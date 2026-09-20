@@ -32,8 +32,17 @@
   判据：`email::tests::delete_path_never_does_a_mailbox_wide_expunge`（**源码哨兵**：`delete_one`
   里一旦再出现 `.expunge()` 就红，且必须含 `uid_copy`）—— 这种"服务器配合着把信弄没"的行为本地
   mock 复现不了，只能钉住源码；`pick_trash` 那条 ④（名字全不中）的注释同步改成"拒绝删除"。
-  ⚠️ 真账号探针（`probe_batch_delete_round_trip_on_a_real_account`，`#[ignore]`）需要在真邮箱上
-  再走一遍「批量删除 → 重新拉取 → 到回收站里找得到」才算真验证。
+  **真账号探针已跑通**（`probe_batch_delete_round_trip_on_a_real_account`，`#[ignore]`，
+  用 `zhaizy@qq.com` —— 就是丢信的那个邮箱）：`moved=Ok(1)`、`in_inbox=false`、
+  `trash=Some("Deleted Messages")`、**`in_trash=true`**，即"删掉的那封**确实躺在回收站里**"。
+  这次跑同时暴露了 QQ 的两个脾气，探针为此改过一轮（不再用 `UID SEARCH` / 整箱 `FETCH 1:*`）：
+  · **QQ 的 SEARCH 索引看不见 APPEND 进去的信**（APPEND 回了 `[APPENDUID … 9769]`、
+    `UID FETCH 9769` 立刻拿得到，而 `UID SEARCH SUBJECT "shuyo-probe-"` 过 60 秒仍是空）
+    ⇒ 改走**序号尾段 FETCH**（`STATUS` 之后拉最后 20 封）按主题认领；
+  · **QQ 广告 `MOVE` 与 `UIDPLUS`**（`CAPABILITY` 实测）⇒ 回收站那条路走的就是 `UID MOVE`，
+    COPY + `UID EXPUNGE` 也都在支持范围内。
+  另外探针现在会先清掉**以前跑挂留下的探针信**（尾段 FETCH + 主题前缀，不靠 SEARCH），
+  这次一口气清掉了 9 封遗留。
 
 - **PDF「AI 识别」的浮层写着「OCR 识别结果」，正文还在讲语言包**（2026-09-20 用户截图：
   「ai 识别的弹窗标题和文案不合适吧？」）。`pdf-ocr-popover` 是「OCR 识别本页」（本机 Tesseract）

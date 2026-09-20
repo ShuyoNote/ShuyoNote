@@ -189,14 +189,26 @@ describe("check-sys-deps 端到端（真脚本、真锁文件、假 dpkg）", ()
 
   it("变异③：强制一条 macOS 工具链探针失败 ⇒ exit 4（复现 Xcode 27 许可未接受那次）", () => {
     const r = runWith({ SHUYONOTE_SYSDEPS_FAKE_PROBE_FAIL: "notarytool" }, "--checks", "toolchain");
-    // 探针表按平台分派：非 macOS 上这里会打印"未做"，那就不该有 exit 4。
+    // 探针表**按平台分派**，所以"非 macOS"这一支必须按平台分开写（2026-09-20 修：
+    // 这条原来只分 darwin / 非 darwin 两种，而 Windows 那天起有了自己的 WIN32_PROBES 表
+    // ⇒ 原来那句「非 macOS 会打印"未做"」在 Windows 上不再成立，判据就自己红了）：
+    //   · darwin：跑 DARWIN_PROBES ⇒ 造假失败必须 exit 4；
+    //   · win32 ：跑 WIN32_PROBES ⇒ **不许**再打印"没做"；`notarytool` 不是本平台的探针，
+    //             **不许**因此变红（否则等于拿 macOS 的工具去卡 Windows 的构建）；
+    //   · 其它（Linux）：没有本平台表 ⇒ 显式打印"没做"，也不许变红。
+    const out = r.stdout;
     if (process.platform === "darwin") {
       expect(r.code).toBe(4);
-      expect(r.stdout).toContain("❌ notarytool");
-      expect(r.stdout).toContain("❌ 工具链探针失败（exit=4）");
+      expect(out).toContain("❌ notarytool");
+      expect(out).toContain("❌ 工具链探针失败（exit=4）");
+    } else if (process.platform === "win32") {
+      expect(r.code).toBe(0);
+      expect(out).toContain("vswhere-msvc"); // 真的跑了本平台的表
+      expect(out).not.toContain("⏭ 工具链探针"); // 有本平台的表 ⇒ 不该说"没做"
+      expect(out).not.toContain("❌");
     } else {
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain("⏭ macOS 工具链探针");
+      expect(out).toContain("⏭ 工具链探针");
     }
   });
 

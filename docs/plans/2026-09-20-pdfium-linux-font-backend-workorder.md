@@ -182,11 +182,38 @@ cd src-tauri && SHUYONOTE_PDFIUM_DIR=<...>/vendor/pdfium/linux-x64/lib \
 ## 7. 未决（**别当已定**）
 
 - **路线 A 的 GN 开关名**：待证（候选 `use_fontconfig`，需在有 `depot_tools` 的机器上 `gn args --list | grep -i font`）；
-- **Android**：现在无 `jniLibs` ⇒ 走 pdf.js 回退。D 是否也覆盖 Android？⇒ 若 Android 打不进字体资源，**保持 pdf.js**；
+- **Android**：~~现在无 `jniLibs` ⇒ 走 pdf.js 回退~~ ⇒ **2026-09-20 更新**：`jniLibs` 那条通路**已落**
+  （`fetch-pdfium --platform android-arm64` → `stage-android-pdfium` → 构建 → `check-android-bundle` 断言包内那份与 vendor
+  逐字节相同；CI run `35504661582` 23 步全绿，读数见母方案 §0.3-**P**）⇒ 安卓**不再**无条件退 pdf.js。
+  **仍未决的是"安卓要不要也随包字体"**：字体映射现在只在 `tauri.linux.conf.json`（安卓包里**没有**字体文件）。
+  **2026-09-20 静态探针（本机，`strings`/`readelf`，与 O 里那条 `ldd` 分析同一手法）**给了一个方向：
+
+  | 探针 | Linux `libpdfium.so` | Android `libpdfium.so` |
+  |---|---|---|
+  | `DT_NEEDED` | 只有 libpthread/libm/libgcc_s/libc/ld-linux | 只有 libdl/libm/libc |
+  | 字符串 `fontconfig` / `/etc/fonts` / `SkFontMgr` | **0 / 0 / 0** | 0 / 0 / 0 |
+  | 字符串 `FreeType` / `hb_`（HarfBuzz） | 7 / **1180** | 2 / 0 |
+  | 字符串 `/system/fonts`（安卓系统字体目录） | 0 | **1** ✅ |
+
+  ⇒ **Linux**：静态链了 FreeType/HarfBuzz，但**没有任何字体配置机制**（无 fontconfig、无 Skia 字体管理）
+  ⇒ 只有"文档内嵌字体"和"provider 现给一份"两条路 —— 这正是路线 D 存在的原因。
+  ⇒ **Android**：带 `/system/fonts` 这条引用 ⇒ **大概率走的是设备系统字体**（与 Windows/macOS 同族），
+  **很可能不需要随包字体**。⚠️ 但这是**静态字符串**，不是行为读数：`SkFontMgr` 那类内部符号在这份
+  `stripped` 库里根本看不见，`/system/fonts` 也可能是别的用途。**结论只能是"预期不需要"**，
+  真正的判据是**安卓真机装包 → 开 `cjk.pdf`**（与 O 的六格同一张表）。在那之前**不许**把
+  "安卓那条通路绿了"读成"安卓中文没问题"（同一个坑，O 里已经踩过一次）；
 - ~~**是否全平台统一装 provider**~~ ⇒ **已定（2026-09-20）**：不按平台分支，**按"库旁文件在不在"**
   （Windows/macOS 不随字体 ⇒ 行为逐字节不变；Linux 随了就生效）。回退 = 删文件；
 - **CJK 缺字面**：单一无衬线字体覆盖不全（生僻字/日韩汉字字形差异）⇒ 残留风险写进发布说明，别写成"中文全好了"；
-- **随包字体本身仍未定**：选哪一份 OFL 字体、体积、许可原文放哪（§4）—— **打包那一步没做**，实机验证用的是本机的 `simhei.ttf`。
+- ~~**随包字体本身仍未定**：选哪一份 OFL 字体、体积、许可原文放哪（§4）—— **打包那一步没做**~~
+  ⇒ **2026-09-20 已定并落地**：`scripts/fetch-font.mjs` 钉死 **`@expo-google-fonts/noto-sans-sc@0.4.3`** 的
+  `NotoSansSC_400Regular.ttf`（落到 `src-tauri/assets/fonts/NotoSansSC-Regular.ttf`，**10,559,284 B**，
+  sha256 `d45f67f0a7c0ca3f256950777ce6a61cc7ce5f9696d02900cbbaac25f8aa7d16`，**OFL-1.1**，
+  许可原文同时取回成 `LICENSE-OFL.txt`）；字体本体**不入库**（`.gitignore`），目录里留 `README.md` 占位
+  （映射是 `assets/fonts/*`，没有文件时 `cargo check` 会因 glob 不匹配 exit 101 ⇒ 占位是必须的）；
+  打包映射写在 `tauri.linux.conf.json`，`release.yml` 打包前现取；**产物级门禁**在 `check-linux-bundle.mjs`
+  （在不在／位置／sha256）。**实机验证仍用的是本机 `simhei.ttf` 那套读数**（O 的六格）——
+  钉死的这份**只验到"进了包、是同一份字节"**，**"它渲染出来的字长什么样"还没人看过**（要真机/真跑）。
 
 ## 8. 挂接
 
