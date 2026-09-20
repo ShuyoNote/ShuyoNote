@@ -268,7 +268,10 @@ export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
-  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
+  // `errors`：拉取失败的账号（key = host|username）＋错误原文。**不许静默跳过**——见
+  // `src-tauri/src/email.rs` 的 `EmailAccountError`：某账号拉不到时，它的邮件会整账号不在列表里，
+  // 界面必须能说清"哪个账号、为什么"，否则用户只看到"这封信没来"。
+  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[]; errors: { account: string; message: string }[] } };
   email_fetch_all_months: { args: { args: { folders: string[]; accounts?: string[] } }; result: string[] };
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };

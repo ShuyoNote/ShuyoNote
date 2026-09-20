@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   removeAccount: vi.fn<() => Promise<void>>(),
   moveMany: vi.fn<() => Promise<number>>(),
   getMessage: vi.fn<() => Promise<unknown>>(),
+  /** 面板注册的事件处理器（currently 只有 `email-unread`）：测试里手动触发它。 */
+  listeners: {} as Record<string, (e: { payload: unknown }) => void>,
 }));
 
 vi.mock("../lib/api", () => ({
@@ -46,7 +48,15 @@ vi.mock("../lib/platform", () => ({
   emailSupported: () => true,
   isDesktopPlatform: () => true,
   platform: {
-    event: { listen: async () => () => {} },
+    event: {
+      // 记下处理器，好让判据能手动推一条 `email-unread` 事件（后端轮询推的就是它）。
+      listen: async (name: string, cb: (e: { payload: unknown }) => void) => {
+        mocks.listeners[name] = cb;
+        return () => {
+          delete mocks.listeners[name];
+        };
+      },
+    },
     dialog: { open: async () => null },
   },
 }));
@@ -291,5 +301,68 @@ describe("批量删除：后端没删掉，界面不许说删掉了（2026-09-20
 
     expect(mocks.moveMany).toHaveBeenCalledTimes(1);
     expect(document.querySelectorAll(".email-item")).toHaveLength(0);
+  });
+});
+
+// **「聚合邮箱收不到某个账号今天的新邮件」——2026-09-20 用户报障的回归。**
+//
+// 事故两层，都在"界面不说实话"上：
+//   ① 后端 `email_fetch_all` 把拉取失败的账号 `Err(_) => {}` **整个吞掉** ⇒ 它的邮件在列表里
+//      整账号消失，界面既不报错也不提示，用户只看到"这封信没来"；
+//   ② 后台轮询只推**未读数**（`email-unread`），**不会**把新信塞进列表 ⇒ 面板开着时列表是一张
+//      快照，"角标涨了、列表里却没有那封信"。
+// 下面两条各盯一半。
+describe("聚合邮箱：账号拉不到要说清 ＋ 未读变多要自动重拉（2026-09-20 用户报障）", () => {
+  const a = acc("a@x.com");
+  const b = acc("b@x.com");
+  const meta = (uid: number, subject: string, owner: EmailAccount): EmailMeta => ({
+    uid,
+    subject,
+    from: "someone@x.com",
+    date: new Date().toUTCString(),
+    snippet: "",
+    seen: true,
+    flagged: false,
+    folder: "INBOX",
+    account: accountKey(owner),
+  });
+
+  it("★ 某个账号拉取失败 ⇒ 面板**点名说清**（账号 + 原因），且不许把它当成「没有新邮件」", async () => {
+    useEmailPanel.setState({ open: true, unread: 0, accounts: [a, b], accountsLoaded: true });
+    mocks.fetchAll.mockResolvedValue({
+      emails: [meta(1, "来自 a 的信", a)],
+      unread: 0,
+      accounts: [accountKey(a), accountKey(b)],
+      // 后端现在会把失败如实带回来（`EmailAccountError`）
+      errors: [{ account: accountKey(b), message: "登录失败: 认证失败" }],
+    });
+    mount();
+    await settle();
+
+    // a 的信照常显示
+    expect(document.querySelectorAll(".email-item")).toHaveLength(1);
+    // ★ b 失败这件事必须出现在界面上：账号名 + 后端原文
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("b@x.com 拉取失败：登录失败: 认证失败");
+    expect(text).toContain("这一轮不在列表里");
+  });
+
+  it("★ 未读数**变多** ⇒ 自动重拉列表（角标涨了，列表里也得有那封信）", async () => {
+    useEmailPanel.setState({ open: true, unread: 0, accounts: [a], accountsLoaded: true });
+    mocks.fetchAll.mockResolvedValue({ emails: [meta(1, "第一封", a)], unread: 1, accounts: [accountKey(a)], errors: [] });
+    mount();
+    await settle();
+    const afterMount = mocks.fetchAll.mock.calls.length;
+    expect(afterMount).toBeGreaterThan(0);
+
+    // 后台轮询第一次报未读 1：只是"当前值"，**不该**因此重拉（没有"变多"这个信号）
+    mocks.listeners["email-unread"]?.({ payload: 1 });
+    await settle();
+    expect(mocks.fetchAll.mock.calls.length).toBe(afterMount);
+
+    // 第二次报 3 ⇒ 变多了 ⇒ 必须重拉（这就是"新信到了列表却不更新"的修法）
+    mocks.listeners["email-unread"]?.({ payload: 3 });
+    await settle();
+    expect(mocks.fetchAll.mock.calls.length).toBeGreaterThan(afterMount);
   });
 });
