@@ -2598,6 +2598,13 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "community_publish_note" || cmd === "community_disconnect") {
       throw new Error("Web 版不支持一键发布到社区，请使用桌面版。");
     }
+    // 内容指纹同样**如实说不支持**，而且这条不是"懒得做"：Rust 是它的**唯一实现**，
+    // 在 TS 里再写一份哈希就等于两侧各有一份口径，迟早漂成两种指纹
+    // —— 那样同一份内容会被算出两个幂等键，症状是**静默多发一篇**。
+    // 所以宁可这里明确报错，也不做一个"看起来算得出、实际与桌面不一致"的假实现。
+    if (cmd === "community_content_rev") {
+      throw new Error("Web 版不支持计算内容指纹（它由 Rust 侧唯一实现，请使用桌面版）。");
+    }
     // 传图与发帖是同一道门：同样要"本地凭据 + 不受 CORS 约束的出口"这两样 Web 版没有的东西。
     if (cmd === "community_upload_attachment") {
       throw new Error("Web 版不支持向社区上传附件，请使用桌面版。");

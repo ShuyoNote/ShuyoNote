@@ -11,10 +11,12 @@
 // 断言的是**命令名**（以及它们的**先后顺序**），不是某个前端包装函数——这样"没调
 // `community_publish_note`"才算数。
 //
-// 打开对话框是**两条只读查询**：`community_connection`（连上了没有）与
-// `community_publish_state`（这篇发过没有、发的是哪一版）。后者只是"提示"：读不到也得让
-// 对话框照常可用（见下面那一组），所以 `backend()` 给它准备了默认值 —— 但**它不是写操作**，
-// 判据里"上传/发帖 0 次"那条同样盯着它出现的那一屏。
+// 打开对话框是**三条只读查询**：`community_connection`（连上了没有）、
+// `community_publish_state`（这份内容发过没有、上次发的是哪一份）与 `community_content_rev`
+// （**当前内容的指纹** —— 幂等键的一半，由 Rust 唯一实现，前端不自己算哈希）。
+// 台账与指纹都只是"读数"：台账读不到也得让对话框照常可用（见下面那一组）；
+// 指纹算不出来则**不许发帖**（见「内容指纹」那一组），因为 `rev` 传错 = 同一份内容多发一篇。
+// 所以 `backend()` 给了两者默认值 —— 但**它们都不是写操作**，判据里"上传/发帖 0 次"那条同样盯着它们出现的那一屏。
 //
 // 正文一律用**真的 Lexical 节点**造（照 `src/editor/nodes/exportDom.test.ts` 那套
 // `$createImageNode(...)`）：手写一段假 JSON 只能证明"我们的假 JSON 能被解析"，
@@ -113,15 +115,23 @@ const NOTE = {
   docJson: PLAIN_JSON,
   tags: ["插件", "Markdown"],
   noteId: "page-1",
-  // 修订号：这里用后端 `save_page` 写进 `updated_at` 的那个毫秒时间戳的字符串形式。
-  rev: "1758355200000",
+  // 注意：**没有 `rev`** —— 指纹不再是 prop，由组件按 title/docJson/tags 现算
+  // （`community_content_rev`）。外面递一个进来就多一处"正文与指纹错位"的缝。
 };
 
 const baseProps: CommunityPublishDialogProps = { ...NOTE, onClose: () => {} };
 
 /**
+ * Rust `community_content_rev` 回的**内容指纹**（32 位十六进制；`content_rev` 的形状）。
+ * 测试里不自己算哈希 —— 那正是这条命令存在的理由（两侧各算一份必然漂）。
+ */
+const FINGERPRINT = "3f2a1b0c9d8e7f60514233241506978a";
+/** 另一份内容 ⇒ 另一个指纹（只用来造"上次发出去的是另一份内容"那一态）。 */
+const OTHER_FINGERPRINT = "0a0b0c0d0e0f10111213141516171819";
+
+/**
  * 一页的**发布台账**（后端在发布成功时自己回写，前端只读 —— 见 `commands.ts` 的
- * `CommunityPublishState`）。`publishedRev` 就是当时递下去的 `rev`。
+ * `CommunityPublishState`）。`publishedRev` 是**内容指纹**：当时递下去的 `rev`。
  */
 const ledger = (publishedRev: string) => ({
   pageId: NOTE.noteId,
@@ -182,13 +192,14 @@ const OK_RESULT = {
 };
 
 /**
- * 默认后端：答两条**打开对话框就会发生的只读查询** —— `community_connection`
- * （连上了没有）与 `community_publish_state`（这篇发过没有，默认"没台账"）；
+ * 默认后端：答三条**打开对话框就会发生的只读查询** —— `community_connection`
+ * （连上了没有）、`community_publish_state`（这份内容发过没有，默认"没台账"）
+ * 与 `community_content_rev`（当前内容的指纹，默认回 `FINGERPRINT`）；
  * 其余交给每个测试自己准备（没准备的命令一律当失败，这样"没调某条命令"才算数）。
  *
- * 台账为什么要给默认值：打开对话框就会读它（只读查询，见 I7），真实后端一定答得上；
+ * 台账/指纹为什么要给默认值：打开对话框就会读它们（只读查询，见 I7），真实后端一定答得上；
  * 若在这里落成"没准备的命令 ⇒ 失败"，测的就变成"后端不认识这条命令"这种现实里不存在的情形。
- * 每个测试可以用 `over` 覆盖其中任意一条（例如造"这篇发过，且是更早的一版"）。
+ * 每个测试可以用 `over` 覆盖其中任意一条（例如造"这份内容发过"或"指纹算不出来"）。
  */
 function backend(
   over: Record<string, (args?: unknown) => unknown | Promise<unknown>> = {},
@@ -198,6 +209,7 @@ function backend(
     if (handler) return Promise.resolve(handler(args));
     if (cmd === "community_connection") return Promise.resolve(CONNECTION);
     if (cmd === "community_publish_state") return Promise.resolve(null);
+    if (cmd === "community_content_rev") return Promise.resolve(FINGERPRINT);
     return Promise.reject(new Error(`测试没准备的命令：${cmd}`));
   };
 }
@@ -214,14 +226,15 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("打开对话框：只做两条只读查询（连上了没有 ＋ 这篇发过没有），什么都不传、什么都不发", () => {
-  it("已连接 → 两条只读查询各一次；**没有** connect_start / upload / publish_note", async () => {
+describe("打开对话框：只做只读查询（连上了没有 ＋ 这份内容发过没有 ＋ 算当前内容的指纹），什么都不传、什么都不发", () => {
+  it("已连接 → 三条只读查询各一次；**没有** connect_start / upload / publish_note", async () => {
     mocks.invoke.mockImplementation(backend());
     mount();
     await vi.waitFor(() => is(byText("确认发布")));
 
     expect(called("community_connection")).toHaveLength(1);
     expect(called("community_publish_state")).toHaveLength(1);
+    expect(called("community_content_rev")).toHaveLength(1);
     expect(text()).toContain("已连接：阿数");
     expect(called("community_connect_start")).toHaveLength(0);
     expect(called("community_upload_attachment")).toHaveLength(0);
@@ -242,13 +255,13 @@ describe("打开对话框：只做两条只读查询（连上了没有 ＋ 这�
   });
 });
 
-describe("发布台账（只读）：这篇发过没有、发的是哪一版、再发一次会怎样", () => {
-  it("没台账 → 只说一句中性的「还没发过」；**不出现**「已经发过 / 再发会新建」这种替用户下的结论", async () => {
+describe("发布台账（只读）：这份内容发过没有、上次发的是哪一份、再发一次会怎样", () => {
+  it("没台账 → 只说一句中性的「这一页还没发过」；**不出现**「已经发过 / 再发会新建」这种替用户下的结论", async () => {
     mocks.invoke.mockImplementation(backend());
     mount();
     await vi.waitFor(() => is(byText("确认发布")));
 
-    expect(text()).toContain("这篇还没发过");
+    expect(text()).toContain("发布台账：这一页还没发过。");
     // 没有台账就没有可下的结论："已经发过"是假的，"再发会新建"是吓唬人。
     expect(text()).not.toContain("已经发过");
     expect(text()).not.toContain("再发会新建");
@@ -258,18 +271,17 @@ describe("发布台账（只读）：这篇发过没有、发的是哪一版、�
     expect(called("community_publish_note")).toHaveLength(0);
   });
 
-  it("台账的 rev 与当前相同 → 说清「这一版已经发过」＋「再发一次不会多发一篇」，地址可点开", async () => {
-    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(NOTE.rev) }));
+  it("指纹相同 → 说清「这一份内容已经发过」（带指纹前 8 位）＋「再发一次不会多发一篇」，地址可点开", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(FINGERPRINT) }));
     mount();
-    await vi.waitFor(() => is(byText("确认发布")));
+    await vi.waitFor(() => expect(text()).toContain("这一份内容已经发过"));
 
-    expect(text()).toContain("这一版已经发过");
+    expect(text()).toContain("发布台账：这一份内容已经发过（指纹 3f2a1b0c…）。");
     // 幂等口径就是这一句：同一个键 → 社区回放第一次的结果（前端不自己算键）
-    expect(text()).toContain("不会多发一篇");
-    expect(text()).toContain("同一个幂等键回放第一次的结果");
+    expect(text()).toContain("现在再发一次不会多发一篇：社区按同一个幂等键回放第一次的结果。");
     expect(text()).not.toContain("再发会新建一篇");
 
-    const link = document.querySelector<HTMLButtonElement>('[data-ledger="same-rev"] .community-save-source')!;
+    const link = document.querySelector<HTMLButtonElement>('[data-ledger="same-content"] .community-save-source')!;
     expect(link).toBeTruthy();
     expect(link.textContent).toContain("https://community.shuyo.cn/post/plugin-recipes-batch-1");
     // 打开方式与既有那套一致：sanitizeExternalUrl ＋ 平台 opener
@@ -279,34 +291,52 @@ describe("发布台账（只读）：这篇发过没有、发的是哪一版、�
     );
   });
 
-  it("台账的 rev 更早 → 说清「上次发布的是更早的一版」＋「再发会新建一篇」（更新已有帖子是 P2）", async () => {
-    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger("1758355100000") }));
+  it("指纹不同 → 说清「上次发出去的是另一份内容」（两个指纹各露前 8 位）＋「再发会新建一篇」（更新已有帖子是 P2）", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(OTHER_FINGERPRINT) }));
     mount();
-    await vi.waitFor(() => is(byText("确认发布")));
+    await vi.waitFor(() => expect(text()).toContain("另一份内容"));
 
-    expect(text()).toContain("上次发布的是更早的一版");
-    expect(text()).toContain("再发会新建一篇");
-    // 别把"会新建"说成"会更新"：这一版根本没有更新已有帖子这条路
-    expect(text()).toContain("更新是 P2 才做的");
+    // 逐字比：上一次的指纹与当前指纹都要露出来（整串 32 位摆在句子里没人读得下去）
+    expect(text()).toContain(
+      "发布台账：上次发出去的是另一份内容（指纹 0a0b0c0d…，当前 3f2a1b0c…）。",
+    );
+    expect(text()).toContain("再发会新建一篇（这一版不会更新已发布的帖子，更新是 P2 才做的）。");
     expect(text()).not.toContain("已经发过");
-    // 也别说"内容改过了"：`rev` 是 `updated_at`，改了又改回去也算新修订 —— 那是我们并不知道的结论。
-    expect(text()).not.toContain("内容在那之后改过了");
-    expect(text()).toContain("不是同一个修订");
+    // 旧说法必须消失：在"内容指纹"之下它们都不成立
+    expect(text()).not.toContain("不是同一个修订");
+    expect(text()).not.toContain("修订号取自页面的更新时间");
 
-    const link = document.querySelector<HTMLButtonElement>('[data-ledger="older-rev"] .community-save-source')!;
+    const link = document.querySelector<HTMLButtonElement>('[data-ledger="different-content"] .community-save-source')!;
     expect(link.textContent).toContain("https://community.shuyo.cn/post/plugin-recipes-batch-1");
+    // 读台账不许顺带发帖
+    expect(called("community_publish_note")).toHaveLength(0);
   });
 
-  it("打开对话框**只读一次**台账（参数就是 { pageId: noteId }），且上传/发帖仍然都是 0 次", async () => {
-    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(NOTE.rev) }));
+  it("指纹还没算出来时**不下结论**：等两个数都有才比（拿空指纹比出来的结论是编的）", async () => {
+    // 这条命令永远不回（挂住）⇒ `rev` 一直是空；台账已经到了。
+    mocks.invoke.mockImplementation(
+      backend({
+        community_publish_state: () => ledger(OTHER_FINGERPRINT),
+        community_content_rev: () => new Promise(() => {}),
+      }),
+    );
     mount();
-    await vi.waitFor(() => is(byText("确认发布")));
+    await vi.waitFor(() => expect(text()).toContain("发布台账：正在算这份内容的指纹"));
+    expect(text()).not.toContain("上次发出去的是另一份内容");
+    expect(text()).not.toContain("这一份内容已经发过");
+  });
+
+  it("打开对话框**只读一次**台账（参数就是 { pageId: noteId }）、指纹也只算一次，且上传/发帖仍然都是 0 次", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(FINGERPRINT) }));
+    mount();
+    await vi.waitFor(() => expect(text()).toContain("这一份内容已经发过"));
 
     const reads = called("community_publish_state");
     expect(reads).toHaveLength(1);
     expect(reads[0][1]).toEqual({ pageId: NOTE.noteId });
-    // 同时发生的另一条只读查询同样各一次；而**写**类的命令一次都没有
+    // 同时发生的另两条只读查询同样各一次；而**写**类的命令一次都没有
     expect(called("community_connection")).toHaveLength(1);
+    expect(called("community_content_rev")).toHaveLength(1);
     expect(called("community_connect_start")).toHaveLength(0);
     expect(called("community_upload_attachment")).toHaveLength(0);
     expect(called("community_publish_note")).toHaveLength(0);
@@ -328,30 +358,99 @@ describe("发布台账（只读）：这篇发过没有、发的是哪一版、�
     // 读不到 ≠ 没发过：不许摆出"已经发过"，也不许给"再发会新建"的结论
     expect(text()).not.toContain("已经发过");
     expect(text()).not.toContain("再发会新建");
-    expect(text()).not.toContain("这篇还没发过");
-    // 界面照旧可用
+    expect(text()).not.toContain("这一页还没发过");
+    // 界面照旧可用（指纹算出来了 ⇒ 发布按钮可点）
     expect(text()).toContain("发布前清单");
-    expect(byText("确认发布").disabled).toBe(false);
+    await vi.waitFor(() => expect(byText("确认发布").disabled).toBe(false));
   });
 
-  it("发布成功（status ok）→ **立刻重读台账**，界面反映的就是「刚发的是这一版」", async () => {
+  it("发布成功（status ok）→ **立刻重读台账**，界面反映的就是「刚发的就是这一份内容」", async () => {
     let reads = 0;
     mocks.invoke.mockImplementation(
       backend({
         community_publish_note: () => OK_RESULT,
-        // 打开时：还没发过；发完之后后端已回写 ⇒ 再读就是这一版。
-        community_publish_state: () => (reads++ === 0 ? null : ledger(NOTE.rev)),
+        // 打开时：还没发过；发完之后后端已回写 ⇒ 再读就是同一份内容（同一个指纹）。
+        community_publish_state: () => (reads++ === 0 ? null : ledger(FINGERPRINT)),
       }),
     );
     mount();
     await vi.waitFor(() => is(byText("确认发布")));
-    expect(text()).toContain("这篇还没发过");
+    expect(text()).toContain("这一页还没发过");
 
     flushSync(() => byText("确认发布").click());
     await vi.waitFor(() => expect(called("community_publish_state")).toHaveLength(2));
-    await vi.waitFor(() => expect(text()).toContain("这一版已经发过"));
+    await vi.waitFor(() => expect(text()).toContain("这一份内容已经发过"));
     // 发完不再是"还没发过"
-    expect(text()).not.toContain("这篇还没发过");
+    expect(text()).not.toContain("这一页还没发过");
+  });
+});
+
+describe("内容指纹（community_content_rev）：比的是内容，正文必须是**本地态**那一份", () => {
+  it("算指纹用的正文含 attachment://… 且**不含** /attachments/（换成社区地址的那份是发帖时才生成的）", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ docJson: ONE_IMAGE_JSON });
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    const call = called("community_content_rev")[0];
+    expect(call).toBeTruthy();
+    const args = call[1] as { title: string; body: string; tags: string[] };
+    expect(args.title).toBe(NOTE.title);
+    expect(args.tags).toEqual(NOTE.tags);
+    // 本机图片的引用**原样**在正文里：这才是"这份内容"的样子。
+    expect(args.body).toContain("attachment://localhost/C%3A/hash-a.png");
+    // 关键：**不能**是换过图片地址的那一份 —— 拿它算指纹会让同一篇笔记因为上传结果
+    // 不同而算出两个指纹（同一个内容两个幂等键 ⇒ 多发一篇；Rust 侧有一条判据钉着这件事）。
+    expect(args.body).not.toContain("/attachments/");
+    // 清单里摆出来给人数的那一份，就是拿去算指纹的那一份
+    expect(args.body).toEqual(pageContentToMarkdown(ONE_IMAGE_JSON));
+    // 纯读：一张图没传、一篇帖没发
+    expect(called("community_upload_attachment")).toHaveLength(0);
+    expect(called("community_publish_note")).toHaveLength(0);
+  });
+
+  it("发帖时 `rev` 就是 community_content_rev 返回的那个指纹（逐字相等）", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_note: () => OK_RESULT }));
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+    flushSync(() => byText("确认发布").click());
+    await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
+
+    const sent = called("community_publish_note")[0][1] as { rev: string };
+    // 不许是时间戳，也不许是前端自己算的：必须是那条命令回的那一个（mock 成固定值 ⇒ 逐字比）
+    expect(sent.rev).toBe(FINGERPRINT);
+    expect(called("community_content_rev")).toHaveLength(1);
+  });
+
+  it("指纹算不出来 ⇒ **不发帖**，并说清为什么（「先发出去再说」在这里不存在）", async () => {
+    mocks.invoke.mockImplementation(
+      backend({
+        community_content_rev: () => {
+          throw new Error("附件索引坏了");
+        },
+        community_publish_note: () => OK_RESULT,
+      }),
+    );
+    mount();
+    await vi.waitFor(() => expect(text()).toContain("算不出这份内容的指纹"));
+
+    // 理由是人话，且带后端原话（错在哪一步就说哪一步）
+    expect(text()).toContain("算不出这份内容的指纹，先别发：附件索引坏了");
+    expect(byText("确认发布").disabled).toBe(true);
+    // 按钮点不动之外还有第二道闸（publish 自己也会挡住）：一次发帖都没有
+    flushSync(() => byText("确认发布").click());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(called("community_publish_note")).toHaveLength(0);
+    expect(called("community_upload_attachment")).toHaveLength(0);
+  });
+
+  it("正文解析不了时不问指纹（没有可信的「当前内容」，问也问不出诚实的指纹）", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ docJson: "{ 这不是 JSON" });
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    expect(text()).toContain("正文解析失败");
+    expect(called("community_content_rev")).toHaveLength(0);
+    expect(byText("确认发布").disabled).toBe(true);
   });
 });
 
@@ -442,15 +541,16 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
 
     // 一次图都没传（没有图要传），但也没有跳过任何一步
     expect(called("community_upload_attachment")).toHaveLength(0);
+    // `rev` 是**内容指纹**（`community_content_rev` 回的那个），不是页面更新时间戳 —— 逐字比。
     expect(called("community_publish_note")[0][1]).toEqual({
       title: NOTE.title,
       body: pageContentToMarkdown(PLAIN_JSON),
       tags: NOTE.tags,
       noteId: NOTE.noteId,
-      rev: NOTE.rev,
+      rev: FINGERPRINT,
     });
 
-    // ok：给出社区地址 + "同一修订重发不会多发一篇"
+    // ok：给出社区地址 + "同一份内容重发不会多发一篇"
     await vi.waitFor(() => expect(text()).toContain("已发布到社区"));
     expect(text()).toContain("https://community.shuyo.cn/post/plugin-recipes-batch-1");
     expect(text()).toContain("再发一次不会多发一篇");

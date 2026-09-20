@@ -19,15 +19,19 @@
 //   · 清单与发帖**同一份来源**：正文只从 `docJson` 算，不在 props 里再塞一份 body
 //     （"清单里一份、发出去另一份"是这一屏最容易出的缝）。
 //
-// 幂等（I2）：`(noteId, rev)` 由调用方传进来，**幂等键由后端算**（`community_publish.rs`），
-// 前端不自己造 key —— 两侧各算一份迟早漂成两种口径。所以本组件只负责**原样把它们递下去**。
+// 幂等（I2）：`(noteId, rev)` 里的 `rev` 是**当前这份内容的指纹**（32 位十六进制）。
+// 调用方只给 `noteId`；`rev` 由本组件调 Rust 的 `community_content_rev` 算（见下方算指纹的那段）—— 幂等键仍由后端按 `(noteId, rev)` 算（`community_publish.rs`），
+// 前端一个字符都不自己造：两侧各算一份迟早漂成两种口径，而症状是同一份内容**多发一篇**。
 //
-// 发布台账（本版接上）：后端在**发布成功时自己回写**一行"这篇最近发到哪儿、发的是哪一版"
+// 为什么 `rev` 不再是 prop：它必须是**这一屏手里那份 `docJson`** 的指纹。由调用方在外面算，
+// 就多了一处"正文与指纹不同源"的缝 —— 一旦错位，社区会把第二次发布当成重放而**静默丢掉**。
+//
+// 发布台账（本版接上）：后端在**发布成功时自己回写**一行"这篇最近发到哪儿、发的是哪一份内容"
 // （`community_publish_note` 内部，见 `community_publish.rs` 的 `record_into_db`），前端**只读不写**。
-// 这一屏据此说清三件事（拿 `publishedRev` 与当前 `rev` 比）：
-//   · 没台账（`null`）⇒ 一句中性的"还没发过"，**不吓唬人**；
-//   · 同 rev ⇒ 这一版已经发过，**再发一次不会多发一篇**（同一个幂等键回放首次结果）；
-//   · 不同 rev ⇒ 上次发布的是更早的一版，**再发会新建一篇**（本版还不更新已有帖子，P2 才做）。
+// 这一屏据此说清三件事（拿 `publishedRev` 与当前指纹比 —— 比的是**内容是不是同一份**）：
+//   · 没台账（`null`）⇒ 一句中性的"这一页还没发过"，**不吓唬人**；
+//   · 同指纹 ⇒ 这一份内容已经发过，**再发一次不会多发一篇**（同一个幂等键回放首次结果）；
+//   · 不同指纹 ⇒ 上次发出去的是另一份内容，**再发会新建一篇**（本版还不更新已有帖子，P2 才做）。
 // 读台账**失败不挡界面**：它只是一句提示，读不到就等于没有 —— 但也不假装"没发过"
 // （那是替用户断言一件我们并不知道的事），所以把理由记在 `ledgerError` 里，用一句中性的话说明。
 //
@@ -63,10 +67,13 @@ export interface CommunityPublishDialogProps {
    */
   docJson: string;
   tags: string[];
-  /** 笔记 id。与 `rev` 一起算幂等键，取值必须稳定（见 `EditorToolbar` 里的注释）。 */
+  /**
+   * 笔记 id。与**内容指纹**一起算幂等键，取值必须稳定（见 `EditorToolbar` 里的注释）。
+   *
+   * 指纹本身**不是 prop**：它由本组件按 `title` / `docJson` / `tags` 现算（`community_content_rev`），
+   * 这样"要发出去的正文"与"拿去算指纹的正文"必然是同一份快照。
+   */
   noteId: string;
-  /** 修订号。**同一个 (noteId, rev) 必须永远算出同一个键**，否则"重试一次多一篇"。 */
-  rev: string;
   onClose: () => void;
 }
 
@@ -118,6 +125,11 @@ function prepareContent(docJson: string): { body: string; broken: number; error:
   }
 }
 
+/** 指纹在界面上的短形式：前 8 位 ＋ 省略号（整串 32 位，摆在句子里没人读得下去）。 */
+function shortRev(rev: string): string {
+  return `${rev.slice(0, 8)}…`;
+}
+
 /** 非 `pending`/`approved` 的状态：如实说清是哪一个，并允许重开一次。 */
 function connectStateNote(state: CommunityConnectState): string {
   if (state === "expired") return "设备码已过期（没人在确认页上确认）。可以重新开始一次。";
@@ -129,7 +141,7 @@ function connectStateNote(state: CommunityConnectState): string {
   return `社区返回了没预期到的状态：${state}。可以重新开始一次。`;
 }
 
-export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onClose }: CommunityPublishDialogProps) {
+export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }: CommunityPublishDialogProps) {
   useOverlayScrollLock(true);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("communityPublish", true, onClose);
@@ -143,6 +155,19 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
   /** 只有图片能传（`community_upload_attachment` 的社区白名单里没有视频）。 */
   const imageRefs = useMemo(() => refs.filter((r) => r.kind === "image"), [refs]);
   const videoCount = refs.length - imageRefs.length;
+
+  /**
+   * 当前这份内容的**指纹**（32 位十六进制）—— 幂等键的一半。
+   *
+   * Rust 是它的**唯一实现**（`community_content_rev` → `community_publish.rs::content_rev`）：
+   * 在 TS 里再写一份哈希，就是两侧各有一份口径，迟早漂成两种指纹 —— 而症状是静默的
+   * （同一份内容算两个键 ⇒ **多发一篇**）。
+   *
+   * `""` = **还没算出来 / 算不出来** ⇒ **一个字节都不发**（见 `publish` 与发布按钮的禁用），
+   * 因为拿一个不对应当前内容的指纹去发，正是"同内容多发一篇"的成因。
+   */
+  const [rev, setRev] = useState("");
+  const [revError, setRevError] = useState("");
 
   /** `undefined` = 还没问过（读取中）；`null` = 问过了、没连上。 */
   const [connection, setConnection] = useState<CommunityConnection | null | undefined>(undefined);
@@ -234,6 +259,53 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
     void loadConnection();
     void loadPublishState();
   }, []);
+
+  /**
+   * 算**当前内容**的指纹（纯本地、只读的一条命令；独立于"连没连上"）。
+   *
+   * 输入就是标题 ＋ 正文 ＋ 标签 —— 这三样任一变，指纹就要重算；`noteId` **不参与**
+   * （同一份内容发到不同笔记？不可能，但幂等键里另有一段是它）。
+   *
+   * ⚠️ `body` 传的是 `prepared.body`，即**清单里摆出来的那一份本地态正文**：图片引用还是
+   * `attachment://…`。发出去的那一份会把地址换成 `/attachments/<hash>`（见 `publish` 的第 ③ 步），
+   * 拿换过地址的那份算指纹会让同一篇笔记因为上传结果/顺序不同而算出两个指纹
+   * —— 那正是"同一份内容多发一篇"（Rust 侧有一条专门的判据钉着这件事）。
+   *
+   * 算不出来**不抛到界面上**，只落成 `revError` ＋ 空指纹：`rev === ""` 时发布按钮禁用，
+   * 理由用一句人话说明（"算不出来"必须是可见的，不能只是按钮点不动）。
+   */
+  const tagsKey = tags.join("\n");
+  useEffect(() => {
+    // 正文都解析不了 ⇒ 没有可信的"当前内容"，问也问不出诚实的指纹；`prepared.error` 已经说清原因。
+    if (prepared.error !== "") {
+      setRev("");
+      setRevError("");
+      return;
+    }
+    let cancelled = false;
+    setRev("");
+    setRevError("");
+    void (async () => {
+      try {
+        const fp = await platform.executor.invoke<string>("community_content_rev", {
+          title,
+          body: prepared.body,
+          tags,
+        });
+        if (!cancelled) setRev(fp);
+      } catch (e) {
+        if (!cancelled) {
+          setRevError(`算不出这份内容的指纹，先别发：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    })();
+    return () => {
+      // 快照变了/卸载了 ⇒ 旧的那次回答作废（否则慢回答会盖掉新的指纹）。
+      cancelled = true;
+    };
+    // `tags` 用拼出来的键当依赖：同样的标签内容不该因为父级新建了一个等值数组就重算一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, prepared.body, tagsKey, prepared.error]);
 
   const openExternal = async (raw: string) => {
     const safe = sanitizeExternalUrl(raw);
@@ -339,6 +411,12 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
    * "上传失败"绝不能报成"发布失败"：那会让人去重试发帖，而真正该修的是那张图。
    */
   const publish = async () => {
+    // 指纹还没算出来 / 算不出来 ⇒ **一个字节都不发**。拿一个不对应当前内容的 `rev` 去发，
+    // 轻则被后端挡下（它显式校验 32 位十六进制），重则同一份内容多发一篇 —— 这不是能"先发出去再说"的事。
+    if (rev === "") {
+      setSendError(revError || "还没算出这份内容的指纹（正在计算），请稍候再试。");
+      return;
+    }
     setSending(true);
     setSendError("");
     setUploadNote("");
@@ -371,7 +449,8 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
       // ③ 换地址：只换"有指纹且映射里有"的那些，其余保持 `__src`（与清单里看到的一致）。
       const body = pageContentToMarkdown(docJson, (hash) => uploaded.get(hash) ?? "");
 
-      // ④ 发帖：`body` 就是第 ③ 步那一份。
+      // ④ 发帖：`body` 就是第 ③ 步那一份；`rev` 是**本地态正文**算出来的指纹
+      //    （不是这里的 `body` 算的 —— 换过图片地址的那份算出来会是另一个指纹）。
       const r = await platform.executor.invoke<CommunityPublishResult>("community_publish_note", {
         title,
         body,
@@ -423,6 +502,9 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
           {sendError && <div className="community-save-error">{sendError}</div>}
           {/* 正文解析不了 ⇒ 清单本身就是假的，先说出来（发布按钮也据此禁用）。 */}
           {prepared.error && <div className="community-save-error">{prepared.error}</div>}
+          {/* 指纹算不出来 ⇒ **不许发帖**，且理由必须让人看见：只说"按钮点不动"等于让人猜。
+              同一份内容多发一篇就是这么来的（拿错的 `rev` 去发）。 */}
+          {revError && <div className="community-save-error">{revError}</div>}
           {/* 上传是慢操作：这一句就是"它还活着"的证据。 */}
           {uploadNote && <div className="community-save-more">{uploadNote}</div>}
           {/* 断开时的原话，**原样**：撤销失败时它写明了"那把令牌仍然有效"——这句必须让人看见，
@@ -447,13 +529,13 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
                     {result.url}
                   </button>
                   <div className="community-save-preview-meta">
-                    同一修订（{noteId} · {rev}）再发一次不会多发一篇：社区按幂等键回放第一次的结果。
+                    同一份内容（{noteId} · 指纹 {shortRev(rev)}）再发一次不会多发一篇：社区按幂等键回放第一次的结果。
                   </div>
                 </>
               )}
               {result.status === "inFlight" && (
                 <div className="community-save-preview-meta">
-                  上一个同修订的发布还在处理中（社区 409 duplicate_in_flight）——这不是失败，稍后重试即可。
+                  上一个同一份内容的发布还在处理中（社区 409 duplicate_in_flight）——这不是失败，稍后重试即可。
                 </div>
               )}
               {result.status === "rejected" && (
@@ -533,21 +615,28 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
                 {connection?.scope ? ` · 授权范围：${connection.scope}` : ""}
               </div>
 
-              {/* ---- 发布台账（只读）：这篇发过没有、发的是哪一版、再发一次会怎样 ----
+              {/* ---- 发布台账（只读）：这份内容发过没有、上次发的是哪一份、再发一次会怎样 ----
                   放在"发布前清单"**上方**：先让人知道"这篇的处境"，再看"将要发什么"。
-                  三个状态互斥，且都只在**已连接**时显示（未连接时发布根本还没开始谈）。 */}
+                  比的是**内容指纹**（不再是页面更新时间）⇒ 三态说的就是"是不是同一份内容"。
+                  ★ 两个比较态都要求 `rev !== ""`：指纹还没算出来时，任何比较结论都是编的
+                  （下面单独给一句"正在算"，而不是拿空指纹去比）。 */}
               {ledgerError !== "" && (
                 <div className="community-save-more">
                   这次没读到发布台账（{ledgerError}）—— 不影响发布，只是这次不显示"这篇发过没有"。
                 </div>
               )}
               {ledgerError === "" && ledger === null && (
-                <div className="community-save-preview-meta">发布台账：这篇还没发过。</div>
+                <div className="community-save-preview-meta">发布台账：这一页还没发过。</div>
               )}
-              {ledgerError === "" && ledger != null && ledger.publishedRev === rev && (
-                <div className="community-save-preview" data-ledger="same-rev">
+              {ledgerError === "" && ledger != null && rev === "" && revError === "" && (
+                <div className="community-save-preview-meta">
+                  发布台账：正在算这份内容的指纹，算出来才能说"发过没有"。
+                </div>
+              )}
+              {ledgerError === "" && ledger != null && rev !== "" && ledger.publishedRev === rev && (
+                <div className="community-save-preview" data-ledger="same-content">
                   <div className="community-save-preview-meta">
-                    发布台账：这一版已经发过（修订 {ledger.publishedRev}）。
+                    发布台账：这一份内容已经发过（指纹 {shortRev(ledger.publishedRev)}）。
                   </div>
                   <button
                     className="community-save-source"
@@ -561,10 +650,11 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
                   </div>
                 </div>
               )}
-              {ledgerError === "" && ledger != null && ledger.publishedRev !== rev && (
-                <div className="community-save-preview" data-ledger="older-rev">
+              {ledgerError === "" && ledger != null && rev !== "" && ledger.publishedRev !== rev && (
+                <div className="community-save-preview" data-ledger="different-content">
                   <div className="community-save-preview-meta">
-                    发布台账：上次发布的是更早的一版（发出去的是修订 {ledger.publishedRev}，当前是 {rev}）。
+                    发布台账：上次发出去的是另一份内容（指纹 {shortRev(ledger.publishedRev)}，当前{" "}
+                    {shortRev(rev)}）。
                   </div>
                   <button
                     className="community-save-source"
@@ -574,13 +664,7 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
                     {ledger.url}
                   </button>
                   <div className="community-save-preview-meta">
-                    当前这一版与上次发出去的那一版**不是同一个修订**，所以现在再发会新建一篇
-                    （这一版不会更新已发布的帖子，更新是 P2 才做的）。
-                  </div>
-                  {/* 只说"不是同一个修订"，不说"内容改过了"：`rev` 取自页面 `updated_at`，
-                      "改一个字再改回去"也会换修订，而内容其实一模一样 —— 那会是一句我们并不知道的结论。 */}
-                  <div className="community-save-more">
-                    修订号取自页面的更新时间，不是内容指纹：改了又改回去也会算新修订。
+                    再发会新建一篇（这一版不会更新已发布的帖子，更新是 P2 才做的）。
                   </div>
                 </div>
               )}
@@ -637,11 +721,13 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onCl
             </button>
           )}
           {/* 「确认发布」与清单同生共死：没有清单就没有这个按钮（I7）。
-              正文解析不了（`prepared.error`）时禁用：没有可信的清单就没有可发的正文。 */}
+              正文解析不了（`prepared.error`）时禁用：没有可信的清单就没有可发的正文。
+              指纹没算出来（`rev === ""`）时同样禁用：`rev` 传错会让同一份内容多发一篇，
+              理由由上方的 `revError` 说明。 */}
           {connected && (result === null || result.status === "inFlight") && (
             <button
               className="community-save-btn primary"
-              disabled={sending || prepared.error !== ""}
+              disabled={sending || prepared.error !== "" || rev === ""}
               onClick={() => void publish()}
             >
               {sending ? "发布中…" : result?.status === "inFlight" ? "重试" : "确认发布"}

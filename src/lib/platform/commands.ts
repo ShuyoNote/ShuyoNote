@@ -239,15 +239,15 @@ export interface CommunityUploadedAttachment {
 /**
  * 一页的**发布台账**（与 Rust `PublishState` 同形）。
  *
- * 为什么需要它：`rev` 现在取自页面 `updated_at`（见方案 §7.1），所以"这篇发过没有、
- * 发的到底是不是当前这一版"只能靠本地记一笔 —— 界面靠它说明"再发一次是重复还是新建一篇"
- * （**P2 之前每次都会新建一篇**，用户更该知道）。
+ * 为什么需要它：发布时那份内容的**指纹**被记在这里，界面才能回答"这份内容发过没有、
+ * 上次发出去的是不是同一份" —— 以及"再发一次是社区回放（不会多一篇）还是新建一篇"
+ * （**P2 之前每次都会新建一篇**，用户更该知道）。台账是**只读**的：写入由后端在发布成功时自己做。
  */
 export interface CommunityPublishState {
   pageId: string;
   slug: string;
   url: string;
-  /** 发出去的那一版的修订标识（与 `community_publish_note` 收到的 `rev` 同源）。 */
+  /** 发出去的那份内容的**指纹**（与 `community_publish_note` 收到的 `rev` 同源）。 */
   publishedRev: string;
   publishedAt: number;
 }
@@ -388,7 +388,8 @@ export interface CommandMap {
   };
   /**
    * 发布一篇笔记。幂等键由后端按 `(noteId, rev)` 算 —— 界面**不要**自己造 key：
-   * 同一个 (笔记, 修订) 必须永远算出同一个键，否则"重试一次多一篇"。
+   * 同一个 (笔记, 内容) 必须永远算出同一个键，否则"重试一次多一篇"。
+   * `rev` 必须是 `community_content_rev` 回的**内容指纹**（后端会显式校验 32 位十六进制）。
    */
   community_publish_note: {
     args: { title: string; body: string; tags: string[]; noteId: string; rev: string };
@@ -415,6 +416,23 @@ export interface CommandMap {
   community_publish_state: {
     args: { pageId: string };
     result: CommunityPublishState | null;
+  };
+  /**
+   * 算一份内容的**指纹**（32 位十六进制）：`(标题, 正文 Markdown, 标签)` → 指纹。
+   *
+   * 为什么这条命令在 Rust 里、前端**不自己算**：哈希一旦两侧各写一份，迟早漂成两种口径，
+   * 而症状是静默的 —— 同内容算出两个指纹 ⇒ 幂等键不同 ⇒ **多发一篇**。所以这里只负责
+   * 把参数递下去、把指纹原样递回来（Rust 是唯一实现，见 `community_publish.rs::content_rev`）。
+   *
+   * ⚠️ `body` 必须是**本地态**正文（图片引用还是 `attachment://…` 的那份，即清单里摆出来的那份）。
+   * 发出去的那份正文会把图片地址换成 `/attachments/<hash>`；拿换过地址的那份算指纹，
+   * 同一篇笔记会因为上传结果不同而算出两个指纹（Rust 侧有专门一条判据说明这件事）。
+   *
+   * 纯函数：不碰网络、不碰磁盘。
+   */
+  community_content_rev: {
+    args: { title: string; body: string; tags: string[] };
+    result: string;
   };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {

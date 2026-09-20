@@ -11,6 +11,7 @@
 //! 四件事对用户意味着四种不同动作，压成一句"发布失败"就等于让人去猜。
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// 只认这一个站点（与抓取侧同一策略：不跟配置走，免得多一个可被改写的出口）。
@@ -21,6 +22,8 @@ const TIMEOUT_SECS: u64 = 20;
 const IDEM_MAX: usize = 128;
 /// 社区对 `source_ref` 的约束：安全字符、≤64（`posts::normalize_source_ref`）。
 const SOURCE_REF_MAX: usize = 64;
+/// 内容指纹的位数（十六进制字符数）：`content_rev` 取 sha256 前 16 字节。
+pub const CONTENT_REV_HEX: usize = 32;
 /// 社区白名单里认的来源名。
 pub const SOURCE: &str = "shuyonote";
 /// 设备码申请时自报的名字（用户会在网页上看到它，所以要认得出来是谁）。
@@ -72,6 +75,34 @@ pub fn source_ref(note_id: &str, rev: &str) -> String {
         format!("{}-{}", sanitize_token(note_id), sanitize_token(rev)),
         SOURCE_REF_MAX,
     )
+}
+
+/// **发布内容指纹**（v1）：同一份内容永远同一个指纹，与"这一页什么时候被保存过"无关。
+///
+/// 为什么不用页面的 `updated_at` 当修订号（这是 0.71.x 那版方案的口子）：`save_page` 每次都写
+/// `now_ms()` ⇒ "改一个字再改回去"也会换修订，而内容其实一模一样 —— 于是
+/// ① 幂等键变了 ⇒ 同一份内容**多发一篇**；② 界面只能说"不是同一个修订"，说不出"内容到底变没变"。
+/// 换成内容指纹后两件事同时变准：同内容 ⇒ 同键 ⇒ 社区回放首次结果（不会多一篇）。
+///
+/// 输入必须是**本地态**（标题、正文 Markdown、标签）：正文里的图片地址在发布时会被换成社区地址，
+/// 拿换过地址的那份算指纹，会让"同一篇笔记、同一批图"因为上传顺序/结果不同而算出两个指纹。
+///
+/// 分片带长度前缀（`<字节数>:<内容>`，段间 `\n`）：标题/正文里本来就可能出现任何字符，
+/// 长度前缀下"两份不同内容拼成同一个串"不会发生（与签名要防的是同一件事）。
+/// 标签**排序**后参与 —— 标签顺序变一下不该算新内容。
+pub fn content_rev(title: &str, body: &str, tags: &[String]) -> String {
+    let mut sorted: Vec<&str> = tags.iter().map(|t| t.as_str()).collect();
+    sorted.sort_unstable();
+    let mut canonical = String::from("shuyonote-content-v1");
+    for part in std::iter::once(title).chain(std::iter::once(body)).chain(sorted) {
+        canonical.push('\n');
+        canonical.push_str(&part.len().to_string());
+        canonical.push(':');
+        canonical.push_str(part);
+    }
+    let digest = Sha256::digest(canonical.as_bytes());
+    // 取前 16 字节（32 hex）：这不是密码学用途的摘要，只用来判"是不是同一份内容"。
+    digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
 }
 
 /// 发给社区的 `NewPost`（字段名与它 `POST /api/posts` 的 JSON 同形）。
@@ -675,6 +706,10 @@ async fn revoke_remote(auth: &StoredAuth) -> Result<bool, String> {
 }
 
 /// 发布一篇笔记。幂等键由 `(note_id, rev)` 算出来 —— 界面**不要**自己造 key。
+///
+/// `rev` 必须是 [`content_rev`] 的返回值（32 位十六进制的**内容指纹**），不是页面更新时间戳：
+/// 传时间戳会让"同一份内容"在每次保存后换一个新的幂等键 ⇒ 多发一篇，而且界面上只能含混地说
+/// "不是同一个修订"。这一条用**显式校验**挡住（见下），因为传错的症状是静默的。
 #[tauri::command]
 pub async fn community_publish_note(
     app: tauri::AppHandle,
@@ -690,6 +725,13 @@ pub async fn community_publish_note(
             "还没连接社区：先点「连接社区」（不用输密码，在自己浏览器里确认一次即可）".to_string(),
         );
     };
+    // 显式挡"把时间戳当修订号"：指纹是 32 位十六进制，`updated_at` 是 13 位十进制。
+    if rev.len() != CONTENT_REV_HEX || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "rev 必须是内容指纹（32 位十六进制，来自 community_content_rev），当前是「{rev}」——\
+             传时间戳会让同一份内容每保存一次就多发一篇"
+        ));
+    }
     let payload = build_payload(&title, &body, &tags, &note_id, &rev)?;
     let key = idempotency_key(&note_id, &rev);
     let outcome = publish_at(&auth.base, &auth, &payload, &key).await?;
@@ -862,18 +904,18 @@ pub async fn community_upload_attachment(
 // ⑤ 发布状态（回写）："这一页最近发到哪儿了、发的是哪一版"
 // ---------------------------------------------------------------------------
 
-/// 一页的发布状态（回给界面的形状）。**没有令牌** —— 它只回答"发到哪儿了、哪一版"。
+/// 一页的发布状态（回给界面的形状）。**没有令牌** —— 它只回答"发到哪儿了、哪一份内容"。
 ///
-/// 为什么要记：`rev` 现在取自 `updated_at`（见方案 §7.1），所以"这篇发过没有、发的到底是不是
-/// 当前这一版"只能靠本地记一笔 —— 没有它，用户没法知道"再发一次是重复还是新建一篇"
-/// （P2 之前每次都是新建一篇，所以他更该知道）。
+/// 为什么要记：`published_rev` 是**内容指纹**（`content_rev`），所以"这篇发过没有、线上那一份
+/// 是不是现在这一份"可以本地判 —— 界面靠它说明"再发一次是重复（社区会回放首次结果）还是新建一篇"
+/// （P2 之前每次都会新建一篇，用户更该知道）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishState {
     pub page_id: String,
     pub slug: String,
     pub url: String,
-    /// 发出去的那一版的修订标识（与 `community_publish_note` 收到的 `rev` 同源）。
+    /// 发出去的那一份内容的指纹（与 `community_publish_note` 收到的 `rev` 同源）。
     pub published_rev: String,
     pub published_at: i64,
 }
@@ -939,7 +981,7 @@ fn record_into_db(app: &tauri::AppHandle, page_id: &str, slug: &str, url: &str, 
     }
 }
 
-/// 读一页的发布状态。界面用它显示"上次发布：…"，并在**修订号不同**时提醒
+/// 读一页的发布状态。界面用它显示"上次发布：…"，并在**内容指纹不同**时提醒
 /// "再发会新建一篇"（P2 之前不会更新已有帖子）。
 #[tauri::command]
 pub fn community_publish_state(
@@ -948,6 +990,15 @@ pub fn community_publish_state(
 ) -> Result<Option<PublishState>, String> {
     let conn = db.0.lock().map_err(|_| "库锁坏了".to_string())?;
     Ok(publish_state(&conn, &page_id))
+}
+
+/// 算当前内容的指纹（**纯函数、不碰网络与磁盘**）。
+///
+/// 界面用它与台账里的 `publishedRev` 比对 —— 比的是"内容是不是同一份"，
+/// 而不是"页面有没有被保存过"。**正文要传本地态**（见 `content_rev` 的注释）。
+#[tauri::command]
+pub fn community_content_rev(title: String, body: String, tags: Vec<String>) -> String {
+    content_rev(&title, &body, &tags)
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,5 +1419,62 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 1, "migrate 应该建出 page_community_publish");
+    }
+
+    /// 内容指纹：同一份内容永远同一个指纹；**字段边界不许串味**；标签顺序无关；换内容必换指纹。
+    #[test]
+    fn content_rev_is_content_addressed_not_time_addressed() {
+        let tags = vec!["笔记".to_string(), "同步".to_string()];
+        let a = content_rev("标题", "正文", &tags);
+        assert_eq!(a, content_rev("标题", "正文", &tags), "同输入必须同输出");
+        assert_eq!(a.len(), CONTENT_REV_HEX, "指纹是 32 位十六进制");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // 标签顺序无关（社区那边标签也只是个集合）
+        let reordered = vec!["同步".to_string(), "笔记".to_string()];
+        assert_eq!(a, content_rev("标题", "正文", &reordered));
+
+        // 任何一段变了都要换（尤其正文改了却没事，正是我们要防的）
+        assert_ne!(a, content_rev("标题2", "正文", &tags));
+        assert_ne!(a, content_rev("标题", "正文2", &tags));
+        assert_ne!(a, content_rev("标题", "正文", &["笔记".to_string()]));
+
+        // 长度前缀：[title="ab", body="c"] 与 [title="a", body="bc"] 拼起来若不加长度就同串
+        assert_ne!(
+            content_rev("ab", "c", &[]),
+            content_rev("a", "bc", &[]),
+            "字段边界必须靠长度前缀分开，否则两份不同内容会算出同一个指纹"
+        );
+
+        // 空内容也有指纹（不是空串），且与"只剩标签"那种不同
+        assert!(!content_rev("", "", &[]).is_empty());
+        assert_ne!(content_rev("", "", &[]), content_rev("", "", &["a".to_string()]));
+    }
+
+    /// 指纹必须由**本地态**正文算出：发布时正文里的图片会被换成社区地址，
+    /// 拿换过地址的那份算，同一篇笔记会因为上传结果不同而算出两个指纹（那就白换了）。
+    #[test]
+    fn content_rev_differs_between_local_and_published_body() {
+        let tags: Vec<String> = vec![];
+        let local = "![图](attachment://localhost/a.png)";
+        let published = "![图](/attachments/deadbeef)";
+        assert_ne!(
+            content_rev("标题", local, &tags),
+            content_rev("标题", published, &tags),
+            "这条不是在夸实现，是在说明**调用方必须传本地态**（界面传的就是 prepareContent 的本地那份）"
+        );
+    }
+
+    /// 幂等键要能吃内容指纹：同一个 `(笔记, 指纹)` 两次算出来必须一样（重发只落一篇的依据）。
+    #[test]
+    fn idempotency_key_is_derived_from_the_content_rev() {
+        let rev = content_rev("标题", "正文", &[]);
+        assert_eq!(
+            idempotency_key("page-1", &rev),
+            idempotency_key("page-1", &rev)
+        );
+        // 内容变了 ⇒ 指纹变了 ⇒ 键也变了（那是**新的一篇**，本来就该是新内容）
+        let other = content_rev("标题", "正文改了", &[]);
+        assert_ne!(idempotency_key("page-1", &rev), idempotency_key("page-1", &other));
     }
 }
