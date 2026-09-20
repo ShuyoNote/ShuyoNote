@@ -698,6 +698,35 @@ fn attachment_row(meta: AttachmentMeta, created_at: i64) -> AttachmentRow {
 /// 文件管理那两列时间的口径判据（**跑不了 `cargo test` 的机器请交给能跑的那两台复核**，
 /// 见 `docs/` 里"Windows 跑不了 cargo test"那条纪律）。
 #[cfg(test)]
+mod attachment_byte_free_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// ★ 删附件字节的**跨空间**规则（2026-09-20 自查发现老实现只在当前空间里 `COUNT(*)`）：
+    /// 附件目录是全局共享的，别的空间还引用同一个 hash 时**绝不能删**。
+    /// 这里把三种输入直接钉住（改回"只看当前空间"这条就红）。
+    #[test]
+    fn bytes_are_only_freeable_when_no_other_space_references_the_hash() {
+        let h = "f2534c73fa62c0a6e0e5b6c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
+        let mut others: HashSet<String> = HashSet::new();
+        others.insert(h.to_string());
+
+        // 别的空间还在引用 ⇒ **不删**，哪怕本空间已经 0 行（老实现会删 —— 就是那条路径）。
+        assert!(!bytes_are_freeable(0, &Some(others.clone()), h));
+
+        // 别的空间没人引用、本空间也 0 行 ⇒ 才删。
+        assert!(bytes_are_freeable(0, &Some(HashSet::new()), h));
+
+        // 本空间还有别的行引用 ⇒ 不删。
+        assert!(!bytes_are_freeable(1, &Some(HashSet::new()), h));
+
+        // **读不全（None）⇒ 一律不删**：字节留着只占空间，删错就是数据丢失。
+        assert!(!bytes_are_freeable(0, &None, h));
+        assert!(!bytes_are_freeable(1, &None, h));
+    }
+}
+
+#[cfg(test)]
 mod attachment_row_tests {
     use super::*;
 
@@ -795,12 +824,60 @@ pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -
     remove_attachment_inner(&db, &attachments_dir, &id)
 }
 
-// Delete a single attachment row; remove its on-disk bytes only when no other
-// row references the hash (true global zero-reference).
+/// **除当前空间之外**其他空间引用的 hash（严格版）；读不全 ⇒ `None` 且原因打进 stderr。
+///
+/// ★ 为什么删字节必须问别的空间（2026-09-20 自查发现）：附件目录是**全局共享**的内容寻址目录，
+/// 老的 `SELECT COUNT(*) FROM attachments WHERE hash = ?` 只在**当前空间**里数 ⇒ 别的空间还引用着
+/// 同一个字节时也会数到 0 ⇒ **把人家还在用的文件删了**（缺陷帖 #6「行在字节不在」的又一条路径）。
+/// 读不全（空间打不开/密钥不符）时**宁可不删**：字节留着只占空间，删错就是数据丢失，
+/// 而且 `cleanup_orphan_attachments`（同样是严格版）以后能把它收回来。
+fn other_spaces_refs(db: &State<'_, Db>) -> Option<std::collections::HashSet<String>> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    let current = match crate::workspaces::active_workspace_id(&c) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("删除附件字节：拿不到当前空间 id（{e}）⇒ 这一轮不删任何字节（宁留勿删）");
+            return None;
+        }
+    };
+    match crate::storage::other_spaces_referenced_hashes(&c, &current) {
+        Ok(set) => Some(set),
+        Err(unreadable) => {
+            eprintln!(
+                "删除附件字节：有 {} 个空间读不到 ⇒ 这一轮不删任何字节（宁留勿删，之后可用「清理孤儿附件」回收）：\n  - {}",
+                unreadable.len(),
+                unreadable.join("\n  - ")
+            );
+            None
+        }
+    }
+}
+
+/// 该 hash 的字节现在可以删吗？**两个条件都满足才行**：当前空间里没有别的行引用它，
+/// **并且**其他空间也没有。单独拎出来是为了让这条跨空间规则有判据守着。
+fn bytes_are_freeable(local_count: i64, other_refs: &Option<std::collections::HashSet<String>>, hash: &str) -> bool {
+    match other_refs {
+        Some(set) => local_count == 0 && !set.contains(hash),
+        None => false, // 读不全 ⇒ 不删
+    }
+}
+
+// Delete a single attachment row; remove its on-disk bytes only when no row **in any space**
+// references the hash (true global zero-reference).
 fn remove_attachment_inner(
     db: &State<'_, Db>,
     attachments_dir: &Path,
     id: &str,
+) -> Result<(), String> {
+    let other_refs = other_spaces_refs(db);
+    remove_attachment_inner_with(db, attachments_dir, id, &other_refs)
+}
+
+fn remove_attachment_inner_with(
+    db: &State<'_, Db>,
+    attachments_dir: &Path,
+    id: &str,
+    other_refs: &Option<std::collections::HashSet<String>>,
 ) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let hash: Option<String> = c
@@ -819,7 +896,7 @@ fn remove_attachment_inner(
         .map_err(|e| e.to_string())?;
     record_change(&c, "attachment", id, "delete", None, now_ms())?;
 
-    // Remove the on-disk file only when no other row references its hash.
+    // 本空间里还有别的行引用它吗？（跨空间那份在 `other_refs` 里）
     let count: i64 = c
         .query_row(
             "SELECT COUNT(*) FROM attachments WHERE hash = ?1",
@@ -827,7 +904,8 @@ fn remove_attachment_inner(
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    if count == 0 {
+    // ⚠️ 这一行**必须**带 `other_refs`：只数当前空间 = 把别的空间还在用的字节删掉（缺陷帖 #6）。
+    if bytes_are_freeable(count, other_refs, &hash) {
         if let Some(p) = find_path_by_hash(attachments_dir, &hash) {
             let _ = std::fs::remove_file(p);
         }
@@ -841,9 +919,11 @@ fn remove_attachment_inner(
 pub fn remove_attachments(app: tauri::AppHandle, db: State<'_, Db>, ids: Vec<String>) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachments_dir = app_data_dir.join("attachments");
+    // 跨空间那一份**只算一次**（批量删除时逐条重算是 O(n×空间数) 次开库）。
+    let other_refs = other_spaces_refs(&db);
     let mut removed = 0usize;
     for id in &ids {
-        remove_attachment_inner(&db, &attachments_dir, id)?;
+        remove_attachment_inner_with(&db, &attachments_dir, id, &other_refs)?;
         removed += 1;
     }
     Ok(removed)
@@ -1072,7 +1152,7 @@ mod export_attachment_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 国密构建（`--features sm-crypto`）：磁盘上那份是 **v2（SM4-CBC ＋ HMAC-SM3）**，
+    /// 默认构建（2026-09-20 起国密即默认）：磁盘上那份是 **v2（SM4-CBC ＋ HMAC-SM3）**，
     /// 导出的仍必须逐字节是**明文**。"导出包"这条路径最容易漏 —— 它读的是同一份文件，
     /// 但走的是"解密出来给人"（`export_attachment_to`），与附件预览不是同一段代码。
     #[cfg(feature = "sm-crypto")]

@@ -51,4 +51,22 @@ describe("gm-version-selfcheck：三段自证的计划", () => {
     expect(leg.args).toContain("sm-crypto");
     expect(leg.args).toContain("--manifest-path");
   });
+
+  // ★ ④ 运行期那一格（2026-09-20 补）：产物里有补丁标记 ≠ 标签真的被 C 层接受。
+  //   这条判据钉住两点：这一格**存在**，且**不在**默认形态里（它要一个打过补丁的构建，
+  //   放进默认形态只会在没那个构建的机器上自报跳过 —— "跳过"看多了就被读成"过了"）。
+  it("--with-tests 时也跑运行期那一格（gm_provider::），且排在应用层单测之前", () => {
+    const plan = legPlan({ ...base, expectPatch: "applied", withTests: true });
+    expect(ids(plan)).toContain("gm-provider");
+    const leg = byId(plan, "gm-provider");
+    expect(leg.args).toContain("gm_provider::");
+    expect(leg.args).toContain("--manifest-path");
+    expect(ids(plan).indexOf("gm-provider")).toBeLessThan(ids(plan).indexOf("sm-tests"));
+  });
+
+  it("★ 不给 --with-tests ⇒ 运行期那一格**不出现**（它需要打过补丁的构建，不进默认形态）", () => {
+    const plan = legPlan({ ...base, expectPatch: "applied" });
+    expect(ids(plan)).not.toContain("gm-provider");
+    expect(ids(plan)).toEqual(["backend-and-patch", "cross-impl"]);
+  });
 });

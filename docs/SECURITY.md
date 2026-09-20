@@ -31,6 +31,55 @@
 - `storage.rs::purge_deleted_workspaces`：删除前对 `sid` 做 `is_safe_space_id` 纵深校验，防历史脏数据导致任意文件删。
 - `db.rs`：`is_safe_space_id` 改 `pub` 供跨模块复用。
 
+### 4. 清理软删空间时「存活空间读不到」⇒ 静默少扫 → 附件被当孤儿**真删**（新增 [高危] 数据丢失）
+- `storage.rs::purge_deleted_workspaces`：老写法 `if let Ok(conn) = open_space_conn(&sid)` **静默跳过**
+  读不到的存活空间（文件缺失 / 半拷贝 / 权限 / 密钥不符），于是它引用的 hash 不在"仍被引用"集合里 ⇒
+  与某个已软删空间共享的附件字节被当孤儿**从盘上删掉**，界面却报"释放了 X"。**没有任何一种读不到的原因
+  等价于"它不引用任何附件"。**
+- 修法：抽出 `scan_referenced_hashes(ids, open)` —— **读不到就返回这批 id 与原因**；调用方把它挪到
+  **删除动作之前**，一旦非空就整体失败（"什么都还没删"），错误信息列出是哪几个空间、为什么。
+  已软删空间那侧仍保持宽松（它们本来就要被删，读不到只意味着少回收字节 —— 安全方向），并补 `eprintln`。
+- 判据：`storage::tests::purge_refuses_to_guess_when_a_live_space_is_unreadable`（三格：都读得到取并集 /
+  一个读不到 ⇒ 整体失败且**不返回任何 hash** / 空集合不算失败）＋ **变异证明**：把该函数退回"静默跳过"，
+  这条判据立刻红（`Ok(["h1"])` 而不是错误）。
+- ⚠️ 诚实边界：单测覆盖的是**这个函数的严格性**；"扫描必须在删除之前"由调用点的**位置**保证，没有端到端
+  （那需要 Tauri `AppHandle`）。真机上的清理动作仍属人手验收。
+
+### 5. 「谁还被引用」的另外三条清理路径都只在**当前空间**里数 ⇒ 删掉别的空间还在用的附件字节（缺陷帖 #6 的同族）
+- 背景：`attachments/` 是**全局共享**的内容寻址目录，所以"这个字节还有没有人用"必须**跨全部空间**回答。
+  2026-09-19 缺陷帖 #6 只修掉了当时看得见的两条（`clear_trash` 的"删完行再数 + 只数当前空间"、
+  `purge_deleted_workspaces` 的 `attachments JOIN pages` 内连接）。2026-09-20 我按「同一族清完了吗」
+  重扫了**所有**会删附件字节的调用点，发现还剩三处：
+
+  | 路径 | 老口径 | 后果 |
+  |---|---|---|
+  | `storage::clear_trash`（清空回收站） | `all_referenced_hashes` = `filter_map(open(..).ok())` ＋ `unwrap_or_default()` | 空间读不到 ⇒ 它引用的字节被判成孤儿 |
+  | `storage::cleanup_orphan_attachments`（清理孤儿附件） | **只查当前空间**的 `attachments` | 别的空间还在用的字节被删（用户点这个按钮就触发） |
+  | `attachments::remove_attachment`（删单个/批量附件） | 注释写着 true global zero-reference，实际 `SELECT COUNT(*) … WHERE hash=?` 只数当前空间 | 在 A 空间删一个附件 ⇒ B 空间同一个文件消失 |
+
+- 修法（统一）：`scan_referenced_hashes` / `all_referenced_hashes` / `other_spaces_referenced_hashes`
+  一律返回 `Result`，**读不全就 Err**；三条路径都改成"读不全 ⇒ 不删"：
+  · `clear_trash` 把严格扫描挪到**删除动作之前** ⇒ 失败即"什么都没删"；
+  · `cleanup_orphan_attachments` 换成跨空间严格集；
+  · `remove_attachment(s)` 先算"其他空间的引用集"（批量只算一次），本空间计数 **与** 跨空间集合**两个条件都满足**
+    才删字节；读不全时**保文件**（字节留着只占空间，删错就是数据丢失），由 `cleanup_orphan_attachments` 以后回收。
+- 判据：`storage::tests::referenced_hashes_counts_rows_whose_page_is_gone_or_null`（补了「JOIN 口径下查不到」的
+  反例守卫）、`storage::tests::purge_refuses_to_guess_when_a_live_space_is_unreadable`、
+  `attachments::attachment_byte_free_tests::bytes_are_only_freeable_when_no_other_space_references_the_hash`（四种输入）
+  ＋ **变异证明两次**（分别退回"静默跳过"、"只看当前空间"，各自判据立刻红）。
+- ⚠️ 诚实边界：跨空间取数走的是生产路径（`open_space_conn`），单测覆盖的是**规则与严格性**；
+  "扫描必须在删除之前"由调用点的**位置**保证，没有端到端（需要 Tauri `AppHandle`）。
+
+### 6. `do_pull` 中途失败把 `foreign_keys` **永久**关在长命主连接上（旧 §四 中危，已修）
+- 老写法：进批量循环前 `PRAGMA foreign_keys = OFF`，**循环之后**再恢复原值。循环里任何一条变更
+  失败都会 `?` 早退 ⇒ 那句恢复**永远不执行** ⇒ 外键在这条**长命的主连接**上**永久 OFF**：
+  之后整个应用的 `attachments.page_id` / `pages.parent_id` 等约束都不再生效，孤儿行静默堆积。
+- 修法：`ForeignKeysOff` RAII 守卫（读不到原值就按"本来开着的"恢复）—— 成功、失败、早退**都是** Drop 恢复，
+  从"看运气"变成"结构上不可能漏"；恢复时机与原来一致（仍在 `set_profile_field` 之后离开作用域时）。
+- 判据：`sync::tests::foreign_keys_guard_restores_even_when_the_batch_bails_early`（早退后必须恢复 /
+  成功路径恢复 / **本来关着仍恢复成关着**，不许改掉调用方的原状态）＋ **变异证明**：把 Drop 改成空实现
+  ⇒ 立刻红（`left: 0, right: 1`）。
+
 > 验证：`cargo test --lib` **55 passed / 0 failed**（含 plugins / sync / workspace_io / storage 测试）。
 
 ---
@@ -54,7 +103,6 @@
 
 **[中危] 中危**
 - **do_push 游标过度推进 + dirty 误清**（`sync.rs:1177-1195`）：`max_seq` 取全局 max 而非本次推送 batch 的最大 `device_seq`；>500 pending 或推送期间编辑时可能静默丢同步。
-- **do_pull 失败使 `foreign_keys` 永久 OFF**（`sync.rs:1250-1306`）：`?` 早退跳过 FK 恢复 → 数据完整性受损。建议 RAII guard + 事务。
 - **apply_delete 不尊重 dirty 优先**（`sync.rs:194-217`）：只比 `updated_at`，未读 `dirty`/`sync_seq` → 本地未同步内容被远端删除覆盖。
 - **锁定态附件明文落盘**（`attachments.rs:223/381/456` + `sync.rs:1636`，E1 静置一致性）。
 - **邮箱 IMAP 凭据明文落盘**（`email.rs:1140-1159`、`:1185-1187`）：`app_data_dir/email-account.json` **只在 E1 开启且解锁**时用会话密钥加密；E1 关闭（默认关）即明文 JSON，且加密**失败**会**静默回退明文**（`:1151`/`:1153` 的 `unwrap_or_else(|_| a.password.clone())`）。IMAP 应用密码通常一次生成、长期有效、可读全部历史邮件，属高价值凭据；任何以该用户身份运行的进程可直接读取，用户备份/网盘同步 AppData 即等于上传邮箱密码。修法：OS 凭据库（stronghold / Keychain / Windows Credential Manager / libsecret）或默认加密；最低限度应把静默回退改为**拒绝保存并报错**。**待修，独立排期。**

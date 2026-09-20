@@ -65,6 +65,35 @@ fn out_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target").join("pdf-compare")
 }
 
+/// 夹具里那个矩形用的**纯蓝**（`0 0 1 rg`）。用来把"页面里的图形"从"文字墨迹"里减掉 ——
+/// 见 [`non_rect_ink`] 的口径与它**为什么只报告不判**。
+const FIXTURE_RECT_RGB: (u8, u8, u8) = (0, 0, 255);
+
+/// **非矩形墨迹**：`alpha != 0` 且 RGB **不等于** [`FIXTURE_RECT_RGB`] 的像素数。
+///
+/// ★ 为什么要有这一列（2026-09-20，Windows 提议 + 我改）：
+/// `cjk*` 那一类"只报不判"的样本里，**"两边都画出东西"这条自检会被页面里的矩形满足** ——
+/// Linux 上 PDFium 的墨迹正好 = 矩形面积（27000）、**文字一个像素都没有**，却仍然"有墨迹"。
+/// 把矩形减掉之后，这一列直接回答"**除图形之外还画了多少**"，三平台立刻可比：
+///
+/// | 平台 | MuPDF | PDFium |
+/// |---|---|---|
+/// | Linux(WSL2) | 1000（乱码） | **0（整行没画）** |
+/// | Windows | 1000（乱码） | 1816（正确） |
+/// | macOS | 1000（乱码） | 2582（正确） |
+///
+/// ⚠️ **口径是近似的、也只能报告**：
+///   · 用**颜色法**（不是几何法）⇒ 不写死夹具的矩形坐标，换样本也照样算；
+///     但矩形的**抗锯齿边缘**与"正好画成纯蓝的文字"都会被算进这一列（本样本无此情况）；
+///   · **不能**升成硬判据：它反映的是"这个平台的 PDFium 有没有字体后端"（环境相关的产品缺陷），
+///     不是代码回归 —— 放进常开门禁会在 Linux 上长期红，久了就没人再看红（我们吃过一次）。
+fn non_rect_ink(rgba: &[u8]) -> usize {
+    rgba
+        .chunks_exact(4)
+        .filter(|p| p[3] != 0 && (p[0], p[1], p[2]) != FIXTURE_RECT_RGB)
+        .count()
+}
+
 /// 两张等长 RGBA 缓冲的差异，**全部按像素统计**（按字节算会把占比放大约 4 倍）。
 #[derive(Debug, Default)]
 struct PixelDiff {
@@ -161,11 +190,18 @@ fn pdfium_matches_mupdf_on_fixtures() {
     assert!(!files.is_empty(), "样本目录为空：{}（先跑 node scripts/make-pdf-fixtures.mjs）", dir.display());
 
     println!(
-        "\n{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9}  {}",
-        "样本", "尺寸", "RGB差", "RGB超阈", "A差", "A超阈", "语义不一致", "双透明", "结论"
+        "\n{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  {}",
+        "样本", "尺寸", "RGB差", "RGB超阈", "A差", "A超阈", "语义不一致", "双透明", "非矩形墨迹(只报告)", "结论"
     );
     println!(
-        "（RGB 那两列**按像素**统计、是硬判据；A/语义/双透明四列只报告，理由见文件头判据 2）"
+        "（RGB 那两列**按像素**统计、是硬判据；A/语义/双透明/非矩形墨迹四列只报告，理由见文件头判据 2 与 `non_rect_ink`）"
+    );
+    // ★ 表头里就把这句写上（2026-09-20，Windows 要求）：**表格行比正文更容易被单独引用**，
+    //   而 `cjk*` 那一行的 📋/✅ **不代表"中文没问题"** —— 它的"有墨迹"可能只来自页面里那个矩形
+    //   （Linux 上 PDFium 正是：27000 = 正好是矩形面积、文字 0 像素）。非矩形墨迹那一列就是为它加的。
+    println!(
+        "⚠️ 本表**不能单独读**：`cjk*` 是「只报不判」，它的 📋 **≠ 中文没问题**；\
+         连「两边都画出东西」都可能被页面里的矩形满足 —— 看**非矩形墨迹**那一列（见 §0.3-O 与信箱 pdfium-p3/visual-check-cjk/）"
     );
 
     let mut failures: Vec<String> = Vec::new();
@@ -190,7 +226,7 @@ fn pdfium_matches_mupdf_on_fixtures() {
                     why.push(format!("PDFium 渲染失败：{e}"));
                 }
                 let msg = format!("{name}: {}", why.join(" / "));
-                println!("{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9}  ❌ {}", name, "-", "-", "-", "-", "-", "-", "-", why.join(" / "));
+                println!("{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  ❌ {}", name, "-", "-", "-", "-", "-", "-", "-", "-", why.join(" / "));
                 failures.push(msg);
                 continue;
             }
@@ -202,8 +238,8 @@ fn pdfium_matches_mupdf_on_fixtures() {
         if (mw, mh) != (pw, ph) {
             let msg = format!("{name}: 尺寸不等 MuPDF={mw}×{mh} / PDFium={pw}×{ph}（不等就不进像素比对）");
             println!(
-                "{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9}  ❌ 尺寸不等 MuPDF={mw}×{mh} / PDFium={pw}×{ph}",
-                name, "不等", "-", "-", "-", "-", "-", "-"
+                "{:<16} {:>11} {:>6} {:>9} {:>6} {:>9} {:>10} {:>9} {:>24}  ❌ 尺寸不等 MuPDF={mw}×{mh} / PDFium={pw}×{ph}",
+                name, "不等", "-", "-", "-", "-", "-", "-", "-"
             );
             failures.push(msg);
             continue;
@@ -234,10 +270,60 @@ fn pdfium_matches_mupdf_on_fixtures() {
         // 判据 2：**只看 R/G/B、按像素统计**（理由见文件头"第一版错在哪"）。
         let d = pixel_diff(&p_rgba, &m_rgba);
 
+        // ★ **两类样本**（2026-09-20 补中文/扫描件时分的类）：
+        //   · 硬判据（默认）：颜色必须等价 —— 适用于"渲染结果**应当**逐像素一致"的样本；
+        //   · **只报不判**（`cjk*`）：**没有嵌入字体**的中文样本，两个引擎各自做字体替换
+        //     ⇒ 字形本来就不同，把它判红等于判一件**做不到**的事。它回答的是另一个问题：
+        //     **两个引擎都能开、尺寸一致、都画出了东西**（"能显示但不对"的第一道筛），
+        //     字形差异**如实报出来**给人看。
+        // ⚠️ 这不是"给红样本开后门"：`scan.pdf`（图像流）走的就是**硬判据**；
+        //    若哪天 `cjk.pdf` 变成"嵌入了字体的样本"，就该把它挪回硬判据那一类。
+        //
+        // ★ **实测（2026-09-20，WSL2 Ubuntu；装了 msyh/simsun 前后各跑一次，数字一字不变）**：
+        //   两家的画法**根本不同**，而且**不是"本机缺中文字体"造成的**（`fc-list` 装字体前后
+        //   都是 MuPDF 28000 / PDFium 27000）：
+        //   · MuPDF 28000 = 蓝矩形 300×90=27000 + **文字 1000**：把 2 字节码**按单字节**喂给它
+        //     自己的回退字体 ⇒ 画出拉丁乱码（`<4E2D65876D4B8BD5>` 渲染成 "N-e mK"）；
+        //   · PDFium 27000 = **正好等于那个蓝矩形的面积**⇒ **整行文字一个像素都没画**
+        //     （墨迹包围盒的顶边就是矩形顶边，文字区域全透明）。
+        //   即：**非嵌入 CID 字体**这条路径上，两家都不可信、不可信的方式还不一样 ⇒ 只能只报不判。
+        //   ⚠️ 这条也是 **P5 的风险项，但风险面比一开始以为的小**：同一份 `cjk.pdf` 在
+        //   **Windows 的 PDFium** 上**画对了**（墨迹 28816、正确「中文测试」；证据包
+        //   `ShuyoNote-collab/pdfium-p3/visual-check-cjk/`）⇒ 分叉在**平台/库**，不在样本、
+        //   也不在我们的包装。⇒ **六格读数已齐（2026-09-20 当天补完）**：
+        //   PDFium：Windows 28816 ✅／macOS **29582 ✅**／Linux 27000 ❌（= 正好矩形面积，文字 0 像素）；
+        //   MuPDF：三平台**逐字同数 28000**（= 矩形 27000 ＋ 乱码 1000）⇒ MuPDF 的乱码与平台无关，
+        //   是**构建期**决定（`mupdf-sys 0.8.0` 的 `all-fonts` 已废弃 ＋ `msbuild.rs` 删掉 `fonts\noto\`）。
+        //   ★ 再进一步（Windows 查的）：Linux 那份 `libpdfium.so` **没有 fontconfig 后端**
+        //   （`ldd` 只有 6 行、`fontconfig`/`FcInit` 符号 0 个；对照 Windows `pdfium.dll` 有 GDI 字体映射）
+        //   ⇒ "包里带了库" ≠ "字能显示"；**base14 不受影响**（`text.pdf` 在 Linux 上照样 0 差），
+        //   这正是这条风险很隐蔽的原因。出路见施工单 `2026-09-20-pdfium-linux-font-backend-workorder`。
+        //   ★ 表里新增的**非矩形墨迹**那一列（`non_rect_ink`）就是为这条加的：它把"图形"减掉，
+        //   直接回答"除图形之外还画了多少"（本机 cjk：M1000 / P2582）。
+        let report_only = name.starts_with("cjk");
+
         let ok = d.rgb_max <= MAX_CHANNEL_DIFF && d.rgb_over <= MAX_OVER_RATIO;
-        let conclusion = if ok { "✅" } else { "❌ 颜色不等价" };
+        let conclusion = if report_only {
+            // 非空白自检：两边都必须**画出东西**（全透明 = 那个引擎根本没能渲染这个样本）
+            let m_ink = m_rgba.chunks_exact(4).filter(|p| p[3] != 0).count();
+            let p_ink = p_rgba.chunks_exact(4).filter(|p| p[3] != 0).count();
+            if m_ink == 0 || p_ink == 0 {
+                failures.push(format!(
+                    "{name}: 只报不判那一类也要求「两边都画出东西」，实际 MuPDF 非透明像素 {m_ink} / PDFium {p_ink}"
+                ));
+                "❌ 有一边是空白".to_string()
+            } else {
+                format!("📋 只报不判（非透明像素 MuPDF {m_ink} / PDFium {p_ink}）")
+            }
+        } else if ok {
+            "✅".to_string()
+        } else {
+            "❌ 颜色不等价".to_string()
+        };
+        let m_nonrect = non_rect_ink(&m_rgba);
+        let p_nonrect = non_rect_ink(&p_rgba);
         println!(
-            "{:<16} {:>11} {:>6} {:>8.3}% {:>6} {:>8.3}% {:>9.3}% {:>8.3}%  {}",
+            "{:<16} {:>11} {:>6} {:>8.3}% {:>6} {:>8.3}% {:>9.3}% {:>8.3}% {:>24}  {}",
             name,
             format!("{mw}×{mh}"),
             d.rgb_max,
@@ -246,9 +332,10 @@ fn pdfium_matches_mupdf_on_fixtures() {
             d.alpha_over * 100.0,
             d.alpha_semantics * 100.0,
             d.both_clear * 100.0,
+            format!("M{m_nonrect} / P{p_nonrect}"),
             conclusion
         );
-        if !ok {
+        if !ok && !report_only {
             failures.push(format!(
                 "{name}: RGB 最大差 {}（限 {MAX_CHANNEL_DIFF}）/ \"RGB 差 > {MAX_CHANNEL_DIFF}\" 的像素占比 {:.3}%（限 {:.3}%）\
                  ｜参考：alpha 最大差 {}、alpha 超阈 {:.3}%、语义不一致 {:.3}%",
@@ -259,7 +346,7 @@ fn pdfium_matches_mupdf_on_fixtures() {
                 d.alpha_over * 100.0,
                 d.alpha_semantics * 100.0
             ));
-        } else if d.alpha_semantics > MAX_OVER_RATIO {
+        } else if !report_only && d.alpha_semantics > MAX_OVER_RATIO {
             // 颜色过了，但"一边透明一边不透明"的像素偏多 ⇒ 未绘制区域语义没对齐。
             // ⚠️ 这一列**故意不判失败**：它对应的是"真机看暗色 + 护眼四档"那个人工决策。
             println!(
@@ -284,6 +371,12 @@ fn pdfium_matches_mupdf_on_fixtures() {
         "\n⚠️ 阈值全过也请**人工目视** {} 下的 PNG/RGBA：能显示但不对（颜色错乱/字体替换/透明底变黑）是阈值抓不住的那类。",
         out.display()
     );
+
+    // ★ **见证**（macOS 2026-09-20 提）：随包字体到底有没有被 PDFium 问过。
+    // 装在库目录旁的字体若没被问过，前面那些读数**说明不了路线 D 生效**（可能是别的原因画出来的），
+    // 而这一行把"真的开火了"变成可读的读数。`0 / 0` = 这次没装随包字体（正常情形之一）。
+    let (asks, answers) = crate::pdfium_native::bundled_font_stats();
+    println!("随包字体：被问 {asks} 次、答 {answers} 次（0/0 = 这次没装随包字体）");
 
     assert!(
         failures.is_empty(),
@@ -357,6 +450,29 @@ mod tests {
         // 顺带说明：背景语义翻转在 RGB 上**也会**显现（这里是"黑透明 vs 白不透明"）⇒
         // 硬判据会红，而 alpha 那几列负责解释**为什么**红。两者不冲突。
         assert!(d.rgb_max > MAX_CHANNEL_DIFF);
+    }
+
+    // ★ 非矩形墨迹那一列的口径（2026-09-20 加列时一并钉住）：它只报告，但**口径本身要被判据守着** ——
+    //   否则"减掉矩形"这件事写对了没有，只有肉眼看表才知道。
+    #[test]
+    fn non_rect_ink_subtracts_only_the_pure_blue_rectangle() {
+        const BLUE: [u8; 4] = [0, 0, 255, 255];
+        const BLACK: [u8; 4] = [0, 0, 0, 255];
+        const CLEAR: [u8; 4] = [0, 0, 0, 0];
+        // 抗锯齿的蓝边（不等于纯蓝）⇒ **会被算进非矩形墨迹**（这是已知的近似，列名/注释里写明了）
+        const BLUE_AA: [u8; 4] = [128, 128, 255, 255];
+
+        // 纯蓝矩形一个都不算；全透明也不算。
+        assert_eq!(non_rect_ink(&buf(&[BLUE, BLUE, BLUE])), 0);
+        assert_eq!(non_rect_ink(&buf(&[CLEAR, CLEAR])), 0);
+        assert_eq!(non_rect_ink(&[]), 0);
+        // 黑字（alpha≠0、非纯蓝）算；抗锯齿蓝边也算（近似）。
+        assert_eq!(non_rect_ink(&buf(&[BLUE, BLACK, BLUE])), 1);
+        assert_eq!(non_rect_ink(&buf(&[BLUE, BLACK, BLUE_AA, CLEAR])), 2);
+        // 透明像素**不管什么颜色**都不算墨迹（alpha 才是"画没画"的判据）。
+        assert_eq!(non_rect_ink(&buf(&[[255, 255, 255, 0], [9, 9, 9, 0]])), 0);
+        // 与 `text.pdf` 的真实形态对齐：Helvetica（非纯蓝）整行都算。
+        assert_eq!(non_rect_ink(&buf(&[BLUE, [10, 10, 10, 255], [200, 200, 200, 255]])), 2);
     }
 
     #[test]

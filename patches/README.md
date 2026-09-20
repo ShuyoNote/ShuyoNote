@@ -12,24 +12,55 @@
 node scripts/sm-library-build.mjs --openssl-dir <Tongsuo 前缀>   # 幂等打补丁 → 清 libsqlite3-sys/本 crate → 构建
 node scripts/sm-library-build.mjs --print-source-sha256           # 打印"将要编译的那份源码"的哈希（**打完补丁后**那份）
 node scripts/sm-library-build.mjs --openssl-dir <p> --check       # 只核对，不构建
+node scripts/sm-library-build.mjs --revert                        # 把补丁从**全机共享的** registry 源码上撤回（做 A/B 用）
 ```
 
 - 应用者只有一个：`scripts/sm-library-build.mjs`（`git apply -p1`，失败退 `patch -p1`），三态如实报
   `already / applied / absent`；**打完会复扫标记**（"退出码 0" ≠ "文件里有那行"）。胶水自己的判据见
-  `scripts/lib/sm-library-patch.test.mjs`（6 条；其中一条的存在就是为了让"复扫标记"成为**承重**判据）。
+  `scripts/lib/sm-library-patch.test.mjs`（9 条：应用/幂等/`--no-apply`/打不上/复扫标记 ＋ 撤回/往返 —
+  其中一条是**逐字节**断言，钉住"`git apply` 不许改行尾"）。
 - 补丁**不手写**：`patches/tools/make-sm3-provider-patch.mjs` 用 20 段锚点替换生成，每段断言"锚点恰好出现一次"
   ⇒ SQLCipher 升级时它**当场失败**，而不是生成一份看着像补丁的废纸。
 - 补丁对应 **libsqlite3-sys 0.38.2 的 SQLCipher 合并文件**（`sqlite3.c` 9.6 MB；方案 §3.1 记的行号
   L109358 / L112304 / L113961 / L114074 与它能对上）。
 - **补丁的身份**（跨机核对"我们打的是同一份"）：
   `patches/0001-sqlcipher-sm3-provider.patch` sha256 =
-  `2515fa1919f4afbf0a94bcbf837052c3116fd6dbed8742e23334abc388ca9a2f`（12,021 字节，**LF**）。
+  `337aac607727f038ade42de2dc0ac1ae47831a859d3897ab22ba7c08a576fc6f`（12,330 字节，**LF**）。
+  ⚠️ **v1 → v2**（2026-09-20）：v1 的 sha256 是 `2515fa19…`（12,021 字节）；v2 修了能力门探测错常量那条 bug
+  （见下面第三条实测）⇒ **两台机器上的 `src_sha256` 都换了新值**（v1 是 `150bc1ee…`，v2 见构建产物那行）。
   行尾可比是因为 `.gitattributes` 是 `* text=auto eol=lf` ⇒ 三平台检出的都是 LF
   （否则 Windows 上检出成 CRLF，`git apply` 的上下文行就对不上了 —— 这条我们专门查过一次）。
-- **能力门（本补丁的关键一处）**：`sqlcipher_codec_ctx_set_hmac_algorithm` / `set_kdf_algorithm` 里加了一句
+- **能力门（本补丁的关键一处）**：`sqlcipher_codec_ctx_set_hmac_algorithm` / `set_kdf_algorithm` 里加一句
   "当前 provider 算不了这个算法就**不落值**"（探测口是 `get_hmac_sz()`，它对不支持的算法返回 0）。
   没有它，光加标签的话，在 CommonCrypto / libtomcrypt 后端上 `PRAGMA cipher_hmac_algorithm = HMAC_SM3`
-  也会**被接受**——回显 SM3、实际算别的（或 `hmac_sz=0` 把保留区算错）。对既有三种算法**零行为变化**。
+  也会**被接受**——回显 SM3、实际算别的（或 `hmac_sz=0` 把保留区算错）。
+  ⚠️ **探测的必须是"这次要设的那个算法"，不是 SM3 常量**（v1 就是这么写错的，见下面第三条实测）。
+  改对之后，对既有三种算法**零行为变化**。
+
+⚠️ **实测（2026-09-20，mac 在 macOS 上抓出、AMD 在 Linux 上受控复现）：v1 的能力门曾把「默认库」弄坏 ——
+根因是"探测错了常量"，不是"补丁不该留在共享 registry 上"。**
+
+- **现象**（macOS，Apple ⇒ CommonCrypto）：`security::` **7 passed / 12 failed**、`gm_provider` 2 passed / 7 failed，
+  现场 `PRAGMA key = "x'<hex>'"` 报 `requires a key of one or more characters` ⇒ **加密库直接打不开**；
+  把源码还原成原版后同一条命令 **19 passed / 0 failed**。
+- **根因**：`sqlcipher_codec_ctx_set_kdf_algorithm` 里的能力门**写死探测 SM3 常量** ⇒ 在没有 SM3 的 provider 上
+  **连默认的 PBKDF2-HMAC-SHA512 都被拒** ⇒ `ctx_init` 失败 ⇒ `PRAGMA key` 不认那把 key。
+- **AMD 的受控复现**（不需要 macOS：把 OpenSSL provider 的 `get_hmac_sz(SM3)` 改成返回 0 = "provider 在场但没有 SM3"）：
+
+  | 用例 | registry 源码 | provider | `security::` | `gm_provider::`（含 ignored） |
+  |---|---|---|---|---|
+  | v1 + CCSIM | v1 补丁 | 没有 SM3 | **7 passed / 12 failed** | 3 passed / **10 failed** |
+  | v2 + CCSIM | v2 补丁（探测 `algorithm`） | 没有 SM3 | **19 passed / 0 failed** | 12 passed / 1 failed（那一 1 条是生成器**按设计拒绝**） |
+  | v2（交付状态） | v2 补丁 | 有 SM3（Tongsuo） | 19 passed / 0 failed | **13 passed / 0 failed** |
+
+  （v1 那一行与 mac 在 macOS 上的数字**逐条相同** —— 两台机器、两条独立的 provider 路径、同一个根因。）
+- ⇒ 两条结论：① 能力门必须探测"**本次请求的算法**"；② 补丁留在共享 registry 上**本身是行为中性**的（v2 之后），
+  但"能一键回到原版"仍然要有 —— `node scripts/sm-library-build.mjs --revert`。
+
+⚠️ **顺带一条同族的（2026-09-20，被本仓自己的判据抓到）**：Windows 上 `core.autocrlf=true` 时，
+`git apply` 会把**输出**整体写成 CRLF ⇒ 同一份源码在三平台**哈希不同**（`src_sha256` 的跨机比对失效）、
+之后的 `git apply -R` 上下文行也对不上。⇒ 胶水已钉成 `git -c core.autocrlf=false apply`，
+并加了一条**逐字节**判据（`scripts/lib/sm-library-patch.test.mjs`）守着它。
 
 ⚠️ **实测（2026-09-20，WSL/Tongsuo 第一轮）：产物标记 ≠ "编出来了"。** 那一轮 `libsqlite3-sys` **编译失败**
 （生成器漏抄了 `#define SQLCIPHER_HMAC_SHA512` 那两行原样上下文），而本 crate 的构建脚本照样打出了
@@ -79,8 +110,11 @@ crate 里跑判据；含"陈旧副本 mtime 更新也要挑锁定版本"的回�
 
 2. **产物要留一个可断言的口子。** 光看 `cargo:rustc-link-lib` 只能回答"OpenSSL 还是 CommonCrypto"，
    回答不了"补丁 apply 上没有" ⇒ `build.rs` 在补丁存在时打一行
-   `cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target=<os> marker=<file>)`，
+   `cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=<补丁文件 sha256 前 8 位> target=<os> libsqlite3-sys=<版本> via=<cargo.lock|产物兜底> marker=<file> src_sha256=<64hex>)`，
    `scripts/check-crypto-backend.mjs`（macOS 侧）据此把判据从"后端对不对"扩到"**补丁在不在**"。
+   ⚠️ `patch=` 这一格 **2026-09-20 改过**（macOS 侧自查）：原来写死字面量 `patch=v1`，补丁升到 v2 之后
+   它**不再标识任何补丁** ⇒ 现在由 `build.rs` **现算补丁文件的 sha256 前 8 位**（同一个补丁文件 ⇒ 同一个标签，
+   跨机核对"我们打的是同一份吗"因此有**两根**柱子：`patch=` 与 `src_sha256=`，都不需要人来同步）。
 
 ## 三格核对（缺一格就会出现"安静地没有国密"的库）
 

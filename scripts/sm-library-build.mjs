@@ -12,6 +12,7 @@
 //   node scripts/sm-library-build.mjs --openssl-dir <p> --check              # 只做构建前的核对，不构建
 //   node scripts/sm-library-build.mjs --openssl-dir <p> --print              # 只打印将要执行的命令
 //   node scripts/sm-library-build.mjs --print-source-sha256                  # 只打印"将要编译的那份源码"的哈希
+//   node scripts/sm-library-build.mjs --revert                                # 把补丁从**全机共享的** registry 源码上撤回
 //   node scripts/sm-library-build.mjs ... --no-apply                          # 不打补丁（**读数会标成 patch=absent**）
 //
 // 补丁（`patches/0001-sqlcipher-sm3-provider.patch`）由本脚本**幂等地**应用到 cargo 将要编译的那份源码上，
@@ -61,7 +62,7 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 //   命令行与外部消费方（macOS 侧的门禁）都 import 它 —— 免得出现"第三份实现各自漂移"。
 //   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
-import { ensurePatch, patchFileOf } from "./lib/sm-library-patch.mjs";
+import { ensurePatch, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
 const NO_APPLY = argv.includes("--no-apply");
 
@@ -74,6 +75,26 @@ try {
 }
 const srcDir = pick.dir;
 console.log(`sm-library-build: 源码 = ${srcDir}（libsqlite3-sys ${pick.version}，via=${pick.via}）`);
+
+// ---- 0.4) `--revert`：把这份**全机共享的** registry 源码撤回原版（mac 2026-09-20 提的第 2 条修法）----
+// 为什么要能撤：那份源码是 cargo registry 里全机共享的一份 —— 补丁留在那儿，同机其它构建
+// （不开 `sm-library`、不给 `OPENSSL_DIR` 的默认构建）编译的也是打过补丁的源码。能力门修好之后那是
+// **行为中性**的，但"一键回到原版"仍是做 A/B（以及判"这条红是不是补丁引起的"）的前提。
+// ⚠️ 与 `--print-source-sha256` 一样**不需要后端**（撤回与编不编得起来无关）。
+if (has("--revert")) {
+  let r;
+  try {
+    r = revertPatch(srcDir, patchFileOf(root));
+  } catch (e) {
+    fail(e.message);
+  }
+  const hits = (readFileSync(join(srcDir, "sqlite3.c"), "utf8").match(/SM3/g) || []).length;
+  console.log(
+    `sm-library-build: 撤回 = ${r.status}${r.tool ? `（工具=${r.tool}）` : ""}；` +
+      `撤回后源码里 SM3 命中 = ${hits}${r.status === "reverted" ? "（原版应当是 0）" : "（本来就没打）"}`,
+  );
+  process.exit(0);
+}
 
 // ---- 0.5) 补丁：幂等地把目录带到"该有的样子"，并**如实报出是哪一种状态** ----
 // 三种状态与三种误读（都踩过）：

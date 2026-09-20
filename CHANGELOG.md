@@ -4,6 +4,105 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **一键发布到社区**（社区互动方案 §三 第 3 条的 P0；分支 `feat/publish-to-community`，
+  2026-09-20 合入 `dev`）。桌面端编辑器工具条「⋯」菜单里多一枚「发布到社区」：连接社区后，
+  把当前笔记（**整篇正文 ＋ 标签**）发到 `community.shuyo.cn`，带 `source=shuyonote` 标记，
+  作者区会显示「来自 ShuyoNote」。
+  - **不收用户密码**：走设备码授权 —— 用户在自己浏览器里确认一次，客户端只拿一把 180 天、可撤销、
+    **只能发帖**的令牌（scope 白名单在社区侧，越界一律 403）；令牌只落在应用数据目录，不进笔记、不进前端状态。
+  - **发布前必须给人看清单**（既有方案的底线条款）：标题、标签、整篇正文与字数、图片张数；
+    **人点「确认发布」才发** —— 没有定时、没有自动同步、打开对话框只做只读查询。
+  - **图片先传社区**（内容寻址 `/attachments/<hash>`），引用替换后再发；上传失败**不发帖**并指出是哪一张。
+  - **同一份内容重发不会多发一篇**：幂等键的修订号是**内容指纹**
+    （`community_content_rev` 算 标题＋本地态正文＋标签 的 sha256 前 16 字节），
+    所以"改一个字再改回去"也还是同一篇 —— 社区按同一个键回放第一次的结果。
+    发布成功后在本地记一条台账，界面显示"这一页还没发过／**这一份内容**已经发过／
+    上次发出去的是**另一份内容**（再发会新建一篇）"。
+  - 判据：`community_publish::` **15 条**（含真起环回监听的假社区，断言 CSRF 双重提交 / Bearer /
+    幂等键 / 原始字节；以及内容指纹的稳定性、字段边界不串味、标签顺序无关）、
+    对话框渲染级 **33 条**（含"算指纹用的必须是本地态正文"、"发帖时 rev 逐字等于指纹"、
+    "指纹算不出来时不发帖"）、`community::` 里面向线上真站点的活判据一条（`#[ignore]`）、
+    迁移判据盯 `page_community_publish` 表本身在不在。
+  - ⚠️ **真机未验**：带令牌的链路（发帖 / 传图 / 幂等 / 台账）至今只有**真环回 HTTP 的假社区**判据，
+    没有在真实账号上点过（本机无 GUI 验收条件，也不该拿生产账号发测试帖）。发版前需人工走三条：
+    连接 → 发一篇带图笔记 → 同一篇再发一次（应说"这一版已经发过"且社区没有第二篇）。
+  - Web 版**不支持**（没有本地凭据存储、出口受 CORS 约束），命令层如实返回"不支持"，不做假入口。
+
+### 修复
+
+- **聚合邮箱的「删除」会永久删信、绕过回收站**（2026-09-20 用户实测：用客户端删了 `zhaizy@qq.com`
+  的上百封邮件，QQ 的「已删除」里却是空的 —— 那批信在 IMAP 层面已经**无法恢复**）。
+  根因是 `delete_one` 的最后一条回退：MOVE 到回收站失败后，它打 `\Deleted` 再跑
+  **`session.expunge()`** —— 那是**整箱 EXPUNGE**，清的是本文件夹里**所有**带 `\Deleted` 的信，
+  而且**完全绕过回收站**。QQ 的回收站不叫 `Trash`/`Deleted Messages`，旧代码的候选名字一个都
+  不中，所以"删除"在 QQ 上等于永久删。
+  改法：**删信路径里不再有任何"就地永久删除"**：① 知道回收站且服务器支持 MOVE ⇒ `UID MOVE` 进去；
+  ② 不支持 MOVE ⇒ **先 `UID COPY` 进回收站**（这一步才是"进回收站"的保证），再打 `\Deleted`，
+  能 `UID EXPUNGE <uid>`（UIDPLUS，只清这一封）就顺手清掉原件，拿不到 UIDPLUS 就**留着**；
+  ③ 连回收站都定位不到 ⇒ **拒绝删除并如实报错**（宁可"没删"，也不做收不回来的删除）。
+  配套：列表里**不再列**带 `\Deleted` 的信（②这条路走过时原件还在服务器上，列表里再显示一次
+  就像"没删掉"）。
+  判据：`email::tests::delete_path_never_does_a_mailbox_wide_expunge`（**源码哨兵**：`delete_one`
+  里一旦再出现 `.expunge()` 就红，且必须含 `uid_copy`）—— 这种"服务器配合着把信弄没"的行为本地
+  mock 复现不了，只能钉住源码；`pick_trash` 那条 ④（名字全不中）的注释同步改成"拒绝删除"。
+  **真账号探针已跑通**（`probe_batch_delete_round_trip_on_a_real_account`，`#[ignore]`，
+  用 `zhaizy@qq.com` —— 就是丢信的那个邮箱）：`moved=Ok(1)`、`in_inbox=false`、
+  `trash=Some("Deleted Messages")`、**`in_trash=true`**，即"删掉的那封**确实躺在回收站里**"。
+  这次跑同时暴露了 QQ 的两个脾气，探针为此改过一轮（不再用 `UID SEARCH` / 整箱 `FETCH 1:*`）：
+  · **QQ 的 SEARCH 索引看不见 APPEND 进去的信**（APPEND 回了 `[APPENDUID … 9769]`、
+    `UID FETCH 9769` 立刻拿得到，而 `UID SEARCH SUBJECT "shuyo-probe-"` 过 60 秒仍是空）
+    ⇒ 改走**序号尾段 FETCH**（`STATUS` 之后拉最后 20 封）按主题认领；
+  · **QQ 广告 `MOVE` 与 `UIDPLUS`**（`CAPABILITY` 实测）⇒ 回收站那条路走的就是 `UID MOVE`，
+    COPY + `UID EXPUNGE` 也都在支持范围内。
+  另外探针现在会先清掉**以前跑挂留下的探针信**（尾段 FETCH + 主题前缀，不靠 SEARCH），
+  这次一口气清掉了 9 封遗留。
+
+- **PDF「AI 识别」的浮层写着「OCR 识别结果」，正文还在讲语言包**（2026-09-20 用户截图：
+  「ai 识别的弹窗标题和文案不合适吧？」）。`pdf-ocr-popover` 是「OCR 识别本页」（本机 Tesseract）
+  与「AI 识别」（视觉大模型）**共用**的浮层，而标题与文案硬编码成 OCR 那一套 ⇒ 点 AI 也写
+  「OCR 识别结果」；识别中的正文讲的是"模型随包分发／语言包按需下载"（**打包方式**的内部权衡，
+  而且 AI 那条路根本没有语言包）；**AI 失败时更要命**：复用了 OCR 那段话，直接让人去下 30 MB
+  语言包，把人带沟里。顶部按钮同理 —— `ocrBusy` 一为真，「OCR 识别本页」就无条件变成「识别中…」，
+  点 AI 时是 OCR 那个按钮在替它表态。
+  改法：文案抽成纯函数 `src/lib/pdfOcrCopy.ts`（`ocrPopoverTitle` / `ocrPopoverCopy` /
+  `ocrBusyButtonLabel`），由「这次是谁跑的」（`OcrMode`，同时进 `PdfPageState`）决定说哪一套；
+  正文只放"此刻该知道的"，**排查线索降级成更淡的第二行**（`.pdf-ocr-tip-hint`）。
+  判据 `src/lib/pdfOcrCopy.test.ts` **13 条**：AI 那条路的标题与全部状态文案不许出现 OCR／语言包／
+  Tesseract；AI 失败必须指向「支持图像的模型」；OCR 失败必须给出"首次联网下语言包（约 30 MB）"这一步
+  并与"识别阶段失败"分开说；正文不许出现内部术语（随包分发／按需下载／`VITE_`）。另加 4 条**接线判据**
+  （读组件源码）钉住标题确实走 `ocrPopoverTitle(ocrMode, …)`、且旧句子不许回来。
+  变异验证（两条都实测红）：忽略 mode ⇒「AI 那条路的标题不许出现 OCR」红；组件退回硬编码 ⇒ 接线判据红。
+- **AI 助手页眉的齿轮（设置）按钮偏心了**（2026-09-20 用户截图：「设置按钮偏心了」）。
+  根因是**类名撞车**：按钮写的是 `ai-header-btn ai-settings`，而设置**弹窗容器**也叫 `.ai-settings`
+  （下面那条 `width: min(840px,…); aspect-ratio; border; border-radius; background` 的规则）。
+  两者同名，弹窗那条后写、权重又一样 ⇒ 把按钮自己的 `display: grid; place-items: center`
+  与 `.ai-header-btn` 的 `border: none` **一起顶掉**：按钮变成 `display:flex; flex-direction:column`，
+  图标被丢到左上角（24px 按钮里偏上 3px；窄屏 `min-height:44px` 时偏上 13px），
+  还白拿了一圈描边、白底与一个圆形轮廓（`--radius-lg` 在 24px 盒子上被夹成 12px ＝ 正圆）——
+  用户截图里那个"偏心"的圆就是这么来的。
+  修法：按钮类名改成 `.ai-settings-btn`（弹窗容器保留 `.ai-settings`，两边不再同名），
+  组件与样式两处都写了注释说明**不许改回去**。
+  判据：`scripts/check-panel-layout.mjs` 加 3 条**几何**断言（真实 Chromium ＋ 真实 App.css）：
+  夹具里放与组件同构的页眉（**必须写对类名**，写错这条判据就永远绿），量「图标中心 − 按钮中心」
+  的偏移（容差 1px），并钉住按钮实际拿到的 `display:grid` / 圆角 6px / 描边 0。
+  变异验证：把夹具与样式改回旧类名跑一遍 = 红（实测偏移 y −13.0px、描边 1px、圆角 16px）；
+  改后 `check-panel-layout` 40 通过 / 0 失败。基线 `tests/baseline.json` 的 `check-panel-layout`
+  随之 25 → 40（工具本来就在喊"基线只有读数 63%，抬到实际值"），`docs/TESTING.md` 的表同步。
+  ⚠️ 这类毛病单测看不见（happy-dom 不做布局，`getBoundingClientRect` 全是 0）、类型检查也看不见。
+
+- **桌面端 AI 调用被权限系统整体拒掉**（用户报「PDF 阅读器 AI 识别出错」，缺陷 #9）：
+  `capabilities/default.json` 里只写了字符串 `"http:default"` —— 而 `http` 插件自带的 `default.toml`
+  写明它 *"enables all fetch operations but **does not allow explicitly any origins to be fetched**.
+  This needs to be manually configured before usage."* ⇒ **作用域为空 = 一个源都不许发**（失败关闭）。
+  于是桌面端**所有**走 `coreFetch`（= `@tauri-apps/plugin-http` 那条 native 路）的跨域 AI 调用
+  —— 视觉识别 / 对话 / 摘要 / 嵌入 —— 一律被拒；而 Web 版走浏览器 `fetch` 不受影响，
+  所以它表现成"只有桌面端 AI 不好使"，且用户只看到一句笼统的「AI 视觉识别失败」。
+  修法：给 `http:default` 显式作用域（`https://**` ＋ `http://**`）—— 服务商是**用户自己填的**
+  （官方 HTTPS 端点，或局域网/回环上的自建模型服务走 http），固定白名单会把"填自己的地址"这条承诺作废。
+  ⚠️ 边界：判据只能证明**配置形状**（作用域存在且覆盖 https/http）＋ 构建期 schema 校验；
+  "打包后的桌面端真的能发出去"仍需真机复验。
 ## [1.91.11] - 2026-09-20
 
 > 国密库级 **P2 落地**（SM3 页 MAC ＋ 库 KDF）＋ 桌面端 AI 权限解封；修掉「AI 设置按钮偏心」「聚合邮箱批量删除删不掉」
@@ -370,57 +469,6 @@
   `pnpm check:win-build-env` 增加这条硬前置（源文件缺失时构建直接报 `resource path … doesn't exist`）。
   Linux/macOS 的同类打包（Linux 的 `resource_dir` 不是 exe 目录、macOS 的 `.app/Contents/Frameworks`）
   仍在 P4 交接单里，**本机做不了、未做**。
-
-- **macOS 装包同样没有带上 PDFium 运行时库**（2026-09-19，P4 的 macOS 那格；与上面那条 Windows 缺陷同一类）。
-  修法：新增平台专用配置 `src-tauri/tauri.macos.conf.json`，把 `vendor/pdfium/mac-univ/lib/libpdfium.dylib`
-  映射进 `.app/Contents/Frameworks`（macOS 动态库的常规位置，且要一起签名/公证）；`macos.yml` 增加取库步骤，
-  `scripts/check-macos-bundle.mjs` 对**产物**断言 dylib 真的在包里（含自带单测）。
-  ⚠️ macOS 更新通道仍因缺 Apple 签名/公证凭据未启用（与本条无关）⇒ 这一格只到"装包带库 ＋ 产物断言"。
-
-### 其它
-
-- **PDFium 引擎随包提供（灰度第一步）——默认仍是 MuPDF**。这次把"装了库却用不起来"的缺口补上了：
-  Windows（`tauri.windows.conf.json`）与 macOS（`tauri.macos.conf.json`）的装包都会带上各平台的 PDFium 运行库，
-  CI 对**产物**断言库真的在包里。要试用：`SHUYONOTE_PDF_ENGINE=pdfium`（不设就是原来的 MuPDF，随时切回）。
-  Linux / Android 的同类打包**未做**；**默认引擎本轮不切**，因为渲染等价的覆盖面还不够（见下一条）。
-- **PDFium ↔ MuPDF P3 对拍报告落进仓库**（被验 commit `23985ef`，在 WSL2 Ubuntu 上跑）：四个自制样本
-  （印刷体 / 旋转页 / 超大页 / 透明底）硬判据 **4/4**（RGB 逐像素最大差 0–1，阈值 8；超阈像素 0.000%，阈值 0.5%）
-  ＋**目视 4/4**；报告与四张左右对照图见
-  [docs/plans/2026-09-19-pdfium-p3-report.md](docs/plans/2026-09-19-pdfium-p3-report.md)。
-  ⚠️ **中文与扫描件样本未覆盖**、非 Windows 平台未跑对拍、真机目视未做。
-
-## [1.91.4] - 2026-09-18
-
-> 导出修好了：图片与网址书签不再空；顺带把「发布自检脚本会把 token 打进日志」收进这一版
-
-### 修复
-
-- **导出 HTML / PDF 时图片与网址书签是空的**（2026-09-17 用户实测报告）。**两个独立缺陷**：
-  ① 导出只抄节点里存下的 `src` —— 桌面端它是应用专有协议 `attachment://localhost/…`、Web 端是
-  裸文件路径；编辑期能显示靠的是渲染时另外解析（`MediaResolver`：`hash` → blobStore → blob URL），
-  而 `exportDOM` 没有这一步 ⇒ 另存的 `.html` 与打印出的 PDF 里图片都是空白；
-  ② 打印是 `doc.write(html) → print()` 一路同步，**图片还没解码就打了快照**，另加 1.2 秒就撤 iframe
-  （WebView 的打印对话框是异步的，太早撤会把没渲染完的内容一起带走）。
-  修法：媒体节点（图片/视频/书签缩略图）在 `exportDOM` 里留下 `data-export-hash` 线索，新增
-  `src/lib/exportInline.ts` 统一在生成 HTML 之后读字节（`api.readAttachmentBytes`）**内联成 `data:` URL**
-  （超过 8MB 的不内联并如实回报）；`printHTML` 打印前等 `img` 解码与 `fonts.ready`（每张各带超时兜底）；
-  网址书签的 `exportDOM` 从「只输出一串 URL」改成输出**真正的卡片**（标题/摘要/站点/链接/缩略图），
-  `BASE_CSS` 自带卡片样式（导出件是独立文档，拿不到应用 CSS）。
-  判据：`src/lib/exportInline.test.ts`（9 条）+ `src/editor/nodes/exportDom.test.ts`（4 条，用真节点跑
-  `$generateHtmlFromNodes`），并做过**变异验证**——把「留线索」那一行删掉，恰好两条断言变红。
-
-### 安全
-
-- **发布自检脚本会把 GitHub token 打进日志**（2026-09-16 发 1.91.3 时当场踩到）。
-  `scripts/check-release-state.mjs` 用 `execFileSync("curl.exe", ["-H", "Authorization: Bearer ghp_…"])`
-  取 Release 信息，curl 一失败，Node 抛出的 message 里**带着整条 argv**，那句
-  `ok(false, …e.message…)` 就把 token 原样打进了终端（在 CI 上就是公开日志）。
-  修法：新增 `scripts/lib/redact.mjs`（`redactSecrets`，覆盖 `Bearer …`、`ghp_/gho_/ghs_/ghu_/ghr_`、
-  `github_pat_`、`token=/access_token=/private_token=`、URL 里的 `user:pass@`），
-  打外部命令错误前一律先过它；`scripts/lib/redact.test.mjs` 六条判据（含那次泄漏的**原样错误串**，
-  以及"正常日志不许被抹花"）。`scripts/release.mjs` 的 gitcode 请求错误只带状态码与 URL，
-  并在注释里写明"不要把 headers 塞进 message"的理由。
-  ⚠️ **已经在日志里露过的那把 token 要轮换**——抹的是以后，抹不掉已经写出去的那次。
 
 ## [1.91.3] - 2026-09-16
 

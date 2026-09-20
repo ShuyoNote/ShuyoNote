@@ -48,7 +48,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
-| contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现） |
+| contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现）。工具链探针**两张表**：macOS（`xcode-select`/SDK/`notarytool`/`codesign`/`clang`）与 **Windows（2026-09-20 补）**——硬判据 `vswhere-msvc`（VC 工具链）/`windows-sdk`/`webview2`（运行时：没它装完打不开），`kind: "info"` 的 `makensis`/`signtool` **只报不判**（tauri 自己取 NSIS、签名只在发版要） |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
 | smoke | `vitest` | 单测回归（**885 用例**） |
@@ -118,6 +118,25 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
    （读数下降时比值 >100%，早被比例判断挡住）⇒ 那条断言怎么改都绿。把判据改成 `thresholdPct: 250`
    真正走到那个分支之后，变异才被抓住。
    ⇒ 结论：**变异证明的价值不在"全抓"，而在"它能发现哪条判据其实没在守东西"。**
+3. **退出码要在"正确的位置"看**（2026-09-20，三台机器各栽一次 —— 这是同一条坑的三次现身）：
+   - **后台/管道**：`cmd > log 2>&1; echo "exit=$?"` 写在**管道后面** ⇒ 拿到的是 `tail`/`grep` 的退出码，
+     不是 `cmd` 的；
+   - **被吞掉的失败**：`cargo clean -p X >/dev/null 2>&1` 漏了 `--manifest-path` ⇒ 在仓库根跑、`exit=101`，
+     而我把输出丢进 `/dev/null` ⇒ 后面"构建"根本没重编，**两轮 A/B 的数字全是装饰**
+     （AMD 这轮实测：v1 与 v2 给出逐条相同的结果就是这么来的）；
+   - **管道截断**：`cmd | Select-Object -First N` 会让上游拿到 `SIGPIPE` ⇒ 命令是成功的、退出码却是 1。
+   ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
+   再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
+   ⚠️ **更正（2026-09-20，macOS 侧指出）**：本条初稿把"macOS 侧那条假红"当成"管道取错退出码"的例子 ——
+   **归因错了**。那条假红的根因是**命令行漏了声明**（只给了 `SHUYONOTE_EXPECT_SM_PATCH`，
+  忘了 macOS 平台默认后端是 commoncrypto）⇒ **门禁报的是对的**；"`$?` 取在管道后"是**另一件事**
+   （它也真实存在，但没造成那条假红）。⇒ 教训加一条：**归因也要有判据** ——
+   "现象出现过"不等于"这个现象是它的原因"，别把同一段时间里的两件事写成因果。
+4. **"合完再 rebase" = 把 merge 丢掉**（2026-09-20，AMD 实测自伤一次）：合了别人的分支（`git merge --no-ff`）
+   之后，若之后按平时习惯跑 `git pull --rebase` / `git rebase`，**rebase 默认丢弃 merge 提交** ⇒
+   那次合并**静默消失**，而推送照样成功、看不出任何异常。
+   ⇒ 纪律：**一旦产生过 merge 提交，之后的同步必须用 fetch+merge**；并且**推之前复核**
+   `git merge-base --is-ancestor <对方的 tip> HEAD`（一行、可判真假）——这条正是把"我以为合了"变成"确实合了"的那一步。
 
 
 ## 结果公开在哪
@@ -220,6 +239,18 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
+- ⚠️ **Windows 上 `cargo test` 的红有三种形态 —— 看到红的第一件事是「认形态」**（2026-09-20 补齐）：
+  三种形态的现场、结论、修法完全不同；把它们混成一句"Windows 上跑不了 rust 测试"会让下一个人白查一轮。
+
+  | 形态 | 现场 | 结论 | 怎么办 |
+  |---|---|---|---|
+  | ① **加载期就死** | 进程直接以 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 退出，**连 `running N tests` 都没有** | 测试 exe 缺应用清单 | `powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1`（见下一条） |
+  | ② **`plugins::` 整片红** | 跑了，但 36 条**全是** `plugins::tests::*`，现场写"找不到宿主二进制" | 宿主二进制不在 | 先 `cargo build --bin shuyonote`，或跑**全量** `cargo test`（它会先构建应用二进制）（见下文那条） |
+  | ③ **正常** | lib 目标跑起来；与代码无关的只有环境项（例如本机没有 PDFium 库 ⇒ 那条**响亮跳过**） | 可以当读数用 | 读数记 `passed + failed`（**不计 ignored**） |
+
+  ⚠️ 区分 ① 与 ② 的**唯一判据**是"有没有输出 `running N tests`"：① 没有那行。
+  （2026-09-20 补：用 ① 的绕法在本机跑通了 `pdfium_native` 的 **7 条**——其中 4 条属于"随包字体"那条线，
+  全部在 Windows 上跑、**没上 WSL** ⇒ 这条路是**可用**的，不是"只好躲到 Linux"。）
 - **Windows 本机跑 rust 组：要过一道 manifest 关**（2026-09-16 撞上，2026-09-19 定位）：症状是
   `cargo test` 的测试二进制在**加载期**就以 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 退出，而
   app（`shuyonote.exe`）能正常跑、且它的导入符号是测试二进制的**超集**。已逐条排除：缺 DLL（含
@@ -264,6 +295,20 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `gm-conformance: ❌ 夹具编不过 / spawnSync cargo ENOENT` 的形式失败，读起来完全像夹具本身有问题。
   `scripts/gm-version-selfcheck.mjs` 里加了兜底：`PATH` 上没有、rustup 默认位置有时补上，并打一行 `!`
   —— **不静默改环境**（改了就会让"我这台能跑"变成不可复现的读数）。
+- **共享检出的 `node_modules` 可能是"半装"状态**（2026-09-20，本机 Windows 实测；与上文"有人重装的那几分钟"是**两种**形态）：
+  症状是 `vitest` / `pnpm build` **全挂**，而报错长得像"代码坏了"：
+  `Error: Cannot find package '…/.pnpm/vitest@4.1.11…/node_modules/tinyexec/index.js'`、
+  `Cannot find module '…/@esbuild/win32-x64/esbuild.exe'` —— 即 `.pnpm` 里少了传递依赖的实体；
+  更坑的是 `npx tsc` 那种入口此时会**静默从 registry 装一个同名假包**（见本文上面那条）。
+  **修法（34 秒、离线、只动自己那棵树）**：把自己的 `node_modules` 从 **junction** 换成真实目录，
+  再用**本地 pnpm store** 重装：
+  ```powershell
+  cmd /c "rmdir node_modules"        # ⚠️ 只删 junction 本身；不要 Remove-Item -Recurse（会删到别人那棵树）
+  pnpm install --frozen-lockfile --offline
+  ```
+  判定修好了：`node node_modules/vitest/vitest.mjs --version` 有输出、`node node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild --version` 有版本。
+  **收益是实打实的**：修好后本机第一次跑出 `vitest 17/17`，并当场抓到"跑 git 的用例缺显式 timeout ⇒
+  Windows 上 5s 默认超时偶发红"这个 flake（`scripts/check-changelog-version-parity.test.mjs` 已修）。
 - **`import.meta.dirname` 在旧 Node 上是 `undefined`**（2026-09-19，WSL 的 Node 18 实测）：
   `resolve(import.meta.dirname, "..")` 直接抛
   `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string` —— 报错文本一个字都没提 Node 版本，
@@ -274,6 +319,18 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
   一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
   （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
+- **安卓真出包在 Windows 本机上走不通**（2026-09-20 实测，两个阻塞，**权威构建地是 Linux/CI**）：
+  1. **`openssl-src` 要 `perl`**：本机没有 ⇒ `cargo:warning=Command 'perl' not found` + `failed to build OpenSSL from source`。
+     处置：用 **Git for Windows 自带的 perl**（`C:\Program Files\Git\usr\bin\perl.exe`，本机实测 5.38.2）放进 PATH 即可过这一关；
+  2. 过了 ① 会卡在 **`mupdf-sys` 的 make 调用把 NDK 路径的反斜杠吃掉**（Windows + msys make 的路径转换）：
+     `/usr/bin/sh: line 1: C:UserscnzenAppDataLocalAndroidSdkndk29.0.13846066toolchains/llvm/prebuilt/windows-x86_64binclang.exe: No such file or directory`
+     ⇒ `make … Error 127`、`make invocation failed with status 2`。
+     ⇒ 本仓的安卓包一直在 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）上出，Windows 从来不是构建地；
+     想在 Windows 本机出包只能给 WSL 装 **Linux 版 SDK/NDK**（Windows 的 NDK 只带 `windows-x86_64` 那份 host 工具链，WSL 里用不了）。
+  ⚠️ 但**打包与验收那两步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）
+     与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言 `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
+     2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
+     这正是 P4 安卓格那条缺口的真产物读数。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 

@@ -6,7 +6,8 @@
       "appimage"
     ],
     "resources": {
-      "vendor/pdfium/linux-x64/lib/libpdfium.so": "libpdfium.so"
+      "vendor/pdfium/linux-x64/lib/libpdfium.so": "libpdfium.so",
+      "assets/fonts/*": "./"
     }
   }
 }

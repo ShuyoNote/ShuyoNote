@@ -161,7 +161,17 @@ pub(crate) fn open_meta_conn_at(dir: &Path) -> Result<Connection, String> {
 }
 
 /// [`open_space_conn`] with an explicit app-data-dir (testable without the global).
+/// ★ 外层只做一件事（P3 预置）：**把"库打不开"的失败翻成可操作文本**。
+///
+/// 为什么包在外层而不是逐句 `map_err`：SQLCipher 的 `file is not a database` 可能在任何一次
+/// **首次读写**上冒出来（`PRAGMA journal_mode` 就会触发它，实测）⇒ 逐句包会漏掉早发的那一处。
+/// 认不出的错误原样返回（见 `security::cipher_open_error`）。
 pub(crate) fn open_space_conn_at(space_id: &str, dir: &Path) -> Result<Connection, String> {
+    open_space_conn_inner(space_id, dir)
+        .map_err(|e| security::cipher_open_error(&e, &format!("空间 {space_id} 的库")))
+}
+
+fn open_space_conn_inner(space_id: &str, dir: &Path) -> Result<Connection, String> {
     if !is_safe_space_id(space_id) {
         return Err("非法空间 id".to_string());
     }
@@ -771,6 +781,21 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
             vector     TEXT NOT NULL,
             hash       TEXT NOT NULL DEFAULT '',
             updated_at INTEGER NOT NULL
+        );
+
+        -- 「发布到社区」的发布状态：**应用派生数据**，故意与 `page_props` 分开 ——
+        -- 塞进属性表会让"社区…"三列出现在用户自己的表格视图里，而属性是**用户**的字段，
+        -- 不该由某个功能自己往里塞（方案 §7.2 的 A/B 取舍：这里选 B）。
+        --
+        -- 只记**最近一次**发布（`page_id` 主键）：一篇笔记现在可能对应社区上的多篇
+        -- （改完再发就是新的一篇，P2 才会变成"更新已有帖子"），这张表回答的是
+        -- "我这篇最近发到哪儿了、线上那一篇是哪一版"；要留全部历史得另开一张表（P2 再谈）。
+        CREATE TABLE IF NOT EXISTS page_community_publish (
+            page_id       TEXT PRIMARY KEY,
+            slug          TEXT NOT NULL DEFAULT '',
+            url           TEXT NOT NULL DEFAULT '',
+            published_rev TEXT NOT NULL DEFAULT '',
+            published_at  INTEGER NOT NULL
         );
         "#,
     )?;

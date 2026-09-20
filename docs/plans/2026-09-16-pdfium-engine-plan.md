@@ -86,6 +86,19 @@ node scripts/fetch-pdfium.mjs --print-sha256 <tgz>   # 补记某平台的校验�
 > **G 是当前 P4 的真实拦路石**（不是技术难，是"没填表"）：`scripts/fetch-pdfium.mjs` 的平台表里
 > `win-arm64` / `linux-x64` / `mac-univ` / `android-arm64` 全是 `sha256: null`。
 
+## 0.3 2026-09-20：两类新样本 ＋ **一条被自己实测推翻的决定（L）**
+
+| # | 决定 | 理由与连带 |
+|---|---|---|
+| **L**<br>**（已撤回）** | ~~缺省引擎"看库在不在"：库不在 ⇒ **回退 MuPDF**（`PdfEngine::resolve`）~~ ⇒ **改为：不动引擎取值，保持 `from_env_value`；缺库时由上层 pdf.js 接管（现状），不做任何静默换引擎** | 提议当天就被自己的实测推翻，**过程照记**，免得后人再提一遍：<br>① 原先的理由"那些平台会**当场渲染失败**"**是错的** —— `src/components/PdfReader.tsx:122-131` 会把原生渲染的异常吞掉、**静默降级 pdf.js**（页面照样出来，现场只有控制台一行日志；`1.91.6` 那封函 §三 早已记过）。<br>② 更关键：**回退目标本身更差**。`cjk.pdf`（非嵌入 CID 中文，国标 `STSong-Light`+`UniGB-UCS2-H`，中文办公软件常见写法）实测（见 O）：**MuPDF 画成单字节拉丁乱码**，而 **pdf.js 带 `pdfjs-dist/cmaps` 169 个 bcmap，`getTextContent()` 正确给出 `["中文测试"]`**。⇒ "缺库就换 MuPDF"等于**用更差的正确性去换速度**，而 pdf.js 那条路本来就接着。<br>③ 结论：**不偷偷换引擎**（"成功 ≠ 生效"那一族），维持现状即可 —— 后端错误信息里已经写明"库缺失 + 怎么放库"，前端那行日志也在，排查不缺线索。<br>④ 撤回范围：`PdfEngine::resolve` 与 3 条新判据回到 dev 的 `from_env_value`＋原 4 条判据；`library_preflight` 恢复 `#[cfg(test)]`。**唯一没撤回的是"这个问号已经问过了"本身。** |
+| **M** | **对拍样本新增两类，且分两类判**：`scan.pdf`（图像 XObject）走**硬判据**；`cjk.pdf`（Type0＋预定义 CMap＋标准 CJK 字体名）**只报不判** | 报告 §六 自认的缺口 #1 就是这两类。扫描件里没有字形 ⇒ 两个引擎**应当**逐像素一致，判硬；中文**没有嵌入字体** ⇒ 两个引擎各走各的字体解析/回退路径，字形本就不同（**实测比这句更糟，见 O**），**逐像素等价在这个样本上做不到** ⇒ 它只回答"都能开、尺寸一致、都画出了东西"（非透明像素两边都 > 0），字形差异**如实报出来**。⚠️ 这不是"给红样本开后门"：`scan.pdf` 里的图像特意做成**块状 + 1:1 到设备像素**（96×96 画进 64×64 pt，`SCALE=1.5` ⇒ 正好 96 设备像素），把"插值算法的自由"从判据里排除掉 |
+| **N**<br>**（随 L 撤回）** | ~~`library_preflight` 去掉 `#[cfg(test)]` ＋ 新增 `library_available()`~~ | 它唯一的用途是喂 L。L 撤回后 `library_preflight` 仍是 `#[cfg(test)]`（唯一调用点是 P3 对拍那条 `#[test]`）。**若哪天要"缺库时在界面/日志里点名"，再把它放出来。** |
+| **O** | **`cjk.pdf` 四个读数：这不是"两个引擎各自换字体"，而是"两家都画不对，且方式不同"；「只报不判」那一类的自检**不足以证明文字画出来了**** | 读数与复现命令另存证据包 `ShuyoNote-collab/pdfium-p3/visual-check-cjk/`：<br>① **PDFium／Windows**：墨迹 **28816**，**正确画出「中文测试」**（有 PNG）；<br>② PDFium／WSL2 Linux：墨迹 **27000 = 蓝矩形面积 ⇒ 整行文字一个像素都没画**；<br>③ MuPDF／WSL2 Linux：墨迹 28000 = 矩形 27000 ＋ **文字 1000**，而这 1000 是**把 2 字节码按单字节**喂回退字体画出的拉丁乱码（`<4E2D65876D4B8BD5>` → "N-e mK"）；<br>④ **pdf.js 4.8.69**（带 cmaps）：`getTextContent()` = `["中文测试"]` ✅。<br>**对照实验**：WSL 装系统 CJK 字体（`msyh`+`simsun`）前后 ②③ **数字一字不变** ⇒ 不是"那台机器缺字体"；`mupdf-sys 0.8.0` 的 `build.rs` 明确写 `all-fonts` 已废弃、`msbuild.rs` 把 `fonts\noto\` 从 Windows 工程里删掉 ⇒ 缺 CJK 资源是**构建期决定**。<br>⇒ ① 样本本身是**对的**（①④ 都映回了「中文测试」）⇒ 分叉在引擎/平台，不在夹具；② "两边都画出东西"会被页面里的**矩形**满足，**证明不了文字**；③ 维持"只报不判"，**不许把它的 ✅ 读成"中文没问题"**；④ **六格读数已齐（2026-09-20 当天补完）**：PDFium／Windows **28816** ✅、PDFium／macOS **29582** ✅（目视「中文测试」正确）、PDFium／Linux **27000** ❌（= 正好矩形面积、文字 0 像素）；MuPDF／**三平台逐字同数 28000**（= 矩形 27000 ＋ 乱码 1000，目视均为 `N-e mK`）⇒ MuPDF 的乱码与平台无关，是**构建期**决定（`all-fonts` 已废弃 ＋ `msbuild.rs` 删掉 `fonts\noto\`）。<br>★ **为什么现有硬判据抓不住它**（2026-09-20，macOS 侧）：`cjk.pdf` 那行 **`RGB差=0`、`RGB超阈=0.000%`，而两张图完全不同** —— 差异**全在 alpha/覆盖**（透明像素两边 RGB 都是 0，黑字的 RGB 也都是 0）⇒ **只比 RGB 的硬判据对「黑字＋透明底」结构性失明**，不是调阈值能解决的；而"两边都画出东西"那道自检会被**矩形**满足（Linux PDFium 27000 > 0 也过）。⇒ 表里新增**「非矩形墨迹」**列（`non_rect_ink`：`alpha≠0 且 RGB≠纯蓝矩形`，**只报不判**），三平台立刻可比：**MuPDF 1000／1000／1000**、**PDFium 0（Linux）／1816（Windows）／2582（macOS）**；**不**把它升成硬判据（它反映的是平台缺字体后端这种**环境相关产品缺陷**，不是代码回归，长期红会让人对红脱敏）。<br>★ **P4 拦路石（Windows 查实）**：Linux 那份 `libpdfium.so` **没有 fontconfig 字体后端**（`ldd` 只有 6 行、`fontconfig`/`FcInit` 符号 0 个；对照 Windows `pdfium.dll` 有 GDI 字体映射）⇒ **"包里带了库" ≠ "字能显示"**；**base14 不受影响**（`text.pdf` 在 Linux 上照样 0 差）—— 这正是它隐蔽的原因。出路：① 自建带 fontconfig／随包字体的库；② 这类文档路由到 pdf.js（本仓已随包带 cmaps/standard_fonts）。施工单见信箱 `2026-09-20-pdfium-linux-font-backend-workorder`（推荐路线 D＝随包一个 OFL 中文字体 ＋ `set_custom_font_provider`）。|
+
+**判据**：`commands::pdf_engine_tests` 保持 dev 的 **4 条**（`unset_uses_the_documented_default_engine`、
+`explicit_values_win_and_are_case_insensitive`、`unknown_or_empty_values_fall_back_to_default`、
+`explicit_mupdf_always_rolls_back`）—— L 撤回后**没有新增判据**；本轮的净产出是**两个样本 ＋ 一张读数表**。
+
 ---
 
 ## 1. 范围：只换光栅化
@@ -116,10 +129,9 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 | **P0** | **拿到并固定 `pdfium.dll`（build 7881）**：自建（Chromium 工具链，重）或取预编译包 + **比对校验和**；把版本与 sha256 写进仓库 | 0.5–1 人日 | ✅ **已完成**（§0.1）：`scripts/fetch-pdfium.mjs` ＋ 校验和 ＋ `SOURCE.txt` 溯源 |
 | **P1** | 新增 `src-tauri/src/pdfium_native.rs`（渲染 + 文档缓存 + 全局 init/锁），**保留 `pdf_native.rs`（MuPDF）不动** | 1–2 人日 | 新模块 + 单测 |
 | **P2** | `render_pdf_page` 按开关分派（✅ **已定（2026-09-17）：运行时开关**），两条路径都能跑 | 0.5 人日 | 可回滚的双路径 |
-| **P3** | **对拍**：同一批真实 PDF（含扫描件、中文、旋转页、超大文件）比较两引擎渲染结果与单页耗时 | 1 人日 | 对拍脚本 + 报告 |
-| **P4** | Windows 打包验收 → 多平台（macOS bundle ＋ 公证、Linux rpath、Android `jniLibs`）**作为独立任务** | 1 人日 + 2–3 人日 | 各平台安装包 |
-| **P5** | 灰度一个发布周期 → 默认切 PDFium → （可选）删 MuPDF | — | 发布记录 |
-
+| **P3** | **对拍**：同一批真实 PDF（含扫描件、中文、旋转页、超大文件）比较两引擎渲染结果与单页耗时 | 1 人日 | 对拍脚本 + 报告 · **✅ 脚本＋6 个自写样本**（WSL2 实测通过）；`scan.pdf` 走硬判据且一次通过；⚠️ **中文那一类只报不判，而且实测三家各有各的问题**（Windows PDFium ✅ / Linux pdfium.so 不画文字 / MuPDF 乱码，pdf.js ✅——见 §0.3-O 与证据包） |
+| **P4** | Windows 打包验收 → 多平台（macOS bundle ＋ 公证、Linux rpath、Android `jniLibs`）**作为独立任务** | 1 人日 + 2–3 人日 | 各平台安装包 · **🟡 只有 Windows 完成**（dll 进包、sha256 一致、变异实测）；Linux/macOS/Android **未验**（见 P3 报告 §七 第 5 行）；⚠️ 中文那类文件的**六格读数已齐**（§0.3-O）；新增一条 **P4 拦路石**：**Linux 那份 `libpdfium.so` 没有 fontconfig 字体后端** ⇒ 非嵌入字体（含国标中文）在 Linux 上**整行不显示**，且"装系统字体"治不了 —— 施工单见信箱 `2026-09-20-pdfium-linux-font-backend-workorder` |
+| **P5** | 灰度一个发布周期 → 默认切 PDFium → （可选）删 MuPDF | — | 发布记录 · **✅ 默认已切**（2026-09-19，`PdfEngine::DEFAULT = Pdfium`，4 条判据守着）；⚠️ 缺库的包**不会白屏**：`PdfReader.tsx:122-131` 把原生渲染的异常吞掉、**静默退回 pdf.js**（"要不要改成回退 MuPDF"问过并**否掉**了，理由见 §0.3-L） |
 **建议顺序**：P0 → P1 → P3（先证明渲染等价，再谈打包）。**P3 不对拍不算完成。**
 
 ---

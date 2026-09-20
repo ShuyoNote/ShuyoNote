@@ -7,6 +7,10 @@
 //   ② **补丁在不在** —— 同一门禁读我们 build.rs 打的产物标记（`SHUYONOTE_EXPECT_SM_PATCH`）；
 //   ③ **跨实现对拍** —— `check-gm-conformance`：GM/T 0002/0004 标准向量 ＋ RustCrypto↔Tongsuo 双向互解
 //      ＋ 两侧密文逐字节相同 ＋ PBKDF2 与拆 key 口径（用 `SHUYONOTE_TONGSUO_OPENSSL` 点名真 Tongsuo）。
+//   ④ **运行期"真的生效没有"**（`--with-tests` 时追加）—— `cargo test --lib gm_provider::`：在**打过补丁
+//      的那份构建**上，回显必须是 `HMAC_SM3`/`PBKDF2_HMAC_SM3`，并守着"静默降级"那条。
+//      ⚠️ 它证明的是**这一份构建**（本机、本次）真的生效；`--with-tests` 的第 3.5 段（应用层单测）管的是
+//      另一件事（`--features sm-crypto` 的算法链路），两段都留着，别把一段读成另一段。
 //
 // 为什么要有它：三格分别属于不同文件/不同人（后端＝构建配置、补丁＝AMD 的 provider 补丁、
 // 对拍＝跨实现），而"国密版"是一个**整体交付物**。没有单一入口时，最容易发生的失败是
@@ -25,6 +29,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -73,6 +78,19 @@ export function legPlan({ opensslDir, expectPatch, tauriDir, withTests, withBuil
     optional: false,
   });
   if (withTests) {
+    // ★ ④ 运行期那一格（2026-09-20 补）：`gm_provider::` 判据跑在**打过补丁的那份构建**上，
+    //   它才是"标签真的被 C 层接受了"的直接证据。此前一条命令只覆盖到"产物里有补丁标记"，
+    //   "运行期真的生效"仍靠人记得单独跑 —— 而这正是 AMD 那条 `check-sm-provider-live` 要补的缝。
+    //   ⚠️ **不进默认门禁**：它需要一个打过补丁 ＋ 配了后端的构建，CI 上不存在（放进去只会自报跳过，
+    //      而"自报跳过"看多了就没人再看）。
+    legs.push({
+      id: "gm-provider",
+      label: "运行期第三格：打过补丁的构建上跑 gm_provider 判据",
+      cmd: "cargo",
+      args: ["test", "--lib", "gm_provider::", "--manifest-path", join(tauriDir, "Cargo.toml")],
+      env: {},
+      optional: false,
+    });
     legs.push({
       id: "sm-tests",
       label: "应用层国密单测（--features sm-crypto）",
@@ -192,9 +210,12 @@ function main() {
         : "补丁状态**未声明**（门禁只报告、未判定）";
   console.log(
     `\ngm-version-selfcheck: ✅ ${results.length} 段全过（commit ${head}）—— 编进去的是 Tongsuo/OpenSSL、${patchClause}、` +
-      "且两套 SM4 实现互解得开。⚠️ 这只证明**算法链路**（应用层 ＋ 对拍）；" +
-      "真机读写与『页加密确为 SM4』仍需 provider 落地后加判据。",
+      "且两套 SM4 实现互解得开。⚠️ 边界：它证明的是**算法链路**（应用层 ＋ 对拍）" +
+      (has("--with-tests")
+        ? "**＋ 运行期接线真的生效**（第 ④ 段 `gm_provider`，只在 `--with-tests` 时跑）"
+        : "；**运行期那一格没跑** —— 要看它加 `--with-tests`（第 ④ 段 `gm_provider::`）") +
+      "；**『页加密确为 SM4』仍属 P3**，那是另一件事（需要 provider 落地）。",
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) main();
+if (isMain(import.meta.url)) main();

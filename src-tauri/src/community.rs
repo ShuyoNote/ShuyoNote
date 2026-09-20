@@ -423,4 +423,64 @@ mod tests {
         assert!(landed.starts_with("http://127.0.0.1"));
         assert_eq!(parse_post(&String::from_utf8(bytes).expect("utf8")).expect("解析").id, "1");
     }
+
+    /// **活的契约判据**（默认忽略，要联网）：社区那边的 JSON 表示必须真的被**这里的解析器**吃下去。
+    ///
+    /// 为什么值得单独留一条：这份契约跨两个仓库（`shuyo-community` 的 `main.rs::post_json`
+    /// ↔ 这里的 `parse_post`）。任何一侧单方面改字段名、改 `url` 的拼法，另一侧的测试都**不会变红** ——
+    /// 只有拿真站点问一次才知道。
+    ///
+    /// 这不是假想：社区 0.71.24 上线时 `url` 被拼成了相对路径（`/post/xxx`），
+    /// 而 `check_post_url` 只收 https 绝对地址 ⇒ 整条「存进笔记」会被这一步静默挡掉。
+    /// 那边补上判据的同时，这一条把**应用侧**的那半也钉住（我们认不认他们给的东西）。
+    ///
+    /// 帖子是从公开列表里**现挑**的（不钉死某个 slug）：钉死会在那篇被撤下时变成一条假红。
+    ///
+    /// 跑法：`scripts\win-cargo-test.ps1 -Filter live_community_json -ExtraArgs --ignored`。
+    #[tokio::test]
+    #[ignore = "要联网 + 社区线上；默认与 CI 都不跑"]
+    async fn live_community_json_is_accepted_by_this_parser() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+            .build()
+            .expect("建 client");
+        let list: serde_json::Value = client
+            .get("https://community.shuyo.cn/api/posts")
+            .send()
+            .await
+            .expect("取公开列表")
+            .json()
+            .await
+            .expect("列表应是 JSON");
+        let slug = list
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|p| p.get("slug"))
+            .and_then(|s| s.as_str())
+            .expect("列表里应至少有一篇（带 slug）")
+            .to_string();
+        let url = format!("https://community.shuyo.cn/post/{slug}");
+        let post = fetch_post_with_hosts(&url, COMMUNITY_HOSTS)
+            .await
+            .unwrap_or_else(|e| panic!("社区应给出可解析的帖子 JSON（Accept: application/json）：{e}"));
+        assert!(!post.title.trim().is_empty(), "标题不能为空");
+        assert!(!post.body_markdown.trim().is_empty(), "正文源码不能为空");
+        assert!(
+            post.id.parse::<i64>().is_ok(),
+            "id 应是数字（社区约好用 id 当稳定键），实际「{}」",
+            post.id
+        );
+        assert_eq!(post.url, url, "url 应是站内绝对地址（相对路径会被 check_post_url 拒掉）");
+        assert!(
+            !post.body_markdown.contains("<p>"),
+            "给的应是**落库源码**而不是渲染后的 HTML"
+        );
+        println!(
+            "live ok: id={} title={} body_chars={} url={}",
+            post.id,
+            post.title,
+            post.body_markdown.chars().count(),
+            post.url
+        );
+    }
 }

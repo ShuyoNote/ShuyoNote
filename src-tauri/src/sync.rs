@@ -264,6 +264,33 @@ pub struct SyncItem {
 ///
 /// 抽成独立函数是为了能单测（`prescan_payload_formats_refuses_the_whole_batch`）——
 /// 它必须在应用循环**之前**调用，这一点由调用点的位置保证（见 `do_pull`）。
+/// 批量应用期间的**临时关外键**，`Drop` 时恢复原值 —— `?` 早退也不会漏掉。
+///
+/// ★ 为什么必须是 RAII（2026-09-20 修）：老写法是"先进循环、循环里到处 `?`、循环之后再
+/// `PRAGMA foreign_keys = orig`"。只要循环里**任何一条**变更失败（网络/格式/约束），`?` 直接
+/// 早退 ⇒ 那句恢复**永远不会执行** ⇒ 外键在**这条长命的主连接**上**永久 OFF**，
+/// 之后整个应用的外键约束都不生效（孤儿行静默堆积）。SECURITY.md §四 早列了这条，
+/// 这里用守卫把它从"看运气"变成"结构上不可能漏"。
+struct ForeignKeysOff<'a> {
+    conn: &'a rusqlite::Connection,
+    orig: i64,
+}
+
+impl<'a> ForeignKeysOff<'a> {
+    fn new(conn: &'a rusqlite::Connection) -> Self {
+        // 原值读不到就按"本来是开的"恢复（宁可多开一次，也别把外键永久关掉）。
+        let orig: i64 = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap_or(1);
+        let _ = conn.execute_batch("PRAGMA foreign_keys = OFF;");
+        Self { conn, orig }
+    }
+}
+
+impl Drop for ForeignKeysOff<'_> {
+    fn drop(&mut self) {
+        let _ = self.conn.execute_batch(&format!("PRAGMA foreign_keys = {};", self.orig));
+    }
+}
+
 fn prescan_payload_formats(changes: &[IncomingChange]) -> Result<(), String> {
     security::ensure_payloads_supported(changes.iter().filter_map(|c| c.payload.as_deref()))
 }
@@ -1388,10 +1415,9 @@ async fn do_pull(
         // 跨设备 pull 的变更可能引用了「尚未先到达」的父页 / 关联页，触发本地外键约束
         // （attachments.page_id / pages.parent_id 等）。批量应用期间临时关闭外键，
         // 应用完恢复原状态，避免整批 pull 被单个外键错误打断。
-        let orig_fk: i64 = c
-            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
-            .unwrap_or(0);
-        let _ = c.execute_batch("PRAGMA foreign_keys = OFF;");
+        // ⚠️ 用 RAII 守卫：循环里任何 `?` 早退都会 drop 掉它 ⇒ 外键**一定**被恢复
+        //（老写法把恢复放在循环之后，一次失败就永久 OFF，见 `ForeignKeysOff` 的注释）。
+        let _fk_guard = ForeignKeysOff::new(&c);
         for change in body.changes {
             let title = item_title(&change.entity, change.payload.as_ref());
             items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string(), title });
@@ -1469,7 +1495,7 @@ async fn do_pull(
             }
         }
         set_profile_field(&c, &profile.ws_id, "last_pulled_seq", max_pulled)?;
-        let _ = c.execute_batch(&format!("PRAGMA foreign_keys = {orig_fk};"));
+        // 外键由 `_fk_guard` 在离开作用域时恢复（成功路径也一样，顺序与原来一致）。
     }
 
     Ok((count, max_pulled, items, conflicts))
@@ -2454,6 +2480,45 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 外键守卫：**循环里任何一条变更失败（`?` 早退）都不能把外键永久关掉**。
+    /// 老写法（恢复那句放在循环之后）在这条用例下会留下 `foreign_keys=0`，
+    /// 而它作用在**长命的主连接**上 ⇒ 之后整个应用的外键约束都不生效。
+    #[test]
+    fn foreign_keys_guard_restores_even_when_the_batch_bails_early() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let read = |c: &rusqlite::Connection| -> i64 {
+            c.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(read(&c), 1, "前置：外键本来是开的");
+
+        // 模拟"批量应用中途失败"：进守卫 → 关外键 → 早退。
+        fn apply_batch(c: &rusqlite::Connection) -> Result<(), String> {
+            let _fk = ForeignKeysOff::new(c);
+            assert_eq!(
+                c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).unwrap(),
+                0,
+                "守卫生效期间外键应当是关的"
+            );
+            Err("模拟第 3 条变更失败".to_string())
+        }
+        assert!(apply_batch(&c).is_err());
+        assert_eq!(read(&c), 1, "早退之后外键必须已恢复（这正是老写法的漏洞）");
+
+        // 成功路径同样恢复。
+        {
+            let _fk = ForeignKeysOff::new(&c);
+        }
+        assert_eq!(read(&c), 1);
+
+        // 本来关着 ⇒ 恢复成关着（不许把用户/调用方的原状态改掉）。
+        c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        {
+            let _fk = ForeignKeysOff::new(&c);
+        }
+        assert_eq!(read(&c), 0, "原状态是关的，恢复后也该是关的");
+    }
 
     /// §0-C：**整批预扫**——这批变更里只要有一段本构建解不开，就要在应用**之前**整批拒绝。
     ///

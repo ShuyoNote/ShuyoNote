@@ -1,4 +1,4 @@
-// `patches/0001-sqlcipher-sm3-provider.patch` 的**应用胶水**（纯函数 + 一个真实副作用函数）。
+// `patches/0001-sqlcipher-sm3-provider.patch` 的**应用胶水**（纯函数 + 两个真实副作用函数）。
 //
 // 为什么要单独一个模块：这条路上有**三种状态**，而它们的正确读法完全不同 ——
 //   ① `already`：源码里已经有标记（上一次打过）⇒ **不重复打**（`git apply` 会失败，那才是真错）；
@@ -24,6 +24,14 @@ function run(cmd, args, cwd) {
   return execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
+// ⚠️ **`git apply` 的行尾必须钉死**（2026-09-20，被自己的判据抓到）：Windows 上 `core.autocrlf=true` 时
+//    `git apply` 会把**输出**整体改写成 CRLF —— 后果不只是"工作树脏"：
+//      ① 同一份源码在 Windows 与 macOS/Linux 上**哈希不同** ⇒ `src_sha256` 的跨机比对（我们特意做的那格）失效；
+//      ② 之后 `git apply -R` 的上下文行对不上。
+//    `-c core.autocrlf=false` 让"应用/撤回"都是**逐字节**的，三平台一致。
+//    （补丁**文件本身**的行尾由仓库 `.gitattributes` 的 `* text=auto eol=lf` 保证 —— 那是另一件事。）
+const GIT_APPLY = ["-c", "core.autocrlf=false", "apply"];
+
 /**
  * 把 `dir`（SQLCipher 源码目录，里面有 `sqlite3.c`）带到"补丁已打"的状态。
  *
@@ -45,7 +53,7 @@ export function ensurePatch(dir, patchFile, { apply = true } = {}) {
   // 先 `--check`：失败要报得具体（多半是源码不是"原始那份"，或 SQLCipher 版本变了）
   let checkErr = null;
   try {
-    run("git", ["apply", "--check", "-p1", patchFile], dir);
+    run("git", [...GIT_APPLY, "--check", "-p1", patchFile], dir);
   } catch (e) {
     checkErr = e;
   }
@@ -58,7 +66,7 @@ export function ensurePatch(dir, patchFile, { apply = true } = {}) {
 
   let tool = null;
   try {
-    run("git", ["apply", "-p1", patchFile], dir);
+    run("git", [...GIT_APPLY, "-p1", patchFile], dir);
     tool = "git apply -p1";
   } catch (e1) {
     try {
@@ -80,4 +88,49 @@ export function ensurePatch(dir, patchFile, { apply = true } = {}) {
     );
   }
   return { status: "applied", file, tool, bytes: after.length };
+}
+
+/**
+ * 把补丁**撤掉**（mac 2026-09-20 提的第 2 条修法：胶水要能撤回）。
+ *
+ * 为什么值得有：那份源码在 cargo registry 里是**全机共享**的一份 —— 补丁留在那里，同机其它构建
+ * （不开 `sm-library`、不给 `OPENSSL_DIR` 的默认构建）编译的也是打过补丁的源码。能力门修好之后
+ * 那已是**行为中性**的，但"能一键回到原版"仍然是做 A/B（以及判"这条红是不是补丁引起的"）的前提。
+ *
+ * @returns {{status:"reverted"|"absent", file:string, tool:string|null, bytes:number}}
+ */
+export function revertPatch(dir, patchFile) {
+  const file = join(dir, "sqlite3.c");
+  if (!existsSync(file)) throw new Error(`revertPatch: 找不到 ${file}`);
+  const before = readFileSync(file, "utf8");
+  if (!before.includes(PATCH_MARKER)) return { status: "absent", file, tool: null, bytes: before.length };
+  if (!existsSync(patchFile)) throw new Error(`revertPatch: 找不到补丁文件 ${patchFile}`);
+
+  let tool = null;
+  let firstErr = null;
+  try {
+    run("git", [...GIT_APPLY, "-R", "-p1", patchFile], dir);
+    tool = "git apply -R -p1";
+  } catch (e1) {
+    firstErr = e1;
+    try {
+      run("patch", ["-R", "-p1", "-i", patchFile], dir);
+      tool = "patch -R -p1";
+    } catch (e2) {
+      throw new Error(
+        `revertPatch: 撤回失败（git apply -R 与 patch -R 都失败）。\n` +
+          `  git：${String(e1.stderr || e1.message).trim().split("\n")[0]}\n` +
+          `  patch：${String(e2.stderr || e2.message).trim().split("\n")[0]}`,
+      );
+    }
+  }
+
+  const after = readFileSync(file, "utf8");
+  if (after.includes(PATCH_MARKER)) {
+    throw new Error(
+      `revertPatch: ${tool} 退出码是 0，但**文件里仍有** ${PATCH_MARKER} ⇒ 不接受这次撤回` +
+        `（原始报错：${String(firstErr?.message || "").split("\n")[0]}）。`,
+    );
+  }
+  return { status: "reverted", file, tool, bytes: after.length };
 }

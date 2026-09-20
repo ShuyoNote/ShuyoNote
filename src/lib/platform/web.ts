@@ -2587,10 +2587,34 @@ export function makeInvoke(store: SqliteStore) {
       if (!r.ok) throw new Error(r.reason);
       return r.text as T;
     }
+    // 一键发布到社区：**桌面专有**，而且不是"懒得做"——它需要两样 Web 版没有的东西：
+    // ① 一个能放凭据的地方（Web 版没有应用数据目录，令牌只能进 localStorage，那是把 180 天的
+    //    令牌交给任何一段同源脚本）；② 一个不受 CORS 约束的出口（社区域只面向同源）。
+    // 所以这里选择**如实说不支持**，而不是做一个"看起来能连、实际发不出去"的假入口。
+    if (cmd === "community_connection") return null as T;
+    if (cmd === "community_connect_start" || cmd === "community_connect_poll") {
+      throw new Error("Web 版不支持「连接社区」（没有本地凭据存储），请使用桌面版。");
+    }
+    if (cmd === "community_publish_note" || cmd === "community_disconnect") {
+      throw new Error("Web 版不支持一键发布到社区，请使用桌面版。");
+    }
+    // 内容指纹同样**如实说不支持**，而且这条不是"懒得做"：Rust 是它的**唯一实现**，
+    // 在 TS 里再写一份哈希就等于两侧各有一份口径，迟早漂成两种指纹
+    // —— 那样同一份内容会被算出两个幂等键，症状是**静默多发一篇**。
+    // 所以宁可这里明确报错，也不做一个"看起来算得出、实际与桌面不一致"的假实现。
+    if (cmd === "community_content_rev") {
+      throw new Error("Web 版不支持计算内容指纹（它由 Rust 侧唯一实现，请使用桌面版）。");
+    }
+    // 传图与发帖是同一道门：同样要"本地凭据 + 不受 CORS 约束的出口"这两样 Web 版没有的东西。
+    if (cmd === "community_upload_attachment") {
+      throw new Error("Web 版不支持向社区上传附件，请使用桌面版。");
+    }
+    // 发布台账是**本地库**里的一行：Web 版没有那个库 ⇒ 如实回"没有台账"，而不是抛错
+    // （它只用来显示"上次发到哪儿了"，抛错会让对话框打不开）。
+    if (cmd === "community_publish_state") return null as T;
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
-    }
-    if (cmd === "plugin_revocations") return [] as T;
+    }    if (cmd === "plugin_revocations") return [] as T;
     if (cmd === "plugin_publisher_keys") return [] as T;
     if (cmd === "plugin_revoked_keys") return [] as T;
     if (cmd === "plugin_facts") return null as T;
@@ -3137,7 +3161,9 @@ export function makeInvoke(store: SqliteStore) {
       if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so same-session import (and the Node smoke test) can read it back.
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
-      return { path: name, size: zip.length } as T;
+      // Web 端整库就是同一个 store，没有"某个空间没解锁"这回事 ⇒ 恒为空数组
+      // （保持与桌面 export_backup 同一个返回契约，界面无需分平台判断）。
+      return { path: name, size: zip.length, skipped: [] } as T;
     }
     if (cmd === "import_backup") {
       // Merge import: each space in the backup (spaces/<id>.db, or a legacy single

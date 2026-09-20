@@ -182,6 +182,76 @@ export interface EmailOpArgs {
   folder: string;
 }
 
+// ---- 一键发布到社区：给前端的形状（令牌不在其中，见 `community_connection` 的注释）----
+
+/** 已连接时的信息：**没有令牌字段** —— 令牌只在本机文件里。 */
+export interface CommunityConnection {
+  base: string;
+  username: string;
+  scope: string;
+  savedAt: string;
+}
+
+export interface CommunityDeviceStart {
+  /** 给用户抄的码（`XXXX-XXXX`）。 */
+  userCode: string;
+  /** 客户端自己轮询用的码。 */
+  deviceCode: string;
+  verifyUrl: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+}
+
+/** 轮询状态机：`approved` 之后后端已把令牌存下来了。 */
+export type CommunityConnectState =
+  | "pending"
+  | "approved"
+  | "expired"
+  | "unknown"
+  | "already_used"
+  | `failed_${number}`;
+
+/** 发布结果。分支按"用户该做什么"分，而不是按 HTTP 状态分。 */
+export type CommunityPublishResult =
+  | { status: "ok"; id: number; slug: string; url: string; idempotencyKey: string }
+  /** 同一个幂等键还在处理中：稍后重试，不是错误。 */
+  | { status: "inFlight" }
+  /** 审核拦下（422），`error` 是社区给的原话。 */
+  | { status: "rejected"; error: string }
+  /** 令牌失效/被撤销 ⇒ 清本地令牌、回到"连接社区"。 */
+  | { status: "unauthorized" }
+  /** 403 `app_token_scope`：撞了 scope 白名单 —— 这是客户端 bug。 */
+  | { status: "outOfScope" }
+  | { status: "unexpected"; httpStatus: number; error: string };
+
+/** 一张附件上传成功后的结果（与 Rust `UploadedAttachment` 同形，serde camelCase）。 */
+export interface CommunityUploadedAttachment {
+  /** 调用方手里那个 hash（本机附件 sha256），用来把正文里的本地引用换成社区地址。 */
+  localHash: string;
+  /** 社区算出来的 hash。正常情况下与 `localHash` 一致（同一份字节的 sha256），但**以它为准**。 */
+  hash: string;
+  /** 写进正文用的地址：**相对路径** `/attachments/<hash>`（社区自己的文档就是这么引用的）。 */
+  url: string;
+  mime: string;
+  size: number;
+}
+
+/**
+ * 一页的**发布台账**（与 Rust `PublishState` 同形）。
+ *
+ * 为什么需要它：发布时那份内容的**指纹**被记在这里，界面才能回答"这份内容发过没有、
+ * 上次发出去的是不是同一份" —— 以及"再发一次是社区回放（不会多一篇）还是新建一篇"
+ * （**P2 之前每次都会新建一篇**，用户更该知道）。台账是**只读**的：写入由后端在发布成功时自己做。
+ */
+export interface CommunityPublishState {
+  pageId: string;
+  slug: string;
+  url: string;
+  /** 发出去的那份内容的**指纹**（与 `community_publish_note` 收到的 `rev` 同源）。 */
+  publishedRev: string;
+  publishedAt: number;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -295,6 +365,75 @@ export interface CommandMap {
       url: string;
     };
   };
+  // 一键发布到社区（客户端侧，`src-tauri/src/community_publish.rs`；契约见 shuyo-community `docs/api.md` §7）。
+  // **不收用户密码**：设备码 → 用户在自己的浏览器里确认 → 换一把 180 天、可撤销、只能发帖的令牌；
+  // 令牌只落在应用数据目录，**不出现在这里的任何类型里**（回给界面的只有"这是谁的授权"）。
+  community_connection: {
+    args: Record<string, never>;
+    result: CommunityConnection | null;
+  };
+  community_connect_start: {
+    args: Record<string, never>;
+    result: CommunityDeviceStart;
+  };
+  /** 轮询一次（界面按 `intervalSeconds` 驱动；批准那一刻后端就把令牌存下来了）。 */
+  community_connect_poll: {
+    args: { deviceCode: string };
+    result: { state: CommunityConnectState; username: string | null };
+  };
+  /** 断开 = 在社区侧**真撤销**那把令牌，再删本地凭据。 */
+  community_disconnect: {
+    args: Record<string, never>;
+    result: { localCleared: boolean; remoteRevoked: boolean; note: string };
+  };
+  /**
+   * 发布一篇笔记。幂等键由后端按 `(noteId, rev)` 算 —— 界面**不要**自己造 key：
+   * 同一个 (笔记, 内容) 必须永远算出同一个键，否则"重试一次多一篇"。
+   * `rev` 必须是 `community_content_rev` 回的**内容指纹**（后端会显式校验 32 位十六进制）。
+   */
+  community_publish_note: {
+    args: { title: string; body: string; tags: string[]; noteId: string; rev: string };
+    result: CommunityPublishResult;
+  };
+  /**
+   * 把正文里的一张**本机附件**传到社区（内容寻址），回一个写进正文用的相对地址。
+   *
+   * 为什么只吃 `hash`、不吃路径：字节要从 `attachments::attachment_bytes` 拿（附件在盘上
+   * 可能是加密的，`fs::read` 得到的是密文 ⇒ 会被社区的魔数白名单挡下，而报错会指向
+   * "不支持的文件类型"这种完全错的方向）。`hash` 是这个应用里附件的唯一身份。
+   *
+   * 白名单只有 png/jpeg/gif/webp/pdf/zip（按魔数判）⇒ **视频传不上去**，
+   * 调用点（发布清单）必须提前如实说，而不是等社区回一句"类型不支持"。
+   */
+  community_upload_attachment: {
+    args: { hash: string };
+    result: CommunityUploadedAttachment;
+  };
+  /**
+   * 读一页的发布台账（**只读、纯本地**：不碰网络、不带令牌）。
+   * 没发过就是 `null`；老库还没建那张表也当 `null`（界面显示"没发过"，而不是打不开）。
+   */
+  community_publish_state: {
+    args: { pageId: string };
+    result: CommunityPublishState | null;
+  };
+  /**
+   * 算一份内容的**指纹**（32 位十六进制）：`(标题, 正文 Markdown, 标签)` → 指纹。
+   *
+   * 为什么这条命令在 Rust 里、前端**不自己算**：哈希一旦两侧各写一份，迟早漂成两种口径，
+   * 而症状是静默的 —— 同内容算出两个指纹 ⇒ 幂等键不同 ⇒ **多发一篇**。所以这里只负责
+   * 把参数递下去、把指纹原样递回来（Rust 是唯一实现，见 `community_publish.rs::content_rev`）。
+   *
+   * ⚠️ `body` 必须是**本地态**正文（图片引用还是 `attachment://…` 的那份，即清单里摆出来的那份）。
+   * 发出去的那份正文会把图片地址换成 `/attachments/<hash>`；拿换过地址的那份算指纹，
+   * 同一篇笔记会因为上传结果不同而算出两个指纹（Rust 侧有专门一条判据说明这件事）。
+   *
+   * 纯函数：不碰网络、不碰磁盘。
+   */
+  community_content_rev: {
+    args: { title: string; body: string; tags: string[] };
+    result: string;
+  };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {
     args: {
@@ -347,7 +486,8 @@ export interface CommandMap {
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };
   // `format` / `algorithm`：本会话写新数据用的密文版本与稳定算法名（§0-C 的算法标识）。
-  // 默认构建恒为 1="xchacha20-poly1305"；国密构建（`--features sm-crypto`）为 2="sm4-cbc+hmac-sm3"。
+  // ★ 2026-09-20 起**默认构建恒为 2="sm4-cbc+hmac-sm3"**（国密已是默认特性，方案 §3.4）；
+  // 只有 `--no-default-features` 的回滚通道才是 1="xchacha20-poly1305"。
   // `space_format` / `space_algorithm`：**当前活动空间**记录在案的密文版本与算法名（0/空串 = 未记录）。
   // §0-C：算法标识要落到空间状态上 —— 界面/诊断得能说出「这个空间的数据是哪一版」，
   // 而不是等到读到某一条才发现读不了。
@@ -554,7 +694,9 @@ export interface CommandMap {
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
-  export_backup: { args: { destPath: string }; result: { path: string; size: number } };
+  // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
+  // 否则用户会把"少数据的备份"当成完整备份。
+  export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };
   export_wiki: { args: { destPath: string }; result: { path: string; size: number; pages: number; files: number } };

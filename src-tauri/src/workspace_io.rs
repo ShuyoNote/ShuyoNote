@@ -73,13 +73,63 @@ fn count_dir(dir: &Path) -> (usize, u64) {
     (n, b)
 }
 
-/// Online-backup `src` into `dst` (WAL-safe).
-fn backup_db(src: &Connection, dst: &Path) -> Result<(), String> {
+/// Online-backup `src` into `dst` (WAL-safe)，**目标可选加同一把钥**。
+///
+/// ⚠️⚠️ 为什么要"可选加钥"（2026-09-20 实测，修 F2）：SQLCipher 的在线备份 API
+/// **要求目标也加同一把钥** —— 源加钥、目标**不加钥**时报
+/// `backup is not supported with encrypted databases`；两边同钥才成功（产物是**密文**）。
+fn backup_db_to(src: &Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
     let mut dst_conn = Connection::open(dst).map_err(|e| e.to_string())?;
+    if let Some(k) = key {
+        dst_conn
+            .execute_batch(&format!("PRAGMA key = \"x'{}'\";", crate::crypto::key_hex(k)))
+            .map_err(|e| e.to_string())?;
+    }
     let backup = rusqlite::backup::Backup::new(src, &mut dst_conn).map_err(|e| e.to_string())?;
     backup
         .run_to_completion(64, std::time::Duration::from_millis(5), None)
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 把 `src` 的**明文**快照写到 `dst`（本模块的契约：zip 里那份 `shuyonote.db` 是明文，
+/// `import_workspace` 正是按 "imported plaintext DB" 写的）。
+///
+/// 加密态下走**两步**（不改变契约、只用仓库已有机制）：
+///   ① 先按"目标同钥"做一次 WAL 安全的**密文**快照（原先这一步就是失败的）；
+///   ② 把这份密文快照搬到 `dst`，再用 `security::convert_space_db(..., false, key)`
+///      **就地解密**成明文 —— 复用它既有的"先校验可读、再原子上换、失败恢复原库"流程
+///      （⚠️ 它是**就地**转换：明文落在传入的那个路径上，所以必须先 copy 到 `dst` 再转，
+///      否则解密结果会落在中转文件上、`dst` 根本不存在）。
+fn snapshot_plaintext(src: &Connection, key: Option<&[u8; 32]>, dst: &Path) -> Result<(), String> {
+    if let Some(k) = key {
+        let mid = crate::tempdir::file("shuyonote-ws-keyed", "db");
+        backup_db_to(src, &mid, Some(k))?;
+        std::fs::copy(&mid, dst).map_err(|e| format!("中转快照落盘失败: {e}"))?;
+        let _ = std::fs::remove_file(&mid);
+        crate::security::convert_space_db(dst, false, Some(k))?;
+    } else {
+        backup_db_to(src, dst, None)?;
+    }
+    // ★ 契约自检：走到这里 `dst` 必须是**不加任何 PRAGMA key 就能打开、且有真实 schema**
+    // 的明文库（zip 成员 `shuyonote.db` 的契约，`import_workspace` 按明文读）。这一句是
+    // "加密态导出"最容易悄悄坏掉的地方：一旦它变成密文、或者根本没写出来，
+    // 导入端就要么报错、要么把密文当明文读进去 —— 两种都不该等到用户导数据时才发现。
+    // （注意：**不能**只靠"打开成功"判断 —— `Connection::open` 会把不存在的文件建成
+    //  空库，空的明文库也能 `SELECT COUNT(*) FROM sqlite_master` 并返回 0。）
+    if !dst.exists() || std::fs::metadata(dst).map(|m| m.len()).unwrap_or(0) == 0 {
+        return Err("导出快照为空（明文快照没有写出来）".to_string());
+    }
+    if crate::security::space_db_is_encrypted(dst) {
+        return Err("导出快照是密文（导出契约要求明文库）".to_string());
+    }
+    let vc = Connection::open(dst).map_err(|e| format!("导出快照不可打开: {e}"))?;
+    let n: i64 = vc
+        .query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get(0))
+        .map_err(|e| format!("导出快照不是明文库（导出契约要求明文）: {e}"))?;
+    if n == 0 {
+        return Err("导出快照里没有任何表（快照不完整）".to_string());
+    }
     Ok(())
 }
 
@@ -155,7 +205,10 @@ pub async fn export_workspace(
     let tmp_db = crate::tempdir::file("shuyonote-ws", "db");
     {
         let conn = db.0.lock().expect("db mutex poisoned");
-        backup_db(&conn, &tmp_db)?;
+        // ⚠️ 加密态必须把**会话密钥**传下去：不带钥去备份加密库会被 SQLCipher 拒绝
+        //（见 `snapshot_plaintext` 注释）。
+        let key = crate::security::key_if_enabled(&conn).map(|k| k.legacy);
+        snapshot_plaintext(&conn, key.as_ref(), &tmp_db)?;
     }
 
     let app2 = app.clone();
@@ -493,6 +546,84 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    /// 进程内唯一的临时目录名（pid + 毫秒 + 自增序号）——测试并行时不能靠固定名字。
+    fn uniq_tmp(tag: &str) -> PathBuf {
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "shuy_wsio_{tag}_{}_{}_{seq}",
+            std::process::id(),
+            crate::db::now_ms()
+        ))
+    }
+
+    /// 建一个带真实 schema 的空间库（`crate::db::migrate`）并写一个页面。
+    fn make_space_db(path: &Path, id: &str) {
+        let c = Connection::open(path).unwrap();
+        crate::db::migrate(&c, id).unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
+             VALUES ('p1', ?1, NULL, 'hi', '{\"root\":{}}', 'hi', 'page', 0, 1, 1, NULL)",
+            [id],
+        )
+        .unwrap();
+        c.close().unwrap();
+    }
+
+    // F2 回归锚点（E1 磁盘加密）：导出工作空间的契约是「zip 里那份 shuyonote.db 是明文」。
+    // 源库加密时也要满足这个契约；而「源加密却不给钥」必须**明确失败**，绝不能产出一个
+    // 看起来成功、实际打不开的坏快照。
+    #[test]
+    fn snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key() {
+        let dir = std::env::temp_dir().join(uniq_tmp("wsenc"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("default.db");
+        make_space_db(&src, "default");
+        let key = crate::crypto::derive_key("hunter2", &crate::crypto::random_salt()).unwrap();
+        crate::security::convert_space_db(&src, true, Some(&key)).unwrap();
+        assert!(crate::security::space_db_is_encrypted(&src));
+
+        // ① 回归锚点：源加密、不给钥 ⇒ SQLCipher 拒绝在线备份。老代码在这里让整个
+        // 「导出工作空间」硬失败（`backup is not supported with encrypted databases`）。
+        let bad = dir.join("bad.db");
+        {
+            let c = Connection::open(&src).unwrap();
+            crate::security::key_conn_with(&c, &key).unwrap();
+            let e = snapshot_plaintext(&c, None, &bad).unwrap_err();
+            assert!(e.contains("backup is not supported"), "意外的错误：{e}");
+        }
+
+        // ② 给钥 ⇒ 产物**不用任何钥**就能读出页面（这才是 zip 成员的契约）。
+        let dst = dir.join("plain.db");
+        {
+            let c = Connection::open(&src).unwrap();
+            crate::security::key_conn_with(&c, &key).unwrap();
+            snapshot_plaintext(&c, Some(&key), &dst).unwrap();
+        }
+        assert!(!crate::security::space_db_is_encrypted(&dst), "导出契约要求明文库");
+        {
+            // 注意：这里**故意**不设任何 PRAGMA key。
+            let c = Connection::open(&dst).unwrap();
+            let t: String = c
+                .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(t, "hi");
+        }
+        // 中转的密文快照不能留在产物目录里。
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains("ws-keyed"))
+            .collect();
+        assert!(leftovers.is_empty(), "中转文件残留：{leftovers:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn extract_workspace_zip_parses_db_meta_att() {

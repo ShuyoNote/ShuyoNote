@@ -58,6 +58,20 @@ if (pristine.includes("SHUYONOTE-GM")) {
 // 见 README 的「P3 还没做的部分」—— 那是 `cipher` 回调，与这里同一文件同一结构体，但需要另一层设计。
 const EDITS = [
   {
+    id: "6 OPENSSL_CIPHER：无条件 SM4 页加密（P3 快路）",
+    anchor: `#define OPENSSL_CIPHER EVP_aes_256_cbc()
+`,
+    add: `/* SHUYONOTE-GM: **无条件**换 SM4 页加密（owner 2026-09-20「无兼容快路」拍板：不做兼容、页加密只有 SM4）。
+** 只改这一处定义** —— 五处使用点（cipher / get_cipher / get_key_sz / get_iv_sz / get_block_sz）都只是引用它，
+** 等价且补丁面最小（少 4 段漂移面）；按快路**不加任何 #ifdef、不加构建开关**。
+** ⚠️ 已知代价（写给下一个人）：这份补丁打在 cargo registry 那份**全机共享**源码上 ⇒ 打过之后，
+** 同一台机器上**任何**后续构建（默认构建、Apple 的 CommonCrypto 构建、别人的 cargo test）都变成 SM4 页。
+** 跑默认门禁前先 node scripts/sm-library-build.mjs --revert（2026-09-20：这条从"行为中性"变成"有后果"，
+** 因为去掉了 #ifdef）。 */
+#define OPENSSL_CIPHER EVP_sm4_cbc()
+`,
+  },
+  {
     id: "1a 枚举/标签：HMAC_SM3",
     anchor: `#define SQLCIPHER_HMAC_SHA512 2
 #define SQLCIPHER_HMAC_SHA512_LABEL "HMAC_SHA512"
@@ -123,9 +137,13 @@ const EDITS = [
     add: `static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) {
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
 
-  /* SHUYONOTE-GM: 同 2a 的能力门（KDF 那张表的 SM3 也取 3，所以复用的是同一个探测口）。 */
+  /* SHUYONOTE-GM: 同 2a 的能力门。⚠️ **探测的是"这次要设的那个算法"，不是 SM3 常量** ——
+  ** 第一版我写成了 get_hmac_sz(ctx->provider_ctx, SQLCIPHER_PBKDF2_HMAC_SM3)，
+  ** 于是"没有 SM3 的 provider"（Apple 的 CommonCrypto 就是）连**默认的** PBKDF2-HMAC-SHA512
+  ** 都会被拒 ⇒ ctx_init 失败 ⇒ PRAGMA key 直接不认那把 key（macOS 上 12+7 条红，2026-09-20 mac 抓出）。
+  ** KDF 与 HMAC 两张表的枚举取值本来就是同一套编号（0/1/2/3），所以用 algorithm 探测与 2a 等价且正确。 */
   if(ctx->provider != NULL && ctx->provider->get_hmac_sz != NULL &&
-     ctx->provider->get_hmac_sz(ctx->provider_ctx, SQLCIPHER_PBKDF2_HMAC_SM3) <= 0) {
+     ctx->provider->get_hmac_sz(ctx->provider_ctx, algorithm) <= 0) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER,
                   "%s: crypto provider does not support kdf algorithm %d", __func__, algorithm);
     return SQLITE_ERROR;

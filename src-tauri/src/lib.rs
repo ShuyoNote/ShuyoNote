@@ -1,5 +1,6 @@
 mod ai;
 mod community;
+mod community_publish;
 mod attachments;
 mod backlinks;
 mod backup;
@@ -7,7 +8,8 @@ mod blocks;
 mod bookmark;
 mod commands;
 mod crypto;
-// 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **只在 `--features sm-crypto` 下编译**（方案 §0-E）。
+// 国密（SM4-CBC ＋ HMAC-SM3）应用层 AEAD —— **2026-09-20 起是默认特性**（方案 §3.4「无兼容快路」）；
+// 要编旧行为（只写 v1）用 `--no-default-features`。
 // 默认包里它整个不存在 ⇒ 默认构建既不多编一个 crate，也不可能写出 v2 密文。
 #[cfg(feature = "sm-crypto")]
 mod crypto_sm;
@@ -513,6 +515,14 @@ pub fn run() {
             commands::render_pdf_page,
             community::fetch_community_post,
             community::fetch_community_json,
+            community_publish::community_connection,
+            community_publish::community_connect_start,
+            community_publish::community_connect_poll,
+            community_publish::community_disconnect,
+            community_publish::community_publish_note,
+            community_publish::community_upload_attachment,
+            community_publish::community_publish_state,
+            community_publish::community_content_rev,
             commands::delete_page,
             commands::move_page,
             search::search,

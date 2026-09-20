@@ -71,6 +71,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // ⚠️ 源码定位/哈希**只有一份实现**（AMD 的纯函数库）——我不再写第三份，免得两侧漂移。
 import { sourceFingerprint } from "./lib/sm-library-source.mjs";
+import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -287,6 +288,20 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
     notices.push(`平台没有默认声明 ⇒ 只报告不判定：${describe(newest)}`);
     return { problems, notices };
   }
+  // ★ 第四格（2026-09-20，AMD 要求加）：**源码带补丁，但这份构建的后端不是 OpenSSL**。
+  //   这一格必须是 notice 而不是红：v2 起补丁的能力门按"本次请求的算法"探测 ⇒
+  //   在没有 SM3 的 provider（Apple 的 CommonCrypto 正是）上补丁是**行为中性**的
+  //   （实测：v2 ＋ CommonCrypto ⇒ `security::` 19 passed / 0 failed，与不打补丁一致）。
+  //   但"产物里有补丁标记"很容易被读成"国密已生效" ⇒ 必须**明说这次用不上**，
+  //   并把两边的证据都摆出来（patch=… 标记 + 后端判定依据）。
+  if (newestMarker && patch.expected !== "absent" && newest.kind === "commoncrypto") {
+    notices.push(
+      `源码带补丁（patch=${newestMarker.patch || "?"} target=${newestMarker.target || "?"} ` +
+        `marker=${newestMarker.marker || "?"}），但**这份构建的后端是 CommonCrypto**（${describe(newest)}）：` +
+        "补丁自 v2 起是**行为中性**的 ⇒ 这**不是错误**，但也**别读成「国密已生效」** —— " +
+        "CommonCrypto 只有 AES，SM3 标签在这条路径上**用不上**（要真生效：给 `OPENSSL_DIR` 编 `sm-library`）",
+    );
+  }
   if (newest.kind === "commoncrypto" || newest.kind === "openssl") {
     if (newest.kind !== expected) {
       problems.push(`声明要 **${expected}**，但**最新**产物是 ${describe(newest)}`);
@@ -392,4 +407,4 @@ export function main() {
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) main();
+if (isMain(import.meta.url)) main();

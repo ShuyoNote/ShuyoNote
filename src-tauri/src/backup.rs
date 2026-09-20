@@ -7,6 +7,10 @@ use tauri::{Emitter, Manager, State};
 pub struct BackupResult {
     pub path: String,
     pub size: i64,
+    /// ★ **被跳过的空间**（2026-09-20 加）：原来这种情况只在 stderr 打一行
+    /// `备份跳过加密空间 …`，用户拿到一个"看起来成功"的包，**里面却没有那些空间的数据**。
+    /// 现在把 `"<spaceId>: <原因>"` 原样带回给调用方，界面必须显示它。
+    pub skipped: Vec<String>,
 }
 
 /// Result of a merge import: how many spaces were imported, and how many had an
@@ -30,13 +34,82 @@ pub struct BackupProgress {
 
 // Create a consistent snapshot of the SQLite database via rusqlite's online
 // backup API (safe under WAL), then zip it with the attachments directory.
-fn backup_db(src: &rusqlite::Connection, dst: &Path) -> Result<(), String> {
+/// Online-backup `src` into `dst`（WAL-safe），**目标可选加同一把钥**。
+///
+/// ⚠️⚠️ 为什么要"可选加钥"（2026-09-20 实测，修 F2）：SQLCipher 的在线备份 API
+/// **要求目标也加同一把钥** —— 源加钥、目标**不加钥**时报
+/// `backup is not supported with encrypted databases`；两边同钥才成功（产物是**密文**，
+/// 这与本模块恢复路径的既有语义一致：加密空间的快照要用会话密钥才打得开）。
+fn backup_db(src: &rusqlite::Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
     let mut dst_conn = rusqlite::Connection::open(dst).map_err(|e| e.to_string())?;
+    if let Some(k) = key {
+        dst_conn
+            .execute_batch(&format!("PRAGMA key = \"x'{}'\";", crate::crypto::key_hex(k)))
+            .map_err(|e| e.to_string())?;
+    }
     let backup = rusqlite::backup::Backup::new(src, &mut dst_conn).map_err(|e| e.to_string())?;
     backup
         .run_to_completion(64, std::time::Duration::from_millis(5), None)
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 给每个空间库做一份在线快照，返回 `(成功的 (spaceId, 快照文件), 被跳过的说明)`。
+///
+/// ★ 为什么要**返回** `skipped` 而不是只打日志（2026-09-20，修 F2）：
+/// E1（磁盘加密）下加密空间需要会话密钥；拿不到钥、或单个空间快照失败时，
+/// 老代码要么让**整个导出硬失败**（`workspace_io` 那条路径），要么**静默少一个空间**
+/// （只在 stderr 打一行）。两种都不是备份产品该有的行为：前者让用户根本导不出，
+/// 后者让用户以为导全了。现在的契约是**能导的导、不能导的明说**。
+fn snapshot_spaces(
+    spaces_dir: &Path,
+    tmp_root: &Path,
+    session_key: Option<&[u8; 32]>,
+) -> Result<(Vec<(String, PathBuf)>, Vec<String>), String> {
+    let mut snapshots: Vec<(String, PathBuf)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    if !spaces_dir.exists() {
+        return Ok((snapshots, skipped));
+    }
+    for entry in std::fs::read_dir(spaces_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".db") {
+            continue;
+        }
+        let id = name.trim_end_matches(".db").to_string();
+        let path = spaces_dir.join(&name);
+        let out = tmp_root.join("spaces").join(&name);
+        let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
+        // 加密空间：连接要加钥，**快照目标也要同一把钥**（见 `backup_db` 注释）。
+        let key = if crate::security::space_db_is_encrypted(&path) {
+            match session_key {
+                Some(k) => Some(k),
+                None => {
+                    skipped.push(format!("{id}: 空间已加密但会话未解锁 ⇒ 这个空间没进备份"));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(k) = key {
+            if let Err(e) = crate::security::key_conn_with(&conn, k) {
+                skipped.push(format!("{id}: 加钥失败（{e}）⇒ 没进备份"));
+                continue;
+            }
+        }
+        // 单个空间的失败**不中断整个备份**，而是记进 `skipped`。
+        if let Err(e) = backup_db(&conn, &out, key) {
+            skipped.push(format!("{id}: 快照失败（{e}）⇒ 没进备份"));
+            continue;
+        }
+        snapshots.push((id, out));
+    }
+    // 输出顺序稳定（`read_dir` 顺序随文件系统），便于测试与产物可比。
+    snapshots.sort();
+    skipped.sort();
+    Ok((snapshots, skipped))
 }
 
 // Count files + total bytes under a directory (recursive), for progress.
@@ -125,31 +198,12 @@ pub async fn export_backup(
     let tmp_meta = tmp_root.join("meta.db");
     {
         let meta_conn = rusqlite::Connection::open(&meta_file).map_err(|e| e.to_string())?;
-        backup_db(&meta_conn, &tmp_meta)?;
+        backup_db(&meta_conn, &tmp_meta, None)?;
     }
 
-    let mut space_snapshots: Vec<(String, PathBuf)> = Vec::new();
-    if spaces_dir.exists() {
-        for entry in std::fs::read_dir(&spaces_dir).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".db") {
-                let id = name.trim_end_matches(".db").to_string();
-                let out = tmp_root.join("spaces").join(&name);
-                let path = crate::db::space_db_path(&app_data_dir, &id);
-                let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
-                // E1: key the connection if this space's DB is SQLCipher-encrypted.
-                // An encrypted space can't be read without the session key, so skip
-                // it (with a log) rather than writing a corrupt/empty snapshot.
-                if let Err(e) = crate::security::key_space_conn(&conn, &path) {
-                    eprintln!("备份跳过加密空间 {id}: {e}");
-                    continue;
-                }
-                backup_db(&conn, &out)?;
-                space_snapshots.push((id, out));
-            }
-        }
-    }
+    // ★ 被跳过的空间要**带回给用户**（原来只在 stderr 打一行，包看起来是成功的）。
+    let (space_snapshots, skipped) =
+        snapshot_spaces(&spaces_dir, &tmp_root, crate::security::session_key().as_ref())?;
 
     let app2 = app.clone();
     let attachments2 = attachments_dir;
@@ -208,6 +262,7 @@ pub async fn export_backup(
             // 报**用户选的位置**，不是我们的中转文件路径（URI 目标下后者对用户没意义）。
             path: dest_path.clone(),
             size,
+            skipped,
         })
     })
     .await
@@ -333,6 +388,35 @@ fn read_workspace_meta(conn: &rusqlite::Connection) -> Result<(String, String, S
     Ok((name, theme, icon))
 }
 
+/// Read the space's display name / theme / icon from **备份快照**, with an actionable
+/// diagnosis when the read fails.
+///
+/// ★ 为什么单独拎一层（2026-09-20，F2 邻接修）：E1 下备份里的空间是**密文快照**。
+/// 「同一台设备、同一口令」恢复没问题；但**另一台设备 / 另一个口令**导出的备份，
+/// `PRAGMA key` 本身**不会报错**（SQLCipher 直到第一次读写才验钥），于是失败点落在
+/// 这次读上，原始报错是 `file is not a database` —— 用户完全无从下手。这里把它翻成
+/// 「这份备份是别的密钥写的」。
+fn read_snapshot_meta(
+    conn: &rusqlite::Connection,
+    snap: &Path,
+    orig_id: &str,
+) -> Result<(String, String, String), String> {
+    read_workspace_meta(conn).map_err(|e| snapshot_read_diagnosis(snap, orig_id, &e))
+}
+
+/// 见 [`read_snapshot_meta`]：密文快照读不出来 ⇒ 说清是「密钥不是这一套」。
+fn snapshot_read_diagnosis(snap: &Path, orig_id: &str, raw: &str) -> String {
+    if crate::security::space_db_is_encrypted(snap) {
+        format!(
+            "备份里的空间 {orig_id} 是密文，当前的口令打不开它（原始报错：{raw}）。\
+             密文备份只能用**导出时那一套密钥**恢复；这通常说明备份来自另一台设备或另一个加密口令。\
+             请在原设备上、用原口令重新导出，或先在那台设备上关闭磁盘加密再导出。"
+        )
+    } else {
+        raw.to_string()
+    }
+}
+
 /// Whether a space with `id` already exists on disk or in meta (collision check).
 fn space_exists(spaces_dir: &Path, meta_file: &Path, id: &str) -> Result<bool, String> {
     if spaces_dir.join(format!("{id}.db")).exists() {
@@ -437,7 +521,7 @@ pub async fn import_backup(
             if let Err(e) = crate::security::key_space_conn(&c, snap) {
                 return Err(format!("恢复加密空间 {orig_id} 需要先解锁: {e}"));
             }
-            read_workspace_meta(&c)?
+            read_snapshot_meta(&c, snap, orig_id)?
         };
         let target_id = if space_exists(&spaces_dir, &meta_file, orig_id)? {
             renamed += 1;
@@ -521,4 +605,134 @@ pub fn write_binary_file(app: tauri::AppHandle, path: String, data: Vec<u8>) -> 
 #[tauri::command]
 pub fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static TMP_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    fn uniq_tmp(tag: &str) -> PathBuf {
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "shuy_bk_{tag}_{}_{}_{seq}",
+            std::process::id(),
+            crate::db::now_ms()
+        ))
+    }
+
+    /// 建一个带真实 schema（`crate::db::migrate`）和一个页面的空间库。
+    fn make_space(path: &Path, id: &str) {
+        let c = rusqlite::Connection::open(path).unwrap();
+        crate::db::migrate(&c, id).unwrap();
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
+             VALUES ('p1', ?1, NULL, 'hi', '{\"root\":{}}', 'hi', 'page', 0, 1, 1, NULL)",
+            [id],
+        )
+        .unwrap();
+        c.close().unwrap();
+    }
+
+    // F2 回归锚点（E1 磁盘加密）：加密空间**必须真的进快照**（目标同钥），
+    // 拿不到钥时必须「少一份但明说」，不能硬失败、更不能静默少一个空间。
+    #[test]
+    fn snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips() {
+        let dir = uniq_tmp("spaces");
+        let _ = std::fs::remove_dir_all(&dir);
+        let spaces = dir.join("spaces");
+        std::fs::create_dir_all(&spaces).unwrap();
+        let out_root = dir.join("out");
+        std::fs::create_dir_all(out_root.join("spaces")).unwrap();
+
+        let plain = spaces.join("plain.db");
+        let enc = spaces.join("enc.db");
+        make_space(&plain, "plain");
+        make_space(&enc, "enc");
+        let key = crate::crypto::derive_key("hunter2", &crate::crypto::random_salt()).unwrap();
+        crate::security::convert_space_db(&enc, true, Some(&key)).unwrap();
+        assert!(crate::security::space_db_is_encrypted(&enc));
+
+        // ① 解锁态：两个空间都进快照；加密那份本身是**密文**，但用同一把钥能读出页面
+        //（证明它是真数据 —— 不是「写坏/写空之后看起来成功」的那种快照）。
+        let (snaps, skipped) = snapshot_spaces(&spaces, &out_root, Some(&key)).unwrap();
+        assert!(skipped.is_empty(), "解锁态不该有跳过：{skipped:?}");
+        assert_eq!(
+            snaps.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["enc", "plain"]
+        );
+        let enc_out = &snaps.iter().find(|(id, _)| id == "enc").unwrap().1;
+        assert!(
+            crate::security::space_db_is_encrypted(enc_out),
+            "加密空间的快照也应是密文（目标必须同钥）"
+        );
+        {
+            let c = rusqlite::Connection::open(enc_out).unwrap();
+            crate::security::key_conn_with(&c, &key).unwrap();
+            let t: String = c
+                .query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(t, "hi");
+        }
+
+        // ② 锁定态（没有会话钥）：明文那份照导，加密那份**记名跳过**（带空间 id 和原因）。
+        let out2 = dir.join("out2");
+        std::fs::create_dir_all(out2.join("spaces")).unwrap();
+        let (snaps2, skipped2) = snapshot_spaces(&spaces, &out2, None).unwrap();
+        assert_eq!(
+            snaps2.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["plain"]
+        );
+        assert_eq!(skipped2.len(), 1, "跳过必须被记下来：{skipped2:?}");
+        assert!(skipped2[0].starts_with("enc:"), "{}", skipped2[0]);
+        assert!(skipped2[0].contains("未解锁"), "{}", skipped2[0]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // F2 邻接（E1 导入）：**另一套密钥**写的密文快照，报错必须是「可操作」的，
+    // 而不是 SQLCipher 的 `file is not a database`。
+    #[test]
+    fn cross_key_encrypted_snapshot_gets_an_actionable_diagnosis() {
+        let dir = uniq_tmp("crosskey");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let snap = dir.join("enc.db");
+        make_space(&snap, "enc");
+        let key_a = crate::crypto::derive_key("passphrase-A", &crate::crypto::random_salt()).unwrap();
+        let key_b = crate::crypto::derive_key("passphrase-B", &crate::crypto::random_salt()).unwrap();
+        crate::security::convert_space_db(&snap, true, Some(&key_a)).unwrap();
+        assert!(crate::security::space_db_is_encrypted(&snap));
+
+        // 同一把钥（同设备同口令）⇒ 正常读出空间名。
+        {
+            let c = rusqlite::Connection::open(&snap).unwrap();
+            crate::security::key_conn_with(&c, &key_a).unwrap();
+            let (name, _, _) = read_snapshot_meta(&c, &snap, "enc").unwrap();
+            assert_eq!(name, "默认空间"); // migrate 播下的那行工作空间名
+        }
+        // 另一把钥（另一台设备/另一个口令）⇒ 读失败，且诊断里必须点明"密钥不是这一套"。
+        {
+            let c = rusqlite::Connection::open(&snap).unwrap();
+            crate::security::key_conn_with(&c, &key_b).unwrap();
+            let e = read_snapshot_meta(&c, &snap, "enc").unwrap_err();
+            assert!(e.contains("密文"), "诊断没说明是密文：{e}");
+            assert!(e.contains("另一台设备"), "诊断没说清成因：{e}");
+            assert!(e.contains("原设备"), "诊断没给出下一步：{e}");
+            assert!(e.contains("enc"), "诊断没带上是哪个空间：{e}");
+        }
+        // 明文快照的原始报错**不能**被套上"密文"的解释（否则就是误诊）。
+        let plain = dir.join("plain.db");
+        make_space(&plain, "plain");
+        {
+            let c = rusqlite::Connection::open(&plain).unwrap();
+            c.execute_batch("PRAGMA foreign_keys=OFF; DELETE FROM workspaces").unwrap();
+            let e = read_snapshot_meta(&c, &plain, "plain").unwrap_err();
+            assert!(!e.contains("密文"), "明文快照被误诊成密文：{e}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

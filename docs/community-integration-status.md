@@ -39,7 +39,7 @@
 | 请求带 `Accept: application/json` | ✅ | 同上（社区只需在**帖子页地址**上做内容协商，应用不用改） |
 | 预览 → 确认 → 落库 | ✅ | `CommunitySaveDialog` 8 条渲染级测试（预览阶段不落库、取消零痕迹、只写一次） |
 | 幂等（同一帖不存第二篇） | ✅ | 搜到候选后**逐字核对**来源地址；4 条测试 |
-| **社区侧提供 JSON** | ⏳ **等社区** | 现在 `/post/<slug>` 只回 HTML、`/api/posts/*.json` 任何 id 都 401。要改的一条写在给社区的一页纸里（内容协商 + `Content-Type`） |
+| **社区侧提供 JSON** | ✅ **已通（2026-09-20）** | 社区 `0.71.24` 起 `GET /post/{slug}` 支持内容协商：带 `Accept: application/json` 返回**落库的原始 Markdown**（`body_markdown`）＋ `Vary: Accept`，机器取数不计浏览；`0.71.25` 修掉上线实测抓到的 `url` 被拼成相对路径（应用会按白名单拒掉）。线上实测 18/18，应用侧另有一条**活判据** `community::tests::live_community_json_is_accepted_by_this_parser`（`#[ignore]`）拿真站点喂自己的解析器。Web 版另需 `Access-Control-Allow-Origin`（社区仓库没有 CORS 先例，**仍未做**，要 owner 拍板） |
 
 ## 三、导入产物（`import`）
 
@@ -70,10 +70,10 @@ URL scheme 导入、**应用 → 分享到社区**。对账如下：
 
 | P0 条目 | 状态 | 卡在哪 |
 |---|---|---|
-| 1. 社区帖子 → 一键存进笔记 | 代码全通（解析/抓取/预览/幂等/落库） | **社区侧要给出 JSON 表示**：帖子页支持 `Accept: application/json`（一条分支），应用这边一行不用改。Web 版另需 `Access-Control-Allow-Origin`（桌面走原生、没有 CORS——别混为一谈） |
+| 1. 社区帖子 → 一键存进笔记 | ✅ **代码与社区侧都通了（2026-09-20）** | 社区 `0.71.24` 起帖子页做内容协商（`Accept: application/json` → 原始 Markdown）、`0.71.25` 修 `url` 相对路径、`0.71.26` 给 JSON 加 `Access-Control-Allow-Origin: *`（Web 版需要）。应用侧一条**活判据** `community::tests::live_community_json_is_accepted_by_this_parser` 拿真站点喂自己的解析器；线上实测 22 条全绿 |
 | 1 的界面验收 | 待做 | 有 GUI 的机器上跑一次「订阅 → 安装」并用帖子链接走一遍「点链接 → 预览 → 确认落库」 |
 | 2. URL scheme 导入（配方/主题/模板） | ✅ 模板这一路通了（清单预览 + 确认才写） | 主题**没有文件格式**（如实说不做）；插件属于分发，走索引订阅 |
-| 3. **应用 → 分享笔记到社区（摘要为主）** | ❌ **没做** | 依赖**社区发帖 API**（现在没有）；而且要**用户自己的凭据**（发帖代表他本人）——这属于"要用户拍板"的一类，不该由 agent 自行决定 |
+| 3. **应用 → 分享笔记到社区**（**整篇正文 ＋ 发布前清单**，owner 2026-09-20 拍板） | ✅ **P0 完成**（分支 `feat/publish-to-community`，**尚未合 `dev`**） | ① **社区侧依赖已解除**（`shuyo-community@0.71.20` 起：`POST /api/posts` ＋ `Idempotency-Key` ＋ `source` 标记 ＋ 设备码应用令牌 ⇒ **不存用户密码**）；② **凭据那半条换了更好的答案**：原写的"要用户自己的凭据"由设备码授权满足（用户网页确认一次，客户端只拿一把 180 天、可撤销、只能发帖的令牌）；③ 已落：后端通道（`c3d9f5af`）、对话框＋入口＋I7 清单＋跨仓活判据（`7bb7c9c3`）、**本地图片先传社区**（`57bd6d64`）、**发布台账回写＋对话框显示**（`94025092`、`e47a6c87`）；④ 判据：`tsc` 0、对话框 28 条、`community_publish::` 12 条、`check:web-commands` 全覆盖。**P1/P2 仍未做**：`rev` 是 `updated_at` 而非内容标识、`PUT` 更新已发布帖子、"线上是否被人改过"。口径与不变式见 [2026-09-20 方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md) |
 | （附带）`compose` 起一份草稿 | — | 已裁定降到 P1（要的是"未保存的编辑器内容"，不是先落库再删） |
 | （附带）托管交接 | ✅ 流程已写 | 发版后把 `plugin-index.fragment.json` 交给托管方，**先传包后传索引**（见 [plugin-hosting.md](plugin-hosting.md)） |
 

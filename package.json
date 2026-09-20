@@ -56,6 +56,8 @@
     "check:pdfjs-shim": "node scripts/check-pdfjs-worker-shim.mjs",
     "check:macos-bundle": "node scripts/check-macos-bundle.mjs",
     "check:linux-bundle": "node scripts/check-linux-bundle.mjs",
+    "check:android-bundle": "node scripts/check-android-bundle.mjs",
+    "android:stage-pdfium": "node scripts/stage-android-pdfium.mjs",
     "check:ps1-ascii": "node scripts/check-ps1-ascii.mjs",
     "check:web-deploy": "node scripts/check-web-deploy.mjs",
     "plugin:fragment": "node scripts/plugin-fragment.mjs",
