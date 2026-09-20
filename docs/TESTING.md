@@ -251,6 +251,24 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   这是 cargo 的预期行为，不是回归——所以基线校验只比较**状态为 passed** 的门禁。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
+- **看到 `plugins::` 大批红，先确认宿主二进制在不在**（2026-09-19：macOS 侧交底、AMD 复现）：
+  干净 worktree / 没编过应用二进制的树里跑 `cargo test --lib` ⇒ `307 passed / 36 failed / 5 ignored`，
+  36 条**全是** `plugins::tests::*`，现场写的是"找不到宿主二进制 `…/target/debug/shuyonote`：请用
+  `cargo test`（会先构建应用二进制），不要用 `cargo test --lib`"。先 `cargo build --bin shuyonote`
+  再跑 `--lib` ⇒ `341 passed / 2 failed`（那 2 条是 PDFium 环境项，与代码无关）。
+  ⚠️ **不要**把这条写成"worktree 一定假红"——AMD 的 `ShuyoNote-bm25` worktree 跑整支是 **343/0/5**，
+  因为那棵树里 `target/debug/` 已经有宿主二进制了。**判据是"宿主二进制在不在"，不是"是不是 worktree"**
+  （macOS 侧最初的措辞就是被这个读数证伪的）。
+- **`cargo` 不在 `PATH` 上，看起来像"夹具坏了"**（macOS 侧 `development.md` 第 7 条，2026-09-19 镜像到本文）：
+  rustup 装在 `~/.cargo/bin`，某些环境（非登录 shell、CI 的裸 exec）不把它带进 `PATH` ⇒ 脚本以
+  `gm-conformance: ❌ 夹具编不过 / spawnSync cargo ENOENT` 的形式失败，读起来完全像夹具本身有问题。
+  `scripts/gm-version-selfcheck.mjs` 里加了兜底：`PATH` 上没有、rustup 默认位置有时补上，并打一行 `!`
+  —— **不静默改环境**（改了就会让"我这台能跑"变成不可复现的读数）。
+- **`import.meta.dirname` 在旧 Node 上是 `undefined`**（2026-09-19，WSL 的 Node 18 实测）：
+  `resolve(import.meta.dirname, "..")` 直接抛
+  `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string` —— 报错文本一个字都没提 Node 版本，
+  读起来像"路径写错了"。它要 Node ≥ 20.11，而本仓要能在 CI/旧 Node 上跑 ⇒ 统一写
+  `dirname(fileURLToPath(import.meta.url))`（`scripts/sm-library-build.mjs` 的注释里也记了这条）。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 

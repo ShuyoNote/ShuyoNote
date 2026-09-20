@@ -17,6 +17,8 @@
 //
 // ## 先量后写：SQLCipher 4.14.0 community 的**实测**行为（本模块的探针，`--ignored --nocapture`）
 //
+// 第一张表量于 **2026-09-19，无 provider 补丁的构建**：
+//
 // | 动作 | 实测结果 |
 // |---|---|
 // | 默认参数 | `cipher_hmac_algorithm = HMAC_SHA512`、`cipher_kdf_algorithm = PBKDF2_HMAC_SHA512` |
@@ -29,10 +31,28 @@
 // 用户以为在用国密，库里其实还是 SHA512/HMAC-SHA512，而本机所有测试都绿（库照常能开、数据照常能读）。
 // ⇒ 所以这一层的判据**不是**"能不能设上"，而是"**设了以后到底生效没有，且不许含糊**"。
 //
+// ## ⚠️ 2026-09-20 更正：那条"**设晚了会坏**"的归因是我读错的，真机制在 `if(ctx)`
+//
+// 补丁落地后，同一份探针在**有补丁的构建**（Tongsuo 后端）上重跑，读数变了：
+//
+// | 动作 | 有补丁的构建 |
+// |---|---|
+// | 标签在 **`PRAGMA key` 之前** | 不报错，**key 之后回显仍是 `HMAC_SHA512`** ⇒ 标签被**静默丢掉** |
+// | 标签在 **`PRAGMA key` 之后** | 不报错，**回显就是 `HMAC_SM3`**，而且连接**照常可读写** |
+//
+// 两行合起来的真机制（源码可对：`sqlcipher_codec_pragma()` 的每个分支都是 `if(ctx) { … }`）：
+//   · **key 之前** codec ctx 还不存在 ⇒ 整块被跳过 ⇒ 语句返回 Ok 而**什么都没做**；
+//   · **key 之后** ctx 存在 ⇒ 真的会落值 —— 而**这个取值认不认识**决定成败：不认识
+//     （无补丁构建上的 `HMAC_SM3`，或任何构建上乱填的值）⇒ `rc` 停在 `SQLITE_ERROR`
+//     ⇒ `sqlcipher_codec_ctx_set_error()` 把连接打进 error state —— **这才是当初被我记成"设晚了"的现象**。
+// ⇒ **正确接线：先 `PRAGMA key`，再设两条 `cipher_*`，然后才做第一次读写**（`set_cipher_key()` 之后、
+//   第一次访问之前）。而"设了到底生效没有"仍然只能看**回显**：上表第一行说明**顺序对了也会被静默丢掉**。
+// 教训（要记进 `docs/TESTING.md` 的那种）：**一次探针同时动了两个变量（先后 × 认不认识），我却只归因了一个。**
+//
 // ## 本模块提供什么
-// `configure_gm_cipher()`：给**还没设 key** 的连接配上国密参数，并**如实回答生效与否**
-// （`Applied` / `Unsupported{回显是什么}`），外加把"标签设晚了"这种用法错误**诊断成人话**而不是
-// 留一句 `SQL logic error`。
+// `configure_gm_cipher()`：给**已设 key、还没做过第一次读写**的连接配上国密参数，并**如实回答生效与否**
+// （`Applied` / `Unsupported{回显是什么}`），外加把"设了一个本构建**不认识**的标签、连接被悄悄打进 error state"
+// 这种用法错误**诊断成人话**，而不是留一句 `SQL logic error`。
 // 它是 P2 的接线点：provider 补丁落地后，同一个函数会自然从 `Unsupported` 翻成 `Applied`，
 // 判据不用改一行 —— **判据写"期望"，不写"现状"**。
 
@@ -91,27 +111,34 @@ fn set_pragma(c: &Connection, stmt: &str) -> Result<(), String> {
     c.execute_batch(stmt).map_err(|e| format!("{stmt} ⇒ {e}"))
 }
 
-/// 给一条**还没设 key** 的连接配上国密加密参数。
+/// 给一条**已设 key、还没做过第一次读写**的连接配上国密加密参数。
+///
+/// ## ⚠️ 调用时机（2026-09-20 实测更正，别再照旧文档接）
+/// 必须在 `PRAGMA key` **之后**、第一次读写**之前**：
+///   · key **之前**设 ⇒ codec ctx 还不存在，`sqlcipher_codec_pragma()` 那层的 `if(ctx)` 整块被跳过
+///     ⇒ 语句返回 Ok 而**什么都没做**（回显仍是 SHA512）—— 这就是"设了却不生效"的静默降级；
+///   · key **之后**设 ⇒ 真的落值（有补丁的构建上回显就是 `HMAC_SM3`）。
+/// 详见文件头那两张表：我第一版把"设晚了会坏"当成顺序问题，真机制是**取值认不认识**。
 ///
 /// ## 返回值只说明"语句被接受、连接没坏"，**不代表生效**
-/// 生效与否要在**设 key 之后**用 `read_gm_cipher_status()` 读回显才能判断（实测：
-/// 未 key 的连接上 `PRAGMA cipher_hmac_algorithm;` **查不出行** —— 这两个值只在加密模式下存在）。
-/// 把"配置"与"验证"分成两步是刻意的：**"设下去了"与"生效了"在这条路上是两件事**。
-///
-/// ## 为什么必须在 `PRAGMA key` **之前**调用
-/// 实测（见文件头表）：标签在 key **之后**设时，语句照样返回 Ok，但连接随即进 error state
-/// —— 用户看到的是若干步之后某个莫名其妙的 `SQL logic error`。所以本函数自己探一下连接健康度，
-/// 把这种用法错误**就地**说清。
+/// 生效与否必须用 `read_gm_cipher_status()` 读回显判断。把"配置"与"验证"分成两步是刻意的：
+/// **"设下去了"与"生效了"在这条路上是两件事**。
 pub fn configure_gm_cipher(c: &Connection) -> Result<(), String> {
-    set_pragma(c, &format!("PRAGMA cipher_hmac_algorithm = {GM_HMAC_LABEL};"))?;
-    set_pragma(c, &format!("PRAGMA cipher_kdf_algorithm = {GM_KDF_LABEL};"))?;
+    configure_cipher_algorithms(c, GM_HMAC_LABEL, GM_KDF_LABEL)
+}
 
-    // 健康度自检：把"标签设晚了"（连接已进过加密路径）与"真不支持"这两种情形分开。
-    // 没有这一步，两种情形在调用方看来都是"设置成了、后面莫名报错"。
+/// `configure_gm_cipher` 的实体（标签当参数传 ⇒ 判据可以拿它去撞"本构建不认识的标签"那条路）。
+fn configure_cipher_algorithms(c: &Connection, hmac: &str, kdf: &str) -> Result<(), String> {
+    set_pragma(c, &format!("PRAGMA cipher_hmac_algorithm = {hmac};"))?;
+    set_pragma(c, &format!("PRAGMA cipher_kdf_algorithm = {kdf};"))?;
+
+    // 健康度自检：把"这个取值本构建不认识 ⇒ 连接被 SQLCipher 打进 error state"与
+    // "语句被接受、后面真的生效了"分开。没有这一步，二者在调用方看来都是"设成了、然后莫名报错"。
     if let Err(e) = c.query_row("SELECT 1", [], |r| r.get::<_, i64>(0)) {
         return Err(format!(
-            "配国密参数后连接已不可用（{e}）—— 多半是**标签设晚了**：\
-             `cipher_*` 必须在 `PRAGMA key` **之前**设；这两个顺序在 SQLCipher 里不会报错，只会静默把连接弄坏"
+            "配国密参数后连接已不可用（{e}）—— 多半是**这个取值本构建不认识**：\
+             SQLCipher 对不认识的算法标签不会响亮拒绝，而是把连接打进 error state（实测：无 provider 补丁的\
+             构建上设 `HMAC_SM3`、或任何构建上乱填一个值，都是这个结果）。请先确认这份构建带 §3.1 provider 补丁"
         ));
     }
     Ok(())
@@ -170,10 +197,12 @@ pub fn generate_sm3_fixture(dest: &std::path::Path) -> Result<(), String> {
     // 写库 + 自证；任何一步失败都要**把临时文件删掉**再返回（不留半成品）
     let write = |tmp: &std::path::Path| -> Result<(), String> {
         let c = Connection::open(tmp).map_err(|e| format!("开临时库失败: {e}"))?;
-        // 顺序：**先配国密参数，再 PRAGMA key**（实测设晚了会把连接弄坏，见文件头那张表）
-        configure_gm_cipher(&c)?;
+        // 顺序（2026-09-20 实测更正）：**先 `PRAGMA key`，再配国密参数，然后才做第一次读写**。
+        // 反过来（先配再 key）在 SQLCipher 里**不会报错**，但标签会被**静默丢掉** —— 那时 codec ctx
+        // 还没建起来，`sqlcipher_codec_pragma()` 的 `if(ctx)` 整块被跳过。见文件头第二张表。
         let key_hex = "07".repeat(32); // 与 mac 的后端夹具同一把 key 习惯，便于人工核对
         set_pragma(&c, &format!("PRAGMA key = \"x'{key_hex}'\";"))?;
+        configure_gm_cipher(&c)?;
 
         // ★ 自证第 ①：这份构建的回显**必须**是国密（否则整份夹具就是假的）
         match read_gm_cipher_status(&c)? {
@@ -235,35 +264,50 @@ mod tests {
     const KEY_PRAGMA: &str =
         "PRAGMA key = \"x'00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff'\";";
 
+    /// 这份构建的国密 provider 生效了吗？—— **不 panic** 的探法。
+    ///
+    /// ⚠️ 为什么不能写成 `configure_gm_cipher(&c).expect(...)`：**没有 provider 补丁的构建上，
+    /// 配置这一步本身就会失败**（`HMAC_SM3` 是它不认识的取值 ⇒ 连接被 SQLCipher 打进 error state）。
+    /// 那个失败**本身就是**"没生效"的证据，不该被当成测试故障。所以：设不上 ⇒ `false`。
+    fn provider_applied() -> bool {
+        let c = fresh();
+        if set_pragma(&c, KEY_PRAGMA).is_err() {
+            return false;
+        }
+        if configure_gm_cipher(&c).is_err() {
+            return false;
+        }
+        read_gm_cipher_status(&c).map(|s| s.is_applied()).unwrap_or(false)
+    }
+
     /// ★ 判据 1：**"设下去了" ≠ "生效了"** —— 只有在**回显就是国密标签**时才允许算生效。
     ///
-    /// 判据写的是**期望**（不是现状）：provider 补丁（P2）落地后，这条会自动从 `Unsupported` 那一支
-    /// 翻到 `Applied` 那一支，**一行都不用改**；而在补丁之前，它必须如实报"未生效"并把回显带出来。
+    /// 判据写的是**期望**（不是现状）：provider 补丁（P2）落地后，`provider_applied()` 会从 false 翻成 true，
+    /// 下面两支自动换边，**一行都不用改**。
+    ///
+    /// 顺序按 2026-09-20 的更正读数：**key → 配国密参数 → 第一次读写**（先配再 key 会被静默丢掉，见判据 5）。
     #[test]
     fn gm_cipher_reports_applied_only_when_the_echo_matches() {
         let c = fresh();
-        configure_gm_cipher(&c).expect("配置国密参数不该报错");
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
-        let st = read_gm_cipher_status(&c).expect("设 key 之后必须读得出状态");
-
-        match &st {
-            GmProviderStatus::Applied { hmac, kdf } => {
-                // 生效时必须**回显就是它**（不能只看"语句没报错"）
-                assert_eq!(hmac, GM_HMAC_LABEL, "回显的 HMAC 算法必须就是国密标签");
-                assert_eq!(kdf, GM_KDF_LABEL, "回显的 KDF 算法必须就是国密标签");
+        if provider_applied() {
+            // ① 有 provider：配置必须成功，且**回显就是国密标签**（不能只看"语句没报错"）
+            configure_gm_cipher(&c).expect("有 provider 的构建上配置不该报错");
+            match read_gm_cipher_status(&c).expect("设 key 之后必须读得出状态") {
+                GmProviderStatus::Applied { hmac, kdf } => {
+                    assert_eq!(hmac, GM_HMAC_LABEL, "回显的 HMAC 算法必须就是国密标签");
+                    assert_eq!(kdf, GM_KDF_LABEL, "回显的 KDF 算法必须就是国密标签");
+                }
+                other => panic!("provider 已生效却没报 Applied：{other:?}"),
             }
-            GmProviderStatus::Unsupported { hmac, kdf, note } => {
-                // 未生效时：回显必须是"别的算法"（这就是静默降级的证据），且说明不能为空
-                assert_ne!(hmac, GM_HMAC_LABEL, "回 Unsupported 却回显了国密标签 —— 状态判定自相矛盾");
-                assert_ne!(kdf, GM_KDF_LABEL, "回 Unsupported 却回显了国密标签 —— 状态判定自相矛盾");
-                assert!(!note.is_empty(), "未生效时必须给出可读的原因");
-                // 实测现状：默认构建（无 provider 补丁）回显 HMAC_SHA512 —— 写进断言，
-                // 这样"哪天悄悄变了"（例如有人加了标签却接错算法）会立刻暴露
-                assert_eq!(hmac, "HMAC_SHA512", "默认构建的回显应为 HMAC_SHA512");
-                assert_eq!(kdf, "PBKDF2_HMAC_SHA512", "默认构建的回显应为 PBKDF2_HMAC_SHA512");
-            }
+        } else {
+            // ② 没 provider：这个取值不被认识 ⇒ 必须**响亮失败**（而不是"设成了、其实没生效"）
+            let e = configure_gm_cipher(&c).expect_err("没有 provider 时配置必须响亮失败");
+            assert!(
+                e.contains("不认识") || e.contains("error state"),
+                "失败原因要能指向「取值本构建不认识」，实际是：{e}"
+            );
         }
-        assert_eq!(st.is_applied(), matches!(st, GmProviderStatus::Applied { .. }));
     }
 
     /// ★ 判据 2：**未 key 的连接读不出状态** ⇒ 必须报错并点明"先设 key"。
@@ -280,38 +324,79 @@ mod tests {
 
     /// ★ 判据 3：配过国密参数的连接**仍然可用**（P2 的接线点就在这个位置）。
     ///
-    /// 这条挡的是"配完就坏"：实测**标签设晚了**会坏，所以这条同时也是顺序约束的哨兵。
+    /// 两支都要能跑：有 provider ⇒ 配完照常读写；没有 ⇒ **配的时候就必须响亮失败**（而不是"配成功、
+    /// 之后某一步莫名其妙的 `SQL logic error`"）。
     #[test]
     fn gm_cipher_keeps_the_connection_usable() {
         let c = fresh();
-        configure_gm_cipher(&c).expect("配置不该报错");
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
-        c.execute_batch("CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (7);")
-            .expect("配过国密参数的连接必须还能建表写值");
-        let n: i64 = c.query_row("SELECT x FROM t", [], |r| r.get(0)).expect("必须还能读");
-        assert_eq!(n, 7);
+        match configure_gm_cipher(&c) {
+            Ok(()) => {
+                c.execute_batch("CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (7);")
+                    .expect("配过国密参数的连接必须还能建表写值");
+                let n: i64 = c.query_row("SELECT x FROM t", [], |r| r.get(0)).expect("必须还能读");
+                assert_eq!(n, 7);
+            }
+            Err(e) => {
+                assert!(
+                    e.contains("不认识") || e.contains("error state"),
+                    "没 provider 时应当是「取值不认识」这条响亮失败，实际是：{e}"
+                );
+            }
+        }
     }
 
-    /// ★ 判据 4：**用法错误要诊断成人话**。
+    /// ★ 判据 4：**本构建不认识的算法标签**要诊断成人话。
     ///
-    /// 实测：在 `PRAGMA key` 之后设 `cipher_*`，SQLCipher **不报错**，但连接进 error state，
+    /// 实测（2026-09-19 在无补丁构建上量到、2026-09-20 更正归因）：不认识的取值**不会**被响亮拒绝 ——
+    /// 语句返回 Ok，但 `rc` 停在 `SQLITE_ERROR` ⇒ `sqlcipher_codec_ctx_set_error()` 把连接打进 error state，
     /// 之后每个读写都是 `SQL logic error`。若这里也静默通过，排查成本会很高（错点离原因很远）。
+    ///
+    /// ⚠️ 这条**不能用国密标签**判：在有补丁的构建上 `HMAC_SM3` 是**认识**的（那时不该报错）。
+    /// 用乱填的值 ⇒ 两种构建上都成立，判据才不随构建漂移。
     #[test]
-    fn gm_cipher_diagnoses_the_too_late_mistake() {
+    fn gm_cipher_diagnoses_an_unknown_label_killing_the_connection() {
         let c = fresh();
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
-        let e = configure_gm_cipher(&c).expect_err("标签设晚了必须报错，而不是静默把连接弄坏");
+        let e = configure_cipher_algorithms(&c, "NOT_A_REAL_ALGO", "NOT_A_REAL_ALGO")
+            .expect_err("不认识的标签必须报错，而不是静默把连接弄坏");
         assert!(
-            e.contains("设晚了") || e.contains("之前"),
-            "错误信息要点明顺序问题，实际是：{e}"
+            e.contains("不认识") || e.contains("error state"),
+            "错误信息要点明「取值不认识 ⇒ 连接进 error state」，实际是：{e}"
         );
     }
 
-    /// ★ 判据 5：`describe()` 是给界面/状态面用的一句话 —— 未生效时必须**说得出"没生效"**。
+    /// ★ 判据 5（2026-09-20 新增）：**`PRAGMA key` 之前设的标签会被静默丢掉** ⇒ 接线点必须在 key 之后。
+    ///
+    /// 这条钉的是 P2 最容易接错的一格：顺序反了**不会报任何错**，只是"回显还是 SHA512"——
+    /// 也就是我们一路在防的静默降级。它同时也是那条被我读错的归因的**回归判据**：
+    /// 当初记成"标签设晚了会坏"，真机制是"`if(ctx)` 把 key 之前的设置整块跳过"。
+    #[test]
+    fn gm_labels_before_the_key_are_silently_dropped() {
+        let c = fresh();
+        // 先配（错的顺序）——这一步**不会**报错，这正是它危险的地方
+        configure_gm_cipher(&c).expect("key 之前配置不该报错（它只是什么都不做）");
+        set_pragma(&c, KEY_PRAGMA).expect("设 key");
+        match read_gm_cipher_status(&c).expect("读状态（连接是健康的，回显读得到）") {
+            GmProviderStatus::Applied { hmac, kdf } => panic!(
+                "key 之前设的标签居然生效了（{hmac}/{kdf}）—— SQLCipher 行为变了，接线顺序的结论要重量一遍"
+            ),
+            GmProviderStatus::Unsupported { hmac, kdf, .. } => {
+                // 这就是**静默降级**的原样：连接健康、语句没报错、盘上仍是默认那套
+                assert_eq!(hmac, "HMAC_SHA512", "被悄悄丢掉之后回显应当还是默认算法");
+                assert_eq!(kdf, "PBKDF2_HMAC_SHA512", "被悄悄丢掉之后回显应当还是默认算法");
+            }
+        }
+    }
+
+    /// ★ 判据 6：`describe()` 是给界面/状态面用的一句话 —— 未生效时必须**说得出"没生效"**。
+    ///
+    /// 用**连接健康**的那种未生效来判文案（key 之前设标签 ⇒ 被静默丢掉）：这样"读得到回显、但没生效"
+    /// 这条支路在任何构建上都跑得起来（没 provider 的构建上若按 key→配置 的顺序，连接会先被弄坏）。
     #[test]
     fn gm_status_describes_the_unsupported_case_loudly() {
         let c = fresh();
-        configure_gm_cipher(&c).expect("配置不该报错");
+        configure_gm_cipher(&c).expect("key 之前配置不该报错");
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
         let st = read_gm_cipher_status(&c).expect("读状态");
         let s = st.describe();
@@ -323,10 +408,10 @@ mod tests {
         }
     }
 
-    /// ★ 判据 6：**没有 provider 补丁的构建上，生成器必须拒绝、且不留文件**。
+    /// ★ 判据 7：**没有 provider 补丁的构建上，生成器必须拒绝、且不留文件**。
     ///
     /// 这条是"自证"逻辑本身的判据 —— 今天就能跑、今天必须绿；补丁落地后它自动变成
-    /// "生成器应当成功"（见判据 7），**判据写的是期望**。
+    /// "生成器应当成功"（见判据 8），**判据写的是期望**。
     #[test]
     fn sm3_fixture_generator_refuses_without_the_provider_and_leaves_nothing() {
         let dir = std::env::temp_dir().join(format!(
@@ -340,15 +425,9 @@ mod tests {
         let dest = dir.join("fixture.db");
         let r = generate_sm3_fixture(&dest);
 
-        // 这份构建（无补丁）的回显是 SHA512 ⇒ 必须拒绝
-        let probe = {
-            let c = fresh();
-            configure_gm_cipher(&c).expect("配置");
-            set_pragma(&c, KEY_PRAGMA).expect("设 key");
-            read_gm_cipher_status(&c).expect("读状态")
-        };
-        if probe.is_applied() {
-            // 补丁已落地：生成器**应当成功**（判据 7 会要求夹具确实存在）
+        // 这份构建的回显是不是国密（**不 panic** 的探法：没 provider 时"配置"这一步自己就会失败）
+        if provider_applied() {
+            // 补丁已落地：生成器**应当成功**（判据 8 会要求夹具确实存在）
             r.expect("provider 已生效时生成器不该失败");
             assert!(dest.exists(), "生成成功却没有夹具文件");
         } else {
@@ -363,16 +442,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ★ 判据 7：**补丁落地之后，夹具必须真的在仓库里**。
+    /// ★ 判据 8：**补丁落地之后，夹具必须真的在仓库里**。
     ///
     /// 今天它是 no-op（前置条件"这份构建有 provider"不成立）；补丁一落地它立刻变成硬要求 ——
     /// 这样"夹具忘了生成"不会变成一条谁都不看的跳过（mac 的原话：跳过多了没人再看）。
     #[test]
     fn sm3_fixture_must_exist_once_the_provider_is_applied() {
-        let c = fresh();
-        configure_gm_cipher(&c).expect("配置");
-        set_pragma(&c, KEY_PRAGMA).expect("设 key");
-        if read_gm_cipher_status(&c).expect("读状态").is_applied() {
+        if provider_applied() {
             assert!(
                 sm3_fixture_path().exists(),
                 "这份构建的国密 provider **已生效**，但 {} 不存在 ⇒ 请用 `cargo test --lib gm_provider::tests::gen_sm3_fixture -- --ignored` 生成它，\
@@ -382,6 +458,54 @@ mod tests {
         } else {
             // 未生效：不假装通过，把"为什么今天不需要它"打出来（`--nocapture` 可见）
             println!("（跳过要求：这份构建的国密 provider 未生效 ⇒ 夹具按设计还不该存在）");
+        }
+    }
+
+    /// ★ 判据 9：夹具的**双向**判据 —— 有 provider 的构建必须读得开它，没有的必须读不开。
+    ///
+    /// "夹具存在"只证明有人写过文件；**"默认算法读不开它"才是"这份密文真的是国密那套"的证据**。
+    /// 但没有 provider 的构建上跑不了第一支，有 provider 的构建上跑不了第二支 ⇒ 判据按**当前构建**分派，
+    /// 两支都留着，谁在哪台上跑都能出一半的读数（这也是 mac 那边要跑的另一半）。
+    #[test]
+    fn sm3_fixture_is_readable_only_with_the_gm_provider() {
+        let path = sm3_fixture_path();
+        if !path.exists() {
+            println!("（夹具还不存在 ⇒ 判据 8 会负责要求它；这里不重复报）");
+            return;
+        }
+        let key_hex = "07".repeat(32);
+        let key = format!("PRAGMA key = \"x'{key_hex}'\";");
+
+        // 读 A：**默认算法**（不设任何 cipher_*）读它
+        let default_read = {
+            let c = Connection::open(&path).expect("开夹具");
+            set_pragma(&c, &key).expect("设 key");
+            c.query_row("SELECT count(*) FROM pages", [], |r| r.get::<_, i64>(0))
+        };
+
+        // 读 B：**国密参数**读它（顺序：key → 配置）
+        // ⚠️ 没有 provider 的构建上这一步**会**失败（不认识的标签 ⇒ 连接进 error state）——
+        //    所以这里不 expect，把结果原样带出来；有 provider 时才断言它必须成功。
+        let gm_read = (|| -> Result<i64, String> {
+            let c = Connection::open(&path).map_err(|e| e.to_string())?;
+            set_pragma(&c, &key)?;
+            configure_gm_cipher(&c)?;
+            c.query_row("SELECT count(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())
+        })();
+
+        let has_provider = provider_applied();
+
+        if has_provider {
+            let n = gm_read.expect("有 provider 的构建必须能按国密参数读开夹具");
+            assert!(n >= 2, "夹具里应当有两行数据，读到 {n}");
+            println!("夹具读数（有 provider）：默认算法 {default_read:?}／国密参数 {n} 行");
+        } else {
+            assert!(
+                default_read.is_err(),
+                "**没有** provider 的构建居然按默认算法读开了这份夹具 ⇒ 它根本不是国密写的（假夹具）"
+            );
+            println!("夹具读数（无 provider）：默认算法 {default_read:?} ⇒ 读不开，符合预期");
         }
     }
 
@@ -463,11 +587,12 @@ mod tests {
         }
     }
 
-    /// 探针：**顺序**是不是关键 —— 国密标签在 `PRAGMA key` **之前**设，行为会不会不同？
+    /// 探针：**顺序**是不是关键 —— 国密标签在 `PRAGMA key` **之前**／**之后**设，行为会不会不同？
     ///
-    /// 为什么值得单独量：SQLCipher 的 cipher 参数只在"第一次真正访问库"之前生效；
-    /// 若标签只能在 key 之前设，那 P2 的接线点就必须在 `set_cipher_key()` **之前**，
-    /// 而"设晚了"这件事不能靠读文档确认 —— 它会安静地什么都不做（见探针 1）。
+    /// ★ 这个探针正是 2026-09-20 那次更正的读数来源：**key 之前设 = 被静默丢掉；key 之后设 = 真的生效**
+    /// （有 provider 补丁的构建上回显 `HMAC_SM3`、连接照常可读写）。当初我只归因了"顺序"，
+    /// 其实同时动了第二个变量：**这个取值本构建认不认识**（见文件头第二张表）。
+    /// ⇒ 结论：P2 的接线点 = `set_cipher_key()` **之后**、第一次读写之前；"设上了没有"只能看回显。
     #[test]
     #[ignore = "探针：读数工具，不是判据"]
     fn probe_label_before_key_vs_after() {

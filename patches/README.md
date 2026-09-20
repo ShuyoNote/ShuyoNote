@@ -1,10 +1,42 @@
-# `patches/` —— 我们对第三方源码的补丁（**目前是空的，第一个补丁还没写**）
+# `patches/` —— 我们对第三方源码的补丁
 
-## 这里将要放什么
+## 这里放什么
 
 | 文件 | 内容 | 状态 |
 |---|---|---|
-| `0001-sqlcipher-sm3-provider.patch` | 给 **SQLCipher** 加国密两格：`cipher_hmac_algorithm = HMAC_SM3`、`cipher_kdf_algorithm = PBKDF2_HMAC_SM3`（方案 §3.1 那张表：枚举 ＋ 回显分支 ＋ `provider.h` 的 `hmac`/`kdf`/`cipher`/`get_hmac_sz` 回调） | **未写**（P2/P3 主体，AMD 认领） |
+| `0001-sqlcipher-sm3-provider.patch` | 给 **SQLCipher** 加国密两格：`cipher_hmac_algorithm = HMAC_SM3`、`cipher_kdf_algorithm = PBKDF2_HMAC_SM3`（方案 §3.1 那张表：枚举 ＋ 回显分支 ＋ OpenSSL provider 的 `hmac`/`kdf`/`get_hmac_sz` 回调 ＋ **一道能力门**） | **已写**（2026-09-20，20 段改动 / 213 行 diff；生成器 `patches/tools/make-sm3-provider-patch.mjs`） |
+
+## 怎么用（应用与读法都固定下来）
+
+```bash
+node scripts/sm-library-build.mjs --openssl-dir <Tongsuo 前缀>   # 幂等打补丁 → 清 libsqlite3-sys/本 crate → 构建
+node scripts/sm-library-build.mjs --print-source-sha256           # 打印"将要编译的那份源码"的哈希（**打完补丁后**那份）
+node scripts/sm-library-build.mjs --openssl-dir <p> --check       # 只核对，不构建
+```
+
+- 应用者只有一个：`scripts/sm-library-build.mjs`（`git apply -p1`，失败退 `patch -p1`），三态如实报
+  `already / applied / absent`；**打完会复扫标记**（"退出码 0" ≠ "文件里有那行"）。胶水自己的判据见
+  `scripts/lib/sm-library-patch.test.mjs`（6 条；其中一条的存在就是为了让"复扫标记"成为**承重**判据）。
+- 补丁**不手写**：`patches/tools/make-sm3-provider-patch.mjs` 用 20 段锚点替换生成，每段断言"锚点恰好出现一次"
+  ⇒ SQLCipher 升级时它**当场失败**，而不是生成一份看着像补丁的废纸。
+- 补丁对应 **libsqlite3-sys 0.38.2 的 SQLCipher 合并文件**（`sqlite3.c` 9.6 MB；方案 §3.1 记的行号
+  L109358 / L112304 / L113961 / L114074 与它能对上）。
+- **能力门（本补丁的关键一处）**：`sqlcipher_codec_ctx_set_hmac_algorithm` / `set_kdf_algorithm` 里加了一句
+  "当前 provider 算不了这个算法就**不落值**"（探测口是 `get_hmac_sz()`，它对不支持的算法返回 0）。
+  没有它，光加标签的话，在 CommonCrypto / libtomcrypt 后端上 `PRAGMA cipher_hmac_algorithm = HMAC_SM3`
+  也会**被接受**——回显 SM3、实际算别的（或 `hmac_sz=0` 把保留区算错）。对既有三种算法**零行为变化**。
+
+⚠️ **实测（2026-09-20，WSL/Tongsuo 第一轮）：产物标记 ≠ "编出来了"。** 那一轮 `libsqlite3-sys` **编译失败**
+（生成器漏抄了 `#define SQLCIPHER_HMAC_SHA512` 那两行原样上下文），而本 crate 的构建脚本照样打出了
+`cargo:warning=… patch applied …` —— 因为那一格判的是"**源码里有没有标记**"，不是"SQLCipher 编没编过"。
+⇒ 读法：`② 补丁在不在` 只证"源码那一份是对的"；**"国密版真的编出来了"要由构建退出码 ＋ `① 后端是谁` ＋ `③ 真的生效没有` 一起回答**。
+
+⚠️ **P3（SM4 页加密）不是"顺手加一个分支"**（2026-09-20 实测源码结构）：`sqlcipher_provider` 的 `cipher` 回调
+签名是 `(ctx, mode, key, key_sz, iv, in, in_sz, out)` —— **没有 algorithm 参数**；页加密算法由
+`#define OPENSSL_CIPHER EVP_aes_256_cbc()` 在**编译期**钉死；而本版 SQLCipher **没有** `cipher_algorithm` PRAGMA
+（`cipher_settings` 也只回显 hmac/kdf 两张表）。⇒ 上 SM4 页加密要么走**编译期切换**（`#ifdef` 换
+`EVP_sm4_cbc()`，宏经 `CFLAGS` 传进去），要么给 provider 结构体**加 algorithm 参数并打通 codec 层**（更贵、
+更远离上游）。这比方案 §3.1 第 4 项那句"同一文件同一结构体"要重，**P3 排期要按它重估**。
 
 补丁对象 = **`libsqlite3-sys` 将要编译的那份 SQLCipher 源码**（默认在 cargo registry：
 `~/.cargo/registry/src/*/libsqlite3-sys-<版本>/sqlcipher/`）。

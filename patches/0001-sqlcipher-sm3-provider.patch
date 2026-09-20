@@ -1,0 +1,218 @@
+SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algorithm / cipher_kdf_algorithm）
+================================================================================
+生成者：patches/tools/make-sm3-provider-patch.mjs（在干净的 sqlite3.c 上跑）
+应用者：scripts/sm-library-build.mjs（`git apply -p1`，在 sqlcipher/ 目录里；幂等）
+判据：src-tauri/build.rs 扫 SQLCIPHER_HMAC_SM3_LABEL 标记；运行期判据在 src-tauri/src/gm_provider.rs
+本补丁**不含** SM4 页加密（P3）—— 见 patches/README.md「P3 还没做的部分」。
+--- a/sqlite3.c
++++ b/sqlite3.c
+@@ -109360,6 +109360,12 @@
+ #define SQLCIPHER_HMAC_SHA256_LABEL "HMAC_SHA256"
+ #define SQLCIPHER_HMAC_SHA512 2
+ #define SQLCIPHER_HMAC_SHA512_LABEL "HMAC_SHA512"
++/* SHUYONOTE-GM BEGIN (patches/0001-sqlcipher-sm3-provider.patch)
++** 国密取值。注意 hmac 与 kdf 两张表**各自独立编号**（各自 0/1/2），本补丁新增的 SM3 在两张表里都取 3；
++** 这不是巧合可用，而是 provider 的 `get_hmac_sz(ctx, algorithm)` 用**同一个 int 判"能不能算"**，
++** 下面两处 setter 里的能力门正是依赖这一点（见 2a/2b）。 */
++#define SQLCIPHER_HMAC_SM3 3
++#define SQLCIPHER_HMAC_SM3_LABEL "HMAC_SM3"
+ 
+ 
+ #define SQLCIPHER_PBKDF2_HMAC_SHA1 0
+@@ -109368,6 +109374,8 @@
+ #define SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL "PBKDF2_HMAC_SHA256"
+ #define SQLCIPHER_PBKDF2_HMAC_SHA512 2
+ #define SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL "PBKDF2_HMAC_SHA512"
++#define SQLCIPHER_PBKDF2_HMAC_SM3 3
++#define SQLCIPHER_PBKDF2_HMAC_SM3_LABEL "PBKDF2_HMAC_SM3"
+ 
+ typedef struct sqlcipher_provider sqlcipher_provider;
+ struct sqlcipher_provider {
+@@ -110791,6 +110799,17 @@
+ static int sqlcipher_codec_ctx_set_hmac_algorithm(codec_ctx *ctx, int algorithm) {
+   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+ 
++  /* SHUYONOTE-GM: **能力门** —— 当前 provider 算不了这个算法就**不落值**。
++  ** 不加这道门，只加标签的话，"设了 HMAC_SM3" 在 CommonCrypto/libtomcrypt 后端上也会**被接受**：
++  ** 回显是 SM3、真算的是别的（或 hmac_sz=0 直接把保留区算错）—— 正是我们要防的**静默降级**。
++  ** 三个 provider 的 get_hmac_sz() 对既有三种算法一律 > 0 ⇒ 对老路径**零行为变化**。 */
++  if(ctx->provider != NULL && ctx->provider->get_hmac_sz != NULL &&
++     ctx->provider->get_hmac_sz(ctx->provider_ctx, algorithm) <= 0) {
++    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER,
++                  "%s: crypto provider does not support hmac algorithm %d", __func__, algorithm);
++    return SQLITE_ERROR;
++  }
++
+   ctx->hmac_algorithm = algorithm;
+   return sqlcipher_codec_ctx_reserve_setup(ctx);
+ }
+@@ -110798,6 +110817,14 @@
+ static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) {
+   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
+ 
++  /* SHUYONOTE-GM: 同 2a 的能力门（KDF 那张表的 SM3 也取 3，所以复用的是同一个探测口）。 */
++  if(ctx->provider != NULL && ctx->provider->get_hmac_sz != NULL &&
++     ctx->provider->get_hmac_sz(ctx->provider_ctx, SQLCIPHER_PBKDF2_HMAC_SM3) <= 0) {
++    sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER,
++                  "%s: crypto provider does not support kdf algorithm %d", __func__, algorithm);
++    return SQLITE_ERROR;
++  }
++
+   ctx->kdf_algorithm = algorithm;
+   return SQLITE_OK;
+ }
+@@ -112311,6 +112338,8 @@
+           rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA256);
+         } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
+           rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA512);
++        } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SM3_LABEL) == 0) {
++          rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SM3);
+         }
+         if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+         rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
+@@ -112323,6 +112352,8 @@
+           sqlcipher_vdbe_return_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA256_LABEL, P4_TRANSIENT);
+         } else if(algorithm == SQLCIPHER_HMAC_SHA512) {
+           sqlcipher_vdbe_return_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA512_LABEL, P4_TRANSIENT);
++        } else if(algorithm == SQLCIPHER_HMAC_SM3) {
++          sqlcipher_vdbe_return_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SM3_LABEL, P4_TRANSIENT);
+         }
+       }
+     }
+@@ -112336,6 +112367,8 @@
+         default_hmac_algorithm = SQLCIPHER_HMAC_SHA256;
+       } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
+         default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
++      } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SM3_LABEL) == 0) {
++        default_hmac_algorithm = SQLCIPHER_HMAC_SM3;
+       }
+     } else {
+       if(default_hmac_algorithm == SQLCIPHER_HMAC_SHA1) {
+@@ -112344,6 +112377,8 @@
+         sqlcipher_vdbe_return_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA256_LABEL, P4_TRANSIENT);
+       } else if(default_hmac_algorithm == SQLCIPHER_HMAC_SHA512) {
+         sqlcipher_vdbe_return_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA512_LABEL, P4_TRANSIENT);
++      } else if(default_hmac_algorithm == SQLCIPHER_HMAC_SM3) {
++        sqlcipher_vdbe_return_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SM3_LABEL, P4_TRANSIENT);
+       }
+     }
+   }else
+@@ -112357,6 +112392,8 @@
+           rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA256);
+         } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
+           rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
++        } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SM3_LABEL) == 0) {
++          rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SM3);
+         }
+         if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
+       } else {
+@@ -112366,6 +112403,8 @@
+           sqlcipher_vdbe_return_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL, P4_TRANSIENT);
+         } else if(ctx->kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
+           sqlcipher_vdbe_return_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL, P4_TRANSIENT);
++        } else if(ctx->kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SM3) {
++          sqlcipher_vdbe_return_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SM3_LABEL, P4_TRANSIENT);
+         }
+       }
+     }
+@@ -112379,6 +112418,8 @@
+         default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA256;
+       } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
+         default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
++      } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SM3_LABEL) == 0) {
++        default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SM3;
+       }
+     } else {
+       if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA1) {
+@@ -112387,6 +112428,8 @@
+         sqlcipher_vdbe_return_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL, P4_TRANSIENT);
+       } else if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
+         sqlcipher_vdbe_return_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL, P4_TRANSIENT);
++      } else if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SM3) {
++        sqlcipher_vdbe_return_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SM3_LABEL, P4_TRANSIENT);
+       }
+     }
+   }else
+@@ -112535,6 +112578,8 @@
+         pragma = sqlite3_mprintf("PRAGMA cipher_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA256_LABEL);
+       } else if(algorithm == SQLCIPHER_HMAC_SHA512) {
+         pragma = sqlite3_mprintf("PRAGMA cipher_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA512_LABEL);
++      } else if(algorithm == SQLCIPHER_HMAC_SM3) {
++        pragma = sqlite3_mprintf("PRAGMA cipher_hmac_algorithm = %s;", SQLCIPHER_HMAC_SM3_LABEL);
+       }
+       sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
+ 
+@@ -112546,6 +112591,8 @@
+         pragma = sqlite3_mprintf("PRAGMA cipher_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL);
+       } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
+         pragma = sqlite3_mprintf("PRAGMA cipher_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
++      } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SM3) {
++        pragma = sqlite3_mprintf("PRAGMA cipher_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SM3_LABEL);
+       }
+       sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
+ 
+@@ -112573,6 +112620,8 @@
+       pragma = sqlite3_mprintf("PRAGMA cipher_default_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA256_LABEL);
+     } else if(default_hmac_algorithm == SQLCIPHER_HMAC_SHA512) {
+       pragma = sqlite3_mprintf("PRAGMA cipher_default_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA512_LABEL);
++    } else if(default_hmac_algorithm == SQLCIPHER_HMAC_SM3) {
++      pragma = sqlite3_mprintf("PRAGMA cipher_default_hmac_algorithm = %s;", SQLCIPHER_HMAC_SM3_LABEL);
+     }
+     sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
+ 
+@@ -112583,6 +112632,8 @@
+       pragma = sqlite3_mprintf("PRAGMA cipher_default_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL);
+     } else if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
+       pragma = sqlite3_mprintf("PRAGMA cipher_default_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
++    } else if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SM3) {
++      pragma = sqlite3_mprintf("PRAGMA cipher_default_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SM3_LABEL);
+     }
+     sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
+   }else
+@@ -113864,6 +113915,8 @@
+   OSSL_PARAM sha1[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha1", 4, 0 }, OSSL_PARAM_END };
+   OSSL_PARAM sha256[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha256", 6, 0 }, OSSL_PARAM_END };
+   OSSL_PARAM sha512[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha512", 6, 0 }, OSSL_PARAM_END };
++  /* SHUYONOTE-GM: 摘要名按 OpenSSL/Tongsuo 的 EVP_MAC 取法给 "SM3"（Tongsuo 3.x 里注册名大小写敏感）。 */
++  OSSL_PARAM sm3[] = { { "digest", OSSL_PARAM_UTF8_STRING, "SM3", 3, 0 }, OSSL_PARAM_END };
+ 
+   if(in == NULL) goto error;
+ 
+@@ -113903,6 +113956,13 @@
+         goto error;
+       }
+       break;
++    case SQLCIPHER_HMAC_SM3:
++      if(!(rc = EVP_MAC_init(hctx, hmac_key, key_sz, sm3))) {
++        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: EVP_MAC_init() with key size %d and sm3 returned %d", key_sz, rc);
++        sqlcipher_openssl_log_errors();
++        goto error;
++      }
++      break;
+     default:
+       sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: invalid algorithm %d", algorithm);
+       goto error;
+@@ -113978,6 +114038,13 @@
+         goto error;
+       }
+       break;
++    case SQLCIPHER_HMAC_SM3: /* == SQLCIPHER_PBKDF2_HMAC_SM3（两张表都取 3） */
++      if(!(rc = PKCS5_PBKDF2_HMAC((const char *)pass, pass_sz, salt, salt_sz, workfactor, EVP_sm3(), key_sz, key))) {
++        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_kdf: PKCS5_PBKDF2_HMAC() for EVP_sm3() workfactor %d and key size %d returned %d", workfactor, key_sz, rc);
++        sqlcipher_openssl_log_errors();
++        goto error;
++      }
++      break;
+     default:
+       return SQLITE_ERROR;
+   }
+@@ -114076,6 +114143,9 @@
+     case SQLCIPHER_HMAC_SHA512:
+       return EVP_MD_size(EVP_sha512());
+       break;
++    case SQLCIPHER_HMAC_SM3:
++      return EVP_MD_size(EVP_sm3()); /* 32 —— 同时是上面两处能力门的探测口 */
++      break;
+     default:
+       return 0;
+   }
