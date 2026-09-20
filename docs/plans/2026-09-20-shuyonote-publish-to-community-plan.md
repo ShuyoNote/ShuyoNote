@@ -96,17 +96,19 @@
 
 ## 7. 分期与判据
 
-- **P0（进行中）**：连接（设备码）＋ 发布单篇 ＋ 结果回写 front matter ＋ **发布前清单（I7）**。
+- **P0（只剩最后一件）**：连接（设备码）＋ 发布单篇 ＋ 图片上传 ＋ **发布前清单（I7）** ＋ 回写发布元数据。
   - ✅ 后端通道（`c3d9f5af`）：`src-tauri/src/community_publish.rs`（设备码 / 令牌存储 / 发帖 / 真撤销；
     8 条判据含真环回 HTTP）＋ 前端契约层（`CommandMap` 与 `web.ts` 5 个命令）。
-  - ✅ 对话框与入口：`CommunityPublishDialog.tsx`（三段式 ＋ **I7 清单**，13 条渲染级判据）、
+  - ✅ 对话框与入口（`7bb7c9c3`）：`CommunityPublishDialog.tsx`（三段式 ＋ **I7 清单**）、
     入口挂在编辑器工具条「⋯」菜单（只在桌面端显示）。
   - ✅ **跨仓契约的活判据**：`community::tests::live_community_json_is_accepted_by_this_parser`
     （`#[ignore]`，要联网）—— 拿**线上真站点**的 JSON 喂给应用自己的解析器。这是唯一能抓住
     "对面改了字段名/url 拼法而这边测试全绿"的判据；社区侧 0.71.24 就是 `url` 拼成相对路径被这么抓到的。
-  - ⏳ 剩下的：本地图片上传（正文里的本机图片现在只在清单里如实提示"社区上显示不出来"）、
-    回写发布元数据（见下面 §7.2 —— 之前写成"回写 front matter"是**错的**：这一侧的笔记是库里的页面，
-    根本没有 markdown front matter）。
+  - ✅ **本地图片上传**（`57bd6d64`）：正文里有指纹（`__hash`）的图片先传社区（`/api/attachments`），
+    引用换成 `/attachments/<hash>`；**上传失败就不发帖**，错误点明是第几张。视频/其它附件如实说
+    "发不出去"（社区白名单只有 png/jpeg/gif/webp/pdf/zip，视频不在其中）。
+  - ⏳ 剩下的：回写发布元数据（见下面 §7.2 —— 之前写成"回写 front matter"是**错的**：
+    这一侧的笔记是库里的页面，根本没有 markdown front matter）。
 
 ## 7.2 回写发布元数据：写哪儿（下一笔，先定死）
 
