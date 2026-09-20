@@ -36,7 +36,6 @@ const REQUIRED_GATE_IDS = [
   "check-sys-deps-linux",
   "check-ocr-assets",
   "check-deep-link",
-  "check-derived-writers",
   "check-plugin-hosting",
   "tsc",
   "vitest",

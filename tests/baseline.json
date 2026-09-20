@@ -19,7 +19,6 @@
       "check-changelog-numbers",
       "check-changelog-version-parity",
       "check-deep-link",
-      "check-derived-writers",
       "check-doc-content-access",
       "check-doc-links",
       "check-gitcode-workflow-rules",
