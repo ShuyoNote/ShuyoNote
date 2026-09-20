@@ -567,8 +567,27 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     };
     // ── PDF 引擎分派（P2，2026-09-17；判据化 2026-09-19 AMD）──────────────────
     // **运行时开关**（方案 §0.2-F 已定：不重编就能切回 MuPDF，便于灰度与回滚）：
-    // 环境变量取值与默认值见 `PdfEngine::from_env_value` / `PdfEngine::DEFAULT`。
-    let engine = PdfEngine::from_env_value(std::env::var("SHUYONOTE_PDF_ENGINE").ok().as_deref());
+    // 环境变量取值与默认值见 `PdfEngine::resolve` / `PdfEngine::DEFAULT`。
+    // ⚠️ 2026-09-20 起取值**多看一眼库在不在**（`resolve` 的注释写了为什么）：
+    //    默认=PDFium，但**库不在时回退 MuPDF** —— 否则包里还没带库的平台会当场渲染失败，
+    //    而终端用户设不了 `SHUYONOTE_PDF_ENGINE`。
+    let env_value = std::env::var("SHUYONOTE_PDF_ENGINE").ok();
+    let pdfium_ready = crate::pdfium_native::library_available();
+    let engine = PdfEngine::resolve(env_value.as_deref(), pdfium_ready);
+    // 回退要**说出来一次**：否则"默认引擎是 PDFium"在那些平台上就是一句假话，
+    // 而且排查时只能看到"走了 MuPDF"却不知道为什么。
+    if !pdfium_ready
+        && engine == PdfEngine::Mupdf
+        && !env_value.as_deref().map(str::trim).map(|v| v.eq_ignore_ascii_case("mupdf")).unwrap_or(false)
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            eprintln!(
+                "[pdf] 未找到 PDFium 动态库 ⇒ 本机**回退到 MuPDF**（开发机：`node scripts/fetch-pdfium.mjs`；\
+                 装包时应由打包步骤把库放到可执行文件同目录。显式要 PDFium：`SHUYONOTE_PDF_ENGINE=pdfium`）"
+            );
+        });
+    }
     // ⚠️ **两套缓存互斥淘汰**（P2 验收项）：同一个 hash 若被两个引擎各持一份，
     // 内存会无声翻倍而两侧 LRU 互不知情 ⇒ 切引擎时先清掉另一侧的同 key 条目。
     match engine {
@@ -640,14 +659,28 @@ impl PdfEngine {
     /// Windows 装包已带库）——`SHUYONOTE_PDF_ENGINE=mupdf` 保留一键回滚。
     pub(crate) const DEFAULT: PdfEngine = PdfEngine::Pdfium;
 
-    /// 环境变量取值 → 引擎。**大小写与首尾空格都不敏感**；认不出的值（含空串）走
-    /// [`PdfEngine::DEFAULT`] —— 认不出就按默认走，不猜、也不报错（渲染不该因为一个
-    /// 拼错的开关而失败）。
-    pub(crate) fn from_env_value(value: Option<&str>) -> PdfEngine {
+    /// ★ **取值口径：把"库在不在"也算进去**（P5 之后必须有这一层）。
+    ///
+    /// 参数 `value` = `SHUYONOTE_PDF_ENGINE` 的取值（**大小写与首尾空格都不敏感**）；
+    /// `pdfium_available` = PDFium 动态库是否就位（`pdfium_native::library_available()`）。
+    ///
+    /// 为什么必须看库（2026-09-20，Windows 侧复核 P5 时发现）：默认已切成 `Pdfium`，
+    /// 而**只有 Windows 的包确定带了库**（方案 §4 验收表：Linux/macOS/Android 的"首启即可渲染"**未验**）。
+    /// 默认若不管库在不在，那些平台的 PDF 会**当场渲染失败** ——
+    /// 而"回滚"要靠 `SHUYONOTE_PDF_ENGINE=mupdf`，**终端用户设不了这个环境变量**。
+    ///
+    /// ⇒ 语义三条：
+    /// 1. 显式 `pdfium` ⇒ **PDFium，不回退**（调用方明确要它，就该把"库不在"这个错误**说出来**，
+    ///    而不是悄悄换引擎 —— 否则排查时会以为自己在用 PDFium，"成功 ≠ 生效"那一类）；
+    /// 2. 显式 `mupdf` ⇒ **MuPDF**（与库在不在无关：一键回滚必须在任何机器上都有效）；
+    /// 3. 缺省 / 认不出的值（含空串）⇒ **库在走 [`PdfEngine::DEFAULT`]（现在是 PDFium），
+    ///    库不在回退 MuPDF**（MuPDF 编译进二进制，一定在）。认不出不报错：渲染不该因为一个拼错的开关而失败。
+    pub(crate) fn resolve(value: Option<&str>, pdfium_available: bool) -> PdfEngine {
         match value.map(str::trim) {
             Some(v) if v.eq_ignore_ascii_case("pdfium") => PdfEngine::Pdfium,
             Some(v) if v.eq_ignore_ascii_case("mupdf") => PdfEngine::Mupdf,
-            _ => PdfEngine::DEFAULT,
+            _ if pdfium_available => PdfEngine::DEFAULT,
+            _ => PdfEngine::Mupdf,
         }
     }
 }
@@ -664,27 +697,28 @@ mod pdf_engine_tests {
     #[test]
     fn unset_uses_the_documented_default_engine() {
         assert_eq!(
-            PdfEngine::from_env_value(None),
+            PdfEngine::resolve(None, true),
             PdfEngine::Pdfium,
             "未设环境变量时的默认引擎（P5 切换点，见 PdfEngine::DEFAULT）"
         );
     }
 
     /// 显式值必须胜过默认值，且**大小写/空格不敏感**（灰度时人手敲的开关）。
+    /// `true` = "库在"那一档（显式值本来就与库在不在无关，两种都断言在下面两条）。
     #[test]
     fn explicit_values_win_and_are_case_insensitive() {
-        assert_eq!(PdfEngine::from_env_value(Some("pdfium")), PdfEngine::Pdfium);
-        assert_eq!(PdfEngine::from_env_value(Some("PDFium")), PdfEngine::Pdfium);
-        assert_eq!(PdfEngine::from_env_value(Some(" pdfium ")), PdfEngine::Pdfium);
-        assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
-        assert_eq!(PdfEngine::from_env_value(Some("MuPDF")), PdfEngine::Mupdf);
+        assert_eq!(PdfEngine::resolve(Some("pdfium"), true), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::resolve(Some("PDFium"), true), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::resolve(Some(" pdfium "), true), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::resolve(Some("mupdf"), true), PdfEngine::Mupdf);
+        assert_eq!(PdfEngine::resolve(Some("MuPDF"), true), PdfEngine::Mupdf);
     }
 
     /// 认不出的值（含空串）⇒ 默认，不报错。失败面：把 `""` 当成"显式指定了某个引擎"。
     #[test]
     fn unknown_or_empty_values_fall_back_to_default() {
         for v in [Some(""), Some("   "), Some("pdf"), Some("1"), Some("true"), Some("pdfiumm")] {
-            assert_eq!(PdfEngine::from_env_value(v), PdfEngine::Pdfium, "value={v:?}");
+            assert_eq!(PdfEngine::resolve(v, true), PdfEngine::Pdfium, "value={v:?}");
         }
     }
 
@@ -694,7 +728,40 @@ mod pdf_engine_tests {
     /// 另断言"默认确实已经不是 MuPDF" —— 否则"回滚"这个词是空的（回滚到同一个东西）。
     #[test]
     fn explicit_mupdf_always_rolls_back() {
-        assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
+        assert_eq!(PdfEngine::resolve(Some("mupdf"), true), PdfEngine::Mupdf);
         assert_ne!(PdfEngine::DEFAULT, PdfEngine::Mupdf, "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条");
+    }
+
+    /// ★ **缺库回退**（2026-09-20 补）：默认取值必须**看库在不在**。
+    ///
+    /// 为什么要有这条：P5 已把默认切成 PDFium，而**只有 Windows 的包确定带了库**
+    /// （方案 §4 验收表里 Linux/macOS/Android 的"首启即可渲染"**未验**）⇒
+    /// 若默认不看库在不在，那些平台的 PDF 会**当场渲染失败**，
+    /// 而"回滚"要靠 `SHUYONOTE_PDF_ENGINE=mupdf` —— **终端用户设不了环境变量**。
+    #[test]
+    fn default_falls_back_to_mupdf_when_the_library_is_missing() {
+        assert_eq!(PdfEngine::resolve(None, true), PdfEngine::Pdfium, "库在 ⇒ 走默认（PDFium）");
+        assert_eq!(PdfEngine::resolve(None, false), PdfEngine::Mupdf, "库不在 ⇒ 回退 MuPDF");
+        // 认不出的值也走同一条判断（而不是硬走 DEFAULT —— 那就等于"库不在也用 PDFium"）
+        for v in [Some(""), Some("   "), Some("pdf"), Some("1"), Some("pdfiumm")] {
+            assert_eq!(PdfEngine::resolve(v, true), PdfEngine::Pdfium, "value={v:?} 库在");
+            assert_eq!(PdfEngine::resolve(v, false), PdfEngine::Mupdf, "value={v:?} 库不在");
+        }
+    }
+
+    /// ⚠️ **显式**要 PDFium 时**不回退**：调用方明确要它，就该把"库不在"这个错误**说出来**，
+    /// 而不是悄悄换一个引擎（否则排查时会以为自己在用 PDFium）。
+    /// 这条属于"成功 ≠ 生效"那一族：**静默换引擎比报错更难查**。
+    #[test]
+    fn explicit_pdfium_never_silently_falls_back() {
+        assert_eq!(PdfEngine::resolve(Some("pdfium"), false), PdfEngine::Pdfium);
+        assert_eq!(PdfEngine::resolve(Some(" PDFIUM "), false), PdfEngine::Pdfium);
+    }
+
+    /// 显式 `mupdf` 与"库在不在"**无关** —— 一键回滚在任何机器上都必须有效。
+    #[test]
+    fn explicit_mupdf_is_unaffected_by_availability() {
+        assert_eq!(PdfEngine::resolve(Some("mupdf"), true), PdfEngine::Mupdf);
+        assert_eq!(PdfEngine::resolve(Some("mupdf"), false), PdfEngine::Mupdf);
     }
 }

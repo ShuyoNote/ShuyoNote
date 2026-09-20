@@ -234,8 +234,34 @@ fn pdfium_matches_mupdf_on_fixtures() {
         // 判据 2：**只看 R/G/B、按像素统计**（理由见文件头"第一版错在哪"）。
         let d = pixel_diff(&p_rgba, &m_rgba);
 
+        // ★ **两类样本**（2026-09-20 补中文/扫描件时分的类）：
+        //   · 硬判据（默认）：颜色必须等价 —— 适用于"渲染结果**应当**逐像素一致"的样本；
+        //   · **只报不判**（`cjk*`）：**没有嵌入字体**的中文样本，两个引擎各自做字体替换
+        //     ⇒ 字形本来就不同，把它判红等于判一件**做不到**的事。它回答的是另一个问题：
+        //     **两个引擎都能开、尺寸一致、都画出了东西**（"能显示但不对"的第一道筛），
+        //     字形差异**如实报出来**给人看。
+        // ⚠️ 这不是"给红样本开后门"：`scan.pdf`（图像流）走的就是**硬判据**；
+        //    若哪天 `cjk.pdf` 变成"嵌入了字体的样本"，就该把它挪回硬判据那一类。
+        let report_only = name.starts_with("cjk");
+
         let ok = d.rgb_max <= MAX_CHANNEL_DIFF && d.rgb_over <= MAX_OVER_RATIO;
-        let conclusion = if ok { "✅" } else { "❌ 颜色不等价" };
+        let conclusion = if report_only {
+            // 非空白自检：两边都必须**画出东西**（全透明 = 那个引擎根本没能渲染这个样本）
+            let m_ink = m_rgba.chunks_exact(4).filter(|p| p[3] != 0).count();
+            let p_ink = p_rgba.chunks_exact(4).filter(|p| p[3] != 0).count();
+            if m_ink == 0 || p_ink == 0 {
+                failures.push(format!(
+                    "{name}: 只报不判那一类也要求「两边都画出东西」，实际 MuPDF 非透明像素 {m_ink} / PDFium {p_ink}"
+                ));
+                "❌ 有一边是空白".to_string()
+            } else {
+                format!("📋 只报不判（非透明像素 MuPDF {m_ink} / PDFium {p_ink}）")
+            }
+        } else if ok {
+            "✅".to_string()
+        } else {
+            "❌ 颜色不等价".to_string()
+        };
         println!(
             "{:<16} {:>11} {:>6} {:>8.3}% {:>6} {:>8.3}% {:>9.3}% {:>8.3}%  {}",
             name,
@@ -248,7 +274,7 @@ fn pdfium_matches_mupdf_on_fixtures() {
             d.both_clear * 100.0,
             conclusion
         );
-        if !ok {
+        if !ok && !report_only {
             failures.push(format!(
                 "{name}: RGB 最大差 {}（限 {MAX_CHANNEL_DIFF}）/ \"RGB 差 > {MAX_CHANNEL_DIFF}\" 的像素占比 {:.3}%（限 {:.3}%）\
                  ｜参考：alpha 最大差 {}、alpha 超阈 {:.3}%、语义不一致 {:.3}%",
@@ -259,7 +285,7 @@ fn pdfium_matches_mupdf_on_fixtures() {
                 d.alpha_over * 100.0,
                 d.alpha_semantics * 100.0
             ));
-        } else if d.alpha_semantics > MAX_OVER_RATIO {
+        } else if !report_only && d.alpha_semantics > MAX_OVER_RATIO {
             // 颜色过了，但"一边透明一边不透明"的像素偏多 ⇒ 未绘制区域语义没对齐。
             // ⚠️ 这一列**故意不判失败**：它对应的是"真机看暗色 + 护眼四档"那个人工决策。
             println!(
