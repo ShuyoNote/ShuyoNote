@@ -162,15 +162,24 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
       —— Linux ✅ 代码已在 dev（`library_dir()` 的 `resource_dir()` 探测 + `tauri.linux.conf.json` + CI 取库 +
       产物断言 `check-linux-bundle`）；**1.91.6 起 Linux 包会真的带库**（上一版 1.91.5 的 deb 解包实测：无 `libpdfium`）。
       —— Android ❌ **无 `jniLibs`** ⇒ 走 pdf.js 回退（发布说明已点名）。
-- [ ] **真机**：桌面（Windows + 至少一个其它平台）＋ Android 真机各跑一遍 —— ❌ **仍未做**；
-      Windows 侧只有自动化验证（含上面那次运行时 A/B），**不是人手签字**。
+- [ ] **真机**：桌面（Windows + 至少一个其它平台）＋ Android 真机各跑一遍
+      —— ✅ **用户侧复验通过（2026-09-19，原话「pdf复验通过」）**：装 **1.91.9**（默认引擎已是 PDFium，
+      且那是**第一个真把三平台产物发出去**的版本，见文末「P5 状态」）打开 PDF 正常。
+      ⚠️ **覆盖范围按用户原话记，没有逐平台展开**：本行原本要求的"至少一个其它桌面平台"与"Android 真机"
+      未见单独签字；macOS 真出包/公证读数与 Android `jniLibs` 仍按上面「打包」那一条挂着。
+      Windows 侧另有自动化验证（含上面那次运行时 A/B），但那**不是人手签字** —— 本条记的正是**人的**复验。
 - [ ] 既有门禁全绿（`tsc`、`pnpm test`、`check:web-commands`、`cargo check --all-targets`）
       —— ✅ 本机：`cargo check --all-targets` 0 错 0 告警、`tsc` 0、vitest 1174 通过 / 1 跳过、`pnpm verify` **23/23**。
-      ⚠️ **CI 的「Rust 测试」任务在 Linux 上红**（`pdf_engine_compare::pdfium_matches_mupdf_on_fixtures` 需要动态库，
-      而 CI 的测试任务不取库）⇒ 这**不是**本轮翻转引入的（`1efd696` 与 dev `97583c5` 上同样红），
-      但它意味着"CI 全绿"目前**不成立**：缺库时应显式跳过并打印原因，或给该任务加 `fetch-pdfium` 步骤。
+      —— ✅ **CI 的「Rust 测试」红已修（dev `f4151be1`，随 1.91.9 进 main）**：那个 job 改成**先取库再跑**
+      （`fetch-pdfium` 步骤），而 `pdf_engine_compare` 在**缺库时响亮跳过并打印原因**、不再判红。
+      随后 main 的 CI 三个 job —— Rust 测试 / 单测·冒烟·契约 / 移动端布局 —— **全绿**（run `35427381570`）。
+      ⇒ §5 风险表里"CI 全绿不成立"那一条**已关闭**。
 
-> **P5 状态（2026-09-19）**：**默认引擎已切 PDFium**（`7247739`，owner 批准，随 **1.91.6** 发布）。
+> **P5 状态（2026-09-19 更新）**：**默认引擎已切 PDFium**（`7247739`，owner 批准，tag `v1.91.6`）。
+> ⚠️ **但 1.91.6 / 1.91.7 / 1.91.8 三版都没能把产物发出去** —— Linux 那条产物断言是**假红**
+> （真因与订正见 `scripts/check-linux-bundle.mjs` 顶部那段），于是**更新通道一直停在 1.91.5**。
+> 真正落地的是 **`v1.91.9`**：三平台产物齐 + `latest.json` 已发（windows-x86_64 / linux-x86_64 / android-aarch64，
+> 三项 url 均 HTTP 206），`check:release-state` **20 项通过**；用户侧 PDF 复验也通过（见上「真机」一条）。
 > 回滚杠杆见上（`SHUYONOTE_PDF_ENGINE=mupdf`）。**"删 MuPDF"这一步没做** —— 按 §2 的 P5，等灰度一个发布周期后再评估。
 
 ---
@@ -186,7 +195,7 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 | 位图格式/通道顺序搞错 | 颜色错乱（**"能显示但不对"**） | Rust 侧转换 + 单测钉住通道顺序（红绿蓝各写一个已知值断言） |
 | 与国密工作流并发改 `Cargo.toml` | 冲突 | 串行：**先落国密的依赖，PDFium 再基于最新 main 落**（见国密方案 §9） |
 | **原生引擎失败会被 pdf.js 静默顶上**（2026-09-19 实测） | "切了默认、其实在用 pdf.js"**界面上不可见**：`PdfReader.tsx:122` 有刻意的回退，只在控制台留 `native page render failed, falling back to pdf.js` | ① 发布说明里对"装包没带库"的平台**点名**（当前是 Android）；② 灰度期的观测口径就用那条日志，别用"页面能不能出来" |
-| `pdfium_matches_mupdf_on_fixtures` 依赖动态库 | CI 的「Rust 测试」任务在跑测机器上**红**（缺库 ⇒ 该测试失败）⇒ "CI 全绿"不成立 | 缺库时**显式跳过并打印原因**（而不是判失败），或给该测试任务加一步 `fetch-pdfium`（谁认领都行） |
+| `pdfium_matches_mupdf_on_fixtures` 依赖动态库 | CI 的「Rust 测试」任务在跑测机器上**红**（缺库 ⇒ 该测试失败）⇒ "CI 全绿"不成立 | ✅ **已按此修（dev `f4151be1`，随 1.91.9 进 main）**：两条都做了 —— 该 job 加了 `fetch-pdfium` 取库，且缺库时**显式跳过并打印原因**。main 的 CI 三个 job 随后全绿（run `35427381570`） |
 
 ---
 
