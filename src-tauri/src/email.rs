@@ -1994,7 +1994,8 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
                 .expect("解析账号配置失败");
         let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
-        let mut session = open_session(&account, "INBOX").await.expect("打开会话失败");
+        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        let mut session = open_session(&account, &folder).await.expect("打开会话失败");
         let mut stream = session
             .fetch("1:*", "(ENVELOPE UID FLAGS)")
             .await
@@ -2074,8 +2075,10 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
                 .expect("解析账号配置失败");
         let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
-        eprintln!("探针账号：{} @ {}:{}（auto_fetch={}）", account.username, account.host, account.port, account.auto_fetch);
-        match fetch_account_emails(&account, &["INBOX".to_string()], None, None).await {
+        // 想看别的文件夹就设 `SHUYO_EMAIL_PROBE_FOLDER`（默认 INBOX）——查"回收站里到底能列出几封"要用。
+        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        eprintln!("探针账号：{} @ {}:{}（auto_fetch={}）文件夹={}", account.username, account.host, account.port, account.auto_fetch, folder);
+        match fetch_account_emails(&account, &[folder.clone()], None, None).await {
             Ok((metas, unread)) => {
                 let mut v: Vec<EmailMeta> = metas.clone();
                 v.sort_by(|a, b| date_ts(&b.date).cmp(&date_ts(&a.date)));
