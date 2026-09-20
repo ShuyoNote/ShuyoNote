@@ -18,7 +18,7 @@
 | **传输层** | ⚠️ **数据面国密、传输层标准 TLS**（方案 §5.2 已定：走"路径 2"） | 链路上的**载荷**是 SM4 密文；协议本身仍是 TLS 1.3。**不要写成"全链路国密"** |
 | **控制面**：更新包签名（minisign/Ed25519）、插件索引签名 | ❌ **不是**（已决定） | 不在甲方系统边界内；内网离线部署下自动更新本就不可用 |
 | 内容寻址摘要（附件 SHA-256） | ❌ **保持 SHA-256**（有意为之） | 换成 SM3 = 全库附件改名 ＋ 同步标识全失；要换需单独立项 |
-| 库级页加密 / 页 HMAC / 库 KDF | 🔶 **尚未**（见 §三"库级"列） | 由 SQLCipher 的编译期 provider 决定，属 P2/P3（**AMD**），不在本版 |
+| 库级页加密 / 页 HMAC / 库 KDF | 🔶 **页加密：尚未**；**页 HMAC 与库 KDF：能力已具备但应用尚未接线** | 由 SQLCipher 的编译期 provider 决定（P2/P3，provider 层属 **AMD**）。⚠️ **2026-09-20 实查更正**：补丁只让 `HMAC_SM3`/`PBKDF2_HMAC_SM3` **可设**（默认值仍是 SHA512），而**应用从来没有设过它们** ⇒ **当今任何构建（含国密版）建出来的库，页 MAC 与库 KDF 仍是 SHA512**。接线规格与代价见方案 §3.5 |
 
 ---
 
@@ -52,9 +52,9 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 平台 | 应用层 SM4（附件/同步载荷；导出包里的附件同此） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
 |---|---|---|---|---|---|
-| **macOS** | ✅ | 🔶 **国密版构建：P2 已落地**（SM3 页 MAC ＋ 库 KDF，接 Tongsuo/OpenSSL 后端）；**默认包仍是 CommonCrypto（只有 AES）**；**页加密仍是 AES**（P3 未做） | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；⚠️ 有一条 macOS-only 风险见 §五 |
+| **macOS** | ✅ | 🔶 **国密版构建：P2 = provider 层已具备**（`HMAC_SM3`/`PBKDF2_HMAC_SM3` **可设且回显正确**、有运行期判据；⚠️ **应用尚未接线 ⇒ 库的页 MAC/KDF 仍是 SHA512**，见方案 §3.5）；**默认包仍是 CommonCrypto（只有 AES）**；**页加密仍是 AES**（P3 未做） | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；⚠️ 有一条 macOS-only 风险见 §五 |
 | **Windows** | ✅（纯 Rust，全平台同一份实现） | 🔶 同 P2（其后端本来就是 OpenSSL） | 据信箱：**AMD 2026-09-18 报过 `tongsuo build: msvc=ok`**（附三条前置踩坑）；⚠️ **本侧没有独立复核** | Windows 侧 | 应用层：本机跑不了 `cargo test`（`0xC0000139`）⇒ 行为由 Linux/CI 证；库级未取证 |
-| **Linux** | ✅ | 🔶 **国密版构建：P2 已落地**（AMD 在 WSL2 上有读数）；页加密仍是 AES（P3 未做） | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
+| **Linux** | ✅ | 🔶 **国密版构建：P2 = provider 层已具备**（AMD 在 WSL2 上有读数；同样**未接线**，见 §3.5）；页加密仍是 AES（P3 未做） | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
 | **Android** | ✅（纯 Rust） | ❌ 未做（P2/P3 的 Android 构建链未排） | Tongsuo 交叉编译**已被 AMD 证过**（NDK r29）；真机验收未做 | 真机＝**人手** | ❌ 未取证 |
 | **iOS** | ❌ | ❌ | 无 `ios.yml`、未开始；Apple 平台与 macOS 同一个 CommonCrypto 坑 | 未立项 | ❌ 范围外（方案 §1 已写明） |
 | **Web** | ❌ | ❌ | 不提供静态加密与多设备同步 | — | ❌ 范围外（方案 §1） |
@@ -62,7 +62,8 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 > **一句话读法**（2026-09-20 更新）：**应用层已全平台国密**（纯 Rust，一份实现；
 > 口径是**附件＋同步载荷**——导出包里那份空间库**刻意是明文**，见 §一，别把两者合成一句）；
-> **库级已走到 P2**（SM3 页 MAC ＋ 库 KDF，随"国密版构建"生效，macOS 本机三段自证全绿）；
+> **库级已走到 P2 的 provider 层**（`HMAC_SM3`/`PBKDF2_HMAC_SM3` 可设、可回显、有运行期判据；macOS 本机三段自证全绿）；
+> ⚠️ **但应用尚未接线 ⇒ 库的页 MAC 与库 KDF 目前仍是 SHA512**（2026-09-20 实查，见方案 §3.5）—— **不要把「能力已具备」读成「已在生效」**；
 > **还差 P3（SM4 页加密）** —— 它**不是顺手加一个分支**（方案 §3.2 三条结构事实：`cipher` 回调无 algorithm 参数、
 > `OPENSSL_CIPHER` 编译期钉死五处、没有 `cipher_algorithm` PRAGMA），**两条路的成本要 owner 拍板**。
 > ✅ **2026-09-20 owner 已拍板：P3 走 A（编译期切换）** —— 施工单与分工见方案 §3.2 末尾，
@@ -90,7 +91,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **换加密后端前后旧库仍可读**（页加密读写回归） | `security::tests::fixture_db_written_by_the_other_provider_still_opens`（夹具 `tests/sqlcipher-backend-fixture.db` 由 **CommonCrypto 后端**写下） | Tongsuo 后端下 `security::` **14/14** |
 | 实际编进去的是哪个后端（不是看你设了什么环境变量） | `node scripts/check-crypto-backend.mjs` | 双向实测：产物 openssl＋声明 openssl ⇒ 绿；产物 CC＋声明 openssl ⇒ **红** |
 | **补丁在不在**（第三格的一半；另半是运行期"真的生效没有"） | `SHUYONOTE_EXPECT_SM_PATCH=applied\|absent node scripts/check-crypto-backend.mjs`<br>⚠️ **国密（Tongsuo）构建上必须同时声明后端**：`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl …` —— macOS 的平台默认是 `commoncrypto`，只声明补丁那格会**假红**（我 2026-09-20 自己踩了一次；一键自证 `gm-version-selfcheck` 里两个声明都已写死） | 声明 applied 而产物无标记 ⇒ 红（附 `cargo clean -p shuyonote`）；声明 absent 而有标记 ⇒ 红（配置漂移）。⚠️ 标记可能是上次构建的重放，故输出里带 `src_sha256`（与当前将要编译的那份源码逐字比对）＋ output mtime；标记里的 `patch=` 是**补丁文件 sha256 前 8 位**（v2 起，之前是写死的 `v1` —— 那在补丁升到 v2 后不再标识任何东西） |
-| **P2 provider 补丁落地**（SM3 页 MAC ＋ 库 KDF ＋ 能力门） | `patches/0001-sqlcipher-sm3-provider.patch` ＋ `scripts/sm-library-build.mjs`（幂等打补丁） | AMD 在 WSL2 有读数；**macOS 本机独立复跑见下两行** |
+| **P2 provider 补丁落地**（让 SM3 页 MAC ＋ 库 KDF **可设** ＋ 能力门） | `patches/0001-sqlcipher-sm3-provider.patch` ＋ `scripts/sm-library-build.mjs`（幂等打补丁） | AMD 在 WSL2 有读数；**macOS 本机独立复跑见下两行**；⚠️ **「可设」≠「在生效」**：应用尚未接线（方案 §3.5） |
 | ★ **三段自证（macOS，真补丁 ＋ 真 Tongsuo）** | `node scripts/gm-version-selfcheck.mjs --openssl-dir <Tongsuo> --expect-patch applied --with-build`（**加 `--with-tests` 会多跑第 ④ 段**：`cargo test --lib gm_provider::` ＝ 运行期「真的生效没有」） | **3 段全过**：后端=openssl（link-search 指 Tongsuo）／补丁在场且 `src_sha256=6ec0a114b861…`（**补丁 v2**；与 AMD 在 WSL 上报的逐字相同，新鲜度可证）／跨对拍 12/12 |
 | 运行期「真的生效没有」（第三格另一半；**已收进一键自证的 `--with-tests`**，见上一行的第 ④ 段） | `cargo test --lib gm_provider`（**在打过补丁 ＋ Tongsuo 的构建上**） | macOS：**9 passed / 0 failed / 4 ignored**（与 AMD 报的同一套 13 一致）；2026-09-20 起 `gm-version-selfcheck --with-tests` 会把这一段并进同一份读数 |
 | 门禁 | `pnpm verify`（23）/ `node scripts/test-report.mjs --group rust`（**6 条**，含 `rust-test`（默认即国密）、`rust-no-sm-crypto`（**回滚通道**：`--no-default-features` 仍可编可过）、`check-crypto-backend`、`gm-conformance`） | 全绿 |

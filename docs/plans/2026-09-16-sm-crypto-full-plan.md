@@ -597,6 +597,39 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 **触发条件（写进这里，定期复核）**：出现**第一个真实部署/试点数据**（哪怕是内部试用写进了不可丢的内容）
 ⇒ 本节作废，"无兼容"窗口关闭；届时按 §3.2 的 A 路施工单 + §3.3 迁移规格执行。
 
+### 3.5 库级 P2 的**接线缺口**（2026-09-20 实查发现）—— 能力≠行为
+
+> **一句话**：P2 交付的是"**provider 能按 `HMAC_SM3` / `PBKDF2_HMAC_SM3` 工作**"，
+> 但**应用从来没用过它** ⇒ **当今任何构建（含国密版）建出来的库，页 MAC 与库 KDF 仍然是 SHA512**。
+> 这不是回归（一直是这个状态），而是**我们的表述把"能力"读成了"行为"**。同样的话在交付说明里也要收。
+
+**三条实查证据（都可复跑）**
+
+1. **补丁只"接受"SM3，没改默认值**：`patches/0001-…patch` 里两处 `default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;`
+   与 `default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;` 是**上下文行**（未改），新增的只是
+   `else if(… == SQLCIPHER_HMAC_SM3)` / `… == SQLCIPHER_PBKDF2_HMAC_SM3` 分支（"允许设"）。
+2. **生产路径一行都没设**：`grep -rn "cipher_kdf_algorithm|cipher_hmac_algorithm" src-tauri/src/*.rs`
+   ⇒ 命中**只有** `gm_provider.rs`（它自己的接线与探针）；`grep -rn "gm_provider::" src-tauri/src/*.rs`
+   排除自身后**为空** ⇒ `configure_gm_cipher()` / `read_gm_cipher_status()` **没有任何生产调用方**。
+3. **这两个 PRAGMA 真的有作用（不是摆设）**：2026-09-20 探针（裸钥模式，写一个库后换算法再读）——
+   · `cipher_kdf_algorithm = PBKDF2_HMAC_SHA1` ⇒ **`file is not a database`**；
+   · `= PBKDF2_HMAC_SHA512` ⇒ 读到 1 行。
+   ⇒ **即使我们用裸钥（`PRAGMA key = "x'…'"`），KDF 算法仍然参与**（它派生页 HMAC 的密钥）
+   ⇒ "库 KDF 国密化"是一个**真实可做且必须显式设置**的动作，不会自己生效。
+
+**接线规格（谁做、什么形态、代价）**
+
+| 项 | 内容 | 归属 |
+|---|---|---|
+| 设置点 | **创建**与**打开**两条路径**必须同时**翻：设置必须在 `PRAGMA key` **之后**、第一次读写**之前**（实测顺序，见 `gm_provider.rs` 头注）；只在创建侧设 ⇒ 新建的库随后**读不了** | 我（`security.rs` 的 keying 路径） |
+| 门控 | **只在 `sm-library`（打过补丁）的构建里设**：未打补丁时这两条 PRAGMA 会被**静默丢掉**（回显仍 SHA512、不报错，见 `gm_provider.rs` 头注表）⇒ 必须**回声校验**（`read_gm_cipher_status`），校验不过就**响亮失败**，绝不允许"以为设了" | 我 |
+| 判据 | ① 打过补丁的构建上，新建库的 `cipher_hmac_algorithm` / `cipher_kdf_algorithm` 回显必须是 SM3 变体；② 未打补丁的构建上**必须拒绝启动这条设置**（不是"设了但没生效"）；③ 交叉：用 SHA512 写的库（现有夹具）在新设置下**必须打不开** | 我 |
+| ⚠️ 测试夹具的连带 | `src-tauri/tests/sqlcipher-backend-fixture.db`（12,288 B，**SHA512** 页 MAC，由 CommonCrypto 后端写下）在新设置下**读不了** ⇒ 那条"换后端后旧库仍可读"的判据要**改造**：要么用 SM3 设置重新生成夹具（并把旧夹具挪作"跨页 MAC 不可读"的反例），要么保留两份夹具分别对应两种设置 | 我（AMD 复核） |
+| 与 fast path 的关系 | 这是**无兼容快路**的一部分：一旦"每个构建都设 SM3"，**旧库（SHA512）就永久读不了** —— 与 P3 换页加密是同一类后果（形态不同） | — |
+
+⚠️ **不属于本次**：把 `cipher_kdf_algorithm` 的**库级 KDF 输出**换成本项目自己的 KDF（那是另一件事；
+本项目库级用的是裸钥 `PRAGMA key = x'…'`，密钥材料的来源仍是 `crypto.rs` 的派生，见 §0.2）。
+
 ### 3.3 ⚠️ P3 的**迁移规格**（A/B 两条路都要，**不依赖 owner 先拍板哪条**）
 
 > 为什么单列一节（2026-09-20，macOS 侧）：A/B 争论的是"**怎么把 SM4 页加密编进去**"，
