@@ -20,6 +20,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = "capabilities/capabilities.json";
@@ -1104,8 +1105,8 @@ export function buildAll(reg = loadRegistry()) {
   };
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-if (isMain) {
+const isEntry = isMain(import.meta.url);
+if (isEntry) {
   const check = process.argv.includes("--check");
   const files = buildAll();
   const stale = [];

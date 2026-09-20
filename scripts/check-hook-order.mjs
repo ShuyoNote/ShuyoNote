@@ -26,6 +26,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -252,7 +253,7 @@ function selfTest() {
   return failed === 0;
 }
 
-const isEntry = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isEntry = isMain(import.meta.url);
 
 if (isEntry && process.argv.includes("--self-test")) {
   process.exit(selfTest() ? 0 : 1);

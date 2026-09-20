@@ -33,6 +33,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./lib/is-main.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -480,5 +481,5 @@ function main() {
 // （`scripts/check-sys-deps.test.mjs` 用它**在进程内**校验"硬判据都有 CI 依据"这条不变量）。
 export { MAP, DARWIN_PROBES, CI_RECIPE, ROOT, parseLock, readCiRecipe };
 
-const isEntry = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isEntry = isMain(import.meta.url);
 if (isEntry) main();
