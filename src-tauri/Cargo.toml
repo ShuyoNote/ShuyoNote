@@ -76,7 +76,8 @@ argon2 = "0.5.3"
 # RngCore trait and breaks OsRng usage.
 rand_core = { version = "0.6", features = ["getrandom"] }
 base64 = "0.23.1"
-# 国密原语（P1 应用层 AEAD，`--features sm-crypto` 才编）。四条都在 RustCrypto，版本对齐 digest 0.11
+# 国密原语（P1 应用层 AEAD）。四条都在 RustCrypto，版本对齐 digest 0.11；
+# ★ 2026-09-20 起 `sm-crypto` 是**默认特性**（方案 §3.4），只有 `--no-default-features`（回滚通道）才不编。
 # ⇒ **与仓里已有的 hmac 0.13 / cipher 0.5.2 / pbkdf2 0.13 是同一代**（`Cargo.lock` 里本来就有它们，
 # 只是此前作为传递依赖；这里提成**可选**直接依赖，不开 feature 时一个新包都不编）。
 # ⚠️ API 口径踩过坑，别照抄旧文档：`cbc 0.2` 的带填充辅助方法是

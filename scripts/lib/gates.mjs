@@ -226,28 +226,22 @@ export const GATES = [
       "国密这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo，见方案 §0-F）——两份漂移的后果是「跨设备读不出对方的数据」，而它没有任何编译期信号、本机单测也照绿。夹具来自 AMD 2026-09-17（信箱仓 gm-conformance），2026-09-19 搬进本仓：去 target/、驱动重写成跨平台 Node（原 driver.sh 是 Linux 专用：stat -c/sha256sum/$HOME/tongsuo-build）、Tongsuo 缺席自报跳过；并加「空跑即红」下限——固定下限会漏掉「Tongsuo 分支整段被删」，所以下限随 Tongsuo 是否参与而变（3 或 8）",
   },
   {
-    id: "rust-sm-crypto",
+    id: "rust-no-sm-crypto",
     group: "rust",
-    label: "国密应用层（SM4-CBC ＋ HMAC-SM3）：编译 ＋ 全量单测（--features sm-crypto）",
-    // 为什么必须**常开**（方案 §0-E 的原话："必须有那条常开 job，否则国密路径会变成
-    // 「没人编、坏了也没人知道」的死代码"）：国密代码整段在 `#[cfg(feature = "sm-crypto")]` 后面，
-    // 默认构建**一行都不编**，所以默认 CI 全绿**证明不了**国密那半边还能用。
-    //
-    // 跑全量（不带 `--lib`）是刻意的：镜像 `rust-test` 的口径，这样"国密版"与"默认版"跑的是同一套
-    // 用例集合，差别只在 feature —— 否则"国密版少跑了一半用例"这种事没人会发现。
-    cmd: "cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto",
+    label: "回滚通道：关掉默认特性（不编国密）仍能编译 ＋ 全量单测",
+    // ★ 2026-09-20 改造（owner 拍板「无兼容快路」后，方案 §3.4）：
+    //   原先这条门禁跑 `--features sm-crypto`，理由是"国密整段在 feature 后面，默认构建一行都不编，
+    //   默认 CI 全绿证明不了国密那半边"。**那条理由现在反过来了** —— `sm-crypto` 已是**默认特性**
+    //   ⇒ 默认门禁（`rust-test`）跑的就是国密那半边，原命令与它**逐值相同**，成了纯粹的重复。
+    //   而快路带来了一条**新的、真正没人验证**的路径：`--no-default-features`（一行可逆的**回滚通道**）。
+    //   它同样"没人编就会腐烂"（比如有人删掉只被旧路径用到的辅助函数），所以把这条常开门禁**改指它**。
+    //   ⚠️ 改名不是洁癖：一个叫 `rust-sm-crypto` 却在验证"不编国密"的门禁，正是我们自己最反对的那种
+    //   "名字比它证明的事多"。旧读数 `rust-sm-crypto: 398` 随之作废（同一条命令现在由 `rust-test` 覆盖）。
+    cmd: "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
     counters: "cargo",
-    // ✅ 2026-09-19 起标 `baseline: true`：读数值取自 **Linux**（WSL2/Ubuntu，与既有 rust-test 基线同一台），
-    // 读数 **376/376**（mac 侧钉 KDF 黄金向量那一笔之后在 Linux 上的重新读数；建基线时是 374，
-    // 当时与 macOS 独立跑出的 374/374 **逐值相同** ⇒ 这套用例没有平台条件差异）。
-    // 并入流程（CI 出报告后）：
-    //   node scripts/test-report.mjs --baseline-from rust-report.json
-    // 之后的护栏是"**只增不减**"：用例数掉下来会红（`baselineViolations`）；承重证明见
-    // `.tools/rust-baseline-mutation.mjs`（把基线抬到 400 ⇒ 当场红，还原后绿）。
-    // ⚠️ 别拿本机 Windows 的数去建基线：Windows 上测试二进制加载期就异常退出（见 docs/TESTING.md）。
     baseline: true,
     incident:
-      "国密这一支一旦没人编就会腐烂：默认包不含国密（§0-E），而 `--features sm-crypto` 若编译不过/单测红，本机与 CI 都不会有任何信号。2026-09-19 建这条 job 时顺带钉住两件事：① 库级密钥必须仍是 Argon2 legacy 那 32 字节（被国密密钥顶替 = 既有加密库全部打不开）；② 国密构建仍必须读得出 v0/v1 老密文（双读）",
+      "2026-09-20：`sm-crypto` 成为默认特性后，原 `rust-sm-crypto`（跑 --features sm-crypto）与 `rust-test` 变成同一条命令；本门禁改为验证**回滚通道**（--no-default-features）——它是「一行可逆」这个承诺的实现，没人编就会腐烂。",
   },
   {
     id: "check-crypto-backend",

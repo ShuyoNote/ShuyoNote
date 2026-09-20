@@ -385,7 +385,7 @@ mod tests {
         let key = derive_key(&fx.passphrase, &salt).unwrap();
         // 夹具里记的 key 也必须与 KDF 现算的一致 —— 否则"换了 KDF"这件事会被静默吞掉。
         assert_eq!(key_hex(&key), fx.key_hex, "KDF 变了（夹具记录的 key 与现算不一致）");
-        // ★ 夹具只用 legacy 密钥：国密构建（`--features sm-crypto`）也必须能读这份老数据。
+        // ★ 夹具只用 legacy 密钥：**默认构建（国密已默认开启）也必须能读这份老数据**。
         let keys = AppKeys::legacy_only(key);
 
         for c in &fx.cases {

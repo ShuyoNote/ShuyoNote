@@ -1152,7 +1152,7 @@ mod export_attachment_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// 国密构建（`--features sm-crypto`）：磁盘上那份是 **v2（SM4-CBC ＋ HMAC-SM3）**，
+    /// 默认构建（2026-09-20 起国密即默认）：磁盘上那份是 **v2（SM4-CBC ＋ HMAC-SM3）**，
     /// 导出的仍必须逐字节是**明文**。"导出包"这条路径最容易漏 —— 它读的是同一份文件，
     /// 但走的是"解密出来给人"（`export_attachment_to`），与附件预览不是同一段代码。
     #[cfg(feature = "sm-crypto")]
