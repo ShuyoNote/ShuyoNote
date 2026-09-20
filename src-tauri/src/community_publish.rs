@@ -1602,4 +1602,77 @@ mod tests {
         let other = content_rev("标题", "正文改了", &[]);
         assert_ne!(idempotency_key("page-1", &rev), idempotency_key("page-1", &other));
     }
+
+    /// **手动探针（会真的发帖）**：拿本机已连接的令牌，对着**真社区**走一遍
+    /// 「发一篇 → 同一份内容再发一次（应回放、不多发一篇）」。
+    ///
+    /// 为什么必须有这么一条：`docs/RELEASING.md` 里那条真机验收（连接 → 发一篇带图笔记 →
+    /// 同一篇再发一次）此前**一次都没走过**，于是「tags 发成数组」这种**契约**错误
+    /// 一路绿到用户面前 —— 2026-09-21 用户第一次真发帖就吃 422
+    /// `invalid type: sequence, expected a string`。
+    ///
+    /// ⚠️ 它会在 `community.shuyo.cn` **真的多一篇帖子**（内容写明了可删），所以默认不跑；
+    /// 幂等键固定（note/rev 写死）⇒ 重跑只会回放同一篇，不会越跑越多。
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture probe_real_publish_round_trip
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：会对着 community.shuyo.cn 真的发一篇帖子（固定幂等键，重跑不多发）"]
+    async fn probe_real_publish_round_trip() {
+        let path = std::env::var("SHUYO_COMMUNITY_AUTH").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\{}",
+                std::env::var("APPDATA").unwrap_or_default(),
+                AUTH_FILE
+            )
+        });
+        let Some(auth) = load_auth_at(Path::new(&path)) else {
+            eprintln!("跳过：{path} 里没有可用的授权（先在应用里点「连接社区」）");
+            return;
+        };
+        eprintln!(
+            "令牌：base={} user={} scope={} client={}",
+            auth.base, auth.username, auth.scope, auth.client
+        );
+        let base = COMMUNITY_BASE.to_string();
+        assert_eq!(
+            auth.base.trim_end_matches('/'),
+            base,
+            "这份授权不是这个站的，探针不往别处发"
+        );
+
+        let title = "联调测试：ShuyoNote 客户端发帖链路（可删）";
+        let body = "这是「一键发布到社区」发版链路的联调测试帖：用来验证请求体形状（`tags` 是**字符串**）、\
+                    幂等键与响应判读。**随时可以删掉**。";
+        let tags = vec!["联调测试".to_string(), "ShuyoNote".to_string()];
+        let note_id = "probe-community-publish";
+        let rev = content_rev(title, body, &tags);
+        let payload = build_payload(title, body, &tags, note_id, &rev).expect("载荷组装");
+        // 把**真正要发出去的 JSON** 打出来：这条探针的一个作用就是让"线上到底发了什么形状"可见。
+        eprintln!("载荷：{}", serde_json::to_string(&payload).unwrap());
+        let key = idempotency_key(note_id, &rev);
+        eprintln!("幂等键：{key}");
+
+        let first = publish_at(&base, &auth, &payload, &key)
+            .await
+            .expect("第一次发布（网络/CSRF 层）失败");
+        eprintln!("第一次：{first:?}");
+        let second = publish_at(&base, &auth, &payload, &key)
+            .await
+            .expect("重发（网络/CSRF 层）失败");
+        eprintln!("第二次（同一份内容、同一个键）：{second:?}");
+
+        match (&first, &second) {
+            (PublishOutcome::Ok { id: a, url, .. }, PublishOutcome::Ok { id: b, .. }) => {
+                eprintln!("✅ 真发成功：{url}");
+                assert_eq!(a, b, "同一份内容重发必须回放**同一篇**（幂等键的全部意义）");
+                eprintln!("✅ 幂等成立：两次都是 #{a}");
+            }
+            (PublishOutcome::Ok { url, .. }, other) => {
+                eprintln!("⚠️ 第一次成功（{url}），但第二次不是 Ok：{other:?}");
+            }
+            (other, _) => eprintln!("❌ 第一次就没成：{other:?}"),
+        }
+    }
 }
