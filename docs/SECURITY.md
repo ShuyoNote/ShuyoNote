@@ -70,6 +70,16 @@
 - ⚠️ 诚实边界：跨空间取数走的是生产路径（`open_space_conn`），单测覆盖的是**规则与严格性**；
   "扫描必须在删除之前"由调用点的**位置**保证，没有端到端（需要 Tauri `AppHandle`）。
 
+### 6. `do_pull` 中途失败把 `foreign_keys` **永久**关在长命主连接上（旧 §四 中危，已修）
+- 老写法：进批量循环前 `PRAGMA foreign_keys = OFF`，**循环之后**再恢复原值。循环里任何一条变更
+  失败都会 `?` 早退 ⇒ 那句恢复**永远不执行** ⇒ 外键在这条**长命的主连接**上**永久 OFF**：
+  之后整个应用的 `attachments.page_id` / `pages.parent_id` 等约束都不再生效，孤儿行静默堆积。
+- 修法：`ForeignKeysOff` RAII 守卫（读不到原值就按"本来开着的"恢复）—— 成功、失败、早退**都是** Drop 恢复，
+  从"看运气"变成"结构上不可能漏"；恢复时机与原来一致（仍在 `set_profile_field` 之后离开作用域时）。
+- 判据：`sync::tests::foreign_keys_guard_restores_even_when_the_batch_bails_early`（早退后必须恢复 /
+  成功路径恢复 / **本来关着仍恢复成关着**，不许改掉调用方的原状态）＋ **变异证明**：把 Drop 改成空实现
+  ⇒ 立刻红（`left: 0, right: 1`）。
+
 > 验证：`cargo test --lib` **55 passed / 0 failed**（含 plugins / sync / workspace_io / storage 测试）。
 
 ---
@@ -93,7 +103,6 @@
 
 **[中危] 中危**
 - **do_push 游标过度推进 + dirty 误清**（`sync.rs:1177-1195`）：`max_seq` 取全局 max 而非本次推送 batch 的最大 `device_seq`；>500 pending 或推送期间编辑时可能静默丢同步。
-- **do_pull 失败使 `foreign_keys` 永久 OFF**（`sync.rs:1250-1306`）：`?` 早退跳过 FK 恢复 → 数据完整性受损。建议 RAII guard + 事务。
 - **apply_delete 不尊重 dirty 优先**（`sync.rs:194-217`）：只比 `updated_at`，未读 `dirty`/`sync_seq` → 本地未同步内容被远端删除覆盖。
 - **锁定态附件明文落盘**（`attachments.rs:223/381/456` + `sync.rs:1636`，E1 静置一致性）。
 - **邮箱 IMAP 凭据明文落盘**（`email.rs:1140-1159`、`:1185-1187`）：`app_data_dir/email-account.json` **只在 E1 开启且解锁**时用会话密钥加密；E1 关闭（默认关）即明文 JSON，且加密**失败**会**静默回退明文**（`:1151`/`:1153` 的 `unwrap_or_else(|_| a.password.clone())`）。IMAP 应用密码通常一次生成、长期有效、可读全部历史邮件，属高价值凭据；任何以该用户身份运行的进程可直接读取，用户备份/网盘同步 AppData 即等于上传邮箱密码。修法：OS 凭据库（stronghold / Keychain / Windows Credential Manager / libsecret）或默认加密；最低限度应把静默回退改为**拒绝保存并报错**。**待修，独立排期。**
