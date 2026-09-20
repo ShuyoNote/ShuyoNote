@@ -162,7 +162,9 @@ describe("listApk / readApkEntry：纯 Node 读 zip（APK 就是 zip）", () => 
     const vendor = join(resolve(dirname(fileURLToPath(import.meta.url)), ".."), VENDOR_LIB);
     const hasVendor = existsSync(vendor);
     const payload = hasVendor ? readFileSync(vendor) : Buffer.from("not-the-real-lib");
-    const apk = withFile("ok.apk", makeZip([{ name: "lib/arm64-v8a/libpdfium.so", data: payload }]));
+    // `stored`（不压缩）：6 MB 的库在这条判据里只关心**字节**，压一遍纯属白烧 CPU ——
+    // deflate 路径由上面那条小载重的往返判据覆盖。
+    const apk = withFile("ok.apk", makeZip([{ name: "lib/arm64-v8a/libpdfium.so", data: payload, stored: true }]));
     const logs = [];
     const code = check({ apk, log: (m) => logs.push(m), err: () => {} });
     if (hasVendor) {
