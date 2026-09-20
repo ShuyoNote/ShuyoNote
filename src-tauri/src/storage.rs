@@ -378,6 +378,42 @@ pub struct WorkspacePurgeResult {
     pub workspaces: usize,
 }
 
+/// 扫描一组空间库各自引用的附件 hash（`attachments` 表的 `hash` 列，**不 join `pages`**）。
+///
+/// ★ 为什么**读不到就报错**、而不是 `if let Ok(conn)` 跳过（2026-09-20 自查发现，
+/// 与 F2 同一族：**静默数据丢失比报错坏得多**）：
+/// 调用方 `purge_deleted_workspaces` 用"仍被剩余空间引用的 hash"去**减**掉要删的集合。
+/// 少扫到一个空间 ⇒ 它引用的附件被当成孤儿 ⇒ **真删盘上文件**（图/附件打不开），
+/// 而界面给的是一句绿色的「释放了多少」。空间库读不到的原因很多（文件缺失、半拷贝、
+/// 权限、密钥不符），**没有一种是"它不引用任何附件"**。
+///
+/// 所以：读不到 ⇒ 返回这批 id 与原因，让调用方**一个附件都不删**。
+/// 参数用闭包注入打开方式，是为了不依赖全局 APP_DATA_DIR 就能测这条规则。
+fn scan_referenced_hashes<F>(ids: &[String], open: F) -> Result<Vec<String>, Vec<String>>
+where
+    F: Fn(&str) -> Result<rusqlite::Connection, String>,
+{
+    let mut out: Vec<String> = Vec::new();
+    let mut unreadable: Vec<String> = Vec::new();
+    for sid in ids {
+        match open(sid) {
+            Ok(conn) => match conn.prepare("SELECT DISTINCT hash FROM attachments") {
+                Ok(mut stmt) => match stmt.query_map([], |r| r.get::<_, String>(0)) {
+                    Ok(rows) => out.extend(rows.flatten()),
+                    Err(e) => unreadable.push(format!("{sid}: 读 attachments 失败（{e}）")),
+                },
+                Err(e) => unreadable.push(format!("{sid}: 打不开 attachments 表（{e}）")),
+            },
+            Err(e) => unreadable.push(format!("{sid}: 打不开空间库（{e}）")),
+        }
+    }
+    if unreadable.is_empty() {
+        Ok(out)
+    } else {
+        Err(unreadable)
+    }
+}
+
 /// M14.4 / M15.4c — Permanently delete soft-deleted workspaces. Under physical
 /// isolation each deleted workspace's content lives in its OWN `spaces/<id>.db`,
 /// so purging removes that DB file (and WAL) rather than deleting rows from the
@@ -402,28 +438,60 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
         rows.map_err(|e| e.to_string())?
     };
 
+    // ★ 顺序与严格性（2026-09-20 自查发现，与 F2 同族）：
+    //   **先**把"仍被存活空间引用的 hash"扫干净，扫不到就**当场失败、什么都不删**；
+    //   **再**删已软删空间的库文件与元数据行。
+    //   老代码把这一步放在删除**之后**、且用 `if let Ok(conn)` 静默跳过读不到的空间 ⇒
+    //   少扫一个存活空间，它引用的附件就被当成孤儿**真删掉**，界面还报"释放了多少"。
+    let remaining_ids: Vec<String> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut stmt = c
+            .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NULL")
+            .map_err(|e| e.to_string())?;
+        let rows: Result<Vec<String>, _> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect();
+        rows.map_err(|e| e.to_string())?
+    };
+    let remaining_for_scan = remaining_ids.clone();
+    let referenced_remaining: std::collections::HashSet<String> =
+        tauri::async_runtime::spawn_blocking(move || {
+            scan_referenced_hashes(&remaining_for_scan, crate::db::open_space_conn)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|unreadable| {
+            format!(
+                "有 {} 个存活空间当前读不到 ⇒ **无法判断哪些附件是孤儿，本次不删任何附件**（什么都还没删）：\n  - {}",
+                unreadable.len(),
+                unreadable.join("\n  - ")
+            )
+        })?
+        .into_iter()
+        .collect();
+
     // For each deleted space, open its DB to collect the hashes it referenced, then
-    // delete its DB + WAL files. Also collect the set of hashes still referenced by
-    // any REMAINING space (so we only free truly-orphaned bytes).
+    // delete its DB + WAL files.
     let deleted_for_files = deleted_ids.clone();
     let (hashes_to_free, freed_bytes) = tauri::async_runtime::spawn_blocking(move || -> Result<(Vec<String>, u64), String> {
         let mut freed_bytes: u64 = 0u64;
         let mut released_hashes: Vec<String> = Vec::new();
 
         for sid in &deleted_for_files {
-            // Collect this space's referenced hashes by opening its DB (read-only intent).
-            if let Ok(conn) = crate::db::open_space_conn(sid) {
-                if let Ok(mut stmt) = conn.prepare(
-                    // ⚠️ 不 join `pages`：内连接会漏掉 `page_id IS NULL`（根目录文件）与
-                    // "页已不在"的历史行，那些字节会被当成孤儿（2026-09-19 缺陷帖 #6）。
-                    "SELECT DISTINCT hash FROM attachments",
-                ) {
-                    if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                        for h in rows.flatten() {
-                            released_hashes.push(h);
-                        }
-                    }
-                }
+            // 这些空间**马上要被删掉**，所以读不到只意味着"少回收一些字节"（安全方向），
+            // 与上面那条"存活空间读不到 ⇒ 不许删"是两件事，这里保持宽松。
+            // ⚠️ 不 join `pages`：内连接会漏掉 `page_id IS NULL`（根目录文件）与
+            // "页已不在"的历史行，那些字节会被当成孤儿（2026-09-19 缺陷帖 #6）。
+            match crate::db::open_space_conn(sid) {
+                Ok(conn) => match conn.prepare("SELECT DISTINCT hash FROM attachments") {
+                    Ok(mut stmt) => match stmt.query_map([], |r| r.get::<_, String>(0)) {
+                        Ok(rows) => released_hashes.extend(rows.flatten()),
+                        Err(e) => eprintln!("清理软删空间 {sid}：读 attachments 失败（{e}）⇒ 这批字节不回收"),
+                    },
+                    Err(e) => eprintln!("清理软删空间 {sid}：打不开 attachments 表（{e}）⇒ 这批字节不回收"),
+                },
+                Err(e) => eprintln!("清理软删空间 {sid}：打不开空间库（{e}）⇒ 这批字节不回收"),
             }
             // Delete the space DB + WAL/shm.
             if !crate::db::is_safe_space_id(sid) {
@@ -457,32 +525,7 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     }
 
     // Free orphaned attachment bytes: hashes referenced ONLY by deleted spaces.
-    // Compute the set of hashes still referenced by any remaining space's DB.
-    let remaining_ids: Vec<String> = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        let mut stmt = c
-            .prepare("SELECT id FROM meta.workspaces WHERE deleted_at IS NULL")
-            .map_err(|e| e.to_string())?;
-        let rows: Result<Vec<String>, _> = stmt
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
-            .collect();
-        rows.map_err(|e| e.to_string())?
-    };
-    let mut referenced_remaining: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for sid in remaining_ids {
-        if let Ok(conn) = crate::db::open_space_conn(&sid) {
-            if let Ok(mut stmt) = conn.prepare(
-                // ⚠️ 不 join `pages`（同 `referenced_hashes` 的注释）：漏掉 `page_id IS NULL`
-                // 与"页已不在"的行 ⇒ 那些字节被别的空间仍在引用也被当孤儿删（缺陷帖 #6）。
-                "SELECT DISTINCT hash FROM attachments",
-            ) {
-                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                    referenced_remaining.extend(rows.flatten());
-                }
-            }
-        }
-    }
+    // `referenced_remaining` 已经在**删除之前**严格扫过（读不到就整体失败）—— 见上面的注释。
 
     let orphaned: Vec<String> = hashes_to_free
         .into_iter()
@@ -511,6 +554,54 @@ mod tests {
     use super::*;
     use crate::db::migrate;
     use rusqlite::Connection;
+
+    // ★ 清理软删空间时"存活空间读不到 ⇒ 一个附件都不许删"（2026-09-20 自查发现的**静默数据丢失**）。
+    // 老代码写成 `if let Ok(conn)` ⇒ 少扫一个存活空间，它引用的附件被当孤儿**真删**。
+    #[test]
+    fn purge_refuses_to_guess_when_a_live_space_is_unreadable() {
+        let mk = |hashes: &[&str]| -> Connection {
+            let c = Connection::open_in_memory().unwrap();
+            migrate(&c, "w1").unwrap();
+            for h in hashes {
+                c.execute(
+                    "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at) VALUES (?1, NULL, 'f', ?2, 'text/plain', 1, 1)",
+                    params![format!("a-{h}"), h],
+                )
+                .unwrap();
+            }
+            c
+        };
+
+        let ids: Vec<String> = vec!["live-a".into(), "live-b".into()];
+
+        // ① 都读得到 ⇒ 取并集。
+        let open_ok = |sid: &str| -> Result<Connection, String> {
+            Ok(match sid {
+                "live-a" => mk(&["h1", "h2"]),
+                _ => mk(&["h2", "h3"]),
+            })
+        };
+        let mut got = scan_referenced_hashes(&ids, open_ok).unwrap();
+        got.sort();
+        got.dedup(); // 跨空间可能重复（调用方收进 HashSet）；这里只看并集对不对
+        assert_eq!(got, vec!["h1", "h2", "h3"]);
+
+        // ② 有一个读不到 ⇒ **整体失败**，且**一个 hash 都不返回**（调用方据此不删任何附件）。
+        let open_partial = |sid: &str| -> Result<Connection, String> {
+            if sid == "live-b" {
+                return Err("数据库已加密但会话未解锁".to_string());
+            }
+            Ok(mk(&["h1"]))
+        };
+        let err = scan_referenced_hashes(&ids, open_partial).unwrap_err();
+        assert_eq!(err.len(), 1, "{err:?}");
+        assert!(err[0].starts_with("live-b:"), "{}", err[0]);
+        assert!(err[0].contains("未解锁"), "{}", err[0]);
+
+        // ③ 空集合 ⇒ Ok(空)，不把"没有空间"误判成失败。
+        let empty: Vec<String> = vec![];
+        assert!(scan_referenced_hashes(&empty, |_| Err("不该被调用".into())).unwrap().is_empty());
+    }
 
     #[test]
     fn clear_trash_breaks_parent_fk_before_delete() {

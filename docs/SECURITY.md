@@ -31,6 +31,20 @@
 - `storage.rs::purge_deleted_workspaces`：删除前对 `sid` 做 `is_safe_space_id` 纵深校验，防历史脏数据导致任意文件删。
 - `db.rs`：`is_safe_space_id` 改 `pub` 供跨模块复用。
 
+### 4. 清理软删空间时「存活空间读不到」⇒ 静默少扫 → 附件被当孤儿**真删**（新增 [高危] 数据丢失）
+- `storage.rs::purge_deleted_workspaces`：老写法 `if let Ok(conn) = open_space_conn(&sid)` **静默跳过**
+  读不到的存活空间（文件缺失 / 半拷贝 / 权限 / 密钥不符），于是它引用的 hash 不在"仍被引用"集合里 ⇒
+  与某个已软删空间共享的附件字节被当孤儿**从盘上删掉**，界面却报"释放了 X"。**没有任何一种读不到的原因
+  等价于"它不引用任何附件"。**
+- 修法：抽出 `scan_referenced_hashes(ids, open)` —— **读不到就返回这批 id 与原因**；调用方把它挪到
+  **删除动作之前**，一旦非空就整体失败（"什么都还没删"），错误信息列出是哪几个空间、为什么。
+  已软删空间那侧仍保持宽松（它们本来就要被删，读不到只意味着少回收字节 —— 安全方向），并补 `eprintln`。
+- 判据：`storage::tests::purge_refuses_to_guess_when_a_live_space_is_unreadable`（三格：都读得到取并集 /
+  一个读不到 ⇒ 整体失败且**不返回任何 hash** / 空集合不算失败）＋ **变异证明**：把该函数退回"静默跳过"，
+  这条判据立刻红（`Ok(["h1"])` 而不是错误）。
+- ⚠️ 诚实边界：单测覆盖的是**这个函数的严格性**；"扫描必须在删除之前"由调用点的**位置**保证，没有端到端
+  （那需要 Tauri `AppHandle`）。真机上的清理动作仍属人手验收。
+
 > 验证：`cargo test --lib` **55 passed / 0 failed**（含 plugins / sync / workspace_io / storage 测试）。
 
 ---
