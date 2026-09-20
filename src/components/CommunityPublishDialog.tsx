@@ -48,9 +48,11 @@ import type {
   CommunityDeviceStart,
   CommunityPublishResult,
   CommunityPublishState,
+  CommunityTaxonomy,
   CommunityUploadedAttachment,
 } from "../lib/platform/commands";
 import { pageContentToMarkdown, pageImageRefs } from "../lib/exportMarkdown";
+import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
 import { sanitizeExternalUrl } from "../lib/links";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
@@ -141,10 +143,133 @@ function connectStateNote(state: CommunityConnectState): string {
   return `社区返回了没预期到的状态：${state}。可以重新开始一次。`;
 }
 
-export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }: CommunityPublishDialogProps) {
+/**
+ * 社区侧的标签上限（它 `src/tags.rs` 的 `MAX_TAGS=5` / `MAX_TAG_CHARS=16`，写入时按 `,` 连接）。
+ * Rust 侧 `build_payload` 也按同一套裁（`community_publish.rs` 的 `COMMUNITY_MAX_TAGS` /
+ * `COMMUNITY_MAX_TAG_CHARS`）—— 两处常量要一起改。
+ *
+ * 这里的编辑框直接按上限约束输入（满 5 个就不再收），所以清单里显示的一定就是发出去的那几个。
+ */
+const COMMUNITY_MAX_TAGS = 5;
+const COMMUNITY_MAX_TAG_CHARS = 16;
+
+/**
+ * 一个标签按**社区的规则**规范化：去 `#`、压空白、限 16 字、ASCII 转小写。
+ *
+ * 为什么界面自己也要做一遍（Rust `build_payload` 里还有一份）：这份是为了让**清单里显示的就是
+ * 社区会存下的那 5 个**（`ShuyoNote` 与 `shuyonote` 在社区里是同一个标签 —— 实测社区词表里
+ * 两个都出现过，就是"同一词分裂成两页"的现场）。Rust 那份是"不信前端"的兜底，两者同口径。
+ */
+export function normalizeTag(raw: string): string {
+  const cleaned = raw.trim().replace(/^#+/, "").replace(/\s+/g, " ").trim();
+  return cleaned.slice(0, COMMUNITY_MAX_TAG_CHARS).toLowerCase();
+}
+
+/** 规范化一整组（去空、去重、限量）—— 预填笔记标签时用。 */
+export function normalizeTags(list: string[]): string[] {
+  let out: string[] = [];
+  for (const raw of list) out = addTag(out, raw);
+  return out;
+}
+
+/** 加一个标签：满了 / 空的 / 重的都**原样返回**（界面据此禁用输入框，不静默丢）。 */
+export function addTag(list: string[], raw: string): string[] {
+  const t = normalizeTag(raw);
+  if (!t) return list;
+  if (list.length >= COMMUNITY_MAX_TAGS) return list;
+  if (list.some((x) => x.toLowerCase() === t)) return list;
+  return [...list, t];
+}
+
+/**
+ * 一个板块能被"标签"对上的几种写法：slug、整名、以及名字里用 `/`、`·`、`、`、空白切开的那几段。
+ *
+ * 为什么要切开：社区的名字是"插件/主题""问答/求助""更新日志/公告"这种**并列**写法，
+ * 而笔记的标签只会写其中一个词（`插件`）—— 只比整名就永远对不上，"标签能对上就预选"就成了空话。
+ * 这只是**预选**（清单里看得见、改得动），猜错了用户当场就能改。
+ */
+function boardKeys(b: { slug: string; name: string }): string[] {
+  return [b.slug, b.name, ...b.name.split(/[/·、\s]+/)]
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** 上次选过的板块（本机记住，发布过的人下次只需确认）。 */const BOARD_MEMO_KEY = "shuyonote:communityBoard";
+function rememberedBoard(): string {
+  try {
+    return localStorage.getItem(BOARD_MEMO_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+function rememberBoard(slug: string): void {
+  try {
+    if (slug) localStorage.setItem(BOARD_MEMO_KEY, slug);
+  } catch {
+    /* 记不住不影响这次发布 */
+  }
+}
+
+export function CommunityPublishDialog({
+  title,
+  docJson,
+  tags: noteTags,
+  noteId,
+  onClose,
+}: CommunityPublishDialogProps) {
   useOverlayScrollLock(true);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("communityPublish", true, onClose);
+
+  /**
+   * **标签可编辑**（owner 2026-09-21：社区那边标签要能改，不能"笔记里没有就只能空着发"）。
+   *
+   * 预填的是**笔记自己的标签**（`pageTags`），但按社区的规则**先规范化一遍**：
+   * 英文转小写、去 `#`、每个 ≤16 字、最多 5 个 —— 这样清单里显示的就是社区会存下的那 5 个，
+   * 而不是"名字对不上、发完才发现少了几个"。笔记本身**一个字都不改**（发布是复制一份出去）。
+   */
+  const [tags, setTags] = useState<string[]>(() => normalizeTags(noteTags));
+  const [tagDraft, setTagDraft] = useState("");
+
+  /**
+   * 板块：默认「未分类」。优先级 **上次选过的 > 笔记标签能对上某个板块 > 未分类**。
+   *
+   * 为什么不让它"自动猜一个就发"：我们**还不能改已发布的帖**（更新是 P2），猜错只能去网页上手动改。
+   * 所以这里的预选是**清单里看得见、改得动**的，且只从社区给的列表里挑（认不出的 slug 社区会静默当未分类）。
+   */
+  const [board, setBoard] = useState("");
+  const [boardTouched, setBoardTouched] = useState(false);
+  /** 社区侧的板块与标签词表（公开只读；拿不到就只是没有建议，不影响发布）。 */
+  const [taxonomy, setTaxonomy] = useState<CommunityTaxonomy | null>(null);
+
+  // 词表只在打开清单时拿一次：失败**不当错误**（板块可以不选、标签可以自己打），
+  // 只落成一句"没有建议可选"的说明 —— 那种"建议拿不到就发不出去"的设计才是错的。
+  useEffect(() => {
+    let cancelled = false;
+    void platform.executor
+      .invoke<CommunityTaxonomy>("community_taxonomy")
+      .then((t) => {
+        if (!cancelled) setTaxonomy(t);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setTaxonomy({ boards: [], tags: [], error: String(e) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 板块预选：上次选过的 > 笔记标签能对上某个板块 > 不选。
+  // `boardTouched` 之后就不再动它 —— 用户明确选了"未分类"是**决定**，不是没选。
+  useEffect(() => {
+    if (!taxonomy || boardTouched) return;
+    const remembered = rememberedBoard();
+    const keys = tags.map((t) => t.toLowerCase());
+    const pick =
+      taxonomy.boards.find((b) => b.slug === remembered) ??
+      taxonomy.boards.find((b) => boardKeys(b).some((k) => keys.includes(k)));
+    if (pick) setBoard(pick.slug);
+  }, [taxonomy, boardTouched, tags]);
 
   /**
    * 清单正文与"有哪些图要传"都从 `docJson` 算（`docJson` 不变就不重算）。
@@ -455,6 +580,9 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
         title,
         body,
         tags,
+        // 「未分类」就**不传这个字段**（Rust 侧连字段都不发）：社区把认不出的 slug 静默当未分类，
+        // 少一个字段就少一次"我们以为选了、其实发了个空值"的歧义。
+        board: board || undefined,
         noteId,
         rev,
       });
@@ -484,6 +612,15 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
   const body = prepared.body;
   const chars = body.length;
   const imgs = countImages(body);
+  /**
+   * 正文预览：**默认渲染**（owner 2026-09-21：「内容是 md 格式，不友好」），另给一个开关看逐字源码。
+   *
+   * 发出去的东西没变 —— 社区把 `body` 当 Markdown 渲染（实测 `<h1>/<h2>/<ul>/<blockquote>` 都在），
+   * 所以这里只是"发出去会长什么样"。要看"一个字节都不差发了什么"的，切到源码那一档
+   * （那条也是判据：清单里摆的必须是**上传前**的本地态正文）。
+   */
+  const [showSource, setShowSource] = useState(false);
+  const previewHtml = useMemo(() => markdownPreviewHtml(body), [body]);
 
   return (
     <div className="community-save-overlay" onClick={onClose}>
@@ -675,9 +812,103 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
                   <div className="community-save-preview-meta">
                     标题：{title || "（这篇没有标题——社区会拒绝，先给笔记起个名）"}
                   </div>
-                  <div className="community-save-preview-meta">
-                    标签：{tags.length > 0 ? tags.map((t) => `#${t}`).join(" ") : "（没有标签）"}
+                  {/* 板块：**只从社区给的列表里挑**（认不出的 slug 社区会静默当未分类，
+                      而我们还不能改已发布的帖 ⇒ 猜错只能去网页手动改，所以这里让人选）。
+                      预选规则见上面那个 effect：上次选过的 > 标签能对上 > 不选。 */}
+                  <div className="community-save-field">
+                    <span className="community-save-preview-meta">板块</span>
+                    <select
+                      className="community-save-board"
+                      value={board}
+                      aria-label="选择板块"
+                      onChange={(e) => {
+                        setBoard(e.target.value);
+                        setBoardTouched(true);
+                        rememberBoard(e.target.value);
+                      }}
+                    >
+                      <option value="">不选板块（未分类）</option>
+                      {(taxonomy?.boards ?? []).map((b) => (
+                        <option key={b.slug} value={b.slug}>
+                          {b.name}
+                          {b.posts > 0 ? `（${b.posts} 篇）` : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  {/* 标签：**可编辑**（预填笔记标签，按社区规则规范化；上限直接约束输入）。
+                      原因是"笔记里没有标签"或"标签跟社区词表对不上"此前都只能空着发出去。 */}
+                  <div className="community-save-field">
+                    <span className="community-save-preview-meta">标签</span>
+                    <div className="community-save-tags">
+                      {tags.map((t) => (
+                        <span key={t} className="community-save-tag">
+                          #{t}
+                          <button
+                            className="community-save-tag-x"
+                            aria-label={`移除标签 ${t}`}
+                            onClick={() => setTags(tags.filter((x) => x !== t))}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                      {tags.length < COMMUNITY_MAX_TAGS ? (
+                        <input
+                          className="community-save-tag-input"
+                          value={tagDraft}
+                          placeholder={tags.length === 0 ? "输入标签后回车" : "再加一个"}
+                          aria-label="添加标签"
+                          maxLength={COMMUNITY_MAX_TAG_CHARS}
+                          onChange={(e) => setTagDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === ",") {
+                              e.preventDefault();
+                              setTags(addTag(tags, tagDraft));
+                              setTagDraft("");
+                            }
+                          }}
+                          onBlur={() => {
+                            if (tagDraft.trim()) {
+                              setTags(addTag(tags, tagDraft));
+                              setTagDraft("");
+                            }
+                          }}
+                        />
+                      ) : (
+                        <span className="community-save-tag-hint">已满 {COMMUNITY_MAX_TAGS} 个</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="community-save-more">
+                    社区规则：最多 {COMMUNITY_MAX_TAGS} 个标签、每个 ≤{COMMUNITY_MAX_TAG_CHARS} 字、英文转小写。
+                    {noteTags.length > 0 ? "（预填的是这篇笔记的标签，可以改）" : "（这篇笔记没有标签，可以在这里加）"}
+                  </div>
+                  {/* 社区已有的标签：点一下就加（用它们自己的词表，免得同一个词在社区分裂成好几页）。 */}
+                  {taxonomy && taxonomy.tags.length > 0 && (
+                    <div className="community-save-tag-suggest">
+                      <span className="community-save-tag-hint">社区已有：</span>
+                      {taxonomy.tags
+                        .filter((t) => !tags.includes(normalizeTag(t)))
+                        .slice(0, 12)
+                        .map((t) => (
+                          <button
+                            key={t}
+                            className="community-save-tag-suggest-item"
+                            onClick={() => setTags(addTag(tags, t))}
+                            disabled={tags.length >= COMMUNITY_MAX_TAGS}
+                          >
+                            +{t}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+                  {/* 拿不到词表要**说出来**（否则用户以为"社区没有板块/没有标签"），但不影响发布。 */}
+                  {taxonomy && taxonomy.error !== "" && (
+                    <div className="community-save-more">
+                      板块/标签建议没拿到：{taxonomy.error}（不影响发布：板块可以不选、标签可以自己打）
+                    </div>
+                  )}
                   <div className="community-save-preview-meta">
                     正文：整篇全文 {chars} 字 · 图片 {imgs} 张
                   </div>
@@ -700,8 +931,30 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
                       还有 {prepared.broken} 张图没有附件指纹（本机图片但缺 hash），传不上去：发出去会缺。
                     </div>
                   )}
-                  {/* 正文**整篇**摆出来（owner 2026-09-20：发的就是整篇，不是摘要）。 */}
-                  <div className="community-save-preview-body">{body || "（正文是空的）"}</div>
+                  {/* 正文**整篇**摆出来（owner 2026-09-20：发的就是整篇，不是摘要）。
+                      默认渲染成"发出去的样子"，要看逐字 Markdown 源码就切一下。 */}
+                  <div className="community-save-preview-row">
+                    <span className="community-save-preview-meta">正文预览</span>
+                    <button
+                      className="community-save-preview-toggle"
+                      onClick={() => setShowSource((v) => !v)}
+                      title={
+                        showSource
+                          ? "切回渲染效果（社区那边看到的样子）"
+                          : "看逐字的 Markdown 源码（发出去的就是它）"
+                      }
+                    >
+                      {showSource ? "看渲染效果" : "看 Markdown 源码"}
+                    </button>
+                  </div>
+                  {showSource || previewHtml === "" ? (
+                    <div className="community-save-preview-body">{body || "（正文是空的）"}</div>
+                  ) : (
+                    <div
+                      className="community-save-preview-body is-rendered"
+                      dangerouslySetInnerHTML={{ __html: previewHtml }}
+                    />
+                  )}
                   <div className="community-save-target">发布到：{connection?.base || "社区"}</div>
                 </div>
               )}

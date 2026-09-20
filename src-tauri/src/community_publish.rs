@@ -7,7 +7,8 @@
 //!      随机键等于放弃幂等，症状是"重试一次多一篇"）。
 //!
 //! 另一条与 `community.rs`（抓取侧）共享的纪律：**状态码如实上报**。401 是"令牌被撤销了"、
-//! 403 `app_token_scope` 是"我们发错接口了"、409 是"上一个还在处理"、422 是"审核拦下了"。
+//! 403 `app_token_scope` 是"我们发错接口了"、409 是"上一个还在处理"、
+//! 422 分两种（带 `error` 的 JSON = "审核/校验拦下了"；纯文本 = axum 没收下我们的请求体 = 客户端 bug）。
 //! 四件事对用户意味着四种不同动作，压成一句"发布失败"就等于让人去猜。
 
 use serde::{Deserialize, Serialize};
@@ -105,14 +106,51 @@ pub fn content_rev(title: &str, body: &str, tags: &[String]) -> String {
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
 }
 
+/// 社区对标签的**服务端口径**（见它 `src/tags.rs` 的 `MAX_TAGS` / `MAX_TAG_CHARS`）：
+/// `,` 连接的一个字符串，最多 5 个、每个 ≤16 字、ASCII 转小写。
+/// 本地先按同一套裁好，免得"清单里写着 8 个标签、社区只存了 5 个"变成一处静默丢失。
+pub const COMMUNITY_MAX_TAGS: usize = 5;
+pub const COMMUNITY_MAX_TAG_CHARS: usize = 16;
+
 /// 发给社区的 `NewPost`（字段名与它 `POST /api/posts` 的 JSON 同形）。
+///
+/// ⚠️ **`tags` 是一个字符串**（`数友,工作流`），**不是数组** —— 2026-09-21 用户第一次真发帖
+/// 就撞在这上面：我们此前按"数组"发（`"tags":["插件","Markdown"]`），社区（axum `Json<NewPost>`，
+/// 见它 `src/posts.rs` 的 `pub tags: Option<String>`）当场回 422：
+/// ```text
+/// Failed to deserialize the JSON body into the target type:
+/// tags: invalid type: sequence, expected a string at line 1 column 425
+/// ```
+/// 社区自己的发帖表单也是**一个文本框**（它 `src/render.rs` 里 `input type="text" name="tags"`），
+/// 服务端用 `tags::normalize` 按 `,`/`，`/`、`/`;`/`；` 切分。
+/// 「字段名同形」这句话当时只对着**字段名**验证过（判据里从来没有真服务器/真契约），
+/// 于是类型错了也一路绿到用户面前 —— 所以现在 `tests` 里有一条**线形状**判据，见
+/// [`tests::payload_sends_tags_as_a_string_because_that_is_the_wire_contract`]。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NewPostPayload {
     pub title: String,
     pub body: String,
-    pub tags: Vec<String>,
+    pub tags: String,
+    /// 板块 slug（社区 `NewPost.board: Option<String>`，认不出就当未分类）。
+    /// **没选就不发这个字段**（`skip_serializing_if`）：空串和"没有"在社区那边虽然同义，
+    /// 但少发一个字段就少一次"我们以为选了、其实发了个空值"的歧义。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
     pub source: String,
     pub source_ref: String,
+}
+
+/// 板块 slug 的形状（社区那边就是 `slugify` 出来的 `[a-z0-9-]`，如 `data-sovereignty`）。
+///
+/// 为什么这里要挡一道：界面只让用户从 `community_taxonomy` 拿到的列表里选，所以**形状不对
+/// 只可能是客户端 bug**（猜错了、拼错了）。社区对认不出的 slug 会静默当"未分类"——
+/// 那种"选了板块却发到无板块"的静默，正是这一道要拦下来的东西。
+pub fn valid_board_slug(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 60
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 /// 组装发帖体。标题为空**在这一侧就报错**：社区会回 422，但那时用户看到的是"审核没通过"，
@@ -121,6 +159,7 @@ pub fn build_payload(
     title: &str,
     body: &str,
     tags: &[String],
+    board: Option<&str>,
     note_id: &str,
     rev: &str,
 ) -> Result<NewPostPayload, String> {
@@ -128,17 +167,39 @@ pub fn build_payload(
     if title.is_empty() {
         return Err("这篇笔记没有标题：社区要求标题非空（给笔记起个名，或用文件名当标题）".to_string());
     }
-    let mut seen = std::collections::HashSet::new();
-    let tags: Vec<String> = tags
-        .iter()
-        .map(|t| t.trim().trim_start_matches('#').trim().to_string())
-        .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
-        .take(20)
-        .collect();
+    let board = match board.map(str::trim).filter(|b| !b.is_empty()) {
+        None => None,
+        Some(b) if valid_board_slug(b) => Some(b.to_string()),
+        Some(b) => {
+            return Err(format!(
+                "板块 slug「{b}」不是社区认识的形状（只该是小写字母/数字/`-`）——\
+                 界面只让用户从社区给的列表里挑，所以这是客户端 bug，请把这句话反馈给开发者"
+            ))
+        }
+    };
+    // 规范化顺序**照着社区 `tags::normalize` 来**（去 `#`、去空、限长 16 字、限 5 个、
+    // 去重时比较的是**裁过之后**的值）——顺序不一样就可能"本地留的和社区存的不是同一批"。
+    // 唯一不跟它一致的是大小写：它存小写，我们保留原样（本地显示/指纹都用原样，不影响幂等）。
+    let mut out: Vec<String> = Vec::new();
+    for raw in tags {
+        let cleaned = raw.trim().trim_start_matches('#').trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let capped: String = cleaned.chars().take(COMMUNITY_MAX_TAG_CHARS).collect();
+        if out.iter().any(|t| t.eq_ignore_ascii_case(&capped)) {
+            continue;
+        }
+        out.push(capped);
+        if out.len() >= COMMUNITY_MAX_TAGS {
+            break;
+        }
+    }
     Ok(NewPostPayload {
         title: title.to_string(),
         body: body.to_string(),
-        tags,
+        tags: out.join(","),
+        board,
         source: SOURCE.to_string(),
         source_ref: source_ref(note_id, rev),
     })
@@ -203,8 +264,21 @@ pub fn classify(status: u16, body: &str, base: &str) -> PublishOutcome {
             PublishOutcome::Ok { id, slug, url }
         }
         409 => PublishOutcome::InFlight,
-        422 => PublishOutcome::Rejected {
-            error: if err.is_empty() { preview(body) } else { err },
+        // 422 有两种，**形状能分开**（2026-09-21 真发帖撞出来的）：
+        //   ① 社区自己的校验/风控拦下 —— 响应体是 JSON 且带 `error`（`内容不合规` / `defect_incomplete`
+        //      / `failed`，见它 `src/posts.rs` 的 create）；
+        //   ② axum 的 `Json<NewPost>` 反序列化失败 —— 响应体是**纯文本**
+        //      （`Failed to deserialize the JSON body into the target type: …`）。
+        // ② 是"我们的请求体形状就不对" = 客户端 bug，被读成"审核拦下"会把 bug 藏起来
+        // （用户截图里那句就是它），所以归到 Unexpected 去。
+        422 if !err.is_empty() => PublishOutcome::Rejected { error: err },
+        422 => PublishOutcome::Unexpected {
+            status,
+            error: if body.trim().is_empty() {
+                "422：社区没给理由（响应体是空的）".to_string()
+            } else {
+                format!("{}（这不是审核拦下，是社区**没收下这个请求体**：把这句话反馈给开发者）", preview(body))
+            },
         },
         401 => PublishOutcome::Unauthorized,
         403 if err == "app_token_scope" => PublishOutcome::OutOfScope,
@@ -705,6 +779,149 @@ async fn revoke_remote(auth: &StoredAuth) -> Result<bool, String> {
     Ok(v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false))
 }
 
+/// 社区的一个板块（`GET /api/boards` 的 `items[]`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoardInfo {
+    pub slug: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// 该板块下的帖子数（社区给的；界面只用来把"有人气的"排前面）。
+    #[serde(default)]
+    pub posts: i64,
+}
+
+/// 发布时要用的两样"社区侧词表"：板块（选哪个）＋ 已有标签（建议用哪些）。
+///
+/// 为什么要一次拿两样：它们都是**公开只读**、都来自同一个站、都只在打开发布清单时用一次；
+/// 分两条命令只会多一次往返与两处错误处理。`error` 非空表示"某一边没拿到"——
+/// 界面据此说明"没有建议可以选"，但**发布本身不受影响**（板块可以不选、标签可以自己打）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct CommunityTaxonomy {
+    pub boards: Vec<BoardInfo>,
+    pub tags: Vec<String>,
+    pub error: String,
+}
+
+/// 解析 `GET /api/boards` 的响应（纯函数，好判）。
+pub fn parse_boards(json: &str) -> Result<Vec<BoardInfo>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("板块列表不是 JSON：{e}"))?;
+    let items = v
+        .get("items")
+        .and_then(|i| i.as_array())
+        .ok_or_else(|| "板块列表里没有 items 数组".to_string())?;
+    let mut out = Vec::new();
+    for it in items {
+        let slug = it.get("slug").and_then(|s| s.as_str()).unwrap_or("").trim().to_string();
+        let name = it.get("name").and_then(|s| s.as_str()).unwrap_or("").trim().to_string();
+        if slug.is_empty() || name.is_empty() || !valid_board_slug(&slug) {
+            continue; // 认不出来的条目直接跳过：宁可少一个选项，也不要发一个不存在的 slug
+        }
+        out.push(BoardInfo {
+            slug,
+            name,
+            description: it
+                .get("description")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string(),
+            posts: it.get("posts").and_then(|p| p.as_i64()).unwrap_or(0),
+        });
+    }
+    Ok(out)
+}
+
+/// 解析 `GET /api/tags` 的响应（纯函数）。
+pub fn parse_tags(json: &str) -> Result<Vec<String>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("标签列表不是 JSON：{e}"))?;
+    let items = v
+        .get("items")
+        .and_then(|i| i.as_array())
+        .ok_or_else(|| "标签列表里没有 items 数组".to_string())?;
+    Ok(items
+        .iter()
+        .filter_map(|t| t.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(60)
+        .collect())
+}
+
+/// 进程内缓存：板块/标签都不是"每分钟会变"的东西，而清单可能被反复打开。
+/// **只在成功时写**（拿不到就不缓存，下一次点开再试）。
+static TAXONOMY: std::sync::Mutex<Option<CommunityTaxonomy>> = std::sync::Mutex::new(None);
+
+/// 拿社区侧的板块与标签词表（**公开只读**，不需要令牌）。
+#[tauri::command]
+pub async fn community_taxonomy() -> Result<CommunityTaxonomy, String> {
+    if let Ok(guard) = TAXONOMY.lock() {
+        if let Some(cached) = guard.as_ref() {
+            return Ok(cached.clone());
+        }
+    }
+    let client = client()?;
+    let mut notes: Vec<String> = Vec::new();
+    let boards = match get_text(&client, &format!("{COMMUNITY_BASE}/api/boards")).await {
+        Ok(body) => match parse_boards(&body) {
+            Ok(b) => b,
+            Err(e) => {
+                notes.push(format!("板块列表读不出来（{e}）"));
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            notes.push(format!("拿不到板块列表（{e}）"));
+            Vec::new()
+        }
+    };
+    let tags = match get_text(&client, &format!("{COMMUNITY_BASE}/api/tags")).await {
+        Ok(body) => match parse_tags(&body) {
+            Ok(t) => t,
+            Err(e) => {
+                notes.push(format!("标签建议读不出来（{e}）"));
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            notes.push(format!("拿不到标签建议（{e}）"));
+            Vec::new()
+        }
+    };
+    let out = CommunityTaxonomy {
+        boards,
+        tags,
+        error: notes.join("；"),
+    };
+    // 两边都有东西才缓存：只有一半时下次点开还能补上。
+    if out.error.is_empty() {
+        if let Ok(mut guard) = TAXONOMY.lock() {
+            *guard = Some(out.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// 一个带体积上限的 GET（返回正文文本）。**只用于公开只读端点**（板块/标签词表）。
+async fn get_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
+    const MAX: usize = 256 * 1024;
+    let resp = client.get(url).send().await.map_err(|e| {
+        if e.is_timeout() {
+            format!("请求超时（{url}）")
+        } else {
+            format!("{e}")
+        }
+    })?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status().as_u16()));
+    }
+    let text = resp.text().await.map_err(|e| format!("读响应失败：{e}"))?;
+    if text.len() > MAX {
+        return Err(format!("响应过大（{} 字节）", text.len()));
+    }
+    Ok(text)
+}
+
 /// 发布一篇笔记。幂等键由 `(note_id, rev)` 算出来 —— 界面**不要**自己造 key。
 ///
 /// `rev` 必须是 [`content_rev`] 的返回值（32 位十六进制的**内容指纹**），不是页面更新时间戳：
@@ -716,6 +933,9 @@ pub async fn community_publish_note(
     title: String,
     body: String,
     tags: Vec<String>,
+    // 板块 slug（`community_taxonomy` 给的列表里选出来的）；`None`/空 = 未分类。
+    // `Option` 在 tauri 的命令参数里天然可缺省，不用再加 serde 属性（它也不允许加在参数上）。
+    board: Option<String>,
     note_id: String,
     rev: String,
 ) -> Result<PublishResult, String> {
@@ -732,7 +952,7 @@ pub async fn community_publish_note(
              传时间戳会让同一份内容每保存一次就多发一篇"
         ));
     }
-    let payload = build_payload(&title, &body, &tags, &note_id, &rev)?;
+    let payload = build_payload(&title, &body, &tags, board.as_deref(), &note_id, &rev)?;
     let key = idempotency_key(&note_id, &rev);
     let outcome = publish_at(&auth.base, &auth, &payload, &key).await?;
     let result = match outcome {
@@ -1053,7 +1273,7 @@ mod tests {
 
     #[test]
     fn payload_needs_a_title_and_dedups_tags() {
-        let e = build_payload("   ", "正文", &[], "n", "1").unwrap_err();
+        let e = build_payload("   ", "正文", &[], None, "n", "1").unwrap_err();
         assert!(e.contains("标题"), "标题为空要说清是这个原因：{e}");
 
         let tags = vec![
@@ -1062,8 +1282,9 @@ mod tests {
             "".to_string(),
             "Note".to_string(),
         ];
-        let p = build_payload("标题", "正文", &tags, "n", "1").unwrap();
-        assert_eq!(p.tags, vec!["Rust".to_string(), "Note".to_string()]);
+        let p = build_payload("标题", "正文", &tags, None, "n", "1").unwrap();
+        // 去重（`Rust` / `#rust` 是同一个）后**拼成一个字符串**：社区收的是 `tags` 字符串。
+        assert_eq!(p.tags, "Rust,Note");
         assert_eq!(p.source, SOURCE);
         assert_eq!(p.source_ref, "n-1");
         // 上站前先自证：发出去的 JSON 字段名就是社区要的那几个。
@@ -1071,6 +1292,113 @@ mod tests {
         for f in ["title", "body", "tags", "source", "source_ref"] {
             assert!(j.get(f).is_some(), "少了字段 {f}");
         }
+    }
+
+    /// **线形状判据**：`tags` 必须是 JSON **字符串**，不能是数组。
+    ///
+    /// 2026-09-21 用户第一次真发帖就被这条挡住（社区 422 原文见 `NewPostPayload` 的注释）：
+    /// 我们此前按数组发，而本地全部判据都只对**字段名**做断言（`j.get("tags").is_some()`），
+    /// 类型错了照样绿 —— 这条就是补那个洞。任何"顺手把 tags 改回 Vec"的改动都会在这里红。
+    #[test]
+    fn payload_sends_tags_as_a_string_because_that_is_the_wire_contract() {
+        let p = build_payload("标题", "正文", &["插件".to_string()], None, "n", "1").unwrap();
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(
+            json.contains(r#""tags":"插件""#),
+            "tags 必须是字符串（社区 `NewPost.tags: Option<String>`）：{json}"
+        );
+        assert!(
+            !json.contains(r#""tags":["#),
+            "tags 不许发成数组 —— 社区会回 422 `invalid type: sequence, expected a string`：{json}"
+        );
+        // 没有标签时是**空字符串**，也不是 `[]`
+        let none = build_payload("标题", "正文", &[], None, "n", "1").unwrap();
+        assert!(serde_json::to_string(&none).unwrap().contains(r#""tags":"""#));
+    }
+
+    /// 本地就按社区的上限裁（5 个 / 每个 ≤16 字）：否则"清单里 8 个标签、社区只存 5 个"
+    /// 又是一处静默丢失。
+    #[test]
+    fn payload_caps_tags_the_way_the_community_does() {        let many: Vec<String> = (0..8).map(|i| format!("tag{i}")).collect();
+        let p = build_payload("标题", "正文", &many, None, "n", "1").unwrap();
+        assert_eq!(p.tags, "tag0,tag1,tag2,tag3,tag4", "最多 5 个");
+
+        let long = vec!["一二三四五六七八九十一二三四五六七八".to_string()];
+        let p2 = build_payload("标题", "正文", &long, None, "n", "1").unwrap();
+        assert_eq!(p2.tags.chars().count(), COMMUNITY_MAX_TAG_CHARS, "每个标签限 16 字");
+
+        // 裁完之后才去重：两个只差尾部的长标签会变成同一个，只留一个。
+        let dup = vec![
+            "一二三四五六七八九十一二三四五六".to_string(),
+            "一二三四五六七八九十一二三四五六七".to_string(),
+        ];
+        let p3 = build_payload("标题", "正文", &dup, None, "n", "1").unwrap();
+        assert!(!p3.tags.contains(','), "裁完相同的两个标签只该留一个：{}", p3.tags);
+    }
+
+    /// **板块**：选了就带、没选就**不出现这个字段**、形状不对要拦下来。
+    ///
+    /// 为什么"没选"要求字段消失（而不是 `""`）：空串与缺字段在社区那边同义，
+    /// 但"我们以为选了、其实发了个空值"这种歧义不该存在 —— 少一个字段就少一次误读。
+    #[test]
+    fn payload_carries_the_board_only_when_one_is_chosen() {
+        let none = build_payload("标题", "正文", &[], None, "n", "1").unwrap();
+        assert_eq!(none.board, None);
+        let json = serde_json::to_string(&none).unwrap();
+        assert!(!json.contains("board"), "没选板块时连字段都不该出现：{json}");
+
+        // 空串 / 全是空白 = 没选（界面把"未分类"就是传成这样）
+        let blank = build_payload("标题", "正文", &[], Some("   "), "n", "1").unwrap();
+        assert_eq!(blank.board, None);
+        assert!(!serde_json::to_string(&blank).unwrap().contains("board"));
+
+        let chosen = build_payload("标题", "正文", &[], Some("data-sovereignty"), "n", "1").unwrap();
+        assert_eq!(chosen.board.as_deref(), Some("data-sovereignty"));
+        assert!(serde_json::to_string(&chosen).unwrap().contains(r#""board":"data-sovereignty""#));
+
+        // 形状不对 = 客户端 bug（界面只让从社区给的列表里挑），要**说出来**而不是静默当未分类
+        let bad = build_payload("标题", "正文", &[], Some("Data Sovereignty!"), "n", "1").unwrap_err();
+        assert!(bad.contains("板块"), "要说清是板块的问题：{bad}");
+        assert!(bad.contains("客户端 bug"), "要说清这是客户端的问题：{bad}");
+    }
+
+    #[test]
+    fn board_slug_shape_rule() {
+        for ok in ["qa", "data-sovereignty", "plugins2", "a_b"] {
+            assert!(valid_board_slug(ok), "{ok} 该放行");
+        }
+        for bad in ["", "-qa", "qa-", "QA", "问 答", "qa/x", &"a".repeat(61)] {
+            assert!(!valid_board_slug(bad), "{bad} 该拦下");
+        }
+    }
+
+    /// 板块/标签词表的解析：认不出来的条目**跳过**（宁可少一个选项，也不要发一个不存在的 slug）。
+    #[test]
+    fn taxonomy_parsers_skip_what_they_cannot_use() {
+        let boards = parse_boards(
+            r#"{"items":[
+                {"id":3,"name":"问答/求助","slug":"qa","description":"提问","posts":4},
+                {"id":9,"name":"坏条目","slug":"Bad Slug!"},
+                {"id":10,"name":"","slug":"noname"},
+                {"id":11,"name":"没问题","slug":"ok"}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            boards.iter().map(|b| b.slug.as_str()).collect::<Vec<_>>(),
+            vec!["qa", "ok"],
+            "形状不对 / 缺名字的条目要跳过"
+        );
+        assert_eq!(boards[0].posts, 4);
+        assert_eq!(boards[0].description, "提问");
+
+        // 形状不对的响应是**错误**（不是空列表）：界面据此说"拿不到板块列表"，而不是"社区没有板块"
+        assert!(parse_boards("<html>").is_err());
+        assert!(parse_boards(r#"{"items":{}}"#).is_err());
+
+        let tags = parse_tags(r#"{"items":["ShuyoNote"," 插件 ","","开发"]}"#).unwrap();
+        assert_eq!(tags, vec!["ShuyoNote", "插件", "开发"]);
+        assert!(parse_tags("nope").is_err());
     }
 
     #[test]
@@ -1114,6 +1442,25 @@ mod tests {
                 error: "内容不合规".to_string()
             }
         );
+        // 422 但**没有** JSON `error`：这是 axum 没收下我们的请求体（响应体是纯文本），
+        // 即客户端 bug —— 2026-09-21「tags 发成了数组」那次就是它，用户看到的那句
+        // 「社区没有通过这篇（审核拦下）」是错的标题。判据要求：原样带上社区那句话 + 明说不是审核。
+        match classify(
+            422,
+            "Failed to deserialize the JSON body into the target type: \
+             tags: invalid type: sequence, expected a string at line 1 column 425",
+            base,
+        ) {
+            PublishOutcome::Unexpected { status, error } => {
+                assert_eq!(status, 422);
+                assert!(
+                    error.contains("invalid type: sequence"),
+                    "要原样带上社区那句话：{error}"
+                );
+                assert!(error.contains("不是审核拦下"), "要说清这不是审核拦下：{error}");
+            }
+            other => panic!("纯文本 422 判读错了：{other:?}"),
+        }
         assert_eq!(classify(401, "", base), PublishOutcome::Unauthorized);
         assert_eq!(
             classify(403, r#"{"ok":false,"error":"app_token_scope"}"#, base),
@@ -1211,7 +1558,17 @@ mod tests {
                     )
                 } else {
                     let lower = req.to_ascii_lowercase();
-                    let ok = lower.contains("x-csrf-token: testcsrf")
+                    // **照真服务器的口径验请求体**：`tags` 必须是字符串（社区 `NewPost.tags: Option<String>`）。
+                    // 2026-09-21 真发帖撞的就是这一条（我们发成数组 ⇒ 社区 422 `invalid type: sequence`）；
+                    // 假社区此前只看请求头，于是这条契约在本地判据里是**空的**。
+                    let body_txt = req.split("\r\n\r\n").nth(1).unwrap_or("");
+                    let tags_is_string = serde_json::from_str::<serde_json::Value>(body_txt)
+                        .ok()
+                        .and_then(|v| v.get("tags").cloned())
+                        .map(|t| t.is_string())
+                        .unwrap_or(false);
+                    let ok = tags_is_string
+                        && lower.contains("x-csrf-token: testcsrf")
                         && lower.contains("cookie: csrf_token=testcsrf")
                         && lower.contains("authorization: bearer tok")
                         && lower.contains("idempotency-key: shuyonote-note1-rev1");
@@ -1220,6 +1577,14 @@ mod tests {
                             200,
                             "",
                             r#"{"id":9,"slug":"note-one","body":"b","tags":[]}"#,
+                        )
+                    } else if !tags_is_string {
+                        // 逐字照抄社区 axum 那句话的形状，好让判据里的失败信息一眼认出来。
+                        (
+                            422,
+                            "",
+                            "Failed to deserialize the JSON body into the target type: \
+                             tags: invalid type: sequence, expected a string at line 1 column 425",
                         )
                     } else {
                         (403, "", r#"{"ok":false,"error":"bad_csrf"}"#)
@@ -1243,7 +1608,7 @@ mod tests {
             client: CLIENT_NAME.to_string(),
             saved_at: now(),
         };
-        let payload = build_payload("标题", "正文", &[], "note1", "rev1").unwrap();
+        let payload = build_payload("标题", "正文", &[], None, "note1", "rev1").unwrap();
         let key = idempotency_key("note1", "rev1");
         let out = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1476,5 +1841,78 @@ mod tests {
         // 内容变了 ⇒ 指纹变了 ⇒ 键也变了（那是**新的一篇**，本来就该是新内容）
         let other = content_rev("标题", "正文改了", &[]);
         assert_ne!(idempotency_key("page-1", &rev), idempotency_key("page-1", &other));
+    }
+
+    /// **手动探针（会真的发帖）**：拿本机已连接的令牌，对着**真社区**走一遍
+    /// 「发一篇 → 同一份内容再发一次（应回放、不多发一篇）」。
+    ///
+    /// 为什么必须有这么一条：`docs/RELEASING.md` 里那条真机验收（连接 → 发一篇带图笔记 →
+    /// 同一篇再发一次）此前**一次都没走过**，于是「tags 发成数组」这种**契约**错误
+    /// 一路绿到用户面前 —— 2026-09-21 用户第一次真发帖就吃 422
+    /// `invalid type: sequence, expected a string`。
+    ///
+    /// ⚠️ 它会在 `community.shuyo.cn` **真的多一篇帖子**（内容写明了可删），所以默认不跑；
+    /// 幂等键固定（note/rev 写死）⇒ 重跑只会回放同一篇，不会越跑越多。
+    ///
+    /// ```text
+    /// cargo test --lib -- --ignored --nocapture probe_real_publish_round_trip
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：会对着 community.shuyo.cn 真的发一篇帖子（固定幂等键，重跑不多发）"]
+    async fn probe_real_publish_round_trip() {
+        let path = std::env::var("SHUYO_COMMUNITY_AUTH").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\{}",
+                std::env::var("APPDATA").unwrap_or_default(),
+                AUTH_FILE
+            )
+        });
+        let Some(auth) = load_auth_at(Path::new(&path)) else {
+            eprintln!("跳过：{path} 里没有可用的授权（先在应用里点「连接社区」）");
+            return;
+        };
+        eprintln!(
+            "令牌：base={} user={} scope={} client={}",
+            auth.base, auth.username, auth.scope, auth.client
+        );
+        let base = COMMUNITY_BASE.to_string();
+        assert_eq!(
+            auth.base.trim_end_matches('/'),
+            base,
+            "这份授权不是这个站的，探针不往别处发"
+        );
+
+        let title = "联调测试：ShuyoNote 客户端发帖链路（可删）";
+        let body = "这是「一键发布到社区」发版链路的联调测试帖：用来验证请求体形状（`tags` 是**字符串**）、\
+                    幂等键与响应判读。**随时可以删掉**。";
+        let tags = vec!["联调测试".to_string(), "ShuyoNote".to_string()];
+        let note_id = "probe-community-publish";
+        let rev = content_rev(title, body, &tags);
+        let payload = build_payload(title, body, &tags, None, note_id, &rev).expect("载荷组装");
+        // 把**真正要发出去的 JSON** 打出来：这条探针的一个作用就是让"线上到底发了什么形状"可见。
+        eprintln!("载荷：{}", serde_json::to_string(&payload).unwrap());
+        let key = idempotency_key(note_id, &rev);
+        eprintln!("幂等键：{key}");
+
+        let first = publish_at(&base, &auth, &payload, &key)
+            .await
+            .expect("第一次发布（网络/CSRF 层）失败");
+        eprintln!("第一次：{first:?}");
+        let second = publish_at(&base, &auth, &payload, &key)
+            .await
+            .expect("重发（网络/CSRF 层）失败");
+        eprintln!("第二次（同一份内容、同一个键）：{second:?}");
+
+        match (&first, &second) {
+            (PublishOutcome::Ok { id: a, url, .. }, PublishOutcome::Ok { id: b, .. }) => {
+                eprintln!("✅ 真发成功：{url}");
+                assert_eq!(a, b, "同一份内容重发必须回放**同一篇**（幂等键的全部意义）");
+                eprintln!("✅ 幂等成立：两次都是 #{a}");
+            }
+            (PublishOutcome::Ok { url, .. }, other) => {
+                eprintln!("⚠️ 第一次成功（{url}），但第二次不是 Ok：{other:?}");
+            }
+            (other, _) => eprintln!("❌ 第一次就没成：{other:?}"),
+        }
     }
 }

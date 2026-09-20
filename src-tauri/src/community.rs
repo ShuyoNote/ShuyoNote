@@ -163,9 +163,15 @@ async fn get_capped(
     cap: u64,
 ) -> Result<(Vec<u8>, String), String> {
     // **带上 `Accept: application/json`**：深链里带的是**帖子页地址**（用户从浏览器复制的那条），
-    // 而社区侧最省的落地方式就是在同一个地址上做内容协商（返回 JSON）——这样应用不需要知道
-    // slug→id 的映射（那是他们的实现细节）。实测过：当前那个地址只回 HTML，
-    // 所以下面那条"不是 JSON"的错误信息要把**该怎么修**说清楚，而不是只说"类型不对"。
+    // 社区侧在**同一个地址**上做内容协商（返回 JSON）——这样应用不需要知道 slug→id 的映射
+    // （那是他们的实现细节）。
+    //
+    // ⚠️ 2026-09-21 更新：**社区已经实现了这个协商**（实测 `GET /post/<slug>` + `Accept: application/json`
+    // ⇒ 200 `application/json`，字段 `id/title/body_markdown/tags(数组)/url(绝对)/author/created_at`
+    // 全在；判据 `tests::live_community_json_is_accepted_by_this_parser` 在线上跑通）。
+    // 此前这里写的是"实测过：当前那个地址只回 HTML" —— 那是社区加上协商**之前**的读数，
+    // 已经过期（留着它会让下一个人以为这条路是坏的）。下面那段"拿到 HTML 就说清怎么修"
+    // 仍然保留：它只在社区哪天回退成 HTML 时才会用到。
     let resp = client
         .get(url)
         .header(reqwest::header::ACCEPT, "application/json")

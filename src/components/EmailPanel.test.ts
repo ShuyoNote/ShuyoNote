@@ -509,11 +509,12 @@ describe("邮件外部图片：占位不碎图 + 明说有几张没加载（2026
 
   it("内嵌图的 data: URI 原样留着，且不算「未加载的外部图片」（后端把 cid: 内联成 data:，靠这条显示 logo）", () => {
     const src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
-    // 注意外面那层 <div>：happy-dom 里 DOMPurify 会把**最外层**元素丢掉（`<p>x</p>` → `x`、
-    // 单独一个 `<img>` → 空串），套一层容器才量得到 img。真实浏览器没这个毛病 ——
-    // 2026-09-20 用真 Chromium(Edge) + 真 DOMPurify 跑「数友社区」那封真邮件读过数：
-    // 消毒后 img 仍在、src 是 21746 字符的 data:image/png，`naturalWidth/Height = 308/60`
-    // （浏览器真的把内嵌 PNG 解码出来了），截图见那次修复记录。
+    // 注意外面那层 <div>：happy-dom 里 DOMPurify **等于没做事**（2026-09-21 实测：默认配置下
+    // `<script>` 都原样返回），只剩"最外层元素的标签被吃掉"这个怪相 —— `<p>x</p>` → `x`、
+    // 单独一个 `<img>` → 空串。真浏览器没这个毛病（同日真 Chromium+真 DOMPurify 读数：
+    // 消毒后 img 仍在、src 是 21746 字符的 data:image/png、`naturalWidth/Height = 308/60`）。
+    // 所以本文件只钉"我们自己的后处理"，不钉"DOMPurify 清没清干净"（那样会是一条假判据，
+    // 详见 `src/lib/mdPreviewHtml.test.ts` 顶部那段环境事实）。
     const clean = sanitizeEmailHtml(`<div><img src="${src}" alt="数友社区" width="154" height="30"></div>`, false);
     // DOMPurify 必须放行 img 的 data: URI（放行不了的话 logo 照样显示不出来）
     expect(clean).toContain(src);

@@ -2612,6 +2612,11 @@ export function makeInvoke(store: SqliteStore) {
     // 发布台账是**本地库**里的一行：Web 版没有那个库 ⇒ 如实回"没有台账"，而不是抛错
     // （它只用来显示"上次发到哪儿了"，抛错会让对话框打不开）。
     if (cmd === "community_publish_state") return null as T;
+    // 板块/标签词表：Web 版没有"不受 CORS 约束的出口"（社区只面向同源），所以**如实回空 + 说明**，
+    // 而不是抛错 —— 这条是"建议"性质，缺了不该让任何一屏打不开。
+    if (cmd === "community_taxonomy") {
+      return { boards: [], tags: [], error: "Web 版拿不到社区板块/标签词表（跨域），请使用桌面版。" } as T;
+    }
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
     }    if (cmd === "plugin_revocations") return [] as T;
