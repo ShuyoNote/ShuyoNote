@@ -21,6 +21,15 @@
 export const GATES = [
   // ---- contract ----
   { id: "check-versions", group: "contract", label: "版本号一致性", cmd: "node scripts/check-versions.mjs" },
+  {
+    id: "check-changelog-version-parity",
+    group: "contract",
+    label: "CHANGELOG 已发布标题与版本文件同改",
+    cmd: "node scripts/check-changelog-version-parity.mjs",
+    incident:
+      "2026-09-20：一笔提交只把 CHANGELOG 顶部那节写成 1.91.10（没动三个版本文件）⇒ dev 上 `check-versions` 红，" +
+      "而它只能说「当前内容不一致」、说不出是哪一笔；本门禁补「哪一笔」，并显式处理 merge（`-m --first-parent`）",
+  },
   { id: "check-changelog", group: "contract", label: "CHANGELOG 结构", cmd: "node scripts/check-changelog.mjs" },
   {
     id: "check-changelog-numbers",
