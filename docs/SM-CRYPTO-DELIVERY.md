@@ -48,16 +48,22 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 平台 | 应用层 SM4（附件/导出/同步载荷） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
 |---|---|---|---|---|---|
-| **macOS** | ✅ | ❌ **仍是 CommonCrypto（只有 AES）** | Tongsuo **已在本机构建**（commit `540603a3`）；切后端**已证明可行且与既有库兼容**；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；库级 🔶 机制已备 |
-| **Windows** | ✅（纯 Rust，全平台同一份实现） | ❌ | **MSVC 版 Tongsuo 未构建**（P3 第一关） | **Windows 侧** | 应用层：本机跑不了 `cargo test`（`0xC0000139`）⇒ 行为由 Linux/CI 证 |
-| **Linux** | ✅ | ❌ | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
-| **Android** | ✅（纯 Rust） | ❌ | Tongsuo 交叉编译**已被 AMD 证过**（NDK r29）；真机验收未做 | 真机＝**人手** | ❌ 未取证 |
+| **macOS** | ✅ | 🔶 **国密版构建：P2 已落地**（SM3 页 MAC ＋ 库 KDF，接 Tongsuo/OpenSSL 后端）；**默认包仍是 CommonCrypto（只有 AES）**；**页加密仍是 AES**（P3 未做） | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；⚠️ 有一条 macOS-only 风险见 §五 |
+| **Windows** | ✅（纯 Rust，全平台同一份实现） | 🔶 同 P2（其后端本来就是 OpenSSL） | 据信箱：**AMD 2026-09-18 报过 `tongsuo build: msvc=ok`**（附三条前置踩坑）；⚠️ **本侧没有独立复核** | Windows 侧 | 应用层：本机跑不了 `cargo test`（`0xC0000139`）⇒ 行为由 Linux/CI 证；库级未取证 |
+| **Linux** | ✅ | 🔶 **国密版构建：P2 已落地**（AMD 在 WSL2 上有读数）；页加密仍是 AES（P3 未做） | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
+| **Android** | ✅（纯 Rust） | ❌ 未做（P2/P3 的 Android 构建链未排） | Tongsuo 交叉编译**已被 AMD 证过**（NDK r29）；真机验收未做 | 真机＝**人手** | ❌ 未取证 |
 | **iOS** | ❌ | ❌ | 无 `ios.yml`、未开始；Apple 平台与 macOS 同一个 CommonCrypto 坑 | 未立项 | ❌ 范围外（方案 §1 已写明） |
 | **Web** | ❌ | ❌ | 不提供静态加密与多设备同步 | — | ❌ 范围外（方案 §1） |
 | 同步**服务端** | ❌ | ❌ | 只转发密文，不改 | 另一仓库 | ❌ 范围外 |
 
-> **一句话读法**：**应用层已经全平台国密（纯 Rust，一份实现）；库级一列全是 ❌ —— 那一列要等 P2/P3 的
-> provider 补丁（AMD）＋ 各平台 Tongsuo 构建把前置补齐**。本说明的作用之一就是**不让这两件事被读成一件**。
+> **一句话读法**（2026-09-20 更新）：**应用层已全平台国密**（纯 Rust，一份实现）；
+> **库级已走到 P2**（SM3 页 MAC ＋ 库 KDF，随"国密版构建"生效，macOS 本机三段自证全绿）；
+> **还差 P3（SM4 页加密）** —— 它**不是顺手加一个分支**（方案 §3.2 三条结构事实：`cipher` 回调无 algorithm 参数、
+> `OPENSSL_CIPHER` 编译期钉死五处、没有 `cipher_algorithm` PRAGMA），**两条路的成本要 owner 拍板**。
+> 本说明的作用之一就是**不让这几件事被读成一件**。
+>
+> ⚠️ **页加密是「整库属性」，不是逐空间的**：上层"按空间开加密"说的是**应用层开关**；
+> 库级页加密一旦选定就是那个**库文件**的属性（且协议里没有算法标识 ⇒ 解密端必须会 SM4）。
 
 ---
 
@@ -76,6 +82,9 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **换加密后端前后旧库仍可读**（页加密读写回归） | `security::tests::fixture_db_written_by_the_other_provider_still_opens`（夹具 `tests/sqlcipher-backend-fixture.db` 由 **CommonCrypto 后端**写下） | Tongsuo 后端下 `security::` **14/14** |
 | 实际编进去的是哪个后端（不是看你设了什么环境变量） | `node scripts/check-crypto-backend.mjs` | 双向实测：产物 openssl＋声明 openssl ⇒ 绿；产物 CC＋声明 openssl ⇒ **红** |
 | **补丁在不在**（第三格的一半；另半是运行期"真的生效没有"） | `SHUYONOTE_EXPECT_SM_PATCH=applied\|absent node scripts/check-crypto-backend.mjs` | 声明 applied 而产物无标记 ⇒ 红（附 `cargo clean -p shuyonote`）；声明 absent 而有标记 ⇒ 红（配置漂移）。⚠️ 标记可能是上次构建的重放，故输出里带 output mtime |
+| **P2 provider 补丁落地**（SM3 页 MAC ＋ 库 KDF ＋ 能力门） | `patches/0001-sqlcipher-sm3-provider.patch` ＋ `scripts/sm-library-build.mjs`（幂等打补丁） | AMD 在 WSL2 有读数；**macOS 本机独立复跑见下两行** |
+| ★ **三段自证（macOS，真补丁 ＋ 真 Tongsuo）** | `node scripts/gm-version-selfcheck.mjs --openssl-dir <Tongsuo> --expect-patch applied --with-build` | **3 段全过**：后端=openssl（link-search 指 Tongsuo）／补丁在场且 `src_sha256=150bc1ee0f7f…` **与 AMD 报的逐字相同**（新鲜度可证）／跨对拍 12/12 |
+| 运行期"真的生效没有"（第三格另一半） | `cargo test --lib gm_provider`（**在打过补丁 ＋ Tongsuo 的构建上**） | macOS：**9 passed / 0 failed / 4 ignored**（与 AMD 报的同一套 13 一致） |
 | 门禁 | `pnpm verify`（23）/ `node scripts/test-report.mjs --group rust`（**6 条**，含 `rust-sm-crypto`、`check-crypto-backend`、`gm-conformance`） | 全绿 |
 | **老端在动手之前就拒绝**（§0-C）：同步**整批拒绝**、空间级标识、附件拒绝（不是逐条失败） | `sync::tests::prescan_payload_formats_refuses_the_whole_batch`、`security::tests::space_guard_…`、`…attachment_bytes_of_an_unsupported_format_are_refused…` | ✅（默认构建拒绝 / 国密构建放行，两半都有 cfg 判据） |
 
@@ -85,9 +94,10 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 项 | 归属 | 还差什么 |
 |---|---|---|
-| 库级 SM4 页加密 / HMAC-SM3 / PBKDF2-HMAC-SM3（P2＝SM3 系、P3＝SM4 页） | **AMD** | provider 补丁（同一文件同一结构体）；本版只加了构建侧接缝与门禁 |
-| 「页加密确为 SM4」的直接判据（读文件头 / 用错算法打不开） | AMD ＋ 本侧 | 依赖上一条落地 |
-| Windows MSVC 版 Tongsuo | **Windows 侧** | MSVC 构建（历史未做） |
+| **P3：SM4 页加密** | **AMD**（方案 §3.2 两条路） | **需 owner 拍板成本**：**A 编译期切换**（`-DSQLCIPHER_SM4_CBC` → `EVP_sm4_cbc()`，薄、建议先做；代价＝同一份源码只能有一种页加密）／**B 给 provider 加 algorithm 参数**（改回调签名 ＋ 三个 provider ＋ codec，上游级、patch 面涨到几十段）。**SM3 系（页 MAC ＋ 库 KDF）已随 P2 落地** |
+| 「页加密确为 SM4」的直接判据（读文件头 / 用错算法打不开） | AMD ＋ 本侧 | 依赖 P3 落地 |
+| ★ **macOS-only 风险：补丁留在共享 registry 上** | **AMD**（我给了三条修法） | 补丁打在**共享**的 `libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c` 上 ⇒ 跑过一次国密构建后，**默认（CommonCrypto）构建会红 12＋7 条**（受控 A/B：打过补丁 7/12 fail ＋ 2/7 fail；还原后 **19/0 ＋ 9/0**；现场是 `PRAGMA key = "x'…'"` 被拒 ⇒ 加密库打不开）。Linux/Windows 后端本就是 OpenSSL ⇒ **只有 macOS 会暴露**。修法候选：按后端守护补丁／胶水可撤回／国密构建用独立 `CARGO_HOME` |
+| Windows MSVC 版 Tongsuo | **Windows 侧** | 据信箱 **AMD 2026-09-18 已报 `msvc=ok`**（Tongsuo 8.5.0-pre2 / SM3＋SM4 读数、三条前置踩坑）；⚠️ **本侧无独立复核** |
 | Android 真机（口令→加密→重启解锁→读写） | **人手** | 真机 |
 | 桌面真机：新装加密 / 重启解锁 / 加密开关双向迁移不丢数据 | **人手** | 真机 |
 | 端到端"旧版库 ＋ 旧版附件 → 新版打开" | **人手** | 真机（本版只有单测层的跨后端夹具与 v0 金标夹具） |
@@ -113,6 +123,9 @@ cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml    # ← 这�
 OPENSSL_DIR=$HOME/tongsuo-macos/install \
   cargo build --lib --features sm-library --manifest-path src-tauri/Cargo.toml
 node scripts/check-crypto-backend.mjs                                 # ← 拿产物说话
+#   ⚠️ macOS 特有：`sm-library-build.mjs` 会把补丁**打到共享的 registry 源码**上。跑完之后**默认构建
+#   （CommonCrypto）会红 12＋7 条**（现场：`PRAGMA key` 被拒）。要么用修法里的"撤回/守护"，
+#   要么跑完立刻还原：把 `…/libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c` 恢复原版（sha256 `ea0bf0b0…`）
 
 # ④ 门禁：默认组 / rust 组（含国密两条）
 pnpm verify && node scripts/test-report.mjs --group rust
@@ -145,5 +158,10 @@ node scripts/gm-version-selfcheck.mjs --openssl-dir <Tongsuo 前缀> --expect-pa
    （有用例钉住）⇒ **同一份 SQLCipher 库文件，默认包也打得开**。但⚠️**这不等于可以无痛降级**：
    库里由国密版写下的**应用层载荷（v2）**默认包解不开，会给出"请升级国密版/更新版本"的**可操作错误**
    （第 2 条）。⇒ 发国密版时要说清："**降级回默认包 = 库能打开、但国密版写过的那部分内容读不出来**"。
-4. **性能**：解锁＝Argon2id ＋ PBKDF2-HMAC-SM3 200000 轮，本机（M4 Max，release）合计 ≈ **112 ms**；
+4. **页加密是「整库属性」，不是逐空间的**（方案 §3.2 的提醒，容易读错）：
+   上层"按空间开加密"说的是**应用层开关**；库级页加密一旦选定就是那个**库文件**的属性，
+   而 SQLCipher 的协议里**没有算法标识** ⇒ **解密端必须自己会 SM4**。
+   所以 P3 走 A（编译期切换）时："同一台机器上的库文件只能有一种页加密"，
+   跨端读取要求**对端也是国密版构建**。
+5. **性能**：解锁＝Argon2id ＋ PBKDF2-HMAC-SM3 200000 轮，本机（M4 Max，release）合计 ≈ **112 ms**；
    中端机按单核比**外推** ≈ 0.4–0.7 s（**外推，不是实测**，真机读数属真机验收）。
