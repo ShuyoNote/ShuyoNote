@@ -1,5 +1,6 @@
 mod ai;
 mod community;
+mod community_publish;
 mod attachments;
 mod backlinks;
 mod backup;
@@ -513,6 +514,11 @@ pub fn run() {
             commands::render_pdf_page,
             community::fetch_community_post,
             community::fetch_community_json,
+            community_publish::community_connection,
+            community_publish::community_connect_start,
+            community_publish::community_connect_poll,
+            community_publish::community_disconnect,
+            community_publish::community_publish_note,
             commands::delete_page,
             commands::move_page,
             search::search,

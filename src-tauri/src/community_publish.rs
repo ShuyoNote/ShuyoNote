@@ -1,0 +1,975 @@
+//! 一键发布到社区（客户端侧）：设备码授权、令牌存储、发帖。
+//!
+//! 社区侧契约：`shuyo-community` `docs/api.md` §7（0.71.20 起）。这一侧要守住三条：
+//!   ① **不收用户密码**：走设备码 —— 用户在自己浏览器里确认，客户端只拿一把 180 天、可撤销的令牌；
+//!   ② **令牌不进笔记**：只落在 app 数据目录（与附件同处），不进 front matter、不进日志、不进导出；
+//!   ③ **同修订重发只落一篇**：幂等键由 `(笔记 id, 修订)` 决定 —— **不用随机数**（社区按 key 回放首次响应，
+//!      随机键等于放弃幂等，症状是"重试一次多一篇"）。
+//!
+//! 另一条与 `community.rs`（抓取侧）共享的纪律：**状态码如实上报**。401 是"令牌被撤销了"、
+//! 403 `app_token_scope` 是"我们发错接口了"、409 是"上一个还在处理"、422 是"审核拦下了"。
+//! 四件事对用户意味着四种不同动作，压成一句"发布失败"就等于让人去猜。
+
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+/// 只认这一个站点（与抓取侧同一策略：不跟配置走，免得多一个可被改写的出口）。
+pub const COMMUNITY_BASE: &str = "https://community.shuyo.cn";
+
+const TIMEOUT_SECS: u64 = 20;
+/// 社区对幂等键的约束：安全字符、≤128（`posts::idempotency_key`）。
+const IDEM_MAX: usize = 128;
+/// 社区对 `source_ref` 的约束：安全字符、≤64（`posts::normalize_source_ref`）。
+const SOURCE_REF_MAX: usize = 64;
+/// 社区白名单里认的来源名。
+pub const SOURCE: &str = "shuyonote";
+/// 设备码申请时自报的名字（用户会在网页上看到它，所以要认得出来是谁）。
+pub const CLIENT_NAME: &str = "ShuyoNote 桌面端";
+const AUTH_FILE: &str = "community-auth.json";
+
+// ---------------------------------------------------------------------------
+// ① 纯函数：不碰网络与磁盘，全部可单测
+// ---------------------------------------------------------------------------
+
+/// 只留 `[A-Za-z0-9_-]` —— 与社区侧 `posts::idempotency_key` / `normalize_source_ref` 同一口径。
+///
+/// 为什么先在这里洗一遍：社区那边**丢弃**非法字符而不是报错（这是对的，客户端换个 id 生成算法
+/// 不该让一次发帖失败），所以"我发出去的键"与"它存下来的键"必须同形，否则重试时算出来的键与
+/// 第一次存进去的不一致 —— 幂等就**静默失效**了。
+pub fn sanitize_token(raw: &str) -> String {
+    raw.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn clip(s: String, max: usize) -> String {
+    if s.chars().count() <= max {
+        s
+    } else {
+        s.chars().take(max).collect()
+    }
+}
+
+/// 幂等键：`shuyonote-<笔记 id>-<修订>`。**同一个 (id, rev) 永远同一个键** —— 这是 I2 的全部。
+///
+/// 两侧各自限长 48：直接截整串会把修订号截掉，于是"同一篇笔记的两个修订"会算出同一个键，
+/// 表现为"发了新版，社区还是老内容"（那是比多一篇更坏的错）。
+pub fn idempotency_key(note_id: &str, rev: &str) -> String {
+    let a = clip(sanitize_token(note_id), 48);
+    let b = clip(sanitize_token(rev), 48);
+    clip(format!("{SOURCE}-{a}-{b}"), IDEM_MAX)
+}
+
+/// `source_ref`：客户端自己算的页面指纹。社区只存不解释，用来人工核对"这帖对应哪篇笔记的哪一版"。
+pub fn source_ref(note_id: &str, rev: &str) -> String {
+    clip(
+        format!("{}-{}", sanitize_token(note_id), sanitize_token(rev)),
+        SOURCE_REF_MAX,
+    )
+}
+
+/// 发给社区的 `NewPost`（字段名与它 `POST /api/posts` 的 JSON 同形）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct NewPostPayload {
+    pub title: String,
+    pub body: String,
+    pub tags: Vec<String>,
+    pub source: String,
+    pub source_ref: String,
+}
+
+/// 组装发帖体。标题为空**在这一侧就报错**：社区会回 422，但那时用户看到的是"审核没通过"，
+/// 而真实原因是"这篇笔记没标题"——两回事。
+pub fn build_payload(
+    title: &str,
+    body: &str,
+    tags: &[String],
+    note_id: &str,
+    rev: &str,
+) -> Result<NewPostPayload, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("这篇笔记没有标题：社区要求标题非空（给笔记起个名，或用文件名当标题）".to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    let tags: Vec<String> = tags
+        .iter()
+        .map(|t| t.trim().trim_start_matches('#').trim().to_string())
+        .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
+        .take(20)
+        .collect();
+    Ok(NewPostPayload {
+        title: title.to_string(),
+        body: body.to_string(),
+        tags,
+        source: SOURCE.to_string(),
+        source_ref: source_ref(note_id, rev),
+    })
+}
+
+fn preview(body: &str) -> String {
+    clip(body.trim().to_string(), 200)
+}
+
+/// 社区响应的判读结果（= 用户该做什么）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum PublishOutcome {
+    Ok {
+        id: i64,
+        slug: String,
+        url: String,
+    },
+    /// 同一个幂等键**正在处理中**：稍后重试，不是错误。
+    InFlight,
+    /// 审核拦下（422），原样带上社区给的理由。
+    Rejected {
+        error: String,
+    },
+    /// 令牌失效 / 被撤销 ⇒ 清本地令牌、回到"连接社区"。
+    Unauthorized,
+    /// 撞上 scope 白名单（403 `app_token_scope`）⇒ 这是客户端 bug，发错接口了。
+    OutOfScope,
+    Unexpected {
+        status: u16,
+        error: String,
+    },
+}
+
+/// 把 HTTP 状态与响应体翻译成"用户该做什么"。
+///
+/// 注意：成功响应是**整篇 `Post`**（社区直接序列化帖子对象，没有 `ok` 字段），所以判"发成了没有"
+/// 靠 `id` + `slug` 在不在，而不是靠某个 `ok: true`。缺了就当没发成 —— 宁可让用户重试，
+/// 也不要回写一个空 slug 进笔记。
+pub fn classify(status: u16, body: &str, base: &str) -> PublishOutcome {
+    let v: serde_json::Value =
+        serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let err = v
+        .get("error")
+        .and_then(|e| e.as_str())
+        .unwrap_or("")
+        .to_string();
+    match status {
+        200..=299 => {
+            let slug = v
+                .get("slug")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string();
+            let id = v.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
+            if slug.is_empty() || id == 0 {
+                return PublishOutcome::Unexpected {
+                    status,
+                    error: format!("社区回了 {} 但响应里没有 id/slug：{}", status, preview(body)),
+                };
+            }
+            let url = format!("{base}/post/{slug}");
+            PublishOutcome::Ok { id, slug, url }
+        }
+        409 => PublishOutcome::InFlight,
+        422 => PublishOutcome::Rejected {
+            error: if err.is_empty() { preview(body) } else { err },
+        },
+        401 => PublishOutcome::Unauthorized,
+        403 if err == "app_token_scope" => PublishOutcome::OutOfScope,
+        403 => PublishOutcome::Rejected {
+            // 全站双重提交：这一条多半意味着"我们没先把 csrf_token cookie 取回来"。
+            error: if err.is_empty() {
+                "403：CSRF 校验没过（本地没拿到 csrf_token cookie）".to_string()
+            } else {
+                err
+            },
+        },
+        _ => PublishOutcome::Unexpected {
+            status,
+            error: if err.is_empty() { preview(body) } else { err },
+        },
+    }
+}
+
+/// 从 `Set-Cookie` 里挑出 `csrf_token=…`。
+///
+/// `reqwest` 在这份 `Cargo.toml` 里**没开 `cookies` feature**（见 §6 的取舍），所以 cookie 由我们
+/// 自己接住再显式发回去 —— 顺带也就有了判据：少了这一步，POST 会被社区 403 挡下。
+pub fn csrf_from_set_cookies<'a, I: IntoIterator<Item = &'a str>>(cookies: I) -> Option<String> {
+    for raw in cookies {
+        for part in raw.split(';') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("csrf_token=") {
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// ② 令牌存储：一个文件，路径可注入（判据要在临时目录里跑）
+// ---------------------------------------------------------------------------
+
+/// 落在磁盘上的授权（**只有这里**有令牌）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredAuth {
+    pub base: String,
+    pub token: String,
+    pub username: String,
+    pub scope: String,
+    pub client: String,
+    pub saved_at: String,
+}
+
+/// 回给界面的连接信息：**没有令牌** —— 令牌不进前端状态，也就不进任何一次前端日志/崩溃上报。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionInfo {
+    pub base: String,
+    pub username: String,
+    pub scope: String,
+    pub saved_at: String,
+}
+
+impl StoredAuth {
+    pub fn info(&self) -> ConnectionInfo {
+        ConnectionInfo {
+            base: self.base.clone(),
+            username: self.username.clone(),
+            scope: self.scope.clone(),
+            saved_at: self.saved_at.clone(),
+        }
+    }
+}
+
+/// 写授权文件。Unix 下把权限收到 0600：这是一把能用 180 天的凭据，同机其它用户不该读得到。
+pub fn save_auth_at(path: &Path, auth: &StoredAuth) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建配置目录失败（{}）：{e}", dir.display()))?;
+    }
+    let text = serde_json::to_string_pretty(auth).map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("写授权文件失败（{}）：{e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// 读授权文件。**读坏了当作"没连接"**（不 panic、不静默用半截数据）——重连一次就好。
+pub fn load_auth_at(path: &Path) -> Option<StoredAuth> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<StoredAuth>(&text).ok()
+}
+
+pub fn clear_auth_at(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("删授权文件失败（{}）：{e}", path.display())),
+    }
+}
+
+fn auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("拿不到应用数据目录：{e}"))?;
+    Ok(dir.join(AUTH_FILE))
+}
+
+// ---------------------------------------------------------------------------
+// ③ 网络：设备码 + 发帖（core 都带 base 参数，测试打回环地址）
+// ---------------------------------------------------------------------------
+
+fn client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// `GET /` 取 CSRF cookie（全站双重提交：cookie 与 `X-CSRF-Token` 必须同值）。
+async fn csrf(client: &reqwest::Client, base: &str) -> Result<String, String> {
+    let resp = client.get(base).send().await.map_err(|e| {
+        if e.is_connect() || e.is_timeout() {
+            format!("连不上社区（{base}）：网络不可达")
+        } else {
+            format!("取 CSRF cookie 失败：{e}")
+        }
+    })?;
+    let cookies: Vec<String> = resp
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .collect();
+    csrf_from_set_cookies(cookies.iter().map(|s| s.as_str())).ok_or_else(|| {
+        format!("{base} 没有下发 csrf_token cookie —— 没有它任何 POST 都会被 403 挡下")
+    })
+}
+
+struct Auth<'a> {
+    bearer: Option<&'a str>,
+    csrf: &'a str,
+    idempotency: Option<&'a str>,
+}
+
+/// 发一个 JSON POST，返回 (状态码, 响应体)。状态码**不在这里判**（判读是 `classify` 的事）。
+async fn post_json(
+    client: &reqwest::Client,
+    url: &str,
+    auth: Auth<'_>,
+    body: &serde_json::Value,
+) -> Result<(u16, String), String> {
+    let mut req = client
+        .post(url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header("X-CSRF-Token", auth.csrf)
+        .header(reqwest::header::COOKIE, format!("csrf_token={}", auth.csrf))
+        .json(body);
+    if let Some(t) = auth.bearer {
+        req = req.bearer_auth(t);
+    }
+    if let Some(k) = auth.idempotency {
+        req = req.header("Idempotency-Key", k);
+    }
+    let resp = req.send().await.map_err(|e| {
+        // 超时/连接失败要说清"可能已经发出了"：发布这条路上重发是安全的（幂等键），
+        // 但用户得知道"重试不会多一篇"这件事成立。
+        if e.is_timeout() {
+            format!("请求超时（{url}）：网络慢或服务端无响应，稍后用同一个幂等键重试即可，不会多发")
+        } else if e.is_connect() {
+            format!("连不上社区（{url}）：网络不可达")
+        } else {
+            format!("请求失败（{url}）：{e}")
+        }
+    })?;
+    let status = resp.status().as_u16();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读响应失败：{e}"))?;
+    Ok((status, text))
+}
+
+/// 发帖的 core（可注入 base）。
+pub async fn publish_at(
+    base: &str,
+    auth: &StoredAuth,
+    payload: &NewPostPayload,
+    key: &str,
+) -> Result<PublishOutcome, String> {
+    let client = client()?;
+    let csrf = csrf(&client, base).await?;
+    let body = serde_json::to_value(payload).map_err(|e| e.to_string())?;
+    let (status, text) = post_json(
+        &client,
+        &format!("{base}/api/posts"),
+        Auth {
+            bearer: Some(&auth.token),
+            csrf: &csrf,
+            idempotency: Some(key),
+        },
+        &body,
+    )
+    .await?;
+    Ok(classify(status, &text, base))
+}
+
+/// 设备码：换到令牌、确认身份、存下来。core 带 base。
+pub async fn poll_at(
+    base: &str,
+    device_code: &str,
+) -> Result<(String, Option<StoredAuth>), String> {
+    let client = client()?;
+    let csrf = csrf(&client, base).await?;
+    let (status, text) = post_json(
+        &client,
+        &format!("{base}/api/auth/app/token"),
+        Auth {
+            bearer: None,
+            csrf: &csrf,
+            idempotency: None,
+        },
+        &serde_json::json!({ "device_code": device_code }),
+    )
+    .await?;
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let token = v.get("token").and_then(|t| t.as_str()).unwrap_or("");
+    if token.is_empty() {
+        // 还没批准 / 过期 / 未知码：错误码原样带出去，别统一成 "failed"。
+        let state = v
+            .get("status")
+            .and_then(|s| s.as_str())
+            .or_else(|| v.get("error").and_then(|e| e.as_str()))
+            .unwrap_or("");
+        let state = if state.is_empty() {
+            format!("failed_{status}")
+        } else {
+            state.to_string()
+        };
+        return Ok((state, None));
+    }
+    let username = me_username(&client, base, token).await.unwrap_or_default();
+    let scope = v
+        .get("scope")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let auth = StoredAuth {
+        base: base.to_string(),
+        token: token.to_string(),
+        username,
+        scope,
+        client: CLIENT_NAME.to_string(),
+        saved_at: now(),
+    };
+    Ok(("approved".to_string(), Some(auth)))
+}
+
+/// `GET /api/me`：只为一个问题 —— "这把令牌是谁的"（界面上要能让用户核对）。
+async fn me_username(
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+) -> Result<String, String> {
+    let resp = client
+        .get(format!("{base}/api/me"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    Ok(v.get("username")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
+fn now() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+// ---------------------------------------------------------------------------
+// ④ Tauri 命令（薄壳：读文件 / 调 core / 写文件）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceStart {
+    pub user_code: String,
+    pub device_code: String,
+    pub verify_url: String,
+    pub interval_seconds: i64,
+    pub expires_in_seconds: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectPoll {
+    /// `pending` / `approved` / `expired` / `unknown` / `already_used` / `failed_<code>`
+    pub state: String,
+    pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisconnectOutcome {
+    pub local_cleared: bool,
+    pub remote_revoked: bool,
+    pub note: String,
+}
+
+/// 发布结果（前端照 `status` 分支：它对应"用户该做什么"，不是"HTTP 发生了什么"）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum PublishResult {
+    #[serde(rename_all = "camelCase")]
+    Ok {
+        id: i64,
+        slug: String,
+        url: String,
+        idempotency_key: String,
+    },
+    InFlight,
+    Rejected {
+        error: String,
+    },
+    Unauthorized,
+    OutOfScope,
+    #[serde(rename_all = "camelCase")]
+    Unexpected {
+        http_status: u16,
+        error: String,
+    },
+}
+
+/// 当前连接（没有令牌字段）。
+#[tauri::command]
+pub fn community_connection(app: tauri::AppHandle) -> Result<Option<ConnectionInfo>, String> {
+    let path = auth_path(&app)?;
+    Ok(load_auth_at(&path).map(|a| a.info()))
+}
+
+/// 起设备码流程：返回 `user_code`（给用户看）与 `device_code`（自己轮询用）。
+#[tauri::command]
+pub async fn community_connect_start() -> Result<DeviceStart, String> {
+    let base = COMMUNITY_BASE;
+    let client = client()?;
+    let csrf = csrf(&client, base).await?;
+    let (status, text) = post_json(
+        &client,
+        &format!("{base}/api/auth/app/device"),
+        Auth {
+            bearer: None,
+            csrf: &csrf,
+            idempotency: None,
+        },
+        &serde_json::json!({ "client": CLIENT_NAME }),
+    )
+    .await?;
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let user_code = v
+        .get("user_code")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let device_code = v
+        .get("device_code")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    if user_code.is_empty() || device_code.is_empty() {
+        return Err(format!(
+            "社区没有给出设备码（HTTP {status}）：{}",
+            preview(&text)
+        ));
+    }
+    Ok(DeviceStart {
+        user_code,
+        device_code,
+        verify_url: format!("{base}/device"),
+        interval_seconds: v
+            .get("interval")
+            .and_then(|i| i.as_i64())
+            .unwrap_or(5),
+        expires_in_seconds: v
+            .get("expires_in")
+            .and_then(|i| i.as_i64())
+            .unwrap_or(600),
+    })
+}
+
+/// 轮询一次（由界面按 `interval_seconds` 驱动：这样关掉对话框就能停，不必在 Rust 侧挂一个定时任务）。
+/// 批准那一刻**顺手把令牌存下来**，界面不必再传一次凭据。
+#[tauri::command]
+pub async fn community_connect_poll(
+    app: tauri::AppHandle,
+    device_code: String,
+) -> Result<ConnectPoll, String> {
+    let (state, auth) = poll_at(COMMUNITY_BASE, &device_code).await?;
+    let Some(auth) = auth else {
+        return Ok(ConnectPoll {
+            state,
+            username: None,
+        });
+    };
+    save_auth_at(&auth_path(&app)?, &auth)?;
+    Ok(ConnectPoll {
+        state,
+        username: Some(auth.username),
+    })
+}
+
+/// 断开连接 = **真撤销**（`POST /api/auth/app/tokens/revoke`），不是只删本地文件。
+///
+/// 顺序有意：先撤销、再删本地。撤销失败也删本地（否则用户被一把撤不掉的令牌"钉"在已连接态），
+/// 但要**把话说明**：那把令牌在网页端撤销前仍然有效。
+#[tauri::command]
+pub async fn community_disconnect(app: tauri::AppHandle) -> Result<DisconnectOutcome, String> {
+    let path = auth_path(&app)?;
+    let Some(auth) = load_auth_at(&path) else {
+        return Ok(DisconnectOutcome {
+            local_cleared: true,
+            remote_revoked: false,
+            note: "本来就没有连接".to_string(),
+        });
+    };
+    let remote = revoke_remote(&auth).await;
+    clear_auth_at(&path)?;
+    Ok(match remote {
+        Ok(true) => DisconnectOutcome {
+            local_cleared: true,
+            remote_revoked: true,
+            note: "已在社区侧撤销，本地凭据已删除".to_string(),
+        },
+        Ok(false) => DisconnectOutcome {
+            local_cleared: true,
+            remote_revoked: false,
+            note: "本地凭据已删除，但社区侧没找到这把授权（可能已被网页端撤销）".to_string(),
+        },
+        Err(e) => DisconnectOutcome {
+            local_cleared: true,
+            remote_revoked: false,
+            note: format!(
+                "本地凭据已删除，但社区侧撤销失败（{e}）—— 那把令牌在到期或被网页端撤销前仍然有效"
+            ),
+        },
+    })
+}
+
+/// 撤销远端：先列出自己的应用授权，认领 `client` 相同的那一条（客户端自报的名字即标识）。
+async fn revoke_remote(auth: &StoredAuth) -> Result<bool, String> {
+    let client = client()?;
+    let csrf = csrf(&client, &auth.base).await?;
+    let resp = client
+        .get(format!("{}/api/auth/app/tokens", auth.base))
+        .bearer_auth(&auth.token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    let id = v
+        .get("items")
+        .and_then(|i| i.as_array())
+        .and_then(|items| {
+            items
+                .iter()
+                .filter(|it| {
+                    it.get("client").and_then(|c| c.as_str()).unwrap_or("") == auth.client
+                })
+                .filter_map(|it| it.get("id").and_then(|i| i.as_i64()))
+                .max()
+        });
+    let Some(id) = id else {
+        return Ok(false);
+    };
+    let (status, body) = post_json(
+        &client,
+        &format!("{}/api/auth/app/tokens/revoke", auth.base),
+        Auth {
+            bearer: Some(&auth.token),
+            csrf: &csrf,
+            idempotency: None,
+        },
+        &serde_json::json!({ "id": id }),
+    )
+    .await?;
+    if !(200..300).contains(&status) {
+        return Err(format!("HTTP {status}：{}", preview(&body)));
+    }
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    Ok(v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false))
+}
+
+/// 发布一篇笔记。幂等键由 `(note_id, rev)` 算出来 —— 界面**不要**自己造 key。
+#[tauri::command]
+pub async fn community_publish_note(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+    tags: Vec<String>,
+    note_id: String,
+    rev: String,
+) -> Result<PublishResult, String> {
+    let path = auth_path(&app)?;
+    let Some(auth) = load_auth_at(&path) else {
+        return Err(
+            "还没连接社区：先点「连接社区」（不用输密码，在自己浏览器里确认一次即可）".to_string(),
+        );
+    };
+    let payload = build_payload(&title, &body, &tags, &note_id, &rev)?;
+    let key = idempotency_key(&note_id, &rev);
+    let outcome = publish_at(&auth.base, &auth, &payload, &key).await?;
+    Ok(match outcome {
+        PublishOutcome::Ok { id, slug, url } => PublishResult::Ok {
+            id,
+            slug,
+            url,
+            idempotency_key: key,
+        },
+        PublishOutcome::InFlight => PublishResult::InFlight,
+        PublishOutcome::Rejected { error } => PublishResult::Rejected { error },
+        PublishOutcome::Unauthorized => PublishResult::Unauthorized,
+        PublishOutcome::OutOfScope => PublishResult::OutOfScope,
+        PublishOutcome::Unexpected { status, error } => PublishResult::Unexpected {
+            http_status: status,
+            error,
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+// ⑤ 判据
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn tmp_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-community-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join(AUTH_FILE)
+    }
+
+    #[test]
+    fn idempotency_key_is_stable_and_only_safe_chars() {
+        // 同一个 (id, rev) 永远同一个键 —— 这是"重发只落一篇"的全部依据。
+        assert_eq!(
+            idempotency_key("笔记 A/1", "rev 2"),
+            idempotency_key("笔记 A/1", "rev 2")
+        );
+        let k = idempotency_key("笔记 A/1", "rev 2");
+        assert!(
+            k.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+            "键里混进了社区不认的字符：{k}"
+        );
+        assert!(k.starts_with("shuyonote-"), "来源要能从键上认出来：{k}");
+        // 换一版必须换一个键，否则"发了新版，社区还是老内容"。
+        assert_ne!(idempotency_key("n", "1"), idempotency_key("n", "2"));
+        assert!(k.chars().count() <= IDEM_MAX);
+    }
+
+    #[test]
+    fn idempotency_key_keeps_both_parts_when_id_is_long() {
+        let long = "长".repeat(200);
+        let k = idempotency_key(&long, "7");
+        assert!(k.chars().count() <= IDEM_MAX);
+        assert!(
+            k.ends_with("-7"),
+            "超长 id 不能把修订号挤掉（否则两个修订会算出同一个键）：{k}"
+        );
+    }
+
+    #[test]
+    fn payload_needs_a_title_and_dedups_tags() {
+        let e = build_payload("   ", "正文", &[], "n", "1").unwrap_err();
+        assert!(e.contains("标题"), "标题为空要说清是这个原因：{e}");
+
+        let tags = vec![
+            "  Rust ".to_string(),
+            "#rust".to_string(),
+            "".to_string(),
+            "Note".to_string(),
+        ];
+        let p = build_payload("标题", "正文", &tags, "n", "1").unwrap();
+        assert_eq!(p.tags, vec!["Rust".to_string(), "Note".to_string()]);
+        assert_eq!(p.source, SOURCE);
+        assert_eq!(p.source_ref, "n-1");
+        // 上站前先自证：发出去的 JSON 字段名就是社区要的那几个。
+        let j = serde_json::to_value(&p).unwrap();
+        for f in ["title", "body", "tags", "source", "source_ref"] {
+            assert!(j.get(f).is_some(), "少了字段 {f}");
+        }
+    }
+
+    #[test]
+    fn source_ref_is_within_the_server_side_rules() {
+        let r = source_ref(&"x".repeat(200), "rev");
+        assert!(r.chars().count() <= SOURCE_REF_MAX, "超长了：{}", r.len());
+        assert!(r
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+    }
+
+    #[test]
+    fn classify_reads_the_community_response_shapes() {
+        let base = "https://community.shuyo.cn";
+        // 成功响应是整篇 Post（没有 ok 字段）。
+        let ok = classify(
+            200,
+            r#"{"id":42,"title":"t","slug":"my-post","body":"b","tags":[],"source":"shuyonote"}"#,
+            base,
+        );
+        assert_eq!(
+            ok,
+            PublishOutcome::Ok {
+                id: 42,
+                slug: "my-post".to_string(),
+                url: "https://community.shuyo.cn/post/my-post".to_string()
+            }
+        );
+        // 200 但没有 slug/id ⇒ 当没发成（绝不回写空 slug 进笔记）。
+        assert!(matches!(
+            classify(200, r#"{"ok":true}"#, base),
+            PublishOutcome::Unexpected { .. }
+        ));
+        assert_eq!(
+            classify(409, r#"{"ok":false,"error":"duplicate_in_flight"}"#, base),
+            PublishOutcome::InFlight
+        );
+        assert_eq!(
+            classify(422, r#"{"ok":false,"error":"内容不合规"}"#, base),
+            PublishOutcome::Rejected {
+                error: "内容不合规".to_string()
+            }
+        );
+        assert_eq!(classify(401, "", base), PublishOutcome::Unauthorized);
+        assert_eq!(
+            classify(403, r#"{"ok":false,"error":"app_token_scope"}"#, base),
+            PublishOutcome::OutOfScope
+        );
+        // 403 但不是 scope：CSRF 那条，措辞要指向真因。
+        match classify(403, "", base) {
+            PublishOutcome::Rejected { error } => assert!(error.contains("CSRF")),
+            other => panic!("403 没有 CSRF 时判读错了：{other:?}"),
+        }
+        match classify(500, "boom", base) {
+            PublishOutcome::Unexpected { status, error } => {
+                assert_eq!(status, 500);
+                assert!(error.contains("boom"));
+            }
+            other => panic!("500 判读错了：{other:?}"),
+        }
+    }
+
+    #[test]
+    fn csrf_cookie_is_picked_out_of_set_cookie_headers() {
+        let got = csrf_from_set_cookies(vec![
+            "other=1; Path=/",
+            "csrf_token=abc123; Path=/; SameSite=Lax; HttpOnly".to_string().as_str(),
+        ]);
+        assert_eq!(got.as_deref(), Some("abc123"));
+        assert_eq!(csrf_from_set_cookies(vec!["csrf_token=; Path=/"]), None);
+        assert_eq!(csrf_from_set_cookies(Vec::<&str>::new()), None);
+    }
+
+    #[test]
+    fn auth_file_round_trips_and_is_not_world_readable() {
+        let path = tmp_path("roundtrip");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(load_auth_at(&path), None, "没文件时就是未连接");
+
+        let auth = StoredAuth {
+            base: COMMUNITY_BASE.to_string(),
+            token: "tok".to_string(),
+            username: "数友".to_string(),
+            scope: "post:create post:update".to_string(),
+            client: CLIENT_NAME.to_string(),
+            saved_at: "2026-09-20T00:00:00Z".to_string(),
+        };
+        save_auth_at(&path, &auth).unwrap();
+        assert_eq!(load_auth_at(&path), Some(auth.clone()));
+        // 回给界面的信息里**没有令牌**。
+        let info = serde_json::to_value(auth.info()).unwrap();
+        assert!(info.get("token").is_none(), "令牌不该进前端状态");
+        assert_eq!(info.get("username").unwrap(), "数友");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "授权文件权限应该是 0600，实际 {mode:o}");
+        }
+
+        clear_auth_at(&path).unwrap();
+        assert_eq!(load_auth_at(&path), None);
+        // 读坏了当"没连接"，不 panic。
+        std::fs::write(&path, "{ 这不是 json").unwrap();
+        assert_eq!(load_auth_at(&path), None);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// 真起一个假社区：① 只给带 `Set-Cookie: csrf_token=…` 的 `GET /`；
+    /// ② `POST /api/posts` 没有 `X-CSRF-Token` / `Cookie` / `Authorization` / `Idempotency-Key`
+    ///    就 403，齐了才 200 一整篇 Post。
+    ///
+    /// 为什么值得起个真监听：这一步的坑全在**头**上（CSRF 双重提交、Bearer、幂等键），
+    /// 用 mock 掉 reqwest 的方式测，等于把要验的东西一起 mock 掉了。
+    #[test]
+    fn publish_sends_csrf_bearer_and_idempotency_key() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_srv = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = vec![0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let mut lines = req.lines();
+                let head = lines.next().unwrap_or("").to_string();
+                seen_srv.lock().unwrap().push(req.clone());
+                let (code, extra, body): (u16, &str, &str) = if head.starts_with("GET /") {
+                    (
+                        200,
+                        "Set-Cookie: csrf_token=testcsrf; Path=/; SameSite=Lax\r\n",
+                        "<html>home</html>",
+                    )
+                } else {
+                    let lower = req.to_ascii_lowercase();
+                    let ok = lower.contains("x-csrf-token: testcsrf")
+                        && lower.contains("cookie: csrf_token=testcsrf")
+                        && lower.contains("authorization: bearer tok")
+                        && lower.contains("idempotency-key: shuyonote-note1-rev1");
+                    if ok {
+                        (
+                            200,
+                            "",
+                            r#"{"id":9,"slug":"note-one","body":"b","tags":[]}"#,
+                        )
+                    } else {
+                        (403, "", r#"{"ok":false,"error":"bad_csrf"}"#)
+                    }
+                };
+                let resp = format!(
+                    "HTTP/1.1 {code} OK\r\n{extra}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let base = format!("http://{}", addr);
+        let auth = StoredAuth {
+            base: base.clone(),
+            token: "tok".to_string(),
+            username: "u".to_string(),
+            scope: "post:create".to_string(),
+            client: CLIENT_NAME.to_string(),
+            saved_at: now(),
+        };
+        let payload = build_payload("标题", "正文", &[], "note1", "rev1").unwrap();
+        let key = idempotency_key("note1", "rev1");
+        let out = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(publish_at(&base, &auth, &payload, &key))
+            .unwrap();
+        assert_eq!(
+            out,
+            PublishOutcome::Ok {
+                id: 9,
+                slug: "note-one".to_string(),
+                url: format!("{base}/post/note-one"),
+            },
+            "假社区收到的请求：{:#?}",
+            seen.lock().unwrap()
+        );
+    }
+}

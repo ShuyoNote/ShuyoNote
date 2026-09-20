@@ -2587,6 +2587,17 @@ export function makeInvoke(store: SqliteStore) {
       if (!r.ok) throw new Error(r.reason);
       return r.text as T;
     }
+    // 一键发布到社区：**桌面专有**，而且不是"懒得做"——它需要两样 Web 版没有的东西：
+    // ① 一个能放凭据的地方（Web 版没有应用数据目录，令牌只能进 localStorage，那是把 180 天的
+    //    令牌交给任何一段同源脚本）；② 一个不受 CORS 约束的出口（社区域只面向同源）。
+    // 所以这里选择**如实说不支持**，而不是做一个"看起来能连、实际发不出去"的假入口。
+    if (cmd === "community_connection") return null as T;
+    if (cmd === "community_connect_start" || cmd === "community_connect_poll") {
+      throw new Error("Web 版不支持「连接社区」（没有本地凭据存储），请使用桌面版。");
+    }
+    if (cmd === "community_publish_note" || cmd === "community_disconnect") {
+      throw new Error("Web 版不支持一键发布到社区，请使用桌面版。");
+    }
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
     }

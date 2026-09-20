@@ -182,6 +182,48 @@ export interface EmailOpArgs {
   folder: string;
 }
 
+// ---- 一键发布到社区：给前端的形状（令牌不在其中，见 `community_connection` 的注释）----
+
+/** 已连接时的信息：**没有令牌字段** —— 令牌只在本机文件里。 */
+export interface CommunityConnection {
+  base: string;
+  username: string;
+  scope: string;
+  savedAt: string;
+}
+
+export interface CommunityDeviceStart {
+  /** 给用户抄的码（`XXXX-XXXX`）。 */
+  userCode: string;
+  /** 客户端自己轮询用的码。 */
+  deviceCode: string;
+  verifyUrl: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+}
+
+/** 轮询状态机：`approved` 之后后端已把令牌存下来了。 */
+export type CommunityConnectState =
+  | "pending"
+  | "approved"
+  | "expired"
+  | "unknown"
+  | "already_used"
+  | `failed_${number}`;
+
+/** 发布结果。分支按"用户该做什么"分，而不是按 HTTP 状态分。 */
+export type CommunityPublishResult =
+  | { status: "ok"; id: number; slug: string; url: string; idempotencyKey: string }
+  /** 同一个幂等键还在处理中：稍后重试，不是错误。 */
+  | { status: "inFlight" }
+  /** 审核拦下（422），`error` 是社区给的原话。 */
+  | { status: "rejected"; error: string }
+  /** 令牌失效/被撤销 ⇒ 清本地令牌、回到"连接社区"。 */
+  | { status: "unauthorized" }
+  /** 403 `app_token_scope`：撞了 scope 白名单 —— 这是客户端 bug。 */
+  | { status: "outOfScope" }
+  | { status: "unexpected"; httpStatus: number; error: string };
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -294,6 +336,35 @@ export interface CommandMap {
       tags: string[];
       url: string;
     };
+  };
+  // 一键发布到社区（客户端侧，`src-tauri/src/community_publish.rs`；契约见 shuyo-community `docs/api.md` §7）。
+  // **不收用户密码**：设备码 → 用户在自己的浏览器里确认 → 换一把 180 天、可撤销、只能发帖的令牌；
+  // 令牌只落在应用数据目录，**不出现在这里的任何类型里**（回给界面的只有"这是谁的授权"）。
+  community_connection: {
+    args: Record<string, never>;
+    result: CommunityConnection | null;
+  };
+  community_connect_start: {
+    args: Record<string, never>;
+    result: CommunityDeviceStart;
+  };
+  /** 轮询一次（界面按 `intervalSeconds` 驱动；批准那一刻后端就把令牌存下来了）。 */
+  community_connect_poll: {
+    args: { deviceCode: string };
+    result: { state: CommunityConnectState; username: string | null };
+  };
+  /** 断开 = 在社区侧**真撤销**那把令牌，再删本地凭据。 */
+  community_disconnect: {
+    args: Record<string, never>;
+    result: { localCleared: boolean; remoteRevoked: boolean; note: string };
+  };
+  /**
+   * 发布一篇笔记。幂等键由后端按 `(noteId, rev)` 算 —— 界面**不要**自己造 key：
+   * 同一个 (笔记, 修订) 必须永远算出同一个键，否则"重试一次多一篇"。
+   */
+  community_publish_note: {
+    args: { title: string; body: string; tags: string[]; noteId: string; rev: string };
+    result: CommunityPublishResult;
   };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {
