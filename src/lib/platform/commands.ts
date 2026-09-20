@@ -236,6 +236,22 @@ export interface CommunityUploadedAttachment {
   size: number;
 }
 
+/**
+ * 一页的**发布台账**（与 Rust `PublishState` 同形）。
+ *
+ * 为什么需要它：`rev` 现在取自页面 `updated_at`（见方案 §7.1），所以"这篇发过没有、
+ * 发的到底是不是当前这一版"只能靠本地记一笔 —— 界面靠它说明"再发一次是重复还是新建一篇"
+ * （**P2 之前每次都会新建一篇**，用户更该知道）。
+ */
+export interface CommunityPublishState {
+  pageId: string;
+  slug: string;
+  url: string;
+  /** 发出去的那一版的修订标识（与 `community_publish_note` 收到的 `rev` 同源）。 */
+  publishedRev: string;
+  publishedAt: number;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -391,6 +407,14 @@ export interface CommandMap {
   community_upload_attachment: {
     args: { hash: string };
     result: CommunityUploadedAttachment;
+  };
+  /**
+   * 读一页的发布台账（**只读、纯本地**：不碰网络、不带令牌）。
+   * 没发过就是 `null`；老库还没建那张表也当 `null`（界面显示"没发过"，而不是打不开）。
+   */
+  community_publish_state: {
+    args: { pageId: string };
+    result: CommunityPublishState | null;
   };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {

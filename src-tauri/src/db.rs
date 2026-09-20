@@ -772,6 +772,21 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
             hash       TEXT NOT NULL DEFAULT '',
             updated_at INTEGER NOT NULL
         );
+
+        -- 「发布到社区」的发布状态：**应用派生数据**，故意与 `page_props` 分开 ——
+        -- 塞进属性表会让"社区…"三列出现在用户自己的表格视图里，而属性是**用户**的字段，
+        -- 不该由某个功能自己往里塞（方案 §7.2 的 A/B 取舍：这里选 B）。
+        --
+        -- 只记**最近一次**发布（`page_id` 主键）：一篇笔记现在可能对应社区上的多篇
+        -- （改完再发就是新的一篇，P2 才会变成"更新已有帖子"），这张表回答的是
+        -- "我这篇最近发到哪儿了、线上那一篇是哪一版"；要留全部历史得另开一张表（P2 再谈）。
+        CREATE TABLE IF NOT EXISTS page_community_publish (
+            page_id       TEXT PRIMARY KEY,
+            slug          TEXT NOT NULL DEFAULT '',
+            url           TEXT NOT NULL DEFAULT '',
+            published_rev TEXT NOT NULL DEFAULT '',
+            published_at  INTEGER NOT NULL
+        );
         "#,
     )?;
 

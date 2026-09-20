@@ -2602,10 +2602,12 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "community_upload_attachment") {
       throw new Error("Web 版不支持向社区上传附件，请使用桌面版。");
     }
+    // 发布台账是**本地库**里的一行：Web 版没有那个库 ⇒ 如实回"没有台账"，而不是抛错
+    // （它只用来显示"上次发到哪儿了"，抛错会让对话框打不开）。
+    if (cmd === "community_publish_state") return null as T;
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
-    }
-    if (cmd === "plugin_revocations") return [] as T;
+    }    if (cmd === "plugin_revocations") return [] as T;
     if (cmd === "plugin_publisher_keys") return [] as T;
     if (cmd === "plugin_revoked_keys") return [] as T;
     if (cmd === "plugin_facts") return null as T;

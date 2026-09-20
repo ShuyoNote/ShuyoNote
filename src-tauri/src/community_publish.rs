@@ -693,7 +693,7 @@ pub async fn community_publish_note(
     let payload = build_payload(&title, &body, &tags, &note_id, &rev)?;
     let key = idempotency_key(&note_id, &rev);
     let outcome = publish_at(&auth.base, &auth, &payload, &key).await?;
-    Ok(match outcome {
+    let result = match outcome {
         PublishOutcome::Ok { id, slug, url } => PublishResult::Ok {
             id,
             slug,
@@ -708,7 +708,12 @@ pub async fn community_publish_note(
             http_status: status,
             error,
         },
-    })
+    };
+    // **只有真发成了才回写**：失败留下一条"发过了"的台账，会让人以为不用再发。
+    if let PublishResult::Ok { slug, url, .. } = &result {
+        record_into_db(&app, &note_id, slug, url, &rev);
+    }
+    Ok(result)
 }
 
 /// 发原始字节（图片上传用）。与 `post_json` 同一套头：CSRF 双重提交 + Bearer。
@@ -854,7 +859,99 @@ pub async fn community_upload_attachment(
 }
 
 // ---------------------------------------------------------------------------
-// ⑤ 判据
+// ⑤ 发布状态（回写）："这一页最近发到哪儿了、发的是哪一版"
+// ---------------------------------------------------------------------------
+
+/// 一页的发布状态（回给界面的形状）。**没有令牌** —— 它只回答"发到哪儿了、哪一版"。
+///
+/// 为什么要记：`rev` 现在取自 `updated_at`（见方案 §7.1），所以"这篇发过没有、发的到底是不是
+/// 当前这一版"只能靠本地记一笔 —— 没有它，用户没法知道"再发一次是重复还是新建一篇"
+/// （P2 之前每次都是新建一篇，所以他更该知道）。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishState {
+    pub page_id: String,
+    pub slug: String,
+    pub url: String,
+    /// 发出去的那一版的修订标识（与 `community_publish_note` 收到的 `rev` 同源）。
+    pub published_rev: String,
+    pub published_at: i64,
+}
+
+/// 记下"这一页最近一次发布到哪儿、发的哪一版"。
+///
+/// 只记**最近一次**（`page_id` 主键，后来的覆盖先前的）：一篇笔记现在可能对应社区上的多篇
+/// （改完再发就是新的一篇，P2 才会改成"更新已有帖子"）；这张表要回答的是
+/// "我这篇最近发到哪儿了、线上那一篇是哪一版"。要留全部历史得另开一张表（P2 再谈）。
+pub fn record_publish(
+    conn: &rusqlite::Connection,
+    page_id: &str,
+    slug: &str,
+    url: &str,
+    rev: &str,
+    at: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO page_community_publish(page_id, slug, url, published_rev, published_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT(page_id) DO UPDATE SET \
+           slug = excluded.slug, url = excluded.url, \
+           published_rev = excluded.published_rev, published_at = excluded.published_at",
+        rusqlite::params![page_id, slug, url, rev, at],
+    )
+    .map(|_| ())
+    .map_err(|e| format!("记发布状态失败：{e}"))
+}
+
+/// 读一页的发布状态（没发过就是 `None`）。表不存在也当 `None` —— 老库还没迁移时，
+/// 界面该显示"没发过"，而不是让整个对话框打不开。
+pub fn publish_state(conn: &rusqlite::Connection, page_id: &str) -> Option<PublishState> {
+    conn.query_row(
+        "SELECT page_id, slug, url, published_rev, published_at \
+         FROM page_community_publish WHERE page_id = ?1",
+        [page_id],
+        |r| {
+            Ok(PublishState {
+                page_id: r.get(0)?,
+                slug: r.get(1)?,
+                url: r.get(2)?,
+                published_rev: r.get(3)?,
+                published_at: r.get(4)?,
+            })
+        },
+    )
+    .ok()
+}
+
+/// 从 `AppHandle` 取库并落一条状态。
+///
+/// **这一步失败不许把发布判成失败**：帖子已经在社区上了，它只是记本地台账 ——
+/// 报错会让人以为没发出去、于是再发一篇（那正好是最不想要的结果）。所以只打一行日志。
+fn record_into_db(app: &tauri::AppHandle, page_id: &str, slug: &str, url: &str, rev: &str) {
+    use tauri::Manager;
+    let db = app.state::<crate::db::Db>();
+    let Ok(conn) = db.0.lock() else {
+        eprintln!("[community] 记发布状态失败：库锁坏了（帖子已发出，不影响结果）");
+        return;
+    };
+    if let Err(e) = record_publish(&conn, page_id, slug, url, rev, crate::db::now_ms()) {
+        eprintln!("[community] 记发布状态失败（帖子已发出，不影响结果）：{e}");
+    }
+}
+
+/// 读一页的发布状态。界面用它显示"上次发布：…"，并在**修订号不同**时提醒
+/// "再发会新建一篇"（P2 之前不会更新已有帖子）。
+#[tauri::command]
+pub fn community_publish_state(
+    db: tauri::State<'_, crate::db::Db>,
+    page_id: String,
+) -> Result<Option<PublishState>, String> {
+    let conn = db.0.lock().map_err(|_| "库锁坏了".to_string())?;
+    Ok(publish_state(&conn, &page_id))
+}
+
+// ---------------------------------------------------------------------------
+// ⑥ 判据
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1203,5 +1300,73 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("422"), "要说清状态码：{err}");
         assert!(err.contains("不支持的文件类型"), "社区的理由要原样带出去：{err}");
+    }
+
+    /// 发布状态：写 → 读 → 覆盖（只记最近一次），且"没发过"与"表不存在"都当作没有（不炸）。
+    #[test]
+    fn publish_state_round_trips_and_keeps_only_the_latest() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, "space-test").unwrap();
+
+        assert!(publish_state(&conn, "p1").is_none(), "没发过就是 None");
+
+        record_publish(
+            &conn,
+            "p1",
+            "note-one",
+            "https://community.shuyo.cn/post/note-one",
+            "rev-1",
+            1000,
+        )
+        .unwrap();
+        let s = publish_state(&conn, "p1").expect("刚写进去的要读得回来");
+        assert_eq!(s.slug, "note-one");
+        assert_eq!(s.published_rev, "rev-1");
+        assert_eq!(s.published_at, 1000);
+
+        // 同一页再发一次（内容改了 ⇒ 新 rev）：**只记最近一次**
+        record_publish(
+            &conn,
+            "p1",
+            "note-one-v2",
+            "https://community.shuyo.cn/post/note-one-v2",
+            "rev-2",
+            2000,
+        )
+        .unwrap();
+        let s = publish_state(&conn, "p1").unwrap();
+        assert_eq!(s.slug, "note-one-v2");
+        assert_eq!(s.published_rev, "rev-2");
+        assert_eq!(s.published_at, 2000);
+
+        // 别的页不受影响
+        assert!(publish_state(&conn, "p2").is_none());
+
+        // 老库（还没建这张表）：读 ⇒ None（界面显示"没发过"，不是打不开）；写 ⇒ 如实报错
+        let old = rusqlite::Connection::open_in_memory().unwrap();
+        assert!(
+            publish_state(&old, "p1").is_none(),
+            "表不存在时该当作没发过，而不是让对话框炸掉"
+        );
+        assert!(
+            record_publish(&old, "p1", "s", "u", "r", 1).is_err(),
+            "表不存在时写入要如实报错（别静默丢）"
+        );
+    }
+
+    /// 迁移要真的把这张表建出来。`CREATE TABLE IF NOT EXISTS` 拼错一个字母就会被静默忽略，
+    /// 而症状是"发过了却永远显示没发过" —— 所以盯的是**表本身在不在**。
+    #[test]
+    fn migrate_creates_the_publish_state_table() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, "space-test").unwrap();
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='page_community_publish'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1, "migrate 应该建出 page_community_publish");
     }
 }
