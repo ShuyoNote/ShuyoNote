@@ -110,8 +110,11 @@ crate 里跑判据；含"陈旧副本 mtime 更新也要挑锁定版本"的回�
 
 2. **产物要留一个可断言的口子。** 光看 `cargo:rustc-link-lib` 只能回答"OpenSSL 还是 CommonCrypto"，
    回答不了"补丁 apply 上没有" ⇒ `build.rs` 在补丁存在时打一行
-   `cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target=<os> marker=<file>)`，
+   `cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=<补丁文件 sha256 前 8 位> target=<os> libsqlite3-sys=<版本> via=<cargo.lock|产物兜底> marker=<file> src_sha256=<64hex>)`，
    `scripts/check-crypto-backend.mjs`（macOS 侧）据此把判据从"后端对不对"扩到"**补丁在不在**"。
+   ⚠️ `patch=` 这一格 **2026-09-20 改过**（macOS 侧自查）：原来写死字面量 `patch=v1`，补丁升到 v2 之后
+   它**不再标识任何补丁** ⇒ 现在由 `build.rs` **现算补丁文件的 sha256 前 8 位**（同一个补丁文件 ⇒ 同一个标签，
+   跨机核对"我们打的是同一份吗"因此有**两根**柱子：`patch=` 与 `src_sha256=`，都不需要人来同步）。
 
 ## 三格核对（缺一格就会出现"安静地没有国密"的库）
 
