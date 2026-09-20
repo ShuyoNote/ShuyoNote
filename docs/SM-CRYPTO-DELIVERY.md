@@ -116,6 +116,14 @@ node scripts/check-crypto-backend.mjs                                 # ← 拿�
 
 # ④ 门禁：默认组 / rust 组（含国密两条）
 pnpm verify && node scripts/test-report.mjs --group rust
+
+# ⑤ ★ **一键三段自证**（国密版发布前跑这个，而不是凭记忆挑几条）
+node scripts/gm-version-selfcheck.mjs --openssl-dir <Tongsuo 前缀> --expect-patch applied
+#   ①后端是谁 ②补丁在不在（读产物）③跨实现对拍  —— 三格全过才算"这版是国密版"
+#   今天补丁还没写 ⇒ 用 `--expect-patch absent` 也能跑通（那时收尾句会说清"补丁未打、页加密仍是 AES"）
+#   ⚠️ 在**默认构建**上第①格本来就该红（默认是 CommonCrypto）—— 那不是脚本坏了，是这版不是国密版
+#   加 `--with-build` 会先走 `sm-library-build.mjs`（先清 libsqlite3-sys 再带 OPENSSL_DIR 编）
+#   加 `--with-tests` 追加应用层国密单测；`--print` 只打印将要跑什么
 ```
 
 > ⚠️ **`cargo clean -p libsqlite3-sys` 为什么不能省**：该 crate 的 `build.rs` **没有**为 `OPENSSL_DIR`
