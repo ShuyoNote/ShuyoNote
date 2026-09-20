@@ -73,7 +73,7 @@ vi.mock("../store/ai", () => ({
 }));
 vi.mock("../store/toast", () => ({ toast: () => {} }));
 
-import { EmailPanel } from "./EmailPanel";
+import { EmailPanel, countBlockedImages, sanitizeEmailHtml, stripRemoteCssUrls } from "./EmailPanel";
 import { useEmailPanel } from "../store/emailPanel";
 import { accountKey } from "../lib/emailAccount";
 import type { EmailAccount, EmailMeta } from "../lib/api";
@@ -364,5 +364,170 @@ describe("聚合邮箱：账号拉不到要说清 ＋ 未读变多要自动重�
     mocks.listeners["email-unread"]?.({ payload: 3 });
     await settle();
     expect(mocks.fetchAll.mock.calls.length).toBeGreaterThan(afterMount);
+  });
+});
+
+// **「信件拉取时间有点长，界面没反馈，体验不好」——2026-09-20 用户反馈的回归。**
+//
+// 事故：聚合是**串行**拉每个账号的每个文件夹（账号多/信多时十几秒很正常），而界面只有一个
+// `busy` 布尔量 —— 用户面对的是一动不动的列表，分不清"在跑"还是"卡死了"。
+// 修法两层：①后端逐账号推 `email-fetch-progress`，界面显示「正在拉取 3/5 · 账号」+ 进度条；
+// ②前端每秒刷新「已 Ns」。另外「拉取」按钮不再顺手重扫月份（那会把一次拉取拖成两倍时长）。
+describe("拉取要有反馈（2026-09-20 用户反馈「拉取时间有点长，界面没反馈」）", () => {
+  const me = acc("a@x.com");
+  const meta = (uid: number, subject: string): EmailMeta => ({
+    uid,
+    subject,
+    from: "someone@x.com",
+    date: new Date().toUTCString(),
+    snippet: "",
+    seen: true,
+    flagged: false,
+    folder: "INBOX",
+    account: accountKey(me),
+  });
+
+  it("★ 拉取中显示「正在拉取 N/M · 账号 · 已 Ns」+ 进度条；拉完自动消失", async () => {
+    useEmailPanel.setState({ open: true, unread: 0, accounts: [me], accountsLoaded: true });
+    let finish: ((v: unknown) => void) | null = null;
+    mocks.fetchAll.mockImplementation(() => new Promise((res) => { finish = res; }));
+    mount();
+    await settle();
+
+    // 还在拉（promise 没 settle）⇒ 状态条必须在
+    expect(document.querySelector(".email-fetch-status")).not.toBeNull();
+    // 后端推「第 2 个账号拉完，共 5 个」
+    mocks.listeners["email-fetch-progress"]?.({ payload: { done: 2, total: 5, account: "imap.example.com|b@x.com" } });
+    await settle();
+
+    const bar = document.querySelector(".email-fetch-status");
+    const text = bar?.textContent ?? "";
+    expect(text).toContain("正在拉取 2/5");
+    // 账号显示成用户名（不是 host|username 整串）
+    expect(text).toContain("b@x.com");
+    expect(text).not.toContain("imap.example.com|b@x.com");
+    // 秒数由前端计（两次后端事件之间可能隔十几秒，光有进度还是像卡住）
+    expect(text).toMatch(/已 \d+s/);
+    expect(document.querySelector<HTMLElement>(".email-fetch-status .sync-progressbar-fill")?.style.width).toBe("40%");
+
+    // 拉完 ⇒ 状态条收掉，不留一个永远转圈的"正在拉取"
+    finish!({ emails: [meta(1, "信")], unread: 0, accounts: [accountKey(me)], errors: [] });
+    await settle();
+    expect(document.querySelector(".email-fetch-status")).toBeNull();
+  });
+
+  it("★ 点「拉取」不再顺手重扫月份（重扫所有账号所有文件夹＝拉取时长翻倍）", async () => {
+    useEmailPanel.setState({ open: true, unread: 0, accounts: [me], accountsLoaded: true });
+    mocks.fetchAll.mockResolvedValue({ emails: [meta(1, "信")], unread: 0, accounts: [accountKey(me)], errors: [] });
+    mount();
+    await settle();
+    const monthsBefore = mocks.listMonths.mock.calls.length;
+    const fetchBefore = mocks.fetchAll.mock.calls.length;
+
+    // happy-dom 里量不到宽度 ⇒ 头部按钮会被收进「更多」下拉，先展开再找（真实窗口下它就在外面）。
+    const byText = (needle: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("button")).find((b) =>
+        (b.textContent ?? "").includes(needle),
+      );
+    if (!byText("拉取")) {
+      byText("更多")!.click();
+      await settle();
+    }
+    const btn = byText("拉取");
+    expect(btn, "找不到「拉取」按钮").toBeTruthy();
+    btn!.click();
+    await settle();
+
+    expect(mocks.fetchAll.mock.calls.length).toBeGreaterThan(fetchBefore);
+    expect(mocks.listMonths.mock.calls.length).toBe(monthsBefore);
+  });
+});
+
+// **「数友社区的 logo 显示不出来」——2026-09-20 用户截图的回归（界面这一半）。**
+//
+// 截图里那行是「[碎图] 数友社区」：`<img>` 被我们默认拦下（src 挪进 data-src）后浏览器画碎图图标，
+// 再拼上发件人写的 alt。判据盯三件事：
+//   ① 拦下的图**不能**再让浏览器画碎图 —— 占位 src 必须是内联的透明图；
+//   ② 用户得知道"有图没加载、原因是什么"，而不是以为发信人没发图；
+//   ③ 点「显示图片」后原图地址要回来（追踪防护是可逆的）。
+describe("邮件外部图片：占位不碎图 + 明说有几张没加载（2026-09-20 用户截图）", () => {
+  const me = { ...acc("a@x.com"), auto_trust_senders: false };
+  const meta: EmailMeta = {
+    uid: 7,
+    subject: "确认订阅",
+    from: "数友社区 <community@shuyo.cn>",
+    date: new Date().toUTCString(),
+    snippet: "",
+    seen: true,
+    flagged: false,
+    folder: "INBOX",
+    account: accountKey(me),
+  };
+  const LOGO = "https://community.shuyo.cn/logo.png";
+  const HTML = `<p>你好</p><img src="${LOGO}" width="120" height="40" alt="数友社区"><img src="cid:inline-logo" alt="内嵌">`;
+
+  const mountWithMail = async () => {
+    useEmailPanel.setState({ open: true, unread: 0, accounts: [me], accountsLoaded: true });
+    mocks.fetchAll.mockResolvedValue({ emails: [meta], unread: 0, accounts: [accountKey(me)], errors: [] });
+    mocks.getMessage.mockResolvedValue({ text: "你好", html: HTML });
+    mount();
+    await settle();
+  };
+
+  it("★ 拦下的远程图给透明占位（不画碎图）+ 横幅说「1 张外部图片未加载」；点显示图片后原址回来", async () => {
+    await mountWithMail();
+
+    const img = document.querySelector<HTMLImageElement>(".email-rich-body img");
+    expect(img).not.toBeNull();
+    // ① 不能是碎图：拦下时 src 必须是内联透明图，原址留在 data-src
+    expect(img!.getAttribute("data-img-blocked")).toBe("1");
+    expect(img!.getAttribute("data-src")).toBe(LOGO);
+    expect(img!.getAttribute("src") ?? "").toMatch(/^data:image\/gif;base64,/);
+    // 占位块沿用邮件里写的宽高，别让 120×40 的 logo 撑成方块
+    expect(img!.getAttribute("style") ?? "").toContain("width:120px");
+    expect(img!.getAttribute("style") ?? "").toContain("height:40px");
+
+    // ② 横幅：说清有几张、为什么、并给一键放行
+    const bar = document.querySelector(".email-img-blocked-bar");
+    expect(bar).not.toBeNull();
+    expect(bar!.textContent).toContain("1 张外部图片未加载");
+    expect(bar!.textContent).toContain("防跟踪");
+    expect(bar!.textContent).toContain("显示图片");
+    // `cid:` 内嵌图不算"外部图片"（它不联网），别把它数进去
+    expect(countBlockedImages(document.querySelector(".email-rich-body")!.innerHTML)).toBe(1);
+
+    // ③ 点「显示图片」⇒ 原址回来、横幅收掉
+    Array.from(bar!.querySelectorAll<HTMLElement>("button"))
+      .find((b) => (b.textContent ?? "").includes("显示图片"))!
+      .click();
+    await settle();
+    expect(document.querySelector(".email-img-blocked-bar")).toBeNull();
+    const after = document.querySelector<HTMLImageElement>(".email-rich-body img");
+    expect(after!.getAttribute("src")).toBe(LOGO);
+    expect(after!.getAttribute("data-img-blocked")).toBeNull();
+  });
+
+  it("内嵌图的 data: URI 原样留着，且不算「未加载的外部图片」（后端把 cid: 内联成 data:，靠这条显示 logo）", () => {
+    const src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+    // 注意外面那层 <div>：happy-dom 里 DOMPurify 会把**最外层**元素丢掉（`<p>x</p>` → `x`、
+    // 单独一个 `<img>` → 空串），套一层容器才量得到 img。真实浏览器没这个毛病 ——
+    // 2026-09-20 用真 Chromium(Edge) + 真 DOMPurify 跑「数友社区」那封真邮件读过数：
+    // 消毒后 img 仍在、src 是 21746 字符的 data:image/png，`naturalWidth/Height = 308/60`
+    // （浏览器真的把内嵌 PNG 解码出来了），截图见那次修复记录。
+    const clean = sanitizeEmailHtml(`<div><img src="${src}" alt="数友社区" width="154" height="30"></div>`, false);
+    // DOMPurify 必须放行 img 的 data: URI（放行不了的话 logo 照样显示不出来）
+    expect(clean).toContain(src);
+    expect(clean).toContain('alt="数友社区"');
+    // data: 不联网 ⇒ 不该被算成"未加载"，也不该被换成透明占位
+    expect(countBlockedImages(clean)).toBe(0);
+    expect(clean).not.toContain("data-img-blocked");
+  });
+
+  it("远程背景图被清掉，但相对路径的 url() 留着（剔掉只会让本来能显示的图变没）", () => {
+    expect(stripRemoteCssUrls("background:url(https://track.example.com/b.gif)")).not.toContain("track.example.com");
+    expect(stripRemoteCssUrls('background:url("//cdn.example.com/b.png")')).not.toContain("cdn.example.com");
+    expect(stripRemoteCssUrls("background:url(/assets/logo.png)")).toContain("/assets/logo.png");
+    // 清成 none 而不是空串：`background:;` 是无效声明，会连带把整条样式丢掉
+    expect(stripRemoteCssUrls("background:url(https://t.example.com/b.gif)")).toContain("none");
   });
 });

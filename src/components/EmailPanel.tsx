@@ -159,10 +159,43 @@ function folderDisplay(name: string): string {
   return FOLDER_ZH[key] ?? decoded;
 }
 
+// 1×1 透明 GIF：给「被我们拦下的远程图」当占位 `src`。
+//
+// 为什么非要给个 src：浏览器对**没有 src（或 src 加载失败）的 `<img>`** 会画一个碎图图标，
+// 配上发件人写的 `alt` 就长成「[碎图] 数友社区」——2026-09-20 用户截图报的
+// 「数友社区的 logo 显示不出来」看到的就是这个东西。换成透明图后只剩我们自己画的虚线占位块，
+// 再配上下面那条「N 张外部图片未加载（防跟踪）」说明，用户一眼能看懂发生了什么。
+const TRANSPARENT_GIF =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+/// 数出一封邮件里被拦下的远程图数量（只认我们自己的标记 `data-img-blocked`，
+/// 免得把发件人自带的 `data-src` 误算进来）。
+export function countBlockedImages(sanitizedHtml: string): number {
+  return (sanitizedHtml.match(/data-img-blocked=/gi) ?? []).length;
+}
+
+/// 占位块沿用邮件里写明的宽高（`width="120" height="40"`），否则一个 120×40 的 logo
+/// 会被 CSS 的最小尺寸撑成方块，排版看着像坏了。已有 `style` 就并进去。
+function applyPlaceholderSize(tag: string, w: string, h: string): string {
+  const dims = `width:${w}px;height:${h}px;`;
+  const styleRe = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+  const m = styleRe.exec(tag);
+  if (m) return tag.replace(styleRe, `style="${dims}${m[1] ?? m[2] ?? ""}"`);
+  return tag.replace(/\s*(\/?)>$/, ` style="${dims}"$1>`);
+}
+
+/// 把样式里的**远程** `url(...)` 清成 `none`（追踪像素/背景图不应在未授权时联网）。
+/// 为什么只清远程：`data:` / 相对路径不联网，剔掉只会让本来能显示的图变没
+/// （2026-09-20「logo 显示不出来」的一条候选原因，顺手收窄）。
+/// 注意写 `none` 而不是空串——`background:;` 是无效声明，容易连带把整条样式丢掉。
+export function stripRemoteCssUrls(s: string): string {
+  return s.replace(/url\s*\(\s*["']?\s*(?:https?:)?\/\/[^"')]+["']?\s*\)/gi, "none");
+}
+
 // 用 DOMPurify 白名单消毒邮件 HTML（去 script/iframe/事件属性/javascript: 协议等）。
-// 图片策略（用户选择 A）：保留 `<img>`（富排版），但默认把 `src` 移到 `data-src` 使浏览器不加载；
-// 用户点「显示图片」后再以 showImages=true 重新渲染，把 src 补回才加载（保留追踪防护，安全靠消毒+用户授权）。
-function sanitizeEmailHtml(html: string, showImages: boolean): string {
+// 图片策略（用户选择 A）：保留 `<img>`（富排版），但默认把 `src` 换成透明占位、原址存进 `data-src`
+// 使浏览器不请求远程图；用户点「显示图片」后再以 showImages=true 重新渲染（保留追踪防护）。
+export function sanitizeEmailHtml(html: string, showImages: boolean): string {
   const config = {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["iframe", "script", "object", "embed", "form", "input", "style", "link", "meta", "base", "svg", "math"],
@@ -180,18 +213,22 @@ function sanitizeEmailHtml(html: string, showImages: boolean): string {
   let clean = DOMPurify.sanitize(html, config);
   DOMPurify.removeHook("afterSanitizeAttributes");
 
-  // 移除背景图/样式里的 url()（追踪/泄露风险）。
-  clean = clean.replace(/url\s*\(\s*["']?[^"')]+["']?\s*\)/gi, "");
+  // 移除背景图样式里的**远程** url()（追踪/泄露风险）；本地的不动。
+  clean = stripRemoteCssUrls(clean);
 
   if (!showImages) {
-    // 默认不加载：把 <img src=...> 改成 <img data-src=...>（保留 tag 与尺寸，浏览器不请求 src）。
+    // 默认不加载：`src` → 透明占位（不留碎图图标），原址进 `data-src`；
+    // 点「显示图片」会以原始 html 重新消毒，`src` 自然回来。
     clean = clean.replace(/<img\b[^>]*>/gi, (tag) => {
       const srcM = /src=["']([^"']*)["']/.exec(tag);
       if (!srcM) return tag;
       const src = srcM[1];
       if (!(src.startsWith("http:") || src.startsWith("https:") || src.startsWith("//"))) return tag;
-      const withoutSrc = tag.replace(/src=["'][^"']*["']/, "");
-      return `${withoutSrc} data-src="${src}"`;
+      let out = tag.replace(/src=["'][^"']*["']/, `src="${TRANSPARENT_GIF}"`);
+      const w = /\bwidth\s*=\s*["']?(\d{1,4})/i.exec(tag)?.[1];
+      const h = /\bheight\s*=\s*["']?(\d{1,4})/i.exec(tag)?.[1];
+      if (w && h) out = applyPlaceholderSize(out, w, h);
+      return out.replace(/\s*(\/?)>$/, ` data-src="${src}" data-img-blocked="1"$1>`);
     });
   }
   return clean;
@@ -275,14 +312,38 @@ function EmailBody({ text }: { text: string }) {
   );
 }
 
-// 富文本正文：经 DOMPurify 消毒后渲染；远程图片默认不加载（src→data-src），点「显示图片」才加载。
-function EmailRichBody({ html, showImages }: { html: string; showImages: boolean }) {
+// 富文本正文：经 DOMPurify 消毒后渲染；远程图片默认不加载（src→透明占位 + data-src），
+// 点「显示图片」才加载。被拦下的图**明说数量和原因**——否则用户只看到"图没了"（2026-09-20 报障）。
+function EmailRichBody({
+  html,
+  showImages,
+  onShowImages,
+}: {
+  html: string;
+  showImages: boolean;
+  onShowImages?: () => void;
+}) {
   const clean = useMemo(() => sanitizeEmailHtml(html, showImages), [html, showImages]);
+  const blocked = useMemo(() => countBlockedImages(clean), [clean]);
   return (
-    <div
-      className="email-rich-body"
-      dangerouslySetInnerHTML={{ __html: clean }}
-    />
+    <div className="email-rich-wrap">
+      {blocked > 0 && (
+        <div className="email-img-blocked-bar" role="status">
+          <span className="email-img-blocked-text">
+            此邮件有 {blocked} 张外部图片未加载（防跟踪）
+          </span>
+          {onShowImages && (
+            <button className="sync-btn ghost" onClick={onShowImages}>
+              显示图片
+            </button>
+          )}
+        </div>
+      )}
+      <div
+        className="email-rich-body"
+        dangerouslySetInnerHTML={{ __html: clean }}
+      />
+    </div>
   );
 }
 
@@ -435,6 +496,10 @@ export function EmailPanel() {
 
   // 富文本远程图：默认不加载，用户点「显示图片」才加载（data-src→src）。
   const [showImages, setShowImages] = useState(false);
+  // 拉取进度（2026-09-20 用户反馈「拉取时间有点长，界面没反馈」）：
+  // 后端逐账号推 `email-fetch-progress`，这里显示「正在拉取 3/5 · sales@shuyo.cn」＋已用秒数。
+  const [fetchProgress, setFetchProgress] = useState<{ done: number; total: number; account: string } | null>(null);
+  const [fetchSeconds, setFetchSeconds] = useState(0);
   // 阅读区工具栏宽度检测：较窄时把次要按钮收进「更多」。
   const readToolbarRef = useRef<HTMLDivElement>(null);
   const readPaneRef = useRef<HTMLDivElement>(null);
@@ -771,8 +836,10 @@ export function EmailPanel() {
   };
 
   const refresh = async () => {
+    // 只拉列表，**不再顺手重扫月份**：`emailFetchAllMonths` 会把所有账号的所有文件夹再扫一遍，
+    // 一次「拉取」被拖成两倍时长（2026-09-20「信件拉取时间有点长」）。月份集合只在
+    // 切账号/切文件夹时才可能变，那两处各自会调 `loadMonths`。
     await fetchInbox(accountFilter, folders);
-    void loadMonths(folders);
   };
 
   // AI 总结邮件要点/行动项（A1）：复用已配置的 AI provider（store/ai.ts）。
@@ -1050,6 +1117,36 @@ export function EmailPanel() {
       .catch(() => {});
     return () => unlisten?.();
   }, [setUnread]);
+
+  // **拉取进度**：后端 `email_fetch_all` 逐账号推 `email-fetch-progress`（见 email.rs 的
+  // `FETCH_PROGRESS_EVENT`）。聚合是串行拉每个账号的每个文件夹，账号/信多时十几秒很正常，
+  // 2026-09-20 用户反馈「拉取时间有点长，界面没反馈，体验不好」——这条事件就是那次反馈的修法。
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    platform.event
+      .listen<{ done: number; total: number; account: string }>("email-fetch-progress", (e) => {
+        setFetchProgress(e.payload);
+      })
+      .then((off) => {
+        unlisten = off;
+      })
+      .catch(() => {});
+    return () => unlisten?.();
+  }, []);
+
+  // 拉取计时：busy 期间每秒刷新「已 Ns」，结束（或被取消）时清掉进度与秒数。
+  // 秒数由前端计——后端只在**账号边界**推事件，两次事件之间可能隔着十几秒。
+  useEffect(() => {
+    if (!busy) {
+      setFetchProgress(null);
+      setFetchSeconds(0);
+      return;
+    }
+    const t0 = Date.now();
+    setFetchSeconds(0);
+    const id = window.setInterval(() => setFetchSeconds(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, [busy]);
 
   // 打开面板时同步一次当前未读数（不等下一次轮询）：累加所有开启了 auto_fetch 的账号。
   useEffect(() => {
@@ -1454,6 +1551,15 @@ export function EmailPanel() {
   // 可信发件人：当前邮件发件人域名在 trusted_domains 内 → 自动放行远程图片。
   const isTrusted = !!active && !!activeAcc && activeAcc.trusted_domains.includes(emailDomainOf(active.from));
   const effectiveShowImages = showImages || isTrusted;
+
+  // 拉取状态文案：有后端进度就说「正在拉取 3/5 · 账号」，没有（例如加载更多/删除）就只说在拉。
+  // 再带上前端计的秒数——用户抱怨的正是"不知道它是在跑还是卡住了"。
+  const fetchAccountLabel = fetchProgress?.account
+    ? (fetchProgress.account.split("|")[1] ?? fetchProgress.account)
+    : "";
+  const fetchStatusText = fetchProgress
+    ? `正在拉取 ${fetchProgress.done}/${fetchProgress.total}${fetchAccountLabel ? ` · ${fetchAccountLabel}` : ""} · 已 ${fetchSeconds}s`
+    : `正在拉取… · 已 ${fetchSeconds}s`;
 
   // 测量工具栏各按钮组的实际宽度，用于逐级收纳（P+Q+R / P+Q+「更多」 / P+「更多」 / 仅保存+「更多」）。
   // 依赖按钮文本随 active/useRich/html/isTrusted/showImages 变化。
@@ -2036,7 +2142,11 @@ export function EmailPanel() {
                           {loadingBody
                             ? "加载正文…"
                             : useRich && html
-                              ? <EmailRichBody html={html} showImages={effectiveShowImages} />
+                              ? <EmailRichBody
+                                  html={html}
+                                  showImages={effectiveShowImages}
+                                  onShowImages={() => setShowImages(true)}
+                                />
                               : body
                                 ? <EmailBody text={body} />
                                 : err
@@ -2098,6 +2208,24 @@ export function EmailPanel() {
                 </div>
               )}
 
+              {/* 拉取中：转圈 + 「正在拉取 3/5 · sales@shuyo.cn · 已 12s」+ 进度条。
+                  用户 2026-09-20 反馈「拉取时间有点长，界面没反馈」——静默的 busy 布尔量换成了它。 */}
+              {accounts.length > 0 && busy && (
+                <div className="sync-status is-progress email-fetch-status" role="status" aria-live="polite">
+                  <div className="sync-progress-row">
+                    <span className="sync-spin" aria-hidden />
+                    <span className="sync-status-text">{fetchStatusText}</span>
+                  </div>
+                  {fetchProgress && fetchProgress.total > 0 && (
+                    <div className="sync-progressbar">
+                      <div
+                        className="sync-progressbar-fill"
+                        style={{ width: `${Math.round((fetchProgress.done / fetchProgress.total) * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               {accounts.length > 0 && accountErrors.length > 0 && (
                 <div className="sync-status is-progress is-err" role="status">
                   <div className="sync-status-text">
