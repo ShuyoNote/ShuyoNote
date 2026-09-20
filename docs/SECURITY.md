@@ -45,6 +45,31 @@
 - ⚠️ 诚实边界：单测覆盖的是**这个函数的严格性**；"扫描必须在删除之前"由调用点的**位置**保证，没有端到端
   （那需要 Tauri `AppHandle`）。真机上的清理动作仍属人手验收。
 
+### 5. 「谁还被引用」的另外三条清理路径都只在**当前空间**里数 ⇒ 删掉别的空间还在用的附件字节（缺陷帖 #6 的同族）
+- 背景：`attachments/` 是**全局共享**的内容寻址目录，所以"这个字节还有没有人用"必须**跨全部空间**回答。
+  2026-09-19 缺陷帖 #6 只修掉了当时看得见的两条（`clear_trash` 的"删完行再数 + 只数当前空间"、
+  `purge_deleted_workspaces` 的 `attachments JOIN pages` 内连接）。2026-09-20 我按「同一族清完了吗」
+  重扫了**所有**会删附件字节的调用点，发现还剩三处：
+
+  | 路径 | 老口径 | 后果 |
+  |---|---|---|
+  | `storage::clear_trash`（清空回收站） | `all_referenced_hashes` = `filter_map(open(..).ok())` ＋ `unwrap_or_default()` | 空间读不到 ⇒ 它引用的字节被判成孤儿 |
+  | `storage::cleanup_orphan_attachments`（清理孤儿附件） | **只查当前空间**的 `attachments` | 别的空间还在用的字节被删（用户点这个按钮就触发） |
+  | `attachments::remove_attachment`（删单个/批量附件） | 注释写着 true global zero-reference，实际 `SELECT COUNT(*) … WHERE hash=?` 只数当前空间 | 在 A 空间删一个附件 ⇒ B 空间同一个文件消失 |
+
+- 修法（统一）：`scan_referenced_hashes` / `all_referenced_hashes` / `other_spaces_referenced_hashes`
+  一律返回 `Result`，**读不全就 Err**；三条路径都改成"读不全 ⇒ 不删"：
+  · `clear_trash` 把严格扫描挪到**删除动作之前** ⇒ 失败即"什么都没删"；
+  · `cleanup_orphan_attachments` 换成跨空间严格集；
+  · `remove_attachment(s)` 先算"其他空间的引用集"（批量只算一次），本空间计数 **与** 跨空间集合**两个条件都满足**
+    才删字节；读不全时**保文件**（字节留着只占空间，删错就是数据丢失），由 `cleanup_orphan_attachments` 以后回收。
+- 判据：`storage::tests::referenced_hashes_counts_rows_whose_page_is_gone_or_null`（补了「JOIN 口径下查不到」的
+  反例守卫）、`storage::tests::purge_refuses_to_guess_when_a_live_space_is_unreadable`、
+  `attachments::attachment_byte_free_tests::bytes_are_only_freeable_when_no_other_space_references_the_hash`（四种输入）
+  ＋ **变异证明两次**（分别退回"静默跳过"、"只看当前空间"，各自判据立刻红）。
+- ⚠️ 诚实边界：跨空间取数走的是生产路径（`open_space_conn`），单测覆盖的是**规则与严格性**；
+  "扫描必须在删除之前"由调用点的**位置**保证，没有端到端（需要 Tauri `AppHandle`）。
+
 > 验证：`cargo test --lib` **55 passed / 0 failed**（含 plugins / sync / workspace_io / storage 测试）。
 
 ---

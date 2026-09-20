@@ -153,30 +153,42 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
 /// （服务器上也没有），就**永久不可恢复**。
 ///
 /// 判据只有一句：`SELECT DISTINCT hash FROM attachments`（**不 join、不按 page 过滤**）。
-pub(crate) fn referenced_hashes(conns: &[rusqlite::Connection]) -> std::collections::HashSet<String> {
-    let mut set = std::collections::HashSet::new();
-    for c in conns {
-        if let Ok(mut stmt) = c.prepare("SELECT DISTINCT hash FROM attachments") {
-            if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                set.extend(rows.flatten());
-            }
-        }
-    }
-    set
+/// `meta.workspaces` 里全部空间 id（含回收站里的空间 —— 它们的行还在，字节就还在被引用）。
+///
+/// ⚠️ **不许 `unwrap_or_default()`**：读 meta 失败时返回"零个空间"是**最危险**的那种失败 ——
+/// 调用方会以为"谁的没被引用" ⇒ 把全部附件都当孤儿（2026-09-20 自查，与 F2 同族）。
+fn all_space_ids(meta: &rusqlite::Connection) -> Result<Vec<String>, Vec<String>> {
+    let mut stmt = meta
+        .prepare("SELECT id FROM meta.workspaces")
+        .map_err(|e| vec![format!("读 meta.workspaces 失败（{e}）")])?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| vec![format!("读 meta.workspaces 失败（{e}）")])?;
+    rows.collect::<Result<Vec<String>, _>>()
+        .map_err(|e| vec![format!("读 meta.workspaces 失败（{e}）")])
 }
 
-/// 生产路径：把**所有**空间库连接拿过来（含回收站里的空间 —— 它们的行还在，字节就还在被引用）。
-fn all_referenced_hashes(meta: &rusqlite::Connection) -> std::collections::HashSet<String> {
-    let ids: Vec<String> = meta
-        .prepare("SELECT id FROM meta.workspaces")
-        .and_then(|mut s| {
-            s.query_map([], |r| r.get::<_, String>(0))
-                .map(|rows| rows.flatten().collect::<Vec<String>>())
-        })
-        .unwrap_or_default();
-    let conns: Vec<rusqlite::Connection> =
-        ids.iter().filter_map(|sid| crate::db::open_space_conn(sid).ok()).collect();
-    referenced_hashes(&conns)
+/// **全空间**引用集（严格版）：任何一个空间读不到 ⇒ `Err`，**绝不静默少扫**。
+///
+/// 老实现是 `filter_map(|sid| open_space_conn(sid).ok())` ＋ `unwrap_or_default()`
+/// ⇒ 少一个空间就等于把"它引用的字节"判成孤儿。清理类命令一旦拿这个集合去"减"，
+/// 就会**真删别的空间还在用的附件**（2026-09-19 缺陷帖 #6 的同一族，只是触发条件不同）。
+/// 所以这里返回 `Result`，让调用方**在动手之前**决定"读不全就不删"。
+pub(crate) fn all_referenced_hashes(
+    meta: &rusqlite::Connection,
+) -> Result<std::collections::HashSet<String>, Vec<String>> {
+    let ids = all_space_ids(meta)?;
+    Ok(scan_referenced_hashes(&ids, crate::db::open_space_conn)?.into_iter().collect())
+}
+
+/// 除 `except_id` 之外**其余空间**的引用集（严格版）。给"先删除行、再回收字节"的命令用：
+/// 当前空间那一份由调用方在删完之后自己查（它就在手上，不需要再开一条连接）。
+pub(crate) fn other_spaces_referenced_hashes(
+    meta: &rusqlite::Connection,
+    except_id: &str,
+) -> Result<std::collections::HashSet<String>, Vec<String>> {
+    let ids: Vec<String> = all_space_ids(meta)?.into_iter().filter(|i| i != except_id).collect();
+    Ok(scan_referenced_hashes(&ids, crate::db::open_space_conn)?.into_iter().collect())
 }
 
 /// M14.2 — Permanently delete trash (soft-deleted pages) and release their bytes.
@@ -209,6 +221,26 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
         }
         (ids, hashes)
     };
+
+    // ★ **动手之前**先把"别的空间还引用着什么"读全（2026-09-20 自查，与 F2 同族）：
+    //   读不全（有空间打不开/密钥不符）就**当场失败、一行都不删**。老实现是
+    //   `filter_map(open(...).ok())` ＋ `unwrap_or_default()` ⇒ 读不到的空间等于"它不引用任何附件"
+    //   ⇒ 与它共享的字节被当孤儿真删，对面出现"行在字节不在"（缺陷帖 #6 同一族）。
+    //   当前空间那一份**不在这里扫**：它的行马上要删掉，扫早了会把该释放的字节又算成"还被引用"
+    //   （删完之后直接在手上这条连接上查，见下面 `still_referenced`）。
+    let (current_space, other_refs) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let current = crate::workspaces::active_workspace_id(&c)?;
+        let other = other_spaces_referenced_hashes(&c, &current).map_err(|unreadable| {
+            format!(
+                "有 {} 个空间当前读不到 ⇒ **无法安全判断哪些附件还有人在用，本次不清理、什么都没删**：\n  - {}",
+                unreadable.len(),
+                unreadable.join("\n  - ")
+            )
+        })?;
+        (current, other)
+    };
+    let _ = &current_space;
 
     // Delete in a transaction.
     {
@@ -245,9 +277,19 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
     // Determine which hashes are now orphaned (no longer referenced) before releasing the lock.
     // ⚠️ **跨全部空间**来问（见 `referenced_hashes` 的注释）：只查当前空间会把**别的空间**
     // 仍在引用的字节当成孤儿删掉 ⇒ 那边出现「行在字节不在」（2026-09-19 缺陷帖 #6）。
+    // 别的空间那一份已经在上面**严格**扫过（读不到就不许往下走）；这里只补当前空间删完行之后的现状。
     let orphaned: std::collections::HashSet<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let still_referenced = all_referenced_hashes(&c);
+        let mut still_referenced = other_refs;
+        let mut stmt = c
+            .prepare("SELECT DISTINCT hash FROM attachments")
+            .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?;
+        let own = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| format!("读当前空间的 attachments 失败（{e}）⇒ 字节未回收，附件行已删"))?;
+        still_referenced.extend(own);
         hashes.iter().filter(|h| !still_referenced.contains(*h)).cloned().collect()
     };
 
@@ -275,15 +317,20 @@ pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let attachment_dir = app_data_dir.join("attachments");
 
+    // ★ **必须跨全部空间**问"这个字节还有没有人用"（2026-09-20 自查发现这里只查了**当前空间**）：
+    //   附件目录是全局共享的内容寻址目录，只按当前空间判断 ⇒ **别的空间仍在引用的字节被删**，
+    //   对面出现"行在字节不在"（正是 2026-09-19 缺陷帖 #6 的症状，这里是它的**第三条路径**）。
+    //   并且是严格版：任何一个空间读不到 ⇒ 整体失败、**一个字节都不删**（老代码只查当前空间，
+    //   根本不会失败，也就永远不会告诉用户"我没法确定"）。
     let referenced: std::collections::HashSet<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let mut stmt = c.prepare("SELECT DISTINCT hash FROM attachments").map_err(|e| e.to_string())?;
-        let hs = stmt
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        hs.into_iter().collect()
+        all_referenced_hashes(&c).map_err(|unreadable| {
+            format!(
+                "有 {} 个空间当前读不到 ⇒ **无法判断哪些附件是孤儿，本次不删任何附件**：\n  - {}",
+                unreadable.len(),
+                unreadable.join("\n  - ")
+            )
+        })?
     };
 
     let att_dir = attachment_dir;
@@ -657,26 +704,37 @@ mod tests {
     #[test]
     fn referenced_hashes_counts_rows_whose_page_is_gone_or_null() {
         const H: &str = "f2534c73fa62c0a6e0e5b6c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
-        // 空间 A：附件行指向一个**不存在**的页（页被永久删除后的残留 / 历史脏数据）
-        let a = Connection::open_in_memory().unwrap();
-        migrate(&a, "a").unwrap();
-        a.execute(
-            "INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) \
-             VALUES ('x1','gone','n',?1,'image/png',1,1)",
-            params![H],
-        )
-        .unwrap();
-        // 空间 B：同一个 hash，page_id 为空（根目录文件）
-        let b = Connection::open_in_memory().unwrap();
-        migrate(&b, "b").unwrap();
-        b.execute(
-            "INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) \
-             VALUES ('x2',NULL,'n',?1,'image/png',1,1)",
-            params![H],
-        )
-        .unwrap();
-
-        let set = referenced_hashes(&[a, b]);
+        // 两个空间各建一行，**同样走生产路径唯一的那条扫描函数**（按 id 现建连接）。
+        let build = |sid: &str| -> Connection {
+            let c = Connection::open_in_memory().unwrap();
+            migrate(&c, sid).unwrap();
+            // A：附件行指向一个**不存在**的页（页被永久删除后的残留 / 历史脏数据）
+            // B：同一个 hash，page_id 为空（根目录文件）
+            let page: Option<&str> = if sid == "a" { Some("gone") } else { None };
+            let id = if sid == "a" { "x1" } else { "x2" };
+            c.execute(
+                "INSERT INTO attachments (id,page_id,name,hash,mime,size,created_at) \
+                 VALUES (?1,?2,'n',?3,'image/png',1,1)",
+                params![id, page, H],
+            )
+            .unwrap();
+            c
+        };
+        let ids = vec!["a".to_string(), "b".to_string()];
+        let set: std::collections::HashSet<String> =
+            scan_referenced_hashes(&ids, |sid| Ok(build(sid))).unwrap().into_iter().collect();
         assert!(set.contains(H), "跨空间 + 页不可解析都必须算被引用：{set:?}");
+
+        // 反例守卫：换成 `JOIN pages ON p.id = a.page_id` 的旧口径 ⇒ 两行都会消失。
+        // 这里直接断言"不 join 才拿得到"，把口径钉在函数里（改回去这条就红）。
+        let c = build("a");
+        let joined: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM attachments a JOIN pages p ON p.id = a.page_id WHERE a.hash = ?1",
+                params![H],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(joined, 0, "JOIN 口径下 A 的行应当查不到 —— 这正是缺陷帖 #6 的形态");
     }
 }
