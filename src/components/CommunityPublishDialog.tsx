@@ -3,8 +3,9 @@
 // 这一屏把既有方案的底线条款落成一个能点的东西
 // （`docs/plans/2026-09-11-app-community-interactions.md` §一：
 //  "任何『自动上传』默认关闭；上传前必须给出清单，并由人手动确认"）：
-//   · 打开对话框**只调一次 `community_connection`**（问一句"连上了没有"）；
-//     不抓取、不预上传、不发帖；
+//   · 打开对话框**只做两条只读查询**：`community_connection`（问一句"连上了没有"）＋
+//     `community_publish_state`（问一句"这篇发过没有、发的是哪一版"）；两条都是纯本地只读，
+//     **不发帖、不抓设备码、不上传**；
 //   · 清单里摆出**将要发出去的东西**：标题、标签、正文全文（整篇，带字数）、图片张数
 //     （owner 2026-09-20 拍板：发整篇正文，靠"清单 + 人确认"守底线，不做默认截断）；
 //   · **人点「确认发布」才调 `community_upload_attachment` / `community_publish_note`**——
@@ -21,6 +22,15 @@
 // 幂等（I2）：`(noteId, rev)` 由调用方传进来，**幂等键由后端算**（`community_publish.rs`），
 // 前端不自己造 key —— 两侧各算一份迟早漂成两种口径。所以本组件只负责**原样把它们递下去**。
 //
+// 发布台账（本版接上）：后端在**发布成功时自己回写**一行"这篇最近发到哪儿、发的是哪一版"
+// （`community_publish_note` 内部，见 `community_publish.rs` 的 `record_into_db`），前端**只读不写**。
+// 这一屏据此说清三件事（拿 `publishedRev` 与当前 `rev` 比）：
+//   · 没台账（`null`）⇒ 一句中性的"还没发过"，**不吓唬人**；
+//   · 同 rev ⇒ 这一版已经发过，**再发一次不会多发一篇**（同一个幂等键回放首次结果）；
+//   · 不同 rev ⇒ 上次发布的是更早的一版，**再发会新建一篇**（本版还不更新已有帖子，P2 才做）。
+// 读台账**失败不挡界面**：它只是一句提示，读不到就等于没有 —— 但也不假装"没发过"
+// （那是替用户断言一件我们并不知道的事），所以把理由记在 `ledgerError` 里，用一句中性的话说明。
+//
 // 令牌（I3）：**永远不进这个组件的 state**。`community_connection` 回的形状里本来就没有令牌
 // 字段（只有 `{base, username, scope, savedAt}`），令牌留在应用数据目录里，这一层连它的形状都不知道。
 //
@@ -33,6 +43,7 @@ import type {
   CommunityConnection,
   CommunityDeviceStart,
   CommunityPublishResult,
+  CommunityPublishState,
   CommunityUploadedAttachment,
 } from "../lib/platform/commands";
 import { pageContentToMarkdown, pageImageRefs } from "../lib/exportMarkdown";
@@ -136,6 +147,12 @@ export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, 
   /** `undefined` = 还没问过（读取中）；`null` = 问过了、没连上。 */
   const [connection, setConnection] = useState<CommunityConnection | null | undefined>(undefined);
   const [connError, setConnError] = useState("");
+  /**
+   * 发布台账：`undefined` = 读取中；`null` = 读到了、这篇没发过。
+   * `ledgerError` 非空时**两样都不显示**（读都没读到，任何结论都是编的），只说明"这次没读到"。
+   */
+  const [ledger, setLedger] = useState<CommunityPublishState | null | undefined>(undefined);
+  const [ledgerError, setLedgerError] = useState("");
   /** `approved` 那一刻社区给的用户名：只用来显示"已连接：<谁>"。 */
   const [approvedName, setApprovedName] = useState("");
 
@@ -189,9 +206,33 @@ export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, 
     }
   };
 
-  // 打开对话框**只问一句**"连上了没有"。发帖、抓取、上传图片都不在这一步。
+  /**
+   * 读一次**发布台账**（`community_publish_state`：只读、纯本地，不碰网络、不带令牌）。
+   *
+   * 失败**不挡界面**：台账只是"这篇发过没有"的一句提示，读不到不该让对话框打不开
+   * （`web.ts` 就是这么处理的：没有本地库 ⇒ 回 `null`，而不是抛错）。但也不能
+   * "读不到就当成没发过" —— 那是在替用户断言一件我们并不知道的事，他可能因此
+   * 再发一篇。所以：`ledger` 落成 `null` 表示"没有可显示的三态"，理由进 `ledgerError`，
+   * 界面用**中性**的话说明"这次没读到"（不是红字错误，它不影响发布）。
+   */
+  const loadPublishState = async (): Promise<void> => {
+    try {
+      const s = await platform.executor.invoke<CommunityPublishState | null>("community_publish_state", {
+        pageId: noteId,
+      });
+      setLedger(s);
+      setLedgerError("");
+    } catch (e) {
+      setLedger(null);
+      setLedgerError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // 打开对话框**只做这两条只读查询**：①"连上了没有" ②"这篇发过没有、发的哪一版"。
+  // 发帖、抓设备码、上传图片都不在这一步（I7）。
   useEffect(() => {
     void loadConnection();
+    void loadPublishState();
   }, []);
 
   const openExternal = async (raw: string) => {
@@ -339,6 +380,11 @@ export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, 
         rev,
       });
       setResult(r);
+      if (r.status === "ok") {
+        // 后端在发布成功时已经把台账回写成这一版；这里**重读一次**，让界面立刻反映
+        // "刚发的是这一版"（否则还停在打开那一刻的旧结论上，甚至说"还没发过"）。
+        await loadPublishState();
+      }
       if (r.status === "unauthorized") {
         // 令牌失效/被撤销：后端的本地凭据已经删了，界面回到"连接社区"。
         setConnection(null);
@@ -486,6 +532,58 @@ export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, 
                 {connection?.base ? ` · ${connection.base}` : ""}
                 {connection?.scope ? ` · 授权范围：${connection.scope}` : ""}
               </div>
+
+              {/* ---- 发布台账（只读）：这篇发过没有、发的是哪一版、再发一次会怎样 ----
+                  放在"发布前清单"**上方**：先让人知道"这篇的处境"，再看"将要发什么"。
+                  三个状态互斥，且都只在**已连接**时显示（未连接时发布根本还没开始谈）。 */}
+              {ledgerError !== "" && (
+                <div className="community-save-more">
+                  这次没读到发布台账（{ledgerError}）—— 不影响发布，只是这次不显示"这篇发过没有"。
+                </div>
+              )}
+              {ledgerError === "" && ledger === null && (
+                <div className="community-save-preview-meta">发布台账：这篇还没发过。</div>
+              )}
+              {ledgerError === "" && ledger != null && ledger.publishedRev === rev && (
+                <div className="community-save-preview" data-ledger="same-rev">
+                  <div className="community-save-preview-meta">
+                    发布台账：这一版已经发过（修订 {ledger.publishedRev}）。
+                  </div>
+                  <button
+                    className="community-save-source"
+                    onClick={() => void openExternal(ledger.url)}
+                    title="在浏览器里打开已发布的这一篇"
+                  >
+                    {ledger.url}
+                  </button>
+                  <div className="community-save-preview-meta">
+                    现在再发一次不会多发一篇：社区按同一个幂等键回放第一次的结果。
+                  </div>
+                </div>
+              )}
+              {ledgerError === "" && ledger != null && ledger.publishedRev !== rev && (
+                <div className="community-save-preview" data-ledger="older-rev">
+                  <div className="community-save-preview-meta">
+                    发布台账：上次发布的是更早的一版（发出去的是修订 {ledger.publishedRev}，当前是 {rev}）。
+                  </div>
+                  <button
+                    className="community-save-source"
+                    onClick={() => void openExternal(ledger.url)}
+                    title="在浏览器里打开上次发布的那一篇"
+                  >
+                    {ledger.url}
+                  </button>
+                  <div className="community-save-preview-meta">
+                    当前这一版与上次发出去的那一版**不是同一个修订**，所以现在再发会新建一篇
+                    （这一版不会更新已发布的帖子，更新是 P2 才做的）。
+                  </div>
+                  {/* 只说"不是同一个修订"，不说"内容改过了"：`rev` 取自页面 `updated_at`，
+                      "改一个字再改回去"也会换修订，而内容其实一模一样 —— 那会是一句我们并不知道的结论。 */}
+                  <div className="community-save-more">
+                    修订号取自页面的更新时间，不是内容指纹：改了又改回去也会算新修订。
+                  </div>
+                </div>
+              )}
 
               {result === null && (
                 <div className="community-save-preview">

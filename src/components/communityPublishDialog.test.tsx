@@ -11,6 +11,11 @@
 // 断言的是**命令名**（以及它们的**先后顺序**），不是某个前端包装函数——这样"没调
 // `community_publish_note`"才算数。
 //
+// 打开对话框是**两条只读查询**：`community_connection`（连上了没有）与
+// `community_publish_state`（这篇发过没有、发的是哪一版）。后者只是"提示"：读不到也得让
+// 对话框照常可用（见下面那一组），所以 `backend()` 给它准备了默认值 —— 但**它不是写操作**，
+// 判据里"上传/发帖 0 次"那条同样盯着它出现的那一屏。
+//
 // 正文一律用**真的 Lexical 节点**造（照 `src/editor/nodes/exportDom.test.ts` 那套
 // `$createImageNode(...)`）：手写一段假 JSON 只能证明"我们的假 JSON 能被解析"，
 // 证明不了应用真正写进 `content_json` 的形状下 `__hash`/`__mime` 拿得到。
@@ -115,6 +120,18 @@ const NOTE = {
 const baseProps: CommunityPublishDialogProps = { ...NOTE, onClose: () => {} };
 
 /**
+ * 一页的**发布台账**（后端在发布成功时自己回写，前端只读 —— 见 `commands.ts` 的
+ * `CommunityPublishState`）。`publishedRev` 就是当时递下去的 `rev`。
+ */
+const ledger = (publishedRev: string) => ({
+  pageId: NOTE.noteId,
+  slug: "plugin-recipes-batch-1",
+  url: "https://community.shuyo.cn/post/plugin-recipes-batch-1",
+  publishedRev,
+  publishedAt: 1758355200000,
+});
+
+/**
  * 受控组件的"父级"：`onClose` 之后**真的把它卸下来**。
  * 组件契约是 `{..., onClose}`（父级决定何时关），所以"关闭对话框后不再轮询"必须测卸载清理，
  * 而不是在还挂着的时候点一下关闭按钮（那样测不出定时器到底停没停）。
@@ -164,14 +181,23 @@ const OK_RESULT = {
   idempotencyKey: "shuyonote-page-1-1758355200000",
 };
 
-/** 默认后端：答 `community_connection`，其余交给每个测试自己准备（没准备的命令一律当失败）。 */
+/**
+ * 默认后端：答两条**打开对话框就会发生的只读查询** —— `community_connection`
+ * （连上了没有）与 `community_publish_state`（这篇发过没有，默认"没台账"）；
+ * 其余交给每个测试自己准备（没准备的命令一律当失败，这样"没调某条命令"才算数）。
+ *
+ * 台账为什么要给默认值：打开对话框就会读它（只读查询，见 I7），真实后端一定答得上；
+ * 若在这里落成"没准备的命令 ⇒ 失败"，测的就变成"后端不认识这条命令"这种现实里不存在的情形。
+ * 每个测试可以用 `over` 覆盖其中任意一条（例如造"这篇发过，且是更早的一版"）。
+ */
 function backend(
   over: Record<string, (args?: unknown) => unknown | Promise<unknown>> = {},
 ): (cmd: string, args?: unknown) => Promise<unknown> {
   return (cmd, args) => {
-    if (cmd === "community_connection") return Promise.resolve(CONNECTION);
     const handler = over[cmd];
     if (handler) return Promise.resolve(handler(args));
+    if (cmd === "community_connection") return Promise.resolve(CONNECTION);
+    if (cmd === "community_publish_state") return Promise.resolve(null);
     return Promise.reject(new Error(`测试没准备的命令：${cmd}`));
   };
 }
@@ -188,13 +214,14 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("打开对话框：只问一句「连上了没有」，什么都不传、什么都不发", () => {
-  it("已连接 → 只调一次 community_connection；**没有** connect_start / upload / publish_note", async () => {
-    mocks.invoke.mockResolvedValue(CONNECTION);
+describe("打开对话框：只做两条只读查询（连上了没有 ＋ 这篇发过没有），什么都不传、什么都不发", () => {
+  it("已连接 → 两条只读查询各一次；**没有** connect_start / upload / publish_note", async () => {
+    mocks.invoke.mockImplementation(backend());
     mount();
     await vi.waitFor(() => is(byText("确认发布")));
 
     expect(called("community_connection")).toHaveLength(1);
+    expect(called("community_publish_state")).toHaveLength(1);
     expect(text()).toContain("已连接：阿数");
     expect(called("community_connect_start")).toHaveLength(0);
     expect(called("community_upload_attachment")).toHaveLength(0);
@@ -202,7 +229,7 @@ describe("打开对话框：只问一句「连上了没有」，什么都不传�
   });
 
   it("未连接 → 入口是「连接社区」（I6：未连接不是错误），且仍然不发任何帖", async () => {
-    mocks.invoke.mockResolvedValue(null);
+    mocks.invoke.mockImplementation(backend({ community_connection: () => null }));
     mount();
     await vi.waitFor(() => is(byText("连接社区")));
 
@@ -215,9 +242,122 @@ describe("打开对话框：只问一句「连上了没有」，什么都不传�
   });
 });
 
+describe("发布台账（只读）：这篇发过没有、发的是哪一版、再发一次会怎样", () => {
+  it("没台账 → 只说一句中性的「还没发过」；**不出现**「已经发过 / 再发会新建」这种替用户下的结论", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    expect(text()).toContain("这篇还没发过");
+    // 没有台账就没有可下的结论："已经发过"是假的，"再发会新建"是吓唬人。
+    expect(text()).not.toContain("已经发过");
+    expect(text()).not.toContain("再发会新建");
+    expect(text()).not.toContain("不会多发一篇");
+    // 台账是只读的：读它不许顺带传一张图、发一篇帖
+    expect(called("community_upload_attachment")).toHaveLength(0);
+    expect(called("community_publish_note")).toHaveLength(0);
+  });
+
+  it("台账的 rev 与当前相同 → 说清「这一版已经发过」＋「再发一次不会多发一篇」，地址可点开", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(NOTE.rev) }));
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    expect(text()).toContain("这一版已经发过");
+    // 幂等口径就是这一句：同一个键 → 社区回放第一次的结果（前端不自己算键）
+    expect(text()).toContain("不会多发一篇");
+    expect(text()).toContain("同一个幂等键回放第一次的结果");
+    expect(text()).not.toContain("再发会新建一篇");
+
+    const link = document.querySelector<HTMLButtonElement>('[data-ledger="same-rev"] .community-save-source')!;
+    expect(link).toBeTruthy();
+    expect(link.textContent).toContain("https://community.shuyo.cn/post/plugin-recipes-batch-1");
+    // 打开方式与既有那套一致：sanitizeExternalUrl ＋ 平台 opener
+    flushSync(() => link.click());
+    await vi.waitFor(() =>
+      expect(mocks.openUrl).toHaveBeenCalledWith("https://community.shuyo.cn/post/plugin-recipes-batch-1"),
+    );
+  });
+
+  it("台账的 rev 更早 → 说清「上次发布的是更早的一版」＋「再发会新建一篇」（更新已有帖子是 P2）", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger("1758355100000") }));
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    expect(text()).toContain("上次发布的是更早的一版");
+    expect(text()).toContain("再发会新建一篇");
+    // 别把"会新建"说成"会更新"：这一版根本没有更新已有帖子这条路
+    expect(text()).toContain("更新是 P2 才做的");
+    expect(text()).not.toContain("已经发过");
+    // 也别说"内容改过了"：`rev` 是 `updated_at`，改了又改回去也算新修订 —— 那是我们并不知道的结论。
+    expect(text()).not.toContain("内容在那之后改过了");
+    expect(text()).toContain("不是同一个修订");
+
+    const link = document.querySelector<HTMLButtonElement>('[data-ledger="older-rev"] .community-save-source')!;
+    expect(link.textContent).toContain("https://community.shuyo.cn/post/plugin-recipes-batch-1");
+  });
+
+  it("打开对话框**只读一次**台账（参数就是 { pageId: noteId }），且上传/发帖仍然都是 0 次", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_state: () => ledger(NOTE.rev) }));
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    const reads = called("community_publish_state");
+    expect(reads).toHaveLength(1);
+    expect(reads[0][1]).toEqual({ pageId: NOTE.noteId });
+    // 同时发生的另一条只读查询同样各一次；而**写**类的命令一次都没有
+    expect(called("community_connection")).toHaveLength(1);
+    expect(called("community_connect_start")).toHaveLength(0);
+    expect(called("community_upload_attachment")).toHaveLength(0);
+    expect(called("community_publish_note")).toHaveLength(0);
+  });
+
+  it("台账读不到 → 不挡界面（清单与「确认发布」照旧），用中性的一句话说明「这次没读到」", async () => {
+    mocks.invoke.mockImplementation(
+      backend({
+        community_publish_state: () => {
+          throw new Error("库锁坏了");
+        },
+      }),
+    );
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    expect(text()).toContain("库锁坏了");
+    expect(text()).toContain("这次没读到发布台账");
+    // 读不到 ≠ 没发过：不许摆出"已经发过"，也不许给"再发会新建"的结论
+    expect(text()).not.toContain("已经发过");
+    expect(text()).not.toContain("再发会新建");
+    expect(text()).not.toContain("这篇还没发过");
+    // 界面照旧可用
+    expect(text()).toContain("发布前清单");
+    expect(byText("确认发布").disabled).toBe(false);
+  });
+
+  it("发布成功（status ok）→ **立刻重读台账**，界面反映的就是「刚发的是这一版」", async () => {
+    let reads = 0;
+    mocks.invoke.mockImplementation(
+      backend({
+        community_publish_note: () => OK_RESULT,
+        // 打开时：还没发过；发完之后后端已回写 ⇒ 再读就是这一版。
+        community_publish_state: () => (reads++ === 0 ? null : ledger(NOTE.rev)),
+      }),
+    );
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+    expect(text()).toContain("这篇还没发过");
+
+    flushSync(() => byText("确认发布").click());
+    await vi.waitFor(() => expect(called("community_publish_state")).toHaveLength(2));
+    await vi.waitFor(() => expect(text()).toContain("这一版已经发过"));
+    // 发完不再是"还没发过"
+    expect(text()).not.toContain("这篇还没发过");
+  });
+});
+
 describe("发布前清单（I7）：将要发出去的东西要摆在人眼前", () => {
   it("标题 / 标签 / 字数 / 正文**全文**都在清单里；**清单出现时上传与发帖都是 0 次**", async () => {
-    mocks.invoke.mockResolvedValue(CONNECTION);
+    mocks.invoke.mockImplementation(backend());
     mount();
     await vi.waitFor(() => is(byText("确认发布")));
 
@@ -240,7 +380,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
   });
 
   it("正文里有本机图片 → 清单说清「N 张会先上传，引用会换成 /attachments/<hash>」，且此刻仍是 0 次上传", async () => {
-    mocks.invoke.mockResolvedValue(CONNECTION);
+    mocks.invoke.mockImplementation(backend());
     mount({ contentJson: ONE_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
@@ -252,7 +392,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
   });
 
   it("同一张图引用两次 → 清单按 hash 去重（内容寻址：传一次就够）", async () => {
-    mocks.invoke.mockResolvedValue(CONNECTION);
+    mocks.invoke.mockImplementation(backend());
     mount({ contentJson: DUP_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
@@ -260,7 +400,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
   });
 
   it("正文里有视频 → 清单**如实说「发不出去」**（社区附件白名单按魔数判，不含视频）", async () => {
-    mocks.invoke.mockResolvedValue(CONNECTION);
+    mocks.invoke.mockImplementation(backend());
     mount({ contentJson: IMAGE_AND_VIDEO_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
