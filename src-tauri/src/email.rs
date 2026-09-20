@@ -422,6 +422,11 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
             .unwrap_or_default();
         let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
         let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+        // 带 `\Deleted` 的**不列出来**：删除走"COPY 进回收站 + 打标记"那条路时，原件在
+        // 服务器上还留着（只是标了删除），列表里再显示一次就像"没删掉"。IMAP 客户端通常也这么处理。
+        if m.flags().any(|f| f == async_imap::types::Flag::Deleted) {
+            return None;
+        }
         Some(EmailMeta {
             uid: m.uid.unwrap_or(0),
             subject,
@@ -685,8 +690,8 @@ pub async fn email_mark_read(args: EmailOpArgs, read: bool) -> Result<(), String
     Ok(())
 }
 
-/// 删除邮件：`UID MOVE` 到「已删除」文件夹（可回收）。依次尝试常见文件夹名，
-/// 都失败时回退到标记 `\Deleted` + EXPUNGE（至少从列表移除）。
+/// 删除邮件：**必须把它放进回收站**（可回收）。知道回收站就 `UID MOVE`，否则 `UID COPY` 进去再打
+/// `\Deleted`；连回收站都定位不到就**拒绝删除**（2026-09-20 用户要求「改为进回收站」）。
 // ── 删除（移入回收站 / 打删除标记）────────────────────────────────────────────
 // 2026-09-20 用户报障：「批量删除以后，重新拉取后依然出现」。根因三层，都在这一小段里：
 //   ① mailbox 名在 IMAP 协议里**只能是 modified UTF-7**（RFC 3501 §5.1.3）。旧代码把
@@ -772,7 +777,8 @@ fn pick_trash(names: &[(String, bool)]) -> Option<String> {
     None
 }
 
-/// 问服务器：回收站叫什么。问不出来就 `None`（那时走 `\Deleted` + EXPUNGE 这条通用路）。
+/// 问服务器：回收站叫什么。问不出来就 `None` —— 那时 `delete_one` **拒绝删除**并如实报错
+/// （宁可"没删"，也不做收不回来的删除）。
 async fn resolve_trash(session: &mut ImapSession) -> Option<String> {
     use futures_util::StreamExt;
     let mut stream = session.list(None, Some("*")).await.ok()?;
@@ -819,7 +825,18 @@ fn delete_err(what: &str, e: async_imap::error::Error) -> DeleteErr {
     }
 }
 
-/// 删掉一封邮件：知道回收站且服务器支持 MOVE ⇒ MOVE 进去；否则 `\Deleted` + `UID EXPUNGE`。
+/// 删掉一封邮件 = **把它挪进回收站**（用户 2026-09-20：「改为进回收站」）。
+///
+/// 三条路，**任何一条都不做"就地永久删除"**：
+/// ① 知道回收站名 + 服务器支持 MOVE ⇒ `UID MOVE` 进去（一步到位）；
+/// ② 不支持 MOVE ⇒ **先 `UID COPY` 进回收站**（这一步才是"进回收站"的保证），再打 `\Deleted`；
+///    能 `UID EXPUNGE <uid>`（RFC 4315 UIDPLUS，只清这一封）就顺手把原件清掉，
+///    拿不到 UIDPLUS 就**留着**——回收站里已有一份，列表那侧按 `\Deleted` 过滤，用户看不见；
+/// ③ 连回收站在哪儿都不知道 ⇒ **拒绝删除并如实报错**（宁可"没删"，也不做收不回来的删除）。
+///
+/// ⚠️ 为什么删掉了"整箱 `EXPUNGE`"这条回退：它清的是**本文件夹里所有带 `\Deleted` 的信**，
+/// 而且**完全绕过回收站** —— 用户那天用客户端删了上百封，QQ 的「已删除」里一封都没有，就是这么没的。
+/// 那批信 IMAP 层面无法恢复，所以这条回退必须消失，而不是"只当兜底"。
 /// **每一步都把响应流读到底并检查结束状态** —— 这是 2026-09-20 那次"假成功"的关键。
 async fn delete_one(
     session: &mut ImapSession,
@@ -828,58 +845,54 @@ async fn delete_one(
 ) -> Result<(), DeleteErr> {
     use futures_util::StreamExt;
 
-    if let Some(folder) = trash {
-        match session.uid_mv(uid.to_string(), folder).await {
-            Ok(()) => return Ok(()),
-            Err(e) if is_conn_lost(&e) => {
-                return Err(delete_err("移动到回收站时连接中断", e));
-            }
-            // MOVE 不支持 / 目标不收（`BAD`/`NO`）→ 走通用路（连接还活着，不该白扔掉这次删除）
-            Err(_) => {}
+    let Some(folder) = trash else {
+        return Err(DeleteErr::Rejected(
+            "没找到这个邮箱的回收站文件夹，出于安全没有删除（不然就收不回来了）".to_string(),
+        ));
+    };
+
+    // ① MOVE：服务器支持就一步进回收站
+    match session.uid_mv(uid.to_string(), folder).await {
+        Ok(()) => return Ok(()),
+        Err(e) if is_conn_lost(&e) => {
+            return Err(delete_err("移动到回收站时连接中断", e));
         }
+        // MOVE 不支持 / 目标不收（`BAD`/`NO`）→ 走 ②
+        Err(_) => {}
     }
 
-    // 打 `\Deleted` 标记。**流必须读到底**：结束码只有读出来才知道（旧代码在这里只看
-    // "命令写进 socket 了没有"）。作用域裹住是为了把 `session` 的可变借用在下一句前放开。
+    // ②-1 先 COPY 进回收站。**这一步失败就什么都不做**：宁可不删，也不能删了收不回。
+    session
+        .uid_copy(uid.to_string(), folder)
+        .await
+        .map_err(|e| delete_err("复制到回收站失败（没有删除任何邮件）", e))?;
+
+    // ②-2 再打 `\Deleted`。流必须读到底：结束码只有读出来才知道。
     {
         let store = session
             .uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)")
             .await
-            .map_err(|e| delete_err("打删除标记失败", e))?;
+            .map_err(|e| delete_err("打删除标记失败（回收站里已有副本）", e))?;
         futures_util::pin_mut!(store);
         while let Some(item) = store.next().await {
-            item.map_err(|e| delete_err("打删除标记失败", e))?;
+            item.map_err(|e| delete_err("打删除标记失败（回收站里已有副本）", e))?;
         }
     }
 
-    // UID EXPUNGE（RFC 4315，UIDPLUS）只清这一封；拿不到就退回 EXPUNGE
-    //（它会清掉本文件夹里**所有**带 `\Deleted` 的 —— 副作用更大，只当兜底）。
-    // 注意：这里必须先把 `match` 的结果落成一个局部变量 —— 作为函数尾表达式时，
-    // `uid_expunge` 那个借用 `session` 的临时值会活到块尾，下面就用不了 `session`（E0499）。
-    let uid_expunged = match session.uid_expunge(uid.to_string()).await {
-        Ok(expunge) => {
-            futures_util::pin_mut!(expunge);
-            while let Some(item) = expunge.next().await {
-                item.map_err(|e| delete_err("删除未生效（UID EXPUNGE 失败）", e))?;
+    // ②-3 能只清这一封就清（UID EXPUNGE）；清不掉就留着 —— 回收站里已有副本，
+    //      列表按 `\Deleted` 过滤后用户看不到，**绝不回退到整箱 EXPUNGE**。
+    if let Ok(expunge) = session.uid_expunge(uid.to_string()).await {
+        futures_util::pin_mut!(expunge);
+        while let Some(item) = expunge.next().await {
+            match item {
+                Ok(_) => {}
+                Err(e) if is_conn_lost(&e) => {
+                    return Err(delete_err("清掉原件时连接中断（回收站里已有副本）", e));
+                }
+                // 服务器拒绝清原件：不影响"已进回收站"这个结果，留着即可。
+                Err(_) => break,
             }
-            true
         }
-        Err(e) if is_conn_lost(&e) => {
-            return Err(delete_err("删除未生效（UID EXPUNGE 时连接中断）", e));
-        }
-        Err(_) => false,
-    };
-    if uid_expunged {
-        return Ok(());
-    }
-
-    let expunge = session
-        .expunge()
-        .await
-        .map_err(|e| delete_err("删除未生效（EXPUNGE 失败）", e))?;
-    futures_util::pin_mut!(expunge);
-    while let Some(item) = expunge.next().await {
-        item.map_err(|e| delete_err("删除未生效（EXPUNGE 失败）", e))?;
     }
     Ok(())
 }
@@ -893,7 +906,7 @@ pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
         .map_err(|e| e.message())
 }
 
-/// 批量删除邮件：一次连接搬多封（知道回收站就 MOVE，否则 `\Deleted` + `UID EXPUNGE`）。
+/// 批量删除邮件：一次连接搬多封，**每封都走 [`delete_one`]**（即"必须进回收站"那三条路）。
 /// 返回**真正**删掉的封数；一封都没删掉时返回 `Err`（不再把假成功交给界面）。
 #[derive(Deserialize)]
 pub struct EmailBatchOpArgs {
@@ -1456,6 +1469,10 @@ fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMe
     let date = env.date.as_ref().map(|d| String::from_utf8_lossy(d.as_ref()).to_string()).unwrap_or_default();
     let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
     let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+    // 同 `build_meta`：带 `\Deleted` 的不列出来（删除是"进回收站"，原件可能还挂着删除标记）。
+    if m.flags().any(|f| f == async_imap::types::Flag::Deleted) {
+        return None;
+    }
     Some(EmailMeta {
         uid: m.uid.unwrap_or(0),
         subject,
@@ -1829,12 +1846,40 @@ mod tests {
         ];
         assert_eq!(pick_trash(&names).as_deref(), Some("INBOX.Deleted Items"));
 
-        // ④ 一个都不像 ⇒ None：那时走 `\Deleted` + EXPUNGE 这条通用路，**不乱猜名字**
+        // ④ 一个都不像 ⇒ None：那时**拒绝删除**（`delete_one` 直接报错），不乱猜名字、
+        //    也不做任何"永久删"——收不回来的事，宁可没做
         let names = vec![
             ("INBOX".to_string(), false),
             ("&g0l6Pw-".to_string(), false),
         ];
         assert_eq!(pick_trash(&names), None);
+    }
+
+    /// **删信路径里不许再出现"整箱 `EXPUNGE`"**（2026-09-20 用户实测：客户端删了上百封，
+    /// QQ 的「已删除」却是空的 —— 那条 `session.expunge()` 把本文件夹里**所有**带 `\Deleted` 的信
+    /// 一起永久清了，而且完全绕过回收站，IMAP 层面无法恢复）。
+    ///
+    /// 这是**源码哨兵**：这种"服务器配合着把信弄没"的行为本地 mock 复现不了（与上面那条
+    /// "mailbox 名必须全是 ASCII" 同一个思路）—— 谁把这条回退加回来，判据就要当场变红。
+    #[test]
+    fn delete_path_never_does_a_mailbox_wide_expunge() {
+        let src = include_str!("email.rs");
+        let start = src
+            .find("async fn delete_one")
+            .expect("delete_one 不见了（改名了？这条哨兵要跟着搬）");
+        let body = &src[start..];
+        let end = body
+            .find("\n#[tauri::command]")
+            .expect("找不到 delete_one 的结尾");
+        let body = &body[..end];
+        assert!(
+            !body.contains(".expunge()"),
+            "delete_one 里出现了整箱 EXPUNGE —— 它会清掉本文件夹里所有带 \\Deleted 的信、且绕过回收站：\n{body}"
+        );
+        assert!(
+            body.contains("uid_copy"),
+            "delete_one 必须先把邮件 COPY 进回收站（服务器不支持 MOVE 时，这一步才是\"进回收站\"的保证）：\n{body}"
+        );
     }
 
     /// **手动探针**（默认不跑，`#[ignore]`）：拿真账号把「批量删除 → 重新拉取」走一遍。
