@@ -175,6 +175,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-18-doc-content-layer-inventory.md](plans/2026-09-18-doc-content-layer-inventory.md) | **阶段 0 · 接口收口：现状盘点与那一层的边界**：实测触点**前端 538 / Rust 208 处（80 文件，门禁口径）**；结论是要收的不是 746 处而是「写入口＋合并点＋派生输入」三处；含 read/write/merge/derive 四件事的 API 草案与"只减不增"门禁（已落地） |
 | [plans/2026-09-18-window-capability-semantics.md](plans/2026-09-18-window-capability-semantics.md) | **窗口类能力的口径（草案 v1）**：`pages.get` / `files.read` / `blocks.list` 这类「窗口/分页」参数的默认值、上限与截断语义，以及两侧必须逐值一致的要求 |
 | [plans/2026-09-19-pdfium-p3-report.md](plans/2026-09-19-pdfium-p3-report.md) | **PDFium↔MuPDF P3 对拍报告**（`23985ef`，WSL2 Ubuntu 执行）：四样本**硬判据 4/4**（RGB 最大差 0–1，阈值 8；超阈 0.000%）＋**目视 4/4**；含单页耗时读数与**诚实边界**（中文/扫描件样本未覆盖、非 Windows 平台装包与真机未做） |
+| [plans/2026-09-20-pdfium-linux-font-backend-workorder.md](plans/2026-09-20-pdfium-linux-font-backend-workorder.md) | **PDFium「Linux 上非嵌入字体不显示」修复施工单**：Linux 那份 `libpdfium.so` **没有字体后端**（`ldd` 只有 6 行、`fontconfig` 符号 0 个；对照 Windows DLL 有 GDI 字体映射）⇒ **非嵌入字体（含国标中文）在 Linux 上整行不显示**；Windows/macOS 正常；MuPDF 三平台同数 28000（乱码）⇒ **这不是换引擎引入的回归**。含四条路线（**推荐「随包 OFL 中文字体 ＋ `Pdfium::set_custom_font_provider`」**，零构建链）、五条判据（含**卸字体后必须回到 0 像素**的负向验收）、确切改动点（`pdfium_native.rs:243-254`）与打包挂接 |
 
 > 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
 > 找不到是正常的——去私有仓库 `shuyonote-sync-server` 的 `docs/`：
