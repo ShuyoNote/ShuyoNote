@@ -105,8 +105,11 @@ const MAP = {
   "web-sys": { debs: [], why: "wasm 绑定，无系统依赖" },
 };
 
-// macOS 工具链探针：**每一条都对应一次真事故或一次真需求**，不是凑数的。
-// `kind: path` ⇒ 退出 0 且输出是存在的路径；`kind: exit` ⇒ 只要退出 0（输出当信息打出来）。
+// 工具链探针：**每一条都对应一次真事故或一次真需求**，不是凑数的。
+// `kind: path` ⇒ 退出 0 且输出是存在的路径；`kind: exit` ⇒ 只要退出 0（输出当信息打出来）；
+// `kind: info` ⇒ **只报不判**（缺了不一定做不了事，但值得让人看见）。
+//
+// `cmd` 可以是数组（静态命令），也可以是**函数**（要在运行时算路径/加参数时用，例如 vswhere 的绝对路径）。
 const DARWIN_PROBES = [
   { id: "xcode-select", cmd: ["xcode-select", "-p"], kind: "path", why: "命令行工具链根目录（找不到 ⇒ 什么都编译不了）" },
   {
@@ -124,6 +127,67 @@ const DARWIN_PROBES = [
   },
   { id: "codesign", cmd: ["xcrun", "--find", "codesign"], kind: "path", why: "签名工具（发版要靠它）" },
   { id: "clang", cmd: ["xcrun", "--find", "clang"], kind: "path", why: "Rust 的链接器/编译驱动 cc 走它" },
+];
+
+// Windows 工具链/运行时探针（2026-09-20 Windows 侧补；AMD 在 `check-sys-deps-gate` 里点名要这张表）。
+//
+// ⚠️ 取舍原则：**只有"缺了会真的构建/打包/启动失败"的才进硬判据**，其余一律 `kind: "info"`。
+//    硬判据多一条，误红的概率就多一分，而误红会让人开始忽略整个门禁。
+//
+// 本机（Windows，2026-09-20）逐条实测过，三条结论写在这里免得后人重踩：
+//   1. **不要探 `link.exe`**（AMD 最初建议的形态）：这台机器 `where link.exe` **找不到**，而它
+//      构建 Rust 完全正常（MSVC 由 VS 安装提供，不需要在 PATH 上）⇒ 那会是一条**误红**探针；
+//   2. `vswhere -latest -property installationPath` 在**只装了 Build Tools** 的机器上**输出为空**
+//      （`-latest` 默认不含 BuildTools 产品）⇒ 必须 `-products *`，否则又是一条误红；
+//   3. 旧的 `HKLM\SOFTWARE\Microsoft\VisualStudio\SxS\VC7` 键在本机**不存在**（别用它）。
+const WIN32_PROBES = [
+  {
+    id: "vswhere-msvc",
+    // 绝对路径：vswhere 不在 PATH 上，但它随 VS Installer 固定在下面这个位置。
+    cmd: () => [
+      join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe"),
+      "-latest",
+      "-products",
+      "*",
+      "-requires",
+      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+      "-property",
+      "installationPath",
+    ],
+    kind: "path",
+    why: "MSVC C++ 工具链（Rust 在 Windows 上靠它链接；探的是「有没有装 VC 工具链」，不是「PATH 上有没有 link.exe」）",
+    incident: "2026-09-20 实测：本机 `where link.exe` 空，但构建正常 ⇒ 按 PATH 探 link.exe 会误红",
+  },
+  {
+    id: "windows-sdk",
+    cmd: ["reg", "query", "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows Kits\\Installed Roots", "/v", "KitsRoot10"],
+    kind: "exit",
+    why: "Windows SDK（MSVC 链接时要它的库与头；注册表这条键本机实测存在）",
+  },
+  {
+    id: "webview2",
+    cmd: [
+      "reg",
+      "query",
+      "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+      "/v",
+      "pv",
+    ],
+    kind: "exit",
+    why: "WebView2 Runtime —— **运行时**依赖：没有它，装出来的 app 打不开，而构建期完全看不出来（本机实测 pv=140.x）",
+  },
+  {
+    id: "makensis",
+    cmd: ["where", "makensis"],
+    kind: "info",
+    why: "NSIS 打包器 —— 只是信息：`tauri build` 会自己取 NSIS，PATH 上没有不代表打不了包",
+  },
+  {
+    id: "signtool",
+    cmd: ["where", "signtool"],
+    kind: "info",
+    why: "签名工具 —— 只在要签安装包时需要；`where` 不到不代表不能构建",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -246,10 +310,15 @@ function debState(pkg) {
   };
 }
 
-function probeDarwin(probe) {
+function probeTool(probe) {
   const forced = (process.env.SHUYONOTE_SYSDEPS_FAKE_PROBE_FAIL || "").split(",").map((s) => s.trim());
   if (forced.includes(probe.id)) return { ok: false, out: "", err: "（测试注入：强制失败）" };
-  const r = runProbe({ file: probe.cmd[0], args: probe.cmd.slice(1) });
+  // `cmd` 可以是静态数组，也可以是函数（在运行时算路径/加参数，例如 Windows 的 vswhere 绝对路径）。
+  // ⚠️ 静态那一支要**整个**展开（`...probe.cmd`），别写成 `[cmd[0], cmd.slice(1)]` ——
+  //    后者会让 args 变成"一个嵌套数组"，Node 会把它**用逗号拼成一个参数**喂给子进程
+  //    （2026-09-20 实测：`reg` 收到的就是 `query,HKLM\…,/v,pv` 这种怪东西）。
+  const [file, ...args] = typeof probe.cmd === "function" ? probe.cmd() : probe.cmd;
+  const r = runProbe({ file, args });
   if (!r.ok) return { ok: false, out: r.out, err: r.err };
   if (probe.kind === "path" && !existsSync(r.out)) return { ok: false, out: r.out, err: `路径不存在：${r.out}` };
   return { ok: true, out: r.out };
@@ -360,20 +429,22 @@ function main() {
     }
   }
 
-  // ---- 判据 3：macOS 工具链探针 ----
+  // ---- 判据 3：平台工具链探针（macOS / Windows 各一张表，别的平台显式跳过）----
   const probes = [];
   let probeSkipped = null;
   if (wantCheck("toolchain")) {
-    if (platform === "darwin") {
-      for (const p of DARWIN_PROBES) {
-        const r = probeDarwin(p);
+    const table = platform === "darwin" ? DARWIN_PROBES : platform === "win32" ? WIN32_PROBES : null;
+    if (table) {
+      for (const p of table) {
+        const r = probeTool(p);
         probes.push({ ...p, ok: r.ok, out: r.out, err: r.err });
       }
     } else {
-      probeSkipped = `本机是 ${platform}：macOS 工具链探针未做（Windows 侧的判据表待 Windows 侧补：MSVC / WebView2 / NSIS）`;
+      probeSkipped = `本机是 ${platform}：macOS/Windows 的工具链探针都没做（Linux 侧的判据是上面的 deb 实查）`;
     }
   }
-  const probeFailed = probes.filter((p) => !p.ok);
+  // `kind: "info"` 的探针**只报不判** ⇒ 不算失败（见 WIN32_PROBES 头注释里的取舍原则）。
+  const probeFailed = probes.filter((p) => !p.ok && p.kind !== "info");
 
   const ctx = {
     lock: lockPath,
@@ -461,11 +532,15 @@ function main() {
   }
   if (wantCheck("toolchain")) {
     if (probeSkipped) {
-      console.log(`⏭ macOS 工具链探针：${probeSkipped}`);
+      console.log(`⏭ 工具链探针：${probeSkipped}`);
     } else {
       for (const p of probes) {
-        console.log(`${p.ok ? "✅" : "❌"} ${p.id.padEnd(16)} ${p.out || p.err || ""}`);
+        // `info` 探针失败**不算失败**（只报不判），用 ℹ️ 与真正的失败区分开 —— 否则报告里会出现
+        // 一个"红着但 exit=0"的行，那比不报更让人迷惑。
+        const mark = p.ok ? "✅" : p.kind === "info" ? "ℹ️ " : "❌";
+        console.log(`${mark} ${p.id.padEnd(16)} ${p.out || p.err || ""}`);
         if (!p.ok && p.incident) console.log(`     ↳ ${p.incident}`);
+        if (!p.ok && p.kind === "info") console.log(`     ↳（只报不判）${p.why}`);
       }
     }
   }
@@ -479,7 +554,7 @@ function main() {
 
 // 只有被当作命令直接跑时才执行；被测试 import 时只导出判据表与纯函数
 // （`scripts/check-sys-deps.test.mjs` 用它**在进程内**校验"硬判据都有 CI 依据"这条不变量）。
-export { MAP, DARWIN_PROBES, CI_RECIPE, ROOT, parseLock, readCiRecipe };
+export { MAP, DARWIN_PROBES, WIN32_PROBES, CI_RECIPE, ROOT, parseLock, readCiRecipe };
 
 const isEntry = isMain(import.meta.url);
 if (isEntry) main();
