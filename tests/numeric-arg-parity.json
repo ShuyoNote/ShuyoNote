@@ -15,6 +15,7 @@
     { "name": "负数 ⇒ clamp 到 1", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":-3}", "expectLimit": 1, "expectOffset": 0 },
     { "name": "零字符串 ⇒ 1", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"0\"}", "expectLimit": 1, "expectOffset": 0 },
     { "name": "非数字字符串 ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"abc\"}", "expectLimit": 6000, "expectOffset": 0 },
+    { "name": "空字符串 ⇒ 默认（Windows 2026-09-19 点名的第 4 格）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\"\"}", "expectLimit": 6000, "expectOffset": 0 },
     { "name": "空白包裹的数字字符串 ⇒ 两侧都拒（不做 trim）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":\" 7 \"}", "expectLimit": 6000, "expectOffset": 0 },
     { "name": "null ⇒ 默认（不做 JS 强制转换）", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":null}", "expectLimit": 6000, "expectOffset": 0 },
     { "name": "布尔 true ⇒ 默认", "rawArgs": "{\"id\":\"ID\",\"offset\":0,\"limit\":true}", "expectLimit": 6000, "expectOffset": 0 },
