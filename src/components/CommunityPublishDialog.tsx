@@ -51,6 +51,7 @@ import type {
   CommunityUploadedAttachment,
 } from "../lib/platform/commands";
 import { pageContentToMarkdown, pageImageRefs } from "../lib/exportMarkdown";
+import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
 import { sanitizeExternalUrl } from "../lib/links";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
@@ -495,6 +496,15 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
   const body = prepared.body;
   const chars = body.length;
   const imgs = countImages(body);
+  /**
+   * 正文预览：**默认渲染**（owner 2026-09-21：「内容是 md 格式，不友好」），另给一个开关看逐字源码。
+   *
+   * 发出去的东西没变 —— 社区把 `body` 当 Markdown 渲染（实测 `<h1>/<h2>/<ul>/<blockquote>` 都在），
+   * 所以这里只是"发出去会长什么样"。要看"一个字节都不差发了什么"的，切到源码那一档
+   * （那条也是判据：清单里摆的必须是**上传前**的本地态正文）。
+   */
+  const [showSource, setShowSource] = useState(false);
+  const previewHtml = useMemo(() => markdownPreviewHtml(body), [body]);
 
   return (
     <div className="community-save-overlay" onClick={onClose}>
@@ -719,8 +729,30 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
                       还有 {prepared.broken} 张图没有附件指纹（本机图片但缺 hash），传不上去：发出去会缺。
                     </div>
                   )}
-                  {/* 正文**整篇**摆出来（owner 2026-09-20：发的就是整篇，不是摘要）。 */}
-                  <div className="community-save-preview-body">{body || "（正文是空的）"}</div>
+                  {/* 正文**整篇**摆出来（owner 2026-09-20：发的就是整篇，不是摘要）。
+                      默认渲染成"发出去的样子"，要看逐字 Markdown 源码就切一下。 */}
+                  <div className="community-save-preview-row">
+                    <span className="community-save-preview-meta">正文预览</span>
+                    <button
+                      className="community-save-preview-toggle"
+                      onClick={() => setShowSource((v) => !v)}
+                      title={
+                        showSource
+                          ? "切回渲染效果（社区那边看到的样子）"
+                          : "看逐字的 Markdown 源码（发出去的就是它）"
+                      }
+                    >
+                      {showSource ? "看渲染效果" : "看 Markdown 源码"}
+                    </button>
+                  </div>
+                  {showSource || previewHtml === "" ? (
+                    <div className="community-save-preview-body">{body || "（正文是空的）"}</div>
+                  ) : (
+                    <div
+                      className="community-save-preview-body is-rendered"
+                      dangerouslySetInnerHTML={{ __html: previewHtml }}
+                    />
+                  )}
                   <div className="community-save-target">发布到：{connection?.base || "社区"}</div>
                 </div>
               )}

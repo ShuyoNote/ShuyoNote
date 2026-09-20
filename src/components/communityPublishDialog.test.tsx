@@ -1,4 +1,4 @@
-// **「发布到社区」：没点确认就绝不上传、绝不发帖（I7），清单要说清"将要发出去的是什么"，
+﻿// **「发布到社区」：没点确认就绝不上传、绝不发帖（I7），清单要说清"将要发出去的是什么"，
 // 上传失败就停在那里，结果按 status 分支。**
 //
 // 这一屏是 P0 的落点，把五段串在一起（连接 → 清单 → 上传图片 → 发帖 → 结果）。每段单独看都不复杂，
@@ -26,6 +26,9 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { $createParagraphNode, $createTextNode, $getRoot, createEditor } from "lexical";
+import { $createHeadingNode, $createQuoteNode, HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { $createListItemNode, $createListNode, ListItemNode, ListNode } from "@lexical/list";
+import { $createHorizontalRuleNode, HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(),
@@ -73,7 +76,7 @@ function videoBlock(hash: string) {
 function docJson(build: (root: ReturnType<typeof $getRoot>) => void): string {
   const editor = createEditor({
     namespace: "publish-dialog-test",
-    nodes: [ImageNode, VideoNode],
+    nodes: [ImageNode, VideoNode, HeadingNode, QuoteNode, ListNode, ListItemNode, HorizontalRuleNode],
     onError: (e) => {
       throw e;
     },
@@ -82,8 +85,50 @@ function docJson(build: (root: ReturnType<typeof $getRoot>) => void): string {
   return JSON.stringify(editor.getEditorState().toJSON());
 }
 
+function heading(tag: "h1" | "h2", text: string) {
+  const node = $createHeadingNode(tag);
+  node.append($createTextNode(text));
+  return node;
+}
+
+function bullet(...items: string[]) {
+  const list = $createListNode("bullet");
+  for (const t of items) {
+    const li = $createListItemNode();
+    li.append($createTextNode(t));
+    list.append(li);
+  }
+  return list;
+}
+
+function quote(text: string) {
+  const node = $createQuoteNode();
+  node.append($createTextNode(text));
+  return node;
+}
+
 const PLAIN_JSON = docJson((root) => {
   root.append(paragraph("正文第一行"), paragraph("正文第二行"));
+});
+
+/**
+ * 用户截图里那篇「每日小记」的形状：标题 + 分隔线 + 二级标题 + 列表 + 引用
+ * —— 用来看"清单里给的是渲染效果还是 Markdown 源码"。
+ *
+ * ⚠️ 第一块是**段落**不是 `h1`：happy-dom 里 DOMPurify 会把**最外层**元素的标签吃掉
+ * （2026-09-21 实测：`<h1>…</h1>` 只剩文字，`<h2>/<ul>/<hr>` 都好好的）。
+ * 真 Chromium 上不丢（同一天用真 Edge + 真 DOMPurify 量过：`h1/h2/hr/li/blockquote` 全在，
+ * 链接也带上了 `target=_blank`）——所以这只是判据环境的怪癖，不是产品行为。
+ */
+const MARKDOWN_RICH_JSON = docJson((root) => {
+  root.append(
+    paragraph("开场一句"),
+    heading("h1", "今日小记"),
+    $createHorizontalRuleNode(),
+    heading("h2", "三件最有价值的事（今日）"),
+    bullet("完成了：", "推进了："),
+    quote("一句话总结今天。"),
+  );
 });
 /**
  * 一张图。
@@ -173,6 +218,15 @@ const byText = (label: string) =>
 const called = (cmd: string) => mocks.invoke.mock.calls.filter((c) => c[0] === cmd);
 const calledNames = () => mocks.invoke.mock.calls.map((c) => c[0] as string);
 const is = (el: unknown) => expect(el).toBeTruthy();
+
+/** 「正文预览」那一档的开关（默认渲染；点它切到逐字 Markdown 源码，再点切回）。 */
+const viewToggle = () => document.querySelector<HTMLButtonElement>(".community-save-preview-toggle");
+const togglePreviewView = () => {
+  const b = viewToggle();
+  if (!b) throw new Error("找不到「看 Markdown 源码 / 看渲染效果」那个开关");
+  flushSync(() => b.click());
+};
+const renderedPreview = () => document.querySelector(".community-save-preview-body.is-rendered");
 
 /** 社区回的上传结果：`url` 是**相对路径**（正文里就这么引用）。 */
 const uploaded = (localHash: string) => ({
@@ -480,6 +534,35 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
     expect(called("community_publish_note")).toHaveLength(0);
   });
 
+  // **owner 2026-09-21：「内容是 md 格式，不友好」** —— 清单此前把 `#`/`##`/`---` 糊在用户脸上，
+  // 而发出去的东西在社区那边是**渲染过**的（社区自己把 body 当 Markdown 渲染）。
+  // 这条盯两档：默认给"发出去的样子"，切的另一档给"逐字的 Markdown 源码"（发的就是它）。
+  it("正文默认**渲染**（标题/列表是真的标题和列表，不是 `#`/`-`），可切到逐字 Markdown 源码", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ docJson: MARKDOWN_RICH_JSON });
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    const box = renderedPreview();
+    is(box);
+    // 真的渲染成了元素（这才叫"友好"）
+    expect(box!.querySelector("h1")?.textContent).toBe("今日小记");
+    expect(box!.querySelector("h2")?.textContent).toContain("三件最有价值的事");
+    expect(box!.querySelectorAll("li")).toHaveLength(2);
+    expect(box!.querySelector("hr")).not.toBeNull();
+    expect(box!.querySelector("blockquote")?.textContent).toContain("一句话总结");
+    // 源码标记不该出现在**渲染**这一档里
+    expect(box!.textContent).not.toContain("## ");
+
+    // 切到源码档：逐字的 Markdown（`## ` 又回来了）——"发出去的就是它"
+    togglePreviewView();
+    expect(renderedPreview()).toBeNull();
+    expect(text()).toContain("## 三件最有价值的事（今日）");
+    expect(text()).toContain("- 完成了：");
+    // 切回去还在
+    togglePreviewView();
+    is(renderedPreview());
+  });
+
   it("正文里有本机图片 → 清单说清「N 张会先上传，引用会换成 /attachments/<hash>」，且此刻仍是 0 次上传", async () => {
     mocks.invoke.mockImplementation(backend());
     mount({ docJson: ONE_IMAGE_JSON });
@@ -487,6 +570,8 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
 
     expect(text()).toContain("图片 1 张会先上传到社区，正文里的引用会换成 /attachments/<hash>");
     // 清单里摆的是**上传前**的正文（本地引用原样可见）——人看到的就是将要被替换的那一份。
+    // 默认那一档是**渲染过的**（见下一条判据），所以这里先切到源码档看逐字的 Markdown。
+    togglePreviewView();
     expect(text()).toContain("![图](attachment://localhost/C%3A/hash-a.png)");
     expect(called("community_upload_attachment")).toHaveLength(0);
     expect(called("community_publish_note")).toHaveLength(0);
@@ -864,3 +949,4 @@ describe("docJson 解析不了：说清、且不许发", () => {
     expect(called("community_publish_note")).toHaveLength(0);
   });
 });
+
