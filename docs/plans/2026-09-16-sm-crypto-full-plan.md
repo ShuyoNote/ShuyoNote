@@ -197,6 +197,42 @@ KDF ：b5623ce8682771b65b7d72a9c0b707adad32fa36e0c03ee92f2832ac594ffad9
 ⇒ **macOS 上 SQLCipher 现在编的确实是 CommonCrypto 后端**（Apple 那套只有 AES），
 方案 §3 第 5 条那句在**本机本构建**上成立。
 
+### F2 落地：E1（磁盘加密）下的「导出/备份」两条路（2026-09-20，Mac，commit `f64f2320`）
+
+**问题（我自己列的待修项，两处都是「失败不显式」）**
+
+| 路径 | 老行为 | 为什么不能接受 |
+|---|---|---|
+| `workspace_io::export_workspace` | E1 下**直接失败**：`backup is not supported with encrypted databases`（SQLCipher 在线备份要求**目标同钥**，代码给的目标不带钥） | 用户**根本导不出**自己的空间 |
+| `backup::export_backup` | 同一原因 + 加密空间只在 stderr 打一行 `备份跳过加密空间 …` | 用户拿到一个「看起来成功」的包，**里面却没有那些空间的数据** |
+
+**改法（只修"失败的表达"，不改语义）**
+
+- `backup_db_to(src, dst, Option<&[u8;32]>)`：目标可选同钥（产物是**密文快照**）。
+- `workspace_io::snapshot_plaintext`：同钥密文快照 → **copy 到 dst** → `security::convert_space_db(dst,false,key)` 就地解密
+  → 末尾**契约自检**（非空 ＋ 非密文头 ＋ 不带 `PRAGMA key` 能读到表）。
+  ⚠️ 两个自己踩到的坑写在这里：① `convert_space_db` 是**就地**转换，不先 copy 就会把明文写在中转文件上、
+  `dst` 根本不存在；② 自检**不能**只靠「打开成功」—— `Connection::open` 会把不存在的文件建成空库，
+  空明文库的 `SELECT COUNT(*) FROM sqlite_master` 也会成功返回 0。
+- `backup::snapshot_spaces()`（抽出后可单测，不再需要 `AppHandle`）→ `(成功快照, skipped)`，
+  `BackupResult.skipped` 带回界面；**单个空间失败不再中断整个备份**，而是记名跳过；
+  `BackupButton` 有 skipped 时给**红字**并列出空间与原因。
+- 邻接顺手补：`import_backup` 用**当前**会话钥读备份里的密文快照，另一台设备/另一个口令的备份会在读时失败，
+  原始报错是 `file is not a database`（`PRAGMA key` 本身不报错，SQLCipher 到第一次读写才验钥）
+  ⇒ `snapshot_read_diagnosis` 翻成「这套备份是另一套密钥写的 ＋ 该怎么办」；明文快照**不套**这个解释。
+
+**取证（本机 macOS 默认构建，读数带 commit）**
+
+| 结论 | 判据 | 读数 |
+|---|---|---|
+| E1 导出仍然给**明文**快照（导入契约） | `workspace_io::tests::snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key` | ✅ |
+| 加密空间**真的进备份**（目标同钥、密文可读）＋ 锁定态**记名跳过** | `backup::tests::snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips` | ✅ |
+| 跨密钥快照给**可操作**错误（不是 `file is not a database`） | `backup::tests::cross_key_encrypted_snapshot_gets_an_actionable_diagnosis` | ✅ |
+| **变异证明**（不是"看着像能盖住"） | ① 把 `snapshot_plaintext` 退回「不给钥」⇒ 红，报错正是 `backup is not supported with encrypted databases`；② 锁定态退回「只打日志」⇒ 红（`跳过必须被记下来：[]`） | ✅ 两次都红 |
+| 门禁 | `pnpm verify` ／ `node scripts/test-report.mjs --group rust` | **23/23** ／ **6/6**（rust-test **394/394**、rust-sm-crypto **407/407**） |
+
+> 诚实边界：以上都是**单测 + 变异**。真机上的「导出 → 换机/换口令 → 导入」仍属**人手验收**（见 §7 未勾项）。
+
 ### ⑤-1 换后端（2026-09-19 落地，含一个**必须写下来的坑**）
 
 **坑（本条的真正价值）**：方案说"选路只看 `OPENSSL_DIR` 一个环境变量"——**选路逻辑**是这样，
@@ -318,11 +354,28 @@ PDFium 依赖）—— 现在的状态是"**跟着一起绿了**"，不是"查�
 |---|---|---|
 | 桌面端（Tauri，Windows/macOS/Linux/Android） | ✅ | 加密开关与 `PRAGMA key` 都在 Rust 侧（`security.rs:126-128`） |
 | **iOS** | ⚠️ **不在此次交付范围**（未开始），**但接入时必须一并解决** | 无 `ios.yml`、`MOBILE.md:35` 记 iOS 未开始；且 Apple 平台编译期走 **CommonCrypto（只有 AES）** ⇒ 见 §3 第 5 条与[利弊与跨平台 §5.1](2026-09-17-sm-crypto-tradeoff.md) |
-| 导出包 / 整库备份 zip | ✅ | 走同一个 AEAD（`crypto.rs:62-89`） |
+| 导出包 / 整库备份 zip | ✅（**分项**，不能整体说国密） | 包里的**附件**是静置密文原样拷入 ⇒ `sm-crypto` 构建下是 v2 国密；但包里的**空间库 `shuyonote.db` 是明文**（导出/导入契约，`import_workspace` 按明文读）⇒ 只能答「附件国密、库那份明文」，见 §1.1 |
 | 附件静置（`attachments/`） | ✅ | E1 起附件加密，同一套原语 |
 | 同步载荷（push/pull） | ✅ | M2.2 起客户端加解密、服务端只转发密文 |
 | **Web 版** | ❌ **不在范围** | `web.ts:2916` 的 `encryption_status` 恒为 `{enabled:false}`，`set_encryption`/`lock`/`unlock`/`disable` 均为空实现；且 Web 版不提供多设备同步 |
 | 同步**服务端**自身 | ❌ 不在本次范围 | 只转发密文；其账号口令存储若也要国密，属另一仓库的独立话题 |
+
+---
+
+## 1.1 导出包到底「国密」在哪 —— 别把它整体读成一件事（2026-09-20 补）
+
+**事实（可复跑）**：
+
+| 包里的东西 | 加密状态 | 判据 |
+|---|---|---|
+| `attachments/<hash>` | **静置密文原样拷入** ⇒ `sm-crypto` 构建下是 `v2`（SM4-CBC ＋ HMAC-SM3） | `workspace_io::export_workspace` / `backup::export_backup` 的附件合并路径 |
+| 空间库 `shuyonote.db` / `spaces/<id>.db` | **明文**（导入契约要求明文：`import_workspace` 按「imported plaintext DB」读） | `workspace_io::snapshot_plaintext` 末尾的**契约自检**（非空 ＋ 非密文头 ＋ 不带 `PRAGMA key` 能读到表） |
+| 整库备份 zip | 同上（meta.db 明文、各空间库为**密文快照**、附件为静置密文） | `backup::snapshot_spaces` |
+
+**为什么库那份是明文**：`import_workspace` 的契约就是「打开一个明文 SQLite 库」；改成密文包
+要么动导入契约、要么额外加一层容器加密 —— 两者都不是「顺手改一行」，本次**明确不做**，
+但**必须说清**：因此导出包**不能**整体宣称国密，且**包的安全性＝用户对这份 zip 的保管**
+（这也是 e2e「导出→导入」在加密态下必须走真机验收的原因）。
 
 ---
 
@@ -335,7 +388,7 @@ PDFium 依赖）—— 现在的状态是"**跟着一起绿了**"，不是"查�
 | **库页加密** | AES-256-CBC（**编译期由 provider 决定**） | **SM4-CBC** | ⚠️ **运行期不可切**，必须新增 provider（§3、§4） |
 | 库页完整性 | HMAC-SHA512（默认） | **HMAC-SM3** | 枚举新增一项，可 PRAGMA 指定 |
 | 应用层 AEAD | XChaCha20-Poly1305，`nonce(24)‖ct`（`crypto.rs:61`） | ✅ **已定（2026-09-17）：SM4-CBC ＋ HMAC-SM3（encrypt-then-MAC）** | 密文格式**必然变化** ⇒ §0-A 与 §4 是前提；**为什么不选 SM4-GCM** 见 §0-B |
-| 附件 / 导出 / 同步载荷 | 同上 | 同上 | **三条路径必须一起改**，漏一条就是"一半国密" |
+| 附件 / 同步载荷（导出包里的附件同此） | 同上 | 同上 | **两条路径必须一起改**，漏一条就是「一半国密」；导出包里的**库文件**是明文，不在这一行 |
 | 更新包签名 | minisign（Ed25519） | **不做 SM2（已决定，2026-09-16）** | 理由见 §5.3：不在甲方的系统边界内，且内网离线部署下自动更新本就不可用 ⇒ 换签名要重做整条发布管线与密钥管理，**成本高、对客户零收益** |
 | 传输层 | TLS 1.3（rustls / native-tls） | 国密 TLS（GM/T 0024） | **本方案最难的一块**，见 §6 |
 
@@ -561,7 +614,8 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 
 | 面 | 是否国密 | 说明 |
 |---|---|---|
-| **数据面**：静置密文（库/附件）、导出包、同步载荷 | ✅ **是** | 档 3 全链路 |
+| **数据面**：静置密文（库/附件）、同步载荷、导出包里的**附件** | ✅ **是** | 档 3 全链路 |
+| 导出包里的**库文件** `shuyonote.db` | ❌ **明文**（导出/导入契约如此） | 导入端按明文读；且 SQLCipher 的在线备份要求目标同钥 ⇒ 真要「密文库包」得另设一层容器加密，本次不改（§1.1） |
 | **传输层** | ⚠️ **数据面国密、传输层标准 TLS（路径 2，已定）** | 链路上的**载荷**是 SM4 密文；协议本身仍是 TLS 1.3。**交付说明必须照这句写**，不要含糊成"全链路国密" |
 | **控制面 / 基础设施**：更新包签名（minisign/Ed25519）、插件索引签名 | ❌ **不是（已决定，见 §2）** | 不在甲方系统边界内；内网离线部署时自动更新本就不可用 |
 | 内容寻址摘要（附件 SHA-256） | ❌ 保持 SHA-256（**有意为之**，§2） | 换 SM3 = 全库改名 + 同步标识失效 |
@@ -595,9 +649,15 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
       ⚠️ **端到端那半没做**：用旧版**真的**生成一个加密库 ＋ 加密附件再拿新版打开，属真机验收。
 - [ ] 新装用户：口令 → 加密 → 重启解锁 → 读写正常（**桌面真机**，不只看单测）
 - [ ] 加密开关双向迁移（开→关、关→开）数据不丢
-- [x] 附件 / 导出包 / 同步载荷**三条路径全覆盖**（**应用层 AEAD 层**）：`security::tests::national_crypto_covers_all_three_paths_…`
+- [x] 附件 / 同步载荷**两条路径全覆盖**（**应用层 AEAD 层**）：`security::tests::national_crypto_covers_all_three_paths_…`
       ＋ `attachments::export_attachment_tests::encrypted_export_under_national_crypto_…`
       （都只在 `--features sm-crypto` 下编，由 `rust-sm-crypto` 这条常开门禁跑）
+      ⚠️ 2026-09-20 更正：原写「三条路径：附件/导出包/同步载荷」。导出包里的**库文件是明文**
+      （导出/导入契约），所以第三条只能算「导出包里的附件」，见 §1.1。
+- [x] **E1（磁盘加密）下导出/备份不再硬失败、也不再静默少空间**（2026-09-20，F2）：
+      `workspace_io` 导出走「同钥密文快照 → 就地解密 → 明文契约自检」；
+      `backup` 抽出 `snapshot_spaces()` 返回 `(成功, skipped)` 并把 `skipped` 带回界面。
+      回归锚点 3 条 ＋ **变异证明**（退回老行为各红一次），见 §0.2 F2 条
 - [ ] 页加密确为 SM4（直接读文件头/用错算法打开应失败，而不是"看起来能用"）
 - [x] SM3 / SM4 标准测试向量通过（**RustCrypto 侧**）：`crypto_sm::tests::sm4_primitive_matches_the_gmt_0002_vector`
       ＋ `sm3_primitive_matches_the_gmt_0004_vector`；跨实现一致性见下一行

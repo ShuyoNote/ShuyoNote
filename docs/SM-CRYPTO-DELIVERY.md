@@ -1,6 +1,9 @@
 # 国密（SM 系列）交付说明 —— **按平台分列**
 
-> 日期：2026-09-19　｜　被验 commit：`7b6d98a7`（dev，两远端一致）
+> 日期：2026-09-20　｜　被验 commit：`f64f2320`（dev，两远端一致）
+> ⚠️ 读数**是分两次取的**，别读成一个 commit：门禁与「导出/备份」那几行在 `f64f2320` 上重跑；
+> 库级那几行（P2 三段自证、Tongsuo 对拍 12/12、`gm_provider` 9/0）取自其父提交 `b5cc99c3`
+> —— F2（`f64f2320`）只动导出/备份路径，**不碰库级任何代码**。
 > 权威方案与全部口径：[`plans/2026-09-16-sm-crypto-full-plan.md`](plans/2026-09-16-sm-crypto-full-plan.md)（§0 拍板 / §0.1 常量表 / §0.2 P1 落地记录 / §3.1 provider 线 / §7 验收标准）
 > 图例：**✅ 已取证**（附判据与读数）｜**🔶 机制已落地、默认未启用**｜**❌ 未做**（写明归属与所需条件）
 
@@ -10,7 +13,8 @@
 
 | 面 | 是否国密 | 说明 |
 |---|---|---|
-| **数据面**：静置密文（附件）、导出包、同步载荷 | ✅ **是** | 应用层 AEAD 全换（SM4-CBC ＋ HMAC-SM3，见 §三） |
+| **数据面**：静置密文（附件）、同步载荷、导出包里的**附件** | ✅ **是** | 应用层 AEAD 全换（SM4-CBC ＋ HMAC-SM3，见 §三） |
+| 导出包里的**库文件**（`shuyonote.db` / `spaces/<id>.db`） | ❌ **明文**（导出/导入契约如此，不是遗漏） | 导入端按「明文 SQLite 库」读；故**导出包不能整体称为国密**。整库备份里的各空间库是**密文快照**（导出端密钥），meta.db 明文。⚠️ 因此**包的安全性＝用户对这份 zip 的保管** |
 | **传输层** | ⚠️ **数据面国密、传输层标准 TLS**（方案 §5.2 已定：走"路径 2"） | 链路上的**载荷**是 SM4 密文；协议本身仍是 TLS 1.3。**不要写成"全链路国密"** |
 | **控制面**：更新包签名（minisign/Ed25519）、插件索引签名 | ❌ **不是**（已决定） | 不在甲方系统边界内；内网离线部署下自动更新本就不可用 |
 | 内容寻址摘要（附件 SHA-256） | ❌ **保持 SHA-256**（有意为之） | 换成 SM3 = 全库附件改名 ＋ 同步标识全失；要换需单独立项 |
@@ -46,7 +50,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 ## 三、按平台分列
 
-| 平台 | 应用层 SM4（附件/导出/同步载荷） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
+| 平台 | 应用层 SM4（附件/同步载荷；导出包里的附件同此） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
 |---|---|---|---|---|---|
 | **macOS** | ✅ | 🔶 **国密版构建：P2 已落地**（SM3 页 MAC ＋ 库 KDF，接 Tongsuo/OpenSSL 后端）；**默认包仍是 CommonCrypto（只有 AES）**；**页加密仍是 AES**（P3 未做） | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；⚠️ 有一条 macOS-only 风险见 §五 |
 | **Windows** | ✅（纯 Rust，全平台同一份实现） | 🔶 同 P2（其后端本来就是 OpenSSL） | 据信箱：**AMD 2026-09-18 报过 `tongsuo build: msvc=ok`**（附三条前置踩坑）；⚠️ **本侧没有独立复核** | Windows 侧 | 应用层：本机跑不了 `cargo test`（`0xC0000139`）⇒ 行为由 Linux/CI 证；库级未取证 |
@@ -56,7 +60,8 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **Web** | ❌ | ❌ | 不提供静态加密与多设备同步 | — | ❌ 范围外（方案 §1） |
 | 同步**服务端** | ❌ | ❌ | 只转发密文，不改 | 另一仓库 | ❌ 范围外 |
 
-> **一句话读法**（2026-09-20 更新）：**应用层已全平台国密**（纯 Rust，一份实现）；
+> **一句话读法**（2026-09-20 更新）：**应用层已全平台国密**（纯 Rust，一份实现；
+> 口径是**附件＋同步载荷**——导出包里那份空间库**刻意是明文**，见 §一，别把两者合成一句）；
 > **库级已走到 P2**（SM3 页 MAC ＋ 库 KDF，随"国密版构建"生效，macOS 本机三段自证全绿）；
 > **还差 P3（SM4 页加密）** —— 它**不是顺手加一个分支**（方案 §3.2 三条结构事实：`cipher` 回调无 algorithm 参数、
 > `OPENSSL_CIPHER` 编译期钉死五处、没有 `cipher_algorithm` PRAGMA），**两条路的成本要 owner 拍板**。
@@ -75,7 +80,8 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **无头老数据永远可读**（含撞头回退，对 v1、v2 各验一遍） | 同上（金标夹具 `tests/crypto-legacy-v0.json`，三格真实密文） | ✅ |
 | **EtM 正确**：篡改版本头/IV/密文/ tag 都必须**先失败且不解密**；两把密钥不可互换 | `crypto_sm::tests::tampering_anywhere_fails_before_decrypting` 等 | ✅ |
 | **未知版本给可操作错误**（不是"数据损坏"） | `unknown_future_version_gets_an_actionable_error`；默认构建读 v2 | ✅ |
-| 三条路径（附件 / 同步载荷 / 导出副本）全覆盖 | `security::tests::national_crypto_covers_all_three_paths_…`、`attachments::…national_crypto…` | ✅（只在 `--features sm-crypto` 下编） |
+| 两条路径（附件 / 同步载荷）全覆盖；导出包里的附件走同一条静置密文路径 | `security::tests::national_crypto_covers_all_three_paths_…`、`attachments::…national_crypto…` | ✅（只在 `--features sm-crypto` 下编） |
+| ★ **E1（磁盘加密）下导出/备份不再硬失败、也不再静默少空间**（2026-09-20，F2，commit `f64f2320`） | `workspace_io::tests::snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key`、`backup::tests::snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips`、`backup::tests::cross_key_encrypted_snapshot_gets_an_actionable_diagnosis` | ✅ 3/3；**变异证明**：退回老行为各红一次 |
 | **库级密钥未被国密密钥顶替**（顶替＝既有加密库全打不开） | `security::tests::national_crypto_…_keeps_the_library_key_unchanged` | ✅ |
 | KDF 常量写死 ＋ 防改小 ＋ 跨实现黄金向量（含**切片**口径） | `kdf_rounds_are_the_pinned_value`、`kdf_golden_vector_and_key_slicing` | 变异证明：改切片只有黄金向量红 |
 | **跨实现对拍**（GM/T 0002/0004 ＋ RustCrypto↔Tongsuo 双向互解 ＋ 两侧密文逐字节相同 ＋ PBKDF2 与拆 key 口径） | `SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl node scripts/check-gm-conformance.mjs` | **12/12**（macOS 与 AMD 的 WSL2 各一次，同源码 commit） |
