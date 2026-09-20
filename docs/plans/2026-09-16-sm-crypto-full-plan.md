@@ -258,10 +258,14 @@ node scripts/check-crypto-backend.mjs        # 拿产物说话，不看你设了
 AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**既有库仍应可读** —— 但这是判断，
 不是证据，所以有夹具：`src-tauri/tests/sqlcipher-backend-fixture.db` 是 **2026-09-19 由 macOS 默认
 （CommonCrypto）后端真实写下**的加密库（生成器 `security::tests::gen_backend_fixture`，key = `0x07 × 32`）。
-判据 `security::tests::fixture_db_written_by_the_other_provider_still_opens` 断言：**两行内容逐字相同、
-且还能继续写**。读数（2026-09-19）：在 **Tongsuo/OpenSSL 后端**下 `cargo test --lib security::` = **14/14 通过**
-（含上面这条 ＋ `encrypted_db_roundtrip_and_sniff` / `convert_space_db_*` / `full_loop_enable_restart_unlock_readable_disable`）
-⇒ **换后端前后旧库仍可读**这条验收项**取证完成**。
+**⚠️ 2026-09-20 语义变更（补丁 v3「无条件 SM4 页加密」之后）**：决定可读性的不再是 **provider**，
+而是**页加密算法** —— 同一份构建**只能**读开其中一种。判据因此改成
+`security::tests::exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`：
+两份内容**逐字相同**、同一把裸钥的夹具（`sqlcipher-backend-fixture.db`＝**AES 页**、
+`sqlcipher-sm4-page-fixture.db`＝**SM4 页**）**恰好一个能读开且可继续写**，另一个必须以
+`file is not a database` 被拒；判据会**打印"本构建的页加密＝AES 还是 SM4"**。
+双向实测（2026-09-20，本机）：默认 CC 构建 ⇒ **AES**；打 v3 ＋ Tongsuo 构建 ⇒ **SM4**。
+⇒ 旧的"换后端前后旧库仍可读"那条只在**页加密相同**时成立；页加密一换就必须迁移（§3.3）。
 
 > ⚠️ **国密（Tongsuo）构建上核对这一格，要同时给两个声明**（2026-09-20 我自己踩了一次）：
 > `SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied node scripts/check-crypto-backend.mjs`。

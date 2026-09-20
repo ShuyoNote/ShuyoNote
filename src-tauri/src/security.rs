@@ -1496,6 +1496,36 @@ mod tests {
     /// 否则"换后端前后旧库仍可读"这条判据就变成了"用同一个后端验证自己"。
     #[test]
     #[ignore = "夹具生成器（手动跑；须核对当时编入的后端）"]
+    /// **SM4 页**夹具生成器（2026-09-20，配合补丁 v3「无条件 SM4 页加密」）。
+    ///
+    /// ⚠️ **必须在"页加密＝SM4"的构建里跑**（`scripts/sm-library-build.mjs --openssl-dir <Tongsuo>`
+    /// 打完 v3 补丁之后）：同一个生成器在 AES 页构建里跑出来的就是 AES 页夹具（那份叫
+    /// `sqlcipher-backend-fixture.db`，见下一个生成器）。**从内容上看不出是哪一种** ——
+    /// 这正是 `cipher_settings` 里没有 algorithm 字段的后果，所以两条判据靠"交叉打开"来判定
+    /// （见 `exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`）。
+    #[test]
+    #[ignore = "夹具生成器：必须在**打过 v3 补丁的 SM4 页构建**里跑"]
+    fn gen_sm4_page_fixture() {
+        let hex = crypto::key_hex(&[7u8; 32]);
+        let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/sqlcipher-sm4-page-fixture.db");
+        let _ = std::fs::remove_file(&out);
+        {
+            let c = Connection::open(&out).unwrap();
+            c.execute_batch(&key_sql).unwrap();
+            c.execute_batch(
+                "CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT NOT NULL, content_text TEXT NOT NULL); \
+                 INSERT INTO pages VALUES ('p1','后端无关性夹具','由创建时的 provider 写下的密文'); \
+                 INSERT INTO pages VALUES ('p2','第二行','确认多行与顺序');",
+            )
+            .unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        }
+        let n = std::fs::metadata(&out).unwrap().len();
+        println!("SM4 页夹具已生成：{}（{n} 字节）", out.display());
+        assert!(n > 4096, "夹具太小，像个空库：{n} 字节");
+    }
+
     fn gen_backend_fixture() {
         let hex = crypto::key_hex(&[7u8; 32]);
         let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
@@ -1550,43 +1580,69 @@ mod tests {
     ///
     /// 夹具 `tests/sqlcipher-backend-fixture.db` 是 **2026-09-19 由 macOS 默认后端（CommonCrypto）**
     /// 真实写下的（生成器见 `gen_backend_fixture`，key = `0x07 × 32`）。
-    /// ⇒ 在 OpenSSL/Tongsuo 后端下编译时跑这条：**能打开、且两行内容逐字相同**才算通过。
-    #[test]
-    fn fixture_db_written_by_the_other_provider_still_opens() {
-        let bytes = include_bytes!("../tests/sqlcipher-backend-fixture.db");
-        assert!(bytes.len() > 4096, "夹具不见了或太小（{} 字节）", bytes.len());
-        assert_ne!(
-            &bytes[..16],
-            b"SQLite format 3\0",
-            "夹具是**明文** SQLite —— 那样它证明不了任何后端无关性"
-        );
-        let dir = uniq_tmp("backendfix");
+    /// 读一份**页加密夹具**：能读开就顺手验证"内容对 ＋ 还写得进"，不能读开就把原始错误带回。
+    ///
+    /// 为什么"读得开还要写得进"：页参数不一致时，**读**可能侥幸通过而**写回**才炸
+    /// （既有判据的老经验），所以这里把写也验一遍。
+    fn probe_page_cipher_fixture(bytes: &[u8], tag: &str) -> Result<usize, String> {
+        assert!(bytes.len() > 4096, "{tag} 夹具不见了或太小（{} 字节）", bytes.len());
+        assert_ne!(&bytes[..16], b"SQLite format 3\0", "{tag} 夹具是**明文** SQLite —— 那样它证明不了任何东西");
+        let dir = uniq_tmp(&format!("fix-{tag}"));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fixture.db");
         std::fs::write(&path, bytes).unwrap();
-
         let c = Connection::open(&path).unwrap();
         c.execute_batch(&format!("PRAGMA key = \"x'{}'\";", crypto::key_hex(&[7u8; 32]))).unwrap();
-        // 打不开时 SQLite 会在第一条真查询上报 "file is not a database"
-        let rows: Vec<(String, String, String)> = c
+        let rows: Result<Vec<(String, String, String)>, _> = c
             .prepare("SELECT id, title, content_text FROM pages ORDER BY id")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
+            .and_then(|mut st| st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect());
+        let rows = match rows {
+            Ok(r) => r,
+            Err(e) => return Err(e.to_string()),
+        };
         assert_eq!(
             rows,
             vec![
                 ("p1".to_string(), "后端无关性夹具".to_string(), "由创建时的 provider 写下的密文".to_string()),
                 ("p2".to_string(), "第二行".to_string(), "确认多行与顺序".to_string()),
             ],
-            "换后端之后旧库读出来的内容不对（这条红了＝用户打不开自己的库）"
+            "{tag} 夹具读出来的内容不对"
         );
-        // 而且**能继续写**（读得开不代表写得进：页大小/HMAC 参数不一致会在写回时才炸）
-        c.execute("INSERT INTO pages VALUES ('p3','换后端之后新写的','仍然可写')", []).unwrap();
-        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
-        assert_eq!(n, 3, "换后端后写不进去");
+        c.execute("INSERT INTO pages VALUES ('p3','本构建新写的','仍然可写')", [])
+            .map_err(|e| format!("{tag} 夹具读得开但**写不进**：{e}"))?;
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).map_err(|e| e.to_string())?;
         let _ = std::fs::remove_dir_all(&dir);
+        Ok(n as usize)
+    }
+
+    /// ★ **页加密算法是库文件的属性**：同一份构建**只能**读开其中一种夹具（方案 §3.3 判据 1「交叉打开必须失败」）。
+    ///
+    /// 两份夹具内容**逐字相同**、都用同一把裸钥（`[7u8;32]`），唯一差别是**写下它的构建的页加密算法**：
+    ///   · `sqlcipher-backend-fixture.db` —— **AES 页**（由 CommonCrypto/OpenSSL 的 AES 页构建写下，2026-09-19）；
+    ///   · `sqlcipher-sm4-page-fixture.db` —— **SM4 页**（由打了补丁 v3「无条件 SM4 页加密」的构建写下，2026-09-20）。
+    ///
+    /// 断言 **恰好一个能开**，并打印**是哪一个** —— 这同时**报出这份构建的页加密算法**，
+    /// 而这是唯一可信的判据：`cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3），
+    /// 靠回显或环境变量都会得到"绿得不是它声称的那件事"。
+    ///
+    /// ⚠️ 这条判据替换了原来的 `fixture_db_written_by_the_other_provider_still_opens`
+    /// （它证明的是"换 **provider** 之后旧库仍可读"）—— 那条在"页加密也跟着换"之后**语义就变了**：
+    /// 现在决定可读性的是**页加密算法**，不是 provider。两份夹具 + 异或，把这个性质**双向**钉住。
+    #[test]
+    fn exactly_one_page_cipher_fixture_opens_and_the_other_is_refused() {
+        let aes = probe_page_cipher_fixture(include_bytes!("../tests/sqlcipher-backend-fixture.db"), "aes-page");
+        let sm4 = probe_page_cipher_fixture(include_bytes!("../tests/sqlcipher-sm4-page-fixture.db"), "sm4-page");
+        match (&aes, &sm4) {
+            (Ok(n), Err(e)) => {
+                assert!(e.contains("file is not a database"), "SM4 夹具被拒的理由不该是别的：{e}");
+                println!("本构建的页加密 = **AES**（AES 夹具读开且可写，{n} 行；SM4 夹具按预期拒绝：{e}）");
+            }
+            (Err(e), Ok(n)) => {
+                assert!(e.contains("file is not a database"), "AES 夹具被拒的理由不该是别的：{e}");
+                println!("本构建的页加密 = **SM4**（SM4 夹具读开且可写，{n} 行；AES 夹具按预期拒绝：{e}）");
+            }
+            (Ok(_), Ok(_)) => panic!("两种页加密的夹具**都能开** ⇒ 「页加密是库文件属性」不成立，或某份夹具写错了"),
+            (Err(a), Err(b)) => panic!("两种都开不了 ⇒ 夹具/密钥/构建有问题：aes={a}；sm4={b}"),
+        }
     }
 }
