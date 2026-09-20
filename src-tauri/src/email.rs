@@ -59,7 +59,19 @@ async fn open_session(account: &EmailAccountArgs, folder: &str) -> Result<ImapSe
         .login(&account.username, &account.password)
         .await
         .map_err(|(e, _c)| format!("登录失败: {}", e))?;
-    session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+    // ⚠️ **唯一的"上线"关口**：UI 手上的文件夹名是**人看的**（`已删除邮件` / `Deleted Messages`），
+    // 而 IMAP 协议里 mailbox 名必须是 **modified UTF-7**（RFC 3501 §5.1.3）——中文名原样发出去，
+    // 阿里云企业邮会当场废掉这条连接（2026-09-20 那次"整批删除静默失败"的成因之一）。
+    // 放在这里编码而不是每个命令各编一次：所有命令都经 `open_session`，一处收口。
+    // 顺带一个性质：`imap_utf7_encode` 对**已经是协议名**的纯 ASCII 是恒等（`&XfJSIJZkkK5O9g-`
+    // 里的 `&` 会被写成 `&-`？—— 不会：见 `imap_utf7_encode` 的 `&-` 只处理字面 `&`，
+    // 而协议名里的 `&` 后面跟的是 base64，编码后会变 —— 所以**内部调用一律传协议名**，
+    // 只有来自 UI 的名字才需要这一层编码）。
+    let wire_folder = folder_on_wire(folder);
+    session
+        .select(&wire_folder)
+        .await
+        .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
     Ok(session)
 }
 
@@ -442,10 +454,14 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
 
     let mut out = Vec::new();
     for folder in &folders {
-        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        // 界面给的是**人看的名字**，上线前编码成 modified UTF-7（与 `open_session` 同一口径）。
+        let wire = folder_on_wire(folder);
+        session
+            .select(&wire)
+            .await
+            .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
 
-        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {
-            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
+        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
             // IMAP 日期格式为 `d-MMM-yyyy`，如 `01-Aug-2026`。
             let from_s = imap_date(df);
             let to_s = imap_date(dt);
@@ -507,7 +523,12 @@ async fn list_account_months(account: &EmailAccountArgs, folders: &[String]) -> 
     let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for folder in &folders {
-        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        // 同 `open_session`：界面给的是人看的名字，上线前编码。
+        let wire = folder_on_wire(folder);
+        session
+            .select(&wire)
+            .await
+            .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
         let mut stream = session
             .fetch("1:*", "(ENVELOPE UID FLAGS)")
             .await
@@ -646,6 +667,11 @@ pub async fn email_list_folders(args: EmailAccountArgs) -> Result<Vec<String>, S
             .iter()
             .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect));
         if !no_select {
+            // ⚠️ 这里回的是**协议名**（`&XfJSIJZkkK5O9g-`），**不要在后台解码**：
+            // 「协议名 → 人看的名字」这一步已经在前端 `EmailPanel.tsx` 的 `folderDisplay()`
+            // （`decodeImapUtf7` + `FOLDER_ZH`）里做了，而且它只影响显示、回给后台的仍是原始名
+            //（`SELECT` 要的正是协议层名字）。两边都转一次就是两个口径，迟早漂移。
+            // 我 2026-09-20 一度在这儿加了解码，回退了 —— 真账号探针当场抓到副作用（见 `folder_on_wire`）。
             out.push(name.name().to_string());
         }
     }
@@ -740,6 +766,78 @@ fn imap_utf7_encode(name: &str) -> String {
     }
     flush(&mut pending, &mut out);
     out
+}
+
+/// `&…-` 段（modified UTF-7 的 base64 载荷）→ UTF-8。解不开返回 `None`。
+fn decode_utf16be_b64(chunk: &str) -> Option<String> {
+    let std_b64 = chunk.replace(',', "/");
+    let pad = (4 - std_b64.len() % 4) % 4;
+    let padded = format!("{}{}", std_b64, "=".repeat(pad));
+    let bytes = base64::engine::general_purpose::STANDARD.decode(padded).ok()?;
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let units: Vec<u16> = bytes.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    String::from_utf16(&units).ok()
+}
+
+/// modified UTF-7 → UTF-8（RFC 3501 §5.1.3 的逆），**给界面看的**。
+///
+/// 为什么必须有它（2026-09-20 用户报障「批量删除的邮件，已删除文件夹找不到」）：
+/// 服务器上的 mailbox 名是协议编码 —— 阿里云企业邮的「已删除邮件」在线上叫 `&XfJSIJZkkK5O9g-`。
+/// 旧的 `email_list_folders` 把**协议名原样**丢给界面，于是文件夹选择器里那一行是一串乱码，
+/// 用户**根本找不到**「已删除」；而删除本身是好的（真账号探针：五个账号都把信搬进了回收站）。
+///
+/// 规则（只用 RFC 3501 的 modified UTF-7，不是标准 UTF-7）：可打印 ASCII 原样；
+/// `&-` ⇒ 字面 `&`；`&…-` ⇒ base64(UTF-16BE)。**解不开的段原样保留** —— 宁可显示一个奇怪的名字，
+/// 也不能把名字吞掉（吞掉就等于那个文件夹在界面上消失了）。
+fn imap_utf7_decode(name: &str) -> String {
+    let mut out = String::new();
+    let mut rest = name;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + 1..];
+        match after.find('-') {
+            // 没有闭合 `-`：按字面 `&` 处理，剩下的原样
+            None => {
+                out.push('&');
+                out.push_str(after);
+                return out;
+            }
+            Some(rel) => {
+                let chunk = &after[..rel];
+                let consumed = pos + 1 + rel + 1;
+                if chunk.is_empty() {
+                    out.push('&'); // `&-` ⇒ 字面 &
+                } else {
+                    match decode_utf16be_b64(chunk) {
+                        Some(s) => out.push_str(&s),
+                        None => out.push_str(&rest[pos..consumed]), // 解不开：整段原样保留
+                    }
+                }
+                rest = &rest[consumed..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 把**界面手上的文件夹名**变成能发到线上的名字，**并且允许调用方直接传协议名**。
+///
+/// 为什么要这一层而不是"一律 encode"（2026-09-20 当天实测踩到的）：`resolve_trash` 问回来的
+/// 已经是**协议名**（`&XfJSIJZkkK5O9g-`），而 `imap_utf7_encode` 对它的字面 `&` 会写成 `&-`
+/// ⇒ 变成 `&-XfJSIJZkkK5O9g-` ⇒ SELECT 失败。真账号探针当场露头：QQ（ASCII 回收站名）没事，
+/// 阿里云（中文名）`in_trash=false` —— 信从收件箱没了、回收站里却没有。
+///
+/// 判据很简单：**能解出人看的名字（`decode(x) != x`）就说明它已经是协议名，别动**；
+/// 否则按界面名编码（纯 ASCII 的界面名编码后是恒等，所以 `INBOX` / `Deleted Messages` 两种都通）。
+fn folder_on_wire(name: &str) -> String {
+    if imap_utf7_decode(name) != name {
+        name.to_string() // 已经是协议名（含 `&…-` 段）
+    } else {
+        imap_utf7_encode(name)
+    }
 }
 
 /// 从 `LIST` 的结果里挑回收站（纯函数，便于钉判据）。
@@ -1805,6 +1903,68 @@ mod tests {
         assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![2, 1]);
     }
 
+    /// **手动探针 ③**（默认不跑，只读）：把某个账号的文件夹列表按**界面会看到的样子**打出来
+    /// （协议名 → `imap_utf7_decode`），并标出哪个是回收站。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='fengjt@shuyo.cn'
+    /// cargo test --lib -- --ignored --nocapture probe_list_folders
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_list_folders() {
+        use futures_util::StreamExt;
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+
+        // 与 `email_list_folders` 同一段逻辑（这里只打印，不改任何东西）
+        use tokio::net::TcpStream;
+        let tcp = TcpStream::connect((account.host.as_str(), account.port)).await.expect("TCP");
+        let tls = tokio_native_tls::TlsConnector::from(native_tls::TlsConnector::new().unwrap());
+        let tls_stream = tls.connect(&account.host, tcp).await.expect("TLS");
+        let client = async_imap::Client::new(tls_stream);
+        let mut session = client
+            .login(&account.username, &account.password)
+            .await
+            .map(|s| s)
+            .map_err(|(e, _)| e)
+            .expect("登录失败");
+        let mut stream = session.list(None, Some("*")).await.expect("LIST 失败");
+        let mut names: Vec<(String, bool)> = Vec::new();
+        while let Some(Ok(name)) = stream.next().await {
+            let no_select = name
+                .attributes()
+                .iter()
+                .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect));
+            if no_select {
+                continue;
+            }
+            let is_trash = name
+                .attributes()
+                .iter()
+                .any(|a| matches!(a, async_imap::types::NameAttribute::Trash));
+            names.push((imap_utf7_decode(name.name()), is_trash));
+        }
+        eprintln!("账号 {}：界面会看到 {} 个文件夹 ——", account.username, names.len());
+        for (human, is_trash) in &names {
+            eprintln!("   {}{}", if *is_trash { "★ " } else { "  " }, human);
+        }
+        eprintln!("   回收站（pick_trash 口径）：{:?}", pick_trash(&names));
+    }
+
     /// **手动探针 ②**（默认不跑）：直接看 `FETCH 1:*` 这条流**到底给了几条、在哪一条断的、报的什么错**。
     ///
     /// 为什么要有它：`fetch_account_emails` 里是 `while let Some(Ok(m)) = stream.next()` ——
@@ -2070,12 +2230,59 @@ mod tests {
         assert_eq!(imap_utf7_encode("a&b"), "a&-b");
     }
 
+    /// **界面拿到的必须是「已删除邮件」而不是 `&XfJSIJZkkK5O9g-`**（2026-09-20 用户报障：
+    /// 「批量删除的邮件，已删除文件夹找不到」—— 删除本身是好的（五个账号的真账号探针都把信搬进了
+    /// 回收站），但文件夹选择器里那一行是协议名乱码，人找不到「已删除」）。
+    /// 上面的 `wire` 全是阿里云企业邮 / QQ 真回给我们的名字（2026-09-20 现场抓的）。
+    #[test]
+    fn imap_utf7_decode_round_trips_the_real_server_names() {
+        for (wire, human) in [
+            ("&XfJSIJZkkK5O9g-", "已删除邮件"),
+            ("&V4NXPpCuTvY-", "垃圾邮件"),
+            ("&XfJT0ZAB-", "已发送"),
+            ("&g0l6Pw-", "草稿"),
+            ("&UXZO1mWHTvZZOQ-", "其他文件夹"),
+            ("&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-", "其他文件夹/员工简历"),
+            ("&UXZO1mWHTvZZOQ-/QQ&kK5O9ouilgU-", "其他文件夹/QQ邮件订阅"),
+            ("INBOX", "INBOX"),
+            ("Deleted Messages", "Deleted Messages"),
+        ] {
+            assert_eq!(imap_utf7_decode(wire), human, "解码 {wire}");
+            // ★ 回程必须闭合：界面把解出来的名字原样传回来时，编码回去要一模一样
+            assert_eq!(imap_utf7_encode(human), wire, "回程编码 {human}");
+        }
+        // `&-` 是字面 `&`（RFC 3501 §5.1.3）
+        assert_eq!(imap_utf7_decode("a&-b"), "a&b");
+        // 解不开的段**原样保留**：宁可显示一个奇怪的名字，也不能把它吞掉（吞掉＝那个文件夹从界面消失）
+        assert_eq!(imap_utf7_decode("&!!!-tail"), "&!!!-tail");
+        assert_eq!(imap_utf7_decode("没有闭合的&段"), "没有闭合的&段");
+    }
+
+    /// **上线前的编码必须两种口径都吃**：界面名（`已删除邮件`）与协议名（`&XfJSIJZkkK5O9g-`）。
+    ///
+    /// 这条是**当天实测踩出来的**：第一版"一律 encode"，于是 `resolve_trash` 问回来的协议名
+    /// 被写成 `&-XfJSIJZkkK5O9g-`（字面 `&` ⇒ `&-`）⇒ 阿里云账号上 `in_trash=false`：
+    /// 信从收件箱没了、回收站里却没有。真账号探针一把就抓住了（QQ 因为回收站名是 ASCII 而没事）。
+    #[test]
+    fn folder_on_wire_accepts_both_ui_names_and_protocol_names() {
+        // 界面名 → 协议名
+        assert_eq!(folder_on_wire("已删除邮件"), "&XfJSIJZkkK5O9g-");
+        assert_eq!(folder_on_wire("垃圾邮件"), "&V4NXPpCuTvY-");
+        // ★ 协议名**原样不动**（再编一次就会多一个 `&-`）
+        assert_eq!(folder_on_wire("&XfJSIJZkkK5O9g-"), "&XfJSIJZkkK5O9g-");
+        assert_eq!(folder_on_wire("&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-"), "&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-");
+        // 纯 ASCII 两种口径都通（编码是恒等）
+        assert_eq!(folder_on_wire("INBOX"), "INBOX");
+        assert_eq!(folder_on_wire("Deleted Messages"), "Deleted Messages");
+        // 界面名里的**字面 `&`** 仍要按 RFC 写成 `&-`
+        assert_eq!(folder_on_wire("a&b"), "a&-b");
+    }
+
     /// **这条判据就是那次事故的哨兵**：发到线上的 mailbox 名一个字都不许是非 ASCII。
     /// 旧代码把 `垃圾箱` / `已删除` 原文发出去，阿里云企业邮不认、当场废掉那条连接，
     /// 于是整批删除静默失败 —— 用户看到的就是「删了、重新拉取又出现」。
     #[test]
-    fn mailbox_names_on_the_wire_are_ascii_only() {
-        for name in [
+    fn mailbox_names_on_the_wire_are_ascii_only() {        for name in [
             "垃圾箱",
             "已删除",
             "已删除邮件",
