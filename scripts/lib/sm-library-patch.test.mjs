@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PATCH_MARKER, ensurePatch } from "./sm-library-patch.mjs";
+import { PATCH_MARKER, ensurePatch, revertPatch } from "./sm-library-patch.mjs";
 
 const dirs = [];
 function fixture(sourceText, patchText) {
@@ -38,14 +38,16 @@ afterEach(() => {
 });
 
 describe("ensurePatch", () => {
-  it("干净源码 ⇒ applied，且**复扫**确认标记真的落进文件（不只看退出码）", () => {
+  it("干净源码 ⇒ applied，且**逐字节**等于期望（顺带钉住「git apply 不许改行尾」）", () => {
     const { dir, patch } = fixture(PRISTINE, PATCH);
     const r = ensurePatch(dir, patch);
     expect(r.status).toBe("applied");
     expect(r.tool).toBe("git apply -p1");
     const after = readFileSync(join(dir, "sqlite3.c"), "utf8");
     expect(after).toContain(PATCH_MARKER);
-    expect(after).not.toBe(PRISTINE);
+    // ⚠️ 这条是**逐字节**断言：Windows 上 `core.autocrlf=true` 时 `git apply` 会把输出写成 CRLF，
+    //    那会让同一份源码在三平台**哈希不同**（`src_sha256` 的跨机比对就废了）——2026-09-20 实测抓到过。
+    expect(after).toBe(`int x = 2; /* ${PATCH_MARKER} */\n`);
   });
 
   it("已经打过 ⇒ already，**幂等**（第二次不再调用 git，也不报错）", () => {
@@ -88,5 +90,34 @@ describe("ensurePatch", () => {
     expect(() => ensurePatch(dir, patch)).toThrow(/仍然没有/);
     // 文件**确实被改了**（git apply 成功了）—— 所以这条红的不是"补丁没打上"，而是"打上的不是判据要的那份"
     expect(readFileSync(join(dir, "sqlite3.c"), "utf8")).toContain("int x = 3;");
+  });
+});
+
+// `revertPatch` 的判据（mac 2026-09-20 提的第 2 条修法：胶水要能撤回）。
+// 为什么值得有：那份源码在 cargo registry 里是**全机共享**的一份 —— "能一键回到原版"是做 A/B、
+// 以及判"这条红是不是补丁引起的"的前提；而"撤回了"同样要**复扫标记**才算数。
+describe("revertPatch", () => {
+  it("打上之后能撤回，且标记**真的消失**（不是只看退出码）", () => {
+    const { dir, patch } = fixture(PRISTINE, PATCH);
+    expect(ensurePatch(dir, patch).status).toBe("applied");
+    const r = revertPatch(dir, patch);
+    expect(r.status).toBe("reverted");
+    expect(r.tool).toBe("git apply -R -p1");
+    expect(readFileSync(join(dir, "sqlite3.c"), "utf8")).toBe(PRISTINE);
+  });
+
+  it("本来就没打 ⇒ absent（不是错误，也不动文件）", () => {
+    const { dir, patch } = fixture(PRISTINE, PATCH);
+    const r = revertPatch(dir, patch);
+    expect(r.status).toBe("absent");
+    expect(readFileSync(join(dir, "sqlite3.c"), "utf8")).toBe(PRISTINE);
+  });
+
+  it("打 → 撤 → 再打：**幂等往返**（撤回之后 `ensurePatch` 还能再打上）", () => {
+    const { dir, patch } = fixture(PRISTINE, PATCH);
+    ensurePatch(dir, patch);
+    revertPatch(dir, patch);
+    expect(ensurePatch(dir, patch).status).toBe("applied");
+    expect(readFileSync(join(dir, "sqlite3.c"), "utf8")).toContain(PATCH_MARKER);
   });
 });
