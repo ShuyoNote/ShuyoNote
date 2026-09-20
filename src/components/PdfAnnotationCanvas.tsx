@@ -243,14 +243,25 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
         toast("AI 视觉识别完成", "success");
       } else if (res.error === "timeout") {
         setOcrStatus("timeout");
-        toast("AI 视觉识别超时，请稍后重试", "error");
+        toast(res.message ? `AI 视觉识别超时：${res.message}` : "AI 视觉识别超时，请稍后重试", "error");
       } else {
         setOcrStatus("error");
-        toast("AI 视觉识别失败：请确认已配置支持图像的模型（如 gpt-4o / qwen-vl / llava）", "error");
+        // 把具体原因也打进控制台：截图/日志里能直接看出是 404、401 还是空图（缺陷 #9 的教训）。
+        console.error("[ai] vision ocr failed", { error: res.error, message: res.message });
+        toast(
+          // 有具体原因就照实说（404=模型名/路径不对、401=key 不对、空文本=模型不支持图像…）；
+          // 只有真拿不到原因时才退回那句笼统话。
+          res.message
+            ? `AI 视觉识别失败：${res.message}`
+            : "AI 视觉识别失败：请确认已配置支持图像的模型（如 gpt-4o / qwen-vl / llava）",
+          "error",
+        );
       }
-    } catch {
+    } catch (e) {
       setOcrStatus("error");
-      toast("AI 视觉识别失败", "error");
+      console.error("[ai] vision ocr threw", e);
+      // 这里此前只喊一句「AI 视觉识别失败」，把异常本身吞了 —— 取图失败与网络异常长得一模一样。
+      toast(`AI 视觉识别失败：${String((e as Error)?.message ?? e)}`, "error");
     } finally {
       ocrBusyRef.current = false;
       setOcrBusy(false);
