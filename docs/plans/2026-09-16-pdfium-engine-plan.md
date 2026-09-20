@@ -86,6 +86,18 @@ node scripts/fetch-pdfium.mjs --print-sha256 <tgz>   # 补记某平台的校验�
 > **G 是当前 P4 的真实拦路石**（不是技术难，是"没填表"）：`scripts/fetch-pdfium.mjs` 的平台表里
 > `win-arm64` / `linux-x64` / `mac-univ` / `android-arm64` 全是 `sha256: null`。
 
+## 0.3 2026-09-20：**P5 切默认之后补的一处安全缺口** ＋ 两类新样本（Windows 侧）
+
+| # | 决定 | 理由与连带 |
+|---|---|---|
+| **L** | **缺省引擎要"看库在不在"：库在 ⇒ PDFium；库不在 ⇒ 回退 MuPDF**（`PdfEngine::resolve`）。⚠️ **显式** `pdfium` 时**不回退** | P5 已把默认切成 PDFium，而**只有 Windows 的包确定带了库**（§4 验收表里 Linux/macOS/Android 的"首启即可渲染"**未验**）⇒ 默认若不管库在不在，那些平台的 PDF 会**当场渲染失败**，而"回滚"要靠 `SHUYONOTE_PDF_ENGINE=mupdf` ——**终端用户设不了环境变量**。显式要求时不回退，是因为**静默换引擎比报错更难查**（"成功 ≠ 生效"那一族）。回退发生时**只出声一次**（`eprintln!`），否则"默认是 PDFium"在那些平台上就是一句假话 |
+| **M** | **对拍样本新增两类，且**分两类判**：`scan.pdf`（图像 XObject）走**硬判据**；`cjk.pdf`（Type0＋预定义 CMap＋标准 CJK 字体名）**只报不判** | 报告 §六 自认的缺口 #1 就是这两类。扫描件里没有字形 ⇒ 两个引擎**应当**逐像素一致，判硬；中文**没有嵌入字体** ⇒ 各自替换字体、字形本就不同，**逐像素等价在这个样本上做不到** ⇒ 它只回答"都能开、尺寸一致、都画出了东西"（非透明像素两边都 > 0），字形差异**如实报出来**。⚠️ 这不是"给红样本开后门"：`scan.pdf` 里的图像特意做成**块状 + 1:1 到设备像素**（96×96 画进 64×64 pt，`SCALE=1.5` ⇒ 正好 96 设备像素），把"插值算法的自由"从判据里排除掉 |
+| **N** | **`library_preflight` 去掉 `#[cfg(test)]` ＋ 新增 `library_available()`** | L 需要一个**生产**可用的探测。不另写一份：判据只有一处（它自己也走 `library_dir()`，于是"环境变量 → 资源目录 → 可执行文件同目录 → vendored"这条优先级不会变成第二个真相） |
+
+**判据（新增 3 条，全在 `commands::pdf_engine_tests`）**：
+`default_falls_back_to_mupdf_when_the_library_is_missing`（库在两档 + 认不出的值两档）、
+`explicit_pdfium_never_silently_falls_back`、`explicit_mupdf_is_unaffected_by_availability`。
+
 ---
 
 ## 1. 范围：只换光栅化
@@ -117,9 +129,8 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 | **P1** | 新增 `src-tauri/src/pdfium_native.rs`（渲染 + 文档缓存 + 全局 init/锁），**保留 `pdf_native.rs`（MuPDF）不动** | 1–2 人日 | 新模块 + 单测 |
 | **P2** | `render_pdf_page` 按开关分派（✅ **已定（2026-09-17）：运行时开关**），两条路径都能跑 | 0.5 人日 | 可回滚的双路径 |
 | **P3** | **对拍**：同一批真实 PDF（含扫描件、中文、旋转页、超大文件）比较两引擎渲染结果与单页耗时 | 1 人日 | 对拍脚本 + 报告 |
-| **P4** | Windows 打包验收 → 多平台（macOS bundle ＋ 公证、Linux rpath、Android `jniLibs`）**作为独立任务** | 1 人日 + 2–3 人日 | 各平台安装包 |
-| **P5** | 灰度一个发布周期 → 默认切 PDFium → （可选）删 MuPDF | — | 发布记录 |
-
+| **P4** | Windows 打包验收 → 多平台（macOS bundle ＋ 公证、Linux rpath、Android `jniLibs`）**作为独立任务** | 1 人日 + 2–3 人日 | 各平台安装包 · **🟡 只有 Windows 完成**（dll 进包、sha256 一致、变异实测）；Linux/macOS/Android **未验**（见 P3 报告 §七 第 5 行） |
+| **P5** | 灰度一个发布周期 → 默认切 PDFium → （可选）删 MuPDF | — | 发布记录 · **✅ 默认已切**（2026-09-19，`PdfEngine::DEFAULT = Pdfium`，4 条判据守着）；⚠️ 随之补了 **§0.3-L 缺库回退**（否则没带库的平台会当场渲染失败） |
 **建议顺序**：P0 → P1 → P3（先证明渲染等价，再谈打包）。**P3 不对拍不算完成。**
 
 ---
