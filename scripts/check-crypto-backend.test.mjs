@@ -294,7 +294,12 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
   });
 
   // ── 新鲜度：比哈希，不比时间（AMD 2026-09-19 的方案）──────────────────────────
-  const cur = { sha256: "b".repeat(64), file: "/reg/libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c", via: "cargo.lock" };
+  const cur = {
+    sha256: "b".repeat(64),
+    file: "/reg/libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c",
+    via: "cargo.lock",
+    hasMarker: true, // 默认代表"当前源码里**有**补丁标记"（即真的属于"源码变过"那一类）
+  };
   const withHash = (h) => mk({ srcSha256: h });
 
   it("★ 哈希与当前源码一致 ⇒ 不红（新鲜度**可证**，不看时间）", () => {
@@ -316,6 +321,22 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
     expect(r.problems.join("\n")).toContain("过期标记");
     expect(r.problems.join("\n")).toContain("cargo clean -p shuyonote");
     expect(r.problems.join("\n")).toContain("cargo clean -p libsqlite3-sys");
+  });
+
+  it("★ 哈希不等且当前源码**没有**补丁标记 ⇒ 成因要写成「这次根本没打补丁」，不许写成「过期」", () => {
+    const r = decide({
+      all: [cand("openssl")],
+      expected: "openssl",
+      patch: {
+        expected: "applied",
+        markers: [withHash("c".repeat(64))],
+        current: { ...cur, hasMarker: false },
+      },
+    });
+    expect(r.problems.length).toBe(2);
+    const text = r.problems.join("\n");
+    expect(text).toContain("当前源码里就没有补丁标记");
+    expect(text).not.toContain("过期");
   });
 
   it("旧产物没有 `src_sha256` 字段 ⇒ **未实查**（只提示，不判红——缺失不等于补丁不在）", () => {

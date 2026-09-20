@@ -250,13 +250,17 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
           `（拿不到当前指纹：${patch.currentError || "未知原因"}）⇒ **未实查**`,
       );
     } else if (recorded !== cur.sha256) {
+      // ★ 哈希不等，但**成因有两类**，必须先分开说（AMD 2026-09-20 提醒：否则会把"这次根本没打补丁"
+      //   误读成"补丁过期"= 假红）。判据用 `sourceFingerprint().hasMarker` 区分：
+      const cause = cur.hasMarker
+        ? "**过期标记**：源码在构建之后**变过**（换了补丁/换了 libsqlite3-sys 版本/registry 被替换）"
+        : "**当前源码里就没有补丁标记**（`--no-apply`、或补丁被撤）⇒ 产物那行标记对应的是**另一次**构建";
       problems.push(
-        "**过期标记**：产物里的 `src_sha256` 与当前将要编译的源码**不是同一份**" +
-          `（产物 ${recorded.slice(0, 12)}… vs 当前 ${cur.sha256.slice(0, 12)}…，当前 = ${cur.file} via=${cur.via}）`,
+        `产物里的 \`src_sha256\` 与当前将要编译的源码**不是同一份**（产物 ${recorded.slice(0, 12)}… ` +
+          `vs 当前 ${cur.sha256.slice(0, 12)}…，当前 = ${cur.file} via=${cur.via}；hasMarker=${cur.hasMarker}）`,
       );
       problems.push(
-        "含义：**源码在构建之后变过**（打了/撤了补丁、换了 libsqlite3-sys 版本、registry 被替换…）" +
-          "⇒ 那行「补丁已应用」不能当证据。重来一遍：\n" +
+        `成因：${cause} ⇒ 那行「补丁已应用」不能当证据。重来一遍：\n` +
           "      cargo clean -p shuyonote && cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml",
       );
     }
