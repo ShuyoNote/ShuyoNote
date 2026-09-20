@@ -269,6 +269,11 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string` —— 报错文本一个字都没提 Node 版本，
   读起来像"路径写错了"。它要 Node ≥ 20.11，而本仓要能在 CI/旧 Node 上跑 ⇒ 统一写
   `dirname(fileURLToPath(import.meta.url))`（`scripts/sm-library-build.mjs` 的注释里也记了这条）。
+- **别在判据里写死平台字面量**（2026-09-20，本机 Windows 实测）：`join("/opt/tongsuo", "bin", "openssl")`
+  在 Windows 上产出 `\opt\tongsuo\bin\openssl`（当前盘根），在 macOS/Linux 上才是 `/opt/tongsuo/bin/openssl`
+  ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
+  一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
+  （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 
