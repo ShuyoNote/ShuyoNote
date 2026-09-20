@@ -275,6 +275,17 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
    * 理由用一句人话说明（"算不出来"必须是可见的，不能只是按钮点不动）。
    */
   const tagsKey = tags.join("\n");
+  /**
+   * 社区侧的标签上限（它 `src/tags.rs` 的 `MAX_TAGS=5` / `MAX_TAG_CHARS=16`，写入时按 `,` 连接）：
+   * Rust 侧 `build_payload` 已经按同一套裁过，这里只是**把这件事说到清单里** ——
+   * 否则"清单写着 8 个标签、社区只存了 5 个"是用户事后才会发现的静默丢失。
+   * 两处常量要一起改（Rust: `community_publish.rs` 的 `COMMUNITY_MAX_TAGS` / `COMMUNITY_MAX_TAG_CHARS`）。
+   */
+  const COMMUNITY_MAX_TAGS = 5;
+  const COMMUNITY_MAX_TAG_CHARS = 16;
+  const tagsOverCommunityLimit =
+    tags.length > COMMUNITY_MAX_TAGS ||
+    tags.some((t) => t.trim().replace(/^#+/, "").length > COMMUNITY_MAX_TAG_CHARS);
   useEffect(() => {
     // 正文都解析不了 ⇒ 没有可信的"当前内容"，问也问不出诚实的指纹；`prepared.error` 已经说清原因。
     if (prepared.error !== "") {
@@ -678,6 +689,14 @@ export function CommunityPublishDialog({ title, docJson, tags, noteId, onClose }
                   <div className="community-save-preview-meta">
                     标签：{tags.length > 0 ? tags.map((t) => `#${t}`).join(" ") : "（没有标签）"}
                   </div>
+                  {/* 社区收标签的规则是它自己的（一个逗号串、最多 5 个、每个 ≤16 字）：
+                      超了就要在**发之前**说清，而不是让用户到社区页面上才发现少了几个。 */}
+                  {tagsOverCommunityLimit && (
+                    <div className="community-save-more">
+                      社区最多收 {COMMUNITY_MAX_TAGS} 个标签、每个 ≤{COMMUNITY_MAX_TAG_CHARS} 字：
+                      这次只会带前 {COMMUNITY_MAX_TAGS} 个，超长的会被截断。
+                    </div>
+                  )}
                   <div className="community-save-preview-meta">
                     正文：整篇全文 {chars} 字 · 图片 {imgs} 张
                   </div>

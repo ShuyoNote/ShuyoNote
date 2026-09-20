@@ -471,6 +471,8 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
     expect(text()).toContain("正文第二行");
     // 落点必须写出来（静默决定"发到哪"和静默上传一样冒犯人）
     expect(text()).toContain("发布到：https://community.shuyo.cn");
+    // 两条短标签**没有**超社区上限 ⇒ 不出现那条提示（判据不该靠吓唬人来"总是通过"）
+    expect(text()).not.toContain("社区最多收");
 
     // **这一条是这一屏的全部意义**：人没点确认 —— 一张图没传、一篇帖没发。
     // 判据是命令名，不是某个前端包装：少一层，就少一处能"看起来没发其实发了"的地方。
@@ -528,6 +530,27 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
     // 回调返回空串时**保持老行为**：地址还是 `__src`（远程图社区自己取得回来）
     const sent = called("community_publish_note")[0][1] as { body: string };
     expect(sent.body).toContain("![远程](https://example.com/a.png)");
+  });
+
+  // 社区收标签的规则是它自己的：`tags::normalize` 一个逗号串、最多 5 个、每个 ≤16 字。
+  // Rust 侧 `build_payload` 按同一套裁，这条判据盯的是**界面有没有跟着说**（别让用户
+  // 到社区页面上才发现少了几个）。2026-09-21 顺手补上：那天才发现标签在线上还发不成。
+  it("标签超过社区上限（>5 个）⇒ 清单**发之前**就说清「只会带前 5 个」", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ tags: ["t1", "t2", "t3", "t4", "t5", "t6"] });
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    expect(text()).toContain("社区最多收 5 个标签");
+    expect(text()).toContain("只会带前 5 个");
+    // 仍然是只读清单：一个字都没发出去
+    expect(called("community_publish_note")).toHaveLength(0);
+  });
+
+  it("单个标签超长（>16 字）同样要说", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ tags: ["一二三四五六七八九十一二三四五六七"] });
+    await vi.waitFor(() => is(byText("确认发布")));
+    expect(text()).toContain("超长的会被截断");
   });
 });
 

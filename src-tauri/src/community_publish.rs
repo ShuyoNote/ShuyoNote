@@ -7,7 +7,8 @@
 //!      随机键等于放弃幂等，症状是"重试一次多一篇"）。
 //!
 //! 另一条与 `community.rs`（抓取侧）共享的纪律：**状态码如实上报**。401 是"令牌被撤销了"、
-//! 403 `app_token_scope` 是"我们发错接口了"、409 是"上一个还在处理"、422 是"审核拦下了"。
+//! 403 `app_token_scope` 是"我们发错接口了"、409 是"上一个还在处理"、
+//! 422 分两种（带 `error` 的 JSON = "审核/校验拦下了"；纯文本 = axum 没收下我们的请求体 = 客户端 bug）。
 //! 四件事对用户意味着四种不同动作，压成一句"发布失败"就等于让人去猜。
 
 use serde::{Deserialize, Serialize};
@@ -105,12 +106,31 @@ pub fn content_rev(title: &str, body: &str, tags: &[String]) -> String {
     digest.iter().take(16).map(|b| format!("{b:02x}")).collect()
 }
 
+/// 社区对标签的**服务端口径**（见它 `src/tags.rs` 的 `MAX_TAGS` / `MAX_TAG_CHARS`）：
+/// `,` 连接的一个字符串，最多 5 个、每个 ≤16 字、ASCII 转小写。
+/// 本地先按同一套裁好，免得"清单里写着 8 个标签、社区只存了 5 个"变成一处静默丢失。
+pub const COMMUNITY_MAX_TAGS: usize = 5;
+pub const COMMUNITY_MAX_TAG_CHARS: usize = 16;
+
 /// 发给社区的 `NewPost`（字段名与它 `POST /api/posts` 的 JSON 同形）。
+///
+/// ⚠️ **`tags` 是一个字符串**（`数友,工作流`），**不是数组** —— 2026-09-21 用户第一次真发帖
+/// 就撞在这上面：我们此前按"数组"发（`"tags":["插件","Markdown"]`），社区（axum `Json<NewPost>`，
+/// 见它 `src/posts.rs` 的 `pub tags: Option<String>`）当场回 422：
+/// ```text
+/// Failed to deserialize the JSON body into the target type:
+/// tags: invalid type: sequence, expected a string at line 1 column 425
+/// ```
+/// 社区自己的发帖表单也是**一个文本框**（它 `src/render.rs` 里 `input type="text" name="tags"`），
+/// 服务端用 `tags::normalize` 按 `,`/`，`/`、`/`;`/`；` 切分。
+/// 「字段名同形」这句话当时只对着**字段名**验证过（判据里从来没有真服务器/真契约），
+/// 于是类型错了也一路绿到用户面前 —— 所以现在 `tests` 里有一条**线形状**判据，见
+/// [`tests::payload_sends_tags_as_a_string_because_that_is_the_wire_contract`]。
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NewPostPayload {
     pub title: String,
     pub body: String,
-    pub tags: Vec<String>,
+    pub tags: String,
     pub source: String,
     pub source_ref: String,
 }
@@ -128,17 +148,28 @@ pub fn build_payload(
     if title.is_empty() {
         return Err("这篇笔记没有标题：社区要求标题非空（给笔记起个名，或用文件名当标题）".to_string());
     }
-    let mut seen = std::collections::HashSet::new();
-    let tags: Vec<String> = tags
-        .iter()
-        .map(|t| t.trim().trim_start_matches('#').trim().to_string())
-        .filter(|t| !t.is_empty() && seen.insert(t.to_lowercase()))
-        .take(20)
-        .collect();
+    // 规范化顺序**照着社区 `tags::normalize` 来**（去 `#`、去空、限长 16 字、限 5 个、
+    // 去重时比较的是**裁过之后**的值）——顺序不一样就可能"本地留的和社区存的不是同一批"。
+    // 唯一不跟它一致的是大小写：它存小写，我们保留原样（本地显示/指纹都用原样，不影响幂等）。
+    let mut out: Vec<String> = Vec::new();
+    for raw in tags {
+        let cleaned = raw.trim().trim_start_matches('#').trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let capped: String = cleaned.chars().take(COMMUNITY_MAX_TAG_CHARS).collect();
+        if out.iter().any(|t| t.eq_ignore_ascii_case(&capped)) {
+            continue;
+        }
+        out.push(capped);
+        if out.len() >= COMMUNITY_MAX_TAGS {
+            break;
+        }
+    }
     Ok(NewPostPayload {
         title: title.to_string(),
         body: body.to_string(),
-        tags,
+        tags: out.join(","),
         source: SOURCE.to_string(),
         source_ref: source_ref(note_id, rev),
     })
@@ -203,8 +234,21 @@ pub fn classify(status: u16, body: &str, base: &str) -> PublishOutcome {
             PublishOutcome::Ok { id, slug, url }
         }
         409 => PublishOutcome::InFlight,
-        422 => PublishOutcome::Rejected {
-            error: if err.is_empty() { preview(body) } else { err },
+        // 422 有两种，**形状能分开**（2026-09-21 真发帖撞出来的）：
+        //   ① 社区自己的校验/风控拦下 —— 响应体是 JSON 且带 `error`（`内容不合规` / `defect_incomplete`
+        //      / `failed`，见它 `src/posts.rs` 的 create）；
+        //   ② axum 的 `Json<NewPost>` 反序列化失败 —— 响应体是**纯文本**
+        //      （`Failed to deserialize the JSON body into the target type: …`）。
+        // ② 是"我们的请求体形状就不对" = 客户端 bug，被读成"审核拦下"会把 bug 藏起来
+        // （用户截图里那句就是它），所以归到 Unexpected 去。
+        422 if !err.is_empty() => PublishOutcome::Rejected { error: err },
+        422 => PublishOutcome::Unexpected {
+            status,
+            error: if body.trim().is_empty() {
+                "422：社区没给理由（响应体是空的）".to_string()
+            } else {
+                format!("{}（这不是审核拦下，是社区**没收下这个请求体**：把这句话反馈给开发者）", preview(body))
+            },
         },
         401 => PublishOutcome::Unauthorized,
         403 if err == "app_token_scope" => PublishOutcome::OutOfScope,
@@ -1063,7 +1107,8 @@ mod tests {
             "Note".to_string(),
         ];
         let p = build_payload("标题", "正文", &tags, "n", "1").unwrap();
-        assert_eq!(p.tags, vec!["Rust".to_string(), "Note".to_string()]);
+        // 去重（`Rust` / `#rust` 是同一个）后**拼成一个字符串**：社区收的是 `tags` 字符串。
+        assert_eq!(p.tags, "Rust,Note");
         assert_eq!(p.source, SOURCE);
         assert_eq!(p.source_ref, "n-1");
         // 上站前先自证：发出去的 JSON 字段名就是社区要的那几个。
@@ -1071,6 +1116,49 @@ mod tests {
         for f in ["title", "body", "tags", "source", "source_ref"] {
             assert!(j.get(f).is_some(), "少了字段 {f}");
         }
+    }
+
+    /// **线形状判据**：`tags` 必须是 JSON **字符串**，不能是数组。
+    ///
+    /// 2026-09-21 用户第一次真发帖就被这条挡住（社区 422 原文见 `NewPostPayload` 的注释）：
+    /// 我们此前按数组发，而本地全部判据都只对**字段名**做断言（`j.get("tags").is_some()`），
+    /// 类型错了照样绿 —— 这条就是补那个洞。任何"顺手把 tags 改回 Vec"的改动都会在这里红。
+    #[test]
+    fn payload_sends_tags_as_a_string_because_that_is_the_wire_contract() {
+        let p = build_payload("标题", "正文", &["插件".to_string()], "n", "1").unwrap();
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(
+            json.contains(r#""tags":"插件""#),
+            "tags 必须是字符串（社区 `NewPost.tags: Option<String>`）：{json}"
+        );
+        assert!(
+            !json.contains(r#""tags":["#),
+            "tags 不许发成数组 —— 社区会回 422 `invalid type: sequence, expected a string`：{json}"
+        );
+        // 没有标签时是**空字符串**，也不是 `[]`
+        let none = build_payload("标题", "正文", &[], "n", "1").unwrap();
+        assert!(serde_json::to_string(&none).unwrap().contains(r#""tags":"""#));
+    }
+
+    /// 本地就按社区的上限裁（5 个 / 每个 ≤16 字）：否则"清单里 8 个标签、社区只存 5 个"
+    /// 又是一处静默丢失。
+    #[test]
+    fn payload_caps_tags_the_way_the_community_does() {
+        let many: Vec<String> = (0..8).map(|i| format!("tag{i}")).collect();
+        let p = build_payload("标题", "正文", &many, "n", "1").unwrap();
+        assert_eq!(p.tags, "tag0,tag1,tag2,tag3,tag4", "最多 5 个");
+
+        let long = vec!["一二三四五六七八九十一二三四五六七八".to_string()];
+        let p2 = build_payload("标题", "正文", &long, "n", "1").unwrap();
+        assert_eq!(p2.tags.chars().count(), COMMUNITY_MAX_TAG_CHARS, "每个标签限 16 字");
+
+        // 裁完之后才去重：两个只差尾部的长标签会变成同一个，只留一个。
+        let dup = vec![
+            "一二三四五六七八九十一二三四五六".to_string(),
+            "一二三四五六七八九十一二三四五六七".to_string(),
+        ];
+        let p3 = build_payload("标题", "正文", &dup, "n", "1").unwrap();
+        assert!(!p3.tags.contains(','), "裁完相同的两个标签只该留一个：{}", p3.tags);
     }
 
     #[test]
@@ -1114,6 +1202,25 @@ mod tests {
                 error: "内容不合规".to_string()
             }
         );
+        // 422 但**没有** JSON `error`：这是 axum 没收下我们的请求体（响应体是纯文本），
+        // 即客户端 bug —— 2026-09-21「tags 发成了数组」那次就是它，用户看到的那句
+        // 「社区没有通过这篇（审核拦下）」是错的标题。判据要求：原样带上社区那句话 + 明说不是审核。
+        match classify(
+            422,
+            "Failed to deserialize the JSON body into the target type: \
+             tags: invalid type: sequence, expected a string at line 1 column 425",
+            base,
+        ) {
+            PublishOutcome::Unexpected { status, error } => {
+                assert_eq!(status, 422);
+                assert!(
+                    error.contains("invalid type: sequence"),
+                    "要原样带上社区那句话：{error}"
+                );
+                assert!(error.contains("不是审核拦下"), "要说清这不是审核拦下：{error}");
+            }
+            other => panic!("纯文本 422 判读错了：{other:?}"),
+        }
         assert_eq!(classify(401, "", base), PublishOutcome::Unauthorized);
         assert_eq!(
             classify(403, r#"{"ok":false,"error":"app_token_scope"}"#, base),
@@ -1211,7 +1318,17 @@ mod tests {
                     )
                 } else {
                     let lower = req.to_ascii_lowercase();
-                    let ok = lower.contains("x-csrf-token: testcsrf")
+                    // **照真服务器的口径验请求体**：`tags` 必须是字符串（社区 `NewPost.tags: Option<String>`）。
+                    // 2026-09-21 真发帖撞的就是这一条（我们发成数组 ⇒ 社区 422 `invalid type: sequence`）；
+                    // 假社区此前只看请求头，于是这条契约在本地判据里是**空的**。
+                    let body_txt = req.split("\r\n\r\n").nth(1).unwrap_or("");
+                    let tags_is_string = serde_json::from_str::<serde_json::Value>(body_txt)
+                        .ok()
+                        .and_then(|v| v.get("tags").cloned())
+                        .map(|t| t.is_string())
+                        .unwrap_or(false);
+                    let ok = tags_is_string
+                        && lower.contains("x-csrf-token: testcsrf")
                         && lower.contains("cookie: csrf_token=testcsrf")
                         && lower.contains("authorization: bearer tok")
                         && lower.contains("idempotency-key: shuyonote-note1-rev1");
@@ -1220,6 +1337,14 @@ mod tests {
                             200,
                             "",
                             r#"{"id":9,"slug":"note-one","body":"b","tags":[]}"#,
+                        )
+                    } else if !tags_is_string {
+                        // 逐字照抄社区 axum 那句话的形状，好让判据里的失败信息一眼认出来。
+                        (
+                            422,
+                            "",
+                            "Failed to deserialize the JSON body into the target type: \
+                             tags: invalid type: sequence, expected a string at line 1 column 425",
                         )
                     } else {
                         (403, "", r#"{"ok":false,"error":"bad_csrf"}"#)
