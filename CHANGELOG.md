@@ -360,8 +360,8 @@
 - **库级国密 P2 落地**（`41c17b99`）：SQLCipher 的 `cipher_hmac_algorithm` / `cipher_kdf_algorithm`
   走 SM3 分支 —— C 层 provider 补丁（`patches/0001-sqlcipher-sm3-provider.patch`，打在 registry 的 `sqlite3.c`）
   ＋ `gm_provider` 运行期接线（**key 之后再设 `cipher_*`**，顺序按实测更正）。
-  macOS 上跑出**三段自证全绿**（后端=openssl／补丁在场且 `src_sha256=150bc1ee…`（**补丁 v1**；当日 AMD
-  修正为 v2 `6ec0a114…`，见 dev `f7b32643`）与 AMD 逐字相同／跨对拍 12/12），
+  macOS 上跑出**三段自证全绿**（后端=openssl／补丁在场且**新鲜度靠 `src_sha256` 自证**（比哈希不比时间，
+  值见当次门禁输出）／跨对拍 12/12），
   运行期 `gm_provider` 判据 9 passed。**页加密仍是 AES：P3 未做**，两条路（编译期切换／加 algorithm 参数）待拍板。
   ⚠️ **这一段说的是「国密变体构建」**（需显式 `OPENSSL_DIR` ＋ `--features sm-library`）：**本版发布的安装包是默认构建**，
   不含库级国密（未给后端时 `build.rs` 当场失败，不会静默降级出一个「看起来是国密」的库）。
