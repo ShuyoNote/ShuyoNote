@@ -431,6 +431,42 @@ AMD 把 vendored amalgamation（`libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，9.
 以及 **provider 反向验证门禁**——断言**编出来的二进制里 SQLCipher 真的用上了 SM3**（不是"独立 openssl 命令行能用"），
 这条与 §7 的「断言实际 provider」是同一件事。
 
+### 3.2 ⚠️ P3（SM4 页加密）不是"顺手加一个分支" —— 结构事实与两条路（2026-09-20 AMD 实测补充）
+
+P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provider.patch`（20 段 / 213 行，
+打在 `libsqlite3-sys 0.38.2` 的合并文件 `sqlite3.c` 上）＋ 运行期判据 ＋ SM3 夹具双向读数；
+`src-tauri/build.rs` 的产物标记行含 `src_sha256=<64hex>`（治"过期标记"）。**P3 与 P2 不是同一量级**，
+下面是实测到的三条结构事实（行号对 0.38.2 的 `sqlite3.c`）：
+
+| # | 事实 | 后果 |
+|---|---|---|
+| 1 | `sqlcipher_provider` 结构体（**L109373** 起）里的 `cipher` 回调签名是 `(void *ctx, int mode, const unsigned char *key, int key_sz, const unsigned char *iv, const unsigned char *in, int in_sz, unsigned char *out)` —— **没有 algorithm 参数** | provider **无法按调用**选页加密算法 |
+| 2 | 页加密由 `#define OPENSSL_CIPHER EVP_aes_256_cbc()`（**L113769**）在**编译期**钉死，`cipher` / `get_cipher` / `get_key_sz` / `get_iv_sz` / `get_block_sz` **五处**都用它 | 换算法 = 换构建 |
+| 3 | 本版**没有** `cipher_algorithm` PRAGMA：`cipher_settings` / `cipher_default_settings` 只回显 `kdf_iter` / `page_size` / `use_hmac` / `plaintext_header_size` / `cipher_hmac_algorithm` / `cipher_kdf_algorithm` 六项 | **运行期切不了页加密**（不是"没人写这条 PRAGMA"，是这一层不存在） |
+
+**两条路（成本差要 owner 拍板）**：
+
+- **A. 编译期切换（薄，建议先做）**：补丁里把 `OPENSSL_CIPHER` 包成
+  `#ifdef SQLCIPHER_SM4_CBC` → `EVP_sm4_cbc()`；构建时经 **`CFLAGS=-DSQLCIPHER_SM4_CBC`** 传进去
+  （`cc` crate 认 `CFLAGS`，`scripts/sm-library-build.mjs` 加一个开关即可）。
+  代价：**同一份 registry 源码只能有一种页加密** ⇒ 换算法要换构建（"改了补丁必须清库重建"那条纪律正好覆盖它）；
+  门禁要按"这份构建是哪种页加密"分派。收益：不动结构体、不碰 codec 层。
+- **B. 给 provider 加 algorithm 参数（厚）**：改 `cipher` 回调签名 ＋ **三个** provider 实现
+  （openssl / CommonCrypto / libtomcrypt）＋ codec 层调用点，再新增 `cipher_algorithm` /
+  `cipher_default_algorithm` PRAGMA 与回显分支。这是**上游级**改动（patch 面从 20 段涨到几十段），
+  收益是"同一套库能同时有 AES 与 SM4 页加密"。
+
+**建议先 A**：档 3 要的交付物是"**国密版构建**"，不是"一个库里同时两种页加密"。
+⚠️ 同时要把一条容易读错的话写进交付文档：**页加密是整库属性，不是逐空间属性** ——
+"按空间开国密"（§4 的最小风险做法）说的是**上层/应用层开关**；库级页加密一旦选定就是那个**库文件**的属性
+（且协议里没有算法标识 ⇒ 解密端必须会 SM4）。这条不写清，"按空间开"会被读成"同一库混用两种页加密"。
+
+**顺手记录一条 P2 的接线事实**（2026-09-20 实测更正，会改应用层接线点）：`PRAGMA key` **之前**设 `cipher_*`
+会被**静默丢掉**（那时 codec ctx 还没建，`sqlcipher_codec_pragma()` 的 `if(ctx)` 整块被跳过）⇒
+接线必须在 `set_cipher_key()` **之后**、第一次读写之前。详见 `src-tauri/src/gm_provider.rs` 文件头第二张表。
+
+---
+
 ### 需要改的点（A 路线）
 
 1. **新增 provider**：SM4-CBC 页加密 ＋ HMAC-SM3 页 MAC ＋ PBKDF2-HMAC-SM3 派生；

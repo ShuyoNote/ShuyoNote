@@ -21,6 +21,11 @@ node scripts/sm-library-build.mjs --openssl-dir <p> --check       # 只核对，
   ⇒ SQLCipher 升级时它**当场失败**，而不是生成一份看着像补丁的废纸。
 - 补丁对应 **libsqlite3-sys 0.38.2 的 SQLCipher 合并文件**（`sqlite3.c` 9.6 MB；方案 §3.1 记的行号
   L109358 / L112304 / L113961 / L114074 与它能对上）。
+- **补丁的身份**（跨机核对"我们打的是同一份"）：
+  `patches/0001-sqlcipher-sm3-provider.patch` sha256 =
+  `2515fa1919f4afbf0a94bcbf837052c3116fd6dbed8742e23334abc388ca9a2f`（12,021 字节，**LF**）。
+  行尾可比是因为 `.gitattributes` 是 `* text=auto eol=lf` ⇒ 三平台检出的都是 LF
+  （否则 Windows 上检出成 CRLF，`git apply` 的上下文行就对不上了 —— 这条我们专门查过一次）。
 - **能力门（本补丁的关键一处）**：`sqlcipher_codec_ctx_set_hmac_algorithm` / `set_kdf_algorithm` 里加了一句
   "当前 provider 算不了这个算法就**不落值**"（探测口是 `get_hmac_sz()`，它对不支持的算法返回 0）。
   没有它，光加标签的话，在 CommonCrypto / libtomcrypt 后端上 `PRAGMA cipher_hmac_algorithm = HMAC_SM3`
