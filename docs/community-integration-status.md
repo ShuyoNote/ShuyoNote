@@ -39,6 +39,7 @@
 | 请求带 `Accept: application/json` | ✅ | 同上（社区只需在**帖子页地址**上做内容协商，应用不用改） |
 | 预览 → 确认 → 落库 | ✅ | `CommunitySaveDialog` 8 条渲染级测试（预览阶段不落库、取消零痕迹、只写一次） |
 | 幂等（同一帖不存第二篇） | ✅ | 搜到候选后**逐字核对**来源地址；4 条测试 |
+| 正文里的图**在笔记里看得见** | ✅ **2026-09-21 补** | 社区正文里的图是站内相对地址（`/attachments/<hash>`），存进笔记后"相对于谁"就不存在了 ⇒ 破图。现在落库前统一绝对化（`absolutizeCommunityLinks`：Markdown `](…)` 与 HTML `src/href` 两种写法都覆盖；`https://` / `//` / `data:` / `attachment:` / 锚点 / 不带头斜杠的相对路径**一律不碰**）；5 条判据。**仍未做**：把图**落到本地附件库**（离线也能看、社区删帖也不丢图） |
 | **社区侧提供 JSON** | ✅ **已通（2026-09-20）** | 社区 `0.71.24` 起 `GET /post/{slug}` 支持内容协商：带 `Accept: application/json` 返回**落库的原始 Markdown**（`body_markdown`）＋ `Vary: Accept`，机器取数不计浏览；`0.71.25` 修掉上线实测抓到的 `url` 被拼成相对路径（应用会按白名单拒掉）。线上实测 18/18，应用侧另有一条**活判据** `community::tests::live_community_json_is_accepted_by_this_parser`（`#[ignore]`）拿真站点喂自己的解析器。Web 版另需 `Access-Control-Allow-Origin`（社区仓库没有 CORS 先例，**仍未做**，要 owner 拍板） |
 
 ## 三、导入产物（`import`）

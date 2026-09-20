@@ -64,6 +64,39 @@ export function linkIntentOf(input: string): LinkIntent {
 }
 
 /**
+ * 把正文里的**站内相对地址**改成绝对地址。
+ *
+ * 为什么必须做（2026-09-21）：社区文章里的图是 `/attachments/<hash>` 这种**相对地址**
+ * （社区自己渲染时它当然是对的），但存进笔记之后「相对于谁」就不存在了 ——
+ * 笔记里那张图会是一张破图，而用户看不出是为什么。
+ *
+ * 只动**单个 `/` 开头**的地址：
+ *   · `https://…` / `//cdn…`（协议相对）/ `data:` / `attachment://…` / `mailto:` / `#锚点` 一律不碰；
+ *   · 不带头斜杠的相对路径（`foo.png`）也**不碰** —— 它相对的是**帖子页**而不是站点根，
+ *     猜错了会把一个本来就不对的地址改成另一个不对的地址。
+ *
+ * Markdown 的 `](…)` 与 HTML 的 `src=`/`href=` 两种写法都要覆盖：社区正文是 Markdown 源码，
+ * 但允许内嵌 HTML（它自己的编辑器也产 HTML）。
+ */
+export function absolutizeCommunityLinks(markdown: string, postUrl: string): string {
+  let origin = "";
+  try {
+    origin = new URL(postUrl).origin;
+  } catch {
+    return markdown; // 来源地址都解析不了（不该发生）⇒ 一个字都不改，别把正文搞坏
+  }
+  if (!origin || origin === "null") return markdown;
+  // `](…)`：Markdown 的图片与链接
+  let out = markdown.replace(/\]\(\s*\/(?!\/)([^)\s]+)\s*\)/g, `](${origin}/$1)`);
+  // HTML 属性：src="…" / href='…'（引号两种都吃）
+  out = out.replace(
+    /(\b(?:src|href)\s*=\s*)(["'])\/(?!\/)([^"']*)\2/gi,
+    (_m, head: string, q: string, rest: string) => `${head}${q}${origin}/${rest}${q}`,
+  );
+  return out;
+}
+
+/**
  * 笔记正文：**先写来源，再写正文**。
  *
  * 来源行必须在最前面：这篇笔记是别人写的东西，读者第一眼就该知道它从哪来、
@@ -79,9 +112,12 @@ export function noteForPost(post: CommunityPost): { title: string; markdown: str
   // 幂等会静默失效，用户每次都会多出一篇重复笔记。（这条是渲染级测试抓出来的。）
   const sourceLine = `> 来源：${post.title} · ${post.url}${meta ? `（${meta}）` : ""}`;
   const tags = post.tags.length ? `\n\n标签：${post.tags.map((t) => `#${t}`).join(" ")}` : "";
+  // 正文里的站内相对地址（主要是 `/attachments/<hash>` 的图）先改成绝对地址：
+  // 不然后面「图片看得见吗」这一条在笔记里永远是破图（见 `absolutizeCommunityLinks`）。
+  const body = absolutizeCommunityLinks(post.bodyMarkdown.trim(), post.url);
   return {
     title: post.title,
-    markdown: `${sourceLine}\n\n---\n\n${post.bodyMarkdown.trim()}${tags}\n`,
+    markdown: `${sourceLine}\n\n---\n\n${body}${tags}\n`,
   };
 }
 
