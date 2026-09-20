@@ -27,6 +27,11 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// ★ 用共用的 `isMain`（**不是**自己写 `resolve(argv[1]) === resolve(import.meta.url)`）：
+//   后者在**路径经过符号链接**时恒为假 ⇒ 脚本静默空转、退出码 0（macOS 2026-09-20 实测，
+//   全仓 7 处同形写法；dev `8c589783` 抽成了这个共用实现）。门禁"绿得不是它声称的那件事"最不能接受。
+import { isMain } from "./lib/is-main.mjs";
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
@@ -114,15 +119,44 @@ export function check({ commit, range, cwd = root, env = process.env, log = cons
     const out = gitSoft(["rev-list", "--first-parent", `${picked.base}..${picked.head}`], cwd);
     if (out === null) {
       err(`✗ 认不出范围 ${picked.base}..${picked.head} ⇒ **判不了**（别当成通过）`);
+      // ⚠️ 这一条是 macOS 2026-09-20 用 `git clone --depth 1` 实测出来的**必踩**形态：
+      //    GitHub/GitCode 的 checkout 默认 `fetch-depth: 1`（浅克隆）⇒ `HEAD^` 不存在 ⇒
+      //    这里直接 exit 3 ⇒ 门禁红，而红的是"判不了"，看起来像门禁坏了。
+      //    所以把**原因与两条出路**写在错误里，而不是让人自己查。
+      if (gitSoft(["rev-parse", "--is-shallow-repository"], cwd) === "true") {
+        err(`  ⚠️ 这是一个**浅克隆**（CI 的 checkout 默认只取 1 个提交）⇒ 祖先根本不在本地。`);
+        err(`     出路 ① 给该 job 的 checkout 加 fetch-depth: 0（取全历史与分支，origin/main 才在）；`);
+        err(`     出路 ② 或设 \`SHUYONOTE_CHANGELOG_PARITY_RANGE=<base>..<head>\` 给显式范围（PR 用 base sha、push 用 before）。`);
+      }
       return 3;
     }
     shas = out.split("\n").filter(Boolean);
     label = `${picked.base}..${picked.head}${picked.auto ? "（自动选的）" : ""}`;
   }
 
-  // ⚠️ 空扫要**说出来**：范围为空是正常情形（例如就在 main 上跑），但绝不能让"扫了 0 笔"
+  // ⚠️ 空扫要**说出来**：范围为空是正常情形（例如就在基线上跑），但绝不能让"扫了 0 笔"
   //    与"扫了 100 笔都没问题"在输出上长得一样。
+  const shallow = gitSoft(["rev-parse", "--is-shallow-repository"], cwd) === "true";
   log(`扫描范围：${label} ⇒ **${shas.length}** 笔提交`);
+  if (shallow) {
+    log(`（注意：这是**浅克隆**，扫到的历史可能比你以为的短 —— 见 ci.yml 的 fetch-depth）`);
+  }
+
+  // ★ **浅克隆 + 空范围 = 判不了，不是通过**（2026-09-20 我自己那条验证脚本抓出来的）：
+  //   浅克隆里 `origin/main` **是存在的**（指向被取到的那一个提交）⇒ `origin/main..HEAD` 为空
+  //   ⇒ 原来会打印"✓ 这 0 笔……"并 exit 0 —— 那正是本仓最防的**假绿**（绿得不是它声称的那件事：
+  //   它什么都没看见）。CI 的 checkout 默认就是浅克隆 ⇒ 这条必须在门禁里堵死。
+  if (shas.length === 0) {
+    if (shallow) {
+      err("✗ 扫描范围为空，而这是一个**浅克隆**（CI 的 checkout 默认只取 1 个提交）");
+      err("  ⇒ **看不见历史，判不了**，不当通过（范围为空在浅克隆里不是证据）");
+      err("  出路 ① 给该 job 的 checkout 加 fetch-depth: 0；");
+      err("  出路 ② 或设 SHUYONOTE_CHANGELOG_PARITY_RANGE=<base>..<head> 给显式范围（PR 用 base sha、push 用 before）。");
+      return 3;
+    }
+    log(`✓ 范围内**没有提交**（例如你就在基线上）—— 这是「没东西可查」，**不是**「查过并全部通过」`);
+    return 0;
+  }
 
   const violations = [];
   for (const sha of shas) {
@@ -147,8 +181,7 @@ export function check({ commit, range, cwd = root, env = process.env, log = cons
   return 0;
 }
 
-const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
-if (invokedDirectly) {
+if (isMain(import.meta.url)) {
   const argv = process.argv.slice(2);
   const valueOf = (name) => {
     const i = argv.indexOf(name);

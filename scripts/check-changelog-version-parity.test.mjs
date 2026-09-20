@@ -169,6 +169,37 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     r.commit("chore: 起手");
     expect(run({ commit: "deadbeefdeadbeef", cwd: r.dir }).code).toBe(3);
   });
+
+  it("★ 浅克隆（CI 的 checkout 默认）⇒ 空范围也必须**判不了**（3），不许假绿", () => {
+    // 来由：macOS 认为浅克隆会 exit 3（`HEAD^` 不存在）；我按那条加提示时自己一验，
+    // 发现**更坏**的一种：浅克隆里 `origin/main` **是存在的**（指向被取到的那一个提交）
+    // ⇒ `origin/main..HEAD` 为空 ⇒ 原来会打印"✓ 这 0 笔……"并 exit 0 —— 那就是假绿。
+    const r = makeRepo();
+    r.commit("chore: 第 1 笔");
+    r.write("CHANGELOG.md", "# 更新日志\n\n## [Unreleased]\n\n- 第 2 次\n");
+    r.commit("chore: 第 2 笔");
+
+    const shallow = mkdtempSync(join(tmpdir(), "shuyo-shallow-"));
+    dirs.push(shallow);
+    execFileSync("git", ["clone", "-q", "--depth", "1", `file://${r.dir}`, shallow], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const { code, errs, logs } = run({ cwd: shallow, env: {} });
+    expect(code).toBe(3);
+    expect(errs).toContain("浅克隆");
+    expect(errs).toContain("fetch-depth: 0");
+    expect(logs).not.toContain("✓");
+  });
+
+  it("非浅克隆 + 空范围 ⇒ 0，但措辞必须是「没东西可查」而不是「通过」", () => {
+    const r = makeRepo();
+    r.commit("chore: 起手");
+    const { code, logs } = run({ range: "HEAD..HEAD", cwd: r.dir, env: {} });
+    expect(code).toBe(0);
+    expect(logs).toContain("没有提交");
+    expect(logs).toContain("不是");
+  });
 });
 
 // 真事故回归（读数是**人工跑的**，因为那笔不在本仓可复现的历史里）：
