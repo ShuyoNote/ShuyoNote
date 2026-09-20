@@ -4,7 +4,48 @@
 
 ## [Unreleased]
 
+## [1.91.13] - 2026-09-20
+
+> 多平台打包：安卓随包 PDFium 库的通路在 CI 上第一次走通（修掉两条"静默"）＋ Linux 的随包中文字体与
+> AppImage 都有了产物级判据。
+
+### 新增
+- **安卓包真的带上 PDFium 运行时了**：打包时把 `libpdfium.so` 放进 `jniLibs/arm64-v8a/`，
+  并在**产物**上断言包内那份与 `vendor/` 里那份 **sha256 逐字节相同**（`check-android-bundle`）。
+  CI 读数：包内条目 962 个、`lib/arm64-v8a/libpdfium.so` 6,338,208 字节与 vendor 相同。
+- **Linux 随包中文字体有了产物级门禁**：`check-linux-bundle` 现在判 `NotoSansSC-Regular.ttf`
+  **在不在 / 位置对不对 / sha256 是否等于钉死的值**（deb 与 AppImage 各判一遍）。
+  背景：那份预编译 `libpdfium.so` **没有字体后端**（无 fontconfig、`FcInit` 0 个）⇒ 非嵌入字体的
+  中文 PDF 在 Linux 上**整行不显示**；而字体本体不入库、构建也不会因此变红，此前整条链上没有东西拦它。
+- **发版 APK 也断言带上了 `libpdfium.so`**（`check-apk-contents.mjs`）：原来只有自检流水线有这条断言，
+  而发版侧那条"ABI 恰为 arm64-v8a"抓不住缺库（Tauri 自己会把 `libshuyonote_lib.so` 放进同一层）。
+
+### 修复
+- **安卓发版流水线在 CI 上"取错平台"（1.91.12 就是红在这）**：`fetch-pdfium.mjs` 只认 `--platform <名>`，
+  而两条 workflow 写的是**位置形式** `… android-arm64` ⇒ 参数被**静默忽略**、回落成 runner 的当前平台
+  （日志里取回的是 `linux-x64`），报错点却落在**下一步** stage（"vendor 里没有 android-arm64 的那份库"）。
+  修法不是改那一行调用，而是**去掉"静默回落"这个状态**：位置参数与 `--platform` 等价、
+  **认不出的名字当场 exit 2**（判据 13 条，含变异读数）。
+- **APK 自检在 CI 上形同虚设**：它用 `tar -tf` 读 zip，而本机 Windows/macOS 的 `tar` 是 bsdtar（认 zip）、
+  **CI 的 ubuntu 上是 GNU tar（读不了 zip）** ⇒ 那一步恒报"没验"（exit 2），只看绿/红会以为它在工作。
+  改用仓里已有的纯 Node `scripts/lib/zip.mjs`（与 `check-apk-contents.mjs` 同一份实现）。
+- **`check-sys-deps` 的探针判据在 Windows 上会红**：Windows 有了自己的探针表之后，"非 macOS 会打印没做"
+  那条断言过期了。现在按平台分开写（Windows 跑自己的表、Linux 显式"没做"、macOS 仍要 exit 4）。
+
+### 其它
+- Linux 打包自检新增 **AppImage 结构比对**的真产物读数（首次通过：与源那份只差一个 `RUNPATH=$ORIGIN`，
+  动态符号 783/783、大小 7645184/7664592）；配方写进 `docs/TESTING.md`。
+- 文档：`docs/TESTING.md` 记了三条现场换来的坑（GNU tar 那一条、判据里起子进程要带
+  `ELECTRON_RUN_AS_NODE=1`、CI 步骤日志怎么读）＋ 在 Windows 本机出 Linux AppImage 的 WSL2 配方；
+  施工单里两处**已经过期**的"未决"改成实际状态；计划表新增 §0.3-P（P4 打包读数汇总）。
+
+
 ## [1.91.12] - 2026-09-20
+
+> ⚠️ **本版没有对外发布**：tag `v1.91.12` 打过，但发版流水线红在安卓「随包 PDFium 库」那一步
+> （run `35504460763`；根因就是上面 1.91.13 修掉的那条"平台名被静默吃掉"）⇒ GitHub Release、
+> 更新通道、国内主站都没动，**内容随 `1.91.13` 一起发**。下面这段正文保留原样。
+
 
 > 一键发布到社区（设备码授权，不收密码）；聚合邮箱的「删除」改成**必定进回收站**（原来是永久删）。
 
