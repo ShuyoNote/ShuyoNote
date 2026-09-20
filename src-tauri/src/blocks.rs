@@ -377,3 +377,144 @@ pub fn list_block_backlinks(db: State<'_, Db>, page_id: String) -> Result<Vec<Bl
     }
     Ok(out)
 }
+
+/// **CRDT 之后的"落盘形态"喂进块图/FTS** 这条实跑（我 2026-09-19 在
+/// `crdt-spike-q2-second-slice.reply-1` §一-② 里认下的那格，AMD 把输入前提钉住了）：
+///
+/// 前提（AMD 实测）：模型形态（`shuyo-paragraph` + id）过 `toLegacyDoc` ⇒
+/// **id 仍在顶层**、`type` 回到老形态、产物里没有 `shuyo-paragraph`。
+/// ⇒ 本判据要证明的是：**那样一份 JSON 真的喂进去，块表/块图/FTS 都正常**，
+/// 而不是"从形状看应该正常"。
+#[cfg(test)]
+mod crdt_legacy_input_tests {
+    use super::*;
+    use crate::search::sync_fts;
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    const SPACE: &str = "space-crdt-input";
+    const TARGET_BLOCK: &str = "22222222-2222-4222-8222-222222222222";
+    const SOURCE_BLOCK: &str = "11111111-1111-4111-8111-111111111111";
+    /// 只出现在**嵌套**里 —— 用来钉住"索引只取顶层块"（嵌套块不给身份）。
+    const NESTED_BLOCK: &str = "33333333-3333-4333-8333-333333333333";
+
+    /// 目标页：只有一个块，供块引用/嵌入指向。
+    fn target_doc() -> String {
+        json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": TARGET_BLOCK,
+              "children": [{ "type": "text", "text": "目标块" }] }
+        ]}})
+        .to_string()
+    }
+
+    /// 源页：**老形态**（`type` 是 `paragraph`/`heading`/…，不是 `shuyo-*`），顶层各带 `blockId`；
+    /// 含一条块引用、一条块嵌入、一个嵌套块（带 id 但**不该**被索引）以及表格/列表/代码块。
+    fn source_doc() -> String {
+        json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": SOURCE_BLOCK, "children": [
+                { "type": "text", "text": "见 " },
+                { "type": "blockref", "targetId": TARGET_BLOCK },
+                { "type": "text", "text": " 与下面的嵌入" }
+            ]},
+            { "type": "blockembed", "blockId": "44444444-4444-4444-8444-444444444444",
+              "targetId": TARGET_BLOCK },
+            { "type": "heading", "tag": "h2", "blockId": "55555555-5555-4555-8555-555555555555",
+              "children": [{ "type": "text", "text": "标题" }] },
+            { "type": "list", "listType": "bullet", "blockId": "66666666-6666-4666-8666-666666666666",
+              "children": [
+                { "type": "listitem", "blockId": NESTED_BLOCK,
+                  "children": [{ "type": "text", "text": "项" }] }
+              ]},
+            { "type": "code", "language": "rust", "blockId": "77777777-7777-4777-8777-777777777777",
+              "children": [{ "type": "code-highlight",
+                "children": [{ "type": "code-highlight__text", "text": "fn main() {}" }] }] },
+            { "type": "table", "blockId": "88888888-8888-4888-8888-888888888888",
+              "children": [{ "type": "tablerow", "children": [{ "type": "tablecell", "children": [
+                { "type": "paragraph", "children": [{ "type": "text", "text": "单元格" }] }
+              ]}]}]}
+        ]}})
+        .to_string()
+    }
+
+    fn space_db() -> Connection {
+        let c = Connection::open_in_memory().expect("内存库");
+        c.pragma_update(None, "foreign_keys", "ON").expect("开 FK");
+        crate::db::migrate(&c, SPACE).expect("建 schema");
+        for (id, title) in [("p-source", "源页"), ("p-target", "目标页")] {
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
+                 VALUES (?1, ?2, NULL, ?3, '{\"root\":{}}', '', 'page', 0, 1, 1, NULL)",
+                rusqlite::params![id, SPACE, title],
+            )
+            .expect("插页");
+        }
+        c
+    }
+
+    #[test]
+    fn legacy_shape_json_is_indexed_by_top_level_ids_only() {
+        let c = space_db();
+        upsert_blocks(&c, "p-target", &target_doc()).expect("目标页入索引");
+        let src = source_doc();
+
+        // `extract_block_ids` 是块表的输入口：**只取顶层**、顺序按文档顺序。
+        let ids = extract_block_ids(&src).expect("抽 id");
+        assert_eq!(ids.first().map(String::as_str), Some(SOURCE_BLOCK));
+        assert_eq!(ids.len(), 6, "顶层 6 个块：{ids:?}");
+        assert!(!ids.contains(&NESTED_BLOCK.to_string()), "嵌套块的 id **不该**被索引：{ids:?}");
+
+        upsert_blocks(&c, "p-source", &src).expect("源页入索引");
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p-source'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 6, "块表行数应等于顶层块数");
+        let nested: i64 = c
+            .query_row("SELECT COUNT(*) FROM blocks WHERE block_id = ?1", [NESTED_BLOCK], |r| r.get(0))
+            .unwrap();
+        assert_eq!(nested, 0, "嵌套块不许进块表");
+    }
+
+    #[test]
+    fn rebuild_block_graph_records_block_level_backlinks() {
+        let c = space_db();
+        upsert_blocks(&c, "p-target", &target_doc()).expect("目标页入索引");
+        let src = source_doc();
+        // `content_text` 用普通正文即可：它服务的是**页级**反链，不在本判据的断言范围里。
+        rebuild_block_graph(&c, "p-source", &src, "见 与下面的嵌入 标题").expect("重建块图");
+
+        let rows: Vec<(String, String)> = {
+            let mut st = c
+                .prepare("SELECT kind, target_block_id FROM backlinks WHERE source_page_id = 'p-source' AND source_block_id != '' ORDER BY kind")
+                .unwrap();
+            let it = st
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .unwrap();
+            it.map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(
+            rows,
+            vec![("embed".to_string(), TARGET_BLOCK.to_string()), ("link".to_string(), TARGET_BLOCK.to_string())],
+            "块引用与块嵌入各应记一条（按 kind 排序）"
+        );
+        // 幂等：再跑一次不该翻倍（`DELETE … WHERE source_block_id != ''` 那一步的承重判据）。
+        rebuild_block_graph(&c, "p-source", &src, "见 与下面的嵌入 标题").expect("重建块图（第二次）");
+        let again: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM backlinks WHERE source_page_id = 'p-source' AND source_block_id != ''",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(again, 2, "重建应当幂等，不许翻倍");
+    }
+
+    #[test]
+    fn fts_row_is_written_for_the_same_page() {
+        let c = space_db();
+        sync_fts(&c, "p-source", "源页", "见 与下面的嵌入").expect("写 FTS");
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_fts WHERE page_id = 'p-source'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "FTS 应当有且只有一行");
+    }
+}
