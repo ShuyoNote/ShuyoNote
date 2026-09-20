@@ -37,6 +37,11 @@ grep -c CreateFontIndirect src-tauri/vendor/pdfium/win-x64/bin/pdfium.dll   # 1�
 - 所以"给那台机器装 `msyh`+`simsun`"治不了 —— 它**看不到 fontconfig**（实测：装前装后读数一字不变）；
 - **base14 不受影响**（`text.pdf` 的 Helvetica/Times 编在库里）⇒ 这也是这条缺陷隐蔽的原因：
   对拍表上 `text.pdf` 照样 ✅，只有 `cjk.pdf` 那一行暴露它。
+- ★ **CMap 是编在库里的**（macOS 在完整 tarball 上数出来的：Linux/`libpdfium.so` 与 macOS/`.dylib` 都有
+  `UniGB-UCS2-H`；两边 `STSong-Light`/`Noto Sans CJK`/`Droid Sans Fallback` 都是 0）
+  ⇒ **D 缺的只是"字形数据"**，与路线选择一致；另：Linux 库里能抽出 PDFium 会去**点名要**的 CJK 字体名
+  （`SimSun`、`AR PL UMing CN/TW Light`、`WenQuanYi Micro Hei`、`AR PL UKai CN/TW`）——
+  **请求路径是通的，只是"没人应答"**。
 
 ## 2. 判据（先定"怎么算修好"，否则会做成"看着好了"）
 
@@ -49,10 +54,16 @@ grep -c CreateFontIndirect src-tauri/vendor/pdfium/win-x64/bin/pdfium.dll   # 1�
 | 5 | **体积预算**（若走随包字体）：Linux 包增量 ≤ **20 MB**；且写进发布说明 | 现 Linux 包里无任何字体文件 |
 | **6** | **★ 负向（硬判据，AMD 2026-09-20 提，已采纳）**：把随包字体**删掉再跑一次**，`cjk.pdf` 必须**回到 27000** | "变化确实来自这次改动"的唯一证明；**只跑正向就下结论**正是本仓最防的"看着好了" |
 | **7** | **★ Latin-only 不许变差（AMD 2026-09-20 提，已采纳）**：同一份 `scan.pdf`（非中文）在装/不装字体两次里**逐像素相同** | 两条腿：**按构造**（provider 只对 CJK/日韩/符号作答，其余一律 `None`，有单测守）＋ **按实测**（两次全表 diff 为空） |
+| **8** | **★ 见证（macOS 2026-09-20 提，已采纳并落地）**：`cjk.pdf` 那次渲染里 provider **确实被问过**（`被问 N 次`，N > 0）；无字体那次必须 `0` | 防"判据看着在岗、其实从没开火"：判据 1/4 都可能在这条路上看着绿而 `provide` 根本没被调用（分支写错/时机不对）。计数＋首次作答出声已实现；对拍表尾部打这行读数 |
 
-> ⚠️ **判据 6/7 已经脚本化**：`bash scripts/verify-bundled-font.sh [字体文件]`
+> ⚠️ **判据 6/7/8 已经脚本化**：`bash scripts/verify-bundled-font.sh [字体文件]`
 > —— 正/负向各跑一次对拍 ＋ 自动 diff 其余样本 ＋ **自检"正向必须比负向多画东西"**
-> （否则这次验证本身无效：字体没放上/ provider 没生效，两次其实都是"无字体"那一档）。
+> （否则这次验证本身无效：字体没放上/provider 没生效，两次其实都是"无字体"那一档）
+> ＋ 断言"正向被问 > 0 次、无字体那次 0 次"。
+>
+> ⚠️ macOS 另提的**"晚设无效"**（provider 必须在**加载文档之前**设好）**已被实测回答**：
+> 它落在 `pdfium_native.rs` 的初始化路径上（`Pdfium::new` 之后、任何文档加载之前），
+> 实测读数就是"**被问 4 次、答 1 次**" ⇒ 不是假设，是生效了。
 
 ## 3. 四条路线（**推荐 D**，理由在表下）
 
@@ -61,7 +72,7 @@ grep -c CreateFontIndirect src-tauri/vendor/pdfium/win-x64/bin/pdfium.dll   # 1�
 | **D ★推荐** | **随包一个 OFL 中文字体 ＋ 应用侧实现 `PdfiumCustomFontProvider`**（`pdfium-render` 已暴露 `FPDF_SetSystemFontInfo`） | 1–2 人日 ＋ 一次打包改动 | 包体积 +10~16 MB；字形与"原文档意图"未必一致（但**比不显示好**）；CJK 缺字面残留（可后补子集） |
 | **C 兜底** | 不修引擎：**这类文档路由到 pdf.js**（本仓已随包带 `pdfjs/cmaps` ＋ `standard_fonts`） | 0.5–1 人日 | 慢、且"引擎选择"变复杂；要一条判据判断"文档有没有非嵌入字体"（pdf.js 的字体列表能拿到） |
 | **A 治本但重** | **自建带 fontconfig 的 `libpdfium.so`**（Chromium/depot_tools 工具链） | 3–5 人日 ＋ CI 镜像 | 供应链变重；产物要能被 `fetch-pdfium.mjs` 用 sha256 钉住；GN 开关名**待证** |
-| **B 便宜的先探** | 找**已带 fontconfig 的预编译包**（第三方/发行版构建）替代 bblanchon 包 | 0.5 人日（探） | 版本必须仍是 **build 7881**（与 `pdfium-render` 的 `pdfium_7881` feature 锁死）；来路与许可要过一遍 |
+| ~~**B 便宜的先探**~~ **✅ 已探明：无**（macOS，2026-09-20） | 找**已带 fontconfig 的预编译包**（第三方/发行版构建）替代 bblanchon 包 | 已花 | 取回的就是我们钉死的那份（sha256 相符），它**自带的 `args.gn`** 里**没有 `pdf_use_fontconfig`**（既不是 `true` 也不是 `false`）；与 Windows 侧量的「`FcInit` 0 个 / `ldd` 6 行」是**两份独立证据、同一个结论** ⇒ 要"带 fontconfig 的 7881"只能自己编（= 路线 A）。边界：NuGet 上同作者的再分发包**未实查**（到 nuget.org 不通） |
 
 **为什么推荐 D 而不是 A**：A 要一条 Chromium 构建链才能换来"多一个系统字体来源"，而**我们真正缺的只是字体数据**；
 D 用**已有的公开 API**（`Pdfium::set_custom_font_provider`，见 §4）把"字体数据"直接喂给 PDFium，
@@ -74,10 +85,10 @@ C 作为"万一 D 的字形不可接受"的兜底保留。
 >
 > | 什么 | 在哪 / 读数 |
 > |---|---|
-> | 实现 | `feat/pdfium-bundled-font @ 246250ec`：`BUNDLED_FONT_CANDIDATES` ＋ `BundledCjkFont`（`PdfiumCustomFontProvider`）＋ **只在"库目录旁真有字体文件"时** `set_custom_font_provider` |
-> | 判据（不需要真渲染 ⇒ Windows 上就能跑） | 3 条新判据；`pdfium_native` **6 passed**（`scripts/win-cargo-test.ps1`） |
-> | 实机验证 | WSL2：**有字体 `cjk.pdf` 墨迹 29034**（+2034 文字像素，**目视「中文测试」**）／**无字体回到 27000**；其余五个样本**两次一字不变** |
-> | 脚本 | `bash scripts/verify-bundled-font.sh [字体文件]`（判据 6/7 都脚本化，且**自检**"正向必须多画"） |
+> | 实现 | `feat/pdfium-bundled-font @ 83372bdd`：`BUNDLED_FONT_CANDIDATES` ＋ `BundledCjkFont`（`PdfiumCustomFontProvider`）＋ **只在"库目录旁真有字体文件"时** `set_custom_font_provider` ＋ **见证计数**（被问/作答，首次作答出声） |
+> | 判据（不需要真渲染 ⇒ Windows 上就能跑） | 4 条新判据；`pdfium_native` **7 passed**（`scripts/win-cargo-test.ps1`） |
+> | 实机验证 | WSL2：**有字体 `cjk.pdf` 墨迹 29034**（+2034 文字像素，**目视「中文测试」**）／**无字体回到 27000**；其余五个样本**两次一字不变**；**见证：正向被问 4 次、答 1 次；无字体那次 0 次** |
+> | 脚本 | `bash scripts/verify-bundled-font.sh [字体文件]`（判据 6/7/8 都脚本化，且**自检**"正向必须多画"） |
 > | 证据 | 信箱 `pdfium-p3/visual-check-cjk/`（含"有字体"那张 PNG 与全部命令） |
 >
 > ⚠️ **口径改动（相对本施工单 §7 原稿）**：安装条件从"**只在 Linux 装**"改成"**库旁真有那个字体文件才装**" ——
@@ -181,6 +192,6 @@ cd src-tauri && SHUYONOTE_PDFIUM_DIR=<...>/vendor/pdfium/linux-x64/lib \
 
 - 母方案：§0.3-O（读数与"只报不判"的理由）、§4 **P4** 行加一条风险：**"Linux 上带库 ≠ 字能显示"**；
 - `scripts/fetch-pdfium.mjs`：五个平台 sha256 **都已实测填好**（不再是 P4 拦路石 G）；
-  若最终走路线 A/B，这里要加"自建包/替代包"的来源与哈希；
-- 对拍表：macOS 侧正在加「**非矩形墨迹**」列（只报不判）——**本施工单的判据 1 就是那一列**；
+  若最终走路线 A/B，这里要加"自建包/替代包"的来源与哈希 —— **B 已探明为无**（§3），所以只剩 A；
+- 对拍表：macOS 已加「**非矩形墨迹**」列与表头那句（只报不判）——**本施工单的判据 1 就是那一列**；
 - 证据：信箱 `pdfium-p3/visual-check-cjk/`（`readings.md` 有全部命令）。
