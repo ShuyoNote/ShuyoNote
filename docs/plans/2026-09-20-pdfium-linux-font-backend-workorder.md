@@ -47,6 +47,12 @@ grep -c CreateFontIndirect src-tauri/vendor/pdfium/win-x64/bin/pdfium.dll   # 1�
 | 3 | **回归面**：`text/scan/rotate90/alpha/a0-large` 在 Linux 上仍**全绿**（`scan` 硬判据 0 差） | `cargo test pdf_engine_compare` |
 | 4 | **不依赖系统状态**：把测试机的中文字体卸掉（`fc-list` 回 8 条）后判据 1 仍成立 | 随包字体/自建库必须是**自带**的 |
 | 5 | **体积预算**（若走随包字体）：Linux 包增量 ≤ **20 MB**；且写进发布说明 | 现 Linux 包里无任何字体文件 |
+| **6** | **★ 负向（硬判据，AMD 2026-09-20 提，已采纳）**：把随包字体**删掉再跑一次**，`cjk.pdf` 必须**回到 27000** | "变化确实来自这次改动"的唯一证明；**只跑正向就下结论**正是本仓最防的"看着好了" |
+| **7** | **★ Latin-only 不许变差（AMD 2026-09-20 提，已采纳）**：同一份 `scan.pdf`（非中文）在装/不装字体两次里**逐像素相同** | 两条腿：**按构造**（provider 只对 CJK/日韩/符号作答，其余一律 `None`，有单测守）＋ **按实测**（两次全表 diff 为空） |
+
+> ⚠️ **判据 6/7 已经脚本化**：`bash scripts/verify-bundled-font.sh [字体文件]`
+> —— 正/负向各跑一次对拍 ＋ 自动 diff 其余样本 ＋ **自检"正向必须比负向多画东西"**
+> （否则这次验证本身无效：字体没放上/ provider 没生效，两次其实都是"无字体"那一档）。
 
 ## 3. 四条路线（**推荐 D**，理由在表下）
 
@@ -64,7 +70,24 @@ C 作为"万一 D 的字形不可接受"的兜底保留。
 
 ## 4. 路线 D 的施工点（**确切到文件/行**）
 
-**现状**（`src-tauri/src/pdfium_native.rs:243-254`）：
+> ## ✅ 已落地并验完（2026-09-20，Windows 侧）
+>
+> | 什么 | 在哪 / 读数 |
+> |---|---|
+> | 实现 | `feat/pdfium-bundled-font @ 246250ec`：`BUNDLED_FONT_CANDIDATES` ＋ `BundledCjkFont`（`PdfiumCustomFontProvider`）＋ **只在"库目录旁真有字体文件"时** `set_custom_font_provider` |
+> | 判据（不需要真渲染 ⇒ Windows 上就能跑） | 3 条新判据；`pdfium_native` **6 passed**（`scripts/win-cargo-test.ps1`） |
+> | 实机验证 | WSL2：**有字体 `cjk.pdf` 墨迹 29034**（+2034 文字像素，**目视「中文测试」**）／**无字体回到 27000**；其余五个样本**两次一字不变** |
+> | 脚本 | `bash scripts/verify-bundled-font.sh [字体文件]`（判据 6/7 都脚本化，且**自检**"正向必须多画"） |
+> | 证据 | 信箱 `pdfium-p3/visual-check-cjk/`（含"有字体"那张 PNG 与全部命令） |
+>
+> ⚠️ **口径改动（相对本施工单 §7 原稿）**：安装条件从"**只在 Linux 装**"改成"**库旁真有那个字体文件才装**" ——
+> 更强也更可判据：Windows/macOS 的包不随字体 ⇒ 行为**逐字节不变**；同一个二进制在两种机器上都能自证，
+> 回退就是删文件。**结论：§7 里"是否全平台统一装"这一条结案**（不是按平台分支，是按"文件在不在"）。
+>
+> ⚠️ 这次实机验证用的字节是 Windows 的 `simhei.ttf`（**只在本机实验、不随包**）；随包仍必须是
+> **OFL** 的 Noto Sans SC / Source Han Sans，且要过判据 5 的体积预算 —— **打包那一步仍未做**。
+
+**现状**（`src-tauri/src/pdfium_native.rs:243-254`，**改造前**）：
 
 ```rust
 let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
@@ -112,8 +135,18 @@ let _ = PDFIUM.set(pdfium);
 
 ## 5. 验收怎么做（**用现成工具，不新造**）
 
+**一条命令**（判据 6/7 都在里面，且脚本会自检"这次验证有没有效"）：
+
+```bash
+bash scripts/verify-bundled-font.sh [字体文件]   # 默认 /mnt/c/Windows/Fonts/simhei.ttf（仅本机实验用）
+```
+
+它做的事就是下面三步 —— 展开写是为了让人知道**每一步在防什么**：
+
 ```bash
 # 0) 候选字体放到"库目录旁"（env 变量的目录就是库目录 ⇒ 测试时不用改代码路径）
+#    ⚠️ 先 rm 再 cp：从 Windows 字体目录拷来的文件带只读位，直接 cp 会 "Permission denied"，
+#    而那时上一轮的字体还在 ⇒ 两次拿到同一个读数、看起来"跑通了"（第一版脚本踩过）
 cp NotoSansSC-Regular.otf <worktree>/src-tauri/vendor/pdfium/linux-x64/lib/
 # 1) 跑对拍（就是今天那条命令）
 cd src-tauri && SHUYONOTE_PDFIUM_DIR=<...>/vendor/pdfium/linux-x64/lib \
@@ -121,23 +154,28 @@ cd src-tauri && SHUYONOTE_PDFIUM_DIR=<...>/vendor/pdfium/linux-x64/lib \
 # 2) 看 cjk.pdf 那一行：非矩形墨迹 > 0（现在 Linux 上是 0）+ 落盘 RGBA 转 PNG 人看一眼
 ```
 
-⚠️ **负向验收别忘**：把 `NotoSansSC-Regular.otf` **删掉**再跑一次 ⇒ 必须回到"文字 0 像素"
+⚠️ **负向验收别忘**（判据 6，**硬**）：把字体 **删掉**再跑一次 ⇒ 必须回到"文字 0 像素"
 （证明"变好"确实来自这次改动，而不是环境里别的字体）—— 这是本仓"变异实测"的既有做法。
+⚠️ 还有一条**元判据**：正向必须比负向**多画出东西**，否则这次验证**无效**（字体没放上/provider 没生效），
+别把它读成"路线 D 不生效"。脚本里已经把它写成会红的那一步。
 
-## 6. 分工与顺序
+## 6. 分工与顺序（**2026-09-20 更新：第 1、2 步已做完**）
 
-1. **Windows**：本施工单 ＋ `BundledCjkFont`＋`provide` 的实现与单测（`provide` 是纯函数，可在 Windows 上测：
-   给一个 CJK 请求必须回非空 `data`、给 Latin 请求必须回 `None`）；
-2. **AMD(WSL2)**：判据 1/2/4/5 的读数（**WSL 就能验**，不需要真机 Linux）；
-3. **Linux 打包那一位**：`tauri.linux.conf.json` 的 resources ＋ 体积实测 ＋ 发布说明一句话；
+1. ~~**Windows**：实现 ＋ 单测~~ ⇒ **✅ 已做完**（`feat/pdfium-bundled-font @ 246250ec`，`pdfium_native` 6 passed）；
+2. ~~**AMD(WSL2)**：判据 1/2/4 的读数~~ ⇒ **✅ 我已跑完**（29034 / 27000，见 §4）；
+   AMD 那一趟**降级为"独立复现"**（仍有价值：验证**另一台 Linux 的 PDFium 是不是同样没有字体后端**），不阻塞任何人；
+3. **Linux 打包那一位**（**仍未做，是现在唯一的前置**）：`tauri.linux.conf.json` 的 resources 放随包字体
+   ＋ 体积实测（判据 5）＋ 发布说明一句话；**选哪份 OFL 字体、许可原文放哪**也在这步定；
 4. **macOS**：路线 B 的"探一眼"（他那边网络能到 GitHub）＋ 必要时做 D 在 macOS 上的**行为不变**复核。
 
 ## 7. 未决（**别当已定**）
 
 - **路线 A 的 GN 开关名**：待证（候选 `use_fontconfig`，需在有 `depot_tools` 的机器上 `gn args --list | grep -i font`）；
 - **Android**：现在无 `jniLibs` ⇒ 走 pdf.js 回退。D 是否也覆盖 Android？⇒ 若 Android 打不进字体资源，**保持 pdf.js**；
-- **是否全平台统一装 provider**：保守起见**只在 Linux 装**（Windows/macOS 平台映射已正确，装了反而可能与系统字体抢优先级）；
-- **CJK 缺字面**：单一无衬线字体覆盖不全（生僻字/日韩汉字字形差异）⇒ 残留风险写进发布说明，别写成"中文全好了"。
+- ~~**是否全平台统一装 provider**~~ ⇒ **已定（2026-09-20）**：不按平台分支，**按"库旁文件在不在"**
+  （Windows/macOS 不随字体 ⇒ 行为逐字节不变；Linux 随了就生效）。回退 = 删文件；
+- **CJK 缺字面**：单一无衬线字体覆盖不全（生僻字/日韩汉字字形差异）⇒ 残留风险写进发布说明，别写成"中文全好了"；
+- **随包字体本身仍未定**：选哪一份 OFL 字体、体积、许可原文放哪（§4）—— **打包那一步没做**，实机验证用的是本机的 `simhei.ttf`。
 
 ## 8. 挂接
 
