@@ -6,6 +6,24 @@
 
 ### 修复
 
+- **AI 助手页眉的齿轮（设置）按钮偏心了**（2026-09-20 用户截图：「设置按钮偏心了」）。
+  根因是**类名撞车**：按钮写的是 `ai-header-btn ai-settings`，而设置**弹窗容器**也叫 `.ai-settings`
+  （下面那条 `width: min(840px,…); aspect-ratio; border; border-radius; background` 的规则）。
+  两者同名，弹窗那条后写、权重又一样 ⇒ 把按钮自己的 `display: grid; place-items: center`
+  与 `.ai-header-btn` 的 `border: none` **一起顶掉**：按钮变成 `display:flex; flex-direction:column`，
+  图标被丢到左上角（24px 按钮里偏上 3px；窄屏 `min-height:44px` 时偏上 13px），
+  还白拿了一圈描边、白底与一个圆形轮廓（`--radius-lg` 在 24px 盒子上被夹成 12px ＝ 正圆）——
+  用户截图里那个"偏心"的圆就是这么来的。
+  修法：按钮类名改成 `.ai-settings-btn`（弹窗容器保留 `.ai-settings`，两边不再同名），
+  组件与样式两处都写了注释说明**不许改回去**。
+  判据：`scripts/check-panel-layout.mjs` 加 3 条**几何**断言（真实 Chromium ＋ 真实 App.css）：
+  夹具里放与组件同构的页眉（**必须写对类名**，写错这条判据就永远绿），量「图标中心 − 按钮中心」
+  的偏移（容差 1px），并钉住按钮实际拿到的 `display:grid` / 圆角 6px / 描边 0。
+  变异验证：把夹具与样式改回旧类名跑一遍 = 红（实测偏移 y −13.0px、描边 1px、圆角 16px）；
+  改后 `check-panel-layout` 40 通过 / 0 失败。基线 `tests/baseline.json` 的 `check-panel-layout`
+  随之 25 → 40（工具本来就在喊"基线只有读数 63%，抬到实际值"），`docs/TESTING.md` 的表同步。
+  ⚠️ 这类毛病单测看不见（happy-dom 不做布局，`getBoundingClientRect` 全是 0）、类型检查也看不见。
+
 - **桌面端 AI 调用被权限系统整体拒掉**（用户报「PDF 阅读器 AI 识别出错」，缺陷 #9）：
   `capabilities/default.json` 里只写了字符串 `"http:default"` —— 而 `http` 插件自带的 `default.toml`
   写明它 *"enables all fetch operations but **does not allow explicitly any origins to be fetched**.
