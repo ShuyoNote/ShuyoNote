@@ -20365,8 +20365,87 @@ body.is-plugin-panel-open .main {
   max-height: 34vh;
   overflow: auto;
 }
-/* 「正文预览」那一行：左边标题、右边「看 Markdown 源码 / 看渲染效果」。 */
-.community-save-preview-row {
+/* 板块 / 标签这两行：左边小标题、右边控件（清单里唯一的两个**可编辑**项）。 */
+.community-save-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.community-save-field > .community-save-preview-meta { flex: none; margin-top: 0; }
+.community-save-board {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.community-save-tags {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.community-save-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  max-width: 100%;
+  word-break: break-all;
+}
+.community-save-tag-x {
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.community-save-tag-x:hover { color: var(--danger); }
+.community-save-tag-input {
+  flex: 1 1 90px;
+  min-width: 90px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.community-save-tag-hint { font-size: 11px; color: var(--text-faint); }
+.community-save-tag-suggest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.community-save-tag-suggest-item {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.community-save-tag-suggest-item:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+.community-save-tag-suggest-item:disabled { opacity: 0.45; cursor: default; }
+/* 「正文预览」那一行：左边标题、右边「看 Markdown 源码 / 看渲染效果」。 */.community-save-preview-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;

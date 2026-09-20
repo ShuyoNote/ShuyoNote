@@ -1,4 +1,4 @@
-﻿// **「发布到社区」：没点确认就绝不上传、绝不发帖（I7），清单要说清"将要发出去的是什么"，
+// **「发布到社区」：没点确认就绝不上传、绝不发帖（I7），清单要说清"将要发出去的是什么"，
 // 上传失败就停在那里，结果按 status 分支。**
 //
 // 这一屏是 P0 的落点，把五段串在一起（连接 → 清单 → 上传图片 → 发帖 → 结果）。每段单独看都不复杂，
@@ -228,6 +228,28 @@ const togglePreviewView = () => {
 };
 const renderedPreview = () => document.querySelector(".community-save-preview-body.is-rendered");
 
+/** 板块下拉 / 标签芯片那几个可编辑控件（清单里唯一的两个**可编辑**项）。 */
+const boardValue = () => document.querySelector<HTMLSelectElement>(".community-save-board")?.value;
+/** 标签芯片的**文字**（去掉那个 ✕ 按钮的字）。 */
+const tagTexts = () =>
+  Array.from(document.querySelectorAll(".community-save-tag")).map((e) =>
+    (e.textContent ?? "").replace("✕", "").trim(),
+  );
+const tagInput = () => document.querySelector<HTMLInputElement>(".community-save-tag-input");
+const addTagByTyping = (t: string) => {
+  const input = tagInput()!;
+  // React 受控输入：直接改 `input.value` 它看不见（值被 value tracker 记着），
+  // 得走原型上的 setter 再派发 input 事件。
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  flushSync(() => {
+    setter.call(input, t);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  flushSync(() => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+};
+
 /** 社区回的上传结果：`url` 是**相对路径**（正文里就这么引用）。 */
 const uploaded = (localHash: string) => ({
   localHash,
@@ -255,6 +277,18 @@ const OK_RESULT = {
  * 若在这里落成"没准备的命令 ⇒ 失败"，测的就变成"后端不认识这条命令"这种现实里不存在的情形。
  * 每个测试可以用 `over` 覆盖其中任意一条（例如造"这份内容发过"或"指纹算不出来"）。
  */
+/** 社区侧的板块/标签词表（公开只读，打开发布清单时读一次）。 */
+const TAXONOMY = {
+  boards: [
+    { slug: "start", name: "发现/上手", description: "", posts: 1 },
+    { slug: "workflows", name: "实战工作流", description: "", posts: 2 },
+    { slug: "qa", name: "问答/求助", description: "", posts: 4 },
+    { slug: "plugins", name: "插件/主题", description: "", posts: 2 },
+  ],
+  tags: ["ShuyoNote", "插件", "理念", "社区"],
+  error: "",
+};
+
 function backend(
   over: Record<string, (args?: unknown) => unknown | Promise<unknown>> = {},
 ): (cmd: string, args?: unknown) => Promise<unknown> {
@@ -264,6 +298,7 @@ function backend(
     if (cmd === "community_connection") return Promise.resolve(CONNECTION);
     if (cmd === "community_publish_state") return Promise.resolve(null);
     if (cmd === "community_content_rev") return Promise.resolve(FINGERPRINT);
+    if (cmd === "community_taxonomy") return Promise.resolve(TAXONOMY);
     return Promise.reject(new Error(`测试没准备的命令：${cmd}`));
   };
 }
@@ -272,6 +307,9 @@ beforeEach(() => {
   mocks.invoke.mockReset();
   mocks.openUrl.mockReset();
   mocks.openUrl.mockResolvedValue(undefined);
+  // 「上次选过的板块」是本机记住的（localStorage）—— 不清就会从这个测试串到下一个，
+  // 表现成"我明明没选，怎么发出去带了 qa"。
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -449,7 +487,9 @@ describe("内容指纹（community_content_rev）：比的是内容，正文必�
     expect(call).toBeTruthy();
     const args = call[1] as { title: string; body: string; tags: string[] };
     expect(args.title).toBe(NOTE.title);
-    expect(args.tags).toEqual(NOTE.tags);
+    // 指纹吃的是**清单里那份标签**（已按社区规则规范化 ⇒ 英文小写）—— 与发帖时递下去的是同一份，
+    // 否则"清单、指纹、发出去的正文"三者不同源，幂等就会算在另一份内容上。
+    expect(args.tags).toEqual(["插件", "markdown"]);
     // 本机图片的引用**原样**在正文里：这才是"这份内容"的样子。
     expect(args.body).toContain("attachment://localhost/C%3A/hash-a.png");
     // 关键：**不能**是换过图片地址的那一份 —— 拿它算指纹会让同一篇笔记因为上传结果
@@ -517,7 +557,9 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
     expect(text()).toContain("发布前清单");
     expect(text()).toContain(NOTE.title);
     expect(text()).toContain("#插件");
-    expect(text()).toContain("#Markdown");
+    // 标签按**社区的规则**规范化后摆出来：`Markdown` → `markdown`（社区写入时就转小写，
+    // 清单里显示成社区会存下的那个样子，免得"清单一个样、线上另一个样"）。
+    expect(text()).toContain("#markdown");
     // 字数：整篇正文的字符数（owner 2026-09-20 拍板：发整篇，不做默认截断）
     expect(text()).toContain(`整篇全文 ${pageContentToMarkdown(PLAIN_JSON).length} 字`);
     // 全文两行都在——**不是摘要**
@@ -618,15 +660,15 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
   });
 
   // 社区收标签的规则是它自己的：`tags::normalize` 一个逗号串、最多 5 个、每个 ≤16 字。
-  // Rust 侧 `build_payload` 按同一套裁，这条判据盯的是**界面有没有跟着说**（别让用户
-  // 到社区页面上才发现少了几个）。2026-09-21 顺手补上：那天才发现标签在线上还发不成。
-  it("标签超过社区上限（>5 个）⇒ 清单**发之前**就说清「只会带前 5 个」", async () => {
+  // Rust 侧 `build_payload` 按同一套裁；2026-09-21 之后界面**直接按上限约束输入**，
+  // 所以"清单里 8 个、线上只存 5 个"这种静默丢失不再可能 —— 预填超了也会裁到 5 个并说明。
+  it("预填的笔记标签超过社区上限（>5 个）⇒ 清单里只留前 5 个，并说明规则", async () => {
     mocks.invoke.mockImplementation(backend());
     mount({ tags: ["t1", "t2", "t3", "t4", "t5", "t6"] });
     await vi.waitFor(() => is(byText("确认发布")));
 
-    expect(text()).toContain("社区最多收 5 个标签");
-    expect(text()).toContain("只会带前 5 个");
+    expect(tagTexts()).toEqual(["#t1", "#t2", "#t3", "#t4", "#t5"]);
+    expect(text()).toContain("社区规则");
     // 仍然是只读清单：一个字都没发出去
     expect(called("community_publish_note")).toHaveLength(0);
   });
@@ -635,7 +677,120 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
     mocks.invoke.mockImplementation(backend());
     mount({ tags: ["一二三四五六七八九十一二三四五六七"] });
     await vi.waitFor(() => is(byText("确认发布")));
-    expect(text()).toContain("超长的会被截断");
+    expect(text()).toContain("社区规则");
+    expect(text()).toContain("每个 ≤16 字");
+  });
+});
+
+// **owner 2026-09-21：「板块和标签怎么解决好？」** —— 结论是**两个都让人自己定**：
+// 板块从社区给的列表里选（我们还不能改已发布的帖 ⇒ 猜错只能去网页改），
+// 标签直接在清单里编辑（笔记里没有、或者跟社区词表对不上时，此前只能空着发）。
+describe("板块与标签：清单里就能定（owner 2026-09-21）", () => {
+  it("板块下拉只摆社区给的列表（含「不选板块」），选中的 slug 随发帖参数出去", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_note: () => OK_RESULT }));
+    // 这篇笔记没有标签 ⇒ 没有可预选的板块，默认就是"未分类"
+    mount({ tags: [] });
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    // 选项来自 `community_taxonomy`（认不出的 slug 社区会静默当未分类 ⇒ 白名单在界面这一侧）
+    const options = Array.from(document.querySelectorAll<HTMLOptionElement>(".community-save-board option"));
+    expect(options.map((o) => o.value)).toEqual(["", "start", "workflows", "qa", "plugins"]);
+    expect(text()).toContain("问答/求助");
+    expect(boardValue()).toBe(""); // 默认未分类
+
+    flushSync(() => {
+      const sel = document.querySelector<HTMLSelectElement>(".community-save-board")!;
+      sel.value = "qa";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(boardValue()).toBe("qa"));
+
+    flushSync(() => byText("确认发布").click());
+    await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
+    const args = called("community_publish_note")[0][1] as { board?: string; tags: string[] };
+    expect(args.board).toBe("qa");
+    expect(args.tags).toEqual([]); // 这篇笔记没有标签（这个用例就是拿"没标签"造的）
+  });
+
+  it("**未分类**时连 board 字段都不传（不是发一个空串）", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_note: () => OK_RESULT }));
+    mount({ tags: [] });
+    await vi.waitFor(() => is(byText("确认发布")));
+    expect(boardValue()).toBe("");
+
+    flushSync(() => byText("确认发布").click());
+    await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
+    const args = called("community_publish_note")[0][1] as Record<string, unknown>;
+    expect("board" in args ? args.board : undefined).toBeUndefined();
+  });
+
+  it("笔记标签跟板块对得上就**预选**（清单里看得见、改得动）", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ tags: ["插件"] });
+    await vi.waitFor(() => is(byText("确认发布")));
+    await vi.waitFor(() => expect(boardValue()).toBe("plugins"));
+  });
+
+  it("标签可编辑：能加（回车/逗号）、能删、按社区规则规范化、满 5 个就不再收", async () => {
+    mocks.invoke.mockImplementation(backend({ community_publish_note: () => OK_RESULT }));
+    mount({ tags: [] });
+    await vi.waitFor(() => is(byText("确认发布")));
+
+    // 笔记没有标签时也能加（此前只能空着发）
+    addTagByTyping("#ShuyoNote");
+    await vi.waitFor(() => expect(tagTexts()).toContain("#shuyonote"));
+    addTagByTyping("插件");
+    await vi.waitFor(() => expect(tagTexts()).toEqual(["#shuyonote", "#插件"]));
+    addTagByTyping("shuyonote"); // 与已有的同一个（大小写无关）
+    expect(tagTexts()).toHaveLength(2);
+
+    // 删一个
+    flushSync(() => document.querySelector<HTMLButtonElement>(".community-save-tag-x")!.click());
+    expect(tagTexts()).toEqual(["#插件"]);
+
+    // 加满 5 个之后输入框消失（不静默丢第 6 个）
+    for (const t of ["a", "b", "c", "d"]) {
+      if (tagInput()) addTagByTyping(t);
+    }
+    await vi.waitFor(() => expect(tagTexts()).toHaveLength(5));
+    expect(tagInput()).toBeNull();
+    expect(text()).toContain("已满 5 个");
+
+    // 发出去的就是界面上这 5 个
+    flushSync(() => byText("确认发布").click());
+    await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
+    const args = called("community_publish_note")[0][1] as { tags: string[] };
+    expect(args.tags).toEqual(["插件", "a", "b", "c", "d"]);
+  });
+
+  it("社区已有标签可一键加；拿不到词表时**说出来但不挡发布**", async () => {
+    mocks.invoke.mockImplementation(
+      backend({
+        community_taxonomy: () => ({ boards: [], tags: [], error: "拿不到板块列表（请求超时）" }),
+        community_publish_note: () => OK_RESULT,
+      }),
+    );
+    mount();
+    await vi.waitFor(() => is(byText("确认发布")));
+    await vi.waitFor(() => expect(text()).toContain("板块/标签建议没拿到"));
+
+    // 没有板块可选 ⇒ 仍是"不选板块"，而且**照样能发**
+    expect(document.querySelectorAll(".community-save-board option")).toHaveLength(1);
+    flushSync(() => byText("确认发布").click());
+    await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
+  });
+
+  it("社区已有标签一点就加（用社区自己的词表，免得同一个词分裂成好几页）", async () => {
+    mocks.invoke.mockImplementation(backend());
+    mount({ tags: [] });
+    await vi.waitFor(() => is(byText("确认发布")));
+    await vi.waitFor(() => expect(document.querySelectorAll(".community-save-tag-suggest-item").length).toBeGreaterThan(0));
+
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>(".community-save-tag-suggest-item")).find(
+      (b) => (b.textContent ?? "").includes("理念"),
+    )!;
+    flushSync(() => item.click());
+    await vi.waitFor(() => expect(tagTexts()).toContain("#理念"));
   });
 });
 
@@ -653,7 +808,11 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
     expect(called("community_publish_note")[0][1]).toEqual({
       title: NOTE.title,
       body: pageContentToMarkdown(PLAIN_JSON),
-      tags: NOTE.tags,
+      // 标签按社区规则规范化（`Markdown` → `markdown`）后才发出去
+      tags: ["插件", "markdown"],
+      // 板块：这篇笔记的标签 `插件` 对得上社区板块「插件/主题」⇒ 清单里**预选**了它
+      // （看得见、改得动；"不选板块"那条判据在下面单独钉着）
+      board: "plugins",
       noteId: NOTE.noteId,
       rev: FINGERPRINT,
     });
