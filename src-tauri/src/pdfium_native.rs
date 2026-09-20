@@ -540,6 +540,22 @@ struct BundledCjkFont {
     next_id: u64,
 }
 
+/// **见证**：随包字体被问过几次 / 答了几次（macOS 2026-09-20 提）。
+///
+/// 为什么要这个计数器：判据 4 与"非矩形墨迹 > 0"都可能在这条路上**看着绿**，而 `provide`
+/// 其实从没被调用过（分支写错、时机不对都行）—— 本仓吃过"判据看着在岗、其实从没开火"。
+/// 有了它，"这次渲染里它**真的被问过**"是可以断言的，而不是靠"我装了所以应该生效"。
+static FONT_ASKS: AtomicU64 = AtomicU64::new(0);
+static FONT_ANSWERS: AtomicU64 = AtomicU64::new(0);
+
+/// `(被问次数, 作答次数)` —— 只在装了随包字体的进程里会 > 0。对拍测试把它打进表里（见证）。
+pub fn bundled_font_stats() -> (u64, u64) {
+    (
+        FONT_ASKS.load(Ordering::Relaxed),
+        FONT_ANSWERS.load(Ordering::Relaxed),
+    )
+}
+
 impl BundledCjkFont {
     fn new(face: String, data: Vec<u8>) -> Self {
         Self { face, data, next_id: 0 }
@@ -555,8 +571,18 @@ impl PdfiumCustomFontProvider for BundledCjkFont {
         &mut self,
         request: PdfiumCustomFontProviderRequest,
     ) -> Option<PdfiumCustomFontProviderResponse> {
+        FONT_ASKS.fetch_add(1, Ordering::Relaxed);
         if !wants_bundled_font(&request.character_set) {
             return None;
+        }
+        let n = FONT_ANSWERS.fetch_add(1, Ordering::Relaxed) + 1;
+        // 第一次作答时**出声一次**：真机上"随包字体到底有没有被用上"要能从日志看出来，
+        // 而不是只能相信"文件放了所以应该生效"。
+        if n == 1 {
+            eprintln!(
+                "[pdf] 随包字体**首次被 PDFium 问到**（请求名 `{}`）⇒ 它真的在用这份字体，不是摆着",
+                request.font_face
+            );
         }
         // 每个响应要一个**唯一 id**（PDFium 之后用它当字体句柄）。
         self.next_id += 1;
@@ -698,6 +724,13 @@ mod tests {
     //
     // 这几条都**不需要真的渲染**，所以在 Windows 上也能跑（本机 `cargo test` 要过
     // `scripts/win-cargo-test.ps1` 那道 manifest 关，见 `docs/TESTING.md`「已知边界」）。
+    //
+    // ⚠️ 见证计数器是**进程级**的，而 `cargo test` 默认多线程并行 ⇒ 碰它的两条判据
+    // 必须串起来跑，否则断言互相干扰（第一版就这么红的：`left: 2 / right: 1`）。
+    static FONT_COUNTER_LOCK: Mutex<()> = Mutex::new(());
+    fn font_counter_guard() -> std::sync::MutexGuard<'static, ()> {
+        FONT_COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     /// 判据：只对 **CJK/日韩/符号**这几类字符集作答，其余一律 `None`。
     ///
@@ -733,6 +766,7 @@ mod tests {
     /// 判据：`provide` 对 CJK 请求回**同一份字节**，且 `id` **逐次唯一**（PDFium 用它当句柄）。
     #[test]
     fn bundled_font_provides_the_same_bytes_with_unique_ids() {
+        let _g = font_counter_guard();
         let data = vec![7u8; MIN_BUNDLED_FONT_BYTES as usize + 1];
         let mut font = BundledCjkFont::new("TestFace".to_string(), data.clone());
 
@@ -776,6 +810,43 @@ mod tests {
             .is_none(),
             "非 CJK 请求必须答 None"
         );
+    }
+
+    /// 判据：**见证计数器真的会动** —— 被问就 +1，CJK 就 +1 作答，Latin 只加"被问"。
+    ///
+    /// 这条守的是"判据看着在岗、其实从没开火"那一族（macOS 提的）：若哪天 `provide` 被接错、
+    /// 或者计数器忘了加，**只有本条会红** —— 对拍表上"非矩形墨迹"那列是只报不判，看不出来。
+    #[test]
+    fn bundled_font_counts_asks_and_answers() {
+        let _g = font_counter_guard();
+        let (asks0, answers0) = bundled_font_stats();
+        let mut font = BundledCjkFont::new("TestFace".to_string(), vec![1u8; 2048]);
+
+        let _ = font.provide(PdfiumCustomFontProviderRequest {
+            font_face: "SimSun".to_string(),
+            character_set: PdfFontCharacterSet::ChineseGb2312,
+            weight: PdfFontWeight::Weight400Normal,
+            is_italic: false,
+            is_fixed_pitch: false,
+            is_serif: true,
+            is_cursive: false,
+        });
+        let (asks1, answers1) = bundled_font_stats();
+        assert_eq!(asks1, asks0 + 1, "被问一次要记一次");
+        assert_eq!(answers1, answers0 + 1, "CJK 请求要记一次作答");
+
+        let _ = font.provide(PdfiumCustomFontProviderRequest {
+            font_face: "Helvetica".to_string(),
+            character_set: PdfFontCharacterSet::Ansi,
+            weight: PdfFontWeight::Weight400Normal,
+            is_italic: false,
+            is_fixed_pitch: false,
+            is_serif: false,
+            is_cursive: false,
+        });
+        let (asks2, answers2) = bundled_font_stats();
+        assert_eq!(asks2, asks1 + 1, "非 CJK 也算'被问过'（这是'它到底有没有开火'的证据）");
+        assert_eq!(answers2, answers1, "非 CJK **不许**记作答");
     }
 
     /// 判据：**没放字体就什么都不装**（这条守着"零行为变化"）。

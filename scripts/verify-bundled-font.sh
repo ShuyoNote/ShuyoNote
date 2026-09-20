@@ -67,3 +67,24 @@ if [ "$POS_INK" -le "$NEG_INK" ]; then
   exit 4
 fi
 echo "✅ 正向多画了 $((POS_INK - NEG_INK)) 个像素 ⇒ 变化确实来自随包字体"
+
+# ★ 见证（macOS 2026-09-20 提）：**"装上了" ≠ "被问过"**。
+#   正向那次必须看到"随包字体：被问 N 次（N > 0）"—— 否则墨迹变多可能是别的原因，
+#   而这一条是"provider 真的开火了"的直接读数；无字体那次必须是 0/0（否则是装错了）。
+wit() { grep -h '随包字体：被问' "$1" | tail -1; }
+ask_of() { echo "$1" | sed -n 's/.*被问 \([0-9]*\) 次.*/\1/p'; }
+WIT_POS="$(wit /tmp/bundled-font-pos.log)"
+WIT_NEG="$(wit /tmp/bundled-font-neg.log)"
+echo "见证：有字体 ⇒ ${WIT_POS:-（日志里没这行）}"
+echo "见证：无字体 ⇒ ${WIT_NEG:-（日志里没这行）}"
+POS_ASK="$(ask_of "$WIT_POS")"
+NEG_ASK="$(ask_of "$WIT_NEG")"
+if [ -z "$POS_ASK" ] || [ "$POS_ASK" -eq 0 ]; then
+  echo "❌ 正向那次 provider **从没被问过** ⇒ 上面的读数说明不了路线 D 生效（判据 8 见证）"
+  exit 5
+fi
+if [ -n "$NEG_ASK" ] && [ "$NEG_ASK" -ne 0 ]; then
+  echo "❌ 无字体那次居然被问了 $NEG_ASK 次 ⇒ provider 装错了（判据 8 见证）"
+  exit 5
+fi
+echo "✅ 见证：正向被问 $POS_ASK 次、无字体那次 0 次"
