@@ -7,12 +7,17 @@
 //
 // 夹具取自真实 `target/*/build/libsqlite3-sys-*/output` 的节选（不是手写简化版）。
 
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
 import {
   classifyOutput,
+  collect,
   collectPatchMarkers,
   patchMarkerOf,
+  selectForHost,
   decide,
   expectedFromEnv,
   PLATFORM_DEFAULT,
@@ -40,13 +45,18 @@ const OUT_UNIX_TONGSUO = [
   "cargo:rustc-link-lib=static=sqlcipher",
 ].join("\n");
 
-/** ★ Windows + `OPENSSL_DIR`：库名是 **libcrypto**，路径是反斜杠 —— 第一版就在这里会漏判。 */
+/**
+ * ★ Windows + `OPENSSL_DIR`：**真产物形状**（Windows 侧 2026-09-19 贴的原文，逐字）。
+ * 两处让第一版漏判的细节都在这里：① 库名是 `libcrypto`；② OpenSSL 那条是**裸** `rustc-link-search=`，
+ * 且路径**含空格**、**不以 lib 结尾**（以 `MD` 结尾）；同一文件里 SQLCipher 那条是 `native=`。
+ */
 const OUT_WINDOWS = [
-  "cargo:include=C:\\Users\\x\\.cargo\\registry\\src\\…\\libsqlite3-sys-0.38.2\\sqlcipher",
+  "cargo:include=C:\\Users\\w\\.cargo\\registry\\src\\…\\libsqlite3-sys-0.38.2\\sqlcipher",
   "cargo:rerun-if-changed=sqlcipher/sqlite3.c",
   "cargo:rustc-link-lib=dylib=libcrypto",
-  "cargo:rustc-link-search=C:\\tongsuo\\lib",
+  "cargo:rustc-link-search=C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MD",
   "cargo:rustc-link-lib=static=sqlcipher",
+  "cargo:rustc-link-search=native=D:\\tree\\target\\debug\\build\\libsqlite3-sys-a382a6e5\\out",
 ].join("\n");
 
 /** `bundled-sqlcipher-vendored-openssl`（Android/静态链）：后端由 openssl-sys 去链，这里**不打标记**。 */
@@ -73,12 +83,20 @@ describe("classifyOutput：四种真实产物形状", () => {
     expect(c.searchDir).toBe("/Users/x/tongsuo-macos/install/lib");
   });
 
-  it("★ Windows ⇒ openssl（`libcrypto` 与反斜杠路径都要认，否则会把正常构建报成红）", () => {
+  it("★ Windows 真产物 ⇒ openssl，且 link-search 取到**含空格的完整路径**（第一版在这里取不到）", () => {
     const c = classifyOutput(OUT_WINDOWS);
     expect(c.kind).toBe("openssl");
-    expect(c.searchDir).toBe("C:\\tongsuo\\lib");
-    // 反斜杠路径里的 tongsuo 也要认出来
-    expect(c.tongsuo).toBe(true);
+    // 完整路径（不能只拿到 "C:\Program"）；且要挑**外部**那个目录，不是我们自己的 OUT_DIR
+    expect(c.searchDir).toBe("C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MD");
+    expect(c.tongsuo).toBe(false);
+  });
+
+  it("★ 两种 link-search 并存时，挑**外部**那个（`native=` 那条是我们自己的 OUT_DIR）", () => {
+    // 反例守卫：这条用例存在的意义是防止"取最后一条"退回成"取到 target 下的 OUT_DIR"
+    const c = classifyOutput(OUT_UNIX_TONGSUO);
+    expect(c.searchDir).toBe("/Users/x/tongsuo-macos/install/lib");
+    // 而 Windows 真产物里最后一条恰恰是 OUT_DIR ⇒ 必须仍然给出 OpenSSL 那条
+    expect(classifyOutput(OUT_WINDOWS).searchDir).not.toContain("target");
   });
 
   it("vendored-openssl（无标记）⇒ no-marker，**不猜**成 openssl", () => {
@@ -166,6 +184,44 @@ describe("★ 平台过滤（AMD 2026-09-19 在 WSL 上抓到的「绿得不是�
     expect(norm(targetDirOf({}))).toContain("src-tauri/target");
     // 空白当未设（不能把空值当目录）
     expect(norm(targetDirOf({ CARGO_TARGET_DIR: "   " }))).toContain("src-tauri/target");
+  });
+});
+
+describe("★ 走过真文件路径：从 target 目录读产物（夹具不只是字符串）", () => {
+  /** 把一段 output 文本按 target 形状写进临时目录，然后走 collect()/selectForHost() 的真实路径。 */
+  const writeOutput = (text, { profile = "debug", hash = "h1" } = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), "crypto-backend-"));
+    const d = join(dir, profile, "build", `libsqlite3-sys-${hash}`);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "output"), text);
+    return dir;
+  };
+
+  it("Windows 真产物落成文件后：collect + win32 过滤 ⇒ openssl，且路径完整", () => {
+    const dir = writeOutput(OUT_WINDOWS);
+    try {
+      const all = selectForHost(collect(dir), "win32");
+      expect(all).toHaveLength(1);
+      expect(all[0].kind).toBe("openssl");
+      expect(all[0].searchDir).toBe("C:\\Program Files\\OpenSSL-Win64\\lib\\VC\\x64\\MD");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("★ 同一棵树里 unix 与 win32 并存 ⇒ 各自只挑自己那份（这就是 AMD 抓过我的那条）", () => {
+    const dir = writeOutput(OUT_WINDOWS, { profile: "debug", hash: "win" });
+    try {
+      const d2 = join(dir, "release", "build", "libsqlite3-sys-nix");
+      mkdirSync(d2, { recursive: true });
+      writeFileSync(join(d2, "output"), OUT_MACOS_CC);
+      const win = selectForHost(collect(dir), "win32");
+      const nix = selectForHost(collect(dir), "darwin");
+      expect(win.map((x) => x.kind)).toEqual(["openssl"]);
+      expect(nix.map((x) => x.kind)).toEqual(["commoncrypto"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -98,12 +98,22 @@ export function classifyOutput(text) {
   if (cc && openssl) return { kind: "ambiguous", detail: "同时出现 CommonCrypto 与 OpenSSL 的标记" };
   if (cc) return { kind: "commoncrypto" };
   if (openssl) {
-    // 取 link-search 里最后一个以 lib/lib64 结尾的路径（`/` 与 `\` 都要认）。
-    const dirs = [
-      ...text.matchAll(/cargo:rustc-link-search[^\n]*?([^\s=]*[\\/](?:lib64|lib))(?=[\s]|$)/gm),
-    ].map((m) => m[1]);
-    const dir = dirs.at(-1) ?? "";
-    return { kind: "openssl", tongsuo: /tongsuo/i.test(dir), searchDir: dir };
+    // 取 `rustc-link-search` 的**整行剩余部分**（Windows 真产物的教训，见下），再挑"外部的那个目录"。
+    //
+    // ⚠️ **第一版在这里错了两处**（Windows 侧拿真产物跑出来的，2026-09-19）：
+    //   ① 真产物里 **两种形状并存**：`rustc-link-search=<path>`（裸等号，OpenSSL 那条）
+    //      与 `rustc-link-search=native=<path>`（SQLCipher 自己的 OUT_DIR）。
+    //      只认一种就会漏掉 OpenSSL 那条；
+    //   ② **路径里有空格**（`C:\Program Files\OpenSSL-Win64\lib\VC\x64\MD`）⇒ 用 `(\S+)` 只会拿到
+    //      `C:\Program`，于是"认不出"。而且那条路径**不以 lib/lib64 结尾**（以 `MD` 结尾），
+    //      所以"按 lib 后缀找"这条思路在真 Windows 布局上从一开始就不成立。
+    //   ⇒ 改成：抓整行（允许空格）→ 排除我们自己 target 下的 OUT_DIR → 剩下的就是外部后端目录。
+    const dirs = [...text.matchAll(/^cargo:rustc-link-search=(?:native=)?(.*)$/gm)]
+      .map((m) => m[1].trim())
+      .filter(Boolean);
+    const external = dirs.filter((d) => !/[\\/]target[\\/]/.test(d));
+    const dir = external.at(-1) ?? dirs.at(-1) ?? "";
+    return { kind: "openssl", tongsuo: /tongsuo/i.test(dirs.join(" ")), searchDir: dir };
   }
   // 有 sqlcipher 的编译痕迹、但没有任何后端标记：典型是
   // `bundled-sqlcipher-vendored-openssl`（后端由 openssl-sys 去链，这个 build.rs 不打印任何标记）。
