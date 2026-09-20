@@ -210,6 +210,25 @@ const FIXTURE = `
     </div>
   </div>
 </div>
+
+<!-- AI 助手页眉：齿轮（设置）按钮 + 关闭按钮。
+     ⚠️ 结构必须与 AiAssistantPanel.tsx 一致，尤其类名 AI 页眉用 ai-header-btn ai-settings-btn：
+     **曾经**它是 ai-settings，与设置弹窗容器 .ai-settings 撞车 —— 弹窗那条
+     display:flex/border/border-radius 把按钮的 display:grid/place-items:center 顶掉，
+     图标被摆到左上角（2026-09-20 用户截图「设置按钮偏心了」）。夹具若写错类名，
+     这条判据就永远是绿的。 -->
+<div class="ai-panel" style="position: static; width: 380px;">
+  <div class="ai-header">
+    <div class="ai-header-main">
+      <div class="ai-title-row"><span class="ai-title">AI 助手</span></div>
+      <div class="ai-header-sub">基于当前空间你所有有权限的页面进行回答</div>
+    </div>
+    <button class="ai-header-btn ai-settings-btn" title="AI 设置" aria-label="AI 设置">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+    </button>
+    <button class="ai-header-btn ai-close" title="关闭" aria-label="关闭">×</button>
+  </div>
+</div>
 `;
 
 const css = readFileSync(join(root, "src", "App.css"), "utf8");
@@ -292,6 +311,25 @@ try {
     probe.remove();
     const ctaBorder = getComputedStyle(document.querySelector(".pm-index-item > button")).borderTopColor;
     const stateOn = document.querySelector(".pm-state-on");
+    // AI 页眉的齿轮按钮：量"图标中心 − 按钮中心"的偏移，外加按钮**实际**拿到的布局/边框/圆角。
+    // 只看元素树看不出偏心（`place-items: center` 写着呢），必须量几何。
+    const gearEl = document.querySelector(".ai-header-btn.ai-settings-btn");
+    const gearIcon = gearEl ? gearEl.querySelector("svg") : null;
+    const gb = gearEl ? gearEl.getBoundingClientRect() : null;
+    const gi = gearIcon ? gearIcon.getBoundingClientRect() : null;
+    const gcs = gearEl ? getComputedStyle(gearEl) : null;
+    const gear = gb && gi ? {
+      dx: (gi.left + gi.width / 2) - (gb.left + gb.width / 2),
+      dy: (gi.top + gi.height / 2) - (gb.top + gb.height / 2),
+      btn: `${Math.round(gb.width)}x${Math.round(gb.height)}`,
+      icon: `${Math.round(gi.width)}x${Math.round(gi.height)}`,
+      display: gcs.display,
+      direction: gcs.flexDirection,
+      align: `${gcs.alignItems}/${gcs.justifyContent}`,
+      border: gcs.borderTopWidth,
+      radius: gcs.borderTopLeftRadius,
+      bg: gcs.backgroundColor,
+    } : null;
     return {
       cardWidth: card?.width,
       infoWidth: info?.width,
@@ -328,8 +366,29 @@ try {
       listColumns: getComputedStyle(document.querySelector(".pm-list")).gridTemplateColumns.split(" ").length,
       accentRgb,
       ctaBorder,
+      gear,
     };
   });
+
+  // ---- AI 助手页眉的齿轮（设置）按钮：图标必须落在按钮**正中** ----
+  // 依据：2026-09-20 用户截图「设置按钮偏心了」。根因是**类名撞车**：按钮的 `ai-settings`
+  // 与设置弹窗容器 `.ai-settings` 同名；弹窗那条规则（`display:flex; flex-direction:column;
+  // border; border-radius: --radius-lg; background: --surface`）写在后面、权重相同，
+  // 于是把按钮的 `display:grid; place-items:center` 与 `border:none` **一起顶掉** ——
+  // 图标被 flex 丢到左上角，按钮还多出一圈本不该有的描边。这类毛病单测看不见
+  //（happy-dom 不做布局）、类型检查看不见，只能量几何。
+  ok(m.gear !== null, "夹具里找得到 AI 页眉的齿轮按钮");
+  if (m.gear) {
+    console.log(`      （齿轮按钮实测：${m.gear.btn} 按钮 / ${m.gear.icon} 图标 / display:${m.gear.display} ${m.gear.align} / 偏移 x ${m.gear.dx.toFixed(1)} y ${m.gear.dy.toFixed(1)} / 描边 ${m.gear.border} / 圆角 ${m.gear.radius}）`);
+    ok(
+      Math.abs(m.gear.dx) <= 1 && Math.abs(m.gear.dy) <= 1,
+      `齿轮图标在按钮正中（偏移 x ${m.gear.dx.toFixed(1)}px、y ${m.gear.dy.toFixed(1)}px，容差 1px）`,
+    );
+    ok(
+      m.gear.display === "grid" && m.gear.radius === "6px" && m.gear.border === "0px",
+      `齿轮按钮用的是自己那套盒子（display:${m.gear.display} / 圆角 ${m.gear.radius} / 描边 ${m.gear.border}）——不是设置弹窗 .ai-settings 那套`,
+    );
+  }
 
   // 插件卡：信息块要占满一行（被挤成 58px 就是那个 bug）
   ok(
