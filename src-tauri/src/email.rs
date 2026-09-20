@@ -1486,6 +1486,57 @@ fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMe
     })
 }
 
+/// 一次 `FETCH <start>:*` 的结果。
+struct FetchChunk {
+    metas: Vec<EmailMeta>,
+    /// 下一条要拉的序号；`None` = 这一箱已经拉完（没有解析错误）。
+    resume_at: Option<u32>,
+    /// 解析中断的说明（有它 ⇒ 这一条畸形邮件会被跳过，但**后面的会继续拉**）。
+    note: Option<String>,
+}
+
+/// 从 `start` 起拉这一箱剩下的邮件头。
+///
+/// ★ 为什么要这么个函数（2026-09-20 用户报障的真根因）：`FETCH 1:*` 的响应是一条**流**，
+/// 而 `while let Some(Ok(m)) = stream.next()` 一旦遇到 `Err` 就**静默结束** ——
+/// 服务端已经把它后面的邮件都发过来了，应用却再也不读。实测：QQ 收件箱里有一封
+/// 工信部的通知，它的 `Message-ID` 里**带一个没转义的 `"`**
+/// （`<…JavaMail."zwfw-info@miit.gov.cn"@…>`），IMAP 语法里那个引号会提前结束字符串
+/// ⇒ `async-imap` 解析到第 36 条就报错 ⇒ **第 36 条之后的全部邮件（含今天的新邮件）在应用里不存在**。
+/// 用户看到的现象是"这个账号最新只到某一天"，而服务端一切正常。
+///
+/// 修法：把"流中途报错"当成**可恢复**的：记下断点、**重开会话**（那次响应剩下的字节还在 socket 里，
+/// 直接再发命令会串味）、从断点下一条继续。代价是"一条畸形邮件只损失它自己"。
+async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Result<FetchChunk, String> {
+    use futures_util::StreamExt;
+    let mut session = open_session(account, folder).await?;
+    let mut stream = session
+        .fetch(format!("{start}:*"), "(ENVELOPE UID FLAGS)")
+        .await
+        .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+    let mut metas = Vec::new();
+    let mut next = start;
+    let mut note = None;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(m) => {
+                if let Some(meta) = meta_from_fetch(&m, folder) {
+                    metas.push(meta);
+                }
+                next += 1;
+            }
+            Err(e) => {
+                note = Some(format!("第 {next} 条解析失败（跳过这一条，后面的继续拉）：{e}"));
+                break;
+            }
+        }
+    }
+    let finished = note.is_none();
+    drop(stream);
+    let _ = session.logout().await;
+    Ok(FetchChunk { metas, resume_at: if finished { None } else { Some(next + 1) }, note })
+}
+
 /// 拉取一个账号（多文件夹）的邮件元信息 + 未读数。传 date_from/date_to 时按日期区间过滤。
 async fn fetch_account_emails(
     account: &EmailAccountArgs,
@@ -1493,37 +1544,38 @@ async fn fetch_account_emails(
     date_from: Option<&str>,
     date_to: Option<&str>,
 ) -> Result<(Vec<EmailMeta>, u32), String> {
-    use futures_util::StreamExt;
     use chrono::Datelike;
-    let mut session = open_session(account, "INBOX").await?;
     let mut out = Vec::new();
     let mut unread = 0u32;
     for folder in folders {
-        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
-        if let (Some(df), Some(dt)) = (date_from, date_to) {
-            // 按月/日期区间：部分 IMAP 服务端（如 QQ 邮箱）对 SINCE/BEFORE 返回空或挑剔日期格式，
-            // 故改为「拉全量 → 按邮件的年月（以其自身时区）过滤」，服务端无关、更稳。
-            let m = target_month(df);
-            let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
-            while let Some(Ok(msg)) = stream.next().await {
-                if let Some(meta) = meta_from_fetch(&msg, folder) {
+        let mut start = 1u32;
+        // 上限只是防"服务端每次都报错"时转不出来；正常一箱最多遇到几封畸形邮件。
+        for _ in 0..500 {
+            let chunk = fetch_chunk(account, folder, start).await?;
+            for meta in chunk.metas {
+                if let (Some(df), Some(dt)) = (date_from, date_to) {
+                    // 按月/日期区间：部分 IMAP 服务端（如 QQ 邮箱）对 SINCE/BEFORE 返回空或挑剔日期格式，
+                    // 故改为「拉全量 → 按邮件的年月（以其自身时区）过滤」，服务端无关、更稳。
+                    let _ = dt; // (保留 date_to 以维持接口签名；按月直接只用 from 的年月)
+                    let m = target_month(df);
                     let in_month = parse_email_date(&meta.date)
                         .map(|t| t.year() == m.0 && t.month() == m.1)
                         .unwrap_or(false);
-                    if in_month {
-                        if !meta.seen { unread += 1; }
-                        out.push(meta);
+                    if !in_month {
+                        continue;
                     }
                 }
-            }
-            let _ = dt; // (保留 date_to 以维持接口签名；按月直接只用 from 的年月)
-        } else {
-            let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
-            while let Some(Ok(m)) = stream.next().await {
-                if let Some(meta) = meta_from_fetch(&m, folder) {
-                    if !meta.seen { unread += 1; }
-                    out.push(meta);
+                if !meta.seen {
+                    unread += 1;
                 }
+                out.push(meta);
+            }
+            match (chunk.resume_at, chunk.note) {
+                (Some(next), Some(msg)) => {
+                    eprintln!("[email] {folder}: {msg}");
+                    start = next;
+                }
+                _ => break,
             }
         }
     }
@@ -1751,6 +1803,135 @@ mod tests {
         ];
         let agg = aggregate_fetches(vec![("a|1".to_string(), Ok((metas, 0)))], 2, 1);
         assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
+    /// **手动探针 ②**（默认不跑）：直接看 `FETCH 1:*` 这条流**到底给了几条、在哪一条断的、报的什么错**。
+    ///
+    /// 为什么要有它：`fetch_account_emails` 里是 `while let Some(Ok(m)) = stream.next()` ——
+    /// 流里出现一个 `Err` 就**静默结束**，剩下的信全部看不到（表现是"这个账号最新只到某一天"）。
+    /// 这条探针把那个被吞掉的 `Err` 打出来。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='zhaizy@qq.com'
+    /// cargo test --lib -- --ignored --nocapture probe_fetch_stream_errors
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_fetch_stream_errors() {
+        use futures_util::StreamExt;
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        let mut session = open_session(&account, "INBOX").await.expect("打开会话失败");
+        let mut stream = session
+            .fetch("1:*", "(ENVELOPE UID FLAGS)")
+            .await
+            .expect("FETCH 命令本身失败");
+        let mut ok = 0usize;
+        let mut last_uid = 0u32;
+        let mut first_err: Option<String> = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(m) => {
+                    ok += 1;
+                    if let Some(u) = m.uid {
+                        last_uid = u;
+                    }
+                }
+                Err(e) => {
+                    first_err = Some(format!("{e:?} / 显示: {e}"));
+                    break;
+                }
+            }
+        }
+        eprintln!("FETCH 1:* 流：收到 Ok {ok} 条，最后一条 uid={last_uid}");
+        match first_err {
+            Some(e) => eprintln!("★ 第一个 Err（被 `while let Some(Ok(..))` 吞掉的就是它）：{e}"),
+            None => eprintln!("没有 Err（流自然结束）"),
+        }
+        drop(stream);
+        let _ = session.logout().await;
+    }
+
+    /// **源码哨兵**：拉取路径里不许再出现 `while let Some(Ok(`。
+    ///
+    /// 那个写法遇到流里的 `Err` 就**静默结束** —— 服务端其实已经把它后面的邮件都发过来了，
+    /// 应用却再也不读。2026-09-20 用户报障的真根因就是这个：QQ 收件箱里一封工信部通知的
+    /// `Message-ID` 带未转义的 `"`，`async-imap` 解析到第 36 条报错 ⇒ 第 36 条之后的
+    /// **全部邮件（含今天的新邮件）在应用里不存在**，而服务端完全正常。
+    #[test]
+    fn fetch_path_never_stops_silently_on_a_stream_error() {
+        let src = include_str!("email.rs");
+        let start = src.find("async fn fetch_chunk").expect("fetch_chunk 不见了（改名了？这条哨兵要跟着搬）");
+        let end = src[start..].find("async fn email_fetch_all").expect("找不到拉取段的结尾") + start;
+        let body = &src[start..end];
+        assert!(
+            !body.contains("Some(Ok("),
+            "拉取路径里又出现了 `while let Some(Ok(..))` —— 它会在流报错时静默丢掉后面的邮件：\n{body}"
+        );
+        assert!(body.contains("resume_at"), "断点续拉（resume_at）不见了");
+    }
+
+    /// **手动探针**（默认不跑）：拿本机 `email-account.json` 里的某个账号，跑一次**聚合那一半**的
+    /// 拉取（`fetch_account_emails`），把"到底拉到几封、最新几封是谁/时间/`date_ts`、还是报错"打出来。
+    ///
+    /// 为什么需要它：聚合邮箱"某个账号的信没来"这类报障，光读代码分不清是
+    /// ① 服务端没有 → ② 凭据不对 → ③ 拉取报错（会被 `email_fetch_all` 记进 `errors`）→
+    /// ④ 拉到了但排序/分页把今天的信排到了第一页之外（`date_ts` 解析失败 ⇒ 0 ⇒ 沉底）。
+    /// 这条探针把 ②③④ 一次读出来。**只读**：`FETCH 1:* (ENVELOPE UID FLAGS)`，不取正文、不改标记。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='zhaizy@qq.com'
+    /// cargo test --lib -- --ignored --nocapture probe_fetch_account_emails
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_fetch_account_emails() {
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        eprintln!("探针账号：{} @ {}:{}（auto_fetch={}）", account.username, account.host, account.port, account.auto_fetch);
+        match fetch_account_emails(&account, &["INBOX".to_string()], None, None).await {
+            Ok((metas, unread)) => {
+                let mut v: Vec<EmailMeta> = metas.clone();
+                v.sort_by(|a, b| date_ts(&b.date).cmp(&date_ts(&a.date)));
+                eprintln!("OK：拉到 {} 封（未读 {}）", metas.len(), unread);
+                eprintln!("  最新 5 封（按 date_ts 降序；date_ts=0 表示**日期解析失败**，在多账号聚合里会沉底）：");
+                for m in v.iter().take(5) {
+                    let subject: String = m.subject.chars().take(46).collect();
+                    eprintln!("   uid={:<6} ts={:<14} {} | {} | {}", m.uid, date_ts(&m.date), m.date, m.from, subject);
+                }
+                // 今天/昨天的信在不在（按本地日历日粗判）
+                let today = chrono::Local::now().format("%d %b %Y").to_string();
+                let hit = v.iter().filter(|m| m.date.contains(&today)).count();
+                eprintln!("  日期里含今天（{today}）的：{hit} 封");
+            }
+            Err(e) => eprintln!("ERR：{e}"),
+        }
     }
 
     #[test]
