@@ -39,7 +39,7 @@
 | 请求带 `Accept: application/json` | ✅ | 同上（社区只需在**帖子页地址**上做内容协商，应用不用改） |
 | 预览 → 确认 → 落库 | ✅ | `CommunitySaveDialog` 8 条渲染级测试（预览阶段不落库、取消零痕迹、只写一次） |
 | 幂等（同一帖不存第二篇） | ✅ | 搜到候选后**逐字核对**来源地址；4 条测试 |
-| **社区侧提供 JSON** | ⏳ **等社区** | 现在 `/post/<slug>` 只回 HTML、`/api/posts/*.json` 任何 id 都 401。要改的一条写在给社区的一页纸里（内容协商 + `Content-Type`）。**2026-09-20 复验：仍然如此**（带 `Accept: application/json` 拿到的是 `text/html`；`/api/posts/1` 与 `/api/posts/1.json` 都是 401 —— 那条路径上挂的是需要登录的 `PUT/DELETE`，本来就没有公开的单帖 GET） |
+| **社区侧提供 JSON** | ✅ **已通（2026-09-20）** | 社区 `0.71.24` 起 `GET /post/{slug}` 支持内容协商：带 `Accept: application/json` 返回**落库的原始 Markdown**（`body_markdown`）＋ `Vary: Accept`，机器取数不计浏览；`0.71.25` 修掉上线实测抓到的 `url` 被拼成相对路径（应用会按白名单拒掉）。线上实测 18/18，应用侧另有一条**活判据** `community::tests::live_community_json_is_accepted_by_this_parser`（`#[ignore]`）拿真站点喂自己的解析器。Web 版另需 `Access-Control-Allow-Origin`（社区仓库没有 CORS 先例，**仍未做**，要 owner 拍板） |
 
 ## 三、导入产物（`import`）
 

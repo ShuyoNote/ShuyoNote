@@ -2,19 +2,36 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
-import { platform } from "../lib/platform";
+import { platform, isDesktopPlatform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useEditorStore } from "../store/editor";
 import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon } from "./icons";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
+import { CommunityPublishDialog } from "./CommunityPublishDialog";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { docHtml, printDoc } from "../lib/print";
 import { inlineExportMedia } from "../lib/exportInline";
+import { pageContentToMarkdown } from "../lib/exportMarkdown";
+
+/**
+ * 「发布到社区」要的 5 个字段。
+ *
+ * **5 个必须来自同一次页面快照**：正文与修订号同源，否则"改了正文但 rev 没变"会让两次
+ * 不同的内容撞进同一个幂等键（后端按 `(noteId, rev)` 算键，见 `community_publish.rs`），
+ * 于是第二次发布被社区当成重发、一篇新内容静默地没发出去。
+ */
+interface PublishTarget {
+  title: string;
+  body: string;
+  tags: string[];
+  noteId: string;
+  rev: string;
+}
 
 function triggerFind() {
   // The find bar listens for Ctrl+F on document; simulate it.
@@ -30,6 +47,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const contentWidth = useViewStore((s) => s.contentWidth);
   const setContentWidth = useViewStore((s) => s.setContentWidth);
   const [exportOpen, setExportOpen] = useState(false);
+  const [publishTarget, setPublishTarget] = useState<PublishTarget | null>(null);
 
   // Apply the adaptive-width body class so content fills the available width.
   useEffect(() => {
@@ -116,6 +134,44 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
 
   const importMarkdown = () => setImporting(true);
 
+  /**
+   * 「发布到社区」：这一步**只组装清单**，一个字节都不发出去。
+   * 真正的发送在 `CommunityPublishDialog` 里，且必须由人点「确认发布」（I7）。
+   */
+  const openPublishDialog = async () => {
+    setExportOpen(false);
+    try {
+      // 5 个字段**一次读齐**（同一次 get_page 快照）。
+      const page = await api.getPage(pageId);
+      if (page.kind !== "page") {
+        toast("只有普通笔记能发布到社区", "error");
+        return;
+      }
+      // 标签失败不该挡住发布：没有标签也能发（少一项，不是错误）。
+      const tags = await api
+        .pageTags(pageId)
+        .then((ts) => ts.map((t) => t.name))
+        .catch(() => [] as string[]);
+      setPublishTarget({
+        title: page.title || "",
+        // 正文用**页面快照**（content_json → Markdown）而不是编辑器的实时状态：实时状态
+        // 可能比这次快照新一次防抖（600ms），而 rev 取的是这份快照的 updated_at ——
+        // 正文与修订号必须同源，理由见 `PublishTarget` 的注释。转换器与「导出 Markdown」共用。
+        body: pageContentToMarkdown(page.content_json || "{}"),
+        tags,
+        // `noteId` = 页面 id（`PageDetail.id`）；`rev` = 页面最后一次保存的时间戳
+        // （`PageDetail.updated_at`：`save_page` 每次都会写 `now_ms()`，见
+        // `src-tauri/src/commands.rs` 的 `save_page`）。它满足"没改就不变"，
+        // 所以同修订重发/重试永远算出同一个幂等键（I2）；改了内容就换一个新键 ——
+        // 那是**新修订**，本就该是新的一帖。
+        noteId: page.id,
+        rev: String(page.updated_at),
+      });
+    } catch (e) {
+      toast(`打开发布清单失败：${e}`, "error");
+    }
+  };
+
   const saveAsTemplate = async () => {
     try {
       const page = await api.getPage(pageId);
@@ -181,6 +237,19 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title={t("editor.exportPdf")}>
               <PrintIcon /> {t("editor.exportPdf")}
             </button>
+            {/* 一键发布到社区：入口先放这里（方案 §5：「先放详情/编辑器工具条一枚」，P1 再考虑右键菜单）。
+                只在 Tauri 壳（有 Rust 内核 ⇒ 有应用数据目录放令牌、有不被 CORS 拦的出口）里显示；
+                Web 版那 4 条命令会如实抛「不支持」（`web.ts`），与其给一个"看起来能连、实际发不出去"
+                的假入口，不如不显示 —— 与插件/同步那些桌面专属入口同一条做法。 */}
+            {isDesktopPlatform() && (
+              <button
+                className="toolbar-menu-item"
+                onClick={() => void openPublishDialog()}
+                title="发布到社区"
+              >
+                <SendIcon /> 发布到社区
+              </button>
+            )}
             {/* 插件命令（`menus: ["editor.toolbar"]`）：放在这里而不是那排图标按钮上——
                 插件给不出图标，一排一模一样的 🔌 反而更难认；这里的文字项正合适。
                 pageId 传的是**正在编辑的这一页**，所以省略 pageId 的能力调用作用在它身上。 */}
@@ -194,6 +263,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         )}
       </div>
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
+      {publishTarget && (
+        <CommunityPublishDialog
+          {...publishTarget}
+          // 关掉即卸载 ⇒ 组件里的轮询 interval 一起停（见 `CommunityPublishDialog`）。
+          onClose={() => setPublishTarget(null)}
+        />
+      )}
     </div>
   );
 }
