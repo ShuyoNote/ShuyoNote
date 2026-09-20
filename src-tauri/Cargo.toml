@@ -15,6 +15,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# `build.rs` 要把**被检查的那份 SQLCipher 源码**的 sha256 写进产物标记（见 `build.rs` 里"新鲜度"那段注释）。
+# 版本取 Cargo.lock 里已有的 0.10（不引入新下载）；**不手写哈希** —— 自己实现的 crypto 不该进构建链。
+sha2 = "0.10"
 
 # ── 国密（SM 系列）主线开关（方案 §0-E）────────────────────────────────────────────────
 #

@@ -34,6 +34,17 @@ mod gm_patch_probe {
 }
 use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_roots, SourcePick};
 
+/// 文件 sha256（小写十六进制）。**不手写哈希** —— 用 `sha2`（Cargo.lock 里已有的 0.10）。
+///
+/// 与 `scripts/sm-library-build.mjs` 的 `sha256OfFile()` 是同一个算法、同一个对象：
+/// 两侧算出来的值必须相等，macOS 侧的门禁就靠这个比对判"标记是不是过期了"。
+fn sha256_of(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(std::fs::read(path).ok()?);
+    Some(format!("{:x}", hasher.finalize()))
+}
+
 fn enforce_explicit_crypto_backend_for_sm_library() {
     // `CARGO_FEATURE_*` 由 cargo 按启用的 feature 注入（feature 名大写、`-` → `_`）。
     if std::env::var_os("CARGO_FEATURE_SM_LIBRARY").is_none() {
@@ -112,12 +123,16 @@ fn require_gm_provider_patch() {
 
     match find_marker(&dir) {
         Some(hit) => {
-            // 产物标记：macOS 侧的 `check-crypto-backend` 据此把"后端对不对"扩到"**补丁在不在**"。
-            // 一行、可 grep、带版本与目标平台 + **取法**（评审时能看出它凭什么认为这是那份源码）。
+            // 产物标记：macOS 侧的 `check-crypto-backend` 据此把"后端对不对"扩到"**补丁在不在**"；
+            // 而 `src_sha256=` 是"**这份标记对应哪份源码**"的证据 —— 它治的正是"产物被重放"：
+            // 源码一旦变过（干净重建 / checkout / 还原实验），这个哈希就与当前源码对不上 ⇒ 判"过期标记"。
+            // ⚠️ **不要改成比 mtime**：产物 output 与源码的 mtime 之间没有因果链（clean / stash / 复制 registry
+            // 都会打乱先后）。macOS 侧 2026-09-19 实测：源码还原了、output 里还留着旧标记 ⇒ 门禁拿到**过期的真标记**。
             let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+            let src_sha256 = sha256_of(&dir.join(&hit)).unwrap_or_else(|| "unavailable".to_string());
             println!(
                 "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target={target_os} \
-                 libsqlite3-sys={version} via={how} marker={hit})"
+                 libsqlite3-sys={version} via={how} marker={hit} src_sha256={src_sha256})"
             );
             // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
             // 免得"改了补丁、cargo 不重编"（比 OPENSSL_DIR 那个坑更隐蔽：连设环境变量这个动作都没有）。
@@ -163,8 +178,9 @@ fn resolve_sqlcipher_source() -> Option<(std::path::PathBuf, String, &'static st
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cargo")))?;
     let roots = registry_src_roots(&cargo_home);
 
-    // ① Cargo.lock
-    let lock = std::fs::read_to_string(manifest.parent()?.join("Cargo.lock")).ok()?;
+    // ① Cargo.lock（★ 就在 `src-tauri/` 自己这层 —— 不是仓库根：我第一次写成 `manifest.parent()`，
+    //    于是锁文件永远读不到、只剩下"产物兜底"那一步在工作；今天加 `src_sha256` 时才被两侧读数抓出来）
+    let lock = std::fs::read_to_string(manifest.join("Cargo.lock")).ok()?;
     let wanted = lock_version(&lock);
     let pick = pick_source_dir(&roots, wanted.as_deref());
 

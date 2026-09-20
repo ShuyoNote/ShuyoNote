@@ -15,9 +15,10 @@
 // 退出码：0 = 成功（或 --print/--check 通过）；1 = 环境不满足；其它 = cargo 的退出码。
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
@@ -33,22 +34,14 @@ const has = (name) => argv.includes(name);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = join(root, "src-tauri", "Cargo.toml");
 const opensslDir = argValue("--openssl-dir") || process.env.OPENSSL_DIR || "";
-const MARKER = "SQLCIPHER_HMAC_SM3_LABEL";
 
 function fail(msg) {
   console.error(`sm-library-build: ❌ ${msg}`);
   process.exit(1);
 }
 
-// ---- 1) 环境核对：没有显式后端就别往下走（与 build.rs 同一条纪律，但在这里先说清）----
-if (!opensslDir) {
-  fail(
-    "没有给 `--openssl-dir`（或环境变量 `OPENSSL_DIR`）。\n" +
-      "  库级国密**必须显式指定后端**：不给的话 SQLCipher 会落回平台默认（Apple 上是 CommonCrypto，\n" +
-      "  而它只有 AES）—— 它会**编得过**，然后安静地没有国密算法。",
-  );
-}
-if (!existsSync(opensslDir)) fail(`--openssl-dir 指向的目录不存在：${opensslDir}`);
+// 锁文件路径（**显式传进库** —— 库不猜仓库在哪，便于单测与复用）
+const LOCK = join(root, "src-tauri", "Cargo.lock");
 
 // ---- 2) 补丁核对：**看将要编译的那份源码**，不是看环境变量 ----
 //
@@ -58,91 +51,58 @@ if (!existsSync(opensslDir)) fail(`--openssl-dir 指向的目录不存在：${op
 //   而**只往 0.30.1 注入标记**也能让构建打出"补丁已应用"（假阳性）。
 //   ⇒ 现在只认 `src-tauri/Cargo.lock` 里锁的那个版本；拿不到就**当场失败**，绝不退而求其次。
 //   （与 Rust 侧同一份规则，实现分别在 `src/gm_patch_probe.rs` 与本文件 —— 两侧都由判据守着。）
-function lockVersion() {
-  const lockPath = join(root, "src-tauri", "Cargo.lock");
-  if (!existsSync(lockPath)) return { version: null, why: `没有 ${lockPath}` };
-  const lines = readFileSync(lockPath, "utf8").split(/\r?\n/);
-  let inPkg = false;
-  let isTarget = false;
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (line.startsWith("[[package]]")) {
-      inPkg = true;
-      isTarget = false;
-      continue;
-    }
-    if (line.startsWith("[")) {
-      inPkg = false;
-      isTarget = false;
-      continue;
-    }
-    if (!inPkg) continue;
-    if (line.startsWith("name = ")) {
-      isTarget = line.slice(7).trim().replace(/"/g, "") === "libsqlite3-sys";
-      continue;
-    }
-    if (isTarget && line.startsWith("version = ")) {
-      return { version: line.slice(10).trim().replace(/"/g, ""), why: "cargo.lock" };
-    }
-  }
-  return { version: null, why: "Cargo.lock 里没有 libsqlite3-sys" };
-}
-
-function registryRoots() {
-  const cargoHome = process.env.CARGO_HOME || join(homedir(), ".cargo");
-  const srcRoot = join(cargoHome, "registry", "src");
-  if (!existsSync(srcRoot)) return [];
-  return readdirSync(srcRoot).map((r) => join(srcRoot, r));
-}
-
-const { version: locked, why: lockedWhy } = lockVersion();
-const found = [];
-for (const reg of registryRoots()) {
-  let pkgs = [];
+//
+// ★ 解析逻辑**不在这里**：它是 `scripts/lib/sm-library-source.mjs`（**JS 那份唯一实现**），
+//   命令行与外部消费方（macOS 侧的门禁）都 import 它 —— 免得出现"第三份实现各自漂移"。
+//   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
+import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
+const PRINT_SHA = argv.includes("--print-source-sha256");
+if (PRINT_SHA) {
+  // 给"另一侧"（macOS 的门禁）用：<sha256> <path> <version> via=<...>
+  // ⚠️ 标记文件**不存在**时（补丁还没打）也照样输出：给的是"当前将要编译的那份源码"的哈希，
+  //    这不是错误状态 —— 判"过期标记"要的正是这个值。
+  let pick;
   try {
-    pkgs = readdirSync(reg);
-  } catch {
-    continue;
+    pick = resolveSqlcipherSource({ lockPath: LOCK });
+  } catch (e) {
+    console.error(`sm-library-build: ${e.message}`);
+    process.exit(1);
   }
-  for (const pkg of pkgs) {
-    if (!pkg.startsWith("libsqlite3-sys-")) continue;
-    const sc = join(reg, pkg, "sqlcipher");
-    if (existsSync(sc)) found.push({ version: pkg.replace("libsqlite3-sys-", ""), dir: sc });
+  const file = markerFileOf(pick.dir) ?? join(pick.dir, "sqlite3.c");
+  if (!existsSync(file)) {
+    console.error(`sm-library-build: 找不到可哈希的文件：${file}`);
+    process.exit(1);
   }
+  console.log(`${sha256OfFile(file)} ${file} ${pick.version} via=${pick.via}`);
+  process.exit(0);
 }
-found.sort((a, b) => a.version.localeCompare(b.version));
 
-let srcDir = null;
-if (!locked) {
-  fail(`拿不到 libsqlite3-sys 的锁定版本（${lockedWhy}）⇒ **不猜**，无法核对补丁。`);
-}
-const hit = found.find((f) => f.version === locked);
-if (!hit) {
+// ---- 1) 环境核对：没有显式后端就别往下走（与 build.rs 同一条纪律，但在这里先说清）----
+// ⚠️ 这段必须在 `--print-source-sha256` **之后**：那条路只回答"当前将要编译的那份源码的哈希"，
+//    与后端无关（我第一次把它放在这段之后 ⇒ `--print-source-sha256` 在没给 OPENSSL_DIR 时直接失败，
+//    而 macOS 侧的门禁正是在"只想算哈希"的场合调它）。
+if (!opensslDir) {
   fail(
-    `Cargo.lock 锁的是 libsqlite3-sys **${locked}**，但 registry 里找到的是 ` +
-      `[${found.map((f) => f.version).join(", ") || "（无）"}] ⇒ **不挑别的版本**：\n` +
-      "  按 mtime 挑会挑到陈旧副本（macOS 侧实测过：0.30.1 的 mtime 比 0.38.2 新）⇒\n" +
-      "  假阴性（补丁打了却报没有）与假阳性（往陈旧副本注入也能通过）都会发生。\n" +
-      "  修法：cargo fetch（把锁定版本取下来），再重跑。",
+    "没有给 `--openssl-dir`（或环境变量 `OPENSSL_DIR`）。\n" +
+      "  库级国密**必须显式指定后端**：不给的话 SQLCipher 会落回平台默认（Apple 上是 CommonCrypto，\n" +
+      "  而它只有 AES）—— 它会**编得过**，然后安静地没有国密算法。",
   );
 }
-srcDir = hit.dir;
-console.log(`sm-library-build: 源码 = ${srcDir}（Cargo.lock: ${locked}）`);
+if (!existsSync(opensslDir)) fail(`--openssl-dir 指向的目录不存在：${opensslDir}`);
 
-let markerHit = null;
-if (srcDir && existsSync(srcDir)) {
-  for (const f of readdirSync(srcDir)) {
-    if (!/\.(c|h)$/.test(f)) continue;
-    try {
-      if (readFileSync(join(srcDir, f), "utf8").includes(MARKER)) {
-        markerHit = f;
-        break;
-      }
-    } catch {
-      /* 读不了就跳过 */
-    }
-  }
+let srcDir = null;
+try {
+  const pick = resolveSqlcipherSource({ lockPath: LOCK });
+  srcDir = pick.dir;
+} catch (e) {
+  fail(e.message);
 }
+
+console.log(`sm-library-build: 源码 = ${srcDir}`);
+
+// 标记扫描与上面 `markerFileOf()` 同序（单一实现的又一处：CLI 的 --print-source-sha256 与这里共用它）
+const markerPath = markerFileOf(srcDir);
+const markerHit = markerPath ? basename(markerPath) : null;
 
 if (!srcDir) {
   fail("找不到 cargo 将要编译的 SQLCipher 源码（registry 里没有 libsqlite3-sys-*/sqlcipher）。");
@@ -155,7 +115,7 @@ if (!markerHit) {
       "  修法：打 patches/0001-sqlcipher-sm3-provider.patch（见 patches/README.md 的三格核对）。",
   );
 }
-console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${srcDir}）`);
+console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${srcDir}，src_sha256=${sha256OfFile(markerPath).slice(0, 12)}…）`);
 
 // ---- 3) 命令（固定两步：先 clean 再 build）----
 const env = { ...process.env, OPENSSL_DIR: opensslDir };
