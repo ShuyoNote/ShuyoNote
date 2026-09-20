@@ -293,6 +293,18 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
   一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
   （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
+- **安卓真出包在 Windows 本机上走不通**（2026-09-20 实测，两个阻塞，**权威构建地是 Linux/CI**）：
+  1. **`openssl-src` 要 `perl`**：本机没有 ⇒ `cargo:warning=Command 'perl' not found` + `failed to build OpenSSL from source`。
+     处置：用 **Git for Windows 自带的 perl**（`C:\Program Files\Git\usr\bin\perl.exe`，本机实测 5.38.2）放进 PATH 即可过这一关；
+  2. 过了 ① 会卡在 **`mupdf-sys` 的 make 调用把 NDK 路径的反斜杠吃掉**（Windows + msys make 的路径转换）：
+     `/usr/bin/sh: line 1: C:UserscnzenAppDataLocalAndroidSdkndk29.0.13846066toolchains/llvm/prebuilt/windows-x86_64binclang.exe: No such file or directory`
+     ⇒ `make … Error 127`、`make invocation failed with status 2`。
+     ⇒ 本仓的安卓包一直在 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）上出，Windows 从来不是构建地；
+     想在 Windows 本机出包只能给 WSL 装 **Linux 版 SDK/NDK**（Windows 的 NDK 只带 `windows-x86_64` 那份 host 工具链，WSL 里用不了）。
+  ⚠️ 但**打包与验收那两步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）
+     与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言 `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
+     2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
+     这正是 P4 安卓格那条缺口的真产物读数。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 
