@@ -415,8 +415,9 @@ jobs:
       - name: 随包 PDFium 库（Android）
         # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
         # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。
+        # ⚠️ 同 android.yml：平台名写成显式的 `--platform`（位置形式曾被静默吃掉 ⇒ 取成 linux-x64）。
         run: |
-          node scripts/fetch-pdfium.mjs android-arm64
+          node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)

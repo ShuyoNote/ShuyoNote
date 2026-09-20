@@ -280,8 +280,14 @@ jobs:
         # ⚠️ 之前仓库里**没有任何地方提到 jniLibs**（`gen/android` 是 `.gitignore` 的），
         #    所以安卓一直**没有随包库**、PDF 静默退到 pdf.js ⇒ 这两步就是那条缺失的通路，
         #    且必须排在 `init` 之后（jniLibs 目录属于刚生成的 gen/）。
+        # ⚠️ 平台名写**显式**的 `--platform`（2026-09-20 修）：原来写的是位置形式
+        #    `… fetch-pdfium.mjs android-arm64`，而那时脚本只认 `--platform` ⇒ 参数被静默吃掉、
+        #    回落成 runner 的当前平台，实际取回的是 **linux-x64**，直到下一句 stage 才报
+        #    「vendor 里没有 android-arm64 的那份库」（run 35501504391 就是这么红的）。
+        #    现在位置形式也认了，且认不出会当场 exit 2（判据见 scripts/lib/pdfium-target.test.mjs）；
+        #    这里仍写成显式形式，好让"取哪个平台"在同一行里自证。
         run: |
-          node scripts/fetch-pdfium.mjs android-arm64
+          node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
       - name: Build APK (arm64, unsigned)
