@@ -331,6 +331,15 @@ node scripts/test-report.mjs --baseline-from rust-report.json
      与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言 `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
      2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
      这正是 P4 安卓格那条缺口的真产物读数。
+     **同一天晚些时候**：那条通路在 CI 上**第一次走到头**（run `35504661582` 全绿，含第 19 步产物自检）——
+     修掉的是下面这两条坑（平台名静默回落 ＋ GNU tar 读不了 zip），**不是**构建本身有问题。
+- **同一件事在"本机 `tar`"与"CI `tar`"上不是同一个程序**（2026-09-20 实测，CI 上真红）：
+  APK 就是 zip，而 **Windows/macOS 的 `tar` 是 bsdtar（认 zip）、CI 的 ubuntu 上是 GNU tar（不认 zip）**
+  ⇒ 用 `tar -tf` 列 APK 的那条判据在 CI 上恒 `exit 2`「没验」（本地永远复现不出来）。
+  本机对照：`wsl tar -tf x.apk` ⇒ `This does not look like a tar archive`；`tar -tf x.apk` ⇒ 正常列出。
+  ⇒ 读 zip 一律走 `scripts/lib/zip.mjs`（纯 JS，`check-apk-contents.mjs` 与 `check-android-bundle.mjs` 共用）。
+  > 这条的**形状**值得记：它不报错、也不说谎，只是把一条产物判据变成**永远不生效**的摆设 ——
+  > 而"没验"（exit 2）与"通过"本仓是分开的，所以只看绿/红会以为它一直在工作。
 - **命令行参数被静默忽略 ⇒ CI 上"取错平台"**（2026-09-20 实测，安卓流水线**连着三跑**红在这，见下面一节）：
   `node scripts/fetch-pdfium.mjs android-arm64` 是**位置形式**，而脚本当时只认 `--platform <名>`
   ⇒ 参数被吃掉、回落到"当前平台"，ubuntu runner 上取回的是 **linux-x64**；
