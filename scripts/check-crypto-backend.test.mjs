@@ -275,6 +275,39 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
     expect(r.notices.join("\n")).toContain("补丁已应用");
   });
 
+  // ★ 第四格（2026-09-20，AMD 要求加）：源码带补丁、后端不是 OpenSSL ⇒ **notice，不是红**。
+  //   要两件事同时成立：① 不判红（v2 起这种组合合法且行为中性）；② 明说"这次用不上"，
+  //   别让"产物里有补丁标记"被读成"国密已生效"。
+  it("★ 补丁在 + 后端是 CommonCrypto ⇒ 不判红，但必须明说这次用不上 SM3", () => {
+    const r = decide({
+      all: [cand("commoncrypto")],
+      expected: "commoncrypto",
+      patch: { expected: "applied", markers: [mk({ srcSha256: "a".repeat(64) })], current: { sha256: "a".repeat(64), hasMarker: true, file: "sqlite3.c", via: "cargo.lock" } },
+    });
+    expect(r.problems).toEqual([]);
+    const n = r.notices.join("\n");
+    expect(n).toContain("CommonCrypto");
+    expect(n).toContain("用不上");
+    expect(n).toContain("patch=v1");        // 标记证据
+    expect(n).toContain("OPENSSL_DIR");     // 下一步
+  });
+
+  it("补丁在 + 后端是 OpenSSL ⇒ **不**打这条提示（那条路才是国密真生效）", () => {
+    const r = decide({
+      all: [cand("openssl")],
+      expected: "openssl",
+      patch: { expected: "applied", markers: [mk({ srcSha256: "a".repeat(64) })], current: { sha256: "a".repeat(64), hasMarker: true, file: "sqlite3.c", via: "cargo.lock" } },
+    });
+    expect(r.problems).toEqual([]);
+    expect(r.notices.join("\n")).not.toContain("用不上");
+  });
+
+  it("声明 absent + CommonCrypto ⇒ 那条提示不重复（drift 已经判红了）", () => {
+    const r = decide({ all: [cand("commoncrypto")], expected: "commoncrypto", patch: { expected: "absent", markers: [mk()] } });
+    expect(r.problems.join("\n")).toContain("配置漂移");
+    expect(r.notices.join("\n")).not.toContain("用不上");
+  });
+
   it("没声明也没有标记 ⇒ 两边都安静", () => {
     const r = decide({ all: [cand("commoncrypto")], expected: "commoncrypto", patch: { expected: null, markers: [] } });
     expect(r.problems).toEqual([]);

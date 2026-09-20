@@ -263,6 +263,14 @@ AES-256-CBC / 页大小 / HMAC 大小）在两套 provider 上一致，所以**�
 （含上面这条 ＋ `encrypted_db_roundtrip_and_sniff` / `convert_space_db_*` / `full_loop_enable_restart_unlock_readable_disable`）
 ⇒ **换后端前后旧库仍可读**这条验收项**取证完成**。
 
+> ⚠️ **国密（Tongsuo）构建上核对这一格，要同时给两个声明**（2026-09-20 我自己踩了一次）：
+> `SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied node scripts/check-crypto-backend.mjs`。
+> 另外：产物标记里的 `patch=` 自 2026-09-20 起是**补丁文件 sha256 的前 8 位**（`patch=337aac60` = 补丁 v2），
+> 不再是写死的 `v1` —— 写死的字面量在补丁升级后就不再标识任何东西，跨机核对会只剩 `src_sha256` 一根柱子。
+> 只给 `SHUYONOTE_EXPECT_SM_PATCH` 会**假红** —— macOS 的平台默认是 `commoncrypto`，
+> 门禁会如实报「声明要 commoncrypto，但最新产物是 openssl」。一键自证 `gm-version-selfcheck`
+> 里这两个声明都已写死，所以它不会踩；**手敲单条命令时会**。
+
 **门禁**：`check-crypto-backend`（rust 组）—— 读 `libsqlite3-sys` 的构建产物，断言
 **实际编进去的后端 == 声明**；`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` 是国密构建的严格模式。
 状态分得很清：**没有本平台产物 ⇒ `!` 自报"未实查"**（没编过 ≠ 编错；只编了别的平台也算没查）；

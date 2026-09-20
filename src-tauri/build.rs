@@ -34,6 +34,10 @@ mod gm_patch_probe {
 }
 use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_roots, SourcePick};
 
+/// 补丁文件名 —— 与 `scripts/lib/sm-library-patch.mjs` 的 `PATCH_BASENAME` 是同一个对象
+/// （那边是 JS 侧唯一实现，这里是 Rust 侧唯一出现；改了名字两边一起改，`patches/README.md` 有登记）。
+const PATCH_FILE: &str = "0001-sqlcipher-sm3-provider.patch";
+
 /// 文件 sha256（小写十六进制）。**不手写哈希** —— 用 `sha2`（Cargo.lock 里已有的 0.10）。
 ///
 /// 与 `scripts/sm-library-build.mjs` 的 `sha256OfFile()` 是同一个算法、同一个对象：
@@ -130,8 +134,18 @@ fn require_gm_provider_patch() {
             // 都会打乱先后）。macOS 侧 2026-09-19 实测：源码还原了、output 里还留着旧标记 ⇒ 门禁拿到**过期的真标记**。
             let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
             let src_sha256 = sha256_of(&dir.join(&hit)).unwrap_or_else(|| "unavailable".to_string());
+            // ★ `patch=` 不再写死字面量（2026-09-20 自查发现）：原来写的是 `patch=v1`，而补丁已经走到
+            //   v2 ⇒ 那个标签**不再标识任何东西**，跨机核对"我们打的是同一份吗"就只剩 `src_sha256` 一根柱子。
+            //   改成**补丁文件自身的 sha256 前 8 位**：它自证、不需要人来同步（与 `patches/README.md`
+            //   记的补丁 sha256 同源，对不上就是不同的补丁文件）。
+            let patch_sha = std::env::var("CARGO_MANIFEST_DIR")
+                .ok()
+                .map(|root| std::path::Path::new(&root).join("..").join("patches").join(PATCH_FILE))
+                .and_then(|p| sha256_of(&p))
+                .map(|h| h.chars().take(8).collect::<String>())
+                .unwrap_or_else(|| "unavailable".to_string());
             println!(
-                "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target={target_os} \
+                "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch={patch_sha} target={target_os} \
                  libsqlite3-sys={version} via={how} marker={hit} src_sha256={src_sha256})"
             );
             // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
