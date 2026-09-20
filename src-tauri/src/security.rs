@@ -221,6 +221,35 @@ pub fn key_space_conn(conn: &Connection, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// SQLCipher「这个库打不开」的**两种**原始报错 —— 实测这两句在**口令错**与**页参数/页加密算法不同**
+/// 两种情况里**完全不可区分**（2026-09-20 探针：512 字节页库用默认参数打开 ⇒ `file is not a database`；
+/// 同一个库用**错口令**打开 ⇒ **一字不差的同一句**；另一种参数不匹配 ⇒ `database disk image is malformed`）。
+pub(crate) const CIPHER_OPEN_RAW: [&str; 2] = ["file is not a database", "database disk image is malformed"];
+
+/// 把「库打不开」的原始报错翻成**可操作**的文本（**两因一果**）。
+///
+/// 为什么必须两因并列、而不是猜一个：见 [`CIPHER_OPEN_RAW`] 的实测 —— 报错层不区分，只能把
+/// "口令不对"与"这个库用了另一种**页加密算法**（AES 页 vs SM4 页）"一起说，并给出下一步。
+/// 这一条是为 P3（A 路：国密构建的 SM4 页加密）准备的：**升级到国密构建**后，应用层口令明明是对的
+/// （哨兵解得开），库级却打不开，现场就是这两句之一 —— 不翻的话用户会一直以为"口令错了"。
+///
+/// ⚠️ 只翻**认得出来的**那两句；其余错误**原样返回**（诊断为"可能是页加密算法不同"要有依据，
+/// 不能把所有开库失败都套上这个解释）。
+pub(crate) fn cipher_open_error(raw: &str, what: &str) -> String {
+    if !CIPHER_OPEN_RAW.iter().any(|m| raw.contains(m)) {
+        return raw.to_string();
+    }
+    format!(
+        "{what}打不开：{raw}\n\
+         ⇒ 两种成因，报错本身**分不出**是哪一种，请按顺序排除：\n\
+         \u{20}1) **口令/密钥不对**（最常见）：确认大小写、输入法、以及是不是另一台设备的口令；\n\
+         \u{20}2) **这个库用了另一种页加密算法**（例如库是 AES 页、而本构建是 SM4 页，或反过来）：\n\
+         \u{20}   页加密算法是**库文件**的属性、不是开关 ⇒ 换构建后必须**迁移**：用**原构建**打开并先「关闭磁盘加密」\n\
+         \u{20}   （导出成明文）⇒ 换本构建 ⇒ 重新「开启磁盘加密」；或改用导出包导入。详见 docs/SM-CRYPTO-DELIVERY.md。\n\
+         原始报错保留在上面，排查时以它为准。"
+    )
+}
+
 /// Same as [`key_space_conn`] but with an **explicitly supplied** key instead of the
 /// process-wide session key. Callers that already hold a key (backup export) must use
 /// this so the keyed connection and any keyed *destination* are guaranteed to use the
@@ -440,7 +469,10 @@ pub fn convert_all_spaces(
 fn reopen_keyed(c: &mut Connection, space_id: &str, app_data_dir: &Path) -> Result<(), String> {
     // `reopen_space_at` re-opens the file and re-attaches meta; it applies the key
     // itself (via key_space_conn) when the target file is encrypted.
+    // ★ 失败要**可操作**（P3 预置）：解锁时应用层哨兵已经验过口令了，随后这一步是**库级**打开 ——
+    //   页加密算法/页参数不同时原始报错与"口令错"一字不差，不翻的话用户会一直怀疑口令。
     crate::db::reopen_space_at(c, space_id, app_data_dir)
+        .map_err(|e| cipher_open_error(&e, &format!("空间 {space_id} 的库")))
 }
 
 /// Per-space at-rest encryption marker (meta.workspaces.encrypted): records which
@@ -878,6 +910,64 @@ mod tests {
     // space DB with the REAL app schema + a page, encrypt it in place, verify it reads
     // back via the open-time keying (header sniff + session key), and confirm no temp
     // files remain. This is the E1 enable-migration that actually encrypts existing spaces.
+    // ★ P3 预置的可操作错误（§3.3②）：这两句原始报错**必须**被翻成"两因一果"，
+    //   其余错误**必须**原样返回（诊断要有依据，不能把一切开库失败都解释成"页加密算法不同"）。
+    #[test]
+    fn cipher_open_errors_are_translated_but_other_errors_are_not() {
+        for raw in [
+            "file is not a database",
+            "database disk image is malformed",
+            "SqliteFailure(Error { code: NotADatabase }, Some(\"file is not a database\"))",
+        ] {
+            let out = cipher_open_error(raw, "空间 s1 的库");
+            assert!(out.contains("口令"), "没提口令：{out}");
+            assert!(out.contains("页加密算法"), "没提页加密算法：{out}");
+            assert!(out.contains("关闭磁盘加密"), "没给下一步：{out}");
+            assert!(out.contains(raw), "原始报错必须保留（排查以它为准）：{out}");
+        }
+        // 认不出的错误 ⇒ 原样返回（不套解释）
+        for raw in ["unable to open database file", "disk I/O error", "some other failure"] {
+            assert_eq!(cipher_open_error(raw, "空间 s1 的库"), raw);
+        }
+    }
+
+    // ★ 端到端：真造一个"页参数与默认不同"的库（P3 之前页加密算法换不了，这是**同一失败签名**的载体：
+    //   探针实测——写库时用非默认页参数 ⇒ 用默认参数打开就是 `file is not a database`，与**错口令**一字不差），
+    //   再走**真实开库路径** `db::open_space_conn_at`，断言错误已经是可操作文本。
+    #[test]
+    fn open_space_conn_reports_an_actionable_error_for_a_mismatched_page_db() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(uniq_tmp("mismatch"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("spaces")).unwrap();
+        // meta.db（open_space_conn_at 会 ATTACH 它）
+        {
+            let m = Connection::open(dir.join("meta.db")).unwrap();
+            crate::db::open_meta_conn_at(&dir).unwrap().close().unwrap();
+            m.close().unwrap();
+        }
+        let key = crypto::derive_key("hunter2", &crypto::random_salt()).unwrap();
+        let hex = crypto::key_hex(&key);
+        let path = crate::db::space_db_path(&dir, "s1");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+            // 先 key 再设非默认页大小（探针 O1 形态）⇒ 这份文件的页参数与本构建的默认**不同**
+            c.execute_batch("PRAGMA cipher_page_size = 512;").unwrap();
+            c.execute_batch("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);").unwrap();
+            assert_eq!(c.query_row("SELECT COUNT(*) FROM t", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            c.close().unwrap();
+        }
+        // `open_space_conn_at` 会用**会话密钥**给连接加钥 ⇒ 这里按真实解锁后的状态置上（本模块的测试同法）。
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
+        let err = crate::db::open_space_conn_at("s1", &dir).unwrap_err();
+        *SESSION_KEY.lock().unwrap() = None;
+        assert!(err.contains("口令"), "开库失败没给可操作文本：{err}");
+        assert!(err.contains("页加密算法"), "没提页加密算法：{err}");
+        assert!(err.contains("关闭磁盘加密"), "没给下一步：{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn convert_space_db_encrypt_back_to_readable() {
         let _g = SEC_LOCK.lock().unwrap();
