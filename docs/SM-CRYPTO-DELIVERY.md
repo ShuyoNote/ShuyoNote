@@ -29,8 +29,8 @@
 | 版本 | 布局 | 用途 |
 |---|---|---|
 | `v0` | 无头 `nonce(24) ‖ ct` | P0 之前的老数据，**永远可读**（含"首两字节恰好撞 magic+版本"的回退） |
-| `v1` | `0x53 0x01 ‖ nonce(24) ‖ XChaCha20-Poly1305 ct` | 默认构建写这个 |
-| `v2` | `0x53 0x02 ‖ iv(16) ‖ SM4-CBC(PKCS#7) ct ‖ HMAC-SM3 tag(32)` | `--features sm-crypto` 的国密构建写这个 |
+| `v1` | `0x53 0x01 ‖ nonce(24) ‖ XChaCha20-Poly1305 ct` | **只读**（老数据；2026-09-20 起不再写） |
+| `v2` | `0x53 0x02 ‖ iv(16) ‖ SM4-CBC(PKCS#7) ct ‖ HMAC-SM3 tag(32)` | **默认构建写这个**（2026-09-20 owner 拍板「无兼容快路」后 `sm-crypto` 成为默认特性；旧行为 `--no-default-features` 仅作**回滚通道**，见方案 §3.4） |
 
 **套件常量（方案 §0.1，一处定义处处引用）**：SM4-CBC ＋ HMAC-SM3（**encrypt-then-MAC，先验后解**）；
 PKCS#7；IV 16B 随机；tag 32B **在尾部**；**MAC 覆盖"版本头 ＋ IV ＋ 密文"**；
@@ -78,11 +78,11 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 结论 | 判据 / 命令 | 读数 |
 |---|---|---|
-| 密文带版本头、两条路径同一编码 | `cargo test --lib crypto::` | 10/10（`--features sm-crypto` 时） |
+| 密文带版本头、两条路径同一编码 | `cargo test --lib crypto::` | 10/10（**默认构建即国密**；`--no-default-features` 只跑旧行为那一半） |
 | **无头老数据永远可读**（含撞头回退，对 v1、v2 各验一遍） | 同上（金标夹具 `tests/crypto-legacy-v0.json`，三格真实密文） | ✅ |
 | **EtM 正确**：篡改版本头/IV/密文/ tag 都必须**先失败且不解密**；两把密钥不可互换 | `crypto_sm::tests::tampering_anywhere_fails_before_decrypting` 等 | ✅ |
 | **未知版本给可操作错误**（不是"数据损坏"） | `unknown_future_version_gets_an_actionable_error`；默认构建读 v2 | ✅ |
-| 两条路径（附件 / 同步载荷）全覆盖；导出包里的附件走同一条静置密文路径 | `security::tests::national_crypto_covers_all_three_paths_…`、`attachments::…national_crypto…` | ✅（只在 `--features sm-crypto` 下编） |
+| 两条路径（附件 / 同步载荷）全覆盖；导出包里的附件走同一条静置密文路径 | `security::tests::national_crypto_covers_all_three_paths_…`、`attachments::…national_crypto…` | ✅（默认构建即国密；旧行为的对照由 `--no-default-features` 提供） |
 | ★ **E1（磁盘加密）下导出/备份不再硬失败、也不再静默少空间**（2026-09-20，F2，commit `f64f2320`） | `workspace_io::tests::snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key`、`backup::tests::snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips`、`backup::tests::cross_key_encrypted_snapshot_gets_an_actionable_diagnosis` | ✅ 3/3；**变异证明**：退回老行为各红一次 |
 | **库级密钥未被国密密钥顶替**（顶替＝既有加密库全打不开） | `security::tests::national_crypto_…_keeps_the_library_key_unchanged` | ✅ |
 | KDF 常量写死 ＋ 防改小 ＋ 跨实现黄金向量（含**切片**口径） | `kdf_rounds_are_the_pinned_value`、`kdf_golden_vector_and_key_slicing` | 变异证明：改切片只有黄金向量红 |
@@ -119,7 +119,8 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 ```bash
 # ① 构建/单测（应用层完全体；各平台一致）
-cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto     # ← 应用层国密的开关（§0-E）
+cargo test --manifest-path src-tauri/Cargo.toml                       # ← 应用层国密已是**默认**（§0-E 于 2026-09-20 由 §3.4 取代）
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features # ← 旧行为（v1 写路径）＝回滚通道
 
 # ② 跨实现对拍：需要一份真 Tongsuo 的 CLI
 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl node scripts/check-gm-conformance.mjs

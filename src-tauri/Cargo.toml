@@ -27,8 +27,12 @@ sha2 = "0.10"
 # 纯 Rust ⇒ 全平台同一份实现，不被 Tongsuo 的 C 构建链阻塞）。
 # **库级**（SQLCipher 页加密 / 页 HMAC，P2-P3）走 Tongsuo，不吃这个 feature —— 两条线各自独立。
 [features]
-default = []
-# 应用层国密（P1，已交付）：SM4-CBC ＋ HMAC-SM3，纯 Rust（RustCrypto）⇒ 全平台同一份实现、不吃构建链。
+# ★ 2026-09-20 owner 拍板「无兼容快路」后**默认打开应用层国密**：
+#   从"默认构建写 v1 / 国密构建写 v2"变成"**只有一个写路径：v2（SM4-CBC ＋ HMAC-SM3）**"，
+#   v0/v1 保留**只读**（最便宜的回退网，见方案 §3.4）。
+#   它是**纯 Rust**（RustCrypto）⇒ 全平台同一份实现、**不吃构建链**（与库级 `sm-library` 不同）。
+#   要回到旧行为：`cargo … --no-default-features`（或把这行改回 `default = []`）——一行可逆。
+default = ["sm-crypto"]
 sm-crypto = ["dep:sm4", "dep:cbc", "dep:sm3", "dep:hmac", "dep:pbkdf2"]
 # 库级国密（P2/P3 的**构建侧接缝**）：SQLCipher 的页加密 / 页 HMAC / 库 KDF 要换成国密，
 # 前提是**编进去的后端**是 Tongsuo/OpenSSL 而不是 Apple 的 CommonCrypto（后者只有 AES，方案 §3 第 5 条）。
