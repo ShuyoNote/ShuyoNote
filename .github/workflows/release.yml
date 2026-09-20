@@ -400,6 +400,13 @@ jobs:
         # 与 android.yml 逐字一致：gen/ 不入库，漏注入只有真机 release 看得见。
         run: pnpm android:mobile-shell --check
 
+      - name: 随包 PDFium 库（Android）
+        # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
+        # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。
+        run: |
+          node scripts/fetch-pdfium.mjs android-arm64
+          pnpm android:stage-pdfium
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
@@ -412,6 +419,11 @@ jobs:
             exit 1
           fi
           pnpm tauri android build --target aarch64 --apk --ci
+
+      - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
+        # 与 android.yml 同名同步；发版包更需要这条（`libpdfium.so` 是**运行时**加载的 ⇒
+        # 包里没有它时"装完不报错"，只有用户开 PDF 才变成打不开）。
+        run: pnpm check:android-bundle
 
       - name: 用正式密钥签名 APK（逻辑与 android.yml 逐字一致）
         # 全部逻辑照抄 `.github/workflows/android.yml` 的同名步骤：

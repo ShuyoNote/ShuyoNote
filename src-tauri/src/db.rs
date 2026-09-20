@@ -161,7 +161,17 @@ pub(crate) fn open_meta_conn_at(dir: &Path) -> Result<Connection, String> {
 }
 
 /// [`open_space_conn`] with an explicit app-data-dir (testable without the global).
+/// ★ 外层只做一件事（P3 预置）：**把"库打不开"的失败翻成可操作文本**。
+///
+/// 为什么包在外层而不是逐句 `map_err`：SQLCipher 的 `file is not a database` 可能在任何一次
+/// **首次读写**上冒出来（`PRAGMA journal_mode` 就会触发它，实测）⇒ 逐句包会漏掉早发的那一处。
+/// 认不出的错误原样返回（见 `security::cipher_open_error`）。
 pub(crate) fn open_space_conn_at(space_id: &str, dir: &Path) -> Result<Connection, String> {
+    open_space_conn_inner(space_id, dir)
+        .map_err(|e| security::cipher_open_error(&e, &format!("空间 {space_id} 的库")))
+}
+
+fn open_space_conn_inner(space_id: &str, dir: &Path) -> Result<Connection, String> {
     if !is_safe_space_id(space_id) {
         return Err("非法空间 id".to_string());
     }

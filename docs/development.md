@@ -278,8 +278,10 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 
 `check-crypto-backend` 的三种状态分得很清：没产物 ⇒ `!` 自报跳过；最新产物 ≠ 声明 ⇒ 红（附上面那条清库命令）；
 存在更旧且分类不同的产物 ⇒ `!` 提示（那正是"沉默不换后端"留下的痕迹）。换后端顺带要过
-`security::tests::fixture_db_written_by_the_other_provider_still_opens`（用**旧后端写下**的加密库夹具，
-见 `src-tauri/tests/sqlcipher-backend-fixture.db`）——它红了就等于**用户打不开自己的库**。
+`security::tests::exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`
+（两份内容相同的加密库夹具：`src-tauri/tests/sqlcipher-backend-fixture.db`＝**AES 页**、
+`sqlcipher-sm4-page-fixture.db`＝**SM4 页**）——它断言"**恰好一个能开**"，红了就等于
+**这份构建读不了它本该读的那种库**（页加密是库文件的属性，见方案 §3.3 判据 1）。
 
 ### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
 

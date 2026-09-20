@@ -372,6 +372,12 @@ fn pdfium_matches_mupdf_on_fixtures() {
         out.display()
     );
 
+    // ★ **见证**（macOS 2026-09-20 提）：随包字体到底有没有被 PDFium 问过。
+    // 装在库目录旁的字体若没被问过，前面那些读数**说明不了路线 D 生效**（可能是别的原因画出来的），
+    // 而这一行把"真的开火了"变成可读的读数。`0 / 0` = 这次没装随包字体（正常情形之一）。
+    let (asks, answers) = crate::pdfium_native::bundled_font_stats();
+    println!("随包字体：被问 {asks} 次、答 {answers} 次（0/0 = 这次没装随包字体）");
+
     assert!(
         failures.is_empty(),
         "对拍未通过（{} 项）：\n  - {}",

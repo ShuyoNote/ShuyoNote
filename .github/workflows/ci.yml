@@ -50,7 +50,18 @@ jobs:
     name: 单测 / 冒烟 / 契约
     runs-on: ubuntu-latest
     steps:
+      # ⚠️ `fetch-depth: 0` **不是**可选的：契约组里 `check-changelog-version-parity` 要看提交历史
+      #    （"这一笔有没有同时改版本文件"）。checkout 默认只取 1 个提交，而浅克隆下**有两种形态**，
+      #    **后一种更危险**：
+      #     ① `origin/main` 不在 ⇒ 走 `HEAD^..HEAD` 兜底 ⇒ 崩成"判不了"（exit 3，**红**）；
+      #     ② `origin/main` **在**且 `== HEAD`（CI 上常见）⇒ 范围为空 ⇒ 修前打印"✓ 这 0 笔……"**退出 0**
+      #        —— **假绿**："什么都没看见"被当成"通过"。
+      #    （② 是 Windows 侧实测出来的、macOS 独立复现并确认；修法：浅克隆 + 空范围 ⇒ **判不了**）
+      #    ⇒ 这条 `fetch-depth` 同时治 ①②；将来谁为了省 CI 时间想删它，请看上面两行再决定。
+      #    若不想取全历史，可改成给该步设 `SHUYONOTE_CHANGELOG_PARITY_RANGE=<base>..<head>`。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:

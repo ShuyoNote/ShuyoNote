@@ -58,6 +58,20 @@ if (pristine.includes("SHUYONOTE-GM")) {
 // 见 README 的「P3 还没做的部分」—— 那是 `cipher` 回调，与这里同一文件同一结构体，但需要另一层设计。
 const EDITS = [
   {
+    id: "6 OPENSSL_CIPHER：无条件 SM4 页加密（P3 快路）",
+    anchor: `#define OPENSSL_CIPHER EVP_aes_256_cbc()
+`,
+    add: `/* SHUYONOTE-GM: **无条件**换 SM4 页加密（owner 2026-09-20「无兼容快路」拍板：不做兼容、页加密只有 SM4）。
+** 只改这一处定义** —— 五处使用点（cipher / get_cipher / get_key_sz / get_iv_sz / get_block_sz）都只是引用它，
+** 等价且补丁面最小（少 4 段漂移面）；按快路**不加任何 #ifdef、不加构建开关**。
+** ⚠️ 已知代价（写给下一个人）：这份补丁打在 cargo registry 那份**全机共享**源码上 ⇒ 打过之后，
+** 同一台机器上**任何**后续构建（默认构建、Apple 的 CommonCrypto 构建、别人的 cargo test）都变成 SM4 页。
+** 跑默认门禁前先 node scripts/sm-library-build.mjs --revert（2026-09-20：这条从"行为中性"变成"有后果"，
+** 因为去掉了 #ifdef）。 */
+#define OPENSSL_CIPHER EVP_sm4_cbc()
+`,
+  },
+  {
     id: "1a 枚举/标签：HMAC_SM3",
     anchor: `#define SQLCIPHER_HMAC_SHA512 2
 #define SQLCIPHER_HMAC_SHA512_LABEL "HMAC_SHA512"

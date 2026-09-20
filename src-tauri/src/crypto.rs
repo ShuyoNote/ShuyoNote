@@ -24,13 +24,15 @@ const NONCE_LEN: usize = 24;
 pub const MAGIC: u8 = 0x53; // 'S'
 /// 版本 1 = **XChaCha20-Poly1305**（P0 起新数据的默认格式）。
 pub const VERSION_XCHACHA: u8 = 1;
-/// 版本 2 = **国密 SM4-CBC ＋ HMAC-SM3（EtM）**。⚠️ 只有 `--features sm-crypto` 才**写得出来**；
+/// 版本 2 = **国密 SM4-CBC ＋ HMAC-SM3（EtM）**。★ 2026-09-20 起 `sm-crypto` 是**默认特性**
+/// （owner 拍板走「无兼容快路」，见方案 §3.4）⇒ **默认构建写的就是 v2**；要回到旧行为用
+/// `--no-default-features`（那是一条**回滚/逃生通道**，不是对外形态）。
 /// 没有那个 feature 的构建读到它必须给"请升级"的**可操作**错误（§0-C），而不是"数据损坏"。
 pub const VERSION_SM4: u8 = 2;
 /// 本构建**写新数据**用的版本。
 ///
 /// 分派依据不是运行时开关，而是 §0-E 的编译期 feature：默认包继续写 v1（**字节层面与 P0 完全一致**，
-/// 默认构建因此不承担任何国密构建链风险），`--features sm-crypto` 的国密版写 v2。
+/// 应用层国密是**纯 Rust** ⇒ 默认打开它**不引入任何构建链风险**（库级 `sm-library` 才需要 OpenSSL/Tongsuo）。
 #[cfg(feature = "sm-crypto")]
 pub const CURRENT_FORMAT: u8 = VERSION_SM4;
 #[cfg(not(feature = "sm-crypto"))]
@@ -230,7 +232,7 @@ pub fn key_hex(key: &[u8; 32]) -> String {
 /// 写新数据。
 ///
 /// · 默认构建 ⇒ v1（`magic | 1 | nonce(24) | XChaCha20-Poly1305`），**与 P0 的字节完全一致**；
-/// · `--features sm-crypto` 且会话手里有国密密钥 ⇒ v2（`magic | 2 | iv(16) | SM4-CBC | HMAC-SM3`）。
+/// · 会话手里有国密密钥（默认构建即如此）⇒ v2（`magic | 2 | iv(16) | SM4-CBC | HMAC-SM3`）。
 /// 两条路径**共用同一套头**（§0-A），所以"这是哪一版"永远只看头，不靠猜。
 pub fn encrypt(plaintext: &[u8], keys: &AppKeys) -> Result<Vec<u8>, String> {
     #[cfg(feature = "sm-crypto")]
@@ -383,7 +385,7 @@ mod tests {
         let key = derive_key(&fx.passphrase, &salt).unwrap();
         // 夹具里记的 key 也必须与 KDF 现算的一致 —— 否则"换了 KDF"这件事会被静默吞掉。
         assert_eq!(key_hex(&key), fx.key_hex, "KDF 变了（夹具记录的 key 与现算不一致）");
-        // ★ 夹具只用 legacy 密钥：国密构建（`--features sm-crypto`）也必须能读这份老数据。
+        // ★ 夹具只用 legacy 密钥：**默认构建（国密已默认开启）也必须能读这份老数据**。
         let keys = AppKeys::legacy_only(key);
 
         for c in &fx.cases {
@@ -519,7 +521,7 @@ mod tests {
     //   · 国密构建：新数据是 v2，且**老数据（v0/v1）照旧能读**（双读，§4 第 2 条）；
     //   · 默认构建：**字节层面不许变**（新数据仍是 v1），但读到 v2 必须给"换国密版/升级"的可操作错误。
 
-    /// 默认构建（不带 `--features sm-crypto`）：写的一律是 v1，且**永远写不出 v2**。
+    /// `--no-default-features`（回滚通道）：写的一律是 v1，且**永远写不出 v2**。
     #[cfg(not(feature = "sm-crypto"))]
     #[test]
     fn default_build_still_writes_v1_and_rejects_v2_with_an_actionable_error() {

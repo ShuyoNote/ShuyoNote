@@ -173,7 +173,23 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      }
      sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
    }else
-@@ -113864,6 +113919,8 @@
+@@ -113766,7 +113821,14 @@
+   return SQLITE_OK;
+ }
+ 
+-#define OPENSSL_CIPHER EVP_aes_256_cbc()
++/* SHUYONOTE-GM: **无条件**换 SM4 页加密（owner 2026-09-20「无兼容快路」拍板：不做兼容、页加密只有 SM4）。
++** 只改这一处定义** —— 五处使用点（cipher / get_cipher / get_key_sz / get_iv_sz / get_block_sz）都只是引用它，
++** 等价且补丁面最小（少 4 段漂移面）；按快路**不加任何 #ifdef、不加构建开关**。
++** ⚠️ 已知代价（写给下一个人）：这份补丁打在 cargo registry 那份**全机共享**源码上 ⇒ 打过之后，
++** 同一台机器上**任何**后续构建（默认构建、Apple 的 CommonCrypto 构建、别人的 cargo test）都变成 SM4 页。
++** 跑默认门禁前先 node scripts/sm-library-build.mjs --revert（2026-09-20：这条从"行为中性"变成"有后果"，
++** 因为去掉了 #ifdef）。 */
++#define OPENSSL_CIPHER EVP_sm4_cbc()
+ 
+ /* activate and initialize sqlcipher. Most importantly, this will automatically
+    intialize OpenSSL's EVP system if it hasn't already be externally. Note that
+@@ -113864,6 +113926,8 @@
    OSSL_PARAM sha1[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha1", 4, 0 }, OSSL_PARAM_END };
    OSSL_PARAM sha256[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha256", 6, 0 }, OSSL_PARAM_END };
    OSSL_PARAM sha512[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha512", 6, 0 }, OSSL_PARAM_END };
@@ -182,7 +198,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
  
    if(in == NULL) goto error;
  
-@@ -113903,6 +113960,13 @@
+@@ -113903,6 +113967,13 @@
          goto error;
        }
        break;
@@ -196,7 +212,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      default:
        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: invalid algorithm %d", algorithm);
        goto error;
-@@ -113978,6 +114042,13 @@
+@@ -113978,6 +114049,13 @@
          goto error;
        }
        break;
@@ -210,7 +226,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      default:
        return SQLITE_ERROR;
    }
-@@ -114076,6 +114147,9 @@
+@@ -114076,6 +114154,9 @@
      case SQLCIPHER_HMAC_SHA512:
        return EVP_MD_size(EVP_sha512());
        break;
