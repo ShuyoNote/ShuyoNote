@@ -221,6 +221,14 @@ pub fn key_space_conn(conn: &Connection, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Same as [`key_space_conn`] but with an **explicitly supplied** key instead of the
+/// process-wide session key. Callers that already hold a key (backup export) must use
+/// this so the keyed connection and any keyed *destination* are guaranteed to use the
+/// same bytes.
+pub fn key_conn_with(conn: &Connection, key: &[u8; 32]) -> Result<(), String> {
+    set_cipher_key(conn, key)
+}
+
 /// Rebuild `src_path`'s schema + data into a brand-new DB at `dst_path`, applying the
 /// target key (if `to_encrypted`) so the output is a fully self-contained, re-readable
 /// space DB. Uses the app's own `migrate` to recreate the schema and copies each table

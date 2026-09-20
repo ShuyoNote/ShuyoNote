@@ -3137,7 +3137,9 @@ export function makeInvoke(store: SqliteStore) {
       if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so same-session import (and the Node smoke test) can read it back.
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
-      return { path: name, size: zip.length } as T;
+      // Web 端整库就是同一个 store，没有"某个空间没解锁"这回事 ⇒ 恒为空数组
+      // （保持与桌面 export_backup 同一个返回契约，界面无需分平台判断）。
+      return { path: name, size: zip.length, skipped: [] } as T;
     }
     if (cmd === "import_backup") {
       // Merge import: each space in the backup (spaces/<id>.db, or a legacy single

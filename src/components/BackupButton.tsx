@@ -76,7 +76,14 @@ export function BackupButton({ label }: { label?: string } = {}) {
       setBusying("正在导出备份…");
       const result = await api.exportBackup(path);
       try { localStorage.setItem("shuyonote:lastBackupAt", String(Date.now())); } catch { /* ignore */ }
-      toast(`备份完成：大小 ${(result.size / 1024).toFixed(1)} KB`, "success");
+      // ★ 少导了东西就必须明说（E1 下加密空间未解锁时就是这种情况）：给一个绿字
+      //   「备份完成」会把用户哄过去，等到他要恢复时才发现少了空间。
+      const skipped = result.skipped ?? [];
+      if (skipped.length > 0) {
+        toast(`备份完成，但有 ${skipped.length} 个空间没包含进去：${skipped.join("；")}`, "error");
+      } else {
+        toast(`备份完成：大小 ${(result.size / 1024).toFixed(1)} KB`, "success");
+      }
     } catch (e) {
       toast(`导出失败：${e}`, "error");
     } finally {

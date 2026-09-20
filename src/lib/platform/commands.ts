@@ -554,7 +554,9 @@ export interface CommandMap {
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
-  export_backup: { args: { destPath: string }; result: { path: string; size: number } };
+  // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
+  // 否则用户会把"少数据的备份"当成完整备份。
+  export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };
   export_wiki: { args: { destPath: string }; result: { path: string; size: number; pages: number; files: number } };
