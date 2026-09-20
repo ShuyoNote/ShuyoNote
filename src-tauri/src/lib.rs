@@ -710,3 +710,63 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+/// Tauri 的 **http 插件作用域**必须显式放行 —— 它的默认权限是"能发请求，但一个源都不许发"。
+///
+/// 缺陷 #9（2026-09-20，用户报「PDF 阅读器 AI 识别出错」）就是这个漏配：capability 里只写了
+/// 字符串 `"http:default"`，而插件自带的 `permissions/default.toml` 写着
+/// *"enables all fetch operations but **does not allow explicitly any origins to be fetched**.
+/// This needs to be manually configured before usage."* ⇒ 桌面端所有走 `coreFetch`
+/// （`@tauri-apps/plugin-http` 那条 native 路）的跨域 AI 调用都被权限系统拒掉；
+/// Web 版走浏览器 `fetch`，所以"只有桌面端 AI 不好使"，而且空作用域是**失败关闭**，
+/// 不会自己暴露 —— 用户只看到一句笼统的「AI 视觉识别失败」。
+///
+/// ⚠️ 这条判据只能证明**配置形状**（有作用域、且覆盖 https 与 http）；"打包后的桌面端真能发出去"
+/// 仍要真机复验 —— 别把这条通过读成"AI 已经好了"。
+#[cfg(test)]
+mod capability_scope_tests {
+    #[test]
+    fn http_plugin_scope_allows_user_configured_endpoints() {
+        // **运行时读**而不是 `include_str!`：后者会把 JSON 烘进二进制，改了 capability 不重编就测不出来
+        // —— 而这条判据要守的恰恰是"文件里那份配置"。
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/capabilities/default.json");
+        let raw = std::fs::read_to_string(path).expect("capabilities/default.json 必须存在");
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("capability 必须是合法 JSON");
+        let perms = v["permissions"].as_array().expect("permissions 必须是数组");
+
+        let scoped: Vec<&serde_json::Value> = perms
+            .iter()
+            .filter(|p| {
+                p.is_object()
+                    && p["identifier"]
+                        .as_str()
+                        .map(|s| s.starts_with("http:"))
+                        .unwrap_or(false)
+            })
+            .collect();
+        let plain_http = perms
+            .iter()
+            .any(|p| p.as_str().map(|s| s.starts_with("http:")).unwrap_or(false));
+
+        assert!(
+            !(plain_http && scoped.is_empty()),
+            "http 插件被授予了权限、却没给任何 allow scope —— 插件自带文档明说这样『一个源都不许发』，\
+             届时桌面端所有 AI 调用会被静默拒掉（缺陷 #9）"
+        );
+
+        let allows: Vec<String> = scoped
+            .iter()
+            .flat_map(|p| p["allow"].as_array().cloned().unwrap_or_default())
+            .filter_map(|a| a["url"].as_str().map(|s| s.to_string()))
+            .collect();
+        assert!(
+            allows.iter().any(|u| u.starts_with("https://")),
+            "AI 服务商是可配置的（默认是 https 端点）⇒ 作用域至少要放行 https：{allows:?}"
+        );
+        assert!(
+            allows.iter().any(|u| u.starts_with("http://")),
+            "自建 / 局域网模型服务（Ollama、LM Studio、内网网关）走 http ⇒ 也要放行：{allows:?}"
+        );
+    }
+}
+
