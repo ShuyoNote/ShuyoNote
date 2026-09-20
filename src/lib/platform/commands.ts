@@ -224,6 +224,18 @@ export type CommunityPublishResult =
   | { status: "outOfScope" }
   | { status: "unexpected"; httpStatus: number; error: string };
 
+/** 一张附件上传成功后的结果（与 Rust `UploadedAttachment` 同形，serde camelCase）。 */
+export interface CommunityUploadedAttachment {
+  /** 调用方手里那个 hash（本机附件 sha256），用来把正文里的本地引用换成社区地址。 */
+  localHash: string;
+  /** 社区算出来的 hash。正常情况下与 `localHash` 一致（同一份字节的 sha256），但**以它为准**。 */
+  hash: string;
+  /** 写进正文用的地址：**相对路径** `/attachments/<hash>`（社区自己的文档就是这么引用的）。 */
+  url: string;
+  mime: string;
+  size: number;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -365,6 +377,20 @@ export interface CommandMap {
   community_publish_note: {
     args: { title: string; body: string; tags: string[]; noteId: string; rev: string };
     result: CommunityPublishResult;
+  };
+  /**
+   * 把正文里的一张**本机附件**传到社区（内容寻址），回一个写进正文用的相对地址。
+   *
+   * 为什么只吃 `hash`、不吃路径：字节要从 `attachments::attachment_bytes` 拿（附件在盘上
+   * 可能是加密的，`fs::read` 得到的是密文 ⇒ 会被社区的魔数白名单挡下，而报错会指向
+   * "不支持的文件类型"这种完全错的方向）。`hash` 是这个应用里附件的唯一身份。
+   *
+   * 白名单只有 png/jpeg/gif/webp/pdf/zip（按魔数判）⇒ **视频传不上去**，
+   * 调用点（发布清单）必须提前如实说，而不是等社区回一句"类型不支持"。
+   */
+  community_upload_attachment: {
+    args: { hash: string };
+    result: CommunityUploadedAttachment;
   };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {

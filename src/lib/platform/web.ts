@@ -2598,6 +2598,10 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "community_publish_note" || cmd === "community_disconnect") {
       throw new Error("Web 版不支持一键发布到社区，请使用桌面版。");
     }
+    // 传图与发帖是同一道门：同样要"本地凭据 + 不受 CORS 约束的出口"这两样 Web 版没有的东西。
+    if (cmd === "community_upload_attachment") {
+      throw new Error("Web 版不支持向社区上传附件，请使用桌面版。");
+    }
     if (cmd === "install_plugin_from_index") {
       throw new Error("Web 版不支持磁盘插件（受限 JS 运行时），请使用桌面版。");
     }

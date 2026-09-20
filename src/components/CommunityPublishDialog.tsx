@@ -7,9 +7,16 @@
 //     不抓取、不预上传、不发帖；
 //   · 清单里摆出**将要发出去的东西**：标题、标签、正文全文（整篇，带字数）、图片张数
 //     （owner 2026-09-20 拍板：发整篇正文，靠"清单 + 人确认"守底线，不做默认截断）；
-//   · **人点「确认发布」才调 `community_publish_note`**——没有定时、没有"顺手同步"、
-//     没有"上次发过就自动再发"；
+//   · **人点「确认发布」才调 `community_upload_attachment` / `community_publish_note`**——
+//     没有定时、没有"顺手同步"、没有"上次发过就自动再发"；
 //   · 结果按 `status` 分支（不是按 HTTP 码），因为 `status` 说的是"用户该做什么"。
+//
+// 图片上传（本版接上）：正文里的**本地图片**先 `community_upload_attachment` 传到社区
+// （内容寻址），正文里的引用换成社区给的 `/attachments/<hash>` 再发帖。
+//   · **没上传成功就不许发帖**：任何一张失败 ⇒ 立刻停，且错误里点出是**哪一张**（带 hash）；
+//   · 传不上去的（视频/没有指纹的本机图）**在清单里如实说**——静默缺图比报错更伤人；
+//   · 清单与发帖**同一份来源**：正文只从 `contentJson` 算，不在 props 里再塞一份 body
+//     （"清单里一份、发出去另一份"是这一屏最容易出的缝）。
 //
 // 幂等（I2）：`(noteId, rev)` 由调用方传进来，**幂等键由后端算**（`community_publish.rs`），
 // 前端不自己造 key —— 两侧各算一份迟早漂成两种口径。所以本组件只负责**原样把它们递下去**。
@@ -19,14 +26,16 @@
 //
 // 定时器：轮询由**界面自己驱动**（后端不挂定时任务，见 `community_publish.rs:574` 的注释），
 // 所有 interval 都登记在 `pollTimer` / `tickTimer` 里，**卸载（= 关闭对话框）时全停**。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { platform } from "../lib/platform";
 import type {
   CommunityConnectState,
   CommunityConnection,
   CommunityDeviceStart,
   CommunityPublishResult,
+  CommunityUploadedAttachment,
 } from "../lib/platform/commands";
+import { pageContentToMarkdown, pageImageRefs } from "../lib/exportMarkdown";
 import { sanitizeExternalUrl } from "../lib/links";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
@@ -34,8 +43,14 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 export interface CommunityPublishDialogProps {
   /** 笔记标题（清单里原样展示，也是发给社区的 `title`）。 */
   title: string;
-  /** 正文 Markdown —— **整篇全文**（清单里也展示全文，不做截断）。 */
-  body: string;
+  /**
+   * 正文的**唯一来源**：页面的 `content_json` 快照（Markdown 由本组件自己算）。
+   *
+   * 为什么收 `contentJson` 而不是收算好的 `body`：清单里展示的正文、上传后发出去的正文
+   * 必须是同一份。让调用方传 body、组件再自己拼一份"换了地址的 body"，等于同一条正文
+   * 有两条来路——迟早出现"清单里是 A、发出去是 B"。
+   */
+  contentJson: string;
   tags: string[];
   /** 笔记 id。与 `rev` 一起算幂等键，取值必须稳定（见 `EditorToolbar` 里的注释）。 */
   noteId: string;
@@ -47,23 +62,49 @@ export interface CommunityPublishDialogProps {
 /** 设备码流程：`idle` 还没开始 / `starting` 正在要码 / `waiting` 等人在浏览器里确认 / `stopped` 结束。 */
 type ConnectFlow = "idle" | "starting" | "waiting" | "stopped";
 
+/** Markdown 图片语法：`![alt](src)`（src 到第一个 `)`/空白为止，可被 `<>` 包着）。 */
+const IMAGE_RE = /!\[[^\]]*\]\(\s*<?([^)\s>]+)/g;
+
+/** 正文里有几张图（含社区地址的、远程的 —— 这是"这篇长什么样"，不是"要传几张"）。 */
+function countImages(md: string): number {
+  let n = 0;
+  for (const _ of md.matchAll(IMAGE_RE)) n += 1;
+  return n;
+}
+
 /**
- * Markdown 里的图片：`![alt](src)`。
+ * **已把所有带指纹的图片换成社区地址之后**，还剩几张社区取不到的。
  *
- * 为什么要数它：社区侧有 `POST /api/attachments`（内容寻址），本地图片要先传上去换成
- * `/attachments/<hash>` 再发——**本版不做图片上传**（方案 P0 的剩余项）。所以清单必须
- * 把"正文里有几张本地图、它们发出去会怎样"如实说出来，而不是让人发完才发现图没了。
+ * 为什么要这一步：没有 `__hash` 的 ImageNode（比如从 Markdown 导进来的 `attachment://…`）
+ * 传不上去（上传命令只认 hash），发出去就是一张空图。上一版对这类图是明说的
+ * （"本版不做图片上传"），接上上传之后**不能反而变得沉默**。
  */
-function imagesIn(body: string): { total: number; local: number } {
-  const re = /!\[[^\]]*\]\(\s*<?([^)\s>]+)/g;
-  let total = 0;
-  let local = 0;
-  for (const m of body.matchAll(re)) {
-    total += 1;
-    // `attachment://…` 是桌面端的应用专有协议，相对路径/裸路径同理：都不是社区能取到的地址。
-    if (!/^https?:\/\//i.test(m[1])) local += 1;
+function unreachableImages(md: string): number {
+  let n = 0;
+  for (const m of md.matchAll(IMAGE_RE)) {
+    const src = m[1];
+    const reachable = /^https?:\/\//i.test(src) || src.startsWith("/attachments/") || src.startsWith("data:");
+    if (!reachable) n += 1;
   }
-  return { total, local };
+  return n;
+}
+
+/**
+ * 清单与发帖共用的那一份正文（**一次算好，两处都从这里取**）。
+ *
+ * `body`：清单里摆出来的全文（本地引用原样可见 —— 人看到的正是"上传前"的样子）；
+ * `broken`：假设每张有指纹的图都传成功，还剩几张是社区取不到的（见 `unreachableImages`）。
+ */
+function prepareContent(contentJson: string): { body: string; broken: number; error: string } {
+  try {
+    const body = pageContentToMarkdown(contentJson);
+    // 用一个**只换地址、不碰别的**的假映射，问出"上传成功之后还剩几张破图"。
+    const resolved = pageContentToMarkdown(contentJson, (hash) => `/attachments/${hash}`);
+    return { body, broken: unreachableImages(resolved), error: "" };
+  } catch (e) {
+    // 解析不了 ⇒ 说清、且**不许发**（发一份自己都不认识的正文比报错更糟）。
+    return { body: "", broken: 0, error: `正文解析失败，先别发：${e instanceof Error ? e.message : String(e)}` };
+  }
 }
 
 /** 非 `pending`/`approved` 的状态：如实说清是哪一个，并允许重开一次。 */
@@ -77,10 +118,20 @@ function connectStateNote(state: CommunityConnectState): string {
   return `社区返回了没预期到的状态：${state}。可以重新开始一次。`;
 }
 
-export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose }: CommunityPublishDialogProps) {
+export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, onClose }: CommunityPublishDialogProps) {
   useOverlayScrollLock(true);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("communityPublish", true, onClose);
+
+  /**
+   * 清单正文与"有哪些图要传"都从 `contentJson` 算（`contentJson` 不变就不重算）。
+   * `imageRefs` 里的每一张**都会先上传**（只有 `kind === "image"` 的能传，视频传不上去）。
+   */
+  const prepared = useMemo(() => prepareContent(contentJson), [contentJson]);
+  const refs = useMemo(() => pageImageRefs(contentJson), [contentJson]);
+  /** 只有图片能传（`community_upload_attachment` 的社区白名单里没有视频）。 */
+  const imageRefs = useMemo(() => refs.filter((r) => r.kind === "image"), [refs]);
+  const videoCount = refs.length - imageRefs.length;
 
   /** `undefined` = 还没问过（读取中）；`null` = 问过了、没连上。 */
   const [connection, setConnection] = useState<CommunityConnection | null | undefined>(undefined);
@@ -103,6 +154,8 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
   const [disconnectOutcome, setDisconnectOutcome] = useState<{ remoteRevoked: boolean; note: string } | null>(null);
 
   const [sending, setSending] = useState(false);
+  /** 上传是慢操作：静默会像卡死，所以"正在上传第 i/N 张…"要看得见。 */
+  const [uploadNote, setUploadNote] = useState("");
   const [result, setResult] = useState<CommunityPublishResult | null>(null);
   const [sendError, setSendError] = useState("");
 
@@ -234,11 +287,50 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
     }
   };
 
-  /** **只有人点了「确认发布」才会走到这里。** */
+  /**
+   * **只有人点了「确认发布」才会走到这里。** 顺序是死的：
+   *   ① 逐张上传本地图片（按 hash 去重，只传 `kind === "image"`）→
+   *   ② 用社区回的 `url` 建 `hash → url` 映射 →
+   *   ③ 用映射把正文里的本地引用换成社区地址 →
+   *   ④ 发帖（发出去的 body 就是第 ③ 步那一份）。
+   *
+   * **①/②/③ 任何一步失败都立刻停、不发帖**（I4：错在哪一步就说哪一步）——
+   * "上传失败"绝不能报成"发布失败"：那会让人去重试发帖，而真正该修的是那张图。
+   */
   const publish = async () => {
     setSending(true);
     setSendError("");
+    setUploadNote("");
     try {
+      // ① 上传。`imageRefs` 已按 hash 去重（见 `pageImageRefs`），同一张图只传一次。
+      /** hash（本机）→ 社区地址。img 节点的 `__hash` 就是本机 hash。 */
+      const uploaded = new Map<string, string>();
+      const total = imageRefs.length;
+      for (let i = 0; i < total; i++) {
+        const ref = imageRefs[i];
+        setUploadNote(`正在上传第 ${i + 1}/${total} 张…`);
+        let up: CommunityUploadedAttachment;
+        try {
+          up = await platform.executor.invoke<CommunityUploadedAttachment>("community_upload_attachment", {
+            hash: ref.hash,
+          });
+        } catch (e) {
+          const why = e instanceof Error ? e.message : String(e);
+          throw new Error(`第 ${i + 1}/${total} 张图片上传失败（附件 ${ref.hash}）：${why}`);
+        }
+        // ② 社区没给地址就换不了引用 ⇒ 当成失败停下：宁可让人重试，也不要发一篇地址是空/
+        //    本机协议的文章出去（那在社区上就是一张破图）。
+        if (!up || !up.url) {
+          throw new Error(`第 ${i + 1}/${total} 张图片上传后社区没给地址（附件 ${ref.hash}）：拒绝继续发布。`);
+        }
+        uploaded.set(ref.hash, up.url);
+      }
+      setUploadNote("");
+
+      // ③ 换地址：只换"有指纹且映射里有"的那些，其余保持 `__src`（与清单里看到的一致）。
+      const body = pageContentToMarkdown(contentJson, (hash) => uploaded.get(hash) ?? "");
+
+      // ④ 发帖：`body` 就是第 ③ 步那一份。
       const r = await platform.executor.invoke<CommunityPublishResult>("community_publish_note", {
         title,
         body,
@@ -256,6 +348,7 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
       setSendError(e instanceof Error ? e.message : String(e));
     } finally {
       setSending(false);
+      setUploadNote("");
     }
   };
 
@@ -263,8 +356,9 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
   // `community_connection` 第二次读回来慢一点，也不该把"已连接"闪回"未连接"。
   const connected = connection != null || approvedName !== "";
   const who = connection?.username || approvedName;
+  const body = prepared.body;
   const chars = body.length;
-  const imgs = imagesIn(body);
+  const imgs = countImages(body);
 
   return (
     <div className="community-save-overlay" onClick={onClose}>
@@ -281,6 +375,10 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
         <div className="community-save-body">
           {connError && <div className="community-save-error">{connError}</div>}
           {sendError && <div className="community-save-error">{sendError}</div>}
+          {/* 正文解析不了 ⇒ 清单本身就是假的，先说出来（发布按钮也据此禁用）。 */}
+          {prepared.error && <div className="community-save-error">{prepared.error}</div>}
+          {/* 上传是慢操作：这一句就是"它还活着"的证据。 */}
+          {uploadNote && <div className="community-save-more">{uploadNote}</div>}
           {/* 断开时的原话，**原样**：撤销失败时它写明了"那把令牌仍然有效"——这句必须让人看见，
               所以它不放在"已连接"那一块里（断开之后那块就不显示了）。 */}
           {disconnectOutcome && (
@@ -391,7 +489,7 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
 
               {result === null && (
                 <div className="community-save-preview">
-                  <div className="community-save-preview-title">发布前清单：下面这些会原样发到社区</div>
+                  <div className="community-save-preview-title">发布前清单：下面这些会发到社区</div>
                   <div className="community-save-preview-meta">
                     标题：{title || "（这篇没有标题——社区会拒绝，先给笔记起个名）"}
                   </div>
@@ -399,12 +497,25 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
                     标签：{tags.length > 0 ? tags.map((t) => `#${t}`).join(" ") : "（没有标签）"}
                   </div>
                   <div className="community-save-preview-meta">
-                    正文：整篇全文 {chars} 字 · 图片 {imgs.total} 张
+                    正文：整篇全文 {chars} 字 · 图片 {imgs} 张
                   </div>
-                  {imgs.local > 0 && (
+                  {/* 清单要说的不是"有几张图"，而是"点了确认之后会发生什么"：
+                      下面这 N 张**会先上传**，正文里它们的地址会变成社区地址。 */}
+                  {imageRefs.length > 0 && (
                     <div className="community-save-more">
-                      其中 {imgs.local} 张是「本机图片」（正文里是 attachment://… 这种社区取不到的地址）。
-                      本版不做图片上传：这 {imgs.local} 张发出去以后在社区上会显示不出来。图片上传是后续版本的事。
+                      图片 {imageRefs.length} 张会先上传到社区，正文里的引用会换成 /attachments/&lt;hash&gt;。（上传没成功就不会发帖。）
+                    </div>
+                  )}
+                  {/* 传不上去的要如实说 —— 白名单只有 png/jpeg/gif/webp/pdf/zip（按魔数判），视频不在其中。 */}
+                  {videoCount > 0 && (
+                    <div className="community-save-error">
+                      视频 {videoCount} 个发不出去（社区附件白名单不含视频），发出去会缺。
+                    </div>
+                  )}
+                  {/* 没有附件指纹（`__hash` 为空）的本机图同样传不上去：不静默。 */}
+                  {prepared.broken > 0 && (
+                    <div className="community-save-error">
+                      还有 {prepared.broken} 张图没有附件指纹（本机图片但缺 hash），传不上去：发出去会缺。
                     </div>
                   )}
                   {/* 正文**整篇**摆出来（owner 2026-09-20：发的就是整篇，不是摘要）。 */}
@@ -427,9 +538,14 @@ export function CommunityPublishDialog({ title, body, tags, noteId, rev, onClose
               重新开始
             </button>
           )}
-          {/* 「确认发布」与清单同生共死：没有清单就没有这个按钮（I7）。 */}
+          {/* 「确认发布」与清单同生共死：没有清单就没有这个按钮（I7）。
+              正文解析不了（`prepared.error`）时禁用：没有可信的清单就没有可发的正文。 */}
           {connected && (result === null || result.status === "inFlight") && (
-            <button className="community-save-btn primary" disabled={sending} onClick={() => void publish()}>
+            <button
+              className="community-save-btn primary"
+              disabled={sending || prepared.error !== ""}
+              onClick={() => void publish()}
+            >
               {sending ? "发布中…" : result?.status === "inFlight" ? "重试" : "确认发布"}
             </button>
           )}

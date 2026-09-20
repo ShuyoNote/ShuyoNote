@@ -519,6 +519,7 @@ pub fn run() {
             community_publish::community_connect_poll,
             community_publish::community_disconnect,
             community_publish::community_publish_note,
+            community_publish::community_upload_attachment,
             commands::delete_page,
             commands::move_page,
             search::search,

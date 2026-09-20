@@ -711,6 +711,148 @@ pub async fn community_publish_note(
     })
 }
 
+/// 发原始字节（图片上传用）。与 `post_json` 同一套头：CSRF 双重提交 + Bearer。
+async fn post_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    auth: Auth<'_>,
+    bytes: Vec<u8>,
+) -> Result<(u16, String), String> {
+    let resp = client
+        .post(url)
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .header("X-CSRF-Token", auth.csrf)
+        .header(reqwest::header::COOKIE, format!("csrf_token={}", auth.csrf))
+        .bearer_auth(auth.bearer.unwrap_or(""))
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                format!("上传超时（{url}）：图可能偏大或网慢，重试即可（内容寻址，重复上传不会占两份）")
+            } else if e.is_connect() {
+                format!("连不上社区（{url}）：网络不可达")
+            } else {
+                format!("上传失败（{url}）：{e}")
+            }
+        })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.map_err(|e| format!("读响应失败：{e}"))?;
+    Ok((status, text))
+}
+
+// ---------------------------------------------------------------------------
+// ④ 图片：上传附件（社区内容寻址，正文里按 `/attachments/<hash>` 引用）
+// ---------------------------------------------------------------------------
+
+/// 社区附件的体积上限（`shuyo-community` 的 `POST /api/attachments` 是 5 MiB）。
+pub const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
+
+/// 上传前的本地判据（纯函数，好单测）：**先把话说清**，别把 6 MB 传上去等对面 413。
+pub fn ensure_uploadable(size: usize) -> Result<(), String> {
+    if size == 0 {
+        return Err("这个附件是空文件，社区不会收".to_string());
+    }
+    if size > MAX_ATTACHMENT_BYTES {
+        return Err(format!(
+            "附件约 {} MiB，超过社区上限 5 MiB —— 先在笔记里压一下这张图再发",
+            (size + 1024 * 1024 - 1) / (1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
+/// 一张附件上传成功后的结果。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadedAttachment {
+    /// 本地 hash（也就调用方手里的那个），用来把正文里的本地引用换成社区地址。
+    pub local_hash: String,
+    /// 社区算出来的 hash。**正常情况下与本地一致**（两边都是同一份字节的 sha256），
+    /// 但以它为准 —— 正文里引用的是社区那份。
+    pub hash: String,
+    /// 写进正文用的地址：**相对路径**（社区自己的文档就是这么引用的：`![图](/attachments/<hash>)`）。
+    pub url: String,
+    pub mime: String,
+    pub size: usize,
+}
+
+/// 上传的 core（可注入 base，判据打回环地址）。
+pub async fn upload_at(
+    base: &str,
+    auth: &StoredAuth,
+    bytes: &[u8],
+) -> Result<(String, String, usize), String> {
+    let client = client()?;
+    let csrf = csrf(&client, base).await?;
+    let (status, text) = post_bytes(
+        &client,
+        &format!("{base}/api/attachments"),
+        Auth {
+            bearer: Some(&auth.token),
+            csrf: &csrf,
+            idempotency: None,
+        },
+        bytes.to_vec(),
+    )
+    .await?;
+    let v: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+    if !(200..300).contains(&status) {
+        // 社区的拒绝理由要说清是**哪一类**（太大 / 类型不支持 / 审核），原样带出去。
+        let why = v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("")
+            .to_string();
+        let why = if why.is_empty() { preview(&text) } else { why };
+        return Err(format!("社区拒收这张图（HTTP {status}）：{why}"));
+    }
+    let hash = v.get("hash").and_then(|h| h.as_str()).unwrap_or("").to_string();
+    if hash.is_empty() {
+        return Err(format!("社区回了 {status} 但没给 hash：{}", preview(&text)));
+    }
+    Ok((
+        hash,
+        v.get("mime").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+        v.get("size").and_then(|s| s.as_u64()).unwrap_or(bytes.len() as u64) as usize,
+    ))
+}
+
+/// 上传一篇笔记里的一张本地图片，返回写进正文用的社区地址。
+///
+/// **为什么字节要从 `attachments::attachment_bytes` 拿，而不是自己 `fs::read`**：
+/// 附件在盘上可能是**加密**的（应用加密开着时），`fs::read` 拿到的是密文 ——
+/// 传上去会被社区的魔数白名单挡下，而报错会说"不支持的文件类型"，把人指向完全错的方向。
+/// 那个函数会把密钥解开再给明文（`security::decrypt_attachment_bytes`）。
+#[tauri::command]
+pub async fn community_upload_attachment(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, crate::db::Db>,
+    hash: String,
+) -> Result<UploadedAttachment, String> {
+    let auth_path = auth_path(&app)?;
+    let Some(auth) = load_auth_at(&auth_path) else {
+        return Err(
+            "还没连接社区：先点「连接社区」（不用输密码，在自己浏览器里确认一次即可）".to_string(),
+        );
+    };
+    // 同步读 + 解密，**在 await 之前**把 `State` 放掉（`attachment_bytes` 会借 db 取密钥）。
+    let bytes = {
+        let db = db;
+        crate::attachments::attachment_bytes(app.clone(), db, &hash)?
+    };
+    ensure_uploadable(bytes.len())?;
+    let (remote, mime, size) = upload_at(&auth.base, &auth, &bytes).await?;
+    Ok(UploadedAttachment {
+        local_hash: hash,
+        url: format!("/attachments/{remote}"),
+        hash: remote,
+        mime,
+        size,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // ⑤ 判据
 // ---------------------------------------------------------------------------
@@ -971,5 +1113,95 @@ mod tests {
             "假社区收到的请求：{:#?}",
             seen.lock().unwrap()
         );
+    }
+
+    #[test]
+    fn upload_guard_speaks_before_the_wire() {
+        assert!(ensure_uploadable(1).is_ok(), "一字节的图也该放行");
+        assert!(ensure_uploadable(MAX_ATTACHMENT_BYTES).is_ok(), "正好 5 MiB 是允许的");
+        let e = ensure_uploadable(0).unwrap_err();
+        assert!(e.contains("空文件"), "空文件要说清是空文件：{e}");
+        let e = ensure_uploadable(MAX_ATTACHMENT_BYTES + 1).unwrap_err();
+        assert!(e.contains("5 MiB"), "超限要说清上限：{e}");
+    }
+
+    /// 假社区收图：两个请求（`GET /` 拿 CSRF、`POST /api/attachments` 送字节）。
+    /// 返回 (base, 收到的原始请求文本)。
+    fn serve_upload(reply: (u16, &'static str)) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_srv = seen.clone();
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let Ok((mut stream, _)) = listener.accept() else { return };
+                let mut buf = vec![0u8; 8192];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let is_get = req.starts_with("GET /");
+                seen_srv.lock().unwrap().push(req);
+                let (code, extra, body) = if is_get {
+                    (200u16, "Set-Cookie: csrf_token=testcsrf; Path=/\r\n", "<html></html>")
+                } else {
+                    (reply.0, "", reply.1)
+                };
+                let resp = format!(
+                    "HTTP/1.1 {code} X\r\n{extra}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://{}", addr), seen)
+    }
+
+    /// 上传要带齐四样（原始字节 / `application/octet-stream` / CSRF 双重提交 / Bearer），
+    /// 且社区拒收时**理由要原样带出去**（"不支持的文件类型"这种话不能丢）。
+    #[test]
+    fn upload_sends_raw_bytes_and_passes_the_reason_back() {
+        let auth = StoredAuth {
+            base: String::new(),
+            token: "tok".to_string(),
+            username: "u".to_string(),
+            scope: "post:create".to_string(),
+            client: CLIENT_NAME.to_string(),
+            saved_at: now(),
+        };
+        // 一张最小的 PNG 头（社区按魔数认类型，所以字节得真像图）
+        let png: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+        // ① 正常收下
+        let (base, seen) = serve_upload((
+            200,
+            r#"{"ok":true,"hash":"deadbeef","mime":"image/png","size":8}"#,
+        ));
+        let out = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(upload_at(&base, &auth, &png))
+            .unwrap();
+        assert_eq!(out, ("deadbeef".to_string(), "image/png".to_string(), 8));
+        let reqs = seen.lock().unwrap().clone();
+        let post = reqs.iter().find(|r| r.starts_with("POST ")).expect("应有 POST");
+        let lower = post.to_ascii_lowercase();
+        assert!(post.starts_with("POST /api/attachments "), "打错了路径：{post}");
+        assert!(lower.contains("content-type: application/octet-stream"), "社区只认 octet-stream");
+        assert!(lower.contains("x-csrf-token: testcsrf"), "少了 CSRF 头");
+        assert!(lower.contains("cookie: csrf_token=testcsrf"), "少了 CSRF cookie");
+        assert!(lower.contains("authorization: bearer tok"), "少了 Bearer");
+        assert!(post.contains("PNG"), "字节没跟着上去（魔数都找不到）");
+
+        // ② 被拒：理由原样带出去
+        let (base2, _) = serve_upload((422, r#"{"ok":false,"error":"不支持的文件类型"}"#));
+        let err = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(upload_at(&base2, &auth, &png))
+            .unwrap_err();
+        assert!(err.contains("422"), "要说清状态码：{err}");
+        assert!(err.contains("不支持的文件类型"), "社区的理由要原样带出去：{err}");
     }
 }

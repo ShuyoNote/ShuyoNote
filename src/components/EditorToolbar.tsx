@@ -16,18 +16,21 @@ import { CommunityPublishDialog } from "./CommunityPublishDialog";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { docHtml, printDoc } from "../lib/print";
 import { inlineExportMedia } from "../lib/exportInline";
-import { pageContentToMarkdown } from "../lib/exportMarkdown";
 
 /**
- * 「发布到社区」要的 5 个字段。
+ * 「发布到社区」要的字段。
  *
- * **5 个必须来自同一次页面快照**：正文与修订号同源，否则"改了正文但 rev 没变"会让两次
- * 不同的内容撞进同一个幂等键（后端按 `(noteId, rev)` 算键，见 `community_publish.rs`），
+ * **必须来自同一次页面快照**：正文（`contentJson`）与修订号同源，否则"改了正文但 rev 没变"
+ * 会让两次不同的内容撞进同一个幂等键（后端按 `(noteId, rev)` 算键，见 `community_publish.rs`），
  * 于是第二次发布被社区当成重发、一篇新内容静默地没发出去。
+ *
+ * 为什么传 `contentJson` 而不是算好的 `body`：发布对话框要用**同一份来源**算两份正文
+ * （清单里那份、换过图片地址发出去的那份）。这里先算一份 Markdown 递进去，
+ * 等于把图片地址在对话框之外就定死了 —— 上传结果就换不进去了。
  */
 interface PublishTarget {
   title: string;
-  body: string;
+  contentJson: string;
   tags: string[];
   noteId: string;
   rev: string;
@@ -154,10 +157,10 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         .catch(() => [] as string[]);
       setPublishTarget({
         title: page.title || "",
-        // 正文用**页面快照**（content_json → Markdown）而不是编辑器的实时状态：实时状态
-        // 可能比这次快照新一次防抖（600ms），而 rev 取的是这份快照的 updated_at ——
-        // 正文与修订号必须同源，理由见 `PublishTarget` 的注释。转换器与「导出 Markdown」共用。
-        body: pageContentToMarkdown(page.content_json || "{}"),
+        // 正文传**页面快照的 `content_json`**（不是编辑器的实时状态）：实时状态可能比这次
+        // 快照新一次防抖（600ms），而 rev 取的是这份快照的 updated_at —— 正文与修订号必须同源。
+        // 快照 → Markdown 的转换由发布对话框自己做（清单与发帖共用同一份来源，见那边的注释）。
+        contentJson: page.content_json || "{}",
         tags,
         // `noteId` = 页面 id（`PageDetail.id`）；`rev` = 页面最后一次保存的时间戳
         // （`PageDetail.updated_at`：`save_page` 每次都会写 `now_ms()`，见
