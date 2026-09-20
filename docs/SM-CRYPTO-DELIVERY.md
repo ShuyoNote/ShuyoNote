@@ -29,8 +29,8 @@
 | 版本 | 布局 | 用途 |
 |---|---|---|
 | `v0` | 无头 `nonce(24) ‖ ct` | P0 之前的老数据，**永远可读**（含"首两字节恰好撞 magic+版本"的回退） |
-| `v1` | `0x53 0x01 ‖ nonce(24) ‖ XChaCha20-Poly1305 ct` | 默认构建写这个 |
-| `v2` | `0x53 0x02 ‖ iv(16) ‖ SM4-CBC(PKCS#7) ct ‖ HMAC-SM3 tag(32)` | `--features sm-crypto` 的国密构建写这个 |
+| `v1` | `0x53 0x01 ‖ nonce(24) ‖ XChaCha20-Poly1305 ct` | **只读**（老数据；2026-09-20 起不再写） |
+| `v2` | `0x53 0x02 ‖ iv(16) ‖ SM4-CBC(PKCS#7) ct ‖ HMAC-SM3 tag(32)` | **默认构建写这个**（2026-09-20 owner 拍板「无兼容快路」后 `sm-crypto` 成为默认特性；旧行为 `--no-default-features` 仅作**回滚通道**，见方案 §3.4） |
 
 **套件常量（方案 §0.1，一处定义处处引用）**：SM4-CBC ＋ HMAC-SM3（**encrypt-then-MAC，先验后解**）；
 PKCS#7；IV 16B 随机；tag 32B **在尾部**；**MAC 覆盖"版本头 ＋ IV ＋ 密文"**；
@@ -65,10 +65,12 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 > **库级已走到 P2**（SM3 页 MAC ＋ 库 KDF，随"国密版构建"生效，macOS 本机三段自证全绿）；
 > **还差 P3（SM4 页加密）** —— 它**不是顺手加一个分支**（方案 §3.2 三条结构事实：`cipher` 回调无 algorithm 参数、
 > `OPENSSL_CIPHER` 编译期钉死五处、没有 `cipher_algorithm` PRAGMA），**两条路的成本要 owner 拍板**。
+> ✅ **2026-09-20 owner 已拍板：P3 走 A（编译期切换）** —— 施工单与分工见方案 §3.2 末尾，
+> 迁移规格（升级/回滚/可操作错误/四条判据）见 §3.3。**拍板已下，但代码未落地 ⇒ 本说明里 P3 一律仍标 ❌/🔶，不许提前写 ✅。**
 > 本说明的作用之一就是**不让这几件事被读成一件**。
 >
 > ⚠️ **页加密是「整库属性」，不是逐空间的**：上层"按空间开加密"说的是**应用层开关**；
-> 库级页加密一旦选定就是那个**库文件**的属性（且协议里没有算法标识 ⇒ 解密端必须会 SM4）。
+> 库级页加密一旦选定就是那个**库文件**的属性（且协议里没有算法标识 ⇒ 解密端必须会 SM4）；⇒ **P3 之后「老数据可读」的准确写法是「经迁移后可读」**：跨页加密算法必须走一次「先在能读老库的构建里关闭磁盘加密（逐表重建，不依赖 `sqlcipher_export`）→ 换构建 → 重新开启」，升级与回滚说明、未迁移库的可操作错误、四条验收判据见方案 §3.3
 
 ---
 
@@ -76,11 +78,11 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 结论 | 判据 / 命令 | 读数 |
 |---|---|---|
-| 密文带版本头、两条路径同一编码 | `cargo test --lib crypto::` | 10/10（`--features sm-crypto` 时） |
+| 密文带版本头、两条路径同一编码 | `cargo test --lib crypto::` | 10/10（**默认构建即国密**；`--no-default-features` 只跑旧行为那一半） |
 | **无头老数据永远可读**（含撞头回退，对 v1、v2 各验一遍） | 同上（金标夹具 `tests/crypto-legacy-v0.json`，三格真实密文） | ✅ |
 | **EtM 正确**：篡改版本头/IV/密文/ tag 都必须**先失败且不解密**；两把密钥不可互换 | `crypto_sm::tests::tampering_anywhere_fails_before_decrypting` 等 | ✅ |
 | **未知版本给可操作错误**（不是"数据损坏"） | `unknown_future_version_gets_an_actionable_error`；默认构建读 v2 | ✅ |
-| 两条路径（附件 / 同步载荷）全覆盖；导出包里的附件走同一条静置密文路径 | `security::tests::national_crypto_covers_all_three_paths_…`、`attachments::…national_crypto…` | ✅（只在 `--features sm-crypto` 下编） |
+| 两条路径（附件 / 同步载荷）全覆盖；导出包里的附件走同一条静置密文路径 | `security::tests::national_crypto_covers_all_three_paths_…`、`attachments::…national_crypto…` | ✅（默认构建即国密；旧行为的对照由 `--no-default-features` 提供） |
 | ★ **E1（磁盘加密）下导出/备份不再硬失败、也不再静默少空间**（2026-09-20，F2，commit `f64f2320`） | `workspace_io::tests::snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key`、`backup::tests::snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips`、`backup::tests::cross_key_encrypted_snapshot_gets_an_actionable_diagnosis` | ✅ 3/3；**变异证明**：退回老行为各红一次 |
 | **库级密钥未被国密密钥顶替**（顶替＝既有加密库全打不开） | `security::tests::national_crypto_…_keeps_the_library_key_unchanged` | ✅ |
 | KDF 常量写死 ＋ 防改小 ＋ 跨实现黄金向量（含**切片**口径） | `kdf_rounds_are_the_pinned_value`、`kdf_golden_vector_and_key_slicing` | 变异证明：改切片只有黄金向量红 |
@@ -91,7 +93,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **P2 provider 补丁落地**（SM3 页 MAC ＋ 库 KDF ＋ 能力门） | `patches/0001-sqlcipher-sm3-provider.patch` ＋ `scripts/sm-library-build.mjs`（幂等打补丁） | AMD 在 WSL2 有读数；**macOS 本机独立复跑见下两行** |
 | ★ **三段自证（macOS，真补丁 ＋ 真 Tongsuo）** | `node scripts/gm-version-selfcheck.mjs --openssl-dir <Tongsuo> --expect-patch applied --with-build`（**加 `--with-tests` 会多跑第 ④ 段**：`cargo test --lib gm_provider::` ＝ 运行期「真的生效没有」） | **3 段全过**：后端=openssl（link-search 指 Tongsuo）／补丁在场且 `src_sha256=6ec0a114b861…`（**补丁 v2**；与 AMD 在 WSL 上报的逐字相同，新鲜度可证）／跨对拍 12/12 |
 | 运行期「真的生效没有」（第三格另一半；**已收进一键自证的 `--with-tests`**，见上一行的第 ④ 段） | `cargo test --lib gm_provider`（**在打过补丁 ＋ Tongsuo 的构建上**） | macOS：**9 passed / 0 failed / 4 ignored**（与 AMD 报的同一套 13 一致）；2026-09-20 起 `gm-version-selfcheck --with-tests` 会把这一段并进同一份读数 |
-| 门禁 | `pnpm verify`（23）/ `node scripts/test-report.mjs --group rust`（**6 条**，含 `rust-sm-crypto`、`check-crypto-backend`、`gm-conformance`） | 全绿 |
+| 门禁 | `pnpm verify`（23）/ `node scripts/test-report.mjs --group rust`（**6 条**，含 `rust-test`（默认即国密）、`rust-no-sm-crypto`（**回滚通道**：`--no-default-features` 仍可编可过）、`check-crypto-backend`、`gm-conformance`） | 全绿 |
 | **老端在动手之前就拒绝**（§0-C）：同步**整批拒绝**、空间级标识、附件拒绝（不是逐条失败） | `sync::tests::prescan_payload_formats_refuses_the_whole_batch`、`security::tests::space_guard_…`、`…attachment_bytes_of_an_unsupported_format_are_refused…` | ✅（默认构建拒绝 / 国密构建放行，两半都有 cfg 判据） |
 
 ---
@@ -117,7 +119,8 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 ```bash
 # ① 构建/单测（应用层完全体；各平台一致）
-cargo test --manifest-path src-tauri/Cargo.toml --features sm-crypto     # ← 应用层国密的开关（§0-E）
+cargo test --manifest-path src-tauri/Cargo.toml                       # ← 应用层国密已是**默认**（§0-E 于 2026-09-20 由 §3.4 取代）
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features # ← 旧行为（v1 写路径）＝回滚通道
 
 # ② 跨实现对拍：需要一份真 Tongsuo 的 CLI
 SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl node scripts/check-gm-conformance.mjs

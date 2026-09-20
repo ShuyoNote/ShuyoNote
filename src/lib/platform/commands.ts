@@ -347,7 +347,8 @@ export interface CommandMap {
   // ---- Encryption (local at-rest) ----
   set_encryption: { args: { passphrase: string }; result: void };
   // `format` / `algorithm`：本会话写新数据用的密文版本与稳定算法名（§0-C 的算法标识）。
-  // 默认构建恒为 1="xchacha20-poly1305"；国密构建（`--features sm-crypto`）为 2="sm4-cbc+hmac-sm3"。
+  // ★ 2026-09-20 起**默认构建恒为 2="sm4-cbc+hmac-sm3"**（国密已是默认特性，方案 §3.4）；
+  // 只有 `--no-default-features` 的回滚通道才是 1="xchacha20-poly1305"。
   // `space_format` / `space_algorithm`：**当前活动空间**记录在案的密文版本与算法名（0/空串 = 未记录）。
   // §0-C：算法标识要落到空间状态上 —— 界面/诊断得能说出「这个空间的数据是哪一版」，
   // 而不是等到读到某一条才发现读不了。
