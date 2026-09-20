@@ -1882,6 +1882,36 @@ mod tests {
         );
     }
 
+    /// 拉 `folder` 的**最后 `tail` 封**（按序号取尾段，不拉整箱），按主题前缀认领，返回命中的 UID。
+    ///
+    /// 为什么不用 `UID SEARCH`：**QQ 的 SEARCH 索引看不见 APPEND 进去的信**（2026-09-20 实测：
+    /// APPEND 回了 `[APPENDUID … 9769]`、`UID FETCH 9769` 立刻拿得到，而
+    /// `UID SEARCH SUBJECT "shuyo-probe-"` 过 60 秒仍然是空）。序号尾段 FETCH 既便宜又不依赖索引。
+    ///
+    /// 复用点：探针用它 ①认回刚 APPEND 的信、②清理以前跑挂留下的垃圾、③到回收站里找那封信。
+    async fn tail_uids(session: &mut ImapSession, folder: &str, tail: u32, prefix: &str) -> Vec<u32> {
+        use futures_util::StreamExt;
+        // `UID SEARCH ALL` 只用来估"有多少封"：它对**已存在**的信是准的；对刚 APPEND 的（QQ 上）
+        // 会少算一封 —— 但 `<n>:*` 里的 `*` 仍然覆盖真正的末尾，所以照样能拿到。
+        let n = session
+            .uid_search("ALL")
+            .await
+            .map(|s| s.len() as u32)
+            .unwrap_or(0);
+        let start = n.saturating_sub(tail).max(1);
+        let mut out = Vec::new();
+        if let Ok(mut stream) = session.fetch(format!("{start}:*"), "(UID ENVELOPE)").await {
+            while let Some(Ok(m)) = stream.next().await {
+                if let Some(meta) = meta_from_fetch(&m, folder) {
+                    if meta.subject.starts_with(prefix) {
+                        out.push(meta.uid);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// **手动探针**（默认不跑，`#[ignore]`）：拿真账号把「批量删除 → 重新拉取」走一遍。
     ///
     /// 为什么非要真服务器：那次失败的方式是"服务器把连接废掉"，本地怎么 mock 都复现不了。
@@ -1923,7 +1953,35 @@ mod tests {
             d = chrono::Utc::now().to_rfc2822()
         );
 
-        // ① 往 INBOX APPEND 一封探针信，并在 FETCH 里按主题找回它的 UID
+        // ⓪ 先把**以前失败留下的探针信**清掉：上一次 APPEND 成功、后面 panic 了，就会留一封在收件箱里。
+        //    （2026-09-20 在 QQ 上第一次跑就留了几封 —— 探针自己收拾自己的垃圾，别让人手动去删。
+        //      注意这里也**不能靠 SEARCH**：QQ 看不见 APPEND 进去的信，得按尾段 FETCH 找。）
+        if let Ok(mut s) = open_session(&account, "INBOX").await {
+            for u in tail_uids(&mut s, "INBOX", 80, "shuyo-probe-").await {
+                if let Ok(store) = s
+                    .uid_store(u.to_string(), "+FLAGS.SILENT (\\Deleted)")
+                    .await
+                {
+                    futures_util::pin_mut!(store);
+                    while store.next().await.is_some() {}
+                }
+                if let Ok(ex) = s.uid_expunge(u.to_string()).await {
+                    futures_util::pin_mut!(ex);
+                    while ex.next().await.is_some() {}
+                }
+                println!("PROBE 清掉一封遗留探针信 uid={u}");
+            }
+            let _ = s.logout().await;
+        }
+
+        // ① 往 INBOX APPEND 一封探针信，再把它的 UID 认回来。
+        //
+        // ⚠️ 两条弯路都在 QQ 上实测踩过（`zhaizy@qq.com`，收件箱 7000+ / 现存 130 封）：
+        //   · **`FETCH 1:*`**：拉全量 ENVELOPE，又慢又容易中途出错，而 `while let Some(Ok(m))`
+        //     一遇 `Err` 就静默收尾 ⇒ "APPEND 之后没找到那封探针信"；
+        //   · **`UID SEARCH HEADER Subject "…"`**：APPEND 完立刻搜、过 60 秒再搜，**都是空**
+        //     ——QQ 的 SEARCH 索引看不见 APPEND 进去的信（`UID FETCH <uid>` 却立刻拿得到）。
+        // 所以用**序号尾段 FETCH** 认领（见 `tail_uids`），给两轮重试。
         let uid = {
             let mut session = open_session(&account, "INBOX")
                 .await
@@ -1932,21 +1990,28 @@ mod tests {
                 .append("INBOX", Some("(\\Seen)"), None, raw.as_bytes())
                 .await
                 .expect("APPEND 探针信失败");
-            let mut stream = session
-                .fetch("1:*", "(UID ENVELOPE)")
-                .await
-                .expect("FETCH 失败");
-            let mut found = None;
-            while let Some(Ok(m)) = stream.next().await {
-                if let Some(meta) = meta_from_fetch(&m, "INBOX") {
-                    if meta.subject == subject {
-                        found = Some(meta.uid);
-                    }
+
+            let mut found: Option<u32> = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                if let Some(u) = tail_uids(&mut session, "INBOX", 20, &subject)
+                    .await
+                    .into_iter()
+                    .max()
+                {
+                    found = Some(u);
+                    break;
                 }
             }
-            drop(stream);
             let _ = session.logout().await;
-            found.expect("APPEND 之后没找到那封探针信")
+            found.unwrap_or_else(|| {
+                panic!(
+                    "APPEND 之后认不回那封探针信（主题 {subject}）—— 连 APPEND 都回不来，\
+                     后面的删除探针就没法跑了"
+                )
+            })
         };
 
         // ② 调**真**函数（就是界面点「删除所选」时走的那条路）
@@ -1957,22 +2022,74 @@ mod tests {
         })
         .await;
 
-        // ③ 重新「拉取」：这封还在不在
-        let metas = email_fetch_inbox(EmailFetchArgs {
-            account: account.clone(),
-            folders: vec!["INBOX".to_string()],
-            limit: 0,
-            offset: 0,
-            date_from: None,
-            date_to: None,
-        })
-        .await
-        .expect("重新拉取失败");
-        let still = metas.iter().any(|m| m.uid == uid);
+        // ③ 它还在不在收件箱里 —— **按 UID 直接问**，不做整箱 FETCH。
+        //
+        // 为什么不用 `email_fetch_inbox`（原探针是那么写的）：真邮箱 7000+ 封时，那条路会**在中途
+        // 静默截断**（`while let Some(Ok(m))` 一遇 `Err` 就收尾，`Err(_) => {}` 又把整个账号的失败
+        // 吞掉），于是"重新拉取"看到的可能只是前一半 —— 拿它判断"这封还在不在"会**假通过**。
+        // 这里区分两件事：**物理上还在不在** vs **列表里还看不看得见**（带 `\Deleted` 标记的，
+        // 列表那侧已经不显示了）。
+        let (present, deleted_flag) = match open_session(&account, "INBOX").await {
+            Ok(mut s) => {
+                let mut present = false;
+                let mut del = false;
+                if let Ok(mut st) = s.uid_fetch(uid.to_string(), "(UID FLAGS)").await {
+                    while let Some(Ok(m)) = st.next().await {
+                        present = true;
+                        del = m.flags().any(|f| f == async_imap::types::Flag::Deleted);
+                    }
+                }
+                let _ = s.logout().await;
+                (present, del)
+            }
+            Err(_) => (false, false),
+        };
+        let still = present && !deleted_flag;
         println!(
-            "PROBE account={} uid={} moved={:?} still_in_inbox={}",
-            account.username, uid, moved, still
+            "PROBE account={} uid={} moved={:?} in_inbox={} deleted_flag={} visible_in_list={}",
+            account.username, uid, moved, present, deleted_flag, still
         );
+
+        // ③′ **它得在回收站里**（2026-09-20 用户：「改为进回收站」）。
+        //     判据不能只看"从收件箱消失了"——旧代码的整箱 EXPUNGE 也能让它消失，代价是永久删掉。
+        //     所以这里先问服务器回收站叫什么（`resolve_trash`），再进那个文件夹按主题找回它，
+        //     找完**顺手把它从回收站也清掉**（只清这一封），别在用户邮箱里留垃圾。
+        let (trash_name, in_trash) = match open_session(&account, "INBOX").await {
+            Ok(mut s) => {
+                let t = resolve_trash(&mut s).await;
+                let _ = s.logout().await;
+                match t {
+                    Some(folder) => match open_session(&account, &folder).await {
+                        Ok(mut tr) => {
+                            // 同样按尾段 FETCH 认领（回收站也可能几千封，且 SEARCH 在 QQ 上靠不住）
+                            let probe_uid: Option<u32> = tail_uids(&mut tr, &folder, 20, &subject)
+                                .await
+                                .into_iter()
+                                .max();
+                            if let Some(u) = probe_uid {
+                                if let Ok(store) = tr
+                                    .uid_store(u.to_string(), "+FLAGS.SILENT (\\Deleted)")
+                                    .await
+                                {
+                                    futures_util::pin_mut!(store);
+                                    while store.next().await.is_some() {}
+                                }
+                                if let Ok(ex) = tr.uid_expunge(u.to_string()).await {
+                                    futures_util::pin_mut!(ex);
+                                    while ex.next().await.is_some() {}
+                                }
+                            }
+                            let _ = tr.logout().await;
+                            (Some(folder), probe_uid.is_some())
+                        }
+                        Err(_) => (Some(folder), false),
+                    },
+                    None => (None, false),
+                }
+            }
+            Err(_) => (None, false),
+        };
+        println!("PROBE trash={:?} in_trash={}", trash_name, in_trash);
 
         // ④ 收尾：万一没删掉，也要把这封探针信清掉（读响应 + UID EXPUNGE），别在用户邮箱里留垃圾
         if still {
@@ -2000,6 +2117,11 @@ mod tests {
         assert!(
             !still,
             "批量删除后重新拉取又出现了（uid={uid}）—— 这正是用户 2026-09-20 报的那个 bug"
+        );
+        assert!(
+            in_trash,
+            "删掉之后必须能在回收站里找到它（用户 2026-09-20：「改为进回收站」）—— 回收站={trash_name:?}。\
+             只「从收件箱消失」不算数：旧代码那条整箱 EXPUNGE 也能让它消失，代价是永久删掉、回收站里什么都没有"
         );
     }
 }
