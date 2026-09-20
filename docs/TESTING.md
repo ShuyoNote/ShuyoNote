@@ -331,6 +331,53 @@ node scripts/test-report.mjs --baseline-from rust-report.json
      与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言 `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
      2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
      这正是 P4 安卓格那条缺口的真产物读数。
+     **同一天晚些时候**：那条通路在 CI 上**第一次走到头**（run `35504661582` 全绿，含第 19 步产物自检）——
+     修掉的是下面这两条坑（平台名静默回落 ＋ GNU tar 读不了 zip），**不是**构建本身有问题。
+- **同一件事在"本机 `tar`"与"CI `tar`"上不是同一个程序**（2026-09-20 实测，CI 上真红）：
+  APK 就是 zip，而 **Windows/macOS 的 `tar` 是 bsdtar（认 zip）、CI 的 ubuntu 上是 GNU tar（不认 zip）**
+  ⇒ 用 `tar -tf` 列 APK 的那条判据在 CI 上恒 `exit 2`「没验」（本地永远复现不出来）。
+  本机对照：`wsl tar -tf x.apk` ⇒ `This does not look like a tar archive`；`tar -tf x.apk` ⇒ 正常列出。
+  ⇒ 读 zip 一律走 `scripts/lib/zip.mjs`（纯 JS，`check-apk-contents.mjs` 与 `check-android-bundle.mjs` 共用）。
+  > 这条的**形状**值得记：它不报错、也不说谎，只是把一条产物判据变成**永远不生效**的摆设 ——
+  > 而"没验"（exit 2）与"通过"本仓是分开的，所以只看绿/红会以为它一直在工作。
+- **命令行参数被静默忽略 ⇒ CI 上"取错平台"**（2026-09-20 实测，安卓流水线**连着三跑**红在这，见下面一节）：
+  `node scripts/fetch-pdfium.mjs android-arm64` 是**位置形式**，而脚本当时只认 `--platform <名>`
+  ⇒ 参数被吃掉、回落到"当前平台"，ubuntu runner 上取回的是 **linux-x64**；
+  报错点却在**下一步**（`stage` 才说"vendor 里没有 android-arm64 的那份库"）——
+  读日志的人会去查 vendor、查 stage，真凶是参数。**修法不是改那一行调用，而是去掉"静默回落"这个状态**：
+  解析抽成 `scripts/lib/pdfium-target.mjs`（位置参数与 `--platform` 等价、认不出的名字当场 exit 2），
+  判据在 `scripts/lib/pdfium-target.test.mjs` ＋ `scripts/fetch-pdfium.test.mjs`（都离线）。
+  > 同族教训：**"我写了个参数"和"它被读到了"是两件事**，跨进程边界（脚本 / workflow / 子进程）时尤其要
+  > 用判据钉住；只靠"读一遍代码觉得对"会在 CI 上以"另一处的报错"形式出现。
+- **判据里起子进程必须带 `ELECTRON_RUN_AS_NODE=1`**（2026-09-20 本机实测）：本仓的 `vitest` 跑在 Electron 里，
+  `process.execPath` 是 **electron 而不是 node** ⇒ `spawnSync(process.execPath, [...])` 会以"加载 Electron 主进程模块"
+  的方式起来了又崩，**表现成"被测脚本自己 exit 1"**——很容易误读成"判据真的红了"（我第一版就是这么被骗了一轮）。
+  现成写法见 `scripts/fetch-pdfium.test.mjs` 里那个 `run()` 助手。
+- **在 Windows 本机出一个 Linux AppImage（WSL2 配方，2026-09-20 实测跑通）**：AppImage 只能由 Linux 构建，
+  但**不必**装一台 Linux —— WSL2 里那套工具链够用（实测：`cargo 1.98.1`、`tauri-cli 2.11.5`、
+  `webkit2gtk-4.1 = 2.52.6`、`gtk+-3.0 = 3.24.41`、`librsvg = 2.58.0`、`dpkg-deb`/`readelf`/`fusermount` 都在）。
+  三步（**注意两个刻意的选择**）：
+  ```bash
+  # ① 前端产物在 Windows 侧建（WSL 里没有 node/pnpm）：pnpm build  ⇒ dist/
+  # ② WSL 里只跑 Rust ＋ 打包；CARGO_TARGET_DIR 指到 ext4 上（快，且**避免与 Windows 的
+  #    target/release 撞车** —— 同名目录、不同 host triple，混用会互相作废缓存）
+  export PATH="$HOME/.cargo/bin:$PATH"
+  export CARGO_TARGET_DIR=/home/cnzen/target-appimage
+  cd /mnt/c/Users/cnzen/zhai/<worktree>
+  cargo tauri build --bundles appimage \
+    --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+  # ③ 判据要的原始读数在 WSL 里取（本机没有 dpkg-deb / 跑不了 AppImage / 没有 readelf），
+  #    解析与判定仍由 Windows 侧那份 check-linux-bundle 做（判据一个字不改）
+  ./ShuyoNote_*.AppImage --appimage-extract        # 不需要 FUSE
+  ```
+  **实测读数（2026-09-20，`ShuyoNote_1.91.10_amd64.AppImage` 117,504,504 B、构建 7m47s）**：
+  `usr/lib/ShuyoNote/libpdfium.so` **7,664,592 B** sha256 `eb19d385…`（源那份 7,645,184 B `f7289309…`）、
+  `usr/lib/ShuyoNote/NotoSansSC-Regular.ttf` 在**资源目录那一层**；
+  结构比对 **✅ 动态表 31/32 条 · 只有 `RUNPATH=$ORIGIN` · 动态符号 783/783 · 大小 7645184/7664592**
+  ⇒ `check-linux-bundle` **0 条 problem**（AppImage 那条判据**第一次**在真产物上跑，之前只有 deb 的读数）。
+  > ⚠️ 展开后的路径**必须以 `./` 开头**（`./squashfs-root/usr/lib/...`）才算"包内相对路径"：
+  > `squashfs-root` 是打包容器的根名，判据会把它摘掉再数层数。写成 `.squashfs-root/...`（少一个斜杠）
+  > 会被判成"位置不对"——我第一版就踩了，而判据的反应是**正确地红**（说明那条位置判据确实在干活）。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 
@@ -349,9 +396,29 @@ node scripts/test-report.mjs --baseline-from rust-report.json
    ```
    注解里会有：**哪条门禁红**、挡什么事故、命令与退出码、**失败用例名与首行信息**、
    基线退步的**原因**、以及**被判据自报跳过**的条目（绿的门禁也可能少跑了几条）。
-2. **本地复跑同一条门禁**：`node scripts/test-report.mjs --only <gate-id>`；
+   ⚠️ **注解只覆盖"门禁清单里"的那些**。不在清单里的步骤（`release.yml` / `android.yml` 的构建步骤）
+   注解是空的 —— 那类红**必须读步骤日志**，配方见下条。
+2. **读步骤日志（要 token；Windows 侧 2026-09-20 实测可用）**：日志接口会 302 到签名 URL，
+   `Invoke-WebRequest` 在 NonInteractive 下会自己卡住/报错，用 `curl.exe` 反而干净：
+   ```powershell
+   # token 就在本机 git 凭据里（与 `git push github` 用的是同一个），**不要**打印出来
+   $tok = ((Get-Content "$env:USERPROFILE\.git-credentials" | Where-Object { $_ -match 'github\.com' } |
+           Select-Object -First 1) -replace '^https://','' -replace '@github\.com.*$','').Split(':')[-1]
+   $h = @{ Authorization = "Bearer $tok"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'dsh' }
+   # ① 该 workflow 最近几跑（拿到 run id / head_sha / conclusion）
+   (Invoke-RestMethod -Headers $h 'https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/workflows/android.yml/runs?per_page=5').workflow_runs
+   # ② 该跑的 jobs 与**每个 step 的结论**（哪一步红的，一眼看到）
+   (Invoke-RestMethod -Headers $h 'https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/runs/<run_id>/jobs').jobs
+   # ③ 那一步的全文日志（98 KB 级别，落地再 grep，别直接往终端倒）
+   curl.exe -sL -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" `
+     "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/jobs/<job_id>/logs" -o $env:TEMP\job.log
+   ```
+   实测收获（2026-09-20）：`android.yml` 的「随包 PDFium 库（Android）」**连着三跑**都红，
+   日志第一行就写着 `target: … / linux-x64` —— 而注解通道对这条**完全为空**，只读注解会以为"什么都没有"。
+   （同一跑里 `jobs` 接口还能看到红在**第 17 步**，后面 6 步是 `skipped` —— 这比人眼翻 1000 行日志快得多。）
+3. **本地复跑同一条门禁**：`node scripts/test-report.mjs --only <gate-id>`；
    门禁清单与 CI **同源**（`scripts/lib/gates.mjs`），所以本地跑的就是 CI 跑的那条。
-3. **仍是"本机绿、CI 红"就找环境差异**，已知的两类（都真实发生过）：
+4. **仍是"本机绿、CI 红"就找环境差异**，已知的两类（都真实发生过）：
    - **干净检出**没有的东西：git tag、未跟踪的构建产物。（`release.mjs` 的 tag 守卫就是这么咬到测试自己的。）
    - **浏览器语言/区域**：CI 的 Chromium 是 `en-US`，而按文案匹配的判据只认中文时就会"找不到入口"。
      复现配方：给 Chrome 加 `--lang=en-US` 再跑同一条门禁（实测能逐字复现）。

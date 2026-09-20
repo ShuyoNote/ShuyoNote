@@ -10,21 +10,23 @@
 //
 // 断言（从"晚才发现"到"更晚才发现"排）：
 //   1. 找得到 APK（默认在 `src-tauri/gen/android/app/build/outputs/apk/**/*.apk` 里取最新的）；
-//   2. 它当 zip 能列（用 `tar -tf`：Windows/macOS/Linux 自带 bsdtar ⇒ **零依赖、离线**）；
+//   2. 它当 zip 能列（**纯 Node 解析**，见 `listApk` 那条注释：原来用 `tar -tf`，而
+//      CI 的 ubuntu 上是 GNU tar、**读不了 zip** ⇒ 那一步在 CI 上恒 exit 2"没验"）；
 //   3. 包里有 `lib/<abi>/libpdfium.so`（至少一个 ABI）；
 //   4. 它那份与 `vendor/pdfium/android-arm64/lib/libpdfium.so` 的 **sha256 一致**（没人在中间换过库）；
 //   5. 把"带了哪些 ABI"打出来 —— 只带 arm64 就**明说**只带 arm64，不假装全带。
 //
-// 退出码：0 = 通过；1 = 有问题（逐条打印原因）；2 = **没验**（找不到 APK / 没有 tar / vendor 里没那份库
+// 退出码：0 = 通过；1 = 有问题（逐条打印原因）；2 = **没验**（找不到 APK / 读不了 zip / vendor 里没那份库
 // ⇒ sha256 那一半没验）—— 按本仓惯例，"没验"必须与"通过"分开。
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { isMain } from "./lib/is-main.mjs";
+// ZIP 读取用**同一份**共享实现（`check-apk-contents.mjs` 与取产物那条线也在用）：
+// 同一个格式解析写两遍就会漂移，而"单一事实来源"在这类字节级判据上尤其要紧。
+import { listZipEntries, readZipEntry } from "./lib/zip.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -74,25 +76,38 @@ function sha256File(p) {
   return createHash("sha256").update(readFileSync(p)).digest("hex");
 }
 
-/** `tar -tf`（bsdtar 直接认 zip/APK）。跑不起来 ⇒ `null`（= 没验，不是"没有库"）。 */
+function sha256Buffer(buf) {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+/**
+ * APK 的条目名列表（读不了 ⇒ `null` = 没验，不是"没有库"）。
+ *
+ * ⚠️ **为什么不用 `tar`**（2026-09-20 实测踩出来的，CI 上真红）：
+ *   本机 Windows / macOS 的 `tar` 是 **bsdtar**，它认 zip，所以本地一切正常；
+ *   而 **CI 的 ubuntu runner 上 `tar` 是 GNU tar，根本读不了 zip** ⇒ 那一步恒报
+ *   「`tar -tf` 读不了这个文件」，exit 2（"没验"）—— 一条**产物判据**被一个环境差异
+ *   变成了永远不生效的摆设（而且它只报"没验"，不会有人怀疑是自己的包坏了）。
+ *   本机实测（同一个 zip）：`wsl tar -tf x.apk` ⇒ `This does not look like a tar archive`；
+ *   `tar -tf x.apk`（bsdtar）⇒ 正常列出。
+ *   ⇒ 改用纯 JS 读（`lib/zip.mjs`，与 `check-apk-contents.mjs` 同一份），三平台行为一致，
+ *     也顺手去掉了"这台机器上有没有 tar/unzip/7z"这种运气。
+ */
 export function listApk(apk) {
   try {
-    return execFileSync("tar", ["-tf", apk], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] })
-      .split("\n")
-      .filter((l) => l.trim().length > 0);
+    return listZipEntries(readFileSync(apk)).map((e) => e.name);
   } catch {
-    return null;
+    return null; // 不是 zip / 被截断 / zip64 不支持 —— 调用方如实报"没验"
   }
 }
 
-/** 把 APK 里某个条目解到临时目录，返回解出来的文件路径。 */
-export function extractEntry(apk, entry) {
-  const dir = mkdtempSync(join(tmpdir(), "shuyo-apk-"));
+/** 把 APK 里某个条目**解成 Buffer**（不落盘）；没有这条或解不开 ⇒ `null`。 */
+export function readApkEntry(apk, entry) {
   try {
-    execFileSync("tar", ["-xf", apk, "-C", dir, entry], { stdio: ["ignore", "pipe", "pipe"] });
-    return { dir, file: join(dir, entry) };
+    const buf = readFileSync(apk);
+    const found = listZipEntries(buf).find((e) => e.name === entry || e.name === `./${entry}`);
+    return found ? readZipEntry(buf, found) : null;
   } catch {
-    rmSync(dir, { recursive: true, force: true });
     return null;
   }
 }
@@ -107,7 +122,7 @@ export function check({ apk, log = console.log, err = console.error } = {}) {
 
   const entries = listApk(found.path);
   if (entries === null) {
-    err("✗ 没验：`tar -tf` 读不了这个文件（没有 tar / 不是 zip）—— 别当成通过");
+    err("✗ 没验：读不了这个 APK 的 zip 结构（不是 zip？被截断？）—— 别当成通过");
     return 2;
   }
   log(`包内条目 ${entries.length} 个`);
@@ -123,15 +138,14 @@ export function check({ apk, log = console.log, err = console.error } = {}) {
   const hasVendor = existsSync(join(root, VENDOR_LIB));
   let bad = 0;
   for (const lib of libs) {
-    const ex = extractEntry(found.path, lib.entry);
-    if (!ex) {
+    const buf = readApkEntry(found.path, lib.entry);
+    if (buf === null) {
       err(`✗ ${lib.entry}：解不出来（包里在、展开失败）`);
       bad++;
       continue;
     }
-    const got = sha256File(ex.file);
-    const size = statSync(ex.file).size;
-    rmSync(ex.dir, { recursive: true, force: true });
+    const got = sha256Buffer(buf);
+    const size = buf.length;
     if (!hasVendor) {
       log(`~ ${lib.entry.padEnd(34)} ${size} 字节  sha256 ${got.slice(0, 16)}…（vendor 里没有 android 那份 ⇒ 没比）`);
       continue;

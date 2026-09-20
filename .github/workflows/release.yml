@@ -205,6 +205,9 @@ jobs:
         # ⇒ 映射到深一层（例如 `…/resources/libpdfium.so`）时 deb 里**确实有**这个文件，
         # 只有产物里的**路径层数**能把它抓出来。P5 把默认引擎切成 PDFium 之后，
         # 这一条就是"Linux 用户开得了 PDF / 开不了 PDF"的分界。
+        # 2026-09-20（Windows 侧）：同一步现在**也判随包中文字体**（`NotoSansSC-Regular.ttf`
+        # 在不在、位置对不对、sha256 是否等于 `fetch-font.mjs` 钉死的那份）—— 缺字体与缺库是
+        # 同一类静默失效，而字体本体不入库、构建也不会因此变红，所以这里是唯一的拦截点。
         if: matrix.platform == 'ubuntu-24.04'
         run: node scripts/check-linux-bundle.mjs
 
@@ -415,8 +418,9 @@ jobs:
       - name: 随包 PDFium 库（Android）
         # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
         # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。
+        # ⚠️ 同 android.yml：平台名写成显式的 `--platform`（位置形式曾被静默吃掉 ⇒ 取成 linux-x64）。
         run: |
-          node scripts/fetch-pdfium.mjs android-arm64
+          node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)

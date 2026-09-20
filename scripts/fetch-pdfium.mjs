@@ -11,8 +11,13 @@
 // 用法：
 //   node scripts/fetch-pdfium.mjs                  # 取当前平台
 //   node scripts/fetch-pdfium.mjs --platform win-x64
+//   node scripts/fetch-pdfium.mjs android-arm64    # 位置形式，与 `--platform` 等价（workflow 里用的就是它）
 //   node scripts/fetch-pdfium.mjs --check          # 只校验已解出的库是否与记录一致（CI 用）
 //   node scripts/fetch-pdfium.mjs --print-sha256 <文件>   # 算某平台包的 sha256（补 SHA256 表用）
+//
+// ⚠️ 平台名**认不出就当场 exit 2**（`scripts/lib/pdfium-target.mjs` 里那条判据）：
+//   写错的名字不许静默回落成"当前平台"——那正是 2026-09-20 安卓 CI 变红的原因
+//   （工作流写的是 `… android-arm64`，只认 `--platform` 的旧版把它当没写）。
 //
 // ⚠️ DNS 被污染的环境（本机就是）：GitHub 的 release 资产走 objects.githubusercontent.com，
 //   直连会卡死。先解析真实 IP，再让脚本用 curl 带 --resolve：
@@ -27,6 +32,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { resolvePlatform } from "./lib/pdfium-target.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_ROOT = join(root, "src-tauri", "vendor", "pdfium");
@@ -132,11 +139,17 @@ if (flag("--print-sha256")) {
   process.exit(0);
 }
 
-const platform = valueOf("--platform") ?? detectPlatform();
-if (!platform || !PLATFORMS[platform]) {
-  console.error(`不支持的平台：${platform ?? "(未识别)"}；可选：${Object.keys(PLATFORMS).join(", ")}`);
+// 平台来自 `--platform <名>` **或**位置参数（`fetch-pdfium.mjs android-arm64`），两者等价。
+// ⚠️ 这一步必须由 `resolvePlatform` 判：2026-09-20 之前只认 `--platform`，
+//    而两个 workflow 里写的都是位置形式 ⇒ 参数被**静默吃掉**、回落成"当前平台"，
+//    ubuntu runner 上取回 linux-x64，直到下一步 stage 才报"vendor 里没有 android-arm64 的那份库"。
+//    现在**认不出的名字当场 exit 2**，不再有"写错了还跑得下去"这个状态。
+const resolved = resolvePlatform(argv, { detect: detectPlatform, known: PLATFORMS });
+if (resolved.error) {
+  console.error(resolved.error);
   process.exit(2);
 }
+const platform = resolved.platform;
 const spec = PLATFORMS[platform];
 const outDir = join(OUT_ROOT, platform);
 // ⚠️ **不要**把 `spec.lib` 里的 `/` 换成 `\`：`lib` 是**包内**的 POSIX 路径
