@@ -123,9 +123,13 @@ const EDITS = [
     add: `static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) {
   if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
 
-  /* SHUYONOTE-GM: 同 2a 的能力门（KDF 那张表的 SM3 也取 3，所以复用的是同一个探测口）。 */
+  /* SHUYONOTE-GM: 同 2a 的能力门。⚠️ **探测的是"这次要设的那个算法"，不是 SM3 常量** ——
+  ** 第一版我写成了 get_hmac_sz(ctx->provider_ctx, SQLCIPHER_PBKDF2_HMAC_SM3)，
+  ** 于是"没有 SM3 的 provider"（Apple 的 CommonCrypto 就是）连**默认的** PBKDF2-HMAC-SHA512
+  ** 都会被拒 ⇒ ctx_init 失败 ⇒ PRAGMA key 直接不认那把 key（macOS 上 12+7 条红，2026-09-20 mac 抓出）。
+  ** KDF 与 HMAC 两张表的枚举取值本来就是同一套编号（0/1/2/3），所以用 algorithm 探测与 2a 等价且正确。 */
   if(ctx->provider != NULL && ctx->provider->get_hmac_sz != NULL &&
-     ctx->provider->get_hmac_sz(ctx->provider_ctx, SQLCIPHER_PBKDF2_HMAC_SM3) <= 0) {
+     ctx->provider->get_hmac_sz(ctx->provider_ctx, algorithm) <= 0) {
     sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER,
                   "%s: crypto provider does not support kdf algorithm %d", __func__, algorithm);
     return SQLITE_ERROR;
