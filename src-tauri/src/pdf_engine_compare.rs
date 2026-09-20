@@ -251,8 +251,10 @@ fn pdfium_matches_mupdf_on_fixtures() {
         //   · PDFium 27000 = **正好等于那个蓝矩形的面积**⇒ **整行文字一个像素都没画**
         //     （墨迹包围盒的顶边就是矩形顶边，文字区域全透明）。
         //   即：**非嵌入 CID 字体**这条路径上，两家都不可信、不可信的方式还不一样 ⇒ 只能只报不判。
-        //   ⚠️ 这条也是 P5 的风险项：中文老 PDF（`STSong-Light` + `UniGB-UCS2-H` 这种国标写法、
-        //   不带字体文件）在**这台 Linux** 上会**整行不显示**，Windows/macOS 侧**尚未复核**。
+        //   ⚠️ 这条也是 **P5 的风险项，但风险面比一开始以为的小**：同一份 `cjk.pdf` 在
+        //   **Windows 的 PDFium** 上**画对了**（墨迹 28816、正确「中文测试」；证据包
+        //   `ShuyoNote-collab/pdfium-p3/visual-check-cjk/`）⇒ 分叉在**平台/库**，不在样本、
+        //   也不在我们的包装。仍欠两份读数：**macOS 上的 PDFium**、**Windows/macOS 上的 MuPDF**。
         let report_only = name.starts_with("cjk");
 
         let ok = d.rgb_max <= MAX_CHANNEL_DIFF && d.rgb_over <= MAX_OVER_RATIO;

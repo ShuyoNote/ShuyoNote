@@ -218,11 +218,9 @@ fn library_dir() -> PathBuf {
 /// 而不是把 `cargo test` 判红 —— 后者会让"缺一个开发期二进制"看起来像"代码坏了"，
 /// 而真红了以后没人分得清是哪一种（2026-09-19 rust job 就是这么红的）。
 ///
-/// 库是否就位（**只探文件、不加载库**）。
-///
-/// `#[cfg(test)]` **已去掉**（2026-09-20）：它现在有**生产**调用点 ——
-/// `commands::render_pdf_page` 用 `library_available()` 决定"缺省引擎是 PDFium 还是回退 MuPDF"。
-/// （原先注释里那句"唯一调用点是 P3 对拍那条 `#[test]`"随之作废。）
+/// `#[cfg(test)]`：当前唯一调用点是 P3 对拍那条 `#[test]`。不加会在非测试构建里报
+/// "never used"（2026-09-19 复核时发现并修：非测试 lib 目标确实是会warn 的，只看 `--tests` 会漏）。
+#[cfg(test)]
 pub fn library_preflight() -> Result<(), String> {
     let dir = library_dir();
     let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
@@ -233,15 +231,6 @@ pub fn library_preflight() -> Result<(), String> {
         "找不到 PDFium 动态库：{}（开发机跑 `node scripts/fetch-pdfium.mjs`；CI 的 rust job 有取库步骤）",
         lib.display()
     ))
-}
-
-/// **生产**用的布尔版：库在不在（`library_preflight` 的判定，丢掉错误文本）。
-///
-/// 调用点：`commands::render_pdf_page` 的引擎取值 —— **默认 PDFium，但库不在就回退 MuPDF**。
-/// 复用 `library_preflight` 而不是另写一份探测：**判据只有一处**（它自己也走 `library_dir()`，
-/// 于是"环境变量 → 资源目录 → 可执行文件同目录 → vendored"这条优先级不会被复制成第二份）。
-pub fn library_available() -> bool {
-    library_preflight().is_ok()
 }
 
 /// 拿到进程级 PDFium 实例；首次调用时绑定动态库。
