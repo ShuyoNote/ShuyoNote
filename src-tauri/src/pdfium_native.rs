@@ -155,6 +155,54 @@ fn candidate_dirs(
     out
 }
 
+/// 本平台的库文件名（`pdfium.dll` / `libpdfium.so` / `libpdfium.dylib`）。
+///
+/// 报错里要写出**这个名字**：`fetch-pdfium.mjs` 的 `PLATFORMS` 里目录前缀各平台不统一
+/// （Windows `bin/`，Linux/macOS/Android `lib/`）⇒ 只说"找不到库"，下一台机器的人还得自己猜。
+fn library_file_name() -> std::ffi::OsString {
+    Pdfium::pdfium_platform_library_name_at_path(std::path::Path::new("."))
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("(未知)"))
+}
+
+/// **按顺序**列出生效的候选目录（环境变量那一条不算候选，它直接短路）。
+///
+/// 单独抽出来是为了**报错能说清"我们找过哪儿"**（AMD 2026-09-17 提）：原来只说
+/// "找不到 `<某路径>`"，而那个路径是**最后回退**出来的，被探过的其它候选一个都看不到 ——
+/// 于是下一台机器的人只能靠猜。现在 `library_dir()` 与报错**共用这同一个函数**（单一真相）。
+fn library_candidates() -> Vec<PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+    candidate_dirs(exe_dir, RESOURCE_DIR.get().cloned(), vendored_root())
+}
+
+/// "找不到库"的**可操作**错误文本（纯函数，便于判据）。
+///
+/// 三件事必须写清：① 本平台的文件名；② **按顺序**探过哪些目录；③ 三条可操作的出路。
+fn missing_library_error(lib: &std::path::Path, candidates: &[PathBuf]) -> String {
+    let tried = if candidates.is_empty() {
+        "  （没有候选目录：既没有可执行文件目录，也没有打包资源目录）".to_string()
+    } else {
+        candidates
+            .iter()
+            .map(|d| format!("  - {}", d.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "找不到 PDFium 动态库：{}\n\
+         · 本平台的文件名是 `{}`（`bin/` 还是 `lib/` **各平台不同**，见 `scripts/fetch-pdfium.mjs` 的 `PLATFORMS`）\n\
+         · 按顺序找过这些目录：\n{}\n\
+         · 出路：开发机跑 `node scripts/fetch-pdfium.mjs`；发行包由打包步骤把库放到可执行文件同目录；\
+         或显式设 `SHUYONOTE_PDFIUM_DIR`",
+        lib.display(),
+        library_file_name().to_string_lossy(),
+        tried
+    )
+}
+
 /// 从候选里挑第一个**真的有库**的目录（文件系统探测只在这一个函数里）。
 fn pick_library_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates
@@ -199,15 +247,15 @@ fn library_dir() -> PathBuf {
             return PathBuf::from(dir);
         }
     }
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
-    let candidates = candidate_dirs(exe_dir.clone(), RESOURCE_DIR.get().cloned(), vendored_root());
+    let candidates = library_candidates();
     if let Some(dir) = pick_library_dir(&candidates) {
         return dir;
     }
     // 最后回退到可执行文件目录，让错误信息里的路径有意义。
-    exe_dir.unwrap_or_else(|| PathBuf::from("."))
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// **库在不在**（给判据用）：与 [`shared_pdfium`] 同一套解析，但不加载、不缓存。
@@ -227,10 +275,7 @@ pub fn library_preflight() -> Result<(), String> {
     if lib.exists() {
         return Ok(());
     }
-    Err(format!(
-        "找不到 PDFium 动态库：{}（开发机跑 `node scripts/fetch-pdfium.mjs`；CI 的 rust job 有取库步骤）",
-        lib.display()
-    ))
+    Err(missing_library_error(&lib, &library_candidates()))
 }
 
 /// 拿到进程级 PDFium 实例；首次调用时绑定动态库。
@@ -242,11 +287,7 @@ fn shared_pdfium() -> Result<&'static Pdfium, String> {
         let dir = library_dir();
         let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
         if !lib.exists() {
-            return Err(format!(
-                "找不到 PDFium 动态库：{}。开发机先跑 `node scripts/fetch-pdfium.mjs`，\
-                 发行包应由打包步骤把库放到可执行文件同目录（或设 SHUYONOTE_PDFIUM_DIR）",
-                lib.display()
-            ));
+            return Err(missing_library_error(&lib, &library_candidates()));
         }
         let bindings = Pdfium::bind_to_library(&lib)
             .map_err(|e| format!("加载 PDFium 失败（{}）：{e}", lib.display()))?;
@@ -466,12 +507,9 @@ mod tests {
     use std::path::Path;
 
     /// 本平台的库文件名（`pdfium.dll` / `libpdfium.so` / `libpdfium.dylib`）——
-    /// 直接用 crate 自己的命名规则，免得判据里硬写平台分支。
+    /// 直接用 crate 自己的命名规则，免得判据里硬写平台分支（与生产侧 [`library_file_name`] 同一份）。
     fn lib_file_name() -> std::ffi::OsString {
-        Pdfium::pdfium_platform_library_name_at_path(Path::new("."))
-            .file_name()
-            .expect("库文件名")
-            .to_os_string()
+        library_file_name()
     }
 
     fn scratch(tag: &str) -> PathBuf {
@@ -582,5 +620,43 @@ mod tests {
         set_resource_dir(dir.clone());
         assert_eq!(library_dir(), dir.clone(), "资源目录登记后 library_dir() 必须命中它");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── "找不到库"的报错本身（AMD 2026-09-17 提：原来只说最后回退的那个路径）──────
+
+    /// 判据：报错必须**按顺序**列出**所有**探过的候选目录 ＋ 本平台的文件名 ＋ 三条出路。
+    ///
+    /// 为什么要有它：原来只说"找不到 `<最后回退的那个路径>`"⇒ 下一台机器的人不知道我们找过哪儿，
+    /// 只能靠猜（"读数不可操作"那一族）。顺序也要保：**候选列表的顺序就是优先级**。
+    #[test]
+    fn missing_library_error_lists_candidates_in_order_and_the_file_name() {
+        let lib = Path::new("/nowhere/libpdfium.so");
+        let candidates = vec![
+            PathBuf::from("/exe-dir"),
+            PathBuf::from("/resource-dir"),
+            PathBuf::from("/vendor/lib"),
+        ];
+        let msg = missing_library_error(lib, &candidates);
+
+        assert!(msg.contains("/nowhere/libpdfium.so"), "要带上找的那个完整路径：{msg}");
+        assert!(
+            msg.contains(&library_file_name().to_string_lossy().to_string()),
+            "要写清本平台的文件名（`bin/` 与 `lib/` 各平台不同）：{msg}"
+        );
+        let (a, b, c) = (
+            msg.find("/exe-dir").expect("第一个候选要在"),
+            msg.find("/resource-dir").expect("第二个候选要在"),
+            msg.find("/vendor/lib").expect("第三个候选要在"),
+        );
+        assert!(a < b && b < c, "候选必须**按顺序**列（顺序=优先级）：{msg}");
+        assert!(msg.contains("SHUYONOTE_PDFIUM_DIR"), "三条出路里要有环境变量那条：{msg}");
+        assert!(msg.contains("fetch-pdfium.mjs"), "要有开发机那条出路：{msg}");
+    }
+
+    /// 判据：候选为空时也要说清（不许打出一个**空白清单** —— 那会被读成"没找过任何地方"）。
+    #[test]
+    fn missing_library_error_says_so_when_there_are_no_candidates() {
+        let msg = missing_library_error(Path::new("libpdfium.so"), &[]);
+        assert!(msg.contains("没有候选目录"), "候选为空要有明说：{msg}");
     }
 }
