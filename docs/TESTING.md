@@ -48,7 +48,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
-| contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现） |
+| contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现）。工具链探针**两张表**：macOS（`xcode-select`/SDK/`notarytool`/`codesign`/`clang`）与 **Windows（2026-09-20 补）**——硬判据 `vswhere-msvc`（VC 工具链）/`windows-sdk`/`webview2`（运行时：没它装完打不开），`kind: "info"` 的 `makensis`/`signtool` **只报不判**（tauri 自己取 NSIS、签名只在发版要） |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
 | smoke | `vitest` | 单测回归（**885 用例**） |
@@ -295,6 +295,20 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `gm-conformance: ❌ 夹具编不过 / spawnSync cargo ENOENT` 的形式失败，读起来完全像夹具本身有问题。
   `scripts/gm-version-selfcheck.mjs` 里加了兜底：`PATH` 上没有、rustup 默认位置有时补上，并打一行 `!`
   —— **不静默改环境**（改了就会让"我这台能跑"变成不可复现的读数）。
+- **共享检出的 `node_modules` 可能是"半装"状态**（2026-09-20，本机 Windows 实测；与上文"有人重装的那几分钟"是**两种**形态）：
+  症状是 `vitest` / `pnpm build` **全挂**，而报错长得像"代码坏了"：
+  `Error: Cannot find package '…/.pnpm/vitest@4.1.11…/node_modules/tinyexec/index.js'`、
+  `Cannot find module '…/@esbuild/win32-x64/esbuild.exe'` —— 即 `.pnpm` 里少了传递依赖的实体；
+  更坑的是 `npx tsc` 那种入口此时会**静默从 registry 装一个同名假包**（见本文上面那条）。
+  **修法（34 秒、离线、只动自己那棵树）**：把自己的 `node_modules` 从 **junction** 换成真实目录，
+  再用**本地 pnpm store** 重装：
+  ```powershell
+  cmd /c "rmdir node_modules"        # ⚠️ 只删 junction 本身；不要 Remove-Item -Recurse（会删到别人那棵树）
+  pnpm install --frozen-lockfile --offline
+  ```
+  判定修好了：`node node_modules/vitest/vitest.mjs --version` 有输出、`node node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild --version` 有版本。
+  **收益是实打实的**：修好后本机第一次跑出 `vitest 17/17`，并当场抓到"跑 git 的用例缺显式 timeout ⇒
+  Windows 上 5s 默认超时偶发红"这个 flake（`scripts/check-changelog-version-parity.test.mjs` 已修）。
 - **`import.meta.dirname` 在旧 Node 上是 `undefined`**（2026-09-19，WSL 的 Node 18 实测）：
   `resolve(import.meta.dirname, "..")` 直接抛
   `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string` —— 报错文本一个字都没提 Node 版本，

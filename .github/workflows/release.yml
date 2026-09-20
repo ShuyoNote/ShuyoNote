@@ -121,6 +121,18 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         run: node scripts/fetch-pdfium.mjs --platform linux-x64
 
+      - name: 取随包中文字体（Linux 装包要带的 NotoSansSC）
+        # 2026-09-20 加（Windows 侧，P4 的 Linux 缺口）。为什么 Linux 需要它：
+        # 那份预编译 `libpdfium.so` **没有字体后端**（`ldd` 无 fontconfig、`FcInit` 0 个）⇒
+        # **非嵌入字体**的中文 PDF（国标 `STSong-Light`+`UniGB-UCS2-H` 这种写法）在 Linux 上**整行不显示**，
+        # 而 Windows/macOS 有系统字体映射、看不见这个问题。治法：库目录旁放一份 OFL 中文字体，
+        # `pdfium_native.rs` 的 provider 会用它（实测：`cjk.pdf` 墨迹 27000 → 29084、目视「中文测试」）。
+        # ⚠️ 与 pdfium 同一个道理：**字体本体不入库**（`.gitignore`），打包前必须现取；
+        #    但**必须匹配到文件**（映射是 `assets/fonts/*`）—— 新克隆/别的 job 靠同目录的 README.md 占位，
+        #    所以"没取字体"不会让任何构建变红（`cargo check` 实测绿）。
+        if: matrix.platform == 'ubuntu-24.04'
+        run: node scripts/fetch-font.mjs
+
       - name: 交付通道协议门禁（shuyonote://）
         # 这条**必须在打包之前**跑，而且不能只靠 `pnpm tauri build` 里 beforeBuildCommand 那一串：
         # 协议注册是唯一一处"配置错了不会编译失败、只在装完之后表现为点链接没反应"的地方。
