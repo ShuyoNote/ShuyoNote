@@ -231,12 +231,15 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
   const REAL = "warning: shuyonote@1.91.3: shuyonote: sm3/sm4 provider patch applied (patch=v1 target=macos marker=sqlite3.c)\n";
   const NONE = "cargo:rerun-if-changed=build.rs\ncargo:rustc-cdylib-link-arg=-Wl,-install_name\n";
 
-  it("认出真实标记并解析出三个字段", () => {
+  it("认出真实标记并解析出各字段（旧形状没有新鲜度三个字段 ⇒ 给空串，不 undefined）", () => {
     expect(patchMarkerOf(REAL)).toEqual({
       found: true,
       patch: "v1",
       target: "macos",
       marker: "sqlite3.c",
+      srcSha256: "",
+      libsqlite3Sys: "",
+      via: "",
     });
   });
 
@@ -276,6 +279,69 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
     const r = decide({ all: [cand("commoncrypto")], expected: "commoncrypto", patch: { expected: null, markers: [] } });
     expect(r.problems).toEqual([]);
     expect(r.notices).toEqual([]);
+  });
+
+  it("★ 标记解析要带上新鲜度证据（`src_sha256` / 版本 / 解析途径）", () => {
+    const line =
+      "warning: shuyonote@1.91.3: shuyonote: sm3/sm4 provider patch applied " +
+      "(patch=v1 target=macos libsqlite3-sys=0.38.2 via=cargo.lock marker=sqlite3.c src_sha256=" +
+      "a".repeat(64) + ")\n";
+    const m = patchMarkerOf(line);
+    expect(m.found).toBe(true);
+    expect(m.srcSha256).toBe("a".repeat(64));
+    expect(m.libsqlite3Sys).toBe("0.38.2");
+    expect(m.via).toBe("cargo.lock");
+  });
+
+  // ── 新鲜度：比哈希，不比时间（AMD 2026-09-19 的方案）──────────────────────────
+  const cur = { sha256: "b".repeat(64), file: "/reg/libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c", via: "cargo.lock" };
+  const withHash = (h) => mk({ srcSha256: h });
+
+  it("★ 哈希与当前源码一致 ⇒ 不红（新鲜度**可证**，不看时间）", () => {
+    const r = decide({
+      all: [cand("openssl")],
+      expected: "openssl",
+      patch: { expected: "applied", markers: [withHash(cur.sha256)], current: cur },
+    });
+    expect(r.problems).toEqual([]);
+    expect(r.notices).toEqual([]);
+  });
+
+  it("★★ 哈希不等 ⇒ 红（「过期标记」），且报错要带两条清库命令", () => {
+    const r = decide({
+      all: [cand("openssl")],
+      expected: "openssl",
+      patch: { expected: "applied", markers: [withHash("c".repeat(64))], current: cur },
+    });
+    expect(r.problems.join("\n")).toContain("过期标记");
+    expect(r.problems.join("\n")).toContain("cargo clean -p shuyonote");
+    expect(r.problems.join("\n")).toContain("cargo clean -p libsqlite3-sys");
+  });
+
+  it("旧产物没有 `src_sha256` 字段 ⇒ **未实查**（只提示，不判红——缺失不等于补丁不在）", () => {
+    const r = decide({
+      all: [cand("openssl")],
+      expected: "openssl",
+      patch: { expected: "applied", markers: [mk()], current: cur }, // mk() 默认不带 srcSha256
+    });
+    expect(r.problems).toEqual([]);
+    expect(r.notices.join("\n")).toContain("未实查");
+  });
+
+  it("拿不到当前指纹（registry 被清/锁文件读不到）⇒ 也是**未实查**，并说明原因", () => {
+    const r = decide({
+      all: [cand("openssl")],
+      expected: "openssl",
+      patch: {
+        expected: "applied",
+        markers: [withHash("d".repeat(64))],
+        current: null,
+        currentError: "找不到可哈希的文件：…",
+      },
+    });
+    expect(r.problems).toEqual([]);
+    expect(r.notices.join("\n")).toContain("未实查");
+    expect(r.notices.join("\n")).toContain("找不到可哈希的文件");
   });
 
   it("collectPatchMarkers 的导出存在（真跑时读 target/*/build/shuyonote-*/output）", () => {

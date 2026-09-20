@@ -49,6 +49,19 @@
 // 所以：① 断言 `applied` 时，本门禁会把**输出文件与它的 mtime** 一起打出来，供人复核新鲜度；
 // ② 判据红了要 `cargo clean -p shuyonote`（只清 libsqlite3-sys 不够：标记是我们自己 build.rs 打的）。
 //
+// ## ★ 第三格的**新鲜度**：比 `src_sha256`，不比时间（2026-09-19，AMD 的方案）
+//
+// 标记行里有 `src_sha256=<64hex>`（AMD 2026-09-19 加，见 `scripts/lib/sm-library-source.mjs`）。
+// **mtime 与源码之间没有因果链**（clean/checkout/stash/复制 registry 都会打乱先后），所以：
+//
+// | 产物里的 `src_sha256` | 与"当前将要编译的那份源码"的哈希 | 结论 |
+// |---|---|---|
+// | 相等 | — | ✓ **标记与源码同一份**（新鲜度可证，不看时间） |
+// | 不等 | — | **过期标记**（源码变过/换了版本）⇒ `EXPECT=applied` 时**红**，否则报「未实查」 |
+// | 字段缺失（旧产物） | — | 报「未实查」＋提示 `cargo clean -p shuyonote`（**不假装能证**） |
+//
+// 当前哈希由 **AMD 那侧的纯函数** `sourceFingerprint()` 给出（我 `import` 它，**不写第三份解析实现**）。
+//
 // 声明来源：`SHUYONOTE_EXPECT_CRYPTO_BACKEND`（`commoncrypto` / `openssl`）＋
 // `SHUYONOTE_EXPECT_SM_PATCH`（`applied` / `absent`）；不设则只报告不判定。
 // 分类与判定都是导出的纯函数，单测见 `scripts/check-crypto-backend.test.mjs`。
@@ -56,6 +69,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+// ⚠️ 源码定位/哈希**只有一份实现**（AMD 的纯函数库）——我不再写第三份，免得两侧漂移。
+import { sourceFingerprint } from "./lib/sm-library-source.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -154,7 +169,16 @@ export function patchMarkerOf(text) {
   if (!m) return { found: false };
   const rest = m.groups?.rest ?? "";
   const field = (k) => new RegExp(`${k}=([^)\\s]+)`).exec(rest)?.[1] ?? "";
-  return { found: true, patch: field("patch"), target: field("target"), marker: field("marker") };
+  return {
+    found: true,
+    patch: field("patch"),
+    target: field("target"),
+    marker: field("marker"),
+    // 新鲜度证据（AMD 2026-09-19 加）：这份标记对应哪份源码的哪个版本
+    srcSha256: field("src_sha256"),
+    libsqlite3Sys: field("libsqlite3-sys"),
+    via: field("via"),
+  };
 }
 
 /** 收集我们自己 build script 的产物（标记在那里，不在 libsqlite3-sys 的产物里）。 */
@@ -211,6 +235,31 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
         "所以「这次没跑」与「这次跑了但没找到补丁」在这里长得一样。两种都先清再编：\n" +
         "      cargo clean -p shuyonote && cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml",
     );
+  } else if (patch.expected === "applied" && newestMarker) {
+    // ★ 新鲜度：比哈希，不比时间。字段缺失 ⇒ 未实查（旧产物不能自证），不当成"补丁不在"。
+    const cur = patch.current ?? null;
+    const recorded = newestMarker.srcSha256 || "";
+    if (!recorded) {
+      notices.push(
+        `产物里的标记**没有** \`src_sha256=\` 字段（旧构建产物）⇒ **未实查**：无法判断这份标记对应哪份源码；` +
+          "要重新拿到可自证的标记：`cargo clean -p shuyonote` 后再编",
+      );
+    } else if (!cur) {
+      notices.push(
+        `产物里的 \`src_sha256=${recorded.slice(0, 12)}…\` 无法与"当前将要编译的源码"比对` +
+          `（拿不到当前指纹：${patch.currentError || "未知原因"}）⇒ **未实查**`,
+      );
+    } else if (recorded !== cur.sha256) {
+      problems.push(
+        "**过期标记**：产物里的 `src_sha256` 与当前将要编译的源码**不是同一份**" +
+          `（产物 ${recorded.slice(0, 12)}… vs 当前 ${cur.sha256.slice(0, 12)}…，当前 = ${cur.file} via=${cur.via}）`,
+      );
+      problems.push(
+        "含义：**源码在构建之后变过**（打了/撤了补丁、换了 libsqlite3-sys 版本、registry 被替换…）" +
+          "⇒ 那行「补丁已应用」不能当证据。重来一遍：\n" +
+          "      cargo clean -p shuyonote && cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml",
+      );
+    }
   } else if (patch.expected === "absent" && newestMarker) {
     problems.push(
       `声明要**补丁未应用**，但产物里有"补丁已应用"标记：${describeMarker(newestMarker)}（配置漂移？）`,
@@ -303,14 +352,29 @@ export function main() {
 
   const patchExpected = (process.env.SHUYONOTE_EXPECT_SM_PATCH || "").trim() || null;
   const markers = collectPatchMarkers(dir);
-  const { problems, notices } = decide({ all, expected, patch: { expected: patchExpected, markers } });
+  // 「当前将要编译的那份源码」的指纹 —— 用 AMD 的纯函数（唯一实现），拿不到就带上原因（判"未实查"，不判红）
+  let current = null;
+  let currentError = "";
+  try {
+    current = sourceFingerprint({ lockPath: join(root, "src-tauri", "Cargo.lock") });
+  } catch (e) {
+    currentError = String(e?.message || e).split("\n")[0];
+  }
+  const { problems, notices } = decide({
+    all,
+    expected,
+    patch: { expected: patchExpected, markers, current, currentError },
+  });
   for (const n of notices) console.error(`! ${n}`);
   if (patchExpected === "applied" && !problems.length) {
     const m = markers[0];
+    const hashLine =
+      m.srcSha256 && current && m.srcSha256 === current.sha256
+        ? `src_sha256=${m.srcSha256.slice(0, 12)}… **与当前源码一致**（新鲜度可证，不看时间；源码=${current.file} via=${current.via}）`
+        : `src_sha256=${m.srcSha256 ? m.srcSha256.slice(0, 12) + "…" : "(缺字段)"} —— ⚠️ 见上面的"未实查"说明`;
     console.log(
       `  补丁标记 ✓ patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
-        `（${m.profile}/${m.entry}，output mtime=${new Date(m.mtime).toISOString()}）` +
-        " ⚠️ 标记可能是上一次构建的重放 ⇒ 存疑就 `cargo clean -p shuyonote` 再编",
+        `（${m.profile}/${m.entry}）\n    ${hashLine}`,
     );
   }
   if (problems.length) {
