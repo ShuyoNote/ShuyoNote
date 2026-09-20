@@ -19,7 +19,8 @@
 //     "逐像素等价"这件事**在这个样本上不可能成立**，把它判红等于判一件做不到的事）。
 //     它回答的是另一个问题：**两个引擎都能开、都画出了东西、尺寸一致**（"能显示但不对"的第一道筛）。
 // ⚠️ 2026-09-20 实测把那句"各自替换字体"**改了**：不是"换出不同字形"，而是 MuPDF 画成单字节乱码、
-//    PDFium **一个字都不画**（详见 cjk.pdf 那一条与 `pdf_engine_compare.rs`）。这一类**不代表中文能看**。
+//    PDFium **一个字都不画**（均为 **WSL2/Linux** 读数；**Windows 的 PDFium 画对了**）。详见 cjk.pdf
+//    那一条与 `pdf_engine_compare.rs`。这一类**不代表"中文能看"**，只代表"引擎开得起来"。
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -170,6 +171,8 @@ const samples = [
     //   画成拉丁乱码（"N-e mK"），PDFium 的墨迹**正好等于页面里那个蓝矩形**（= 文字一个像素没画）；
     //   装系统 CJK 字体前后数字一字不变。详见 `pdf_engine_compare.rs` 里的实测段。
     //   ⚠️ "两边都画出东西"这道自检**会被那个蓝矩形满足** ⇒ 它只证明引擎开得起来，不证明文字画出来了。
+    //   ✅ 但同一份样本在 **Windows 的 PDFium** 上是**画对的**（28816 墨迹、「中文测试」）⇒ 分叉在
+    //   平台/库，不在样本；证据包 `ShuyoNote-collab/pdfium-p3/visual-check-cjk/`。
     file: "cjk.pdf",
     why: "中文：Type0/CID + UniGB-UCS2-H + 标准 CJK 字体名（**只报不判**，字形靠替换）",
     bytes: buildPdf({
