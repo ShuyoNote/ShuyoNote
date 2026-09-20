@@ -6,6 +6,21 @@
 
 ### 修复
 
+- **PDF「AI 识别」的浮层写着「OCR 识别结果」，正文还在讲语言包**（2026-09-20 用户截图：
+  「ai 识别的弹窗标题和文案不合适吧？」）。`pdf-ocr-popover` 是「OCR 识别本页」（本机 Tesseract）
+  与「AI 识别」（视觉大模型）**共用**的浮层，而标题与文案硬编码成 OCR 那一套 ⇒ 点 AI 也写
+  「OCR 识别结果」；识别中的正文讲的是"模型随包分发／语言包按需下载"（**打包方式**的内部权衡，
+  而且 AI 那条路根本没有语言包）；**AI 失败时更要命**：复用了 OCR 那段话，直接让人去下 30 MB
+  语言包，把人带沟里。顶部按钮同理 —— `ocrBusy` 一为真，「OCR 识别本页」就无条件变成「识别中…」，
+  点 AI 时是 OCR 那个按钮在替它表态。
+  改法：文案抽成纯函数 `src/lib/pdfOcrCopy.ts`（`ocrPopoverTitle` / `ocrPopoverCopy` /
+  `ocrBusyButtonLabel`），由「这次是谁跑的」（`OcrMode`，同时进 `PdfPageState`）决定说哪一套；
+  正文只放"此刻该知道的"，**排查线索降级成更淡的第二行**（`.pdf-ocr-tip-hint`）。
+  判据 `src/lib/pdfOcrCopy.test.ts` **13 条**：AI 那条路的标题与全部状态文案不许出现 OCR／语言包／
+  Tesseract；AI 失败必须指向「支持图像的模型」；OCR 失败必须给出"首次联网下语言包（约 30 MB）"这一步
+  并与"识别阶段失败"分开说；正文不许出现内部术语（随包分发／按需下载／`VITE_`）。另加 4 条**接线判据**
+  （读组件源码）钉住标题确实走 `ocrPopoverTitle(ocrMode, …)`、且旧句子不许回来。
+  变异验证（两条都实测红）：忽略 mode ⇒「AI 那条路的标题不许出现 OCR」红；组件退回硬编码 ⇒ 接线判据红。
 - **AI 助手页眉的齿轮（设置）按钮偏心了**（2026-09-20 用户截图：「设置按钮偏心了」）。
   根因是**类名撞车**：按钮写的是 `ai-header-btn ai-settings`，而设置**弹窗容器**也叫 `.ai-settings`
   （下面那条 `width: min(840px,…); aspect-ratio; border; border-radius; background` 的规则）。
