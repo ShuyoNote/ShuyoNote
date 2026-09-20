@@ -15,9 +15,10 @@
 // 退出码：0 = 成功（或 --print/--check 通过）；1 = 环境不满足；其它 = cargo 的退出码。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const argv = process.argv.slice(2);
 const argValue = (name) => {
@@ -26,7 +27,10 @@ const argValue = (name) => {
 };
 const has = (name) => argv.includes(name);
 
-const root = resolve(import.meta.dirname, "..");
+// ⚠️ 不要用 `import.meta.dirname`（Node ≥ 20.11 才有）：本仓要在 CI/旧 Node 上跑，
+//    在 Node 18 上它是 `undefined` ⇒ `resolve(undefined, "..")` 直接抛
+//    `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string`（2026-09-19 在 WSL 的 Node 18 上实测到）。
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = join(root, "src-tauri", "Cargo.toml");
 const opensslDir = argValue("--openssl-dir") || process.env.OPENSSL_DIR || "";
 const MARKER = "SQLCIPHER_HMAC_SM3_LABEL";
@@ -47,34 +51,84 @@ if (!opensslDir) {
 if (!existsSync(opensslDir)) fail(`--openssl-dir 指向的目录不存在：${opensslDir}`);
 
 // ---- 2) 补丁核对：**看将要编译的那份源码**，不是看环境变量 ----
-function sqlcipherSourceDir() {
-  if (process.env.SHUYONOTE_SQLCIPHER_SRC_DIR) return process.env.SHUYONOTE_SQLCIPHER_SRC_DIR;
-  const vendored = join(root, "src-tauri", "vendor", "sqlcipher");
-  if (existsSync(vendored)) return vendored;
-  const cargoHome = process.env.CARGO_HOME || join(homedir(), ".cargo");
-  const srcRoot = join(cargoHome, "registry", "src");
-  if (!existsSync(srcRoot)) return null;
-  let best = null;
-  for (const reg of readdirSync(srcRoot)) {
-    const regDir = join(srcRoot, reg);
-    let pkgs = [];
-    try {
-      pkgs = readdirSync(regDir);
-    } catch {
+//
+// ★ 版本取法（2026-09-19 macOS 侧受控实验证明第一版错了）：
+//   旧版按「registry 里 mtime 最新的那个版本」挑 —— 他那台机器上 **0.30.1 的 mtime 比 0.38.2 新**
+//   （陈旧副本），于是补丁正确打在 0.38.2 上时报"没有标记"（假阴性），
+//   而**只往 0.30.1 注入标记**也能让构建打出"补丁已应用"（假阳性）。
+//   ⇒ 现在只认 `src-tauri/Cargo.lock` 里锁的那个版本；拿不到就**当场失败**，绝不退而求其次。
+//   （与 Rust 侧同一份规则，实现分别在 `src/gm_patch_probe.rs` 与本文件 —— 两侧都由判据守着。）
+function lockVersion() {
+  const lockPath = join(root, "src-tauri", "Cargo.lock");
+  if (!existsSync(lockPath)) return { version: null, why: `没有 ${lockPath}` };
+  const lines = readFileSync(lockPath, "utf8").split(/\r?\n/);
+  let inPkg = false;
+  let isTarget = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line.startsWith("[[package]]")) {
+      inPkg = true;
+      isTarget = false;
       continue;
     }
-    for (const pkg of pkgs) {
-      if (!pkg.startsWith("libsqlite3-sys-")) continue;
-      const dir = join(regDir, pkg, "sqlcipher");
-      if (!existsSync(dir)) continue;
-      const m = statSync(dir).mtimeMs;
-      if (!best || m > best.m) best = { m, dir };
+    if (line.startsWith("[")) {
+      inPkg = false;
+      isTarget = false;
+      continue;
+    }
+    if (!inPkg) continue;
+    if (line.startsWith("name = ")) {
+      isTarget = line.slice(7).trim().replace(/"/g, "") === "libsqlite3-sys";
+      continue;
+    }
+    if (isTarget && line.startsWith("version = ")) {
+      return { version: line.slice(10).trim().replace(/"/g, ""), why: "cargo.lock" };
     }
   }
-  return best?.dir ?? null;
+  return { version: null, why: "Cargo.lock 里没有 libsqlite3-sys" };
 }
 
-const srcDir = sqlcipherSourceDir();
+function registryRoots() {
+  const cargoHome = process.env.CARGO_HOME || join(homedir(), ".cargo");
+  const srcRoot = join(cargoHome, "registry", "src");
+  if (!existsSync(srcRoot)) return [];
+  return readdirSync(srcRoot).map((r) => join(srcRoot, r));
+}
+
+const { version: locked, why: lockedWhy } = lockVersion();
+const found = [];
+for (const reg of registryRoots()) {
+  let pkgs = [];
+  try {
+    pkgs = readdirSync(reg);
+  } catch {
+    continue;
+  }
+  for (const pkg of pkgs) {
+    if (!pkg.startsWith("libsqlite3-sys-")) continue;
+    const sc = join(reg, pkg, "sqlcipher");
+    if (existsSync(sc)) found.push({ version: pkg.replace("libsqlite3-sys-", ""), dir: sc });
+  }
+}
+found.sort((a, b) => a.version.localeCompare(b.version));
+
+let srcDir = null;
+if (!locked) {
+  fail(`拿不到 libsqlite3-sys 的锁定版本（${lockedWhy}）⇒ **不猜**，无法核对补丁。`);
+}
+const hit = found.find((f) => f.version === locked);
+if (!hit) {
+  fail(
+    `Cargo.lock 锁的是 libsqlite3-sys **${locked}**，但 registry 里找到的是 ` +
+      `[${found.map((f) => f.version).join(", ") || "（无）"}] ⇒ **不挑别的版本**：\n` +
+      "  按 mtime 挑会挑到陈旧副本（macOS 侧实测过：0.30.1 的 mtime 比 0.38.2 新）⇒\n" +
+      "  假阴性（补丁打了却报没有）与假阳性（往陈旧副本注入也能通过）都会发生。\n" +
+      "  修法：cargo fetch（把锁定版本取下来），再重跑。",
+  );
+}
+srcDir = hit.dir;
+console.log(`sm-library-build: 源码 = ${srcDir}（Cargo.lock: ${locked}）`);
+
 let markerHit = null;
 if (srcDir && existsSync(srcDir)) {
   for (const f of readdirSync(srcDir)) {

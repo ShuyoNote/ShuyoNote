@@ -8,9 +8,9 @@
     "check-web-build": 8,
     "mobile-layout": 43,
     "mobile-overlays": 979,
-    "rust-test": 381,
+    "rust-test": 386,
     "rust-plugins-alone": 117,
-    "rust-sm-crypto": 393
+    "rust-sm-crypto": 398
   },
   "gates": {
     "contract": [

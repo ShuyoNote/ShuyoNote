@@ -15,6 +15,10 @@ mod crypto_sm;
 // 与 mac 的分工见 `2026-09-19-gm-p1-application-layer.reply-2.md` §七：构建期出"编进去的是哪个后端"，
 // 这里出"SM3/SM4 到底有没有被 SQLCipher 真的走通"。**目前是探针阶段**（先量事实再写判据）。
 mod gm_provider;
+// 「哪份 SQLCipher 源码 / 有没有 SM3 标记」的解析 —— **同一份代码被 `build.rs`（`include!`）与本 crate
+// 的判据共用**，免得"构建期判据"和"判据里的判据"各写一份、各自漂移
+// （2026-09-19 macOS 侧的受控实验证明第一版取法错了：按 mtime 挑版本会挑到陈旧副本）。
+mod gm_patch_probe;
 mod database;
 mod db;
 mod disk;

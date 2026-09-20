@@ -7,7 +7,19 @@
 | `0001-sqlcipher-sm3-provider.patch` | 给 **SQLCipher** 加国密两格：`cipher_hmac_algorithm = HMAC_SM3`、`cipher_kdf_algorithm = PBKDF2_HMAC_SM3`（方案 §3.1 那张表：枚举 ＋ 回显分支 ＋ `provider.h` 的 `hmac`/`kdf`/`cipher`/`get_hmac_sz` 回调） | **未写**（P2/P3 主体，AMD 认领） |
 
 补丁对象 = **`libsqlite3-sys` 将要编译的那份 SQLCipher 源码**（默认在 cargo registry：
-`~/.cargo/registry/src/*/libsqlite3-sys-*/sqlcipher/`）。
+`~/.cargo/registry/src/*/libsqlite3-sys-<版本>/sqlcipher/`）。
+
+⚠️ **"哪份"是算出来的，不是猜出来的**（2026-09-19 macOS 侧用受控实验抓到我第一版错了）：
+取法是 **① `src-tauri/Cargo.lock` 里锁的版本**（权威、在仓里、可复核）→ ② 依赖构建产物
+`target/**/build/libsqlite3-sys-*/output` 里的 `cargo:include=` 交叉核对（按平台过滤）→
+**③ mtime 永不单独判 ✓**。按 mtime "最新胜出"会挑到**陈旧副本**（他那台：0.30.1 的 mtime 比 0.38.2 新）：
+
+- **假阴性**：补丁正确打在 0.38.2 上 ⇒ 检查去看 0.30.1 ⇒ 报"没有标记" ⇒ 构建被拒；
+- **假阳性**：只往 0.30.1 注入标记 ⇒ 构建通过并打出"补丁已应用"，而将被编译的那份**一个字没改**。
+
+同一份规则有**两处实现**，都由判据守着：`src-tauri/src/gm_patch_probe.rs`（`build.rs` 用 `include!`，
+crate 里跑判据；含"陈旧副本 mtime 更新也要挑锁定版本"的回归判据）＋ `scripts/sm-library-build.mjs`。
+
 ⚠️ **实测（2026-09-19）：那一版是"合并文件"形态** —— 目录里只有
 `sqlite3.c`（9.6 MB）/ `sqlite3.h` / `sqlite3ext.h` / `LICENSE` / `bindgen_bundled_version.rs`，
 **没有**单独的 `crypto_openssl.c` ⇒ **补丁打在 `sqlite3.c` 里**（方案 §3.1 那些行号 L109365 / L113961

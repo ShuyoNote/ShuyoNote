@@ -26,6 +26,14 @@ fn main() {
     tauri_build::build()
 }
 
+// 与 crate 共用同一份"哪份源码 / 有没有标记"的解析逻辑（判据在 crate 里驱动它，见 `gm_patch_probe.rs`）。
+// ⚠️ 必须**裹一层 `mod`**：被 include 的文件头上有 `#![allow(dead_code)]`（内层属性），
+//    直接 include 到根上会报 "an inner attribute is not permitted in this context"。
+mod gm_patch_probe {
+    include!("src/gm_patch_probe.rs");
+}
+use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_roots, SourcePick};
+
 fn enforce_explicit_crypto_backend_for_sm_library() {
     // `CARGO_FEATURE_*` 由 cargo 按启用的 feature 注入（feature 名大写、`-` → `_`）。
     if std::env::var_os("CARGO_FEATURE_SM_LIBRARY").is_none() {
@@ -88,19 +96,29 @@ fn require_gm_provider_patch() {
         );
     }
 
-    let Some(dir) = sqlcipher_source_dir() else {
+    // ★ 版本取法的**可信度顺序**（macOS 侧 2026-09-19 用受控实验证明我第一版错了，见 `gm_patch_probe.rs` 头注）：
+    //   `Cargo.lock` 的版本 ＞ 依赖构建产物里的 `cargo:include=` ＞ mtime（只配兜底、**永不单独判 ✓**）。
+    let Some((dir, version, how)) = resolve_sqlcipher_source() else {
         panic!(
-            "`sm-library`：找不到 cargo 将要编译的那份 SQLCipher 源码（既没在 registry 里，也没有 `SHUYONOTE_SQLCIPHER_SRC_DIR`）。\n\
-             这一格无法核对 ⇒ **当场失败**，而不是安静地编出一个没有国密的库。"
+            "`sm-library`：**定位不到** cargo 将要编译的那份 SQLCipher 源码 —— 这一格无法核对 ⇒ **当场失败**，\n\
+             而不是安静地编出一个没有国密的库。\n\
+             \n\
+             取法顺序：① `src-tauri/Cargo.lock` 里 `libsqlite3-sys` 的版本 → 对应 registry 目录；\n\
+                       ② 依赖构建产物 `target/**/build/libsqlite3-sys-*/output` 里的 `cargo:include=`。\n\
+             ⚠️ **不按 mtime 挑**：陈旧副本的 mtime 可能更新，那会挑到**另一个版本**（假阴性：补丁明明打了却报「没有」；\n\
+                假阳性：只在陈旧副本里注入标记也能让构建打出「补丁已应用」）。详见 `src/gm_patch_probe.rs` 头注。"
         );
     };
 
-    match find_gm_marker(&dir) {
+    match find_marker(&dir) {
         Some(hit) => {
             // 产物标记：macOS 侧的 `check-crypto-backend` 据此把"后端对不对"扩到"**补丁在不在**"。
-            // 一行、可 grep、带版本与目标平台。
+            // 一行、可 grep、带版本与目标平台 + **取法**（评审时能看出它凭什么认为这是那份源码）。
             let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-            println!("cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target={target_os} marker={hit})");
+            println!(
+                "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target={target_os} \
+                 libsqlite3-sys={version} via={how} marker={hit})"
+            );
             // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
             // 免得"改了补丁、cargo 不重编"（比 OPENSSL_DIR 那个坑更隐蔽：连设环境变量这个动作都没有）。
             println!("cargo:rerun-if-changed={}", dir.display());
@@ -114,7 +132,7 @@ fn require_gm_provider_patch() {
              `HMAC_SM3` / `PBKDF2_HMAC_SM3` 两个标签，而它**不会报错**：实测回显仍是 `HMAC_SHA512`、\n\
              盘上写的仍是 SHA512 那套（见 src-tauri/src/gm_provider.rs 文件头那张表）。\n\
              \n\
-             查的是（cargo 将要编译的那份源码）：\n  {}\n\
+             查的是（cargo 将要编译的那份源码，libsqlite3-sys={version}，取法={how}）：\n  {}\n\
              找的标记：`SQLCIPHER_HMAC_SM3_LABEL`（方案 §3.1 的新增标签）。\n\
              \n\
              修法：\n\
@@ -130,11 +148,95 @@ fn require_gm_provider_patch() {
     }
 }
 
+/// 定位"将要编译的那份 SQLCipher 源码"，并把**取法**一并返回（写进产物标记，评审时可见）。
+///
+/// 顺序（可信度从高到低）：
+///   1. **`Cargo.lock` 的版本** —— 仓里、可复核、就是"cargo 将要解析成什么"的权威；
+///   2. **依赖构建产物** `cargo:include=…/libsqlite3-sys-<版本>/sqlcipher` —— 真正被编译的那份的自我陈述
+///      （与 1 比对：不一致就**报错**，不挑一个继续）；
+///   3. 都没有 ⇒ `None`（调用方当场失败）。
+fn resolve_sqlcipher_source() -> Option<(std::path::PathBuf, String, &'static str)> {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    let manifest = std::path::Path::new(&manifest);
+    let cargo_home = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cargo")))?;
+    let roots = registry_src_roots(&cargo_home);
+
+    // ① Cargo.lock
+    let lock = std::fs::read_to_string(manifest.parent()?.join("Cargo.lock")).ok()?;
+    let wanted = lock_version(&lock);
+    let pick = pick_source_dir(&roots, wanted.as_deref());
+
+    // ② 与依赖构建产物交叉核对（有产物时）
+    let from_output = include_hint_from_build_output(manifest);
+    if let SourcePick::Found { dir, version } = &pick {
+        if let Some((hint_dir, hint_ver)) = &from_output {
+            if hint_ver != version {
+                panic!(
+                    "`sm-library`：`Cargo.lock` 说 libsqlite3-sys={version}，但依赖的构建产物说 {hint_ver}\n\
+                     （产物里的 cargo:include={}）⇒ **不挑一个继续**：这两者不一致说明有东西没重编/被改过，\n\
+                     此时「检查哪份源码」本身就是不确定的。修法：`cargo clean -p libsqlite3-sys` 后重建。",
+                    hint_dir.display()
+                );
+            }
+        }
+        return Some((dir.clone(), version.clone(), "cargo.lock"));
+    }
+
+    // 锁版本拿不到或不匹配时，退到产物那条（它同样可信，且是"真正被编译"的自我陈述）
+    if let Some((dir, ver)) = from_output {
+        return Some((dir, ver, "build-output"));
+    }
+    None
+}
+
+/// 从依赖构建产物里读 `cargo:include=…/libsqlite3-sys-<版本>/sqlcipher`。
+///
+/// ⚠️ 与 macOS 侧那条纪律一致：**按平台过滤**（同一 target 目录里可能躺着别的平台的产物）。
+fn include_hint_from_build_output(manifest: &std::path::Path) -> Option<(std::path::PathBuf, String)> {
+    let target = manifest.join("target");
+    let host_is_windows = cfg!(windows);
+    for profile in ["debug", "release"] {
+        let build = target.join(profile).join("build");
+        let Ok(entries) = std::fs::read_dir(&build) else { continue };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.starts_with("libsqlite3-sys-") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(e.path().join("output")) else { continue };
+            for line in text.lines() {
+                let Some(rest) = line.strip_prefix("cargo:include=") else { continue };
+                // 另一个平台的产物会带盘符/反斜杠（Windows）或 `/`（unix）——按当前平台粗筛
+                let looks_windows = rest.contains('\\') || rest.contains(":\\");
+                if looks_windows != host_is_windows {
+                    continue;
+                }
+                let p = std::path::Path::new(rest);
+                // `…/libsqlite3-sys-<版本>/sqlcipher` 或 `…/libsqlite3-sys-<版本>` 都要能认
+                let (dir, ver) = if p.file_name().map(|f| f == "sqlcipher").unwrap_or(false) {
+                    (p.to_path_buf(), p.parent()?.file_name()?.to_string_lossy().to_string())
+                } else {
+                    (p.join("sqlcipher"), p.file_name()?.to_string_lossy().to_string())
+                };
+                let version = ver.strip_prefix("libsqlite3-sys-").unwrap_or(&ver).to_string();
+                if dir.is_dir() {
+                    return Some((dir, version));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// cargo 将要编译的那份 SQLCipher 源码目录。
 ///
-/// 顺序：显式 `SHUYONOTE_SQLCIPHER_SRC_DIR`（vendored/自建检出用）→ 仓内 `vendor/sqlcipher`
-/// → cargo registry（`libsqlite3-sys-*/sqlcipher`，即默认路径）。
-fn sqlcipher_source_dir() -> Option<std::path::PathBuf> {
+/// ⚠️ **已废弃（2026-09-19）**：这一版按 mtime 最新挑版本，macOS 侧用受控实验证明它会挑到**陈旧副本**
+/// （0.30.1 的 mtime 比 0.38.2 新），造成假阴性 **与** 假阳性。取法已改为
+/// `resolve_sqlcipher_source()`（`Cargo.lock` 版本优先 ＋ 构建产物交叉核对），本函数保留仅为留痕。
+#[allow(dead_code)]
+fn sqlcipher_source_dir_deprecated_mtime() -> Option<std::path::PathBuf> {
     use std::path::{Path, PathBuf};
 
     if let Some(p) = std::env::var_os("SHUYONOTE_SQLCIPHER_SRC_DIR") {
@@ -180,7 +282,10 @@ fn sqlcipher_source_dir() -> Option<std::path::PathBuf> {
 }
 
 /// 在源码目录里找 SM3 标签标记（返回命中的文件名）。
-fn find_gm_marker(dir: &std::path::Path) -> Option<String> {
+///
+/// ⚠️ 实现已搬到 `src/gm_patch_probe.rs`（`include!` 进来的那份），这样**判据能直接驱动它**。
+#[allow(dead_code)]
+fn find_gm_marker_deprecated(dir: &std::path::Path) -> Option<String> {
     let entries = std::fs::read_dir(dir).ok()?;
     for e in entries.flatten() {
         let p = e.path();
