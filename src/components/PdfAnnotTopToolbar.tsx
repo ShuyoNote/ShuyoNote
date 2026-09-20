@@ -4,6 +4,7 @@
 import { useMemo } from "react";
 import type { PdfPageController, AnnotTool, PdfPageState } from "./pdfAnnotController";
 import { TOOLS } from "./pdfAnnotController";
+import { ocrBusyButtonLabel } from "../lib/pdfOcrCopy";
 
 interface Props {
   /** 当前活动页控制器（无则禁用大部分操作）。 */
@@ -109,11 +110,13 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
           <button className="pdf-annot-ocr" onClick={() => ctl?.speakPage()} title="朗读本页（有文本层读全文；扫描版先识别再听）">朗读本页</button>
           {!st.hasTextLayer && (
             <>
+              {/* 忙碌文案跟着**在跑的那条路**走。旧写法让「OCR 识别本页」无条件变成「识别中…」，
+                  于是点「AI 识别」时反倒由 OCR 那个按钮替它表态（2026-09-20 用户截图里的那一幕）。 */}
               <button className="pdf-annot-ocr" onClick={() => ctl?.runOcr()} disabled={st.ocrBusy}>
-                {st.ocrBusy ? "识别中…" : "OCR 识别本页"}
+                {st.ocrBusy && st.ocrMode === "ocr" ? ocrBusyButtonLabel("ocr") : "OCR 识别本页"}
               </button>
               <button className="pdf-annot-ocr pdf-annot-ocr-ai" onClick={() => ctl?.visionOcr()} disabled={st.ocrBusy} title="用 AI 视觉大模型识别本页文字（对中文/复杂排版通常更准，需配置支持图像的模型）">
-                AI 识别
+                {st.ocrBusy && st.ocrMode === "ai" ? ocrBusyButtonLabel("ai") : "AI 识别"}
               </button>
             </>
           )}
@@ -124,5 +127,5 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
 }
 
 function nullSt(): PdfPageState {
-  return { selected: null, selectedType: null, annotationsCount: 0, canUndo: false, hasTextLayer: false, ocrBusy: false, aiBusy: false };
+  return { selected: null, selectedType: null, annotationsCount: 0, canUndo: false, hasTextLayer: false, ocrBusy: false, ocrMode: "ocr", aiBusy: false };
 }
