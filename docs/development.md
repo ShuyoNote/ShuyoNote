@@ -292,6 +292,20 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 处置：**产物判据必须（a）认 `CARGO_TARGET_DIR`，（b）按当前平台过滤，（c）过滤后只剩别的平台时报"未实查"而不是 ✓**。
 "未实查"是一个合法且必要的结论 —— 判据的名字不能比它能证明的多。
 
+### 7. `cargo` 不在 `PATH` 上时，脚本会把它报成**别的东西**
+
+rustup 装在 `~/.cargo/bin`，而有些环境（含本会话的默认 shell）**不把**它带进 `PATH`。
+此时凡是要 shell out 到 cargo 的脚本都会失败，而报错**长得像业务问题**：
+
+```text
+gm-conformance: ❌ 夹具编不过
+spawnSync cargo ENOENT
+```
+
+看起来像"夹具坏了"，其实是"找不到 cargo"（2026-09-19 我自己就被这条误导过一次）。
+处置：跑之前确认 `command -v cargo`；`scripts/gm-version-selfcheck.mjs` 已内置兜底
+（PATH 上没有、但 rustup 默认位置有时补上，并**打印一行 `!`** 说明，不静默改环境）。
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。

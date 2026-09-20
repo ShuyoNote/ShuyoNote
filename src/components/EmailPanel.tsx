@@ -1128,6 +1128,17 @@ export function EmailPanel() {
         moved += await api.emailMoveManyToTrash(g.acc, g.uids, g.folder);
       }
       for (const m of target) { const a = accountFor(m); if (a) bodyCache.delete(bodyCacheKey(a, m.folder, m.uid)); }
+      // ⚠️ 2026-09-20 用户报障：「批量删除以后，重新拉取后依然出现」。旧代码**不看 moved**
+      // 就把选中的行从列表里拿掉、还弹一句成功 —— 后端一封都没删掉时界面照样"删"了，一刷新全回来。
+      // 现在：只有**真删掉**的才从列表里拿掉；少一封就如实说，并重新拉取一遍真相。
+      if (moved < target.length) {
+        setChecked(new Set());
+        toast(moved > 0 ? `已删除 ${moved} 封，其余失败` : `一封都没删掉（${target.length} 封失败）`, moved > 0 ? "success" : "error");
+        // 先拉真相再写提示 —— `fetchInbox` 自己会 `setErr("")`，反过来写就被它擦掉了。
+        await fetchInbox();
+        setErr(`只删除成功 ${moved}/${target.length} 封（其余被服务器拒绝，列表已重新拉取）`);
+        return;
+      }
       adjustUnread(-target.filter((x) => !x.seen).length);
       setList((prev) => prev.filter((x) => !checked.has(emailKey(x))));
       setChecked(new Set());

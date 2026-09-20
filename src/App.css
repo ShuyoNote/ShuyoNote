@@ -15549,12 +15549,18 @@ p:has(> .editor-drawing-container) {
   font-size: 17px;
   line-height: 1;
 }
-.ai-header-btn.ai-settings {
+/* ⚠️ 按钮的类名是 `ai-settings-btn`，**故意不叫** `ai-settings`：后者是设置**弹窗容器**
+   （`.ai-settings`，见下面 16xxx 行那条 width/aspect-ratio/border 的规则）。两者同名时，
+   弹窗那条规则后写、权重又一样，会把这里的 `display: grid; place-items: center` 和
+   `.ai-header-btn` 的 `border: none` 一起顶掉 —— 齿轮就被 flex 摆到左上角、按钮还多出一圈描边，
+   正是 2026-09-20 用户截图「设置按钮偏心了」。判据：`scripts/check-panel-layout.mjs`
+   的「齿轮图标在按钮正中（偏移 ≤1px）」。 */
+.ai-header-btn.ai-settings-btn {
   width: 24px;
   height: 24px;
   padding: 0;
 }
-.ai-header-btn.ai-settings svg {
+.ai-header-btn.ai-settings-btn svg {
   display: block;
 }
 

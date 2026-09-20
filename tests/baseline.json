@@ -4,13 +4,13 @@
     "vitest": 1303,
     "smoke-web": 352,
     "check-pdf-reload": 8,
-    "check-panel-layout": 25,
+    "check-panel-layout": 40,
     "check-web-build": 8,
     "mobile-layout": 43,
     "mobile-overlays": 979,
-    "rust-test": 370,
+    "rust-test": 386,
     "rust-plugins-alone": 117,
-    "rust-sm-crypto": 382
+    "rust-sm-crypto": 398
   },
   "gates": {
     "contract": [

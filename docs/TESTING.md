@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
 | browser | `check-pdf-reload` | StrictMode 下 PDF 二次加载交回已 detach 的 buffer（8 断言） |
-| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（25 断言） |
+| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（40 断言） |
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（8 断言） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |
@@ -93,6 +93,32 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 > ⚠️ 小坑（实测）：新增门禁后跑 `--update-baseline` 时，这一轮里 `vitest` 会红一次
 > （`701/702`）——因为自测断言"注册表里每条门禁都必须登记在基线里"，而基线是**跑完才写**的。
 > 写完再跑一次就是绿的；CI 上看不到这个中间态。
+
+### 下界**太旧**：只提示，不判红（2026-09-19）
+
+"只增不减"只管**下降**。可下界也可能低到没有意义 —— 实测过：`vitest` 记着 **746**，而当前读数是 **1303**
+（= 删掉 500 条测试也照样绿）。所以补了一条**体检**（`report-core.mjs::staleBaselineNotices`）：
+
+| 情形 | 判据 | 后果 |
+|---|---|---|
+| 读数**下降** | `baselineViolations` | **红**（硬约束） |
+| 下界 **< 当前 80%** | `staleBaselineNotices` | 只打 `! 基线提示：…`（同时进 `--json` 的 `baselineNotices` 与 markdown 摘要） |
+
+**为什么"太旧"不能也判红**（macOS 侧 2026-09-19 的理由，我同意）：读数上涨是**正常事**，
+判红就等于逼人每加一批测试都改基线，最后大家会习惯性 `--update-baseline`，**护栏反而失效**。
+后果不同 ⇒ 处置不同。
+
+### 写判据的纪律：变异证明不是形式（2026-09-19 的两条实测）
+
+1. **"空输出"≠"零命中"**。我用 `cargo check … | grep -E "^(warning|error)"` 数警告，
+   而那段挂在 `&&` 链里、输出被吃掉 ⇒ **空输出被我读成了"零警告"**，直到 macOS 侧独立数出 8 条。
+   ⇒ 数任何东西都要**打印计数**（`warning 行数: 0` 才算数），别只看"有没有输出"。
+2. **变异证明要能替你改对判据**（比"3/3 全抓"更值钱）。同一天里它抓到我一条**摆设判据**：
+   基线太旧提示里 `expected >= actual` 那行显式排除，在默认阈值 80% 下**永远走不到**
+   （读数下降时比值 >100%，早被比例判断挡住）⇒ 那条断言怎么改都绿。把判据改成 `thresholdPct: 250`
+   真正走到那个分支之后，变异才被抓住。
+   ⇒ 结论：**变异证明的价值不在"全抓"，而在"它能发现哪条判据其实没在守东西"。**
+
 
 ## 结果公开在哪
 
@@ -225,6 +251,29 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   这是 cargo 的预期行为，不是回归——所以基线校验只比较**状态为 passed** 的门禁。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
+- **看到 `plugins::` 大批红，先确认宿主二进制在不在**（2026-09-19：macOS 侧交底、AMD 复现）：
+  干净 worktree / 没编过应用二进制的树里跑 `cargo test --lib` ⇒ `307 passed / 36 failed / 5 ignored`，
+  36 条**全是** `plugins::tests::*`，现场写的是"找不到宿主二进制 `…/target/debug/shuyonote`：请用
+  `cargo test`（会先构建应用二进制），不要用 `cargo test --lib`"。先 `cargo build --bin shuyonote`
+  再跑 `--lib` ⇒ `341 passed / 2 failed`（那 2 条是 PDFium 环境项，与代码无关）。
+  ⚠️ **不要**把这条写成"worktree 一定假红"——AMD 的 `ShuyoNote-bm25` worktree 跑整支是 **343/0/5**，
+  因为那棵树里 `target/debug/` 已经有宿主二进制了。**判据是"宿主二进制在不在"，不是"是不是 worktree"**
+  （macOS 侧最初的措辞就是被这个读数证伪的）。
+- **`cargo` 不在 `PATH` 上，看起来像"夹具坏了"**（macOS 侧 `development.md` 第 7 条，2026-09-19 镜像到本文）：
+  rustup 装在 `~/.cargo/bin`，某些环境（非登录 shell、CI 的裸 exec）不把它带进 `PATH` ⇒ 脚本以
+  `gm-conformance: ❌ 夹具编不过 / spawnSync cargo ENOENT` 的形式失败，读起来完全像夹具本身有问题。
+  `scripts/gm-version-selfcheck.mjs` 里加了兜底：`PATH` 上没有、rustup 默认位置有时补上，并打一行 `!`
+  —— **不静默改环境**（改了就会让"我这台能跑"变成不可复现的读数）。
+- **`import.meta.dirname` 在旧 Node 上是 `undefined`**（2026-09-19，WSL 的 Node 18 实测）：
+  `resolve(import.meta.dirname, "..")` 直接抛
+  `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string` —— 报错文本一个字都没提 Node 版本，
+  读起来像"路径写错了"。它要 Node ≥ 20.11，而本仓要能在 CI/旧 Node 上跑 ⇒ 统一写
+  `dirname(fileURLToPath(import.meta.url))`（`scripts/sm-library-build.mjs` 的注释里也记了这条）。
+- **别在判据里写死平台字面量**（2026-09-20，本机 Windows 实测）：`join("/opt/tongsuo", "bin", "openssl")`
+  在 Windows 上产出 `\opt\tongsuo\bin\openssl`（当前盘根），在 macOS/Linux 上才是 `/opt/tongsuo/bin/openssl`
+  ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
+  一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
+  （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 

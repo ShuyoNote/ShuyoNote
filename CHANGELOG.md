@@ -4,6 +4,38 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **AI 助手页眉的齿轮（设置）按钮偏心了**（2026-09-20 用户截图：「设置按钮偏心了」）。
+  根因是**类名撞车**：按钮写的是 `ai-header-btn ai-settings`，而设置**弹窗容器**也叫 `.ai-settings`
+  （下面那条 `width: min(840px,…); aspect-ratio; border; border-radius; background` 的规则）。
+  两者同名，弹窗那条后写、权重又一样 ⇒ 把按钮自己的 `display: grid; place-items: center`
+  与 `.ai-header-btn` 的 `border: none` **一起顶掉**：按钮变成 `display:flex; flex-direction:column`，
+  图标被丢到左上角（24px 按钮里偏上 3px；窄屏 `min-height:44px` 时偏上 13px），
+  还白拿了一圈描边、白底与一个圆形轮廓（`--radius-lg` 在 24px 盒子上被夹成 12px ＝ 正圆）——
+  用户截图里那个"偏心"的圆就是这么来的。
+  修法：按钮类名改成 `.ai-settings-btn`（弹窗容器保留 `.ai-settings`，两边不再同名），
+  组件与样式两处都写了注释说明**不许改回去**。
+  判据：`scripts/check-panel-layout.mjs` 加 3 条**几何**断言（真实 Chromium ＋ 真实 App.css）：
+  夹具里放与组件同构的页眉（**必须写对类名**，写错这条判据就永远绿），量「图标中心 − 按钮中心」
+  的偏移（容差 1px），并钉住按钮实际拿到的 `display:grid` / 圆角 6px / 描边 0。
+  变异验证：把夹具与样式改回旧类名跑一遍 = 红（实测偏移 y −13.0px、描边 1px、圆角 16px）；
+  改后 `check-panel-layout` 40 通过 / 0 失败。基线 `tests/baseline.json` 的 `check-panel-layout`
+  随之 25 → 40（工具本来就在喊"基线只有读数 63%，抬到实际值"），`docs/TESTING.md` 的表同步。
+  ⚠️ 这类毛病单测看不见（happy-dom 不做布局，`getBoundingClientRect` 全是 0）、类型检查也看不见。
+
+- **桌面端 AI 调用被权限系统整体拒掉**（用户报「PDF 阅读器 AI 识别出错」，缺陷 #9）：
+  `capabilities/default.json` 里只写了字符串 `"http:default"` —— 而 `http` 插件自带的 `default.toml`
+  写明它 *"enables all fetch operations but **does not allow explicitly any origins to be fetched**.
+  This needs to be manually configured before usage."* ⇒ **作用域为空 = 一个源都不许发**（失败关闭）。
+  于是桌面端**所有**走 `coreFetch`（= `@tauri-apps/plugin-http` 那条 native 路）的跨域 AI 调用
+  —— 视觉识别 / 对话 / 摘要 / 嵌入 —— 一律被拒；而 Web 版走浏览器 `fetch` 不受影响，
+  所以它表现成"只有桌面端 AI 不好使"，且用户只看到一句笼统的「AI 视觉识别失败」。
+  修法：给 `http:default` 显式作用域（`https://**` ＋ `http://**`）—— 服务商是**用户自己填的**
+  （官方 HTTPS 端点，或局域网/回环上的自建模型服务走 http），固定白名单会把"填自己的地址"这条承诺作废。
+  ⚠️ 边界：判据只能证明**配置形状**（作用域存在且覆盖 https/http）＋ 构建期 schema 校验；
+  "打包后的桌面端真的能发出去"仍需真机复验。
+
 ## [1.91.10] - 2026-09-19
 
 > 国密交付收官（库级 ＋ 应用层）＋ 跨库总结接进应用；修掉「附件被误删字节」与「PDF 批注删不掉」
@@ -175,6 +207,25 @@
 
 ### 修复
 
+- **聚合邮箱的「批量删除」在阿里云企业邮上一封都删不掉，界面却说删掉了**（2026-09-20 用户报障：
+  「聚合邮箱的邮件批量删除以后，重新拉取后，依然出现？」）。根因三层，都在 `email.rs` 那一小段里：
+  ① IMAP 协议里非 ASCII 的 mailbox 名**必须**按 modified UTF-7 编码（RFC 3501 §5.1.3），旧代码把
+  `垃圾箱` / `已删除` **原文**发出去 —— 阿里云企业邮收到非法字节流后**当场废掉那条连接**（不回任何响应），
+  于是"逐个候选名 `UID MOVE`"把连接赔在第 5 个候选名上，后面的回退 `\Deleted` + EXPUNGE 全落在一条
+  死连接上；② 回收站该**问服务器**（`LIST` 的 `\Trash` 特殊用途标记 / 常见叫法），而不是猜名字 ——
+  它的回收站叫「已删除邮件」（协议名 `&XfJSIJZkkK5O9g-`，2026-09-20 现场抓的），原来那五个候选名一个都不对；
+  ③ `uid_store(...).await.is_ok()` 只证明"命令写进了 socket"，**连接已经断了也返回 Ok** ⇒ `moved` 是假计数，
+  界面拿这个假计数当成功、把行删掉，一刷新全回来。
+  修法：新增 `imap_utf7_encode`（+`pick_trash`/`resolve_trash`：先认 `\Trash` 标记，再按常见叫法，
+  中文名按编码后比），删除统一走 `delete_one`（能 MOVE 就 MOVE 进回收站，否则 `\Deleted` + **UID EXPUNGE**），
+  **每一步都把响应流读到底**并区分错误：连接类 ⇒ 重开连接补一次，服务器拒绝 ⇒ 如实失败；
+  一封都没删掉时后端返回 `Err` 而不是 `Ok(0)`；界面只在**真删掉**的封数等于选中数时才把行拿掉，
+  否则重新拉取真相并报出「只删除成功 X/Y 封」。
+  判据：`email.rs` 两条纯函数用例（UTF-7 的期望值就是**阿里云 `LIST` 真回给我们的协议名**；
+  「发到线上的 mailbox 名必须全是 ASCII」正是这次事故的哨兵）+ `pick_trash` 四态用例；
+  `EmailPanel.test.ts` 两条（`moved=0` ⇒ 两行都还在列表里且给出失败提示；`moved=2` ⇒ 两行才拿掉）。
+  另附 `#[ignore]` 的**真账号探针**（`probe_batch_delete_round_trip_on_a_real_account`）：修前 `moved=0`
+  且邮件仍在 INBOX，修后 `moved=1` 且消失 —— 这种"服务器把连接废掉"的失败方式，本地 mock 复现不了。
 - **文件管理「类型」列的「文件」被拆成「文/件」**（2026-09-19 用户截图报告；**上一条并没有解决它**）。
   上一条给表格设了 `min-width` 兜底，那只保证"表格不缩到下限以下"——表格被内容撑到 min-content 时，
   列宽怎么分是另一回事：`.fm-name-col` 有 `min-width`、`.fm-size-col` 与两个日期列都有 `nowrap`，

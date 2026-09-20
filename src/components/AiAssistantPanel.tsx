@@ -152,7 +152,12 @@ export function AiAssistantPanel() {
             </div>
             <div className="ai-header-sub">基于当前空间你所有有权限的页面进行回答</div>
           </div>
-          <button className="ai-header-btn ai-settings" title="AI 设置" onClick={() => setSettingsOpen(true)} aria-label="AI 设置">
+          {/* ⚠️ 类名是 `ai-settings-btn`，**不能**叫 `ai-settings`：设置弹窗容器已经叫 `.ai-settings`，
+              两者同名时弹窗那条规则（display:flex / border / border-radius / background）会把按钮的
+              `display:grid; place-items:center; border:none` 一起顶掉 ⇒ 齿轮被摆到左上角、还多出一圈描边
+              （2026-09-20 用户截图「设置按钮偏心了」）。判据：`scripts/check-panel-layout.mjs`
+              的「齿轮图标在按钮正中」。 */}
+          <button className="ai-header-btn ai-settings-btn" title="AI 设置" onClick={() => setSettingsOpen(true)} aria-label="AI 设置">
             <SettingsIcon width={16} height={16} />
           </button>
           <button className="ai-header-btn ai-close" title="关闭" onClick={() => setOpen(false)} aria-label="关闭">
