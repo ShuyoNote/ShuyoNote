@@ -75,6 +75,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | **跨实现对拍**（GM/T 0002/0004 ＋ RustCrypto↔Tongsuo 双向互解 ＋ 两侧密文逐字节相同 ＋ PBKDF2 与拆 key 口径） | `SHUYONOTE_TONGSUO_OPENSSL=<Tongsuo>/bin/openssl node scripts/check-gm-conformance.mjs` | **12/12**（macOS 与 AMD 的 WSL2 各一次，同源码 commit） |
 | **换加密后端前后旧库仍可读**（页加密读写回归） | `security::tests::fixture_db_written_by_the_other_provider_still_opens`（夹具 `tests/sqlcipher-backend-fixture.db` 由 **CommonCrypto 后端**写下） | Tongsuo 后端下 `security::` **14/14** |
 | 实际编进去的是哪个后端（不是看你设了什么环境变量） | `node scripts/check-crypto-backend.mjs` | 双向实测：产物 openssl＋声明 openssl ⇒ 绿；产物 CC＋声明 openssl ⇒ **红** |
+| **补丁在不在**（第三格的一半；另半是运行期"真的生效没有"） | `SHUYONOTE_EXPECT_SM_PATCH=applied\|absent node scripts/check-crypto-backend.mjs` | 声明 applied 而产物无标记 ⇒ 红（附 `cargo clean -p shuyonote`）；声明 absent 而有标记 ⇒ 红（配置漂移）。⚠️ 标记可能是上次构建的重放，故输出里带 output mtime |
 | 门禁 | `pnpm verify`（23）/ `node scripts/test-report.mjs --group rust`（**6 条**，含 `rust-sm-crypto`、`check-crypto-backend`、`gm-conformance`） | 全绿 |
 | **老端在动手之前就拒绝**（§0-C）：同步**整批拒绝**、空间级标识、附件拒绝（不是逐条失败） | `sync::tests::prescan_payload_formats_refuses_the_whole_batch`、`security::tests::space_guard_…`、`…attachment_bytes_of_an_unsupported_format_are_refused…` | ✅（默认构建拒绝 / 国密构建放行，两半都有 cfg 判据） |
 

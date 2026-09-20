@@ -37,9 +37,21 @@
 //   ② 按**当前平台**过滤候选（Windows 产物的 `output` 里是 `C:\…` 这种路径）；
 //   ③ 过滤后**只剩别的平台的候选** ⇒ 报「未实查」，**不是** ✓。
 //
-// 声明来源：`SHUYONOTE_EXPECT_CRYPTO_BACKEND`（`commoncrypto` / `openssl`），
-// 不设则按平台默认（见 `PLATFORM_DEFAULT`）。分类与判定都是导出的纯函数，单测见
-// `scripts/check-crypto-backend.test.mjs`。
+// ## ★ 第三格（2026-09-19 补）：**补丁在不在**
+//
+// AMD 的 `src-tauri/build.rs` 在 `sm-library` 构建时会往产物打一行标记：
+//   `cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch=v1 target=<os> marker=<file>)`
+// ⇒ 本门禁用 `SHUYONOTE_EXPECT_SM_PATCH=applied|absent` 断言它：
+// **后端是谁 → 补丁在不在 → 真的生效没有**（第三格是 AMD 的运行期 `check-sm-provider-live`）。
+//
+// ⚠️ **前提（AMD 实测，必须写在这里）**：**构建脚本不重跑时，cargo 会重放上一次的 `cargo:warning`**
+// ⇒ 那行标记只有在**构建脚本真的跑过**时才可信（他把"没补丁却打出补丁标记"真踩了一次）。
+// 所以：① 断言 `applied` 时，本门禁会把**输出文件与它的 mtime** 一起打出来，供人复核新鲜度；
+// ② 判据红了要 `cargo clean -p shuyonote`（只清 libsqlite3-sys 不够：标记是我们自己 build.rs 打的）。
+//
+// 声明来源：`SHUYONOTE_EXPECT_CRYPTO_BACKEND`（`commoncrypto` / `openssl`）＋
+// `SHUYONOTE_EXPECT_SM_PATCH`（`applied` / `absent`）；不设则只报告不判定。
+// 分类与判定都是导出的纯函数，单测见 `scripts/check-crypto-backend.test.mjs`。
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -122,6 +134,42 @@ export function selectForHost(all, hostPlatform) {
   return all.filter((x) => x.platform === want);
 }
 
+/**
+ * 从**我们自己的构建产物**里读"补丁在不在"标记（纯函数）。
+ * AMD 的 `build.rs` 打的形态：`shuyonote: sm3/sm4 provider patch applied (patch=v1 target=macos marker=sqlite3.c)`。
+ */
+export function patchMarkerOf(text) {
+  if (typeof text !== "string") return { found: false };
+  const m = /shuyonote:\s*sm3\/sm4 provider patch applied(?<rest>[^\n]*)/.exec(text);
+  if (!m) return { found: false };
+  const rest = m.groups?.rest ?? "";
+  const field = (k) => new RegExp(`${k}=([^)\\s]+)`).exec(rest)?.[1] ?? "";
+  return { found: true, patch: field("patch"), target: field("target"), marker: field("marker") };
+}
+
+/** 收集我们自己 build script 的产物（标记在那里，不在 libsqlite3-sys 的产物里）。 */
+export function collectPatchMarkers(dir) {
+  const out = [];
+  for (const profile of ["debug", "release"]) {
+    const buildDir = join(dir, profile, "build");
+    if (!existsSync(buildDir)) continue;
+    for (const entry of readdirSync(buildDir)) {
+      if (!entry.startsWith("shuyonote-")) continue;
+      const p = join(buildDir, entry, "output");
+      if (!existsSync(p)) continue;
+      let text;
+      try {
+        text = readFileSync(p, "utf8");
+      } catch {
+        continue;
+      }
+      const mk = patchMarkerOf(text);
+      if (mk.found) out.push({ profile, entry, outputPath: p, mtime: statSync(p).mtimeMs, ...mk });
+    }
+  }
+  return out.sort((a, b) => b.mtime - a.mtime);
+}
+
 /** 给人看的描述。 */
 export function describe(x) {
   return (
@@ -137,9 +185,29 @@ export function describe(x) {
  * 判定（纯函数）：返回 `{ problems, notices }`。
  * 三种状态分得清 —— 没产物/没标记 ⇒ 只提示；**认得出的产物 ≠ 声明 ⇒ 红**；旧产物分类不同 ⇒ 提示。
  */
-export function decide({ all, expected }) {
+export function decide({ all, expected, patch = { expected: null, markers: [] } }) {
   const problems = [];
   const notices = [];
+  // ★ 第三格：补丁在不在（独立于后端那一格 —— 后端对了、补丁没打，仍然没有国密算法）
+  const newestMarker = patch.markers?.[0] ?? null;
+  const describeMarker = (m) =>
+    m ? `${m.profile}/${m.entry}（patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}，output mtime=${new Date(m.mtime).toISOString()}）` : "(无)";
+  if (patch.expected === "applied" && !newestMarker) {
+    problems.push(
+      "声明要**补丁已应用**，但产物里没有那行标记（`shuyonote: sm3/sm4 provider patch applied …`）",
+    );
+    problems.push(
+      "⚠️ 两个常见成因：① 补丁确实没打；② **`cargo:warning` 被重放**——构建脚本没重跑时 cargo 会把上一次的输出再放一遍，" +
+        "所以「这次没跑」与「这次跑了但没找到补丁」在这里长得一样。两种都先清再编：\n" +
+        "      cargo clean -p shuyonote && cargo clean -p libsqlite3-sys --manifest-path src-tauri/Cargo.toml",
+    );
+  } else if (patch.expected === "absent" && newestMarker) {
+    problems.push(
+      `声明要**补丁未应用**，但产物里有"补丁已应用"标记：${describeMarker(newestMarker)}（配置漂移？）`,
+    );
+  } else if (patch.expected == null && newestMarker) {
+    notices.push(`产物里有"补丁已应用"标记（未声明期望，只报告）：${describeMarker(newestMarker)}`);
+  }
   if (!all.length) return { problems, notices };
 
   const newest = all[0];
@@ -223,8 +291,18 @@ export function main() {
     );
   }
 
-  const { problems, notices } = decide({ all, expected });
+  const patchExpected = (process.env.SHUYONOTE_EXPECT_SM_PATCH || "").trim() || null;
+  const markers = collectPatchMarkers(dir);
+  const { problems, notices } = decide({ all, expected, patch: { expected: patchExpected, markers } });
   for (const n of notices) console.error(`! ${n}`);
+  if (patchExpected === "applied" && !problems.length) {
+    const m = markers[0];
+    console.log(
+      `  补丁标记 ✓ patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
+        `（${m.profile}/${m.entry}，output mtime=${new Date(m.mtime).toISOString()}）` +
+        " ⚠️ 标记可能是上一次构建的重放 ⇒ 存疑就 `cargo clean -p shuyonote` 再编",
+    );
+  }
   if (problems.length) {
     console.error("check-crypto-backend: ❌ 不通过");
     for (const p of problems) console.error(`  - ${p}`);

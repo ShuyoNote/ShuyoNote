@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
 import {
   classifyOutput,
+  collectPatchMarkers,
+  patchMarkerOf,
   decide,
   expectedFromEnv,
   PLATFORM_DEFAULT,
@@ -164,6 +166,64 @@ describe("★ 平台过滤（AMD 2026-09-19 在 WSL 上抓到的「绿得不是�
     expect(norm(targetDirOf({}))).toContain("src-tauri/target");
     // 空白当未设（不能把空值当目录）
     expect(norm(targetDirOf({ CARGO_TARGET_DIR: "   " }))).toContain("src-tauri/target");
+  });
+});
+
+describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里的标记）", () => {
+  // AMD 的形态（真实行）：
+  //   warning: shuyonote@1.91.3: shuyonote: sm3/sm4 provider patch applied (patch=v1 target=macos marker=sqlite3.c)
+  const REAL = "warning: shuyonote@1.91.3: shuyonote: sm3/sm4 provider patch applied (patch=v1 target=macos marker=sqlite3.c)\n";
+  const NONE = "cargo:rerun-if-changed=build.rs\ncargo:rustc-cdylib-link-arg=-Wl,-install_name\n";
+
+  it("认出真实标记并解析出三个字段", () => {
+    expect(patchMarkerOf(REAL)).toEqual({
+      found: true,
+      patch: "v1",
+      target: "macos",
+      marker: "sqlite3.c",
+    });
+  });
+
+  it("没有标记时 found=false（不能把别的 warning 当标记）", () => {
+    expect(patchMarkerOf(NONE).found).toBe(false);
+    expect(patchMarkerOf("warning: something else: sm3 related but not the marker").found).toBe(false);
+  });
+
+  const cand = (kind) => ({ profile: "debug", entry: "libsqlite3-sys-x", kind, platform: "unix", mtime: 1 });
+  const mk = (over = {}) => ({ profile: "debug", entry: "shuyonote-x", patch: "v1", target: "macos", marker: "sqlite3.c", mtime: 1, ...over });
+
+  it("声明 applied ＋ 标记在 ⇒ 不红", () => {
+    const r = decide({ all: [cand("openssl")], expected: "openssl", patch: { expected: "applied", markers: [mk()] } });
+    expect(r.problems).toEqual([]);
+  });
+
+  it("★ 声明 applied ＋ 标记不在 ⇒ 红，且报错要含 `cargo clean -p shuyonote`（重放坑的处置）", () => {
+    const r = decide({ all: [cand("openssl")], expected: "openssl", patch: { expected: "applied", markers: [] } });
+    expect(r.problems.length).toBe(2);
+    expect(r.problems.join("\n")).toContain("cargo clean -p shuyonote");
+    // 后端那一格是对的 ⇒ 红的只能是补丁这一格（两格独立，别合起来判）
+    expect(r.problems.join("\n")).toContain("补丁已应用");
+  });
+
+  it("★ 声明 absent ＋ 标记在 ⇒ 红（配置漂移；这正是我在实验里踩到的形态）", () => {
+    const r = decide({ all: [cand("openssl")], expected: "openssl", patch: { expected: "absent", markers: [mk()] } });
+    expect(r.problems.join("\n")).toContain("配置漂移");
+  });
+
+  it("不声明期望 ⇒ 只提示'产物里有标记'，不判红", () => {
+    const r = decide({ all: [cand("openssl")], expected: "openssl", patch: { expected: null, markers: [mk()] } });
+    expect(r.problems).toEqual([]);
+    expect(r.notices.join("\n")).toContain("补丁已应用");
+  });
+
+  it("没声明也没有标记 ⇒ 两边都安静", () => {
+    const r = decide({ all: [cand("commoncrypto")], expected: "commoncrypto", patch: { expected: null, markers: [] } });
+    expect(r.problems).toEqual([]);
+    expect(r.notices).toEqual([]);
+  });
+
+  it("collectPatchMarkers 的导出存在（真跑时读 target/*/build/shuyonote-*/output）", () => {
+    expect(typeof collectPatchMarkers).toBe("function");
   });
 });
 
