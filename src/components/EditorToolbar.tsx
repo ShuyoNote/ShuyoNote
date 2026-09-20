@@ -20,20 +20,19 @@ import { inlineExportMedia } from "../lib/exportInline";
 /**
  * 「发布到社区」要的字段。
  *
- * **必须来自同一次页面快照**：正文（`docJson`）与修订号同源，否则"改了正文但 rev 没变"
- * 会让两次不同的内容撞进同一个幂等键（后端按 `(noteId, rev)` 算键，见 `community_publish.rs`），
- * 于是第二次发布被社区当成重发、一篇新内容静默地没发出去。
+ * **正文与"发的是哪一份内容"必须同源**：这里只给页面快照的文档 JSON，**不给指纹** ——
+ * 指纹由发布对话框按这份快照现算（`community_content_rev`）。在外面另算一个指纹递进去，
+ * 就多了一处"正文与指纹错位"的缝：错位时社区会把第二次发布当成重放而**静默丢掉**。
  *
  * 为什么传 `docJson` 而不是算好的 `body`：发布对话框要用**同一份来源**算两份正文
- * （清单里那份、换过图片地址发出去的那份）。这里先算一份 Markdown 递进去，
- * 等于把图片地址在对话框之外就定死了 —— 上传结果就换不进去了。
+ * （清单里那份、换过图片地址发出去的那份），指纹也必须按**本地态**那一份算。
+ * 这里先算一份 Markdown 递进去，等于把图片地址在对话框之外就定死了 —— 上传结果就换不进去了。
  */
 interface PublishTarget {
   title: string;
   docJson: string;
   tags: string[];
   noteId: string;
-  rev: string;
 }
 
 function triggerFind() {
@@ -158,17 +157,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       setPublishTarget({
         title: page.title || "",
         // 正文传**页面快照的文档 JSON**（不是编辑器的实时状态）：实时状态可能比这次
-        // 快照新一次防抖（600ms），而 rev 取的是这份快照的 updated_at —— 正文与修订号必须同源。
-        // 快照 → Markdown 的转换由发布对话框自己做（清单与发帖共用同一份来源，见那边的注释）。
+        // 快照新一次防抖（600ms）。快照 → Markdown 的转换、以及**这一份内容的内容指纹**，
+        // 都由发布对话框自己按这份快照算（清单、指纹、发出去的正文三者同源）。
         docJson: page.content_json || "{}",
         tags,
-        // `noteId` = 页面 id（`PageDetail.id`）；`rev` = 页面最后一次保存的时间戳
-        // （`PageDetail.updated_at`：`save_page` 每次都会写 `now_ms()`，见
-        // `src-tauri/src/commands.rs` 的 `save_page`）。它满足"没改就不变"，
-        // 所以同修订重发/重试永远算出同一个幂等键（I2）；改了内容就换一个新键 ——
-        // 那是**新修订**，本就该是新的一帖。
+        // `noteId` = 页面 id（`PageDetail.id`）：与内容指纹一起算幂等键（I2）。
+        // 指纹不再从这里传 —— 它必须由对话框按上面那份 `docJson` 现算，见 `PublishTarget` 的注释。
         noteId: page.id,
-        rev: String(page.updated_at),
       });
     } catch (e) {
       toast(`打开发布清单失败：${e}`, "error");
