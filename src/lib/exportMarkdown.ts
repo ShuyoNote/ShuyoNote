@@ -100,7 +100,7 @@ export interface PageImageRef {
 }
 
 /**
- * 收集 `content_json` 里**带附件指纹**的图片/视频，按 hash 去重。
+ * 收集页面文档 JSON 里**带附件指纹**的图片/视频，按 hash 去重。
  *
  * 三个约定，与发布链路绑在一起：
  *  · 只收 `__hash` 非空的节点 —— 没有指纹就没有字节可传（`community_upload_attachment`
@@ -109,7 +109,7 @@ export interface PageImageRef {
  *    让它把整个发布入口炸掉是本末倒置（真的解析不了时，正文转换那一步会报错）；
  *  · 按 hash 去重 —— 同一张图在正文里引用两次只该传一次（社区是内容寻址，传两次也是同一份）。
  */
-export function pageImageRefs(contentJson: string): PageImageRef[] {
+export function pageImageRefs(docJson: string): PageImageRef[] {
   const out: PageImageRef[] = [];
   const seen = new Set<string>();
   const collect = (node: LexicalNode) => {
@@ -127,12 +127,12 @@ export function pageImageRefs(contentJson: string): PageImageRef[] {
     // 在 Markdown 里本来就整块丢 —— 这里却会收进 refs。两个方向里选"多收"：多传一张是无害的
     // （内容寻址，传两次也是同一份），漏传就是社区上一篇缺图的文章且没人知道。
     // 真实的图片都是顶层块（插入走 `blockUtils.ts::$getInsertTargetBlock`，停在 root 边界），
-    // 所以这只在手工/外部产出的 `content_json` 上才见得到。
+    // 所以这只在手工/外部产出的页面文档 JSON 上才见得到。
     if ($isElementNode(node)) for (const child of node.getChildren()) collect(child);
   };
   try {
     const editor = createEditor({ nodes: NODES, namespace: "shuyonote-image-refs" });
-    editor.setEditorState(editor.parseEditorState(contentJson));
+    editor.setEditorState(editor.parseEditorState(docJson));
     editor.getEditorState().read(() => {
       for (const child of $getRoot().getChildren()) collect(child);
     });
@@ -177,7 +177,7 @@ function transformersWithImageResolver(resolveImage: ResolveImage): Transformer[
 }
 
 /**
- * 把一个页面的 `content_json` 转成 Markdown（**纯函数、无副作用**：起一个 headless editor
+ * 把一个页面的文档 JSON 转成 Markdown（**纯函数、无副作用**：起一个 headless editor
  * 解析 + 转换，不碰 DOM、不碰文件）。
  *
  * 两处共用这一条转换：工作区导出（`exportWorkspaceToMarkdown`）与「发布到社区」的发布前清单。
@@ -187,9 +187,9 @@ function transformersWithImageResolver(resolveImage: ResolveImage): Transformer[
  * `resolveImage`（可选）：把本地图片引用换成别的地址（发布到社区时换成 `/attachments/<hash>`）。
  * 不传 = 一字不变的老行为（工作区导出就是这一路）。
  */
-export function pageContentToMarkdown(contentJson: string, resolveImage?: ResolveImage): string {
+export function pageContentToMarkdown(docJson: string, resolveImage?: ResolveImage): string {
   const editor = createEditor({ nodes: NODES, namespace: "shuyonote-export" });
-  editor.setEditorState(editor.parseEditorState(contentJson));
+  editor.setEditorState(editor.parseEditorState(docJson));
   // Expand Route-B columns blocks into plain paragraphs (from each column's own
   // EditorState) so their content isn't lost in the Markdown export.
   editor.update(() => {

@@ -16,7 +16,7 @@
 // （内容寻址），正文里的引用换成社区给的 `/attachments/<hash>` 再发帖。
 //   · **没上传成功就不许发帖**：任何一张失败 ⇒ 立刻停，且错误里点出是**哪一张**（带 hash）；
 //   · 传不上去的（视频/没有指纹的本机图）**在清单里如实说**——静默缺图比报错更伤人；
-//   · 清单与发帖**同一份来源**：正文只从 `contentJson` 算，不在 props 里再塞一份 body
+//   · 清单与发帖**同一份来源**：正文只从 `docJson` 算，不在 props 里再塞一份 body
 //     （"清单里一份、发出去另一份"是这一屏最容易出的缝）。
 //
 // 幂等（I2）：`(noteId, rev)` 由调用方传进来，**幂等键由后端算**（`community_publish.rs`），
@@ -55,13 +55,13 @@ export interface CommunityPublishDialogProps {
   /** 笔记标题（清单里原样展示，也是发给社区的 `title`）。 */
   title: string;
   /**
-   * 正文的**唯一来源**：页面的 `content_json` 快照（Markdown 由本组件自己算）。
+   * 正文的**唯一来源**：页面文档 JSON 的一次快照（Markdown 由本组件自己算）。
    *
-   * 为什么收 `contentJson` 而不是收算好的 `body`：清单里展示的正文、上传后发出去的正文
+   * 为什么收 `docJson` 而不是收算好的 `body`：清单里展示的正文、上传后发出去的正文
    * 必须是同一份。让调用方传 body、组件再自己拼一份"换了地址的 body"，等于同一条正文
    * 有两条来路——迟早出现"清单里是 A、发出去是 B"。
    */
-  contentJson: string;
+  docJson: string;
   tags: string[];
   /** 笔记 id。与 `rev` 一起算幂等键，取值必须稳定（见 `EditorToolbar` 里的注释）。 */
   noteId: string;
@@ -106,11 +106,11 @@ function unreachableImages(md: string): number {
  * `body`：清单里摆出来的全文（本地引用原样可见 —— 人看到的正是"上传前"的样子）；
  * `broken`：假设每张有指纹的图都传成功，还剩几张是社区取不到的（见 `unreachableImages`）。
  */
-function prepareContent(contentJson: string): { body: string; broken: number; error: string } {
+function prepareContent(docJson: string): { body: string; broken: number; error: string } {
   try {
-    const body = pageContentToMarkdown(contentJson);
+    const body = pageContentToMarkdown(docJson);
     // 用一个**只换地址、不碰别的**的假映射，问出"上传成功之后还剩几张破图"。
-    const resolved = pageContentToMarkdown(contentJson, (hash) => `/attachments/${hash}`);
+    const resolved = pageContentToMarkdown(docJson, (hash) => `/attachments/${hash}`);
     return { body, broken: unreachableImages(resolved), error: "" };
   } catch (e) {
     // 解析不了 ⇒ 说清、且**不许发**（发一份自己都不认识的正文比报错更糟）。
@@ -129,17 +129,17 @@ function connectStateNote(state: CommunityConnectState): string {
   return `社区返回了没预期到的状态：${state}。可以重新开始一次。`;
 }
 
-export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, onClose }: CommunityPublishDialogProps) {
+export function CommunityPublishDialog({ title, docJson, tags, noteId, rev, onClose }: CommunityPublishDialogProps) {
   useOverlayScrollLock(true);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("communityPublish", true, onClose);
 
   /**
-   * 清单正文与"有哪些图要传"都从 `contentJson` 算（`contentJson` 不变就不重算）。
+   * 清单正文与"有哪些图要传"都从 `docJson` 算（`docJson` 不变就不重算）。
    * `imageRefs` 里的每一张**都会先上传**（只有 `kind === "image"` 的能传，视频传不上去）。
    */
-  const prepared = useMemo(() => prepareContent(contentJson), [contentJson]);
-  const refs = useMemo(() => pageImageRefs(contentJson), [contentJson]);
+  const prepared = useMemo(() => prepareContent(docJson), [docJson]);
+  const refs = useMemo(() => pageImageRefs(docJson), [docJson]);
   /** 只有图片能传（`community_upload_attachment` 的社区白名单里没有视频）。 */
   const imageRefs = useMemo(() => refs.filter((r) => r.kind === "image"), [refs]);
   const videoCount = refs.length - imageRefs.length;
@@ -369,7 +369,7 @@ export function CommunityPublishDialog({ title, contentJson, tags, noteId, rev, 
       setUploadNote("");
 
       // ③ 换地址：只换"有指纹且映射里有"的那些，其余保持 `__src`（与清单里看到的一致）。
-      const body = pageContentToMarkdown(contentJson, (hash) => uploaded.get(hash) ?? "");
+      const body = pageContentToMarkdown(docJson, (hash) => uploaded.get(hash) ?? "");
 
       // ④ 发帖：`body` 就是第 ③ 步那一份。
       const r = await platform.executor.invoke<CommunityPublishResult>("community_publish_note", {

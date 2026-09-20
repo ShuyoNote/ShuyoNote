@@ -68,7 +68,7 @@ function videoBlock(hash: string) {
   return $createVideoNode(`attachment://localhost/C%3A/${hash}.mp4`, hash, "video/mp4");
 }
 
-function contentJson(build: (root: ReturnType<typeof $getRoot>) => void): string {
+function docJson(build: (root: ReturnType<typeof $getRoot>) => void): string {
   const editor = createEditor({
     namespace: "publish-dialog-test",
     nodes: [ImageNode, VideoNode],
@@ -80,7 +80,7 @@ function contentJson(build: (root: ReturnType<typeof $getRoot>) => void): string
   return JSON.stringify(editor.getEditorState().toJSON());
 }
 
-const PLAIN_JSON = contentJson((root) => {
+const PLAIN_JSON = docJson((root) => {
   root.append(paragraph("正文第一行"), paragraph("正文第二行"));
 });
 /**
@@ -92,25 +92,25 @@ const PLAIN_JSON = contentJson((root) => {
  * 走 `getTextContent()`（= 空串），整张丢。造样本必须照真实形状来，
  * 否则测的是一个应用里不存在的排版。
  */
-const ONE_IMAGE_JSON = contentJson((root) => {
+const ONE_IMAGE_JSON = docJson((root) => {
   root.append(paragraph("看图："), imageBlock("hash-a"));
 });
 /** 两张不同的图 ＋ 同一张图再引用一次（去重的判据）。 */
-const DUP_IMAGE_JSON = contentJson((root) => {
+const DUP_IMAGE_JSON = docJson((root) => {
   root.append(imageBlock("hash-a"), imageBlock("hash-b"), imageBlock("hash-a"));
 });
 /** 一张能传的图 ＋ 一个**传不上去**的视频。 */
-const IMAGE_AND_VIDEO_JSON = contentJson((root) => {
+const IMAGE_AND_VIDEO_JSON = docJson((root) => {
   root.append(imageBlock("hash-a"), videoBlock("hash-vid"));
 });
 /** 一张**远程**图（http，没有附件指纹）：社区自己取得到，不该被当成"要传的"或"会缺的"。 */
-const REMOTE_IMAGE_JSON = contentJson((root) => {
+const REMOTE_IMAGE_JSON = docJson((root) => {
   root.append($createImageNode("https://example.com/a.png", "远程", false, null, null, null, null));
 });
 
 const NOTE = {
   title: "插件配方：批量一",
-  contentJson: PLAIN_JSON,
+  docJson: PLAIN_JSON,
   tags: ["插件", "Markdown"],
   noteId: "page-1",
   // 修订号：这里用后端 `save_page` 写进 `updated_at` 的那个毫秒时间戳的字符串形式。
@@ -381,7 +381,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
 
   it("正文里有本机图片 → 清单说清「N 张会先上传，引用会换成 /attachments/<hash>」，且此刻仍是 0 次上传", async () => {
     mocks.invoke.mockImplementation(backend());
-    mount({ contentJson: ONE_IMAGE_JSON });
+    mount({ docJson: ONE_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
     expect(text()).toContain("图片 1 张会先上传到社区，正文里的引用会换成 /attachments/<hash>");
@@ -393,7 +393,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
 
   it("同一张图引用两次 → 清单按 hash 去重（内容寻址：传一次就够）", async () => {
     mocks.invoke.mockImplementation(backend());
-    mount({ contentJson: DUP_IMAGE_JSON });
+    mount({ docJson: DUP_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
     expect(text()).toContain("图片 2 张会先上传到社区");
@@ -401,7 +401,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
 
   it("正文里有视频 → 清单**如实说「发不出去」**（社区附件白名单按魔数判，不含视频）", async () => {
     mocks.invoke.mockImplementation(backend());
-    mount({ contentJson: IMAGE_AND_VIDEO_JSON });
+    mount({ docJson: IMAGE_AND_VIDEO_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
     expect(text()).toContain("视频 1 个发不出去（社区附件白名单不含视频），发出去会缺");
@@ -414,7 +414,7 @@ describe("发布前清单（I7）：将要发出去的东西要摆在人眼前",
 
   it("远程图片（http、没有附件指纹）不参与上传，地址原样保留、也不误报「会缺」", async () => {
     mocks.invoke.mockImplementation(backend({ community_publish_note: () => OK_RESULT }));
-    mount({ contentJson: REMOTE_IMAGE_JSON });
+    mount({ docJson: REMOTE_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
 
     // 正文里确实有一张图，但它不是"要上传的那类"
@@ -468,7 +468,7 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
         community_publish_note: () => OK_RESULT,
       }),
     );
-    mount({ contentJson: ONE_IMAGE_JSON });
+    mount({ docJson: ONE_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
     flushSync(() => byText("确认发布").click());
     await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
@@ -500,7 +500,7 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
         community_publish_note: () => OK_RESULT,
       }),
     );
-    mount({ contentJson: DUP_IMAGE_JSON });
+    mount({ docJson: DUP_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
     flushSync(() => byText("确认发布").click());
     await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
@@ -518,7 +518,7 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
         community_publish_note: () => OK_RESULT,
       }),
     );
-    mount({ contentJson: IMAGE_AND_VIDEO_JSON });
+    mount({ docJson: IMAGE_AND_VIDEO_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
     flushSync(() => byText("确认发布").click());
     await vi.waitFor(() => expect(called("community_publish_note")).toHaveLength(1));
@@ -538,7 +538,7 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
         community_publish_note: () => OK_RESULT,
       }),
     );
-    mount({ contentJson: DUP_IMAGE_JSON });
+    mount({ docJson: DUP_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
     flushSync(() => byText("确认发布").click());
     await vi.waitFor(() => expect(text()).toContain("上传失败"));
@@ -561,7 +561,7 @@ describe("确认之后才发：先传图、后发帖，参数就是清单里那�
         community_publish_note: () => OK_RESULT,
       }),
     );
-    mount({ contentJson: ONE_IMAGE_JSON });
+    mount({ docJson: ONE_IMAGE_JSON });
     await vi.waitFor(() => is(byText("确认发布")));
     flushSync(() => byText("确认发布").click());
     await vi.waitFor(() => expect(text()).toContain("社区没给地址"));
@@ -730,10 +730,10 @@ describe("关闭对话框必须停止轮询", () => {
   });
 });
 
-describe("contentJson 解析不了：说清、且不许发", () => {
+describe("docJson 解析不了：说清、且不许发", () => {
   it("坏 JSON → 显示「正文解析失败」，发布按钮禁用（没有可信清单就没有可发的正文）", async () => {
     mocks.invoke.mockImplementation(backend({ community_publish_note: () => OK_RESULT }));
-    mount({ contentJson: "{ 这不是 JSON" });
+    mount({ docJson: "{ 这不是 JSON" });
     await vi.waitFor(() => is(byText("确认发布")));
 
     expect(text()).toContain("正文解析失败");
