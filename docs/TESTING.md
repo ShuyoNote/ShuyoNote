@@ -353,6 +353,31 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `process.execPath` 是 **electron 而不是 node** ⇒ `spawnSync(process.execPath, [...])` 会以"加载 Electron 主进程模块"
   的方式起来了又崩，**表现成"被测脚本自己 exit 1"**——很容易误读成"判据真的红了"（我第一版就是这么被骗了一轮）。
   现成写法见 `scripts/fetch-pdfium.test.mjs` 里那个 `run()` 助手。
+- **在 Windows 本机出一个 Linux AppImage（WSL2 配方，2026-09-20 实测跑通）**：AppImage 只能由 Linux 构建，
+  但**不必**装一台 Linux —— WSL2 里那套工具链够用（实测：`cargo 1.98.1`、`tauri-cli 2.11.5`、
+  `webkit2gtk-4.1 = 2.52.6`、`gtk+-3.0 = 3.24.41`、`librsvg = 2.58.0`、`dpkg-deb`/`readelf`/`fusermount` 都在）。
+  三步（**注意两个刻意的选择**）：
+  ```bash
+  # ① 前端产物在 Windows 侧建（WSL 里没有 node/pnpm）：pnpm build  ⇒ dist/
+  # ② WSL 里只跑 Rust ＋ 打包；CARGO_TARGET_DIR 指到 ext4 上（快，且**避免与 Windows 的
+  #    target/release 撞车** —— 同名目录、不同 host triple，混用会互相作废缓存）
+  export PATH="$HOME/.cargo/bin:$PATH"
+  export CARGO_TARGET_DIR=/home/cnzen/target-appimage
+  cd /mnt/c/Users/cnzen/zhai/<worktree>
+  cargo tauri build --bundles appimage \
+    --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+  # ③ 判据要的原始读数在 WSL 里取（本机没有 dpkg-deb / 跑不了 AppImage / 没有 readelf），
+  #    解析与判定仍由 Windows 侧那份 check-linux-bundle 做（判据一个字不改）
+  ./ShuyoNote_*.AppImage --appimage-extract        # 不需要 FUSE
+  ```
+  **实测读数（2026-09-20，`ShuyoNote_1.91.10_amd64.AppImage` 117,504,504 B、构建 7m47s）**：
+  `usr/lib/ShuyoNote/libpdfium.so` **7,664,592 B** sha256 `eb19d385…`（源那份 7,645,184 B `f7289309…`）、
+  `usr/lib/ShuyoNote/NotoSansSC-Regular.ttf` 在**资源目录那一层**；
+  结构比对 **✅ 动态表 31/32 条 · 只有 `RUNPATH=$ORIGIN` · 动态符号 783/783 · 大小 7645184/7664592**
+  ⇒ `check-linux-bundle` **0 条 problem**（AppImage 那条判据**第一次**在真产物上跑，之前只有 deb 的读数）。
+  > ⚠️ 展开后的路径**必须以 `./` 开头**（`./squashfs-root/usr/lib/...`）才算"包内相对路径"：
+  > `squashfs-root` 是打包容器的根名，判据会把它摘掉再数层数。写成 `.squashfs-root/...`（少一个斜杠）
+  > 会被判成"位置不对"——我第一版就踩了，而判据的反应是**正确地红**（说明那条位置判据确实在干活）。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 
