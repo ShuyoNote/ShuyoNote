@@ -473,11 +473,19 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 社区侧只做"合并片段 + 签索引 + 托管"——**不写条目、不碰包字节、也不持有我们的发布者私钥**。
 
 ```bash
-SHUYONOTE_PUBLISHER_KEY=~/.minisign/shuyonote.key \   # 私钥**路径**（内容不进仓库、不进普通 CI 变量）
-SHUYONOTE_PUBLISHER_PUB=~/.minisign/shuyonote.pub  \  # 公钥（省略则按 .key → .pub 推）
-SHUYONOTE_MINISIGN=$(which minisign)               \  # 默认找 PATH 里的 minisign
-  pnpm release ...                                     # 或 node scripts/release.mjs ...
+SHUYONOTE_PUBLISHER_KEY=%USERPROFILE%\.minisign\community.key \   # 私钥**路径**（内容不进仓库、不进普通 CI 变量）
+SHUYONOTE_PUBLISHER_PUB=%USERPROFILE%\.minisign\community.pub  \  # 公钥（省略则按 .key → .pub 推）
+SHUYONOTE_MINISIGN=%USERPROFILE%\.minisign-bin\minisign.exe     \ # Windows 侧用它（默认找 PATH 里的 minisign）
+  pnpm release ...                                                 # 或 node scripts/release.mjs ...
 ```
+
+> ⚠️ **真实文件名是 `community.key`，不是 `shuyonote.key`**（2026-09-20 订正）：本节原先把示例写成
+> `~/.minisign/shuyonote.key`，照它去找**必然 miss** ⇒ 片段被跳过（`release.mjs` 会打印后果，不是静默）。
+> 一把 key 同时承担**索引签名**与**发布者签名**两个角色，理由与后果见
+> [plugin-hosting.md](plugin-hosting.md) §六。产片段那一步的完整命令（含 `--url-base` / `--publisher` /
+> `--min-app-version` 的取值口径）也在那篇 §四。
+> **只在包的 `sha256` 真的变了时才重发片段/索引**：一套没变的插件重跑一遍，产出与线上逐字段相同，
+> 而 `--min-app-version <应用版本>` 会把门槛平白抬高（详见 plugin-hosting.md §四 的告警）。
 
 **发版之后还有一步**：把产出的 `plugin-index.fragment.json` 交给**索引托管方**（当前是数友社区，
 见 [plugin-hosting.md](plugin-hosting.md)）。托管方合并片段 → 用自己的密钥签索引 → 托管；
