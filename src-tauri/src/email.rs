@@ -1548,28 +1548,43 @@ pub struct EmailFetchAllArgs {
     pub accounts: Vec<String>,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct EmailAccountError {
+    /// 账号 key（`host|username`，与 `account_key` 同口径）。
+    pub account: String,
+    pub message: String,
+}
+
 #[derive(Serialize)]
 pub struct EmailAggregate {
     pub emails: Vec<EmailMeta>,
     pub unread: u32,
     pub accounts: Vec<String>,
+    /// 拉取失败的账号（**不许静默跳过**）。
+    ///
+    /// 为什么单列出来（2026-09-20 用户报障）：聚合是"多个账号并成一条时间线"，
+    /// 某个账号拉取失败时，旧行为是 `Err(_) => {}` —— 它的邮件**整账号消失**，
+    /// 而界面上既没有错误、也没有"少了一个账号"的任何提示 ⇒ 用户看到的是
+    /// "这封信没来"（分不清"没收到"和"没拉到"）。现在把失败如实带回前端显示。
+    pub errors: Vec<EmailAccountError>,
 }
 
-/// 聚合所有（或指定）账号的收件流（B）：合并账号、按时间降序、分页；单账号失败跳过。
-/// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
-/// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
-#[tauri::command]
-pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
-    let accounts = read_accounts(&db, &app)?;
-    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
+/// 把"每个账号一次拉取的结果"合并成聚合体：按时间降序、汇总未读、**失败如实带出来**。
+///
+/// 为什么抽成纯函数：`email_fetch_all` 要 `Db`/`AppHandle`，单测进不去；
+/// 而"失败要不要吞掉"正是这条链上最容易悄悄回退的一步（旧的 `Err(_) => {}` 就是这么来的）。
+fn aggregate_fetches(
+    results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)>,
+    limit: u32,
+    offset: u32,
+) -> EmailAggregate {
     let mut rows: Vec<(i64, EmailMeta)> = Vec::new();
     let mut unread_total = 0u32;
     let mut account_keys = Vec::new();
-    for acc in &accounts {
-        let key = account_key(acc);
-        if !args.accounts.is_empty() && !args.accounts.contains(&key) { continue; }
+    let mut errors = Vec::new();
+    for (key, res) in results {
         account_keys.push(key.clone());
-        match fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await {
+        match res {
             Ok((metas, u)) => {
                 unread_total += u;
                 for mut m in metas {
@@ -1578,17 +1593,34 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
                     rows.push((ts, m));
                 }
             }
-            Err(_) => { /* 单账号失败跳过，不影响其它账号 */ }
+            Err(message) => errors.push(EmailAccountError { account: key, message }),
         }
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
     let mut emails: Vec<EmailMeta> = rows.into_iter().map(|(_, m)| m).collect();
-    if args.limit > 0 {
-        let start = (args.offset as usize).min(emails.len());
-        let end = (start + args.limit as usize).min(emails.len());
+    if limit > 0 {
+        let start = (offset as usize).min(emails.len());
+        let end = (start + limit as usize).min(emails.len());
         emails = emails[start..end].to_vec();
     }
-    Ok(EmailAggregate { emails, unread: unread_total, accounts: account_keys })
+    EmailAggregate { emails, unread: unread_total, accounts: account_keys, errors }
+}
+
+/// 聚合所有（或指定）账号的收件流（B）：合并账号、按时间降序、分页。
+/// **单账号失败不再吞掉**：它进 `errors` 一并返回（见 `EmailAccountError` 的注释）。
+/// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
+/// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
+#[tauri::command]
+pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
+    let accounts = read_accounts(&db, &app)?;
+    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
+    let mut results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)> = Vec::new();
+    for acc in &accounts {
+        let key = account_key(acc);
+        if !args.accounts.is_empty() && !args.accounts.contains(&key) { continue; }
+        results.push((key, fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await));
+    }
+    Ok(aggregate_fetches(results, args.limit, args.offset))
 }
 
 #[derive(Deserialize)]
@@ -1648,6 +1680,77 @@ mod tests {
         // "你好" 的 utf-8 base64 编码词
         let encoded = "=?utf-8?B?5L2g5aW9?=";
         assert_eq!(decode_mime_words(encoded), "你好");
+    }
+
+    // ---- 聚合：单账号失败**不许吞掉**（2026-09-20 用户报障：某账号的邮件在聚合列表里"没来"，
+    //      而界面既不报错也没有任何提示 —— 旧行为 `Err(_) => {}` 把整个账号静默丢了）----
+
+    fn meta_for(date: &str, uid: u32) -> EmailMeta {
+        EmailMeta {
+            uid,
+            subject: format!("s{uid}"),
+            from: "a@x.com".to_string(),
+            date: date.to_string(),
+            snippet: String::new(),
+            seen: false,
+            flagged: false,
+            folder: "INBOX".to_string(),
+            account: String::new(),
+        }
+    }
+
+    #[test]
+    fn aggregate_fetches_reports_failed_account_instead_of_dropping_it() {
+        let ok = vec![meta_for("Mon, 20 Sep 2026 18:17:08 +0800", 1)];
+        let agg = aggregate_fetches(
+            vec![
+                ("imap.qq.com|zhaizy@qq.com".to_string(), Err("登录失败: 认证失败".to_string())),
+                ("imap.qiye.aliyun.com|sales@shuyo.cn".to_string(), Ok((ok, 2))),
+            ],
+            0,
+            0,
+        );
+        // ★ 失败的那个：账号 key 与错误原文**原样带出来**（界面要能说清"哪个账号、为什么"）
+        assert_eq!(
+            agg.errors,
+            vec![EmailAccountError {
+                account: "imap.qq.com|zhaizy@qq.com".to_string(),
+                message: "登录失败: 认证失败".to_string(),
+            }]
+        );
+        // 成功的那个不受影响：邮件还在、未读照加
+        assert_eq!(agg.emails.len(), 1);
+        assert_eq!(agg.emails[0].account, "imap.qiye.aliyun.com|sales@shuyo.cn");
+        assert_eq!(agg.unread, 2);
+        // 两个账号都在 `accounts` 里：界面要能分辨"它有账号、只是这一轮没拉到"
+        assert_eq!(agg.accounts.len(), 2);
+    }
+
+    #[test]
+    fn aggregate_fetches_all_ok_has_no_errors_and_sorts_newest_first() {
+        let agg = aggregate_fetches(
+            vec![
+                ("a|1".to_string(), Ok((vec![meta_for("Mon, 7 Jul 2026 16:19:49 +0800", 7)], 0))),
+                ("b|2".to_string(), Ok((vec![meta_for("Sun, 20 Sep 2026 20:42:43 +0800", 9)], 1))),
+            ],
+            0,
+            0,
+        );
+        assert!(agg.errors.is_empty());
+        assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![9, 7]);
+        assert_eq!(agg.unread, 1);
+    }
+
+    #[test]
+    fn aggregate_fetches_pages_after_merging_not_per_account() {
+        // 先合并再分页：否则"每账号各取 N 封"会把多账号合成的时间线切碎
+        let metas = vec![
+            meta_for("Sun, 20 Sep 2026 10:00:00 +0800", 3),
+            meta_for("Sun, 20 Sep 2026 09:00:00 +0800", 2),
+            meta_for("Sun, 20 Sep 2026 08:00:00 +0800", 1),
+        ];
+        let agg = aggregate_fetches(vec![("a|1".to_string(), Ok((metas, 0)))], 2, 1);
+        assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![2, 1]);
     }
 
     #[test]

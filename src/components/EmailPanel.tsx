@@ -385,6 +385,10 @@ export function EmailPanel() {
   // 懒加载分页：每页条数 + 是否还有更多。
   const PAGE_SIZE = 200;
   const [hasMore, setHasMore] = useState(false);
+  // 这一轮聚合里**拉取失败**的账号（含错误原文）。为什么要有它（2026-09-20 用户报障）：
+  // 后端曾经 `Err(_) => {}` 把失败账号整个吞掉 ⇒ 它的邮件在列表里"没来"，界面上却什么都不说，
+  // 用户分不清"今天没有新邮件"和"这个账号根本没拉到"。
+  const [accountErrors, setAccountErrors] = useState<{ account: string; message: string }[]>([]);
 
   // 账号筛选派生：全选(空集或全勾) → 传空数组=聚合全部；否则仅聚合勾选的账号。
   const isAllAccounts = selectedAccountKeys.size === 0 || selectedAccountKeys.size >= accounts.length;
@@ -629,9 +633,12 @@ export function EmailPanel() {
       setList(agg.emails);
       // 聚合角标用后端汇总的 unread（跨所有账号），而非当前页列表统计。
       setUnread(agg.unread);
+      // 拉不到的账号如实显示（后端 `errors`）：否则"少了一个账号的信"看起来就像"没有新邮件"。
+      setAccountErrors(agg.errors ?? []);
       setHasMore(agg.emails.length >= PAGE_SIZE);
       if (agg.emails.length === 0) {
-        setErr("未拉到邮件（检查账号 / 认证）");
+        const failed = (agg.errors ?? []).map((e) => e.account.split("|")[1] ?? e.account);
+        setErr(failed.length > 0 ? `未拉到邮件（${failed.join("、")} 拉取失败，见下方具体原因）` : "未拉到邮件（检查账号 / 认证）");
       } else if (agg.emails.some((m) => (active ? emailKey(m) === emailKey(active) : false))) {
         // 保持当前阅读的邮件选中，不打扰。
       } else {
@@ -1012,10 +1019,31 @@ export function EmailPanel() {
   // 定时收取：Rust 后台按 interval_minutes 轮询未读数，通过 `email-unread` 事件或
   // 即时拉取更新侧边栏角标。轮询次数控制放在后端（WebView 最小化会节流 JS timer），
   // 前端只负责接收事件 + 打开面板时同步一次角标。
+  //
+  // ⚠️ **角标变了不等于列表变了**（2026-09-20 用户报障的根因）：轮询只推**未读数**，
+  // 它不会把新信塞进列表 —— 面板开着时列表是一张**快照**，于是出现"角标涨了、今天的信却没出现"。
+  // 所以这里多一步：**未读变多**（说明后台确实看到了新信）且面板开着、当前不在写邮件时，
+  // 静默把第一页重拉一遍（`fetchInbox` 会保留正在阅读的那封，不会把阅读区打断）。
+  const autoRefreshRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    autoRefreshRef.current = () => {
+      if (!open) return;
+      if (compose) return; // 正在写回信/转发：别在用户打字时把列表换掉
+      void fetchInbox(accountFilter, folders, 0);
+    };
+  });
+
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let prev: number | null = null;
     platform.event
-      .listen<number>("email-unread", (e) => setUnread(e.payload))
+      .listen<number>("email-unread", (e) => {
+        const n = e.payload ?? 0;
+        setUnread(n);
+        const before = prev;
+        prev = n;
+        if (before !== null && n > before) autoRefreshRef.current();
+      })
       .then((off) => {
         unlisten = off;
       })
@@ -2065,6 +2093,14 @@ export function EmailPanel() {
                 </div>
               )}
 
+              {accounts.length > 0 && accountErrors.length > 0 && (
+                <div className="sync-status is-progress is-err" role="status">
+                  <div className="sync-status-text">
+                    {accountErrors.map((e) => `${e.account.split("|")[1] ?? e.account} 拉取失败：${e.message}`).join("；")}
+                    <span style={{ opacity: 0.75 }}>（这些账号的邮件这一轮不在列表里）</span>
+                  </div>
+                </div>
+              )}
               {accounts.length > 0 && err && <div className="sync-status is-progress is-err"><div className="sync-status-text">{err}</div></div>}
             </div>
           </div>,
