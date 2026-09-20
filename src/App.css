@@ -17472,6 +17472,13 @@ p:has(> .editor-drawing-container) {
   line-height: 1.5;
   padding: 2px 0;
 }
+/* 第二行：怎么做 / 排查线索。比正文更淡一档，别和"你此刻要知道的那句"抢注意力。 */
+.pdf-ocr-tip-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-faint);
+  line-height: 1.6;
+}
 /* OCR 结果居中弹层：必定可见（不再埋在页块底部）；默认更大，可拖动右下角自由调整尺寸。 */
 .pdf-ocr-popover {
   position: fixed;
