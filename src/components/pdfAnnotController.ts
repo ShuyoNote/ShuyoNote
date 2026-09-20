@@ -2,6 +2,7 @@
 // 每页 PdfAnnotationCanvas 挂载时通过 registerController 注册自己的句柄，
 // 卸载时注销；顶部工具栏作用于 currentPage 对应的句柄。
 import type { PdfAnnotation } from "../lib/pdfAnnotation";
+import type { OcrMode } from "../lib/pdfOcrCopy";
 
 export type AnnotTool = "select" | "highlight" | "ink" | "sticky";
 
@@ -19,6 +20,8 @@ export interface PdfPageState {
   hasTextLayer: boolean;
   /** OCR 识别进行中（按钮加载态）。 */
   ocrBusy: boolean;
+  /** 正在跑的是哪条识别路（本机 OCR / AI 视觉）：按钮与浮层的文案都跟着它走。 */
+  ocrMode: OcrMode;
   /** AI 帮读进行中。 */
   aiBusy: boolean;
 }

@@ -5,6 +5,7 @@ import { api } from "../lib/api";
 import { type PdfAnnotation, annPxBox, normCoords, pageToBlock, pdfRef, removeAnnotation } from "../lib/pdfAnnotation";
 import { snapHighlightToText, textInBox, type TextItemLike } from "../lib/pdfTextLayer";
 import { ocrRecognize, OCR_PAGE_SCALE } from "../lib/ocr";
+import { ocrPopoverCopy, ocrPopoverTitle, type OcrMode, type OcrStatus } from "../lib/pdfOcrCopy";
 import { useAiStore } from "../store/ai";
 import type { ProviderConfig } from "../lib/ai/llm";
 import { ocrWithVision, blobToDataUrl } from "../lib/ai/ocrVision";
@@ -75,6 +76,19 @@ function contains(ann: PdfAnnotation, x: number, y: number): boolean {
   return false;
 }
 
+/**
+ * 识别浮层的正文：第一行是**用户此刻要知道的**，第二行（更淡）是**怎么做 / 排查线索**。
+ * 文案本身全部来自 `lib/pdfOcrCopy`（纯函数、有判据）—— 这里只负责把两行摆出来。
+ */
+function OcrTip({ copy }: { copy: { main: string; hint?: string } }) {
+  return (
+    <div className="pdf-ocr-tip">
+      {copy.main}
+      {copy.hint && <span className="pdf-ocr-tip-hint">{copy.hint}</span>}
+    </div>
+  );
+}
+
 // 标注「实际绘制区域」的像素坐标 [px, py, pw, ph]。选中描边须与绘制的图形一致：
 // 便签实际画的是固定 ~26px 方块（取自 box 左上角），不是 box 的 0.04×0.06 长条；
 // 高亮/矩形按 box 的 x0..x1；墨迹按 points 包围盒。统一走 pdfAnnotation 的 annPxBox，
@@ -85,7 +99,10 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
   // OCR 结果状态（用于显示"未识别到文字/失败"等，而非只有成功文本才出面板）。
-  const [ocrStatus, setOcrStatus] = useState<"idle" | "empty" | "timeout" | "error" | "error-recognize">("idle");
+  const [ocrStatus, setOcrStatus] = useState<OcrStatus>("idle");
+  // 这一份浮层**两条路共用**（本机 OCR / AI 视觉），所以必须记住"这次是谁跑的"：
+  // 标题与文案都跟着它走，否则会出现用户截图那一幕（按 AI、浮层写 OCR、正文讲语言包）。
+  const [ocrMode, setOcrMode] = useState<OcrMode>("ocr");
   const [ocrBusy, setOcrBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiPreview, setAiPreview] = useState<string | null>(null);
@@ -173,6 +190,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setOcrBusy(true);
     setOcrText(null);
     setOcrStatus("idle");
+    setOcrMode("ocr");
     // 单页 OCR 用固定高分辨率重渲染（而非当前缩放下可能很低的显示图），显著提升识别精度。
     // 直接把 Blob 交给 tesseract（内部走 FileReader）；不要先转 objectURL——
     // 传 URL 字符串时 tesseract 会 `fetch('blob:...')`，桌面壳 CSP 的 connect-src 未放行 blob:
@@ -233,6 +251,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     setOcrBusy(true);
     setOcrText(null);
     setOcrStatus("idle");
+    setOcrMode("ai");
     try {
       const blob = await renderPage(pageIndex, OCR_PAGE_SCALE);
       const dataUrl = await blobToDataUrl(blob);
@@ -671,8 +690,8 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
   // 用 ref 持有最新方法，注册一个稳定控制器（避免每次渲染都触发父级副作用）。
   const selectedAnn = selected ? annotations.find((a) => a.id === selected) : null;
   const ctlRef = useRef<PdfPageController | null>(null);
-  const latest = useRef({ annotations, selected, selectedAnn, canUndo, tool, ocrBusy });
-  latest.current = { annotations, selected, selectedAnn, canUndo, tool, ocrBusy };
+  const latest = useRef({ annotations, selected, selectedAnn, canUndo, tool, ocrBusy, ocrMode });
+  latest.current = { annotations, selected, selectedAnn, canUndo, tool, ocrBusy, ocrMode };
   const onStateChangeRef = useRef(onStateChange);
   onStateChangeRef.current = onStateChange;
 
@@ -689,6 +708,7 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           hasTextLayer,
           aiBusy,
           ocrBusy: cur.ocrBusy,
+          ocrMode: cur.ocrMode,
         };
       },
       setTool: (t: AnnotTool) => onToolChange(t),
@@ -720,6 +740,9 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
     onStateChange?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annotations, selected, canUndo, ocrBusy, onStateChange]);
+
+  // 浮层正文：忙碌时走"正在识别"那一态（出文本就不走文案了）。
+  const ocrCopy = ocrPopoverCopy(ocrMode, ocrBusy ? "idle" : ocrStatus);
 
   return (
     <div className="pdf-annot">
@@ -931,26 +954,20 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
       </div>
 
       {(ocrBusy || ocrText !== null || ocrStatus !== "idle") && createPortal(
-        <div className="pdf-ocr-popover" role="dialog" aria-label="OCR 识别结果">
+        <div className="pdf-ocr-popover" role="dialog" aria-label={ocrPopoverTitle(ocrMode, ocrBusy)}>
           <div className="pdf-ocr-pop-head">
-            <span>OCR 识别结果</span>
+            <span>{ocrPopoverTitle(ocrMode, ocrBusy)}</span>
             {!ocrBusy && (
               <button className="pdf-ocr-pop-close" onClick={() => { setOcrText(null); setOcrStatus("idle"); }} title="关闭">×</button>
             )}
           </div>
           <div className="pdf-ocr-pop-body">
             {ocrBusy ? (
-              <div className="pdf-ocr-tip">识别中…（模型随包分发时首次加载稍慢；语言包按需下载时首次还要联网取一次）</div>
+              <OcrTip copy={ocrCopy} />
             ) : ocrText ? (
               <textarea className="pdf-ocr-text" readOnly value={ocrText} onFocus={(e) => e.currentTarget.select()} spellCheck={false} />
-            ) : ocrStatus === "timeout" ? (
-              <div className="pdf-ocr-tip">识别超时（timeout）：模型加载或识别时间过长，请稍后重试。</div>
-            ) : ocrStatus === "error" ? (
-              <div className="pdf-ocr-tip">识别失败（error·模型加载）：识别模型/语言包没能加载。<b>若这是第一次用 OCR，需要联网下载一次语言包（约 30 MB，之后永久离线可用）</b>；离线发行版则应随包分发语言包并设 `VITE_TESSERACT_LANG_PATH`。排查见控制台「[ocr] local assets」与「[ocr] worker error」。</div>
-            ) : ocrStatus === "error-recognize" ? (
-              <div className="pdf-ocr-tip">识别失败（error·识别阶段）：模型已加载，失败发生在取图/引擎环节（例如页面图像读取被拦、位图过大）。请查看控制台「[ocr] recognize failed」的具体原因。</div>
             ) : (
-              <div className="pdf-ocr-tip">本页未识别到文字（empty）：可能为空页/图表页，或扫描清晰度不足。模型已加载，请换一页正文再试。</div>
+              <OcrTip copy={ocrCopy} />
             )}
           </div>
           {ocrText && !ocrBusy && (
