@@ -22,7 +22,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { CI_RECIPE, DARWIN_PROBES, MAP, parseLock, readCiRecipe } from "./check-sys-deps.mjs";
+import { CI_RECIPE, DARWIN_PROBES, WIN32_PROBES, MAP, parseLock, readCiRecipe } from "./check-sys-deps.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(root, "scripts", "check-sys-deps.mjs");
@@ -127,6 +127,27 @@ describe("check-sys-deps 判据表的不变量（进程内，不跑任何命令�
     for (const p of DARWIN_PROBES) {
       expect(p.cmd[0], `${p.id} 没有命令`).toBeTruthy();
       expect(p.why, `${p.id} 没写理由`).toBeTruthy();
+    }
+  });
+
+  it("Windows 工具链探针表非空、id 唯一、每条都写了理由；且至少有一条**会判**的", () => {
+    expect(WIN32_PROBES.length).toBeGreaterThan(0);
+    expect(new Set(WIN32_PROBES.map((p) => p.id)).size).toBe(WIN32_PROBES.length);
+    for (const p of WIN32_PROBES) {
+      // `cmd` 允许是**函数**（要在运行时算路径/加参数，例如 vswhere 的绝对路径）
+      const cmd = typeof p.cmd === "function" ? p.cmd() : p.cmd;
+      expect(cmd[0], `${p.id} 没有命令`).toBeTruthy();
+      expect(p.why, `${p.id} 没写理由`).toBeTruthy();
+      expect(["path", "exit", "info"], `${p.id} 的 kind 不认识：${p.kind}`).toContain(p.kind);
+    }
+    // 全是 info 就等于"这张表只报不判"⇒ 要显式挡住
+    expect(WIN32_PROBES.filter((p) => p.kind !== "info").length).toBeGreaterThan(0);
+  });
+
+  it("Windows 探针不许按 PATH 探 `link.exe`（2026-09-20 本机实测：PATH 上没有它，而构建完全正常）", () => {
+    for (const p of WIN32_PROBES) {
+      const cmd = typeof p.cmd === "function" ? p.cmd() : p.cmd;
+      expect(cmd.join(" ").toLowerCase().includes("link.exe"), `这条探针会误红：${p.id}`).toBe(false);
     }
   });
 });
