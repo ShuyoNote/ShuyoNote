@@ -19,10 +19,16 @@
 //   node scripts/check-changelog-version-parity.mjs                    # 自动选范围（见下）
 //   node scripts/check-changelog-version-parity.mjs --commit <sha>     # 只查一笔（变异实测用）
 //   node scripts/check-changelog-version-parity.mjs --range <a>..<b>   # 查一段
+//   node scripts/check-changelog-version-parity.mjs --repo <目录>      # 查**另一份检出**（默认查脚本自己所在的）
 //   SHUYONOTE_CHANGELOG_PARITY_RANGE=<range>                           # 同上（测试注入用）
 //
-// 退出码：0 = 没有违规；1 = 有违规（打印是哪几笔）；3 = **判不了**（不是 git 仓库 / git 不可用）——
-// 按本仓惯例，"判不了"必须与"通过"分开（否则工具坏掉时门禁反而是绿的）。
+// ⚠️ **它默认只查"脚本自己所在的那个 checkout"**（`root` 由脚本路径推出）。
+//    2026-09-20 macOS 在复现浅克隆那个场景时踩到：人在克隆 B 里、却用 worktree A 的脚本跑 ⇒
+//    它老老实实扫了 **A**（数字完全正常），差点把"量错了仓库"读成"修法没用"。
+//    ⇒ 要查别处的克隆，用**那份克隆里的脚本**跑，或显式 `--repo <那个目录>`。
+//
+// 退出码：0 = 没有违规；1 = 有违规（打印是哪几笔）；3 = **判不了**（不是 git 仓库 / git 不可用 /
+// 浅克隆下看不见历史）—— 按本仓惯例，"判不了"必须与"通过"分开（否则工具坏掉时门禁反而是绿的）。
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -187,5 +193,9 @@ if (isMain(import.meta.url)) {
     const i = argv.indexOf(name);
     return i >= 0 ? argv[i + 1] : undefined;
   };
-  process.exit(check({ commit: valueOf("--commit"), range: valueOf("--range") }));
+  // `--repo` 用来查**另一份检出**（默认 `undefined` ⇒ `check` 的默认参数接管，查脚本自己所在的树）。
+  const repo = valueOf("--repo");
+  process.exit(
+    check({ commit: valueOf("--commit"), range: valueOf("--range"), cwd: repo ? resolve(repo) : undefined }),
+  );
 }
