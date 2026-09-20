@@ -590,6 +590,11 @@ static FONT_ASKS: AtomicU64 = AtomicU64::new(0);
 static FONT_ANSWERS: AtomicU64 = AtomicU64::new(0);
 
 /// `(被问次数, 作答次数)` —— 只在装了随包字体的进程里会 > 0。对拍测试把它打进表里（见证）。
+///
+/// ⚠️ `#[cfg(test)]`：**生产构建里没有调用点**（唯一读者是 `pdf_engine_compare` 那张表），
+/// 不 gate 会报 `function bundled_font_stats is never used`（2026-09-20 打 Linux 包时看到的）。
+/// 生产侧的"见证"是首次作答时那行 `eprintln!`（用户/支持能从日志看出它开火了）。
+#[cfg(test)]
 pub fn bundled_font_stats() -> (u64, u64) {
     (
         FONT_ASKS.load(Ordering::Relaxed),
