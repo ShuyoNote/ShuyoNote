@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { deflateRawSync } from "node:zlib";
 
-import { apkLibEntries, ABI_DIRS, check, readApkEntry, readZipEntries } from "./check-android-bundle.mjs";
+import { apkLibEntries, ABI_DIRS, check, listApk, readApkEntry } from "./check-android-bundle.mjs";
 
 const VENDOR_LIB = join("src-tauri", "vendor", "pdfium", "android-arm64", "lib", "libpdfium.so");
 
@@ -115,7 +115,7 @@ describe("apkLibEntries：只认 Gradle 会装进 nativeLibraryDir 的那一层"
 });
 
 // ---- 读 zip 的那一半：纯 Node（2026-09-20 换掉 `tar -tf`，见门禁文件头）----
-describe("readZipEntries / readApkEntry：纯 Node 读 zip（APK 就是 zip）", () => {
+describe("listApk / readApkEntry：纯 Node 读 zip（APK 就是 zip）", () => {
   const tmp = mkdtempSync(join(tmpdir(), "shuyo-ziptest-"));
   const withFile = (name, buf) => {
     const p = join(tmp, name);
@@ -131,10 +131,7 @@ describe("readZipEntries / readApkEntry：纯 Node 读 zip（APK 就是 zip）",
         { name: "lib/arm64-v8a/libpdfium.so", data: "y".repeat(500), stored: true },
       ]),
     );
-    expect(readZipEntries(readFileSync(apk)).map((e) => e.name)).toEqual([
-      "AndroidManifest.xml",
-      "lib/arm64-v8a/libpdfium.so",
-    ]);
+    expect(listApk(apk)).toEqual(["AndroidManifest.xml", "lib/arm64-v8a/libpdfium.so"]);
   });
 
   it("★ 取出来的字节与写进去的**一模一样**（deflate 与 stored 各一遍）", () => {
@@ -154,8 +151,8 @@ describe("readZipEntries / readApkEntry：纯 Node 读 zip（APK 就是 zip）",
   it("★ 不是 zip（例如本机 `tar -a -cf x.apk` 造出来的那种「伪 APK」）⇒ null（如实报「没验」，不许崩、也不许当通过）", () => {
     // 这正是本机 `tar -a -cf x.apk` 造出来的东西：ustar 头 `lib/…`，根本没有中央目录
     const fake = Buffer.concat([Buffer.from("lib/"), Buffer.alloc(2048)]);
-    expect(readZipEntries(fake)).toBeNull();
     const apk = withFile("fake.apk", fake);
+    expect(listApk(apk)).toBeNull();
     const errs = [];
     expect(check({ apk, log: () => {}, err: (m) => errs.push(m) })).toBe(2);
     expect(errs.join("\n")).toMatch(/读不了这个 APK 的 zip 结构/);

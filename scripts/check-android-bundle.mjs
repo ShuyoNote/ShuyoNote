@@ -10,7 +10,7 @@
 //
 // 断言（从"晚才发现"到"更晚才发现"排）：
 //   1. 找得到 APK（默认在 `src-tauri/gen/android/app/build/outputs/apk/**/*.apk` 里取最新的）；
-//   2. 它当 zip 能列（**纯 Node 解析**，见 `readZipEntries` 那条注释：原来用 `tar -tf`，而
+//   2. 它当 zip 能列（**纯 Node 解析**，见 `listApk` 那条注释：原来用 `tar -tf`，而
 //      CI 的 ubuntu 上是 GNU tar、**读不了 zip** ⇒ 那一步在 CI 上恒 exit 2"没验"）；
 //   3. 包里有 `lib/<abi>/libpdfium.so`（至少一个 ABI）；
 //   4. 它那份与 `vendor/pdfium/android-arm64/lib/libpdfium.so` 的 **sha256 一致**（没人在中间换过库）；
@@ -22,9 +22,11 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inflateRawSync } from "node:zlib";
 
 import { isMain } from "./lib/is-main.mjs";
+// ZIP 读取用**同一份**共享实现（`check-apk-contents.mjs` 与取产物那条线也在用）：
+// 同一个格式解析写两遍就会漂移，而"单一事实来源"在这类字节级判据上尤其要紧。
+import { listZipEntries, readZipEntry } from "./lib/zip.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -79,128 +81,35 @@ function sha256Buffer(buf) {
 }
 
 /**
- * 纯 Node 读 zip（APK 就是 zip）的**中央目录** ⇒ 条目数组。
+ * APK 的条目名列表（读不了 ⇒ `null` = 没验，不是"没有库"）。
  *
  * ⚠️ **为什么不用 `tar`**（2026-09-20 实测踩出来的，CI 上真红）：
  *   本机 Windows / macOS 的 `tar` 是 **bsdtar**，它认 zip，所以本地一切正常；
  *   而 **CI 的 ubuntu runner 上 `tar` 是 GNU tar，根本读不了 zip** ⇒ 那一步恒报
  *   「`tar -tf` 读不了这个文件」，exit 2（"没验"）—— 一条**产物判据**被一个环境差异
- *   变成了永远不生效的摆设（而且它只是"没验"，不会有人以为是自己的包坏了）。
- *   ⇒ 现在三个平台同一份纯 JS 实现，零外部依赖；也顺手去掉了"有没有 tar/unzip/7z"这种运气。
- *
- * 只做 APK 需要的那点事：EOCD（含 zip64）→ 中央目录 → 条目名/压缩方式/大小/本地头偏移。
- * 读不了（不是 zip、被截断）⇒ `null`：调用方**如实报"没验"**，不许当成通过。
+ *   变成了永远不生效的摆设（而且它只报"没验"，不会有人怀疑是自己的包坏了）。
+ *   本机实测（同一个 zip）：`wsl tar -tf x.apk` ⇒ `This does not look like a tar archive`；
+ *   `tar -tf x.apk`（bsdtar）⇒ 正常列出。
+ *   ⇒ 改用纯 JS 读（`lib/zip.mjs`，与 `check-apk-contents.mjs` 同一份），三平台行为一致，
+ *     也顺手去掉了"这台机器上有没有 tar/unzip/7z"这种运气。
  */
-export function readZipEntries(buf) {
+export function listApk(apk) {
   try {
-    const eocd = findEocd(buf);
-    if (!eocd) return null;
-    const entries = [];
-    let p = eocd.cdOffset;
-    for (let i = 0; i < eocd.count; i++) {
-      if (buf.readUInt32LE(p) !== 0x02014b50) return null; // 中央目录头签名不对
-      const method = buf.readUInt16LE(p + 10);
-      let compressedSize = buf.readUInt32LE(p + 20);
-      let uncompressedSize = buf.readUInt32LE(p + 24);
-      const nameLen = buf.readUInt16LE(p + 28);
-      const extraLen = buf.readUInt16LE(p + 30);
-      const commentLen = buf.readUInt16LE(p + 32);
-      let localOffset = buf.readUInt32LE(p + 42);
-      const name = buf.toString("utf8", p + 46, p + 46 + nameLen);
-      // zip64：这几个字段为 0xffffffff 时真值在 0x0001 扩展字段里（按出现顺序补位）
-      if (compressedSize === 0xffffffff || uncompressedSize === 0xffffffff || localOffset === 0xffffffff) {
-        const z = readZip64Extra(buf, p + 46 + nameLen, extraLen, {
-          uncompressedSize,
-          compressedSize,
-          localOffset,
-        });
-        uncompressedSize = z.uncompressedSize;
-        compressedSize = z.compressedSize;
-        localOffset = z.localOffset;
-      }
-      entries.push({ name, method, compressedSize, uncompressedSize, localOffset });
-      p += 46 + nameLen + extraLen + commentLen;
-    }
-    return entries;
+    return listZipEntries(readFileSync(apk)).map((e) => e.name);
+  } catch {
+    return null; // 不是 zip / 被截断 / zip64 不支持 —— 调用方如实报"没验"
+  }
+}
+
+/** 把 APK 里某个条目**解成 Buffer**（不落盘）；没有这条或解不开 ⇒ `null`。 */
+export function readApkEntry(apk, entry) {
+  try {
+    const buf = readFileSync(apk);
+    const found = listZipEntries(buf).find((e) => e.name === entry || e.name === `./${entry}`);
+    return found ? readZipEntry(buf, found) : null;
   } catch {
     return null;
   }
-}
-
-function findEocd(buf) {
-  const min = Math.max(0, buf.length - 65557);
-  for (let i = buf.length - 22; i >= min; i--) {
-    if (buf.readUInt32LE(i) !== 0x06054b50) continue;
-    let count = buf.readUInt16LE(i + 10);
-    let cdOffset = buf.readUInt32LE(i + 16);
-    if (count === 0xffff || cdOffset === 0xffffffff) {
-      // zip64 EOCD locator 就贴在 EOCD 前面（20 字节）
-      const loc = i - 20;
-      if (loc >= 0 && buf.readUInt32LE(loc) === 0x07064b50) {
-        const z64 = Number(buf.readBigUInt64LE(loc + 8));
-        if (buf.readUInt32LE(z64) === 0x06064b50) {
-          count = Number(buf.readBigUInt64LE(z64 + 32));
-          cdOffset = Number(buf.readBigUInt64LE(z64 + 48));
-        }
-      }
-    }
-    return { count, cdOffset };
-  }
-  return null;
-}
-
-function readZip64Extra(buf, extraStart, extraLen, cur) {
-  const out = { ...cur };
-  let p = extraStart;
-  const end = extraStart + extraLen;
-  while (p + 4 <= end) {
-    const id = buf.readUInt16LE(p);
-    const size = buf.readUInt16LE(p + 2);
-    if (id === 0x0001) {
-      let q = p + 4;
-      // zip64 扩展字段只放"上面对应字段是 0xffffffff 的那些"，顺序固定
-      if (cur.uncompressedSize === 0xffffffff) {
-        out.uncompressedSize = Number(buf.readBigUInt64LE(q));
-        q += 8;
-      }
-      if (cur.compressedSize === 0xffffffff) {
-        out.compressedSize = Number(buf.readBigUInt64LE(q));
-        q += 8;
-      }
-      if (cur.localOffset === 0xffffffff) {
-        out.localOffset = Number(buf.readBigUInt64LE(q));
-        q += 8;
-      }
-      return out;
-    }
-    p += 4 + size;
-  }
-  return out;
-}
-
-/** APK 的条目名列表（与 `tar -tf` 同口径；读不了 ⇒ `null` = 没验，不是"没有库"）。 */
-export function listApk(apk) {
-  const entries = readZipEntries(readFileSync(apk));
-  return entries === null ? null : entries.map((e) => e.name);
-}
-
-/** 把 APK 里某个条目**解成 Buffer**（不落盘）：方法 0 直取、方法 8 走 `inflateRawSync`。 */
-export function readApkEntry(apk, entry) {
-  const buf = readFileSync(apk);
-  const entries = readZipEntries(buf);
-  if (entries === null) return null;
-  const found = entries.find((e) => e.name === entry || e.name === `./${entry}`);
-  if (!found) return null;
-  // 本地头：签名(4) + …名字长度在 +26、扩展长度在 +28 ⇒ 数据从 +30+名字+扩展 开始
-  const lo = found.localOffset;
-  if (buf.readUInt32LE(lo) !== 0x04034b50) return null;
-  const nameLen = buf.readUInt16LE(lo + 26);
-  const extraLen = buf.readUInt16LE(lo + 28);
-  const start = lo + 30 + nameLen + extraLen;
-  const raw = buf.subarray(start, start + found.compressedSize);
-  if (found.method === 0) return Buffer.from(raw);
-  if (found.method === 8) return inflateRawSync(raw);
-  return null; // 别的压缩方式（APK 不会用）
 }
 
 export function check({ apk, log = console.log, err = console.error } = {}) {
