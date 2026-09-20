@@ -33,12 +33,18 @@ run() {  # $1 = 标签
 }
 
 echo "=== [1/3] 正向：库里放字体（$(basename "$FONT_SRC") → $(basename "$FONT_DST")）==="
-cp "$FONT_SRC" "$FONT_DST"
+# ⚠️ 先删再拷：从 Windows 字体目录拷过来的文件带**只读位**（`-r-xr-xr-x`），直接 cp 到它头上会
+# "Permission denied" —— 而那时**上一轮的字体还在**，正/负向两次会拿到同一个读数、看起来"跑通了"，
+# 实际这次验证是**假的**（本脚本第一版就撞上这条：报错被淹没在 cargo 输出里）。
+rm -f "$FONT_DST" || true
+cp "$FONT_SRC" "$FONT_DST" || { echo "❌ 放字体失败（$FONT_DST）"; exit 3; }
+[ -s "$FONT_DST" ] || { echo "❌ 字体没放上（0 字节）"; exit 3; }
 run pos
 
 echo
 echo "=== [2/3] 负向：删掉字体再跑（必须回到 27000，且其余行一字不变）==="
-rm -f "$FONT_DST"
+rm -f "$FONT_DST" || { echo "❌ 删字体失败 —— 负向那次不算数"; exit 3; }
+[ ! -e "$FONT_DST" ] || { echo "❌ 字体还在，负向无效"; exit 3; }
 run neg
 
 echo
@@ -48,3 +54,16 @@ grep -h 'cjk.pdf' /tmp/bundled-font-neg.log | sed 's/^/无字体: /'
 echo "--- 其余样本两次的差异（应当为空）---"
 diff <(grep -E '^[a-z0-9-]+\.pdf' /tmp/bundled-font-pos.log | grep -v '^cjk\.pdf') \
      <(grep -E '^[a-z0-9-]+\.pdf' /tmp/bundled-font-neg.log | grep -v '^cjk\.pdf') && echo "（空 = 只有 cjk 那一行变了）"
+
+# ★ 自检：正向**必须**比负向多画出东西 —— 否则"验证"本身无效（字体没放上 / provider 没生效 ⇒
+#   两次其实都是"无字体"那一档）。这条让脚本**自己会红**，而不是靠人眼看两行数字。
+ink() { grep -h 'cjk.pdf' "$1" | grep -o 'PDFium [0-9]*' | grep -o '[0-9]*'; }
+POS_INK="$(ink /tmp/bundled-font-pos.log)"
+NEG_INK="$(ink /tmp/bundled-font-neg.log)"
+echo "墨迹：有字体 $POS_INK / 无字体 $NEG_INK"
+if [ -z "$POS_INK" ] || [ -z "$NEG_INK" ]; then echo "❌ 没解析到读数"; exit 4; fi
+if [ "$POS_INK" -le "$NEG_INK" ]; then
+  echo "❌ 正向没有比负向多画东西 ⇒ **这次验证无效**（别读成「路线 D 不生效」，先查字体有没有放上）"
+  exit 4
+fi
+echo "✅ 正向多画了 $((POS_INK - NEG_INK)) 个像素 ⇒ 变化确实来自随包字体"
