@@ -23,7 +23,8 @@
 | TS | `src/lib/blockRev.ts` ＋ `src/lib/blockRev.test.ts` | **15 条**（多一条"与两形态转换配合"） |
 
 读数（2026-09-22，本机 Windows）：`vitest run src/lib/blockRev.test.ts` **15/15**；
-`cargo test --lib block_rev` **14/14**（Windows 按 `win-cargo-test.ps1` 同样的四步手跑，见前一封信）。
+`cargo test --lib block_rev` **14/14**（Windows 按 `win-cargo-test.ps1` 同样的四步手跑，见前一封信）；
+节点级 `src/editor/nodes/blockRevDeclared.test.ts`（§5）**5/5**。
 
 **逐块判定**（`baseline` = 这一页上一次保存/加载的那份 JSON）：
 
@@ -77,11 +78,27 @@
 **顺序（硬约束）**：应与**块级判定同时上线** —— 先只写 rev 而没人读，等于往 JSON 里加一个没人用的字段
 （还会在混版本期间被老客户端剥掉，产生无意义的 churn）。
 
-## 5. 本片**没做**（别当成漏了）
+## 5. 节点上的**声明字段**（内存 / CRDT 平面那半）：已接内建 7 类 ＋ 自有 1 类
 
-1. **节点上的声明字段**（内存 / CRDT 平面那半）还没加：那一半是**阶段 2/3** 的前置
-   （Yjs 只同步节点模型）。本层的 rev 由**保存时的差分**产生，**不依赖**它；
-   ⇒ 两块工作可以分别落地、互不阻塞（各自的判据在自己的文件里）。
-2. 接线 + 冲突提示 UI + "版本历史 × 冲突"的合成（见 §4 的顺序约束）。
-3. 真两台设备 + 真 `applyChange` 的行为复核：本机能跑的只有纯函数，
-   按老规矩请 macOS/AMD 在**被验 commit** 上复核（`docs/development.md` §10.5）。
+与"写 rev"分开落地（互不阻塞）：rev 由保存时的**差分**产生，不依赖节点字段；节点字段是为
+**阶段 2/3**（Yjs 只同步节点模型）与"不经 baseline 的重序列化路径"准备的保险。
+
+| 进度 | 类 |
+|---|---|
+| ✅ 内建镜像 7 类 | `BlockParagraphNode` / `BlockHeadingNode` / `BlockQuoteNode` / `BlockListNode` / `BlockCodeNode` / `BlockHorizontalRuleNode` / `BlockTableNode` |
+| ✅ 自有节点样板 1 类 | `FormulaNode`（走"类就是类型"那条轻路：字段 + import/export/clone/afterCloneFrom） |
+| ⏳ 剩余 10 类自有节点 | `callout` / `mermaid` / `imageRow` / `image` / `video` / `blockembed` / `webbookmark` / `attachment-ref` / `drawing` / `columnsBlock` |
+
+判据：`src/editor/nodes/blockRevDeclared.test.ts` **5 条**（表格驱动，逐类验）——
+① 有值才写（`null` ⇒ 落盘 JSON 里**不许有**这个字段，缺字段 ≠ 0）；
+② 老形态兼容（没有字段 ⇒ 读成"没有"，再写出去仍不写）；③ `exportJSON → importJSON` 往返；
+④ 克隆路径（`markDirty()`）；⑤ 声明字段进的是节点模型（`toJSON()` 同一条路）。
+
+✓ 与 `src/lib/blockRev.ts` 的 `blockRevOf` **共用一份口径**（`blockIdHelpers` 转出去，不重写第二份）。
+
+**两条踩过的坑**（都写进判据文件头了）：
+- 任何节点工厂必须在 `editor.update()` 里调（外面调抛 `Unable to find an active editor`）；
+- **别用"空根 + 装饰节点"验块身份**：formula 这类 DecoratorNode 单独 append 进空根会被 Lexical 的
+  **根规范化包进一个段落**（`paragraph` 是内建类型、没有块身份）⇒ 读 `root.children[0]` 会读到包装段落，
+  看上去像"rev 没写出去"。判据改成**递归找目标 type**（第 ①/② 条干脆不挂根、直接读 `exportJSON()`）。
+  —— 与块身份那边记的"判据别用空根+装饰节点"同一条纪律，这次又踩了一遍。
