@@ -340,7 +340,8 @@ node scripts/test-report.mjs --baseline-from rust-report.json
      ⇒ 本仓的安卓包一直在 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）上出，Windows 从来不是构建地。
    ⚠️ 但**打包与验收那几小步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）、
      `pnpm android:app-icon`（把品牌图标铺进 `res/`；不铺的话 APK 桌面图标是 Tauri 默认图，
-     见 `scripts/android-app-icon.mjs` 的模块头）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
+     见 `scripts/android-app-icon.mjs` 的模块头；**改图标本身**走 `node scripts/build-android-icons.mjs`，
+     源是 `design/logo/android-*.svg` ＋ `android-icon.json`，见 `design/logo/README.md`）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
      `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
      2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
      这正是 P4 安卓格那条缺口的真产物读数。
