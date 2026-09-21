@@ -143,7 +143,11 @@ pub(crate) fn restore_version_in_conn(c: &Connection, version_id: &str) -> Resul
     // 2026-09-19 裁定 (a)：**两侧同批**改（前端半 = Windows `1db5fca`，Rust 半 = macOS `c209490`）。
     let restored = crate::doc_content::DocContent {
         title,
-        json: content_json,
+        // ★ **阶段 1**：恢复也是一次**本地编辑** ⇒ 同样要盖 `blockRev`（baseline = 当前页内容 `cur`）。
+        //   不盖的后果：恢复回来的块带着**旧 rev**（或干脆没有）⇒ 下一次合并判错胜负，
+        //   极端情况下这次恢复会被远端**静默盖掉**（最终虽收敛，但用户看到内容闪回）——
+        //   与 `dirty = 1` 那条是同一族问题，所以两处一起守。
+        json: crate::doc_content::stamp_block_revs(c, &page_id, &content_json)?,
         text: content_text,
     };
     crate::doc_content::write(c, &page_id, &restored, now)?;
@@ -194,8 +198,7 @@ mod tests {
         .unwrap();
     }
 
-    /// ★ **恢复版本 = 一次本地未推送改动** ⇒ 必须置 `dirty = 1`。
-    ///
+    /// ★ **恢复版本 = 一次本地未推送改动** ⇒ 必须置 `dirty = 1`。    ///
     /// 这条判据是这一族改动的承重件（2026-09-19 裁定 (a)）：不置 1 时，"恢复后、推送前"的某次
     /// pull 会**静默把这次恢复冲掉**（`shouldTakeRemote` 只看 `dirty`/`seq`），最终虽收敛，
     /// 但用户会看到内容闪回且没有任何提示 —— 与 `truncated`/`ExtractCoverage` 那类"成功 ≠ 生效"
@@ -245,6 +248,43 @@ mod tests {
         );
         let text: String = c.query_row("SELECT content_text FROM pages WHERE id = ?1", params!["p2"], |r| r.get(0)).unwrap();
         assert_eq!(text, "已删页的内容", "被拒之后内容不得被改写");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **阶段 1**：恢复**同样要盖 `blockRev`**（baseline = 当前页内容）。
+    ///
+    /// 不盖的后果与 `dirty = 1` 那条同族：恢复回来的块带着**旧 rev**（或干脆没有）⇒ 下一次合并
+    /// 判错胜负，极端情况下这次恢复会被远端**静默盖掉**。前端半边在
+    /// `scripts/verify-two-device-sync.mjs` 的场景 J（真 `restore_version` 命令）。
+    #[test]
+    fn restore_version_stamps_block_revs() {
+        let (c, dir) = test_conn("stamp");
+        // 当前页：b1 已经是 rev 3，b2 是 0
+        let cur = r#"{"root":{"children":[{"type":"paragraph","blockId":"b1","blockRev":3,"children":[]},{"type":"paragraph","blockId":"b2","blockRev":0,"children":[]}]}}"#;
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, dirty)
+             VALUES ('p1','s1','页',?1,'','page',0,0,NULL,0)",
+            params![cur],
+        )
+        .unwrap();
+        // 历史版本：b1 是**另一份内容**、b2 与当前相同（老快照，没有 rev 字段）
+        let old = r#"{"root":{"children":[{"type":"paragraph","blockId":"b1","children":[{"type":"text","text":"旧"}]},{"type":"paragraph","blockId":"b2","children":[]}]}}"#;
+        c.execute(
+            "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at)
+             VALUES ('v1','p1','页',?1,'',1)",
+            params![old],
+        )
+        .unwrap();
+
+        restore_version_in_conn(&c, "v1").expect("活页应当能恢复");
+
+        let json: String =
+            c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        let revs = crate::block_rev::read_top_level_block_revs(&json);
+        let by_id = |id: &str| revs.iter().find(|b| b.block_id == id).and_then(|b| b.rev);
+        // b1 内容变了 ⇒ maxSeen(3) + 1 = 4；b2 内容没变 ⇒ 保持当前页那个 0
+        assert_eq!(by_id("b1"), Some(4), "改过的那块应当盖成 max+1；实际 JSON = {json}");
+        assert_eq!(by_id("b2"), Some(0), "没改的那块应当保持当前页的 rev；实际 JSON = {json}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

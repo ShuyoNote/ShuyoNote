@@ -430,6 +430,37 @@ async function main() {
       .join(",")}`,
   );
 
+  // =========== 场景 J：**恢复版本**也盖章（真 `restore_version`）===========
+  // 恢复 = 一次本地编辑 ⇒ 不盖 rev 的话，恢复回来的块带着旧 rev（或没有）⇒ 下一次合并判错胜负，
+  // 极端情况下这次恢复会被远端静默盖掉（与"恢复要置 dirty=1"那条同族）。
+  console.log("\n场景 J：恢复版本盖 rev（真 `restore_version` 命令）");
+  const SJ = await newDevice();
+  const invokeSJ = makeInvoke(SJ);
+  localCreate(SJ, "page-restore-stamp", "恢复页", "");
+  SJ.run("UPDATE pages SET content_json = ?, dirty = 0, sync_seq = 1 WHERE id = ?", [
+    contentOf([blk("b1", 3, "现在的"), blk("b2", 0, "B")]),
+    "page-restore-stamp",
+  ]);
+  SJ.run(
+    "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at) VALUES (?,?,?,?,?,?)",
+    [
+      "ver-stamp",
+      "page-restore-stamp",
+      "恢复页",
+      contentOf([blk("b1", null, "恢复回来的"), blk("b2", null, "B")]),
+      "",
+      Date.now(),
+    ],
+  );
+  await invokeSJ("restore_version", { versionId: "ver-stamp" });
+  const restoredDoc = readContent(SJ, "page-restore-stamp").json;
+  ok(
+    blocksOf(restoredDoc).map((b) => b.rev).join(",") === "4,0",
+    `场景 J: 恢复后 b1 = max+1（3→4）、b2 没变保持 0，实际=${blocksOf(restoredDoc)
+      .map((b) => b.rev)
+      .join(",")}`,
+  );
+
   // =========== 汇总 ===========
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
   rmSync(tmpDir, { recursive: true, force: true });

@@ -3101,7 +3101,10 @@ export function makeInvoke(store: SqliteStore) {
       const cur = readContent(store, r.page_id);
       if (!cur) throw new Error("页面不存在或已删除（先还原页面，再恢复它的历史版本）");
       snapshotBeforeSave(store, r.page_id, cur.title, cur.json, cur.text);
-      writeContent(store, r.page_id, { title: r.title, json: r.content_json, text: r.content_text }, Date.now());
+      // ★ **阶段 1**：恢复也是一次**本地编辑** ⇒ 同样要盖 `blockRev`（baseline = 当前页内容 `cur`）。
+      //   不盖的后果：恢复回来的块带着**旧 rev**（或干脆没有）⇒ 下一次合并判错胜负，
+      //   极端情况下这次恢复会被远端**静默盖掉**（与上面 `dirty = 1` 那条同族）。
+      writeContent(store, r.page_id, { title: r.title, json: assignBlockRevs(cur.json, String(r.content_json ?? "")), text: r.content_text }, Date.now());
       const restored = store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0];
       recordChange(store, "page", r.page_id, "upsert", restored ?? { id: r.page_id, title: r.title, content_json: r.content_json, content_text: r.content_text, updated_at: Date.now() }, Date.now());
       return restored as T;
