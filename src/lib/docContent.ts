@@ -215,3 +215,188 @@ export function shouldTakeRemote(local: LocalContentState | undefined, remoteSeq
   if (local.syncSeq > remoteSeq) return false; // 已同步到更晚的变更 → 留本地
   return true; // 远端更新（seq 更大且本地无未同步改动）→ 用远端
 }
+
+// =====================================================================================
+// 阶段 1 · **块级 LWW**（第一切片：纯函数）—— 与 Rust 侧 `doc_content.rs` 的那一段**逐条对应**
+//
+// 裁定（2026-09-20，所有者）与逐块判定表：`docs/plans/2026-09-19-stage1-block-lww-readiness.md`
+// §6/§7。三条定死的：**(a)** `blockRev` 是声明的节点属性（Lamport 计数器、随 `content_json` 走）；
+// **(iii)** 缺 `blockRev` 或 rev 相等而内容不同 ⇒ **冲突、不静默选边**；rev **不参与同步**。
+//
+// 本切片只做纯函数：不碰 SQL、不碰协议、不碰 UI。
+//
+// ## 与 Rust 那份的形状对应（改一边必须同时看另一边）
+//
+//   · `BlockSnapshot`  ↔ `doc_content::BlockSnapshot`（`rev` 用 `undefined`/`null` 表示"缺"）
+//   · `BlockChoice`    ↔ `doc_content::BlockChoice`（Rust 的 `Conflict(reason)` 在这里拆成
+//                        `choice: "conflict"` ＋ `reason` 两个字段 —— 字符串联合更贴 TS 的习惯，
+//                        但**判定与取值必须逐条相同**）
+//   · `mergeBlocks`    ↔ `doc_content::merge_blocks`
+//   · `mergePageBlocks`↔ `doc_content::merge_page_and_blocks`
+//
+// ## 调用顺序（④ 页级语义不许被块级推翻）
+// 先 `shouldTakeRemote`（页级：`dirty` 优先本地）——它说"留本地"时**不许**用块级结果覆盖；
+// 说"用远端"时才逐块比对。合成规则只写在 `mergePageBlocks` 里（唯一入口）。
+//
+// ## 已知边界（与 Rust 那份同一份清单）
+// 1. **没有块级删除 / 墓碑**：只在一侧的块按"保留"处理（`only-local` / `only-remote`）；
+// 2. **顺序 / 移动不参与合并**：顺序取页级胜方那一侧，另一侧多出来的块按自己的顺序追加在表尾；
+// 3. **`rev` 是过渡量**：不许进 FTS / 反链 / 导出 / 版本历史，也不许当"最后修改时间"用。
+// =====================================================================================
+
+/** 一份「块表」里的一行：块的 id、它的 `blockRev`、该块的 JSON 片段。 */
+export interface BlockSnapshot {
+  blockId: string;
+  /** Lamport 计数器；`undefined` / `null` = **老客户端产物**（字段被剥掉）⇒ 不静默判。 */
+  rev?: number | null;
+  /**
+   * 该块的 JSON 片段，**不含 `blockRev` 字段**（rev 单独放在上面那个字段里）。
+   *
+   * ⚠️ 这不是洁癖：判定表第一行是"两侧内容**逐字节相同** ⇒ 不提示"，而老客户端"打开—原样保存"
+   * **恰恰会剥掉 `blockRev`**。若把 rev 算进被比较的片段，那一行就**永远不成立** ⇒ 每次同步都提示
+   * ⇒ 噪声 ⇒ 用户学会忽略 ⇒ 等于静默（反判据第二条要拦的正是这个）。去 rev 的动作由**调用方**
+   * 在提取块表时做（见 `scripts/verify-two-device-sync.mjs` 的 `blocksOf`）。
+   */
+  json: string;
+}
+
+/** 为什么不自动选边（判定表里那两行"冲突"）。 */
+export type ConflictReason = "same-rev-different-content" | "missing-rev";
+
+/** 这一块**是怎么定的**。 */
+export type BlockChoice =
+  | "local" // remote.rev < local.rev ⇒ 留本地
+  | "remote" // remote.rev > local.rev ⇒ 用远端
+  | "identical" // 两侧内容逐字节相同 ⇒ 无事（**不许提示**）
+  | "only-local" // 只有本地有（本片不做块级删除 ⇒ 保留）
+  | "only-remote" // 只有远端有
+  | "conflict"; // 判不了 ⇒ 不自动选边（裁定 (iii)）
+
+/** 合并结果里的一块。 */
+export interface MergedBlock {
+  blockId: string;
+  choice: BlockChoice;
+  /** 仅 `choice === "conflict"` 时有值。 */
+  reason?: ConflictReason;
+  /** ⚠️ `choice === "conflict"` 时它是**本地现状占位**（本地没有则远端那一版），**不是**裁决。 */
+  json: string;
+}
+
+/** 一块冲突：两侧各自的版本都带出来，UI 才有得"取回"。 */
+export interface BlockConflict {
+  blockId: string;
+  reason: ConflictReason;
+  localJson?: string;
+  remoteJson?: string;
+}
+
+/** 逐块合并的结果（`conflicts` 非空 = 这次合并没有完全自动完成）。 */
+export interface BlockMergeOutcome {
+  blocks: MergedBlock[];
+  conflicts: BlockConflict[];
+}
+
+/**
+ * ★ **块级合并点**（纯函数）：两份块表 + 页级判定 ⇒ 逐块选边。
+ *
+ * 判定（与 §7 那张表逐行对应，**顺序有意义**）：
+ * 内容逐字节相同 ⇒ `identical`（**先判它**：老客户端"打开—原样保存"会剥掉 `rev` 而内容未变，
+ * 那次**不许**提示）／`remote.rev > local.rev` ⇒ `remote`／`remote.rev < local.rev` ⇒ `local`／
+ * rev 相等而内容不同 ⇒ `conflict: same-rev-different-content`／任一侧缺 rev ⇒
+ * `conflict: missing-rev`／只有一侧有 ⇒ `only-local` / `only-remote`。
+ */
+export function mergeBlocks(
+  local: readonly BlockSnapshot[],
+  remote: readonly BlockSnapshot[],
+  pageLevel: "local" | "remote",
+): BlockMergeOutcome {
+  const lmap = new Map(local.map((b) => [b.blockId, b]));
+  const rmap = new Map(remote.map((b) => [b.blockId, b]));
+
+  // 顺序：页级胜方那一侧的顺序，另一侧多出来的块按自己的顺序**追加在表尾**（已知边界 2）。
+  // 同一 id 在一侧出现两次时**取第一次**（Map 的后写覆盖要绕开：这里用显式去重）。
+  const [first, rest] = pageLevel === "local" ? [local, remote] : [remote, local];
+  const order: string[] = [];
+  for (const b of [...first, ...rest]) {
+    if (!order.includes(b.blockId)) order.push(b.blockId);
+  }
+
+  const blocks: MergedBlock[] = [];
+  const conflicts: BlockConflict[] = [];
+
+  for (const id of order) {
+    const l = lmap.get(id);
+    const r = rmap.get(id);
+
+    let choice: BlockChoice;
+    let reason: ConflictReason | undefined;
+    let json: string;
+
+    if (l && r && l.json === r.json) {
+      // 先判"内容逐字节相同"——含"老客户端剥了 rev 但内容没变"那条
+      choice = "identical";
+      json = l.json;
+    } else if (l && r) {
+      const lr = l.rev ?? null;
+      const rr = r.rev ?? null;
+      if (lr !== null && rr !== null) {
+        if (rr > lr) {
+          choice = "remote";
+          json = r.json;
+        } else if (rr < lr) {
+          choice = "local";
+          json = l.json;
+        } else {
+          choice = "conflict";
+          reason = "same-rev-different-content";
+          json = l.json;
+        }
+      } else {
+        // 任一侧缺 rev（老客户端产物）⇒ 判不了就不判
+        choice = "conflict";
+        reason = "missing-rev";
+        json = l.json;
+      }
+    } else if (l) {
+      choice = "only-local";
+      json = l.json;
+    } else if (r) {
+      choice = "only-remote";
+      json = r.json;
+    } else {
+      continue; // order 从两侧 id 的并集来 ⇒ 不可达
+    }
+
+    if (choice === "conflict") {
+      conflicts.push({
+        blockId: id,
+        reason: reason!,
+        localJson: l?.json,
+        remoteJson: r?.json,
+      });
+    }
+    blocks.push(reason ? { blockId: id, choice, reason, json } : { blockId: id, choice, json });
+  }
+
+  return { blocks, conflicts };
+}
+
+/** 阶段 1 的**合成入口**：先页级（`dirty` 优先本地），再逐块。 */
+export type PageBlockMerge =
+  | { action: "keep-local" }
+  | { action: "merge"; blocks: MergedBlock[]; conflicts: BlockConflict[] };
+
+/**
+ * ★ 阶段 1 合并的**唯一调用顺序**（免得调用方各写一遍、写岔）。
+ * 页级说留本地（`dirty` 或本地 `syncSeq` 更靠后）⇒ **整页都不动**，这一支**不许**再走块级合并（④）。
+ */
+export function mergePageBlocks(
+  local: LocalContentState | undefined,
+  remoteSeq: number,
+  localBlocks: readonly BlockSnapshot[],
+  remoteBlocks: readonly BlockSnapshot[],
+): PageBlockMerge {
+  if (!shouldTakeRemote(local, remoteSeq)) return { action: "keep-local" };
+  const { blocks, conflicts } = mergeBlocks(localBlocks, remoteBlocks, "remote");
+  return { action: "merge", blocks, conflicts };
+}

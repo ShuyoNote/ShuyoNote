@@ -164,7 +164,7 @@ pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq:
 }
 
 /// 合并判定：**本地留还是远端覆盖**。
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeDecision {
     KeepLocal,
     TakeRemote,
@@ -185,6 +185,239 @@ pub fn merge(local: Option<LocalState>, remote_seq: i64) -> MergeDecision {
         Some(l) if l.seq > remote_seq => MergeDecision::KeepLocal,
         _ => MergeDecision::TakeRemote,
     }
+}
+
+// =====================================================================================
+// 阶段 1 · **块级 LWW**（第一切片：纯函数）
+//
+// 裁定（2026-09-20，所有者）与逐块判定表：`docs/plans/2026-09-19-stage1-block-lww-readiness.md`
+// §6「裁定」/§7「实现口径」。三条定死的：**(a)** `blockRev` 是**声明的节点属性**（Lamport 计数器、
+// 随 `content_json` 走）；**(iii)** 缺 `blockRev` 或 rev 相等而内容不同 ⇒ **冲突、不静默选边**；
+// rev **不参与同步**（不新开协议字段、不加数据库列、不做全局定序）。
+//
+// 本切片**只做纯函数**：不碰 SQL、不碰协议、不碰 UI（见 §7 最后一段）。
+//
+// ## 调用顺序（④ 页级语义不许被块级推翻）
+//
+// 先 `merge`（页级：`dirty` 优先本地）——它说 `KeepLocal` 时**不许**用块级结果覆盖本地；
+// 说 `TakeRemote` 时才逐块比对，把"本地那一块其实更新"的块留下来。这条合成规则就写在
+// `merge_page_and_blocks` 里（**唯一入口**，免得两处各写一遍顺序）。
+//
+// ## 已知边界（**写下来，别当成漏了**）
+//
+// 1. **没有块级删除 / 墓碑**：某块只在一侧存在时按"保留"处理（`OnlyLocal` / `OnlyRemote`）。
+//    今天页级 LWW 会让它整页消失，块级合并下它**会留下** —— 这是本片**故意的**选择（内容不许
+//    静默丢），块级删除语义留到有墓碑（或 CRDT）那一刀；判据把它钉住，见
+//    `block_only_on_one_side_is_kept`。
+// 2. **顺序 / 移动不参与合并**：顺序取页级胜方那一侧，另一侧多出来的块**按它自己的顺序追加在表尾**。
+//    这是回复信（`2026-09-19-stage1-block-lww-readiness.reply-1` §二）明确要求钉住的那条边界，
+//    判据见 `order_comes_from_the_page_level_winner_and_extras_are_appended`。
+// 3. **`rev` 只是本机视角的过渡量**：不许进 FTS / 反链 / 导出 / 版本历史，也不许当"最后修改时间"用
+//    （§7 最后一段）。到了 C 由 Yjs 的 clock 取代。
+// =====================================================================================
+
+/// 一份「块表」里的一行：块的 id、它的 `blockRev`（Lamport 计数器）、该块的 JSON 片段。
+///
+/// `rev: None` = **老客户端产物**（它不认识这个字段，保存时会被剥掉）⇒ 裁定 (iii)：**不静默判**。
+///
+/// ⚠️ **`json` 里不含 `blockRev` 字段**（rev 单独放在上面那个字段里）—— 这不是洁癖：
+/// 判定表的第一行是"两侧内容**逐字节相同** ⇒ 不提示"，而老客户端"打开—原样保存"**恰恰会剥掉
+/// `blockRev`**。若把 rev 算进被比较的片段，那一行就**永远不成立** ⇒ 每次同步都提示 ⇒ 噪声 ⇒
+/// 用户学会忽略 ⇒ 等于静默（反判据第二条要拦的正是这个）。去 rev 的动作由**调用方**在提取块表时做。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockSnapshot {
+    pub block_id: String,
+    pub rev: Option<i64>,
+    pub json: String,
+}
+
+impl BlockSnapshot {
+    pub fn new(block_id: &str, rev: Option<i64>, json: &str) -> Self {
+        BlockSnapshot {
+            block_id: block_id.to_string(),
+            rev,
+            json: json.to_string(),
+        }
+    }
+}
+
+/// 这一块**是怎么定的** —— 输出里的每一项都带它，调用方不需要自己再推一遍。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockChoice {
+    /// `remote.rev < local.rev` ⇒ 留本地那一块（本地有远端没见过的编辑）
+    Local,
+    /// `remote.rev > local.rev` ⇒ 用远端那一块
+    Remote,
+    /// 两侧内容**逐字节相同** ⇒ 无事（写哪一版都一样，**不许提示**）
+    Identical,
+    /// 只有本地有这一块（本片不做块级删除 ⇒ 保留）
+    OnlyLocal,
+    /// 只有远端有这一块
+    OnlyRemote,
+    /// **判不了** ⇒ 不自动选边（裁定 (iii)）
+    Conflict(ConflictReason),
+}
+
+impl BlockChoice {
+    /// 这一项是不是"要用户裁决" —— 调用方用它决定要不要提示。
+    pub fn is_conflict(&self) -> bool {
+        matches!(self, BlockChoice::Conflict(_))
+    }
+}
+
+/// 为什么不自动选边（判定表里那两行"冲突"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictReason {
+    /// `rev` 相等但内容不同 —— 并发同改同一块（两侧都从同一 base 加一 ⇒ 编号必然相等）
+    SameRevDifferentContent,
+    /// 任一侧缺 `blockRev` —— 老客户端产物（字段被 `exportJSON` 剥掉）
+    MissingRev,
+}
+
+/// 合并结果里的一块。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergedBlock {
+    pub block_id: String,
+    pub choice: BlockChoice,
+    /// 该块的 JSON 片段。⚠️ `choice` 是 `Conflict` 时它是**本地现状占位**（本地没有则远端那一版），
+    /// **不是**裁决结果 —— 见 `BlockMergeOutcome` 的注释。
+    pub json: String,
+}
+
+/// 一块冲突：两侧各自的版本都带出来，调用方/UI 才有得"取回"。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockConflict {
+    pub block_id: String,
+    pub reason: ConflictReason,
+    pub local_json: Option<String>,
+    pub remote_json: Option<String>,
+}
+
+/// 逐块合并的结果。
+///
+/// ⚠️ **`conflicts` 非空 = 这次合并没有完全自动完成**：`blocks` 里对应的那一项 `choice` 是
+/// `Conflict(...)`、`json` 只是**现状占位**。调用方**不许**在没有提示、也没拿到用户裁决的情况下
+/// 把它直接当结果写回（"冲突不许静默丢"那条不变量）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockMergeOutcome {
+    pub blocks: Vec<MergedBlock>,
+    pub conflicts: Vec<BlockConflict>,
+}
+
+impl BlockMergeOutcome {
+    /// 这一页有没有需要用户裁决的块。
+    pub fn has_conflicts(&self) -> bool {
+        !self.conflicts.is_empty()
+    }
+}
+
+/// ★ **块级合并点**（纯函数）：两份块表 + 页级判定 ⇒ 逐块选边。
+///
+/// 判定（与 §7 那张表逐行对应，**顺序有意义**）：
+///
+/// | 情形 | 判定 |
+/// |---|---|
+/// | 两侧内容**逐字节相同** | `Identical`（**先判它**：老客户端"打开—原样保存"会剥掉 `rev` 而内容未变，那次**不许**提示） |
+/// | `remote.rev > local.rev` | `Remote` |
+/// | `remote.rev < local.rev` | `Local` |
+/// | `rev` 相等、内容不同 | `Conflict(SameRevDifferentContent)` |
+/// | 任一侧缺 `rev` | `Conflict(MissingRev)` |
+/// | 只有一侧有这一块 | `OnlyLocal` / `OnlyRemote`（本片不做块级删除） |
+pub fn merge_blocks(
+    local: &[BlockSnapshot],
+    remote: &[BlockSnapshot],
+    page_level: MergeDecision,
+) -> BlockMergeOutcome {
+    use std::collections::HashMap;
+
+    let lmap: HashMap<&str, &BlockSnapshot> =
+        local.iter().map(|b| (b.block_id.as_str(), b)).collect();
+    let rmap: HashMap<&str, &BlockSnapshot> =
+        remote.iter().map(|b| (b.block_id.as_str(), b)).collect();
+
+    // 顺序：页级胜方那一侧的顺序，另一侧多出来的块按它自己的顺序**追加在表尾**（已知边界 2）。
+    // 同一 id 在一侧出现两次时**取第一次**（原顺序里先出现的那一份）。
+    let (first, rest) = match page_level {
+        MergeDecision::KeepLocal => (local, remote),
+        MergeDecision::TakeRemote => (remote, local),
+    };
+    let mut order: Vec<&str> = Vec::with_capacity(first.len() + rest.len());
+    for b in first.iter().chain(rest.iter()) {
+        if !order.contains(&b.block_id.as_str()) {
+            order.push(b.block_id.as_str());
+        }
+    }
+
+    let mut blocks = Vec::with_capacity(order.len());
+    let mut conflicts = Vec::new();
+
+    for id in order {
+        let l = lmap.get(id).copied();
+        let r = rmap.get(id).copied();
+
+        let (choice, json) = match (l, r) {
+            // 两侧都有：先看内容是不是**逐字节相同**（含"老客户端剥了 rev 但内容没变"那条）
+            (Some(l), Some(r)) if l.json == r.json => (BlockChoice::Identical, l.json.clone()),
+            (Some(l), Some(r)) => match (l.rev, r.rev) {
+                (Some(lr), Some(rr)) if rr > lr => (BlockChoice::Remote, r.json.clone()),
+                (Some(lr), Some(rr)) if rr < lr => (BlockChoice::Local, l.json.clone()),
+                (Some(_), Some(_)) => (
+                    BlockChoice::Conflict(ConflictReason::SameRevDifferentContent),
+                    l.json.clone(),
+                ),
+                // 任一侧缺 rev（老客户端产物）⇒ 判不了就不判
+                _ => (
+                    BlockChoice::Conflict(ConflictReason::MissingRev),
+                    l.json.clone(),
+                ),
+            },
+            (Some(l), None) => (BlockChoice::OnlyLocal, l.json.clone()),
+            (None, Some(r)) => (BlockChoice::OnlyRemote, r.json.clone()),
+            // order 是从两侧 id 的并集来的 ⇒ 这一支不可达
+            (None, None) => continue,
+        };
+
+        if let BlockChoice::Conflict(reason) = choice {
+            conflicts.push(BlockConflict {
+                block_id: id.to_string(),
+                reason,
+                local_json: l.map(|b| b.json.clone()),
+                remote_json: r.map(|b| b.json.clone()),
+            });
+        }
+
+        blocks.push(MergedBlock {
+            block_id: id.to_string(),
+            choice,
+            json,
+        });
+    }
+
+    BlockMergeOutcome { blocks, conflicts }
+}
+
+/// 阶段 1 的**合成入口**：先页级（`dirty` 优先本地），再逐块。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PageMerge {
+    /// 页级判定说留本地（`dirty != 0` 或本地 `seq` 更靠后）⇒ **整页都不动**。
+    /// ⚠️ 这一支**不许**再走块级合并：④ 页级语义不被块级推翻。
+    KeepLocal,
+    /// 页级说用远端 ⇒ 逐块比对后的结果（可能仍有 `conflicts` 要提示）。
+    Merged(BlockMergeOutcome),
+}
+
+/// ★ 阶段 1 合并的**唯一调用顺序**（免得调用方各写一遍、写岔）。
+pub fn merge_page_and_blocks(
+    local_state: Option<LocalState>,
+    remote_seq: i64,
+    local_blocks: &[BlockSnapshot],
+    remote_blocks: &[BlockSnapshot],
+) -> PageMerge {
+    let page_level = merge(local_state, remote_seq);
+    if page_level == MergeDecision::KeepLocal {
+        return PageMerge::KeepLocal;
+    }
+    PageMerge::Merged(merge_blocks(local_blocks, remote_blocks, page_level))
 }
 
 #[cfg(test)]
@@ -220,5 +453,237 @@ mod tests {
     #[test]
     fn clean_and_behind_takes_remote() {
         assert_eq!(merge(st(4, 0), 5), MergeDecision::TakeRemote);
+    }
+
+    // ===== 阶段 1 · 块级合并（纯函数）=====================================================
+    // 与前端 `src/lib/docContent.test.ts` 的 `docContent.mergeBlocks` 那组用例**逐条对应**：
+    //   · 两端各改不同块 ⇒ 都保留        ↔ blocks_edited_on_different_sides_are_both_kept
+    //   · 远端 rev 更大                   ↔ newer_remote_rev_takes_remote
+    //   · 本地 rev 更大                   ↔ newer_local_rev_keeps_local
+    //   · 内容逐字节相同（缺 rev）        ↔ identical_content_is_not_a_conflict…
+    //   · rev 相等而内容不同              ↔ equal_rev_different_content_is_a_conflict
+    //   · 缺 rev 且内容变了（反判据）     ↔ missing_rev_with_changed_content_must_be_a_conflict
+    //   · 只在一侧的块                    ↔ block_only_on_one_side_is_kept
+    //   · 顺序边界                        ↔ order_comes_from_the_page_level_winner…
+    //   · 页级 KeepLocal 不许被块级推翻   ↔ page_level_keep_local_never_consults_blocks
+    //   · 冲突带两侧原文                  ↔ conflict_carries_both_sides_so_the_ui_can_offer_recovery
+
+    fn blk(id: &str, rev: Option<i64>, body: &str) -> BlockSnapshot {
+        BlockSnapshot::new(id, rev, body)
+    }
+
+    /// 按 id 取结果里那一项（顺序无关的断言用它）。
+    fn pick(o: &BlockMergeOutcome, id: &str) -> MergedBlock {
+        o.blocks
+            .iter()
+            .find(|b| b.block_id == id)
+            .expect("块不在结果里")
+            .clone()
+    }
+
+    /// 结果的 id 顺序。
+    fn ids(o: &BlockMergeOutcome) -> Vec<&str> {
+        o.blocks.iter().map(|b| b.block_id.as_str()).collect()
+    }
+
+    #[test]
+    fn blocks_edited_on_different_sides_are_both_kept() {
+        // ★ 阶段 1 的**核心承诺**：两端各改不同的顶层块 ⇒ 两边的**内容**都必须保留。
+        let local = vec![
+            blk("b1", Some(2), "本地改过的 b1"),
+            blk("b2", Some(1), "b2 原样"),
+        ];
+        let remote = vec![
+            blk("b1", Some(1), "b1 原样"),
+            blk("b2", Some(2), "远端改过的 b2"),
+        ];
+
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+
+        assert_eq!(pick(&out, "b1").choice, BlockChoice::Local);
+        assert_eq!(pick(&out, "b1").json, "本地改过的 b1");
+        assert_eq!(pick(&out, "b2").choice, BlockChoice::Remote);
+        assert_eq!(pick(&out, "b2").json, "远端改过的 b2");
+        assert!(
+            !out.has_conflicts(),
+            "各改不同块不该产生冲突：{:?}",
+            out.conflicts
+        );
+    }
+
+    #[test]
+    fn newer_remote_rev_takes_remote() {
+        let local = vec![blk("b1", Some(3), "旧")];
+        let remote = vec![blk("b1", Some(4), "新")];
+        assert_eq!(
+            merge_blocks(&local, &remote, MergeDecision::TakeRemote).blocks[0].json,
+            "新"
+        );
+    }
+
+    #[test]
+    fn newer_local_rev_keeps_local() {
+        let local = vec![blk("b1", Some(5), "本地更新")];
+        let remote = vec![blk("b1", Some(4), "远端更旧")];
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+        assert_eq!(out.blocks[0].choice, BlockChoice::Local);
+        assert_eq!(out.blocks[0].json, "本地更新");
+        assert!(!out.has_conflicts());
+    }
+
+    #[test]
+    fn identical_content_is_not_a_conflict_even_when_revs_are_missing() {
+        // ★ 反判据第二条（回复信 §三）：老客户端"打开—原样保存"会剥掉 `blockRev` 而**内容未变** ——
+        // 那次**不许**提示，否则提示会在每次同步冒出来 ⇒ 变成噪声 ⇒ 用户学会忽略 ⇒ 等于静默。
+        let local = vec![blk("b1", Some(7), "一模一样")];
+        let remote = vec![blk("b1", None, "一模一样")];
+
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+
+        assert_eq!(pick(&out, "b1").choice, BlockChoice::Identical);
+        assert!(
+            !out.has_conflicts(),
+            "内容逐字节相同却提示了：{:?}",
+            out.conflicts
+        );
+    }
+
+    #[test]
+    fn equal_rev_different_content_is_a_conflict() {
+        // 并发同改同一块：两侧都从同一 base 加一 ⇒ 编号**必然相等**。
+        let local = vec![blk("b1", Some(2), "我改的")];
+        let remote = vec![blk("b1", Some(2), "他改的")];
+
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+
+        assert_eq!(
+            pick(&out, "b1").choice,
+            BlockChoice::Conflict(ConflictReason::SameRevDifferentContent)
+        );
+        assert_eq!(out.conflicts.len(), 1);
+        assert_eq!(out.conflicts[0].local_json.as_deref(), Some("我改的"));
+        assert_eq!(out.conflicts[0].remote_json.as_deref(), Some("他改的"));
+    }
+
+    #[test]
+    fn missing_rev_with_changed_content_must_be_a_conflict() {
+        // ★ 反判据第一条（§4 第 3 条）：造一份"老客户端产物"（`blockRev` 被剥掉）而内容**变了**
+        // ⇒ **必须**走到裁定 (iii)（提示）。**若它静默按"最旧"处理（Local/Remote）⇒ 这条红。**
+        for (l, r) in [
+            (
+                blk("b1", None, "老客户端改的"),
+                blk("b1", Some(9), "新客户端的"),
+            ),
+            (
+                blk("b1", Some(9), "新客户端的"),
+                blk("b1", None, "老客户端改的"),
+            ),
+            (blk("b1", None, "甲"), blk("b1", None, "乙")),
+        ] {
+            let out = merge_blocks(&[l], &[r], MergeDecision::TakeRemote);
+            let got = out.blocks[0].choice;
+            assert_eq!(
+                got,
+                BlockChoice::Conflict(ConflictReason::MissingRev),
+                "缺 rev 且内容变了却静默选边了：{got:?}"
+            );
+            assert!(got.is_conflict());
+        }
+    }
+
+    #[test]
+    fn block_only_on_one_side_is_kept() {
+        // 已知边界 1：本片**不做块级删除 / 墓碑** ⇒ 只在一侧的块保留（判据把它钉住，
+        // 免得将来有人顺手把它改成"消失"而没人发现）。
+        let local = vec![
+            blk("b1", Some(1), "共有"),
+            blk("b-new", Some(1), "本地新块"),
+        ];
+        let remote = vec![
+            blk("b1", Some(2), "远端改过"),
+            blk("b-remote", Some(1), "远端新块"),
+        ];
+
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+
+        assert_eq!(pick(&out, "b-new").choice, BlockChoice::OnlyLocal);
+        assert_eq!(pick(&out, "b-remote").choice, BlockChoice::OnlyRemote);
+        assert!(
+            !out.has_conflicts(),
+            "只在一侧的块不是冲突：{:?}",
+            out.conflicts
+        );
+    }
+
+    #[test]
+    fn order_comes_from_the_page_level_winner_and_extras_are_appended() {
+        // 已知边界 2（回复信 §二明确要求钉住）：**顺序 / 移动不参与合并** ——
+        // 顺序取页级胜方那一侧，另一侧多出来的块按它自己的顺序**追加在表尾**。
+        let local = vec![
+            blk("l1", Some(1), "l1"),
+            blk("l2", Some(1), "l2"),
+            blk("l3", Some(1), "l3"),
+        ];
+        let remote = vec![blk("r1", Some(1), "r1"), blk("r2", Some(1), "r2")];
+
+        // 页级胜方 = 本地 ⇒ 本地顺序在前，远端那两个追加在后。
+        let keep_local_order = merge_blocks(&local, &remote, MergeDecision::KeepLocal);
+        assert_eq!(ids(&keep_local_order), vec!["l1", "l2", "l3", "r1", "r2"]);
+
+        // 页级胜方 = 远端 ⇒ 反过来。
+        let take_remote_order = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+        assert_eq!(ids(&take_remote_order), vec!["r1", "r2", "l1", "l2", "l3"]);
+    }
+
+    #[test]
+    fn page_level_keep_local_never_consults_blocks() {
+        // ④ 本地 `dirty` 仍优先 ⇒ 页级判定说"留本地"时，**整页都不动**，
+        // 不许拿块级合并的结果去覆盖它（否则"本地刚改还没推"的东西会被拆开）。
+        let local_blocks = vec![blk("b1", Some(1), "本地现状")];
+        let remote_blocks = vec![blk("b1", Some(99), "远端更新")];
+
+        // dirty=1 ⇒ 页级留本地
+        assert_eq!(
+            merge_page_and_blocks(st(3, 1), 99, &local_blocks, &remote_blocks),
+            PageMerge::KeepLocal
+        );
+
+        // 干净且落后 ⇒ 页级用远端，这一支才做逐块比对
+        match merge_page_and_blocks(st(3, 0), 99, &local_blocks, &remote_blocks) {
+            PageMerge::Merged(out) => assert_eq!(out.blocks[0].json, "远端更新"),
+            PageMerge::KeepLocal => panic!("干净且落后时不该留本地"),
+        }
+    }
+
+    #[test]
+    fn conflict_carries_both_sides_so_the_ui_can_offer_recovery() {
+        // "冲突不许静默丢"：结果里必须**两侧原文都在**，UI 才有得"取回"。
+        let local = vec![blk("b1", Some(2), "{\"v\":\"local\"}")];
+        let remote = vec![blk("b1", Some(2), "{\"v\":\"remote\"}")];
+
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+
+        assert_eq!(out.conflicts.len(), 1);
+        let c = &out.conflicts[0];
+        assert_eq!(c.block_id, "b1");
+        assert_eq!(c.local_json.as_deref(), Some("{\"v\":\"local\"}"));
+        assert_eq!(c.remote_json.as_deref(), Some("{\"v\":\"remote\"}"));
+        // 冲突那一项在 blocks 里的 json 是**本地现状占位**，不是裁决 —— 注释里写死了这条。
+        assert_eq!(pick(&out, "b1").json, "{\"v\":\"local\"}");
+    }
+
+    #[test]
+    fn empty_side_takes_the_other_side_whole() {
+        let local: Vec<BlockSnapshot> = vec![];
+        let remote = vec![blk("b1", Some(1), "甲的"), blk("b2", None, "乙的")];
+
+        let out = merge_blocks(&local, &remote, MergeDecision::TakeRemote);
+        assert_eq!(ids(&out), vec!["b1", "b2"]);
+        assert!(out
+            .blocks
+            .iter()
+            .all(|b| b.choice == BlockChoice::OnlyRemote));
+        // ⚠️ 本页一侧整页为空时**不报冲突**：那不是"判不了"，是"另一侧全都有"。
+        assert!(!out.has_conflicts());
     }
 }

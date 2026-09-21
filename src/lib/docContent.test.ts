@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { localState, readAllContents, readContent, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type DocContent } from "./docContent";
+import { localState, mergeBlocks, mergePageBlocks, readAllContents, readContent, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 
 beforeAll(() => {
   const wasm = join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm");
@@ -180,6 +180,123 @@ describe("docContent.shouldTakeRemote（★ 唯一的合并点：页级 LWW）",
 
   it("没改过且落后 ⇒ 用远端", () => {
     expect(shouldTakeRemote({ syncSeq: 4, dirty: 0 }, 5)).toBe(true);
+  });
+});
+
+describe("docContent.mergeBlocks（★ 阶段 1：块级 LWW 纯函数）", () => {
+  // 与 Rust 侧 `src-tauri/src/doc_content.rs` 的 `mod tests` **逐条对应**（改一边看另一边）：
+  //   两端各改不同块 ⇒ 都保留        ↔ blocks_edited_on_different_sides_are_both_kept
+  //   远端 rev 更大 / 本地 rev 更大   ↔ newer_remote_rev_takes_remote / newer_local_rev_keeps_local
+  //   内容逐字节相同（缺 rev）        ↔ identical_content_is_not_a_conflict_even_when_revs_are_missing
+  //   rev 相等而内容不同              ↔ equal_rev_different_content_is_a_conflict
+  //   缺 rev 且内容变了（反判据）     ↔ missing_rev_with_changed_content_must_be_a_conflict
+  //   只在一侧的块                    ↔ block_only_on_one_side_is_kept
+  //   顺序边界                        ↔ order_comes_from_the_page_level_winner_and_extras_are_appended
+  //   页级留本地不许被块级推翻        ↔ page_level_keep_local_never_consults_blocks
+  //   冲突带两侧原文                  ↔ conflict_carries_both_sides_so_the_ui_can_offer_recovery
+  //   一侧为空                        ↔ empty_side_takes_the_other_side_whole
+
+  const blk = (blockId: string, rev: number | null, json: string): BlockSnapshot => ({ blockId, rev, json });
+  const pick = (out: BlockMergeOutcome, id: string) => out.blocks.find((b) => b.blockId === id)!;
+  const ids = (out: BlockMergeOutcome) => out.blocks.map((b) => b.blockId);
+
+  it("★ 两端各改不同块 ⇒ 两边的内容都保留（阶段 1 的核心承诺）", () => {
+    const local = [blk("b1", 2, "本地改过的 b1"), blk("b2", 1, "b2 原样")];
+    const remote = [blk("b1", 1, "b1 原样"), blk("b2", 2, "远端改过的 b2")];
+
+    const out = mergeBlocks(local, remote, "remote");
+
+    expect(pick(out, "b1").choice).toBe("local");
+    expect(pick(out, "b1").json).toBe("本地改过的 b1");
+    expect(pick(out, "b2").choice).toBe("remote");
+    expect(pick(out, "b2").json).toBe("远端改过的 b2");
+    expect(out.conflicts).toEqual([]);
+  });
+
+  it("远端 rev 更大 ⇒ 用远端", () => {
+    expect(mergeBlocks([blk("b1", 3, "旧")], [blk("b1", 4, "新")], "remote").blocks[0].json).toBe("新");
+  });
+
+  it("本地 rev 更大 ⇒ 留本地（远端更旧不许覆盖）", () => {
+    const out = mergeBlocks([blk("b1", 5, "本地更新")], [blk("b1", 4, "远端更旧")], "remote");
+    expect(out.blocks[0]).toMatchObject({ choice: "local", json: "本地更新" });
+    expect(out.conflicts).toEqual([]);
+  });
+
+  it("★ 内容逐字节相同 ⇒ identical 且**不许提示**（老客户端「打开—原样保存」会剥掉 rev）", () => {
+    // 反判据第二条（回复信 §三）：若也提示，提示会在每次同步冒出来 ⇒ 变噪声 ⇒ 用户学会忽略 ⇒ 等于静默。
+    const out = mergeBlocks([blk("b1", 7, "一模一样")], [blk("b1", null, "一模一样")], "remote");
+    expect(pick(out, "b1").choice).toBe("identical");
+    expect(out.conflicts).toEqual([]);
+  });
+
+  it("rev 相等而内容不同 ⇒ 冲突 same-rev-different-content（并发同改同一块）", () => {
+    const out = mergeBlocks([blk("b1", 2, "我改的")], [blk("b1", 2, "他改的")], "remote");
+    expect(pick(out, "b1")).toMatchObject({ choice: "conflict", reason: "same-rev-different-content" });
+    expect(out.conflicts).toHaveLength(1);
+  });
+
+  it("★ 缺 rev 且内容变了 ⇒ **必须**冲突 missing-rev（静默按「最旧」处理则本条红）", () => {
+    const cases: [BlockSnapshot, BlockSnapshot][] = [
+      [blk("b1", null, "老客户端改的"), blk("b1", 9, "新客户端的")],
+      [blk("b1", 9, "新客户端的"), blk("b1", null, "老客户端改的")],
+      [blk("b1", null, "甲"), blk("b1", null, "乙")],
+    ];
+    for (const [l, r] of cases) {
+      const out = mergeBlocks([l], [r], "remote");
+      expect(out.blocks[0]).toMatchObject({ choice: "conflict", reason: "missing-rev" });
+      expect(out.conflicts).toHaveLength(1);
+    }
+  });
+
+  it("只在一侧的块 ⇒ only-local / only-remote，且**不是**冲突（本片不做块级删除）", () => {
+    const out = mergeBlocks(
+      [blk("b1", 1, "共有"), blk("b-new", 1, "本地新块")],
+      [blk("b1", 2, "远端改过"), blk("b-remote", 1, "远端新块")],
+      "remote",
+    );
+    expect(pick(out, "b-new").choice).toBe("only-local");
+    expect(pick(out, "b-remote").choice).toBe("only-remote");
+    expect(out.conflicts).toEqual([]);
+  });
+
+  it("顺序边界：顺序取页级胜方那一侧，另一侧多出来的块**追加在表尾**", () => {
+    const local = [blk("l1", 1, "l1"), blk("l2", 1, "l2"), blk("l3", 1, "l3")];
+    const remote = [blk("r1", 1, "r1"), blk("r2", 1, "r2")];
+
+    expect(ids(mergeBlocks(local, remote, "local"))).toEqual(["l1", "l2", "l3", "r1", "r2"]);
+    expect(ids(mergeBlocks(local, remote, "remote"))).toEqual(["r1", "r2", "l1", "l2", "l3"]);
+  });
+
+  it("④ 页级留本地时**整页不动** —— 块级合并不许推翻它", () => {
+    const local = [blk("b1", 1, "本地现状")];
+    const remote = [blk("b1", 99, "远端更新")];
+
+    // dirty=1 ⇒ 页级留本地
+    expect(mergePageBlocks({ syncSeq: 3, dirty: 1 }, 99, local, remote)).toEqual({ action: "keep-local" });
+
+    // 干净且落后 ⇒ 才做逐块比对
+    const merged = mergePageBlocks({ syncSeq: 3, dirty: 0 }, 99, local, remote);
+    expect(merged.action).toBe("merge");
+    if (merged.action === "merge") expect(merged.blocks[0].json).toBe("远端更新");
+  });
+
+  it("冲突里**两侧原文都在**（UI 才有得取回）＋ blocks 里那一项是本地现状占位", () => {
+    const out = mergeBlocks([blk("b1", 2, '{"v":"local"}')], [blk("b1", 2, '{"v":"remote"}')], "remote");
+    expect(out.conflicts[0]).toEqual({
+      blockId: "b1",
+      reason: "same-rev-different-content",
+      localJson: '{"v":"local"}',
+      remoteJson: '{"v":"remote"}',
+    });
+    expect(pick(out, "b1").json).toBe('{"v":"local"}');
+  });
+
+  it("一侧为空 ⇒ 全取另一侧，且**不报冲突**（那不是「判不了」，是「另一侧全都有」）", () => {
+    const out = mergeBlocks([], [blk("b1", 1, "甲的"), blk("b2", null, "乙的")], "remote");
+    expect(ids(out)).toEqual(["b1", "b2"]);
+    expect(out.blocks.every((b) => b.choice === "only-remote")).toBe(true);
+    expect(out.conflicts).toEqual([]);
   });
 });
 
