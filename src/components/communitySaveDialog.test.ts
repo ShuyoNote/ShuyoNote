@@ -161,6 +161,43 @@ afterEach(() => {
 });
 
 describe("存社区帖子：预览在前，落库在后", () => {
+  it("正文预览默认**渲染**（不是糊一屏 Markdown 源码），可切到源码档再切回来", async () => {
+    // owner 2026-09-21：「内容区显示为 MD 格式不太友好吧？」——正文里带 `**`/`>`/`---` 时才看得出来
+    const mdPost = { ...post, body_markdown: "**加粗**与 `代码`\n\n> 引用一行\n\n---\n\n- 列表一项" };
+    mocks.fetchImpl.mockImplementation(() => jsonResponse(mdPost));
+    mount();
+    type(POST_URL);
+    flushSync(() => byText("读取").click());
+    await vi.waitFor(() => expect(text()).toContain("插件配方：批量一"));
+
+    const body = () => document.querySelector<HTMLElement>(".community-save-preview-body")!;
+    // ① 默认档 = 渲染档：`.is-rendered` 在，且**真有** Markdown 语义的产物
+    expect(body().classList.contains("is-rendered")).toBe(true);
+    expect(body().querySelector("strong")?.textContent).toBe("加粗");
+    expect(body().querySelector("blockquote")).not.toBeNull();
+    expect(body().querySelector("hr")).not.toBeNull();
+    // ② 渲染档里不该再看到 Markdown 的**字面量**（`**加粗**` / 行首 `> `）
+    expect(body().textContent).not.toContain("**");
+    expect(body().textContent).not.toContain("---");
+
+    // ③ 切到源码档：逐字给出（存进笔记的就是它）
+    const toggle = Array.from(document.querySelectorAll<HTMLButtonElement>(".community-save-preview-toggle")).find((b) =>
+      (b.textContent ?? "").includes("看 Markdown 源码"),
+    )!;
+    flushSync(() => toggle.click());
+    expect(body().classList.contains("is-rendered")).toBe(false);
+    expect(body().textContent).toContain("**加粗**");
+    expect(body().textContent).toContain("> 引用一行");
+
+    // ④ 再切回渲染档
+    const back = Array.from(document.querySelectorAll<HTMLButtonElement>(".community-save-preview-toggle")).find((b) =>
+      (b.textContent ?? "").includes("看渲染效果"),
+    )!;
+    flushSync(() => back.click());
+    expect(body().classList.contains("is-rendered")).toBe(true);
+    expect(body().textContent).not.toContain("**");
+  });
+
   it("读取成功 → 先出预览（标题/作者/来源/正文），**此时还没有落库**", async () => {
     mocks.fetchImpl.mockImplementation(() => jsonResponse(post));
     mount();
