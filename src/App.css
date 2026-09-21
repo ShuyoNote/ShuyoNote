@@ -1923,6 +1923,9 @@ select.sync-input {
   background: var(--accent);
   transition: width 0.2s ease;
 }
+/* 邮箱「拉取进度」条要占满整行：`.sync-status.is-progress` 是 flex 行 + wrap，
+   直接塞进去会被当成一个宽 0 的 flex 项（同步面板那边是嵌在 .sync-progress-row 里同理）。 */
+.email-fetch-status .sync-progressbar { flex-basis: 100%; margin-top: 2px; }
 /* 触发图标上同步中的脉冲点。 */
 .sync-pulse {
   width: 7px;
@@ -4755,6 +4758,63 @@ body.content-full .editor-placeholder {
 .prop-value:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* 「时间」属性：**一行只有一个可见的输入框**（手输框）＋ 一枚 📅 按钮开原生选择器。
+   以前这里并排摆两个框（原生 datetime-local ＋ 手输框），同一个时刻显示两遍 ——
+   owner 2026-09-21 的截图问的就是那个。现在原生那枚藏 1px（**不能 display:none**：
+   那样 showPicker() 会抛），所以 DOM 里仍是两个 input，但肉眼只有一个。 */
+.prop-datetime {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 75%;
+  min-width: 0;
+}
+
+.prop-datetime .prop-value {
+  flex: 1;
+  max-width: none;
+  min-width: 0;
+}
+
+.prop-datetime-pick {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: var(--radius-xs);
+  padding: 3px 6px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.prop-datetime-pick:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* 藏在布局里（1px + 透明）：showPicker() 要求元素是"渲染过的"，display:none 会抛 */
+.prop-datetime-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.prop-value.is-invalid {
+  border-color: var(--danger, #e5484d);
+}
+
+.prop-invalid {
+  flex-shrink: 0;
+  color: var(--danger, #e5484d);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: help;
 }
 
 .prop-checkbox {
@@ -18594,18 +18654,46 @@ p:has(> .editor-drawing-container) {
 .email-list-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  /* ★ 允许换行（2026-09-20 用户截图：列表面板窄的时候，标题被挤成竖排、批量按钮的文字互相压住）。
+     只换行还不够：下面每个按钮都 `flex: none` + `white-space: nowrap`，宁可行整体掉到第二行，
+     也不要把某个按钮压扁成"文字溢出到邻居身上"。 */
+  flex-wrap: wrap;
+  gap: 6px 10px;
   padding: 12px 14px 8px;
   position: relative;
   justify-content: space-between;
 }
-.email-list-head-title { font-size: 15px; font-weight: 700; color: var(--text); }
-.email-list-head-left { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.email-list-head-title { font-size: 15px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.email-list-head-left { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
+/* 列表头右侧整组（批量操作 + 共 N 封）：
+   · 宽时一行：`… 删除选中(1) 标为已读 标为未读 存为笔记  共 139 封`
+   · 窄时**整组换行**，且 `wrap-reverse` 让「共 N 封」留在上一行右端、批量按钮掉到下一行
+   （2026-09-20 用户截图的那一幕：标题被挤成竖排、按钮文字叠在一起）。 */
+.email-list-head-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+/* 批量操作组：窄了就整组换行 */
+.email-list-head-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  justify-content: flex-end;
+  min-width: 0;
+}
 .email-list-head-sep { color: var(--text-faint); font-size: 14px; }
 .email-list-head-count {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: none;
+  white-space: nowrap;
   font-size: 12px;
   color: var(--text-dim);
   background: transparent;
@@ -18680,7 +18768,8 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+  /* `margin-left: auto` 移到 `.email-list-head-actions` 上：让**整组**右对齐、整组换行 */
+  flex: none;
   font-size: 12px;
   color: var(--danger, #e5484d);
   background: transparent;
@@ -18709,6 +18798,7 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: none;
   font-size: 12px;
   color: var(--accent, #4f7cff);
   background: transparent;
@@ -19186,14 +19276,30 @@ p:has(> .editor-drawing-container) {
 /* 富文本正文（DOMPurify 消毒后渲染） */
 .email-rich-body { font-size: 15px; line-height: 1.8; color: var(--text); word-break: break-word; }
 .email-rich-body img { max-width: 100%; height: auto; }
-/* 图片未加载(仅 data-src)时留占位高度，避免排版塌陷 */
-.email-rich-body img[data-src] {
-  min-height: 80px;
-  min-width: 80px;
+/* 被拦下的外部图片：给的是 1×1 透明 src，所以**不会**再出现浏览器那个碎图图标，
+   这里只补一个虚线占位块。最小 24px 给不带宽高的图标一点面积；带 width/height 的图
+   会用内联 style（sanitize 时按原属性写进去）拿到真实尺寸。 */
+.email-rich-body img[data-img-blocked] {
+  min-height: 24px;
+  min-width: 24px;
   background: var(--chip-bg);
   outline: 1px dashed var(--border-strong);
   outline-offset: -1px;
 }
+/* 「此邮件有 N 张外部图片未加载（防跟踪）· 显示图片」——别让用户以为图是发信人没发。 */
+.email-img-blocked-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--chip-bg);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.email-img-blocked-text { flex: 1 1 auto; min-width: 0; }
 .email-rich-body a { color: var(--accent, #4f7cff); text-decoration: none; }
 .email-rich-body a:hover { text-decoration: underline; }
 .email-rich-body table { max-width: 100%; border-collapse: collapse; }
@@ -20290,6 +20396,21 @@ body.is-plugin-panel-open .main {
   text-align: left;
   word-break: break-all;
 }
+/* `.community-save-source` 是"一行可点的地址/链接"（发布台账那条）；下面这个只是
+   「看 Markdown 源码 / 看渲染效果」的档位开关，**故意用不同的类名** —— 同一屏里两者都在，
+   共用类名会让"点开已发布的那一篇"那条判据（按 `querySelector(".community-save-source")` 找）
+   点到开关上。 */
+.community-save-preview-toggle {
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent, var(--text-dim));
+  font-size: 11.5px;
+  cursor: pointer;
+  text-align: right;
+  white-space: nowrap;
+}
 .community-save-preview-body {
   margin-top: 8px;
   padding-top: 8px;
@@ -20300,6 +20421,160 @@ body.is-plugin-panel-open .main {
   word-break: break-word;
   max-height: 34vh;
   overflow: auto;
+}
+/* 板块 / 标签这两行：左边小标题、右边控件（清单里唯一的两个**可编辑**项）。 */
+.community-save-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.community-save-field > .community-save-preview-meta { flex: none; margin-top: 0; }
+.community-save-board {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.community-save-tags {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.community-save-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  max-width: 100%;
+  word-break: break-all;
+}
+.community-save-tag-x {
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.community-save-tag-x:hover { color: var(--danger); }
+.community-save-tag-input {
+  flex: 1 1 90px;
+  min-width: 90px;
+  padding: 3px 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+.community-save-tag-hint { font-size: 11px; color: var(--text-faint); }
+.community-save-tag-suggest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.community-save-tag-suggest-item {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.community-save-tag-suggest-item:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+.community-save-tag-suggest-item:disabled { opacity: 0.45; cursor: default; }
+/* 「正文预览」那一行：左边标题、右边「看 Markdown 源码 / 看渲染效果」。 */.community-save-preview-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.community-save-preview-row .community-save-preview-meta { margin-top: 0; }
+.community-save-preview-row .community-save-source { margin-top: 0; white-space: nowrap; }
+/* 渲染档：正文按"发出去的样子"排版（社区那边也是这套 Markdown 语义）。
+   源码档仍是上面的 pre-wrap 等宽观感 —— 两档的差别只在这里。 */
+.community-save-preview-body.is-rendered {
+  white-space: normal;
+  color: var(--text);
+  line-height: 1.7;
+}
+.community-save-preview-body.is-rendered > :first-child { margin-top: 0; }
+.community-save-preview-body.is-rendered h1,
+.community-save-preview-body.is-rendered h2,
+.community-save-preview-body.is-rendered h3,
+.community-save-preview-body.is-rendered h4,
+.community-save-preview-body.is-rendered h5,
+.community-save-preview-body.is-rendered h6 {
+  margin: 12px 0 6px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+.community-save-preview-body.is-rendered h1 { font-size: 17px; }
+.community-save-preview-body.is-rendered h2 { font-size: 15px; }
+.community-save-preview-body.is-rendered h3 { font-size: 13.5px; }
+.community-save-preview-body.is-rendered h4,
+.community-save-preview-body.is-rendered h5,
+.community-save-preview-body.is-rendered h6 { font-size: 12.5px; }
+.community-save-preview-body.is-rendered p { margin: 6px 0; }
+.community-save-preview-body.is-rendered ul,
+.community-save-preview-body.is-rendered ol { margin: 6px 0; padding-left: 20px; }
+.community-save-preview-body.is-rendered li { margin: 2px 0; }
+.community-save-preview-body.is-rendered hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+.community-save-preview-body.is-rendered blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-dim);
+}
+.community-save-preview-body.is-rendered code {
+  background: var(--chip-bg);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+.community-save-preview-body.is-rendered pre {
+  background: var(--chip-bg);
+  padding: 8px;
+  border-radius: 6px;
+  overflow: auto;
+}
+.community-save-preview-body.is-rendered pre code { background: transparent; padding: 0; }
+.community-save-preview-body.is-rendered img {
+  max-width: 100%;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+.community-save-preview-body.is-rendered a { color: var(--accent, var(--text)); }
+.community-save-preview-body.is-rendered table { border-collapse: collapse; margin: 8px 0; }
+.community-save-preview-body.is-rendered th,
+.community-save-preview-body.is-rendered td {
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  text-align: left;
 }
 .community-save-more {
   margin-top: 6px;

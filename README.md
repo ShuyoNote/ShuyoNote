@@ -262,7 +262,7 @@ flowchart TB
 | 备份 / 导出 | rusqlite 在线 backup API + zip（Web 用 fflate + 流式 `Zip`） |
 | 插件 | boa_engine（受限 JS 运行时）+ 白名单 API |
 | 附件 | 内容寻址（SHA-256 去重）；Web 侧存 IndexedDB `blobStore` |
-| PDF 渲染/批注 | pdf.js（Web）+ MuPDF（桌面 native，`mupdf-sys`）+ 坐标归一化 `pdfAnnotation` 纯函数 | `src/lib/pdf*.ts`、`src-tauri/pdf_native.rs` |
+| PDF 渲染/批注 | pdf.js（Web）+ PDFium（桌面 native，**默认引擎**）+ MuPDF（**构建期可选项** `mupdf-rollback`，默认不编）+ 坐标归一化 `pdfAnnotation` 纯函数 | `src/lib/pdf*.ts`、`src-tauri/pdfium_native.rs` |
 | OCR / AI 识别 | tesseract.js 本地识别（`ocr.ts`，语言包按需下载 + IndexedDB 缓存）+ 视觉大模型（`ai/ocrVision.ts`） | `src/lib/ocr.ts`、`src/lib/ai/ocrVision.ts` |
 | 朗读 / 目录 | Web Speech 朗读（`speech.ts`）+ AI 生成目录（`aiOutline.ts` + `pdfOutlineGen.ts`） | `src/lib/speech.ts`、`src/lib/aiOutline.ts` |
 
@@ -337,7 +337,8 @@ ShuyoNote/
 │   └── src/
 │       ├── db.rs             # SQLite 连接/迁移；meta.db + spaces/<id>.db 每空间库
 │       ├── commands.rs       # 页面 CRUD
-│       ├── pdf_native.rs     # PDF native 渲染（MuPDF 经 mupdf-sys）
+│       ├── pdfium_native.rs  # PDF native 渲染（PDFium，默认引擎）
+│       ├── pdf_native.rs     # PDF native 渲染（MuPDF 经 mupdf-sys；仅 --features mupdf-rollback 时编）
 │       ├── search.rs         # FTS5 检索（含全空间跨库合并）
 │       ├── sync.rs           # outbox / LWW / push-pull / 附件同步
 │       ├── attachments.rs    # 图片 / 附件（内容寻址）

@@ -197,6 +197,46 @@ Windows 上「点社区链接 → 唤起应用」靠注册表 `HKCU\Software\Cla
 浏览器式唤起（`ShellExecute` 拉起恰好一个进程）、已有实例转发（仍是同一 PID）。
 原始输出留在**私有工程信箱**里（不放公开仓库）。
 
+### 安装目录：默认 `%LOCALAPPDATA%\Programs\ShuyoNote`（fork 了一份 NSIS 模板）
+
+**Tauri 没有"自定义默认安装目录"的配置项** —— `bundle.windows.nsis` 里只有 `installMode`
+（`currentUser` / `perMachine` / `both`），默认目录写死在模板里（上游 feature request：
+tauri-apps/tauri#11015）。所以只有两条路：接受 Tauri 的默认，或者 **fork 模板**。我们选了后者。
+
+| 项 | 值 |
+|---|---|
+| fork 的文件 | `src-tauri/nsis/installer.nsi`（`bundle.windows.nsis.template` 指向它；相对 `src-tauri/`） |
+| 上游 | `tauri-bundler <ver>` 的 `src/bundle/windows/nsis/installer.nsi`（文件头记着 sha256 与 cli-version） |
+| 改了几行 | **1 行**：`StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"` → `…\Programs\${PRODUCTNAME}` |
+| 结果 | 全新安装默认 `%LOCALAPPDATA%\Programs\ShuyoNote`（VS Code 那种写法）；**仍是 currentUser ⇒ 免 UAC、更新静默** |
+| 老用户 | **不受影响**：模板的 `RestorePreviousInstallLocation` 会读 `HKCU\Software\shuyo\ShuyoNote` 的默认值（上次装在哪儿）并覆盖默认值 |
+
+**⚠️ 为什么不用 `perMachine`（它才是 `Program Files`）**：`perMachine` 的注册表根是 **HKLM**
+（`SetShellVarContext all`），而老用户的"上次装在哪"与卸载项都在 **HKCU** ⇒ 新安装器**看不见**旧的
+per-user 安装，会把新版装到 `C:\Program Files\ShuyoNote`、把旧的 AppData 那份留在原地（两个同名卸载项、
+快捷方式仍指向旧版）；而 Tauri 更新完是拿 `current_exe()` 重启的 ⇒ **又回到旧路径那个 exe**，
+旧版继续跑、继续提示更新。另外 `perMachine` 是 `RequestExecutionLevel admin`：**安装**与**每次自动更新**
+都会弹 UAC。owner 2026-09-21 的裁定因此是「保持 currentUser，只改默认目录」。
+
+**⚠️ 升级 Tauri CLI 时必须重做这个 fork**：下载新版本 tauri-bundler 的上游 `installer.nsi`，重放那 1 行改动，
+更新头部的 `upstream-crate` / `upstream-sha256` / `cli-version`。不做的后果**不是编译错误**，而是打出来的包
+与 CLI 传入的占位符对不上（装不上，或又装回旧位置）。
+
+**门禁**：`node scripts/check-nsis-template.mjs`（已进 `pnpm build`）。离线查三条 —— template 指向的文件存在、
+那一行改动恰好 1 处且旧写法不残留、头部 `cli-version` 与 package.json 一致；**联网时**把上游模板下下来
+逐行 diff，差异多于那一行就红；取不到就打印 `· 跳过（网络原因）`、**不算失败**（与 `check:release-state` 同口径）。
+
+**真机验证（可重跑）**：`powershell -File scripts/verify-installer-default-dir.ps1 -Installer <setup.exe>`
+—— 只走到「选择安装位置」页，读那个输入框里的**预填值**（跨进程 `WM_GETTEXT`，`GetWindowText` 读别的进程
+的 EDIT 会得到空串），然后**取消**（绝不点安装）。它回答的正是 owner 那次截图的问题：**这个路径是产品默认，
+还是本机记着的旧路径？**
+
+> ⚠️ 本机看到 `C:\Users\<用户>\_archive\…` 这类路径**不代表产品默认错了**：那是模板按
+> `HKCU\Software\shuyo\ShuyoNote` 记住的上一次安装位置（2026-09-21 owner 截图那次就是它）。
+> 要复现"全新机器"的默认值：先删掉那个键的**默认项**（语言项留着无妨），再跑上面的探针。
+> 探针按 PID 找向导窗口 —— `perMachine` 那种要过 UAC 的包，向导属于提权后的**新**进程，探针找不到，
+> 会明确报 `ENV:` 而**不会静默通过**。
+
 ### 本机（Windows 签名构建）
 ```powershell
 # ① OpenSSL：两条都要（缺第一条当场 panic，缺第二条链接期报 LNK1181）
@@ -208,6 +248,9 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyon
 # ③ PDFium 运行时：装包要把 pdfium.dll 放在 exe 同级（源文件不进 git；缺席则**构建脚本期**即失败）
 node scripts/fetch-pdfium.mjs --check --platform win-x64   # 报「缺少」就跑一次：node scripts/fetch-pdfium.mjs --platform win-x64
 pnpm tauri build --bundles nsis   # 产出 bundle/nsis/ShuyoNote_<版本>_x64-setup.exe + 同名 .sig
+# ④（只在需要 MuPDF 回滚包时）默认构建**不编** MuPDF：`mupdf-rollback` 是构建期特性，
+#    平时不背它（它是重量级 C 依赖）。要出一个能 `SHUYONOTE_PDF_ENGINE=mupdf` 的包就加：
+#    pnpm tauri build --bundles nsis --features mupdf-rollback     # 体积/构建时间的代价随之回来
 ```
 
 > **2026-09-16 本机实测（8 分钟出包，产物过了 `release.mjs` 的签名互验）**——两条 OpenSSL 的坑

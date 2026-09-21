@@ -143,8 +143,9 @@ if (WIN) {
       : "没找到，先 `node scripts/fetch-pdfium.mjs --platform win-x64`",
     "缺了 `cargo build` / `pnpm tauri build` 会**当场停下**：`tauri-build` 的 `copy_resources` 报 " +
       "「resource path … doesn't exist」（`tauri-utils::Error::ResourcePathNotFound`，出在**构建脚本期**而非打包期）。" +
-      "缺了它的后果：装包里没有 pdfium.dll ⇒ 用户端只有 `SHUYONOTE_PDF_ENGINE=pdfium` 时报「找不到 PDFium 动态库」" +
-      "（默认引擎仍是 MuPDF，暂不致命；P5 换默认后就致命了）。源文件由 `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉，不进 git",
+      "缺了它的后果：装包里没有 pdfium.dll ⇒ 用户端开着默认引擎（PDFium，P5 自 1.91.13 起生效）" +
+      "开 PDF 就会「找不到 PDFium 动态库」——**已经致命**（这条在 P5 之前写的是"暂不致命"，别再照抄）。" +
+      "源文件由 `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉，不进 git",
   );
 }
 

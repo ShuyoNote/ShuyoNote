@@ -252,6 +252,31 @@ export interface CommunityPublishState {
   publishedAt: number;
 }
 
+/**
+ * 社区侧的一个板块（`GET /api/boards`，公开只读）。
+ *
+ * 界面只让用户从这份列表里挑 slug —— 社区对认不出的 slug 会**静默**当"未分类"，
+ * 所以"能选出来"这件事本身就是白名单。
+ */
+export interface CommunityBoard {
+  slug: string;
+  name: string;
+  description: string;
+  /** 该板块的帖子数（界面把"有人气的"排前面）。 */
+  posts: number;
+}
+
+/**
+ * 发布时要用的社区词表：板块（选哪个）＋ 已有标签（建议用哪些）。
+ * 与 Rust `community_publish::CommunityTaxonomy` 同形。
+ */
+export interface CommunityTaxonomy {
+  boards: CommunityBoard[];
+  tags: string[];
+  /** 非空 = 某一边没拿到（网络/形状）；发布本身不受影响，只是没有建议可选。 */
+  error: string;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -268,7 +293,10 @@ export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
-  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
+  // `errors`：拉取失败的账号（key = host|username）＋错误原文。**不许静默跳过**——见
+  // `src-tauri/src/email.rs` 的 `EmailAccountError`：某账号拉不到时，它的邮件会整账号不在列表里，
+  // 界面必须能说清"哪个账号、为什么"，否则用户只看到"这封信没来"。
+  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[]; errors: { account: string; message: string }[] } };
   email_fetch_all_months: { args: { args: { folders: string[]; accounts?: string[] } }; result: string[] };
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
@@ -392,7 +420,19 @@ export interface CommandMap {
    * `rev` 必须是 `community_content_rev` 回的**内容指纹**（后端会显式校验 32 位十六进制）。
    */
   community_publish_note: {
-    args: { title: string; body: string; tags: string[]; noteId: string; rev: string };
+    args: {
+      title: string;
+      body: string;
+      tags: string[];
+      /**
+       * 板块 slug（只能来自 `community_taxonomy` 给的列表）。
+       * **没选就不传**（Rust 侧连字段都不发）：社区把认不出的 slug 静默当"未分类"，
+       * 那种"选了板块却发到无板块"的静默正是这里要避免的。
+       */
+      board?: string;
+      noteId: string;
+      rev: string;
+    };
     result: CommunityPublishResult;
   };
   /**
@@ -433,6 +473,18 @@ export interface CommandMap {
   community_content_rev: {
     args: { title: string; body: string; tags: string[] };
     result: string;
+  };
+  /**
+   * 社区侧的**板块 + 已有标签**（公开只读，不需要令牌）：打开发布清单时拿一次，
+   * 用来给"板块"下拉提供选项、给"标签"输入框提供建议（用社区自己的词表，
+   * 免得同一个词在社区里分裂成好几页）。
+   *
+   * `error` 非空 = 某一边没拿到（网络/形状）：界面据此说明"没有建议可选"，
+   * 但**发布本身不受影响** —— 板块可以不选、标签可以自己打。
+   */
+  community_taxonomy: {
+    args: Record<string, never>;
+    result: CommunityTaxonomy;
   };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {
