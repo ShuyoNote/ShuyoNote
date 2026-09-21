@@ -1,6 +1,6 @@
 # 阶段 1（块级 LWW ＋ 冲突提示）的**前置问题**：每块的"最后修改"从哪来？（2026-09-19）
 
-> 状态：**已定（2026-09-20 所有者拍板：三条按建议执行，见 §6）—— 阶段 1 开工。** 上位：[全量 CRDT 冲刺计划](2026-09-18-crdt-full-migration-plan.md) §3 阶段 1。
+> 状态：**已定（2026-09-20 所有者拍板：三条按建议执行，见 §6）—— 阶段 1 开工；第一切片（纯函数）已落地（2026-09-22，见 §8）。** 上位：[全量 CRDT 冲刺计划](2026-09-18-crdt-full-migration-plan.md) §3 阶段 1。
 > 起因：阶段 0 的接口收口已经把"怎么合"收进了一处（`doc_content::merge` ↔ `docContent.shouldTakeRemote`），
 > 计划里写着"阶段 1 把它换成块级 LWW，调用方一行不改"。**但那个函数今天是纯函数**：
 > 它的全部输入是 `(local.syncSeq, local.dirty, remoteSeq)` —— 里面**没有任何块的信息**。
@@ -124,9 +124,10 @@
 
   | 情形 | 判定 | 依据 |
   |---|---|---|
+  | **两侧内容逐字节相同** | **无事**（`identical`） | **先判它**：老客户端"打开—原样保存"会剥掉 `blockRev` 而**内容未变** ⇒ 那次**不许提示**（否则提示每次同步都冒出来 ⇒ 噪声 ⇒ 用户学会忽略 ⇒ 等于静默；回复信 §三）。⚠️ 前提是**块片段里不含 `blockRev`** —— 否则这一行永远不成立（见 §8 第一条读数） |
   | `remote.rev > local.rev` | 用远端那一块 | 远端这一块有本地没见过的编辑（顺序编辑：后者编号更大） |
   | `remote.rev < local.rev` | 留本地那一块 | 本地这一块有远端没见过的编辑 |
-  | `rev` 相等且块内容相同 | 无事 | 两侧都还没碰 |
+  | `rev` 相等且块内容相同 | 无事 | 两侧都还没碰（已被上面那行蕴含，保留原表述以便对读） |
   | **`rev` 相等但内容不同** | **冲突 ⇒ 提示**（不静默选边） | 并发同改同一块：两侧都从同一 base 加一 ⇒ 编号必然相等 —— 这正是 (iii) 要接住的情形 |
   | **任一侧缺 `blockRev`** | **冲突 ⇒ 提示** | 老客户端产物（字段被 `exportJSON` 剥掉，见 §3.1 的 (iii)）⇒ 判不了就不判 |
 
@@ -137,3 +138,69 @@
 
 **第一切片据此可写成纯函数**，输入就是两份"块表"（`blockId → (rev, 该块的 JSON 片段)`）+ 页级读数，
 输出 `{ 选中的块集合, 冲突块集合 }`；不碰 SQL、不碰协议、不碰 UI。
+
+---
+
+## 8. 第一切片**已落地**（2026-09-22，纯函数 ＋ 判据）
+
+落点（**两份实现，语义逐条对应**）：
+
+| 侧 | 文件 | 新增 |
+|---|---|---|
+| Rust（桌面/Web 命令面） | `src-tauri/src/doc_content.rs` | `BlockSnapshot` / `BlockChoice` / `ConflictReason` / `MergedBlock` / `BlockConflict` / `BlockMergeOutcome` / **`merge_blocks`** / **`merge_page_and_blocks`**（＋ `PageMerge`） |
+| TS（Web 平台面） | `src/lib/docContent.ts` | `BlockSnapshot` / `BlockChoice` / `ConflictReason` / **`mergeBlocks`** / **`mergePageBlocks`**（＋ `PageBlockMerge`） |
+
+**判据（成对，改一边必须看另一边）**：Rust `mod tests` 里 11 条 ↔ TS `docContent.test.ts` 里 11 条；
+端到端 `scripts/verify-two-device-sync.mjs` **场景 H**（13 条）。
+
+读数（2026-09-22，本机 Windows）：
+- `vitest run src/lib/docContent.test.ts` ⇒ **33 passed / 0 failed**（原 22 条 ＋ 本片 11 条）；
+- `node scripts/verify-two-device-sync.mjs` ⇒ **34 passed / 0 failed**（原 21 条 ＋ 场景 H 13 条），exit 0；
+- `cargo test --lib doc_content` ⇒ **16 passed / 0 failed**（原 5 条 ＋ 本片 11 条）；`tsc --noEmit` 干净；
+- 默认门禁 `pnpm verify`（contract ＋ smoke ＋ sync ＋ plugin）⇒ **23 条全过**（含 vitest 1167/1168，
+  1 条是 `.skip`）。
+
+> ⚠️ **本分支上还没有 `scripts/win-cargo-test.ps1`**（基线 `feat/doc-content-layer` 落后 dev 264 笔，
+> 那个包装器在 dev 上）。本机是按它**同样的四步**手跑的：`cargo test --no-run` → 复制测试 exe →
+> `mt.exe` 注入 Common-Controls v6 清单 → 跑那份副本。并回 dev 之后就能直接用那个脚本。
+>
+> ⚠️ 顺带一条工具坑：本机 `cargo fmt` **不是**这个仓库的格式基线 —— 直接跑会把 **44 个无关文件**
+> 一起重排（已全部回滚）。别在这条分支上跑全量 `cargo fmt` 之后提交。
+
+### 8.1 ★ 实现时才发现的一条口径：**块片段里不含 `blockRev`**
+
+判定表第一行是"两侧内容**逐字节相同** ⇒ 不许提示"。**第一次跑场景 H 那条反判据就红了** ——
+因为夹具把 `blockRev` 留在了块片段里：老客户端"打开—原样保存"剥掉 `blockRev` ⇒ 两个片段**逐字节不同**
+⇒ 判定表第一行**永远不成立** ⇒ 每次同步都提示（正是反判据二禁止的"噪声 ⇒ 用户学会忽略 ⇒ 等于静默"）。
+
+⇒ 口径定死：`BlockSnapshot.json` 是**去掉 `blockRev` 之后**的块片段，rev 单独走 `rev` 字段；
+去 rev 的动作由**调用方**在"提取块表"那一步做（下一片的双形态读写里就是它）。
+两份实现的文件注释里都写死了这条（`doc_content.rs` / `docContent.ts`）。
+**这条是判据抓出来的，不是想出来的** —— 记在这里，免得下一片有人在提取时又把 rev 塞回去。
+
+### 8.2 两条反判据的读数（裁定 (iii) 的承重证明）
+
+| 反判据 | 期望 | 实际 |
+|---|---|---|
+| 缺 `blockRev` 且内容**变了**（老客户端产物） | **必须** `conflict: missing-rev`（静默按"最旧"处理 ⇒ 红） | ✅ 三条变体（本地缺 / 远端缺 / 两侧都缺）全部冲突 |
+| 缺 `blockRev` 但内容**逐字节相同**（打开—原样保存） | **不许**提示（`identical`，冲突数 0） | ✅ |
+
+### 8.3 本片**没做**（下一片的清单，别当成漏了）
+
+1. **接线**：`mergePageBlocks` **还没有**接进 `applyChange`（Web）与 `sync::apply_upsert`（Rust）。
+   理由不是懒：**今天真实页里根本没有 `blockRev`**（写入侧还没做），一接上去每一块都会落进
+   "缺 rev ⇒ 冲突" ⇒ 等于给所有用户弹提示。**接线的顺序必须是**：先有"编辑器真的写出 `blockRev`"
+   （`feat/block-id-model` 的自有块节点 ＋ 双形态读写），再接判定。
+2. **`blockRev` 的双形态读写**（内存声明字段 ↔ 落盘/上行的老 `type` ＋ 顶层 `blockRev`）—— 依赖上面那条分支；
+3. **冲突提示 UI**（`conflicts` 里已经带了两侧原文，UI 只管画）与**版本历史 × 冲突**的合成；
+4. **真两台设备 ＋ 真 `applyChange`** 的行为复核：本机能跑的只有纯函数与"脚本内两设备"，
+   按老规矩请 macOS/AMD 在**被验 commit** 上复核（`docs/development.md` §10.5）。
+
+### 8.4 本片刻意钉住的**已知边界**（都有判据，免得将来静默改变）
+
+| 边界 | 现在的行为 | 判据 |
+|---|---|---|
+| **没有块级删除 / 墓碑** | 只在一侧的块 ⇒ `only-local` / `only-remote`，**保留**（页级 LWW 时代它会被整页覆盖掉） | Rust `block_only_on_one_side_is_kept` ↔ TS「只在一侧的块」 |
+| **顺序 / 移动不参与合并** | 顺序取**页级胜方**那一侧，另一侧多出来的块按自己的顺序**追加在表尾** | Rust `order_comes_from_the_page_level_winner_and_extras_are_appended` ↔ TS「顺序边界」 |
+| **页级语义不被块级推翻**（裁定 ④） | 页级说"留本地"（`dirty` 或本地 `seq` 更靠后）⇒ **整页不动**，不走块级 | Rust `page_level_keep_local_never_consults_blocks` ↔ TS「④ 页级留本地时整页不动」 |
+| **`rev` 是过渡量** | 不进 FTS / 反链 / 导出 / 版本历史，不当"最后修改时间" | 由 `merge_blocks` 的签名（只有块表与页级判定）在结构上保证 |

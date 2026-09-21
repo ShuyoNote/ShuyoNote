@@ -174,7 +174,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-18-crdt-spike-workorder.md](plans/2026-09-18-crdt-spike-workorder.md) | **CRDT spike 施工单**：只回答三问（JSON⇄ydoc 转换、下游等价、E2EE 加密快照），1–2 天、独立分支、不阻塞阶段 1；含「把收敛断言写在 Node 侧以便 Windows 自验」这个压周期的取舍 |
 | [plans/2026-09-18-doc-content-layer-inventory.md](plans/2026-09-18-doc-content-layer-inventory.md) | **阶段 0 · 接口收口：现状盘点与那一层的边界**：实测触点**前端 538 / Rust 208 处（80 文件，门禁口径）**；结论是要收的不是 746 处而是「写入口＋合并点＋派生输入」三处；含 read/write/merge/derive 四件事的 API 草案与"只减不增"门禁（已落地） |
 | [plans/2026-09-18-window-capability-semantics.md](plans/2026-09-18-window-capability-semantics.md) | **窗口类能力的口径（草案 v1）**：`pages.get` / `files.read` / `blocks.list` 这类「窗口/分页」参数的默认值、上限与截断语义，以及两侧必须逐值一致的要求 |
-| [plans/2026-09-19-stage1-block-lww-readiness.md](plans/2026-09-19-stage1-block-lww-readiness.md) | **阶段 1（块级 LWW ＋ 冲突提示）的前置问题**：每块的「最后修改」从哪来？——**决策请求，不是开工通知**：`merge` 今天是纯函数、`blocks` 派生表没有版本列 ⇒ 三条选项与两个必须一起定的问题（旧客户端丢字段时算谁赢、rev 参不参与同步） |
+| [plans/2026-09-19-stage1-block-lww-readiness.md](plans/2026-09-19-stage1-block-lww-readiness.md) | **阶段 1（块级 LWW ＋ 冲突提示）**：每块的「最后修改」从哪来 —— **2026-09-20 已拍板**：(a) 声明式 `blockRev`（Lamport、随 `content_json` 走）／ (iii) 缺 rev 或 rev 相等而内容不同 ⇒ **触发提示**（不静默判）／ rev 不参与同步；**第一切片（纯函数）已落地**（`doc_content::merge_blocks` ↔ `docContent.mergeBlocks` ＋ 成对判据 ＋ `two-device-sync` 场景 H）；含接线顺序、已知边界与「块片段不含 `blockRev`」那条口径 |
 
 > 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
 > 找不到是正常的——去私有仓库 `shuyonote-sync-server` 的 `docs/`：
