@@ -121,6 +121,18 @@ jobs:
         if: matrix.platform == 'ubuntu-24.04'
         run: node scripts/fetch-pdfium.mjs --platform linux-x64
 
+      - name: 取随包中文字体（Linux 装包要带的 NotoSansSC）
+        # 2026-09-20 加（Windows 侧，P4 的 Linux 缺口）。为什么 Linux 需要它：
+        # 那份预编译 `libpdfium.so` **没有字体后端**（`ldd` 无 fontconfig、`FcInit` 0 个）⇒
+        # **非嵌入字体**的中文 PDF（国标 `STSong-Light`+`UniGB-UCS2-H` 这种写法）在 Linux 上**整行不显示**，
+        # 而 Windows/macOS 有系统字体映射、看不见这个问题。治法：库目录旁放一份 OFL 中文字体，
+        # `pdfium_native.rs` 的 provider 会用它（实测：`cjk.pdf` 墨迹 27000 → 29084、目视「中文测试」）。
+        # ⚠️ 与 pdfium 同一个道理：**字体本体不入库**（`.gitignore`），打包前必须现取；
+        #    但**必须匹配到文件**（映射是 `assets/fonts/*`）—— 新克隆/别的 job 靠同目录的 README.md 占位，
+        #    所以"没取字体"不会让任何构建变红（`cargo check` 实测绿）。
+        if: matrix.platform == 'ubuntu-24.04'
+        run: node scripts/fetch-font.mjs
+
       - name: 交付通道协议门禁（shuyonote://）
         # 这条**必须在打包之前**跑，而且不能只靠 `pnpm tauri build` 里 beforeBuildCommand 那一串：
         # 协议注册是唯一一处"配置错了不会编译失败、只在装完之后表现为点链接没反应"的地方。
@@ -193,6 +205,9 @@ jobs:
         # ⇒ 映射到深一层（例如 `…/resources/libpdfium.so`）时 deb 里**确实有**这个文件，
         # 只有产物里的**路径层数**能把它抓出来。P5 把默认引擎切成 PDFium 之后，
         # 这一条就是"Linux 用户开得了 PDF / 开不了 PDF"的分界。
+        # 2026-09-20（Windows 侧）：同一步现在**也判随包中文字体**（`NotoSansSC-Regular.ttf`
+        # 在不在、位置对不对、sha256 是否等于 `fetch-font.mjs` 钉死的那份）—— 缺字体与缺库是
+        # 同一类静默失效，而字体本体不入库、构建也不会因此变红，所以这里是唯一的拦截点。
         if: matrix.platform == 'ubuntu-24.04'
         run: node scripts/check-linux-bundle.mjs
 
@@ -400,6 +415,25 @@ jobs:
         # 与 android.yml 逐字一致：gen/ 不入库，漏注入只有真机 release 看得见。
         run: pnpm android:mobile-shell --check
 
+      - name: 品牌桌面图标（把 src-tauri/icons/android 铺进 gen 工程）
+        # 为什么需要：`tauri android init` 每次都把 **Tauri 默认图标**（那团蓝橙色漩涡）写进
+        # `res/mipmap-*/`；仓库里入库的品牌图标（含 anydpi 自适应图标）**没有任何步骤会铺过去**
+        # ⇒ 装出来的 APK 桌面图标一直是 Tauri 默认图（owner 2026-09-21 截图问的就是它）。
+        # gen/ 不入库 ⇒ 只能在 init 之后脚本化铺一遍（与 stage-android-pdfium 同一条理由）。
+        run: pnpm android:app-icon
+
+      - name: 自检：桌面图标确实是品牌那套
+        # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线）。
+        run: pnpm check:android-app-icon
+
+      - name: 随包 PDFium 库（Android）
+        # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
+        # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。
+        # ⚠️ 同 android.yml：平台名写成显式的 `--platform`（位置形式曾被静默吃掉 ⇒ 取成 linux-x64）。
+        run: |
+          node scripts/fetch-pdfium.mjs --platform android-arm64
+          pnpm android:stage-pdfium
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
@@ -412,6 +446,11 @@ jobs:
             exit 1
           fi
           pnpm tauri android build --target aarch64 --apk --ci
+
+      - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
+        # 与 android.yml 同名同步；发版包更需要这条（`libpdfium.so` 是**运行时**加载的 ⇒
+        # 包里没有它时"装完不报错"，只有用户开 PDF 才变成打不开）。
+        run: pnpm check:android-bundle
 
       - name: 用正式密钥签名 APK（逻辑与 android.yml 逐字一致）
         # 全部逻辑照抄 `.github/workflows/android.yml` 的同名步骤：

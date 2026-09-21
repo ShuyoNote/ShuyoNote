@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { platform } from "../../lib/platform";
+import { openExternalUrl } from "../../lib/openExternal";
 import { api } from "../../lib/api";
 import { inputDialog } from "../../store/input";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
@@ -297,7 +298,7 @@ function WebBookmarkCard(props: {
   // Open the URL via the host's opener (system default browser). `window.open`
   // is blocked in the WebView, so the opener driver is the reliable way.
   const open = () => {
-    platform.opener.openUrl(props.url).catch(() => {});
+    void openExternalUrl(props.url);
   };
 
   // Edit URL via the in-app dialog (immune to Lexical decorator re-renders).

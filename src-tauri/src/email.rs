@@ -59,7 +59,19 @@ async fn open_session(account: &EmailAccountArgs, folder: &str) -> Result<ImapSe
         .login(&account.username, &account.password)
         .await
         .map_err(|(e, _c)| format!("登录失败: {}", e))?;
-    session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+    // ⚠️ **唯一的"上线"关口**：UI 手上的文件夹名是**人看的**（`已删除邮件` / `Deleted Messages`），
+    // 而 IMAP 协议里 mailbox 名必须是 **modified UTF-7**（RFC 3501 §5.1.3）——中文名原样发出去，
+    // 阿里云企业邮会当场废掉这条连接（2026-09-20 那次"整批删除静默失败"的成因之一）。
+    // 放在这里编码而不是每个命令各编一次：所有命令都经 `open_session`，一处收口。
+    // 顺带一个性质：`imap_utf7_encode` 对**已经是协议名**的纯 ASCII 是恒等（`&XfJSIJZkkK5O9g-`
+    // 里的 `&` 会被写成 `&-`？—— 不会：见 `imap_utf7_encode` 的 `&-` 只处理字面 `&`，
+    // 而协议名里的 `&` 后面跟的是 base64，编码后会变 —— 所以**内部调用一律传协议名**，
+    // 只有来自 UI 的名字才需要这一层编码）。
+    let wire_folder = folder_on_wire(folder);
+    session
+        .select(&wire_folder)
+        .await
+        .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
     Ok(session)
 }
 
@@ -422,6 +434,11 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
             .unwrap_or_default();
         let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
         let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+        // 带 `\Deleted` 的**不列出来**：删除走"COPY 进回收站 + 打标记"那条路时，原件在
+        // 服务器上还留着（只是标了删除），列表里再显示一次就像"没删掉"。IMAP 客户端通常也这么处理。
+        if m.flags().any(|f| f == async_imap::types::Flag::Deleted) {
+            return None;
+        }
         Some(EmailMeta {
             uid: m.uid.unwrap_or(0),
             subject,
@@ -437,10 +454,14 @@ pub async fn email_fetch_inbox(args: EmailFetchArgs) -> Result<Vec<EmailMeta>, S
 
     let mut out = Vec::new();
     for folder in &folders {
-        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        // 界面给的是**人看的名字**，上线前编码成 modified UTF-7（与 `open_session` 同一口径）。
+        let wire = folder_on_wire(folder);
+        session
+            .select(&wire)
+            .await
+            .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
 
-        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {
-            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
+        if let (Some(df), Some(dt)) = (&args.date_from, &args.date_to) {            // 按日期区间：先用 IMAP SEARCH SINCE/BEFORE 拿该区间 UID，再只 FETCH 这些。
             // IMAP 日期格式为 `d-MMM-yyyy`，如 `01-Aug-2026`。
             let from_s = imap_date(df);
             let to_s = imap_date(dt);
@@ -502,7 +523,12 @@ async fn list_account_months(account: &EmailAccountArgs, folders: &[String]) -> 
     let mut months: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for folder in &folders {
-        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
+        // 同 `open_session`：界面给的是人看的名字，上线前编码。
+        let wire = folder_on_wire(folder);
+        session
+            .select(&wire)
+            .await
+            .map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
         let mut stream = session
             .fetch("1:*", "(ENVELOPE UID FLAGS)")
             .await
@@ -641,6 +667,11 @@ pub async fn email_list_folders(args: EmailAccountArgs) -> Result<Vec<String>, S
             .iter()
             .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect));
         if !no_select {
+            // ⚠️ 这里回的是**协议名**（`&XfJSIJZkkK5O9g-`），**不要在后台解码**：
+            // 「协议名 → 人看的名字」这一步已经在前端 `EmailPanel.tsx` 的 `folderDisplay()`
+            // （`decodeImapUtf7` + `FOLDER_ZH`）里做了，而且它只影响显示、回给后台的仍是原始名
+            //（`SELECT` 要的正是协议层名字）。两边都转一次就是两个口径，迟早漂移。
+            // 我 2026-09-20 一度在这儿加了解码，回退了 —— 真账号探针当场抓到副作用（见 `folder_on_wire`）。
             out.push(name.name().to_string());
         }
     }
@@ -685,8 +716,8 @@ pub async fn email_mark_read(args: EmailOpArgs, read: bool) -> Result<(), String
     Ok(())
 }
 
-/// 删除邮件：`UID MOVE` 到「已删除」文件夹（可回收）。依次尝试常见文件夹名，
-/// 都失败时回退到标记 `\Deleted` + EXPUNGE（至少从列表移除）。
+/// 删除邮件：**必须把它放进回收站**（可回收）。知道回收站就 `UID MOVE`，否则 `UID COPY` 进去再打
+/// `\Deleted`；连回收站都定位不到就**拒绝删除**（2026-09-20 用户要求「改为进回收站」）。
 // ── 删除（移入回收站 / 打删除标记）────────────────────────────────────────────
 // 2026-09-20 用户报障：「批量删除以后，重新拉取后依然出现」。根因三层，都在这一小段里：
 //   ① mailbox 名在 IMAP 协议里**只能是 modified UTF-7**（RFC 3501 §5.1.3）。旧代码把
@@ -737,6 +768,78 @@ fn imap_utf7_encode(name: &str) -> String {
     out
 }
 
+/// `&…-` 段（modified UTF-7 的 base64 载荷）→ UTF-8。解不开返回 `None`。
+fn decode_utf16be_b64(chunk: &str) -> Option<String> {
+    let std_b64 = chunk.replace(',', "/");
+    let pad = (4 - std_b64.len() % 4) % 4;
+    let padded = format!("{}{}", std_b64, "=".repeat(pad));
+    let bytes = base64::engine::general_purpose::STANDARD.decode(padded).ok()?;
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let units: Vec<u16> = bytes.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    String::from_utf16(&units).ok()
+}
+
+/// modified UTF-7 → UTF-8（RFC 3501 §5.1.3 的逆），**给界面看的**。
+///
+/// 为什么必须有它（2026-09-20 用户报障「批量删除的邮件，已删除文件夹找不到」）：
+/// 服务器上的 mailbox 名是协议编码 —— 阿里云企业邮的「已删除邮件」在线上叫 `&XfJSIJZkkK5O9g-`。
+/// 旧的 `email_list_folders` 把**协议名原样**丢给界面，于是文件夹选择器里那一行是一串乱码，
+/// 用户**根本找不到**「已删除」；而删除本身是好的（真账号探针：五个账号都把信搬进了回收站）。
+///
+/// 规则（只用 RFC 3501 的 modified UTF-7，不是标准 UTF-7）：可打印 ASCII 原样；
+/// `&-` ⇒ 字面 `&`；`&…-` ⇒ base64(UTF-16BE)。**解不开的段原样保留** —— 宁可显示一个奇怪的名字，
+/// 也不能把名字吞掉（吞掉就等于那个文件夹在界面上消失了）。
+fn imap_utf7_decode(name: &str) -> String {
+    let mut out = String::new();
+    let mut rest = name;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + 1..];
+        match after.find('-') {
+            // 没有闭合 `-`：按字面 `&` 处理，剩下的原样
+            None => {
+                out.push('&');
+                out.push_str(after);
+                return out;
+            }
+            Some(rel) => {
+                let chunk = &after[..rel];
+                let consumed = pos + 1 + rel + 1;
+                if chunk.is_empty() {
+                    out.push('&'); // `&-` ⇒ 字面 &
+                } else {
+                    match decode_utf16be_b64(chunk) {
+                        Some(s) => out.push_str(&s),
+                        None => out.push_str(&rest[pos..consumed]), // 解不开：整段原样保留
+                    }
+                }
+                rest = &rest[consumed..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 把**界面手上的文件夹名**变成能发到线上的名字，**并且允许调用方直接传协议名**。
+///
+/// 为什么要这一层而不是"一律 encode"（2026-09-20 当天实测踩到的）：`resolve_trash` 问回来的
+/// 已经是**协议名**（`&XfJSIJZkkK5O9g-`），而 `imap_utf7_encode` 对它的字面 `&` 会写成 `&-`
+/// ⇒ 变成 `&-XfJSIJZkkK5O9g-` ⇒ SELECT 失败。真账号探针当场露头：QQ（ASCII 回收站名）没事，
+/// 阿里云（中文名）`in_trash=false` —— 信从收件箱没了、回收站里却没有。
+///
+/// 判据很简单：**能解出人看的名字（`decode(x) != x`）就说明它已经是协议名，别动**；
+/// 否则按界面名编码（纯 ASCII 的界面名编码后是恒等，所以 `INBOX` / `Deleted Messages` 两种都通）。
+fn folder_on_wire(name: &str) -> String {
+    if imap_utf7_decode(name) != name {
+        name.to_string() // 已经是协议名（含 `&…-` 段）
+    } else {
+        imap_utf7_encode(name)
+    }
+}
+
 /// 从 `LIST` 的结果里挑回收站（纯函数，便于钉判据）。
 /// 入参是 `(协议名, 是否带 \Trash 标记)`；返回的是**协议名**，要原样回给 SELECT/MOVE/UID MOVE
 /// （**别再编一次** —— 服务器给的已经是协议层名字）。
@@ -772,7 +875,8 @@ fn pick_trash(names: &[(String, bool)]) -> Option<String> {
     None
 }
 
-/// 问服务器：回收站叫什么。问不出来就 `None`（那时走 `\Deleted` + EXPUNGE 这条通用路）。
+/// 问服务器：回收站叫什么。问不出来就 `None` —— 那时 `delete_one` **拒绝删除**并如实报错
+/// （宁可"没删"，也不做收不回来的删除）。
 async fn resolve_trash(session: &mut ImapSession) -> Option<String> {
     use futures_util::StreamExt;
     let mut stream = session.list(None, Some("*")).await.ok()?;
@@ -819,7 +923,18 @@ fn delete_err(what: &str, e: async_imap::error::Error) -> DeleteErr {
     }
 }
 
-/// 删掉一封邮件：知道回收站且服务器支持 MOVE ⇒ MOVE 进去；否则 `\Deleted` + `UID EXPUNGE`。
+/// 删掉一封邮件 = **把它挪进回收站**（用户 2026-09-20：「改为进回收站」）。
+///
+/// 三条路，**任何一条都不做"就地永久删除"**：
+/// ① 知道回收站名 + 服务器支持 MOVE ⇒ `UID MOVE` 进去（一步到位）；
+/// ② 不支持 MOVE ⇒ **先 `UID COPY` 进回收站**（这一步才是"进回收站"的保证），再打 `\Deleted`；
+///    能 `UID EXPUNGE <uid>`（RFC 4315 UIDPLUS，只清这一封）就顺手把原件清掉，
+///    拿不到 UIDPLUS 就**留着**——回收站里已有一份，列表那侧按 `\Deleted` 过滤，用户看不见；
+/// ③ 连回收站在哪儿都不知道 ⇒ **拒绝删除并如实报错**（宁可"没删"，也不做收不回来的删除）。
+///
+/// ⚠️ 为什么删掉了"整箱 `EXPUNGE`"这条回退：它清的是**本文件夹里所有带 `\Deleted` 的信**，
+/// 而且**完全绕过回收站** —— 用户那天用客户端删了上百封，QQ 的「已删除」里一封都没有，就是这么没的。
+/// 那批信 IMAP 层面无法恢复，所以这条回退必须消失，而不是"只当兜底"。
 /// **每一步都把响应流读到底并检查结束状态** —— 这是 2026-09-20 那次"假成功"的关键。
 async fn delete_one(
     session: &mut ImapSession,
@@ -828,58 +943,54 @@ async fn delete_one(
 ) -> Result<(), DeleteErr> {
     use futures_util::StreamExt;
 
-    if let Some(folder) = trash {
-        match session.uid_mv(uid.to_string(), folder).await {
-            Ok(()) => return Ok(()),
-            Err(e) if is_conn_lost(&e) => {
-                return Err(delete_err("移动到回收站时连接中断", e));
-            }
-            // MOVE 不支持 / 目标不收（`BAD`/`NO`）→ 走通用路（连接还活着，不该白扔掉这次删除）
-            Err(_) => {}
+    let Some(folder) = trash else {
+        return Err(DeleteErr::Rejected(
+            "没找到这个邮箱的回收站文件夹，出于安全没有删除（不然就收不回来了）".to_string(),
+        ));
+    };
+
+    // ① MOVE：服务器支持就一步进回收站
+    match session.uid_mv(uid.to_string(), folder).await {
+        Ok(()) => return Ok(()),
+        Err(e) if is_conn_lost(&e) => {
+            return Err(delete_err("移动到回收站时连接中断", e));
         }
+        // MOVE 不支持 / 目标不收（`BAD`/`NO`）→ 走 ②
+        Err(_) => {}
     }
 
-    // 打 `\Deleted` 标记。**流必须读到底**：结束码只有读出来才知道（旧代码在这里只看
-    // "命令写进 socket 了没有"）。作用域裹住是为了把 `session` 的可变借用在下一句前放开。
+    // ②-1 先 COPY 进回收站。**这一步失败就什么都不做**：宁可不删，也不能删了收不回。
+    session
+        .uid_copy(uid.to_string(), folder)
+        .await
+        .map_err(|e| delete_err("复制到回收站失败（没有删除任何邮件）", e))?;
+
+    // ②-2 再打 `\Deleted`。流必须读到底：结束码只有读出来才知道。
     {
         let store = session
             .uid_store(uid.to_string(), "+FLAGS.SILENT (\\Deleted)")
             .await
-            .map_err(|e| delete_err("打删除标记失败", e))?;
+            .map_err(|e| delete_err("打删除标记失败（回收站里已有副本）", e))?;
         futures_util::pin_mut!(store);
         while let Some(item) = store.next().await {
-            item.map_err(|e| delete_err("打删除标记失败", e))?;
+            item.map_err(|e| delete_err("打删除标记失败（回收站里已有副本）", e))?;
         }
     }
 
-    // UID EXPUNGE（RFC 4315，UIDPLUS）只清这一封；拿不到就退回 EXPUNGE
-    //（它会清掉本文件夹里**所有**带 `\Deleted` 的 —— 副作用更大，只当兜底）。
-    // 注意：这里必须先把 `match` 的结果落成一个局部变量 —— 作为函数尾表达式时，
-    // `uid_expunge` 那个借用 `session` 的临时值会活到块尾，下面就用不了 `session`（E0499）。
-    let uid_expunged = match session.uid_expunge(uid.to_string()).await {
-        Ok(expunge) => {
-            futures_util::pin_mut!(expunge);
-            while let Some(item) = expunge.next().await {
-                item.map_err(|e| delete_err("删除未生效（UID EXPUNGE 失败）", e))?;
+    // ②-3 能只清这一封就清（UID EXPUNGE）；清不掉就留着 —— 回收站里已有副本，
+    //      列表按 `\Deleted` 过滤后用户看不到，**绝不回退到整箱 EXPUNGE**。
+    if let Ok(expunge) = session.uid_expunge(uid.to_string()).await {
+        futures_util::pin_mut!(expunge);
+        while let Some(item) = expunge.next().await {
+            match item {
+                Ok(_) => {}
+                Err(e) if is_conn_lost(&e) => {
+                    return Err(delete_err("清掉原件时连接中断（回收站里已有副本）", e));
+                }
+                // 服务器拒绝清原件：不影响"已进回收站"这个结果，留着即可。
+                Err(_) => break,
             }
-            true
         }
-        Err(e) if is_conn_lost(&e) => {
-            return Err(delete_err("删除未生效（UID EXPUNGE 时连接中断）", e));
-        }
-        Err(_) => false,
-    };
-    if uid_expunged {
-        return Ok(());
-    }
-
-    let expunge = session
-        .expunge()
-        .await
-        .map_err(|e| delete_err("删除未生效（EXPUNGE 失败）", e))?;
-    futures_util::pin_mut!(expunge);
-    while let Some(item) = expunge.next().await {
-        item.map_err(|e| delete_err("删除未生效（EXPUNGE 失败）", e))?;
     }
     Ok(())
 }
@@ -893,7 +1004,7 @@ pub async fn email_move_to_trash(args: EmailOpArgs) -> Result<(), String> {
         .map_err(|e| e.message())
 }
 
-/// 批量删除邮件：一次连接搬多封（知道回收站就 MOVE，否则 `\Deleted` + `UID EXPUNGE`）。
+/// 批量删除邮件：一次连接搬多封，**每封都走 [`delete_one`]**（即"必须进回收站"那三条路）。
 /// 返回**真正**删掉的封数；一封都没删掉时返回 `Err`（不再把假成功交给界面）。
 #[derive(Deserialize)]
 pub struct EmailBatchOpArgs {
@@ -1102,27 +1213,23 @@ pub async fn email_get_body(args: EmailSaveUidArgs) -> Result<String, String> {
 
 /// 按 UID 取邮件正文的 HTML（未消毒，供前端 DOMPurify 富文本渲染）。
 /// 选中无 text/html 子部分时回退为纯文本（此时前端按文本显示）。
+/// 内嵌图片（`cid:`）已换成 `data:` URI（见 `rewrite_cid_refs`）。
 #[tauri::command]
 pub async fn email_get_html(args: EmailSaveUidArgs) -> Result<String, String> {
     let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
     let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
-    let mut html = String::new();
-    if email_html_collect(&parsed, &mut html) {
-        Ok(html)
-    } else {
-        Ok(email_text(&parsed))
-    }
+    Ok(email_html_body(&parsed).unwrap_or_else(|| email_text(&parsed)))
 }
 
 /// 按 UID 一次拉取并解析，同时返回纯文本 + 未消毒 HTML（供前端一次调用拿到两者，
 /// 避免此前点开一封邮件时并发两次 IMAP 连接 + 两次拉取完整报文 + 两次解析）。
+/// 内嵌图片（`cid:`）已换成 `data:` URI（见 `rewrite_cid_refs`）。
 #[tauri::command]
 pub async fn email_get_message(args: EmailSaveUidArgs) -> Result<EmailMessageParts, String> {
     let raw = fetch_uid_raw(&args.account, &args.folder, args.uid).await?;
     let parsed = mailparse::parse_mail(raw.as_bytes()).map_err(|e| e.to_string())?;
     let text = email_text(&parsed);
-    let mut html = String::new();
-    let html = if email_html_collect(&parsed, &mut html) { html } else { text.clone() };
+    let html = email_html_body(&parsed).unwrap_or_else(|| text.clone());
     Ok(EmailMessageParts { text, html })
 }
 
@@ -1238,6 +1345,116 @@ fn email_html_collect(p: &mailparse::ParsedMail, best: &mut String) -> bool {
         }
     }
     false
+}
+
+/// 内嵌图片单张体积上限：超过就**不做**内联（留下 `cid:`），避免一封营销信把
+/// 几十 MB base64 塞进 WebView。5 MB 已足够覆盖 logo / 签名 / 横幅这类内嵌图。
+const MAX_INLINE_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// 一封邮件里所有内嵌图加起来的**原始字节**预算（base64 后约 ×1.37）。
+/// 为什么要总量闸：`email_get_html` 也是「存为笔记」的数据源，正文里的内嵌图会跟着进
+/// 页面的**正文 JSON**——不封顶的话，一封塞满大图的营销信能把笔记撑成几十 MB。
+/// 超预算的部分保留 `cid:`（碎图，但不会把库撑爆）。
+const MAX_INLINE_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+
+/// 收集整棵 MIME 树里带 `Content-ID` 的部分：`cid`（小写、去掉尖括号）→ (mime, base64)。
+///
+/// 为什么要收集整棵树而不是只看 text/html 的兄弟：`multipart/related` 之外的排版
+/// （有些客户端把内嵌图放在 `multipart/mixed` 的其它分支）也应能找到。
+fn collect_cid_parts(
+    p: &mailparse::ParsedMail,
+    out: &mut std::collections::HashMap<String, (String, String)>,
+    budget: &mut usize,
+) {
+    let cid = p
+        .headers
+        .iter()
+        .find(|h| h.get_key().eq_ignore_ascii_case("Content-ID"))
+        .map(|h| h.get_value())
+        .unwrap_or_default();
+    let cid = cid
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim()
+        .to_lowercase();
+    // 只内联图片：`cid:` 出现在 `src` 里就是图片；别的类型（音频/PDF）内联进 HTML 没意义。
+    if !cid.is_empty() && p.ctype.mimetype.starts_with("image/") {
+        if let Ok(bytes) = p.get_body_raw() {
+            if !bytes.is_empty() && bytes.len() <= MAX_INLINE_IMAGE_BYTES && bytes.len() <= *budget {
+                *budget -= bytes.len();
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                out.insert(cid, (p.ctype.mimetype.clone(), b64));
+            }
+        }
+    }
+    for sub in &p.subparts {
+        collect_cid_parts(sub, out, budget);
+    }
+}
+
+/// 把正文 HTML 里的 `cid:xxx` 引用换成 `data:<mime>;base64,...`。
+///
+/// **2026-09-20 用户报障「数友社区的 logo 显示不出来」的真根因**：logo 是
+/// `multipart/related` 里的内嵌 `image/png`（`Content-ID: <shuyo-logo>`），HTML 里写的是
+/// `<img src="cid:shuyo-logo" alt="数友社区" width="154" height="30">`。我们此前原样把
+/// `cid:` 交给浏览器 ⇒ 它取不到这个 scheme ⇒ **碎图图标 + alt 文本**（截图里那行「[碎图] 数友社区」）。
+/// 内嵌图不联网、也不涉及追踪，替换成 `data:` 是安全的，且前端 DOMPurify 默认允许 `img` 的 data URI。
+///
+/// 匹配用的 `cid:` 可能带百分号转义（少数客户端会 encode），所以先按原样查，再按解码后查。
+fn rewrite_cid_refs(
+    html: &str,
+    parts: &std::collections::HashMap<String, (String, String)>,
+) -> String {
+    if parts.is_empty() || !html.to_lowercase().contains("cid:") {
+        return html.to_string();
+    }
+    let re = regex::Regex::new(r#"(?i)cid:([^"'\s)>]+)"#).unwrap();
+    re.replace_all(html, |c: &regex::Captures| {
+        let raw = &c[1];
+        let key = raw.to_lowercase();
+        let hit = parts
+            .get(&key)
+            .or_else(|| parts.get(&percent_decode(&key)));
+        match hit {
+            Some((mime, b64)) => format!("data:{};base64,{}", mime, b64),
+            // 找不到对应部分就原样保留（宁可碎图，也不要凭空造一个假地址）。
+            None => c[0].to_string(),
+        }
+    })
+    .into_owned()
+}
+
+/// 只解 `%XX`（`cid:` 里可能出现的转义），其余原样返回。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(v) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// 取「可富文本渲染 + 内嵌图片已内联」的正文；没有 text/html 部分返回 `None`（调用方回退纯文本）。
+fn email_html_body(p: &mailparse::ParsedMail) -> Option<String> {
+    let mut html = String::new();
+    if !email_html_collect(p, &mut html) {
+        return None;
+    }
+    let mut parts = std::collections::HashMap::new();
+    let mut budget = MAX_INLINE_TOTAL_BYTES;
+    collect_cid_parts(p, &mut parts, &mut budget);
+    Some(rewrite_cid_refs(&html, &parts))
 }
 
 /// 从原始 HTML 里仅剔除 script/style 与 display:none 预读文本（不做标签白名单——
@@ -1456,6 +1673,10 @@ fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMe
     let date = env.date.as_ref().map(|d| String::from_utf8_lossy(d.as_ref()).to_string()).unwrap_or_default();
     let seen = m.flags().any(|f| f == async_imap::types::Flag::Seen);
     let flagged = m.flags().any(|f| f == async_imap::types::Flag::Flagged);
+    // 同 `build_meta`：带 `\Deleted` 的不列出来（删除是"进回收站"，原件可能还挂着删除标记）。
+    if m.flags().any(|f| f == async_imap::types::Flag::Deleted) {
+        return None;
+    }
     Some(EmailMeta {
         uid: m.uid.unwrap_or(0),
         subject,
@@ -1469,6 +1690,57 @@ fn meta_from_fetch(m: &async_imap::types::Fetch, folder: &str) -> Option<EmailMe
     })
 }
 
+/// 一次 `FETCH <start>:*` 的结果。
+struct FetchChunk {
+    metas: Vec<EmailMeta>,
+    /// 下一条要拉的序号；`None` = 这一箱已经拉完（没有解析错误）。
+    resume_at: Option<u32>,
+    /// 解析中断的说明（有它 ⇒ 这一条畸形邮件会被跳过，但**后面的会继续拉**）。
+    note: Option<String>,
+}
+
+/// 从 `start` 起拉这一箱剩下的邮件头。
+///
+/// ★ 为什么要这么个函数（2026-09-20 用户报障的真根因）：`FETCH 1:*` 的响应是一条**流**，
+/// 而 `while let Some(Ok(m)) = stream.next()` 一旦遇到 `Err` 就**静默结束** ——
+/// 服务端已经把它后面的邮件都发过来了，应用却再也不读。实测：QQ 收件箱里有一封
+/// 工信部的通知，它的 `Message-ID` 里**带一个没转义的 `"`**
+/// （`<…JavaMail."zwfw-info@miit.gov.cn"@…>`），IMAP 语法里那个引号会提前结束字符串
+/// ⇒ `async-imap` 解析到第 36 条就报错 ⇒ **第 36 条之后的全部邮件（含今天的新邮件）在应用里不存在**。
+/// 用户看到的现象是"这个账号最新只到某一天"，而服务端一切正常。
+///
+/// 修法：把"流中途报错"当成**可恢复**的：记下断点、**重开会话**（那次响应剩下的字节还在 socket 里，
+/// 直接再发命令会串味）、从断点下一条继续。代价是"一条畸形邮件只损失它自己"。
+async fn fetch_chunk(account: &EmailAccountArgs, folder: &str, start: u32) -> Result<FetchChunk, String> {
+    use futures_util::StreamExt;
+    let mut session = open_session(account, folder).await?;
+    let mut stream = session
+        .fetch(format!("{start}:*"), "(ENVELOPE UID FLAGS)")
+        .await
+        .map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
+    let mut metas = Vec::new();
+    let mut next = start;
+    let mut note = None;
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(m) => {
+                if let Some(meta) = meta_from_fetch(&m, folder) {
+                    metas.push(meta);
+                }
+                next += 1;
+            }
+            Err(e) => {
+                note = Some(format!("第 {next} 条解析失败（跳过这一条，后面的继续拉）：{e}"));
+                break;
+            }
+        }
+    }
+    let finished = note.is_none();
+    drop(stream);
+    let _ = session.logout().await;
+    Ok(FetchChunk { metas, resume_at: if finished { None } else { Some(next + 1) }, note })
+}
+
 /// 拉取一个账号（多文件夹）的邮件元信息 + 未读数。传 date_from/date_to 时按日期区间过滤。
 async fn fetch_account_emails(
     account: &EmailAccountArgs,
@@ -1476,37 +1748,38 @@ async fn fetch_account_emails(
     date_from: Option<&str>,
     date_to: Option<&str>,
 ) -> Result<(Vec<EmailMeta>, u32), String> {
-    use futures_util::StreamExt;
     use chrono::Datelike;
-    let mut session = open_session(account, "INBOX").await?;
     let mut out = Vec::new();
     let mut unread = 0u32;
     for folder in folders {
-        session.select(folder).await.map_err(|e| format!("选择 {} 失败: {}", folder, e))?;
-        if let (Some(df), Some(dt)) = (date_from, date_to) {
-            // 按月/日期区间：部分 IMAP 服务端（如 QQ 邮箱）对 SINCE/BEFORE 返回空或挑剔日期格式，
-            // 故改为「拉全量 → 按邮件的年月（以其自身时区）过滤」，服务端无关、更稳。
-            let m = target_month(df);
-            let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
-            while let Some(Ok(msg)) = stream.next().await {
-                if let Some(meta) = meta_from_fetch(&msg, folder) {
+        let mut start = 1u32;
+        // 上限只是防"服务端每次都报错"时转不出来；正常一箱最多遇到几封畸形邮件。
+        for _ in 0..500 {
+            let chunk = fetch_chunk(account, folder, start).await?;
+            for meta in chunk.metas {
+                if let (Some(df), Some(dt)) = (date_from, date_to) {
+                    // 按月/日期区间：部分 IMAP 服务端（如 QQ 邮箱）对 SINCE/BEFORE 返回空或挑剔日期格式，
+                    // 故改为「拉全量 → 按邮件的年月（以其自身时区）过滤」，服务端无关、更稳。
+                    let _ = dt; // (保留 date_to 以维持接口签名；按月直接只用 from 的年月)
+                    let m = target_month(df);
                     let in_month = parse_email_date(&meta.date)
                         .map(|t| t.year() == m.0 && t.month() == m.1)
                         .unwrap_or(false);
-                    if in_month {
-                        if !meta.seen { unread += 1; }
-                        out.push(meta);
+                    if !in_month {
+                        continue;
                     }
                 }
-            }
-            let _ = dt; // (保留 date_to 以维持接口签名；按月直接只用 from 的年月)
-        } else {
-            let mut stream = session.fetch("1:*", "(ENVELOPE UID FLAGS)").await.map_err(|e| format!("拉取 {} 失败: {}", folder, e))?;
-            while let Some(Ok(m)) = stream.next().await {
-                if let Some(meta) = meta_from_fetch(&m, folder) {
-                    if !meta.seen { unread += 1; }
-                    out.push(meta);
+                if !meta.seen {
+                    unread += 1;
                 }
+                out.push(meta);
+            }
+            match (chunk.resume_at, chunk.note) {
+                (Some(next), Some(msg)) => {
+                    eprintln!("[email] {folder}: {msg}");
+                    start = next;
+                }
+                _ => break,
             }
         }
     }
@@ -1531,28 +1804,43 @@ pub struct EmailFetchAllArgs {
     pub accounts: Vec<String>,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct EmailAccountError {
+    /// 账号 key（`host|username`，与 `account_key` 同口径）。
+    pub account: String,
+    pub message: String,
+}
+
 #[derive(Serialize)]
 pub struct EmailAggregate {
     pub emails: Vec<EmailMeta>,
     pub unread: u32,
     pub accounts: Vec<String>,
+    /// 拉取失败的账号（**不许静默跳过**）。
+    ///
+    /// 为什么单列出来（2026-09-20 用户报障）：聚合是"多个账号并成一条时间线"，
+    /// 某个账号拉取失败时，旧行为是 `Err(_) => {}` —— 它的邮件**整账号消失**，
+    /// 而界面上既没有错误、也没有"少了一个账号"的任何提示 ⇒ 用户看到的是
+    /// "这封信没来"（分不清"没收到"和"没拉到"）。现在把失败如实带回前端显示。
+    pub errors: Vec<EmailAccountError>,
 }
 
-/// 聚合所有（或指定）账号的收件流（B）：合并账号、按时间降序、分页；单账号失败跳过。
-/// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
-/// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
-#[tauri::command]
-pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
-    let accounts = read_accounts(&db, &app)?;
-    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
+/// 把"每个账号一次拉取的结果"合并成聚合体：按时间降序、汇总未读、**失败如实带出来**。
+///
+/// 为什么抽成纯函数：`email_fetch_all` 要 `Db`/`AppHandle`，单测进不去；
+/// 而"失败要不要吞掉"正是这条链上最容易悄悄回退的一步（旧的 `Err(_) => {}` 就是这么来的）。
+fn aggregate_fetches(
+    results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)>,
+    limit: u32,
+    offset: u32,
+) -> EmailAggregate {
     let mut rows: Vec<(i64, EmailMeta)> = Vec::new();
     let mut unread_total = 0u32;
     let mut account_keys = Vec::new();
-    for acc in &accounts {
-        let key = account_key(acc);
-        if !args.accounts.is_empty() && !args.accounts.contains(&key) { continue; }
+    let mut errors = Vec::new();
+    for (key, res) in results {
         account_keys.push(key.clone());
-        match fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await {
+        match res {
             Ok((metas, u)) => {
                 unread_total += u;
                 for mut m in metas {
@@ -1561,17 +1849,63 @@ pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: Ema
                     rows.push((ts, m));
                 }
             }
-            Err(_) => { /* 单账号失败跳过，不影响其它账号 */ }
+            Err(message) => errors.push(EmailAccountError { account: key, message }),
         }
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
     let mut emails: Vec<EmailMeta> = rows.into_iter().map(|(_, m)| m).collect();
-    if args.limit > 0 {
-        let start = (args.offset as usize).min(emails.len());
-        let end = (start + args.limit as usize).min(emails.len());
+    if limit > 0 {
+        let start = (offset as usize).min(emails.len());
+        let end = (start + limit as usize).min(emails.len());
         emails = emails[start..end].to_vec();
     }
-    Ok(EmailAggregate { emails, unread: unread_total, accounts: account_keys })
+    EmailAggregate { emails, unread: unread_total, accounts: account_keys, errors }
+}
+
+/// 拉取进度事件（2026-09-20 用户反馈：「信件拉取时间有点长，界面没反馈，体验不好」）。
+///
+/// 为什么要**逐账号**推：聚合是串行拉每个账号的每个文件夹（`FETCH 1:*`，账号多/信多时十几秒很正常），
+/// 而前端此前只有一个 `busy` 布尔量 —— 用户面对的是一动不动的列表，不知道是在跑还是卡住了。
+/// 这里把"第几个账号、共几个、正在拉谁"推给界面，界面就能显示「正在拉取 3/5 · sales@shuyo.cn」。
+pub const FETCH_PROGRESS_EVENT: &str = "email-fetch-progress";
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct EmailFetchProgress {
+    /// 已完成（含刚完成这一个）
+    pub done: u32,
+    pub total: u32,
+    /// 刚拉完的账号（`host|username`）
+    pub account: String,
+}
+
+/// 聚合所有（或指定）账号的收件流（B）：合并账号、按时间降序、分页。
+/// **单账号失败不再吞掉**：它进 `errors` 一并返回（见 `EmailAccountError` 的注释）。
+/// 传 date_from/date_to 时，仅合并日期区间内的邮件（供「按月直达」用）。
+/// 传 accounts 时仅聚合这些账号；空表示聚合全部已保存账号。
+#[tauri::command]
+pub async fn email_fetch_all(db: State<'_, Db>, app: tauri::AppHandle, args: EmailFetchAllArgs) -> Result<EmailAggregate, String> {
+    let accounts = read_accounts(&db, &app)?;
+    let folders = if args.folders.is_empty() { vec!["INBOX".to_string()] } else { args.folders.clone() };
+    let targets: Vec<&EmailAccountArgs> = accounts
+        .iter()
+        .filter(|a| args.accounts.is_empty() || args.accounts.contains(&account_key(a)))
+        .collect();
+    let total = targets.len() as u32;
+    // 0 先推一次：界面能立刻从「没反应」变成「0/5 · 正在连第一个账号」
+    let _ = app.emit(
+        FETCH_PROGRESS_EVENT,
+        EmailFetchProgress { done: 0, total, account: String::new() },
+    );
+    let mut results: Vec<(String, Result<(Vec<EmailMeta>, u32), String>)> = Vec::new();
+    for (i, acc) in targets.iter().enumerate() {
+        let key = account_key(acc);
+        results.push((key.clone(), fetch_account_emails(acc, &folders, args.date_from.as_deref(), args.date_to.as_deref()).await));
+        let _ = app.emit(
+            FETCH_PROGRESS_EVENT,
+            EmailFetchProgress { done: (i + 1) as u32, total, account: key },
+        );
+    }
+    Ok(aggregate_fetches(results, args.limit, args.offset))
 }
 
 #[derive(Deserialize)]
@@ -1631,6 +1965,469 @@ mod tests {
         // "你好" 的 utf-8 base64 编码词
         let encoded = "=?utf-8?B?5L2g5aW9?=";
         assert_eq!(decode_mime_words(encoded), "你好");
+    }
+
+    // ---- 聚合：单账号失败**不许吞掉**（2026-09-20 用户报障：某账号的邮件在聚合列表里"没来"，
+    //      而界面既不报错也没有任何提示 —— 旧行为 `Err(_) => {}` 把整个账号静默丢了）----
+
+    fn meta_for(date: &str, uid: u32) -> EmailMeta {
+        EmailMeta {
+            uid,
+            subject: format!("s{uid}"),
+            from: "a@x.com".to_string(),
+            date: date.to_string(),
+            snippet: String::new(),
+            seen: false,
+            flagged: false,
+            folder: "INBOX".to_string(),
+            account: String::new(),
+        }
+    }
+
+    #[test]
+    fn aggregate_fetches_reports_failed_account_instead_of_dropping_it() {
+        let ok = vec![meta_for("Mon, 20 Sep 2026 18:17:08 +0800", 1)];
+        let agg = aggregate_fetches(
+            vec![
+                ("imap.qq.com|zhaizy@qq.com".to_string(), Err("登录失败: 认证失败".to_string())),
+                ("imap.qiye.aliyun.com|sales@shuyo.cn".to_string(), Ok((ok, 2))),
+            ],
+            0,
+            0,
+        );
+        // ★ 失败的那个：账号 key 与错误原文**原样带出来**（界面要能说清"哪个账号、为什么"）
+        assert_eq!(
+            agg.errors,
+            vec![EmailAccountError {
+                account: "imap.qq.com|zhaizy@qq.com".to_string(),
+                message: "登录失败: 认证失败".to_string(),
+            }]
+        );
+        // 成功的那个不受影响：邮件还在、未读照加
+        assert_eq!(agg.emails.len(), 1);
+        assert_eq!(agg.emails[0].account, "imap.qiye.aliyun.com|sales@shuyo.cn");
+        assert_eq!(agg.unread, 2);
+        // 两个账号都在 `accounts` 里：界面要能分辨"它有账号、只是这一轮没拉到"
+        assert_eq!(agg.accounts.len(), 2);
+    }
+
+    #[test]
+    fn aggregate_fetches_all_ok_has_no_errors_and_sorts_newest_first() {
+        let agg = aggregate_fetches(
+            vec![
+                ("a|1".to_string(), Ok((vec![meta_for("Mon, 7 Jul 2026 16:19:49 +0800", 7)], 0))),
+                ("b|2".to_string(), Ok((vec![meta_for("Sun, 20 Sep 2026 20:42:43 +0800", 9)], 1))),
+            ],
+            0,
+            0,
+        );
+        assert!(agg.errors.is_empty());
+        assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![9, 7]);
+        assert_eq!(agg.unread, 1);
+    }
+
+    #[test]
+    fn aggregate_fetches_pages_after_merging_not_per_account() {
+        // 先合并再分页：否则"每账号各取 N 封"会把多账号合成的时间线切碎
+        let metas = vec![
+            meta_for("Sun, 20 Sep 2026 10:00:00 +0800", 3),
+            meta_for("Sun, 20 Sep 2026 09:00:00 +0800", 2),
+            meta_for("Sun, 20 Sep 2026 08:00:00 +0800", 1),
+        ];
+        let agg = aggregate_fetches(vec![("a|1".to_string(), Ok((metas, 0)))], 2, 1);
+        assert_eq!(agg.emails.iter().map(|m| m.uid).collect::<Vec<_>>(), vec![2, 1]);
+    }
+
+    /// **手动探针 ③**（默认不跑，只读）：把某个账号的文件夹列表按**界面会看到的样子**打出来
+    /// （协议名 → `imap_utf7_decode`），并标出哪个是回收站。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='fengjt@shuyo.cn'
+    /// cargo test --lib -- --ignored --nocapture probe_list_folders
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_list_folders() {
+        use futures_util::StreamExt;
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+
+        // 与 `email_list_folders` 同一段逻辑（这里只打印，不改任何东西）
+        use tokio::net::TcpStream;
+        let tcp = TcpStream::connect((account.host.as_str(), account.port)).await.expect("TCP");
+        let tls = tokio_native_tls::TlsConnector::from(native_tls::TlsConnector::new().unwrap());
+        let tls_stream = tls.connect(&account.host, tcp).await.expect("TLS");
+        let client = async_imap::Client::new(tls_stream);
+        let mut session = client
+            .login(&account.username, &account.password)
+            .await
+            .map(|s| s)
+            .map_err(|(e, _)| e)
+            .expect("登录失败");
+        let mut stream = session.list(None, Some("*")).await.expect("LIST 失败");
+        let mut names: Vec<(String, bool)> = Vec::new();
+        while let Some(Ok(name)) = stream.next().await {
+            let no_select = name
+                .attributes()
+                .iter()
+                .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect));
+            if no_select {
+                continue;
+            }
+            let is_trash = name
+                .attributes()
+                .iter()
+                .any(|a| matches!(a, async_imap::types::NameAttribute::Trash));
+            names.push((imap_utf7_decode(name.name()), is_trash));
+        }
+        eprintln!("账号 {}：界面会看到 {} 个文件夹 ——", account.username, names.len());
+        for (human, is_trash) in &names {
+            eprintln!("   {}{}", if *is_trash { "★ " } else { "  " }, human);
+        }
+        eprintln!("   回收站（pick_trash 口径）：{:?}", pick_trash(&names));
+    }
+
+    /// **手动探针 ②**（默认不跑）：直接看 `FETCH 1:*` 这条流**到底给了几条、在哪一条断的、报的什么错**。
+    ///
+    /// 为什么要有它：`fetch_account_emails` 里是 `while let Some(Ok(m)) = stream.next()` ——
+    /// 流里出现一个 `Err` 就**静默结束**，剩下的信全部看不到（表现是"这个账号最新只到某一天"）。
+    /// 这条探针把那个被吞掉的 `Err` 打出来。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='zhaizy@qq.com'
+    /// cargo test --lib -- --ignored --nocapture probe_fetch_stream_errors
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_fetch_stream_errors() {
+        use futures_util::StreamExt;
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        let mut session = open_session(&account, &folder).await.expect("打开会话失败");
+        let mut stream = session
+            .fetch("1:*", "(ENVELOPE UID FLAGS)")
+            .await
+            .expect("FETCH 命令本身失败");
+        let mut ok = 0usize;
+        let mut last_uid = 0u32;
+        let mut first_err: Option<String> = None;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(m) => {
+                    ok += 1;
+                    if let Some(u) = m.uid {
+                        last_uid = u;
+                    }
+                }
+                Err(e) => {
+                    first_err = Some(format!("{e:?} / 显示: {e}"));
+                    break;
+                }
+            }
+        }
+        eprintln!("FETCH 1:* 流：收到 Ok {ok} 条，最后一条 uid={last_uid}");
+        match first_err {
+            Some(e) => eprintln!("★ 第一个 Err（被 `while let Some(Ok(..))` 吞掉的就是它）：{e}"),
+            None => eprintln!("没有 Err（流自然结束）"),
+        }
+        drop(stream);
+        let _ = session.logout().await;
+    }
+
+    /// **源码哨兵**：拉取路径里不许再出现 `while let Some(Ok(`。
+    ///
+    /// 那个写法遇到流里的 `Err` 就**静默结束** —— 服务端其实已经把它后面的邮件都发过来了，
+    /// 应用却再也不读。2026-09-20 用户报障的真根因就是这个：QQ 收件箱里一封工信部通知的
+    /// `Message-ID` 带未转义的 `"`，`async-imap` 解析到第 36 条报错 ⇒ 第 36 条之后的
+    /// **全部邮件（含今天的新邮件）在应用里不存在**，而服务端完全正常。
+    #[test]
+    fn fetch_path_never_stops_silently_on_a_stream_error() {
+        let src = include_str!("email.rs");
+        let start = src.find("async fn fetch_chunk").expect("fetch_chunk 不见了（改名了？这条哨兵要跟着搬）");
+        let end = src[start..].find("async fn email_fetch_all").expect("找不到拉取段的结尾") + start;
+        let body = &src[start..end];
+        assert!(
+            !body.contains("Some(Ok("),
+            "拉取路径里又出现了 `while let Some(Ok(..))` —— 它会在流报错时静默丢掉后面的邮件：\n{body}"
+        );
+        assert!(body.contains("resume_at"), "断点续拉（resume_at）不见了");
+    }
+
+    /// **手动探针**（默认不跑）：拿本机 `email-account.json` 里的某个账号，跑一次**聚合那一半**的
+    /// 拉取（`fetch_account_emails`），把"到底拉到几封、最新几封是谁/时间/`date_ts`、还是报错"打出来。
+    ///
+    /// 为什么需要它：聚合邮箱"某个账号的信没来"这类报障，光读代码分不清是
+    /// ① 服务端没有 → ② 凭据不对 → ③ 拉取报错（会被 `email_fetch_all` 记进 `errors`）→
+    /// ④ 拉到了但排序/分页把今天的信排到了第一页之外（`date_ts` 解析失败 ⇒ 0 ⇒ 沉底）。
+    /// 这条探针把 ②③④ 一次读出来。**只读**：`FETCH 1:* (ENVELOPE UID FLAGS)`，不取正文、不改标记。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='zhaizy@qq.com'
+    /// cargo test --lib -- --ignored --nocapture probe_fetch_account_emails
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_fetch_account_emails() {
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        // 想看别的文件夹就设 `SHUYO_EMAIL_PROBE_FOLDER`（默认 INBOX）——查"回收站里到底能列出几封"要用。
+        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+        eprintln!("探针账号：{} @ {}:{}（auto_fetch={}）文件夹={}", account.username, account.host, account.port, account.auto_fetch, folder);
+        match fetch_account_emails(&account, &[folder.clone()], None, None).await {
+            Ok((metas, unread)) => {
+                let mut v: Vec<EmailMeta> = metas.clone();
+                v.sort_by(|a, b| date_ts(&b.date).cmp(&date_ts(&a.date)));
+                eprintln!("OK：拉到 {} 封（未读 {}）", metas.len(), unread);
+                eprintln!("  最新 5 封（按 date_ts 降序；date_ts=0 表示**日期解析失败**，在多账号聚合里会沉底）：");
+                for m in v.iter().take(5) {
+                    let subject: String = m.subject.chars().take(46).collect();
+                    eprintln!("   uid={:<6} ts={:<14} {} | {} | {}", m.uid, date_ts(&m.date), m.date, m.from, subject);
+                }
+                // 今天/昨天的信在不在（按本地日历日粗判）
+                let today = chrono::Local::now().format("%d %b %Y").to_string();
+                let hit = v.iter().filter(|m| m.date.contains(&today)).count();
+                eprintln!("  日期里含今天（{today}）的：{hit} 封");
+            }
+            Err(e) => eprintln!("ERR：{e}"),
+        }
+    }
+
+    /// **手动探针**：查一封营销信里的图片究竟是怎么引用的（2026-09-20 用户报障「数友社区的 logo 显示不出来」）。
+    ///
+    /// 为什么必须取证：logo 显示不出来的可能原因有三种，**在界面上长得一模一样**（碎图图标 + `alt` 文本），
+    /// 但修法完全不同：
+    ///   ① `http(s)://` 远程图 —— 被我们默认拦下（点「显示图片」即可）；
+    ///   ② `cid:xxx` 内嵌附件 —— 后端**必须**把内嵌图片改写成 `data:` URI，否则浏览器永远加载不出来；
+    ///   ③ `background:url(...)` / `<style>` 背景图 —— 后端剔了 `<style>`、前端剔了 `url()`。
+    /// 这条探针把「每个 `<img>` 的 src 协议」「MIME 里有没有带 Content-ID 的内嵌图片」直接打出来，不猜。
+    ///
+    /// ```text
+    /// $env:SHUYO_EMAIL_PROBE_ACCOUNT='zhaizy@qq.com'
+    /// $env:SHUYO_EMAIL_PROBE_NEEDLE='community@shuyo.cn'
+    /// cargo test --lib -- --ignored --nocapture probe_inline_image_refs
+    /// ```
+    #[tokio::test]
+    #[ignore = "手动探针：要真账号（SHUYO_EMAIL_PROBE_ACCOUNT=某个已配置的邮箱）"]
+    async fn probe_inline_image_refs() {
+        let want = std::env::var("SHUYO_EMAIL_PROBE_ACCOUNT").unwrap_or_default();
+        if want.is_empty() {
+            eprintln!("跳过：没设 SHUYO_EMAIL_PROBE_ACCOUNT");
+            return;
+        }
+        let cfg = std::env::var("SHUYO_EMAIL_PROBE_CFG").unwrap_or_else(|_| {
+            format!(
+                "{}\\cn.shuyo.shuyonote\\email-account.json",
+                std::env::var("APPDATA").unwrap_or_default()
+            )
+        });
+        let all: Vec<EmailAccountArgs> =
+            serde_json::from_str(&std::fs::read_to_string(&cfg).expect("读账号配置失败"))
+                .expect("解析账号配置失败");
+        let account = all.into_iter().find(|a| a.username == want).expect("配置里没有这个账号");
+        let needle = std::env::var("SHUYO_EMAIL_PROBE_NEEDLE").unwrap_or_else(|_| "shuyo".to_string());
+        let needle_lc = needle.to_lowercase();
+        let folder = std::env::var("SHUYO_EMAIL_PROBE_FOLDER").unwrap_or_else(|_| "INBOX".to_string());
+
+        let (metas, _unread) = match fetch_account_emails(&account, &[folder.clone()], None, None).await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("ERR：{e}");
+                return;
+            }
+        };
+        let mut hits: Vec<EmailMeta> = metas
+            .into_iter()
+            .filter(|m| {
+                m.from.to_lowercase().contains(&needle_lc) || m.subject.to_lowercase().contains(&needle_lc)
+            })
+            .collect();
+        hits.sort_by(|a, b| date_ts(&b.date).cmp(&date_ts(&a.date)));
+        eprintln!("账号 {} 文件夹 {} 里命中「{}」的邮件：{} 封", account.username, folder, needle, hits.len());
+        if hits.is_empty() {
+            return;
+        }
+        let m = &hits[0];
+        eprintln!("取最新一封：uid={} date={} from={} subject={}", m.uid, m.date, m.from, m.subject);
+
+        let raw = match fetch_uid_raw(&account, &folder, m.uid).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("取原文失败：{e}");
+                return;
+            }
+        };
+        eprintln!("原文长度：{} 字节；含 <style>：{}", raw.len(), raw.to_lowercase().contains("<style"));
+
+        // MIME 树：哪些子部分是内嵌图片（有 Content-ID / inline disposition）？
+        let parsed = match mailparse::parse_mail(raw.as_bytes()) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("解析失败：{e}");
+                return;
+            }
+        };
+        fn walk(p: &mailparse::ParsedMail, depth: usize) {
+            let cid = p
+                .headers
+                .iter()
+                .find(|h| h.get_key().eq_ignore_ascii_case("Content-ID"))
+                .map(|h| h.get_value())
+                .unwrap_or_default();
+            let disp = p
+                .headers
+                .iter()
+                .find(|h| h.get_key().eq_ignore_ascii_case("Content-Disposition"))
+                .map(|h| h.get_value())
+                .unwrap_or_default();
+            let body_len = p.get_body_raw().map(|b| b.len()).unwrap_or(0);
+            eprintln!(
+                "{}ctype={:<26} bytes={:<8} cid={:<28} disp={}",
+                "  ".repeat(depth),
+                p.ctype.mimetype,
+                body_len,
+                cid.trim(),
+                disp.trim()
+            );
+            for sub in &p.subparts {
+                walk(sub, depth + 1);
+            }
+        }
+        walk(&parsed, 0);
+
+        let Some(html) = email_html_body(&parsed) else {
+            eprintln!("这封没有 text/html 部分（纯文本信）");
+            return;
+        };
+        let img_re = regex::Regex::new(r"(?is)<img\b[^>]*>").unwrap();
+        let src_re = regex::Regex::new(r#"(?is)src\s*=\s*["']([^"']*)["']"#).unwrap();
+        let tags: Vec<&str> = img_re.find_iter(&html).map(|x| x.as_str()).collect();
+        eprintln!("（经 `email_html_body`：内嵌图已内联）HTML 里 <img> 共 {} 个：", tags.len());
+        for (i, tag) in tags.iter().take(12).enumerate() {
+            let src = src_re.captures(tag).map(|c| c[1].to_string()).unwrap_or_default();
+            let scheme = if src.starts_with("cid:") {
+                "cid(内嵌附件)**未内联**"
+            } else if src.starts_with("data:") {
+                "data(已内联 ✅)"
+            } else if src.starts_with("http://") || src.starts_with("https://") {
+                "http(远程)"
+            } else if src.is_empty() {
+                "(无 src)"
+            } else {
+                "相对/其它"
+            };
+            let src_head: String = src.chars().take(60).collect();
+            let one: String = tag.chars().take(150).collect();
+            eprintln!("  [{i}] {scheme} src={src_head}（共 {} 字符）", src.len());
+            eprintln!("      {}", one.replace('\n', " "));
+        }
+        let url_n = html.to_lowercase().matches("url(").count();
+        eprintln!("HTML 里 url( 出现 {url_n} 次（背景图会被前端剔掉）");
+        // 想把这份正文拿去喂真浏览器（比如在真 Chromium 里过一遍 DOMPurify 看 logo 是不是真的解码出来）
+        // 就设 `SHUYO_EMAIL_PROBE_OUT=<文件路径>`。
+        if let Ok(out) = std::env::var("SHUYO_EMAIL_PROBE_OUT") {
+            match std::fs::write(&out, html.as_bytes()) {
+                Ok(()) => eprintln!("已把这份 HTML 写到 {out}（{} 字节）", html.len()),
+                Err(e) => eprintln!("写 {out} 失败：{e}"),
+            }
+        }
+        let head: String = html.chars().take(400).collect();
+        eprintln!("HTML 前 400 字符：\n{head}");
+    }
+
+    /// **内嵌图片（`cid:`）必须内联成 `data:` URI** —— 2026-09-20「数友社区的 logo 显示不出来」的真根因。
+    ///
+    /// 真账号取证（探针 `probe_inline_image_refs`，QQ 收件箱 uid 9760「确认订阅：数友社区新帖提醒」）：
+    /// ```text
+    /// multipart/alternative
+    ///   text/plain 479B
+    ///   multipart/related
+    ///     text/html 1546B   <img src="cid:shuyo-logo" alt="数友社区" width="154" height="30">
+    ///     image/png 16291B  Content-ID: <shuyo-logo>  Content-Disposition: inline
+    /// ```
+    /// 浏览器不认 `cid:` scheme ⇒ 碎图图标 + alt 文本（截图里那行「[碎图] 数友社区」）。
+    /// 这里用一封**等价结构**的合成邮件钉住修法（不联网）。
+    #[test]
+    fn email_html_inlines_cid_images_as_data_uri() {
+        // 只当文本用，不解码；内容是不是合法 PNG 与判据无关。
+        let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+        let raw = format!(
+            "From: a@b.com\r\nSubject: t\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=ALT\r\n\r\n\
+--ALT\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nni hao\r\n\
+--ALT\r\nContent-Type: multipart/related; boundary=REL\r\n\r\n\
+--REL\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>hi</p><img src=\"cid:shuyo-logo\" alt=\"shuyo\" width=\"154\" height=\"30\">\r\n\
+--REL\r\nContent-Type: image/png; name=logo.png\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <shuyo-logo>\r\nContent-Disposition: inline; filename=logo.png\r\n\r\n{png_b64}\r\n\
+--REL--\r\n--ALT--\r\n"
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).unwrap();
+        let html = email_html_body(&parsed).expect("有 text/html 部分");
+        assert!(html.contains("data:image/png;base64,"), "内嵌图没内联：{html}");
+        assert!(!html.contains("cid:shuyo-logo"), "还留着 cid: 引用：{html}");
+        assert!(html.contains("alt=\"shuyo\""), "alt 被弄丢了：{html}");
+    }
+
+    /// `cid:` 引用的三种边角：大小写、百分号转义、以及**查不到就原样保留**（不凭空造地址）。
+    #[test]
+    fn rewrite_cid_refs_handles_case_encoding_and_misses() {
+        let mut parts = std::collections::HashMap::new();
+        parts.insert("shuyo-logo".to_string(), ("image/png".to_string(), "AAA".to_string()));
+        parts.insert("my logo".to_string(), ("image/gif".to_string(), "BBB".to_string()));
+        // 大小写不敏感（头里写 <SHUYO-LOGO>、正文写 cid:shuyo-logo 的邮件很常见）
+        assert_eq!(
+            rewrite_cid_refs(r#"<img src="cid:SHUYO-LOGO">"#, &parts),
+            r#"<img src="data:image/png;base64,AAA">"#
+        );
+        // 百分号转义
+        assert_eq!(
+            rewrite_cid_refs(r#"<img src="cid:my%20logo">"#, &parts),
+            r#"<img src="data:image/gif;base64,BBB">"#
+        );
+        // 查不到 ⇒ 原样保留
+        assert_eq!(
+            rewrite_cid_refs(r#"<img src="cid:nope">"#, &parts),
+            r#"<img src="cid:nope">"#
+        );
+        // 没有 cid: 的正文一个字节都不动
+        assert_eq!(rewrite_cid_refs("<p>hello</p>", &parts), "<p>hello</p>");
     }
 
     #[test]
@@ -1769,12 +2566,59 @@ mod tests {
         assert_eq!(imap_utf7_encode("a&b"), "a&-b");
     }
 
+    /// **界面拿到的必须是「已删除邮件」而不是 `&XfJSIJZkkK5O9g-`**（2026-09-20 用户报障：
+    /// 「批量删除的邮件，已删除文件夹找不到」—— 删除本身是好的（五个账号的真账号探针都把信搬进了
+    /// 回收站），但文件夹选择器里那一行是协议名乱码，人找不到「已删除」）。
+    /// 上面的 `wire` 全是阿里云企业邮 / QQ 真回给我们的名字（2026-09-20 现场抓的）。
+    #[test]
+    fn imap_utf7_decode_round_trips_the_real_server_names() {
+        for (wire, human) in [
+            ("&XfJSIJZkkK5O9g-", "已删除邮件"),
+            ("&V4NXPpCuTvY-", "垃圾邮件"),
+            ("&XfJT0ZAB-", "已发送"),
+            ("&g0l6Pw-", "草稿"),
+            ("&UXZO1mWHTvZZOQ-", "其他文件夹"),
+            ("&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-", "其他文件夹/员工简历"),
+            ("&UXZO1mWHTvZZOQ-/QQ&kK5O9ouilgU-", "其他文件夹/QQ邮件订阅"),
+            ("INBOX", "INBOX"),
+            ("Deleted Messages", "Deleted Messages"),
+        ] {
+            assert_eq!(imap_utf7_decode(wire), human, "解码 {wire}");
+            // ★ 回程必须闭合：界面把解出来的名字原样传回来时，编码回去要一模一样
+            assert_eq!(imap_utf7_encode(human), wire, "回程编码 {human}");
+        }
+        // `&-` 是字面 `&`（RFC 3501 §5.1.3）
+        assert_eq!(imap_utf7_decode("a&-b"), "a&b");
+        // 解不开的段**原样保留**：宁可显示一个奇怪的名字，也不能把它吞掉（吞掉＝那个文件夹从界面消失）
+        assert_eq!(imap_utf7_decode("&!!!-tail"), "&!!!-tail");
+        assert_eq!(imap_utf7_decode("没有闭合的&段"), "没有闭合的&段");
+    }
+
+    /// **上线前的编码必须两种口径都吃**：界面名（`已删除邮件`）与协议名（`&XfJSIJZkkK5O9g-`）。
+    ///
+    /// 这条是**当天实测踩出来的**：第一版"一律 encode"，于是 `resolve_trash` 问回来的协议名
+    /// 被写成 `&-XfJSIJZkkK5O9g-`（字面 `&` ⇒ `&-`）⇒ 阿里云账号上 `in_trash=false`：
+    /// 信从收件箱没了、回收站里却没有。真账号探针一把就抓住了（QQ 因为回收站名是 ASCII 而没事）。
+    #[test]
+    fn folder_on_wire_accepts_both_ui_names_and_protocol_names() {
+        // 界面名 → 协议名
+        assert_eq!(folder_on_wire("已删除邮件"), "&XfJSIJZkkK5O9g-");
+        assert_eq!(folder_on_wire("垃圾邮件"), "&V4NXPpCuTvY-");
+        // ★ 协议名**原样不动**（再编一次就会多一个 `&-`）
+        assert_eq!(folder_on_wire("&XfJSIJZkkK5O9g-"), "&XfJSIJZkkK5O9g-");
+        assert_eq!(folder_on_wire("&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-"), "&UXZO1mWHTvZZOQ-/&VFhd5XuAU4Y-");
+        // 纯 ASCII 两种口径都通（编码是恒等）
+        assert_eq!(folder_on_wire("INBOX"), "INBOX");
+        assert_eq!(folder_on_wire("Deleted Messages"), "Deleted Messages");
+        // 界面名里的**字面 `&`** 仍要按 RFC 写成 `&-`
+        assert_eq!(folder_on_wire("a&b"), "a&-b");
+    }
+
     /// **这条判据就是那次事故的哨兵**：发到线上的 mailbox 名一个字都不许是非 ASCII。
     /// 旧代码把 `垃圾箱` / `已删除` 原文发出去，阿里云企业邮不认、当场废掉那条连接，
     /// 于是整批删除静默失败 —— 用户看到的就是「删了、重新拉取又出现」。
     #[test]
-    fn mailbox_names_on_the_wire_are_ascii_only() {
-        for name in [
+    fn mailbox_names_on_the_wire_are_ascii_only() {        for name in [
             "垃圾箱",
             "已删除",
             "已删除邮件",
@@ -1829,12 +2673,70 @@ mod tests {
         ];
         assert_eq!(pick_trash(&names).as_deref(), Some("INBOX.Deleted Items"));
 
-        // ④ 一个都不像 ⇒ None：那时走 `\Deleted` + EXPUNGE 这条通用路，**不乱猜名字**
+        // ④ 一个都不像 ⇒ None：那时**拒绝删除**（`delete_one` 直接报错），不乱猜名字、
+        //    也不做任何"永久删"——收不回来的事，宁可没做
         let names = vec![
             ("INBOX".to_string(), false),
             ("&g0l6Pw-".to_string(), false),
         ];
         assert_eq!(pick_trash(&names), None);
+    }
+
+    /// **删信路径里不许再出现"整箱 `EXPUNGE`"**（2026-09-20 用户实测：客户端删了上百封，
+    /// QQ 的「已删除」却是空的 —— 那条 `session.expunge()` 把本文件夹里**所有**带 `\Deleted` 的信
+    /// 一起永久清了，而且完全绕过回收站，IMAP 层面无法恢复）。
+    ///
+    /// 这是**源码哨兵**：这种"服务器配合着把信弄没"的行为本地 mock 复现不了（与上面那条
+    /// "mailbox 名必须全是 ASCII" 同一个思路）—— 谁把这条回退加回来，判据就要当场变红。
+    #[test]
+    fn delete_path_never_does_a_mailbox_wide_expunge() {
+        let src = include_str!("email.rs");
+        let start = src
+            .find("async fn delete_one")
+            .expect("delete_one 不见了（改名了？这条哨兵要跟着搬）");
+        let body = &src[start..];
+        let end = body
+            .find("\n#[tauri::command]")
+            .expect("找不到 delete_one 的结尾");
+        let body = &body[..end];
+        assert!(
+            !body.contains(".expunge()"),
+            "delete_one 里出现了整箱 EXPUNGE —— 它会清掉本文件夹里所有带 \\Deleted 的信、且绕过回收站：\n{body}"
+        );
+        assert!(
+            body.contains("uid_copy"),
+            "delete_one 必须先把邮件 COPY 进回收站（服务器不支持 MOVE 时，这一步才是\"进回收站\"的保证）：\n{body}"
+        );
+    }
+
+    /// 拉 `folder` 的**最后 `tail` 封**（按序号取尾段，不拉整箱），按主题前缀认领，返回命中的 UID。
+    ///
+    /// 为什么不用 `UID SEARCH`：**QQ 的 SEARCH 索引看不见 APPEND 进去的信**（2026-09-20 实测：
+    /// APPEND 回了 `[APPENDUID … 9769]`、`UID FETCH 9769` 立刻拿得到，而
+    /// `UID SEARCH SUBJECT "shuyo-probe-"` 过 60 秒仍然是空）。序号尾段 FETCH 既便宜又不依赖索引。
+    ///
+    /// 复用点：探针用它 ①认回刚 APPEND 的信、②清理以前跑挂留下的垃圾、③到回收站里找那封信。
+    async fn tail_uids(session: &mut ImapSession, folder: &str, tail: u32, prefix: &str) -> Vec<u32> {
+        use futures_util::StreamExt;
+        // `UID SEARCH ALL` 只用来估"有多少封"：它对**已存在**的信是准的；对刚 APPEND 的（QQ 上）
+        // 会少算一封 —— 但 `<n>:*` 里的 `*` 仍然覆盖真正的末尾，所以照样能拿到。
+        let n = session
+            .uid_search("ALL")
+            .await
+            .map(|s| s.len() as u32)
+            .unwrap_or(0);
+        let start = n.saturating_sub(tail).max(1);
+        let mut out = Vec::new();
+        if let Ok(mut stream) = session.fetch(format!("{start}:*"), "(UID ENVELOPE)").await {
+            while let Some(Ok(m)) = stream.next().await {
+                if let Some(meta) = meta_from_fetch(&m, folder) {
+                    if meta.subject.starts_with(prefix) {
+                        out.push(meta.uid);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// **手动探针**（默认不跑，`#[ignore]`）：拿真账号把「批量删除 → 重新拉取」走一遍。
@@ -1878,7 +2780,35 @@ mod tests {
             d = chrono::Utc::now().to_rfc2822()
         );
 
-        // ① 往 INBOX APPEND 一封探针信，并在 FETCH 里按主题找回它的 UID
+        // ⓪ 先把**以前失败留下的探针信**清掉：上一次 APPEND 成功、后面 panic 了，就会留一封在收件箱里。
+        //    （2026-09-20 在 QQ 上第一次跑就留了几封 —— 探针自己收拾自己的垃圾，别让人手动去删。
+        //      注意这里也**不能靠 SEARCH**：QQ 看不见 APPEND 进去的信，得按尾段 FETCH 找。）
+        if let Ok(mut s) = open_session(&account, "INBOX").await {
+            for u in tail_uids(&mut s, "INBOX", 80, "shuyo-probe-").await {
+                if let Ok(store) = s
+                    .uid_store(u.to_string(), "+FLAGS.SILENT (\\Deleted)")
+                    .await
+                {
+                    futures_util::pin_mut!(store);
+                    while store.next().await.is_some() {}
+                }
+                if let Ok(ex) = s.uid_expunge(u.to_string()).await {
+                    futures_util::pin_mut!(ex);
+                    while ex.next().await.is_some() {}
+                }
+                println!("PROBE 清掉一封遗留探针信 uid={u}");
+            }
+            let _ = s.logout().await;
+        }
+
+        // ① 往 INBOX APPEND 一封探针信，再把它的 UID 认回来。
+        //
+        // ⚠️ 两条弯路都在 QQ 上实测踩过（`zhaizy@qq.com`，收件箱 7000+ / 现存 130 封）：
+        //   · **`FETCH 1:*`**：拉全量 ENVELOPE，又慢又容易中途出错，而 `while let Some(Ok(m))`
+        //     一遇 `Err` 就静默收尾 ⇒ "APPEND 之后没找到那封探针信"；
+        //   · **`UID SEARCH HEADER Subject "…"`**：APPEND 完立刻搜、过 60 秒再搜，**都是空**
+        //     ——QQ 的 SEARCH 索引看不见 APPEND 进去的信（`UID FETCH <uid>` 却立刻拿得到）。
+        // 所以用**序号尾段 FETCH** 认领（见 `tail_uids`），给两轮重试。
         let uid = {
             let mut session = open_session(&account, "INBOX")
                 .await
@@ -1887,21 +2817,28 @@ mod tests {
                 .append("INBOX", Some("(\\Seen)"), None, raw.as_bytes())
                 .await
                 .expect("APPEND 探针信失败");
-            let mut stream = session
-                .fetch("1:*", "(UID ENVELOPE)")
-                .await
-                .expect("FETCH 失败");
-            let mut found = None;
-            while let Some(Ok(m)) = stream.next().await {
-                if let Some(meta) = meta_from_fetch(&m, "INBOX") {
-                    if meta.subject == subject {
-                        found = Some(meta.uid);
-                    }
+
+            let mut found: Option<u32> = None;
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                if let Some(u) = tail_uids(&mut session, "INBOX", 20, &subject)
+                    .await
+                    .into_iter()
+                    .max()
+                {
+                    found = Some(u);
+                    break;
                 }
             }
-            drop(stream);
             let _ = session.logout().await;
-            found.expect("APPEND 之后没找到那封探针信")
+            found.unwrap_or_else(|| {
+                panic!(
+                    "APPEND 之后认不回那封探针信（主题 {subject}）—— 连 APPEND 都回不来，\
+                     后面的删除探针就没法跑了"
+                )
+            })
         };
 
         // ② 调**真**函数（就是界面点「删除所选」时走的那条路）
@@ -1912,22 +2849,74 @@ mod tests {
         })
         .await;
 
-        // ③ 重新「拉取」：这封还在不在
-        let metas = email_fetch_inbox(EmailFetchArgs {
-            account: account.clone(),
-            folders: vec!["INBOX".to_string()],
-            limit: 0,
-            offset: 0,
-            date_from: None,
-            date_to: None,
-        })
-        .await
-        .expect("重新拉取失败");
-        let still = metas.iter().any(|m| m.uid == uid);
+        // ③ 它还在不在收件箱里 —— **按 UID 直接问**，不做整箱 FETCH。
+        //
+        // 为什么不用 `email_fetch_inbox`（原探针是那么写的）：真邮箱 7000+ 封时，那条路会**在中途
+        // 静默截断**（`while let Some(Ok(m))` 一遇 `Err` 就收尾，`Err(_) => {}` 又把整个账号的失败
+        // 吞掉），于是"重新拉取"看到的可能只是前一半 —— 拿它判断"这封还在不在"会**假通过**。
+        // 这里区分两件事：**物理上还在不在** vs **列表里还看不看得见**（带 `\Deleted` 标记的，
+        // 列表那侧已经不显示了）。
+        let (present, deleted_flag) = match open_session(&account, "INBOX").await {
+            Ok(mut s) => {
+                let mut present = false;
+                let mut del = false;
+                if let Ok(mut st) = s.uid_fetch(uid.to_string(), "(UID FLAGS)").await {
+                    while let Some(Ok(m)) = st.next().await {
+                        present = true;
+                        del = m.flags().any(|f| f == async_imap::types::Flag::Deleted);
+                    }
+                }
+                let _ = s.logout().await;
+                (present, del)
+            }
+            Err(_) => (false, false),
+        };
+        let still = present && !deleted_flag;
         println!(
-            "PROBE account={} uid={} moved={:?} still_in_inbox={}",
-            account.username, uid, moved, still
+            "PROBE account={} uid={} moved={:?} in_inbox={} deleted_flag={} visible_in_list={}",
+            account.username, uid, moved, present, deleted_flag, still
         );
+
+        // ③′ **它得在回收站里**（2026-09-20 用户：「改为进回收站」）。
+        //     判据不能只看"从收件箱消失了"——旧代码的整箱 EXPUNGE 也能让它消失，代价是永久删掉。
+        //     所以这里先问服务器回收站叫什么（`resolve_trash`），再进那个文件夹按主题找回它，
+        //     找完**顺手把它从回收站也清掉**（只清这一封），别在用户邮箱里留垃圾。
+        let (trash_name, in_trash) = match open_session(&account, "INBOX").await {
+            Ok(mut s) => {
+                let t = resolve_trash(&mut s).await;
+                let _ = s.logout().await;
+                match t {
+                    Some(folder) => match open_session(&account, &folder).await {
+                        Ok(mut tr) => {
+                            // 同样按尾段 FETCH 认领（回收站也可能几千封，且 SEARCH 在 QQ 上靠不住）
+                            let probe_uid: Option<u32> = tail_uids(&mut tr, &folder, 20, &subject)
+                                .await
+                                .into_iter()
+                                .max();
+                            if let Some(u) = probe_uid {
+                                if let Ok(store) = tr
+                                    .uid_store(u.to_string(), "+FLAGS.SILENT (\\Deleted)")
+                                    .await
+                                {
+                                    futures_util::pin_mut!(store);
+                                    while store.next().await.is_some() {}
+                                }
+                                if let Ok(ex) = tr.uid_expunge(u.to_string()).await {
+                                    futures_util::pin_mut!(ex);
+                                    while ex.next().await.is_some() {}
+                                }
+                            }
+                            let _ = tr.logout().await;
+                            (Some(folder), probe_uid.is_some())
+                        }
+                        Err(_) => (Some(folder), false),
+                    },
+                    None => (None, false),
+                }
+            }
+            Err(_) => (None, false),
+        };
+        println!("PROBE trash={:?} in_trash={}", trash_name, in_trash);
 
         // ④ 收尾：万一没删掉，也要把这封探针信清掉（读响应 + UID EXPUNGE），别在用户邮箱里留垃圾
         if still {
@@ -1955,6 +2944,11 @@ mod tests {
         assert!(
             !still,
             "批量删除后重新拉取又出现了（uid={uid}）—— 这正是用户 2026-09-20 报的那个 bug"
+        );
+        assert!(
+            in_trash,
+            "删掉之后必须能在回收站里找到它（用户 2026-09-20：「改为进回收站」）—— 回收站={trash_name:?}。\
+             只「从收件箱消失」不算数：旧代码那条整箱 EXPUNGE 也能让它消失，代价是永久删掉、回收站里什么都没有"
         );
     }
 }

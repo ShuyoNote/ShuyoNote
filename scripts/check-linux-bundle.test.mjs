@@ -16,6 +16,7 @@ import {
   checkLinuxBundle,
   comparePdfiumLibs,
   dynamicSectionRunpath,
+  isResourceDirFilePath,
   isResourceDirLibPath,
   normalizeDynamicSection,
   parseDpkgDebList,
@@ -23,6 +24,7 @@ import {
   parseSectionNames,
   PDFIUM_LIB,
 } from "./check-linux-bundle.mjs";
+import { FONT_SHA256, FONT_TARGET } from "./fetch-font.mjs";
 
 const OK = {
   debNames: ["ShuyoNote_1.91.5_amd64.deb"],
@@ -30,6 +32,9 @@ const OK = {
   pdfiumDebSha: "a".repeat(64),
   pdfiumVendorSha: "a".repeat(64),
   pdfiumVendorExists: true,
+  // 随包中文字体：一份"好产物"里它必须在，且 sha256 等于钉死的那份
+  fontPathsInDeb: [`./usr/lib/ShuyoNote/${FONT_TARGET}`],
+  fontShaInDeb: FONT_SHA256,
 };
 
 describe("isResourceDirLibPath（资源目录**根**那一层）", () => {
@@ -57,6 +62,13 @@ describe("isResourceDirLibPath（资源目录**根**那一层）", () => {
     expect(isResourceDirLibPath("./usr/share/ShuyoNote/libpdfium.so")).toBe(false);
     expect(isResourceDirLibPath("./opt/ShuyoNote/libpdfium.so")).toBe(false);
     expect(isResourceDirLibPath("./usr/lib/ShuyoNote/libpdfium.so.1")).toBe(false);
+  });
+
+  it("同一个位置判据也管**随包字体**（只换文件名；`usr/lib/<一段>/<文件名>` 才算数）", () => {
+    expect(isResourceDirFilePath(`./usr/lib/ShuyoNote/${FONT_TARGET}`, FONT_TARGET)).toBe(true);
+    expect(isResourceDirFilePath(`squashfs-root/usr/lib/ShuyoNote/${FONT_TARGET}`, FONT_TARGET)).toBe(true);
+    expect(isResourceDirFilePath(`./usr/lib/ShuyoNote/resources/${FONT_TARGET}`, FONT_TARGET)).toBe(false);
+    expect(isResourceDirFilePath("./usr/lib/ShuyoNote/libpdfium.so", FONT_TARGET)).toBe(false); // 认名字，不是"随便一个文件"
   });
 });
 
@@ -101,6 +113,59 @@ describe("checkLinuxBundle", () => {
     expect(
       checkLinuxBundle({ ...OK, appImageNames: img, libPathsInAppImage: ["./usr/lib/ShuyoNote/x/libpdfium.so"] }).join("\n"),
     ).toMatch(/位置不对/);
+  });
+});
+
+// ---- 随包中文字体（2026-09-20，P4 的 Linux 缺口；与库同族的产物级判据）----
+describe("checkLinuxBundle：随包中文字体", () => {
+  it("★ 字体不在 deb 里 ⇒ 红，而且要说清后果（非嵌入中文字体整行不显示）", () => {
+    const p = checkLinuxBundle({ ...OK, fontPathsInDeb: [] });
+    expect(p.join("\n")).toMatch(new RegExp(`${FONT_TARGET} 不在 deb 里`));
+    expect(p.join("\n")).toMatch(/整行不显示/); // 别只说"缺文件"，要说清用户那边是什么样
+  });
+
+  it("★ 字体在子目录里 ⇒ **必须红**（与库同一条规矩：资源目录根那一层才算带）", () => {
+    const p = checkLinuxBundle({ ...OK, fontPathsInDeb: [`./usr/lib/ShuyoNote/resources/${FONT_TARGET}`] });
+    expect(p.join("\n")).toMatch(/位置不对/);
+    // 反向：正确的那一层必须绿
+    expect(checkLinuxBundle({ ...OK, fontPathsInDeb: [`./usr/lib/ShuyoNote/${FONT_TARGET}`] })).toEqual([]);
+  });
+
+  it("★ sha256 与 `fetch-font.mjs` 钉死的那份不一致 ⇒ 红（拿到的不是 pin 的那份字体）", () => {
+    const p = checkLinuxBundle({ ...OK, fontShaInDeb: "b".repeat(64) });
+    expect(p.join("\n")).toMatch(/不是 pin 的那份字体/);
+    expect(p.join("\n")).toContain(FONT_SHA256.slice(0, 12)); // 报错里带上钉死值，省一次翻文件
+  });
+
+  it("AppImage 里字体缺失/位置不对 ⇒ 同库那条一样红", () => {
+    const img = ["ShuyoNote_1.91.5_amd64.AppImage"];
+    expect(
+      checkLinuxBundle({ ...OK, appImageNames: img, libPathsInAppImage: ["x"], fontPathsInAppImage: [] }).join("\n"),
+    ).toMatch(/不在 AppImage 里/);
+    expect(
+      checkLinuxBundle({
+        ...OK,
+        appImageNames: img,
+        libPathsInAppImage: ["x"],
+        fontPathsInAppImage: [`./squashfs-root/usr/lib/ShuyoNote/resources/${FONT_TARGET}`],
+      }).join("\n"),
+    ).toMatch(/位置不对/);
+  });
+
+  it("AppImage **读不到内容**时不为字体再报一条（库那条已经如实说了「没验过」）", () => {
+    const p = checkLinuxBundle({
+      ...OK,
+      appImageNames: ["ShuyoNote_1.91.5_amd64.AppImage"],
+      libPathsInAppImage: null,
+      fontPathsInAppImage: null,
+    });
+    expect(p).toHaveLength(1);
+    expect(p[0]).toMatch(/没验过/);
+  });
+
+  it("老调用方**没问**字体（参数不给）⇒ 不判、也不报 —— 但 CLI 永远会问（见 main()）", () => {
+    const { fontPathsInDeb, fontShaInDeb, fontPathsInAppImage, ...noFont } = OK;
+    expect(checkLinuxBundle(noFont)).toEqual([]);
   });
 });
 

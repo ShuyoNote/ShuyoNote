@@ -13,7 +13,15 @@
 //      —— Rust 侧只探"资源目录根"，深一层就等于没带；
 //   4. deb 里那份与 `vendor/pdfium/linux-x64/lib/libpdfium.so` 的 **sha256 一致**
 //      （deb 是纯粹的 ar+tar，没人动过库的字节 ⇒ 这条能钉死"拷错了/上一次构建的残留"）；
-//   5. AppImage 若在，位置同上，另外与源那份做**结构比对**（见下）。
+//   5. AppImage 若在，位置同上，另外与源那份做**结构比对**（见下）；
+//   6. **随包中文字体在包里、也在资源目录那一层、且 sha256 等于 `fetch-font.mjs` 钉死的那份**
+//      （2026-09-20 补，P4 的 Linux 缺口）——
+//      为什么它必须单独有一条：那份预编译 `libpdfium.so` **没有字体后端**（`ldd` 无 fontconfig、
+//      `FcInit` 0 个），非嵌入字体（国标 `STSong-Light`+`UniGB-UCS2-H` 这种写法）的中文 PDF
+//      在 Linux 上**整行不显示**，而 Windows/macOS 有系统字体映射、看不见这个问题。
+//      缺字体与缺库是同一类静默失效：装完不报错，只有用户打开某类 PDF 才发现 ⇒ 必须**产物级**判据。
+//      （字体本体不入库（`.gitignore`），只有同目录一个 README.md 占位；所以"没取字体"**不会**让构建红，
+//       这条门禁就是唯一会红的地方。）
 //
 // ⚠️ **AppImage 里那份字节必然不等于源那份，而且这消除不掉**（2026-09-19 第二次订正）：
 //   linuxdeploy 对 AppDir 里 `usr/lib` 下**每个** ELF 都会无条件 `patchelf --set-rpath`
@@ -46,6 +54,9 @@ import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { isMain } from "./lib/is-main.mjs";
+// 随包中文字体的**钉死哈希**就是这条判据的 oracle：`fetch-font.mjs` 已经把它写成常量，
+// 这里 import 进来（而不是再抄一份），保证"门禁认的那份"与"打包前取的那份"永远是同一个值。
+import { FONT_SHA256, FONT_TARGET } from "./fetch-font.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -65,7 +76,7 @@ export const APPIMAGE_SIZE_SLACK_BYTES = 256 * 1024;
  * 为什么用"层数"而不是写死 `<id>`：Tauri 的 deb 资源目录名取自产品名/标识符，
  * 跨版本变过一次；**层数**才是我们真正依赖的性质（`resource_dir()` 给的就是那一层）。
  */
-export function isResourceDirLibPath(entry) {
+export function isResourceDirFilePath(entry, fileName) {
   let parts = String(entry)
     .replace(/^\.\//, "")
     .split("/")
@@ -75,7 +86,11 @@ export function isResourceDirLibPath(entry) {
   // 所以要比层数之前先摘掉它 —— 2026-09-19 的 CI 就是被这一点误判成"位置不对"的
   //（库其实位置正确：`usr/lib/ShuyoNote/libpdfium.so`）。
   if (parts[0] === "squashfs-root") parts = parts.slice(1);
-  return parts.length === 4 && parts[0] === "usr" && parts[1] === "lib" && parts[3] === PDFIUM_LIB;
+  return parts.length === 4 && parts[0] === "usr" && parts[1] === "lib" && parts[3] === fileName;
+}
+
+export function isResourceDirLibPath(entry) {
+  return isResourceDirFilePath(entry, PDFIUM_LIB);
 }
 
 /**
@@ -258,6 +273,11 @@ export function checkLinuxBundle({
   pdfiumVendorSha = null,
   pdfiumVendorExists = true,
   appImageCompare = null, // comparePdfiumLibs 的结果；null = 没做结构比对
+  // 随包中文字体（`null` = 这一路**没问**，例如只判库的老调用方/老单测；CLI 永远会问）
+  fontPathsInDeb = null,
+  fontShaInDeb = null,
+  fontPathsInAppImage = null,
+  fontExpectedSha = FONT_SHA256,
 }) {
   const problems = [];
 
@@ -316,6 +336,37 @@ export function checkLinuxBundle({
     }
   }
 
+  // ---- 随包中文字体（与库同族：产物级、静默失效、只有 Linux 需要）----
+  if (fontPathsInDeb !== null && debNames.length > 0) {
+    if (fontPathsInDeb.length === 0) {
+      problems.push(
+        `${FONT_TARGET} 不在 deb 里 —— Linux 上**非嵌入字体**的中文 PDF 会整行不显示` +
+          `（那份预编译 libpdfium.so 没有字体后端：ldd 无 fontconfig、FcInit 0 个）。` +
+          `打包前要跑 node scripts/fetch-font.mjs，映射见 src-tauri/tauri.linux.conf.json`,
+      );
+    } else if (!fontPathsInDeb.some((p) => isResourceDirFilePath(p, FONT_TARGET))) {
+      problems.push(
+        `${FONT_TARGET} 在 deb 里的位置不对：${fontPathsInDeb.join("、")} —— ` +
+          `必须与库同在**资源目录那一层**（usr/lib/<一段>/${FONT_TARGET}）：` +
+          `provider 只在"库目录旁"找随包字体，深一层就等于没带`,
+      );
+    } else if (fontExpectedSha && fontShaInDeb && fontShaInDeb !== fontExpectedSha) {
+      problems.push(
+        `deb 里那份 ${FONT_TARGET} 的 sha256 与钉死的那份不一致（${fontShaInDeb.slice(0, 12)}… vs ` +
+          `${fontExpectedSha.slice(0, 12)}…）—— 拿到的不是 pin 的那份字体（版本变了没改 fetch-font？）`,
+      );
+    }
+  }
+  // AppImage 的字体只在与库同一份展开清单读得到时才判：AppImage **读不到内容**那种情况，
+  // 上面库那一条已经如实报了"没验过"，不必再报两条同源的话。
+  if (fontPathsInAppImage !== null && appImageNames.length > 0) {
+    if (fontPathsInAppImage.length === 0) {
+      problems.push(`${FONT_TARGET} 不在 AppImage 里（AppImage 用户那条字体缺口照旧）`);
+    } else if (!fontPathsInAppImage.some((p) => isResourceDirFilePath(p, FONT_TARGET))) {
+      problems.push(`${FONT_TARGET} 在 AppImage 里的位置不对：${fontPathsInAppImage.join("、")}`);
+    }
+  }
+
   return problems;
 }
 
@@ -369,6 +420,8 @@ function main() {
 
   let libPathsInDeb = [];
   let pdfiumDebSha = null;
+  let fontPathsInDeb = null;
+  let fontShaInDeb = null;
   if (debNames.length > 0) {
     const deb = join(debDir, debNames[0]);
     const listing = tryRun("dpkg-deb", ["-c", deb]);
@@ -376,10 +429,10 @@ function main() {
       console.error("[check-linux-bundle] ❌ 读不了 deb（本机没有 dpkg-deb？）—— 这条**没验过**");
       process.exit(1);
     }
-    libPathsInDeb = parseDpkgDebList(listing).filter((p) => p.endsWith(`/${PDFIUM_LIB}`) || p.endsWith(PDFIUM_LIB));
+    const parsedDeb = parseDpkgDebList(listing);
     // ⚠️ 防线：**读出来了行、却一条路径都没解析出来** ⇒ 那是解析器不认识这个格式，
-    // 不是"包里没有库"。把这两种情况分开报 —— 2026-09-19 的 CI 假红就是被混为一谈的。
-    if (libPathsInDeb.length === 0 && parseDpkgDebList(listing).length === 0 && listing.trim() !== "") {
+    // 不是"包里没有东西"。把这两种情况分开报 —— 2026-09-19 的 CI 假红就是被混为一谈的。
+    if (parsedDeb.length === 0 && listing.trim() !== "") {
       console.error(
         "[check-linux-bundle] ❌ `dpkg-deb -c` 有输出但**一条路径都没解析出来** —— 格式不认识（解析器的问题），" +
           "这条**没验过**；不要把「没读到」当成「包里没有」。前 3 行原样：\n" +
@@ -391,11 +444,17 @@ function main() {
       );
       process.exit(2);
     }
-    if (libPathsInDeb.length > 0) {
+    libPathsInDeb = parsedDeb.filter((p) => p.endsWith(`/${PDFIUM_LIB}`) || p.endsWith(PDFIUM_LIB));
+    // 字体：同口径（`parseDpkgDebList` 已把路径前缀归一掉）。
+    // ⚠️ 只按**文件名**匹配，不看目录 —— "在不在包里"与"在不在正确的那一层"是两件事，
+    //    后者交给 `isResourceDirFilePath` 判（与库那条一样）。
+    fontPathsInDeb = parsedDeb.filter((p) => p.endsWith(`/${FONT_TARGET}`) || p.endsWith(FONT_TARGET));
+    if (libPathsInDeb.length > 0 || fontPathsInDeb.length > 0) {
       const tmp = mkdtempSync(join(tmpdir(), "linux-bundle-"));
       try {
         if (tryRun("dpkg-deb", ["-x", deb, tmp]) !== null) {
-          pdfiumDebSha = sha256File(join(tmp, libPathsInDeb[0]));
+          pdfiumDebSha = libPathsInDeb.length > 0 ? sha256File(join(tmp, libPathsInDeb[0])) : null;
+          fontShaInDeb = fontPathsInDeb.length > 0 ? sha256File(join(tmp, fontPathsInDeb[0])) : null;
         }
       } finally {
         rmSync(tmp, { recursive: true, force: true });
@@ -406,6 +465,7 @@ function main() {
   let libPathsInAppImage = appImageNames.length > 0 ? null : [];
   let pdfiumAppImageSha = null;
   let appImageCompare = null;
+  let fontPathsInAppImage = appImageNames.length > 0 ? null : [];
   if (appImageNames.length > 0) {
     const img = join(appImageDir, appImageNames[0]);
     const tmp = mkdtempSync(join(tmpdir(), "linux-appimage-"));
@@ -414,6 +474,13 @@ function main() {
       const ok = tryRun(img, ["--appimage-extract"], { cwd: tmp });
       if (ok !== null) {
         const found = tryRun("find", [tmp, "-name", PDFIUM_LIB]);
+        const foundFont = tryRun("find", [tmp, "-name", FONT_TARGET]);
+        if (foundFont !== null) {
+          fontPathsInAppImage = foundFont
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((p) => "." + p.slice(tmp.length));
+        }
         if (found !== null) {
           // find 输出是绝对路径 ⇒ 去掉 tmp 前缀，得到与 deb 同口径的相对路径。
           libPathsInAppImage = found
@@ -463,6 +530,9 @@ function main() {
     pdfiumVendorSha,
     pdfiumVendorExists: existsSync(vendorLib),
     appImageCompare,
+    fontPathsInDeb,
+    fontShaInDeb,
+    fontPathsInAppImage,
   });
 
   console.log(`[check-linux-bundle] bundle=${bundleDir}`);
@@ -479,6 +549,15 @@ function main() {
         (appImageCompare ? ` ⇒ 结构比对：${appImageCompare.facts.join(" · ")}` : " ⇒ **结构比对没做**"),
     );
   }
+  console.log(
+    `  ${FONT_TARGET}：deb ` +
+      (fontPathsInDeb === null
+        ? "(没问)"
+        : fontPathsInDeb.length > 0
+          ? `${fontPathsInDeb.join("、")}（${(fontShaInDeb ?? "").slice(0, 12)}…，钉死值 ${FONT_SHA256.slice(0, 12)}…）`
+          : "(不在包里)") +
+      ` · AppImage ${fontPathsInAppImage === null ? "(问不到)" : fontPathsInAppImage.join("、") || "(不在包里)"}`,
+  );
   if (problems.length > 0) {
     console.error("[check-linux-bundle] ❌ 不通过：");
     for (const p of problems) console.error(`  - ${p}`);

@@ -273,8 +273,41 @@ jobs:
         # 所以拦在构建期（缺 inset 桥 ⇒ 顶部又变触摸死区；缺返回键回调 ⇒ 返回键退出应用）。
         run: pnpm check:android-mobile-shell
 
+      - name: 品牌桌面图标（把 src-tauri/icons/android 铺进 gen 工程）
+        # 为什么需要（2026-09-21）：`tauri android init` 每次都把 **Tauri 默认图标**写进
+        # `res/mipmap-*/`，而入库的品牌图标（含 anydpi 自适应图标）**没有任何步骤铺过去**
+        # ⇒ 装出来的 APK 桌面图标一直是默认那团蓝橙色漩涡（owner 截图问的就是它）。
+        # 同样是改 gen/（生成物、不入库），所以也只能在 init 之后脚本化铺一遍。
+        run: pnpm android:app-icon
+
+      - name: 自检：桌面图标确实是品牌那套
+        run: pnpm check:android-app-icon
+
+      - name: 随包 PDFium 库（Android）
+        # 为什么需要（2026-09-20 补，P4 的安卓格）：`libpdfium.so` 是 `libloading` **运行时**加载的
+        # ⇒ 包里没有它时**装完不会立刻报错**，只有用户开 PDF（P5 之后默认走 PDFium）才变成
+        # 「找不到 PDFium 动态库」⇒ 界面上是"打不开"。
+        # ⚠️ 之前仓库里**没有任何地方提到 jniLibs**（`gen/android` 是 `.gitignore` 的），
+        #    所以安卓一直**没有随包库**、PDF 静默退到 pdf.js ⇒ 这两步就是那条缺失的通路，
+        #    且必须排在 `init` 之后（jniLibs 目录属于刚生成的 gen/）。
+        # ⚠️ 平台名写**显式**的 `--platform`（2026-09-20 修）：原来写的是位置形式
+        #    `… fetch-pdfium.mjs android-arm64`，而那时脚本只认 `--platform` ⇒ 参数被静默吃掉、
+        #    回落成 runner 的当前平台，实际取回的是 **linux-x64**，直到下一句 stage 才报
+        #    「vendor 里没有 android-arm64 的那份库」（run 35501504391 就是这么红的）。
+        #    现在位置形式也认了，且认不出会当场 exit 2（判据见 scripts/lib/pdfium-target.test.mjs）；
+        #    这里仍写成显式形式，好让"取哪个平台"在同一行里自证。
+        run: |
+          node scripts/fetch-pdfium.mjs --platform android-arm64
+          pnpm android:stage-pdfium
+
       - name: Build APK (arm64, unsigned)
         run: pnpm tauri android build --target aarch64 --apk --ci
+
+      - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
+        # 与 check:macos-bundle / check:linux-bundle 同一族：断言 `lib/<abi>/libpdfium.so` 在包内、
+        # 且与 vendor 那份**逐字节相同**（"文件在"和"是同一份字节"是两件事）。
+        # 判据的由来：Windows 吃过"装包里没有 pdfium.dll"、macOS 吃过"包里有但位置对不上"。
+        run: pnpm check:android-bundle
 
       - name: 用正式密钥签名 APK（让 CI 出的包直接能装到真机上验）
         # 为什么加这一步：CI 以前出的是**未签名**包，装真机前必须在本机手工

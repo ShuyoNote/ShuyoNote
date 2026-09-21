@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  absolutizeCommunityLinks,
   findStoredPost,
   linkIntentOf,
   noteForPost,
@@ -74,16 +75,19 @@ describe("linkIntentOf — 深链与网址都认，认不出就说清为什么",
 });
 
 describe("noteForPost — 来源必须写在最前面", () => {
-  it("第一行是来源引用块，含标题、地址、作者与时间", () => {
-    const { title, markdown } = noteForPost(post);
+  it("第一行是来源引用块，含标题、地址、作者与时间；标签**不在正文里**（落成真标签）", () => {
+    const { title, markdown, tags } = noteForPost(post);
     expect(title).toBe("插件配方：批量一");
     const first = markdown.split("\n")[0];
-    // 地址是**纯文本**：全文检索索引的是 content_text，只放链接 href 会让幂等查不到。
+    // 地址是**纯文本**：全文检索索引的是 content_text，只放链接 href 会让幂等查不到
+    //（2026-09-21 起它同时是属性里的「来源」，但正文这一份**不能删** —— 属性值不进全文索引）。
     expect(first).toBe(
       "> 来源：插件配方：批量一 · https://community.shuyo.cn/post/plugin-recipes-batch-1（作者 数友社区 · 2026-09-11T11:00:00Z）",
     );
     expect(markdown).toContain("第一行\n第二行\n第三行");
-    expect(markdown).toContain("#插件 #ShuyoNote");
+    // 标签走 `add_tag`（见 `communitySaveNote.ts`），正文里不再有那一行
+    expect(tags).toEqual(["插件", "ShuyoNote"]);
+    expect(markdown).not.toContain("标签：");
   });
 
   it("没有作者/时间/标签时不留空壳（不出现「作者 」这种半句话）", () => {
@@ -154,5 +158,65 @@ describe("searchKeyOf — 用 slug 搜，准确性交给逐字核对", () => {
 
   it("不是 URL 时原样返回（不抛异常）", () => {
     expect(searchKeyOf("随便一段字")).toBe("随便一段字");
+  });
+});
+
+// **2026-09-21：社区文章存进笔记后，图是破的** —— 正文里的图是站内相对地址
+// （`/attachments/<hash>`），存进笔记后"相对于谁"就不存在了。这条判据钉住"存进去之前先绝对化"。
+describe("absolutizeCommunityLinks — 站内相对地址要变成绝对地址（否则笔记里的图是破的）", () => {
+  const url = "https://community.shuyo.cn/post/plugin-recipes-batch-1";
+
+  it("Markdown 的图片与链接：单个 / 开头的都补上站点前缀", () => {
+    expect(absolutizeCommunityLinks("![图](/attachments/abc123)", url)).toBe(
+      "![图](https://community.shuyo.cn/attachments/abc123)",
+    );
+    expect(absolutizeCommunityLinks("看[这篇](/post/another-post)", url)).toBe(
+      "看[这篇](https://community.shuyo.cn/post/another-post)",
+    );
+    // 图前后有别的字也要对
+    expect(absolutizeCommunityLinks("前 ![图](/attachments/a.png) 后", url)).toBe(
+      "前 ![图](https://community.shuyo.cn/attachments/a.png) 后",
+    );
+  });
+
+  it("内嵌 HTML 的 src/href 同样要绝对化（社区正文允许 HTML）", () => {
+    expect(absolutizeCommunityLinks('<img src="/attachments/x.png">', url)).toBe(
+      '<img src="https://community.shuyo.cn/attachments/x.png">',
+    );
+    expect(absolutizeCommunityLinks("<a href='/u/cnzen'>我</a>", url)).toBe(
+      "<a href='https://community.shuyo.cn/u/cnzen'>我</a>",
+    );
+  });
+
+  it("**不许**动的那些：绝对地址 / 协议相对 / data: / attachment: / 锚点 / 不带头斜杠的相对路径", () => {
+    for (const keep of [
+      "![图](https://cdn.example.com/a.png)",
+      "![图](//cdn.example.com/a.png)",
+      "![图](data:image/png;base64,AAA)",
+      "![图](attachment://localhost/C%3A/hash.png)",
+      "![图](foo.png)",
+      "[锚](#section)",
+      "[邮件](mailto:a@b.com)",
+    ]) {
+      expect(absolutizeCommunityLinks(keep, url)).toBe(keep);
+    }
+  });
+
+  it("来源地址解析不了 ⇒ 一个字都不改（宁可保持原样，也不要把正文搞坏）", () => {
+    const md = "![图](/attachments/a.png)";
+    expect(absolutizeCommunityLinks(md, "不是地址")).toBe(md);
+    expect(absolutizeCommunityLinks(md, "")).toBe(md);
+  });
+
+  it("noteForPost 存进笔记的那份正文已经是绝对地址（含图的帖子）", () => {
+    const withImage: CommunityPost = {
+      ...post,
+      bodyMarkdown: "看看这张图：\n\n![截图](/attachments/deadbeef.png)\n\n完。",
+    };
+    const { markdown } = noteForPost(withImage);
+    expect(markdown).toContain("![截图](https://community.shuyo.cn/attachments/deadbeef.png)");
+    expect(markdown).not.toContain("](/attachments/");
+    // 来源行照旧在最前面（幂等要靠它逐字核对）
+    expect(markdown.split("\n")[0]).toContain("> 来源：");
   });
 });

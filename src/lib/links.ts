@@ -60,3 +60,35 @@ export function setAllowExternal(v: boolean): void {
     // Ignore in non-browser/test.
   }
 }
+
+/**
+ * 「打开一个外部网站」的**纯决策**（不碰平台、不弹提示）—— 真总闸的判定就在这里，
+ * 出口只有一个：`src/lib/openExternal.ts` 的 `openExternalUrl`。
+ *
+ * 为什么要拆成纯函数：这段逻辑要能被 `scripts/smoke-web.mjs` 直接打（它只 bundle 纯模块），
+ * 也要能不依赖 WebView 单测。**调用点不许自己判** —— 各处自己写一遍 `if (!getAllowExternal())`
+ * 正是这个开关以前只盖住 1/7 个外链面（关于页四个链接）的原因。
+ */
+export type ExternalOpenDecision =
+  /** 允许打开，`url` 已过白名单（只有 http/https）。 */
+  | { kind: "open"; url: string }
+  /** 总闸关着 ⇒ 不打开，但**必须把原因说出来**（不许静默无反应）。 */
+  | { kind: "blocked" }
+  /** 不是 http(s)（`javascript:` / `file:` / `data:` / 相对路径…）⇒ 根本不打开。 */
+  | { kind: "unsafe" };
+
+export function decideExternalOpen(raw: string, allowed: boolean = getAllowExternal()): ExternalOpenDecision {
+  const url = sanitizeExternalUrl(raw);
+  if (!url) return { kind: "unsafe" };
+  if (!allowed) return { kind: "blocked" };
+  return { kind: "open", url };
+}
+
+/** 被拦下时给用户的那句话（**统一措辞**，别让每个调用点自己编一句）。 */
+export function externalOpenNotice(d: ExternalOpenDecision): string {
+  if (d.kind === "blocked") {
+    return "已关闭外部跳转：设置里「允许跳转到外部项目网站」打开后才能跳。本地文件与离线功能不受影响。";
+  }
+  if (d.kind === "unsafe") return "这个链接不是 http(s) 地址，不打开。";
+  return "";
+}

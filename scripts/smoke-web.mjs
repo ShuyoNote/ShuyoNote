@@ -83,7 +83,7 @@ await esbuild.build({
       'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
       'export { SHORTCUTS, shortcutGroups, shortcutSearch, shortcutLabel } from "./src/lib/shortcuts";\n' +
       'export { COVER_PRESETS } from "./src/lib/covers";\n' +
-      'export { APP_NAME, APP_VERSION, APP_LICENSE, linkItems, sanitizeExternalUrl, getAllowExternal, setAllowExternal } from "./src/lib/links";\n' +
+      'export { APP_NAME, APP_VERSION, APP_LICENSE, linkItems, sanitizeExternalUrl, getAllowExternal, setAllowExternal, decideExternalOpen, externalOpenNotice } from "./src/lib/links";\n' +
       'export { normCoords, denormCoords, annPxBox, validateAnnotation, addAnnotation, removeAnnotation, updateAnnotation, annotationMode, pdfRef, parsePdfRef, pageToBlock } from "./src/lib/pdfAnnotation";\n' +
       'export { pickEngine, wantsWorker, PDF_RENDER_ENGINES } from "./src/lib/pdfRender";\n' +
       'export { compareVersions, updateStatus } from "./src/lib/updates";\n' +
@@ -1067,6 +1067,15 @@ assert("workspace name persists across instances", wsAgain !== "");
   // Node has no localStorage: set is a no-op, so we only assert it's callable and
   // the getter stays a boolean. (Persistence is exercised in the real browser.)
   assert("setAllowExternal callable + getter boolean", (aiMod.setAllowExternal(true), typeof aiMod.getAllowExternal() === "boolean"));
+  // 真总闸（2026-09-21）：判定是纯函数，所以这里能直接验"关着时**不会**打开"，
+  // 而不是只验 setter 能调。出口只有一个（src/lib/openExternal.ts），接线由
+  // src/lib/openExternal.wiring.test.ts 扫源码钉住。
+  assert("decideExternalOpen: 开着 + https ⇒ open", aiMod.decideExternalOpen("https://example.com/x", true).kind === "open");
+  assert("decideExternalOpen: 关着 ⇒ blocked（拿不到 url ⇒ 不会打开）", (() => { const d = aiMod.decideExternalOpen("https://example.com/x", false); return d.kind === "blocked" && d.url === undefined; })());
+  assert("decideExternalOpen: javascript: ⇒ unsafe", aiMod.decideExternalOpen("javascript:alert(1)", true).kind === "unsafe");
+  assert("decideExternalOpen: 相对路径 ⇒ unsafe", aiMod.decideExternalOpen("/etc/passwd", true).kind === "unsafe");
+  assert("externalOpenNotice: 被拦下时有话说（不许静默）", aiMod.externalOpenNotice({ kind: "blocked" }).includes("允许跳转到外部项目网站"));
+  assert("externalOpenNotice: 不是 http(s) 也说清", aiMod.externalOpenNotice({ kind: "unsafe" }).length > 0);
 
   // M24 stage-1 — PDF annotation pure functions (normalize/validate/CRUD/摘录转块/文本层降级).
   assert("normCoords normalizes + clamps to 0..1", JSON.stringify(aiMod.normCoords(100, 50, 300, 250, 1000, 500)) === "[0.1,0.1,0.3,0.5]");

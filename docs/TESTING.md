@@ -48,7 +48,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
-| contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现） |
+| contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现）。工具链探针**两张表**：macOS（`xcode-select`/SDK/`notarytool`/`codesign`/`clang`）与 **Windows（2026-09-20 补）**——硬判据 `vswhere-msvc`（VC 工具链）/`windows-sdk`/`webview2`（运行时：没它装完打不开），`kind: "info"` 的 `makensis`/`signtool` **只报不判**（tauri 自己取 NSIS、签名只在发版要） |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
 | smoke | `vitest` | 单测回归（**885 用例**） |
@@ -239,6 +239,18 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⚠️ 剩下的边界只是**运行时**：本机没有 GitCode runner，所以"真跑一次"仍待首次合并到默认分支后确认。
 - **happy-dom 不等于浏览器**：`vitest` 跑在 happy-dom 里，**不做布局**、不按视口重算媒体查询，
   所以"文字挤成竖柱""弹层关不上"这类只能靠 browser / mobile 组（真实 Chromium）兜。
+- ⚠️ **Windows 上 `cargo test` 的红有三种形态 —— 看到红的第一件事是「认形态」**（2026-09-20 补齐）：
+  三种形态的现场、结论、修法完全不同；把它们混成一句"Windows 上跑不了 rust 测试"会让下一个人白查一轮。
+
+  | 形态 | 现场 | 结论 | 怎么办 |
+  |---|---|---|---|
+  | ① **加载期就死** | 进程直接以 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 退出，**连 `running N tests` 都没有** | 测试 exe 缺应用清单 | `powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1`（见下一条） |
+  | ② **`plugins::` 整片红** | 跑了，但 36 条**全是** `plugins::tests::*`，现场写"找不到宿主二进制" | 宿主二进制不在 | 先 `cargo build --bin shuyonote`，或跑**全量** `cargo test`（它会先构建应用二进制）（见下文那条） |
+  | ③ **正常** | lib 目标跑起来；与代码无关的只有环境项（例如本机没有 PDFium 库 ⇒ 那条**响亮跳过**） | 可以当读数用 | 读数记 `passed + failed`（**不计 ignored**） |
+
+  ⚠️ 区分 ① 与 ② 的**唯一判据**是"有没有输出 `running N tests`"：① 没有那行。
+  （2026-09-20 补：用 ① 的绕法在本机跑通了 `pdfium_native` 的 **7 条**——其中 4 条属于"随包字体"那条线，
+  全部在 Windows 上跑、**没上 WSL** ⇒ 这条路是**可用**的，不是"只好躲到 Linux"。）
 - **Windows 本机跑 rust 组：要过一道 manifest 关**（2026-09-16 撞上，2026-09-19 定位）：症状是
   `cargo test` 的测试二进制在**加载期**就以 `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` 退出，而
   app（`shuyonote.exe`）能正常跑、且它的导入符号是测试二进制的**超集**。已逐条排除：缺 DLL（含
@@ -283,6 +295,20 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   `gm-conformance: ❌ 夹具编不过 / spawnSync cargo ENOENT` 的形式失败，读起来完全像夹具本身有问题。
   `scripts/gm-version-selfcheck.mjs` 里加了兜底：`PATH` 上没有、rustup 默认位置有时补上，并打一行 `!`
   —— **不静默改环境**（改了就会让"我这台能跑"变成不可复现的读数）。
+- **共享检出的 `node_modules` 可能是"半装"状态**（2026-09-20，本机 Windows 实测；与上文"有人重装的那几分钟"是**两种**形态）：
+  症状是 `vitest` / `pnpm build` **全挂**，而报错长得像"代码坏了"：
+  `Error: Cannot find package '…/.pnpm/vitest@4.1.11…/node_modules/tinyexec/index.js'`、
+  `Cannot find module '…/@esbuild/win32-x64/esbuild.exe'` —— 即 `.pnpm` 里少了传递依赖的实体；
+  更坑的是 `npx tsc` 那种入口此时会**静默从 registry 装一个同名假包**（见本文上面那条）。
+  **修法（34 秒、离线、只动自己那棵树）**：把自己的 `node_modules` 从 **junction** 换成真实目录，
+  再用**本地 pnpm store** 重装：
+  ```powershell
+  cmd /c "rmdir node_modules"        # ⚠️ 只删 junction 本身；不要 Remove-Item -Recurse（会删到别人那棵树）
+  pnpm install --frozen-lockfile --offline
+  ```
+  判定修好了：`node node_modules/vitest/vitest.mjs --version` 有输出、`node node_modules/.pnpm/esbuild@*/node_modules/esbuild/bin/esbuild --version` 有版本。
+  **收益是实打实的**：修好后本机第一次跑出 `vitest 17/17`，并当场抓到"跑 git 的用例缺显式 timeout ⇒
+  Windows 上 5s 默认超时偶发红"这个 flake（`scripts/check-changelog-version-parity.test.mjs` 已修）。
 - **`import.meta.dirname` 在旧 Node 上是 `undefined`**（2026-09-19，WSL 的 Node 18 实测）：
   `resolve(import.meta.dirname, "..")` 直接抛
   `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string` —— 报错文本一个字都没提 Node 版本，
@@ -293,6 +319,112 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
   一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
   （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
+- ✅ **安卓包现在能在 Windows 本机出了（2026-09-21 打通，实测产出 59.5 MB 的 unsigned universal APK）**。
+  这一节原先记的是"本机出不了"，三条拦路石逐条变成了可执行的步骤：
+  1. **`openssl-src` 要 `perl`**：**不用装完整 perl**。Git for Windows 自带的那份只缺几个**纯 Perl** 模块
+     （`Locale::Maketext`/`::Simple`、`ExtUtils::MakeMaker`、`Pod::Usage`/`Pod::Simple`/`Pod::Text`/`Pod::Man`/
+     `Pod::Escapes`、`ExtUtils::Install`/`::Manifest`、`Text::Template`、`File::Which`），而 **CPAN 本机可达**：
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File scripts\setup-local-perl.ps1
+     # ⇒ 把上面那些抓进 ~/.local-perl5/lib；构建时设 $env:PERL5LIB 指向它
+     ```
+     ⚠️ 两条"标准做法"在本机都是**死路**（都要从 github.com 取 MSI，本机不通）：
+     `winget install StrawberryPerl.StrawberryPerl` ⇒ `InternetOpenUrl() failed 0x80072efd`；
+     `choco install strawberryperl -y` ⇒ 同源、`exited 404`（`activeperl` 那条 choco 自己也标了 "likely broken"）。
+     也**不要**指望 git 的 perl 裸用：它连 `Locale::Maketext` 都没有 ⇒ `IPC::Cmd` → `Params::Check` 整条起不来
+     （cmd / PowerShell / Git Bash 三种壳同一条）。
+  2. **OpenSSL 的 `make` 把 NDK 路径的反斜杠吃掉**（`/usr/bin/sh` 是 msys sh）：
+     `C:\…\ndk\29…\bin\clang.exe` → `C:UserscnzenAppData…binclang.exe` ⇒ `Error 127`。
+     解法：**把工具链路径用正斜杠喂给构建**（cargo 风格的环境变量也得喂，因为 tauri/cc 会把带反斜杠的
+     `TARGET_CC` 塞进去）：`CC_aarch64_linux_android` / `AR_…` / `RANLIB_…` / `TARGET_CC` / `TARGET_AR` /
+     `TARGET_RANLIB` = `…/bin/clang.exe`、`…/bin/llvm-ar.exe`、`…/bin/llvm-ranlib.exe`（**正斜杠**），
+     并且保证 `C:\Program Files\Git\usr\bin`（`sh.exe`）在 PATH 上 —— openssl 的 Makefile 要 sh。
+  3. **Gradle 那条 `node tauri …`**：`tauri android init` 会把"用哪个可执行文件 + 什么参数"烘进生成的
+     `gen/android/buildSrc/…/BuildTask.kt`。本机那份是 `executable = "node"` + `args = ["tauri", …]`
+     ⇒ node 把 `tauri` 当模块名找 ⇒ `Cannot find module '…\src-tauri\tauri'`，
+     `Execution failed for task ':app:rustBuildArm64Release'`。修法：
+     ```powershell
+     node scripts/patch-android-buildtask.mjs      # 改成显式 `node <node_modules/@tauri-apps/cli/tauri.js> …`
+     ```
+     （CI 的 Android job 没这个问题 ⇒ **这条只在本机补，不进 CI**。）
+
+  **完整配方**（`init` 会把 `gen/` 重新生成 ⇒ 之后**这几步都要重跑**）：
+  ```powershell
+  $ndk = "$env:LOCALAPPDATA\Android\Sdk\ndk\29.0.13846066\toolchains\llvm\prebuilt\windows-x86_64\bin".Replace('\','/')
+  $env:PERL5LIB = "$env:USERPROFILE\.local-perl5\lib"
+  $env:PATH = "$env:PATH;C:\Program Files\Git\usr\bin"
+  foreach ($v in 'CC','AR','RANLIB') { Set-Item "env:${v}_aarch64_linux_android" "$ndk/$(if ($v -eq 'CC') {'clang'} elseif ($v -eq 'AR') {'llvm-ar'} else {'llvm-ranlib'}).exe" }
+  $env:TARGET_CC = "$ndk/clang.exe"; $env:TARGET_AR = "$ndk/llvm-ar.exe"; $env:TARGET_RANLIB = "$ndk/llvm-ranlib.exe"
+  $env:CFLAGS_aarch64_linux_android = "--target=aarch64-linux-android24"
+
+  node_modules\.bin\tauri.CMD android init --ci
+  node scripts/android-platform-verifier.mjs
+  node scripts/android-mobile-shell.mjs
+  node scripts/android-app-icon.mjs
+  node scripts/stage-android-pdfium.mjs
+  node scripts/patch-android-buildtask.mjs
+  node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci   # ⇒ gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
+  ```
+  出包后按 ⑨ 的签名步骤用**正式密钥**签（`zipalign -f -p 4` → `apksigner sign --ks … --ks-key-alias shuyonote`
+  → `apksigner verify --print-certs` 指纹应为 `6ee89e6f…7a88`），装到手机时注意：
+  **本机构建的 versionCode 取自 `dev` 的版本号，通常低于已发布版 ⇒ `adb install -r -d`**（`-d` 允许降级；
+  同签名不会丢数据）。首次全新构建约 35–40 分钟（OpenSSL 在 Windows 上编得慢），之后有缓存约 6–8 分钟。
+  ⇒ 本仓的**发版**安卓包仍然由 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）产出；
+  本机这条路是"要快速看真机效果 / 没网时自测"用的。
+   ⚠️ 但**打包与验收那几小步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）、
+     `pnpm android:app-icon`（把品牌图标铺进 `res/`；不铺的话 APK 桌面图标是 Tauri 默认图，
+     见 `scripts/android-app-icon.mjs` 的模块头；**改图标本身**走 `node scripts/build-android-icons.mjs`，
+     源是 `design/logo/android-*.svg` ＋ `android-icon.json`，见 `design/logo/README.md`）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
+     `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
+     2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
+     这正是 P4 安卓格那条缺口的真产物读数。
+     **同一天晚些时候**：那条通路在 CI 上**第一次走到头**（run `35504661582` 全绿，含第 19 步产物自检）——
+     修掉的是下面这两条坑（平台名静默回落 ＋ GNU tar 读不了 zip），**不是**构建本身有问题。
+- **同一件事在"本机 `tar`"与"CI `tar`"上不是同一个程序**（2026-09-20 实测，CI 上真红）：
+  APK 就是 zip，而 **Windows/macOS 的 `tar` 是 bsdtar（认 zip）、CI 的 ubuntu 上是 GNU tar（不认 zip）**
+  ⇒ 用 `tar -tf` 列 APK 的那条判据在 CI 上恒 `exit 2`「没验」（本地永远复现不出来）。
+  本机对照：`wsl tar -tf x.apk` ⇒ `This does not look like a tar archive`；`tar -tf x.apk` ⇒ 正常列出。
+  ⇒ 读 zip 一律走 `scripts/lib/zip.mjs`（纯 JS，`check-apk-contents.mjs` 与 `check-android-bundle.mjs` 共用）。
+  > 这条的**形状**值得记：它不报错、也不说谎，只是把一条产物判据变成**永远不生效**的摆设 ——
+  > 而"没验"（exit 2）与"通过"本仓是分开的，所以只看绿/红会以为它一直在工作。
+- **命令行参数被静默忽略 ⇒ CI 上"取错平台"**（2026-09-20 实测，安卓流水线**连着三跑**红在这，见下面一节）：
+  `node scripts/fetch-pdfium.mjs android-arm64` 是**位置形式**，而脚本当时只认 `--platform <名>`
+  ⇒ 参数被吃掉、回落到"当前平台"，ubuntu runner 上取回的是 **linux-x64**；
+  报错点却在**下一步**（`stage` 才说"vendor 里没有 android-arm64 的那份库"）——
+  读日志的人会去查 vendor、查 stage，真凶是参数。**修法不是改那一行调用，而是去掉"静默回落"这个状态**：
+  解析抽成 `scripts/lib/pdfium-target.mjs`（位置参数与 `--platform` 等价、认不出的名字当场 exit 2），
+  判据在 `scripts/lib/pdfium-target.test.mjs` ＋ `scripts/fetch-pdfium.test.mjs`（都离线）。
+  > 同族教训：**"我写了个参数"和"它被读到了"是两件事**，跨进程边界（脚本 / workflow / 子进程）时尤其要
+  > 用判据钉住；只靠"读一遍代码觉得对"会在 CI 上以"另一处的报错"形式出现。
+- **判据里起子进程必须带 `ELECTRON_RUN_AS_NODE=1`**（2026-09-20 本机实测）：本仓的 `vitest` 跑在 Electron 里，
+  `process.execPath` 是 **electron 而不是 node** ⇒ `spawnSync(process.execPath, [...])` 会以"加载 Electron 主进程模块"
+  的方式起来了又崩，**表现成"被测脚本自己 exit 1"**——很容易误读成"判据真的红了"（我第一版就是这么被骗了一轮）。
+  现成写法见 `scripts/fetch-pdfium.test.mjs` 里那个 `run()` 助手。
+- **在 Windows 本机出一个 Linux AppImage（WSL2 配方，2026-09-20 实测跑通）**：AppImage 只能由 Linux 构建，
+  但**不必**装一台 Linux —— WSL2 里那套工具链够用（实测：`cargo 1.98.1`、`tauri-cli 2.11.5`、
+  `webkit2gtk-4.1 = 2.52.6`、`gtk+-3.0 = 3.24.41`、`librsvg = 2.58.0`、`dpkg-deb`/`readelf`/`fusermount` 都在）。
+  三步（**注意两个刻意的选择**）：
+  ```bash
+  # ① 前端产物在 Windows 侧建（WSL 里没有 node/pnpm）：pnpm build  ⇒ dist/
+  # ② WSL 里只跑 Rust ＋ 打包；CARGO_TARGET_DIR 指到 ext4 上（快，且**避免与 Windows 的
+  #    target/release 撞车** —— 同名目录、不同 host triple，混用会互相作废缓存）
+  export PATH="$HOME/.cargo/bin:$PATH"
+  export CARGO_TARGET_DIR=/home/cnzen/target-appimage
+  cd /mnt/c/Users/cnzen/zhai/<worktree>
+  cargo tauri build --bundles appimage \
+    --config '{"build":{"beforeBuildCommand":""},"bundle":{"createUpdaterArtifacts":false}}'
+  # ③ 判据要的原始读数在 WSL 里取（本机没有 dpkg-deb / 跑不了 AppImage / 没有 readelf），
+  #    解析与判定仍由 Windows 侧那份 check-linux-bundle 做（判据一个字不改）
+  ./ShuyoNote_*.AppImage --appimage-extract        # 不需要 FUSE
+  ```
+  **实测读数（2026-09-20，`ShuyoNote_1.91.10_amd64.AppImage` 117,504,504 B、构建 7m47s）**：
+  `usr/lib/ShuyoNote/libpdfium.so` **7,664,592 B** sha256 `eb19d385…`（源那份 7,645,184 B `f7289309…`）、
+  `usr/lib/ShuyoNote/NotoSansSC-Regular.ttf` 在**资源目录那一层**；
+  结构比对 **✅ 动态表 31/32 条 · 只有 `RUNPATH=$ORIGIN` · 动态符号 783/783 · 大小 7645184/7664592**
+  ⇒ `check-linux-bundle` **0 条 problem**（AppImage 那条判据**第一次**在真产物上跑，之前只有 deb 的读数）。
+  > ⚠️ 展开后的路径**必须以 `./` 开头**（`./squashfs-root/usr/lib/...`）才算"包内相对路径"：
+  > `squashfs-root` 是打包容器的根名，判据会把它摘掉再数层数。写成 `.squashfs-root/...`（少一个斜杠）
+  > 会被判成"位置不对"——我第一版就踩了，而判据的反应是**正确地红**（说明那条位置判据确实在干活）。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 
@@ -311,9 +443,29 @@ node scripts/test-report.mjs --baseline-from rust-report.json
    ```
    注解里会有：**哪条门禁红**、挡什么事故、命令与退出码、**失败用例名与首行信息**、
    基线退步的**原因**、以及**被判据自报跳过**的条目（绿的门禁也可能少跑了几条）。
-2. **本地复跑同一条门禁**：`node scripts/test-report.mjs --only <gate-id>`；
+   ⚠️ **注解只覆盖"门禁清单里"的那些**。不在清单里的步骤（`release.yml` / `android.yml` 的构建步骤）
+   注解是空的 —— 那类红**必须读步骤日志**，配方见下条。
+2. **读步骤日志（要 token；Windows 侧 2026-09-20 实测可用）**：日志接口会 302 到签名 URL，
+   `Invoke-WebRequest` 在 NonInteractive 下会自己卡住/报错，用 `curl.exe` 反而干净：
+   ```powershell
+   # token 就在本机 git 凭据里（与 `git push github` 用的是同一个），**不要**打印出来
+   $tok = ((Get-Content "$env:USERPROFILE\.git-credentials" | Where-Object { $_ -match 'github\.com' } |
+           Select-Object -First 1) -replace '^https://','' -replace '@github\.com.*$','').Split(':')[-1]
+   $h = @{ Authorization = "Bearer $tok"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'dsh' }
+   # ① 该 workflow 最近几跑（拿到 run id / head_sha / conclusion）
+   (Invoke-RestMethod -Headers $h 'https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/workflows/android.yml/runs?per_page=5').workflow_runs
+   # ② 该跑的 jobs 与**每个 step 的结论**（哪一步红的，一眼看到）
+   (Invoke-RestMethod -Headers $h 'https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/runs/<run_id>/jobs').jobs
+   # ③ 那一步的全文日志（98 KB 级别，落地再 grep，别直接往终端倒）
+   curl.exe -sL -H "Authorization: Bearer $tok" -H "Accept: application/vnd.github+json" `
+     "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/jobs/<job_id>/logs" -o $env:TEMP\job.log
+   ```
+   实测收获（2026-09-20）：`android.yml` 的「随包 PDFium 库（Android）」**连着三跑**都红，
+   日志第一行就写着 `target: … / linux-x64` —— 而注解通道对这条**完全为空**，只读注解会以为"什么都没有"。
+   （同一跑里 `jobs` 接口还能看到红在**第 17 步**，后面 6 步是 `skipped` —— 这比人眼翻 1000 行日志快得多。）
+3. **本地复跑同一条门禁**：`node scripts/test-report.mjs --only <gate-id>`；
    门禁清单与 CI **同源**（`scripts/lib/gates.mjs`），所以本地跑的就是 CI 跑的那条。
-3. **仍是"本机绿、CI 红"就找环境差异**，已知的两类（都真实发生过）：
+4. **仍是"本机绿、CI 红"就找环境差异**，已知的两类（都真实发生过）：
    - **干净检出**没有的东西：git tag、未跟踪的构建产物。（`release.mjs` 的 tag 守卫就是这么咬到测试自己的。）
    - **浏览器语言/区域**：CI 的 Chromium 是 `en-US`，而按文案匹配的判据只认中文时就会"找不到入口"。
      复现配方：给 Chrome 加 `--lang=en-US` 再跑同一条门禁（实测能逐字复现）。

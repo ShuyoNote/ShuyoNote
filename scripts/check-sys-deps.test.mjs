@@ -22,7 +22,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { CI_RECIPE, DARWIN_PROBES, MAP, parseLock, readCiRecipe } from "./check-sys-deps.mjs";
+import { CI_RECIPE, DARWIN_PROBES, WIN32_PROBES, MAP, parseLock, readCiRecipe } from "./check-sys-deps.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(root, "scripts", "check-sys-deps.mjs");
@@ -129,6 +129,27 @@ describe("check-sys-deps 判据表的不变量（进程内，不跑任何命令�
       expect(p.why, `${p.id} 没写理由`).toBeTruthy();
     }
   });
+
+  it("Windows 工具链探针表非空、id 唯一、每条都写了理由；且至少有一条**会判**的", () => {
+    expect(WIN32_PROBES.length).toBeGreaterThan(0);
+    expect(new Set(WIN32_PROBES.map((p) => p.id)).size).toBe(WIN32_PROBES.length);
+    for (const p of WIN32_PROBES) {
+      // `cmd` 允许是**函数**（要在运行时算路径/加参数，例如 vswhere 的绝对路径）
+      const cmd = typeof p.cmd === "function" ? p.cmd() : p.cmd;
+      expect(cmd[0], `${p.id} 没有命令`).toBeTruthy();
+      expect(p.why, `${p.id} 没写理由`).toBeTruthy();
+      expect(["path", "exit", "info"], `${p.id} 的 kind 不认识：${p.kind}`).toContain(p.kind);
+    }
+    // 全是 info 就等于"这张表只报不判"⇒ 要显式挡住
+    expect(WIN32_PROBES.filter((p) => p.kind !== "info").length).toBeGreaterThan(0);
+  });
+
+  it("Windows 探针不许按 PATH 探 `link.exe`（2026-09-20 本机实测：PATH 上没有它，而构建完全正常）", () => {
+    for (const p of WIN32_PROBES) {
+      const cmd = typeof p.cmd === "function" ? p.cmd() : p.cmd;
+      expect(cmd.join(" ").toLowerCase().includes("link.exe"), `这条探针会误红：${p.id}`).toBe(false);
+    }
+  });
 });
 
 describe("check-sys-deps 端到端（真脚本、真锁文件、假 dpkg）", () => {
@@ -168,14 +189,26 @@ describe("check-sys-deps 端到端（真脚本、真锁文件、假 dpkg）", ()
 
   it("变异③：强制一条 macOS 工具链探针失败 ⇒ exit 4（复现 Xcode 27 许可未接受那次）", () => {
     const r = runWith({ SHUYONOTE_SYSDEPS_FAKE_PROBE_FAIL: "notarytool" }, "--checks", "toolchain");
-    // 探针表按平台分派：非 macOS 上这里会打印"未做"，那就不该有 exit 4。
+    // 探针表**按平台分派**，所以"非 macOS"这一支必须按平台分开写（2026-09-20 修：
+    // 这条原来只分 darwin / 非 darwin 两种，而 Windows 那天起有了自己的 WIN32_PROBES 表
+    // ⇒ 原来那句「非 macOS 会打印"未做"」在 Windows 上不再成立，判据就自己红了）：
+    //   · darwin：跑 DARWIN_PROBES ⇒ 造假失败必须 exit 4；
+    //   · win32 ：跑 WIN32_PROBES ⇒ **不许**再打印"没做"；`notarytool` 不是本平台的探针，
+    //             **不许**因此变红（否则等于拿 macOS 的工具去卡 Windows 的构建）；
+    //   · 其它（Linux）：没有本平台表 ⇒ 显式打印"没做"，也不许变红。
+    const out = r.stdout;
     if (process.platform === "darwin") {
       expect(r.code).toBe(4);
-      expect(r.stdout).toContain("❌ notarytool");
-      expect(r.stdout).toContain("❌ 工具链探针失败（exit=4）");
+      expect(out).toContain("❌ notarytool");
+      expect(out).toContain("❌ 工具链探针失败（exit=4）");
+    } else if (process.platform === "win32") {
+      expect(r.code).toBe(0);
+      expect(out).toContain("vswhere-msvc"); // 真的跑了本平台的表
+      expect(out).not.toContain("⏭ 工具链探针"); // 有本平台的表 ⇒ 不该说"没做"
+      expect(out).not.toContain("❌");
     } else {
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain("⏭ macOS 工具链探针");
+      expect(out).toContain("⏭ 工具链探针");
     }
   });
 

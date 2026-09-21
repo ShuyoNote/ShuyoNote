@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Android 自适应图标的**前景层**：只有「翻开的笔记 ＋ 灵感火花」，透明底。
+       内容整体按 **76%** 缩到画布中心（`translate(512,512) scale(.76) translate(-512,-512)`）——
+       自适应图标只有中间约 66–72% 是安全区，书顶满就会被裁到贴边（owner 2026-09-21：
+       「中间的书本太大了，小一点」）。缩放后两页占画布宽 401px（≈ 安全区的 54%），
+       四周留出蓝底呼吸。坐标与 `shuyonote-mark.svg` 保持一致，只多一层 transform。 -->
+  <g transform="translate(512,512) scale(0.76) translate(-512,-512)">
+    <!-- 翻开的笔记：两页 -->
+    <rect x="248" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+    <rect x="526" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+
+    <!-- 左页正文行 -->
+    <rect x="290" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="290" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="290" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+
+    <!-- 右页正文行 -->
+    <rect x="568" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="568" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="568" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+
+    <!-- 灵感火花（四角星） -->
+    <path d="M 770 238
+             Q 775.4 262.6, 800 268
+             Q 775.4 273.4, 770 298
+             Q 764.6 273.4, 740 268
+             Q 764.6 262.6, 770 238 Z"
+          fill="#FFFFFF"/>
+  </g>
+</svg>

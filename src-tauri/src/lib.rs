@@ -1,5 +1,6 @@
 mod ai;
 mod community;
+mod community_publish;
 mod attachments;
 mod backlinks;
 mod backup;
@@ -44,14 +45,17 @@ mod graph;
 mod models;
 mod net;
 mod capabilities_gen;
+// MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
+// PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
+#[cfg(feature = "mupdf-rollback")]
 mod pdf_native;
-// PDFium 光栅化：**P2 已接线**（`commands.rs` 按 `SHUYONOTE_PDF_ENGINE=pdfium` 分派，缺省仍是 MuPDF）
-// ⇒ 模块级 `#![allow(dead_code)]` 已随之删除（只留两处逐项 allow 并写明理由）。
+// PDFium 光栅化：默认引擎（`PdfEngine::DEFAULT = Pdfium`，见 commands.rs）。
 mod pdfium_native;
 // P3 对拍（**仅测试**）：两引擎渲同一页 + 比像素 + 落裸 RGBA。
+// 它同时用两个引擎 ⇒ 只有编了 `mupdf-rollback` 才有意义。
 // ⚠️ 本机（Windows）跑不了 `cargo test`（0xC0000139）⇒ 这里只保证它**编得过**，
 // 结论由 AMD(WSL2)/Mac 执行后给出。
-#[cfg(test)]
+#[cfg(all(test, feature = "mupdf-rollback"))]
 mod pdf_engine_compare;
 // 「用户选的文件」的唯一落地入口：Android 的选择器返回 `content://` URI 而不是文件路径，
 // `std::fs` 打不开它——这一层负责把它拷成临时真实路径（详情见模块头注释）。
@@ -514,6 +518,15 @@ pub fn run() {
             commands::render_pdf_page,
             community::fetch_community_post,
             community::fetch_community_json,
+            community_publish::community_connection,
+            community_publish::community_connect_start,
+            community_publish::community_connect_poll,
+            community_publish::community_disconnect,
+            community_publish::community_publish_note,
+            community_publish::community_upload_attachment,
+            community_publish::community_publish_state,
+            community_publish::community_content_rev,
+            community_publish::community_taxonomy,
             commands::delete_page,
             commands::move_page,
             search::search,

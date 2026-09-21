@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { sanitizeExternalUrl } from "../lib/links";
-import { platform } from "../lib/platform";
+import { openExternalUrl } from "../lib/openExternal";
 import { confirmDialog } from "../store/confirm";
 import { usePlugins } from "../store/plugins";
 import type { PluginIndexEntry, PluginIndexView } from "../types";
@@ -112,16 +111,6 @@ export function PluginIndexPanel() {
 
   const sig = view ? indexSignatureLabel(view) : null;
 
-  /** 打开外部链接：与关于对话框同一条路——先 sanitize，再用平台 opener；失败就安静失败。 */
-  const openExternal = async (url: string) => {
-    const safe = sanitizeExternalUrl(url);
-    if (!safe) return;
-    try {
-      await platform.opener.openUrl(safe);
-    } catch {
-      /* 浏览器被拦时不该把界面弄崩：这是一次"看看外面的东西"，不是数据操作 */
-    }
-  };
 
   /** 每个插件已固定的发布者公钥指纹（来自已装插件列表）。 */
   const pinnedOf = (id: string) => installedOf(id)?.publisher_key ?? null;
@@ -296,7 +285,7 @@ export function PluginIndexPanel() {
                             key={l.kind}
                             className="pm-index-item-link"
                             title={`${l.url}（在浏览器里打开）`}
-                            onClick={() => openExternal(l.url)}
+                            onClick={() => void openExternalUrl(l.url)}
                           >
                             {l.label} · {l.host}
                           </button>

@@ -1,0 +1,6 @@
+{
+  "default": "android-legacy.svg",
+  "android_bg": "android-background.svg",
+  "android_fg": "android-foreground.svg",
+  "bg_color": "#2952CC"
+}
