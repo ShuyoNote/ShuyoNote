@@ -40,6 +40,17 @@ sm-crypto = ["dep:sm4", "dep:cbc", "dep:sm3", "dep:hmac", "dep:pbkdf2"]
 # 事后由门禁 `check-crypto-backend` 拿产物核对。provider 补丁本身属 AMD（P2/P3）。
 sm-library = []
 
+# ★ 2026-09-21：MuPDF 变成**构建期特性**，默认**不编**（owner 拍板"保留退路的折中"）。
+#   背景：PDFium 从 1.91.13 起就是默认引擎（`PdfEngine::DEFAULT = Pdfium`），MuPDF 只剩
+#   `SHUYONOTE_PDF_ENGINE=mupdf` 这条"一键回滚"。它是个重量级 C 依赖（构建产物里
+#   `libmupdf.lib` 633 MB、进包还要占若干 MB），而**绝大多数构建根本用不到它**。
+#   所以：平时不编（省构建时间/体积），要留退路时**显式重编一次**：
+#     cargo build --release --features mupdf-rollback      # 桌面
+#     pnpm tauri build --features mupdf-rollback           # 走 CLI（透传给 cargo）
+#   ⚠️ 没编这个 feature 的构建里，`SHUYONOTE_PDF_ENGINE=mupdf` **不会静默换成 PDFium**：
+#   它会回一句"这个构建没编入 MuPDF，请用带 mupdf-rollback 的构建"（判据守着，见 commands.rs）。
+mupdf-rollback = ["dep:mupdf-sys"]
+
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 tauri-plugin-opener = "2"
@@ -102,7 +113,8 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # than the high-level `mupdf` crate, whose safe wrapper has an MSVC compile bug
 # (bindgen does not emit `max_align_t`). We call the `mupdf_*` convenience API
 # via src/pdf_native.rs.
-mupdf-sys = "0.8.0"
+# ⚠️ 2026-09-21 起它是**可选依赖**：只有 `--features mupdf-rollback` 才编（见 [features] 那段）。
+mupdf-sys = { version = "0.8.0", optional = true }
 # PDFium（P1，2026-09-17 开工）：**只做光栅化的替换**，MuPDF 路径保留（P2 才按运行时开关分派）。
 # 选 `pdfium-render` 而不是自己 FFI 的理由（spike 实测，见 docs/plans/2026-09-16-pdfium-engine-plan.md §0）：
 # 它用**预生成绑定 ＋ libloading 动态加载**，构建期不跑 bindgen ⇒ 不会重演上面 mupdf 那个 `max_align_t` 坑。

@@ -1657,7 +1657,7 @@ export function EmailPanel() {
             <header className="email-page-head" ref={pageHeadRef}>
               <div className="email-page-title">
                 <span className="email-page-title-text">邮箱</span>
-                {!headSubNarrow && <span className="email-page-sub">聚合收件箱 · 邮件即笔记（桌面版）</span>}
+                {!headSubNarrow && <span className="email-page-sub">聚合收件箱 · 邮件即笔记</span>}
               </div>
               <div className="email-page-actions">
                 {headToolNarrow ? (
@@ -1729,7 +1729,7 @@ export function EmailPanel() {
             {/* 头部隐藏测量基准：量出标题/副标题/工具组实际宽度，供 headSub/headTool 收纳阈值使用（不占布局）。 */}
             <div className="email-read-measure" aria-hidden="true">
               <span ref={measureHeadTitleRef} className="email-page-title-text">邮箱</span>
-              <span ref={measureHeadSubRef} className="email-page-sub" style={{ maxWidth: "none" }}>聚合收件箱 · 邮件即笔记（桌面版）</span>
+              <span ref={measureHeadSubRef} className="email-page-sub" style={{ maxWidth: "none" }}>聚合收件箱 · 邮件即笔记</span>
               <div ref={measureHeadActionsRef} className="email-page-actions">
                 <span className="sync-btn ghost">{folders.length === 1 ? folderDisplay(folders[0]) : `已选 ${folders.length} 文件夹`}</span>
                 <span className="sync-btn ghost"><RefreshIcon width={14} height={14} /> 拉取</span>
