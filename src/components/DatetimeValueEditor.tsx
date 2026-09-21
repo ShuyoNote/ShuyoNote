@@ -17,7 +17,9 @@ import {
  * （截图里「发布于」一行两个时间控件，同一个值显示了两遍）。
  *
  * 现在：可见的那个框 = **手输框**（显示"给人看的形态"，例如 `2026年9月20日 11:29:02`，
- * 可直接改，失焦或回车解析）；右侧一枚 📅 按钮打开**原生选择器**。
+ * 可直接改，失焦或回车解析）；右侧一枚**日历图标按钮**打开**原生选择器**
+ * （2026-09-21 从 `📅` emoji 换成与属性行里那三个图标按钮同一套画法的 SVG：emoji 的尺寸
+ * 由字体行高决定，跟 13×13 的线性图标既不搭、也跟那三个 18×18 的方框对不齐）。
  * 原生那枚被藏成 1px（**不能 `display:none`**：那样 `showPicker()` 会抛），
  * 不支持 `showPicker()` 的老 WebView 退化成"聚焦隐藏输入框"，**手输那条路始终可用**,
  * 所以没有任何环境会因为这次改动失去输入能力。
@@ -99,7 +101,24 @@ export function DatetimeValueEditor({
         aria-label="打开日期选择器（可到秒）"
         onClick={openPicker}
       >
-        📅
+        {/* 图标与属性行里那三个（上移/下移/移除）**同一套画法**：`prop-ico` ＋ 13×13 ＋
+            stroke 1.8 ＋ round 拐角。原来这里是一枚 `📅` emoji —— emoji 的字号/行高是字体决定的，
+            在按钮里既对不齐那三个 18×18 的方框，观感也和线性 SVG 不是一家（owner 2026-09-21）。 */}
+        <svg
+          className="prop-ico"
+          viewBox="0 0 24 24"
+          width="13"
+          height="13"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="5" width="18" height="16" rx="2.5" />
+          <path d="M8 3v4M16 3v4M3 11h18" />
+        </svg>
       </button>
       {/* 原生选择器：**必须在布局里**（1px + 透明），`display:none` 会让 showPicker() 抛 */}
       <input

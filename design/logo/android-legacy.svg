@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Android **旧式图标**（`ic_launcher.png`，给 Android 7 那种不吃自适应图标的地方）＋
+       其它平台：蓝底 squircle ＋ 缩到 76% 的书 —— 与新的自适应图标观感一致。
+       桌面端的 `src-tauri/icons/icon.png` **不动**（那是另一套产物）。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4D8DFF"/>
+      <stop offset="1" stop-color="#2952CC"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <g transform="translate(512,512) scale(0.76) translate(-512,-512)">
+    <rect x="248" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+    <rect x="526" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
+    <rect x="290" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="290" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="290" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="568" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="568" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
+    <rect x="568" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
+    <path d="M 770 238
+             Q 775.4 262.6, 800 268
+             Q 775.4 273.4, 770 298
+             Q 764.6 273.4, 740 268
+             Q 764.6 262.6, 770 238 Z"
+          fill="#FFFFFF"/>
+  </g>
+</svg>
