@@ -441,6 +441,22 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 > [!] **清理旧 assets 必须保留「动态加载」资源（踩坑，v1.84.1）**：官网手动部署时若删旧产物，**不能只按 `index.html`/`sw.js` 的静态资源引用过滤**——sql.js 的 wasm（`new URL('sql-wasm-….wasm', import.meta.url)` 在 `vendor-*.js` 里运行时加载）和 pdf worker（`pdf.worker.min-….mjs`）等**不在静态引用里**，误删会导致 `Error: SqliteStore not initialized`（sql-wasm fetch 404 → `SqliteStore.init()` 抛错 → catch 返回未初始化 store → 所有 DB 查询报错）。
 > **正确做法**：按**本地 `dist-web` 全量清单**同步（`find . -type f` 生成本地清单，服务器按清单删多余文件），既铺平目录又保留全部动态资源。**GitHub Pages 走 CI 全新构建不受影响**；只有手动 scp 的官方站需小心。
 
+> [!] **清单文件必须是 LF —— 否则 `comm` 会把线上**整个目录**判成"多余"全删掉（2026-09-21 v1.91.19 实际踩到，网站空了约 3 分钟）**：
+> PowerShell 5.1 的 `Set-Content -Encoding ascii`（以及 `Out-File`）写的是 **CRLF**，每行尾多一个 `\r`，
+> 而服务器 `find | sort` 出来的是 LF ⇒ 两边**没有一行相等** ⇒ `comm -23` 把**全部**文件判成"服务器多余"。
+> 现场读数：`本地清单 311 个文件 / 服务器原有 416 个 / 服务器多余（将删）416 个 ⇒ 同步后 0 个文件`。
+> **修法**（写 LF，别用 `Set-Content`）：
+> ```powershell
+> $root = (Resolve-Path dist-web).Path
+> $lines = Get-ChildItem dist-web -Recurse -File |
+>   ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\','/') }
+> [System.IO.File]::WriteAllText("$env:TEMP\web-manifest.txt", ($lines -join "`n") + "`n",
+>   (New-Object System.Text.UTF8Encoding($false)))
+> ```
+> 另外：**先备份再动**（`tar czf /root/shuyo-site-app-backup-<ts>.tgz -C /var/www/shuyo-site app`）——
+> 这次能 3 分钟内恢复就是因为备份和本地 `dist-web` 都在。**删之前先 `wc -l` 看一眼"将删多少个"**：
+> 它是"全部"的时候，几乎一定是清单本身错了，不是线上多了一堆垃圾。
+
 > [!] **为什么"看版本号"不够**：`check:web-deploy` 会把线上 `index.html` 引用的**每个资源**
 > 都取一遍。版本号对、资源对不上，正是 v1.84.4 那种"页面能开、功能全废"的坏法。
 
