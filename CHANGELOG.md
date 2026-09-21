@@ -4,6 +4,36 @@
 
 ## [Unreleased]
 
+## [1.91.18] - 2026-09-21
+
+> Windows 安装器的**默认安装目录**从 `%LOCALAPPDATA%\ShuyoNote` 改到 `%LOCALAPPDATA%\Programs\ShuyoNote`。
+> 起因是用户截图问「程序的安装地址不专业啊？」—— 截图里那条其实是**本机记住的上一次测试安装位置**（不是产品默认），
+> 但真正的默认值也确实少一层 `Programs`，于是照 VS Code 那套写法补上。
+
+### 变更
+- **全新安装的默认目录 = `%LOCALAPPDATA%\Programs\ShuyoNote`**（即 `C:\Users\<用户名>\AppData\Local\Programs\ShuyoNote`）。
+  Tauri 没有"自定义默认安装目录"的配置项（`bundle.windows.nsis` 只有 `installMode`，上游 feature request：
+  tauri-apps/tauri#11015），所以 **fork 了上游的 NSIS 模板**：`src-tauri/nsis/installer.nsi` 与
+  `tauri-bundler 2.9.4` **逐字节相同、只改 1 行**（`$LOCALAPPDATA\${PRODUCTNAME}` → `$LOCALAPPDATA\Programs\${PRODUCTNAME}`）。
+  **仍然是 currentUser**：安装与自动更新都不弹 UAC。
+- **老用户不受影响**：模板的 `RestorePreviousInstallLocation` 会读 `HKCU\Software\shuyo\ShuyoNote`
+  记住的上一次安装位置并沿用它，只有全新安装才落到新目录（这也意味着**不会被"搬家"**）。
+- **为什么没改成 `perMachine`**（那才是 `C:\Program Files\ShuyoNote`）：perMachine 的注册表根是 **HKLM**
+  （`SetShellVarContext all`），看不见老用户写在 **HKCU** 的安装位置与卸载项 ⇒ 会装出"两份并存"；
+  而 Tauri 更新完是拿 `current_exe()` 重启的 ⇒ **又回到旧路径那个 exe**，旧版继续跑、继续提示更新。
+  另外 perMachine 是 `RequestExecutionLevel admin`：安装与**每次自动更新**都会弹 UAC。
+
+### 其它
+- 新增门禁 `scripts/check-nsis-template.mjs`（已进 `pnpm build` 与 `pnpm verify` 的 contract 组）：
+  离线查三条（fork 文件在、那一行改动恰好 1 处且旧写法不残留、头部 `cli-version` 与 package.json 一致），
+  **联网时**把上游模板下下来逐行 diff，差异多于那一行就红；取不到只打印"跳过（网络原因）"。升级 Tauri CLI 会被它拦下。
+- 新增真机探针 `scripts/verify-installer-default-dir.ps1`：只走到「选择安装位置」页，读那个输入框里的**预填值**
+  （跨进程 `WM_GETTEXT`），然后**取消**——绝不安装。它的用途正是回答"这个路径是产品默认，还是本机记着的旧路径"。
+- 新增 `scripts/load-release-credentials.ps1`：凭据文件换过格式（`访问令牌：` 行 / `github_pat_` 细粒度令牌），
+  旧的写死模式会静默失败；现在两种形状都认，并带 `-Verify` 把"发版时才炸的 401"提前成两秒。
+- 已知边界：**已装过的用户**不会被搬到新目录（沿用记忆键）；想让他们统一到 `Programs` 下需要先卸载再装。
+
+
 ## [1.91.17] - 2026-09-21
 
 > 两件与社区有关的小事：「已连接」那一行终于显示得出是谁，
