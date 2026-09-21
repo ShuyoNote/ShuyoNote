@@ -92,8 +92,11 @@ if ($Verify) {
     } catch { $bad += 'GH_TOKEN'; Write-Output ("  github api: FAILED ({0})" -f $_.Exception.Message) }
   }
   if ($env:GITCODE_TOKEN) {
+    # GitCode's v5 API does NOT accept "Authorization: token <pat>" (it answers 401 token not found);
+    # it wants PRIVATE-TOKEN or Bearer -- scripts/release.mjs sends both. Checking with the wrong
+    # header here would report a perfectly good token as broken (that mistake cost one round trip).
     try {
-      $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Headers @{ Authorization = "token $($env:GITCODE_TOKEN)" } -Uri 'https://gitcode.com/api/v5/repos/shuyo-cn/ShuyoNote'
+      $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 30 -Headers @{ 'PRIVATE-TOKEN' = $env:GITCODE_TOKEN } -Uri 'https://gitcode.com/api/v5/repos/shuyo-cn/ShuyoNote'
       Write-Output ("  gitcode api: {0} OK" -f $r.StatusCode)
     } catch { $bad += 'GITCODE_TOKEN'; Write-Output ("  gitcode api: FAILED ({0})" -f $_.Exception.Message) }
   }
