@@ -67,7 +67,6 @@
 两台设备各改不同块 ⇒ 两边每个块都有 rev、各改的那块更大（⇒ 判定层不会落进"缺 rev ⇒ 冲突"）。
 
 ## 4. 接线：**已落地**（2026-09-22，第三段）
-
 | 位置 | 做了什么 |
 |---|---|
 | 桌面临 `commands::save_page` | 盖 rev：`doc_content::stamp_block_revs(&c, page_id, 这一版)`（baseline = 库里这一行）—— **先盖章，再落库/进版本历史** |
@@ -127,3 +126,26 @@ Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`version
   看上去像"rev 没写出去"。判据改成**递归找目标 type**，并先放一个内建段落打底（第 ①/② 条干脆不挂根、
   直接读 `exportJSON()`）。—— 与块身份那边记的"判据别用空根+装饰节点"同一条纪律，这次又踩了一遍；
 - 装饰节点被包进段落之后，`markDirty()` 要**精确标到被测那一个节点**（只标根的直接子节点会变成空转）。
+
+## 6. 冲突**留痕与裁决**（第五段：提示 UI 的**数据层**）
+
+裁定 (iii) 说的是"缺 `rev` / 同 rev 不同内容 ⇒ **不静默选边**"。到第四段为止这条只做到了一半：
+合并报出冲突后**回落页级 LWW**（覆盖语义与接线前逐字相同），但**没有留下任何痕迹** ⇒ 对用户仍是静默的。
+这一段把"静默"变成"有痕"：
+
+| 件事 | 落点 |
+|---|---|
+| **新表 `page_conflicts`**（本地、**不同步 / 不进备份导出**） | 桌面 `db.rs::migrate` ＋ Web `sqliteStore.ts`（两边列名逐字一致）：`id / page_id / block_id / reason / local_json / remote_json / detected_at / resolved_at / resolved_choice` |
+| **三种合并结果分开** | `RemoteMerge`（Rust）/ `RemoteMerge` 联合类型（TS）：`NotApplicable`（老内容 / 脏 JSON）／**`Conflicted`（要留痕）**／`Merged`。⚠️ 以前用 `Option`/`undefined` 一个值表示两件事 —— **那正是"静默"的来源** |
+| **落表** | `apply_remote_page` / `applyRemoteContent` 在 `Conflicted` 时先 `record_page_conflicts`，**仍然用远端原样落库**（覆盖语义不变）；同一 (页, 块) 的未决记录**覆盖不堆积** |
+| **读** | `unresolved_page_conflicts` / `pageConflictsOf`（提示 UI 就用它：一条 = 一处待裁决） |
+| **裁决** | `resolve_page_conflict` / `resolvePageConflict(id, "local" \| "remote")`：把选中那一版写回该块（`replace_block_content`）、**盖新 rev**（baseline = 当前页）、落库（`write`/`writeContent` 置 `dirty = 1` ⇒ **这次裁决会被推上去**）、标记已决；已决的再裁决**报错**（不静默成功） |
+
+判据：Rust `doc_content` **28/28**（新增 `replace_block_content_swaps_one_block_only`、
+`conflicts_are_recorded_listed_and_deduped`、`resolving_a_conflict_writes_the_chosen_side_with_a_new_rev`，
+并把"有冲突"与"没什么可合"分成两条）↔ TS `docContent.test.ts` **47 条**（表驱动那 5 条新的）↔
+端到端 `two-device-sync` **42/42**（场景 H 里那段冲突现在走**真 `applyChange`**：落表 ⇒ 两侧原文都在 ⇒
+裁决「留本地」⇒ 内容换回 + rev `3,1` + `dirty=1` + 不再未决）。
+
+⚠️ **仍没做（下一段）**：**界面**（提示条 / 块级角标 / 裁决按钮）—— 数据层已经够了，UI 只用调
+`pageConflictsOf` / `resolvePageConflict` 两个入口。
