@@ -80,9 +80,8 @@ node scripts/android-app-icon.mjs      # 铺进 gen/android 的 res/（gen/ 不�
 想再大/再小，改 `android-foreground.svg` 与 `android-legacy.svg` 里那层 `transform` 的系数再重跑两步。
 判据见 `scripts/android-icon-art.test.mjs`（"书不许顶满"读的就是这个系数 ≤ 0.8，且两页仍落在安全区内）。
 
-启动器实际会显示的样子（同一份产物按 72dp/108dp 圆形裁切合成，见 `docs/media/android-icon/`）：
+改前/改后对照板（改前的方形图标与圆形裁切、改后的方形/圆形/圆角方三种 mask、以及 96/72/48px 的实际大小；
+合成脚本见提交说明里的 PIL 片段，产物在 `docs/media/android-icon/compare.png`）：
 
-| 改之前（书顶满，竖直方向几乎贴边） | 改之后（76%） |
-|---|---|
-| ![before](../../docs/media/android-icon/before.png) | ![after](../../docs/media/android-icon/after.png) |
+![安卓图标改前改后对照](../../docs/media/android-icon/compare.png)
 
