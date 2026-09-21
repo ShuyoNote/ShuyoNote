@@ -9,12 +9,13 @@
 //
 // 幂等：**同一篇帖子只存一篇**。判断方式是"搜索捞出候选 → 正文里逐字核对来源地址"
 // （见 `communitySave.ts` 的 `findStoredPost`，那里写清了为什么不信分词）。
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { type CommunityPost } from "../lib/communityPost";
 import { findStoredPost, linkIntentOf, noteForPost, previewOf, searchKeyOf } from "../lib/communitySave";
 import { NOTE_ATTR_SPECS, savePostAsNote } from "../lib/communitySaveNote";
 import { parseTemplatePayload, templateManifest, type ImportedTemplate } from "../lib/communityImport";
+import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
 import { useTemplates } from "../store/templates";
 import { platform } from "../lib/platform";
 import { useCommunitySave } from "../store/communitySave";
@@ -44,6 +45,8 @@ export function CommunitySaveDialog() {
   const [action, setAction] = useState<"save" | "import">("save");
   /** 导入预览：模板 + 逐行清单（"会创建什么"要摆在最前面）。 */
   const [imported, setImported] = useState<{ template: ImportedTemplate; manifest: string[] } | null>(null);
+  /** 正文预览看哪一档：默认**渲染**，切一下看逐字 Markdown 源码。 */
+  const [showSource, setShowSource] = useState(false);
 
   // 每次打开都从干净状态开始：上一次的链接与预览不该"粘"到这一次。
   // 深链那一路会带 `pendingLink` 进来：**预填并直接读一次**（读=抓取+预览），
@@ -64,6 +67,20 @@ export function CommunitySaveDialog() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pendingLink]);
+
+  // 正文预览：**默认渲染**（owner 2026-09-21：「内容区显示为 MD 格式不太友好吧？」），
+  // 另给一个开关看逐字源码 —— 与「发布到社区」那份清单同一个口径（同一套
+  // `markdownPreviewHtml`，免得两处 Markdown 语义各走一路）。
+  // ⚠️ 这几个 hook 必须在下面那句 `if (!open) return null` **之前**：放在后面会让
+  // "关着的时候少跑几个 hook"，React 当场报 `Rendered fewer hooks than expected`
+  // （这次就是这么被测试抓出来的）。
+  const noteMarkdown = post ? noteForPost(post).markdown : "";
+  const preview = post ? previewOf(noteMarkdown) : null;
+  const previewHtml = useMemo(() => (post ? markdownPreviewHtml(noteMarkdown) : ""), [post, noteMarkdown]);
+  // 换一条链接重新读过之后，回到"渲染"这一档（否则上一条的源码档会漏过来）。
+  useEffect(() => {
+    setShowSource(false);
+  }, [post?.url]);
 
   if (!open) return null;
 
@@ -211,8 +228,6 @@ export function CommunitySaveDialog() {
     }
   };
 
-  const preview = post ? previewOf(noteForPost(post).markdown) : null;
-
   return (
     <div className="community-save-overlay" onClick={close}>
       <div className="community-save-box" onClick={(e) => e.stopPropagation()}>
@@ -274,14 +289,38 @@ export function CommunitySaveDialog() {
               <button className="community-save-source" onClick={() => void openSource()} title="在浏览器里打开原帖">
                 来源：{post.url}
               </button>
-              <div className="community-save-preview-body">
-                {preview.lines.map((line, i) => (
-                  <div key={i}>{line || "\u00a0"}</div>
-                ))}
-                {preview.hiddenLines > 0 && (
-                  <div className="community-save-more">…后面还有 {preview.hiddenLines} 行（存进笔记后会完整写入）</div>
-                )}
+              {/* 正文默认**渲染**成"存进笔记后的样子"，要看逐字 Markdown 源码就切一下
+                  （owner 2026-09-21：「内容区显示为 MD 格式不太友好吧？」）。
+                  存进去的**仍然是这份 Markdown 原文**，一个字没改。 */}
+              <div className="community-save-preview-row">
+                <span className="community-save-preview-meta">正文预览</span>
+                <button
+                  className="community-save-preview-toggle"
+                  onClick={() => setShowSource((v) => !v)}
+                  title={
+                    showSource
+                      ? "切回渲染效果（存进笔记后看到的样子）"
+                      : "看逐字的 Markdown 源码（存进笔记的就是它）"
+                  }
+                >
+                  {showSource ? "看渲染效果" : "看 Markdown 源码"}
+                </button>
               </div>
+              {showSource || previewHtml === "" ? (
+                <div className="community-save-preview-body">
+                  {preview.lines.map((line, i) => (
+                    <div key={i}>{line || "\u00a0"}</div>
+                  ))}
+                  {preview.hiddenLines > 0 && (
+                    <div className="community-save-more">…后面还有 {preview.hiddenLines} 行（存进笔记后会完整写入）</div>
+                  )}
+                </div>
+              ) : (
+                <div
+                  className="community-save-preview-body is-rendered"
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
+                />
+              )}
               {/* 落点必须写出来：静默决定"存到哪"是最容易被冒犯的地方。 */}
               <div className="community-save-target">将存到：工作区根目录（可在左侧页面树里拖动归档）</div>
             </div>
