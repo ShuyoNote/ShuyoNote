@@ -53,7 +53,7 @@ import type {
 } from "../lib/platform/commands";
 import { pageContentToMarkdown, pageImageRefs } from "../lib/exportMarkdown";
 import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
-import { sanitizeExternalUrl } from "../lib/links";
+import { openExternalUrl } from "../lib/openExternal";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
@@ -432,15 +432,6 @@ export function CommunityPublishDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, prepared.body, tagsKey, prepared.error]);
 
-  const openExternal = async (raw: string) => {
-    const safe = sanitizeExternalUrl(raw);
-    if (!safe) return;
-    try {
-      await platform.opener.openUrl(safe);
-    } catch {
-      /* 浏览器被拦时安静失败：这只是一次"去看看" */
-    }
-  };
 
   /** 轮询一次。`pending` 继续等；`approved` 之后后端已把令牌存下来了。 */
   const pollOnce = async (deviceCode: string) => {
@@ -660,7 +651,7 @@ export function CommunityPublishDialog({
                   <div className="community-save-preview-title">已发布到社区</div>
                   <button
                     className="community-save-source"
-                    onClick={() => void openExternal(result.url)}
+                    onClick={() => void openExternalUrl(result.url)}
                     title="在浏览器里打开这篇"
                   >
                     {result.url}
@@ -733,7 +724,7 @@ export function CommunityPublishDialog({
                   </div>
                   <button
                     className="community-save-source"
-                    onClick={() => void openExternal(device.verifyUrl)}
+                    onClick={() => void openExternalUrl(device.verifyUrl)}
                     title="在浏览器里打开确认页"
                   >
                     打开确认页：{device.verifyUrl}
@@ -777,7 +768,7 @@ export function CommunityPublishDialog({
                   </div>
                   <button
                     className="community-save-source"
-                    onClick={() => void openExternal(ledger.url)}
+                    onClick={() => void openExternalUrl(ledger.url)}
                     title="在浏览器里打开已发布的这一篇"
                   >
                     {ledger.url}
@@ -795,7 +786,7 @@ export function CommunityPublishDialog({
                   </div>
                   <button
                     className="community-save-source"
-                    onClick={() => void openExternal(ledger.url)}
+                    onClick={() => void openExternalUrl(ledger.url)}
                     title="在浏览器里打开上次发布的那一篇"
                   >
                     {ledger.url}
