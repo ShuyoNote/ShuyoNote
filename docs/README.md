@@ -175,6 +175,7 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-18-crdt-spike-workorder.md](plans/2026-09-18-crdt-spike-workorder.md) | **CRDT spike 施工单**：只回答三问（JSON⇄ydoc 转换、下游等价、E2EE 加密快照），1–2 天、独立分支、不阻塞阶段 1；含「把收敛断言写在 Node 侧以便 Windows 自验」这个压周期的取舍 |
 | [plans/2026-09-18-doc-content-layer-inventory.md](plans/2026-09-18-doc-content-layer-inventory.md) | **阶段 0 · 接口收口：现状盘点与那一层的边界**：实测触点**前端 538 / Rust 208 处（80 文件，门禁口径）**；结论是要收的不是 746 处而是「写入口＋合并点＋派生输入」三处；含 read/write/merge/derive 四件事的 API 草案与"只减不增"门禁（已落地） |
 | [plans/2026-09-18-window-capability-semantics.md](plans/2026-09-18-window-capability-semantics.md) | **窗口类能力的口径（草案 v1）**：`pages.get` / `files.read` / `blocks.list` 这类「窗口/分页」参数的默认值、上限与截断语义，以及两侧必须逐值一致的要求 |
+| [plans/2026-09-22-block-rev-write-layer.md](plans/2026-09-22-block-rev-write-layer.md) | **阶段 1 · 块版本（`blockRev`）这一层**：rev 从哪来、什么时候涨（纯函数，Rust 14 条 ↔ TS 15 条判据）；两条"**不是内容**"（rev 字段本身、键序 —— 判错就是静默丢更新）＋「有身份 ⇒ 一定有 rev（老块盖 0）」这条阶段 1 承诺要求的口径；含**接线清单与硬顺序**（与块级判定同时上线） |
 
 > 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
 > 找不到是正常的——去私有仓库 `shuyonote-sync-server` 的 `docs/`：
