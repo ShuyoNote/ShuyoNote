@@ -71,6 +71,18 @@ export const GATES = [
     incident: "2026-09-11：无 BOM 的 UTF-8 .ps1 在 PS 5.1 下按 ANSI 解码 ⇒ 报 9 处假语法错误",
   },
   {
+    id: "check-nsis-template",
+    group: "contract",
+    label: "NSIS 安装器模板（fork 的一行改动 + CLI 版本核对）",
+    cmd: "node scripts/check-nsis-template.mjs",
+    incident:
+      "2026-09-21：owner 截图问「程序的安装地址不专业啊？」——" +
+      "Tauri 没有自定义默认安装目录的配置项（只有 installMode，上游 tauri-apps/tauri#11015），" +
+      "默认目录写在 NSIS 模板里，所以我们 fork 了一份上游模板只改那一行；" +
+      "fork 的两个风险都不吵不闹：模板被删/改回去 ⇒ 又装到 AppData 里（本机那次是注册表记着旧路径，更容易被误判成'产品默认不专业'），" +
+      "Tauri CLI 升级后上游模板变了而我们的 fork 停在旧版 ⇒ 与 CLI 传入的占位符对不上，打出来的包装不上",
+  },
+  {
     id: "check-pdfjs-shim",
     group: "contract",
     label: "pdf.js worker 垫片（顺序不变量，裸 Node）",

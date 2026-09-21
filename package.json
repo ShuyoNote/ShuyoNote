@@ -7,7 +7,7 @@
     "dev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && vite",
     "dev:web": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/write-version-json.mjs && vite --config vite.web.config.ts",
     "dev:desktop": "node scripts/tauri-dev.mjs",
-    "build": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/check-ocr-assets.mjs && node scripts/check-versions.mjs && node scripts/check-changelog.mjs && node scripts/check-workflow-yaml.mjs && node scripts/check-release-parity.mjs && node scripts/check-overlay-registry.mjs && node scripts/check-hook-order.mjs && tsc && node scripts/check-web-commands.mjs && node scripts/check-deep-link.mjs && node scripts/check-capabilities.mjs && vite build",
+    "build": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/check-ocr-assets.mjs && node scripts/check-versions.mjs && node scripts/check-changelog.mjs && node scripts/check-workflow-yaml.mjs && node scripts/check-release-parity.mjs && node scripts/check-overlay-registry.mjs && node scripts/check-hook-order.mjs && tsc && node scripts/check-web-commands.mjs && node scripts/check-deep-link.mjs && node scripts/check-nsis-template.mjs && node scripts/check-capabilities.mjs && vite build",
     "build:web": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && node scripts/check-ocr-assets.mjs && node scripts/write-version-json.mjs && vite build --config vite.web.config.ts --outDir dist-web && node scripts/write-version-json.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "check:changelog": "node scripts/check-changelog.mjs",
