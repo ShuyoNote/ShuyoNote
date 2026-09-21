@@ -175,6 +175,11 @@ export function patchMarkerOf(text) {
     patch: field("patch"),
     target: field("target"),
     marker: field("marker"),
+    // ★ 页加密算法（2026-09-20，补丁 v3 起）：`sm4` / `aes` / `other` / `unknown`。
+    //   `cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3）⇒ 这一格是"这份构建
+    //   写出去的库是 SM4 页还是 AES 页"在**构建期**唯一能被读出来的地方（另一条路是实验：
+    //   `security::tests::exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`）。
+    pageCipher: field("page_cipher"),
     // 新鲜度证据（AMD 2026-09-19 加）：这份标记对应哪份源码的哪个版本
     srcSha256: field("src_sha256"),
     libsqlite3Sys: field("libsqlite3-sys"),
@@ -226,7 +231,10 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
   // ★ 第三格：补丁在不在（独立于后端那一格 —— 后端对了、补丁没打，仍然没有国密算法）
   const newestMarker = patch.markers?.[0] ?? null;
   const describeMarker = (m) =>
-    m ? `${m.profile}/${m.entry}（patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}，output mtime=${new Date(m.mtime).toISOString()}）` : "(无)";
+    m
+      ? `${m.profile}/${m.entry}（patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
+        `${m.pageCipher ? ` page_cipher=${m.pageCipher}` : ""}，output mtime=${new Date(m.mtime).toISOString()}）`
+      : "(无)";
   if (patch.expected === "applied" && !newestMarker) {
     problems.push(
       "声明要**补丁已应用**，但产物里没有那行标记（`shuyonote: sm3/sm4 provider patch applied …`）",
@@ -393,8 +401,14 @@ export function main() {
         : `src_sha256=${m.srcSha256 ? m.srcSha256.slice(0, 12) + "…" : "(缺字段)"} —— ⚠️ 见上面的"未实查"说明`;
     console.log(
       `  补丁标记 ✓ patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
-        `（${m.profile}/${m.entry}）\n    ${hashLine}`,
+        `${m.pageCipher ? ` **page_cipher=${m.pageCipher}**` : ""}（${m.profile}/${m.entry}）\n    ${hashLine}`,
     );
+    if (!m.pageCipher) {
+      console.error(
+        "! 产物标记里没有 `page_cipher=` 字段（旧构建产物）⇒ **这一格未实查**：无法从产物回答「这份构建是 SM4 页还是 AES 页」。" +
+          "重新拿可自证的标记：`cargo clean -p shuyonote` 后再编（补丁 v3 起 build.rs 会打这一格）",
+      );
+    }
   }
   if (problems.length) {
     console.error("check-crypto-backend: ❌ 不通过");

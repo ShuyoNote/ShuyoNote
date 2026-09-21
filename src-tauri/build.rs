@@ -38,6 +38,32 @@ use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_ro
 /// （那边是 JS 侧唯一实现，这里是 Rust 侧唯一出现；改了名字两边一起改，`patches/README.md` 有登记）。
 const PATCH_FILE: &str = "0001-sqlcipher-sm3-provider.patch";
 
+/// 从 SQLCipher 的合并文件里读**页加密算法**（补丁 v3 起必须能随时回答的问题）。
+///
+/// 口径 = **读源码**：看 `#define OPENSSL_CIPHER` 那一行取的是哪个 EVP。
+/// ⚠️ **不读环境变量、不读 CFLAGS** —— "设了但没生效"正是我们反复吃亏的形态（`OPENSSL_DIR` 那次）；
+///    而这份宏定义在 `#ifdef SQLCIPHER_CRYPTO_OPENSSL` 块内 ⇒ **CommonCrypto 构建根本不编译它**
+///    （2026-09-20 实测），所以对 CC 构建这个值只描述源码、不描述那份产物。
+/// 返回值只用于**产物标记**：`sm4` / `aes` / `other`（认得出的别的 EVP）/ `unknown`（读不到那行）。
+fn read_page_cipher(path: &std::path::Path) -> &'static str {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return "unknown";
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("#define OPENSSL_CIPHER") {
+            if rest.contains("EVP_sm4_cbc") {
+                return "sm4";
+            }
+            if rest.contains("EVP_aes_256_cbc") {
+                return "aes";
+            }
+            return "other";
+        }
+    }
+    "unknown"
+}
+
 /// 文件 sha256（小写十六进制）。**不手写哈希** —— 用 `sha2`（Cargo.lock 里已有的 0.10）。
 ///
 /// 与 `scripts/sm-library-build.mjs` 的 `sha256OfFile()` 是同一个算法、同一个对象：
@@ -144,9 +170,14 @@ fn require_gm_provider_patch() {
                 .and_then(|p| sha256_of(&p))
                 .map(|h| h.chars().take(8).collect::<String>())
                 .unwrap_or_else(|| "unavailable".to_string());
+            // ★ 页加密算法也进标记（2026-09-20，补丁 v3「无条件 SM4 页加密」之后必须有）：
+            //   v3 把 `OPENSSL_CIPHER` 无条件换成 `EVP_sm4_cbc()` ⇒ "**这份构建是 SM4 页还是 AES 页**"
+            //   成了必须随时能回答的问题。值与 `src_sha256` **同一时刻取自同一份源码** ⇒
+            //   源码事后被还原而产物未重编时，两格会**一起**对不上当前源码（新鲜度判据红），不会被静默吞掉。
+            let page_cipher = read_page_cipher(&dir.join(&hit));
             println!(
                 "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch={patch_sha} target={target_os} \
-                 libsqlite3-sys={version} via={how} marker={hit} src_sha256={src_sha256})"
+                 libsqlite3-sys={version} via={how} marker={hit} page_cipher={page_cipher} src_sha256={src_sha256})"
             );
             // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
             // 免得"改了补丁、cargo 不重编"（比 OPENSSL_DIR 那个坑更隐蔽：连设环境变量这个动作都没有）。

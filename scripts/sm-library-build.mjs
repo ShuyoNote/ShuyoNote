@@ -188,3 +188,39 @@ for (const [cmd, args, label] of [
   }
 }
 console.log("sm-library-build: ✅ 完成 —— 事后核对：node scripts/sm-library-build.mjs --check ／ check-crypto-backend ／ cargo test --lib gm_provider::");
+
+// ★ 收尾横幅（2026-09-20；**刻意不自动 revert**，见下面那条"为什么"）
+//
+// 决策记录：AMD 提的两个选项里，我原先选了「甲（默认自动 revert）」，**实测后改判成「乙+（保留 ＋ 大横幅）」**：
+//   · 「自动 revert」看着更安全，但它会制造一个**新的**静默态：`build.rs` 对源码目录打了
+//     `rerun-if-changed` ⇒ 还原源码后，下一次 `cargo …` 会让**构建脚本重跑**（重建的仍是上次那份
+//     libsqlite3-sys 产物，而标记会按**已还原的源码**重新打印）⇒ "源码是 AES、产物是 SM4"，
+//     而**你下一次读到的读数描述的是源码、不是产物** —— 这正是我们反复吃的"绿得不是它声称的那件事"。
+//   · 保留补丁则"源码与产物一致"，代价是**同机其它 OpenSSL 构建会跟着变成 SM4 页**（Apple 的 CC 构建不受影响，
+//     因为那个 `#define` 在 `#ifdef SQLCIPHER_CRYPTO_OPENSSL` 里）⇒ 用**横幅**把这个后果说响，而不是用
+//     一个更隐蔽的状态去掩盖它。
+//   要回到原版：`node scripts/sm-library-build.mjs --revert`（幂等，且会复扫标记）。
+{
+  const hits = (readFileSync(join(srcDir, "sqlite3.c"), "utf8").match(/SM3/g) || []).length;
+  let pageCipher = "unknown";
+  for (const line of readFileSync(join(srcDir, "sqlite3.c"), "utf8").split("\n")) {
+    const t = line.trim();
+    if (t.startsWith("#define OPENSSL_CIPHER")) {
+      pageCipher = t.includes("EVP_sm4_cbc") ? "sm4" : t.includes("EVP_aes_256_cbc") ? "aes" : "other";
+      break;
+    }
+  }
+  const lines = [
+    "",
+    "════════════════════════════════════════════════════════════════════════",
+    `⚠️ 补丁**留在**共享 registry 源码上（SM3 命中=${hits}，**page_cipher=${pageCipher}**）`,
+    "   · 这是**刻意**的：源码与产物必须一致，否则下一次 cargo 命令会让标记描述源码、而你测的是产物",
+    "   · 后果（2026-09-20 起，补丁 v3 去掉了 #ifdef）：**同机后续任何 OpenSSL/Tongsuo 构建都是 SM4 页**",
+    "     （Apple 的 CommonCrypto 构建不受影响）；跑默认门禁或别的项目前请先：",
+    "       node scripts/sm-library-build.mjs --revert",
+    "   · 本构建的页加密也会写进产物标记（`page_cipher=`）—— 用 check-crypto-backend 读，别靠回忆",
+    "════════════════════════════════════════════════════════════════════════",
+    "",
+  ];
+  console.error(lines.join("\n"));
+}
