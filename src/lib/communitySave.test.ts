@@ -75,16 +75,19 @@ describe("linkIntentOf — 深链与网址都认，认不出就说清为什么",
 });
 
 describe("noteForPost — 来源必须写在最前面", () => {
-  it("第一行是来源引用块，含标题、地址、作者与时间", () => {
-    const { title, markdown } = noteForPost(post);
+  it("第一行是来源引用块，含标题、地址、作者与时间；标签**不在正文里**（落成真标签）", () => {
+    const { title, markdown, tags } = noteForPost(post);
     expect(title).toBe("插件配方：批量一");
     const first = markdown.split("\n")[0];
-    // 地址是**纯文本**：全文检索索引的是 content_text，只放链接 href 会让幂等查不到。
+    // 地址是**纯文本**：全文检索索引的是 content_text，只放链接 href 会让幂等查不到
+    //（2026-09-21 起它同时是属性里的「来源」，但正文这一份**不能删** —— 属性值不进全文索引）。
     expect(first).toBe(
       "> 来源：插件配方：批量一 · https://community.shuyo.cn/post/plugin-recipes-batch-1（作者 数友社区 · 2026-09-11T11:00:00Z）",
     );
     expect(markdown).toContain("第一行\n第二行\n第三行");
-    expect(markdown).toContain("#插件 #ShuyoNote");
+    // 标签走 `add_tag`（见 `communitySaveNote.ts`），正文里不再有那一行
+    expect(tags).toEqual(["插件", "ShuyoNote"]);
+    expect(markdown).not.toContain("标签：");
   });
 
   it("没有作者/时间/标签时不留空壳（不出现「作者 」这种半句话）", () => {

@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   openUrl: vi.fn<(url: string) => Promise<void>>(),
   saveAs: vi.fn<(arg: unknown) => Promise<boolean>>(),
   toast: vi.fn<(msg: string, kind?: string) => void>(),
+  /** 落库之后那两步（真标签 / 属性）走的命令。 */
+  invoke: vi.fn<(cmd: string, args?: unknown) => Promise<unknown>>(),
 }));
 
 vi.mock("../lib/api", () => ({ api: { search: mocks.search, getPage: async () => ({}) } }));
@@ -26,6 +28,7 @@ vi.mock("../lib/platform", () => ({
   // 这一段也被测到（真机上桌面端走的是 Rust 命令，Web 端走浏览器 fetch）。
   platform: {
     opener: { openUrl: mocks.openUrl },
+    executor: { invoke: mocks.invoke },
     community: {
       fetchDocument: async (url: string) => {
         const { fetchCommunityDocument } = await import("../lib/communityPost");
@@ -129,8 +132,22 @@ beforeEach(() => {
   mocks.saveAs.mockReset();
   mocks.saveAs.mockResolvedValue(true);
   mocks.toast.mockReset();
+  mocks.invoke.mockReset();
   mocks.search.mockResolvedValue([]);
   mocks.createPage.mockResolvedValue("new-page-id");
+  // 落库之后的两步：属性定义默认"已经有了"（`list_attr_defs` 回四个），其余命令回成功。
+  // 单个用例可以覆盖 `invoke` 来造"标签没写上""属性没写上"。
+  mocks.invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === "list_attr_defs") {
+      return [
+        { id: "a-src", name: "来源", attr_type: "text", options: [] },
+        { id: "a-author", name: "作者", attr_type: "text", options: [] },
+        { id: "a-pub", name: "发布于", attr_type: "datetime", options: [] },
+        { id: "a-saved", name: "存于", attr_type: "datetime", options: [] },
+      ];
+    }
+    return undefined;
+  });
   vi.stubGlobal("fetch", mocks.fetchImpl);
   // 连 pendingLink 一起重置：只设 open:true 会让上一个用例的链接"漏"到下一个（我踩过）
   useCommunitySave.setState({ open: true, pendingLink: null });
@@ -173,7 +190,18 @@ describe("存社区帖子：预览在前，落库在后", () => {
     expect(content.content_text?.startsWith("来源：")).toBe(true);
     // 来源地址必须在**纯文本**里（幂等靠全文检索核对它；只放链接 href 会查不到）
     expect(content.content_text).toContain(POST_URL);
+    // 落库是"建页 → 真标签 → 属性"三步，提示要等**最后**才出现（不是建完页就弹）。
+    await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalled());
     expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("已存进笔记"), "success");
+    // 社区标签落成**真标签**、元信息落成**属性**（owner 2026-09-21 拍板的口径）
+    const added = mocks.invoke.mock.calls.filter((c) => c[0] === "add_tag").map((c) => (c[1] as { name: string }).name);
+    expect(added).toEqual(post.tags);
+    const props = mocks.invoke.mock.calls
+      .filter((c) => c[0] === "set_page_prop")
+      .map((c) => (c[1] as { args: { attr_id: string; value: string } }).args);
+    expect(props.map((p) => p.attr_id)).toEqual(["a-src", "a-author", "a-pub", "a-saved"]);
+    expect(props[0].value).toBe(POST_URL);
+    expect(props[1].value).toBe(post.author);
   });
 
   it("取消（关闭对话框）→ 零痕迹：没落库、没提示、没打开任何页面", async () => {
