@@ -143,10 +143,13 @@ fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), 
     // 于是**判定与落库在同一个文件里**，将来换 CRDT 时这一整条只改一处。
     // 前端侧的同名一份是 `docContent.upsertRemoteContent`（两侧 SQL 的列集本就不同，
     // 语义必须一致：`sync_seq` 记远端的、`dirty` 硬写 0）。
-    crate::doc_content::upsert_remote(c, page, sync_seq)?;
-
-    // 派生也只经那一层（今天远端应用只刷 FTS —— 逐字搬运，不多做）。
-    crate::doc_content::derive_fts(c, &page.id, &page.title, &page.content_text)?;
+    //
+    // ★ **阶段 1**：页级说"用远端"之后，**逐块合并 + 落库 + 派生**都在那一层的唯一入口
+    //   `doc_content::apply_remote_page` 里做（两端各自改**不同块** ⇒ 两边的编辑都保留；
+    //   老内容 / 有冲突 ⇒ 它内部回落成"远端原样"，与接线前逐字相同）。
+    //   ⚠️ 合并成功时那一行的正文可能滞后一拍（派生文本要编辑器语义，不能在同步路径现算）——
+    //   见 `docs/plans/2026-09-22-block-rev-write-layer.md` 与前端同名函数的注释。
+    crate::doc_content::apply_remote_page(c, page, sync_seq)?;
     Ok(())
 }
 

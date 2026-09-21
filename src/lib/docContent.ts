@@ -21,6 +21,8 @@
 // ⚠️ **只搬不改**：本文件建立时只做抽取（`web.ts` 里原来的分支与 SQL 逐字保留）。
 // 任何**行为**改动必须另开一次提交并在提交信息里写明 —— 见 `doc_content.rs` 文件头同款纪律。
 
+import { blockRevOf, canonicalContent } from "./blockRev";
+
 /** 一页的**内容** —— 那一层的单位（与 Rust 侧 `DocContent` 字段一一对应）。 */
 export interface DocContent {
   title: string;
@@ -280,6 +282,13 @@ export interface MergedBlock {
   reason?: ConflictReason;
   /** ⚠️ `choice === "conflict"` 时它是**本地现状占位**（本地没有则远端那一版），**不是**裁决。 */
   json: string;
+  /**
+   * 选中那一版的 `blockRev`（`null` = 两侧都没有这个字段）。
+   *
+   * ⚠️ 物化回落盘 JSON 时**必须写回去**：漏了它，合并产物就把 rev 丢了 ⇒ 下一次合并会把这一页
+   * 误判成"老客户端产物"（每次同步都提示）。
+   */
+  rev: number | null;
 }
 
 /** 一块冲突：两侧各自的版本都带出来，UI 才有得"取回"。 */
@@ -331,11 +340,13 @@ export function mergeBlocks(
     let choice: BlockChoice;
     let reason: ConflictReason | undefined;
     let json: string;
+    let rev: number | null;
 
     if (l && r && l.json === r.json) {
       // 先判"内容逐字节相同"——含"老客户端剥了 rev 但内容没变"那条
       choice = "identical";
       json = l.json;
+      rev = l.rev ?? r.rev ?? null;
     } else if (l && r) {
       const lr = l.rev ?? null;
       const rr = r.rev ?? null;
@@ -343,26 +354,32 @@ export function mergeBlocks(
         if (rr > lr) {
           choice = "remote";
           json = r.json;
+          rev = rr;
         } else if (rr < lr) {
           choice = "local";
           json = l.json;
+          rev = lr;
         } else {
           choice = "conflict";
           reason = "same-rev-different-content";
           json = l.json;
+          rev = lr;
         }
       } else {
         // 任一侧缺 rev（老客户端产物）⇒ 判不了就不判
         choice = "conflict";
         reason = "missing-rev";
         json = l.json;
+        rev = lr ?? rr;
       }
     } else if (l) {
       choice = "only-local";
       json = l.json;
+      rev = l.rev ?? null;
     } else if (r) {
       choice = "only-remote";
       json = r.json;
+      rev = r.rev ?? null;
     } else {
       continue; // order 从两侧 id 的并集来 ⇒ 不可达
     }
@@ -375,7 +392,7 @@ export function mergeBlocks(
         remoteJson: r?.json,
       });
     }
-    blocks.push(reason ? { blockId: id, choice, reason, json } : { blockId: id, choice, json });
+    blocks.push(reason ? { blockId: id, choice, reason, json, rev } : { blockId: id, choice, json, rev });
   }
 
   return { blocks, conflicts };
@@ -399,4 +416,126 @@ export function mergePageBlocks(
   if (!shouldTakeRemote(local, remoteSeq)) return { action: "keep-local" };
   const { blocks, conflicts } = mergeBlocks(localBlocks, remoteBlocks, "remote");
   return { action: "merge", blocks, conflicts };
+}
+
+// =====================================================================================
+// 阶段 1 **接线用的适配器**：落盘 JSON ⇄ 块表（纯函数，不碰编辑器、不碰 SQL）
+//
+// 判定（`mergeBlocks`）只认"块表"，而线上两份东西都是**整页 JSON** ⇒ 中间要一层拆/装。
+// 这一层刻意**保守**：宁可回落今天的行为（页级 LWW），也不猜。三条规则：
+//   ① 解析不出来 / 没有 root / children 不是数组 ⇒ 不合并；
+//   ② **只要有任何一个顶层块没有非空 `blockId`** ⇒ 不合并（老内容还没补种身份，别按空 id 乱配）；
+//   ③ 拆出来的片段**去掉 `blockRev`**（与 `mergeBlocks` 的契约一致，见 `blockRev.ts`）。
+// =====================================================================================
+
+/**
+ * 把一份文档拆成**块表**（顶层块的 `(blockId, rev, 内容片段)`）。
+ *
+ * 任一保守规则不满足 ⇒ `undefined`（调用方据此**回落**页级 LWW）。
+ */
+export function blockSnapshotsOf(docJson: string): BlockSnapshot[] | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(docJson);
+  } catch {
+    return undefined;
+  }
+  const root = (parsed as Record<string, unknown> | null)?.root;
+  if (!root || typeof root !== "object" || Array.isArray(root)) return undefined;
+  const children = (root as Record<string, unknown>).children;
+  if (!Array.isArray(children)) return undefined;
+
+  const out: BlockSnapshot[] = [];
+  for (const child of children) {
+    if (!child || typeof child !== "object" || Array.isArray(child)) return undefined;
+    const node = child as Record<string, unknown>;
+    const blockId = typeof node.blockId === "string" ? node.blockId : "";
+    if (!blockId) return undefined; // 规则 ②
+    const { blockRev: _dropped, ...content } = node; // 规则 ③
+    // ★ 用**规范化**形态存片段（键排序、再保险地去掉任何层级的 `blockRev`）：
+    //   `mergeBlocks` 比的是"逐字节相同"，而**键序不是内容** —— 两边各写自己的 `JSON.stringify`
+    //   会让同一份内容因键序不同被判成"改了"（那就变成静默丢更新）。Rust 侧同一份口径。
+    out.push({ blockId, rev: blockRevOf(node), json: canonicalContent(content) });
+  }
+  return out;
+}
+
+/**
+ * 把块表（合并结果）装回一份落盘 JSON：children 换掉，根上其它字段照旧。
+ *
+ * ⚠️ 每一块都把 `rev` **写回去**（`blockRev` 字段）—— 漏了它，下一次合并会把这页误判成"老客户端产物"。
+ */
+export function applyBlockSnapshots(docJson: string, blocks: readonly MergedBlock[]): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(docJson);
+  } catch {
+    return undefined;
+  }
+  const doc = parsed as Record<string, unknown> | null;
+  const root = doc?.root;
+  if (!doc || !root || typeof root !== "object" || Array.isArray(root)) return undefined;
+
+  const children = blocks.map((b) => {
+    const node = JSON.parse(b.json) as Record<string, unknown>;
+    if (typeof b.rev === "number") node.blockRev = b.rev;
+    return node;
+  });
+  (root as Record<string, unknown>).children = children;
+  return JSON.stringify(doc);
+}
+
+/**
+ * ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：把远端那一版与**本地现状**逐块比一遍。
+ *
+ * 返回 `undefined` = **这次不合并、回落今天的行为**（页级 LWW，与接线前逐字相同）：
+ *  · 本地没有这一页（那是新建，没什么可合）／任一侧拆不出完整块表（老内容、脏 JSON）；
+ *  · **有冲突**（`rev` 相等而内容不同 / 任一侧缺 `rev`）：裁定 (iii) 要求"不静默选边"，
+ *    而提示 UI 还没做 ⇒ **这一片必须先回落**，不能装作无事发生。UI 那一片接上之后，
+ *    这里才会变成"把冲突交给用户"。
+ *
+ * 返回字符串 = 合并后的落盘 JSON（**两端各改不同块 ⇒ 两边的编辑都在**）。
+ *
+ * ⚠️ **已知边界（如实写）**：`content_text` 这一片**仍是页级胜方那一份**，可能与合并后的 JSON 不一致
+ * （合并进来的块，其正文要等下一次保存/编辑才进 FTS）。派生文本要**编辑器语义**
+ * （`deriveContentText` 会拖进整张节点表 —— `docs/development.md` 记过的那条坑：node 侧 esbuild 打包
+ * `smoke-web` 会炸），不能在同步路径里现算。⇒ 这是本片**故意**的取舍：**派生索引可重建**
+ * （冲刺计划 §5 不变量 2），下一次保存会重建它。
+ */
+export function mergeRemoteContent(localJson: string, remoteJson: string): string | undefined {
+  const localBlocks = blockSnapshotsOf(localJson);
+  const remoteBlocks = blockSnapshotsOf(remoteJson);
+  if (!localBlocks || !remoteBlocks) return undefined;
+
+  const { blocks, conflicts } = mergeBlocks(localBlocks, remoteBlocks, "remote");
+  if (conflicts.length > 0) return undefined; // 交由页面级行为兜底；提示 UI 是下一片
+
+  return applyBlockSnapshots(remoteJson, blocks);
+}
+
+/**
+ * ★★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
+ *
+ * 内部按顺序做三件（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
+ *   1. 读**本地现状**（读出口 `readContent`）；
+ *   2. 试一次逐块合并（`mergeRemoteContent`）—— 不合并时返回 `undefined`（老内容 / 有冲突）；
+ *   3. 落库（`upsertRemoteContent`）：合并成功就用合并产物，否则用远端原样（= 接线前的行为）。
+ *
+ * 返回**是否发生了合并**（调用方可以拿去打日志/判据；不合并**不是错误**）。
+ *
+ * ⚠️ 为什么把这三步收在一层里（而不是让 `web.ts` 自己拼）：`web.ts` 是**受收口门禁约束**的文件
+ * （`content_json` 计数只许减不许增），把"读远端那一版 / 写回合并产物"留在那一层之外做，
+ * 门禁会当场红（本片第一次落地就是被它拦下的）。
+ */
+export function applyRemoteContent(
+  db: ContentSql,
+  pageId: string,
+  row: RemotePageRow,
+  remoteSeq: number,
+): boolean {
+  const local = readContent(db, pageId);
+  const remoteJson = typeof row.content_json === "string" ? row.content_json : "";
+  const merged = local ? mergeRemoteContent(local.json, remoteJson) : undefined;
+  upsertRemoteContent(db, merged ? { ...row, content_json: merged } : row, remoteSeq);
+  return merged !== undefined;
 }

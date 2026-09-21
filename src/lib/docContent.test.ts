@@ -16,7 +16,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { localState, mergeBlocks, mergePageBlocks, readAllContents, readContent, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, readAllContents, readContent, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { assignBlockRevs } from "./blockRev";
 
 beforeAll(() => {
   const wasm = join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm");
@@ -335,5 +336,92 @@ describe("docContent.resolveSaveContent（保存时「哪些字段真的被覆�
 
   it("undefined（字段缺省）也按「没带」处理", () => {
     expect(resolveSaveContent(SAMPLE, {})).toEqual(SAMPLE);
+  });
+});
+
+describe("docContent 的接线适配器（落盘 JSON ⇄ 块表）与 mergeRemoteContent", () => {
+  // 这一组是**阶段 1 接线**的判据：判定（mergeBlocks）只认"块表"，而线上两份都是整页 JSON。
+  // 适配器刻意保守：**宁可回落页级 LWW，也不猜**。
+
+  const blk = (blockId: string | undefined, rev: number | null, body: string) => ({
+    type: "paragraph",
+    ...(blockId === undefined ? {} : { blockId }),
+    ...(rev === null ? {} : { blockRev: rev }),
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+  const bodiesOf = (json: string) =>
+    ((JSON.parse(json) as { root: { children: Array<{ children: Array<{ text: string }> }> } }).root.children ?? []).map(
+      (c) => c.children?.[0]?.text,
+    );
+  const revsOf = (json: string) =>
+    (JSON.parse(json) as { root: { children: Array<{ blockRev?: number }> } }).root.children.map((c) => c.blockRev);
+
+  it("blockSnapshotsOf：拆出 (blockId, rev, 片段)，且片段里**不含 blockRev**", () => {
+    const blocks = blockSnapshotsOf(doc(blk("b1", 3, "甲"), blk("b2", null, "乙")));
+    expect(blocks?.map((b) => b.blockId)).toEqual(["b1", "b2"]);
+    expect(blocks?.map((b) => b.rev)).toEqual([3, null]);
+    expect(blocks?.[0].json).not.toContain("blockRev");
+  });
+
+  it("★ 保守规则：只要有一个顶层块没有身份（老内容）⇒ undefined（不合并）", () => {
+    expect(blockSnapshotsOf(doc(blk("b1", 1, "甲"), blk(undefined, null, "乙")))).toBeUndefined();
+    expect(blockSnapshotsOf(doc(blk("", 1, "甲")))).toBeUndefined();
+  });
+
+  it("★ 保守规则：脏 JSON / 没有 root / children 不是数组 ⇒ undefined", () => {
+    for (const bad of ["not json", "{}", '{"root":null}', '{"root":{"children":"nope"}}']) {
+      expect(blockSnapshotsOf(bad)).toBeUndefined();
+    }
+  });
+
+  it("applyBlockSnapshots：把 rev **写回**每个块（漏了它，下次合并会误判成老客户端产物）", () => {
+    const merged = applyBlockSnapshots(
+      doc(blk("b1", 1, "旧")),
+      [
+        { blockId: "b1", choice: "local", json: JSON.stringify(blk("b1", null, "新")), rev: 7 },
+        { blockId: "b9", choice: "only-remote", json: JSON.stringify(blk("b9", null, "新块")), rev: null },
+      ],
+    )!;
+    expect(bodiesOf(merged)).toEqual(["新", "新块"]);
+    expect(revsOf(merged)).toEqual([7, undefined]);
+  });
+
+  it("★ mergeRemoteContent：两端各改**不同块** ⇒ 两边的编辑都在、rev 也都在", () => {
+    const local = doc(blk("b1", 2, "A 改的"), blk("b2", 1, "b2 原始"));
+    const remote = doc(blk("b1", 1, "b1 原始"), blk("b2", 2, "B 改的"));
+
+    const merged = mergeRemoteContent(local, remote)!;
+
+    expect(merged).toBeDefined();
+    expect(bodiesOf(merged)).toEqual(["A 改的", "B 改的"]);
+    expect(revsOf(merged)).toEqual([2, 2]); // 各自选中那一版的 rev
+  });
+
+  it("★ mergeRemoteContent：有冲突（rev 相等而内容不同）⇒ **undefined**（回落页级 LWW，不静默选边）", () => {
+    const local = doc(blk("b1", 2, "我改的"));
+    const remote = doc(blk("b1", 2, "他改的"));
+    expect(mergeRemoteContent(local, remote)).toBeUndefined();
+  });
+
+  it("★ mergeRemoteContent：任一侧缺 rev ⇒ **undefined**（老客户端产物，判不了就不判）", () => {
+    expect(mergeRemoteContent(doc(blk("b1", null, "我改的")), doc(blk("b1", 5, "他的")))).toBeUndefined();
+    expect(mergeRemoteContent(doc(blk("b1", 5, "我的")), doc(blk("b1", null, "他改的")))).toBeUndefined();
+  });
+
+  it("★ mergeRemoteContent：老内容（没有块身份）⇒ undefined（与接线前逐字相同）", () => {
+    expect(mergeRemoteContent(doc(blk(undefined, null, "老")), doc(blk("b1", 1, "新")))).toBeUndefined();
+  });
+
+  it("★ 与 rev 层配合：合并产物再走一遍 `assignBlockRevs` ⇒ **rev 不倒退、内容不再变**", () => {
+    // 承重：合并产物是"下一次保存的 baseline"。若物化时把 rev 丢了，assignBlockRevs 会把每个块当成
+    // "老客户端产物" 重新盖 0/1 —— rev 倒退 ⇒ 下一次合并的胜负判断就错了。
+    const local = doc(blk("b1", 4, "A 改的"), blk("b2", 1, "b2 原始"));
+    const remote = doc(blk("b1", 1, "b1 原始"), blk("b2", 5, "B 改的"));
+    const merged = mergeRemoteContent(local, remote)!;
+
+    const stamped = assignBlockRevs(merged, merged);
+    expect(revsOf(stamped)).toEqual([4, 5]);
+    expect(bodiesOf(stamped)).toEqual(["A 改的", "B 改的"]);
   });
 });

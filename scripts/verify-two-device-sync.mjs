@@ -1,10 +1,9 @@
 // 两设备同页并发编辑 · 同步一致性验收（v1.84.3 seq-LWW + dirty 优先本地）。
 //
 // 场景 A–G：页级 seq-LWW ＋ dirty 优先本地（v1.84.3 的行为，承重判据是"恢复版本后推送前收到远端"）。
-// 场景 H（2026-09-22，阶段 1 第一切片）：**块级合并纯函数** —— 两端改**不同块** ⇒ 都保留；
-//   含两条反判据（缺 `blockRev` 且内容变了 ⇒ 必须提示；内容逐字节相同 ⇒ 不许提示）。
-//   ⚠️ 场景 H **还没有**接进 `applyChange`（接线是下一片：要先有"编辑器真的写出 `blockRev`"），
-//   它按将来接线的方式手动走一遍：真 store → 真读出口 → 块表 → `mergePageBlocks`。
+// 场景 H（2026-09-22，阶段 1）：**块级合并已接进 `applyChange`** —— 两端改**不同块** ⇒ 都保留；
+//   含"冲突 ⇒ 回落今天的页级 LWW"（裁定 (iii)：不静默选边，提示 UI 还没做）
+//   与两条纯函数反判据（缺 `blockRev` 且内容变了 ⇒ 必须提示；内容逐字节相同 ⇒ 不许提示）。
 //
 // 真实复现客户端合并逻辑：用真实的 `applyChange`（web.ts 导出）+ 真实的
 // `SqliteStore`（sql.js WASM）各建一台"设备"的本地库，模拟两设备同时编辑
@@ -99,10 +98,12 @@ let serverSeq = 0;
 const serverView = new Map(); // id -> { seq, title, content_text, updated_at, from_device }
 
 // 设备把本地 dirty 改动 push 到服务端：服务端分配序，记录版本，清【该设备】的 dirty。
-function pushToServer(store, entityId, dev, title, text) {
+// `contentJson`（可选）= 整页 JSON —— 真实负载就带它（阶段 1 的合并要靠它）。
+function pushToServer(store, entityId, dev, title, text, contentJson) {
   const seq = ++serverSeq;
   serverView.set(entityId, {
     seq, title, content_text: text,
+    ...(typeof contentJson === "string" ? { content_json: contentJson } : {}),
     updated_at: Date.now(), from_device: dev, workspace_id: "ws1",
   });
   store.run("UPDATE pages SET dirty = 0 WHERE id = ?", [entityId]);
@@ -119,7 +120,11 @@ function pullFromServer(store, seen) {
     applyChange(store, {
       id: 0, seq: v.seq, device_id: v.from_device, device_seq: 1,
       entity: "page", entity_id: id, op: "upsert",
-      payload: JSON.stringify({ id, title: v.title, content_text: v.content_text, updated_at: v.updated_at, workspace_id: v.workspace_id }),
+      payload: JSON.stringify({
+        id, title: v.title, content_text: v.content_text,
+        ...(typeof v.content_json === "string" ? { content_json: v.content_json } : {}),
+        updated_at: v.updated_at, workspace_id: v.workspace_id,
+      }),
       updated_at: v.updated_at,
     });
     const after = getRow(store, id);
@@ -302,12 +307,9 @@ async function main() {
   pullFromServer(G, new Map([[PR, seqRemote]]));
   ok(getRow(G, PR).content_text === "远端更新内容", "push 后 dirty=0 ⇒ 后续远端正常覆盖（保护不是永久锁死）");
 
-  // =========== 场景 H：阶段 1 块级合并 —— 两端改**不同块** ⇒ 都保留 ===========
-  // 这一片验的是**纯函数**（`docContent.mergeBlocks` ↔ `doc_content::merge_blocks`）。
-  // ⚠️ 它**还没有**接进 `applyChange` —— 接线是下一片（要先有"编辑器真的写出 `blockRev`"，
-  // 即 `feat/block-id-model` 的自有块节点 ＋ 双形态读写）。所以这里按**将来接线的方式**手动走一遍：
-  // 真 `SqliteStore` → 真读出口 `readContent` → 块表 → `mergePageBlocks`（页级 + 逐块）→ 物化回 JSON。
-  console.log("\n场景 H：块级合并（阶段 1 第一切片）—— 两端改不同块 ⇒ 都保留");
+  // =========== 场景 H：阶段 1 块级合并 **已接线** —— 两端改**不同块** ⇒ 都保留 ===========
+  // 走**真路径**：真 `SqliteStore` ＋ 真 `applyChange`（远端载荷里带整页 `content_json`）。
+  console.log("\n场景 H：块级合并（阶段 1，已接进 applyChange）—— 两端改不同块 ⇒ 都保留");
   const PH = "page-blocks";
   const HA = await newDevice();
   const HB = await newDevice();
@@ -325,8 +327,7 @@ async function main() {
   const aBlocks = withRev(baseBlocks, "b1", 2, "b1 由 A 改");
   writeContent(HA, PH, { title: "块页", json: contentOf(aBlocks), text: "b1 由 A 改\nb2 原始" }, Date.now());
   ok(getRow(HA, PH).dirty === 1, "H: A 改 b1 后 dirty=1（未同步）");
-  const seqH1 = pushToServer(HA, PH, "devA", "块页", "b1 由 A 改\nb2 原始");
-  serverView.get(PH).content_json = contentOf(aBlocks);
+  const seqH1 = pushToServer(HA, PH, "devA", "块页", "b1 由 A 改\nb2 原始", contentOf(aBlocks));
 
   // B 改 b2（rev 1 → 2）；B pull 时本地 dirty=1 ⇒ 页级保留本地（今天的行为，不被 A 整页盖掉）
   const bBlocks = withRev(baseBlocks, "b2", 2, "b2 由 B 改");
@@ -336,26 +337,38 @@ async function main() {
   ok(bodyOf(readContent(HB, PH).json, "b1") === "b1 原始", "H: B pull 时 dirty 保护本地 ⇒ B 手上的 b1 仍是原始版（页级语义，正确）");
 
   // B 推上去（服务端 seq 更大）；A 是干净的 ⇒ 页级判定说"用远端"
-  const seqH2 = pushToServer(HB, PH, "devB", "块页", "b1 原始\nb2 由 B 改");
-  serverView.get(PH).content_json = contentOf(bBlocks);
+  const seqH2 = pushToServer(HB, PH, "devB", "块页", "b1 原始\nb2 由 B 改", contentOf(bBlocks));
   ok(seqH2 > seqH1, `H: B push 得 seq=${seqH2}（A 那一版是 ${seqH1}）`);
 
-  // ★ **承重证明**：服务端那一版里 b1 是旧的 ⇒ 页级 LWW（今天的行为）整页吃下去就会**丢掉 A 的编辑**
+  // ★ **承重证明**：服务端那一版里 b1 是旧的 ⇒ 页级 LWW 整页吃下去就会**丢掉 A 的编辑**
   const remoteOnly = serverView.get(PH).content_json;
   ok(bodyOf(remoteOnly, "b1") === "b1 原始", "H: ★ 服务端那一版里 b1 是旧的 —— 整页 LWW 会丢掉 A 的编辑（这条就是块级合并要救的）");
 
-  // ★ 阶段 1：页级判定 + 逐块合并（唯一入口 `mergePageBlocks`）
-  const page = mergePageBlocks(
-    localState(HA, PH),
-    serverView.get(PH).seq,
-    blocksOf(readContent(HA, PH).json),
-    blocksOf(remoteOnly),
+  // ★★ **真接线**：A pull（干净且落后）⇒ `applyChange` 里应走"逐块合并"，把两边的编辑都落下来
+  pullFromServer(HA, new Map([[PH, seqH1]]));
+  const afterPull = readContent(HA, PH).json;
+  ok(bodyOf(afterPull, "b1") === "b1 由 A 改", "H: ★★ 经真 `applyChange` 合并后，b1 保留 **A 的编辑**");
+  ok(bodyOf(afterPull, "b2") === "b2 由 B 改", "H: ★★ 经真 `applyChange` 合并后，b2 取到 **B 的编辑**");
+  ok(
+    blocksOf(afterPull).map((b) => b.rev).join(",") === "2,2",
+    `H: 合并产物把 rev 也写回了（漏了它下次会被误判成老客户端产物），实际=${blocksOf(afterPull).map((b) => b.rev).join(",")}`,
   );
-  ok(page.action === "merge", "H: A 干净且落后 ⇒ 页级走「用远端」那一支（才轮到逐块比对）");
-  const mergedJson = contentOf(page.blocks ?? []);
-  ok(bodyOf(mergedJson, "b1") === "b1 由 A 改", "H: ★ 合并后 b1 保留 **A 的编辑**（本地 rev 更大）");
-  ok(bodyOf(mergedJson, "b2") === "b2 由 B 改", "H: ★ 合并后 b2 取到 **B 的编辑**（远端 rev 更大）");
-  ok((page.conflicts ?? []).length === 0, `H: 两端各改不同块 ⇒ 无冲突（实际 ${(page.conflicts ?? []).length}）`);
+
+  // ★ 冲突回落：同一块两端都改、rev 相等 ⇒ **不合并**，回落今天的页级 LWW（落下来的是远端那一版）
+  const PC = "page-conflict";
+  const CA = await newDevice();
+  for (const s of [CA]) {
+    localCreate(s, PC, "冲突页", "");
+    writeContent(s, PC, { title: "冲突页", json: contentOf(baseBlocks), text: "" }, Date.now());
+    s.run("UPDATE pages SET dirty = 0, sync_seq = 1 WHERE id = ?", [PC]);
+  }
+  pushToServer(CA, PC, "devA", "冲突页", "", contentOf([blk("b1", 2, "A 版"), blk("b2", 1, "b2 原始")]));
+  pushToServer(CA, PC, "devB", "冲突页", "", contentOf([blk("b1", 2, "B 版"), blk("b2", 1, "b2 原始")]));
+  pullFromServer(CA, new Map([[PC, 1]]));
+  ok(
+    bodyOf(readContent(CA, PC).json, "b1") === "B 版",
+    "H: 冲突时**回落页级 LWW**（不静默选边）—— 落下来的就是远端那一版，与接线前逐字相同",
+  );
 
   // ★ 反判据一：老客户端产物（`blockRev` 被剥掉）而内容**变了** ⇒ **必须**提示
   //（若静默按"最旧"处理 ⇒ 这条红 —— 那正是裁定 (i) 被否决的理由）
@@ -393,6 +406,28 @@ async function main() {
       oneSide.blocks[1].choice === "only-remote" &&
       oneSide.conflicts.length === 0,
     "已知边界：只在一侧的块保留（本片不做块级删除）、顺序 = 页级胜方 + 另一侧追加在表尾",
+  );
+
+  // =========== 场景 I：**保存路径**给每个有身份的顶层块盖 rev（真 `save_page`）===========
+  // 接线的一半在保存侧：不盖章 ⇒ 块级判定每一页都会回落到页级 LWW（接线等于白接）。
+  console.log("\n场景 I：保存路径盖 rev（真 `save_page` 命令）");
+  const SI = await newDevice();
+  const invokeSI = makeInvoke(SI);
+  localCreate(SI, "page-stamp", "盖章页", "");
+  SI.run("UPDATE pages SET content_json = ?, dirty = 0, sync_seq = 1 WHERE id = ?", [
+    contentOf([blk("b1", null, "原始一"), blk("b2", null, "原始二")]),
+    "page-stamp",
+  ]);
+  await invokeSI("save_page", {
+    id: "page-stamp",
+    content_json: contentOf([blk("b1", null, "改过"), blk("b2", null, "原始二")]),
+  });
+  const stampedDoc = readContent(SI, "page-stamp").json;
+  ok(
+    blocksOf(stampedDoc).map((b) => b.rev).join(",") === "1,0",
+    `场景 I: 保存后 rev = 1,0（改过的那块 = max+1、没改的老块盖 0），实际=${blocksOf(stampedDoc)
+      .map((b) => b.rev)
+      .join(",")}`,
   );
 
   // =========== 汇总 ===========

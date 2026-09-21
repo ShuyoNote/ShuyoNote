@@ -282,6 +282,11 @@ pub struct MergedBlock {
     /// 该块的 JSON 片段。⚠️ `choice` 是 `Conflict` 时它是**本地现状占位**（本地没有则远端那一版），
     /// **不是**裁决结果 —— 见 `BlockMergeOutcome` 的注释。
     pub json: String,
+    /// 选中那一版的 `blockRev`（`None` = 两侧都没有这个字段）。
+    ///
+    /// ⚠️ 物化回落盘 JSON 时**必须写回去**：漏了它，合并产物就把 rev 丢了 ⇒ 下一次合并会把这一页
+    /// 误判成"老客户端产物"（每次同步都提示）。
+    pub rev: Option<i64>,
 }
 
 /// 一块冲突：两侧各自的版本都带出来，调用方/UI 才有得"取回"。
@@ -355,24 +360,28 @@ pub fn merge_blocks(
         let l = lmap.get(id).copied();
         let r = rmap.get(id).copied();
 
-        let (choice, json) = match (l, r) {
+        let (choice, json, rev) = match (l, r) {
             // 两侧都有：先看内容是不是**逐字节相同**（含"老客户端剥了 rev 但内容没变"那条）
-            (Some(l), Some(r)) if l.json == r.json => (BlockChoice::Identical, l.json.clone()),
+            (Some(l), Some(r)) if l.json == r.json => {
+                (BlockChoice::Identical, l.json.clone(), l.rev.or(r.rev))
+            }
             (Some(l), Some(r)) => match (l.rev, r.rev) {
-                (Some(lr), Some(rr)) if rr > lr => (BlockChoice::Remote, r.json.clone()),
-                (Some(lr), Some(rr)) if rr < lr => (BlockChoice::Local, l.json.clone()),
-                (Some(_), Some(_)) => (
+                (Some(lr), Some(rr)) if rr > lr => (BlockChoice::Remote, r.json.clone(), Some(rr)),
+                (Some(lr), Some(rr)) if rr < lr => (BlockChoice::Local, l.json.clone(), Some(lr)),
+                (Some(lr), Some(_)) => (
                     BlockChoice::Conflict(ConflictReason::SameRevDifferentContent),
                     l.json.clone(),
+                    Some(lr),
                 ),
                 // 任一侧缺 rev（老客户端产物）⇒ 判不了就不判
                 _ => (
                     BlockChoice::Conflict(ConflictReason::MissingRev),
                     l.json.clone(),
+                    l.rev.or(r.rev),
                 ),
             },
-            (Some(l), None) => (BlockChoice::OnlyLocal, l.json.clone()),
-            (None, Some(r)) => (BlockChoice::OnlyRemote, r.json.clone()),
+            (Some(l), None) => (BlockChoice::OnlyLocal, l.json.clone(), l.rev),
+            (None, Some(r)) => (BlockChoice::OnlyRemote, r.json.clone(), r.rev),
             // order 是从两侧 id 的并集来的 ⇒ 这一支不可达
             (None, None) => continue,
         };
@@ -386,11 +395,7 @@ pub fn merge_blocks(
             });
         }
 
-        blocks.push(MergedBlock {
-            block_id: id.to_string(),
-            choice,
-            json,
-        });
+        blocks.push(MergedBlock { block_id: id.to_string(), choice, json, rev });
     }
 
     BlockMergeOutcome { blocks, conflicts }
@@ -418,6 +423,134 @@ pub fn merge_page_and_blocks(
         return PageMerge::KeepLocal;
     }
     PageMerge::Merged(merge_blocks(local_blocks, remote_blocks, page_level))
+}
+
+// =====================================================================================
+// 阶段 1 **接线用的适配器**：落盘 JSON ⇄ 块表（纯函数，不碰编辑器、不碰 SQL）
+//
+// 与前端 `src/lib/docContent.ts` 的同名三个函数**逐条对应**（改一边必须看另一边）。
+// 判定（`merge_blocks`）只认"块表"，而线上两份东西都是**整页 JSON** ⇒ 中间要一层拆/装。
+// 三条保守规则（宁可回落今天的行为，也不猜）：
+//   ① 解析不出来 / 没有 root / children 不是数组 ⇒ 不合并；
+//   ② **只要有任何一个顶层块没有非空 `blockId`** ⇒ 不合并（老内容还没补种身份）；
+//   ③ 拆出来的片段走 `block_rev::canonical_content`（**去 `blockRev` ＋ 键排序**）——
+//      判定比的是"逐字节相同"，而**键序不是内容**（见 block_rev 文件头口径 3）。
+// =====================================================================================
+
+/// 解析成文档对象（要有 `root` 且是对象）；否则 `None`（适配器据此回落，不合并）。
+fn parse_doc(doc_json: &str) -> Option<serde_json::Value> {    let parsed: serde_json::Value = serde_json::from_str(doc_json).ok()?;
+    if !parsed.is_object() {
+        return None;
+    }
+    match parsed.get("root") {
+        Some(root) if root.is_object() => Some(parsed),
+        _ => None,
+    }
+}
+
+/// 把一份文档拆成**块表**（顶层块的 `(blockId, rev, 内容片段)`）。任一保守规则不满足 ⇒ `None`。
+pub fn block_snapshots(doc_json: &str) -> Option<Vec<BlockSnapshot>> {
+    let doc = parse_doc(doc_json)?;
+    let children = doc.get("root")?.get("children")?.as_array()?;
+    let mut out = Vec::with_capacity(children.len());
+    for child in children {
+        if !child.is_object() {
+            return None;
+        }
+        let block_id = child.get("blockId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        if block_id.is_empty() {
+            return None; // 规则 ②
+        }
+        out.push(BlockSnapshot {
+            block_id,
+            rev: crate::block_rev::block_rev_of(child),
+            json: crate::block_rev::canonical_content(child), // 规则 ③
+        });
+    }
+    Some(out)
+}
+
+/// 把块表（合并结果）装回一份落盘 JSON：`children` 换掉，根上其它字段照旧。
+///
+/// ⚠️ 每一块都把 `rev` **写回** `blockRev` 字段 —— 漏了它，下一次合并会把这页误判成"老客户端产物"。
+pub fn apply_block_snapshots(doc_json: &str, blocks: &[MergedBlock]) -> Option<String> {
+    let mut doc: serde_json::Value = serde_json::from_str(doc_json).ok()?;
+    if !doc.is_object() || !doc.get("root").map(|r| r.is_object()).unwrap_or(false) {
+        return None;
+    }
+    let mut children: Vec<serde_json::Value> = Vec::with_capacity(blocks.len());
+    for b in blocks {
+        let mut node: serde_json::Value = serde_json::from_str(&b.json).ok()?;
+        if let (Some(rev), Some(obj)) = (b.rev, node.as_object_mut()) {
+            obj.insert("blockRev".to_string(), serde_json::json!(rev));
+        }
+        children.push(node);
+    }
+    doc.get_mut("root")?.as_object_mut()?.insert("children".to_string(), serde_json::Value::Array(children));
+    Some(doc.to_string())
+}
+
+/// ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：与本地现状逐块比一遍。
+///
+/// 返回 `None` = **这次不合并、回落今天的行为**（页级 LWW，与接线前逐字相同）：
+/// 任一侧拆不出完整块表（老内容、脏 JSON），或**有冲突**（裁定 (iii)：不静默选边，
+/// 而提示 UI 还没做 ⇒ 这一片必须先回落）。
+///
+/// ⚠️ **已知边界**：`content_text` 仍是页级胜方那一份，可能与合并后的 JSON 不一致
+/// （派生文本要编辑器语义，不能在同步路径里现算）—— 见前端同名函数的注释。
+pub fn merge_remote_content(local_json: &str, remote_json: &str) -> Option<String> {
+    let local_blocks = block_snapshots(local_json)?;
+    let remote_blocks = block_snapshots(remote_json)?;
+
+    let outcome = merge_blocks(&local_blocks, &remote_blocks, MergeDecision::TakeRemote);
+    if outcome.has_conflicts() {
+        return None; // 交由页面级行为兜底；提示 UI 是下一片
+    }
+
+    apply_block_snapshots(remote_json, &outcome.blocks)
+}
+
+/// ★ **保存路径的 rev 盖章**（阶段 1 接线的入口之一）：拿"上一版"（库里这一页）与这一版比一遍，
+/// 返回**要落库**的 JSON。
+///
+/// 桌面保存（`commands::save_page`）调它；Web 侧同一份语义在 `platform/web.ts::save_page`
+/// （那侧直接调 `assignBlockRevs`，因为它手上已经有同一行的读出口）。
+///
+/// ⚠️ 顺序：**先盖章，再落库/进版本历史** —— 版本历史里存的应当是"用户真正保存的那一版"（含 rev）。
+/// ⚠️ 不盖章的后果：块级判定（`sync::apply_upsert` 里那次 `merge_remote_content`）会因为没有 rev
+/// 而**每一页都回落**到页级 LWW —— 接线就等于白接。
+pub fn stamp_block_revs(c: &Connection, page_id: &str, next_json: &str) -> Result<String, String> {
+    let prev = read(c, page_id)?.map(|d| d.json).unwrap_or_default();
+    Ok(crate::block_rev::assign_block_revs(&prev, next_json))
+}
+
+/// ★★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
+///
+/// 内部按顺序做三件（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
+///   1. 读**本地现状**（读出口 `read`）；
+///   2. 试一次逐块合并（`merge_remote_content`）—— 不合并时 `None`（老内容 / 有冲突）；
+///   3. 落库（`upsert_remote`）：合并成功就用合并产物，否则用远端原样（= 接线前的行为）。
+///
+/// ⚠️ 为什么把这三步收在一层里（而不是让 `sync.rs` 自己拼）：`sync.rs` 是**受收口门禁约束**的文件
+/// （那两个字段的计数只许减不许增），把"读远端那一版 / 写回合并产物"留在那一层之外做，
+/// `check-doc-content-access` 会当场红。
+pub fn apply_remote_page(
+    c: &Connection,
+    page: &crate::models::PageDetail,
+    sync_seq: i64,
+) -> Result<(), String> {
+    let merged = read(c, &page.id)?.and_then(|local| merge_remote_content(&local.json, &page.content_json));
+    match merged {
+        Some(json) => {
+            let mut merged_page = page.clone();
+            merged_page.content_json = json;
+            upsert_remote(c, &merged_page, sync_seq)?;
+        }
+        None => upsert_remote(c, page, sync_seq)?,
+    }
+    // 派生也只经那一层（今天远端应用只刷 FTS —— 与接线前逐字相同；合并成功时那条正文可能滞后一拍，
+    // 见 `merge_remote_content` 的"已知边界"）。
+    derive_fts(c, &page.id, &page.title, &page.content_text)
 }
 
 #[cfg(test)]
@@ -685,5 +818,178 @@ mod tests {
             .all(|b| b.choice == BlockChoice::OnlyRemote));
         // ⚠️ 本页一侧整页为空时**不报冲突**：那不是"判不了"，是"另一侧全都有"。
         assert!(!out.has_conflicts());
+    }
+
+    // ===== 阶段 1 接线适配器（与前端 docContent.test.ts 的同名用例逐条对应）=================
+
+    /// 一个**落盘 JSON 形态**的段落块（`blockId` 可选，`rev` 可选）。
+    fn jblk(block_id: Option<&str>, rev: Option<i64>, body: &str) -> serde_json::Value {
+        let mut node = serde_json::json!({
+            "type": "paragraph",
+            "children": [{ "type": "text", "text": body }],
+        });
+        if let Some(id) = block_id {
+            node["blockId"] = serde_json::json!(id);
+        }
+        if let Some(rev) = rev {
+            node["blockRev"] = serde_json::json!(rev);
+        }
+        node
+    }
+
+    fn jdoc(blocks: Vec<serde_json::Value>) -> String {
+        serde_json::json!({ "root": { "children": blocks } }).to_string()
+    }
+
+    /// 合并产物里每块的正文（断言用）。
+    fn bodies_of(doc_json: &str) -> Vec<String> {
+        let doc: serde_json::Value = serde_json::from_str(doc_json).unwrap();
+        doc.pointer("/root/children")
+            .and_then(|c| c.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|n| {
+                        n.pointer("/children/0/text").and_then(|t| t.as_str()).unwrap_or_default().to_string()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 合并产物里每块的 rev（`None` = 字段不在）。
+    fn revs_of(doc_json: &str) -> Vec<Option<i64>> {
+        let doc: serde_json::Value = serde_json::from_str(doc_json).unwrap();
+        doc.pointer("/root/children")
+            .and_then(|c| c.as_array())
+            .map(|items| items.iter().map(crate::block_rev::block_rev_of).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn block_snapshots_splits_and_drops_rev() {
+        let blocks = block_snapshots(&jdoc(vec![jblk(Some("b1"), Some(3), "甲"), jblk(Some("b2"), None, "乙")]))
+            .expect("应当能拆出块表");
+        assert_eq!(blocks.iter().map(|b| b.block_id.as_str()).collect::<Vec<_>>(), vec!["b1", "b2"]);
+        assert_eq!(blocks.iter().map(|b| b.rev).collect::<Vec<_>>(), vec![Some(3), None]);
+        assert!(!blocks[0].json.contains("blockRev"), "片段里不许带 rev");
+    }
+
+    #[test]
+    fn block_snapshots_bails_when_a_block_has_no_identity() {
+        // 老内容（还没补种身份）⇒ 不合并，回落今天的行为。
+        assert!(block_snapshots(&jdoc(vec![jblk(Some("b1"), Some(1), "甲"), jblk(None, None, "乙")])).is_none());
+        assert!(block_snapshots(&jdoc(vec![jblk(Some(""), Some(1), "甲")])).is_none());
+    }
+
+    #[test]
+    fn block_snapshots_bails_on_dirty_json() {
+        for bad in ["not json", "{}", "{\"root\":null}", "{\"root\":{\"children\":\"nope\"}}"] {
+            assert!(block_snapshots(bad).is_none(), "{bad} 应当拆不出来");
+        }
+    }
+
+    #[test]
+    fn apply_block_snapshots_writes_rev_back() {
+        let merged = apply_block_snapshots(
+            &jdoc(vec![jblk(Some("b1"), Some(1), "旧")]),
+            &[
+                MergedBlock {
+                    block_id: "b1".into(),
+                    choice: BlockChoice::Local,
+                    json: crate::block_rev::canonical_content(&jblk(Some("b1"), None, "新")),
+                    rev: Some(7),
+                },
+                MergedBlock {
+                    block_id: "b9".into(),
+                    choice: BlockChoice::OnlyRemote,
+                    json: crate::block_rev::canonical_content(&jblk(Some("b9"), None, "新块")),
+                    rev: None,
+                },
+            ],
+        )
+        .expect("应当能装回去");
+
+        assert_eq!(bodies_of(&merged), vec!["新", "新块"]);
+        assert_eq!(revs_of(&merged), vec![Some(7), None]);
+    }
+
+    #[test]
+    fn merge_remote_content_keeps_both_sides_edits() {
+        let local = jdoc(vec![jblk(Some("b1"), Some(2), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
+        let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "B 改的")]);
+
+        let merged = merge_remote_content(&local, &remote).expect("两端各改不同块 ⇒ 必须能合");
+
+        assert_eq!(bodies_of(&merged), vec!["A 改的", "B 改的"]);
+        assert_eq!(revs_of(&merged), vec![Some(2), Some(2)]);
+    }
+
+    #[test]
+    fn merge_remote_content_bails_on_conflict_missing_rev_and_legacy() {
+        // rev 相等而内容不同 ⇒ 冲突 ⇒ 不合并；任一侧缺 rev ⇒ 不合并；老内容缺身份 ⇒ 不合并。
+        assert!(merge_remote_content(
+            &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]),
+            &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]),
+        )
+        .is_none());
+        assert!(merge_remote_content(
+            &jdoc(vec![jblk(Some("b1"), None, "我改的")]),
+            &jdoc(vec![jblk(Some("b1"), Some(5), "他的")]),
+        )
+        .is_none());
+        assert!(merge_remote_content(
+            &jdoc(vec![jblk(None, None, "老")]),
+            &jdoc(vec![jblk(Some("b1"), Some(1), "新")]),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn merge_remote_content_output_survives_assign_block_revs() {        // 承重：合并产物是"下一次保存的 baseline"。物化时丢了 rev ⇒ assign_block_revs 会把每块
+        // 当成"老客户端产物"重新盖 0/1 ⇒ rev 倒退 ⇒ 下一次合并的胜负判断就错了。
+        let local = jdoc(vec![jblk(Some("b1"), Some(4), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
+        let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(5), "B 改的")]);
+        let merged = merge_remote_content(&local, &remote).expect("应当能合");
+
+        let stamped = crate::block_rev::assign_block_revs(&merged, &merged);
+        assert_eq!(revs_of(&stamped), vec![Some(4), Some(5)]);
+        assert_eq!(bodies_of(&stamped), vec!["A 改的", "B 改的"]);
+    }
+
+    #[test]
+    fn stamp_block_revs_stamps_on_a_real_page_row() {
+        // 保存路径的盖章入口：**真表**（只建 `read` 用到的那几列；`read` 的谓词另有判据覆盖）。
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE pages (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+               content_json TEXT NOT NULL DEFAULT '', content_text TEXT NOT NULL DEFAULT '',
+               deleted_at INTEGER
+             );",
+        )
+        .unwrap();
+        let old = jdoc(vec![jblk(Some("b1"), None, "原始一"), jblk(Some("b2"), None, "原始二")]);
+        c.execute(
+            "INSERT INTO pages (id, title, content_json, content_text) VALUES ('p1','标题',?1,'')",
+            rusqlite::params![old],
+        )
+        .unwrap();
+
+        // 改一块再保存 ⇒ 改过的那块 `max+1 (=1)`，没改的那块盖 `0`（"有身份 ⇒ 一定有 rev"）
+        let next = jdoc(vec![jblk(Some("b1"), None, "改过"), jblk(Some("b2"), None, "原始二")]);
+        let stamped = stamp_block_revs(&c, "p1", &next).unwrap();
+
+        assert_eq!(revs_of(&stamped), vec![Some(1), Some(0)]);
+        assert_eq!(bodies_of(&stamped), vec!["改过", "原始二"]);
+    }
+
+    #[test]
+    fn stamp_block_revs_on_a_missing_page_returns_input_unchanged() {
+        // 页面不存在 ⇒ `read` 给 `None` ⇒ baseline 空 ⇒ 所有块按"新块"盖 1（**不抛**）。
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '', content_text TEXT NOT NULL DEFAULT '', deleted_at INTEGER);").unwrap();
+        let next = jdoc(vec![jblk(Some("b1"), None, "新")]);
+        assert_eq!(revs_of(&stamp_block_revs(&c, "nope", &next).unwrap()), vec![Some(1)]);
     }
 }

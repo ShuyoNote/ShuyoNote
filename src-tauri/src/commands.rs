@@ -379,7 +379,15 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
 
     let content = crate::doc_content::DocContent {
         title: args.title.unwrap_or(cur.title),
-        json: args.content_json.unwrap_or(cur.json),
+        // ★ **阶段 1**：保存时给每个有身份的顶层块盖 `blockRev`（baseline = 库里这一页）。
+        //   块级判定（`sync::apply_upsert` 的 `merge_remote_content`）靠它比"哪一块更新"；
+        //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
+        //   ⚠️ 顺序：**先盖章再落库/快照** —— 快照里存的应当是"用户真正保存的那一版"（含 rev）。
+        json: crate::doc_content::stamp_block_revs(
+            &c,
+            &args.id,
+            &args.content_json.unwrap_or_else(|| cur.json.clone()),
+        )?,
         text: args.content_text.unwrap_or(cur.text),
     };
 

@@ -2,7 +2,8 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, upsertRemoteContent } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent } from "../docContent";
+import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -780,7 +781,12 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
       }
       if (useRemote) {
-        upsertRemoteContent(store, { ...p, id: String(p.id) }, change.seq);
+        // ★ **阶段 1**：落库走那一层的**唯一入口** `applyRemoteContent` —— 它内部先试一次
+        // **逐块合并**（两端各自改**不同块** ⇒ 两边的编辑都保留），不合并时就是接线前的行为：
+        // 老内容（顶层块没有身份）／脏 JSON，或**有冲突**（`rev` 相等而内容不同、任一侧缺 `rev`）——
+        // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
+        // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
+        applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
       }
     }
     return;
@@ -1321,6 +1327,11 @@ export function makeInvoke(store: SqliteStore) {
         // **清成空串**并 `dirty = 1` 推给服务端 —— 桌面侧一直是保留正文的（`unwrap_or(cur_json)`）。
         // 2026-09-18 对齐两侧语义，判据与用例见 `docContent.resolveSaveContent` 的注释与单测。
         const next = resolveSaveContent(cur, args);
+        // ★ **阶段 1**：保存时给每个有身份的顶层块盖 `blockRev`（baseline = 库里这一页 = `cur`）。
+        //   块级判定（`applyChange` 里那次 `mergeRemoteContent`）靠它比"哪一块更新"；
+        //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
+        //   ⚠️ 顺序：**先盖章再快照/落库** —— 版本历史里存的应当是"用户真正保存的那一版"（含 rev）。
+        next.json = assignBlockRevs(cur.json, next.json);
         // Snapshot the current state before overwriting (version history).
         snapshotBeforeSave(store, id, next.title, next.json, next.text);
         writeContent(store, id, next, Date.now());
