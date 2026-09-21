@@ -1,5 +1,5 @@
 {
-  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。｜2026-09-19 读数出处：vitest **1303**＝numTotalTests（抬之前 Linux/Node22 实测 1299＝1293 passed＋6 skipped，与 macOS 1299 同值；Windows 是 1298＋1 —— **total 三台一致、passed/skipped 的分法不同**，因为 skipped 也计入 total ⇒ 基线取 total 才跨平台安全；随后本笔又加了 4 条 report-core 判据 ⇒ 1303）。原先 vitest 记着 **746**（只有当前值的 57%），那条「只增不减」实际上拦不住什么，故抬到实际值。「下界太旧」的体检见 report-core 的 `staleBaselineNotices`：只出 `!` 提示、**不判红**（判红会把人训练成习惯性 --update-baseline）。rust-test 370 / rust-sm-crypto 382 / rust-plugins-alone 117 都取自 **Linux**(WSL2/Ubuntu，Windows 上测试二进制加载期异常退出读数不可信)。｜2026-09-20：`sm-crypto` 成**默认特性**（方案 §3.4 快路）⇒ 原 `rust-sm-crypto`（`--features sm-crypto`）与 `rust-test` 变成同一条命令，已**改名并改指回滚通道** `rust-no-sm-crypto`（`--no-default-features`，macOS 实测 401）；`rust-test` 当前 413。",
+  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。",
   "counts": {
     "vitest": 1303,
     "smoke-web": 352,
@@ -22,6 +22,7 @@
       "check-doc-content-access",
       "check-doc-links",
       "check-gitcode-workflow-rules",
+      "check-nsis-template",
       "check-ocr-assets",
       "check-overlay-registry",
       "check-pdfjs-shim",
