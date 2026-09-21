@@ -32,117 +32,16 @@ const OUT_COLOR = "#f59e0b";
 // 超过该节点数的图跳过 O(n^2) 力导向动画，改用静态环状布局（性能守卫）。
 const MAX_FORCE = 250;
 
-function maxSpeed(ns: SimNode[]): number {
-  let m = 0;
-  for (const n of ns) {
-    m = Math.max(m, Math.abs(n.vx), Math.abs(n.vy));
-  }
-  return m;
-}
-
-function tick(
-  ns: SimNode[],
-  edges: GraphEdge[],
-  size: { w: number; h: number },
-  dragId: string | null,
-  dimension: string,
-  pinned: Set<string>,
-) {
-  const nodeById = new Map(ns.map((n) => [n.id, n]));
-  const cx = size.w / 2;
-  const cy = size.h / 2;
-  const damping = 0.9;
-  const isFree = (id: string) => dragId !== id && !pinned.has(id);
-
-  for (let i = 0; i < ns.length; i++) {
-    for (let j = i + 1; j < ns.length; j++) {
-      const a = ns[i];
-      const b = ns[j];
-      let dx = a.x - b.x;
-      let dy = a.y - b.y;
-      let d2 = dx * dx + dy * dy;
-      if (d2 < 1) {
-        d2 = 1;
-        dx = 1;
-        dy = 0;
-      }
-      const d = Math.sqrt(d2);
-      const f = 9000 / d2;
-      const fx = (dx / d) * f;
-      const fy = (dy / d) * f;
-      if (isFree(a.id)) {
-        a.vx += fx;
-        a.vy += fy;
-      }
-      if (isFree(b.id)) {
-        b.vx -= fx;
-        b.vy -= fy;
-      }
-    }
-  }
-
-  for (const e of edges) {
-    const a = nodeById.get(e.source);
-    const b = nodeById.get(e.target);
-    if (!a || !b) continue;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const d = Math.sqrt(dx * dx + dy * dy) || 1;
-    const ideal = e.kind === "belongs" ? 80 : 150;
-    const f = 0.04 * (d - ideal);
-    const fx = (dx / d) * f;
-    const fy = (dy / d) * f;
-    if (isFree(a.id)) {
-      a.vx += fx;
-      a.vy += fy;
-    }
-    if (isFree(b.id)) {
-      b.vx -= fx;
-      b.vy -= fy;
-    }
-  }
-
-  // Clustering force (M21.2): pull each page node toward its same-group centroid
-  // so pages sharing a tag/attr value naturally clump together.
-  const groups = new Map<string, { x: number; y: number; count: number }>();
-  for (const n of ns) {
-    const k = nodeClusterKey(n, dimension);
-    if (!k) continue;
-    const g = groups.get(k) ?? { x: 0, y: 0, count: 0 };
-    g.x += n.x;
-    g.y += n.y;
-    g.count++;
-    groups.set(k, g);
-  }
-  for (const n of ns) {
-    if (!isFree(n.id)) continue;
-    const k = nodeClusterKey(n, dimension);
-    if (!k) continue;
-    const g = groups.get(k)!;
-    if (g.count < 2) continue;
-    const gx = g.x / g.count;
-    const gy = g.y / g.count;
-    n.vx += (gx - n.x) * 0.02;
-    n.vy += (gy - n.y) * 0.02;
-  }
-
-  for (const n of ns) {
-    if (!isFree(n.id)) {
-      n.vx = 0;
-      n.vy = 0;
-      continue;
-    }
-    n.vx += (cx - n.x) * 0.001;
-    n.vy += (cy - n.y) * 0.001;
-    n.vx *= damping;
-    n.vy *= damping;
-    n.x += n.vx;
-    n.y += n.vy;
-    n.x = Math.max(20, Math.min(size.w - 20, n.x));
-    n.y = Math.max(20, Math.min(size.h - 20, n.y));
-  }
-}
-
+// 布局的力与收敛逻辑抽到 `src/lib/graphLayout.ts`（纯函数、带机器判据）—— 见那个文件的注释：
+// 上一版（无退火 + `maxSpeed<0.03` 判据）实测**永远不收敛**，每次都跑满 500 帧（60fps 下 8.3 秒）
+// 然后冻在抖动状态里；现在靠"退火 + 单帧位移上限 + 按位移判稳"，250 节点 90–110 帧就停。
+import {
+  DEFAULT_ANNEAL,
+  MIN_ALPHA,
+  settle,
+  tick,
+  type LayoutOptions,
+} from "../lib/graphLayout";
 function nodeRadius(n: SimNode): number {
   if (n.kind === "block") return 5;
   return Math.max(6, Math.min(6 + n.degree * 2, 22));
@@ -188,6 +87,8 @@ export function GraphView() {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [frame, setFrame] = useState(0);
+  // 拖拽唤醒计数：变了就再跑一段局部松弛（见下面那个 effect）。
+  const [wake, setWake] = useState(0);
   const [size, setSize] = useState({ w: 900, h: 640 });
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -361,30 +262,42 @@ export function GraphView() {
     setNodes(allNodes);
   }, [graph, size, showBlocks, mode, currentId, dimension, valueFilter]);
 
-  // Force-directed simulation loop.
+  // 布局：**图一变就同步预热到稳**（首帧就是稳的，不用等几秒），只有预算用完（大图）才交给 rAF。
+  //
+  // 为什么不再"每帧 tick + maxSpeed 判据"：那条判据实测永远达不到 ⇒ 每次都跑满 500 帧
+  // （60fps 下 8.3 秒，120Hz 屏 4.2 秒）然后冻在抖动里。现在：退火 + 单帧位移上限 + 按位移判稳。
   useEffect(() => {
     if (nodes.length === 0) return;
-    // 大规模图：静态环状布局（simRef 已是环状初始），不跑 O(n^2) 力导向动画。
+    // 大规模图：静态环状布局（simRef 已是环状初始），不跑 O(n^2) 力导向。
     if (nodes.length > MAX_FORCE) {
       setFrame((f) => f + 1);
       return;
     }
+    const opts: LayoutOptions = {
+      clusterKey: (n) => nodeClusterKey(n as SimNode, dimension),
+      pinned: pinnedIdsRef.current,
+    };
+    // 预热预算 60ms：250 节点实测整段收敛只要 ~90ms 里的一小部分（纯计算 ~70ms），
+    // 超过预算就让下面那段 rAF 接着跑（仍会退火停住，不会再"抖很久"）。
+    const pre = settle(simRef.current, edgesRef.current, size, { ...opts, budgetMs: 60 });
+    setFrame((f) => f + 1);
+    if (pre.stable) return; // 已经稳了：**不挂 rAF**，不再每帧重渲染
+
     let raf = 0;
     let running = true;
-    let settled = 0;
-    let iterations = 0;
+    let alpha = pre.alpha;
     let frameTick = 0;
     const loop = () => {
       if (!running) return;
-      tick(simRef.current, edgesRef.current, size, dragRef.current?.id ?? null, dimension, pinnedIdsRef.current);
-      // 更严格收敛判定：避免初始环状速度就被判“已稳定”而几乎不动(显得卡住)。
-      settled = maxSpeed(simRef.current) < 0.03 ? settled + 1 : 0;
-      iterations += 1;
+      tick(simRef.current, edgesRef.current, size, {
+        ...opts,
+        alpha,
+        dragId: dragRef.current?.id ?? null,
+      });
+      alpha *= DEFAULT_ANNEAL;
       // 节流：每 2 帧才触发一次 React 渲染(~30fps)，减轻大量节点/边的渲染负担。
       if (frameTick++ % 2 === 0) setFrame((f) => f + 1);
-      if (settled < 30 && iterations < 500 && simRef.current.length > 1) {
-        raf = requestAnimationFrame(loop);
-      }
+      if (alpha >= MIN_ALPHA) raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => {
@@ -392,6 +305,37 @@ export function GraphView() {
       cancelAnimationFrame(raf);
     };
   }, [nodes, size, dimension]);
+
+  // 拖拽唤醒：循环停手之后拖动一个节点，其余节点原本**不会让位**（拖拽只改被拖的那个）。
+  // 这里在开始拖拽时跑一段局部松弛（alpha 0.6 起、×0.94 退火 ⇒ 约 104 帧 ≈ 1.7 秒），
+  // 让邻居在被拖期间让开，松手后自己停住。
+  useEffect(() => {
+    if (wake === 0 || nodes.length === 0 || nodes.length > MAX_FORCE) return;
+    const opts: LayoutOptions = {
+      clusterKey: (n) => nodeClusterKey(n as SimNode, dimension),
+      pinned: pinnedIdsRef.current,
+    };
+    let raf = 0;
+    let running = true;
+    let alpha = 0.6;
+    let frameTick = 0;
+    const loop = () => {
+      if (!running) return;
+      tick(simRef.current, edgesRef.current, size, {
+        ...opts,
+        alpha,
+        dragId: dragRef.current?.id ?? null,
+      });
+      alpha *= 0.94;
+      if (frameTick++ % 2 === 0) setFrame((f) => f + 1);
+      if (alpha >= MIN_ALPHA) raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => {
+      running = false;
+      cancelAnimationFrame(raf);
+    };
+  }, [wake]);
 
   const displayNodes = simRef.current;
   const nodeMap = useMemo(
@@ -450,6 +394,8 @@ export function GraphView() {
     const node = simRef.current.find((n) => n.id === id);
     if (!node) return;
     pointerDownRef.current = { id, t: Date.now() };
+    // 唤醒布局：让邻居在这段拖拽期间让位（循环停手之后本来不会动）。
+    setWake((w) => w + 1);
     dragRef.current = { id, scx: e.clientX, scy: e.clientY, nx: node.x, ny: node.y };
     movedRef.current = false;
     svgRef.current?.setPointerCapture(e.pointerId);
