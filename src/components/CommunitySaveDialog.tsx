@@ -20,7 +20,7 @@ import { platform } from "../lib/platform";
 import { useCommunitySave } from "../store/communitySave";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
-import { sanitizeExternalUrl } from "../lib/links";
+import { openExternalUrl } from "../lib/openExternal";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
@@ -194,14 +194,10 @@ export function CommunitySaveDialog() {
     await useNotes.getState().openPage(existing.id);
   };
 
-  const openSource = async () => {
-    const safe = post ? sanitizeExternalUrl(post.url) : "";
-    if (!safe) return;
-    try {
-      await platform.opener.openUrl(safe);
-    } catch {
-      /* 浏览器被拦时安静失败：这只是一次"去看看原帖" */
-    }
+  const openSource = () => {
+    // 走全应用唯一的外链出口（总闸 + 白名单 + 拦下时说明）——不在这里自己判开关，
+    // 那正是这个开关以前只盖住 1/6 个外链面的原因（见 `src/lib/openExternal.ts`）。
+    if (post) void openExternalUrl(post.url);
   };
 
   const preview = post ? previewOf(noteForPost(post).markdown) : null;
