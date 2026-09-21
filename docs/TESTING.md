@@ -319,25 +319,58 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
   一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
   （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
-- **安卓真出包在 Windows 本机上走不通**（2026-09-20 实测；**权威构建地是 Linux/CI**）：
-  1. **`openssl-src` 要 `perl`**：本机没有 ⇒ `cargo:warning=Command 'perl' not found` + `failed to build OpenSSL from source`。
-     ⚠️ **2026-09-21 更正**：早先这里写"用 Git for Windows 自带的那份 perl（`C:\Program Files\Git\usr\bin\perl.exe`）
-     放进 PATH 即可过这一关"—— **实测过不去**，而且原因不是 PATH：那份 msys perl **缺模块**，连自己的核心模块都 require 不动
+- ✅ **安卓包现在能在 Windows 本机出了（2026-09-21 打通，实测产出 59.5 MB 的 unsigned universal APK）**。
+  这一节原先记的是"本机出不了"，三条拦路石逐条变成了可执行的步骤：
+  1. **`openssl-src` 要 `perl`**：**不用装完整 perl**。Git for Windows 自带的那份只缺几个**纯 Perl** 模块
+     （`Locale::Maketext`/`::Simple`、`ExtUtils::MakeMaker`、`Pod::Usage`/`Pod::Simple`/`Pod::Text`/`Pod::Man`/
+     `Pod::Escapes`、`ExtUtils::Install`/`::Manifest`、`Text::Template`、`File::Which`），而 **CPAN 本机可达**：
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File scripts\setup-local-perl.ps1
+     # ⇒ 把上面那些抓进 ~/.local-perl5/lib；构建时设 $env:PERL5LIB 指向它
      ```
-     Can't locate Locale/Maketext/Simple.pm in @INC (… /usr/lib/perl5/core_perl /usr/share/perl5/core_perl)
-       at /usr/share/perl5/core_perl/Params/Check.pm line 6.
-     Error configuring OpenSSL build: Command failed: "perl" "./Configure" …
+     ⚠️ 两条"标准做法"在本机都是**死路**（都要从 github.com 取 MSI，本机不通）：
+     `winget install StrawberryPerl.StrawberryPerl` ⇒ `InternetOpenUrl() failed 0x80072efd`；
+     `choco install strawberryperl -y` ⇒ 同源、`exited 404`（`activeperl` 那条 choco 自己也标了 "likely broken"）。
+     也**不要**指望 git 的 perl 裸用：它连 `Locale::Maketext` 都没有 ⇒ `IPC::Cmd` → `Params::Check` 整条起不来
+     （cmd / PowerShell / Git Bash 三种壳同一条）。
+  2. **OpenSSL 的 `make` 把 NDK 路径的反斜杠吃掉**（`/usr/bin/sh` 是 msys sh）：
+     `C:\…\ndk\29…\bin\clang.exe` → `C:UserscnzenAppData…binclang.exe` ⇒ `Error 127`。
+     解法：**把工具链路径用正斜杠喂给构建**（cargo 风格的环境变量也得喂，因为 tauri/cc 会把带反斜杠的
+     `TARGET_CC` 塞进去）：`CC_aarch64_linux_android` / `AR_…` / `RANLIB_…` / `TARGET_CC` / `TARGET_AR` /
+     `TARGET_RANLIB` = `…/bin/clang.exe`、`…/bin/llvm-ar.exe`、`…/bin/llvm-ranlib.exe`（**正斜杠**），
+     并且保证 `C:\Program Files\Git\usr\bin`（`sh.exe`）在 PATH 上 —— openssl 的 Makefile 要 sh。
+  3. **Gradle 那条 `node tauri …`**：`tauri android init` 会把"用哪个可执行文件 + 什么参数"烘进生成的
+     `gen/android/buildSrc/…/BuildTask.kt`。本机那份是 `executable = "node"` + `args = ["tauri", …]`
+     ⇒ node 把 `tauri` 当模块名找 ⇒ `Cannot find module '…\src-tauri\tauri'`，
+     `Execution failed for task ':app:rustBuildArm64Release'`。修法：
+     ```powershell
+     node scripts/patch-android-buildtask.mjs      # 改成显式 `node <node_modules/@tauri-apps/cli/tauri.js> …`
      ```
-     在 cmd、PowerShell、**Git Bash 三种壳里都是同一条**（`Params::Check` → `Locale::Maketext::Simple` 缺失 ⇒ `IPC::Cmd` 也起不来）。
-     要过这一关得**装一份完整的 perl**（Strawberry Perl 等）；本机 2026-09-21 试过两条都**下不动**：
-     `winget install StrawberryPerl.StrawberryPerl` ⇒ `InternetOpenUrl() failed 0x80072efd`（它从 github.com 取 MSI，
-     本机到 github.com 不通）；`choco install strawberryperl -y` ⇒ 同一个源、同样失败（`exited 404`）。
-  2. ~~过了 ① 会卡在 **`mupdf-sys` 的 make 调用把 NDK 路径的反斜杠吃掉**……~~
-     **2026-09-21 起这一条不再适用**：MuPDF 改成了构建期特性 `mupdf-rollback`（**默认不编**，见
-     `docs/plans/2026-09-16-pdfium-engine-plan.md` §0.4）⇒ 默认安卓构建**根本不会调用 mupdf 的 make**，
-     那个"NDK 路径反斜杠被 msys make 吃掉"的坑随之消失（历史读数保留在上面那条 strikethrough 里，
-     要复现就加 `--features mupdf-rollback`）。**仍然卡在 ① 的 perl 上**。
-     ⇒ 本仓的安卓包一直在 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）上出，Windows 从来不是构建地。
+     （CI 的 Android job 没这个问题 ⇒ **这条只在本机补，不进 CI**。）
+
+  **完整配方**（`init` 会把 `gen/` 重新生成 ⇒ 之后**这几步都要重跑**）：
+  ```powershell
+  $ndk = "$env:LOCALAPPDATA\Android\Sdk\ndk\29.0.13846066\toolchains\llvm\prebuilt\windows-x86_64\bin".Replace('\','/')
+  $env:PERL5LIB = "$env:USERPROFILE\.local-perl5\lib"
+  $env:PATH = "$env:PATH;C:\Program Files\Git\usr\bin"
+  foreach ($v in 'CC','AR','RANLIB') { Set-Item "env:${v}_aarch64_linux_android" "$ndk/$(if ($v -eq 'CC') {'clang'} elseif ($v -eq 'AR') {'llvm-ar'} else {'llvm-ranlib'}).exe" }
+  $env:TARGET_CC = "$ndk/clang.exe"; $env:TARGET_AR = "$ndk/llvm-ar.exe"; $env:TARGET_RANLIB = "$ndk/llvm-ranlib.exe"
+  $env:CFLAGS_aarch64_linux_android = "--target=aarch64-linux-android24"
+
+  node_modules\.bin\tauri.CMD android init --ci
+  node scripts/android-platform-verifier.mjs
+  node scripts/android-mobile-shell.mjs
+  node scripts/android-app-icon.mjs
+  node scripts/stage-android-pdfium.mjs
+  node scripts/patch-android-buildtask.mjs
+  node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci   # ⇒ gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
+  ```
+  出包后按 ⑨ 的签名步骤用**正式密钥**签（`zipalign -f -p 4` → `apksigner sign --ks … --ks-key-alias shuyonote`
+  → `apksigner verify --print-certs` 指纹应为 `6ee89e6f…7a88`），装到手机时注意：
+  **本机构建的 versionCode 取自 `dev` 的版本号，通常低于已发布版 ⇒ `adb install -r -d`**（`-d` 允许降级；
+  同签名不会丢数据）。首次全新构建约 35–40 分钟（OpenSSL 在 Windows 上编得慢），之后有缓存约 6–8 分钟。
+  ⇒ 本仓的**发版**安卓包仍然由 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）产出；
+  本机这条路是"要快速看真机效果 / 没网时自测"用的。
    ⚠️ 但**打包与验收那几小步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）、
      `pnpm android:app-icon`（把品牌图标铺进 `res/`；不铺的话 APK 桌面图标是 Tauri 默认图，
      见 `scripts/android-app-icon.mjs` 的模块头；**改图标本身**走 `node scripts/build-android-icons.mjs`，
