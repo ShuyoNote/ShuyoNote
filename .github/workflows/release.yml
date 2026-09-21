@@ -415,6 +415,17 @@ jobs:
         # 与 android.yml 逐字一致：gen/ 不入库，漏注入只有真机 release 看得见。
         run: pnpm android:mobile-shell --check
 
+      - name: 品牌桌面图标（把 src-tauri/icons/android 铺进 gen 工程）
+        # 为什么需要：`tauri android init` 每次都把 **Tauri 默认图标**（那团蓝橙色漩涡）写进
+        # `res/mipmap-*/`；仓库里入库的品牌图标（含 anydpi 自适应图标）**没有任何步骤会铺过去**
+        # ⇒ 装出来的 APK 桌面图标一直是 Tauri 默认图（owner 2026-09-21 截图问的就是它）。
+        # gen/ 不入库 ⇒ 只能在 init 之后脚本化铺一遍（与 stage-android-pdfium 同一条理由）。
+        run: pnpm android:app-icon
+
+      - name: 自检：桌面图标确实是品牌那套
+        # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线）。
+        run: pnpm check:android-app-icon
+
       - name: 随包 PDFium 库（Android）
         # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
         # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。

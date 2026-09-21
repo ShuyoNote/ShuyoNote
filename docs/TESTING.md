@@ -319,16 +319,29 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ 把**期望值**写成 POSIX 字面量的判据**只在 Windows 红**（现场：`scripts/gm-version-selfcheck.test.mjs`
   一条，`vitest` 整组红：`1 failed | 1359 passed`）。**修法**：期望值用**同一个 `join`** 现算
   （跟着那个 `base` 走，别再抄一份字面量）。同族三条（本条 ＋ 上面两条）都是**本平台自测绿、换一台就红**。
-- **安卓真出包在 Windows 本机上走不通**（2026-09-20 实测，两个阻塞，**权威构建地是 Linux/CI**）：
+- **安卓真出包在 Windows 本机上走不通**（2026-09-20 实测；**权威构建地是 Linux/CI**）：
   1. **`openssl-src` 要 `perl`**：本机没有 ⇒ `cargo:warning=Command 'perl' not found` + `failed to build OpenSSL from source`。
-     处置：用 **Git for Windows 自带的 perl**（`C:\Program Files\Git\usr\bin\perl.exe`，本机实测 5.38.2）放进 PATH 即可过这一关；
-  2. 过了 ① 会卡在 **`mupdf-sys` 的 make 调用把 NDK 路径的反斜杠吃掉**（Windows + msys make 的路径转换）：
-     `/usr/bin/sh: line 1: C:UserscnzenAppDataLocalAndroidSdkndk29.0.13846066toolchains/llvm/prebuilt/windows-x86_64binclang.exe: No such file or directory`
-     ⇒ `make … Error 127`、`make invocation failed with status 2`。
-     ⇒ 本仓的安卓包一直在 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）上出，Windows 从来不是构建地；
-     想在 Windows 本机出包只能给 WSL 装 **Linux 版 SDK/NDK**（Windows 的 NDK 只带 `windows-x86_64` 那份 host 工具链，WSL 里用不了）。
-  ⚠️ 但**打包与验收那两步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）
-     与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言 `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
+     ⚠️ **2026-09-21 更正**：早先这里写"用 Git for Windows 自带的那份 perl（`C:\Program Files\Git\usr\bin\perl.exe`）
+     放进 PATH 即可过这一关"—— **实测过不去**，而且原因不是 PATH：那份 msys perl **缺模块**，连自己的核心模块都 require 不动
+     ```
+     Can't locate Locale/Maketext/Simple.pm in @INC (… /usr/lib/perl5/core_perl /usr/share/perl5/core_perl)
+       at /usr/share/perl5/core_perl/Params/Check.pm line 6.
+     Error configuring OpenSSL build: Command failed: "perl" "./Configure" …
+     ```
+     在 cmd、PowerShell、**Git Bash 三种壳里都是同一条**（`Params::Check` → `Locale::Maketext::Simple` 缺失 ⇒ `IPC::Cmd` 也起不来）。
+     要过这一关得**装一份完整的 perl**（Strawberry Perl 等）；本机 2026-09-21 试过两条都**下不动**：
+     `winget install StrawberryPerl.StrawberryPerl` ⇒ `InternetOpenUrl() failed 0x80072efd`（它从 github.com 取 MSI，
+     本机到 github.com 不通）；`choco install strawberryperl -y` ⇒ 同一个源、同样失败（`exited 404`）。
+  2. ~~过了 ① 会卡在 **`mupdf-sys` 的 make 调用把 NDK 路径的反斜杠吃掉**……~~
+     **2026-09-21 起这一条不再适用**：MuPDF 改成了构建期特性 `mupdf-rollback`（**默认不编**，见
+     `docs/plans/2026-09-16-pdfium-engine-plan.md` §0.4）⇒ 默认安卓构建**根本不会调用 mupdf 的 make**，
+     那个"NDK 路径反斜杠被 msys make 吃掉"的坑随之消失（历史读数保留在上面那条 strikethrough 里，
+     要复现就加 `--features mupdf-rollback`）。**仍然卡在 ① 的 perl 上**。
+     ⇒ 本仓的安卓包一直在 **CI 的 ubuntu runner**（`android.yml` 的 `runs-on: ubuntu-latest`）上出，Windows 从来不是构建地。
+   ⚠️ 但**打包与验收那几小步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）、
+     `pnpm android:app-icon`（把品牌图标铺进 `res/`；不铺的话 APK 桌面图标是 Tauri 默认图，
+     见 `scripts/android-app-icon.mjs` 的模块头）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
+     `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
      2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
      这正是 P4 安卓格那条缺口的真产物读数。
      **同一天晚些时候**：那条通路在 CI 上**第一次走到头**（run `35504661582` 全绿，含第 19 步产物自检）——
