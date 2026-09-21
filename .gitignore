@@ -99,3 +99,6 @@ test-report-*.json
 
 # 国密对拍夹具的构建产物（工具 crate，独立于应用 workspace）
 tools/gm-conformance/target/
+
+# check-nsis-template 的缓存：它把上游 tauri-bundler 的 NSIS 模板下到这里做逐行比对
+/target/

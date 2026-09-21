@@ -44,7 +44,8 @@
       "nsis": {
         "languages": [
           "SimpChinese"
-        ]
+        ],
+        "template": "nsis/installer.nsi"
       }
     }
   },
