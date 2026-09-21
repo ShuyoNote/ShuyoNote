@@ -97,27 +97,32 @@ export function absolutizeCommunityLinks(markdown: string, postUrl: string): str
 }
 
 /**
- * 笔记正文：**先写来源，再写正文**。
+ * 笔记正文：**先写来源，再写正文**（标签不在这里 —— 它落成笔记的**真标签**，见
+ * `communitySaveNote.ts`）。
  *
  * 来源行必须在最前面：这篇笔记是别人写的东西，读者第一眼就该知道它从哪来、
  * 点得回去。用引用块而不是普通一行——引用块在 Markdown 阅读器里视觉上是"这段是引来的"。
+ *
+ * ⚠️ **来源地址必须以纯文本出现在正文里**（2026-09-21 起它同时还是属性里的「来源」，
+ * 但正文这一份**不能删**）：链接的 href 只活在 `content_json` 的节点属性里，属性值又**不进全文索引**
+ * （FTS 只索引 title + content_text）—— 而"这篇帖子是不是已经存过"正是靠"按 slug 搜索 →
+ * 在正文里**逐字核对**来源地址"。把它只放进属性，幂等会静默失效，用户每次都会多出一篇重复笔记。
+ *
+ * 返回值多了 `tags`：社区标签要落成笔记的**真标签**（左侧标签视图/筛选/改名统一都靠它），
+ * 不再往正文里塞一行 `标签：#a #b`。
  */
-export function noteForPost(post: CommunityPost): { title: string; markdown: string } {
+export function noteForPost(post: CommunityPost): { title: string; markdown: string; tags: string[] } {
   const meta = [post.author ? `作者 ${post.author}` : "", post.updatedAt || post.createdAt]
     .filter(Boolean)
     .join(" · ");
-  // **来源地址必须以纯文本出现在正文里**，不能只放进 Markdown 链接的 href：
-  // 链接的 href 只活在 `content_json` 的节点属性里，而全文检索索引的是**纯文本**
-  // （`content_text`）。只放 href 的话，"这篇帖子是不是已经存过"就永远查不到——
-  // 幂等会静默失效，用户每次都会多出一篇重复笔记。（这条是渲染级测试抓出来的。）
   const sourceLine = `> 来源：${post.title} · ${post.url}${meta ? `（${meta}）` : ""}`;
-  const tags = post.tags.length ? `\n\n标签：${post.tags.map((t) => `#${t}`).join(" ")}` : "";
   // 正文里的站内相对地址（主要是 `/attachments/<hash>` 的图）先改成绝对地址：
   // 不然后面「图片看得见吗」这一条在笔记里永远是破图（见 `absolutizeCommunityLinks`）。
   const body = absolutizeCommunityLinks(post.bodyMarkdown.trim(), post.url);
   return {
     title: post.title,
-    markdown: `${sourceLine}\n\n---\n\n${body}${tags}\n`,
+    markdown: `${sourceLine}\n\n---\n\n${body}\n`,
+    tags: post.tags,
   };
 }
 

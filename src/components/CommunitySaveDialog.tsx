@@ -11,9 +11,9 @@
 // （见 `communitySave.ts` 的 `findStoredPost`，那里写清了为什么不信分词）。
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { markdownToPageContent } from "../lib/mdPreview";
 import { type CommunityPost } from "../lib/communityPost";
 import { findStoredPost, linkIntentOf, noteForPost, previewOf, searchKeyOf } from "../lib/communitySave";
+import { NOTE_ATTR_SPECS, savePostAsNote } from "../lib/communitySaveNote";
 import { parseTemplatePayload, templateManifest, type ImportedTemplate } from "../lib/communityImport";
 import { useTemplates } from "../store/templates";
 import { platform } from "../lib/platform";
@@ -169,22 +169,29 @@ export function CommunitySaveDialog() {
       return;
     }
     if (!post) return;
-    const note = noteForPost(post);
-    const payload = markdownToPageContent(note.markdown);
-    if (!payload) {
-      setReason("这篇帖子没有可写入的正文");
+    // 落库走 `savePostAsNote`（建页 → 真标签 → 属性）。**三层结果分开说**：
+    // 什么都没成 ⇒ 留在对话框里报错；笔记成了 ⇒ 关掉并说清"哪几样没写上"（别报成失败，
+    // 也别把"标签没写上"咽下去 —— 用户下次会发现标签栏里没有它）。
+    try {
+      const r = await savePostAsNote(post, {
+        createPage: useNotes.getState().createPage,
+        invoke: platform.executor.invoke,
+      });
+      if (!r.pageId) {
+        setReason(r.error || "创建页面失败");
+        return;
+      }
+      if (r.warnings.length > 0) {
+        toast(`已存进笔记，但${r.warnings.join("；")}`, "info");
+      } else {
+        toast(`已存进笔记：${post.title}`, "success");
+      }
+    } catch (e) {
+      // 抛出来的（平台命令炸了、注入的依赖不对…）必须落成**看得见**的一句话：
+      // 静默的 rejection 只会让人以为"点了没反应"（这条 try/catch 就是被一次测试抓出来的）。
+      setReason(`存进笔记失败：${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    const id = await useNotes.getState().createPage(null, {
-      title: note.title,
-      content_json: payload.content_json,
-      content_text: payload.content_text,
-    });
-    if (!id) {
-      setReason("创建页面失败");
-      return;
-    }
-    toast(`已存进笔记：${note.title}`, "success");
     close();
   };
 
@@ -254,6 +261,15 @@ export function CommunitySaveDialog() {
               <div className="community-save-preview-meta">
                 {[post.author, post.updatedAt || post.createdAt].filter(Boolean).join(" · ")}
                 {post.tags.length > 0 && ` · ${post.tags.map((t) => `#${t}`).join(" ")}`}
+              </div>
+              {/* 元信息落到哪儿要**在写之前**说清（owner 2026-09-21 拍板的口径）：
+                  标签 → 笔记的真标签；来源/作者/发布于/存于 → 笔记属性；来源那一行同时留在正文里
+                  （幂等与导出都靠它，删了就查不出"这篇存过没有"）。 */}
+              <div className="community-save-preview-meta">
+                {post.tags.length > 0
+                  ? `标签会成为笔记的真标签：${post.tags.map((t) => `#${t}`).join(" ")}`
+                  : "这篇帖子没有标签"}
+                {` · ${NOTE_ATTR_SPECS.map((a) => a.name).join(" / ")} 会成为笔记属性`}
               </div>
               <button className="community-save-source" onClick={() => void openSource()} title="在浏览器里打开原帖">
                 来源：{post.url}
