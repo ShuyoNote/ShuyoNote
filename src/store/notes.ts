@@ -7,7 +7,7 @@ import { useTemplateCenterStore } from "./templateCenter";
 import { useFileManagerStore } from "./fileManager";
 import { useFilePreview } from "./filePreview";
 
-interface NoteState {
+export interface NoteState {
   pages: PageMeta[];
   currentId: string | null;
   current: PageDetail | null;

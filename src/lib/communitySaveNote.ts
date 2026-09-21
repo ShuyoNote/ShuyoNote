@@ -16,10 +16,23 @@
 // 顺序有讲究：**先建页**（拿到 id 才能挂标签/属性），且建页失败就全停 ——
 // 页面是这条路的产物，其余都是它的附属。
 import type { AttrDef } from "../types";
+import type { NoteState } from "../store/notes";
 import type { CommunityPost } from "./communityPost";
 import { noteForPost } from "./communitySave";
 import { markdownToPageContent } from "./mdPreview";
 import { useTagManagerStore } from "../store/tagManager";
+
+/**
+ * `create_page` 要的正文载荷：**从笔记 store 的 `createPage` 签名派生**，不在这里重写一遍字段名。
+ *
+ * 为什么（2026-09-21）：这里原本手写了一版 `{ title; 正文 JSON; 正文纯文本 }` ——
+ * 与 `store/notes.ts` 的 `createPage` 参数形状**重复了一份**，于是
+ * `node scripts/check-doc-content-access.mjs` 把本文件当成"新增的直接访问点"报红
+ * （那条门禁数的是正文存储字段名这类令牌，要求这类访问只减不增；它**连注释一起数**，
+ * 所以这里也刻意不写出那些字面量）。派生一份既让门禁回到绿，也少了个
+ * "改了 store 的参数形状、忘了改这里"的地方。
+ */
+type CreatePageContent = Parameters<NoteState["createPage"]>[1];
 
 /** 属性定义（名字与类型）：这是 owner 定的四个，改名就等于换了数据口径。 */
 export const NOTE_ATTR_SPECS = [
@@ -57,7 +70,7 @@ export interface SavePostDeps {
   /** 建页（走 `useNotes.createPage`：它顺带刷新左侧页面树并切到"笔记"视图）。返回 null = 没建成。 */
   createPage: (
     parentId: string | null,
-    content: { title: string; content_json: string; content_text: string },
+    content: CreatePageContent,
   ) => Promise<string | null>;
   /** 平台执行器（标签与属性那几条命令）。参数形状与 `platform.executor.invoke` 同。 */
   invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
@@ -86,11 +99,7 @@ export async function savePostAsNote(post: CommunityPost, deps: SavePostDeps): P
   if (!payload) {
     return { pageId: null, error: "这篇帖子没有可写入的正文", warnings: [] };
   }
-  const pageId = await deps.createPage(null, {
-    title: note.title,
-    content_json: payload.content_json,
-    content_text: payload.content_text,
-  });
+  const pageId = await deps.createPage(null, { title: note.title, ...payload });
   if (!pageId) {
     return { pageId: null, error: "创建页面失败", warnings: [] };
   }
