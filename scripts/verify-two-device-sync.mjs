@@ -1,5 +1,11 @@
 // 两设备同页并发编辑 · 同步一致性验收（v1.84.3 seq-LWW + dirty 优先本地）。
 //
+// 场景 A–G：页级 seq-LWW ＋ dirty 优先本地（v1.84.3 的行为，承重判据是"恢复版本后推送前收到远端"）。
+// 场景 H（2026-09-22，阶段 1 第一切片）：**块级合并纯函数** —— 两端改**不同块** ⇒ 都保留；
+//   含两条反判据（缺 `blockRev` 且内容变了 ⇒ 必须提示；内容逐字节相同 ⇒ 不许提示）。
+//   ⚠️ 场景 H **还没有**接进 `applyChange`（接线是下一片：要先有"编辑器真的写出 `blockRev`"），
+//   它按将来接线的方式手动走一遍：真 store → 真读出口 → 块表 → `mergePageBlocks`。
+//
 // 真实复现客户端合并逻辑：用真实的 `applyChange`（web.ts 导出）+ 真实的
 // `SqliteStore`（sql.js WASM）各建一台"设备"的本地库，模拟两设备同时编辑
 // 同一页，验证 seq-LWW + dirty 优先本地是否正确收敛、不互相吞改动。
@@ -46,7 +52,20 @@ await esbuild.build({
 });
 
 const mod = await import(pathToFileURL(outfile).href + "?v=" + Date.now());
-const { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter, applyChange } = mod;
+const { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter, applyChange, makeInvoke } = mod;
+
+// ---- 1b. bundle docContent.ts（阶段 1 的块级合并纯函数；零依赖，很轻）----
+const dcOut = join(tmpDir, "docContent.mjs");
+await esbuild.build({
+  entryPoints: [join(root, "src/lib/docContent.ts")],
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node20",
+  outfile: dcOut,
+});
+const dc = await import(pathToFileURL(dcOut).href + "?v=" + Date.now());
+const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent } = dc;
 
 // ---- 2. 注入 sql.js wasm 字节 + 内存 adapter（Node 环境）----
 const wasmPath = require.resolve("sql.js/dist/sql-wasm.wasm");
@@ -129,6 +148,41 @@ function localEdit(store, id, title, text) {
   store.run("UPDATE pages SET title = ?, content_text = ?, updated_at = ?, dirty = 1 WHERE id = ?", [title, text, Date.now(), id]);
 }
 
+// ---- 阶段 1（场景 H）用的夹具助手 --------------------------------------------------
+// 从 `content_json` 的顶层 children 提取块表（`blockId` / `blockRev`）。
+// ⚠️ 这是**脚本自带的夹具助手**，不是生产代码：生产侧那份"双形态读写"（编辑器序列化时写
+// `blockRev`）属阶段 1 的**下一片**，依赖 `feat/block-id-model` 的自有块节点。
+// ⚠️ **块片段里去掉 `blockRev`**（rev 单独放 `rev`）：判定表第一行比的是"内容逐字节相同"，
+// 而老客户端"打开—原样保存"正好会剥掉 `blockRev` —— 把 rev 留在片段里，那一行就永远不成立
+// （每次同步都提示 = 噪声）。这正是本场景最后那条反判据在守的东西。
+const blk = (blockId, rev, body) => ({ blockId, rev, json: JSON.stringify({ type: "paragraph", blockId, body }) });
+const blocksOf = (contentJson) => {
+  const children = JSON.parse(contentJson)?.root?.children ?? [];
+  return children.map((c, i) => {
+    const { blockRev, ...content } = c ?? {};
+    return {
+      blockId: typeof content?.blockId === "string" ? content.blockId : `no-id-${i}`,
+      rev: typeof blockRev === "number" ? blockRev : null,
+      json: JSON.stringify(content),
+    };
+  });
+};
+/** 物化回一份 `content_json`（写入时把 `blockRev` 放回块对象里 —— 双形态的"落盘形态"）。 */
+const contentOf = (blocks) =>
+  JSON.stringify({
+    root: {
+      children: blocks.map((b) => {
+        const c = JSON.parse(b.json);
+        return typeof b.rev === "number" ? { ...c, blockRev: b.rev } : c;
+      }),
+    },
+  });
+/** 取某一块的正文（断言用）。 */
+const bodyOf = (contentJson, blockId) => {
+  const c = (JSON.parse(contentJson)?.root?.children ?? []).find((x) => x?.blockId === blockId);
+  return c ? c.body : null;
+};
+
 async function main() {
   console.log("\n[两设备同页并发编辑验收] (seq-LWW + dirty 优先本地, 对齐 v1.84.3)\n");
 
@@ -208,6 +262,138 @@ async function main() {
   const seenA3 = new Map(); seenA3.set(P2, 4);
   pullFromServer(A2, seenA3);
   ok(getRow(A2, P2).title === "A2版", `时钟漂移下 A 保留本地「A2版」（dirty 保护），实际=${getRow(A2, P2).title}`);
+
+  // =========== 场景 G：恢复历史版本后的本地改动必须被 dirty 保护（2026-09-19 裁定 (a)）===========
+  // 承重判据：`restore_version` 必须置 `dirty = 1`。不置 1 时，"恢复后、推送前"收到远端会把这次
+  // 恢复**静默冲掉**（最终靠 outbox 收敛，但用户会看到内容闪回、且没有任何提示）。
+  // 这条判据打的是**真实的命令路径**（`makeInvoke` → `restore_version`），不是在脚本里重演 restore 逻辑。
+  console.log("\n场景 G：恢复历史版本 → 推送前收到远端 ⇒ 恢复的内容不被冲掉");
+  const G = await newDevice();
+  const invokeG = makeInvoke(G);
+  const PR = "page-restore";
+  localCreate(G, PR, "当前内容(v3)", "当前内容(v3)");
+  const seqG = pushToServer(G, PR, "devG", "当前内容(v3)", "当前内容(v3)"); // 已同步、dirty=0
+  ok(getRow(G, PR).dirty === 0, "G 建页并 push 后 dirty=0（可被远端覆盖的基线状态）");
+  // 造一条历史版本（真实路径下由 snapshotBeforeSave 产生；这里插一行等价的历史行）
+  G.run(
+    "INSERT INTO page_versions (id, page_id, title, content_json, content_text, created_at) VALUES (?,?,?,?,?,?)",
+    ["ver-1", PR, "旧标题(v1)", "{}", "旧内容(v1)", Date.now()],
+  );
+  await invokeG("restore_version", { versionId: "ver-1" });
+  ok(getRow(G, PR).content_text === "旧内容(v1)", "恢复后本地内容 = 旧内容(v1)");
+  ok(getRow(G, PR).dirty === 1, "★ 恢复后 dirty=1（恢复 = 一次本地未推送改动）");
+  const vcount = G.query("SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", [PR])[0].n;
+  ok(vcount === 2, `恢复前的内容已进快照（历史行数应为 2：历史行 + 恢复前快照），实际=${vcount}`);
+  // 推送**之前**，远端来了一条更新的版本（另一台设备改的）
+  const seqRemote = ++serverSeq;
+  serverView.set(PR, {
+    seq: seqRemote, title: "远端新标题", content_text: "远端新内容",
+    updated_at: Date.now(), from_device: "devX", workspace_id: "ws1",
+  });
+  pullFromServer(G, new Map([[PR, seqG]]));
+  ok(getRow(G, PR).content_text === "旧内容(v1)", "★ 推送前收到远端 ⇒ 恢复的内容不被冲掉（dirty 保护）");
+  ok(getRow(G, PR).dirty === 1, "且仍 dirty=1（本次 pull 未消费该远端）");
+  // 反向：push 之后（dirty=0）同一条远端必须能正常覆盖 —— dirty 是"保护未推送的改动"，不是"永久锁住"
+  pushToServer(G, PR, "devG", getRow(G, PR).title, getRow(G, PR).content_text);
+  serverView.set(PR, {
+    seq: ++serverSeq, title: "远端更新", content_text: "远端更新内容",
+    updated_at: Date.now(), from_device: "devX", workspace_id: "ws1",
+  });
+  pullFromServer(G, new Map([[PR, seqRemote]]));
+  ok(getRow(G, PR).content_text === "远端更新内容", "push 后 dirty=0 ⇒ 后续远端正常覆盖（保护不是永久锁死）");
+
+  // =========== 场景 H：阶段 1 块级合并 —— 两端改**不同块** ⇒ 都保留 ===========
+  // 这一片验的是**纯函数**（`docContent.mergeBlocks` ↔ `doc_content::merge_blocks`）。
+  // ⚠️ 它**还没有**接进 `applyChange` —— 接线是下一片（要先有"编辑器真的写出 `blockRev`"，
+  // 即 `feat/block-id-model` 的自有块节点 ＋ 双形态读写）。所以这里按**将来接线的方式**手动走一遍：
+  // 真 `SqliteStore` → 真读出口 `readContent` → 块表 → `mergePageBlocks`（页级 + 逐块）→ 物化回 JSON。
+  console.log("\n场景 H：块级合并（阶段 1 第一切片）—— 两端改不同块 ⇒ 都保留");
+  const PH = "page-blocks";
+  const HA = await newDevice();
+  const HB = await newDevice();
+  const baseBlocks = [blk("b1", 1, "b1 原始"), blk("b2", 1, "b2 原始")];
+  const withRev = (blocks, id, rev, body) => blocks.map((b) => (b.blockId === id ? blk(id, rev, body) : b));
+
+  // 两台设备都处于"已同步到 seq=1"的基线（dirty=0），与服务端那一版逐字相同
+  for (const s of [HA, HB]) {
+    localCreate(s, PH, "块页", "");
+    writeContent(s, PH, { title: "块页", json: contentOf(baseBlocks), text: "b1 原始\nb2 原始" }, Date.now());
+    s.run("UPDATE pages SET dirty = 0, sync_seq = 1 WHERE id = ?", [PH]);
+  }
+
+  // A 改 b1（rev 1 → 2）并推上去（服务端存的是**整页 JSON** —— 真实负载形态）
+  const aBlocks = withRev(baseBlocks, "b1", 2, "b1 由 A 改");
+  writeContent(HA, PH, { title: "块页", json: contentOf(aBlocks), text: "b1 由 A 改\nb2 原始" }, Date.now());
+  ok(getRow(HA, PH).dirty === 1, "H: A 改 b1 后 dirty=1（未同步）");
+  const seqH1 = pushToServer(HA, PH, "devA", "块页", "b1 由 A 改\nb2 原始");
+  serverView.get(PH).content_json = contentOf(aBlocks);
+
+  // B 改 b2（rev 1 → 2）；B pull 时本地 dirty=1 ⇒ 页级保留本地（今天的行为，不被 A 整页盖掉）
+  const bBlocks = withRev(baseBlocks, "b2", 2, "b2 由 B 改");
+  writeContent(HB, PH, { title: "块页", json: contentOf(bBlocks), text: "b1 原始\nb2 由 B 改" }, Date.now());
+  ok(getRow(HB, PH).dirty === 1, "H: B 改 b2 后 dirty=1（未同步）");
+  pullFromServer(HB, new Map([[PH, 1]]));
+  ok(bodyOf(readContent(HB, PH).json, "b1") === "b1 原始", "H: B pull 时 dirty 保护本地 ⇒ B 手上的 b1 仍是原始版（页级语义，正确）");
+
+  // B 推上去（服务端 seq 更大）；A 是干净的 ⇒ 页级判定说"用远端"
+  const seqH2 = pushToServer(HB, PH, "devB", "块页", "b1 原始\nb2 由 B 改");
+  serverView.get(PH).content_json = contentOf(bBlocks);
+  ok(seqH2 > seqH1, `H: B push 得 seq=${seqH2}（A 那一版是 ${seqH1}）`);
+
+  // ★ **承重证明**：服务端那一版里 b1 是旧的 ⇒ 页级 LWW（今天的行为）整页吃下去就会**丢掉 A 的编辑**
+  const remoteOnly = serverView.get(PH).content_json;
+  ok(bodyOf(remoteOnly, "b1") === "b1 原始", "H: ★ 服务端那一版里 b1 是旧的 —— 整页 LWW 会丢掉 A 的编辑（这条就是块级合并要救的）");
+
+  // ★ 阶段 1：页级判定 + 逐块合并（唯一入口 `mergePageBlocks`）
+  const page = mergePageBlocks(
+    localState(HA, PH),
+    serverView.get(PH).seq,
+    blocksOf(readContent(HA, PH).json),
+    blocksOf(remoteOnly),
+  );
+  ok(page.action === "merge", "H: A 干净且落后 ⇒ 页级走「用远端」那一支（才轮到逐块比对）");
+  const mergedJson = contentOf(page.blocks ?? []);
+  ok(bodyOf(mergedJson, "b1") === "b1 由 A 改", "H: ★ 合并后 b1 保留 **A 的编辑**（本地 rev 更大）");
+  ok(bodyOf(mergedJson, "b2") === "b2 由 B 改", "H: ★ 合并后 b2 取到 **B 的编辑**（远端 rev 更大）");
+  ok((page.conflicts ?? []).length === 0, `H: 两端各改不同块 ⇒ 无冲突（实际 ${(page.conflicts ?? []).length}）`);
+
+  // ★ 反判据一：老客户端产物（`blockRev` 被剥掉）而内容**变了** ⇒ **必须**提示
+  //（若静默按"最旧"处理 ⇒ 这条红 —— 那正是裁定 (i) 被否决的理由）
+  const oldClient = mergeBlocks(
+    blocksOf(contentOf([blk("b1", null, "老客户端改的")])),
+    blocksOf(contentOf([blk("b1", 9, "新客户端的")])),
+    "remote",
+  );
+  ok(
+    oldClient.blocks[0].choice === "conflict" && oldClient.blocks[0].reason === "missing-rev",
+    "★ 反判据：缺 rev 且内容变了 ⇒ 必须提示（不许静默选边）",
+  );
+  ok(oldClient.conflicts[0].localJson === blocksOf(contentOf([blk("b1", null, "老客户端改的")]))[0].json, "冲突里带着两侧原文（UI 才有得取回）");
+
+  // ★ 反判据二：老客户端"打开—原样保存"（剥了 rev、内容**逐字节相同**）⇒ **不许**提示
+  //（否则提示会在每次同步冒出来 ⇒ 噪声 ⇒ 用户学会忽略 ⇒ 等于静默）
+  const sameBytes = mergeBlocks(
+    blocksOf(contentOf([blk("b1", 7, "一模一样")])),
+    blocksOf(contentOf([blk("b1", null, "一模一样")])),
+    "remote",
+  );
+  ok(
+    sameBytes.blocks[0].choice === "identical" && sameBytes.conflicts.length === 0,
+    "★ 反判据：内容逐字节相同 ⇒ 不许提示",
+  );
+
+  // ★ 已知边界（钉住，免得将来静默改成"消失"）：只在一侧的块**保留**、顺序取页级胜方那一侧
+  const oneSide = mergeBlocks(
+    [blk("b1", 1, "共有")],
+    [blk("b1", 2, "远端改过"), blk("b9", 1, "远端新块")],
+    "remote",
+  );
+  ok(
+    oneSide.blocks.map((b) => b.blockId).join(",") === "b1,b9" &&
+      oneSide.blocks[1].choice === "only-remote" &&
+      oneSide.conflicts.length === 0,
+    "已知边界：只在一侧的块保留（本片不做块级删除）、顺序 = 页级胜方 + 另一侧追加在表尾",
+  );
 
   // =========== 汇总 ===========
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);

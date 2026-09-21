@@ -41,6 +41,15 @@ pub struct GraphData {
     pub blocks: Vec<GraphBlock>,
     /// Block-level edges: block→block (link/embed) + block→page (belongs).
     pub block_edges: Vec<GraphEdge>,
+    /// **这个平台能不能给出块层** —— 桌面恒为 `true`（块层来自派生表 `blocks`）。
+    ///
+    /// 为什么显式给一个布尔，而不是让调用方"看 `blocks` 空不空"：空数组分不出
+    /// 「平台不支持块层」与「这个空间里没有块引用」。Web 侧没有 `blocks` 派生表
+    /// ⇒ 它声明 `false`（`src/lib/platform/web.ts`），UI 据此禁用"块级"开关
+    /// （改前：Web 用户能点开一个永远空的块层图且没有任何提示）。
+    /// ⚠️ 它是**契约**：Web 侧将来做出块层派生时要一起翻成 `true`
+    /// （`scripts/smoke-web.mjs` 的块层断言会逼着一起改）。
+    pub blocks_supported: bool,
 }
 
 // Priority for aggregating multiple backlinks between the same two pages:
@@ -241,14 +250,8 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
         let content_json = if let Some(j) = json_cache.get(&page_id) {
             j.clone()
         } else {
-            let j: String = c
-                .query_row(
-                    "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                    params![page_id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?
+            let j: String = crate::doc_content::read(&c, &page_id)?
+                .map(|d| d.json)
                 .unwrap_or_else(|| "{}".to_string());
             json_cache.insert(page_id.clone(), j.clone());
             j
@@ -272,5 +275,6 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
         edges,
         blocks,
         block_edges,
+        blocks_supported: true,
     })
 }

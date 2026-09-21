@@ -11,6 +11,10 @@ mod crypto;
 mod database;
 mod db;
 mod disk;
+// 「文档内容」那一层（read/write/merge/derive）：阶段 0「接口收口」的壳，**行为等价**。
+// 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
+// 见 `docs/plans/2026-09-18-doc-content-layer-inventory.md`。
+mod doc_content;
 // 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
 // Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
 // 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，

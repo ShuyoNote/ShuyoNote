@@ -756,8 +756,14 @@ export function GraphView() {
         <button
           className={`graph-toggle ${showBlocks ? "graph-toggle-active" : ""}`}
           onClick={() => setShowBlocks((v) => !v)}
+          // ⚠️ 块层是**平台能力**，不是"这个空间里没有块引用"：Web 侧 `blocks_supported === false`
+          //    （块层来自桌面才有的派生表 `blocks`）。改前这里只看 `graph.blocks.length`，
+          //    于是 Web 用户能点开一个**永远空**的块层图、且没有任何提示。
+          //    ⇒ 不支持时**禁用并说明**，而不是让用户点开一个空图。
+          disabled={!graph.blocks_supported}
+          title={graph.blocks_supported ? undefined : "块层仅在桌面端可用（Web 版没有块级派生）"}
         >
-          块级{graph.blocks.length > 0 ? ` (${graph.blocks.length})` : ""}
+          块级{graph.blocks_supported && graph.blocks.length > 0 ? ` (${graph.blocks.length})` : ""}
         </button>
       </div>
     </div>

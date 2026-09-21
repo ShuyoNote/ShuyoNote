@@ -231,24 +231,17 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "块不存在".to_string())?;
 
-    let (title, content_json): (String, String) = c
-        .query_row(
-            "SELECT title, content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-            params![page_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
+    let page = crate::doc_content::read(&c, &page_id)?
         .ok_or_else(|| "页面不存在".to_string())?;
 
-    let snippet = snippet_for_block(&content_json, &block_id);
-    let content = block_text(&content_json, &block_id)
+    let snippet = snippet_for_block(&page.json, &block_id);
+    let content = block_text(&page.json, &block_id)
         .map(|t| t.trim().to_string())
         .unwrap_or_default();
     Ok(BlockInfo {
         block_id,
         page_id,
-        page_title: title,
+        page_title: page.title,
         snippet,
         content,
     })
@@ -258,15 +251,9 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
 pub fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<PageBlock>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
 
-    let content_json: String = c
-        .query_row(
-            "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-            params![page_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "页面不存在".to_string())?;
+    let content_json = crate::doc_content::read(&c, &page_id)?
+        .ok_or_else(|| "页面不存在".to_string())?
+        .json;
 
     let v = parse_json(&content_json)?;
     let mut blocks = Vec::new();
@@ -338,14 +325,11 @@ pub fn list_block_backlinks(db: State<'_, Db>, page_id: String) -> Result<Vec<Bl
     let c = db.0.lock().expect("db mutex poisoned");
 
     // Target snippets all live in the current page.
-    let target_json: String = c
-        .query_row(
-            "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-            params![page_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
+    // ★ 读出口走「文档内容」那一层（阶段 0 接口收口）：谓词与原 SQL **逐字相同**（`deleted_at IS NULL`）。
+    //   读不到（页不存在/已软删）仍按**搬运前的语义**退化成 `"{}"`（不是报错）——
+    //   这条"缺页给空文档"是调用方契约的一部分，搬动时不许改。
+    let target_json: String = crate::doc_content::read(&c, &page_id)?
+        .map(|d| d.json)
         .unwrap_or_else(|| "{}".to_string());
 
     let mut stmt = c
