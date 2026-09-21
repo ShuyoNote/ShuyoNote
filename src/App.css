@@ -4767,7 +4767,8 @@ body.content-full .editor-placeholder {
 .prop-datetime {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* 与 `.prop-row` 的 gap 一致：手输框 → 图标按钮 的间距要和 值 → 上移/下移/移除 那段一样宽 */
+  gap: 8px;
   flex: 1;
   max-width: 75%;
   min-width: 0;
@@ -4779,21 +4780,28 @@ body.content-full .editor-placeholder {
   min-width: 0;
 }
 
+/* 「打开日期选择器」按钮：**与属性行里那三个图标按钮（上移/下移/移除）同一个方框** ——
+   18×18、无边框、透明底、`--text-faint` → hover `--text`。
+   原先是个带边框的小方块 ＋ `📅` emoji：emoji 的尺寸由字体行高决定，既跟 13×13 的线性
+   SVG 不搭，也比那三个 18×18 的按钮高一截 ⇒ 一行里对不齐（owner 2026-09-21 截图指出）。 */
 .prop-datetime-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-dim);
-  border-radius: var(--radius-xs);
-  padding: 3px 6px;
-  font-size: 12px;
-  line-height: 1.2;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-faint);
   cursor: pointer;
 }
 
 .prop-datetime-pick:hover {
-  border-color: var(--accent);
   color: var(--text);
+  background: var(--hover);
 }
 
 /* 藏在布局里（1px + 透明）：showPicker() 要求元素是"渲染过的"，display:none 会抛 */
