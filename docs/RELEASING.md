@@ -248,6 +248,9 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyon
 # ③ PDFium 运行时：装包要把 pdfium.dll 放在 exe 同级（源文件不进 git；缺席则**构建脚本期**即失败）
 node scripts/fetch-pdfium.mjs --check --platform win-x64   # 报「缺少」就跑一次：node scripts/fetch-pdfium.mjs --platform win-x64
 pnpm tauri build --bundles nsis   # 产出 bundle/nsis/ShuyoNote_<版本>_x64-setup.exe + 同名 .sig
+# ④（只在需要 MuPDF 回滚包时）默认构建**不编** MuPDF：`mupdf-rollback` 是构建期特性，
+#    平时不背它（它是重量级 C 依赖）。要出一个能 `SHUYONOTE_PDF_ENGINE=mupdf` 的包就加：
+#    pnpm tauri build --bundles nsis --features mupdf-rollback     # 体积/构建时间的代价随之回来
 ```
 
 > **2026-09-16 本机实测（8 分钟出包，产物过了 `release.mjs` 的签名互验）**——两条 OpenSSL 的坑
