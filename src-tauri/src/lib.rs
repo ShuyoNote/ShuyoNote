@@ -3,6 +3,7 @@ mod community;
 mod attachments;
 mod backlinks;
 mod backup;
+mod block_rev;
 mod blocks;
 mod bookmark;
 mod commands;
