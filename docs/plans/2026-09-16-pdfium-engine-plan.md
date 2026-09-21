@@ -102,6 +102,27 @@ node scripts/fetch-pdfium.mjs --print-sha256 <tgz>   # 补记某平台的校验�
 
 ---
 
+## 0.4 2026-09-21：MuPDF 改成**构建期特性**（默认不编）—— 不是删除，是"平时不背它"
+
+owner 问「是否可以清理 mupdf 了？」。查下来**代码上早就可以删**（PDFium 从 1.91.13 起是默认引擎，
+MuPDF 的公开面只有 `has_document`/`forget`/`render_page`/`compact_rgba` 四个函数，职责就是光栅化，
+而文本层/坐标/页数/目录本来走 pdf.js），但**删掉就没有一键回滚了**，而 macOS/Android 的**真机**
+两格还没验。于是拍了中间的第三条路：
+
+| 项 | 落法 |
+|---|---|
+| 依赖 | `mupdf-sys` 变 **optional**；新特性 **`mupdf-rollback`**（`default` **不含**它） |
+| 平时 | 默认构建**根本不编 MuPDF** ⇒ 少一个重量级 C 依赖（构建、体积、供应链、一处 unsafe FFI） |
+| 回滚 | `cargo build --release --features mupdf-rollback`（或 `pnpm tauri build --features mupdf-rollback`）重编一次即可；`SHUYONOTE_PDF_ENGINE=mupdf` 语义不变 |
+| 没编时的行为 | 显式要 MuPDF **不静默换 PDFium、也不 panic**，而是回一句能照着做的话（`commands::MUPDF_NOT_COMPILED`：点名 `mupdf-rollback` ＋ 当下用 `pdfium`） |
+| 判据 | `commands::pdf_engine_tests` **4 → 5 条**：新增 `asking_for_mupdf_says_what_to_do_when_the_feature_is_off`（两种构建各断言自己那一半；`mupdf_compiled()` 必须等于 `cfg!(feature)`）；P3 对拍模块 `pdf_engine_compare` 改成 `#[cfg(all(test, feature = "mupdf-rollback"))]`（它同时用两个引擎，没编 MuPDF 时没有意义） |
+
+**为什么不是"直接删"**：删了就没有退路，而 §4 的"渲染等价"里中文/扫描件两类**仍未完全达成**、
+macOS 装完开 PDF 与 Android 真机开 PDF**都还没验**。这一步把"背不背它"从**产品决定**降成**构建参数**：
+验收补齐后只需删一个 feature 定义；反过来哪天 PDFium 出问题，也不必回滚版本、只需换一个构建。
+
+---
+
 ## 1. 范围：只换光栅化
 
 ```ts
@@ -200,6 +221,8 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 > 真正落地的是 **`v1.91.9`**：三平台产物齐 + `latest.json` 已发（windows-x86_64 / linux-x86_64 / android-aarch64，
 > 三项 url 均 HTTP 206），`check:release-state` **20 项通过**；用户侧 PDF 复验也通过（见上「真机」一条）。
 > 回滚杠杆见上（`SHUYONOTE_PDF_ENGINE=mupdf`）。**"删 MuPDF"这一步没做** —— 按 §2 的 P5，等灰度一个发布周期后再评估。
+> ⚠️ 2026-09-21 更新（见 §0.4）：**"删"仍然没做，但"背不背它"改成了构建参数** ——
+> `mupdf-rollback` 特性默认不编，要回滚就 `--features mupdf-rollback` 重编一次。
 
 ---
 
