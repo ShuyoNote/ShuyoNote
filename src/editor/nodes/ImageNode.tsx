@@ -12,7 +12,7 @@ import {
 import type { CSSProperties, JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
-import { blockIdOf, withBlockId } from "./blockIdHelpers";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 export type SerializedImageNode = Spread<
   {
@@ -24,6 +24,7 @@ export type SerializedImageNode = Spread<
     hash?: string | null;
     mime?: string | null;
     blockId?: string;
+    blockRev?: number;
   },
   SerializedLexicalNode
 >;
@@ -38,6 +39,8 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   __mime: string | null;
   /** 块身份（只有**顶层块**才有；行内图片 `inline=true` 与嵌套实例都不给）。 */
   __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "image";
@@ -54,6 +57,7 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       node.__mime,
       node.__blockId,
       node.__key,
+      node.__blockRev,
     );
   }
 
@@ -67,6 +71,7 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     mime: string | null = null,
     blockId = "",
     key?: NodeKey,
+    blockRev: number | null = null,
   ) {
     super(key);
     this.__src = src;
@@ -77,11 +82,13 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
     this.__hash = hash;
     this.__mime = mime;
     this.__blockId = blockId;
+    this.__blockRev = blockRev;
   }
 
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as ImageNode).__blockId;
+    this.__blockRev = (prevNode as ImageNode).__blockRev;
   }
 
   getBlockId(): string {
@@ -91,6 +98,15 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -154,20 +170,23 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedImageNode {
-    return withBlockId(
-      {
-        ...super.exportJSON(),
-        type: "image",
-        version: 1,
-        src: this.__src,
-        altText: this.__altText,
-        inline: this.__inline,
-        width: this.__width,
-        height: this.__height,
-        hash: this.__hash ?? undefined,
-        mime: this.__mime ?? undefined,
-      },
-      this.__blockId,
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "image",
+          version: 1,
+          src: this.__src,
+          altText: this.__altText,
+          inline: this.__inline,
+          width: this.__width,
+          height: this.__height,
+          hash: this.__hash ?? undefined,
+          mime: this.__mime ?? undefined,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
     );
   }
 
@@ -181,6 +200,7 @@ export class ImageNode extends DecoratorNode<JSX.Element> {
       serializedNode.hash ?? null,
       serializedNode.mime ?? null,
       blockIdOf(serializedNode),
+      blockRevOf(serializedNode),
     );
   }
 
@@ -198,9 +218,10 @@ export function $createImageNode(
   hash?: string | null,
   mime?: string | null,
   blockId?: string,
+  blockRev: number | null = null,
 ): ImageNode {
   return $applyNodeReplacement(
-    new ImageNode(src, altText, inline, width, height, hash, mime, blockId ?? ""),
+    new ImageNode(src, altText, inline, width, height, hash, mime, blockId ?? "", undefined, blockRev),
   );
 }
 

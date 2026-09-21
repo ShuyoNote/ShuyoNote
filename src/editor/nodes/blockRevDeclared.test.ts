@@ -20,7 +20,14 @@
 // （与块身份那边"清单与判据共用一份"同一做法）。
 
 import { describe, expect, it } from "vitest";
-import { $createTextNode, $getRoot, createEditor, type LexicalEditor, type LexicalNode } from "lexical";
+import {
+  $createParagraphNode,
+  $createTextNode,
+  $getRoot,
+  createEditor,
+  type LexicalEditor,
+  type LexicalNode,
+} from "lexical";
 
 import { EDITOR_NODES } from "../config";
 import { $createBlockParagraphNode, BLOCK_PARAGRAPH_TYPE } from "./BlockParagraphNode";
@@ -31,6 +38,16 @@ import { $createBlockCodeNode, BLOCK_CODE_TYPE } from "./BlockCodeNode";
 import { $createBlockHorizontalRuleNode, BLOCK_HORIZONTAL_RULE_TYPE } from "./BlockHorizontalRuleNode";
 import { $createBlockTableNode, BLOCK_TABLE_TYPE } from "./BlockTableNode";
 import { $createFormulaNode } from "./FormulaNode";
+import { $createCalloutNode } from "./CalloutNode";
+import { $createMermaidNode } from "./MermaidNode";
+import { $createImageRowNode } from "./ImageRowNode";
+import { $createImageNode } from "./ImageNode";
+import { $createVideoNode } from "./VideoNode";
+import { $createBlockEmbedNode } from "./BlockEmbedNode";
+import { $createWebBookmarkNode } from "./WebBookmarkNode";
+import { $createAttachmentRefNode } from "./AttachmentRefNode";
+import { $createDrawingNode } from "./DrawingNode";
+import { $createColumnsBlockNode } from "./ColumnsBlockNode";
 
 function newEditor(): LexicalEditor {
   return createEditor({ nodes: EDITOR_NODES, namespace: "block-rev-declared-test" });
@@ -39,8 +56,13 @@ function newEditor(): LexicalEditor {
 type Json = Record<string, unknown>;
 type RevCarrier = LexicalNode & { getBlockRev(): number | null; setBlockRev(rev: number | null): void };
 
-/** 已接入**声明式 `blockRev`** 的模型节点（内建镜像 7 类 ＋ 自有节点样板 formula）。 */
+/**
+ * 已接入**声明式 `blockRev`** 的模型节点 —— **全部 18 类**（内建镜像 7 ＋ 自有 11）。
+ *
+ * 与块身份那边同一条纪律：**清单与判据共用一份** —— 新增一类只在这里加一行，漏接就当场红。
+ */
 const MODEL_NODE_TABLE: Array<{ label: string; type: string; make: () => LexicalNode }> = [
+  // 内建镜像 7 类（新 type ＋ 两形态映射那条路）
   { label: "段落", type: BLOCK_PARAGRAPH_TYPE, make: () => $createBlockParagraphNode("blk-1") },
   { label: "标题", type: BLOCK_HEADING_TYPE, make: () => $createBlockHeadingNode("h2", "blk-1") },
   { label: "引用", type: BLOCK_QUOTE_TYPE, make: () => $createBlockQuoteNode("blk-1") },
@@ -48,7 +70,30 @@ const MODEL_NODE_TABLE: Array<{ label: string; type: string; make: () => Lexical
   { label: "代码块", type: BLOCK_CODE_TYPE, make: () => $createBlockCodeNode("javascript", "blk-1") },
   { label: "水平线", type: BLOCK_HORIZONTAL_RULE_TYPE, make: () => $createBlockHorizontalRuleNode("blk-1") },
   { label: "表格", type: BLOCK_TABLE_TYPE, make: () => $createBlockTableNode("blk-1") },
-  { label: "公式（自有节点样板）", type: "formula", make: () => $createFormulaNode("x^2", "blk-1") },
+  // 自有节点 11 类（"类就是类型"那条轻路）
+  { label: "callout", type: "callout", make: () => $createCalloutNode("blk-1") },
+  { label: "公式", type: "formula", make: () => $createFormulaNode("x^2", "blk-1") },
+  { label: "mermaid", type: "mermaid", make: () => $createMermaidNode("graph TD", "flowchart", "blk-1") },
+  { label: "图片行", type: "imageRow", make: () => $createImageRowNode([{ src: "a.png", alt: "a" }], "blk-1") },
+  { label: "图片", type: "image", make: () => $createImageNode("a.png", "a", false, null, null, null, null, "blk-1") },
+  { label: "视频", type: "video", make: () => $createVideoNode("v.mp4", null, null, "blk-1") },
+  { label: "块嵌入", type: "blockembed", make: () => $createBlockEmbedNode("target-1", "blk-1") },
+  {
+    label: "网页书签",
+    type: "webbookmark",
+    make: () => $createWebBookmarkNode("https://a.example", "t", "d", "s.example", "", "", "blk-1"),
+  },
+  {
+    label: "附件引用",
+    type: "attachment-ref",
+    make: () => $createAttachmentRefNode("att-1", "f.pdf", 12, "application/pdf", "", "", "blk-1"),
+  },
+  {
+    label: "绘图",
+    type: "drawing",
+    make: () => $createDrawingNode(null, null, null, null, "", null, null, null, null, null, "blk-1"),
+  },
+  { label: "分栏", type: "columnsBlock", make: () => $createColumnsBlockNode([], [], "blk-1") },
 ];
 
 /** 在导出 JSON 里**递归**找某个 model type 的节点（根规范化可能把装饰节点包进段落）。 */
@@ -86,15 +131,33 @@ function exportedNodeJson(make: () => LexicalNode, rev: number | null): Json {
 function seed(editor: LexicalEditor, make: () => LexicalNode, rev: number | null): void {
   editor.update(
     () => {
+      // 先放一个**内建**段落打底（真编辑器里装饰节点从不与"空根"同时出现）。
+      const filler = $createParagraphNode();
+      filler.append($createTextNode("打底"));
+      $getRoot().append(filler);
+
       const node = make();
       if (node.getType() === BLOCK_PARAGRAPH_TYPE) {
         (node as unknown as { append(child: LexicalNode): void }).append($createTextNode("内容"));
       }
       $getRoot().append(node);
+      // ⚠️ rev 在**挂进编辑器之后**再写：新建（还没进编辑器状态）时 `getWritable()` 的克隆
+      // 语义与挂进去之后不同，判据要在"真编辑器里"的那条路径上验。
       if (rev !== null) (node as RevCarrier).setBlockRev(rev);
     },
     { discrete: true },
   );
+}
+
+/** 在**活着的编辑器状态**里按 type 递归找节点（更新闭包内用）。 */
+function findLive(node: LexicalNode, type: string): LexicalNode | null {
+  if (node.getType() === type) return node;
+  const kids = (node as unknown as { getChildren?: () => LexicalNode[] }).getChildren?.() ?? [];
+  for (const kid of kids) {
+    const hit = findLive(kid, type);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 const docWith = (child: Json): string =>
@@ -143,7 +206,8 @@ describe("声明式 blockRev（节点级）", () => {
       seed(editor, entry.make, 5);
       editor.update(
         () => {
-          $getRoot().getFirstChild()?.markDirty();
+          // 精确标脏**被测那一个**节点（装饰节点可能被包在段落里，别只标根的直接子节点）
+          findLive($getRoot(), entry.type)?.markDirty();
         },
         { discrete: true },
       );

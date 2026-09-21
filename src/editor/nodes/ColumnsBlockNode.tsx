@@ -14,7 +14,7 @@ import type { JSX } from "react";
 import { lazy, Suspense, useCallback } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { useNotes } from "../../store/notes";
-import { blockIdOf, withBlockId } from "./blockIdHelpers";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 // Lazy-load the view so the static import chain never pulls config.ts back in
 // (config.ts imports this node for EDITOR_NODES, so a static view import would be a
@@ -28,7 +28,7 @@ const ColumnsBlockView = lazy(() =>
 // as N independent nested editors. `cols.length` = column count.
 
 export type SerializedColumnsBlockNode = Spread<
-  { count: number; cols: string[]; widths?: number[]; blockId?: string },
+  { count: number; cols: string[]; widths?: number[]; blockId?: string; blockRev?: number },
   SerializedLexicalNode
 >;
 
@@ -43,25 +43,29 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   __widths: number[];
   /** 块身份（只有**顶层块**才有）。 */
   __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "columnsBlock";
   }
 
   static clone(node: ColumnsBlockNode): ColumnsBlockNode {
-    return new ColumnsBlockNode(node.__cols.slice(), node.__widths.slice(), node.__blockId, node.__key);
+    return new ColumnsBlockNode(node.__cols.slice(), node.__widths.slice(), node.__blockId, node.__key, node.__blockRev);
   }
 
-  constructor(cols: string[] = [], widths: number[] = [], blockId = "", key?: NodeKey) {
+  constructor(cols: string[] = [], widths: number[] = [], blockId = "", key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__cols = cols;
     this.__widths = widths;
     this.__blockId = blockId;
+    this.__blockRev = blockRev;
   }
 
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as ColumnsBlockNode).__blockId;
+    this.__blockRev = (prevNode as ColumnsBlockNode).__blockRev;
   }
 
   getBlockId(): string {
@@ -71,6 +75,15 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -123,16 +136,19 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedColumnsBlockNode {
-    return withBlockId(
-      {
-        ...super.exportJSON(),
-        type: "columnsBlock",
-        count: this.__cols.length,
-        cols: this.__cols.slice(),
-        widths: this.__widths.slice(),
-        version: 1,
-      },
-      this.__blockId,
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "columnsBlock",
+          count: this.__cols.length,
+          cols: this.__cols.slice(),
+          widths: this.__widths.slice(),
+          version: 1,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
     );
   }
 
@@ -141,7 +157,7 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
       ? serializedNode.cols.slice()
       : new Array(Math.max(1, Math.floor(serializedNode.count) || 2)).fill(EMPTY_COL);
     const widths = Array.isArray(serializedNode.widths) ? serializedNode.widths.slice() : [];
-    return $createColumnsBlockNode(cols, widths, blockIdOf(serializedNode));
+    return $createColumnsBlockNode(cols, widths, blockIdOf(serializedNode), blockRevOf(serializedNode));
   }
 
   isInline(): false {
@@ -149,9 +165,14 @@ export class ColumnsBlockNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createColumnsBlockNode(cols: string[] = [], widths: number[] = [], blockId?: string): ColumnsBlockNode {
+export function $createColumnsBlockNode(
+  cols: string[] = [],
+  widths: number[] = [],
+  blockId?: string,
+  blockRev: number | null = null,
+): ColumnsBlockNode {
   const c = cols.length > 0 ? cols.slice() : [EMPTY_COL, EMPTY_COL];
-  return $applyNodeReplacement(new ColumnsBlockNode(c, widths.slice(), blockId ?? ""));
+  return $applyNodeReplacement(new ColumnsBlockNode(c, widths.slice(), blockId ?? "", undefined, blockRev));
 }
 
 export function $isColumnsBlockNode(node: LexicalNode | null | undefined): node is ColumnsBlockNode {

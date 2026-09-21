@@ -12,10 +12,10 @@ import {
 import type { JSX } from "react";
 import { MediaResolver } from "./MediaResolver";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
-import { blockIdOf, withBlockId } from "./blockIdHelpers";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 export type SerializedVideoNode = Spread<
-  { src: string; hash?: string | null; mime?: string | null; blockId?: string },
+  { src: string; hash?: string | null; mime?: string | null; blockId?: string; blockRev?: number },
   SerializedLexicalNode
 >;
 
@@ -25,26 +25,37 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   __mime: string | null;
   /** 块身份（只有**顶层块**才有；行内/嵌套实例不给）。 */
   __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "video";
   }
 
   static clone(node: VideoNode): VideoNode {
-    return new VideoNode(node.__src, node.__hash, node.__mime, node.__blockId, node.__key);
+    return new VideoNode(node.__src, node.__hash, node.__mime, node.__blockId, node.__key, node.__blockRev);
   }
 
-  constructor(src: string, hash: string | null = null, mime: string | null = null, blockId = "", key?: NodeKey) {
+  constructor(
+    src: string,
+    hash: string | null = null,
+    mime: string | null = null,
+    blockId = "",
+    key?: NodeKey,
+    blockRev: number | null = null,
+  ) {
     super(key);
     this.__src = src;
     this.__hash = hash;
     this.__mime = mime;
     this.__blockId = blockId;
+    this.__blockRev = blockRev;
   }
 
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as VideoNode).__blockId;
+    this.__blockRev = (prevNode as VideoNode).__blockRev;
   }
 
   getBlockId(): string {
@@ -54,6 +65,15 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -100,16 +120,19 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedVideoNode {
-    return withBlockId(
-      {
-        ...super.exportJSON(),
-        type: "video",
-        version: 1,
-        src: this.__src,
-        hash: this.__hash ?? undefined,
-        mime: this.__mime ?? undefined,
-      },
-      this.__blockId,
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "video",
+          version: 1,
+          src: this.__src,
+          hash: this.__hash ?? undefined,
+          mime: this.__mime ?? undefined,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
     );
   }
 
@@ -119,6 +142,7 @@ export class VideoNode extends DecoratorNode<JSX.Element> {
       serializedNode.hash ?? null,
       serializedNode.mime ?? null,
       blockIdOf(serializedNode),
+      blockRevOf(serializedNode),
     );
   }
 
@@ -132,8 +156,9 @@ export function $createVideoNode(
   hash?: string | null,
   mime?: string | null,
   blockId?: string,
+  blockRev: number | null = null,
 ): VideoNode {
-  return $applyNodeReplacement(new VideoNode(src, hash ?? null, mime ?? null, blockId ?? ""));
+  return $applyNodeReplacement(new VideoNode(src, hash ?? null, mime ?? null, blockId ?? "", undefined, blockRev));
 }
 
 export function $isVideoNode(node: LexicalNode | null | undefined): node is VideoNode {
