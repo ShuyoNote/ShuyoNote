@@ -74,19 +74,27 @@
 | Web 端 `platform/web.ts::save_page` | 同一份语义：`assignBlockRevs(cur.json, next.json)`（`cur` 就是同一行的读出口） |
 | 桌面远端应用 `sync::apply_upsert` | 页级说"用远端"之后调**唯一入口** `doc_content::apply_remote_page`（逐块合并 + 落库 + 刷 FTS） |
 | Web 远端应用 `platform/web.ts::applyChange` | 同一个入口的 TS 版：`docContent.applyRemoteContent` |
-| `restore_version` | **仍未接**（恢复会带回旧 rev ⇒ 与"版本历史 × 冲突"那一片一起做 —— 已知边界） |
-| 分栏子编辑器 / 模板中心 / 插件写路径 | **仍未接**（各自决定"算不算一次本地编辑"） |
+| `restore_version`（两侧） | **已接（第四段）**：恢复也是一次**本地编辑** ⇒ 同样盖章（baseline = 当前页内容）。不盖的后果与 `dirty = 1` 那条同族：恢复回来的块带着**旧 rev** ⇒ 下一次合并判错胜负，极端情况下这次恢复被远端**静默盖掉**。判据：Rust `restore_version_stamps_block_revs` ↔ `two-device-sync` **场景 J** |
+
+**逐处决定过、结论是"不需要单独接"的**（写下来，免得下次有人以为漏了）：
+
+| 位置 | 结论与理由 |
+|---|---|
+| `commands::create_page` / Web `create_page` / 模板中心 | **不盖**。新建**没有 baseline** ⇒ 第一次保存时 baseline 就是它自己的内容 ⇒ 未改的块盖 `0`、改过的 `max+1`；合并语义照样成立（各改不同块仍可合） |
+| 插件写页路径 | **已覆盖**：`pages.create` / `blocks.append` 都是 `mediate: "draft"` —— 插件只**产生草稿**，真正落库走前端的保存路径（= 上面已盖章那一处）；`plugins.rs` 里那几处直接 `INSERT INTO pages` 都在 `#[cfg(test)]` 夹具里 |
+| 分栏子编辑器 `ColumnEditor` | **已覆盖**：它只把内容回写给**父编辑器**（`onChange`），自己不碰库；落库走父编辑器的保存路径 |
+| PDF 批注 / `emailRichNote` / AI 应用块 | **已覆盖**：都是"生成 JSON → 调 `save_page`"，走上面那一处 |
 
 **合并失败/冲突时的行为**：`merge_remote_content` / `mergeRemoteContent` 返回 `None`/`undefined` ⇒
 **回落成"远端原样"**，与接线前**逐字相同**（老内容、脏 JSON、有冲突三种情况都走这条）。
 ⇒ 这一步**不引入任何新的静默行为**：有冲突的页面行为与接线前一致，等提示 UI 那一片再接管。
 
-⚠️ **为什么这两半必须同时上线**（本段就是按这条做的）：只写 rev 没人读 = 往 JSON 里加一个没人用的
+⚠️ **为什么这两半必须同时上线**（第三段就是按这条做的）：只写 rev 没人读 = 往 JSON 里加一个没人用的
 字段（混版本期还会被老客户端剥掉）；只接判定不盖章 = 每一页都因为缺 rev 而回落 ⇒ 判定等于白接。
 
-读数（第三段，Windows 本机）：`two-device-sync` **35/35**（场景 H 改成**走真 `applyChange`**：
-"两端改不同块 ⇒ 合并后两边的编辑都在、rev 也写回"；新增场景 I 验**保存路径盖章**）；
-Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`block_rev` 14/14；
+读数（第三/四段，Windows 本机）：`two-device-sync` **36/36**（场景 H **走真 `applyChange`**：
+"两端改不同块 ⇒ 合并后两边的编辑都在、rev 也写回"；场景 I 验**保存路径盖章**；场景 J 验**恢复盖章**）；
+Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`versions::` **3/3**、`block_rev` 14/14；
 `pnpm verify` **23/23**；`check-doc-content-access` 反而**又降了一档**（`sync.rs` 1 → 0：
 远端应用整条收进那一层了）。
 
