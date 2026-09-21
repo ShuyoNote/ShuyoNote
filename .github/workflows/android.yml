@@ -273,6 +273,16 @@ jobs:
         # 所以拦在构建期（缺 inset 桥 ⇒ 顶部又变触摸死区；缺返回键回调 ⇒ 返回键退出应用）。
         run: pnpm check:android-mobile-shell
 
+      - name: 品牌桌面图标（把 src-tauri/icons/android 铺进 gen 工程）
+        # 为什么需要（2026-09-21）：`tauri android init` 每次都把 **Tauri 默认图标**写进
+        # `res/mipmap-*/`，而入库的品牌图标（含 anydpi 自适应图标）**没有任何步骤铺过去**
+        # ⇒ 装出来的 APK 桌面图标一直是默认那团蓝橙色漩涡（owner 截图问的就是它）。
+        # 同样是改 gen/（生成物、不入库），所以也只能在 init 之后脚本化铺一遍。
+        run: pnpm android:app-icon
+
+      - name: 自检：桌面图标确实是品牌那套
+        run: pnpm check:android-app-icon
+
       - name: 随包 PDFium 库（Android）
         # 为什么需要（2026-09-20 补，P4 的安卓格）：`libpdfium.so` 是 `libloading` **运行时**加载的
         # ⇒ 包里没有它时**装完不会立刻报错**，只有用户开 PDF（P5 之后默认走 PDFium）才变成
