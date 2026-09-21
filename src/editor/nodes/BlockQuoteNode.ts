@@ -11,6 +11,7 @@ import type { NodeKey, SerializedElementNode } from "lexical";
 import { QuoteNode } from "@lexical/rich-text";
 
 import { newBlockId } from "../../lib/blockIdentity";
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
 import { $createBlockParagraphNode } from "./BlockParagraphNode";
 
 /** 模型层的 type（落盘/同步前会被 `toLegacyDoc()` 还原成 `"quote"`）。 */
@@ -18,17 +19,20 @@ export const BLOCK_QUOTE_TYPE = "shuyo-quote";
 
 export interface SerializedBlockQuoteNode extends SerializedElementNode {
   blockId?: string;
+  /** 块版本（Lamport）；**缺字段 = 老客户端产物**。 */
+  blockRev?: number;
 }
 
 export class BlockQuoteNode extends QuoteNode {
   __blockId: string;
+  __blockRev: number | null;
 
   static getType(): string {
     return BLOCK_QUOTE_TYPE;
   }
 
   static clone(node: BlockQuoteNode): BlockQuoteNode {
-    return new BlockQuoteNode(node.__blockId, node.__key);
+    return new BlockQuoteNode(node.__blockId, node.__key, node.__blockRev);
   }
 
   static importJSON(serializedNode: Record<string, unknown>): BlockQuoteNode {
@@ -37,18 +41,20 @@ export class BlockQuoteNode extends QuoteNode {
     node.setFormat(s.format);
     node.setIndent(s.indent);
     node.setDirection(s.direction);
+    node.setBlockRev(blockRevOf(s));
     return node;
   }
 
-  constructor(blockId?: string, key?: NodeKey) {
+  constructor(blockId?: string, key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
   }
 
   exportJSON(): SerializedBlockQuoteNode {
     const json = super.exportJSON() as SerializedBlockQuoteNode;
-    // 空 ID 不写字段（嵌套块不给身份，别给落盘形态添噪音）—— 与段落/标题一致。
-    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
+    // 空 ID / 没有 rev 都不写字段（嵌套块不给身份，别给落盘形态添噪音）—— 与段落/标题一致。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   getBlockId(): string {
@@ -58,6 +64,15 @@ export class BlockQuoteNode extends QuoteNode {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   /**

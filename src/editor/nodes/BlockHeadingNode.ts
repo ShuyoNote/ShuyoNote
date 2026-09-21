@@ -17,6 +17,7 @@ import {
 } from "@lexical/rich-text";
 
 import { newBlockId } from "../../lib/blockIdentity";
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
 import { $createBlockParagraphNode } from "./BlockParagraphNode";
 
 /** 模型层的 type（落盘/同步前会被 `toLegacyDoc()` 还原成 `"heading"`）。 */
@@ -24,17 +25,20 @@ export const BLOCK_HEADING_TYPE = "shuyo-heading";
 
 export interface SerializedBlockHeadingNode extends SerializedHeadingNode {
   blockId?: string;
+  /** 块版本（Lamport）；**缺字段 = 老客户端产物**。 */
+  blockRev?: number;
 }
 
 export class BlockHeadingNode extends HeadingNode {
   __blockId: string;
+  __blockRev: number | null;
 
   static getType(): string {
     return BLOCK_HEADING_TYPE;
   }
 
   static clone(node: BlockHeadingNode): BlockHeadingNode {
-    return new BlockHeadingNode(node.__tag, node.__blockId, node.__key);
+    return new BlockHeadingNode(node.__tag, node.__blockId, node.__key, node.__blockRev);
   }
 
   static importJSON(serializedNode: Record<string, unknown>): BlockHeadingNode {
@@ -43,18 +47,20 @@ export class BlockHeadingNode extends HeadingNode {
     node.setFormat(s.format);
     node.setIndent(s.indent);
     node.setDirection(s.direction);
+    node.setBlockRev(blockRevOf(s));
     return node;
   }
 
-  constructor(tag: HeadingTagType = "h1", blockId?: string, key?: NodeKey) {
+  constructor(tag: HeadingTagType = "h1", blockId?: string, key?: NodeKey, blockRev: number | null = null) {
     super(tag, key);
     this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
   }
 
   exportJSON(): SerializedBlockHeadingNode {
     const json = super.exportJSON() as SerializedBlockHeadingNode;
-    // 同 `BlockParagraphNode`：**空 ID 不写字段**，别让嵌套块给落盘形态添噪音。
-    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
+    // 同 `BlockParagraphNode`：**空 ID / 没有 rev 都不写字段**，别让嵌套块给落盘形态添噪音。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   getBlockId(): string {
@@ -64,6 +70,15 @@ export class BlockHeadingNode extends HeadingNode {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   /**

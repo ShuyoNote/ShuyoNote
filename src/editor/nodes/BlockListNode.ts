@@ -11,6 +11,8 @@
 import { ListNode, type ListType, type SerializedListNode } from "@lexical/list";
 import type { NodeKey } from "lexical";
 
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
+
 /** 模型层的 type（落盘/同步前会被 `toLegacyDoc()` 还原成 `"list"`）。 */
 export const BLOCK_LIST_TYPE = "shuyo-list";
 
@@ -18,17 +20,20 @@ export type LexicalListType = ListType;
 
 export interface SerializedBlockListNode extends SerializedListNode {
   blockId?: string;
+  /** 块版本（Lamport）；**缺字段 = 老客户端产物**。 */
+  blockRev?: number;
 }
 
 export class BlockListNode extends ListNode {
   __blockId: string;
+  __blockRev: number | null;
 
   static getType(): string {
     return BLOCK_LIST_TYPE;
   }
 
   static clone(node: BlockListNode): BlockListNode {
-    return new BlockListNode(node.__listType, node.__start, node.__blockId, node.__key);
+    return new BlockListNode(node.__listType, node.__start, node.__blockId, node.__key, node.__blockRev);
   }
 
   static importJSON(serializedNode: Record<string, unknown>): BlockListNode {
@@ -41,24 +46,33 @@ export class BlockListNode extends ListNode {
     node.setFormat(s.format);
     node.setIndent(s.indent);
     node.setDirection(s.direction);
+    node.setBlockRev(blockRevOf(s));
     return node;
   }
 
-  constructor(listType: LexicalListType = "number", start = 1, blockId?: string, key?: NodeKey) {
+  constructor(
+    listType: LexicalListType = "number",
+    start = 1,
+    blockId?: string,
+    key?: NodeKey,
+    blockRev: number | null = null,
+  ) {
     super(listType, start, key);
     this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
   }
 
   /** 0.50 的克隆路径（基类也走它）。声明字段必须跟着走，否则改个缩进就会把块 ID 清空。 */
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as BlockListNode).__blockId;
+    this.__blockRev = (prevNode as BlockListNode).__blockRev;
   }
 
   exportJSON(): SerializedBlockListNode {
     const json = super.exportJSON() as SerializedBlockListNode;
-    // 空 ID 不写字段（嵌套列表不给身份，别给落盘形态添噪音）。
-    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
+    // 空 ID / 没有 rev 都不写字段（嵌套列表不给身份，别给落盘形态添噪音）。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   getBlockId(): string {
@@ -68,6 +82,15 @@ export class BlockListNode extends ListNode {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 }
 

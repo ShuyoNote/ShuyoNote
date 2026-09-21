@@ -17,10 +17,10 @@ import { Suspense, useCallback, useEffect, useRef } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
 import { openFormulaEditor } from "../../store/formulaEditor";
-import { blockIdOf, withBlockId } from "./blockIdHelpers";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 export type SerializedFormulaNode = Spread<
-  { latex: string; blockId?: string },
+  { latex: string; blockId?: string; blockRev?: number },
   SerializedLexicalNode
 >;
 
@@ -101,24 +101,27 @@ export class FormulaNode extends DecoratorNode<JSX.Element> {
   __latex: string;
   /** 块身份（只有**顶层块**才有；见 docs/plans/2026-09-18-crdt-block-id-ownership.md）。 */
   __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段（缺字段 = 老客户端产物）。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "formula";
   }
 
   static clone(node: FormulaNode): FormulaNode {
-    return new FormulaNode(node.__latex, node.__blockId, node.__key);
+    return new FormulaNode(node.__latex, node.__blockId, node.__key, node.__blockRev);
   }
-
-  constructor(latex = "", blockId = "", key?: NodeKey) {
+  constructor(latex = "", blockId = "", key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__latex = latex;
     this.__blockId = blockId;
+    this.__blockRev = blockRev;
   }
 
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as FormulaNode).__blockId;
+    this.__blockRev = (prevNode as FormulaNode).__blockRev;
   }
 
   getBlockId(): string {
@@ -128,6 +131,15 @@ export class FormulaNode extends DecoratorNode<JSX.Element> {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -169,24 +181,29 @@ export class FormulaNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedFormulaNode {
-    return withBlockId(
-      {
-        ...super.exportJSON(),
-        type: "formula",
-        version: 1,
-        latex: this.__latex,
-      },
-      this.__blockId,
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "formula",
+          version: 1,
+          latex: this.__latex,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
     );
   }
 
   static importJSON(serializedNode: SerializedFormulaNode): FormulaNode {
-    return $createFormulaNode(serializedNode.latex ?? "", blockIdOf(serializedNode));
+    // rev 走**工厂参数**（与 `blockId` 同一条路）：解析出来的节点还没进编辑器状态，直接经构造参数
+    // 带上比"先造再 set"少一次 `getWritable()` 克隆。`setBlockRev` 仍然保留（挂上编辑器之后用它）。
+    return $createFormulaNode(serializedNode.latex ?? "", blockIdOf(serializedNode), blockRevOf(serializedNode));
   }
 }
 
-export function $createFormulaNode(latex: string, blockId?: string): FormulaNode {
-  return $applyNodeReplacement(new FormulaNode(latex, blockId ?? ""));
+export function $createFormulaNode(latex: string, blockId?: string, blockRev: number | null = null): FormulaNode {
+  return $applyNodeReplacement(new FormulaNode(latex, blockId ?? "", undefined, blockRev));
 }
 
 export function $isFormulaNode(node: LexicalNode | null | undefined): node is FormulaNode {

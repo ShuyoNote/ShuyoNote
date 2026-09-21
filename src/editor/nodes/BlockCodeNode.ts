@@ -19,16 +19,20 @@ import type { NodeKey } from "lexical";
 import { type SerializedCodeNode } from "@lexical/code";
 
 import { SafeCodeNode } from "./SafeCodeNode";
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
 
 /** 模型层的 type（落盘/同步前会被 `toLegacyDoc()` 还原成 `"code"`）。 */
 export const BLOCK_CODE_TYPE = "shuyo-code";
 
 export interface SerializedBlockCodeNode extends SerializedCodeNode {
   blockId?: string;
+  /** 块版本（Lamport）；**缺字段 = 老客户端产物**。 */
+  blockRev?: number;
 }
 
 export class BlockCodeNode extends SafeCodeNode {
   __blockId: string;
+  __blockRev: number | null;
 
   static getType(): string {
     return BLOCK_CODE_TYPE;
@@ -36,7 +40,7 @@ export class BlockCodeNode extends SafeCodeNode {
 
   static clone(node: BlockCodeNode): BlockCodeNode {
     const language = (node as unknown as { __language?: string }).__language;
-    return new BlockCodeNode(language, node.__blockId, node.__key);
+    return new BlockCodeNode(language, node.__blockId, node.__key, node.__blockRev);
   }
 
   static importJSON(serializedNode: Record<string, unknown>): BlockCodeNode {
@@ -45,24 +49,27 @@ export class BlockCodeNode extends SafeCodeNode {
     node.setFormat(s.format);
     node.setIndent(s.indent);
     node.setDirection(s.direction);
+    node.setBlockRev(blockRevOf(s));
     return node;
   }
 
-  constructor(language?: string, blockId?: string, key?: NodeKey) {
+  constructor(language?: string, blockId?: string, key?: NodeKey, blockRev: number | null = null) {
     super(language ?? "javascript", key);
     this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
   }
 
   /** 0.50 的克隆路径之一；声明字段不能丢（段落那边立过同款判据）。 */
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as BlockCodeNode).__blockId;
+    this.__blockRev = (prevNode as BlockCodeNode).__blockRev;
   }
 
   exportJSON(): SerializedBlockCodeNode {
     const json = super.exportJSON() as SerializedBlockCodeNode;
-    // 空 ID 不写字段（嵌套代码块不给身份，别给落盘形态添噪音）。
-    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
+    // 空 ID / 没有 rev 都不写字段（嵌套代码块不给身份，别给落盘形态添噪音）。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   getBlockId(): string {
@@ -72,6 +79,15 @@ export class BlockCodeNode extends SafeCodeNode {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 }
 

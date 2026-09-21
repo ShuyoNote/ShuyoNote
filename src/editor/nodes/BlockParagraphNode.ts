@@ -26,6 +26,7 @@
 // 换句话说：**本类只活在编辑器里**。任何要写出去的地方，先过 `blockIdentity.toLegacyDoc()`。
 
 import { newBlockId } from "../../lib/blockIdentity";
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
 import {
   $applyNodeReplacement,
   ParagraphNode,
@@ -41,17 +42,24 @@ export const BLOCK_PARAGRAPH_TYPE = "shuyo-paragraph";
 export interface SerializedBlockParagraphNode extends SerializedParagraphNode {
   /** 块 ID。空串表示"还没被补种"（加载时由 `toModelDoc` 补，见 `blockIdentity`）。 */
   blockId?: string;
+  /** 块版本（Lamport 计数器）；**缺字段 = 老客户端产物**（它保存时会把这个字段剥掉）。 */
+  blockRev?: number;
 }
 
 export class BlockParagraphNode extends ParagraphNode {
   __blockId: string;
+  /**
+   * **声明的**块版本 —— 与 `blockId` 同一条路（见 `docs/plans/2026-09-22-block-rev-write-layer.md`）：
+   * 不做成声明字段，CRDT 绑定就会在往返时把它丢掉；`null` = 没有/不认识这个字段。
+   */
+  __blockRev: number | null;
 
   static getType(): string {
     return BLOCK_PARAGRAPH_TYPE;
   }
 
   static clone(node: BlockParagraphNode): BlockParagraphNode {
-    return new BlockParagraphNode(node.__blockId, node.__key);
+    return new BlockParagraphNode(node.__blockId, node.__key, node.__blockRev);
   }
 
   static importJSON(serializedNode: SerializedLexicalNode & Record<string, unknown>): BlockParagraphNode {
@@ -64,12 +72,14 @@ export class BlockParagraphNode extends ParagraphNode {
     node.setDirection(s.direction);
     node.setTextFormat(s.textFormat ?? 0);
     node.setTextStyle(s.textStyle ?? "");
+    node.setBlockRev(blockRevOf(s)); // 缺字段 ⇒ null（**不**当成 0）
     return node;
   }
 
-  constructor(blockId?: string, key?: NodeKey) {
+  constructor(blockId?: string, key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
   }
 
   exportJSON(): SerializedBlockParagraphNode {
@@ -78,7 +88,8 @@ export class BlockParagraphNode extends ParagraphNode {
     //（`serializeWithBlockIds` 只遍历 `root.getChildren()`）。嵌套段落（列表项/引用/分栏里的）
     // 被变换升级成模型类型后会带一个空 ID —— 若照样写出去，落盘 JSON 就会多出一片
     // `"blockId": ""`，破坏"写出去的形态与今天一致"这条承诺（也让 diff/体积无谓变大）。
-    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
+    // `blockRev` 同理：**没有值就不写**（缺失 ≠ 0，见 `withBlockRev`）。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   /** 读块 ID（外部一律经这里，别直接摸 `__blockId`）。 */
@@ -90,6 +101,17 @@ export class BlockParagraphNode extends ParagraphNode {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  /** 读块版本（`null` = 没有/不认识这个字段）。 */
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  /** 写块版本。 */
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   /**

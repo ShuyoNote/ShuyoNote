@@ -13,22 +13,27 @@
 import type { NodeKey } from "lexical";
 import { TableNode, type SerializedTableNode } from "@lexical/table";
 
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
+
 /** 模型层的 type（落盘/同步前会被 `toLegacyDoc()` 还原成 `"table"`）。 */
 export const BLOCK_TABLE_TYPE = "shuyo-table";
 
 export interface SerializedBlockTableNode extends SerializedTableNode {
   blockId?: string;
+  /** 块版本（Lamport）；**缺字段 = 老客户端产物**。 */
+  blockRev?: number;
 }
 
 export class BlockTableNode extends TableNode {
   __blockId: string;
+  __blockRev: number | null;
 
   static getType(): string {
     return BLOCK_TABLE_TYPE;
   }
 
   static clone(node: BlockTableNode): BlockTableNode {
-    return new BlockTableNode(node.__blockId, node.__key);
+    return new BlockTableNode(node.__blockId, node.__key, node.__blockRev);
   }
 
   static importJSON(serializedNode: Record<string, unknown>): BlockTableNode {
@@ -36,23 +41,27 @@ export class BlockTableNode extends TableNode {
     const node = $createBlockTableNode(s.blockId ?? "");
     // 基类自己的状态（rowStriping / frozen* / colWidths / format / indent / direction）交给它吃。
     node.updateFromJSON(s as never);
+    // ⚠️ 放在 `updateFromJSON` **之后**：那是基类的方法，别指望它认识我们的声明字段。
+    node.setBlockRev(blockRevOf(s));
     return node;
   }
 
-  constructor(blockId?: string, key?: NodeKey) {
+  constructor(blockId?: string, key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
   }
 
   afterCloneFrom(prevNode: this): void {
     super.afterCloneFrom(prevNode);
     this.__blockId = (prevNode as BlockTableNode).__blockId;
+    this.__blockRev = (prevNode as BlockTableNode).__blockRev;
   }
 
   exportJSON(): SerializedBlockTableNode {
     const json = super.exportJSON() as SerializedBlockTableNode;
-    // 空 ID 不写字段（嵌套表格不给身份，别给落盘形态添噪音）。
-    return this.__blockId ? { ...json, blockId: this.__blockId } : json;
+    // 空 ID / 没有 rev 都不写字段（嵌套表格不给身份，别给落盘形态添噪音）。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   getBlockId(): string {
@@ -62,6 +71,15 @@ export class BlockTableNode extends TableNode {
   setBlockId(blockId: string): void {
     const writable = this.getWritable();
     writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 }
 
