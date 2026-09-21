@@ -6,6 +6,8 @@
 > ⚠️ 那份阶段 1 文档**不在本分支上**（它在 `feat/stage1-block-merge` / `feat/doc-content-layer` 线上），
 > 所以这里写成普通引用而不是链接 —— 两边合并时它会自然接上。
 > 分支：`feat/stage1-block-rev`（基线 `feat/block-id-model` —— "写 rev"要一个能带**声明字段**的块级节点模型）。
+> ⚠️ **第三段已把两条 stage-1 线并成 `feat/stage1-block-lww`**（本文件 ＋ 块级合并那一份判定）并**接线**，
+> 见 §4；本文件其余部分保留当时的落地记录。
 
 ---
 
@@ -64,22 +66,31 @@
 判据 `stage1_promise_holds_at_this_layer` / `★ 阶段 1 的承诺在本层成立` 把整条走一遍：
 两台设备各改不同块 ⇒ 两边每个块都有 rev、各改的那块更大（⇒ 判定层不会落进"缺 rev ⇒ 冲突"）。
 
-## 4. 本层今天**没有调用方**（接线清单，下一片）
+## 4. 接线：**已落地**（2026-09-22，第三段）
 
-`assign_block_revs` / `assignBlockRevs` 还没有人调 —— 接线要动这些地方，**每一处都要单独决定**：
+| 位置 | 做了什么 |
+|---|---|
+| 桌面临 `commands::save_page` | 盖 rev：`doc_content::stamp_block_revs(&c, page_id, 这一版)`（baseline = 库里这一行）—— **先盖章，再落库/进版本历史** |
+| Web 端 `platform/web.ts::save_page` | 同一份语义：`assignBlockRevs(cur.json, next.json)`（`cur` 就是同一行的读出口） |
+| 桌面远端应用 `sync::apply_upsert` | 页级说"用远端"之后调**唯一入口** `doc_content::apply_remote_page`（逐块合并 + 落库 + 刷 FTS） |
+| Web 远端应用 `platform/web.ts::applyChange` | 同一个入口的 TS 版：`docContent.applyRemoteContent` |
+| `restore_version` | **仍未接**（恢复会带回旧 rev ⇒ 与"版本历史 × 冲突"那一片一起做 —— 已知边界） |
+| 分栏子编辑器 / 模板中心 / 插件写路径 | **仍未接**（各自决定"算不算一次本地编辑"） |
 
-| 位置 | baseline 从哪来 | 备注 |
-|---|---|---|
-| 桌面保存 `commands::save_page` | 它本来就读了当前行（`cur_json`） | 最自然的一处 |
-| Web 保存 `platform/web.ts::save_page` | 同一行多取一列即可 | 前端那份目前只 `SELECT id, title` |
-| `restore_version` | 恢复出来的内容 | ⚠️ **恢复会带回旧 rev** ⇒ 下一次合并可能被远端静默盖掉 —— 与"版本历史 × 冲突"那一片一起做 |
-| 分栏子编辑器回写 / 模板中心 / 插件写路径 / 远端应用 | 各自 | 逐个决定"算不算一次本地编辑" |
+**合并失败/冲突时的行为**：`merge_remote_content` / `mergeRemoteContent` 返回 `None`/`undefined` ⇒
+**回落成"远端原样"**，与接线前**逐字相同**（老内容、脏 JSON、有冲突三种情况都走这条）。
+⇒ 这一步**不引入任何新的静默行为**：有冲突的页面行为与接线前一致，等提示 UI 那一片再接管。
 
-**顺序（硬约束）**：应与**块级判定同时上线** —— 先只写 rev 而没人读，等于往 JSON 里加一个没人用的字段
-（还会在混版本期间被老客户端剥掉，产生无意义的 churn）。
+⚠️ **为什么这两半必须同时上线**（本段就是按这条做的）：只写 rev 没人读 = 往 JSON 里加一个没人用的
+字段（混版本期还会被老客户端剥掉）；只接判定不盖章 = 每一页都因为缺 rev 而回落 ⇒ 判定等于白接。
+
+读数（第三段，Windows 本机）：`two-device-sync` **35/35**（场景 H 改成**走真 `applyChange`**：
+"两端改不同块 ⇒ 合并后两边的编辑都在、rev 也写回"；新增场景 I 验**保存路径盖章**）；
+Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`block_rev` 14/14；
+`pnpm verify` **23/23**；`check-doc-content-access` 反而**又降了一档**（`sync.rs` 1 → 0：
+远端应用整条收进那一层了）。
 
 ## 5. 节点上的**声明字段**（内存 / CRDT 平面那半）：**18 类全部接入**
-
 与"写 rev"分开落地（互不阻塞）：rev 由保存时的**差分**产生，不依赖节点字段；节点字段是为
 **阶段 2/3**（Yjs 只同步节点模型）与"不经 baseline 的重序列化路径"准备的保险。
 
