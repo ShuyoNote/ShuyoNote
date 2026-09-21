@@ -841,6 +841,28 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute(stmt, [])?;
     }
 
+    // 阶段 1 · **冲突留痕**（本地表，**不同步 / 不进备份导出**）：远端应用时报出的"同一块被两端改过"
+    // 记在这里，供界面提示与裁决。见 `docs/plans/2026-09-22-block-rev-write-layer.md`。
+    // 同样**单语句挨个执行**（理由同上：哪条失败一眼看得见）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_conflicts (
+            id              TEXT PRIMARY KEY,
+            page_id         TEXT NOT NULL,
+            block_id        TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            local_json      TEXT NOT NULL DEFAULT '',
+            remote_json     TEXT NOT NULL DEFAULT '',
+            detected_at     INTEGER NOT NULL,
+            resolved_at     INTEGER,
+            resolved_choice TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at)",
+        [],
+    )?;
+
     // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS pdf_annotations (

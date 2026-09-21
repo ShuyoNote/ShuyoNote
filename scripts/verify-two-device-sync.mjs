@@ -64,7 +64,7 @@ await esbuild.build({
   outfile: dcOut,
 });
 const dc = await import(pathToFileURL(dcOut).href + "?v=" + Date.now());
-const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent } = dc;
+const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent, pageConflictsOf, resolvePageConflict } = dc;
 
 // ---- 2. 注入 sql.js wasm 字节 + 内存 adapter（Node 环境）----
 const wasmPath = require.resolve("sql.js/dist/sql-wasm.wasm");
@@ -357,18 +357,43 @@ async function main() {
   // ★ 冲突回落：同一块两端都改、rev 相等 ⇒ **不合并**，回落今天的页级 LWW（落下来的是远端那一版）
   const PC = "page-conflict";
   const CA = await newDevice();
-  for (const s of [CA]) {
-    localCreate(s, PC, "冲突页", "");
-    writeContent(s, PC, { title: "冲突页", json: contentOf(baseBlocks), text: "" }, Date.now());
-    s.run("UPDATE pages SET dirty = 0, sync_seq = 1 WHERE id = ?", [PC]);
-  }
-  pushToServer(CA, PC, "devA", "冲突页", "", contentOf([blk("b1", 2, "A 版"), blk("b2", 1, "b2 原始")]));
+  localCreate(CA, PC, "冲突页", "");
+  // CA 本地那一版：b1 已经改到 rev 2（"A 版"），并且**已推上去**（dirty=0）
+  const aConflictBlocks = [blk("b1", 2, "A 版"), blk("b2", 1, "b2 原始")];
+  writeContent(CA, PC, { title: "冲突页", json: contentOf(aConflictBlocks), text: "" }, Date.now());
+  CA.run("UPDATE pages SET dirty = 0, sync_seq = 1 WHERE id = ?", [PC]);
+  pushToServer(CA, PC, "devA", "冲突页", "", contentOf(aConflictBlocks));
+  // 另一台设备**并发改了同一块**（rev 也是 2、内容不同）⇒ 这才是真冲突
   pushToServer(CA, PC, "devB", "冲突页", "", contentOf([blk("b1", 2, "B 版"), blk("b2", 1, "b2 原始")]));
   pullFromServer(CA, new Map([[PC, 1]]));
   ok(
     bodyOf(readContent(CA, PC).json, "b1") === "B 版",
     "H: 冲突时**回落页级 LWW**（不静默选边）—— 落下来的就是远端那一版，与接线前逐字相同",
   );
+
+  // ★★ **冲突留痕**（裁定 (iii) 的"不许静默"）：落表、读回、带两侧原文
+  const conflicts = pageConflictsOf(CA, PC);
+  ok(
+    conflicts.length === 1 && conflicts[0].blockId === "b1" && conflicts[0].reason === "same-rev-different-content",
+    `H: 冲突**落表**（不静默）—— 一条未决记录，实际=${conflicts.length}`,
+  );
+  ok(
+    String(conflicts[0]?.localJson ?? "").includes("A 版") && String(conflicts[0]?.remoteJson ?? "").includes("B 版"),
+    "H: 冲突记录里两侧原文都在（裁决才有得选）",
+  );
+
+  // ★★ **裁决「留本地」**：换回本地那一版 + 盖新 rev（maxSeen(2)+1 = 3）+ dirty=1（会被推上去）
+  resolvePageConflict(CA, conflicts[0].id, "local");
+  const resolvedDoc = readContent(CA, PC).json;
+  ok(bodyOf(resolvedDoc, "b1") === "A 版", "H: 裁决「留本地」⇒ 内容换回本地那一版");
+  ok(
+    blocksOf(resolvedDoc).map((b) => b.rev).join(",") === "3,1",
+    `H: 裁决后该块盖了新 rev（maxSeen(2)+1=3），实际=${blocksOf(resolvedDoc)
+      .map((b) => b.rev)
+      .join(",")}`,
+  );
+  ok(getRow(CA, PC).dirty === 1, "H: 裁决 = 一笔本地编辑（dirty=1 ⇒ 会被推上去）");
+  ok(pageConflictsOf(CA, PC).length === 0, "H: 裁决之后不再是未决");
 
   // ★ 反判据一：老客户端产物（`blockRev` 被剥掉）而内容**变了** ⇒ **必须**提示
   //（若静默按"最旧"处理 ⇒ 这条红 —— 那正是裁定 (i) 被否决的理由）

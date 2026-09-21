@@ -21,7 +21,8 @@
 // ⚠️ **只搬不改**：本文件建立时只做抽取（`web.ts` 里原来的分支与 SQL 逐字保留）。
 // 任何**行为**改动必须另开一次提交并在提交信息里写明 —— 见 `doc_content.rs` 文件头同款纪律。
 
-import { blockRevOf, canonicalContent } from "./blockRev";
+import { assignBlockRevs, blockRevOf, canonicalContent } from "./blockRev";
+import { newBlockId } from "./blockIdentity";
 
 /** 一页的**内容** —— 那一层的单位（与 Rust 侧 `DocContent` 字段一一对应）。 */
 export interface DocContent {
@@ -486,44 +487,192 @@ export function applyBlockSnapshots(docJson: string, blocks: readonly MergedBloc
 }
 
 /**
+ * 远端合并的三种结果。
+ *
+ * **别再用 `undefined` 一个值表示两件事**：调用方要区分"没什么可合"（老内容 / 脏 JSON）与
+ * "**有冲突要留痕**"—— 后者必须落表（裁定 (iii)：不静默选边），否则就是"静默"。
+ */
+export type RemoteMerge =
+  | { kind: "not-applicable" } // 不合并（老内容 / 脏 JSON）⇒ 用远端原样（与接线前逐字相同）
+  | { kind: "conflicted"; conflicts: BlockConflict[] } // 有冲突 ⇒ 用远端原样，但**要落表**
+  | { kind: "merged"; json: string }; // 合并成功（两端各改不同块 ⇒ 两边的编辑都在）
+
+/**
  * ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：把远端那一版与**本地现状**逐块比一遍。
  *
- * 返回 `undefined` = **这次不合并、回落今天的行为**（页级 LWW，与接线前逐字相同）：
- *  · 本地没有这一页（那是新建，没什么可合）／任一侧拆不出完整块表（老内容、脏 JSON）；
- *  · **有冲突**（`rev` 相等而内容不同 / 任一侧缺 `rev`）：裁定 (iii) 要求"不静默选边"，
- *    而提示 UI 还没做 ⇒ **这一片必须先回落**，不能装作无事发生。UI 那一片接上之后，
- *    这里才会变成"把冲突交给用户"。
- *
- * 返回字符串 = 合并后的落盘 JSON（**两端各改不同块 ⇒ 两边的编辑都在**）。
- *
- * ⚠️ **已知边界（如实写）**：`content_text` 这一片**仍是页级胜方那一份**，可能与合并后的 JSON 不一致
+ * ⚠️ **已知边界（如实写）**：那一行的正文**仍是页级胜方那一份**，可能与合并后的 JSON 不一致
  * （合并进来的块，其正文要等下一次保存/编辑才进 FTS）。派生文本要**编辑器语义**
  * （`deriveContentText` 会拖进整张节点表 —— `docs/development.md` 记过的那条坑：node 侧 esbuild 打包
  * `smoke-web` 会炸），不能在同步路径里现算。⇒ 这是本片**故意**的取舍：**派生索引可重建**
  * （冲刺计划 §5 不变量 2），下一次保存会重建它。
  */
-export function mergeRemoteContent(localJson: string, remoteJson: string): string | undefined {
+export function mergeRemoteContent(localJson: string, remoteJson: string): RemoteMerge {
   const localBlocks = blockSnapshotsOf(localJson);
   const remoteBlocks = blockSnapshotsOf(remoteJson);
-  if (!localBlocks || !remoteBlocks) return undefined;
+  if (!localBlocks || !remoteBlocks) return { kind: "not-applicable" };
 
   const { blocks, conflicts } = mergeBlocks(localBlocks, remoteBlocks, "remote");
-  if (conflicts.length > 0) return undefined; // 交由页面级行为兜底；提示 UI 是下一片
+  if (conflicts.length > 0) return { kind: "conflicted", conflicts };
 
-  return applyBlockSnapshots(remoteJson, blocks);
+  const json = applyBlockSnapshots(remoteJson, blocks);
+  return json === undefined ? { kind: "not-applicable" } : { kind: "merged", json };
+}
+
+/** 把一份文档里某个**顶层块**的内容换成另一个（裁决入口用）。块不在这份文档里 ⇒ `undefined`。 */
+export function replaceBlockContent(docJson: string, blockId: string, blockJson: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(docJson);
+  } catch {
+    return undefined;
+  }
+  const doc = parsed as Record<string, unknown> | null;
+  if (!doc || typeof doc !== "object") return undefined;
+  const root = doc.root as Record<string, unknown> | undefined;
+  const children = root?.children;
+  if (!Array.isArray(children)) return undefined;
+
+  let replacement: unknown;
+  try {
+    replacement = JSON.parse(blockJson);
+  } catch {
+    return undefined;
+  }
+
+  let hit = false;
+  const next = children.map((child) => {
+    const node = child as Record<string, unknown>;
+    if (!hit && node?.blockId === blockId) {
+      hit = true;
+      return replacement;
+    }
+    return child;
+  });
+  if (!hit) return undefined;
+  root!.children = next;
+  return JSON.stringify(doc);
+}
+
+/** 一处冲突（表 `page_conflicts` 的一行；`resolvedAt` 为空 = **未裁决**）。 */
+export interface PageConflictRow {
+  id: string;
+  pageId: string;
+  blockId: string;
+  reason: ConflictReason;
+  localJson: string;
+  remoteJson: string;
+  detectedAt: number;
+  resolvedAt?: number | null;
+  resolvedChoice?: string | null;
+}
+
+/** 裁决时选哪一侧。 */
+export type ConflictChoice = "local" | "remote";
+
+/**
+ * 把这次合并报出的冲突**落表**（同一页同一块已有未决记录 ⇒ 先删旧的那条，避免堆积）。
+ *
+ * ⚠️ 表 `page_conflicts` 由平台 schema 建（桌面 `db.rs::migrate` / Web `sqliteStore.ts`），
+ * 两边列名逐字一致。
+ */
+export function recordPageConflicts(db: ContentSql, pageId: string, conflicts: readonly BlockConflict[]): void {
+  const now = Date.now();
+  for (const cf of conflicts) {
+    db.run("DELETE FROM page_conflicts WHERE page_id = ? AND block_id = ? AND resolved_at IS NULL", [
+      pageId,
+      cf.blockId,
+    ]);
+    db.run(
+      `INSERT INTO page_conflicts
+         (id, page_id, block_id, reason, local_json, remote_json, detected_at, resolved_at, resolved_choice)
+       VALUES (?,?,?,?,?,?,?,NULL,NULL)`,
+      [
+        newBlockId(), // 与块身份共用**同一个** id 生成器（别在这一层再写第二份）
+        pageId,
+        cf.blockId,
+        cf.reason,
+        cf.localJson ?? "",
+        cf.remoteJson ?? "",
+        now,
+      ],
+    );
+  }
+}
+
+/** 这一页**未裁决**的冲突（按发现时间；提示 UI 就用它）。 */
+export function pageConflictsOf(db: ContentSql, pageId: string): PageConflictRow[] {
+  const rows = db.query<{
+    id: string;
+    page_id: string;
+    block_id: string;
+    reason: string;
+    local_json: string;
+    remote_json: string;
+    detected_at: number;
+    resolved_at: number | null;
+    resolved_choice: string | null;
+  }>(
+    `SELECT id, page_id, block_id, reason, local_json, remote_json, detected_at, resolved_at, resolved_choice
+     FROM page_conflicts WHERE page_id = ? AND resolved_at IS NULL ORDER BY detected_at, block_id`,
+    [pageId],
+  );
+  return rows.map((row) => ({
+    id: String(row.id),
+    pageId: String(row.page_id),
+    blockId: String(row.block_id),
+    reason: String(row.reason) as ConflictReason,
+    localJson: String(row.local_json ?? ""),
+    remoteJson: String(row.remote_json ?? ""),
+    detectedAt: Number(row.detected_at ?? 0),
+    resolvedAt: row.resolved_at === null || row.resolved_at === undefined ? null : Number(row.resolved_at),
+    resolvedChoice: row.resolved_choice ?? null,
+  }));
+}
+
+/**
+ * ★ **裁决一处冲突**：把选中的那一版写回该块、**盖新 rev**（baseline = 当前页）、落库并标记已决。
+ *
+ * `writeContent` 会置 `dirty = 1` ⇒ 这次裁决本身是**一笔本地编辑**，会被推上去（"留本地"就是这么生效的）。
+ *
+ * ⚠️ 与合并路径同一条已知边界：正文文本这一次**不重算** —— 下一次保存/编辑会重建。
+ */
+export function resolvePageConflict(db: ContentSql, conflictId: string, choice: ConflictChoice): void {
+  const row = db.query<{ page_id: string; block_id: string; local_json: string; remote_json: string }>(
+    "SELECT page_id, block_id, local_json, remote_json FROM page_conflicts WHERE id = ? AND resolved_at IS NULL",
+    [conflictId],
+  )[0];
+  if (!row) throw new Error("冲突不存在或已裁决");
+
+  const pageId = String(row.page_id);
+  const page = readContent(db, pageId);
+  if (!page) throw new Error("页面不存在");
+
+  const chosen = choice === "local" ? String(row.local_json ?? "") : String(row.remote_json ?? "");
+  const next = replaceBlockContent(page.json, String(row.block_id), chosen);
+  if (next === undefined) throw new Error("这一块已不在页面里（页面在裁决前又变过）");
+
+  const stamped = assignBlockRevs(page.json, next);
+  writeContent(db, pageId, { title: page.title, json: stamped, text: page.text }, Date.now());
+  db.run("UPDATE page_conflicts SET resolved_at = ?, resolved_choice = ? WHERE id = ?", [
+    Date.now(),
+    choice,
+    conflictId,
+  ]);
 }
 
 /**
  * ★★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
  *
- * 内部按顺序做三件（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
+ * 内部按顺序做（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
  *   1. 读**本地现状**（读出口 `readContent`）；
- *   2. 试一次逐块合并（`mergeRemoteContent`）—— 不合并时返回 `undefined`（老内容 / 有冲突）；
- *   3. 落库（`upsertRemoteContent`）：合并成功就用合并产物，否则用远端原样（= 接线前的行为）。
+ *   2. 试一次逐块合并（`mergeRemoteContent`）；
+ *   3. 按结果落库：`merged` ⇒ 用合并产物；`conflicted` ⇒ **先落冲突表**、再用远端原样
+ *      （页级 LWW，与接线前**逐字相同** —— 这一片只是把"静默"变成"有痕"，**不改覆盖语义**）；
+ *      `not-applicable` ⇒ 用远端原样。
  *
  * 返回**是否发生了合并**（调用方可以拿去打日志/判据；不合并**不是错误**）。
  *
- * ⚠️ 为什么把这三步收在一层里（而不是让 `web.ts` 自己拼）：`web.ts` 是**受收口门禁约束**的文件
+ * ⚠️ 为什么把这几步收在一层里（而不是让 `web.ts` 自己拼）：`web.ts` 是**受收口门禁约束**的文件
  * （`content_json` 计数只许减不许增），把"读远端那一版 / 写回合并产物"留在那一层之外做，
  * 门禁会当场红（本片第一次落地就是被它拦下的）。
  */
@@ -535,7 +684,18 @@ export function applyRemoteContent(
 ): boolean {
   const local = readContent(db, pageId);
   const remoteJson = typeof row.content_json === "string" ? row.content_json : "";
-  const merged = local ? mergeRemoteContent(local.json, remoteJson) : undefined;
-  upsertRemoteContent(db, merged ? { ...row, content_json: merged } : row, remoteSeq);
-  return merged !== undefined;
+  const outcome: RemoteMerge = local
+    ? mergeRemoteContent(local.json, remoteJson)
+    : { kind: "not-applicable" };
+
+  if (outcome.kind === "merged") {
+    upsertRemoteContent(db, { ...row, content_json: outcome.json }, remoteSeq);
+    return true;
+  }
+  if (outcome.kind === "conflicted") {
+    // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
+    recordPageConflicts(db, pageId, outcome.conflicts);
+  }
+  upsertRemoteContent(db, row, remoteSeq);
+  return false;
 }

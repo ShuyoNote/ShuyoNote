@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, readAllContents, readContent, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs } from "./blockRev";
 
 beforeAll(() => {
@@ -391,26 +391,33 @@ describe("docContent 的接线适配器（落盘 JSON ⇄ 块表）与 mergeRemo
     const local = doc(blk("b1", 2, "A 改的"), blk("b2", 1, "b2 原始"));
     const remote = doc(blk("b1", 1, "b1 原始"), blk("b2", 2, "B 改的"));
 
-    const merged = mergeRemoteContent(local, remote)!;
+    const outcome = mergeRemoteContent(local, remote);
 
-    expect(merged).toBeDefined();
+    expect(outcome.kind).toBe("merged");
+    const merged = outcome.kind === "merged" ? outcome.json : "";
     expect(bodiesOf(merged)).toEqual(["A 改的", "B 改的"]);
     expect(revsOf(merged)).toEqual([2, 2]); // 各自选中那一版的 rev
   });
 
-  it("★ mergeRemoteContent：有冲突（rev 相等而内容不同）⇒ **undefined**（回落页级 LWW，不静默选边）", () => {
-    const local = doc(blk("b1", 2, "我改的"));
-    const remote = doc(blk("b1", 2, "他改的"));
-    expect(mergeRemoteContent(local, remote)).toBeUndefined();
+  it("★ mergeRemoteContent：有冲突（rev 相等而内容不同）⇒ `conflicted`（**不静默选边**，要留痕）", () => {
+    const outcome = mergeRemoteContent(doc(blk("b1", 2, "我改的")), doc(blk("b1", 2, "他改的")));
+    expect(outcome.kind).toBe("conflicted");
+    if (outcome.kind === "conflicted") {
+      expect(outcome.conflicts).toHaveLength(1);
+      expect(outcome.conflicts[0]).toMatchObject({ blockId: "b1", reason: "same-rev-different-content" });
+      expect(outcome.conflicts[0].localJson).toContain("我改的");
+      expect(outcome.conflicts[0].remoteJson).toContain("他改的");
+    }
   });
 
-  it("★ mergeRemoteContent：任一侧缺 rev ⇒ **undefined**（老客户端产物，判不了就不判）", () => {
-    expect(mergeRemoteContent(doc(blk("b1", null, "我改的")), doc(blk("b1", 5, "他的")))).toBeUndefined();
-    expect(mergeRemoteContent(doc(blk("b1", 5, "我的")), doc(blk("b1", null, "他改的")))).toBeUndefined();
+  it("★ mergeRemoteContent：任一侧缺 rev ⇒ 也是 `conflicted`（判不了就不判）", () => {
+    expect(mergeRemoteContent(doc(blk("b1", null, "我改的")), doc(blk("b1", 5, "他的"))).kind).toBe("conflicted");
+    expect(mergeRemoteContent(doc(blk("b1", 5, "我的")), doc(blk("b1", null, "他改的"))).kind).toBe("conflicted");
   });
 
-  it("★ mergeRemoteContent：老内容（没有块身份）⇒ undefined（与接线前逐字相同）", () => {
-    expect(mergeRemoteContent(doc(blk(undefined, null, "老")), doc(blk("b1", 1, "新")))).toBeUndefined();
+  it("★ mergeRemoteContent：老内容（没有块身份）⇒ `not-applicable`（**不是**冲突）", () => {
+    expect(mergeRemoteContent(doc(blk(undefined, null, "老")), doc(blk("b1", 1, "新"))).kind).toBe("not-applicable");
+    expect(mergeRemoteContent("not json", doc(blk("b1", 1, "新"))).kind).toBe("not-applicable");
   });
 
   it("★ 与 rev 层配合：合并产物再走一遍 `assignBlockRevs` ⇒ **rev 不倒退、内容不再变**", () => {
@@ -418,10 +425,124 @@ describe("docContent 的接线适配器（落盘 JSON ⇄ 块表）与 mergeRemo
     // "老客户端产物" 重新盖 0/1 —— rev 倒退 ⇒ 下一次合并的胜负判断就错了。
     const local = doc(blk("b1", 4, "A 改的"), blk("b2", 1, "b2 原始"));
     const remote = doc(blk("b1", 1, "b1 原始"), blk("b2", 5, "B 改的"));
-    const merged = mergeRemoteContent(local, remote)!;
+    const outcome = mergeRemoteContent(local, remote);
+    const merged = outcome.kind === "merged" ? outcome.json : "";
 
     const stamped = assignBlockRevs(merged, merged);
     expect(revsOf(stamped)).toEqual([4, 5]);
     expect(bodiesOf(stamped)).toEqual(["A 改的", "B 改的"]);
+  });
+});
+
+describe("docContent 的冲突留痕与裁决（表 page_conflicts）", () => {
+  // 裁定 (iii)：判不了就**不静默选边** —— 冲突要落表（提示 UI 的数据），覆盖语义这一片**不变**。
+
+  const blk = (blockId: string, rev: number | null, body: string) => ({
+    type: "paragraph",
+    blockId,
+    ...(rev === null ? {} : { blockRev: rev }),
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+  const bodiesOf = (json: string) =>
+    ((JSON.parse(json) as { root: { children: Array<{ children: Array<{ text: string }> }> } }).root.children ?? []).map(
+      (c) => c.children?.[0]?.text,
+    );
+  const revsOf = (json: string) =>
+    (JSON.parse(json) as { root: { children: Array<{ blockRev?: number }> } }).root.children.map((c) => c.blockRev);
+
+  it("replaceBlockContent：只换那一块；块不在这份文档里 ⇒ undefined（裁决据此拒绝）", () => {
+    const d = doc(blk("b1", 1, "旧"), blk("b2", 1, "别动"));
+    const out = replaceBlockContent(d, "b1", JSON.stringify(blk("b1", null, "新")))!;
+    expect(bodiesOf(out)).toEqual(["新", "别动"]);
+    expect(replaceBlockContent(d, "nope", "{}")).toBeUndefined();
+    expect(replaceBlockContent("not json", "b1", "{}")).toBeUndefined();
+  });
+
+  it("★ 落表 + 读回 + **去重**：同一 (页, 块) 的未决记录只留一条", async () => {
+    const db = await freshDb();
+    const conflict = {
+      blockId: "b1",
+      reason: "same-rev-different-content" as const,
+      localJson: JSON.stringify(blk("b1", null, "我改的")),
+      remoteJson: JSON.stringify(blk("b1", null, "他改的")),
+    };
+    recordPageConflicts(db, "p1", [conflict]);
+    recordPageConflicts(db, "p1", [conflict]);
+
+    const rows = pageConflictsOf(db, "p1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ blockId: "b1", reason: "same-rev-different-content", resolvedAt: null });
+    expect(rows[0].localJson).toContain("我改的");
+    expect(rows[0].remoteJson).toContain("他改的");
+    expect(pageConflictsOf(db, "p2")).toEqual([]);
+  });
+
+  it("★ 裁决「留本地」⇒ 该块换回本地那一版、**盖新 rev**、`dirty=1`（这次裁决要被推上去）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", {
+      title: "页",
+      json: doc(blk("b1", 3, "远端赢了的那版"), blk("b2", 0, "别动")),
+      text: "",
+    });
+    recordPageConflicts(db, "p1", [
+      {
+        blockId: "b1",
+        reason: "same-rev-different-content" as const,
+        localJson: JSON.stringify(blk("b1", null, "我原来改的")),
+        remoteJson: JSON.stringify(blk("b1", null, "远端赢了的那版")),
+      },
+    ]);
+    const id = pageConflictsOf(db, "p1")[0].id;
+
+    resolvePageConflict(db, id, "local");
+
+    const after = readContent(db, "p1")!;
+    expect(bodiesOf(after.json)).toEqual(["我原来改的", "别动"]);
+    expect(revsOf(after.json)).toEqual([4, 0]); // maxSeen(3) + 1
+    expect(localState(db, "p1")!.dirty).toBe(1); // 裁决 = 一笔本地编辑
+    expect(pageConflictsOf(db, "p1")).toEqual([]); // 已决
+    expect(() => resolvePageConflict(db, id, "remote")).toThrow("冲突不存在或已裁决");
+  });
+
+  it("★ applyRemoteContent：冲突时**落表**且覆盖语义不变（仍用远端原样）", async () => {
+    const db = await freshDb();
+    const localJson = doc(blk("b1", 2, "我改的"));
+    seedPage(db, "p1", { title: "页", json: localJson, text: "" }, { dirty: 0, syncSeq: 1 });
+
+    const merged = applyRemoteContent(
+      db,
+      "p1",
+      { id: "p1", title: "页", content_json: doc(blk("b1", 2, "他改的")), content_text: "" },
+      9,
+    );
+
+    expect(merged).toBe(false); // 没有合并（有冲突）
+    expect(bodiesOf(readContent(db, "p1")!.json)).toEqual(["他改的"]); // 页级 LWW：落的是远端原样
+    const rows = pageConflictsOf(db, "p1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].localJson).toContain("我改的");
+    expect(rows[0].remoteJson).toContain("他改的");
+  });
+
+  it("★ applyRemoteContent：无冲突时合并 + **不落表**", async () => {
+    const db = await freshDb();
+    seedPage(
+      db,
+      "p1",
+      { title: "页", json: doc(blk("b1", 2, "A 改的"), blk("b2", 1, "b2 原始")), text: "" },
+      { dirty: 0, syncSeq: 1 },
+    );
+
+    const merged = applyRemoteContent(
+      db,
+      "p1",
+      { id: "p1", title: "页", content_json: doc(blk("b1", 1, "b1 原始"), blk("b2", 2, "B 改的")), content_text: "" },
+      9,
+    );
+
+    expect(merged).toBe(true);
+    expect(bodiesOf(readContent(db, "p1")!.json)).toEqual(["A 改的", "B 改的"]);
+    expect(pageConflictsOf(db, "p1")).toEqual([]);
   });
 });

@@ -315,6 +315,19 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_page_props ON page_props(page_id);
       CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
       CREATE INDEX IF NOT EXISTS idx_page_versions ON page_versions(page_id, created_at DESC);
+      -- 阶段 1 · 冲突留痕（本地表，不同步/不进备份导出）：远端应用时报出的"同一块被两端改过"。
+      CREATE TABLE IF NOT EXISTS page_conflicts (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        local_json TEXT NOT NULL DEFAULT '',
+        remote_json TEXT NOT NULL DEFAULT '',
+        detected_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_choice TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at);
       CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
       -- Sync engine tables (S8: per-workspace profiles / auth sessions / change log).
       CREATE TABLE IF NOT EXISTS changes (

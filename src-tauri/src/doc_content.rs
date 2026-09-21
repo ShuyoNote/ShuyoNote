@@ -490,24 +490,198 @@ pub fn apply_block_snapshots(doc_json: &str, blocks: &[MergedBlock]) -> Option<S
     Some(doc.to_string())
 }
 
-/// ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：与本地现状逐块比一遍。
+/// 远端合并的三种结果。
 ///
-/// 返回 `None` = **这次不合并、回落今天的行为**（页级 LWW，与接线前逐字相同）：
-/// 任一侧拆不出完整块表（老内容、脏 JSON），或**有冲突**（裁定 (iii)：不静默选边，
-/// 而提示 UI 还没做 ⇒ 这一片必须先回落）。
+/// **别再用 `Option`**：调用方要区分"没什么可合"（老内容 / 脏 JSON）与"**有冲突要留痕**"
+/// —— 后者必须落表（裁定 (iii)：不静默选边），否则就是"静默"。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteMerge {
+    /// 不合并（老内容 / 脏 JSON）⇒ 用远端原样（与接线前**逐字相同**）
+    NotApplicable,
+    /// **有冲突** ⇒ 不自动选边：用远端原样（页级 LWW），但冲突**要落表**
+    Conflicted(Vec<BlockConflict>),
+    /// 合并成功（两端各改不同块 ⇒ 两边的编辑都在）
+    Merged(String),
+}
+
+/// ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：与本地现状逐块比一遍。
 ///
 /// ⚠️ **已知边界**：`content_text` 仍是页级胜方那一份，可能与合并后的 JSON 不一致
 /// （派生文本要编辑器语义，不能在同步路径里现算）—— 见前端同名函数的注释。
-pub fn merge_remote_content(local_json: &str, remote_json: &str) -> Option<String> {
-    let local_blocks = block_snapshots(local_json)?;
-    let remote_blocks = block_snapshots(remote_json)?;
+pub fn merge_remote_content(local_json: &str, remote_json: &str) -> RemoteMerge {
+    let (Some(local_blocks), Some(remote_blocks)) = (block_snapshots(local_json), block_snapshots(remote_json))
+    else {
+        return RemoteMerge::NotApplicable;
+    };
 
     let outcome = merge_blocks(&local_blocks, &remote_blocks, MergeDecision::TakeRemote);
     if outcome.has_conflicts() {
-        return None; // 交由页面级行为兜底；提示 UI 是下一片
+        // 裁定 (iii)：不静默选边 ⇒ 这一版**回落页级 LWW**（与接线前逐字相同），
+        // 但把冲突**交回去**让调用方留痕（提示 UI 的数据）。
+        return RemoteMerge::Conflicted(outcome.conflicts);
     }
 
-    apply_block_snapshots(remote_json, &outcome.blocks)
+    match apply_block_snapshots(remote_json, &outcome.blocks) {
+        Some(json) => RemoteMerge::Merged(json),
+        None => RemoteMerge::NotApplicable,
+    }
+}
+
+/// 把一份文档里某个**顶层块**的内容换成另一个（裁决入口用）。块不在这份文档里 ⇒ `None`。
+pub fn replace_block_content(doc_json: &str, block_id: &str, block_json: &str) -> Option<String> {
+    let mut doc: serde_json::Value = serde_json::from_str(doc_json).ok()?;
+    if !doc.is_object() {
+        return None;
+    }
+    let replacement: serde_json::Value = serde_json::from_str(block_json).ok()?;
+    let children = doc.pointer_mut("/root/children")?.as_array_mut()?;
+    let mut hit = false;
+    for child in children.iter_mut() {
+        if child.get("blockId").and_then(|v| v.as_str()) == Some(block_id) {
+            *child = replacement.clone();
+            hit = true;
+            break;
+        }
+    }
+    if !hit {
+        return None;
+    }
+    Some(doc.to_string())
+}
+
+/// 一处冲突（表 `page_conflicts` 的一行；`resolved_at` 为空 = **未裁决**）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageConflict {
+    pub id: String,
+    pub page_id: String,
+    pub block_id: String,
+    pub reason: String,
+    pub local_json: String,
+    pub remote_json: String,
+    pub detected_at: i64,
+    pub resolved_at: Option<i64>,
+    pub resolved_choice: Option<String>,
+}
+
+/// 裁决时选哪一侧。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictChoice {
+    Local,
+    Remote,
+}
+
+fn conflict_reason_str(reason: ConflictReason) -> &'static str {
+    match reason {
+        ConflictReason::SameRevDifferentContent => "same-rev-different-content",
+        ConflictReason::MissingRev => "missing-rev",
+    }
+}
+
+fn conflict_choice_str(choice: ConflictChoice) -> &'static str {
+    match choice {
+        ConflictChoice::Local => "local",
+        ConflictChoice::Remote => "remote",
+    }
+}
+
+/// 把这次合并报出的冲突**落表**（同一页同一块已有未决记录 ⇒ 先删旧的那条，避免堆积）。
+pub fn record_page_conflicts(
+    c: &Connection,
+    page_id: &str,
+    conflicts: &[BlockConflict],
+) -> Result<(), String> {
+    let now = crate::db::now_ms();
+    for cf in conflicts {
+        c.execute(
+            "DELETE FROM page_conflicts WHERE page_id = ?1 AND block_id = ?2 AND resolved_at IS NULL",
+            params![page_id, cf.block_id],
+        )
+        .map_err(|e| e.to_string())?;
+        c.execute(
+            "INSERT INTO page_conflicts
+               (id, page_id, block_id, reason, local_json, remote_json, detected_at, resolved_at, resolved_choice)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                page_id,
+                cf.block_id,
+                conflict_reason_str(cf.reason),
+                cf.local_json.clone().unwrap_or_default(),
+                cf.remote_json.clone().unwrap_or_default(),
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 这一页**未裁决**的冲突（按发现时间；提示 UI 就用它）。
+pub fn unresolved_page_conflicts(c: &Connection, page_id: &str) -> Result<Vec<PageConflict>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT id, page_id, block_id, reason, local_json, remote_json, detected_at, resolved_at, resolved_choice
+             FROM page_conflicts WHERE page_id = ?1 AND resolved_at IS NULL ORDER BY detected_at, block_id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![page_id], |row| {
+            Ok(PageConflict {
+                id: row.get(0)?,
+                page_id: row.get(1)?,
+                block_id: row.get(2)?,
+                reason: row.get(3)?,
+                local_json: row.get(4)?,
+                remote_json: row.get(5)?,
+                detected_at: row.get(6)?,
+                resolved_at: row.get(7)?,
+                resolved_choice: row.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// ★ **裁决一处冲突**：把选中的那一版写回该块、**盖新 rev**（baseline = 当前页）、落库并标记已决。
+///
+/// `write` 会置 `dirty = 1` ⇒ 这次裁决本身是**一笔本地编辑**，会被推上去（"留本地"就是这么生效的）。
+///
+/// ⚠️ 与合并路径同一条已知边界：正文文本这一次**不重算**（派生文本要编辑器语义）——
+/// 下一次保存/编辑会重建。
+pub fn resolve_page_conflict(
+    c: &Connection,
+    conflict_id: &str,
+    choice: ConflictChoice,
+) -> Result<(), String> {
+    let (page_id, block_id, local_json, remote_json): (String, String, String, String) = c
+        .query_row(
+            "SELECT page_id, block_id, local_json, remote_json FROM page_conflicts
+             WHERE id = ?1 AND resolved_at IS NULL",
+            params![conflict_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "冲突不存在或已裁决".to_string())?;
+
+    let page = read(c, &page_id)?.ok_or_else(|| "页面不存在".to_string())?;
+    let chosen = match choice {
+        ConflictChoice::Local => local_json,
+        ConflictChoice::Remote => remote_json,
+    };
+    let next = replace_block_content(&page.json, &block_id, &chosen)
+        .ok_or_else(|| "这一块已不在页面里（页面在裁决前又变过）".to_string())?;
+    let stamped = crate::block_rev::assign_block_revs(&page.json, &next);
+    let content = DocContent { title: page.title, json: stamped, text: page.text };
+    let now = crate::db::now_ms();
+    write(c, &page_id, &content, now)?;
+    derive(c, &page_id, &content)?;
+    c.execute(
+        "UPDATE page_conflicts SET resolved_at = ?1, resolved_choice = ?2 WHERE id = ?3",
+        params![now, conflict_choice_str(choice), conflict_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// ★ **保存路径的 rev 盖章**（阶段 1 接线的入口之一）：拿"上一版"（库里这一页）与这一版比一遍，
@@ -526,12 +700,14 @@ pub fn stamp_block_revs(c: &Connection, page_id: &str, next_json: &str) -> Resul
 
 /// ★★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
 ///
-/// 内部按顺序做三件（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
+/// 内部按顺序做（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
 ///   1. 读**本地现状**（读出口 `read`）；
-///   2. 试一次逐块合并（`merge_remote_content`）—— 不合并时 `None`（老内容 / 有冲突）；
-///   3. 落库（`upsert_remote`）：合并成功就用合并产物，否则用远端原样（= 接线前的行为）。
+///   2. 试一次逐块合并（`merge_remote_content`）；
+///   3. 按结果落库：`Merged` ⇒ 用合并产物；`Conflicted` ⇒ **先落冲突表**、再用远端原样
+///      （页级 LWW，与接线前**逐字相同** —— 这一片只是把"静默"变成"有痕"，**不改覆盖语义**）；
+///      `NotApplicable` ⇒ 用远端原样。
 ///
-/// ⚠️ 为什么把这三步收在一层里（而不是让 `sync.rs` 自己拼）：`sync.rs` 是**受收口门禁约束**的文件
+/// ⚠️ 为什么把这几步收在一层里（而不是让 `sync.rs` 自己拼）：`sync.rs` 是**受收口门禁约束**的文件
 /// （那两个字段的计数只许减不许增），把"读远端那一版 / 写回合并产物"留在那一层之外做，
 /// `check-doc-content-access` 会当场红。
 pub fn apply_remote_page(
@@ -539,14 +715,23 @@ pub fn apply_remote_page(
     page: &crate::models::PageDetail,
     sync_seq: i64,
 ) -> Result<(), String> {
-    let merged = read(c, &page.id)?.and_then(|local| merge_remote_content(&local.json, &page.content_json));
-    match merged {
-        Some(json) => {
+    let local = read(c, &page.id)?;
+    let Some(local) = local else {
+        return upsert_remote(c, page, sync_seq);
+    };
+
+    match merge_remote_content(&local.json, &page.content_json) {
+        RemoteMerge::Merged(json) => {
             let mut merged_page = page.clone();
             merged_page.content_json = json;
             upsert_remote(c, &merged_page, sync_seq)?;
         }
-        None => upsert_remote(c, page, sync_seq)?,
+        RemoteMerge::Conflicted(conflicts) => {
+            // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
+            record_page_conflicts(c, &page.id, &conflicts)?;
+            upsert_remote(c, page, sync_seq)?;
+        }
+        RemoteMerge::NotApplicable => upsert_remote(c, page, sync_seq)?,
     }
     // 派生也只经那一层（今天远端应用只刷 FTS —— 与接线前逐字相同；合并成功时那条正文可能滞后一拍，
     // 见 `merge_remote_content` 的"已知边界"）。
@@ -919,42 +1104,157 @@ mod tests {
         let local = jdoc(vec![jblk(Some("b1"), Some(2), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
         let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "B 改的")]);
 
-        let merged = merge_remote_content(&local, &remote).expect("两端各改不同块 ⇒ 必须能合");
+        let RemoteMerge::Merged(merged) = merge_remote_content(&local, &remote) else {
+            panic!("两端各改不同块 ⇒ 必须能合");
+        };
 
         assert_eq!(bodies_of(&merged), vec!["A 改的", "B 改的"]);
         assert_eq!(revs_of(&merged), vec![Some(2), Some(2)]);
     }
 
     #[test]
-    fn merge_remote_content_bails_on_conflict_missing_rev_and_legacy() {
-        // rev 相等而内容不同 ⇒ 冲突 ⇒ 不合并；任一侧缺 rev ⇒ 不合并；老内容缺身份 ⇒ 不合并。
-        assert!(merge_remote_content(
+    fn merge_remote_content_reports_conflicts_separately_from_not_applicable() {
+        // ★ 三种结果必须分得开：**有冲突**（要留痕）≠**没什么可合**（老内容 / 脏 JSON）。
+        //   用 `Option` 的时候这两者是一回事 —— 那正是"静默"的来源。
+        match merge_remote_content(
             &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]),
             &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]),
-        )
-        .is_none());
-        assert!(merge_remote_content(
-            &jdoc(vec![jblk(Some("b1"), None, "我改的")]),
-            &jdoc(vec![jblk(Some("b1"), Some(5), "他的")]),
-        )
-        .is_none());
-        assert!(merge_remote_content(
-            &jdoc(vec![jblk(None, None, "老")]),
-            &jdoc(vec![jblk(Some("b1"), Some(1), "新")]),
-        )
-        .is_none());
+        ) {
+            RemoteMerge::Conflicted(conflicts) => {
+                assert_eq!(conflicts.len(), 1);
+                assert_eq!(conflicts[0].reason, ConflictReason::SameRevDifferentContent);
+                assert_eq!(conflicts[0].local_json.as_deref().map(|j| j.contains("我改的")), Some(true));
+                assert_eq!(conflicts[0].remote_json.as_deref().map(|j| j.contains("他改的")), Some(true));
+            }
+            other => panic!("同 rev 不同内容应当是冲突，实际 {other:?}"),
+        }
+        // 任一侧缺 rev ⇒ 也是冲突（判不了就不判）
+        assert!(matches!(
+            merge_remote_content(
+                &jdoc(vec![jblk(Some("b1"), None, "我改的")]),
+                &jdoc(vec![jblk(Some("b1"), Some(5), "他的")]),
+            ),
+            RemoteMerge::Conflicted(_)
+        ));
+        // 老内容缺身份 ⇒ **不是冲突**，是"没什么可合"
+        assert_eq!(
+            merge_remote_content(
+                &jdoc(vec![jblk(None, None, "老")]),
+                &jdoc(vec![jblk(Some("b1"), Some(1), "新")]),
+            ),
+            RemoteMerge::NotApplicable
+        );
     }
 
     #[test]
-    fn merge_remote_content_output_survives_assign_block_revs() {        // 承重：合并产物是"下一次保存的 baseline"。物化时丢了 rev ⇒ assign_block_revs 会把每块
+    fn merge_remote_content_output_survives_assign_block_revs() {
+        // 承重：合并产物是"下一次保存的 baseline"。物化时丢了 rev ⇒ assign_block_revs 会把每块
         // 当成"老客户端产物"重新盖 0/1 ⇒ rev 倒退 ⇒ 下一次合并的胜负判断就错了。
         let local = jdoc(vec![jblk(Some("b1"), Some(4), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
         let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(5), "B 改的")]);
-        let merged = merge_remote_content(&local, &remote).expect("应当能合");
+        let RemoteMerge::Merged(merged) = merge_remote_content(&local, &remote) else {
+            panic!("应当能合");
+        };
 
         let stamped = crate::block_rev::assign_block_revs(&merged, &merged);
         assert_eq!(revs_of(&stamped), vec![Some(4), Some(5)]);
         assert_eq!(bodies_of(&stamped), vec!["A 改的", "B 改的"]);
+    }
+
+    /// 冲突留痕那几个入口用的连接：**走仓库自己的建库路径**（真 schema）。
+    ///
+    /// ⚠️ 别图省事手抄两张最小表：`resolve_page_conflict` 里有 `derive`（FTS ＋ 块图），
+    /// 手抄的 schema 少了那几张表就会在 `derive` 上炸 —— 那测的就是"另一套 schema"了
+    /// （`versions.rs` 的 `test_conn` 记过同一条教训）。
+    fn conflict_conn(tag: &str) -> (Connection, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("shuyonote-conflicts-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("s1", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "test-device").unwrap();
+        (c, dir)
+    }
+
+    fn insert_conflict_page(c: &Connection, id: &str, json: &str) {
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, dirty)
+             VALUES (?1, 's1', '页', ?2, '', 'page', 0, 0, NULL, 0)",
+            rusqlite::params![id, json],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn replace_block_content_swaps_one_block_only() {
+        let doc = jdoc(vec![jblk(Some("b1"), Some(1), "旧"), jblk(Some("b2"), Some(1), "别动")]);
+        let out = replace_block_content(&doc, "b1", &jblk(Some("b1"), None, "新").to_string()).unwrap();
+        assert_eq!(bodies_of(&out), vec!["新", "别动"]);
+        // 块不在这一版里 ⇒ None（裁决时据此拒绝，而不是悄悄什么都不做）
+        assert!(replace_block_content(&doc, "nope", "{}").is_none());
+        assert!(replace_block_content("not json", "b1", "{}").is_none());
+    }
+
+    #[test]
+    fn conflicts_are_recorded_listed_and_deduped() {
+        let (c, dir) = conflict_conn("list");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]));
+
+        let conflict = BlockConflict {
+            block_id: "b1".into(),
+            reason: ConflictReason::SameRevDifferentContent,
+            local_json: Some(jblk(Some("b1"), None, "我改的").to_string()),
+            remote_json: Some(jblk(Some("b1"), None, "他改的").to_string()),
+        };
+        record_page_conflicts(&c, "p1", &[conflict.clone()]).unwrap();
+        // 同一页同一块再来一次 ⇒ **覆盖**（不堆积）
+        record_page_conflicts(&c, "p1", &[conflict]).unwrap();
+
+        let rows = unresolved_page_conflicts(&c, "p1").unwrap();
+        assert_eq!(rows.len(), 1, "同一 (page, block) 的未决记录只该有一条");
+        assert_eq!(rows[0].block_id, "b1");
+        assert_eq!(rows[0].reason, "same-rev-different-content");
+        assert!(rows[0].local_json.contains("我改的"));
+        assert!(rows[0].remote_json.contains("他改的"));
+        assert_eq!(rows[0].resolved_at, None);
+        // 别的页不受影响
+        assert!(unresolved_page_conflicts(&c, "p2").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolving_a_conflict_writes_the_chosen_side_with_a_new_rev() {
+        let (c, dir) = conflict_conn("resolve");
+        let current = jdoc(vec![jblk(Some("b1"), Some(3), "远端赢了的那版"), jblk(Some("b2"), Some(0), "别动")]);
+        insert_conflict_page(&c, "p1", &current);
+        record_page_conflicts(
+            &c,
+            "p1",
+            &[BlockConflict {
+                block_id: "b1".into(),
+                reason: ConflictReason::SameRevDifferentContent,
+                local_json: Some(jblk(Some("b1"), None, "我原来改的").to_string()),
+                remote_json: Some(jblk(Some("b1"), None, "远端赢了的那版").to_string()),
+            }],
+        )
+        .unwrap();
+        let id = unresolved_page_conflicts(&c, "p1").unwrap()[0].id.clone();
+
+        // 裁决"留本地" ⇒ 该块换回本地那一版，并且**盖了新 rev**（maxSeen(3)+1 = 4）
+        resolve_page_conflict(&c, &id, ConflictChoice::Local).unwrap();
+
+        let json: String =
+            c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(bodies_of(&json), vec!["我原来改的", "别动"]);
+        assert_eq!(revs_of(&json), vec![Some(4), Some(0)]);
+        // 裁决 = 一笔本地编辑（要被推上去）
+        let dirty: i64 = c.query_row("SELECT dirty FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(dirty, 1);
+        // 标成已决，不再出现在未决列表里
+        assert!(unresolved_page_conflicts(&c, "p1").unwrap().is_empty());
+        // 已决的再裁决 ⇒ 报错（不静默成功）
+        assert!(resolve_page_conflict(&c, &id, ConflictChoice::Remote).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
