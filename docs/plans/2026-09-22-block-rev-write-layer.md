@@ -78,7 +78,7 @@
 **顺序（硬约束）**：应与**块级判定同时上线** —— 先只写 rev 而没人读，等于往 JSON 里加一个没人用的字段
 （还会在混版本期间被老客户端剥掉，产生无意义的 churn）。
 
-## 5. 节点上的**声明字段**（内存 / CRDT 平面那半）：已接内建 7 类 ＋ 自有 1 类
+## 5. 节点上的**声明字段**（内存 / CRDT 平面那半）：**18 类全部接入**
 
 与"写 rev"分开落地（互不阻塞）：rev 由保存时的**差分**产生，不依赖节点字段；节点字段是为
 **阶段 2/3**（Yjs 只同步节点模型）与"不经 baseline 的重序列化路径"准备的保险。
@@ -86,19 +86,25 @@
 | 进度 | 类 |
 |---|---|
 | ✅ 内建镜像 7 类 | `BlockParagraphNode` / `BlockHeadingNode` / `BlockQuoteNode` / `BlockListNode` / `BlockCodeNode` / `BlockHorizontalRuleNode` / `BlockTableNode` |
-| ✅ 自有节点样板 1 类 | `FormulaNode`（走"类就是类型"那条轻路：字段 + import/export/clone/afterCloneFrom） |
-| ⏳ 剩余 10 类自有节点 | `callout` / `mermaid` / `imageRow` / `image` / `video` / `blockembed` / `webbookmark` / `attachment-ref` / `drawing` / `columnsBlock` |
+| ✅ 自有节点 11 类 | `callout`（`CalloutNode`）/ `formula` / `mermaid` / `imageRow` / `image` / `video` / `blockembed` / `webbookmark` / `attachment-ref` / `drawing` / `columnsBlock` |
 
-判据：`src/editor/nodes/blockRevDeclared.test.ts` **5 条**（表格驱动，逐类验）——
+每类都是同一套四处改动：**声明字段** ＋ `clone`/`afterCloneFrom`（两条克隆路径都不许丢）＋
+`exportJSON`/`importJSON`（CRDT 绑定就靠这两个）＋ `getBlockRev`/`setBlockRev`。
+`blockembed` 那类注意：它的 `__blockId` **已被"引用目标"占用**，身份字段叫 `__selfBlockId` ⇒ rev 是**新加**的
+`__blockRev`（不与任何既有字段撞名）。
+
+判据：`src/editor/nodes/blockRevDeclared.test.ts` **5 条**（表格驱动，`MODEL_NODE_TABLE` 里 **18 行**逐类验，
+与块身份那边"清单与判据共用一份"同一做法）——
 ① 有值才写（`null` ⇒ 落盘 JSON 里**不许有**这个字段，缺字段 ≠ 0）；
 ② 老形态兼容（没有字段 ⇒ 读成"没有"，再写出去仍不写）；③ `exportJSON → importJSON` 往返；
-④ 克隆路径（`markDirty()`）；⑤ 声明字段进的是节点模型（`toJSON()` 同一条路）。
+④ 克隆路径（精确 `markDirty()` 被测节点）；⑤ 声明字段进的是节点模型（`toJSON()` 同一条路）。
 
 ✓ 与 `src/lib/blockRev.ts` 的 `blockRevOf` **共用一份口径**（`blockIdHelpers` 转出去，不重写第二份）。
 
-**两条踩过的坑**（都写进判据文件头了）：
+**三条踩过的坑**（都写进判据文件头了）：
 - 任何节点工厂必须在 `editor.update()` 里调（外面调抛 `Unable to find an active editor`）；
 - **别用"空根 + 装饰节点"验块身份**：formula 这类 DecoratorNode 单独 append 进空根会被 Lexical 的
   **根规范化包进一个段落**（`paragraph` 是内建类型、没有块身份）⇒ 读 `root.children[0]` 会读到包装段落，
-  看上去像"rev 没写出去"。判据改成**递归找目标 type**（第 ①/② 条干脆不挂根、直接读 `exportJSON()`）。
-  —— 与块身份那边记的"判据别用空根+装饰节点"同一条纪律，这次又踩了一遍。
+  看上去像"rev 没写出去"。判据改成**递归找目标 type**，并先放一个内建段落打底（第 ①/② 条干脆不挂根、
+  直接读 `exportJSON()`）。—— 与块身份那边记的"判据别用空根+装饰节点"同一条纪律，这次又踩了一遍；
+- 装饰节点被包进段落之后，`markDirty()` 要**精确标到被测那一个节点**（只标根的直接子节点会变成空转）。
