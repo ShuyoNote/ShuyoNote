@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 pub const COMMUNITY_BASE: &str = "https://community.shuyo.cn";
 
 const TIMEOUT_SECS: u64 = 20;
+/// 补名字那一次请求的超时：它是"打开对话框顺手补一下"，不该让人等 20 秒（见 `refresh_username_at`）。
+const BACKFILL_TIMEOUT_SECS: u64 = 6;
 /// 社区对幂等键的约束：安全字符、≤128（`posts::idempotency_key`）。
 const IDEM_MAX: usize = 128;
 /// 社区对 `source_ref` 的约束：安全字符、≤64（`posts::normalize_source_ref`）。
@@ -542,6 +544,27 @@ pub async fn poll_at(
     Ok(("approved".to_string(), Some(auth)))
 }
 
+/// 从 `GET /api/me` 的响应里取"这是谁的授权"（**纯函数**，好判形状）。
+///
+/// ⚠️ 2026-09-21 修：社区回的是 **`{"me":{"username":"cnzen@shuyo.cn",…}}`**（见它 `docs/api.md`），
+/// 而这里此前读的是**顶层** `username` ⇒ 永远取到空串 ⇒ 界面上一直显示「（社区没给出用户名）」
+/// （用户截图指的就是这一行）。两种形状都吃：先 `me.username`，再顶层 `username`（老/别的部署）。
+pub fn parse_me_username(json: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+    let from = |node: Option<&serde_json::Value>| {
+        node.and_then(|n| n.get("username"))
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let nested = from(v.get("me"));
+    if !nested.is_empty() {
+        return nested;
+    }
+    from(Some(&v))
+}
+
 /// `GET /api/me`：只为一个问题 —— "这把令牌是谁的"（界面上要能让用户核对）。
 async fn me_username(
     client: &reqwest::Client,
@@ -555,11 +578,41 @@ async fn me_username(
         .await
         .map_err(|e| e.to_string())?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
-    Ok(v.get("username")
-        .and_then(|u| u.as_str())
-        .unwrap_or("")
-        .to_string())
+    Ok(parse_me_username(&text))
+}
+
+/// **补名字**：1.91.16 之前的安装存下来的 `username` 是空的（上面那个解析 bug）。
+///
+/// 名字只用来"让用户核对这是谁的授权"，所以这里的原则是**尽力而为、绝不打扰**：
+///   · 已经有名字 ⇒ 直接返回，**不碰网络**；
+///   · 没有名字 ⇒ 问一次 `/api/me`（短超时），补到了**写回文件**、补不到就原样返回（不报错）；
+///   · 补过之后名字就非空了，所以这件事每个安装**最多发生一次**。
+///
+/// 为什么放在 `community_connection` 里而不是加一条新命令：它就是为了让"打开对话框看到的那一行"
+/// 是准的；多一条命令就要多一处契约/web 桩/判据，而这条路只有一次网络请求。
+pub async fn refresh_username_at(path: &Path) -> Option<ConnectionInfo> {
+    let auth = load_auth_at(path)?;
+    if !auth.username.trim().is_empty() {
+        return Some(auth.info());
+    }
+    // 补名字用**短超时**的 client：它是"顺手补一下"，不该让对话框开半天。
+    let fetched = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(BACKFILL_TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+    {
+        Ok(c) => me_username(&c, &auth.base, &auth.token).await.unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    if fetched.trim().is_empty() {
+        return Some(auth.info());
+    }
+    let updated = StoredAuth {
+        username: fetched,
+        ..auth
+    };
+    let _ = save_auth_at(path, &updated);
+    Some(updated.info())
 }
 
 fn now() -> String {
@@ -621,10 +674,16 @@ pub enum PublishResult {
 }
 
 /// 当前连接（没有令牌字段）。
+///
+/// **唯一一处会走网络的地方**：本地那份 `username` 是空的时候补一次名字（见
+/// [`refresh_username_at`]）；已经有名字就纯本地读文件。补不到照样返回本地那份。
 #[tauri::command]
-pub fn community_connection(app: tauri::AppHandle) -> Result<Option<ConnectionInfo>, String> {
+pub async fn community_connection(app: tauri::AppHandle) -> Result<Option<ConnectionInfo>, String> {
     let path = auth_path(&app)?;
-    Ok(load_auth_at(&path).map(|a| a.info()))
+    if load_auth_at(&path).is_none() {
+        return Ok(None);
+    }
+    Ok(refresh_username_at(&path).await)
 }
 
 /// 起设备码流程：返回 `user_code`（给用户看）与 `device_code`（自己轮询用）。
@@ -1478,6 +1537,98 @@ mod tests {
             }
             other => panic!("500 判读错了：{other:?}"),
         }
+    }
+
+    /// **「（社区没给出用户名）」的真根因**：社区回的是 `{"me":{"username":…}}`，
+    /// 而这里此前读**顶层** `username` ⇒ 永远空串（用户截图指的就是那一行）。
+    #[test]
+    fn parse_me_username_handles_the_nested_shape() {
+        // 社区真实响应（2026-09-21 用本机那把令牌实测抓的原文）
+        let real = r#"{"me":{"avatar_hash":"55d05b","bio":null,"created_at":"2026-09-08 14:12:56","display_name":"cnzen","id":1,"username":"cnzen@shuyo.cn"}}"#;
+        assert_eq!(parse_me_username(real), "cnzen@shuyo.cn");
+        // 顶层 username 也吃（老/别的部署），但**嵌套优先**
+        assert_eq!(parse_me_username(r#"{"username":"top"}"#), "top");
+        assert_eq!(
+            parse_me_username(r#"{"username":"top","me":{"username":"inner"}}"#),
+            "inner"
+        );
+        // 认不出来就是空串（界面照旧说"社区没给出用户名"）——不 panic、不猜
+        assert_eq!(parse_me_username(""), "");
+        assert_eq!(parse_me_username("<html>"), "");
+        assert_eq!(parse_me_username(r#"{"me":{}}"#), "");
+        assert_eq!(parse_me_username(r#"{"me":{"username":"   "}}"#), "");
+    }
+
+    /// 补名字：**空才补、补到才写回、补不到原样返回**（每个安装最多发生一次）。
+    #[test]
+    fn refresh_username_backfills_once_and_never_fails() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let dir = std::env::temp_dir().join(format!("shuyo-me-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("community-auth.json");
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_srv = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = vec![0u8; 4096];
+                let _ = stream.read(&mut buf);
+                hits_srv.fetch_add(1, Ordering::SeqCst);
+                let body = r#"{"me":{"id":1,"username":"cnzen@shuyo.cn"}}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let auth = StoredAuth {
+            base: format!("http://{addr}"),
+            token: "tok".to_string(),
+            username: String::new(), // ← 老安装存下来的样子
+            scope: "post:create post:update".to_string(),
+            client: CLIENT_NAME.to_string(),
+            saved_at: now(),
+        };
+        save_auth_at(&path, &auth).unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        // ① 空名字 ⇒ 问一次、补上、**写回文件**
+        let got = rt.block_on(refresh_username_at(&path)).expect("有授权就该有结果");
+        assert_eq!(got.username, "cnzen@shuyo.cn");
+        assert_eq!(load_auth_at(&path).unwrap().username, "cnzen@shuyo.cn");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "空名字要补一次");
+
+        // ② 已经有名字 ⇒ **不碰网络**
+        let again = rt.block_on(refresh_username_at(&path)).expect("有授权就该有结果");
+        assert_eq!(again.username, "cnzen@shuyo.cn");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "有名字就不该再问");
+
+        // ③ 没有授权文件 ⇒ None（不是错误）
+        std::fs::remove_file(&path).unwrap();
+        assert!(rt.block_on(refresh_username_at(&path)).is_none());
+
+        // ④ 网络不通 ⇒ 原样返回本地那份（**不报错**，界面照旧显示"社区没给出用户名"）
+        save_auth_at(&path, &auth).unwrap();
+        let offline = StoredAuth {
+            base: "http://127.0.0.1:1".to_string(), // 没人听
+            ..auth.clone()
+        };
+        save_auth_at(&path, &offline).unwrap();
+        let got = rt.block_on(refresh_username_at(&path)).expect("补不到也要给本地那份");
+        assert_eq!(got.username, "");
+        assert_eq!(load_auth_at(&path).unwrap().username, "", "补不到就不该动文件");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
