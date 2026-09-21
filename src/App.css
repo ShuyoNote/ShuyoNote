@@ -4760,6 +4760,63 @@ body.content-full .editor-placeholder {
   border-color: var(--accent);
 }
 
+/* 「时间」属性：**一行只有一个可见的输入框**（手输框）＋ 一枚 📅 按钮开原生选择器。
+   以前这里并排摆两个框（原生 datetime-local ＋ 手输框），同一个时刻显示两遍 ——
+   owner 2026-09-21 的截图问的就是那个。现在原生那枚藏 1px（**不能 display:none**：
+   那样 showPicker() 会抛），所以 DOM 里仍是两个 input，但肉眼只有一个。 */
+.prop-datetime {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 75%;
+  min-width: 0;
+}
+
+.prop-datetime .prop-value {
+  flex: 1;
+  max-width: none;
+  min-width: 0;
+}
+
+.prop-datetime-pick {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  border-radius: var(--radius-xs);
+  padding: 3px 6px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.prop-datetime-pick:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* 藏在布局里（1px + 透明）：showPicker() 要求元素是"渲染过的"，display:none 会抛 */
+.prop-datetime-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.prop-value.is-invalid {
+  border-color: var(--danger, #e5484d);
+}
+
+.prop-invalid {
+  flex-shrink: 0;
+  color: var(--danger, #e5484d);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: help;
+}
+
 .prop-checkbox {
   width: 16px;
   height: 16px;
