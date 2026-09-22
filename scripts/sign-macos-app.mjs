@@ -41,6 +41,81 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** 包内需要单独先签的嵌套二进制：Frameworks 下的库、MacOS 下的辅助可执行文件。 */
 export const NESTED_DIRS = ["Contents/Frameworks", "Contents/MacOS"];
 
+/**
+ * ★ **codesign 的参数**（纯函数，便于判据）—— 2026-09-22 按 Windows 侧的复核意见抽出。
+ *
+ * 为什么必须分开写：**ad-hoc 与真实身份对时间戳的要求相反**。
+ *   · ad-hoc（`-`）：**盖不了**安全时间戳 ⇒ 必须 `--timestamp=none`（第一版把它硬编码给了两条路）；
+ *   · 真实身份：Apple 的**公证要求安全时间戳** ⇒ 必须 `--timestamp`；且公证还要求 **hardened runtime**
+ *     ⇒ `--options runtime`（第一版**一处都没有**）。
+ * ⇒ 共用一句 argv 的后果是：`codesign --verify --deep --strict` **照样绿**、脚本**什么都不报**，
+ *   只有 Apple 服务器那一关会拒（`A timestamp was expected but was not found`）—— 正是我们最防的盲区。
+ *
+ * `entitlements` 给了就带上：加了 hardened runtime 之后，**该有的 entitlements 不能少**
+ * （WKWebView/JIT 那类），否则会从"签不过"变成"签过了但起不来"。
+ */
+export function signArgs(identity, target, { entitlements = null } = {}) {
+  const adhoc = identity === "-";
+  const args = adhoc
+    ? ["--force", "--sign", "-", "--timestamp=none"]
+    : ["--force", "--sign", identity, "--timestamp", "--options", "runtime"];
+  if (!adhoc && entitlements) args.push("--entitlements", entitlements);
+  args.push(target);
+  return args;
+}
+
+/**
+ * ★ **递归**找出包内的嵌套 Mach-O（2026-09-22 修：第一版只 `readdirSync` 一层 ⇒
+ * `Contents/Frameworks/sub/nested.dylib` 这种**再深一层**的一个都发现不了；
+ * 而判据里"更深的先签"那条喂给 `signingOrder` 的正是扫描器产不出来的路径 —— "判据绿了，但它证的不是生产那条路"。
+ * 实测（Windows 侧的假包）：包里两个嵌套 Mach-O，脚本只发现 1 个。）
+ *
+ * 遇到**嵌套的 `.app`**（内层 app bundle）**响亮拒绝**：那不是"一个 Mach-O"，要按 bundle 整体签，
+ * 本脚本不做 ⇒ 宁可当场说清，也别静静漏过去（真漏签时 `--deep --strict` 会红，但形态与"静默"同源）。
+ * `.framework` 则继续递归进去（它里面的 Mach-O 会被正常发现）。
+ */
+export function nestedMachOs(appPath, { mainExecutable = null, depthLimit = 8, isMachO = null } = {}) {
+  const found = [];
+  const refuses = [];
+  const isMach = isMachO ?? defaultIsMachO;
+  const walk = (absDir, relDir, depth) => {
+    if (depth > depthLimit) return;
+    let entries = [];
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const abs = join(absDir, e.name);
+      // ⚠️ 第一版写成 `${relDir}/${e.name}`：walk 从 app 根开始 ⇒ 首层就是 `/Contents`（**多一个斜杠**），
+      //   于是"主可执行文件不进清单"那条按相对路径比较**失配** ⇒ 主可执行文件被当成嵌套二进制被签两次
+      //   （dry-run 当场看出来）。相对路径必须从根拼起。
+      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (rel.endsWith(".app")) refuses.push(rel);
+        else walk(abs, rel, depth + 1);
+        continue;
+      }
+      if (!e.isFile()) continue;
+      if (mainExecutable && rel === mainExecutable) continue; // 主可执行文件由"签整个 bundle"那一步覆盖
+      if (isMach(abs)) found.push(rel);
+    }
+  };
+  walk(appPath, "", 0);
+  return { found, refuses };
+}
+
+function defaultIsMachO(path) {
+  try {
+    if (statSync(path).size < 4) return false;
+    const head = readFileSync(path).subarray(0, 4);
+    return MACHO_MAGICS.has(head.readUInt32BE(0)) || MACHO_MAGICS.has(head.readUInt32LE(0));
+  } catch {
+    return false;
+  }
+}
+
 /** Mach-O 的魔数：32/64 位、大小端，**外加 fat/universal 容器**。
  *
  * ⚠️ 第一版漏了 `0xcafebabe` ⇒ `Contents/Frameworks/libpdfium.dylib`（**universal**，x86_64＋arm64）
@@ -123,18 +198,17 @@ function main() {
   const plist = readFileSync(join(appPath, "Contents", "Info.plist"), "utf8");
   const mainExe = (/<key>CFBundleExecutable<\/key>\s*<string>([^<]*)<\/string>/.exec(plist) ?? [])[1] ?? null;
 
-  const found = [];
-  for (const dir of NESTED_DIRS) {
-    const abs = join(appPath, dir);
-    if (!existsSync(abs)) continue;
-    for (const name of readdirSync(abs)) {
-      const p = join(abs, name);
-      if (!statSync(p).isFile()) continue;
-      if (!isMachO(p)) continue;
-      found.push(`${dir}/${name}`);
-    }
+  // ★ 递归发现（第一版只扫一层，见 `nestedMachOs` 的注释）＋ 遇嵌套 `.app` 响亮拒绝
+  const { found, refuses } = nestedMachOs(appPath, { mainExecutable: mainExe ? `Contents/MacOS/${mainExe}` : null });
+  if (refuses.length) {
+    console.error(
+      `[sign-macos-app] ❌ 包里有**嵌套的 .app**（${refuses.join("、")}）—— 那不是"一个 Mach-O"，` +
+        "要按 bundle 整体签，本脚本不做 ⇒ 当场停下（宁愿不做，也别静静漏签）",
+    );
+    process.exit(2);
   }
   const order = signingOrder(found, mainExe ? `Contents/MacOS/${mainExe}` : null);
+  const entitlements = flag("--entitlements");
 
   const libRel = join("Contents", "Frameworks", "libpdfium.dylib");
   const bundleLib = join(appPath, libRel);
@@ -155,7 +229,12 @@ function main() {
       ` ⇒ ${preSignIdentical ? "逐字节相同 ✅（这是签之前的读数）" : "**不一致 ❌**"}`,
   );
 
+  // ★ `--dry-run` 把**真实要执行的 argv** 逐条打出来：证书没到位的今天，这两条边界
+  //   （`--timestamp` / `--options runtime`）也要能被肉眼与判据看见，不必等到那天。
+  console.log(`  身份对应的 codesign 参数：${JSON.stringify(signArgs(identity, "<目标>", { entitlements }))}`);
   if (dryRun) {
+    for (const rel of order) console.log(`    · codesign ${signArgs(identity, rel, { entitlements }).join(" ")}`);
+    console.log(`    · codesign ${signArgs(identity, appPath, { entitlements }).join(" ")}   ← 最后签整个 bundle`);
     console.log("[sign-macos-app] --dry-run：到此为止（没有改动任何文件）");
     process.exit(preSignIdentical ? 0 : 1);
   }
@@ -164,7 +243,7 @@ function main() {
   for (const rel of order) {
     const abs = join(appPath, rel);
     try {
-      run("codesign", ["--force", "--sign", identity, "--timestamp=none", abs]);
+      run("codesign", signArgs(identity, abs, { entitlements }));
       signedCount += 1;
       console.log(`  ✅ 已签 ${rel}`);
     } catch (e) {
@@ -175,7 +254,7 @@ function main() {
 
   // 最后：签整个 bundle（这一步同时覆盖主可执行文件与 `_CodeSignature/CodeResources`）
   try {
-    run("codesign", ["--force", "--sign", identity, "--timestamp=none", appPath]);
+    run("codesign", signArgs(identity, appPath, { entitlements }));
     console.log("  ✅ 已签 bundle（含主可执行文件与 _CodeSignature/CodeResources）");
   } catch (e) {
     console.error(`[sign-macos-app] ❌ 签 bundle 失败：${String(e.stderr || e.message).trim()}`);
