@@ -773,3 +773,117 @@ export function PanelIcon(props: IconProps) {
     </Icon>
   );
 }
+
+// ---------------------------------------------------------------------------
+// PDF 批注工具条那一套（2026-09-22，owner："这几个按钮都使用统一风格的 svg 图标"）。
+//
+// 为什么单独在这里补：工具条原来那 12 枚图标是**各写各的**——同一个 `viewBox` 却用了两套
+// `strokeWidth`（1.8 / 2）、两种渲染尺寸（16 / 15 / 13），而且"高亮"与"画笔"是两支几乎一样的
+// 斜笔（截图里并排看几乎分不出）。现在全部走本文件这套 `Icon` 包装（24×24 / `strokeWidth` 1.7 /
+// `stroke="currentColor"` / round 线帽与线接），形状也换成一眼能分开的一组：
+//   · 选择 = 鼠标指针      · 高亮 = 荧光笔（带笔尖斜面）   · 画笔 = 画刷（带刷毛）
+//   · 便签 = 折角便签纸    · 撤销 = 回转箭头               · 导出 = 下载箭头
+// 判据在 `verify-mobile-views.mjs`：工具条里每一枚 `<svg>` 的 viewBox / stroke / 线帽 / 线接 /
+// 线宽 / 尺寸都必须一致（"统一风格"是可量的，不是形容词）。
+// ---------------------------------------------------------------------------
+
+/** 选择工具：鼠标指针。 */
+export function MousePointerIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m4 4 7.07 17 2.51-7.39L21 11.07z" />
+    </Icon>
+  );
+}
+
+/** 高亮：荧光笔（笔身斜置 + 笔尖斜面 + 下方一道基线）。 */
+export function HighlighterIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m9 11-6 6v3h9l3-3" />
+      <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+    </Icon>
+  );
+}
+
+/** 画笔：画刷（笔杆 + 刷毛），与"高亮"的荧光笔一眼分得开。 */
+export function BrushIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08" />
+      <path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z" />
+    </Icon>
+  );
+}
+
+/** 便签：右下折角的便签纸。 */
+export function StickyNoteIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 4h16v10l-6 6H4z" />
+      <path d="M20 14h-4a2 2 0 0 0-2 2v4" />
+    </Icon>
+  );
+}
+
+/** 撤销：回转箭头。 */
+export function UndoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </Icon>
+  );
+}
+
+/** 更多：三个点（实心点，与 `ListIcon` / `GripVerticalIcon` 同一写法）。 */
+export function MoreHorizontalIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}
+
+/** 摘录成块：方框 + 向外的箭头（"从这一块里取出来"）。 */
+export function SquareArrowOutIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+    </Icon>
+  );
+}
+
+/** 复制：两张叠起来的纸。 */
+export function CopyIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </Icon>
+  );
+}
+
+/** 勾：文本层可精确划词。 */
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </Icon>
+  );
+}
+
+/** 警告三角：扫描版（无文本层）。 */
+export function AlertTriangleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </Icon>
+  );
+}

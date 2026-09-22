@@ -679,6 +679,19 @@ async function checkPdfReader(page, vp) {
         })),
         layerText: (reader.querySelector(".pdf-annot-layer")?.textContent || "").trim(),
         layerTitle: (reader.querySelector(".pdf-annot-layer")?.getAttribute("title") || "").trim(),
+        // 统一图标（owner 2026-09-22："这几个按钮都使用统一风格的 svg 图标"）。
+        // 判据：工具条里每一枚 `<svg>` 的 viewBox / stroke / 线帽 / 线接 / **线宽** / **尺寸**都一致
+        //（改前是 1.8 与 2 两套线宽、16 / 15 两种尺寸混排）。
+        icons: Array.from(reader.querySelectorAll(".pdf-annot-toolbar button svg")).map((s) => ({
+          vb: s.getAttribute("viewBox"),
+          fill: s.getAttribute("fill"),
+          stroke: s.getAttribute("stroke"),
+          sw: s.getAttribute("stroke-width"),
+          cap: s.getAttribute("stroke-linecap"),
+          join: s.getAttribute("stroke-linejoin"),
+          w: s.getAttribute("width"),
+          h: s.getAttribute("height"),
+        })),
       };
     });
 
@@ -1008,6 +1021,25 @@ function assertPdfReader(rr, vp) {
       `桌面 head 控制组宽度 ${rr.controlsW}px ≤ 420（扁平化+间距 14→8 后实测 393；改前 441）`,
     );
   }
+  // 统一图标：工具条里每一枚 svg 必须同源同规格（"统一风格"是可量的，不是形容词）。
+  const ic = rr.icons ?? [];
+  const base = ic[0];
+  ok(
+    ic.length >= 6 &&
+      ic.every(
+        (i) =>
+          i.vb === base.vb &&
+          i.fill === base.fill &&
+          i.stroke === base.stroke &&
+          i.sw === base.sw &&
+          i.cap === base.cap &&
+          i.join === base.join &&
+          i.w === base.w &&
+          i.h === base.h,
+      ),
+    `工具条里 ${ic.length} 枚图标是同一套规格（viewBox=${base?.vb}、stroke=${base?.stroke}、` +
+      `线宽=${base?.sw}、${base?.w}×${base?.h}、线帽=${base?.cap}）——改前 1.8/2 两套线宽、16/15 两种尺寸`,
+  );
 }
 
 async function main() {  const executablePath = findChrome();
