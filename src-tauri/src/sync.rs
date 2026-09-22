@@ -2109,36 +2109,7 @@ async fn sync_attachments(
     let remote_set: HashSet<String> = remote.items.iter().map(|i| i.hash.clone()).collect();
 
     // 2. Local hashes (files on disk).
-    let mut local_set = HashSet::new();
-    // Bucketed layout: `attachments/<hh>/<hash>.<ext>`.
-    if let Ok(bucket_entries) = std::fs::read_dir(&attachments_dir) {
-        for be in bucket_entries.flatten() {
-            let bname = be.file_name().to_string_lossy().into_owned();
-            if bname.len() == 2 && bname.chars().all(|c| c.is_ascii_hexdigit()) && be.path().is_dir() {
-                if let Ok(files) = std::fs::read_dir(be.path()) {
-                    for f in files.flatten() {
-                        let name = f.file_name().to_string_lossy().into_owned();
-                        if name.ends_with(".part") { continue; }
-                        if let Some(stem) = name.split('.').next() {
-                            if !stem.is_empty() { local_set.insert(stem.to_string()); }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Legacy flat layout.
-    if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // 排除 .part 临时文件（下载中断残留）：其内容哈希与目标不符，
-            // 作为“本地待上传附件”上传会被服务端 SHA-256 校验拒绝（400）。
-            if name.ends_with(".part") { continue; }
-            if let Some(stem) = name.split('.').next() {
-                local_set.insert(stem.to_string());
-            }
-        }
-    }
+    let local_set = scan_local_attachment_hashes(&attachments_dir);
 
     // 3/4 步的待传清单：**一次算清**，既是循环的输入，也是"未上传/未下载 N 个"的来源。
     let up_items: Vec<String> = local_set.difference(&remote_set).cloned().collect();
@@ -2338,6 +2309,62 @@ async fn sync_attachments(
     }
 
     Ok(AttachmentSyncOutcome { items: att_items, paused, paused_reason, skipped_upload, skipped_download, skipped_too_large, failed, bytes_downloaded })
+}
+
+/// 扫出本地 `attachments/` 目录里**已经落地**的附件内容哈希（文件名的主干）。
+///
+/// 两种布局都认：新的分桶布局 `attachments/<hh>/<hash>.<ext>`，以及老版本的平铺
+/// `attachments/<hash>.<ext>`。
+///
+/// ⚠️ 2026-09-22 真机验收修（连同 `sync.rs` 上传循环里那条 `failed += 1`）：
+/// 平铺那一支原先**没有排除目录**，而分桶目录名恰好是**两个十六进制字符**
+/// （`08` / `0a` / …），于是每个桶都被当成本地待上传附件进了 `up_items`，再在上传
+/// 循环里过不了 `is_valid_attachment_hash` ⇒ `failed += 1`。面板于是报出
+/// 「N 个传输失败」，而 **N == 分桶目录数**，与真实传输毫无关系：
+/// 桌面端实测同一份数据先报 33 个（那时 33 个桶），附件收完再报 57 个（57 个桶），
+/// 两次都是「上传 0 / 拉取 0」——而两端的字节其实已经 56/56/56 完全一致
+/// （本地 56 件 = 服务端 meta 56 行 = 服务端 blob 56 个），页面与附件都同步到位。
+///
+/// 目录**只认**两字符十六进制的分桶目录；其它目录（用户自己塞进来的）一概不算附件。
+fn scan_local_attachment_hashes(dir: &Path) -> HashSet<String> {
+    let mut set = HashSet::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return set;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // 排除 `.part` 临时文件（下载中断残留）：其内容哈希与目标不符，
+        // 作为“本地待上传附件”上传会被服务端 SHA-256 校验拒绝（400）。
+        if name.ends_with(".part") {
+            continue;
+        }
+        let is_bucket = name.len() == 2 && name.chars().all(|c| c.is_ascii_hexdigit());
+        if entry.path().is_dir() {
+            if !is_bucket {
+                continue;
+            }
+            if let Ok(files) = std::fs::read_dir(entry.path()) {
+                for f in files.flatten() {
+                    let fname = f.file_name().to_string_lossy().into_owned();
+                    if fname.ends_with(".part") {
+                        continue;
+                    }
+                    if let Some(stem) = fname.split('.').next() {
+                        if !stem.is_empty() {
+                            set.insert(stem.to_string());
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if let Some(stem) = name.split('.').next() {
+            if !stem.is_empty() {
+                set.insert(stem.to_string());
+            }
+        }
+    }
+    set
 }
 
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
@@ -2549,6 +2576,38 @@ mod tests {
             let _fk = ForeignKeysOff::new(&c);
         }
         assert_eq!(read(&c), 0, "原状态是关的，恢复后也该是关的");
+    }
+
+    /// 2026-09-22 真机验收：本地附件清单**不许把分桶目录当成附件**。
+    ///
+    /// 判据（对着那次真机读数写）：同一个 `attachments/` 下
+    ///   - `0a/<64 位 hash>.png`（新分桶布局）要认；
+    ///   - `<64 位 hash>.pdf`（老平铺布局）要认；
+    ///   - `0a` 这个**目录名**不能进集合——它就是"面板报 N 个传输失败、而 N == 桶数"的根源
+    ///     （见 `scan_local_attachment_hashes` 的注释）；
+    ///   - `*.part` 半成品不能进集合（名字里的哈希与内容不符，传上去会被服务端 400）。
+    #[test]
+    fn local_attachment_scan_ignores_bucket_dirs_and_part_files() {
+        let dir = std::env::temp_dir().join(format!("shuyonote-att-scan-{}", uuid::Uuid::new_v4()));
+        let bucket = dir.join("0a");
+        std::fs::create_dir_all(&bucket).unwrap();
+        let bucketed = "a".repeat(64);
+        let flat = "b".repeat(64);
+        let partial = "c".repeat(64);
+        std::fs::write(bucket.join(format!("{bucketed}.png")), b"x").unwrap();
+        std::fs::write(dir.join(format!("{flat}.pdf")), b"y").unwrap();
+        std::fs::write(dir.join(format!("{partial}.7f3a.part")), b"z").unwrap();
+
+        let got = scan_local_attachment_hashes(&dir);
+
+        assert!(got.contains(&bucketed), "分桶布局里的 hash 要认：{got:?}");
+        assert!(got.contains(&flat), "老平铺布局里的 hash 要认：{got:?}");
+        assert_eq!(
+            got.len(),
+            2,
+            "桶目录名与 .part 都不得进集合（进去就会被上传循环计成“传输失败”）：{got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// §0-C：**整批预扫**——这批变更里只要有一段本构建解不开，就要在应用**之前**整批拒绝。
