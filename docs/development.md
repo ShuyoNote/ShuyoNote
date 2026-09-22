@@ -218,6 +218,17 @@ run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console
 用这个 runner 跑 `build --bundles app,dmg` 一切正常（本机的 `.app`/`.dmg` 就是这么产出的）。
 `npx` / `pnpm exec` 不一定中招（它们的 shim 多走一层 shell），但**任何**只信 `argv[0]` 的包装在会怀里都危险。
 
+★ **更省事的处置（2026-09-22 实测，本轮的 `.app`/`.dmg` 就是这么建的）**：把**真 node** 放到 `PATH` 最前面，
+劫持就被绕开了 —— 因为 `tauri.js` 拿到的 `process.argv[0]` 终于是 `.../bin/node`：
+
+```bash
+export PATH="$HOME/.local/node-v24.20.0-darwin-arm64/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+pnpm tauri build --bundles app,dmg --config /tmp/tauri-ci-config.json   # ✅ 正常构建
+```
+
+（这份 `PATH` 里的 `pnpm` 也是真 node 装的那份；会怀的 `.desktop-bin` 里 `node`/`pnpm` 都是指向 Helper 的 shim，
+它们**排在后面**就不会被选中。`pnpm verify` 之类的普通命令不受影响，只有"按 `argv[0]` 推自己是谁"的包装会歪。）
+
 ### 3. 共享 `node_modules` 在"有人重装"的那几分钟对**所有人**不可用
 
 症状是**缺依赖形状的红**（`@esbuild/win32-x64` 缺失、`tinyexec` 找不到），

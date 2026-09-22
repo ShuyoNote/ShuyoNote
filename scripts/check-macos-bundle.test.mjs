@@ -141,6 +141,28 @@ describe("checkBundle", () => {
     expect(problems).toMatch(/aaaaaaaaaaaa… vs bbbbbbbbbbbb…|bbbbbbbbbbbb… vs aaaaaaaaaaaa…/);
   });
 
+  // ★ 2026-09-22（P4 签名那一格）：签名**会改字节**，所以"包内 == vendor"只对未签名产物成立。
+  //   判据必须把"签名后的正常"与"拷错了"分开说 —— 否则签名一落地，这条门禁就永久红。
+  it("★ 哈希不同但**签名有效**（lib 严格校验 ＋ .app --deep --strict）⇒ 接受（签名后哈希一定会变）", () => {
+    const problems = checkBundle(
+      okArgs({ pdfiumBundleSha: "b".repeat(64), pdfiumLibSigned: true, appDeepStrictPassed: true }),
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("★ 哈希不同且**签名不完整** ⇒ 仍报错，并指向 sign-macos-app.mjs（不许把「签了一半」当通过）", () => {
+    for (const partial of [
+      { pdfiumLibSigned: true, appDeepStrictPassed: false },
+      { pdfiumLibSigned: false, appDeepStrictPassed: true },
+      { pdfiumLibSigned: false, appDeepStrictPassed: false },
+    ]) {
+      const problems = checkBundle(okArgs({ pdfiumBundleSha: "b".repeat(64), ...partial })).join();
+      expect(problems).toMatch(/与 vendor 源文件 sha256 不一致/);
+      expect(problems).toMatch(/不是一份签名有效的包/);
+      expect(problems).toMatch(/sign-macos-app/);
+    }
+  });
+
   it("vendor 里没有库 → 报**前置缺失**（别把它说成产物问题）", () => {
     const problems = checkBundle(okArgs({ pdfiumBundleSha: null, pdfiumVendorExists: false })).join();
     expect(problems).toMatch(/vendor 里没有 mac-univ 的 PDFium/);

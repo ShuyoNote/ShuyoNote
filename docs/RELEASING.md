@@ -127,6 +127,18 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 > `pnpm check:macos-bundle` 对**产物**断言：库在不在、以及它与 `vendor/` 里那份的 **sha256 是否一致**
 > （大小相同也可能是别的库）。macos.yml 里已有取库步骤；`check:macos-bundle` 在 CI 的 macOS job 里跑。
 >
+> ★ **签名必须早于做 dmg（2026-09-22 实测）**：本机复现 `pnpm tauri build --bundles app,dmg` 后发现
+> `dmg` 里那份 `.app` 是**签名之前**的拷贝（挂载后 `codesign --verify --deep --strict` ⇒ ❌ exit=1），
+> 因为**打包这一步本身不做任何签名**（产物只有工具链的 linker 签名 ⇒ 严格校验报
+> `code has no resources but signature indicates they must be present`）。⇒ 有身份时**交给 Tauri 自带签名**
+> （`APPLE_CERTIFICATE`/`APPLE_SIGNING_IDENTITY` 那一套，bundler 的顺序本就是 nested → app → dmg）；
+> 没有身份时用 `node scripts/sign-macos-app.mjs`（默认 ad-hoc，**先 nested、后 bundle**，签完自动
+> `--verify --deep --strict`），但它**不能**在 dmg 之后补签 —— 那样 dmg 里那份仍然是没签的。
+> ⚠️ 三条读数口径：① **签名会改字节**（库实测 `3858ed6a…` 15,219,824 B ⇒ `e4a3a51f…` 15,274,928 B，+55,104 B）
+> ⇒ "包内与 vendor 逐字节相同"只对**未签名**产物成立（`check:macos-bundle` 已分两条分支）；
+> ② 内容一致性的**可证明时刻在签名之前**（脚本在那里断言），签完只能证明"签名有效"；
+> ③ ad-hoc 包 `spctl -a -vv` **rejected** 是**预期**（Gatekeeper 要真实身份），别读成"签坏了"。
+>
 > **Windows 档另有两条 PDFium 相关步骤（2026-09-18 加）**：打包前先
 > `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉 `pdfium.dll`（二进制**不入库**，
 > `.gitignore` 里有 `src-tauri/vendor/pdfium/`；`src-tauri/tauri.windows.conf.json` 把它映射成
