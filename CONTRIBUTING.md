@@ -6,7 +6,14 @@
 
 1. **跑起来**：`pnpm install && pnpm tauri dev`（桌面），或 `pnpm dev:web`（浏览器）。
 2. **找活干**：看 [路线图](docs/roadmap.md) 里还没实现 / 待做的项，或从 `docs/plans/` 挑一份已被拆解的方案；没有想法就从顺手的小事入手（修 UI 细节、补空 / 加载 / 错误态、加单测、修文档）。
-3. **提 Issue**：先搜有没有人提过；说清楚「复现步骤 / 期望 / 实际 / 版本」。**不要**在 Issue 里贴大段日志，给关键行 + 复现即可。
+3. **提缺陷 / 建议**：**入口在 [数友社区](https://community.shuyo.cn)**（问答/求助板块，免费注册）——
+   用结构化模板填「版本 / 平台 / 复现步骤 / 期望 / 实际」。**可复现的缺陷会由系统转成 issue**
+   并回链到原帖（状态以 issue 为准，你在帖子上能看到「已转 #N / 已修复于 x.y.z」）；
+   无法复现的抱怨留在社区讨论即可。**不要**在两个地方贴大段日志，给关键行 + 复现即可。
+   > 为什么这么分流：社区国内可达、能被搜索引擎收录、不用第三方账号；而 issue 那边有
+   > `fix #123`、里程碑、订阅这些与代码绑定的能力，两者各司其职（方案见社区仓
+   > `docs/community/issue-bridge-plan.md`）。
+4. **安全问题**：**不要**开公开 issue 或社区帖，走 [SECURITY.md](SECURITY.md) 的私密通道。
 
 ## 我要做什么 → 看哪里
 
@@ -52,7 +59,7 @@ feat/*  ← 你的特性分支，从 dev 切出。
 1. 从最新的 `dev` 拉一个分支：`git checkout dev && git pull && git checkout -b feat/your-change`。
 2. **小步**：一个 PR 只做一件事；提交信息用 `type(scope): summary`（如 `feat(db): add rollup column`、`fix(sync): exclude .part on upload`）。
 3. 提交前跑上面「提交前请遵守」的验证。
-4. 开 PR 时描述：**改了什么 / 为什么 / 怎么验证 / 有没有破坏点**；关联 Issue。
+4. 开 PR 时描述：**改了什么 / 为什么 / 怎么验证 / 有没有破坏点**；关联对应的 issue（缺陷/建议通常由社区的帖子自动转成 issue，在那边引用即可）。
 5. 保持可读：改动范围尽量聚焦，别把无关重构混进来。
 
 ## License 与贡献许可（CLA）
@@ -70,7 +77,7 @@ feat/*  ← 你的特性分支，从 dev 切出。
 ## 其它
 
 - **行为准则**：友善、就事论事；对新人耐心。
-- **有问题**：在 Issue 或 Discussions 里讨论；先读 [docs/development.md](docs/development.md) 的「常见坑」，很多答案在里面。
+- **有问题**：先搜社区（很多问题已有人踩过并写下来了），再在[社区问答板块](https://community.shuyo.cn/board/qa)或 issue 讨论；动手前先读 [docs/development.md](docs/development.md) 的「常见坑」，很多答案在里面。
 
 > 详细约定见 [docs/development.md](docs/development.md)；当前状态见内部项目状态笔记。
 
