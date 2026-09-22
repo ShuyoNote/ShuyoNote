@@ -235,7 +235,41 @@ export function describe(x) {
  * 判定（纯函数）：返回 `{ problems, notices }`。
  * 三种状态分得清 —— 没产物/没标记 ⇒ 只提示；**认得出的产物 ≠ 声明 ⇒ 红**；旧产物分类不同 ⇒ 提示。
  */
-export function decide({ all, expected, patch = { expected: null, markers: [] }, pageCipher = { expected: null }, smCrypto = { expected: null } }) {
+/**
+ * 纯函数：路径归一（去掉末尾分隔符、分隔符统一成 `/`）。
+ *
+ * ⚠️ 大小写**默认不动**：Unix 上 `/opt/ssl` 与 `/opt/SSL` 是**两个目录**，一律小写会把"链了另一个目录"
+ * 读成绿（假绿正是本仓最防的形态）。Windows 的路径不区分大小写 ⇒ 那一侧由调用处显式传
+ * `{ caseInsensitive: true }`（`decide` 的 `opensslDir.caseInsensitive`，`main()` 用 `process.platform === "win32"` 填）。
+ */
+export function normalizeDir(p, { caseInsensitive = false } = {}) {
+  const s = String(p ?? "")
+    .trim()
+    .replace(/[\\/]+$/, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/");
+  return caseInsensitive ? s.toLowerCase() : s;
+}
+
+/**
+ * 纯函数：**这份产物到底链的是哪个 OpenSSL 目录** —— 与声明的前缀一致吗？
+ *
+ * ★ 2026-09-22（Windows 侧彩排后点名要的，理由是**实测**）：`OPENSSL_LIB_DIR` / `OPENSSL_INCLUDE_DIR`
+ *   **优先于** `OPENSSL_DIR`（`openssl-sys` 的取值顺序）。他们那台机器**用户级环境变量里本来就写着**
+ *   另一个动态前缀 ⇒ 只钉 `OPENSSL_DIR` 时：`--require-static` **绿**、`backend=openssl` 也**绿**，
+ *   而产物实际链的是**厂商那份动态 OpenSSL** —— 「看起来是国密、其实链了别的库」的又一个入口，
+ *   而且是**环境变量**引起的，不看代码发现不了。
+ * ⇒ 加这一格：把"到底链了哪个目录"变成产物级断言。
+ * 匹配规则：相等，或 actual 是 expected 的**子目录**（`/usr` ↔ `/usr/lib/x86_64-linux-gnu` 这种同族关系）。
+ */
+export function opensslDirMatches(expected, actual, { caseInsensitive = false } = {}) {
+  const e = normalizeDir(expected, { caseInsensitive });
+  const a = normalizeDir(actual, { caseInsensitive });
+  if (!e || !a) return null; // 未实查
+  return a === e || a.startsWith(`${e}/`);
+}
+
+export function decide({ all, expected, patch = { expected: null, markers: [] }, pageCipher = { expected: null }, smCrypto = { expected: null }, opensslDir = { expected: null, actual: "", caseInsensitive: false } }) {
   const problems = [];
   const notices = [];
   // ★ 第三格：补丁在不在（独立于后端那一格 —— 后端对了、补丁没打，仍然没有国密算法）
@@ -383,6 +417,25 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
       notices.push(`应用层国密与声明一致：sm_crypto=${newestMarker.smCrypto}`);
     }
   }
+  // ★ 产物实际链的 OpenSSL 目录（2026-09-22，见 `opensslDirMatches` 的注释）
+  if (opensslDir.expected) {
+    const m = opensslDirMatches(opensslDir.expected, opensslDir.actual, { caseInsensitive: !!opensslDir.caseInsensitive });
+    if (m === null) {
+      notices.push(
+        `声明了 SHUYONOTE_EXPECT_OPENSSL_DIR=${opensslDir.expected}，但产物里**没解析出 link-search 目录**` +
+          `（实际读到的：${JSON.stringify(opensslDir.actual || "")}）⇒ 这一格未实查`,
+      );
+    } else if (!m) {
+      problems.push(
+        `产物**实际链的 OpenSSL 目录**是 \`${opensslDir.actual}\`，而声明要求 \`${opensslDir.expected}\` —— ` +
+          `⚠️ 最常见成因：**\`OPENSSL_LIB_DIR\`/\`OPENSSL_INCLUDE_DIR\` 优先于 \`OPENSSL_DIR\`**（openssl-sys 的取值顺序），` +
+          `而它们可能来自**用户级环境变量**（Windows 那台就是这样）⇒ 三个变量要一起钉；` +
+          `否则「静态守卫绿 ＋ backend=openssl 绿」也拦不住"链了另一个 OpenSSL"`,
+      );
+    } else {
+      notices.push(`产物实际链的 OpenSSL 目录与声明一致：${opensslDir.actual}`);
+    }
+  }
   return { problems, notices };
 }
 
@@ -436,6 +489,7 @@ export function main() {
   const patchExpected = (process.env.SHUYONOTE_EXPECT_SM_PATCH || "").trim() || null;
   const pageCipherExpected = (process.env.SHUYONOTE_EXPECT_PAGE_CIPHER || "").trim() || null;
   const smCryptoExpected = (process.env.SHUYONOTE_EXPECT_SM_CRYPTO || "").trim() || null;
+  const opensslDirExpected = (process.env.SHUYONOTE_EXPECT_OPENSSL_DIR || "").trim() || null;
   const markers = collectPatchMarkers(dir);
   // 「当前将要编译的那份源码」的指纹 —— 用 AMD 的纯函数（唯一实现），拿不到就带上原因（判"未实查"，不判红）
   let current = null;
@@ -451,6 +505,12 @@ export function main() {
     patch: { expected: patchExpected, markers, current, currentError },
     pageCipher: { expected: pageCipherExpected },
     smCrypto: { expected: smCryptoExpected },
+    opensslDir: {
+      expected: opensslDirExpected,
+      actual: all[0]?.searchDir ?? "",
+      // Windows 路径不区分大小写；Unix 上大小写不同就是**另一个目录**（见 normalizeDir 的注释）
+      caseInsensitive: process.platform === "win32",
+    },
   });
   for (const n of notices) console.error(`! ${n}`);
   if (patchExpected === "applied" && !problems.length) {

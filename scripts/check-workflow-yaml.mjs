@@ -19,8 +19,9 @@
 //   为什么放在这个门禁里：它同样是"配置少一行、构建照样绿、用户端才暴露"的形态 ——
 //   把 `--features sm-library` 删掉，产物标记**仍会**写 `page_cipher=sm4`（页加密是补丁的编译期行为），
 //   于是包看起来是国密、库级页 MAC/KDF 却是 SHA512。没有任何编译期信号会告诉你。
-//   ⇒ 这里只认**四件套文本在场**（`--features sm-library` / `sm-library-build.mjs … --prepare` /
-//   `SHUYONOTE_EXPECT_SM_PATCH=applied` / `SHUYONOTE_EXPECT_PAGE_CIPHER=sm4`，外加 `OPENSSL_DIR`），
+//   ⇒ 这里只认**五件文本在场**（`--features sm-library` / `sm-library-build.mjs … --prepare` /
+//   `SHUYONOTE_EXPECT_SM_PATCH=applied` / `SHUYONOTE_EXPECT_PAGE_CIPHER=sm4` /
+//   `SHUYONOTE_EXPECT_SM_CRYPTO=on`，外加 `SHUYONOTE_EXPECT_OPENSSL_DIR` 与 `OPENSSL_DIR=` 本身），
 //   判据在 `scripts/check-workflow-yaml.test.mjs`（含变异证明）。
 //   ⚠️ 反过来也要知道它的边界：**文本在场 ≠ 那条命令真的跑对了** —— 那件事只有真流水线能证。
 //
@@ -43,7 +44,7 @@ const MAPPING = /^([A-Za-z0-9_.-]+):(\s+)(.*)$/;
 const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
 
 /**
- * 纯函数：`release.yml` 里「单一口味＝国密」的四件套必须都在场（外加一个 OPENSSL_DIR）。
+ * 纯函数：`release.yml` 里「单一口味＝国密」的必备文本必须都在场（构建四件＋产物断言两件＋OpenSSL 前缀本身）。
  *
  * 返回 problems（空数组＝通过）。**只认文本**：这是"别被人顺手删掉"的护栏，不是"命令跑对了"的证明。
  */
@@ -63,7 +64,10 @@ export function gmPipelineRequirements(text, { file = "release.yml" } = {}) {
     [/SHUYONOTE_EXPECT_SM_PATCH=(applied|"?applied"?)/, "没有断言 `SHUYONOTE_EXPECT_SM_PATCH=applied`"],
     [/SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/, "没有断言 `SHUYONOTE_EXPECT_PAGE_CIPHER=sm4`（单一口味＝发出去的包必须是 SM4 页）"],
     [/SHUYONOTE_EXPECT_SM_CRYPTO=on/, "没有断言 `SHUYONOTE_EXPECT_SM_CRYPTO=on`（应用层国密：off ⇒ 包退回 v1 写路径）"],
-    [/OPENSSL_DIR/, "没有 `OPENSSL_DIR`（`build.rs` 在 `sm-library` 上是 fail-fast，不给必红；但也别靠「它自己会发现」）"],
+    [/SHUYONOTE_EXPECT_OPENSSL_DIR=/, "没有断言 `SHUYONOTE_EXPECT_OPENSSL_DIR`（产物实际链的 OpenSSL 目录；只给 OPENSSL_DIR 挡不住 OPENSSL_LIB_DIR 覆盖）"],
+    // ⚠️ 这里**必须**用 lookbehind 排除 `SHUYONOTE_EXPECT_OPENSSL_DIR=`：否则上一条断言会替这一条背书
+    //   （2026-09-22 变异当场抓到：把 `echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV` 删掉，判据照样绿）。
+    [/(?<![A-Z_])OPENSSL_DIR=/, "没有 `OPENSSL_DIR=`（`build.rs` 在 `sm-library` 上是 fail-fast，不给必红；但也别靠「它自己会发现」）"],
   ];
   for (const [re, why] of need) if (!re.test(effective)) problems.push(`${file}：${why}`);
   return problems;
@@ -173,9 +177,9 @@ for (const f of files) {
 }
 
 if (gmBad.length) {
-  console.error("发版工作流里**单一口味＝国密**的四件套不全（配置少一行、构建照样绿、用户端才暴露）：");
+  console.error("发版工作流里**单一口味＝国密**的必备项不全（配置少一行、构建照样绿、用户端才暴露）：");
   for (const p of gmBad) console.error(`  - ${p}`);
-  console.error("  决定与理由见 docs/RELEASING.md「库级国密：单一口味」；这四件的分工写在 `.github/workflows/release.yml` 那两步的注释里。");
+  console.error("  决定与理由见 docs/RELEASING.md「库级国密：单一口味」；这几件的分工写在 `.github/workflows/release.yml` 那两步的注释里。");
   process.exit(1);
 }
 
