@@ -316,6 +316,7 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
       CREATE INDEX IF NOT EXISTS idx_page_versions ON page_versions(page_id, created_at DESC);
       -- 阶段 1 · 冲突留痕（本地表，不同步/不进备份导出）：远端应用时报出的"同一块被两端改过"。
+      -- ⚠️ 只是**本机证据**，不能解释跨机器差异：别的设备上可能没有这一行，服务端也没有这张表。
       CREATE TABLE IF NOT EXISTS page_conflicts (
         id TEXT PRIMARY KEY,
         page_id TEXT NOT NULL,

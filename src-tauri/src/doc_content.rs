@@ -98,6 +98,8 @@ pub fn write_text(c: &Connection, page_id: &str, text: &str) -> Result<(), Strin
 /// （相同 ⇒ 一次写库都没有）。返回**是否修了**。
 ///
 /// ⚠️ 比较放在**这一层**而不是调用方（前端编辑器插件）：那类界面文件读这一列会把收口门禁顶红。
+/// ⚠️ **正文文本与 FTS 索引必须一起动**（macOS 2026-09-22）：只改列不改索引 ⇒ 那一页在搜索结果里
+/// 仍是旧正文 —— 正是这次修复要消灭的东西，而且更隐蔽（列看着对、搜索不对）。
 pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) -> Result<bool, String> {
     let Some(cur) = read(c, page_id)? else {
         return Ok(false);
@@ -106,6 +108,11 @@ pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) 
         return Ok(false);
     }
     write_text(c, page_id, derived)?;
+    derive_fts(c, page_id, &cur.title, derived)?;
+    // ★ AMD 2026-09-22：自动修复**不是用户操作** ⇒ 不许完全静默（"我的库什么时候被改过"要查得到）。
+    //   但也不许做成第二个冲突 UI：**不写 `page_conflicts`**（那是"要人裁决"的表，塞进去会让
+    //   "未决数量"失去意义），只留一行日志（与 `[sync]` 那几条同一形态）。
+    eprintln!("[doc-content] 正文修复：page={page_id}（打开页面时按编辑器语义重算，索引同步刷新）");
     Ok(true)
 }
 
@@ -361,6 +368,10 @@ impl BlockMergeOutcome {
 /// | `rev` 相等、内容不同 | `Conflict(SameRevDifferentContent)` |
 /// | 任一侧缺 `rev` | `Conflict(MissingRev)` |
 /// | 只有一侧有这一块 | `OnlyLocal` / `OnlyRemote`（本片不做块级删除） |
+///
+/// ⚠️ `Identical` 那一行**也要带 rev**，且取两侧**较大**的那个：判据
+/// `identical_content_with_divergent_revs_converges_to_max` 钉的就是这条（取较小的那个会让本地基线
+/// 落后于远端已见过的编号 ⇒ 本地随后的编辑静默输给远端更旧的编辑）。
 pub fn merge_blocks(
     local: &[BlockSnapshot],
     remote: &[BlockSnapshot],
@@ -396,7 +407,14 @@ pub fn merge_blocks(
         let (choice, json, rev) = match (l, r) {
             // 两侧都有：先看内容是不是**逐字节相同**（含"老客户端剥了 rev 但内容没变"那条）
             (Some(l), Some(r)) if l.json == r.json => {
-                (BlockChoice::Identical, l.json.clone(), l.rev.or(r.rev))
+                // ★ rev 取**两侧较大的那个**（不是"本地优先"）：内容逐字相同 ≠ 两边一样新。
+                //   老写法 `l.rev.or(r.rev)` 会把本地那个更旧的 rev 留下 ⇒ 本地下一次编辑从这个更低的
+                //   基线加一 ⇒ 编号**追不上**远端已经有的那笔编辑 ⇒ 远端那笔更新的编辑会在随后一次合并里
+                //   **静默赢过**本地这笔（丢更新）。取 max：本地基线跟着抬上去 ⇒ 真并发时落进
+                //   "同 rev 不同内容" ⇒ 提示，而不是静默。
+                //   ⚠️ 不为此把行标脏：内容逐字相同 ⇒ 没有可推的信息（rev 不参与同步，见 §6）；
+                //   标脏反而凭空多出一笔"本地改动"，把 `dirty`-优先本地那条推开。
+                (BlockChoice::Identical, l.json.clone(), l.rev.max(r.rev))
             }
             (Some(l), Some(r)) => match (l.rev, r.rev) {
                 (Some(lr), Some(rr)) if rr > lr => (BlockChoice::Remote, r.json.clone(), Some(rr)),
@@ -471,7 +489,8 @@ pub fn merge_page_and_blocks(
 // =====================================================================================
 
 /// 解析成文档对象（要有 `root` 且是对象）；否则 `None`（适配器据此回落，不合并）。
-fn parse_doc(doc_json: &str) -> Option<serde_json::Value> {    let parsed: serde_json::Value = serde_json::from_str(doc_json).ok()?;
+fn parse_doc(doc_json: &str) -> Option<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_str(doc_json).ok()?;
     if !parsed.is_object() {
         return None;
     }
@@ -527,6 +546,7 @@ pub fn apply_block_snapshots(doc_json: &str, blocks: &[MergedBlock]) -> Option<S
 ///
 /// **别再用 `Option`**：调用方要区分"没什么可合"（老内容 / 脏 JSON）与"**有冲突要留痕**"
 /// —— 后者必须落表（裁定 (iii)：不静默选边），否则就是"静默"。
+/// **以前用 `Option` / `undefined` 一个值表示两件事 —— 那正是『静默』的来源**（AMD 要求把这句话写在这里）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteMerge {
     /// 不合并（老内容 / 脏 JSON）⇒ 用远端原样（与接线前**逐字相同**）
@@ -621,6 +641,12 @@ fn conflict_choice_str(choice: ConflictChoice) -> &'static str {
 }
 
 /// 把这次合并报出的冲突**落表**（同一页同一块已有未决记录 ⇒ 先删旧的那条，避免堆积）。
+///
+/// ⚠️ **这张表是"本机证据"，不能用来解释跨机器的差异**（AMD 2026-09-22 要求写进注释）：它记的是
+/// "这一轮远端应用时**本机**看到的两版" —— 别的设备上可能根本没有这一行，服务端也没有这张表。
+/// ⚠️ **"留痕 ≠ 已裁决"**：`resolved_at` 为空的那些行是**未决**，调用方/界面**不许**把它读成"已处理"。
+/// 今天"只有 `resolved_at` 被写上才会从'未决'里消失"这条由判据
+/// `only_a_real_resolution_changes_the_unresolved_count` 守着。
 pub fn record_page_conflicts(
     c: &Connection,
     page_id: &str,
@@ -746,32 +772,46 @@ pub fn stamp_block_revs(c: &Connection, page_id: &str, next_json: &str) -> Resul
 /// ⚠️ 为什么把这几步收在一层里（而不是让 `sync.rs` 自己拼）：`sync.rs` 是**受收口门禁约束**的文件
 /// （那两个字段的计数只许减不许增），把"读远端那一版 / 写回合并产物"留在那一层之外做，
 /// `check-doc-content-access` 会当场红。
+///
+/// ★ **返回值就是"这次到底发生了什么"**（AMD 2026-09-22 的要求："留痕 ≠ 已裁决" ⇒ 调用方必须能看见
+/// "有未裁决冲突"这件事，**哪怕只是个计数**）：`sync.rs` 拿 `Conflicted(..)` 的条数去推一个页面级计数，
+/// 与页级 dirty 提示分开报（两者含义不同，别合成一个值 —— 那正是"静默"的另一种长相）。
+///
+/// ⚠️ **正文那一列的已知边界**（如实写）：`Merged` 那一支把**合并产物**写进内容列，而正文列仍是
+/// **远端那一份**（合并进来的块，其正文要等下一次"打开页面"由编辑器语义补算 —— `refresh_page_text_if_stale`）。
+/// 窗口期的两件事：① 那一页 **FTS 搜不到刚合并进来的字**；② 直到页面被打开（不是"直到下一次保存"）。
+/// 为什么不在这一层现算：派生正文要**编辑器语义**（节点表），在同步路径里现算等于在这里长出第二份派生实现
+/// —— 那正是 §4 规则 1 禁止的。
 pub fn apply_remote_page(
     c: &Connection,
     page: &crate::models::PageDetail,
     sync_seq: i64,
-) -> Result<(), String> {
+) -> Result<RemoteMerge, String> {
     let local = read(c, &page.id)?;
     let Some(local) = local else {
-        return upsert_remote(c, page, sync_seq);
+        upsert_remote(c, page, sync_seq)?;
+        derive_fts(c, &page.id, &page.title, &page.content_text)?;
+        return Ok(RemoteMerge::NotApplicable);
     };
 
-    match merge_remote_content(&local.json, &page.content_json) {
+    let outcome = merge_remote_content(&local.json, &page.content_json);
+    match &outcome {
         RemoteMerge::Merged(json) => {
             let mut merged_page = page.clone();
-            merged_page.content_json = json;
+            merged_page.content_json = json.clone();
             upsert_remote(c, &merged_page, sync_seq)?;
         }
         RemoteMerge::Conflicted(conflicts) => {
             // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
-            record_page_conflicts(c, &page.id, &conflicts)?;
+            record_page_conflicts(c, &page.id, conflicts)?;
             upsert_remote(c, page, sync_seq)?;
         }
         RemoteMerge::NotApplicable => upsert_remote(c, page, sync_seq)?,
     }
     // 派生也只经那一层（今天远端应用只刷 FTS —— 与接线前逐字相同；合并成功时那条正文可能滞后一拍，
-    // 见 `merge_remote_content` 的"已知边界"）。
-    derive_fts(c, &page.id, &page.title, &page.content_text)
+    // 见本函数的"已知边界"与 `merge_remote_content`）。
+    derive_fts(c, &page.id, &page.title, &page.content_text)?;
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -1361,5 +1401,270 @@ mod tests {
         assert_eq!(json, "{\"root\":{\"children\":[]}}", "正文修复不许动内容");
         assert_eq!(dirty, 0, "正文修复不是本地编辑（标脏会被推上去）");
         assert_eq!(updated, 7, "正文修复不许改 updated_at（那是内容的时间戳）");
+    }
+
+    // ===== 2026-09-22 回信（macOS / AMD 抓到的两条）=======================================
+
+    /// ★ **同内容、不同 rev ⇒ 收敛到两者较大的那个**（macOS 给的名字，逐字）。
+    ///
+    /// 老写法 `l.rev.or(r.rev)` 是"本地优先"：本地那个更旧的 rev 被留下 ⇒ 本地下一次编辑从更低的
+    /// 基线加一 ⇒ 编号追不上远端已经见过的编号 ⇒ **远端更旧的编辑会在随后一次合并里静默赢过本地的新编辑**。
+    #[test]
+    fn identical_content_with_divergent_revs_converges_to_max() {
+        for (l, r, want) in [(Some(2), Some(4), Some(4)), (Some(4), Some(2), Some(4)), (Some(7), None, Some(7)), (None, None, None)] {
+            let out = merge_blocks(&[blk("b1", l, "逐字一样")], &[blk("b1", r, "逐字一样")], MergeDecision::TakeRemote);
+            assert_eq!(pick(&out, "b1").choice, BlockChoice::Identical, "l={l:?} r={r:?}");
+            assert_eq!(pick(&out, "b1").rev, want, "l={l:?} r={r:?} 必须取较大的 rev（不许本地优先）");
+            assert!(!out.has_conflicts(), "内容逐字相同不该提示：{:?}", out.conflicts);
+        }
+    }
+
+    /// ★ 承重（macOS 给的 trace，端到端）：那条 max 不是"顺手取个大值"，它决定下一次合并**是提示还是静默**。
+    ///
+    /// A 的 b1 已到 4，B 只有 2（内容一样）；B 收到远端后必须把 4 记下来。
+    /// 之后 A、B 各改这一块 ⇒ 两边都盖 5 ⇒ 下一次合并落进"同 rev 不同内容"⇒ **提示**。
+    /// 若 B 停在 2（老写法），B 改出来的是 3 < A 的 5 ⇒ A 静默赢、B 的编辑没了。
+    #[test]
+    fn max_rev_keeps_the_next_local_edit_visible_instead_of_losing_it() {
+        let b_local = jdoc(vec![jblk(Some("b1"), Some(2), "一样")]);
+        let a_remote = jdoc(vec![jblk(Some("b1"), Some(4), "一样")]);
+
+        let RemoteMerge::Merged(merged) = merge_remote_content(&b_local, &a_remote) else {
+            panic!("同内容应当算 identical（合得上）");
+        };
+        assert_eq!(revs_of(&merged), vec![Some(4)], "B 这边必须把 4 记下来（不是 2）");
+
+        // 之后各自改这一块：A 从 4 加一到 5；B 从**合并产物的 4** 加一到 5（两份实现是同一个纯函数）。
+        let a_next = crate::block_rev::assign_block_revs(&a_remote, &jdoc(vec![jblk(Some("b1"), None, "A 改的")]));
+        let b_next = crate::block_rev::assign_block_revs(&merged, &jdoc(vec![jblk(Some("b1"), None, "B 改的")]));
+        assert_eq!(revs_of(&a_next), vec![Some(5)]);
+        assert_eq!(revs_of(&b_next), vec![Some(5)]);
+
+        // ⇒ 下一次合并：同 rev、不同内容 ⇒ **冲突（看得见）**，不是"远端静默赢"。
+        match merge_remote_content(&b_next, &a_next) {
+            RemoteMerge::Conflicted(c) => assert_eq!(c[0].reason, ConflictReason::SameRevDifferentContent),
+            other => panic!("应当提示冲突，实际 {other:?}"),
+        }
+    }
+
+    /// ★ **`rev == 0` 的语义**（macOS §二 要求把三条钉在一起）：0 = **"老到不能再老"**，
+    /// 不是"判不了"，也不是"新版本"。⇒ 明确的远端 rev 3 赢它，且**不弹提示**（老块没被谁改过）。
+    #[test]
+    fn legacy_zero_rev_block_loses_to_explicit_remote_rev() {
+        let out = merge_blocks(
+            &[blk("b1", Some(0), "老内容")],
+            &[blk("b1", Some(3), "远端改过的")],
+            MergeDecision::TakeRemote,
+        );
+        assert_eq!(pick(&out, "b1").choice, BlockChoice::Remote);
+        assert_eq!(pick(&out, "b1").json, "远端改过的");
+        assert_eq!(pick(&out, "b1").rev, Some(3), "合并后这一块的 rev 变成远端那个（≥1）");
+        assert!(!out.has_conflicts(), "0 是『最旧』不是『判不了』⇒ 不许提示");
+
+        // ③ 0 绝不是"新版本"：改过的块一定拿到 **≥1**（`maxSeen + 1`），本层不会写出新的 0。
+        let stamped = crate::block_rev::assign_block_revs(
+            &jdoc(vec![jblk(Some("b1"), Some(0), "老")]),
+            &jdoc(vec![jblk(Some("b1"), None, "改了")]),
+        );
+        assert_eq!(revs_of(&stamped), vec![Some(1)]);
+    }
+
+    /// ★ **嵌套层的 `blockRev`**（macOS §四 (d)）：本层的口径是"`blockRev` 是管道、哪一层都不是内容"
+    /// ⇒ 比较时任意层级都剥掉；**物化产物里嵌层的同名字段也会消失**（今天的已知边界，钉在这里，
+    /// 免得将来有人以为它是"内容"而被静默改掉）。内容本身一个字节都不许动。
+    #[test]
+    fn materialization_drops_nested_block_rev_and_keeps_content() {
+        let nested = serde_json::json!({
+            "type": "quote", "blockId": "b1",
+            "children": [{ "type": "paragraph", "blockId": "nested-1", "blockRev": 9,
+                           "children": [{ "type": "text", "text": "引用里的字" }] }],
+        });
+        let merged = apply_block_snapshots(
+            &jdoc(vec![nested.clone()]),
+            &[MergedBlock {
+                block_id: "b1".into(),
+                choice: BlockChoice::Identical,
+                json: crate::block_rev::canonical_content(&nested),
+                rev: Some(4),
+            }],
+        )
+        .expect("应当能装回去");
+
+        let doc: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(doc.pointer("/root/children/0/blockRev").and_then(|v| v.as_i64()), Some(4));
+        assert!(doc.pointer("/root/children/0/children/0/blockRev").is_none(), "嵌层同名键会被剥掉（今天的边界）");
+        assert_eq!(
+            doc.pointer("/root/children/0/children/0/blockId").and_then(|v| v.as_str()),
+            Some("nested-1"),
+            "嵌层的**内容**（身份、文字）一个都不许动"
+        );
+        assert_eq!(
+            doc.pointer("/root/children/0/children/0/children/0/text").and_then(|v| v.as_str()),
+            Some("引用里的字")
+        );
+    }
+
+    // ===== 2026-09-22：apply 的返回值 / 正文与 FTS / 已知边界 ==============================
+
+    fn remote_page(id: &str, json: &str, text: &str) -> crate::models::PageDetail {
+        crate::models::PageDetail {
+            id: id.into(),
+            workspace_id: "s1".into(),
+            parent_id: None,
+            title: "页".into(),
+            content_json: json.into(),
+            content_text: text.into(),
+            cover: String::new(),
+            icon: String::new(),
+            cover_height: 300,
+            cover_pos: 50.0,
+            kind: "page".into(),
+            sort_order: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    /// ★ **"关掉提示" ≠ "已裁决"**（AMD 2026-09-22，`conflict-banner.reply-1` §二②）：今天的提示条**没有关闭动作**
+    /// （没有未决记录时它自己消失）⇒ 等价的可测形态是：**只有 `resolved_at` 被写上，才会让这一行从"未决"里消失**。
+    /// 别的一切都不许动这个计数：再落一次同样的冲突（重连 / 重放那一格）、页面被写、重复读 —— 都不许涨也不许掉。
+    #[test]
+    fn only_a_real_resolution_changes_the_unresolved_count() {
+        let (c, dir) = conflict_conn("unresolved-count");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]));
+        let conflict = BlockConflict {
+            block_id: "b1".into(),
+            reason: ConflictReason::SameRevDifferentContent,
+            local_json: Some(jblk(Some("b1"), None, "我改的").to_string()),
+            remote_json: Some(jblk(Some("b1"), None, "他改的").to_string()),
+        };
+
+        let unresolved = |c: &Connection| unresolved_page_conflicts(c, "p1").unwrap().len();
+        // ① 第一次应用 ⇒ 1 条未决
+        apply_remote_page(&c, &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"), 9)
+            .unwrap();
+        assert_eq!(unresolved(&c), 1);
+
+        // ② 重连 / 重放同一格 ⇒ **不增长**（"同一 (页, 块) 覆盖不堆积"）
+        record_page_conflicts(&c, "p1", &[conflict.clone()]).unwrap();
+        record_page_conflicts(&c, "p1", &[conflict.clone()]).unwrap();
+        assert_eq!(unresolved(&c), 1, "重放同一冲突不许把未决记录堆起来");
+
+        // ③ 这一页被写（保存 / 合并 / 正文修复都不是"裁决"）⇒ 计数不动
+        let cur = read(&c, "p1").unwrap().unwrap();
+        write(&c, "p1", &cur, crate::db::now_ms()).unwrap();
+        assert_eq!(unresolved(&c), 1, "写页面不是裁决");
+
+        // ④ 重复读 ⇒ 计数不动（"未决计数永远查得到"）
+        assert_eq!(unresolved(&c), 1);
+        assert_eq!(unresolved(&c), 1);
+
+        // ⑤ **只有**真裁决会变（0）—— 这一条就是"关闭动作不许写 resolved_at"的等价形态
+        let id = unresolved_page_conflicts(&c, "p1").unwrap()[0].id.clone();
+        resolve_page_conflict(&c, &id, ConflictChoice::Remote).unwrap();
+        assert_eq!(unresolved(&c), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **"留痕 ≠ 已裁决"**（AMD 要求）：远端应用这一步必须**把"有未裁决冲突"交回来**
+    /// —— 调用方（同步那一层）不许只能靠"再去查一次表"才知道。
+    #[test]
+    fn apply_remote_page_reports_unresolved_conflicts() {
+        let (c, dir) = conflict_conn("apply-report");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]));
+
+        let conflicted = apply_remote_page(
+            &c,
+            &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
+            9,
+        )
+        .unwrap();
+        match conflicted {
+            RemoteMerge::Conflicted(cf) => assert_eq!(cf.len(), 1),
+            other => panic!("同 rev 不同内容 ⇒ 必须回报冲突，实际 {other:?}"),
+        }
+        assert_eq!(unresolved_page_conflicts(&c, "p1").unwrap().len(), 1, "而且必须留痕");
+
+        // 另一个页面：两端各改不同块 ⇒ 回报 `Merged`（没有冲突要裁决）
+        insert_conflict_page(
+            &c,
+            "p2",
+            &jdoc(vec![jblk(Some("b1"), Some(2), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]),
+        );
+        let merged = apply_remote_page(
+            &c,
+            &remote_page(
+                "p2",
+                &jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "B 改的")]),
+                "远端正文",
+            ),
+            9,
+        )
+        .unwrap();
+        assert!(matches!(merged, RemoteMerge::Merged(_)));
+        assert!(unresolved_page_conflicts(&c, "p2").unwrap().is_empty(), "合得上就不该留一条要裁决的痕");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **已知边界钉在这里**（不是"以后再说"）：合并成功那一支写的是**合并产物**，
+    /// 而正文列仍是**远端那一份**（派生正文要编辑器语义，不能在这一层现算）。
+    /// 窗口 = **直到那一页被打开**（`refresh_page_text_if_stale`），期间 FTS 搜不到刚合并进来的字。
+    #[test]
+    fn merged_write_leaves_the_text_column_on_the_remote_side() {
+        let (c, dir) = conflict_conn("merged-text");
+        insert_conflict_page(
+            &c,
+            "p1",
+            &jdoc(vec![jblk(Some("b1"), Some(2), "本地改的"), jblk(Some("b2"), Some(1), "b2 原始")]),
+        );
+        apply_remote_page(
+            &c,
+            &remote_page(
+                "p1",
+                &jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "远端改的")]),
+                "远端那一份正文",
+            ),
+            9,
+        )
+        .unwrap();
+
+        let json: String = c.query_row("SELECT content_json FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+        let text: String = c.query_row("SELECT content_text FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(bodies_of(&json), vec!["本地改的", "远端改的"], "合并产物：两边的编辑都在");
+        assert_eq!(text, "远端那一份正文", "正文列这一刻仍是远端那一份（已知边界，如实钉住）");
+        assert_ne!(text, "本地改的远端改的", "它不是合并产物的派生文本 —— 别把它当成一致");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **正文文本与 FTS 索引必须一起动**（macOS 2026-09-22 实测抓到的缺口；判据名用它给的
+    /// `refreshing_the_text_also_refreshes_the_search_index`）：只改列不改索引 ⇒ 桌面搜索**按查词形态分流**
+    /// （单词 ≥3 字走 `page_fts`、多词/<3 字走 `content_text`）⇒ 症状是"**有时候搜得到、有时候搜不到**"，
+    /// 比全搜不到更难报上来。同时按 AMD 的判据形状：修完之后 `content_text` 必须与**层里读出来的**那一份逐字节一致。
+    #[test]
+    fn refreshing_the_text_also_refreshes_the_search_index() {
+        let (c, dir) = conflict_conn("text-repair");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "正文")]));
+        derive_fts(&c, "p1", "页", "旧的正文").unwrap();
+        let fts_hits = |c: &Connection, q: &str| -> i64 {
+            c.query_row(
+                "SELECT count(*) FROM page_fts WHERE page_fts MATCH ?1",
+                rusqlite::params![format!("\"{q}\"")],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(fts_hits(&c, "旧的正文"), 1);
+        assert_eq!(fts_hits(&c, "刚合并进来的字"), 0, "先证伪：修复之前那条路（单词 ≥3 字）确实搜不到");
+
+        assert!(refresh_page_text_if_stale(&c, "p1", "刚合并进来的字").unwrap(), "不同 ⇒ 要修");
+
+        // ① 层里的读出口与算出来的那一份**逐字节一致**（AMD 的判据形状）
+        assert_eq!(read(&c, "p1").unwrap().unwrap().text, "刚合并进来的字");
+        // ② 索引跟着动 ⇒ "单词 ≥3 字"那条路也搜得到（macOS 的判据形状）
+        assert_eq!(fts_hits(&c, "刚合并进来的字"), 1);
+        assert_eq!(fts_hits(&c, "旧的正文"), 0);
+        // ③ 相同 ⇒ 一次写库都不做（绝大多数页面走这条）
+        assert!(!refresh_page_text_if_stale(&c, "p1", "刚合并进来的字").unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

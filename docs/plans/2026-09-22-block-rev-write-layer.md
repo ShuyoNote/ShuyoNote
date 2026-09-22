@@ -214,3 +214,86 @@ TS `writeContentText` 的同款一条 ↔ `src/lib/pageTextRepair.test.ts` **4 �
 
 ⚠️ **仍然存在的窗口（如实）**：**从没被打开过**的那一页，正文不会被修 —— 那要等"标记待重建 + 后台补算"
 （需要新表/新列，本段没做）；Web 侧搜索是**按内容 JSON 现算**的（不读 `content_text`），所以那边没有这个窗口。
+**用户可读的措辞**（macOS 要求别只留在方案里）：**"合并进来的内容，要打开过那一页才能被搜索到。"**
+最小关闭形态（macOS 建议，未做）：`pages` 上加一列本地标志 `text_stale`（不同步、不进导出），
+合并/裁决落库那一步置 1、打开修完清 0 —— 好处是**可观测**（能报"还有几页正文待重建"），且仍然不引第二份派生。
+
+## 10. 回信那一轮（第九段：macOS / AMD 抓到的四条 ＋ 两个回答）
+
+四位评审的原文在信箱里（`2026-09-22-*.reply-*.md`）。这一段只记**落进代码的那几条**与**不改的那几条**。
+
+### 10.1 ★ 真 bug：`identical` 那一支的 rev 必须取 **max**（macOS 抓到）
+
+老写法 `l.rev.or(r.rev)`（TS `l.rev ?? r.rev`）是"本地优先"。**内容逐字节相同 ≠ 两边一样新**：
+留下更旧的那个 rev ⇒ 本地下一次编辑从这个更低的基线加一 ⇒ 编号追不上远端**已经见过**的编号
+⇒ 远端那笔更旧的编辑会在随后一次合并里**静默赢过**本地的新编辑（丢更新）。
+
+macOS 给的 trace（现在就是判据）：A 的 `b1` 已到 `4`、B 只有 `2`（内容相同）；B 收到远端后必须把 `4` 记下来；
+之后 A、B 各改这块 ⇒ 两边都盖 `5` ⇒ 下一次合并落进"同 rev 不同内容"⇒ **提示**（看得见），而不是静默。
+
+判据：Rust `identical_content_with_divergent_revs_converges_to_max`
+＋ 承重那条 `max_rev_keeps_the_next_local_edit_visible_instead_of_losing_it`（端到端把"静默丢"跑成"提示"）
+↔ TS `docContent.test.ts` 同名一条。
+
+⚠️ **不为此把行标脏**（AMD 建议过）：内容逐字相同 ⇒ 没有可推的信息（rev 不参与同步，§6）；
+标脏会凭空多出一笔"本地改动"，把 `dirty`-优先本地那条推开 —— 副作用比收益大。抬升的 rev 只作为**本地后续编辑的基线**。
+
+### 10.2 `rev === 0` 的三条语义（macOS §二 要求钉在一起）
+
+| 语义 | 落点 |
+|---|---|
+| `0` = **"老到不能再老"**（比较时**小于**任何明确 rev） | `merge_blocks` 的 `(Some(lr), Some(rr)) if rr > lr` ⇒ 远端赢；不是"判不了" |
+| `0` **不是**"新版本" | `assign_block_revs`：改过的块一定拿 `maxSeen + 1 ≥ 1`，本层不写出新的 `0` |
+| 比较发生在**两侧各自读到的 `blockRev`** 上（同一把尺子），**服务端不参与**（服务端不读 rev，只搬 JSON） | 本文件的层边界 ＋ `docs/plans/2026-09-19-stage1-block-lww-readiness.md` §6 |
+
+判据：Rust `legacy_zero_rev_block_loses_to_explicit_remote_rev` ↔ TS 同名一条（内容取远端、rev 抬到 `3`、**不提示**）。
+
+### 10.3 正文文本与 **FTS 索引必须一起动**（macOS §三 的警告，`page-text-repair.reply-2` 里**实测抓到**）
+
+`refresh_page_text_if_stale` 原来只 `write_text`：**列对了、搜索结果还是旧的**。桌面的搜索是**按查词形态分流**的
+（单词 ≥3 字走 `page_fts`、多词/<3 字走 `content_text`）⇒ 症状是"**有时候搜得到、有时候搜不到**"，
+比全搜不到更难被当成 bug 报上来。⇒ 现在顺手 `derive_fts` 一次（派生仍只从这一层出，§4 规则 1）。
+
+判据：Rust `refreshing_the_text_also_refreshes_the_search_index`（macOS 给的名字）—— 真表、**先证伪**
+（修复前 `MATCH "刚合并进来的字"` = 0）、修完 ① 层里读出口与算出来的那一份逐字节一致（AMD 的形状）
+② `MATCH` 到新文本、`MATCH` 不到旧文本 ③ 相同 ⇒ 一次写库都不做。
+另加**边界判据** `merged_write_leaves_the_text_column_on_the_remote_side`：合并成功那一刻正文列**仍是远端那一份**
+（它不是合并产物的派生文本）—— 钉住，免得有人以为它是一致的。
+
+**"自动修复"的两条口径**（`page-text-repair.reply-1`，AMD）：
+① **不写 `page_conflicts`**（那是"要人裁决"的表，塞进去会让"未决数量"失去意义 —— 角标 UI 正靠它计数）；
+② 但**不许完全静默** ⇒ 修完留一行日志（Rust `eprintln!("[doc-content] 正文修复：page=…")`，
+与既有 `[sync]` 那几条同形态；Web 侧由编辑器插件 `console.info` 同一句话），**不做第二个冲突 UI**。
+
+### 10.4 嵌层的同名字段：**写进文档**（macOS §四 (d)）
+
+`canonical_content` **递归**剥 `blockRev`（哪一层都不是内容）⇒ 物化产物里**嵌层的同名键会消失**。
+今天选"写进文档 + 钉成判据"而不是"改成只剥顶层"：改成只剥顶层会让**一次纯管道差异**（嵌层 rev 的增删）
+被判成"内容变了"⇒ 那一块白涨一个 rev ⇒ 反过来又制造"本地旧内容赢过远端真编辑"的口子。
+代价如实写：嵌层同名键消失 ⇒ 若那一块将来**被提升为顶层块**，它的 rev 从 `0`/新盖章重新开始（丢的是 rev 记忆，不是内容）。
+判据：Rust `materialization_drops_nested_block_rev_and_keeps_content` ↔ TS 同名一条（嵌层的 `blockId`/文字一个字节不许动）。
+
+### 10.5 "留痕 ≠ 已裁决"：apply 的**返回值**必须说出来（AMD）
+
+- 层：`apply_remote_page` 返回 `RemoteMerge`（Rust）／`applyRemoteContent` 返回 `AppliedRemoteContent`（TS）——
+  调用方不必"再去查一次表"才知道这次有没有留下未裁决的冲突。
+- 同步报告：`SyncReport` / `WorkspaceSyncResult` 新增 `block_conflict_pages`（**页面数**，按页去重）。
+  ⚠️ 与既有的 `conflicts`（页级 dirty ⇒ **要用户选**保留本地/采用远端）**分开报**：合成一个值就是"静默"的另一种长相。
+- Web 侧同步报告**今天根本没有** conflicts 字段（历史遗留）⇒ 那一侧只在**层返回值**上暴露；界面靠 `pageConflictsOf` 直接读表。
+
+判据：Rust `sync::tests::apply_upsert_reports_unresolved_block_conflicts`（回报 1 ＋ 表里正好 1 行；内容相同时回报 0）
+＋ `doc_content::tests::apply_remote_page_reports_unresolved_conflicts` ↔ TS 两条 `applyRemoteContent` 用例（`{merged, unresolved}`）。
+
+### 10.6 角标的**负判据**（macOS §一）
+
+"打一次就完事"是错的：Lexical 结构一变就**重建 DOM**，类名跟着没。
+⇒ 把 Editor 里那段形状抽成 `installConflictBadges(editor, apply)`（**立刻先打一次 ＋ 每次 update 再打**），
+判据：`blockConflictBadge.test.ts` 最后一条（挂载先打 ⇒ 模拟 DOM 重建 ⇒ 触发 update ⇒ 类名回来 ⇒ 解绑后登记被摘掉）。
+
+### 10.7 这一轮**不做**的：部分合并（macOS §四 明确"现在不做"）
+
+理由（他们的，我照抄）：可解释（第三种状态"半页合并了"要 UI 解释）／可测（今天的判据面短）／失败面小。
+⇒ 保持**整页回落 ＋ 留痕 ＋ 可裁决**；`merge_remote_content` 里那条"有冲突就整页回落"的语义**一个字没改**。
+前置条件（将来单独立项时）：① 块级 rev 覆盖完整（18 类声明字段已就位）② **真机双设备验收通过**。
+代价如实记：整页回落那一支里，"非冲突块本该合并进来的收益"一并放弃（同页并发仍会丢更新），
+而 `page_conflicts` 只记了**冲突块**，被放弃的**非冲突本地块**今天没有痕迹。

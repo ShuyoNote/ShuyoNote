@@ -843,6 +843,9 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
 
     // 阶段 1 · **冲突留痕**（本地表，**不同步 / 不进备份导出**）：远端应用时报出的"同一块被两端改过"
     // 记在这里，供界面提示与裁决。见 `docs/plans/2026-09-22-block-rev-write-layer.md`。
+    // ⚠️ **这只是本机的证据，不能用来解释跨机器的差异**（AMD 2026-09-22 要求写清）：它记的是
+    // "这一轮远端应用时**本机**看到的两版" —— 别的设备上可能根本没有这张表的这一行，服务端也没有这张表。
+    // 想复现"为什么这台机器上是这个结果"，必须同时拿两边各自的库（与两边的 `sync_seq`）。
     // 同样**单语句挨个执行**（理由同上：哪条失败一眼看得见）。
     conn.execute(
         "CREATE TABLE IF NOT EXISTS page_conflicts (

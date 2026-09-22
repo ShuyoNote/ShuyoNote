@@ -308,6 +308,21 @@ export interface BlockMergeOutcome {
 }
 
 /**
+ * 两侧 rev 取**较大**那个（都缺 ⇒ `null`）。
+ *
+ * ⚠️ 这不是"顺手取个大值"：`identical`（内容逐字相同）那一支也用它。留下更**旧**的那个 rev
+ * 会让本地下一次编辑从更低的基线加一 ⇒ 编号追不上远端已有的编号 ⇒ 远端更旧的编辑静默赢。
+ * 判据：`identical_content_with_divergent_revs_converges_to_max`（Rust 侧同名）。
+ */
+function maxRev(a: number | null | undefined, b: number | null | undefined): number | null {
+  const av = a ?? null;
+  const bv = b ?? null;
+  if (av === null) return bv;
+  if (bv === null) return av;
+  return Math.max(av, bv);
+}
+
+/**
  * ★ **块级合并点**（纯函数）：两份块表 + 页级判定 ⇒ 逐块选边。
  *
  * 判定（与 §7 那张表逐行对应，**顺序有意义**）：
@@ -345,10 +360,14 @@ export function mergeBlocks(
     let rev: number | null;
 
     if (l && r && l.json === r.json) {
-      // 先判"内容逐字节相同"——含"老客户端剥了 rev 但内容没变"那条
+      // 先判"内容逐字节相同"——含"老客户端剥了 rev 但内容没变"那条。
+      // ★ rev 取**两侧较大的那个**（不是"本地优先"）：内容逐字相同 ≠ 两边一样新。
+      //   老写法 `l.rev ?? r.rev` 会把本地那个更旧的 rev 留下 ⇒ 本地下一次编辑从更低的基线加一 ⇒
+      //   编号追不上远端已经见过的编号 ⇒ 远端那笔更新的编辑会在随后一次合并里**静默赢过**本地这笔。
+      //   ⚠️ 不为此标脏：内容逐字相同 ⇒ 没有可推的信息（rev 不参与同步）；标脏会凭空多出一笔"本地改动"。
       choice = "identical";
       json = l.json;
-      rev = l.rev ?? r.rev ?? null;
+      rev = maxRev(l.rev, r.rev);
     } else if (l && r) {
       const lr = l.rev ?? null;
       const rr = r.rev ?? null;
@@ -492,6 +511,7 @@ export function applyBlockSnapshots(docJson: string, blocks: readonly MergedBloc
  *
  * **别再用 `undefined` 一个值表示两件事**：调用方要区分"没什么可合"（老内容 / 脏 JSON）与
  * "**有冲突要留痕**"—— 后者必须落表（裁定 (iii)：不静默选边），否则就是"静默"。
+ * **以前用一个 `undefined` 表示两件事 —— 那正是『静默』的来源**（AMD 要求把这句话写在这里）。
  */
 export type RemoteMerge =
   | { kind: "not-applicable" } // 不合并（老内容 / 脏 JSON）⇒ 用远端原样（与接线前逐字相同）
@@ -691,6 +711,19 @@ export function refreshPageTextIfStale(db: ContentSql, pageId: string, derived: 
 }
 
 /**
+ * 一次远端应用的**结果**（"留痕 ≠ 已裁决" ⇒ 调用方必须能看见"有未裁决冲突"，哪怕只是个计数）。
+ *
+ * ⚠️ `unresolved` 是**这一轮新落表的条数**，不是"这一页未裁决总数" —— 总数查 `pageConflictsOf`
+ *（上一轮留下的未裁决记录不会因为这一轮合得上而消失，那是两件事）。
+ */
+export interface AppliedRemoteContent {
+  /** 这次是不是走了"逐块合并"那一支（`false` = 用远端原样，与接线前逐字相同）。 */
+  merged: boolean;
+  /** 这次落表了几处未裁决的冲突（0 = 没有）。 */
+  unresolved: number;
+}
+
+/**
  * ★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
  *
  * 内部按顺序做（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
@@ -700,7 +733,7 @@ export function refreshPageTextIfStale(db: ContentSql, pageId: string, derived: 
  *      （页级 LWW，与接线前**逐字相同** —— 这一片只是把"静默"变成"有痕"，**不改覆盖语义**）；
  *      `not-applicable` ⇒ 用远端原样。
  *
- * 返回**是否发生了合并**（调用方可以拿去打日志/判据；不合并**不是错误**）。
+ * 返回值见 `AppliedRemoteContent`（不合并**不是错误**，是"没什么可合"）。
  *
  * ⚠️ 为什么把这几步收在一层里（而不是让 `web.ts` 自己拼）：`web.ts` 是**受收口门禁约束**的文件
  * （`content_json` 计数只许减不许增），把"读远端那一版 / 写回合并产物"留在那一层之外做，
@@ -711,7 +744,7 @@ export function applyRemoteContent(
   pageId: string,
   row: RemotePageRow,
   remoteSeq: number,
-): boolean {
+): AppliedRemoteContent {
   const local = readContent(db, pageId);
   const remoteJson = typeof row.content_json === "string" ? row.content_json : "";
   const outcome: RemoteMerge = local
@@ -720,12 +753,14 @@ export function applyRemoteContent(
 
   if (outcome.kind === "merged") {
     upsertRemoteContent(db, { ...row, content_json: outcome.json }, remoteSeq);
-    return true;
+    return { merged: true, unresolved: 0 };
   }
   if (outcome.kind === "conflicted") {
     // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
     recordPageConflicts(db, pageId, outcome.conflicts);
+    upsertRemoteContent(db, row, remoteSeq);
+    return { merged: false, unresolved: outcome.conflicts.length };
   }
   upsertRemoteContent(db, row, remoteSeq);
-  return false;
+  return { merged: false, unresolved: 0 };
 }

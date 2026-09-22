@@ -18,3 +18,20 @@ export function applyConflictBadges(blockIds: readonly string[], root: ParentNod
     el.classList.toggle("block-conflict", id.length > 0 && wanted.has(id));
   }
 }
+
+/**
+ * 把"打角标"挂到编辑器的**每一次 update 之后**，并**立刻先打一次**；返回解绑函数。
+ *
+ * 为什么必须这样（macOS 提的负判据）：Lexical 结构一变就会**重建 DOM**，带 `data-block-id` 的元素
+ * 被换成新节点 ⇒ 类名跟着没。所以"打一次就完事"是错的：**每次 update 之后都要重打**。
+ *
+ * 单测见 `blockConflictBadge.test.ts` 最后一条 —— 只测 `applyConflictBadges` 只能证明"函数是对的"，
+ * 证明不了"DOM 重建之后它被重新调用过"；这条判据是"重建之后必须回来"唯一可单测的形状。
+ */
+export function installConflictBadges(
+  editor: { registerUpdateListener(listener: () => void): () => void },
+  apply: () => void,
+): () => void {
+  apply();
+  return editor.registerUpdateListener(apply);
+}

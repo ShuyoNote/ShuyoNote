@@ -17,7 +17,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
 import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
-import { assignBlockRevs } from "./blockRev";
+import { assignBlockRevs, canonicalContent } from "./blockRev";
 
 beforeAll(() => {
   const wasm = join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm");
@@ -189,6 +189,8 @@ describe("docContent.mergeBlocks（★ 阶段 1：块级 LWW 纯函数）", () =
   //   两端各改不同块 ⇒ 都保留        ↔ blocks_edited_on_different_sides_are_both_kept
   //   远端 rev 更大 / 本地 rev 更大   ↔ newer_remote_rev_takes_remote / newer_local_rev_keeps_local
   //   内容逐字节相同（缺 rev）        ↔ identical_content_is_not_a_conflict_even_when_revs_are_missing
+  //   同内容不同 rev 取 max（★新）    ↔ identical_content_with_divergent_revs_converges_to_max
+  //   rev 0 = 最旧（★新）             ↔ legacy_zero_rev_block_loses_to_explicit_remote_rev
   //   rev 相等而内容不同              ↔ equal_rev_different_content_is_a_conflict
   //   缺 rev 且内容变了（反判据）     ↔ missing_rev_with_changed_content_must_be_a_conflict
   //   只在一侧的块                    ↔ block_only_on_one_side_is_kept
@@ -228,6 +230,31 @@ describe("docContent.mergeBlocks（★ 阶段 1：块级 LWW 纯函数）", () =
     // 反判据第二条（回复信 §三）：若也提示，提示会在每次同步冒出来 ⇒ 变噪声 ⇒ 用户学会忽略 ⇒ 等于静默。
     const out = mergeBlocks([blk("b1", 7, "一模一样")], [blk("b1", null, "一模一样")], "remote");
     expect(pick(out, "b1").choice).toBe("identical");
+    expect(out.conflicts).toEqual([]);
+  });
+
+  it("★ identical_content_with_divergent_revs_converges_to_max（macOS 2026-09-22 抓到的真 bug）", () => {
+    // 同内容 ≠ 一样新。老写法 `l.rev ?? r.rev` 是"本地优先"⇒ 本地留下更旧的 rev ⇒ 本地下一次编辑
+    // 从更低的基线加一 ⇒ 编号追不上远端已有的 ⇒ 远端更旧的编辑下一次**静默赢**（丢更新）。
+    const cases: Array<[number | null, number | null, number | null]> = [
+      [2, 4, 4],
+      [4, 2, 4],
+      [7, null, 7],
+      [null, null, null],
+    ];
+    for (const [l, r, want] of cases) {
+      const out = mergeBlocks([blk("b1", l, "逐字一样")], [blk("b1", r, "逐字一样")], "remote");
+      expect(pick(out, "b1").choice).toBe("identical");
+      expect(pick(out, "b1").rev).toBe(want);
+      expect(out.conflicts).toEqual([]);
+    }
+  });
+
+  it("★ rev === 0 的老块 + 远端 rev 3 ⇒ 取远端那一版、rev 抬到 3，且**不提示**", () => {
+    // macOS §二 要求把三条语义钉在一起：0 = "老到不能再老"（比较时**小于**任何明确 rev）、
+    // 不是"判不了"（不是冲突）、也**不是新版本**（盖章时改过的块一定拿 ≥1）。
+    const out = mergeBlocks([blk("b1", 0, "老内容")], [blk("b1", 3, "远端改过的")], "remote");
+    expect(pick(out, "b1")).toMatchObject({ choice: "remote", json: "远端改过的", rev: 3 });
     expect(out.conflicts).toEqual([]);
   });
 
@@ -478,6 +505,30 @@ describe("docContent 的冲突留痕与裁决（表 page_conflicts）", () => {
     expect(pageConflictsOf(db, "p2")).toEqual([]);
   });
 
+  it("★ 只有真裁决会改变未决计数（AMD：『关掉提示』≠『已裁决』）", async () => {
+    // 与 Rust 侧 `only_a_real_resolution_changes_the_unresolved_count` 逐条对应。
+    // 今天的提示条**没有关闭动作**（没有未决记录时它自己消失）⇒ 等价的可测形态是：
+    // **只有 `resolved_at` 被写上才会让这一行从"未决"里消失**；写页面、重放、重复读都不许动这个计数。
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 2, "我改的")), text: "" }, { dirty: 0, syncSeq: 1 });
+    const conflict = {
+      blockId: "b1",
+      reason: "same-rev-different-content" as const,
+      localJson: JSON.stringify(blk("b1", null, "我改的")),
+      remoteJson: JSON.stringify(blk("b1", null, "他改的")),
+    };
+    recordPageConflicts(db, "p1", [conflict]);
+    recordPageConflicts(db, "p1", [conflict]); // 重连 / 重放同一格 ⇒ 不增长
+    expect(pageConflictsOf(db, "p1")).toHaveLength(1);
+
+    writeContent(db, "p1", { title: "页", json: doc(blk("b1", 3, "改过")), text: "" }, Date.now());
+    expect(pageConflictsOf(db, "p1")).toHaveLength(1); // 写页面不是裁决
+
+    expect(pageConflictsOf(db, "p1")).toHaveLength(1); // 重复读也不动
+    resolvePageConflict(db, pageConflictsOf(db, "p1")[0].id, "remote");
+    expect(pageConflictsOf(db, "p1")).toEqual([]); // 只有真裁决会变
+  });
+
   it("★ 裁决「留本地」⇒ 该块换回本地那一版、**盖新 rev**、`dirty=1`（这次裁决要被推上去）", async () => {
     const db = await freshDb();
     seedPage(db, "p1", {
@@ -517,7 +568,8 @@ describe("docContent 的冲突留痕与裁决（表 page_conflicts）", () => {
       9,
     );
 
-    expect(merged).toBe(false); // 没有合并（有冲突）
+    // ★ 返回值必须把"有未裁决冲突"交出来（AMD 2026-09-22："留痕 ≠ 已裁决"，哪怕只是个计数）
+    expect(merged).toEqual({ merged: false, unresolved: 1 });
     expect(bodiesOf(readContent(db, "p1")!.json)).toEqual(["他改的"]); // 页级 LWW：落的是远端原样
     const rows = pageConflictsOf(db, "p1");
     expect(rows).toHaveLength(1);
@@ -541,9 +593,30 @@ describe("docContent 的冲突留痕与裁决（表 page_conflicts）", () => {
       9,
     );
 
-    expect(merged).toBe(true);
+    expect(merged).toEqual({ merged: true, unresolved: 0 });
     expect(bodiesOf(readContent(db, "p1")!.json)).toEqual(["A 改的", "B 改的"]);
     expect(pageConflictsOf(db, "p1")).toEqual([]);
+  });
+
+  it("★ 物化会把**嵌层**的同名 `blockRev` 剥掉（今天已知边界），但内容一个字节不许动", () => {
+    // macOS §四 (d)：要么限定只剥顶层、要么写进文档。这里选"写进文档 + 钉成判据"：
+    // `blockRev` 是管道，哪一层都不是内容 ⇒ 比较与物化都剥；代价是物化的嵌层同名字段会消失。
+    const nested = {
+      type: "quote",
+      blockId: "b1",
+      children: [
+        { type: "paragraph", blockId: "nested-1", blockRev: 9, children: [{ type: "text", text: "引用里的字" }] },
+      ],
+    };
+    const merged = applyBlockSnapshots(doc(nested), [
+      { blockId: "b1", choice: "identical", json: canonicalContent(nested), rev: 4 },
+    ])!;
+    const parsed = JSON.parse(merged) as { root: { children: Array<Record<string, unknown>> } };
+    const b1 = parsed.root.children[0] as { blockRev?: number; children: Array<Record<string, unknown>> };
+    expect(b1.blockRev).toBe(4);
+    expect(b1.children[0].blockRev).toBeUndefined(); // 嵌层会被剥掉（边界）
+    expect(b1.children[0].blockId).toBe("nested-1"); // 内容（身份、文字）不许动
+    expect((b1.children[0].children as Array<{ text: string }>)[0].text).toBe("引用里的字");
   });
 });
 

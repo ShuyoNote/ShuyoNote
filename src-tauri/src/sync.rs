@@ -131,12 +131,12 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
 
 // ---- remote apply (LWW) ----
 
-fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), String> {
+fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<usize, String> {
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
     let local = crate::doc_content::local_state(c, &page.id)?;
     if crate::doc_content::merge(local, sync_seq) == crate::doc_content::MergeDecision::KeepLocal {
-        return Ok(());
+        return Ok(0);
     }
 
     // 「用远端」那一笔落库也走那一层（`doc_content::upsert_remote`）——
@@ -147,10 +147,15 @@ fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<(), 
     // ★ **阶段 1**：页级说"用远端"之后，**逐块合并 + 落库 + 派生**都在那一层的唯一入口
     //   `doc_content::apply_remote_page` 里做（两端各自改**不同块** ⇒ 两边的编辑都保留；
     //   老内容 / 有冲突 ⇒ 它内部回落成"远端原样"，与接线前逐字相同）。
-    //   ⚠️ 合并成功时那一行的正文可能滞后一拍（派生文本要编辑器语义，不能在同步路径现算）——
-    //   见 `docs/plans/2026-09-22-block-rev-write-layer.md` 与前端同名函数的注释。
-    crate::doc_content::apply_remote_page(c, page, sync_seq)?;
-    Ok(())
+    //
+    // ★ **返回值 = 这次留下了几处未裁决的冲突**（AMD 2026-09-22 的要求："留痕 ≠ 已裁决" ⇒
+    //   调用方必须能看见"有未裁决冲突"，哪怕只是个计数）。它由 `apply_remote_page` 的
+    //   `RemoteMerge::Conflicted(..)` 直接给出 —— 调用方不必"再去查一次表"才知道。
+    let outcome = crate::doc_content::apply_remote_page(c, page, sync_seq)?;
+    Ok(match outcome {
+        crate::doc_content::RemoteMerge::Conflicted(conflicts) => conflicts.len(),
+        _ => 0,
+    })
 }
 
 fn apply_delete(c: &Connection, id: &str, updated_at: i64) -> Result<(), String> {
@@ -223,6 +228,14 @@ pub struct SyncReport {
     pub items: Vec<SyncItem>,
     /// P0.1 conflict hint: local dirty page that received a newer server change.
     pub conflicts: Vec<SyncConflict>,
+    /// 阶段 1（2026-09-22）：本轮**因块级合并判不了而落表的页面数**（未裁决）。
+    ///
+    /// ⚠️ 与 `conflicts` **不是一回事**（AMD 要求分开报，别合成一个值）：
+    ///   · `conflicts` = 页级"本地有未推送改动 + 服务端有新 seq" ⇒ 要用户选**保留本地 / 采用远端**；
+    ///   · 这个 = 逐块判不了（同 rev 不同内容 / 任一侧缺 rev）⇒ **已经**逐块留痕（表 `page_conflicts`），
+    ///     只需让用户知道"这一页有未裁决的冲突"，详情走 `list_page_conflicts`。
+    /// 单位是**页面数**（同一页一轮里可能被应用多次，只算一次）。
+    pub block_conflict_pages: usize,
     /// P6.1：**本轮附件同步因"开关被关掉"而中途停止**（不是在入口就没开）。
     /// 界面据此显示"因开关关闭而停止"，而不是"同步完成"——否则用户以为全下完了。
     pub attachments_paused: bool,
@@ -1335,7 +1348,7 @@ async fn do_push(
 async fn do_pull(
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(usize, i64, Vec<SyncItem>, Vec<SyncConflict>), String> {
+) -> Result<(usize, i64, Vec<SyncItem>, Vec<SyncConflict>, usize), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
@@ -1373,6 +1386,10 @@ async fn do_pull(
     let mut count: usize = 0;
     let mut items: Vec<SyncItem> = Vec::new();
     let mut conflicts: Vec<SyncConflict> = Vec::new();
+    // ★ 阶段 1：本轮**留下未裁决块级冲突**的页面（按页面去重 —— 同一页一轮里可能被应用多次）。
+    // ⚠️ 与上面那个 `conflicts`（页级 dirty 提示）**含义不同、分开报**：那个要用户选"保留本地/采用远端"，
+    // 这个已经有逐块留痕（`page_conflicts`），只需让用户知道"这一页有未裁决冲突"。
+    let mut unresolved_page_ids: Vec<String> = Vec::new();
     {
         let c = db.0.lock().expect("db mutex poisoned");
         // 跨设备 pull 的变更可能引用了「尚未先到达」的父页 / 关联页，触发本地外键约束
@@ -1401,7 +1418,10 @@ async fn do_pull(
                             if local_dirty != 0 {
                                 conflicts.push(SyncConflict { entity_id: page.id.clone(), title: page.title.clone() });
                             }
-                            apply_upsert(&c, &page, change.seq)?;
+                            let unresolved = apply_upsert(&c, &page, change.seq)?;
+                            if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
+                                unresolved_page_ids.push(page.id.clone());
+                            }
                             count += 1;
                             // 仅在该条成功应用后推进游标，失败时不推进，避免静默丢变更。
                             if change.seq > max_pulled {
@@ -1462,7 +1482,7 @@ async fn do_pull(
         let _ = c.execute_batch(&format!("PRAGMA foreign_keys = {orig_fk};"));
     }
 
-    Ok((count, max_pulled, items, conflicts))
+    Ok((count, max_pulled, items, conflicts, unresolved_page_ids.len()))
 }
 
 #[derive(Serialize)]
@@ -1474,6 +1494,9 @@ pub struct WorkspaceSyncResult {
     pub last_pulled_seq: i64,
     pub error: Option<String>,
     pub conflicts: Vec<SyncConflict>,
+    /// 阶段 1：本轮**因块级合并判不了而落表的页面数**（定义与"为什么与 `conflicts` 分开"
+    /// 见 `SyncReport::block_conflict_pages`）。
+    pub block_conflict_pages: usize,
     /// P6.1：附件同步**因开关被关掉而中途停止**（见 `SyncReport::attachments_paused`）。
     pub attachments_paused: bool,
     /// P6.1：本轮因开关关闭而未上传 / 未下载的件数（见 `SyncReport` 同名字段的定义）。
@@ -1492,7 +1515,8 @@ async fn sync_workspace_only(
     profile: &SyncProfile,
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
-    let (pulled, last_pulled_seq, pulled_items, conflicts) = do_pull(db, profile).await?;
+    let (pulled, last_pulled_seq, pulled_items, conflicts, block_conflict_pages) =
+        do_pull(db, profile).await?;
     let att = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
     items.extend(pulled_items);
@@ -1504,6 +1528,7 @@ async fn sync_workspace_only(
         last_pulled_seq,
         items,
         conflicts,
+        block_conflict_pages,
         attachments_paused: att.paused,
         attachments_skipped_upload: att.skipped_upload,
         attachments_skipped_download: att.skipped_download,
@@ -1536,6 +1561,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
                 conflicts: rep.conflicts,
+                block_conflict_pages: rep.block_conflict_pages,
                 attachments_paused: rep.attachments_paused,
                 attachments_skipped_upload: rep.attachments_skipped_upload,
                 attachments_skipped_download: rep.attachments_skipped_download,
@@ -1552,6 +1578,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 last_pulled_seq: 0,
                 error: Some(e),
                 conflicts: Vec::new(),
+                block_conflict_pages: 0,
                 attachments_paused: false,
                 attachments_skipped_upload: 0,
                 attachments_skipped_download: 0,
@@ -1604,6 +1631,7 @@ pub async fn sync_workspace(
                 last_pulled_seq: rep.last_pulled_seq,
                 error: None,
                 conflicts: rep.conflicts,
+                block_conflict_pages: rep.block_conflict_pages,
                 attachments_paused: rep.attachments_paused,
                 attachments_skipped_upload: rep.attachments_skipped_upload,
                 attachments_skipped_download: rep.attachments_skipped_download,
@@ -2806,5 +2834,69 @@ mod tests {
         let got = list_profiles(&c).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].sync_attachments, 0);
+    }
+
+    // ---- 阶段 1（2026-09-22）：apply 的返回值必须把"有未裁决冲突"交出来 ----
+
+    /// 冲突那条路径用的连接：**走仓库自己的建库路径**（真 schema：pages / page_fts / page_conflicts）。
+    /// 与 `doc_content` 测试里的 `conflict_conn` 同一思路，这里用内存库（同步这一层只碰那几张表）。
+    fn pages_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&c, "ws").unwrap();
+        c
+    }
+
+    fn remote_page(id: &str, json: &str) -> PageDetail {
+        PageDetail {
+            id: id.into(),
+            workspace_id: "ws".into(),
+            parent_id: None,
+            title: "页".into(),
+            content_json: json.into(),
+            content_text: "远端正文".into(),
+            cover: String::new(),
+            icon: String::new(),
+            cover_height: 300,
+            cover_pos: 50.0,
+            kind: "page".into(),
+            sort_order: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn page_json(block_id: &str, rev: i64, text: &str) -> String {
+        serde_json::json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": block_id, "blockRev": rev,
+              "children": [{ "type": "text", "text": text }] }
+        ] } })
+        .to_string()
+    }
+
+    /// ★ AMD 2026-09-22 的要求（"留痕 ≠ 已裁决"）：`apply_upsert` 必须**回报**这次留下了几处未裁决的
+    /// 冲突 —— 调用方不许只能靠"再去查一次表"才知道。判据同时钉住"合得上时回报 0"。
+    #[test]
+    fn apply_upsert_reports_unresolved_block_conflicts() {
+        let c = pages_conn();
+        // 本地这一行：干净（dirty=0）、seq 更旧 ⇒ 页级判定会走"用远端"。
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, sync_seq, dirty)
+             VALUES ('p1', 'ws', '页', ?1, '本地正文', 'page', 0, 0, NULL, 1, 0)",
+            params![page_json("b1", 2, "我改的")],
+        )
+        .unwrap();
+
+        // 同 rev、不同内容 ⇒ 判不了 ⇒ 落表 + 回报条数
+        let n = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9).unwrap();
+        assert_eq!(n, 1, "必须把『有 1 处未裁决冲突』交回来");
+        let recorded: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_conflicts WHERE page_id='p1' AND resolved_at IS NULL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(recorded, 1, "回报的条数要对得上表里的行");
+
+        // 同一页再来一次干净的应用（内容逐字相同）⇒ 这一轮没有未裁决冲突 ⇒ 回报 0
+        c.execute("UPDATE pages SET sync_seq = 1, dirty = 0 WHERE id='p1'", []).unwrap();
+        let n = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10).unwrap();
+        assert_eq!(n, 0, "内容相同 ⇒ 没有新冲突 ⇒ 回报 0（旧的那条未裁决记录仍在，那是上一轮的事）");
     }
 }

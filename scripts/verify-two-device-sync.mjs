@@ -4,6 +4,9 @@
 // 场景 H（2026-09-22，阶段 1）：**块级合并已接进 `applyChange`** —— 两端改**不同块** ⇒ 都保留；
 //   含"冲突 ⇒ 回落今天的页级 LWW"（裁定 (iii)：不静默选边，提示 UI 还没做）
 //   与两条纯函数反判据（缺 `blockRev` 且内容变了 ⇒ 必须提示；内容逐字节相同 ⇒ 不许提示）。
+// 场景 I / J：真 `save_page` / 真 `restore_version` 会给块盖 rev（不盖章 ⇒ 块级判定每页都回落）。
+// 场景 K（2026-09-22，回信那一轮）：**内容逐字相同、rev 不同 ⇒ 收敛到 max**（macOS 抓到的真 bug）——
+//   留下更旧的那个 rev ⇒ 本地下一次编辑静默输给远端**更旧**的编辑；场景 K 把那条 trace 走成"看得见的冲突"。
 //
 // 真实复现客户端合并逻辑：用真实的 `applyChange`（web.ts 导出）+ 真实的
 // `SqliteStore`（sql.js WASM）各建一台"设备"的本地库，模拟两设备同时编辑
@@ -484,6 +487,60 @@ async function main() {
     `场景 J: 恢复后 b1 = max+1（3→4）、b2 没变保持 0，实际=${blocksOf(restoredDoc)
       .map((b) => b.rev)
       .join(",")}`,
+  );
+
+  // =========== 场景 K：同内容、不同 rev ⇒ **收敛到 max**（macOS 2026-09-22 抓到的真 bug）===========
+  // 老写法 `l.rev ?? r.rev`（本地优先）会把本地那个**更旧**的 rev 留下 ⇒ 本地下一次编辑从更低的基线
+  // 加一 ⇒ 编号追不上远端已经见过的编号 ⇒ 远端更旧的编辑在随后一次合并里**静默赢过**本地的编辑。
+  // 这条场景把 macOS 给的 trace 走一遍：identical 那一步必须把 4 记下来，之后那次合并必须是**看得见的冲突**。
+  console.log("\n场景 K：同内容不同 rev ⇒ 取 max（否则后续编辑被静默丢掉）");
+  const PK = "page-maxrev";
+  const KA = await newDevice();
+  const KB = await newDevice();
+  const invokeKA = makeInvoke(KA);
+  const invokeKB = makeInvoke(KB);
+
+  // 两端这一块**内容逐字相同**，rev 不同：A 已经到 4（它改过两轮又改回来），B 只有 2
+  localCreate(KA, PK, "同内容页", "");
+  KA.run("UPDATE pages SET content_json = ?, dirty = 0, sync_seq = 1 WHERE id = ?", [
+    contentOf([blk("b1", 4, "一样")]),
+    PK,
+  ]);
+  pushToServer(KA, PK, "devA", "同内容页", "", contentOf([blk("b1", 4, "一样")]));
+  localCreate(KB, PK, "同内容页", "");
+  KB.run("UPDATE pages SET content_json = ?, dirty = 0, sync_seq = 1 WHERE id = ?", [
+    contentOf([blk("b1", 2, "一样")]),
+    PK,
+  ]);
+
+  pullFromServer(KB, new Map([[PK, 1]]));
+  const kB1 = blocksOf(readContent(KB, PK).json)[0];
+  ok(bodyOf(readContent(KB, PK).json, "b1") === "一样", "K: 远端与本地内容逐字相同 ⇒ 走 identical（**不提示**）");
+  ok(
+    kB1.rev === 4,
+    `K: ★ rev 必须收敛到 max(2,4)=4（老写法留下 2 —— 那正是那条 bug），实际=${kB1.rev}`,
+  );
+
+  // 之后两端各改这一块：A 从 4 加一到 5；B 从**合并产物的 4** 加一到 5（走真 `save_page` 盖章）
+  await invokeKA("save_page", { id: PK, content_json: contentOf([blk("b1", null, "A 后改的")]) });
+  await invokeKB("save_page", { id: PK, content_json: contentOf([blk("b1", null, "B 后改的")]) });
+  ok(
+    blocksOf(readContent(KA, PK).json)[0].rev === 5 && blocksOf(readContent(KB, PK).json)[0].rev === 5,
+    `K: 两端各改一次 ⇒ 两边都盖 5，实际 A=${blocksOf(readContent(KA, PK).json)[0].rev} B=${blocksOf(readContent(KB, PK).json)[0].rev}`,
+  );
+
+  // B 先推（推完 B 就干净了），A 再推；B 回来 pull ⇒ 页级说"用远端"、块级判不了 ⇒ **冲突看得见**
+  pushToServer(KB, PK, "devB", "同内容页", "", contentOf([blk("b1", 5, "B 后改的")]));
+  pushToServer(KA, PK, "devA", "同内容页", "", contentOf([blk("b1", 5, "A 后改的")]));
+  pullFromServer(KB, new Map([[PK, 1]]));
+  const kConflicts = pageConflictsOf(KB, PK);
+  ok(
+    kConflicts.length === 1 && kConflicts[0].reason === "same-rev-different-content",
+    `K: ★★ 同 rev 不同内容 ⇒ 冲突**看得见**（老写法这一条会是 0：B 的编辑被静默丢掉），实际=${kConflicts.length}`,
+  );
+  ok(
+    bodyOf(readContent(KB, PK).json, "b1") === "A 后改的",
+    "K: 冲突时回落页级 LWW（与接线前逐字相同）—— 这一片只把「静默」变成「有痕」",
   );
 
   // =========== 汇总 ===========

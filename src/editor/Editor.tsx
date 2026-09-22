@@ -15,7 +15,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $getRoot, $createParagraphNode, createEditor, ParagraphNode, type EditorState, type LexicalEditor } from "lexical";
 // 块身份那一层：内存模型 ⇄ 落盘/同步形态（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）
 import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } from "../lib/blockIdentity";
-import { applyConflictBadges } from "./blockConflictBadge";
+import { applyConflictBadges, installConflictBadges } from "./blockConflictBadge";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
@@ -444,17 +444,16 @@ function BlockIdPlugin({
   // 阶段 1 · **冲突块角标**：提示条把"哪几块有未决冲突"发布到 store，这里把它打到 DOM 上。
   // 每次 editor update 之后再打一遍 —— Lexical 结构一变会重建 DOM，类名会跟着没；
   // 没有冲突（空表）时只清一次，不挂 listener。
+  // "打一次 + 每次 update 重打"这段形状抽在 `installConflictBadges` 里（macOS 要的负判据就钉在它上）。
   useEffect(() => {
     if (conflictBlockIds.length === 0) {
       applyConflictBadges([]);
       return;
     }
-    const apply = () => {
+    return installConflictBadges(editor, () => {
       tagBlockDoms(editor, map, editor.getEditorState());
       applyConflictBadges(conflictBlockIds);
-    };
-    apply();
-    return editor.registerUpdateListener(apply);
+    });
   }, [conflictBlockIds, editor, map]);
 
   return null;
@@ -477,7 +476,16 @@ function PageTextRepairPlugin({ pageId }: { pageId: string }) {
     if (!pageId) return;
     // 与保存路径**同一句**（`$getRoot().getTextContent()`）—— 所以这不是"第二份派生实现"
     const derived = editor.getEditorState().read(() => $getRoot().getTextContent());
-    void api.refreshPageText(pageId, derived);
+    void api
+      .refreshPageText(pageId, derived)
+      .then((repaired) => {
+        // ★ AMD 2026-09-22：自动修复**不是用户操作** ⇒ 别静默（"我的库什么时候被改过"要查得到），
+        //   但也别做成第二个冲突 UI —— 只留一行日志（不写 `page_conflicts`）。
+        if (repaired) console.info(`[doc-content] 正文修复：page=${pageId}`);
+      })
+      .catch(() => {
+        /* 修不了不打扰用户：下一次打开这一页会再试一遍 */
+      });
   }, [editor, pageId]);
   return null;
 }
