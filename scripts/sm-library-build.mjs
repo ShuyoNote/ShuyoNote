@@ -187,7 +187,10 @@ for (const [cmd, args, label] of [
     process.exit(typeof e.status === "number" ? e.status : 1);
   }
 }
-console.log("sm-library-build: ✅ 完成 —— 事后核对：node scripts/sm-library-build.mjs --check ／ check-crypto-backend ／ cargo test --lib gm_provider::");
+console.log(
+  "sm-library-build: ✅ 完成 —— 事后核对：node scripts/sm-library-build.mjs --check ／ check-crypto-backend ／ " +
+    "cargo test --features sm-library --lib gm_provider::",
+);
 
 // ★ 收尾横幅（2026-09-20；**刻意不自动 revert**，见下面那条"为什么"）
 //
@@ -219,6 +222,10 @@ console.log("sm-library-build: ✅ 完成 —— 事后核对：node scripts/sm-
     "     （Apple 的 CommonCrypto 构建不受影响）；跑默认门禁或别的项目前请先：",
     "       node scripts/sm-library-build.mjs --revert",
     "   · 本构建的页加密也会写进产物标记（`page_cipher=`）—— 用 check-crypto-backend 读，别靠回忆",
+    "   · ★ 读**应用层**的国密读数必须带 `--features sm-library`：胶水只把它加在 `cargo build` 上，",
+    "     裸 `cargo test` 会把接线那段 `#[cfg(feature = \"sm-library\")]` **编掉** ⇒ 你会以为在测接线构建，",
+    "     其实在测一个「没接线」的应用（我 2026-09-22 踩过：探针读数自相矛盾，根因就是这个）",
+    "       例：cargo test --features sm-library --lib security::",
     "════════════════════════════════════════════════════════════════════════",
     "",
   ];

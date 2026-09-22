@@ -283,6 +283,30 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 `sqlcipher-sm4-page-fixture.db`＝**SM4 页**）——它断言"**恰好一个能开**"，红了就等于
 **这份构建读不了它本该读的那种库**（页加密是库文件的属性，见方案 §3.3 判据 1）。
 
+#### 5.1 ★ 跑**应用层**的国密读数时，`--features sm-library` **不能省**（2026-09-22 实测，我自己踩的）
+
+这是第 5 条的同族坑，但**更隐蔽**：`scripts/sm-library-build.mjs` 只在它执行的 `cargo build` 那一句上加了
+`--features sm-library`；后面的 `cargo test` / `cargo run` 是你自己敲的 —— **不加这个特性，应用里
+`set_cipher_key` 那段国密接线会被 `#[cfg]` 整个编掉**，于是：
+
+- 库仍然是"认识国密标签"的库（补丁在源码上、`page_cipher=sm4`），
+- 而**应用一行国密参数都没设** ⇒ 写出来的库仍是 SHA512 参数，
+- 你却在读"国密构建"的读数。**两次读数会互相矛盾**（同一份文件"既被默认参数读开、又被国密参数读开"），
+  因为其中一次根本不在测你以为的那件事。
+
+```bash
+node scripts/sm-library-build.mjs --openssl-dir $HOME/tongsuo-macos/install
+# 应用层读数（接线后的构建）——这两个都要：
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test --lib --features sm-library security::
+# 库层读数（provider 能力，不需要特性开关）：
+cargo test --lib gm_provider::
+```
+
+三处防线（2026-09-22 加）：① 胶水收尾横幅直接写明这条口径；② `build.rs` 在"源码有补丁但没开 `sm-library`"时
+打 `cargo:warning`（不 panic：`--no-default-features` 回滚通道需要在补丁仍在源码上时照样能跑）；
+③ `node scripts/gm-version-selfcheck.mjs --with-tests` 的**第 ⑤ 段**就是
+`cargo test --lib --features sm-library security::`（＋`OPENSSL_DIR`），删掉任一个，判据立刻红（有变异证明）。
+
 ### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
 
 判据读 `target/` 下的产物时，有两个默认假设**经常不成立**：① target 就在仓库里（实际很多人设了

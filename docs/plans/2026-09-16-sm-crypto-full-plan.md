@@ -640,6 +640,81 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 ⚠️ **不属于本次**：把 `cipher_kdf_algorithm` 的**库级 KDF 输出**换成本项目自己的 KDF（那是另一件事；
 本项目库级用的是裸钥 `PRAGMA key = x'…'`，密钥材料的来源仍是 `crypto.rs` 的派生，见 §0.2）。
 
+#### 3.5.1 ✅ 接线已落地（2026-09-22，macOS 侧）
+
+**形态**：`security.rs::set_cipher_key` 在 `#[cfg(feature = "sm-library")]` 下调用 `apply_gm_page_settings(conn)`。三步**互不依赖**：
+
+1. `gm_provider::library_recognizes_gm_labels()` —— **这个库认不认识国密标签**（内存库探，与口令/文件无关，带进程内缓存）；
+   不认识 ⇒ **响亮失败**：那种构建上标签会被静默丢掉，写出来仍是 SHA512；
+2. `gm_provider::set_gm_cipher_labels(conn)` —— 设 `cipher_hmac_algorithm = HMAC_SM3` ＋ `cipher_kdf_algorithm = PBKDF2_HMAC_SM3`；
+3. `gm_provider::read_gm_cipher_status(conn)` —— **回显**必须是 `Applied`；回显**读不出来**时**不判红**
+   （那是"这条连接本来就有别的问题"，让后面的读去失败 ⇒ 由 `cipher_open_error` 翻成"两因一果"）。
+
+**为什么这样切（第一版是错的，写进这里免得后人再走一遍）**
+
+第一版用 `configure_gm_cipher`（它结尾有 `SELECT 1` 健康自检）＋"回显不是 Applied 就失败"。
+问题是那句 `SELECT 1` **分不出两种成因**：① 标签不认识（它想抓的）；② **口令/密钥不对**
+（SQLCipher 在第一次读时同样把连接打进 error state，报**一字不差的** `file is not a database`）。
+实测症状：`backup::tests::cross_key_encrypted_snapshot_gets_an_actionable_diagnosis` 的"另一把钥"那一支
+本该让**读**失败、再由 `cipher_open_error` 给出可操作文本，结果在 `set_cipher_key` 阶段就被拦下，
+报成**"这份构建可能没有 provider 补丁"** ⇒ **误诊**。⇒ 换成上面的三步：能力探针（与口令无关）＋ 标签设置 ＋ 回显（读不出来不判红）。
+
+**为什么只在 `sm-library` 里有这个分支**：默认构建（CommonCrypto）没有 provider 补丁 ⇒ 那两条 PRAGMA 会被
+**静默丢掉** ⇒ 加了只会制造"设了但没生效"。默认构建保持 AES 页 ＋ SHA512（`--no-default-features` 仍是回滚通道）。
+
+**★★ 读数口径（这一条是我 2026-09-22 自己踩出来的坑，务必先读）**
+
+> **接线的应用层读数必须显式带 `--features sm-library`**：构建胶水只在 `cargo build` 那一句上加它，
+> 于是裸 `cargo test` 会把 `apply_gm_page_settings` 整段 `#[cfg]` **编掉** ⇒ 你测的是**没接线的应用**。
+> 我因此拿到两套互相矛盾的探针读数（同一份文件"既被默认参数读开、又被国密参数读开"），查了半天才发现
+> 根因是这个开关；**当时"全绿"的读数（`security::` 21/0）其实全部来自没接线的构建**。
+> 已加三处防线：① 胶水收尾横幅写明口径；② `build.rs` 新增**反向告警**（源码有补丁、但没开 `sm-library`
+> ⇒ `cargo:warning` 说明"你写出来的仍是 SHA512"）；③ `gm-version-selfcheck --with-tests` 新增**第 ⑤ 段**
+> `cargo test --lib --features sm-library security::`（＋2 条判据 ＋ 变异证明：删掉 `--features sm-library`
+> 或删掉 `OPENSSL_DIR` ⇒ 该判据立刻红）。
+
+**读数（被验 commit 见提交信息；构建＝补丁 v3 ＋ 本机 Tongsuo）**
+
+| 判据 | 接线构建（`--features sm-library`） | 默认构建（AES＋SHA512） |
+|---|---|---|
+| 全库单测 `cargo test --lib` | **427 passed / 0 failed / 18 ignored** | 见 `--group rust` 门禁 |
+| `security::` | **21 / 0 / 2 ignored** | 21 / 0 / 2 |
+| `gm_provider::` | **9 / 0 / 4 ignored** | 9 / 0 / 4 |
+| 库级参数（`exactly_one_page_cipher_…` 打印） | **SM4 页 ＋ SM3 页 MAC/库 KDF** | AES 页 ＋ SHA512 页 MAC/库 KDF |
+| 回滚通道 `--no-default-features` | — | **415 / 0 / 17 ignored** |
+
+**接线当场抓出的两个真 bug（都是"接线后才出现"的形态 —— 这正是它值得做的理由）**
+
+1. **在线备份的目标端参数不跟着源走**：`backup.rs::backup_db` 与 `workspace_io.rs::backup_db_to` 原先只写
+   裸 `PRAGMA key`。实测（接线构建）：**备份 API 是按目标连接的 codec 重新加密页面的** ⇒ 目标端默认参数
+   ⇒ 产出一份 **SM3 源 → SHA512 快照** 的库，而恢复路径（`key_conn_with`）用国密参数读它 ⇒
+   `file is not a database`（`snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips`、
+   `snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key` 两条判据当场红）。
+   修法：目标端改走 `key_conn_with`（生产口径）。**这条只有接线构建能发现** —— 默认构建两边都是默认参数，怎么跑都绿。
+2. **错口令被误诊**（见上面"为什么这样切"）。
+
+**判据侧的连带改动**
+
+- `security::tests::encrypted_db_roundtrip_and_sniff` 原是"明文主连接 ＋ `ATTACH … KEY` 导出"造加密库 ——
+  那条路写出来的是**另一套库级参数**。现在拆成两半：**生产口径**（`rebuild_space_db`）写的库必须能往返；
+  **裸 `ATTACH` 写的库在国密构建上必须读不开**（`#[cfg(feature = "sm-library")]`，默认构建读得开它是对的）。
+- 夹具是**参数绑定**的：`sqlcipher-sm4-page-fixture.db` 与 `sqlcipher-sm3-fixture.db` **只能在"打了补丁 ＋ 已接线"的
+  构建里生成**，生成器**自证回显**后才 `rename`。**接线实现一改就重生成**，否则它变成"上一代参数"的证物。
+  2026-09-22 实测的那次红就是这样来的：AMD 那份 `sqlcipher-sm3-fixture.db` 是**接线前**的参数写的 ⇒
+  接线构建上 `gm_provider::` 1 条红；用**他自己的生成器**在接线构建里重生成后转绿（两半都验过）。
+
+**代价（与 §3.4 快路一致）**：接线构建**读不开 SHA512 参数写的老库**（响亮报 `file is not a database`，
+并由 `cipher_open_error` 翻成"口令不对／页加密算法不同"两因并列的可操作文本）。
+
+**判据 ③ 的改造**：原先设想的"用 SHA512 写的库在新设置下必须打不开"由**两份夹具交叉打开**承担
+（AES＋SHA512 夹具 vs SM4＋SM3 夹具，**恰好一个能开**，并**打印**是哪一种）——`cipher_settings` 回显里
+没有 algorithm 字段，交叉打开是本仓库唯一可信的判据（§3.2 事实 3）。
+
+**下一条建议（不是本次交付）**：把"页 MAC/库 KDF 的默认值"做成**补丁 v4**（`default_hmac_algorithm = SQLCIPHER_HMAC_SM3`、
+`default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SM3`）。这样"库级参数"就像 P3 的页加密一样成为**库级属性**，
+不依赖应用每条 keying 路径都记得接线（本节的 bug 1 正是"漏了一条路径"）。应用层的接线保留为**回声自证**。
+→ 已发信请 AMD 评估（补丁是他的产物）。
+
 ### 3.3 ⚠️ P3 的**迁移规格**（A/B 两条路都要，**不依赖 owner 先拍板哪条**）
 
 > 为什么单列一节（2026-09-20，macOS 侧）：A/B 争论的是"**怎么把 SM4 页加密编进去**"，
