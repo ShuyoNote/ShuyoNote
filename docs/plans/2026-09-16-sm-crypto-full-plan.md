@@ -607,6 +607,37 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 **触发条件（写进这里，定期复核）**：出现**第一个真实部署/试点数据**（哪怕是内部试用写进了不可丢的内容）
 ⇒ 本节作废，"无兼容"窗口关闭；届时按 §3.2 的 A 路施工单 + §3.3 迁移规格执行。
 
+#### 3.4.1 ✅ 第 3 步「单一口味」：**owner 已拍板 ＝ 国密**（2026-09-22），并已落进发布链
+
+**决定**：所有平台发出的包，库级一律 **SM4 页 ＋ SM3 页 MAC/库 KDF**；不做「这个平台 AES、那个平台 SM4」的混合。
+理由（拍板时给的）：应用层早已单一口味（`sm-crypto` 是默认特性）、库级两套同时在用户群里会产生
+"同一文件在 A 机器能开、B 机器打不开、且报错一字不差"的最难查形态（SQLCipher 文件里**不写**算法），
+而且现在**没有真实用户** ⇒ 迁移成本为零，等有用户再做就是一次真正的用户迁移工程。
+
+**落地（`release.yml`，四处改动）**
+
+| # | 改动 | 为什么必须有 |
+|---|---|---|
+| 1 | Linux 显式 `OPENSSL_DIR=/usr`；Windows 沿用 vcpkg `x64-windows-static-md` | `build.rs` 在 `sm-library` 上 fail-fast，不给就构建失败（这是设计：宁可失败，也别安静退回别的后端） |
+| 2 | 新增步骤：`openssl version` ＋ `list -cipher-algorithms \| grep -i sm4` ＋ `list -digest-algorithms \| grep -i sm3`，然后 `sm-library-build.mjs --prepare`（Windows 加 `--require-static`） | ① 证明用的那份 OpenSSL **真的有** SM3/SM4；② 打补丁 ＋ 清产物（不清不会换后端）；③ `--require-static` 拦"产物依赖构建机那份 libcrypto" |
+| 3 | `tauri build … **--features sm-library**` | 不带 ⇒ 应用接线那段 `#[cfg]` 被编掉，而标记仍写 `page_cipher=sm4`（页加密是补丁的编译期行为）⇒ 包**看起来**是国密 |
+| 4 | 构建后**产物断言**：`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` ＋ `…_SM_PATCH=applied` ＋ **`…_PAGE_CIPHER=sm4`** | 单一口味＝发出去的包必须是 SM4 页；`cipher_settings` 回显里没有 algorithm 字段，只有产物标记能回答 |
+
+**各平台加密库来源（口味一致、链接方式可不同）**：Windows＝vcpkg 静态；Linux＝系统 OpenSSL 3（**共享**，
+deb shlibs 声明依赖，边界＝要求 OpenSSL ≥3.0）；macOS＝**没有系统 OpenSSL**，发版档需自编一份 `no-shared`
+（配方写在 `docs/RELEASING.md`「库级国密：单一口味」一节）。
+★ **Tongsuo 不是必需的**（数据面只用 SM3/SM4/PBKDF2-HMAC-SM3，上游 OpenSSL ≥1.1.1 都有；Tongsuo 的独有价值是
+GM/T 0024 TLS，不在范围）。
+
+**本机实测（macOS，静态前缀）**：`otool -L` 无任何 `libcrypto/libssl`（真静态）；标记
+`patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`；三条断言全过。
+新增判据：`check-crypto-backend` 的页加密期望格（4 条）＋ 静态前缀守卫（5 条），**变异证明 4/4 全被抓住**
+（其中一条当场抓出我的正则漏了真实产物名 `libcrypto.3.dylib`）。
+
+**已知边界**：① 老库（AES＋SHA512）在国密构建上**读不开** ⇒ 迁移三步（旧版关磁盘加密 → 换版 → 重开）；
+② Linux 依赖发行版 OpenSSL ≥3.0；③ Android／iOS 库级仍未排；④ `macos.yml` 那份 CI 自检包**刻意仍是非国密**
+（它不发布；发版档启用时按上面配方 ＋ `scripts/sign-macos-app.mjs` 的由内到外签名）。
+
 ### 3.5 库级 P2 的**接线缺口**（2026-09-20 实查发现）—— 能力≠行为
 
 > **一句话**：P2 交付的是"**provider 能按 `HMAC_SM3` / `PBKDF2_HMAC_SM3` 工作**"，

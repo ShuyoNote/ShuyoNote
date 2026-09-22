@@ -18,7 +18,7 @@
 | **传输层** | ⚠️ **数据面国密、传输层标准 TLS**（方案 §5.2 已定：走"路径 2"） | 链路上的**载荷**是 SM4 密文；协议本身仍是 TLS 1.3。**不要写成"全链路国密"** |
 | **控制面**：更新包签名（minisign/Ed25519）、插件索引签名 | ❌ **不是**（已决定） | 不在甲方系统边界内；内网离线部署下自动更新本就不可用 |
 | 内容寻址摘要（附件 SHA-256） | ❌ **保持 SHA-256**（有意为之） | 换成 SM3 = 全库附件改名 ＋ 同步标识全失；要换需单独立项 |
-| 库级页加密 / 页 HMAC / 库 KDF | ✅ **打过补丁的 OpenSSL（国密）构建：SM4 页 ＋ SM3 页 MAC ＋ SM3 库 KDF**，且**补丁 v4 起这是库级默认值**（不再靠应用约定）；**未打补丁 / CommonCrypto 构建仍是 AES ＋ SHA512** | 由 SQLCipher 的编译期 provider 决定（P2/P3，provider 层属 **AMD**）。**2026-09-20 已接线**：`set_cipher_key` 在 `#[cfg(feature = "sm-library")]` 下设 `cipher_hmac_algorithm=HMAC_SM3` / `cipher_kdf_algorithm=PBKDF2_HMAC_SM3`，并**回显校验**（回显不是 `Applied` ⇒ 响亮失败，宁可不写库）。⚠️ 两条必须一起读：① **回显校验是判据本身** —— SQLCipher 会**接受**不认识的算法标签却不改算法，「设了没报错」在无补丁的构建上就是**静默降级**；② 代价是**这份构建读不开 SHA512 参数写的老库**（owner 已拍板走快路，见方案 §3.4）。接线规格见方案 §3.5 |
+| 库级页加密 / 页 HMAC / 库 KDF | ✅ **打过补丁的 OpenSSL（国密）构建：SM4 页 ＋ SM3 页 MAC ＋ SM3 库 KDF**，且**补丁 v4 起这是库级默认值**（不再靠应用约定）；**未打补丁 / CommonCrypto 构建仍是 AES ＋ SHA512**。<br>★ **2026-09-22 owner 拍板「单一口味＝国密」并已落进 `release.yml`**：发出去的包一律 SM4 页（构建前 `--prepare` 打补丁＋清产物、`tauri build --features sm-library`、构建后断言 `page_cipher=sm4`）。各平台库来源：Windows＝vcpkg 静态／Linux＝系统 OpenSSL 3（共享，deb 声明依赖）／macOS＝自编 `no-shared`（配方见 `docs/RELEASING.md`）。**Tongsuo 不是必需的**（数据面用到的 SM3/SM4/PBKDF2-SM3 上游 OpenSSL ≥1.1.1 都有） | 由 SQLCipher 的编译期 provider 决定（P2/P3，provider 层属 **AMD**）。**2026-09-20 已接线**：`set_cipher_key` 在 `#[cfg(feature = "sm-library")]` 下设 `cipher_hmac_algorithm=HMAC_SM3` / `cipher_kdf_algorithm=PBKDF2_HMAC_SM3`，并**回显校验**（回显不是 `Applied` ⇒ 响亮失败，宁可不写库）。⚠️ 两条必须一起读：① **回显校验是判据本身** —— SQLCipher 会**接受**不认识的算法标签却不改算法，「设了没报错」在无补丁的构建上就是**静默降级**；② 代价是**这份构建读不开 SHA512 参数写的老库**（owner 已拍板走快路，见方案 §3.4）。接线规格见方案 §3.5 |
 
 ---
 

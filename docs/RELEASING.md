@@ -187,6 +187,56 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 
 **⚠️ 换行符**：Windows runner 默认 `core.autocrlf=true`，若仓库未固定 `eol=lf`，文本会被检出成 CRLF；对生成物做逐字节比对的门禁（如 `check-capabilities`）会在 Windows 上必失败，而它跑在 Tauri 的 `beforeBuildCommand` 里 → 整个 Windows 构建红掉（v1.84.6 首次发布即如此，Linux 正常）。仓库已加 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，门禁也比较时忽略行尾——两层都在，别退回逐字节比较。
 
+### ★ 库级国密：**单一口味**（2026-09-22 owner 拍板 → 落进 `release.yml`）
+
+**决定**：以后所有平台发的包，库级一律是国密那一套 —— **页加密 SM4 ＋ 页 MAC/库 KDF SM3**。
+不再有「这个平台 AES、那个平台 SM4」的混合状态（那会变成"同一个文件在 A 机器能开、B 机器打不开、
+且报错一模一样"的最难查形态：SQLCipher 的文件里**不写**用的是哪套算法）。
+
+**发布链要的四个开关**（`release.yml` 已就位；少任何一个都会产出「看起来是国密、其实不是」的包）：
+
+| # | 开关 | 为什么 |
+|---|---|---|
+| 1 | `OPENSSL_DIR` **显式给** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败，而不是安静退回 CommonCrypto |
+| 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端） |
+| 3 | `pnpm tauri build … --features sm-library` | 不带它 → 应用接线那段 `#[cfg]` 被编掉，而产物标记仍写 `page_cipher=sm4`（页加密是补丁的**编译期**行为）⇒ 包看起来是国密、库级页 MAC/KDF 却还是 SHA512 |
+| 4 | 产物断言（`SHUYONOTE_EXPECT_*` 三条） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`** —— 只有产物能回答这三格（`cipher_settings` 回显里没有 algorithm 字段） |
+
+**各平台的加密库来源**（"口味"必须一致，**链接方式可以不同**）：
+
+| 平台 | 来源 | 自包含？ |
+|---|---|---|
+| **Windows** | vcpkg `openssl:x64-windows-static-md` | ✅ 静态（`libcrypto.lib`）；`--require-static` 会核对 |
+| **Linux** | 系统 OpenSSL 3（`OPENSSL_DIR=/usr`，runner 上 ≥3.0 自带 SM3/SM4） | ⚠️ **共享**：deb 的 shlibs 声明这个依赖；老发行版上要求 OpenSSL ≥3.0（这也是这一格的已知边界） |
+| **macOS** | **没有系统 OpenSSL** ⇒ 必须自己编一份（`no-shared`）并自包含 | 发版档启用时按下面配方 |
+
+> ★ **Tongsuo 不是必需的**：我们数据面只用到 SM3/SM4/PBKDF2-HMAC-SM3，**上游 OpenSSL ≥1.1.1 就有**
+> （方案里早就更正过这一点）。Tongsuo 的独有价值是 GM/T 0024 那类国密 TLS —— 不在本项目范围（§5.4）。
+> macOS 那份"自己编"用 stock OpenSSL 或 Tongsuo 都可以；本机验证时用的是 Tongsuo。
+
+**macOS 发版档（等 Apple secrets 到位再启用）的配方**：
+
+```bash
+# ① 编一份**静态**的 SM 版 OpenSSL（no-shared ⇒ 只产出 libcrypto.a）
+./Configure --prefix="$PREFIX" no-shared no-tests && make -j8 && make install_sw
+# ② 只留静态库（`--require-static` 会拒绝共享版前缀：产物会依赖构建机那份）
+rm -f "$PREFIX"/lib/libcrypto.*.dylib "$PREFIX"/lib/libcrypto.dylib
+OPENSSL_DIR="$PREFIX" node scripts/sm-library-build.mjs --prepare --require-static
+# ③ 打包（必须带特性）
+OPENSSL_DIR="$PREFIX" pnpm tauri build --bundles app,dmg --features sm-library
+# ④ 产物断言（同 release.yml）
+SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied \
+SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 node scripts/check-crypto-backend.mjs
+# ⑤ **签名必须早于做 dmg**，且由内到外（见上面「签名/公证」那条与 scripts/sign-macos-app.mjs）
+```
+
+**本机实测（2026-09-22，macOS，静态前缀）**：`otool -L` 里**没有**任何 `libcrypto/libssl`
+（＝真的静态链进去了）；产物标记 `patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`；
+三条断言全过。
+
+**老库怎么办（快路后果）**：国密构建**读不开** AES＋SHA512 写的老库。迁移＝在旧版里关掉该空间的
+「磁盘加密」（会重写成明文 SQLite）→ 换新版 → 重新打开加密。还没有真实用户，所以现在是零迁移成本。
+
 ### ⚠️ `shuyonote://` 协议注册依赖 Windows 档保持 `nsis`
 
 Windows 上「点社区链接 → 唤起应用」靠注册表 `HKCU\Software\Classes\shuyonote`。**这份注册与它的卸载清理都不是我们手写的**，而是：

@@ -87,6 +87,10 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
+          # ★ 库级国密（单一口味）要一个**显式**的 OPENSSL_DIR（`build.rs` 在 `sm-library` 上是 fail-fast：
+          #   不给就当场失败，而不是安静地退回 CommonCrypto/别的后端）。Linux 用系统 OpenSSL 3
+          #   —— 它自带 SM3/SM4，且 deb 的 shlibs 会声明这个依赖（口径见 docs/RELEASING.md）。
+          echo "OPENSSL_DIR=/usr" >> "$GITHUB_ENV"
 
       - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
@@ -143,12 +147,39 @@ jobs:
         #   4. 事件名前后端一致（对不上 = 前端永远等不到事件）。
         run: node scripts/check-deep-link.mjs
 
+      - name: ★ 库级国密（单一口味）：核对后端 ＋ 打补丁 ＋ 清产物
+        # 2026-09-22 owner 拍板「就发国密单一口味」⇒ **发出去的包必须是 SM4 页 ＋ SM3 页 MAC/库 KDF**。
+        # 这一格干三件事，缺一件都会产出「看起来是国密、其实不是」的包：
+        #   ① 核对后端**真的**有 SM3/SM4（用的是系统/vcpkg 的 OpenSSL，不是我们自带的）；
+        #   ② 把补丁打到「将要编译的那份 SQLCipher 源码」上（`--prepare` 只做准备，不重复构建）；
+        #   ③ 清掉 `libsqlite3-sys` 与本 crate 的产物 —— 它的 build.rs 没为 `OPENSSL_DIR` 声明
+        #      `rerun-if-env-changed`，不清就**不会**换后端（docs/development.md 工具坑第 5 条）。
+        # ⚠️ 紧接着的 `tauri build` **必须**带 `--features sm-library`：不带的话应用接线那段 `#[cfg]`
+        #    会被编掉，而产物标记仍写着 `page_cipher=sm4`（页加密是补丁的编译期行为）⇒
+        #    包看起来是国密、库级页 MAC/KDF 却还是 SHA512（2026-09-22 在 `cargo test` 上踩过同一个坑）。
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "== 后端探测（必须真的有 SM3/SM4） =="
+          openssl version
+          openssl list -cipher-algorithms | grep -i -m1 sm4
+          openssl list -digest-algorithms | grep -i -m1 sm3
+          echo "== 准备（补丁 ＋ 清产物） =="
+          if [ "${{ matrix.platform }}" = "windows-latest" ]; then
+            # vcpkg 的 x64-windows-static-md ⇒ lib/libcrypto.lib（静态）⇒ 产物自包含
+            node scripts/sm-library-build.mjs --prepare --require-static
+          else
+            # Linux runner 的 OpenSSL 3 自带 SM3/SM4；这里**不要求**静态（系统库是共享的，
+            # 依赖由 deb 的 shlibs 声明）—— 各平台口径写在 docs/RELEASING.md 的「单一口味」一节
+            node scripts/sm-library-build.mjs --prepare
+          fi
+
       - name: Build bundles
         # ⚠️ Windows 档**必须**保持 `nsis`：`shuyonote://` 的注册表写入（HKCU\Software\Classes）
         # 与卸载清理都在 NSIS 模板里（tauri-bundler 的 installer.nsi：安装时写，卸载时先核对
         # `shell\open\command` 确实指向本次安装的 exe 再删）。换成 msi 就得在 WiX 侧另配一份
         # 等价的注册与清理，否则会变成「装完点链接没反应」，且卸载后留下一条指向已删 exe 的键。
-        run: pnpm tauri build --bundles ${{ matrix.bundles }}
+        run: pnpm tauri build --bundles ${{ matrix.bundles }} --features sm-library
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -167,6 +198,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: ★ 产物断言：这一版真的是国密（页加密 = SM4）
+        # 单一口味＝**发出去的包必须是 SM4 页**。这一格是产物级证据，不是声明：
+        # `page_cipher=` 来自 `build.rs` 对「将要编译的那份源码」的读取（`#define OPENSSL_CIPHER`），
+        # 而 `cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3）⇒ 只有它能回答。
+        # 三个声明缺一不可：后端是 openssl（有 SM3/SM4）＋ 补丁在场 ＋ 页加密是 sm4。
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl \
+          SHUYONOTE_EXPECT_SM_PATCH=applied \
+          SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 \
+            node scripts/check-crypto-backend.mjs
 
       - name: 装包确实带上了 pdfium.dll（Windows 档）
         # 与 Linux 档那条 deb 断言同一个道理：**产物级**判据。源码级只能证明"配置里写了映射"，
