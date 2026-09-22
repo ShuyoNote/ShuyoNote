@@ -17400,12 +17400,6 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
 }
-/* 选中后操作栏里的辅助文案 */
-.pdf-annot-tip {
-  font-size: 12px;
-  color: var(--text-dim);
-  padding: 4px 8px;
-}
 /* 页面能力提示条（文本层 + OCR）——滚动页面时吸顶固定，保持批注控制可见。 */
 .pdf-annot-status {
   width: 100%;
@@ -21988,8 +21982,6 @@ body.is-plugin-panel-open .main {
        · 进 `⋯`（`.pdf-reader-more`，由 `PdfReader` 的 `toolsOpen` 加 `.tools-open` 放出）——
          最大化 / 批注侧栏 / 提问 / 护眼 / 导出带批注副本，以及整条批注状态条
          （文本层提示 + 朗读 / OCR / AI 识别，由 `PdfAnnotTopToolbar` 的 `showStatus` 控制）；
-       · 提示语 `.pdf-annot-tip`（"先在页面选中一条标注…"）窄屏直接不显示——它是**说明**、
-         不是动作；选中标注之后那一组动作按钮（摘录/AI/复制引用/删除）照旧出现。
      全部都有"一次点击可达"的入口，没有丢功能；桌面一个像素没变（`.pdf-reader-more` 的
      基础规则就是 `display:none`，`tools-open` 那几条也只在窄屏生效）。 */
   .pdf-reader-more { display: inline-flex; }
@@ -22011,7 +22003,6 @@ body.is-plugin-panel-open .main {
   }
   .pdf-annot-tools::-webkit-scrollbar { display: none; }
   .pdf-annot-tool { flex: 0 0 auto; }
-  .pdf-annot-tip { display: none; }
   .pdf-annot-toolbar,
   .pdf-annot-actions {
     flex-wrap: wrap;

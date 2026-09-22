@@ -270,6 +270,19 @@ SHUYONOTE_EXPECT_OPENSSL_DIR="$PREFIX" node scripts/check-crypto-backend.mjs
 > ★ 静态前缀的**判据是在前缀本身上**（`--require-static` 会直接拒绝含 `libcrypto.*.dylib` 的前缀）——
 > 2026-09-22 本机重跑时就撞到过一次：`/Users/shuyo/tongsuo-macos/install/lib` 里混着上次留下的 `.dylib`，
 > 于是"静态"这个前提不成立。**先 `--require-static` 绿了再谈产物静态**，顺序不能反。
+>
+> ⚠️ **别拿 `--require-static`（或 `--print-source-sha256`）当"纯探针"** —— 它们**会先幂等打补丁**再干正事
+> （Windows 侧 2026-09-22 实测：打印 `补丁 = applied（本次打上）`）⇒ 一次"只想看看前缀静不静"的核对，
+> 会把补丁打到**全机共享的** registry 源码上。只想读判据用这条（实测**不打补丁、不构建**）：
+>
+> ```bash
+> node -e "import('./scripts/lib/sm-library-source.mjs').then(m => console.log(m.requireStaticCrypto(process.env.OPENSSL_DIR)))"
+> ```
+>
+> ★ Windows 侧另一条实测（不是提醒，是读数）：本机**全局** `OPENSSL_DIR=C:\Program Files\OpenSSL-Win64` 时
+> `requireStaticCrypto` **拒绝** —— `lib\libcrypto.lib` 是**导入库** 且 `bin\libcrypto-3-x64.dll` 在场
+> ⇒ 在默认环境下编出来的国密包**依赖构建机那份 DLL**。发单一口味包前必须先备一个只含
+> `libcrypto.a`/`libcrypto.lib`、且 `bin/` 无 crypto DLL 的前缀。
 
 **老库怎么办（快路后果）**：国密构建**读不开** AES＋SHA512 写的老库。迁移＝在旧版里关掉该空间的
 「磁盘加密」（会重写成明文 SQLite）→ 换新版 → 重新打开加密。还没有真实用户，所以现在是零迁移成本。

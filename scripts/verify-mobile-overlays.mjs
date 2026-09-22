@@ -814,11 +814,9 @@ async function main() {
           `窄屏段里批注工具行改成单行横滑（${toolsNowrap.map((e) => e.sel).join("；") || "没找到规则"}）` +
             `——换行会白吃 44px 正文高度`,
         );
-        const tipHidden = rules.filter((e) => /^\.pdf-annot-tip$/.test(e.sel) && /none/.test(e.display ?? ""));
-        ok(
-          tipHidden.length > 0,
-          `窄屏段里那句说明（.pdf-annot-tip「先在页面选中一条标注…」）不再占一行`,
-        );
+        // 注：这里原来还有一条"窄屏段里那句说明（.pdf-annot-tip）不再占一行"的断言。
+        // 2026-09-22 那句说明**整体删掉**了（桌面也删），标记与它的 CSS 规则一起移除，
+        // 所以这条 CSS 级断言没有对象可钉，随之删除（不是"改成永远通过"）。
       }
 
       // ---- 手机上的同步入口：主界面必须有一个（不能只藏在侧栏抽屉里） ----

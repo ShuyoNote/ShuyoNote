@@ -10,6 +10,8 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { resolve, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { plansIndexProblems } from "./lib/docs-index.mjs";
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SKIP = /(^|[\\/])(node_modules|tmp|dist|dist-web|target|\.git)([\\/]|$)/;
 const LINK = /\]\((?!https?:|#|mailto:)([^)#\s]+\.md)(?:#[^)\s]*)?\)/g;
@@ -75,4 +77,28 @@ if (navProblems.length) {
   process.exit(1);
 }
 
-console.log(`文档链接完整：${files.length} 个 .md，${links} 条相对链接全部可达；「快速导航」左列形态正确。`);
+// ── 附加口径②：`docs/README.md` 的「方案与规划（plans）」表必须**登记全部**方案文档 ──
+//
+// 为什么单判这一条（2026-09-22）：`docs/plans/` 已 71 篇，而写完一篇忘了登记时**死链判据抓不到**
+// （它只查"链接指向的文件在不在"）⇒ 新会话按文档入口找不到那一篇，同一件事会被第二次立项。
+// 判据与理由（含"只认表行、不认正文提一句"与"刻意不判反向"）见 `scripts/lib/docs-index.mjs`，
+// 判据本身在 `scripts/lib/docs-index.test.mjs`（6 条，含两条变异）。
+const plansDir = join(root, "docs", "plans");
+{
+  const planFiles = existsSync(plansDir)
+    ? readdirSync(plansDir).filter((f) => f.endsWith(".md"))
+    : [];
+  const indexProblems = plansIndexProblems({
+    planFiles,
+    readmeText: existsSync(join(root, "docs", "README.md"))
+      ? readFileSync(join(root, "docs", "README.md"), "utf8")
+      : "",
+  });
+  if (indexProblems.length) {
+    console.error(`方案索引不全 ${indexProblems.length} 处（docs/plans 共 ${planFiles.length} 篇）：`);
+    for (const p of indexProblems) console.error("  - " + p);
+    console.error("  为什么必须有这一条：**写完方案忘了登记，死链判据抓不到**（链接没坏，只是没人找得到）。");
+    process.exit(1);
+  }
+  console.log(`文档链接完整：${files.length} 个 .md，${links} 条相对链接全部可达；「快速导航」左列形态正确；方案索引齐全（${planFiles.length} 篇）。`);
+}

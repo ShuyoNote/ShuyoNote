@@ -487,6 +487,23 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
 - `docs/` 聚焦"是什么 / 为什么 / 怎么做"；版本演进以 `CHANGELOG.md` 为准。
 - 文档统一入口：`docs/README.md`（导航表 + 方案索引）。新增文档记得登记进去。
 
+### 8.1 「记得登记」已经**不是靠记得**（2026-09-22 起由门禁拦）
+
+上面那句"新增文档记得登记"原先只是一句嘱咐，实测会漂移：`docs/plans/` 到 **71 篇**时，有 4 篇
+**没进 `docs/README.md` 的方案索引**，而**死链判据抓不到**（链接没坏，只是没人找得到）。
+⇒ 现在有三条**可执行**规矩（都在 `node scripts/check-doc-links.mjs`，跑在 `pnpm verify` 的 `contract` 组里）：
+
+| 规矩 | 拦的是什么 |
+|---|---|
+| **方案索引一一对应** | `docs/plans/*.md` 每个都必须在 `docs/README.md` 的表里有一行，且右列**有内容**（不是空、不是破折号）。⚠️ **只在正文里提一句不算登记** —— 判据只认表行（第一版用全文件匹配，变异当场证明"提一句就能变绿"）。纯函数与变异在 `scripts/lib/docs-index.mjs` / `.test.mjs` |
+| **相对链接可达** | 把路径按"自己在 `docs/` 根目录"写（如 `plans/x.md`，正确是 `x.md`）—— 这是本仓真实踩过的一类 |
+| **「快速导航」左列是「我想了解…」** | 新增方案时顺手把"文档 → 内容"形态的行插进导航表（两张两列表长得一样、语义不同；死链判据看不见） |
+
+- **刻意不判的反向**：`docs/README.md` 里**允许**出现指向私有仓 `shuyonote-sync-server` 的 `plans/x.md` 路径
+  （如 M27 那行）。"提到的必须存在"会对着一条**正确的**说明喊红。
+- 所以新增一篇方案的标准动作：写 `docs/plans/YYYY-MM-DD-xxx.md` → 在 `docs/README.md` 的方案索引里加一行
+  （一句话说清"这篇讲什么"）→ `node scripts/check-doc-links.mjs` 绿。
+
 ## 9. 常见坑
 
 - **`Missing environment variable OPENSSL_DIR`（Windows）**：`rusqlite` 的 `bundled-sqlcipher` 要链接系统 OpenSSL，Windows 必须显式给路径 —— 装了 OpenSSL 也要导 `OPENSSL_DIR`（最常见就是「装了但没设变量」）。详见 **§2.3.1 OpenSSL（Windows 必做）**。
@@ -681,7 +698,8 @@ curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
 与 `localVision` 同一条"只许本机端点"的红线）→ `attachmentDeps` → `av.transcript@1`。
 默认模型 `funasr-nano`；**桌面端走原生 http（不经 WebView）⇒ 没有 CORS 这一关**，Web 端才有。
 ⚠️ **live 冒烟还没跑过**：本机 herdsman 没起（`ECONNREFUSED 127.0.0.1:8080`）⇒ 现在的绿都是假端点那层；
-要真读数先让桌面应用的「模型商店」把服务起起来，再按上面两条 curl 复跑。细节见
+要真读数先让桌面应用的「模型商店」把服务起起来，再跑 `src/lib/ai/localTranscribe.live.test.ts`
+（**服务不在就跳过、并把理由写进 describe 标题**：TTS 合成 → 经我们自己的通道转写 → 经 `av.transcript@1` 成段）。细节见
 `docs/plans/2026-09-22-asr-wiring-plan.md` §6（含"换 ASR 模型今天不生效"那条参数优先级问题）。
 **§10.5 补一双孪生形态（2026-09-18，AMD 侧复核块 ID 分支时又踩到一次）**：上面那条治的是
 **本地分支没更新**，还有一种更隐蔽的 —— **`origin/dev` 这类远端跟踪 ref 静默过期**：

@@ -213,7 +213,7 @@ $ vitest run src/lib/extract src/lib/ai src/lib/platform
 
 1. **真模型那条链路没跑过**：本机 herdsman 现在**没在跑**（`vitest` 里 `librarySummary.live` 报
    `ECONNREFUSED 127.0.0.1:8080`；Windows 验收机同一条：`curl` exit=7）⇒ 现在的绿全是**假端点**那层；
-   要真读数得先让桌面应用的「模型商店」把服务起起来，再跑一次 §10.7 的闭环冒烟；
+   ⇒ 已补上一条**会自跳过的 live 判据**（**§6.6**），要在**服务在跑的那台**上跑一次才有真读数；
 2. **Web 端 CORS 未实测**（桌面不受影响，理由见 6.2-②）。
 
 ### 6.5 顺带发现的一条**参数优先级**问题（不是本轮的错，记下来免得以后查）
@@ -223,9 +223,8 @@ $ vitest run src/lib/extract src/lib/ai src/lib/platform
 `localTranscribe(config, { model: "sherpa-onnx-paraformer-zh-small" })` 里那个模型**今天不会生效**，
 因为"本次调用"优先于"构造时"。
 
-⇒ 结论：**用户可配 ASR 模型这件事现在做不到**，要做得改抽取器那一行（让它别硬编码默认值、
-把"用哪个模型"变成真参数）。这属于**抽取层**的口径，我没有擅自改（那边有判据钉着），
-已在信箱里提给 AMD。在那之前：换模型＝改 `DEFAULT_ASR_MODEL` 或在调用侧直接把 `transcribe` 换掉。
+⇒ 当时的结论：**用户可配 ASR 模型这件事做不到**，要改抽取器那一行才成立（抽取层的口径，我没擅自改，
+已在信箱里提给 AMD）。★ **已裁定并落地，见下面 §6.5.1**（本段保留原文，作为"问题怎么被发现的"记录）。
 
 #### 6.5.1 ★ 裁定（2026-09-22，AMD）：走 **A**，已落地
 
@@ -239,3 +238,22 @@ $ vitest run src/lib/extract src/lib/ai src/lib/platform
 `localTranscribe` **import 它**（本来就是）⇒ 走默认那条路的行为**与裁定前逐字一致**，配置那条路才通。
 判据（`avTranscript.test.ts`）：① 调用参数必须是 `{ model: undefined }`（**钉住"不许再强制默认值"**
 —— 这一条正是上面那个"安静盖掉"的回归守卫）；② `DEFAULT_ASR_MODEL` 的字面值锁死。
+
+### 6.6 ★ live 判据已落地：TTS → `localTranscribe` → 抽取器（服务不在就跳过）
+
+`src/lib/ai/localTranscribe.live.test.ts`（3 条，`describe.skipIf`）——**只有它能回答"接上真模型能不能用"**，
+因为 `localTranscribe.test.ts` 用的是假端点，证的是"请求形状与解析对不对"。
+
+```text
+① TTS 合成 ⇒ 拿到 wav（RIFF 魔数、>1000 字节）
+② 经**我们自己的通道**转写 ⇒ 断言去标点关键词（两个本地 ASR 只差标点，按带标点那句断言会让无标点模型假红）
+③ 经 `av.transcript@1` ⇒ 段的形状**按服务端实际给的**如实区分：给了 segments ⇒ `loc` 必须 `HH:MM:SS`；
+   没给 ⇒ 契约上退成一段、`loc=""`（**不编造定位**）；并把服务端实际形状打印成一行读数
+```
+
+★ 落点选在 `src/lib/ai/` 而不是 `src/lib/extract/`：这条判据验的是**通道**（multipart 形状、状态码、
+响应归一、超时），抽取器那一层已经由 conformance 夹具覆盖；把通道的真跑放进抽取层，会让人以为
+"抽取器需要真模型才能测"。第 ③ 条顺带覆盖"段与 loc"的接线，所以两边都够得着。
+
+⚠️ **本机与 Windows 验收机的服务都没起** ⇒ 这两台现在是 **skipped**（不是绿，也不是红）。
+要真读数得在**服务在跑的那台**上跑一次；跳过的理由会写进 describe 标题，一眼能分辨环境与回归。
