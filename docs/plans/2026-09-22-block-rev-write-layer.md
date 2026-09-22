@@ -187,3 +187,30 @@ Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`version
 判据：`src/editor/blockConflictBadge.test.ts` **3 条**（加类名＋**摘掉**不在表里的／空表全清／没打标记的块匹配不到）
 ＋ `src/components/ConflictBanner.test.ts` 扩到 **6 条**（新增：把 id 发布给编辑器；「定位」设 `focusBlockId`；
 卸载后清空角标）。两条坑与 §7 同款（`.test.ts` 而非 `.test.tsx`；React 18 的 `act` 要手动开开关）。
+
+## 9. 正文文本"滞后一拍"的收口（第八段）
+
+**问题**（前面几节一直挂着的那条已知边界）：合并 / 裁决产物是**拼出来**的（服务端拼的、或本地按块拼的），
+而 `content_text` 仍是**页级胜方那一份** ⇒ 那一页的 FTS 会有一段时间"搜不到刚合并进来的字"，
+要等**下一次保存**才重建。
+
+**修法（关键是"不引第二份派生实现"）**：派生文本要编辑器语义，而 `contentText.ts::deriveContentText`
+会把整张节点表拖进打包图（`docs/development.md` 记过的那条坑，同步路径不能用）。
+⇒ 换方向：**有编辑器的那一侧**在打开页面时顺手算一遍（编辑器已经把文档解析好了），
+与库里那份不同就写回去。
+
+| 件事 | 落点 |
+|---|---|
+| 判断（纯函数） | `src/lib/pageTextRepair.ts::repairPageTextIfStale` —— 三条边界：**拿不到库里那份 ⇒ 不修**（不猜）／两边相同 ⇒ **一次写库都没有**（绝大多数页面）／空页两边都是空串 ⇒ 不修 |
+| 算 | `Editor.tsx` 的新插件 `PageTextRepairPlugin`（在 composer 内）：`$getRoot().getTextContent()` —— **与保存路径同一句**（所以这不是"第二份派生实现"）→ `api.refreshPageText(pageId, derived)` |
+| 比 + 写（**都在层里**） | `doc_content::refresh_page_text_if_stale` / `docContent.refreshPageTextIfStale`：读库里那份 → 不同才写 → 返回"是否修了"。⚠️ 第一版把"库里那份"传到界面层去比较 ⇒ **收口门禁当场红**（`App.tsx` / `Editor.tsx` 那类文件的计数只许减不许增）⇒ 比较挪进层里就对了 |
+| 写什么 | **只动正文文本**：不动内容 JSON、**不动 `dirty`**、不动 `updated_at` —— 它不是用户编辑，标脏会被当成本地改动推上去 |
+
+⇒ 窗口从"下次**保存**"缩到"下次**打开**该页"（打开时编辑器本来就会解析一遍，判据是零成本的字符串比较）。
+
+判据：Rust `write_text_touches_only_the_text`（真表：内容/dirty/updated_at 一个都没动）↔
+TS `writeContentText` 的同款一条 ↔ `src/lib/pageTextRepair.test.ts` **4 条**（不同 ⇒ 写回并报"修了"／相同 ⇒
+不写／`undefined` ⇒ 不写／空页与无 id ⇒ 不写）。
+
+⚠️ **仍然存在的窗口（如实）**：**从没被打开过**的那一页，正文不会被修 —— 那要等"标记待重建 + 后台补算"
+（需要新表/新列，本段没做）；Web 侧搜索是**按内容 JSON 现算**的（不读 `content_text`），所以那边没有这个窗口。
