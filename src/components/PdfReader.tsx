@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
@@ -33,6 +33,25 @@ import { PdfAskBar } from "./PdfAskBar";
 
 /** 「AI 生成目录」默认向后生成的页数（可在目录面板范围下拉里改：30/60/120 页或整本）。 */
 const AI_OUTLINE_PAGES = 60;
+
+/**
+ * 头部工具条里**可以被收进「⋯」**的几项，按"先收谁"排序（2026-09-22，owner：
+ * "pdf 阅读器顶部系统工具栏任何时候不换行，空间狭小时收起来，除了最右端的关闭按钮"）。
+ *
+ * 值 = `.pdf-reader-head` 里的选择器（每一项都是它的**直接子元素**，所以量宽公式很短）。
+ * 顺序的理由：四个"视图开关"（最大化/批注侧栏/提问/护眼）最先收 → 导出 → 缩放 →
+ * 翻页（页码读数也是信息，尽量留）→ 目录（导航入口）最后收。
+ * **永不收**：文件名（它靠省略号自己缩）、「⋯」自己、**关闭**。
+ */
+const HEAD_HIDE_ORDER = ["tail", "export", "zoom", "nav", "outline"] as const;
+type HeadHideKey = (typeof HEAD_HIDE_ORDER)[number];
+const HEAD_HIDE_SEL: Record<HeadHideKey, string> = {
+  tail: ".pdf-head-tail",
+  export: ".pdf-head-export",
+  zoom: ".pdf-reader-zoom",
+  nav: ".pdf-reader-nav",
+  outline: ".pdf-reader-outline-toggle",
+};
 
 /** 目录栏宽度持久化键。 */
 const OUTLINE_WIDTH_KEY = "shuyonote.pdf.outlineWidth";
@@ -387,15 +406,110 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const [sidebarOpen, setSidebarOpen] = useState(() => !overlayViewport);
   const [outlineOpen, setOutlineOpen] = useState(() => !overlayViewport);
   /**
-   * 窄屏的「更多工具」是否展开（桌面不用它，桌面本来就放得下）。
+   * 头部工具条的「⋯」菜单是否展开（2026-09-22 起它由**量宽**决定要不要出现，不再只属于窄屏）。
    *
-   * 真机/真窗口量到：窄屏上这一屏顶部一共堆了 **8 行**控件（头部 4 行 + 批注工具 4 行），
-   * 正文第一页被顶到屏幕下半部分去了。这里把**低频的 5 个**（最大化 / 批注侧栏 / 提问 /
-   * 护眼 / 导出带批注副本）与**批注状态条**（文本层提示 + 朗读/OCR/AI 识别）收进 `⋯`，
-   * 常驻只留 3 行：[目录][文件名][⋯][×] / [上一页][页码][下一页][−][缩放][+] / 批注工具（单行横滑）。
-   * 默认收起——它们都是"偶尔用一次"，而正文空间每一屏都要用。
+   * owner："pdf 阅读器顶部系统工具栏任何时候不换行，空间狭小时收起来，除了最右端的关闭按钮。"
+   * 放不下的那几项按 `HEAD_HIDE_ORDER` 收进这里；**关闭按钮永远不收**（它是"离开"的唯一入口）。
    */
-  const [toolsOpen, setToolsOpen] = useState(false);
+  const [headMenuOpen, setHeadMenuOpen] = useState(false);
+  const headRef = useRef<HTMLDivElement | null>(null);
+  const headMoreRef = useRef<HTMLDivElement | null>(null);
+  const [headHidden, setHeadHidden] = useState<HeadHideKey[]>([]);
+  const headHiddenSet = useMemo(() => new Set(headHidden), [headHidden]);
+  // 容器宽度变了（面板开合 / 窗口缩放 / 横竖屏）→ 触发一次重渲染，让下面那个量宽 effect 重算。
+  const [, headBump] = useState(0);
+  useEffect(() => {
+    const el = headRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => headBump((t) => t + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // 菜单：点外面 / Esc 关掉；没有可收的项时也关掉（宽度变宽了它就该自己消失）。
+  useEffect(() => {
+    if (!headMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!headMoreRef.current?.contains(e.target as Node)) setHeadMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHeadMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [headMenuOpen]);
+  useEffect(() => {
+    if (!headHidden.length && headMenuOpen) setHeadMenuOpen(false);
+  }, [headHidden.length, headMenuOpen]);
+  // ---------------------------------------------------------------------------
+  // 量宽 → 决定头部收哪几项。与 `PdfAnnotTopToolbar` 是**同一套做法**：
+  //   · 候选先临时显示回来、读 rect、再恢复 —— 全在同一个 layout effect 里同步走完，
+  //     浏览器不会在这中间画一帧；
+  //   · 每次都从"全展开"重新推导 ⇒ "要不要收"是纯函数，不会"收了又放、放了又收"。
+  // 这里每一项都是头部的直接子元素（工具条那份不一样：撤销/导出嵌在工具组里，
+  // 而且标签收起会改变那一组的宽度），所以公式是简版：宽度求和 + 间距。
+  // ⚠️ 前提同样是"收起来的项**仍然渲染**、只是被 CSS 藏起来"——条件渲染会让这里量到 0 宽。
+  // ---------------------------------------------------------------------------
+  useLayoutEffect(() => {
+    const head = headRef.current;
+    const moreWrap = headMoreRef.current;
+    if (!head || !moreWrap || typeof getComputedStyle !== "function") return;
+    const hcs = getComputedStyle(head);
+    const gap = parseFloat(hcs.columnGap) || 0;
+    const avail = head.clientWidth - (parseFloat(hcs.paddingLeft) || 0) - (parseFloat(hcs.paddingRight) || 0);
+    if (avail <= 16) return;
+    const restores: [HTMLElement, string][] = [];
+    const force = (el: HTMLElement | null) => {
+      if (!el) return;
+      if (getComputedStyle(el).display === "none") {
+        restores.push([el, el.style.display]);
+        el.style.display = "flex";
+      }
+    };
+    force(moreWrap);
+    const cands: [HeadHideKey, HTMLElement | null][] = HEAD_HIDE_ORDER.map((k) => [
+      k,
+      head.querySelector<HTMLElement>(`:scope > ${HEAD_HIDE_SEL[k]}`),
+    ]);
+    for (const [, el] of cands) force(el);
+    const w = (el: HTMLElement | null) => (el ? el.getBoundingClientRect().width : 0);
+    const wMore = w(moreWrap);
+    const candEls = new Set(cands.map(([, el]) => el).filter(Boolean) as HTMLElement[]);
+    const nameEl = head.querySelector<HTMLElement>(":scope > .pdf-reader-name");
+    // 文件名按**地板宽**计（它自己会用省略号缩到 `min-width`，见 App.css）。地板从 CSS 读，
+    // 不在这里抄一份 —— 抄一份就会两边漂移。
+    const nameFloor = nameEl ? parseFloat(getComputedStyle(nameEl).minWidth) || 0 : 0;
+    const natural = Array.from(head.children).filter(
+      (c) => c !== moreWrap && (c === nameEl || candEls.has(c as HTMLElement) || getComputedStyle(c).display !== "none"),
+    ) as HTMLElement[];
+    // 各项**自身**占的宽（不含间距与「⋯」）
+    const itemW = new Map<HeadHideKey, number>();
+    for (const [k, el] of cands) if (el) itemW.set(k, w(el));
+    let sum = 0;
+    for (const c of natural) sum += c === nameEl ? nameFloor : w(c);
+    for (const [el, display] of restores) el.style.display = display;
+
+    const need = (set: HeadHideKey[]) => {
+      const vis = natural.length - set.length;
+      let t = sum;
+      for (const k of set) t -= itemW.get(k) ?? 0;
+      t += Math.max(0, vis - 1) * gap;
+      if (set.length) t += gap + wMore; // 「⋯」自己也要占一格（含它与前一格之间的间距）
+      return t;
+    };
+    let next: HeadHideKey[] = [];
+    if (need(next) > avail + 1) {
+      for (const k of HEAD_HIDE_ORDER) {
+        if (!itemW.has(k)) continue;
+        next = [...next, k];
+        if (need(next) <= avail + 1) break;
+      }
+    }
+    if (next.join(" ") !== headHidden.join(" ")) setHeadHidden(next);
+  });
   // 转到抽屉形态（竖屏转横屏、把窗口拖矮、进分屏）时**收起来**：留着开就是拿两栏盖住正文。
   // 只单向收敛（不回弹），把"要不要打开"的决定权留给用户。
   useEffect(() => {
@@ -1318,6 +1432,224 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   // 容器的层叠上下文。**内容区模式不能 portal**——portal 会把 DOM 挂到 body 下，
   // CSS 里那条 `.main > .pdf-reader-overlay` 就永远匹配不上，于是"留在内容区里"这件事
   // 只发生在 React 树里、没发生在真实 DOM 里（第一版就是这么错的）。
+  // ---------------------------------------------------------------------------
+  // 头部工具条的分组（2026-09-22 重排）：每一项都是 `.pdf-reader-head` 的**直接子元素**，
+  // 这样"量宽 → 收起"的公式才简单（见上面那个 layout effect），而且收起来的项能在「⋯」
+  // 菜单里用**同一份 JSX** 再渲染一遍（不是抄两遍逻辑）。
+  //   [目录][文件名][翻页][缩放][分隔线][视图开关组][分隔线][导出][⋯][×]
+  // 顺序：nav / zoom 从原来的 `.pdf-reader-controls` 里**提出来**当兄弟节点（那个包裹层
+  // 会让"只收缩放、留翻页"这种粒度做不到），间距靠 head 自己的 `gap: 8px`（原值就是 8）。
+  // ---------------------------------------------------------------------------
+  const headNav = (
+    <div className="pdf-reader-nav">
+      <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() - 1)} disabled={pageAtViewport() <= 0} title="上一页">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span className="pdf-reader-page">
+        {pageCount > 0
+          ? `第 ${Math.min(currentPage + 1, pageCount)} / ${pageCount} 页`
+          : // pageCount=0 时以前会显示"第 1 / 1 页"——那是在替一份打不开的文档
+            // 说谎。宁可显示"页数未知"。
+            "页数未知"}
+      </span>
+      <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() + 1)} disabled={pageAtViewport() >= pageCount - 1} title="下一页">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+  );
+
+  const headZoom = (
+    <div className="pdf-reader-zoom">
+      <button className="pdf-reader-btn" onClick={() => setZoom(stepZoom(scale, -1))} title="缩小" aria-label="缩小">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg>
+      </button>
+      <div className="pdf-zoom-wrap" ref={zoomWrapRef}>
+        <button
+          className="pdf-reader-btn pdf-zoom-btn"
+          onClick={() => setZoomOpen((o) => !o)}
+          title="缩放"
+          aria-haspopup="listbox"
+          aria-expanded={zoomOpen}
+        >
+          <span className="pdf-reader-pct">{zoomLabel(zoom)}</span>
+          <svg className="pdf-zoom-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        {zoomOpen && (
+          <div className="pdf-zoom-menu" role="listbox">
+            <button
+              className={`pdf-zoom-item${zoom.mode === "actual" ? " active" : ""}`}
+              role="option"
+              onClick={() => { actualSize(); setZoomOpen(false); }}
+            >
+              <span>实际大小</span>
+            </button>
+            <button
+              className={`pdf-zoom-item${zoom.mode === "fit-page" ? " active" : ""}`}
+              role="option"
+              onClick={() => { fitPage(); setZoomOpen(false); }}
+            >
+              <span>适合页面</span>
+            </button>
+            <button
+              className={`pdf-zoom-item${zoom.mode === "fit-width" ? " active" : ""}`}
+              role="option"
+              onClick={() => { fitWidth(); setZoomOpen(false); }}
+            >
+              <span>适合宽度</span>
+            </button>
+            <button
+              className={`pdf-zoom-item${zoom.mode === "fit-content" ? " active" : ""}`}
+              role="option"
+              onClick={() => { fitContent(); setZoomOpen(false); }}
+            >
+              <span>适合内容</span>
+            </button>
+            <button
+              className="pdf-zoom-item"
+              role="option"
+              onClick={() => { zoomCustomRef.current?.focus(); }}
+            >
+              <span>自定义缩放</span>
+            </button>
+            <div className="pdf-zoom-sep" />
+            {ZOOM_LADDER.map((p) => {
+              const isCur = zoom.mode === "pct" && Math.abs(zoomPct(scale) - p) < 0.5;
+              return (
+                <button
+                  key={p}
+                  className={`pdf-zoom-item${isCur ? " active" : ""}`}
+                  role="option"
+                  onClick={() => { setZoom({ mode: "pct", pct: p }); setZoomOpen(false); }}
+                >
+                  <span className="pdf-zoom-item-check">{isCur ? "✓" : ""}</span>
+                  <span className="pdf-zoom-item-label">{Number.isInteger(p) ? p : +p.toFixed(2)}%</span>
+                </button>
+              );
+            })}
+            <div className="pdf-zoom-sep" />
+            <button className="pdf-zoom-item pdf-zoom-footer" role="option" onClick={setDefaultZoom}>
+              <span>设置默认缩放比例</span>
+            </button>
+            <input
+              ref={zoomCustomRef}
+              className="pdf-zoom-custom"
+              type="number"
+              min={1}
+              step="any"
+              placeholder="自定义 %"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const v = parseFloat(e.currentTarget.value);
+                  if (!Number.isNaN(v) && v > 0) { setZoom({ mode: "pct", pct: v }); setZoomOpen(false); }
+                }
+                e.stopPropagation();
+              }}
+              onBlur={(e) => {
+                const v = parseFloat(e.currentTarget.value);
+                if (!Number.isNaN(v) && v > 0) { setZoom({ mode: "pct", pct: v }); setZoomOpen(false); }
+              }}
+            />
+          </div>
+        )}
+      </div>
+      <button className="pdf-reader-btn" onClick={() => setZoom(stepZoom(scale, 1))} title="放大" aria-label="放大">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+  );
+
+  /** 视图开关组：最大化 / 批注侧栏 / 提问 / 护眼（最先被收进「⋯」的一组）。 */
+  const headTail = (
+    <div className="pdf-head-tail">
+      {!inline && (
+        <button className="pdf-reader-btn pdf-reader-maximize" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
+          {maximized ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 4h12v12M4 8l16-4"/></svg>
+          )}
+        </button>
+      )}
+      <button className="pdf-reader-btn pdf-reader-sidebar-toggle" onClick={() => setSidebarOpen((s) => !s)} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
+        {sidebarOpen ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+        )}
+      </button>
+      <button className="pdf-reader-btn pdf-reader-ask" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+      </button>
+      <div className="pdf-eye-wrap" ref={eyeWrapRef}>
+        <button
+          className={`pdf-reader-btn${eyeMode !== "off" ? " active" : ""}`}
+          onClick={() => setEyeOpen((o) => !o)}
+          title={`护眼模式：${EYE_MODES.find((m) => m.id === eyeMode)?.label ?? "关闭"}`}
+          aria-haspopup="listbox"
+          aria-expanded={eyeOpen}
+          aria-pressed={eyeMode !== "off"}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7z"/><circle cx="12" cy="12" r="2.6"/></svg>
+        </button>
+        {eyeOpen && (
+          <div className="pdf-eye-menu" role="listbox">
+            {EYE_MODES.map((m) => (
+              <button
+                key={m.id}
+                className={`pdf-eye-item${eyeMode === m.id ? " active" : ""}`}
+                role="option"
+                onClick={() => {
+                  setEyeMode(m.id);
+                  try { localStorage.setItem(EYE_CARE_KEY, m.id); } catch {}
+                  setEyeOpen(false);
+                }}
+              >
+                <span className="pdf-eye-item-check">{eyeMode === m.id ? "✓" : ""}</span>
+                <span className="pdf-eye-item-label">{m.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  /** 导出（图标按钮）+ 导出中的「取消」。 */
+  const headExport = (
+    <div className="pdf-head-export">
+      <button
+        className="pdf-reader-btn pdf-export-btn"
+        onClick={() => void handleExportAnnotatedPdf()}
+        disabled={!ready || pageCount <= 0 || exportState.status === "running"}
+        title={
+          exportState.status === "running"
+            ? `正在导出带批注的 PDF 副本：${exportState.done}/${exportState.total} 页`
+            : "导出为带批注的 PDF 副本（不动源文件）"
+        }
+        aria-label="导出带批注副本"
+      >
+        {exportState.status === "running" ? (
+          <span className="pdf-export-progress">
+            {exportState.done}/{exportState.total}
+          </span>
+        ) : (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            {/* 「带批注的副本」= 文档 + 向下导出箭头 */}
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+            <path d="M14 3v5h5" />
+            <path d="M12 11.5v5.5" />
+            <path d="M9.6 14.6 12 17l2.4-2.4" />
+          </svg>
+        )}
+      </button>
+      {exportState.status === "running" && (
+        <button className="pdf-reader-btn pdf-export-btn" onClick={() => exportAbortRef.current?.abort()} title="取消导出">
+          取消
+        </button>
+      )}
+    </div>
+  );
+
   const tree = (
     <div
       className="pdf-reader-overlay"
@@ -1328,9 +1660,19 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     >
       <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeMode !== "off" ? ` eye-${eyeMode}` : ""}`}>
         {/* 标题区整体可拖窗口（配合 dragDropEnabled=false）。按钮/控件不挂在
-            drag-region 上，否则点击会被当成拖窗口——与主窗口 TitleBar 一致。 */}
-        <div className={`pdf-reader-head${toolsOpen ? " tools-open" : ""}`} data-tauri-drag-region>
-          <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen} style={{ marginRight: 6 }}>
+            drag-region 上，否则点击会被当成拖窗口——与主窗口 TitleBar 一致。
+
+            ⚠️ 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，空间狭小时收起来，
+            除了最右端的关闭按钮"）：这一行**任何时候都不换行**，放不下的项由上面的量宽 effect
+            写进 `data-collapse`、收进「⋯」；**关闭按钮永不收**（它是"离开"的唯一入口，
+            所以它排在最后 + `margin-left:auto` 顶到最右端）。 */}
+        <div
+          className={`pdf-reader-head${headHidden.length ? " has-more" : ""}`}
+          data-collapse={headHidden.join(" ")}
+          ref={headRef}
+          data-tauri-drag-region
+        >
+          <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen}>
             {outlineOpen ? (
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
             ) : (
@@ -1338,219 +1680,48 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
             )}
           </button>
           <span className="pdf-reader-name" data-tauri-drag-region title={name || "PDF"}>{name || "PDF"}</span>
-          <div className="pdf-reader-controls">
-            <div className="pdf-reader-nav">
-              <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() - 1)} disabled={pageAtViewport() <= 0} title="上一页">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
-              <span className="pdf-reader-page">
-              {pageCount > 0
-                ? `第 ${Math.min(currentPage + 1, pageCount)} / ${pageCount} 页`
-                : // pageCount=0 时以前会显示"第 1 / 1 页"——那是在替一份打不开的文档
-                  // 说谎。宁可显示"页数未知"。
-                  "页数未知"}
-            </span>
-              <button className="pdf-reader-btn" onClick={() => smoothScrollTo(pageAtViewport() + 1)} disabled={pageAtViewport() >= pageCount - 1} title="下一页">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-              </button>
-            </div>
-            <div className="pdf-reader-zoom">
-              <button className="pdf-reader-btn" onClick={() => setZoom(stepZoom(scale, -1))} title="缩小" aria-label="缩小">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg>
-              </button>
-              <div className="pdf-zoom-wrap" ref={zoomWrapRef}>
-                <button
-                  className="pdf-reader-btn pdf-zoom-btn"
-                  onClick={() => setZoomOpen((o) => !o)}
-                  title="缩放"
-                  aria-haspopup="listbox"
-                  aria-expanded={zoomOpen}
-                >
-                  <span className="pdf-reader-pct">{zoomLabel(zoom)}</span>
-                  <svg className="pdf-zoom-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-                </button>
-                {zoomOpen && (
-                  <div className="pdf-zoom-menu" role="listbox">
-                    <button
-                      className={`pdf-zoom-item${zoom.mode === "actual" ? " active" : ""}`}
-                      role="option"
-                      onClick={() => { actualSize(); setZoomOpen(false); }}
-                    >
-                      <span>实际大小</span>
+          {headNav}
+          {headZoom}
+          {/* 分组分隔线：左边是"翻页 / 缩放"，右边是"面板 / 视图"（窄屏隐藏）。 */}
+          <span className="pdf-reader-sep" aria-hidden />
+          {headTail}
+          {/* 分隔线：把"面板 / 视图"与"导出"分开（窄屏隐藏）。 */}
+          <span className="pdf-reader-sep" aria-hidden />
+          {headExport}
+          {/* 「⋯」：**放不下时才出现**（`has-more` 由量宽结果决定）；菜单里是收起来的那几项。 */}
+          <div className="pdf-head-more-wrap" ref={headMoreRef}>
+            <button
+              className={`pdf-reader-btn pdf-reader-more${headMenuOpen ? " active" : ""}`}
+              onClick={() => setHeadMenuOpen((v) => !v)}
+              title="更多工具（放不下的收在这里）"
+              aria-label="更多工具"
+              aria-expanded={headMenuOpen}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+                <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+                <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+            {/* ⚠️ 菜单里的这几件是同一份 JSX 的第二份调用（收起来的那几项在这里仍可点到）。
+                它必须留在 head 的直接子元素**之外**：量宽时按 `:scope > 选择器` 找的是行内那一份。 */}
+            {headMenuOpen && (
+              <div className="pdf-head-more-pop" role="group" aria-label="更多工具">
+                {headHiddenSet.has("outline") && (
+                  <div className="pdf-head-more-row">
+                    <button className="pdf-reader-btn" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                      <span className="pdf-head-more-label">{outlineOpen ? "隐藏目录" : "显示目录"}</span>
                     </button>
-                    <button
-                      className={`pdf-zoom-item${zoom.mode === "fit-page" ? " active" : ""}`}
-                      role="option"
-                      onClick={() => { fitPage(); setZoomOpen(false); }}
-                    >
-                      <span>适合页面</span>
-                    </button>
-                    <button
-                      className={`pdf-zoom-item${zoom.mode === "fit-width" ? " active" : ""}`}
-                      role="option"
-                      onClick={() => { fitWidth(); setZoomOpen(false); }}
-                    >
-                      <span>适合宽度</span>
-                    </button>
-                    <button
-                      className={`pdf-zoom-item${zoom.mode === "fit-content" ? " active" : ""}`}
-                      role="option"
-                      onClick={() => { fitContent(); setZoomOpen(false); }}
-                    >
-                      <span>适合内容</span>
-                    </button>
-                    <button
-                      className="pdf-zoom-item"
-                      role="option"
-                      onClick={() => { zoomCustomRef.current?.focus(); }}
-                    >
-                      <span>自定义缩放</span>
-                    </button>
-                    <div className="pdf-zoom-sep" />
-                    {ZOOM_LADDER.map((p) => {
-                      const isCur = zoom.mode === "pct" && Math.abs(zoomPct(scale) - p) < 0.5;
-                      return (
-                        <button
-                          key={p}
-                          className={`pdf-zoom-item${isCur ? " active" : ""}`}
-                          role="option"
-                          onClick={() => { setZoom({ mode: "pct", pct: p }); setZoomOpen(false); }}
-                        >
-                          <span className="pdf-zoom-item-check">{isCur ? "✓" : ""}</span>
-                          <span className="pdf-zoom-item-label">{Number.isInteger(p) ? p : +p.toFixed(2)}%</span>
-                        </button>
-                      );
-                    })}
-                    <div className="pdf-zoom-sep" />
-                    <button className="pdf-zoom-item pdf-zoom-footer" role="option" onClick={setDefaultZoom}>
-                      <span>设置默认缩放比例</span>
-                    </button>
-                    <input
-                      ref={zoomCustomRef}
-                      className="pdf-zoom-custom"
-                      type="number"
-                      min={1}
-                      step="any"
-                      placeholder="自定义 %"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const v = parseFloat(e.currentTarget.value);
-                          if (!Number.isNaN(v) && v > 0) { setZoom({ mode: "pct", pct: v }); setZoomOpen(false); }
-                        }
-                        e.stopPropagation();
-                      }}
-                      onBlur={(e) => {
-                        const v = parseFloat(e.currentTarget.value);
-                        if (!Number.isNaN(v) && v > 0) { setZoom({ mode: "pct", pct: v }); setZoomOpen(false); }
-                      }}
-                    />
                   </div>
                 )}
+                {headHiddenSet.has("nav") && <div className="pdf-head-more-row">{headNav}</div>}
+                {headHiddenSet.has("zoom") && <div className="pdf-head-more-row">{headZoom}</div>}
+                {headHiddenSet.has("tail") && <div className="pdf-head-more-row">{headTail}</div>}
+                {headHiddenSet.has("export") && <div className="pdf-head-more-row">{headExport}</div>}
               </div>
-              <button className="pdf-reader-btn" onClick={() => setZoom(stepZoom(scale, 1))} title="放大" aria-label="放大">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-              </button>
-            </div>
-            {/* 分组分隔线：左边是"翻页 / 缩放"，右边是"面板 / 视图"（最大化·批注栏·提问·护眼）。 */}
-            <span className="pdf-reader-sep" aria-hidden />
-            {!inline && (
-            <button className="pdf-reader-btn pdf-reader-maximize" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
-              {maximized ? (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
-              ) : (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 4h12v12M4 8l16-4"/></svg>
-              )}
-            </button>
             )}
-            <button className="pdf-reader-btn pdf-reader-sidebar-toggle" onClick={() => setSidebarOpen((s) => !s)} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
-              {sidebarOpen ? (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
-              ) : (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
-              )}
-            </button>
-            <button className="pdf-reader-btn pdf-reader-ask" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
-            </button>
-            <div className="pdf-eye-wrap" ref={eyeWrapRef}>
-              <button
-                className={`pdf-reader-btn${eyeMode !== "off" ? " active" : ""}`}
-                onClick={() => setEyeOpen((o) => !o)}
-                title={`护眼模式：${EYE_MODES.find((m) => m.id === eyeMode)?.label ?? "关闭"}`}
-                aria-haspopup="listbox"
-                aria-expanded={eyeOpen}
-                aria-pressed={eyeMode !== "off"}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5c-5 0-9 4.5-9 7s4 7 9 7 9-4.5 9-7-4-7-9-7z"/><circle cx="12" cy="12" r="2.6"/></svg>
-              </button>
-              {eyeOpen && (
-                <div className="pdf-eye-menu" role="listbox">
-                  {EYE_MODES.map((m) => (
-                    <button
-                      key={m.id}
-                      className={`pdf-eye-item${eyeMode === m.id ? " active" : ""}`}
-                      role="option"
-                      onClick={() => {
-                        setEyeMode(m.id);
-                        try { localStorage.setItem(EYE_CARE_KEY, m.id); } catch {}
-                        setEyeOpen(false);
-                      }}
-                    >
-                      <span className="pdf-eye-item-check">{eyeMode === m.id ? "✓" : ""}</span>
-                      <span className="pdf-eye-item-label">{m.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
-          {/* 分组分隔线：把"翻页/缩放"与"面板/视图"两族在视觉上分开（桌面才显示，窄屏隐藏——
-              窄屏每个按钮已经是 44 宽，再加分隔只会挤掉正文宽度）。 */}
-          <span className="pdf-reader-sep" aria-hidden />
-          {/* 导出：**图标按钮**，与旁边那排 `.pdf-reader-btn` 同规格（原来是一枚 102×28 的文字按钮，
-              在 1280 下吃掉整条 head 的 102px）。完整说法在 `title`/`aria-label` 里；
-              导出中改成紧凑的 `3/12`（原来是"导出中 3/12"，同样只为让它更窄）。 */}
-          <button
-            className="pdf-reader-btn pdf-export-btn"
-            onClick={() => void handleExportAnnotatedPdf()}
-            disabled={!ready || pageCount <= 0 || exportState.status === "running"}
-            title={
-              exportState.status === "running"
-                ? `正在导出带批注的 PDF 副本：${exportState.done}/${exportState.total} 页`
-                : "导出为带批注的 PDF 副本（不动源文件）"
-            }
-            aria-label="导出带批注副本"
-          >
-            {exportState.status === "running" ? (
-              <span className="pdf-export-progress">
-                {exportState.done}/{exportState.total}
-              </span>
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                {/* 「带批注的副本」= 文档 + 向下导出箭头 */}
-                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                <path d="M14 3v5h5" />
-                <path d="M12 11.5v5.5" />
-                <path d="M9.6 14.6 12 17l2.4-2.4" />
-              </svg>
-            )}
-          </button>
-          {exportState.status === "running" && (
-            <button className="pdf-reader-btn pdf-export-btn" onClick={() => exportAbortRef.current?.abort()} title="取消导出">
-              取消
-            </button>
-          )}
-          {/* 窄屏的「更多工具」：桌面 `display:none`（那边一次放得下，不需要它）。
-              展开后由 CSS 放出上面那 5 个低频按钮与下面的批注状态条。 */}
-          <button
-            className="pdf-reader-btn pdf-reader-more"
-            onClick={() => setToolsOpen((v) => !v)}
-            title="更多工具（批注侧栏 / 护眼 / 导出等）"
-            aria-label="更多工具"
-            aria-expanded={toolsOpen}
-          >
-            ⋯
-          </button>
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
         </div>
         <div className="pdf-reader-body">

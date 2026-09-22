@@ -518,8 +518,10 @@ async function checkPdfReader(page, vp) {
       const rb = rowEl?.getBoundingClientRect();
       return {
         empties,
-        moreVisible: visible(".pdf-reader-more"),
-        secondary: SECONDARY.map(visible),
+        // ⚠️ 用 `shown`（连祖先一起看）而不是 `visible`（只看自己）：这 4 个控件现在是被
+        // **外层 `.pdf-head-tail`** 整组藏起来的，只看自己的 computed display 会误判成"可见"。
+        moreVisible: shown(reader.querySelector(".pdf-reader-more")),
+        secondary: SECONDARY.map((s) => shown(reader.querySelector(s))),
         toolsH: tools ? Math.round(tools.getBoundingClientRect().height) : null,
         docW: document.documentElement.scrollWidth,
         vw: innerWidth,
@@ -538,6 +540,15 @@ async function checkPdfReader(page, vp) {
         bar: toolbarEl
           ? {
               h: Math.round(toolbarEl.getBoundingClientRect().height),
+              // 固定高度（owner 2026-09-22："页内工具栏高度永远固定，不能被撑大"）：
+              // 声明值 = 渲染值，且行内内容不许被裁到。
+              fixed: Math.round(parseFloat(getComputedStyle(toolbarEl).height)),
+              rowInner: rowEl ? rowEl.clientHeight : null,
+              rowScroll: rowEl ? rowEl.scrollHeight : null,
+              tallGroup: (() => {
+                const gs = Array.from(rowEl?.querySelectorAll(".pdf-annot-tools, .pdf-annot-actions, .pdf-annot-status") ?? []);
+                return gs.length ? Math.round(Math.max(...gs.map((g) => g.getBoundingClientRect().height))) : null;
+              })(),
               collapse: toolbarEl.getAttribute("data-collapse") ?? "",
               hasMore: toolbarEl.classList.contains("has-more"),
               moreShown: shown(reader.querySelector(".pdf-annot-more")),
@@ -579,6 +590,66 @@ async function checkPdfReader(page, vp) {
             layer: shown(pop.querySelector(".pdf-annot-layer")),
           };
         })(),
+        // 头部工具条（2026-09-22，owner："pdf 阅读器顶部系统工具栏任何时候不换行，
+        // 空间狭小时收起来，除了最右端的关闭按钮"）——与 `bar` 同一套判据，另加"关闭永远在"。
+        headBar: (() => {
+          const h = reader.querySelector(".pdf-reader-head");
+          if (!h) return null;
+          const hb = h.getBoundingClientRect();
+          const kids = Array.from(h.children).filter((el) => shown(el));
+          const g = [];
+          for (const el of kids) {
+            const b = el.getBoundingClientRect();
+            const hit = g.find((x) => b.top < x.bottom - 0.5 && b.bottom > x.top + 0.5);
+            if (hit) {
+              hit.top = Math.min(hit.top, b.top);
+              hit.bottom = Math.max(hit.bottom, b.bottom);
+            } else g.push({ top: b.top, bottom: b.bottom });
+          }
+          const close = h.querySelector(".pdf-reader-close");
+          const cb = close ? close.getBoundingClientRect() : null;
+          return {
+            h: Math.round(hb.height),
+            fixed: Math.round(parseFloat(getComputedStyle(h).height)),
+            right: Math.round(hb.right),
+            collapse: h.getAttribute("data-collapse") ?? "",
+            hasMore: h.classList.contains("has-more"),
+            moreShown: shown(h.querySelector(".pdf-reader-more")),
+            wrap: getComputedStyle(h).flexWrap,
+            rows: g.length,
+            overflow: h.scrollWidth > h.clientWidth + 1,
+            outside: Array.from(h.querySelectorAll("button"))
+              .filter((b) => shown(b) && !b.closest(".pdf-head-more-pop"))
+              .filter((b) => {
+                const bb = b.getBoundingClientRect();
+                return bb.right > hb.right + 1 || bb.left < hb.left - 1;
+              })
+              .map((b) => (b.getAttribute("title") || b.textContent || "").trim().slice(0, 8)),
+            closeShown: shown(close),
+            closeRight: cb ? Math.round(cb.right) : null,
+            nameW: Math.round(reader.querySelector(".pdf-reader-name")?.getBoundingClientRect().width ?? 0),
+          };
+        })(),
+        // 头部「⋯」菜单里的东西（点开那一刻才量）
+        headMenu: (() => {
+          const pop = reader.querySelector(".pdf-head-more-pop");
+          if (!pop) return null;
+          const pb = pop.getBoundingClientRect();
+          const items = [
+            ".pdf-reader-nav",
+            ".pdf-reader-zoom",
+            ".pdf-reader-maximize",
+            ".pdf-reader-sidebar-toggle",
+            ".pdf-reader-ask",
+            ".pdf-eye-wrap",
+            ".pdf-export-btn",
+          ];
+          return {
+            text: (pop.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90),
+            inViewport: pb.left >= -1 && pb.right <= innerWidth + 1,
+            shown: items.filter((s) => shown(pop.querySelector(s))),
+          };
+        })(),
         toolbar: box(toolbarEl),
         status: box(reader.querySelector(".pdf-annot-status")),
         // head（顶部工具条）自身的预算 + 导出按钮规格（"太占地方"那条的回归判据）
@@ -590,7 +661,9 @@ async function checkPdfReader(page, vp) {
           })
           .filter((c) => c.w > 1 && c.h > 1),
         exportBtn: (() => {
-          const el = reader.querySelector(".pdf-export-btn");
+          // ⚠️ 导出按钮现在**可能被收进头部「⋯」**（`data-collapse~="export"`），
+          //    行内那一份是 display:none ⇒ 0×0。要量的是**看得见的那一份**。
+          const el = Array.from(reader.querySelectorAll(".pdf-export-btn")).find((b) => shown(b)) ?? null;
           if (!el) return null;
           const b = el.getBoundingClientRect();
           return {
@@ -599,6 +672,7 @@ async function checkPdfReader(page, vp) {
             text: (el.textContent || "").trim(),
             title: (el.getAttribute("title") || "").trim(),
             label: (el.getAttribute("aria-label") || "").trim(),
+            inMenu: !!el.closest(".pdf-head-more-pop"),
           };
         })(),
         // 右侧批注栏的筛选开关（2026-09-22：四枚胶囊默认收起，常驻只剩一枚漏斗）
@@ -657,7 +731,13 @@ async function checkPdfReader(page, vp) {
           const cs = getComputedStyle(el);
           return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor };
         })(),
-        controlsW: Math.round(reader.querySelector(".pdf-reader-controls")?.getBoundingClientRect().width ?? 0),
+        controlsW: Math.round(
+          (reader.querySelector(".pdf-reader-nav")?.getBoundingClientRect().width ?? 0) +
+            (reader.querySelector(".pdf-reader-zoom")?.getBoundingClientRect().width ?? 0) +
+            // ⚠️ 2026-09-22：`.pdf-reader-controls` 那一层**拆掉了**（它会让"只收缩放、留翻页"
+            //    这种粒度做不到）⇒ 控制组宽度 = 翻页组 + 缩放组 + 它们之间那一个 head gap(8)。
+            8,
+        ),
         // 朗读 / OCR / AI：扁平化（owner 2026-09-22 第二张截图"这几个按钮也进行扁平化处理"）。
         // 与 `.pdf-reader-btn` 同一套判据：**无边框 + 透明底**；AI 靠**文字颜色**区分。
         ocrStyle: (() => {
@@ -701,13 +781,18 @@ async function checkPdfReader(page, vp) {
   // 5) 窄屏：点开头部的「⋯」再量一态（"收起了"和"点了能出来"是两件事）
   let secondaryAfter = first.secondary;
   let hasStatusAfter = first.hasStatus;
+  let headMenuAfter = null;
   let after = null;
   if (vp.width <= 768 && first.moreVisible) {
     await safeEval(page, () => document.querySelector(".pdf-reader-more")?.click());
     await sleep(600);
     after = await measure();
+    headMenuAfter = after.headMenu ?? null;
     secondaryAfter = after.secondary ?? secondaryAfter;
     hasStatusAfter = after.hasStatus ?? hasStatusAfter;
+    // 量完就关掉：后面那几步（批注「⋯」/ 拖拽 / 侧栏筛选）不该被头上这层菜单压着。
+    await safeEval(page, () => document.querySelector(".pdf-reader-more")?.click());
+    await sleep(300);
   }
   // 5b) 批注工具条自己的「⋯」：放不下的项收在这里（owner 2026-09-22：
   //     "pdf 页内工具栏任何时候不换行，空间狭小时，可以收起来，不截断"）。
@@ -796,6 +881,7 @@ async function checkPdfReader(page, vp) {
     after,
     secondaryAfter,
     hasStatusAfter,
+    headMenuAfter,
     menu,
     wide,
     sidebarFlow,
@@ -847,23 +933,35 @@ function assertPdfReader(rr, vp) {
       `${rr.empties.length ? "：" + rr.empties.join("、") : ""}）`,
   );
   // ①b 导出按钮：**图标规格**（原来是一枚 102×28 的文字按钮，owner 说"太占地方"）。
+  // ⚠️ 2026-09-22：导出现在**可能被收进头部「⋯」**（列一窄就收）⇒ 要量**看得见的那一份**：
+  //    窄屏在"点开头部「⋯」"那一态里（`rr.after`），桌面在"关掉两侧面板"的宽态里（`rr.wide`）。
+  const ex = vp.width <= 768 ? rr.after?.exportBtn : rr.wide?.exportBtn ?? rr.exportBtn;
   ok(
-    !!rr.exportBtn && rr.exportBtn.text === "" && rr.exportBtn.w <= (vp.width <= 768 ? 48 : 32),
-    `「导出带批注副本」是图标按钮（${rr.exportBtn?.w}×${rr.exportBtn?.h}，文字="${rr.exportBtn?.text}"）` +
+    !!ex && ex.text === "" && ex.w <= (vp.width <= 768 ? 48 : 32),
+    `「导出带批注副本」是图标按钮（${ex?.w}×${ex?.h}，文字="${ex?.text}"${ex?.inMenu ? "，在「⋯」菜单里" : ""}）` +
       `——改前 102×28 的文字按钮`,
   );
   ok(
-    (rr.exportBtn?.title?.length ?? 0) > 0 && (rr.exportBtn?.label?.length ?? 0) > 0,
-    `导出图标带 title + aria-label（「${rr.exportBtn?.label}」）——图标化不等于把说法藏掉`,
+    (ex?.title?.length ?? 0) > 0 && (ex?.label?.length ?? 0) > 0,
+    `导出图标带 title + aria-label（「${ex?.label}」）——图标化不等于把说法藏掉`,
   );
-  // ①c head（顶部工具条）预算。实测：390 上 215px/4 行 → 115px；320 上 → 165px。
+  // ①c head（顶部工具条）预算。**高度现在是写死的**（owner："系统工具栏高度也要固定，
+  // 不能被撑得更大"）⇒ 钉"渲染值 = 声明值"，并钉每一态的渲染值都等于它。
   const headLines = linesOf(rr.headChildren ?? []);
+  ok(
+    rr.headBar?.h === rr.headBar?.fixed,
+    `系统工具栏高度固定（渲染 ${rr.headBar?.h}px = 声明 ${rr.headBar?.fixed}px；${headLines} 行）` +
+      `——改前是内容撑的：390 上 115px / 2 行、320 上 165px / 3 行`,
+  );
   if (vp.width <= 768) {
-    const budget = vp.width <= 320 ? 175 : 130;
-    ok((rr.head?.h ?? 1e9) <= budget, `窄屏 head 高度 ${rr.head?.h}px ≤ ${budget}（实测 ${headLines} 行；改前 215px / 4 行）`);
+    const otherHeadH = rr.after?.headBar?.h;
     ok(
-      (rr.exportBtn?.w ?? 0) >= 44 && (rr.exportBtn?.h ?? 0) >= 44,
-      `导出图标命中区 ≥44（${rr.exportBtn?.w}×${rr.exportBtn?.h}）`,
+      rr.head?.h <= 80 && otherHeadH === rr.headBar?.h,
+      `窄屏头部换一态也不变高（${rr.headBar?.h} → 点开「⋯」后 ${otherHeadH}）`,
+    );
+    ok(
+      (ex?.w ?? 0) >= 44 && (ex?.h ?? 0) >= 44,
+      `导出图标命中区 ≥44（${ex?.w}×${ex?.h}）`,
     );
   } else {
     ok((rr.head?.h ?? 1e9) <= 56, `桌面 head 仍是一行（${rr.head?.h}px ≤ 56）`);
@@ -872,7 +970,10 @@ function assertPdfReader(rr, vp) {
   if (vp.width <= 768) {
     ok(rr.moreVisible, `窄屏有「⋯」入口（更多工具）`);
     ok(rr.secondary.every((v) => v === false), `默认收起那 4 个低频头部控件（实测 ${JSON.stringify(rr.secondary)}）`);
-    ok(rr.secondaryAfter.every((v) => v === true), `点开「⋯」后它们真的出现（实测 ${JSON.stringify(rr.secondaryAfter)}）`);
+    ok(
+      (rr.headMenuAfter?.shown ?? []).length >= 3 && rr.headMenuAfter?.inViewport === true,
+      `点开头部「⋯」后收起来的那几件在菜单里可见（实测 ${JSON.stringify(rr.headMenuAfter?.shown ?? [])}，菜单在视口内=${rr.headMenuAfter?.inViewport}）`,
+    );
     ok(rr.toolsH !== null && rr.toolsH <= 56, `批注工具行是**一行**（高 ${rr.toolsH} ≤ 56；换行会白吃 44px）`);
     // 状态组（文本层 chip + 朗读/OCR/AI）现在由**工具条自己**按宽度收进它那枚「⋯」。
     ok(rr.hasStatus === false, `窄屏状态组自动收起来（实测 hasStatus=${rr.hasStatus}，data-collapse="${rr.bar?.collapse}"）`);
@@ -993,12 +1094,56 @@ function assertPdfReader(rr, vp) {
     (bar?.outside?.length ?? 1) === 0,
     `没有任何按钮被挤出工具条（实测 ${JSON.stringify(bar?.outside ?? [])}）`,
   );
+  // 高度**固定**：声明多少就渲染多少（`height` 而不是 `min-height` ⇒ 内容撑不大它），
+  // 而且固定高度不许裁到内容（行内可滚高度 = 行视口高）。
+  ok(
+    bar?.h === bar?.fixed,
+    `页内工具栏高度固定（渲染 ${bar?.h}px = 声明 ${bar?.fixed}px）——owner："高度永远固定，不能被撑大"`,
+  );
+  ok(
+    (bar?.rowScroll ?? 1e9) <= (bar?.rowInner ?? 0) + 1 && (bar?.tallGroup ?? 1e9) <= (bar?.rowInner ?? 0) + 1,
+    `固定高度没有裁到内容（行内容高 ${bar?.rowScroll} ≤ 行视口高 ${bar?.rowInner}，最高的那一组 ${bar?.tallGroup}）`,
+  );
+  {
+    // 换一态高度必须**一模一样**：窄屏是"点开「⋯」"，桌面是"关掉两侧面板"。
+    const otherH = vp.width <= 768 ? rr.after?.bar?.h : rr.wide?.bar?.h;
+    ok(
+      otherH === bar?.h,
+      `换一态高度不变（${vp.width <= 768 ? "点开「⋯」" : "关掉两侧面板"}：${bar?.h} → ${otherH}）——高度会变就等于正文在抖`,
+    );
+  }
   if (bar?.hasMore) {
     ok(
       !!rr.menu && rr.menu.inViewport,
       `「⋯」菜单没出视口（实测 ${rr.menu?.inViewport}，内容「${rr.menu?.text}」）`,
     );
   }
+  // ---------------------------------------------------------------------------
+  // 头部（顶部系统工具栏）：同样**任何时候都不换行**，放不下收进它自己的「⋯」——
+  // **关闭按钮除外**（owner："除了最右端的关闭按钮"）。
+  // ---------------------------------------------------------------------------
+  const hbar = rr.headBar;
+  ok(
+    hbar?.wrap === "nowrap",
+    `头部**任何时候**都不换行（computed flex-wrap=${hbar?.wrap}）——改前窄屏是 wrap：390 占 2 行 115px、320 占 3 行 165px`,
+  );
+  ok(
+    hbar?.h === hbar?.fixed,
+    `头部高度**固定**（渲染 ${hbar?.h}px = 声明 ${hbar?.fixed}px）——owner："系统工具栏高度也要固定，不能被撑得更大"`,
+  );
+  ok(
+    hbar?.rows === 1 && hbar?.overflow === false,
+    `头部只有一行、也没有溢出（${hbar?.rows} 行 / 溢出=${hbar?.overflow}，高 ${hbar?.h}px；data-collapse="${hbar?.collapse}"）`,
+  );
+  ok(
+    (hbar?.outside?.length ?? 1) === 0,
+    `头部没有按钮被挤出（实测 ${JSON.stringify(hbar?.outside ?? [])}）`,
+  );
+  ok(
+    hbar?.closeShown === true && (hbar?.closeRight ?? 0) >= (hbar?.right ?? 1e9) - 24,
+    `「关闭」永远可见且在最右端（right=${hbar?.closeRight} vs 头部内容右缘≈${(hbar?.right ?? 0) - 12}）` +
+      `——它是"离开"的唯一入口，永远不收`,
+  );
   // 扁平化：按钮**无边框 + 透明底**（改前是"描边 + 浅底"的小方块）；批注工具条去掉外框勾线。
   ok(
     rr.btnStyle?.border === "0px none" && /rgba\(0, 0, 0, 0\)|transparent/.test(rr.btnStyle?.bg ?? ""),

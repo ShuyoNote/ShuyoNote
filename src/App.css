@@ -17172,18 +17172,44 @@ p:has(> .editor-drawing-container) {
   border-radius: 0;
   border: none;
 }
+/* 头部（顶部系统工具栏）—— 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，
+   空间狭小时收起来，除了最右端的关闭按钮"）：
+   · **任何时候都不换行**（`nowrap`）；放不下的项由 `PdfReader` 量宽后写进 `data-collapse`、
+     收进「⋯」（见下面的 `[data-collapse]` 那几条）；
+   · **关闭按钮永不收**，并且 `margin-left:auto` 顶到最右端（它是"离开"的唯一入口）；
+   · 这一行**不开** `overflow-x`：「⋯」的菜单是绝对定位的子元素，行一滚它就被裁掉了。
+     兜底靠"最少配置 = [文件名 48][⋯ 44][×] ≈ 144px"这条事实（比任何可能的阅读器宽度都窄）。
+   ⚠️ 原来它靠 `flex-wrap: wrap` 保证按钮不被裁（真机 730 > 360）——折行的代价是
+   390 上占 115px、320 上占 165px 高，"不换行 + 收起来"才是那条要求的正解。 */
 .pdf-reader-head {
   display: flex;
   align-items: center;
   /* 2026-09-22：12 → 10 → **8**。前两次是"有了分组分隔线、可以收一点"；
      这次按钮扁平化（无边框无底色）之后，图标之间不再需要"方块不相碰"的额外余量。 */
   gap: 8px;
+  flex-wrap: nowrap;
+  /* ⚠️ 2026-09-22（owner："pdf 阅读器的系统工具栏高度也要固定，不能被撑得更大"）：
+     **高度写死**（`height` 而不是 `min-height`）——它一变高，正文就跟着少一截。
+     · 桌面这一档：按钮 28 + 上下内边距 10+10 + 下边框 1 = 49，留 1px 余量写 50；
+     · 窄屏那一档（按钮 44）在文件末尾另给 66；
+     · 里面的文字一律不许折行（文件名走省略号、页码/百分比 `white-space: nowrap`），
+       否则折行会把这一格撑高 —— 固定高度就不成立了。
+     改按钮尺寸/内边距时**要跟着改这两个值**。 */
+  height: 50px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  /* 「⋯」的菜单以**头部**为包含块（不是「⋯」那一格）：后者才 44px 宽，
+     菜单用它当包含块会"按它算 max-width" ⇒ 窄屏左边直接跑出屏幕。 */
+  position: relative;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* 文件名：**唯一的弹性项** —— 有富余就长（`flex-grow`）、挤了就缩到 `min-width` 打省略号。
+   ⚠️ `min-width: 48px` 这个地板宽是"量宽"公式里用的（`PdfReader` 直接读 CSS 的 `min-width`，
+   不另抄一份）；它同时保证"空间再紧也不会把文件名挤没"。 */
 .pdf-reader-name {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 48px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -17191,11 +17217,15 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   font-size: 14px;
 }
-.pdf-reader-controls {
+/* 翻页 / 缩放两组：**不再套一层** `.pdf-reader-controls`（那一层会让"只收缩放、留翻页"
+   这种粒度做不到：外层在，内层只能整块藏）。现在它们是 head 的直接子元素，
+   组间距就是 head 自己的 `gap`（8，与原值一致）。 */
+.pdf-head-tail,
+.pdf-head-export {
   display: flex;
   align-items: center;
-  /* 14 → 8：按钮扁平化之后不再有"方块挤方块"的问题，组间距可以压（2026-09-22 压缩占宽） */
   gap: 8px;
+  flex: 0 0 auto;
 }
 .pdf-reader-nav,
 .pdf-reader-zoom {
@@ -17203,6 +17233,8 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   /* 6 → 2：翻页组/缩放组内部本来就是"图标—文字—图标"，扁平之后不需要 6px 的呼吸位 */
   gap: 2px;
+  /* 量宽要的是**真实宽**：这两组不许被压扁（否则"收哪几项"就算错了）。 */
+  flex: 0 0 auto;
 }
 .pdf-reader-page,
 .pdf-reader-pct {
@@ -17210,6 +17242,8 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   min-width: 72px;
   text-align: center;
+  /* 同样的道理：这两处文字一折行，头部就会被撑高（页码读数里有空格）。 */
+  white-space: nowrap;
 }
 /* 缩放下拉：触发器显示当前模式/百分比，点击弹出参考阅读器式菜单（fit 模式 + 百分比阶梯 + 底部设置）。 */
 .pdf-zoom-wrap {
@@ -17372,11 +17406,66 @@ p:has(> .editor-drawing-container) {
    ⚠️ **基础规则就是隐藏**：桌面一次放得下，不需要这个入口；窄屏那段（文件末尾）
    再把它 `inline-flex` 放出来。写在 `.pdf-reader-btn` **之后**——两者同为 (0,1,0)，
    靠"后写的赢"，写在前面会被 `.pdf-reader-btn` 的 display 顶掉（那样手机上根本点不到）。 */
+/* 「更多工具」入口：**只在头部真的塞不下时才出现**（`has-more` 由 `PdfReader` 量宽后写）。
+   ⚠️ 基础规则就是隐藏；`.pdf-reader-head.has-more .pdf-reader-more` 放出来。
+   写在 `.pdf-reader-btn` **之后**——两者同为 (0,1,0)，靠"后写的赢"（写在前面会被顶掉，
+   那样手机上根本点不到）。 */
+.pdf-head-more-wrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
 .pdf-reader-more {
   display: none;
 }
+.pdf-reader-head.has-more .pdf-reader-more {
+  display: inline-flex;
+}
+/* 收起来的项：`data-collapse` 的值就是被收起来的那些 key（由 `PdfReader` 写）。
+   ⚠️ 每条都限定在**行内**（`>` 直接子元素）：「⋯」菜单里渲染的是同一份 JSX 的第二份调用，
+   那几件必须看得见，否则"收起来"就等于"删掉"。 */
+.pdf-reader-head[data-collapse~="outline"] > .pdf-reader-outline-toggle,
+.pdf-reader-head[data-collapse~="nav"] > .pdf-reader-nav,
+.pdf-reader-head[data-collapse~="zoom"] > .pdf-reader-zoom,
+.pdf-reader-head[data-collapse~="tail"] > .pdf-head-tail,
+.pdf-reader-head[data-collapse~="export"] > .pdf-head-export {
+  display: none;
+}
+/* 「⋯」的菜单：**锚在头部的内联菜单**（与 `.pdf-eye-pop` / `.pdf-annot-more-pop` 同一先例），
+   不是应用级浮层。里面的行可以自由换行 —— "永不换行"约束的是头部那一行，不是这个浮出来的面板。 */
+.pdf-head-more-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* 贴头部**内容区**的右缘（head 的左右内边距是 12）。包含块是 head 本身，
+     所以窄屏下 `max-width` 按视口算也不会把左边顶出屏幕。 */
+  right: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  /* ⚠️ `width: max-content`：包含块是「⋯」那一格（才 ~44px 宽），`width:auto` 的
+     shrink-to-fit 会按包含块算 ⇒ 菜单被压成一条。 */
+  width: max-content;
+  max-width: min(92vw, 520px);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.pdf-head-more-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pdf-head-more-label {
+  font-size: 12px;
+}
 .pdf-reader-close {
   margin-left: auto;
+  flex: 0 0 auto;
   border: none;
   background: transparent;
   color: var(--text-faint);
@@ -17591,6 +17680,8 @@ p:has(> .editor-drawing-container) {
   gap: 5px;
   font-size: 11.5px;
   color: var(--text-dim);
+  /* 同上：这一格也不许折行把工具条撑高。 */
+  white-space: nowrap;
 }
 .pdf-annot-layer.ok { color: var(--accent); }
 .pdf-annot-layer.warn { color: #b8860b; }
@@ -17606,6 +17697,9 @@ p:has(> .editor-drawing-container) {
   padding: 4px 10px;
   border-radius: 7px;
   cursor: pointer;
+  /* ⚠️ 见 `.pdf-reader-stage-wrap > .pdf-annot-toolbar` 那条注释：忙碌文案
+     「识别中 3/12」里有空格，不给 nowrap 的话窄一点就折成两行、把工具条撑高。 */
+  white-space: nowrap;
 }
 .pdf-annot-ocr:hover:not(:disabled) {
   background: var(--hover);
@@ -18100,11 +18194,22 @@ p:has(> .editor-drawing-container) {
 .pdf-eye-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .pdf-eye-item.active { color: var(--accent); font-weight: 600; }
 .pdf-eye-item-check { width: 12px; flex-shrink: 0; }
-/* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。 */
+/* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。
+   ⚠️ 2026-09-22（owner："pdf 阅读器的页内工具栏高度永远固定，不能被撑大"）：
+   **高度写死**，不让内容把它撑高 —— 这一条是"正文空间每一屏都要用"的直接兑现：
+   它一变高，正文就少一截，而且是在"点了某个按钮/某条命令在跑"的时候变，最烦人。
+   · `height` 而不是 `min-height`：`min-height` 只能保证"不低于"，正是"会被撑大"的那种写法；
+   · 里面的按钮**一律单行**（`.pdf-annot-tool` / `.pdf-annot-ocr` 都 `white-space: nowrap`）：
+     文字换行会让按钮长高 ⇒ 把这一格撑破（这一条是本次真正的隐患：OCR 忙碌文案
+     「识别中 3/12」里有空格，窄一点就会折成两行）；
+   · 窄屏那一档（按钮 44 高）另给一个固定值，见文件末尾的 `@media (max-width:768px), …`。
+   改按钮尺寸/内边距时**要跟着改这两个值**，否则会裁到内容。 */
 .pdf-reader-stage-wrap > .pdf-annot-toolbar {
   position: static;
   flex-shrink: 0;
   max-width: none;
+  height: 50px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   padding: 6px 10px;
   background: var(--bg);
@@ -22201,10 +22306,11 @@ body.is-plugin-panel-open .main {
      并把「关闭」推到可见的一端；触摸目标补齐到 44×44（这一层原来是 28×28，
      与 §4.1 那条"命中区 ≥44"是同一条规矩，只是当初没覆盖到阅读器内部）。
      --------------------------------------------------------------------------- */
-  .pdf-reader-head {
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
+  /* ⚠️ 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，空间狭小时收起来"）：
+     这里原来给 head 开的是 `flex-wrap: wrap`（"不裁 = 每个按钮都真的能按到"），代价是
+     390 上 115px / 2 行、320 上 165px / 3 行。现在 head **任何时候都不换行**，
+     放不下的收进「⋯」（`PdfReader` 量宽 + `[data-collapse]`）—— 不裁这件事由
+     "最少配置 [文件名][⋯][×] ≈ 144px" 保证，不需要靠折行。 */
   /* ---------------------------------------------------------------------------
      浮层形态的阅读器**必须自己让开系统栏**（同一轮真机量到的第四处）
 
@@ -22220,18 +22326,8 @@ body.is-plugin-panel-open .main {
   .pdf-reader-overlay:not(.main > .pdf-reader-overlay) {
     padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
   }
-  /* ⚠️ 只让 head 换行**不够**：它里面的 `.pdf-reader-controls` 自己是个 603px 宽的 flex 行
-     （真机实测），换行只能在"子元素"这一级发生 ⇒ 那一整块照样溢出、右边仍被裁。
-     内层容器也要允许换行，并让标题允许被压缩（原来 `flex:1` 会先吃掉 270px）。 */
-  .pdf-reader-controls {
-    flex-wrap: wrap;
-    row-gap: 6px;
-    min-width: 0;
-    /* 2026-09-22：窄屏把这一组内部的间距收紧（14/6 → 6/4）。翻页组 + 缩放组实测共 ~356px，
-       而 390 视口里可用 362px —— 原来就差这十几像素，于是它一直占**两行**（94px）。
-       收紧后并成一行 ⇒ head 再省约 47px。 */
-    gap: 6px;
-  }
+  /* 2026-09-22：窄屏把这两组内部的间距收紧（6 → 4）。⚠️ 外层 `.pdf-reader-controls`
+     已经**不存在**了（head 改成扁平 + 量宽收起，那一层会让"只收缩放、留翻页"做不到）。 */
   .pdf-reader-nav,
   .pdf-reader-zoom {
     gap: 4px;
@@ -22245,54 +22341,18 @@ body.is-plugin-panel-open .main {
     flex: 0 1 auto;
     max-width: 42%;
   }
-  /* ---------------------------------------------------------------------------
-     窄屏 head 的**排布顺序**（2026-09-22，owner："把顶部工具条整体优化一下"）
-
-     原来 head 的 DOM 顺序是 [目录][文件名][控制组][导出][⋯][×]，而控制组（362×94）在中间
-     ⇒ 它一换行，后面的 `⋯`/`×` 就被推到**第四行**：实测 390 下 head 高 **215px / 4 行**
-     （占 844 的 25%！）。`⋯` 与 `×` 是"离开/更多"这两个最常用的入口，不该被挤到最后。
-
-     用 `order` 重排（只动视觉顺序、不动 DOM，桌面不受影响）：
-       第一行 = [目录][文件名][导出][⋯][×]（`×` 靠下面的 `margin-left:auto` 顶到最右）
-       之后才是 [翻页][缩放][面板开关] 这些"视图控制"。
-     实测：head **215 → 约 150px、4 行 → 3 行**（390）。
-     ⚠️ `导出` 也跟着提到第一行（它是图标按钮了，只占 44，不再值得藏进 `⋯`）。
-     --------------------------------------------------------------------------- */
-  .pdf-reader-outline-toggle { order: 1; }
-  .pdf-reader-name { order: 2; }
-  .pdf-reader-head .pdf-export-btn { order: 3; }
-  .pdf-reader-more { order: 4; }
-  .pdf-reader-close { order: 5; }
-  .pdf-reader-controls { order: 9; }
-  /* 分隔线在窄屏不显示：每个按钮已经 44 宽，再加 1px + 两侧间距只会挤掉正文，
-     而且换行时它可能落在行首/行尾，看着像一条多余的竖线。 */
+  /* 分隔线在窄屏不显示：每个按钮已经 44 宽，再加 1px + 两侧间距只会挤掉正文。 */
   .pdf-reader-sep { display: none; }
   .pdf-reader-close {
     margin-left: auto;
   }
-  /* ---------------------------------------------------------------------------
-     PDF 阅读器「控制按钮把正文挤没」· 2026-09-22（用户真窗口截图）
-
-     窄屏上这一屏顶部一共堆了 **8 行**：头部 4 行（标题 / 上一页下一页缩放 / 三个开关 /
-     导出）＋ 批注工具 4 行（工具 / 导出批注 / 提示语 / 文本层+朗读OCR）。正文第一页
-     被顶到屏幕下半部分。
-
-     收法（与本轮其它页同一条口径：**常驻只留必需的，低频的进 `⋯`**）：
-       · 常驻 3 行 —— [目录][文件名][⋯][×] / [上一页][页码][下一页][−][缩放][+] /
-         批注工具（**单行横滑**，不再换行）；
-       · 进 `⋯`（`.pdf-reader-more`，由 `PdfReader` 的 `toolsOpen` 加 `.tools-open` 放出）——
-         最大化 / 批注侧栏 / 提问 / 护眼 / 导出带批注副本，以及整条批注状态条
-         （文本层提示 + 朗读 / OCR / AI 识别，由 `PdfAnnotTopToolbar` 的 `showStatus` 控制）；
-     全部都有"一次点击可达"的入口，没有丢功能；桌面一个像素没变（`.pdf-reader-more` 的
-     基础规则就是 `display:none`，`tools-open` 那几条也只在窄屏生效）。 */
-  .pdf-reader-more { display: inline-flex; }
-  /* ⚠️ `.pdf-export-btn` **不在**这份"默认收起"名单里：它已经是图标按钮（44×44），
-     而"导出这份带批注的副本"是标注完之后的主要动作 ⇒ 常驻、一次点击可达。 */
-  .pdf-reader-head:not(.tools-open) .pdf-reader-maximize,
-  .pdf-reader-head:not(.tools-open) .pdf-reader-sidebar-toggle,
-  .pdf-reader-head:not(.tools-open) .pdf-reader-ask,
-  .pdf-reader-head:not(.tools-open) .pdf-eye-wrap {
-    display: none;
+  /* ⚠️ 这里原来还有一段 `order` 重排（[目录][文件名][导出][⋯][×] 提到第一行）——
+     那是"折行时代"的补丁：控制组一换行，后面的 `⋯`/`×` 就被推到第四行。
+     现在只有一行、且 DOM 顺序本来就是 [目录][文件名][翻页][缩放][视图开关][导出][⋯][×]，
+     `order` 全部删掉（留着只会让人以为是它在起作用）。 */
+  /* 「⋯」的菜单在窄屏不许超出视口：里面的行本来就允许换行。 */
+  .pdf-head-more-pop {
+    max-width: calc(100vw - 24px);
   }
   /* ⚠️ 2026-09-22：这里原来给批注工具组开了一条**横向滚动**（"单行横滑"）——按钮被推出屏外，
      和"收起来"是两回事。现在窄屏也**不换行、不横滑**：工具条自己量宽后把放不下的收进「⋯」
@@ -22301,6 +22361,16 @@ body.is-plugin-panel-open .main {
   /* 「⋯」的菜单在窄屏铺满一行的宽度：里面的分组本来就允许换行。 */
   .pdf-annot-more-pop {
     max-width: calc(100vw - 24px);
+  }
+  /* ⚠️ 页内工具栏的**固定高度**在窄屏另一档：按钮是 44 命中区 + 工具组内边距 8 +
+     工具条内边距 12 + 下边框 1 = 65px。写死它，内容再忙也不许把这一格撑高。 */
+  .pdf-reader-stage-wrap > .pdf-annot-toolbar {
+    height: 65px;
+  }
+  /* ⚠️ 系统工具栏（头部）同理：按钮 44 + 上下内边距 10+10 + 下边框 1 = 65，留 1px 写 66。
+     它是"一句话都不许折行"的那一层：文件名走省略号、页码/百分比 `nowrap`。 */
+  .pdf-reader-head {
+    height: 66px;
   }
   .pdf-reader-head button,
   .pdf-annot-toolbar button,
@@ -22358,24 +22428,17 @@ body.is-plugin-panel-open .main {
 }
 
 /* ---------------------------------------------------------------------------
-   横屏（**矮**视口专有）：PDF 阅读器的头部/批注行不许换行，改成单行横向滚动
+   横屏（**矮**视口专有）：批注工具行单行 + 兜底横滑
 
-   上面那段"允许换行"是为了"不把按钮裁在屏外"（纵屏必备）。但到了横屏就走向反面：
-   12 + 6 个 44px 的按钮一换行，光这两行就吃掉整个高度——真机实测（792×360）
-
-     .pdf-reader-head        215px
-     .pdf-annot-toolbar      157px
-     .pdf-reader 总高        319px   ⇒ 正文区只剩 40px，页面图 y=429 **整页在屏外**
-
-   所以矮视口另给一套：**单行 + 横向滚动**（每个按钮仍然 44px、都摸得到，只是要滑一下），
-   关闭按钮 sticky 贴右端常驻（它是"离开"的唯一入口，不能滑走）。
-   为什么用"矮"而不是"窄"：窄而高的竖屏有足够高度换行，换行比横向滑动更好用。
+   ⚠️ 2026-09-22 起这一段**只管批注工具行的兜底滚动**：头部（`.pdf-reader-head`）与
+   批注工具条都已经"任何时候不换行 + 放不下收进「⋯」"，横屏这一档同理（量出来的宽度
+   已经含着"高度矮"这件事）。
+   ⚠️⚠️ head **不能**在这里开 `overflow-x: auto`：那会让绝对定位的「⋯」菜单被裁掉
+   （overflow-x 一旦不是 visible，overflow-y 也跟着变 auto）。所以 head 只留
+   `sticky` 的关闭按钮那条 —— 它其实也不再需要 sticky（整行不滚），保留是历史包袱，
+   等下一轮顺手清。
    --------------------------------------------------------------------------- */
 @media (max-height: 520px) {
-  .pdf-reader-head,
-  .pdf-reader-controls,
-  /* ⚠️ 2026-09-22：批注工具条**不在这里**了 —— 它现在任何时候都是单行，
-     放不下由组件量宽收进「⋯」（横屏那一档也一样，量出来的宽度已经含了"高度矮"这件事）。 */
   .pdf-annot-toolbar-row {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -22383,19 +22446,11 @@ body.is-plugin-panel-open .main {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
-  .pdf-reader-head::-webkit-scrollbar,
-  .pdf-reader-controls::-webkit-scrollbar,
   .pdf-annot-toolbar-row::-webkit-scrollbar {
     display: none;
   }
   .pdf-reader-name {
     max-width: 30%;
-  }
-  .pdf-reader-close {
-    position: sticky;
-    right: 0;
-    margin-left: auto;
-    background: var(--bg);
   }
   /* 批注工具组同理：量宽要的是**真实宽**，别被压扁。 */
   .pdf-annot-tools,
