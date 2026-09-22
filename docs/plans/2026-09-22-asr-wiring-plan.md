@@ -58,6 +58,56 @@ export type ExtractErrorCode = … | "provider_error";   // VLM/ASR 端点不可
 ＋ `conformance.test.ts` / `coverage.test.ts` / `registry.test.ts` 这几条一致性判据。
 ⇒ **半截落地会直接把门禁弄红**，所以下一轮按这 6 处**一次做齐**，不自作主张只加一个模块。
 
+## 2.6 ★ 注入点定了：**新增一个可选 `transcribe`**（不蹭 `vision`）—— 2026-09-22 读 `ExtractDeps` 后定
+
+契约现状（`types.ts:70-90`）：`ExtractDeps = { vision?, rasterize? }` —— **没有 ASR 的口子**。
+三条不变量必须照办：**全部可选**（没注入 ⇒ 抽取器返回 `provider_error`，**不许抛**、**不许自建网络客户端**）、
+**只能由平台层那个唯一入口构造**、抽取层**禁止 import `platform/**`**（有源码级断言 `isolated.test.ts` 守着）。
+（顺带印证：`loc` 的示例里早就写着 `'00:03:21'` —— 转写的时间戳定位也是**契约里预留过的**。）
+
+**拟新增**（写在 `ExtractDeps` 里，与 `vision`/`rasterize` 同形）：
+
+```ts
+/** 语音转写（音视频 → 文本）。**由平台层注入**；未注入 ⇒ `audio.asr` 返回 `provider_error`。 */
+transcribe?: (
+  audio: Uint8Array,
+  mime: string,
+  opts: { model?: string; language?: string },
+) => Promise<{ text: string; segments?: readonly { start: number; end: number; text: string }[] }>;
+```
+
+**为什么不蹭 `vision`**（设计决定，写下来免得后人"顺手复用"）：
+1. 形状不同：`vision(prompt, image, mime)` 是"提问 + 图"；转写是"音频 + 模型 + 语言" ——
+   硬塞进去会让**假实现**（判据依赖的那层）与平台接线同时变糊；
+2. 契约本来就是**一个能力一个键**（`vision` / `rasterize` 各自带"没注入就 `provider_error`"的规则），
+   加 `transcribe` 是**照既有形状填空**，不是发明新规矩；
+3. `hasPunct` **不放进 deps 的返回**：由**归一函数**从文本判定（§2 那条口径：标点不能成为隐式依赖）。
+
+⚠️ **跨归属的一格**：`transcribe` 的**实装**在平台层（`src/lib/platform/**` 的那个唯一入口
+`attachmentDeps(...)`）—— 那不是我的文件。**我出契约与抽取器；平台侧接线请 mac/windows 认领**
+（端点就一条：`POST 127.0.0.1:8080/v1/audio/transcriptions`；两条 curl 模板见 `docs/development.md §10.7`）。
+
+### 2.6.1 ★ 实测：**类型系统自己会拦住"只改一处"**（2026-09-22，试完就回退了）
+
+我先只在 `types.ts` 的 `ExtractDeps` 里加了 `transcribe?`，然后跑 `tsc --noEmit`：
+
+```text
+src/lib/extract/depsCatalog.ts(59,14): error TS2741:
+  Property 'transcribe' is missing in type '{}' but required in type 'Record<"transcribe", never>'
+```
+
+⇒ 这不是"我猜会有 6 处耦合"，而是**编译器点名了第一处**（`depsCatalog.ts` 的键集**由 `ExtractDeps` 推导**，
+少一格就当场红）。**我把这次改动回退了**（`git checkout` + `tsc` exit=0），理由：
+剩下那 5 处（registry／§15 矩阵／三条一致性判据／抽取器本体）我这一轮预算不够，
+**留一个 tsc 红的仓比留一份写着清单的计划更坏**。
+
+⇒ **下一轮的第一枪就是它**：按 §2.5 那份 6 处清单一次做齐；顺序建议
+`types.ts` → `depsCatalog.ts`（让 tsc 把下一处点出来）→ `registry.ts` → 抽取器 ＋ 判据 → §15 矩阵。
+**用编译器当清单**——它会一处一处点，比人肉记准。
+
+
+
+
 
 
 模块位置：`src/lib/extract/audio.ts`（与 `image.ts`/`text.ts`/`pdf.ts` 同族：都是"外部东西 → 文本"）。
