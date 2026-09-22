@@ -607,6 +607,30 @@ git ls-remote origin refs/heads/dev refs/heads/main    # 两侧 SHA 逐一核对
 git switch main                               # 别把工作区留在 dev（§9「常见坑」里两条都栽在这上面）
 ```
 
+#### 10.3.1 ★ 发布线的**文档修正**分支：当天合回 `main`，否则会**静默搁浅**（2026-09-22 实例）
+
+真实发生的一次：`release: 1.91.11`（`39024800`）在 `main` 上之后，为**已发布说明**开了
+`docs/changelog-1.91.11-gm-wording`（两笔**只动 `CHANGELOG.md`** 的提交：三处事实性更正 ＋
+按 AMD 要求撤掉 `src_sha256` 的**具体值**）。两笔都推到了**双远端**，但**从未合回 `main`** ——
+于是 `main` 上那份**已经对外发布**的 1.91.11 国密段，六天里一直带着被撤掉的具体值、
+以及一句"缓解方式待定"（而缓解新门禁 `gm-registry-clean` 后来已经落地）。
+⇒ **判据（一句话）**：`git branch -r --no-merged main` 里出现的、**只动 `CHANGELOG.md`/发布说明**的分支，
+当天就该合回 `main`；它不影响 `dev`，所以**任何 CI/门禁都不会提醒你**。
+这是"分支推上去了"与"修正在线上生效"之间的缝——`git log origin/main` 里没有那两笔，就是它。
+
+```bash
+# 收口一条发布线文档分支（非强推、只带来 CHANGELOG 改动）
+git switch main && git merge --ff-only origin/main
+git cherry-pick <两笔的 sha>          # 只动 CHANGELOG.md ⇒ 冲突面最小
+git diff --stat origin/main           # ★ 确认只有 CHANGELOG.md
+node scripts/check-changelog.mjs && node scripts/check-versions.mjs && node scripts/check-doc-links.mjs
+git push origin main && git push github main
+git switch dev                        # 别把工作区留在 main
+```
+
+**实例读数**（2026-09-22）：cherry-pick 两笔 ⇒ 相对 `origin/main` 只差 `CHANGELOG.md`（11 增 3 删）；
+`check-changelog` / `check-versions` / `check-doc-links` / `check-changelog-version-parity` 全绿。
+
 ### 10.4 开 MR / 合并之前：**先按目标分支对一次 diff**（2026-09-17 加，AMD 侧实战踩出来的）
 
 **规则**：把特性分支合进 `dev`（或 `dev` 合进 `main`）之前，先跑
