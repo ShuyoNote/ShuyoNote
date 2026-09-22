@@ -62,7 +62,7 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 //   命令行与外部消费方（macOS 侧的门禁）都 import 它 —— 免得出现"第三份实现各自漂移"。
 //   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
-import { ensurePatch, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
+import { ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
 const NO_APPLY = argv.includes("--no-apply");
 
@@ -101,9 +101,15 @@ if (has("--revert")) {
 //   already（源码里已有标记）⇒ 不重复打；再打一次 `git apply` 会失败，那不是错误而是重复动作；
 //   applied ⇒ 打上了，且 `ensurePatch` 内部**复扫过标记**（退出码 0 ≠ 文件里有那行）；
 //   absent（--no-apply）⇒ **不是错误**，但下面的读数必须被读成"未打补丁的源码"。
+//
+// ★ `--check` 必须**只读**（2026-09-22 修）：它的帮助文字写的是"只做构建前的核对，不构建"，
+//   但它原先照样走到这里 `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**
+//   （我自己踩到：跑完 `--check` 想确认源码是不是干净的，结果它把源码变成了打过补丁的样子，
+//   于是"我刚还原过"这句话当场变成假的）。核对就该不改状态 —— 要改状态请显式跑构建或 `--revert`。
+const CHECK_ONLY = has("--check");
 let patchState;
 try {
-  patchState = ensurePatch(srcDir, patchFileOf(root), { apply: !NO_APPLY });
+  patchState = ensurePatch(srcDir, patchFileOf(root), patchApplyDecision({ noApply: NO_APPLY, checkOnly: CHECK_ONLY }));
 } catch (e) {
   fail(e.message);
 }
@@ -170,8 +176,13 @@ if (has("--print")) {
   console.log(`  OPENSSL_DIR=${opensslDir} ${buildCmd[0]} ${buildCmd[1].join(" ")}`);
   process.exit(0);
 }
-if (has("--check")) {
-  console.log(`sm-library-build: --check 通过（环境与补丁都满足，未构建；补丁状态=${patchState.status}）`);
+if (CHECK_ONLY) {
+  // ⚠️ 这里说的 `patchState.status` 是**核对时**的状态，不是"我打上了"：
+  //   already ⇒ 源码本来就有补丁；absent ⇒ 源码干净（**本次没有打** —— 要打就去掉 --check）。
+  console.log(
+    `sm-library-build: --check 通过（环境与补丁都满足，未构建；补丁状态=${patchState.status}` +
+      `${patchState.status === "absent" ? "＝源码干净，**本次没有打补丁**（--check 只读）" : ""}）`,
+  );
   process.exit(0);
 }
 

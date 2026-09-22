@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PATCH_MARKER, ensurePatch, revertPatch } from "./sm-library-patch.mjs";
+import { PATCH_MARKER, ensurePatch, patchApplyDecision, revertPatch } from "./sm-library-patch.mjs";
 
 const dirs = [];
 function fixture(sourceText, patchText) {
@@ -120,4 +120,22 @@ describe("revertPatch", () => {
     expect(ensurePatch(dir, patch).status).toBe("applied");
     expect(readFileSync(join(dir, "sqlite3.c"), "utf8")).toContain(PATCH_MARKER);
   });
+  // ★ 第四条纪律（2026-09-22 加）：**只读的核对不许改共享状态**。
+  //   来历：`--check` 的帮助文字是「只做构建前的核对，不构建」，但它原先照样 `apply: true`
+  //   ⇒ 我拿它确认「源码干不干净」，它却把全机共享的 registry 源码变成了「打过补丁」的样子，
+  //   于是「我刚还原过」当场变成假话。变异证明：把 `!checkOnly` 去掉 ⇒ 第 1 条立刻红。
+  it("★ checkOnly ⇒ **不打**补丁（--check 是只读核对；要改状态请显式跑构建或 --revert）", () => {
+    expect(patchApplyDecision({ checkOnly: true }).apply).toBe(false);
+  });
+
+  it("noApply ⇒ 不打（理由不同：要的是「未打补丁」的读数）；默认 ⇒ 打", () => {
+    expect(patchApplyDecision({ noApply: true }).apply).toBe(false);
+    expect(patchApplyDecision({}).apply).toBe(true);
+    expect(patchApplyDecision().apply).toBe(true);
+  });
+
+  it("两个开关同时给 ⇒ 仍是不打（同向，不许有一条把它翻回来）", () => {
+    expect(patchApplyDecision({ noApply: true, checkOnly: true }).apply).toBe(false);
+  });
 });
+
