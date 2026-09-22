@@ -49,7 +49,7 @@ if (ONLY_VP && !ACTIVE_PHONES.length) {
   process.exit(1);
 }
 const DESKTOP = { name: "1280x800", width: 1280, height: 800 };
-/** 造一条**时间**类型属性（值控件是 `.prop-datetime` 那层 wrapper，不是裸 input）。 */
+/** 造一条**时间**类型属性（2026-09-22 起它的值控件是原生 `datetime-local`，不是 wrapper）。 */
 const DATETIME_PROP = "时间";
 
 // 常驻控制带的**高度预算**（px）。数字是"改之前量的"再收紧一档，不是拍脑袋：
@@ -292,8 +292,7 @@ async function checkProperties(page, vp, tag) {
     }
     if (!has) return { err: "「添加属性」行没出现" };
     await page.type(".prop-add-name", name);
-    // 「时间」那条要显式选类型：它的值不是 input，而是 `.prop-datetime`（手输框 ＋ 📅 按钮）——
-    // 这层 wrapper 曾经带着旧行布局的 `max-width: 75%`，在网格里留下 25% 死空白（owner 截图圈出）。
+    // 「时间」那条要显式选类型：它的值控件是原生 `datetime-local`（2026-09-22 起，与「日期」同风格）。
     if (name === DATETIME_PROP) {
       await safeEval(page, (v) => {
         const sel = document.querySelector(".prop-add-type");
@@ -338,6 +337,17 @@ async function checkProperties(page, vp, tag) {
   return safeEval(page, (t) => {
     const body = document.querySelector(".properties-body");
     if (!body) return { err: "属性面板不在 DOM 里" };
+    /** 可见 = 自己与祖先都没有被 `display:none` 掉（窄屏的行尾小按钮就是被藏起来的）。 */
+    const visible = (el) => {
+      if (!el) return false;
+      let cur = el;
+      while (cur && cur !== body) {
+        if (getComputedStyle(cur).display === "none") return false;
+        cur = cur.parentElement;
+      }
+      const b = el.getBoundingClientRect();
+      return b.width > 1 && b.height > 1;
+    };
     const rows = Array.from(body.querySelectorAll(".prop-row"));
     const items = rows
       .map((row) => {
@@ -348,13 +358,17 @@ async function checkProperties(page, vp, tag) {
         if (!n || !v) return null;
         const nb = n.getBoundingClientRect();
         const vb = v.getBoundingClientRect();
-        // 「时间」行的值控件是 `.prop-datetime` 这层 wrapper（手输框 + 📅 按钮）：
-        // 量**整层**的右边缘到行尾按钮左边缘的空隙 —— 那层曾带 `max-width: 75%`，
-        // 在网格里留下 25% 死空白（owner 2026-09-22 截图圈出的就是它）。
-        const dt = row.querySelector(".prop-datetime");
+        // 「时间」行的值控件现在是**原生 `datetime-local`**（2026-09-22，owner：
+        // "页面时间属性的控件采用和日期一样风格的控件，不要再额外加按钮"）——
+        // 它必须吃满值列（不许像当年那层 `.prop-datetime` wrapper 那样带 `max-width: 75%`
+        // 留 25% 死空白），而且**这一行不该再有额外按钮**（那一版是手输框 ＋ 日历按钮）。
+        const dt = row.querySelector('input[type="datetime-local"]');
         const btns = row.querySelector(".prop-order-btns");
         const dtGap =
           dt && btns ? Math.round(btns.getBoundingClientRect().left - dt.getBoundingClientRect().right) : null;
+        const dtExtraButtons = dt
+          ? Array.from(row.querySelectorAll("button")).filter((b) => visible(b) && !b.closest(".prop-order-btns")).length
+          : null;
         return {
           name: (n.textContent || "").trim(),
           nameLeft: Math.round(nb.left),
@@ -363,6 +377,8 @@ async function checkProperties(page, vp, tag) {
           valLeft: Math.round(vb.left),
           gap: Math.round(vb.left - nb.right),
           dtGap,
+          dtExtraButtons,
+          dtKind: dt ? (dt.getAttribute("type") ?? "") : null,
           // 行尾那三个按钮的实测尺寸（已知取舍，只记录不判定）
           btn: row.querySelector(".prop-order, .prop-remove")?.getBoundingClientRect().width ?? null,
         };
@@ -1672,16 +1688,23 @@ async function main() {  const executablePath = findChrome();
             `每行都是"名字在左、值在右"（${r.items.map((i) => `${i.name}:${i.nameLeft}<${i.valLeft}`).join(" ")}）` +
               `——「标签」那行只有 2 个孩子时，会把后面整块顶偏一格（名字跑到最右）`,
           );
-          // ---- 「时间」行的值控件不许留死空白 ----
-          // 它的值是 `.prop-datetime` 这层 wrapper（手输框 + 📅 按钮），曾带着旧行布局的
-          // `max-width: 75%`；值列已经是网格的 `1fr` ⇒ 那 25% 是纯死空白（owner 截图圈出的就是它）。
-          // 判据按**这一行自己的**空隙量（别的行是裸 input，网格天然顶满，量不出这个 bug）。
+          // ---- 「时间」行的值控件：原生 datetime-local + 不许有额外按钮 ----
+          // 2026-09-22（owner："页面时间属性的控件采用和日期一样风格的控件，不要再额外加按钮"）：
+          // 它从"手输框 + 日历按钮"（那层 `.prop-datetime` wrapper）换成了原生控件，
+          // 于是两条都要钉：① 控件类型是 datetime-local；② 这一行除行尾那三个之外没有别的按钮；
+          // ③ 它吃满值列（当年那层 wrapper 带 `max-width: 75%`，留下 25% 死空白）。
           const dtItem = r.items.find((i) => i.name === DATETIME_PROP);
-          ok(!!dtItem, `夹具里量到了「${DATETIME_PROP}」那一行（时间类型，值控件是 .prop-datetime）`);
+          ok(!!dtItem, `夹具里量到了「${DATETIME_PROP}」那一行（时间类型）`);
+          ok(
+            dtItem?.dtKind === "datetime-local" && dtItem?.dtExtraButtons === 0,
+            `「${DATETIME_PROP}」的值控件是原生 \`datetime-local\`、且**没有额外按钮**` +
+              `（实测 type=${dtItem?.dtKind}、额外按钮 ${dtItem?.dtExtraButtons} 个）` +
+              `——改前是"手输框 + 日历按钮"两个元素`,
+          );
           ok(
             dtItem && dtItem.dtGap !== null && dtItem.dtGap <= 30,
             `「${DATETIME_PROP}」行不留死空白（值控件右边缘到行尾按钮只差 ${dtItem?.dtGap}px ≤ 30；` +
-              `改前是值列的 25%，390px 上约 57px —— owner 2026-09-22 截图圈的就是这处）`,
+              `改前那层 wrapper 带 max-width:75%，390px 上约 57px）`,
           );
           ok(r.docW <= r.vw, `属性面板无横向溢出（docW ${r.docW} ≤ ${r.vw}）`);
           // ---- 行尾「⋯」动作面板（窄屏专有）：三个 18px 小按钮收成一个 44×44 ----

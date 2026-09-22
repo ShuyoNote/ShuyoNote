@@ -4834,12 +4834,11 @@ body.content-full .editor-placeholder {
    勾选框是个例外（它是 16px 的小方块，拉满就成了横条）。 */
 .properties-body .prop-value:not(.prop-checkbox) { width: 100%; max-width: none; }
 .properties-body .prop-checkbox { justify-self: start; }
-/* 「时间」属性：值不是一个 input，而是 `.prop-datetime` 这层 wrapper（手输框 ＋ 📅 按钮）。
-   它自带旧**行布局**留下的 `max-width: 75%`（当年一行是 flex，不想让值占满整行）——
-   值列现在由网格决定（`1fr`），那 25% 就纯粹是**死空白**：owner 2026-09-22 的截图里，
-   同一列上文本输入框顶到了行尾按钮，日期控件却短一截、后面空一大块。
-   口径与上面 `.prop-value` 那条一致：值列宽度归网格管，这一层也放开。 */
-.properties-body .prop-datetime { max-width: none; }
+/* ⚠️ 2026-09-22：这一块（`.prop-datetime` / `.prop-datetime-pick` / `.prop-datetime-picker`
+   与上面那条 `.properties-body .prop-datetime`）**整块删掉了** —— 「时间」属性现在就是
+   一个原生 `<input type="datetime-local">`（与「日期」属性同一个风格、没有额外按钮，
+   owner："页面时间属性的控件采用和日期一样风格的控件，不要再额外加按钮"），
+   值列宽度归网格管（`.properties-body .prop-value` 那条），不再需要外层 wrapper。 */
 
 .prop-value {
   flex: 1;
@@ -4856,59 +4855,6 @@ body.content-full .editor-placeholder {
 .prop-value:focus {
   outline: none;
   border-color: var(--accent);
-}
-
-/* 「时间」属性：**一行只有一个可见的输入框**（手输框）＋ 一枚 📅 按钮开原生选择器。
-   以前这里并排摆两个框（原生 datetime-local ＋ 手输框），同一个时刻显示两遍 ——
-   owner 2026-09-21 的截图问的就是那个。现在原生那枚藏 1px（**不能 display:none**：
-   那样 showPicker() 会抛），所以 DOM 里仍是两个 input，但肉眼只有一个。 */
-.prop-datetime {
-  display: flex;
-  align-items: center;
-  /* 与 `.prop-row` 的 gap 一致：手输框 → 图标按钮 的间距要和 值 → 上移/下移/移除 那段一样宽 */
-  gap: 8px;
-  flex: 1;
-  max-width: 75%;
-  min-width: 0;
-}
-
-.prop-datetime .prop-value {
-  flex: 1;
-  max-width: none;
-  min-width: 0;
-}
-
-/* 「打开日期选择器」按钮：**与属性行里那三个图标按钮（上移/下移/移除）同一个方框** ——
-   18×18、无边框、透明底、`--text-faint` → hover `--text`。
-   原先是个带边框的小方块 ＋ `📅` emoji：emoji 的尺寸由字体行高决定，既跟 13×13 的线性
-   SVG 不搭，也比那三个 18×18 的按钮高一截 ⇒ 一行里对不齐（owner 2026-09-21 截图指出）。 */
-.prop-datetime-pick {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 5px;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.prop-datetime-pick:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-/* 藏在布局里（1px + 透明）：showPicker() 要求元素是"渲染过的"，display:none 会抛 */
-.prop-datetime-picker {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .prop-value.is-invalid {
