@@ -600,3 +600,29 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
         rgba_base64: base64::engine::general_purpose::STANDARD.encode(&compact),
     })
 }
+
+/// **这一页未裁决的冲突**（阶段 1：裁定 (iii) 的"不静默选边"要靠它显示给用户）。
+///
+/// 纯读；数据在本地表 `page_conflicts`，写入发生在远端应用路径（`doc_content::apply_remote_page`）。
+#[tauri::command]
+pub fn list_page_conflicts(
+    db: State<Db>,
+    page_id: String,
+) -> Result<Vec<crate::doc_content::PageConflict>, String> {
+    let c = conn(&db);
+    crate::doc_content::unresolved_page_conflicts(&c, &page_id)
+}
+
+/// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。
+///
+/// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。
+#[tauri::command]
+pub fn resolve_page_conflict(db: State<Db>, conflict_id: String, choice: String) -> Result<(), String> {
+    let c = conn(&db);
+    let choice = match choice.as_str() {
+        "local" => crate::doc_content::ConflictChoice::Local,
+        "remote" => crate::doc_content::ConflictChoice::Remote,
+        other => return Err(format!("choice 只能是 local 或 remote，收到 {other}")),
+    };
+    crate::doc_content::resolve_page_conflict(&c, &conflict_id, choice)
+}

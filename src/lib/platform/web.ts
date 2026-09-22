@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict } from "../docContent";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -3116,6 +3116,30 @@ export function makeInvoke(store: SqliteStore) {
       store.run("DELETE FROM page_versions WHERE page_id = ?", [pid]);
       const after = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", [pid])[0]?.n ?? 0;
       return (before - after) as T;
+    }
+    if (cmd === "list_page_conflicts") {
+      // 阶段 1 · 冲突留痕：字段名**对齐 Rust 侧 `PageConflict` 的 snake_case**（前端两边同一套读法）。
+      const pid = String(a.pageId ?? a.page_id ?? "");
+      return pageConflictsOf(store, pid).map((c) => ({
+        id: c.id,
+        page_id: c.pageId,
+        block_id: c.blockId,
+        reason: c.reason,
+        local_json: c.localJson,
+        remote_json: c.remoteJson,
+        detected_at: c.detectedAt,
+        resolved_at: c.resolvedAt ?? null,
+        resolved_choice: c.resolvedChoice ?? null,
+      })) as T;
+    }
+    if (cmd === "resolve_page_conflict") {
+      const conflictId = String(a.conflictId ?? a.conflict_id ?? "");
+      const choice = String(a.choice ?? "");
+      if (choice !== "local" && choice !== "remote") {
+        throw new Error(`choice 只能是 local 或 remote，收到 ${choice}`);
+      }
+      resolvePageConflict(store, conflictId, choice);
+      return null as T;
     }
 
     // ---- Backup / export / import (standard zip, matches the desktop format) ----

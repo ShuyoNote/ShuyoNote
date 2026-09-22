@@ -470,6 +470,9 @@ pub fn run() {
             updates::install_android_update,
             commands::create_database,
             commands::save_page,
+            // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
+            commands::list_page_conflicts,
+            commands::resolve_page_conflict,
             commands::set_page_cover,
             commands::set_page_icon,
             commands::set_page_cover_height,

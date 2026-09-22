@@ -550,7 +550,10 @@ pub fn replace_block_content(doc_json: &str, block_id: &str, block_json: &str) -
 }
 
 /// 一处冲突（表 `page_conflicts` 的一行；`resolved_at` 为空 = **未裁决**）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Serialize` 是给命令面用的（`list_page_conflicts` 直接把它交给前端；字段名按 snake_case 出去，
+/// Web 侧的同名命令**对齐同一套字段名**）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PageConflict {
     pub id: String,
     pub page_id: String,

@@ -100,4 +100,14 @@ export default {
     database: "Database",
     page: "Page",
   },
+  // Stage 1 · conflict banner (`components/ConflictBanner.tsx`)
+  conflicts: {
+    title: "{{count}} conflict(s) on this page",
+    hint: "The same block was edited on two devices. Pick one side; the other is not lost — it stays in version history.",
+    local: "This device",
+    remote: "Remote",
+    keepLocal: "Keep local",
+    useRemote: "Use remote",
+    resolved: "Merged this block as you chose",
+  },
 } as const;

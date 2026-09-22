@@ -488,6 +488,10 @@ export const api = {
   listVersions: (pageId: string) => invoke("list_versions", { pageId }),
   restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
   clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
+  // ---- 阶段 1 · 冲突留痕与裁决（提示 UI 用这两个入口）----
+  listPageConflicts: (pageId: string) => invoke("list_page_conflicts", { pageId }),
+  resolvePageConflict: (conflictId: string, choice: "local" | "remote") =>
+    invoke("resolve_page_conflict", { conflictId, choice }),
   exportBackup: (destPath: string) =>
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>

@@ -527,6 +527,23 @@ export interface CommandMap {
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
+  /** 阶段 1 · 冲突留痕：这一页**未裁决**的冲突（字段名与 Rust 侧 `PageConflict` 的 snake_case 一致）。 */
+  list_page_conflicts: {
+    args: { pageId: string };
+    result: Array<{
+      id: string;
+      page_id: string;
+      block_id: string;
+      reason: string;
+      local_json: string;
+      remote_json: string;
+      detected_at: number;
+      resolved_at: number | null;
+      resolved_choice: string | null;
+    }>;
+  };
+  /** 阶段 1 · 裁决一处冲突（`local` 或 `remote`；其余值两侧都报错，不默认选边）。 */
+  resolve_page_conflict: { args: { conflictId: string; choice: string }; result: null };
   export_backup: { args: { destPath: string }; result: { path: string; size: number } };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };

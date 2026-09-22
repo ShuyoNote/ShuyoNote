@@ -100,4 +100,14 @@ export default {
     database: "数据库",
     page: "页面",
   },
+  // 阶段 1 · 冲突提示条（`components/ConflictBanner.tsx`）
+  conflicts: {
+    title: "这一页有 {{count}} 处冲突",
+    hint: "同一块被两台设备同时改过。选一侧保留即可；另一侧不会丢——它仍在版本历史里。",
+    local: "本机那一版",
+    remote: "远端那一版",
+    keepLocal: "留本地",
+    useRemote: "用远端",
+    resolved: "已按你的选择合并这一块",
+  },
 } as const;
