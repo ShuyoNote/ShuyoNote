@@ -17687,6 +17687,9 @@ p:has(> .editor-drawing-container) {
      行盒高度恒为 18、盒子中心 = 文字中心 ⇒ 四个字面同线、四块背景同高。 */
   font-size: 12px;
   line-height: 18px;
+  /* 上下内边距与右边三个按钮**一模一样**（4px）⇒ 四块的盒子高度也都是 26px，
+     不只是"文字中线相同"。没有底色，所以看不出这 8px，但结构与命中区完全一致。 */
+  padding: 4px 0;
   color: var(--text-dim);
   /* 这一格也不许折行把工具条撑高。 */
   white-space: nowrap;
@@ -18120,19 +18123,37 @@ p:has(> .editor-drawing-container) {
 /* ⚠️ 右侧手柄要**避开常驻悬浮条**（`--rail-w`）：它在 `--z-bar` 层，比阅读器浮层高，
    否则右侧中段（41×112 那条）的指针事件会被它截走 ⇒ 只有上下一小段能拖。 */
 .pdf-edge-drag.is-right { right: var(--rail-w); }
-.pdf-edge-drag::after {
+/* ---------------------------------------------------------------------------
+   两侧的**拖拽竖线**：四处同一件东西（2026-09-22，owner："pdf 阅读器左右侧边栏的拖拽竖线
+   粗细要一样"）。
+
+   四处 = 左侧栏 ×（展开 / 收起）、右侧栏 ×（展开 / 收起）。统一规格：
+   **3px × 44px、垂直居中、`--border` 色、hover 变强调色**；抓取条本身仍是透明的 6px，
+   而且两侧都**完全落在各自面板内**。
+
+   ⚠️ 改前右侧那条是 `left: -3px`（跨在边界上），而 `.pdf-sidebar-col` 是 `overflow: hidden`
+   —— 露在面板外的那 3px 被裁掉，于是"展开态 hover 的高亮"**左边 6px、右边只剩 3px**，
+   这就是"粗细不一样"的来源；收起态那两条 `::after` 虽然都是 3px，但左边贴 `left: 2px`、
+   右边贴 `right: 2px`，位置也不完全镜像。现在两处都用同一条规则居中，规格只有一个。
+   --------------------------------------------------------------------------- */
+.pdf-edge-drag::after,
+.pdf-outline-resizer::after,
+.pdf-sidebar-resizer::after {
   content: "";
   position: absolute;
   top: 50%;
-  transform: translateY(-50%);
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: 3px;
   height: 44px;
   border-radius: 2px;
   background: var(--border);
 }
-.pdf-edge-drag.is-left::after { left: 2px; }
-.pdf-edge-drag.is-right::after { right: 2px; }
-.pdf-edge-drag:hover::after { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+.pdf-edge-drag:hover::after,
+.pdf-outline-resizer:hover::after,
+.pdf-sidebar-resizer:hover::after {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+}
 .pdf-reader-stage-wrap {
   flex: 1;
   min-width: 0;
@@ -18267,7 +18288,10 @@ p:has(> .editor-drawing-container) {
 .pdf-sidebar-col .pdf-sidebar { width: 100%; border-left: none; flex: 1; min-height: 0; }
 .pdf-sidebar-resizer {
   position: absolute;
-  left: -3px;
+  /* ⚠️ 0 而不是 -3px：`.pdf-sidebar-col` 是 `overflow: hidden`，跨出去的那 3px 会被裁掉
+     ⇒ 抓取条只剩 3px（左侧那条是 6px）——"左右拖拽竖线粗细不一样"就是这么来的。
+     现在两侧都**完全落在各自面板内**，镜像对称。 */
+  left: 0;
   top: 0;
   bottom: 0;
   width: 6px;
@@ -18275,7 +18299,6 @@ p:has(> .editor-drawing-container) {
   z-index: 5;
   background: transparent;
 }
-.pdf-sidebar-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* 左侧目录（书签）侧栏 */
 .pdf-outline {
   width: 240px;
@@ -18305,7 +18328,6 @@ p:has(> .editor-drawing-container) {
   z-index: 5;
   background: transparent;
 }
-.pdf-outline-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .pdf-outline-head {
   padding: 12px 14px;
   font-size: 13px;
