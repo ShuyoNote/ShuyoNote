@@ -516,6 +516,9 @@ pub fn run() {
             commands::refresh_page_text,
             // 阶段 1 · B1："正文待重建"队列（补算器按它把合并/裁决过的页面补上）
             commands::list_stale_text_pages,
+            // B 方案（2026-09-22）：页级"保留本地"时被游标吃掉的那一版远端内容 —— 清单与三个真裁决
+            commands::list_pending_remote_pages,
+            commands::resolve_pending_remote,
             commands::set_page_cover,
             commands::set_page_icon,
             commands::set_page_cover_height,

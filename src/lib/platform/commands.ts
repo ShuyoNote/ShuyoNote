@@ -102,6 +102,12 @@ export interface WorkspaceSyncResult {
   last_pulled_seq: number;
   error: string | null;
   conflicts: SyncConflict[];
+  /**
+   * ★ B 方案（2026-09-22）：本轮**页级保留本地**、已把"那一版远端内容"存进待裁决清单的**页面数**。
+   * 与 `conflicts` **不是一回事**（别合成一个值）：`conflicts` 是"要你选保留本地/采用远端"的提示，
+   * 这个是"已经替你留了痕、随时可以在「待取回的远端版本」里裁决"的件数。详情走 `list_pending_remote_pages`。
+   */
+  pending_remote_pages?: number;
   /** P6.1：附件同步**因开关被关掉而中途停止**（界面据此显示"因开关关闭而停止"）。 */
   attachments_paused: boolean;
   /** P6.1：本轮**因开关关闭而未传**的附件件数（界面显示"未上传 N 个 / 未下载 M 个"）。
@@ -775,6 +781,42 @@ export interface CommandMap {
   list_stale_text_pages: {
     args: { limit?: number | null };
     result: { total: number; pages: Array<{ page_id: string; title: string; doc_json: string }> };
+  };
+  /**
+   * ★ B 方案（2026-09-22）· **待取回的远端版本**：页级"保留本地"时那条远端变更会被游标吃掉
+   * （取证 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §3.2 的 L），现在它存在本地
+   * `pending_remote_pages` 里 ⇒ 这个命令把清单给界面，用户随后裁决（`resolve_pending_remote`）。
+   * 纯读；字段名与 Rust 侧 `PendingRemoteQueue` 的 snake_case 对齐。
+   */
+  list_pending_remote_pages: {
+    args: { limit?: number | null };
+    result: {
+      total: number;
+      pages: Array<{
+        page_id: string;
+        title: string;
+        seq: number;
+        remote_updated_at: number;
+        stashed_at: number;
+      }>;
+    };
+  };
+  /**
+   * ★ B 方案 · **裁决一处"待取回的远端版本"**：`merge`（合并这一页：先逐块合并）/
+   * `take_remote`（整页采用远端，并**真的**放弃本地还没推上去的改动）/ `keep_local`（保留本地，什么都不动）。
+   * 其余值两侧都报错（不默认选边 —— 与 `resolve_page_conflict` 同一纪律）。
+   */
+  resolve_pending_remote: {
+    args: { pageId: string; choice: string };
+    result: {
+      page_id: string;
+      choice: string;
+      merged: boolean;
+      unresolved: number;
+      adopted_seq: number;
+      discarded_local_changes: number;
+      local_changes_pending: number;
+    };
   };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };

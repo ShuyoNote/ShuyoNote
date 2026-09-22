@@ -131,12 +131,31 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
 
 // ---- remote apply (LWW) ----
 
-fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<usize, String> {
+/// 一次远端页 upsert 的**处置结果**。
+///
+/// ★ 为什么必须是枚举，而不是像旧版那样返回 `usize`（取证文件 §5，B 方案第①条）：
+///   旧的 `0` 同时表示 ①"应用了远端、而且**没有**未裁决冲突"与 ②"**压根没应用**（页级保留本地）"。
+///   调用方（游标）只看计数 ⇒ 把"没应用"的那条也当"处理完了" ⇒ 推进游标 ⇒ **那笔远端编辑再也取不回**
+///   （取证 §3.2 的 L，而且层里一条痕都没有）。
+///   这与 `RemoteMerge` 当初那个 `Option` 是**同一类错误**：返回值必须先说清"发生了什么"，再谈计数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpsertApply {
+    /// 远端这一版**已应用**（逐块合并产物，或远端原样）。`unresolved` = 其中判不了而落进
+    /// `page_conflicts` 的块数（`0` = 应用干净）。
+    Applied { unresolved: usize },
+    /// 页级**保留本地**：远端这一版**没有被应用**（本地那份未推送的编辑优先，裁定 ④，语义正确）。
+    ///
+    /// ⚠️ 调用方**必须**为这一支留痕（`doc_content::stash_pending_remote`）—— 否则就是取证里的 L：
+    /// 游标过去了、对端那笔编辑再也取不回、层里什么都没有。
+    KeptLocal,
+}
+
+fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<UpsertApply, String> {
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
     let local = crate::doc_content::local_state(c, &page.id)?;
     if crate::doc_content::merge(local, sync_seq) == crate::doc_content::MergeDecision::KeepLocal {
-        return Ok(0);
+        return Ok(UpsertApply::KeptLocal);
     }
 
     // 「用远端」那一笔落库也走那一层（`doc_content::upsert_remote`）——
@@ -152,10 +171,179 @@ fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<usiz
     //   调用方必须能看见"有未裁决冲突"，哪怕只是个计数）。它由 `apply_remote_page` 的
     //   `RemoteMerge::Conflicted(..)` 直接给出 —— 调用方不必"再去查一次表"才知道。
     let outcome = crate::doc_content::apply_remote_page(c, page, sync_seq)?;
-    Ok(match outcome {
-        crate::doc_content::RemoteMerge::Conflicted(conflicts) => conflicts.len(),
-        _ => 0,
+    Ok(UpsertApply::Applied {
+        unresolved: match outcome {
+            crate::doc_content::RemoteMerge::Conflicted(conflicts) => conflicts.len(),
+            _ => 0,
+        },
     })
+}
+
+// ---- B 方案（2026-09-22）：页级保留本地时留下的那一版远端，怎么收场 ----
+//
+// 取证与三个候选修法见 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §6。
+// 这里落的是**方案 B**：游标照旧推进（不做方案 A，那会 livelock），但被跳过的那一版
+// **在本地存下来**（`pending_remote_pages`），于是"静默"变成"看得见 ＋ 可收场"。
+//
+// ⚠️ 三个选项**都必须真的动数据**：旧横幅那句"已放弃本地未推送改动"是**假的**（`dirty` 还在，
+//    下一次 push 照样把本地那版推上去）—— 那正是取证文件 §4 记的 F3。
+
+/// 用户对"待取回的那一版远端"的处置。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingChoice {
+    /// 合并这一页：与自动路径同一套（先逐块合并，两端各改不同块 ⇒ 都保留）。
+    Merge,
+    /// 采用远端：整页换成远端那一版（**不走**块级合并），并放弃本地**还没推上去**的改动。
+    TakeRemote,
+    /// 保留本地：什么都不动（本地那笔改动会在下一次 push 推上去）。
+    KeepLocal,
+}
+
+impl PendingChoice {
+    /// ⚠️ 只认三个字面量，**其余一律 `None`**（与 `resolve_page_conflict` 同一纪律：不默认选边）。
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "merge" => Some(PendingChoice::Merge),
+            "take_remote" => Some(PendingChoice::TakeRemote),
+            "keep_local" => Some(PendingChoice::KeepLocal),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PendingChoice::Merge => "merge",
+            PendingChoice::TakeRemote => "take_remote",
+            PendingChoice::KeepLocal => "keep_local",
+        }
+    }
+}
+
+/// 裁决结果（给界面写状态行用；每个字段都是"到底做了什么"的读数）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PendingChoiceReport {
+    pub page_id: String,
+    pub choice: String,
+    /// `merge`：产物那一笔是不是**逐块合并**（`false` = 没有可合的，用了远端原样）。
+    pub merged: bool,
+    /// `merge`：这一轮落表的未裁决冲突条数（> 0 ⇒ 那一页还要走块级裁决）。
+    pub unresolved: usize,
+    /// `take_remote`：采用的远端 `seq`（另两个选项是 0）。
+    pub adopted_seq: i64,
+    /// `take_remote`：**真的丢掉了 N 笔没推上去的本地改动**（那句"已放弃本地未推送改动"的证据）。
+    pub discarded_local_changes: usize,
+    /// `merge`：本地还有 M 笔没推上去的改动 ⇒ 产物里那些"只在本地"的块要靠它们进 log ⇒ 已把这一页标回 dirty。
+    pub local_changes_pending: usize,
+}
+
+/// 这一页所属空间"**已经推上去**"的水位。
+///
+/// ⚠️ 必须与 `do_push` 用来挑变更的是**同一个值**：`sync_profiles.last_pushed_seq`（按该页的
+/// `workspace_id`）。写在这里当注释是因为中途踩过一次：`sync_state` 里**也有**一个同名 KV，
+/// 但 `get_profile` 读的是 `sync_profiles` 那一列（`state_i64` 读的是另一个库的表）——
+/// 用错那个，`unsent_*` 会永远算成"全都还没推"。
+fn pushed_watermark_for_page(c: &Connection, page_id: &str) -> Result<i64, String> {
+    let ws: Option<String> = c
+        .query_row("SELECT workspace_id FROM pages WHERE id = ?1", params![page_id], |row| row.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(ws) = ws else {
+        return Ok(0);
+    };
+    let v: Option<i64> = c
+        .query_row(
+            "SELECT last_pushed_seq FROM sync_profiles WHERE ws_id = ?1",
+            params![ws],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(v.unwrap_or(0))
+}
+
+/// 这一页**还没推上去**的本地整页变更条数（判定与 `do_push` 同一口径：同一设备 ＋ `seq > 水位`）。
+pub fn unsent_page_change_count(c: &Connection, page_id: &str) -> Result<usize, String> {
+    let (device, last_pushed) = (device_id(c)?, pushed_watermark_for_page(c, page_id)?);
+    let n: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM changes
+             WHERE entity = 'page' AND entity_id = ?1 AND device_id = ?2 AND seq > ?3",
+            params![page_id, device, last_pushed],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(n as usize)
+}
+
+/// 丢掉这一页**还没推上去**的那笔本地整页变更 ——「采用远端」＝真的放弃本地那一版。
+///
+/// ⚠️ 只删 `seq > 水位` 的：已经推上去的那些是历史（`do_push` 的 `MAX(seq)` 记账也靠它们），
+/// 删了会让游标账目错乱；而那些已经推到服务端的编辑**不该**被本地丢掉（它们是对端的既成事实）。
+pub fn discard_unsent_page_changes(c: &Connection, page_id: &str) -> Result<usize, String> {
+    let (device, last_pushed) = (device_id(c)?, pushed_watermark_for_page(c, page_id)?);
+    let n = c
+        .execute(
+            "DELETE FROM changes
+             WHERE entity = 'page' AND entity_id = ?1 AND device_id = ?2 AND seq > ?3",
+            params![page_id, device, last_pushed],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+/// ★ **裁决入口**（桌面侧唯一）：把"页级保留本地时存下的那一版远端"按用户选择收场。
+///
+/// 三条分支都会**真的改数据**（见 `PendingChoice`），而且都会清掉那条待取回的存档 ——
+/// 于是"游标过去了、对端那笔编辑再也取不回、层里什么都没有"这件事不再可能发生。
+pub fn resolve_pending_remote(
+    c: &Connection,
+    page_id: &str,
+    choice: PendingChoice,
+) -> Result<PendingChoiceReport, String> {
+    let (seq, payload) = crate::doc_content::pending_remote_payload(c, page_id)?
+        .ok_or_else(|| "这一页没有待取回的远端版本（可能已经裁决过）".to_string())?;
+    let page: PageDetail =
+        serde_json::from_str(&payload).map_err(|e| format!("存档的远端版本读不出来：{e}"))?;
+
+    let mut report = PendingChoiceReport {
+        page_id: page_id.to_string(),
+        choice: choice.as_str().to_string(),
+        merged: false,
+        unresolved: 0,
+        adopted_seq: 0,
+        discarded_local_changes: 0,
+        local_changes_pending: 0,
+    };
+
+    match choice {
+        // 「保留本地」= 现状：本地那份照旧，它会在下一次 push 推上去（对端届时会走块级合并）。
+        PendingChoice::KeepLocal => {}
+        PendingChoice::TakeRemote => {
+            crate::doc_content::take_remote_page(c, &page, seq)?;
+            report.adopted_seq = seq;
+            // ⚠️ 这一半不能省：本地那笔**还没推上去**的整页改动要丢掉，否则下一次 push 又把本地那版
+            //    推上去 —— 用户看到的"已放弃本地未推送改动"就成了假话。
+            report.discarded_local_changes = discard_unsent_page_changes(c, page_id)?;
+        }
+        PendingChoice::Merge => {
+            // 与自动路径**同一套**（`apply_remote_page`：先逐块合并，判不了才回落远端原样并留痕）。
+            let outcome = crate::doc_content::apply_remote_page(c, &page, seq)?;
+            report.merged = matches!(outcome, crate::doc_content::RemoteMerge::Merged { .. });
+            if let crate::doc_content::RemoteMerge::Conflicted(conflicts) = &outcome {
+                report.unresolved = conflicts.len();
+            }
+            // 合并产物里含**本地那一版独有的块**，而那些块只在"本地还没推上去的那笔变更"里 ⇒
+            // 这一步之后必须把这一页标回 `dirty`（`apply_remote_page` 走的是"远端应用"那一支，
+            // 会把 `dirty` 压成 0），否则页级判定会把本地那些块当"已经同步过"。
+            report.local_changes_pending = unsent_page_change_count(c, page_id)?;
+            if report.local_changes_pending > 0 {
+                crate::doc_content::mark_page_dirty(c, page_id)?;
+            }
+        }
+    }
+
+    crate::doc_content::clear_pending_remote(c, page_id)?;
+    Ok(report)
 }
 
 fn apply_delete(c: &Connection, id: &str, updated_at: i64) -> Result<(), String> {
@@ -236,6 +424,13 @@ pub struct SyncReport {
     ///     只需让用户知道"这一页有未裁决的冲突"，详情走 `list_page_conflicts`。
     /// 单位是**页面数**（同一页一轮里可能被应用多次，只算一次）。
     pub block_conflict_pages: usize,
+    /// ★ B 方案（2026-09-22）：本轮**页级保留本地**、因而把"那一版远端内容"存进本地待裁决清单的**页面数**。
+    ///
+    /// 与 `conflicts` 的关系（**别合成一个值**）：`conflicts` 是"要你选保留本地 / 采用远端"的提示，
+    /// 而这个是"**已经替你留了痕**、随时可以在「待取回的远端版本」里裁决"的件数 ——
+    /// 修好之前这一支是**完全静默**的（游标过去了，对端那笔编辑再也取不回，层里什么都没有）。
+    /// 详情走 `list_pending_remote_pages`。
+    pub pending_remote_pages: usize,
     /// P6.1：**本轮附件同步因"开关被关掉"而中途停止**（不是在入口就没开）。
     /// 界面据此显示"因开关关闭而停止"，而不是"同步完成"——否则用户以为全下完了。
     pub attachments_paused: bool,
@@ -1383,7 +1578,7 @@ async fn do_push(
 async fn do_pull(
     db: &State<'_, Db>,
     profile: &SyncProfile,
-) -> Result<(usize, i64, Vec<SyncItem>, Vec<SyncConflict>, usize), String> {
+) -> Result<(usize, i64, Vec<SyncItem>, Vec<SyncConflict>, usize, usize), String> {
     let last_pulled = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::sync_gate(&c)?;
@@ -1426,10 +1621,15 @@ async fn do_pull(
     let mut count: usize = 0;
     let mut items: Vec<SyncItem> = Vec::new();
     let mut conflicts: Vec<SyncConflict> = Vec::new();
+    let now = crate::db::now_ms();
     // ★ 阶段 1：本轮**留下未裁决块级冲突**的页面（按页面去重 —— 同一页一轮里可能被应用多次）。
     // ⚠️ 与上面那个 `conflicts`（页级 dirty 提示）**含义不同、分开报**：那个要用户选"保留本地/采用远端"，
     // 这个已经有逐块留痕（`page_conflicts`），只需让用户知道"这一页有未裁决冲突"。
     let mut unresolved_page_ids: Vec<String> = Vec::new();
+    // ★ B 方案（2026-09-22）：本轮**页级保留本地**的页面（按页面去重）。这些页面的远端那一版
+    // 已经存进 `pending_remote_pages`（本地表）⇒ 界面要能告诉用户"有 N 页等你裁决"，
+    // 而不是像修好之前那样"游标过去了、什么都没有"（取证文件 §3.2）。
+    let mut pending_remote_ids: Vec<String> = Vec::new();
     {
         let c = db.0.lock().expect("db mutex poisoned");
         // 跨设备 pull 的变更可能引用了「尚未先到达」的父页 / 关联页，触发本地外键约束
@@ -1458,8 +1658,29 @@ async fn do_pull(
                                 conflicts.push(SyncConflict { entity_id: page.id.clone(), title: page.title.clone() });
                             }
                             let unresolved = apply_upsert(&c, &page, change.seq)?;
-                            if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
-                                unresolved_page_ids.push(page.id.clone());
+                            match unresolved {
+                                UpsertApply::Applied { unresolved } => {
+                                    if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
+                                        unresolved_page_ids.push(page.id.clone());
+                                    }
+                                    // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）
+                                    // 已经是陈的，清掉（不清就是"清单永远挂着几条假账"）。
+                                    if let Some(stashed) = crate::doc_content::pending_remote_seq(&c, &page.id)? {
+                                        if stashed <= change.seq {
+                                            crate::doc_content::clear_pending_remote(&c, &page.id)?;
+                                        }
+                                    }
+                                }
+                                UpsertApply::KeptLocal => {
+                                    // ★★ B 方案（2026-09-22）：页级保留本地**语义正确**，但那一版远端内容
+                                    // 会被游标吃掉（取证文件 §3.2 的 L）⇒ **在本地存下来**，让用户还能裁决。
+                                    // 游标照旧推进（朴素方案 A 会 livelock：这一页可能永远 KeepLocal，
+                                    // 后面所有变更都取不到）—— 所以"留痕"是这条路的代价，也是它的收场。
+                                    crate::doc_content::stash_pending_remote(&c, &page, change.seq, now)?;
+                                    if !pending_remote_ids.contains(&page.id) {
+                                        pending_remote_ids.push(page.id.clone());
+                                    }
+                                }
                             }
                             count += 1;
                             // 仅在该条成功应用后推进游标，失败时不推进，避免静默丢变更。
@@ -1521,7 +1742,14 @@ async fn do_pull(
         // 外键由 `_fk_guard` 在离开作用域时恢复（成功路径也一样，顺序与原来一致）。
     }
 
-    Ok((count, max_pulled, items, conflicts, unresolved_page_ids.len()))
+    Ok((
+        count,
+        max_pulled,
+        items,
+        conflicts,
+        unresolved_page_ids.len(),
+        pending_remote_ids.len(),
+    ))
 }
 
 #[derive(Serialize)]
@@ -1536,6 +1764,9 @@ pub struct WorkspaceSyncResult {
     /// 阶段 1：本轮**因块级合并判不了而落表的页面数**（定义与"为什么与 `conflicts` 分开"
     /// 见 `SyncReport::block_conflict_pages`）。
     pub block_conflict_pages: usize,
+    /// ★ B 方案：本轮**页级保留本地**、已把远端那一版存进待裁决清单的页面数
+    /// （定义见 `SyncReport::pending_remote_pages`；详情走 `list_pending_remote_pages`）。
+    pub pending_remote_pages: usize,
     /// P6.1：附件同步**因开关被关掉而中途停止**（见 `SyncReport::attachments_paused`）。
     pub attachments_paused: bool,
     /// P6.1：本轮因开关关闭而未上传 / 未下载的件数（见 `SyncReport` 同名字段的定义）。
@@ -1554,7 +1785,7 @@ async fn sync_workspace_only(
     profile: &SyncProfile,
 ) -> Result<SyncReport, String> {
     let (pushed, last_pushed_seq, pushed_items) = do_push(db, profile).await?;
-    let (pulled, last_pulled_seq, pulled_items, conflicts, block_conflict_pages) =
+    let (pulled, last_pulled_seq, pulled_items, conflicts, block_conflict_pages, pending_remote_pages) =
         do_pull(db, profile).await?;
     let att = sync_attachments(app, db, profile).await?;
     let mut items = pushed_items;
@@ -1568,6 +1799,7 @@ async fn sync_workspace_only(
         items,
         conflicts,
         block_conflict_pages,
+        pending_remote_pages,
         attachments_paused: att.paused,
         attachments_skipped_upload: att.skipped_upload,
         attachments_skipped_download: att.skipped_download,
@@ -1601,6 +1833,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 error: None,
                 conflicts: rep.conflicts,
                 block_conflict_pages: rep.block_conflict_pages,
+                pending_remote_pages: rep.pending_remote_pages,
                 attachments_paused: rep.attachments_paused,
                 attachments_skipped_upload: rep.attachments_skipped_upload,
                 attachments_skipped_download: rep.attachments_skipped_download,
@@ -1618,6 +1851,7 @@ pub async fn sync_now(app: tauri::AppHandle, db: State<'_, Db>) -> Result<Vec<Wo
                 error: Some(e),
                 conflicts: Vec::new(),
                 block_conflict_pages: 0,
+                pending_remote_pages: 0,
                 attachments_paused: false,
                 attachments_skipped_upload: 0,
                 attachments_skipped_download: 0,
@@ -1671,6 +1905,7 @@ pub async fn sync_workspace(
                 error: None,
                 conflicts: rep.conflicts,
                 block_conflict_pages: rep.block_conflict_pages,
+                pending_remote_pages: rep.pending_remote_pages,
                 attachments_paused: rep.attachments_paused,
                 attachments_skipped_upload: rep.attachments_skipped_upload,
                 attachments_skipped_download: rep.attachments_skipped_download,
@@ -3063,8 +3298,8 @@ mod tests {
         .unwrap();
 
         // 同 rev、不同内容 ⇒ 判不了 ⇒ 落表 + 回报条数
-        let n = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9).unwrap();
-        assert_eq!(n, 1, "必须把『有 1 处未裁决冲突』交回来");
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9).unwrap();
+        assert_eq!(out, UpsertApply::Applied { unresolved: 1 }, "必须把『有 1 处未裁决冲突』交回来");
         let recorded: i64 = c
             .query_row("SELECT COUNT(*) FROM page_conflicts WHERE page_id='p1' AND resolved_at IS NULL", [], |r| r.get(0))
             .unwrap();
@@ -3072,7 +3307,201 @@ mod tests {
 
         // 同一页再来一次干净的应用（内容逐字相同）⇒ 这一轮没有未裁决冲突 ⇒ 回报 0
         c.execute("UPDATE pages SET sync_seq = 1, dirty = 0 WHERE id='p1'", []).unwrap();
-        let n = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10).unwrap();
-        assert_eq!(n, 0, "内容相同 ⇒ 没有新冲突 ⇒ 回报 0（旧的那条未裁决记录仍在，那是上一轮的事）");
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10).unwrap();
+        assert_eq!(
+            out,
+            UpsertApply::Applied { unresolved: 0 },
+            "内容相同 ⇒ 没有新冲突 ⇒ 回报 0（旧的那条未裁决记录仍在，那是上一轮的事）"
+        );
+    }
+
+    // ---- B 方案（2026-09-22）：页级保留本地时，那一版远端内容**不许**被游标静默吃掉 ----
+    // 判据对着 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §3.2 的 L 写。
+
+    /// B 那几条判据要的连接：真建库路径（`pages` / `changes` / `pending_remote_pages` / meta 都齐）。
+    fn pending_conn(tag: &str) -> (Connection, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("shuyonote-pending-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("ws", &dir).unwrap();
+        set_meta_state(&c, "device_id", "test-device").unwrap();
+        (c, dir)
+    }
+
+    fn insert_local_page(c: &Connection, id: &str, json: &str, sync_seq: i64, dirty: i64) {
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, sync_seq, dirty)
+             VALUES (?1, 'ws', '页', ?2, '', 'page', 0, 0, NULL, ?3, ?4)",
+            params![id, json, sync_seq, dirty],
+        )
+        .unwrap();
+    }
+
+    /// 造一笔"本地整页改动"（`changes` 里的一行），返回它的 `seq`（行号，就是游标比的那个数）。
+    /// `device_seq` 照 `record_change` 的写法回填成行号（表上有 `UNIQUE(device_id, device_seq)`）。
+    fn insert_local_change(c: &Connection, id: &str, json: &str) -> i64 {
+        c.execute(
+            "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+             VALUES ('test-device', 0, 'page', ?1, 'upsert', ?2, 0)",
+            params![id, json],
+        )
+        .unwrap();
+        let seq = c.last_insert_rowid();
+        c.execute("UPDATE changes SET device_seq = ?1 WHERE seq = ?1", params![seq]).unwrap();
+        seq
+    }
+
+    /// 把"已经推上去"的水位钉在 `seq`（**与 `do_push` 挑变更时读的是同一个值**：
+    /// `sync_profiles.last_pushed_seq`）。
+    fn set_pushed_watermark(c: &Connection, seq: i64) {
+        c.execute(
+            "INSERT INTO sync_profiles (ws_id, server_url, token, space_id, last_pushed_seq, last_pulled_seq, sync_attachments)
+             VALUES ('ws', 'http://a', '', 'sp', ?1, 0, 1)
+             ON CONFLICT(ws_id) DO UPDATE SET last_pushed_seq = excluded.last_pushed_seq",
+            params![seq],
+        )
+        .unwrap();
+    }
+
+    fn stash(c: &Connection, page: &PageDetail, seq: i64) {
+        crate::doc_content::stash_pending_remote(c, page, seq, 1000).unwrap();
+    }
+
+    fn local_json(c: &Connection, id: &str) -> String {
+        c.query_row("SELECT content_json FROM pages WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+    }
+
+    fn dirty_of(c: &Connection, id: &str) -> i64 {
+        c.query_row("SELECT dirty FROM pages WHERE id = ?1", params![id], |r| r.get(0)).unwrap()
+    }
+
+    /// ★ **返回值分义**：`KeptLocal`（压根没应用）与 `Applied{unresolved:0}`（应用了且无冲突）
+    /// 必须是**两个不同的值** —— 旧版把这两件事都返回 `0`，游标因此分不出来（取证文件 §5）。
+    #[test]
+    fn apply_upsert_says_whether_it_applied_or_kept_local() {
+        let (c, dir) = pending_conn("split");
+        let mine = page_json("b1", 1, "我本地改的");
+        insert_local_page(&c, "p1", &mine, 1, 1); // dirty ⇒ 页级判定 = 保留本地
+
+        assert_eq!(
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9).unwrap(),
+            UpsertApply::KeptLocal,
+            "本地有未推送改动 ⇒ 这一支是『没应用』，不许当成『应用干净』"
+        );
+        assert_eq!(local_json(&c, "p1"), mine, "保留本地 ⇒ 内容一个字都不许动");
+
+        // 把本地清零（已同步）⇒ 同一笔远端变更这次真的应用了
+        c.execute("UPDATE pages SET dirty = 0 WHERE id = 'p1'", []).unwrap();
+        assert_eq!(
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9).unwrap(),
+            UpsertApply::Applied { unresolved: 0 },
+            "应用了且没有未裁决冲突 ⇒ 另一支"
+        );
+        assert!(local_json(&c, "p1").contains("他改的"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ **B 的核心判据**：「采用远端」要**真的**放弃本地还没推上去的那笔改动，
+    /// 而**已经推上去的**历史一行都不许删（删了游标账目就错乱，而且那些是对端的既成事实）。
+    #[test]
+    fn taking_the_remote_version_really_drops_the_unsent_local_change() {
+        let (c, dir) = pending_conn("take");
+        insert_local_page(&c, "p1", &page_json("b1", 1, "我本地改的"), 1, 1);
+        insert_local_change(&c, "p1", &page_json("b1", 1, "我本地改的")); // 未推（水位 = 0）
+
+        let remote = remote_page("p1", &page_json("b1", 9, "他改的"));
+        stash(&c, &remote, 9);
+        let report = resolve_pending_remote(&c, "p1", PendingChoice::TakeRemote).unwrap();
+
+        assert_eq!(report.choice, "take_remote");
+        assert_eq!(report.adopted_seq, 9);
+        assert_eq!(report.discarded_local_changes, 1, "未推的那一笔被丢掉了（这句才是真话）");
+        assert!(local_json(&c, "p1").contains("他改的"), "整页换成远端那一版");
+        assert_eq!(dirty_of(&c, "p1"), 0, "远端应用 ⇒ 没有未推送改动");
+        assert_eq!(unsent_page_change_count(&c, "p1").unwrap(), 0);
+        assert_eq!(crate::doc_content::pending_remote_seq(&c, "p1").unwrap(), None, "裁决完存档要清掉");
+
+        // 已经推上去的那一笔**不许**被删
+        insert_local_page(&c, "p2", &page_json("b1", 1, "旧的本地版"), 1, 1);
+        let sent = insert_local_change(&c, "p2", &page_json("b1", 1, "旧的本地版"));
+        set_pushed_watermark(&c, sent); // 这一笔算"已经推上去了"
+        insert_local_change(&c, "p2", &page_json("b1", 2, "新的本地版")); // 未推
+        stash(&c, &remote_page("p2", &page_json("b1", 9, "他改的")), 9);
+        assert_eq!(
+            discard_unsent_page_changes(&c, "p2").unwrap(),
+            1,
+            "只丢未推的那一笔"
+        );
+        let left: i64 = c
+            .query_row("SELECT COUNT(*) FROM changes WHERE entity_id = 'p2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 1, "已推上去的那一笔是历史，必须留着");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ 「合并这一页」：两端各改**不同块** ⇒ 都保留；而产物里那些"只在本地"的块要靠
+    /// **本地那笔还没推上去的改动**进 log ⇒ 这一步之后必须把这一页**标回 dirty**。
+    #[test]
+    fn merging_re_marks_dirty_while_the_local_change_is_still_unsent() {
+        let (c, dir) = pending_conn("merge");
+        let mine = serde_json::json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 2,
+              "children": [{ "type": "text", "text": "我改的 b1" }] },
+            { "type": "paragraph", "blockId": "b2", "blockRev": 1,
+              "children": [{ "type": "text", "text": "b2 原样" }] }
+        ] } })
+        .to_string();
+        let theirs = serde_json::json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 1,
+              "children": [{ "type": "text", "text": "b1 原样" }] },
+            { "type": "paragraph", "blockId": "b2", "blockRev": 2,
+              "children": [{ "type": "text", "text": "他改的 b2" }] }
+        ] } })
+        .to_string();
+        insert_local_page(&c, "p1", &mine, 1, 1);
+        insert_local_change(&c, "p1", &mine);
+        stash(&c, &remote_page("p1", &theirs), 9);
+
+        let report = resolve_pending_remote(&c, "p1", PendingChoice::Merge).unwrap();
+        let merged = local_json(&c, "p1");
+        assert!(report.merged, "这一支走的是逐块合并");
+        assert!(merged.contains("我改的 b1"), "本地那一块要留下：{merged}");
+        assert!(merged.contains("他改的 b2"), "远端那一块也要进来：{merged}");
+        assert_eq!(report.unresolved, 0, "两端改的是不同块 ⇒ 没有要裁决的");
+        assert_eq!(report.local_changes_pending, 1);
+        assert_eq!(dirty_of(&c, "p1"), 1, "产物里的本地块还只在本地那笔变更里 ⇒ 必须标回 dirty");
+        assert_eq!(crate::doc_content::pending_remote_seq(&c, "p1").unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 「保留本地」＝现状：内容、脏标记、未推变更**一个都不动**，只把存档清掉（用户认下这个分歧）。
+    #[test]
+    fn keeping_local_changes_nothing_except_clearing_the_archive() {
+        let (c, dir) = pending_conn("keep");
+        let mine = page_json("b1", 1, "我本地改的");
+        insert_local_page(&c, "p1", &mine, 1, 1);
+        insert_local_change(&c, "p1", &mine);
+        stash(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9);
+
+        let report = resolve_pending_remote(&c, "p1", PendingChoice::KeepLocal).unwrap();
+        assert_eq!(report.choice, "keep_local");
+        assert_eq!(report.discarded_local_changes, 0);
+        assert_eq!(local_json(&c, "p1"), mine, "内容不许动");
+        assert_eq!(dirty_of(&c, "p1"), 1, "本地那笔改动还在 ⇒ 脏标记还在（下一次 push 推它）");
+        assert_eq!(unsent_page_change_count(&c, "p1").unwrap(), 1);
+        assert_eq!(crate::doc_content::pending_remote_seq(&c, "p1").unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 裁决口径只认三个字面量（**不默认选边** —— 与 `resolve_page_conflict` 同一纪律）。
+    #[test]
+    fn pending_choice_only_accepts_the_three_documented_words() {
+        assert_eq!(PendingChoice::parse("merge"), Some(PendingChoice::Merge));
+        assert_eq!(PendingChoice::parse("take_remote"), Some(PendingChoice::TakeRemote));
+        assert_eq!(PendingChoice::parse("keep_local"), Some(PendingChoice::KeepLocal));
+        for bad in ["", "remote", "local", "Merge", "take-remote"] {
+            assert_eq!(PendingChoice::parse(bad), None, "{bad} 不该被认");
+        }
     }
 }

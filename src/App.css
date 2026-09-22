@@ -1215,6 +1215,31 @@ html[data-platform="win"] .app-body {
 .btn-sync-conflict.keep { border-color: var(--success, #2e7d32); color: var(--success, #2e7d32); }
 .btn-sync-conflict.adopt { border-color: var(--primary); color: var(--primary); }
 .sync-conflict-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+/* ★ B 方案（2026-09-22）：「待取回的远端版本」——页级保留本地时存下来的那一版。
+   修好之前这一支完全没有界面（游标过去了、对端那笔编辑再也取不回），所以这块是"从静默到可见"的那一半。
+   配色刻意用**信息**（不是危险）：它记的是"有东西等你处理"，不是"出错了"。 */
+.sync-pending-remote {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+  color: var(--text);
+}
+.sync-pending-remote .sync-conflict-list { margin: 0 0 6px; padding-left: 18px; }
+.sync-pending-remote li { margin-bottom: 4px; }
+.sync-pending-actions { display: inline-flex; gap: 6px; margin-left: 8px; }
+.sync-pending-actions button {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+}
+.sync-pending-actions button:hover { border-color: var(--accent); color: var(--accent); }
 .sync-profiles {
   flex: 1;
   min-height: 0;

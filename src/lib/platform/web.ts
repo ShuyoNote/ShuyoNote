@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, type RemotePageRow } from "../docContent";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -754,6 +754,51 @@ function maxOutboxSeq(store: SqliteStore, lastSeq: number): number {
   return store.query<{ m: number }>("SELECT COALESCE(MAX(id), 0) AS m FROM changes WHERE id > ?", [lastSeq])[0]?.m ?? 0;
 }
 
+// ---- B 方案（2026-09-22）：页级保留本地时留下的那一版远端，怎么收场 ----
+//
+// 与 Rust `sync.rs` 的 `unsent_page_change_count` / `discard_unsent_page_changes` 一一对应。
+// ⚠️ 水位必须与 `doPush` 挑变更时读的是**同一个值**：`sync_profiles.last_pushed_seq`
+
+/** 这一页所属空间"已经推上去"的水位。 */
+function pushedWatermarkForPage(store: SqliteStore, pageId: string): number {
+  const ws = store.query<{ workspace_id: string }>(
+    "SELECT workspace_id FROM pages WHERE id = ?",
+    [pageId],
+  )[0]?.workspace_id;
+  if (!ws) return 0;
+  return Number(
+    store.query<{ last_pushed_seq: number }>(
+      "SELECT last_pushed_seq FROM sync_profiles WHERE ws_id = ?",
+      [ws],
+    )[0]?.last_pushed_seq ?? 0,
+  );
+}
+
+/** 这一页**还没推上去**的本地整页变更条数。 */
+function unsentPageChangeCount(store: SqliteStore, pageId: string): number {
+  return Number(
+    store.query<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM changes WHERE entity = 'page' AND entity_id = ? AND id > ?",
+      [pageId, pushedWatermarkForPage(store, pageId)],
+    )[0]?.n ?? 0,
+  );
+}
+
+/**
+ * 丢掉这一页**还没推上去**的本地整页变更 ——「采用远端」＝真的放弃本地那一版。
+ *
+ * ⚠️ 只删 `id > 水位` 的：已经推上去的那些是历史（`doPush` 的 `MAX(id)` 记账也靠它们），
+ * 而且它们是对端的既成事实，本地不许把它们抹掉。
+ */
+function discardUnsentPageChanges(store: SqliteStore, pageId: string): number {
+  const n = unsentPageChangeCount(store, pageId);
+  store.run("DELETE FROM changes WHERE entity = 'page' AND entity_id = ? AND id > ?", [
+    pageId,
+    pushedWatermarkForPage(store, pageId),
+  ]);
+  return n;
+}
+
 // Apply the payload of a pulled change to local tables (LWW, mirror sync.rs).
 // exported for the sync LWW unit test.
 export function applyChange(store: SqliteStore, change: SyncChange): void {
@@ -782,13 +827,24 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
       if (local && local.dirty !== 0 && !useRemote) {
         console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
       }
-      if (useRemote) {
+      if (!useRemote) {
+        // ★★ B 方案（2026-09-22）：页级保留本地**语义正确**，但那一版远端内容会被游标吃掉
+        // （`doPull` 之后 `maxSeq` 照旧推进）⇒ **在本地存下来**，让用户还能裁决。
+        // 游标不做"没应用就不推进"（那会 livelock：这一页可能永远 KeepLocal，它后面的变更全取不到）。
+        stashPendingRemote(store, p as RemotePageRow, change.seq, Date.now());
+        return;
+      }
+      {
         // ★ **阶段 1**：落库走那一层的**唯一入口** `applyRemoteContent` —— 它内部先试一次
         // **逐块合并**（两端各自改**不同块** ⇒ 两边的编辑都保留），不合并时就是接线前的行为：
         // 老内容（顶层块没有身份）／脏 JSON，或**有冲突**（`rev` 相等而内容不同、任一侧缺 `rev`）——
         // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
         // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
         applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
+        // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）已经是陈的，清掉
+        //（与 Rust `do_pull` 里那一段逐字对应：不清就是"清单永远挂着几条假账"）。
+        const stashed = pendingRemoteSeq(store, String(p.id));
+        if (stashed !== undefined && stashed <= change.seq) clearPendingRemote(store, String(p.id));
       }
     }
     return;
@@ -956,6 +1012,12 @@ const attBudgetFields = (
   attachments_skipped_too_large: att?.skippedTooLarge ?? 0,
   attachments_failed: att?.failed ?? 0,
   attachments_bytes_downloaded: att?.bytesDownloaded ?? 0,
+});
+
+// ★ B 方案（2026-09-22）：同步结果里带上"待取回的远端版本"总数（面板要能说"有 N 页等你裁决"）。
+// 与 Rust `WorkspaceSyncResult::pending_remote_pages` 同一口径；`limit: 0` ⇒ 只要总数、不取列表。
+const pendingRemoteFields = (store: SqliteStore) => ({
+  pending_remote_pages: pendingRemoteQueue(store, 0).total,
 });
 
 async function syncAttachments(
@@ -2704,9 +2766,9 @@ export function makeInvoke(store: SqliteStore) {
           const pulled = await doPull(store, profile);
           const att = await syncAttachments(store, profile);
           const latest = getProfile(store, profile.ws_id);
-          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att) });
+          out.push({ ws_id: profile.ws_id, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att), ...pendingRemoteFields(store) });
         } catch (e) {
-          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null) });
+          out.push({ ws_id: profile.ws_id, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null), ...pendingRemoteFields(store) });
         }
       }
       return out as T;
@@ -2877,10 +2939,10 @@ export function makeInvoke(store: SqliteStore) {
         const att = await syncAttachments(store, p);
         const latest = getProfile(store, wsId);
         useSyncStatus.getState().end();
-        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att) } as T;
+        return { ws_id: wsId, pushed: pushed.pushed, pulled: pulled.pulled, last_pushed_seq: latest.last_pushed_seq, last_pulled_seq: latest.last_pulled_seq, error: null, attachments_paused: att.paused, attachments_skipped_upload: att.skippedUpload, attachments_skipped_download: att.skippedDownload, ...attBudgetFields(att), ...pendingRemoteFields(store) } as T;
       } catch (e) {
         useSyncStatus.getState().end(String(e));
-        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null) } as T;
+        return { ws_id: wsId, pushed: 0, pulled: 0, last_pushed_seq: 0, last_pulled_seq: 0, error: String(e), attachments_paused: false, attachments_skipped_upload: 0, attachments_skipped_download: 0, ...attBudgetFields(null), ...pendingRemoteFields(store) } as T;
       }
     }
     // ---- team spaces: members / roles / orgs (Bearer token from auth_sessions) ----
@@ -3197,6 +3259,46 @@ export function makeInvoke(store: SqliteStore) {
       // 比较在那一层里做（相同 ⇒ 一次写库都没有）；返回"是否真的修了"。
       const pid = String(a.pageId ?? a.page_id ?? "");
       return refreshPageTextIfStale(store, pid, String(a.text ?? "")) as T;
+    }
+    if (cmd === "list_pending_remote_pages") {
+      // ★ B 方案：待取回的远端版本清单（字段名与 Rust `PendingRemoteQueue` 的 snake_case 对齐）。
+      const q = pendingRemoteQueue(store, Number(a.limit ?? 20));
+      return { total: q.total, pages: q.pages } as T;
+    }
+    if (cmd === "resolve_pending_remote") {
+      // ★ B 方案：三个选项**都真的动数据**（旧横幅那两条按钮只改一行文案 —— 取证文件 §4 的 F3）。
+      const pid = String(a.pageId ?? a.page_id ?? "");
+      const choice = String(a.choice ?? "");
+      if (choice !== "merge" && choice !== "take_remote" && choice !== "keep_local") {
+        throw new Error(`choice 只能是 merge / take_remote / keep_local，收到 ${choice}`);
+      }
+      const archived = pendingRemotePayload(store, pid);
+      if (!archived) throw new Error("这一页没有待取回的远端版本（可能已经裁决过）");
+      const report = {
+        page_id: pid,
+        choice,
+        merged: false,
+        unresolved: 0,
+        adopted_seq: 0,
+        discarded_local_changes: 0,
+        local_changes_pending: 0,
+      };
+      if (choice === "take_remote") {
+        takeRemoteWholePage(store, archived.row, archived.seq);
+        report.adopted_seq = archived.seq;
+        // ⚠️ 这一半不能省：本地那笔还没推上去的改动要丢掉，否则下一次 push 又把本地那版推上去。
+        report.discarded_local_changes = discardUnsentPageChanges(store, pid);
+      } else if (choice === "merge") {
+        // 与自动路径**同一套**（`applyRemoteContent`：先逐块合并，判不了才回落远端原样并留痕）。
+        const out = applyRemoteContent(store, pid, archived.row, archived.seq);
+        report.merged = out.merged;
+        report.unresolved = out.unresolved;
+        report.local_changes_pending = unsentPageChangeCount(store, pid);
+        // 产物里含"只在本地"的块 ⇒ 它们要靠本地那笔未推变更进 log ⇒ 把这一页标回 dirty。
+        if (report.local_changes_pending > 0) markPageDirty(store, pid);
+      }
+      clearPendingRemote(store, pid);
+      return report as T;
     }
 
     // ---- Backup / export / import (standard zip, matches the desktop format) ----

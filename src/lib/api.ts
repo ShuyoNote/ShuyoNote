@@ -499,6 +499,14 @@ export const api = {
    * `limit` 只是"这一批取几页"；`total` 才是"还有多少页"。
    */
   listStaleTextPages: (limit?: number) => invoke("list_stale_text_pages", { limit }),
+  /**
+   * ★ B 方案（2026-09-22）· **待取回的远端版本**：页级"保留本地"时那条远端变更会被游标吃掉，
+   * 现在它被存在本地（`pending_remote_pages`）⇒ 这个清单让界面能说清"哪一页、哪一版"。
+   */
+  listPendingRemotePages: (limit?: number) => invoke("list_pending_remote_pages", { limit }),
+  /** ★ B 方案 · 裁决一处：`merge`（合并这一页）/ `take_remote`（整页采用远端）/ `keep_local`（保留本地）。 */
+  resolvePendingRemote: (pageId: string, choice: "merge" | "take_remote" | "keep_local") =>
+    invoke("resolve_pending_remote", { pageId, choice }),
   exportBackup: (destPath: string) =>
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>

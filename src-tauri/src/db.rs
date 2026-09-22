@@ -907,6 +907,23 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         [],
     )?;
 
+    // B 方案（2026-09-22）· **未取回的远端版本**（本地表，**不同步 / 不进导出**）：页级"保留本地"
+    // 时那条远端变更会被游标吃掉（取证文件 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md`
+    // §3.2 的 L）⇒ 在这里把**那一版远端内容**存下来，让用户还能裁决（合并 / 采用远端 / 保留本地）。
+    // 每页只留**最新一条**（`page_id` 是主键）—— 它不是变更日志，规模有界。
+    // 理由与纪律见 `doc_content.rs` 的同一节（本地状态三条纪律）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pending_remote_pages (
+            page_id           TEXT PRIMARY KEY,
+            seq               INTEGER NOT NULL,
+            title             TEXT NOT NULL DEFAULT '',
+            payload           TEXT NOT NULL,
+            remote_updated_at INTEGER NOT NULL,
+            stashed_at        INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
     // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS pdf_annotations (
