@@ -805,9 +805,23 @@ GM/T 0024 TLS，不在范围）。
 **连带：夹具与补丁版本绑定** —— v4 之后 `sqlcipher-sm4-page-fixture.db` 是 **SM4 页 ＋ SM3 默认**（已在 v4 构建里重生成）。
 把它放回 v3 构建会"两张都读不开" ⇒ 交叉判据红（**红得对**）。
 
-**v4 之后"默认值"这件事的最终口径**：**打过补丁的 OpenSSL 构建**里，库级参数**默认即国密**（不靠应用约定）；
+⚠️ **`--no-default-features`（回滚通道）只关「应用层」那一半**：库级（页加密/页 MAC/库 KDF）是**编译期库属性**，v4 之后打过补丁的 OpenSSL 构建默认即 SM3 ⇒ 这个特性**关不掉**库级国密（要回退库级只能换库/换构建）。
+
+**v4 之后「默认值」这件事的最终口径**：**打过补丁的 OpenSSL 构建**里，库级参数**默认即国密**（不靠应用约定）；
 应用层接线保留为**回声自证**（`library_recognizes_gm_labels` ＋ `set_gm_cipher_labels` ＋ 回显）；
 **未打补丁 / CommonCrypto 构建**仍是 AES ＋ SHA512。⇒ 与快路自洽：**国密版只有 OpenSSL 一种后端**。
+
+**★ 库级国密在**移动端**的现状与建议（2026-09-22，macOS 侧记，等 owner 一句话）**
+
+| 平台 | 现状 | 要做的话是什么 | 粗估 |
+|---|---|---|---|
+| **Android** | ❌ 未排。系统**没有** OpenSSL ⇒ 必须**随包**一份 SM 版（Tongsuo 或 stock OpenSSL `no-shared` 交叉编译；AMD 已证过 NDK r29 能编） | ① 交叉编译静态 `libcrypto.a`（arm64-v8a，与 `fetch-pdfium` 同一套 vendor 机制）；② `stage-android` 时把 `OPENSSL_DIR` 指过去并加 `--features sm-library`；③ 产物断言（`check-android-bundle` 加一格：`.so` 里**没有** `libcrypto.so` 依赖 ＋ 页加密标记） | 2–3 人日（编库 0.5 ＋ 接线 0.5 ＋ 判据/真机 1–2） |
+| **iOS** | 范围外（方案 §1：iOS 未立项） | 同 Android 思路（静态 OpenSSL ＋ 同一个特性） | 立项后再说 |
+
+> **建议**：**Android 先不做**。理由：① 国密库级的**用户可见收益**已经由桌面三平台拿到（Linux 支已 CI 证、Windows 待彩排、macOS 待 secrets）；
+> ② Android 没有"系统 OpenSSL"这层麻烦，但**要随包一份静态 SM 库**，与 P4 的 pdfium 同一类工程量，而 Android 的**真机验收**（人手）本来就是这条线上的瓶颈；
+> ③ 更划算的下一步是**把 macOS 发版档接上**（只等 Apple secrets），因为它把"用户能拿到的包"补齐，而不是再加一个平台。
+> 若 owner 说"排"，我按上表做（第一步就是交叉编译静态库 ＋ 产物断言）。
 
 **下一条建议（不是本次交付）**：把"页 MAC/库 KDF 的默认值"做成**补丁 v4**（`default_hmac_algorithm = SQLCIPHER_HMAC_SM3`、
 `default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SM3`）。这样"库级参数"就像 P3 的页加密一样成为**库级属性**，
