@@ -26,13 +26,16 @@ describe("deps 能力登记表", () => {
   it("**编译期穷尽性真的在生效**（两个方向都验，避免它退化成空跑）", () => {
     // ① 登记表里的名字必须都是 `ExtractDeps` 的键 —— 这条由 `as const satisfies` 在编译期保证；
     //    运行时再核一遍，防止有人把 `satisfies` 删了却以为还有保护。
-    const keys: (keyof ExtractDeps)[] = ["vision", "rasterize"];
+    const keys: (keyof ExtractDeps)[] = ["vision", "rasterize", "transcribe"];
     for (const c of DEP_CAPABILITIES) expect(keys).toContain(c.name);
 
     // ② 反向：`ExtractDeps` 的键必须都在登记表里。
     //    ⚠️ 运行时拿不到类型信息，所以这条**只能靠编译期**（`_DEP_EXHAUSTIVE`）。
     //    这里用一个"看起来像它"的替身证明断言写法是活的：故意漏一个键，映射类型会要求它存在。
-    type Missing = Exclude<"vision" | "rasterize" | "对不上", (typeof DEP_CAPABILITIES)[number]["name"]>;
+    type Missing = Exclude<
+      "vision" | "rasterize" | "transcribe" | "对不上",
+      (typeof DEP_CAPABILITIES)[number]["name"]
+    >;
     const mustBeNonNever: Missing = "对不上"; // 若穷尽，这里类型是 never ⇒ 赋值会报错（即"漏登记"会被编译期抓住）
     expect(mustBeNonNever).toBe("对不上");
 

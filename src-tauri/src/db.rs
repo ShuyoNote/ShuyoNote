@@ -604,6 +604,28 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 );"#,
 ];
 
+/// 块级 FTS + 三个同步触发器（**桌面专属**，见 `migrate` 里调用处的长注释）。
+///
+/// 抽成常量是为了让**判据用同一份文本建库** —— 判据要测的是真正会执行的那份 DDL，
+/// 不是测试里抄的一份（抄一份就变成"测的是测试自己"）。
+pub(crate) const CHUNK_FTS_DDL: &str = r#"
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+    chunk_id UNINDEXED,
+    text,
+    tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS chunks_fts_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunk_fts(chunk_id, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_fts_ad AFTER DELETE ON chunks BEGIN
+    DELETE FROM chunk_fts WHERE chunk_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_fts_au AFTER UPDATE ON chunks BEGIN
+    DELETE FROM chunk_fts WHERE chunk_id = old.id;
+    INSERT INTO chunk_fts(chunk_id, text) VALUES (new.id, new.text);
+END;
+"#;
+
 pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         r#"
@@ -882,6 +904,62 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute(stmt, [])?;
     }
 
+    // 阶段 1 · **冲突留痕**（本地表，**不同步 / 不进备份导出**）：远端应用时报出的"同一块被两端改过"
+    // 记在这里，供界面提示与裁决。见 `docs/plans/2026-09-22-block-rev-write-layer.md`。
+    // ⚠️ **这只是本机的证据，不能用来解释跨机器的差异**（AMD 2026-09-22 要求写清）：它记的是
+    // "这一轮远端应用时**本机**看到的两版" —— 别的设备上可能根本没有这张表的这一行，服务端也没有这张表。
+    // 想复现"为什么这台机器上是这个结果"，必须同时拿两边各自的库（与两边的 `sync_seq`）。
+    // 同样**单语句挨个执行**（理由同上：哪条失败一眼看得见）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_conflicts (
+            id              TEXT PRIMARY KEY,
+            page_id         TEXT NOT NULL,
+            block_id        TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            local_json      TEXT NOT NULL DEFAULT '',
+            remote_json     TEXT NOT NULL DEFAULT '',
+            detected_at     INTEGER NOT NULL,
+            resolved_at     INTEGER,
+            resolved_choice TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at)",
+        [],
+    )?;
+
+    // B 方案（2026-09-22）· **未取回的远端版本**（本地表，**不同步 / 不进导出**）：页级"保留本地"
+    // 时那条远端变更会被游标吃掉（取证文件 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md`
+    // §3.2 的 L）⇒ 在这里把**那一版远端内容**存下来，让用户还能裁决（合并 / 采用远端 / 保留本地）。
+    // 每页只留**最新一条**（`page_id` 是主键）—— 它不是变更日志，规模有界。
+    // 理由与纪律见 `doc_content.rs` 的同一节（本地状态三条纪律）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pending_remote_pages (
+            page_id           TEXT PRIMARY KEY,
+            seq               INTEGER NOT NULL,
+            title             TEXT NOT NULL DEFAULT '',
+            payload           TEXT NOT NULL,
+            remote_updated_at INTEGER NOT NULL,
+            stashed_at        INTEGER NOT NULL
+        )",
+        [],
+    )?;
+
+    // 块级 FTS（**桌面专属**）+ 三个同步触发器（2026-09-19 AMD，P2 的 BM25 那半）。
+    //
+    // ⚠️ **为什么它不进 `DERIVED_SCHEMA_DDL`（TS 那份"单一事实源"）**：Web 平台的 SQLite 是
+    //    `sql.js`，而它**没有编 FTS5** —— 实测原文 `Error: no such module: fts5`
+    //    （探针 `.tools/probe-sqljs-trigger.mjs`）。把它放进共享 DDL ⇒ **Web 平台建表即失败**。
+    //    所以这一层与 `page_fts` 一样只建在桌面库里；Web 侧继续走 LIKE 路径。
+    //    ⇒ **块级 BM25 是桌面能力**，这一点必须写进能力文档，不能让人以为两个平台一样。
+    //
+    // 为什么用**触发器**而不是在每个写入点手动同步：`chunks` 的写入方在 TS 侧
+    //    （`extract/chunkStore.ts`，整体替换 = DELETE + 一批 INSERT），手动同步就得在**每个**
+    //    写入点记得刷索引，漏一处 = "索引悄悄不全"，而且没有任何信号。触发器把这件事交给
+    //    数据库保证：**任何**写入方（现在或将来）都自动维护索引。
+    conn.execute_batch(CHUNK_FTS_DDL)?;
+
     // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS pdf_annotations (
@@ -985,6 +1063,19 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     )?;
     if pages_has_dirty == 0 {
         conn.execute("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+
+    // 阶段 1（B1，2026-09-22）· **正文列"待重建"标记**：合并产物 / 冲突裁决都是"内容拼出来的"，
+    // 而正文列与 FTS 仍是页级胜方那一份 ⇒ 那一页在一段时间内搜不到刚合并进来的字。
+    // 这一列就是"补算器"的工作队列（`1` = 待重建）。**本地状态：不同步、不进导出**（与
+    // `page_conflicts` 同族）—— 别的设备有它自己的标记。见 `doc_content.rs` 的同一节。
+    let pages_has_text_stale: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'text_stale'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pages_has_text_stale == 0 {
+        conn.execute("ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0", [])?;
     }
 
     // Tag custom color (hex like "#c2410c"). NULL = use deterministic auto color.

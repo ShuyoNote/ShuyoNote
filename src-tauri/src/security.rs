@@ -206,7 +206,53 @@ pub fn space_db_is_encrypted(path: &Path) -> bool {
 fn set_cipher_key(conn: &Connection, key: &[u8; 32]) -> Result<(), String> {
     let hex = crypto::key_hex(key);
     conn.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))
-        .map_err(|e| format!("设置 SQLCipher 密钥失败: {e}"))
+        .map_err(|e| format!("设置 SQLCipher 密钥失败: {e}"))?;
+    // ★ P2 接线（2026-09-20）：把**页 MAC 与库 KDF 也设成国密**。这是"库级国密从能力变行为"的那一步。
+    //   只在带 provider 补丁的构建（`sm-library`）里做：没有补丁的构建上这两条 PRAGMA 会被
+    //   **静默丢掉**（回显依旧、不报错）⇒ 那正是"以为设了"的形态。
+    #[cfg(feature = "sm-library")]
+    apply_gm_page_settings(conn)?;
+    Ok(())
+}
+
+/// `cipher_hmac_algorithm = HMAC_SM3` ＋ `cipher_kdf_algorithm = PBKDF2_HMAC_SM3`，**并校验回声**。
+///
+/// 顺序（AMD 2026-09-20 实测，见 `gm_provider.rs` 头注）：必须在 `PRAGMA key` **之后**、
+/// 第一次读写**之前** —— key 之前设会被静默丢弃。
+///
+/// 三步，**互不依赖**（2026-09-22 更正，第一版把三件事混成一件，误诊了"口令不对"）：
+///   ① [`library_recognizes_gm_labels`]：**这个库认不认识国密标签** —— 用内存库探，与口令/文件无关；
+///      不认识就**响亮失败**（那种构建上标签会被静默丢掉，写出来仍 SHA512）。
+///   ② [`set_gm_cipher_labels`]：设两条 PRAGMA。⚠️ **不能**用 `configure_gm_cipher`
+///      （它带 `SELECT 1` 健康自检，而"口令不对"与"标签不认识"在那句话上**一字不差**）——
+///      否则用错口令解锁空间时会报"这个构建可能没有 provider 补丁"，属**误诊**。
+///   ③ [`read_gm_cipher_status`]：**回显**必须是 `Applied`；回显**读不出来**时不判红（那是这条连接
+///      自己的问题，让后面的读去失败 ⇒ 由 `cipher_open_error` 翻成"两因一果"的可操作文本）。
+#[cfg(feature = "sm-library")]
+fn apply_gm_page_settings(conn: &Connection) -> Result<(), String> {
+    use crate::gm_provider::{library_recognizes_gm_labels, read_gm_cipher_status, set_gm_cipher_labels};
+    if !library_recognizes_gm_labels() {
+        return Err(
+            "这份构建的 SQLCipher **不认识** `HMAC_SM3` / `PBKDF2_HMAC_SM3`（内存库回显不是国密标签）——\n\
+             而它**不会报错**：SQLCipher 接受不认识的标签却照默认算法走 ⇒ 写出来的仍是 SHA512 那套。\n\
+             ⇒ 按约定**拒绝继续**：要么国密、要么别写库。多半是这份构建的 SQLCipher 没有 §3.1 provider 补丁\n\
+             （或后端没有 SM3）—— 核对：`node scripts/check-crypto-backend.mjs` ／ 见方案 §3.5。"
+                .to_string(),
+        );
+    }
+    set_gm_cipher_labels(conn).map_err(|e| {
+        format!("库级国密参数设置失败（{e}）—— 这个构建带 `sm-library`，按约定必须用 SM3 页 MAC/库 KDF")
+    })?;
+    match read_gm_cipher_status(conn) {
+        Ok(crate::gm_provider::GmProviderStatus::Applied { .. }) => Ok(()),
+        Ok(other) => Err(format!(
+            "库级国密参数**没有生效**（回声 = {other:?}）：标签设下去了但算法没变 ⇒ 写出来的仍是默认
+             （HMAC_SHA512 / PBKDF2_HMAC_SHA512）那套。⇒ **拒绝继续**：要么国密、要么别写库。"
+        )),
+        // 回显读不出来 ⇒ **不判红**：错口令 / 页参数不同的库都会把连接打进 error state，
+        // 那是**这条连接**的问题，应该在后面的读上失败并给出可操作文本（`cipher_open_error`）。
+        Err(_) => Ok(()),
+    }
 }
 
 /// Apply `PRAGMA key` to a fresh connection if (and only if) its DB file is
@@ -315,13 +361,23 @@ fn rebuild_space_db(
     dst.execute_batch(&format!("ATTACH DATABASE '{src_sql}' AS plain {src_key};"))
         .map_err(|e| format!("ATTACH 源库失败: {e}"))?;
 
-    // Enumerate the source's real tables (skip sqlite_* system tables and page_fts*
-    // FTS shadow tables — the latter are rebuilt below).
+    // Enumerate the source's real tables (skip sqlite_* system tables and the FTS5
+    // **virtual tables + their shadow tables** — both families are rebuilt on the target below).
+    //
+    // ⚠️⚠️ **以后再加 FTS5 表，这里必须同步加一行前缀**（2026-09-19：`chunk_fts` 就是第二次踩同一个坑）。
+    //   为什么必须排除，而不是"让它一起被拷"：FTS5 会连带建一族影子表
+    //   （`_config` / `_data` / `_docsize` / `_idx`），其中 `<表>_config` 是**单行表**（`k` 唯一）
+    //   ⇒ 逐表 `INSERT … SELECT *` 拷到第二行就撞 `UNIQUE constraint failed`，
+    //   而报错发生在**用户数据迁移路径**上（开/关加密时的就地转换），代价极高。
+    //   实测（macOS 侧 2026-09-19）：本表当初让 `security::` 8 条判据在**分支自己的基点**上就是红的。
+    //   排除之后索引不会丢：`chunks` 行被拷过去时触发器会自动维护，兜底还有读取路径上的
+    //   `search::ensure_chunk_fts()`（计数对不上就整体重建）。
     let tables: Vec<String> = {
         let mut stmt = dst
             .prepare(
                 "SELECT name FROM plain.sqlite_master WHERE type='table' \
-                 AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'page_fts%' ORDER BY name",
+                 AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'page_fts%' \
+                 AND name NOT LIKE 'chunk_fts%' ORDER BY name",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
@@ -854,54 +910,119 @@ mod tests {
         assert_eq!(decrypt_attachment_bytes(Some(&key), plain).unwrap(), plain);
     }
 
+    /// ★ 2026-09-22 改写（接线构建实测抓出来的）：**这份夹具的写法决定了它能证明什么**。
+    ///
+    /// 原版用"明文主连接 ＋ `ATTACH … KEY` 导出"造加密库 —— 在**接线构建**里那条路写出来的是
+    /// **默认库级参数（HMAC_SHA512）** 的库（`ATTACH` 的 codec 不认 `sm-library` 的接线），
+    /// 而应用读它用的是国密参数 ⇒ 读不开。也就是说：原版夹具**本身是另一套参数**，
+    /// 它证明的其实是"跨参数读不开"，不是"本构建能往返"。
+    ///
+    /// 现在两半都留下：
+    ///   · **生产口径**（`convert_space_db` 用的那个原语 `rebuild_space_db`）写的库 ⇒ 必须能往返；
+    ///   · **裸 ATTACH（另一套库级参数）写的库** ⇒ **必须读不开**（快路的后果，响亮报错；
+    ///     这是"跨参数不可读"的正例，只在 `sm-library` 构建上判 —— 默认构建读得开它，那是对的）。
     #[test]
     fn encrypted_db_roundtrip_and_sniff() {
         let _g = SEC_LOCK.lock().unwrap();
         let dir = std::env::temp_dir().join(uniq_tmp("sniff"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let src = dir.join("default.db");
-        {
-            let c = Connection::open(&src).unwrap();
-            c.execute_batch("CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT); INSERT INTO pages VALUES('p1','hi');").unwrap();
-            c.close().unwrap();
-        }
-        assert!(!space_db_is_encrypted(&src));
         let salt = crypto::random_salt();
         let key = crypto::derive_key("hunter2", &salt).unwrap();
         let hex = crypto::key_hex(&key);
-        // REPLICATE convert_space_db: sniff the source first (File::open + read),
-        // then export — to test whether that sniff corrupts the export.
-        assert!(!space_db_is_encrypted(&src));
-        let encp = dir.join("enc.db");
+
+        // 明文源：**用真 app schema**（`rebuild_space_db` 是按表名整表拷贝的，列数必须对得上）。
+        let src = dir.join("default.db");
         {
             let c = Connection::open(&src).unwrap();
-            let e = encp.display().to_string().replace('\'', "''");
-            c.execute_batch(&format!("ATTACH DATABASE '{e}' AS enc KEY \"x'{hex}'\";")).unwrap();
-            let _ = c.query_row("SELECT sqlcipher_export('enc')", [], |r| r.get::<_, i64>(0));
-            c.execute_batch("DETACH DATABASE enc;").unwrap();
+            crate::db::migrate(&c, "default").unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
+                 VALUES ('p1', 'default', NULL, 'hi', '{\"root\":{}}', 'hi', 'page', 0, 1, 1, NULL)",
+                [],
+            )
+            .unwrap();
             c.close().unwrap();
         }
+        // 先嗅一次头（原版要证的正是"嗅探不破坏后续导出"）。
+        assert!(!space_db_is_encrypted(&src));
+
+        let encp = dir.join("enc.db");
+        rebuild_space_db(&src, &encp, true, Some(&key), "default").unwrap();
         assert!(space_db_is_encrypted(&encp));
-        // Unkeyed read fails.
+        // 无钥读不开。
         {
             let c = Connection::open(&encp).unwrap();
             assert!(c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
         }
-        // Wrong key fails.
+        // 错钥读不开（★ 这一支在接线构建里曾被我第一版接线**误诊**成"构建没有 provider 补丁"，
+        //   见 `apply_gm_page_settings` 的注释）。
         let wrong = crypto::derive_key("wrong-pass", &salt).unwrap();
         {
             let c = Connection::open(&encp).unwrap();
-            c.execute_batch(&format!("PRAGMA key = \"x'{}\";", crypto::key_hex(&wrong))).unwrap();
+            c.execute_batch(&format!("PRAGMA key = \"x'{}';\"", crypto::key_hex(&wrong))).unwrap();
             assert!(c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err());
         }
-        // Right key via key_space_conn (session key) reads.
+        // 对钥（走开库路径 key_space_conn）读得开。
         *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
         {
             let c = Connection::open(&encp).unwrap();
             key_space_conn(&c, &encp).unwrap();
             let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
             assert_eq!(n, 1);
+            let t: String = c.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(t, "hi");
+        }
+
+        // ② 另一套库级参数（裸 `ATTACH … KEY`，明文主连接）写的库：
+        //    ★ **判据自适应当前状态**（2026-09-22 补丁 v4 之后改；v4 之前这里写的是"必须读不开"）：
+        //    · **v4 之前**：裸 ATTACH 写的是**默认参数**（页 MAC/库 KDF = SHA512），而生产口径设的是 SM3
+        //      ⇒ 两套参数 ⇒ **必须读不开**（那条负判据当时是对的）；
+        //    · **v4 之后**：OpenSSL 构建的**默认值就是 SM3** ⇒ 裸 ATTACH 与生产口径**同一套参数**
+        //      ⇒ **读得开是对的**（这正说明"库级参数不再靠应用约定"）。
+        //    ⇒ 把它写成"先量这份文件到底是哪一套参数，再断言对应结论"，两种世界下都是真话。
+        #[cfg(feature = "sm-library")]
+        {
+            let legacy = dir.join("raw_attach.db");
+            {
+                let c = Connection::open(&src).unwrap();
+                let e = legacy.display().to_string().replace('\'', "''");
+                c.execute_batch(&format!("ATTACH DATABASE '{e}' AS enc KEY \"x'{hex}'\";")).unwrap();
+                let _ = c.query_row("SELECT sqlcipher_export('enc')", [], |r| r.get::<_, i64>(0));
+                c.execute_batch("DETACH DATABASE enc;").unwrap();
+                c.close().unwrap();
+            }
+            assert!(space_db_is_encrypted(&legacy), "裸 ATTACH 也该写出密文库");
+
+            // 先用**裸钥**（＝写它的那套参数）确认真能读开，并问出"这份构建的默认是不是 SM3"
+            let defaults_are_sm3 = {
+                let bare = Connection::open(&legacy).unwrap();
+                bare.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+                let st = crate::gm_provider::read_gm_cipher_status(&bare).unwrap();
+                let read: Result<i64, _> =
+                    bare.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+                assert!(read.is_ok(), "裸钥读不开自己写出来的库 ⇒ 夹具/构建有问题：{read:?}");
+                st.is_applied()
+            };
+
+            // 再用**生产口径**（接线后的国密参数）读同一份文件
+            let c = Connection::open(&legacy).unwrap();
+            key_conn_with(&c, &key).unwrap();
+            let via_app: Result<i64, _> =
+                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+            if defaults_are_sm3 {
+                assert!(
+                    via_app.is_ok(),
+                    "补丁 v4 之后默认已是 SM3 ⇒ 裸 ATTACH 写的库与生产口径**同参数**，必须读得开：{via_app:?}"
+                );
+                println!("裸 ATTACH 产物读数：默认已是国密（v4）⇒ 生产口径也读得开（{via_app:?}）");
+            } else {
+                assert!(
+                    via_app.is_err(),
+                    "默认还不是 SM3（v4 之前）⇒ 裸 ATTACH 写的是另一套参数，必须读不开，却读到了 {via_app:?}"
+                );
+                println!("裸 ATTACH 产物读数：默认仍是 SHA512（v4 之前）⇒ 生产口径读不开（符合当时的负判据）");
+            }
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1156,6 +1277,14 @@ mod tests {
             let s = Connection::open(&space_path).unwrap();
             crate::db::migrate(&s, "default").unwrap();
             s.execute_batch("INSERT INTO pages (id, workspace_id, title, content_text, created_at, updated_at) VALUES ('p1','default','hello','hello',1,1)").unwrap();
+            // ★ 派生层也给一行：`convert_space_db` 是**逐表拷贝**，而 `chunk_fts` 是 FTS5 虚拟表
+            //   （带一族单行影子表）⇒ 它必须被**排除**而不是被拷（见 `convert_space_db` 里那段注释）。
+            //   这一行用来验证"排除索引之后，索引本身还在"。
+            s.execute_batch(
+                "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) \
+                 VALUES ('p1#0','p1',NULL,0,'','zh','hello chunk body','h1')",
+            )
+            .unwrap();
             s.close().unwrap();
         }
         let salt = crypto::random_salt();
@@ -1166,6 +1295,17 @@ mod tests {
         let conn = crate::db::open_space_conn_at("default", &dir).unwrap();
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
+        // ★ 逐表拷贝排除索引表之后，**索引本身必须还在**（两条机制：拷 `chunks` 时触发器维护；
+        //   兜底是读取路径上的 `ensure_chunk_fts()`）。只测"不炸了"是不够的 ——
+        //   索引静默丢了的话，症状是"搜索悄悄变差"，没有任何报错。
+        let chunks_n: i64 = conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0)).unwrap();
+        let indexed_n: i64 = conn.query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0)).unwrap();
+        assert_eq!(chunks_n, 1, "转换后 chunks 行数不对（拷贝漏了派生层？）");
+        assert_eq!(indexed_n, chunks_n, "转换后块级 FTS 索引与 chunks 行数不一致（索引被拷坏或丢了）");
+        let chunk_hit: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunk_fts WHERE chunk_fts MATCH 'chunk'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(chunk_hit, 1, "转换后块级全文检索查不到那行（索引没被维护/重建）");
         // Full-text search still works post-encryption (the migration rebuilds page_fts).
         let fts: i64 = conn
             .query_row("SELECT COUNT(*) FROM page_fts WHERE page_fts MATCH 'hello'", [], |r| r.get(0))
@@ -1503,8 +1643,18 @@ mod tests {
     /// `sqlcipher-backend-fixture.db`，见下一个生成器）。**从内容上看不出是哪一种** ——
     /// 这正是 `cipher_settings` 里没有 algorithm 字段的后果，所以两条判据靠"交叉打开"来判定
     /// （见 `exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`）。
+    ///
+    /// ★ **更正（2026-09-22）**：这份夹具是用**裸 `PRAGMA key`**（不设任何 `cipher_*`）写的 ⇒
+    /// 它的**页 MAC/库 KDF 是"这个构建的默认值"**，不是"SM3"。补丁 v3 只改页加密算法
+    /// （`default_hmac_algorithm` / `default_kdf_algorithm` 在补丁里是**未改的上下文行**）⇒
+    /// 当今它写出来的是 **SM4 页 ＋ SHA512 默认**。所以：
+    ///   · 它证明的是**页加密**（这一条判据只判页加密，别再把它读成"页 MAC/KDF 也是国密"）；
+    ///   · 页 MAC/库 KDF 的国密化由**另外两处**证：`gm_provider` 的回显（连接级）＋
+    ///     `sqlcipher-sm3-fixture.db`（那份是**显式设了国密参数**写的，参数绑定是真的）。
+    ///   · 补丁 v4（把默认值也改成 SM3）落地后：**在 OpenSSL 构建里**这份夹具会变成 SM4 页 ＋ SM3，
+    ///     那时**重生成**它即可（`raw_key_defaults_are_sm3_only_when_the_patch_says_so` 会自动换边）。
     #[test]
-    #[ignore = "夹具生成器：必须在**打过 v3 补丁的 SM4 页构建**里跑"]
+    #[ignore = "夹具生成器：必须在**页加密＝SM4**的构建里跑（打 v3 补丁 ＋ OpenSSL 后端；与是否接线无关）"]
     fn gen_sm4_page_fixture() {
         let hex = crypto::key_hex(&[7u8; 32]);
         let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
@@ -1615,11 +1765,23 @@ mod tests {
         Ok(n as usize)
     }
 
-    /// ★ **页加密算法是库文件的属性**：同一份构建**只能**读开其中一种夹具（方案 §3.3 判据 1「交叉打开必须失败」）。
+    /// ★ **库级参数是库文件的属性**：同一份构建**只能**读开其中一种夹具（方案 §3.3 判据 1「交叉打开必须失败」）。
+    ///
+    /// ⚠️⚠️ **这条判据只判「页加密」，不判页 MAC/库 KDF**（2026-09-22 **更正我自己**）：
+    /// 两份夹具都是用**裸 `PRAGMA key`**（不设任何 `cipher_*`）写的 ⇒ 它们的**页 MAC/库 KDF 都是
+    /// "写它那个构建的默认值"**。补丁 v3 只改页加密算法（`default_hmac_algorithm` /
+    /// `default_kdf_algorithm` 在补丁里是**未改的上下文行**）⇒ 当今两份夹具的 MAC/KDF **都是 SHA512**，
+    /// 而**页**一个是 AES、一个是 SM4 —— 所以交叉打开能分开的**只有页加密**。
+    /// 我先前在这条判据的打印里写了"SM4 页 ＋ **SM3** 页 MAC/库 KDF"，那是**把夹具的来源读错了**：
+    /// `gen_sm4_page_fixture` 从来没有设过 `cipher_*`，它打印不出 SM3 这件事。
+    /// 页 MAC/库 KDF 的国密化**另有证据**：`gm_provider` 的回显（连接级）＋ `sqlcipher-sm3-fixture.db`
+    /// （显式设了国密参数写的，参数绑定是真的）＋ `raw_key_defaults_are_sm3_only_when_the_patch_says_so`
+    /// （默认值到底是不是 SM3；补丁 v4 落地后会自动换边）。
     ///
     /// 两份夹具内容**逐字相同**、都用同一把裸钥（`[7u8;32]`），唯一差别是**写下它的构建的页加密算法**：
-    ///   · `sqlcipher-backend-fixture.db` —— **AES 页**（由 CommonCrypto/OpenSSL 的 AES 页构建写下，2026-09-19）；
+    ///   · `sqlcipher-backend-fixture.db` —— **AES 页**（由 CommonCrypto 的默认构建写下，2026-09-19）；
     ///   · `sqlcipher-sm4-page-fixture.db` —— **SM4 页**（由打了补丁 v3「无条件 SM4 页加密」的构建写下，2026-09-20）。
+    ///     ⚠️ **页加密一改，这份夹具就要重生成**（`gen_sm4_page_fixture`）。
     ///
     /// 断言 **恰好一个能开**，并打印**是哪一个** —— 这同时**报出这份构建的页加密算法**，
     /// 而这是唯一可信的判据：`cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3），
@@ -1635,14 +1797,86 @@ mod tests {
         match (&aes, &sm4) {
             (Ok(n), Err(e)) => {
                 assert!(e.contains("file is not a database"), "SM4 夹具被拒的理由不该是别的：{e}");
-                println!("本构建的页加密 = **AES**（AES 夹具读开且可写，{n} 行；SM4 夹具按预期拒绝：{e}）");
+                println!(
+                    "本构建的**页加密** = **AES 页**（AES 夹具读开且可写，{n} 行；SM4 夹具按预期拒绝：{e}）\
+                     —— 页 MAC/库 KDF 不在这一条里（夹具是裸钥写的，见本条判据的注释）"
+                );
             }
             (Err(e), Ok(n)) => {
                 assert!(e.contains("file is not a database"), "AES 夹具被拒的理由不该是别的：{e}");
-                println!("本构建的页加密 = **SM4**（SM4 夹具读开且可写，{n} 行；AES 夹具按预期拒绝：{e}）");
+                println!(
+                    "本构建的**页加密** = **SM4 页**（SM4 夹具读开且可写，{n} 行；AES 夹具按预期拒绝：{e}）\
+                     —— 页 MAC/库 KDF 不在这一条里（夹具是裸钥写的，见本条判据的注释）"
+                );
             }
-            (Ok(_), Ok(_)) => panic!("两种页加密的夹具**都能开** ⇒ 「页加密是库文件属性」不成立，或某份夹具写错了"),
+            (Ok(_), Ok(_)) => panic!("两份页加密不同的夹具**都能开** ⇒ 「页加密是库文件属性」不成立，或某份夹具写错了"),
             (Err(a), Err(b)) => panic!("两种都开不了 ⇒ 夹具/密钥/构建有问题：aes={a}；sm4={b}"),
         }
+    }
+
+    /// ★ **夹具的页 MAC/库 KDF 到底是什么？** —— 用"同一个文件、两种读法"分开（2026-09-22 加）。
+    ///
+    /// 动机：上面那条**交叉打开**只能分开**页加密**，而"库级 MAC/KDF 是国密"这句话曾经被挂在它头上
+    /// （我自己写错了一次，见那条判据的注释）。这一条直接量**那个问题**：
+    /// 同一份 SM4 夹具，**裸钥**读得开、**再设 `cipher_hmac_algorithm=HMAC_SM3`/`cipher_kdf_algorithm=PBKDF2_HMAC_SM3`**
+    /// 之后还读得开吗？—— 实测（补丁 v3、未接线）**读不开**（`file is not a database`）⇒
+    /// 说明这份夹具的 MAC/KDF 是**默认（SHA512）**，页加密与 MAC/KDF 是**两件事**。
+    ///
+    /// ★ **它同时是"补丁 v4"的前瞻判据**（自适应当前状态，不需要改代码就能换边）：
+    ///   · 裸钥读法回显**不是** SM3（今天）⇒ 断言"设了国密参数之后**读不开**"（证明夹具不是 SM3 参数）；
+    ///   · 裸钥读法回显**是** SM3（v4 落地后的 OpenSSL 构建）⇒ 断言"设了国密参数之后**照样读得开**"。
+    /// ⇒ v4 落地时这一条会自动变成"默认值＝国密"的产物级判据，不用人来记得改它。
+    #[test]
+    fn raw_key_defaults_are_sm3_only_when_the_patch_says_so() {
+        let bytes = include_bytes!("../tests/sqlcipher-sm4-page-fixture.db");
+        let hex = crypto::key_hex(&[7u8; 32]);
+        let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
+        let dir = uniq_tmp("raw-defaults");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture.db");
+        std::fs::write(&path, bytes.as_slice()).unwrap();
+
+        // ① 裸钥（不设任何 cipher_*）：先看回显，再决定期望
+        let raw = Connection::open(&path).unwrap();
+        raw.execute_batch(&key_sql).unwrap();
+        let status = crate::gm_provider::read_gm_cipher_status(&raw).unwrap();
+        let defaults_are_sm3 = status.is_applied();
+        let raw_read: Result<i64, _> = raw
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+        // 页加密不同的话裸钥就开不了（AES 页构建里读 SM4 夹具）⇒ 那种构建上这条判据只报状态
+        let page_cipher_matches = raw_read.is_ok();
+        drop(raw);
+
+        // ② 同一个文件、**设了国密参数**再读
+        let gm = Connection::open(&path).unwrap();
+        gm.execute_batch(&key_sql).unwrap();
+        let gm_read = (|| -> Result<i64, String> {
+            crate::gm_provider::configure_gm_cipher(&gm)?;
+            gm.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())
+        })();
+
+        println!(
+            "SM4 夹具读数：裸钥默认回显 = {:?}（defaults_are_sm3={defaults_are_sm3}）· 裸钥读 = {raw_read:?} · 设国密参数后读 = {gm_read:?}",
+            status
+        );
+        if !page_cipher_matches {
+            println!("（本构建的页加密不是 SM4 ⇒ 两个读法都读不开，这一条只报状态、不断言）");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        if defaults_are_sm3 {
+            // v4 落地后的形态：默认就是国密 ⇒ 设了国密参数照样读得开
+            assert!(
+                gm_read.is_ok(),
+                "裸钥默认回显已经是 SM3，但设了国密参数反而读不开 ⇒ 默认值与显式设置不一致：{gm_read:?}"
+            );
+        } else {
+            assert!(
+                gm_read.is_err(),
+                "裸钥默认**不是** SM3，而设了国密参数却仍读得开 ⇒ 这份夹具本来就用国密参数写的（标签与事实不符）：{gm_read:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

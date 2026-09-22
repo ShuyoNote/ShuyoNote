@@ -7,7 +7,7 @@
 // 所以夹具用的是**真实产物的缩进（Tab）与嵌套形状**，而不是手写的简化版。
 
 import { describe, expect, it } from "vitest";
-import { checkBundle, plistSchemes, plistString } from "./check-macos-bundle.mjs";
+import { checkBundle, notarizationPrereqs, plistSchemes, plistString } from "./check-macos-bundle.mjs";
 
 /** 真实产物 Info.plist 的节选（Tab 缩进、数组嵌套、key 顺序都与 tauri 写出来的一致）。 */
 const REAL_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
@@ -141,10 +141,63 @@ describe("checkBundle", () => {
     expect(problems).toMatch(/aaaaaaaaaaaa… vs bbbbbbbbbbbb…|bbbbbbbbbbbb… vs aaaaaaaaaaaa…/);
   });
 
+  // ★ 2026-09-22（P4 签名那一格）：签名**会改字节**，所以"包内 == vendor"只对未签名产物成立。
+  //   判据必须把"签名后的正常"与"拷错了"分开说 —— 否则签名一落地，这条门禁就永久红。
+  it("★ 哈希不同但**签名有效**（lib 严格校验 ＋ .app --deep --strict）⇒ 接受（签名后哈希一定会变）", () => {
+    const problems = checkBundle(
+      okArgs({ pdfiumBundleSha: "b".repeat(64), pdfiumLibSigned: true, appDeepStrictPassed: true }),
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it("★ 哈希不同且**签名不完整** ⇒ 仍报错，并指向 sign-macos-app.mjs（不许把「签了一半」当通过）", () => {
+    for (const partial of [
+      { pdfiumLibSigned: true, appDeepStrictPassed: false },
+      { pdfiumLibSigned: false, appDeepStrictPassed: true },
+      { pdfiumLibSigned: false, appDeepStrictPassed: false },
+    ]) {
+      const problems = checkBundle(okArgs({ pdfiumBundleSha: "b".repeat(64), ...partial })).join();
+      expect(problems).toMatch(/与 vendor 源文件 sha256 不一致/);
+      expect(problems).toMatch(/不是一份签名有效的包/);
+      expect(problems).toMatch(/sign-macos-app/);
+    }
+  });
+
   it("vendor 里没有库 → 报**前置缺失**（别把它说成产物问题）", () => {
     const problems = checkBundle(okArgs({ pdfiumBundleSha: null, pdfiumVendorExists: false })).join();
     expect(problems).toMatch(/vendor 里没有 mac-univ 的 PDFium/);
     expect(problems).toMatch(/前置缺失/);
     expect(problems).not.toMatch(/不在包里/);
+  });
+});
+
+// ★ 2026-09-22（Windows 侧建议）：把"脚本没报错"与"Apple 会接受"之间的盲区变成两条本机可读的读数。
+//   缺安全时间戳 / 缺 hardened runtime 时，`codesign --verify --deep --strict` **照样绿** ——
+//   这正是 `scripts/sign-macos-app.mjs` 第一版的两处缺陷（真实身份那一支出不了可公证的包）。
+describe("check-macos-bundle：可公证性的两条前置（只对真实身份判）", () => {
+  const ADHOC = "Executable=/x.app/Contents/MacOS/x\nSignature=adhoc\nflags=0x2(adhoc)\n";
+  const DEV_OK = "Authority=Developer ID Application: Shuyo (TEAM)\nTimestamp=22 Sep 2026 10:00:00\nflags=0x10000(runtime)\n";
+  const DEV_NO_TS = "Authority=Developer ID Application: Shuyo (TEAM)\nflags=0x10000(runtime)\n";
+  const DEV_NO_RT = "Authority=Developer ID Application: Shuyo (TEAM)\nTimestamp=22 Sep 2026 10:00:00\nflags=0x0(none)\n";
+
+  it("★ ad-hoc ⇒ **不判**（本机预演天天绿，不能被这两条顶红）", () => {
+    expect(notarizationPrereqs(ADHOC)).toEqual({ judged: false, problems: [] });
+  });
+
+  it("真实身份 ＋ 时间戳 ＋ runtime ⇒ 通过", () => {
+    expect(notarizationPrereqs(DEV_OK)).toEqual({ judged: true, problems: [] });
+  });
+
+  it("★ 真实身份缺安全时间戳 ⇒ 红，并点出 `--timestamp`", () => {
+    const { judged, problems } = notarizationPrereqs(DEV_NO_TS);
+    expect(judged).toBe(true);
+    expect(problems.join()).toMatch(/安全时间戳/);
+    expect(problems.join()).toMatch(/--timestamp/);
+  });
+
+  it("★ 真实身份缺 hardened runtime ⇒ 红，并点出 `--options runtime`", () => {
+    const { problems } = notarizationPrereqs(DEV_NO_RT);
+    expect(problems.join()).toMatch(/hardened runtime/);
+    expect(problems.join()).toMatch(/--options runtime/);
   });
 });

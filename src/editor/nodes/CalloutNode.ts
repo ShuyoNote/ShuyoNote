@@ -1,8 +1,8 @@
 import {
   $applyNodeReplacement,
-  $createParagraphNode,
   ElementNode,
-  ParagraphNode,
+  type NodeKey,
+  type ParagraphNode,
   type DOMExportOutput,
   type EditorConfig,
   type LexicalEditor,
@@ -11,9 +11,16 @@ import {
   type SerializedElementNode,
 } from "lexical";
 
-export type SerializedCalloutNode = SerializedElementNode;
+import { newBlockId } from "../../lib/blockIdentity";
+import { blockRevOf, withBlockRev } from "./blockIdHelpers";
+import { $createBlockParagraphNode } from "./BlockParagraphNode";
+
+export type SerializedCalloutNode = SerializedElementNode & { blockId?: string; blockRev?: number };
 
 export class CalloutNode extends ElementNode {
+  __blockId: string;
+  __blockRev: number | null;
+
   $config() {
     return this.config("callout", { extends: ElementNode });
   }
@@ -23,7 +30,19 @@ export class CalloutNode extends ElementNode {
   }
 
   static clone(node: CalloutNode): CalloutNode {
-    return new CalloutNode(node.__key);
+    return new CalloutNode(node.__blockId, node.__key, node.__blockRev);
+  }
+
+  constructor(blockId?: string, key?: NodeKey, blockRev: number | null = null) {
+    super(key);
+    this.__blockId = blockId ?? "";
+    this.__blockRev = blockRev;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as CalloutNode).__blockId;
+    this.__blockRev = (prevNode as CalloutNode).__blockRev;
   }
 
   createDOM(config: EditorConfig): HTMLElement {
@@ -45,29 +64,52 @@ export class CalloutNode extends ElementNode {
   }
 
   exportJSON(): SerializedCalloutNode {
-    return {
+    const json: SerializedCalloutNode = {
       ...super.exportJSON(),
       type: "callout",
       version: 1,
     };
+    // 空 ID / 没有 rev 都不写字段：**嵌套** callout 不给身份（只有顶层块有），别给落盘形态添噪音。
+    return withBlockRev(this.__blockId ? { ...json, blockId: this.__blockId } : json, this.__blockRev);
   }
 
   static importJSON(serializedNode: SerializedCalloutNode): CalloutNode {
-    const node = $createCalloutNode();
+    const node = $createCalloutNode(serializedNode.blockId ?? "", blockRevOf(serializedNode));
     node.setFormat(serializedNode.format);
     node.setIndent(serializedNode.indent);
     node.setDirection(serializedNode.direction);
     return node;
   }
 
+  /** 块身份（与包出来的 `Block*Node` 同类 API）。 */
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
+  }
+
+  /** 块版本（`null` = 没有/不认识这个字段）。 */
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
+  }
+
   insertNewAfter(_: RangeSelection, restoreSelection?: boolean): ParagraphNode {
-    const newBlock = $createParagraphNode();
+    // 跳出 callout 的新段落必须是**模型段落**并当场带 ID（否则它的身份只能等保存时注入）。
+    const newBlock = $createBlockParagraphNode(newBlockId());
     this.insertAfter(newBlock, restoreSelection);
     return newBlock;
   }
 
   collapseAtStart(): boolean {
-    const paragraph = $createParagraphNode();
+    const paragraph = $createBlockParagraphNode(newBlockId());
     const children = this.getChildren();
     children.forEach((child) => paragraph.append(child));
     this.replace(paragraph);
@@ -83,8 +125,8 @@ export class CalloutNode extends ElementNode {
   }
 }
 
-export function $createCalloutNode(): CalloutNode {
-  return $applyNodeReplacement(new CalloutNode());
+export function $createCalloutNode(blockId?: string, blockRev: number | null = null): CalloutNode {
+  return $applyNodeReplacement(new CalloutNode(blockId, undefined, blockRev));
 }
 
 export function $isCalloutNode(node: LexicalNode | null | undefined): node is CalloutNode {

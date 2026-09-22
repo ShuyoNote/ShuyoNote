@@ -48,6 +48,8 @@ export async function runLibraryIndex(opts: {
   platform: Platform;
   /** 视觉模型（图片/扫描件/扫描页要用）。没给 ⇒ 需要它的抽取器走 `provider_error`（政策如此）。 */
   vision?: ExtractDeps["vision"];
+  /** 语音转写（音视频要用）。没给 ⇒ `av.transcript@1` 走 `provider_error`（同一条政策）。 */
+  transcribe?: ExtractDeps["transcribe"];
   onProgress?: (p: IndexProgress) => void;
 }): Promise<IndexRunOutcome> {
   const avail = indexAvailability(opts.platform);
@@ -56,6 +58,7 @@ export async function runLibraryIndex(opts: {
   const stores = await opts.platform.derivedStores!();
   const report = await indexLibrary(stores, {
     ...(opts.vision ? { vision: opts.vision } : {}),
+    ...(opts.transcribe ? { transcribe: opts.transcribe } : {}),
     onProgress: (done, total, label) =>
       opts.onProgress?.({
         done,

@@ -11,6 +11,12 @@
   --z-context: 1100;
   --z-palette: 1500;
   --z-toast: 1600;
+  /* 桌面右侧**常驻**悬浮条（`.right-rail`，在 `--z-bar` 层）的宽度。
+     2026-09-22 提出来当一个变量：PDF 阅读器"收起态的边缘拖拽手柄"必须避开它 ——
+     手柄在 `.pdf-reader-overlay`（`--z-content`）里，层级天然低于悬浮条，
+     放在最右边会被它压住（`elementFromPoint` 实测在中段返回 `div.right-rail`），
+     而把阅读器抬到悬浮条之上又会夺掉"阅读时仍能用 AI/聊天面板"这件事。 */
+  --rail-w: 41px;
   /* Brand & neutrals */
   --accent: #3370ff;
   --accent-strong: #2952cc;
@@ -1111,8 +1117,14 @@ html[data-platform="win"] .app-body {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 14px;
-  /* 同步弹窗是用户主动调出的浮层——高于文件预览(600)/内容，避免被预览遮挡。 */
-  z-index: 1500;
+  /* 同步弹窗是用户主动调出的浮层：**高于文件预览(600)**，但必须**低于确认/输入对话框(1400)**。
+     ⚠️ 2026-09-22 真机验收修：这里曾是魔法数 1500（理由是"别被文件预览挡住"，而 700 就已经
+     高于预览 600）。1500 > `.confirm-overlay` 的 1400 ⇒ 从同步面板里发起的「新建空间 /
+     重命名 / 设备密钥」输入框会画在面板**背后**，用户看到的是"点了按钮没反应"
+     （就是 F3「P0.1 按钮没反应」的真身）。
+     浮层该用的值就是 --z-popover(700)：700 > 预览(600)，且 < 模态(1000) / 右键(1100) /
+     确认框(1400) / 命令面板(1500) / toast(1600)——见 :root 里的分层规范。 */
+  z-index: var(--z-popover);
 }
 .sync-title {
   font-size: 13px;
@@ -1209,6 +1221,31 @@ html[data-platform="win"] .app-body {
 .btn-sync-conflict.keep { border-color: var(--success, #2e7d32); color: var(--success, #2e7d32); }
 .btn-sync-conflict.adopt { border-color: var(--primary); color: var(--primary); }
 .sync-conflict-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+/* ★ B 方案（2026-09-22）：「待取回的远端版本」——页级保留本地时存下来的那一版。
+   修好之前这一支完全没有界面（游标过去了、对端那笔编辑再也取不回），所以这块是"从静默到可见"的那一半。
+   配色刻意用**信息**（不是危险）：它记的是"有东西等你处理"，不是"出错了"。 */
+.sync-pending-remote {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-size: 12px;
+  color: var(--text);
+}
+.sync-pending-remote .sync-conflict-list { margin: 0 0 6px; padding-left: 18px; }
+.sync-pending-remote li { margin-bottom: 4px; }
+.sync-pending-actions { display: inline-flex; gap: 6px; margin-left: 8px; }
+.sync-pending-actions button {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+}
+.sync-pending-actions button:hover { border-color: var(--accent); color: var(--accent); }
 .sync-profiles {
   flex: 1;
   min-height: 0;
@@ -4691,6 +4728,8 @@ body.content-full .editor-placeholder {
   padding: 0 2px;
 }
 .prop-order-btns { display: inline-flex; flex-direction: row; flex-shrink: 0; gap: 2px; align-items: center; }
+/* 行尾「⋯」只在窄屏出现（见文件末尾"属性表的 ⋯ 动作面板"）：桌面那三个小按钮就够了。 */
+.prop-more { display: none; }
 .prop-order,
 .prop-remove {
   display: inline-flex;
@@ -4743,6 +4782,64 @@ body.content-full .editor-placeholder {
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------------------
+ * 属性表：名字列**按最长名字自适应**，值列吃掉剩下的宽度
+ *
+ * 起因（真机/真窗口量到的，两处都是同一个根因——`120px` 写死了）：
+ *   · 桌面 780px 窗口：名字列固定 120px，而「标签/作者/来源/存于」只有 2 个字
+ *     ⇒ 名字与值之间空出一大片（用户看到的就是这个"留空太大"）；
+ *   · 窄屏 390px：一行只有 230px，120px 名字 + 58px 排序按钮 + 16px 间距之后，
+ *     值只剩 **36px**（连一个日期都放不下）。实测见 `tmp/probe-props.mjs`。
+ *
+ * 为什么用「父级 grid + 行 `display: contents`」：既要**列宽统一**（所有值的左边缘
+ * 对齐，像一张表），又要**不写死宽度**——只有网格能做到：列宽由所有行里最宽的那个
+ * 名字决定，短名字不再留白、长名字不再被 `text-overflow` 截断。
+ *
+ * ⚠️ 行用了 `display: contents` 就没有自己的盒子了：行级的 hover / 拖拽落点指示
+ *（`.prop-row.drop-before::before` 是 `position: absolute`，要有个定位父级）会失去依托。
+ *    落点指示属于**当前已停用**的手工拖拽（`PropertiesPanel` 的
+ *    `DRAG_MOVE_ENABLED = false`，代码里写着"临时停用"）；真要恢复它，得把指示器
+ *    改挂到网格单元上（或给 `.properties-body` 加一条伪元素轨道），不能直接翻那个开关。
+ * ⚠️ 还有一条同一处的约束：**每行的孩子数必须与列数（3）对得上**，否则自动放置会把
+ *    后面的行"顶偏"。第一版就栽在这——`.prop-row-tag` 只有 2 个孩子（名字 + 标签块），
+ *    于是下一行的名字被填进同一行的第 3 列，从此整块错位一格（值最左、`⋯` 中间、
+ *    名字最右）。现在用 `.prop-name { grid-column: 1 }` 把名字钉死在第 1 列。
+ *    ⇒ 若将来要**恢复拖拽**（会多出一个 `.prop-grip` 孩子），必须同时把 `grid-template-columns`
+ *      改成 4 列（或把 grip 并进名字那一格），否则又会错位。
+ * ------------------------------------------------------------------------- */
+.properties-body {
+  display: grid;
+  /* 名字列 = 最宽的名字；值列 = 剩余（`minmax(0,1fr)` 才能被压缩，否则长内容会撑破容器）；
+     第三列 = 行尾的排序/删除按钮（`max-content`）。 */
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  grid-auto-rows: minmax(30px, auto);
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+}
+.properties-body .prop-row { display: contents; }
+/* 一次性的「添加属性」行跨满整行，保留它自己的 flex 布局。 */
+.properties-body .prop-add-row { grid-column: 1 / -1; }
+/* ⚠️ **每行的名字钉在第 1 列**，否则"只有 2 个子元素的行"会把后面整块带偏：
+   「标签」那一行是 [名字, 标签块]（没有行尾按钮），自动放置会把**下一行的名字**
+   填进同一行的第 3 列 ⇒ 从此每行都错位一格，界面上就是
+   "值在最左、`⋯` 在中间、属性名跑到最右"（2026-09-22 真机截图）。
+   加了这条之后，名字总是从第 1 列起，短行留下的空格就留在那儿。 */
+.properties-body .prop-name { grid-column: 1; }
+/* 标签块把剩下的两列都吃掉：不然它只拿到第 2 列，第 3 列（max-content ≈ 58px）空着，
+   标签一多就提前换行。 */
+.properties-body .prop-row-tag .prop-tag-value { grid-column: 2 / -1; }
+.properties-body .prop-name { width: auto; max-width: 12em; }
+/* 值列已经由网格决定宽度，`max-width: 75%` 那一档在这里只会再留 25% 的空白；
+   勾选框是个例外（它是 16px 的小方块，拉满就成了横条）。 */
+.properties-body .prop-value:not(.prop-checkbox) { width: 100%; max-width: none; }
+.properties-body .prop-checkbox { justify-self: start; }
+/* ⚠️ 2026-09-22：这一块（`.prop-datetime` / `.prop-datetime-pick` / `.prop-datetime-picker`
+   与上面那条 `.properties-body .prop-datetime`）**整块删掉了** —— 「时间」属性现在就是
+   一个原生 `<input type="datetime-local">`（与「日期」属性同一个风格、没有额外按钮，
+   owner："页面时间属性的控件采用和日期一样风格的控件，不要再额外加按钮"），
+   值列宽度归网格管（`.properties-body .prop-value` 那条），不再需要外层 wrapper。 */
+
 .prop-value {
   flex: 1;
   max-width: 75%;
@@ -4758,59 +4855,6 @@ body.content-full .editor-placeholder {
 .prop-value:focus {
   outline: none;
   border-color: var(--accent);
-}
-
-/* 「时间」属性：**一行只有一个可见的输入框**（手输框）＋ 一枚 📅 按钮开原生选择器。
-   以前这里并排摆两个框（原生 datetime-local ＋ 手输框），同一个时刻显示两遍 ——
-   owner 2026-09-21 的截图问的就是那个。现在原生那枚藏 1px（**不能 display:none**：
-   那样 showPicker() 会抛），所以 DOM 里仍是两个 input，但肉眼只有一个。 */
-.prop-datetime {
-  display: flex;
-  align-items: center;
-  /* 与 `.prop-row` 的 gap 一致：手输框 → 图标按钮 的间距要和 值 → 上移/下移/移除 那段一样宽 */
-  gap: 8px;
-  flex: 1;
-  max-width: 75%;
-  min-width: 0;
-}
-
-.prop-datetime .prop-value {
-  flex: 1;
-  max-width: none;
-  min-width: 0;
-}
-
-/* 「打开日期选择器」按钮：**与属性行里那三个图标按钮（上移/下移/移除）同一个方框** ——
-   18×18、无边框、透明底、`--text-faint` → hover `--text`。
-   原先是个带边框的小方块 ＋ `📅` emoji：emoji 的尺寸由字体行高决定，既跟 13×13 的线性
-   SVG 不搭，也比那三个 18×18 的按钮高一截 ⇒ 一行里对不齐（owner 2026-09-21 截图指出）。 */
-.prop-datetime-pick {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 5px;
-  color: var(--text-faint);
-  cursor: pointer;
-}
-
-.prop-datetime-pick:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-/* 藏在布局里（1px + 透明）：showPicker() 要求元素是"渲染过的"，display:none 会抛 */
-.prop-datetime-picker {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .prop-value.is-invalid {
@@ -13875,6 +13919,12 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   background: var(--hover);
 }
+/* 只属于窄屏的两种形态（见文件末尾"文件视图窄屏适配"那段）：
+   · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）；
+   · `.fm-more-btn`  —— 表格行尾的 `⋯`（桌面已经有六个小按钮，用不着它）。
+   基础规则里都 `display:none` ⇒ **桌面一个像素都不变**，形态切换全在窄屏那段里做。 */
+.fm-btn-icon { display: none; }
+.fm-more-btn { display: none; }
 .fm-preview-overlay {
   position: fixed;
   /* 避开自绘标题栏与左竖条：标题栏 32px、竖条 48px、侧栏 --sidebar-w。
@@ -15531,6 +15581,9 @@ p:has(> .editor-drawing-container) {
   top: 50%;
   transform: translateY(-50%);
   z-index: 30;
+  /* 显式写出宽度（原来是内容撑出来的 30 + 2×5 padding + 2×1 border = 41）：
+     阅读器边缘手柄要按这个数避让，见 `--rail-w`。 */
+  width: var(--rail-w);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -17065,16 +17118,44 @@ p:has(> .editor-drawing-container) {
   border-radius: 0;
   border: none;
 }
+/* 头部（顶部系统工具栏）—— 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，
+   空间狭小时收起来，除了最右端的关闭按钮"）：
+   · **任何时候都不换行**（`nowrap`）；放不下的项由 `PdfReader` 量宽后写进 `data-collapse`、
+     收进「⋯」（见下面的 `[data-collapse]` 那几条）；
+   · **关闭按钮永不收**，并且 `margin-left:auto` 顶到最右端（它是"离开"的唯一入口）；
+   · 这一行**不开** `overflow-x`：「⋯」的菜单是绝对定位的子元素，行一滚它就被裁掉了。
+     兜底靠"最少配置 = [文件名 48][⋯ 44][×] ≈ 144px"这条事实（比任何可能的阅读器宽度都窄）。
+   ⚠️ 原来它靠 `flex-wrap: wrap` 保证按钮不被裁（真机 730 > 360）——折行的代价是
+   390 上占 115px、320 上占 165px 高，"不换行 + 收起来"才是那条要求的正解。 */
 .pdf-reader-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  /* 2026-09-22：12 → 10 → **8**。前两次是"有了分组分隔线、可以收一点"；
+     这次按钮扁平化（无边框无底色）之后，图标之间不再需要"方块不相碰"的额外余量。 */
+  gap: 8px;
+  flex-wrap: nowrap;
+  /* ⚠️ 2026-09-22（owner："pdf 阅读器的系统工具栏高度也要固定，不能被撑得更大"）：
+     **高度写死**（`height` 而不是 `min-height`）——它一变高，正文就跟着少一截。
+     · 桌面这一档：按钮 28 + 上下内边距 10+10 + 下边框 1 = 49，留 1px 余量写 50；
+     · 窄屏那一档（按钮 44）在文件末尾另给 66；
+     · 里面的文字一律不许折行（文件名走省略号、页码/百分比 `white-space: nowrap`），
+       否则折行会把这一格撑高 —— 固定高度就不成立了。
+     改按钮尺寸/内边距时**要跟着改这两个值**。 */
+  height: 50px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  /* 「⋯」的菜单以**头部**为包含块（不是「⋯」那一格）：后者才 44px 宽，
+     菜单用它当包含块会"按它算 max-width" ⇒ 窄屏左边直接跑出屏幕。 */
+  position: relative;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* 文件名：**唯一的弹性项** —— 有富余就长（`flex-grow`）、挤了就缩到 `min-width` 打省略号。
+   ⚠️ `min-width: 48px` 这个地板宽是"量宽"公式里用的（`PdfReader` 直接读 CSS 的 `min-width`，
+   不另抄一份）；它同时保证"空间再紧也不会把文件名挤没"。 */
 .pdf-reader-name {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 48px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -17082,16 +17163,24 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   font-size: 14px;
 }
-.pdf-reader-controls {
+/* 翻页 / 缩放两组：**不再套一层** `.pdf-reader-controls`（那一层会让"只收缩放、留翻页"
+   这种粒度做不到：外层在，内层只能整块藏）。现在它们是 head 的直接子元素，
+   组间距就是 head 自己的 `gap`（8，与原值一致）。 */
+.pdf-head-tail,
+.pdf-head-export {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 .pdf-reader-nav,
 .pdf-reader-zoom {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* 6 → 2：翻页组/缩放组内部本来就是"图标—文字—图标"，扁平之后不需要 6px 的呼吸位 */
+  gap: 2px;
+  /* 量宽要的是**真实宽**：这两组不许被压扁（否则"收哪几项"就算错了）。 */
+  flex: 0 0 auto;
 }
 .pdf-reader-page,
 .pdf-reader-pct {
@@ -17099,6 +17188,8 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   min-width: 72px;
   text-align: center;
+  /* 同样的道理：这两处文字一折行，头部就会被撑高（页码读数里有空格）。 */
+  white-space: nowrap;
 }
 /* 缩放下拉：触发器显示当前模式/百分比，点击弹出参考阅读器式菜单（fit 模式 + 百分比阶梯 + 底部设置）。 */
 .pdf-zoom-wrap {
@@ -17185,25 +17276,50 @@ p:has(> .editor-drawing-container) {
   outline: none;
   border-color: var(--accent);
 }
+/* 阅读器的控制按钮：**扁平**（2026-09-22，owner："控制按钮全部改成扁平类型按钮，进一步压缩占宽"）。
+   原来是"描边 + 浅底"的小方块（`border: 1px solid var(--border); background: var(--block-hover)`）——
+   一长排方块自带拥挤感，间距也不敢压。现在：**无边框、无底色、只有图标**（hover/选中才给底色）；
+   边框去掉后一组图标可以贴得更近（间距见 `.pdf-reader-head` / `.pdf-reader-controls` /
+   `.pdf-reader-nav` 的 gap，本轮一并从 10/14/6 压到 8/8/2）。
+   ⚠️ 尺寸仍是 28×28（`box-sizing: border-box` 下去掉 1px 边框不改变外边距盒）⇒ 布局不跳；
+      命中区规则（窄屏 ≥44）在文件末尾那段里照旧生效。 */
 .pdf-reader-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--block-hover);
-  color: var(--text);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
   border-radius: 6px;
   width: 28px;
   height: 28px;
   cursor: pointer;
 }
 
-/* 「导出带批注副本」：覆盖固定 28px 宽，按中文标签内容自适应。 */
+/* 「导出带批注副本」：**与其它 `.pdf-reader-btn` 同规格的图标按钮**（28×28）。
+   2026-09-22 owner："导出带批注副本…现在的太占地方" —— 它原来是一枚自适应宽的文字按钮，
+   1280 下实测 **102×28**，是整条 head 里最占地方的一个（其余图标都是 28×28）。
+   完整说法进 `title` / `aria-label`；导出中才需要一点文字宽度（紧凑的 `3/12`）。 */
 .pdf-reader-btn.pdf-export-btn {
+  width: 28px;
+  padding: 0;
+}
+.pdf-reader-btn.pdf-export-btn:has(.pdf-export-progress) {
   width: auto;
-  padding: 0 8px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+.pdf-export-progress {
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  font-size: 12px;
+}
+/* 分组分隔线：head 里把"翻页 / 缩放"与"面板 / 视图"两族分开（原来是一长串没有分组的图标）。
+   窄屏隐藏 —— 那里每个按钮已经是 44 宽，再加分隔只会挤掉正文宽度，换行时还可能落在行首。 */
+.pdf-reader-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
 }
 .pdf-reader-btn svg {
   display: block;
@@ -17221,11 +17337,81 @@ p:has(> .editor-drawing-container) {
   white-space: nowrap;
 }
 .pdf-reader-btn:hover:not(:disabled) {
-  border-color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
+}
+/* 扁平之后"选中态"得自己给反馈（原来靠边框变强调色）：护眼等开关用 `active` 类。 */
+.pdf-reader-btn.active {
+  background: var(--accent-soft);
   color: var(--accent);
+}
+.pdf-reader-btn:active:not(:disabled) {
+  background: var(--hover-strong, var(--hover));
+}
+/* 窄屏的「更多工具」入口（批注侧栏 / 护眼 / 导出…）。
+   ⚠️ **基础规则就是隐藏**：桌面一次放得下，不需要这个入口；窄屏那段（文件末尾）
+   再把它 `inline-flex` 放出来。写在 `.pdf-reader-btn` **之后**——两者同为 (0,1,0)，
+   靠"后写的赢"，写在前面会被 `.pdf-reader-btn` 的 display 顶掉（那样手机上根本点不到）。 */
+/* 「更多工具」入口：**只在头部真的塞不下时才出现**（`has-more` 由 `PdfReader` 量宽后写）。
+   ⚠️ 基础规则就是隐藏；`.pdf-reader-head.has-more .pdf-reader-more` 放出来。
+   写在 `.pdf-reader-btn` **之后**——两者同为 (0,1,0)，靠"后写的赢"（写在前面会被顶掉，
+   那样手机上根本点不到）。 */
+.pdf-head-more-wrap {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.pdf-reader-more {
+  display: none;
+}
+.pdf-reader-head.has-more .pdf-reader-more {
+  display: inline-flex;
+}
+/* 收起来的项：`data-collapse` 的值就是被收起来的那些 key（由 `PdfReader` 写）。
+   ⚠️ 每条都限定在**行内**（`>` 直接子元素）：「⋯」菜单里渲染的是同一份 JSX 的第二份调用，
+   那几件必须看得见，否则"收起来"就等于"删掉"。 */
+.pdf-reader-head[data-collapse~="outline"] > .pdf-reader-outline-toggle,
+.pdf-reader-head[data-collapse~="nav"] > .pdf-reader-nav,
+.pdf-reader-head[data-collapse~="zoom"] > .pdf-reader-zoom,
+.pdf-reader-head[data-collapse~="tail"] > .pdf-head-tail,
+.pdf-reader-head[data-collapse~="export"] > .pdf-head-export {
+  display: none;
+}
+/* 「⋯」的菜单：**锚在头部的内联菜单**（与 `.pdf-eye-pop` / `.pdf-annot-more-pop` 同一先例），
+   不是应用级浮层。里面的行可以自由换行 —— "永不换行"约束的是头部那一行，不是这个浮出来的面板。 */
+.pdf-head-more-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* 贴头部**内容区**的右缘（head 的左右内边距是 12）。包含块是 head 本身，
+     所以窄屏下 `max-width` 按视口算也不会把左边顶出屏幕。 */
+  right: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  /* ⚠️ `width: max-content`：包含块是「⋯」那一格（才 ~44px 宽），`width:auto` 的
+     shrink-to-fit 会按包含块算 ⇒ 菜单被压成一条。 */
+  width: max-content;
+  max-width: min(92vw, 520px);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.pdf-head-more-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pdf-head-more-label {
+  font-size: 12px;
 }
 .pdf-reader-close {
   margin-left: auto;
+  flex: 0 0 auto;
   border: none;
   background: transparent;
   color: var(--text-faint);
@@ -17257,20 +17443,101 @@ p:has(> .editor-drawing-container) {
   align-items: center;
 }
 /* 顶层工具栏：工具在左，选区操作在右，整条随阅读器宽度。
-   批注工具栏「不滚动」：滚动查看放大页面时吸顶固定（sticky）。 */
+   批注工具栏「不滚动」：滚动查看放大页面时吸顶固定（sticky）。
+
+   ⚠️ 2026-09-22（owner："pdf 页内工具栏任何时候不换行，空间狭小时，可以收起来，不截断"）：
+   这一条**永不换行**（`flex-wrap: nowrap`）。原来它是 `wrap`，宽度不够就折成两行
+   （1280 上少一列面板就折；选中一条批注再多出操作组，折得更狠），窄屏则靠工具组横向滚动
+   把按钮推出屏外 —— 两种都不是"收起来"。现在：
+     · `.pdf-annot-toolbar-row` = 三个组所在的那一行（`nowrap`，`overflow-x:auto` 只作**兜底**：
+       真到极限还能滑，绝不裁切）；
+     · 放不下时由 `PdfAnnotTopToolbar` **量宽**后按优先级收进「⋯」（`data-collapse` 那几条规则）；
+     · 「⋯」与它的菜单是行的**兄弟**节点 ⇒ 不会被行的滚动裁掉。 */
 .pdf-annot-toolbar {
   width: 100%;
   max-width: 860px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  flex-wrap: wrap;
-  position: sticky;
-  top: 0;
+  flex-wrap: nowrap;
+  position: relative;
   z-index: 22;
   background: var(--bg);
   padding: 4px 6px 6px;
+}
+.pdf-annot-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 兜底：把所有能收的都收完还放不下（≈230px 以下的窄条）时还能横向滑 —— 不裁切。 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.pdf-annot-toolbar-row::-webkit-scrollbar {
+  display: none;
+}
+/* 「⋯」：没有可收的项时整个收起（连占位都不留）。 */
+.pdf-annot-more-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.pdf-annot-toolbar:not(.has-more) .pdf-annot-more-wrap {
+  display: none;
+}
+.pdf-annot-more {
+  padding: 5px 7px;
+}
+/* 收起来的项（`data-collapse` 由 `PdfAnnotTopToolbar` 写、值就是被收起来的那些项）。
+   ⚠️ 三条都限定在**行内**（`.pdf-annot-toolbar-row`）：「⋯」菜单里渲染的是同一批元素的
+   第二份调用，那几件必须**看得见**，否则"收起来"就等于"删掉"。 */
+.pdf-annot-toolbar[data-collapse~="status"] .pdf-annot-toolbar-row > .pdf-annot-status,
+.pdf-annot-toolbar[data-collapse~="actions"] .pdf-annot-toolbar-row > .pdf-annot-actions,
+.pdf-annot-toolbar[data-collapse~="undoExport"] .pdf-annot-toolbar-row .pdf-annot-pair {
+  display: none;
+}
+.pdf-annot-toolbar .pdf-annot-tools.is-icons .pdf-annot-tool-label {
+  display: none;
+}
+/* 「⋯」里的菜单：**锚在工具条内的内联菜单**（不是应用级浮层，见组件顶部注释）。
+   它里面的分组可以自由换行 —— "永不换行"约束的是工具条那一行，不是这个浮出来的面板。 */
+.pdf-annot-more-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  /* ⚠️ `width: max-content` 是必须的：这个面板的包含块是「⋯」那一格（才 ~36px 宽），
+     `width:auto` 的 shrink-to-fit 会按包含块算 ⇒ 面板被压成 ~95px，"朗读"竖着排成两行。 */
+  width: max-content;
+  max-width: min(88vw, 460px);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.pdf-annot-more-pop .pdf-annot-actions,
+.pdf-annot-more-pop .pdf-annot-status,
+.pdf-annot-more-pop .pdf-annot-pair {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.pdf-annot-more-pop .pdf-annot-status {
+  width: auto;
+  max-width: none;
+  position: static;
+  background: transparent;
+  padding: 0;
 }
 .pdf-annot-tools,
 .pdf-annot-actions {
@@ -17278,9 +17545,21 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 4px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  /* 去掉外框勾线（2026-09-22，owner："去掉批注工具栏的外框勾线"）。
+     原来这一圈 1px 边框把工具行画成一个"盒子"，和扁平化的阅读器按钮风格不一致；
+     现在只留极浅的底色做分组，分组靠 `.pdf-reader-sep` 那条分隔线交代。 */
+  border: none;
   border-radius: 9px;
   padding: 4px 6px;
+  /* 量宽的预算必须是**内容真实宽度**：这三格不许被压扁（否则"要不要收"就量不准）。 */
+  flex: 0 0 auto;
+}
+/* 撤销 + 导出批注：一个整体（要么都在工具组里，要么一起进「⋯」）。 */
+.pdf-annot-pair {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
 }
 .pdf-annot-tool {
   display: inline-flex;
@@ -17326,47 +17605,69 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
 }
-/* 选中后操作栏里的辅助文案 */
-.pdf-annot-tip {
-  font-size: 12px;
-  color: var(--text-dim);
-  padding: 4px 8px;
-}
-/* 页面能力提示条（文本层 + OCR）——滚动页面时吸顶固定，保持批注控制可见。 */
+/* 页面能力组（文本层 chip + 朗读 / OCR / AI）——**工具行里的一格**。
+   2026-09-22 起它不再"独占一行/吸顶"：工具条改成单行 + 按需收进「⋯」，
+   这一格的宽度必须等于**内容宽**（`width:auto`），否则它自己就会把行撑爆。
+   放不下时由 `PdfAnnotTopToolbar` 把它整格收进「⋯」（`data-collapse~="status"`）。
+   标签一律**短**（朗读 / OCR / AI），完整说法进 `title`：它原来被
+   「朗读本页 / OCR 识别本页 / AI 识别」撑到 472px。 */
 .pdf-annot-status {
-  width: 100%;
-  max-width: 860px;
+  width: auto;
+  max-width: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 0 4px;
-  position: sticky;
-  top: 50px;
-  z-index: 20;
-  background: var(--bg);
+  flex: 0 0 auto;
 }
 .pdf-annot-layer {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  /* ⚠️ 2026-09-22（owner 截图："这几个按钮似乎不在一个水平线上？"）：
+     这一格与右边三个按钮**必须在同一条线上**。改前这里是 11.5px + `line-height: normal`，
+     右边是 12px + `normal` ⇒ 三者的**行盒高度居然各不相同**——实测「无文本层」17px、
+     「朗读」25px、「OCR」「AI」23px（`normal` 按脚本取字体度量，汉字与拉丁不一样）。
+     盒子中心虽然都对齐在 75.5，但「朗读」的文字比旁边低 1px、三块背景大小也各不相同，
+     看上去就是"没排齐"。现在两边都写死 `font-size: 12px; line-height: 18px`：
+     行盒高度恒为 18、盒子中心 = 文字中心 ⇒ 四个字面同线、四块背景同高。 */
+  font-size: 12px;
+  line-height: 18px;
+  /* 上下内边距与右边三个按钮**一模一样**（4px）⇒ 四块的盒子高度也都是 26px，
+     不只是"文字中线相同"。没有底色，所以看不出这 8px，但结构与命中区完全一致。 */
+  padding: 4px 0;
   color: var(--text-dim);
+  /* 这一格也不许折行把工具条撑高。 */
+  white-space: nowrap;
 }
 .pdf-annot-layer.ok { color: var(--accent); }
 .pdf-annot-layer.warn { color: #b8860b; }
+/* 朗读 / OCR / AI（2026-09-22 owner 截图："这几个按钮也进行扁平化处理"）——
+   与 `.pdf-reader-btn` 同一套扁平语言：**无边框、透明底**，hover 才给底色。
+   改前是"1px 描边 + `--surface` 浅底"的胶囊，和已经扁平化的头部图标按钮并排时
+   明显是两种语言（截图里三个白底描边胶囊）。 */
 .pdf-annot-ocr {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
   font-size: 12px;
+  /* ⚠️ 写死行高（不是 `normal`）：`normal` 按脚本取度量 ⇒「朗读」(汉字) 25px、
+     「OCR」「AI」(拉丁) 23px，同一排按钮都不一样高、字面也不在同一条线上
+     （owner 截图："这几个按钮似乎不在一个水平线上？"）。同 18px 之后恒为 26px 高。 */
+  line-height: 18px;
   padding: 4px 10px;
   border-radius: 7px;
   cursor: pointer;
+  /* ⚠️ 见 `.pdf-reader-stage-wrap > .pdf-annot-toolbar` 那条注释：忙碌文案
+     「识别中 3/12」里有空格，不给 nowrap 的话窄一点就折成两行、把工具条撑高。 */
+  white-space: nowrap;
 }
 .pdf-annot-ocr:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
+}
+.pdf-annot-ocr:active:not(:disabled) {
+  background: var(--hover-strong, var(--hover));
 }
 .pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
 /* 两个识别按钮靠在一起（右侧一组）。 */
@@ -17375,10 +17676,13 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 6px;
 }
-/* AI 视觉识别按钮：用强调色区分。 */
+/* AI 视觉识别按钮：靠**文字颜色**（而不是描边）区分，扁平化后仍然分得出来。 */
 .pdf-annot-ocr-ai {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.pdf-annot-ocr-ai:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .pdf-annot-stage {
   position: relative;
@@ -17741,6 +18045,60 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: row;
   overflow: hidden;
+  /* 侧栏收起时的"拖出来"手柄要相对它定位（2026-09-22） */
+  position: relative;
+}
+/* 侧栏/目录**收起时**那条边上的抓取条（两侧侧栏都能"拖拽收起 / 拖拽展开"）。
+   为什么需要它：收起后面板不在 DOM 里 ⇒ 没有可抓的 resizer，光靠 head 上的按钮就只能"点"。
+   可见性：中间一段 3px 小竖条当"这里能拖"的提示，hover 变强调色；不抢视觉。
+   ⚠️ `z-index: 40` 是量出来的：`.right-rail`（全局右侧悬浮条）是 **z-index 30 / position: fixed**，
+   而且它正好浮在阅读器右侧中段（41×112）。原来手柄是 z-index 5 ⇒ 中段被它压住、指针事件收不到
+   （`elementFromPoint` 在 y=425 返回 `div.right-rail`）⇒ 右侧"拖出来"只有上下一小段能用。
+   宽度取 6px（与 `.pdf-outline-resizer` / `.pdf-sidebar-resizer` 同规格）：手柄在 1274..1280，
+   而悬浮条按钮在 1245..1275 ⇒ 只压住它 1px，不影响点它。 */
+.pdf-edge-drag {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 40;
+  cursor: col-resize;
+  background: transparent;
+}
+.pdf-edge-drag.is-left { left: 0; }
+/* ⚠️ 右侧手柄要**避开常驻悬浮条**（`--rail-w`）：它在 `--z-bar` 层，比阅读器浮层高，
+   否则右侧中段（41×112 那条）的指针事件会被它截走 ⇒ 只有上下一小段能拖。 */
+.pdf-edge-drag.is-right { right: var(--rail-w); }
+/* ---------------------------------------------------------------------------
+   两侧的**拖拽竖线**：四处同一件东西（2026-09-22，owner："pdf 阅读器左右侧边栏的拖拽竖线
+   粗细要一样"）。
+
+   四处 = 左侧栏 ×（展开 / 收起）、右侧栏 ×（展开 / 收起）。统一规格：
+   **3px × 44px、垂直居中、`--border` 色、hover 变强调色**；抓取条本身仍是透明的 6px，
+   而且两侧都**完全落在各自面板内**。
+
+   ⚠️ 改前右侧那条是 `left: -3px`（跨在边界上），而 `.pdf-sidebar-col` 是 `overflow: hidden`
+   —— 露在面板外的那 3px 被裁掉，于是"展开态 hover 的高亮"**左边 6px、右边只剩 3px**，
+   这就是"粗细不一样"的来源；收起态那两条 `::after` 虽然都是 3px，但左边贴 `left: 2px`、
+   右边贴 `right: 2px`，位置也不完全镜像。现在两处都用同一条规则居中，规格只有一个。
+   --------------------------------------------------------------------------- */
+.pdf-edge-drag::after,
+.pdf-outline-resizer::after,
+.pdf-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.pdf-edge-drag:hover::after,
+.pdf-outline-resizer:hover::after,
+.pdf-sidebar-resizer:hover::after {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 .pdf-reader-stage-wrap {
   flex: 1;
@@ -17815,11 +18173,22 @@ p:has(> .editor-drawing-container) {
 .pdf-eye-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .pdf-eye-item.active { color: var(--accent); font-weight: 600; }
 .pdf-eye-item-check { width: 12px; flex-shrink: 0; }
-/* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。 */
+/* 顶部批注工具栏（唯一一份，固定在阅读器内容区顶部，不随页面滚动）。
+   ⚠️ 2026-09-22（owner："pdf 阅读器的页内工具栏高度永远固定，不能被撑大"）：
+   **高度写死**，不让内容把它撑高 —— 这一条是"正文空间每一屏都要用"的直接兑现：
+   它一变高，正文就少一截，而且是在"点了某个按钮/某条命令在跑"的时候变，最烦人。
+   · `height` 而不是 `min-height`：`min-height` 只能保证"不低于"，正是"会被撑大"的那种写法；
+   · 里面的按钮**一律单行**（`.pdf-annot-tool` / `.pdf-annot-ocr` 都 `white-space: nowrap`）：
+     文字换行会让按钮长高 ⇒ 把这一格撑破（这一条是本次真正的隐患：OCR 忙碌文案
+     「识别中 3/12」里有空格，窄一点就会折成两行）；
+   · 窄屏那一档（按钮 44 高）另给一个固定值，见文件末尾的 `@media (max-width:768px), …`。
+   改按钮尺寸/内边距时**要跟着改这两个值**，否则会裁到内容。 */
 .pdf-reader-stage-wrap > .pdf-annot-toolbar {
   position: static;
   flex-shrink: 0;
   max-width: none;
+  height: 50px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   padding: 6px 10px;
   background: var(--bg);
@@ -17865,7 +18234,10 @@ p:has(> .editor-drawing-container) {
 .pdf-sidebar-col .pdf-sidebar { width: 100%; border-left: none; flex: 1; min-height: 0; }
 .pdf-sidebar-resizer {
   position: absolute;
-  left: -3px;
+  /* ⚠️ 0 而不是 -3px：`.pdf-sidebar-col` 是 `overflow: hidden`，跨出去的那 3px 会被裁掉
+     ⇒ 抓取条只剩 3px（左侧那条是 6px）——"左右拖拽竖线粗细不一样"就是这么来的。
+     现在两侧都**完全落在各自面板内**，镜像对称。 */
+  left: 0;
   top: 0;
   bottom: 0;
   width: 6px;
@@ -17873,7 +18245,6 @@ p:has(> .editor-drawing-container) {
   z-index: 5;
   background: transparent;
 }
-.pdf-sidebar-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* 左侧目录（书签）侧栏 */
 .pdf-outline {
   width: 240px;
@@ -17903,7 +18274,6 @@ p:has(> .editor-drawing-container) {
   z-index: 5;
   background: transparent;
 }
-.pdf-outline-resizer:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 .pdf-outline-head {
   padding: 12px 14px;
   font-size: 13px;
@@ -18046,15 +18416,53 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-bottom: 1px solid var(--border);
 }
-/* 5 — 侧栏类型筛选 */
-.pdf-sidebar-filter {
+/* 5 — 侧栏类型筛选
+   2026-09-22（owner："右边侧栏顶部的四个按钮平时收起来"）：四枚胶囊**默认收起**，
+   常驻只剩一枚漏斗开关（`.pdf-sidebar-filter-toggle`）。理由：它们只在"标注多到要按类型筛"
+   时才用得上，常驻时却几乎占满整个栏宽（≈236px，侧栏本身才 ~260px）。 */
+.pdf-sidebar-filters {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
   padding: 8px 8px 4px;
   flex-wrap: wrap;
 }
+/* 2026-09-22（owner 截图："这几个按钮也进行扁平化处理"）：漏斗开关与它展开后的四枚胶囊
+   一起走扁平语言（无边框、透明底、hover 给底色、选中给 `--accent-soft` 底 + 强调色），
+   理由与 `.pdf-annot-ocr` 相同：右侧栏里再留一圈 1px 描边，和已经扁平的工具行不是一套。 */
+.pdf-sidebar-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.pdf-sidebar-filter-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* 筛选**不是"全部"**时常驻态也要看得出来（收起时旁边带当前类型文字） */
+.pdf-sidebar-filter-toggle.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pdf-sidebar-filter-current {
+  white-space: nowrap;
+}
+.pdf-sidebar-filter {
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  flex-wrap: wrap;
+}
 .pdf-sidebar-filter-btn {
-  border: 1px solid var(--border);
+  border: none;
   background: transparent;
   color: var(--text-dim);
   font-size: 11.5px;
@@ -18063,13 +18471,12 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
 }
 .pdf-sidebar-filter-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
 }
 .pdf-sidebar-filter-btn.active {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: rgba(51, 112, 255, 0.25);
 }
 .pdf-sidebar-list {
   flex: 1;
@@ -18269,7 +18676,12 @@ p:has(> .editor-drawing-container) {
   width: 13px; height: 13px; border: 2px solid var(--surface, #fff); border-radius: 50%;
   background: var(--accent, #4f7cff); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
 }
-.fm-ctx {
+/* 两处行动作面板共用同一套盒子（文件视图的右键菜单 / 属性行的「⋯」）。
+   ⚠️ `position: fixed` 在这个**基础**规则里——`.prop-ctx` 之前只蹭了窄屏那条 `is-sheet`，
+   而那条本身不写 `position`，于是它在窄屏上是 `static`：既没贴底、也没有定位，
+   直接顺着文档流落在属性卡后面（实测 t=841/1037，视口只有 844 ⇒ 整个面板在屏幕下方看不见）。 */
+.fm-ctx,
+.prop-ctx {
   position: fixed;
   z-index: var(--z-context);
   min-width: 170px;
@@ -18279,7 +18691,8 @@ p:has(> .editor-drawing-container) {
   border-radius: 10px;
   box-shadow: 0 14px 36px rgba(0,0,0,.22);
 }
-.fm-ctx-title {
+.fm-ctx-title,
+.prop-ctx-title {
   padding: 4px 10px 8px;
   font-size: 12px;
   color: var(--text-faint);
@@ -18290,12 +18703,14 @@ p:has(> .editor-drawing-container) {
   text-overflow: ellipsis;
   max-width: 220px;
 }
-.fm-ctx-list {
+.fm-ctx-list,
+.prop-ctx-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.fm-ctx-item {
+.fm-ctx-item,
+.prop-ctx-item {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -18309,9 +18724,15 @@ p:has(> .editor-drawing-container) {
   border-radius: 7px;
   cursor: pointer;
 }
-.fm-ctx-item:hover { background: var(--hover); }
-.fm-ctx-item.is-danger { color: var(--danger); }
-.fm-ctx-item.is-danger:hover { background: var(--danger-soft); }
+.fm-ctx-item:hover,
+.prop-ctx-item:hover { background: var(--hover); }
+.fm-ctx-item.is-danger,
+.prop-ctx-item.is-danger { color: var(--danger); }
+.fm-ctx-item.is-danger:hover,
+.prop-ctx-item.is-danger:hover { background: var(--danger-soft); }
+/* 禁用态（首行不能「上移」、末行不能「下移」）：与行内那三个小按钮同一套语义。 */
+.prop-ctx-item:disabled { opacity: 0.4; cursor: default; }
+.prop-ctx-item:disabled:hover { background: transparent; }
 .fm-ctx-ic {
   width: 16px; height: 16px;
   flex-shrink: 0;
@@ -20636,6 +21057,615 @@ body.is-plugin-panel-open .main {
 }
 
 /* ===========================================================================
+ * 模板中心（`TemplateCenterView`）窄屏 / 触屏适配 · 2026-09-22
+ * ===========================================================================
+ * 它**不是浮层**，而是 `.main` 里的一个整视图（`App.tsx` 里 `templateOpen` 那一支），
+ * 所以这里只吃**窄**断点（768px，与 `useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 同源）——
+ * 仓库口径是「**布局看宽度**；浮层才看宽度和高度，横屏手机不算窄」。
+ * 唯一的例外是"卡片操作要不要常驻"：那是**有没有 hover** 的问题，与宽度无关，
+ * 单独写在紧跟的 `@media (hover: none)` 那一条里。
+ *
+ * 390×844 上量到的三处（都让某个操作**点不到**，而且都不报错）：
+ *   1. `.tc-head` 是一行 flex：面包屑 + **固定 240px** 的搜索框 + 导入 + 关闭。
+ *      390px 视口扣掉 `.template-center` 左右各 32px 只剩 326px，而这几项里
+ *      `.tc-search`（`flex-shrink:0`）与 `.tc-close`（`flex-shrink:0`）都不缩水，
+ *      加间距要 ~368px ⇒ **横向溢出 42px**，「关闭」被推出屏幕——模板中心在手机上
+ *      **关不掉**。这与 `.set-dialog{min-width:640px}` 是同一类坏法：
+ *      固定宽度压过可用宽度，且失败时静默。改法：换行成两行，搜索框独占第二行。
+ *   2. `.tc-tabs` 六个分类加起来 ~420px，在 326px 里溢出 ⇒ 「健康 / 我的模板」
+ *      落在屏外，**既看不到也切不过去**（那两类模板在手机上只能靠"全部"翻）。
+ *      改法：单行横向滚动。
+ *   3. `.tc-card-actions` 只在 `:hover` 时 `opacity: 1`——触屏**永远没有 hover**，
+ *      于是「我的模板」的**导出 / 删除在手机上永远点不到**（那不是装饰按钮，
+ *      是这两件事的唯一入口）；而且它们是 22×22，本来就低于仓库那条"触屏 ≥44"。
+ *      这一条与宽度无关（横屏手机同样如此），所以单独写成 `@media (hover: none)`。
+ * =========================================================================== */
+@media (max-width: 768px) {
+  .template-center {
+    /* 桌面那 32px 的横向留白在 390px 上吃掉 16%（卡片区只剩 326px）。
+       底部 72px 是给左下角那两颗 `position: fixed` 的浮动按钮让位
+       （`.mobile-rail-toggle` / `.mobile-sync-slot`：`bottom:18px` + 44px 高 = 62px，
+       再加一点呼吸位）——否则最后一行卡片永远压在它们下面，点不到。 */
+    padding: 12px 14px 72px;
+    /* §2 那条纪律：内容区唯一可滚，且不把滚动惯性传给外层。 */
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---------- 头部：两行（面包屑 + 导入 + 关闭 / 搜索整行） ---------- */
+  .tc-head {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    margin-bottom: 10px;
+  }
+  /* `order` 是必需的：DOM 顺序是 面包屑 → 搜索 → 导入 → 关闭，
+     而窄屏要让搜索掉到第二行、两个按钮留在第一行右端。 */
+  .tc-breadcrumb { order: 1; flex: 1 1 auto; }
+  .tc-import { order: 2; min-height: 44px; padding: 4px 12px; }
+  .tc-close { order: 3; }
+  .tc-search {
+    order: 4;
+    /* `flex-basis: 100%` 是"独占一行"在 flex 里的写法：它跟谁都不挤，
+       于是第一行只会是"面包屑 + 导入 + 关闭"。 */
+    flex: 1 1 100%;
+  }
+  .tc-search-input {
+    width: 100%;
+    /* 触屏命中区 ≥44（仓库口径）：搜索是这一层的主要动作，不是装饰。 */
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  /* ---------- 分类页签：单行横向滚动 ---------- */
+  .tc-tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* 选中态那条下划线是 `bottom: -1px`，而 `overflow` 在 padding box 上裁——
+       不留这 2px 就会被裁掉一半（2px 变 1px）。 */
+    padding-bottom: 2px;
+  }
+  .tc-tabs::-webkit-scrollbar { display: none; }
+  /* `flex: 0 0 auto`：页签不许被压扁（压扁就等于文字看不全）。 */
+  .tc-tab { flex: 0 0 auto; min-height: 44px; padding: 8px 14px; }
+
+  /* ---------- 卡片：两列（140px 起），缩略图跟着收一档 ----------
+     ⚠️ 下限必须是 **140px 而不是 160px**：320px（iPhone SE / 老 Android）可用宽只有
+     320 − 14×2 = 292px，`minmax(160px,1fr)` 在 2×160+12 = 332 > 292 时退回**一列**——
+     一张卡占满 292px、封面却只有 56px 高，版式整个散掉（实测过）。
+     140px 时 2×140+12 = 292 正好两列；390px 上每列仍是 1fr 拉出来的 175px。 */
+  .tc-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  /* 桌面一张卡 240px 起、缩略图 150px（封面 74px）；140~175px 宽的卡上照搬，
+     正文快照会被挤成一条缝，所以封面 / 内容区 / 字号一起等比收一档。 */
+  .tc-preview { height: 112px; }
+  .tc-preview-cover { height: 56px; }
+  .tc-pv-card { padding: 8px 9px; gap: 5px; }
+  .tc-pv-text { font-size: 9px; }
+  .tc-pv-head { font-size: 10px; }
+  .tc-card-body { padding: 9px 10px; }
+  .tc-card-name { font-size: 13px; }
+}
+
+/* ---------------------------------------------------------------------------
+ * 触屏（`hover: none`）：卡片操作要**常驻**，而且**不许占版面**
+ *
+ * 两条约束各自都有理由：
+ *   1. **常驻**：基础规则只在 `:hover` 时 `opacity: 1`，而触屏永远没有 hover ⇒
+ *      「我的模板」的导出 / 删除在手机上等于不存在。
+ *   2. **不占版面**：移动端版式要简洁。第一版把它改成"卡片底部一行常驻按钮"，
+ *      功能是对的、版式是错的——每个自建模板都多出一条 54px 的行，而没有操作行的
+ *      卡片被网格 `stretch` 拉到同高、底下空出一块带边框的白（320px 上最明显）。
+ *      所以回到"悬浮在封面右上角"：`position: absolute` ⇒ **卡片高度与桌面一致**，
+ *      网格不必为它做任何让步。
+ *
+ * 真正需要取舍的只剩一处：**命中区 vs 视觉尺寸**。
+ * 仓库那条"触屏命中区 ≥44"不是可选项，但 44×44 的深色圆盖在 56px 高的封面上太重。
+ * 于是把两者拆开——按钮对外仍是 44×44，圆用 `radial-gradient` 只画 30px：
+ * **看着是两个小圆，摸着是够大的按钮**，这是唯一不用二选一的写法。
+ * 代价是"封面右上角那一小块不再等于'点卡片建页'"，卡片正文与封面其余部分照旧。
+ *
+ * 为什么单列一条而不是塞进上面那个宽度断点：这与宽度无关——
+ * **792×360 的横屏手机不命中 768px**，但它同样没有 hover，同样删不掉自己的模板。
+ * 用 `hover` 媒体特性是"纯 CSS、无 JS 对应值"，所以也不触碰仓库那条
+ * "JS/CSS 断点必须是同一个数"（那条管的是宽度/高度断点）。
+ * ------------------------------------------------------------------------- */
+@media (max-width: 768px), (hover: none) {
+  /* 两个按钮**横排**（桌面是竖排两行）：56px 高的封面里塞不下两个 44 高的按钮，
+     横排才放得进上下各 6px 的余量。`top/right` 收到 2px，视觉圆才贴得住角。 */
+  .tc-card-actions {
+    top: 2px;
+    right: 2px;
+    flex-direction: row;
+    gap: 0;
+  }
+  /* `.tc-card:hover .tc-card-del` 必须一起写：基础规则里那条是 (0,2,0)，
+     在**能 hover**的环境（窄窗口 + 鼠标）里比 `.tc-card-del` (0,1,0) 大——
+     不带它，尺寸会退回 22×22。 */
+  .tc-card-del,
+  .tc-card:hover .tc-card-del {
+    opacity: 1;
+    /* 44×44 是**命中区**，下面那个半径 15px 的圆才是视觉尺寸（30px）。 */
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: radial-gradient(circle 15px at 50% 50%, rgba(0, 0, 0, 0.45) 0, rgba(0, 0, 0, 0.45) 14px, transparent 15px);
+    color: #fff;
+    font-size: 14px;
+  }
+  /* 悬停仍走危险色（基础规则 `.tc-card-del:hover` 的 background: var(--danger)）。 */
+  .tc-card-del:hover {
+    background: radial-gradient(circle 15px at 50% 50%, var(--danger) 0, var(--danger) 14px, transparent 15px);
+  }
+}
+
+/* ===========================================================================
+ * 文件视图（`FileManagerView`）窄屏适配 · 2026-09-22
+ * ===========================================================================
+ * 它也是 `.main` 里的整视图（`App.tsx` 的 `files` 那一支），吃**窄**断点。
+ * 390×844 / 320×568 上量到的（前两条是**功能不可用**，而且都不报错）：
+ *   1. `.file-manager-actions`：五个按钮一行 252px 起，390 上 `right=392 > 390`
+ *      ⇒「上传 / 视图切换」被推出屏幕；320 上溢出 72px。**这不是"挤"，是点不到。**
+ *   2. `.file-manager-table` 宽 673px，而 `.file-manager-table-wrap` 只有 `overflow-y`
+ *      ⇒ 类型/大小/时间/操作四列**被裁掉、且滚不到**（外层 `.file-manager{overflow:hidden}`）。
+ *   3. `.file-manager-toolbar` 一行里塞着 面包屑 + 计数 + **180px** 的搜索框：
+ *      320 上搜索框 `right=365 > 320`。
+ *
+ * 版式原则（与模板中心同一条）：**控制按钮不许占掉有限空间**。
+ * 所以这里的做法不是"把按钮改小继续挤"，而是**减少同时在场的控件**：
+ *   · 操作行在窄屏变成一排**图标**按钮（命中区 44×44、字形 18px，无边框无底色）——
+ *     文字标签留在 DOM 里给读屏用，形态由 CSS 切，桌面一个像素都不变；
+ *   · 「删除所选」在**没有选中**时不占位（一个 disabled 的破坏性按钮在手机上只是噪音）；
+ *   · 网格尺寸滑杆不显示（手机上列宽由 140px 的默认值决定，那条 84px 的轨道是纯占位）；
+ *   · 表格行的六个 20px 小按钮换成**一个 `⋯`**（44×44）打开动作面板，
+ *     并隐藏「类型 / 上次修改时间 / 创建时间」三列（名字 + 大小才是手机上要看的）；
+ *     面板补齐了原来只在小按钮里的动作（移动 / 版本 / 阅读并标注），少一项就等于
+ *     "手机上某个动作消失了"——那比按钮小更糟。
+ *   · 表格保留**横向滚动**作为兜底（长文件名不再把整行挤出屏幕且够不到）。
+ * =========================================================================== */
+/* ---------------------------------------------------------------------------
+ * 手机档（≤480）：文件表**藏列** —— 类型 / 日期整列去掉，只留名字与操作。
+ *
+ * ⚠️ 为什么不是挂在 768 档：`scripts/check-panel-layout.mjs` 在 **560px** 档明确保护
+ *   "表格保住列宽、横向滚动只留在容器里"（那是 2026-09 之前就定下的设计）。
+ *   挂在 768 上会连 560 一起盖掉——该门禁正是红在这一条上（`✗ 「类型」列不竖排（0 行）`：
+ *   元素被 `display:none`，行数当然是 0）。所以**手机（≤480）才藏列**，560 及以上保留列、
+ *   由容器横滚。仓库已有 CSS-only 的额外档先例（720 档），这里同样不碰 JS 断点。
+ * ------------------------------------------------------------------------- */
+@media (max-width: 480px) {
+  .file-manager-table .fm-kind-col,
+  .file-manager-table .fm-date-col,
+  .file-manager-table .fm-date { display: none; }
+}
+
+@media (max-width: 768px) {
+  .file-manager {
+    /* 桌面 `24px 32px` 的留白在 320px 上吃掉 20%。 */
+    padding: 10px 14px 0;
+  }
+
+  /* ---------- 标题行 / 操作行拆成两行：竖排比"挤一行"更省也更清楚 ---------- */
+  .file-manager-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+  .file-manager-title-block { gap: 8px; }
+  /* 那个 46px 的方块图标只是装饰，而窄屏的每一像素都要向内容让位
+     （左边竖条里已经有一个文件夹图标在指示"你在文件视图"）。 */
+  .file-manager-bigicon { display: none; }
+  .file-manager-title { font-size: 18px; }
+
+  /* ---------- 操作行：一排图标按钮（视觉很轻，命中区仍是 44） ---------- */
+  .file-manager-actions { flex-wrap: wrap; gap: 2px; }
+  .fm-btn {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+    /* 去掉边框与底色：一排 44px 的方框看着占地方，一排 18px 的字形才叫"简洁"。 */
+    border-color: transparent;
+    background: transparent;
+  }
+  .fm-btn:hover { background: var(--hover); }
+  .fm-btn-text { display: none; }
+  .fm-btn-icon { display: block; width: 18px; height: 18px; }
+  /* 没选中 = 不能被删，那这个按钮就不该在场（row 上的勾选仍然照常工作）。 */
+  .fm-btn-danger:disabled { display: none; }
+  .fm-size-slider { display: none; }
+  .fm-view-toggle { padding: 0; gap: 0; background: transparent; border-color: transparent; }
+  .fm-view-btn { width: 44px; height: 44px; }
+
+  /* ---------- 工具条：面包屑 + 搜索**同一行**（竖排两行白吃掉 44px 正文高度） ---------- */
+  .file-manager-toolbar {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding: 2px 0 6px;
+  }
+  .fm-breadcrumb {
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    /* 深路径改为**单行横滑**：换行会把工具条顶成三行，而面包屑本来就不该吃掉正文高度。 */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .fm-breadcrumb::-webkit-scrollbar { display: none; }
+  .fm-crumb { flex: 0 0 auto; min-height: 44px; }
+  /* 「N 个文件 · 共 X · N 项」这一行统计在手机上不占位：列表本身就是那份信息，
+     而它一在场就把搜索挤到第三行（实测工具条因此高 107px）。 */
+  .fm-count { display: none; }
+  .fm-search {
+    order: 2;
+    flex: 0 1 46%;
+    width: auto;
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  /* ---------- 表格：能横滑，且只留"名字 + 大小 + 操作" ---------- */
+  .file-manager-table-wrap {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* `width: max-content` 是横滑的前提：`width:100%` 会把七列硬压进 292px。 */
+  .file-manager-table { width: max-content; min-width: 100%; }
+  .file-manager-table th,
+  .file-manager-table td { padding: 8px 10px; }
+  /* 行尾六个 20px 小按钮 → 一个 `⋯`；其余动作在动作面板里。 */
+  .file-manager-table .fm-file-actions { display: none; }
+  .fm-more-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 18px;
+    line-height: 1;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .fm-more-btn:active { background: var(--hover); color: var(--text); }
+  /* 行内"打开这个文件"的按钮：桌面上它跟着文字高度（~20px），窄屏给足 44。 */
+  .fm-name-btn { min-height: 44px; }
+  /* 行首那个勾选框：**命中区是整行**（点行即选中，`tr` 上有 onClick），
+     所以它在窄屏只当"状态指示"用——`pointer-events:none` 让点击穿透到行上，
+     顺带消掉"点勾选框会不会触发两次"的疑问。视觉放大到 22px 更好认。 */
+  .file-manager-table input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    pointer-events: none;
+  }
+  /* 表头那个「全选」不在可点行里，它是**唯一**的全选入口，命中区必须自己够大：
+     外面那个 `label` 长到 44×44（负 margin 让它不把行撑高），input 本身
+     `pointer-events:none`——点 label 就等于点它。 */
+  .file-manager-table .fm-selectall {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin: -11px;
+    cursor: pointer;
+  }
+  .file-manager-table .fm-selectall input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    pointer-events: none;
+  }
+
+  /* ---------- 动作面板：贴底成面板，不再是跟着手指的 x/y 小浮层 ----------
+     `position: fixed` + 内联 `left/top` 在手机上会跑到屏外（长按右下角的行，
+     面板就有一半在屏幕外）。窄屏由组件**不写**内联定位（`is-sheet`），这里接管。
+     两处共用同一套几何：文件视图的行动作（`.fm-ctx`）与属性行的「⋯」（`.prop-ctx`）。 */
+  .fm-ctx.is-sheet,
+  .prop-ctx.is-sheet {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: max(var(--sab), var(--kb));
+    width: auto;
+    max-height: calc(var(--ovh) - 24px);
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding: 8px;
+    padding-bottom: calc(8px + var(--sab));
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    z-index: 1600;
+  }
+  .fm-ctx.is-sheet .fm-ctx-item,
+  .prop-ctx.is-sheet .prop-ctx-item { min-height: 48px; font-size: 14px; }
+  /* 面板是"动作列表"，标题只是导航用的上下文——别让它占掉一整行。 */
+  .fm-ctx.is-sheet .fm-ctx-title,
+  .prop-ctx.is-sheet .prop-ctx-title { padding: 2px 10px 8px; max-width: none; }
+}
+
+/* ===========================================================================
+ * 窄屏"常驻 chrome"紧凑化 · 2026-09-22
+ * ===========================================================================
+ * 这一节管的是**每一屏都在场**的那些控制：左竖条、侧栏头部、编辑工具栏、页面动作、
+ * 右侧悬浮条。它们不属于某个视图，而是"控制按钮在有限空间里占了多少"这个问题本身。
+ *
+ * 口径（与模板中心、文件视图同一条）：**命中区 44、视觉尽量小、常驻数量尽量少**。
+ * 下面每一条都只动"命中区 / 内边距"，图标与字形尺寸几乎不变——
+ * 视觉上不该因为"手指要 44"就把界面撑胖。
+ *
+ * 量到的（390×844 / 320×568，都是"看得见、点不中"）：
+ *   · `.activity-btn` 40×40（差 4px）；`.btn-sync` / `.btn-new` 61×28 / 62×28；
+ *     `.sidebar-title` 40 高；`.toolbar-btn` 28×28；`.page-action-btn` 85×27；
+ *     `.rail-btn` 30×30。
+ * =========================================================================== */
+@media (max-width: 768px) {
+  /* ---------- 正文左右留白：52px → 18px ----------
+     桌面那一档 `--doc-pad: 52px` 是给"居中文档列"用的；320px 屏上它左右各吃掉 52px
+     ⇒ 标题/正文/属性卡只剩 **216px**（33% 的屏宽没了，实测属性值列因此被压到 47px）。
+     窄屏收到 18px。`.note-scroll` / `.title-area` / `.properties` / `.metadata-card`
+     等七八处共用这一个变量，改一处全跟着走。 */
+  :root { --doc-pad: 18px; }
+
+  /* 属性面板内层的左右留白同理（桌面 28px 是为了和文档列对齐）。 */
+  .properties-body { padding: 6px 12px 10px; }
+
+  /* ---------- 属性行尾：三个 18px 小按钮 → 一个 `⋯`（44×44）----------
+     为什么不是"把那三个各自补到 44"：三个 44 就是 132px，而 320px 上整个属性行只有
+     230px（名字 39 + 间距 16 + 值列）——补完值列只剩 ~43px，等于把用户真正要看的值挤没。
+     收进一个 `⋯` 之后值列反而更宽（实测 320px：147 → 161px），而且手机上本来也点不中
+     那三个 18px 的图标。面板里三项齐全（上移/下移/移除属性），**功能一点没少**。 */
+  .prop-order-btns .prop-order,
+  .prop-order-btns .prop-remove { display: none; }
+  .prop-more {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 18px;
+    line-height: 1;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .prop-more:active { background: var(--hover); color: var(--text); }
+  /* 面板的遮罩：`z-index` 比面板低一档（面板 1600）。 */
+  .prop-ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  /* ---------- 文件管理：网格图块的勾选框 ----------
+     桌面上它靠 `:hover` 才显形，而**触屏没有 hover** ⇒ 手机上它既看不见、又只有 15×15；
+     图块本身的点击是"打开文件"⇒ **网格模式在手机上根本选不中任何东西**
+     （批量删除/移动都够不到）。窄屏改成：常显 + 命中区 44（外面那层 label 提供命中区，
+     见 `FileManagerView` 的 `.fm-grid-checkwrap`；桌面那层 label 不设样式、不影响布局）。 */
+  .fm-grid-checkwrap {
+    position: absolute;
+    top: 0;
+    right: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+  }
+  .fm-grid-check {
+    position: static;
+    width: 20px;
+    height: 20px;
+    opacity: 1;
+    pointer-events: none;
+  }
+
+  /* ---------- 左竖条：40 → 44（48px 宽的条正好是 44 + 左右各 2） ---------- */
+  .activity-bar { padding: 4px 2px; }
+  .activity-btn { width: 44px; height: 44px; }
+  /* 回收站触发器不是 `.activity-btn`（它自带浮层，类名是 `.btn-trash`），
+     所以上面那条管不到它——而且基础规则是**两段**：`.btn-trash`(0,1,0) 与
+     `.activity-bar .btn-trash`(0,2,0)，后者赢。这里必须用**同样的特异性**写。 */
+  .activity-bar .btn-trash { width: 44px; height: 44px; }
+  .activity-group { gap: 0; }
+
+  /* ---------- 侧栏头部：同步 / 新建 / 空间名 ---------- */
+  .btn-sync,
+  .btn-new { height: 44px; }
+  .sidebar-title { min-height: 44px; }
+
+  /* ---------- 编辑工具栏 ----------
+     命中区给到 44，**图标尺寸一点不动**：一排透明底的 44px 格子看起来只是一排图标，
+     而一排 28px 的格子看起来也一样——但后者点不中。真正占地方的是"格子数"，
+     所以这里同时把间距收到 0。 */
+  .editor-toolbar-bar { padding: 4px 10px; gap: 8px; }
+  .editor-toolbar { gap: 0; }
+  .toolbar-btn { width: 44px; height: 44px; }
+  /* 面包屑让位：它本身是导航，深路径改为**单行横滑**（换行会把工具栏顶成两行）。 */
+  .breadcrumbs {
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .breadcrumbs::-webkit-scrollbar { display: none; }
+  .crumb { flex: 0 0 auto; min-height: 44px; }
+  /* 「更换图标 / 更换封面」等页面级动作（27 高）。 */
+  .page-action-btn { min-height: 44px; }
+
+  /* ---------- 右侧悬浮条：窄屏**默认收起**，由右下角的圆钮唤出 ----------
+     ⚠️ 断点必须与 `useMobile()` 用的**同一个**（`max-width: 768px`，= `MOBILE_BREAKPOINT_PX`），
+     不能跟着浮层那套写成"窄**或矮**"（`max-height:520px`）：这条工具条的**显隐是 JS 决定的**
+     （`RightRail` 里 `isMobile` 判断），CSS 说"矮屏也收起"而 JS 说"不算窄屏"就会两边打架
+     ——横屏手机（792×360）会出现"工具条被 CSS 藏了、唤出按钮没有渲染"的死角。
+     仓库那条"JS/CSS 断点必须是同一个数"说的正是这种地方。 */
+  .mobile-right-toggle {
+    position: fixed;
+    right: 12px;
+    /* 与左下角那枚（`.mobile-rail-toggle`）同一套让位规则：状态栏 / 手势条 / 键盘。 */
+    bottom: max(18px, calc(var(--sab) + 12px));
+    z-index: 45;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-full);
+    background: var(--surface);
+    color: var(--text-dim);
+    box-shadow: var(--shadow-md);
+    cursor: pointer;
+  }
+  .mobile-right-toggle:active { background: var(--hover); color: var(--text); }
+  .mobile-right-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 56;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  /* 展开态：贴在右下角那枚按钮**上方**（不再是"垂直居中贴在右缘"——那样它在
+     窄屏上会压住正文，而且离拇指最远）。 */
+  .right-rail.is-open {
+    top: auto;
+    right: 8px;
+    bottom: calc(max(18px, calc(var(--sab) + 12px)) + 52px);
+    transform: none;
+    z-index: 57;
+    padding: 4px;
+    gap: 2px;
+    border-right: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+  }
+  .rail-btn { width: 44px; height: 44px; }
+}
+
+/* ===========================================================================
+ * 窄屏"视图内部工具条"紧凑化 · 2026-09-22
+ * ===========================================================================
+ * 看板的筛选条、关系图的控制面板：它们浮在内容上，窄屏下**必须换行**——
+ * 关系图那一条控制总宽 ~650px，锚在 `right: 14px`，390px 视口上左边有 274px
+ * **挂在屏幕外**（右锚定不会溢出右边，所以此前没人发现：它是"左边点不到"）。
+ * 换行之后每一行都留在屏内，命中区同时补到 44。
+ * =========================================================================== */
+@media (max-width: 768px) {
+  /* ---------- 看板：分组维度选择器 30 高 ---------- */
+  .board-group-select { min-height: 44px; }
+  .board-toolbar { flex-wrap: wrap; row-gap: 4px; }
+
+  /* ---------- 关系图：控制面板换行 + 命中区 44 ---------- */  .graph-controls {
+    left: 8px;
+    right: 8px;
+    top: 8px;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    max-width: calc(100% - 16px);
+    padding: 4px 6px;
+  }
+  .graph-controls button { min-height: 44px; }
+  .graph-select,
+  .graph-search { min-height: 44px; }
+  .graph-search { flex: 1 1 120px; }
+  /* 分隔条只对"同一行内的分组"有意义；换行之后它会悬在行尾，反而像多余的空格。 */
+  .graph-controls-sep { display: none; }
+  /* ⚠️ 「块级」那个开关不在 `.graph-controls` 里，它在左下角的 `.graph-legend` 里
+     （图例条 + 一个开关）。上一版只写了 `.graph-controls button`，于是它仍是 40 高。 */
+  .graph-legend {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    max-width: calc(100% - 28px);
+  }
+  .graph-legend .graph-toggle { min-height: 44px; }
+}
+
+/* ===========================================================================
+ * 数据库视图（`DatabaseView`）窄屏适配 · 2026-09-22
+ * ===========================================================================
+ * 8 个视图页签（表格/画廊/看板/列表/日历/时间轴/目录/甘特图）排成一行是 **582px**，
+ * 而 `.database-head` 虽然是 `flex-wrap: wrap`，`.db-view-switch` 却是
+ * `flex: 0 0 auto`——它自己既不换行也不缩，于是 390px 上 `right=606`
+ * （**右边 216px 挂在屏幕外**，320 上是 286px）：「日历 / 时间轴 / 目录 / 甘特图」
+ * 四个模式在手机上**根本切不过去**。命中区也普遍偏小：
+ * 筛选框 30 高、页签 29、`＋ 列` 25、单元格输入 26、行标题按钮 27。
+ *
+ * 做法与文件视图同一条（**不让控件留在屏幕外，也不让它们占版面**）：
+ * 页签**单行横滑**（换行会白吃 88px 正文高度），其余控件补到 44。
+ * =========================================================================== */
+@media (max-width: 768px) {
+  .database-view { padding: 10px 12px 16px; }
+  .database-head { row-gap: 6px; margin-bottom: 8px; }
+  .database-title { order: 1; flex: 1 1 auto; font-size: 18px; }
+  .database-count { order: 2; }
+  /* 视图页签：单行横向滚动。 */
+  .db-view-switch {
+    order: 3;
+    flex: 1 1 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .db-view-switch::-webkit-scrollbar { display: none; }
+  .db-view-switch button { flex: 0 0 auto; min-height: 44px; }
+  /* 筛选框 + 右侧动作挤同一行：筛选框可缩到 120px（桌面上它是固定 240px）。 */
+  .database-filter {
+    order: 4;
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 0;
+    min-height: 44px;
+    font-size: 14px;
+  }
+  .db-actions { order: 5; margin-left: 0; flex-wrap: wrap; gap: 4px; }
+  .db-views-btn { min-height: 44px; }
+  /* 单元格里的小控件：桌面上它们是"贴着单元格"的 25~28 高。 */
+  .db-add-col,
+  .db-title,
+  .db-input,
+  .db-ref { min-height: 44px; }
+  .db-title { padding: 0 8px; }
+  /* 外层 `.database-table-wrap` 本来就是 `overflow:auto`；这里让表**真的撑开**，
+     否则七列会被硬压进 292px（那时每一列都只剩几十像素）。 */
+  .database-table { width: max-content; min-width: 100%; }
+  /* 看板 / 列表模式的条目同理（卡片本身就是可点的目标）。 */
+  .db-board-card,
+  .db-list-item { min-height: 44px; }
+  /* 其余模式的条目与工具按钮：桌面上它们是"贴着内容"的 20~31 高
+     （列表展开箭头 20×20、列表/时间轴/目录的标题按钮 20~28 高、看板分组选择器 31 高、
+     日历翻页 ‹ › 26 高）。窄屏一律补到 44——量过 8 个模式，越界 0 处、命中区这些是剩下的。 */
+  .db-list-expand,
+  .db-list-title,
+  .db-timeline-title,
+  .db-dir-title,
+  .db-board-select,
+  .db-cal-toolbar button { min-height: 44px; }
+  /* 只有图形的（展开箭头 / 日历翻页）宽度也要够。 */
+  .db-list-expand,
+  .db-cal-toolbar button { min-width: 44px; }
+}
+
+/* ===========================================================================
  * 窄屏浮层 / 弹窗适配（<=768px）· 2026-09-14
  * ===========================================================================
  * ⚠️ 本块**必须留在文件末尾**。
@@ -21116,6 +22146,15 @@ body.is-plugin-panel-open .main {
     padding-bottom: 14px;
     z-index: 1600;
   }
+  /* 窄屏弹层里**只有同步面板**要回到 --z-popover(700)：它是唯一会从自身内容里发起
+     输入框/确认框的弹层（见 App.css 里 `.sync-popover` 的注释），而上面那一整排
+     1600（搜索/回收站/空间切换/备份/新建菜单/版本历史）是"弹层压弹层"的既有做法，
+     它们的父级可能是全屏模态（如设置里的备份下拉），压低会反过来被模态吃掉。
+     同步面板不在这类模态里，所以只压低它自己。 */
+  .sync-popover,
+  .sync-popover.is-sync {
+    z-index: var(--z-popover);
+  }
   /* 内部本来就有滚动条的，别叠两层滚动。 */
   .search-popover .search-results,
   .trash-popover .trash-list,
@@ -21247,10 +22286,11 @@ body.is-plugin-panel-open .main {
      并把「关闭」推到可见的一端；触摸目标补齐到 44×44（这一层原来是 28×28，
      与 §4.1 那条"命中区 ≥44"是同一条规矩，只是当初没覆盖到阅读器内部）。
      --------------------------------------------------------------------------- */
-  .pdf-reader-head {
-    flex-wrap: wrap;
-    row-gap: 6px;
-  }
+  /* ⚠️ 2026-09-22（owner："pdf 阅读器顶部系统工具栏任何时候不换行，空间狭小时收起来"）：
+     这里原来给 head 开的是 `flex-wrap: wrap`（"不裁 = 每个按钮都真的能按到"），代价是
+     390 上 115px / 2 行、320 上 165px / 3 行。现在 head **任何时候都不换行**，
+     放不下的收进「⋯」（`PdfReader` 量宽 + `[data-collapse]`）—— 不裁这件事由
+     "最少配置 [文件名][⋯][×] ≈ 144px" 保证，不需要靠折行。 */
   /* ---------------------------------------------------------------------------
      浮层形态的阅读器**必须自己让开系统栏**（同一轮真机量到的第四处）
 
@@ -21266,26 +22306,51 @@ body.is-plugin-panel-open .main {
   .pdf-reader-overlay:not(.main > .pdf-reader-overlay) {
     padding: var(--sat) var(--sar) max(var(--sab), var(--kb)) var(--sal);
   }
-  /* ⚠️ 只让 head 换行**不够**：它里面的 `.pdf-reader-controls` 自己是个 603px 宽的 flex 行
-     （真机实测），换行只能在"子元素"这一级发生 ⇒ 那一整块照样溢出、右边仍被裁。
-     内层容器也要允许换行，并让标题允许被压缩（原来 `flex:1` 会先吃掉 270px）。 */
-  .pdf-reader-controls {
-    flex-wrap: wrap;
-    row-gap: 6px;
-    min-width: 0;
+  /* 2026-09-22：窄屏把这两组内部的间距收紧（6 → 4）。⚠️ 外层 `.pdf-reader-controls`
+     已经**不存在**了（head 改成扁平 + 量宽收起，那一层会让"只收缩放、留翻页"做不到）。 */
+  .pdf-reader-nav,
+  .pdf-reader-zoom {
+    gap: 4px;
+  }
+  /* 页码指示器是"至少 72px"（桌面为了不抖），窄屏没必要留那么宽：短文本自然更窄，
+     长文本（如「第 128 / 1024 页」）本来就超过 72px，不受影响。 */
+  .pdf-reader-page {
+    min-width: 64px;
   }
   .pdf-reader-name {
     flex: 0 1 auto;
     max-width: 42%;
   }
+  /* 分隔线在窄屏不显示：每个按钮已经 44 宽，再加 1px + 两侧间距只会挤掉正文。 */
+  .pdf-reader-sep { display: none; }
   .pdf-reader-close {
     margin-left: auto;
   }
-  .pdf-annot-toolbar,
-  .pdf-annot-tools,
-  .pdf-annot-actions {
-    flex-wrap: wrap;
-    row-gap: 6px;
+  /* ⚠️ 这里原来还有一段 `order` 重排（[目录][文件名][导出][⋯][×] 提到第一行）——
+     那是"折行时代"的补丁：控制组一换行，后面的 `⋯`/`×` 就被推到第四行。
+     现在只有一行、且 DOM 顺序本来就是 [目录][文件名][翻页][缩放][视图开关][导出][⋯][×]，
+     `order` 全部删掉（留着只会让人以为是它在起作用）。 */
+  /* 「⋯」的菜单在窄屏不许超出视口：里面的行本来就允许换行。 */
+  .pdf-head-more-pop {
+    max-width: calc(100vw - 24px);
+  }
+  /* ⚠️ 2026-09-22：这里原来给批注工具组开了一条**横向滚动**（"单行横滑"）——按钮被推出屏外，
+     和"收起来"是两回事。现在窄屏也**不换行、不横滑**：工具条自己量宽后把放不下的收进「⋯」
+     （`PdfAnnotTopToolbar` + `[data-collapse]`）。行内只留兜底滚动（见 `.pdf-annot-toolbar-row`）。 */
+  .pdf-annot-tool { flex: 0 0 auto; }
+  /* 「⋯」的菜单在窄屏铺满一行的宽度：里面的分组本来就允许换行。 */
+  .pdf-annot-more-pop {
+    max-width: calc(100vw - 24px);
+  }
+  /* ⚠️ 页内工具栏的**固定高度**在窄屏另一档：按钮是 44 命中区 + 工具组内边距 8 +
+     工具条内边距 12 + 下边框 1 = 65px。写死它，内容再忙也不许把这一格撑高。 */
+  .pdf-reader-stage-wrap > .pdf-annot-toolbar {
+    height: 65px;
+  }
+  /* ⚠️ 系统工具栏（头部）同理：按钮 44 + 上下内边距 10+10 + 下边框 1 = 65，留 1px 写 66。
+     它是"一句话都不许折行"的那一层：文件名走省略号、页码/百分比 `nowrap`。 */
+  .pdf-reader-head {
+    height: 66px;
   }
   .pdf-reader-head button,
   .pdf-annot-toolbar button,
@@ -21294,54 +22359,174 @@ body.is-plugin-panel-open .main {
     min-width: 44px;
     min-height: 44px;
   }
+
+  /* ---------------------------------------------------------------------------
+   * 5b. **小控件不许被"按钮一律 44 高"拉变形**（2026-09-22，用户截图）
+   *
+   * 上面 §5 那一串 `min-height: 44px` 是给**普通按钮**的；下面这几类不是普通按钮，
+   * 它们的"高度"就是**设计尺寸本身**（轨道 / 圆点），拉高就是走形：
+   *   · `.ui-toggle`  38×22 的胶囊（`border-radius: 11px`）+ 18px 圆钮
+   *       ⇒ 拉到 44 高变成 **44×44 的扁方疙瘩、圆钮贴在角上**（实测 44×44，就是用户截图里那个）；
+   *   · `.set-swatch` 30×30 的圆（`border-radius: 50%`，行内 gap 10px）⇒ **30×44 的椭圆**；
+   *   · `.tag-color-pick` / `.tag-color-custom` 20×20 的色点 ⇒ **20×44 的椭圆**。
+   *
+   * 命中区照样要给够 44，但做法是**向外扩一层透明命中区**（`::after` 撑到 44×44 居中覆盖），
+   * 而不是把可见的轨道/圆点拉大：**视觉尺寸是设计值，命中区是手指的事**，两者分开。
+   * ⚠️ 色点那一族横向只扩到 44：相邻色点隔 10px ⇒ 命中区最多重叠 4px
+   *（那条 4px 窄带两边都算命中，取 DOM 靠后的那个）——比"20px 宽点不中"好得多，也不再是椭圆。
+   *
+   * ⚠️⚠️ **这一节必须留在 §5 那串规则的后面**：`button.ui-toggle` 与 `.about button`
+   * 都是 (0,1,1)，靠"后写的赢"压回设计高度。第一次我把它插在 §5 中间，结果被后面
+   * 那条"图标类按钮宽度也要够 44"（`.about button{min-width/min-height:44}`）反压回来，
+   * 量出来仍是 44×44——**同特异性下位置就是胜负**，别靠 `!important`。
+   * ------------------------------------------------------------------------- */
+  button.ui-toggle { width: 38px; min-width: 38px; height: 22px; min-height: 22px; }
+  button.set-swatch { position: relative; width: 30px; min-width: 30px; height: 30px; min-height: 30px; }
+  /* 色点：`.tag-color-pick` 是 `<button>`，而 `.tag-color-custom` 是 **`<label>`**
+     （里面套 `input[type=color]`）——所以这里按**容器**限定特异性
+     （`.tag-picker …` = (0,2,0) > `.tag-picker button` = (0,1,1)），而不是给 label 写 `button.…`。 */
+  .tag-picker .tag-color-pick,
+  .tag-picker .tag-color-custom {
+    position: relative;
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    min-height: 20px;
+  }
+  button.ui-toggle::after,
+  button.set-swatch::after,
+  .tag-picker .tag-color-pick::after,
+  .tag-picker .tag-color-custom::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 /* ---------------------------------------------------------------------------
-   横屏（**矮**视口专有）：PDF 阅读器的头部/批注行不许换行，改成单行横向滚动
+   横屏（**矮**视口专有）：批注工具行单行 + 兜底横滑
 
-   上面那段"允许换行"是为了"不把按钮裁在屏外"（纵屏必备）。但到了横屏就走向反面：
-   12 + 6 个 44px 的按钮一换行，光这两行就吃掉整个高度——真机实测（792×360）
-
-     .pdf-reader-head        215px
-     .pdf-annot-toolbar      157px
-     .pdf-reader 总高        319px   ⇒ 正文区只剩 40px，页面图 y=429 **整页在屏外**
-
-   所以矮视口另给一套：**单行 + 横向滚动**（每个按钮仍然 44px、都摸得到，只是要滑一下），
-   关闭按钮 sticky 贴右端常驻（它是"离开"的唯一入口，不能滑走）。
-   为什么用"矮"而不是"窄"：窄而高的竖屏有足够高度换行，换行比横向滑动更好用。
+   ⚠️ 2026-09-22 起这一段**只管批注工具行的兜底滚动**：头部（`.pdf-reader-head`）与
+   批注工具条都已经"任何时候不换行 + 放不下收进「⋯」"，横屏这一档同理（量出来的宽度
+   已经含着"高度矮"这件事）。
+   ⚠️⚠️ head **不能**在这里开 `overflow-x: auto`：那会让绝对定位的「⋯」菜单被裁掉
+   （overflow-x 一旦不是 visible，overflow-y 也跟着变 auto）。所以 head 只留
+   `sticky` 的关闭按钮那条 —— 它其实也不再需要 sticky（整行不滚），保留是历史包袱，
+   等下一轮顺手清。
    --------------------------------------------------------------------------- */
 @media (max-height: 520px) {
-  .pdf-reader-head,
-  .pdf-reader-controls,
-  .pdf-annot-toolbar,
-  .pdf-annot-tools,
-  .pdf-annot-actions {
+  .pdf-annot-toolbar-row {
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
-  .pdf-reader-head::-webkit-scrollbar,
-  .pdf-reader-controls::-webkit-scrollbar,
-  .pdf-annot-toolbar::-webkit-scrollbar,
-  .pdf-annot-tools::-webkit-scrollbar,
-  .pdf-annot-actions::-webkit-scrollbar {
+  .pdf-annot-toolbar-row::-webkit-scrollbar {
     display: none;
   }
   .pdf-reader-name {
     max-width: 30%;
   }
-  .pdf-reader-close {
-    position: sticky;
-    right: 0;
-    margin-left: auto;
-    background: var(--bg);
-  }
-  /* 批注工具行同理：单行滚动，别把正文挤没。 */
+  /* 批注工具组同理：量宽要的是**真实宽**，别被压扁。 */
   .pdf-annot-tools,
   .pdf-annot-actions {
     flex-shrink: 0;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   阶段 1 · **冲突提示条**（`components/ConflictBanner.tsx`）
+
+   裁定 (iii)："判不了就**不静默选边**" —— 同一块被两台设备同时改过时，这条提示出现在页面顶部，
+   逐条给出「本机那一版 / 远端那一版」两个按钮（留本地 / 用远端）。**没有冲突时它整条不渲染**。
+
+   为什么用 `.main` 的直接子元素：它属于"页面级状态"，与 `.editor-toolbar-bar` 同一层。
+   窄屏下**只换行、不裁**（`flex-wrap`）—— 44px 触摸目标那条纪律同样适用于这两个按钮。
+   --------------------------------------------------------------------------- */
+.conflict-banner {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font-size: 13px;
+}
+.conflict-banner-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.conflict-banner-title {
+  font-weight: 600;
+}
+.conflict-banner-hint {
+  color: var(--text-dim);
+}
+.conflict-banner-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.conflict-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.conflict-item-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+.conflict-side {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conflict-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.conflict-btn {
+  min-height: 44px;
+  min-width: 72px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.conflict-btn:hover {
+  background: var(--hover);
+}
+.conflict-btn-primary {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+/* 阶段 1 · **冲突块角标**（`editor/blockConflictBadge.ts`）：提示条里那几条对应的块，在正文里也看得出来。
+   只用一条内阴影，不动块的背景 —— 正文里的背景属于主题/引用/代码块，改它会把格式吃掉。 */
+.block-conflict {
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 

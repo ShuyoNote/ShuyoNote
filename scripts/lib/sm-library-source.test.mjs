@@ -8,7 +8,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { lockVersion, markerFileOf, resolveSqlcipherSource, sha256OfFile, sourceFingerprint } from "./sm-library-source.mjs";
+import {
+  lockVersion,
+  requireStaticCrypto,
+  markerFileOf,
+  resolveSqlcipherSource,
+  sha256OfFile,
+  sourceFingerprint,
+  staticCryptoVerdict,
+} from "./sm-library-source.mjs";
 
 const LOCK = `
 version = 4
@@ -121,5 +129,103 @@ describe("markerFileOf / sha256OfFile / sourceFingerprint", () => {
   it("标记只认内容、不认文件名（一个 .c 里有字面量就算）", () => {
     const { lockPath, roots } = fixture({ versions: ["0.38.2"], markerIn: "0.38.2", markerFile: "zzz.c" });
     expect(sourceFingerprint({ lockPath, roots }).hasMarker).toBe(true);
+  });
+});
+
+// ★ 2026-09-22（owner 拍板「就发国密单一口味」后加）：**发布链上必须能证明"自包含"**。
+//   机制：`libsqlite3-sys` 发 `rustc-link-lib=dylib=crypto`，链接器在**没有共享库时退到 .a**
+//   ⇒ "前缀里只有 libcrypto.a"＝静态链接；"前缀里有 .dylib/.so"＝产物依赖**构建机**那份。
+//   实测（本机）：只放 libcrypto.a 的前缀 ⇒ `otool -L` 里**没有**任何 libcrypto/libssl。
+describe("sm-library-source：静态前缀守卫（单一口味要自包含）", () => {
+  it("只有 libcrypto.a ⇒ 通过，并报出它", () => {
+    const v = staticCryptoVerdict({ names: ["libcrypto.a", "libssl.a", "pkgconfig"] });
+    expect(v.ok).toBe(true);
+    expect(v.found).toContain("libcrypto.a");
+  });
+
+  it("★ 有 libcrypto.dylib（或 .so / 版本化 .so）⇒ **不通过**，且理由要点到「依赖构建机」", () => {
+    for (const names of [
+      ["libcrypto.a", "libcrypto.dylib"],
+      ["libcrypto.so", "libcrypto.a"],
+      ["libcrypto.so.3", "libcrypto.a"],
+      ["libcrypto.3.dylib", "libcrypto.a"],
+    ]) {
+      const v = staticCryptoVerdict({ names });
+      expect(v.ok).toBe(false);
+      expect(v.why).toMatch(/共享版 libcrypto/);
+      expect(v.why).toMatch(/构建机/);
+      expect(v.why).toMatch(/libcrypto\.a/);
+    }
+  });
+
+  it("lib64 里的共享库也算（只看 lib/ 会漏）", () => {
+    const v = staticCryptoVerdict({ names: ["libcrypto.a"], files: [{ names: ["libcrypto.so.3"] }] });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto\.so\.3/);
+  });
+
+  it("没有 .a ⇒ 不通过（静态链接无从谈起，别静默变成动态）", () => {
+    const v = staticCryptoVerdict({ names: ["libssl.dylib", "pkgconfig"] });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/没有.*libcrypto\.a/);
+  });
+});
+
+  // ★ 这一条走**磁盘版**（`requireStaticCrypto`）—— 上面那条只喂纯函数，抓不住"只看 lib/、漏 lib64"的变异
+  //   （实测：把 lib64 那支删掉，纯函数那条照样绿 ⇒ 必须有一条走目录扫描的）。
+  //   ⚠️ 它**名字里就写着"磁盘版"，第一版却喂了假 FS** —— 而假 FS 按字面 `/lib64` 匹配，生产用的是
+  //   `node:path.join`（Windows 上是 `\`）⇒ 在 Windows 上永远匹配不上（**假红**，2026-09-22 实测）。
+  //   ⇒ 真的走磁盘：目录用 `join` 建，判据自动跨平台，也比假 FS 更接近真前缀。
+  it("磁盘版必须**同时看** lib/ 与 lib64/（只扫 lib/ 会漏掉真实前缀）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sm-static-"));
+    made.push(dir);
+    mkdirSync(join(dir, "lib"), { recursive: true });
+    mkdirSync(join(dir, "lib64"), { recursive: true });
+    writeFileSync(join(dir, "lib", "libcrypto.a"), "");
+    writeFileSync(join(dir, "lib64", "libcrypto.so.3"), "");
+    const v = requireStaticCrypto(dir);
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto\.so\.3/);
+    // 反向：lib64 里也放 .a ⇒ 通过
+    rmSync(join(dir, "lib64", "libcrypto.so.3"));
+    writeFileSync(join(dir, "lib64", "libcrypto.a"), "");
+    expect(requireStaticCrypto(dir).ok).toBe(true);
+  });
+
+// ★ Windows 那一支（2026-09-22，Windows 侧点名要）：OpenSSL 的 **Windows 安装版是动态的**，
+//   DLL 叫 `bin\libcrypto-3-x64.dll`（**连字符**），而它同时在 `lib\` 放一份**导入库** `libcrypto.lib`
+//   ⇒ 只看 `lib/` 会被骗过（看着像"有 .lib 就能静态"），实际是"链接期解析到导入库、运行时去找 DLL"。
+//   动机不是理论：Windows 那台机器的全局 `OPENSSL_DIR` 正指着这样一个动态前缀。
+describe("sm-library-source：静态前缀守卫（Windows 的那一支）", () => {
+  it("★ 动态前缀：`lib/libcrypto.lib`（导入库）＋ `bin/libcrypto-3-x64.dll` ⇒ **不通过**", () => {
+    const v = staticCryptoVerdict({
+      names: ["libcrypto.lib"],
+      files: [{ names: ["libcrypto.lib"] }, { names: ["libcrypto-3-x64.dll", "libssl-3-x64.dll"] }],
+    });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto-3-x64\.dll/);
+  });
+
+  it("vcpkg 那种静态前缀（只有 libcrypto.lib、bin 里没有 crypto DLL）⇒ 通过", () => {
+    const v = staticCryptoVerdict({
+      names: ["libcrypto.lib", "libssl.lib"],
+      files: [{ names: ["libcrypto.lib"] }, { names: [] }],
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it("★ 磁盘版必须扫 `bin/`（只扫 lib/ 会漏掉 Windows 那个坑）", () => {
+    // 同上：这条是"磁盘版"，就走真磁盘（假 FS 的字面 `/bin` 在 Windows 上匹配不上 ⇒ 假红）。
+    // 本机全局 `OPENSSL_DIR=C:\Program Files\OpenSSL-Win64` 正长这样：
+    // `lib\libcrypto.lib`（导入库）＋ `bin\libcrypto-3-x64.dll`。
+    const dir = mkdtempSync(join(tmpdir(), "sm-static-win-"));
+    made.push(dir);
+    mkdirSync(join(dir, "lib"), { recursive: true });
+    mkdirSync(join(dir, "bin"), { recursive: true });
+    writeFileSync(join(dir, "lib", "libcrypto.lib"), "");
+    writeFileSync(join(dir, "bin", "libcrypto-3-x64.dll"), "");
+    const v = requireStaticCrypto(dir);
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto-3-x64\.dll/);
   });
 });

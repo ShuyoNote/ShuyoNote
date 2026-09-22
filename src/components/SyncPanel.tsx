@@ -118,6 +118,65 @@ export function SyncPanel() {
   const [detailOpenIdx, setDetailOpenIdx] = useState<number | null>(null);
   // P0.1 同页冲突提示：sync_workspace 返回的 dirty 冲突页，用户选择保留/采用。
   const [conflicts, setConflicts] = useState<{ ws_id: string; entity_id: string; title: string }[]>([]);
+  // ★ B 方案（2026-09-22）：**待取回的远端版本**（页级保留本地时存下来的那一版）。
+  // 修好之前这一支是**完全静默**的：游标过去了、对端那笔编辑再也取不回、层里一条痕都没有。
+  const [pending, setPending] = useState<{ page_id: string; title: string; seq: number }[]>([]);
+  const [pendingTotal, setPendingTotal] = useState(0);
+
+  /** 读待取回清单（面板打开 / 每次同步之后）。失败不打扰用户：它只是提示面。 */
+  const loadPendingRemote = async () => {
+    try {
+      const q = await api.listPendingRemotePages(20);
+      setPending((q?.pages ?? []) as { page_id: string; title: string; seq: number }[]);
+      setPendingTotal(Number(q?.total ?? 0));
+    } catch {
+      setPending([]);
+      setPendingTotal(0);
+    }
+  };
+
+  /**
+   * 裁决**一处**待取回的远端版本。三个选项都**真的动数据** ——
+   * 旧横幅那两条按钮只改一行文案（取证文件 §4 的 F3），这一版不是。
+   */
+  const resolveOne = async (pageId: string, choice: "merge" | "take_remote" | "keep_local") => {
+    try {
+      const rep = await api.resolvePendingRemote(pageId, choice);
+      const what =
+        choice === "merge"
+          ? `已合并（${rep.merged ? "逐块合并" : "用远端原样"}${rep.unresolved ? `，还有 ${rep.unresolved} 处要逐块裁决` : ""}）`
+          : choice === "take_remote"
+            ? `已采用远端版本（放弃本地未推送改动 ${rep.discarded_local_changes} 笔）`
+            : "已保留本地（下次同步会推送你这份）";
+      setStatus(what);
+    } catch (e) {
+      setStatus(`裁决失败：${e}`);
+    }
+    await loadPendingRemote();
+    await loadPages();
+  };
+
+  /** 横幅上那两颗按钮：对**当前这批冲突页**批量按同一口径收场。 */
+  const resolveAll = async (choice: "take_remote" | "keep_local") => {
+    const ids = Array.from(new Set(conflicts.map((c) => c.entity_id)));
+    let done = 0;
+    for (const id of ids) {
+      try {
+        await api.resolvePendingRemote(id, choice);
+        done++;
+      } catch {
+        /* 单页失败不挡其它页；下一次同步还会把它带出来 */
+      }
+    }
+    setConflicts([]);
+    setStatus(
+      choice === "keep_local"
+        ? `已保留本地改动（${done} 页；下次同步会推送你这份）`
+        : `已采用服务端版本（${done} 页；本地未推送的改动已真的放弃）`,
+    );
+    await loadPendingRemote();
+    await loadPages();
+  };
 
   const refresh = async () => {
     try {
@@ -179,6 +238,7 @@ export function SyncPanel() {
         }),
       );
       await loadHistory();
+      await loadPendingRemote();
     } catch (e) {
       setStatus(String(e));
     }
@@ -307,6 +367,7 @@ export function SyncPanel() {
       }
       await loadPages();
       await loadHistory();
+      await loadPendingRemote();
     } catch (e) {
       syncErr = String(e);
       setStatus(`「${r.name}」同步失败：${e}`);
@@ -616,14 +677,37 @@ export function SyncPanel() {
                 ))}
               </ul>
               <div className="sync-conflict-actions">
-                <button onClick={() => { setConflicts([]); setStatus("已保留本地改动（下次同步会推送你这份）"); }} className="btn-sync-conflict keep">
+                <button onClick={() => void resolveAll("keep_local")} className="btn-sync-conflict keep">
                   保留本地
                 </button>
-                <button onClick={() => { setConflicts([]); setStatus("改用服务端版本（已放弃本地未推送改动）"); }} className="btn-sync-conflict adopt">
+                <button onClick={() => void resolveAll("take_remote")} className="btn-sync-conflict adopt">
                   采用服务端
                 </button>
               </div>
-              <div className="sync-conflict-hint">提示：你在此页有未推送的改动，另一台设备改了同一页。选「保留本地」则你这份优先；选「采用服务端」则放弃本地改用服务端最新。</div>
+              <div className="sync-conflict-hint">
+                提示：你在这些页有未推送的改动，另一台设备改了同一页。**远端那一版已经存在本地**（不会因为游标走过去而丢）：
+                选「保留本地」= 你这份优先（下次同步推上去）；选「采用服务端」= 真的放弃本地未推送的改动。
+              </div>
+            </div>
+          )}
+          {pending.length > 0 && (
+            <div className="sync-pending-remote" role="status">
+              <div className="sync-conflict-title">📥 待取回的远端版本（{pendingTotal} 页）</div>
+              <ul className="sync-conflict-list">
+                {pending.map((p) => (
+                  <li key={p.page_id}>
+                    《{p.title || "（无标题）"}》
+                    <span className="sync-pending-actions">
+                      <button onClick={() => void resolveOne(p.page_id, "merge")}>合并这一页</button>
+                      <button onClick={() => void resolveOne(p.page_id, "take_remote")}>采用远端</button>
+                      <button onClick={() => void resolveOne(p.page_id, "keep_local")}>保留本地</button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="sync-conflict-hint">
+                这些页面当时**保留了本地**（本地有未推送的改动），对端那一版已替你存下 —— 三个选项都会**真的改数据**。
+              </div>
             </div>
           )}
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>

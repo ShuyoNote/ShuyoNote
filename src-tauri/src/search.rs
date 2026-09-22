@@ -672,8 +672,103 @@ fn chunk_limit_or_default(limit: Option<usize>) -> usize {
 }
 /// 向量加分上限：**不主导**关键词（与页面级的 `VECTOR_BONUS` 同一个思路）。
 const CHUNK_VECTOR_BONUS: f32 = 6.0;
+/// BM25 加分上限：与向量同一个思路 —— **有界、不主导**关键词覆盖分。
+///
+/// 为什么不做成"用 BM25 取代关键词分"：那会改**召回集**（trigram 命中但关键词覆盖为 0 的块
+/// 会新进结果），而召回变化是用户可见的、该有自己的一组判据与跨机复核。
+/// 这一版只做**排序**（候选集一字不动）⇒ 可证：启用/不启用索引，命中的块**完全相同**。
+const CHUNK_BM25_BONUS: f32 = 3.0;
 /// 片段长度（与页面级 `build_like_snippet` 的调用口径一致）。
 const CHUNK_SNIPPET_LEN: usize = 120;
+
+/// 把归一化后的查询变成 FTS5 的 `MATCH` 表达式：**每个词加双引号**（否则 `-` / `*` / `:` /
+/// `NEAR` / `OR` 这些会被当成语法，用户的普通输入会让查询报错），引号本身双写转义。
+///
+/// 返回 `None` = "没有可用检索词"（空查询）⇒ 调用方**跳过** FTS 那一路，不是错误。
+/// 词之间用空格 = FTS5 的隐式 AND（与关键词覆盖"每个词都要出现"的口径一致）。
+fn chunk_match_expr(query: &str) -> Option<String> {
+    let parts: Vec<String> = query
+        .split_whitespace()
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("\"{}\"", w.replace('"', "\"\"")))
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+/// 块级 FTS 索引**自愈**：表在就查、**计数对不上就重建**（派生索引可重建是这一层的纪律）。
+///
+/// 什么时候会"对不上"：索引是 2026-09-19 才加的，**老库**里 `chunks` 已有行而 `chunk_fts` 是空的；
+/// 或者历史上某次写入发生在触发器建立之前。判据用计数比较（两张表都很小，代价可忽略），
+/// 重建 = 清空 + 从 `chunks` 整体灌一遍 —— 与"派生索引不入同步/备份"的口径一致。
+///
+/// ⚠️ 缺 `chunks` 表（老库没迁到派生层）⇒ **直接返回，不报错**（向前兼容，与 `read_chunks` 同口径）。
+fn ensure_chunk_fts(c: &Connection) -> Result<(), String> {
+    if !table_exists(c, "chunks") {
+        return Ok(());
+    }
+    if !table_exists(c, "chunk_fts") {
+        return Ok(()); // 触发器/表由 `db::migrate` 建；这里不越权改 schema
+    }
+    let count = |t: &str| -> Result<i64, String> {
+        c.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0))
+            .map_err(|e| e.to_string())
+    };
+    let chunks = count("chunks")?;
+    let indexed = count("chunk_fts")?;
+    if chunks == indexed {
+        return Ok(());
+    }
+    c.execute("DELETE FROM chunk_fts", []).map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT INTO chunk_fts(chunk_id, text) SELECT id, text FROM chunks",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 读 BM25 分数（**只对候选块算**，键 = chunk id，值归一化到 0..1）。
+///
+/// `bm25()` 在 SQLite 里是"越小越相关"的负数 ⇒ 取负后按 `x/(1+x)` 压到 `[0,1)`，
+/// 这样它只能当**有界加分**，不会盖过关键词覆盖分。
+/// 任何一步失败（缺表/表达式不给/MATCH 语法）都返回空表 ⇒ 退化成"没有 BM25 那一路"，
+/// **搜索本身不能因为索引出问题而失败**。
+fn read_chunk_bm25(c: &Connection, query: &str, wanted: &HashSet<&str>) -> HashMap<String, f32> {
+    let mut out = HashMap::new();
+    let Some(expr) = chunk_match_expr(query) else { return out };
+    if !table_exists(c, "chunk_fts") {
+        return out;
+    }
+    let Ok(mut stmt) = c.prepare("SELECT chunk_id, bm25(chunk_fts) FROM chunk_fts WHERE chunk_fts MATCH ?1") else {
+        return out;
+    };
+    let Ok(iter) = stmt.query_map(params![expr], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?))
+    }) else {
+        return out;
+    };
+    for (id, raw) in iter.flatten() {
+        if !wanted.contains(id.as_str()) {
+            continue;
+        }
+        out.insert(id, normalize_bm25(raw));
+    }
+    out
+}
+
+/// BM25 原始分 → `[0,1)` 的**有界**加分（`bm25()` 越小越相关 ⇒ 取负后按 `x/(1+x)` 压紧）。
+///
+/// 抽成函数有两个理由：① 判据能直接钉"上界严格小于 1、且随相关性单调"；
+/// ② 补掉我第一版判据的漏洞 —— 当时只断言"落在 [0,1]"，**把这层归一化去掉它照样绿**
+/// （小夹具上原始分恰好 ≤1）。变异实测抓到的，所以这里必须是一个能被单独钉住的函数。
+fn normalize_bm25(raw: f64) -> f32 {
+    let x = (-raw).max(0.0) as f32;
+    x / (1.0 + x)
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -761,22 +856,28 @@ fn read_chunks(c: &Connection) -> Result<Vec<ChunkRow>, String> {
     Ok(rows)
 }
 
-/// 纯排序：关键词覆盖分（复用页面级同一个 `keyword_score`）+ **有界**向量加分。
+/// 纯排序：关键词覆盖分（复用页面级同一个 `keyword_score`）+ **有界**的 BM25 加分 + **有界**向量加分。
 ///
-/// 关键词为 0 的块**不进结果**（否则每个查询都会把全库块带回来）。排序稳定：同分按
-/// `(page_id, att_id, ord)` 兜底 —— 否则同一查询两次调用顺序可能不同，测试必然 flake。
+/// ⚠️ **候选集与"没有 BM25"那一版完全一致**：BM25 与向量两条加分都**只在 `kw > 0` 时**生效
+/// （两个 `if kw > 0.0`），所以"哪些块进结果"没有被这次改动改变 —— 变的是**同分块之间的先后**。
+/// 这是有意的：召回变化该有自己的一组判据，不该混在"加个 BM25"里悄悄发生。
+/// 排序稳定：同分按 `(page_id, att_id, ord, id)` 兜底 —— 否则同一查询两次调用顺序可能不同，测试必然 flake。
 fn rank_chunks(
     query: &str,
     rows: Vec<ChunkRow>,
-    vectors: &std::collections::HashMap<String, Vec<f32>>,
+    vectors: &HashMap<String, Vec<f32>>,
     query_vec: Option<&[f32]>,
+    bm25: &HashMap<String, f32>,
 ) -> Vec<(ChunkRow, f32)> {
     let mut scored: Vec<(ChunkRow, f32)> = Vec::new();
     for row in rows {
         let kw = keyword_score(query, "", &row.text);
         let mut score = kw;
-        if let (Some(qv), Some(cv)) = (query_vec, vectors.get(&row.id)) {
-            if kw > 0.0 {
+        if kw > 0.0 {
+            if let Some(b) = bm25.get(&row.id) {
+                score += CHUNK_BM25_BONUS * b;
+            }
+            if let (Some(qv), Some(cv)) = (query_vec, vectors.get(&row.id)) {
                 score += CHUNK_VECTOR_BONUS * cosine_sim(qv, cv);
             }
         }
@@ -851,8 +952,13 @@ pub(crate) fn search_chunks_in_conn(
     if rows.is_empty() {
         return Ok(Vec::new());
     }
+    // 索引自愈 + BM25：两步都**不阻断**搜索（索引出问题 ⇒ 退化成"没有 BM25 那一路"，
+    // 而不是让 AI 的检索整条失败 —— 派生索引只是加速/排序，不是真相来源）。
+    let _ = ensure_chunk_fts(c);
+    let wanted: HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+    let bm25 = read_chunk_bm25(c, query, &wanted);
     let vectors = read_chunk_vectors(c, &rows, model);
-    let hits = rank_chunks(query, rows, &vectors, query_vec);
+    let hits = rank_chunks(query, rows, &vectors, query_vec, &bm25);
     Ok(hits
         .into_iter()
         .take(limit)
@@ -1272,10 +1378,142 @@ mod tests {
         .unwrap();
     }
 
+    // ---- 块级 BM25（P2 的"混合检索"那半，2026-09-19 AMD）----
+    //
+    // 索引是**桌面专属**（`sql.js` 没编 FTS5，见 `db::CHUNK_FTS_DDL` 的注释），
+    // 建表与触发器都在 `db::migrate` 里。这三条判据守的是"索引真的跟着写走"与
+    // "BM25 只改排序、不改召回"。
+
+    /// 建库时**用真正会执行的那份 DDL**（`db::CHUNK_FTS_DDL`），不抄一份。
+    fn chunks_conn_with_fts() -> Connection {
+        let c = chunks_conn();
+        c.execute_batch(crate::db::CHUNK_FTS_DDL).unwrap();
+        c
+    }
+
+    fn fts_hits(c: &Connection, term: &str) -> Vec<String> {
+        let mut stmt = c
+            .prepare("SELECT chunk_id FROM chunk_fts WHERE chunk_fts MATCH ?1 ORDER BY chunk_id")
+            .unwrap();
+        let out = stmt
+            .query_map(params![format!("\"{term}\"")], |r| r.get::<_, String>(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        out
+    }
+
+    /// ★ 判据 1：**三个触发器**让索引跟着任何写入方走（不需要写入方记得刷索引）。
+    ///
+    /// 失败面：少了触发器 ⇒ 索引停在建表那一刻，检索"看不见新内容"（而且没有信号）。
+    #[test]
+    fn chunk_index_follows_writes_through_triggers() {
+        let c = chunks_conn_with_fts();
+        add_chunk(&c, "p:p1#0", Some("p1"), None, 0, "", "制度第三十七条 报销流程", "h1");
+        assert_eq!(fts_hits(&c, "第三十七条"), vec!["p:p1#0"], "INSERT 后应当能检索到");
+
+        // UPDATE：旧文本必须**不再**命中，新文本要命中（只删不插或只插不删都会在这里露出来）。
+        c.execute("UPDATE chunks SET text = '制度第三十八条 差旅标准' WHERE id = 'p:p1#0'", []).unwrap();
+        assert!(fts_hits(&c, "第三十七条").is_empty(), "UPDATE 后旧文本不该还命中");
+        assert_eq!(fts_hits(&c, "差旅标准"), vec!["p:p1#0"], "UPDATE 后新文本该命中");
+
+        // DELETE：整条记录必须从索引里消失（否则会返回一个已经不存在的块 id）。
+        c.execute("DELETE FROM chunks WHERE id = 'p:p1#0'", []).unwrap();
+        assert!(fts_hits(&c, "差旅标准").is_empty(), "DELETE 后不该还有残留");
+    }
+
+    /// ★ 判据 2：老库（先有 `chunks`、后加索引）由 `ensure_chunk_fts` **自愈**重建。
+    ///
+    /// 失败面：不做自愈 ⇒ 升级上来的库里 BM25 永远空（且看上去"就是没有匹配"）。
+    #[test]
+    fn ensure_chunk_fts_backfills_a_stale_index() {
+        let c = chunks_conn();
+        // 先写数据、**后**建索引 —— 正是升级路径的形状。
+        add_chunk(&c, "p:p1#0", Some("p1"), None, 0, "", "报销流程 第一条", "h1");
+        add_chunk(&c, "p:p1#1", Some("p1"), None, 1, "", "差旅标准 第二条", "h2");
+        c.execute_batch(crate::db::CHUNK_FTS_DDL).unwrap();
+        assert!(fts_hits(&c, "报销流程").is_empty(), "刚建好的索引是空的（触发器不追溯历史行）");
+
+        ensure_chunk_fts(&c).unwrap();
+        assert_eq!(fts_hits(&c, "报销流程"), vec!["p:p1#0"]);
+        assert_eq!(fts_hits(&c, "差旅标准"), vec!["p:p1#1"]);
+
+        // 再跑一次：计数已平 ⇒ 幂等，不做无谓重建。
+        ensure_chunk_fts(&c).unwrap();
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM chunk_fts", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 2);
+    }
+
+    /// 判据 3：`MATCH` 表达式必须**给每个词加引号**（否则 `-`、`*`、`:`、`OR` 这些会被当语法，
+    /// 用户随手输入的普通字符串会让查询报错），引号自身双写转义。
+    #[test]
+    fn chunk_match_expr_quotes_terms_and_rejects_empty() {
+        assert_eq!(chunk_match_expr("报销 流程").as_deref(), Some("\"报销\" \"流程\""));
+        assert_eq!(chunk_match_expr("a-b").as_deref(), Some("\"a-b\""));
+        assert_eq!(chunk_match_expr("a\"b").as_deref(), Some("\"a\"\"b\""));
+        assert_eq!(chunk_match_expr("   "), None, "空白查询 ⇒ None（跳过 FTS，不是错误）");
+        assert_eq!(chunk_match_expr(""), None);
+    }
+
+    /// ★ 判据 4：BM25 加分**有界**且**不改召回集**。
+    ///
+    /// 为什么把它当判据：把 BM25 做成"取代关键词分"会悄悄改变"哪些块进结果"，
+    /// 而召回变化是用户可见的。这条钉住：给任何 bm25 表，命中的 **id 集合**都不变，
+    /// 且加分确实**只增不减**（下界 0、上界 `CHUNK_BM25_BONUS`）。
+    #[test]
+    fn bm25_boost_is_bounded_and_never_changes_the_hit_set() {
+        let c = chunks_conn_with_fts();
+        add_chunk(&c, "p:p1#0", Some("p1"), None, 0, "", "报销流程 报销流程", "h1");
+        add_chunk(&c, "p:p1#1", Some("p1"), None, 1, "", "报销流程 附件清单", "h2");
+        add_chunk(&c, "p:p1#2", Some("p1"), None, 2, "", "与查询无关的内容", "h3");
+        let rows = read_chunks(&c).unwrap();
+        let wanted: HashSet<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        let bm25 = read_chunk_bm25(&c, "报销流程", &wanted);
+        assert!(!bm25.is_empty(), "FTS 命中的块应当拿到 BM25 分");
+        assert!(bm25.values().all(|v| *v >= 0.0 && *v <= 1.0), "归一化后必须落在 [0,1]");
+
+        // ★ 归一化的**形状**也要钉住（第一版只钉了区间 ⇒ 去掉归一化仍绿，变异实测抓到）：
+        //   逐块把原始分读出来，断言映射值 == normalize_bm25(原始分)。
+        for id in ["p:p1#0", "p:p1#1"] {
+            let raw: f64 = c
+                .query_row(
+                    "SELECT bm25(chunk_fts) FROM chunk_fts WHERE chunk_fts MATCH ?1 AND chunk_id = ?2",
+                    params!["\"报销流程\"", id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(bm25.get(id).copied(), Some(normalize_bm25(raw)), "{id} 必须是归一化后的值");
+        }
+        // 上界是**严格**小于 1（原始分再大也不会到 1），且随原始分单调。
+        assert!(normalize_bm25(-3.0) < 1.0, "上界必须严格小于 1");
+        assert!(normalize_bm25(-3.0) > normalize_bm25(-1.0), "原始分越大（越相关）映射值越大");
+        assert_eq!(normalize_bm25(0.0), 0.0);
+        assert_eq!(normalize_bm25(5.0), 0.0, "正的 bm25（不该出现）夹到 0，不产生负加分");
+
+        let ids = |hits: &[(ChunkRow, f32)]| {
+            let mut v: Vec<String> = hits.iter().map(|(r, _)| r.id.clone()).collect();
+            v.sort();
+            v
+        };
+        let without = rank_chunks("报销流程", read_chunks(&c).unwrap(), &HashMap::new(), None, &HashMap::new());
+        let with = rank_chunks("报销流程", read_chunks(&c).unwrap(), &HashMap::new(), None, &bm25);
+        assert_eq!(ids(&without), ids(&with), "BM25 只许改排序，不许改命中集");
+
+        // 加分只增不减：同一个块，带 bm25 的分数 ≥ 不带。
+        let score_of = |hits: &[(ChunkRow, f32)], id: &str| {
+            hits.iter().find(|(r, _)| r.id == id).map(|(_, s)| *s).unwrap_or(f32::NAN)
+        };
+        for id in ["p:p1#0", "p:p1#1"] {
+            assert!(
+                score_of(&with, id) >= score_of(&without, id),
+                "{id} 的分数不该因为 BM25 变小"
+            );
+        }
+    }
+
     /// `hash` 对不上就不能用那条向量 —— 否则"改了内容还在用旧向量"，而 `hash` 这列的存在就是为了防这个。
     #[test]
-    fn chunk_vector_is_rejected_when_model_or_hash_disagrees() {
-        assert!(chunk_vector_usable("m1", "abc", "abc", "m1"));
+    fn chunk_vector_is_rejected_when_model_or_hash_disagrees() {        assert!(chunk_vector_usable("m1", "abc", "abc", "m1"));
         assert!(!chunk_vector_usable("m1", "abc", "abc", "m2"), "模型换了就不能用旧向量");
         assert!(!chunk_vector_usable("m1", "abc", "def", "m1"), "块内容变了（hash 变）就不能用旧向量");
         assert!(!chunk_vector_usable("m1", "", "abc", "m1"), "空 hash 视为不可用");

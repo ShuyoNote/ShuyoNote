@@ -125,6 +125,15 @@ export const GATES = [
       "两类真事故各一条：①2026-09-17 发版机清构建期依赖（libssl-dev）⇒ 社区端 openssl-sys 编译失败；②同日 15:51 本机 Xcode 27 装完许可未接受 ⇒ git/python3/cc/xcrun 全线不可用（notarytool 一条探针就能提前发现）",
   },
   {
+    id: "check-derived-writers",
+    group: "contract",
+    label: "派生表唯一写入者（Rust 生产代码不许写 attachment_text / chunks）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒。
+    cmd: "node scripts/check-derived-writers.mjs",
+    incident:
+      "2026-09-18 spike 问题二查出**正文文本有两条派生实现**（7 个样本里 4 个结果不同，症状是搜索片段/反链随『谁最后保存』变）；同族风险是派生**表**长出第二个写入者 —— 两边各写一份时两侧测试都绿，用户看到的是同一份附件两套派生文本。Windows 裁定「写只有一处（TS 抽取管线：src/lib/extract/store.ts / chunkStore.ts）」，并要求把这条落成**可执行判据**（原话：只写在文档里的规则会漂）。Rust 侧今天确有两处 INSERT，但都在 #[cfg(test)] 里播种夹具 ⇒ 判据必须做区域判定（与 check-doc-content-access 共用 scripts/lib/rust-scan.mjs）",
+  },
+  {
     id: "check-doc-content-access",
     group: "contract",
     label: "文档内容直接访问（只减不增：新文件 / 超基线即红）",
@@ -210,6 +219,9 @@ export const GATES = [
   // 且重试一定写进报告（"靠重试才通过"会单独列一节）。CI 默认 0 次重试——flake 要吵出来。
   { id: "mobile-layout", group: "mobile", label: "移动端布局验收（真实 Chromium）", cmd: "node scripts/verify-mobile-layout.mjs", baseline: true, counters: "auto", flaky: true },
   { id: "mobile-overlays", group: "mobile", label: "浮层 / 弹窗验收（真实 Chromium）", cmd: "node scripts/verify-mobile-overlays.mjs", baseline: true, counters: "auto", flaky: true },
+  // 主区里的**整视图**（笔记/看板/关系图/文件/数据库 8 模式 + 属性表 + 小控件 + PDF 阅读器真 DOM）。
+  // 2026-09-22 补进注册表：它此前只挂在 package.json（`test:mobile-views`），`pnpm verify` 跑不到它。
+  { id: "mobile-views", group: "mobile", label: "主视图移动端验收（真实 Chromium）", cmd: "node scripts/verify-mobile-views.mjs", baseline: true, counters: "auto", flaky: true },
 
   // ---- rust ----
   // 读数（`counters: "cargo"`）**已在 Linux 侧实测并入** tests/baseline.json：
@@ -263,6 +275,35 @@ export const GATES = [
     baseline: true,
     incident:
       "2026-09-20：`sm-crypto` 成为默认特性后，原 `rust-sm-crypto`（跑 --features sm-crypto）与 `rust-test` 变成同一条命令；本门禁改为验证**回滚通道**（--no-default-features）——它是「一行可逆」这个承诺的实现，没人编就会腐烂。",
+  },
+  {
+    id: "rust-sm-wired",
+    group: "rust",
+    label: "库级国密**接线**构建：打补丁 ＋ `--features sm-library` 下的全量单测",
+    // ★ 2026-09-22 加，动机是**一次真实事故**：应用接线（`apply_gm_page_settings`）整段在
+    //   `#[cfg(feature = "sm-library")]` 后面，而 CI 原有的 rust 门禁**全部跑默认特性**
+    //   ⇒ 那条路**没有任何门禁碰过**。我在本机把发版链原样跑一遍时踩到的那个坑
+    //   （`--prepare` 只清 dev profile ⇒ release 的旧 CommonCrypto SQLCipher 被原样复用
+    //   ⇒ 包表面全对而库级不是国密）就是这一类，只有产物断言抓住。
+    //   本门禁把它变成常开：能拿到 SM 版 OpenSSL 前缀就真跑（Linux 用 `/usr`），拿不到**自报跳过**。
+    //   ⚠️ 它跑完会**还原补丁并把默认特性重新编好** —— 否则同一 job 里后面的 `check-crypto-backend`
+    //   会读到"补丁态 ＋ openssl 最新产物"而按平台默认声明判红。
+    cmd: "node scripts/check-gm-wired.mjs",
+    incident:
+      "2026-09-22：接线那段（`set_cipher_key` → 能力探针/设标签/回显校验）没有任何 CI 门禁覆盖；同时在 macOS 本机发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 发出非国密包」。两者一起促成本门禁：打补丁 ＋ 清两个 profile ＋ `--features sm-library` 跑全量单测（内部下限 380 passed/0 failed，空跑即红），跑完还原补丁并重建默认特性，避免留下混态。",
+  },
+  {
+    id: "gm-registry-clean",
+    group: "rust",
+    label: "共享 registry 没留国密补丁（默认构建别被它悄悄改掉）",
+    // 为什么挂在 rust 组：它读的是 cargo registry 里那份 **libsqlite3-sys 的 SQLCipher 源码**，
+    // 而那正是 rust 组所有 cargo 门禁会去编译的同一份源码。
+    // 三档：原版 / "这次就是 sm-library 构建" ⇒ ok；带补丁但本平台不红 ⇒ **只提示不判红**；
+    // 带补丁 ∧ macOS 默认构建 ⇒ **红**（那 12＋7 条红会伪装成"加密库坏了"）。
+    // 读不出来（没跑过 cargo / 拿不到 Cargo.lock）⇒ 只提示，**不判红**。
+    cmd: "node scripts/check-gm-registry-clean.mjs",
+    incident:
+      "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。",
   },
   {
     id: "check-crypto-backend",
@@ -327,6 +368,7 @@ export const DEFAULT_GROUP_FORBIDDEN = [
   "build:web",
   "verify-mobile-layout",
   "verify-mobile-overlays",
+  "verify-mobile-views",
 ];
 
 export function gateSetOf(list) {

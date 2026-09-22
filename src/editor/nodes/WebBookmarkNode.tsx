@@ -18,9 +18,10 @@ import { openExternalUrl } from "../../lib/openExternal";
 import { api } from "../../lib/api";
 import { inputDialog } from "../../store/input";
 import { EXPORT_HASH_ATTR, EXPORT_MIME_ATTR } from "../../lib/exportInline";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 export type SerializedWebBookmarkNode = Spread<
-  { url: string; title: string; description: string; siteName: string; imageHash: string; imageMime: string },
+  { url: string; title: string; description: string; siteName: string; imageHash: string; imageMime: string; blockId?: string; blockRev?: number },
   SerializedLexicalNode
 >;
 
@@ -33,6 +34,10 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
   __siteName: string;
   __imageHash: string;
   __imageMime: string;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "webbookmark";
@@ -46,7 +51,9 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
       node.__siteName,
       node.__imageHash,
       node.__imageMime,
+      node.__blockId,
       node.__key,
+      node.__blockRev,
     );
   }
 
@@ -57,7 +64,9 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     siteName: string,
     imageHash: string,
     imageMime: string,
+    blockId = "",
     key?: NodeKey,
+    blockRev: number | null = null,
   ) {
     super(key);
     this.__url = url;
@@ -66,6 +75,32 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
     this.__siteName = siteName;
     this.__imageHash = imageHash;
     this.__imageMime = imageMime;
+    this.__blockId = blockId;
+    this.__blockRev = blockRev;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as WebBookmarkNode).__blockId;
+    this.__blockRev = (prevNode as WebBookmarkNode).__blockRev;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   createDOM(_config: EditorConfig): HTMLElement {
@@ -147,17 +182,23 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedWebBookmarkNode {
-    return {
-      ...super.exportJSON(),
-      type: "webbookmark",
-      url: this.__url,
-      title: this.__title,
-      description: this.__description,
-      siteName: this.__siteName,
-      imageHash: this.__imageHash,
-      imageMime: this.__imageMime,
-      version: 1,
-    };
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "webbookmark",
+          url: this.__url,
+          title: this.__title,
+          description: this.__description,
+          siteName: this.__siteName,
+          imageHash: this.__imageHash,
+          imageMime: this.__imageMime,
+          version: 1,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
+    );
   }
 
   static importJSON(serializedNode: SerializedWebBookmarkNode): WebBookmarkNode {
@@ -168,6 +209,8 @@ export class WebBookmarkNode extends DecoratorNode<JSX.Element> {
       serializedNode.siteName,
       serializedNode.imageHash,
       serializedNode.imageMime,
+      blockIdOf(serializedNode),
+      blockRevOf(serializedNode),
     );
   }
 
@@ -183,9 +226,11 @@ export function $createWebBookmarkNode(
   siteName = "",
   imageHash = "",
   imageMime = "",
+  blockId?: string,
+  blockRev: number | null = null,
 ): WebBookmarkNode {
   return $applyNodeReplacement(
-    new WebBookmarkNode(url, title, description, siteName, imageHash, imageMime),
+    new WebBookmarkNode(url, title, description, siteName, imageHash, imageMime, blockId ?? "", undefined, blockRev),
   );
 }
 

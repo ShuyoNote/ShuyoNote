@@ -63,7 +63,13 @@
 // 当前哈希由 **AMD 那侧的纯函数** `sourceFingerprint()` 给出（我 `import` 它，**不写第三份解析实现**）。
 //
 // 声明来源：`SHUYONOTE_EXPECT_CRYPTO_BACKEND`（`commoncrypto` / `openssl`）＋
-// `SHUYONOTE_EXPECT_SM_PATCH`（`applied` / `absent`）；不设则只报告不判定。
+// `SHUYONOTE_EXPECT_SM_PATCH`（`applied` / `absent`）＋
+// `SHUYONOTE_EXPECT_PAGE_CIPHER`（`sm4` / `aes`）；不设则只报告不判定。
+//
+// ★ `SHUYONOTE_EXPECT_PAGE_CIPHER`（2026-09-22 加，owner 拍板「就发国密单一口味」之后）：
+//   单一口味意味着**发出去的包必须是 SM4 页** —— 而这件事只有产物标记能回答（`cipher_settings`
+//   回显里没有 algorithm 字段，见方案 §3.2 事实 3）。⇒ 发布链上必须有一格这么断言，
+//   否则「这一版是国密」就只是一句声明。
 // 分类与判定都是导出的纯函数，单测见 `scripts/check-crypto-backend.test.mjs`。
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -175,6 +181,15 @@ export function patchMarkerOf(text) {
     patch: field("patch"),
     target: field("target"),
     marker: field("marker"),
+    // ★ 页加密算法（2026-09-20，补丁 v3 起）：`sm4` / `aes` / `other` / `unknown`。
+    //   `cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3）⇒ 这一格是"这份构建
+    //   写出去的库是 SM4 页还是 AES 页"在**构建期**唯一能被读出来的地方（另一条路是实验：
+    //   `security::tests::exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`）。
+    pageCipher: field("page_cipher"),
+    // ★ 应用层国密（`sm-crypto`）：2026-09-22 实测发现 `tauri dev` 与 `tauri build` 对 default features
+    //   处理不同（dev 传 `--no-default-features --features sm-crypto`；build 不关 defaults）⇒
+    //   "发版包带没带应用层国密"必须有产物读数（否则某天 CLI 行为一变，包会静默退回 v1 写路径）。
+    smCrypto: field("sm_crypto"),
     // 新鲜度证据（AMD 2026-09-19 加）：这份标记对应哪份源码的哪个版本
     srcSha256: field("src_sha256"),
     libsqlite3Sys: field("libsqlite3-sys"),
@@ -220,13 +235,66 @@ export function describe(x) {
  * 判定（纯函数）：返回 `{ problems, notices }`。
  * 三种状态分得清 —— 没产物/没标记 ⇒ 只提示；**认得出的产物 ≠ 声明 ⇒ 红**；旧产物分类不同 ⇒ 提示。
  */
-export function decide({ all, expected, patch = { expected: null, markers: [] } }) {
+/**
+ * 纯函数：路径归一（去掉末尾分隔符、分隔符统一成 `/`）。
+ *
+ * ⚠️ 大小写**默认不动**：Unix 上 `/opt/ssl` 与 `/opt/SSL` 是**两个目录**，一律小写会把"链了另一个目录"
+ * 读成绿（假绿正是本仓最防的形态）。Windows 的路径不区分大小写 ⇒ 那一侧由调用处显式传
+ * `{ caseInsensitive: true }`（`decide` 的 `opensslDir.caseInsensitive`，`main()` 用 `process.platform === "win32"` 填）。
+ */
+export function normalizeDir(p, { caseInsensitive = false } = {}) {
+  const s = String(p ?? "")
+    .trim()
+    .replace(/[\\/]+$/, "")
+    .replace(/\\/g, "/")
+    .replace(/\/+/g, "/");
+  return caseInsensitive ? s.toLowerCase() : s;
+}
+
+/**
+ * 纯函数：**这份产物到底链的是哪个 OpenSSL 目录** —— 与声明的前缀一致吗？
+ *
+ * ★ 2026-09-22（Windows 侧彩排后点名要的，理由是**实测**）：`OPENSSL_LIB_DIR` / `OPENSSL_INCLUDE_DIR`
+ *   **优先于** `OPENSSL_DIR`（`openssl-sys` 的取值顺序）。他们那台机器**用户级环境变量里本来就写着**
+ *   另一个动态前缀 ⇒ 只钉 `OPENSSL_DIR` 时：`--require-static` **绿**、`backend=openssl` 也**绿**，
+ *   而产物实际链的是**厂商那份动态 OpenSSL** —— 「看起来是国密、其实链了别的库」的又一个入口，
+ *   而且是**环境变量**引起的，不看代码发现不了。
+ * ⇒ 加这一格：把"到底链了哪个目录"变成产物级断言。
+ * 匹配规则：相等，或 actual 是 expected 的**子目录**（`/usr` ↔ `/usr/lib/x86_64-linux-gnu` 这种同族关系）。
+ */
+/**
+ * 纯函数：这个"目录"看起来是 **cargo 的产物目录**（`target/…`）而不是一个真的 OpenSSL 前缀吗？
+ *
+ * ★ 2026-09-22 从**真 CI 日志**读出来的第二种形态（Linux，`--group rust` 那个 job）：
+ *   没设 `OPENSSL_DIR` 时，`libsqlite3-sys/build.rs` **走的是"没找到 OpenSSL"那一支**
+ *   （`use_openssl` 保持 false ⇒ 只打 `rustc-link-lib=dylib=crypto`、**不打 `rustc-link-search`**），
+ *   于是 `classifyOutput` 只能退回最后那条 `rustc-link-search` —— SQLCipher 自己的 `OUT_DIR`
+ *   （真读数：`…/target/debug/build/libsqlite3-sys-2a9f05b01f82195b/out`）。
+ *   ⇒ 此时"实际目录 ≠ 声明前缀"**不是**"链了另一个 OpenSSL"，而是"这次构建压根没走发现路径"。
+ *   两者修法完全不同（前者查 `OPENSSL_LIB_DIR` 覆盖，后者查构建次序/有没有导出那三个变量）。
+ */
+export function looksLikeCargoOutDir(p) {
+  const s = String(p ?? "");
+  return s === "" || /[\\/]target[\\/]/.test(s);
+}
+
+export function opensslDirMatches(expected, actual, { caseInsensitive = false } = {}) {
+  const e = normalizeDir(expected, { caseInsensitive });
+  const a = normalizeDir(actual, { caseInsensitive });
+  if (!e || !a) return null; // 未实查
+  return a === e || a.startsWith(`${e}/`);
+}
+
+export function decide({ all, expected, patch = { expected: null, markers: [] }, pageCipher = { expected: null }, smCrypto = { expected: null }, opensslDir = { expected: null, actual: "", caseInsensitive: false } }) {
   const problems = [];
   const notices = [];
   // ★ 第三格：补丁在不在（独立于后端那一格 —— 后端对了、补丁没打，仍然没有国密算法）
   const newestMarker = patch.markers?.[0] ?? null;
   const describeMarker = (m) =>
-    m ? `${m.profile}/${m.entry}（patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}，output mtime=${new Date(m.mtime).toISOString()}）` : "(无)";
+    m
+      ? `${m.profile}/${m.entry}（patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
+        `${m.pageCipher ? ` page_cipher=${m.pageCipher}` : ""}，output mtime=${new Date(m.mtime).toISOString()}）`
+      : "(无)";
   if (patch.expected === "applied" && !newestMarker) {
     problems.push(
       "声明要**补丁已应用**，但产物里没有那行标记（`shuyonote: sm3/sm4 provider patch applied …`）",
@@ -285,6 +353,9 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
   }
 
   if (expected === null) {
+    // ⚠️ 这里必须**提前返回**：没有声明就没有可判的事由，只报告（原版就是这样；
+    //    我 2026-09-22 插页加密那一格时误删了这个 return，判据当场抓住 —— 见测试里那条
+    //    "平台没有默认声明 ⇒ 只报告不判定"）。
     notices.push(`平台没有默认声明 ⇒ 只报告不判定：${describe(newest)}`);
     return { problems, notices };
   }
@@ -318,6 +389,78 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
       `最新产物认不出后端（${describe(newest)}）⇒ **未实查**：这条门禁只对认得出的形状下结论，` +
         "认不出的形状一律自报，不冒充通过",
     );
+  }
+    // ★ 页加密那一格（2026-09-22 加；owner 拍板「就发国密单一口味」）：单一口味意味着**发出去的包必须是 SM4 页**。
+  //   只有**拿到产物标记**才判得动：没标记 / 没那一格 ⇒ 记成"未实查"（不判红，与后端/补丁两格同口径）；
+  //   拿到了且与声明不符 ⇒ **红**（这正是"这一份不是国密包"的产物级证据）。
+  if (pageCipher.expected) {
+    if (!newestMarker) {
+      notices.push(
+        `声明了 SHUYONOTE_EXPECT_PAGE_CIPHER=${pageCipher.expected}，但**没找到任何产物标记** ⇒ 这一格未实查（先编一次，别把它读成通过）`,
+      );
+    } else if (!newestMarker.pageCipher) {
+      notices.push(
+        `声明了 SHUYONOTE_EXPECT_PAGE_CIPHER=${pageCipher.expected}，但标记里**没有** \`page_cipher=\` 字段（旧构建产物）⇒ 这一格未实查`,
+      );
+    } else if (newestMarker.pageCipher !== pageCipher.expected) {
+      problems.push(
+        `产物标记说这份构建的页加密是 **${newestMarker.pageCipher}**，而声明要求 **${pageCipher.expected}**` +
+          `（单一口味＝发出去的包必须是 SM4 页；这一份不是 ⇒ 别发出去）`,
+      );
+    } else {
+      notices.push(`页加密与声明一致：page_cipher=${newestMarker.pageCipher}`);
+    }
+  }
+  // ★ 应用层国密那一格（2026-09-22）：`sm_crypto=on|off` 必须与声明一致。
+  //   动机是**实测**：`tauri build --features sm-library` 走的是 `cargo build --bins --features
+  //   sm-library,tauri/custom-protocol --release`（**defaults 仍在** ⇒ `sm-crypto` 没被顶掉）；
+  //   而 `tauri dev` 走的是 `--no-default-features --features sm-crypto`。两条路不同 ⇒
+  //   "发版包一定带应用层国密"不能只靠 CLI 行为不变。
+  if (smCrypto.expected) {
+    if (!newestMarker) {
+      notices.push(`声明了 SHUYONOTE_EXPECT_SM_CRYPTO=${smCrypto.expected}，但没有产物标记 ⇒ 这一格未实查`);
+    } else if (!newestMarker.smCrypto) {
+      notices.push(
+        `标记里**没有** \`sm_crypto=\` 字段（旧构建产物）⇒ 这一格未实查；` +
+          `重新拿可自证的标记：\`cargo clean -p shuyonote\` 后再编`,
+      );
+    } else if (newestMarker.smCrypto !== smCrypto.expected) {
+      problems.push(
+        `产物标记说这份构建的**应用层国密**是 **${newestMarker.smCrypto}**，而声明要求 **${smCrypto.expected}**` +
+          `（单一口味＝发出去的包必须写 v2 密文；off 意味着退回 v1 写路径）`,
+      );
+    } else {
+      notices.push(`应用层国密与声明一致：sm_crypto=${newestMarker.smCrypto}`);
+    }
+  }
+  // ★ 产物实际链的 OpenSSL 目录（2026-09-22，见 `opensslDirMatches` 的注释）
+  if (opensslDir.expected) {
+    const m = opensslDirMatches(opensslDir.expected, opensslDir.actual, { caseInsensitive: !!opensslDir.caseInsensitive });
+    if (m === null) {
+      notices.push(
+        `声明了 SHUYONOTE_EXPECT_OPENSSL_DIR=${opensslDir.expected}，但产物里**没解析出 link-search 目录**` +
+          `（实际读到的：${JSON.stringify(opensslDir.actual || "")}）⇒ 这一格未实查`,
+      );
+    } else if (!m && looksLikeCargoOutDir(opensslDir.actual)) {
+      // 第二种形态（2026-09-22 从真 CI 日志读出来）：产物里**根本没有** OpenSSL 的 link-search 行，
+      // 解析出来的是 SQLCipher 自己的 OUT_DIR ⇒ 这次构建没走 OPENSSL_DIR/OPENSSL_LIB_DIR 发现路径。
+      problems.push(
+        `产物里**没有 OpenSSL 的 link-search 行**（解析到的是 cargo 产物目录 \`${opensslDir.actual}\`），` +
+          `而声明要求 \`${opensslDir.expected}\` ⇒ 这次构建**没走显式发现路径**（\`OPENSSL_DIR\` 那三个变量没导出，` +
+          `或这棵树是在没设它们的条件下编的）⇒ **无法证明链的是哪个前缀**。` +
+          `修法：按 release.yml 的次序 —— 先 \`sm-library-build.mjs --print-env >> $GITHUB_ENV\`，**再**构建；` +
+          `只在构建那一步设环境变量、或复用旧的构建目录，都会落回这一形态`,
+      )
+    } else if (!m) {
+      problems.push(
+        `产物**实际链的 OpenSSL 目录**是 \`${opensslDir.actual}\`，而声明要求 \`${opensslDir.expected}\` —— ` +
+          `⚠️ 最常见成因：**\`OPENSSL_LIB_DIR\`/\`OPENSSL_INCLUDE_DIR\` 优先于 \`OPENSSL_DIR\`**（openssl-sys 的取值顺序），` +
+          `而它们可能来自**用户级环境变量**（Windows 那台就是这样）⇒ 三个变量要一起钉；` +
+          `否则「静态守卫绿 ＋ backend=openssl 绿」也拦不住"链了另一个 OpenSSL"`,
+      );
+    } else {
+      notices.push(`产物实际链的 OpenSSL 目录与声明一致：${opensslDir.actual}`);
+    }
   }
   return { problems, notices };
 }
@@ -370,6 +513,9 @@ export function main() {
   }
 
   const patchExpected = (process.env.SHUYONOTE_EXPECT_SM_PATCH || "").trim() || null;
+  const pageCipherExpected = (process.env.SHUYONOTE_EXPECT_PAGE_CIPHER || "").trim() || null;
+  const smCryptoExpected = (process.env.SHUYONOTE_EXPECT_SM_CRYPTO || "").trim() || null;
+  const opensslDirExpected = (process.env.SHUYONOTE_EXPECT_OPENSSL_DIR || "").trim() || null;
   const markers = collectPatchMarkers(dir);
   // 「当前将要编译的那份源码」的指纹 —— 用 AMD 的纯函数（唯一实现），拿不到就带上原因（判"未实查"，不判红）
   let current = null;
@@ -383,6 +529,14 @@ export function main() {
     all,
     expected,
     patch: { expected: patchExpected, markers, current, currentError },
+    pageCipher: { expected: pageCipherExpected },
+    smCrypto: { expected: smCryptoExpected },
+    opensslDir: {
+      expected: opensslDirExpected,
+      actual: all[0]?.searchDir ?? "",
+      // Windows 路径不区分大小写；Unix 上大小写不同就是**另一个目录**（见 normalizeDir 的注释）
+      caseInsensitive: process.platform === "win32",
+    },
   });
   for (const n of notices) console.error(`! ${n}`);
   if (patchExpected === "applied" && !problems.length) {
@@ -393,8 +547,14 @@ export function main() {
         : `src_sha256=${m.srcSha256 ? m.srcSha256.slice(0, 12) + "…" : "(缺字段)"} —— ⚠️ 见上面的"未实查"说明`;
     console.log(
       `  补丁标记 ✓ patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
-        `（${m.profile}/${m.entry}）\n    ${hashLine}`,
+        `${m.pageCipher ? ` **page_cipher=${m.pageCipher}**` : ""}${m.smCrypto ? ` sm_crypto=${m.smCrypto}` : ""}（${m.profile}/${m.entry}）\n    ${hashLine}`,
     );
+    if (!m.pageCipher) {
+      console.error(
+        "! 产物标记里没有 `page_cipher=` 字段（旧构建产物）⇒ **这一格未实查**：无法从产物回答「这份构建是 SM4 页还是 AES 页」。" +
+          "重新拿可自证的标记：`cargo clean -p shuyonote` 后再编（补丁 v3 起 build.rs 会打这一格）",
+      );
+    }
   }
   if (problems.length) {
     console.error("check-crypto-backend: ❌ 不通过");

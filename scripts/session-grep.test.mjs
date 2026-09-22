@@ -38,26 +38,45 @@ describe("会话记录解压（多帧 zstd）", () => {
     expect(text.includes("百度")).toBe(true);
   });
 
-  it("**截断的帧也不抛错**，只返回部分内容 —— 所以靠 catch 检测不到截断", () => {
-    // 这条是探针实测出来的、比"多帧只解第一帧"更阴的一层：
-    // `zstdDecompressSync` 对**截断**的帧不抛异常，而是安静地返回解出来的那部分
-    // （实测：31 字节的帧截到 4 字节 → 返回空串；截到 16 字节 → 返回半个汉字）。
-    // ⇒ **不能靠 try/catch 判断"这份记录读全了没有"**，只能核对解出的规模。
+  it("**截断的帧**：老 node 安静返回半截、新 node 直接抛 —— 两种都实测过，靠 catch 都不可信", () => {
+    // 这条是探针实测出来的、比"多帧只解第一帧"更阴的一层。
+    //
+    // ★ 2026-09-22 补记（**原判据写的"不抛错"在 node 24.20.0 上已经不成立**）：同一台机器上两份 node
+    //   对同一个 31 字节的帧截到 16 字节，读数不同 ——
+    //     · node **24.18.1**（DSH 会怀里那份）⇒ **不抛**，安静返回 `这一�`（7 字节，半个汉字）；
+    //     · node **24.20.0**（`~/.local` 里那份真 node）⇒ 抛 `Z_BUF_ERROR unexpected end of file`。
+    //   原来那条 `expect(...).not.toThrow()` 因此在真 node 上**必然红**（我本轮就是这么撞上的：
+    //   同一个文件跑 5 次红 5 次，而全库那一次跑却绿 —— 差别就是 PATH 上哪个 node 在前）。
+    // ⇒ 判据不再钉"某个 zlib 版本的实现细节"，只钉两个版本**共同**的那件事：
+    //   **截断一定丢数据**（要么半截、要么报错），而"没报错"从来不等于"读全了"。
     const whole = zstdCompressSync(Buffer.from("这一帧会被截断\n", "utf8"));
-    const partial = zstdDecompressSync(whole.subarray(0, 16)).toString("utf8");
-    expect(partial.length).toBeGreaterThan(0); // 有内容
-    expect(partial).not.toBe("这一帧会被截断\n"); // 但不完整
-    expect(() => zstdDecompressSync(whole.subarray(0, 16))).not.toThrow(); // 关键：不抛错
+    let partial = null;
+    let err = null;
+    try {
+      partial = zstdDecompressSync(whole.subarray(0, 16)).toString("utf8");
+    } catch (e) {
+      err = e;
+    }
+    if (err) {
+      // 新 node：能被 catch 看到，但**这一次是它，下一次未必** —— 所以判据不靠它。
+      expect(err).toBeInstanceOf(Error);
+      expect(partial).toBe(null);
+    } else {
+      expect(partial.length).toBeGreaterThan(0); // 有内容
+      expect(partial).not.toBe("这一帧会被截断\n"); // 但不完整
+    }
 
     // 我们的实现仍然要把"好帧"完整交给调用方；截断帧贡献的那点残片不影响前后帧。
     const good = zstdCompressSync(Buffer.from("好的一帧\n", "utf8"));
     const buf = Buffer.concat([good, whole.subarray(0, 16), zstdCompressSync(Buffer.from("收尾帧\n", "utf8"))]);
-    const { text, frames } = decompressMaybeMultiFrame(buf);
+    const { text, frames, brokenFrames } = decompressMaybeMultiFrame(buf);
     expect(frames).toBe(3);
     expect(text).toContain("好的一帧");
     expect(text).toContain("收尾帧");
-    // brokenFrames 在这里是 0 —— 正因为截断**不抛错**，这个计数器抓不到截断。
-    // 所以脚本必须汇报"解出多少字符"（那是唯一可信的信号），而不是只报"有没有报错"。
+    // ⚠️ brokenFrames 也**是版本相关的**（老 node 0 / 新 node 1）⇒ 它同样不能当"读全了"的判据：
+    //    老 node 上截断帧安静地贡献半个汉字，而这个计数器还是 0。
+    //    所以脚本必须汇报"解出多少字符"（那是唯一可信的信号），而不是只报"有没有报错"。
+    expect([0, 1]).toContain(brokenFrames);
   });
 
   it("不是 zstd 的输入按纯文本处理（兼容未压缩的 .jsonl）", () => {

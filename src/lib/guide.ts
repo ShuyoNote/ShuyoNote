@@ -979,7 +979,7 @@ function indexBlocks(): Block[] {
     ]),
     rule(),
     h("更多", "h2"),
-    callout("在命令面板 Ctrl+K 输入「关于」，可访问项目主页 / 文档 / 发布 / 问题（外链可在「关于」里关闭，不影响离线使用）。"),
+    callout("在命令面板 Ctrl+K 输入「关于」，可访问产品官网 / 项目主页 / 发布 / 问题（外链可在「关于」里关闭，不影响离线使用）。"),
   ];
 }
 
@@ -1054,11 +1054,13 @@ export async function openGuide(opts: { open?: boolean } = {}): Promise<void> {
   // 1) Ensure the index (main guide) exists first so children can nest under it.
   let indexId: string | null | undefined = existingByTitle.get(GUIDE_TITLE);
   if (!indexId) {
+    // `select: false`：预置是**后台**动作，不许把用户此刻正在看的页面顶掉
+    //（见 `store/notes.ts` 的 `createPage` 注释）。要不要打开由本函数末尾按 `opts.open` 决定。
     indexId = await notes.createPage(null, {
       title: GUIDE_TITLE,
       content_json: pageJson(GUIDE_PAGES[0].blocks),
       content_text: pageText(GUIDE_PAGES[0].blocks),
-    });
+    }, { select: false });
   }
 
   const ids: { title: string; id: string }[] = [];
@@ -1080,7 +1082,7 @@ export async function openGuide(opts: { open?: boolean } = {}): Promise<void> {
         title: page.title,
         content_json: pageJson(page.blocks),
         content_text: pageText(page.blocks),
-      });
+      }, { select: false });
     } else {
       // Page already exists: re-save canonical content so the backend rebuilds
       // block/backlink indexes (the relationship graph depends on them). Same

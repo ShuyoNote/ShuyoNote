@@ -54,6 +54,14 @@ export const OLLAMA_DEFAULT_NUM_CTX = 8192;
 export const OPENAI_COMPAT_DEFAULT_BASE = "https://api.deepseek.com";
 export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-v4-flash-vision-exp";
 
+// Herdsman：本机的模型服务（OpenAI 兼容），**不需要 Key**。
+// 实测（2026-09-19，本机 localhost:8080）：`/v1/models`、`/v1/chat/completions`（含流式）可用；
+// 思考型模型（如 Qwen3.8-Flash-Next）会把 `max_tokens` 先花在 `reasoning_content` 上 ——
+// 预算太小会出现「只有思考、content 为空」，靠 `DEFAULT_MAX_TOKENS`（8192）或显式 thinking 开关规避；
+// 嵌入/重排需要**另装** embedding 模型，否则 `/v1/embeddings`、`/v1/rerank` 返回 400。
+export const HERDSMAN_DEFAULT_BASE = "http://localhost:8080/v1";
+export const HERDSMAN_DEFAULT_MODEL = "Qwen3.8-Flash-Next";
+
 /** 预设服务商（缺省配置）。国产优先，尤其 DeepSeek。选预设自动填 地址/模型/协议/是否需 Key。 */
 export interface AiPreset {
   id: string;
@@ -69,6 +77,7 @@ export interface AiPreset {
 export const AI_PRESETS: AiPreset[] = [
   { id: "deepseek", name: "DeepSeek", provider: "openai", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash-vision-exp", needsKey: true, domestic: true },
   { id: "ollama", name: "Ollama（本地）", provider: "ollama", baseUrl: OLLAMA_DEFAULT_URL, model: OLLAMA_DEFAULT_MODEL, needsKey: false, domestic: true },
+  { id: "herdsman", name: "Herdsman（本地）", provider: "openai", baseUrl: HERDSMAN_DEFAULT_BASE, model: HERDSMAN_DEFAULT_MODEL, needsKey: false, domestic: true },
   { id: "zhipu", name: "智谱 GLM", provider: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", needsKey: true, domestic: true },
   { id: "qwen", name: "阿里 通义 Qwen", provider: "openai", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true, domestic: true },
   { id: "kimi", name: "月之暗面 Kimi", provider: "openai", baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", needsKey: true, domestic: true },
@@ -80,6 +89,7 @@ export const AI_PRESETS: AiPreset[] = [
 export const MODEL_OPTIONS: Record<string, string[]> = {
   deepseek: ["deepseek-v4-flash-vision-exp", "deepseek-chat", "deepseek-reasoner"],
   ollama: ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "nomic-embed-text", "dmeta-embedding-zh"],
+  herdsman: ["Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-0731"],
   zhipu: ["glm-4-flash", "glm-4-plus", "embedding-3"],
   qwen: ["qwen-plus", "qwen-turbo", "qwen-max", "text-embedding-v3"],
   kimi: ["moonshot-v1-8k", "moonshot-v1-32k"],

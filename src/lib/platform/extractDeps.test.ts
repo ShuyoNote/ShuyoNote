@@ -132,6 +132,20 @@ describe("attachmentDeps —— deps 的唯一构造点", () => {
     await expect(deps.vision!("p", new Uint8Array(), "image/png")).resolves.toBe("识别结果");
   });
 
+  it("★ 给了 `transcribe` 就透传；**不给也照样没有这个键**（⇒ 音频抽取走 provider_error）", async () => {
+    setPlatform(fakePlatform());
+    const transcribe = async () => ({ text: "今天天气不错" });
+    const withIt = attachmentDeps("att-1", { transcribe });
+    expect(withIt.transcribe).toBe(transcribe);
+    await expect(withIt.transcribe!(new Uint8Array([1]), "audio/wav", {})).resolves.toEqual({
+      text: "今天天气不错",
+    });
+    // 两条通道**各自独立**：只给 vision 不许把 transcribe 也变出来（那是编假实现）
+    const onlyVision = attachmentDeps("att-1", { vision: async () => "x" });
+    expect("transcribe" in onlyVision).toBe(false);
+    expect("vision" in attachmentDeps("att-1")).toBe(false);
+  });
+
   it("平台渲染失败时**原样抛出**（不许在这里吞掉变成一句「没文字」）", async () => {
     setPlatform(
       fakePlatform({

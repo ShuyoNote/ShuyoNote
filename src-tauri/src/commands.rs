@@ -379,7 +379,15 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
 
     let content = crate::doc_content::DocContent {
         title: args.title.unwrap_or(cur.title),
-        json: args.content_json.unwrap_or(cur.json),
+        // ★ **阶段 1**：保存时给每个有身份的顶层块盖 `blockRev`（baseline = 库里这一页）。
+        //   块级判定（`sync::apply_upsert` 的 `merge_remote_content`）靠它比"哪一块更新"；
+        //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
+        //   ⚠️ 顺序：**先盖章再落库/快照** —— 快照里存的应当是"用户真正保存的那一版"（含 rev）。
+        json: crate::doc_content::stamp_block_revs(
+            &c,
+            &args.id,
+            &args.content_json.unwrap_or_else(|| cur.json.clone()),
+        )?,
         text: args.content_text.unwrap_or(cur.text),
     };
 
@@ -775,4 +783,85 @@ mod pdf_engine_tests {
             assert!(err.contains("pdfium"), "错里要给出当下可用的默认项：{err}");
         }
     }
+}
+
+/// **这一页未裁决的冲突**（阶段 1：裁定 (iii) 的"不静默选边"要靠它显示给用户）。
+///
+/// 纯读；数据在本地表 `page_conflicts`，写入发生在远端应用路径（`doc_content::apply_remote_page`）。
+#[tauri::command]
+pub fn list_page_conflicts(
+    db: State<Db>,
+    page_id: String,
+) -> Result<Vec<crate::doc_content::PageConflict>, String> {
+    let c = conn(&db);
+    crate::doc_content::unresolved_page_conflicts(&c, &page_id)
+}
+
+/// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。
+///
+/// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。
+#[tauri::command]
+pub fn resolve_page_conflict(db: State<Db>, conflict_id: String, choice: String) -> Result<(), String> {
+    let c = conn(&db);
+    let choice = match choice.as_str() {
+        "local" => crate::doc_content::ConflictChoice::Local,
+        "remote" => crate::doc_content::ConflictChoice::Remote,
+        other => return Err(format!("choice 只能是 local 或 remote，收到 {other}")),
+    };
+    crate::doc_content::resolve_page_conflict(&c, &conflict_id, choice)
+}
+
+/// **正文文本的本地修复**（阶段 1）：有编辑器的那一侧按编辑器语义算好文本，交给它写回。
+///
+/// ⚠️ **只动正文**（内容 JSON 与 `dirty` 都不动）—— 它不是用户编辑，别当成一笔本地改动推上去。
+/// 返回**是否真的修了**（相同就一次写库都没有）。
+#[tauri::command]
+pub fn refresh_page_text(db: State<Db>, page_id: String, text: String) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::doc_content::refresh_page_text_if_stale(&c, &page_id, &text)
+}
+
+/// ★ **待重建正文的队列**（B1，2026-09-22）：合并产物 / 冲突裁决之后，那一页的正文列与 FTS 需要
+/// 按**编辑器语义**重算一遍（Rust 侧没有那个派生实现 —— 唯一实现在前端 `src/lib/contentText.ts`）。
+/// 这个命令给补算器两样东西：**这一批要补的页面**（各带 `doc_json`）与**待补总数**（界面要能说"还有 N 页"）。
+///
+/// ⚠️ 只读；`limit` 夹在 1..=50（补算是**有预算**的后台动作，不许一次把整库拖进来）。
+#[tauri::command]
+pub fn list_stale_text_pages(
+    db: State<Db>,
+    limit: Option<usize>,
+) -> Result<crate::doc_content::StaleTextQueue, String> {
+    let c = conn(&db);
+    crate::doc_content::stale_text_queue(&c, limit.unwrap_or(10))
+}
+
+/// ★ **待取回的远端版本**（B 方案，2026-09-22）：页级"保留本地"（本地有未推送改动时优先本地，裁定 ④）
+/// 语义是对的，但那一版远端内容会被**游标吃掉** ⇒ 这台设备再也取不回对端那笔编辑，而且层里
+/// **一条痕都没有**（取证 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §3.2 的 L）。
+/// 现在它被存在本地表 `pending_remote_pages`，这个命令把清单给界面，用户随后裁决
+/// （`resolve_pending_remote`）。纯读；`limit` 由调用方给（界面列表，不是批量作业）。
+#[tauri::command]
+pub fn list_pending_remote_pages(
+    db: State<Db>,
+    limit: Option<usize>,
+) -> Result<crate::doc_content::PendingRemoteQueue, String> {
+    let c = conn(&db);
+    crate::doc_content::pending_remote_queue(&c, limit.unwrap_or(20))
+}
+
+/// ★ **裁决一处"待取回的远端版本"**：`choice` = `"merge"`（合并这一页：先逐块合并，两端各改不同块 ⇒ 都保留）
+/// / `"take_remote"`（整页采用远端，并**真的**放弃本地还没推上去的改动）/ `"keep_local"`（保留本地，什么都不动）。
+/// 其余值一律报错（**不默认选边** —— 与 `resolve_page_conflict` 同一纪律）。
+///
+/// 三个选项都**真的动数据**：旧横幅那两条按钮只改一行文案（取证文件 §4 的 F3），这一版不是。
+#[tauri::command]
+pub fn resolve_pending_remote(
+    db: State<Db>,
+    page_id: String,
+    choice: String,
+) -> Result<crate::sync::PendingChoiceReport, String> {
+    let c = conn(&db);
+    let choice = crate::sync::PendingChoice::parse(&choice)
+        .ok_or_else(|| format!("choice 只能是 merge / take_remote / keep_local，收到 {choice}"))?;
+    crate::sync::resolve_pending_remote(&c, &page_id, choice)
 }

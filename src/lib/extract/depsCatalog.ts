@@ -32,16 +32,28 @@ export const DEP_CAPABILITIES = [
     whenAbsent: "provider_error",
     injectedBy: "platform",
     signature: "(prompt: string, image: Uint8Array, mime: string) => Promise<string>",
-    usedBy: ["image.ocr@1", "pdf.ocr@1（待落地）", "av.transcript@1（待落地）"],
+    usedBy: ["image.ocr@1", "pdf.ocr@1"],
   },
   {
     name: "rasterize",
-    purpose: "把 PDF 的某一页（0 基）渲染成 RGBA —— 扫描件要「页 → 像素」才能走 vision",
+    purpose: "把 PDF 的某一页（0 基）渲染成**编码图** —— 扫描件要「页 → 编码图」才能走 vision",
+    whenAbsent: "provider_error",
+    injectedBy: "platform",
+    // ⚠️ 2026-09-22 订正（AMD 报的漂移，我核过 §15.8 第 1b 条）：出口是**编码图 `RasterizedPage`**
+    //   （`bytes` ＋ `mime` ＋ `width/height`），不是裸 RGBA。`types.ts` 的 `RasterizedPage` 是唯一口径；
+    //   这里原先是 `{ rgba; width; height }`，早于那次裁定 —— 会让人照错的形状写下游。
+    signature:
+      "(bytes: Uint8Array, pageIndex: number, scale: number) => Promise<RasterizedPage>（编码图：bytes ＋ mime ＋ width/height）",
+    usedBy: ["pdf.ocr@1"],
+  },
+  {
+    name: "transcribe",
+    purpose: "语音转写：音视频 → 文本（可带时间戳的分段；不是 vision 的一种 —— 形状与端点都不同）",
     whenAbsent: "provider_error",
     injectedBy: "platform",
     signature:
-      "(bytes: Uint8Array, pageIndex: number, scale: number) => Promise<{ rgba: Uint8Array; width: number; height: number }>",
-    usedBy: ["pdf.ocr@1（待落地）"],
+      "(audio: Uint8Array, mime: string, opts: { model?: string; language?: string }) => Promise<{ text: string; segments?: readonly { start: number; end: number; text: string }[] }>",
+    usedBy: ["av.transcript@1"],
   },
 ] as const satisfies readonly DepCapability[];
 

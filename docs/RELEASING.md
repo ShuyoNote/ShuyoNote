@@ -102,6 +102,24 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 >    git -c http.proxy= -c https.proxy= -c http.curloptResolve=github.com:443:140.82.114.3 push https://github.com/ShuyoNote/ShuyoNote.git main
 >    ```
 >    可用 IP 先用 `curl.exe -s -o NUL -w "%{http_code}" --resolve github.com:443:<ip> https://github.com/` 探一下
+>
+> **★ 读 CI 结果也一样：`api.github.com` 直连不通，钉 IP 可通（2026-09-22 实测）** ——
+> 可用 IP：`140.82.112.6` / `140.82.113.6` / `140.82.114.6`（`140.82.112.3` 已**过期**：报 `ERR_TLS_CERT_ALTNAME_INVALID`）。
+> 配方（三条命令就能拿到「哪条门禁红了 ÷ 它的日志 ÷ cargo 的原话」）：
+> ```bash
+> IP=140.82.112.6
+> # ① 这个 commit 的 ci 运行（拿 run id ＋ 结论）
+> curl -sS --resolve api.github.com:443:$IP -H "Authorization: Bearer $TOKEN" \
+>   "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/workflows/ci.yml/runs?branch=dev&per_page=5"
+> # ② 哪个 job 红了（steps[].conclusion 里就写着是哪一步）
+> curl -sS --resolve api.github.com:443:$IP -H "Authorization: Bearer $TOKEN" \
+>   "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/runs/<run-id>/jobs"
+> # ③ 那一步的完整日志（`-L` 跟重定向；公开仓库用 token 更稳）
+> curl -sSL --resolve api.github.com:443:$IP -H "Authorization: Bearer $TOKEN" \
+>   "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/jobs/<job-id>/logs" -o ci.log
+> ```
+> 2026-09-22 就是这么读出 `rust-sm-wired` 在 Linux 上红的**真因**的（`openssl-sys` 只看 `<prefix>/lib|lib64`，
+> 而 Ubuntu 的开发文件在多架构目录 ⇒ 只给 `OPENSSL_DIR=/usr` 必炸；详见「库级国密：单一口味」那一节）。
 >    （实测 `20.205.243.166` 与 `140.82.114.3` 会**轮流**不通）。
 > 3. `api.github.com` **不**受影响（DNS 正常），查 CI 状态/下载 artifact 用 `curl` 直接打 API 即可。
 
@@ -126,6 +144,18 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 > **不是**它的搜索路径，所以不能用 `bundle.resources`）。打包后用
 > `pnpm check:macos-bundle` 对**产物**断言：库在不在、以及它与 `vendor/` 里那份的 **sha256 是否一致**
 > （大小相同也可能是别的库）。macos.yml 里已有取库步骤；`check:macos-bundle` 在 CI 的 macOS job 里跑。
+>
+> ★ **签名必须早于做 dmg（2026-09-22 实测）**：本机复现 `pnpm tauri build --bundles app,dmg` 后发现
+> `dmg` 里那份 `.app` 是**签名之前**的拷贝（挂载后 `codesign --verify --deep --strict` ⇒ ❌ exit=1），
+> 因为**打包这一步本身不做任何签名**（产物只有工具链的 linker 签名 ⇒ 严格校验报
+> `code has no resources but signature indicates they must be present`）。⇒ 有身份时**交给 Tauri 自带签名**
+> （`APPLE_CERTIFICATE`/`APPLE_SIGNING_IDENTITY` 那一套，bundler 的顺序本就是 nested → app → dmg）；
+> 没有身份时用 `node scripts/sign-macos-app.mjs`（默认 ad-hoc，**先 nested、后 bundle**，签完自动
+> `--verify --deep --strict`），但它**不能**在 dmg 之后补签 —— 那样 dmg 里那份仍然是没签的。
+> ⚠️ 三条读数口径：① **签名会改字节**（库实测 `3858ed6a…` 15,219,824 B ⇒ `e4a3a51f…` 15,274,928 B，+55,104 B）
+> ⇒ "包内与 vendor 逐字节相同"只对**未签名**产物成立（`check:macos-bundle` 已分两条分支）；
+> ② 内容一致性的**可证明时刻在签名之前**（脚本在那里断言），签完只能证明"签名有效"；
+> ③ ad-hoc 包 `spctl -a -vv` **rejected** 是**预期**（Gatekeeper 要真实身份），别读成"签坏了"。
 >
 > **Windows 档另有两条 PDFium 相关步骤（2026-09-18 加）**：打包前先
 > `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉 `pdfium.dll`（二进制**不入库**，
@@ -174,6 +204,88 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 `release.mjs` 按**版本号整词匹配**挑产物（`_1.84.6_` ✓，`_1.84.60_` / `11.84.6` ✗），所以 bundle 目录里留着旧版本产物不会污染发布；同平台出现同类候选（例如上次 run 的同版本残留）会**直接报错**而不是随便挑一个，可用 `--artifacts a.exe,b.deb` 显式指定。
 
 **⚠️ 换行符**：Windows runner 默认 `core.autocrlf=true`，若仓库未固定 `eol=lf`，文本会被检出成 CRLF；对生成物做逐字节比对的门禁（如 `check-capabilities`）会在 Windows 上必失败，而它跑在 Tauri 的 `beforeBuildCommand` 里 → 整个 Windows 构建红掉（v1.84.6 首次发布即如此，Linux 正常）。仓库已加 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，门禁也比较时忽略行尾——两层都在，别退回逐字节比较。
+
+### ★ 库级国密：**单一口味**（2026-09-22 owner 拍板 → 落进 `release.yml`）
+
+**决定**：以后所有平台发的包，库级一律是国密那一套 —— **页加密 SM4 ＋ 页 MAC/库 KDF SM3**。
+不再有「这个平台 AES、那个平台 SM4」的混合状态（那会变成"同一个文件在 A 机器能开、B 机器打不开、
+且报错一模一样"的最难查形态：SQLCipher 的文件里**不写**用的是哪套算法）。
+
+**发布链要的开关与断言**（`release.yml` 已就位；少任何一个都会产出「看起来是国密、其实不是」的包）：
+
+| # | 开关 | 为什么 |
+|---|---|---|
+| 1 | `OPENSSL_DIR` **显式给**，并**用 `--print-env` 翻译成三个变量** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败。<br>⚠️ **不能只给 `OPENSSL_DIR`**：`openssl-sys` 只看 `<OPENSSL_DIR>/lib` 与 `lib64`，而 Ubuntu 的开发文件在**多架构目录**（`/usr/lib/x86_64-linux-gnu/`）⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64", "/usr/lib"] does not contain the required files…`）。⇒ 走唯一实现：`node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"`（它给出 `OPENSSL_DIR` ＋ `OPENSSL_LIB_DIR` ＋ `OPENSSL_INCLUDE_DIR`，两个 crate 都认；判据在 `scripts/lib/sm-library-plan.test.mjs`） |
+| 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate、两个 profile 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端）<br>⚠️ **`--release` 那一条不能省**：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用** ⇒ 包表面全对（补丁标记 `page_cipher=sm4` 也在）而**库级根本不是国密**。这是 2026-09-22 在本机把发版链原样跑一遍时**被第 4 条断言抓住**的真实事故；修法＝两个 profile 都清（`--prepare` 已这么做，判据在 `scripts/lib/sm-library-plan.test.mjs`） |
+| 3 | `pnpm tauri build … --features sm-library` | 不带它 → 应用接线那段 `#[cfg]` 被编掉，而产物标记仍写 `page_cipher=sm4`（页加密是补丁的**编译期**行为）⇒ 包看起来是国密、库级页 MAC/KDF 却还是 SHA512 |
+| 4 | 产物断言（`SHUYONOTE_EXPECT_*` **五条**） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`**、**`sm_crypto=on`**、**`SHUYONOTE_EXPECT_OPENSSL_DIR`＝产物实际链的那个前缀** —— 只有产物能回答这五格（`cipher_settings` 回显里没有 algorithm 字段）。<br>★ 最后那一格是 2026-09-22 **实测**逼出来的：`tauri dev` 发的是 `cargo run --no-default-features --features sm-crypto`，而 `tauri build --features sm-library` 发的是 `cargo build --bins --features sm-library,tauri/custom-protocol --release`（**defaults 仍在** ⇒ `sm-crypto` 没被顶掉）。两条路不同 ⇒「发版包一定带应用层国密」不能只靠 CLI 行为不变：它一旦变，包会**静默退回 v1 写路径**（没有国密），而今天没有任何判据会红。⇒ 把 `sm_crypto=on|off` 写进产物标记并断言 |
+| 5 | **产物里 `rustc-link-search` 的目录必须等于钉的那个前缀**（`SHUYONOTE_EXPECT_OPENSSL_DIR`） | ★ 这是 2026-09-22 **Windows 侧实测**逼出来的第五格：`openssl-sys` 的取值顺序是 **`OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` 优先于 `OPENSSL_DIR`**，而它们**可能来自用户级环境变量**。⇒ 只钉 `OPENSSL_DIR` 时，`--require-static` **绿**、`backend=openssl` 也**绿**，但产物实际链的是**另一个** OpenSSL（版本/口味都可能不同，而"口径一致"这件事没有任何编译期信号）。<br>判据是"**相等或在其子目录下**"（Windows 的 `lib/VC/x64/MD`、Ubuntu 的 `lib/x86_64-linux-gnu` 都是子目录形态）；不符就红，报错里点名这个覆盖陷阱。纯函数在 `scripts/check-crypto-backend.mjs`，判据与变异在 `scripts/check-crypto-backend.test.mjs`；`release.yml` 与实际产物两条路都跑过（绿 / 故意写错前缀⇒红）。<br>⚠️ 大小写**只在 Windows 那侧折叠**（那边路径本就不区分大小写）：Unix 上 `/opt/ssl` 与 `/opt/SSL` 是**两个目录**，一律折叠会把"链了另一个目录"读成绿。<br>★ **两种"不匹配"必须分清**（2026-09-22 从**真 CI 日志**读出来的第二种形态）：产物里解析到的若是 **cargo 产物目录**（`…/target/debug/build/libsqlite3-sys-…/out`），那不是"链了另一个 OpenSSL"，而是**这次构建压根没走 `OPENSSL_DIR`/`OPENSSL_LIB_DIR` 发现路径** —— `libsqlite3-sys/build.rs` 在"没找到 OpenSSL"那一支只打 `rustc-link-lib=dylib=crypto`、**不打 `rustc-link-search`**（真读数：Linux `--group rust` 那个 job 没设 `OPENSSL_DIR`，解析出来就是 OUT_DIR）。两者修法完全不同，所以脚本按形态给不同的理由（纯函数 `looksLikeCargoOutDir`）。<br>⇒ **次序不能反**：`--print-env >> $GITHUB_ENV` 必须在 `tauri build` **之前**、且在同一个 job 里（`release.yml` 就是这么写的）；只在构建那一步临时设变量、或复用旧构建目录，都会落回第二种形态 |
+
+**各平台的加密库来源**（"口味"必须一致，**链接方式可以不同**）：
+
+| 平台 | 来源 | 自包含？ |
+|---|---|---|
+| **Windows** | vcpkg `openssl:x64-windows-static-md` | ✅ 静态（`libcrypto.lib`）；`--require-static` 会核对 |
+| **Linux** | 系统 OpenSSL 3（`OPENSSL_DIR=/usr`，runner 上 ≥3.0 自带 SM3/SM4） | ⚠️ **共享**：deb 的 shlibs 声明这个依赖；老发行版上要求 OpenSSL ≥3.0（这也是这一格的已知边界） |
+| **macOS** | **没有系统 OpenSSL** ⇒ 必须自己编一份（`no-shared`）并自包含 | 发版档启用时按下面配方 |
+
+> ★ **Tongsuo 不是必需的**：我们数据面只用到 SM3/SM4/PBKDF2-HMAC-SM3，**上游 OpenSSL ≥1.1.1 就有**
+> （方案里早就更正过这一点）。Tongsuo 的独有价值是 GM/T 0024 那类国密 TLS —— 不在本项目范围（§5.4）。
+> macOS 那份"自己编"用 stock OpenSSL 或 Tongsuo 都可以；本机验证时用的是 Tongsuo。
+
+**macOS 发版档（等 Apple secrets 到位再启用）的配方**：
+
+```bash
+# ① 编一份**静态**的 SM 版 OpenSSL（no-shared ⇒ 只产出 libcrypto.a）
+./Configure --prefix="$PREFIX" no-shared no-tests && make -j8 && make install_sw
+# ② 只留静态库（`--require-static` 会拒绝共享版前缀：产物会依赖构建机那份）
+rm -f "$PREFIX"/lib/libcrypto.*.dylib "$PREFIX"/lib/libcrypto.dylib
+OPENSSL_DIR="$PREFIX" node scripts/sm-library-build.mjs --prepare --require-static
+# ③ 打包（必须带特性）
+OPENSSL_DIR="$PREFIX" pnpm tauri build --bundles app,dmg --features sm-library
+# ④ 产物断言（同 release.yml 的那五条）
+SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied \
+SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 SHUYONOTE_EXPECT_SM_CRYPTO=on \
+SHUYONOTE_EXPECT_OPENSSL_DIR="$PREFIX" node scripts/check-crypto-backend.mjs
+# ⑤ **签名必须早于做 dmg**，且由内到外（见上面「签名/公证」那条与 scripts/sign-macos-app.mjs）
+```
+
+**本机实测（2026-09-22，macOS，按上面配方**原样**跑完 `app,dmg`）**：
+· `--prepare` 清四个产物（两个 crate × 两个 profile）→ `tauri build --features sm-library` 重编；
+· `otool -L` 里**没有**任何 `libcrypto/libssl`（真静态、自包含）；
+· 产物标记 `patch=72df3f9a · page_cipher=sm4 · sm_crypto=on · src_sha256=741d999b7933…`；五条断言全过（含 `SHUYONOTE_EXPECT_OPENSSL_DIR`）；
+· strip 后的 release 二进制里 `strings` 仍能看到 **`HMAC-SM3` / `SM4-CBC`** ⇒ 国密 provider 确实编进去了；
+· `node scripts/check-macos-bundle.mjs` ✅（未签名状态，签名按上面那条由内到外做）。
+
+**Windows 本地复演那份（2026-09-22，Windows 侧同学给的读数）**：NSIS 打包 ＋ 三条断言全过，
+`dumpbin /dependents` 里 **0 个** `crypto/ssl`（真静态）、标记 `patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`。
+他们复演时踩到的两个坑（都属于"**本机环境替配置背书**"，已进本节判据）：
+
+| 坑 | 症状 | 怎么办 |
+|---|---|---|
+| `OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` **优先于** `OPENSSL_DIR` | 用户级环境变量里本来就写着**另一个** OpenSSL ⇒ 产物链的是它。`--require-static` 绿、`backend=openssl` 绿，**只有"链了哪一份"没人管** | 加第五格 `SHUYONOTE_EXPECT_OPENSSL_DIR`（本节上表第 5 行）；本机复演时先把这三个变量清空，或显式指到 vcpkg 那个前缀 |
+| 本地 `pnpm tauri build` 要 `TAURI_SIGNING_PRIVATE_KEY` | 没有它就**在打包阶段**失败（与国密无关）；CI 里由 secrets 提供 | 本机复演要么临时给一个自签密钥，要么只跑 `cargo build --features sm-library` ＋ 产物断言（本机就是这么做的：`cargo build` ＋ `check-crypto-backend.mjs`） |
+| `dumpbin` 不在 `PATH` | 报"找不到命令"，容易被当成"没有依赖" | 用 **VS 开发者命令提示符**（或写全路径 `…\VC\Tools\MSVC\…\bin\Hostx64\x64\dumpbin.exe`）；⚠️ **"没跑成"和"0 个依赖"不是同一件事**，别把前者读成后者 |
+
+> ★ 静态前缀的**判据是在前缀本身上**（`--require-static` 会直接拒绝含 `libcrypto.*.dylib` 的前缀）——
+> 2026-09-22 本机重跑时就撞到过一次：`/Users/shuyo/tongsuo-macos/install/lib` 里混着上次留下的 `.dylib`，
+> 于是"静态"这个前提不成立。**先 `--require-static` 绿了再谈产物静态**，顺序不能反。
+>
+> ⚠️ **别拿 `--require-static`（或 `--print-source-sha256`）当"纯探针"** —— 它们**会先幂等打补丁**再干正事
+> （Windows 侧 2026-09-22 实测：打印 `补丁 = applied（本次打上）`）⇒ 一次"只想看看前缀静不静"的核对，
+> 会把补丁打到**全机共享的** registry 源码上。只想读判据用这条（实测**不打补丁、不构建**）：
+>
+> ```bash
+> node -e "import('./scripts/lib/sm-library-source.mjs').then(m => console.log(m.requireStaticCrypto(process.env.OPENSSL_DIR)))"
+> ```
+>
+> ★ Windows 侧另一条实测（不是提醒，是读数）：本机**全局** `OPENSSL_DIR=C:\Program Files\OpenSSL-Win64` 时
+> `requireStaticCrypto` **拒绝** —— `lib\libcrypto.lib` 是**导入库** 且 `bin\libcrypto-3-x64.dll` 在场
+> ⇒ 在默认环境下编出来的国密包**依赖构建机那份 DLL**。发单一口味包前必须先备一个只含
+> `libcrypto.a`/`libcrypto.lib`、且 `bin/` 无 crypto DLL 的前缀。
+
+**老库怎么办（快路后果）**：国密构建**读不开** AES＋SHA512 写的老库。迁移＝在旧版里关掉该空间的
+「磁盘加密」（会重写成明文 SQLite）→ 换新版 → 重新打开加密。还没有真实用户，所以现在是零迁移成本。
 
 ### ⚠️ `shuyonote://` 协议注册依赖 Windows 档保持 `nsis`
 
@@ -361,11 +473,19 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 社区侧只做"合并片段 + 签索引 + 托管"——**不写条目、不碰包字节、也不持有我们的发布者私钥**。
 
 ```bash
-SHUYONOTE_PUBLISHER_KEY=~/.minisign/shuyonote.key \   # 私钥**路径**（内容不进仓库、不进普通 CI 变量）
-SHUYONOTE_PUBLISHER_PUB=~/.minisign/shuyonote.pub  \  # 公钥（省略则按 .key → .pub 推）
-SHUYONOTE_MINISIGN=$(which minisign)               \  # 默认找 PATH 里的 minisign
-  pnpm release ...                                     # 或 node scripts/release.mjs ...
+SHUYONOTE_PUBLISHER_KEY=%USERPROFILE%\.minisign\community.key \   # 私钥**路径**（内容不进仓库、不进普通 CI 变量）
+SHUYONOTE_PUBLISHER_PUB=%USERPROFILE%\.minisign\community.pub  \  # 公钥（省略则按 .key → .pub 推）
+SHUYONOTE_MINISIGN=%USERPROFILE%\.minisign-bin\minisign.exe     \ # Windows 侧用它（默认找 PATH 里的 minisign）
+  pnpm release ...                                                 # 或 node scripts/release.mjs ...
 ```
+
+> ⚠️ **真实文件名是 `community.key`，不是 `shuyonote.key`**（2026-09-20 订正）：本节原先把示例写成
+> `~/.minisign/shuyonote.key`，照它去找**必然 miss** ⇒ 片段被跳过（`release.mjs` 会打印后果，不是静默）。
+> 一把 key 同时承担**索引签名**与**发布者签名**两个角色，理由与后果见
+> [plugin-hosting.md](plugin-hosting.md) §六。产片段那一步的完整命令（含 `--url-base` / `--publisher` /
+> `--min-app-version` 的取值口径）也在那篇 §四。
+> **只在包的 `sha256` 真的变了时才重发片段/索引**：一套没变的插件重跑一遍，产出与线上逐字段相同，
+> 而 `--min-app-version <应用版本>` 会把门槛平白抬高（详见 plugin-hosting.md §四 的告警）。
 
 **发版之后还有一步**：把产出的 `plugin-index.fragment.json` 交给**索引托管方**（当前是数友社区，
 见 [plugin-hosting.md](plugin-hosting.md)）。托管方合并片段 → 用自己的密钥签索引 → 托管；

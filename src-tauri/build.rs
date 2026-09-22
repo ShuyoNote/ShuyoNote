@@ -22,8 +22,37 @@
 
 fn main() {
     enforce_explicit_crypto_backend_for_sm_library();
+    warn_if_patched_source_without_sm_library_feature();
     require_gm_provider_patch();
     tauri_build::build()
+}
+
+/// ★ 反向告警（2026-09-22 本人踩坑后补）：**源码上有补丁、但这次构建没开 `sm-library`**。
+///
+/// 这是本冲刺里最容易把自己骗到的状态：构建胶水只在 `cargo build` 上加 `--features sm-library`，
+/// 而裸 `cargo test` / `cargo run` 会把 `set_cipher_key` 里那段 `#[cfg(feature = "sm-library")]` **编掉**
+/// ⇒ 库是"能认 SM3"的库（`page_cipher` 甚至已经是 `sm4`），而**应用一行国密参数都不设**，
+/// 写出来的仍是 SHA512 参数 —— 你以为自己在测接线后的构建，其实在测一个没接线的应用。
+/// 我 2026-09-22 的临时探针正是这么得出自相矛盾读数的（两轮读数对不上，根因就是这个开关）。
+///
+/// 只**警告**不 panic：`--no-default-features` 的回滚通道门禁需要在"补丁还在源码上"时照样能跑。
+fn warn_if_patched_source_without_sm_library_feature() {
+    if std::env::var_os("CARGO_FEATURE_SM_LIBRARY").is_some() {
+        return;
+    }
+    let Some((dir, version, how)) = resolve_sqlcipher_source() else {
+        return;
+    };
+    if find_marker(&dir).is_none() {
+        return;
+    }
+    println!(
+        "cargo:warning=shuyonote: ⚠️ SQLCipher 源码上有 §3.1 的 SM3/SM4 provider 补丁（libsqlite3-sys={version} via={how}），\
+         但这次构建**没开 `sm-library`** ⇒ 应用不会设 `cipher_hmac_algorithm=HMAC_SM3` / \
+         `cipher_kdf_algorithm=PBKDF2_HMAC_SM3`，写出来的库仍是 SHA512 参数。\
+         要读**应用层**的国密读数请带上特性：`cargo test --features sm-library …`；\
+         要回到干净源码：`node scripts/sm-library-build.mjs --revert`。"
+    );
 }
 
 // 与 crate 共用同一份"哪份源码 / 有没有标记"的解析逻辑（判据在 crate 里驱动它，见 `gm_patch_probe.rs`）。
@@ -37,6 +66,32 @@ use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_ro
 /// 补丁文件名 —— 与 `scripts/lib/sm-library-patch.mjs` 的 `PATCH_BASENAME` 是同一个对象
 /// （那边是 JS 侧唯一实现，这里是 Rust 侧唯一出现；改了名字两边一起改，`patches/README.md` 有登记）。
 const PATCH_FILE: &str = "0001-sqlcipher-sm3-provider.patch";
+
+/// 从 SQLCipher 的合并文件里读**页加密算法**（补丁 v3 起必须能随时回答的问题）。
+///
+/// 口径 = **读源码**：看 `#define OPENSSL_CIPHER` 那一行取的是哪个 EVP。
+/// ⚠️ **不读环境变量、不读 CFLAGS** —— "设了但没生效"正是我们反复吃亏的形态（`OPENSSL_DIR` 那次）；
+///    而这份宏定义在 `#ifdef SQLCIPHER_CRYPTO_OPENSSL` 块内 ⇒ **CommonCrypto 构建根本不编译它**
+///    （2026-09-20 实测），所以对 CC 构建这个值只描述源码、不描述那份产物。
+/// 返回值只用于**产物标记**：`sm4` / `aes` / `other`（认得出的别的 EVP）/ `unknown`（读不到那行）。
+fn read_page_cipher(path: &std::path::Path) -> &'static str {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return "unknown";
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("#define OPENSSL_CIPHER") {
+            if rest.contains("EVP_sm4_cbc") {
+                return "sm4";
+            }
+            if rest.contains("EVP_aes_256_cbc") {
+                return "aes";
+            }
+            return "other";
+        }
+    }
+    "unknown"
+}
 
 /// 文件 sha256（小写十六进制）。**不手写哈希** —— 用 `sha2`（Cargo.lock 里已有的 0.10）。
 ///
@@ -144,9 +199,21 @@ fn require_gm_provider_patch() {
                 .and_then(|p| sha256_of(&p))
                 .map(|h| h.chars().take(8).collect::<String>())
                 .unwrap_or_else(|| "unavailable".to_string());
+            // ★ 页加密算法也进标记（2026-09-20，补丁 v3「无条件 SM4 页加密」之后必须有）：
+            //   v3 把 `OPENSSL_CIPHER` 无条件换成 `EVP_sm4_cbc()` ⇒ "**这份构建是 SM4 页还是 AES 页**"
+            //   成了必须随时能回答的问题。值与 `src_sha256` **同一时刻取自同一份源码** ⇒
+            //   源码事后被还原而产物未重编时，两格会**一起**对不上当前源码（新鲜度判据红），不会被静默吞掉。
+            let page_cipher = read_page_cipher(&dir.join(&hit));
+            // ★ **应用层国密**也进标记（2026-09-22，被一次实测逼出来）：`tauri dev` 与 `tauri build` 对
+            //   `default features` 的处理**不一样**（实测 argv：dev ⇒ `--no-default-features --features sm-crypto`；
+            //   build ⇒ `--features sm-library,tauri/custom-protocol`，**defaults 仍在**）。
+            //   ⇒ "发版包一定带 `sm-crypto`"这件事今天只靠"CLI 的行为不变"撑着；而它一旦变，
+            //   产物会**静默退回 v1 写路径**（没有国密），且没有任何判据会红。
+            //   ⇒ 把它写成**产物里可读的一格**，发布链上就能断言（`SHUYONOTE_EXPECT_SM_CRYPTO=on`）。
+            let sm_crypto = if std::env::var_os("CARGO_FEATURE_SM_CRYPTO").is_some() { "on" } else { "off" };
             println!(
                 "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch={patch_sha} target={target_os} \
-                 libsqlite3-sys={version} via={how} marker={hit} src_sha256={src_sha256})"
+                 libsqlite3-sys={version} via={how} marker={hit} page_cipher={page_cipher} sm_crypto={sm_crypto} src_sha256={src_sha256})"
             );
             // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
             // 免得"改了补丁、cargo 不重编"（比 OPENSSL_DIR 那个坑更隐蔽：连设环境变量这个动作都没有）。

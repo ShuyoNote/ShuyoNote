@@ -218,6 +218,17 @@ run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console
 用这个 runner 跑 `build --bundles app,dmg` 一切正常（本机的 `.app`/`.dmg` 就是这么产出的）。
 `npx` / `pnpm exec` 不一定中招（它们的 shim 多走一层 shell），但**任何**只信 `argv[0]` 的包装在会怀里都危险。
 
+★ **更省事的处置（2026-09-22 实测，本轮的 `.app`/`.dmg` 就是这么建的）**：把**真 node** 放到 `PATH` 最前面，
+劫持就被绕开了 —— 因为 `tauri.js` 拿到的 `process.argv[0]` 终于是 `.../bin/node`：
+
+```bash
+export PATH="$HOME/.local/node-v24.20.0-darwin-arm64/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+pnpm tauri build --bundles app,dmg --config /tmp/tauri-ci-config.json   # ✅ 正常构建
+```
+
+（这份 `PATH` 里的 `pnpm` 也是真 node 装的那份；会怀的 `.desktop-bin` 里 `node`/`pnpm` 都是指向 Helper 的 shim，
+它们**排在后面**就不会被选中。`pnpm verify` 之类的普通命令不受影响，只有"按 `argv[0]` 推自己是谁"的包装会歪。）
+
 ### 3. 共享 `node_modules` 在"有人重装"的那几分钟对**所有人**不可用
 
 症状是**缺依赖形状的红**（`@esbuild/win32-x64` 缺失、`tinyexec` 找不到），
@@ -283,6 +294,35 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 `sqlcipher-sm4-page-fixture.db`＝**SM4 页**）——它断言"**恰好一个能开**"，红了就等于
 **这份构建读不了它本该读的那种库**（页加密是库文件的属性，见方案 §3.3 判据 1）。
 
+#### 5.1 ★ 跑**应用层**的国密读数时，`--features sm-library` **不能省**（2026-09-22 实测，我自己踩的）
+
+这是第 5 条的同族坑，但**更隐蔽**：`scripts/sm-library-build.mjs` 只在它执行的 `cargo build` 那一句上加了
+`--features sm-library`；后面的 `cargo test` / `cargo run` 是你自己敲的 —— **不加这个特性，应用里
+`set_cipher_key` 那段国密接线会被 `#[cfg]` 整个编掉**，于是：
+
+- 库仍然是"认识国密标签"的库（补丁在源码上、`page_cipher=sm4`），
+- 而**应用一行国密参数都没设** ⇒ 写出来的库仍是 SHA512 参数，
+- 你却在读"国密构建"的读数。**两次读数会互相矛盾**（同一份文件"既被默认参数读开、又被国密参数读开"），
+  因为其中一次根本不在测你以为的那件事。
+
+```bash
+node scripts/sm-library-build.mjs --openssl-dir $HOME/tongsuo-macos/install
+# 应用层读数（接线后的构建）——这两个都要：
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test --lib --features sm-library security::
+# 库层读数（provider 能力，不需要特性开关）：
+cargo test --lib gm_provider::
+```
+
+> **同族第二件（同一天）**：`scripts/sm-library-build.mjs --check` 的帮助文字是「只做构建前的核对，不构建」，
+> 但它原先照样 `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**（我拿它确认"源码干不干净"，
+> 结果它把源码变成了"打过补丁"的样子 ⇒ "我刚还原过"当场变成假话）。已修（`patchApplyDecision` 纯函数 ＋
+> `apply: !noApply && !checkOnly` ＋ 3 条判据 ＋ 变异证明）。**核对是只读动作**：想改状态就显式跑构建或 `--revert`。
+
+三处防线（2026-09-22 加）：① 胶水收尾横幅直接写明这条口径；② `build.rs` 在"源码有补丁但没开 `sm-library`"时
+打 `cargo:warning`（不 panic：`--no-default-features` 回滚通道需要在补丁仍在源码上时照样能跑）；
+③ `node scripts/gm-version-selfcheck.mjs --with-tests` 的**第 ⑤ 段**就是
+`cargo test --lib --features sm-library security::`（＋`OPENSSL_DIR`），删掉任一个，判据立刻红（有变异证明）。
+
 ### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
 
 判据读 `target/` 下的产物时，有两个默认假设**经常不成立**：① target 就在仓库里（实际很多人设了
@@ -308,10 +348,48 @@ spawnSync cargo ENOENT
 处置：跑之前确认 `command -v cargo`；`scripts/gm-version-selfcheck.mjs` 已内置兜底
 （PATH 上没有、但 rustup 默认位置有时补上，并**打印一行 `!`** 说明，不静默改环境）。
 
+### 8. `node` 有两份时，**同一个判据会红绿不同**（2026-09-22 实测，我自己撞上的）
+
+本机有**两份 node**：DSH 会怀里那份 `/Users/shuyo/Library/Application Support/dsh-desktop/harness/.desktop-bin/node`
+（**v24.18.1**）与 `~/.local/node-v24.20.0-darwin-arm64/bin/node`（**v24.20.0**）。PATH 上哪个在前，
+决定的不只是"能不能跑 `pnpm tauri`"（那条坑见 `docs/development.md` 的 tauri 一节），
+**还决定个别判据的红绿** —— 因为那是**库行为本身变了**，不是我们的代码变了：
+
+```text
+scripts/session-grep.test.mjs「截断的帧也不抛错」
+  node 24.18.1 ⇒ zstdDecompressSync(截断帧) 不抛，返回 "这一�"     ⇒ 判据绿
+  node 24.20.0 ⇒ zstdDecompressSync(截断帧) 抛 Z_BUF_ERROR         ⇒ 判据红（5 次跑红 5 次）
+```
+
+症状最有误导性的一点：**全库 `vitest` 那一次跑是绿的、单独跑这个文件却是红的**（两边用的是不同的 node）。
+处置（已落地）：判据不再钉"某个 zlib 版本的实现细节"，只钉两个版本**共同**的事实
+（截断一定丢数据：要么半截、要么报错；"没报错"≠"读全了"），并在注释里**同时记下两份读数**。
+⇒ 通用教训：**判据里任何"某个依赖的实现细节"都是一颗定时炸弹**；要钉就钉"我们自己的实现必须满足什么"。
+（本轮同一形态还有一条：`vite/vitest` 别的红是 Windows 侧报的另外三条，与本条无关。）
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。
 - `node scripts/smoke-web.mjs` → 出现 **`N passed, 0 failed`**。
+
+### 8. **还原文件时 mtime 会被带回旧值** ⇒ `cargo` 复用旧二进制，读到的是**上一次**的结论
+
+2026-09-20（Windows 侧，我给一条新判据做变异实测时自己踩的）：变异——改动
+`src-tauri/src/blocks.rs` 让判据红 —— 通过；随后用 `Copy-Item <备份> <原文件>` 还原，
+再跑一次，**判据还是红的**，看起来像"变异没撤干净"。
+
+根因：`Copy-Item`（以及 `robocopy` 这类"保留时间戳"的复制）会把**源文件的 mtime 一起带过去**，
+而 Cargo 的脏检查是**按 mtime**判的 ⇒ 还原后的源文件比上次构建产物的时间**更早**，
+Cargo 认为"没变"，**直接复用那个变异过的测试二进制**。
+
+处置（任选一条，越靠前越省事）：
+- 还原后**碰一下时间戳**：`(Get-Item <文件>).LastWriteTime = Get-Date`（PowerShell）/ `touch <文件>`（sh）；
+- 或者用**不会带时间戳**的方式还原：`git checkout -- <文件>`（它是按当前时间写盘的）；
+- 或者强制重建：`cargo clean -p shuyonote`（慢，但最确定）。
+
+**判据**：变异/还原这类"只改一行再看一次"的实验里，**两次读数的产物时间必须不同** ——
+否则你读到的很可能是同一个二进制。（这条与 `docs/TESTING.md` 里"注入后要字节扫描确认清单真的落进副本"
+是同一族：**别相信"我改了"，要证明"跑的确实是新产物"**。）
 
 ## 5. 版本号提升规则（重要）
 
@@ -428,6 +506,23 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
 - `docs/` 聚焦"是什么 / 为什么 / 怎么做"；版本演进以 `CHANGELOG.md` 为准。
 - 文档统一入口：`docs/README.md`（导航表 + 方案索引）。新增文档记得登记进去。
 
+### 8.1 「记得登记」已经**不是靠记得**（2026-09-22 起由门禁拦）
+
+上面那句"新增文档记得登记"原先只是一句嘱咐，实测会漂移：`docs/plans/` 到 **71 篇**时，有 4 篇
+**没进 `docs/README.md` 的方案索引**，而**死链判据抓不到**（链接没坏，只是没人找得到）。
+⇒ 现在有三条**可执行**规矩（都在 `node scripts/check-doc-links.mjs`，跑在 `pnpm verify` 的 `contract` 组里）：
+
+| 规矩 | 拦的是什么 |
+|---|---|
+| **方案索引一一对应** | `docs/plans/*.md` 每个都必须在 `docs/README.md` 的表里有一行，且右列**有内容**（不是空、不是破折号）。⚠️ **只在正文里提一句不算登记** —— 判据只认表行（第一版用全文件匹配，变异当场证明"提一句就能变绿"）。纯函数与变异在 `scripts/lib/docs-index.mjs` / `.test.mjs` |
+| **相对链接可达** | 把路径按"自己在 `docs/` 根目录"写（如 `plans/x.md`，正确是 `x.md`）—— 这是本仓真实踩过的一类 |
+| **「快速导航」左列是「我想了解…」** | 新增方案时顺手把"文档 → 内容"形态的行插进导航表（两张两列表长得一样、语义不同；死链判据看不见） |
+
+- **刻意不判的反向**：`docs/README.md` 里**允许**出现指向私有仓 `shuyonote-sync-server` 的 `plans/x.md` 路径
+  （如 M27 那行）。"提到的必须存在"会对着一条**正确的**说明喊红。
+- 所以新增一篇方案的标准动作：写 `docs/plans/YYYY-MM-DD-xxx.md` → 在 `docs/README.md` 的方案索引里加一行
+  （一句话说清"这篇讲什么"）→ `node scripts/check-doc-links.mjs` 绿。
+
 ## 9. 常见坑
 
 - **`Missing environment variable OPENSSL_DIR`（Windows）**：`rusqlite` 的 `bundled-sqlcipher` 要链接系统 OpenSSL，Windows 必须显式给路径 —— 装了 OpenSSL 也要导 `OPENSSL_DIR`（最常见就是「装了但没设变量」）。详见 **§2.3.1 OpenSSL（Windows 必做）**。
@@ -447,6 +542,37 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
   **仍未定位**。下次接手建议从"能加载 Debug CRT 的最小复现"入手（先确认一个只 import Debug CRT 的极简 Rust 测试二进制在本机能否加载），
   把范围从"整个 crate 的依赖链"缩到 CRT 加载本身。
   **在此之前：本机所有 Rust 单测只能过 `cargo check --all-targets` 的编译检查，不能当"已验证"。**
+- **vitest 默认单测超时 5 s —— 端到端 / live 类判据必须自己给超时**（2026-09-22，一周内**三次同源**）：
+  签名一模一样：报 **`Test timed out in 5000ms`**（不是断言不等），而且**每次红的集合不同**（排队/负载抖）。
+  三次实例：① 我的 `localTranscribe.live.test.ts` 在**唯一有模型服务的机器**上第一跑就红 2 条 —— 本机 TTS 每次 ~3.4 s，
+  而 live 族是**多个文件并发**打同一个服务；② Windows 侧 `check-sys-deps` 的端到端在那台要 6.2 s（脚本本体 `node scripts/check-sys-deps.mjs` 1 秒内 exit=0）；
+  ③ 疑似同族：`overlayShortcuts` 的 Esc 用例（**macOS 上 20 ms 绿**，未定论）。
+  ⇒ 规矩：**凡是"要等外部东西"（模型服务、真浏览器、子进程、端到端链路）的判据，显式给第三参数超时**；
+  排查时先看错误原文是 `timed out` 还是断言 —— 两者修法完全不同。
+  ★ 更要紧的一条同族纪律：**一条从未在任何地方跑过的判据等于没有判据**（①就是"三台机器都 skipped、第一次真跑才暴露"）。
+- **长驻的 `pnpm tauri dev` 会被"你在同一个工作树里做 git"打断**（2026-09-22 实测）：
+  `tauri dev` **默认开着文件 watcher**；在它运行期间我做 `git merge` / `pull` / 大范围 `checkout`，
+  它会**触发重建**，而实测其中几次**重建后直接退出（`EXIT=0`）** —— 现象最迷惑人的地方是
+  **日志里没有任何报错**（停在 `Running target/debug/shuyonote`），看起来像"应用自己崩了"。
+  取数办法：`pnpm tauri dev > log 2>&1; echo "EXIT=$? at $(date +%H:%M:%S)"` ⇒ 那次抓到
+  `EXIT=0 at 15:55:43`，而日志里紧接着就是一次 `Building … Finished … Running`。
+  **处置**：要长驻就用 `pnpm tauri dev --no-watch`（**vite 的 HMR 仍在**，只是不因文件变动重启后端），
+  或者把 dev 跑在**另一个 worktree** 里、把主工作树留给 git 操作。
+  ⚠️ 边界：这是**实测到的相关**（rebuild ⇒ 退出），**机制没有确证**（没去看 Tauri CLI 的 watcher 实现）；
+  所以别把它当"必然"，但要记住：**看到一个没有报错的退出，先看它退出前有没有刚重建过**。
+- **shell 脚本里 `$VAR` 后面紧跟中文（全角括号/逗号）⇒ 变量名被"吞"**（2026-09-22 实测，我自己踩的）：
+  bash 在 UTF-8 locale 下会把紧跟其后的**多字节字符**并进变量名 ⇒ `set -u` 报
+  `line 69: app_cur（: unbound variable`（名字里带乱码），而**报错行看起来完全正常**：
+  `log "★ dev 已快进到 $app_cur（$app_head → …）"` —— 中文说明文里到处都是这种写法。
+  **处置**：只要变量后面可能跟非 ASCII，一律写 `${VAR}`（花括号）。本会话的监听脚本
+  `/tmp/watch-dev-mail.sh` 第一版就是这样在"快进已经成功、只是写日志"的那一步崩掉的
+  ⇒ 顺带一条**判据式的教训**：**副作用（快进/合并）发生在日志之前时，日志崩掉会让"事实上已经做了"看起来像"什么都没做"**；
+  所以关键动作要么先落日志再动手，要么把日志写成不会崩的形式。
+- **别用"自己命令里出现的字面量"去匹配进程命令行**（2026-09-22，Windows 侧实战）：
+  有人用 `CommandLine -match 'ShuyoNote'` 挑要停的进程，结果**把自己那条命令也匹配进去了**
+  （它自己的命令行里就含这个字符串）⇒ 连带把宿主 job runner 一起杀掉、工具报 `0xFFFFFFFF`；
+  同一天换成 `'start-desktop-dev.ps1'` 又中了一次。⇒ 只按**进程名**＋**端口所有者 PID**，或用**精确 PID**；
+  这条与"读别的进程 EDIT 必须用 `WM_GETTEXT`"同族：**进程操作要用身份，不要用文本**。
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
@@ -523,6 +649,45 @@ git ls-remote origin refs/heads/dev refs/heads/main    # 两侧 SHA 逐一核对
 git switch main                               # 别把工作区留在 dev（§9「常见坑」里两条都栽在这上面）
 ```
 
+#### 10.3.0 ★ 每次发版后，把 `main` **回合进 `dev`**（版本号属于"main-only 提交"）
+
+`release: X.Y.Z`（版本号 bump ＋ CHANGELOG 已发布段）**只发生在 `main` 上** ⇒ 它天然是"`dev` 没有的提交"，
+按 §10.3 就该回合进来。**2026-09-22 实例**：`dev` 的版本号一直停在 **`1.91.10`**，而 `main` 已经 `1.91.20`
+（差 10 个版本没回合），后果有两条、都不显眼但用户能看见：
+
+1. 「关于」里显示 `v1.91.10`（`APP_VERSION` 来自 `package.json`）；
+2. **开发构建天天提示「有新版本」** —— 它拿 `APP_VERSION`（1.91.10）与更新通道的 `latest.json`（1.91.20）比。
+
+做法：`git merge origin/main`（**是 merge，不是手抄版本号** —— `check-changelog-version-parity` 的实现注释
+里写明了这个口径："发布提升从 main 回合进 dev 恰恰是 merge"）。冲突面通常**只有 `CHANGELOG.md` 一处**，
+解法固定：**`dev` 的 `[Unreleased]` 保持在最前**，把 `main` 的已发布段整段插到 `dev` 现有的**首个已发布段**之前
+⇒ 顺序是 `Unreleased → 新发布的几段 → 原来的已发布段 → …`。回合后跑
+`check-versions` / `check-changelog` / `check-changelog-version-parity` / `check-doc-links` 四条（都很快）。
+
+#### 10.3.1 ★ 发布线的**文档修正**分支：当天合回 `main`，否则会**静默搁浅**（2026-09-22 实例）
+
+真实发生的一次：`release: 1.91.11`（`39024800`）在 `main` 上之后，为**已发布说明**开了
+`docs/changelog-1.91.11-gm-wording`（两笔**只动 `CHANGELOG.md`** 的提交：三处事实性更正 ＋
+按 AMD 要求撤掉 `src_sha256` 的**具体值**）。两笔都推到了**双远端**，但**从未合回 `main`** ——
+于是 `main` 上那份**已经对外发布**的 1.91.11 国密段，六天里一直带着被撤掉的具体值、
+以及一句"缓解方式待定"（而缓解新门禁 `gm-registry-clean` 后来已经落地）。
+⇒ **判据（一句话）**：`git branch -r --no-merged main` 里出现的、**只动 `CHANGELOG.md`/发布说明**的分支，
+当天就该合回 `main`；它不影响 `dev`，所以**任何 CI/门禁都不会提醒你**。
+这是"分支推上去了"与"修正在线上生效"之间的缝——`git log origin/main` 里没有那两笔，就是它。
+
+```bash
+# 收口一条发布线文档分支（非强推、只带来 CHANGELOG 改动）
+git switch main && git merge --ff-only origin/main
+git cherry-pick <两笔的 sha>          # 只动 CHANGELOG.md ⇒ 冲突面最小
+git diff --stat origin/main           # ★ 确认只有 CHANGELOG.md
+node scripts/check-changelog.mjs && node scripts/check-versions.mjs && node scripts/check-doc-links.mjs
+git push origin main && git push github main
+git switch dev                        # 别把工作区留在 main
+```
+
+**实例读数**（2026-09-22）：cherry-pick 两笔 ⇒ 相对 `origin/main` 只差 `CHANGELOG.md`（11 增 3 删）；
+`check-changelog` / `check-versions` / `check-doc-links` / `check-changelog-version-parity` 全绿。
+
 ### 10.4 开 MR / 合并之前：**先按目标分支对一次 diff**（2026-09-17 加，AMD 侧实战踩出来的）
 
 **规则**：把特性分支合进 `dev`（或 `dev` 合进 `main`）之前，先跑
@@ -579,6 +744,65 @@ AMD 实测的成因：`git fetch` 被 **`refusing to fetch into branch 'refs/hea
 
 > 与 §10.4 是同一类病：**都是"看起来完成了、其实基线或对象不是你以为的那个"**。
 > §10.4 治"拿旧分支当基线"，这条治"在旧提交上验证"。
+
+### 10.7 本机模型服务（Herdsman）：清单、两个 ASR 的分工、以及一条冒烟配方（2026-09-22 AMD 侧实测）
+
+**服务**：`herdsman.exe`（`C:\Program Files\starwave\Herdsman\`）监听 `127.0.0.1:8080`，OpenAI 兼容
+（`/v1/models`、`/v1/chat/completions`、`/v1/audio/speech`、`/v1/audio/transcriptions`）；
+数据在 `%USERPROFILE%\.herdsman\`（`models/` 是模型、`launch_records/` 是启动记录），下载缓存在 `.cache\herdsman\`。
+CLI：`herdsman.exe skill models {list,download --model <名字> [--wait],start,stop,status,uninstall}`。
+⚠️ **从普通 shell 调 `skill models` 会"空输出且什么都没发生"**（2026-09-22 实测：`list` 0 行、
+`download` 无输出且 5 min 内 `models/`、`ota_downloads/` 无变化）⇒ 它要**运行中的桌面进程**的通道；
+**装模型走桌面应用的「模型商店」最稳**。判"装上了没有"要拿读数：`GET /v1/models` 多出来 ＋
+`models/<名字>/` 出现且大小对得上（别只看 UI 说"已安装"）。
+
+**清单（2026-09-22 实测，9 个）**：`DeepSeek-V4-Flash-0731`、`Qwen3.8-Flash-Next`（视觉）、
+`bge-m3`（向量）、`bge-reranker-v2-m3`（重排）；
+**ASR 两个**：`funasr-nano`、`sherpa-onnx-paraformer-zh-small`（79.5 MB，2026-09-22 装）；
+TTS：`sherpa-onnx-vits-melo-tts-zh-en`、`edge-tts`（云端、不占盘）；图片：`zimage-turbo`。
+
+★ **两个 ASR 的差别（同一段音频实测，别让下游静默依赖标点）**：
+
+| 引擎 | 同一句「今天天气不错，我们下午三点开会。」的转写 |
+|---|---|
+| `funasr-nano` | `今天天气不错，我们下午三点开会。`（**带标点**，与原句一字不差） |
+| `sherpa-onnx-paraformer-zh-small` | `今天天气不错我们下午三点开会`（**裸文本，无标点**） |
+
+**闭环冒烟配方**（不需要外部音频；本仓**没有**短音频夹具 —— `*.wav/*.mp3/*.m4a/*.ogg` 全树无命中）：
+
+```bash
+# ① 合成：本地 TTS 造一句中文
+curl -s -X POST http://127.0.0.1:8080/v1/audio/speech -H "Content-Type: application/json" \
+  -d '{"model":"sherpa-onnx-vits-melo-tts-zh-en","input":"今天天气不错，我们下午三点开会。","response_format":"wav"}' \
+  -o tts-smoke.wav
+# ② 转写：用被验的那个 ASR 模型
+curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
+  -F "file=@tts-smoke.wav" -F "model=sherpa-onnx-paraformer-zh-small"
+```
+
+⚠️ **这条冒烟的边界**：音频是 TTS 合成的**干净音**（≈3 s、无噪声、标准普通话）⇒ 它证的是"链路通、中文能认"，
+**不等于**真人口音／远场／嘈杂环境也这个水平；那类结论要拿**真录音**复跑。
+
+★ **应用里已经接上这条端点**（2026-09-22，macOS 侧）：`src/lib/ai/localTranscribe.ts`（唯一构造点，
+与 `localVision` 同一条"只许本机端点"的红线）→ `attachmentDeps` → `av.transcript@1`。
+默认模型 `funasr-nano`；**桌面端走原生 http（不经 WebView）⇒ 没有 CORS 这一关**，Web 端才有。
+★ **live 冒烟已跑通**（2026-09-22，AMD 那台有服务）：`funasr-nano` 逐字带标点、Paraformer 只差标点、
+本机 herdsman 不返回 `segments` ⇒ 契约上一段且 `loc=""`。⚠️ 本机 herdsman 没起（`ECONNREFUSED 127.0.0.1:8080`）⇒ 本机只有假端点那层；
+★ 教训：**一条从未在任何地方跑过的判据等于没有判据** —— 那台机器上它第一跑就因"没给 vitest 超时"红了两条（TTS 每次 ~3.4 s），已修。
+本机要复现这条读数：先用桌面应用的「模型商店」把服务起起来，再跑 `src/lib/ai/localTranscribe.live.test.ts`
+（**服务不在就跳过、并把理由写进 describe 标题**：TTS 合成 → 经我们自己的通道转写 → 经 `av.transcript@1` 成段；
+它**必须显式给超时** —— 本机 TTS 每次 ~3.4 s，而 live 族是并发打同一个服务的）。细节见
+`docs/plans/2026-09-22-asr-wiring-plan.md` §6（含"换 ASR 模型今天不生效"那条参数优先级问题）。
+**§10.5 补一双孪生形态（2026-09-18，AMD 侧复核块 ID 分支时又踩到一次）**：上面那条治的是
+**本地分支没更新**，还有一种更隐蔽的 —— **`origin/dev` 这类远端跟踪 ref 静默过期**：
+
+- 成因：clone 时 `remote.origin.fetch` 只配了 `main`（例如 `+refs/heads/main:refs/remotes/origin/main`）
+  ⇒ 你 `git fetch origin dev` 之后 `FETCH_HEAD` 是新的，但 **`origin/dev` 这个 ref 不会更新**；
+  随后 `git log origin/dev` / 拿 `origin/dev` 当基线，看到的还是旧的（AMD 一度停在 `bd68a608` 上复核）。
+- 判据：**引用任何 `origin/<分支>` 之前**，用 `git ls-remote origin refs/heads/<分支>` 核一眼，
+  或直接 `git fetch origin <分支>` 后用 `FETCH_HEAD`/`git rev-parse FETCH_HEAD`；
+  根治办法是把 fetch refspec 补全（`git config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`）。
+- ⇒ 与本条同源：**"我看到的分支"必须是"我从远端刚拿到的那一个"**，而不是本地某个同名 ref。
 
 ### 10.6 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
 

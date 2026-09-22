@@ -4,6 +4,7 @@ mod community_publish;
 mod attachments;
 mod backlinks;
 mod backup;
+mod block_rev;
 mod blocks;
 mod bookmark;
 mod commands;
@@ -508,6 +509,16 @@ pub fn run() {
             updates::install_android_update,
             commands::create_database,
             commands::save_page,
+            // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
+            commands::list_page_conflicts,
+            commands::resolve_page_conflict,
+            // 阶段 1 · 正文文本的本地修复（合并/裁决之后由"有编辑器的那一侧"喂正确文本）
+            commands::refresh_page_text,
+            // 阶段 1 · B1："正文待重建"队列（补算器按它把合并/裁决过的页面补上）
+            commands::list_stale_text_pages,
+            // B 方案（2026-09-22）：页级"保留本地"时被游标吃掉的那一版远端内容 —— 清单与三个真裁决
+            commands::list_pending_remote_pages,
+            commands::resolve_pending_remote,
             commands::set_page_cover,
             commands::set_page_icon,
             commands::set_page_cover_height,

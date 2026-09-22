@@ -230,7 +230,9 @@ export class SqliteStore {
         cover_height INTEGER NOT NULL DEFAULT 300,
         cover_pos REAL NOT NULL DEFAULT 50,
         sync_seq INTEGER NOT NULL DEFAULT 0,
-        dirty INTEGER NOT NULL DEFAULT 0
+        dirty INTEGER NOT NULL DEFAULT 0,
+        -- 阶段 1（B1）：正文列"待重建"（合并/裁决之后由补算器重建）。本地状态：不同步、不进导出。
+        text_stale INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS pdf_annotations (
         id TEXT PRIMARY KEY,
@@ -315,6 +317,32 @@ export class SqliteStore {
       CREATE INDEX IF NOT EXISTS idx_page_props ON page_props(page_id);
       CREATE INDEX IF NOT EXISTS idx_attr_props ON page_props(attr_id);
       CREATE INDEX IF NOT EXISTS idx_page_versions ON page_versions(page_id, created_at DESC);
+      -- 阶段 1 · 冲突留痕（本地表，不同步/不进备份导出）：远端应用时报出的"同一块被两端改过"。
+      -- ⚠️ 只是**本机证据**，不能解释跨机器差异：别的设备上可能没有这一行，服务端也没有这张表。
+      CREATE TABLE IF NOT EXISTS page_conflicts (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL,
+        block_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        local_json TEXT NOT NULL DEFAULT '',
+        remote_json TEXT NOT NULL DEFAULT '',
+        detected_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_choice TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at);
+      -- B 方案（2026-09-22）·「未取回的远端版本」（本地表，不同步/不进备份导出）：页级"保留本地"时
+      -- 那条远端变更会被游标吃掉（doPull 的 maxSeq 照旧推进）⇒ 在这里存下**那一版远端内容**，
+      -- 让用户还能裁决（merge / take_remote / keep_local —— 三个都真的动数据）。
+      -- 每页只留最新一条（page_id 是主键），它不是变更日志。与桌面 db.rs 的同名表**同形**。
+      CREATE TABLE IF NOT EXISTS pending_remote_pages (
+        page_id TEXT PRIMARY KEY,
+        seq INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL,
+        remote_updated_at INTEGER NOT NULL,
+        stashed_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
       -- Sync engine tables (S8: per-workspace profiles / auth sessions / change log).
       CREATE TABLE IF NOT EXISTS changes (
@@ -413,6 +441,13 @@ export class SqliteStore {
     }
     try {
       this.db.run("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
+    } catch {
+      /* already exists */
+    }
+    // 阶段 1（B1，2026-09-22）· 正文列"待重建"标记：合并产物 / 冲突裁决之后那一页的正文与索引要按
+    // 编辑器语义重算。**本地状态：不同步、不进导出**（与 page_conflicts 同族）。见 `lib/docContent.ts`。
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0");
     } catch {
       /* already exists */
     }

@@ -1,6 +1,10 @@
 # ShuyoNote 路线图
 
 > 基于三方对比（见 [compare-obsidian-siyuan-shuyonote.md](compare-obsidian-siyuan-shuyonote.md)）梳理的演进路线。按「价值 ÷ 工程量」排序。**✅ = 已实现并合入**；「规划」= 已出 [方案](README.md#方案与规划-plans)，待里程碑落地。设计走向遵循 [设计哲学](design-philosophy.md)。
+>
+> **本次对齐：2026-09-22**（对齐应用仓 `dev`；对外交付线 `1.91.x`，最新已发布 `1.91.18`）。
+> ★ 除 M1–M27 之外，2026-09 还有六条**在飞战役**（国密 / PDFium / 全库 AI 覆盖 / 块级 CRDT 阶段 1 / 社区与分发 / 近实时）——
+> 它们按各自方案里的 **P 阶段**跟踪、**不占 M 编号**，单独列在 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号)。
 
 ## 1. 现状（已实现）
 
@@ -23,6 +27,20 @@
 - 多工作空间 = **已实现**（M10 里程碑达成：隔离 + 切换 + 生命周期 + 每空间内容过滤；**M15 物理隔离**把它升级为「每空间独立 SQLite 库 + 全局内容寻址附件 + 单空间导出/导入」）
 - 插件 = **已实现（L1）**（M11 里程碑达成：磁盘加载命令插件 + boa 受限运行时 + 白名单 API + 启停持久化 + 卸载/安装 + `__insert` 可插入内容）。**下一步见 [插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)**（M11.5–M11.13：先补时限/资源上限与故障可见性 → 冻结 ABI/权限 → 扩能力并与 AI 工具层合并 → 触发面 → 声明式插件 → 有闸门的 UI/分发；隔离强度 M11.13 已判定必有，为 M11.11 分发硬前置）；**分发与供给侧策略见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)**（协议而非平台 + 贡献阶梯 + 社区上线当天清单）
 - 团队版同步（M27 部分）= **已实现**：客户端 **per-workspace `sync_profiles`**（一个客户端持多身份，各空间同步到各服务器）+ **sync-server S1–S8**（认证/角色/同步隔离/空间级附件/审计/Docker）+ 同步 E2E（见 M2）；账户 UI / 个人密钥 / 本地加密 见 [身份与隐私子路线图](identity-privacy-roadmap.md)
+
+## 1.1 2026-09 新增（比里程碑粒度更细，按战役记）
+
+> 这一节只写**用户可感知或可验证**的新能力，一行一件事；每条都能在仓库里找到判据或读数。
+
+- **国密（SM 系列）走完四层**：应用层密文格式 **v2**（SM4-CBC ＋ HMAC-SM3，PBKDF2-HMAC-SM3）已是**默认写法**；库级**页加密 SM4 ＋ 页 MAC/库 KDF SM3**（SQLCipher provider 补丁 v4）；owner 拍板**单一口味**（所有平台只发国密那一套），发布链上用**五条产物断言**把"看起来是国密、其实不是"的每个入口挡住。交付口径见 [SM-CRYPTO-DELIVERY](SM-CRYPTO-DELIVERY.md)，方案与读数见[国密全链路方案](plans/2026-09-16-sm-crypto-full-plan.md)。
+- **PDF 桌面引擎换成 PDFium（可切换）**：`SHUYONOTE_PDF_ENGINE=pdfium` 走 PDFium、缺省仍 MuPDF；**两引擎对拍**出了硬判据报告（四样本逐像素最大差 0–1、阈值 8、超阈 0.000%）。见 [PDFium 方案](plans/2026-09-16-pdfium-engine-plan.md) 与 [P3 对拍报告](plans/2026-09-19-pdfium-p3-report.md)。
+- **「全库 AI 覆盖」落地了大半**：附件/页面 → 派生文本 ＋ 块 ＋ 嵌入三层（抽取器注册表按 mime 分派、跨实现的 conformance 夹具）；**本机模型端点**是唯一出入口（红线：抽取不得走远程 provider）。进度总账见[覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md) §8.0。
+- **语音转写（ASR）接线**：`av.transcript@1` 抽取器 ＋ 契约四处 ＋ **平台侧转写通道**（`localTranscribe`：只许本机端点、带时间戳分段、默认 `funasr-nano`）。见 [ASR 接线方案](plans/2026-09-22-asr-wiring-plan.md)。
+- **块级 CRDT 的阶段 1 地基**：块身份（`blockId` 归属）、**块版本 `blockRev`**（纯函数 Rust ↔ TS 双份判据）、写层与就绪度盘点都已落地（**阶段 1 本身仍在飞**，见 §3.5）。
+- **社区与插件分发**：`plugin-index.json` 规范 ＋ 索引签名 ＋ 撤回（两级、离线生效）＋ 发布者公钥固定（TOFU）＋ 多源订阅 ＋ **事实清单（只摆事实不评分）**；社区侧另有「一键发布到社区」的客户端方案。
+- **近实时协作**：同页冲突提示、presence（谁在编辑）、评论/@/通知、SSE 推送——服务端 `collab.rs` 与客户端命令/UI 已落地（**块级 CRDT 仍是后置**，见 [实时协同分析](realtime-collab-analysis.md)）。
+- **发布线 1.91.x**：Windows 安装器默认目录改到 `%LOCALAPPDATA%\Programs\ShuyoNote`（fork 上游 NSIS 模板、逐行对照）、Android 发版件走正式密钥签名 + 指纹硬比对、macOS 签名脚本补 hardened runtime（公证待 Apple 凭据）。
+
 
 ## 2. 下一阶段优先级
 
@@ -53,6 +71,11 @@
 | **P0** | **团队版（自建协作）** | Notion 团队版 / 语雀 / 飞书知识库 | 多用户 + 权限（协同后置）；不接外部通讯 App，全自建；组织空间放弃零知识（个人空间保留 E2E） | 🔶 **M27 部分**（服务端 S1–S8 + 客户端 per-space 同步 + 账户 UI（U1–U4）+ 本地加密（E1）已落地；协同后置，[身份与隐私子路线图](identity-privacy-roadmap.md)） |
 | **P0** | **多账户切换 UI**（空间身份标签 / 当前目标 pill / SyncPanel 登录+空间下拉） | 多账号工作流 | 一人多服务器×多空间时看清「我在同步到哪」；低成本 | ✅ M27-UI（U1–U4 落地，[身份与隐私子路线图](identity-privacy-roadmap.md)） |
 | **P1** | **本地静置加密**（口令→Argon2id→密钥→加密 DB+附件，默认关） | Notion 本地加密 / 思源 | 个人无服务器也想私密；与同步 E2E（M2）互补 | ✅ E1 已落地（SQLCipher 空间库 + 附件加密 + 锁定门控，v1.64.16）；**E2 解锁/锁定 UX + 忘记口令提醒已落地**（同一轮修掉"加密安装重启即崩溃屏、锁定屏从没出现过"的 hooks 早退错），见[身份与隐私子路线图](identity-privacy-roadmap.md) |
+| **P0** | **国密（SM 系列）合规准入** | 等保/密评门槛（政企交付） | 唯一硬收益＝**合规准入**；代价与"档 2 vs 档 3"的账在[利弊补充](plans/2026-09-17-sm-crypto-tradeoff.md)里 | ✅ **四层走完 ＋ 单一口味已拍板 ＋ 落进发布链**（应用层 v2 默认 / 库级 SM4 页 ＋ SM3 KDF / 五条产物断言）；见 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号) 与 [交付说明](SM-CRYPTO-DELIVERY.md) |
+| **P1** | **全库 AI 覆盖**（派生文本 → 块 → 嵌入，抽取器注册表按 mime 分派） | Obsidian 插件生态 / 思源 AI | 让"整库可被 AI 检索/总结"成立，而不是只覆盖当前页 | 🔶 **大部分已落地**（三层派生 ＋ 本机模型红线 ＋ 抽取器 conformance）；**ASR 转写接线**已补（[方案](plans/2026-09-22-asr-wiring-plan.md)）；总账见[覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md) §8.0 |
+| **P2** | **PDF 引擎：PDFium（桌面光栅化）** | 闭源商业授权版的许可前置 | 只换光栅化、不碰坐标与前端契约；两引擎可切换 | ✅ **可切换 ＋ P3 对拍 4/4 硬判据**（[方案](plans/2026-09-16-pdfium-engine-plan.md) / [对拍报告](plans/2026-09-19-pdfium-p3-report.md)）；仍待：Linux 字体后端、真机验收 |
+| **P1** | **块级协同地基（阶段 1：块版本 ＋ 冲突提示）** | 思源/语雀的近实时编辑体验 | 页级 LWW 会把同页并发编辑整页覆盖；阶段 1 先让"谁改了哪块"可见、可合 | 🔶 **在飞**（块身份 ＋ `blockRev` ＋ 写层已落地；就绪度与剩余见[阶段 1 方案](plans/2026-09-19-stage1-block-lww-readiness.md) 与 [blockRev 写层](plans/2026-09-22-block-rev-write-layer.md)） |
+| **P2** | **社区与插件分发生态** | Obsidian 社区 / 思源集市 | 供给先于市场：协议 ＋ 索引 ＋ 签名/撤回 ＋ 一方先行插件 | 🔶 **协议与治理已落地**（索引签名、两级撤回、TOFU 公钥固定、多源订阅、事实清单）；**市场 UI 与"一键发布到社区"仍在飞**（[发布方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md)） |
 
 ## 3. 里程碑规划
 
@@ -321,6 +344,20 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 > **仍待（身份与隐私，详见 [身份与隐私子路线图](identity-privacy-roadmap.md)）**：**K2** 客户端「粘贴密钥连个人服务器」流程；本地静置加密的 E2（忘记口令提醒，口令即密钥别无副本）。（可用性加固 H1：备份 + `/health/db` 深探 ✅ 已落地。）
 > **明确后置（P2）**：本地多用户档案（一台机器多人、各不相同 vault）；团队实时协同（C4）。
 
+## 3.5 「2026-09 在飞战役」（按方案 P 阶段跟踪，不进 M 编号）
+
+> 为什么单列一节：这六条都比单个里程碑大、且**跨里程碑**（国密横跨加密/发布/构建，AI 覆盖横跨 M17/M18/M20），
+> 塞进 M 编号只会让两边都失真。每条的**权威文档**在最后一列——本节只给"现在到哪、卡在哪"。
+
+| 战役 | 现在到哪（可验证的读数/事实） | 卡在哪 / 下一步 | 权威文档 |
+|---|---|---|---|
+| **国密** | 四层走完（应用层 v2 默认 / 库级 SM4 页 ＋ SM3 页 MAC/库 KDF / 单一口味拍板 / 发布链五条产物断言）；Linux CI 上新门禁 `rust-sm-wired` 真跑 **491 passed / 0 failed**；macOS 真产物 `otool -L` 无 `libcrypto/libssl`、`strings` 见 `HMAC-SM3`/`SM4-CBC` | ① Windows 做"产物实际链的 OpenSSL 前缀"这一格的**真机变异证明**；② Linux 发版链上那格要等**带 tag 的真发版**；③ macOS 公证待 Apple 凭据；④ 老库（AES＋SHA512）迁移三步（无真实用户 ⇒ 零成本） | [全链路方案](plans/2026-09-16-sm-crypto-full-plan.md) ＋ [交付说明](SM-CRYPTO-DELIVERY.md) ＋ [利弊补充](plans/2026-09-17-sm-crypto-tradeoff.md) |
+| **PDFium** | 两引擎可切换；P3 对拍四样本**硬判据 4/4**（逐像素最大差 0–1，阈值 8） | Linux 非嵌入字体后端（施工单已出）、真机逐条验收 | [方案](plans/2026-09-16-pdfium-engine-plan.md) ＋ [对拍报告](plans/2026-09-19-pdfium-p3-report.md) |
+| **全库 AI 覆盖** | 派生文本 ✅ / 块 ✅ / 嵌入 ✅；抽取器注册表按 mime 分派 ＋ 跨实现 conformance；**本机端点红线**（抽取不得走远程 provider）；**ASR 真模型读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、本机 herdsman 不返回 `segments` ⇒ 契约上退成一段、`loc=""`） | 面板侧"消费抽取结果"那一层未落地（触发点在导入/附件那条路）；Web 端 CORS 未实测 | [覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md)（总账 §8.0） |
+| **块级 CRDT（阶段 1）** | 块身份归属已拍板；`blockRev` 纯函数（Rust 14 条 ↔ TS 15 条判据）＋ 18 类节点声明字段全接入；写层施工单已出 | 阶段 1 的写回与冲突提示收口；阶段 2+ 的 CRDT 迁移路线未开工 | [块 ID 归属](plans/2026-09-18-crdt-block-id-ownership.md) ＋ [阶段 1 就绪度](plans/2026-09-19-stage1-block-lww-readiness.md) ＋ [blockRev 写层](plans/2026-09-22-block-rev-write-layer.md) |
+| **社区与分发** | 索引规范 ＋ 索引签名 ＋ 两级撤回（离线生效）＋ TOFU 公钥固定 ＋ 多源订阅 ＋ 事实清单；社区侧版本线独立 | 市场 UI（c）与「一键发布到社区」客户端侧仍在飞；闸门不变（作者文档 ＋ ≥3 真实第三方插件） | [分发策略](plans/2026-09-10-plugin-distribution-strategy.md) ＋ [发布方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md) ＋ [社区现状](community-integration-status.md) |
+| **近实时协作** | 同页冲突提示 / presence / 评论@通知 / SSE 推送均已落地（服务端 `collab.rs` ＋ 客户端命令/UI） | 块级真协同后置（CRDT 阶段 1 是它的地基）；**明确不做**的是实时聊天 | [实时协同分析](realtime-collab-analysis.md) ＋ [SYNC](SYNC.md) |
+
 ## 4. 竞品差距跟踪
 
 | 维度 | 当前差距 | 计划 |
@@ -343,3 +380,6 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 | 帮助/上手 | 靠占位符/tooltip/命令面板，无体系化帮助 | **M25 帮助系统**（[方案](plans/2026-08-27-help-system-plan.md)，规划：就地提示 + 快捷键面板 + 内置「使用指南」页） |
 | 数学公式 | 无正文公式渲染 | **M26 公式**（[方案](plans/2026-08-30-formula-plan.md)：块级 `$$…$$` + 行内 `$…$`，KaTeX 懒加载；已落地） |
 | 团队协作 / 多用户 | 单用户、无账号、无权限、无实时协同 | **M27 团队版**（账号/认证 + 权限，协同后置，全自建，方案见私有仓库 `shuyonote-sync-server`，规划） |
+| 合规准入（等保/密评） | 无国密算法面 | **国密四层 ＋ 单一口味**（已落地；[交付说明](SM-CRYPTO-DELIVERY.md)） |
+| 本地 AI（不出网） | 竞品多以云端 AI 为主 | **本机端点红线**（抽取/转写/嵌入一律走本机 provider，非 loopback ⇒ 拒绝注入能力）——差异点是"数据不出网"这件事有**代码级**判据，不是声明 |
+| 同页并发编辑 | 页级 LWW ⇒ 同页并发可能整页覆盖 | **块级 CRDT 阶段 1**（`blockRev` ＋ 冲突提示，在飞，见 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号)） |

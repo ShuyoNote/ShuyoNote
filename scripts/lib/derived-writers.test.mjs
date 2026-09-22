@@ -1,0 +1,117 @@
+// `derived-writers` 的判据：**生产代码写派生表必须被抓到，测试夹具不许误伤**。
+//
+// 这一组的存在理由：这条规则的价值全在"测试里的 INSERT 不算"这一步上 ——
+// Rust 侧今天就有两处 INSERT 在 `#[cfg(test)]` 里（播种夹具），判据若不做区域判定，
+// 一开始就红，真回归会被淹没；反过来，若切得太狠（把生产代码也切掉），规则就形同虚设。
+import { describe, expect, it } from "vitest";
+
+import { findDerivedWrites, scanDerivedWriters } from "./derived-writers.mjs";
+
+describe("findDerivedWrites：认得三种写法", () => {
+  it("INSERT INTO / INSERT OR REPLACE INTO / REPLACE INTO（大小写不敏感）", () => {
+    const text = [
+      'c.execute("INSERT INTO chunks (id) VALUES (?1)", []).unwrap();',
+      'c.execute("insert into attachment_text (id) VALUES (?1)", []).unwrap();',
+      'c.execute("INSERT OR REPLACE INTO chunks (id) VALUES (?1)", []).unwrap();',
+      'c.execute("REPLACE INTO attachment_text (id) VALUES (?1)", []).unwrap();',
+    ].join("\n");
+    const hits = findDerivedWrites(text);
+    expect(hits.map((h) => h.table)).toEqual(["chunks", "attachment_text", "chunks", "attachment_text"]);
+    expect(hits.map((h) => h.line)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("别的表 / 只是 SELECT 不算", () => {
+    const text = [
+      'c.execute("INSERT INTO pages (id) VALUES (?1)", []).unwrap();',
+      'c.execute("SELECT content FROM chunk_text_view", []).unwrap();',
+      'let _ = "chunks"; // 只是提到表名',
+      'c.execute("SELECT id FROM chunks WHERE id = ?1", []).unwrap();',
+    ].join("\n");
+    expect(findDerivedWrites(text)).toEqual([]);
+  });
+
+  it("同一行两次也算两次（不漏）", () => {
+    const text = 'let _ = ("INSERT INTO chunks", "INSERT INTO attachment_text");';
+    expect(findDerivedWrites(text).length).toBe(2);
+  });
+
+  it("★ 跨行写法必须抓住（`INSERT INTO` ⏎ `  chunks (…)`）—— 逐行扫会静默漏过", () => {
+    // Windows 2026-09-19 复核实测：逐行扫时这一格 exit 0（假绿）。本仓自己的长 INSERT 就爱这么折行。
+    const text = ['let sql = "INSERT INTO', '  chunks (id) VALUES (?1)";', 'c.execute(sql, []).unwrap();'].join("\n");
+    const hits = findDerivedWrites(text);
+    expect(hits).toEqual([{ table: "chunks", line: 1 }]);
+  });
+
+  it("★ 跨行 + 大写 + OR REPLACE 的组合也抓住", () => {
+    const text = ["c.execute(", '  "INSERT OR REPLACE INTO', '     attachment_text (att_id) VALUES (?1)",', "  [],", ");"].join("\n");
+    expect(findDerivedWrites(text)).toEqual([{ table: "attachment_text", line: 2 }]);
+  });
+
+  it("跨行写法下，行号报的是 `INSERT` 那一行（不是表名那一行）", () => {
+    const text = ["fn a() {}", "fn b() {}", 'let s = "REPLACE INTO', '   chunk_embeddings (id) VALUES (?1)";'].join("\n");
+    expect(findDerivedWrites(text)).toEqual([{ table: "chunk_embeddings", line: 3 }]);
+  });
+
+  it("`chunk_embeddings` 也在清单里（Windows 建议：今天两侧都没有生产写入者，加了不会红）", () => {
+    expect(findDerivedWrites('x("INSERT INTO chunk_embeddings (id)")')).toEqual([{ table: "chunk_embeddings", line: 1 }]);
+  });
+
+  // ★ 2026-09-20 Windows 侧复核补的两组：原实现**逐行扫** + 表名修饰没覆盖 ⇒ 都是**漏算**（假绿方向）。
+  describe("跨行与表名修饰（复核补的漏算）", () => {
+    it("★ 跨行的 SQL 必须抓到（Rust 的 r#\"…\"# 形态）", () => {
+      const text = ['let sql = r#"INSERT INTO', "    chunks (id, text) VALUES (?1, ?2)" + '"#;'].join("\n");
+      const hits = findDerivedWrites(text);
+      expect(hits).toEqual([{ table: "chunks", line: 1 }]);
+    });
+
+    it("★ 表名带 schema 前缀 / 引号 / 方括号 / Rust 转义引号，都要抓到", () => {
+      const text = [
+        'x("INSERT INTO main.chunks (id) VALUES (?1)")',
+        // Rust 源码文本里，字符串内层引号是带反斜杠的：`\"attachment_text\"`
+        'x("INSERT INTO \\"attachment_text\\" (id) VALUES (?1)")',
+        'x("INSERT INTO [chunks] (id) VALUES (?1)")',
+        "x(r#\"INSERT INTO `chunks` (id) VALUES (?1)\"#)",
+      ].join("\n");
+      const hits = findDerivedWrites(text);
+      expect(hits.map((h) => h.table)).toEqual(["chunks", "attachment_text", "chunks", "chunks"]);
+      expect(hits.map((h) => h.line)).toEqual([1, 2, 3, 4]);
+    });
+
+    it("范围**没有**放宽：`DELETE FROM` / `UPDATE` 仍不算（那是口径问题，不是漏算）", () => {
+      const text = ['x("DELETE FROM chunks WHERE id = ?1")', 'x("UPDATE attachment_text SET body = ?1")'].join("\n");
+      expect(findDerivedWrites(text)).toEqual([]);
+    });
+  });
+  });
+
+describe("scanDerivedWriters：按文件汇总，路径带出来", () => {
+  it("多文件多命中", () => {
+    const out = scanDerivedWriters([
+      { path: "src-tauri/src/a.rs", text: 'x("INSERT INTO chunks")' },
+      { path: "src-tauri/src/b.rs", text: "y()" },
+    ]);
+    expect(out).toEqual([{ path: "src-tauri/src/a.rs", table: "chunks", line: 1 }]);
+  });
+
+  it("空输入 ⇒ 空结果（判据本身不许把'没扫到'当成绿）", () => {
+    expect(scanDerivedWriters([])).toEqual([]);
+  });
+
+  // ★ 2026-09-20 那次 revert 的正解：**路径白名单**（桌面运输通道）＋ 反判据。
+  //   它被 revert 的原因是"门禁在运输通道落地之前写的，落地后立刻红" —— 处置办法是改规则与判据，不是删门禁。
+  it("★ 运输通道被豁免：`derived_transport.rs` 里的生产写入不算违规", () => {
+    const files = [{ path: "src-tauri/src/derived_transport.rs", text: 'tx.execute("INSERT INTO chunks (id) VALUES (?1)")' }];
+    expect(scanDerivedWriters(files)).toEqual([]);
+  });
+
+  it("★ 反判据：**别的** Rust 文件里同样的写法照样红（豁免不能变成总开关）", () => {
+    const files = [
+      { path: "src-tauri/src/search.rs", text: 'c.execute("INSERT INTO chunks (id) VALUES (?1)")' },
+      { path: "src-tauri/src/extract_rust.rs", text: 'c.execute("REPLACE INTO attachment_text (id) VALUES (?1)")' },
+    ];
+    expect(scanDerivedWriters(files).map((v) => v.path)).toEqual([
+      "src-tauri/src/search.rs",
+      "src-tauri/src/extract_rust.rs",
+    ]);
+  });
+});
