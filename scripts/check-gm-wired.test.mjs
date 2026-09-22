@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor } from "./check-gm-wired.mjs";
+import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs } from "./check-gm-wired.mjs";
 
 describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   it("给了 OPENSSL_DIR 且目录在 ⇒ 用它", () => {
@@ -146,5 +146,44 @@ describe("check-gm-wired：Windows 上测试 exe 要能找到 OpenSSL 的 DLL", 
   it("POSIX 不动它（那边靠 rpath / install_name，不需要 PATH）", () => {
     expect(testPathFor("/usr/bin:/bin", "/opt/tongsuo", "linux")).toBe("/usr/bin:/bin");
     expect(testPathFor("/usr/bin", "/opt/tongsuo", "darwin")).toBe("/usr/bin");
+  });
+});
+
+describe("check-gm-wired：`cargo test` 参数（win32 的显式 skip 必须精确且只在 win32）", () => {
+  const M = "src-tauri/Cargo.toml";
+
+  it("★ win32 ⇒ 精确 `-- --skip plugins::`（整数组相等：谁放宽模式，这条当场红）", () => {
+    expect(cargoTestArgs({ platform: "win32", manifest: M })).toEqual([
+      "test",
+      "--features",
+      "sm-library",
+      "--manifest-path",
+      M,
+      "--",
+      "--skip",
+      "plugins::",
+    ]);
+  });
+
+  it("★ 非 win32 ⇒ **一个 skip 都不许有**（否则会在 Linux/macOS 上悄悄少跑一整组）", () => {
+    for (const platform of ["linux", "darwin", "freebsd"]) {
+      expect(cargoTestArgs({ platform, manifest: M }), platform).toEqual([
+        "test",
+        "--features",
+        "sm-library",
+        "--manifest-path",
+        M,
+      ]);
+    }
+  });
+
+  it("★ 变异守护：跳过的**是一个具名模块**，不是「随便什么都能跳」", () => {
+    // 契约（不是实现细节）：默认模式不许是空串/通配；同时参数要**可覆盖**（证明它不是写死的，
+    // 否则将来要换模块名只能去改实现 —— 而那正是"判据绑在实现上"的开端）。
+    const dflt = cargoTestArgs({ platform: "win32", manifest: M });
+    expect(dflt).not.toContain("");
+    expect(dflt).not.toContain("*");
+    expect(dflt[dflt.length - 1]).toBe("plugins::");
+    expect(cargoTestArgs({ platform: "win32", manifest: M, skipModules: ["foo::"] })).toContain("foo::");
   });
 });
