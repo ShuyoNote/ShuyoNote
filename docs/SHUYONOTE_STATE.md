@@ -34,7 +34,7 @@
 |---|---|---|
 | **国密** | 四层走完 ＋ **单一口味拍板** ＋ 落进发布链（应用层 v2 默认；库级 SM4 页 ＋ SM3 页 MAC/库 KDF；产物五条断言） | Windows 真机变异证明 / Linux 带 tag 的真读数 / macOS 公证凭据 / 老库迁移（无真实用户，零成本） |
 | **PDFium** | 桌面光栅化可切换（`SHUYONOTE_PDF_ENGINE=pdfium`）；P3 对拍四样本硬判据 4/4 | Linux 非嵌入字体后端、真机逐条验收 |
-| **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；ASR 转写通道（`localTranscribe`）已接 | 面板侧"消费抽取结果"未落地；真模型 live 读数要本机服务在跑 |
+| **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；ASR 转写通道（`localTranscribe`）已接，**真模型 live 读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、段＝1 且 `loc=""` 符合契约） | 面板侧「消费抽取结果」未落地；Web 端 CORS 未测 |
 | **块级 CRDT（阶段 1）** | 块身份 ＋ `blockRev`（Rust/TS 双份判据）＋ 写层施工单 | 阶段 1 写回收口；阶段 2+ 未开工 |
 | **社区与分发** | 索引规范/签名/两级撤回/TOFU/多源订阅/事实清单 | 市场 UI、一键发布到社区的客户端侧 |
 | **近实时** | 冲突提示/presence/评论@通知/SSE 已落地 | 块级真协同（CRDT 阶段 1 是地基） |
@@ -117,10 +117,10 @@
 ## 5. 验证循环
 
 - **门禁的单一事实来源＝[TESTING.md](TESTING.md) 里的 `scripts/lib/gates.mjs`**。本地一键 `pnpm verify`（当前 **25 条**）＋
-  Rust 另行 `node scripts/test-report.mjs --group rust`（当前 **7 条**）。**别把条数手抄进别的文档**——要看就跑一次。
-- 当前读数（2026-09-22，本机 macOS、真 node 24.20.0）：`pnpm verify` **25/25**；`--group rust` **7/7**
-  （`rust-test` 491、`rust-plugins-alone` 117、`rust-no-sm-crypto` 479；`rust-sm-wired` 在没有 SM 版 OpenSSL 前缀的机器上**自报跳过**，
-  Linux CI 上真跑 **491 passed / 0 failed**）；`vitest` **1828 passed / 6 skipped**；`tsc --noEmit` exit=0；`smoke-web` **360/360**。
+  Rust 另行 `node scripts/test-report.mjs --group rust`（当前 **8 条**）。**别把条数手抄进别的文档**——要看就跑一次。
+- 当前读数（2026-09-22，本机 macOS、真 node 24.20.0）：`pnpm verify` **25/25**；`--group rust` **8/8**
+  （`rust-test` 492、`rust-plugins-alone` 117、`rust-no-sm-crypto` 480、`gm-registry-clean` 绿；`rust-sm-wired` 在没有 SM 版 OpenSSL 前缀的机器上**自报跳过**，
+  Linux CI 上真跑 **491 passed / 0 failed**）；`vitest` **1859 passed**（AMD 侧读数，含 live 3 条）；`tsc --noEmit` exit=0；`smoke-web` **360/360**。
   断言数"只增不减"由 `tests/baseline.json` 硬校验（**新增测试要抬高基线**，`pnpm verify:baseline`）。
 - Rust 侧 CI（`.github/workflows/ci.yml` 的 `rust-tests`）：`cargo test`（含宿主子进程集成测试）
   + **`plugins::` 单独跑**那一条 —— 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试

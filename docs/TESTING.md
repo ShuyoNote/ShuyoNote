@@ -61,6 +61,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |
 | rust | `rust-sm-wired` | ★ **库级国密接线构建**：打补丁 ＋ `--features sm-library` 下跑全量单测。理由＝应用接线（`apply_gm_page_settings`）整段在 `#[cfg(feature = "sm-library")]` 后面，而**其余 rust 门禁全跑默认特性** ⇒ 那条路本来没有任何门禁碰过（2026-09-22：我在本机把发版链原样跑一遍，才发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 包表面全对而库级不是国密」）。无 SM 版 OpenSSL 前缀时**自报跳过**（Linux 自动用 `/usr`；macOS 需给 `OPENSSL_DIR`）。它跑完会**还原补丁并重建默认特性**，不留混态 |
+| rust | `gm-registry-clean` | ★ **补丁残留在全机共享 registry 上**（AMD 2026-09-22 落地；方案 §五 里唯一归属他的那一行）。`sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的**新**静默态）⇒ "跑过一次国密构建、忘了 `--revert`"会把这台机器留在**看不见的状态**里：**macOS 上后续默认构建红 12＋7 条，而现场长得像加密库坏了**；Linux/Windows 上不红，但后续默认构建被**静默**改成写 SM4 页。三档判定：原版 / 本次就是 `sm-library` 构建 ⇒ `ok`；带补丁 ∧ 非 darwin ⇒ **`notice`（不判红，但说清会被静默改页加密）**；带补丁 ∧ darwin 默认构建 ⇒ **`block`（exit 1 ＋ 给出 `--revert` 那一行）**；**读不出来**（没跑过 cargo / 拿不到 `Cargo.lock`）⇒ `notice`（与 `check-crypto-backend` 的「旧产物 ⇒ 未实查」同口径）。⚠️ **macOS 上刚跑完国密构建还没 `--revert` 时它会红 —— 这是刻意的**（判据替你记住那件事）。它**只读**（连调 3 次 CLI，源码 SM3 命中恒为 50）；13 条判据 ＋ 变异 2 条 |
 | artifact | `external-index` / `external-package` | 我们打出的包与索引，应用**真**解析器 / 真校验器认不认 |
 | artifact | `plugin-fragment-no-zip` | 打包依赖命令行 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条） |
 

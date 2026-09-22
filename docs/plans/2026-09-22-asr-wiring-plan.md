@@ -209,12 +209,12 @@ $ vitest run src/lib/extract src/lib/ai src/lib/platform
   Test Files 38 passed | 3 skipped (41)   Tests 398 passed | 6 skipped (404)
 ```
 
-### 6.4 ⚠️ 还没证的两件事（不许读成"验过了"）
+### 6.4 证据到什么程度了（★ 2026-09-22 更新：live 那一格**已经证掉**）
 
-1. **真模型那条链路没跑过**：本机 herdsman 现在**没在跑**（`vitest` 里 `librarySummary.live` 报
-   `ECONNREFUSED 127.0.0.1:8080`；Windows 验收机同一条：`curl` exit=7）⇒ 现在的绿全是**假端点**那层；
-   ⇒ 已补上一条**会自跳过的 live 判据**（**§6.6**），要在**服务在跑的那台**上跑一次才有真读数；
-2. **Web 端 CORS 未实测**（桌面不受影响，理由见 6.2-②）。
+1. **真模型那条链路：✅ 已跑通**（AMD 那台有模型服务，2026-09-22 第一次真跑）—— 读数与
+   「**第一跑为什么是红的**」见 **§6.7**。本机与 Windows 验收机仍只有假端点那层的绿
+   （服务没起，live 判据在那里是 **skipped**，既不是绿也不是红）；
+2. **Web 端 CORS 仍未实测**（桌面不受影响，理由见 6.2-②）。
 
 ### 6.5 顺带发现的一条**参数优先级**问题（不是本轮的错，记下来免得以后查）
 
@@ -257,3 +257,53 @@ $ vitest run src/lib/extract src/lib/ai src/lib/platform
 
 ⚠️ **本机与 Windows 验收机的服务都没起** ⇒ 这两台现在是 **skipped**（不是绿，也不是红）。
 要真读数得在**服务在跑的那台**上跑一次；跳过的理由会写进 describe 标题，一眼能分辨环境与回归。
+
+### 6.7 ★ live 判据第一次真跑的读数（2026-09-22，AMD 那台；★ 而且**第一跑是红的**）
+
+**先说红的**：这条判据在能跑它的机器上第一次跑 ⇒ **2 条 fail（`Test timed out in 5000ms`）**，
+第三条绿且打出了真读数。根因**不是通道**：那条判据此前在**三台机器上都只有 skipped**
+（本机 `ECONNREFUSED`、Windows 验收机 `curl exit=7`）⇒ **它从未在任何地方真的运行过**，
+于是"没给 vitest 超时"这件事没有任何地方能暴露。AMD 单发实测：
+
+```text
+TTS 第 1 次（可能带模型加载）: 3421 ms  status=200 bytes=259570 RIFF=RIFF
+TTS 第 2 次（热）            : 3395 ms  status=200 bytes=243626
+ASR funasr-nano，同一段 wav   :  163 ms  status=200
+```
+
+⇒ **TTS 每次 ~3.4 s（冷热一样）**，而 live 判据是**多个文件并发**打同一个模型服务
+（`image.localVlm` / `librarySummary*` / 本文件）⇒ 排队后单次轻松超过 vitest 默认 5 s。
+`localTranscribe` 那边本来就写着 `timeoutMs: 300_000`（转写是分钟级的活），**判据这侧一个都没给** ——
+修法（AMD 动了我这个文件，我照收）：三条判据加第三参数 **`LIVE_TIMEOUT_MS = 120_000`**，
+断言一条未动、`skipIf` 纪律未动。
+
+★ **教训（我的）**：**一条"从未在任何地方跑过"的判据，等于没有判据** ——
+它的 skipped 不是"环境所限"，而是"没人验证过它能不能跑"。同类判据（live 族）以后一律**显式给超时**，
+并在文件头写清"这台机器上没有服务时它只是 skipped，请在有服务的那台跑一次"。
+
+**真读数（全部经我们自己的通道 `localTranscribe`，不是 curl）**：同一次 TTS
+（`sherpa-onnx-vits-melo-tts-zh-en`，`status=200`，243902 字节），原句「今天天气不错，我们下午三点开会。」
+
+| # | 模型 | 回读原文 | 去标点 | `segments` |
+|---|---|---|---|---|
+| ① | `funasr-nano` | `今天天气不错，我们下午三点开会。` | `今天天气不错我们下午三点开会` | **无** |
+| ② | `sherpa-onnx-paraformer-zh-small` | `今天天气不错我们下午三点开会` | 同上 | **无** |
+
+③ 两条模型各打出的 `[live]` 行：
+
+```text
+[live] funasr-nano                      ⇒ frames=1 带定位=0（服务端只给 text ⇒ loc 为空，符合契约）
+[live] sherpa-onnx-paraformer-zh-small  ⇒ frames=1 带定位=0（服务端只给 text ⇒ loc 为空，符合契约）
+```
+
+三条结论：
+
+1. **①与 §1 的结论一致，但这次是经我们的通道**（§1 那次是 curl）：`funasr-nano` **逐字带标点、与原句一字不差**；
+2. **②证实了"两个本地 ASR 只差标点"这条口径**，也是经我们的通道；
+3. **③本机 herdsman 不返回 `segments`** ⇒ 契约上退成**一段、`loc=""`** ——「**不编造定位**」在**真数据**上成立；
+   而判据的 `if/else` 走的是 else 那一半并**打印**出来（herdsman 哪天加了 `verbose_json`，
+   同一条判据会**自动**改成要求 `HH:MM:SS`）。
+
+★ 另：用 `HERDSMAN_ASR_MODEL=sherpa-onnx-paraformer-zh-small` 再跑一遍 ⇒ **3 passed**，
+⇒ 那条「**去标点**关键词」的断言是 **model-agnostic** 的（不是只对带标点那个模型成立）——
+这正是它当初该有的性质，现在有读数了。
