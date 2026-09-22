@@ -530,7 +530,7 @@ async function checkPdfReader(page, vp) {
             const r = document.createRange();
             r.selectNodeContents(tn);
             const b = r.getBoundingClientRect();
-            return b.height > 0 ? { mid: +((b.top + b.bottom) / 2).toFixed(2), h: +b.height.toFixed(2) } : null;
+            return b.height > 0 ? { mid: +((b.top + b.bottom) / 2).toFixed(2), h: +b.height.toFixed(2), boxH: +el.getBoundingClientRect().height.toFixed(2) } : null;
           })
           .filter(Boolean);
         if (rects.length < 2) return null;
@@ -538,6 +538,7 @@ async function checkPdfReader(page, vp) {
           n: rects.length,
           mids: rects.map((r) => r.mid),
           hs: rects.map((r) => r.h),
+          boxHs: rects.map((r) => r.boxH),
           spread: +(Math.max(...rects.map((r) => r.mid)) - Math.min(...rects.map((r) => r.mid))).toFixed(2),
         };
       };
@@ -680,6 +681,41 @@ async function checkPdfReader(page, vp) {
             text: (pop.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90),
             inViewport: pb.left >= -1 && pb.right <= innerWidth + 1,
             shown: items.filter((s) => shown(pop.querySelector(s))),
+          };
+        })(),
+        // 两侧的**拖拽竖线**（2026-09-22，owner："左右侧边栏的拖拽竖线粗细要一样"）：
+        // 四处 = 左/右侧栏 × 展开/收起，规格必须完全一致；抓取条**可见宽**也必须一致
+        // （改前右侧那条是 `left:-3px`，被 `.pdf-sidebar-col` 的 overflow:hidden 裁成 3px
+        //   ⇒ 展开态 hover 高亮一边 6px、一边 3px，这就是"粗细不一样"的来源）。
+        dragBars: (() => {
+          const stripVisibleW = (el) => {
+            if (!el) return null;
+            const b = el.getBoundingClientRect();
+            let l = b.left;
+            let r = b.right;
+            let cur = el.parentElement;
+            while (cur) {
+              const cs = getComputedStyle(cur);
+              if (!(cs.overflowX === "visible" && cs.overflowY === "visible")) {
+                const cr = cur.getBoundingClientRect();
+                l = Math.max(l, cr.left);
+                r = Math.min(r, cr.right);
+              }
+              cur = cur.parentElement;
+            }
+            return Math.round(Math.max(0, r - l));
+          };
+          const spec = (sel) => {
+            const el = reader.querySelector(sel);
+            if (!el) return null;
+            const cs = getComputedStyle(el, "::after");
+            return { w: cs.width, h: cs.height, bg: cs.backgroundColor, radius: cs.borderRadius, strip: stripVisibleW(el) };
+          };
+          return {
+            edgeLeft: spec(".pdf-edge-drag.is-left"),
+            edgeRight: spec(".pdf-edge-drag.is-right"),
+            openLeft: spec(".pdf-outline-resizer"),
+            openRight: spec(".pdf-sidebar-resizer"),
           };
         })(),
         toolbar: box(toolbarEl),
@@ -1075,6 +1111,28 @@ function assertPdfReader(rr, vp) {
       df?.afterExpandRight?.sidebarCol?.present === true && df.afterExpandRight.sidebarCol.w >= 220,
       `从右侧手柄往左拖够 ⇒ 批注栏拖出来了（宽 ${df?.afterExpandRight?.sidebarCol?.w} ≥ 220）`,
     );
+    // 两侧的**拖拽竖线**必须是同一条（owner："左右侧边栏的拖拽竖线粗细要一样"）。
+    // 四处 = 左/右 × 展开/收起，规格完全一致；抓取条的**可见宽**也要一致
+    // （改前右侧那条 `left:-3px` 被列的 overflow:hidden 裁成 3px ⇒ hover 高亮一边 6px、一边 3px）。
+    {
+      const bars = [
+        ["收起-左", df?.afterCollapseLeft?.dragBars?.edgeLeft],
+        ["展开-右", df?.afterCollapseLeft?.dragBars?.openRight],
+        ["收起-右", df?.afterCollapseRight?.dragBars?.edgeRight],
+        ["展开-左", df?.afterCollapseRight?.dragBars?.openLeft],
+      ].filter(([, b]) => b);
+      const base = bars[0]?.[1];
+      ok(
+        bars.length === 4 &&
+          bars.every(([, b]) => b.w === base.w && b.h === base.h && b.bg === base.bg && b.radius === base.radius),
+        `四处拖拽竖线规格完全一致（${bars.map(([n, b]) => `${n} ${b.w}×${b.h}`).join(" / ")}，色 ${base?.bg}）`,
+      );
+      ok(
+        bars.length === 4 && bars.every(([, b]) => b.strip === 6),
+        `四条抓取条的**可见宽**都是 6px（${bars.map(([n, b]) => `${n} ${b.strip}px`).join(" / ")}）` +
+          `——改前右侧那条被裁成 3px，于是 hover 高亮左边 6px、右边 3px`,
+      );
+    }
     // 「1+2」：三个按钮**短标签**（朗读 / OCR / AI），状态组从"独占一行的 472px 状态条"
     // 改成"与工具组同排的 221px 小组"（关掉目录+侧栏 ⇒ 列宽足够，这一档才检验得出来）
     ok(
@@ -1180,9 +1238,14 @@ function assertPdfReader(rr, vp) {
   // 桌面看**关掉两侧面板**那一态（`wide`：列宽够，状态组才在行内）；窄屏行内那份收在「⋯」里
   // ⇒ 看菜单里的那一份（点开时量过）。
   const sl = vp.width <= 768 ? rr.menu?.line : rr.wide?.statusLine;
+  // ⚠️ "盒子也一样高"只在**桌面**档成立：窄屏那三个按钮是 44px 命中区（手指的事），
+  // 而「无文本层」是个状态标签、不接点击 ⇒ 26px。命中区与视觉尺寸分开是本仓既有纪律，
+  // 不能为了"数字整齐"去把标签也撑到 44。
+  const boxOk = vp.width <= 768 ? true : new Set(sl?.boxHs ?? []).size === 1;
   ok(
-    !!sl && sl.spread <= 0.5 && new Set(sl.hs).size === 1,
-    `状态组「无文本层 / 朗读 / OCR / AI」四个字面在同一条线上（中线散布 ${sl?.spread}px、文字高 ${JSON.stringify(sl?.hs)}）` +
+    !!sl && sl.spread <= 0.5 && new Set(sl.hs).size === 1 && boxOk,
+    `状态组「无文本层 / 朗读 / OCR / AI」四个字面在同一条线上（中线散布 ${sl?.spread}px、` +
+      `文字高 ${JSON.stringify(sl?.hs)}、盒子高 ${JSON.stringify(sl?.boxHs)}）` +
       `——改前 line-height:normal 下三者的行盒高是 17/25/23，字面差 1px`,
   );
   // 扁平化：按钮**无边框 + 透明底**（改前是"描边 + 浅底"的小方块）；批注工具条去掉外框勾线。
