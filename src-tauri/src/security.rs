@@ -1586,8 +1586,18 @@ mod tests {
     /// `sqlcipher-backend-fixture.db`，见下一个生成器）。**从内容上看不出是哪一种** ——
     /// 这正是 `cipher_settings` 里没有 algorithm 字段的后果，所以两条判据靠"交叉打开"来判定
     /// （见 `exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`）。
+    ///
+    /// ★ **更正（2026-09-22）**：这份夹具是用**裸 `PRAGMA key`**（不设任何 `cipher_*`）写的 ⇒
+    /// 它的**页 MAC/库 KDF 是"这个构建的默认值"**，不是"SM3"。补丁 v3 只改页加密算法
+    /// （`default_hmac_algorithm` / `default_kdf_algorithm` 在补丁里是**未改的上下文行**）⇒
+    /// 当今它写出来的是 **SM4 页 ＋ SHA512 默认**。所以：
+    ///   · 它证明的是**页加密**（这一条判据只判页加密，别再把它读成"页 MAC/KDF 也是国密"）；
+    ///   · 页 MAC/库 KDF 的国密化由**另外两处**证：`gm_provider` 的回显（连接级）＋
+    ///     `sqlcipher-sm3-fixture.db`（那份是**显式设了国密参数**写的，参数绑定是真的）。
+    ///   · 补丁 v4（把默认值也改成 SM3）落地后：**在 OpenSSL 构建里**这份夹具会变成 SM4 页 ＋ SM3，
+    ///     那时**重生成**它即可（`raw_key_defaults_are_sm3_only_when_the_patch_says_so` 会自动换边）。
     #[test]
-    #[ignore = "夹具生成器：必须在**打过 v3 补丁 ＋ 已接线**的构建里跑（否则写出来的是上一代参数）"]
+    #[ignore = "夹具生成器：必须在**页加密＝SM4**的构建里跑（打 v3 补丁 ＋ OpenSSL 后端；与是否接线无关）"]
     fn gen_sm4_page_fixture() {
         let hex = crypto::key_hex(&[7u8; 32]);
         let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
@@ -1700,11 +1710,21 @@ mod tests {
 
     /// ★ **库级参数是库文件的属性**：同一份构建**只能**读开其中一种夹具（方案 §3.3 判据 1「交叉打开必须失败」）。
     ///
-    /// 两份夹具内容**逐字相同**、都用同一把裸钥（`[7u8;32]`），唯一差别是**写下它的构建的库级参数组合**：
-    ///   · `sqlcipher-backend-fixture.db` —— **AES 页 ＋ SHA512 页 MAC/库 KDF**（由 CommonCrypto 的默认构建写下，2026-09-19）；
-    ///   · `sqlcipher-sm4-page-fixture.db` —— **SM4 页 ＋ SM3 页 MAC/库 KDF**（由「打 v3 补丁 ＋ **已接线**（`sm-library` 里设
-    ///     `cipher_hmac_algorithm=HMAC_SM3` / `cipher_kdf_algorithm=PBKDF2_HMAC_SM3`）」的构建写下，2026-09-20）。
-    ///     ⚠️ **接线的实现一改，这份夹具就要重生成**（`gen_sm4_page_fixture`），否则它会变成"上一代参数"的证物。
+    /// ⚠️⚠️ **这条判据只判「页加密」，不判页 MAC/库 KDF**（2026-09-22 **更正我自己**）：
+    /// 两份夹具都是用**裸 `PRAGMA key`**（不设任何 `cipher_*`）写的 ⇒ 它们的**页 MAC/库 KDF 都是
+    /// "写它那个构建的默认值"**。补丁 v3 只改页加密算法（`default_hmac_algorithm` /
+    /// `default_kdf_algorithm` 在补丁里是**未改的上下文行**）⇒ 当今两份夹具的 MAC/KDF **都是 SHA512**，
+    /// 而**页**一个是 AES、一个是 SM4 —— 所以交叉打开能分开的**只有页加密**。
+    /// 我先前在这条判据的打印里写了"SM4 页 ＋ **SM3** 页 MAC/库 KDF"，那是**把夹具的来源读错了**：
+    /// `gen_sm4_page_fixture` 从来没有设过 `cipher_*`，它打印不出 SM3 这件事。
+    /// 页 MAC/库 KDF 的国密化**另有证据**：`gm_provider` 的回显（连接级）＋ `sqlcipher-sm3-fixture.db`
+    /// （显式设了国密参数写的，参数绑定是真的）＋ `raw_key_defaults_are_sm3_only_when_the_patch_says_so`
+    /// （默认值到底是不是 SM3；补丁 v4 落地后会自动换边）。
+    ///
+    /// 两份夹具内容**逐字相同**、都用同一把裸钥（`[7u8;32]`），唯一差别是**写下它的构建的页加密算法**：
+    ///   · `sqlcipher-backend-fixture.db` —— **AES 页**（由 CommonCrypto 的默认构建写下，2026-09-19）；
+    ///   · `sqlcipher-sm4-page-fixture.db` —— **SM4 页**（由打了补丁 v3「无条件 SM4 页加密」的构建写下，2026-09-20）。
+    ///     ⚠️ **页加密一改，这份夹具就要重生成**（`gen_sm4_page_fixture`）。
     ///
     /// 断言 **恰好一个能开**，并打印**是哪一个** —— 这同时**报出这份构建的页加密算法**，
     /// 而这是唯一可信的判据：`cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3），
@@ -1721,17 +1741,85 @@ mod tests {
             (Ok(n), Err(e)) => {
                 assert!(e.contains("file is not a database"), "SM4 夹具被拒的理由不该是别的：{e}");
                 println!(
-                    "本构建的库级参数 = **AES 页 ＋ SHA512 页 MAC/库 KDF**（AES 夹具读开且可写，{n} 行；SM4 夹具按预期拒绝：{e}）"
+                    "本构建的**页加密** = **AES 页**（AES 夹具读开且可写，{n} 行；SM4 夹具按预期拒绝：{e}）\
+                     —— 页 MAC/库 KDF 不在这一条里（夹具是裸钥写的，见本条判据的注释）"
                 );
             }
             (Err(e), Ok(n)) => {
                 assert!(e.contains("file is not a database"), "AES 夹具被拒的理由不该是别的：{e}");
                 println!(
-                    "本构建的库级参数 = **SM4 页 ＋ SM3 页 MAC/库 KDF**（SM4 夹具读开且可写，{n} 行；AES 夹具按预期拒绝：{e}）"
+                    "本构建的**页加密** = **SM4 页**（SM4 夹具读开且可写，{n} 行；AES 夹具按预期拒绝：{e}）\
+                     —— 页 MAC/库 KDF 不在这一条里（夹具是裸钥写的，见本条判据的注释）"
                 );
             }
-            (Ok(_), Ok(_)) => panic!("两种库级参数的夹具**都能开** ⇒ 「库级参数是库文件属性」不成立，或某份夹具写错了"),
+            (Ok(_), Ok(_)) => panic!("两份页加密不同的夹具**都能开** ⇒ 「页加密是库文件属性」不成立，或某份夹具写错了"),
             (Err(a), Err(b)) => panic!("两种都开不了 ⇒ 夹具/密钥/构建有问题：aes={a}；sm4={b}"),
         }
+    }
+
+    /// ★ **夹具的页 MAC/库 KDF 到底是什么？** —— 用"同一个文件、两种读法"分开（2026-09-22 加）。
+    ///
+    /// 动机：上面那条**交叉打开**只能分开**页加密**，而"库级 MAC/KDF 是国密"这句话曾经被挂在它头上
+    /// （我自己写错了一次，见那条判据的注释）。这一条直接量**那个问题**：
+    /// 同一份 SM4 夹具，**裸钥**读得开、**再设 `cipher_hmac_algorithm=HMAC_SM3`/`cipher_kdf_algorithm=PBKDF2_HMAC_SM3`**
+    /// 之后还读得开吗？—— 实测（补丁 v3、未接线）**读不开**（`file is not a database`）⇒
+    /// 说明这份夹具的 MAC/KDF 是**默认（SHA512）**，页加密与 MAC/KDF 是**两件事**。
+    ///
+    /// ★ **它同时是"补丁 v4"的前瞻判据**（自适应当前状态，不需要改代码就能换边）：
+    ///   · 裸钥读法回显**不是** SM3（今天）⇒ 断言"设了国密参数之后**读不开**"（证明夹具不是 SM3 参数）；
+    ///   · 裸钥读法回显**是** SM3（v4 落地后的 OpenSSL 构建）⇒ 断言"设了国密参数之后**照样读得开**"。
+    /// ⇒ v4 落地时这一条会自动变成"默认值＝国密"的产物级判据，不用人来记得改它。
+    #[test]
+    fn raw_key_defaults_are_sm3_only_when_the_patch_says_so() {
+        let bytes = include_bytes!("../tests/sqlcipher-sm4-page-fixture.db");
+        let hex = crypto::key_hex(&[7u8; 32]);
+        let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
+        let dir = uniq_tmp("raw-defaults");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fixture.db");
+        std::fs::write(&path, bytes.as_slice()).unwrap();
+
+        // ① 裸钥（不设任何 cipher_*）：先看回显，再决定期望
+        let raw = Connection::open(&path).unwrap();
+        raw.execute_batch(&key_sql).unwrap();
+        let status = crate::gm_provider::read_gm_cipher_status(&raw).unwrap();
+        let defaults_are_sm3 = status.is_applied();
+        let raw_read: Result<i64, _> = raw
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+        // 页加密不同的话裸钥就开不了（AES 页构建里读 SM4 夹具）⇒ 那种构建上这条判据只报状态
+        let page_cipher_matches = raw_read.is_ok();
+        drop(raw);
+
+        // ② 同一个文件、**设了国密参数**再读
+        let gm = Connection::open(&path).unwrap();
+        gm.execute_batch(&key_sql).unwrap();
+        let gm_read = (|| -> Result<i64, String> {
+            crate::gm_provider::configure_gm_cipher(&gm)?;
+            gm.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+                .map_err(|e| e.to_string())
+        })();
+
+        println!(
+            "SM4 夹具读数：裸钥默认回显 = {:?}（defaults_are_sm3={defaults_are_sm3}）· 裸钥读 = {raw_read:?} · 设国密参数后读 = {gm_read:?}",
+            status
+        );
+        if !page_cipher_matches {
+            println!("（本构建的页加密不是 SM4 ⇒ 两个读法都读不开，这一条只报状态、不断言）");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        if defaults_are_sm3 {
+            // v4 落地后的形态：默认就是国密 ⇒ 设了国密参数照样读得开
+            assert!(
+                gm_read.is_ok(),
+                "裸钥默认回显已经是 SM3，但设了国密参数反而读不开 ⇒ 默认值与显式设置不一致：{gm_read:?}"
+            );
+        } else {
+            assert!(
+                gm_read.is_err(),
+                "裸钥默认**不是** SM3，而设了国密参数却仍读得开 ⇒ 这份夹具本来就用国密参数写的（标签与事实不符）：{gm_read:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

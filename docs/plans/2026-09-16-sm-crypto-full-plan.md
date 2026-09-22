@@ -678,10 +678,40 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 | 判据 | 接线构建（`--features sm-library`） | 默认构建（AES＋SHA512） |
 |---|---|---|
 | 全库单测 `cargo test --lib` | **427 passed / 0 failed / 18 ignored** | 见 `--group rust` 门禁 |
-| `security::` | **21 / 0 / 2 ignored** | 21 / 0 / 2 |
+| `security::` | **22 / 0 / 2 ignored** | 22 / 0 / 2 |
 | `gm_provider::` | **9 / 0 / 4 ignored** | 9 / 0 / 4 |
-| 库级参数（`exactly_one_page_cipher_…` 打印） | **SM4 页 ＋ SM3 页 MAC/库 KDF** | AES 页 ＋ SHA512 页 MAC/库 KDF |
+| **页加密**（`exactly_one_page_cipher_…` 打印） | **SM4 页** | **AES 页** |
+| 页 MAC/库 KDF（夹具绑定，见下面那条**更正**） | 默认＝**SHA512**（补丁 v3 未改默认值）；应用接线显式设 SM3 | 默认 SHA512 ＋ 未接线 |
 | 回滚通道 `--no-default-features` | — | **415 / 0 / 17 ignored** |
+
+**★★ 更正我自己（2026-09-22 当天，实测）：「页加密」与「页 MAC/库 KDF」是两件事，别把前者当后者的证据**
+
+我先前把 `exactly_one_page_cipher_…` 的打印读成"本构建的库级参数 = SM4 页 **＋ SM3 页 MAC/库 KDF**"，
+并把它写进交付说明与两封回信（给 AMD 的 `2026-09-22-gm-wiring-landed.md` 与本侧状态）。**这是错的**，
+根因是**夹具的写法**：
+
+- `gen_sm4_page_fixture` / `gen_backend_fixture` 都用**裸 `PRAGMA key`**（不设任何 `cipher_*`）写夹具 ⇒
+  夹具的**页 MAC/库 KDF = "写它那个构建的默认值"**；
+- 补丁 v3 **只改页加密算法** —— `default_hmac_algorithm` / `default_kdf_algorithm` 在补丁里是**未改的上下文行**；
+- ⇒ 当今两份夹具的 MAC/KDF **都是 SHA512**，交叉打开能分开的**只有页加密**。
+
+**实测（补丁 v3 ＋ OpenSSL 后端，`page_cipher=sm4`，本机）**
+
+| 读法（同一份 `sqlcipher-sm4-page-fixture.db`） | 结果 |
+|---|---|
+| 裸钥（不设 `cipher_*`）回显 | `HMAC_SHA512` / `PBKDF2_HMAC_SHA512`（**默认没变**） |
+| 裸钥读 | **Ok(2)**（夹具就是默认参数写的） |
+| 再设 `HMAC_SM3` / `PBKDF2_HMAC_SM3` 之后读 | **`file is not a database`（读不开）** ⇒ 夹具**不是** SM3 参数 |
+
+⇒ 新增判据 `raw_key_defaults_are_sm3_only_when_the_patch_says_so` 把这个事实钉住，并且**自适应当前状态**：
+裸钥回显不是 SM3（今天）⇒ 断言"设国密参数后读不开"；**补丁 v4 落地后**（OpenSSL 构建默认变 SM3）⇒
+自动换成"设国密参数照样读得开"，**不用人记得改判据**。
+「库级 MAC/KDF 是国密」的证据仍然充分，但**不是**那条交叉判据：① `gm_provider` 的**回显**（连接级）；
+② `sqlcipher-sm3-fixture.db`（**显式设了国密参数**写的，参数绑定是真的）；③ 直写探针实测"参数确实绑定"
+（默认参数写的文件用国密参数读不开，反之亦然）。
+
+⚠️ **v4 的一个连带**：默认值一改，**SM4 夹具必须重生成**（否则它是"上一代默认参数"的证物）——
+不重生成时 `exactly_one_page_cipher_…` 会**两张都读不开** ⇒ 红（这正是它该有的行为）。
 
 **接线当场抓出的两个真 bug（都是"接线后才出现"的形态 —— 这正是它值得做的理由）**
 
