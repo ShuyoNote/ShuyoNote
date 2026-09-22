@@ -1054,10 +1054,15 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("COVER_PRESETS all have css + kind + name", covers.every((c) => typeof c.css === "string" && (c.css.startsWith("linear-gradient") || c.css.startsWith('url("data:image/svg+xml,') || c.css.startsWith('url("/covers/') || c.css.startsWith('url("covers/')) && c.kind && c.name), JSON.stringify(covers.map((c) => c.id)));
   assert("COVER_PRESETS includes image-themed covers", covers.some((c) => c.kind === "image" && (c.css.startsWith('url("data:image/svg+xml,') || c.css.startsWith('url("/covers/') || c.css.startsWith('url("covers/'))), "checked image covers");
   // M25 P2 — external project-site links (single source) + privacy toggle.
+  // 2026-09-22：产品官网进来、文档出去。所以"每条都在 gitcode 上"这条判据要**排除官网那一条**
+  // （它是自家域名 https://shuyo.cn/），并单独钉"官网必须是自家域名、其余仍在项目仓库"。
   const links = aiMod.linkItems();
   assert("linkItems has 4 clean links", Array.isArray(links) && links.length === 4, JSON.stringify(links.map((l) => l.id)));
-  assert("linkItems carry id/label/url + no tracking", links.every((l) => l.id && l.label && /^https:\/\/gitcode\.com\//.test(l.url) && !/[?&](utm_|ref=)/.test(l.url)), JSON.stringify(links));
-  assert("linkItems include 项目主页/文档/发布/问题", ["home", "docs", "releases", "issues"].every((id) => links.some((l) => l.id === id)));
+  assert("linkItems carry id/label/url + no tracking", links.every((l) => l.id && l.label && /^https:\/\//.test(l.url) && !/[?&](utm_|ref=)/.test(l.url)), JSON.stringify(links));
+  assert("linkItems include 产品官网/项目主页/发布/问题", ["site", "home", "releases", "issues"].every((id) => links.some((l) => l.id === id)));
+  assert("产品官网指向自家域名", links.find((l) => l.id === "site")?.url === "https://shuyo.cn/", JSON.stringify(links.find((l) => l.id === "site")));
+  assert("除产品官网外仍指向项目仓库", links.filter((l) => l.id !== "site").every((l) => /^https:\/\/gitcode\.com\//.test(l.url)), JSON.stringify(links.filter((l) => l.id !== "site").map((l) => l.url)));
+  assert("「文档」入口已移除", !links.some((l) => l.id === "docs"), JSON.stringify(links.map((l) => l.id)));
   assert("APP_VERSION is a semver string", typeof aiMod.APP_VERSION === "string" && /^\d+\.\d+\.\d+/.test(aiMod.APP_VERSION), String(aiMod.APP_VERSION));
   assert("APP_LICENSE is AGPL-3.0", aiMod.APP_LICENSE === "AGPL-3.0", String(aiMod.APP_LICENSE));
   assert("sanitizeExternalUrl keeps https", aiMod.sanitizeExternalUrl("https://example.com/x") === "https://example.com/x");

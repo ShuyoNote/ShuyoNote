@@ -12,10 +12,22 @@ interface ActivityState {
   /** 窄屏的浮层竖条是否展开。**不持久化**：它是瞬时的布局状态，由屏幕尺寸
    *  决定，跨会话记住没有意义（和 sidebarOpen 的区别就在这）。 */
   railOpen: boolean;
+  /**
+   * 窄屏的**右侧工具条**（AI / 评论 / 目录 / 插件面板）是否展开。
+   *
+   * 窄屏**默认收起**：它是一条常驻的浮动控制条，390px 上会压在正文右缘
+   * （量过 46px 宽），而它承载的四个入口本来就是"偶尔用一次"。唤出按钮在右下角
+   * （拇指区），与左下角的「展开工具栏 / 同步」对称。
+   *
+   * 与 `railOpen` 同一条口径：**不持久化**——这是屏幕尺寸决定的布局状态，
+   * 写进 localStorage 会污染桌面端（桌面上这条工具条是常驻的）。
+   */
+  rightRailOpen: boolean;
   setActivity: (a: Activity) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (v: boolean, opts?: { persist?: boolean }) => void;
   setRailOpen: (v: boolean) => void;
+  setRightRailOpen: (v: boolean) => void;
 }
 
 const KEY_ACTIVITY = "shuyonote:activity";
@@ -34,6 +46,8 @@ export const useActivity = create<ActivityState>((set, get) => ({
   sidebarOpen: localStorage.getItem(KEY_SIDEBAR) !== "0",
   railOpen: false,
   setRailOpen: (v) => set({ railOpen: v }),
+  rightRailOpen: false,
+  setRightRailOpen: (v) => set({ rightRailOpen: v }),
   setActivity: (a) => {
     try {
       localStorage.setItem(KEY_ACTIVITY, a);
