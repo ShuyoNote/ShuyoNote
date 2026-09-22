@@ -61,6 +61,18 @@ async function synthesize(): Promise<Uint8Array> {
 const up = await serviceUp();
 const skipReason = up ? "" : `本机模型服务不可达（${BASE}）—— 这是环境，不是回归`;
 
+/**
+ * ★ vitest 超时**必须显式给**（2026-09-22 在唯一有服务的机器上实测踩到）：
+ * 默认 5 s 不够 —— 本机 TTS 合成**每次 ~3.4 s**（冷热都一样，见下），而 live 判据是**多个文件并发**
+ * 打同一个模型服务（`image.localVlm` / `librarySummary*` / 本文件）⇒ 排队后单次轻松超过 5 s，
+ * 于是**两条本来会绿的判据报 `Test timed out in 5000ms`**（看起来像"转写坏了"，其实只是超时）。
+ * 读数（本机实测，单发）：`TTS` 第 1 次 3421 ms / 第 2 次 3395 ms（wav 259570 / 243626 字节，RIFF 魔数在）；
+ * `funasr-nano` 转写同一段 163 ms。
+ * ⚠️ 这条不是"把超时调大让它绿"：`localTranscribe` 那边本来就写着 `timeoutMs: 300_000`（转写是分钟级的活），
+ * 这里只是让**判据的等待**与那条口径一致。
+ */
+const LIVE_TIMEOUT_MS = 120_000;
+
 describe.skipIf(skipReason !== "")(`ASR 真跑：TTS → localTranscribe → 抽取器（${skipReason || BASE}）`, () => {
   const transcribe = () => {
     const lt = localTranscribe({ provider: "openai", baseUrl: BASE, model: "", apiKey: "" }, { model: ASR_MODEL, timeoutMs: 300_000 });
@@ -74,7 +86,7 @@ describe.skipIf(skipReason !== "")(`ASR 真跑：TTS → localTranscribe → 抽
     expect(wav.byteLength).toBeGreaterThan(1000);
     // RIFF 魔数：证明拿到的是音频而不是一段 JSON 错误
     expect(String.fromCharCode(...wav.slice(0, 4))).toBe("RIFF");
-  });
+  }, LIVE_TIMEOUT_MS);
 
   it(`★ 经我们自己的通道转写，中文关键词认得出来（模型 ${ASR_MODEL}）`, async () => {
     const wav = await synthesize();
@@ -83,7 +95,7 @@ describe.skipIf(skipReason !== "")(`ASR 真跑：TTS → localTranscribe → 抽
     expect(out.text.length).toBeGreaterThan(0);
     // 去标点断言：`funasr-nano` 带标点、`sherpa-onnx-paraformer-zh-small` 裸文本，两者都含这句
     expect(out.text.replace(/[，。！？、\s]/g, "")).toContain(KEYWORD);
-  });
+  }, LIVE_TIMEOUT_MS);
 
   it("★ 抽取器这一层：段与 `loc` 的形状**按服务端实际给的**如实区分（不编造定位）", async () => {
     const wav = await synthesize();
@@ -114,5 +126,5 @@ describe.skipIf(skipReason !== "")(`ASR 真跑：TTS → localTranscribe → 抽
       `[live] ${ASR_MODEL} ⇒ frames=${res.segments.length} ` +
         `带定位=${shaped.length}（${shaped.length ? "服务端给了 segments" : "服务端只给 text ⇒ loc 为空，符合契约"}）`,
     );
-  });
+  }, LIVE_TIMEOUT_MS);
 });
