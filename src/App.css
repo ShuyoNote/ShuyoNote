@@ -11,6 +11,12 @@
   --z-context: 1100;
   --z-palette: 1500;
   --z-toast: 1600;
+  /* 桌面右侧**常驻**悬浮条（`.right-rail`，在 `--z-bar` 层）的宽度。
+     2026-09-22 提出来当一个变量：PDF 阅读器"收起态的边缘拖拽手柄"必须避开它 ——
+     手柄在 `.pdf-reader-overlay`（`--z-content`）里，层级天然低于悬浮条，
+     放在最右边会被它压住（`elementFromPoint` 实测在中段返回 `div.right-rail`），
+     而把阅读器抬到悬浮条之上又会夺掉"阅读时仍能用 AI/聊天面板"这件事。 */
+  --rail-w: 41px;
   /* Brand & neutrals */
   --accent: #3370ff;
   --accent-strong: #2952cc;
@@ -15629,6 +15635,9 @@ p:has(> .editor-drawing-container) {
   top: 50%;
   transform: translateY(-50%);
   z-index: 30;
+  /* 显式写出宽度（原来是内容撑出来的 30 + 2×5 padding + 2×1 border = 41）：
+     阅读器边缘手柄要按这个数避让，见 `--rail-w`。 */
+  width: var(--rail-w);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -17875,7 +17884,43 @@ p:has(> .editor-drawing-container) {
   display: flex;
   flex-direction: row;
   overflow: hidden;
+  /* 侧栏收起时的"拖出来"手柄要相对它定位（2026-09-22） */
+  position: relative;
 }
+/* 侧栏/目录**收起时**那条边上的抓取条（两侧侧栏都能"拖拽收起 / 拖拽展开"）。
+   为什么需要它：收起后面板不在 DOM 里 ⇒ 没有可抓的 resizer，光靠 head 上的按钮就只能"点"。
+   可见性：中间一段 3px 小竖条当"这里能拖"的提示，hover 变强调色；不抢视觉。
+   ⚠️ `z-index: 40` 是量出来的：`.right-rail`（全局右侧悬浮条）是 **z-index 30 / position: fixed**，
+   而且它正好浮在阅读器右侧中段（41×112）。原来手柄是 z-index 5 ⇒ 中段被它压住、指针事件收不到
+   （`elementFromPoint` 在 y=425 返回 `div.right-rail`）⇒ 右侧"拖出来"只有上下一小段能用。
+   宽度取 6px（与 `.pdf-outline-resizer` / `.pdf-sidebar-resizer` 同规格）：手柄在 1274..1280，
+   而悬浮条按钮在 1245..1275 ⇒ 只压住它 1px，不影响点它。 */
+.pdf-edge-drag {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 40;
+  cursor: col-resize;
+  background: transparent;
+}
+.pdf-edge-drag.is-left { left: 0; }
+/* ⚠️ 右侧手柄要**避开常驻悬浮条**（`--rail-w`）：它在 `--z-bar` 层，比阅读器浮层高，
+   否则右侧中段（41×112 那条）的指针事件会被它截走 ⇒ 只有上下一小段能拖。 */
+.pdf-edge-drag.is-right { right: var(--rail-w); }
+.pdf-edge-drag::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 44px;
+  border-radius: 2px;
+  background: var(--border);
+}
+.pdf-edge-drag.is-left::after { left: 2px; }
+.pdf-edge-drag.is-right::after { right: 2px; }
+.pdf-edge-drag:hover::after { background: color-mix(in srgb, var(--accent) 60%, transparent); }
 .pdf-reader-stage-wrap {
   flex: 1;
   min-width: 0;
