@@ -94,7 +94,7 @@ export function PdfAskBar({ attachmentId, pageCount, getEngine, onDone }: Props)
     const notes = useNotes.getState();
     if (notes.current && notes.current.id) {
       try {
-        const { contentTextOf } = await import("../lib/ai/lexical");
+        const { contentTextOf } = await import("../lib/ai/lexicalContent");
         const blockNode = JSON.parse(block.content_json).root.children[0];
         const doc = JSON.parse(notes.current.content_json || '{"root":{"children":[],"type":"root","version":1}}');
         doc.root.children.push(blockNode);

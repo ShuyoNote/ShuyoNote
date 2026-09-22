@@ -749,6 +749,33 @@ export interface CommandMap {
   // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
   // 否则用户会把"少数据的备份"当成完整备份。
   export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
+  /** 阶段 1 · 冲突留痕：这一页**未裁决**的冲突（字段名与 Rust 侧 `PageConflict` 的 snake_case 一致）。 */
+  list_page_conflicts: {
+    args: { pageId: string };
+    result: Array<{
+      id: string;
+      page_id: string;
+      block_id: string;
+      reason: string;
+      local_json: string;
+      remote_json: string;
+      detected_at: number;
+      resolved_at: number | null;
+      resolved_choice: string | null;
+    }>;
+  };
+  /** 阶段 1 · 裁决一处冲突（`local` 或 `remote`；其余值两侧都报错，不默认选边）。 */
+  resolve_page_conflict: { args: { conflictId: string; choice: string }; result: null };
+  /** 阶段 1 · 正文文本的本地修复（合并/裁决产物补算；**只动正文**，不动内容与 dirty）。 */
+  refresh_page_text: { args: { pageId: string; text: string }; result: boolean };
+  /**
+   * 阶段 1 · B1：**待重建正文的队列**（补算器用）。`total` = 待重建总数（界面说"还有 N 页"），
+   * `pages[].doc_json` = 那一页的文档 JSON（**故意不叫存储列名**：界面侧不必碰内容层那两列）。
+   */
+  list_stale_text_pages: {
+    args: { limit?: number | null };
+    result: { total: number; pages: Array<{ page_id: string; title: string; doc_json: string }> };
+  };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };
   export_wiki: { args: { destPath: string }; result: { path: string; size: number; pages: number; files: number } };

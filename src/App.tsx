@@ -29,6 +29,8 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { EditorToolbar } from "./components/EditorToolbar";
+import { ConflictBanner } from "./components/ConflictBanner";
+import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
 import { RightRail } from "./components/RightRail";
@@ -419,6 +421,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
 
   return (
     <div className="main">
+      {/* 阶段 1 · 冲突提示条：同一块被两端改过时**看得见**（裁定 (iii) 的"不静默选边"） */}
+      <ConflictBanner pageId={pageId} />
       <div className="editor-toolbar-bar">
         {breadcrumbs.length > 0 && (
           <div className="breadcrumbs">
@@ -836,6 +840,8 @@ function AppShell() {
         <InputDialog />
         <AiAssistantPanel />
         <CommentsDrawer />
+        {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
+        <TextRepairRunner />
         <RightRail />
         <ShortcutsPanel />
         <AboutDialog />

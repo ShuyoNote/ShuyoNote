@@ -2,7 +2,8 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, upsertRemoteContent } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue } from "../docContent";
+import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
@@ -782,7 +783,12 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         console.warn(`[sync] 保留本地（本地有未同步改动）page ${p.id}`);
       }
       if (useRemote) {
-        upsertRemoteContent(store, { ...p, id: String(p.id) }, change.seq);
+        // ★ **阶段 1**：落库走那一层的**唯一入口** `applyRemoteContent` —— 它内部先试一次
+        // **逐块合并**（两端各自改**不同块** ⇒ 两边的编辑都保留），不合并时就是接线前的行为：
+        // 老内容（顶层块没有身份）／脏 JSON，或**有冲突**（`rev` 相等而内容不同、任一侧缺 `rev`）——
+        // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
+        // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
+        applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
       }
     }
     return;
@@ -1323,6 +1329,11 @@ export function makeInvoke(store: SqliteStore) {
         // **清成空串**并 `dirty = 1` 推给服务端 —— 桌面侧一直是保留正文的（`unwrap_or(cur_json)`）。
         // 2026-09-18 对齐两侧语义，判据与用例见 `docContent.resolveSaveContent` 的注释与单测。
         const next = resolveSaveContent(cur, args);
+        // ★ **阶段 1**：保存时给每个有身份的顶层块盖 `blockRev`（baseline = 库里这一页 = `cur`）。
+        //   块级判定（`applyChange` 里那次 `mergeRemoteContent`）靠它比"哪一块更新"；
+        //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
+        //   ⚠️ 顺序：**先盖章再快照/落库** —— 版本历史里存的应当是"用户真正保存的那一版"（含 rev）。
+        next.json = assignBlockRevs(cur.json, next.json);
         // Snapshot the current state before overwriting (version history).
         snapshotBeforeSave(store, id, next.title, next.json, next.text);
         writeContent(store, id, next, Date.now());
@@ -3121,21 +3132,22 @@ export function makeInvoke(store: SqliteStore) {
       if (!r) throw new Error("版本不存在");
       // Preserve the CURRENT content before overwriting, so a restore is
       // reversible (deduped against the newest snapshot). Matches desktop.
-      // ⚠️ 活性谓词与 `readContent` 一致（`deleted_at IS NULL`）：**恢复只对活页**
-      // ——要给已软删的页面恢复内容，应先把页面还原出来（2026-09-19 跨机裁定"统一到活页"）。
-      const cur = store.query<{ title: string; content_json: string; content_text: string }>(
-        "SELECT title, content_json, content_text FROM pages WHERE id = ? AND deleted_at IS NULL",
-        [r.page_id],
-      )[0];
+      // ★ **页内容的读/写都走「文档内容」那一层**（阶段 0 接口收口，2026-09-19）：
+      //   · 读 = `readContent`（`SELECT title, content_json, content_text … AND deleted_at IS NULL`，
+      //     与这里原先那条 SQL **逐字相同**）⇒ **恢复只对活页**这条口径由那一层定义，不再靠注释；
+      //   · 写 = `writeContent`（`UPDATE … SET title, content_json, content_text, updated_at, dirty = 1`，
+      //     也与 2026-09-19 裁定 (a) 之后这里那条 SQL **逐字相同**）。
+      //   ⇒ 于是"恢复版本"这条路上的**判据与命令面走同一条代码路径**（`docContent.test.ts` 22 条
+      //     与 `two-device-sync` 的场景 G 都在守它），将来换 CRDT 只改那一层。
+      //   ⚠️ 两处**语义**仍留在本命令里、**不属于**那一层：① 版本不存在就抛；② 读不到活页就**拒绝**
+      //     （而不是静默跳过快照 —— 那会让 UPDATE 改写已软删的页）。
+      const cur = readContent(store, r.page_id);
       if (!cur) throw new Error("页面不存在或已删除（先还原页面，再恢复它的历史版本）");
-      snapshotBeforeSave(store, r.page_id, cur.title, cur.content_json, cur.content_text);
-      // `dirty = 1`：恢复版本是**用户自己刚做的动作**，与 `writeContent` 硬写 1、
-      // `upsertRemoteContent` 硬写 0 成对。不置 1 时，"恢复后、推送前"的某次 pull 会
-      // **静默把这次恢复冲掉**（最终虽收敛，但用户会看到内容闪回且没有任何提示）。
-      // 2026-09-19 裁定 (a)：两侧同时改 —— Rust `versions.rs::restore_version` 同批。
-      store.run("UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1 WHERE id = ?", [
-        r.title, r.content_json, r.content_text, Date.now(), r.page_id,
-      ]);
+      snapshotBeforeSave(store, r.page_id, cur.title, cur.json, cur.text);
+      // ★ **阶段 1**：恢复也是一次**本地编辑** ⇒ 同样要盖 `blockRev`（baseline = 当前页内容 `cur`）。
+      //   不盖的后果：恢复回来的块带着**旧 rev**（或干脆没有）⇒ 下一次合并判错胜负，
+      //   极端情况下这次恢复会被远端**静默盖掉**（与上面 `dirty = 1` 那条同族）。
+      writeContent(store, r.page_id, { title: r.title, json: assignBlockRevs(cur.json, String(r.content_json ?? "")), text: r.content_text }, Date.now());
       const restored = store.query("SELECT * FROM pages WHERE id = ?", [r.page_id])[0];
       recordChange(store, "page", r.page_id, "upsert", restored ?? { id: r.page_id, title: r.title, content_json: r.content_json, content_text: r.content_text, updated_at: Date.now() }, Date.now());
       return restored as T;
@@ -3147,6 +3159,44 @@ export function makeInvoke(store: SqliteStore) {
       store.run("DELETE FROM page_versions WHERE page_id = ?", [pid]);
       const after = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", [pid])[0]?.n ?? 0;
       return (before - after) as T;
+    }
+    if (cmd === "list_page_conflicts") {
+      // 阶段 1 · 冲突留痕：字段名**对齐 Rust 侧 `PageConflict` 的 snake_case**（前端两边同一套读法）。
+      const pid = String(a.pageId ?? a.page_id ?? "");
+      return pageConflictsOf(store, pid).map((c) => ({
+        id: c.id,
+        page_id: c.pageId,
+        block_id: c.blockId,
+        reason: c.reason,
+        local_json: c.localJson,
+        remote_json: c.remoteJson,
+        detected_at: c.detectedAt,
+        resolved_at: c.resolvedAt ?? null,
+        resolved_choice: c.resolvedChoice ?? null,
+      })) as T;
+    }
+    if (cmd === "resolve_page_conflict") {
+      const conflictId = String(a.conflictId ?? a.conflict_id ?? "");
+      const choice = String(a.choice ?? "");
+      if (choice !== "local" && choice !== "remote") {
+        throw new Error(`choice 只能是 local 或 remote，收到 ${choice}`);
+      }
+      resolvePageConflict(store, conflictId, choice);
+      return null as T;
+    }
+    if (cmd === "list_stale_text_pages") {
+      // 阶段 1 · B1：待重建正文的队列（字段名与 Rust 侧 `StaleTextQueue` 的 snake_case 对齐）。
+      const q = staleTextQueue(store, Number(a.limit ?? 10));
+      return {
+        total: q.total,
+        pages: q.pages.map((p) => ({ page_id: p.pageId, title: p.title, doc_json: p.docJson })),
+      } as T;
+    }
+    if (cmd === "refresh_page_text") {
+      // 阶段 1 · 正文文本的本地修复：**只动正文**（内容与 dirty 都不动）。
+      // 比较在那一层里做（相同 ⇒ 一次写库都没有）；返回"是否真的修了"。
+      const pid = String(a.pageId ?? a.page_id ?? "");
+      return refreshPageTextIfStale(store, pid, String(a.text ?? "")) as T;
     }
 
     // ---- Backup / export / import (standard zip, matches the desktop format) ----

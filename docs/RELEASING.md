@@ -102,6 +102,24 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 >    git -c http.proxy= -c https.proxy= -c http.curloptResolve=github.com:443:140.82.114.3 push https://github.com/ShuyoNote/ShuyoNote.git main
 >    ```
 >    可用 IP 先用 `curl.exe -s -o NUL -w "%{http_code}" --resolve github.com:443:<ip> https://github.com/` 探一下
+>
+> **★ 读 CI 结果也一样：`api.github.com` 直连不通，钉 IP 可通（2026-09-22 实测）** ——
+> 可用 IP：`140.82.112.6` / `140.82.113.6` / `140.82.114.6`（`140.82.112.3` 已**过期**：报 `ERR_TLS_CERT_ALTNAME_INVALID`）。
+> 配方（三条命令就能拿到「哪条门禁红了 ÷ 它的日志 ÷ cargo 的原话」）：
+> ```bash
+> IP=140.82.112.6
+> # ① 这个 commit 的 ci 运行（拿 run id ＋ 结论）
+> curl -sS --resolve api.github.com:443:$IP -H "Authorization: Bearer $TOKEN" \
+>   "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/workflows/ci.yml/runs?branch=dev&per_page=5"
+> # ② 哪个 job 红了（steps[].conclusion 里就写着是哪一步）
+> curl -sS --resolve api.github.com:443:$IP -H "Authorization: Bearer $TOKEN" \
+>   "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/runs/<run-id>/jobs"
+> # ③ 那一步的完整日志（`-L` 跟重定向；公开仓库用 token 更稳）
+> curl -sSL --resolve api.github.com:443:$IP -H "Authorization: Bearer $TOKEN" \
+>   "https://api.github.com/repos/ShuyoNote/ShuyoNote/actions/jobs/<job-id>/logs" -o ci.log
+> ```
+> 2026-09-22 就是这么读出 `rust-sm-wired` 在 Linux 上红的**真因**的（`openssl-sys` 只看 `<prefix>/lib|lib64`，
+> 而 Ubuntu 的开发文件在多架构目录 ⇒ 只给 `OPENSSL_DIR=/usr` 必炸；详见「库级国密：单一口味」那一节）。
 >    （实测 `20.205.243.166` 与 `140.82.114.3` 会**轮流**不通）。
 > 3. `api.github.com` **不**受影响（DNS 正常），查 CI 状态/下载 artifact 用 `curl` 直接打 API 即可。
 
