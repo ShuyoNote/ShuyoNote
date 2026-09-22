@@ -20888,6 +20888,21 @@ body.is-plugin-panel-open .main {
  *     "手机上某个动作消失了"——那比按钮小更糟。
  *   · 表格保留**横向滚动**作为兜底（长文件名不再把整行挤出屏幕且够不到）。
  * =========================================================================== */
+/* ---------------------------------------------------------------------------
+ * 手机档（≤480）：文件表**藏列** —— 类型 / 日期整列去掉，只留名字与操作。
+ *
+ * ⚠️ 为什么不是挂在 768 档：`scripts/check-panel-layout.mjs` 在 **560px** 档明确保护
+ *   "表格保住列宽、横向滚动只留在容器里"（那是 2026-09 之前就定下的设计）。
+ *   挂在 768 上会连 560 一起盖掉——该门禁正是红在这一条上（`✗ 「类型」列不竖排（0 行）`：
+ *   元素被 `display:none`，行数当然是 0）。所以**手机（≤480）才藏列**，560 及以上保留列、
+ *   由容器横滚。仓库已有 CSS-only 的额外档先例（720 档），这里同样不碰 JS 断点。
+ * ------------------------------------------------------------------------- */
+@media (max-width: 480px) {
+  .file-manager-table .fm-kind-col,
+  .file-manager-table .fm-date-col,
+  .file-manager-table .fm-date { display: none; }
+}
+
 @media (max-width: 768px) {
   .file-manager {
     /* 桌面 `24px 32px` 的留白在 320px 上吃掉 20%。 */
@@ -20965,9 +20980,6 @@ body.is-plugin-panel-open .main {
   }
   /* `width: max-content` 是横滑的前提：`width:100%` 会把七列硬压进 292px。 */
   .file-manager-table { width: max-content; min-width: 100%; }
-  .file-manager-table .fm-kind-col,
-  .file-manager-table .fm-date-col,
-  .file-manager-table .fm-date { display: none; }
   .file-manager-table th,
   .file-manager-table td { padding: 8px 10px; }
   /* 行尾六个 20px 小按钮 → 一个 `⋯`；其余动作在动作面板里。 */
