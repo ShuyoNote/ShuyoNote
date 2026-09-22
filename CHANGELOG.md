@@ -75,6 +75,23 @@
 
 ### 修复
 
+- **PDF 批注工具条上挂着一枚"空壳胶囊"**（2026-09-22，owner 截图圈出）。`.pdf-annot-actions` 这层容器
+  自带 `background` / `border` / `border-radius: 9px` / `padding: 4px 6px`；上一轮把那句
+  "先在页面选中一条标注…"的说明删掉之后，**容器还在、样式还在** ⇒ 没选中标注时它就渲染成
+  一枚 **14×10 的小白胶囊**挂在工具条上（还白占 flex 一格）。
+  修法：容器**只在有内容时渲染**（`{st.selected && (<div className="pdf-annot-actions">…)}`）。
+
+  ★ 顺手把这条**钉进真 DOM 门禁**：此前阅读器只做得到 **CSS 级**断言（"要一份真 PDF 才渲染内部"
+  是当时的结论）——这轮发现能**在浏览器里把夹具喂进去**：web 平台的 `dialog.open` 走隐藏
+  `<input type=file>`，用 `waitForFileChooser` + `chooser.accept()` 即可。⚠️ 必须**先挂 chooser 再点**：
+  那个 input 建完就点、随后被清理，`waitForSelector('input[type=file]')` 等不到（实测踩过）。
+  于是 `verify-mobile-views.mjs` 新增一节"**PDF 阅读器（真 PDF）**"：上传 `scan.pdf`（无文本层）→
+  从「⋯ → 阅读并标注」打开 → 量：**空壳容器 = 0**、`⋯` 收起/展开**真的生效**（默认 5 个低频控件
+  全不可见、点开后全可见）、状态行窄屏默认收起而点开出现、批注工具行一行（54px）、无横向溢出。
+  同时把这条门禁本身补进 `scripts/lib/gates.mjs` 的 **mobile 组**（它此前只挂在 `package.json`，
+  `pnpm verify` 跑不到它）＋ `tests/baseline.json` 登记（`mobile-views: 210`）。
+  实测：views **210/0**（原 190）· `test-report` 不变量 11/11 · tsc exit=0。
+
 - **「时间」属性在值列里留一条死空白**（2026-09-22，owner 截图圈出）。`.prop-datetime` 这层 wrapper
   （手输框 ＋ 📅 按钮）带着旧**行布局**时代的 `max-width: 75%`，而值列早已改成网格的 `1fr` ——
   于是同一列里文本输入框顶到了行尾按钮，日期控件却短一截、后面空掉 25%（390px 上约 57px）。

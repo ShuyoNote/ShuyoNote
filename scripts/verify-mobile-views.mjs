@@ -390,8 +390,142 @@ async function checkProperties(page, vp, tag) {
   }, tag);
 }
 
-async function main() {
-  const executablePath = findChrome();
+/**
+ * PDF 阅读器：**真 DOM** 验收（上传一份真 PDF 再打开它）。
+ *
+ * 为什么以前没做：阅读器要一份真 PDF 才渲染内部，而测试工作区里没有 PDF 附件 ⇒
+ * 此前它只有 `verify-mobile-overlays.mjs` 里的 **CSS 级**断言（钉得住规则、钉不到真 DOM）。
+ * 2026-09-22 发现能**把夹具喂进去**：web 平台的 `dialog.open` 走隐藏 `<input type=file>`，
+ * 用 `waitForFileChooser` + `chooser.accept([path])` 即可。⚠️ 必须**先挂 chooser 再点**——
+ * 那个 input 建完就点、随后被清理，`waitForSelector('input[type=file]')` 是等不到的（实测踩过）。
+ *
+ * 这一节只钉**真 DOM 才看得见**的东西：
+ *   ① 工具条里不许有"空壳胶囊"（`.pdf-annot-actions` 自带背景/边框/圆角，空着就是一白胶囊）；
+ *   ② `⋯` 收起/展开真的生效（CSS 级断言只能证明规则在、证明不了点下去会出来）；
+ *   ③ 批注工具行窄屏是**一行**；④ 无横向溢出；⑤ 扫描版显示文本层状态行。
+ */
+async function checkPdfReader(page, vp) {
+  // 1) 进文件管理器
+  await openView(page, "文件管理");
+  await sleep(900);
+  // 1b) 切到**列表视图**：窄屏默认是网格（`defaultFileView(null, w)`），而「行尾 ⋯ → 阅读并标注」
+  //     那条菜单只在表格行上。按类名点第一个 `.fm-view-btn`（title 走 i18n，别按文字找）。
+  await safeEval(page, () => document.querySelector(".fm-view-btn")?.click());
+  await sleep(700);
+
+  // 2) 上传夹具（先挂 chooser 再点）
+  const sel = await safeEval(page, () => {
+    const b = Array.from(document.querySelectorAll("[title]")).find((x) =>
+      (x.getAttribute("title") || "").includes("上传"),
+    );
+    if (!b) return null;
+    if (!b.id) b.id = "__pdf_upload_probe";
+    return "#__pdf_upload_probe";
+  });
+  if (!sel) return { err: "找不到「上传」入口" };
+  const fixture = join(process.cwd(), "src-tauri", "tests", "fixtures", "pdf", "scan.pdf");
+  try {
+    const [chooser] = await Promise.all([page.waitForFileChooser({ timeout: 20000 }), page.click(sel)]);
+    await chooser.accept([fixture]);
+  } catch (e) {
+    return { err: `文件选择器没接上：${String(e).slice(0, 120)}` };
+  }
+  await sleep(3500);
+
+  // 3) 打开阅读器：行尾 ⋯ → 阅读并标注（自己实现过的那条路，选择器可靠）
+  const hasMenu = await safeEval(page, () => {
+    const rows = Array.from(document.querySelectorAll("tr, .fm-row"));
+    const row = rows.find((r) => (r.textContent || "").includes(".pdf"));
+    const more = row?.querySelector(".fm-more-btn") ?? null;
+    if (more) more.click();
+    return !!more;
+  });
+  if (!hasMenu) {
+    const diag = await safeEval(page, () => ({
+      main: document.querySelector(".main")?.className ?? null,
+      tables: document.querySelectorAll(".file-manager-table").length,
+      trs: Array.from(document.querySelectorAll("tr"))
+        .map((r) => (r.textContent || "").trim().slice(0, 28))
+        .slice(0, 8),
+      gridCards: document.querySelectorAll(".fm-grid-card").length,
+      toasts: Array.from(document.querySelectorAll(".toast")).map((t) => (t.textContent || "").trim().slice(0, 40)),
+      fileInputs: document.querySelectorAll('input[type="file"]').length,
+      fmVisible: !!document.querySelector(".file-manager"),
+    }));
+    return { err: `上传后没找到 pdf 行的「⋯」（上传可能没成功）；诊断=${JSON.stringify(diag)}` };
+  }
+  await sleep(900);
+  const clicked = await safeEval(page, () => {
+    const el = Array.from(document.querySelectorAll(".fm-ctx-item, [role='menuitem'], button")).find((e) =>
+      (e.textContent || "").includes("阅读并标注"),
+    );
+    if (el) el.click();
+    return !!el;
+  });
+  if (!clicked) return { err: "上下文菜单里没有「阅读并标注」" };
+  await sleep(6000);
+
+  // 4) 量（先量"默认收起"这一态）
+  const measure = () =>
+    safeEval(page, () => {
+      const reader = document.querySelector(".pdf-reader");
+      if (!reader) return { err: "阅读器没打开" };
+      // 空壳：没有文字、没有子元素，却有可见背景或边框，且大于 6×6
+      const empties = [];
+      for (const el of Array.from(reader.querySelectorAll(".pdf-annot-toolbar *"))) {
+        const cs = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        if (r.width < 6 || r.height < 6) continue;
+        if (el.children.length > 0 || (el.textContent || "").trim()) continue;
+        const hasBg = cs.backgroundColor !== "rgba(0, 0, 0, 0)" && cs.backgroundColor !== "transparent";
+        const hasBorder = parseFloat(cs.borderTopWidth) > 0 || parseFloat(cs.borderLeftWidth) > 0;
+        if (hasBg || hasBorder) {
+          empties.push(
+            `${el.tagName.toLowerCase()}${el.className ? "." + String(el.className).trim().replace(/\s+/g, ".") : ""} ${Math.round(r.width)}x${Math.round(r.height)}`,
+          );
+        }
+      }
+      const visible = (s) => {
+        const el = reader.querySelector(s);
+        return el ? getComputedStyle(el).display !== "none" : null;
+      };
+      const SECONDARY = [
+        ".pdf-reader-maximize",
+        ".pdf-reader-sidebar-toggle",
+        ".pdf-reader-ask",
+        ".pdf-eye-wrap",
+        ".pdf-export-btn",
+      ];
+      const tools = reader.querySelector(".pdf-annot-tools");
+      return {
+        empties,
+        moreVisible: visible(".pdf-reader-more"),
+        secondary: SECONDARY.map(visible),
+        toolsH: tools ? Math.round(tools.getBoundingClientRect().height) : null,
+        docW: document.documentElement.scrollWidth,
+        vw: innerWidth,
+        hasStatus: !!reader.querySelector(".pdf-annot-status"),
+        pages: (reader.querySelector(".pdf-reader-page")?.textContent || "").trim(),
+      };
+    });
+
+  const first = await measure();
+  if (first.err) return { err: first.err };
+
+  // 5) 窄屏：点开「⋯」再量一态（"收起了"和"点了能出来"是两件事）
+  let secondaryAfter = first.secondary;
+  let hasStatusAfter = first.hasStatus;
+  if (vp.width <= 768 && first.moreVisible) {
+    await safeEval(page, () => document.querySelector(".pdf-reader-more")?.click());
+    await sleep(600);
+    const after = await measure();
+    secondaryAfter = after.secondary ?? secondaryAfter;
+    hasStatusAfter = after.hasStatus ?? hasStatusAfter;
+  }
+  return { ...first, secondaryAfter, hasStatusAfter };
+}
+
+async function main() {  const executablePath = findChrome();
   if (!executablePath) {
     console.error("找不到 Chrome/Chromium。请安装 Google Chrome，或用 PUPPETEER_EXECUTABLE_PATH 指定路径。");
     process.exit(1);
@@ -869,6 +1003,63 @@ async function main() {
         await shot(ppage, `${vp.name}-properties`);
         ok(perrs.length === 0, `属性页无 JS 报错${perrs.length ? "：" + perrs.join(" | ") : ""}`);
         await pctx.close();
+      }
+
+      // ---------- PDF 阅读器：**真 DOM**（上传一份真 PDF 再打开） ----------
+      {
+        console.log(`\n【${vp.name} · PDF 阅读器（真 PDF）】`);
+        const rctx = await browser.createBrowserContext();
+        const rpage = await rctx.newPage();
+        const rerrs = [];
+        rpage.on("pageerror", (e) => rerrs.push(String(e).slice(0, 160)));
+        await rpage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+        await rpage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+        await sleep(3500);
+        const rr = await checkPdfReader(rpage, vp);
+        if (rr.err) {
+          ok(false, `PDF 阅读器体检失败：${rr.err}`);
+        } else {
+          ok(
+            /第\s*\d+\s*\/\s*\d+\s*页|页数未知/.test(rr.pages),
+            `夹具 PDF 真的载入了（页码读数「${rr.pages}」）——上传 + 打开这条路走通了`,
+          );
+          // ① 工具条里不许有"空壳胶囊"：`.pdf-annot-actions` 自带背景/边框/圆角，
+          //    空着就是一枚 14×10 的小白胶囊（owner 2026-09-22 截图圈出的那个）。
+          ok(
+            rr.empties.length === 0,
+            `批注工具条里没有"没有内容却有背景/边框"的空壳（实测 ${rr.empties.length} 个` +
+              `${rr.empties.length ? "：" + rr.empties.join("、") : ""}）`,
+          );
+          // ② `⋯` 的收起/展开：CSS 级断言只能钉规则，钉不到"点下去会不会出来"。
+          if (vp.width <= 768) {
+            ok(rr.moreVisible, `窄屏有「⋯」入口（更多工具）`);
+            ok(
+              rr.secondary.every((v) => v === false),
+              `默认收起那 5 个低频头部控件（实测可见性 ${JSON.stringify(rr.secondary)}）`,
+            );
+            ok(
+              rr.secondaryAfter.every((v) => v === true),
+              `点开「⋯」后它们真的出现（实测 ${JSON.stringify(rr.secondaryAfter)}）`,
+            );
+            ok(
+              rr.toolsH !== null && rr.toolsH <= 56,
+              `批注工具行是**一行**（高 ${rr.toolsH} ≤ 56；换行会白吃 44px 正文高度）`,
+            );
+            // 状态行（文本层提示 + 朗读/OCR/AI）窄屏**默认收进 ⋯**，点开才出现 —— 两条都钉
+            ok(rr.hasStatus === false, `窄屏默认收起状态行（省一行；实测 hasStatus=${rr.hasStatus}）`);
+            ok(
+              rr.hasStatusAfter === true,
+              `点开「⋯」后状态行（OCR / AI 识别那一行）出现（实测 hasStatus=${rr.hasStatusAfter}）`,
+            );
+          } else {
+            ok(!rr.moreVisible, `桌面不显示「⋯」入口（一次放得下）`);
+            ok(rr.hasStatus === true, `桌面一直显示状态行（OCR / AI 识别那一行，不缺空间）`);
+          }
+          ok(rr.docW <= rr.vw + 1, `阅读器无横向溢出（docW ${rr.docW} ≤ ${rr.vw}）`);
+        }
+        await shot(rpage, `${vp.name}-pdf-reader`);
+        ok(rerrs.length === 0, `阅读器页无 JS 报错${rerrs.length ? "：" + rerrs.join(" | ") : ""}`);
+        await rctx.close();
       }
     }
 
