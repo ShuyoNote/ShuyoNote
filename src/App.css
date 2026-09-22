@@ -17166,7 +17166,9 @@ p:has(> .editor-drawing-container) {
 .pdf-reader-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  /* 2026-09-22：12 → 10。这一串原来是"一整排没有分组的图标"，靠间距硬撑；
+     现在有了 `.pdf-reader-sep` 分组，间距可以收一点，整条 head 更紧。 */
+  gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
 }
@@ -17296,12 +17298,30 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
 }
 
-/* 「导出带批注副本」：覆盖固定 28px 宽，按中文标签内容自适应。 */
+/* 「导出带批注副本」：**与其它 `.pdf-reader-btn` 同规格的图标按钮**（28×28）。
+   2026-09-22 owner："导出带批注副本…现在的太占地方" —— 它原来是一枚自适应宽的文字按钮，
+   1280 下实测 **102×28**，是整条 head 里最占地方的一个（其余图标都是 28×28）。
+   完整说法进 `title` / `aria-label`；导出中才需要一点文字宽度（紧凑的 `3/12`）。 */
 .pdf-reader-btn.pdf-export-btn {
+  width: 28px;
+  padding: 0;
+}
+.pdf-reader-btn.pdf-export-btn:has(.pdf-export-progress) {
   width: auto;
-  padding: 0 8px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+.pdf-export-progress {
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  font-size: 12px;
+}
+/* 分组分隔线：head 里把"翻页 / 缩放"与"面板 / 视图"两族分开（原来是一长串没有分组的图标）。
+   窄屏隐藏 —— 那里每个按钮已经是 44 宽，再加分隔只会挤掉正文宽度，换行时还可能落在行首。 */
+.pdf-reader-sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  background: var(--border);
 }
 .pdf-reader-btn svg {
   display: block;
@@ -22019,11 +22039,46 @@ body.is-plugin-panel-open .main {
     flex-wrap: wrap;
     row-gap: 6px;
     min-width: 0;
+    /* 2026-09-22：窄屏把这一组内部的间距收紧（14/6 → 6/4）。翻页组 + 缩放组实测共 ~356px，
+       而 390 视口里可用 362px —— 原来就差这十几像素，于是它一直占**两行**（94px）。
+       收紧后并成一行 ⇒ head 再省约 47px。 */
+    gap: 6px;
+  }
+  .pdf-reader-nav,
+  .pdf-reader-zoom {
+    gap: 4px;
+  }
+  /* 页码指示器是"至少 72px"（桌面为了不抖），窄屏没必要留那么宽：短文本自然更窄，
+     长文本（如「第 128 / 1024 页」）本来就超过 72px，不受影响。 */
+  .pdf-reader-page {
+    min-width: 64px;
   }
   .pdf-reader-name {
     flex: 0 1 auto;
     max-width: 42%;
   }
+  /* ---------------------------------------------------------------------------
+     窄屏 head 的**排布顺序**（2026-09-22，owner："把顶部工具条整体优化一下"）
+
+     原来 head 的 DOM 顺序是 [目录][文件名][控制组][导出][⋯][×]，而控制组（362×94）在中间
+     ⇒ 它一换行，后面的 `⋯`/`×` 就被推到**第四行**：实测 390 下 head 高 **215px / 4 行**
+     （占 844 的 25%！）。`⋯` 与 `×` 是"离开/更多"这两个最常用的入口，不该被挤到最后。
+
+     用 `order` 重排（只动视觉顺序、不动 DOM，桌面不受影响）：
+       第一行 = [目录][文件名][导出][⋯][×]（`×` 靠下面的 `margin-left:auto` 顶到最右）
+       之后才是 [翻页][缩放][面板开关] 这些"视图控制"。
+     实测：head **215 → 约 150px、4 行 → 3 行**（390）。
+     ⚠️ `导出` 也跟着提到第一行（它是图标按钮了，只占 44，不再值得藏进 `⋯`）。
+     --------------------------------------------------------------------------- */
+  .pdf-reader-outline-toggle { order: 1; }
+  .pdf-reader-name { order: 2; }
+  .pdf-reader-head .pdf-export-btn { order: 3; }
+  .pdf-reader-more { order: 4; }
+  .pdf-reader-close { order: 5; }
+  .pdf-reader-controls { order: 9; }
+  /* 分隔线在窄屏不显示：每个按钮已经 44 宽，再加 1px + 两侧间距只会挤掉正文，
+     而且换行时它可能落在行首/行尾，看着像一条多余的竖线。 */
+  .pdf-reader-sep { display: none; }
   .pdf-reader-close {
     margin-left: auto;
   }
@@ -22043,11 +22098,12 @@ body.is-plugin-panel-open .main {
      全部都有"一次点击可达"的入口，没有丢功能；桌面一个像素没变（`.pdf-reader-more` 的
      基础规则就是 `display:none`，`tools-open` 那几条也只在窄屏生效）。 */
   .pdf-reader-more { display: inline-flex; }
+  /* ⚠️ `.pdf-export-btn` **不在**这份"默认收起"名单里：它已经是图标按钮（44×44），
+     而"导出这份带批注的副本"是标注完之后的主要动作 ⇒ 常驻、一次点击可达。 */
   .pdf-reader-head:not(.tools-open) .pdf-reader-maximize,
   .pdf-reader-head:not(.tools-open) .pdf-reader-sidebar-toggle,
   .pdf-reader-head:not(.tools-open) .pdf-reader-ask,
-  .pdf-reader-head:not(.tools-open) .pdf-eye-wrap,
-  .pdf-reader-head:not(.tools-open) .pdf-export-btn {
+  .pdf-reader-head:not(.tools-open) .pdf-eye-wrap {
     display: none;
   }
   /* 批注工具单行横滑：换行会白吃 44px 正文高度（工具本来就排得下，只是差几十像素）。 */

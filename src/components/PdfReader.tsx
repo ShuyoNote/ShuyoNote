@@ -1339,6 +1339,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
+            {/* 分组分隔线：左边是"翻页 / 缩放"，右边是"面板 / 视图"（最大化·批注栏·提问·护眼）。 */}
+            <span className="pdf-reader-sep" aria-hidden />
             {!inline && (
             <button className="pdf-reader-btn pdf-reader-maximize" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
               {maximized ? (
@@ -1390,13 +1392,36 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
               )}
             </div>
           </div>
+          {/* 分组分隔线：把"翻页/缩放"与"面板/视图"两族在视觉上分开（桌面才显示，窄屏隐藏——
+              窄屏每个按钮已经是 44 宽，再加分隔只会挤掉正文宽度）。 */}
+          <span className="pdf-reader-sep" aria-hidden />
+          {/* 导出：**图标按钮**，与旁边那排 `.pdf-reader-btn` 同规格（原来是一枚 102×28 的文字按钮，
+              在 1280 下吃掉整条 head 的 102px）。完整说法在 `title`/`aria-label` 里；
+              导出中改成紧凑的 `3/12`（原来是"导出中 3/12"，同样只为让它更窄）。 */}
           <button
             className="pdf-reader-btn pdf-export-btn"
             onClick={() => void handleExportAnnotatedPdf()}
             disabled={!ready || pageCount <= 0 || exportState.status === "running"}
-            title="导出为带批注的 PDF 副本（不动源文件）"
+            title={
+              exportState.status === "running"
+                ? `正在导出带批注的 PDF 副本：${exportState.done}/${exportState.total} 页`
+                : "导出为带批注的 PDF 副本（不动源文件）"
+            }
+            aria-label="导出带批注副本"
           >
-            {exportState.status === "running" ? `导出中 ${exportState.done}/${exportState.total}` : "导出带批注副本"}
+            {exportState.status === "running" ? (
+              <span className="pdf-export-progress">
+                {exportState.done}/{exportState.total}
+              </span>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                {/* 「带批注的副本」= 文档 + 向下导出箭头 */}
+                <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                <path d="M14 3v5h5" />
+                <path d="M12 11.5v5.5" />
+                <path d="M9.6 14.6 12 17l2.4-2.4" />
+              </svg>
+            )}
           </button>
           {exportState.status === "running" && (
             <button className="pdf-reader-btn pdf-export-btn" onClick={() => exportAbortRef.current?.abort()} title="取消导出">
