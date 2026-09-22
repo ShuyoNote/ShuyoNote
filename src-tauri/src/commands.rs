@@ -569,15 +569,33 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     // **运行时开关**（方案 §0.2-F 已定：不重编就能切回 MuPDF，便于灰度与回滚）：
     // 环境变量取值与默认值见 `PdfEngine::from_env_value` / `PdfEngine::DEFAULT`。
     let engine = PdfEngine::from_env_value(std::env::var("SHUYONOTE_PDF_ENGINE").ok().as_deref());
+    // ★ 2026-09-21：MuPDF 成了**构建期特性**（默认不编）。有人显式要 MuPDF 而这个构建里没有它时，
+    //   **在这里就说清怎么办** —— 绝不静默换成 PDFium（"成功 ≠ 生效"那一族），也不 panic。
+    if engine == PdfEngine::Mupdf {
+        ensure_mupdf_available()?;
+    }
     // ⚠️ **两套缓存互斥淘汰**（P2 验收项）：同一个 hash 若被两个引擎各持一份，
     // 内存会无声翻倍而两侧 LRU 互不知情 ⇒ 切引擎时先清掉另一侧的同 key 条目。
     match engine {
-        PdfEngine::Pdfium => crate::pdf_native::forget(&hash),
+        PdfEngine::Pdfium => {
+            #[cfg(feature = "mupdf-rollback")]
+            crate::pdf_native::forget(&hash);
+        }
         PdfEngine::Mupdf => crate::pdfium_native::forget(&hash),
     }
     // 缓存命中判断也要**按引擎各查各的**（两套缓存彼此独立）。
     let cached = match engine {
-        PdfEngine::Mupdf => crate::pdf_native::has_document(&hash),
+        PdfEngine::Mupdf => {
+            // 没编 MuPDF 的构建在上面那句 `ensure_mupdf_available()` 就返回了 ⇒ 这里是防呆分支。
+            #[cfg(feature = "mupdf-rollback")]
+            {
+                crate::pdf_native::has_document(&hash)
+            }
+            #[cfg(not(feature = "mupdf-rollback"))]
+            {
+                false
+            }
+        }
         PdfEngine::Pdfium => crate::pdfium_native::has_document(&hash),
     };
     let bytes = if cached {
@@ -595,9 +613,18 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
         move || -> Result<(Vec<u8>, usize, usize), String> {
             match engine {
                 PdfEngine::Mupdf => {
-                    let (rgba, w, h, stride) =
-                        unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }?;
-                    Ok((crate::pdf_native::compact_rgba(&rgba, w, h, stride)?, w, h))
+                    #[cfg(feature = "mupdf-rollback")]
+                    {
+                        let (rgba, w, h, stride) =
+                            unsafe { crate::pdf_native::render_page(&hash, &bytes, page_index, scale) }?;
+                        Ok((crate::pdf_native::compact_rgba(&rgba, w, h, stride)?, w, h))
+                    }
+                    // 没编 MuPDF 的构建走不到这里（上面已返回）——保留一句可读的错，别写成 unreachable!()。
+                    #[cfg(not(feature = "mupdf-rollback"))]
+                    {
+                        let _ = (bytes, page_index, scale);
+                        Err(MUPDF_NOT_COMPILED.to_string())
+                    }
                 }
                 // 用 `render_page_owned`：这条分支拿到字节之后不再需要它，省掉一次整文件拷贝。
                 PdfEngine::Pdfium => {
@@ -620,6 +647,33 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
         height,
         rgba_base64: base64::engine::general_purpose::STANDARD.encode(&compact),
     })
+}
+
+/// 这个构建**有没有编入 MuPDF**（构建期特性 `mupdf-rollback`）——配置的**单一事实来源**：
+/// 命令的分派与下面的判据都问它，免得"注释说没编、代码却还在调"。
+pub(crate) fn mupdf_compiled() -> bool {
+    cfg!(feature = "mupdf-rollback")
+}
+
+/// 请求了 MuPDF、但这个构建没编入它时给的那句话。
+///
+/// 为什么要这么长：这不是"内部错误"，而是**用户（或灰度时的人）敲了一个开关却得不到想要的东西**
+/// —— 必须一句话说清"现在没有它 + 换哪个开关 + 想要它怎么构建"。
+/// （编了 `mupdf-rollback` 的构建里这句话没有调用点，但那是有意的：判据与文档都指着它。）
+#[cfg_attr(feature = "mupdf-rollback", allow(dead_code))]
+pub(crate) const MUPDF_NOT_COMPILED: &str = "这个构建没有编入 MuPDF（构建期特性 `mupdf-rollback`，2026-09-21 起默认不编）。\
+现在请把 SHUYONOTE_PDF_ENGINE 设为 pdfium（或删掉这个环境变量）用默认引擎；\
+若确实要用 MuPDF 回滚，请用带 `--features mupdf-rollback` 重新构建的安装包。";
+
+/// 命令入口的前置检查：编了就是 `Ok(())`，没编就是上面那句话。
+#[cfg(feature = "mupdf-rollback")]
+fn ensure_mupdf_available() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(feature = "mupdf-rollback"))]
+fn ensure_mupdf_available() -> Result<(), String> {
+    Err(MUPDF_NOT_COMPILED.to_string())
 }
 
 /// PDF 光栅化引擎（P2 的分派量）。
@@ -696,5 +750,29 @@ mod pdf_engine_tests {
     fn explicit_mupdf_always_rolls_back() {
         assert_eq!(PdfEngine::from_env_value(Some("mupdf")), PdfEngine::Mupdf);
         assert_ne!(PdfEngine::DEFAULT, PdfEngine::Mupdf, "P5 之后默认不再是 MuPDF；若改成 MuPDF 请同步改这条与上面那条");
+    }
+
+    /// ★ **2026-09-21 的新不变式**：MuPDF 是构建期特性（默认不编）⇒ 显式要它却编不出时，
+    /// 必须给一句**能照着做**的错，而不是静默换成 PDFium、也不是 panic。
+    ///
+    /// 这条在两种构建下都跑（各断言各的那一半）：默认构建断言"拒绝 + 出路"，
+    /// `--features mupdf-rollback` 构建断言"放行"。
+    #[test]
+    fn asking_for_mupdf_says_what_to_do_when_the_feature_is_off() {
+        assert_eq!(
+            super::mupdf_compiled(),
+            cfg!(feature = "mupdf-rollback"),
+            "`mupdf_compiled()` 必须与 feature 一致（它是配置的单一事实来源）"
+        );
+        if cfg!(feature = "mupdf-rollback") {
+            assert!(super::ensure_mupdf_available().is_ok(), "编了就该放行");
+        } else {
+            let err = super::ensure_mupdf_available()
+                .expect_err("没编 MuPDF 的构建里，要 MuPDF 必须**明确报错**（不许静默换引擎）");
+            assert_eq!(err, super::MUPDF_NOT_COMPILED);
+            // 两件必须出现在这句话里：① 现在没有它（点名特性，好去构建）；② 现在该用什么。
+            assert!(err.contains("mupdf-rollback"), "错里要点名那个特性：{err}");
+            assert!(err.contains("pdfium"), "错里要给出当下可用的默认项：{err}");
+        }
     }
 }

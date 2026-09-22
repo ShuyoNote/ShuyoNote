@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { platform } from "../../lib/platform";
+import { openExternalUrl } from "../../lib/openExternal";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getSelection, $isRangeSelection, type LexicalNode } from "lexical";
 import { $isLinkNode, type LinkNode } from "@lexical/link";
@@ -80,7 +80,7 @@ export function LinkPopoverPlugin() {
   };
 
   const open = () => {
-    if (state.url) platform.opener.openUrl(state.url).catch(() => {});
+    if (state.url) void openExternalUrl(state.url);
     setState(null);
   };
 

@@ -40,12 +40,17 @@ pub struct BackupProgress {
 /// **要求目标也加同一把钥** —— 源加钥、目标**不加钥**时报
 /// `backup is not supported with encrypted databases`；两边同钥才成功（产物是**密文**，
 /// 这与本模块恢复路径的既有语义一致：加密空间的快照要用会话密钥才打得开）。
+///
+/// ⚠️⚠️ 目标端**必须走 `key_conn_with`（＝带库级参数的生产口径），不能只写裸 `PRAGMA key`**
+/// （2026-09-22 接线构建实测抓到）：备份 API 是**按目标连接的 codec 重新加密页面**的
+/// ⇒ 目标端用什么参数，产物就是什么参数。只写裸 `PRAGMA key` 时目标端是默认参数
+/// （HMAC_SHA512），于是在**国密（`sm-library`）构建**里会产出一份 **SM3 源 → SHA512 快照**
+/// 的产物，而恢复路径用国密参数去读它 ⇒ `file is not a database`（判据
+/// `snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips` 当场红）。
 fn backup_db(src: &rusqlite::Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
     let mut dst_conn = rusqlite::Connection::open(dst).map_err(|e| e.to_string())?;
     if let Some(k) = key {
-        dst_conn
-            .execute_batch(&format!("PRAGMA key = \"x'{}'\";", crate::crypto::key_hex(k)))
-            .map_err(|e| e.to_string())?;
+        crate::security::key_conn_with(&dst_conn, k)?;
     }
     let backup = rusqlite::backup::Backup::new(src, &mut dst_conn).map_err(|e| e.to_string())?;
     backup

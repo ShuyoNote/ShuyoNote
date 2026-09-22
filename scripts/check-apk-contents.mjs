@@ -71,6 +71,20 @@ ok(
   `lib/ 下的 ABI 恰好是 arm64-v8a（实测 ${abis.join(", ") || "没有 lib/"}）`,
 );
 
+// ---- 2.5 随包 PDFium 库（2026-09-20 补，P4 安卓格）----
+// 为什么要在**发版产物**上也断言一次：`libpdfium.so` 是 `libloading` **运行时**加载的 ⇒ 包里没有它
+// **装完不会立刻报错**，只有用户开 PDF（P5 之后是默认引擎）才变成"打不开"，界面上还不说是缺库
+// （前端会静默退到 pdf.js）。上面的 ABI 断言抓不住它：Tauri 自己会把 `libshuyonote_lib.so` 放进
+// `lib/arm64-v8a/` ⇒ **那一层不会空**，所以"ABI 对"与"库在"是两件事。
+// sha256 那一半（与 vendor 逐字节相同）在 `scripts/check-android-bundle.mjs` —— 那条要 vendor 文件
+// （只在构建机上现拉），发版 job 上没有；这里判**在不在**，是能在任何地方跑的那一半。
+const pdfiumLibs = entries.filter((e) => /^lib\/[^/]+\/libpdfium\.so$/.test(e.name)).map((e) => e.name);
+ok(
+  pdfiumLibs.length > 0,
+  `lib/<abi>/libpdfium.so 在包里（实测 ${pdfiumLibs.join("、") || "**没有 libpdfium.so**"}）—— ` +
+    `缺了就是"装得上、开 PDF 才报找不到库"；打包步骤见 .github/workflows/release.yml 的「随包 PDFium 库（Android）」`,
+);
+
 // ---- 3. 签名（apksigner 打的，包内 META-INF） ----
 const sig = entries.filter((e) => /^META-INF\/.*\.(RSA|DSA|EC|SF)$/i.test(e.name));
 ok(sig.length > 0, `含 apksigner 签名块（${sig.map((s) => s.name).join(", ") || "没有"}）`);

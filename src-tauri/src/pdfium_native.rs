@@ -155,6 +155,54 @@ fn candidate_dirs(
     out
 }
 
+/// 本平台的库文件名（`pdfium.dll` / `libpdfium.so` / `libpdfium.dylib`）。
+///
+/// 报错里要写出**这个名字**：`fetch-pdfium.mjs` 的 `PLATFORMS` 里目录前缀各平台不统一
+/// （Windows `bin/`，Linux/macOS/Android `lib/`）⇒ 只说"找不到库"，下一台机器的人还得自己猜。
+fn library_file_name() -> std::ffi::OsString {
+    Pdfium::pdfium_platform_library_name_at_path(std::path::Path::new("."))
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("(未知)"))
+}
+
+/// **按顺序**列出生效的候选目录（环境变量那一条不算候选，它直接短路）。
+///
+/// 单独抽出来是为了**报错能说清"我们找过哪儿"**（AMD 2026-09-17 提）：原来只说
+/// "找不到 `<某路径>`"，而那个路径是**最后回退**出来的，被探过的其它候选一个都看不到 ——
+/// 于是下一台机器的人只能靠猜。现在 `library_dir()` 与报错**共用这同一个函数**（单一真相）。
+fn library_candidates() -> Vec<PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+    candidate_dirs(exe_dir, RESOURCE_DIR.get().cloned(), vendored_root())
+}
+
+/// "找不到库"的**可操作**错误文本（纯函数，便于判据）。
+///
+/// 三件事必须写清：① 本平台的文件名；② **按顺序**探过哪些目录；③ 三条可操作的出路。
+fn missing_library_error(lib: &std::path::Path, candidates: &[PathBuf]) -> String {
+    let tried = if candidates.is_empty() {
+        "  （没有候选目录：既没有可执行文件目录，也没有打包资源目录）".to_string()
+    } else {
+        candidates
+            .iter()
+            .map(|d| format!("  - {}", d.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "找不到 PDFium 动态库：{}\n\
+         · 本平台的文件名是 `{}`（`bin/` 还是 `lib/` **各平台不同**，见 `scripts/fetch-pdfium.mjs` 的 `PLATFORMS`）\n\
+         · 按顺序找过这些目录：\n{}\n\
+         · 出路：开发机跑 `node scripts/fetch-pdfium.mjs`；发行包由打包步骤把库放到可执行文件同目录；\
+         或显式设 `SHUYONOTE_PDFIUM_DIR`",
+        lib.display(),
+        library_file_name().to_string_lossy(),
+        tried
+    )
+}
+
 /// 从候选里挑第一个**真的有库**的目录（文件系统探测只在这一个函数里）。
 fn pick_library_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates
@@ -199,15 +247,15 @@ fn library_dir() -> PathBuf {
             return PathBuf::from(dir);
         }
     }
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
-    let candidates = candidate_dirs(exe_dir.clone(), RESOURCE_DIR.get().cloned(), vendored_root());
+    let candidates = library_candidates();
     if let Some(dir) = pick_library_dir(&candidates) {
         return dir;
     }
     // 最后回退到可执行文件目录，让错误信息里的路径有意义。
-    exe_dir.unwrap_or_else(|| PathBuf::from("."))
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// **库在不在**（给判据用）：与 [`shared_pdfium`] 同一套解析，但不加载、不缓存。
@@ -227,10 +275,7 @@ pub fn library_preflight() -> Result<(), String> {
     if lib.exists() {
         return Ok(());
     }
-    Err(format!(
-        "找不到 PDFium 动态库：{}（开发机跑 `node scripts/fetch-pdfium.mjs`；CI 的 rust job 有取库步骤）",
-        lib.display()
-    ))
+    Err(missing_library_error(&lib, &library_candidates()))
 }
 
 /// 拿到进程级 PDFium 实例；首次调用时绑定动态库。
@@ -242,16 +287,23 @@ fn shared_pdfium() -> Result<&'static Pdfium, String> {
         let dir = library_dir();
         let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
         if !lib.exists() {
-            return Err(format!(
-                "找不到 PDFium 动态库：{}。开发机先跑 `node scripts/fetch-pdfium.mjs`，\
-                 发行包应由打包步骤把库放到可执行文件同目录（或设 SHUYONOTE_PDFIUM_DIR）",
-                lib.display()
-            ));
+            return Err(missing_library_error(&lib, &library_candidates()));
         }
         let bindings = Pdfium::bind_to_library(&lib)
             .map_err(|e| format!("加载 PDFium 失败（{}）：{e}", lib.display()))?;
+        let mut pdfium = Pdfium::new(bindings);
+        // 随包字体（路线 D）：**只在库目录旁真有字体文件时**才装 provider ⇒ 没放字体
+        // 的机器（含 Windows/macOS 的包）行为与今天逐字节相同。理由与判据见本模块
+        // 「随包字体」那一节 ＋ 施工单 §2/§4。
+        if let Some(font) = BundledCjkFont::from_library_dir(&dir) {
+            eprintln!(
+                "[pdf] 随包字体就位（{}）：非嵌入字体的文档在**没有系统字体后端**的平台上也能显示",
+                font.face
+            );
+            pdfium.set_custom_font_provider(Box::new(font));
+        }
         // 两个线程同时初始化时，`set` 会有一个失败——那说明另一个已经建好了，忽略即可。
-        let _ = PDFIUM.set(Pdfium::new(bindings));
+        let _ = PDFIUM.set(pdfium);
     }
     PDFIUM
         .get()
@@ -459,6 +511,136 @@ fn check_pixel_budget(width: f64, height: f64, scale: f32, stage: &str) -> Resul
     Ok(())
 }
 
+// ── 随包字体（路线 D，2026-09-20）──────────────────────────────────────────────
+//
+// **为什么需要它**：Linux 那份预编译 `libpdfium.so` **没有字体后端** —— `ldd` 里没有 fontconfig、
+// 文件里 `fontconfig`/`FcInit` 符号 **0 个**（`FreeType` 那几处只是内置光栅化器）。
+// ⇒ "字体没嵌进 PDF"的文档（含国标中文 `STSong-Light`+`UniGB-UCS2-H`）在 Linux 上**整行不显示**；
+// Windows/macOS 有平台字体映射（GDI/CoreText）不受影响。**这不是换引擎引入的回归** ——
+// 换之前 MuPDF 在同一类文件上是**乱码**（三平台同数 28000 = 矩形 27000 ＋ 乱码 1000）。
+// 全部读数与判据：`docs/plans/2026-09-20-pdfium-linux-font-backend-workorder.md`。
+//
+// **做法**：随包一个 OFL 中文字体 ＋ 用 `Pdfium::set_custom_font_provider` 把它当字体来源 ——
+// 不重建 PDFium、不新增二进制供应链，且**与系统里有没有中文字体无关**（那是判据 4 要的）。
+//
+// ⚠️ **安装条件只有一条：库目录旁真有那个字体文件**。没放 ⇒ **一行行为变化都没有**
+// （Windows/macOS 的包不随字体 ⇒ 照旧走平台映射）。于是同一个二进制在 Linux 包里生效、
+// 在没放字体的机器上保持今天的行为 —— 可判据、可回退、可变异。
+//
+// ⚠️ **别把这个做成"给缺字体的通用兜底"**：只对 CJK/日韩/符号这几类字符集作答，
+// 其余一律 `None`。答了就等于向 PDFium 宣称"任何字体我都有"，那会把平台字体映射挤掉。
+
+/// 随包字体的**候选文件名**（与动态库放同一目录；打包把它跟库一起放，见施工单 §4）。
+///
+/// 列多个名字是为了**打包时换字体不用改代码**（OFL 的 Noto/Source Han 谁在仓库里就用谁）；
+/// 也为了本地验证时能直接放一个现成 TTF 进去（`*.ttf` 与 `*.otf` 都收）。
+const BUNDLED_FONT_CANDIDATES: [&str; 4] = [
+    "NotoSansSC-Regular.otf",
+    "NotoSansSC-Regular.ttf",
+    "NotoSansCJKsc-Regular.otf",
+    "SourceHanSansSC-Regular.otf",
+];
+
+/// 比这更小的"字体文件"一律当**占位文件**，不用（本仓吃过一次亏：26 字节的占位 dll
+/// 被当成库 ⇒ 报的是"加载失败"而不是"库不在"，见 `docs/TESTING.md` 的占位文件那条）。
+const MIN_BUNDLED_FONT_BYTES: u64 = 1024;
+
+/// 库目录旁有没有随包字体：有就返回（文件名, 字节），没有就 `None`。
+///
+/// **不报错、不打印**：字体是可选的（没它只是回到"Linux 上非嵌入字体不显示"的已知缺陷）。
+fn bundled_font_beside(dir: &std::path::Path) -> Option<(String, Vec<u8>)> {
+    for name in BUNDLED_FONT_CANDIDATES {
+        let path = dir.join(name);
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        if !meta.is_file() || meta.len() < MIN_BUNDLED_FONT_BYTES {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(&path) {
+            return Some((name.to_string(), bytes));
+        }
+    }
+    None
+}
+
+/// 这个字符集要不要用随包字体兜底（**只答这几类**，见上面那条警告）。
+fn wants_bundled_font(character_set: &PdfFontCharacterSet) -> bool {
+    matches!(
+        character_set,
+        PdfFontCharacterSet::ChineseGb2312
+            | PdfFontCharacterSet::ChineseBig5
+            | PdfFontCharacterSet::JapaneseShiftJis
+            | PdfFontCharacterSet::KoreanHangul
+            | PdfFontCharacterSet::Symbol
+    )
+}
+
+/// 随包字体提供者：PDFium 来问字体，就用同一份字节作答。
+struct BundledCjkFont {
+    face: String,
+    data: Vec<u8>,
+    next_id: u64,
+}
+
+/// **见证**：随包字体被问过几次 / 答了几次（macOS 2026-09-20 提）。
+///
+/// 为什么要这个计数器：判据 4 与"非矩形墨迹 > 0"都可能在这条路上**看着绿**，而 `provide`
+/// 其实从没被调用过（分支写错、时机不对都行）—— 本仓吃过"判据看着在岗、其实从没开火"。
+/// 有了它，"这次渲染里它**真的被问过**"是可以断言的，而不是靠"我装了所以应该生效"。
+static FONT_ASKS: AtomicU64 = AtomicU64::new(0);
+static FONT_ANSWERS: AtomicU64 = AtomicU64::new(0);
+
+/// `(被问次数, 作答次数)` —— 只在装了随包字体的进程里会 > 0。对拍测试把它打进表里（见证）。
+///
+/// ⚠️ `#[cfg(test)]`：**生产构建里没有调用点**（唯一读者是 `pdf_engine_compare` 那张表），
+/// 不 gate 会报 `function bundled_font_stats is never used`（2026-09-20 打 Linux 包时看到的）。
+/// 生产侧的"见证"是首次作答时那行 `eprintln!`（用户/支持能从日志看出它开火了）。
+#[cfg(test)]
+pub fn bundled_font_stats() -> (u64, u64) {
+    (
+        FONT_ASKS.load(Ordering::Relaxed),
+        FONT_ANSWERS.load(Ordering::Relaxed),
+    )
+}
+
+impl BundledCjkFont {
+    fn new(face: String, data: Vec<u8>) -> Self {
+        Self { face, data, next_id: 0 }
+    }
+
+    fn from_library_dir(dir: &std::path::Path) -> Option<Self> {
+        bundled_font_beside(dir).map(|(face, data)| Self::new(face, data))
+    }
+}
+
+impl PdfiumCustomFontProvider for BundledCjkFont {
+    fn provide(
+        &mut self,
+        request: PdfiumCustomFontProviderRequest,
+    ) -> Option<PdfiumCustomFontProviderResponse> {
+        FONT_ASKS.fetch_add(1, Ordering::Relaxed);
+        if !wants_bundled_font(&request.character_set) {
+            return None;
+        }
+        let n = FONT_ANSWERS.fetch_add(1, Ordering::Relaxed) + 1;
+        // 第一次作答时**出声一次**：真机上"随包字体到底有没有被用上"要能从日志看出来，
+        // 而不是只能相信"文件放了所以应该生效"。
+        if n == 1 {
+            eprintln!(
+                "[pdf] 随包字体**首次被 PDFium 问到**（请求名 `{}`）⇒ 它真的在用这份字体，不是摆着",
+                request.font_face
+            );
+        }
+        // 每个响应要一个**唯一 id**（PDFium 之后用它当字体句柄）。
+        self.next_id += 1;
+        Some(PdfiumCustomFontProviderResponse {
+            id: self.next_id,
+            font_face: self.face.clone(),
+            character_set: request.character_set,
+            data: self.data.clone(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,12 +648,9 @@ mod tests {
     use std::path::Path;
 
     /// 本平台的库文件名（`pdfium.dll` / `libpdfium.so` / `libpdfium.dylib`）——
-    /// 直接用 crate 自己的命名规则，免得判据里硬写平台分支。
+    /// 直接用 crate 自己的命名规则，免得判据里硬写平台分支（与生产侧 [`library_file_name`] 同一份）。
     fn lib_file_name() -> std::ffi::OsString {
-        Pdfium::pdfium_platform_library_name_at_path(Path::new("."))
-            .file_name()
-            .expect("库文件名")
-            .to_os_string()
+        library_file_name()
     }
 
     fn scratch(tag: &str) -> PathBuf {
@@ -582,5 +761,202 @@ mod tests {
         set_resource_dir(dir.clone());
         assert_eq!(library_dir(), dir.clone(), "资源目录登记后 library_dir() 必须命中它");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── "找不到库"的报错本身（AMD 2026-09-17 提：原来只说最后回退的那个路径）──────
+
+    /// 判据：报错必须**按顺序**列出**所有**探过的候选目录 ＋ 本平台的文件名 ＋ 三条出路。
+    ///
+    /// 为什么要有它：原来只说"找不到 `<最后回退的那个路径>`"⇒ 下一台机器的人不知道我们找过哪儿，
+    /// 只能靠猜（"读数不可操作"那一族）。顺序也要保：**候选列表的顺序就是优先级**。
+    #[test]
+    fn missing_library_error_lists_candidates_in_order_and_the_file_name() {
+        let lib = Path::new("/nowhere/libpdfium.so");
+        let candidates = vec![
+            PathBuf::from("/exe-dir"),
+            PathBuf::from("/resource-dir"),
+            PathBuf::from("/vendor/lib"),
+        ];
+        let msg = missing_library_error(lib, &candidates);
+
+        assert!(msg.contains("/nowhere/libpdfium.so"), "要带上找的那个完整路径：{msg}");
+        assert!(
+            msg.contains(&library_file_name().to_string_lossy().to_string()),
+            "要写清本平台的文件名（`bin/` 与 `lib/` 各平台不同）：{msg}"
+        );
+        let (a, b, c) = (
+            msg.find("/exe-dir").expect("第一个候选要在"),
+            msg.find("/resource-dir").expect("第二个候选要在"),
+            msg.find("/vendor/lib").expect("第三个候选要在"),
+        );
+        assert!(a < b && b < c, "候选必须**按顺序**列（顺序=优先级）：{msg}");
+        assert!(msg.contains("SHUYONOTE_PDFIUM_DIR"), "三条出路里要有环境变量那条：{msg}");
+        assert!(msg.contains("fetch-pdfium.mjs"), "要有开发机那条出路：{msg}");
+    }
+
+    /// 判据：候选为空时也要说清（不许打出一个**空白清单** —— 那会被读成"没找过任何地方"）。
+    #[test]
+    fn missing_library_error_says_so_when_there_are_no_candidates() {
+        let msg = missing_library_error(Path::new("libpdfium.so"), &[]);
+        assert!(msg.contains("没有候选目录"), "候选为空要有明说：{msg}");
+    }
+
+    // ── 随包字体（路线 D）────────────────────────────────────────────────────
+    //
+    // 这几条都**不需要真的渲染**，所以在 Windows 上也能跑（本机 `cargo test` 要过
+    // `scripts/win-cargo-test.ps1` 那道 manifest 关，见 `docs/TESTING.md`「已知边界」）。
+    //
+    // ⚠️ 见证计数器是**进程级**的，而 `cargo test` 默认多线程并行 ⇒ 碰它的两条判据
+    // 必须串起来跑，否则断言互相干扰（第一版就这么红的：`left: 2 / right: 1`）。
+    static FONT_COUNTER_LOCK: Mutex<()> = Mutex::new(());
+    fn font_counter_guard() -> std::sync::MutexGuard<'static, ()> {
+        FONT_COUNTER_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 判据：只对 **CJK/日韩/符号**这几类字符集作答，其余一律 `None`。
+    ///
+    /// 失败面（这条最要紧）：对**任何**字符集都作答 ⇒ 等于宣称"所有字体我都有"，
+    /// 会把平台字体映射挤掉 —— Windows/macOS 上本来画得对的文档反而可能被我们的
+    /// 单一无衬线字体替换。所以"不该答的**必须**答 `None`"要和"该答的有答"一样被测。
+    #[test]
+    fn bundled_font_answers_only_for_cjk_and_symbol_charsets() {
+        for cs in [
+            PdfFontCharacterSet::ChineseGb2312,
+            PdfFontCharacterSet::ChineseBig5,
+            PdfFontCharacterSet::JapaneseShiftJis,
+            PdfFontCharacterSet::KoreanHangul,
+            PdfFontCharacterSet::Symbol,
+        ] {
+            assert!(wants_bundled_font(&cs), "这几类必须兜底（否则非嵌入中文仍旧不显示）");
+        }
+        for cs in [
+            PdfFontCharacterSet::Ansi,
+            PdfFontCharacterSet::Default,
+            PdfFontCharacterSet::Cyrillic,
+            PdfFontCharacterSet::Greek,
+            PdfFontCharacterSet::Thai,
+            PdfFontCharacterSet::Hebrew,
+            PdfFontCharacterSet::Arabic,
+            PdfFontCharacterSet::Vietnamese,
+            PdfFontCharacterSet::EasternEuropean,
+        ] {
+            assert!(!wants_bundled_font(&cs), "这几类**不许**答（会挤掉平台字体映射）");
+        }
+    }
+
+    /// 判据：`provide` 对 CJK 请求回**同一份字节**，且 `id` **逐次唯一**（PDFium 用它当句柄）。
+    #[test]
+    fn bundled_font_provides_the_same_bytes_with_unique_ids() {
+        let _g = font_counter_guard();
+        let data = vec![7u8; MIN_BUNDLED_FONT_BYTES as usize + 1];
+        let mut font = BundledCjkFont::new("TestFace".to_string(), data.clone());
+
+        let first = font
+            .provide(PdfiumCustomFontProviderRequest {
+                font_face: "STSong-Light".to_string(),
+                character_set: PdfFontCharacterSet::ChineseGb2312,
+                weight: PdfFontWeight::Weight400Normal,
+                is_italic: false,
+                is_fixed_pitch: false,
+                is_serif: true,
+                is_cursive: false,
+            })
+            .expect("CJK 请求必须作答");
+        assert_eq!(first.data, data, "回的必须是随包那份字节");
+        assert_eq!(first.font_face, "TestFace");
+
+        let second = font
+            .provide(PdfiumCustomFontProviderRequest {
+                font_face: "STSong-Light".to_string(),
+                character_set: PdfFontCharacterSet::ChineseGb2312,
+                weight: PdfFontWeight::Weight400Normal,
+                is_italic: false,
+                is_fixed_pitch: false,
+                is_serif: true,
+                is_cursive: false,
+            })
+            .expect("第二次也必须作答");
+        assert_ne!(first.id, second.id, "id 必须唯一（同一 id 会让 PDFium 以为是同一个字体）");
+
+        assert!(
+            font.provide(PdfiumCustomFontProviderRequest {
+                font_face: "Helvetica".to_string(),
+                character_set: PdfFontCharacterSet::Ansi,
+                weight: PdfFontWeight::Weight400Normal,
+                is_italic: false,
+                is_fixed_pitch: false,
+                is_serif: false,
+                is_cursive: false,
+            })
+            .is_none(),
+            "非 CJK 请求必须答 None"
+        );
+    }
+
+    /// 判据：**见证计数器真的会动** —— 被问就 +1，CJK 就 +1 作答，Latin 只加"被问"。
+    ///
+    /// 这条守的是"判据看着在岗、其实从没开火"那一族（macOS 提的）：若哪天 `provide` 被接错、
+    /// 或者计数器忘了加，**只有本条会红** —— 对拍表上"非矩形墨迹"那列是只报不判，看不出来。
+    #[test]
+    fn bundled_font_counts_asks_and_answers() {
+        let _g = font_counter_guard();
+        let (asks0, answers0) = bundled_font_stats();
+        let mut font = BundledCjkFont::new("TestFace".to_string(), vec![1u8; 2048]);
+
+        let _ = font.provide(PdfiumCustomFontProviderRequest {
+            font_face: "SimSun".to_string(),
+            character_set: PdfFontCharacterSet::ChineseGb2312,
+            weight: PdfFontWeight::Weight400Normal,
+            is_italic: false,
+            is_fixed_pitch: false,
+            is_serif: true,
+            is_cursive: false,
+        });
+        let (asks1, answers1) = bundled_font_stats();
+        assert_eq!(asks1, asks0 + 1, "被问一次要记一次");
+        assert_eq!(answers1, answers0 + 1, "CJK 请求要记一次作答");
+
+        let _ = font.provide(PdfiumCustomFontProviderRequest {
+            font_face: "Helvetica".to_string(),
+            character_set: PdfFontCharacterSet::Ansi,
+            weight: PdfFontWeight::Weight400Normal,
+            is_italic: false,
+            is_fixed_pitch: false,
+            is_serif: false,
+            is_cursive: false,
+        });
+        let (asks2, answers2) = bundled_font_stats();
+        assert_eq!(asks2, asks1 + 1, "非 CJK 也算'被问过'（这是'它到底有没有开火'的证据）");
+        assert_eq!(answers2, answers1, "非 CJK **不许**记作答");
+    }
+
+    /// 判据：**没放字体就什么都不装**（这条守着"零行为变化"）。
+    ///
+    /// 另外两条失败面：① 占位文件（小于 `MIN_BUNDLED_FONT_BYTES`）被当成字体 —— 本仓在
+    /// dll 上吃过这个亏（26 字节占位 ⇒ 报"加载失败"而不是"库不在"）；② 目录不存在时 panic。
+    #[test]
+    fn bundled_font_is_absent_until_the_file_is_really_there() {
+        let empty = dir_without_lib("font-absent");
+        assert!(bundled_font_beside(&empty).is_none(), "目录里没有字体 ⇒ 不许装 provider");
+        assert!(BundledCjkFont::from_library_dir(&empty).is_none());
+
+        let placeholder = empty.join(BUNDLED_FONT_CANDIDATES[0]);
+        fs::write(&placeholder, b"26 bytes of nothing at all").expect("写占位文件");
+        assert!(
+            bundled_font_beside(&empty).is_none(),
+            "**占位文件不是字体**：小于 {MIN_BUNDLED_FONT_BYTES} 字节一律不认"
+        );
+
+        let real = vec![0u8; MIN_BUNDLED_FONT_BYTES as usize];
+        fs::write(&placeholder, &real).expect("写够大的文件");
+        let (face, bytes) = bundled_font_beside(&empty).expect("够大就该认");
+        assert_eq!(face, BUNDLED_FONT_CANDIDATES[0]);
+        assert_eq!(bytes.len(), real.len());
+
+        let missing = scratch("font-missing-dir");
+        let _ = fs::remove_dir_all(&missing);
+        assert!(bundled_font_beside(&missing).is_none(), "目录不存在时不许 panic");
+
+        let _ = fs::remove_dir_all(&empty);
     }
 }

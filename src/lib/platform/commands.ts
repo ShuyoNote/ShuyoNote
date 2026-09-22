@@ -182,6 +182,101 @@ export interface EmailOpArgs {
   folder: string;
 }
 
+// ---- 一键发布到社区：给前端的形状（令牌不在其中，见 `community_connection` 的注释）----
+
+/** 已连接时的信息：**没有令牌字段** —— 令牌只在本机文件里。 */
+export interface CommunityConnection {
+  base: string;
+  username: string;
+  scope: string;
+  savedAt: string;
+}
+
+export interface CommunityDeviceStart {
+  /** 给用户抄的码（`XXXX-XXXX`）。 */
+  userCode: string;
+  /** 客户端自己轮询用的码。 */
+  deviceCode: string;
+  verifyUrl: string;
+  intervalSeconds: number;
+  expiresInSeconds: number;
+}
+
+/** 轮询状态机：`approved` 之后后端已把令牌存下来了。 */
+export type CommunityConnectState =
+  | "pending"
+  | "approved"
+  | "expired"
+  | "unknown"
+  | "already_used"
+  | `failed_${number}`;
+
+/** 发布结果。分支按"用户该做什么"分，而不是按 HTTP 状态分。 */
+export type CommunityPublishResult =
+  | { status: "ok"; id: number; slug: string; url: string; idempotencyKey: string }
+  /** 同一个幂等键还在处理中：稍后重试，不是错误。 */
+  | { status: "inFlight" }
+  /** 审核拦下（422），`error` 是社区给的原话。 */
+  | { status: "rejected"; error: string }
+  /** 令牌失效/被撤销 ⇒ 清本地令牌、回到"连接社区"。 */
+  | { status: "unauthorized" }
+  /** 403 `app_token_scope`：撞了 scope 白名单 —— 这是客户端 bug。 */
+  | { status: "outOfScope" }
+  | { status: "unexpected"; httpStatus: number; error: string };
+
+/** 一张附件上传成功后的结果（与 Rust `UploadedAttachment` 同形，serde camelCase）。 */
+export interface CommunityUploadedAttachment {
+  /** 调用方手里那个 hash（本机附件 sha256），用来把正文里的本地引用换成社区地址。 */
+  localHash: string;
+  /** 社区算出来的 hash。正常情况下与 `localHash` 一致（同一份字节的 sha256），但**以它为准**。 */
+  hash: string;
+  /** 写进正文用的地址：**相对路径** `/attachments/<hash>`（社区自己的文档就是这么引用的）。 */
+  url: string;
+  mime: string;
+  size: number;
+}
+
+/**
+ * 一页的**发布台账**（与 Rust `PublishState` 同形）。
+ *
+ * 为什么需要它：发布时那份内容的**指纹**被记在这里，界面才能回答"这份内容发过没有、
+ * 上次发出去的是不是同一份" —— 以及"再发一次是社区回放（不会多一篇）还是新建一篇"
+ * （**P2 之前每次都会新建一篇**，用户更该知道）。台账是**只读**的：写入由后端在发布成功时自己做。
+ */
+export interface CommunityPublishState {
+  pageId: string;
+  slug: string;
+  url: string;
+  /** 发出去的那份内容的**指纹**（与 `community_publish_note` 收到的 `rev` 同源）。 */
+  publishedRev: string;
+  publishedAt: number;
+}
+
+/**
+ * 社区侧的一个板块（`GET /api/boards`，公开只读）。
+ *
+ * 界面只让用户从这份列表里挑 slug —— 社区对认不出的 slug 会**静默**当"未分类"，
+ * 所以"能选出来"这件事本身就是白名单。
+ */
+export interface CommunityBoard {
+  slug: string;
+  name: string;
+  description: string;
+  /** 该板块的帖子数（界面把"有人气的"排前面）。 */
+  posts: number;
+}
+
+/**
+ * 发布时要用的社区词表：板块（选哪个）＋ 已有标签（建议用哪些）。
+ * 与 Rust `community_publish::CommunityTaxonomy` 同形。
+ */
+export interface CommunityTaxonomy {
+  boards: CommunityBoard[];
+  tags: string[];
+  /** 非空 = 某一边没拿到（网络/形状）；发布本身不受影响，只是没有建议可选。 */
+  error: string;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -198,7 +293,10 @@ export interface CommandMap {
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
-  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[] } };
+  // `errors`：拉取失败的账号（key = host|username）＋错误原文。**不许静默跳过**——见
+  // `src-tauri/src/email.rs` 的 `EmailAccountError`：某账号拉不到时，它的邮件会整账号不在列表里，
+  // 界面必须能说清"哪个账号、为什么"，否则用户只看到"这封信没来"。
+  email_fetch_all: { args: { args: { folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string; accounts?: string[] } }; result: { emails: EmailMeta[]; unread: number; accounts: string[]; errors: { account: string; message: string }[] } };
   email_fetch_all_months: { args: { args: { folders: string[]; accounts?: string[] } }; result: string[] };
   email_save_uid: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: PageDetail };
   email_get_body: { args: { args: { account: EmailAccount; uid: number; folder: string } }; result: string };
@@ -294,6 +392,99 @@ export interface CommandMap {
       tags: string[];
       url: string;
     };
+  };
+  // 一键发布到社区（客户端侧，`src-tauri/src/community_publish.rs`；契约见 shuyo-community `docs/api.md` §7）。
+  // **不收用户密码**：设备码 → 用户在自己的浏览器里确认 → 换一把 180 天、可撤销、只能发帖的令牌；
+  // 令牌只落在应用数据目录，**不出现在这里的任何类型里**（回给界面的只有"这是谁的授权"）。
+  community_connection: {
+    args: Record<string, never>;
+    result: CommunityConnection | null;
+  };
+  community_connect_start: {
+    args: Record<string, never>;
+    result: CommunityDeviceStart;
+  };
+  /** 轮询一次（界面按 `intervalSeconds` 驱动；批准那一刻后端就把令牌存下来了）。 */
+  community_connect_poll: {
+    args: { deviceCode: string };
+    result: { state: CommunityConnectState; username: string | null };
+  };
+  /** 断开 = 在社区侧**真撤销**那把令牌，再删本地凭据。 */
+  community_disconnect: {
+    args: Record<string, never>;
+    result: { localCleared: boolean; remoteRevoked: boolean; note: string };
+  };
+  /**
+   * 发布一篇笔记。幂等键由后端按 `(noteId, rev)` 算 —— 界面**不要**自己造 key：
+   * 同一个 (笔记, 内容) 必须永远算出同一个键，否则"重试一次多一篇"。
+   * `rev` 必须是 `community_content_rev` 回的**内容指纹**（后端会显式校验 32 位十六进制）。
+   */
+  community_publish_note: {
+    args: {
+      title: string;
+      body: string;
+      tags: string[];
+      /**
+       * 板块 slug（只能来自 `community_taxonomy` 给的列表）。
+       * **没选就不传**（Rust 侧连字段都不发）：社区把认不出的 slug 静默当"未分类"，
+       * 那种"选了板块却发到无板块"的静默正是这里要避免的。
+       */
+      board?: string;
+      noteId: string;
+      rev: string;
+    };
+    result: CommunityPublishResult;
+  };
+  /**
+   * 把正文里的一张**本机附件**传到社区（内容寻址），回一个写进正文用的相对地址。
+   *
+   * 为什么只吃 `hash`、不吃路径：字节要从 `attachments::attachment_bytes` 拿（附件在盘上
+   * 可能是加密的，`fs::read` 得到的是密文 ⇒ 会被社区的魔数白名单挡下，而报错会指向
+   * "不支持的文件类型"这种完全错的方向）。`hash` 是这个应用里附件的唯一身份。
+   *
+   * 白名单只有 png/jpeg/gif/webp/pdf/zip（按魔数判）⇒ **视频传不上去**，
+   * 调用点（发布清单）必须提前如实说，而不是等社区回一句"类型不支持"。
+   */
+  community_upload_attachment: {
+    args: { hash: string };
+    result: CommunityUploadedAttachment;
+  };
+  /**
+   * 读一页的发布台账（**只读、纯本地**：不碰网络、不带令牌）。
+   * 没发过就是 `null`；老库还没建那张表也当 `null`（界面显示"没发过"，而不是打不开）。
+   */
+  community_publish_state: {
+    args: { pageId: string };
+    result: CommunityPublishState | null;
+  };
+  /**
+   * 算一份内容的**指纹**（32 位十六进制）：`(标题, 正文 Markdown, 标签)` → 指纹。
+   *
+   * 为什么这条命令在 Rust 里、前端**不自己算**：哈希一旦两侧各写一份，迟早漂成两种口径，
+   * 而症状是静默的 —— 同内容算出两个指纹 ⇒ 幂等键不同 ⇒ **多发一篇**。所以这里只负责
+   * 把参数递下去、把指纹原样递回来（Rust 是唯一实现，见 `community_publish.rs::content_rev`）。
+   *
+   * ⚠️ `body` 必须是**本地态**正文（图片引用还是 `attachment://…` 的那份，即清单里摆出来的那份）。
+   * 发出去的那份正文会把图片地址换成 `/attachments/<hash>`；拿换过地址的那份算指纹，
+   * 同一篇笔记会因为上传结果不同而算出两个指纹（Rust 侧有专门一条判据说明这件事）。
+   *
+   * 纯函数：不碰网络、不碰磁盘。
+   */
+  community_content_rev: {
+    args: { title: string; body: string; tags: string[] };
+    result: string;
+  };
+  /**
+   * 社区侧的**板块 + 已有标签**（公开只读，不需要令牌）：打开发布清单时拿一次，
+   * 用来给"板块"下拉提供选项、给"标签"输入框提供建议（用社区自己的词表，
+   * 免得同一个词在社区里分裂成好几页）。
+   *
+   * `error` 非空 = 某一边没拿到（网络/形状）：界面据此说明"没有建议可选"，
+   * 但**发布本身不受影响** —— 板块可以不选、标签可以自己打。
+   */
+  community_taxonomy: {
+    args: Record<string, never>;
+    result: CommunityTaxonomy;
   };
   /** 从索引安装一个插件（下载 → sha256 校验 → 解包 → 安装）。 */
   install_plugin_from_index: {

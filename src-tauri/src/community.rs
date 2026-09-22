@@ -163,9 +163,15 @@ async fn get_capped(
     cap: u64,
 ) -> Result<(Vec<u8>, String), String> {
     // **带上 `Accept: application/json`**：深链里带的是**帖子页地址**（用户从浏览器复制的那条），
-    // 而社区侧最省的落地方式就是在同一个地址上做内容协商（返回 JSON）——这样应用不需要知道
-    // slug→id 的映射（那是他们的实现细节）。实测过：当前那个地址只回 HTML，
-    // 所以下面那条"不是 JSON"的错误信息要把**该怎么修**说清楚，而不是只说"类型不对"。
+    // 社区侧在**同一个地址**上做内容协商（返回 JSON）——这样应用不需要知道 slug→id 的映射
+    // （那是他们的实现细节）。
+    //
+    // ⚠️ 2026-09-21 更新：**社区已经实现了这个协商**（实测 `GET /post/<slug>` + `Accept: application/json`
+    // ⇒ 200 `application/json`，字段 `id/title/body_markdown/tags(数组)/url(绝对)/author/created_at`
+    // 全在；判据 `tests::live_community_json_is_accepted_by_this_parser` 在线上跑通）。
+    // 此前这里写的是"实测过：当前那个地址只回 HTML" —— 那是社区加上协商**之前**的读数，
+    // 已经过期（留着它会让下一个人以为这条路是坏的）。下面那段"拿到 HTML 就说清怎么修"
+    // 仍然保留：它只在社区哪天回退成 HTML 时才会用到。
     let resp = client
         .get(url)
         .header(reqwest::header::ACCEPT, "application/json")
@@ -422,5 +428,65 @@ mod tests {
         let (bytes, landed) = get_capped(&client(), &url, MAX_POST_JSON_BYTES).await.expect("必须取到");
         assert!(landed.starts_with("http://127.0.0.1"));
         assert_eq!(parse_post(&String::from_utf8(bytes).expect("utf8")).expect("解析").id, "1");
+    }
+
+    /// **活的契约判据**（默认忽略，要联网）：社区那边的 JSON 表示必须真的被**这里的解析器**吃下去。
+    ///
+    /// 为什么值得单独留一条：这份契约跨两个仓库（`shuyo-community` 的 `main.rs::post_json`
+    /// ↔ 这里的 `parse_post`）。任何一侧单方面改字段名、改 `url` 的拼法，另一侧的测试都**不会变红** ——
+    /// 只有拿真站点问一次才知道。
+    ///
+    /// 这不是假想：社区 0.71.24 上线时 `url` 被拼成了相对路径（`/post/xxx`），
+    /// 而 `check_post_url` 只收 https 绝对地址 ⇒ 整条「存进笔记」会被这一步静默挡掉。
+    /// 那边补上判据的同时，这一条把**应用侧**的那半也钉住（我们认不认他们给的东西）。
+    ///
+    /// 帖子是从公开列表里**现挑**的（不钉死某个 slug）：钉死会在那篇被撤下时变成一条假红。
+    ///
+    /// 跑法：`scripts\win-cargo-test.ps1 -Filter live_community_json -ExtraArgs --ignored`。
+    #[tokio::test]
+    #[ignore = "要联网 + 社区线上；默认与 CI 都不跑"]
+    async fn live_community_json_is_accepted_by_this_parser() {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+            .build()
+            .expect("建 client");
+        let list: serde_json::Value = client
+            .get("https://community.shuyo.cn/api/posts")
+            .send()
+            .await
+            .expect("取公开列表")
+            .json()
+            .await
+            .expect("列表应是 JSON");
+        let slug = list
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|p| p.get("slug"))
+            .and_then(|s| s.as_str())
+            .expect("列表里应至少有一篇（带 slug）")
+            .to_string();
+        let url = format!("https://community.shuyo.cn/post/{slug}");
+        let post = fetch_post_with_hosts(&url, COMMUNITY_HOSTS)
+            .await
+            .unwrap_or_else(|e| panic!("社区应给出可解析的帖子 JSON（Accept: application/json）：{e}"));
+        assert!(!post.title.trim().is_empty(), "标题不能为空");
+        assert!(!post.body_markdown.trim().is_empty(), "正文源码不能为空");
+        assert!(
+            post.id.parse::<i64>().is_ok(),
+            "id 应是数字（社区约好用 id 当稳定键），实际「{}」",
+            post.id
+        );
+        assert_eq!(post.url, url, "url 应是站内绝对地址（相对路径会被 check_post_url 拒掉）");
+        assert!(
+            !post.body_markdown.contains("<p>"),
+            "给的应是**落库源码**而不是渲染后的 HTML"
+        );
+        println!(
+            "live ok: id={} title={} body_chars={} url={}",
+            post.id,
+            post.title,
+            post.body_markdown.chars().count(),
+            post.url
+        );
     }
 }

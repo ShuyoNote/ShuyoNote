@@ -9,18 +9,19 @@
 //
 // 幂等：**同一篇帖子只存一篇**。判断方式是"搜索捞出候选 → 正文里逐字核对来源地址"
 // （见 `communitySave.ts` 的 `findStoredPost`，那里写清了为什么不信分词）。
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
-import { markdownToPageContent } from "../lib/mdPreview";
 import { type CommunityPost } from "../lib/communityPost";
 import { findStoredPost, linkIntentOf, noteForPost, previewOf, searchKeyOf } from "../lib/communitySave";
+import { NOTE_ATTR_SPECS, savePostAsNote } from "../lib/communitySaveNote";
 import { parseTemplatePayload, templateManifest, type ImportedTemplate } from "../lib/communityImport";
+import { markdownPreviewHtml } from "../lib/mdPreviewHtml";
 import { useTemplates } from "../store/templates";
 import { platform } from "../lib/platform";
 import { useCommunitySave } from "../store/communitySave";
 import { useNotes } from "../store/notes";
 import { toast } from "../store/toast";
-import { sanitizeExternalUrl } from "../lib/links";
+import { openExternalUrl } from "../lib/openExternal";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
@@ -44,6 +45,8 @@ export function CommunitySaveDialog() {
   const [action, setAction] = useState<"save" | "import">("save");
   /** 导入预览：模板 + 逐行清单（"会创建什么"要摆在最前面）。 */
   const [imported, setImported] = useState<{ template: ImportedTemplate; manifest: string[] } | null>(null);
+  /** 正文预览看哪一档：默认**渲染**，切一下看逐字 Markdown 源码。 */
+  const [showSource, setShowSource] = useState(false);
 
   // 每次打开都从干净状态开始：上一次的链接与预览不该"粘"到这一次。
   // 深链那一路会带 `pendingLink` 进来：**预填并直接读一次**（读=抓取+预览），
@@ -64,6 +67,20 @@ export function CommunitySaveDialog() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, pendingLink]);
+
+  // 正文预览：**默认渲染**（owner 2026-09-21：「内容区显示为 MD 格式不太友好吧？」），
+  // 另给一个开关看逐字源码 —— 与「发布到社区」那份清单同一个口径（同一套
+  // `markdownPreviewHtml`，免得两处 Markdown 语义各走一路）。
+  // ⚠️ 这几个 hook 必须在下面那句 `if (!open) return null` **之前**：放在后面会让
+  // "关着的时候少跑几个 hook"，React 当场报 `Rendered fewer hooks than expected`
+  // （这次就是这么被测试抓出来的）。
+  const noteMarkdown = post ? noteForPost(post).markdown : "";
+  const preview = post ? previewOf(noteMarkdown) : null;
+  const previewHtml = useMemo(() => (post ? markdownPreviewHtml(noteMarkdown) : ""), [post, noteMarkdown]);
+  // 换一条链接重新读过之后，回到"渲染"这一档（否则上一条的源码档会漏过来）。
+  useEffect(() => {
+    setShowSource(false);
+  }, [post?.url]);
 
   if (!open) return null;
 
@@ -169,22 +186,29 @@ export function CommunitySaveDialog() {
       return;
     }
     if (!post) return;
-    const note = noteForPost(post);
-    const payload = markdownToPageContent(note.markdown);
-    if (!payload) {
-      setReason("这篇帖子没有可写入的正文");
+    // 落库走 `savePostAsNote`（建页 → 真标签 → 属性）。**三层结果分开说**：
+    // 什么都没成 ⇒ 留在对话框里报错；笔记成了 ⇒ 关掉并说清"哪几样没写上"（别报成失败，
+    // 也别把"标签没写上"咽下去 —— 用户下次会发现标签栏里没有它）。
+    try {
+      const r = await savePostAsNote(post, {
+        createPage: useNotes.getState().createPage,
+        invoke: platform.executor.invoke,
+      });
+      if (!r.pageId) {
+        setReason(r.error || "创建页面失败");
+        return;
+      }
+      if (r.warnings.length > 0) {
+        toast(`已存进笔记，但${r.warnings.join("；")}`, "info");
+      } else {
+        toast(`已存进笔记：${post.title}`, "success");
+      }
+    } catch (e) {
+      // 抛出来的（平台命令炸了、注入的依赖不对…）必须落成**看得见**的一句话：
+      // 静默的 rejection 只会让人以为"点了没反应"（这条 try/catch 就是被一次测试抓出来的）。
+      setReason(`存进笔记失败：${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    const id = await useNotes.getState().createPage(null, {
-      title: note.title,
-      content_json: payload.content_json,
-      content_text: payload.content_text,
-    });
-    if (!id) {
-      setReason("创建页面失败");
-      return;
-    }
-    toast(`已存进笔记：${note.title}`, "success");
     close();
   };
 
@@ -194,17 +218,11 @@ export function CommunitySaveDialog() {
     await useNotes.getState().openPage(existing.id);
   };
 
-  const openSource = async () => {
-    const safe = post ? sanitizeExternalUrl(post.url) : "";
-    if (!safe) return;
-    try {
-      await platform.opener.openUrl(safe);
-    } catch {
-      /* 浏览器被拦时安静失败：这只是一次"去看看原帖" */
-    }
+  const openSource = () => {
+    // 走全应用唯一的外链出口（总闸 + 白名单 + 拦下时说明）——不在这里自己判开关，
+    // 那正是这个开关以前只盖住 1/6 个外链面的原因（见 `src/lib/openExternal.ts`）。
+    if (post) void openExternalUrl(post.url);
   };
-
-  const preview = post ? previewOf(noteForPost(post).markdown) : null;
 
   return (
     <div className="community-save-overlay" onClick={close}>
@@ -255,17 +273,50 @@ export function CommunitySaveDialog() {
                 {[post.author, post.updatedAt || post.createdAt].filter(Boolean).join(" · ")}
                 {post.tags.length > 0 && ` · ${post.tags.map((t) => `#${t}`).join(" ")}`}
               </div>
+              {/* 元信息落到哪儿要**在写之前**说清（owner 2026-09-21 拍板的口径）：
+                  标签 → 笔记的真标签；来源/作者/发布于/存于 → 笔记属性；来源那一行同时留在正文里
+                  （幂等与导出都靠它，删了就查不出"这篇存过没有"）。 */}
+              <div className="community-save-preview-meta">
+                {post.tags.length > 0
+                  ? `标签会成为笔记的真标签：${post.tags.map((t) => `#${t}`).join(" ")}`
+                  : "这篇帖子没有标签"}
+                {` · ${NOTE_ATTR_SPECS.map((a) => a.name).join(" / ")} 会成为笔记属性`}
+              </div>
               <button className="community-save-source" onClick={() => void openSource()} title="在浏览器里打开原帖">
                 来源：{post.url}
               </button>
-              <div className="community-save-preview-body">
-                {preview.lines.map((line, i) => (
-                  <div key={i}>{line || "\u00a0"}</div>
-                ))}
-                {preview.hiddenLines > 0 && (
-                  <div className="community-save-more">…后面还有 {preview.hiddenLines} 行（存进笔记后会完整写入）</div>
-                )}
+              {/* 正文默认**渲染**成"存进笔记后的样子"，要看逐字 Markdown 源码就切一下
+                  （owner 2026-09-21：「内容区显示为 MD 格式不太友好吧？」）。
+                  存进去的**仍然是这份 Markdown 原文**，一个字没改。 */}
+              <div className="community-save-preview-row">
+                <span className="community-save-preview-meta">正文预览</span>
+                <button
+                  className="community-save-preview-toggle"
+                  onClick={() => setShowSource((v) => !v)}
+                  title={
+                    showSource
+                      ? "切回渲染效果（存进笔记后看到的样子）"
+                      : "看逐字的 Markdown 源码（存进笔记的就是它）"
+                  }
+                >
+                  {showSource ? "看渲染效果" : "看 Markdown 源码"}
+                </button>
               </div>
+              {showSource || previewHtml === "" ? (
+                <div className="community-save-preview-body">
+                  {preview.lines.map((line, i) => (
+                    <div key={i}>{line || "\u00a0"}</div>
+                  ))}
+                  {preview.hiddenLines > 0 && (
+                    <div className="community-save-more">…后面还有 {preview.hiddenLines} 行（存进笔记后会完整写入）</div>
+                  )}
+                </div>
+              ) : (
+                <div
+                  className="community-save-preview-body is-rendered"
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
+                />
+              )}
               {/* 落点必须写出来：静默决定"存到哪"是最容易被冒犯的地方。 */}
               <div className="community-save-target">将存到：工作区根目录（可在左侧页面树里拖动归档）</div>
             </div>

@@ -38,6 +38,21 @@ const GIT_APPLY = ["-c", "core.autocrlf=false", "apply"];
  * @returns {{status:"already"|"applied"|"absent", file:string, tool:string|null, bytes:number}}
  * @throws 当 `apply` 为真、补丁文件在、`--check` 通过，但**打完仍扫不到标记**时（说明应用得不完整）。
  */
+/**
+ * ★ 纯函数：**这次调用该不该真的打补丁**（2026-09-22 加，因为它出过一次真事故）。
+ *
+ * `scripts/sm-library-build.mjs --check` 的帮助文字是「只做构建前的核对，不构建」，但它原先照样
+ * `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**：我拿 `--check` 去确认
+ * 「源码干不干净」，结果它把源码变成了「打过补丁」的样子 —— 于是「我刚还原过」当场变成假话，
+ * 跟着的所有读数都不可信。核对是**只读**动作；要改状态请显式跑构建或 `--revert`。
+ *
+ * 放在 lib 而不是 CLI 里，是因为那个脚本**不是模块**（import 它就会执行脚本主体并 `process.exit`），
+ * 判据没法在单测里 import 它。
+ */
+export function patchApplyDecision({ noApply = false, checkOnly = false } = {}) {
+  return { apply: !noApply && !checkOnly };
+}
+
 export function ensurePatch(dir, patchFile, { apply = true } = {}) {
   const file = join(dir, "sqlite3.c");
   if (!existsSync(file)) throw new Error(`ensurePatch: 找不到 ${file}`);

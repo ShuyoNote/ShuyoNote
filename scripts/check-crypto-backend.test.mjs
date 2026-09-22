@@ -240,7 +240,21 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
       srcSha256: "",
       libsqlite3Sys: "",
       via: "",
+      // 旧形状（没有 `page_cipher=`）⇒ 给空串，**不 undefined**：调用方据此判"这一格未实查"
+      pageCipher: "",
     });
+  });
+
+  // ★ 页加密那一格（2026-09-20，补丁 v3 起）：产物标记里要能读出"这份构建是 SM4 页还是 AES 页"。
+  //   为什么重要：`cipher_settings` 回显里**没有** algorithm 字段 ⇒ 构建期唯一能读到的地方就是这里；
+  //   而 v3 把 `OPENSSL_CIPHER` 无条件换成 `EVP_sm4_cbc()`，"我说不出自己是什么"是不可接受的。
+  it("★ 新形状带 `page_cipher=` ⇒ 解析出来；缺这一格 ⇒ 空串（调用方判「未实查」）", () => {
+    const w = (pc) =>
+      `warning: shuyonote@1.91.10: shuyonote: sm3/sm4 provider patch applied (patch=040387ab target=macos ` +
+      `libsqlite3-sys=0.38.2 via=cargo.lock marker=sqlite3.c${pc} src_sha256=${"a".repeat(64)})\n`;
+    expect(patchMarkerOf(w(" page_cipher=sm4")).pageCipher).toBe("sm4");
+    expect(patchMarkerOf(w(" page_cipher=aes")).pageCipher).toBe("aes");
+    expect(patchMarkerOf(w("")).pageCipher).toBe("");
   });
 
   it("没有标记时 found=false（不能把别的 warning 当标记）", () => {

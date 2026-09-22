@@ -22,6 +22,15 @@ pnpm changelog 1.84.0 "版本主题"
 >    历史上用过的 `优化 / 改进 / 重构 / 样式 / 工程 / 文档 / 测试 / 验证 / 说明 / 其他 / ### 修复（xxx）`
 >    等写法已 grandfather（只对新版本生效，不改历史）。
 
+> **一条写法约定（不是门禁，靠人/agent 自觉；2026-09-20 定）**：
+> **每条 ≤6 行**，首句必须是**一句用户可见的变化**；第二句最多一个"为什么"，且只在理由非显然时写。
+> **数字只写聚合数**（如 `community_publish::` 15 条）—— 门禁真正核对的只有"绑到基线套件的那些数字"，
+> 其余数字写了也没人核。**超过 6 行的内容一律搬去 `docs/plans/` 的方案文档**，这里只留一行指针。
+> 理由很实际：**CHANGELOG 是发布后不能改的历史，方案文档随时能改**。本轮就吃过一次 —— 方案 §7.1 有一句
+> 写错了（"换一张图不改指纹"），当场改准；同样的话若写在 CHANGELOG 里就只能永久留着。
+> 事故/死胡同叙事放 `docs/known-issues.md` 或方案的"口子"清单。三份分工：
+> **CHANGELOG = 用户可见变化 ＋ 聚合数字**；**commit message = 为什么 ＋ 证据（含反例）**；**方案文档 = 设计与取舍**。
+
 > ⚠️ 教训：**不要**用「前一版本段头」做手动替换锚点——那会把旧段头覆盖，造成版本断档。务必用上面脚本（它只在首个版本头之前插入，原内容不动）。
 
 ## ② 同步多处版本
@@ -118,6 +127,18 @@ git push origin vX.Y.Z && git push github vX.Y.Z     # tag 必须**两个远端�
 > `pnpm check:macos-bundle` 对**产物**断言：库在不在、以及它与 `vendor/` 里那份的 **sha256 是否一致**
 > （大小相同也可能是别的库）。macos.yml 里已有取库步骤；`check:macos-bundle` 在 CI 的 macOS job 里跑。
 >
+> ★ **签名必须早于做 dmg（2026-09-22 实测）**：本机复现 `pnpm tauri build --bundles app,dmg` 后发现
+> `dmg` 里那份 `.app` 是**签名之前**的拷贝（挂载后 `codesign --verify --deep --strict` ⇒ ❌ exit=1），
+> 因为**打包这一步本身不做任何签名**（产物只有工具链的 linker 签名 ⇒ 严格校验报
+> `code has no resources but signature indicates they must be present`）。⇒ 有身份时**交给 Tauri 自带签名**
+> （`APPLE_CERTIFICATE`/`APPLE_SIGNING_IDENTITY` 那一套，bundler 的顺序本就是 nested → app → dmg）；
+> 没有身份时用 `node scripts/sign-macos-app.mjs`（默认 ad-hoc，**先 nested、后 bundle**，签完自动
+> `--verify --deep --strict`），但它**不能**在 dmg 之后补签 —— 那样 dmg 里那份仍然是没签的。
+> ⚠️ 三条读数口径：① **签名会改字节**（库实测 `3858ed6a…` 15,219,824 B ⇒ `e4a3a51f…` 15,274,928 B，+55,104 B）
+> ⇒ "包内与 vendor 逐字节相同"只对**未签名**产物成立（`check:macos-bundle` 已分两条分支）；
+> ② 内容一致性的**可证明时刻在签名之前**（脚本在那里断言），签完只能证明"签名有效"；
+> ③ ad-hoc 包 `spctl -a -vv` **rejected** 是**预期**（Gatekeeper 要真实身份），别读成"签坏了"。
+>
 > **Windows 档另有两条 PDFium 相关步骤（2026-09-18 加）**：打包前先
 > `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉 `pdfium.dll`（二进制**不入库**，
 > `.gitignore` 里有 `src-tauri/vendor/pdfium/`；`src-tauri/tauri.windows.conf.json` 把它映射成
@@ -188,6 +209,46 @@ Windows 上「点社区链接 → 唤起应用」靠注册表 `HKCU\Software\Cla
 浏览器式唤起（`ShellExecute` 拉起恰好一个进程）、已有实例转发（仍是同一 PID）。
 原始输出留在**私有工程信箱**里（不放公开仓库）。
 
+### 安装目录：默认 `%LOCALAPPDATA%\Programs\ShuyoNote`（fork 了一份 NSIS 模板）
+
+**Tauri 没有"自定义默认安装目录"的配置项** —— `bundle.windows.nsis` 里只有 `installMode`
+（`currentUser` / `perMachine` / `both`），默认目录写死在模板里（上游 feature request：
+tauri-apps/tauri#11015）。所以只有两条路：接受 Tauri 的默认，或者 **fork 模板**。我们选了后者。
+
+| 项 | 值 |
+|---|---|
+| fork 的文件 | `src-tauri/nsis/installer.nsi`（`bundle.windows.nsis.template` 指向它；相对 `src-tauri/`） |
+| 上游 | `tauri-bundler <ver>` 的 `src/bundle/windows/nsis/installer.nsi`（文件头记着 sha256 与 cli-version） |
+| 改了几行 | **1 行**：`StrCpy $INSTDIR "$LOCALAPPDATA\${PRODUCTNAME}"` → `…\Programs\${PRODUCTNAME}` |
+| 结果 | 全新安装默认 `%LOCALAPPDATA%\Programs\ShuyoNote`（VS Code 那种写法）；**仍是 currentUser ⇒ 免 UAC、更新静默** |
+| 老用户 | **不受影响**：模板的 `RestorePreviousInstallLocation` 会读 `HKCU\Software\shuyo\ShuyoNote` 的默认值（上次装在哪儿）并覆盖默认值 |
+
+**⚠️ 为什么不用 `perMachine`（它才是 `Program Files`）**：`perMachine` 的注册表根是 **HKLM**
+（`SetShellVarContext all`），而老用户的"上次装在哪"与卸载项都在 **HKCU** ⇒ 新安装器**看不见**旧的
+per-user 安装，会把新版装到 `C:\Program Files\ShuyoNote`、把旧的 AppData 那份留在原地（两个同名卸载项、
+快捷方式仍指向旧版）；而 Tauri 更新完是拿 `current_exe()` 重启的 ⇒ **又回到旧路径那个 exe**，
+旧版继续跑、继续提示更新。另外 `perMachine` 是 `RequestExecutionLevel admin`：**安装**与**每次自动更新**
+都会弹 UAC。owner 2026-09-21 的裁定因此是「保持 currentUser，只改默认目录」。
+
+**⚠️ 升级 Tauri CLI 时必须重做这个 fork**：下载新版本 tauri-bundler 的上游 `installer.nsi`，重放那 1 行改动，
+更新头部的 `upstream-crate` / `upstream-sha256` / `cli-version`。不做的后果**不是编译错误**，而是打出来的包
+与 CLI 传入的占位符对不上（装不上，或又装回旧位置）。
+
+**门禁**：`node scripts/check-nsis-template.mjs`（已进 `pnpm build`）。离线查三条 —— template 指向的文件存在、
+那一行改动恰好 1 处且旧写法不残留、头部 `cli-version` 与 package.json 一致；**联网时**把上游模板下下来
+逐行 diff，差异多于那一行就红；取不到就打印 `· 跳过（网络原因）`、**不算失败**（与 `check:release-state` 同口径）。
+
+**真机验证（可重跑）**：`powershell -File scripts/verify-installer-default-dir.ps1 -Installer <setup.exe>`
+—— 只走到「选择安装位置」页，读那个输入框里的**预填值**（跨进程 `WM_GETTEXT`，`GetWindowText` 读别的进程
+的 EDIT 会得到空串），然后**取消**（绝不点安装）。它回答的正是 owner 那次截图的问题：**这个路径是产品默认，
+还是本机记着的旧路径？**
+
+> ⚠️ 本机看到 `C:\Users\<用户>\_archive\…` 这类路径**不代表产品默认错了**：那是模板按
+> `HKCU\Software\shuyo\ShuyoNote` 记住的上一次安装位置（2026-09-21 owner 截图那次就是它）。
+> 要复现"全新机器"的默认值：先删掉那个键的**默认项**（语言项留着无妨），再跑上面的探针。
+> 探针按 PID 找向导窗口 —— `perMachine` 那种要过 UAC 的包，向导属于提权后的**新**进程，探针找不到，
+> 会明确报 `ENV:` 而**不会静默通过**。
+
 ### 本机（Windows 签名构建）
 ```powershell
 # ① OpenSSL：两条都要（缺第一条当场 panic，缺第二条链接期报 LNK1181）
@@ -199,6 +260,9 @@ $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = (Get-Content -Raw "$HOME\.tauri\shuyon
 # ③ PDFium 运行时：装包要把 pdfium.dll 放在 exe 同级（源文件不进 git；缺席则**构建脚本期**即失败）
 node scripts/fetch-pdfium.mjs --check --platform win-x64   # 报「缺少」就跑一次：node scripts/fetch-pdfium.mjs --platform win-x64
 pnpm tauri build --bundles nsis   # 产出 bundle/nsis/ShuyoNote_<版本>_x64-setup.exe + 同名 .sig
+# ④（只在需要 MuPDF 回滚包时）默认构建**不编** MuPDF：`mupdf-rollback` 是构建期特性，
+#    平时不背它（它是重量级 C 依赖）。要出一个能 `SHUYONOTE_PDF_ENGINE=mupdf` 的包就加：
+#    pnpm tauri build --bundles nsis --features mupdf-rollback     # 体积/构建时间的代价随之回来
 ```
 
 > **2026-09-16 本机实测（8 分钟出包，产物过了 `release.mjs` 的签名互验）**——两条 OpenSSL 的坑
@@ -388,6 +452,22 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 
 > [!] **清理旧 assets 必须保留「动态加载」资源（踩坑，v1.84.1）**：官网手动部署时若删旧产物，**不能只按 `index.html`/`sw.js` 的静态资源引用过滤**——sql.js 的 wasm（`new URL('sql-wasm-….wasm', import.meta.url)` 在 `vendor-*.js` 里运行时加载）和 pdf worker（`pdf.worker.min-….mjs`）等**不在静态引用里**，误删会导致 `Error: SqliteStore not initialized`（sql-wasm fetch 404 → `SqliteStore.init()` 抛错 → catch 返回未初始化 store → 所有 DB 查询报错）。
 > **正确做法**：按**本地 `dist-web` 全量清单**同步（`find . -type f` 生成本地清单，服务器按清单删多余文件），既铺平目录又保留全部动态资源。**GitHub Pages 走 CI 全新构建不受影响**；只有手动 scp 的官方站需小心。
+
+> [!] **清单文件必须是 LF —— 否则 `comm` 会把线上**整个目录**判成"多余"全删掉（2026-09-21 v1.91.19 实际踩到，网站空了约 3 分钟）**：
+> PowerShell 5.1 的 `Set-Content -Encoding ascii`（以及 `Out-File`）写的是 **CRLF**，每行尾多一个 `\r`，
+> 而服务器 `find | sort` 出来的是 LF ⇒ 两边**没有一行相等** ⇒ `comm -23` 把**全部**文件判成"服务器多余"。
+> 现场读数：`本地清单 311 个文件 / 服务器原有 416 个 / 服务器多余（将删）416 个 ⇒ 同步后 0 个文件`。
+> **修法**（写 LF，别用 `Set-Content`）：
+> ```powershell
+> $root = (Resolve-Path dist-web).Path
+> $lines = Get-ChildItem dist-web -Recurse -File |
+>   ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\','/') }
+> [System.IO.File]::WriteAllText("$env:TEMP\web-manifest.txt", ($lines -join "`n") + "`n",
+>   (New-Object System.Text.UTF8Encoding($false)))
+> ```
+> 另外：**先备份再动**（`tar czf /root/shuyo-site-app-backup-<ts>.tgz -C /var/www/shuyo-site app`）——
+> 这次能 3 分钟内恢复就是因为备份和本地 `dist-web` 都在。**删之前先 `wc -l` 看一眼"将删多少个"**：
+> 它是"全部"的时候，几乎一定是清单本身错了，不是线上多了一堆垃圾。
 
 > [!] **为什么"看版本号"不够**：`check:web-deploy` 会把线上 `index.html` 引用的**每个资源**
 > 都取一遍。版本号对、资源对不上，正是 v1.84.4 那种"页面能开、功能全废"的坏法。

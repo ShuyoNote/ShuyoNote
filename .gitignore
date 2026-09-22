@@ -64,6 +64,13 @@ release/
 # PDFium 动态库（由 scripts/fetch-pdfium.mjs 按钉死版本 + 校验和拉取；二进制不入库）
 src-tauri/vendor/pdfium/
 
+# 随包字体（由 scripts/fetch-font.mjs 按钉死版本 + 校验和拉取；字体本体不入库）
+# ⚠️ 同目录的 README.md **要入库** —— 它是 tauri.linux.conf.json 里 `assets/fonts/*` 那条映射的占位，
+#    少了它那个 glob 会匹配 0 个文件、构建期直接红（实测：`cargo check` 报 glob pattern … didn't match）。
+src-tauri/assets/fonts/*.ttf
+src-tauri/assets/fonts/*.otf
+src-tauri/assets/fonts/LICENSE-OFL.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -92,3 +99,6 @@ test-report-*.json
 
 # 国密对拍夹具的构建产物（工具 crate，独立于应用 workspace）
 tools/gm-conformance/target/
+
+# check-nsis-template 的缓存：它把上游 tauri-bundler 的 NSIS 模板下到这里做逐行比对
+/target/

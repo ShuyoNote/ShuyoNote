@@ -218,6 +218,17 @@ run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console
 用这个 runner 跑 `build --bundles app,dmg` 一切正常（本机的 `.app`/`.dmg` 就是这么产出的）。
 `npx` / `pnpm exec` 不一定中招（它们的 shim 多走一层 shell），但**任何**只信 `argv[0]` 的包装在会怀里都危险。
 
+★ **更省事的处置（2026-09-22 实测，本轮的 `.app`/`.dmg` 就是这么建的）**：把**真 node** 放到 `PATH` 最前面，
+劫持就被绕开了 —— 因为 `tauri.js` 拿到的 `process.argv[0]` 终于是 `.../bin/node`：
+
+```bash
+export PATH="$HOME/.local/node-v24.20.0-darwin-arm64/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+pnpm tauri build --bundles app,dmg --config /tmp/tauri-ci-config.json   # ✅ 正常构建
+```
+
+（这份 `PATH` 里的 `pnpm` 也是真 node 装的那份；会怀的 `.desktop-bin` 里 `node`/`pnpm` 都是指向 Helper 的 shim，
+它们**排在后面**就不会被选中。`pnpm verify` 之类的普通命令不受影响，只有"按 `argv[0]` 推自己是谁"的包装会歪。）
+
 ### 3. 共享 `node_modules` 在"有人重装"的那几分钟对**所有人**不可用
 
 症状是**缺依赖形状的红**（`@esbuild/win32-x64` 缺失、`tinyexec` 找不到），
@@ -278,8 +289,39 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 
 `check-crypto-backend` 的三种状态分得很清：没产物 ⇒ `!` 自报跳过；最新产物 ≠ 声明 ⇒ 红（附上面那条清库命令）；
 存在更旧且分类不同的产物 ⇒ `!` 提示（那正是"沉默不换后端"留下的痕迹）。换后端顺带要过
-`security::tests::fixture_db_written_by_the_other_provider_still_opens`（用**旧后端写下**的加密库夹具，
-见 `src-tauri/tests/sqlcipher-backend-fixture.db`）——它红了就等于**用户打不开自己的库**。
+`security::tests::exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`
+（两份内容相同的加密库夹具：`src-tauri/tests/sqlcipher-backend-fixture.db`＝**AES 页**、
+`sqlcipher-sm4-page-fixture.db`＝**SM4 页**）——它断言"**恰好一个能开**"，红了就等于
+**这份构建读不了它本该读的那种库**（页加密是库文件的属性，见方案 §3.3 判据 1）。
+
+#### 5.1 ★ 跑**应用层**的国密读数时，`--features sm-library` **不能省**（2026-09-22 实测，我自己踩的）
+
+这是第 5 条的同族坑，但**更隐蔽**：`scripts/sm-library-build.mjs` 只在它执行的 `cargo build` 那一句上加了
+`--features sm-library`；后面的 `cargo test` / `cargo run` 是你自己敲的 —— **不加这个特性，应用里
+`set_cipher_key` 那段国密接线会被 `#[cfg]` 整个编掉**，于是：
+
+- 库仍然是"认识国密标签"的库（补丁在源码上、`page_cipher=sm4`），
+- 而**应用一行国密参数都没设** ⇒ 写出来的库仍是 SHA512 参数，
+- 你却在读"国密构建"的读数。**两次读数会互相矛盾**（同一份文件"既被默认参数读开、又被国密参数读开"），
+  因为其中一次根本不在测你以为的那件事。
+
+```bash
+node scripts/sm-library-build.mjs --openssl-dir $HOME/tongsuo-macos/install
+# 应用层读数（接线后的构建）——这两个都要：
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test --lib --features sm-library security::
+# 库层读数（provider 能力，不需要特性开关）：
+cargo test --lib gm_provider::
+```
+
+> **同族第二件（同一天）**：`scripts/sm-library-build.mjs --check` 的帮助文字是「只做构建前的核对，不构建」，
+> 但它原先照样 `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**（我拿它确认"源码干不干净"，
+> 结果它把源码变成了"打过补丁"的样子 ⇒ "我刚还原过"当场变成假话）。已修（`patchApplyDecision` 纯函数 ＋
+> `apply: !noApply && !checkOnly` ＋ 3 条判据 ＋ 变异证明）。**核对是只读动作**：想改状态就显式跑构建或 `--revert`。
+
+三处防线（2026-09-22 加）：① 胶水收尾横幅直接写明这条口径；② `build.rs` 在"源码有补丁但没开 `sm-library`"时
+打 `cargo:warning`（不 panic：`--no-default-features` 回滚通道需要在补丁仍在源码上时照样能跑）；
+③ `node scripts/gm-version-selfcheck.mjs --with-tests` 的**第 ⑤ 段**就是
+`cargo test --lib --features sm-library security::`（＋`OPENSSL_DIR`），删掉任一个，判据立刻红（有变异证明）。
 
 ### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
 

@@ -67,6 +67,24 @@ describe("gm-version-selfcheck：三段自证的计划", () => {
   it("★ 不给 --with-tests ⇒ 运行期那一格**不出现**（它需要打过补丁的构建，不进默认形态）", () => {
     const plan = legPlan({ ...base, expectPatch: "applied" });
     expect(ids(plan)).not.toContain("gm-provider");
+    expect(ids(plan)).not.toContain("gm-wiring");
     expect(ids(plan)).toEqual(["backend-and-patch", "cross-impl"]);
+  });
+
+  // ★ ⑤ 接线那一格（2026-09-22 补）：**特性开关必须显式写出来**。
+  //   变异证明：把 `--features sm-library` 从这一格里删掉 ⇒ 会被编掉接线、测的是"没接线的应用"
+  //   （我今天就是这么拿到自相矛盾读数的）⇒ 下面两条断言当场红。
+  it("--with-tests 时也跑接线那一格（gm-wiring），且必须显式带 --features sm-library", () => {
+    const plan = legPlan({ ...base, expectPatch: "applied", withTests: true });
+    expect(ids(plan)).toContain("gm-wiring");
+    const leg = byId(plan, "gm-wiring");
+    expect(leg.args).toContain("sm-library");
+    expect(leg.args).toContain("security::");
+    expect(leg.args).toContain("--manifest-path");
+  });
+
+  it("接线那一格必须带上 OPENSSL_DIR（build.rs 在 sm-library 上是 fail-fast）", () => {
+    const plan = legPlan({ ...base, opensslDir: "/opt/tongsuo", expectPatch: "applied", withTests: true });
+    expect(byId(plan, "gm-wiring").env.OPENSSL_DIR).toBe("/opt/tongsuo");
   });
 });

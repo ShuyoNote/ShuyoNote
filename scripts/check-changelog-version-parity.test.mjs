@@ -85,14 +85,19 @@ describe("violatesParity（纯函数四条）", () => {
   });
 });
 
+// ⚠️ 跑 git 的用例**必须给显式 timeout**：默认 5000ms 在 Windows 上不够（每次 `git` 都是一次进程创建；
+//    merge 那条要建仓库＋多次提交＋两次 `check()` ⇒ >5s）。macOS 上同一条用例秒过，所以这是**平台速度差异**，
+//    不是判据错 —— 但「在 CI/别人机器上偶发红」比「慢 25 秒」贵得多。
+const GIT_TIMEOUT = 30_000;
+
 describe("仓库里跑（判据 ①② 的实测）", () => {
-  it("基线（只有 Unreleased）⇒ 绿", () => {
+  it("基线（只有 Unreleased）⇒ 绿", { timeout: GIT_TIMEOUT }, () => {
     const { dir, commit } = makeRepo();
     const base = commit("chore: 起手");
     expect(run({ commit: base, cwd: dir }).code).toBe(0);
   });
 
-  it("★ 反向：只往 Unreleased 追加一行 ⇒ **必须绿**（否则日常开发全被挡住）", () => {
+  it("★ 反向：只往 Unreleased 追加一行 ⇒ **必须绿**（否则日常开发全被挡住）", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     const base = r.commit("chore: 起手");
     r.write("CHANGELOG.md", "# 更新日志\n\n## [Unreleased]\n\n- 起手\n- 新功能一行\n");
@@ -100,7 +105,7 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(run({ range: `${base}..${tip}`, cwd: r.dir }).code).toBe(0);
   });
 
-  it("★ 正向：只改已发布标题、不动版本文件 ⇒ **必须红**，且点名那一笔", () => {
+  it("★ 正向：只改已发布标题、不动版本文件 ⇒ **必须红**，且点名那一笔", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     const base = r.commit("chore: 起手");
     r.write("CHANGELOG.md", "# 更新日志\n\n## [Unreleased]\n\n- 起手\n\n## [1.0.0] - 2026-01-01\n\n- 首个版本\n");
@@ -111,7 +116,7 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(errs).toContain("1.0.0");
   });
 
-  it("正向的**配对**：同样的标题变化 ＋ 同时动 package.json ⇒ 绿", () => {
+  it("正向的**配对**：同样的标题变化 ＋ 同时动 package.json ⇒ 绿", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     const base = r.commit("chore: 起手");
     // ⚠️ 版本文件必须**真的变**：把 1.0.0 原样再写一遍时 git 看不到改动 ⇒ 判据**仍然红**，
@@ -122,7 +127,7 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(run({ range: `${base}..${tip}`, cwd: r.dir }).code).toBe(0);
   });
 
-  it("★ 版本文件**没真的变**（同一内容重写一遍）⇒ 仍然红（判据问的是「动作做没做」）", () => {
+  it("★ 版本文件**没真的变**（同一内容重写一遍）⇒ 仍然红（判据问的是「动作做没做」）", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     const base = r.commit("chore: 起手");
     r.write("CHANGELOG.md", "# 更新日志\n\n## [Unreleased]\n\n- 起手\n\n## [1.0.0] - 2026-01-01\n\n- 首个版本\n");
@@ -131,7 +136,7 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(run({ range: `${base}..${tip}`, cwd: r.dir }).code).toBe(1);
   });
 
-  it("★ merge：违规藏在被合进来的分支里 ⇒ 查 **merge 那一笔**也要红（口径 ②）", () => {
+  it("★ merge：违规藏在被合进来的分支里 ⇒ 查 **merge 那一笔**也要红（口径 ②）", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     const base = r.commit("chore: 起手");
     r.git("checkout", "-q", "-b", "release-line");
@@ -147,7 +152,7 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(run({ range: `${base}..${merge}`, cwd: r.dir }).code).toBe(1);
   });
 
-  it("merge 但**没碰** CHANGELOG ⇒ 绿（别把正常合并判红）", () => {
+  it("merge 但**没碰** CHANGELOG ⇒ 绿（别把正常合并判红）", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     r.commit("chore: 起手");
     r.git("checkout", "-q", "-b", "feature");
@@ -158,19 +163,19 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(run({ commit: r.head(), cwd: r.dir }).code).toBe(0);
   });
 
-  it("判不了要显式（不是 git 仓库 ⇒ 3，不许当通过）", () => {
+  it("判不了要显式（不是 git 仓库 ⇒ 3，不许当通过）", { timeout: GIT_TIMEOUT }, () => {
     const dir = mkdtempSync(join(tmpdir(), "shuyo-not-a-repo-"));
     dirs.push(dir);
     expect(run({ commit: "HEAD", cwd: dir }).code).toBe(3);
   });
 
-  it("认不出的 commit ⇒ 3（判不了 ≠ 通过）", () => {
+  it("认不出的 commit ⇒ 3（判不了 ≠ 通过）", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     r.commit("chore: 起手");
     expect(run({ commit: "deadbeefdeadbeef", cwd: r.dir }).code).toBe(3);
   });
 
-  it("★ 浅克隆（CI 的 checkout 默认）⇒ 空范围也必须**判不了**（3），不许假绿", () => {
+  it("★ 浅克隆（CI 的 checkout 默认）⇒ 空范围也必须**判不了**（3），不许假绿", { timeout: GIT_TIMEOUT }, () => {
     // 来由：macOS 认为浅克隆会 exit 3（`HEAD^` 不存在）；我按那条加提示时自己一验，
     // 发现**更坏**的一种：浅克隆里 `origin/main` **是存在的**（指向被取到的那一个提交）
     // ⇒ `origin/main..HEAD` 为空 ⇒ 原来会打印"✓ 这 0 笔……"并 exit 0 —— 那就是假绿。
@@ -192,7 +197,7 @@ describe("仓库里跑（判据 ①② 的实测）", () => {
     expect(logs).not.toContain("✓");
   });
 
-  it("非浅克隆 + 空范围 ⇒ 0，但措辞必须是「没东西可查」而不是「通过」", () => {
+  it("非浅克隆 + 空范围 ⇒ 0，但措辞必须是「没东西可查」而不是「通过」", { timeout: GIT_TIMEOUT }, () => {
     const r = makeRepo();
     r.commit("chore: 起手");
     const { code, logs } = run({ range: "HEAD..HEAD", cwd: r.dir, env: {} });

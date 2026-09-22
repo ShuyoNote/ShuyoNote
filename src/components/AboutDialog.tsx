@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useEditorStore } from "../store/editor";
-import { platform, isMobileUserAgent } from "../lib/platform";
+import { isMobileUserAgent } from "../lib/platform";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import {
@@ -9,10 +9,10 @@ import {
   APP_VERSION,
   APP_LICENSE,
   linkItems,
-  sanitizeExternalUrl,
   getAllowExternal,
   setAllowExternal,
 } from "../lib/links";
+import { openExternalUrl } from "../lib/openExternal";
 import { fetchUpdateManifest, debugUpdateVersion, updateStatus, RELEASES_URL, type UpdateState } from "../lib/updates";
 import { checkDesktopUpdate, fetchUpdateManifestNative, installAndroidUpdate, type UpdateProgress } from "../lib/updater";
 import { isDesktop, detectFromDeployed } from "../lib/useUpdateChecker";
@@ -209,16 +209,6 @@ export function AboutDialog() {
 
   if (!open) return null;
 
-  const openExternal = async (url: string) => {
-    const safe = sanitizeExternalUrl(url);
-    if (!safe || !allowExternal) return;
-    try {
-      await platform.opener.openUrl(safe);
-    } catch {
-      // Opening in a browser can be blocked (e.g. no window) — fail quietly.
-    }
-  };
-
   const toggleExternal = (v: boolean) => {
     setAllow(v);
     setAllowExternal(v);
@@ -285,7 +275,7 @@ export function AboutDialog() {
                       ) : null}
                       <button
                         className="about-update-later"
-                        onClick={() => openExternal(androidApkUrl ?? RELEASES_URL)}
+                        onClick={() => void openExternalUrl(androidApkUrl ?? RELEASES_URL)}
                       >
                         {androidApkUrl ? "手动下载" : "前往发布页"}
                       </button>
@@ -308,7 +298,7 @@ export function AboutDialog() {
                       <button className="about-update-later" onClick={() => setDeclined(true)}>稍后再说</button>
                     </>
                   ) : (
-                    <button className="about-update-later" onClick={() => openExternal(RELEASES_URL)}>前往发布页</button>
+                    <button className="about-update-later" onClick={() => void openExternalUrl(RELEASES_URL)}>前往发布页</button>
                   )}
                   {updateError && <span className="about-update-error">更新失败：{updateError}</span>}
                 </span>
@@ -344,7 +334,7 @@ export function AboutDialog() {
           <div className="about-links-title">开源与反馈</div>
           <div className="about-links">
             {linkItems().map((l) => (
-              <button key={l.id} className="about-link" onClick={() => openExternal(l.url)}>
+              <button key={l.id} className="about-link" onClick={() => void openExternalUrl(l.url)}>
                 {l.label}
               </button>
             ))}
@@ -356,7 +346,10 @@ export function AboutDialog() {
           <div className="about-toggle-row">
             <div className="about-toggle-text">
               <div className="about-toggle-label">允许跳转到外部项目网站</div>
-              <div className="about-hint">关闭后外链不跳转，不影响离线使用；外链不带跟踪参数。</div>
+              <div className="about-hint">
+                关闭后任何外部网站都不会被打开（关于页链接、社区原帖、插件索引、书签与正文里的链接都在内）；
+                本地文件与离线功能不受影响。外链不带跟踪参数。
+              </div>
             </div>
             <button
               type="button"

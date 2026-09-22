@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Android 自适应图标的**背景层**：满幅蓝色圆角方形（squircle）。
+       为什么不把蓝色画在前景里：自适应图标会被启动器按自己的形状**裁切**（圆形/圆角方/水滴），
+       只有中间约 66–72% 是安全区 ⇒ 背景该满幅、内容该待在安全区里。
+       2026-09-21：owner 说「中间的书本太大了」——原来前景是**整枚图标**（蓝底＋书），
+       于是书跟着蓝色一起顶满，被裁切后书显得更大。现在拆成 bg/fg 两层，书缩到 76%。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4D8DFF"/>
+      <stop offset="1" stop-color="#2952CC"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+</svg>
