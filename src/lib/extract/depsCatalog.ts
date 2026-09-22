@@ -32,7 +32,7 @@ export const DEP_CAPABILITIES = [
     whenAbsent: "provider_error",
     injectedBy: "platform",
     signature: "(prompt: string, image: Uint8Array, mime: string) => Promise<string>",
-    usedBy: ["image.ocr@1", "pdf.ocr@1（待落地）", "av.transcript@1（待落地）"],
+    usedBy: ["image.ocr@1", "pdf.ocr@1（待落地）"],
   },
   {
     name: "rasterize",
@@ -42,6 +42,15 @@ export const DEP_CAPABILITIES = [
     signature:
       "(bytes: Uint8Array, pageIndex: number, scale: number) => Promise<{ rgba: Uint8Array; width: number; height: number }>",
     usedBy: ["pdf.ocr@1（待落地）"],
+  },
+  {
+    name: "transcribe",
+    purpose: "语音转写：音视频 → 文本（可带时间戳的分段；不是 vision 的一种 —— 形状与端点都不同）",
+    whenAbsent: "provider_error",
+    injectedBy: "platform",
+    signature:
+      "(audio: Uint8Array, mime: string, opts: { model?: string; language?: string }) => Promise<{ text: string; segments?: readonly { start: number; end: number; text: string }[] }>",
+    usedBy: ["av.transcript@1"],
   },
 ] as const satisfies readonly DepCapability[];
 

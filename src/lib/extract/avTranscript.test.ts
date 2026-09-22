@@ -7,14 +7,9 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_ASR_MODEL, avTranscriptExtractor, hhmmss } from "./avTranscript";
-import type { TranscribeFn } from "./avTranscript";
 import type { ExtractDeps, ExtractInput } from "./types";
 
-/** ⚠️ 契约落地前 `transcribe` 还不在 `ExtractDeps` 上：这里与模块**共用同一个局部窄类型**
- *  （`ExtractDeps.transcribe?` 一进契约，这个别名和模块里那个一起删掉）。 */
-type DepsForTest = ExtractDeps & { transcribe?: TranscribeFn };
-
-function inputWith(deps: DepsForTest): ExtractInput {
+function inputWith(deps: ExtractDeps): ExtractInput {
   return {
     bytes: new Uint8Array([1, 2, 3]),
     filename: "meeting.m4a",
@@ -94,7 +89,7 @@ describe("av.transcript@1", () => {
         transcribe: async () => {
           throw new Error("超时（120s）");
         },
-      } as ExtractDeps),
+      }),
     );
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error("unreachable");

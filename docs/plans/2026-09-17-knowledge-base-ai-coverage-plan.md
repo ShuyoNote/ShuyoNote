@@ -778,7 +778,7 @@ export function pickExtractor(
 1. 先改**本节**（契约）→ 2. 再改**实现** → 3. 若改的是 `id` 的版本号，同时更新 §6.1 的重跑口径与 §13 待拍板里相关项。
 **禁止**先改实现再回头补契约。
 
-### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize`**（2026-09-17 增补）
+### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe`**（2026-09-17 增补；`transcribe` 2026-09-22 补）
 
 起因：Mac 侧要做 `pdf.ocr`，先做了五分钟可行性核对就发现**路是堵的** —— 扫描件要"页 → 像素"，
 而契约不给它要像素的路（抽取器只有 `bytes`；平台原有的渲染入口要的是 **attachmentId**）。
@@ -848,8 +848,21 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
   / `depsOf`（**不传未注入项**，保住"未注入 ⇒ `provider_error`"的语义）。
   各写各的假实现会长成三种口径，而这层分歧**没有任何编译期信号**。
 
-**`av.transcript` 将来也要走同一条路**（音频解码 → 又一个 `deps` 能力）。所以规则是通用的：
-**凡是"只有平台能做"的事，都加 `deps`；一律可选、一律没注入就 `provider_error`、一律不许抽取器自己想办法。**
+**第 6 项：`transcribe`（语音转写，2026-09-22 落地）** —— 这一条正是上面那条通用规则的第一次兑现。
+（原文这里是"**`av.transcript` 将来也要走同一条路**（音频解码 → 又一个 `deps` 能力）"，现已兑现。）
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| 1 | 加不加 `deps.transcribe` | **加**，且**不蹭 `vision`**。形状：`(audio: Uint8Array, mime: string, opts: { model?: string; language?: string }) => Promise<{ text: string; segments?: readonly { start: number; end: number; text: string }[] }>`。三条理由：① **形状不同**——`vision(prompt, image, mime)` 是「提问 + 图」，转写是「音频 + 模型 + 语言」，硬塞进去会让**假实现**（判据依赖的那层）与平台接线同时变糊；② 契约本来就是**一个能力一个键**（`vision` / `rasterize` 各自带"没注入就 `provider_error`"的规则），加它是**照既有形状填空**；③ 它有自己的端点，**不该算 `vision` 的消费者**（原先 `vision.usedBy` 里错列了 `av.transcript@1`，已移走） |
+| 2 | **谁注入** | 与 `rasterize` 同：**平台层**（唯一构造点 `attachmentDeps(...)`）。端点 `POST 127.0.0.1:8080/v1/audio/transcriptions`（OpenAI 兼容；两条 curl 模板见 `docs/development.md` §10.7）。⚠️ **这一格尚未实装，由平台侧认领**；在那之前 `av.transcript@1` 一律 `provider_error` —— **这是已知状态不是 bug**（与 Web 下 `pdf.ocr` 同一条口径） |
+| 3 | `hasPunct` 放不放进返回值 | **不放**。两个本地 ASR（`funasr-nano` 带标点 / `sherpa-onnx-paraformer-zh-small` 裸文本）在同一段音频上**内容逐字一致、只差标点** ⇒ 标点必须由**归一函数从文本判定**，不许成为下游的隐式依赖（`2026-09-22-asr-wiring-plan.md` §2） |
+| 4 | 默认模型 | `funasr-nano`（带标点，更适合直接进正文）；`sherpa-onnx-paraformer-zh-small` 作轻量备选。⚠️ **默认值待 peer 复核**（`2026-09-22-asr-wiring-plan.md` §5.1，与"入口放哪"一并问） |
+
+落地形态：`src/lib/extract/avTranscript.ts` —— `av.transcript@1`、`cost: "gpu"`、段 `kind: "transcript"`、
+`loc: "HH:MM:SS"`（时间码是这类内容唯一的定位）。登记在 `DEP_CAPABILITIES`（`depsCatalog.ts`）⇒
+**本表与 `ExtractDeps` 由 `_DEP_EXHAUSTIVE` 双向卡住，漏登记一处 `tsc` 就红**。
+
+所以规则是通用的：**凡是"只有平台能做"的事，都加 `deps`；一律可选、一律没注入就 `provider_error`、一律不许抽取器自己想办法。**
 
 **能力登记表（一处定义，防漂移）**：`src/lib/extract/depsCatalog.ts`。
 「哪些能力存在、叫什么、缺了报什么、谁注入」原先散在**契约注释 + `types.ts` + `isolated.test.ts`** 三处，

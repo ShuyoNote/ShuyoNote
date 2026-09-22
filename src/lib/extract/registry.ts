@@ -12,6 +12,7 @@ import { pdfTextExtractor } from "./pdf";
 import { pdfOcrExtractor } from "./pdfOcr";
 import { OOXML_EXTRACTORS } from "./ooxml";
 import { textExtractor } from "./text";
+import { avTranscriptExtractor } from "./avTranscript";
 import type { Extractor } from "./types";
 
 /** 去掉 mime 参数并按小写归一：`Text/Plain; charset=utf-8` → `text/plain`。 */
@@ -106,7 +107,10 @@ export function pickExtractor(
  *  - ✅ HTML（`text.html@1`）—— **同一次真样张**里 `.html` 也是 `no_extractor`（保存的网页很常见）
  *  - ✅ PDF 视觉通道（`pdf.ocr@1`），cost=gpu —— 扫描件/混合文档；**只对没有文本层的页**做视觉
  *  - ✅ 图片语义描述（`image.caption@1`），cost=gpu —— 2026-09-19 落地；**只在 OCR 判 empty 时被调度**
- *  - ⏳ 待补：`ooxml.xls`（旧格式，需 LibreOffice headless）、`av.transcript`（音视频，最贵，默认关）
+ *  - ✅ 音视频转写（`av.transcript@1`），cost=gpu —— 2026-09-22 落地；**能力与抽取器同批进契约**
+ *    （`ExtractDeps.transcribe?` ＋ `DEP_CAPABILITIES` ＋ 方案 §15.8 ＋ 本表 ＋ conformance 夹具，
+ *    五处必须同批：只登记能力不落地抽取器、或落了抽取器不带夹具，判据都会当场红）
+ *  - ⏳ 待补：`ooxml.xls`（旧格式，需 LibreOffice headless）
  */
 export const REGISTRY: readonly Extractor[] = [
   ...OOXML_EXTRACTORS,
@@ -126,4 +130,9 @@ export const REGISTRY: readonly Extractor[] = [
   htmlExtractor,
   // 纯文本放最后：它的扩展名不与上面几族重叠，放最后是为将来"更具体的纯文本子类"留位
   textExtractor,
+  // ⚠️ 音视频转写：`audio/*` / `video/*` 与上面几族**零重叠**，所以位置不影响分派；
+  //    它单独排在这里是因为它**与别族不同类**（最贵、且要 `deps.transcribe` 注入）。
+  //    没注入 transcribe ⇒ `provider_error`（不抛、不自建客户端，§15.3-7）——
+  //    在平台侧把 `attachmentDeps` 接上 ASR 端点之前，**这是预期状态不是 bug**。
+  avTranscriptExtractor,
 ];

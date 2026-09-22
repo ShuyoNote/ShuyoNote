@@ -1,8 +1,10 @@
 // 音视频转写抽取器：音视频 → 带**时间戳**的文本段（`kind: "transcript"`、`loc: "HH:MM:SS"`）。
 //
 // 为什么它在契约里早有位置：`types.ts` 的 `SegmentKind` 一直写着
-// `| "transcript"; // 音视频转写：loc = 'HH:MM:SS'`，`depsCatalog.ts` 的 `usedBy` 里也早挂着
-// `av.transcript@1（待落地）` —— 所以本文件是**填空**，不是发明形状。
+// `| "transcript"; // 音视频转写：loc = 'HH:MM:SS'` —— 所以本文件是**填空**，不是发明形状。
+// 与它同批（原子）进契约的有四处：`ExtractDeps.transcribe?`、`DEP_CAPABILITIES` 的 `transcribe`
+// 条目、方案 §15.8、`registry.ts` 的登记；另加 conformance 夹具 —— 少一处判据就红
+// （见 `docs/plans/2026-09-22-asr-wiring-plan.md` §5.0）。
 //
 // ⚠️ 三条契约不变量（§15.3）：
 //   1. **不自建网络客户端**：转写一律经注入的 `deps.transcribe`；没注入 ⇒ `provider_error`，**不许抛**；
@@ -28,19 +30,6 @@ const AV_ID = "av.transcript@1";
 /** 默认走带标点的那个（更适合直接进正文）。 */
 export const DEFAULT_ASR_MODEL = "funasr-nano";
 
-/** 转写回调的形状 —— **下一轮**会作为 `ExtractDeps.transcribe?` 正式进契约；
- *  在契约落地前，用这个局部窄类型让本文件先能编译（契约一落地就删掉它）。 */
-export type TranscribeFn = (
-  audio: Uint8Array,
-  mime: string,
-  opts: { model?: string; language?: string },
-) => Promise<{
-  text: string;
-  segments?: readonly { start: number; end: number; text: string }[];
-}>;
-
-type DepsWithTranscribe = ExtractDeps & { transcribe?: TranscribeFn };
-
 /** 秒 → `HH:MM:SS`（超过 24h 也照样进位；不四舍五入到分钟，免得两段落到同一 loc）。 */
 export function hhmmss(seconds: number): string {
   const s = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
@@ -64,7 +53,7 @@ export const avTranscriptExtractor: Extractor = {
   extensions: [".wav", ".mp3", ".m4a", ".ogg", ".flac", ".mp4", ".mov"],
   cost: "gpu",
   async extract(input: ExtractInput): Promise<ExtractResult> {
-    const transcribe = (input.deps as DepsWithTranscribe).transcribe;
+    const transcribe = input.deps.transcribe;
     if (!transcribe) {
       return fail(
         AV_ID,
@@ -73,7 +62,7 @@ export const avTranscriptExtractor: Extractor = {
       );
     }
 
-    let raw: Awaited<ReturnType<TranscribeFn>>;
+    let raw: Awaited<ReturnType<NonNullable<ExtractDeps["transcribe"]>>>;
     try {
       raw = await transcribe(input.bytes, input.mime, { model: DEFAULT_ASR_MODEL });
     } catch (e) {
