@@ -105,26 +105,38 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange, showStatu
           </>
         </div>
       )}
-      {/* 页面能力提示条：文本层状态 + OCR（无文本层时）。窄屏默认收起（见 Props.showStatus）。 */}
+      {/* 页面能力 + 本页动作组：文本层状态 chip 与 朗读/OCR/AI 三个**页面级命令**同在一格。
+          宽屏它与工具组**同一行**（`.pdf-annot-status` 不再 `width:100%` 独占一行，见 App.css），
+          窄屏仍整行收在「⋯」里（见 Props.showStatus）。
+          ⚠️ 标签一律**短**（朗读 / OCR / AI），完整说法进 `title`：这一行原来被
+          「朗读本页 / OCR 识别本页 / AI 识别」撑到 472px，宽屏放不下就只能独占一行。 */}
       {showStatus && (
       <div className="pdf-annot-status">
-        <span className={`pdf-annot-layer ${st.hasTextLayer ? "ok" : "warn"}`}>
+        <span
+          className={`pdf-annot-layer ${st.hasTextLayer ? "ok" : "warn"}`}
+          title={st.hasTextLayer ? "有文本层，可精确划词" : "无文本层，建议用矩形/画笔/便签"}
+        >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             {st.hasTextLayer ? <path d="M20 6L9 17l-5-5" /> : <path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />}
           </svg>
-          {st.hasTextLayer ? "有文本层，可精确划词" : "无文本层，建议用矩形/画笔/便签"}
+          {st.hasTextLayer ? "有文本层" : "无文本层"}
         </span>
         <div className="pdf-annot-ocr-actions">
-          <button className="pdf-annot-ocr" onClick={() => ctl?.speakPage()} title="朗读本页（有文本层读全文；扫描版先识别再听）">朗读本页</button>
+          <button className="pdf-annot-ocr" onClick={() => ctl?.speakPage()} title="朗读本页（有文本层读全文；扫描版先识别再听）">朗读</button>
           {!st.hasTextLayer && (
             <>
               {/* 忙碌文案跟着**在跑的那条路**走。旧写法让「OCR 识别本页」无条件变成「识别中…」，
                   于是点「AI 识别」时反倒由 OCR 那个按钮替它表态（2026-09-20 用户截图里的那一幕）。 */}
-              <button className="pdf-annot-ocr" onClick={() => ctl?.runOcr()} disabled={st.ocrBusy}>
-                {st.ocrBusy && st.ocrMode === "ocr" ? ocrBusyButtonLabel("ocr") : "OCR 识别本页"}
+              <button
+                className="pdf-annot-ocr"
+                onClick={() => ctl?.runOcr()}
+                disabled={st.ocrBusy}
+                title="OCR 识别本页（本机识别；无文本层时把扫描页变成可划词的文字）"
+              >
+                {st.ocrBusy && st.ocrMode === "ocr" ? ocrBusyButtonLabel("ocr") : "OCR"}
               </button>
               <button className="pdf-annot-ocr pdf-annot-ocr-ai" onClick={() => ctl?.visionOcr()} disabled={st.ocrBusy} title="用 AI 视觉大模型识别本页文字（对中文/复杂排版通常更准，需配置支持图像的模型）">
-                {st.ocrBusy && st.ocrMode === "ai" ? ocrBusyButtonLabel("ai") : "AI 识别"}
+                {st.ocrBusy && st.ocrMode === "ai" ? ocrBusyButtonLabel("ai") : "AI"}
               </button>
             </>
           )}

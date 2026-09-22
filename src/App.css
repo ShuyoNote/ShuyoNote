@@ -17431,7 +17431,12 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
 }
-/* 页面能力提示条（文本层 + OCR）——滚动页面时吸顶固定，保持批注控制可见。 */
+/* 页面能力提示条（文本层 + OCR）——滚动页面时吸顶固定，保持批注控制可见。
+   ⚠️ 2026-09-22：这一组**宽屏不再独占一行**（见下面那条 `@media (min-width: 769px)`）。
+   原来 `width: 100%` 把它压成"状态条"，于是 1280 下工具条是**两行**
+   （实测 `tools@56` / `status@105`，第二行整行只有 chip + 三个按钮，472×27）。
+   标签也一并缩短（朗读 / OCR / AI，完整说法进 `title`）——它原来被
+   「朗读本页 / OCR 识别本页 / AI 识别」撑到 472px，宽屏塞不进第一行。 */
 .pdf-annot-status {
   width: 100%;
   max-width: 860px;
@@ -17444,6 +17449,16 @@ p:has(> .editor-drawing-container) {
   top: 50px;
   z-index: 20;
   background: var(--bg);
+}
+/* 宽屏：与工具组**同一行**，并被 `space-between` 推到工具行右端（省下那一整行）。
+   窄屏不动 —— 它整行收在「⋯」里（`showStatus`），那里**需要**整行宽度。 */
+@media (min-width: 769px) {
+  .pdf-annot-status {
+    width: auto;
+    max-width: none;
+    flex: 0 0 auto;
+    position: static;
+  }
 }
 .pdf-annot-layer {
   display: inline-flex;
