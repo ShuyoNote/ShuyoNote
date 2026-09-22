@@ -6,7 +6,7 @@
 // 两条都发生在这门禁的第一版身上（前者靠下限定为 380 兜住，后者靠这条判据）。
 import { describe, expect, it } from "vitest";
 
-import { parseTestResult, pickOpensslDir } from "./check-gm-wired.mjs";
+import { parseTestResult, pickOpensslDir, prefixLooksLinkable } from "./check-gm-wired.mjs";
 
 describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   it("给了 OPENSSL_DIR 且目录在 ⇒ 用它", () => {
@@ -41,5 +41,31 @@ describe("check-gm-wired：解析 cargo 的 test result", () => {
 
   it("没有 `test result:` ⇒ null（＝这一格没跑，门禁据此判红：空跑即红）", () => {
     expect(parseTestResult("error: could not compile `shuyonote`")).toBe(null);
+  });
+});
+
+describe("check-gm-wired：前缀能不能真的链接（Linux 的 `/usr` 要看开发文件）", () => {
+  it("★ ubuntu 多架构布局（`lib/x86_64-linux-gnu/libcrypto.so`）⇒ 可链接", () => {
+    const exists = () => true;
+    const readdir = (p) =>
+      p.endsWith("/lib") ? ["x86_64-linux-gnu"] : p.endsWith("x86_64-linux-gnu") ? ["libcrypto.so", "libcrypto.so.3"] : [];
+    expect(prefixLooksLinkable("/usr", { exists, readdir })).toBe(true);
+  });
+
+  it("★ 只有运行时库（`libcrypto.so.3`，没有 `.so` 开发符号链接）⇒ **不可链接**（该跳过）", () => {
+    const exists = () => true;
+    const readdir = (p) => (p.endsWith("/lib") ? ["libcrypto.so.3"] : []);
+    expect(prefixLooksLinkable("/opt/rt-only", { exists, readdir })).toBe(false);
+  });
+
+  it("Windows 的 vcpkg 前缀（`lib/libcrypto.lib`）⇒ 可链接", () => {
+    const exists = (p) => p.endsWith("/lib");
+    const readdir = () => ["libcrypto.lib", "libssl.lib"];
+    expect(prefixLooksLinkable("/vcpkg/installed/x64-windows-static-md", { exists, readdir })).toBe(true);
+  });
+
+  it("空目录 / 没给前缀 ⇒ 不可链接", () => {
+    expect(prefixLooksLinkable("/nope", { exists: () => false, readdir: () => [] })).toBe(false);
+    expect(prefixLooksLinkable("")).toBe(false);
   });
 });

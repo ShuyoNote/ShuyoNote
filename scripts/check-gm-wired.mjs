@@ -30,6 +30,44 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = join(root, "src-tauri", "Cargo.toml");
 const MIN_PASSED = 380;
 
+/**
+ * 纯函数：这个前缀**能不能真的链接**（有开发用的库文件，不只是运行时 .so.N）。
+ *
+ * 为什么单独一步：Linux 的 `/usr` 常被当成"当然能用"，但链接需要 `libcrypto.so`（**开发符号链接**，
+ * 由 `libssl-dev` 提供）；只有运行时 `libcrypto.so.3` 的机器上 `-lcrypto` 会直接失败。
+ * 第一版就是假设了 `/usr` 一定可用 —— CI（ubuntu runner）真跑时才发现要看这一条。
+ */
+export function prefixLooksLinkable(dir, { exists = existsSync, readdir = readdirSync } = {}) {
+  if (!dir) return false;
+  const devLib = (names) => names.some((n) => /^libcrypto\.(a|so|dylib|lib)$/i.test(n));
+  const libDirs = ["lib", "lib64"]
+    .map((sub) => join(dir, sub))
+    .filter((d) => exists(d));
+  // ★ Linux 多架构：开发文件常在 `/usr/lib/x86_64-linux-gnu/` 这种**一层子目录**里
+  //   （第一版只看 `/usr/lib` 本身 ⇒ 在 ubuntu runner 上会误判"不可链接"⇒ 门禁静默跳过，
+  //    而那正是它唯一该跑的平台）。判据见 `check-gm-wired.test.mjs`。
+  for (const d of libDirs) {
+    let names = [];
+    try {
+      names = readdir(d);
+    } catch {
+      continue;
+    }
+    if (devLib(names)) return true;
+    for (const entry of names) {
+      const sub = join(d, entry);
+      let subNames = null;
+      try {
+        subNames = exists(sub) ? readdir(sub) : null;
+      } catch {
+        subNames = null; // 不是目录（普通文件）⇒ 跳过
+      }
+      if (subNames && devLib(subNames)) return true;
+    }
+  }
+  return false;
+}
+
 /** 纯函数：挑这次要用哪个 OpenSSL 前缀（没得用就 null ⇒ 自报跳过）。 */
 export function pickOpensslDir({ env = process.env, platform = process.platform, exists = existsSync } = {}) {
   const fromEnv = (env.OPENSSL_DIR || "").trim();
@@ -59,6 +97,14 @@ function run(cmd, args, env, { quiet = false } = {}) {
 
 function main() {
   const opensslDir = pickOpensslDir();
+  if (opensslDir && !prefixLooksLinkable(opensslDir)) {
+    console.log(
+      `! 跳过（自报跳过，不装绿）：${opensslDir} 里没有**开发用**的 crypto 库文件` +
+        `（链接需要 \`libcrypto.so\` 这个**开发符号链接**，只有运行时 \`libcrypto.so.3\` 是不够的）。\n` +
+        "  Linux 上装 `libssl-dev` 即可（CI 的 rust-tests job 里已有这一条）。",
+    );
+    process.exit(0);
+  }
   if (!opensslDir) {
     console.log(
       "! 跳过（自报跳过，不装绿）：本机没有可用的 SM 版 OpenSSL 前缀。\n" +
@@ -76,7 +122,17 @@ function main() {
   //    ⇒ 会把补丁留在共享 registry 上（这正是本仓反复防的混态）。第一版就写错了这一步。
   const checks = () => {
     console.log("① 打补丁 ＋ 清两个 crate × 两个 profile");
-    run("node", ["scripts/sm-library-build.mjs", "--openssl-dir", opensslDir, "--prepare"], env);
+    // ⚠️ 这一步也要包起来：`--prepare` 内部会调 `cargo`，而"cargo 不在 PATH"是很常见的一步之遥
+    //   （本机 2026-09-22 又踩了一次）。第一版没包 ⇒ Node 直接把 execFileSync 的错误对象倒出来，
+    //   栈里只有 `stderr: ''`，看不出是哪一步。
+    try {
+      run("node", ["scripts/sm-library-build.mjs", "--openssl-dir", opensslDir, "--prepare"], env);
+    } catch (e) {
+      const detail = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim().split("\n").slice(-8).join("\n   | ");
+      console.error(`❌ 准备步骤失败（打补丁/清产物）。原始输出尾部：\n   | ${detail || e.message}`);
+      console.error("   最常见：`cargo` 不在 PATH（本机：export PATH=\"$HOME/.cargo/bin:$PATH\"）。");
+      return 1;
+    }
     applied = true;
 
     console.log("② `--features sm-library` 下跑全量单测（接线那段的直接证据）");
@@ -94,7 +150,11 @@ function main() {
     const counts = parseTestResult(output);
     for (const l of output.split("\n").filter((l) => /^test .* FAILED/.test(l)).slice(0, 8)) console.error(`   ${l}`);
     if (!counts) {
-      console.error("❌ 拿不到 `test result:` 行 —— 这一格等于没跑（空跑即红）");
+      // ★ 必须把 cargo 的原话带出来：CI 上第一版这里只写"拿不到 test result 行"，于是**没有任何线索**
+      //   知道是编译不过、链接不过、还是 build.rs 的 fail-fast（诊断信息被自己吞掉了）。
+      const tail = output.split("\n").filter((l) => l.trim()).slice(-25);
+      console.error("❌ 拿不到 `test result:` 行 —— 这一格等于没跑（空跑即红）。cargo 输出尾部：");
+      for (const l of tail) console.error(`   | ${l}`);
       return 1;
     }
     console.log(`   ${counts.passed} passed / ${counts.failed} failed（下限 ${MIN_PASSED} passed、0 failed）`);
