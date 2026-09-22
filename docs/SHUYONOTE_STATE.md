@@ -1,6 +1,6 @@
 # ShuyoNote 项目现状摘要（客户端 · 会话延续种子）
 
-> 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到 2026-09-22**（对外交付线 `1.91.21`；`dev` 已并入 `main`）。
+> 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到 2026-09-22**（对外交付线 `1.91.22`；`dev` 已并入 `main`）。
 > 项目根：`~/zhai/ShuyoNote`（Mac）/ `C:\Users\cnzen\zhai\ShuyoNote`（Windows）；远端 gitcode（`origin`，权威）+ github（`github`，镜像）。
 > 服务端现状见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`；**跨平台开发接续（环境事实、待办与下一步、
 > 换到 Mac 怎么接）见 `docs/SESSION_CONTINUE.md`（服务端仓库）**——本文件只写"现状"，不写操作步骤。
@@ -14,10 +14,12 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
 - **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.50（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
 - **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver）。
-- **版本**：对外交付线最新 **`1.91.21`**（2026-09-22）；**`main` 已包含 `dev` 的全部内容** ——
-  本次发布把 `dev` 显式合进了 `main`（`dev` 不再是分叉状态；上一版 1.91.20 时还差 64 个提交）。
-  `dev` 工作区的 `package.json` 版本号（`1.91.20`）落后于交付线是**预期的**：bump 发生在发布线上，
-  下次发版再从 `1.91.21` 往上走（口径见 [RELEASING](RELEASING.md) ④）。
+- **版本**：对外交付线最新 **`1.91.22`**（2026-09-22）；**`main` 已包含 `dev` 的全部内容** ——
+  1.91.21 那次把 `dev` 显式合进了 `main`（`dev` 不再是分叉状态；上一版 1.91.20 时还差 64 个提交）。
+  **1.91.21 没有产出安装包**：Windows/Linux 的 Release 构建都红在「库级国密」打补丁那一步
+  （冷 registry 上没有 SQLCipher 源码）⇒ 1.91.22 就是补这一刀（打补丁前先 `cargo fetch --locked`）。
+  `dev` 工作区的 `package.json` 版本号落后于交付线是**预期的**：bump 发生在发布线上
+  （口径见 [RELEASING](RELEASING.md) ④）。
 - **许可证**：客户端 **AGPL-3.0**；配套自建同步服务端 **商业**（`shuyonote-sync-server`，见其仓库）。
 
 ## 2. 已实现核心功能（里程碑 M1–M27）
