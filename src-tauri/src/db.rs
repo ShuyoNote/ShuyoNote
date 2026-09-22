@@ -882,6 +882,31 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute(stmt, [])?;
     }
 
+    // 阶段 1 · **冲突留痕**（本地表，**不同步 / 不进备份导出**）：远端应用时报出的"同一块被两端改过"
+    // 记在这里，供界面提示与裁决。见 `docs/plans/2026-09-22-block-rev-write-layer.md`。
+    // ⚠️ **这只是本机的证据，不能用来解释跨机器的差异**（AMD 2026-09-22 要求写清）：它记的是
+    // "这一轮远端应用时**本机**看到的两版" —— 别的设备上可能根本没有这张表的这一行，服务端也没有这张表。
+    // 想复现"为什么这台机器上是这个结果"，必须同时拿两边各自的库（与两边的 `sync_seq`）。
+    // 同样**单语句挨个执行**（理由同上：哪条失败一眼看得见）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_conflicts (
+            id              TEXT PRIMARY KEY,
+            page_id         TEXT NOT NULL,
+            block_id        TEXT NOT NULL,
+            reason          TEXT NOT NULL,
+            local_json      TEXT NOT NULL DEFAULT '',
+            remote_json     TEXT NOT NULL DEFAULT '',
+            detected_at     INTEGER NOT NULL,
+            resolved_at     INTEGER,
+            resolved_choice TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at)",
+        [],
+    )?;
+
     // M24 — PDF annotations: per (attachment_id, page_index) JSON payload list.
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS pdf_annotations (
@@ -985,6 +1010,19 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     )?;
     if pages_has_dirty == 0 {
         conn.execute("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+
+    // 阶段 1（B1，2026-09-22）· **正文列"待重建"标记**：合并产物 / 冲突裁决都是"内容拼出来的"，
+    // 而正文列与 FTS 仍是页级胜方那一份 ⇒ 那一页在一段时间内搜不到刚合并进来的字。
+    // 这一列就是"补算器"的工作队列（`1` = 待重建）。**本地状态：不同步、不进导出**（与
+    // `page_conflicts` 同族）—— 别的设备有它自己的标记。见 `doc_content.rs` 的同一节。
+    let pages_has_text_stale: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'text_stale'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pages_has_text_stale == 0 {
+        conn.execute("ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0", [])?;
     }
 
     // Tag custom color (hex like "#c2410c"). NULL = use deterministic auto color.

@@ -657,6 +657,16 @@ curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
 
 ⚠️ **这条冒烟的边界**：音频是 TTS 合成的**干净音**（≈3 s、无噪声、标准普通话）⇒ 它证的是"链路通、中文能认"，
 **不等于**真人口音／远场／嘈杂环境也这个水平；那类结论要拿**真录音**复跑。
+**§10.5 补一双孪生形态（2026-09-18，AMD 侧复核块 ID 分支时又踩到一次）**：上面那条治的是
+**本地分支没更新**，还有一种更隐蔽的 —— **`origin/dev` 这类远端跟踪 ref 静默过期**：
+
+- 成因：clone 时 `remote.origin.fetch` 只配了 `main`（例如 `+refs/heads/main:refs/remotes/origin/main`）
+  ⇒ 你 `git fetch origin dev` 之后 `FETCH_HEAD` 是新的，但 **`origin/dev` 这个 ref 不会更新**；
+  随后 `git log origin/dev` / 拿 `origin/dev` 当基线，看到的还是旧的（AMD 一度停在 `bd68a608` 上复核）。
+- 判据：**引用任何 `origin/<分支>` 之前**，用 `git ls-remote origin refs/heads/<分支>` 核一眼，
+  或直接 `git fetch origin <分支>` 后用 `FETCH_HEAD`/`git rev-parse FETCH_HEAD`；
+  根治办法是把 fetch refspec 补全（`git config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`）。
+- ⇒ 与本条同源：**"我看到的分支"必须是"我从远端刚拿到的那一个"**，而不是本地某个同名 ref。
 
 ### 10.6 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
 

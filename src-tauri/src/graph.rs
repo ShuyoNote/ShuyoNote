@@ -250,14 +250,8 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
         let content_json = if let Some(j) = json_cache.get(&page_id) {
             j.clone()
         } else {
-            let j: String = c
-                .query_row(
-                    "SELECT content_json FROM pages WHERE id = ?1 AND deleted_at IS NULL",
-                    params![page_id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?
+            let j: String = crate::doc_content::read(&c, &page_id)?
+                .map(|d| d.json)
                 .unwrap_or_else(|| "{}".to_string());
             json_cache.insert(page_id.clone(), j.clone());
             j

@@ -12,7 +12,10 @@ import "./prismSetup";
 import { CodeExtension, CodeIndentExtension, registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getRoot, $createParagraphNode, createEditor, type EditorState, type LexicalEditor } from "lexical";
+import { $getRoot, $createParagraphNode, createEditor, ParagraphNode, type EditorState, type LexicalEditor } from "lexical";
+// 块身份那一层：内存模型 ⇄ 落盘/同步形态（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）
+import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } from "../lib/blockIdentity";
+import { applyConflictBadges, installConflictBadges } from "./blockConflictBadge";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
@@ -31,11 +34,28 @@ import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
+import { api } from "../lib/api";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
 import { BlockSelectorPlugin } from "./plugins/BlockSelectorPlugin";
 import { BlockRefSyncPlugin } from "./plugins/BlockRefSyncPlugin";
+import {
+  ensureBlockIdOnTopLevelNode,
+  SELF_OWNED_BLOCK_ID_NODE_TYPES,
+  upgradeCodeToBlockNode,
+  upgradeHeadingToBlockNode,
+  upgradeHorizontalRuleToBlockNode,
+  upgradeListToBlockNode,
+  upgradeParagraphToBlockNode,
+  upgradeQuoteToBlockNode,
+  upgradeTableToBlockNode,
+} from "./blockIdTransform";
+import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { ListNode } from "@lexical/list";
+import { SafeCodeNode } from "./nodes/SafeCodeNode";
+import { HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
+import { TableNode } from "@lexical/table";
 import { CodeBlockToolbar } from "./plugins/CodeBlockToolbar";
 
 import { editorTheme as theme, EDITOR_NODES, ALLOWED_NODE_TYPES } from "./config";
@@ -165,7 +185,9 @@ function parseEditorState(contentJson: string): EditorState | null {
       console.warn("[ShuyoNote] 页面内容不可用(打开空白)。content_json 长度:", contentJson.length, "片段:", contentJson.slice(0, 300));
       return null;
     }
-    contentJson = valid;
+    // ★ 老形态（落盘/同步）→ **内存模型**：`paragraph` 换成 `shuyo-paragraph`，顶层块补齐块 ID。
+    // 顺序有意如此：**先按老形态校验/净化**（wire 格式才是我们承诺稳定的那一种），再换模型类型。
+    contentJson = toModelDoc(valid, newBlockId);
   }
   // Lexical catches a malformed node internally and routes it to the editor's
   // onError (a no-op here), returning an EMPTY state — so `probeEditor` never
@@ -205,33 +227,15 @@ function parseEditorState(contentJson: string): EditorState | null {
   }
 }
 
-// Generate a stable block id (UUID v4). Falls back to crypto.getRandomValues when
-// crypto.randomUUID is unavailable (non-secure contexts).
-function newBlockId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
+// Generate a stable block id (UUID v4). 实现在 `lib/blockIdentity.ts`（全应用只留一份）。
+// 这一层还要用它做**两形态互转**：内存用 `shuyo-paragraph`（块 ID 是声明属性，CRDT 才同步得到），
+// 落盘/同步一律还原成 `paragraph` + `blockId` 字段。见 docs/plans/2026-09-18-crdt-block-id-ownership.md。
 
 // Read the persisted block ids from a serialized editor state, in top-level
 // child order (null where a block has no id yet, e.g. legacy documents).
+// ⚠️ 老形态（落盘/同步）里 `blockId` 是**注入的字段**，所以要在这里读出来 → 种进内存模型的节点上。
 function extractSeedIds(contentJson: string): (string | null)[] {
-  try {
-    const parsed = JSON.parse(contentJson);
-    const children = parsed?.root?.children;
-    if (!Array.isArray(children)) return [];
-    return children.map((c: any) =>
-      typeof c?.blockId === "string" && c.blockId.length > 0 ? (c.blockId as string) : null,
-    );
-  } catch {
-    return [];
-  }
+  return topLevelBlockIds(contentJson).map((id) => (id.length > 0 ? id : null));
 }
 
 // Serialize an editor state, injecting a stable `blockId` into every top-level
@@ -246,16 +250,22 @@ function serializeWithBlockIds(editorState: EditorState, map: Map<string, string
     if (Array.isArray(rootChildren)) {
       children.forEach((child, i) => {
         if (i >= rootChildren.length) return;
+        // 内存模型里的节点（如 `BlockParagraphNode`）自己就带块 ID（`exportJSON` 已写出）；
+        // `map` 仍是**会话内的权威**（跨重排/复制粘贴保持身份，与今天一致），
+        // 所以这里：map 没有就优先用模型里的 ID（避免每次保存都把已有 ID 换掉），最后才新造。
+        const modelId = readBlockId(json?.root?.children?.[i]);
         let id = map.get(child.getKey());
         if (!id) {
-          id = newBlockId();
+          id = modelId || newBlockId();
           map.set(child.getKey(), id);
         }
         rootChildren[i].blockId = id;
       });
     }
   });
-  return JSON.stringify(json);
+  // ★ 写出去之前**还原成老形态**：`shuyo-paragraph` → `paragraph`。
+  // 落盘/同步的 JSON 里不许出现模型 type（旧版本客户端会把未注册类型整块丢掉 = 段落全丢）。
+  return toLegacyDoc(JSON.stringify(json));
 }
 
 // Tag each top-level block's DOM element with `data-block-id` so block-reference
@@ -286,6 +296,7 @@ function BlockIdPlugin({
 }) {
   const [editor] = useLexicalComposerContext();
   const focusBlockId = useEditorStore((s) => s.focusBlockId);
+  const conflictBlockIds = useEditorStore((s) => s.conflictBlockIds);
 
   // Seed ids once, matching persisted order.
   useEffect(() => {
@@ -296,6 +307,55 @@ function BlockIdPlugin({
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
+
+  // 新建的段落（粘贴 / markdown 导入 / HTML 导入 / 空编辑器首段，以及 Lexical 内部自己造的）
+  // 一律**升级成模型段落**（`shuyo-paragraph` + 声明块 ID）：这样块 ID 来自**模型**，
+  // 而不是等到保存时才注入 JSON（那种 ID 在 CRDT 平面里没有稳定身份）。
+  // 创建段落的调用点太散，逐个改必漏 ⇒ 用节点变换一处覆盖。理由见 `blockIdTransform.ts`。
+  useEffect(
+    () => editor.registerNodeTransform(ParagraphNode, upgradeParagraphToBlockNode),
+    [editor],
+  );
+  // 标题同理（第 4 步逐类型加，每加一个类型补一条判据）。
+  useEffect(
+    () => editor.registerNodeTransform(HeadingNode, upgradeHeadingToBlockNode),
+    [editor],
+  );
+  // 引用（第 4 步第二个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(QuoteNode, upgradeQuoteToBlockNode),
+    [editor],
+  );
+  // 列表（第 4 步第三个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(ListNode, upgradeListToBlockNode),
+    [editor],
+  );
+  // 代码块（第 4 步第四个类型）。变换注册在 SafeCodeNode 上（它的 type 是 `"code"`）。
+  useEffect(
+    () => editor.registerNodeTransform(SafeCodeNode, upgradeCodeToBlockNode),
+    [editor],
+  );
+  // 水平线（第 4 步第五个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(HorizontalRuleNode, upgradeHorizontalRuleToBlockNode),
+    [editor],
+  );
+  // 表格（第 4 步第六个类型）。
+  useEffect(
+    () => editor.registerNodeTransform(TableNode, upgradeTableToBlockNode),
+    [editor],
+  );
+  // 自有节点（不需要新 type）：只给**新建的顶层块**补身份。清单在 `SELF_OWNED_BLOCK_ID_NODE_TYPES`，
+  // 新增一类自有节点只要往那个数组加一行（注册与判据共用同一份清单，不会漏）。
+  useEffect(() => {
+    const disposers = SELF_OWNED_BLOCK_ID_NODE_TYPES.map((node) =>
+      editor.registerNodeTransform(node, ensureBlockIdOnTopLevelNode),
+    );
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
   }, [editor]);
 
   // Tag DOMs on mount and on every update.
@@ -355,8 +415,7 @@ function BlockIdPlugin({
 
   // Scroll to + highlight the focused block. Retries briefly so cross-page jumps
   // land after the new editor mounts (the old editor unmounts and cancels here).
-  useEffect(() => {
-    if (!focusBlockId) return;
+  useEffect(() => {    if (!focusBlockId) return;
     let cancelled = false;
     let attempts = 0;
     const attempt = () => {
@@ -382,12 +441,54 @@ function BlockIdPlugin({
     };
   }, [focusBlockId, editor, map]);
 
+  // 阶段 1 · **冲突块角标**：提示条把"哪几块有未决冲突"发布到 store，这里把它打到 DOM 上。
+  // 每次 editor update 之后再打一遍 —— Lexical 结构一变会重建 DOM，类名会跟着没；
+  // 没有冲突（空表）时只清一次，不挂 listener。
+  // "打一次 + 每次 update 重打"这段形状抽在 `installConflictBadges` 里（macOS 要的负判据就钉在它上）。
+  useEffect(() => {
+    if (conflictBlockIds.length === 0) {
+      applyConflictBadges([]);
+      return;
+    }
+    return installConflictBadges(editor, () => {
+      tagBlockDoms(editor, map, editor.getEditorState());
+      applyConflictBadges(conflictBlockIds);
+    });
+  }, [conflictBlockIds, editor, map]);
+
   return null;
 }
 
 // Lazy-load the drawing editor modal so the (large) Excalidraw bundle is split
 // into its own chunk and only fetched when a user actually edits a drawing.
 const DrawingEditorModal = lazy(() => import("../components/DrawingEditorModal"));
+
+/**
+ * 阶段 1 · **正文文本的本地修复**（见 `lib/pageTextRepair.ts`）。
+ *
+ * 合并 / 裁决产物的正文仍是页级胜方那一份（那种内容是拼出来的、没有编辑器参与），
+ * 于是这里趁**编辑器已经把文档解析好**的时候按编辑器语义算一遍，交给那一层去比、不同才写回 ——
+ * 只动正文（不动内容、不动 `dirty`）。**比较在那一层里做**（界面文件读那一列会把收口门禁顶红）。
+ */
+function PageTextRepairPlugin({ pageId }: { pageId: string }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    if (!pageId) return;
+    // 与保存路径**同一句**（`$getRoot().getTextContent()`）—— 所以这不是"第二份派生实现"
+    const derived = editor.getEditorState().read(() => $getRoot().getTextContent());
+    void api
+      .refreshPageText(pageId, derived)
+      .then((repaired) => {
+        // ★ AMD 2026-09-22：自动修复**不是用户操作** ⇒ 别静默（"我的库什么时候被改过"要查得到），
+        //   但也别做成第二个冲突 UI —— 只留一行日志（不写 `page_conflicts`）。
+        if (repaired) console.info(`[doc-content] 正文修复：page=${pageId}`);
+      })
+      .catch(() => {
+        /* 修不了不打扰用户：下一次打开这一页会再试一遍 */
+      });
+  }, [editor, pageId]);
+  return null;
+}
 
 const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
   // Stable block identity: node key → block id, and the persisted ids (in
@@ -436,9 +537,11 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <TablePlugin hasHorizontalScroll />
         <OnChangePlugin onChange={onChange} />
         <BlockIdPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
+        <PageTextRepairPlugin pageId={pageId} />
         <BlockRefPlugin pageId={pageId} />
         <PdfRefPlugin />
         <BlockRefSyncPlugin />
+      {/* 块身份那一层的模型节点升级（见下方 BlockIdPlugin 里的 registerNodeTransform） */}
         <BlockSelectorPlugin />
         <CodeBlockToolbar />
         <MarkdownShortcutPlugin transformers={SHUYONOTE_TRANSFORMERS} />

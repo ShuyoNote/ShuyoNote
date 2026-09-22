@@ -488,6 +488,17 @@ export const api = {
   listVersions: (pageId: string) => invoke("list_versions", { pageId }),
   restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
   clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
+  // ---- 阶段 1 · 冲突留痕与裁决（提示 UI 用这两个入口）----
+  listPageConflicts: (pageId: string) => invoke("list_page_conflicts", { pageId }),
+  resolvePageConflict: (conflictId: string, choice: "local" | "remote") =>
+    invoke("resolve_page_conflict", { conflictId, choice }),
+  /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
+  refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),
+  /**
+   * 阶段 1 · B1：**待重建正文的队列**（补算器按它把合并/裁决过的页面补上）。
+   * `limit` 只是"这一批取几页"；`total` 才是"还有多少页"。
+   */
+  listStaleTextPages: (limit?: number) => invoke("list_stale_text_pages", { limit }),
   exportBackup: (destPath: string) =>
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>
