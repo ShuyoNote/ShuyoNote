@@ -100,9 +100,7 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange, showStatu
               <span>删除</span>
             </button>
           </>
-        ) : (
-          <span className="pdf-annot-tip">先在页面选中一条标注，即可摘录、复制引用或删除</span>
-        )}
+        ) : null}
       </div>
       {/* 页面能力提示条：文本层状态 + OCR（无文本层时）。窄屏默认收起（见 Props.showStatus）。 */}
       {showStatus && (
