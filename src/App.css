@@ -21345,3 +21345,94 @@ body.is-plugin-panel-open .main {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   阶段 1 · **冲突提示条**（`components/ConflictBanner.tsx`）
+
+   裁定 (iii)："判不了就**不静默选边**" —— 同一块被两台设备同时改过时，这条提示出现在页面顶部，
+   逐条给出「本机那一版 / 远端那一版」两个按钮（留本地 / 用远端）。**没有冲突时它整条不渲染**。
+
+   为什么用 `.main` 的直接子元素：它属于"页面级状态"，与 `.editor-toolbar-bar` 同一层。
+   窄屏下**只换行、不裁**（`flex-wrap`）—— 44px 触摸目标那条纪律同样适用于这两个按钮。
+   --------------------------------------------------------------------------- */
+.conflict-banner {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font-size: 13px;
+}
+.conflict-banner-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.conflict-banner-title {
+  font-weight: 600;
+}
+.conflict-banner-hint {
+  color: var(--text-dim);
+}
+.conflict-banner-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.conflict-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.conflict-item-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+.conflict-side {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conflict-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.conflict-btn {
+  min-height: 44px;
+  min-width: 72px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.conflict-btn:hover {
+  background: var(--hover);
+}
+.conflict-btn-primary {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+/* 阶段 1 · **冲突块角标**（`editor/blockConflictBadge.ts`）：提示条里那几条对应的块，在正文里也看得出来。
+   只用一条内阴影，不动块的背景 —— 正文里的背景属于主题/引用/代码块，改它会把格式吃掉。 */
+.block-conflict {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+

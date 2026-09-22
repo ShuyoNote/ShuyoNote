@@ -11,6 +11,7 @@ import {
 } from "lexical";
 import type { JSX } from "react";
 import { Suspense, lazy } from "react";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 // Lazy-load Excalidraw so it's not in the first-paint bundle. Only a page that
 // actually contains a drawing block pays the (large) cost of loading the scene.
 const InlineDrawing = lazy(() => import("../../components/InlineDrawing"));
@@ -32,6 +33,8 @@ export type SerializedDrawingNode = Spread<
     zoom?: number | null;
     scrollX?: number | null;
     scrollY?: number | null;
+    blockId?: string;
+    blockRev?: number;
   },
   SerializedLexicalNode
 >;
@@ -47,6 +50,10 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   __zoom: number | null;
   __scrollX: number | null;
   __scrollY: number | null;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "drawing";
@@ -64,7 +71,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       node.__zoom,
       node.__scrollX,
       node.__scrollY,
+      node.__blockId,
       node.__key,
+      node.__blockRev,
     );
   }
 
@@ -79,7 +88,9 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     zoom: number | null = null,
     scrollX: number | null = null,
     scrollY: number | null = null,
+    blockId = "",
     key?: NodeKey,
+    blockRev: number | null = null,
   ) {
     super(key);
     this.__hash = hash;
@@ -92,6 +103,32 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
     this.__zoom = zoom;
     this.__scrollX = scrollX;
     this.__scrollY = scrollY;
+    this.__blockId = blockId;
+    this.__blockRev = blockRev;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as DrawingNode).__blockId;
+    this.__blockRev = (prevNode as DrawingNode).__blockRev;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -143,21 +180,27 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedDrawingNode {
-    return {
-      ...super.exportJSON(),
-      type: "drawing",
-      version: 1,
-      hash: this.__hash,
-      mime: this.__mime,
-      thumbHash: this.__thumbHash,
-      thumbMime: this.__thumbMime ?? undefined,
-      text: this.__text,
-      width: this.__width,
-      height: this.__height,
-      zoom: this.__zoom,
-      scrollX: this.__scrollX,
-      scrollY: this.__scrollY,
-    };
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "drawing",
+          version: 1,
+          hash: this.__hash,
+          mime: this.__mime,
+          thumbHash: this.__thumbHash,
+          thumbMime: this.__thumbMime ?? undefined,
+          text: this.__text,
+          width: this.__width,
+          height: this.__height,
+          zoom: this.__zoom,
+          scrollX: this.__scrollX,
+          scrollY: this.__scrollY,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
+    );
   }
 
   static importJSON(serializedNode: SerializedDrawingNode): DrawingNode {
@@ -175,6 +218,8 @@ export class DrawingNode extends DecoratorNode<JSX.Element> {
       serializedNode.zoom ?? null,
       serializedNode.scrollX ?? null,
       serializedNode.scrollY ?? null,
+      blockIdOf(serializedNode),
+      blockRevOf(serializedNode),
     );
   }
 }
@@ -190,8 +235,12 @@ export function $createDrawingNode(
   zoom: number | null = null,
   scrollX: number | null = null,
   scrollY: number | null = null,
+  blockId?: string,
+  blockRev: number | null = null,
 ): DrawingNode {
-  return $applyNodeReplacement(new DrawingNode(hash, mime, thumbHash, thumbMime, text, width, height, zoom, scrollX, scrollY));
+  return $applyNodeReplacement(
+    new DrawingNode(hash, mime, thumbHash, thumbMime, text, width, height, zoom, scrollX, scrollY, blockId ?? "", undefined, blockRev),
+  );
 }
 
 export function $isDrawingNode(node: LexicalNode | null | undefined): node is DrawingNode {

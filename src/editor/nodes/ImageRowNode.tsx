@@ -10,6 +10,7 @@ import {
   type Spread,
 } from "lexical";
 import type { CSSProperties, JSX } from "react";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 // A horizontal row of images (e.g. a GitHub README's <p align="center"> shield
 // badges). Lexical's inline DecoratorNode images don't flow in a paragraph in
@@ -26,24 +27,56 @@ export interface ImageRowItem {
 export type SerializedImageRowNode = Spread<
   {
     items: ImageRowItem[];
+    blockId?: string;
+    blockRev?: number;
   },
   SerializedLexicalNode
 >;
 
 export class ImageRowNode extends DecoratorNode<JSX.Element> {
   __items: ImageRowItem[];
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "imageRow";
   }
 
   static clone(node: ImageRowNode): ImageRowNode {
-    return new ImageRowNode(node.__items, node.__key);
+    return new ImageRowNode(node.__items, node.__blockId, node.__key, node.__blockRev);
   }
 
-  constructor(items: ImageRowItem[] = [], key?: NodeKey) {
+  constructor(items: ImageRowItem[] = [], blockId = "", key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__items = items;
+    this.__blockId = blockId;
+    this.__blockRev = blockRev;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as ImageRowNode).__blockId;
+    this.__blockRev = (prevNode as ImageRowNode).__blockRev;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -97,15 +130,21 @@ export class ImageRowNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedImageRowNode {
-    return {
-      ...super.exportJSON(),
-      type: "imageRow",
-      items: this.__items,
-    };
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "imageRow",
+          items: this.__items,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
+    );
   }
 
   static importJSON(serializedNode: SerializedImageRowNode): ImageRowNode {
-    return $createImageRowNode(serializedNode.items ?? []);
+    return $createImageRowNode(serializedNode.items ?? [], blockIdOf(serializedNode), blockRevOf(serializedNode));
   }
 
   isInline(): boolean {
@@ -113,8 +152,8 @@ export class ImageRowNode extends DecoratorNode<JSX.Element> {
   }
 }
 
-export function $createImageRowNode(items: ImageRowItem[] = []): ImageRowNode {
-  return $applyNodeReplacement(new ImageRowNode(items));
+export function $createImageRowNode(items: ImageRowItem[] = [], blockId = "", blockRev: number | null = null): ImageRowNode {
+  return $applyNodeReplacement(new ImageRowNode(items, blockId, undefined, blockRev));
 }
 
 export function $isImageRowNode(node: LexicalNode | null | undefined): node is ImageRowNode {

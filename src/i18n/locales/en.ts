@@ -100,4 +100,19 @@ export default {
     database: "Database",
     page: "Page",
   },
+  // Stage 1 · conflict banner (`components/ConflictBanner.tsx`)
+  conflicts: {
+    title: "{{count}} conflict(s) on this page",
+    hint: "The same block was edited on two devices. Pick one side; the other is not lost — it stays in version history.",
+    local: "This device",
+    remote: "Remote",
+    locate: "Locate",
+    keepLocal: "Keep local",
+    useRemote: "Use remote",
+    resolved: "Merged this block as you chose",
+  },
+  // Stage 1 · body-text index repair pass (`components/TextRepairRunner.tsx`, B1)
+  textRepair: {
+    pending: "{{count}} page(s) still need their text index rebuilt (merged-in content is not searchable yet — open the page to fix it)",
+  },
 } as const;

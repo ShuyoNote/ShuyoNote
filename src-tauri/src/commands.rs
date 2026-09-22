@@ -379,7 +379,15 @@ pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String
 
     let content = crate::doc_content::DocContent {
         title: args.title.unwrap_or(cur.title),
-        json: args.content_json.unwrap_or(cur.json),
+        // ★ **阶段 1**：保存时给每个有身份的顶层块盖 `blockRev`（baseline = 库里这一页）。
+        //   块级判定（`sync::apply_upsert` 的 `merge_remote_content`）靠它比"哪一块更新"；
+        //   不盖章 ⇒ 判定每一页都会回落到页级 LWW，接线等于白接。
+        //   ⚠️ 顺序：**先盖章再落库/快照** —— 快照里存的应当是"用户真正保存的那一版"（含 rev）。
+        json: crate::doc_content::stamp_block_revs(
+            &c,
+            &args.id,
+            &args.content_json.unwrap_or_else(|| cur.json.clone()),
+        )?,
         text: args.content_text.unwrap_or(cur.text),
     };
 
@@ -775,4 +783,54 @@ mod pdf_engine_tests {
             assert!(err.contains("pdfium"), "错里要给出当下可用的默认项：{err}");
         }
     }
+}
+
+/// **这一页未裁决的冲突**（阶段 1：裁定 (iii) 的"不静默选边"要靠它显示给用户）。
+///
+/// 纯读；数据在本地表 `page_conflicts`，写入发生在远端应用路径（`doc_content::apply_remote_page`）。
+#[tauri::command]
+pub fn list_page_conflicts(
+    db: State<Db>,
+    page_id: String,
+) -> Result<Vec<crate::doc_content::PageConflict>, String> {
+    let c = conn(&db);
+    crate::doc_content::unresolved_page_conflicts(&c, &page_id)
+}
+
+/// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。
+///
+/// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。
+#[tauri::command]
+pub fn resolve_page_conflict(db: State<Db>, conflict_id: String, choice: String) -> Result<(), String> {
+    let c = conn(&db);
+    let choice = match choice.as_str() {
+        "local" => crate::doc_content::ConflictChoice::Local,
+        "remote" => crate::doc_content::ConflictChoice::Remote,
+        other => return Err(format!("choice 只能是 local 或 remote，收到 {other}")),
+    };
+    crate::doc_content::resolve_page_conflict(&c, &conflict_id, choice)
+}
+
+/// **正文文本的本地修复**（阶段 1）：有编辑器的那一侧按编辑器语义算好文本，交给它写回。
+///
+/// ⚠️ **只动正文**（内容 JSON 与 `dirty` 都不动）—— 它不是用户编辑，别当成一笔本地改动推上去。
+/// 返回**是否真的修了**（相同就一次写库都没有）。
+#[tauri::command]
+pub fn refresh_page_text(db: State<Db>, page_id: String, text: String) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::doc_content::refresh_page_text_if_stale(&c, &page_id, &text)
+}
+
+/// ★ **待重建正文的队列**（B1，2026-09-22）：合并产物 / 冲突裁决之后，那一页的正文列与 FTS 需要
+/// 按**编辑器语义**重算一遍（Rust 侧没有那个派生实现 —— 唯一实现在前端 `src/lib/contentText.ts`）。
+/// 这个命令给补算器两样东西：**这一批要补的页面**（各带 `doc_json`）与**待补总数**（界面要能说"还有 N 页"）。
+///
+/// ⚠️ 只读；`limit` 夹在 1..=50（补算是**有预算**的后台动作，不许一次把整库拖进来）。
+#[tauri::command]
+pub fn list_stale_text_pages(
+    db: State<Db>,
+    limit: Option<usize>,
+) -> Result<crate::doc_content::StaleTextQueue, String> {
+    let c = conn(&db);
+    crate::doc_content::stale_text_queue(&c, limit.unwrap_or(10))
 }
