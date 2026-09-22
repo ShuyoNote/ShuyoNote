@@ -69,6 +69,51 @@ export function prefixLooksLinkable(dir, { exists = existsSync, readdir = readdi
   return false;
 }
 
+/**
+ * 纯函数：把「准备步骤失败」的原始输出翻成**可操作**的提示（而不是每次都念同一条）。
+ *
+ * 为什么加（2026-09-22 AMD 在 Windows 上真踩到）：这条原先只印一句「最常见：`cargo` 不在 PATH」。
+ * 而那次真因是 `cargo clean` 碰到**正在运行的 `shuyonote.exe`**
+ * （`error: failed to remove ... shuyonote.exe` / `Caused by: 拒绝访问。 (os error 5)`）——
+ * 提示把人引去查 PATH，方向完全错了，白跑一轮。两类原因的可操作修法完全不同 ⇒ 按**输出里的证据**分类。
+ */
+export function explainPrepareFailure(output = "") {
+  const t = String(output);
+  const hints = [];
+  if (/os error 5|拒绝访问|Access is denied|being used by another process|另一个程序正在使用/i.test(t)) {
+    hints.push(
+      "有进程占着 `target/` —— 最常见的正是**开发实例还在跑**（`shuyonote.exe` 让 `cargo clean` 删不掉自己）。" +
+        "先停掉它再跑本门禁：`Get-Process shuyonote,cargo -ErrorAction SilentlyContinue | Stop-Process -Force`（Windows）",
+    );
+  }
+  if (/not recognized|不是内部或外部命令|command not found|ENOENT/i.test(t)) {
+    hints.push("`cargo` 不在 PATH（POSIX：`export PATH=\"$HOME/.cargo/bin:$PATH\"`；Windows：把 `%USERPROFILE%\\.cargo\\bin` 加进 PATH）");
+  }
+  if (hints.length === 0) {
+    hints.push("看上面那 8 行原始输出（本函数认得的两类：`target/` 被占 / `cargo` 不在 PATH）");
+  }
+  return hints;
+}
+
+/**
+ * 纯函数：把**测试 exe 运行时**要找的 OpenSSL 目录并进 PATH（只在 win32 上做）。
+ *
+ * 为什么需要（2026-09-22 AMD 在 Windows 上真踩到，两跳才定位到）：
+ *   本机全局 `OPENSSL_DIR` 是**动态**前缀（`lib\libcrypto.lib` 是**导入库** ＋ `bin\libcrypto-3-x64.dll`）
+ *   ⇒ 测试 exe 编得出来，但**加载时**找不到 `libcrypto-3-x64.dll`，进程直接以
+ *   `0xC0000135 STATUS_DLL_NOT_FOUND` 退出，而 cargo 只报一句 `test failed`（看不出是缺 DLL）。
+ *   `scripts/start-desktop-dev.ps1` 本来就把 `<前缀>\bin` 放进 PATH（所以 app 跑得起来），门禁没放
+ *   ⇒ 这一格在 Windows 上**根本跑不起来**（"Windows 侧无独立库级读数"的真正原因之一）。
+ *   POSIX 靠 rpath/install_name，不需要这一步。
+ */
+export function testPathFor(pathValue, opensslDir, platform = process.platform) {
+  if (platform !== "win32" || !opensslDir) return pathValue;
+  const bin = join(opensslDir, "bin");
+  const parts = String(pathValue ?? "").split(";").filter(Boolean);
+  if (parts.some((p) => p.toLowerCase() === bin.toLowerCase())) return pathValue;
+  return [bin, ...parts].join(";");
+}
+
 /** 纯函数：挑这次要用哪个 OpenSSL 前缀（没得用就 null ⇒ 自报跳过）。 */
 export function pickOpensslDir({ env = process.env, platform = process.platform, exists = existsSync } = {}) {
   const fromEnv = (env.OPENSSL_DIR || "").trim();
@@ -128,7 +173,9 @@ function main() {
     );
     process.exit(0);
   }
-  const env = { ...process.env, ...sslEnv };
+  // ★ Windows 上还要让**测试 exe 运行时**找得到 OpenSSL 的 DLL：本机全局前缀是动态的
+  //   （参见 `testPathFor` 的注释——没有这一步，测试 exe 会以 0xC0000135 直接退出）。
+  const env = { ...process.env, ...sslEnv, PATH: testPathFor(process.env.PATH, sslEnv.OPENSSL_DIR) };
   console.log(`（OPENSSL_DIR=${sslEnv.OPENSSL_DIR}／LIB_DIR=${sslEnv.OPENSSL_LIB_DIR}／INCLUDE_DIR=${sslEnv.OPENSSL_INCLUDE_DIR}）`);
   let applied = false;
   let exitCode = 0;
@@ -144,7 +191,7 @@ function main() {
     } catch (e) {
       const detail = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim().split("\n").slice(-8).join("\n   | ");
       console.error(`❌ 准备步骤失败（打补丁/清产物）。原始输出尾部：\n   | ${detail || e.message}`);
-      console.error("   最常见：`cargo` 不在 PATH（本机：export PATH=\"$HOME/.cargo/bin:$PATH\"）。");
+      for (const h of explainPrepareFailure(`${detail}\n${e.message ?? ""}`)) console.error(`   · ${h}`);
       return 1;
     }
     applied = true;

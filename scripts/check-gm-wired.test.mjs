@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseTestResult, pickOpensslDir, prefixLooksLinkable } from "./check-gm-wired.mjs";
+import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor } from "./check-gm-wired.mjs";
 
 describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   it("给了 OPENSSL_DIR 且目录在 ⇒ 用它", () => {
@@ -30,8 +30,7 @@ describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   });
 });
 
-describe("check-gm-wired：解析 cargo 的 test result", () => {
-  it("单块", () => {
+describe("check-gm-wired：解析 cargo 的 test result", () => {  it("单块", () => {
     expect(parseTestResult("test result: ok. 428 passed; 0 failed; 18 ignored; 0 measured")).toEqual({ passed: 428, failed: 0 });
   });
 
@@ -95,5 +94,57 @@ describe("check-gm-wired：前缀能不能真的链接（Linux 的 `/usr` 要看
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ★ 这一组是**真踩出来的**（2026-09-22，AMD 的 Windows）：`--prepare` 失败时门禁原先只印
+//   「最常见：`cargo` 不在 PATH」，而那次真因是 `cargo clean` 碰上**正在跑的 `shuyonote.exe`**
+//   （`os error 5 拒绝访问`）⇒ 提示把人引去查 PATH，方向完全错了、白跑一轮。
+//   两类原因的可操作修法完全不同 ⇒ 必须按证据分开，且**不许互相冒充**。
+describe("check-gm-wired：准备失败的提示要分清「target 被占」与「cargo 不在 PATH」", () => {
+  const LOCKED = [
+    "sm-library-build: ① 清 shuyonote 的 debug 产物",
+    "error: failed to remove file `C:\\...\\target\\debug\\deps\\shuyonote.exe`",
+    "Caused by:",
+    "    拒绝访问。 (os error 5)",
+  ].join("\n");
+
+  it("★ target 被占（os error 5 / 拒绝访问）⇒ 提示指向「先停掉 dev 实例」，且**不许**提 PATH", () => {
+    const hints = explainPrepareFailure(LOCKED).join("\n");
+    expect(hints).toMatch(/占着/);
+    expect(hints).toMatch(/shuyonote/);
+    expect(hints).not.toMatch(/PATH/);
+  });
+
+  it("cargo 不在 PATH ⇒ 提示指向 PATH", () => {
+    const hints = explainPrepareFailure("'cargo' is not recognized as an internal or external command").join("\n");
+    expect(hints).toMatch(/PATH/);
+  });
+
+  it("两类证据都没有 ⇒ 如实说「看原始输出」，不瞎猜一个方向", () => {
+    const hints = explainPrepareFailure("some unexpected failure").join("\n");
+    expect(hints).toMatch(/原始输出/);
+  });
+});
+
+// ★ 同样是**真踩出来的**（2026-09-22 AMD 的 Windows）：测试 exe 编出来了却在**加载时**死掉，
+//   cargo 只报一句 `test failed`，真因是 `0xC0000135 STATUS_DLL_NOT_FOUND` —— 本机全局前缀是
+//   **动态**的，运行时要 `libcrypto-3-x64.dll`，而门禁没把 `<前缀>\bin` 放进 PATH（dev 脚本放了）。
+describe("check-gm-wired：Windows 上测试 exe 要能找到 OpenSSL 的 DLL", () => {
+  it("★ win32 + 动态前缀 ⇒ 把 `<前缀>\\bin` 并到 PATH 最前（否则 0xC0000135 直接退出）", () => {
+    const p = testPathFor("C:\\Windows;C:\\other", "C:\\OpenSSL", "win32");
+    expect(p.split(";")[0]).toBe(join("C:\\OpenSSL", "bin"));
+    expect(p).toContain("C:\\other");
+  });
+
+  it("幂等：已经在 PATH 里就不重复插（比大小写无关）", () => {
+    const once = testPathFor("C:\\x", "C:\\OpenSSL", "win32");
+    expect(testPathFor(once, "C:\\OpenSSL", "win32")).toBe(once);
+    expect(testPathFor(once.toLowerCase(), "C:\\OpenSSL", "win32")).toBe(once.toLowerCase());
+  });
+
+  it("POSIX 不动它（那边靠 rpath / install_name，不需要 PATH）", () => {
+    expect(testPathFor("/usr/bin:/bin", "/opt/tongsuo", "linux")).toBe("/usr/bin:/bin");
+    expect(testPathFor("/usr/bin", "/opt/tongsuo", "darwin")).toBe("/usr/bin");
   });
 });
