@@ -58,6 +58,25 @@ if (pristine.includes("SHUYONOTE-GM")) {
 // 见 README 的「P3 还没做的部分」—— 那是 `cipher` 回调，与这里同一文件同一结构体，但需要另一层设计。
 const EDITS = [
   {
+    id: "0 默认值也设成 SM3（v4；按 provider 守卫）",
+    anchor: `static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
+static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
+`,
+    add: `/* SHUYONOTE-GM (v4): 国密构建把**默认值**也设成 SM3 —— owner 快路（不做兼容）＋ 消灭
+** 「库级参数靠应用约定」那一类 bug（只要有一条 keying 路径忘了手动设标签，就会静默回落）。
+** ⚠️ **必须**用 SQLCIPHER_CRYPTO_OPENSSL 守卫：本补丁的能力门（见 2a/2b）对 provider 不支持的算法
+** 返回错误，而 CommonCrypto / libtomcrypt 不支持 SM3 ⇒ 无条件改会让那两个后端在 ctx_init 就整个打不开。
+** ⇒ 本分支编译出的默认值**与后端有关**（OpenSSL/国密 ⇒ SM3；其它 ⇒ SHA512），这是**有意**的。 */
+#ifdef SQLCIPHER_CRYPTO_OPENSSL
+static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SM3;
+static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SM3;
+#else
+static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
+static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
+#endif
+`,
+  },
+  {
     id: "6 OPENSSL_CIPHER：无条件 SM4 页加密（P3 快路）",
     anchor: `#define OPENSSL_CIPHER EVP_aes_256_cbc()
 `,
