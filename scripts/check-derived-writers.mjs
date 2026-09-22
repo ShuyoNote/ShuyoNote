@@ -16,7 +16,7 @@ import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { scanDerivedWriters } from "./lib/derived-writers.mjs";
+import { ALLOWED_RUST_WRITERS, scanDerivedWriters } from "./lib/derived-writers.mjs";
 import { productionText } from "./lib/rust-scan.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -59,8 +59,14 @@ if (violations.length) {
   console.error(`
 这两张表（attachment_text / chunks）的派生文本只由 TS 抽取管线写：
   src/lib/extract/store.ts / chunkStore.ts（经 sqliteStore.ts / web.ts）
-Rust 侧若确实需要写，请先回答"谁拥有这条派生"并把规则与判据一起改 —— 不要绕过这条门禁。`);
+**唯一豁免**是桌面运输通道 \`src-tauri/src/derived_transport.rs\`（它只执行 TS 发来的 op，
+派生的 owner 仍是 TS 那一份 —— 见 scripts/lib/derived-writers.mjs 的 ALLOWED_RUST_WRITERS）。
+除此之外 Rust 侧若确实需要写，请先回答"谁拥有这条派生"并把规则与判据一起改 —— 不要绕过这条门禁。`);
   process.exit(1);
 }
 
-console.log(`✓ 派生表唯一写入者：扫过 ${files.length} 个 .rs（已剥测试尾部），生产写入 0 处`);
+console.log(
+  `✓ 派生表唯一写入者：扫过 ${files.length} 个 .rs（已剥测试尾部），生产写入 0 处` +
+    `（豁免 ${ALLOWED_RUST_WRITERS.length} 个已批准的运输通道文件）`,
+);
+

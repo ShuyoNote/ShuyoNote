@@ -96,4 +96,22 @@ describe("scanDerivedWriters：按文件汇总，路径带出来", () => {
   it("空输入 ⇒ 空结果（判据本身不许把'没扫到'当成绿）", () => {
     expect(scanDerivedWriters([])).toEqual([]);
   });
+
+  // ★ 2026-09-20 那次 revert 的正解：**路径白名单**（桌面运输通道）＋ 反判据。
+  //   它被 revert 的原因是"门禁在运输通道落地之前写的，落地后立刻红" —— 处置办法是改规则与判据，不是删门禁。
+  it("★ 运输通道被豁免：`derived_transport.rs` 里的生产写入不算违规", () => {
+    const files = [{ path: "src-tauri/src/derived_transport.rs", text: 'tx.execute("INSERT INTO chunks (id) VALUES (?1)")' }];
+    expect(scanDerivedWriters(files)).toEqual([]);
+  });
+
+  it("★ 反判据：**别的** Rust 文件里同样的写法照样红（豁免不能变成总开关）", () => {
+    const files = [
+      { path: "src-tauri/src/search.rs", text: 'c.execute("INSERT INTO chunks (id) VALUES (?1)")' },
+      { path: "src-tauri/src/extract_rust.rs", text: 'c.execute("REPLACE INTO attachment_text (id) VALUES (?1)")' },
+    ];
+    expect(scanDerivedWriters(files).map((v) => v.path)).toEqual([
+      "src-tauri/src/search.rs",
+      "src-tauri/src/extract_rust.rs",
+    ]);
+  });
 });

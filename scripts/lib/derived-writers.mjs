@@ -67,12 +67,31 @@ export function findDerivedWrites(text) {
 }
 
 /**
+ * **唯一允许的 Rust 侧生产写入者**：桌面运输通道（`derived_transport.rs`）。
+ *
+ * 为什么它不是"第二条派生实现"（这是本门禁 2026-09-20 被 revert 的真正原因，必须写清楚）：
+ * 那个文件**不产出派生内容**，它只执行 TS 侧发过来的 op
+ * （`DerivedOp::ReplaceChunks` / `RemoveChunks` / …），在事务里替 TS 落库 ——
+ * **派生的 owner 仍然是 TS 抽取管线那一份**（`src/lib/extract/store.ts` / `chunkStore.ts`），
+ * 命令边界另一侧是同一个 owner。而本规则要防的是"Rust 侧自己长出一条派生"（症状：同一份附件两套派生文本）。
+ *
+ * ⚠️ 白名单**只按路径**，不按语句形状：形状能被绕过（换个写法就漏），路径不能。
+ * ⚠️ 2026-09-20 那次的教训：门禁是在这条运输通道落地**之前**写的，落地后它立刻红，
+ * 于是被 revert（merge 与 revert 相隔 32 秒、信箱里没有任何讨论）。正确处置是**把规则与判据一起改**
+ * —— 也就是这一处白名单 ＋ 下面那条"别的 Rust 文件照样红"的反判据。
+ */
+export const ALLOWED_RUST_WRITERS = ["src-tauri/src/derived_transport.rs"];
+
+/**
  * 给定 `{ path, text }`（text 已剥测试尾部）清单，返回违规项。
+ *
+ * 白名单命中的文件**整体跳过**（不是"只放过那几行"）：那个文件的存在本身就是被批准的形态。
  * @returns `{ path, table, line }[]`
  */
 export function scanDerivedWriters(files) {
   const out = [];
   for (const f of files) {
+    if (ALLOWED_RUST_WRITERS.includes(f.path)) continue;
     for (const hit of findDerivedWrites(f.text)) {
       out.push({ path: f.path, table: hit.table, line: hit.line });
     }
