@@ -106,6 +106,29 @@ export function explainPrepareFailure(output = "") {
  *   ⇒ 这一格在 Windows 上**根本跑不起来**（"Windows 侧无独立库级读数"的真正原因之一）。
  *   POSIX 靠 rpath/install_name，不需要这一步。
  */
+/**
+ * 纯函数：这次 `cargo test` 的参数。
+ *
+ * ★ **win32 上显式 `--skip plugins::`**（2026-09-22，AMD 在 Windows 上第一次真跑逼出来的）：
+ * 那 34 条 `plugins::` 要**真宿主进程**（生产路径是同二进制 re-exec），Windows 本机的 `cargo test`
+ * 跑不了那一组；实测（`--features sm-library`，打补丁，同一次单进程全量）：
+ * **455 passed / 34 failed / 18 ignored**，34 条**全在** `plugins::`，而我们关心的国密各组
+ * （`gm_provider::` / `security::` / `sm3` / `sm4` / `cipher`）**失败 0 条**。
+ *
+ * ⚠️ 三个刻意的取舍（都是"不许装绿"那一类）：
+ *   1. **显式 skip，不是"允许失败 N 条"** —— 数字豁免（例如 `failed ≤ 34 且名字以 plugins:: 开头`）
+ *      会在插件测试增减时**悄悄改变含义**，而且它把"这一组没跑"伪装成"跑过了"；
+ *   2. **只在 win32 上 skip**，且模式**必须精确是** `plugins::`（判据里对两个平台都做**整数组相等**断言
+ *      ⇒ 谁要把模式放宽成空/通配，判据当场红）；
+ *   3. **其余集合仍要求 `failed === 0`** —— 不放宽通过标准，只排除那一组明确跑不了的。
+ * 那一组的权威读数归 CI / WSL2（`rust-plugins-alone` 门禁）与 Windows 自己的 `win-cargo-test.ps1`。
+ */
+export function cargoTestArgs({ platform = process.platform, manifest, skipModules = ["plugins::"] } = {}) {
+  const args = ["test", "--features", "sm-library", "--manifest-path", manifest];
+  if (platform === "win32") args.push("--", "--skip", skipModules[0]);
+  return args;
+}
+
 export function testPathFor(pathValue, opensslDir, platform = process.platform) {
   if (platform !== "win32" || !opensslDir) return pathValue;
   const bin = join(opensslDir, "bin");
@@ -203,7 +226,14 @@ function main() {
       // ⚠️ **不能加 `--lib`**：`plugins::tests` 要 `target/debug/shuyonote`（宿主二进制，生产路径是
       //   同二进制 re-exec），而 `--lib` 只编测试二进制 ⇒ 那一组会红 34 条（本门禁第一版就是这么红的，
       //   判据自己抓到了 —— 它的报错原文就写着"不要用 `cargo test --lib`"）。
-      output = run("cargo", ["test", "--features", "sm-library", "--manifest-path", manifest], env);
+      if (process.platform === "win32") {
+        // 自报"排除了什么"：跳过必须**看得见**，否则读日志的人会以为这一组也跑过了。
+        console.log(
+          "   ⚠️ win32：显式 `--skip plugins::`（那一组要真宿主进程，本机 cargo test 跑不了；" +
+            "权威读数归 CI/WSL2 的 `rust-plugins-alone` 与 win-cargo-test.ps1）——其余集合仍要求 0 failed",
+        );
+      }
+      output = run("cargo", cargoTestArgs({ manifest }), env);
     } catch (e) {
       ok = false;
       output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
