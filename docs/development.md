@@ -698,7 +698,8 @@ curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
 与 `localVision` 同一条"只许本机端点"的红线）→ `attachmentDeps` → `av.transcript@1`。
 默认模型 `funasr-nano`；**桌面端走原生 http（不经 WebView）⇒ 没有 CORS 这一关**，Web 端才有。
 ⚠️ **live 冒烟还没跑过**：本机 herdsman 没起（`ECONNREFUSED 127.0.0.1:8080`）⇒ 现在的绿都是假端点那层；
-要真读数先让桌面应用的「模型商店」把服务起起来，再按上面两条 curl 复跑。细节见
+要真读数先让桌面应用的「模型商店」把服务起起来，再跑 `src/lib/ai/localTranscribe.live.test.ts`
+（**服务不在就跳过、并把理由写进 describe 标题**：TTS 合成 → 经我们自己的通道转写 → 经 `av.transcript@1` 成段）。细节见
 `docs/plans/2026-09-22-asr-wiring-plan.md` §6（含"换 ASR 模型今天不生效"那条参数优先级问题）。
 **§10.5 补一双孪生形态（2026-09-18，AMD 侧复核块 ID 分支时又踩到一次）**：上面那条治的是
 **本地分支没更新**，还有一种更隐蔽的 —— **`origin/dev` 这类远端跟踪 ref 静默过期**：
