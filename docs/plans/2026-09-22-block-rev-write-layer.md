@@ -241,7 +241,7 @@ JSON 变了，而正文列仍是写回前那一份（两个平台都是：Rust `
 `docs/development.md` 记过这条坑）⇒ 层里与 `web.ts` 里**都不能引**它；补算只能由**只在浏览器包里**的界面侧驱动
 （今天的 `PageTextRepairPlugin` 正是这个位置）。
 
-第 ② 件的两个形态（**未做，等 owner 拍板**）：
+第 ② 件的两个形态（**owner 2026-09-22 拍板选 B1**，落地见 §11）：
 
 - **B1（耐久队列）**：`pages` 加一列本地标志 `text_stale`（**不同步、不进导出**，与 `page_conflicts` 同族）；
   合并/裁决落库那一步置 1、补算写完清 0。好处：跨重启记得住、能报"**还有 N 页正文待重建**"。
@@ -251,6 +251,53 @@ JSON 变了，而正文列仍是写回前那一份（两个平台都是：Rust `
 
 ⚠️ macOS 那条禁令继续有效：**不许在"读"路径上惰性重建**（每次读都算 ⇒ 索引与库内容最容易不一致，且慢）
 —— 补算只能是**写路径**上的动作（合并/裁决落库之后、或打开页面时）。
+
+## 11. B1 已落地（第十段）：正文"待重建"标记 ＋ **补算器**（2026-09-22，owner 拍板）
+
+### 11.1 落点
+
+| 件 | 落点 |
+|---|---|
+| schema（两处） | Rust `db.rs`（`pragma_table_info` 检查 ＋ `ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0`）、Web `sqliteStore.ts`（DDL ＋ 同一个 ALTER） |
+| 层（两处，逐条对应） | Rust `doc_content.rs`：`text_stale` / `mark_text_stale` / `clear_text_stale` / `stale_text_queue`；TS `docContent.ts`：`textStale` / `markTextStale` / `clearTextStale` / `staleTextQueue` |
+| 打标记 | ① `apply_remote_page` / `applyRemoteContent` 的合并支（**且只在产物里留下了远端没有的本地块时**，见 §11.3）；② `resolve_page_conflict` / `resolvePageConflict`（裁决换了内容） |
+| 清标记 | `refresh_page_text_if_stale` / `refreshPageTextIfStale` 的**两条出口**：真的修了；或算出来与库里相同（§11.3 的假账） |
+| 队列读出口 | 命令 `list_stale_text_pages`（Rust `commands::list_stale_text_pages` ＋ `web.ts` 同名分支 ＋ `CommandMap` ＋ `api.listStaleTextPages`），返回 `{ total, pages: [{ page_id, title, doc_json }] }` |
+| 补算驱动（**界面侧**） | `src/components/TextRepairRunner.tsx`：`runTextRepairPass` 问队列 → 用**唯一派生实现**（`contentText.ts::deriveContentText`，探测编辑器、不需要 DOM）算文本 → `api.refreshPageText` 写回；挂载在 `App.tsx` 的根部浮层里，**应用启动 ＋ 每次同步结束**各跑一趟，`TEXT_REPAIR_BUDGET = 20` 页/趟，补不完就 `toast` **"还有 N 页正文待重建"**（i18n `textRepair.pending`） |
+| 日志 | 每补一页 `console.info("[doc-content] 正文补算：page=…")`（Rust 侧同款 `eprintln!`），与 AMD 那条"不许完全静默"一致；**不写 `page_conflicts`** |
+
+**为什么驱动在界面侧**：`contentText.ts` 拖着整张节点表，而 `docContent.ts` 会被 **node 侧** smoke 打进去
+（`scripts/smoke-web.mjs` 的 entryPoint 就是 `platform/web.ts`）⇒ 层里与 `web.ts` 里都不能引它。
+
+### 11.2 判据（Rust ＋ TS ＋ 脚本 ＋ 组件，四层）
+
+- Rust `only_a_real_merge_marks_the_text_as_stale`（四支：合并留下本地块 ⇒ 打；冲突回落／没什么可合／
+  **两端逐字相同** ⇒ 都不打）、`resolving_a_conflict_marks_the_text_as_stale_and_the_queue_lists_it`、
+  `repairing_clears_the_flag_even_when_the_derived_text_matches`；
+- TS `docContent.test.ts` 同名三条（逐条对应，含 `limit` 夹到 ≥1、页面不存在 ⇒ `undefined`）；
+- 脚本**场景 N**（`verify-two-device-sync.mjs`，真 `applyChange`）：吃下远端本身**不打** → 合并**打** →
+  此刻正文列还是**远端那一版**的文本（b2 写着"原始"、内容里已是 B 改的）→ 队列交得出来 →
+  补算后正文一致、标记清掉、队列空 → 相同文本再补一次不写（脚本断言 64 → **76**）；
+- 组件 `TextRepairRunner.test.ts` 五条：队列空 ⇒ 一次都不调／喂的是**唯一派生实现**的输出（且**不是**老算法
+  的空格拼接）／**预算**被真的尊重（第二批只问 2 页）／补不完回报 `remaining > 0`／同步中不跑、同步结束跑一趟并弹提示。
+
+### 11.3 落地时被抓住的两件事（都值得记）
+
+1. **"产物字符串 != 远端字符串"是错的判据** —— 物化会重排键序、剥掉嵌层同名键、写回 `blockRev`
+   ⇒ **内容逐字相同的两端也会得到不同的字符串** ⇒ 每一页同步都会被误打标记（假账）。
+   脚本场景 N 当场抓住 ⇒ 改成看**产物里有没有远端没有的本地块**（`kept_local` / `keptLocal`，
+   由 `merge_blocks` 的 `Local`/`OnlyLocal` 判定），并把它作为 `RemoteMerge::Merged` 的**字段**交出来
+   （返回值先说清"发生了什么"，与 §5 那条纪律同源）。
+2. **"相同也要清标记"**：合并/裁决可能**并没有**改动这一页的正文 ⇒ 不清就会永远挂着几页假账，
+   "还有 N 页待重建"就变成噪声（正是 macO 说的"提示变噪声等于没有提示"）。判据单独钉住。
+
+### 11.4 仍然存在的边界（如实）
+
+- 补算要有**应用在跑**：同步完立刻关掉应用 ⇒ 标记留着，下一次启动/同步继续补（这正是 B1 比 B2 强的地方：
+  **跨进程记得住**）；
+- 补算是**有预算**的（20 页/趟）：积压很多时一轮补不完，界面会说"还有 N 页"，而不是假装补完了；
+- Web 侧 `resolvePageConflict` 也打标记 ✓（那边搜索读正文列，见 §9 的更正）；
+- **阶段 2（正文 Yjs）落地后**这一列与补算器应当一起退场（那时正文由 CRDT 直接描述，没有"派生滞后"这件事）。
 
 ## 10. 回信那一轮（第九段：macOS / AMD 抓到的四条 ＋ 两个回答）
 

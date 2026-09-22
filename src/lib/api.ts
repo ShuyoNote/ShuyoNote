@@ -494,6 +494,11 @@ export const api = {
     invoke("resolve_page_conflict", { conflictId, choice }),
   /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
   refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),
+  /**
+   * 阶段 1 · B1：**待重建正文的队列**（补算器按它把合并/裁决过的页面补上）。
+   * `limit` 只是"这一批取几页"；`total` 才是"还有多少页"。
+   */
+  listStaleTextPages: (limit?: number) => invoke("list_stale_text_pages", { limit }),
   exportBackup: (destPath: string) =>
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>

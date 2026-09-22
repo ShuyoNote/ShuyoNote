@@ -971,6 +971,19 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         conn.execute("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0", [])?;
     }
 
+    // 阶段 1（B1，2026-09-22）· **正文列"待重建"标记**：合并产物 / 冲突裁决都是"内容拼出来的"，
+    // 而正文列与 FTS 仍是页级胜方那一份 ⇒ 那一页在一段时间内搜不到刚合并进来的字。
+    // 这一列就是"补算器"的工作队列（`1` = 待重建）。**本地状态：不同步、不进导出**（与
+    // `page_conflicts` 同族）—— 别的设备有它自己的标记。见 `doc_content.rs` 的同一节。
+    let pages_has_text_stale: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pages') WHERE name = 'text_stale'",
+        [],
+        |row| row.get(0),
+    )?;
+    if pages_has_text_stale == 0 {
+        conn.execute("ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+
     // Tag custom color (hex like "#c2410c"). NULL = use deterministic auto color.
     let tags_has_color: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('tags') WHERE name = 'color'",

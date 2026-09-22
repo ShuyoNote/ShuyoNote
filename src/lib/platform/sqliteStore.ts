@@ -230,7 +230,9 @@ export class SqliteStore {
         cover_height INTEGER NOT NULL DEFAULT 300,
         cover_pos REAL NOT NULL DEFAULT 50,
         sync_seq INTEGER NOT NULL DEFAULT 0,
-        dirty INTEGER NOT NULL DEFAULT 0
+        dirty INTEGER NOT NULL DEFAULT 0,
+        -- 阶段 1（B1）：正文列"待重建"（合并/裁决之后由补算器重建）。本地状态：不同步、不进导出。
+        text_stale INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS pdf_annotations (
         id TEXT PRIMARY KEY,
@@ -427,6 +429,13 @@ export class SqliteStore {
     }
     try {
       this.db.run("ALTER TABLE pages ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
+    } catch {
+      /* already exists */
+    }
+    // 阶段 1（B1，2026-09-22）· 正文列"待重建"标记：合并产物 / 冲突裁决之后那一页的正文与索引要按
+    // 编辑器语义重算。**本地状态：不同步、不进导出**（与 page_conflicts 同族）。见 `lib/docContent.ts`。
+    try {
+      this.db.run("ALTER TABLE pages ADD COLUMN text_stale INTEGER NOT NULL DEFAULT 0");
     } catch {
       /* already exists */
     }

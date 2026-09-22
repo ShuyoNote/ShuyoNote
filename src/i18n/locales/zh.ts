@@ -111,4 +111,8 @@ export default {
     useRemote: "用远端",
     resolved: "已按你的选择合并这一块",
   },
+  // 阶段 1 · 正文索引的补算器（`components/TextRepairRunner.tsx`，B1）
+  textRepair: {
+    pending: "还有 {{count}} 页正文待重建（合并进来的内容暂时搜不到，打开那一页即可）",
+  },
 } as const;

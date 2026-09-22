@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, textStale, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs, canonicalContent } from "./blockRev";
 
 beforeAll(() => {
@@ -641,5 +641,116 @@ describe("docContent 的正文文本本地修复（阶段 1 的收口）", () =>
     expect(readContent(db, "p1")!.text).toBe("又变了");
     // 页面不存在 ⇒ 不修（不猜）
     expect(refreshPageTextIfStale(db, "nope", "随便")).toBe(false);
+  });
+});
+
+// B1（2026-09-22）· 「正文待重建」标记 ＋ 队列 —— 与 Rust 侧 `doc_content::tests` 的同名三条**逐条对应**。
+describe("docContent 的「正文待重建」标记与队列（B1）", () => {
+  // 夹具就在这一段里（同文件其它 describe 各自也有一份，互不借用）
+  const blk = (blockId: string | undefined, rev: number | null, body: string) => ({
+    type: "paragraph",
+    ...(blockId === undefined ? {} : { blockId }),
+    ...(rev === null ? {} : { blockRev: rev }),
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+
+  it("★ 只有真合并/裁决才打标记（冲突回落与「没什么可合」两支不許打）", async () => {
+    const db = await freshDb();
+    // ① 合并成功 ⇒ 打
+    seedPage(
+      db,
+      "p1",
+      { title: "页", json: doc(blk("b1", 2, "本地改的"), blk("b2", 1, "b2 原始")), text: "本地正文" },
+      { dirty: 0, syncSeq: 1 },
+    );
+    const merged = applyRemoteContent(
+      db,
+      "p1",
+      {
+        id: "p1",
+        title: "页",
+        content_json: doc(blk("b1", 1, "b1 原始"), blk("b2", 2, "远端改的")),
+        content_text: "远端正文",
+      },
+      9,
+    );
+    expect(merged.merged).toBe(true);
+    expect(textStale(db, "p1")).toBe(true);
+
+    // ② 冲突回落（用远端原样）⇒ 不打
+    seedPage(db, "p2", { title: "页", json: doc(blk("b1", 2, "我改的")), text: "" }, { dirty: 0, syncSeq: 1 });
+    const conflicted = applyRemoteContent(
+      db,
+      "p2",
+      { id: "p2", title: "页", content_json: doc(blk("b1", 2, "他改的")), content_text: "" },
+      9,
+    );
+    expect(conflicted.unresolved).toBe(1);
+    expect(textStale(db, "p2")).toBe(false);
+
+    // ③ 没什么可合（老内容没有块身份）⇒ 也不打
+    seedPage(db, "p3", { title: "页", json: doc(blk(undefined, null, "老")), text: "" }, { dirty: 0, syncSeq: 1 });
+    applyRemoteContent(db, "p3", { id: "p3", title: "页", content_json: doc(blk("b1", 1, "新")), content_text: "" }, 9);
+    expect(textStale(db, "p3")).toBe(false);
+
+    // ④ **产物 == 远端那一版**（两端逐字相同）⇒ 也**不许**打（正文列与内容一致；打了就是假账）
+    seedPage(db, "p4", { title: "页", json: doc(blk("b1", 7, "一模一样")), text: "一模一样" }, { dirty: 0, syncSeq: 1 });
+    const same = applyRemoteContent(
+      db,
+      "p4",
+      { id: "p4", title: "页", content_json: doc(blk("b1", 7, "一模一样")), content_text: "一模一样" },
+      9,
+    );
+    expect(same.merged).toBe(true); // 合得上（虽然什么都没变）
+    expect(textStale(db, "p4")).toBe(false);
+  });
+
+  it("★ 裁决打标记；队列交得出来（id/标题/文档 JSON），补算后清标记、队列空", async () => {
+    const db = await freshDb();
+    seedPage(
+      db,
+      "p1",
+      { title: "页", json: doc(blk("b1", 3, "远端赢了的那版"), blk("b2", 0, "别动")), text: "" },
+      { dirty: 0, syncSeq: 1 },
+    );
+    recordPageConflicts(db, "p1", [
+      {
+        blockId: "b1",
+        reason: "same-rev-different-content" as const,
+        localJson: JSON.stringify(blk("b1", null, "我原来改的")),
+        remoteJson: JSON.stringify(blk("b1", null, "远端赢了的那版")),
+      },
+    ]);
+    resolvePageConflict(db, pageConflictsOf(db, "p1")[0].id, "local");
+    expect(textStale(db, "p1")).toBe(true);
+
+    const q = staleTextQueue(db, 10);
+    expect(q.total).toBe(1);
+    expect(q.pages).toHaveLength(1);
+    expect(q.pages[0].pageId).toBe("p1");
+    expect(q.pages[0].title).toBe("页");
+    expect(q.pages[0].docJson).toContain("我原来改的");
+    // `limit` 夹到 ≥1（后台动作不许一次把整库拖进来）
+    expect(staleTextQueue(db, 0).pages).toHaveLength(1);
+
+    // 补算之后：标记清掉、队列空
+    expect(refreshPageTextIfStale(db, "p1", "补算出来的正文")).toBe(true);
+    expect(textStale(db, "p1")).toBe(false);
+    expect(staleTextQueue(db, 10).total).toBe(0);
+  });
+
+  it("★ 算出来与库里相同也清标记（否则「还有 N 页」会挂着假账）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "正文")), text: "" }, { dirty: 0, syncSeq: 1 });
+    markTextStale(db, "p1");
+    expect(textStale(db, "p1")).toBe(true);
+
+    expect(refreshPageTextIfStale(db, "p1", "")).toBe(false); // 相同 ⇒ 不写正文
+
+    expect(textStale(db, "p1")).toBe(false); // 但标记必须清掉
+    expect(staleTextQueue(db, 10).total).toBe(0);
+    // 页面不存在 ⇒ 不猜（也不报错）
+    expect(textStale(db, "nope")).toBeUndefined();
   });
 });

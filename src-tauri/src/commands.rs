@@ -636,3 +636,17 @@ pub fn refresh_page_text(db: State<Db>, page_id: String, text: String) -> Result
     let c = conn(&db);
     crate::doc_content::refresh_page_text_if_stale(&c, &page_id, &text)
 }
+
+/// ★ **待重建正文的队列**（B1，2026-09-22）：合并产物 / 冲突裁决之后，那一页的正文列与 FTS 需要
+/// 按**编辑器语义**重算一遍（Rust 侧没有那个派生实现 —— 唯一实现在前端 `src/lib/contentText.ts`）。
+/// 这个命令给补算器两样东西：**这一批要补的页面**（各带 `doc_json`）与**待补总数**（界面要能说"还有 N 页"）。
+///
+/// ⚠️ 只读；`limit` 夹在 1..=50（补算是**有预算**的后台动作，不许一次把整库拖进来）。
+#[tauri::command]
+pub fn list_stale_text_pages(
+    db: State<Db>,
+    limit: Option<usize>,
+) -> Result<crate::doc_content::StaleTextQueue, String> {
+    let c = conn(&db);
+    crate::doc_content::stale_text_queue(&c, limit.unwrap_or(10))
+}

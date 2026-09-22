@@ -100,20 +100,113 @@ pub fn write_text(c: &Connection, page_id: &str, text: &str) -> Result<(), Strin
 /// ⚠️ 比较放在**这一层**而不是调用方（前端编辑器插件）：那类界面文件读这一列会把收口门禁顶红。
 /// ⚠️ **正文文本与 FTS 索引必须一起动**（macOS 2026-09-22）：只改列不改索引 ⇒ 那一页在搜索结果里
 /// 仍是旧正文 —— 正是这次修复要消灭的东西，而且更隐蔽（列看着对、搜索不对）。
+/// ⚠️ 两条出口都要**清掉"待重建"标记**（B1）：① 真的修了；② 算出来与库里那份**相同**
+/// （合并可能并没有改动这一页的正文 ⇒ 它本来就不该留在队列里）。
 pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) -> Result<bool, String> {
     let Some(cur) = read(c, page_id)? else {
         return Ok(false);
     };
     if cur.text == derived {
+        clear_text_stale(c, page_id)?;
         return Ok(false);
     }
     write_text(c, page_id, derived)?;
     derive_fts(c, page_id, &cur.title, derived)?;
+    clear_text_stale(c, page_id)?;
     // ★ AMD 2026-09-22：自动修复**不是用户操作** ⇒ 不许完全静默（"我的库什么时候被改过"要查得到）。
     //   但也不许做成第二个冲突 UI：**不写 `page_conflicts`**（那是"要人裁决"的表，塞进去会让
     //   "未决数量"失去意义），只留一行日志（与 `[sync]` 那几条同一形态）。
-    eprintln!("[doc-content] 正文修复：page={page_id}（打开页面时按编辑器语义重算，索引同步刷新）");
+    eprintln!("[doc-content] 正文修复：page={page_id}（按编辑器语义重算，索引同步刷新）");
     Ok(true)
+}
+
+// =====================================================================================
+// 「正文待重建」标记（B1，2026-09-22）：**本地派生索引的工作队列**
+//
+// 为什么需要它：合并产物与冲突裁决都是"内容拼出来的"，而正文列与 FTS 仍是页级胜方那一份
+// ⇒ 那一页**搜不到刚合并进来的字**。修的方向是"写路径上按编辑器语义重算一次"，
+// 但补算要有两样东西：① 派生实现（现成：`src/lib/contentText.ts`，它不在 Rust 侧）；
+// ② **知道哪些页待重建** —— 就是这一族函数。
+//
+// ⚠️ 三条纪律：
+//   1. 它是**本地状态**：不同步、不进导出（与 `page_conflicts` 同族）；别的设备有它自己的标记；
+//   2. **不许在读路径上惰性重建**（macOS）：读的时候只读标记，不做派生；
+//   3. 标记只打在"**内容变了、正文列没跟着变**"的那两条路上（合并产物 / 裁决写回），
+//      而且合并那一条还要看**产物里有没有远端没有的本地块**（否则是假账，见 `merge_remote_content`）。
+// =====================================================================================
+
+/// 这一页的正文列是不是"待重建"；页面不存在 ⇒ `Ok(None)`。
+pub fn text_stale(c: &Connection, page_id: &str) -> Result<Option<bool>, String> {
+    c.query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = ?1", params![page_id], |row| {
+        Ok(row.get::<_, i64>(0)? != 0)
+    })
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// 打上"待重建"（合并产物 / 裁决写回之后调它）。
+pub fn mark_text_stale(c: &Connection, page_id: &str) -> Result<(), String> {
+    c.execute("UPDATE pages SET text_stale = 1 WHERE id = ?1", params![page_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 清掉"待重建"（正文列刚被重建过一次）。**没置着就一次写库都不做**（绝大多数页面走这条）。
+pub fn clear_text_stale(c: &Connection, page_id: &str) -> Result<(), String> {
+    c.execute(
+        "UPDATE pages SET text_stale = 0 WHERE id = ?1 AND text_stale = 1",
+        params![page_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 队列里的一页：**补算器**要的三样东西。
+///
+/// 字段名叫 `doc_json`（**不是存储列名**）：这样界面侧不必去碰"文档内容层的那两列"，
+/// 分层与收口门禁都干净（门禁的处置第 2 条本来就把"收 JSON 文本的参数改名"列为首选）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StaleTextPage {
+    pub page_id: String,
+    pub title: String,
+    pub doc_json: String,
+}
+
+/// 队列 ＋ 总数。`total` 必须单独给：界面要能说"**还有 N 页**"，而 `pages` 只是这一批。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StaleTextQueue {
+    pub total: i64,
+    pub pages: Vec<StaleTextPage>,
+}
+
+/// ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。
+pub fn stale_text_queue(c: &Connection, limit: usize) -> Result<StaleTextQueue, String> {
+    let limit = limit.clamp(1, 50);
+    let total: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM pages WHERE text_stale = 1 AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    let mut stmt = c
+        .prepare(
+            "SELECT id, title, content_json FROM pages
+             WHERE text_stale = 1 AND deleted_at IS NULL
+             ORDER BY updated_at DESC, id ASC LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit as i64], |row| {
+            Ok(StaleTextPage {
+                page_id: row.get(0)?,
+                title: row.get(1)?,
+                doc_json: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let pages = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(StaleTextQueue { total, pages })
 }
 
 /// **派生**：内容变了之后，所有"从内容重建"的东西都从这里刷。
@@ -553,8 +646,12 @@ pub enum RemoteMerge {
     NotApplicable,
     /// **有冲突** ⇒ 不自动选边：用远端原样（页级 LWW），但冲突**要落表**
     Conflicted(Vec<BlockConflict>),
-    /// 合并成功（两端各改不同块 ⇒ 两边的编辑都在）
-    Merged(String),
+    /// 合并成功（两端各改不同块 ⇒ 两边的编辑都在）。
+    ///
+    /// `kept_local` = 产物里**保留了远端那一版没有的本地块**（`Local` / `OnlyLocal`）：
+    /// 只有它为 `true` 时"正文列"才与内容不一致（要打"待重建"，B1）；
+    /// 全是 `Remote` / `Identical` / `OnlyRemote` ⇒ 产物就是远端那份内容 ⇒ **不打**（打了是假账）。
+    Merged { json: String, kept_local: bool },
 }
 
 /// ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：与本地现状逐块比一遍。
@@ -574,8 +671,16 @@ pub fn merge_remote_content(local_json: &str, remote_json: &str) -> RemoteMerge 
         return RemoteMerge::Conflicted(outcome.conflicts);
     }
 
+    // ★ 产物里有没有**远端那一版没有的本地块** ⇒ 决定"正文列是否与内容不一致"（B1 的打标记条件）。
+    //   ⚠️ **不能**拿"产物字符串 != 远端字符串"来判断：物化会重排键序、剥掉嵌层同名键、写回 `blockRev`
+    //   ⇒ 内容逐字相同的两端也会得到**不同的字符串**（第一版就是这么误判的，被脚本场景 N 当场抓住）。
+    let kept_local = outcome
+        .blocks
+        .iter()
+        .any(|b| matches!(b.choice, BlockChoice::Local | BlockChoice::OnlyLocal));
+
     match apply_block_snapshots(remote_json, &outcome.blocks) {
-        Some(json) => RemoteMerge::Merged(json),
+        Some(json) => RemoteMerge::Merged { json, kept_local },
         None => RemoteMerge::NotApplicable,
     }
 }
@@ -738,6 +843,8 @@ pub fn resolve_page_conflict(
     let now = crate::db::now_ms();
     write(c, &page_id, &content, now)?;
     derive(c, &page_id, &content)?;
+    // ★ B1：裁决也是"内容拼出来的"（换成选中那一块）⇒ 正文列仍是写回前那一份 ⇒ 打"待重建"。
+    mark_text_stale(c, &page_id)?;
     c.execute(
         "UPDATE page_conflicts SET resolved_at = ?1, resolved_choice = ?2 WHERE id = ?3",
         params![now, conflict_choice_str(choice), conflict_id],
@@ -796,10 +903,16 @@ pub fn apply_remote_page(
 
     let outcome = merge_remote_content(&local.json, &page.content_json);
     match &outcome {
-        RemoteMerge::Merged(json) => {
+        RemoteMerge::Merged { json, kept_local } => {
             let mut merged_page = page.clone();
             merged_page.content_json = json.clone();
             upsert_remote(c, &merged_page, sync_seq)?;
+            // ★ B1：**只有产物里保留了远端那一版没有的本地块**才打"待重建"。
+            //   否则产物就是远端那份内容（正文列正是它）⇒ 打了就是**假账**（补算器白解析一次再清掉），
+            //   而"两端内容逐字相同"的合并会**经常**走到这一支。
+            if *kept_local {
+                mark_text_stale(c, &page.id)?;
+            }
         }
         RemoteMerge::Conflicted(conflicts) => {
             // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
@@ -1180,7 +1293,7 @@ mod tests {
         let local = jdoc(vec![jblk(Some("b1"), Some(2), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
         let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "B 改的")]);
 
-        let RemoteMerge::Merged(merged) = merge_remote_content(&local, &remote) else {
+        let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&local, &remote) else {
             panic!("两端各改不同块 ⇒ 必须能合");
         };
 
@@ -1228,7 +1341,7 @@ mod tests {
         // 当成"老客户端产物"重新盖 0/1 ⇒ rev 倒退 ⇒ 下一次合并的胜负判断就错了。
         let local = jdoc(vec![jblk(Some("b1"), Some(4), "A 改的"), jblk(Some("b2"), Some(1), "b2 原始")]);
         let remote = jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(5), "B 改的")]);
-        let RemoteMerge::Merged(merged) = merge_remote_content(&local, &remote) else {
+        let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&local, &remote) else {
             panic!("应当能合");
         };
 
@@ -1429,7 +1542,7 @@ mod tests {
         let b_local = jdoc(vec![jblk(Some("b1"), Some(2), "一样")]);
         let a_remote = jdoc(vec![jblk(Some("b1"), Some(4), "一样")]);
 
-        let RemoteMerge::Merged(merged) = merge_remote_content(&b_local, &a_remote) else {
+        let RemoteMerge::Merged { json: merged, .. } = merge_remote_content(&b_local, &a_remote) else {
             panic!("同内容应当算 identical（合得上）");
         };
         assert_eq!(revs_of(&merged), vec![Some(4)], "B 这边必须把 4 记下来（不是 2）");
@@ -1601,7 +1714,7 @@ mod tests {
             9,
         )
         .unwrap();
-        assert!(matches!(merged, RemoteMerge::Merged(_)));
+        assert!(matches!(merged, RemoteMerge::Merged { .. }));
         assert!(unresolved_page_conflicts(&c, "p2").unwrap().is_empty(), "合得上就不该留一条要裁决的痕");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1665,6 +1778,138 @@ mod tests {
         assert_eq!(fts_hits(&c, "旧的正文"), 0);
         // ③ 相同 ⇒ 一次写库都不做（绝大多数页面走这条）
         assert!(!refresh_page_text_if_stale(&c, "p1", "刚合并进来的字").unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ===== B1（2026-09-22）：正文"待重建"标记 ＋ 队列 ＝=====================================
+    // 与前端 `src/lib/docContent.test.ts` 的同名三条**逐条对应**（改一边看另一边）。
+
+    /// ★ **只在这两条路上打标记**（合并产物 / 裁决写回），而且**合并那一条还要看有没有留下本地块**。
+    /// 冲突回落、"没什么可合"、"产物 == 远端那一版"（逐字相同）三支都**不许**打 ——
+    /// 那时正文列与内容是**一致**的，打了就是假账（还会把"还有几页待重建"变成噪声）。
+    #[test]
+    fn only_a_real_merge_marks_the_text_as_stale() {
+        let (c, dir) = conflict_conn("stale-mark");
+
+        // ① 合并成功且**留下了本地块** ⇒ 打
+        insert_conflict_page(
+            &c,
+            "p1",
+            &jdoc(vec![jblk(Some("b1"), Some(2), "本地改的"), jblk(Some("b2"), Some(1), "b2 原始")]),
+        );
+        let merged = apply_remote_page(
+            &c,
+            &remote_page(
+                "p1",
+                &jdoc(vec![jblk(Some("b1"), Some(1), "b1 原始"), jblk(Some("b2"), Some(2), "远端改的")]),
+                "远端正文",
+            ),
+            9,
+        )
+        .unwrap();
+        assert!(
+            matches!(merged, RemoteMerge::Merged { kept_local: true, .. }),
+            "这一路必须留下本地块：{merged:?}"
+        );
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true), "合并产物 ⇒ 正文待重建");
+
+        // ② 冲突回落（用远端原样）⇒ 不打
+        insert_conflict_page(&c, "p2", &jdoc(vec![jblk(Some("b1"), Some(2), "我改的")]));
+        let conflicted = apply_remote_page(
+            &c,
+            &remote_page("p2", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
+            9,
+        )
+        .unwrap();
+        assert!(matches!(conflicted, RemoteMerge::Conflicted(_)));
+        assert_eq!(text_stale(&c, "p2").unwrap(), Some(false), "回落页级 LWW ⇒ 正文就是内容那一份");
+
+        // ③ 没什么可合（老内容）⇒ 也不打
+        insert_conflict_page(&c, "p3", &jdoc(vec![jblk(None, None, "老")]));
+        let na = apply_remote_page(
+            &c,
+            &remote_page("p3", &jdoc(vec![jblk(Some("b1"), Some(1), "新")]), "远端正文"),
+            9,
+        )
+        .unwrap();
+        assert_eq!(na, RemoteMerge::NotApplicable);
+        assert_eq!(text_stale(&c, "p3").unwrap(), Some(false));
+
+        // ④ **两端逐字相同**（产物 == 远端那一版，`kept_local = false`）⇒ 也**不许**打：
+        //    正文列就是远端那份文本、与内容一致；打了就是假账（补算会白跑一趟再把标记清掉）。
+        //    ⚠️ 这一条同时守住"别拿产物字符串 != 远端字符串 当判据"——物化会重排键序/剥嵌层字段，
+        //       两边内容一致时字符串仍然不同（第一版就是这么误判的，被脚本场景 N 抓住）。
+        insert_conflict_page(&c, "p4", &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]));
+        let same = apply_remote_page(
+            &c,
+            &remote_page("p4", &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]), "一模一样"),
+            9,
+        )
+        .unwrap();
+        assert!(
+            matches!(same, RemoteMerge::Merged { kept_local: false, .. }),
+            "什么都没变的那一次不许报成「留下了本地块」：{same:?}"
+        );
+        assert_eq!(text_stale(&c, "p4").unwrap(), Some(false), "产物 == 远端 ⇒ 正文列与内容一致 ⇒ 不打标记");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **裁决也打标记**，而且**队列**能把它交出来（补算器要的就是这三样：id ＋ 标题 ＋ 文档 JSON）。
+    #[test]
+    fn resolving_a_conflict_marks_the_text_as_stale_and_the_queue_lists_it() {
+        let (c, dir) = conflict_conn("stale-queue");
+        insert_conflict_page(
+            &c,
+            "p1",
+            &jdoc(vec![jblk(Some("b1"), Some(3), "远端赢了的那版"), jblk(Some("b2"), Some(0), "别动")]),
+        );
+        record_page_conflicts(
+            &c,
+            "p1",
+            &[BlockConflict {
+                block_id: "b1".into(),
+                reason: ConflictReason::SameRevDifferentContent,
+                local_json: Some(jblk(Some("b1"), None, "我原来改的").to_string()),
+                remote_json: Some(jblk(Some("b1"), None, "远端赢了的那版").to_string()),
+            }],
+        )
+        .unwrap();
+        let id = unresolved_page_conflicts(&c, "p1").unwrap()[0].id.clone();
+        resolve_page_conflict(&c, &id, ConflictChoice::Local).unwrap();
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true), "裁决换了内容 ⇒ 正文待重建");
+
+        let q = stale_text_queue(&c, 10).unwrap();
+        assert_eq!(q.total, 1);
+        assert_eq!(q.pages.len(), 1);
+        assert_eq!(q.pages[0].page_id, "p1");
+        assert_eq!(q.pages[0].title, "页");
+        assert!(q.pages[0].doc_json.contains("我原来改的"), "队列要把文档 JSON 带出来给补算器");
+        // `limit` 夹到 ≥1（后台动作也不许一次把整库拖进来）
+        assert_eq!(stale_text_queue(&c, 0).unwrap().pages.len(), 1);
+
+        // 补算之后：标记清掉、队列空
+        assert!(refresh_page_text_if_stale(&c, "p1", "补算出来的正文").unwrap());
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(false));
+        assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0);
+        // 再来一次（相同文本）⇒ 一次写库都不做，标记保持 0（不回退）
+        assert!(!refresh_page_text_if_stale(&c, "p1", "补算出来的正文").unwrap());
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **"算出来与库里相同"也要清标记**：合并/裁决可能**并没有**改动这一页的正文
+    /// ⇒ 它本来就不该留在队列里（否则"还有几页待重建"会永远挂着几页假账）。
+    #[test]
+    fn repairing_clears_the_flag_even_when_the_derived_text_matches() {
+        let (c, dir) = conflict_conn("stale-equal");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "正文")])); // content_text = ""
+        mark_text_stale(&c, "p1").unwrap();
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true));
+
+        assert!(!refresh_page_text_if_stale(&c, "p1", "").unwrap(), "相同 ⇒ 不写正文");
+
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(false), "但标记必须清掉（它不该留在队列里）");
+        assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

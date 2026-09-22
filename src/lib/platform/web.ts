@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue } from "../docContent";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -3140,6 +3140,14 @@ export function makeInvoke(store: SqliteStore) {
       }
       resolvePageConflict(store, conflictId, choice);
       return null as T;
+    }
+    if (cmd === "list_stale_text_pages") {
+      // 阶段 1 · B1：待重建正文的队列（字段名与 Rust 侧 `StaleTextQueue` 的 snake_case 对齐）。
+      const q = staleTextQueue(store, Number(a.limit ?? 10));
+      return {
+        total: q.total,
+        pages: q.pages.map((p) => ({ page_id: p.pageId, title: p.title, doc_json: p.docJson })),
+      } as T;
     }
     if (cmd === "refresh_page_text") {
       // 阶段 1 · 正文文本的本地修复：**只动正文**（内容与 dirty 都不动）。

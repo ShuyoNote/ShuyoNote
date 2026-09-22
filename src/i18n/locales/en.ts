@@ -111,4 +111,8 @@ export default {
     useRemote: "Use remote",
     resolved: "Merged this block as you chose",
   },
+  // Stage 1 · body-text index repair pass (`components/TextRepairRunner.tsx`, B1)
+  textRepair: {
+    pending: "{{count}} page(s) still need their text index rebuilt (merged-in content is not searchable yet — open the page to fix it)",
+  },
 } as const;

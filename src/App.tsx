@@ -30,6 +30,7 @@ import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { ConflictBanner } from "./components/ConflictBanner";
+import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
 import { RightRail } from "./components/RightRail";
@@ -839,6 +840,8 @@ function AppShell() {
         <InputDialog />
         <AiAssistantPanel />
         <CommentsDrawer />
+        {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
+        <TextRepairRunner />
         <RightRail />
         <ShortcutsPanel />
         <AboutDialog />

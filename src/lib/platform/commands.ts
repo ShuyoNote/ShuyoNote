@@ -546,6 +546,14 @@ export interface CommandMap {
   resolve_page_conflict: { args: { conflictId: string; choice: string }; result: null };
   /** 阶段 1 · 正文文本的本地修复（合并/裁决产物补算；**只动正文**，不动内容与 dirty）。 */
   refresh_page_text: { args: { pageId: string; text: string }; result: boolean };
+  /**
+   * 阶段 1 · B1：**待重建正文的队列**（补算器用）。`total` = 待重建总数（界面说"还有 N 页"），
+   * `pages[].doc_json` = 那一页的文档 JSON（**故意不叫存储列名**：界面侧不必碰内容层那两列）。
+   */
+  list_stale_text_pages: {
+    args: { limit?: number | null };
+    result: { total: number; pages: Array<{ page_id: string; title: string; doc_json: string }> };
+  };
   export_backup: { args: { destPath: string }; result: { path: string; size: number } };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };

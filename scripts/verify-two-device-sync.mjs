@@ -67,7 +67,7 @@ await esbuild.build({
   outfile: dcOut,
 });
 const dc = await import(pathToFileURL(dcOut).href + "?v=" + Date.now());
-const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent, pageConflictsOf, resolvePageConflict } = dc;
+const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, textStale } = dc;
 
 // ---- 2. 注入 sql.js wasm 字节 + 内存 adapter（Node 环境）----
 const wasmPath = require.resolve("sql.js/dist/sql-wasm.wasm");
@@ -690,6 +690,55 @@ async function main() {
     "M: ★★ 全新设备按序折 log ⇒ 与 X 手上的合并产物**逐块相同**（⇒ 合并产物不推送**本身**不丢数据）");
   ok(pageConflictsOf(MX, PM).length === 0 && pageConflictsOf(MC.s, PM).length === 0,
     "M: 这一路没有冲突要裁决（两端改的是不同块）");
+
+  // =========== 场景 N：B1 —— 合并之后那一页进「正文待重建」队列，补算后出队 ===========
+  // 走**真路径**：`applyChange`（真 web.ts）→ `applyRemoteContent` → 合并 ⇒ 打标记；
+  // 补算器的那一步在这里用**手写的派生文本**代替（真派生实现要 Lexical 节点表，
+  // node 侧 esbuild 打不动 —— 它由界面侧的 `TextRepairRunner` 驱动，判据在 vitest 里）。
+  console.log("\n场景 N：B1 正文待重建队列（合并 → 入队 → 补算 → 出队）");
+  const PN = "page-stale-text";
+  const nBase = [blk("b1", 1, "b1 原始"), blk("b2", 1, "b2 原始")];
+  const nA = [blk("b1", 2, "A 改的 b1"), blk("b2", 1, "b2 原始")];
+  const nB = [blk("b1", 1, "b1 原始"), blk("b2", 2, "B 改的 b2")];
+  const seedClean = async (blocks, text) => {
+    const d = await newDevice();
+    localCreate(d, PN, "待重建页", "");
+    writeContent(d, PN, { title: "待重建页", json: contentOf(blocks), text }, Date.now());
+    d.run("UPDATE pages SET dirty = 0, sync_seq = 0 WHERE id = ?", [PN]);
+    return d;
+  };
+  const NA = await seedClean(nBase, "b1 原始\nb2 原始");
+  const NB = await seedClean(nBase, "b1 原始\nb2 原始");
+  // 这一节的设备只吃"这一节之后"的变更（服务端 log 是跨场景共享的；真设备也有自己的游标）
+  const nStart = serverSeq;
+  const nSeq1 = pushToServer(NA, PN, "devA", "待重建页", "b1 原始\nb2 原始", contentOf(nBase));
+  pullLog(NB, { since: nStart }, "devB"); // B 拿到基线（吃下 ⇒ sync_seq=nSeq1）
+  ok(getRow(NB, PN).sync_seq === nSeq1, "N: B 吃掉基线（`sync_seq` 被写成远端那个 seq）");
+  ok(textStale(NB, PN) === false, "N: 吃下远端本身**不打**标记（正文列与内容一致）");
+
+  // 并发：A 推 b1、B **本地也改了 b2**（先落到本地那一行、再推）⇒ B 回头 pull ⇒ 逐块合并
+  pushToServer(NA, PN, "devA", "待重建页", "A 改的 b1\nb2 原始", contentOf(nA));
+  writeContent(NB, PN, { title: "待重建页", json: contentOf(nB), text: "b1 原始\nB 改的 b2" }, Date.now());
+  pushToServer(NB, PN, "devB", "待重建页", "b1 原始\nB 改的 b2", contentOf(nB));
+  pullLog(NB, { since: nSeq1 }, "devB");
+  const nJson = readContent(NB, PN).json;
+  ok(bodyOf(nJson, "b1") === "A 改的 b1" && bodyOf(nJson, "b2") === "B 改的 b2",
+    "N: 合并产物在手（两边编辑都在）");
+  ok(textStale(NB, PN) === true, "N: ★ 合并之后**打上**「正文待重建」");
+  ok(readContent(NB, PN).text === "A 改的 b1\nb2 原始",
+    `N: 此刻正文列是**远端那一版**的文本（b2 还写着"原始"，而内容里已是 B 改的）—— 这就是要补算的东西，实际=${JSON.stringify(readContent(NB, PN).text)}`);
+
+  const nQueue = staleTextQueue(NB, 10);
+  ok(nQueue.total === 1 && nQueue.pages[0].pageId === PN, `N: ★ 队列把这一页交出来（补算器据此补），实际 total=${nQueue.total}`);
+  ok(nQueue.pages[0].docJson === nJson, "N: 队列带的是**当前文档 JSON**（补算的输入就是它）");
+
+  // 补算（这里用手写派生文本；真派生在界面侧用唯一实现）：不同 ⇒ 写回 + 索引刷新 + 清标记
+  ok(refreshPageTextIfStale(NB, PN, "A 改的 b1\nB 改的 b2") === true, "N: 补算写了正文");
+  ok(readContent(NB, PN).text === "A 改的 b1\nB 改的 b2", "N: 正文列与合并产物一致了");
+  ok(textStale(NB, PN) === false, "N: ★ 标记被清掉（不会留在队列里）");
+  ok(staleTextQueue(NB, 10).total === 0, "N: 队列空了");
+  // 反判据：相同文本再补一次 ⇒ 一次写库都不做（也不回退标记）
+  ok(refreshPageTextIfStale(NB, PN, "A 改的 b1\nB 改的 b2") === false, "N: 相同 ⇒ 不再写");
 
   // =========== 汇总 ===========
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);

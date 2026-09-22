@@ -516,7 +516,7 @@ export function applyBlockSnapshots(docJson: string, blocks: readonly MergedBloc
 export type RemoteMerge =
   | { kind: "not-applicable" } // 不合并（老内容 / 脏 JSON）⇒ 用远端原样（与接线前逐字相同）
   | { kind: "conflicted"; conflicts: BlockConflict[] } // 有冲突 ⇒ 用远端原样，但**要落表**
-  | { kind: "merged"; json: string }; // 合并成功（两端各改不同块 ⇒ 两边的编辑都在）
+  | { kind: "merged"; json: string; keptLocal: boolean }; // 合并成功；`keptLocal` = 产物里**留下了远端没有的本地块**
 
 /**
  * ★ **阶段 1 的远端合并**（页级说"用远端"之后调它）：把远端那一版与**本地现状**逐块比一遍。
@@ -536,7 +536,12 @@ export function mergeRemoteContent(localJson: string, remoteJson: string): Remot
   if (conflicts.length > 0) return { kind: "conflicted", conflicts };
 
   const json = applyBlockSnapshots(remoteJson, blocks);
-  return json === undefined ? { kind: "not-applicable" } : { kind: "merged", json };
+  if (json === undefined) return { kind: "not-applicable" };
+  // ★ 产物里有没有**远端那一版没有的本地块** ⇒ 决定"正文列是否与内容不一致"（B1 的打标记条件）。
+  //   ⚠️ **不能**拿"产物字符串 != 远端字符串"来判断：物化会重排键序、剥掉嵌层同名键、写回 `blockRev`
+  //   ⇒ 内容逐字相同的两端也会得到**不同的字符串**（第一版就是这么误判的，被脚本场景 N 当场抓住）。
+  const keptLocal = blocks.some((b) => b.choice === "local" || b.choice === "only-local");
+  return { kind: "merged", json, keptLocal };
 }
 
 /** 把一份文档里某个**顶层块**的内容换成另一个（裁决入口用）。块不在这份文档里 ⇒ `undefined`。 */
@@ -674,6 +679,8 @@ export function resolvePageConflict(db: ContentSql, conflictId: string, choice: 
 
   const stamped = assignBlockRevs(page.json, next);
   writeContent(db, pageId, { title: page.title, json: stamped, text: page.text }, Date.now());
+  // ★ B1：裁决也是"内容拼出来的"（换成选中那一块）⇒ 正文列仍是写回前那一份 ⇒ 打"待重建"。
+  markTextStale(db, pageId);
   db.run("UPDATE page_conflicts SET resolved_at = ?, resolved_choice = ? WHERE id = ?", [
     Date.now(),
     choice,
@@ -695,19 +702,86 @@ export function writeContentText(db: ContentSql, pageId: string, text: string): 
 
 /**
  * **正文文本的本地修复（带判据的那一个）**：拿库里那一份与算出来的比，**不同才写回**
- * （相同 ⇒ 一次写库都没有 —— 绝大多数页面走这条）。返回**是否修了**。
+ * （相同 ⇒ 正文列一次写库都没有）。返回**是否修了**。
  *
- * ⚠️ 比较放在**这一层**而不是调用方：调用方（编辑器插件）只负责"按编辑器语义算一遍"，
+ * ⚠️ 比较放在**这一层**而不是调用方：调用方（编辑器插件 / 补算器）只负责"按编辑器语义算一遍"，
  * 让它顺手读那一列会把收口门禁顶红（`App.tsx` 那类界面文件的计数只许减不许增）。
+ * ⚠️ 两条出口都要**清掉"待重建"标记**（B1）：① 真的修了；② 算出来与库里那份**相同**
+ * （合并可能并没有改动这一页的正文 ⇒ 它本来就不该留在队列里）。
  */
 export function refreshPageTextIfStale(db: ContentSql, pageId: string, derived: string): boolean {
   const cur = readContent(db, pageId);
-  return repairPageTextIfStale(
+  const repaired = repairPageTextIfStale(
     { refresh: (id, text) => writeContentText(db, id, text) },
     pageId,
     cur?.text,
     derived,
   );
+  if (cur) clearTextStale(db, pageId);
+  return repaired;
+}
+
+// =====================================================================================
+// 「正文待重建」标记（B1，2026-09-22）—— 与 Rust 侧 `doc_content.rs` 的同名一节**逐条对应**
+//
+// 合并产物（`merged`）与冲突裁决都是"内容拼出来的"，而正文列仍是页级胜方那一份 ⇒ 那一页
+// **搜不到刚合并进来的字**。这一列就是"补算器"的工作队列。三条纪律（与 Rust 侧同一份）：
+//   ① **本地状态**：不同步、不进导出（与 `page_conflicts` 同族）；
+//   ② **不许在读路径上惰性重建**（macOS）：读的时候只读标记；
+//   ③ 只打在"内容变了、正文列没跟着变"的两条路上（合并产物 / 裁决写回）。
+// =====================================================================================
+
+/** 这一页的正文列是不是"待重建"；页面不存在 ⇒ `undefined`。 */
+export function textStale(db: ContentSql, pageId: string): boolean | undefined {
+  const row = db.query<{ text_stale: number }>(
+    "SELECT COALESCE(text_stale, 0) AS text_stale FROM pages WHERE id = ?",
+    [pageId],
+  )[0];
+  return row ? Number(row.text_stale ?? 0) !== 0 : undefined;
+}
+
+/** 打上"待重建"（合并产物 / 裁决写回之后调它）。 */
+export function markTextStale(db: ContentSql, pageId: string): void {
+  db.run("UPDATE pages SET text_stale = 1 WHERE id = ?", [pageId]);
+}
+
+/** 清掉"待重建"（正文列刚被重建过一次）。**没置着就一次写库都不做**。 */
+export function clearTextStale(db: ContentSql, pageId: string): void {
+  db.run("UPDATE pages SET text_stale = 0 WHERE id = ? AND text_stale = 1", [pageId]);
+}
+
+/** 队列里的一页。字段叫 `docJson`（不是存储列名）—— 界面侧不必去碰"文档内容层的那两列"。 */
+export interface StaleTextPage {
+  pageId: string;
+  title: string;
+  docJson: string;
+}
+
+/** 队列 ＋ 总数（`total` 单独给：界面要能说"**还有 N 页**"，而 `pages` 只是这一批）。 */
+export interface StaleTextQueue {
+  total: number;
+  pages: StaleTextPage[];
+}
+
+/** ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。 */
+export function staleTextQueue(db: ContentSql, limit = 10): StaleTextQueue {
+  const total =
+    Number(
+      db.query<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM pages WHERE text_stale = 1 AND deleted_at IS NULL",
+      )[0]?.n ?? 0,
+    ) || 0;
+  const lim = Math.max(1, Math.min(50, Math.trunc(limit) || 10));
+  const rows = db.query<{ id: string; title: string; doc_json: string }>(
+    `SELECT id, title, content_json AS doc_json FROM pages
+     WHERE text_stale = 1 AND deleted_at IS NULL
+     ORDER BY updated_at DESC, id ASC LIMIT ?`,
+    [lim],
+  );
+  return {
+    total,
+    pages: rows.map((r) => ({ pageId: String(r.id), title: String(r.title ?? ""), docJson: String(r.doc_json ?? "") })),
+  };
 }
 
 /**
@@ -753,6 +827,9 @@ export function applyRemoteContent(
 
   if (outcome.kind === "merged") {
     upsertRemoteContent(db, { ...row, content_json: outcome.json }, remoteSeq);
+    // ★ B1：**只有产物里留下了远端那一版没有的本地块**才打"待重建"。
+    //   否则产物就是远端那份内容（正文列正是它）⇒ 打了就是**假账**（补算器白解析一次再清掉）。
+    if (outcome.keptLocal) markTextStale(db, pageId);
     return { merged: true, unresolved: 0 };
   }
   if (outcome.kind === "conflicted") {
