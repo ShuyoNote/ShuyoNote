@@ -620,6 +620,44 @@ AMD 实测的成因：`git fetch` 被 **`refusing to fetch into branch 'refs/hea
 > 与 §10.4 是同一类病：**都是"看起来完成了、其实基线或对象不是你以为的那个"**。
 > §10.4 治"拿旧分支当基线"，这条治"在旧提交上验证"。
 
+### 10.7 本机模型服务（Herdsman）：清单、两个 ASR 的分工、以及一条冒烟配方（2026-09-22 AMD 侧实测）
+
+**服务**：`herdsman.exe`（`C:\Program Files\starwave\Herdsman\`）监听 `127.0.0.1:8080`，OpenAI 兼容
+（`/v1/models`、`/v1/chat/completions`、`/v1/audio/speech`、`/v1/audio/transcriptions`）；
+数据在 `%USERPROFILE%\.herdsman\`（`models/` 是模型、`launch_records/` 是启动记录），下载缓存在 `.cache\herdsman\`。
+CLI：`herdsman.exe skill models {list,download --model <名字> [--wait],start,stop,status,uninstall}`。
+⚠️ **从普通 shell 调 `skill models` 会"空输出且什么都没发生"**（2026-09-22 实测：`list` 0 行、
+`download` 无输出且 5 min 内 `models/`、`ota_downloads/` 无变化）⇒ 它要**运行中的桌面进程**的通道；
+**装模型走桌面应用的「模型商店」最稳**。判"装上了没有"要拿读数：`GET /v1/models` 多出来 ＋
+`models/<名字>/` 出现且大小对得上（别只看 UI 说"已安装"）。
+
+**清单（2026-09-22 实测，9 个）**：`DeepSeek-V4-Flash-0731`、`Qwen3.8-Flash-Next`（视觉）、
+`bge-m3`（向量）、`bge-reranker-v2-m3`（重排）；
+**ASR 两个**：`funasr-nano`、`sherpa-onnx-paraformer-zh-small`（79.5 MB，2026-09-22 装）；
+TTS：`sherpa-onnx-vits-melo-tts-zh-en`、`edge-tts`（云端、不占盘）；图片：`zimage-turbo`。
+
+★ **两个 ASR 的差别（同一段音频实测，别让下游静默依赖标点）**：
+
+| 引擎 | 同一句「今天天气不错，我们下午三点开会。」的转写 |
+|---|---|
+| `funasr-nano` | `今天天气不错，我们下午三点开会。`（**带标点**，与原句一字不差） |
+| `sherpa-onnx-paraformer-zh-small` | `今天天气不错我们下午三点开会`（**裸文本，无标点**） |
+
+**闭环冒烟配方**（不需要外部音频；本仓**没有**短音频夹具 —— `*.wav/*.mp3/*.m4a/*.ogg` 全树无命中）：
+
+```bash
+# ① 合成：本地 TTS 造一句中文
+curl -s -X POST http://127.0.0.1:8080/v1/audio/speech -H "Content-Type: application/json" \
+  -d '{"model":"sherpa-onnx-vits-melo-tts-zh-en","input":"今天天气不错，我们下午三点开会。","response_format":"wav"}' \
+  -o tts-smoke.wav
+# ② 转写：用被验的那个 ASR 模型
+curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
+  -F "file=@tts-smoke.wav" -F "model=sherpa-onnx-paraformer-zh-small"
+```
+
+⚠️ **这条冒烟的边界**：音频是 TTS 合成的**干净音**（≈3 s、无噪声、标准普通话）⇒ 它证的是"链路通、中文能认"，
+**不等于**真人口音／远场／嘈杂环境也这个水平；那类结论要拿**真录音**复跑。
+
 ### 10.6 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
 
 如实记下，因为它是"要恢复中转形态"这件事的由来：
