@@ -543,12 +543,26 @@ async function checkPdfReader(page, vp) {
           const sb = reader.querySelector(".pdf-sidebar");
           if (!sb) return null;
           const t = sb.querySelector(".pdf-sidebar-filter-toggle");
+          const chips = Array.from(sb.querySelectorAll(".pdf-sidebar-filter-btn"));
+          // ⚠️ 第一枚胶囊（「全部」）在 `filter === "all"` 时**就是 `.active`**、本来就带底色，
+          //    拿它判"透明底"必然误报 —— 要判的是**非选中**那一枚。
+          const chip = chips.find((el) => !el.classList.contains("active")) ?? null;
+          const activeChip = chips.find((el) => el.classList.contains("active")) ?? null;
+          const styleOf = (el) => {
+            if (!el) return null;
+            const cs = getComputedStyle(el);
+            return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor };
+          };
           return {
             toggle: !!t,
             title: (t?.getAttribute("title") || "").trim(),
             expanded: t?.getAttribute("aria-expanded") === "true",
             chips: sb.querySelectorAll(".pdf-sidebar-filter-btn").length,
             activeLabel: (sb.querySelector(".pdf-sidebar-filter-current")?.textContent || "").trim(),
+            // 扁平化：漏斗开关与展开后的胶囊（改前都是"1px 描边"）
+            toggleStyle: styleOf(t),
+            chipStyle: styleOf(chip),
+            activeChipStyle: styleOf(activeChip),
           };
         })(),
         // 两侧面板：在不在、多宽；以及"收起时的拖拽手柄"在不在（2026-09-22 拖拽收起/展开）
@@ -581,6 +595,20 @@ async function checkPdfReader(page, vp) {
           return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor };
         })(),
         controlsW: Math.round(reader.querySelector(".pdf-reader-controls")?.getBoundingClientRect().width ?? 0),
+        // 朗读 / OCR / AI：扁平化（owner 2026-09-22 第二张截图"这几个按钮也进行扁平化处理"）。
+        // 与 `.pdf-reader-btn` 同一套判据：**无边框 + 透明底**；AI 靠**文字颜色**区分。
+        ocrStyle: (() => {
+          const el = reader.querySelector(".pdf-annot-ocr:not(.pdf-annot-ocr-ai)");
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor, color: cs.color };
+        })(),
+        ocrAiStyle: (() => {
+          const el = reader.querySelector(".pdf-annot-ocr-ai");
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor, color: cs.color };
+        })(),
         // 短标签必须带 title（否则"朗读 / OCR / AI"就没有完整说法）
         labels: Array.from(reader.querySelectorAll(".pdf-annot-ocr")).map((b) => ({
           text: (b.textContent || "").trim(),
@@ -705,6 +733,11 @@ function linesOf(boxes) {
   return g.length;
 }
 
+/** 扁平控件判据：**无边框 + 透明底**（`.pdf-reader-btn`、朗读/OCR/AI、漏斗+胶囊 共用一套语言）。 */
+function isFlat(style) {
+  return style?.border === "0px none" && /rgba\(0, 0, 0, 0\)|transparent/.test(style?.bg ?? "");
+}
+
 /**
  * PDF 阅读器那一节的断言（手机档与桌面档**共用**）。
  * ⚠️ 曾经只写在手机循环里 ⇒ 桌面那几条（同排/工具条一行高/右端）**永远不执行**（死断言）。
@@ -774,6 +807,17 @@ function assertPdfReader(rr, vp) {
       sb?.collapsed?.chips === 0 && sb.collapsed.activeLabel === "高亮",
       `收起后仍看得出当前筛选（图标旁写「${sb?.collapsed?.activeLabel}」）——否则"列表变短了"没有解释`,
     );
+    // 漏斗开关 + 展开后的四枚胶囊也走扁平语言（owner 2026-09-22 第二张截图圈出了这枚漏斗）。
+    // 选中那枚**应当**有底色（`--accent-soft`），没边框 —— 这两件事一起钉。
+    ok(
+      isFlat(sb?.before?.toggleStyle) &&
+        isFlat(sb?.opened?.chipStyle) &&
+        sb?.opened?.activeChipStyle?.border === "0px none" &&
+        !/rgba\(0, 0, 0, 0\)|transparent/.test(sb?.opened?.activeChipStyle?.bg ?? ""),
+      `侧栏漏斗与筛选胶囊都是扁平样式（漏斗 border=${sb?.before?.toggleStyle?.border}、` +
+        `胶囊 border=${sb?.opened?.chipStyle?.border}；选中胶囊只靠底色 bg=${sb?.opened?.activeChipStyle?.bg}）` +
+        `——改前都是 1px 描边`,
+    );
     // 拖拽收起 / 拖拽展开（真实鼠标拖拽，两侧各一遍）
     const df = rr.dragFlow;
     ok(
@@ -833,6 +877,13 @@ function assertPdfReader(rr, vp) {
   ok(
     rr.toolsStyle?.border === "0px none" && !/rgba\(0, 0, 0, 0\)/.test(rr.toolsStyle?.bg ?? ""),
     `批注工具条去掉了外框勾线、只留底色分组（border=${rr.toolsStyle?.border}、bg=${rr.toolsStyle?.bg}）`,
+  );
+  // 同一张状态组里的朗读 / OCR / AI 也一起扁平（owner 2026-09-22 第二张截图；
+  // 判据与上面 `.pdf-reader-btn` 同源）——否则"扁平图标 + 描边胶囊"并排是两种语言。
+  ok(
+    isFlat(lab?.ocrStyle) && isFlat(lab?.ocrAiStyle) && lab?.ocrAiStyle?.color !== lab?.ocrStyle?.color,
+    `朗读/OCR/AI 三个按钮也是扁平样式（border=${lab?.ocrStyle?.border}、bg=${lab?.ocrStyle?.bg}），` +
+      `AI 靠文字色区分（${lab?.ocrAiStyle?.color} ≠ ${lab?.ocrStyle?.color}）——改前是"描边 + 浅底"胶囊`,
   );
   if (vp.width > 768) {
     ok(
