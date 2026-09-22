@@ -148,8 +148,81 @@ src/lib/extract/depsCatalog.ts(59,14): error TS2741:
 - 只加"能力"不落地抽取器 ⇒ 判据红（`1 failed | 2 passed`，我按纪律回退了）；
 - **先留日志再回退** —— 我上次把失败日志删早了，导致那两条断言的原文没读到（下次先 `cat` 再 revert）。
 
-### 5.1 入口与参数（等回话，不阻塞上面）
+### 5.1 入口与参数（**2026-09-22 macOS 侧已拍**，见 §7）
 
 1. **入口**：AI 面板加「音频转写」／走导入（拖音频文件）／挂到附件 —— 归 mac 定，我不擅自改他的文件；
 2. 语言参数是否要（中文默认？中英混说？）；
 3. 长音频要不要分段（→ 与 §4-2 的"进内容层后可被总结"耦合：分段粒度决定总结的输入形状）。
+
+## 6. ★ 平台侧实装已落地（2026-09-22，macOS 侧；§5.1 的三问同批给了答案）
+
+上一节 §5.1 那三个"等回话"的问题，这一节就是回答 + 落地读数。
+
+### 6.1 三个答案
+
+| 问题 | 决定 | 为什么 |
+|---|---|---|
+| **入口放哪** | **导入 / 附件那条路**（与 `image.ocr`／`pdf.text` 同一处触发），**不挂 AI 面板的按钮** | 产物形状是「内容 ＋ `loc="HH:MM:SS"`」，与 OCR／PDF 文字同类；§15.4 的注册表是**按 mime/扩展名**分派的 ⇒ 一个 `.m4a` 附件在笔记里就该能被抽，**不该要求用户先打开 AI 面板**。AI 面板只做**消费**（把已有抽取结果当素材） |
+| **语言参数** | 要，但**可选透传**（`language?`，不给就不发这个字段） | 不给时让服务端用它自己的默认（中文场景由模型决定），我们不猜；要固定中文时调用方显式传 `zh` |
+| **长音频分段** | **按端点给的段走，UI 侧不做二次切分** | 契约本来就是"每段一条 `kind=transcript`"（`loc` 来自 `start`）⇒ 分段粒度已经在契约里。若**平台侧**因模型窗口必须切，切完必须**按时间戳还原到整段音频的时间轴**（不能每块从 `00:00:00` 重新计），**别把 N 段糊成一段** —— 那会把 `loc` 这个唯一的定位能力丢掉 |
+
+另：`hasPunct` **不进返回值**（AMD 已在契约里裁定），与上面"标点不能成为下游的隐式依赖"是同一条。
+
+### 6.2 落地：`src/lib/ai/localTranscribe.ts`
+
+与 `localVision` **同一条红线**（复用同一个 `isLoopbackBaseUrl` 判据，不另写一份）：
+
+```text
+localTranscribe(config, { model?, language?, timeoutMs? })
+  → { transcribe?, refusal? }        // 非本机 ⇒ 只有 refusal，下游按"未注入"走 provider_error
+transcribe(audio, mime, { model?, language? })
+  → POST <base>/v1/audio/transcriptions   multipart: file(+文件名按 mime 给扩展名) / model / language?
+  → 解析 {text} 或 {text, segments:[{start,end,text}]}   别的形状**抛**，不猜字段名
+```
+
+四条刻意写下来的取舍：
+
+1. **默认模型写死 `funasr-nano`**（owner 拍板），且**不用 `config.model`** —— 那是**文本对话模型**的名字，
+   拿去打转写端点必然 404（两个模型空间不是一回事）；
+2. **传输走 `coreFetch`** ⇒ 桌面端是 `@tauri-apps/plugin-http`（**原生请求，不经 WebView**）
+   ⇒ **桌面没有 CORS 这一关**；`capabilities/default.json` 的 http 作用域含 `http://**` ⇒ `127.0.0.1:8080` 在范围内。
+   ★ Windows 2026-09-22 提醒的"CORS 未验"**只作用在 Web 端**（浏览器 fetch），桌面端不适用；
+3. **超时默认 5 分钟**（转写比视觉慢得多）；404 的报错**单独给一句指路**（"这台机器上装了哪个 ASR 模型看 `GET /v1/models`"）；
+4. **空音频（0 字节）不是模型问题** ⇒ 报错明说"问题在取字节"（与视觉对空图的处置同口径）。
+
+接线链（**每一跳都漏不得**，漏了结果与"没配置"长得一模一样）：
+
+```text
+AiSettingsForm.runIndex  →  runLibraryIndex({ vision, transcribe })
+  → indexLibrary  → indexPage/indexUnfiled → indexOne → extractAttachment → attachmentDeps  → avTranscriptExtractor
+```
+
+### 6.3 判据读数（机读，全绿）
+
+```text
+src/lib/ai/localTranscribe.test.ts       15 条   （红线 2 / 请求形状 2 / 响应归一 5 / 失败路径 4 / 纯函数 2）
+src/lib/indexPage.test.ts                19 条   （+2：没注入 transcribe ⇒ provider_error；
+                                                  ★ 注入了 ⇒ 真的被调用 ＋ 段进内容层（loc=HH:MM:SS）＋ 顺手分块）
+src/lib/platform/extractDeps.test.ts     14 条   （+1：transcribe 透传；两条通道各自独立，不许互相变出来）
+$ npx tsc --noEmit                       exit=0
+$ vitest run src/lib/extract src/lib/ai src/lib/platform
+  Test Files 38 passed | 3 skipped (41)   Tests 398 passed | 6 skipped (404)
+```
+
+### 6.4 ⚠️ 还没证的两件事（不许读成"验过了"）
+
+1. **真模型那条链路没跑过**：本机 herdsman 现在**没在跑**（`vitest` 里 `librarySummary.live` 报
+   `ECONNREFUSED 127.0.0.1:8080`；Windows 验收机同一条：`curl` exit=7）⇒ 现在的绿全是**假端点**那层；
+   要真读数得先让桌面应用的「模型商店」把服务起起来，再跑一次 §10.7 的闭环冒烟；
+2. **Web 端 CORS 未实测**（桌面不受影响，理由见 6.2-②）。
+
+### 6.5 顺带发现的一条**参数优先级**问题（不是本轮的错，记下来免得以后查）
+
+抽取器 `avTranscript.ts` **写死**了 `transcribe(bytes, mime, { model: DEFAULT_ASR_MODEL })`
+（AMD 的判据 `calls == [{mime, model: DEFAULT_ASR_MODEL}]` 也钉着它）⇒
+`localTranscribe(config, { model: "sherpa-onnx-paraformer-zh-small" })` 里那个模型**今天不会生效**，
+因为"本次调用"优先于"构造时"。
+
+⇒ 结论：**用户可配 ASR 模型这件事现在做不到**，要做得改抽取器那一行（让它别硬编码默认值、
+把"用哪个模型"变成真参数）。这属于**抽取层**的口径，我没有擅自改（那边有判据钉着），
+已在信箱里提给 AMD。在那之前：换模型＝改 `DEFAULT_ASR_MODEL` 或在调用侧直接把 `transcribe` 换掉。

@@ -347,6 +347,63 @@ describe("indexPage：把一个页面索引完整", () => {
     expect(r.summary).toContain("provider_error");
   });
 
+  it("★ 音频附件没注入 transcribe ⇒ **provider_error**（不会瞎试网络）", async () => {
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "av", name: "会议录音.wav", mime: "audio/wav", hash: "av", size: 1, path: "" },
+    ]);
+    setActivePlatform(
+      platformWith({ p1: "正文。" }, { av: new Uint8Array([1, 2, 3]) }, {
+        av: { name: "会议录音.wav", mime: "audio/wav" },
+      }),
+    );
+
+    const s = await stores();
+    const r = await indexPage("p1", s); // 不给 transcribe
+    expect(r.attachments[0].status).toBe("failed");
+    expect(r.attachments[0].code).toBe("provider_error");
+  });
+
+  it("★ 注入了 transcribe ⇒ 它**真的被调用**，且带时间戳的段进了内容层（能力 ≠ 行为）", async () => {
+    // 这条是"接线"判据，不是"函数返回什么"：`transcribe` 是抽取层**收到**的 deps，
+    // 从 UI 传到抽取器中间要经过 `runLibraryIndex → indexLibrary → indexPage → indexOne → extractAttachment`
+    // 五跳 —— 任何一跳漏传，`av.transcript@1` 都会安静地退回 `provider_error`，
+    // 而"没注入"和"注入了但没传下去"在结果上**长得一模一样**。
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "av", name: "会议录音.wav", mime: "audio/wav", hash: "av", size: 1, path: "" },
+    ]);
+    setActivePlatform(
+      platformWith({ p1: "正文。" }, { av: new Uint8Array([1, 2, 3]) }, {
+        av: { name: "会议录音.wav", mime: "audio/wav" },
+      }),
+    );
+
+    const calls: { mime: string; model?: string; bytes: number }[] = [];
+    const transcribe = async (audio: Uint8Array, mime: string, opts: { model?: string }) => {
+      calls.push({ mime, model: opts.model, bytes: audio.byteLength });
+      return {
+        text: "今天天气不错，我们下午三点开会。",
+        segments: [
+          { start: 0, end: 3.5, text: "今天天气不错，" },
+          { start: 3.5, end: 7, text: "我们下午三点开会。" },
+        ],
+      };
+    };
+
+    const s = await stores();
+    const r = await indexPage("p1", s, { transcribe });
+
+    // ① 真的调到了（mime 与字节都从平台取到的那一份）
+    expect(calls).toEqual([{ mime: "audio/wav", model: "funasr-nano", bytes: 3 }]);
+    expect(r.attachments[0].status).toBe("stored");
+    // ② 文本进了内容层，且 `loc` 是**时间戳定位**（HH:MM:SS）—— 转写与其它抽取器最本质的区别
+    const segs = await s.text.segmentsOf("av");
+    expect(segs.map((x) => x.text)).toEqual(["今天天气不错，", "我们下午三点开会。"]);
+    expect(segs.map((x) => x.loc)).toEqual(["00:00:00", "00:00:03"]);
+    expect(segs.every((x) => x.kind === "transcript")).toBe(true);
+    // ③ 顺手分块（同一入口的职责）⇒ 检索面立刻看得到
+    expect((await s.chunks.chunksOf({ kind: "attachment", attId: "av" })).length).toBeGreaterThan(0);
+  });
+
   it("页面不存在 ⇒ 抛出（调用方的错，不该被伪装成「索引了 0 块」）", async () => {
     (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     setActivePlatform(platformWith({}, {}));
