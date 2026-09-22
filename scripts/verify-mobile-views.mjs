@@ -227,8 +227,42 @@ async function closeRail(page) {
   }
 }
 
+/**
+ * 等应用外壳就绪（**轮询**，不用固定 sleep）。
+ *
+ * ⚠️ 为什么必须这样等（2026-09-22 实测：1.91.21 的 CI 里三条视图门禁全红）：
+ * CI runner 冷启动比开发机慢得多，脚本原来 `goto` + `sleep(3500)` 就去点竖条，
+ * 于是整轮都是「打不开「笔记（编辑器）」…」，最后抛
+ * `No element found for selector: .activity-group .activity-btn[title^="文件管理"]`。
+ * 本机 6 秒内起得来 ⇒ **本地永远看不到这条**。本仓的老规矩：别用固定 sleep 等异步。
+ */
+async function waitForApp(page, timeoutMs = 45000) {
+  const t0 = Date.now();
+  for (;;) {
+    const ready = await safeEval(page, () => !!document.querySelector(".activity-group .activity-btn"));
+    if (ready) return true;
+    if (Date.now() - t0 > timeoutMs) {
+      console.error(`  ✗ 等应用外壳超时（${timeoutMs}ms）：.activity-group .activity-btn 一直没出现`);
+      return false;
+    }
+    await sleep(400);
+  }
+}
+
+/** 等某个选择器出现（同为轮询；`openView` 之后等"这个视图真的画出来了"）。 */
+async function waitFor(page, selector, timeoutMs = 20000) {
+  const t0 = Date.now();
+  for (;;) {
+    const hit = await safeEval(page, (s) => !!document.querySelector(s), selector);
+    if (hit) return true;
+    if (Date.now() - t0 > timeoutMs) return false;
+    await sleep(300);
+  }
+}
+
 /** 打开某个主视图：竖条 → 活动图标（**按 title 选，不按序号**）。 */
 async function openView(page, title) {
+  await waitForApp(page);
   await openRail(page);
   const found = await page.evaluate((t) => {
     const btn = Array.from(document.querySelectorAll(".activity-group .activity-btn")).find((b) =>
@@ -421,23 +455,30 @@ async function checkProperties(page, vp, tag) {
  *   ③ 批注工具行窄屏是**一行**；④ 无横向溢出；⑤ 扫描版显示文本层状态行。
  */
 async function checkPdfReader(page, vp) {
-  // 1) 进文件管理器
+  // 1) 进文件管理器（**轮询等它真的画出来**，别用固定 sleep —— CI 冷启动慢，见 waitForApp 的注释）
   await openView(page, "文件管理");
-  await sleep(900);
+  await waitFor(page, ".file-manager", 20000);
+  await sleep(600);
   // 1b) 切到**列表视图**：窄屏默认是网格（`defaultFileView(null, w)`），而「行尾 ⋯ → 阅读并标注」
   //     那条菜单只在表格行上。按类名点第一个 `.fm-view-btn`（title 走 i18n，别按文字找）。
   await safeEval(page, () => document.querySelector(".fm-view-btn")?.click());
   await sleep(700);
 
   // 2) 上传夹具（先挂 chooser 再点）
-  const sel = await safeEval(page, () => {
-    const b = Array.from(document.querySelectorAll("[title]")).find((x) =>
-      (x.getAttribute("title") || "").includes("上传"),
-    );
-    if (!b) return null;
-    if (!b.id) b.id = "__pdf_upload_probe";
-    return "#__pdf_upload_probe";
-  });
+  //    ⚠️ 「上传」入口**轮询等**（最多 ~8s）：切到列表视图后工具栏可能还没画出来，
+  //    固定 sleep 在 CI 上会直接报「找不到「上传」入口」（2026-09-22 实测）。
+  let sel = null;
+  for (let i = 0; i < 25 && !sel; i++) {
+    sel = await safeEval(page, () => {
+      const b = Array.from(document.querySelectorAll("[title]")).find((x) =>
+        (x.getAttribute("title") || "").includes("上传"),
+      );
+      if (!b) return null;
+      if (!b.id) b.id = "__pdf_upload_probe";
+      return "#__pdf_upload_probe";
+    });
+    if (!sel) await sleep(320);
+  }
   if (!sel) return { err: "找不到「上传」入口" };
   const fixture = join(process.cwd(), "src-tauri", "tests", "fixtures", "pdf", "scan.pdf");
   try {
@@ -1360,7 +1401,8 @@ async function main() {  const executablePath = findChrome();
       page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
       await page.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
       await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
-      await sleep(3000);
+      await waitForApp(page);
+      await sleep(600);
 
       for (const v of VIEWS) {
         console.log(`\n【${vp.name} · ${v.label}】`);
@@ -1666,7 +1708,8 @@ async function main() {  const executablePath = findChrome();
         ppage.on("pageerror", (e) => perrs.push(String(e).slice(0, 160)));
         await ppage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
         await ppage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
-        await sleep(3500);
+        await waitForApp(ppage);
+        await sleep(600);
         const r = await checkProperties(ppage, vp, vp.name);
         if (r.err) {
           ok(false, `属性表体检失败：${r.err}`);
@@ -1803,7 +1846,8 @@ async function main() {  const executablePath = findChrome();
         rpage.on("pageerror", (e) => rerrs.push(String(e).slice(0, 160)));
         await rpage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
         await rpage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
-        await sleep(3500);
+        await waitForApp(rpage);
+        await sleep(600);
         assertPdfReader(await checkPdfReader(rpage, vp), vp);
         await shot(rpage, `${vp.name}-pdf-reader`);
         ok(rerrs.length === 0, `阅读器页无 JS 报错${rerrs.length ? "：" + rerrs.join(" | ") : ""}`);
@@ -1816,7 +1860,8 @@ async function main() {  const executablePath = findChrome();
     const desk = await deskCtx.newPage();
     await desk.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
     await desk.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
-    await sleep(2500);
+    await waitForApp(desk);
+    await sleep(500);
     console.log(`\n【桌面 ${DESKTOP.name} · 窄屏规则不许漏到桌面】`);
     const d = await safeEval(desk, () => {
       const r = (sel) => {

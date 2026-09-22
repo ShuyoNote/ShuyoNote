@@ -250,6 +250,7 @@ async function main() {
         tabH: tabs.length ? Math.round(tabs[0].getBoundingClientRect().height) : null,
         tabsClientW: tabsEl ? tabsEl.clientWidth : null,
         tabsScrollW: tabsEl ? tabsEl.scrollWidth : null,
+        tabsOverflowX: tabsEl ? getComputedStyle(tabsEl).overflowX : null,
         cols,
       };
     });
@@ -263,9 +264,11 @@ async function main() {
     );
     ok(tc.closeHits === true, "「关闭」是它自己中心点上的命中元素（看得见 = 点得到）");
     ok(
-      tc.tabCount === 6 && tc.tabsScrollW > tc.tabsClientW,
-      `六个分类页签可横向滚动（${tc.tabCount} 个：scrollWidth ${tc.tabsScrollW} > clientWidth ${tc.tabsClientW}）` +
-        `——溢出且滚不到 = 「健康 / 我的模板」永远切不过去`,
+      tc.tabCount === 6 && (tc.tabsScrollW <= tc.tabsClientW + 1 || /auto|scroll/.test(tc.tabsOverflowX ?? "")),
+      `六个分类页签都在，且"放得下就直接显示 / 放不下就能横滑"（${tc.tabCount} 个：` +
+        `scrollWidth ${tc.tabsScrollW} vs clientWidth ${tc.tabsClientW}，overflow-x=${tc.tabsOverflowX}）` +
+        `——"溢出且滚不到"才是 bug（「健康 / 我的模板」永远切不过去）；` +
+        `⚠️ 2026-09-22：Linux runner 字体更窄，六个页签正好放得下（362 = 362），原来那条"必须溢出"在 CI 上恒红`,
     );
     ok(tc.tabH >= 44, `页签命中区 ≥44（实际 ${tc.tabH}）`);
     ok(tc.cols === 2, `390px 下卡片是两列（实际 ${tc.cols} 列）——桌面那条 minmax(240px,1fr) 只剩一列、每张卡占满整屏`);
