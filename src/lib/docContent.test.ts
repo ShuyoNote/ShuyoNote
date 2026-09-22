@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs } from "./blockRev";
 
 beforeAll(() => {
@@ -544,5 +544,29 @@ describe("docContent 的冲突留痕与裁决（表 page_conflicts）", () => {
     expect(merged).toBe(true);
     expect(bodiesOf(readContent(db, "p1")!.json)).toEqual(["A 改的", "B 改的"]);
     expect(pageConflictsOf(db, "p1")).toEqual([]);
+  });
+});
+
+describe("docContent 的正文文本本地修复（阶段 1 的收口）", () => {
+  it("★ writeContentText：**只动正文** —— 内容 JSON、dirty、sync_seq 一个都不许动", async () => {
+    // 它是"合并/裁决产物的正文补算"用的写入（那类内容没有编辑器参与 ⇒ 正文滞后一拍）。
+    // 标脏就会把它当成一笔本地编辑推上去 —— 那不是这一层的职责。
+    const db = await freshDb();
+    const json = JSON.stringify({ root: { children: [{ type: "paragraph", blockId: "b1", blockRev: 2 }] } });
+    seedPage(db, "p1", { title: "页", json, text: "旧文本（页级胜方那一份）" }, { dirty: 1, syncSeq: 3 });
+
+    writeContentText(db, "p1", "按编辑器语义补算出来的正文");
+
+    const after = readContent(db, "p1")!;
+    expect(after.text).toBe("按编辑器语义补算出来的正文");
+    expect(after.json).toBe(json);
+    expect(localState(db, "p1")).toEqual({ syncSeq: 3, dirty: 1 });
+
+    // 带判据的那一个：**相同 ⇒ 一次写库都没有**（绝大多数页面走这条）
+    expect(refreshPageTextIfStale(db, "p1", "按编辑器语义补算出来的正文")).toBe(false);
+    expect(refreshPageTextIfStale(db, "p1", "又变了")).toBe(true);
+    expect(readContent(db, "p1")!.text).toBe("又变了");
+    // 页面不存在 ⇒ 不修（不猜）
+    expect(refreshPageTextIfStale(db, "nope", "随便")).toBe(false);
   });
 });

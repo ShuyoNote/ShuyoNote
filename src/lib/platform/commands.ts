@@ -544,6 +544,8 @@ export interface CommandMap {
   };
   /** 阶段 1 · 裁决一处冲突（`local` 或 `remote`；其余值两侧都报错，不默认选边）。 */
   resolve_page_conflict: { args: { conflictId: string; choice: string }; result: null };
+  /** 阶段 1 · 正文文本的本地修复（合并/裁决产物补算；**只动正文**，不动内容与 dirty）。 */
+  refresh_page_text: { args: { pageId: string; text: string }; result: boolean };
   export_backup: { args: { destPath: string }; result: { path: string; size: number } };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };

@@ -473,6 +473,8 @@ pub fn run() {
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,
+            // 阶段 1 · 正文文本的本地修复（合并/裁决之后由"有编辑器的那一侧"喂正确文本）
+            commands::refresh_page_text,
             commands::set_page_cover,
             commands::set_page_icon,
             commands::set_page_cover_height,

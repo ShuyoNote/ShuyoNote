@@ -23,6 +23,7 @@
 
 import { assignBlockRevs, blockRevOf, canonicalContent } from "./blockRev";
 import { newBlockId } from "./blockIdentity";
+import { repairPageTextIfStale } from "./pageTextRepair";
 
 /** 一页的**内容** —— 那一层的单位（与 Rust 侧 `DocContent` 字段一一对应）。 */
 export interface DocContent {
@@ -661,7 +662,36 @@ export function resolvePageConflict(db: ContentSql, conflictId: string, choice: 
 }
 
 /**
- * ★★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
+ * **正文文本的本地修复**（阶段 1 · "正文待重建"那条边界的收口）—— 与 Rust 侧 `write_text` 同一语义。
+ *
+ * 什么时候需要它：合并 / 裁决产物是**拼出来**的，正文文本仍是页级胜方那一份 ⇒ 那一页的 FTS 会有一段时间
+ * "搜不到刚合并进来的字"，要等下一次保存才重建。修法（**不引第二份派生实现**）：有编辑器的那一侧在打开
+ * 页面时按编辑器语义算一遍，与库里那份不同就写回来 —— **只动正文文本**：① 不动内容 JSON、② **不动 `dirty`**
+ * （它不是用户编辑，标脏会把它当成本地改动推上去）。
+ */
+export function writeContentText(db: ContentSql, pageId: string, text: string): void {
+  db.run("UPDATE pages SET content_text = ? WHERE id = ?", [text, pageId]);
+}
+
+/**
+ * **正文文本的本地修复（带判据的那一个）**：拿库里那一份与算出来的比，**不同才写回**
+ * （相同 ⇒ 一次写库都没有 —— 绝大多数页面走这条）。返回**是否修了**。
+ *
+ * ⚠️ 比较放在**这一层**而不是调用方：调用方（编辑器插件）只负责"按编辑器语义算一遍"，
+ * 让它顺手读那一列会把收口门禁顶红（`App.tsx` 那类界面文件的计数只许减不许增）。
+ */
+export function refreshPageTextIfStale(db: ContentSql, pageId: string, derived: string): boolean {
+  const cur = readContent(db, pageId);
+  return repairPageTextIfStale(
+    { refresh: (id, text) => writeContentText(db, id, text) },
+    pageId,
+    cur?.text,
+    derived,
+  );
+}
+
+/**
+ * ★ **阶段 1 的远端落库入口**（唯一）：页级说"用远端"之后，调用方只调这一个。
  *
  * 内部按顺序做（顺序就是裁定 ④ 要求的那条：**页级优先，块级只在其后**）：
  *   1. 读**本地现状**（读出口 `readContent`）；

@@ -626,3 +626,13 @@ pub fn resolve_page_conflict(db: State<Db>, conflict_id: String, choice: String)
     };
     crate::doc_content::resolve_page_conflict(&c, &conflict_id, choice)
 }
+
+/// **正文文本的本地修复**（阶段 1）：有编辑器的那一侧按编辑器语义算好文本，交给它写回。
+///
+/// ⚠️ **只动正文**（内容 JSON 与 `dirty` 都不动）—— 它不是用户编辑，别当成一笔本地改动推上去。
+/// 返回**是否真的修了**（相同就一次写库都没有）。
+#[tauri::command]
+pub fn refresh_page_text(db: State<Db>, page_id: String, text: String) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::doc_content::refresh_page_text_if_stale(&c, &page_id, &text)
+}

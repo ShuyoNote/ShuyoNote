@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale } from "../docContent";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -3140,6 +3140,12 @@ export function makeInvoke(store: SqliteStore) {
       }
       resolvePageConflict(store, conflictId, choice);
       return null as T;
+    }
+    if (cmd === "refresh_page_text") {
+      // 阶段 1 · 正文文本的本地修复：**只动正文**（内容与 dirty 都不动）。
+      // 比较在那一层里做（相同 ⇒ 一次写库都没有）；返回"是否真的修了"。
+      const pid = String(a.pageId ?? a.page_id ?? "");
+      return refreshPageTextIfStale(store, pid, String(a.text ?? "")) as T;
     }
 
     // ---- Backup / export / import (standard zip, matches the desktop format) ----

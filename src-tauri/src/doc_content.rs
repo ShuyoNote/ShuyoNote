@@ -76,6 +76,39 @@ pub fn write(c: &Connection, page_id: &str, content: &DocContent, now: i64) -> R
     Ok(())
 }
 
+/// **正文文本的本地修复**（阶段 1 · "正文待重建"那条边界的收口）。
+///
+/// 什么时候需要它：合并 / 裁决产物是**服务端或本地拼出来**的，正文文本仍是页级胜方那一份
+/// ⇒ 那一页的 FTS 会有一段时间"搜不到刚合并进来的字"，要等下一次保存才重建。
+/// 修法（不用第二份派生实现）：**有编辑器的那一侧**（前端）在打开页面时按编辑器语义算一遍，
+/// 与库里那份不同就用这个函数写回去 —— **只动正文文本**，① 不动 `content_json`、② **不动 `dirty`**。
+///
+/// ⚠️ 为什么 `dirty` 必须不动：这次修复不是"用户改了内容"，标脏会把它当成一笔本地编辑推上去
+/// （正文文本确实会因此同步给别的设备，但那不是这一层的职责 —— 这里只修本地索引的输入）。
+pub fn write_text(c: &Connection, page_id: &str, text: &str) -> Result<(), String> {
+    c.execute(
+        "UPDATE pages SET content_text = ?1 WHERE id = ?2",
+        params![text, page_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// **正文文本的本地修复（带判据的那一个）**：拿库里那一份与算出来的比，**不同才写回**
+/// （相同 ⇒ 一次写库都没有）。返回**是否修了**。
+///
+/// ⚠️ 比较放在**这一层**而不是调用方（前端编辑器插件）：那类界面文件读这一列会把收口门禁顶红。
+pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) -> Result<bool, String> {
+    let Some(cur) = read(c, page_id)? else {
+        return Ok(false);
+    };
+    if cur.text == derived {
+        return Ok(false);
+    }
+    write_text(c, page_id, derived)?;
+    Ok(true)
+}
+
 /// **派生**：内容变了之后，所有"从内容重建"的东西都从这里刷。
 ///
 /// 今天是两块：FTS 索引（`search`）＋ 块图/反向链接（`blocks`）。
@@ -1294,5 +1327,39 @@ mod tests {
         c.execute_batch("CREATE TABLE pages (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '', content_text TEXT NOT NULL DEFAULT '', deleted_at INTEGER);").unwrap();
         let next = jdoc(vec![jblk(Some("b1"), None, "新")]);
         assert_eq!(revs_of(&stamp_block_revs(&c, "nope", &next).unwrap()), vec![Some(1)]);
+    }
+
+    #[test]
+    fn write_text_touches_only_the_text() {
+        // 阶段 1 · 正文文本的本地修复：**只动 content_text** —— `content_json` 与 `dirty` 都不许动
+        //（它不是用户编辑；标脏会把它当成一笔本地改动推上去）。
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE pages (
+               id TEXT PRIMARY KEY, content_json TEXT NOT NULL DEFAULT '',
+               content_text TEXT NOT NULL DEFAULT '', dirty INTEGER NOT NULL DEFAULT 0,
+               updated_at INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO pages (id, content_json, content_text, dirty, updated_at) VALUES ('p1', '{\"root\":{\"children\":[]}}', '旧文本', 0, 7)",
+            [],
+        )
+        .unwrap();
+
+        write_text(&c, "p1", "新文本").unwrap();
+
+        let (json, text, dirty, updated): (String, String, i64, i64) = c
+            .query_row(
+                "SELECT content_json, content_text, dirty, updated_at FROM pages WHERE id = 'p1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(text, "新文本");
+        assert_eq!(json, "{\"root\":{\"children\":[]}}", "正文修复不许动内容");
+        assert_eq!(dirty, 0, "正文修复不是本地编辑（标脏会被推上去）");
+        assert_eq!(updated, 7, "正文修复不许改 updated_at（那是内容的时间戳）");
     }
 }

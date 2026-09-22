@@ -492,6 +492,8 @@ export const api = {
   listPageConflicts: (pageId: string) => invoke("list_page_conflicts", { pageId }),
   resolvePageConflict: (conflictId: string, choice: "local" | "remote") =>
     invoke("resolve_page_conflict", { conflictId, choice }),
+  /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
+  refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),
   exportBackup: (destPath: string) =>
     invoke("export_backup", { destPath }),
   importBackup: (srcPath: string) =>

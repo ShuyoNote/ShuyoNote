@@ -34,6 +34,7 @@ import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
 import { BlockDragPlugin } from "./plugins/BlockDragPlugin";import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
+import { api } from "../lib/api";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
 import { PdfRefPlugin } from "./plugins/PdfRefPlugin";
@@ -463,6 +464,24 @@ function BlockIdPlugin({
 // into its own chunk and only fetched when a user actually edits a drawing.
 const DrawingEditorModal = lazy(() => import("../components/DrawingEditorModal"));
 
+/**
+ * 阶段 1 · **正文文本的本地修复**（见 `lib/pageTextRepair.ts`）。
+ *
+ * 合并 / 裁决产物的正文仍是页级胜方那一份（那种内容是拼出来的、没有编辑器参与），
+ * 于是这里趁**编辑器已经把文档解析好**的时候按编辑器语义算一遍，交给那一层去比、不同才写回 ——
+ * 只动正文（不动内容、不动 `dirty`）。**比较在那一层里做**（界面文件读那一列会把收口门禁顶红）。
+ */
+function PageTextRepairPlugin({ pageId }: { pageId: string }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    if (!pageId) return;
+    // 与保存路径**同一句**（`$getRoot().getTextContent()`）—— 所以这不是"第二份派生实现"
+    const derived = editor.getEditorState().read(() => $getRoot().getTextContent());
+    void api.refreshPageText(pageId, derived);
+  }, [editor, pageId]);
+  return null;
+}
+
 const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, searchQuery }: EditorProps) {
   // Stable block identity: node key → block id, and the persisted ids (in
   // top-level child order) read from the saved document at mount.
@@ -510,6 +529,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <TablePlugin hasHorizontalScroll />
         <OnChangePlugin onChange={onChange} />
         <BlockIdPlugin seedIds={seedIdsRef.current} map={blockIdMapRef.current} />
+        <PageTextRepairPlugin pageId={pageId} />
         <BlockRefPlugin pageId={pageId} />
         <PdfRefPlugin />
         <BlockRefSyncPlugin />
