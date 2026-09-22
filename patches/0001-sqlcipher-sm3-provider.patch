@@ -28,7 +28,26 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
  
  typedef struct sqlcipher_provider sqlcipher_provider;
  struct sqlcipher_provider {
-@@ -110791,6 +110799,17 @@
+@@ -109681,8 +109689,18 @@
+ static volatile int default_kdf_iter = PBKDF2_ITER;
+ static volatile int default_page_size = 4096;
+ static volatile int default_plaintext_header_size = 0;
++/* SHUYONOTE-GM (v4): 国密构建把**默认值**也设成 SM3 —— owner 快路（不做兼容）＋ 消灭
++** 「库级参数靠应用约定」那一类 bug（只要有一条 keying 路径忘了手动设标签，就会静默回落）。
++** ⚠️ **必须**用 SQLCIPHER_CRYPTO_OPENSSL 守卫：本补丁的能力门（见 2a/2b）对 provider 不支持的算法
++** 返回错误，而 CommonCrypto / libtomcrypt 不支持 SM3 ⇒ 无条件改会让那两个后端在 ctx_init 就整个打不开。
++** ⇒ 本分支编译出的默认值**与后端有关**（OpenSSL/国密 ⇒ SM3；其它 ⇒ SHA512），这是**有意**的。 */
++#ifdef SQLCIPHER_CRYPTO_OPENSSL
++static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SM3;
++static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SM3;
++#else
+ static volatile int default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
+ static volatile int default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
++#endif
+ static volatile int sqlcipher_mem_security_on = 0;
+ static volatile int sqlcipher_mem_executed = 0;
+ static volatile int sqlcipher_mem_initialized = 0;
+@@ -110791,6 +110809,17 @@
  static int sqlcipher_codec_ctx_set_hmac_algorithm(codec_ctx *ctx, int algorithm) {
    if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
  
@@ -46,7 +65,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
    ctx->hmac_algorithm = algorithm;
    return sqlcipher_codec_ctx_reserve_setup(ctx);
  }
-@@ -110798,6 +110817,18 @@
+@@ -110798,6 +110827,18 @@
  static int sqlcipher_codec_ctx_set_kdf_algorithm(codec_ctx *ctx, int algorithm) {
    if(SQLCIPHER_FLAG_GET(ctx->flags, CIPHER_FLAG_KEY_USED)) return SQLITE_OK;
  
@@ -65,7 +84,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
    ctx->kdf_algorithm = algorithm;
    return SQLITE_OK;
  }
-@@ -112311,6 +112342,8 @@
+@@ -112311,6 +112352,8 @@
            rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA256);
          } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
            rc = sqlcipher_codec_ctx_set_hmac_algorithm(ctx, SQLCIPHER_HMAC_SHA512);
@@ -74,7 +93,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
          }
          if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
          rc = codec_set_btree_to_codec_pagesize(db, pDb, ctx);
-@@ -112323,6 +112356,8 @@
+@@ -112323,6 +112366,8 @@
            sqlcipher_vdbe_return_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA256_LABEL, P4_TRANSIENT);
          } else if(algorithm == SQLCIPHER_HMAC_SHA512) {
            sqlcipher_vdbe_return_string(pParse, "cipher_hmac_algorithm", SQLCIPHER_HMAC_SHA512_LABEL, P4_TRANSIENT);
@@ -83,7 +102,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
          }
        }
      }
-@@ -112336,6 +112371,8 @@
+@@ -112336,6 +112381,8 @@
          default_hmac_algorithm = SQLCIPHER_HMAC_SHA256;
        } else if(sqlite3_stricmp(zRight, SQLCIPHER_HMAC_SHA512_LABEL) == 0) {
          default_hmac_algorithm = SQLCIPHER_HMAC_SHA512;
@@ -92,7 +111,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
        }
      } else {
        if(default_hmac_algorithm == SQLCIPHER_HMAC_SHA1) {
-@@ -112344,6 +112381,8 @@
+@@ -112344,6 +112391,8 @@
          sqlcipher_vdbe_return_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA256_LABEL, P4_TRANSIENT);
        } else if(default_hmac_algorithm == SQLCIPHER_HMAC_SHA512) {
          sqlcipher_vdbe_return_string(pParse, "cipher_default_hmac_algorithm", SQLCIPHER_HMAC_SHA512_LABEL, P4_TRANSIENT);
@@ -101,7 +120,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
        }
      }
    }else
-@@ -112357,6 +112396,8 @@
+@@ -112357,6 +112406,8 @@
            rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA256);
          } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
            rc = sqlcipher_codec_ctx_set_kdf_algorithm(ctx, SQLCIPHER_PBKDF2_HMAC_SHA512);
@@ -110,7 +129,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
          }
          if (rc != SQLITE_OK) sqlcipher_codec_ctx_set_error(ctx, SQLITE_ERROR);
        } else {
-@@ -112366,6 +112407,8 @@
+@@ -112366,6 +112417,8 @@
            sqlcipher_vdbe_return_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL, P4_TRANSIENT);
          } else if(ctx->kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
            sqlcipher_vdbe_return_string(pParse, "cipher_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL, P4_TRANSIENT);
@@ -119,7 +138,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
          }
        }
      }
-@@ -112379,6 +112422,8 @@
+@@ -112379,6 +112432,8 @@
          default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA256;
        } else if(sqlite3_stricmp(zRight, SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL) == 0) {
          default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SHA512;
@@ -128,7 +147,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
        }
      } else {
        if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA1) {
-@@ -112387,6 +112432,8 @@
+@@ -112387,6 +112442,8 @@
          sqlcipher_vdbe_return_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL, P4_TRANSIENT);
        } else if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
          sqlcipher_vdbe_return_string(pParse, "cipher_default_kdf_algorithm", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL, P4_TRANSIENT);
@@ -137,7 +156,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
        }
      }
    }else
-@@ -112535,6 +112582,8 @@
+@@ -112535,6 +112592,8 @@
          pragma = sqlite3_mprintf("PRAGMA cipher_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA256_LABEL);
        } else if(algorithm == SQLCIPHER_HMAC_SHA512) {
          pragma = sqlite3_mprintf("PRAGMA cipher_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA512_LABEL);
@@ -146,7 +165,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
        }
        sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
  
-@@ -112546,6 +112595,8 @@
+@@ -112546,6 +112605,8 @@
          pragma = sqlite3_mprintf("PRAGMA cipher_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL);
        } else if(algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
          pragma = sqlite3_mprintf("PRAGMA cipher_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
@@ -155,7 +174,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
        }
        sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
  
-@@ -112573,6 +112624,8 @@
+@@ -112573,6 +112634,8 @@
        pragma = sqlite3_mprintf("PRAGMA cipher_default_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA256_LABEL);
      } else if(default_hmac_algorithm == SQLCIPHER_HMAC_SHA512) {
        pragma = sqlite3_mprintf("PRAGMA cipher_default_hmac_algorithm = %s;", SQLCIPHER_HMAC_SHA512_LABEL);
@@ -164,7 +183,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      }
      sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
  
-@@ -112583,6 +112636,8 @@
+@@ -112583,6 +112646,8 @@
        pragma = sqlite3_mprintf("PRAGMA cipher_default_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA256_LABEL);
      } else if(default_kdf_algorithm == SQLCIPHER_PBKDF2_HMAC_SHA512) {
        pragma = sqlite3_mprintf("PRAGMA cipher_default_kdf_algorithm = %s;", SQLCIPHER_PBKDF2_HMAC_SHA512_LABEL);
@@ -173,7 +192,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      }
      sqlcipher_vdbe_return_string(pParse, "pragma", pragma, P4_DYNAMIC);
    }else
-@@ -113766,7 +113821,14 @@
+@@ -113766,7 +113831,14 @@
    return SQLITE_OK;
  }
  
@@ -189,7 +208,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
  
  /* activate and initialize sqlcipher. Most importantly, this will automatically
     intialize OpenSSL's EVP system if it hasn't already be externally. Note that
-@@ -113864,6 +113926,8 @@
+@@ -113864,6 +113936,8 @@
    OSSL_PARAM sha1[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha1", 4, 0 }, OSSL_PARAM_END };
    OSSL_PARAM sha256[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha256", 6, 0 }, OSSL_PARAM_END };
    OSSL_PARAM sha512[] = { { "digest", OSSL_PARAM_UTF8_STRING, "sha512", 6, 0 }, OSSL_PARAM_END };
@@ -198,7 +217,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
  
    if(in == NULL) goto error;
  
-@@ -113903,6 +113967,13 @@
+@@ -113903,6 +113977,13 @@
          goto error;
        }
        break;
@@ -212,7 +231,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      default:
        sqlcipher_log(SQLCIPHER_LOG_ERROR, SQLCIPHER_LOG_PROVIDER, "sqlcipher_openssl_hmac: invalid algorithm %d", algorithm);
        goto error;
-@@ -113978,6 +114049,13 @@
+@@ -113978,6 +114059,13 @@
          goto error;
        }
        break;
@@ -226,7 +245,7 @@ SHUYONOTE-GM 补丁 0001：给 SQLCipher 加国密 SM3 两格（cipher_hmac_algo
      default:
        return SQLITE_ERROR;
    }
-@@ -114076,6 +114154,9 @@
+@@ -114076,6 +114164,9 @@
      case SQLCIPHER_HMAC_SHA512:
        return EVP_MD_size(EVP_sha512());
        break;
