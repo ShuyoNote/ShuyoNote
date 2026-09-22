@@ -1,4 +1,4 @@
-// 判据：workflow YAML 窄规则 ＋ 「单一口味＝国密」四件套
+// 判据：workflow YAML 窄规则 ＋ 「单一口味＝国密」必备项（构建四件＋产物断言两件）
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { checkText, gmPipelineRequirements } from "./check-workflow-yaml.mjs";
@@ -15,6 +15,7 @@ const GOOD = `
           SHUYONOTE_EXPECT_SM_PATCH=applied \\
           SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 \\
           SHUYONOTE_EXPECT_SM_CRYPTO=on \\
+          SHUYONOTE_EXPECT_OPENSSL_DIR="$OPENSSL_DIR" \\
             node scripts/check-crypto-backend.mjs
 `;
 
@@ -28,17 +29,18 @@ describe("check-workflow-yaml：窄规则（非法 YAML 那一类）", () => {
   });
 });
 
-describe("check-workflow-yaml：单一口味＝国密（发版链四件套）", () => {
+describe("check-workflow-yaml：单一口味＝国密（发版链必备项）", () => {
   it("齐全 ⇒ 通过", () => {
     expect(gmPipelineRequirements(GOOD)).toEqual([]);
   });
 
-  it("★ 少任何一件 ⇒ 各自报出来（四件都能独立抓住，不是「只看一件」）", () => {
+  it("★ 少任何一件 ⇒ 各自报出来（每一件都能独立抓住，不是「只看一件」）", () => {
     const drops = [
       [/ --features sm-library/, /--features sm-library/],
       [/node scripts\/sm-library-build\.mjs --prepare/, /sm-library-build\.mjs --prepare/],
       [/SHUYONOTE_EXPECT_SM_PATCH=applied/, /SHUYONOTE_EXPECT_SM_PATCH=applied/],
       [/SHUYONOTE_EXPECT_SM_CRYPTO=on/, /SHUYONOTE_EXPECT_SM_CRYPTO=on/],
+      [/SHUYONOTE_EXPECT_OPENSSL_DIR=/, /SHUYONOTE_EXPECT_OPENSSL_DIR=/],
       [/SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/, /SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/],
       [/echo "OPENSSL_DIR=\/usr"/, /OPENSSL_DIR/],
     ];

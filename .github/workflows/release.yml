@@ -210,7 +210,10 @@ jobs:
         # 单一口味＝**发出去的包必须是 SM4 页**。这一格是产物级证据，不是声明：
         # `page_cipher=` 来自 `build.rs` 对「将要编译的那份源码」的读取（`#define OPENSSL_CIPHER`），
         # 而 `cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3）⇒ 只有它能回答。
-        # 四个声明缺一不可：后端是 openssl（有 SM3/SM4）＋ 补丁在场 ＋ 页加密是 sm4 ＋ **应用层国密是 on**。
+        # 五个声明缺一不可：后端是 openssl（有 SM3/SM4）＋ 补丁在场 ＋ 页加密是 sm4 ＋ 应用层国密是 on
+        # ＋ **产物实际链的 OpenSSL 目录就是我们钉的那个前缀**（最后这格 2026-09-22 加，Windows 侧实测逼出来的：
+        # `OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` **优先于** `OPENSSL_DIR`，而它们可能来自用户级环境变量 ⇒
+        # "静态守卫绿 ＋ backend=openssl 绿"也拦不住"链了另一个 OpenSSL"）。
         # 最后那一格是 2026-09-22 补的：`tauri dev` 与 `tauri build` 对 `default features` 的处理**不同**
         # （实测 argv：dev ⇒ `--no-default-features --features sm-crypto`；build ⇒ `--features sm-library,tauri/custom-protocol`），
         # ⇒ "发版包带没带 `sm-crypto`"不能只靠 CLI 行为不变：它一旦变，包会**静默退回 v1 写路径**（没有国密）。
@@ -221,6 +224,7 @@ jobs:
           SHUYONOTE_EXPECT_SM_PATCH=applied \
           SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 \
           SHUYONOTE_EXPECT_SM_CRYPTO=on \
+          SHUYONOTE_EXPECT_OPENSSL_DIR="$OPENSSL_DIR" \
             node scripts/check-crypto-backend.mjs
 
       - name: 装包确实带上了 pdfium.dll（Windows 档）

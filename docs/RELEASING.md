@@ -211,14 +211,15 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 不再有「这个平台 AES、那个平台 SM4」的混合状态（那会变成"同一个文件在 A 机器能开、B 机器打不开、
 且报错一模一样"的最难查形态：SQLCipher 的文件里**不写**用的是哪套算法）。
 
-**发布链要的四个开关**（`release.yml` 已就位；少任何一个都会产出「看起来是国密、其实不是」的包）：
+**发布链要的开关与断言**（`release.yml` 已就位；少任何一个都会产出「看起来是国密、其实不是」的包）：
 
 | # | 开关 | 为什么 |
 |---|---|---|
 | 1 | `OPENSSL_DIR` **显式给**，并**用 `--print-env` 翻译成三个变量** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败。<br>⚠️ **不能只给 `OPENSSL_DIR`**：`openssl-sys` 只看 `<OPENSSL_DIR>/lib` 与 `lib64`，而 Ubuntu 的开发文件在**多架构目录**（`/usr/lib/x86_64-linux-gnu/`）⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64", "/usr/lib"] does not contain the required files…`）。⇒ 走唯一实现：`node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"`（它给出 `OPENSSL_DIR` ＋ `OPENSSL_LIB_DIR` ＋ `OPENSSL_INCLUDE_DIR`，两个 crate 都认；判据在 `scripts/lib/sm-library-plan.test.mjs`） |
 | 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate、两个 profile 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端）<br>⚠️ **`--release` 那一条不能省**：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用** ⇒ 包表面全对（补丁标记 `page_cipher=sm4` 也在）而**库级根本不是国密**。这是 2026-09-22 在本机把发版链原样跑一遍时**被第 4 条断言抓住**的真实事故；修法＝两个 profile 都清（`--prepare` 已这么做，判据在 `scripts/lib/sm-library-plan.test.mjs`） |
 | 3 | `pnpm tauri build … --features sm-library` | 不带它 → 应用接线那段 `#[cfg]` 被编掉，而产物标记仍写 `page_cipher=sm4`（页加密是补丁的**编译期**行为）⇒ 包看起来是国密、库级页 MAC/KDF 却还是 SHA512 |
-| 4 | 产物断言（`SHUYONOTE_EXPECT_*` **四条**） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`**、**`sm_crypto=on`** —— 只有产物能回答这四格（`cipher_settings` 回显里没有 algorithm 字段）。<br>★ 最后那一格是 2026-09-22 **实测**逼出来的：`tauri dev` 发的是 `cargo run --no-default-features --features sm-crypto`，而 `tauri build --features sm-library` 发的是 `cargo build --bins --features sm-library,tauri/custom-protocol --release`（**defaults 仍在** ⇒ `sm-crypto` 没被顶掉）。两条路不同 ⇒「发版包一定带应用层国密」不能只靠 CLI 行为不变：它一旦变，包会**静默退回 v1 写路径**（没有国密），而今天没有任何判据会红。⇒ 把 `sm_crypto=on|off` 写进产物标记并断言 |
+| 4 | 产物断言（`SHUYONOTE_EXPECT_*` **五条**） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`**、**`sm_crypto=on`**、**`SHUYONOTE_EXPECT_OPENSSL_DIR`＝产物实际链的那个前缀** —— 只有产物能回答这五格（`cipher_settings` 回显里没有 algorithm 字段）。<br>★ 最后那一格是 2026-09-22 **实测**逼出来的：`tauri dev` 发的是 `cargo run --no-default-features --features sm-crypto`，而 `tauri build --features sm-library` 发的是 `cargo build --bins --features sm-library,tauri/custom-protocol --release`（**defaults 仍在** ⇒ `sm-crypto` 没被顶掉）。两条路不同 ⇒「发版包一定带应用层国密」不能只靠 CLI 行为不变：它一旦变，包会**静默退回 v1 写路径**（没有国密），而今天没有任何判据会红。⇒ 把 `sm_crypto=on|off` 写进产物标记并断言 |
+| 5 | **产物里 `rustc-link-search` 的目录必须等于钉的那个前缀**（`SHUYONOTE_EXPECT_OPENSSL_DIR`） | ★ 这是 2026-09-22 **Windows 侧实测**逼出来的第五格：`openssl-sys` 的取值顺序是 **`OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` 优先于 `OPENSSL_DIR`**，而它们**可能来自用户级环境变量**。⇒ 只钉 `OPENSSL_DIR` 时，`--require-static` **绿**、`backend=openssl` 也**绿**，但产物实际链的是**另一个** OpenSSL（版本/口味都可能不同，而"口径一致"这件事没有任何编译期信号）。<br>判据是"**相等或在其子目录下**"（Windows 的 `lib/VC/x64/MD`、Ubuntu 的 `lib/x86_64-linux-gnu` 都是子目录形态）；不符就红，报错里点名这个覆盖陷阱。纯函数在 `scripts/check-crypto-backend.mjs`，判据与变异在 `scripts/check-crypto-backend.test.mjs`；`release.yml` 与实际产物两条路都跑过（绿 / 故意写错前缀⇒红）。<br>⚠️ 大小写**只在 Windows 那侧折叠**（那边路径本就不区分大小写）：Unix 上 `/opt/ssl` 与 `/opt/SSL` 是**两个目录**，一律折叠会把"链了另一个目录"读成绿。<br>★ **两种"不匹配"必须分清**（2026-09-22 从**真 CI 日志**读出来的第二种形态）：产物里解析到的若是 **cargo 产物目录**（`…/target/debug/build/libsqlite3-sys-…/out`），那不是"链了另一个 OpenSSL"，而是**这次构建压根没走 `OPENSSL_DIR`/`OPENSSL_LIB_DIR` 发现路径** —— `libsqlite3-sys/build.rs` 在"没找到 OpenSSL"那一支只打 `rustc-link-lib=dylib=crypto`、**不打 `rustc-link-search`**（真读数：Linux `--group rust` 那个 job 没设 `OPENSSL_DIR`，解析出来就是 OUT_DIR）。两者修法完全不同，所以脚本按形态给不同的理由（纯函数 `looksLikeCargoOutDir`）。<br>⇒ **次序不能反**：`--print-env >> $GITHUB_ENV` 必须在 `tauri build` **之前**、且在同一个 job 里（`release.yml` 就是这么写的）；只在构建那一步临时设变量、或复用旧构建目录，都会落回第二种形态 |
 
 **各平台的加密库来源**（"口味"必须一致，**链接方式可以不同**）：
 
@@ -242,18 +243,33 @@ rm -f "$PREFIX"/lib/libcrypto.*.dylib "$PREFIX"/lib/libcrypto.dylib
 OPENSSL_DIR="$PREFIX" node scripts/sm-library-build.mjs --prepare --require-static
 # ③ 打包（必须带特性）
 OPENSSL_DIR="$PREFIX" pnpm tauri build --bundles app,dmg --features sm-library
-# ④ 产物断言（同 release.yml）
+# ④ 产物断言（同 release.yml 的那五条）
 SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied \
-SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 node scripts/check-crypto-backend.mjs
+SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 SHUYONOTE_EXPECT_SM_CRYPTO=on \
+SHUYONOTE_EXPECT_OPENSSL_DIR="$PREFIX" node scripts/check-crypto-backend.mjs
 # ⑤ **签名必须早于做 dmg**，且由内到外（见上面「签名/公证」那条与 scripts/sign-macos-app.mjs）
 ```
 
 **本机实测（2026-09-22，macOS，按上面配方**原样**跑完 `app,dmg`）**：
 · `--prepare` 清四个产物（两个 crate × 两个 profile）→ `tauri build --features sm-library` 重编；
 · `otool -L` 里**没有**任何 `libcrypto/libssl`（真静态、自包含）；
-· 产物标记 `patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`；三条断言全过；
+· 产物标记 `patch=72df3f9a · page_cipher=sm4 · sm_crypto=on · src_sha256=741d999b7933…`；五条断言全过（含 `SHUYONOTE_EXPECT_OPENSSL_DIR`）；
 · strip 后的 release 二进制里 `strings` 仍能看到 **`HMAC-SM3` / `SM4-CBC`** ⇒ 国密 provider 确实编进去了；
 · `node scripts/check-macos-bundle.mjs` ✅（未签名状态，签名按上面那条由内到外做）。
+
+**Windows 本地复演那份（2026-09-22，Windows 侧同学给的读数）**：NSIS 打包 ＋ 三条断言全过，
+`dumpbin /dependents` 里 **0 个** `crypto/ssl`（真静态）、标记 `patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`。
+他们复演时踩到的两个坑（都属于"**本机环境替配置背书**"，已进本节判据）：
+
+| 坑 | 症状 | 怎么办 |
+|---|---|---|
+| `OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` **优先于** `OPENSSL_DIR` | 用户级环境变量里本来就写着**另一个** OpenSSL ⇒ 产物链的是它。`--require-static` 绿、`backend=openssl` 绿，**只有"链了哪一份"没人管** | 加第五格 `SHUYONOTE_EXPECT_OPENSSL_DIR`（本节上表第 5 行）；本机复演时先把这三个变量清空，或显式指到 vcpkg 那个前缀 |
+| 本地 `pnpm tauri build` 要 `TAURI_SIGNING_PRIVATE_KEY` | 没有它就**在打包阶段**失败（与国密无关）；CI 里由 secrets 提供 | 本机复演要么临时给一个自签密钥，要么只跑 `cargo build --features sm-library` ＋ 产物断言（本机就是这么做的：`cargo build` ＋ `check-crypto-backend.mjs`） |
+| `dumpbin` 不在 `PATH` | 报"找不到命令"，容易被当成"没有依赖" | 用 **VS 开发者命令提示符**（或写全路径 `…\VC\Tools\MSVC\…\bin\Hostx64\x64\dumpbin.exe`）；⚠️ **"没跑成"和"0 个依赖"不是同一件事**，别把前者读成后者 |
+
+> ★ 静态前缀的**判据是在前缀本身上**（`--require-static` 会直接拒绝含 `libcrypto.*.dylib` 的前缀）——
+> 2026-09-22 本机重跑时就撞到过一次：`/Users/shuyo/tongsuo-macos/install/lib` 里混着上次留下的 `.dylib`，
+> 于是"静态"这个前提不成立。**先 `--require-static` 绿了再谈产物静态**，顺序不能反。
 
 **老库怎么办（快路后果）**：国密构建**读不开** AES＋SHA512 写的老库。迁移＝在旧版里关掉该空间的
 「磁盘加密」（会重写成明文 SQLite）→ 换新版 → 重新打开加密。还没有真实用户，所以现在是零迁移成本。

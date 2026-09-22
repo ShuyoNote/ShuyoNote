@@ -23,6 +23,9 @@ import {
   PLATFORM_DEFAULT,
   platformOfOutput,
   targetDirOf,
+  normalizeDir,
+  opensslDirMatches,
+  looksLikeCargoOutDir,
 } from "./check-crypto-backend.mjs";
 
 /** macOS 默认（Apple）后端：CommonCrypto + Security.framework。 */
@@ -499,5 +502,77 @@ describe("check-crypto-backend：应用层国密那一格（sm_crypto=）", () =
     const { problems, notices } = decide({ ...base(undefined), smCrypto: { expected: "on" } });
     expect(problems.some((p) => /应用层国密/.test(p))).toBe(false);
     expect(notices.join()).toMatch(/未实查/);
+  });
+});
+
+// ★ 2026-09-22（Windows 侧彩排后点名要的）：**产物实际链的是哪个 OpenSSL 目录**必须能断言。
+//   动机是他们的实测：`OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` **优先于** `OPENSSL_DIR`，
+//   而他们那台机器**用户级环境变量里本来就写着**另一个动态前缀 ⇒ 只钉 `OPENSSL_DIR` 时
+//   `--require-static` 绿、`backend=openssl` 也绿，产物却链了**厂商那份动态 OpenSSL**。
+describe("check-crypto-backend：产物实际链的 OpenSSL 目录", () => {
+  it("归一：末尾分隔符 / 反斜杠算同一个；大小写**只在 Windows 那侧**折叠", () => {
+    expect(normalizeDir("C:\\Program Files\\OpenSSL-Win64\\")).toBe("C:/Program Files/OpenSSL-Win64");
+    expect(normalizeDir("C:\\Program Files\\OpenSSL-Win64\\", { caseInsensitive: true })).toBe("c:/program files/openssl-win64");
+    expect(opensslDirMatches("C:\\Vcpkg\\prefix", "c:/vcpkg/prefix/", { caseInsensitive: true })).toBe(true);
+  });
+
+  it("★ Unix 上大小写不同就是**另一个目录** ⇒ 不匹配（默认不折叠，避免假绿）", () => {
+    expect(opensslDirMatches("/opt/ssl", "/opt/SSL/lib")).toBe(false);
+  });
+
+  it("子目录也算（Linux 的 `/usr` ↔ `/usr/lib/x86_64-linux-gnu` 同族）", () => {
+    expect(opensslDirMatches("/usr", "/usr/lib/x86_64-linux-gnu")).toBe(true);
+    expect(opensslDirMatches("/usr/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu")).toBe(true);
+  });
+
+  it("★ 另一个前缀 ⇒ **不匹配**（这条就是「链了别的 OpenSSL」要拦的情形）", () => {
+    expect(opensslDirMatches("/tmp/tongsuo-static", "C:/Program Files/OpenSSL-Win64/lib/VC/x64/MD")).toBe(false);
+  });
+
+  it("没给/没解析出 ⇒ null（未实查，不判红）", () => {
+    expect(opensslDirMatches("", "/usr/lib")).toBe(null);
+    expect(opensslDirMatches("/usr", "")).toBe(null);
+  });
+
+  it("★ decide：声明的前缀与实际不符 ⇒ 红，且理由要点到 `OPENSSL_LIB_DIR` 覆盖 `OPENSSL_DIR`", () => {
+    const { problems } = decide({
+      all: [{ kind: "openssl", searchDir: "C:/Program Files/OpenSSL-Win64/lib/VC/x64/MD" }],
+      expected: "openssl",
+      patch: { expected: null, markers: [] },
+      opensslDir: { expected: "C:/vcpkg/installed/x64-windows-static-md", actual: "C:/Program Files/OpenSSL-Win64/lib/VC/x64/MD" },
+    });
+    expect(problems.join()).toMatch(/OPENSSL_LIB_DIR/);
+    expect(problems.join()).toMatch(/另一个 OpenSSL/);
+  });
+
+  it("★ decide：解析到的是 cargo 产物目录 ⇒ 红，但理由要指向**构建没走发现路径**，不能误报成 OPENSSL_LIB_DIR 覆盖", () => {
+    // 2026-09-22 从**真 CI 日志**读到的第二种形态（Linux `--group rust`，没设 OPENSSL_DIR）：
+    // 真读数 = `…/target/debug/build/libsqlite3-sys-2a9f05b01f82195b/out`。
+    const outDir = "/home/runner/work/ShuyoNote/ShuyoNote/src-tauri/target/debug/build/libsqlite3-sys-2a9f05b01f82195b/out";
+    expect(looksLikeCargoOutDir(outDir)).toBe(true);
+    expect(looksLikeCargoOutDir("/usr/lib/x86_64-linux-gnu")).toBe(false);
+    expect(looksLikeCargoOutDir("C:/vcpkg/installed/x64-windows-static-md/lib")).toBe(false);
+    expect(looksLikeCargoOutDir("")).toBe(true);
+
+    const { problems } = decide({
+      all: [{ kind: "openssl", searchDir: outDir }],
+      expected: "openssl",
+      patch: { expected: null, markers: [] },
+      opensslDir: { expected: "/usr", actual: outDir },
+    });
+    expect(problems.join()).toMatch(/没有 OpenSSL 的 link-search 行/);
+    expect(problems.join()).toMatch(/--print-env/);
+    expect(problems.join()).not.toMatch(/OPENSSL_LIB_DIR/); // 不许把第二种形态误报成第一种
+  });
+
+  it("decide：一致 ⇒ 通过并记一条", () => {
+    const { problems, notices } = decide({
+      all: [{ kind: "openssl", searchDir: "/tmp/tongsuo-static/lib" }],
+      expected: "openssl",
+      patch: { expected: null, markers: [] },
+      opensslDir: { expected: "/tmp/tongsuo-static", actual: "/tmp/tongsuo-static/lib" },
+    });
+    expect(problems).toEqual([]);
+    expect(notices.join()).toMatch(/实际链的 OpenSSL 目录与声明一致/);
   });
 });

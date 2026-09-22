@@ -80,6 +80,23 @@ describe("runLibraryIndex", () => {
     if (r.ok) expect(r.summary).toContain("索引完成");
   });
 
+  it("★ 两条模型通道（`vision` / `transcribe`）都**原样传给 indexLibrary**，不给就不凭空造", async () => {
+    // 这一跳漏传的后果与"用户没配置模型"**完全一样**（抽取器一律 provider_error），
+    // 而 tsc 抓不到（可选字段少传一个是合法调用）⇒ 只能靠这条判据。
+    const vision = async () => "v";
+    const transcribe = async () => ({ text: "t" });
+    await runLibraryIndex({ platform: platformWith(fakeStores), vision, transcribe });
+    const opts = calls[0].opts as { vision?: unknown; transcribe?: unknown };
+    expect(opts.vision).toBe(vision);
+    expect(opts.transcribe).toBe(transcribe);
+
+    calls.length = 0;
+    await runLibraryIndex({ platform: platformWith(fakeStores) });
+    const none = calls[0].opts as Record<string, unknown>;
+    expect("vision" in none).toBe(false);
+    expect("transcribe" in none).toBe(false);
+  });
+
   it("total=0（空库）⇒ ratio 是 0 而不是 NaN", async () => {
     vi.resetModules();
     vi.doMock("./indexPage", () => ({

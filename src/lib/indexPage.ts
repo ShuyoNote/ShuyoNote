@@ -53,6 +53,14 @@ export interface IndexPageStores {
 export interface IndexPageOptions {
   /** 视觉模型调用（扫描件/图片）。**没给 ⇒ 需要它的抽取器走 `provider_error`**，不会瞎试网络。 */
   vision?: ExtractDeps["vision"];
+  /**
+   * 语音转写（音视频）。
+   *
+   * 与 `vision` 同一条口径：**没给 ⇒ `av.transcript@1` 走 `provider_error`**（不瞎试网络）。
+   * 实装在 `src/lib/ai/localTranscribe.ts`（本机端点），由调用方构造后传进来 ——
+   * 抽取层与平台层都不该自己造网络客户端（契约 §15.3-1）。
+   */
+  transcribe?: ExtractDeps["transcribe"];
   /** 只处理这些附件（给"我只要重抽这一个"的场景）。省略 = 该页全部附件。 */
   onlyAttachmentIds?: readonly string[];
 }
@@ -142,7 +150,10 @@ async function indexOne(
   opts: IndexPageOptions,
 ): Promise<PageAttachmentIndex> {
   try {
-    const r = await extractAttachment(attId, stores, opts.vision ? { vision: opts.vision } : {});
+    const r = await extractAttachment(attId, stores, {
+      ...(opts.vision ? { vision: opts.vision } : {}),
+      ...(opts.transcribe ? { transcribe: opts.transcribe } : {}),
+    });
     return {
       attId,
       status: r.outcome.status,

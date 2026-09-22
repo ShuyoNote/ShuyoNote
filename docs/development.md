@@ -348,6 +348,25 @@ spawnSync cargo ENOENT
 处置：跑之前确认 `command -v cargo`；`scripts/gm-version-selfcheck.mjs` 已内置兜底
 （PATH 上没有、但 rustup 默认位置有时补上，并**打印一行 `!`** 说明，不静默改环境）。
 
+### 8. `node` 有两份时，**同一个判据会红绿不同**（2026-09-22 实测，我自己撞上的）
+
+本机有**两份 node**：DSH 会怀里那份 `/Users/shuyo/Library/Application Support/dsh-desktop/harness/.desktop-bin/node`
+（**v24.18.1**）与 `~/.local/node-v24.20.0-darwin-arm64/bin/node`（**v24.20.0**）。PATH 上哪个在前，
+决定的不只是"能不能跑 `pnpm tauri`"（那条坑见 `docs/development.md` 的 tauri 一节），
+**还决定个别判据的红绿** —— 因为那是**库行为本身变了**，不是我们的代码变了：
+
+```text
+scripts/session-grep.test.mjs「截断的帧也不抛错」
+  node 24.18.1 ⇒ zstdDecompressSync(截断帧) 不抛，返回 "这一�"     ⇒ 判据绿
+  node 24.20.0 ⇒ zstdDecompressSync(截断帧) 抛 Z_BUF_ERROR         ⇒ 判据红（5 次跑红 5 次）
+```
+
+症状最有误导性的一点：**全库 `vitest` 那一次跑是绿的、单独跑这个文件却是红的**（两边用的是不同的 node）。
+处置（已落地）：判据不再钉"某个 zlib 版本的实现细节"，只钉两个版本**共同**的事实
+（截断一定丢数据：要么半截、要么报错；"没报错"≠"读全了"），并在注释里**同时记下两份读数**。
+⇒ 通用教训：**判据里任何"某个依赖的实现细节"都是一颗定时炸弹**；要钉就钉"我们自己的实现必须满足什么"。
+（本轮同一形态还有一条：`vite/vitest` 别的红是 Windows 侧报的另外三条，与本条无关。）
+
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
 - `git push` → 出现 **`main -> main`**。
@@ -657,6 +676,13 @@ curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
 
 ⚠️ **这条冒烟的边界**：音频是 TTS 合成的**干净音**（≈3 s、无噪声、标准普通话）⇒ 它证的是"链路通、中文能认"，
 **不等于**真人口音／远场／嘈杂环境也这个水平；那类结论要拿**真录音**复跑。
+
+★ **应用里已经接上这条端点**（2026-09-22，macOS 侧）：`src/lib/ai/localTranscribe.ts`（唯一构造点，
+与 `localVision` 同一条"只许本机端点"的红线）→ `attachmentDeps` → `av.transcript@1`。
+默认模型 `funasr-nano`；**桌面端走原生 http（不经 WebView）⇒ 没有 CORS 这一关**，Web 端才有。
+⚠️ **live 冒烟还没跑过**：本机 herdsman 没起（`ECONNREFUSED 127.0.0.1:8080`）⇒ 现在的绿都是假端点那层；
+要真读数先让桌面应用的「模型商店」把服务起起来，再按上面两条 curl 复跑。细节见
+`docs/plans/2026-09-22-asr-wiring-plan.md` §6（含"换 ASR 模型今天不生效"那条参数优先级问题）。
 **§10.5 补一双孪生形态（2026-09-18，AMD 侧复核块 ID 分支时又踩到一次）**：上面那条治的是
 **本地分支没更新**，还有一种更隐蔽的 —— **`origin/dev` 这类远端跟踪 ref 静默过期**：
 
