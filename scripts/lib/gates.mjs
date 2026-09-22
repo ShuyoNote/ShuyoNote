@@ -281,6 +281,19 @@ export const GATES = [
       "2026-09-22：接线那段（`set_cipher_key` → 能力探针/设标签/回显校验）没有任何 CI 门禁覆盖；同时在 macOS 本机发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 发出非国密包」。两者一起促成本门禁：打补丁 ＋ 清两个 profile ＋ `--features sm-library` 跑全量单测（内部下限 380 passed/0 failed，空跑即红），跑完还原补丁并重建默认特性，避免留下混态。",
   },
   {
+    id: "gm-registry-clean",
+    group: "rust",
+    label: "共享 registry 没留国密补丁（默认构建别被它悄悄改掉）",
+    // 为什么挂在 rust 组：它读的是 cargo registry 里那份 **libsqlite3-sys 的 SQLCipher 源码**，
+    // 而那正是 rust 组所有 cargo 门禁会去编译的同一份源码。
+    // 三档：原版 / "这次就是 sm-library 构建" ⇒ ok；带补丁但本平台不红 ⇒ **只提示不判红**；
+    // 带补丁 ∧ macOS 默认构建 ⇒ **红**（那 12＋7 条红会伪装成"加密库坏了"）。
+    // 读不出来（没跑过 cargo / 拿不到 Cargo.lock）⇒ 只提示，**不判红**。
+    cmd: "node scripts/check-gm-registry-clean.mjs",
+    incident:
+      "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。",
+  },
+  {
     id: "check-crypto-backend",
     group: "rust",
     label: "SQLCipher 的加密后端与声明一致（构建期实查，不是看环境变量）",
