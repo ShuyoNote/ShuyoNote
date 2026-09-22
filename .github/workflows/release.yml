@@ -80,6 +80,26 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
 
+      - name: 取 Cargo 依赖源码（国密补丁要打在 registry 里那份 SQLCipher 源码上）
+        # ⚠️⚠️ 位置是**量出来的**，别往下挪（2026-09-22 实测，两轮都栽在这里）：
+        #   · 1.91.21：Windows/Linux 两档都红在「★ 库级国密」那一格：
+        #       sm-library-build: ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，
+        #                         但 registry 里找到的是 [（无）]
+        #     根因：`scripts/lib/sm-library-source.mjs` 要去
+        #     `$CARGO_HOME/registry/src/*/libsqlite3-sys-<锁定版本>/sqlcipher` 定位源码，
+        #     而**冷 registry 的 runner 上 `registry/src` 还是空的** —— 之前没有任何 `cargo fetch`。
+        #     （本机从没踩到：开发机的 registry 早就热了。）
+        #   · 1.91.22：把它加在「★ 库级国密」**前面**仍然红 —— 因为 **Linux 的
+        #     `Linux system deps` 那一格自己就会调 `sm-library-build --print-env`**（要拿
+        #     `OPENSSL_DIR=/usr` 的多架构目录翻译结果），而那一格比国密那格更早。
+        #   ⇒ 必须放在**这两个调用点之前**（放在 `Setup pnpm` 之后、`Linux system deps` 之前），
+        #     一次覆盖 Linux 与 Windows 两条路径。
+        # `cargo fetch --locked` 会把锁文件里每个 crate 的源码**解包到 `registry/src`**
+        # （2026-09-22 本机拿空 CARGO_HOME 实测过：跑完就有
+        # `registry/src/<registry>/libsqlite3-sys-0.38.2/sqlcipher`，正是那一格要找的目录）。
+        working-directory: src-tauri
+        run: cargo fetch --locked
+
       - name: Linux system deps
         if: matrix.platform == 'ubuntu-24.04'
         run: |
@@ -150,19 +170,6 @@ jobs:
         #   3. lib.rs 注册插件 + 命令进 generate_handler!；
         #   4. 事件名前后端一致（对不上 = 前端永远等不到事件）。
         run: node scripts/check-deep-link.mjs
-
-      - name: 取 Cargo 依赖源码（国密补丁要打在 registry 里那份 SQLCipher 源码上）
-        # ⚠️ 这一格**必须在「库级国密」之前**（2026-09-22 实测，1.91.21 的 Windows/Linux 两档
-        #    都红在同一句）：
-        #      sm-library-build: ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，
-        #                        但 registry 里找到的是 [（无）]
-        #    原因：那一步要去 `$CARGO_HOME/registry/src/*/libsqlite3-sys-<锁定版本>/sqlcipher`
-        #    打补丁（`scripts/lib/sm-library-source.mjs`），而**冷 registry 的 runner 上
-        #    `registry/src` 还是空的** —— 在它之前没有任何 `cargo fetch`。
-        #    本机之所以从没踩到：开发机的 registry 早就热了（源在 `registry/src` 里躺着）。
-        #    `cargo fetch --locked` 会把锁文件里每个 crate 的源码解到 `registry/src` ⇒ 定死版本。
-        working-directory: src-tauri
-        run: cargo fetch --locked
 
       - name: ★ 库级国密（单一口味）：核对后端 ＋ 打补丁 ＋ 清产物
         # 2026-09-22 owner 拍板「就发国密单一口味」⇒ **发出去的包必须是 SM4 页 ＋ SM3 页 MAC/库 KDF**。

@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [1.91.23] - 2026-09-22
+
+> 发布链修复（第二刀）：`cargo fetch` 要放在**更早**的位置 —— Linux 那一格自己就会找 SQLCipher 源码
+
+### 修复
+
+- **`cargo fetch --locked` 的位置**（1.91.22 的 Linux 档仍然红在这一处）：上一版把它加在
+  「★ 库级国密」之前，但 **Linux 的 `Linux system deps` 那一格自己就会调
+  `sm-library-build --print-env`**（要拿 `OPENSSL_DIR=/usr` 的多架构目录翻译结果），而那一格更早
+  ⇒ 打补丁那一步看到的仍是"registry 里没有源码"。现在它放在 `Setup pnpm` 之后、
+  `Linux system deps` 之前，**一次覆盖 Linux 与 Windows 两条调用路径**，并在注释里写清这两个
+  调用点（免得下次又被挪下去）。本机拿空 `CARGO_HOME` 实测过：跑完就有
+  `registry/src/<registry>/libsqlite3-sys-0.38.2/sqlcipher`，正是那一格要找的目录。
+
+- **1.91.21 与 1.91.22 都没有产出安装包**（Windows / Linux 的 Release 构建都断在这一步）
+  ⇒ 对外的桌面安装包与更新通道仍停在 1.91.20；**1.91.23 是第一个能出包的版本**。
+  Web 版不受影响（已随 1.91.22 上线，两个入口都是 1.91.22）。
+
 ## [1.91.22] - 2026-09-22
 
 > 发布链修复：1.91.21 的桌面安装包没能产出（冷 registry 上打不了国密补丁）
