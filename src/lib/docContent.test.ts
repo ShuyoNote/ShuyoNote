@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, localState, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, textStale, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs, canonicalContent } from "./blockRev";
 
 beforeAll(() => {
@@ -752,5 +752,89 @@ describe("docContent 的「正文待重建」标记与队列（B1）", () => {
     expect(staleTextQueue(db, 10).total).toBe(0);
     // 页面不存在 ⇒ 不猜（也不报错）
     expect(textStale(db, "nope")).toBeUndefined();
+  });
+});
+
+// B 方案（2026-09-22）·「未取回的远端版本」——与 Rust `doc_content.rs` 的 `pending_remote_*` 逐条对应。
+// 要修的东西：页级保留本地（裁定 ④）语义正确，但那一版远端内容会被游标吃掉
+// ⇒ 取证文件 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §3.2 的 L。
+describe("docContent 的「未取回的远端版本」（B 方案）", () => {
+  // 夹具就在这一段里（同文件其它 describe 各自也有一份，互不借用）
+  const blk = (blockId: string, rev: number | null, body: string) => ({
+    type: "paragraph",
+    blockId,
+    ...(rev === null ? {} : { blockRev: rev }),
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+  const remoteRow = (id: string, json: string, title = "远端标题") => ({
+    id,
+    workspace_id: "active",
+    title,
+    content_json: json,
+    content_text: "",
+    updated_at: 5,
+  });
+
+  it("每页只留最新一条（第二次 stash 是覆盖，不是追加）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本地")), text: "" });
+    stashPendingRemote(db, remoteRow("p1", doc(blk("b1", 2, "远端旧"))), 7, 100);
+    stashPendingRemote(db, remoteRow("p1", doc(blk("b1", 3, "远端新"))), 9, 200);
+
+    const q = pendingRemoteQueue(db, 10);
+    expect(q.total).toBe(1);
+    expect(q.pages[0]).toMatchObject({ page_id: "p1", seq: 9, stashed_at: 200 });
+    const archived = pendingRemotePayload(db, "p1")!;
+    expect(archived.seq).toBe(9);
+    expect(String(archived.row.content_json)).toContain("远端新");
+    expect(String(archived.row.content_json)).not.toContain("远端旧");
+    // `limit` 只影响这一批、不影响总数
+    expect(pendingRemoteQueue(db, 0).pages).toHaveLength(0);
+    expect(pendingRemoteQueue(db, 0).total).toBe(1);
+  });
+
+  it("没存着 ⇒ 清一次、查一次都不报错（绝大多数页面走这条）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本地")), text: "" });
+    expect(pendingRemoteSeq(db, "p1")).toBeUndefined();
+    expect(pendingRemotePayload(db, "p1")).toBeUndefined();
+    clearPendingRemote(db, "p1");
+    expect(pendingRemoteQueue(db, 10).total).toBe(0);
+  });
+
+  it("采用远端：整页换掉 ＋ dirty 归零 ＋ 把旧的未裁决冲突标掉", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本地")), text: "" }, { dirty: 1 });
+    recordPageConflicts(db, "p1", [
+      {
+        blockId: "b1",
+        reason: "same-rev-different-content" as const,
+        localJson: JSON.stringify(blk("b1", null, "本地")),
+        remoteJson: JSON.stringify(blk("b1", null, "远端")),
+      },
+    ]);
+    expect(pageConflictsOf(db, "p1")).toHaveLength(1);
+
+    takeRemoteWholePage(db, remoteRow("p1", doc(blk("b1", 9, "远端赢了"))), 11);
+
+    const after = readContent(db, "p1")!;
+    expect(after.title).toBe("远端标题");
+    expect(after.json).toContain("远端赢了");
+    expect(after.json).not.toContain("本地");
+    expect(localState(db, "p1")).toMatchObject({ syncSeq: 11, dirty: 0 });
+    expect(pageConflictsOf(db, "p1")).toHaveLength(0); // 整页换掉 ⇒ 旧的那些痕没有可裁决的对象了
+  });
+
+  it("markPageDirty 是 dirty 这一列的第三个写者（write 写 1 / upsertRemote 写 0 / writeText 不动）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本地")), text: "" }, { dirty: 0 });
+    markPageDirty(db, "p1");
+    expect(localState(db, "p1")!.dirty).toBe(1);
+    // 远端应用会把它压回 0（这就是"合并之后要重新标上"的原因）
+    takeRemoteWholePage(db, remoteRow("p1", doc(blk("b1", 1, "远端"))), 3);
+    expect(localState(db, "p1")!.dirty).toBe(0);
+    markPageDirty(db, "p1");
+    expect(localState(db, "p1")!.dirty).toBe(1);
   });
 });

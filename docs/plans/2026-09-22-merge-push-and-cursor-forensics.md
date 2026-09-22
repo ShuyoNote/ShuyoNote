@@ -149,3 +149,43 @@ B 随后推 `seq3`、再同步：什么也取不到 ⇒ B 长期停在"没有 A 
 附件清单每轮重算），也让 L/M 那两条的现场判断更难（光看 log 分不出"这一笔到底是不是有人在编辑"）。
 若要收口，建议与 §6 的方案 B 一并拍 —— 两者都落在"**谁把 `dirty=1` 写下去**"这一层。
 
+## 10. **方案 B 已落地**（2026-09-22，owner 拍板"按你的建议推进"）
+
+§6 的 B 分三条，三条都在这一批里做完（Rust ＋ Web **两份实现**，判据成对）：
+
+| # | 做什么 | 落在哪 |
+|---|---|---|
+| ① | `apply_*` 的返回值**分义**：`UpsertApply::Applied { unresolved }` / `KeptLocal`（旧版 `0` 同时表示这两件事 —— §5 的病根） | `src-tauri/src/sync.rs`（`apply_upsert`）＋ `platform/web.ts` 里 `shouldTakeRemote` 的两支 |
+| ② | 页级 `KeptLocal` 时把**那一版远端内容 ＋ 它的 seq** 存进本地表 `pending_remote_pages`（**每页只留最新一条**；不同步、不进导出，与 `page_conflicts` / `text_stale` 同族） | 表：`db.rs` / `sqliteStore.ts`；API：`doc_content.rs` / `docContent.ts`（stash / queue / payload / seq / clear） |
+| ③ | 界面给**真的会改数据**的三选一：`merge`（合并这一页）/ `take_remote`（整页采用远端）/ `keep_local`（保留本地） | 命令 `list_pending_remote_pages` ＋ `resolve_pending_remote`（Rust ＋ Web ＋ `CommandMap`）；面板：冲突横幅那两颗按钮 + 「待取回的远端版本」清单 |
+
+**游标照旧推进**（不做 §6 的方案 A：那一页可能永远 `KeepLocal` ⇒ 它后面的变更永远取不到 = livelock）。
+"留痕"就是这条路的代价，也是它的收场 —— 被跳过的 payload **已经在本地**，所以不依赖"再有人推一次"。
+
+几条**写进代码注释的语义细节**（评审时最容易漏的）：
+
+1. **`take_remote` 必须真的放弃本地那一笔未推的变更**（`discard_unsent_page_changes`，只删 `seq > 水位` 的）——
+   旧横幅那句"已放弃本地未推送改动"是**假话**（`dirty` 还在，下一次 push 照样推上去），F3 就是这么来的；
+   已经推上去的那些**不许删**（它们是对端的既成事实，也是 `do_push` 的 `MAX(seq)` 记账依据）。
+2. **`merge` 之后要把这一页标回 `dirty`**（当"本地还有没推上去的改动"时）：产物里那些**只在本地**的块
+   要靠本地那笔未推变更进 log —— 自动路径不需要这一步，因为那一支的前提就是"本地已推过"（§3.1 的 M）。
+3. **更新的远端版本一旦应用，旧的存档就清掉**（`stashed_seq <= applied_seq`）：不清就是"清单挂着假账"。
+4. **水位取 `sync_profiles.last_pushed_seq`**（与 `do_push` 挑变更时同一个值）。⚠️ `sync_state` 里**也有**一个
+   同名 KV，用错那个会让 `unsent_*` 永远算成"全都还没推"（这一条是写代码时真踩到的，注释里留了记号）。
+
+**读数**（判据面）：
+
+- Rust：`sync::` **23/0**（新增 5 条：返回值分义 / `take_remote` 真丢未推变更且不删已推 / `merge` 标回 dirty /
+  `keep_local` 什么都不动 / 口径只认三个字面量）、`doc_content::` **44/0**（新增 4 条：每页只留最新 /
+  没存着是空读 / 采用远端会标掉旧冲突 / `mark_page_dirty` 是第三个写者）；
+- Web：`docContent.test.ts` **59/59**（新增 4 条，与上面四条**逐条对应**）；
+- 端到端：`scripts/verify-two-device-sync.mjs` **84/84**（场景 L 那三条 ★★ 已按 §7.4 的要求**反过来断言**：
+  跳过之后**留痕**、走**真实命令路径** `list_pending_remote_pages` + `resolve_pending_remote` 把 A 的编辑取回来、
+  裁决完存档清掉）；
+- 门禁：`tsc` 0、`check-web-commands`（Rust 238 ↔ web.ts 239 ↔ `CommandMap` 240）、`check-doc-content-access`
+  **562 = 基线 562**（新增代码全在那一层里，没有从别处直接摸内容列）、`check-overlay-registry` 26/26。
+
+⚠️ **仍然没做的**（如实）：§9 那条"内容逐字节相同的重复推送"（未定因）没有一起收 —— 它与 B 都落在
+"谁把 `dirty=1` 写下去"这一层，但它的根因还没证到，**不在这一批里**。
+
+

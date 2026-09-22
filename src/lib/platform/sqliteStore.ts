@@ -331,6 +331,18 @@ export class SqliteStore {
         resolved_choice TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at);
+      -- B 方案（2026-09-22）·「未取回的远端版本」（本地表，不同步/不进备份导出）：页级"保留本地"时
+      -- 那条远端变更会被游标吃掉（doPull 的 maxSeq 照旧推进）⇒ 在这里存下**那一版远端内容**，
+      -- 让用户还能裁决（merge / take_remote / keep_local —— 三个都真的动数据）。
+      -- 每页只留最新一条（page_id 是主键），它不是变更日志。与桌面 db.rs 的同名表**同形**。
+      CREATE TABLE IF NOT EXISTS pending_remote_pages (
+        page_id TEXT PRIMARY KEY,
+        seq INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL,
+        remote_updated_at INTEGER NOT NULL,
+        stashed_at INTEGER NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_attachments_page ON attachments(page_id);
       -- Sync engine tables (S8: per-workspace profiles / auth sessions / change log).
       CREATE TABLE IF NOT EXISTS changes (

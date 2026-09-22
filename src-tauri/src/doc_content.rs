@@ -927,6 +927,163 @@ pub fn apply_remote_page(
     Ok(outcome)
 }
 
+// =====================================================================================
+// 「未取回的远端版本」（B 方案，2026-09-22）：页级保留本地时，**那一版远端内容留在这里**
+//
+// 为什么要有它（取证 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §6 方案 B）：
+//   页级 `KeepLocal`（本地 dirty 优先，裁定 ④）**语义是对的**，但那一版远端内容会被**游标吃掉**
+//   ⇒ 这台设备**再也取不回**对端那笔编辑，而且层里**一条痕都没有**（同文件 §3.2 的 L）。
+//   游标不能为它停住（朴素方案 A 会 livelock：那一页可能**永远** KeepLocal ⇒ 它后面的变更永远取不到），
+//   所以改成：**游标照旧推进，但那一版先在本地存下来**，用户随后裁决
+//   （`merge` 合并这一页 / `take_remote` 采用远端 / `keep_local` 认下分歧 —— 三个都真的动数据）。
+//
+// ⚠️ 三条纪律（与 `page_conflicts` / `text_stale` 同族）：
+//   1. **本地状态**：不同步、不进导出；别的设备有它自己的行；
+//   2. **每页只留最新一条**（`page_id` 是主键，`INSERT OR REPLACE`）—— 它不是变更日志，规模有界；
+//   3. 存的是**远端那一版整页 JSON 的明文**（与 `content_json` 同形态）：payload 在 `do_pull` 里
+//      已经解过一次密，这里若再存密文，就等于把"这条痕还能不能读"绑死在当时那把钥匙上。
+// =====================================================================================
+
+/// 一页「未取回的远端版本」的读数（界面列表用；**不含 payload 本体** —— 那是大字段）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PendingRemotePage {
+    pub page_id: String,
+    pub title: String,
+    /// 远端那一版的 `seq`（服务端单调序号）。用户裁决时按它去落 `sync_seq`。
+    pub seq: i64,
+    pub remote_updated_at: i64,
+    pub stashed_at: i64,
+}
+
+/// 列表 ＋ 总数（与 `StaleTextQueue` 同形：界面要能说"**还有 N 页**"，`pages` 只是这一批）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PendingRemoteQueue {
+    pub total: i64,
+    pub pages: Vec<PendingRemotePage>,
+}
+
+/// 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。
+pub fn stash_pending_remote(
+    c: &Connection,
+    page: &crate::models::PageDetail,
+    seq: i64,
+    now: i64,
+) -> Result<(), String> {
+    let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
+    c.execute(
+        "INSERT INTO pending_remote_pages (page_id, seq, title, payload, remote_updated_at, stashed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(page_id) DO UPDATE SET
+           seq = excluded.seq,
+           title = excluded.title,
+           payload = excluded.payload,
+           remote_updated_at = excluded.remote_updated_at,
+           stashed_at = excluded.stashed_at",
+        params![page.id, seq, page.title, payload, page.updated_at, now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 待取回的远端版本队列（`limit` 由调用方夹住 —— 这是界面列表，不是批量作业）。
+pub fn pending_remote_queue(c: &Connection, limit: usize) -> Result<PendingRemoteQueue, String> {
+    let total: i64 = c
+        .query_row("SELECT COUNT(*) FROM pending_remote_pages", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    let mut stmt = c
+        .prepare(
+            "SELECT page_id, title, seq, remote_updated_at, stashed_at
+             FROM pending_remote_pages ORDER BY stashed_at DESC, page_id LIMIT ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![limit as i64], |row| {
+            Ok(PendingRemotePage {
+                page_id: row.get(0)?,
+                title: row.get(1)?,
+                seq: row.get(2)?,
+                remote_updated_at: row.get(3)?,
+                stashed_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    let pages = rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    Ok(PendingRemoteQueue { total, pages })
+}
+
+/// 这一页**待取回**的那一版：`(seq, 整页 JSON)`。没有 ⇒ `Ok(None)`。
+pub fn pending_remote_payload(c: &Connection, page_id: &str) -> Result<Option<(i64, String)>, String> {
+    c.query_row(
+        "SELECT seq, payload FROM pending_remote_pages WHERE page_id = ?1",
+        params![page_id],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// 清掉这一页待取回的那一版（裁决完 / 更新的远端版本已经应用过 ⇒ 旧的这条是陈的）。
+///
+/// ⚠️ **没存着就一次写库都不做**（绝大多数页面走这条，与 `clear_text_stale` 同一口径）。
+pub fn clear_pending_remote(c: &Connection, page_id: &str) -> Result<(), String> {
+    c.execute("DELETE FROM pending_remote_pages WHERE page_id = ?1", params![page_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 这一页待取回那一版的 `seq`（`None` = 没有待取回的版本）。给 `do_pull` 判断"新应用的那一版是否已经比它新"用。
+pub fn pending_remote_seq(c: &Connection, page_id: &str) -> Result<Option<i64>, String> {
+    c.query_row(
+        "SELECT seq FROM pending_remote_pages WHERE page_id = ?1",
+        params![page_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
+/// 标记这一页"有未推送改动"（`dirty = 1`）。
+///
+/// 为什么单独给一个函数：`dirty` 是**同步契约**的一部分（`merge` 的页级判定靠它保护本地未推送的编辑），
+/// 而本文件是它的唯一主人（`write` 硬写 1、`upsert_remote` 硬写 0、`write_text` **故意不动**）。
+/// B 的裁决路径需要第三处：**合并这一页之后，本地那一笔还没推上去的改动仍在**（产物里的本地块要靠它进 log）
+/// ⇒ 必须把 `dirty` 重新置上（`apply_remote_page` 走的是"远端应用"那一支，会硬写 0）。
+pub fn mark_page_dirty(c: &Connection, page_id: &str) -> Result<(), String> {
+    c.execute("UPDATE pages SET dirty = 1 WHERE id = ?1", params![page_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// **采用远端**（整页、不走块级合并）：页级 LWW 的原样覆盖 —— 用户明确选择放弃本地那一版。
+///
+/// 与 `apply_remote_page` 的区别就是**不试块级合并**：那条路在"两端各改了不同块"时会保留两边的编辑，
+/// 而这里用户要的是"就要远端这份"。
+///
+/// ⚠️ 三件事一起做，缺一不可：
+///   ① 覆盖内容（`upsert_remote`：`sync_seq` 记远端的、`dirty` 硬写 0）；
+///   ② 把这一页**未裁决的块级冲突一次性标掉** —— 那些痕记的是"旧本地版 vs 旧远端版"，
+///      整页换成远端之后它们已经没有可裁决的对象了（留着会让"未决数量"永远归不了零）；
+///   ③ 派生 FTS（与 `apply_remote_page` 一致）。
+///
+/// ⚠️ **调用方还要负责变更日志那一半**（把这一页还没推上去的本地改动丢掉）：那一层不属于本文件，
+/// 见 `sync::resolve_pending_remote`（桌面）与 `platform/web.ts`（Web）的同名路径。
+pub fn take_remote_page(
+    c: &Connection,
+    page: &crate::models::PageDetail,
+    sync_seq: i64,
+) -> Result<(), String> {
+    upsert_remote(c, page, sync_seq)?;
+    derive_fts(c, &page.id, &page.title, &page.content_text)?;
+    let now = crate::db::now_ms();
+    c.execute(
+        "UPDATE page_conflicts SET resolved_at = ?1, resolved_choice = ?2
+         WHERE page_id = ?3 AND resolved_at IS NULL",
+        params![now, conflict_choice_str(ConflictChoice::Remote), page.id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1910,6 +2067,125 @@ mod tests {
 
         assert_eq!(text_stale(&c, "p1").unwrap(), Some(false), "但标记必须清掉（它不该留在队列里）");
         assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ===== B 方案（2026-09-22）·「未取回的远端版本」=========================================
+    // 判据对着取证文件 §3.2 的 L 写：**页级保留本地不许把远端那一版弄丢**，
+    // 而"弄丢"在修好之前的表现是"游标过去了、层里一条痕都没有"。
+
+    fn stashed_page(id: &str, json: &str, title: &str) -> crate::models::PageDetail {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "workspace_id": "s1",
+            "parent_id": null,
+            "title": title,
+            "content_json": json,
+            "content_text": "",
+            "sort_order": 0.0,
+            "created_at": 0,
+            "updated_at": 5,
+        }))
+        .unwrap()
+    }
+
+    /// 每页**只留最新一条**：第二次 stash 是覆盖，不是追加（它是"待处理清单"，不是变更日志）。
+    #[test]
+    fn pending_remote_keeps_only_the_newest_version_per_page() {
+        let (c, dir) = conflict_conn("pending-newest");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
+
+        stash_pending_remote(&c, &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "远端旧")]), "页"), 7, 100).unwrap();
+        stash_pending_remote(&c, &stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(3), "远端新")]), "页"), 9, 200).unwrap();
+
+        let q = pending_remote_queue(&c, 10).unwrap();
+        assert_eq!(q.total, 1, "同一页只许一条");
+        assert_eq!(q.pages.len(), 1);
+        assert_eq!(q.pages[0].seq, 9, "留最新那一版的 seq");
+        assert_eq!(q.pages[0].stashed_at, 200);
+        let (seq, payload) = pending_remote_payload(&c, "p1").unwrap().expect("这一页有待取回的版本");
+        assert_eq!(seq, 9);
+        assert!(payload.contains("远端新"), "payload 是被覆盖后的那一版：{payload}");
+        assert!(!payload.contains("远端旧"));
+
+        // `limit` 只影响**这一批**，`total` 仍是全量（界面要说"还有 N 页"）。
+        // ⚠️ 夹取发生在命令面（`list_pending_remote_pages` 的 `limit.unwrap_or(20)`）。
+        assert_eq!(pending_remote_queue(&c, 1).unwrap().pages.len(), 1);
+        assert_eq!(pending_remote_queue(&c, 0).unwrap().pages.len(), 0, "SQL LIMIT 0 ⇒ 这一批是空的");
+        assert_eq!(pending_remote_queue(&c, 0).unwrap().total, 1, "但总数照旧");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 没存着 ⇒ 清一次、查一次都**不报错也不写库**（绝大多数页面走这条）。
+    #[test]
+    fn pending_remote_absent_is_an_empty_read_and_a_no_op_clear() {
+        let (c, dir) = conflict_conn("pending-absent");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
+
+        assert_eq!(pending_remote_seq(&c, "p1").unwrap(), None);
+        assert!(pending_remote_payload(&c, "p1").unwrap().is_none());
+        clear_pending_remote(&c, "p1").unwrap();
+        assert_eq!(pending_remote_queue(&c, 10).unwrap().total, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// **采用远端**：整页换成远端那一版（不走块级合并）、`dirty` 归零、`sync_seq` 记远端，
+    /// 并且把这一页**旧的未裁决冲突一次性标掉**（否则"未决数量"永远归不了零）。
+    #[test]
+    fn taking_the_remote_whole_page_dismisses_the_old_conflicts() {
+        let (c, dir) = conflict_conn("pending-take");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
+        mark_page_dirty(&c, "p1").unwrap();
+
+        // 先制造一条"旧本地版 vs 旧远端版"的未裁决痕
+        record_page_conflicts(
+            &c,
+            "p1",
+            &[BlockConflict {
+                block_id: "b1".into(),
+                reason: ConflictReason::SameRevDifferentContent,
+                local_json: Some(jblk(Some("b1"), None, "本地").to_string()),
+                remote_json: Some(jblk(Some("b1"), None, "远端").to_string()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(unresolved_page_conflicts(&c, "p1").unwrap().len(), 1, "前置：有一条未裁决");
+
+        let remote = stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(9), "远端赢了")]), "远端标题");
+        take_remote_page(&c, &remote, 11).unwrap();
+
+        let cur = read(&c, "p1").unwrap().unwrap();
+        assert_eq!(cur.title, "远端标题");
+        assert!(cur.json.contains("远端赢了"));
+        assert!(!cur.json.contains("本地"), "整页覆盖：本地那一版不在了");
+        let (seq, dirty): (i64, i64) = c
+            .query_row("SELECT sync_seq, dirty FROM pages WHERE id = 'p1'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(seq, 11, "记的是远端那个 seq");
+        assert_eq!(dirty, 0, "远端应用 ⇒ 没有未推送改动");
+        assert!(
+            unresolved_page_conflicts(&c, "p1").unwrap().is_empty(),
+            "整页换成远端之后，旧的那些痕没有可裁决的对象了"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `mark_page_dirty` 是 `dirty` 这一列的**第三个**写者（`write` 硬写 1 / `upsert_remote` 硬写 0 /
+    /// `write_text` 不动），B 的"合并这一页"要用它把"本地还有没推上去的改动"重新标上。
+    #[test]
+    fn mark_page_dirty_is_the_third_writer_of_the_sync_contract_field() {
+        let (c, dir) = conflict_conn("pending-dirty");
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "本地")]));
+        mark_page_dirty(&c, "p1").unwrap();
+        let dirty = |c: &Connection| -> i64 {
+            c.query_row("SELECT dirty FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(dirty(&c), 1);
+        // 远端应用会把它压回 0（这就是"合并之后要重新标上"的原因）
+        take_remote_page(&c, &stashed_page("p1", "{}", "页"), 3).unwrap();
+        assert_eq!(dirty(&c), 0);
+        mark_page_dirty(&c, "p1").unwrap();
+        assert_eq!(dirty(&c), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

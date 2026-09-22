@@ -841,3 +841,118 @@ export function applyRemoteContent(
   upsertRemoteContent(db, row, remoteSeq);
   return { merged: false, unresolved: 0 };
 }
+
+// =====================================================================================
+// 「未取回的远端版本」（B 方案，2026-09-22）：页级保留本地时，**那一版远端内容留在这里**
+//
+// 与 Rust 侧 `doc_content.rs` 的同名一节**一一对应**（判据也成对：`docContent.test.ts` ↔
+// `doc_content.rs` 的 `pending_remote_*` 那几条）。要修的东西见取证文件
+// `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §6 方案 B：
+// 页级 `KeepLocal` **语义正确**，但那一版远端内容会被**游标吃掉** ⇒ 这台设备再也取不回对端那笔编辑，
+// 而且层里一条痕都没有。游标不能为它停住（朴素方案 A 会 livelock），所以：**照旧推进，但存下来**。
+//
+// ⚠️ 三条纪律（与 `page_conflicts` / `text_stale` 同族）：本地状态（不同步、不进导出）；
+//    每页只留最新一条；存的是**远端那一版整页 JSON**（明文，与 `content_json` 同形态）。
+// =====================================================================================
+
+/** 一页「未取回的远端版本」的读数（界面列表用；**不含 payload 本体**）。 */
+export interface PendingRemotePage {
+  page_id: string;
+  title: string;
+  /** 远端那一版的 `seq`（服务端单调序号）。 */
+  seq: number;
+  remote_updated_at: number;
+  stashed_at: number;
+}
+
+/** 列表 ＋ 总数（与 `StaleTextQueue` 同形：界面要能说"还有 N 页"）。 */
+export interface PendingRemoteQueue {
+  total: number;
+  pages: PendingRemotePage[];
+}
+
+/** 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。 */
+export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: number, now: number): void {
+  db.run(
+    `INSERT INTO pending_remote_pages (page_id, seq, title, payload, remote_updated_at, stashed_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(page_id) DO UPDATE SET
+       seq = excluded.seq, title = excluded.title, payload = excluded.payload,
+       remote_updated_at = excluded.remote_updated_at, stashed_at = excluded.stashed_at`,
+    [String(row.id), seq, String(row.title ?? ""), JSON.stringify(row), Number(row.updated_at ?? 0), now],
+  );
+}
+
+/** 待取回的远端版本队列（`limit` 由调用方给 —— 这是界面列表，不是批量作业）。 */
+export function pendingRemoteQueue(db: ContentSql, limit = 20): PendingRemoteQueue {
+  const total = Number(
+    db.query<{ n: number }>("SELECT COUNT(*) AS n FROM pending_remote_pages")[0]?.n ?? 0,
+  );
+  const rows = db.query<Record<string, unknown>>(
+    `SELECT page_id, title, seq, remote_updated_at, stashed_at FROM pending_remote_pages
+     ORDER BY stashed_at DESC, page_id LIMIT ?`,
+    [limit],
+  );
+  return {
+    total,
+    pages: rows.map((r) => ({
+      page_id: String(r.page_id),
+      title: String(r.title ?? ""),
+      seq: Number(r.seq),
+      remote_updated_at: Number(r.remote_updated_at),
+      stashed_at: Number(r.stashed_at),
+    })),
+  };
+}
+
+/** 这一页待取回那一版的 `seq`（`undefined` = 没有）。给 `applyChange` 判断"新应用的这版是否已经比它新"。 */
+export function pendingRemoteSeq(db: ContentSql, pageId: string): number | undefined {
+  const row = db.query<{ seq: number }>(
+    "SELECT seq FROM pending_remote_pages WHERE page_id = ?",
+    [pageId],
+  )[0];
+  return row ? Number(row.seq) : undefined;
+}
+
+/** 这一页**待取回**的那一版（`seq` ＋ 整页 wire 行）。没有 ⇒ `undefined`。 */
+export function pendingRemotePayload(
+  db: ContentSql,
+  pageId: string,
+): { seq: number; row: RemotePageRow } | undefined {
+  const row = db.query<{ seq: number; payload: string }>(
+    "SELECT seq, payload FROM pending_remote_pages WHERE page_id = ?",
+    [pageId],
+  )[0];
+  if (!row) return undefined;
+  try {
+    return { seq: Number(row.seq), row: JSON.parse(String(row.payload)) as RemotePageRow };
+  } catch {
+    return undefined; // 存档坏了就当没有（界面会提示"没有待取回的版本"）
+  }
+}
+
+/** 清掉这一页待取回的那一版（裁决完 / 更新的远端版本已经应用过 ⇒ 旧的这条是陈的）。 */
+export function clearPendingRemote(db: ContentSql, pageId: string): void {
+  db.run("DELETE FROM pending_remote_pages WHERE page_id = ?", [pageId]);
+}
+
+/** 标记这一页"有未推送改动"（对应 Rust `mark_page_dirty`；`dirty` 是同步契约的一部分）。 */
+export function markPageDirty(db: ContentSql, pageId: string): void {
+  db.run("UPDATE pages SET dirty = 1 WHERE id = ?", [pageId]);
+}
+
+/**
+ * **采用远端**（整页、不走块级合并）：与 `upsertRemoteContent` 的区别就是不试逐块合并
+ * （用户明确选择"就要远端这份"）。
+ *
+ * ⚠️ 两件事一起做：① 覆盖内容（`dirty` 硬写 0）；② 把这一页**未裁决的块级冲突一次性标掉** ——
+ * 那些痕记的是"旧本地版 vs 旧远端版"，整页换掉之后它们已经没有可裁决的对象了。
+ * ⚠️ 变更日志那一半（把这一页还没推上去的本地改动丢掉）在 `web.ts` 的同名路径里 —— 那一层不属于本文件。
+ */
+export function takeRemoteWholePage(db: ContentSql, row: RemotePageRow, remoteSeq: number): void {
+  upsertRemoteContent(db, row, remoteSeq);
+  db.run(
+    "UPDATE page_conflicts SET resolved_at = ?, resolved_choice = ? WHERE page_id = ? AND resolved_at IS NULL",
+    [Date.now(), "remote", String(row.id)],
+  );
+}

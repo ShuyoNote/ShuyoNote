@@ -67,7 +67,7 @@ await esbuild.build({
   outfile: dcOut,
 });
 const dc = await import(pathToFileURL(dcOut).href + "?v=" + Date.now());
-const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, textStale } = dc;
+const { mergeBlocks, mergePageBlocks, localState, readContent, writeContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, textStale, pendingRemoteQueue, pendingRemotePayload, pendingRemoteSeq } = dc;
 
 // ---- 2. 注入 sql.js wasm 字节 + 内存 adapter（Node 环境）----
 const wasmPath = require.resolve("sql.js/dist/sql-wasm.wasm");
@@ -616,14 +616,20 @@ async function main() {
   const lPull1 = pullLog(LB.s, LB.cursor, "devB");
   ok(lPull1.skipped.includes(lSeq2), "L: 远端 seq2 被**跳过**（页级 dirty 优先本地 —— 裁定 ④，语义正确）");
   ok(bodyOf(readContent(LB.s, PL).json, "b1") === "b1 原始", "L: 跳过之后 B 手上没有 A 的 b1 编辑（这一步是设计如此）");
-  ok(pageConflictsOf(LB.s, PL).length === 0, "L: ⚠️ 而且**一条痕都没有**（页级跳过不落块级冲突表）");
-  ok(LB.cursor.since >= lSeq2, `L: ⚠️ 但游标**照样推进**到了 ${LB.cursor.since} —— 那条远端变更已被消费`);
+  ok(pageConflictsOf(LB.s, PL).length === 0, "L: 页级跳过**不落块级冲突表**（`page_conflicts` 里没有行 —— 它不是块级判不了）");
+  // ★ B 方案（2026-09-22 修好之后）：**痕在**。修好之前这一格是"一条痕都没有"（取证那一轮的原话），
+  //   而"没有痕"正是它致命的地方：游标过去了、对端那笔编辑再也取不回、层里什么都没有。
+  ok(pendingRemoteQueue(LB.s, 10).total === 1 && pendingRemoteSeq(LB.s, PL) === lSeq2,
+    "L: ★★ 但**留痕了**：被跳过的那一版（seq=" + lSeq2 + "）存进了 `pending_remote_pages`（可裁决、可收场）");
+  ok(pendingRemotePayload(LB.s, PL)?.row?.content_json?.includes("A 改的 b1") === true,
+    "L: 存下来的就是 A 那一版内容（payload 里带 A 的 b1 编辑）");
+  ok(LB.cursor.since >= lSeq2, `L: ⚠️ 而游标**照样推进**到了 ${LB.cursor.since}（游标不为它停住 —— 朴素方案 A 会 livelock）`);
 
   // ④ B 把自己的版本推上去（seq3），然后**再同步一次**（真实客户端每轮都是 push 完再 pull）
   const lSeq3 = pushToServer(LB.s, PL, "devB", "游标页", "", contentOf(lbB));
   pullLog(LB.s, LB.cursor, "devB");
   ok(bodyOf(readContent(LB.s, PL).json, "b1") === "b1 原始",
-    "L: ★★ 再同步一次之后 B 仍然**看不到** A 的 b1 编辑（游标已越过 seq2 ⇒ 不会再取）");
+    "L: ★★ 再同步一次也**不会自动**把 A 的编辑塞进来（游标已越过 seq2）—— 它要用户裁决（下一条）");
 
   // ⑤ 对端与全新设备：编辑**没有**从世界上消失
   const lPullA = pullLog(LA.s, LA.cursor, "devA");
@@ -638,11 +644,37 @@ async function main() {
   ok(bodyOf(cJson, "b1") === "A 改的 b1" && bodyOf(cJson, "b2") === "B 改的 b2",
     "L: ★★ 全新设备按序折 log ⇒ 两边编辑都在（**log ＋ 块级 LWW 是收敛的**）");
 
-  // ⑥ 恢复条件（唯一的）：A 之后再推一次（哪怕内容没变）⇒ B 才拿回那条编辑
+  // ⑦ ★★ B 方案（2026-09-22）：**走真实命令路径**把那一版取回来 —— 不再依赖"再有人推一次"。
+  //    这一格是修法的判据（原来 ⑥ 那句"只有再有人推一次才拿回"是取证，已被这一格取代）。
+  //    `makeInvoke` 是 web.ts 的真命令面（与桌面 `resolve_pending_remote` 同一份语义与字段名）。
+  const invokeLB = makeInvoke(LB.s);
+  const listed = await invokeLB("list_pending_remote_pages", { limit: 10 });
+  ok(listed.total === 1 && listed.pages[0].page_id === PL && listed.pages[0].seq === lSeq2,
+    "B: `list_pending_remote_pages` 报出这一页（seq=" + lSeq2 + "）—— 界面能说清『哪一页、哪一版』");
+  // 让"本地还有没推上去的改动"那一支也走到：真实客户端由保存写这笔变更，这里手工塞一行。
+  LB.s.run(
+    "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) VALUES ('devB', 1, 'page', ?, 'upsert', '{}', 0)",
+    [PL],
+  );
+  const resolved = await invokeLB("resolve_pending_remote", { pageId: PL, choice: "merge" });
+  const bJson = readContent(LB.s, PL).json;
+  ok(resolved.merged === true && resolved.unresolved === 0, "B: 『合并这一页』走的是逐块合并，且没有要裁决的块");
+  ok(bodyOf(bJson, "b1") === "A 改的 b1" && bodyOf(bJson, "b2") === "B 改的 b2",
+    "B: ★★ 裁决之后**两边的编辑都在**（A 的 b1 拿回来了，B 的 b2 也还在）");
+  ok(getRow(LB.s, PL).dirty === 1,
+    "B: 产物里含『只在本地』的那一块 ⇒ 这一页被标回 dirty（那笔未推变更会把它带进 log）");
+  ok((await invokeLB("list_pending_remote_pages", {})).total === 0, "B: 裁决完存档清掉（清单不留假账）");
+  let badChoice = "";
+  try { await invokeLB("resolve_pending_remote", { pageId: PL, choice: "remote" }); } catch (e) { badChoice = String(e); }
+  ok(badChoice.includes("merge"), "B: 裁决口径只认三个字面量（`remote` 当场报错，不默认选边）");
+
+  // ⑥ 对照：A 之后再推一次（哪怕内容没变）。B 现在**有未推送改动**（⑦ 之后 dirty=1）⇒ 页级仍然
+  //    **保留本地** ⇒ 这一次推送对 B 不生效。⇒ 真正让 B 收敛的是 ⑦ 的**裁决**，不是"等别人再推一次"
+  //    （这正是修好之前唯一的出路，也是它为什么是"一段没人看见的分歧"）。
   const lSeq4 = pushToServer(LA.s, PL, "devA", "游标页", "", aJson);
   const lPull2 = pullLog(LB.s, LB.cursor, "devB");
-  ok(lPull2.applied.includes(lSeq4) && bodyOf(readContent(LB.s, PL).json, "b1") === "A 改的 b1",
-    "L: 只有**再有人推一次**（A 再保存/再同步）B 才拿回 A 的编辑 ⇒ 在那之前是一段没人看见的分歧");
+  ok(lPull2.skipped.includes(lSeq4) && bodyOf(readContent(LB.s, PL).json, "b1") === "A 改的 b1",
+    "L: （对照）B 有未推改动 ⇒ A 的再推也被页级保留本地；B 手里的 b1 是**它自己裁决拿回来的**那一份");
 
   // ---- 场景 M：合并产物写回 `dirty = 0` ⇒ 不推送，这件事本身丢不丢 ==========================
   const PM = "page-merge-nopush";

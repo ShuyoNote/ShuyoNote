@@ -834,3 +834,34 @@ pub fn list_stale_text_pages(
     let c = conn(&db);
     crate::doc_content::stale_text_queue(&c, limit.unwrap_or(10))
 }
+
+/// ★ **待取回的远端版本**（B 方案，2026-09-22）：页级"保留本地"（本地有未推送改动时优先本地，裁定 ④）
+/// 语义是对的，但那一版远端内容会被**游标吃掉** ⇒ 这台设备再也取不回对端那笔编辑，而且层里
+/// **一条痕都没有**（取证 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §3.2 的 L）。
+/// 现在它被存在本地表 `pending_remote_pages`，这个命令把清单给界面，用户随后裁决
+/// （`resolve_pending_remote`）。纯读；`limit` 由调用方给（界面列表，不是批量作业）。
+#[tauri::command]
+pub fn list_pending_remote_pages(
+    db: State<Db>,
+    limit: Option<usize>,
+) -> Result<crate::doc_content::PendingRemoteQueue, String> {
+    let c = conn(&db);
+    crate::doc_content::pending_remote_queue(&c, limit.unwrap_or(20))
+}
+
+/// ★ **裁决一处"待取回的远端版本"**：`choice` = `"merge"`（合并这一页：先逐块合并，两端各改不同块 ⇒ 都保留）
+/// / `"take_remote"`（整页采用远端，并**真的**放弃本地还没推上去的改动）/ `"keep_local"`（保留本地，什么都不动）。
+/// 其余值一律报错（**不默认选边** —— 与 `resolve_page_conflict` 同一纪律）。
+///
+/// 三个选项都**真的动数据**：旧横幅那两条按钮只改一行文案（取证文件 §4 的 F3），这一版不是。
+#[tauri::command]
+pub fn resolve_pending_remote(
+    db: State<Db>,
+    page_id: String,
+    choice: String,
+) -> Result<crate::sync::PendingChoiceReport, String> {
+    let c = conn(&db);
+    let choice = crate::sync::PendingChoice::parse(&choice)
+        .ok_or_else(|| format!("choice 只能是 merge / take_remote / keep_local，收到 {choice}"))?;
+    crate::sync::resolve_pending_remote(&c, &page_id, choice)
+}
