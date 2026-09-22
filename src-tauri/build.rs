@@ -22,8 +22,37 @@
 
 fn main() {
     enforce_explicit_crypto_backend_for_sm_library();
+    warn_if_patched_source_without_sm_library_feature();
     require_gm_provider_patch();
     tauri_build::build()
+}
+
+/// ★ 反向告警（2026-09-22 本人踩坑后补）：**源码上有补丁、但这次构建没开 `sm-library`**。
+///
+/// 这是本冲刺里最容易把自己骗到的状态：构建胶水只在 `cargo build` 上加 `--features sm-library`，
+/// 而裸 `cargo test` / `cargo run` 会把 `set_cipher_key` 里那段 `#[cfg(feature = "sm-library")]` **编掉**
+/// ⇒ 库是"能认 SM3"的库（`page_cipher` 甚至已经是 `sm4`），而**应用一行国密参数都不设**，
+/// 写出来的仍是 SHA512 参数 —— 你以为自己在测接线后的构建，其实在测一个没接线的应用。
+/// 我 2026-09-22 的临时探针正是这么得出自相矛盾读数的（两轮读数对不上，根因就是这个开关）。
+///
+/// 只**警告**不 panic：`--no-default-features` 的回滚通道门禁需要在"补丁还在源码上"时照样能跑。
+fn warn_if_patched_source_without_sm_library_feature() {
+    if std::env::var_os("CARGO_FEATURE_SM_LIBRARY").is_some() {
+        return;
+    }
+    let Some((dir, version, how)) = resolve_sqlcipher_source() else {
+        return;
+    };
+    if find_marker(&dir).is_none() {
+        return;
+    }
+    println!(
+        "cargo:warning=shuyonote: ⚠️ SQLCipher 源码上有 §3.1 的 SM3/SM4 provider 补丁（libsqlite3-sys={version} via={how}），\
+         但这次构建**没开 `sm-library`** ⇒ 应用不会设 `cipher_hmac_algorithm=HMAC_SM3` / \
+         `cipher_kdf_algorithm=PBKDF2_HMAC_SM3`，写出来的库仍是 SHA512 参数。\
+         要读**应用层**的国密读数请带上特性：`cargo test --features sm-library …`；\
+         要回到干净源码：`node scripts/sm-library-build.mjs --revert`。"
+    );
 }
 
 // 与 crate 共用同一份"哪份源码 / 有没有标记"的解析逻辑（判据在 crate 里驱动它，见 `gm_patch_probe.rs`）。
