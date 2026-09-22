@@ -302,6 +302,11 @@ OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test --lib --features sm-library s
 cargo test --lib gm_provider::
 ```
 
+> **同族第二件（同一天）**：`scripts/sm-library-build.mjs --check` 的帮助文字是「只做构建前的核对，不构建」，
+> 但它原先照样 `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**（我拿它确认"源码干不干净"，
+> 结果它把源码变成了"打过补丁"的样子 ⇒ "我刚还原过"当场变成假话）。已修（`patchApplyDecision` 纯函数 ＋
+> `apply: !noApply && !checkOnly` ＋ 3 条判据 ＋ 变异证明）。**核对是只读动作**：想改状态就显式跑构建或 `--revert`。
+
 三处防线（2026-09-22 加）：① 胶水收尾横幅直接写明这条口径；② `build.rs` 在"源码有补丁但没开 `sm-library`"时
 打 `cargo:warning`（不 panic：`--no-default-features` 回滚通道需要在补丁仍在源码上时照样能跑）；
 ③ `node scripts/gm-version-selfcheck.mjs --with-tests` 的**第 ⑤ 段**就是
