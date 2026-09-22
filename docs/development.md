@@ -523,6 +523,14 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
   **仍未定位**。下次接手建议从"能加载 Debug CRT 的最小复现"入手（先确认一个只 import Debug CRT 的极简 Rust 测试二进制在本机能否加载），
   把范围从"整个 crate 的依赖链"缩到 CRT 加载本身。
   **在此之前：本机所有 Rust 单测只能过 `cargo check --all-targets` 的编译检查，不能当"已验证"。**
+- **vitest 默认单测超时 5 s —— 端到端 / live 类判据必须自己给超时**（2026-09-22，一周内**三次同源**）：
+  签名一模一样：报 **`Test timed out in 5000ms`**（不是断言不等），而且**每次红的集合不同**（排队/负载抖）。
+  三次实例：① 我的 `localTranscribe.live.test.ts` 在**唯一有模型服务的机器**上第一跑就红 2 条 —— 本机 TTS 每次 ~3.4 s，
+  而 live 族是**多个文件并发**打同一个服务；② Windows 侧 `check-sys-deps` 的端到端在那台要 6.2 s（脚本本体 `node scripts/check-sys-deps.mjs` 1 秒内 exit=0）；
+  ③ 疑似同族：`overlayShortcuts` 的 Esc 用例（**macOS 上 20 ms 绿**，未定论）。
+  ⇒ 规矩：**凡是"要等外部东西"（模型服务、真浏览器、子进程、端到端链路）的判据，显式给第三参数超时**；
+  排查时先看错误原文是 `timed out` 还是断言 —— 两者修法完全不同。
+  ★ 更要紧的一条同族纪律：**一条从未在任何地方跑过的判据等于没有判据**（①就是"三台机器都 skipped、第一次真跑才暴露"）。
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
