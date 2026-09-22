@@ -130,6 +130,26 @@ src/lib/extract/depsCatalog.ts(59,14): error TS2741:
 
 ## 5. 待定（等回话，不阻塞第 3 节）
 
+### 5.0 ★ 原子落地的**第四件**：契约文档本身也被判据守着（2026-09-22 读到）
+
+`depsCatalog.test.ts` 里有一条判据原话是「**契约文档里列了每个能力（防「代码加了、文档没加」）**」
+⇒ 所以原子清单不是 3 件而是 **4 件起步**，而且**顺序不能省**：
+
+```
+① src/lib/extract/types.ts          加 ExtractDeps.transcribe?
+② src/lib/extract/depsCatalog.ts    登记 transcribe（并把 vision.usedBy 里错列的 av.transcript 移走）
+③ docs/plans/2026-09-17-…-plan.md §15   ← **必须同批**（有判据比对"能力 ⇄ 文档"）
+④ src/lib/extract/registry.ts       登记 avTranscriptExtractor（这一步才补上"能力 ⇄ 已落地抽取器"的配对）
+⑤ avTranscript.ts / .test.ts        删掉那两个**局部窄类型**（契约一进就删）
+⑥ 验证：tsc ＋ vitest src/lib/extract（depsCatalog / isolated / coverage / conformance 四条一致性判据）
+```
+
+**上一轮的两条经验（都吃过）**：
+- 只加"能力"不落地抽取器 ⇒ 判据红（`1 failed | 2 passed`，我按纪律回退了）；
+- **先留日志再回退** —— 我上次把失败日志删早了，导致那两条断言的原文没读到（下次先 `cat` 再 revert）。
+
+### 5.1 入口与参数（等回话，不阻塞上面）
+
 1. **入口**：AI 面板加「音频转写」／走导入（拖音频文件）／挂到附件 —— 归 mac 定，我不擅自改他的文件；
 2. 语言参数是否要（中文默认？中英混说？）；
 3. 长音频要不要分段（→ 与 §4-2 的"进内容层后可被总结"耦合：分段粒度决定总结的输入形状）。
