@@ -4828,6 +4828,12 @@ body.content-full .editor-placeholder {
    勾选框是个例外（它是 16px 的小方块，拉满就成了横条）。 */
 .properties-body .prop-value:not(.prop-checkbox) { width: 100%; max-width: none; }
 .properties-body .prop-checkbox { justify-self: start; }
+/* 「时间」属性：值不是一个 input，而是 `.prop-datetime` 这层 wrapper（手输框 ＋ 📅 按钮）。
+   它自带旧**行布局**留下的 `max-width: 75%`（当年一行是 flex，不想让值占满整行）——
+   值列现在由网格决定（`1fr`），那 25% 就纯粹是**死空白**：owner 2026-09-22 的截图里，
+   同一列上文本输入框顶到了行尾按钮，日期控件却短一截、后面空一大块。
+   口径与上面 `.prop-value` 那条一致：值列宽度归网格管，这一层也放开。 */
+.properties-body .prop-datetime { max-width: none; }
 
 .prop-value {
   flex: 1;
