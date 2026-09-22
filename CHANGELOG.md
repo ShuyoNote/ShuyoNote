@@ -40,6 +40,21 @@
 
 ### 变更
 
+- **PDF 状态组「朗读 / OCR / AI」＋ 右侧栏漏斗／筛选胶囊一起扁平化**（2026-09-22，owner 第二张截图：
+  "这几个按钮也进行扁平化处理"）。上一轮把阅读器控制按钮改成了扁平（无边框 + 无底色），但同一屏里
+  还剩两类"描边 + 浅底"的胶囊，并排时是两种语言：
+  · `.pdf-annot-ocr`（朗读 / OCR / AI）原来是 `border: 1px solid var(--border)` ＋ `background: var(--surface)`；
+  · `.pdf-sidebar-filter-toggle`（漏斗）与它展开后的四枚 `.pdf-sidebar-filter-btn` 同样是 1px 描边。
+  现在统一成与 `.pdf-reader-btn` 同一套：**无边框、透明底**，hover 给 `--hover`、按下给 `--hover-strong`，
+  选中/激活给 `--accent-soft` 底 ＋ 强调色文字（原来"选中"是靠边框变强调色，扁平之后必须换成底色）。
+  ⚠️ **AI 视觉识别按钮的区分从"强调色描边"换成"强调色文字"**：它原来是靠 `border-color` 变蓝来区分
+  普通 OCR 与 AI 视觉的，扁平之后没有边框可用 —— 这条区别必须换一种表达，不能顺手丢掉。
+  尺寸、命中区、布局都没动：窄屏那两条对 `.pdf-annot-toolbar button` / `.pdf-sidebar button` 的
+  `min-width/min-height: 44px` 照旧命中这几个按钮；状态组宽度 221 → 215px（三个按钮各少两圈 1px 描边）。
+  `verify-mobile-views.mjs` 补 2 条判据（朗读/OCR/AI：`border=0px none` ＋ 透明底，且 AI 的文字色与
+  朗读不同；漏斗与非选中胶囊：`border=0px none` ＋ 透明底，选中胶囊只靠底色）⇒ views **255/0**
+  （脚本当前总数以门禁基线为准，baseline 同步 251 → 255）。
+
 - **PDF 阅读器控制按钮全部扁平化 + 去掉批注工具栏的外框勾线**（2026-09-22，owner：
   "控制按钮全部改成扁平类型按钮，进一步压缩占宽" / "去掉批注工具栏的外框勾线"）。
   · 阅读器按钮原来是"**描边 + 浅底**"的小方块（`border: 1px solid var(--border)` ＋

@@ -17518,18 +17518,25 @@ p:has(> .editor-drawing-container) {
 }
 .pdf-annot-layer.ok { color: var(--accent); }
 .pdf-annot-layer.warn { color: #b8860b; }
+/* 朗读 / OCR / AI（2026-09-22 owner 截图："这几个按钮也进行扁平化处理"）——
+   与 `.pdf-reader-btn` 同一套扁平语言：**无边框、透明底**，hover 才给底色。
+   改前是"1px 描边 + `--surface` 浅底"的胶囊，和已经扁平化的头部图标按钮并排时
+   明显是两种语言（截图里三个白底描边胶囊）。 */
 .pdf-annot-ocr {
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 7px;
   cursor: pointer;
 }
 .pdf-annot-ocr:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
+}
+.pdf-annot-ocr:active:not(:disabled) {
+  background: var(--hover-strong, var(--hover));
 }
 .pdf-annot-ocr:disabled { opacity: 0.6; cursor: default; }
 /* 两个识别按钮靠在一起（右侧一组）。 */
@@ -17538,10 +17545,13 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 6px;
 }
-/* AI 视觉识别按钮：用强调色区分。 */
+/* AI 视觉识别按钮：靠**文字颜色**（而不是描边）区分，扁平化后仍然分得出来。 */
 .pdf-annot-ocr-ai {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.pdf-annot-ocr-ai:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .pdf-annot-stage {
   position: relative;
@@ -18256,11 +18266,14 @@ p:has(> .editor-drawing-container) {
   padding: 8px 8px 4px;
   flex-wrap: wrap;
 }
+/* 2026-09-22（owner 截图："这几个按钮也进行扁平化处理"）：漏斗开关与它展开后的四枚胶囊
+   一起走扁平语言（无边框、透明底、hover 给底色、选中给 `--accent-soft` 底 + 强调色），
+   理由与 `.pdf-annot-ocr` 相同：右侧栏里再留一圈 1px 描边，和已经扁平的工具行不是一套。 */
 .pdf-sidebar-filter-toggle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px solid var(--border);
+  border: none;
   background: transparent;
   color: var(--text-dim);
   font-size: 11.5px;
@@ -18270,14 +18283,13 @@ p:has(> .editor-drawing-container) {
   flex: 0 0 auto;
 }
 .pdf-sidebar-filter-toggle:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
 }
 /* 筛选**不是"全部"**时常驻态也要看得出来（收起时旁边带当前类型文字） */
 .pdf-sidebar-filter-toggle.is-active {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: rgba(51, 112, 255, 0.25);
 }
 .pdf-sidebar-filter-current {
   white-space: nowrap;
@@ -18289,7 +18301,7 @@ p:has(> .editor-drawing-container) {
   flex-wrap: wrap;
 }
 .pdf-sidebar-filter-btn {
-  border: 1px solid var(--border);
+  border: none;
   background: transparent;
   color: var(--text-dim);
   font-size: 11.5px;
@@ -18298,13 +18310,12 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
 }
 .pdf-sidebar-filter-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
 }
 .pdf-sidebar-filter-btn.active {
   background: var(--accent-soft);
   color: var(--accent);
-  border-color: rgba(51, 112, 255, 0.25);
 }
 .pdf-sidebar-list {
   flex: 1;
