@@ -502,6 +502,20 @@ async function checkPdfReader(page, vp) {
         const b = el?.getBoundingClientRect();
         return b ? { top: b.top, bottom: b.bottom, right: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height) } : null;
       };
+      /** 可见 = 自己与祖先都没有被 `display:none` 掉（收进「⋯」的项仍然在 DOM 里）。 */
+      const shown = (el) => {
+        if (!el) return false;
+        let cur = el;
+        while (cur && cur !== reader) {
+          if (getComputedStyle(cur).display === "none") return false;
+          cur = cur.parentElement;
+        }
+        const b = el.getBoundingClientRect();
+        return b.width > 1 && b.height > 1;
+      };
+      const toolbarEl = reader.querySelector(".pdf-annot-toolbar");
+      const rowEl = reader.querySelector(".pdf-annot-toolbar-row");
+      const rb = rowEl?.getBoundingClientRect();
       return {
         empties,
         moreVisible: visible(".pdf-reader-more"),
@@ -509,14 +523,63 @@ async function checkPdfReader(page, vp) {
         toolsH: tools ? Math.round(tools.getBoundingClientRect().height) : null,
         docW: document.documentElement.scrollWidth,
         vw: innerWidth,
-        hasStatus: !!reader.querySelector(".pdf-annot-status"),
+        hasStatus: shown(reader.querySelector(".pdf-annot-status")),
         pages: (reader.querySelector(".pdf-reader-page")?.textContent || "").trim(),
         // 分组盒子（Node 侧按"纵向重叠"算行数：盒高不同且垂直居中，比 top 相等是错的）
-        groupBoxes: Array.from(reader.querySelector(".pdf-annot-toolbar")?.children ?? []).map((c) => {
+        // ⚠️ 取**行内**（`.pdf-annot-toolbar-row`）的那些分组：工具条自身现在只有两个孩子
+        //    （行 + 「⋯」那一格），拿它算行数会永远得 1，等于没量。
+        groupBoxes: Array.from(
+          (reader.querySelector(".pdf-annot-toolbar-row") ?? reader.querySelector(".pdf-annot-toolbar"))?.children ?? [],
+        ).map((c) => {
           const b = c.getBoundingClientRect();
           return { name: String(c.className).split(" ")[0], top: b.top, bottom: b.bottom };
         }),
-        toolbar: box(reader.querySelector(".pdf-annot-toolbar")),
+        // 批注工具条：**永不换行**（owner 2026-09-22）——行内分组的纵向行数 + 有没有溢出/被挤出。
+        bar: toolbarEl
+          ? {
+              h: Math.round(toolbarEl.getBoundingClientRect().height),
+              collapse: toolbarEl.getAttribute("data-collapse") ?? "",
+              hasMore: toolbarEl.classList.contains("has-more"),
+              moreShown: shown(reader.querySelector(".pdf-annot-more")),
+              rowLines: (() => {
+                const kids = Array.from(rowEl?.children ?? []).filter((el) => shown(el));
+                const g = [];
+                for (const el of kids) {
+                  const b = el.getBoundingClientRect();
+                  const hit = g.find((x) => b.top < x.bottom - 0.5 && b.bottom > x.top + 0.5);
+                  if (hit) {
+                    hit.top = Math.min(hit.top, b.top);
+                    hit.bottom = Math.max(hit.bottom, b.bottom);
+                  } else g.push({ top: b.top, bottom: b.bottom });
+                }
+                return g.length;
+              })(),
+              rowOverflow: rowEl ? { scrollW: rowEl.scrollWidth, clientW: rowEl.clientWidth } : null,
+              outside: rb
+                ? Array.from(rowEl.querySelectorAll("button"))
+                    .filter((b) => shown(b))
+                    .filter((b) => {
+                      const bb = b.getBoundingClientRect();
+                      return bb.right > rb.right + 1 || bb.left < rb.left - 1;
+                    })
+                    .map((b) => (b.textContent || "").trim().slice(0, 8))
+                : [],
+              ocrInRow: Array.from(rowEl?.querySelectorAll(".pdf-annot-ocr") ?? []).filter((b) => shown(b)).length,
+            }
+          : null,
+        // 「⋯」菜单里的东西（点开那一刻才量）
+        menu: (() => {
+          const pop = reader.querySelector(".pdf-annot-more-pop");
+          if (!pop) return null;
+          const pb = pop.getBoundingClientRect();
+          return {
+            text: (pop.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80),
+            inViewport: pb.left >= -1 && pb.right <= innerWidth + 1,
+            ocr: Array.from(pop.querySelectorAll(".pdf-annot-ocr")).filter((b) => shown(b)).map((b) => (b.textContent || "").trim()),
+            layer: shown(pop.querySelector(".pdf-annot-layer")),
+          };
+        })(),
+        toolbar: box(toolbarEl),
         status: box(reader.querySelector(".pdf-annot-status")),
         // head（顶部工具条）自身的预算 + 导出按钮规格（"太占地方"那条的回归判据）
         head: box(reader.querySelector(".pdf-reader-head")),
@@ -616,13 +679,26 @@ async function checkPdfReader(page, vp) {
         })),
         layerText: (reader.querySelector(".pdf-annot-layer")?.textContent || "").trim(),
         layerTitle: (reader.querySelector(".pdf-annot-layer")?.getAttribute("title") || "").trim(),
+        // 统一图标（owner 2026-09-22："这几个按钮都使用统一风格的 svg 图标"）。
+        // 判据：工具条里每一枚 `<svg>` 的 viewBox / stroke / 线帽 / 线接 / **线宽** / **尺寸**都一致
+        //（改前是 1.8 与 2 两套线宽、16 / 15 两种尺寸混排）。
+        icons: Array.from(reader.querySelectorAll(".pdf-annot-toolbar button svg")).map((s) => ({
+          vb: s.getAttribute("viewBox"),
+          fill: s.getAttribute("fill"),
+          stroke: s.getAttribute("stroke"),
+          sw: s.getAttribute("stroke-width"),
+          cap: s.getAttribute("stroke-linecap"),
+          join: s.getAttribute("stroke-linejoin"),
+          w: s.getAttribute("width"),
+          h: s.getAttribute("height"),
+        })),
       };
     });
 
   const first = await measure();
   if (first.err) return { err: first.err };
 
-  // 5) 窄屏：点开「⋯」再量一态（"收起了"和"点了能出来"是两件事）
+  // 5) 窄屏：点开头部的「⋯」再量一态（"收起了"和"点了能出来"是两件事）
   let secondaryAfter = first.secondary;
   let hasStatusAfter = first.hasStatus;
   let after = null;
@@ -632,6 +708,17 @@ async function checkPdfReader(page, vp) {
     after = await measure();
     secondaryAfter = after.secondary ?? secondaryAfter;
     hasStatusAfter = after.hasStatus ?? hasStatusAfter;
+  }
+  // 5b) 批注工具条自己的「⋯」：放不下的项收在这里（owner 2026-09-22：
+  //     "pdf 页内工具栏任何时候不换行，空间狭小时，可以收起来，不截断"）。
+  //     量完就关掉 —— 后面的拖拽 / 筛选那几步需要它闭合。
+  let menu = null;
+  if (first.bar?.hasMore) {
+    await safeEval(page, () => document.querySelector(".pdf-annot-more")?.click());
+    await sleep(500);
+    menu = (await measure()).menu;
+    await safeEval(page, () => document.querySelector(".pdf-annot-more")?.click());
+    await sleep(300);
   }
   // 6b) 桌面：右侧批注栏的筛选**默认收起**（owner 2026-09-22）——
   //     点开有 4 枚胶囊、选一个再收起后仍能看出当前筛选（否则"列表变短了"没有解释）。
@@ -709,6 +796,7 @@ async function checkPdfReader(page, vp) {
     after,
     secondaryAfter,
     hasStatusAfter,
+    menu,
     wide,
     sidebarFlow,
     dragFlow,
@@ -786,12 +874,24 @@ function assertPdfReader(rr, vp) {
     ok(rr.secondary.every((v) => v === false), `默认收起那 4 个低频头部控件（实测 ${JSON.stringify(rr.secondary)}）`);
     ok(rr.secondaryAfter.every((v) => v === true), `点开「⋯」后它们真的出现（实测 ${JSON.stringify(rr.secondaryAfter)}）`);
     ok(rr.toolsH !== null && rr.toolsH <= 56, `批注工具行是**一行**（高 ${rr.toolsH} ≤ 56；换行会白吃 44px）`);
-    // 状态组（文本层 chip + 朗读/OCR/AI）窄屏**默认收进 ⋯**，点开才出现 —— 两条都钉
-    ok(rr.hasStatus === false, `窄屏默认收起状态组（省一行；实测 hasStatus=${rr.hasStatus}）`);
-    ok(rr.hasStatusAfter === true, `点开「⋯」后状态组出现（实测 hasStatus=${rr.hasStatusAfter}）`);
+    // 状态组（文本层 chip + 朗读/OCR/AI）现在由**工具条自己**按宽度收进它那枚「⋯」。
+    ok(rr.hasStatus === false, `窄屏状态组自动收起来（实测 hasStatus=${rr.hasStatus}，data-collapse="${rr.bar?.collapse}"）`);
+    ok(
+      rr.hasStatusAfter === rr.hasStatus,
+      `头部「⋯」只开合头部那 4 个控件，不再动批注状态组（${rr.hasStatus} → ${rr.hasStatusAfter}）`,
+    );
+    ok(
+      rr.bar?.hasMore === true && (rr.menu?.ocr?.length ?? 0) >= 1,
+      `收起来的「朗读 / OCR / AI」在工具条「⋯」里仍然点得到（实测 ${JSON.stringify(rr.menu?.ocr ?? null)}）`,
+    );
   } else {
     ok(!rr.moreVisible, `桌面不显示「⋯」入口（一次放得下）`);
-    ok(rr.hasStatus === true, `桌面一直显示状态组（OCR / AI 那一行，不缺空间）`);
+    // 桌面第一态是"目录 + 批注栏都开着"（正文列只有 ~492px）⇒ 状态组**应当**收进「⋯」；
+    // 面板关掉后列宽足够 ⇒ 它自己回来（"收起来"不等于"消失"，见下面 wide 那条）。
+    ok(
+      rr.hasStatus === false && (rr.menu?.ocr?.length ?? 0) >= 1,
+      `列窄时状态组收进「⋯」且可达（行内=${rr.hasStatus}、菜单=${JSON.stringify(rr.menu?.ocr ?? null)}）`,
+    );
     // 右侧批注栏：四枚筛选胶囊**默认收起**，常驻只剩一枚漏斗（owner 2026-09-22：
     // "右边侧栏顶部的四个按钮平时收起来"）。改前 4 枚常驻 ≈236px，几乎占满 260px 的栏宽。
     const sb = rr.sidebarFlow;
@@ -856,6 +956,11 @@ function assertPdfReader(rr, vp) {
         (rr.wide?.status?.right ?? 0) >= (rr.wide?.toolbar?.right ?? 1e9) - 24,
       `状态组落在工具行**右端**（右缘 ${rr.wide?.status?.right} vs 工具条 ${rr.wide?.toolbar?.right}）`,
     );
+    // "收起来"不等于"消失"：面板关掉、列宽够了之后，收进「⋯」的那几件要**自己回来**。
+    ok(
+      rr.wide?.hasStatus === true && rr.wide?.bar?.hasMore === false,
+      `列宽足够时状态组自动回到行内、「⋯」收起（hasStatus=${rr.wide?.hasStatus}、hasMore=${rr.wide?.bar?.hasMore}）`,
+    );
   }
   // 短标签 + title：这是"能缩短"的前提（缩了还不给完整说法就等于藏功能）
   // ⚠️ 窄屏要看**点开「⋯」之后**那一态（默认收起时状态组不在 DOM 里 ⇒ 第一态量到空数组）。
@@ -869,6 +974,31 @@ function assertPdfReader(rr, vp) {
     `文本层 chip 也是短句 + title（实测「${lab?.layerText ?? ""}」/「${lab?.layerTitle ?? ""}」）`,
   );
   ok(rr.docW <= rr.vw + 1, `阅读器无横向溢出（docW ${rr.docW} ≤ ${rr.vw}）`);
+  // ---------------------------------------------------------------------------
+  // 批注工具条：**任何时候都不换行**，空间不够就收进「⋯」，且不许截断
+  // （owner 2026-09-22："pdf 页内工具栏任何时候不换行，空间狭小时，可以收起来，不截断"）。
+  // 三条判据分别对应这句话里的三件事：一行 / 没被挤出 / 收起来的仍可达。
+  // ---------------------------------------------------------------------------
+  const bar = rr.bar;
+  ok(
+    bar?.rowLines === 1,
+    `批注工具条**只有一行**（行内 ${bar?.rowLines} 行；data-collapse="${bar?.collapse}"）` +
+      `——改前是 flex-wrap: wrap，1280 少一列面板就折成两行`,
+  );
+  ok(
+    (bar?.rowOverflow?.scrollW ?? 1e9) <= (bar?.rowOverflow?.clientW ?? 0) + 1,
+    `行内没有被推出可视区（scrollW ${bar?.rowOverflow?.scrollW} ≤ clientW ${bar?.rowOverflow?.clientW}）——"不截断"`,
+  );
+  ok(
+    (bar?.outside?.length ?? 1) === 0,
+    `没有任何按钮被挤出工具条（实测 ${JSON.stringify(bar?.outside ?? [])}）`,
+  );
+  if (bar?.hasMore) {
+    ok(
+      !!rr.menu && rr.menu.inViewport,
+      `「⋯」菜单没出视口（实测 ${rr.menu?.inViewport}，内容「${rr.menu?.text}」）`,
+    );
+  }
   // 扁平化：按钮**无边框 + 透明底**（改前是"描边 + 浅底"的小方块）；批注工具条去掉外框勾线。
   ok(
     rr.btnStyle?.border === "0px none" && /rgba\(0, 0, 0, 0\)|transparent/.test(rr.btnStyle?.bg ?? ""),
@@ -891,6 +1021,25 @@ function assertPdfReader(rr, vp) {
       `桌面 head 控制组宽度 ${rr.controlsW}px ≤ 420（扁平化+间距 14→8 后实测 393；改前 441）`,
     );
   }
+  // 统一图标：工具条里每一枚 svg 必须同源同规格（"统一风格"是可量的，不是形容词）。
+  const ic = rr.icons ?? [];
+  const base = ic[0];
+  ok(
+    ic.length >= 6 &&
+      ic.every(
+        (i) =>
+          i.vb === base.vb &&
+          i.fill === base.fill &&
+          i.stroke === base.stroke &&
+          i.sw === base.sw &&
+          i.cap === base.cap &&
+          i.join === base.join &&
+          i.w === base.w &&
+          i.h === base.h,
+      ),
+    `工具条里 ${ic.length} 枚图标是同一套规格（viewBox=${base?.vb}、stroke=${base?.stroke}、` +
+      `线宽=${base?.sw}、${base?.w}×${base?.h}、线帽=${base?.cap}）——改前 1.8/2 两套线宽、16/15 两种尺寸`,
+  );
 }
 
 async function main() {  const executablePath = findChrome();

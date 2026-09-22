@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { type PdfAnnotation } from "../lib/pdfAnnotation";
 import type { PdfAnnotationRecord } from "../types";
+import { TrashIcon } from "./icons";
 
 // M24 — 思源式右侧「批注」侧栏。列出该 PDF 全部页的批注（分组按页），
 // 每条显示类型图标 + 内容/坐标 + 页码；点击跳转到对应页并定位到该批注。
@@ -181,7 +182,9 @@ export function PdfSidebar({ records, currentPage, onJump, onDelete }: Props) {
                       onDelete(pageIdx, ann.id);
                     }}
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+                    {/* 和工具条里那枚「删除选中标注」用**同一枚图标**（`icons.tsx` 的 `TrashIcon`）：
+                        同一个动作在同一个屏幕上不该有两种画法。 */}
+                    <TrashIcon width={13} height={13} />
                   </button>
                 </div>
               );

@@ -1590,9 +1590,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
                   version={annotToolVersion}
                   tool={tool}
                   onToolChange={setTool}
-                  // 窄屏默认收起批注状态条（文本层提示 + 朗读/OCR/AI），与头部的 `⋯` 同一个开关；
-                  // 宽屏一直显示（那边不缺空间，而且这些是"扫描版 PDF 第一步要点的"）。
-                  showStatus={!overlayViewport || toolsOpen}
+                  // 宽度不够时由工具条自己把「文本层 chip + 朗读/OCR/AI」收进它那枚「⋯」
+                  // （2026-09-22：不再靠这里传 showStatus 猜 —— 见 PdfAnnotTopToolbar 顶部注释）。
                 />
                 <div className="pdf-reader-stage" ref={stageRef} onScroll={onStageScroll}>
                   <div className="pdf-continuous" style={{ height: layout.total, position: "relative" }}>
