@@ -17,6 +17,7 @@
 //   node scripts/verify-mobile-layout.mjs --shots /tmp/shots   # 顺便存图
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
+import { pinAppLanguage } from "./lib/pin-locale.mjs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -119,6 +120,7 @@ async function main() {
     // ---------- 手机视口：用独立 context，保证 localStorage 从零开始 ----------
     const phoneCtx = await browser.createBrowserContext();
     const phone = await phoneCtx.newPage();
+    await pinAppLanguage(phone);
     const pageErrors = [];
     phone.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
     await phone.setViewport({ ...PHONE, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -430,6 +432,7 @@ async function main() {
       console.log(`\n【小屏 320x568 · 模板中心】`);
       const smallCtx = await browser.createBrowserContext();
       const small = await smallCtx.newPage();
+      await pinAppLanguage(small);
       const smallErrors = [];
       small.on("pageerror", (e) => smallErrors.push(String(e).slice(0, 200)));
       await small.setViewport({ width: 320, height: 568, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -470,6 +473,7 @@ async function main() {
     // ---------- 桌面视口：独立 context，默认偏好（侧栏展开）----------
     const deskCtx = await browser.createBrowserContext();
     const desktop = await deskCtx.newPage();
+    await pinAppLanguage(desktop);
     await desktop.setViewport(DESKTOP);
     await desktop.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
     await sleep(2500);
