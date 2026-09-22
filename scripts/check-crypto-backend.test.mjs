@@ -25,6 +25,7 @@ import {
   targetDirOf,
   normalizeDir,
   opensslDirMatches,
+  looksLikeCargoOutDir,
 } from "./check-crypto-backend.mjs";
 
 /** macOS 默认（Apple）后端：CommonCrypto + Security.framework。 */
@@ -542,6 +543,26 @@ describe("check-crypto-backend：产物实际链的 OpenSSL 目录", () => {
     });
     expect(problems.join()).toMatch(/OPENSSL_LIB_DIR/);
     expect(problems.join()).toMatch(/另一个 OpenSSL/);
+  });
+
+  it("★ decide：解析到的是 cargo 产物目录 ⇒ 红，但理由要指向**构建没走发现路径**，不能误报成 OPENSSL_LIB_DIR 覆盖", () => {
+    // 2026-09-22 从**真 CI 日志**读到的第二种形态（Linux `--group rust`，没设 OPENSSL_DIR）：
+    // 真读数 = `…/target/debug/build/libsqlite3-sys-2a9f05b01f82195b/out`。
+    const outDir = "/home/runner/work/ShuyoNote/ShuyoNote/src-tauri/target/debug/build/libsqlite3-sys-2a9f05b01f82195b/out";
+    expect(looksLikeCargoOutDir(outDir)).toBe(true);
+    expect(looksLikeCargoOutDir("/usr/lib/x86_64-linux-gnu")).toBe(false);
+    expect(looksLikeCargoOutDir("C:/vcpkg/installed/x64-windows-static-md/lib")).toBe(false);
+    expect(looksLikeCargoOutDir("")).toBe(true);
+
+    const { problems } = decide({
+      all: [{ kind: "openssl", searchDir: outDir }],
+      expected: "openssl",
+      patch: { expected: null, markers: [] },
+      opensslDir: { expected: "/usr", actual: outDir },
+    });
+    expect(problems.join()).toMatch(/没有 OpenSSL 的 link-search 行/);
+    expect(problems.join()).toMatch(/--print-env/);
+    expect(problems.join()).not.toMatch(/OPENSSL_LIB_DIR/); // 不许把第二种形态误报成第一种
   });
 
   it("decide：一致 ⇒ 通过并记一条", () => {

@@ -262,6 +262,22 @@ export function normalizeDir(p, { caseInsensitive = false } = {}) {
  * ⇒ 加这一格：把"到底链了哪个目录"变成产物级断言。
  * 匹配规则：相等，或 actual 是 expected 的**子目录**（`/usr` ↔ `/usr/lib/x86_64-linux-gnu` 这种同族关系）。
  */
+/**
+ * 纯函数：这个"目录"看起来是 **cargo 的产物目录**（`target/…`）而不是一个真的 OpenSSL 前缀吗？
+ *
+ * ★ 2026-09-22 从**真 CI 日志**读出来的第二种形态（Linux，`--group rust` 那个 job）：
+ *   没设 `OPENSSL_DIR` 时，`libsqlite3-sys/build.rs` **走的是"没找到 OpenSSL"那一支**
+ *   （`use_openssl` 保持 false ⇒ 只打 `rustc-link-lib=dylib=crypto`、**不打 `rustc-link-search`**），
+ *   于是 `classifyOutput` 只能退回最后那条 `rustc-link-search` —— SQLCipher 自己的 `OUT_DIR`
+ *   （真读数：`…/target/debug/build/libsqlite3-sys-2a9f05b01f82195b/out`）。
+ *   ⇒ 此时"实际目录 ≠ 声明前缀"**不是**"链了另一个 OpenSSL"，而是"这次构建压根没走发现路径"。
+ *   两者修法完全不同（前者查 `OPENSSL_LIB_DIR` 覆盖，后者查构建次序/有没有导出那三个变量）。
+ */
+export function looksLikeCargoOutDir(p) {
+  const s = String(p ?? "");
+  return s === "" || /[\\/]target[\\/]/.test(s);
+}
+
 export function opensslDirMatches(expected, actual, { caseInsensitive = false } = {}) {
   const e = normalizeDir(expected, { caseInsensitive });
   const a = normalizeDir(actual, { caseInsensitive });
@@ -425,6 +441,16 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
         `声明了 SHUYONOTE_EXPECT_OPENSSL_DIR=${opensslDir.expected}，但产物里**没解析出 link-search 目录**` +
           `（实际读到的：${JSON.stringify(opensslDir.actual || "")}）⇒ 这一格未实查`,
       );
+    } else if (!m && looksLikeCargoOutDir(opensslDir.actual)) {
+      // 第二种形态（2026-09-22 从真 CI 日志读出来）：产物里**根本没有** OpenSSL 的 link-search 行，
+      // 解析出来的是 SQLCipher 自己的 OUT_DIR ⇒ 这次构建没走 OPENSSL_DIR/OPENSSL_LIB_DIR 发现路径。
+      problems.push(
+        `产物里**没有 OpenSSL 的 link-search 行**（解析到的是 cargo 产物目录 \`${opensslDir.actual}\`），` +
+          `而声明要求 \`${opensslDir.expected}\` ⇒ 这次构建**没走显式发现路径**（\`OPENSSL_DIR\` 那三个变量没导出，` +
+          `或这棵树是在没设它们的条件下编的）⇒ **无法证明链的是哪个前缀**。` +
+          `修法：按 release.yml 的次序 —— 先 \`sm-library-build.mjs --print-env >> $GITHUB_ENV\`，**再**构建；` +
+          `只在构建那一步设环境变量、或复用旧的构建目录，都会落回这一形态`,
+      )
     } else if (!m) {
       problems.push(
         `产物**实际链的 OpenSSL 目录**是 \`${opensslDir.actual}\`，而声明要求 \`${opensslDir.expected}\` —— ` +
