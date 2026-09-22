@@ -513,6 +513,34 @@ async function checkPdfReader(page, vp) {
         const b = el.getBoundingClientRect();
         return b.width > 1 && b.height > 1;
       };
+      /**
+       * 状态组（文本层 chip + 朗读/OCR/AI）的**字面**是不是在同一条线上。
+       * 用 Range 量文字自己的矩形：`line-height: normal` 时汉字与拉丁的行盒高度不同
+       * （实测 25 / 23 / 17），盒子中心虽然都对齐，字面却差 1px（owner 截图："这几个按钮
+       * 似乎不在一个水平线上？"）。判据 = 四个文字矩形**中线散布** + 文字高一致。
+       */
+      const textLine = (root) => {
+        const els = root
+          ? [root.querySelector(".pdf-annot-layer"), ...Array.from(root.querySelectorAll(".pdf-annot-ocr"))].filter(Boolean)
+          : [];
+        const rects = els
+          .map((el) => {
+            const tn = Array.from(el.childNodes).find((n) => n.nodeType === 3 && (n.textContent || "").trim());
+            if (!tn) return null;
+            const r = document.createRange();
+            r.selectNodeContents(tn);
+            const b = r.getBoundingClientRect();
+            return b.height > 0 ? { mid: +((b.top + b.bottom) / 2).toFixed(2), h: +b.height.toFixed(2) } : null;
+          })
+          .filter(Boolean);
+        if (rects.length < 2) return null;
+        return {
+          n: rects.length,
+          mids: rects.map((r) => r.mid),
+          hs: rects.map((r) => r.h),
+          spread: +(Math.max(...rects.map((r) => r.mid)) - Math.min(...rects.map((r) => r.mid))).toFixed(2),
+        };
+      };
       const toolbarEl = reader.querySelector(".pdf-annot-toolbar");
       const rowEl = reader.querySelector(".pdf-annot-toolbar-row");
       const rb = rowEl?.getBoundingClientRect();
@@ -588,8 +616,12 @@ async function checkPdfReader(page, vp) {
             inViewport: pb.left >= -1 && pb.right <= innerWidth + 1,
             ocr: Array.from(pop.querySelectorAll(".pdf-annot-ocr")).filter((b) => shown(b)).map((b) => (b.textContent || "").trim()),
             layer: shown(pop.querySelector(".pdf-annot-layer")),
+            // 窄屏行内那一份状态组是收起来的（量不到文字矩形）⇒ 用菜单里这一份量"字面同线"
+            line: textLine(pop),
           };
         })(),
+        // 状态组的"字面同线"（行内那一份看得见时才有值）
+        statusLine: textLine(reader.querySelector(".pdf-annot-status")),
         // 头部工具条（2026-09-22，owner："pdf 阅读器顶部系统工具栏任何时候不换行，
         // 空间狭小时收起来，除了最右端的关闭按钮"）——与 `bar` 同一套判据，另加"关闭永远在"。
         headBar: (() => {
@@ -1143,6 +1175,15 @@ function assertPdfReader(rr, vp) {
     hbar?.closeShown === true && (hbar?.closeRight ?? 0) >= (hbar?.right ?? 1e9) - 24,
     `「关闭」永远可见且在最右端（right=${hbar?.closeRight} vs 头部内容右缘≈${(hbar?.right ?? 0) - 12}）` +
       `——它是"离开"的唯一入口，永远不收`,
+  );
+  // 状态组四个"字面"必须同线（owner 截图："这几个按钮似乎不在一个水平线上？"）。
+  // 桌面看**关掉两侧面板**那一态（`wide`：列宽够，状态组才在行内）；窄屏行内那份收在「⋯」里
+  // ⇒ 看菜单里的那一份（点开时量过）。
+  const sl = vp.width <= 768 ? rr.menu?.line : rr.wide?.statusLine;
+  ok(
+    !!sl && sl.spread <= 0.5 && new Set(sl.hs).size === 1,
+    `状态组「无文本层 / 朗读 / OCR / AI」四个字面在同一条线上（中线散布 ${sl?.spread}px、文字高 ${JSON.stringify(sl?.hs)}）` +
+      `——改前 line-height:normal 下三者的行盒高是 17/25/23，字面差 1px`,
   );
   // 扁平化：按钮**无边框 + 透明底**（改前是"描边 + 浅底"的小方块）；批注工具条去掉外框勾线。
   ok(
