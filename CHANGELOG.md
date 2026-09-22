@@ -75,6 +75,13 @@
 
 ### 修复
 
+- **桌面端 AI 调用被权限系统整体拒掉**（缺陷 #9 根因，用户报「PDF 阅读器 AI 识别出错」）：
+  `capabilities/default.json` 里只写了字符串 `"http:default"`，而该插件自带的 `default.toml` 写明
+  *"does not allow explicitly any origins to be fetched"* ⇒ **作用域为空 = 一个源都不许发**（失败关闭）
+  ⇒ 桌面端**所有**走 `coreFetch` 的跨域 AI 调用（视觉 / 对话 / 摘要 / 嵌入）一律被拒，Web 版不受影响。
+  修法：给 `http:default` 显式作用域 `https://**` ＋ `http://**`（服务商是**用户自己填的**，固定白名单会作废这条承诺）；
+  判据 `http_plugin_scope_allows_user_configured_endpoints`（运行时读文件，变异验证过）；⚠️ 边界：只证**配置形状**，真机待复验。
+
 - **文件表"藏列"的范围收窄到手机档（≤480）**（2026-09-22）。移动端冲刺里我把「类型 / 日期」两列的
   隐藏挂在了 **768** 档上，于是连 `scripts/check-panel-layout.mjs` 在 **560px** 档保护的既有设计
   （"表格保住列宽、横向滚动只留在容器里"）一起盖掉了——那条门禁在 dev 上是红的：

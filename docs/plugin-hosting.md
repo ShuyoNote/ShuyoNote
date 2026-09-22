@@ -62,6 +62,14 @@ $noBom = New-Object System.Text.UTF8Encoding($false)
 `downloadUrl` 带版本号（`<id>-<version>.zip`），且**资源不可覆盖重传** ——
 所以新版本是**新文件**，旧文件保持不动（已订阅用户手里的索引可能还指向它）：
 
+> ⚠️ **只有包的 `sha256` 真的变了，才跑这一节**（2026-09-20 实测）：拿一套**没变**的插件重跑一遍，
+> 产出的索引与线上**逐字段相同**（核过：18 条全一致，只有签名时间戳与 `generatedAt` 不同）——
+> 而下面命令里的 `--min-app-version <应用版本>` 会把**没变的插件**门槛从线上的 `1.89.1` 抬到当前版本
+> ⇒ **旧版本用户从此装不了本来能用的插件**（插件字节与 09-11 那版完全相同，抬门槛没有依据）。
+> ⇒ 重发前先逐字节比一遍（新包 vs 线上同名 zip 的 `sha256`）：**有变才发**；没变就别发，
+> 或显式给旧的 `--min-app-version`（如 `1.89.1`）把门槛保住。
+> 同理，`--publisher` 的值要与线上一致（现在是 `ShuyoNote 官方`），否则用户看到的发布者名会变。
+
 ```bash
 # 1) 在 Windows 侧产出（打包 + 发布者签名 + 索引签名）
 node scripts/plugin-fragment.mjs --plugins examples/plugins --out <out> \
