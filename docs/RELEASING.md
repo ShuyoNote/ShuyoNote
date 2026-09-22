@@ -197,7 +197,7 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 
 | # | 开关 | 为什么 |
 |---|---|---|
-| 1 | `OPENSSL_DIR` **显式给** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败，而不是安静退回 CommonCrypto |
+| 1 | `OPENSSL_DIR` **显式给**，并**用 `--print-env` 翻译成三个变量** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败。<br>⚠️ **不能只给 `OPENSSL_DIR`**：`openssl-sys` 只看 `<OPENSSL_DIR>/lib` 与 `lib64`，而 Ubuntu 的开发文件在**多架构目录**（`/usr/lib/x86_64-linux-gnu/`）⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64", "/usr/lib"] does not contain the required files…`）。⇒ 走唯一实现：`node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"`（它给出 `OPENSSL_DIR` ＋ `OPENSSL_LIB_DIR` ＋ `OPENSSL_INCLUDE_DIR`，两个 crate 都认；判据在 `scripts/lib/sm-library-plan.test.mjs`） |
 | 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate、两个 profile 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端）<br>⚠️ **`--release` 那一条不能省**：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用** ⇒ 包表面全对（补丁标记 `page_cipher=sm4` 也在）而**库级根本不是国密**。这是 2026-09-22 在本机把发版链原样跑一遍时**被第 4 条断言抓住**的真实事故；修法＝两个 profile 都清（`--prepare` 已这么做，判据在 `scripts/lib/sm-library-plan.test.mjs`） |
 | 3 | `pnpm tauri build … --features sm-library` | 不带它 → 应用接线那段 `#[cfg]` 被编掉，而产物标记仍写 `page_cipher=sm4`（页加密是补丁的**编译期**行为）⇒ 包看起来是国密、库级页 MAC/KDF 却还是 SHA512 |
 | 4 | 产物断言（`SHUYONOTE_EXPECT_*` 三条） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`** —— 只有产物能回答这三格（`cipher_settings` 回显里没有 algorithm 字段） |
