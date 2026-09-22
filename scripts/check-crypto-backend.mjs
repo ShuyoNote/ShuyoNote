@@ -135,7 +135,15 @@ export function classifyOutput(text) {
       .filter(Boolean);
     const external = dirs.filter((d) => !/[\\/]target[\\/]/.test(d));
     const dir = external.at(-1) ?? dirs.at(-1) ?? "";
-    return { kind: "openssl", tongsuo: /tongsuo/i.test(dirs.join(" ")), searchDir: dir };
+    // ⚠️ 2026-09-22 **真 CI（v1.91.23 的 Windows 档）读出来的一条**：`external.at(-1)` 会挑错。
+    //    那份产物里 OpenSSL 那条（`…\vcpkg\installed\x64-windows-static-md\lib`）**在前**，
+    //    后面还跟着 MSVC 工具链自己的一串 link-search（真读数末尾是
+    //    `…\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x64`）⇒ 取"最后一条外部目录"就取到了 atlmfc，
+    //    于是门禁对着一个**完全正常**的包喊红（本机之所以从没踩到：开发机的产物里
+    //    OpenSSL 那条正好是最后一条外部目录 —— 见 `src-tauri/target/*/build/libsqlite3-sys-*/output`）。
+    //    ⇒ 把**全部**外部候选一起交给 `decide`，由它按"有一个与声明前缀对得上"来判；
+    //      单一 `searchDir` 保留（判"压根没有 OpenSSL 那行"时仍要用它）。
+    return { kind: "openssl", tongsuo: /tongsuo/i.test(dirs.join(" ")), searchDir: dir, searchDirs: external };
   }
   // 有 sqlcipher 的编译痕迹、但没有任何后端标记：典型是
   // `bundled-sqlcipher-vendored-openssl`（后端由 openssl-sys 去链，这个 build.rs 不打印任何标记）。
@@ -435,13 +443,26 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
   }
   // ★ 产物实际链的 OpenSSL 目录（2026-09-22，见 `opensslDirMatches` 的注释）
   if (opensslDir.expected) {
-    const m = opensslDirMatches(opensslDir.expected, opensslDir.actual, { caseInsensitive: !!opensslDir.caseInsensitive });
-    if (m === null) {
+    // ⚠️ 候选**是一组**，不是一个（2026-09-22 v1.91.23 的 Windows 档真 CI 实测）：
+    //    那份产物里 OpenSSL 那条 link-search 在**前**，MSVC 工具链自己的一串在**后** ⇒
+    //    只看"最后一条外部目录"会挑到 `…\VC\Tools\MSVC\…\atlmfc\lib\x64`，把**正常的包判红**。
+    //    判据改成"**候选里有一个**与声明前缀对得上" —— 仍然要求它真出现在 link-search 行里，
+    //    所以"链了别的 OpenSSL"照旧红（见下面那条测试）。
+    const candidates = (opensslDir.actuals?.length ? opensslDir.actuals : [opensslDir.actual]).filter(Boolean);
+    const matched = candidates.find(
+      (c) => opensslDirMatches(opensslDir.expected, c, { caseInsensitive: !!opensslDir.caseInsensitive }) === true,
+    );
+    if (!candidates.length) {
       notices.push(
         `声明了 SHUYONOTE_EXPECT_OPENSSL_DIR=${opensslDir.expected}，但产物里**没解析出 link-search 目录**` +
           `（实际读到的：${JSON.stringify(opensslDir.actual || "")}）⇒ 这一格未实查`,
       );
-    } else if (!m && looksLikeCargoOutDir(opensslDir.actual)) {
+    } else if (matched) {
+      notices.push(
+        `产物实际链的 OpenSSL 目录与声明一致：${matched}` +
+          (candidates.length > 1 ? `（产物里另有 ${candidates.length - 1} 条别的外部 link-search 目录，已一并核对）` : ""),
+      );
+    } else if (candidates.every((c) => looksLikeCargoOutDir(c))) {
       // 第二种形态（2026-09-22 从真 CI 日志读出来）：产物里**根本没有** OpenSSL 的 link-search 行，
       // 解析出来的是 SQLCipher 自己的 OUT_DIR ⇒ 这次构建没走 OPENSSL_DIR/OPENSSL_LIB_DIR 发现路径。
       problems.push(
@@ -451,15 +472,13 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
           `修法：按 release.yml 的次序 —— 先 \`sm-library-build.mjs --print-env >> $GITHUB_ENV\`，**再**构建；` +
           `只在构建那一步设环境变量、或复用旧的构建目录，都会落回这一形态`,
       )
-    } else if (!m) {
+    } else {
       problems.push(
-        `产物**实际链的 OpenSSL 目录**是 \`${opensslDir.actual}\`，而声明要求 \`${opensslDir.expected}\` —— ` +
+        `产物**实际链的 OpenSSL 目录**是 \`${candidates.join(" | ")}\`，而声明要求 \`${opensslDir.expected}\` —— ` +
           `⚠️ 最常见成因：**\`OPENSSL_LIB_DIR\`/\`OPENSSL_INCLUDE_DIR\` 优先于 \`OPENSSL_DIR\`**（openssl-sys 的取值顺序），` +
           `而它们可能来自**用户级环境变量**（Windows 那台就是这样）⇒ 三个变量要一起钉；` +
           `否则「静态守卫绿 ＋ backend=openssl 绿」也拦不住"链了另一个 OpenSSL"`,
       );
-    } else {
-      notices.push(`产物实际链的 OpenSSL 目录与声明一致：${opensslDir.actual}`);
     }
   }
   return { problems, notices };
@@ -534,6 +553,8 @@ export function main() {
     opensslDir: {
       expected: opensslDirExpected,
       actual: all[0]?.searchDir ?? "",
+      // 全部外部候选（真 CI 里 OpenSSL 那条后面还跟着 MSVC 的 atlmfc ⇒ 只看最后一条会挑错，见 classifyOutput）
+      actuals: all[0]?.searchDirs ?? [],
       // Windows 路径不区分大小写；Unix 上大小写不同就是**另一个目录**（见 normalizeDir 的注释）
       caseInsensitive: process.platform === "win32",
     },

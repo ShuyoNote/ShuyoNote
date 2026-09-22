@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+## [1.91.24] - 2026-09-22
+
+> 发布链修复（第三刀）：Windows 的**产物级断言**把正常的包判红了 —— 是断言自己挑错了那条 link-search
+
 ### 修复
 
 - **三条移动端门禁在 CI 上假红：runner 的浏览器是 en-US**。`src/i18n` 按 `navigator.language`
@@ -14,6 +18,18 @@
   `shuyonote:lang` 键把语言钉成 zh-CN（`scripts/lib/pin-locale.mjs`）——钉的是**测试环境**，
   不是改产品去迎合断言。验证：本机把 `navigator.language` 改成 en-US 复现出 CI 那串英文标题，
   钉回 zh-CN 后标题恢复中文（`Notes` → `笔记`、`Files` → `文件管理`）。
+
+- **`check-crypto-backend` 在 Windows 上假红**（1.91.23 的 Windows 档：Linux 已全绿、安装包也真的
+  编出来了，却卡在这一格）：那条断言从 SQLCipher 的构建输出里取"最后一条外部 `rustc-link-search`
+  目录"当作"实际链的 OpenSSL 目录"，而**真 CI 的产物里 OpenSSL 那条在前、MSVC 工具链自己的一串在后**
+  （末尾是 `…\VC\Tools\MSVC\…\atlmfc\lib\x64`）⇒ 对着一个完全正常的包喊红。
+  现在把**全部外部候选**一起核对：只要其中**有一个**与声明的前缀（`SHUYONOTE_EXPECT_OPENSSL_DIR`）
+  对得上就算过；一个都对不上仍然是红（另加两条判据守住这点）。本机用
+  `src-tauri/target/*/build/libsqlite3-sys-*/output` 的真实读数复现了这个形状。
+
+- **1.91.21 / 1.91.22 / 1.91.23 都没有产出安装包**：前两版断在"冷 registry 上没有 SQLCipher
+  源码"，1.91.23 补上了 `cargo fetch`（Linux 档已绿）但 Windows 又断在上述断言 ⇒ 对外的桌面安装包
+  与更新通道仍停在 1.91.20。**1.91.24 预期是第一个全绿出包的版本**（Linux/Android 已在 1.91.23 验过）。
 
 ## [1.91.23] - 2026-09-22
 

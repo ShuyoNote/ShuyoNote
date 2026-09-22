@@ -575,4 +575,48 @@ describe("check-crypto-backend：产物实际链的 OpenSSL 目录", () => {
     expect(problems).toEqual([]);
     expect(notices.join()).toMatch(/实际链的 OpenSSL 目录与声明一致/);
   });
+
+  // ★ 2026-09-22 v1.91.23 的 Windows 档**真 CI**读数：
+  //   产物里 OpenSSL 那条（vcpkg 前缀）在**前**，MSVC 工具链自己的一串在**后**，
+  //   末尾是 `…\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x64`。
+  //   只按"最后一条外部目录"判 ⇒ 对着一个完全正常的包喊红（Linux 档同一条判据是绿的）。
+  it("★ 多条外部 link-search：OpenSSL 那条不在最后 ⇒ 只要**候选里有一个**对得上就不该红", () => {
+    const dirs = [
+      "C:/vcpkg/installed/x64-windows-static-md/lib",
+      "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/atlmfc/lib/x64",
+    ];
+    const { problems, notices } = decide({
+      all: [{ kind: "openssl", searchDir: dirs.at(-1), searchDirs: dirs }],
+      expected: "openssl",
+      patch: { expected: null, markers: [] },
+      opensslDir: {
+        expected: "C:\\vcpkg\\installed\\x64-windows-static-md",
+        actual: dirs.at(-1),
+        actuals: dirs,
+        caseInsensitive: true,
+      },
+    });
+    expect(problems).toEqual([]);
+    expect(notices.join()).toMatch(/实际链的 OpenSSL 目录与声明一致/);
+  });
+
+  it("★ 多条外部 link-search：**一个都对不上** ⇒ 仍然红（别把这一修法变成放水）", () => {
+    const dirs = [
+      "C:/Program Files/OpenSSL-Win64/lib/VC/x64/MD",
+      "C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/atlmfc/lib/x64",
+    ];
+    const { problems } = decide({
+      all: [{ kind: "openssl", searchDir: dirs.at(-1), searchDirs: dirs }],
+      expected: "openssl",
+      patch: { expected: null, markers: [] },
+      opensslDir: {
+        expected: "C:\\vcpkg\\installed\\x64-windows-static-md",
+        actual: dirs.at(-1),
+        actuals: dirs,
+        caseInsensitive: true,
+      },
+    });
+    expect(problems.join()).toMatch(/OpenSSL-Win64/);
+    expect(problems.join()).toMatch(/OPENSSL_LIB_DIR/);
+  });
 });
