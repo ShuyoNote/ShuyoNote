@@ -186,3 +186,34 @@ describe("sm-library-source：静态前缀守卫（单一口味要自包含）",
     });
     expect(ok.ok).toBe(true);
   });
+
+// ★ Windows 那一支（2026-09-22，Windows 侧点名要）：OpenSSL 的 **Windows 安装版是动态的**，
+//   DLL 叫 `bin\libcrypto-3-x64.dll`（**连字符**），而它同时在 `lib\` 放一份**导入库** `libcrypto.lib`
+//   ⇒ 只看 `lib/` 会被骗过（看着像"有 .lib 就能静态"），实际是"链接期解析到导入库、运行时去找 DLL"。
+//   动机不是理论：Windows 那台机器的全局 `OPENSSL_DIR` 正指着这样一个动态前缀。
+describe("sm-library-source：静态前缀守卫（Windows 的那一支）", () => {
+  it("★ 动态前缀：`lib/libcrypto.lib`（导入库）＋ `bin/libcrypto-3-x64.dll` ⇒ **不通过**", () => {
+    const v = staticCryptoVerdict({
+      names: ["libcrypto.lib"],
+      files: [{ names: ["libcrypto.lib"] }, { names: ["libcrypto-3-x64.dll", "libssl-3-x64.dll"] }],
+    });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto-3-x64\.dll/);
+  });
+
+  it("vcpkg 那种静态前缀（只有 libcrypto.lib、bin 里没有 crypto DLL）⇒ 通过", () => {
+    const v = staticCryptoVerdict({
+      names: ["libcrypto.lib", "libssl.lib"],
+      files: [{ names: ["libcrypto.lib"] }, { names: [] }],
+    });
+    expect(v.ok).toBe(true);
+  });
+
+  it("★ 磁盘版必须扫 `bin/`（只扫 lib/ 会漏掉 Windows 那个坑）", () => {
+    const exists = (p) => p.endsWith("/lib") || p.endsWith("/bin");
+    const readdir = (p) => (p.endsWith("/bin") ? ["libcrypto-3-x64.dll"] : ["libcrypto.lib"]);
+    const v = requireStaticCrypto("/fake/win", { readdir, exists });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto-3-x64\.dll/);
+  });
+});

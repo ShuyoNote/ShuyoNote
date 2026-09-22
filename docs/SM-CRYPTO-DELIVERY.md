@@ -53,7 +53,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | 平台 | 应用层 SM4（附件/同步载荷；导出包里的附件同此） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
 |---|---|---|---|---|---|
 | **macOS** | ✅ | ✅ **`sm-library` 构建：P2 已接线 ＋ P3（SM4 页）已落地** ⇒ 页加密 SM4、页 MAC/KDF SM3（本机实测：XOR 判据打印「本构建的**页加密** = SM4 页」—— ⚠️ **更正**：那条判据**只判页加密**，夹具是裸钥默认参数写的）；**默认包仍是 CommonCrypto（AES ＋ SHA512）** | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；库级 ✅（`security::` 22/0、`gm_provider::` 9/0，接线构建实测）；⚠️ 有一条 macOS-only 风险见 §五 |
-| **Windows** | ✅（纯 Rust，全平台同一份实现） | 🔶 **代码同一份 ⇒ 接线也在**（其后端本来就是 OpenSSL）；⚠️ **本侧无独立库级读数** | 据信箱：**AMD 2026-09-18 报过 `tongsuo build: msvc=ok`**（附三条前置踩坑）；⚠️ **本侧没有独立复核** | Windows 侧 | 应用层：本机跑不了 `cargo test`（`0xC0000139`）⇒ 行为由 Linux/CI 证；库级未取证 |
+| **Windows** | ✅（纯 Rust，全平台同一份实现） | 🔶 **代码同一份 ⇒ 接线也在**（其后端本来就是 OpenSSL）；⚠️ **本侧无独立库级读数** | 据信箱：**AMD 2026-09-18 报过 `tongsuo build: msvc=ok`**（附三条前置踩坑）；⚠️ **本侧没有独立复核** | Windows 侧 | 应用层：本机需走 `scripts/win-cargo-test.ps1`（测试 exe 手工挂 v6 清单；**真因是清单，不是 PATH/同名 DLL** —— 我原来的 PATH 假设已被 Windows 侧实测证伪，见信箱 `…crypto-backend.reply-3.md`）⇒ 行为另有 Linux/CI 证；库级未取证 |
 | **Linux** | ✅ | 🔶 **代码同一份 ⇒ 接线也在**（AMD 在 WSL2 上有 provider 层读数；**接线后的库级读数归 AMD**，见 §3.5） | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
 | **Android** | ✅（纯 Rust） | ❌ 未做（P2/P3 的 Android 构建链未排） | Tongsuo 交叉编译**已被 AMD 证过**（NDK r29）；真机验收未做 | 真机＝**人手** | ❌ 未取证 |
 | **iOS** | ❌ | ❌ | 无 `ios.yml`、未开始；Apple 平台与 macOS 同一个 CommonCrypto 坑 | 未立项 | ❌ 范围外（方案 §1 已写明） |

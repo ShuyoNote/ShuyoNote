@@ -155,7 +155,16 @@ export function sourceFingerprint({ lockPath, cargoHome, roots } = {}) {
 export function sharedCryptoNames(names) {
   // ⚠️ 别只写 `libcrypto\.(dylib|so)`：**真实产物里版本号在中间** —— macOS 是 `libcrypto.3.dylib`、
   // Linux 是 `libcrypto.so.3` ⇒ 第一版正则漏掉了**最常见的那两个名字**（判据当场抓住，见测试）。
-  return names.filter((n) => /^libcrypto(\.\d+)*\.(dylib|so)(\..*)?$/.test(n) || /^crypto\.dll$/.test(n));
+  // ★ Windows 那一支（2026-09-22，Windows 侧点名要）：OpenSSL 的 **Windows 安装版**是**动态**的，
+  //   名字是 `bin\libcrypto-3-x64.dll`（**连字符**不是点），而且它同时在 `lib\` 放一份
+  //   **导入库** `libcrypto.lib` ⇒ 只看 `lib/` 会被骗过（看着像"有 .lib，可以静态"），
+  //   实际是"链接期解析到导入库、运行时去找 DLL"。⇒ 必须**扫 `bin/` 里的 `*crypto*.dll`**。
+  return names.filter(
+    (n) =>
+      /^libcrypto(\.\d+)*\.(dylib|so)(\..*)?$/.test(n) ||
+      /^libcrypto[-\w.]*\.dll$/i.test(n) ||
+      /^crypto\.dll$/i.test(n),
+  );
 }
 
 /** 同目录下的静态版（有它才可能静态链接）。 */
@@ -175,7 +184,8 @@ export function staticCryptoVerdict({ names = [], files = [] } = {}) {
   const shared = sharedCryptoNames(names);
   const statics = staticCryptoNames(names);
   const extra = files.flatMap((f) => sharedCryptoNames(f.names ?? []));
-  const allShared = [...shared, ...extra];
+  // 去重：`names`（合并后的全量）与 `extra`（按目录分组的）会有重叠 ⇒ 错误信息里同一个名字不该出现两次
+  const allShared = [...new Set([...shared, ...extra])];
   if (allShared.length > 0) {
     return {
       ok: false,
@@ -195,9 +205,11 @@ export function staticCryptoVerdict({ names = [], files = [] } = {}) {
 /** 读磁盘版：把 `<prefix>/lib`、`<prefix>/lib64` 的文件名列出来判（给 CLI 用）。 */
 export function requireStaticCrypto(prefix, { readdir = readdirSync, exists = existsSync } = {}) {
   if (!prefix) return { ok: false, why: "没给 OPENSSL_DIR（--openssl-dir）⇒ 无法核对静态前缀" };
-  const dirs = ["lib", "lib64"].map((d) => join(prefix, d)).filter((d) => exists(d));
-  if (dirs.length === 0) return { ok: false, why: `${prefix} 下没有 lib/ 或 lib64/ ⇒ 不像一个 OpenSSL 前缀` };
-  const files = dirs.map((d) => ({ dir: d, names: readdir(d) }));
+  // `lib/`、`lib64/` 找静态库；`bin/` 用来抓 **Windows 的动态 DLL**（见 `sharedCryptoNames` 的注释）
+  const libDirs = ["lib", "lib64"].map((d) => join(prefix, d)).filter((d) => exists(d));
+  if (libDirs.length === 0) return { ok: false, why: `${prefix} 下没有 lib/ 或 lib64/ ⇒ 不像一个 OpenSSL 前缀` };
+  const binDirs = ["bin"].map((d) => join(prefix, d)).filter((d) => exists(d));
+  const files = [...libDirs, ...binDirs].map((d) => ({ dir: d, names: readdir(d) }));
   const names = files.flatMap((f) => f.names);
   const v = staticCryptoVerdict({ names, files });
   if (!v.ok) return { ok: false, why: `${prefix}：${v.why}` };
