@@ -147,5 +147,27 @@ Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`version
 端到端 `two-device-sync` **42/42**（场景 H 里那段冲突现在走**真 `applyChange`**：落表 ⇒ 两侧原文都在 ⇒
 裁决「留本地」⇒ 内容换回 + rev `3,1` + `dirty=1` + 不再未决）。
 
-⚠️ **仍没做（下一段）**：**界面**（提示条 / 块级角标 / 裁决按钮）—— 数据层已经够了，UI 只用调
-`pageConflictsOf` / `resolvePageConflict` 两个入口。
+## 7. 冲突提示条（第六段：界面）
+
+数据层（§6）之上加了一条**看得见**的提示：`src/components/ConflictBanner.tsx`，挂在页面视图
+（`App.tsx` 的 `NoteEditor`，`.main` 的直接子元素、工具条之上）。
+
+- **触发**：① 挂载 / 换页；② **一次同步结束**（`useSyncStatus.syncing` 变回 false —— 冲突只可能在 pull 时出现）
+  ③ 自己裁决之后。**不做轮询**；**没有冲突时整条不渲染**（不在每页顶部挂空条）。
+  ⚠️ 只留**一个** effect：挂载时它本来就会跑一次 —— 另写一个"挂载时读"的 effect 会**每次开页查两遍**
+  （第一版就是这样，判据 ④ 顺带发现的）。
+- **两侧都对用户露出**：每条显示「本机那一版 / 远端那一版」的正文（取块片段里的 text，读不出来就如实说
+  "（读不出来）"，不编），两个按钮 = `留本地` / `用远端`。文案走 i18n（`zh`/`en` 各一组 `conflicts.*`）。
+- **入口**：命令面 `list_page_conflicts` / `resolve_page_conflict`（Rust `commands.rs` 注册进
+  `generate_handler!`；Web 侧同一套命令名在 `platform/web.ts`；`CommandMap` 与 `api.ts` 各加一条 ——
+  `check-web-commands` 这个三方契约门禁会盯着这三处别漏）。
+- **样式**：`App.css` 新增 `.conflict-banner*`（用全仓变量，窄屏**只换行不裁**，按钮 44px 触摸目标）。
+
+判据：`src/components/ConflictBanner.test.ts` **4 条**（happy-dom；打桩 `api` 与 `react-i18next`）——
+① 没有冲突 ⇒ 什么都不渲染；② 有冲突 ⇒ 两侧原文 + 两个按钮都在；③ 点「留本地」⇒
+`resolvePageConflict(id, "local")`（**参数就是它，不猜**）；④ 裁决后重新读 ⇒ 未决没了整条消失。
+> ⚠️ 本仓 vitest 的 `include` 只有 `src/**/*.test.ts` + `scripts/**/*.test.mjs` ⇒ 组件判据**写成 `.test.ts`**、
+> 用 `createElement`（`.test.tsx` 根本不会被跑到）；React 18 的 `act` 还要手动开
+> `IS_REACT_ACT_ENVIRONMENT`（happy-dom 下默认没开 ⇒ 只有警告、刷新时机不受控）。
+
+⚠️ **仍没做**：块级角标（指出"冲突就在这一块"）；真机双设备验收（要人手）。
