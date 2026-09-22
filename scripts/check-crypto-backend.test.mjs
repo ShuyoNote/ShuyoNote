@@ -22,7 +22,6 @@ import {
   expectedFromEnv,
   PLATFORM_DEFAULT,
   platformOfOutput,
-  selectForHost,
   targetDirOf,
 } from "./check-crypto-backend.mjs";
 
@@ -428,5 +427,41 @@ describe("expectedFromEnv：显式 > 平台默认", () => {
     expect(PLATFORM_DEFAULT.darwin).toBe("commoncrypto");
     expect(PLATFORM_DEFAULT.linux).toBe("openssl");
     expect(PLATFORM_DEFAULT.win32).toBe("openssl");
+  });
+});
+
+// ★ 2026-09-22（owner 拍板「就发国密单一口味」）：**发出去的包必须是 SM4 页** —— 声明不合就红。
+//   为什么必须有这一格：`cipher_settings` 回显里没有 algorithm 字段（方案 §3.2 事实 3），
+//   页加密只有产物标记能回答 ⇒ 不这么断言，"这一版是国密"就只是一句声明。
+describe("check-crypto-backend：页加密那一格（单一口味）", () => {
+  const marker = (pageCipher) => [{ profile: "release", entry: "shuyonote", patch: "72df3f9a", target: "macos", marker: "sqlite3.c", pageCipher, mtime: 0 }];
+  const base = { all: [{ kind: "openssl" }], expected: "openssl", patch: { expected: "applied", markers: marker("sm4"), current: null, currentError: "" } };
+
+  it("声明 sm4 而标记就是 sm4 ⇒ 通过（并记一条一致）", () => {
+    const { problems, notices } = decide({ ...base, pageCipher: { expected: "sm4" } });
+    expect(problems).toEqual([]);
+    expect(notices.join()).toMatch(/页加密与声明一致/);
+  });
+
+  it("★ 声明 sm4 而标记是 aes ⇒ **红**（这一份不是国密包，别发出去）", () => {
+    const { problems } = decide({ ...base, patch: { ...base.patch, markers: marker("aes") }, pageCipher: { expected: "sm4" } });
+    expect(problems.join()).toMatch(/页加密是 \*\*aes\*\*/);
+    expect(problems.join()).toMatch(/别发出去/);
+  });
+
+  it("没有标记 ⇒ **未实查**（notice，不判红：别把「没编过」读成「过了」，也别读成「不是国密」）", () => {
+    const { problems, notices } = decide({ ...base, patch: { expected: "applied", markers: [] }, pageCipher: { expected: "sm4" } });
+    expect(problems.some((p) => /页加密/.test(p))).toBe(false);
+    expect(notices.join()).toMatch(/未实查/);
+  });
+
+  it("旧产物标记里没有 page_cipher 字段 ⇒ 也未实查", () => {
+    const { problems, notices } = decide({
+      ...base,
+      patch: { ...base.patch, markers: [{ ...marker(undefined), pageCipher: undefined }] },
+      pageCipher: { expected: "sm4" },
+    });
+    expect(problems).toEqual([]);
+    expect(notices.join()).toMatch(/未实查/);
   });
 });

@@ -63,7 +63,13 @@
 // 当前哈希由 **AMD 那侧的纯函数** `sourceFingerprint()` 给出（我 `import` 它，**不写第三份解析实现**）。
 //
 // 声明来源：`SHUYONOTE_EXPECT_CRYPTO_BACKEND`（`commoncrypto` / `openssl`）＋
-// `SHUYONOTE_EXPECT_SM_PATCH`（`applied` / `absent`）；不设则只报告不判定。
+// `SHUYONOTE_EXPECT_SM_PATCH`（`applied` / `absent`）＋
+// `SHUYONOTE_EXPECT_PAGE_CIPHER`（`sm4` / `aes`）；不设则只报告不判定。
+//
+// ★ `SHUYONOTE_EXPECT_PAGE_CIPHER`（2026-09-22 加，owner 拍板「就发国密单一口味」之后）：
+//   单一口味意味着**发出去的包必须是 SM4 页** —— 而这件事只有产物标记能回答（`cipher_settings`
+//   回显里没有 algorithm 字段，见方案 §3.2 事实 3）。⇒ 发布链上必须有一格这么断言，
+//   否则「这一版是国密」就只是一句声明。
 // 分类与判定都是导出的纯函数，单测见 `scripts/check-crypto-backend.test.mjs`。
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -225,7 +231,7 @@ export function describe(x) {
  * 判定（纯函数）：返回 `{ problems, notices }`。
  * 三种状态分得清 —— 没产物/没标记 ⇒ 只提示；**认得出的产物 ≠ 声明 ⇒ 红**；旧产物分类不同 ⇒ 提示。
  */
-export function decide({ all, expected, patch = { expected: null, markers: [] } }) {
+export function decide({ all, expected, patch = { expected: null, markers: [] }, pageCipher = { expected: null } }) {
   const problems = [];
   const notices = [];
   // ★ 第三格：补丁在不在（独立于后端那一格 —— 后端对了、补丁没打，仍然没有国密算法）
@@ -293,6 +299,9 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
   }
 
   if (expected === null) {
+    // ⚠️ 这里必须**提前返回**：没有声明就没有可判的事由，只报告（原版就是这样；
+    //    我 2026-09-22 插页加密那一格时误删了这个 return，判据当场抓住 —— 见测试里那条
+    //    "平台没有默认声明 ⇒ 只报告不判定"）。
     notices.push(`平台没有默认声明 ⇒ 只报告不判定：${describe(newest)}`);
     return { problems, notices };
   }
@@ -326,6 +335,27 @@ export function decide({ all, expected, patch = { expected: null, markers: [] } 
       `最新产物认不出后端（${describe(newest)}）⇒ **未实查**：这条门禁只对认得出的形状下结论，` +
         "认不出的形状一律自报，不冒充通过",
     );
+  }
+    // ★ 页加密那一格（2026-09-22 加；owner 拍板「就发国密单一口味」）：单一口味意味着**发出去的包必须是 SM4 页**。
+  //   只有**拿到产物标记**才判得动：没标记 / 没那一格 ⇒ 记成"未实查"（不判红，与后端/补丁两格同口径）；
+  //   拿到了且与声明不符 ⇒ **红**（这正是"这一份不是国密包"的产物级证据）。
+  if (pageCipher.expected) {
+    if (!newestMarker) {
+      notices.push(
+        `声明了 SHUYONOTE_EXPECT_PAGE_CIPHER=${pageCipher.expected}，但**没找到任何产物标记** ⇒ 这一格未实查（先编一次，别把它读成通过）`,
+      );
+    } else if (!newestMarker.pageCipher) {
+      notices.push(
+        `声明了 SHUYONOTE_EXPECT_PAGE_CIPHER=${pageCipher.expected}，但标记里**没有** \`page_cipher=\` 字段（旧构建产物）⇒ 这一格未实查`,
+      );
+    } else if (newestMarker.pageCipher !== pageCipher.expected) {
+      problems.push(
+        `产物标记说这份构建的页加密是 **${newestMarker.pageCipher}**，而声明要求 **${pageCipher.expected}**` +
+          `（单一口味＝发出去的包必须是 SM4 页；这一份不是 ⇒ 别发出去）`,
+      );
+    } else {
+      notices.push(`页加密与声明一致：page_cipher=${newestMarker.pageCipher}`);
+    }
   }
   return { problems, notices };
 }
@@ -378,6 +408,7 @@ export function main() {
   }
 
   const patchExpected = (process.env.SHUYONOTE_EXPECT_SM_PATCH || "").trim() || null;
+  const pageCipherExpected = (process.env.SHUYONOTE_EXPECT_PAGE_CIPHER || "").trim() || null;
   const markers = collectPatchMarkers(dir);
   // 「当前将要编译的那份源码」的指纹 —— 用 AMD 的纯函数（唯一实现），拿不到就带上原因（判"未实查"，不判红）
   let current = null;
@@ -391,6 +422,7 @@ export function main() {
     all,
     expected,
     patch: { expected: patchExpected, markers, current, currentError },
+    pageCipher: { expected: pageCipherExpected },
   });
   for (const n of notices) console.error(`! ${n}`);
   if (patchExpected === "applied" && !problems.length) {

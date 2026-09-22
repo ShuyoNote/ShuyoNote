@@ -607,6 +607,37 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 **触发条件（写进这里，定期复核）**：出现**第一个真实部署/试点数据**（哪怕是内部试用写进了不可丢的内容）
 ⇒ 本节作废，"无兼容"窗口关闭；届时按 §3.2 的 A 路施工单 + §3.3 迁移规格执行。
 
+#### 3.4.1 ✅ 第 3 步「单一口味」：**owner 已拍板 ＝ 国密**（2026-09-22），并已落进发布链
+
+**决定**：所有平台发出的包，库级一律 **SM4 页 ＋ SM3 页 MAC/库 KDF**；不做「这个平台 AES、那个平台 SM4」的混合。
+理由（拍板时给的）：应用层早已单一口味（`sm-crypto` 是默认特性）、库级两套同时在用户群里会产生
+"同一文件在 A 机器能开、B 机器打不开、且报错一字不差"的最难查形态（SQLCipher 文件里**不写**算法），
+而且现在**没有真实用户** ⇒ 迁移成本为零，等有用户再做就是一次真正的用户迁移工程。
+
+**落地（`release.yml`，四处改动）**
+
+| # | 改动 | 为什么必须有 |
+|---|---|---|
+| 1 | Linux 显式 `OPENSSL_DIR=/usr`；Windows 沿用 vcpkg `x64-windows-static-md` | `build.rs` 在 `sm-library` 上 fail-fast，不给就构建失败（这是设计：宁可失败，也别安静退回别的后端） |
+| 2 | 新增步骤：`openssl version` ＋ `list -cipher-algorithms \| grep -i sm4` ＋ `list -digest-algorithms \| grep -i sm3`，然后 `sm-library-build.mjs --prepare`（Windows 加 `--require-static`） | ① 证明用的那份 OpenSSL **真的有** SM3/SM4；② 打补丁 ＋ 清产物（不清不会换后端）；③ `--require-static` 拦"产物依赖构建机那份 libcrypto" |
+| 3 | `tauri build … **--features sm-library**` | 不带 ⇒ 应用接线那段 `#[cfg]` 被编掉，而标记仍写 `page_cipher=sm4`（页加密是补丁的编译期行为）⇒ 包**看起来**是国密 |
+| 4 | 构建后**产物断言**：`SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl` ＋ `…_SM_PATCH=applied` ＋ **`…_PAGE_CIPHER=sm4`** | 单一口味＝发出去的包必须是 SM4 页；`cipher_settings` 回显里没有 algorithm 字段，只有产物标记能回答 |
+
+**各平台加密库来源（口味一致、链接方式可不同）**：Windows＝vcpkg 静态；Linux＝系统 OpenSSL 3（**共享**，
+deb shlibs 声明依赖，边界＝要求 OpenSSL ≥3.0）；macOS＝**没有系统 OpenSSL**，发版档需自编一份 `no-shared`
+（配方写在 `docs/RELEASING.md`「库级国密：单一口味」一节）。
+★ **Tongsuo 不是必需的**（数据面只用 SM3/SM4/PBKDF2-HMAC-SM3，上游 OpenSSL ≥1.1.1 都有；Tongsuo 的独有价值是
+GM/T 0024 TLS，不在范围）。
+
+**本机实测（macOS，静态前缀）**：`otool -L` 无任何 `libcrypto/libssl`（真静态）；标记
+`patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`；三条断言全过。
+新增判据：`check-crypto-backend` 的页加密期望格（4 条）＋ 静态前缀守卫（5 条），**变异证明 4/4 全被抓住**
+（其中一条当场抓出我的正则漏了真实产物名 `libcrypto.3.dylib`）。
+
+**已知边界**：① 老库（AES＋SHA512）在国密构建上**读不开** ⇒ 迁移三步（旧版关磁盘加密 → 换版 → 重开）；
+② Linux 依赖发行版 OpenSSL ≥3.0；③ Android／iOS 库级仍未排；④ `macos.yml` 那份 CI 自检包**刻意仍是非国密**
+（它不发布；发版档启用时按上面配方 ＋ `scripts/sign-macos-app.mjs` 的由内到外签名）。
+
 ### 3.5 库级 P2 的**接线缺口**（2026-09-20 实查发现）—— 能力≠行为
 
 > **一句话**：P2 交付的是"**provider 能按 `HMAC_SM3` / `PBKDF2_HMAC_SM3` 工作**"，
@@ -678,10 +709,40 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 | 判据 | 接线构建（`--features sm-library`） | 默认构建（AES＋SHA512） |
 |---|---|---|
 | 全库单测 `cargo test --lib` | **427 passed / 0 failed / 18 ignored** | 见 `--group rust` 门禁 |
-| `security::` | **21 / 0 / 2 ignored** | 21 / 0 / 2 |
+| `security::` | **22 / 0 / 2 ignored** | 22 / 0 / 2 |
 | `gm_provider::` | **9 / 0 / 4 ignored** | 9 / 0 / 4 |
-| 库级参数（`exactly_one_page_cipher_…` 打印） | **SM4 页 ＋ SM3 页 MAC/库 KDF** | AES 页 ＋ SHA512 页 MAC/库 KDF |
+| **页加密**（`exactly_one_page_cipher_…` 打印） | **SM4 页** | **AES 页** |
+| 页 MAC/库 KDF（夹具绑定，见下面那条**更正**） | 默认＝**SHA512**（补丁 v3 未改默认值）；应用接线显式设 SM3 | 默认 SHA512 ＋ 未接线 |
 | 回滚通道 `--no-default-features` | — | **415 / 0 / 17 ignored** |
+
+**★★ 更正我自己（2026-09-22 当天，实测）：「页加密」与「页 MAC/库 KDF」是两件事，别把前者当后者的证据**
+
+我先前把 `exactly_one_page_cipher_…` 的打印读成"本构建的库级参数 = SM4 页 **＋ SM3 页 MAC/库 KDF**"，
+并把它写进交付说明与两封回信（给 AMD 的 `2026-09-22-gm-wiring-landed.md` 与本侧状态）。**这是错的**，
+根因是**夹具的写法**：
+
+- `gen_sm4_page_fixture` / `gen_backend_fixture` 都用**裸 `PRAGMA key`**（不设任何 `cipher_*`）写夹具 ⇒
+  夹具的**页 MAC/库 KDF = "写它那个构建的默认值"**；
+- 补丁 v3 **只改页加密算法** —— `default_hmac_algorithm` / `default_kdf_algorithm` 在补丁里是**未改的上下文行**；
+- ⇒ 当今两份夹具的 MAC/KDF **都是 SHA512**，交叉打开能分开的**只有页加密**。
+
+**实测（补丁 v3 ＋ OpenSSL 后端，`page_cipher=sm4`，本机）**
+
+| 读法（同一份 `sqlcipher-sm4-page-fixture.db`） | 结果 |
+|---|---|
+| 裸钥（不设 `cipher_*`）回显 | `HMAC_SHA512` / `PBKDF2_HMAC_SHA512`（**默认没变**） |
+| 裸钥读 | **Ok(2)**（夹具就是默认参数写的） |
+| 再设 `HMAC_SM3` / `PBKDF2_HMAC_SM3` 之后读 | **`file is not a database`（读不开）** ⇒ 夹具**不是** SM3 参数 |
+
+⇒ 新增判据 `raw_key_defaults_are_sm3_only_when_the_patch_says_so` 把这个事实钉住，并且**自适应当前状态**：
+裸钥回显不是 SM3（今天）⇒ 断言"设国密参数后读不开"；**补丁 v4 落地后**（OpenSSL 构建默认变 SM3）⇒
+自动换成"设国密参数照样读得开"，**不用人记得改判据**。
+「库级 MAC/KDF 是国密」的证据仍然充分，但**不是**那条交叉判据：① `gm_provider` 的**回显**（连接级）；
+② `sqlcipher-sm3-fixture.db`（**显式设了国密参数**写的，参数绑定是真的）；③ 直写探针实测"参数确实绑定"
+（默认参数写的文件用国密参数读不开，反之亦然）。
+
+⚠️ **v4 的一个连带**：默认值一改，**SM4 夹具必须重生成**（否则它是"上一代默认参数"的证物）——
+不重生成时 `exactly_one_page_cipher_…` 会**两张都读不开** ⇒ 红（这正是它该有的行为）。
 
 **接线当场抓出的两个真 bug（都是"接线后才出现"的形态 —— 这正是它值得做的理由）**
 
@@ -709,6 +770,42 @@ P2（SM3 页 MAC ＋ 库 KDF）**已落地**：`patches/0001-sqlcipher-sm3-provi
 **判据 ③ 的改造**：原先设想的"用 SHA512 写的库在新设置下必须打不开"由**两份夹具交叉打开**承担
 （AES＋SHA512 夹具 vs SM4＋SM3 夹具，**恰好一个能开**，并**打印**是哪一种）——`cipher_settings` 回显里
 没有 algorithm 字段，交叉打开是本仓库唯一可信的判据（§3.2 事实 3）。
+
+#### 3.5.2 ✅ **补丁 v4 已落地并验收**（2026-09-22，AMD 出补丁、本侧独立验收）
+
+**形态**（`bad94e03`／合并后 `530a14ae`）：在 `#ifdef SQLCIPHER_CRYPTO_OPENSSL` 支里把
+`default_hmac_algorithm` / `default_kdf_algorithm` 也设成 SM3；**非 OpenSSL 支保持 SHA512**。
+守卫是**必需**的（不是风格）：AMD 的能力门在 `get_hmac_sz(SM3) <= 0` 时**不落值并报错**（CommonCrypto 正是这种），
+无条件改默认值会让 CC 构建在 `ctx_init` 就**整体打不开**。
+
+**验收读数（本机 macOS，Tongsuo，`OPENSSL_DIR` ＋ `--features sm-library`）**
+
+| 项 | 读数 |
+|---|---|
+| 产物标记 | `patch=72df3f9a` · `page_cipher=sm4` · `src_sha256=741d999b7933…`（与当前源码一致，新鲜度可证） |
+| 裸钥（不设 `cipher_*`）回显 | **`HMAC_SM3` / `PBKDF2_HMAC_SM3`（`Applied`）** ← v3 时是 SHA512 |
+| 同一份 SM4 夹具：裸钥读 / 再设国密参数读 | **Ok(2) / Ok(2)** ← v3 时是 Ok / **读不开** |
+| 接线构建 `security::` | **22 / 0 / 2 ignored**（含新增的状态自适应判据） |
+| 接线构建全库 | **427 / 1 / 18 ignored**（那 1 条红＝AMD 的 `gm_labels_before_the_key_are_silently_dropped`，见下） |
+| 默认（CommonCrypto）构建门禁 | `--group rust` **6/6**（`rust-test` 440/440、`rust-no-sm-crypto` 428/428）、`pnpm verify` **25/25** |
+
+**v4 让两条判据必须跟着改（都是"把默认值写死"造成的，不是行为回归）**
+
+1. **AMD 的** `gm_labels_before_the_key_are_silently_dropped`：它用"key 之前设标签 ⇒ 回显仍是 **SHA512**"
+   来证明"被静默丢掉"；v4 之后**默认就是 SM3** ⇒ 丢掉的东西与默认同名 ⇒ 它走 panic 支。
+   修法（已发信，等他改或授权我改）：改用**非默认**目标标签（如 SHA256）来证丢弃，或先量出默认再比。
+   ⚠️ 这条红**只在打过 v4 的构建上出现**（CI 的默认门禁跑在未打补丁的源码上 ⇒ 不暴露）⇒
+   属于"接线构建专属红"，`gm-version-selfcheck --with-tests` 的第 ④/⑤ 段是它该被照到的地方。
+2. **本侧**的 `encrypted_db_roundtrip_and_sniff` 里"裸 ATTACH 写的库在国密构建上**必须读不开**"那条负判据
+   **失效了**（v4 之后裸 ATTACH 与生产口径**同参数** ⇒ 读得开，这是**好结果**）⇒ 已改成**自适应当前状态**
+   （先量这份文件是哪一套参数，再断言对应结论）。判据没有变弱：跨参数读不开仍由**页加密**那条承担。
+
+**连带：夹具与补丁版本绑定** —— v4 之后 `sqlcipher-sm4-page-fixture.db` 是 **SM4 页 ＋ SM3 默认**（已在 v4 构建里重生成）。
+把它放回 v3 构建会"两张都读不开" ⇒ 交叉判据红（**红得对**）。
+
+**v4 之后"默认值"这件事的最终口径**：**打过补丁的 OpenSSL 构建**里，库级参数**默认即国密**（不靠应用约定）；
+应用层接线保留为**回声自证**（`library_recognizes_gm_labels` ＋ `set_gm_cipher_labels` ＋ 回显）；
+**未打补丁 / CommonCrypto 构建**仍是 AES ＋ SHA512。⇒ 与快路自洽：**国密版只有 OpenSSL 一种后端**。
 
 **下一条建议（不是本次交付）**：把"页 MAC/库 KDF 的默认值"做成**补丁 v4**（`default_hmac_algorithm = SQLCIPHER_HMAC_SM3`、
 `default_kdf_algorithm = SQLCIPHER_PBKDF2_HMAC_SM3`）。这样"库级参数"就像 P3 的页加密一样成为**库级属性**，

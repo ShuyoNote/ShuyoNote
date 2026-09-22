@@ -8,7 +8,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { lockVersion, markerFileOf, resolveSqlcipherSource, sha256OfFile, sourceFingerprint } from "./sm-library-source.mjs";
+import {
+  lockVersion,
+  requireStaticCrypto,
+  markerFileOf,
+  resolveSqlcipherSource,
+  sha256OfFile,
+  sourceFingerprint,
+  staticCryptoVerdict,
+} from "./sm-library-source.mjs";
 
 const LOCK = `
 version = 4
@@ -123,3 +131,58 @@ describe("markerFileOf / sha256OfFile / sourceFingerprint", () => {
     expect(sourceFingerprint({ lockPath, roots }).hasMarker).toBe(true);
   });
 });
+
+// ★ 2026-09-22（owner 拍板「就发国密单一口味」后加）：**发布链上必须能证明"自包含"**。
+//   机制：`libsqlite3-sys` 发 `rustc-link-lib=dylib=crypto`，链接器在**没有共享库时退到 .a**
+//   ⇒ "前缀里只有 libcrypto.a"＝静态链接；"前缀里有 .dylib/.so"＝产物依赖**构建机**那份。
+//   实测（本机）：只放 libcrypto.a 的前缀 ⇒ `otool -L` 里**没有**任何 libcrypto/libssl。
+describe("sm-library-source：静态前缀守卫（单一口味要自包含）", () => {
+  it("只有 libcrypto.a ⇒ 通过，并报出它", () => {
+    const v = staticCryptoVerdict({ names: ["libcrypto.a", "libssl.a", "pkgconfig"] });
+    expect(v.ok).toBe(true);
+    expect(v.found).toContain("libcrypto.a");
+  });
+
+  it("★ 有 libcrypto.dylib（或 .so / 版本化 .so）⇒ **不通过**，且理由要点到「依赖构建机」", () => {
+    for (const names of [
+      ["libcrypto.a", "libcrypto.dylib"],
+      ["libcrypto.so", "libcrypto.a"],
+      ["libcrypto.so.3", "libcrypto.a"],
+      ["libcrypto.3.dylib", "libcrypto.a"],
+    ]) {
+      const v = staticCryptoVerdict({ names });
+      expect(v.ok).toBe(false);
+      expect(v.why).toMatch(/共享版 libcrypto/);
+      expect(v.why).toMatch(/构建机/);
+      expect(v.why).toMatch(/libcrypto\.a/);
+    }
+  });
+
+  it("lib64 里的共享库也算（只看 lib/ 会漏）", () => {
+    const v = staticCryptoVerdict({ names: ["libcrypto.a"], files: [{ names: ["libcrypto.so.3"] }] });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto\.so\.3/);
+  });
+
+  it("没有 .a ⇒ 不通过（静态链接无从谈起，别静默变成动态）", () => {
+    const v = staticCryptoVerdict({ names: ["libssl.dylib", "pkgconfig"] });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/没有.*libcrypto\.a/);
+  });
+});
+
+  // ★ 这一条走**磁盘版**（`requireStaticCrypto`）—— 上面那条只喂纯函数，抓不住"只看 lib/、漏 lib64"的变异
+  //   （实测：把 lib64 那支删掉，纯函数那条照样绿 ⇒ 必须有一条走目录扫描的）。
+  it("磁盘版必须**同时看** lib/ 与 lib64/（只扫 lib/ 会漏掉真实前缀）", () => {
+    const exists = (p) => p.endsWith("/lib") || p.endsWith("/lib64");
+    const readdir = (p) => (p.endsWith("/lib64") ? ["libcrypto.so.3"] : ["libcrypto.a"]);
+    const v = requireStaticCrypto("/fake/prefix", { readdir, exists });
+    expect(v.ok).toBe(false);
+    expect(v.why).toMatch(/libcrypto\.so\.3/);
+    // 反向：lib64 也放 .a ⇒ 通过
+    const ok = requireStaticCrypto("/fake/prefix", {
+      readdir: (p) => (p.endsWith("/lib64") ? ["libcrypto.a"] : ["libcrypto.a"]),
+      exists,
+    });
+    expect(ok.ok).toBe(true);
+  });

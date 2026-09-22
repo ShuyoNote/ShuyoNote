@@ -146,3 +146,60 @@ export function sourceFingerprint({ lockPath, cargoHome, roots } = {}) {
   }
   return { ...pick, file, sha256: sha256OfFile(file), hasMarker: markerFileOf(pick.dir) !== null };
 }
+
+// ---------------------------------------------------------------------------
+// `--require-static`：**单一口味要自包含**（2026-09-22，owner 拍板「就发国密单一口味」之后加）
+// ---------------------------------------------------------------------------
+
+/** 一个 OpenSSL 前缀的 `lib/`、`lib64/` 里，哪些名字算"共享版 libcrypto"。 */
+export function sharedCryptoNames(names) {
+  // ⚠️ 别只写 `libcrypto\.(dylib|so)`：**真实产物里版本号在中间** —— macOS 是 `libcrypto.3.dylib`、
+  // Linux 是 `libcrypto.so.3` ⇒ 第一版正则漏掉了**最常见的那两个名字**（判据当场抓住，见测试）。
+  return names.filter((n) => /^libcrypto(\.\d+)*\.(dylib|so)(\..*)?$/.test(n) || /^crypto\.dll$/.test(n));
+}
+
+/** 同目录下的静态版（有它才可能静态链接）。 */
+export function staticCryptoNames(names) {
+  return names.filter((n) => /^libcrypto\.a$/.test(n) || /^libcrypto\.lib$/.test(n));
+}
+
+/**
+ * 纯函数：给一组 `lib/`、`lib64/` 的文件名，判断这个前缀**能不能给出自包含的产物**。
+ *
+ * 为什么要这条：`libsqlite3-sys` 打的是 `rustc-link-lib=dylib=crypto`，而链接器
+ * **在没有共享库时会退到 `.a`** ⇒ "前缀里只有 `libcrypto.a`" 就等于静态链接；
+ * **只要有 `.dylib`/`.so`，产物就会依赖构建机上的那份**（用户机器上要么找不到、
+ * 要么用到另一份 OpenSSL）—— 那是"看起来是国密、其实取决于环境"的形态，发布链上必须拦。
+ */
+export function staticCryptoVerdict({ names = [], files = [] } = {}) {
+  const shared = sharedCryptoNames(names);
+  const statics = staticCryptoNames(names);
+  const extra = files.flatMap((f) => sharedCryptoNames(f.names ?? []));
+  const allShared = [...shared, ...extra];
+  if (allShared.length > 0) {
+    return {
+      ok: false,
+      why:
+        `前缀里有共享版 libcrypto（${allShared.join("、")}）⇒ 产物会依赖**构建机上的那份**，` +
+        `到用户机器上要么找不到、要么换用另一份 OpenSSL。\n` +
+        `  ⇒ 要么把共享库挪走（只留 libcrypto.a），要么改用一个 no-shared 编出来的前缀。\n` +
+        `  （` + "`libsqlite3-sys` 发的是 `rustc-link-lib=dylib=crypto`，没有共享库时链接器会取 .a）",
+    };
+  }
+  if (statics.length === 0) {
+    return { ok: false, why: `前缀里**没有** libcrypto.a/libcrypto.lib ⇒ 静态链接无从谈起（只给了：${names.join("、") || "(空)"}）` };
+  }
+  return { ok: true, found: statics.join("、") };
+}
+
+/** 读磁盘版：把 `<prefix>/lib`、`<prefix>/lib64` 的文件名列出来判（给 CLI 用）。 */
+export function requireStaticCrypto(prefix, { readdir = readdirSync, exists = existsSync } = {}) {
+  if (!prefix) return { ok: false, why: "没给 OPENSSL_DIR（--openssl-dir）⇒ 无法核对静态前缀" };
+  const dirs = ["lib", "lib64"].map((d) => join(prefix, d)).filter((d) => exists(d));
+  if (dirs.length === 0) return { ok: false, why: `${prefix} 下没有 lib/ 或 lib64/ ⇒ 不像一个 OpenSSL 前缀` };
+  const files = dirs.map((d) => ({ dir: d, names: readdir(d) }));
+  const names = files.flatMap((f) => f.names);
+  const v = staticCryptoVerdict({ names, files });
+  if (!v.ok) return { ok: false, why: `${prefix}：${v.why}` };
+  return { ok: true, found: `${prefix} ⇒ ${v.found}` };
+}
