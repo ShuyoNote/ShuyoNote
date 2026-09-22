@@ -116,9 +116,9 @@
 
 ## 5. 验证循环
 
-- **门禁的单一事实来源＝[TESTING.md](TESTING.md) 里的 `scripts/lib/gates.mjs`**。本地一键 `pnpm verify`（当前 **25 条**）＋
+- **门禁的单一事实来源＝[TESTING.md](TESTING.md) 里的 `scripts/lib/gates.mjs`**。本地一键 `pnpm verify`（当前 **26 条** —— 别的文档里别抄这个数，**以 `scripts/lib/gates.mjs` 为准**）＋
   Rust 另行 `node scripts/test-report.mjs --group rust`（当前 **8 条**）。**别把条数手抄进别的文档**——要看就跑一次。
-- 当前读数（2026-09-22，本机 macOS、真 node 24.20.0）：`pnpm verify` **25/25**；`--group rust` **8/8**
+- 当前读数（2026-09-22，本机 macOS、真 node 24.20.0）：`pnpm verify` **26/26**；`--group rust` **8/8**
   （`rust-test` 492、`rust-plugins-alone` 117、`rust-no-sm-crypto` 480、`gm-registry-clean` 绿；`rust-sm-wired` 在没有 SM 版 OpenSSL 前缀的机器上**自报跳过**，
   Linux CI 上真跑 **491 passed / 0 failed**）；`vitest` **1859 passed**（AMD 侧读数，含 live 3 条）；`tsc --noEmit` exit=0；`smoke-web` **360/360**。
   断言数"只增不减"由 `tests/baseline.json` 硬校验（**新增测试要抬高基线**，`pnpm verify:baseline`）。
