@@ -87,6 +87,25 @@ transcribe?: (
 `attachmentDeps(...)`）—— 那不是我的文件。**我出契约与抽取器；平台侧接线请 mac/windows 认领**
 （端点就一条：`POST 127.0.0.1:8080/v1/audio/transcriptions`；两条 curl 模板见 `docs/development.md §10.7`）。
 
+### 2.6.1 ★ 实测：**类型系统自己会拦住"只改一处"**（2026-09-22，试完就回退了）
+
+我先只在 `types.ts` 的 `ExtractDeps` 里加了 `transcribe?`，然后跑 `tsc --noEmit`：
+
+```text
+src/lib/extract/depsCatalog.ts(59,14): error TS2741:
+  Property 'transcribe' is missing in type '{}' but required in type 'Record<"transcribe", never>'
+```
+
+⇒ 这不是"我猜会有 6 处耦合"，而是**编译器点名了第一处**（`depsCatalog.ts` 的键集**由 `ExtractDeps` 推导**，
+少一格就当场红）。**我把这次改动回退了**（`git checkout` + `tsc` exit=0），理由：
+剩下那 5 处（registry／§15 矩阵／三条一致性判据／抽取器本体）我这一轮预算不够，
+**留一个 tsc 红的仓比留一份写着清单的计划更坏**。
+
+⇒ **下一轮的第一枪就是它**：按 §2.5 那份 6 处清单一次做齐；顺序建议
+`types.ts` → `depsCatalog.ts`（让 tsc 把下一处点出来）→ `registry.ts` → 抽取器 ＋ 判据 → §15 矩阵。
+**用编译器当清单**——它会一处一处点，比人肉记准。
+
+
 
 
 
