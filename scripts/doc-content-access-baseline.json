@@ -15,7 +15,7 @@
   "src-tauri/src/versions.rs": 19,
   "src-tauri/src/workspaces.rs": 15,
   "src/App.tsx": 18,
-  "src/components/CommunitySaveDialog.tsx": 8,
+  "src/components/CommunitySaveDialog.tsx": 4,
   "src/components/DatabaseView.tsx": 2,
   "src/components/EditorToolbar.tsx": 5,
   "src/components/EmailPanel.tsx": 22,
