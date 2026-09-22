@@ -25,6 +25,7 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMain } from "./lib/is-main.mjs";
+import { opensslEnvFor } from "./lib/sm-library-plan.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = join(root, "src-tauri", "Cargo.toml");
@@ -115,7 +116,20 @@ function main() {
   }
   console.log(`库级国密接线门禁：OPENSSL_DIR=${opensslDir}`);
 
-  const env = { ...process.env, OPENSSL_DIR: opensslDir };
+  // ★ 报出去的 env 必须让**两个** crate 都认：`openssl-sys` 只看 `<OPENSSL_DIR>/lib|lib64`，
+  //   而 Ubuntu 的开发文件在 `/usr/lib/x86_64-linux-gnu/` ⇒ 只给 `OPENSSL_DIR=/usr` 会在编译期炸
+  //   （CI 日志逐字：`OpenSSL libdir at ["/usr/lib64","/usr/lib"] does not contain the required files…`）。
+  //   `libsqlite3-sys` 同时认 `OPENSSL_LIB_DIR` ＋ `OPENSSL_INCLUDE_DIR` 这一对 ⇒ 三个都给。
+  const sslEnv = opensslEnvFor(opensslDir);
+  if (!sslEnv) {
+    console.log(
+      `! 跳过（自报跳过，不装绿）：${opensslDir} 里找不到 OpenSSL 的开发文件（libcrypto.so / .a / .lib）——\n` +
+        "  链接需要**开发符号链接**（Linux 上由 libssl-dev 提供；只有运行时 libcrypto.so.3 不够）。",
+    );
+    process.exit(0);
+  }
+  const env = { ...process.env, ...sslEnv };
+  console.log(`（OPENSSL_DIR=${sslEnv.OPENSSL_DIR}／LIB_DIR=${sslEnv.OPENSSL_LIB_DIR}／INCLUDE_DIR=${sslEnv.OPENSSL_INCLUDE_DIR}）`);
   let applied = false;
   let exitCode = 0;
   // ⚠️ 所有失败路径都用**返回值**而不是 `process.exit()`：`process.exit` 不会走 `finally`

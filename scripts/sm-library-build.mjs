@@ -16,6 +16,7 @@
 //   node scripts/sm-library-build.mjs ... --no-apply                          # 不打补丁（**读数会标成 patch=absent**）
 //   node scripts/sm-library-build.mjs ... --prepare                           # **只做准备**：打补丁 ＋ 清两个 crate 的产物，
 //                                                                             #   不构建（CI 里接着自己跑 `tauri build --features sm-library`）
+//   node scripts/sm-library-build.mjs ... --print-env                         # 打印 `OPENSSL_DIR/…LIB_DIR/…INCLUDE_DIR`（给 CI 写 $GITHUB_ENV）
 //   node scripts/sm-library-build.mjs ... --require-static                    # **要求 OPENSSL_DIR 里只有静态 libcrypto**
 //                                                                             #   （单一口味要自包含：有 .dylib/.so 就当场失败）
 //
@@ -68,7 +69,7 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 //   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
 import { requireStaticCrypto } from "./lib/sm-library-source.mjs";
-import { cleanCommands, shouldBuild } from "./lib/sm-library-plan.mjs";
+import { cleanCommands, envFileLines, opensslEnvFor, shouldBuild } from "./lib/sm-library-plan.mjs";
 import { ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
 const NO_APPLY = argv.includes("--no-apply");
@@ -187,6 +188,19 @@ if (has("--print")) {
   }
   process.exit(0);
 }
+// ---- 0.7) `--print-env`：把 `OPENSSL_DIR` 翻译成**两个 crate 都认**的键值行 ----
+// 为什么要它：`release.yml` 的"准备"与"构建"是**两个 step** ⇒ 变量必须经 `$GITHUB_ENV` 传下去；
+// 而 `openssl-sys` 只看 `<OPENSSL_DIR>/lib|lib64`（Ubuntu 的开发文件在多架构目录里）⇒ 只导 OPENSSL_DIR 会炸。
+// 判据在 `scripts/lib/sm-library-plan.test.mjs`（`opensslEnvFor` / `envFileLines`）。
+if (has("--print-env")) {
+  const envForSsl = opensslEnvFor(opensslDir);
+  if (!envForSsl) {
+    fail(`找不到 OpenSSL 开发文件（${opensslDir || "(没给 --openssl-dir)"}）⇒ 无法给出可链接的环境变量`);
+  }
+  console.log(envFileLines(envForSsl));
+  process.exit(0);
+}
+
 if (CHECK_ONLY) {
   // ⚠️ 这里说的 `patchState.status` 是**核对时**的状态，不是"我打上了"：
   //   already ⇒ 源码本来就有补丁；absent ⇒ 源码干净（**本次没有打** —— 要打就去掉 --check）。

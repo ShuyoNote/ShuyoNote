@@ -87,10 +87,14 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
             libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
-          # ★ 库级国密（单一口味）要一个**显式**的 OPENSSL_DIR（`build.rs` 在 `sm-library` 上是 fail-fast：
-          #   不给就当场失败，而不是安静地退回 CommonCrypto/别的后端）。Linux 用系统 OpenSSL 3
-          #   —— 它自带 SM3/SM4，且 deb 的 shlibs 会声明这个依赖（口径见 docs/RELEASING.md）。
-          echo "OPENSSL_DIR=/usr" >> "$GITHUB_ENV"
+          # ★ 库级国密（单一口味）要一个**显式**的 OpenSSL 前缀。Linux 用系统 OpenSSL 3（自带 SM3/SM4；
+          #   deb 的 shlibs 会声明这个依赖，口径见 docs/RELEASING.md）。
+          #   ⚠️ **不能只写 `OPENSSL_DIR=/usr`**：Ubuntu 的开发文件在**多架构目录**
+          #   （`/usr/lib/x86_64-linux-gnu/`），而 `openssl-sys` 只看 `<OPENSSL_DIR>/lib|lib64`
+          #   ⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64","/usr/lib"]
+          #   does not contain the required files…`）。⇒ 交给唯一实现去翻译这三个变量。
+          export OPENSSL_DIR=/usr
+          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
 
       - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
@@ -167,12 +171,15 @@ jobs:
           echo "== 准备（补丁 ＋ 清产物） =="
           if [ "${{ matrix.platform }}" = "windows-latest" ]; then
             # vcpkg 的 x64-windows-static-md ⇒ lib/libcrypto.lib（静态）⇒ 产物自包含
-            node scripts/sm-library-build.mjs --prepare --require-static
+            node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
           else
             # Linux runner 的 OpenSSL 3 自带 SM3/SM4；这里**不要求**静态（系统库是共享的，
             # 依赖由 deb 的 shlibs 声明）—— 各平台口径写在 docs/RELEASING.md 的「单一口味」一节
-            node scripts/sm-library-build.mjs --prepare
+            node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare
           fi
+          # ★ 把前缀翻译成**两个 crate 都认**的三个变量，写进后续 step 的环境
+          #   （`--print-env` 是唯一实现；判据在 scripts/lib/sm-library-plan.test.mjs）
+          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
 
       - name: Build bundles
         # ⚠️ Windows 档**必须**保持 `nsis`：`shuyonote://` 的注册表写入（HKCU\Software\Classes）
