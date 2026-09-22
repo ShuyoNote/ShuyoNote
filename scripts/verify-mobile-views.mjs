@@ -497,6 +497,10 @@ async function checkPdfReader(page, vp) {
         ".pdf-export-btn",
       ];
       const tools = reader.querySelector(".pdf-annot-tools");
+      const box = (el) => {
+        const b = el?.getBoundingClientRect();
+        return b ? { top: b.top, bottom: b.bottom, right: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height) } : null;
+      };
       return {
         empties,
         moreVisible: visible(".pdf-reader-more"),
@@ -506,8 +510,34 @@ async function checkPdfReader(page, vp) {
         vw: innerWidth,
         hasStatus: !!reader.querySelector(".pdf-annot-status"),
         pages: (reader.querySelector(".pdf-reader-page")?.textContent || "").trim(),
+        // 分组盒子（Node 侧按"纵向重叠"算行数：盒高不同且垂直居中，比 top 相等是错的）
+        groupBoxes: Array.from(reader.querySelector(".pdf-annot-toolbar")?.children ?? []).map((c) => {
+          const b = c.getBoundingClientRect();
+          return { name: String(c.className).split(" ")[0], top: b.top, bottom: b.bottom };
+        }),
+        toolbar: box(reader.querySelector(".pdf-annot-toolbar")),
+        status: box(reader.querySelector(".pdf-annot-status")),
+        // 短标签必须带 title（否则"朗读 / OCR / AI"就没有完整说法）
+        labels: Array.from(reader.querySelectorAll(".pdf-annot-ocr")).map((b) => ({
+          text: (b.textContent || "").trim(),
+          title: (b.getAttribute("title") || "").trim(),
+        })),
+        layerText: (reader.querySelector(".pdf-annot-layer")?.textContent || "").trim(),
+        layerTitle: (reader.querySelector(".pdf-annot-layer")?.getAttribute("title") || "").trim(),
       };
     });
+    /** 分组占了几行：按纵向重叠合并。 */
+    const linesOf = (boxes) => {
+      const g = [];
+      for (const b of boxes) {
+        const hit = g.find((x) => b.top < x.bottom - 0.5 && b.bottom > x.top + 0.5);
+        if (hit) {
+          hit.top = Math.min(hit.top, b.top);
+          hit.bottom = Math.max(hit.bottom, b.bottom);
+        } else g.push({ top: b.top, bottom: b.bottom });
+      }
+      return g.length;
+    };
 
   const first = await measure();
   if (first.err) return { err: first.err };
@@ -515,14 +545,95 @@ async function checkPdfReader(page, vp) {
   // 5) 窄屏：点开「⋯」再量一态（"收起了"和"点了能出来"是两件事）
   let secondaryAfter = first.secondary;
   let hasStatusAfter = first.hasStatus;
+  let after = null;
   if (vp.width <= 768 && first.moreVisible) {
     await safeEval(page, () => document.querySelector(".pdf-reader-more")?.click());
     await sleep(600);
-    const after = await measure();
+    after = await measure();
     secondaryAfter = after.secondary ?? secondaryAfter;
     hasStatusAfter = after.hasStatus ?? hasStatusAfter;
   }
-  return { ...first, secondaryAfter, hasStatusAfter };
+  // 6) 桌面：把目录 + 批注侧栏都关掉再量一态 —— 只有**列宽足够**时"状态组与工具组同排"
+  //    才检验得出来（面板开着时正文列可能只有 ~492px，`tools 454 + status 221` 必然换行）。
+  let wide = null;
+  if (vp.width > 768) {
+    await safeEval(page, () => {
+      document.querySelector(".pdf-reader-outline-toggle")?.click();
+      document.querySelector(".pdf-reader-sidebar-toggle")?.click();
+    });
+    await sleep(1200);
+    wide = await measure();
+  }
+  return {
+    ...first,
+    after,
+    secondaryAfter,
+    hasStatusAfter,
+    wide,
+    lines: linesOf(first.groupBoxes),
+    wideLines: wide ? linesOf(wide.groupBoxes) : null,
+  };
+}
+
+/**
+ * PDF 阅读器那一节的断言（手机档与桌面档**共用**）。
+ * ⚠️ 曾经只写在手机循环里 ⇒ 桌面那几条（同排/工具条一行高/右端）**永远不执行**（死断言）。
+ */
+function assertPdfReader(rr, vp) {
+  if (rr.err) {
+    ok(false, `PDF 阅读器体检失败：${rr.err}`);
+    return;
+  }
+  ok(
+    /第\s*\d+\s*\/\s*\d+\s*页|页数未知/.test(rr.pages),
+    `夹具 PDF 真的载入了（页码读数「${rr.pages}」）——上传 + 打开这条路走通了`,
+  );
+  // ① 工具条里不许有"空壳胶囊"：`.pdf-annot-actions` 自带背景/边框/圆角，
+  //    空着就是一枚 14×10 的小白胶囊（owner 2026-09-22 截图圈出的那个）。
+  ok(
+    rr.empties.length === 0,
+    `批注工具条里没有"没有内容却有背景/边框"的空壳（实测 ${rr.empties.length} 个` +
+      `${rr.empties.length ? "：" + rr.empties.join("、") : ""}）`,
+  );
+  // ② `⋯` 的收起/展开：CSS 级断言只能钉规则，钉不到"点下去会不会出来"。
+  if (vp.width <= 768) {
+    ok(rr.moreVisible, `窄屏有「⋯」入口（更多工具）`);
+    ok(rr.secondary.every((v) => v === false), `默认收起那 5 个低频头部控件（实测 ${JSON.stringify(rr.secondary)}）`);
+    ok(rr.secondaryAfter.every((v) => v === true), `点开「⋯」后它们真的出现（实测 ${JSON.stringify(rr.secondaryAfter)}）`);
+    ok(rr.toolsH !== null && rr.toolsH <= 56, `批注工具行是**一行**（高 ${rr.toolsH} ≤ 56；换行会白吃 44px）`);
+    // 状态组（文本层 chip + 朗读/OCR/AI）窄屏**默认收进 ⋯**，点开才出现 —— 两条都钉
+    ok(rr.hasStatus === false, `窄屏默认收起状态组（省一行；实测 hasStatus=${rr.hasStatus}）`);
+    ok(rr.hasStatusAfter === true, `点开「⋯」后状态组出现（实测 hasStatus=${rr.hasStatusAfter}）`);
+  } else {
+    ok(!rr.moreVisible, `桌面不显示「⋯」入口（一次放得下）`);
+    ok(rr.hasStatus === true, `桌面一直显示状态组（OCR / AI 那一行，不缺空间）`);
+    // 「1+2」：三个按钮**短标签**（朗读 / OCR / AI），状态组从"独占一行的 472px 状态条"
+    // 改成"与工具组同排的 221px 小组"（关掉目录+侧栏 ⇒ 列宽足够，这一档才检验得出来）
+    ok(
+      rr.wideLines === 1,
+      `列宽足够时状态组与工具组**同一行**（实测 ${rr.wideLines} 行，工具条高 ${rr.wide?.toolbar?.h}px）` +
+        `——改前它靠 width:100% 必然独占一行`,
+    );
+    ok((rr.wide?.status?.w ?? 1e9) <= 260, `状态组缩到 ${rr.wide?.status?.w}px ≤ 260（改前 472px）`);
+    ok((rr.wide?.toolbar?.h ?? 1e9) <= 56, `工具条只有一行高（${rr.wide?.toolbar?.h}px ≤ 56；改前 89px）`);
+    ok(
+      (rr.wide?.status?.right ?? 0) <= (rr.wide?.toolbar?.right ?? 0) + 1 &&
+        (rr.wide?.status?.right ?? 0) >= (rr.wide?.toolbar?.right ?? 1e9) - 24,
+      `状态组落在工具行**右端**（右缘 ${rr.wide?.status?.right} vs 工具条 ${rr.wide?.toolbar?.right}）`,
+    );
+  }
+  // 短标签 + title：这是"能缩短"的前提（缩了还不给完整说法就等于藏功能）
+  // ⚠️ 窄屏要看**点开「⋯」之后**那一态（默认收起时状态组不在 DOM 里 ⇒ 第一态量到空数组）。
+  const lab = vp.width <= 768 ? rr.after : rr.wide ?? rr;
+  ok(
+    lab?.labels?.length >= 1 && lab.labels.every((l) => l.text.length <= 4 && l.title.length > 0),
+    `朗读/OCR/AI 用短标签且都带 title（实测 ${JSON.stringify(lab?.labels?.map((l) => l.text) ?? [])}）`,
+  );
+  ok(
+    (lab?.layerText?.length ?? 99) <= 6 && (lab?.layerTitle?.length ?? 0) > 0,
+    `文本层 chip 也是短句 + title（实测「${lab?.layerText ?? ""}」/「${lab?.layerTitle ?? ""}」）`,
+  );
+  ok(rr.docW <= rr.vw + 1, `阅读器无横向溢出（docW ${rr.docW} ≤ ${rr.vw}）`);
 }
 
 async function main() {  const executablePath = findChrome();
@@ -1015,48 +1126,7 @@ async function main() {  const executablePath = findChrome();
         await rpage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
         await rpage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
         await sleep(3500);
-        const rr = await checkPdfReader(rpage, vp);
-        if (rr.err) {
-          ok(false, `PDF 阅读器体检失败：${rr.err}`);
-        } else {
-          ok(
-            /第\s*\d+\s*\/\s*\d+\s*页|页数未知/.test(rr.pages),
-            `夹具 PDF 真的载入了（页码读数「${rr.pages}」）——上传 + 打开这条路走通了`,
-          );
-          // ① 工具条里不许有"空壳胶囊"：`.pdf-annot-actions` 自带背景/边框/圆角，
-          //    空着就是一枚 14×10 的小白胶囊（owner 2026-09-22 截图圈出的那个）。
-          ok(
-            rr.empties.length === 0,
-            `批注工具条里没有"没有内容却有背景/边框"的空壳（实测 ${rr.empties.length} 个` +
-              `${rr.empties.length ? "：" + rr.empties.join("、") : ""}）`,
-          );
-          // ② `⋯` 的收起/展开：CSS 级断言只能钉规则，钉不到"点下去会不会出来"。
-          if (vp.width <= 768) {
-            ok(rr.moreVisible, `窄屏有「⋯」入口（更多工具）`);
-            ok(
-              rr.secondary.every((v) => v === false),
-              `默认收起那 5 个低频头部控件（实测可见性 ${JSON.stringify(rr.secondary)}）`,
-            );
-            ok(
-              rr.secondaryAfter.every((v) => v === true),
-              `点开「⋯」后它们真的出现（实测 ${JSON.stringify(rr.secondaryAfter)}）`,
-            );
-            ok(
-              rr.toolsH !== null && rr.toolsH <= 56,
-              `批注工具行是**一行**（高 ${rr.toolsH} ≤ 56；换行会白吃 44px 正文高度）`,
-            );
-            // 状态行（文本层提示 + 朗读/OCR/AI）窄屏**默认收进 ⋯**，点开才出现 —— 两条都钉
-            ok(rr.hasStatus === false, `窄屏默认收起状态行（省一行；实测 hasStatus=${rr.hasStatus}）`);
-            ok(
-              rr.hasStatusAfter === true,
-              `点开「⋯」后状态行（OCR / AI 识别那一行）出现（实测 hasStatus=${rr.hasStatusAfter}）`,
-            );
-          } else {
-            ok(!rr.moreVisible, `桌面不显示「⋯」入口（一次放得下）`);
-            ok(rr.hasStatus === true, `桌面一直显示状态行（OCR / AI 识别那一行，不缺空间）`);
-          }
-          ok(rr.docW <= rr.vw + 1, `阅读器无横向溢出（docW ${rr.docW} ≤ ${rr.vw}）`);
-        }
+        assertPdfReader(await checkPdfReader(rpage, vp), vp);
         await shot(rpage, `${vp.name}-pdf-reader`);
         ok(rerrs.length === 0, `阅读器页无 JS 报错${rerrs.length ? "：" + rerrs.join(" | ") : ""}`);
         await rctx.close();
@@ -1158,6 +1228,11 @@ async function main() {  const executablePath = findChrome();
       ok(dp.docW <= dp.vw, `桌面属性面板无横向溢出（docW ${dp.docW} ≤ ${dp.vw}）`);
     }
     await shot(desk, `${DESKTOP.name}-properties`);
+    // 桌面也跑一遍 PDF 阅读器：`⋯` 的隐藏、状态组"与工具组同排（省一行）"这几条
+    // **只有桌面档才走得到**（手机档走的是 if 的另一支）——此前漏在这里，等于那几条断言没跑过。
+    console.log(`\n【桌面 ${DESKTOP.name} · PDF 阅读器（真 PDF）】`);
+    assertPdfReader(await checkPdfReader(desk, DESKTOP), DESKTOP);
+    await shot(desk, `${DESKTOP.name}-pdf-reader`);
     await deskCtx.close();
   } finally {
     await browser.close();
