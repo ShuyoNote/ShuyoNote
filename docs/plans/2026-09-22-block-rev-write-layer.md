@@ -381,3 +381,36 @@ macOS 给的 trace（现在就是判据）：A 的 `b1` 已到 `4`、B 只有 `2
 前置条件（将来单独立项时）：① 块级 rev 覆盖完整（18 类声明字段已就位）② **真机双设备验收通过**。
 代价如实记：整页回落那一支里，"非冲突块本该合并进来的收益"一并放弃（同页并发仍会丢更新），
 而 `page_conflicts` 只记了**冲突块**，被放弃的**非冲突本地块**今天没有痕迹。
+
+## 12. 并进 dev ＋ 验收（2026-09-22，第十一段）
+
+**合并**：`feat/stage1-block-lww`（68 个提交，tip `a7467252`）→ **dev `468e0597`**（`e877da1c..468e0597`）。
+四处冲突都是"两边各加各的"，**都保留**：
+
+| 文件 | 保留了什么 |
+|---|---|
+| `src-tauri/src/commands.rs` | dev 的 MuPDF / `PdfEngine` 段 ＋ 本片的 `list_page_conflicts` / `resolve_page_conflict` / `refresh_page_text` / `list_stale_text_pages` |
+| `src/lib/platform/commands.ts` | dev 的 `export_backup`（带 `skipped`）＋ 本片四个条目（本片那一半里的旧 `export_backup` 去掉，避免 TS 类型重复键） |
+| `docs/README.md` / `docs/development.md` | dev 的两行 pdfium / §10.7（Herdsman）＋ 本片的块 ID 归属、阶段 1 readiness、blockRev 写层 |
+
+⚠️ 合并解析**踩过一次**（如实记）：本片的四个命令**曾被放进 `mod pdf_engine_tests` 里**（dev 那个测试模块的
+`}` 落在冲突块之外）⇒ Rust 编译报 `unclosed delimiter` ⇒ 补上模块的 `}` 后 amend 进合并提交。
+教训与 §4 同族：**合并"两边都保留"时，要看保留的位置在不在某个块里**，别只看内容在不在。
+
+**自动化验收读数**（都在合并后的 dev 上）：
+
+| 读数 | 值 |
+|---|---|
+| `pnpm verify`（dev 现在是 **25** 条门禁） | **24 ✅ / 1 ❌**；绿含 `tsc`、`check-web-commands`、`check-doc-content-access`（562 ≤ 基线 566）、`check-doc-links`、`check-capabilities`、`smoke-web` 360/360、**`two-device-sync` 76/76** |
+| vitest 的 6 条红 | `scripts/check-gm-wired.test.mjs`(2) ＋ `scripts/lib/sm-library-plan.test.mjs`(2) ＋ `scripts/lib/sm-library-source.test.mjs`(2) —— **在纯 dev tip（`643ebaf0`，不含本片合并）上同样这 6 条红** ⇒ **与本片无关**（Windows 平台的 OpenSSL 前缀 / POSIX 路径布局那一族） |
+| Rust（合并后） | `doc_content` **40/0**、`block_rev` 14/0、`sync` **17/0**、`versions` 3/0；整支 `cargo test --lib` **445 通过 / 34 失败**，且**非 `plugins::` 的失败 = 0**（那 34 条要宿主二进制；`win-cargo-test.ps1` 头注写明 `--lib` 跑不了它们，权威读数属 CI/WSL2） |
+
+**人工验收清单**（机器替不了；同批细节在协同信箱）：
+
+1. 两端各改**不同块** ⇒ 同步后两边都保留、**不弹提示**；
+2. 两端**并发改同一块** ⇒ 弹提示（两侧原文都在）＋ 块级角标；「定位」能滚到那一块；选一侧裁决 ⇒
+   内容换过去、**盖新 rev**、`dirty=1`（会被推上去）；裁决后**未决计数归零**；
+3. 老客户端产物（无 `blockRev`）**改了内容** ⇒ **必须提示**（`missing-rev`）；**打开—原样保存**（逐字节相同）⇒ 不提示；
+4. 合并 / 裁决之后：**打开那一页**（或等一次同步结束的补算）后，搜**刚合并进来的字**搜得到；
+   若积压，提示条说"还有 N 页正文待重建"；
+5. 版本历史**恢复** ⇒ 恢复那一版同样盖章（`restore_version`）⇒ 不会被远端静默盖掉。
