@@ -265,6 +265,22 @@ export const GATES = [
       "2026-09-20：`sm-crypto` 成为默认特性后，原 `rust-sm-crypto`（跑 --features sm-crypto）与 `rust-test` 变成同一条命令；本门禁改为验证**回滚通道**（--no-default-features）——它是「一行可逆」这个承诺的实现，没人编就会腐烂。",
   },
   {
+    id: "rust-sm-wired",
+    group: "rust",
+    label: "库级国密**接线**构建：打补丁 ＋ `--features sm-library` 下的全量单测",
+    // ★ 2026-09-22 加，动机是**一次真实事故**：应用接线（`apply_gm_page_settings`）整段在
+    //   `#[cfg(feature = "sm-library")]` 后面，而 CI 原有的 rust 门禁**全部跑默认特性**
+    //   ⇒ 那条路**没有任何门禁碰过**。我在本机把发版链原样跑一遍时踩到的那个坑
+    //   （`--prepare` 只清 dev profile ⇒ release 的旧 CommonCrypto SQLCipher 被原样复用
+    //   ⇒ 包表面全对而库级不是国密）就是这一类，只有产物断言抓住。
+    //   本门禁把它变成常开：能拿到 SM 版 OpenSSL 前缀就真跑（Linux 用 `/usr`），拿不到**自报跳过**。
+    //   ⚠️ 它跑完会**还原补丁并把默认特性重新编好** —— 否则同一 job 里后面的 `check-crypto-backend`
+    //   会读到"补丁态 ＋ openssl 最新产物"而按平台默认声明判红。
+    cmd: "node scripts/check-gm-wired.mjs",
+    incident:
+      "2026-09-22：接线那段（`set_cipher_key` → 能力探针/设标签/回显校验）没有任何 CI 门禁覆盖；同时在 macOS 本机发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 发出非国密包」。两者一起促成本门禁：打补丁 ＋ 清两个 profile ＋ `--features sm-library` 跑全量单测（内部下限 380 passed/0 failed，空跑即红），跑完还原补丁并重建默认特性，避免留下混态。",
+  },
+  {
     id: "check-crypto-backend",
     group: "rust",
     label: "SQLCipher 的加密后端与声明一致（构建期实查，不是看环境变量）",
