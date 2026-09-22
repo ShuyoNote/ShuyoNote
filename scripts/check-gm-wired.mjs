@@ -123,6 +123,29 @@ export function explainPrepareFailure(output = "") {
  *   3. **其余集合仍要求 `failed === 0`** —— 不放宽通过标准，只排除那一组明确跑不了的。
  * 那一组的权威读数归 CI / WSL2（`rust-plugins-alone` 门禁）与 Windows 自己的 `win-cargo-test.ps1`。
  */
+/**
+ * 纯函数：这次失败是不是**装载期**失败（测试 exe 根本没跑起来）？
+ *
+ * ★ 2026-09-22 AMD 在 Windows 上把这条路走到底了，结论是**两层互相独立、都要补**：
+ *   · `0xC0000135 STATUS_DLL_NOT_FOUND` ⇒ 运行时找不到 OpenSSL 的 DLL（PATH 层，已由 `testPathFor` 修）；
+ *   · `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` ⇒ **缺 v6 清单**（`Microsoft.Windows.Common-Controls`）——
+ *     `cargo test` 生成的测试 exe **不带应用清单**，装载器绑回旧 comctl32 ⇒ 入口点找不到。
+ *     这一层**只有** `scripts/win-cargo-test.ps1` 做（`--no-run` → 复制 exe → `mt.exe -outputresource:…;1` → 跑副本）。
+ *
+ * 为什么要单独认这一类：它**不是**"接线坏了"，也不该报成"跑过了 0 条"。
+ * 认出来才能自报**未实查**（与 macOS 缺静态前缀、以及"旧产物⇒未实查"同一条纪律）。
+ */
+export function windowsLoadFailure(output) {
+  const text = String(output ?? "");
+  if (/0xc0000139/i.test(text)) {
+    return "0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND —— 测试 exe **缺 v6 清单**（Windows 装载期失败，不是接线失败）";
+  }
+  if (/0xc0000135/i.test(text)) {
+    return "0xC0000135 STATUS_DLL_NOT_FOUND —— 测试 exe 找不到依赖 DLL（先看 PATH 里有没有 `<前缀>\\bin`）";
+  }
+  return null;
+}
+
 export function cargoTestArgs({ platform = process.platform, manifest, skipModules = ["plugins::"] } = {}) {
   const args = ["test", "--features", "sm-library", "--manifest-path", manifest];
   if (platform === "win32") args.push("--", "--skip", skipModules[0]);
@@ -237,6 +260,19 @@ function main() {
     } catch (e) {
       ok = false;
       output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+    // ★ 装载期失败（win32）⇒ **自报未实查**：这不是接线坏了，而是"这一格在这台机器上跑不起来"。
+    if (process.platform === "win32") {
+      const loadWhy = windowsLoadFailure(`${output}\n${ok ? "" : ""}`);
+      if (loadWhy) {
+        console.log(`   ! win32：测试 exe **没有被加载起来** ⇒ 这一格在 Windows 上**未实查**（不判红，也不装绿）`);
+        console.log(`     · ${loadWhy}`);
+        console.log("     · 已存在的**独立**读数（2026-09-22 AMD 实测，走 `win-cargo-test.ps1` 注入清单后跑）：");
+        console.log("       455 passed / 34 failed / 18 ignored，34 条**全在** `plugins::`，国密各组 0 失败");
+        console.log("     · 要这条门禁**自己在 win32 上出读数**：需要跑器把「已注入清单的副本路径」可解析地打印，");
+        console.log("       门禁再跑那个副本（`--skip plugins::`）并自己解析 `test result:` —— 见信箱 `…reply-4.md` §三");
+        return 0;
+      }
     }
     const counts = parseTestResult(output);
     for (const l of output.split("\n").filter((l) => /^test .* FAILED/.test(l)).slice(0, 8)) console.error(`   ${l}`);

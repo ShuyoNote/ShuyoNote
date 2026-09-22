@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs } from "./check-gm-wired.mjs";
+import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs, windowsLoadFailure } from "./check-gm-wired.mjs";
 
 describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   it("给了 OPENSSL_DIR 且目录在 ⇒ 用它", () => {
@@ -185,5 +185,22 @@ describe("check-gm-wired：`cargo test` 参数（win32 的显式 skip 必须精�
     expect(dflt).not.toContain("*");
     expect(dflt[dflt.length - 1]).toBe("plugins::");
     expect(cargoTestArgs({ platform: "win32", manifest: M, skipModules: ["foo::"] })).toContain("foo::");
+  });
+});
+
+describe("check-gm-wired：win32 的**装载期**失败要能被认出来（不是接线坏了）", () => {
+  it("★ 0xC0000139（缺 v6 清单）与 0xC0000135（缺 DLL）各给一句可执行的解释", () => {
+    const a = windowsLoadFailure("process didn't exit successfully: … (exit code: 0xc0000139, STATUS_ENTRYPOINT_NOT_FOUND)");
+    expect(a).toMatch(/v6 清单/);
+    const b = windowsLoadFailure("Caused by: process didn't exit successfully (exit code: 0xC0000135, STATUS_DLL_NOT_FOUND)");
+    expect(b).toMatch(/bin/);
+  });
+
+  it("★ 别的失败**不许**被认成装载期失败（否则真回归会被自报跳过吞掉）", () => {
+    // 断言失败 / 编译失败 / 正常通过 —— 三种都不是装载期问题
+    expect(windowsLoadFailure("test result: FAILED. 455 passed; 34 failed; 18 ignored")).toBeNull();
+    expect(windowsLoadFailure("error[E0308]: mismatched types")).toBeNull();
+    expect(windowsLoadFailure("test result: ok. 492 passed; 0 failed")).toBeNull();
+    expect(windowsLoadFailure("")).toBeNull();
   });
 });
