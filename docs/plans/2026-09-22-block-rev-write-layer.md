@@ -171,3 +171,19 @@ Rust `doc_content` **25/25**（含适配器 7 条 ＋ 盖章 2 条）、`version
 > `IS_REACT_ACT_ENVIRONMENT`（happy-dom 下默认没开 ⇒ 只有警告、刷新时机不受控）。
 
 ⚠️ **仍没做**：块级角标（指出"冲突就在这一块"）；真机双设备验收（要人手）。
+
+## 8. 块级角标 ＋ 定位（第七段）
+
+提示条只说"这一页有几处冲突"，用户还得自己找那一块。这一段补上"看得见是哪一块 + 一键跳过去"：
+
+| 件事 | 落点 |
+|---|---|
+| **发布** | 提示条把 `rows.map(r => r.block_id)` 写进 `useEditorStore.conflictBlockIds`（离开这一页时清空）；**同一份表重复发布不产生新状态**（否则每轮同步都会让编辑器重挂一次 update listener） |
+| **打角标** | `src/editor/blockConflictBadge.ts::applyConflictBadges(ids, root)`：按 `data-block-id`（编辑器给顶层块的 DOM 打的标记，与块引用跳转**同一套**）加/摘 `block-conflict` 类；**不在表里的要摘掉**，空表 = 全清 |
+| **调用时机** | `Editor.tsx` 里与"跳转到块"相邻的一个 effect：没有冲突就只清一次、**不挂 listener**；有冲突则**每次 editor update 之后再打一遍**（Lexical 结构一变会重建 DOM，类名会跟着没） |
+| **定位** | 提示条每条加一个「定位」按钮 ⇒ `setFocusBlockId(block_id)` —— 与 BacklinksPanel / 块嵌入**同一条路**：`Editor` 会滚到它并闪一下 |
+| **样式** | `.block-conflict` **只用一条内阴影**（不动背景：正文里的背景属于主题/引用/代码块，改它会把格式吃掉） |
+
+判据：`src/editor/blockConflictBadge.test.ts` **3 条**（加类名＋**摘掉**不在表里的／空表全清／没打标记的块匹配不到）
+＋ `src/components/ConflictBanner.test.ts` 扩到 **6 条**（新增：把 id 发布给编辑器；「定位」设 `focusBlockId`；
+卸载后清空角标）。两条坑与 §7 同款（`.test.ts` 而非 `.test.tsx`；React 18 的 `act` 要手动开开关）。
