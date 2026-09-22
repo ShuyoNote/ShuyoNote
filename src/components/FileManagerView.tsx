@@ -12,7 +12,7 @@ import { usePdfReader } from "../store/pdfReader";
 import { useSyncStatus } from "../store/syncStatus";
 import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
-import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon } from "./icons";
+import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon, UploadIcon, HistoryIcon } from "./icons";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
 import { attachmentFetchHint } from "../lib/attachmentFetchHint";
@@ -22,6 +22,7 @@ import {
   readSavedFileView,
   type FileViewMode,
 } from "../lib/fileManagerView";
+import { isNarrowViewport, useMobileOverlayViewport } from "../hooks/useMobile";
 
 // 右键菜单用的内联 SVG（打开 / 改名）。
 const OpenIcon = ({ size = 14 }: { size?: number }) => (
@@ -35,6 +36,33 @@ const EditIcon = ({ size = 14 }: { size?: number }) => (
     <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 );
+// 「阅读并标注」（PDF）：行内小按钮与动作面板共用一份，免得两处画得不一样。
+const AnnotateIcon = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+    <path d="M14 3v6h6" />
+    <path d="M9 14l3-3 2.5 2.5-3 3z" />
+  </svg>
+);
+// 「移动到文件夹」：窄屏行内那六个小按钮被收进动作面板，面板里必须有它。
+const MoveIcon = ({ size = 14 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M3 7a2 2 0 0 1 2-2h3.6l1.8 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <path d="M12 16v-5" />
+    <path d="M9.6 13.2 12 10.8l2.4 2.4" />
+  </svg>
+);
+
+// 表格 / 网格里的一行：页面或文件夹（`pageId`），或一个附件文件（`file` + `versions`）。
+// 抽成别名是因为它被**四处**共用——表格行的动作按钮、动作面板（`ctxMenu.row`）、
+// `deleteRow` / `renameRow`；少写一个字段就会让"面板里少一个动作"这类漏项通过编译。
+type FileRow = {
+  kind: string;
+  pageId?: string;
+  name: string;
+  file?: AttachmentMeta;
+  versions?: AttachmentMeta[];
+};
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -114,6 +142,10 @@ function MiniPreview({ content }: { content: string }) {
 // type + modified/created columns, and create pages/folders inside a folder.
 export function FileManagerView() {
   const { t } = useTranslation();
+  // 窄屏（或矮视口）下动作面板贴底成面板：内联的 x/y 定位在窄屏**不写**，由 CSS 接管
+  // ——与 `.pdf-reader` 那条"浮层形态下不许写内联宽度"是同一条纪律（内联样式优先级更高，
+  // 两边各改一半必然有一边不生效）。
+  const isSheet = useMobileOverlayViewport();
   const { pages, openPage, createPage, createFolder } = useNotes();
   const { folderId, setFolderId } = useFileManagerStore();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -159,13 +191,18 @@ export function FileManagerView() {
   // 页面 cover 图加载失败（Web 端 asset url 常失败）→ 回退图标占位，避免显示 alt/broken 图标。
   const [brokenCovers, setBrokenCovers] = useState<Set<string>>(() => new Set());
   // 网格缩略图大小（列数随之自适应）。
-  const [gridSize, setGridSize] = useState<number>(() => Number(localStorage.getItem("shuyonote:fmGridSize")) || 160);
+  // ⚠️ 窄屏默认取 140（不是 160）：320px 上可用宽 292，`minmax(160px,1fr)` 只会排到**一列**
+  // ——一张 292px 的瓷砖，缩略图被拉成一条。140 时 2×140+12 = 292 正好两列。
+  // 断点与 `useMobile.ts` 同源（`isNarrowViewport()` 读的就是 `MOBILE_BREAKPOINT_PX`）。
+  const [gridSize, setGridSize] = useState<number>(
+    () => Number(localStorage.getItem("shuyonote:fmGridSize")) || (isNarrowViewport() ? 140 : 160),
+  );
   const setGrid = (n: number) => {
     try { localStorage.setItem("shuyonote:fmGridSize", String(n)); } catch { /* ignore */ }
     setGridSize(n);
   };
   // 右键菜单。
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta } | null }>({ x: 0, y: 0, row: null });
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; row: FileRow | null }>({ x: 0, y: 0, row: null });
 
   // folderId 为 null = 空间根：列出「未整理」文件（page_id IS NULL），
   // 而不是像以前那样直接清空——根下也允许上传，文件得有地方显示。
@@ -641,7 +678,7 @@ export function FileManagerView() {
   const closeCtx = () => setCtxMenu({ x: 0, y: 0, row: null });
 
   // 右键「删除」：文件硬删（附件），页面/文件夹软删（进回收站）。
-  const deleteRow = async (row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta }) => {
+  const deleteRow = async (row: FileRow) => {
     const label = row.name || "未命名";
     const isFile = row.kind === "file" && !!row.file;
     const msg = isFile
@@ -664,7 +701,7 @@ export function FileManagerView() {
   };
 
   // 右键「改名」：文件改附件名，页面/文件夹改标题。
-  const renameRow = (row: { kind: string; pageId?: string; name: string; file?: AttachmentMeta }) => {
+  const renameRow = (row: FileRow) => {
     const current = row.name || "未命名";
     inputDialog({
       title: "改名",
@@ -707,22 +744,30 @@ export function FileManagerView() {
             onClick={batchRemove}
             disabled={selectedCount === 0}
             title="删除选中的页面/文件夹/文件"
+            aria-label="删除选中"
           >
-            {selectedCount > 0 ? `${t("files.removeSelected")} (${selectedCount})` : t("files.removeSelected")}
+            <TrashIcon className="fm-btn-icon" width={18} height={18} />
+            <span className="fm-btn-text">
+              {selectedCount > 0 ? `${t("files.removeSelected")} (${selectedCount})` : t("files.removeSelected")}
+            </span>
           </button>
-          <button className="fm-btn" onClick={newFolder}>
-            ＋ {t("files.newFolder")}
+          <button className="fm-btn" onClick={newFolder} title={t("files.newFolder")} aria-label={t("files.newFolder")}>
+            <FolderIcon className="fm-btn-icon" width={18} height={18} />
+            <span className="fm-btn-text">＋ {t("files.newFolder")}</span>
           </button>
-          <button className="fm-btn" onClick={newPage}>
-            ＋ {t("files.newPage")}
+          <button className="fm-btn" onClick={newPage} title={t("files.newPage")} aria-label={t("files.newPage")}>
+            <PageIcon className="fm-btn-icon" width={18} height={18} />
+            <span className="fm-btn-text">＋ {t("files.newPage")}</span>
           </button>
           <button
             className="fm-btn"
             onClick={uploadFiles}
             disabled={importing}
             title={folderId ? "批量上传文件" : "上传到空间根目录（未整理）"}
+            aria-label={t("files.upload")}
           >
-            {importing ? t("files.uploading") : `＋ ${t("files.upload")}`}
+            <UploadIcon className="fm-btn-icon" width={18} height={18} />
+            <span className="fm-btn-text">{importing ? t("files.uploading") : `＋ ${t("files.upload")}`}</span>
           </button>
           <div className="fm-view-toggle" role="group" aria-label="视图切换">
             <button
@@ -827,14 +872,23 @@ export function FileManagerView() {
                     setCtxMenu({ x: e.clientX, y: e.clientY, row });
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    className="fm-grid-check"
-                    checked={selected.has(row.key)}
-                    onChange={() => toggleSelect(row.key)}
-                    onClick={(e) => e.stopPropagation()}
+                  {/* 窄屏把命中区交给外面这层 `label`（44×44）——见 App.css 的
+                      `.fm-grid-checkwrap`。桌面它只是个"位置透明"的包裹层，勾选框照旧
+                      绝对定位在右上角、照旧只在 hover/选中时显形。 */}
+                  <label
+                    className="fm-grid-checkwrap"
                     title="选择"
-                  />
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="fm-grid-check"
+                      checked={selected.has(row.key)}
+                      onChange={() => toggleSelect(row.key)}
+                      onClick={(e) => e.stopPropagation()}
+                      title="选择"
+                    />
+                  </label>
                   {isImage ? (
                     <img
                       className="fm-grid-thumb"
@@ -892,18 +946,24 @@ export function FileManagerView() {
           <thead>
             <tr>
               <th className="fm-check-col">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={toggleSelectAll}
-                  title="全选/取消全选"
-                />
+                {/* 窄屏把命中区交给这个 `label`（44×44）——`input[type=checkbox]` 是
+                    替换元素，Chrome 对它的 `padding` 不生效（实测 `padding:12px` 算出来是 0，
+                    所以"content-box 撑大命中区"那招在这里没用）。label 包住 input 时
+                    点 label 就是点 input，命中区就真的到了 44。 */}
+                <label className="fm-selectall">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    title="全选/取消全选"
+                  />
+                </label>
               </th>
               <th className="fm-name-col">文件名</th>
               <th className="fm-kind-col">类型</th>
               <th className="fm-size-col">大小</th>
-              <th>上次修改时间</th>
-              <th>创建时间</th>
+              <th className="fm-date-col">上次修改时间</th>
+              <th className="fm-date-col">创建时间</th>
               <th className="fm-ops-col" />
             </tr>
           </thead>
@@ -913,6 +973,13 @@ export function FileManagerView() {
                 key={row.key}
                 className={selected.has(row.key) ? "fm-row-selected" : ""}
                 onClick={() => toggleSelect(row.key)}
+                // 窄屏没有 hover、右键也只能靠长按：列表模式此前**根本没有**右键入口
+                // （只有网格那一支接了 `onContextMenu`）。手机上行内那六个 20px 小按钮
+                // 换成下面那个 `⋯`，其余动作全在这一份面板里。
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu({ x: e.clientX, y: e.clientY, row });
+                }}
               >
                 <td className="fm-check-col">
                   <input
@@ -967,6 +1034,18 @@ export function FileManagerView() {
                   {row.created}
                 </td>
                 <td className="fm-ops-col">
+                  {/* 窄屏：六个小按钮 → 一个 `⋯`（44×44 命中区）。桌面 `display:none`。 */}
+                  <button
+                    className="fm-more-btn"
+                    title="更多操作"
+                    aria-label="更多操作"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCtxMenu({ x: 0, y: 0, row });
+                    }}
+                  >
+                    ⋯
+                  </button>
                   {row.kind === "file" && (
                     <span className="fm-file-actions">
                       {/* M24 PDF 批注：直达阅读器，跳过预览层。openPdf 内自带 attachmentId+name。 */}
@@ -979,11 +1058,7 @@ export function FileManagerView() {
                             void usePdfReader.getState().openPdf(row.file!.id, row.file!.name);
                           }}
                         >
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                            <path d="M14 3v6h6" />
-                            <path d="M9 14l3-3 2.5 2.5-3 3z" />
-                          </svg>
+                          <AnnotateIcon size={15} />
                         </button>
                       )}
                       {row.versions && row.versions.length > 0 && (
@@ -1077,7 +1152,12 @@ export function FileManagerView() {
           </button>
         );
         return (
-          <div className="fm-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y }} onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <div
+            className={`fm-ctx${isSheet ? " is-sheet" : ""}`}
+            style={isSheet ? undefined : { left: ctxMenu.x, top: ctxMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="fm-ctx-title" title={row.name}>{row.name || "未命名"}</div>
             <div className="fm-ctx-list">
               {isFile ? (
@@ -1088,6 +1168,13 @@ export function FileManagerView() {
                     ? ctxItem(<DownloadIcon width={14} height={14} />, "从服务器下载", () => { void fetchBytes(row.file!); closeCtx(); })
                     : ctxItem(<DownloadIcon width={14} height={14} />, "下载", () => { downloadFile(row.file!); closeCtx(); })}
                   {ctxItem(<FolderIcon width={14} height={14} />, "在文件夹中显示", () => { revealFile(row.file!.path); closeCtx(); })}
+                  {/* 窄屏把行内那六个小按钮收进了这一份面板，所以面板必须**功能完整**：
+                      少一项就等于"手机上某个动作消失了"——那比按钮小更糟。 */}
+                  {row.file!.mime === "application/pdf" &&
+                    ctxItem(<AnnotateIcon size={14} />, "阅读并标注", () => { void usePdfReader.getState().openPdf(row.file!.id, row.file!.name); closeCtx(); })}
+                  {ctxItem(<MoveIcon size={14} />, "移动到文件夹", () => { setMoving(row.file!); closeCtx(); })}
+                  {row.versions && row.versions.length > 0 &&
+                    ctxItem(<HistoryIcon width={14} height={14} />, `${row.versions.length + 1} 个历史版本`, () => { setVersionTarget(row.file!); closeCtx(); })}
                 </>
               ) : (
                 ctxItem(<OpenIcon size={14} />, "打开", () => { openRow(row); closeCtx(); })
