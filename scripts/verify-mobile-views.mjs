@@ -551,6 +551,19 @@ async function checkPdfReader(page, vp) {
             activeLabel: (sb.querySelector(".pdf-sidebar-filter-current")?.textContent || "").trim(),
           };
         })(),
+        // 两侧面板：在不在、多宽；以及"收起时的拖拽手柄"在不在（2026-09-22 拖拽收起/展开）
+        outlineCol: (() => {
+          const el = reader.querySelector(".pdf-outline-col");
+          return { present: !!el, w: el ? Math.round(el.getBoundingClientRect().width) : 0 };
+        })(),
+        sidebarCol: (() => {
+          const el = reader.querySelector(".pdf-sidebar-col");
+          return { present: !!el, w: el ? Math.round(el.getBoundingClientRect().width) : 0 };
+        })(),
+        edgeHandles: {
+          left: !!reader.querySelector(".pdf-edge-drag.is-left"),
+          right: !!reader.querySelector(".pdf-edge-drag.is-right"),
+        },
         // 短标签必须带 title（否则"朗读 / OCR / AI"就没有完整说法）
         labels: Array.from(reader.querySelectorAll(".pdf-annot-ocr")).map((b) => ({
           text: (b.textContent || "").trim(),
@@ -596,6 +609,45 @@ async function checkPdfReader(page, vp) {
     const collapsed = (await measure()).sidebar;
     sidebarFlow = { before, opened, collapsed };
   }
+  // 6b-2) 桌面：**真实鼠标拖拽**收起/展开两侧面板（owner 2026-09-22："要可以通过鼠标拖拽收起展开"）。
+  //      · 拖 resizer 拖到阈值以内 ⇒ 面板收起、那条边出现 `.pdf-edge-drag` 手柄；
+  //      · 从手柄拖得不够 ⇒ 不动（不误开）；拖够了 ⇒ 面板回来；
+  //      · 两侧都试（左目录 dir=1 向左变窄，右批注 dir=-1 向右变窄）。
+  let dragFlow = null;
+  if (vp.width > 768) {
+    const dragBy = async (sel, dx) => {
+      const at = await safeEval(page, (s) => {
+        const el = document.querySelector(s);
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return { x: b.x + b.width / 2, y: b.y + Math.round(b.height / 2) };
+      }, sel);
+      if (!at) return false;
+      await page.mouse.move(at.x, at.y);
+      await page.mouse.down();
+      await page.mouse.move(at.x + dx, at.y, { steps: 12 });
+      await page.mouse.up();
+      await sleep(450);
+      return true;
+    };
+    const leftOpen = (await measure()).outlineCol;
+    // ① 左目录：从 resizer 向左拖 200px（起始 240 ⇒ raw 40 < 阈值 120）⇒ 收起
+    await dragBy(".pdf-outline-resizer", -200);
+    const afterCollapseLeft = await measure();
+    // ② 从手柄往右拖 60px（不够阈值 120）⇒ 仍然收起（不误开）
+    await dragBy(".pdf-edge-drag.is-left", 60);
+    const afterSmallLeft = await measure();
+    // ③ 从手柄往右拖 260px ⇒ 面板回来，宽度 ≥ min(160)
+    await dragBy(".pdf-edge-drag.is-left", 260);
+    const afterExpandLeft = await measure();
+    // ④ 右批注栏：从 resizer 向右拖 200px（起始 260 ⇒ raw 60 < 阈值 160）⇒ 收起；再从手柄拖回
+    const rightOpen = (await measure()).sidebarCol;
+    await dragBy(".pdf-sidebar-resizer", 200);
+    const afterCollapseRight = await measure();
+    await dragBy(".pdf-edge-drag.is-right", -260);
+    const afterExpandRight = await measure();
+    dragFlow = { leftOpen, afterCollapseLeft, afterSmallLeft, afterExpandLeft, rightOpen, afterCollapseRight, afterExpandRight };
+  }
   // 6c) 桌面：把目录 + 批注侧栏都关掉再量一态 —— 只有**列宽足够**时"状态组与工具组同排"
   //    才检验得出来（面板开着时正文列可能只有 ~492px，`tools 454 + status 221` 必然换行）。
   let wide = null;
@@ -614,6 +666,7 @@ async function checkPdfReader(page, vp) {
     hasStatusAfter,
     wide,
     sidebarFlow,
+    dragFlow,
     lines: linesOf(first.groupBoxes),
     wideLines: wide ? linesOf(wide.groupBoxes) : null,
   };
@@ -703,6 +756,30 @@ function assertPdfReader(rr, vp) {
     ok(
       sb?.collapsed?.chips === 0 && sb.collapsed.activeLabel === "高亮",
       `收起后仍看得出当前筛选（图标旁写「${sb?.collapsed?.activeLabel}」）——否则"列表变短了"没有解释`,
+    );
+    // 拖拽收起 / 拖拽展开（真实鼠标拖拽，两侧各一遍）
+    const df = rr.dragFlow;
+    ok(
+      df?.leftOpen?.present === true && df.afterCollapseLeft.outlineCol.present === false &&
+        df.afterCollapseLeft.edgeHandles.left === true,
+      `把目录 resizer 往左拖过头 ⇒ 目录收起，并出现可拖出来的边缘手柄（handle=${df?.afterCollapseLeft?.edgeHandles?.left}）`,
+    );
+    ok(
+      df?.afterSmallLeft?.outlineCol?.present === false,
+      `从手柄拖得不够（60px < 阈值 120）⇒ 不误开（目录仍在=${df?.afterSmallLeft?.outlineCol?.present}）`,
+    );
+    ok(
+      df?.afterExpandLeft?.outlineCol?.present === true && df.afterExpandLeft.outlineCol.w >= 160,
+      `从手柄往右拖够 ⇒ 目录拖出来了（宽 ${df?.afterExpandLeft?.outlineCol?.w} ≥ 160）`,
+    );
+    ok(
+      df?.rightOpen?.present === true && df.afterCollapseRight.sidebarCol.present === false &&
+        df.afterCollapseRight.edgeHandles.right === true,
+      `把批注栏 resizer 往右拖过头 ⇒ 批注栏收起 + 边缘手柄出现`,
+    );
+    ok(
+      df?.afterExpandRight?.sidebarCol?.present === true && df.afterExpandRight.sidebarCol.w >= 220,
+      `从右侧手柄往左拖够 ⇒ 批注栏拖出来了（宽 ${df?.afterExpandRight?.sidebarCol?.w} ≥ 220）`,
     );
     // 「1+2」：三个按钮**短标签**（朗读 / OCR / AI），状态组从"独占一行的 472px 状态条"
     // 改成"与工具组同排的 221px 小组"（关掉目录+侧栏 ⇒ 列宽足够，这一档才检验得出来）

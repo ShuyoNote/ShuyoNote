@@ -52,6 +52,9 @@ function startPanelResize(
     onDragStart?: () => void;
     /** 拖动/双击结束（用于恢复并应用一次舞台尺寸）。 */
     onDragEnd?: () => void;
+    /** 拖到多窄就**收起**（2026-09-22：拖拽与开合同一个手势）。不给就只按 min/max 夹。 */
+    collapseAt?: number;
+    onCollapse?: () => void;
   },
 ) {
   cfg.onDragStart?.();
@@ -70,17 +73,33 @@ function startPanelResize(
   const startX = e.clientX;
   const startW = parseFloat(el.style.width) || cfg.def;
   let cur = startW;
-  const stop = () => {
+  const detach = () => {
     try { handle.releasePointerCapture?.(e.pointerId); } catch { /* 忽略 */ }
     handle.removeEventListener("pointermove", move);
     handle.removeEventListener("pointerup", up);
     handle.removeEventListener("pointercancel", cancel);
+  };
+  const stop = () => {
+    detach();
     cfg.commit(cur);
     try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
     cfg.onDragEnd?.();
   };
+  /** 拖过头了：**不提交宽度**，直接收起（并结束这一次拖拽）。 */
+  const collapse = () => {
+    detach();
+    cfg.onCollapse?.();
+    cfg.onDragEnd?.();
+  };
   const move = (ev: PointerEvent) => {
-    cur = Math.max(cfg.min, Math.min(cfg.max, startW + cfg.dir * (ev.clientX - startX)));
+    const raw = startW + cfg.dir * (ev.clientX - startX);
+    // 2026-09-22（owner："要可以通过鼠标拖拽收起展开"）：拖到 collapseAt 以内就收起。
+    // 判据用**未夹的 raw**（夹过之后永远 ≥ min ⇒ 永远收不起来）。
+    if (cfg.onCollapse && raw < (cfg.collapseAt ?? 0)) {
+      collapse();
+      return;
+    }
+    cur = Math.max(cfg.min, Math.min(cfg.max, raw));
     el.style.width = `${cur}px`;
   };
   const up = () => stop();
@@ -89,6 +108,76 @@ function startPanelResize(
   handle.addEventListener("pointermove", move);
   handle.addEventListener("pointerup", up);
   handle.addEventListener("pointercancel", cancel);
+}
+
+/**
+ * 面板**收起时**那条边上的"拖出来"手势（2026-09-22，owner："两侧侧栏要可以通过鼠标拖拽收起展开"）。
+ * 收起后面板不在 DOM 里 ⇒ 没有可抓的 resizer，所以在同一条边上留一条 8px 手柄：
+ *   · 拖动 ⇒ 面板立刻打开，宽度**跟着指针走**（绝对位置，不是增量 —— "拉出来"的手感）；
+ *   · 拖不够（< 阈值）松手 ⇒ 撤回，仍然保持收起（避免误开）；
+ *   · 双击 ⇒ 按默认宽度打开。
+ */
+function startPanelExpand(
+  e: ReactPointerEvent<HTMLDivElement>,
+  cfg: {
+    min: number; max: number; def: number; key: string; side: "left" | "right";
+    commit: (n: number) => void;
+    open: () => void;
+    close: () => void;
+    collapseAt: number;
+    onDragEnd?: () => void;
+  },
+) {
+  e.preventDefault();
+  const host = e.currentTarget.parentElement;
+  const handle = e.currentTarget;
+  if (!host) return;
+  if (e.detail === 2) {
+    cfg.commit(cfg.def);
+    try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
+    cfg.open();
+    return;
+  }
+  const rect = host.getBoundingClientRect();
+  const widthAt = (clientX: number) =>
+    Math.max(cfg.min, Math.min(cfg.max, cfg.side === "left" ? clientX - rect.left : rect.right - clientX));
+  const rawAt = (clientX: number) => (cfg.side === "left" ? clientX - rect.left : rect.right - clientX);
+  let opened = false;
+  let lastX = e.clientX;
+  const detach = () => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", finish);
+    handle.removeEventListener("pointercancel", finish);
+  };
+  const move = (ev: PointerEvent) => {
+    lastX = ev.clientX;
+    const raw = rawAt(ev.clientX);
+    if (raw >= cfg.collapseAt) {
+      if (!opened) {
+        opened = true;
+        cfg.open(); // 一越过阈值就打开；随后 commit 让宽度跟手
+      }
+      cfg.commit(widthAt(ev.clientX));
+    } else if (opened) {
+      // 拖回去又不够宽 ⇒ 再次收起（手势两边对称）
+      opened = false;
+      cfg.close();
+    }
+  };
+  const finish = () => {
+    detach();
+    try { handle.releasePointerCapture?.(e.pointerId); } catch { /* 忽略 */ }
+    if (opened) {
+      const w = widthAt(lastX);
+      cfg.commit(w);
+      try { localStorage.setItem(cfg.key, String(w)); } catch { /* 忽略 */ }
+    }
+    cfg.onDragEnd?.();
+  };
+  try { handle.setPointerCapture?.(e.pointerId); } catch { /* 忽略 */ }
+  handle.addEventListener("pointermove", move);
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
 }
 
 /** 护眼模式开关的本地持久化键。 */
@@ -341,6 +430,18 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       commit: (n) => setOutlineWidth(n),
       onDragStart: () => { isResizingRef.current = true; },
       onDragEnd: () => { isResizingRef.current = false; applyStageSize(); },
+      // 拖到 120 以内 ⇒ 直接收起（"拖拽收起"这一半）
+      collapseAt: 120,
+      onCollapse: () => setOutlineOpen(false),
+    });
+  /** 目录收起时：这条边上的手柄可以把面板"拖出来"（另一半）。 */
+  const onOutlineExpandStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+    startPanelExpand(e, {
+      min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY, side: "left",
+      commit: (n) => setOutlineWidth(n),
+      open: () => setOutlineOpen(true),
+      close: () => setOutlineOpen(false),
+      collapseAt: 120,
     });
 
   // 右侧批注侧栏宽度（同理：向左加宽 dir=-1，持久化）。
@@ -356,6 +457,17 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       commit: (n) => setSidebarWidth(n),
       onDragStart: () => { isResizingRef.current = true; },
       onDragEnd: () => { isResizingRef.current = false; applyStageSize(); },
+      // 拖到 160 以内 ⇒ 直接收起
+      collapseAt: 160,
+      onCollapse: () => setSidebarOpen(false),
+    });
+  const onSidebarExpandStart = (e: ReactPointerEvent<HTMLDivElement>) =>
+    startPanelExpand(e, {
+      min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY, side: "right",
+      commit: (n) => setSidebarWidth(n),
+      open: () => setSidebarOpen(true),
+      close: () => setSidebarOpen(false),
+      collapseAt: 160,
     });
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
@@ -1444,6 +1556,22 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
         <div className="pdf-reader-body">
           {ready && pageCount > 0 ? (
             <div className={`pdf-reader-layout${sidebarOpen ? " has-sidebar" : ""}${outlineOpen ? " has-outline" : ""}`}>
+              {/* 面板收起时的"拖出来"边缘手柄（桌面形态；抽屉形态下有开关按钮，不需要）。
+                  拖动 ⇒ 打开并跟手定宽；拖不够 ⇒ 不动；双击 ⇒ 默认宽度打开。 */}
+              {!overlayViewport && !outlineOpen && (
+                <div
+                  className="pdf-edge-drag is-left"
+                  onPointerDown={onOutlineExpandStart}
+                  title="向右拖动展开目录（双击恢复默认宽度）"
+                />
+              )}
+              {!overlayViewport && !sidebarOpen && (
+                <div
+                  className="pdf-edge-drag is-right"
+                  onPointerDown={onSidebarExpandStart}
+                  title="向左拖动展开批注侧栏（双击恢复默认宽度）"
+                />
+              )}
               {outlineOpen && (
                 <div
                   className="pdf-outline-col"
