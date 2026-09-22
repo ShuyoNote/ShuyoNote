@@ -27,6 +27,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
+import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
 
@@ -598,6 +599,7 @@ async function main() {
     for (const vp of ACTIVE_PHONES) {
       const ctx = await browser.createBrowserContext();
       const page = await ctx.newPage();
+      await pinAppLanguage(page);
       const pageErrors = [];
       page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
       await page.setViewport({ width: vp.width, height: vp.height, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -1552,6 +1554,7 @@ async function main() {
     // ---------- 桌面视口：浮层仍是"锚定浮层"，没被窄屏规则一起改掉 ----------
     const deskCtx = await browser.createBrowserContext();
     const desk = await deskCtx.newPage();
+    await pinAppLanguage(desk);
     await desk.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
     await desk.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
     await sleep(2500);

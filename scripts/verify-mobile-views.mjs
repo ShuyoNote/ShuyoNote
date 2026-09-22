@@ -32,6 +32,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
+import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
 
@@ -1397,6 +1398,7 @@ async function main() {  const executablePath = findChrome();
     for (const vp of ACTIVE_PHONES) {
       const ctx = await browser.createBrowserContext();
       const page = await ctx.newPage();
+      await pinAppLanguage(page);
       const pageErrors = [];
       page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
       await page.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -1704,6 +1706,7 @@ async function main() {  const executablePath = findChrome();
         console.log(`\n【${vp.name} · 属性表（名字列自适应）】`);
         const pctx = await browser.createBrowserContext();
         const ppage = await pctx.newPage();
+        await pinAppLanguage(ppage);
         const perrs = [];
         ppage.on("pageerror", (e) => perrs.push(String(e).slice(0, 160)));
         await ppage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -1842,6 +1845,7 @@ async function main() {  const executablePath = findChrome();
         console.log(`\n【${vp.name} · PDF 阅读器（真 PDF）】`);
         const rctx = await browser.createBrowserContext();
         const rpage = await rctx.newPage();
+        await pinAppLanguage(rpage);
         const rerrs = [];
         rpage.on("pageerror", (e) => rerrs.push(String(e).slice(0, 160)));
         await rpage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -1858,6 +1862,7 @@ async function main() {  const executablePath = findChrome();
     // ---------- 桌面：确认上面那套窄屏规则**没有改掉桌面** ----------
     const deskCtx = await browser.createBrowserContext();
     const desk = await deskCtx.newPage();
+    await pinAppLanguage(desk);
     await desk.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
     await desk.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
     await waitForApp(desk);

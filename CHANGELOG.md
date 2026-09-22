@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **三条移动端门禁在 CI 上假红：runner 的浏览器是 en-US**。`src/i18n` 按 `navigator.language`
+  选语言 ⇒ 活动栏标题渲染成 `Notes` / `Files` / `Board`……，而门禁里到处是**按中文 title 找按钮**
+  （`title^="笔记（编辑器）"` / `"文件管理"`…）⇒ 每个视图都"打不开"，最后抛
+  `No element found for selector: .activity-group .activity-btn[title^="文件管理"]`。开发机浏览器是
+  zh-CN，所以**本地永远复现不出来**。现在三条门禁（9 处页面）在导航前用产品自己的
+  `shuyonote:lang` 键把语言钉成 zh-CN（`scripts/lib/pin-locale.mjs`）——钉的是**测试环境**，
+  不是改产品去迎合断言。验证：本机把 `navigator.language` 改成 en-US 复现出 CI 那串英文标题，
+  钉回 zh-CN 后标题恢复中文（`Notes` → `笔记`、`Files` → `文件管理`）。
+
 ## [1.91.21] - 2026-09-22
 
 > 移动端适配落地 + PDF 阅读器这一轮打磨 + 一键发布到社区
