@@ -93,6 +93,14 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   // 拖拽时鼠标所在的插入位置（用于显示位置指示线；null=不显示）。
   const [overIdx, setOverIdx] = useState<number | null>(null);
+  /**
+   * 窄屏的**行动作面板**（`⋯`）对着哪一条属性打开。
+   *
+   * 存 `attr_id` 而**不是下标**：面板开着的时候用户可能刚点过「上移」，`orderedProps`
+   * 的顺序当场就变了——存下标会指到另一条属性上去（"点了上移，面板里变成别人的名字"）。
+   * 桌面不用它（那三个按钮直接排在行尾）。
+   */
+  const [moreId, setMoreId] = useState<string | null>(null);
   const onDropTo = (toIdx: number) => {
     if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setOverIdx(null); return; }
     const next = [...attrs];
@@ -231,6 +239,16 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
                 </span>
                 <ValueEditor prop={p} onChange={(v) => persist(p.attr_id, v)} />
                 <span className="prop-order-btns">
+                  {/* 窄屏只留这一个 `⋯`（44×44）：三个按钮各自补到 44 会白吃掉 60px 的值列宽度，
+                      而值列在 320px 上本来就只有一百多像素。桌面它 `display:none`（那三个照旧）。 */}
+                  <button
+                    className="prop-more"
+                    title="更多操作"
+                    aria-label="更多操作"
+                    onClick={() => setMoreId(p.attr_id)}
+                  >
+                    ⋯
+                  </button>
                   <button className="prop-order" disabled={i === 0} onClick={() => moveProp(p.attr_id, -1)} title="上移">
                     <svg className="prop-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 15l6-6 6 6" /></svg>
                   </button>
@@ -282,6 +300,43 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
           ) : null}
         </div>
       )}
+      {/* 窄屏的「行尾 ⋯」动作面板：贴底成面板（`position: fixed` ⇒ 不参与
+          `.properties-body` 的网格布局）。桌面这条分支根本不渲染（`.prop-more` 是
+          `display:none`，用户点不到它）。 */}
+      {moreId !== null &&
+        (() => {
+          const idx = orderedProps.findIndex((x) => x.attr_id === moreId);
+          if (idx < 0) return null; // 这条属性刚被移除/换掉了
+          const p = orderedProps[idx];
+          const close = () => setMoreId(null);
+          const act = (fn: () => void) => () => {
+            fn();
+            close();
+          };
+          return (
+            <>
+              <div className="prop-ctx-backdrop" onClick={close} aria-hidden />
+              <div className="prop-ctx is-sheet" role="menu" aria-label={`${p.name} 的属性操作`}>
+                <div className="prop-ctx-title" title={p.name}>{p.name}</div>
+                <div className="prop-ctx-list">
+                  <button className="prop-ctx-item" disabled={idx === 0} onClick={act(() => moveProp(p.attr_id, -1))}>
+                    上移
+                  </button>
+                  <button
+                    className="prop-ctx-item"
+                    disabled={idx === orderedProps.length - 1}
+                    onClick={act(() => moveProp(p.attr_id, 1))}
+                  >
+                    下移
+                  </button>
+                  <button className="prop-ctx-item is-danger" onClick={act(() => void remove(p.attr_id))}>
+                    移除属性
+                  </button>
+                </div>
+              </div>
+            </>
+          );
+        })()}
       </div>
     </div>
   );

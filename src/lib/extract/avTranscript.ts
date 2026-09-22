@@ -27,7 +27,15 @@ import {
 
 const AV_ID = "av.transcript@1";
 
-/** 默认走带标点的那个（更适合直接进正文）。 */
+/** 本线的**默认 ASR 模型**（owner 2026-09-22 拍板：**带标点**，更适合直接进正文）。
+ *
+ *  ⚠️ 抽取器**刻意不在每次调用里传它**（`transcribe(bytes, mime, {})`）—— 这是 2026-09-22 与 macOS 侧
+ *  对完口径后改的（方案 §6.5）：契约里 `opts.model` 是「**本次调用**要用的模型」，优先级是
+ *  **本次调用 > 注入方构造时给的 > 默认**。抽取器每轮都塞一个默认值 ⇒ 把**注入方配置的模型**
+ *  永远盖掉（实测：`localTranscribe(config, { model: "sherpa-onnx-paraformer-zh-small" })` 里的模型不生效
+ *  ⇒ 「用户可配 ASR 模型」这件事根本做不到，而它**不报错**，只是安静地用回默认）。
+ *  ⇒ 默认值由**注入方**采用；本常量是它的**唯一来源**（`src/lib/ai/localTranscribe.ts` import 它），
+ *  所以"默认是哪个模型"仍然只有一处可改。 */
 export const DEFAULT_ASR_MODEL = "funasr-nano";
 
 /** 秒 → `HH:MM:SS`（超过 24h 也照样进位；不四舍五入到分钟，免得两段落到同一 loc）。 */
@@ -64,7 +72,8 @@ export const avTranscriptExtractor: Extractor = {
 
     let raw: Awaited<ReturnType<NonNullable<ExtractDeps["transcribe"]>>>;
     try {
-      raw = await transcribe(input.bytes, input.mime, { model: DEFAULT_ASR_MODEL });
+      // ⚠️ **不传 model**（也刻意不传语言）：把"用哪个模型"留给注入方 —— 见 `DEFAULT_ASR_MODEL` 的注释。
+      raw = await transcribe(input.bytes, input.mime, {});
     } catch (e) {
       return fail(
         AV_ID,

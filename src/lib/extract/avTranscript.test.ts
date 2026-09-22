@@ -61,8 +61,21 @@ describe("av.transcript@1", () => {
     if (!r.ok) throw new Error("unreachable");
     expect(r.segments.map((s) => s.kind)).toEqual(["transcript", "transcript"]);
     expect(r.segments.map((s) => s.loc)).toEqual(["00:00:00", "01:02:03"]);
-    // 假实现被怎么调的也要能被核对（默认模型 + 原件 mime）
-    expect(calls).toEqual([{ mime: "audio/mp4", model: DEFAULT_ASR_MODEL }]);
+    // 假实现被怎么调的也要能被核对（原件 mime ＋ **不指定模型**，理由见下一条）
+    expect(calls).toEqual([{ mime: "audio/mp4", model: undefined }]);
+  });
+
+  it("★ 抽取器**不**在每次调用里强制 `model` —— 否则注入方配置的模型永远不生效", async () => {
+    // 契约里 `opts.model` 是「**本次调用**要用的模型」，优先级：本次调用 > 注入方构造时给的 > 默认。
+    // 抽取器每轮塞一个默认值 ⇒ `localTranscribe(config, { model: … })` 里那个模型被**安静地**盖掉
+    //（不报错，只是用回默认）⇒「用户可配 ASR 模型」做不到。默认值由注入方采用（方案 §6.5）。
+    const { fn, calls } = fakeTranscribe({ text: "随便一段" });
+    await avTranscriptExtractor.extract(inputWith({ transcribe: fn }));
+    expect(calls).toEqual([{ mime: "audio/mp4", model: undefined }]);
+  });
+
+  it("默认模型常量＝`funasr-nano`（owner 拍板；抽取层只**声明**默认，不强制）", () => {
+    expect(DEFAULT_ASR_MODEL).toBe("funasr-nano");
   });
 
   it("没有 segments 时退成**一段**（loc 为空 —— 无定位就别编一个）", async () => {

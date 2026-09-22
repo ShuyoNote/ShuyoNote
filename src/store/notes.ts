@@ -20,7 +20,7 @@ export interface NoteState {
 
   loadPages: () => Promise<void>;
   openPage: (id: string) => Promise<void>;
-  createPage: (parentId: string | null, content?: { content_json: string; content_text: string; title?: string }) => Promise<string | null>;
+  createPage: (parentId: string | null, content?: { content_json: string; content_text: string; title?: string }, opts?: { select?: boolean }) => Promise<string | null>;
   createFolder: (parentId: string | null) => Promise<void>;
   createDatabase: (parentId: string | null, title?: string) => Promise<string | null>;
   deletePage: (id: string) => Promise<void>;
@@ -74,7 +74,7 @@ export const useNotes = create<NoteState>((set, get) => ({
     }
   },
 
-  createPage: async (parentId, content?) => {
+  createPage: async (parentId, content?, opts?) => {
     try {
       const page = await api.createPage({
         parent_id: parentId,
@@ -83,6 +83,13 @@ export const useNotes = create<NoteState>((set, get) => ({
         content_text: content?.content_text,
       });
       await get().loadPages();
+      // ⚠️ `select: false` 是给**后台批量建页**用的（首次进入空间时预置「使用指南」
+      // 那 20 多页）。默认要选中并把视图切回笔记——那是"用户点了新建"的语义；
+      // 但后台预置如果也这么干，就会**一页一页地把用户当前打开的页面顶掉**：
+      // 预置是异步跑的，用户在这几秒里点开/新建的任何页面都会被下一句
+      // `set({ currentId })` 抢走，表现就是"点了没反应"（实测：从模板中心建一个
+      // 数据库页，几秒后当前页变成了「使用指南」里某一页）。
+      if (opts?.select === false) return page.id;
       set({ currentId: page.id, current: page });
       useViewStore.getState().setView("notes");
       return page.id;

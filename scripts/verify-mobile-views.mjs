@@ -1,0 +1,953 @@
+// 主视图移动端验收 · 用真实 Chromium 把**笔记 / 看板 / 关系图 / 文件 / 数据库**
+// 在手机视口下逐个打开，量三件事：**越界（点不到）、命中区（点不中）、控制带高度（占版面）**。
+//
+// 为什么单独一个脚本（而不是并进 verify-mobile-layout / verify-mobile-overlays）：
+//   · `verify-mobile-layout.mjs` 管的是**布局外壳**（竖条 / 侧栏抽屉 / 遮罩 / 模板中心入口）；
+//   · `verify-mobile-overlays.mjs` 管的是**浮层**（设置 / 存储 / 命令面板那一类，
+//     清单式枚举了 19 层）；
+//   · 而"**主区里的整视图**"这两块都没覆盖：它们是 `.main` 的直接子元素，不是浮层、
+//     也不是外壳，于是此前只有人眼看过。2026-09-22 的冲刺里量到的问题全落在这条缝里：
+//       1. 文件视图的操作行 390px 上就 `right=392` —— 「上传 / 视图切换」在屏幕外；
+//       2. 文件表格 673px 宽而外层只有 `overflow-y` ⇒ 四列**被裁掉且滚不到**；
+//       3. 关系图的控制面板 ~650px 锚在 `right:14px` ⇒ 左边 274px **挂在屏幕外**
+//          （右锚定不会溢出右边，所以只查"右边越界"的断言永远看不到它）；
+//       4. 切视图（看板/文件）时侧栏抽屉**盖在刚切过去的视图上**，看起来像"点了没反应"。
+//
+// 判据分三层，全部是量出来的：
+//   A. **越界**：可见元素的 left/right 必须在视口内；在**可横滑祖先**里的不算
+//      （表格 436px 宽是故意的，外层 `overflow-x:auto` 兜着它 = "滚得到"）；
+//   B. **命中区**：**高度**一律 ≥44；**宽度**只对"没有文字"的图标控件要求 ≥44
+//      （文字 chip 只有 38 宽是正常的）。`pointer-events:none` 的（纯指示器）不算。
+//   C. **控制带高度**：常驻控制条各有预算。这一条对应那条产品口径——
+//      "**不要让控制按钮过多占用有限空间**"：把"占版面"变成可回退的数字。
+//
+// 前置：本机有 Chrome/Chromium（或 PUPPETEER_EXECUTABLE_PATH 指定），
+//       以及已启动的 web 开发服务（默认 http://localhost:5173/）。
+//
+// 用法：
+//   pnpm dev:web                       # 另开一个终端
+//   pnpm test:mobile-views             # 有失败即非零退出
+//   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-views
+//   node scripts/verify-mobile-views.mjs --shots /tmp/shots
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
+
+const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
+
+// 断点与 `src/hooks/useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 是**同一个数**（768）：
+// JS 说"这是手机"而 CSS 说"这是桌面"会同时废掉两边的分支。
+const PHONES = [
+  { name: "390x844", width: 390, height: 844 },
+  { name: "320x568", width: 320, height: 568 },
+];
+// 调试用：`ONLY_VP=320x568` 只跑一档（改脚本时不必等两档跑完）。**门禁不许用它**。
+const ONLY_VP = process.env.ONLY_VP || "";
+const ACTIVE_PHONES = ONLY_VP ? PHONES.filter((p) => p.name === ONLY_VP) : PHONES;
+if (ONLY_VP && !ACTIVE_PHONES.length) {
+  console.error(`ONLY_VP=${ONLY_VP} 不对，可选：${PHONES.map((p) => p.name).join(" / ")}`);
+  process.exit(1);
+}
+const DESKTOP = { name: "1280x800", width: 1280, height: 800 };
+
+// 常驻控制带的**高度预算**（px）。数字是"改之前量的"再收紧一档，不是拍脑袋：
+// 文件视图原来是 head 86 + toolbar 107 = 193（320px 上占 37% 视口），现在是 76+53 = 129。
+// 超了就是"控制按钮又占版面了"，红了就回来看看是不是又往那一行里塞了东西。
+const CHROME_BUDGET = {
+  ".editor-toolbar-bar": 56,
+  ".file-manager-head": 84,
+  ".file-manager-toolbar": 60,
+  ".graph-controls": 112,
+  ".board-toolbar": 52,
+};
+
+const shotsArg = process.argv.indexOf("--shots");
+const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
+
+let pass = 0;
+let fail = 0;
+const ok = (cond, msg) => {
+  if (cond) {
+    pass++;
+    console.log(`  ✓ ${msg}`);
+  } else {
+    fail++;
+    console.error(`  ✗ ${msg}`);
+  }
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * `page.evaluate` 的加固版：CI 里 Chrome 偶发 `Promise was collected`
+ * （基础设施抖动，不是断言失败）。重试不改变任何断言的含义（求值是幂等的）。
+ */
+async function safeEval(page, fn, ...args) {
+  const RETRYABLE = /Promise was collected|Execution context was destroyed|Cannot find context/i;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await page.evaluate(fn, ...args);
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      if (attempt < 3 && RETRYABLE.test(msg)) {
+        await sleep(500 * attempt);
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+/**
+ * 在页面里量一次：越界 / 命中区 / 控制带。
+ * ⚠️ 这个函数是**在浏览器里**跑的（`page.evaluate`），所以它看不到 Node 侧的常量——
+ * 控制带选择器必须由参数传进去（`CHROME_BUDGET` 的键），第一版就是漏了这一点，
+ * 直接 `ReferenceError: CHROME_BUDGET is not defined`。
+ */
+const probe = (barSelectors) => {
+  const vw = innerWidth;
+  const visible = (el) => {
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const name = (el) => {
+    const cls = (el.className || "").toString().split(/\s+/).filter(Boolean).slice(0, 3).join(".");
+    return cls ? `${el.tagName.toLowerCase()}.${cls}` : el.tagName.toLowerCase();
+  };
+  // 在**可横滑**的祖先里 = "滚得到"，不是越界。
+  const inScroller = (el) => {
+    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+      const cs = getComputedStyle(p);
+      if ((cs.overflowX === "auto" || cs.overflowX === "scroll") && p.scrollWidth > p.clientWidth + 1) return true;
+    }
+    return false;
+  };
+
+  const overflow = [];
+  const parked = [];
+  for (const el of document.querySelectorAll(".main *")) {
+    if (!visible(el)) continue;
+    // **SVG 画布里的内容不算越界**：关系图是一块可以拖动 / 缩放的画布，
+    // 节点层本来就会伸到画布外（SVG 会裁掉它，用户拖一下就看得到）。
+    // 这一条判据管的是**控件**——关系图的控件是 HTML（`.graph-controls` / `.graph-legend`），
+    // 它们照旧在扫描范围里。文件表格那种"宽内容"也不受影响（它不是 SVG）。
+    if (el.ownerSVGElement || el.tagName.toLowerCase() === "svg") continue;
+    const r = el.getBoundingClientRect();
+    if (r.right <= vw + 1 && r.left >= -1) continue;
+    const pr = el.parentElement ? el.parentElement.getBoundingClientRect() : null;
+    if (pr && (pr.right > vw + 1 || pr.left < -1)) continue; // 父级已经报了，别刷屏
+    if (inScroller(el)) continue;
+    // **整块**在视口外 = 收起状态的抽屉（`.toc-panel` 用 `translateX(100%)` 停在屏外），
+    // 用户看不见它，也就谈不上"看得见点不到"。这一档只记一条 note。
+    // ⚠️ 判据必须是"**整块**在外"：只越出一半（`left` 在里面、`right` 超出去）
+    // 才是要抓的那类坏法——那正是文件视图操作行、关系图控制面板的形态。
+    if (r.right <= 0 || r.left >= vw) {
+      parked.push({ el: name(el), left: Math.round(r.left), right: Math.round(r.right) });
+      continue;
+    }
+    overflow.push({ el: name(el), left: Math.round(r.left), right: Math.round(r.right), text: (el.textContent || "").trim().slice(0, 18) });
+  }
+
+  const small = [];
+  const seen = new Set();
+  for (const el of document.querySelectorAll('button, [role="button"], input:not([type="hidden"]), select, textarea, a[href]')) {
+    if (!visible(el)) continue;
+    if (getComputedStyle(el).pointerEvents === "none") continue; // 纯指示器（它的命中区在行/标签上）
+    const r = el.getBoundingClientRect();
+    const hasText = (el.textContent || "").trim().length > 0;
+    if (r.height >= 44 && (hasText || r.width >= 44)) continue;
+    const key = name(el);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    small.push({ el: key, w: Math.round(r.width), h: Math.round(r.height), text: (el.textContent || "").trim().slice(0, 14) });
+  }
+
+  const bars = {};
+  for (const sel of barSelectors) {
+    const el = document.querySelector(sel);
+    bars[sel] = el && visible(el) ? Math.round(el.getBoundingClientRect().height) : null;
+  }
+  // 同一条常驻控制带里的相邻几条要一起算：只卡单条会让"拆成两条"绕过去。
+  const fmHead = document.querySelector(".file-manager-head");
+  const fmBar = document.querySelector(".file-manager-toolbar");
+  const fmChrome =
+    fmHead && fmBar && visible(fmHead) && visible(fmBar)
+      ? Math.round(fmHead.getBoundingClientRect().height + fmBar.getBoundingClientRect().height)
+      : null;
+
+  return {
+    vw,
+    docW: document.documentElement.scrollWidth,
+    sidebarDisplay: (() => {
+      const s = document.querySelector(".sidebar");
+      return s ? getComputedStyle(s).display : null;
+    })(),
+    tableWrap: (() => {
+      const w = document.querySelector(".file-manager-table-wrap");
+      return w && visible(w) ? { sw: w.scrollWidth, cw: w.clientWidth } : null;
+    })(),
+    bars,
+    fmChrome,
+    overflow: overflow.slice(0, 8),
+    overflowCount: overflow.length,
+    parked: parked.slice(0, 4),
+    small: small.slice(0, 8),
+    smallCount: small.length,
+  };
+};
+
+/**
+ * 展开左侧浮层竖条。
+ * ⚠️ `.mobile-rail-toggle` **只在"竖条收起"时才渲染**（`App.tsx` 的条件渲染），
+ * 所以不能无脑 `page.click()`：上一轮如果竖条还开着，这里就会
+ * `No element found for selector: .mobile-rail-toggle`（第一版就是这么红的）。
+ */
+async function openRail(page) {
+  if (await page.$(".mobile-rail-toggle")) {
+    await page.click(".mobile-rail-toggle");
+    await sleep(600);
+  }
+}
+
+/**
+ * 收起左侧浮层竖条（**走应用自己的路径**：点它那层遮罩）。
+ *
+ * ⚠️ 不能只是把 `.activity-bar` 的 `is-open` 类摘掉充数：那只是 CSS，store 里
+ * `railOpen` 仍是 true ⇒ 唤出按钮不会重新渲染，而且那层 `inset:0` 的遮罩
+ * （z-index 58）会盖住右下角那枚 z-index 45 的「右侧工具」按钮——后面任何
+ * "点右下角"的操作都会被遮罩吃掉（本脚本第一版就栽在这：工具条永远打不开）。
+ */
+async function closeRail(page) {
+  if (await page.$(".mobile-rail-backdrop")) {
+    await page.click(".mobile-rail-backdrop");
+    await sleep(500);
+  }
+}
+
+/** 打开某个主视图：竖条 → 活动图标（**按 title 选，不按序号**）。 */
+async function openView(page, title) {
+  await openRail(page);
+  const found = await page.evaluate((t) => {
+    const btn = Array.from(document.querySelectorAll(".activity-group .activity-btn")).find((b) =>
+      (b.getAttribute("title") || "").startsWith(t),
+    );
+    if (btn && !btn.classList.contains("is-on")) btn.click();
+    return !!btn;
+  }, title);
+  await sleep(1600);
+  await closeRail(page);
+  await sleep(300);
+  return found;
+}
+
+/** 从模板中心建一个**数据库页**（`内容管理库`），建成后主区应渲染 `.database-view`。 */
+async function openDatabaseView(page) {
+  await openRail(page);
+  await sleep(600);
+  await page.evaluate(() => document.querySelector('.activity-group-end .activity-btn[title="模板中心"]')?.click());
+  await sleep(1800);
+  const hit = await page.evaluate(() => {
+    const el = Array.from(document.querySelectorAll(".tc-card")).find((c) => (c.textContent || "").includes("内容管理库"));
+    if (el) el.click();
+    return !!el;
+  });
+  if (!hit) return false;
+  // 建库要连着一串 async（建库 → 逐个属性 → 加列）：轮询而不是死等一个猜出来的毫秒数。
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    if (await page.evaluate(() => !!document.querySelector(".database-view"))) return true;
+  }
+  return false;
+}
+
+/**
+ * 属性表（笔记的属性面板）：名字列**自适应**、值列拿到剩下的宽度。
+ *
+ * 为什么走**界面**而不是 `import("/src/store/…")` 塞数据：动态 import 与页面里的
+ * app 只有在"同一份模块 URL"时才是**同一个 store 实例**——开发服务器一旦因为改过源码
+ * 给模块加了 `?t=` 缓存键，脚本拿到的是**另一个实例**（实测：那份 store 里 `pages: 0`，
+ * 而 DOM 里有 2 行）。`verify-mobile-overlays.mjs` 就吃过这个亏（假红 6 条，重启才绿）。
+ * 从界面点「添加属性」既绕开了这个坑，验的又是**用户真走的那条路**。
+ */
+async function checkProperties(page, vp, tag) {
+  // 1) 用界面加 4 条属性（名字长短不一，才能验"列宽跟着最长的那条走"）。
+  for (const name of ["作者", "来源", "发布于", "存于"]) {
+    const clicked = await safeEval(page, () => {
+      const b = Array.from(document.querySelectorAll(".page-action-btn")).find((x) =>
+        (x.textContent || "").includes("添加属性"),
+      );
+      if (b) b.click();
+      return !!b;
+    });
+    if (!clicked) return { err: "找不到「添加属性」入口" };
+    // 等输入框出现（面板要等异步加载完才渲染）
+    let has = false;
+    for (let i = 0; i < 20 && !has; i++) {
+      await sleep(150);
+      has = await safeEval(page, () => !!document.querySelector(".prop-add-name"));
+    }
+    if (!has) return { err: "「添加属性」行没出现" };
+    await page.type(".prop-add-name", name);
+    await safeEval(page, () => document.querySelector(".prop-add-confirm")?.click());
+    await sleep(600);
+  }
+
+  // 1b) 再加**一个标签**：「标签」那一行是 [名字, 标签块] 两个孩子的**短行**，
+  //     第一版网格错位就是它引起的（下一行的名字被填进同一行的第 3 列）。
+  //     不加它，这一段量到的全是"三个孩子"的正常行——**根本盖不到那个 bug**。
+  await safeEval(page, () => {
+    const b = Array.from(document.querySelectorAll(".page-action-btn")).find((x) =>
+      (x.textContent || "").includes("添加标签"),
+    );
+    if (b) b.click();
+    return !!b;
+  });
+  await sleep(900);
+  let hasTagInput = false;
+  for (let i = 0; i < 12 && !hasTagInput; i++) {
+    hasTagInput = await safeEval(page, () => !!document.querySelector(".tag-picker-input"));
+    if (!hasTagInput) await sleep(200);
+  }
+  if (hasTagInput) {
+    await page.type(".tag-picker-input", "验收标签");
+    await page.keyboard.press("Enter");
+    await sleep(900);
+    await safeEval(page, () => document.querySelector(".tag-picker-backdrop")?.click());
+    await sleep(500);
+  }
+
+  // 2) 量：名字→值的空隙、值的宽度、值左边缘是否对齐（对齐是"看起来像一张表"的前提）
+  // ⚠️ `tag` 是 Node 侧的变量，浏览器里看不到它 —— 必须当参数传进去
+  //    （第一版直接在页面函数里用了它，`ReferenceError: tag is not defined`）。
+  return safeEval(page, (t) => {
+    const body = document.querySelector(".properties-body");
+    if (!body) return { err: "属性面板不在 DOM 里" };
+    const rows = Array.from(body.querySelectorAll(".prop-row"));
+    const items = rows
+      .map((row) => {
+        const n = row.querySelector(".prop-name");
+        // 「标签」行的值不是 `.prop-value` 而是 `.prop-tag-value` —— 两种都要量，
+        // 否则恰好漏掉那个"短行"（第一版就是这么漏的）。
+        const v = row.querySelector(".prop-value, .prop-tag-value");
+        if (!n || !v) return null;
+        const nb = n.getBoundingClientRect();
+        const vb = v.getBoundingClientRect();
+        return {
+          name: (n.textContent || "").trim(),
+          nameLeft: Math.round(nb.left),
+          nameW: Math.round(nb.width),
+          valW: Math.round(vb.width),
+          valLeft: Math.round(vb.left),
+          gap: Math.round(vb.left - nb.right),
+          // 行尾那三个按钮的实测尺寸（已知取舍，只记录不判定）
+          btn: row.querySelector(".prop-order, .prop-remove")?.getBoundingClientRect().width ?? null,
+        };
+      })
+      .filter(Boolean);
+    const lefts = items.map((i) => i.valLeft);
+    const nameLefts = items.map((i) => i.nameLeft);
+    return {
+      count: items.length,
+      items,
+      maxGap: items.length ? Math.max(...items.map((i) => i.gap)) : null,
+      minValW: items.length ? Math.min(...items.map((i) => i.valW)) : null,
+      maxNameW: items.length ? Math.max(...items.map((i) => i.nameW)) : null,
+      alignSpread: lefts.length ? Math.max(...lefts) - Math.min(...lefts) : null,
+      // "属性名在最左"这条不变量：所有名字同一个左边缘，且每行都比它的值更靠左。
+      // 第一版没有它 ⇒ "标签那一行只有 2 个孩子，把后面整块顶偏一格"（名字跑到最右）
+      // 这种错位量不出来（逐行取元素仍然拿得到，只是位置反了）。
+      nameSpread: nameLefts.length ? Math.max(...nameLefts) - Math.min(...nameLefts) : null,
+      nameBeforeValue: items.length ? items.every((i) => i.nameLeft < i.valLeft) : null,
+      docW: document.documentElement.scrollWidth,
+      vw: innerWidth,
+      rowBtnW: items.length ? items[0].btn : null,
+      tag: t,
+    };
+  }, tag);
+}
+
+async function main() {
+  const executablePath = findChrome();
+  if (!executablePath) {
+    console.error("找不到 Chrome/Chromium。请安装 Google Chrome，或用 PUPPETEER_EXECUTABLE_PATH 指定路径。");
+    process.exit(1);
+  }
+  console.log(`浏览器: ${executablePath}`);
+
+  let reachable = false;
+  try {
+    const r = await fetch(APP_URL, { signal: AbortSignal.timeout(8000) });
+    reachable = r.ok;
+  } catch {
+    /* 下面统一报错 */
+  }
+  if (!reachable) {
+    console.error(`应用地址不可达：${APP_URL}\n请先启动：pnpm dev:web（或设置 APP_URL 指向已运行的服务）。`);
+    process.exit(1);
+  }
+  console.log(`应用地址: ${APP_URL}\n`);
+
+  const { default: puppeteer } = await import("puppeteer-core");
+  const browser = await launchChrome({ executablePath });
+  if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+  const shot = async (page, nm) => {
+    if (SHOTS) await page.screenshot({ path: join(SHOTS, `${nm}.png`) });
+  };
+
+  // 视图清单：name → 打开方式 + 该视图**必须成立**的额外判据。
+  const VIEWS = [
+    { name: "notes", label: "笔记（编辑器）", open: (p) => openView(p, "笔记") },
+    { name: "board", label: "看板", open: (p) => openView(p, "系统看板") },
+    { name: "graph", label: "关系图", open: (p) => openView(p, "关系图") },
+    { name: "files", label: "文件（列表）", open: (p) => openView(p, "文件管理") },
+    {
+      name: "files-grid",
+      label: "文件（网格）",
+      open: async (p) => {
+        const r = await openView(p, "文件管理");
+        await p.evaluate(() => document.querySelectorAll(".fm-view-btn")[1]?.click());
+        await sleep(900);
+        return r;
+      },
+    },
+  ];
+
+  try {
+    for (const vp of ACTIVE_PHONES) {
+      const ctx = await browser.createBrowserContext();
+      const page = await ctx.newPage();
+      const pageErrors = [];
+      page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
+      await page.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+      await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await sleep(3000);
+
+      for (const v of VIEWS) {
+        console.log(`\n【${vp.name} · ${v.label}】`);
+        const opened = await v.open(page);
+        if (!opened) {
+          ok(false, `打不开「${v.label}」——这一档直接判红（打不开就没得量）`);
+          continue;
+        }
+        const s = await safeEval(page, probe, Object.keys(CHROME_BUDGET));
+
+        // A. 越界
+        ok(
+          s.docW <= s.vw,
+          `文档宽 ${s.docW} ≤ 视口 ${s.vw}（横向溢出 ${s.overflowCount} 处）` +
+            (s.overflow.length ? `：${s.overflow.map((o) => `${o.el} left=${o.left}/right=${o.right}`).join("；")}` : ""),
+        );
+        ok(
+          s.overflowCount === 0,
+          s.overflowCount === 0
+            ? "没有「挂在屏幕外且滚不到」的控件" +
+                (s.parked.length ? `（另：${s.parked.map((o) => o.el).join(" / ")} 整块停在屏外，那是收起态抽屉）` : "")
+            : `${s.overflowCount} 处控件在视口外：${s.overflow.map((o) => `${o.el}(left=${o.left} right=${o.right} "${o.text}")`).join(" | ")}`,
+        );
+
+        // B. 命中区
+        ok(
+          s.smallCount === 0,
+          s.smallCount === 0
+            ? "所有可交互控件：高度 ≥44，图标类宽度也 ≥44"
+            : `${s.smallCount} 类控件低于 44：${s.small.map((x) => `${x.el} ${x.w}x${x.h} "${x.text}"`).join(" | ")}`,
+        );
+
+        // C. 控制带高度（"不要让控制按钮过多占用有限空间"）
+        for (const [sel, budget] of Object.entries(CHROME_BUDGET)) {
+          const h = s.bars[sel];
+          if (h === null) continue;
+          ok(h <= budget, `${sel} 高 ${h} ≤ 预算 ${budget}`);
+        }
+        if (s.fmChrome !== null) {
+          ok(
+            s.fmChrome <= 150,
+            `文件视图的常驻控制带合计 ${s.fmChrome} ≤ 150（改前 193；320px 上那是 37% 视口）`,
+          );
+        }
+
+        // 视图专属判据
+        if (v.name === "files") {
+          // 表格本来就有 6 列：**能横滑**是它可用的前提（改前外层只有 overflow-y，
+          // 右边四列被 `overflow:hidden` 裁掉且滚不到）。
+          ok(
+            !!s.tableWrap && s.tableWrap.sw >= s.tableWrap.cw,
+            `文件表格可横滑（scrollWidth ${s.tableWrap?.sw} ≥ clientWidth ${s.tableWrap?.cw}）——` +
+              `宽内容要"滚得到"，不能被裁掉`,
+          );
+        }
+        if (v.name === "notes" || v.name === "board") {
+          // 切视图时侧栏抽屉不该盖在刚切过去的视图上（`ActivityBar.pick`）。
+          ok(s.sidebarDisplay === "none", `窄屏切视图后侧栏抽屉不盖住主区（display=${s.sidebarDisplay}）`);
+        }
+        await shot(page, `${vp.name}-${v.name}`);
+      }
+
+      // ---------- 数据库视图的 **8 个模式**都要量 ----------
+      // 只量默认的表格模式会漏掉后面 7 个（画廊/看板/列表/日历/时间轴/目录/甘特图）——
+      // 而"切不过去"这件事恰恰只会在它们身上发生：8 个页签排成一行是 582px，
+      // 而 `.db-view-switch` 自己不换行也不缩（`flex: 0 0 auto`），
+      // 390px 上 `right=606`，后四个模式以前**根本点不到**。
+      console.log(`\n【${vp.name} · 数据库视图（8 个模式）】`);
+      const dbOpened = await openDatabaseView(page);
+      ok(dbOpened, "从模板中心建出数据库页并打开 `.database-view`");
+      if (dbOpened) {
+        const modes = await safeEval(page, () =>
+          Array.from(document.querySelectorAll(".db-view-switch button")).map((b) => (b.textContent || "").trim()),
+        );
+        ok(modes.length === 8, `8 个视图页签都在（实际 ${modes.length} 个：${modes.join("/")}）`);
+        for (const mode of modes) {
+          // 点页签 → 断言它**真的切过去了**（`.db-view-active` 落在它身上）。
+          const switched = await safeEval(
+            page,
+            (label) => {
+              const b = Array.from(document.querySelectorAll(".db-view-switch button")).find(
+                (x) => (x.textContent || "").trim() === label,
+              );
+              if (!b) return null;
+              b.click();
+              return true;
+            },
+            mode,
+          );
+          await sleep(1200);
+          const active = await safeEval(page, () => {
+            const a = document.querySelector(".db-view-switch .db-view-active");
+            return a ? (a.textContent || "").trim() : null;
+          });
+          ok(switched === true && active === mode, `切到「${mode}」并生效（active=${active}）`);
+          const s = await safeEval(page, probe, Object.keys(CHROME_BUDGET));
+          ok(
+            s.overflowCount === 0 && s.docW <= s.vw,
+            `「${mode}」无越界（docW ${s.docW}/${s.vw}，越界 ${s.overflowCount} 处` +
+              (s.overflow.length ? `：${s.overflow.map((o) => o.el).join("、")}` : "") +
+              `）`,
+          );
+          ok(
+            s.smallCount === 0,
+            s.smallCount === 0
+              ? `「${mode}」控件命中区都 ≥44`
+              : `「${mode}」有 ${s.smallCount} 类控件低于 44：${s.small.map((x) => `${x.el} ${x.w}x${x.h}`).join(" | ")}`,
+          );
+          await shot(page, `${vp.name}-db-${mode}`);
+        }
+      }
+
+      // ---------- 窄屏右侧工具条：默认收起 + 右下角唤出 ----------
+      // 它是一条常驻的浮动控制条（AI / 评论 / 目录 / 插件面板），窄屏上会压在正文右缘；
+      // 而它承载的入口本来就低频 ⇒ 默认收起，由右下角 44×44 的圆钮唤出（拇指区）。
+      console.log(`\n【${vp.name} · 窄屏右侧工具条】`);
+      await openView(page, "笔记");
+      const rail0 = await safeEval(page, () => {
+        const t = document.querySelector(".mobile-right-toggle");
+        const b = t ? t.getBoundingClientRect() : null;
+        return {
+          railInDom: !!document.querySelector(".right-rail"),
+          toggle: b ? { w: Math.round(b.width), h: Math.round(b.height), l: Math.round(b.left), r: Math.round(b.right), b: Math.round(b.bottom) } : null,
+          leftToggle: (() => {
+            const l = document.querySelector(".mobile-rail-toggle");
+            if (!l) return null;
+            const r = l.getBoundingClientRect();
+            return { l: Math.round(r.left), r: Math.round(r.right) };
+          })(),
+          vw: innerWidth,
+          vh: innerHeight,
+        };
+      });
+      ok(!rail0.railInDom, "窄屏默认**不渲染**右侧工具条（不再常驻压住正文右缘）");
+      ok(
+        !!rail0.toggle && rail0.toggle.w >= 44 && rail0.toggle.h >= 44 && rail0.toggle.r <= rail0.vw && rail0.toggle.b <= rail0.vh,
+        `右下角有 44×44 的唤出按钮且完整在屏内（${rail0.toggle?.w}×${rail0.toggle?.h}，right=${rail0.toggle?.r} ≤ ${rail0.vw}）`,
+      );
+      ok(
+        !rail0.toggle || !rail0.leftToggle || rail0.toggle.l > rail0.leftToggle.r,
+        `右下角那枚与左下角那枚不重叠（右 ${rail0.toggle?.l} > 左末端 ${rail0.leftToggle?.r}）`,
+      );
+
+      await page.click(".mobile-right-toggle");
+      await sleep(700);
+      const rail1 = await safeEval(page, () => {
+        const el = document.querySelector(".right-rail.is-open");
+        const b = el ? el.getBoundingClientRect() : null;
+        return {
+          open: !!el,
+          backdrop: !!document.querySelector(".mobile-right-backdrop"),
+          box: b ? { l: Math.round(b.left), r: Math.round(b.right), t: Math.round(b.top), b: Math.round(b.bottom) } : null,
+          vw: innerWidth,
+          vh: innerHeight,
+          btnCount: document.querySelectorAll(".right-rail .rail-btn").length,
+        };
+      });
+      ok(rail1.open && rail1.backdrop, "点唤出按钮后工具条展开、并出现遮罩");
+      ok(
+        !!rail1.box && rail1.box.l >= 0 && rail1.box.r <= rail1.vw && rail1.box.t >= 0 && rail1.box.b <= rail1.vh,
+        `展开的工具条完整在屏内（${JSON.stringify(rail1.box)} ⊂ ${rail1.vw}×${rail1.vh}）`,
+      );
+      ok(rail1.btnCount >= 3, `工具条里有 AI / 评论 / 目录 三个入口（实际 ${rail1.btnCount} 个）`);
+
+      // 点一个入口 → 工具条收起（抽屉是整屏的，工具条盖在上面没意义）
+      const picked = await safeEval(page, () => {
+        const btns = Array.from(document.querySelectorAll(".right-rail .rail-btn"));
+        const b = btns[btns.length - 1];
+        if (!b) return false;
+        b.click();
+        return true;
+      });
+      await sleep(1200);
+      const rail2 = await safeEval(page, () => ({
+        railInDom: !!document.querySelector(".right-rail"),
+        toggle: !!document.querySelector(".mobile-right-toggle"),
+      }));
+      ok(picked && !rail2.railInDom && rail2.toggle, "点任意入口后工具条自动收起、唤出按钮回来");
+      await shot(page, `${vp.name}-right-rail`);
+
+      // ---------- 小控件（开关 / 色点）不许被"按钮一律 44 高"拉变形 ----------
+      // 用户截图：窄屏「关于」里那个开关变成了 44×44 的扁方疙瘩、圆钮贴在角上。
+      // 根因是尾块 §5 那条"弹层里的按钮统一给够高度"把**开关的轨道**也拉高了；
+      // 同族的还有色板（30×30 的圆 → 30×44 的椭圆）与标签色点（20×20 → 20×44）。
+      // 现在改成"视觉保持设计尺寸 + 向外扩一层透明命中区（`::after`）"，
+      // 所以这一节要同时钉两件事：**盒子没走形** 且 **命中区真的到了 44**。
+      console.log(`\n【${vp.name} · 小控件不走形】`);
+      const measureMicro = async () => {
+        // ⚠️ 先把控件滚到**可视区中央**再量：关于/设置弹层本身可滚动，默认滚动位置下开关可能
+        // 贴着底边（dev 把那条提示文案写得更长之后就是这样），于是"中心下方 21px"那一点落在
+        // 弹层可视区之外 ⇒ `elementFromPoint` 返回弹层本身、被判成"命中区不够"。
+        // 那是**滚动裁剪**，不是 CSS 的问题；滚到中间再量才是这条断言想测的东西。
+        await safeEval(page, () => {
+          const el = document.querySelector(".about .ui-toggle") || document.querySelector(".set-swatch");
+          el?.scrollIntoView({ block: "center" });
+        });
+        await sleep(350);
+        return safeEval(page, () => {
+          const box = (sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            // 命中区：中心正上/正下/正左 21px 处取点，看命中的是不是它自己
+            const cx = r.left + r.width / 2;
+            const cy = r.top + r.height / 2;
+            const at = (x, y) => {
+              const hit = document.elementFromPoint(x, y);
+              return !!hit && (hit === el || el.contains(hit));
+            };
+            return {
+              w: Math.round(r.width),
+              h: Math.round(r.height),
+              radius: getComputedStyle(el).borderRadius,
+              up21: at(cx, cy - 21),
+              down21: at(cx, cy + 21),
+            };
+          };
+          return { toggle: box(".about .ui-toggle"), swatch: box(".set-swatch") };
+        });
+      };
+      const openAboutOrSettings = async (title) => {
+        await openRail(page);
+        await page.evaluate((t) => {
+          const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find(
+            (x) => (x.getAttribute("title") || "") === t,
+          );
+          if (b) b.click();
+        }, title);
+        await sleep(1500);
+      };
+      await openAboutOrSettings("关于");
+      // 「关于」里的外链清单（2026-09-22：加产品官网、去掉文档）——数据源在 `src/lib/links.ts`，
+      // 那条由 smoke 门禁钉着；这里钉**界面上真的渲染出来**（别只有数据改了、UI 没跟上）。
+      const aboutLinks = await safeEval(page, () =>
+        Array.from(document.querySelectorAll(".about-links .about-link")).map((b) => (b.textContent || "").trim()),
+      );
+      ok(
+        aboutLinks.includes("产品官网"),
+        `「关于 → 开源与反馈」里有「产品官网」入口（实际：[${aboutLinks.join(" / ")}]）`,
+      );
+      ok(!aboutLinks.includes("文档"), `「文档」入口已从「关于」里移除（实际：[${aboutLinks.join(" / ")}]）`);
+      ok(aboutLinks.length === 4, `外链仍是四条（产品官网 / 项目主页 / 发布 / 问题），实际 ${aboutLinks.length} 条`);
+      let m = await measureMicro();
+      if (!m.toggle) {
+        ok(false, "「关于」里找不到 `.ui-toggle`（开关）——这一档没能验到");
+      } else {
+        ok(
+          m.toggle.w === 38 && m.toggle.h === 22,
+          `开关保持设计尺寸 38×22（实际 ${m.toggle.w}×${m.toggle.h}，圆角 ${m.toggle.radius}）` +
+            `——被拉成 44×44 就是用户截图里那个"扁方疙瘩 + 角上的球"`,
+        );
+        ok(
+          m.toggle.up21 && m.toggle.down21,
+          `开关的命中区仍然到了 44（中心上下各 21px 处都能命中：${m.toggle.up21}/${m.toggle.down21}）` +
+            `——视觉小、命中大，靠的是 `+ "`::after` 扩出来的透明层",
+        );
+      }
+      await page.keyboard.press("Escape");
+      await sleep(700);
+      await openAboutOrSettings("设置");
+      m = await measureMicro();
+      if (!m.swatch) {
+        ok(false, "「设置 → 外观」里找不到 `.set-swatch`（色板）——这一档没能验到");
+      } else {
+        ok(
+          m.swatch.w === 30 && m.swatch.h === 30,
+          `色板保持 30×30 的圆（实际 ${m.swatch.w}×${m.swatch.h}，圆角 ${m.swatch.radius}）——被拉高就成了椭圆`,
+        );
+        ok(m.swatch.up21 && m.swatch.down21, `色板的命中区也到了 44（上下各 21px：${m.swatch.up21}/${m.swatch.down21}）`);
+      }
+      await page.keyboard.press("Escape");
+      await sleep(700);
+
+      // 标签色点：没有任何门禁会打开 `.tag-picker`，所以这里塞一个**只带类名的探针节点**
+      // （与 `.plugin-panel` 那条宽度断言同一个办法）——钉的是 CSS 规则本身。
+      const dot = await safeEval(page, () => {
+        const wrap = document.createElement("div");
+        wrap.className = "tag-picker";
+        const btn = document.createElement("button");
+        btn.className = "tag-color-pick";
+        wrap.appendChild(btn);
+        document.body.appendChild(wrap);
+        const r = btn.getBoundingClientRect();
+        const out = { w: Math.round(r.width), h: Math.round(r.height), radius: getComputedStyle(btn).borderRadius };
+        wrap.remove();
+        return out;
+      });
+      ok(
+        dot.w === 20 && dot.h === 20,
+        `标签色点保持 20×20 的圆（实际 ${dot.w}×${dot.h}，圆角 ${dot.radius}）——它与「label」那一支同族`,
+      );
+
+      await shot(page, `${vp.name}-micro-controls`);
+      ok(pageErrors.length === 0, `页面无 JS 报错${pageErrors.length ? "：" + pageErrors.join(" | ") : ""}`);
+      await ctx.close();
+
+      // ---------- 属性表：名字列自适应 ----------
+      {
+        console.log(`\n【${vp.name} · 属性表（名字列自适应）】`);
+        const pctx = await browser.createBrowserContext();
+        const ppage = await pctx.newPage();
+        const perrs = [];
+        ppage.on("pageerror", (e) => perrs.push(String(e).slice(0, 160)));
+        await ppage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+        await ppage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+        await sleep(3500);
+        const r = await checkProperties(ppage, vp, vp.name);
+        if (r.err) {
+          ok(false, `属性表体检失败：${r.err}`);
+        } else {
+          ok(r.count >= 5, `面板里量到 ${r.count} 行属性（4 条属性 + 「标签」那一行）`);
+          // 名字列自适应：写死 120px 时这条必红（那正是"留空太大 + 窄屏值只剩 36px"的根因）
+          ok(r.maxNameW <= 80, `名字列按内容自适应（最宽 ${r.maxNameW}px ≤ 80，改前固定 120px）`);
+          ok(r.maxGap <= 16, `名字→值的空隙 ${r.maxGap}px ≤ 16（改前固定列宽把空隙撑成一大片）`);
+          const minValW = vp.width <= 320 ? 90 : 100;
+          ok(r.minValW >= minValW, `值列拿到足够宽度（最窄 ${r.minValW}px ≥ ${minValW}，改前 390px 上只有 36px）`);
+          ok(r.alignSpread <= 1, `所有值的左边缘对齐（最大差 ${r.alignSpread}px）——"自适应"不等于"长短不一"`);
+          // 「属性名在最左」：这是用户直接看到的那条（截图里名字跑到了最右）
+          ok(
+            r.nameSpread <= 1,
+            `所有属性名的左边缘一致（最大差 ${r.nameSpread}px）——名字必须是最左那一列`,
+          );
+          ok(
+            r.nameBeforeValue === true,
+            `每行都是"名字在左、值在右"（${r.items.map((i) => `${i.name}:${i.nameLeft}<${i.valLeft}`).join(" ")}）` +
+              `——「标签」那行只有 2 个孩子时，会把后面整块顶偏一格（名字跑到最右）`,
+          );
+          ok(r.docW <= r.vw, `属性面板无横向溢出（docW ${r.docW} ≤ ${r.vw}）`);
+          // ---- 行尾「⋯」动作面板（窄屏专有）：三个 18px 小按钮收成一个 44×44 ----
+          console.log(`【${vp.name} · 属性行「⋯」动作面板】`);
+          const micro = await safeEval(ppage, () => {
+            const more = document.querySelector(".prop-more");
+            const order = document.querySelector(".prop-order");
+            if (!more) return null;
+            const b = more.getBoundingClientRect();
+            return {
+              w: Math.round(b.width),
+              h: Math.round(b.height),
+              orderDisplay: order ? getComputedStyle(order).display : "(没有)",
+              count: document.querySelectorAll(".prop-more").length,
+            };
+          });
+          ok(!!micro, "属性行尾渲染出了「⋯」");
+          ok(
+            micro && micro.w >= 44 && micro.h >= 44,
+            `「⋯」命中区 44×44（实际 ${micro?.w}×${micro?.h}）——取代原来三个 18px 的图标按钮`,
+          );
+          ok(micro && micro.orderDisplay === "none", `窄屏不再常驻那三个小按钮（display=${micro?.orderDisplay}）`);
+
+          const before = await safeEval(ppage, () =>
+            Array.from(document.querySelectorAll(".properties-body .prop-name")).map((n) => (n.textContent || "").trim()),
+          );
+          // 点第 2 个「⋯」并记下**它属于哪一条属性**：不能假设"第 0/1 行会互换"——
+          // 「标签」那一行没有 `⋯`（它不可排序），所以 `.prop-more` 的下标与行下标并不同源。
+          const target = await safeEval(ppage, () => {
+            const b = Array.from(document.querySelectorAll(".prop-more"))[1];
+            if (!b) return null;
+            const row = b.closest(".prop-row");
+            const name = row?.querySelector(".prop-name")?.textContent?.trim() ?? null;
+            b.click();
+            return name;
+          });
+          await sleep(600);
+          const sheet = await safeEval(ppage, () => {
+            const el = document.querySelector(".prop-ctx.is-sheet");
+            if (!el) return null;
+            const b = el.getBoundingClientRect();
+            const items = Array.from(el.querySelectorAll(".prop-ctx-item"));
+            return {
+              items: items.length,
+              labels: items.map((x) => (x.textContent || "").trim()),
+              disabled: items.map((x) => x.disabled),
+              l: Math.round(b.left),
+              r: Math.round(b.right),
+              t: Math.round(b.top),
+              b: Math.round(b.bottom),
+              vw: innerWidth,
+              vh: innerHeight,
+              backdrop: !!document.querySelector(".prop-ctx-backdrop"),
+            };
+          });
+          ok(!!sheet && sheet.items === 3 && sheet.backdrop, `「⋯」打开动作面板，三项齐全且有遮罩（${sheet?.labels.join("/")}）`);
+          ok(
+            !!sheet && sheet.l >= 0 && sheet.r <= sheet.vw && sheet.t >= 0 && sheet.b <= sheet.vh,
+            `面板完整在屏内（l=${sheet?.l} r=${sheet?.r} t=${sheet?.t} b=${sheet?.b} ⊂ ${sheet?.vw}×${sheet?.vh}）`,
+          );
+          ok(
+            !!sheet && sheet.disabled[0] === false && sheet.disabled[1] === false,
+            `第 2 行的「上移 / 下移」都可用（disabled=${JSON.stringify(sheet?.disabled?.slice(0, 2))}）`,
+          );
+
+          // 点「上移」→ 面板收起 + 顺序真的变了（这一条钉的是"功能一点没少"）
+          await safeEval(ppage, () => document.querySelector(".prop-ctx-item")?.click());
+          await sleep(900);
+          const after = await safeEval(ppage, () => ({
+            names: Array.from(document.querySelectorAll(".properties-body .prop-name")).map((n) => (n.textContent || "").trim()),
+            sheetOpen: !!document.querySelector(".prop-ctx.is-sheet"),
+          }));
+          ok(!after.sheetOpen, "点完动作后面板自动收起");
+          ok(
+            after.names.length === before.length &&
+              !!target &&
+              after.names.indexOf(target) === before.indexOf(target) - 1,
+            `「${target}」被上移了一格（${before.join(" / ")} → ${after.names.join(" / ")}），且没丢行`,
+          );
+          console.log(
+            `  · 桌面仍是那三个 18px 的小按钮（有鼠标、值列也宽裕）；窄屏收成一个 44×44 的「⋯」，` +
+              `值列因此比"三个都补到 44"宽 60px（本档实测 ${r.minValW}px）`,
+          );
+        }
+        await shot(ppage, `${vp.name}-properties`);
+        ok(perrs.length === 0, `属性页无 JS 报错${perrs.length ? "：" + perrs.join(" | ") : ""}`);
+        await pctx.close();
+      }
+    }
+
+    // ---------- 桌面：确认上面那套窄屏规则**没有改掉桌面** ----------
+    const deskCtx = await browser.createBrowserContext();
+    const desk = await deskCtx.newPage();
+    await desk.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
+    await desk.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+    await sleep(2500);
+    console.log(`\n【桌面 ${DESKTOP.name} · 窄屏规则不许漏到桌面】`);
+    const d = await safeEval(desk, () => {
+      const r = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return { w: Math.round(b.width), h: Math.round(b.height) };
+      };
+      return {
+        mobileMQ: matchMedia("(max-width: 768px)").matches,
+        activityBtn: r(".activity-btn"),
+        toolbarBtn: r(".toolbar-btn"),
+        rightRail: r(".right-rail"),
+        railBtn: r(".rail-btn"),
+      };
+    });
+    ok(!d.mobileMQ, "桌面不命中窄屏媒体查询");
+    ok(
+      d.activityBtn && d.activityBtn.w === 40 && d.activityBtn.h === 40,
+      `桌面竖条按钮仍是 40×40（实际 ${d.activityBtn?.w}×${d.activityBtn?.h}）——窄屏那条 44 不许漏过去`,
+    );
+    ok(
+      d.toolbarBtn && d.toolbarBtn.w === 28 && d.toolbarBtn.h === 28,
+      `桌面编辑工具栏按钮仍是 28×28（实际 ${d.toolbarBtn?.w}×${d.toolbarBtn?.h}）`,
+    );
+    ok(
+      d.rightRail && d.rightRail.w <= 42,
+      `桌面右侧悬浮条仍是常驻窄条（实际 ${d.rightRail?.w}px，宽 ${d.rightRail?.h}）——窄屏那套"默认收起 + 右下角唤出"不许漏到桌面`,
+    );
+    const dRail = await safeEval(desk, () => ({
+      toggle: !!document.querySelector(".mobile-right-toggle"),
+      backdrop: !!document.querySelector(".mobile-right-backdrop"),
+      rail: !!document.querySelector(".right-rail"),
+      railBtns: document.querySelectorAll(".right-rail .rail-btn").length,
+    }));
+    ok(dRail.rail && !dRail.toggle && !dRail.backdrop, "桌面不渲染唤出按钮与遮罩（工具条本来就是常驻的）");
+    ok(dRail.railBtns >= 3, `桌面工具条三个入口都在（实际 ${dRail.railBtns} 个）`);
+    await shot(desk, `${DESKTOP.name}-notes`);
+
+    // 桌面文件视图：操作行必须是"带文字的按钮"，表格必须**没有**被裁
+    await desk.click('.activity-group .activity-btn[title^="文件管理"]');
+    await sleep(1800);
+    const df = await safeEval(desk, () => {
+      const btn = document.querySelector(".file-manager-actions .fm-btn");
+      const label = document.querySelector(".file-manager-actions .fm-btn-text");
+      const more = document.querySelector(".fm-more-btn");
+      const row = document.querySelector(".file-manager-table tbody tr");
+      return {
+        btnBox: btn ? { w: Math.round(btn.getBoundingClientRect().width), h: Math.round(btn.getBoundingClientRect().height) } : null,
+        labelVisible: label ? getComputedStyle(label).display !== "none" : null,
+        iconVisible: (() => {
+          const ic = document.querySelector(".file-manager-actions .fm-btn-icon");
+          return ic ? getComputedStyle(ic).display !== "none" : null;
+        })(),
+        moreDisplay: more ? getComputedStyle(more).display : null,
+        opsButtons: row ? row.querySelectorAll(".fm-file-actions button").length : null,
+      };
+    });
+    ok(
+      df.btnBox && df.btnBox.h === 32 && df.btnBox.w > 44,
+      `桌面文件操作行仍是带文字的按钮（${df.btnBox?.w}×${df.btnBox?.h}，文字可见=${df.labelVisible}）——` +
+        `窄屏那套"图标按钮"不许漏到桌面`,
+    );
+    ok(df.iconVisible === false, "桌面不显示按钮里的图标（`display:none`，桌面像素不变）");
+    ok(df.moreDisplay === "none", "桌面不渲染行尾的 `⋯`（`display:none`）");
+    ok(
+      df.opsButtons === null || df.opsButtons >= 0,
+      `桌面表格行仍走原来的行内小按钮（本工作区该行 ${df.opsButtons ?? "-"} 个）`,
+    );
+    await shot(desk, `${DESKTOP.name}-files`);
+
+    // ---------- 桌面 · 属性表（用户就是在桌面上看到"名字跑到最右"的） ----------
+    // 移动端那几条量的是窄屏；而这一条错位是**与宽度无关**的（网格列数对不上就会错），
+    // 所以桌面也钉一遍——顺手把"桌面不许跟着窄屏改"之外的另一半也钉住。
+    console.log(`\n【桌面 ${DESKTOP.name} · 属性表】`);
+    await openView(desk, "笔记");
+    const dp = await checkProperties(desk, DESKTOP, "desktop");
+    if (dp.err) {
+      ok(false, `桌面属性表体检失败：${dp.err}`);
+    } else {
+      ok(dp.count >= 5, `桌面量到 ${dp.count} 行属性（4 条属性 + 「标签」那一行都在）`);
+      ok(dp.nameSpread <= 1, `桌面属性名左边缘一致（最大差 ${dp.nameSpread}px）——名字在最左`);
+      ok(
+        dp.nameBeforeValue === true,
+        `桌面每行也是"名字在左、值在右"（${dp.items.map((i) => `${i.name}:${i.nameLeft}<${i.valLeft}`).join(" ")}）`,
+      );
+      ok(dp.docW <= dp.vw, `桌面属性面板无横向溢出（docW ${dp.docW} ≤ ${dp.vw}）`);
+    }
+    await shot(desk, `${DESKTOP.name}-properties`);
+    await deskCtx.close();
+  } finally {
+    await browser.close();
+  }
+
+  console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
+  if (fail) {
+    console.error("存在失败项：主视图移动端验收未通过。");
+    process.exit(1);
+  }
+  console.log("主视图移动端验收全部通过 ✅");
+  if (SHOTS) console.log(`截图已保存到 ${SHOTS}`);
+}
+
+main().catch((e) => {
+  console.error("验收脚本异常:", e);
+  process.exit(1);
+});

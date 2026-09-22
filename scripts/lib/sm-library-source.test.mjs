@@ -173,18 +173,23 @@ describe("sm-library-source：静态前缀守卫（单一口味要自包含）",
 
   // ★ 这一条走**磁盘版**（`requireStaticCrypto`）—— 上面那条只喂纯函数，抓不住"只看 lib/、漏 lib64"的变异
   //   （实测：把 lib64 那支删掉，纯函数那条照样绿 ⇒ 必须有一条走目录扫描的）。
+  //   ⚠️ 它**名字里就写着"磁盘版"，第一版却喂了假 FS** —— 而假 FS 按字面 `/lib64` 匹配，生产用的是
+  //   `node:path.join`（Windows 上是 `\`）⇒ 在 Windows 上永远匹配不上（**假红**，2026-09-22 实测）。
+  //   ⇒ 真的走磁盘：目录用 `join` 建，判据自动跨平台，也比假 FS 更接近真前缀。
   it("磁盘版必须**同时看** lib/ 与 lib64/（只扫 lib/ 会漏掉真实前缀）", () => {
-    const exists = (p) => p.endsWith("/lib") || p.endsWith("/lib64");
-    const readdir = (p) => (p.endsWith("/lib64") ? ["libcrypto.so.3"] : ["libcrypto.a"]);
-    const v = requireStaticCrypto("/fake/prefix", { readdir, exists });
+    const dir = mkdtempSync(join(tmpdir(), "sm-static-"));
+    made.push(dir);
+    mkdirSync(join(dir, "lib"), { recursive: true });
+    mkdirSync(join(dir, "lib64"), { recursive: true });
+    writeFileSync(join(dir, "lib", "libcrypto.a"), "");
+    writeFileSync(join(dir, "lib64", "libcrypto.so.3"), "");
+    const v = requireStaticCrypto(dir);
     expect(v.ok).toBe(false);
     expect(v.why).toMatch(/libcrypto\.so\.3/);
-    // 反向：lib64 也放 .a ⇒ 通过
-    const ok = requireStaticCrypto("/fake/prefix", {
-      readdir: (p) => (p.endsWith("/lib64") ? ["libcrypto.a"] : ["libcrypto.a"]),
-      exists,
-    });
-    expect(ok.ok).toBe(true);
+    // 反向：lib64 里也放 .a ⇒ 通过
+    rmSync(join(dir, "lib64", "libcrypto.so.3"));
+    writeFileSync(join(dir, "lib64", "libcrypto.a"), "");
+    expect(requireStaticCrypto(dir).ok).toBe(true);
   });
 
 // ★ Windows 那一支（2026-09-22，Windows 侧点名要）：OpenSSL 的 **Windows 安装版是动态的**，
@@ -210,9 +215,16 @@ describe("sm-library-source：静态前缀守卫（Windows 的那一支）", () 
   });
 
   it("★ 磁盘版必须扫 `bin/`（只扫 lib/ 会漏掉 Windows 那个坑）", () => {
-    const exists = (p) => p.endsWith("/lib") || p.endsWith("/bin");
-    const readdir = (p) => (p.endsWith("/bin") ? ["libcrypto-3-x64.dll"] : ["libcrypto.lib"]);
-    const v = requireStaticCrypto("/fake/win", { readdir, exists });
+    // 同上：这条是"磁盘版"，就走真磁盘（假 FS 的字面 `/bin` 在 Windows 上匹配不上 ⇒ 假红）。
+    // 本机全局 `OPENSSL_DIR=C:\Program Files\OpenSSL-Win64` 正长这样：
+    // `lib\libcrypto.lib`（导入库）＋ `bin\libcrypto-3-x64.dll`。
+    const dir = mkdtempSync(join(tmpdir(), "sm-static-win-"));
+    made.push(dir);
+    mkdirSync(join(dir, "lib"), { recursive: true });
+    mkdirSync(join(dir, "bin"), { recursive: true });
+    writeFileSync(join(dir, "lib", "libcrypto.lib"), "");
+    writeFileSync(join(dir, "bin", "libcrypto-3-x64.dll"), "");
+    const v = requireStaticCrypto(dir);
     expect(v.ok).toBe(false);
     expect(v.why).toMatch(/libcrypto-3-x64\.dll/);
   });
