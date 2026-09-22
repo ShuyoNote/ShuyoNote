@@ -91,6 +91,30 @@ export function legPlan({ opensslDir, expectPatch, tauriDir, withTests, withBuil
       env: {},
       optional: false,
     });
+    // ★ ⑤ **接线那一格**（2026-09-22 补，被自己的事故逼出来的）：④ 只证明"库认识国密标签"，
+    //   而"**应用真的有在用它**"是另一件事（§3.5：能力≠行为）。今天我就是在这里翻车的：
+    //   跑 `cargo test` 时**漏了 `--features sm-library`** ⇒ 接线那段 `#[cfg]` 被编掉 ⇒
+    //   我拿着"没接线的应用"的读数当接线读数（两次读数互相矛盾，查了半天）。
+    //   ⇒ 这一格把**特性开关 ＋ OPENSSL_DIR ＋ security:: 整组**钉在一起：
+    //     带 `--features sm-library` 时 `set_cipher_key` 才会走国密接线，也才会暴露"错口令被误诊"
+    //     "备份目标端参数不跟着走"这类**只有接线后才会出现**的失败。
+    //   ⚠️ `env.OPENSSL_DIR` 必须给：`build.rs` 对 `sm-library` 是 fail-fast（不给就当场失败）。
+    legs.push({
+      id: "gm-wiring",
+      label: "运行期第四格：应用接线（--features sm-library 下的 security:: 整组）",
+      cmd: "cargo",
+      args: [
+        "test",
+        "--lib",
+        "--features",
+        "sm-library",
+        "security::",
+        "--manifest-path",
+        join(tauriDir, "Cargo.toml"),
+      ],
+      env: { OPENSSL_DIR: opensslDir },
+      optional: false,
+    });
     legs.push({
       id: "sm-tests",
       label: "应用层国密单测（--features sm-crypto）",
@@ -212,9 +236,9 @@ function main() {
     `\ngm-version-selfcheck: ✅ ${results.length} 段全过（commit ${head}）—— 编进去的是 Tongsuo/OpenSSL、${patchClause}、` +
       "且两套 SM4 实现互解得开。⚠️ 边界：它证明的是**算法链路**（应用层 ＋ 对拍）" +
       (has("--with-tests")
-        ? "**＋ 运行期接线真的生效**（第 ④ 段 `gm_provider`，只在 `--with-tests` 时跑）"
-        : "；**运行期那一格没跑** —— 要看它加 `--with-tests`（第 ④ 段 `gm_provider::`）") +
-      "；**『页加密确为 SM4』仍属 P3**，那是另一件事（需要 provider 落地）。",
+        ? "**＋ 库级真的生效 ＋ 应用真的在用它**（第 ④ 段 `gm_provider::` 与第 ⑤ 段 `security::`，只在 `--with-tests` 时跑）"
+        : "；**运行期那两格没跑** —— 要看它们加 `--with-tests`（第 ④ 段 `gm_provider::`、第 ⑤ 段接线 `security:: --features sm-library`）") +
+      "；`page_cipher=` 由第 ① 段打印（SM4 页还是 AES 页，拿产物标记说话）。",
   );
 }
 

@@ -26,11 +26,30 @@ import { MermaidNode } from "./nodes/MermaidNode";
 import { PageLinkNode } from "./nodes/PageLinkNode";
 import { FormulaNode } from "./nodes/FormulaNode";
 import { InlineFormulaNode } from "./nodes/InlineFormulaNode";
+import { BlockParagraphNode } from "./nodes/BlockParagraphNode";
+import { BlockHeadingNode } from "./nodes/BlockHeadingNode";
+import { BlockQuoteNode } from "./nodes/BlockQuoteNode";
+import { BlockListNode } from "./nodes/BlockListNode";
+import { BlockCodeNode } from "./nodes/BlockCodeNode";
+import { BlockHorizontalRuleNode } from "./nodes/BlockHorizontalRuleNode";
+import { BlockTableNode } from "./nodes/BlockTableNode";
 
 // All node types this editor can deserialize. A serialized node whose `type` is
 // outside this set (e.g. a stray/unregistered type) is dropped by lexicalStateValid
 // so it can't crash the editor or spam the console with "type ... not found".
+//
+// ⚠️ `BlockParagraphNode`（模型 type `shuyo-paragraph`）**只服务于内存模型**：
+// 块 ID 要成为**声明的节点属性**，CRDT 绑定才会同步它。**它绝不该出现在落盘/同步的 JSON 里** ——
+// 旧版本客户端会把未注册类型**整块丢掉**（`lexicalStateValid` 的 sanitize），那等于段落全丢。
+// ⇒ 写出去之前一律经 `blockIdentity.toLegacyDoc()`。背景：`docs/plans/2026-09-18-crdt-block-id-ownership.md`。
 export const EDITOR_NODES: Klass<LexicalNode>[] = [
+  BlockParagraphNode,
+  BlockHeadingNode,
+  BlockQuoteNode,
+  BlockListNode,
+  BlockCodeNode,
+  BlockHorizontalRuleNode,
+  BlockTableNode,
   HeadingNode,
   QuoteNode,
   ListNode,

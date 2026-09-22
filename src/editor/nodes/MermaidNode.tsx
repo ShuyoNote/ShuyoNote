@@ -15,11 +15,14 @@ import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
 import { detectMermaidSyntax, mermaidSyntaxOptions } from "../../lib/mermaid";
 import { useResolvedTheme } from "../../store/theme";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 
 export type SerializedMermaidNode = Spread<
   {
     src: string;
     syntax?: string;
+    blockId?: string;
+    blockRev?: number;
   },
   SerializedLexicalNode
 >;
@@ -31,19 +34,49 @@ const mermaidThemeRef = { current: "" };
 export class MermaidNode extends DecoratorNode<JSX.Element> {
   __src: string;
   __syntax: string;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "mermaid";
   }
 
   static clone(node: MermaidNode): MermaidNode {
-    return new MermaidNode(node.__src, node.__syntax, node.__key);
+    return new MermaidNode(node.__src, node.__syntax, node.__blockId, node.__key, node.__blockRev);
   }
 
-  constructor(src = "", syntax = "", key?: NodeKey) {
+  constructor(src = "", syntax = "", blockId = "", key?: NodeKey, blockRev: number | null = null) {
     super(key);
     this.__src = src;
     this.__syntax = syntax || detectMermaidSyntax(src);
+    this.__blockId = blockId;
+    this.__blockRev = blockRev;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as MermaidNode).__blockId;
+    this.__blockRev = (prevNode as MermaidNode).__blockRev;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -88,17 +121,28 @@ export class MermaidNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedMermaidNode {
-    return {
-      ...super.exportJSON(),
-      type: "mermaid",
-      version: 1,
-      src: this.__src,
-      syntax: this.__syntax,
-    };
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "mermaid",
+          version: 1,
+          src: this.__src,
+          syntax: this.__syntax,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
+    );
   }
 
   static importJSON(serializedNode: SerializedMermaidNode): MermaidNode {
-    return $createMermaidNode(serializedNode.src ?? "", serializedNode.syntax ?? "");
+    return $createMermaidNode(
+      serializedNode.src ?? "",
+      serializedNode.syntax ?? "",
+      blockIdOf(serializedNode),
+      blockRevOf(serializedNode),
+    );
   }
 }
 
@@ -249,8 +293,8 @@ function MermaidView({
   );
 }
 
-export function $createMermaidNode(src = "", syntax = ""): MermaidNode {
-  return $applyNodeReplacement(new MermaidNode(src, syntax));
+export function $createMermaidNode(src = "", syntax = "", blockId = "", blockRev: number | null = null): MermaidNode {
+  return $applyNodeReplacement(new MermaidNode(src, syntax, blockId, undefined, blockRev));
 }
 
 export function $isMermaidNode(node: LexicalNode | null | undefined): node is MermaidNode {

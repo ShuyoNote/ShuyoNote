@@ -70,6 +70,14 @@ const roMod = await import(pathToFileURL(roOutfile).href + "?v=" + Date.now());
 // `../api` import with a throwing proxy so the WRITE tools (create_page /
 // append_block) can be exercised without touching the real platform, since they
 // never actually call the backend — they only build DraftResults.
+//
+// ⚠️ 这个包**只装纯逻辑**：不许出现需要"编辑器节点表"的模块。
+// 事故记录（2026-09-18）：`contentTextOf` 曾住 `ai/lexical`，而那层为了"与编辑器语义统一"
+// 委托了 `lib/contentText`（要 `editor/config`）⇒ 本包被拖进整个编辑器节点图
+// （excalidraw CSS / katex 字体 / sql.js wasm），esbuild 在 node 侧直接打不出来，
+// `smoke-web` 门禁红。现在那类函数住在 `lib/ai/lexicalContent`，由编辑器侧调用方 import。
+// 判据：`pageJsonFromText` 仍在这里被验（它把 content_text 按构造成本算），
+// 而"它算出来的正文文本 == 编辑器语义派生"由 `src/lib/ai/lexicalContent.test.ts` 的配对判据钉住。
 const aiOutfile = join(tmpDir, "aicore.mjs");
 await esbuild.build({
   stdin: {
@@ -77,7 +85,7 @@ await esbuild.build({
       'export { extractToolCalls } from "./src/lib/ai/llm";\n' +
       'export { createOllamaTransport, testOllamaConnection } from "./src/lib/ai/llm";\n' +
       'export { createOpenAICompatTransport, testOpenAICompatConnection, createProviderTransport, testProviderConnection } from "./src/lib/ai/llm";\n' +
-      'export { appendBlocksToJson, contentTextOf, cleanDraftText } from "./src/lib/ai/lexical";\n' +
+      'export { appendBlocksToJson, pageJsonFromText, cleanDraftText } from "./src/lib/ai/lexical";\n' +
       'export { findUnlinkedMentions, suggestPageLinks } from "./src/lib/mention";\n' +
       'export { charBigrams, semanticScore, semanticRank, rankRelevantPages } from "./src/lib/searchSemantic";\n' +
       'export { normalizeVector, cosineSim, vectorRank, embedUrl, embedBody, parseEmbedding, readEmbedConfig, embeddingText, embedHash, EMBED_TEXT_CAP } from "./src/lib/semanticEmbed";\n' +
@@ -976,8 +984,17 @@ assert("workspace name persists across instances", wsAgain !== "");
   assert("appendBlocksToJson adds 2 paragraph nodes", parsed.root.children.length === 3, `len=${parsed.root.children.length}`);
   const last2 = parsed.root.children[2];
   assert("appendBlocksToJson assigns blockId", last2.blockId === "blk-2" && last2.children[0].text === "b");
-  // contentTextOf flattens text.
-  assert("contentTextOf extracts text", aiMod.contentTextOf(next) === "hi a b");
+  // pageJsonFromText: 纯文本 → 合法 root + 正文文本（**按构造成本算**：块间是 `\n\n`）。
+  // 原先这里断言的是 `contentTextOf(next) === "hi a b"` —— 那正是**空格拼接的老算法**
+  // （也就是被"派生合一"干掉的那条漂移）。它现在住 `lib/ai/lexicalContent`（要编辑器节点表），
+  // 不在这个纯逻辑包里；两套算法的**配对**由 `src/lib/ai/lexicalContent.test.ts` 钉住。
+  const pj = aiMod.pageJsonFromText("a\nb", () => `blk-${++n}`);
+  assert("pageJsonFromText 正文文本 = 归一化行按块分隔拼接", pj.content_text === "a\n\nb", pj.content_text);
+  assert("pageJsonFromText 造出的 root 可解析", JSON.parse(pj.content_json).root.children.length === 2);
+  assert("pageJsonFromText 空内容 ⇒ 空 root + 空文本", (() => {
+    const e = aiMod.pageJsonFromText("   \n ", () => "x");
+    return e.content_text === "" && JSON.parse(e.content_json).root.children.length === 0;
+  })());
   // cleanDraftText strips markdown + sentence dividers for the inline writer.
   assert("cleanDraftText strips markdown + dividers", aiMod.cleanDraftText("**《路灯下的伞》**\n---\n正文内容") === "《路灯下的伞》\n正文内容", aiMod.cleanDraftText("**《路灯下的伞》**\n---\n正文内容"));
   // M19.1 findUnlinkedMentions: bare titles are found, already-[[ ]] linked ones skipped.

@@ -1111,8 +1111,14 @@ html[data-platform="win"] .app-body {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 14px;
-  /* 同步弹窗是用户主动调出的浮层——高于文件预览(600)/内容，避免被预览遮挡。 */
-  z-index: 1500;
+  /* 同步弹窗是用户主动调出的浮层：**高于文件预览(600)**，但必须**低于确认/输入对话框(1400)**。
+     ⚠️ 2026-09-22 真机验收修：这里曾是魔法数 1500（理由是"别被文件预览挡住"，而 700 就已经
+     高于预览 600）。1500 > `.confirm-overlay` 的 1400 ⇒ 从同步面板里发起的「新建空间 /
+     重命名 / 设备密钥」输入框会画在面板**背后**，用户看到的是"点了按钮没反应"
+     （就是 F3「P0.1 按钮没反应」的真身）。
+     浮层该用的值就是 --z-popover(700)：700 > 预览(600)，且 < 模态(1000) / 右键(1100) /
+     确认框(1400) / 命令面板(1500) / toast(1600)——见 :root 里的分层规范。 */
+  z-index: var(--z-popover);
 }
 .sync-title {
   font-size: 13px;
@@ -21795,6 +21801,15 @@ body.is-plugin-panel-open .main {
     padding-bottom: 14px;
     z-index: 1600;
   }
+  /* 窄屏弹层里**只有同步面板**要回到 --z-popover(700)：它是唯一会从自身内容里发起
+     输入框/确认框的弹层（见 App.css 里 `.sync-popover` 的注释），而上面那一整排
+     1600（搜索/回收站/空间切换/备份/新建菜单/版本历史）是"弹层压弹层"的既有做法，
+     它们的父级可能是全屏模态（如设置里的备份下拉），压低会反过来被模态吃掉。
+     同步面板不在这类模态里，所以只压低它自己。 */
+  .sync-popover,
+  .sync-popover.is-sync {
+    z-index: var(--z-popover);
+  }
   /* 内部本来就有滚动条的，别叠两层滚动。 */
   .search-popover .search-results,
   .trash-popover .trash-list,
@@ -22104,5 +22119,96 @@ body.is-plugin-panel-open .main {
   .pdf-annot-actions {
     flex-shrink: 0;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   阶段 1 · **冲突提示条**（`components/ConflictBanner.tsx`）
+
+   裁定 (iii)："判不了就**不静默选边**" —— 同一块被两台设备同时改过时，这条提示出现在页面顶部，
+   逐条给出「本机那一版 / 远端那一版」两个按钮（留本地 / 用远端）。**没有冲突时它整条不渲染**。
+
+   为什么用 `.main` 的直接子元素：它属于"页面级状态"，与 `.editor-toolbar-bar` 同一层。
+   窄屏下**只换行、不裁**（`flex-wrap`）—— 44px 触摸目标那条纪律同样适用于这两个按钮。
+   --------------------------------------------------------------------------- */
+.conflict-banner {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font-size: 13px;
+}
+.conflict-banner-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.conflict-banner-title {
+  font-weight: 600;
+}
+.conflict-banner-hint {
+  color: var(--text-dim);
+}
+.conflict-banner-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.conflict-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.conflict-item-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+.conflict-side {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conflict-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.conflict-btn {
+  min-height: 44px;
+  min-width: 72px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.conflict-btn:hover {
+  background: var(--hover);
+}
+.conflict-btn-primary {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+/* 阶段 1 · **冲突块角标**（`editor/blockConflictBadge.ts`）：提示条里那几条对应的块，在正文里也看得出来。
+   只用一条内阴影，不动块的背景 —— 正文里的背景属于主题/引用/代码块，改它会把格式吃掉。 */
+.block-conflict {
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 

@@ -11,6 +11,7 @@ import {
 } from "lexical";
 import { platform } from "../../lib/platform";
 import { usePdfReader } from "../../store/pdfReader";
+import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
 import type { JSX } from "react";
 
 export type SerializedAttachmentRefNode = Spread<
@@ -21,6 +22,8 @@ export type SerializedAttachmentRefNode = Spread<
     mime: string;
     hash: string;
     path: string;
+    blockId?: string;
+    blockRev?: number;
   },
   SerializedLexicalNode
 >;
@@ -79,6 +82,10 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
   __mime: string;
   __hash: string;
   __path: string;
+  /** 块身份（只有**顶层块**才有）。 */
+  __blockId: string;
+  /** 声明式块版本（Lamport）；`null` = 没有/不认识这个字段。 */
+  __blockRev: number | null;
 
   static getType(): string {
     return "attachment-ref";
@@ -92,7 +99,9 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
       node.__mime,
       node.__hash,
       node.__path,
+      node.__blockId,
       node.__key,
+      node.__blockRev,
     );
   }
 
@@ -103,7 +112,9 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
     mime = "",
     hash = "",
     path = "",
+    blockId = "",
     key?: NodeKey,
+    blockRev: number | null = null,
   ) {
     super(key);
     this.__attachmentId = attachmentId;
@@ -112,6 +123,32 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
     this.__mime = mime;
     this.__hash = hash;
     this.__path = path;
+    this.__blockId = blockId;
+    this.__blockRev = blockRev;
+  }
+
+  afterCloneFrom(prevNode: this): void {
+    super.afterCloneFrom(prevNode);
+    this.__blockId = (prevNode as AttachmentRefNode).__blockId;
+    this.__blockRev = (prevNode as AttachmentRefNode).__blockRev;
+  }
+
+  getBlockId(): string {
+    return this.__blockId;
+  }
+
+  setBlockId(blockId: string): void {
+    const writable = this.getWritable();
+    writable.__blockId = blockId;
+  }
+
+  getBlockRev(): number | null {
+    return this.__blockRev;
+  }
+
+  setBlockRev(blockRev: number | null): void {
+    const writable = this.getWritable();
+    writable.__blockRev = blockRev;
   }
 
   $config() {
@@ -181,17 +218,23 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
   }
 
   exportJSON(): SerializedAttachmentRefNode {
-    return {
-      ...super.exportJSON(),
-      type: "attachment-ref",
-      version: 1,
-      attachmentId: this.__attachmentId,
-      name: this.__name,
-      size: this.__size,
-      mime: this.__mime,
-      hash: this.__hash,
-      path: this.__path,
-    };
+    return withBlockRev(
+      withBlockId(
+        {
+          ...super.exportJSON(),
+          type: "attachment-ref",
+          version: 1,
+          attachmentId: this.__attachmentId,
+          name: this.__name,
+          size: this.__size,
+          mime: this.__mime,
+          hash: this.__hash,
+          path: this.__path,
+        },
+        this.__blockId,
+      ),
+      this.__blockRev,
+    );
   }
 
   static importJSON(serializedNode: SerializedAttachmentRefNode): AttachmentRefNode {
@@ -202,6 +245,8 @@ export class AttachmentRefNode extends DecoratorNode<JSX.Element> {
       serializedNode.mime ?? "",
       serializedNode.hash ?? "",
       serializedNode.path ?? "",
+      blockIdOf(serializedNode),
+      blockRevOf(serializedNode),
     );
   }
 
@@ -217,9 +262,11 @@ export function $createAttachmentRefNode(
   mime = "",
   hash = "",
   path = "",
+  blockId?: string,
+  blockRev: number | null = null,
 ): AttachmentRefNode {
   return $applyNodeReplacement(
-    new AttachmentRefNode(attachmentId, name, size, mime, hash, path),
+    new AttachmentRefNode(attachmentId, name, size, mime, hash, path, blockId ?? "", undefined, blockRev),
   );
 }
 

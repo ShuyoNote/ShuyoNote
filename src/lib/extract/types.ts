@@ -3,7 +3,8 @@
 // 冻结日期 2026-09-17。**分家开工前以 §15 为准，不要各自发挥**；要改契约先改那一节再改这里。
 //
 // 一句话：抽取器只做「格式 → 带定位的段」，不做分块（分块是 P2 的职责）；失败返回结构化
-// 错误码而不抛异常；网络只经注入的 deps.vision，不自建客户端（守「默认不出网」的红线）。
+// 错误码而不抛异常；网络只经注入的 `deps`（`vision` / `transcribe`），不自建客户端
+//（守「默认不出网」的红线）。
 
 /** 抽取器的算力档位 —— 调度器据此排队错峰（6GB 显存放不下「文本＋嵌入＋VLM」三件常驻）。 */
 export type ExtractCost = "cpu" | "gpu";
@@ -87,6 +88,29 @@ export interface ExtractDeps {
     pageIndex: number,
     scale: number,
   ) => Promise<RasterizedPage>;
+  /** 语音转写（音视频 → 文本，可带时间戳的分段）。**由平台层注入**。
+   *  未注入时，`av.transcript@1` 必须返回 `provider_error`，不许抛（§15.3-7）。
+   *
+   *  **为什么不蹭 `vision`**（2026-09-22 裁定，写下来免得后人"顺手复用"）：
+   *   1. 形状不同：`vision(prompt, image, mime)` 是「提问 + 图」；转写是「音频 + 模型 + 语言」——
+   *      硬塞进去会让**假实现**（判据依赖的那层）与平台接线同时变糊；
+   *   2. 契约本来就是**一个能力一个键**（`vision` / `rasterize` 各自带"没注入就 `provider_error`"的规则），
+   *      加 `transcribe` 是照既有形状**填空**，不是发明新规矩；
+   *   3. **`hasPunct` 不放进返回值** —— 由归一函数从文本判定。两个本地 ASR
+   *      （带标点的 `funasr-nano` / 裸文本的 `sherpa-onnx-paraformer-zh-small`）在同一段音频上
+   *      **内容逐字一致、只差标点** ⇒ 标点不能成为下游的隐式依赖。
+   *
+   *  ⚠️ **实装在平台层**（唯一入口 `attachmentDeps(...)`，端点 `POST 127.0.0.1:8080/v1/audio/transcriptions`）——
+   *  本层只出契约与抽取器；`src/lib/platform/**` 那一格由平台侧认领
+   *  （见 `docs/plans/2026-09-22-asr-wiring-plan.md` §2.6）。 */
+  transcribe?: (
+    audio: Uint8Array,
+    mime: string,
+    opts: { model?: string; language?: string },
+  ) => Promise<{
+    text: string;
+    segments?: readonly { start: number; end: number; text: string }[];
+  }>;
 }
 
 export interface ExtractInput {

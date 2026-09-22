@@ -17,6 +17,8 @@ import { SlashMenuPlugin } from "../editor/plugins/SlashMenuPlugin";
 import { InsertShortcutPlugin } from "../editor/plugins/InsertShortcutPlugin";
 import { BlockInsertPlugin } from "../editor/plugins/BlockInsertPlugin";
 import { lexicalStateValid } from "../lib/lexicalValidate";
+// 块身份那一层：内存模型（`shuyo-paragraph` + 声明块 ID）⇄ 落盘/同步形态（`paragraph` + 注入 `blockId`）
+import { newBlockId, toLegacyDoc, toModelDoc } from "../lib/blockIdentity";
 
 // A single column editor (Route B): one NESTED Lexical editor sharing the page
 // editor's nodes/theme, hosting its own EditorState JSON. `onChange` is called with
@@ -53,10 +55,12 @@ export const ColumnEditor = memo(function ColumnEditor({
 
   // Sanitize + validate a saved column doc; fall back to an empty paragraph so a
   // malformed column never crashes the editor.
+  // 校验完再转**内存模型**（`paragraph` → `shuyo-paragraph`，块 ID 成为声明属性）；
+  // 写回去时一律经 `toLegacyDoc()` —— 模型 type 不许落到落盘/同步的 JSON 上。
   const safeJson = (() => {
     if (!column) return null;
     const v = lexicalStateValid(column, ALLOWED_NODE_TYPES);
-    return v;
+    return v ? toModelDoc(v, newBlockId) : v;
   })();
 
   // Create the nested editor once; pass the outer editor as `parentEditor` so
@@ -92,7 +96,7 @@ export const ColumnEditor = memo(function ColumnEditor({
     if (column !== null && column !== lastEmitted.current) {
       try {
         const parsed = lexicalStateValid(column, ALLOWED_NODE_TYPES);
-        if (parsed) editor.setEditorState(editor.parseEditorState(parsed));
+        if (parsed) editor.setEditorState(editor.parseEditorState(toModelDoc(parsed, newBlockId)));
       } catch (err) {
         setErr(err instanceof Error ? err.message : String(err));
       }
@@ -101,7 +105,8 @@ export const ColumnEditor = memo(function ColumnEditor({
   }, [column, editor]);
 
   const onChange = (_state: EditorState, ed: LexicalEditor) => {
-    const json = JSON.stringify(ed.getEditorState().toJSON());
+    // 写出去之前还原成老形态（模型 type 不许进父编辑器/落盘/同步）。
+    const json = toLegacyDoc(JSON.stringify(ed.getEditorState().toJSON()));
     lastEmitted.current = json;
     onSerialize?.(columnKey, json);
   };

@@ -14,6 +14,11 @@
 //   node scripts/sm-library-build.mjs --print-source-sha256                  # 只打印"将要编译的那份源码"的哈希
 //   node scripts/sm-library-build.mjs --revert                                # 把补丁从**全机共享的** registry 源码上撤回
 //   node scripts/sm-library-build.mjs ... --no-apply                          # 不打补丁（**读数会标成 patch=absent**）
+//   node scripts/sm-library-build.mjs ... --prepare                           # **只做准备**：打补丁 ＋ 清两个 crate 的产物，
+//                                                                             #   不构建（CI 里接着自己跑 `tauri build --features sm-library`）
+//   node scripts/sm-library-build.mjs ... --print-env                         # 打印 `OPENSSL_DIR/…LIB_DIR/…INCLUDE_DIR`（给 CI 写 $GITHUB_ENV）
+//   node scripts/sm-library-build.mjs ... --require-static                    # **要求 OPENSSL_DIR 里只有静态 libcrypto**
+//                                                                             #   （单一口味要自包含：有 .dylib/.so 就当场失败）
 //
 // 补丁（`patches/0001-sqlcipher-sm3-provider.patch`）由本脚本**幂等地**应用到 cargo 将要编译的那份源码上，
 // 且**在算 `--print-source-sha256` 之前**：build.rs 记进产物标记的哈希，必须是"已打补丁那份"的哈希。
@@ -38,6 +43,7 @@ const has = (name) => argv.includes(name);
 //    在 Node 18 上它是 `undefined` ⇒ `resolve(undefined, "..")` 直接抛
 //    `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string`（2026-09-19 在 WSL 的 Node 18 上实测到）。
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
 const manifest = join(root, "src-tauri", "Cargo.toml");
 const opensslDir = argValue("--openssl-dir") || process.env.OPENSSL_DIR || "";
 
@@ -62,7 +68,9 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 //   命令行与外部消费方（macOS 侧的门禁）都 import 它 —— 免得出现"第三份实现各自漂移"。
 //   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
-import { ensurePatch, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
+import { requireStaticCrypto } from "./lib/sm-library-source.mjs";
+import { cleanCommands, envFileLines, opensslEnvFor, shouldBuild } from "./lib/sm-library-plan.mjs";
+import { ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
 const NO_APPLY = argv.includes("--no-apply");
 
@@ -101,9 +109,15 @@ if (has("--revert")) {
 //   already（源码里已有标记）⇒ 不重复打；再打一次 `git apply` 会失败，那不是错误而是重复动作；
 //   applied ⇒ 打上了，且 `ensurePatch` 内部**复扫过标记**（退出码 0 ≠ 文件里有那行）；
 //   absent（--no-apply）⇒ **不是错误**，但下面的读数必须被读成"未打补丁的源码"。
+//
+// ★ `--check` 必须**只读**（2026-09-22 修）：它的帮助文字写的是"只做构建前的核对，不构建"，
+//   但它原先照样走到这里 `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**
+//   （我自己踩到：跑完 `--check` 想确认源码是不是干净的，结果它把源码变成了打过补丁的样子，
+//   于是"我刚还原过"这句话当场变成假的）。核对就该不改状态 —— 要改状态请显式跑构建或 `--revert`。
+const CHECK_ONLY = has("--check");
 let patchState;
 try {
-  patchState = ensurePatch(srcDir, patchFileOf(root), { apply: !NO_APPLY });
+  patchState = ensurePatch(srcDir, patchFileOf(root), patchApplyDecision({ noApply: NO_APPLY, checkOnly: CHECK_ONLY }));
 } catch (e) {
   fail(e.message);
 }
@@ -158,27 +172,64 @@ console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${srcDir}，src
 
 // ---- 3) 命令（固定两步：先 clean 再 build）----
 const env = { ...process.env, OPENSSL_DIR: opensslDir };
-const cleanCmd = ["cargo", ["clean", "-p", "libsqlite3-sys", "--manifest-path", manifest]];
-// ⚠️ 第二条 clean 是为了**读数可信**，不是洁癖：本 crate 的构建脚本不重跑时，cargo 会把**上一次的
-//    `cargo:warning`**（也就是"补丁已应用"那一行，含旧 `src_sha256`）从缓存里**重放**出来 ——
-//    于是一份没打补丁的构建也会打出"补丁已应用"。要拿构建期那一格的可信读数，先清本 crate 的脚本产物。
-const cleanSelfCmd = ["cargo", ["clean", "-p", "shuyonote", "--manifest-path", manifest]];
+// 清产物：**两个 profile 都要清**（dev ＋ release）。为什么 —— 见 `lib/sm-library-plan.mjs` 头注
+// 里那次真实事故：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用**，
+// 于是"按发版链构建"出来的包表面全对（补丁标记也在）而**库级根本不是国密**。
+// 第二条（清本 crate）是为了**读数可信**：它的构建脚本不重跑时，cargo 会把上一次的 `cargo:warning`
+// （"补丁已应用"那一行，含旧 `src_sha256`）从缓存里**重放**出来 ⇒ 没打补丁的构建也会显示"已应用"。
+const cleanSteps = cleanCommands({ manifest });
 const buildCmd = ["cargo", ["build", "--features", "sm-library", "--manifest-path", manifest]];
 if (has("--print")) {
-  console.log(`  ${cleanCmd[0]} ${cleanCmd[1].join(" ")}`);
-  console.log(`  ${cleanSelfCmd[0]} ${cleanSelfCmd[1].join(" ")}`);
-  console.log(`  OPENSSL_DIR=${opensslDir} ${buildCmd[0]} ${buildCmd[1].join(" ")}`);
+  for (const st of cleanSteps) console.log(`  ${st.cmd} ${st.args.join(" ")}`);
+  if (shouldBuild({ prepare: has("--prepare") })) {
+    console.log(`  OPENSSL_DIR=${opensslDir} ${buildCmd[0]} ${buildCmd[1].join(" ")}`);
+  } else {
+    console.log("  （--prepare：只清产物 ＋ 打补丁，**不构建**；构建请用带 `--features sm-library` 的 tauri build）");
+  }
   process.exit(0);
 }
-if (has("--check")) {
-  console.log(`sm-library-build: --check 通过（环境与补丁都满足，未构建；补丁状态=${patchState.status}）`);
+// ---- 0.7) `--print-env`：把 `OPENSSL_DIR` 翻译成**两个 crate 都认**的键值行 ----
+// 为什么要它：`release.yml` 的"准备"与"构建"是**两个 step** ⇒ 变量必须经 `$GITHUB_ENV` 传下去；
+// 而 `openssl-sys` 只看 `<OPENSSL_DIR>/lib|lib64`（Ubuntu 的开发文件在多架构目录里）⇒ 只导 OPENSSL_DIR 会炸。
+// 判据在 `scripts/lib/sm-library-plan.test.mjs`（`opensslEnvFor` / `envFileLines`）。
+if (has("--print-env")) {
+  const envForSsl = opensslEnvFor(opensslDir);
+  if (!envForSsl) {
+    fail(`找不到 OpenSSL 开发文件（${opensslDir || "(没给 --openssl-dir)"}）⇒ 无法给出可链接的环境变量`);
+  }
+  console.log(envFileLines(envForSsl));
   process.exit(0);
 }
 
+if (CHECK_ONLY) {
+  // ⚠️ 这里说的 `patchState.status` 是**核对时**的状态，不是"我打上了"：
+  //   already ⇒ 源码本来就有补丁；absent ⇒ 源码干净（**本次没有打** —— 要打就去掉 --check）。
+  console.log(
+    `sm-library-build: --check 通过（环境与补丁都满足，未构建；补丁状态=${patchState.status}` +
+      `${patchState.status === "absent" ? "＝源码干净，**本次没有打补丁**（--check 只读）" : ""}）`,
+  );
+  process.exit(0);
+}
+
+// ---- 0.9) `--require-static`：**单一口味要自包含**（2026-09-22 owner 拍板后加）----
+// 为什么需要它：`libsqlite3-sys` 打的是 `rustc-link-lib=dylib=crypto`（见它的 build.rs），
+// 而**链接器在没有 .dylib/.so 时会去取 .a** ⇒ "给一个只有 libcrypto.a 的前缀" 就等于静态链接。
+// 反过来说：前缀里**只要有共享库**，产物就会依赖一个**外部** libcrypto（路径还是构建机的）
+// ⇒ 到用户机器上要么找不到、要么用到另一份 OpenSSL —— 那正是"看起来是国密、其实取决于环境"的形态。
+// 所以发布链上必须显式要求静态；本地开发可以用共享前缀（更快）。
+if (has("--require-static")) {
+  const r = requireStaticCrypto(opensslDir);
+  if (!r.ok) fail(r.why);
+  console.log(`sm-library-build: 静态前缀 ✓（${r.found}）`);
+}
+
 for (const [cmd, args, label] of [
-  [cleanCmd[0], cleanCmd[1], "① 清掉 libsqlite3-sys 的产物（否则改了后端/补丁也不会重编）"],
-  [cleanSelfCmd[0], cleanSelfCmd[1], "①.5 清掉本 crate 的构建脚本产物（否则 cargo **重放**上一次的 cargo:warning）"],
-  [buildCmd[0], buildCmd[1], "② 带 OPENSSL_DIR 构建 sm-library"],
+  ...cleanSteps.map((st) => [st.cmd, st.args, `① ${st.label}`]),
+  // ★ `--prepare`：CI 里**只做准备**（补丁 ＋ 清产物），构建交给带 `--features sm-library` 的
+  //   `tauri build` 自己做 —— 免得同一份代码编两遍（一遍 cargo build、一遍 tauri build）。
+  //   注意：`tauri build` **必须**带 `--features sm-library`，否则接线那段 `#[cfg]` 会被编掉，
+  //   产物看起来正常、库级却不是国密（我们 2026-09-22 在 `cargo test` 上踩过同一个坑）。
+  ...(shouldBuild({ prepare: has("--prepare") }) ? [[buildCmd[0], buildCmd[1], "② 带 OPENSSL_DIR 构建 sm-library"]] : []),
 ]) {
   console.log(`sm-library-build: ${label}`);
   try {
@@ -187,4 +238,47 @@ for (const [cmd, args, label] of [
     process.exit(typeof e.status === "number" ? e.status : 1);
   }
 }
-console.log("sm-library-build: ✅ 完成 —— 事后核对：node scripts/sm-library-build.mjs --check ／ check-crypto-backend ／ cargo test --lib gm_provider::");
+console.log(
+  "sm-library-build: ✅ 完成 —— 事后核对：node scripts/sm-library-build.mjs --check ／ check-crypto-backend ／ " +
+    "cargo test --features sm-library --lib gm_provider::",
+);
+
+// ★ 收尾横幅（2026-09-20；**刻意不自动 revert**，见下面那条"为什么"）
+//
+// 决策记录：AMD 提的两个选项里，我原先选了「甲（默认自动 revert）」，**实测后改判成「乙+（保留 ＋ 大横幅）」**：
+//   · 「自动 revert」看着更安全，但它会制造一个**新的**静默态：`build.rs` 对源码目录打了
+//     `rerun-if-changed` ⇒ 还原源码后，下一次 `cargo …` 会让**构建脚本重跑**（重建的仍是上次那份
+//     libsqlite3-sys 产物，而标记会按**已还原的源码**重新打印）⇒ "源码是 AES、产物是 SM4"，
+//     而**你下一次读到的读数描述的是源码、不是产物** —— 这正是我们反复吃的"绿得不是它声称的那件事"。
+//   · 保留补丁则"源码与产物一致"，代价是**同机其它 OpenSSL 构建会跟着变成 SM4 页**（Apple 的 CC 构建不受影响，
+//     因为那个 `#define` 在 `#ifdef SQLCIPHER_CRYPTO_OPENSSL` 里）⇒ 用**横幅**把这个后果说响，而不是用
+//     一个更隐蔽的状态去掩盖它。
+//   要回到原版：`node scripts/sm-library-build.mjs --revert`（幂等，且会复扫标记）。
+{
+  const hits = (readFileSync(join(srcDir, "sqlite3.c"), "utf8").match(/SM3/g) || []).length;
+  let pageCipher = "unknown";
+  for (const line of readFileSync(join(srcDir, "sqlite3.c"), "utf8").split("\n")) {
+    const t = line.trim();
+    if (t.startsWith("#define OPENSSL_CIPHER")) {
+      pageCipher = t.includes("EVP_sm4_cbc") ? "sm4" : t.includes("EVP_aes_256_cbc") ? "aes" : "other";
+      break;
+    }
+  }
+  const lines = [
+    "",
+    "════════════════════════════════════════════════════════════════════════",
+    `⚠️ 补丁**留在**共享 registry 源码上（SM3 命中=${hits}，**page_cipher=${pageCipher}**）`,
+    "   · 这是**刻意**的：源码与产物必须一致，否则下一次 cargo 命令会让标记描述源码、而你测的是产物",
+    "   · 后果（2026-09-20 起，补丁 v3 去掉了 #ifdef）：**同机后续任何 OpenSSL/Tongsuo 构建都是 SM4 页**",
+    "     （Apple 的 CommonCrypto 构建不受影响）；跑默认门禁或别的项目前请先：",
+    "       node scripts/sm-library-build.mjs --revert",
+    "   · 本构建的页加密也会写进产物标记（`page_cipher=`）—— 用 check-crypto-backend 读，别靠回忆",
+    "   · ★ 读**应用层**的国密读数必须带 `--features sm-library`：胶水只把它加在 `cargo build` 上，",
+    "     裸 `cargo test` 会把接线那段 `#[cfg(feature = \"sm-library\")]` **编掉** ⇒ 你会以为在测接线构建，",
+    "     其实在测一个「没接线」的应用（我 2026-09-22 踩过：探针读数自相矛盾，根因就是这个）",
+    "       例：cargo test --features sm-library --lib security::",
+    "════════════════════════════════════════════════════════════════════════",
+    "",
+  ];
+  console.error(lines.join("\n"));
+}

@@ -59,6 +59,39 @@ export function plistSchemes(xml) {
 /** 打包产物里 PDFium 该在的位置（**与 Rust 侧 `pdfium_native::library_dir()` 的搜索顺序一致**）。 */
 export const PDFIUM_IN_BUNDLE = "Contents/Frameworks/libpdfium.dylib";
 
+/**
+ * ★ 纯函数：**这份签名能不能拿去公证**（2026-09-22 加，Windows 侧建议）。
+ *
+ * 为什么要有它：脚本"没报错"与"Apple 会接受"之间有一段**盲区** ——
+ * `codesign --verify --deep --strict` 在缺**安全时间戳**或缺 **hardened runtime** 时**照样是绿的**
+ * （这两条正是 `scripts/sign-macos-app.mjs` 第一版的两处缺陷）。⇒ 把盲区变成两条**本机可读**的读数。
+ *
+ * ⚠️ **只对真实身份判**：ad-hoc 盖不了时间戳、也不需要 runtime ⇒ 对 ad-hoc 判这两条本机就天天红。
+ * 判据是 `codesign -d --verbose=4` 的输出里有没有 `Authority=`（真实开发者身份）。
+ */
+export function notarizationPrereqs(details) {
+  const text = String(details ?? "");
+  if (!text.trim()) return { judged: false, problems: [] };
+  const adhoc = /Signature=adhoc|flags=[^\n]*adhoc/i.test(text);
+  const realIdentity = /Authority=Developer ID Application/i.test(text);
+  if (adhoc && !realIdentity) return { judged: false, problems: [] }; // ad-hoc：这两条不适用
+  if (!realIdentity) return { judged: false, problems: [] };
+  const problems = [];
+  if (!/Timestamp=/.test(text)) {
+    problems.push(
+      "签名里**没有安全时间戳**（`codesign -d --verbose=4` 输出里找不到 `Timestamp=`）⇒ notarytool 会拒" +
+        "（`A timestamp was expected but was not found`）。修法：真实身份那一支必须用 `--timestamp`（不能是 `--timestamp=none`）",
+    );
+  }
+  if (!/flags=[^\n]*runtime/i.test(text)) {
+    problems.push(
+      "签名里**没有 hardened runtime**（找不到 `flags=…(runtime)`）⇒ 公证要求它。修法：`--options runtime`" +
+        "（并确认该带的 entitlements 没漏 —— 否则会从「签不过」变成「签过了起不来」）",
+    );
+  }
+  return { judged: true, problems };
+}
+
 export function checkBundle({
   appExists,
   isDirectory,
@@ -69,6 +102,16 @@ export function checkBundle({
   pdfiumBundleSha = null,
   pdfiumVendorSha = null,
   pdfiumVendorExists = true,
+  // ★ 2026-09-22（P4 签名那一格）：签名**会改变字节**（写入 CodeDirectory），所以"包内 == vendor"
+  //   只对**未签名**的产物成立。签名后的产物由这两个读数接手：
+  //     · libSigned：`codesign --verify --strict` 在这份 lib 上通过；
+  //     · appSigned：`codesign --verify --deep --strict` 在整个 .app 上通过。
+  //   两个都为真 ⇒ 允许哈希不同（差异应当只是签名），并把这件事**打印出来**（别静默放过）。
+  pdfiumLibSigned = false,
+  appDeepStrictPassed = false,
+  pdfiumSignedSha = null,
+  // ★ 「已签名」那一支额外判"能不能公证"（ad-hoc 由纯函数自己排除）
+  signingDetails = null,
 }) {
   const problems = [];
   if (!appExists) {
@@ -114,10 +157,24 @@ export function checkBundle({
         `（映射见 src-tauri/tauri.macos.conf.json；库由 node scripts/fetch-pdfium.mjs 现拉）`,
     );
   } else if (pdfiumVendorSha && pdfiumBundleSha !== pdfiumVendorSha) {
-    problems.push(
-      `包里的 libpdfium.dylib 与 vendor 源文件 sha256 不一致（${pdfiumBundleSha.slice(0, 12)}… vs ${pdfiumVendorSha.slice(0, 12)}…）` +
-        `—— 拷错了，或拿到的是上一次构建的产物`,
-    );
+    // 差异有两种可能，判据必须分开说（否则"签名后正常"会被报成"拷错了"）：
+    //   ① **已签名**：lib 自身签名有效 ＋ 整个 .app `--deep --strict` 通过 ⇒ 接受（并打印）；
+    //   ② 其余 ⇒ 就是拷错/旧产物。
+    //   ⚠️ 内容一致性的**可证明时刻在签名之前**（`scripts/sign-macos-app.mjs` 在那里断言"包内 == vendor"）；
+    //     签完之后只能证明"签名有效"，证明不了"码没换" —— 这条边界写在这里，别把它读成更强的保证。
+    if (pdfiumLibSigned && appDeepStrictPassed) {
+      // 接受：交给下面的打印说明（这里不 push problem）
+      // ★ 但"签名有效"≠"能公证"：安全时间戳与 hardened runtime 缺一，Apple 那一关会拒（本机两处读数）
+      const notary = notarizationPrereqs(signingDetails);
+      for (const p of notary.problems) problems.push(p);
+    } else {
+      problems.push(
+        `包里的 libpdfium.dylib 与 vendor 源文件 sha256 不一致（${pdfiumBundleSha.slice(0, 12)}… vs ${pdfiumVendorSha.slice(0, 12)}…）` +
+          `，而它**也不是一份签名有效的包**（lib 签名=${pdfiumLibSigned ? "有效" : "无效/无"}、` +
+          `.app \`--deep --strict\`=${appDeepStrictPassed ? "通过" : "不通过"}）` +
+          `—— 要么是拷错了/旧产物，要么是签名没做全（先跑 node scripts/sign-macos-app.mjs）`,
+      );
+    }
   }
 
   if (!dmgNames || dmgNames.length === 0) {
@@ -169,6 +226,29 @@ function main() {
   const pdfiumBundleSha = sha256(bundleLib);
   const pdfiumVendorSha = sha256(vendorLib);
 
+  // ★ 签名状态（2026-09-22，P4 那一格）：签名会改字节 ⇒ 只在**能证明签名有效**时才接受哈希差异。
+  //   两条读数都用 `codesign`（仅 macOS 可用；别的平台返回 false ⇒ 落回"必须逐字节相同"的老口径）。
+  const codesignPasses = (args) => {
+    if (process.platform !== "darwin") return false;
+    try {
+      execFileSync("codesign", args, { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // `codesign -d --verbose=4` 把详情写到 **stderr**，两条都要收
+  const codesignDetails = (target) => {
+    if (process.platform !== "darwin" || !existsSync(target)) return "";
+    try {
+      return execFileSync("codesign", ["-d", "--verbose=4", target], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    } catch (e) {
+      return `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+  };
+  const pdfiumLibSigned = existsSync(bundleLib) && codesignPasses(["--verify", "--strict", bundleLib]);
+  const appDeepStrictPassed = existsSync(appPath) && codesignPasses(["--verify", "--deep", "--strict", appPath]);
+
   const problems = checkBundle({
     appExists: existsSync(appPath),
     isDirectory: existsSync(appPath) && statSync(appPath).isDirectory(),
@@ -179,6 +259,9 @@ function main() {
     pdfiumBundleSha,
     pdfiumVendorSha,
     pdfiumVendorExists: existsSync(vendorLib),
+    pdfiumLibSigned,
+    appDeepStrictPassed,
+    signingDetails: codesignDetails(appPath),
   });
 
   // 再问一次系统（能问就问；问不了不算失败，但要如实说明）。
@@ -190,9 +273,16 @@ function main() {
   console.log(`[check-macos-bundle] bundle=${bundleDir}`);
   console.log(`  版本 ${version} · identifier ${conf.identifier} · dmg ${dmgNames.join("、") || "(无)"}`);
   console.log(`  系统认领的 scheme：${claimed === null ? "(本机问不到，跳过)" : claimed.join("、") || "(无)"}`);
+  const sameAsVendor = pdfiumBundleSha && pdfiumVendorSha && pdfiumBundleSha === pdfiumVendorSha;
   console.log(
     `  PDFium：${pdfiumBundleSha ? `${PDFIUM_IN_BUNDLE}（${pdfiumBundleSha.slice(0, 12)}…）` : "(不在包里)"}` +
-      ` · vendor 源：${pdfiumVendorSha ? pdfiumVendorSha.slice(0, 12) + "…" : "(缺)"}`,
+      ` · vendor 源：${pdfiumVendorSha ? pdfiumVendorSha.slice(0, 12) + "…" : "(缺)"}` +
+      ` ⇒ ${sameAsVendor ? "与 vendor 逐字节相同（未签名）" : `与 vendor 不同（+${(existsSync(bundleLib) && existsSync(vendorLib) ? statSync(bundleLib).size - statSync(vendorLib).size : "?")} B）`}`,
+  );
+  console.log(
+    `  签名：libpdfium \`--verify --strict\`=${pdfiumLibSigned ? "✅" : "❌"} · .app \`--verify --deep --strict\`=${
+      appDeepStrictPassed ? "✅" : "❌"
+    }（签名后哈希**一定**会变：差异应当只是 CodeDirectory；内容一致性的可证明时刻在签名之前，见 sign-macos-app.mjs）`,
   );
   if (problems.length > 0) {
     console.error("[check-macos-bundle] ❌ 不通过：");

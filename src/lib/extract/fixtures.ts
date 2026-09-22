@@ -590,15 +590,42 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: true, kinds: ["sheet"], contains: [] },
     planned: true,
   },
+  // ===== 音视频转写（2026-09-22 落地；`deps.transcribe` 那一格与抽取器**同批**进契约）=====
   {
     id: "av/转写",
-    pins: "音视频转写：`loc = HH:MM:SS`（时间码是这类内容唯一的定位）",
+    pins:
+      "音视频转写：`loc = HH:MM:SS`（**时间码**是这类内容唯一的定位 —— 不是行号、不是页号）",
     extractor: "av.transcript@1",
     filename: "会议.mp4",
     mime: "video/mp4",
     make: () => new Uint8Array(0),
-    expect: { ok: true, kinds: ["transcript"], contains: [], locs: ["00:00:00"] },
-    planned: true,
+    // 显式注入 transcribe ⇒ 走成功路径（不给 deps 的那条由 "av/没配转写" 覆盖）
+    deps: {
+      transcribe: async () => ({
+        text: "今天天气不错，我们下午三点开会。",
+        segments: [
+          { start: 0, end: 2, text: "今天天气不错，" },
+          { start: 3723, end: 3725, text: "我们下午三点开会。" },
+        ],
+      }),
+    },
+    expect: {
+      ok: true,
+      kinds: ["transcript", "transcript"],
+      contains: ["今天天气不错", "我们下午三点开会"],
+      locs: ["00:00:00", "01:02:03"],
+    },
+  },
+  {
+    id: "av/没配转写",
+    pins:
+      "**§15.3-7**：没有 deps.transcribe 必须立刻 provider_error，**不许自建网络**" +
+      "（默认不出网的底线；平台侧的 ASR 端点接线由平台认领）",
+    extractor: "av.transcript@1",
+    filename: "会议.mp4",
+    mime: "video/mp4",
+    make: () => new Uint8Array(0),
+    expect: { ok: false, code: "provider_error" },
   },
 
   // ===== 纯文本（Windows；**真样张跑器发现整目录 `.md` 全是 no_extractor** 之后补的）=====

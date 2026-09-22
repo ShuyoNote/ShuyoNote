@@ -218,6 +218,17 @@ run(process.argv.slice(2), 'tauri').then(() => process.exit(0), (e) => { console
 用这个 runner 跑 `build --bundles app,dmg` 一切正常（本机的 `.app`/`.dmg` 就是这么产出的）。
 `npx` / `pnpm exec` 不一定中招（它们的 shim 多走一层 shell），但**任何**只信 `argv[0]` 的包装在会怀里都危险。
 
+★ **更省事的处置（2026-09-22 实测，本轮的 `.app`/`.dmg` 就是这么建的）**：把**真 node** 放到 `PATH` 最前面，
+劫持就被绕开了 —— 因为 `tauri.js` 拿到的 `process.argv[0]` 终于是 `.../bin/node`：
+
+```bash
+export PATH="$HOME/.local/node-v24.20.0-darwin-arm64/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+pnpm tauri build --bundles app,dmg --config /tmp/tauri-ci-config.json   # ✅ 正常构建
+```
+
+（这份 `PATH` 里的 `pnpm` 也是真 node 装的那份；会怀的 `.desktop-bin` 里 `node`/`pnpm` 都是指向 Helper 的 shim，
+它们**排在后面**就不会被选中。`pnpm verify` 之类的普通命令不受影响，只有"按 `argv[0]` 推自己是谁"的包装会歪。）
+
 ### 3. 共享 `node_modules` 在"有人重装"的那几分钟对**所有人**不可用
 
 症状是**缺依赖形状的红**（`@esbuild/win32-x64` 缺失、`tinyexec` 找不到），
@@ -283,6 +294,35 @@ node scripts/check-crypto-backend.mjs     # ← 拿**产物**说话，不看你�
 `sqlcipher-sm4-page-fixture.db`＝**SM4 页**）——它断言"**恰好一个能开**"，红了就等于
 **这份构建读不了它本该读的那种库**（页加密是库文件的属性，见方案 §3.3 判据 1）。
 
+#### 5.1 ★ 跑**应用层**的国密读数时，`--features sm-library` **不能省**（2026-09-22 实测，我自己踩的）
+
+这是第 5 条的同族坑，但**更隐蔽**：`scripts/sm-library-build.mjs` 只在它执行的 `cargo build` 那一句上加了
+`--features sm-library`；后面的 `cargo test` / `cargo run` 是你自己敲的 —— **不加这个特性，应用里
+`set_cipher_key` 那段国密接线会被 `#[cfg]` 整个编掉**，于是：
+
+- 库仍然是"认识国密标签"的库（补丁在源码上、`page_cipher=sm4`），
+- 而**应用一行国密参数都没设** ⇒ 写出来的库仍是 SHA512 参数，
+- 你却在读"国密构建"的读数。**两次读数会互相矛盾**（同一份文件"既被默认参数读开、又被国密参数读开"），
+  因为其中一次根本不在测你以为的那件事。
+
+```bash
+node scripts/sm-library-build.mjs --openssl-dir $HOME/tongsuo-macos/install
+# 应用层读数（接线后的构建）——这两个都要：
+OPENSSL_DIR=$HOME/tongsuo-macos/install cargo test --lib --features sm-library security::
+# 库层读数（provider 能力，不需要特性开关）：
+cargo test --lib gm_provider::
+```
+
+> **同族第二件（同一天）**：`scripts/sm-library-build.mjs --check` 的帮助文字是「只做构建前的核对，不构建」，
+> 但它原先照样 `apply: true` ⇒ **一次核对就把补丁打到全机共享的 registry 源码上**（我拿它确认"源码干不干净"，
+> 结果它把源码变成了"打过补丁"的样子 ⇒ "我刚还原过"当场变成假话）。已修（`patchApplyDecision` 纯函数 ＋
+> `apply: !noApply && !checkOnly` ＋ 3 条判据 ＋ 变异证明）。**核对是只读动作**：想改状态就显式跑构建或 `--revert`。
+
+三处防线（2026-09-22 加）：① 胶水收尾横幅直接写明这条口径；② `build.rs` 在"源码有补丁但没开 `sm-library`"时
+打 `cargo:warning`（不 panic：`--no-default-features` 回滚通道需要在补丁仍在源码上时照样能跑）；
+③ `node scripts/gm-version-selfcheck.mjs --with-tests` 的**第 ⑤ 段**就是
+`cargo test --lib --features sm-library security::`（＋`OPENSSL_DIR`），删掉任一个，判据立刻红（有变异证明）。
+
 ### 6. 门禁"查的产物"可能**不是你这台机器**的（构建目录被重定向/共用时）
 
 判据读 `target/` 下的产物时，有两个默认假设**经常不成立**：① target 就在仓库里（实际很多人设了
@@ -307,6 +347,25 @@ spawnSync cargo ENOENT
 看起来像"夹具坏了"，其实是"找不到 cargo"（2026-09-19 我自己就被这条误导过一次）。
 处置：跑之前确认 `command -v cargo`；`scripts/gm-version-selfcheck.mjs` 已内置兜底
 （PATH 上没有、但 rustup 默认位置有时补上，并**打印一行 `!`** 说明，不静默改环境）。
+
+### 8. `node` 有两份时，**同一个判据会红绿不同**（2026-09-22 实测，我自己撞上的）
+
+本机有**两份 node**：DSH 会怀里那份 `/Users/shuyo/Library/Application Support/dsh-desktop/harness/.desktop-bin/node`
+（**v24.18.1**）与 `~/.local/node-v24.20.0-darwin-arm64/bin/node`（**v24.20.0**）。PATH 上哪个在前，
+决定的不只是"能不能跑 `pnpm tauri`"（那条坑见 `docs/development.md` 的 tauri 一节），
+**还决定个别判据的红绿** —— 因为那是**库行为本身变了**，不是我们的代码变了：
+
+```text
+scripts/session-grep.test.mjs「截断的帧也不抛错」
+  node 24.18.1 ⇒ zstdDecompressSync(截断帧) 不抛，返回 "这一�"     ⇒ 判据绿
+  node 24.20.0 ⇒ zstdDecompressSync(截断帧) 抛 Z_BUF_ERROR         ⇒ 判据红（5 次跑红 5 次）
+```
+
+症状最有误导性的一点：**全库 `vitest` 那一次跑是绿的、单独跑这个文件却是红的**（两边用的是不同的 node）。
+处置（已落地）：判据不再钉"某个 zlib 版本的实现细节"，只钉两个版本**共同**的事实
+（截断一定丢数据：要么半截、要么报错；"没报错"≠"读全了"），并在注释里**同时记下两份读数**。
+⇒ 通用教训：**判据里任何"某个依赖的实现细节"都是一颗定时炸弹**；要钉就钉"我们自己的实现必须满足什么"。
+（本轮同一形态还有一条：`vite/vitest` 别的红是 Windows 侧报的另外三条，与本条无关。）
 
 **判读"真成功"**：Windows 下 pwsh 常把 `cargo check` / `git push` 的 stderr 包成 `[exit code: 1]`（NativeCommandError 噪音）。真正的成功信号是：
 - `cargo check` → 出现 **`Finished \`dev\` profile …`**。
@@ -579,6 +638,54 @@ AMD 实测的成因：`git fetch` 被 **`refusing to fetch into branch 'refs/hea
 
 > 与 §10.4 是同一类病：**都是"看起来完成了、其实基线或对象不是你以为的那个"**。
 > §10.4 治"拿旧分支当基线"，这条治"在旧提交上验证"。
+
+### 10.7 本机模型服务（Herdsman）：清单、两个 ASR 的分工、以及一条冒烟配方（2026-09-22 AMD 侧实测）
+
+**服务**：`herdsman.exe`（`C:\Program Files\starwave\Herdsman\`）监听 `127.0.0.1:8080`，OpenAI 兼容
+（`/v1/models`、`/v1/chat/completions`、`/v1/audio/speech`、`/v1/audio/transcriptions`）；
+数据在 `%USERPROFILE%\.herdsman\`（`models/` 是模型、`launch_records/` 是启动记录），下载缓存在 `.cache\herdsman\`。
+CLI：`herdsman.exe skill models {list,download --model <名字> [--wait],start,stop,status,uninstall}`。
+⚠️ **从普通 shell 调 `skill models` 会"空输出且什么都没发生"**（2026-09-22 实测：`list` 0 行、
+`download` 无输出且 5 min 内 `models/`、`ota_downloads/` 无变化）⇒ 它要**运行中的桌面进程**的通道；
+**装模型走桌面应用的「模型商店」最稳**。判"装上了没有"要拿读数：`GET /v1/models` 多出来 ＋
+`models/<名字>/` 出现且大小对得上（别只看 UI 说"已安装"）。
+
+**清单（2026-09-22 实测，9 个）**：`DeepSeek-V4-Flash-0731`、`Qwen3.8-Flash-Next`（视觉）、
+`bge-m3`（向量）、`bge-reranker-v2-m3`（重排）；
+**ASR 两个**：`funasr-nano`、`sherpa-onnx-paraformer-zh-small`（79.5 MB，2026-09-22 装）；
+TTS：`sherpa-onnx-vits-melo-tts-zh-en`、`edge-tts`（云端、不占盘）；图片：`zimage-turbo`。
+
+★ **两个 ASR 的差别（同一段音频实测，别让下游静默依赖标点）**：
+
+| 引擎 | 同一句「今天天气不错，我们下午三点开会。」的转写 |
+|---|---|
+| `funasr-nano` | `今天天气不错，我们下午三点开会。`（**带标点**，与原句一字不差） |
+| `sherpa-onnx-paraformer-zh-small` | `今天天气不错我们下午三点开会`（**裸文本，无标点**） |
+
+**闭环冒烟配方**（不需要外部音频；本仓**没有**短音频夹具 —— `*.wav/*.mp3/*.m4a/*.ogg` 全树无命中）：
+
+```bash
+# ① 合成：本地 TTS 造一句中文
+curl -s -X POST http://127.0.0.1:8080/v1/audio/speech -H "Content-Type: application/json" \
+  -d '{"model":"sherpa-onnx-vits-melo-tts-zh-en","input":"今天天气不错，我们下午三点开会。","response_format":"wav"}' \
+  -o tts-smoke.wav
+# ② 转写：用被验的那个 ASR 模型
+curl -s -X POST http://127.0.0.1:8080/v1/audio/transcriptions \
+  -F "file=@tts-smoke.wav" -F "model=sherpa-onnx-paraformer-zh-small"
+```
+
+⚠️ **这条冒烟的边界**：音频是 TTS 合成的**干净音**（≈3 s、无噪声、标准普通话）⇒ 它证的是"链路通、中文能认"，
+**不等于**真人口音／远场／嘈杂环境也这个水平；那类结论要拿**真录音**复跑。
+**§10.5 补一双孪生形态（2026-09-18，AMD 侧复核块 ID 分支时又踩到一次）**：上面那条治的是
+**本地分支没更新**，还有一种更隐蔽的 —— **`origin/dev` 这类远端跟踪 ref 静默过期**：
+
+- 成因：clone 时 `remote.origin.fetch` 只配了 `main`（例如 `+refs/heads/main:refs/remotes/origin/main`）
+  ⇒ 你 `git fetch origin dev` 之后 `FETCH_HEAD` 是新的，但 **`origin/dev` 这个 ref 不会更新**；
+  随后 `git log origin/dev` / 拿 `origin/dev` 当基线，看到的还是旧的（AMD 一度停在 `bd68a608` 上复核）。
+- 判据：**引用任何 `origin/<分支>` 之前**，用 `git ls-remote origin refs/heads/<分支>` 核一眼，
+  或直接 `git fetch origin <分支>` 后用 `FETCH_HEAD`/`git rev-parse FETCH_HEAD`；
+  根治办法是把 fetch refspec 补全（`git config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'`）。
+- ⇒ 与本条同源：**"我看到的分支"必须是"我从远端刚拿到的那一个"**，而不是本地某个同名 ref。
 
 ### 10.6 一次真实偏差：`feat/android-mobile` 直接合进了 `main`（2026-09-14）
 

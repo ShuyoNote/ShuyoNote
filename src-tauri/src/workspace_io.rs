@@ -78,12 +78,15 @@ fn count_dir(dir: &Path) -> (usize, u64) {
 /// ⚠️⚠️ 为什么要"可选加钥"（2026-09-20 实测，修 F2）：SQLCipher 的在线备份 API
 /// **要求目标也加同一把钥** —— 源加钥、目标**不加钥**时报
 /// `backup is not supported with encrypted databases`；两边同钥才成功（产物是**密文**）。
+///
+/// ⚠️⚠️ 目标端必须走 `key_conn_with`（生产口径，带库级国密参数）—— 备份 API 按**目标连接的 codec**
+/// 重新加密页面，只写裸 `PRAGMA key` 会产出"默认参数（SHA512）"的快照，而本模块下一步
+/// `convert_space_db(dst, false, k)` 是用国密参数去读它的 ⇒ 接线构建里当场红
+/// （2026-09-22 实测：`snapshot_plaintext_from_an_encrypted_source_is_readable_without_a_key`）。
 fn backup_db_to(src: &Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<(), String> {
     let mut dst_conn = Connection::open(dst).map_err(|e| e.to_string())?;
     if let Some(k) = key {
-        dst_conn
-            .execute_batch(&format!("PRAGMA key = \"x'{}'\";", crate::crypto::key_hex(k)))
-            .map_err(|e| e.to_string())?;
+        crate::security::key_conn_with(&dst_conn, k)?;
     }
     let backup = rusqlite::backup::Backup::new(src, &mut dst_conn).map_err(|e| e.to_string())?;
     backup

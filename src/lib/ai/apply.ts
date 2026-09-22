@@ -3,7 +3,8 @@
 // makes the "draft → confirm → commit" boundary explicit and hard to bypass.
 
 import { api } from "../api";
-import { appendBlocksToJson, contentTextOf, pageJsonFromText } from "./lexical";
+import { appendBlocksToJson, pageJsonFromText } from "./lexical";
+import { contentTextOf } from "./lexicalContent";
 import type { PageDetail } from "../../types";
 
 export interface ApplyResult {

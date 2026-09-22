@@ -127,6 +127,57 @@ pub fn configure_gm_cipher(c: &Connection) -> Result<(), String> {
     configure_cipher_algorithms(c, GM_HMAC_LABEL, GM_KDF_LABEL)
 }
 
+/// ★ **只设标签、不做健康自检**的那一半（2026-09-22 加，给应用接线用）。
+///
+/// ## 为什么接线不能直接用 `configure_gm_cipher`（我自己的第一版就这么错的）
+/// `configure_gm_cipher` 结尾那句 `SELECT 1` 健康自检想分开的是"标签不认识 ⇒ 连接被 SQLCipher
+/// 打进 error state"与"语句被接受、事后再看生效没有"。但那句话**分不出两种成因**：
+///   · 标签不认识（它想抓的那个）；
+///   · **口令/密钥不对**（SQLCipher 在第一次读时同样把连接打进 error state，报**一字不差的**
+///     `file is not a database`）。
+/// 实测（2026-09-22，接线构建）：`backup::tests::cross_key_encrypted_snapshot_gets_an_actionable_diagnosis`
+/// 的"另一把钥"那一支本该让**读**失败、再由 `cipher_open_error` 翻成"两因一果"的可操作文本，
+/// 结果在 `set_cipher_key` 里就被自检拦下，报成**"这个构建可能没有 provider 补丁"** ⇒ **误诊**。
+///
+/// ⇒ 接线的正确形态是**两件互不依赖的事**：
+///   ① **库认不认识这两个标签** —— 与口令/文件无关，用一条内存库探（[`library_recognizes_gm_labels`]，带缓存）；
+///   ② **这条连接上标签有没有落值** —— 用**回显**看（[`read_gm_cipher_status`]）；回显读不出来时**不判红**
+///      （那说明这条连接本来就有别的问题，让后面的读去失败、由 `cipher_open_error` 如实翻译）。
+pub fn set_gm_cipher_labels(c: &Connection) -> Result<(), String> {
+    set_pragma(c, &format!("PRAGMA cipher_hmac_algorithm = {GM_HMAC_LABEL};"))?;
+    set_pragma(c, &format!("PRAGMA cipher_kdf_algorithm = {GM_KDF_LABEL};"))?;
+    Ok(())
+}
+
+/// **这份构建的 SQLCipher 认不认识国密标签？** —— 与口令/文件无关的**库级**能力探针（带缓存）。
+///
+/// 用一条 `:memory:` 库：先 `PRAGMA key`（让 codec ctx 真的建起来 —— "没 key 时 PRAGMA 不代表加密路径"），
+/// 再设标签、再读回显。没有 provider 补丁时回显仍是 `HMAC_SHA512`（SQLCipher 不校验标签）⇒ `false`。
+///
+/// 为什么缓存：接线的每个 `set_cipher_key` 都会问一次，而它问的是**同一进程同一个库**的能力，
+/// 答案不会变；每条连接都探一次纯属浪费（还要建一个内存库）。
+pub fn library_recognizes_gm_labels() -> bool {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let Ok(c) = Connection::open_in_memory() else {
+            return false;
+        };
+        // 密钥随便给：这里**只**关心"标签认不认识"，与密钥材料无关。
+        if set_pragma(&c, KEY_PRAGMA_FOR_CAPABILITY_PROBE).is_err() {
+            return false;
+        }
+        if set_gm_cipher_labels(&c).is_err() {
+            return false;
+        }
+        read_gm_cipher_status(&c).map(|s| s.is_applied()).unwrap_or(false)
+    })
+}
+
+/// `library_recognizes_gm_labels` 用的口令（写成常量，免得与别的 PRAGMA 串味）。
+const KEY_PRAGMA_FOR_CAPABILITY_PROBE: &str =
+    "PRAGMA key = \"x'000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'\";";
+
 /// `configure_gm_cipher` 的实体（标签当参数传 ⇒ 判据可以拿它去撞"本构建不认识的标签"那条路）。
 fn configure_cipher_algorithms(c: &Connection, hmac: &str, kdf: &str) -> Result<(), String> {
     set_pragma(c, &format!("PRAGMA cipher_hmac_algorithm = {hmac};"))?;
@@ -378,20 +429,24 @@ mod tests {
     /// 当初记成"标签设晚了会坏"，真机制是"`if(ctx)` 把 key 之前的设置整块跳过"。
     #[test]
     fn gm_labels_before_the_key_are_silently_dropped() {
+        // ★ 2026-09-22 按 v4 改（macOS 侧指出）：**用"非默认"的目标标签来证"丢弃"**。
+        //   旧写法用 GM 标签 + 断言"回显仍是 HMAC_SHA512" ⇒ v4 之后本构建的**默认就是 SM3**，
+        //   被丢掉的标签与默认值同名 ⇒ 回显一样 ⇒ 判据分不出"丢了"还是"生效了"（不是回归，是判据把默认值写死了）。
+        //   ⇒ 现在设 **HMAC_SHA256**（任何构建下都不是默认），只断言"回显**不是**我们设的那个标签" ⇒ 与默认值无关。
         let c = fresh();
         // 先配（错的顺序）——这一步**不会**报错，这正是它危险的地方
-        configure_gm_cipher(&c).expect("key 之前配置不该报错（它只是什么都不做）");
+        configure_cipher_algorithms(&c, "HMAC_SHA256", "PBKDF2_HMAC_SHA256")
+            .expect("key 之前配置不该报错（它只是什么都不做）");
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
-        match read_gm_cipher_status(&c).expect("读状态（连接是健康的，回显读得到）") {
-            GmProviderStatus::Applied { hmac, kdf } => panic!(
-                "key 之前设的标签居然生效了（{hmac}/{kdf}）—— SQLCipher 行为变了，接线顺序的结论要重量一遍"
-            ),
-            GmProviderStatus::Unsupported { hmac, kdf, .. } => {
-                // 这就是**静默降级**的原样：连接健康、语句没报错、盘上仍是默认那套
-                assert_eq!(hmac, "HMAC_SHA512", "被悄悄丢掉之后回显应当还是默认算法");
-                assert_eq!(kdf, "PBKDF2_HMAC_SHA512", "被悄悄丢掉之后回显应当还是默认算法");
-            }
-        }
+        // 直接读回显（不走 `read_gm_cipher_status`：v4 之后回显可能就是 GM 标签，那是**默认值**的功劳，
+        // 不是"key 之前设的标签生效了"）
+        let hmac = pragma_str(&c, "cipher_hmac_algorithm").expect("读状态（连接是健康的，回显读得到）");
+        let kdf = pragma_str(&c, "cipher_kdf_algorithm").expect("读状态（连接是健康的，回显读得到）");
+        assert_ne!(
+            hmac, "HMAC_SHA256",
+            "key 之前设的标签被静默丢掉 ⇒ 回显不该是我们设的那个标签（实际拿到 {hmac}）"
+        );
+        assert_ne!(kdf, "PBKDF2_HMAC_SHA256", "同上（实际拿到 {kdf}）");
     }
 
     /// ★ 判据 6：`describe()` 是给界面/状态面用的一句话 —— 未生效时必须**说得出"没生效"**。
