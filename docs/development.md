@@ -560,6 +560,19 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
   或者把 dev 跑在**另一个 worktree** 里、把主工作树留给 git 操作。
   ⚠️ 边界：这是**实测到的相关**（rebuild ⇒ 退出），**机制没有确证**（没去看 Tauri CLI 的 watcher 实现）；
   所以别把它当"必然"，但要记住：**看到一个没有报错的退出，先看它退出前有没有刚重建过**。
+- **shell 脚本里 `$VAR` 后面紧跟中文（全角括号/逗号）⇒ 变量名被"吞"**（2026-09-22 实测，我自己踩的）：
+  bash 在 UTF-8 locale 下会把紧跟其后的**多字节字符**并进变量名 ⇒ `set -u` 报
+  `line 69: app_cur（: unbound variable`（名字里带乱码），而**报错行看起来完全正常**：
+  `log "★ dev 已快进到 $app_cur（$app_head → …）"` —— 中文说明文里到处都是这种写法。
+  **处置**：只要变量后面可能跟非 ASCII，一律写 `${VAR}`（花括号）。本会话的监听脚本
+  `/tmp/watch-dev-mail.sh` 第一版就是这样在"快进已经成功、只是写日志"的那一步崩掉的
+  ⇒ 顺带一条**判据式的教训**：**副作用（快进/合并）发生在日志之前时，日志崩掉会让"事实上已经做了"看起来像"什么都没做"**；
+  所以关键动作要么先落日志再动手，要么把日志写成不会崩的形式。
+- **别用"自己命令里出现的字面量"去匹配进程命令行**（2026-09-22，Windows 侧实战）：
+  有人用 `CommandLine -match 'ShuyoNote'` 挑要停的进程，结果**把自己那条命令也匹配进去了**
+  （它自己的命令行里就含这个字符串）⇒ 连带把宿主 job runner 一起杀掉、工具报 `0xFFFFFFFF`；
+  同一天换成 `'start-desktop-dev.ps1'` 又中了一次。⇒ 只按**进程名**＋**端口所有者 PID**，或用**精确 PID**；
+  这条与"读别的进程 EDIT 必须用 `WM_GETTEXT`"同族：**进程操作要用身份，不要用文本**。
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
