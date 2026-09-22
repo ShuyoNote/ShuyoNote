@@ -429,20 +429,24 @@ mod tests {
     /// 当初记成"标签设晚了会坏"，真机制是"`if(ctx)` 把 key 之前的设置整块跳过"。
     #[test]
     fn gm_labels_before_the_key_are_silently_dropped() {
+        // ★ 2026-09-22 按 v4 改（macOS 侧指出）：**用"非默认"的目标标签来证"丢弃"**。
+        //   旧写法用 GM 标签 + 断言"回显仍是 HMAC_SHA512" ⇒ v4 之后本构建的**默认就是 SM3**，
+        //   被丢掉的标签与默认值同名 ⇒ 回显一样 ⇒ 判据分不出"丢了"还是"生效了"（不是回归，是判据把默认值写死了）。
+        //   ⇒ 现在设 **HMAC_SHA256**（任何构建下都不是默认），只断言"回显**不是**我们设的那个标签" ⇒ 与默认值无关。
         let c = fresh();
         // 先配（错的顺序）——这一步**不会**报错，这正是它危险的地方
-        configure_gm_cipher(&c).expect("key 之前配置不该报错（它只是什么都不做）");
+        configure_cipher_algorithms(&c, "HMAC_SHA256", "PBKDF2_HMAC_SHA256")
+            .expect("key 之前配置不该报错（它只是什么都不做）");
         set_pragma(&c, KEY_PRAGMA).expect("设 key");
-        match read_gm_cipher_status(&c).expect("读状态（连接是健康的，回显读得到）") {
-            GmProviderStatus::Applied { hmac, kdf } => panic!(
-                "key 之前设的标签居然生效了（{hmac}/{kdf}）—— SQLCipher 行为变了，接线顺序的结论要重量一遍"
-            ),
-            GmProviderStatus::Unsupported { hmac, kdf, .. } => {
-                // 这就是**静默降级**的原样：连接健康、语句没报错、盘上仍是默认那套
-                assert_eq!(hmac, "HMAC_SHA512", "被悄悄丢掉之后回显应当还是默认算法");
-                assert_eq!(kdf, "PBKDF2_HMAC_SHA512", "被悄悄丢掉之后回显应当还是默认算法");
-            }
-        }
+        // 直接读回显（不走 `read_gm_cipher_status`：v4 之后回显可能就是 GM 标签，那是**默认值**的功劳，
+        // 不是"key 之前设的标签生效了"）
+        let hmac = pragma_str(&c, "cipher_hmac_algorithm").expect("读状态（连接是健康的，回显读得到）");
+        let kdf = pragma_str(&c, "cipher_kdf_algorithm").expect("读状态（连接是健康的，回显读得到）");
+        assert_ne!(
+            hmac, "HMAC_SHA256",
+            "key 之前设的标签被静默丢掉 ⇒ 回显不该是我们设的那个标签（实际拿到 {hmac}）"
+        );
+        assert_ne!(kdf, "PBKDF2_HMAC_SHA256", "同上（实际拿到 {kdf}）");
     }
 
     /// ★ 判据 6：`describe()` 是给界面/状态面用的一句话 —— 未生效时必须**说得出"没生效"**。
