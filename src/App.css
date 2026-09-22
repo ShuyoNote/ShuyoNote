@@ -17175,10 +17175,10 @@ p:has(> .editor-drawing-container) {
 .pdf-reader-head {
   display: flex;
   align-items: center;
-  /* 2026-09-22：12 → 10。这一串原来是"一整排没有分组的图标"，靠间距硬撑；
-     现在有了 `.pdf-reader-sep` 分组，间距可以收一点，整条 head 更紧。 */
-  gap: 10px;
-  padding: 10px 14px;
+  /* 2026-09-22：12 → 10 → **8**。前两次是"有了分组分隔线、可以收一点"；
+     这次按钮扁平化（无边框无底色）之后，图标之间不再需要"方块不相碰"的额外余量。 */
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 .pdf-reader-name {
@@ -17194,13 +17194,15 @@ p:has(> .editor-drawing-container) {
 .pdf-reader-controls {
   display: flex;
   align-items: center;
-  gap: 14px;
+  /* 14 → 8：按钮扁平化之后不再有"方块挤方块"的问题，组间距可以压（2026-09-22 压缩占宽） */
+  gap: 8px;
 }
 .pdf-reader-nav,
 .pdf-reader-zoom {
   display: flex;
   align-items: center;
-  gap: 6px;
+  /* 6 → 2：翻页组/缩放组内部本来就是"图标—文字—图标"，扁平之后不需要 6px 的呼吸位 */
+  gap: 2px;
 }
 .pdf-reader-page,
 .pdf-reader-pct {
@@ -17294,13 +17296,20 @@ p:has(> .editor-drawing-container) {
   outline: none;
   border-color: var(--accent);
 }
+/* 阅读器的控制按钮：**扁平**（2026-09-22，owner："控制按钮全部改成扁平类型按钮，进一步压缩占宽"）。
+   原来是"描边 + 浅底"的小方块（`border: 1px solid var(--border); background: var(--block-hover)`）——
+   一长排方块自带拥挤感，间距也不敢压。现在：**无边框、无底色、只有图标**（hover/选中才给底色）；
+   边框去掉后一组图标可以贴得更近（间距见 `.pdf-reader-head` / `.pdf-reader-controls` /
+   `.pdf-reader-nav` 的 gap，本轮一并从 10/14/6 压到 8/8/2）。
+   ⚠️ 尺寸仍是 28×28（`box-sizing: border-box` 下去掉 1px 边框不改变外边距盒）⇒ 布局不跳；
+      命中区规则（窄屏 ≥44）在文件末尾那段里照旧生效。 */
 .pdf-reader-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border);
-  background: var(--block-hover);
-  color: var(--text);
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
   border-radius: 6px;
   width: 28px;
   height: 28px;
@@ -17348,8 +17357,16 @@ p:has(> .editor-drawing-container) {
   white-space: nowrap;
 }
 .pdf-reader-btn:hover:not(:disabled) {
-  border-color: var(--accent);
+  background: var(--hover);
+  color: var(--text);
+}
+/* 扁平之后"选中态"得自己给反馈（原来靠边框变强调色）：护眼等开关用 `active` 类。 */
+.pdf-reader-btn.active {
+  background: var(--accent-soft);
   color: var(--accent);
+}
+.pdf-reader-btn:active:not(:disabled) {
+  background: var(--hover-strong, var(--hover));
 }
 /* 窄屏的「更多工具」入口（批注侧栏 / 护眼 / 导出…）。
    ⚠️ **基础规则就是隐藏**：桌面一次放得下，不需要这个入口；窄屏那段（文件末尾）
@@ -17412,7 +17429,10 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 4px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  /* 去掉外框勾线（2026-09-22，owner："去掉批注工具栏的外框勾线"）。
+     原来这一圈 1px 边框把工具行画成一个"盒子"，和扁平化的阅读器按钮风格不一致；
+     现在只留极浅的底色做分组，分组靠 `.pdf-reader-sep` 那条分隔线交代。 */
+  border: none;
   border-radius: 9px;
   padding: 4px 6px;
 }

@@ -564,6 +564,23 @@ async function checkPdfReader(page, vp) {
           left: !!reader.querySelector(".pdf-edge-drag.is-left"),
           right: !!reader.querySelector(".pdf-edge-drag.is-right"),
         },
+        // 扁平化 + 去掉工具条外框（owner 2026-09-22）：
+        //   · 阅读器按钮 = 无边框 + 透明底（改前"描边 + 浅底"的小方块）
+        //   · 批注工具条 = 去掉外框勾线（底色保留做分组）
+        //   · 控制组宽度（压间距 + 去边框后的"进一步压缩占宽"）
+        btnStyle: (() => {
+          const el = reader.querySelector(".pdf-reader-btn");
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor };
+        })(),
+        toolsStyle: (() => {
+          const el = reader.querySelector(".pdf-annot-tools");
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { border: `${cs.borderTopWidth} ${cs.borderTopStyle}`, bg: cs.backgroundColor };
+        })(),
+        controlsW: Math.round(reader.querySelector(".pdf-reader-controls")?.getBoundingClientRect().width ?? 0),
         // 短标签必须带 title（否则"朗读 / OCR / AI"就没有完整说法）
         labels: Array.from(reader.querySelectorAll(".pdf-annot-ocr")).map((b) => ({
           text: (b.textContent || "").trim(),
@@ -808,6 +825,21 @@ function assertPdfReader(rr, vp) {
     `文本层 chip 也是短句 + title（实测「${lab?.layerText ?? ""}」/「${lab?.layerTitle ?? ""}」）`,
   );
   ok(rr.docW <= rr.vw + 1, `阅读器无横向溢出（docW ${rr.docW} ≤ ${rr.vw}）`);
+  // 扁平化：按钮**无边框 + 透明底**（改前是"描边 + 浅底"的小方块）；批注工具条去掉外框勾线。
+  ok(
+    rr.btnStyle?.border === "0px none" && /rgba\(0, 0, 0, 0\)|transparent/.test(rr.btnStyle?.bg ?? ""),
+    `阅读器控制按钮是扁平样式（border=${rr.btnStyle?.border}、bg=${rr.btnStyle?.bg}）——改前"描边+浅底"`,
+  );
+  ok(
+    rr.toolsStyle?.border === "0px none" && !/rgba\(0, 0, 0, 0\)/.test(rr.toolsStyle?.bg ?? ""),
+    `批注工具条去掉了外框勾线、只留底色分组（border=${rr.toolsStyle?.border}、bg=${rr.toolsStyle?.bg}）`,
+  );
+  if (vp.width > 768) {
+    ok(
+      rr.controlsW > 0 && rr.controlsW <= 420,
+      `桌面 head 控制组宽度 ${rr.controlsW}px ≤ 420（扁平化+间距 14→8 后实测 393；改前 441）`,
+    );
+  }
 }
 
 async function main() {  const executablePath = findChrome();
