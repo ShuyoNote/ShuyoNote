@@ -99,6 +99,9 @@ const getRow = (store, id) =>
 // 模拟服务端：单调 seq 分配器 + 版本视图（对应 changes AUTOINCREMENT id）
 let serverSeq = 0;
 const serverView = new Map(); // id -> { seq, title, content_text, updated_at, from_device }
+// ★ 场景 L/M（取证用）：**真正的 change log**（服务端 `/push` 写的就是它；服务端**没有** page 表 ——
+// `src/sync.rs::push` 只 INSERT 进 `changes`，`pull` 只按 `seq ASC` 返回）。每个设备把它**按序**折一遍。
+const serverLog = []; // [{ seq, entity_id, payload, from_device }]
 
 // 设备把本地 dirty 改动 push 到服务端：服务端分配序，记录版本，清【该设备】的 dirty。
 // `contentJson`（可选）= 整页 JSON —— 真实负载就带它（阶段 1 的合并要靠它）。
@@ -109,8 +112,46 @@ function pushToServer(store, entityId, dev, title, text, contentJson) {
     ...(typeof contentJson === "string" ? { content_json: contentJson } : {}),
     updated_at: Date.now(), from_device: dev, workspace_id: "ws1",
   });
+  serverLog.push({
+    seq, entity_id: entityId, from_device: dev,
+    payload: JSON.stringify({
+      id: entityId, title, content_text: text,
+      ...(typeof contentJson === "string" ? { content_json: contentJson } : {}),
+      updated_at: Date.now(), workspace_id: "ws1",
+    }),
+  });
   store.run("UPDATE pages SET dirty = 0 WHERE id = ?", [entityId]);
   return seq;
+}
+
+// ★ 场景 L/M：**按 change log 折一遍**（与真实客户端同一套语义：全局游标 `since`，按 seq ASC，
+// 跳过自己推的；**消费到就推进游标** —— 今天两端都这样：Rust `do_pull` 在 `apply_upsert` 返回 Ok 后推进、
+// Web `doPull` 无条件推进）。
+// 返回 { applied, skipped }：`applied` = 真的吃了远端那一版（page `sync_seq` 被写成该 seq），
+// `skipped` = 页级判定保留本地（dirty 优先）⇒ **远端那一版被放弃**。
+function pullLog(store, cursor, device) {
+  const applied = [];
+  const skipped = [];
+  for (const entry of serverLog) {
+    if (entry.seq <= cursor.since) continue;
+    if (entry.from_device === device) {
+      // 自己的改动：服务端 exclude_device 会过滤掉，但游标仍要走过它
+      if (entry.seq > cursor.since) cursor.since = entry.seq;
+      continue;
+    }
+    const before = getRow(store, entry.entity_id);
+    applyChange(store, {
+      id: 0, seq: entry.seq, device_id: entry.from_device, device_seq: 1,
+      entity: "page", entity_id: entry.entity_id, op: "upsert",
+      payload: entry.payload, updated_at: Date.now(),
+    });
+    const after = getRow(store, entry.entity_id);
+    // 判据：远端被接受 ⇒ 这一行的 `sync_seq` 被写成 entry.seq（`upsertRemoteContent` 的语义）
+    if (after && before?.sync_seq !== entry.seq && after.sync_seq === entry.seq) applied.push(entry.seq);
+    else skipped.push(entry.seq);
+    cursor.since = entry.seq; // 今天的真实客户端：**不管吃没吃，游标都推进**
+  }
+  return { applied, skipped };
 }
 
 // 设备从服务端 pull：把服务端版本经真实 applyChange 应用到本地库。
@@ -131,15 +172,11 @@ function pullFromServer(store, seen) {
       updated_at: v.updated_at,
     });
     const after = getRow(store, id);
-    // 只有当本地接受了远端（标题被替换成远端版本）才推进 seen（真实 pull 按 seq 游标推进）。
-    // 若本地 dirty 保护保留了本地，seen 不推进（模拟真实 pull：该 seq 未"消费"）。
-    if (after && after.title === v.title) {
-      seen.set(id, v.seq);
-    } else {
-      // 本地保留（dirty）→ seen 推进到该 seq，避免反复重放（真实 pull 用游标）。
-      // 但真实客户端会保留 dirty 且不推进 last_pulled_seq 到会覆盖本地的 seq。
-      seen.set(id, v.seq);
-    }
+    // ⚠️ 这里**两个分支都推进** —— 与**真实客户端**一致（2026-09-22 核对过两边）：
+    //   · Rust `sync.rs::do_pull`：`apply_upsert` 即使返回"保留本地"也是 `Ok` ⇒ `max_pulled` 照样推进；
+    //   · Web `platform/web.ts::doPull`：`applyChange` 之后**无条件** `maxSeq = c.seq`。
+    // 旧注释曾写"真实客户端会保留 dirty 且不推进" —— **那句是错的**，证据与后果见场景 L（取证那一格）。
+    seen.set(id, v.seq);
   }
 }
 
@@ -542,6 +579,117 @@ async function main() {
     bodyOf(readContent(KB, PK).json, "b1") === "A 后改的",
     "K: 冲突时回落页级 LWW（与接线前逐字相同）—— 这一片只把「静默」变成「有痕」",
   );
+
+  // =========== 场景 L / M：**取证**（2026-09-22，owner 点名的下一片：先取证，不改语义）===========
+  // 问题是两句不同的话，必须分开证：
+  //   L. "页级保留本地（dirty）时，那条远端变更**被游标消费掉**" ⇒ 会不会让某台设备**永远**看不到对端的编辑？
+  //   M. "合并产物写回时 `dirty = 0` ⇒ 不推送" 这件事**本身**会不会丢编辑？
+  // 服务端形态先摆清楚（仓库里可查）：`src/sync.rs::push` 只把整页 JSON 写进 `changes`，
+  // `pull` 只按 `seq ASC` 返回 —— **服务端没有 page 表、没有任何"最新版"消费方**。
+  // ⇒ 真相只能由"每个设备把 change log 按序折一遍"决定。
+  console.log("\n场景 L/M：取证 —— 合并产物不推送 vs 被游标消费掉的远端变更");
+
+  // ---- 场景 L：页级「保留本地」把远端那条变更消费掉了 =====================================
+  // ⚠️ 这一节的断言是**取证**（钉住今天的行为），**不是"应该保持的行为"**：
+  // 修法落地时要把 ★★ 那三条**反过来断言**（B 必须拿得到 A 的编辑、且要有痕/可收场）。
+  // 方案与代价见 `docs/plans/2026-09-22-merge-push-and-cursor-forensics.md` §6。
+  const PL = "page-cursor";
+  const LA = { s: await newDevice(), cursor: { since: 0 } };
+  const LB = { s: await newDevice(), cursor: { since: 0 } };
+  const lbBase = [blk("b1", 1, "b1 原始"), blk("b2", 1, "b2 原始")];
+  // ① 基线：A 建页并推 seq1（两端都从它开始）
+  localCreate(LA.s, PL, "游标页", "");
+  writeContent(LA.s, PL, { title: "游标页", json: contentOf(lbBase), text: "" }, Date.now());
+  LA.s.run("UPDATE pages SET dirty = 0, sync_seq = 1 WHERE id = ?", [PL]);
+  const lSeq1 = pushToServer(LA.s, PL, "devA", "游标页", "", contentOf(lbBase));
+  pullLog(LB.s, LB.cursor, "devB"); // B 拿到基线（吃下 ⇒ sync_seq=1）
+  ok(LB.cursor.since === lSeq1, `L: B 的游标走到 ${lSeq1}（基线已消费）`);
+
+  // ② A 改 b1 并推 seq2
+  const lbA = [blk("b1", 2, "A 改的 b1"), blk("b2", 1, "b2 原始")];
+  writeContent(LA.s, PL, { title: "游标页", json: contentOf(lbA), text: "" }, Date.now());
+  const lSeq2 = pushToServer(LA.s, PL, "devA", "游标页", "", contentOf(lbA));
+
+  // ③ B 本地改了 b2（dirty=1，未推）⇒ 此刻 B pull 到 seq2：**页级保留本地**（dirty 优先）
+  const lbB = [blk("b1", 1, "b1 原始"), blk("b2", 2, "B 改的 b2")];
+  writeContent(LB.s, PL, { title: "游标页", json: contentOf(lbB), text: "" }, Date.now());
+  const lPull1 = pullLog(LB.s, LB.cursor, "devB");
+  ok(lPull1.skipped.includes(lSeq2), "L: 远端 seq2 被**跳过**（页级 dirty 优先本地 —— 裁定 ④，语义正确）");
+  ok(bodyOf(readContent(LB.s, PL).json, "b1") === "b1 原始", "L: 跳过之后 B 手上没有 A 的 b1 编辑（这一步是设计如此）");
+  ok(pageConflictsOf(LB.s, PL).length === 0, "L: ⚠️ 而且**一条痕都没有**（页级跳过不落块级冲突表）");
+  ok(LB.cursor.since >= lSeq2, `L: ⚠️ 但游标**照样推进**到了 ${LB.cursor.since} —— 那条远端变更已被消费`);
+
+  // ④ B 把自己的版本推上去（seq3），然后**再同步一次**（真实客户端每轮都是 push 完再 pull）
+  const lSeq3 = pushToServer(LB.s, PL, "devB", "游标页", "", contentOf(lbB));
+  pullLog(LB.s, LB.cursor, "devB");
+  ok(bodyOf(readContent(LB.s, PL).json, "b1") === "b1 原始",
+    "L: ★★ 再同步一次之后 B 仍然**看不到** A 的 b1 编辑（游标已越过 seq2 ⇒ 不会再取）");
+
+  // ⑤ 对端与全新设备：编辑**没有**从世界上消失
+  const lPullA = pullLog(LA.s, LA.cursor, "devA");
+  ok(lPullA.applied.includes(lSeq3), "L: A 吃下 B 的 seq3（A 干净 ⇒ 页级用远端、块级保住 A 自己的 b1）");
+  const aJson = readContent(LA.s, PL).json;
+  ok(bodyOf(aJson, "b1") === "A 改的 b1" && bodyOf(aJson, "b2") === "B 改的 b2",
+    "L: ★★ 合并之后 A 两边编辑都在（⇒ A 的编辑没丢，丢的只是 **B 的视图**）");
+
+  const LC = { s: await newDevice(), cursor: { since: 0 } };
+  pullLog(LC.s, LC.cursor, "devC");
+  const cJson = readContent(LC.s, PL).json;
+  ok(bodyOf(cJson, "b1") === "A 改的 b1" && bodyOf(cJson, "b2") === "B 改的 b2",
+    "L: ★★ 全新设备按序折 log ⇒ 两边编辑都在（**log ＋ 块级 LWW 是收敛的**）");
+
+  // ⑥ 恢复条件（唯一的）：A 之后再推一次（哪怕内容没变）⇒ B 才拿回那条编辑
+  const lSeq4 = pushToServer(LA.s, PL, "devA", "游标页", "", aJson);
+  const lPull2 = pullLog(LB.s, LB.cursor, "devB");
+  ok(lPull2.applied.includes(lSeq4) && bodyOf(readContent(LB.s, PL).json, "b1") === "A 改的 b1",
+    "L: 只有**再有人推一次**（A 再保存/再同步）B 才拿回 A 的编辑 ⇒ 在那之前是一段没人看见的分歧");
+
+  // ---- 场景 M：合并产物写回 `dirty = 0` ⇒ 不推送，这件事本身丢不丢 ==========================
+  const PM = "page-merge-nopush";
+  const mBaseBlocks = [blk("b1", 1, "b1 原始"), blk("b2", 1, "b2 原始")];
+  const mABlocks = [blk("b1", 2, "A 改的 b1"), blk("b2", 1, "b2 原始")];
+  const mBBlocks = [blk("b1", 1, "b1 原始"), blk("b2", 2, "B 改的 b2")];
+  const baseAt = async (blocks, syncSeq) => {
+    const d = await newDevice();
+    localCreate(d, PM, "合并页", "");
+    writeContent(d, PM, { title: "合并页", json: contentOf(blocks), text: "" }, Date.now());
+    d.run("UPDATE pages SET dirty = 0, sync_seq = ? WHERE id = ?", [syncSeq, PM]);
+    return d;
+  };
+
+  const MA = await baseAt(mBaseBlocks, 0);
+  const mSeq1 = pushToServer(MA, PM, "devA", "合并页", "", contentOf(mBaseBlocks)); // 基线
+  const MB = await baseAt(mBaseBlocks, mSeq1); // 并发的另一端（基于基线）
+  const MX = await baseAt(mABlocks, 0); // 第三台：**已经消费了 seq2**（所以手上有 A 的编辑）
+  const MD = await baseAt(mABlocks, 0); // 第四台：同上（用来做"只吃 seq3"的对照）
+
+  const mSeq2 = pushToServer(MA, PM, "devA", "合并页", "", contentOf(mABlocks));
+  const mSeq3 = pushToServer(MB, PM, "devB", "合并页", "", contentOf(mBBlocks));
+  for (const d of [MX, MD]) d.run("UPDATE pages SET sync_seq = ? WHERE id = ?", [mSeq2, PM]);
+
+  // X 只吃 seq3 ⇒ 逐块合并 ⇒ 产物在手，而 `dirty` 必须是 0（**不推送**）
+  const mPullX = pullLog(MX, { since: mSeq2 }, "devX");
+  const xJson = readContent(MX, PM).json;
+  ok(bodyOf(xJson, "b1") === "A 改的 b1" && bodyOf(xJson, "b2") === "B 改的 b2",
+    "M: X 在 pull 时**拼出了合并产物**（边上边合）");
+  ok(getRow(MX, PM).dirty === 0, "M: ⚠️ 合并产物落库时 `dirty = 0` ⇒ **不会被推上去**（这就是被点名的那件事）");
+  ok(mPullX.applied.includes(mSeq3), "M: 这一轮 X 确实吃下了远端那一版（所以它算已消费）");
+
+  // 结论：别的设备照样拿全 —— 因为服务端**没有 page 表**，真相是 change log
+  const mPullD = pullLog(MD, { since: mSeq2 }, "devD");
+  const dJson = readContent(MD, PM).json;
+  ok(bodyOf(dJson, "b1") === "A 改的 b1" && bodyOf(dJson, "b2") === "B 改的 b2",
+    "M: 落后的老设备 D 只吃 seq3 ⇒ 也拼出同一份产物（**不推送合并产物不影响它**）");
+  ok(mPullD.applied.includes(mSeq3), "M: D 也消费了 seq3");
+
+  const MC = { s: await newDevice(), cursor: { since: 0 } };
+  pullLog(MC.s, MC.cursor, "devC");
+  const cMJson = readContent(MC.s, PM).json;
+  const blockKey = (json) => blocksOf(json).map((b) => `${b.blockId}:${bodyOf(json, b.blockId)}`).join("|");
+  ok(blockKey(cMJson) === blockKey(xJson),
+    "M: ★★ 全新设备按序折 log ⇒ 与 X 手上的合并产物**逐块相同**（⇒ 合并产物不推送**本身**不丢数据）");
+  ok(pageConflictsOf(MX, PM).length === 0 && pageConflictsOf(MC.s, PM).length === 0,
+    "M: 这一路没有冲突要裁决（两端改的是不同块）");
 
   // =========== 汇总 ===========
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
