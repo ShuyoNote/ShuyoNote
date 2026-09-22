@@ -33,7 +33,32 @@ $ vitest run src/lib/ai src/lib/extract          # 含 .live. 两条，走本机
 ⚠️ 两者差别**只在标点**（同音频实测内容逐字一致）—— 所以**标点不能成为下游的隐式依赖**：
 归一函数必须**显式**声明"这段文本是否含标点"，别让"有没有标点"取决于选了哪个模型。
 
-## 3. 纯函数层（**先做这一层；不依赖任何人的拍板**）
+## 2.5 ★ 冻结契约里**已经有这一格**（2026-09-22 复核 `src/lib/extract/types.ts`）
+
+`types.ts`（冻结 v1，方案 §15）里 **早就为音视频转写留了位置** —— 所以这件事**不是新造形状**，是**填空**：
+
+```ts
+export type SegmentKind = … | "transcript";   // 音视频转写：loc = 'HH:MM:SS'
+export type ExtractErrorCode = … | "provider_error";   // VLM/ASR 端点不可达或未配置
+```
+
+⇒ 我上面对"归一"的设想要按契约收敛成：
+
+- 产物是 **`ExtractedSegment{ kind: "transcript", loc: "HH:MM:SS", text }`**（**`loc` 用时间戳**，
+  不是行号 —— 这是转写与其它抽取器最本质的区别：**定位来自音频时间轴**）；
+- 端点不可达／没配 ⇒ 返回 **`fail("provider_error", …)`**（**不抛异常**，契约要求）；
+- ★ 契约里还有一条硬纪律：**"网络只经注入的 `deps`，不自建客户端"**（守"默认不出网"的红线）
+  ⇒ ASR 的端点也必须从**注入点**拿（下一步要先读 `deps` 接口，确认 ASR 是复用 `deps.vision`
+  还是需要新增一个注入点 —— **这是写代码前必须先定的一格**，别自己起一个 `fetch`）；
+- 算力档位（`ExtractCost`：`cpu`/`gpu`）大概率为 **`gpu`**（要和 VLM／嵌入排队错峰）。
+
+⚠️ 因此**"加一个抽取器"是 gate 耦合的改动**（我读了目录，这条链有 5+ 个文件会被牵动）：
+`src/lib/extract/audio.ts`（新）＋ **`registry.ts`**（登记）＋ **`depsCatalog.ts`**（能力目录，且有 `depsCatalog.test.ts`）
+＋ **`docs/plans/2026-09-17-knowledge-base-ai-coverage-plan.md §15`**（契约文档的那张矩阵）
+＋ `conformance.test.ts` / `coverage.test.ts` / `registry.test.ts` 这几条一致性判据。
+⇒ **半截落地会直接把门禁弄红**，所以下一轮按这 6 处**一次做齐**，不自作主张只加一个模块。
+
+
 
 模块位置：`src/lib/extract/audio.ts`（与 `image.ts`/`text.ts`/`pdf.ts` 同族：都是"外部东西 → 文本"）。
 
