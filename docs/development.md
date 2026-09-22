@@ -550,6 +550,16 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
   ⇒ 规矩：**凡是"要等外部东西"（模型服务、真浏览器、子进程、端到端链路）的判据，显式给第三参数超时**；
   排查时先看错误原文是 `timed out` 还是断言 —— 两者修法完全不同。
   ★ 更要紧的一条同族纪律：**一条从未在任何地方跑过的判据等于没有判据**（①就是"三台机器都 skipped、第一次真跑才暴露"）。
+- **长驻的 `pnpm tauri dev` 会被"你在同一个工作树里做 git"打断**（2026-09-22 实测）：
+  `tauri dev` **默认开着文件 watcher**；在它运行期间我做 `git merge` / `pull` / 大范围 `checkout`，
+  它会**触发重建**，而实测其中几次**重建后直接退出（`EXIT=0`）** —— 现象最迷惑人的地方是
+  **日志里没有任何报错**（停在 `Running target/debug/shuyonote`），看起来像"应用自己崩了"。
+  取数办法：`pnpm tauri dev > log 2>&1; echo "EXIT=$? at $(date +%H:%M:%S)"` ⇒ 那次抓到
+  `EXIT=0 at 15:55:43`，而日志里紧接着就是一次 `Building … Finished … Running`。
+  **处置**：要长驻就用 `pnpm tauri dev --no-watch`（**vite 的 HMR 仍在**，只是不因文件变动重启后端），
+  或者把 dev 跑在**另一个 worktree** 里、把主工作树留给 git 操作。
+  ⚠️ 边界：这是**实测到的相关**（rebuild ⇒ 退出），**机制没有确证**（没去看 Tauri CLI 的 watcher 实现）；
+  所以别把它当"必然"，但要记住：**看到一个没有报错的退出，先看它退出前有没有刚重建过**。
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
