@@ -14,6 +14,7 @@ const GOOD = `
         run: |
           SHUYONOTE_EXPECT_SM_PATCH=applied \\
           SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 \\
+          SHUYONOTE_EXPECT_SM_CRYPTO=on \\
             node scripts/check-crypto-backend.mjs
 `;
 
@@ -37,6 +38,7 @@ describe("check-workflow-yaml：单一口味＝国密（发版链四件套）", 
       [/ --features sm-library/, /--features sm-library/],
       [/node scripts\/sm-library-build\.mjs --prepare/, /sm-library-build\.mjs --prepare/],
       [/SHUYONOTE_EXPECT_SM_PATCH=applied/, /SHUYONOTE_EXPECT_SM_PATCH=applied/],
+      [/SHUYONOTE_EXPECT_SM_CRYPTO=on/, /SHUYONOTE_EXPECT_SM_CRYPTO=on/],
       [/SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/, /SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/],
       [/echo "OPENSSL_DIR=\/usr"/, /OPENSSL_DIR/],
     ];

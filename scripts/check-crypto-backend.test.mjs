@@ -241,6 +241,8 @@ describe("★ 第三格：补丁在不在（读 AMD 的 build.rs 打在产物里
       via: "",
       // 旧形状（没有 `page_cipher=`）⇒ 给空串，**不 undefined**：调用方据此判"这一格未实查"
       pageCipher: "",
+      // 同一条口径：旧形状也没有 `sm_crypto=`（2026-09-22 加）⇒ 空串
+      smCrypto: "",
     });
   });
 
@@ -462,6 +464,40 @@ describe("check-crypto-backend：页加密那一格（单一口味）", () => {
       pageCipher: { expected: "sm4" },
     });
     expect(problems).toEqual([]);
+    expect(notices.join()).toMatch(/未实查/);
+  });
+});
+
+// ★ 2026-09-22：**应用层国密也必须进产物标记**。动机是一次实测 ——
+//   `tauri dev` 发的是 `--no-default-features --features sm-crypto`，而
+//   `tauri build --features sm-library` 发的是 `--features sm-library,tauri/custom-protocol`（**defaults 仍在**）。
+//   两条路不同 ⇒ "发版包一定带 sm-crypto"不能只靠 CLI 行为不变；它一旦变，包会**静默退回 v1 写路径**。
+describe("check-crypto-backend：应用层国密那一格（sm_crypto=）", () => {
+  const marker = (smCrypto) => [
+    { profile: "release", entry: "shuyonote", patch: "72df3f9a", target: "macos", marker: "sqlite3.c", pageCipher: "sm4", smCrypto, mtime: 0 },
+  ];
+  const base = (smCrypto) => ({
+    all: [{ kind: "openssl" }],
+    expected: "openssl",
+    patch: { expected: "applied", markers: marker(smCrypto), current: null, currentError: "" },
+    pageCipher: { expected: "sm4" },
+  });
+
+  it("声明 on 且标记 on ⇒ 通过（并记一条一致）", () => {
+    const { problems, notices } = decide({ ...base("on"), smCrypto: { expected: "on" } });
+    expect(problems).toEqual([]);
+    expect(notices.join()).toMatch(/应用层国密与声明一致/);
+  });
+
+  it("★ 声明 on 而标记 off ⇒ **红**（发出去的包退回 v1 写路径，没有国密）", () => {
+    const { problems } = decide({ ...base("off"), smCrypto: { expected: "on" } });
+    expect(problems.join()).toMatch(/应用层国密/);
+    expect(problems.join()).toMatch(/退回 v1 写路径/);
+  });
+
+  it("旧产物没有 sm_crypto 字段 ⇒ 未实查（不判红，也别读成通过）", () => {
+    const { problems, notices } = decide({ ...base(undefined), smCrypto: { expected: "on" } });
+    expect(problems.some((p) => /应用层国密/.test(p))).toBe(false);
     expect(notices.join()).toMatch(/未实查/);
   });
 });

@@ -210,13 +210,17 @@ jobs:
         # 单一口味＝**发出去的包必须是 SM4 页**。这一格是产物级证据，不是声明：
         # `page_cipher=` 来自 `build.rs` 对「将要编译的那份源码」的读取（`#define OPENSSL_CIPHER`），
         # 而 `cipher_settings` 的回显里**没有** algorithm 字段（方案 §3.2 事实 3）⇒ 只有它能回答。
-        # 三个声明缺一不可：后端是 openssl（有 SM3/SM4）＋ 补丁在场 ＋ 页加密是 sm4。
+        # 四个声明缺一不可：后端是 openssl（有 SM3/SM4）＋ 补丁在场 ＋ 页加密是 sm4 ＋ **应用层国密是 on**。
+        # 最后那一格是 2026-09-22 补的：`tauri dev` 与 `tauri build` 对 `default features` 的处理**不同**
+        # （实测 argv：dev ⇒ `--no-default-features --features sm-crypto`；build ⇒ `--features sm-library,tauri/custom-protocol`），
+        # ⇒ "发版包带没带 `sm-crypto`"不能只靠 CLI 行为不变：它一旦变，包会**静默退回 v1 写路径**（没有国密）。
         shell: bash
         run: |
           set -euo pipefail
           SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl \
           SHUYONOTE_EXPECT_SM_PATCH=applied \
           SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 \
+          SHUYONOTE_EXPECT_SM_CRYPTO=on \
             node scripts/check-crypto-backend.mjs
 
       - name: 装包确实带上了 pdfium.dll（Windows 档）

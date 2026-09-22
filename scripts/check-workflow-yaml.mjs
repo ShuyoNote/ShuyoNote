@@ -62,6 +62,7 @@ export function gmPipelineRequirements(text, { file = "release.yml" } = {}) {
     [/sm-library-build\.mjs[^\n]*--prepare/, "没有 `sm-library-build.mjs … --prepare` ⇒ 补丁没打 / 产物没清（不清就不会换后端）"],
     [/SHUYONOTE_EXPECT_SM_PATCH=(applied|"?applied"?)/, "没有断言 `SHUYONOTE_EXPECT_SM_PATCH=applied`"],
     [/SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/, "没有断言 `SHUYONOTE_EXPECT_PAGE_CIPHER=sm4`（单一口味＝发出去的包必须是 SM4 页）"],
+    [/SHUYONOTE_EXPECT_SM_CRYPTO=on/, "没有断言 `SHUYONOTE_EXPECT_SM_CRYPTO=on`（应用层国密：off ⇒ 包退回 v1 写路径）"],
     [/OPENSSL_DIR/, "没有 `OPENSSL_DIR`（`build.rs` 在 `sm-library` 上是 fail-fast，不给必红；但也别靠「它自己会发现」）"],
   ];
   for (const [re, why] of need) if (!re.test(effective)) problems.push(`${file}：${why}`);

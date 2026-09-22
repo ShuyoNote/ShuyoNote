@@ -204,9 +204,16 @@ fn require_gm_provider_patch() {
             //   成了必须随时能回答的问题。值与 `src_sha256` **同一时刻取自同一份源码** ⇒
             //   源码事后被还原而产物未重编时，两格会**一起**对不上当前源码（新鲜度判据红），不会被静默吞掉。
             let page_cipher = read_page_cipher(&dir.join(&hit));
+            // ★ **应用层国密**也进标记（2026-09-22，被一次实测逼出来）：`tauri dev` 与 `tauri build` 对
+            //   `default features` 的处理**不一样**（实测 argv：dev ⇒ `--no-default-features --features sm-crypto`；
+            //   build ⇒ `--features sm-library,tauri/custom-protocol`，**defaults 仍在**）。
+            //   ⇒ "发版包一定带 `sm-crypto`"这件事今天只靠"CLI 的行为不变"撑着；而它一旦变，
+            //   产物会**静默退回 v1 写路径**（没有国密），且没有任何判据会红。
+            //   ⇒ 把它写成**产物里可读的一格**，发布链上就能断言（`SHUYONOTE_EXPECT_SM_CRYPTO=on`）。
+            let sm_crypto = if std::env::var_os("CARGO_FEATURE_SM_CRYPTO").is_some() { "on" } else { "off" };
             println!(
                 "cargo:warning=shuyonote: sm3/sm4 provider patch applied (patch={patch_sha} target={target_os} \
-                 libsqlite3-sys={version} via={how} marker={hit} page_cipher={page_cipher} src_sha256={src_sha256})"
+                 libsqlite3-sys={version} via={how} marker={hit} page_cipher={page_cipher} sm_crypto={sm_crypto} src_sha256={src_sha256})"
             );
             // 补丁文件不被任何 rerun-if-changed 覆盖 ⇒ 这里显式盯住源码与 patches/ 目录，
             // 免得"改了补丁、cargo 不重编"（比 OPENSSL_DIR 那个坑更隐蔽：连设环境变量这个动作都没有）。

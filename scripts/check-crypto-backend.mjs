@@ -186,6 +186,10 @@ export function patchMarkerOf(text) {
     //   写出去的库是 SM4 页还是 AES 页"在**构建期**唯一能被读出来的地方（另一条路是实验：
     //   `security::tests::exactly_one_page_cipher_fixture_opens_and_the_other_is_refused`）。
     pageCipher: field("page_cipher"),
+    // ★ 应用层国密（`sm-crypto`）：2026-09-22 实测发现 `tauri dev` 与 `tauri build` 对 default features
+    //   处理不同（dev 传 `--no-default-features --features sm-crypto`；build 不关 defaults）⇒
+    //   "发版包带没带应用层国密"必须有产物读数（否则某天 CLI 行为一变，包会静默退回 v1 写路径）。
+    smCrypto: field("sm_crypto"),
     // 新鲜度证据（AMD 2026-09-19 加）：这份标记对应哪份源码的哪个版本
     srcSha256: field("src_sha256"),
     libsqlite3Sys: field("libsqlite3-sys"),
@@ -231,7 +235,7 @@ export function describe(x) {
  * 判定（纯函数）：返回 `{ problems, notices }`。
  * 三种状态分得清 —— 没产物/没标记 ⇒ 只提示；**认得出的产物 ≠ 声明 ⇒ 红**；旧产物分类不同 ⇒ 提示。
  */
-export function decide({ all, expected, patch = { expected: null, markers: [] }, pageCipher = { expected: null } }) {
+export function decide({ all, expected, patch = { expected: null, markers: [] }, pageCipher = { expected: null }, smCrypto = { expected: null } }) {
   const problems = [];
   const notices = [];
   // ★ 第三格：补丁在不在（独立于后端那一格 —— 后端对了、补丁没打，仍然没有国密算法）
@@ -357,6 +361,28 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
       notices.push(`页加密与声明一致：page_cipher=${newestMarker.pageCipher}`);
     }
   }
+  // ★ 应用层国密那一格（2026-09-22）：`sm_crypto=on|off` 必须与声明一致。
+  //   动机是**实测**：`tauri build --features sm-library` 走的是 `cargo build --bins --features
+  //   sm-library,tauri/custom-protocol --release`（**defaults 仍在** ⇒ `sm-crypto` 没被顶掉）；
+  //   而 `tauri dev` 走的是 `--no-default-features --features sm-crypto`。两条路不同 ⇒
+  //   "发版包一定带应用层国密"不能只靠 CLI 行为不变。
+  if (smCrypto.expected) {
+    if (!newestMarker) {
+      notices.push(`声明了 SHUYONOTE_EXPECT_SM_CRYPTO=${smCrypto.expected}，但没有产物标记 ⇒ 这一格未实查`);
+    } else if (!newestMarker.smCrypto) {
+      notices.push(
+        `标记里**没有** \`sm_crypto=\` 字段（旧构建产物）⇒ 这一格未实查；` +
+          `重新拿可自证的标记：\`cargo clean -p shuyonote\` 后再编`,
+      );
+    } else if (newestMarker.smCrypto !== smCrypto.expected) {
+      problems.push(
+        `产物标记说这份构建的**应用层国密**是 **${newestMarker.smCrypto}**，而声明要求 **${smCrypto.expected}**` +
+          `（单一口味＝发出去的包必须写 v2 密文；off 意味着退回 v1 写路径）`,
+      );
+    } else {
+      notices.push(`应用层国密与声明一致：sm_crypto=${newestMarker.smCrypto}`);
+    }
+  }
   return { problems, notices };
 }
 
@@ -409,6 +435,7 @@ export function main() {
 
   const patchExpected = (process.env.SHUYONOTE_EXPECT_SM_PATCH || "").trim() || null;
   const pageCipherExpected = (process.env.SHUYONOTE_EXPECT_PAGE_CIPHER || "").trim() || null;
+  const smCryptoExpected = (process.env.SHUYONOTE_EXPECT_SM_CRYPTO || "").trim() || null;
   const markers = collectPatchMarkers(dir);
   // 「当前将要编译的那份源码」的指纹 —— 用 AMD 的纯函数（唯一实现），拿不到就带上原因（判"未实查"，不判红）
   let current = null;
@@ -423,6 +450,7 @@ export function main() {
     expected,
     patch: { expected: patchExpected, markers, current, currentError },
     pageCipher: { expected: pageCipherExpected },
+    smCrypto: { expected: smCryptoExpected },
   });
   for (const n of notices) console.error(`! ${n}`);
   if (patchExpected === "applied" && !problems.length) {
@@ -433,7 +461,7 @@ export function main() {
         : `src_sha256=${m.srcSha256 ? m.srcSha256.slice(0, 12) + "…" : "(缺字段)"} —— ⚠️ 见上面的"未实查"说明`;
     console.log(
       `  补丁标记 ✓ patch=${m.patch || "?"} target=${m.target || "?"} marker=${m.marker || "?"}` +
-        `${m.pageCipher ? ` **page_cipher=${m.pageCipher}**` : ""}（${m.profile}/${m.entry}）\n    ${hashLine}`,
+        `${m.pageCipher ? ` **page_cipher=${m.pageCipher}**` : ""}${m.smCrypto ? ` sm_crypto=${m.smCrypto}` : ""}（${m.profile}/${m.entry}）\n    ${hashLine}`,
     );
     if (!m.pageCipher) {
       console.error(
