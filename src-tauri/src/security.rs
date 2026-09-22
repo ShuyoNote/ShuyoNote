@@ -964,7 +964,13 @@ mod tests {
             assert_eq!(t, "hi");
         }
 
-        // ② 另一套库级参数（裸 `ATTACH … KEY`，明文主连接）写的库：**国密构建必须读不开**。
+        // ② 另一套库级参数（裸 `ATTACH … KEY`，明文主连接）写的库：
+        //    ★ **判据自适应当前状态**（2026-09-22 补丁 v4 之后改；v4 之前这里写的是"必须读不开"）：
+        //    · **v4 之前**：裸 ATTACH 写的是**默认参数**（页 MAC/库 KDF = SHA512），而生产口径设的是 SM3
+        //      ⇒ 两套参数 ⇒ **必须读不开**（那条负判据当时是对的）；
+        //    · **v4 之后**：OpenSSL 构建的**默认值就是 SM3** ⇒ 裸 ATTACH 与生产口径**同一套参数**
+        //      ⇒ **读得开是对的**（这正说明"库级参数不再靠应用约定"）。
+        //    ⇒ 把它写成"先量这份文件到底是哪一套参数，再断言对应结论"，两种世界下都是真话。
         #[cfg(feature = "sm-library")]
         {
             let legacy = dir.join("raw_attach.db");
@@ -977,14 +983,36 @@ mod tests {
                 c.close().unwrap();
             }
             assert!(space_db_is_encrypted(&legacy), "裸 ATTACH 也该写出密文库");
+
+            // 先用**裸钥**（＝写它的那套参数）确认真能读开，并问出"这份构建的默认是不是 SM3"
+            let defaults_are_sm3 = {
+                let bare = Connection::open(&legacy).unwrap();
+                bare.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+                let st = crate::gm_provider::read_gm_cipher_status(&bare).unwrap();
+                let read: Result<i64, _> =
+                    bare.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+                assert!(read.is_ok(), "裸钥读不开自己写出来的库 ⇒ 夹具/构建有问题：{read:?}");
+                st.is_applied()
+            };
+
+            // 再用**生产口径**（接线后的国密参数）读同一份文件
             let c = Connection::open(&legacy).unwrap();
-            // 设 key ＋ 国密标签**不报错**（库认识标签），但**读**必须失败（参数是另一套）。
             key_conn_with(&c, &key).unwrap();
-            let read: Result<i64, _> = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
-            assert!(
-                read.is_err(),
-                "裸 ATTACH 写的（默认库级参数）库在国密构建上**必须读不开**，却读到了 {read:?}"
-            );
+            let via_app: Result<i64, _> =
+                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0));
+            if defaults_are_sm3 {
+                assert!(
+                    via_app.is_ok(),
+                    "补丁 v4 之后默认已是 SM3 ⇒ 裸 ATTACH 写的库与生产口径**同参数**，必须读得开：{via_app:?}"
+                );
+                println!("裸 ATTACH 产物读数：默认已是国密（v4）⇒ 生产口径也读得开（{via_app:?}）");
+            } else {
+                assert!(
+                    via_app.is_err(),
+                    "默认还不是 SM3（v4 之前）⇒ 裸 ATTACH 写的是另一套参数，必须读不开，却读到了 {via_app:?}"
+                );
+                println!("裸 ATTACH 产物读数：默认仍是 SHA512（v4 之前）⇒ 生产口径读不开（符合当时的负判据）");
+            }
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
