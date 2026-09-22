@@ -494,7 +494,8 @@ async function checkPdfReader(page, vp) {
         ".pdf-reader-sidebar-toggle",
         ".pdf-reader-ask",
         ".pdf-eye-wrap",
-        ".pdf-export-btn",
+        // ⚠️ `.pdf-export-btn` **不在**名单里：2026-09-22 起它是图标按钮（44×44）且**常驻**
+        //    ——"导出这份带批注的副本"是标注之后的主要动作，藏进 ⋯ 不值当。
       ];
       const tools = reader.querySelector(".pdf-annot-tools");
       const box = (el) => {
@@ -517,6 +518,26 @@ async function checkPdfReader(page, vp) {
         }),
         toolbar: box(reader.querySelector(".pdf-annot-toolbar")),
         status: box(reader.querySelector(".pdf-annot-status")),
+        // head（顶部工具条）自身的预算 + 导出按钮规格（"太占地方"那条的回归判据）
+        head: box(reader.querySelector(".pdf-reader-head")),
+        headChildren: Array.from(reader.querySelector(".pdf-reader-head")?.children ?? [])
+          .map((c) => {
+            const b = c.getBoundingClientRect();
+            return { name: String(c.className).split(" ")[0], top: b.top, bottom: b.bottom, w: Math.round(b.width), h: Math.round(b.height) };
+          })
+          .filter((c) => c.w > 1 && c.h > 1),
+        exportBtn: (() => {
+          const el = reader.querySelector(".pdf-export-btn");
+          if (!el) return null;
+          const b = el.getBoundingClientRect();
+          return {
+            w: Math.round(b.width),
+            h: Math.round(b.height),
+            text: (el.textContent || "").trim(),
+            title: (el.getAttribute("title") || "").trim(),
+            label: (el.getAttribute("aria-label") || "").trim(),
+          };
+        })(),
         // 短标签必须带 title（否则"朗读 / OCR / AI"就没有完整说法）
         labels: Array.from(reader.querySelectorAll(".pdf-annot-ocr")).map((b) => ({
           text: (b.textContent || "").trim(),
@@ -526,18 +547,6 @@ async function checkPdfReader(page, vp) {
         layerTitle: (reader.querySelector(".pdf-annot-layer")?.getAttribute("title") || "").trim(),
       };
     });
-    /** 分组占了几行：按纵向重叠合并。 */
-    const linesOf = (boxes) => {
-      const g = [];
-      for (const b of boxes) {
-        const hit = g.find((x) => b.top < x.bottom - 0.5 && b.bottom > x.top + 0.5);
-        if (hit) {
-          hit.top = Math.min(hit.top, b.top);
-          hit.bottom = Math.max(hit.bottom, b.bottom);
-        } else g.push({ top: b.top, bottom: b.bottom });
-      }
-      return g.length;
-    };
 
   const first = await measure();
   if (first.err) return { err: first.err };
@@ -576,6 +585,22 @@ async function checkPdfReader(page, vp) {
 }
 
 /**
+ * 若干矩形占了几"行"：**按纵向重叠**合并。
+ * ⚠️ 不能比"顶端相等"：同一行里盒高不同（44 vs 28）且 `align-items: center`，top 会差几像素。
+ */
+function linesOf(boxes) {
+  const g = [];
+  for (const b of boxes ?? []) {
+    const hit = g.find((x) => b.top < x.bottom - 0.5 && b.bottom > x.top + 0.5);
+    if (hit) {
+      hit.top = Math.min(hit.top, b.top);
+      hit.bottom = Math.max(hit.bottom, b.bottom);
+    } else g.push({ top: b.top, bottom: b.bottom });
+  }
+  return g.length;
+}
+
+/**
  * PDF 阅读器那一节的断言（手机档与桌面档**共用**）。
  * ⚠️ 曾经只写在手机循环里 ⇒ 桌面那几条（同排/工具条一行高/右端）**永远不执行**（死断言）。
  */
@@ -595,10 +620,32 @@ function assertPdfReader(rr, vp) {
     `批注工具条里没有"没有内容却有背景/边框"的空壳（实测 ${rr.empties.length} 个` +
       `${rr.empties.length ? "：" + rr.empties.join("、") : ""}）`,
   );
+  // ①b 导出按钮：**图标规格**（原来是一枚 102×28 的文字按钮，owner 说"太占地方"）。
+  ok(
+    !!rr.exportBtn && rr.exportBtn.text === "" && rr.exportBtn.w <= (vp.width <= 768 ? 48 : 32),
+    `「导出带批注副本」是图标按钮（${rr.exportBtn?.w}×${rr.exportBtn?.h}，文字="${rr.exportBtn?.text}"）` +
+      `——改前 102×28 的文字按钮`,
+  );
+  ok(
+    (rr.exportBtn?.title?.length ?? 0) > 0 && (rr.exportBtn?.label?.length ?? 0) > 0,
+    `导出图标带 title + aria-label（「${rr.exportBtn?.label}」）——图标化不等于把说法藏掉`,
+  );
+  // ①c head（顶部工具条）预算。实测：390 上 215px/4 行 → 115px；320 上 → 165px。
+  const headLines = linesOf(rr.headChildren ?? []);
+  if (vp.width <= 768) {
+    const budget = vp.width <= 320 ? 175 : 130;
+    ok((rr.head?.h ?? 1e9) <= budget, `窄屏 head 高度 ${rr.head?.h}px ≤ ${budget}（实测 ${headLines} 行；改前 215px / 4 行）`);
+    ok(
+      (rr.exportBtn?.w ?? 0) >= 44 && (rr.exportBtn?.h ?? 0) >= 44,
+      `导出图标命中区 ≥44（${rr.exportBtn?.w}×${rr.exportBtn?.h}）`,
+    );
+  } else {
+    ok((rr.head?.h ?? 1e9) <= 56, `桌面 head 仍是一行（${rr.head?.h}px ≤ 56）`);
+  }
   // ② `⋯` 的收起/展开：CSS 级断言只能钉规则，钉不到"点下去会不会出来"。
   if (vp.width <= 768) {
     ok(rr.moreVisible, `窄屏有「⋯」入口（更多工具）`);
-    ok(rr.secondary.every((v) => v === false), `默认收起那 5 个低频头部控件（实测 ${JSON.stringify(rr.secondary)}）`);
+    ok(rr.secondary.every((v) => v === false), `默认收起那 4 个低频头部控件（实测 ${JSON.stringify(rr.secondary)}）`);
     ok(rr.secondaryAfter.every((v) => v === true), `点开「⋯」后它们真的出现（实测 ${JSON.stringify(rr.secondaryAfter)}）`);
     ok(rr.toolsH !== null && rr.toolsH <= 56, `批注工具行是**一行**（高 ${rr.toolsH} ≤ 56；换行会白吃 44px）`);
     // 状态组（文本层 chip + 朗读/OCR/AI）窄屏**默认收进 ⋯**，点开才出现 —— 两条都钉
