@@ -18180,11 +18180,47 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   border-bottom: 1px solid var(--border);
 }
-/* 5 — 侧栏类型筛选 */
+/* 5 — 侧栏类型筛选
+   2026-09-22（owner："右边侧栏顶部的四个按钮平时收起来"）：四枚胶囊**默认收起**，
+   常驻只剩一枚漏斗开关（`.pdf-sidebar-filter-toggle`）。理由：它们只在"标注多到要按类型筛"
+   时才用得上，常驻时却几乎占满整个栏宽（≈236px，侧栏本身才 ~260px）。 */
+.pdf-sidebar-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 4px;
+  flex-wrap: wrap;
+}
+.pdf-sidebar-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.pdf-sidebar-filter-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 筛选**不是"全部"**时常驻态也要看得出来（收起时旁边带当前类型文字） */
+.pdf-sidebar-filter-toggle.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(51, 112, 255, 0.25);
+}
+.pdf-sidebar-filter-current {
+  white-space: nowrap;
+}
 .pdf-sidebar-filter {
   display: flex;
   gap: 4px;
-  padding: 8px 8px 4px;
+  padding: 0;
   flex-wrap: wrap;
 }
 .pdf-sidebar-filter-btn {

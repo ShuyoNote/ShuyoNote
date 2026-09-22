@@ -538,6 +538,19 @@ async function checkPdfReader(page, vp) {
             label: (el.getAttribute("aria-label") || "").trim(),
           };
         })(),
+        // 右侧批注栏的筛选开关（2026-09-22：四枚胶囊默认收起，常驻只剩一枚漏斗）
+        sidebar: (() => {
+          const sb = reader.querySelector(".pdf-sidebar");
+          if (!sb) return null;
+          const t = sb.querySelector(".pdf-sidebar-filter-toggle");
+          return {
+            toggle: !!t,
+            title: (t?.getAttribute("title") || "").trim(),
+            expanded: t?.getAttribute("aria-expanded") === "true",
+            chips: sb.querySelectorAll(".pdf-sidebar-filter-btn").length,
+            activeLabel: (sb.querySelector(".pdf-sidebar-filter-current")?.textContent || "").trim(),
+          };
+        })(),
         // 短标签必须带 title（否则"朗读 / OCR / AI"就没有完整说法）
         labels: Array.from(reader.querySelectorAll(".pdf-annot-ocr")).map((b) => ({
           text: (b.textContent || "").trim(),
@@ -562,7 +575,28 @@ async function checkPdfReader(page, vp) {
     secondaryAfter = after.secondary ?? secondaryAfter;
     hasStatusAfter = after.hasStatus ?? hasStatusAfter;
   }
-  // 6) 桌面：把目录 + 批注侧栏都关掉再量一态 —— 只有**列宽足够**时"状态组与工具组同排"
+  // 6b) 桌面：右侧批注栏的筛选**默认收起**（owner 2026-09-22）——
+  //     点开有 4 枚胶囊、选一个再收起后仍能看出当前筛选（否则"列表变短了"没有解释）。
+  //     ⚠️ 必须排在"关掉目录+侧栏"那一步**之前**（那一步之后 `.pdf-sidebar` 就不在 DOM 里了）。
+  let sidebarFlow = null;
+  if (vp.width > 768) {
+    const before = first.sidebar;
+    await safeEval(page, () => document.querySelector(".pdf-sidebar-filter-toggle")?.click());
+    await sleep(400);
+    const opened = (await measure()).sidebar;
+    await safeEval(page, () => {
+      const b = Array.from(document.querySelectorAll(".pdf-sidebar-filter-btn")).find(
+        (x) => (x.textContent || "").trim() === "高亮",
+      );
+      b?.click();
+    });
+    await sleep(300);
+    await safeEval(page, () => document.querySelector(".pdf-sidebar-filter-toggle")?.click()); // 收起
+    await sleep(400);
+    const collapsed = (await measure()).sidebar;
+    sidebarFlow = { before, opened, collapsed };
+  }
+  // 6c) 桌面：把目录 + 批注侧栏都关掉再量一态 —— 只有**列宽足够**时"状态组与工具组同排"
   //    才检验得出来（面板开着时正文列可能只有 ~492px，`tools 454 + status 221` 必然换行）。
   let wide = null;
   if (vp.width > 768) {
@@ -579,6 +613,7 @@ async function checkPdfReader(page, vp) {
     secondaryAfter,
     hasStatusAfter,
     wide,
+    sidebarFlow,
     lines: linesOf(first.groupBoxes),
     wideLines: wide ? linesOf(wide.groupBoxes) : null,
   };
@@ -654,6 +689,21 @@ function assertPdfReader(rr, vp) {
   } else {
     ok(!rr.moreVisible, `桌面不显示「⋯」入口（一次放得下）`);
     ok(rr.hasStatus === true, `桌面一直显示状态组（OCR / AI 那一行，不缺空间）`);
+    // 右侧批注栏：四枚筛选胶囊**默认收起**，常驻只剩一枚漏斗（owner 2026-09-22：
+    // "右边侧栏顶部的四个按钮平时收起来"）。改前 4 枚常驻 ≈236px，几乎占满 260px 的栏宽。
+    const sb = rr.sidebarFlow;
+    ok(
+      sb?.before?.toggle === true && sb.before.chips === 0 && sb.before.expanded === false,
+      `批注栏筛选默认收起（只有 1 枚漏斗开关、${sb?.before?.chips} 枚胶囊）——改前 4 枚胶囊常驻`,
+    );
+    ok(
+      sb?.opened?.chips === 4 && sb.opened.expanded === true,
+      `点开后 4 枚胶囊都在（实测 ${sb?.opened?.chips} 枚）`,
+    );
+    ok(
+      sb?.collapsed?.chips === 0 && sb.collapsed.activeLabel === "高亮",
+      `收起后仍看得出当前筛选（图标旁写「${sb?.collapsed?.activeLabel}」）——否则"列表变短了"没有解释`,
+    );
     // 「1+2」：三个按钮**短标签**（朗读 / OCR / AI），状态组从"独占一行的 472px 状态条"
     // 改成"与工具组同排的 221px 小组"（关掉目录+侧栏 ⇒ 列宽足够，这一档才检验得出来）
     ok(
