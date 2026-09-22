@@ -180,6 +180,25 @@ function killPids(pids, label) {
 }
 
 /**
+ * 等端口真的空出来（轮询）；期间每隔一段时间调用一次 `onTick`（用来补杀）。
+ * ⚠️ 必须轮询：见下面端口清理那段的注释 —— 立刻重查在 Windows 上会误判成"清理失败"。
+ */
+async function waitPortFree(port, timeoutMs, onTick) {
+  const t0 = Date.now();
+  let lastTick = 0;
+  for (;;) {
+    if (!(await portBusy(port))) return true;
+    const now = Date.now();
+    if (now - t0 > timeoutMs) return false;
+    if (onTick && now - lastTick > 1500) {
+      lastTick = now;
+      onTick();
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/**
  * 残留的 tauri / vite 进程（**只做客套提示，不自动杀**）。
  *
  * POSIX：`ps -axo pid,command` 能拿到命令行 ⇒ 精确匹配 `tauri dev` / `vite`。
@@ -280,14 +299,26 @@ if (busy.length > 0) {
     const pids = pidsOnPort(port);
     if (pids.length) killPids(pids, `:${port}`);
   }
-  // 再检查一遍；若仍有占用（权限/系统服务）则放弃。
+  // ⚠️ 杀完**必须轮询等端口真的释放**，不能立刻重查：Windows 上 `TerminateProcess` 之后
+  //    监听套接字不会立刻消失，马上重查会看到"仍被占用"，于是误判成"权限不够/系统服务"
+  //    直接 exit 1 —— 2026-09-22 实测踩到：明明已经杀掉了 pid 27392，却报"无法清理"。
+  //    （这条路径之前从没在 Windows 上真跑过：上次验的是"端口空着"的 happy path。）
+  // 等待期间再补一次重杀（第一次 SIGTERM 可能没落地）。
+  for (const port of busy) {
+    const freed = await waitPortFree(port, 6000, () => {
+      const pids = pidsOnPort(port);
+      if (pids.length) killPids(pids, `:${port}（第二次）`);
+    });
+    if (!freed) console.log(`[dev] ⚠️ :${port} 6 秒内没释放，继续检查…`);
+  }
   const still = [];
   if (await portBusy(npm.vitePort)) still.push(npm.vitePort);
   if (await portBusy(npm.hmrPort)) still.push(npm.hmrPort);
   if (still.length) {
-    console.error(`[dev] ✗ 端口 ${still.join(", ")} 仍被占用，无法清理。请手动处理。`);
+    console.error(`[dev] ✗ 端口 ${still.join(", ")} 仍被占用，无法清理。请手动处理（或加 --no-clean 自行处理）。`);
     process.exit(1);
   }
+  console.log(`[dev] 端口已清理：${busy.join(", ")} 现在空闲`);
 }
 
 // ---- warn about stale tauri/vite (not holding 1420 but still running) ----
