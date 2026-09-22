@@ -1,18 +1,23 @@
 # ShuyoNote 项目现状摘要（客户端 · 会话延续种子）
 
-> 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到最新 v1.90.2（2026-09-15）**。
-> 项目根：`~/zhai/ShuyoNote`（Mac）/ `C:\Users\cnzen\zhai\ShuyoNote`（Windows）；远端 gitcode + github。
+> 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到 2026-09-22**（对外交付线 `1.91.20`；`dev` 上另有 2026-09 六条在飞战役）。
+> 项目根：`~/zhai/ShuyoNote`（Mac）/ `C:\Users\cnzen\zhai\ShuyoNote`（Windows）；远端 gitcode（`origin`，权威）+ github（`github`，镜像）。
 > 服务端现状见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`；**跨平台开发接续（环境事实、待办与下一步、
 > 换到 Mac 怎么接）见 `docs/SESSION_CONTINUE.md`（服务端仓库）**——本文件只写"现状"，不写操作步骤。
+> ★ **三机协作（2026-09 起）**：Mac / Windows / AMD 三台机器并行推进，**信道是信箱仓 `ShuyoNote-collab`**
+> （不是本文档）。每轮开工前先 `git -C ../shuyo-collab pull` → 读 `STATUS.md` 三侧区块 → 只回挂
+> `NEEDS-REPLY` 的信；各侧进度写在 `tools/my-status.json`，由 `tools/status-sync.mjs` 自动落进 `STATUS.md`。
+> ★ **粒度更细的现状**在 [roadmap §1.1 与 §3.5](roadmap.md)：里程碑看 §3，六条在飞战役看 §3.5。
 
 ## 1. 项目概况
 
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
 - **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.50（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
 - **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver）。
-- **版本**：**v1.90.2**（`package.json` / `src-tauri/tauri.conf.json` 一致；tag `v1.90.2` → `7daea43`）。
-  ⚠️ **`main` 与 `dev` 当前是真分叉**（`git merge-base --is-ancestor dev main` 为假），
-  两个分支的实际 sha 与处理办法见 `SESSION_CONTINUE.md` §12.2——**动 `dev` 或发版前先读那一节**。
+- **版本**：对外交付线最新 **`1.91.20`**（`origin/main` = `9a57629f`，2026-09-21）；**`dev` 与 `main` 是分叉的**
+  （`main` 上有 1.91.4–1.91.20 的 release 提交，`dev` 上是 2026-09 六条战役；`git rev-list --count dev..origin/main` = 64）。
+  ⇒ **发版仍按 [RELEASING](RELEASING.md) 走 `dev → main` 的显式合并**；`dev` 工作区的 `package.json` 版本号（当前 `1.91.10`）
+  与交付线版本号**本来就不必相同**（bump 发生在发布线上）。
 - **许可证**：客户端 **AGPL-3.0**；配套自建同步服务端 **商业**（`shuyonote-sync-server`，见其仓库）。
 
 ## 2. 已实现核心功能（里程碑 M1–M27）
@@ -23,7 +28,21 @@
 | M26 | 公式（数学） | [x] |
 | M27 | 团队版（自建协作） | [部分] 部分（服务端 S1–S8 已落地；客户端 per-workspace `sync_profiles` + 账户 UI（U1–U4）+ E2E 加密已落地；**实时协同后置**） |
 
-### 近期重大变更（v1.82 → v1.90.2）
+### 2026-09 战役（**先看这一段**；逐条权威文档在 [roadmap §3.5](roadmap.md)）
+
+| 战役 | 现在到哪 | 还没关的格子 |
+|---|---|---|
+| **国密** | 四层走完 ＋ **单一口味拍板** ＋ 落进发布链（应用层 v2 默认；库级 SM4 页 ＋ SM3 页 MAC/库 KDF；产物五条断言） | Windows 真机变异证明 / Linux 带 tag 的真读数 / macOS 公证凭据 / 老库迁移（无真实用户，零成本） |
+| **PDFium** | 桌面光栅化可切换（`SHUYONOTE_PDF_ENGINE=pdfium`）；P3 对拍四样本硬判据 4/4 | Linux 非嵌入字体后端、真机逐条验收 |
+| **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；ASR 转写通道（`localTranscribe`）已接 | 面板侧"消费抽取结果"未落地；真模型 live 读数要本机服务在跑 |
+| **块级 CRDT（阶段 1）** | 块身份 ＋ `blockRev`（Rust/TS 双份判据）＋ 写层施工单 | 阶段 1 写回收口；阶段 2+ 未开工 |
+| **社区与分发** | 索引规范/签名/两级撤回/TOFU/多源订阅/事实清单 | 市场 UI、一键发布到社区的客户端侧 |
+| **近实时** | 冲突提示/presence/评论@通知/SSE 已落地 | 块级真协同（CRDT 阶段 1 是地基） |
+
+### 更早的批次（v1.82 → v1.91.3，保留用于查历史与教训）
+
+> 下面这些条目写于 2026-09-15 前后，**结论与教训仍然有效**（尤其是"渲染级测试是 hooks 类错的唯一门禁"
+> 与"真机验收不能用截图判"），但**其中的版本号与"未发版"字样已过期**：它们后来都进了 `main`。
 
 - **v1.90.2 已发版上线（Android 首个正式发布件）**：GitHub Release `v1.90.2` 挂 **5 个资产**
   （`ShuyoNote_1.90.2_android-arm64-release.apk` + 其 `.sha256`、`_x64-setup.exe`、`_amd64.deb`、`_amd64.AppImage`）；
@@ -70,11 +89,14 @@
 ## 3. 关键架构
 
 - **平台 driver**：`src/lib/platform/`（types/tauri/web/index）；`api.ts` 经 `platform.executor.invoke` 调命令，命令契约见 `src/lib/platform/commands.ts`（`CommandMap`）。
-- **同步**：outbox `changes` + LWW（服务端 seq 基准 + dirty 优先本地，v1.84.3）；附件内容寻址去重。
+- **加密分层（2026-09 之后必须分四层说）**：① 口令派生（非国密支 Argon2id / 国密支 PBKDF2-HMAC-SM3）；② 应用层静置（密文头 `0x53 0x01` = XChaCha20-Poly1305，`0x53 0x02` = SM4-CBC ＋ HMAC-SM3；**v0 无头老格式只读**）；③ 库级静置（SQLCipher 空间库：页加密与页 MAC/库 KDF——**国密单一口味下是 SM4 页 ＋ SM3**，切换点在编译期 provider 补丁）；④ 传输（同步载荷＝客户端加解密，服务端只见密文）。
+- **抽取/派生层**：`src/lib/extract/`（抽取器注册表按 mime 分派 ＋ 派生文本/块/嵌入三层，**纯逻辑、不 import 平台**）＋ `src/lib/platform/extractDeps.ts`（**deps 的唯一构造点**）＋ `src/lib/ai/`（本机模型通道：`localVision` / `localTranscribe`，非 loopback 一律拒绝注入）。
+- **同步**：outbox `changes` + LWW（服务端 seq 基准 + dirty 优先本地，v1.84.3）；附件内容寻址去重（sha256 前 2 字符分桶）。
 - **存储**：每工作空间独立库（`meta.db` + `spaces/<ws_id>/`）；附件内容寻址 hash + 分桶 + 可加密。
-- **PDF**：桌面 native MuPDF + Web pdf.js 双引擎；`platform.pdfRender` driver。
-- **编辑器**：Lexical 0.50 + 自定义节点；节点类型收敛于 `src/editor/config.ts`。
-- **提版**：`scripts/release.mjs`（gitcode 更新）+ `tauri-plugin-updater`（签名 + `latest.json`）。
+- **PDF**：桌面 native 双引擎（缺省 **MuPDF**，可切 **PDFium**）＋ Web pdf.js；统一走 `platform.pdfRender` driver，坐标与文本层仍归 pdf.js。
+- **编辑器**：Lexical 0.50 + 自定义节点；节点类型收敛于 `src/editor/config.ts`；块身份/版本见块级 CRDT 阶段 1。
+- **提版**：`scripts/release.mjs`（gitcode 更新）+ `tauri-plugin-updater`（签名 + `latest.json`）；国密档另有 `scripts/sm-library-build.mjs` 与产物断言。
+
 
 ## 4. 边界 / 红线（重要取舍，勿轻易推翻）
 
@@ -83,12 +105,25 @@
 - **AGPL**：不把"托管云同步 SaaS"作为服务端收费点；收费点 = AI / 私有部署交付 / 内容模板。
 - **版本号约定**：验证性/修复轮不改版本号；只有 bump + 发布才重打安装包。
 - **协同后置（P2）**：实时协同明确不做（详见 `docs/realtime-collab-analysis.md`）。
+- **国密＝单一口味（2026-09-22 owner 拍板，勿轻易推翻）**：所有平台发出的包库级一律 **SM4 页 ＋ SM3 页 MAC/库 KDF**，
+  不做"这个平台 AES、那个平台 SM4"的混合 —— SQLCipher 文件里**不写**用的是哪套算法，混合会产生
+  "同一文件在 A 机器能开、B 机器打不开，且报错一字不差"的最难查形态。代价是**老库（AES＋SHA512）在国密构建上读不开**：
+  迁移＝旧版里关掉该空间「磁盘加密」（重写成明文 SQLite）→ 换新版 → 重新打开加密。**没有真实用户 ⇒ 现在迁移成本为零**，
+  等有用户再做就是一次真正的用户迁移工程。发布链上用**五条产物断言**守着（少一条就发出"看起来是国密"的包），见 [SM-CRYPTO-DELIVERY](SM-CRYPTO-DELIVERY.md)。
+- **抽取/转写不得走远程 provider（红线）**：图片/扫描件/音视频的模型调用只允许 **loopback 端点**；
+  非本机 ⇒ **拒绝注入能力**（下游按"未注入"走 `provider_error`），而不是偷偷出网。判据在 `src/lib/ai/localVision.ts` /
+  `localTranscribe.ts`（共用同一个 `isLoopbackBaseUrl`）。这条把方案 §13 第 7 项从"待拍板"钉成政策。
 
 ## 5. 验证循环
 
-- `npx tsc --noEmit`、`pnpm build`（含 `check-versions` + `check-web-commands` + `tsc` + `vite`）、`node scripts/smoke-web.mjs`（**350 断言**）、`vitest`（**88**）、`cargo test`（**55**）。
-- Rust 侧另有 CI 在跑（`.github/workflows/ci.yml` 的 `rust-tests`）：`cargo test`（含宿主子进程集成测试）
-  + **`cargo test --lib plugins::`** ——后者是 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试
+- **门禁的单一事实来源＝[TESTING.md](TESTING.md) 里的 `scripts/lib/gates.mjs`**。本地一键 `pnpm verify`（当前 **25 条**）＋
+  Rust 另行 `node scripts/test-report.mjs --group rust`（当前 **7 条**）。**别把条数手抄进别的文档**——要看就跑一次。
+- 当前读数（2026-09-22，本机 macOS、真 node 24.20.0）：`pnpm verify` **25/25**；`--group rust` **7/7**
+  （`rust-test` 491、`rust-plugins-alone` 117、`rust-no-sm-crypto` 479；`rust-sm-wired` 在没有 SM 版 OpenSSL 前缀的机器上**自报跳过**，
+  Linux CI 上真跑 **491 passed / 0 failed**）；`vitest` **1828 passed / 6 skipped**；`tsc --noEmit` exit=0；`smoke-web` **360/360**。
+  断言数"只增不减"由 `tests/baseline.json` 硬校验（**新增测试要抬高基线**，`pnpm verify:baseline`）。
+- Rust 侧 CI（`.github/workflows/ci.yml` 的 `rust-tests`）：`cargo test`（含宿主子进程集成测试）
+  + **`plugins::` 单独跑**那一条 —— 2026-09-13 加的门禁，挡"只有全量跑才绿"的测试
   （那种测试单跑必红，最费时间）。
 - Android：改 `.github/workflows/android.yml` **或** `src-tauri/src/**` / `Cargo.toml` / `Cargo.lock` /
   `src/**` / `scripts/**` / `tauri.conf.json` 等构建输入**都会触发**它（2026-09-13 之前 paths 只含
@@ -110,9 +145,22 @@
 
 ## 6. 下一步候选（按需选一项继续）
 
-1. **M27 团队版剩余**：实时协同（后置）；本地多用户档案。
-2. **PDF 批注阶段 2**：写回源 PDF / OCR 精确划词（延后；导出带批注副本已实现）。
-3. **Android 移动端（M6）——当前最活跃的一条线**。路线＝**Tauri 原生壳**（不是 WebView 壳；后者只留给 Tauri 不可达的平台，如鸿蒙 ArkWeb）。
+> **2026-09-22 重排**：1–6 是**当前最该推的**（多数在等外部条件或已被认领）；下面「更早几轮的候选」
+> 那一段（7 起）保留用于查历史与教训，**不再代表当前优先级**。
+
+1. **国密收尾的四个外部格子**（实现已完，缺的是"别人那台的读数"）：Windows 真机做"产物实际链的 OpenSSL 前缀"的**变异证明**；
+   Linux 带 tag 的真发版给那一格的最终读数；macOS 公证凭 Apple 凭据；老库迁移三步（无真实用户 ⇒ 零成本）。见 [交付说明](SM-CRYPTO-DELIVERY.md)。
+2. **全库 AI 覆盖的面板侧**：抽取的**触发点**已定在"导入 / 附件"那条路（与 OCR 同一处），但**消费层**（面板把已有抽取结果当素材做问答/总结）还没落地。
+3. **块级 CRDT 阶段 1 收口**：写回与冲突提示的最后一跳（[写层施工单](plans/2026-09-22-block-rev-write-layer.md)）。
+4. **真机验收（要人手）**：Android 装机开 PDF / 导出 / 加密锁屏；Linux AppImage 真跑；Windows 安装器默认目录复验。
+5. **PDFium 收尾**：Linux 非嵌入字体后端（[施工单](plans/2026-09-20-pdfium-linux-font-backend-workorder.md)）＋ 真机逐条验收。
+6. **社区与分发**：市场 UI（c）与「一键发布到社区」客户端侧（[方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md)）；闸门不变（作者文档 ＋ ≥3 真实第三方插件）。
+
+### 更早几轮的候选（细节保留）
+
+7. **M27 团队版剩余**：实时协同（后置）；本地多用户档案。
+8. **PDF 批注阶段 2**：写回源 PDF / OCR 精确划词（延后；导出带批注副本已实现）。
+9. **Android 移动端（M6）——当前最活跃的一条线**。路线＝**Tauri 原生壳**（不是 WebView 壳；后者只留给 Tauri 不可达的平台，如鸿蒙 ArkWeb）。
    - **CI 能在 Linux runner 上出包**（`.github/workflows/android.yml`）：路上翻出并修掉**两个只在 Linux 上暴露**的坑
      （NDK 没有 `aarch64-linux-android-ranlib`、`mupdf-sys` 的 bindgen 不带 `--target`）——修法与理由都写在 workflow 的步骤注释里；
    - **体积 156.7 → 53.41 MiB**（`strip` + tesseract-core 白名单 + OCR 语言包改按需下载），当初定的 55–70 MiB 目标已达成；
@@ -150,13 +198,13 @@
       顶部 41 CSS px 死区是否恢复 / 返回键三层 / 键盘 `--kb`）、新包 artifact、以及"新旧包
       `versionName`/`versionCode` 相同、必须靠 `--kb` 与 `window.__SHUYONOTE_BACK__` 区分"这些
       都在同仓库的 `docs/SESSION_CONTINUE.md` **§12.5**；先读它再连设备。
-4. **插件体系：M11.13 方案已拍板、**阶段 1+2 已落地——应用已真正跑在子进程上**（协议 + 帧 + `HostClient`；能力调用走 IPC 回父进程服务；命令与事件两条路都已切流；进程内执行路径已删除、14 处测试迁到生产路；实测进程启动 ~5 ms、每次能力 IPC ~0.1 ms；阶段 3 = 超时即杀 + OS 上限 + 打包验收；6 个决定见方案 §8.1）**——[插件宿主子进程化 + OS 级资源限制方案](plans/2026-09-10-plugin-host-isolation-plan.md)：把 Boa 挪进独立子进程（纯解释器：不碰 DB/密钥/路径，能力全部 RPC 回父进程；**应用现已跑在这条边界上**），取消与超时改为真杀进程，OS 级内存/CPU 上限三平台落地，4 阶段约 9–10 天；它是 M11.11a 分发的硬前置。**M11.9 已全部收口**（视图落点 `overlay`/`rail`）；一方插件 11 个（8 个能直接用）+ [可发布清单](plugin-recipes.md) 已备好。
-5. **插件体系进化 M11.8 触发面与事件**：M11.5/M11.6/M11.7 均已落地（时限与资源上限、ABI v1 + 能力注册表 + 权限与写中介、20 条能力 + 与 AI 工具层合并，**以及 M11.6 收口的作者工具链**——应用内校验/热重载/`pnpm plugin:validate`/示例插件/类型包 globals）；**M11.8 已落地四档**（命令参数 → 宿主渲染表单、结构化返回、事件钩子 v1 + **7 个发射点全部接上**（`app.started`/`page.opened`/`page.deleted`/`space.switched`/`page.saved`/`import.finished`/`sync.completed`，后两个是后台事件、在单一咽喉点播报）、**触发面 v1：编辑器 `/` 菜单**）；**M11.8 已全部落地**（命令参数、结构化返回、事件钩子 + **7 个发射点全齐**、编辑器 `/` 菜单、**页面列表行菜单 `page.context`**、**文件列表右键菜单 `file.context`**、**编辑器工具栏 `editor.toolbar`**、插件设置）；**M11.9 已落地三档**（零代码插件 `runtime: declarative` + 宿主渲染的声明式视图 + 零 JS 示例 reading-board；主题插件 `theme.tokens` + 主题检查进校验器 + 示例 warm-night；**导入触发 `manifest.triggers`**——命令面板入口 → 选文件 → **宿主** `readTextFile` 读内容 → `{ fileName, content }` 当 `argsJson` 交给 `run_plugin_command`，**没有新能力也没有新命令**，权限与写中介原样成立，顺带把 `MAX_ARGS_BYTES` 16 KiB → 1 MiB 并把注释语义改成「行为的界」，示例 md-outline）；**M11.9 第四档也已落地**（声明式视图参数化：查询字段可用 `{fromSetting}` 引用用户设置——零代码也能「用户可配」；顺带修掉三个静默失效的坑：视图 camelCase 字段被丢弃、声明式缺「加载器会不会拒」兜底、`select` 候选项短写法被拒载）；**M11.9 第五档也已落地**（导出：新能力 `api.files.export` + 权限 `export:files` + 触发 `kind: "export"`——**不直接写盘**，命令跑完后逐个弹系统保存对话框、用户点保存才写；插件给不出路径；事件里无效；示例 index-export）；**M11.9 已完成**（第六档：视图落点 `views[].placement`——`overlay` 浮层 / `rail` 右侧常驻面板，两种形态共用同一张表、互斥与"点行不关面板"都有渲染级测试；示例 reading-board 两种落点各示范一个）；之后是 M11.10 沙盒 UI（闸门=M11.9 声明式穷尽）；**那处信任缺口已闭合**（授权快照：声明扩张由后端拒绝执行 `approval_required`，直到用户重新确认，见路线图）。见[插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)（**定位=做第一不做更大**：做**第一个「有权限模型 + 作用在 E2EE 可自托管数据上」的可信插件体系**，不比能力条数）。
-6. **数友社区上线当天（不等 M11.13）**：开「模板 / 主题 / 插件配方」分类 + 发布 `plugin-index.json` 规范 + 招募 3 位共创作者；**不做**应用内市场 UI——见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯，前三级为惰性数据可立即开放）。
+10. **插件体系：M11.13 方案已拍板、**阶段 1+2 已落地——应用已真正跑在子进程上**（协议 + 帧 + `HostClient`；能力调用走 IPC 回父进程服务；命令与事件两条路都已切流；进程内执行路径已删除、14 处测试迁到生产路；实测进程启动 ~5 ms、每次能力 IPC ~0.1 ms；阶段 3 = 超时即杀 + OS 上限 + 打包验收；6 个决定见方案 §8.1）**——[插件宿主子进程化 + OS 级资源限制方案](plans/2026-09-10-plugin-host-isolation-plan.md)：把 Boa 挪进独立子进程（纯解释器：不碰 DB/密钥/路径，能力全部 RPC 回父进程；**应用现已跑在这条边界上**），取消与超时改为真杀进程，OS 级内存/CPU 上限三平台落地，4 阶段约 9–10 天；它是 M11.11a 分发的硬前置。**M11.9 已全部收口**（视图落点 `overlay`/`rail`）；一方插件 11 个（8 个能直接用）+ [可发布清单](plugin-recipes.md) 已备好。
+11. **插件体系进化 M11.8 触发面与事件**：M11.5/M11.6/M11.7 均已落地（时限与资源上限、ABI v1 + 能力注册表 + 权限与写中介、20 条能力 + 与 AI 工具层合并，**以及 M11.6 收口的作者工具链**——应用内校验/热重载/`pnpm plugin:validate`/示例插件/类型包 globals）；**M11.8 已落地四档**（命令参数 → 宿主渲染表单、结构化返回、事件钩子 v1 + **7 个发射点全部接上**（`app.started`/`page.opened`/`page.deleted`/`space.switched`/`page.saved`/`import.finished`/`sync.completed`，后两个是后台事件、在单一咽喉点播报）、**触发面 v1：编辑器 `/` 菜单**）；**M11.8 已全部落地**（命令参数、结构化返回、事件钩子 + **7 个发射点全齐**、编辑器 `/` 菜单、**页面列表行菜单 `page.context`**、**文件列表右键菜单 `file.context`**、**编辑器工具栏 `editor.toolbar`**、插件设置）；**M11.9 已落地三档**（零代码插件 `runtime: declarative` + 宿主渲染的声明式视图 + 零 JS 示例 reading-board；主题插件 `theme.tokens` + 主题检查进校验器 + 示例 warm-night；**导入触发 `manifest.triggers`**——命令面板入口 → 选文件 → **宿主** `readTextFile` 读内容 → `{ fileName, content }` 当 `argsJson` 交给 `run_plugin_command`，**没有新能力也没有新命令**，权限与写中介原样成立，顺带把 `MAX_ARGS_BYTES` 16 KiB → 1 MiB 并把注释语义改成「行为的界」，示例 md-outline）；**M11.9 第四档也已落地**（声明式视图参数化：查询字段可用 `{fromSetting}` 引用用户设置——零代码也能「用户可配」；顺带修掉三个静默失效的坑：视图 camelCase 字段被丢弃、声明式缺「加载器会不会拒」兜底、`select` 候选项短写法被拒载）；**M11.9 第五档也已落地**（导出：新能力 `api.files.export` + 权限 `export:files` + 触发 `kind: "export"`——**不直接写盘**，命令跑完后逐个弹系统保存对话框、用户点保存才写；插件给不出路径；事件里无效；示例 index-export）；**M11.9 已完成**（第六档：视图落点 `views[].placement`——`overlay` 浮层 / `rail` 右侧常驻面板，两种形态共用同一张表、互斥与"点行不关面板"都有渲染级测试；示例 reading-board 两种落点各示范一个）；之后是 M11.10 沙盒 UI（闸门=M11.9 声明式穷尽）；**那处信任缺口已闭合**（授权快照：声明扩张由后端拒绝执行 `approval_required`，直到用户重新确认，见路线图）。见[插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)（**定位=做第一不做更大**：做**第一个「有权限模型 + 作用在 E2EE 可自托管数据上」的可信插件体系**，不比能力条数）。
+12. **数友社区上线当天（不等 M11.13）**：开「模板 / 主题 / 插件配方」分类 + 发布 `plugin-index.json` 规范 + 招募 3 位共创作者；**不做**应用内市场 UI——见[插件分发策略](plans/2026-09-10-plugin-distribution-strategy.md)（协议而非平台 + 贡献阶梯，前三级为惰性数据可立即开放）。
    - **卡片阅读量已上线（v0.70.7，2026-09-15）**：首页与标签页的帖子卡片 meta 行，在点赞旁补了 `eye` 图标 + `p.views`（此前只有详情页与精选页有浏览数）。线上验收不是"页面上有数字就算"：① 结构判定——首页 16 张卡、标签页 1 张卡，**每张**卡片的 meta 行里点赞与浏览图标同时存在（`tmp/fixture/verify-community-views.mjs`）；② 活数据判定——先读某卡浏览量，**打开该帖详情**（服务端在此 +1）再回读同一张卡，`34 → 35`（`tmp/fixture/verify-community-views-live.mjs`）。两条都过才算数。
-7. **插件分发（M11.11）已随 v1.88.0 / v1.89.0 发出**：**a** = `plugin-index.json` 索引 + 索引签名（minisign）+ zip/URL 安装（先校验后落盘：https 白名单 / 体积上限 / `sha256` / 临时目录解包 / manifest 校验）+ 前端「从索引安装（给 URL）」；**升级 / 重装 / 拒绝降级**（先备份后动手，失败回滚，不动用户的启用状态与授权快照）；**b 的技术核心** = 离线撤回列表（索引说过的"这个版本不该再用"落库，运行与安装两条路都拦，离线也拦得住，用户可显式「仍然使用」）+ 发布者公钥固定（TOFU：首次装成功后固定，换 key 一律拒绝并摆出新旧指纹，确认后可「信任新密钥并安装」）。v1.89.0 又补上：**多源订阅**（一组索引可增删、一次检查全部、逐条记结果）、**按发布者密钥撤回**（`revokedKeys`：用它签的条目不可安装、已装插件运行被拦、安装前也查；离线生效，用户可显式「仍然使用」）、**事实清单**（来源/体积/声明/静态扫描 + **内容指纹**：装完之后那份文件有没有被改过——只摆事实、不评分）、以及[插件开发者政策](plugin-policy.md)与 SECURITY 的插件一节。**仍未做**：市场 UI 的搜索/浏览（c）、评分卡（有意做成事实清单，不做评分）、Windows 的 RSS 与内核硬上限；闸门不变（作者文档 + ≥3 真实第三方插件）。M11.10 UI 插件 / M23.5 协同 / 移动端（M6）：已评估延后（M11.10 闸门=声明式贡献面穷尽）。
+13. **插件分发（M11.11）已随 v1.88.0 / v1.89.0 发出**：**a** = `plugin-index.json` 索引 + 索引签名（minisign）+ zip/URL 安装（先校验后落盘：https 白名单 / 体积上限 / `sha256` / 临时目录解包 / manifest 校验）+ 前端「从索引安装（给 URL）」；**升级 / 重装 / 拒绝降级**（先备份后动手，失败回滚，不动用户的启用状态与授权快照）；**b 的技术核心** = 离线撤回列表（索引说过的"这个版本不该再用"落库，运行与安装两条路都拦，离线也拦得住，用户可显式「仍然使用」）+ 发布者公钥固定（TOFU：首次装成功后固定，换 key 一律拒绝并摆出新旧指纹，确认后可「信任新密钥并安装」）。v1.89.0 又补上：**多源订阅**（一组索引可增删、一次检查全部、逐条记结果）、**按发布者密钥撤回**（`revokedKeys`：用它签的条目不可安装、已装插件运行被拦、安装前也查；离线生效，用户可显式「仍然使用」）、**事实清单**（来源/体积/声明/静态扫描 + **内容指纹**：装完之后那份文件有没有被改过——只摆事实、不评分）、以及[插件开发者政策](plugin-policy.md)与 SECURITY 的插件一节。**仍未做**：市场 UI 的搜索/浏览（c）、评分卡（有意做成事实清单，不做评分）、Windows 的 RSS 与内核硬上限；闸门不变（作者文档 + ≥3 真实第三方插件）。M11.10 UI 插件 / M23.5 协同 / 移动端（M6）：已评估延后（M11.10 闸门=声明式贡献面穷尽）。
 
-8. **跨机器多端同步测试（Windows ⇄ Mac，服务器放 Mac）—— ✅ 2026-09-15 已实测通过**：
+14. **跨机器多端同步测试（Windows ⇄ Mac，服务器放 Mac）—— ✅ 2026-09-15 已实测通过**：
    会合协议 `scripts/sync-multidevice.mjs`（两端各跑一次、不需要约定先后：写标记 → 等对方 →
    **互改对方的页**再等回改 ⇒ 证明"就地更新也双向到达"，不只是"新页能看见"）。
    **实测结果**：Mac `{"role":"mac",…,"pass":6,"fail":0}`、Windows `{"role":"windows",…,"pass":6,"fail":0}`，

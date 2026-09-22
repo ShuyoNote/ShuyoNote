@@ -27,26 +27,61 @@
 
 ## 目录结构
 
+> 下面是**按用途分组**的一张地图（不是文件清单的完整枚举）。要"有没有漏登记"这个问题的答案，
+> 看 [约定](#约定) 里那条**可执行**的判据（`node scripts/check-doc-links.mjs`）。
+
 ```
 docs/
-├── README.md            # 本文档：统一入口 / 导航 / 索引
-├── development.md       # 开发指南：运行、测试、验证、提版规则
-├── TESTING.md           # 回归测试体系：门禁清单 / 基线 / 结果公开 / 覆盖边界
-├── architecture.md      # 系统架构与存储模型
-├── MOBILE.md            # 移动端适配（WebView 壳 + MobileBridge）
-├── web-sync-boundary.md # Web 版同步能力边界（为什么不支持多设备同步 + 若要做的路线）
-├── identity-privacy-model.md # 身份/鉴权/加密模型（密钥 vs 账户、多空间、本地私密）
-├── identity-privacy-roadmap.md # 身份/隐私落地子路线图
-├── sync-server-data-boundary.md # 同步服务端数据可见边界与威胁模型（看得见什么 / 防什么不防什么）
-├── positioning.md       # 产品定位
-├── design-philosophy.md # 设计哲学
-├── free-site-export-guide.md     # 免费客户出口·网站/帮助站指南（公开向；付费客户沟通材料见私有 shuyonote-sync-server 仓库）
-├── roadmap.md           # 演进路线图（M1–M25 里程碑）
-├── compare-*.md         # 竞品对比
-└── plans/               # 各功能技术方案（按日期）
-design/                  # UI/UX 设计交付（设计系统 / UX 流程 / 实现计划）
-CHANGELOG.md             # 版本变更日志
+├── README.md                    # 本文档：统一入口 / 导航 / 索引（含方案登记表）
+│
+│   ── 现状与规划（先读这两份）──
+├── SHUYONOTE_STATE.md           # 项目现状种子（新会话从这里续）
+├── roadmap.md                   # 演进路线图（M1–M27 ＋ 2026-09 在飞战役）
+│
+│   ── 工程与验证 ──
+├── development.md               # 开发指南：运行 / 测试 / 验证循环 / 提版规则 / 工具坑
+├── TESTING.md                   # 回归测试体系：门禁清单（单一事实来源）/ 基线 / 覆盖边界
+├── architecture.md              # 系统架构与存储模型
+├── multi-platform-ci.md         # 多平台自动构建发布（CI）
+├── RELEASING.md                 # 发布 runbook（桌面 + Android + 国密单一口味）
+├── macos-updater.md             # macOS 签名 / 公证 / 自动更新
+├── SM-CRYPTO-DELIVERY.md        # 国密交付说明（按平台分列，含边界声明）
+│
+│   ── 同步 / 身份 / 安全 ──
+├── SYNC.md                      # 同步机制详解（增量 changes / LWW / 空间隔离）
+├── web-sync-boundary.md         # Web 版为什么不做多设备同步
+├── sync-server-data-boundary.md # 同步服务端数据可见边界与威胁模型
+├── identity-privacy-model.md    # 身份/鉴权/加密模型
+├── identity-privacy-roadmap.md  # 身份/隐私落地子路线图
+├── SECURITY.md                  # 安全模型与审计结论
+├── sync-multidevice-test.md     # 跨机器多端同步会合测试（Windows ⇄ Mac）
+├── realtime-collab-analysis.md   # 实时协同利弊分析（近实时 vs 块级 CRDT）
+│
+│   ── 平台 ──
+├── MOBILE.md                    # 移动端适配（Tauri 原生壳 + 适配层）
+├── harmony-web-ceiling.md       # 鸿蒙 ArkWeb 壳的能力天花板
+├── 鸿蒙桌面版计划.md              # 鸿蒙桌面版计划（中文文件名，注意路径转义）
+│
+│   ── 产品与设计 ──
+├── positioning.md               # 产品定位
+├── design-philosophy.md         # 设计哲学
+├── compare-*.md                 # 竞品对比
+├── free-site-export-guide.md    # 免费客户出口·网站/帮助站指南
+│
+│   ── 插件与社区 ──
+├── plugin-api.md                # 插件 API（作者向，生成物）
+├── plugin-recipes.md            # 可发布插件清单
+├── plugin-policy.md             # 插件开发者政策
+├── plugin-first-plugin.md       # 20 行写第一个插件
+├── plugin-index-spec.md         # plugin-index.json 公开规范
+├── plugin-hosting.md            # 第一方插件索引的托管运维
+├── community-integration-status.md  # 社区接入验收记录与现状
+│
+└── plans/                       # 各功能技术方案 / 施工单 / 取证（按日期，**全部登记在上面的表里**）
+design/                          # UI/UX 设计交付（设计系统 / UX 流程 / 实现计划）
+CHANGELOG.md                     # 版本变更日志
 ```
+
 
 ## 产品与定位
 
@@ -69,7 +104,7 @@ CHANGELOG.md             # 版本变更日志
 | [plugin-first-plugin.md](plugin-first-plugin.md) | **20 行写第一个插件**：从 `pnpm plugin:new` 生成起点 → 看懂 manifest 与权限三种写法 → 写第一个命令 → 装进应用跑一遍 → 出问题看哪里 → 发布给别人。目标是"只看文档不读源码" |
 | [plugin-index-spec.md](plugin-index-spec.md) | **`plugin-index.json` 公开规范（一页纸）**：最小可用索引、字段表与限制、应用会强制的规则、两级签名（索引 / 发布者）、两级撤回（版本 / 密钥）、发布三步。照着写就能托管一份索引 |
 | [plugin-hosting.md](plugin-hosting.md) | **第一方插件索引的托管运维**：社区索引的实际落地点与 URL、**为什么单开 `/plugins/` 而不复用 `/static/`**（后者统一长缓存、索引被长缓存 = 新插件永远看不到）、nginx 配置与那次 BOM 事故、发布新版本的完整命令与**上传顺序**、以及每次发布后的验收命令 |
-| [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、M1–M25 里程碑规划（M1–M5、M7–M23 已达；**M24 PDF 批注**为规划/建议，暂排 M20 后；**M25 帮助系统**为规划；M6/移动与 M11.10 UI 插件/M11.11 市场已评估未做（带启动闸门，见 [插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)））、竞品差距跟踪 |
+| [roadmap.md](roadmap.md) | **演进路线图**：现状盘点、下一阶段优先级、**M1–M27 里程碑规划**（M24 批注/M25 帮助/M26 公式/M27 团队版部分已落地；M6 移动端执行中；M11.10 UI 插件 / M11.11 市场带启动闸门未做）、**§3.5「2026-09 在飞战役」**（国密 / PDFium / 全库 AI 覆盖 / 块级 CRDT 阶段 1 / 社区与分发 / 近实时），以及竞品差距跟踪 |
 | [harmony-web-ceiling.md](harmony-web-ceiling.md) | **基于 Web 版开发鸿蒙桌面应用的能力边界（天花板）分析**：ArkWeb 壳不改变浏览器内核；能力矩阵（DB/文件系统/原生引擎/加密/系统集成/同步/插件）；路线 A（纯套壳≈PWA）vs 路线 B（加 ArkTS 原生桥）；对 ShuyoNote 的建议与取舍 |
 
 ## 演进路线（里程碑总览）
@@ -179,6 +214,10 @@ CHANGELOG.md             # 版本变更日志
 | [plans/2026-09-20-pdfium-linux-font-backend-workorder.md](plans/2026-09-20-pdfium-linux-font-backend-workorder.md) | **PDFium「Linux 上非嵌入字体不显示」修复施工单**：Linux 那份 `libpdfium.so` **没有字体后端**（`ldd` 只有 6 行、`fontconfig` 符号 0 个；对照 Windows DLL 有 GDI 字体映射）⇒ **非嵌入字体（含国标中文）在 Linux 上整行不显示**；Windows/macOS 正常；MuPDF 三平台同数 28000（乱码）⇒ **这不是换引擎引入的回归**。含四条路线（**推荐「随包 OFL 中文字体 ＋ `Pdfium::set_custom_font_provider`」**，零构建链）、五条判据（含**卸字体后必须回到 0 像素**的负向验收）、确切改动点（`pdfium_native.rs:243-254`）与打包挂接 |
 | [plans/2026-09-19-stage1-block-lww-readiness.md](plans/2026-09-19-stage1-block-lww-readiness.md) | **阶段 1（块级 LWW ＋ 冲突提示）**：每块的「最后修改」从哪来 —— **2026-09-20 已拍板**：(a) 声明式 `blockRev`（Lamport、随落盘/同步那份 JSON 走）／ (iii) 缺 rev 或 rev 相等而内容不同 ⇒ **触发提示**（不静默判）／ rev 不参与同步；**第一切片（纯函数）已落地**（`doc_content::merge_blocks` ↔ `docContent.mergeBlocks` ＋ 成对判据 ＋ `two-device-sync` 场景 H）；含接线顺序、已知边界与「块片段不含 `blockRev`」那条口径 |
 | [plans/2026-09-22-block-rev-write-layer.md](plans/2026-09-22-block-rev-write-layer.md) | **阶段 1 · 块版本（`blockRev`）这一层**：rev 从哪来、什么时候涨（纯函数，Rust 14 条 ↔ TS 15 条判据）；两条"**不是内容**"（rev 字段本身、键序 —— 判错就是静默丢更新）＋「有身份 ⇒ 一定有 rev（老块盖 0）」这条阶段 1 承诺要求的口径；节点上的**声明字段 18 类全部接入**（5 条判据 × 18 类）；含**接线清单与硬顺序** |
+| [plans/2026-09-17-pdfium-p3-compare-workorder.md](plans/2026-09-17-pdfium-p3-compare-workorder.md) | **PDFium P3「两引擎对拍」施工单**：把 PDFium 与 MuPDF 的渲染结果做成**硬判据**（逐像素最大差 ≤8、超阈占比 0.000%），并先钉死「谁跑」——Windows 写 harness 与样本生成、AMD(WSL2) 或 Mac 执行出报告，且报告必须写清**在哪台机、什么 commit**。**已按此执行并出报告**（见 [P3 对拍报告](plans/2026-09-19-pdfium-p3-report.md)） |
+| [plans/2026-09-20-shuyonote-publish-to-community-plan.md](plans/2026-09-20-shuyonote-publish-to-community-plan.md) | **一键发布到社区（客户端侧）**：把既有 P0 第 3 条「应用 → 分享笔记到社区」落地。先与两份既有文档对账（职责 / 依赖 / 卡点），再给这一侧的形态——登录与凭据、发布载荷（摘要为主）、与社区 `docs/api.md` §7 接口的字段对应、失败与撤回；并明确「要用户拍板」的那一类不由 agent 自行决定 |
+| [plans/2026-09-22-asr-wiring-plan.md](plans/2026-09-22-asr-wiring-plan.md) | **ASR 接线（形态与判据）**：先钉形态再写代码——契约里本就有 `av.transcript@1` 的位置（填空不是新造）。含「四处原子同批 ＋ 六处一致性判据」的清单与两条吃过亏的经验；**§6 平台侧转写通道已落地**（`localTranscribe`：只许本机端点 ＋ 五跳接线 ＋ 判据），入口 / 语言 / 分段三问已定，另记**没证的两条**与一条参数优先级问题 |
+| [plans/2026-09-22-merge-push-and-cursor-forensics.md](plans/2026-09-22-merge-push-and-cursor-forensics.md) | **取证：「合并产物不推送」vs「被游标消费掉的远端变更」**：只放证据与候选修法、**不改语义**。结论＝前者**不丢**（服务端只有 change log，任何设备折 log 都能推导出同一份产物），后者**会丢**（跳过即消费 ⇒ 那台设备再也取不回对端那笔编辑，且层里一条痕都没有）。判据落在 `verify-two-device-sync.mjs` 场景 L/M（断言 47 → **64**） |
 
 > 📤 **2026-09-13 · 公司运作材料已移入私有仓库**：以下内容不再在本公开仓库保留副本，
 > 找不到是正常的——去私有仓库 `shuyonote-sync-server` 的 `docs/`：
@@ -244,3 +283,15 @@ CHANGELOG.md             # 版本变更日志
 - 功能规划、竞品分析、产品定位归 `docs/`；像素级 UI/UX 设计交付归 `design/`。
 - 里程碑完成的规划会标注 [x] 并补充「实现」要点，对应到具体文件/命令。
 - 版本演进以 `CHANGELOG.md` 为准，`docs/` 文档聚焦"是什么 / 为什么 / 怎么做"。
+
+### 文档体系的四条**可执行**规矩（不是口号，门禁会拦）
+
+| 规矩 | 谁在拦 |
+|---|---|
+| **新增一篇方案，必须登记进上面「方案与规划（plans）」表**（右列写一句"这篇讲什么"） | `node scripts/check-doc-links.mjs` —— 判据＝`docs/plans/*.md` 与表行**一一对应**；⚠️ **只在正文里提一句不算登记**（判据只认表行），理由见 `scripts/lib/docs-index.mjs` |
+| **相对链接必须可达**（把路径按「自己在 `docs/` 根目录」来写会指错：例如写成 `plans/xxx.md`，正确写法是 `xxx.md`） | 同一个脚本的**死链判据**（125 个 .md / 681 条链接） |
+| **「快速导航」表左列必须是「我想了解…」，不能是文件路径** | 同一个脚本的**形态判据**（两张两列表长得一样、语义完全不同，插错栏死链判据抓不到） |
+| **公司运作 / 合规 / 法务 / 商业化 / 上线推广材料不进公开仓** | 走人工判据：进私有仓 `shuyonote-sync-server`；⚠️ 因此上面那张表里**允许**出现指向私有仓的 `plans/x.md` 路径，**反向判据（提到的必须存在）刻意不判** |
+
+> 这四条都跑在 `pnpm verify` 的 `contract` 组里（`check-doc-links`），也就是说**写文档和写代码同一套门禁**。
+
