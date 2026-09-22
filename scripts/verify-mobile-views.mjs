@@ -49,6 +49,8 @@ if (ONLY_VP && !ACTIVE_PHONES.length) {
   process.exit(1);
 }
 const DESKTOP = { name: "1280x800", width: 1280, height: 800 };
+/** 造一条**时间**类型属性（值控件是 `.prop-datetime` 那层 wrapper，不是裸 input）。 */
+const DATETIME_PROP = "时间";
 
 // 常驻控制带的**高度预算**（px）。数字是"改之前量的"再收紧一档，不是拍脑袋：
 // 文件视图原来是 head 86 + toolbar 107 = 193（320px 上占 37% 视口），现在是 76+53 = 129。
@@ -271,8 +273,9 @@ async function openDatabaseView(page) {
  * 从界面点「添加属性」既绕开了这个坑，验的又是**用户真走的那条路**。
  */
 async function checkProperties(page, vp, tag) {
-  // 1) 用界面加 4 条属性（名字长短不一，才能验"列宽跟着最长的那条走"）。
-  for (const name of ["作者", "来源", "发布于", "存于"]) {
+  // 1) 用界面加 4 条属性（名字长短不一，才能验"列宽跟着最长的那条走"），
+  //    第 5 条是**时间**类型（值控件是 `.prop-datetime`，见下面那条"不许留死空白"的断言）。
+  for (const name of ["作者", "来源", "发布于", "存于", DATETIME_PROP]) {
     const clicked = await safeEval(page, () => {
       const b = Array.from(document.querySelectorAll(".page-action-btn")).find((x) =>
         (x.textContent || "").includes("添加属性"),
@@ -289,6 +292,18 @@ async function checkProperties(page, vp, tag) {
     }
     if (!has) return { err: "「添加属性」行没出现" };
     await page.type(".prop-add-name", name);
+    // 「时间」那条要显式选类型：它的值不是 input，而是 `.prop-datetime`（手输框 ＋ 📅 按钮）——
+    // 这层 wrapper 曾经带着旧行布局的 `max-width: 75%`，在网格里留下 25% 死空白（owner 截图圈出）。
+    if (name === DATETIME_PROP) {
+      await safeEval(page, (v) => {
+        const sel = document.querySelector(".prop-add-type");
+        if (!sel) return false;
+        sel.value = v;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      }, "datetime");
+      await sleep(200);
+    }
     await safeEval(page, () => document.querySelector(".prop-add-confirm")?.click());
     await sleep(600);
   }
@@ -333,6 +348,13 @@ async function checkProperties(page, vp, tag) {
         if (!n || !v) return null;
         const nb = n.getBoundingClientRect();
         const vb = v.getBoundingClientRect();
+        // 「时间」行的值控件是 `.prop-datetime` 这层 wrapper（手输框 + 📅 按钮）：
+        // 量**整层**的右边缘到行尾按钮左边缘的空隙 —— 那层曾带 `max-width: 75%`，
+        // 在网格里留下 25% 死空白（owner 2026-09-22 截图圈出的就是它）。
+        const dt = row.querySelector(".prop-datetime");
+        const btns = row.querySelector(".prop-order-btns");
+        const dtGap =
+          dt && btns ? Math.round(btns.getBoundingClientRect().left - dt.getBoundingClientRect().right) : null;
         return {
           name: (n.textContent || "").trim(),
           nameLeft: Math.round(nb.left),
@@ -340,6 +362,7 @@ async function checkProperties(page, vp, tag) {
           valW: Math.round(vb.width),
           valLeft: Math.round(vb.left),
           gap: Math.round(vb.left - nb.right),
+          dtGap,
           // 行尾那三个按钮的实测尺寸（已知取舍，只记录不判定）
           btn: row.querySelector(".prop-order, .prop-remove")?.getBoundingClientRect().width ?? null,
         };
@@ -748,6 +771,17 @@ async function main() {
             r.nameBeforeValue === true,
             `每行都是"名字在左、值在右"（${r.items.map((i) => `${i.name}:${i.nameLeft}<${i.valLeft}`).join(" ")}）` +
               `——「标签」那行只有 2 个孩子时，会把后面整块顶偏一格（名字跑到最右）`,
+          );
+          // ---- 「时间」行的值控件不许留死空白 ----
+          // 它的值是 `.prop-datetime` 这层 wrapper（手输框 + 📅 按钮），曾带着旧行布局的
+          // `max-width: 75%`；值列已经是网格的 `1fr` ⇒ 那 25% 是纯死空白（owner 截图圈出的就是它）。
+          // 判据按**这一行自己的**空隙量（别的行是裸 input，网格天然顶满，量不出这个 bug）。
+          const dtItem = r.items.find((i) => i.name === DATETIME_PROP);
+          ok(!!dtItem, `夹具里量到了「${DATETIME_PROP}」那一行（时间类型，值控件是 .prop-datetime）`);
+          ok(
+            dtItem && dtItem.dtGap !== null && dtItem.dtGap <= 30,
+            `「${DATETIME_PROP}」行不留死空白（值控件右边缘到行尾按钮只差 ${dtItem?.dtGap}px ≤ 30；` +
+              `改前是值列的 25%，390px 上约 57px —— owner 2026-09-22 截图圈的就是这处）`,
           );
           ok(r.docW <= r.vw, `属性面板无横向溢出（docW ${r.docW} ≤ ${r.vw}）`);
           // ---- 行尾「⋯」动作面板（窄屏专有）：三个 18px 小按钮收成一个 44×44 ----

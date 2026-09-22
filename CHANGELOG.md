@@ -75,6 +75,15 @@
 
 ### 修复
 
+- **「时间」属性在值列里留一条死空白**（2026-09-22，owner 截图圈出）。`.prop-datetime` 这层 wrapper
+  （手输框 ＋ 📅 按钮）带着旧**行布局**时代的 `max-width: 75%`，而值列早已改成网格的 `1fr` ——
+  于是同一列里文本输入框顶到了行尾按钮，日期控件却短一截、后面空掉 25%（390px 上约 57px）。
+  改法与旁边 `.prop-value` 那条同口径：值列宽度归网格管 ⇒ `.properties-body .prop-datetime { max-width: none }`。
+  实测该行「值控件右边缘 → 行尾按钮」的空隙 **8px**（改前 ≈ 值列宽的 25%）。
+  `verify-mobile-views.mjs` 同时补了判据：夹具多造一条**时间**类型属性（走界面把 `.prop-add-type`
+  选成 `datetime`），并按**这一行自己**的空隙量 —— 别的行是裸 `input`、网格天然顶满，量不出这个 bug。
+  现为 **190/0**；`check:panel-layout` 40/0、日期控件单测 10/10、tsc 0。
+
 - **桌面端 AI 调用被权限系统整体拒掉**（缺陷 #9 根因，用户报「PDF 阅读器 AI 识别出错」）：
   `capabilities/default.json` 里只写了字符串 `"http:default"`，而该插件自带的 `default.toml` 写明
   *"does not allow explicitly any origins to be fetched"* ⇒ **作用域为空 = 一个源都不许发**（失败关闭）
