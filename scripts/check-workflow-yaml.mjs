@@ -15,6 +15,15 @@
 // 而引入误报（一个会误报的门禁，很快就会被 `--no-verify` 绕过去，等于没有）。
 // 它的价值是**零依赖、零误报**地把已经真实发生过的那一类错误挡在 push 之前。
 //
+// ★ 第二条规则（2026-09-22 加，owner 拍板「单一口味＝国密」之后）：**发版链的国密四件套必须在场**。
+//   为什么放在这个门禁里：它同样是"配置少一行、构建照样绿、用户端才暴露"的形态 ——
+//   把 `--features sm-library` 删掉，产物标记**仍会**写 `page_cipher=sm4`（页加密是补丁的编译期行为），
+//   于是包看起来是国密、库级页 MAC/KDF 却是 SHA512。没有任何编译期信号会告诉你。
+//   ⇒ 这里只认**四件套文本在场**（`--features sm-library` / `sm-library-build.mjs … --prepare` /
+//   `SHUYONOTE_EXPECT_SM_PATCH=applied` / `SHUYONOTE_EXPECT_PAGE_CIPHER=sm4`，外加 `OPENSSL_DIR`），
+//   判据在 `scripts/check-workflow-yaml.test.mjs`（含变异证明）。
+//   ⚠️ 反过来也要知道它的边界：**文本在场 ≠ 那条命令真的跑对了** —— 那件事只有真流水线能证。
+//
 // 覆盖范围：`.github/workflows/*.yml|yaml` 与 `.gitcode/workflows/*.yml|yaml`，
 // 用 readdirSync 枚举（不写死文件名）。
 //
@@ -32,6 +41,32 @@ const DEFAULT_DIRS = [".github/workflows", ".gitcode/workflows"];
 const MAPPING = /^([A-Za-z0-9_.-]+):(\s+)(.*)$/;
 // 块标量指示符：`|`、`>`，可带 chomping/缩进指示（`|-`、`>+2`）。
 const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
+
+/**
+ * 纯函数：`release.yml` 里「单一口味＝国密」的四件套必须都在场（外加一个 OPENSSL_DIR）。
+ *
+ * 返回 problems（空数组＝通过）。**只认文本**：这是"别被人顺手删掉"的护栏，不是"命令跑对了"的证明。
+ */
+export function gmPipelineRequirements(text, { file = "release.yml" } = {}) {
+  const problems = [];
+  // ⚠️ **只看非注释行**：我第一版直接匹配整份文本，而 release.yml 的注释里就写着
+  //   “`tauri build` **必须**带 `--features sm-library`” ⇒ 把命令行里那一段删掉，
+  //   判据**照样绿**（变异当场抓住，见 scripts/check-workflow-yaml.test.mjs 的那条证明）。
+  //   这类"注释替命令背书"的假绿正是本仓反复防的形态。
+  const effective = text
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .join("\n");
+  const need = [
+    [/-{1,2}features\s+sm-library|features[=,]\s*sm-library/, "构建命令没带 `--features sm-library` ⇒ 应用接线那段 `#[cfg]` 会被编掉（包看起来是国密、库级页 MAC/KDF 仍是 SHA512）"],
+    [/sm-library-build\.mjs[^\n]*--prepare/, "没有 `sm-library-build.mjs … --prepare` ⇒ 补丁没打 / 产物没清（不清就不会换后端）"],
+    [/SHUYONOTE_EXPECT_SM_PATCH=(applied|"?applied"?)/, "没有断言 `SHUYONOTE_EXPECT_SM_PATCH=applied`"],
+    [/SHUYONOTE_EXPECT_PAGE_CIPHER=sm4/, "没有断言 `SHUYONOTE_EXPECT_PAGE_CIPHER=sm4`（单一口味＝发出去的包必须是 SM4 页）"],
+    [/OPENSSL_DIR/, "没有 `OPENSSL_DIR`（`build.rs` 在 `sm-library` 上是 fail-fast，不给必红；但也别靠「它自己会发现」）"],
+  ];
+  for (const [re, why] of need) if (!re.test(effective)) problems.push(`${file}：${why}`);
+  return problems;
+}
 
 function indentWidth(line) {
   let n = 0;
@@ -64,8 +99,9 @@ function stripComment(value) {
   return value;
 }
 
-function checkFile(file) {
-  const lines = readFileSync(file, "utf8").split("\n");
+/** 纯函数：窄规则本体（吃文本，不吃路径 ⇒ 判据不用建临时文件）。 */
+export function checkText(text) {
+  const lines = text.split("\n");
   const hits = [];
   // 块标量（`run: |`）的内部行不是 YAML 结构，必须整段跳过，否则里面的
   // `某个: 东西:` 会被误报。进入块标量后，缩进更深的行都算内容，退到同级/更浅才出来。
@@ -96,6 +132,10 @@ function checkFile(file) {
   return hits;
 }
 
+function checkFile(file) {
+  return checkText(readFileSync(file, "utf8"));
+}
+
 const argDirs = process.argv.slice(2);
 const dirs = argDirs.length ? argDirs.map((d) => resolve(d)) : DEFAULT_DIRS.map((d) => join(root, d));
 
@@ -121,9 +161,21 @@ if (files.length === 0) {
 }
 
 const bad = [];
+const gmBad = [];
 for (const f of files) {
   const path = f.startsWith(root) ? relative(root, f) : f;
   for (const hit of checkFile(f)) bad.push({ path, ...hit });
+  // ★ 第二条规则只作用在发版工作流上（别的 workflow 不发布，不该被它管）
+  if (/release\.ya?ml$/i.test(path)) {
+    for (const p of gmPipelineRequirements(readFileSync(f, "utf8"), { file: path })) gmBad.push(p);
+  }
+}
+
+if (gmBad.length) {
+  console.error("发版工作流里**单一口味＝国密**的四件套不全（配置少一行、构建照样绿、用户端才暴露）：");
+  for (const p of gmBad) console.error(`  - ${p}`);
+  console.error("  决定与理由见 docs/RELEASING.md「库级国密：单一口味」；这四件的分工写在 `.github/workflows/release.yml` 那两步的注释里。");
+  process.exit(1);
 }
 
 if (bad.length) {
