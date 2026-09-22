@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAiStore } from "../store/ai";
 import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
+import { localTranscribe } from "../lib/ai/localTranscribe";
 import { localVision } from "../lib/ai/localVision";
 import { platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
@@ -115,8 +116,8 @@ export function AiSettingsForm({
   //
   // 两件与红线有关的事，都**如实显示**而不是静默降级：
   //  · 平台不支持（移动壳等）⇒ 按钮禁用 + 说明写清；
-  //  · 配的不是本机端点 ⇒ `localVision` 拒绝注入 `vision`，需要视觉的抽取器会走 `provider_error`
-  //    —— 那句话直接显示给用户看（"为什么这类文件没抽出来"）。
+  //  · 配的不是本机端点 ⇒ `localVision` / `localTranscribe` 拒绝注入，需要视觉/转写的抽取器会走
+  //    `provider_error` —— 那两句理由直接显示给用户看（「为什么这类文件没抽出来」）。
   const runIndex = async () => {
     setIndexing(true);
     setIndexProgress(null);
@@ -124,14 +125,20 @@ export function AiSettingsForm({
     setIndexNote(null);
     try {
       const lv = localVision(resolved());
+      // 语音转写同一套政策与同一个构造点（本机端点）。两条通道**分开构造**：
+      // 视觉被拒（配了远程）不代表转写也该被拒 —— 反过来也一样，各给各的话。
+      const lt = localTranscribe(resolved());
       const outcome = await runLibraryIndex({
         platform,
         ...(lv.vision ? { vision: lv.vision } : {}),
+        ...(lt.transcribe ? { transcribe: lt.transcribe } : {}),
         onProgress: setIndexProgress,
       });
       if (outcome.ok) {
         setIndexSummary(outcome.summary);
-        if (lv.refusal) setIndexNote(lv.refusal);
+        // 两条拒绝理由都显示（用户要能知道"哪一类文件没抽出来、为什么"）。
+        const notes = [lv.refusal, lt.refusal].filter(Boolean);
+        if (notes.length) setIndexNote(notes.join(" "));
       } else {
         setIndexNote(outcome.reason);
       }

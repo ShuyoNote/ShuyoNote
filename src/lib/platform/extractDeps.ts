@@ -33,6 +33,17 @@ export interface AttachmentDepsOptions {
    * **不在这里编一个假实现**充数。
    */
   vision?: ExtractDeps["vision"];
+  /**
+   * 语音转写（音视频）。
+   *
+   * 与 `vision` **同一个理由**同样是调用方给：平台仍然没有"模型驱动"这一层。
+   * 但与 `vision` 不同的是：**这条通道已经有实装**（`src/lib/ai/localTranscribe.ts`，
+   * 走本机 `POST /v1/audio/transcriptions`）—— 所以调用方现在**有东西可传**，
+   * 不必像 `vision` 那样等 §13 第 7 项拍板。
+   *
+   * 不给就**如实**让 `cost:"gpu"` 的抽取器返回 `provider_error`（契约 §15.3-7）。
+   */
+  transcribe?: ExtractDeps["transcribe"];
 }
 
 /**
@@ -60,6 +71,7 @@ export function attachmentDeps(attId: string, opts: AttachmentDepsOptions = {}):
     },
   };
   if (opts.vision) deps.vision = opts.vision;
+  if (opts.transcribe) deps.transcribe = opts.transcribe;
   return deps;
 }
 
