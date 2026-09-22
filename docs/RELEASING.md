@@ -198,7 +198,7 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 | # | 开关 | 为什么 |
 |---|---|---|
 | 1 | `OPENSSL_DIR` **显式给** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败，而不是安静退回 CommonCrypto |
-| 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端） |
+| 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate、两个 profile 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端）<br>⚠️ **`--release` 那一条不能省**：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用** ⇒ 包表面全对（补丁标记 `page_cipher=sm4` 也在）而**库级根本不是国密**。这是 2026-09-22 在本机把发版链原样跑一遍时**被第 4 条断言抓住**的真实事故；修法＝两个 profile 都清（`--prepare` 已这么做，判据在 `scripts/lib/sm-library-plan.test.mjs`） |
 | 3 | `pnpm tauri build … --features sm-library` | 不带它 → 应用接线那段 `#[cfg]` 被编掉，而产物标记仍写 `page_cipher=sm4`（页加密是补丁的**编译期**行为）⇒ 包看起来是国密、库级页 MAC/KDF 却还是 SHA512 |
 | 4 | 产物断言（`SHUYONOTE_EXPECT_*` 三条） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`** —— 只有产物能回答这三格（`cipher_settings` 回显里没有 algorithm 字段） |
 
@@ -230,9 +230,12 @@ SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 node scripts/check-crypto-backend.mjs
 # ⑤ **签名必须早于做 dmg**，且由内到外（见上面「签名/公证」那条与 scripts/sign-macos-app.mjs）
 ```
 
-**本机实测（2026-09-22，macOS，静态前缀）**：`otool -L` 里**没有**任何 `libcrypto/libssl`
-（＝真的静态链进去了）；产物标记 `patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`；
-三条断言全过。
+**本机实测（2026-09-22，macOS，按上面配方**原样**跑完 `app,dmg`）**：
+· `--prepare` 清四个产物（两个 crate × 两个 profile）→ `tauri build --features sm-library` 重编；
+· `otool -L` 里**没有**任何 `libcrypto/libssl`（真静态、自包含）；
+· 产物标记 `patch=72df3f9a · page_cipher=sm4 · src_sha256=741d999b7933…`；三条断言全过；
+· strip 后的 release 二进制里 `strings` 仍能看到 **`HMAC-SM3` / `SM4-CBC`** ⇒ 国密 provider 确实编进去了；
+· `node scripts/check-macos-bundle.mjs` ✅（未签名状态，签名按上面那条由内到外做）。
 
 **老库怎么办（快路后果）**：国密构建**读不开** AES＋SHA512 写的老库。迁移＝在旧版里关掉该空间的
 「磁盘加密」（会重写成明文 SQLite）→ 换新版 → 重新打开加密。还没有真实用户，所以现在是零迁移成本。

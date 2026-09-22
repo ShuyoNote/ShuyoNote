@@ -1,5 +1,5 @@
 {
-  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。",
+  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。",
   "counts": {
     "vitest": 1303,
     "smoke-web": 352,
@@ -61,6 +61,7 @@
       "gm-conformance",
       "rust-no-sm-crypto",
       "rust-plugins-alone",
+      "rust-sm-wired",
       "rust-test"
     ],
     "artifact": [

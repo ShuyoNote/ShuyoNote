@@ -60,6 +60,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（8 断言） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |
+| rust | `rust-sm-wired` | ★ **库级国密接线构建**：打补丁 ＋ `--features sm-library` 下跑全量单测。理由＝应用接线（`apply_gm_page_settings`）整段在 `#[cfg(feature = "sm-library")]` 后面，而**其余 rust 门禁全跑默认特性** ⇒ 那条路本来没有任何门禁碰过（2026-09-22：我在本机把发版链原样跑一遍，才发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 包表面全对而库级不是国密」）。无 SM 版 OpenSSL 前缀时**自报跳过**（Linux 自动用 `/usr`；macOS 需给 `OPENSSL_DIR`）。它跑完会**还原补丁并重建默认特性**，不留混态 |
 | artifact | `external-index` / `external-package` | 我们打出的包与索引，应用**真**解析器 / 真校验器认不认 |
 | artifact | `plugin-fragment-no-zip` | 打包依赖命令行 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条） |
 

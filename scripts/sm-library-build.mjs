@@ -16,6 +16,7 @@
 //   node scripts/sm-library-build.mjs ... --no-apply                          # 不打补丁（**读数会标成 patch=absent**）
 //   node scripts/sm-library-build.mjs ... --prepare                           # **只做准备**：打补丁 ＋ 清两个 crate 的产物，
 //                                                                             #   不构建（CI 里接着自己跑 `tauri build --features sm-library`）
+//   node scripts/sm-library-build.mjs ... --print-env                         # 打印 `OPENSSL_DIR/…LIB_DIR/…INCLUDE_DIR`（给 CI 写 $GITHUB_ENV）
 //   node scripts/sm-library-build.mjs ... --require-static                    # **要求 OPENSSL_DIR 里只有静态 libcrypto**
 //                                                                             #   （单一口味要自包含：有 .dylib/.so 就当场失败）
 //
@@ -68,6 +69,7 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 //   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
 import { requireStaticCrypto } from "./lib/sm-library-source.mjs";
+import { cleanCommands, envFileLines, opensslEnvFor, shouldBuild } from "./lib/sm-library-plan.mjs";
 import { ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
 const NO_APPLY = argv.includes("--no-apply");
@@ -170,18 +172,35 @@ console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${srcDir}，src
 
 // ---- 3) 命令（固定两步：先 clean 再 build）----
 const env = { ...process.env, OPENSSL_DIR: opensslDir };
-const cleanCmd = ["cargo", ["clean", "-p", "libsqlite3-sys", "--manifest-path", manifest]];
-// ⚠️ 第二条 clean 是为了**读数可信**，不是洁癖：本 crate 的构建脚本不重跑时，cargo 会把**上一次的
-//    `cargo:warning`**（也就是"补丁已应用"那一行，含旧 `src_sha256`）从缓存里**重放**出来 ——
-//    于是一份没打补丁的构建也会打出"补丁已应用"。要拿构建期那一格的可信读数，先清本 crate 的脚本产物。
-const cleanSelfCmd = ["cargo", ["clean", "-p", "shuyonote", "--manifest-path", manifest]];
+// 清产物：**两个 profile 都要清**（dev ＋ release）。为什么 —— 见 `lib/sm-library-plan.mjs` 头注
+// 里那次真实事故：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用**，
+// 于是"按发版链构建"出来的包表面全对（补丁标记也在）而**库级根本不是国密**。
+// 第二条（清本 crate）是为了**读数可信**：它的构建脚本不重跑时，cargo 会把上一次的 `cargo:warning`
+// （"补丁已应用"那一行，含旧 `src_sha256`）从缓存里**重放**出来 ⇒ 没打补丁的构建也会显示"已应用"。
+const cleanSteps = cleanCommands({ manifest });
 const buildCmd = ["cargo", ["build", "--features", "sm-library", "--manifest-path", manifest]];
 if (has("--print")) {
-  console.log(`  ${cleanCmd[0]} ${cleanCmd[1].join(" ")}`);
-  console.log(`  ${cleanSelfCmd[0]} ${cleanSelfCmd[1].join(" ")}`);
-  console.log(`  OPENSSL_DIR=${opensslDir} ${buildCmd[0]} ${buildCmd[1].join(" ")}`);
+  for (const st of cleanSteps) console.log(`  ${st.cmd} ${st.args.join(" ")}`);
+  if (shouldBuild({ prepare: has("--prepare") })) {
+    console.log(`  OPENSSL_DIR=${opensslDir} ${buildCmd[0]} ${buildCmd[1].join(" ")}`);
+  } else {
+    console.log("  （--prepare：只清产物 ＋ 打补丁，**不构建**；构建请用带 `--features sm-library` 的 tauri build）");
+  }
   process.exit(0);
 }
+// ---- 0.7) `--print-env`：把 `OPENSSL_DIR` 翻译成**两个 crate 都认**的键值行 ----
+// 为什么要它：`release.yml` 的"准备"与"构建"是**两个 step** ⇒ 变量必须经 `$GITHUB_ENV` 传下去；
+// 而 `openssl-sys` 只看 `<OPENSSL_DIR>/lib|lib64`（Ubuntu 的开发文件在多架构目录里）⇒ 只导 OPENSSL_DIR 会炸。
+// 判据在 `scripts/lib/sm-library-plan.test.mjs`（`opensslEnvFor` / `envFileLines`）。
+if (has("--print-env")) {
+  const envForSsl = opensslEnvFor(opensslDir);
+  if (!envForSsl) {
+    fail(`找不到 OpenSSL 开发文件（${opensslDir || "(没给 --openssl-dir)"}）⇒ 无法给出可链接的环境变量`);
+  }
+  console.log(envFileLines(envForSsl));
+  process.exit(0);
+}
+
 if (CHECK_ONLY) {
   // ⚠️ 这里说的 `patchState.status` 是**核对时**的状态，不是"我打上了"：
   //   already ⇒ 源码本来就有补丁；absent ⇒ 源码干净（**本次没有打** —— 要打就去掉 --check）。
@@ -205,13 +224,12 @@ if (has("--require-static")) {
 }
 
 for (const [cmd, args, label] of [
-  [cleanCmd[0], cleanCmd[1], "① 清掉 libsqlite3-sys 的产物（否则改了后端/补丁也不会重编）"],
-  [cleanSelfCmd[0], cleanSelfCmd[1], "①.5 清掉本 crate 的构建脚本产物（否则 cargo **重放**上一次的 cargo:warning）"],
+  ...cleanSteps.map((st) => [st.cmd, st.args, `① ${st.label}`]),
   // ★ `--prepare`：CI 里**只做准备**（补丁 ＋ 清产物），构建交给带 `--features sm-library` 的
   //   `tauri build` 自己做 —— 免得同一份代码编两遍（一遍 cargo build、一遍 tauri build）。
   //   注意：`tauri build` **必须**带 `--features sm-library`，否则接线那段 `#[cfg]` 会被编掉，
   //   产物看起来正常、库级却不是国密（我们 2026-09-22 在 `cargo test` 上踩过同一个坑）。
-  ...(has("--prepare") ? [] : [[buildCmd[0], buildCmd[1], "② 带 OPENSSL_DIR 构建 sm-library"]]),
+  ...(shouldBuild({ prepare: has("--prepare") }) ? [[buildCmd[0], buildCmd[1], "② 带 OPENSSL_DIR 构建 sm-library"]] : []),
 ]) {
   console.log(`sm-library-build: ${label}`);
   try {
