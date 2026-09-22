@@ -74,8 +74,11 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange, showStatu
           <span className="pdf-annot-tool-label">导出批注</span>
         </button>
       </div>
-      <div className="pdf-annot-actions">
-        {st.selected ? (
+      {/* ⚠️ 容器**只在有内容时渲染**：`.pdf-annot-actions` 自带背景/边框/圆角/内边距，
+          空着就是一枚 **14×10 的小白胶囊** 挂在工具条上（owner 2026-09-22 截图圈出的那个）。
+          起因是上一轮把那句"先在页面选中一条标注…"的说明删掉后，容器还在、样式还在 ⇒ 留下可见空壳。 */}
+      {st.selected && (
+        <div className="pdf-annot-actions">
           <>
             <button className="pdf-annot-tool accent" onClick={() => ctl?.excerpt()} title="把选中内容摘录为笔记块（含 pdf:// 回链）">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></svg>
@@ -100,8 +103,8 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange, showStatu
               <span>删除</span>
             </button>
           </>
-        ) : null}
-      </div>
+        </div>
+      )}
       {/* 页面能力提示条：文本层状态 + OCR（无文本层时）。窄屏默认收起（见 Props.showStatus）。 */}
       {showStatus && (
       <div className="pdf-annot-status">

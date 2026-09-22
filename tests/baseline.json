@@ -1,13 +1,14 @@
 {
-  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。 2026-09-22：新增门禁 `gm-registry-clean`（共享 registry 没留国密补丁；只读、不构建，读不出来只提示不判红），登记进 gates.rust —— 它没有 `counters`（不按用例数计），故不计入 `counts`。",
+  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。 2026-09-22：新增门禁 `gm-registry-clean`（共享 registry 没留国密补丁；只读、不构建，读不出来只提示不判红），登记进 gates.rust —— 它没有 `counters`（不按用例数计），故不计入 `counts`。 2026-09-22：新增门禁 `mobile-views`（主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**；需 Chromium 与 dev server），登记进 gates.mobile。",
   "counts": {
     "vitest": 1303,
-    "smoke-web": 352,
+    "smoke-web": 363,
     "check-pdf-reload": 8,
     "check-panel-layout": 40,
     "check-web-build": 8,
     "mobile-layout": 43,
     "mobile-overlays": 979,
+    "mobile-views": 210,
     "rust-test": 386,
     "rust-plugins-alone": 117,
     "rust-no-sm-crypto": 401
@@ -54,7 +55,8 @@
     ],
     "mobile": [
       "mobile-layout",
-      "mobile-overlays"
+      "mobile-overlays",
+      "mobile-views"
     ],
     "rust": [
       "check-crypto-backend",

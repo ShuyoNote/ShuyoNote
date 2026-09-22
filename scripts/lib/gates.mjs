@@ -219,6 +219,9 @@ export const GATES = [
   // 且重试一定写进报告（"靠重试才通过"会单独列一节）。CI 默认 0 次重试——flake 要吵出来。
   { id: "mobile-layout", group: "mobile", label: "移动端布局验收（真实 Chromium）", cmd: "node scripts/verify-mobile-layout.mjs", baseline: true, counters: "auto", flaky: true },
   { id: "mobile-overlays", group: "mobile", label: "浮层 / 弹窗验收（真实 Chromium）", cmd: "node scripts/verify-mobile-overlays.mjs", baseline: true, counters: "auto", flaky: true },
+  // 主区里的**整视图**（笔记/看板/关系图/文件/数据库 8 模式 + 属性表 + 小控件 + PDF 阅读器真 DOM）。
+  // 2026-09-22 补进注册表：它此前只挂在 package.json（`test:mobile-views`），`pnpm verify` 跑不到它。
+  { id: "mobile-views", group: "mobile", label: "主视图移动端验收（真实 Chromium）", cmd: "node scripts/verify-mobile-views.mjs", baseline: true, counters: "auto", flaky: true },
 
   // ---- rust ----
   // 读数（`counters: "cargo"`）**已在 Linux 侧实测并入** tests/baseline.json：
@@ -365,6 +368,7 @@ export const DEFAULT_GROUP_FORBIDDEN = [
   "build:web",
   "verify-mobile-layout",
   "verify-mobile-overlays",
+  "verify-mobile-views",
 ];
 
 export function gateSetOf(list) {
