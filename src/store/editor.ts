@@ -10,6 +10,11 @@ export type SettingsTab = "appearance" | "spaces" | "account" | "email" | "data"
 interface EditorState {
   editor: LexicalEditor | null;
   focusBlockId: string | null;
+  /**
+   * 阶段 1 · **有未决冲突的块**（提示条发布、编辑器画角标）：
+   * 空数组 = 没有冲突（编辑器会把角标清掉）。
+   */
+  conflictBlockIds: string[];
   /** Shared flag so the editor's "space opens AI" trigger can open the inline AI bar. */
   aiBarOpen: boolean;
   /** Screen position (fixed) where the floating inline AI bar should be anchored. */
@@ -32,6 +37,7 @@ interface EditorState {
   setEditor: (editor: LexicalEditor | null) => void;
   setFocusBlockId: (id: string | null) => void;
   clearFocusBlockId: () => void;
+  setConflictBlockIds: (ids: string[]) => void;
   setAiBarOpen: (v: boolean) => void;
   setAiBarPos: (pos: { top: number; left: number } | null) => void;
   setAiBarAnchorKey: (k: string | null) => void;
@@ -50,6 +56,7 @@ interface EditorState {
 export const useEditorStore = create<EditorState>((set) => ({
   editor: null,
   focusBlockId: null,
+  conflictBlockIds: [],
   aiBarOpen: false,
   aiBarPos: null,
   aiBarAnchorKey: null,
@@ -63,6 +70,9 @@ export const useEditorStore = create<EditorState>((set) => ({
   setEditor: (editor) => set({ editor }),
   setFocusBlockId: (id) => set({ focusBlockId: id }),
   clearFocusBlockId: () => set({ focusBlockId: null }),
+  // 同一份表重复发布时**不产生新状态**（否则每轮同步都会让编辑器重挂一次 update listener）
+  setConflictBlockIds: (ids) =>
+    set((s) => (s.conflictBlockIds.join("\u0000") === ids.join("\u0000") ? s : { conflictBlockIds: ids })),
   setAiBarOpen: (v) => set({ aiBarOpen: v }),
   setAiBarPos: (pos) => set({ aiBarPos: pos }),
   setAiBarAnchorKey: (k) => set({ aiBarAnchorKey: k }),

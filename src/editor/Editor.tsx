@@ -15,6 +15,7 @@ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext
 import { $getRoot, $createParagraphNode, createEditor, ParagraphNode, type EditorState, type LexicalEditor } from "lexical";
 // 块身份那一层：内存模型 ⇄ 落盘/同步形态（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）
 import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } from "../lib/blockIdentity";
+import { applyConflictBadges } from "./blockConflictBadge";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
@@ -294,6 +295,7 @@ function BlockIdPlugin({
 }) {
   const [editor] = useLexicalComposerContext();
   const focusBlockId = useEditorStore((s) => s.focusBlockId);
+  const conflictBlockIds = useEditorStore((s) => s.conflictBlockIds);
 
   // Seed ids once, matching persisted order.
   useEffect(() => {
@@ -412,8 +414,7 @@ function BlockIdPlugin({
 
   // Scroll to + highlight the focused block. Retries briefly so cross-page jumps
   // land after the new editor mounts (the old editor unmounts and cancels here).
-  useEffect(() => {
-    if (!focusBlockId) return;
+  useEffect(() => {    if (!focusBlockId) return;
     let cancelled = false;
     let attempts = 0;
     const attempt = () => {
@@ -438,6 +439,22 @@ function BlockIdPlugin({
       cancelAnimationFrame(raf);
     };
   }, [focusBlockId, editor, map]);
+
+  // 阶段 1 · **冲突块角标**：提示条把"哪几块有未决冲突"发布到 store，这里把它打到 DOM 上。
+  // 每次 editor update 之后再打一遍 —— Lexical 结构一变会重建 DOM，类名会跟着没；
+  // 没有冲突（空表）时只清一次，不挂 listener。
+  useEffect(() => {
+    if (conflictBlockIds.length === 0) {
+      applyConflictBadges([]);
+      return;
+    }
+    const apply = () => {
+      tagBlockDoms(editor, map, editor.getEditorState());
+      applyConflictBadges(conflictBlockIds);
+    };
+    apply();
+    return editor.registerUpdateListener(apply);
+  }, [conflictBlockIds, editor, map]);
 
   return null;
 }

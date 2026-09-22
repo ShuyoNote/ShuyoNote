@@ -106,6 +106,7 @@ export default {
     hint: "The same block was edited on two devices. Pick one side; the other is not lost — it stays in version history.",
     local: "This device",
     remote: "Remote",
+    locate: "Locate",
     keepLocal: "Keep local",
     useRemote: "Use remote",
     resolved: "Merged this block as you chose",

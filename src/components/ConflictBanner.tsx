@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../lib/api";
+import { useEditorStore } from "../store/editor";
 import { useSyncStatus } from "../store/syncStatus";
 import { toast } from "../store/toast";
 
@@ -39,6 +40,7 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<ConflictRow[]>([]);
   const syncing = useSyncStatus((s) => s.syncing);
+  const setConflictBlockIds = useEditorStore((s) => s.setConflictBlockIds);
 
   const refresh = useCallback(() => {
     api
@@ -53,6 +55,12 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
     if (!syncing) refresh();
   }, [syncing, refresh]);
 
+  // 把"哪几块有冲突"发布给编辑器（它据此画块级角标）；离开这一页时清空，别把角标留在别的页上。
+  useEffect(() => {
+    setConflictBlockIds(rows.map((row) => row.block_id));
+  }, [rows, setConflictBlockIds]);
+  useEffect(() => () => setConflictBlockIds([]), [setConflictBlockIds]);
+
   if (rows.length === 0) return null;
 
   const decide = async (row: ConflictRow, choice: "local" | "remote") => {
@@ -63,6 +71,11 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
     } catch (e) {
       toast(String(e), "error");
     }
+  };
+
+  /** 跳到那一块：与块引用跳转**同一条路**（`Editor` 会滚到它并闪一下）。 */
+  const jumpTo = (row: ConflictRow) => {
+    useEditorStore.getState().setFocusBlockId(row.block_id);
   };
 
   return (
@@ -83,6 +96,9 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
               </span>
             </div>
             <div className="conflict-item-actions">
+              <button className="conflict-btn conflict-btn-locate" onClick={() => jumpTo(row)}>
+                {t("conflicts.locate")}
+              </button>
               <button className="conflict-btn" onClick={() => void decide(row, "local")}>
                 {t("conflicts.keepLocal")}
               </button>

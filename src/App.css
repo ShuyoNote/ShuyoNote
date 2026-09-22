@@ -21067,3 +21067,9 @@ body.is-plugin-panel-open .main {
   color: var(--accent-strong);
 }
 
+/* 阶段 1 · **冲突块角标**（`editor/blockConflictBadge.ts`）：提示条里那几条对应的块，在正文里也看得出来。
+   只用一条内阴影，不动块的背景 —— 正文里的背景属于主题/引用/代码块，改它会把格式吃掉。 */
+.block-conflict {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
