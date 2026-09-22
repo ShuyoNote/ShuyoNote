@@ -17408,20 +17408,101 @@ p:has(> .editor-drawing-container) {
   align-items: center;
 }
 /* 顶层工具栏：工具在左，选区操作在右，整条随阅读器宽度。
-   批注工具栏「不滚动」：滚动查看放大页面时吸顶固定（sticky）。 */
+   批注工具栏「不滚动」：滚动查看放大页面时吸顶固定（sticky）。
+
+   ⚠️ 2026-09-22（owner："pdf 页内工具栏任何时候不换行，空间狭小时，可以收起来，不截断"）：
+   这一条**永不换行**（`flex-wrap: nowrap`）。原来它是 `wrap`，宽度不够就折成两行
+   （1280 上少一列面板就折；选中一条批注再多出操作组，折得更狠），窄屏则靠工具组横向滚动
+   把按钮推出屏外 —— 两种都不是"收起来"。现在：
+     · `.pdf-annot-toolbar-row` = 三个组所在的那一行（`nowrap`，`overflow-x:auto` 只作**兜底**：
+       真到极限还能滑，绝不裁切）；
+     · 放不下时由 `PdfAnnotTopToolbar` **量宽**后按优先级收进「⋯」（`data-collapse` 那几条规则）；
+     · 「⋯」与它的菜单是行的**兄弟**节点 ⇒ 不会被行的滚动裁掉。 */
 .pdf-annot-toolbar {
   width: 100%;
   max-width: 860px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  flex-wrap: wrap;
-  position: sticky;
-  top: 0;
+  flex-wrap: nowrap;
+  position: relative;
   z-index: 22;
   background: var(--bg);
   padding: 4px 6px 6px;
+}
+.pdf-annot-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 兜底：把所有能收的都收完还放不下（≈230px 以下的窄条）时还能横向滑 —— 不裁切。 */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.pdf-annot-toolbar-row::-webkit-scrollbar {
+  display: none;
+}
+/* 「⋯」：没有可收的项时整个收起（连占位都不留）。 */
+.pdf-annot-more-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.pdf-annot-toolbar:not(.has-more) .pdf-annot-more-wrap {
+  display: none;
+}
+.pdf-annot-more {
+  padding: 5px 7px;
+}
+/* 收起来的项（`data-collapse` 由 `PdfAnnotTopToolbar` 写、值就是被收起来的那些项）。
+   ⚠️ 三条都限定在**行内**（`.pdf-annot-toolbar-row`）：「⋯」菜单里渲染的是同一批元素的
+   第二份调用，那几件必须**看得见**，否则"收起来"就等于"删掉"。 */
+.pdf-annot-toolbar[data-collapse~="status"] .pdf-annot-toolbar-row > .pdf-annot-status,
+.pdf-annot-toolbar[data-collapse~="actions"] .pdf-annot-toolbar-row > .pdf-annot-actions,
+.pdf-annot-toolbar[data-collapse~="undoExport"] .pdf-annot-toolbar-row .pdf-annot-pair {
+  display: none;
+}
+.pdf-annot-toolbar .pdf-annot-tools.is-icons .pdf-annot-tool-label {
+  display: none;
+}
+/* 「⋯」里的菜单：**锚在工具条内的内联菜单**（不是应用级浮层，见组件顶部注释）。
+   它里面的分组可以自由换行 —— "永不换行"约束的是工具条那一行，不是这个浮出来的面板。 */
+.pdf-annot-more-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  /* ⚠️ `width: max-content` 是必须的：这个面板的包含块是「⋯」那一格（才 ~36px 宽），
+     `width:auto` 的 shrink-to-fit 会按包含块算 ⇒ 面板被压成 ~95px，"朗读"竖着排成两行。 */
+  width: max-content;
+  max-width: min(88vw, 460px);
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+.pdf-annot-more-pop .pdf-annot-actions,
+.pdf-annot-more-pop .pdf-annot-status,
+.pdf-annot-more-pop .pdf-annot-pair {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.pdf-annot-more-pop .pdf-annot-status {
+  width: auto;
+  max-width: none;
+  position: static;
+  background: transparent;
+  padding: 0;
 }
 .pdf-annot-tools,
 .pdf-annot-actions {
@@ -17435,6 +17516,15 @@ p:has(> .editor-drawing-container) {
   border: none;
   border-radius: 9px;
   padding: 4px 6px;
+  /* 量宽的预算必须是**内容真实宽度**：这三格不许被压扁（否则"要不要收"就量不准）。 */
+  flex: 0 0 auto;
+}
+/* 撤销 + 导出批注：一个整体（要么都在工具组里，要么一起进「⋯」）。 */
+.pdf-annot-pair {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
 }
 .pdf-annot-tool {
   display: inline-flex;
@@ -17480,34 +17570,20 @@ p:has(> .editor-drawing-container) {
   display: inline-flex;
   align-items: center;
 }
-/* 页面能力提示条（文本层 + OCR）——滚动页面时吸顶固定，保持批注控制可见。
-   ⚠️ 2026-09-22：这一组**宽屏不再独占一行**（见下面那条 `@media (min-width: 769px)`）。
-   原来 `width: 100%` 把它压成"状态条"，于是 1280 下工具条是**两行**
-   （实测 `tools@56` / `status@105`，第二行整行只有 chip + 三个按钮，472×27）。
-   标签也一并缩短（朗读 / OCR / AI，完整说法进 `title`）——它原来被
-   「朗读本页 / OCR 识别本页 / AI 识别」撑到 472px，宽屏塞不进第一行。 */
+/* 页面能力组（文本层 chip + 朗读 / OCR / AI）——**工具行里的一格**。
+   2026-09-22 起它不再"独占一行/吸顶"：工具条改成单行 + 按需收进「⋯」，
+   这一格的宽度必须等于**内容宽**（`width:auto`），否则它自己就会把行撑爆。
+   放不下时由 `PdfAnnotTopToolbar` 把它整格收进「⋯」（`data-collapse~="status"`）。
+   标签一律**短**（朗读 / OCR / AI），完整说法进 `title`：它原来被
+   「朗读本页 / OCR 识别本页 / AI 识别」撑到 472px。 */
 .pdf-annot-status {
-  width: 100%;
-  max-width: 860px;
+  width: auto;
+  max-width: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 0 4px;
-  position: sticky;
-  top: 50px;
-  z-index: 20;
-  background: var(--bg);
-}
-/* 宽屏：与工具组**同一行**，并被 `space-between` 推到工具行右端（省下那一整行）。
-   窄屏不动 —— 它整行收在「⋯」里（`showStatus`），那里**需要**整行宽度。 */
-@media (min-width: 769px) {
-  .pdf-annot-status {
-    width: auto;
-    max-width: none;
-    flex: 0 0 auto;
-    position: static;
-  }
+  flex: 0 0 auto;
 }
 .pdf-annot-layer {
   display: inline-flex;
@@ -22218,21 +22294,13 @@ body.is-plugin-panel-open .main {
   .pdf-reader-head:not(.tools-open) .pdf-eye-wrap {
     display: none;
   }
-  /* 批注工具单行横滑：换行会白吃 44px 正文高度（工具本来就排得下，只是差几十像素）。 */
-  .pdf-annot-tools {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-  }
-  .pdf-annot-tools::-webkit-scrollbar { display: none; }
+  /* ⚠️ 2026-09-22：这里原来给批注工具组开了一条**横向滚动**（"单行横滑"）——按钮被推出屏外，
+     和"收起来"是两回事。现在窄屏也**不换行、不横滑**：工具条自己量宽后把放不下的收进「⋯」
+     （`PdfAnnotTopToolbar` + `[data-collapse]`）。行内只留兜底滚动（见 `.pdf-annot-toolbar-row`）。 */
   .pdf-annot-tool { flex: 0 0 auto; }
-  .pdf-annot-toolbar,
-  .pdf-annot-actions {
-    flex-wrap: wrap;
-    row-gap: 6px;
+  /* 「⋯」的菜单在窄屏铺满一行的宽度：里面的分组本来就允许换行。 */
+  .pdf-annot-more-pop {
+    max-width: calc(100vw - 24px);
   }
   .pdf-reader-head button,
   .pdf-annot-toolbar button,
@@ -22306,9 +22374,9 @@ body.is-plugin-panel-open .main {
 @media (max-height: 520px) {
   .pdf-reader-head,
   .pdf-reader-controls,
-  .pdf-annot-toolbar,
-  .pdf-annot-tools,
-  .pdf-annot-actions {
+  /* ⚠️ 2026-09-22：批注工具条**不在这里**了 —— 它现在任何时候都是单行，
+     放不下由组件量宽收进「⋯」（横屏那一档也一样，量出来的宽度已经含了"高度矮"这件事）。 */
+  .pdf-annot-toolbar-row {
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
@@ -22317,9 +22385,7 @@ body.is-plugin-panel-open .main {
   }
   .pdf-reader-head::-webkit-scrollbar,
   .pdf-reader-controls::-webkit-scrollbar,
-  .pdf-annot-toolbar::-webkit-scrollbar,
-  .pdf-annot-tools::-webkit-scrollbar,
-  .pdf-annot-actions::-webkit-scrollbar {
+  .pdf-annot-toolbar-row::-webkit-scrollbar {
     display: none;
   }
   .pdf-reader-name {
@@ -22331,7 +22397,7 @@ body.is-plugin-panel-open .main {
     margin-left: auto;
     background: var(--bg);
   }
-  /* 批注工具行同理：单行滚动，别把正文挤没。 */
+  /* 批注工具组同理：量宽要的是**真实宽**，别被压扁。 */
   .pdf-annot-tools,
   .pdf-annot-actions {
     flex-shrink: 0;
