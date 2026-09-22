@@ -634,6 +634,8 @@ GM/T 0024 TLS，不在范围）。
 新增判据：`check-crypto-backend` 的页加密期望格（4 条）＋ 静态前缀守卫（5 条），**变异证明 4/4 全被抓住**
 （其中一条当场抓出我的正则漏了真实产物名 `libcrypto.3.dylib`）。
 
+**★ 真 CI 读数（2026-09-22，Linux，run `35685322260`／dev `6248b882`）**：新门禁 `rust-sm-wired` 在 ubuntu runner 上**真跑**（`OPENSSL_DIR=/usr` ⇒ `LIB_DIR=/usr/lib/x86_64-linux-gnu`、`INCLUDE_DIR=/usr/include`）：`--features sm-library` 全量单测 **440 passed / 0 failed**，`--group rust` **7 条全绿（575.8s）**，跑完还原补丁并重建默认特性。⚠️ 这条路上 CI 逼出两个真问题（都已修）：① **不能只给 `OPENSSL_DIR=/usr`** —— `openssl-sys` 只看 `<prefix>/lib|lib64`，Ubuntu 的开发文件在**多架构目录** ⇒ 编译期炸（**发版链同样会炸**，已改成 `--print-env` 输出三个变量）；② 门禁必须**打印 cargo 输出尾部**，否则「拿不到 test result」什么都诊断不了。
+
 **已知边界**：① 老库（AES＋SHA512）在国密构建上**读不开** ⇒ 迁移三步（旧版关磁盘加密 → 换版 → 重开）；
 ② Linux 依赖发行版 OpenSSL ≥3.0；③ Android／iOS 库级仍未排；④ `macos.yml` 那份 CI 自检包**刻意仍是非国密**
 （它不发布；发版档启用时按上面配方 ＋ `scripts/sign-macos-app.mjs` 的由内到外签名）。
