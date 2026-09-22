@@ -303,3 +303,34 @@ E2EE 与 CRDT **不冲突**：加密发生在客户端，快照也在客户端�
    合并逻辑**一行都不用写**（今天服务端还要做 LWW 的序号分发，将来更简单）；
 6. 收益已量化：**增量 129 B/字**（问题一）、**密文 140 B/条**（问题三）、ydoc 比 JSON 更小
    ——"同页并发"这条商业叙事有了数字。
+
+---
+
+## 附录：Stage B 探针里**未提交**的那 17 行（2026-09-22 归档时抢救进来）
+
+归档时发现 `ShuyoNote-spike` 工作树里 `spike/crdt/stage-b-app-nodes.mjs` 有一处**从未提交**的改动。
+它是结论形状的（"到底是不是根因"的实测与两条反例），所以逐字抄在这里，随工作树一起清掉时不会丢：
+
+```js
+    // ⚠️ **只被 `decorate()` 用的渲染器依赖，也在解析阶段换成空模块**。
+    // 它们体积巨大（excalidraw / mermaid / katex / prismjs / tesseract）且与"节点模型"无关；
+    // headless 往返**不会**调 `decorate`。第一版没桩掉它们，18.8 MB 的 bundle 在 Node `import()` 时挂住 ——
+    // 这里就是把那次失败的前提换掉，看它是不是根因。
+    // ⚠️ **只桩掉"确实要 DOM/体积巨大"的那几个**：`prismjs` 与 `katex` 的模块级代码是纯 JS
+    //    （不需要 DOM），桩掉反而会炸 —— 实测把 `prismjs` 也桩了之后，`@lexical/code-prism` 里
+    //    那句 `(Prism)` 直接 `ReferenceError: Prism is not defined`。
+    const RENDERER_ONLY = /^(@excalidraw\/excalidraw|mermaid|tesseract\.js|pdfjs-dist)(\/.*)?$/;
+    build.onResolve({ filter: RENDERER_ONLY }, (args) => ({ path: args.path, namespace: "stub-renderer" }));
+    build.onLoad({ filter: /.*/, namespace: "stub-renderer" }, () => ({
+      // ⚠️ 必须写成 **CJS**（`module.exports = …`）：esbuild 对 ESM 会**静态校验命名导出**，
+      // 用 `export default new Proxy(...)` 会被 "No matching export ... for import "Excalidraw"" 挡下（实测）。
+      // CJS 则把 `import { X }` 当作默认导出上的属性访问，任意命名都能过。
+      contents: "module.exports = new Proxy({}, { get: () => () => ({}) });",
+      loader: "js",
+    }));
+```
+
+⚠️ 但**结论本身没写在这段代码里**（当时忙在"换掉前提看是不是根因"）：`README.md` §2.2 记的仍是
+"打包应用的 `config.ts` 成功、Node 加载挂住，如实留案"。⇒ 这条附录只保住**手法与两条反例**，
+"桩掉渲染器依赖之后到底还挂不挂"**没有复跑读数**，不要当成已结论。
+
