@@ -393,7 +393,12 @@ describe("indexPage：把一个页面索引完整", () => {
     const r = await indexPage("p1", s, { transcribe });
 
     // ① 真的调到了（mime 与字节都从平台取到的那一份）
-    expect(calls).toEqual([{ mime: "audio/wav", model: "funasr-nano", bytes: 3 }]);
+    //    ⚠️ `model` 是 **undefined**：抽取层**不强制默认值**（2026-09-22 裁定走 A，方案 §6.5.1）——
+    //    契约里优先级是「**本次调用** > 注入方构造时给的 > 默认」，抽取器每轮塞一个默认值
+    //    会把注入方配置的模型**安静地**盖掉（不报错，只是用回默认 ⇒「用户可配 ASR 模型」做不到）。
+    //    "默认模型是 funasr-nano"那条判据在**施加它的那一层**：`src/lib/ai/localTranscribe.test.ts`
+    //    （`expect(form.get("model")).toBe(DEFAULT_ASR_MODEL)`）—— 本文件只钉"这五跳接线真的通了"。
+    expect(calls).toEqual([{ mime: "audio/wav", model: undefined, bytes: 3 }]);
     expect(r.attachments[0].status).toBe("stored");
     // ② 文本进了内容层，且 `loc` 是**时间戳定位**（HH:MM:SS）—— 转写与其它抽取器最本质的区别
     const segs = await s.text.segmentsOf("av");
