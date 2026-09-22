@@ -607,6 +607,21 @@ git ls-remote origin refs/heads/dev refs/heads/main    # 两侧 SHA 逐一核对
 git switch main                               # 别把工作区留在 dev（§9「常见坑」里两条都栽在这上面）
 ```
 
+#### 10.3.0 ★ 每次发版后，把 `main` **回合进 `dev`**（版本号属于"main-only 提交"）
+
+`release: X.Y.Z`（版本号 bump ＋ CHANGELOG 已发布段）**只发生在 `main` 上** ⇒ 它天然是"`dev` 没有的提交"，
+按 §10.3 就该回合进来。**2026-09-22 实例**：`dev` 的版本号一直停在 **`1.91.10`**，而 `main` 已经 `1.91.20`
+（差 10 个版本没回合），后果有两条、都不显眼但用户能看见：
+
+1. 「关于」里显示 `v1.91.10`（`APP_VERSION` 来自 `package.json`）；
+2. **开发构建天天提示「有新版本」** —— 它拿 `APP_VERSION`（1.91.10）与更新通道的 `latest.json`（1.91.20）比。
+
+做法：`git merge origin/main`（**是 merge，不是手抄版本号** —— `check-changelog-version-parity` 的实现注释
+里写明了这个口径："发布提升从 main 回合进 dev 恰恰是 merge"）。冲突面通常**只有 `CHANGELOG.md` 一处**，
+解法固定：**`dev` 的 `[Unreleased]` 保持在最前**，把 `main` 的已发布段整段插到 `dev` 现有的**首个已发布段**之前
+⇒ 顺序是 `Unreleased → 新发布的几段 → 原来的已发布段 → …`。回合后跑
+`check-versions` / `check-changelog` / `check-changelog-version-parity` / `check-doc-links` 四条（都很快）。
+
 #### 10.3.1 ★ 发布线的**文档修正**分支：当天合回 `main`，否则会**静默搁浅**（2026-09-22 实例）
 
 真实发生的一次：`release: 1.91.11`（`39024800`）在 `main` 上之后，为**已发布说明**开了
