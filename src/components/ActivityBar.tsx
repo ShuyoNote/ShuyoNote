@@ -62,7 +62,11 @@ export function ActivityBar() {
     // 切换视图（看板/关系图等）时关闭文件预览，避免残留遮住新视图。
     useFilePreview.getState().close();
     setActivity(id);
-    setSidebarOpen(true);
+    // ⚠️ 窄屏**不要**顺手把侧栏拉开：桌面上侧栏是并排的一列（拉开正好一起看），
+    // 但窄屏它是**盖住内容的整高抽屉**——点「看板」之后看到的是侧栏抽屉，
+    // 刚切过去的视图还在它后面，用户得再点一次遮罩才看得见（等于"点了没反应"）。
+    // 窄屏想开抽屉有专门的入口（`.sidebar-toggle-btn` / 竖条里那个按钮）。
+    if (!isMobileViewport()) setSidebarOpen(true);
     setView(id);
   };
 

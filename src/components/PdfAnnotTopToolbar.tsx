@@ -13,6 +13,12 @@ interface Props {
   version: number;
   tool: AnnotTool;
   onToolChange: (t: AnnotTool) => void;
+  /**
+   * 是否显示底部那条"页面能力"状态条（文本层提示 + 朗读 / OCR / AI 识别）。
+   * 窄屏由 `PdfReader` 的「更多工具」(`⋯`) 控制（默认收起，省一行）；
+   * 宽屏传 true（不缺空间，而且这些是扫描版 PDF 要点的第一步）。
+   */
+  showStatus?: boolean;
 }
 
 const _iconFor: Record<AnnotTool, string> = {
@@ -22,7 +28,7 @@ const _iconFor: Record<AnnotTool, string> = {
   sticky: "M4 5h16v10l-5 5H4z",
 };
 
-export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) {
+export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange, showStatus = true }: Props) {
   // version 变化 → 重读当前页状态快照（撤销/选中/批注数等）。
   const st: PdfPageState = useMemo(() => (ctl ? ctl.getState() : nullSt()), [ctl, version]);
 
@@ -98,7 +104,8 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
           <span className="pdf-annot-tip">先在页面选中一条标注，即可摘录、复制引用或删除</span>
         )}
       </div>
-      {/* 页面能力提示条：文本层状态 + OCR（无文本层时） */}
+      {/* 页面能力提示条：文本层状态 + OCR（无文本层时）。窄屏默认收起（见 Props.showStatus）。 */}
+      {showStatus && (
       <div className="pdf-annot-status">
         <span className={`pdf-annot-layer ${st.hasTextLayer ? "ok" : "warn"}`}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -122,6 +129,7 @@ export function PdfAnnotTopToolbar({ ctl, version, tool, onToolChange }: Props) 
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

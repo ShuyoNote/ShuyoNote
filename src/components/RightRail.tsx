@@ -2,13 +2,22 @@ import { useMemo } from "react";
 import { useRightPanel } from "../store/rightPanel";
 import { usePlugins } from "../store/plugins";
 import { usePluginViewStore } from "../store/pluginViews";
+import { useActivity } from "../store/activity";
+import { useMobile } from "../hooks/useMobile";
 import { viewPlacement, viewPlacementKey } from "../lib/pluginViews";
 import { SparkleIcon, ListIcon, CommentIcon, PanelIcon } from "./icons";
 
 // Right-edge vertical icon rail (Wolai-style launcher): a slim strip of buttons on
 // the window's right edge that opens the right-side drawers (AI assistant / TOC /
 // comments). The buttons are mutually exclusive via the shared rightPanel store.
+//
+// 窄屏默认收起（见 `store/activity.ts` 的 `rightRailOpen`）：390px 上它是一条
+// 压在正文右缘的常驻控制条，而它那四个入口本来就是低频动作。收起后由右下角
+// 一枚 44×44 的圆钮唤出，点任意入口或遮罩即收起。
 export function RightRail() {
+  const isMobile = useMobile();
+  const rightRailOpen = useActivity((s) => s.rightRailOpen);
+  const setRightRailOpen = useActivity((s) => s.setRightRailOpen);
   const aiOpen = useRightPanel((s) => s.ai);
   const tocOpen = useRightPanel((s) => s.toc);
   const commentsOpen = useRightPanel((s) => s.comments);
@@ -32,52 +41,78 @@ export function RightRail() {
     [plugins],
   );
 
+  // 桌面常驻；窄屏只有展开时才渲染那条工具条。
+  const showRail = !isMobile || rightRailOpen;
+  // 窄屏点完入口就收起（抽屉是整屏的，工具条盖在上面没有意义）。
+  const pick = (action: () => void) => () => {
+    action();
+    if (isMobile) setRightRailOpen(false);
+  };
+
   return (
-    <div className="right-rail">
-      <button
-        className={`rail-btn ${aiOpen ? "active" : ""}`}
-        title="AI 助手"
-        aria-label="AI 助手"
-        onClick={() => openAi(!aiOpen)}
-      >
-        <SparkleIcon width={16} height={16} />
-      </button>
-      <button
-        className={`rail-btn ${commentsOpen ? "active" : ""}`}
-        title="评论 / 通知"
-        aria-label="评论 / 通知"
-        onClick={() => openComments(!commentsOpen)}
-      >
-        <CommentIcon width={16} height={16} />
-      </button>
-      <button
-        className={`rail-btn ${tocOpen ? "active" : ""}`}
-        title="目录"
-        aria-label="目录"
-        onClick={() => openToc(!tocOpen)}
-      >
-        <ListIcon width={16} height={16} />
-      </button>
-      {railViews.map((rv) => {
-        const active = pluginKey === rv.key;
-        return (
+    <>
+      {isMobile && rightRailOpen && (
+        <div className="mobile-right-backdrop" onClick={() => setRightRailOpen(false)} aria-hidden />
+      )}
+      {isMobile && !rightRailOpen && (
+        <button
+          className="mobile-right-toggle"
+          title="展开右侧工具"
+          aria-label="展开右侧工具"
+          aria-expanded={false}
+          onClick={() => setRightRailOpen(true)}
+        >
+          <PanelIcon width={18} height={18} />
+        </button>
+      )}
+      {showRail && (
+        <div className={`right-rail${isMobile ? " is-open" : ""}`}>
           <button
-            key={rv.key}
-            className={`rail-btn ${active ? "active" : ""}`}
-            title={`${rv.view.title || rv.view.id}（插件「${rv.pluginName}」）`}
-            aria-label={`插件面板：${rv.view.title || rv.view.id}`}
-            aria-pressed={active}
-            onClick={() => {
-              // 再点一下收起（与上面三个抽屉同一个手感）；收起也走 store 的关闭路径，
-              // 否则右栏的"当前占用"会留着一个已经看不见的键。
-              if (active) usePluginViewStore.getState().close();
-              else usePluginViewStore.getState().open(rv.pluginId, rv.pluginName, rv.view);
-            }}
+            className={`rail-btn ${aiOpen ? "active" : ""}`}
+            title="AI 助手"
+            aria-label="AI 助手"
+            onClick={pick(() => openAi(!aiOpen))}
           >
-            <PanelIcon width={16} height={16} />
+            <SparkleIcon width={16} height={16} />
           </button>
-        );
-      })}
-    </div>
+          <button
+            className={`rail-btn ${commentsOpen ? "active" : ""}`}
+            title="评论 / 通知"
+            aria-label="评论 / 通知"
+            onClick={pick(() => openComments(!commentsOpen))}
+          >
+            <CommentIcon width={16} height={16} />
+          </button>
+          <button
+            className={`rail-btn ${tocOpen ? "active" : ""}`}
+            title="目录"
+            aria-label="目录"
+            onClick={pick(() => openToc(!tocOpen))}
+          >
+            <ListIcon width={16} height={16} />
+          </button>
+          {railViews.map((rv) => {
+            const active = pluginKey === rv.key;
+            return (
+              <button
+                key={rv.key}
+                className={`rail-btn ${active ? "active" : ""}`}
+                title={`${rv.view.title || rv.view.id}（插件「${rv.pluginName}」）`}
+                aria-label={`插件面板：${rv.view.title || rv.view.id}`}
+                aria-pressed={active}
+                onClick={pick(() => {
+                  // 再点一下收起（与上面三个抽屉同一个手感）；收起也走 store 的关闭路径，
+                  // 否则右栏的"当前占用"会留着一个已经看不见的键。
+                  if (active) usePluginViewStore.getState().close();
+                  else usePluginViewStore.getState().open(rv.pluginId, rv.pluginName, rv.view);
+                })}
+              >
+                <PanelIcon width={16} height={16} />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 }

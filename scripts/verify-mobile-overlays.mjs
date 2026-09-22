@@ -175,9 +175,30 @@ const ACTION_TEXT = ["确定", "取消", "保存", "关闭", "完成", "创建",
 // 在页面里跑的探针。`page.evaluate` 会把函数序列化过去，所以这里不能引用外部变量。
 // ---------------------------------------------------------------------------
 
-/** 打开一层。走应用**自己的 store**（与界面同一条路），而不是往 DOM 里塞假节点。 */
+/**
+ * 打开一层。走应用**自己的 store**（与界面同一条路），而不是往 DOM 里塞假节点。
+ *
+ * ⚠️ 取模块必须**按 app 实际加载过的 URL**（`store()` 里那三行），不能直接
+ * `import("/src/store/notes.ts")`：Vite 在源码改过之后会给模块 URL 挂 `?t=<mtime>`
+ * 缓存键，裸路径会解析成**另一个模块实例**（一个新的 zustand store）——脚本在它上面
+ * `setSidebarOpen(true)` / `setManagerOpen(true)`，界面上那份 store 毫不知情，
+ * 症状就是"opened=true 但元素不在 DOM 里"。实测证据：那份 store 里 `pages.length === 0`
+ * 而 DOM 里有页面树；只影响**依赖 store 的层**（插件管理 / 文件预览 / 同步面板），
+ * 792×360 反倒不红（那个宽度侧栏不是抽屉，用不着靠 store 打开）。
+ * 本脚本 2026-09-22 先后假红过 6 条和 2 条，两次都是这个原因，所以修在源头。
+ *
+ * ⚠️ 这段函数体是**在浏览器里**跑的（`page.evaluate` 只带源码过去，看不到模块作用域里
+ * 的任何东西），所以那三行必须**内联**在这里，不能抽成外部帮助函数（抽了就
+ * `ReferenceError: storeLoader is not defined`——本轮的 `CHROME_BUDGET` / `tag` 都踩过）。
+ */
 async function openOverlay(which) {
-  const store = (p) => import(/* @vite-ignore */ p);
+  const store = (p) => {
+    const loaded = (performance.getEntriesByType?.("resource") ?? [])
+      .map((e) => e.name)
+      .filter((n) => n.includes(p));
+    // 取最后一个：HMR 之后同一个模块可能既加载过裸路径、也加载过带缓存键的那份。
+    return import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : p));
+  };
   const click = (sel) => {
     const el = document.querySelector(sel);
     if (!el) return false;
@@ -358,7 +379,13 @@ async function openOverlay(which) {
 
 /** 关掉所有已知的浮层，让下一层的测量从干净状态开始。 */
 async function closeAllOverlays() {
-  const store = (p) => import(/* @vite-ignore */ p);
+  // 同上：按 app 实际加载过的 URL 取模块（内联，理由见 `openOverlay` 的注释）。
+  const store = (p) => {
+    const loaded = (performance.getEntriesByType?.("resource") ?? [])
+      .map((e) => e.name)
+      .filter((n) => n.includes(p));
+    return import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : p));
+  };
   const ed = await store("/src/store/editor.ts");
   const s = ed.useEditorStore.getState();
   s.closeSettings?.();
@@ -680,6 +707,7 @@ async function main() {
                   sel: sel.trim(),
                   cond: r.conditionText.replace(/\s+/g, " "),
                   position: st.position,
+                  display: st.display,
                   width: st.width,
                   minWidth: st.minWidth,
                   minHeight: st.minHeight,
@@ -756,6 +784,40 @@ async function main() {
         ok(
           closeSticky.length > 0,
           `矮视口里「关闭」sticky 常驻（${closeSticky.map((e) => e.sel).join("；") || "没找到规则"}）——它是"离开"的唯一入口，不能跟着横滑走`,
+        );
+
+        // ---- 2026-09-22：控制条把正文挤没（用户真窗口截图，8 行 chrome） ----
+        // 阅读器**要一份真 PDF 才会渲染内部**（测试工作区里没有），所以这一层与上面几条一样
+        // 是 **CSS 级**断言：钉的是"规则真的把低频控件收起来了"。
+        // 几何效果另有一条探针节点量（下面 `pdfChromeProbe`）。
+        const moreBtn = rules.filter((e) => /^\.pdf-reader-more$/.test(e.sel));
+        ok(
+          moreBtn.some((e) => /inline-flex/.test(e.display ?? "")),
+          `窄屏段里「更多工具」入口放出来了（${moreBtn.map((e) => e.display || "-").join(" / ") || "没找到规则"}）` +
+            `——它的基础规则是 display:none（桌面不需要），窄屏必须显式放出来，否则手机上根本点不到`,
+        );
+        const hiddenSecondary = rules.filter(
+          (e) => /\.pdf-reader-head:not\(\.tools-open\)/.test(e.sel) && /none/.test(e.display ?? ""),
+        );
+        const hiddenSel = hiddenSecondary.map((e) => e.sel).join(" | ");
+        for (const cls of ["pdf-reader-maximize", "pdf-reader-sidebar-toggle", "pdf-reader-ask", "pdf-eye-wrap", "pdf-export-btn"]) {
+          ok(
+            new RegExp(cls.replace(/-/g, "\\-")).test(hiddenSel),
+            `低频头部控件「${cls}」默认收起（展开走 .tools-open）：${hiddenSel.slice(0, 120)}`,
+          );
+        }
+        const toolsNowrap = rules.filter(
+          (e) => /^\.pdf-annot-tools$/.test(e.sel) && /nowrap/.test(e["flexWrap"] ?? "") && /auto/.test(e["overflowX"] ?? ""),
+        );
+        ok(
+          toolsNowrap.length > 0,
+          `窄屏段里批注工具行改成单行横滑（${toolsNowrap.map((e) => e.sel).join("；") || "没找到规则"}）` +
+            `——换行会白吃 44px 正文高度`,
+        );
+        const tipHidden = rules.filter((e) => /^\.pdf-annot-tip$/.test(e.sel) && /none/.test(e.display ?? ""));
+        ok(
+          tipHidden.length > 0,
+          `窄屏段里那句说明（.pdf-annot-tip「先在页面选中一条标注…」）不再占一行`,
         );
       }
 
@@ -1281,6 +1343,98 @@ async function main() {
           `钉的是"窄屏 width:100% 被文件后面那条基础规则压掉"（那时只有 100vw-64px = ${panel.innerW - 64}px）`,
       );
 
+      // ---- PDF 阅读器顶部控制条：`⋯` 到底省下几行（几何，探针节点） ----
+      // 阅读器**要一份真 PDF 才会渲染内部**（测试工作区里没有真的 PDF 附件），所以这里与
+      // `.plugin-panel` 同一个办法：塞一份**只带类名**的复刻（结构与 `PdfReader` 的头部一致），
+      // 量"收起 / 展开"两种状态的高度差，以及批注工具行是不是真的单行。
+      const pdfProbe = await safeEval(page, () => {
+        const head = document.createElement("div");
+        head.className = "pdf-reader-head";
+        head.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:-1";
+        const btn = (cls, txt) => {
+          const b = document.createElement("button");
+          b.className = `pdf-reader-btn ${cls}`;
+          b.textContent = txt;
+          return b;
+        };
+        const mk = (cls, html) => {
+          const d = document.createElement("div");
+          d.className = cls;
+          d.innerHTML = html;
+          return d;
+        };
+        head.append(
+          btn("pdf-reader-outline-toggle", "☰"),
+          Object.assign(document.createElement("span"), { className: "pdf-reader-name", textContent: "小马白话期权.pdf" }),
+          mk(
+            "pdf-reader-controls",
+            '<div class="pdf-reader-nav"><button class="pdf-reader-btn">‹</button>' +
+              '<span class="pdf-reader-page">第 1 / 17 页</span><button class="pdf-reader-btn">›</button></div>' +
+              '<div class="pdf-reader-zoom"><button class="pdf-reader-btn">−</button>' +
+              '<button class="pdf-reader-btn pdf-zoom-btn"><span class="pdf-reader-pct">适合宽度</span></button>' +
+              '<button class="pdf-reader-btn">+</button></div>' +
+              '<button class="pdf-reader-btn pdf-reader-maximize">⤢</button>' +
+              '<button class="pdf-reader-btn pdf-reader-sidebar-toggle">▯</button>' +
+              '<button class="pdf-reader-btn pdf-reader-ask">∿</button>' +
+              '<div class="pdf-eye-wrap"><button class="pdf-reader-btn">◉</button></div>',
+          ),
+          btn("pdf-export-btn", "导出带批注副本"),
+          btn("pdf-reader-more", "⋯"),
+          btn("pdf-reader-close", "×"),
+        );
+        document.body.appendChild(head);
+        const collapsed = head.getBoundingClientRect().height;
+        head.classList.add("tools-open");
+        const expanded = head.getBoundingClientRect().height;
+        head.remove();
+
+        // 批注工具行：6 个按钮（4 工具 + 撤销 + 导出批注）。
+        // ⚠️ 这里**故意把容器压到 280px** 再量：在 360/390 上这 6 个按钮本来就排得下，
+        //    "排得下"证明不了"不换行"；压到 280 才能证明它**该换行时不换行、改为横滑**。
+        const tools = document.createElement("div");
+        tools.className = "pdf-annot-tools";
+        tools.style.cssText = "position:fixed;left:0;width:280px;top:0;z-index:-1";
+        for (const t of ["选择", "高亮", "画笔", "便签", "撤销", "导出批注"]) {
+          const b = document.createElement("button");
+          b.className = "pdf-annot-tool";
+          b.textContent = t;
+          tools.appendChild(b);
+        }
+        document.body.appendChild(tools);
+        const toolsH = Math.round(tools.getBoundingClientRect().height);
+        const toolsScrollable = tools.scrollWidth > tools.clientWidth + 1;
+        const toolsW = Math.round(tools.getBoundingClientRect().width);
+        tools.remove();
+
+        // 桌面那两条基础规则（`⋯` 必须藏起来）在**桌面视口**里另测，见脚本末尾 —
+        // 这里是窄屏视口，`⋯` 本来就该显示（第一版把这条写在这里，三个档全假红）。
+        return { collapsed: Math.round(collapsed), expanded: Math.round(expanded), toolsH, toolsScrollable, toolsW, innerW: window.innerWidth };
+      });
+      console.log(`\n【${vp.name} · PDF 顶部控制条】`);
+      if (pdfProbe.innerW <= 480) {
+        ok(
+          pdfProbe.expanded - pdfProbe.collapsed >= 40,
+          `「⋯」收起时头部矮 ${pdfProbe.expanded - pdfProbe.collapsed}px（收起 ${pdfProbe.collapsed} / 展开 ${pdfProbe.expanded}）` +
+            `——收起的是整排低频控件（最大化/批注侧栏/提问/护眼/导出），至少省一行 44`,
+        );
+      } else {
+        // 792×360 这种"宽而矮"：横向放得下，收起与否都只占一行 ⇒ 高度不变是对的，
+        // 只断言"没有变高"（第一版在这里要求 ≥40，在这个档上假红）。
+        ok(
+          pdfProbe.expanded >= pdfProbe.collapsed,
+          `宽视口（${pdfProbe.innerW}px）下头部收起/展开都是一行（${pdfProbe.collapsed} / ${pdfProbe.expanded}）——横向放得下，不该变更高`,
+        );
+      }
+      ok(
+        pdfProbe.toolsH <= 56,
+        `批注工具行在 ${pdfProbe.toolsW}px 宽下是**一行**（高 ${pdfProbe.toolsH} ≤ 56，6 个按钮）` +
+          `——原来会折成两行（改前实测多占 44px 正文高度）`,
+      );
+      ok(
+        pdfProbe.toolsScrollable,
+        `容器窄到 ${pdfProbe.toolsW}px 时这一行**横滑**而不是换行（scrollWidth > clientWidth）——不换行不是靠裁掉按钮`,
+      );
+
       // ---- 视口变宽时，窄屏规则必须让位（不许把桌面也变成弹层） ----
       ok(pageErrors.length === 0, `页面无 JS 报错${pageErrors.length ? "：" + pageErrors.join(" | ") : ""}`);
       await ctx.close();
@@ -1333,6 +1487,21 @@ async function main() {
       ok(false, "桌面没能打开设置面板");
     }
     await safeEval(desk, closeAllOverlays);
+    // ---- 桌面：PDF 阅读器的「⋯」入口必须**藏起来**（桌面一次放得下，不该多一个入口） ----
+    // ⚠️ 这条必须在**桌面视口**里测：窄屏那段把它显式放出来了，在窄屏里测必然假红
+    //    （第一版就写在窄屏循环里，三个档全假红）。
+    const pdfMoreOnDesk = await safeEval(desk, () => {
+      const b = document.createElement("button");
+      b.className = "pdf-reader-btn pdf-reader-more";
+      document.body.appendChild(b);
+      const disp = getComputedStyle(b).display;
+      b.remove();
+      return disp;
+    });
+    ok(
+      pdfMoreOnDesk === "none",
+      `桌面视口里 PDF 的「⋯」入口是 display:none（实际 ${pdfMoreOnDesk}）——桌面一次放得下，不需要它`,
+    );
     await deskCtx.close();
   } finally {
     await browser.close();

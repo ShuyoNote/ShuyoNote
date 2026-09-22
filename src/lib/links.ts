@@ -17,12 +17,17 @@ export interface LinkItem {
 }
 
 const PROJECT_BASE = "https://gitcode.com/shuyo-cn/ShuyoNote";
+/** 产品官网（国内主站；README「在线试用」里那条自托管主站的域名）。 */
+const PRODUCT_SITE = "https://shuyo.cn/";
 
-// Four clean links — no utm/ref/tracking params. Docs/releases/issues points at
-// the project site (P2 external static docs site, reusable via M21 wiki export).
+// 四个干净链接 —— 不带 utm/ref/tracking 参数。
+// ⚠️ 2026-09-22：**加「产品官网」、去掉「文档」**。
+//    文档原来指向仓库里的 `tree/main/docs`，那是给**贡献者**看的（源码目录树），
+//    对"我刚装上这是什么/能干什么"的普通用户没有用；产品官网才是那一类入口。
+//    仓库本身仍在下一个链接（项目主页）里，贡献者一步可达。
 export const PROJECT_LINKS: LinkItem[] = [
+  { id: "site", label: "产品官网", url: PRODUCT_SITE },
   { id: "home", label: "项目主页", url: PROJECT_BASE },
-  { id: "docs", label: "文档", url: `${PROJECT_BASE}/tree/main/docs` },
   { id: "releases", label: "发布", url: `${PROJECT_BASE}/releases` },
   { id: "issues", label: "问题", url: `${PROJECT_BASE}/issues` },
 ];

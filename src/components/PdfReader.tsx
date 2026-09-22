@@ -297,6 +297,16 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   // 等于正文看不见（页面图 x=99/宽 306，右边直接溢出屏幕）。
   const [sidebarOpen, setSidebarOpen] = useState(() => !overlayViewport);
   const [outlineOpen, setOutlineOpen] = useState(() => !overlayViewport);
+  /**
+   * 窄屏的「更多工具」是否展开（桌面不用它，桌面本来就放得下）。
+   *
+   * 真机/真窗口量到：窄屏上这一屏顶部一共堆了 **8 行**控件（头部 4 行 + 批注工具 4 行），
+   * 正文第一页被顶到屏幕下半部分去了。这里把**低频的 5 个**（最大化 / 批注侧栏 / 提问 /
+   * 护眼 / 导出带批注副本）与**批注状态条**（文本层提示 + 朗读/OCR/AI 识别）收进 `⋯`，
+   * 常驻只留 3 行：[目录][文件名][⋯][×] / [上一页][页码][下一页][−][缩放][+] / 批注工具（单行横滑）。
+   * 默认收起——它们都是"偶尔用一次"，而正文空间每一屏都要用。
+   */
+  const [toolsOpen, setToolsOpen] = useState(false);
   // 转到抽屉形态（竖屏转横屏、把窗口拖矮、进分屏）时**收起来**：留着开就是拿两栏盖住正文。
   // 只单向收敛（不回弹），把"要不要打开"的决定权留给用户。
   useEffect(() => {
@@ -1207,7 +1217,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       <div className={`pdf-reader${maximized ? " maximized" : ""}${eyeMode !== "off" ? ` eye-${eyeMode}` : ""}`}>
         {/* 标题区整体可拖窗口（配合 dragDropEnabled=false）。按钮/控件不挂在
             drag-region 上，否则点击会被当成拖窗口——与主窗口 TitleBar 一致。 */}
-        <div className="pdf-reader-head" data-tauri-drag-region>
+        <div className={`pdf-reader-head${toolsOpen ? " tools-open" : ""}`} data-tauri-drag-region>
           <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen} style={{ marginRight: 6 }}>
             {outlineOpen ? (
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
@@ -1330,7 +1340,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
               </button>
             </div>
             {!inline && (
-            <button className="pdf-reader-btn" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
+            <button className="pdf-reader-btn pdf-reader-maximize" onClick={toggleMax} title={maximized ? "还原窗口" : "最大化窗口"}>
               {maximized ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
               ) : (
@@ -1338,14 +1348,14 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
               )}
             </button>
             )}
-            <button className="pdf-reader-btn" onClick={() => setSidebarOpen((s) => !s)} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
+            <button className="pdf-reader-btn pdf-reader-sidebar-toggle" onClick={() => setSidebarOpen((s) => !s)} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
               {sidebarOpen ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
               ) : (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
               )}
             </button>
-            <button className="pdf-reader-btn" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
+            <button className="pdf-reader-btn pdf-reader-ask" onClick={() => setAskOpen((s) => !s)} title={askOpen ? "隐藏提问栏" : "对这篇 PDF 提问"} aria-pressed={askOpen}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
             </button>
             <div className="pdf-eye-wrap" ref={eyeWrapRef}>
@@ -1393,6 +1403,17 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
               取消
             </button>
           )}
+          {/* 窄屏的「更多工具」：桌面 `display:none`（那边一次放得下，不需要它）。
+              展开后由 CSS 放出上面那 5 个低频按钮与下面的批注状态条。 */}
+          <button
+            className="pdf-reader-btn pdf-reader-more"
+            onClick={() => setToolsOpen((v) => !v)}
+            title="更多工具（批注侧栏 / 护眼 / 导出等）"
+            aria-label="更多工具"
+            aria-expanded={toolsOpen}
+          >
+            ⋯
+          </button>
           <button className="pdf-reader-close" onClick={close} title="关闭">×</button>
         </div>
         <div className="pdf-reader-body">
@@ -1416,6 +1437,9 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
                   version={annotToolVersion}
                   tool={tool}
                   onToolChange={setTool}
+                  // 窄屏默认收起批注状态条（文本层提示 + 朗读/OCR/AI），与头部的 `⋯` 同一个开关；
+                  // 宽屏一直显示（那边不缺空间，而且这些是"扫描版 PDF 第一步要点的"）。
+                  showStatus={!overlayViewport || toolsOpen}
                 />
                 <div className="pdf-reader-stage" ref={stageRef} onScroll={onStageScroll}>
                   <div className="pdf-continuous" style={{ height: layout.total, position: "relative" }}>
