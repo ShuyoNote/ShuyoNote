@@ -9248,4 +9248,168 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
+
+    // ---- `files.search`（能力面）的行为判据（2026-09-23，Windows 侧认领）------------------------
+    //
+    // 清单见信箱 `2026-09-23-coverage-persistence-landed.reply-2.md` §二。
+    // 为什么补：`cap_files_search` 此前**只有契约级覆盖**（`check-capabilities` 那层"分支存在、形状对"），
+    // 而它读的是真 SQL ＋ **作用域语义** —— 契约级判据看不到"空 query 被当成空结果""跨空间命中"这类事。
+    //   ① 空 query ⇒ `bad_args`（调用错误 ≠ 空结果）；② `limit` 夹取；③ 入口归一化在岗；
+    //   ④ 只命中**活动空间**；⑤ `loc` 与 `files.read` 的段同口径；⑥ 空库 ⇒ 空数组。
+
+    /// 测试用的**空间库目录**：走仓库自己的建库路径（真 schema —— `chunks`/`attachment_text`/`attachments` 都在）。
+    fn cap_search_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("shuyonote-capsearch-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        dir
+    }
+
+    /// 把 `with_read_conn` 指向这个目录里的某个空间。
+    ///
+    /// ⚠️ **必须清 `READ_CONN` 缓存**：它是 thread-local，而 cargo 的测试线程会被复用 ⇒
+    /// 不清就会拿到**上一个用例**那个目录的连接（症状：断言随执行顺序变，最难查的那种）。
+    fn point_cap_search_at(dir: &std::path::Path, space: &str) {
+        READ_CONN.with(|cell| {
+            cell.borrow_mut().take();
+        });
+        RUN_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.read_space = Some(space.to_string());
+            st.read_dir = Some(dir.to_path_buf());
+        });
+    }
+
+    fn unpoint_cap_search(dir: &std::path::Path) {
+        READ_CONN.with(|cell| {
+            cell.borrow_mut().take();
+        });
+        RUN_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.read_space = None;
+            st.read_dir = None;
+        });
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn add_cap_chunk(c: &Connection, id: &str, att: Option<&str>, ord: i64, loc: &str, text: &str) {
+        c.execute(
+            "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) VALUES (?1, NULL, ?2, ?3, ?4, '', ?5, 'h1')",
+            params![id, att, ord, loc, text],
+        )
+        .unwrap();
+    }
+
+    /// ① 空 query 是**调用错误**（`bad_args`），不是"搜了没命中"。
+    #[test]
+    fn cap_files_search_rejects_an_empty_query_with_bad_args() {
+        let err = cap_files_search("   ", 10).unwrap_err();
+        assert!(err.starts_with("bad_args"), "空 query 应当是 bad_args：{err}");
+    }
+
+    /// ② `limit` 夹取（0/负 ⇒ 1；上限之内给全）。
+    #[test]
+    fn cap_files_search_clamps_the_limit() {
+        let dir = cap_search_dir("limit");
+        let c = crate::db::open_space_conn_at("s1", &dir).unwrap();
+        for i in 0..5 {
+            add_cap_chunk(&c, &format!("page:p{i}#0"), None, i, "L1", "周会纪要");
+        }
+        drop(c);
+        point_cap_search_at(&dir, "s1");
+
+        let one = cap_files_search("周会纪要", 0).unwrap();
+        assert_eq!(one.as_array().unwrap().len(), 1, "limit=0 ⇒ 夹到 1（与注册表 desc 同值）");
+        let all = cap_files_search("周会纪要", 1000).unwrap();
+        assert_eq!(all.as_array().unwrap().len(), 5, "只有 5 条命中 ⇒ 上限之内全给");
+
+        unpoint_cap_search(&dir);
+    }
+
+    /// ③ 检索侧**归一化在岗**（兼容表意字）：不归一化的后果是"全库搜得到、块搜搜不到"。
+    #[test]
+    fn cap_files_search_normalizes_the_query() {
+        let dir = cap_search_dir("norm");
+        let c = crate::db::open_space_conn_at("s1", &dir).unwrap();
+        add_cap_chunk(&c, "page:p1#0", None, 0, "L1", "第一段，第二段。");
+        drop(c);
+        point_cap_search_at(&dir, "s1");
+
+        let hits = cap_files_search("第\u{2F00}段", 10).unwrap();
+        assert_eq!(
+            hits.as_array().unwrap().len(),
+            1,
+            "兼容形查询要在**能力面入口**就被归一化（与 `search::prepare_chunk_query` 同口径）"
+        );
+
+        unpoint_cap_search(&dir);
+    }
+
+    /// ④ 作用域：**只命中活动空间**（另一个空间里同样的词一条都不许进来）。
+    #[test]
+    fn cap_files_search_only_hits_the_active_space() {
+        let dir = cap_search_dir("scope");
+        let s1 = crate::db::open_space_conn_at("s1", &dir).unwrap();
+        add_cap_chunk(&s1, "page:p1#0", None, 0, "L1", "周会纪要");
+        drop(s1);
+        let s2 = crate::db::open_space_conn_at("s2", &dir).unwrap();
+        add_cap_chunk(&s2, "page:p9#0", None, 0, "L1", "周会纪要");
+        drop(s2);
+        point_cap_search_at(&dir, "s1"); // 活动空间 = s1
+
+        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let arr = hits.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "只该命中活动空间（s1）：{arr:?}");
+        assert_eq!(arr[0]["pageId"], "p1");
+        assert!(arr.iter().all(|h| h["pageId"] != "p9"), "s2 的块不许泄漏进来");
+
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⑤ `loc` 与 `files.read` 的段**同一口径**（否则模型拿到的回链对不上）。
+    #[test]
+    fn cap_files_search_loc_matches_files_read() {
+        let dir = cap_search_dir("loc");
+        let c = crate::db::open_space_conn_at("s1", &dir).unwrap();
+        c.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('a1', NULL, '扫描件.pdf', 'h1', 'application/pdf', 1, 1)",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage)
+             VALUES ('a1', 'pdf.text@1', 0, 'para', '扫描件里的周会纪要', 'p.3', 'h1', 1, '')",
+            [],
+        )
+        .unwrap();
+        add_cap_chunk(&c, "att:a1#0", Some("a1"), 0, "p.3", "扫描件里的周会纪要");
+        drop(c);
+        point_cap_search_at(&dir, "s1");
+
+        let hits = cap_files_search("周会纪要", 10).unwrap();
+        let hit = &hits.as_array().unwrap()[0];
+        let page = cap_files_read("a1", 0, 10).unwrap();
+        assert_eq!(
+            hit["loc"], page["segments"][0]["loc"],
+            "检索命中的 loc 与 files.read 的段 loc 必须是同一口径：hit={hit:?} page={page:?}"
+        );
+        assert_eq!(hit["attId"], "a1", "附件块要把 attId 带出来（消费方靠它回链）");
+
+        unpoint_cap_search(&dir);
+    }
+
+    /// ⑥ 空库（还没索引）⇒ **空数组**，不是错误。
+    #[test]
+    fn cap_files_search_on_an_empty_db_is_an_empty_array() {
+        let dir = cap_search_dir("empty");
+        drop(crate::db::open_space_conn_at("s1", &dir).unwrap());
+        point_cap_search_at(&dir, "s1");
+
+        let hits = cap_files_search("周会纪要", 10).unwrap();
+        assert_eq!(hits, serde_json::json!([]), "空库 ⇒ 空数组（不是错误、也不是 null）");
+
+        unpoint_cap_search(&dir);
+    }
 }
