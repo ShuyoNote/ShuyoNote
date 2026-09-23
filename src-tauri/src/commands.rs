@@ -368,6 +368,37 @@ pub fn set_page_icon(db: State<Db>, args: SetIconArgs) -> Result<PageDetail, Str
     fetch_page(&c, &args.id)
 }
 
+/// 冲刺 S7-2（2026-09-23）：读这一页的 **CRDT 状态**（没有 ⇒ `None`）。
+///
+/// 与前端 `api.readPageState`（`src/lib/api.ts`）成对；桌面侧这一层**只存取不透明字节**
+/// （见 `src-tauri/src/page_crdt.rs` 文件头：Rust 不认识 CRDT 格式，也不该认识）。
+/// ⚠️ 在此之前这两条只登记为 **web 专用** ⇒ 桌面上 `PageCrdtBinding` 每次打开页面都会
+/// "绑定失败"并弹一次 toast；接上这条命令才是真正的修复。
+#[derive(serde::Deserialize)]
+pub struct PageStateArgs {
+    pub page_id: String,
+}
+
+/// 写这一页的 CRDT 状态（同一页只留最新一份：主键 upsert）。与 `api.savePageState` 成对。
+#[derive(serde::Deserialize)]
+pub struct SavePageStateArgs {
+    pub page_id: String,
+    /// 状态字节。前端用 `number[]` 过 IPC（二进制不能直接过 `Uint8Array`）。
+    pub state: Vec<u8>,
+}
+
+#[tauri::command]
+pub fn read_page_state(db: State<Db>, args: PageStateArgs) -> Result<Option<Vec<u8>>, String> {
+    let c = conn(&db);
+    crate::page_crdt::read_page_crdt_state(&c, &args.page_id)
+}
+
+#[tauri::command]
+pub fn save_page_state(db: State<Db>, args: SavePageStateArgs) -> Result<(), String> {
+    let c = conn(&db);
+    crate::page_crdt::write_page_crdt_state(&c, &args.page_id, &args.state, now_ms())
+}
+
 #[tauri::command]
 pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String> {
     let c = conn(&db);

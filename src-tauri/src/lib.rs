@@ -515,6 +515,11 @@ pub fn run() {
             updates::install_android_update,
             commands::create_database,
             commands::save_page,
+            // 冲刺 CRDT S7-2（2026-09-23）：每页 CRDT 状态的读/写（`page_crdt` 表）。
+            // 与前端 `api.readPageState` / `api.savePageState` 成对 —— 接上之后**桌面**才真正
+            // 与 Web 同行为（在此之前它俩只登记为 web 专用，桌面上每次打开页面都会绑定失败）。
+            commands::read_page_state,
+            commands::save_page_state,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,
