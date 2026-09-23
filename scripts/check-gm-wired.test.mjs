@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs, windowsLoadFailure } from "./check-gm-wired.mjs";
+import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs, windowsLoadFailure, pinnedPrefixVerdict } from "./check-gm-wired.mjs";
 
 describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   it("给了 OPENSSL_DIR 且目录在 ⇒ 用它", () => {
@@ -202,5 +202,42 @@ describe("check-gm-wired：win32 的**装载期**失败要能被认出来（不�
     expect(windowsLoadFailure("error[E0308]: mismatched types")).toBeNull();
     expect(windowsLoadFailure("test result: ok. 492 passed; 0 failed")).toBeNull();
     expect(windowsLoadFailure("")).toBeNull();
+  });
+});
+
+describe("check-gm-wired：③ 钉的前缀 vs 产物 link-search（第五格的同 job 版）", () => {
+  const P = "/Users/shuyo/tongsuo-macos/install";
+
+  it("有一个候选对得上（含**子目录**形态）⇒ true", () => {
+    expect(pinnedPrefixVerdict({ expected: P, candidates: [`${P}/lib`] }).verdict).toBe(true);
+    expect(pinnedPrefixVerdict({ expected: "/usr", candidates: ["/usr/lib/x86_64-linux-gnu"] }).verdict).toBe(true);
+  });
+
+  it("★ 一个都对不上（真实外部目录）⇒ false，且理由点到 `OPENSSL_LIB_DIR` 覆盖", () => {
+    const v = pinnedPrefixVerdict({ expected: P, candidates: ["/opt/homebrew/opt/openssl@3/lib"] });
+    expect(v.verdict).toBe(false);
+    expect(v.reason).toMatch(/OPENSSL_LIB_DIR/);
+  });
+
+  it("★ 候选全是 cargo 产物目录 ⇒ false，但理由是**第二种形态**（没走发现路径），不是「链了别的」", () => {
+    const v = pinnedPrefixVerdict({
+      expected: "/usr",
+      candidates: ["/repo/src-tauri/target/debug/build/libsqlite3-sys-abc/out"],
+    });
+    expect(v.verdict).toBe(false);
+    expect(v.reason).toMatch(/没走 OPENSSL_DIR 发现路径/);
+    expect(v.reason).not.toMatch(/OPENSSL_LIB_DIR/);
+  });
+
+  it("★ 没解析出候选 ⇒ null（**未实查**，不判红 —— 与「旧产物⇒未实查」同纪律）", () => {
+    expect(pinnedPrefixVerdict({ expected: P, candidates: [] }).verdict).toBe(null);
+    expect(pinnedPrefixVerdict({ expected: P, candidates: [""] }).verdict).toBe(null);
+  });
+
+  it("win32 折叠大小写（Windows 路径本就不区分）", () => {
+    expect(
+      pinnedPrefixVerdict({ expected: "C:\\Vcpkg\\prefix", candidates: ["c:/vcpkg/prefix/lib"], platform: "win32" })
+        .verdict,
+    ).toBe(true);
   });
 });
