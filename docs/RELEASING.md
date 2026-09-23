@@ -272,8 +272,10 @@ SHUYONOTE_EXPECT_OPENSSL_DIR="$PREFIX" node scripts/check-crypto-backend.mjs
 > 于是"静态"这个前提不成立。**先 `--require-static` 绿了再谈产物静态**，顺序不能反。
 >
 > ⚠️ **别拿 `--require-static`（或 `--print-source-sha256`）当"纯探针"** —— 它们**会先幂等打补丁**再干正事
-> （Windows 侧 2026-09-22 实测：打印 `补丁 = applied（本次打上）`）⇒ 一次"只想看看前缀静不静"的核对，
-> 会把补丁打到**全机共享的** registry 源码上。只想读判据用这条（实测**不打补丁、不构建**）：
+> （Windows 侧 2026-09-22 实测：打印 `补丁 = applied（本次打上）`）。
+> ★ **2026-09-23 起补丁只打在私有副本上**（`<repo>/.gm-build/libsqlite3-sys-<ver>/`，cargo 由私有 `CARGO_HOME`
+> 指过去）⇒ 它**不再改共享 registry**；但"打补丁"这件事仍然发生（建副本），所以**只想读判据**时仍用这条
+> （实测**不打补丁、不建副本、不构建**）：
 >
 > ```bash
 > node -e "import('./scripts/lib/sm-library-source.mjs').then(m => console.log(m.requireStaticCrypto(process.env.OPENSSL_DIR)))"

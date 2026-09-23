@@ -12,8 +12,15 @@
 node scripts/sm-library-build.mjs --openssl-dir <Tongsuo 前缀>   # 幂等打补丁 → 清 libsqlite3-sys/本 crate → 构建
 node scripts/sm-library-build.mjs --print-source-sha256           # 打印"将要编译的那份源码"的哈希（**打完补丁后**那份）
 node scripts/sm-library-build.mjs --openssl-dir <p> --check       # 只核对，不构建
-node scripts/sm-library-build.mjs --revert                        # 把补丁从**全机共享的** registry 源码上撤回（做 A/B 用）
+node scripts/sm-library-build.mjs --revert                        # 删掉**私有副本**（.gm-build/）；共享 registry 本来就没被碰过
+node scripts/sm-library-build.mjs --print-env                      # 打印 OPENSSL_*/CARGO_HOME 行（CI 写进 $GITHUB_ENV）
 ```
+
+> ★ **2026-09-23 起：补丁不再接触全机共享的 registry 源码** —— 它只打在
+> `<repo>/.gm-build/libsqlite3-sys-<ver>/sqlcipher/`（**私有副本**）上，cargo 由**私有 `CARGO_HOME`**
+> （`config.toml` 里的 `[patch.crates-io]`）指过去 ⇒ 「跑完忘了还原、默认构建被静默改成 SM4 页」那一类
+> 状态**不可能发生**（不是"被发现"，是不存在）。`--revert` 就是删那个目录。见 `sm-library-isolate.mjs`。
+> 判据：`scripts/lib/sm-library-isolate.test.mjs`（核心一条：跑完隔离，共享那份**逐字未变**）。
 
 - 应用者只有一个：`scripts/sm-library-build.mjs`（`git apply -p1`，失败退 `patch -p1`），三态如实报
   `already / applied / absent`；**打完会复扫标记**（"退出码 0" ≠ "文件里有那行"）。胶水自己的判据见
