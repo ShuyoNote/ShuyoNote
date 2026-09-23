@@ -167,6 +167,10 @@ jobs:
           test -n "$NDK" || { echo "runner 上没有任何 NDK，且装不上"; exit 1; }
           echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          # ★ 还要给 `ANDROID_NDK_ROOT`：**名字不同不是笔误** —— NDK 自己的文档用 `_HOME`，
+          #   而 OpenSSL/Tongsuo 的 `Configure` 只读 `_ROOT`（只给 `_HOME` 会在交叉编译那一步报
+          #   `$ANDROID_NDK_ROOT is not defined ... build file wasn't produced`，看起来像"没装 NDK"）。
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
           echo "选用 NDK: $NDK"
           NDKBIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "--- bin 里的相关工具 ---"
@@ -300,14 +304,41 @@ jobs:
           node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
+      - name: 随包静态 SM 加密库（Android，库级国密）
+        # owner 2026-09-23 拍「Android 库级国密：**做**」。Android 系统**不带** OpenSSL ⇒ 必须随包一份
+        # **静态** SM 库；`scripts/build-tongsuo-android.sh` 交叉编译（Gitee 镜像 @ 钉死 commit，
+        # 属性自检：静态 / 大小带 / headers / SM 符号 —— **不按字节钉**，理由见该脚本与
+        # `check-openssl-android.mjs` 文件头的"三遍实测"），`--print-env` 把它翻成
+        # openssl-sys / libsqlite3-sys 认的那几个键。
+        # ⚠️ 顺序：必须在 `Init Android project` 与任何 cargo 构建**之前**（补丁要打在"将要编译的那份源码"上）。
+        run: |
+          set -e
+          sh scripts/build-tongsuo-android.sh
+          node scripts/check-openssl-android.mjs
+          node scripts/check-openssl-android.mjs --print-env >> "$GITHUB_ENV"
+
+      - name: 打上 SQLCipher 的国密 provider 补丁（与桌面同一条链）
+        # 桌面发版用的是同一个 `sm-library-build.mjs --prepare`（打补丁 ＋ 清掉两个 crate × 两个 profile
+        # 的产物，防"复用旧 SQLCipher"）。这里只是把 `--openssl-dir` 指到 Android 那份静态前缀。
+        run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
+
       - name: Build APK (arm64, unsigned)
-        run: pnpm tauri android build --target aarch64 --apk --ci
+        # `--features sm-library`：库级国密的**应用层接线**那一半（`#[cfg(feature = "sm-library")]`）；
+        # 库级本身由上面那份静态库与补丁决定。⚠️ 不带这个特性的话，接线那段根本不会被编译。
+        run: pnpm tauri android build --target aarch64 --apk --ci --features sm-library
 
       - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
         # 与 check:macos-bundle / check:linux-bundle 同一族：断言 `lib/<abi>/libpdfium.so` 在包内、
         # 且与 vendor 那份**逐字节相同**（"文件在"和"是同一份字节"是两件事）。
         # 判据的由来：Windows 吃过"装包里没有 pdfium.dll"、macOS 吃过"包里有但位置对不上"。
         run: pnpm check:android-bundle
+
+      - name: 自检：APK 的「库级国密」是**静态随包**
+        # 同级独立门禁（不并在上一条里：两件事的"没验"不该互相污染，详见脚本文件头）：
+        #   ① 包里不该有 `lib/<abi>/libcrypto.so*`；② 应用 .so 的 DT_NEEDED 里不该有它。
+        # ⚠️ 正向那一半（SM provider 真编进去了）这里**验不了** —— release 包 `strip = true`，
+        #    符号被剥掉；最终证据是真机跑一次，属人手。
+        run: pnpm check:android-crypto
 
       - name: 用正式密钥签名 APK（让 CI 出的包直接能装到真机上验）
         # 为什么加这一步：CI 以前出的是**未签名**包，装真机前必须在本机手工

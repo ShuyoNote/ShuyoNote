@@ -40,22 +40,33 @@ PREFIX_FIXED="/opt/shuyonote/openssl-android"
 
 die() { echo "build-tongsuo-android: ✗ $1" >&2; exit "${2:-1}"; }
 
+# NDK 位置：`ANDROID_NDK_ROOT` 优先，其次 **`ANDROID_NDK_HOME`**
+#   ⚠️ 两者都要认：`Configure` 的 android-* 目标只读 `ANDROID_NDK_ROOT`，而 CI 的 "Pick an NDK" 步骤
+#   导出的是 `ANDROID_NDK_HOME`（那是 NDK 自己文档里的名字）⇒ 只认一个就会在 CI 上"明明装了却说没有"。
+: "${ANDROID_NDK_ROOT:=${ANDROID_NDK_HOME:-}}"
 [ -n "${ANDROID_NDK_ROOT:-}" ] || {
-  # 没给就**显式**在几个标准位置找一下 —— 找到要**大声说找到哪一份**（悄悄挑一个错的 NDK 比失败更坏）
+  # 都没给就**显式**在几个标准位置找一下 —— 找到要**大声说找到哪一份**（悄悄挑一个错的 NDK 比失败更坏）
   for c in "$HOME/ndk/android-ndk-r29" "$HOME/android-ndk-r29" "/opt/android-ndk-r29" \
+           ${ANDROID_SDK_ROOT:+"$ANDROID_SDK_ROOT/ndk/29.0.13846066"} \
            "$HOME/Library/Android/sdk/ndk/29.0.14206865" "$HOME/Android/Sdk/ndk/29.0.14206865"; do
     if [ -d "$c" ]; then
       # ⚠️ **必须 export**：Configure（perl 脚本）读的是**环境**；只赋值不导出的话，子进程看不见，
       #    症状与"完全没设"一模一样（`$ANDROID_NDK_ROOT is not defined ... build file wasn't produced`）。
       ANDROID_NDK_ROOT="$c"
       export ANDROID_NDK_ROOT
-      echo "build-tongsuo-android: 未给 ANDROID_NDK_ROOT ⇒ 自动选中 $c" >&2
+      echo "build-tongsuo-android: 未给 ANDROID_NDK_ROOT/ANDROID_NDK_HOME ⇒ 自动选中 $c" >&2
       break
     fi
   done
 }
-[ -n "${ANDROID_NDK_ROOT:-}" ] || die "没有 ANDROID_NDK_ROOT（Configure 的 android-arm64 目标要它；本机标准位置也没找到）
-  用法：ANDROID_NDK_ROOT=<ndk> sh scripts/build-tongsuo-android.sh"
+# 兜底：SDK 根下挑最新的那个 NDK（CI runner 常见布局）
+if [ -z "${ANDROID_NDK_ROOT:-}" ] && [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT/ndk" ]; then
+  ANDROID_NDK_ROOT=$(ls -d "$ANDROID_SDK_ROOT"/ndk/* 2>/dev/null | sort -V | tail -1)
+  export ANDROID_NDK_ROOT
+  echo "build-tongsuo-android: 从 ANDROID_SDK_ROOT/ndk 选最新的：$ANDROID_NDK_ROOT" >&2
+fi
+[ -n "${ANDROID_NDK_ROOT:-}" ] || die "没有 ANDROID_NDK_ROOT/ANDROID_NDK_HOME（Configure 的 android-arm64 目标要它；标准位置也没找到）
+  用法：ANDROID_NDK_ROOT=<ndk> sh scripts/build-tongsuo-android.sh        # 或 ANDROID_NDK_HOME=<ndk>"
 [ -d "$ANDROID_NDK_ROOT" ] || die "ANDROID_NDK_ROOT 指向的目录不存在：$ANDROID_NDK_ROOT"
 export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
 export PATH="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
