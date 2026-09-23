@@ -70,14 +70,15 @@ GET {server}/pull?since={last_pulled_seq}&limit=500&space_id=..&exclude_device={
 |---|---|---|
 | **手动** | 点同步按钮 | 立即 push + pull |
 | **定时轮询** | 应用内每隔一段时间（秒～分钟级，用户可配） | 桌面与 Web 都有；**它是兜底，不会被下面那条取代** |
-| **SSE 变更流**（P1.5） | 服务端 `GET {server}/spaces/{space_id}/changes-stream` 推来一帧 ⇒ 立刻拉一次 | ⚠️ **只有 Web 端**（`src/hooks/useSyncStream.ts` 对桌面直接 `return`，桌面靠 reqwest 定时器）。桌面侧的通道**设计稿**见 [plans/2026-09-23-desktop-near-realtime-stream-design.md](plans/2026-09-23-desktop-near-realtime-stream-design.md)（**未实现**） |
+| **SSE 变更流**（P1.5） | 服务端 `GET {server}/spaces/{space_id}/changes-stream` 推来一帧 ⇒ 立刻拉一次 | ✅ **桌面与 Web 都有**（2026-09-23 第 48–49 轮补齐桌面侧）：Web 走 `fetch` ＋ `ReadableStream`（`src/hooks/useSyncStream.ts`）；桌面走 **Rust `reqwest` 订流 ＋ `app.emit("sync-stream-change")` ⇒ 前端 `listen` 后照旧调 `api.syncWorkspace`**（`src-tauri/src/sync_stream.rs`）——「Rust 订流、**拉取仍由前端发起**」是刻意选的形态：这样它自动经过 **C2 Wi-Fi 闸门 / 防重入 / 状态行配对**，不会绕出第三条路。判据 1–6 有本机读数，**判据 7 的"真行为"与真机双设备仍未验**，见 [设计稿](plans/2026-09-23-desktop-near-realtime-stream-design.md) §5 |
 
 - SSE 端点是 axum `Sse` ＋ `KeepAlive`（约 15s 注释帧），服务端只发"**有变更**"这个信号，
   **不解析 payload**（仍"哑且盲"）；收到帧的客户端仍走上面那条 pull。
 - 订阅按**当前工作空间**那条绑定（与 claim 共用 `crdt/claimScope.ts` 的唯一解析）——
   旧实现挑"第一个绑定过的档案"，多工作空间下会订到别的空间（2026-09-23 已修）。
 
-> 结论：**近实时**，不是毫秒级；延迟＝"这一次拉取什么时候发生"。Web 上由推送决定、桌面上由轮询间隔决定。
+> 结论：**近实时**，不是毫秒级；延迟＝"这一次拉取什么时候发生"。**两侧都由推送决定**（Web 浏览器订阅、
+> 桌面由 Rust 订流后发事件），推送不可用/被代理掐掉时退回**轮询间隔**（所以轮询那条通道不许撤）。
 > ⚠️ 对 **CRDT 协同**来说这条延迟更重要了：CRDT 是**最终一致**，"对端的编辑多久能看到"就等于这个延迟。
 
 ## 六、冲突合并（服务端 seq 基准 + dirty 优先本地，v1.84.3）

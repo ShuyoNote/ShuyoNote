@@ -10,6 +10,9 @@ import { installViewportInsets } from "./lib/viewportInsets";
 import { installBackBridge } from "./lib/overlayStack";
 import { setCrdtRemoteApplier } from "./lib/crdt/plane";
 import { mergeRemotePageState } from "./lib/crdt/pageBinding";
+// ⚠️ `lineageNotice` 刻意是**零依赖的纯模块**（不 import 任何东西）⇒ 拉它进来不会把编辑器节点表
+//    或别的实现拖进启动路径（这正是上面那条"同步路径只认签名"的约束要防的事）。
+import { lineageRefusalNotice } from "./lib/crdt/lineageNotice";
 import { toast } from "./store/toast";
 
 // 移动端壳（Android）的两条桥。**必须在 React 挂载之前装好**：
@@ -34,9 +37,14 @@ setCrdtRemoteApplier((db, pageId, state) => {
   // ★ S8：**血统冲突必须报出去**（不许静默）—— 那意味着这一页出现了两条互不相关的编辑历史：
   //   本机那一版**原样保留、没有合并**（合了就会"一块变两块"，见 `mergeability.test.ts` ①）。
   //   护栏本身已经 console.warn 过一次；这里再给用户可见的一次提示。
-  if (res.lineageConflict) {
-    console.error("[crdt] 血统冲突：拒绝合并（本机版本保留）", { pageId, ...res.lineageConflict });
-    toast(`这一页出现了两条互不相关的编辑历史，已保留本机版本（未合并）`, "error");
+  //   ★ 第 49 轮：措辞改从 `lineageRefusalNotice` 取 —— **与"打开页面"那条路
+  //   （`Editor.tsx` 的 `pendingSkipped`）共用一处实现**，两条路不许各自长一句话。
+  const refusal = res.lineageConflict
+    ? lineageRefusalNotice({ pageId, mine: res.lineageConflict.mine, remote: res.lineageConflict.remote })
+    : null;
+  if (refusal) {
+    console.error(refusal.log);
+    toast(refusal.message, "error");
   }
 });
 

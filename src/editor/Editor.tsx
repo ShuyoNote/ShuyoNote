@@ -24,6 +24,7 @@ import {
   type PageStatePort,
 } from "../lib/crdt/pageBinding";
 import type { PageClaimPort } from "../lib/crdt/bootstrap";
+import { lineageRefusalNotice } from "../lib/crdt/lineageNotice";
 import { useEditorStore } from "../store/editor";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
@@ -552,6 +553,16 @@ function PageCrdtBinding({
           return;
         }
         binding = b;
+        // ★ 冲刺 §13.3 第 2 条（第 49 轮）：**`pendingSkipped > 0` 不许再只留在 `console.warn` 里**。
+        //   那是"这一页有对端改动因为血统无关被拒、本机那版原样保留"—— 用户必须看得见
+        //   （与 `main.tsx` 的 `lineageConflict` **同一个措辞来源**：`lineageRefusalNotice`）。
+        //   ⚠️ 仍然**没有**裁决 UI（用户不能选"要哪一条血统"）：那要动 `page_conflicts`/裁决面，
+        //   见冲刺 §13.3 的收口口径 —— 这一片只做"可见 + 有痕"这一半。
+        const refusal = lineageRefusalNotice({ pageId, skipped: b.pendingSkipped });
+        if (refusal) {
+          console.error(refusal.log);
+          toast(refusal.message, "error");
+        }
         b.session.onLocalEdit(() => {
           void b.persist().catch((e) => {
             console.error("[crdt] 状态保存失败", e);

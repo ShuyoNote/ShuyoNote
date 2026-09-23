@@ -500,6 +500,23 @@ check-web-commands ⇒ Rust 244 / web 245 / CommandMap 246（+2 条命令，两�
 2. **`pendingSkipped > 0` 现在只到 `console.warn`**：没有走 S8 那条"冲突可见 + 用户可裁决"的出口
    （那要动 `page_conflicts` / 裁决 UI）。**下一片**该把它接上（与 `mergeRemotePageState` 的
    `lineageConflict` 合流）。
+   ★ **第 49 轮已接上「可见 + 有痕」那一半**（**裁决**那一半仍未做，见下）：
+   · 新增零依赖纯模块 `src/lib/crdt/lineageNotice.ts`（`lineageRefusalNotice({pageId, mine, remote, skipped})`
+     ⇒ `{log, message} | null`），**两条路共用这一处措辞**：pull 那条（`main.tsx` 的 `lineageConflict`）
+     与"打开页面"那条（`Editor.tsx` 的 `pendingSkipped`）；
+   · `Editor.tsx` 的调用方**真的读了** `pendingSkipped`（第 43 轮就是算出来没人读）⇒ `console.error` ＋
+     `toast(..., "error")`，与血统冲突同一条出口；
+   · 判据：`lineageNotice.test.ts` 5 条（含**反方向**那条：`skipped=0`/无冲突 ⇒ `null`，
+     **不许制造噪声**——"不静默"不等于"什么都说"）＋ `lineageNotice.wiring.test.ts` 4 条
+     （文本级：接线没退回静默、措辞只有一处来源、两条路都"先留痕再打扰用户"、护栏里那条当场留痕不许消失）；
+   · **变异实测**（证明判据咬人）：① 把 `skipped: b.pendingSkipped` 去掉（＝退回第 43 轮的静默形状）
+     ⇒ 接线判据 **红**；② 在 `main.tsx` 里再抄一遍措辞字面量（＝第二个来源）⇒ 同一文件另一条 **红**；
+     两处还原 ⇒ 绿（9/9）。
+   ⚠️ **仍未做的（裁决）**：用户**不能选**"要哪一条血统"——现在只是"被告知"。真做要动
+   `page_conflicts` / 裁决面，而 `doc_content.rs:117` 那条纪律明确写了"**不许**为了别的标记去写
+   `page_conflicts`（那是要人裁决的块级表）"⇒ 需要先定**页级**留痕的落点（新表或既有页级面），
+   再谈 UI。另外：被拒的待并状态**仍然会被清掉**（`clearPending`），所以"这一台以后还会不会重试"
+   仍是"服务端下次推来再说"——这一半也归上一条。
 3. **真机双设备验收仍未做**（要人手）—— 而且现在**更值得做**了：这一片之后，桌面的
    "打开页面 ⇒ 承接对端血统"这条路才有东西可验。
 
@@ -572,6 +589,14 @@ check-web-commands ⇒ Rust 244 / web 245 / CommandMap 246（+2 条命令，两�
 
 ⇒ 本轮**只出稿**（与 §14.2 同一取舍：先有判据与口径，再写码）。要动手时按设计稿 §7 的顺序，
 判据 5（真机端到端）可以和 §11.9 的真机双设备验收**一次做完**。
+
+> ★ **后续（第 48–49 轮，已实现）**：设计稿 §7 的四步都落了（`src-tauri/src/sync_stream.rs` ＋
+> 契约/API/平台收口 ＋ `useSyncStream` 桌面分支 ＋ 「近实时推送」开关）；判据 **1–6 有本机读数**、
+> 7 是"结构性已判 ＋ 真行为未验"（§5 表与 §5.1/§5.2）。
+> ⚠️ 因此本页下面那句"只出稿"以及 §15.1 表里那格"**SSE 仅 Web**"都是**当时的实况**，
+> 现在的口径以 [设计稿 §5](2026-09-23-desktop-near-realtime-stream-design.md) 与
+> [SYNC](../SYNC.md) §五 为准（**桌面与 Web 都有**）—— 本轮把 `SYNC.md` / `roadmap.md` /
+> `realtime-collab-analysis.md` / `docs/README.md` 四处仍写着"仅 Web / 未实现"的地方一并更正。
 
 ## 16. 第 47 轮：**撤出磁盘边界的 CRDT 平面开关**（把 §15.2 那条"该撤没撤"做掉）
 
