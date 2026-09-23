@@ -308,6 +308,39 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 ### 8.1 被「**本机不能自验**」卡住的三项 —— 附施工单（给能跑 `cargo test` 的那一侧）
 
+> ★ **2026-09-23 更新（AMD，Windows）：这个前提已经不成立 —— 三项都在本机跑出了行为读数。**
+>
+> "Windows 跑不了 `cargo test`" 的真因是**两个独立的装载期问题**，都已解决：
+> ① 测试 exe 缺 v6 清单（`0xC0000139`）⇒ 走 `scripts/win-cargo-test.ps1`（`mt.exe` 注入清单）；
+> ② 动态 OpenSSL 前缀下运行时缺 `bin\libcrypto-3-x64.dll`（`0xC0000135`）⇒ 把 `<前缀>\bin` 放进 PATH。
+> 两条都做完后，**本机全量 lib 单测**：
+>
+> ```text
+> $ PATH="C:\Program Files\OpenSSL-Win64\bin;$PATH" powershell -File scripts\win-cargo-test.ps1
+> test result: FAILED. **495 passed; 1 failed; 18 ignored**; finished in 64.93s
+>   （唯一那条红是 **wall-clock 负载假红**，见下面第 1 条）
+> ```
+>
+> **三项的判据逐条实测（全 ok）**：
+> · ① `pages.get` 的 offset/limit：`plugins::tests::pages_get_paginates_by_code_point_like_the_ts_side` · `blocks_list_honours_limit`
+> · ③ Rust 建表与调用：`db::tests::derived_schema_matches_the_ts_source_of_truth` · `migrate_creates_derived_tables` ·
+>   `derived_transport::tests::replace_attachment_text_is_whole_replace_and_byte_identical` · `remove_chunks_touches_only_that_owner`
+> · （顺带把 P2 检索侧的也读了）`search::tests::chunk_search_hits_both_owners_and_carries_backlinks` ·
+>   `chunk_limit_follows_the_registry_default_and_clamps_both_ends` · `chunk_vector_is_rejected_when_model_or_hash_disagrees` ·
+>   `chunk_query_is_normalized_like_page_search`
+>
+> ⚠️ **两条这次实测才暴露、且都还没处置的事**：
+> 1. **`infinite_loop_is_cut_off_by_the_loop_budget` 是负载假红**：全量并发下超 20 s 红，**单跑 0.45 s 绿**
+>    （断言是 `elapsed < 20s`，被 CPU 饥饿顶过去了）。与仓里那条"**要等外部东西的判据要显式给超时**"同族，
+>    只是这次在 Rust 侧。处置候选：改成不依赖墙钟的断言 / 让这条串行跑 / 抬阈值 —— **属 Rust 侧**。
+> 2. **② 那两个工具没有判据，而且 §8.1② 要求的「覆盖度」没做**：`files.read` / `files.search` 的实现都在
+>    （`plugins.rs::cap_files_read` / `cap_files_search`），但全量日志里**没有任何对应判据**；
+>    更实质的是 —— **`ExtractCoverage` 根本没有落库**：`extract/schema.ts` 与 `store.ts` 里没有覆盖度列，
+>    Rust 的 `AttachmentTextPage` 只有 `{ segments, total, truncated }`，而那个 `truncated` 是**读取窗口**截断，
+>    **不是"抽全了没有"**。⇒ 混合文档（正文页 ＋ 扫描页）那类"抽了但没抽全"，在 AI 工具面上**仍然答不出来**。
+>    ⚠️ 处置是**跨侧同批**：TS 的 `DERIVED_SCHEMA_DDL` 是单一事实源，而 Rust **逐字照抄并有一致性断言**
+>    （就是 ③ 的 `derived_schema_matches_the_ts_source_of_truth`）⇒ 加列必须两侧同一批，否则那条断言当场红。
+
 > 📄 **可套用的补丁草案在同目录的 [`2026-09-17-ai-coverage-handoff-patches.md`](2026-09-17-ai-coverage-handoff-patches.md)**
 > —— 里面是精确的 JSON 条目、TS 适配器代码、Rust 改动的**形状与验收**，
 > 以及**三条实测出来的事实**（22/22 能力都声明 rust 函数；新增能力要动 6 处；加参数不产生 Rust 生成物 diff 但仍要改 dispatch）
