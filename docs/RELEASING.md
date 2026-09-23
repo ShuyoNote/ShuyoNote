@@ -459,6 +459,27 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 > 只有真的读到指纹且不一致才红 —— 否则 GitHub 抽风会被误当成"发错包了"。
 > 它**不进 `pnpm build`**（要对线上发请求，不适合构建期跑），是发版当天的手工命令。
 
+**`--deep`（可选深检，2026-09-23 加）**：`node scripts/check-release-state.mjs --deep`
+把**所有远端读取**改走 `scripts/lib/gh-fetch.mjs` 这一条路（直连为主，**只在网络类失败时**才退到钉 IP；
+走过的路如实打进日志），并把判定从"二态"换成**三态**：
+
+| 情形 | 判定 |
+|---|---|
+| HTTP 2xx（且值相符） | ✓ 通过 |
+| **HTTP 404**（资源不在）或 2xx 但值不符 | ✗ **红**（"事实"那一类） |
+| 401/403、5xx/429、网络类失败（含钉 IP 被证书校验拒） | `· 未实查` —— **不算失败** |
+
+> 为什么需要第三态：一个只认 `200` 的检查会把"我这台到不了 GitHub"报成"发版发错了"，
+> 于是要么人去查一个不存在的问题，要么学会"这条红可以忽略"（更坏）。
+> 三态的实现与判据在 `scripts/lib/remote-fact.mjs` ＋ `remote-fact.test.mjs`（逐格钉住，两侧都钉）。
+> **默认不加 `--deep` 时行为与以前逐字相同**（CI/例行自检不受影响）。
+>
+> ⚠️ **钉 IP 那条兜底在 HTTPS 上不成立**（实测）：`Host` 头是 HTTP 层的，而 TLS 的 SNI 来自**连接目标**
+> ⇒ 钉 IP 之后证书主机名对不上，收场是 `ERR_TLS_CERT_ALTNAME_INVALID`。深检下它被如实记成 **未实查**
+> （不是红）。要真修得给 undici 一个自定义 dispatcher（`connect: { servername }`），
+> 或改用 `https.request`（那会长出第二条 fetch 路径）——**取舍写在 `lib/gh-fetch.mjs` 的
+> `PINNED_IP_HTTPS_LIMITATION` 上方**，暂不做。
+
 ## ⑦ Web 版（**必做**，两个入口都要）
 
 > 为什么从"可选"改成"必做"：它从 v1.84.5 起就没人跟了——本次（v1.89.0）自检发现

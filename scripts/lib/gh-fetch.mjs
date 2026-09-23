@@ -70,7 +70,7 @@ export function planAttempts(url, { pinnedIp, host } = {}) {
   if (!pinnedIp) return attempts;
   const u = new URL(url);
   const targetHost = host || u.hostname;
-  // 只有显式给了 pinnedIp 才排第二条；`Host` 头保持原主机名，SNI/证书校验才不会被 IP 打乱
+  // 只有显式给了 pinnedIp 才排第二条；`Host` 头保持原主机名（HTTP 层仍然指向对的主机）
   attempts.push({
     label: "pinned-ip",
     url: `${u.protocol}//${pinnedIp}${u.port ? `:${u.port}` : ""}${u.pathname}${u.search}`,
@@ -79,6 +79,32 @@ export function planAttempts(url, { pinnedIp, host } = {}) {
   });
   return attempts;
 }
+
+/**
+ * ⚠️ **这条兜底在 HTTPS 上会失败，而且失败得"不像网络问题"**（2026-09-23 实测，AMD）：
+ *
+ * ```text
+ * node scripts/check-release-state.mjs --deep --pinned-ip 140.82.112.6
+ *   [deep] direct: 抛错（network/UND_ERR_CONNECT_TIMEOUT）
+ *   [deep] 直连失败且是网络类失败 ⇒ 退到钉 IP 140.82.112.6（Host 仍为 api.github.com）
+ *   [deep] pinned-ip: 抛错（network/ERR_TLS_CERT_ALTNAME_INVALID）
+ * ```
+ *
+ * 原因：`Host` 头是 **HTTP 层**的，而 TLS 的 **SNI**（决定服务端出示哪张证书）来自**连接目标**。
+ * 钉 IP 之后，Node 的 `fetch` 会用 IP 做 SNI ⇒ 服务端给的证书是 `api.github.com` 的 ⇒ 与 IP 不匹配
+ * ⇒ `ERR_TLS_CERT_ALTNAME_INVALID`。（这条注释原先写的是"Host 保持原主机名 ⇒ SNI/证书校验不会乱"
+ * —— **那句话是错的**，实测把它推翻了。）
+ *
+ * ⇒ **现状与取舍**（写清楚，免得下一个人以为"兜底能救 HTTPS"）：
+ *   · 真正能修的是给 undici 一个自定义 dispatcher（`connect: { servername: targetHost }`）——
+ *     那要引入 `undici` 依赖、或改用 `https.request`（后者会**长出第二条 fetch 路径**，与约束②冲突）；
+ *   · **在那之前**，这条兜底对 HTTPS 的净效果是"多花一次握手"，最终由三态判定记成 **未实查**
+ *     （`lib/remote-fact.mjs`：网络类失败 ⇒ 未实查，**不是红**）—— 即"我们没查成"，而不是"线上不对"。
+ *   · 对 **明文 HTTP**（本项目里没有这种远端）或证书本身覆盖该 IP 的场景，`Host` 头是够的。
+ */
+export const PINNED_IP_HTTPS_LIMITATION =
+  "钉 IP 兜底在 HTTPS 上会被 SNI/证书校验拒绝（ERR_TLS_CERT_ALTNAME_INVALID）⇒ 记为「未实查」，不是红；" +
+  "要真修得给 undici 自定义 dispatcher（servername）——见 planAttempts 上方的实测与取舍";
 
 /**
  * 取一份远端内容。**唯一的网络入口**（`fetchImpl` 可注入 ⇒ 判据不需要真网络）。
