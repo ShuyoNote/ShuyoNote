@@ -52,7 +52,12 @@ export function PropertiesPanel({ pageId }: { pageId: string }) {
         setLoading(false);
       });
   };
-  useEffect(load, [pageId, tick]);
+  // ⚠️ `propsRev` 必须在依赖里：它表示"**别处**替这一页写了属性"（社区帖存成笔记那条路——
+  //    先建页、后写属性 ⇒ 本面板挂载时拉到的是"没属性"的那一份）。少了它就得重新打开这一页
+  //    才看得到属性（2026-09-23 用户实测）。它必须**声明在 effect 之前**（依赖数组在渲染时求值，
+  //    写在后面会 TDZ 抛 "Cannot access before initialization"）。
+  const propsRev = usePropertyUiStore((s) => s.propsRev);
+  useEffect(load, [pageId, tick, propsRev]);
 
   // "添加属性" from the page-actions row: open the panel and focus the add input.
   const addPropSeq = usePropertyUiStore((s) => s.addPropSeq);

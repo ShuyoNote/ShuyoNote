@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NOTE_ATTR_SPECS, communityDateTime, localNow, savePostAsNote } from "./communitySaveNote";
 import type { CommunityPost } from "./communityPost";
+import { usePropertyUiStore } from "../store/propertyUi";
 
 const post: CommunityPost = {
   id: "55",
@@ -126,6 +127,24 @@ describe("savePostAsNote —— 建页 → 真标签 → 属性", () => {
     const r = await savePostAsNote({ ...post, bodyMarkdown: "   " }, deps(invoke));
     expect(r.pageId).toBe("page-1");
     expect(r.error).toBe("");
+  });
+
+  // ★ 2026-09-23 用户实测：「社区文章存进笔记后，属性区不能及时看到，需重新打开才有」。
+  //   属性区是**自己拉** `getPageProps` 的（本地 state），而这里写属性走的是绕过它的命令
+  //   ⇒ 写完必须通知它重拉（否则页面是"先建后写属性"，属性区挂载时拿到的还是空的那一份）。
+  it("写完属性要**通知属性区重拉**（否则得重新打开这一页才看得到）", async () => {
+    const { invoke } = fakeInvoke();
+    const before = usePropertyUiStore.getState().propsRev;
+    await savePostAsNote(post, deps(invoke));
+    expect(usePropertyUiStore.getState().propsRev).toBe(before + 1);
+  });
+
+  it("属性一个都没写成 ⇒ **不**通知（别让属性区白重拉一次）", async () => {
+    const { invoke } = fakeInvoke({ list_attr_defs: () => { throw new Error("库锁住了"); } });
+    const before = usePropertyUiStore.getState().propsRev;
+    const r = await savePostAsNote(post, deps(invoke));
+    expect(r.warnings.length).toBe(1);
+    expect(usePropertyUiStore.getState().propsRev).toBe(before);
   });
 });
 
