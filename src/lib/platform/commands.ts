@@ -357,6 +357,9 @@ export interface CommandMap {
   //    两侧边界各转一次（Web 侧就在分派那里）。桌面实现归切片 S7。
   read_page_state: { args: { args: { page_id: string } }; result: number[] | null };
   save_page_state: { args: { args: { page_id: string; state: number[] } }; result: null };
+  // 冲刺 S9（2026-09-23）：**CRDT 血统 claim** —— 原子裁定"谁先给这一页建血统"。
+  // 服务端端点 `/sync/lineage-claim`（`shuyonote-sync-server` 的 `sync_routes`）。
+  claim_page_lineage: { args: { args: { space_id: string; page_id: string; device_id: string } }; result: { granted: boolean } };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };
