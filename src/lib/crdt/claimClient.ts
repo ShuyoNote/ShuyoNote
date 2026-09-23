@@ -14,8 +14,15 @@
 //      ⇒ 不许混进离线那一支（混进去就会静默地又建一条血统）。
 import type { PageClaimPort } from "./bootstrap";
 
-/** claim 端点的相对路径（与 `shuyonote-sync-server` 的 `sync_routes` 对齐）。 */
-export const LINEAGE_CLAIM_PATH = "/sync/lineage-claim";
+/**
+ * claim 端点的相对路径。
+ *
+ * ⚠️ **没有 `/sync` 前缀** —— 服务端把 `sync_routes` **挂在根上**（客户端调 `/push` 也是这个形状：
+ * `syncFetch(profile.server_url, "/push", …)`）。第一版我写成 `/sync/lineage-claim`，**部署后探针实测
+ * 404**（而 `/lineage-claim` 回 401 ＝ 路由在、只是没带鉴权）。⇒ 路径是**跨仓契约**，上线后必须用
+ * 真探针核一遍，别靠"看起来对"。
+ */
+export const LINEAGE_CLAIM_PATH = "/lineage-claim";
 
 /** 注入点（判据用假 fetch；生产用全局 fetch）。**不许**在这一层 import 平台实现。 */
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{

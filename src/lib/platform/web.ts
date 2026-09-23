@@ -1484,7 +1484,9 @@ export function makeInvoke(store: SqliteStore) {
       const token = getAuthSession(store, server).token || profile.token;
       let res: { granted?: unknown };
       try {
-        res = (await syncFetch(server, "/sync/lineage-claim", token || null, {
+        // ⚠️ 路径**没有 `/sync` 前缀**：服务端把 sync 路由挂在根上（与 `/push` 同一形状）。
+        //    第一版写成 `/sync/lineage-claim` ⇒ 部署后实测 404（`/lineage-claim` 回 401＝路由在）。
+        res = (await syncFetch(server, "/lineage-claim", token || null, {
           space_id: String(args.space_id ?? ""),
           page_id: String(args.page_id ?? ""),
           // ⚠️ `device_id` 由**这里**填（`syncDeviceId()` 与同步请求用的是同一个 id）——
