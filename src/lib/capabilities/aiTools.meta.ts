@@ -93,7 +93,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "files.read",
-    description: "读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。",
+    description: "读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated, coverage}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。`truncated` 说的是「这一页没给全」，而 `coverage` 说的是「**抽取本身**有没有承认没抽全」（§15.10：成功 ≠ 抽全了）：coverage 里每个抽取器一条 `{extractor, coverage}`，`coverage` 是原始 JSON（如 `{\"complete\":false,\"gapIndexes\":[2]}`），**空字符串或空数组都表示「未知」，不许读成「完整」**。",
     argsSchema: {
       type: "object",
       properties: {

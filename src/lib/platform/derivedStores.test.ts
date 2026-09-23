@@ -45,12 +45,31 @@ describe("desktopDerivedStores：op 发射与读映射", () => {
         extractor: "pdf.text@1",
         srcHash: "sha256:abc",
         now: 1_758_259_200_000,
+        // ★ 不传覆盖度 ⇒ 线上是 `''`（＝**未知**），**不是** `{"complete":true}`
+        coverage: "",
         segments: [
           { kind: "text", text: "第一段", loc: "p1" },
           { kind: "text", text: "第二段", loc: "" },
         ],
       },
     ]);
+  });
+
+  it("★ text.replace 带覆盖度 ⇒ 线上是**一段 JSON 字符串**（序列化只在 TS 这一处做）", async () => {
+    const { invoker, calls } = fakeInvoker();
+    const s = desktopDerivedStores(invoker);
+    await s.text.replace(
+      "att-1",
+      "pdf.text@1",
+      "sha256:abc",
+      [{ kind: "text", text: "第一段", loc: "p1" }],
+      1,
+      { complete: false, gapIndexes: [1], note: "跳过 p.2" },
+    );
+    const op = opsOf(calls)[0] as { coverage: string };
+    expect(op.coverage).toBe('{"complete":false,"gapIndexes":[1],"note":"跳过 p.2"}');
+    // 关键：线上过去的是**字符串**，不是嵌套对象 —— 解析/口径在 `storedCoverageFrom` 一处。
+    expect(typeof op.coverage).toBe("string");
   });
 
   it("chunks.replace ⇒ 一条 replaceChunks（owner 两种形状都覆盖）", async () => {
@@ -87,6 +106,26 @@ describe("desktopDerivedStores：op 发射与读映射", () => {
       "chunkStats",
       "attachmentTextStats",
     ]);
+  });
+
+  it("★ text.coverageOf ⇒ 发 attachmentTextCoverage，并**走共用纯函数**解析（`''`/坏 JSON ⇒ 未知）", async () => {
+    const { invoker, calls } = fakeInvoker([
+      { extractor: "pdf.ocr@1", coverage: '{"complete":true}' },
+      { extractor: "pdf.text@1", coverage: "" }, // 未知
+      { extractor: "text.plain@1", coverage: "{不是 json" }, // 坏 ⇒ 也只算未知
+    ]);
+    const s = desktopDerivedStores(invoker);
+    const got = await s.text.coverageOf("att-1");
+
+    expect(queryOf(calls)).toEqual({ op: "attachmentTextCoverage", attId: "att-1" });
+    expect(got).toEqual([
+      { extractor: "pdf.ocr@1", coverage: { complete: true } },
+      { extractor: "pdf.text@1" },
+      { extractor: "text.plain@1" },
+    ]);
+    // 桌面这半边的判据就到这里：**解析口径不在这里**（那是 `store.ts::storedCoverageFrom` 的判据），
+    // 这里只钉"发对了 query、且没有自己再造一套解析"。
+    expect("coverage" in got[1]!).toBe(false);
   });
 
   it("ensureSchema 在桌面是 no-op（schema 归 Rust 的 migrate）—— 一条命令都不发", async () => {

@@ -10,7 +10,7 @@
 // NOTE: the Web Platform's executor still routes through this store, so it's
 // genuinely SQLite-backed, not a fake.
 import { DERIVED_SCHEMA_DDL } from "../extract/schema";
-import { createAttachmentTextStore } from "../extract/store";
+import { COVERAGE_COLUMN_MIGRATION, createAttachmentTextStore } from "../extract/store";
 import type { SqlValue, Database, SqlJsModule } from "./sqljs-types";
 
 type InitSqlJs = (config?: {
@@ -390,6 +390,14 @@ export class SqliteStore {
     // 分层上这是"平台层 import 了功能模块"，看着略反常；但按仓库既有做法，表结构本来就集中声明在
     // 这个 migrate() 里（`page_embeddings` 就是这样）。为了不出现"TS 里也写两份"，选择 import 而非复制。
     for (const stmt of DERIVED_SCHEMA_DDL) this.db.run(stmt);
+    // ★ 覆盖度列（2026-09-23）：`attachment_text` 加 `coverage`。
+    //   `CREATE TABLE IF NOT EXISTS` **不会**给已存在的表加列 ⇒ 老浏览器库必须靠这条幂等 ALTER 补，
+    //   否则读侧 `SELECT … coverage` 会直接报错。Rust 侧同批加了同一条（`db.rs::migrate`）。
+    try {
+      this.db.run(COVERAGE_COLUMN_MIGRATION);
+    } catch {
+      /* already exists */
+    }
     // P6.1「每空间开关」：老浏览器库补列。**`DEFAULT 1` 是有意的**——升级不能静默改变
     // 同步范围（见 docs/plans/2026-09-15-attachment-on-demand-plan.md §五.4）。
     try {

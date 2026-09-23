@@ -7,6 +7,22 @@
 // 所以这里导出字符串，Web 侧直接执行，Rust 侧照抄并加一条一致性断言（见 §7 的验收项）。
 //
 // 三张表都是**本地派生缓存**：只读、可重建、**不进同步 / 不进备份 / 不进导出**。
+//
+// ⚠️⚠️ **本文件里只有 DDL 用反引号 —— 注释里也一个都不要写**。
+// 理由不是洁癖：Rust 侧 `db.rs::tests::derived_schema_matches_the_ts_source_of_truth` 把本文件读进去，
+// **按反引号切分**、取奇数段当"模板字符串体"，再要求恰好 6 条 DDL 逐字相同（Rust 侧照抄那份）。
+// 注释里多一对反引号就会**打乱奇偶** ⇒ 那条判据当场红（真的发生过，见下），
+// 而它红的方式是"解析出 7 条"，一眼看得见 —— 这正是它被写成"解析失败也判红"的原因。
+//
+// ⚠️ **coverage 列（2026-09-23 加）**：存的是 ExtractCoverage 的 JSON，空串 ＝ **没有覆盖度信息**
+// （旧数据／抽取器未报）——**不许把它读成"完整"**。语义与理由：
+//  · 这一列回答的是"**这份派生文本抽全了没有**"（§15.10：成功 ≠ 抽全了）。没有它，
+//    「混合文档里那几页扫描件没抽到内容」与「文件里本来就没有」在 AI 工具面**长得一模一样**；
+//  · **刻意冗余在每个段行上**（而不是另起一张表）：派生层是可重建缓存、replace() 整体替换
+//    ⇒ 一行一次写，读侧少一次 join/额外查询；按本仓"少一张表就少一处三轴漂移"的口径选它
+//    （同 §15.8 里选 RasterizedPage 而不是再加一个 encode 能力的理由）；
+//  · 老库靠**两侧各一条幂等 ALTER TABLE … ADD COLUMN** 补（Rust db.rs::migrate / Web
+//    sqliteStore.ts::migrate），因为 CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
 
 /** 一行 = 一个抽取段（不是"一份附件一行"）：段自带定位，是回链与块级检索的最小单位。 */
 export const ATTACHMENT_TEXT_DDL = `
@@ -19,6 +35,7 @@ CREATE TABLE IF NOT EXISTS attachment_text (
   loc        TEXT    NOT NULL DEFAULT '',
   src_hash   TEXT    NOT NULL,
   updated_at INTEGER NOT NULL,
+  coverage   TEXT    NOT NULL DEFAULT '',
   PRIMARY KEY (att_id, extractor, seq)
 );`;
 

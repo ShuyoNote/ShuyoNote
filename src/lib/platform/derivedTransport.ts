@@ -40,6 +40,19 @@ export type DerivedOp =
       extractor: string;
       srcHash: string;
       now: number;
+      /**
+       * 该抽取器的**覆盖度**（`ExtractCoverage` 的 JSON），`""` ＝ **没有覆盖度信息**。
+       *
+       * ⚠️ 三个刻意的决定，写在这里因为漏掉任何一条都会变成"两份实现"：
+       * 1. **必填**（不是 `coverage?`）：漏传就会在编译期红 —— 而漏传的后果是"库里的覆盖度**
+       *    **被静默抹成未知"（`replace` 是整体替换），这种事不该靠记性。
+       * 2. **序列化在 TS 侧做一次，这里只搬字符串**（`JSON.stringify` 在 store 实现里）：
+       *    Rust 侧原样写进 `coverage` 列、原样读回来，**不解析也不重新拼**。若改成传结构体让
+       *    Rust 再序列化，就有了第二个"JSON 长什么样"的地方，与 TS 的解析口径必然漂。
+       * 3. **`""` 与 `'{"complete":true}'` 是两件事**：`""` ＝ 未知（老行、没算过），
+       *    解析归 `extract/store.ts::storedCoverageFrom` 这一处纯函数（`""`／坏 JSON ⇒ 未知）。
+       */
+      coverage: string;
       segments: DerivedSegment[];
     }
   | { op: "removeAttachmentText"; attId: string }
@@ -48,6 +61,7 @@ export type DerivedOp =
 
 export type DerivedQuery =
   | { op: "attachmentTextSegments"; attId: string }
+  | { op: "attachmentTextCoverage"; attId: string }
   | { op: "chunkRows"; owner: DerivedOwner }
   | { op: "chunkStats" }
   | { op: "attachmentTextStats" };

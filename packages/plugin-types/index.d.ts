@@ -191,9 +191,9 @@ export interface PluginApi {
    */
     search(query: string, limit?: number): { chunkId: string; pageId: string | null; attId: string | null; ord: number; loc: string; snippet: string; score: number }[];
   /** 读取附件派生文本（权限 `read:files`；1.1.0 起）
-   * 返回：派生文本段 + 总段数；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）
+   * 返回：派生文本段 + 总段数 + **每个抽取器的覆盖度读数**；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）。coverage 为空数组 ＝ 没有读数（未知），**不是**「抽全了」
    */
-    read(id: string, offset?: number, limit?: number): { segments: { extractor: string; kind: string; text: string; loc: string }[]; total: number; truncated: boolean } | null;
+    read(id: string, offset?: number, limit?: number): { segments: { extractor: string; kind: string; text: string; loc: string }[]; total: number; truncated: boolean; coverage: { extractor: string; coverage: string }[] } | null;
   /** 把内容保存成文件（用户选位置）（权限 `export:files`；1.0.0 起）
    * 返回：{queued: true, bytes}——**不代表已保存**：命令跑完后宿主会弹保存对话框逐个问你，点了取消就什么都没写
    */

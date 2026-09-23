@@ -54,6 +54,7 @@ const OPS: DerivedOp[] = [
     extractor: "pdf.text@1",
     srcHash: "sha256:abc",
     now: 1758259200000,
+    coverage: '{"complete":false,"gapIndexes":[1]}',
     segments: [seg("para", "第一段", "p1"), seg("para", "第二段  with spaces")],
   },
   { op: "removeAttachmentText", attId: "att-1" },
@@ -63,6 +64,7 @@ const OPS: DerivedOp[] = [
 
 const QUERIES: DerivedQuery[] = [
   { op: "attachmentTextSegments", attId: "att-1" },
+  { op: "attachmentTextCoverage", attId: "att-1" },
   { op: "chunkRows", owner: { kind: "attachment", attId: "att-1" } },
   { op: "chunkStats" },
   { op: "attachmentTextStats" },

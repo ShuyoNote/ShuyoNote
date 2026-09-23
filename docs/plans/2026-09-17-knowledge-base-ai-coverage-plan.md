@@ -245,6 +245,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **应用侧「开始索引」触发与进度** | `libraryIndexing.ts`（运行模型，与 DOM 解耦）＋ AI 设置面板的按钮 | `libraryIndexing.test.ts` · `indexPage.test.ts` |
 | **跨库总结 ＋ 强制引用**（P4） | `ai/librarySummary.ts` | `ai/librarySummary.test.ts` ＋ `ai/librarySummary.live.test.ts`（真模型：回链**全部来自输入**、`droppedInventedRefs=0`） |
 | **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
+| **★ 覆盖度落库 ＋ 读侧口径**（2026-09-23，AMD）：`attachment_text.coverage` 存 `ExtractCoverage` 的 JSON，空串 ＝ **未知**（不是"完整"）；`files.read` 的返回里带回每个抽取器一条 `{extractor, coverage}` | TS：`extract/schema.ts` · `extract/store.ts` · `extract/pipeline.ts` · `platform/sqliteStore.ts` · `platform/derivedStores.ts` · `platform/derivedText.ts` ／ Rust：`db.rs`（DDL 照抄 ＋ 幂等 ALTER）· `derived_transport.rs`（写/读两格）· `search.rs`（读页面） | `store.test.ts` 6 条（含**老库迁移**与"未知 ≠ 完整"）· `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含**缺列容忍**）· `derivedTransport.test.ts`（与夹具逐字相同）· 跨语言夹具 `tests/derived-transport-ops.json` · Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string` · `search::tests::read_attachment_text_separates_missing_from_empty_and_carries_coverage` ＋ `…_tolerates_an_old_table_without_the_coverage_column` · `db::tests::derived_schema_matches_the_ts_source_of_truth` |
 | **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
@@ -321,6 +322,18 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >   （唯一那条红是 **wall-clock 负载假红**，见下面第 1 条）
 > ```
 >
+> ★ **2026-09-23 第二次全量（覆盖度落库之后）** —— 同一条命令，**0 失败**：
+>
+> ```text
+> test result: ok. **499 passed; 0 failed; 18 ignored**; finished in 43.81s
+> ```
+>
+> 比上次多了 4 条（`db::derived_schema_matches_the_ts_source_of_truth` 这次**绿**、
+> `derived_transport::coverage_round_trips_and_stays_a_raw_string`、
+> `search::read_attachment_text_separates_missing_from_empty_and_carries_coverage`、
+> `search::read_attachment_text_tolerates_an_old_table_without_the_coverage_column`），
+> 而上次那条 wall-clock 假红这次**没出现** —— 又一次说明它是**负载**相关，不是代码相关。
+>
 > **三项的判据逐条实测（全 ok）**：
 > · ① `pages.get` 的 offset/limit：`plugins::tests::pages_get_paginates_by_code_point_like_the_ts_side` · `blocks_list_honours_limit`
 > · ③ Rust 建表与调用：`db::tests::derived_schema_matches_the_ts_source_of_truth` · `migrate_creates_derived_tables` ·
@@ -329,17 +342,27 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >   `chunk_limit_follows_the_registry_default_and_clamps_both_ends` · `chunk_vector_is_rejected_when_model_or_hash_disagrees` ·
 >   `chunk_query_is_normalized_like_page_search`
 >
-> ⚠️ **两条这次实测才暴露、且都还没处置的事**：
+> ⚠️ **两条这次实测才暴露的事（第 2 条已处置，第 1 条仍属 Rust 侧）**：
 > 1. **`infinite_loop_is_cut_off_by_the_loop_budget` 是负载假红**：全量并发下超 20 s 红，**单跑 0.45 s 绿**
 >    （断言是 `elapsed < 20s`，被 CPU 饥饿顶过去了）。与仓里那条"**要等外部东西的判据要显式给超时**"同族，
 >    只是这次在 Rust 侧。处置候选：改成不依赖墙钟的断言 / 让这条串行跑 / 抬阈值 —— **属 Rust 侧**。
-> 2. **② 那两个工具没有判据，而且 §8.1② 要求的「覆盖度」没做**：`files.read` / `files.search` 的实现都在
->    （`plugins.rs::cap_files_read` / `cap_files_search`），但全量日志里**没有任何对应判据**；
->    更实质的是 —— **`ExtractCoverage` 根本没有落库**：`extract/schema.ts` 与 `store.ts` 里没有覆盖度列，
->    Rust 的 `AttachmentTextPage` 只有 `{ segments, total, truncated }`，而那个 `truncated` 是**读取窗口**截断，
->    **不是"抽全了没有"**。⇒ 混合文档（正文页 ＋ 扫描页）那类"抽了但没抽全"，在 AI 工具面上**仍然答不出来**。
->    ⚠️ 处置是**跨侧同批**：TS 的 `DERIVED_SCHEMA_DDL` 是单一事实源，而 Rust **逐字照抄并有一致性断言**
->    （就是 ③ 的 `derived_schema_matches_the_ts_source_of_truth`）⇒ 加列必须两侧同一批，否则那条断言当场红。
+> 2. ✅ **已处置（2026-09-23，AMD）** —— 原来这两件事是：`files.read` / `files.search` 没有判据；
+>    且 **`ExtractCoverage` 根本没有落库**（`extract/schema.ts` 与 `store.ts` 里没有覆盖度列，
+>    Rust 的 `AttachmentTextPage` 只有 `{ segments, total, truncated }`，而那个 `truncated` 是**读取窗口**
+>    截断、**不是"抽全了没有"**）⇒ 混合文档（正文页 ＋ 扫描页）那类"抽了但没抽全"在 AI 工具面上答不出来。
+>    **现在**：`attachment_text` 多了 `coverage` 列（两侧同一批：TS `DERIVED_SCHEMA_DDL` 是事实源、
+>    Rust `db.rs` 逐字照抄 ＋ 两侧各一条幂等 `ALTER`），`files.read` 的返回里带回
+>    `coverage: [{ extractor, coverage }]`（`''`／空数组 ＝ **未知**，不许读成"完整"），
+>    `files.search` 仍**没有**判据（这条**没做**，见下）。
+>    **处置时踩到并已修的一条真坑（值得记住）**：`db::tests::derived_schema_matches_the_ts_source_of_truth`
+>    把 `schema.ts` **按反引号切分**取"模板字符串体" ⇒ 我在注释里写的那几个反引号（例如 `` `coverage` ``）
+>    **当场把那条判据变红**（解析出 7 条 DDL 而不是 6 条）。判据**按设计**红得响亮（"解析失败也判红"），
+>    修法是在 `schema.ts` 顶部写明"**本文件里只有 DDL 用反引号，注释里也一个都不要写**"。
+>    ⇒ 这条是"判据抓住了实现者"的正面例子，不是判据太脆：它守的正是"两侧 DDL 逐字相同"。
+> 3. **`files.read` / `files.search` 的判据现状（2026-09-23 复核）**：`read_attachment_text` 两侧都补了 ——
+>    Web 侧 `platform/derivedText.test.ts`（真 sql.js、真 SQL，含覆盖度那一组）＋
+>    Rust 侧 `search::tests::read_attachment_text_*` 两条（此前**一条都没有**）；
+>    `files.search`（`cap_files_search` → `search_chunks_in_conn`）**仍只有契约级覆盖**，行为判据缺 —— 归 Rust 侧。
 
 > 📄 **可套用的补丁草案在同目录的 [`2026-09-17-ai-coverage-handoff-patches.md`](2026-09-17-ai-coverage-handoff-patches.md)**
 > —— 里面是精确的 JSON 条目、TS 适配器代码、Rust 改动的**形状与验收**，
@@ -1081,3 +1104,37 @@ export interface ExtractCoverage {
 > 否则"抽到了但没切块"会被误报成已覆盖；② **页面没有块 ≠ 这个页面的内容没被索引**
 > （页面的图片/附件/数据库块本来就不在 `content_text` 里，由附件侧负责）—— 报告文案里写明了这一点，
 > 免得看报告的人去"修"一个不是问题的问题。
+
+#### 15.10.1 **落库**：这条原则落到库里和读侧（2026-09-23，AMD）
+
+**为什么必须落库**：在这之前 `ExtractCoverage` 只活在**一次抽取的返回值里** ——
+抽完就没了。于是"混合文档里有 3 页扫描件没抽到内容"这件事，**换一个进程、换一次启动就再也查不到**；
+AI 工具面只能看到 `truncated`（读取窗口），而它**不是**"抽全了没有"。
+
+**四处改动（一处语义、三处搬运）**：
+
+| 处 | 改了什么 | 为什么这么改 |
+|---|---|---|
+| **库**：`attachment_text.coverage`（`TEXT NOT NULL DEFAULT ''`） | 存 `ExtractCoverage` 的 JSON；`''` ＝ **没有读数** | 刻意**冗余在段行上**（不另起表）：派生层是可重建缓存、`replace()` 是整体替换 ⇒ 一行一次写；少一张表就少一处漂移 |
+| **写**：`store.replace(..., coverage?)` → `platform/derivedStores.ts` → `derived_query`/`derived_apply` | **线上传的是一段 JSON 字符串**（不是结构体） | 序列化只在 TS 侧做一次。若让 Rust 再序列化，就有了第二个"JSON 长什么样"的地方，与 TS 的解析口径必然漂 |
+| **读**：`AttachmentTextStore.coverageOf` → 新查询 `attachmentTextCoverage` → Rust `search::read_attachment_text_coverage_in_conn` | 一条 SQL、两个读者（运输层 ＋ `read_attachment_text` 页面） | 两处各写一份 SQL 会长出两种语义（去重与否、排序、缺列怎么办），而**漂移不会报错** |
+| **解析**：`storedCoverageFrom(rows)`（纯函数，两平台共用） | 空串／坏 JSON ⇒ **未知**，**不是**"完整" | 这是本条要防的那一件事；它只许有**一处**实现 |
+
+**三条刻意的不变量**（各有判据）：
+1. **未知 ≠ 完整**：`''`（没算过／没报）与 `{"complete":true}` 是两件事 —— 不传覆盖度时读回来是
+   **"没有这一格"**（不是 `{complete:true}`）。库里那份不是合法 JSON 时**同样**只算未知（不许猜成完整）。
+2. **一次抽取一份**：一行一段，但覆盖度按 `(att_id, extractor)` **去重**（`DISTINCT`），按 `extractor` 稳定排序。
+3. **老库与缺列**：两侧各一条幂等 `ALTER TABLE … ADD COLUMN`（`CREATE TABLE IF NOT EXISTS` **不会**给已存在的表加列）；
+   而"列真的不在"时读侧答复**"没有读数"**（空），**不是**让 `files.read` 整条失败 ——
+   读不到读数与没有读数是两件事，但对着"未知"这条语义它们是同一个答复。
+
+**判据（都在本机跑过）**：TS `store.test.ts` 6 条 · `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含缺列容忍）·
+`derivedTransport.test.ts`（与跨语言夹具 `tests/derived-transport-ops.json` **逐字相同**，`coverage` 字段也在夹具里）；
+Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string`（含"重抽不报覆盖度 ⇒ 旧读数必须被清掉"）·
+`search::tests::read_attachment_text_*` 两条 · `db::tests::derived_schema_matches_the_ts_source_of_truth`。
+
+> ⚠️ **一条实现期踩到的坑，已写进 `schema.ts` 顶部**：那条 DDL 一致性判据把 `schema.ts`
+> **按反引号切分**取模板字符串体 ⇒ 我在注释里写的反引号**当场把判据变红**（解析出 7 条而不是 6 条）。
+> 判据红得对（它守的就是"两侧逐字相同"），要改的是注释的写法。
+>
+> ⚠️ **仍没做的一格**：`files.search`（`cap_files_search`）**只有契约级覆盖**，没有行为判据 —— 归 Rust 侧。

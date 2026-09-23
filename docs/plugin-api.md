@@ -220,7 +220,7 @@ register({
 - 调用：`api.files.read(id, offset, limit)`
 - 权限：`read:files`
 - scope：`current-space`
-- 返回：派生文本段 + 总段数；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）
+- 返回：派生文本段 + 总段数 + **每个抽取器的覆盖度读数**；附件不存在返回 null；还没抽过 ⇒ segments 空 + total 0（**不是**失败）。coverage 为空数组 ＝ 没有读数（未知），**不是**「抽全了」
 - 参数：
   - `id`: `string` —— 附件 id
   - `offset`: `number`（可选），默认 `0` —— 从第几段开始（默认 0）

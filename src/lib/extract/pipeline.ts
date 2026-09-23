@@ -125,7 +125,7 @@ export async function extractAndStore(
         continue;
       }
       // 完整覆盖 ⇒ 立即收工（顺序即优先级：第一个完整的就是它）
-      return store_(opts, ex.id, r.segments, now);
+      return store_(opts, ex.id, r.segments, now, r.coverage);
     }
     last = { code: r.code, message: r.message };
     if (!RETRYABLE.has(r.code)) break; // 换了也不会好，别浪费
@@ -133,7 +133,7 @@ export async function extractAndStore(
 
   // 没有完整覆盖的结果，但有不完整的 ⇒ **落它**，并把"不完整"如实带到库里
   //（宁可少而**标注清楚**，也不要整体失败什么都没留下；下游能据此知道"这不是全文"）。
-  if (partial) return store_(opts, partial.extractor, partial.segments, now);
+  if (partial) return store_(opts, partial.extractor, partial.segments, now, partial.coverage);
 
   return {
     status: "failed",
@@ -149,6 +149,7 @@ async function store_(
   extractorId: string,
   segments: ExtractedSegment[],
   now: number,
+  coverage?: ExtractCoverage,
 ): Promise<ExtractOutcome> {
   const normalized = segments.map((s) =>
     s.text === normalizeForStore(s.text) ? s : { ...s, text: normalizeForStore(s.text) },
@@ -157,7 +158,11 @@ async function store_(
   // 漏掉 await 在同步实现（Web 的 sql.js）下照样跑过，但在**桌面**（走 `derived_apply` 命令面、真异步）
   // 会变成"发出去就不管"⇒ 落库与返回**竞态**，`needsExtract` 随后可能读不到刚写的行
   //（症状：索引"跑完了"但库里是空的）。判据见 `coverage.test.ts` 的「慢后端」用例。
-  await opts.store.replace(opts.attId, extractorId, opts.hash, normalized, now);
+  //
+  // ★ **覆盖度一起落库**（2026-09-23）：调度器**已经**在用 `coverage` 挑胜者（缺口少的胜出），
+  //   但此前只落段、把它丢了 ⇒ 读侧（AI 工具面）答不出"这份文本抽全了没有"。
+  //   省略时写 `''` ＝ **未知**（不是"完整"）。
+  await opts.store.replace(opts.attId, extractorId, opts.hash, normalized, now, coverage);
   return {
     status: "stored",
     extractor: extractorId,

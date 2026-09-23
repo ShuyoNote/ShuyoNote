@@ -91,12 +91,20 @@ pub struct ChunkIn {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum DerivedOp {
-    /// `AttachmentTextStore.replace(attId, extractor, srcHash, segments, now)`
+    /// `AttachmentTextStore.replace(attId, extractor, srcHash, segments, now, coverage)`
     ReplaceAttachmentText {
         att_id: String,
         extractor: String,
         src_hash: String,
         now: i64,
+        /// 覆盖度：`ExtractCoverage` 的 JSON，`""` ＝ **没有覆盖度信息**（不是"完整"）。
+        ///
+        /// ⚠️ **不给 `#[serde(default)]`**（与 `loc`/`lang` 不同）：这层缺字段时宁可整批报
+        /// missing field（看得见的红），也不要静默退化成"未知" —— 后者会让"我们以为落了覆盖度"
+        /// 这件事**没有任何信号**，而它恰好就是「把没抽到说成没有」那条老坑的入口。
+        /// 序列化在 TS 侧只做一次（见 `lib/platform/derivedTransport.ts` 的同名字段注释），
+        /// 这里**只搬字符串**：不解析、不重新拼、不改写。
+        coverage: String,
         segments: Vec<SegmentIn>,
     },
     /// `AttachmentTextStore.removeAttachment(attId)`
@@ -116,6 +124,12 @@ pub enum DerivedOp {
 pub enum DerivedQuery {
     /// `AttachmentTextStore.segmentsOf(attId)`：按 `(extractor, seq)` 稳定排序。
     AttachmentTextSegments { att_id: String },
+    /// `AttachmentTextStore.coverageOf(attId)`：每个抽取器一份覆盖度（**原始 JSON 字符串**）。
+    ///
+    /// 为什么返回原始字符串而不是解析后的结构：解析（空串／坏 JSON ⇒ 未知，未知 ≠ 完整）这条
+    /// 语义只许有**一处**实现 —— TS 的 `extract/store.ts::storedCoverageFrom`（两个平台共用）。
+    /// 这里再解析一次就等于给同一件事写第二份实现，而漂移的后果是把"没抽全"读成"抽全了"。
+    AttachmentTextCoverage { att_id: String },
     /// `ChunkStore.chunksOf(owner)`：按 `ord` 升序。
     ChunkRows { owner: DerivedOwner },
     /// `ChunkStore.stats()`：块总数。
@@ -149,7 +163,7 @@ pub fn apply_ops(conn: &mut Connection, ops: &[DerivedOp]) -> Result<ApplyReport
 
 fn apply_one(tx: &Transaction<'_>, op: &DerivedOp) -> Result<usize, String> {
     match op {
-        DerivedOp::ReplaceAttachmentText { att_id, extractor, src_hash, now, segments } => {
+        DerivedOp::ReplaceAttachmentText { att_id, extractor, src_hash, now, coverage, segments } => {
             non_empty("att_id", att_id)?;
             non_empty("extractor", extractor)?;
             // ⚠️ 整体替换（不做逐段 diff）：与 `extract/store.ts::replace` 逐字同序 ——
@@ -163,9 +177,9 @@ fn apply_one(tx: &Transaction<'_>, op: &DerivedOp) -> Result<usize, String> {
             let mut n = deleted;
             for (seq, s) in segments.iter().enumerate() {
                 tx.execute(
-                    "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![att_id, extractor, seq as i64, s.kind, s.text, s.loc, src_hash, now],
+                    "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![att_id, extractor, seq as i64, s.kind, s.text, s.loc, src_hash, now, coverage],
                 )
                 .map_err(|e| e.to_string())?;
                 n += 1;
@@ -232,6 +246,13 @@ pub fn query_rows(conn: &Connection, q: &DerivedQuery) -> Result<serde_json::Val
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?;
             Ok(json!(rows))
+        }
+        DerivedQuery::AttachmentTextCoverage { att_id } => {
+            // SQL 与口径都**借用 `search.rs` 那一处**（同一张表的同一条读数有两个读者：
+            // 这里的运输层，与 `read_attachment_text` 那一页）—— 两处各写一份 SQL 就会长出两种语义
+            // （去重与否、排序、缺列怎么办），而它们的漂移**不会报错**。
+            let rows = crate::search::read_attachment_text_coverage_in_conn(conn, att_id)?;
+            serde_json::to_value(rows).map_err(|e| e.to_string())
         }
         DerivedQuery::ChunkRows { owner } => {
             let (w, id) = owner.where_clause();
@@ -308,6 +329,10 @@ mod tests {
     use super::*;
 
     /// 与桌面库同形的**最小库**（只建派生层的三张表里用到的两张）。
+    ///
+    /// ⚠️ 这张 `attachment_text` 必须与 `db::DERIVED_SCHEMA_DDL` 的列**逐列同形**（含 `coverage`）：
+    /// 少一列的后果是这里的判据全绿而真库报错（`SELECT … coverage` 找不到列）——
+    /// 那正是"判据看起来在守、其实没守"的老坑。
     fn conn() -> Connection {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(
@@ -315,6 +340,7 @@ mod tests {
                att_id TEXT NOT NULL, extractor TEXT NOT NULL, seq INTEGER NOT NULL,
                kind TEXT NOT NULL, text TEXT NOT NULL, loc TEXT NOT NULL DEFAULT '',
                src_hash TEXT NOT NULL, updated_at INTEGER NOT NULL,
+               coverage TEXT NOT NULL DEFAULT '',
                PRIMARY KEY (att_id, extractor, seq)
              );
              CREATE TABLE chunks (
@@ -369,6 +395,7 @@ mod tests {
                 extractor: "pdf.text@1".into(),
                 src_hash: "h1".into(),
                 now: 1,
+                coverage: String::new(),
                 segments: vec![seg("para", "第一段"), seg("para", "第二段"), seg("para", "第三段")],
             }],
         )
@@ -383,6 +410,7 @@ mod tests {
                 extractor: "pdf.text@1".into(),
                 src_hash: "h2".into(),
                 now: 2,
+                coverage: String::new(),
                 segments: vec![seg("para", "新的第一段"), seg("para", "新的第二段")],
             }],
         )
@@ -403,6 +431,7 @@ mod tests {
                 extractor: "pdf.text@1".into(),
                 src_hash: "h3".into(),
                 now: 3,
+                coverage: String::new(),
                 segments: vec![seg("para", "  前后都有空格  \n第二行\t制表  ")],
             }],
         )
@@ -425,6 +454,7 @@ mod tests {
                     extractor: "pdf.text@1".into(),
                     src_hash: "h1".into(),
                     now: 1,
+                    coverage: String::new(),
                     segments: vec![seg("para", "原有内容")],
                 },
                 DerivedOp::ReplaceChunks {
@@ -444,6 +474,7 @@ mod tests {
                     extractor: "pdf.text@1".into(),
                     src_hash: "h2".into(),
                     now: 2,
+                    coverage: String::new(),
                     segments: vec![seg("para", "新的内容")],
                 },
                 DerivedOp::ReplaceChunks {
@@ -524,6 +555,7 @@ mod tests {
                 extractor: "x".into(),
                 src_hash: "h".into(),
                 now: 1,
+                coverage: String::new(),
                 segments: vec![seg("para", "t")],
             }]
         )
@@ -546,6 +578,7 @@ mod tests {
                     extractor: "b@1".into(),
                     src_hash: "h1".into(),
                     now: 1,
+                    coverage: String::new(),
                     segments: vec![seg("para", "b0"), seg("para", "b1")],
                 },
                 DerivedOp::ReplaceAttachmentText {
@@ -553,6 +586,7 @@ mod tests {
                     extractor: "a@1".into(),
                     src_hash: "h1".into(),
                     now: 1,
+                    coverage: String::new(),
                     segments: vec![seg("para", "a0")],
                 },
                 DerivedOp::ReplaceChunks {
@@ -607,21 +641,29 @@ mod tests {
         assert_eq!(ops.len(), 4);
         let queries: Vec<DerivedQuery> =
             serde_json::from_value(v["queries"].clone()).expect("夹具里的每条 query 都必须能反序列化");
-        assert_eq!(queries.len(), 4);
+        assert_eq!(queries.len(), 5, "加读操作时这份夹具与 TS 侧那半必须同批改");
 
         // 抽样逐字段核对：默认值漂移（比如 loc 没落上）会让这条红。
         match &ops[0] {
-            DerivedOp::ReplaceAttachmentText { att_id, extractor, src_hash, now, segments } => {
+            DerivedOp::ReplaceAttachmentText { att_id, extractor, src_hash, now, coverage, segments } => {
                 assert_eq!(att_id, "att-1");
                 assert_eq!(extractor, "pdf.text@1");
                 assert_eq!(src_hash, "sha256:abc");
                 assert_eq!(*now, 1_758_259_200_000);
+                assert_eq!(coverage, r#"{"complete":false,"gapIndexes":[1]}"#, "覆盖度原样过线（不解析、不重拼）");
                 assert_eq!(segments.len(), 2);
                 assert_eq!(segments[0].loc, "p1");
                 assert_eq!(segments[1].text, "第二段  with spaces", "空白必须原样（运输层不许 trim）");
             }
             other => panic!("第一条应当是 replaceAttachmentText，实际 {other:?}"),
         }
+        // 覆盖度那条读操作也必须在夹具里（少了它，TS 侧发得出去而这里没有对应分支）。
+        assert!(
+            queries
+                .iter()
+                .any(|q| matches!(q, DerivedQuery::AttachmentTextCoverage { att_id } if att_id == "att-1")),
+            "夹具里必须有 attachmentTextCoverage",
+        );
         match &ops[2] {
             DerivedOp::ReplaceChunks { owner, chunks } => {
                 assert!(matches!(owner, DerivedOwner::Attachment { att_id } if att_id == "att-1"));
@@ -632,5 +674,82 @@ mod tests {
             }
             other => panic!("第三条应当是 replaceChunks，实际 {other:?}"),
         }
+    }
+
+    /// ★ 判据 7：**覆盖度**写进去能原样读回，且与同步实现同口径。
+    ///
+    /// 为什么单列一条（而不是搭在别的判据里顺带看一眼）：`coverage` 是"成功 ≠ 抽全了"这件事
+    /// 在库里的**唯一**落点（§15.10）。它坏掉的方式很安静 —— 列没写进去、写进去被写成别的抽取器的、
+    /// 或者被解析成"完整" —— 三种都不会让抽取/检索报错，只会让读侧以为"全抽到了"。
+    #[test]
+    fn coverage_round_trips_and_stays_a_raw_string() {
+        let mut c = conn();
+        // 同一个抽取器**两段**（覆盖度是"每次抽取一份"，不是"每段一份" ⇒ 读回必须去重）；
+        // 另一个抽取器**不报**覆盖度 ⇒ `""`（未知，**不是** `{"complete":true}`）。
+        apply_ops(
+            &mut c,
+            &[
+                DerivedOp::ReplaceAttachmentText {
+                    att_id: "att-1".into(),
+                    extractor: "pdf.text@1".into(),
+                    src_hash: "h1".into(),
+                    now: 1,
+                    coverage: r#"{"complete":false,"gapIndexes":[2]}"#.into(),
+                    segments: vec![seg("para", "第一段"), seg("para", "第二段")],
+                },
+                DerivedOp::ReplaceAttachmentText {
+                    att_id: "att-1".into(),
+                    extractor: "pdf.ocr@1".into(),
+                    src_hash: "h1".into(),
+                    now: 1,
+                    coverage: String::new(),
+                    segments: vec![seg("para", "OCR 段")],
+                },
+                // 别的附件必须不受影响（读操作按 att_id 收口）
+                DerivedOp::ReplaceAttachmentText {
+                    att_id: "att-2".into(),
+                    extractor: "pdf.text@1".into(),
+                    src_hash: "h9".into(),
+                    now: 1,
+                    coverage: r#"{"complete":true}"#.into(),
+                    segments: vec![seg("para", "另一个附件")],
+                },
+            ],
+        )
+        .unwrap();
+
+        let rows = query_rows(&c, &DerivedQuery::AttachmentTextCoverage { att_id: "att-1".into() }).unwrap();
+        let arr = rows.as_array().unwrap();
+        assert_eq!(arr.len(), 2, "每个抽取器一行（两段不许出两行）");
+        // 按 extractor 排序（与 `store.ts::coverageOf` 的 ORDER BY 一致）
+        assert_eq!(arr[0]["extractor"], "pdf.ocr@1");
+        assert_eq!(arr[0]["coverage"], "", "没报 ⇒ 空串（未知）；**不是** complete");
+        assert_eq!(arr[1]["extractor"], "pdf.text@1");
+        assert_eq!(
+            arr[1]["coverage"], r#"{"complete":false,"gapIndexes":[2]}"#,
+            "原样字符串：不解析、不重拼（解析口径只在 TS 那一处）"
+        );
+
+        // 别的附件读到的是它自己那份 ⇒ 证明不是"随便读一张表"
+        let other = query_rows(&c, &DerivedQuery::AttachmentTextCoverage { att_id: "att-2".into() }).unwrap();
+        assert_eq!(other.as_array().unwrap()[0]["coverage"], r#"{"complete":true}"#);
+
+        // 覆盖度随**整体替换**走：重抽一次不报覆盖度 ⇒ 列必须被清成空串（不是留着上一次的）。
+        apply_ops(
+            &mut c,
+            &[DerivedOp::ReplaceAttachmentText {
+                att_id: "att-1".into(),
+                extractor: "pdf.text@1".into(),
+                src_hash: "h2".into(),
+                now: 2,
+                coverage: String::new(),
+                segments: vec![seg("para", "重抽后的段")],
+            }],
+        )
+        .unwrap();
+        let rows = query_rows(&c, &DerivedQuery::AttachmentTextCoverage { att_id: "att-1".into() }).unwrap();
+        let arr = rows.as_array().unwrap();
+        let text_row = arr.iter().find(|r| r["extractor"].as_str() == Some("pdf.text@1")).unwrap();
+        assert_eq!(text_row["coverage"], "", "上一次的覆盖度不许留下来（残值会被读成这次的读数）");
     }
 }

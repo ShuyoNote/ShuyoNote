@@ -25,10 +25,24 @@ export interface AttachmentTextSegmentDto {
   loc: string;
 }
 
+/**
+ * 某个抽取器上一次报的**覆盖度**（§15.10：成功 ≠ 抽全了）。
+ *
+ * `coverage` 是**原始 JSON 字符串**，`''` ＝ 没有这一格（旧数据 / 那个抽取器没报）。
+ * ⚠️ 这里**不解析** —— 解析口径（空串或坏 JSON ⇒ 未知，而未知**不是**完整）只在
+ * `extract/store.ts::storedCoverageFrom` 一处；读页面只是把它**原样带给调用方**。
+ */
+export interface AttachmentTextCoverageDto {
+  extractor: string;
+  coverage: string;
+}
+
 export interface AttachmentTextPageDto {
   segments: AttachmentTextSegmentDto[];
   total: number;
   truncated: boolean;
+  /** 每个抽取器上次报的覆盖度；**空数组 ＝ 没有读数**（未知，不是"抽全了"）。 */
+  coverage: AttachmentTextCoverageDto[];
 }
 
 /** 一页最多取多少段（与注册表 `files.read` 的 `limit` desc 一致，也与 Rust 侧常量同值）。 */
@@ -43,7 +57,8 @@ export const MAX_ATT_TEXT_LIMIT = 1000;
  * - 有段：正常返回，`total` 是**总段数**（不是本页条数），`truncated` 表示"还有没给你的"。
  *
  * 与桌面 `search.rs::read_attachment_text_in_conn` **同语义**（两边各写一份，
- * 所以这里逐字段对齐：缺表当空、`(extractor, seq)` 排序、`total` 用 COUNT、越界不报错）。
+ * 所以这里逐字段对齐：缺表当空、`(extractor, seq)` 排序、`total` 用 COUNT、越界不报错、
+ * **覆盖度去重且缺列当空**）。
  */
 export function readAttachmentTextVia(
   db: DerivedTextQuery,
@@ -63,7 +78,7 @@ export function readAttachmentTextVia(
   const hasTable =
     db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='attachment_text'")
       .length > 0;
-  if (!hasTable) return { segments: [], total: 0, truncated: false };
+  if (!hasTable) return { segments: [], total: 0, truncated: false, coverage: [] };
 
   const total = Number(
     db.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachment_text WHERE att_id = ?", [id])[0]?.n ?? 0,
@@ -77,5 +92,28 @@ export function readAttachmentTextVia(
     segments: rows.map((r) => ({ extractor: r.extractor, kind: r.kind, text: r.text, loc: r.loc })),
     total,
     truncated: off + rows.length < total,
+    coverage: readCoverageVia(db, id),
   };
+}
+
+/**
+ * 覆盖度读数（每个抽取器一份；`DISTINCT` + 按 `extractor` 排序）。
+ *
+ * 三条口径与桌面 `search.rs::read_attachment_text_coverage_in_conn` **逐条对齐**
+ * （两边各写一份，所以这里写得跟那边一模一样：去重、排序、**缺列 ⇒ 空**）：
+ * 一行一段，但覆盖度是**每次抽取一份** ⇒ 必须去重；而老库（迁移没跑过）没有这一列时，
+ * 正确的答复是"**没有读数**"（未知），不是让整条读失败 —— 读不到读数与没有读数是两件事，
+ * 但对着"未知"这条语义它们是同一个答复。
+ */
+function readCoverageVia(db: DerivedTextQuery, attId: string): AttachmentTextCoverageDto[] {
+  try {
+    return db
+      .query<AttachmentTextCoverageDto>(
+        "SELECT DISTINCT extractor, coverage FROM attachment_text WHERE att_id = ? ORDER BY extractor ASC",
+        [attId],
+      )
+      .map((r) => ({ extractor: r.extractor, coverage: String(r.coverage ?? "") }));
+  } catch {
+    return []; // 缺列（老库）⇒ 没有读数
+  }
 }

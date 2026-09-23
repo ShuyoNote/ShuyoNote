@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { extractAndStore } from "./pipeline";
 import { candidates, pickExtractor, REGISTRY } from "./registry";
 import { DERIVED_SCHEMA_DDL } from "./schema";
-import { createAttachmentTextStore, type SqlRunner } from "./store";
+import { createAttachmentTextStore, COVERAGE_COLUMN_MIGRATION, type SqlRunner } from "./store";
 import { docxExtractor } from "./ooxml";
 import { fail, ok, type Extractor } from "./types";
 
@@ -70,6 +70,84 @@ function freshStore() {
   store.ensureSchema(DERIVED_SCHEMA_DDL);
   return { db, store };
 }
+
+// ── 覆盖度落库（2026-09-23）──────────────────────────────────────────────────
+//
+// 这一列回答的是"**这份派生文本抽全了没有**"（方案 §15.10：成功 ≠ 抽全了）。此前它被算出来又被丢掉，
+// 于是「混合文档里那几页扫描件没抽到内容」与「文件里本来就没有」在 AI 工具面**长得一模一样**。
+// ⚠️ 这一组里最要紧的是第 ②③ 条：**未知 ≠ 完整** —— 缺信息时必须读成"不知道"，不许读成"抽全了"。
+describe("覆盖度落库（`coverage` 列）", () => {
+  const seg = [{ kind: "text" as const, text: "第一页", loc: "p.1" }];
+
+  // ⚠️ 这一组必须 `async/await`：`coverageOf` 的返回类型是 `Awaitable<…>`（同步实现直接给值、
+  //    桌面走命令面给 Promise）—— 漏 `await` 在同步实现下照样"过"，所以判据一律按异步写。
+  it("① 写进去能原样读回（complete / gapIndexes / note 都在）", async () => {
+    const { store } = freshStore();
+    await store.replace("att1", "pdf.text@1", "h1", seg, 100, {
+      complete: false,
+      gapIndexes: [1],
+      note: "跳过 p.2",
+    });
+    expect(await store.coverageOf("att1")).toEqual([
+      { extractor: "pdf.text@1", coverage: { complete: false, gapIndexes: [1], note: "跳过 p.2" } },
+    ]);
+  });
+
+  it("② ★ **不传覆盖度 ⇒ 读回来是「没有这一格」**（未知 ≠ 完整）", async () => {
+    const { store } = freshStore();
+    await store.replace("att1", "text.plain@1", "h1", seg, 100);
+    const got = await store.coverageOf("att1");
+    expect(got).toEqual([{ extractor: "text.plain@1" }]);
+    expect("coverage" in got[0]!).toBe(false); // 不是 `{complete:true}`，是**根本没有**
+  });
+
+  it("③ ★ 库里那份不是合法 JSON（旧格式/手改）⇒ 也只算**未知**，不许猜成完整", async () => {
+    const { db, store } = freshStore();
+    await store.replace("att1", "x@1", "h1", seg, 100, { complete: false });
+    db.run("UPDATE attachment_text SET coverage = ? WHERE att_id = ?", ["{不是 json", "att1"]);
+    expect(await store.coverageOf("att1")).toEqual([{ extractor: "x@1" }]);
+  });
+
+  it("④ 多个抽取器 ⇒ 按 extractor 稳定排序，各带各的（不合并、不串味）", async () => {
+    const { store } = freshStore();
+    await store.replace("att1", "pdf.ocr@1", "h1", seg, 100, { complete: true });
+    await store.replace("att1", "pdf.text@1", "h1", seg, 100, { complete: false, gapIndexes: [2] });
+    expect(await store.coverageOf("att1")).toEqual([
+      { extractor: "pdf.ocr@1", coverage: { complete: true } },
+      { extractor: "pdf.text@1", coverage: { complete: false, gapIndexes: [2] } },
+    ]);
+  });
+
+  it("⑤ 换了抽取器/重抽 ⇒ 覆盖度跟着整体替换（不留上一次的残值）", async () => {
+    const { store } = freshStore();
+    await store.replace("att1", "pdf.text@1", "h1", seg, 100, { complete: false, gapIndexes: [1] });
+    await store.replace("att1", "pdf.text@1", "h1", seg, 200, { complete: true });
+    expect(await store.coverageOf("att1")).toEqual([
+      { extractor: "pdf.text@1", coverage: { complete: true } },
+    ]);
+  });
+
+  it("⑥ ★ **老库**（表里没有 coverage 列）能靠那条幂等迁移补上，补完可读可写", async () => {
+    const db = new SQL.Database() as unknown as SqlJsDatabase;
+    // 先造一张"按老 DDL 建的表"（没有 coverage 列）
+    const oldDdl = DERIVED_SCHEMA_DDL.map((s) =>
+      s.includes("attachment_text") ? s.replace(/\n  coverage   TEXT    NOT NULL DEFAULT '',/, "") : s,
+    );
+    for (const stmt of oldDdl) db.exec(stmt);
+    const cols = () =>
+      (db.exec("PRAGMA table_info(attachment_text)")[0]?.values ?? []).map((v) => String(v[1]));
+    expect(cols()).not.toContain("coverage");
+
+    db.run(COVERAGE_COLUMN_MIGRATION); // 与 Rust/Web 的 migrate 同一条
+    expect(cols()).toContain("coverage");
+
+    const store = createAttachmentTextStore(runner(db));
+    await store.replace("att1", "pdf.text@1", "h1", seg, 100, { complete: true });
+    expect(await store.coverageOf("att1")).toEqual([
+      { extractor: "pdf.text@1", coverage: { complete: true } },
+    ]);
+  });
+});
 
 const SEG = [
   { kind: "heading" as const, text: "季度总结", loc: "" },
