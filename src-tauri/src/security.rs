@@ -300,6 +300,13 @@ fn apply_gm_page_settings(conn: &Connection) -> Result<(), String> {
     }
 }
 
+/// 测试用：直接装/卸会话里的**旧应用级钥匙**（跨模块的判据要用 —— `space_crypto` 的迁移判据
+/// 得先把"今天那种已加密空间"造出来）。
+#[cfg(test)]
+pub(crate) fn tests_set_session_key(key: Option<[u8; 32]>) {
+    *SESSION_KEY.lock().unwrap() = key.map(crypto::AppKeys::legacy_only);
+}
+
 /// ★ 第 1 步（1b-2b）：**启动闸门**——"这个空间的库现在能不能直接打开？"
 ///
 /// 判据是**嗅这个文件**（不是应用级开关）：密的 **且** 会话里没有钥匙 ⇒ 不能（退回内存库 ＋

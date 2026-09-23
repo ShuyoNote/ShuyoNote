@@ -242,6 +242,43 @@ pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
     }
 }
 
+/// ★★ **C（owner 拍板 1）：存量迁移的第一半 —— 把"旧的应用级钥匙"装进袋子。**
+///
+/// **为什么不重加密**：今天已加密空间的库是用**旧的应用级钥匙**（`security::session_key()` 那 32 字节）写的。
+/// 最省的迁法是"**把旧钥匙原样包成这个空间的盒子**"⇒ 空间钥匙 == 旧钥匙 ⇒ **库文件一个字节都不用动**，
+/// 风险面最小（不重写数据，所以也不需要"先备份再重写"）。
+/// 以后要换成真随机的空间钥匙，走 `rotate` ＋ 一次重加密（那是第二步）。
+///
+/// 四个出口**都要响亮**（对应 owner 的 C=1「报错＋说清怎么办」）：
+/// · 库文件**不是密的** ⇒ `Err`（没什么可迁的 —— 明文空间不该有盒子）；
+/// · 会话**没解锁** ⇒ `Err`（先输口令再迁移）；袋子也还没有 ⇒ `Err`（先用口令建袋子）；
+/// · 袋子**已经有它** ⇒ `Ok(false)`（**幂等**，不重复做）；
+/// · 成功 ⇒ `Ok(true)`。
+pub fn migrate_legacy_space_into_keyring(
+    conn: &Connection,
+    app_data_dir: &Path,
+    space_id: &str,
+) -> Result<bool, String> {
+    let path = crate::db::space_db_path(app_data_dir, space_id);
+    if !crate::security::space_db_is_encrypted(&path) {
+        return Err(format!(
+            "空间「{space_id}」的库文件不是密文 ⇒ 没有可迁移的旧钥匙（明文空间本来就不该有盒子）"
+        ));
+    }
+    let master = session_master().ok_or("会话未解锁：先输口令，再迁移")?;
+    let mut kr = keyring().ok_or("钥匙袋还不存在：先用口令建它（点一次「开启加密」即可）")?;
+    if kr.has(space_id) {
+        return Ok(false); // 幂等
+    }
+    // ★ 旧钥匙就是"空间钥匙"：库文件因此**一个字节都不用动**
+    let legacy = crate::security::session_key()
+        .ok_or("会话里没有旧钥匙（未解锁？）—— 先输口令再迁移")?;
+    kr.wrap(&master, space_id, &legacy)?;
+    store_keyring(conn, &kr)?;
+    crate::security::set_space_encrypted_marked(conn, space_id, true)?;
+    Ok(true)
+}
+
 /// 读这个空间的**本地分类标记**（读不到/没那条 ⇒ `Unknown`）。
 pub fn space_kind(c: &Connection, space_id: &str) -> SpaceKind {
     c.query_row(
@@ -651,6 +688,65 @@ mod tests {
         set_keyring_for_test(None);
         set_session_master(None).unwrap();
         drop(c2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ C（owner 拍板 1）：**存量迁移 = 把旧钥匙装进袋子**（库文件不动）＋ 四条响亮出口。
+    #[test]
+    fn migrating_a_legacy_space_wraps_the_old_key_without_touching_the_file() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("mig-a", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        crate::security::tests_set_session_key(None);
+
+        // ① 明文空间 ⇒ Err（说清"没什么可迁的"）
+        let err = migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap_err();
+        assert!(err.contains("不是密文"), "{err}");
+
+        // 做一份**用旧应用级钥匙加密**的库（＝今天所有已加密空间的样子）
+        let legacy = crate::keyring::random_space_key();
+        let path = crate::db::space_db_path(&dir, "mig-a");
+        drop(c); // Windows：转换前必须让开这个空间的连接
+        crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
+        assert!(crate::security::space_db_is_encrypted(&path));
+        let c = crate::db::open_space_conn_at("mig-b", &dir).unwrap(); // 换一个别的空间当连接
+
+        // ② 没解锁 / 没袋子 ⇒ Err（两条各说各的）
+        let err = migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap_err();
+        assert!(err.contains("未解锁") || err.contains("钥匙袋"), "{err}");
+
+        // 装上袋子（口令）＋ 会话旧钥匙 ⇒ ③ 迁移成功
+        let mut kr = Keyring::new();
+        let master = kr.kdf.derive_master("我家猫叫mimi").unwrap();
+        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
+        set_keyring_for_test(Some(kr));
+        set_session_master(Some(master)).unwrap();
+        crate::security::tests_set_session_key(Some(legacy));
+        assert!(migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap(), "第一次要真的迁");
+
+        // ★ 盒子里装的**就是旧钥匙** ⇒ 库文件不必动，开库那条路照样开得开
+        let boxed = keyring().unwrap().unwrap_key(&master, "mig-a").unwrap();
+        assert_eq!(boxed, legacy, "★ 空间钥匙 == 旧钥匙（所以一个字节都不用重写）");
+        {
+            let probe = Connection::open(&path).unwrap();
+            crate::security::key_space_conn(&probe, &path).unwrap();
+            probe.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).unwrap();
+        }
+        // 迁移之后：闸门把它当**加密空间**（袋里有它）
+        assert!(space_status(&dir, "mig-a").in_keyring);
+
+        // ④ 幂等：再来一次 ⇒ Ok(false)，不重复做
+        assert!(!migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap());
+
+        crate::security::tests_set_session_key(None);
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
