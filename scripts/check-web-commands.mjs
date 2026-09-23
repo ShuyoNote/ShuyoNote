@@ -68,11 +68,6 @@ const missingContract = [...rustCommands].filter((c) => !contractCommands.has(c)
 const WEB_ONLY_COMMANDS = new Map([
   ["request_persistent_storage", "浏览器的 Storage API，桌面端没有对应概念（UI 按 supported 决定显不显示）"],
   ["export_wiki", "静态 HTML wiki 导出目前只在 web 平台实现（桌面端命令面板按平台隐藏它）"],
-  // 冲刺 CRDT S3b-2c（2026-09-23）：**暂时**只有 web 实现 —— 桌面侧的 `doc_content.rs` 镜像
-  // 归切片 **S7「两侧都接」**（计划里有它，`src-tauri/src/db.rs` 也已建好 `page_crdt` 表）。
-  // 调用点（界面接线）必须按平台收口，别在桌面上裸调。
-  ["read_page_state", "CRDT 状态的读：桌面实现归冲刺切片 S7（表已建，读写没接）"],
-  ["save_page_state", "CRDT 状态的写：桌面实现归冲刺切片 S7（表已建，读写没接）"],
 ]);
 const missingRust = [...contractCommands]
   .filter((c) => !rustCommands.has(c) && !WEB_ONLY_COMMANDS.has(c))
