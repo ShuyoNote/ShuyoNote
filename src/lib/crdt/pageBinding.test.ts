@@ -30,6 +30,8 @@ function fakeDb() {
         rows.delete(String(params[0]));
         return;
       }
+      // S6 起：合并（`mergeRemotePageState`）会给这一页打「待重建」标记 ⇒ 这个形状要认。
+      if (/UPDATE pages SET text_stale = 1/.test(sql)) return;
       throw new Error(`fakeDb 不认这条 run：${sql.slice(0, 48)}`);
     },
     query(sql: string, params?: unknown[]) {
