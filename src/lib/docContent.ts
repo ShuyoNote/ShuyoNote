@@ -740,9 +740,21 @@ export function textStale(db: ContentSql, pageId: string): boolean | undefined {
   return row ? Number(row.text_stale ?? 0) !== 0 : undefined;
 }
 
-/** 打上"待重建"（合并产物 / 裁决写回之后调它）。 */
+/**
+ * 打上"待重建"（合并产物 / 裁决写回之后调它）。
+ *
+ * ★ **数据库页不打**（2026-09-23，P3-② 接线之后才成立的事实）。理由是**结构**的，不是"算出来恰好是空"：
+ * 数据库页的正文 ＝ **列名 ＋ 行 ＋ 规则** —— 列/行在**数据库表**里、筛选/排序规则在**视图侧**手上，
+ * 而补算器（`TextRepairRunner` → `deriveContentText`）的输入**只有 `content_json`**
+ * ⇒ 它**无论**从那份 JSON 里读出什么，算出来的都**不可能是**这一页该有的正文 ⇒ 任何写回都是**有损**的
+ * （把视图侧写好的行文本抹掉：搜索里整页行内容消失，直到那页被重新打开）。
+ *
+ * ⚠️ **别把理由写成"数据库页的 JSON 是 `{}` ⇒ 算出来是空串"**：那是当前的数据形态，不是结构事实。
+ * 哪天有人往那份 JSON 里放个文本镜像（导出/预览用），那个版本的保护会**静默失效** ——
+ * 补算器写回的不再是空串，但**依然是**抹掉列/行。
+ */
 export function markTextStale(db: ContentSql, pageId: string): void {
-  db.run("UPDATE pages SET text_stale = 1 WHERE id = ?", [pageId]);
+  db.run("UPDATE pages SET text_stale = 1 WHERE id = ? AND kind <> 'database'", [pageId]);
 }
 
 /** 清掉"待重建"（正文列刚被重建过一次）。**没置着就一次写库都不做**。 */
@@ -763,18 +775,28 @@ export interface StaleTextQueue {
   pages: StaleTextPage[];
 }
 
-/** ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。 */
+/**
+ * ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。
+ *
+ * ⚠️ **双保险：数据库页不入队**（结构与理由见 `markTextStale` 的注释）。标记侧已经不打数据库页了，
+ * 这里再排一次是为了**存量库** —— 在接线（`1e68f680`）之前被标过的数据库页 `text_stale` 还是 1，
+ * 而它们一旦被补算就会把行文本抹掉。两处口径必须一致（Rust 侧同名函数同步改）。
+ *
+ * ★★ **COUNT 与 SELECT 必须带同一个 `WHERE`**（macOS 2026-09-23 指出）：补算器是用
+ * `remaining = total - pages.length` 判断"还要不要继续"的（`TextRepairRunner.tsx:56`）⇒
+ * 只给其中一条加过滤，`total` 就会永远 ≥ 1 ⇒ 每轮空转到预算耗尽、界面长期显示"还有 N 页"而 N 不降。
+ */
 export function staleTextQueue(db: ContentSql, limit = 10): StaleTextQueue {
   const total =
     Number(
       db.query<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM pages WHERE text_stale = 1 AND deleted_at IS NULL",
+        "SELECT COUNT(*) AS n FROM pages WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'",
       )[0]?.n ?? 0,
     ) || 0;
   const lim = Math.max(1, Math.min(50, Math.trunc(limit) || 10));
   const rows = db.query<{ id: string; title: string; doc_json: string }>(
     `SELECT id, title, content_json AS doc_json FROM pages
-     WHERE text_stale = 1 AND deleted_at IS NULL
+     WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'
      ORDER BY updated_at DESC, id ASC LIMIT ?`,
     [lim],
   );

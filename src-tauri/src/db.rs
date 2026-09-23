@@ -573,6 +573,7 @@ CREATE TABLE IF NOT EXISTS attachment_text (
   loc        TEXT    NOT NULL DEFAULT '',
   src_hash   TEXT    NOT NULL,
   updated_at INTEGER NOT NULL,
+  coverage   TEXT    NOT NULL DEFAULT '',
   PRIMARY KEY (att_id, extractor, seq)
 );"#,
     r#"
@@ -902,6 +903,21 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     //（批量执行失败时 rusqlite 只给第一个错误，排查更贵）。
     for stmt in DERIVED_SCHEMA_DDL {
         conn.execute(stmt, [])?;
+    }
+
+    // ★ 覆盖度列（2026-09-23，与 TS 侧 `sqliteStore.ts::migrate` 同批）：`CREATE TABLE IF NOT EXISTS`
+    //   **不会**给已存在的表加列 ⇒ 老库必须靠这条幂等 ALTER 补，否则读侧 `SELECT … coverage` 直接报错。
+    //   为什么这一列要存在：它回答"**这份派生文本抽全了没有**"（§15.10）——没有它，
+    //   「混合文档里那几页扫描件没抽到内容」与「文件里本来就没有」在 AI 工具面长得一模一样。
+    //   失败 ⇒ 列已存在（SQLite 对 `ADD COLUMN` 重复执行报 duplicate column name），与 TS 侧同一处理。
+    if let Err(e) = conn.execute(
+        "ALTER TABLE attachment_text ADD COLUMN coverage TEXT NOT NULL DEFAULT ''",
+        [],
+    ) {
+        let msg = e.to_string();
+        if !msg.contains("duplicate column name") {
+            return Err(e);
+        }
     }
 
     // 阶段 1 · **冲突留痕**（本地表，**不同步 / 不进备份导出**）：远端应用时报出的"同一块被两端改过"

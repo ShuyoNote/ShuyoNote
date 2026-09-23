@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_GROUPS, GATES, GROUP_ORDER, gateSetOf } from "./lib/gates.mjs";
-import { baselineViolations, countsForGate, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, staleBaselineNotices, summaryLine } from "./lib/report-core.mjs";
+import { baselineNoteFor, baselineViolations, countsForGate, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, staleBaselineNotices, summaryLine } from "./lib/report-core.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmpDir = join(root, ".test-report-tmp");
@@ -390,9 +390,9 @@ if (UPDATE_BASELINE) {
     baselinePath,
     JSON.stringify(
       {
-        note:
-          "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；"
-          + "CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。",
+        // `note` 里累积着**手写的历史**（哪条门禁哪天加的、为什么加）⇒ 只更新读数，别动它。
+        // 以前这里写死一段固定文案，于是每次抬基线都静默抹掉那段历史（见 report-core 的 baselineNoteFor）。
+        note: baselineNoteFor(existsSync(baselinePath) ? baseline.note : ""),
         counts,
         gates: gateSetOf(GATES),
       },

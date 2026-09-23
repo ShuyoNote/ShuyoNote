@@ -145,9 +145,22 @@ pub fn text_stale(c: &Connection, page_id: &str) -> Result<Option<bool>, String>
 }
 
 /// 打上"待重建"（合并产物 / 裁决写回之后调它）。
+///
+/// ★ **数据库页不打**（2026-09-23，P3-② 接线之后才成立的事实）。理由是**结构**的，不是"算出来恰好是空"：
+/// 数据库页的正文 ＝ **列名 ＋ 行 ＋ 规则** —— 列/行在**数据库表**里、筛选/排序规则在**视图侧**手上，
+/// 而补算器的输入**只有 `content_json`** ⇒ 它**无论**从那份 JSON 里读出什么，算出来的都**不可能是**
+/// 这一页该有的正文 ⇒ 任何写回都是**有损**的（把视图侧写好的行文本抹掉，搜索里整页行内容消失，
+/// 直到那页被重新打开）。
+///
+/// ⚠️ **别把理由写成"数据库页的 JSON 是 `{}` ⇒ 算出来是空串"**：那是当前的数据形态，不是结构事实。
+/// 哪天有人往那份 JSON 里放个文本镜像（导出/预览用），那个版本的保护会**静默失效** ——
+/// 补算器写回的不再是空串，但**依然是**抹掉列/行。
 pub fn mark_text_stale(c: &Connection, page_id: &str) -> Result<(), String> {
-    c.execute("UPDATE pages SET text_stale = 1 WHERE id = ?1", params![page_id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "UPDATE pages SET text_stale = 1 WHERE id = ?1 AND kind <> 'database'",
+        params![page_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -180,11 +193,19 @@ pub struct StaleTextQueue {
 }
 
 /// ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。
+///
+/// ⚠️ **双保险：数据库页不入队**（结构与理由见 `mark_text_stale` 的注释）。标记侧已经不打数据库页了，
+/// 这里再排一次是为了**存量库** —— 在接线（`1e68f680`）之前被标过的数据库页 `text_stale` 还是 1，
+/// 而它们一旦被补算就会把行文本抹掉。两处口径必须一致（`src/lib/docContent.ts` 同名函数同步改）。
+///
+/// ★★ **COUNT 与 SELECT 必须带同一个 `WHERE`**（macOS 2026-09-23 指出）：补算器是用
+/// `remaining = total - pages.len()` 判断"还要不要继续"的 ⇒ 只给其中一条加过滤，`total` 就永远 ≥ 1
+/// ⇒ 每轮空转到预算耗尽、界面长期显示"还有 N 页"而 N 不降。
 pub fn stale_text_queue(c: &Connection, limit: usize) -> Result<StaleTextQueue, String> {
     let limit = limit.clamp(1, 50);
     let total: i64 = c
         .query_row(
-            "SELECT COUNT(*) FROM pages WHERE text_stale = 1 AND deleted_at IS NULL",
+            "SELECT COUNT(*) FROM pages WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'",
             [],
             |row| row.get(0),
         )
@@ -192,7 +213,7 @@ pub fn stale_text_queue(c: &Connection, limit: usize) -> Result<StaleTextQueue, 
     let mut stmt = c
         .prepare(
             "SELECT id, title, content_json FROM pages
-             WHERE text_stale = 1 AND deleted_at IS NULL
+             WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'
              ORDER BY updated_at DESC, id ASC LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -2067,6 +2088,40 @@ mod tests {
 
         assert_eq!(text_stale(&c, "p1").unwrap(), Some(false), "但标记必须清掉（它不该留在队列里）");
         assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 2026-09-23（Windows 侧）：**数据库页不进这条队列**。
+    ///
+    /// P3-② 接线（`1e68f680`）之后，数据库页的正文 ＝ 列名 ＋ 行 ＋ 规则，由**视图侧**写进去；
+    /// 而它**不在 `content_json` 里**（建库时 JSON 就是 `{}`）⇒ 补算器派生出来的是空
+    /// ⇒ 一旦入队，`refresh_page_text_if_stale` 会把行文本**抹成空串**（搜索里整页行内容消失）。
+    #[test]
+    fn database_pages_stay_out_of_the_stale_text_queue() {
+        let (c, dir) = conflict_conn("stale-database");
+        // ① 标记侧：数据库页打不上标记
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, dirty)
+             VALUES ('db1', 's1', '任务库', '{}', '数据库：任务库\n行：\n审批：状态＝进行中', 'database', 0, 0, NULL, 0)",
+            [],
+        )
+        .unwrap();
+        mark_text_stale(&c, "db1").unwrap();
+        assert_eq!(text_stale(&c, "db1").unwrap(), Some(false), "数据库页不该被打上待重建");
+
+        // ② 队列侧（双保险）：存量库里已经被标过的数据库页也不列出来
+        c.execute("UPDATE pages SET text_stale = 1 WHERE id = 'db1'", []).unwrap();
+        assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0, "存量标记也不许把数据库页带进来");
+        assert!(stale_text_queue(&c, 10).unwrap().pages.is_empty());
+
+        // ③ 回归守护：普通页面照旧（别把整类页面一起排除掉）
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "正文")]));
+        mark_text_stale(&c, "p1").unwrap();
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true));
+        let q = stale_text_queue(&c, 10).unwrap();
+        assert_eq!(q.total, 1);
+        assert_eq!(q.pages[0].page_id, "p1");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

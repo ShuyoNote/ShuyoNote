@@ -245,6 +245,8 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **应用侧「开始索引」触发与进度** | `libraryIndexing.ts`（运行模型，与 DOM 解耦）＋ AI 设置面板的按钮 | `libraryIndexing.test.ts` · `indexPage.test.ts` |
 | **跨库总结 ＋ 强制引用**（P4） | `ai/librarySummary.ts` | `ai/librarySummary.test.ts` ＋ `ai/librarySummary.live.test.ts`（真模型：回链**全部来自输入**、`droppedInventedRefs=0`） |
 | **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
+| **★ 覆盖度落库 ＋ 读侧口径**（2026-09-23，AMD）：`attachment_text.coverage` 存 `ExtractCoverage` 的 JSON，空串 ＝ **未知**（不是"完整"）；`files.read` 的返回里带回每个抽取器一条 `{extractor, coverage}` | TS：`extract/schema.ts` · `extract/store.ts` · `extract/pipeline.ts` · `platform/sqliteStore.ts` · `platform/derivedStores.ts` · `platform/derivedText.ts` ／ Rust：`db.rs`（DDL 照抄 ＋ 幂等 ALTER）· `derived_transport.rs`（写/读两格）· `search.rs`（读页面） | `store.test.ts` 6 条（含**老库迁移**与"未知 ≠ 完整"）· `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含**缺列容忍**）· `derivedTransport.test.ts`（与夹具逐字相同）· 跨语言夹具 `tests/derived-transport-ops.json` · Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string` · `search::tests::read_attachment_text_separates_missing_from_empty_and_carries_coverage` ＋ `…_tolerates_an_old_table_without_the_coverage_column` · `db::tests::derived_schema_matches_the_ts_source_of_truth` |
+| **★ 覆盖报告的第五类 `partial`**（2026-09-23，AMD）：报告不再只看"**有没有块**" —— 抽取器自己报了 `complete:false` 的**已索引**附件单列（`attachments.partial` ＋ 明细 `reason: "partial"` ＋ 摘要里"其中 N 份**没抽全**"）；**没读数 ＝ 未知**，既不算缺口也**不算完整** | `extract/coverageReport.ts`（读 `coverageOf`） | `coverageReport.test.ts` 6 条（有缺口／没读数／读数是完整／坏 JSON／换读数不留残值／三类混在一起不串味） |
 | **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
@@ -307,6 +309,61 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 
 ### 8.1 被「**本机不能自验**」卡住的三项 —— 附施工单（给能跑 `cargo test` 的那一侧）
+
+> ★ **2026-09-23 更新（AMD，Windows）：这个前提已经不成立 —— 三项都在本机跑出了行为读数。**
+>
+> "Windows 跑不了 `cargo test`" 的真因是**两个独立的装载期问题**，都已解决：
+> ① 测试 exe 缺 v6 清单（`0xC0000139`）⇒ 走 `scripts/win-cargo-test.ps1`（`mt.exe` 注入清单）；
+> ② 动态 OpenSSL 前缀下运行时缺 `bin\libcrypto-3-x64.dll`（`0xC0000135`）⇒ 把 `<前缀>\bin` 放进 PATH。
+> 两条都做完后，**本机全量 lib 单测**：
+>
+> ```text
+> $ PATH="C:\Program Files\OpenSSL-Win64\bin;$PATH" powershell -File scripts\win-cargo-test.ps1
+> test result: FAILED. **495 passed; 1 failed; 18 ignored**; finished in 64.93s
+>   （唯一那条红是 **wall-clock 负载假红**，见下面第 1 条）
+> ```
+>
+> ★ **2026-09-23 第二次全量（覆盖度落库之后）** —— 同一条命令，**0 失败**：
+>
+> ```text
+> test result: ok. **499 passed; 0 failed; 18 ignored**; finished in 43.81s
+> ```
+>
+> 比上次多了 4 条（`db::derived_schema_matches_the_ts_source_of_truth` 这次**绿**、
+> `derived_transport::coverage_round_trips_and_stays_a_raw_string`、
+> `search::read_attachment_text_separates_missing_from_empty_and_carries_coverage`、
+> `search::read_attachment_text_tolerates_an_old_table_without_the_coverage_column`），
+> 而上次那条 wall-clock 假红这次**没出现** —— 又一次说明它是**负载**相关，不是代码相关。
+>
+> **三项的判据逐条实测（全 ok）**：
+> · ① `pages.get` 的 offset/limit：`plugins::tests::pages_get_paginates_by_code_point_like_the_ts_side` · `blocks_list_honours_limit`
+> · ③ Rust 建表与调用：`db::tests::derived_schema_matches_the_ts_source_of_truth` · `migrate_creates_derived_tables` ·
+>   `derived_transport::tests::replace_attachment_text_is_whole_replace_and_byte_identical` · `remove_chunks_touches_only_that_owner`
+> · （顺带把 P2 检索侧的也读了）`search::tests::chunk_search_hits_both_owners_and_carries_backlinks` ·
+>   `chunk_limit_follows_the_registry_default_and_clamps_both_ends` · `chunk_vector_is_rejected_when_model_or_hash_disagrees` ·
+>   `chunk_query_is_normalized_like_page_search`
+>
+> ⚠️ **两条这次实测才暴露的事（第 2 条已处置，第 1 条仍属 Rust 侧）**：
+> 1. **`infinite_loop_is_cut_off_by_the_loop_budget` 是负载假红**：全量并发下超 20 s 红，**单跑 0.45 s 绿**
+>    （断言是 `elapsed < 20s`，被 CPU 饥饿顶过去了）。与仓里那条"**要等外部东西的判据要显式给超时**"同族，
+>    只是这次在 Rust 侧。处置候选：改成不依赖墙钟的断言 / 让这条串行跑 / 抬阈值 —— **属 Rust 侧**。
+> 2. ✅ **已处置（2026-09-23，AMD）** —— 原来这两件事是：`files.read` / `files.search` 没有判据；
+>    且 **`ExtractCoverage` 根本没有落库**（`extract/schema.ts` 与 `store.ts` 里没有覆盖度列，
+>    Rust 的 `AttachmentTextPage` 只有 `{ segments, total, truncated }`，而那个 `truncated` 是**读取窗口**
+>    截断、**不是"抽全了没有"**）⇒ 混合文档（正文页 ＋ 扫描页）那类"抽了但没抽全"在 AI 工具面上答不出来。
+>    **现在**：`attachment_text` 多了 `coverage` 列（两侧同一批：TS `DERIVED_SCHEMA_DDL` 是事实源、
+>    Rust `db.rs` 逐字照抄 ＋ 两侧各一条幂等 `ALTER`），`files.read` 的返回里带回
+>    `coverage: [{ extractor, coverage }]`（`''`／空数组 ＝ **未知**，不许读成"完整"），
+>    `files.search` 仍**没有**判据（这条**没做**，见下）。
+>    **处置时踩到并已修的一条真坑（值得记住）**：`db::tests::derived_schema_matches_the_ts_source_of_truth`
+>    把 `schema.ts` **按反引号切分**取"模板字符串体" ⇒ 我在注释里写的那几个反引号（例如 `` `coverage` ``）
+>    **当场把那条判据变红**（解析出 7 条 DDL 而不是 6 条）。判据**按设计**红得响亮（"解析失败也判红"），
+>    修法是在 `schema.ts` 顶部写明"**本文件里只有 DDL 用反引号，注释里也一个都不要写**"。
+>    ⇒ 这条是"判据抓住了实现者"的正面例子，不是判据太脆：它守的正是"两侧 DDL 逐字相同"。
+> 3. **`files.read` / `files.search` 的判据现状（2026-09-23 复核）**：`read_attachment_text` 两侧都补了 ——
+>    Web 侧 `platform/derivedText.test.ts`（真 sql.js、真 SQL，含覆盖度那一组）＋
+>    Rust 侧 `search::tests::read_attachment_text_*` 两条（此前**一条都没有**）；
+>    `files.search`（`cap_files_search` → `search_chunks_in_conn`）**仍只有契约级覆盖**，行为判据缺 —— 归 Rust 侧。
 
 > 📄 **可套用的补丁草案在同目录的 [`2026-09-17-ai-coverage-handoff-patches.md`](2026-09-17-ai-coverage-handoff-patches.md)**
 > —— 里面是精确的 JSON 条目、TS 适配器代码、Rust 改动的**形状与验收**，
@@ -468,7 +525,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 | 格 | 现状（取证） | 缺什么 | 交付形状（建议） | 判据（建议） | 归属（按 git 作者） | 风险 / 边界 |
 |---|---|---|---|---|---|---|
-| **数据库块**（P3-②） | 数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成 `content_text`。原表引的 `DatabaseView.tsx` 那行是「另存为模板」 | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::writeContentTextIfChanged` 那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `writeContentTextIfChanged` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
+| **数据库块**（P3-②） | **✅ 已落地**（纯函数 AMD `81b0657e` ＋ 接线 macOS `1e68f680`）。**缺的是什么**：数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成正文文本。原表引的 `DatabaseView.tsx` 那行是「另存为模板」（订正见 `2026-09-22-coverage-p3-remaining-two-cells.md` §一）。**接线形态**：`src/lib/databaseTextForPage.ts`（纯函数层：`databasePageText` ⇒ **空库 `null`**／`databaseRulesText` ⇒ 人读规则短句／`refreshDatabasePageText` ⇒ 非空才调那条入口）＋ `DatabaseView.load()` 一处调 `api.refreshPageText`（**只动正文文本**：不动内容 JSON、不动 `dirty`、不动 `updated_at`；两侧的同名实现本来就有判据：`docContent.test.ts` 与 `doc_content.rs::tests`） | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::refreshPageTextIfStale`（＋桌面 `api.refresh_page_text`）那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `refreshPageTextIfStale` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
 | **绘图块**（P3-①） | **✅ 已落地**。分工是**两份合起来的**（撞车后由 `43decd56` 收口）：<br>· **结构纯函数 ＝ AMD** `src/lib/drawingStructureText.ts`（`excalidrawStructureText` ⇒ `{text,nodeCount,edgeCount}`，定序 **y→x→id**、装饰忽略、已删除忽略）；<br>· **合成层 ＝ cnzen** `src/lib/drawingText.ts::excalidrawSearchText`（**进正文的全文 ＝ 标签 ＋ 结构**，标签在前、换行分隔、任一半为空不加空行；总长 `MAX_DRAWING_TEXT_CHARS = 20_000` **封顶并明说截断**）；<br>· 接线一处：`DrawingEditorModal.tsx` 保存绘图时调 `excalidrawSearchText` | 无（已完成） | **方言以 `drawingStructureText.ts` 为准**（`drawingText.ts:32` 的注释就指着它）：一行一条连线 `A → B`、端点无文字退类型名、无连线但有文字的节点单独成行；上限/截断由合成层负责（结构函数不加上限 —— 它不知道标签占了多少） | 结构侧 **11 条**（AMD，含"**打乱输入顺序 ⇒ 逐字相同**"）＋ 合成层 **4 条**（cnzen：两半都在／不加空行／封顶截断／`excalidrawSceneText` 回归守护） | AMD（结构）＋ cnzen（合成与接线） | ⚠️ **存量绘图块仍是旧快照** —— 节点里的 `text` 是"保存那一刻"算的 ⇒ 已存在的绘图要**重新打开并保存**才带结构文本（或另做批量重算入口）；与 P3-② 同一模式 |
 
 > **一句话交接**：这两格都**不需要新契约**（不是 `deps` 能力、不是抽取器），改动落在
@@ -480,7 +537,9 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >   cnzen 在 `drawingText.ts` 里，方言 `矩形"审批" →箭头→ 矩形"发布"`）。收口提交 **`43decd56`**（cnzen）的处置是
 >   **保留 AMD 那份结构函数**（`drawingText.ts` 退成**合成层**：`sceneText ＋ structureText`、字符封顶、
 >   截断明说、回归守护），并删掉他们自己那份结构实现与判据 —— ⇒ **方言现以 `drawingStructureText.ts` 为准**；
-> · **P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS**（cnzen `reply-1` §三 认领，
+> · **P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS（cnzen `1e68f680`，12 条判据：含"空库一次都不调"、**源码级接线判据**与**路由判据**——后者盯"接没接上"，因为这一格最容易的坏法是"算法绿、接线掉了"）**
+> · **边界**：**存量数据库页要重新打开一次**才会带上新正文（触发点就是"打开数据库页"）；`rowRefs` 暂不挂内联回链（等真有消费方再一次定死）
+> · 旧注：P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS（cnzen `reply-1` §三 认领，
 >   并同意按工作单第 ③ 条验收「**改正文列之后页面不许变脏**」—— 那是这格里最贵的坑）。
 >   纯函数：`src/lib/databaseText.ts`（`databaseTextOf`，14 条判据）＋ `.test.ts`。三条设计决定（接线方务必读一眼）：
 >   ① **不发明行 ref 的内联方言** —— 返回 `{ text, rowRefs, truncated }`，行回链要不要挂 `[[标题]]` 由接线侧定；
@@ -493,7 +552,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >   ② **新增文件里的字面提及也计入 `check-doc-content-access`** —— 我 `81b0657e` 那两个新文件把 contract 组弄红了
 >      （我当时只跑了那两个测试文件与全量单测，**漏了门禁组**），是 cnzen 用**改措辞**（不抬基线）替我补的。
 >      ⇒ 新增文件后要跑 `test-report --group contract`。
-> · 接线形态见上表（数据库走 `writeContentTextIfChanged` 那条既有模式；绘图侧已由 `excalidrawSearchText` 收口）。
+> · 接线形态见上表（数据库走 `refreshPageTextIfStale` 那条既有模式；绘图侧已由 `excalidrawSearchText` 收口）。
 
 ### P4 —— 跨库总结管线 ＋ 强制引用
 
@@ -1046,3 +1105,48 @@ export interface ExtractCoverage {
 > 否则"抽到了但没切块"会被误报成已覆盖；② **页面没有块 ≠ 这个页面的内容没被索引**
 > （页面的图片/附件/数据库块本来就不在 `content_text` 里，由附件侧负责）—— 报告文案里写明了这一点，
 > 免得看报告的人去"修"一个不是问题的问题。
+
+#### 15.10.1 **落库**：这条原则落到库里和读侧（2026-09-23，AMD）
+
+**为什么必须落库**：在这之前 `ExtractCoverage` 只活在**一次抽取的返回值里** ——
+抽完就没了。于是"混合文档里有 3 页扫描件没抽到内容"这件事，**换一个进程、换一次启动就再也查不到**；
+AI 工具面只能看到 `truncated`（读取窗口），而它**不是**"抽全了没有"。
+
+**四处改动（一处语义、三处搬运）**：
+
+| 处 | 改了什么 | 为什么这么改 |
+|---|---|---|
+| **库**：`attachment_text.coverage`（`TEXT NOT NULL DEFAULT ''`） | 存 `ExtractCoverage` 的 JSON；`''` ＝ **没有读数** | 刻意**冗余在段行上**（不另起表）：派生层是可重建缓存、`replace()` 是整体替换 ⇒ 一行一次写；少一张表就少一处漂移 |
+| **写**：`store.replace(..., coverage?)` → `platform/derivedStores.ts` → `derived_query`/`derived_apply` | **线上传的是一段 JSON 字符串**（不是结构体） | 序列化只在 TS 侧做一次。若让 Rust 再序列化，就有了第二个"JSON 长什么样"的地方，与 TS 的解析口径必然漂 |
+| **读**：`AttachmentTextStore.coverageOf` → 新查询 `attachmentTextCoverage` → Rust `search::read_attachment_text_coverage_in_conn` | 一条 SQL、两个读者（运输层 ＋ `read_attachment_text` 页面） | 两处各写一份 SQL 会长出两种语义（去重与否、排序、缺列怎么办），而**漂移不会报错** |
+| **解析**：`storedCoverageFrom(rows)`（纯函数，两平台共用） | 空串／坏 JSON ⇒ **未知**，**不是**"完整" | 这是本条要防的那一件事；它只许有**一处**实现 |
+
+**三条刻意的不变量**（各有判据）：
+1. **未知 ≠ 完整**：`''`（没算过／没报）与 `{"complete":true}` 是两件事 —— 不传覆盖度时读回来是
+   **"没有这一格"**（不是 `{complete:true}`）。库里那份不是合法 JSON 时**同样**只算未知（不许猜成完整）。
+2. **一次抽取一份**：一行一段，但覆盖度按 `(att_id, extractor)` **去重**（`DISTINCT`），按 `extractor` 稳定排序。
+3. **老库与缺列**：两侧各一条幂等 `ALTER TABLE … ADD COLUMN`（`CREATE TABLE IF NOT EXISTS` **不会**给已存在的表加列）；
+   而"列真的不在"时读侧答复**"没有读数"**（空），**不是**让 `files.read` 整条失败 ——
+   读不到读数与没有读数是两件事，但对着"未知"这条语义它们是同一个答复。
+
+**判据（都在本机跑过）**：TS `store.test.ts` 6 条 · `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含缺列容忍）·
+`derivedTransport.test.ts`（与跨语言夹具 `tests/derived-transport-ops.json` **逐字相同**，`coverage` 字段也在夹具里）；
+Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string`（含"重抽不报覆盖度 ⇒ 旧读数必须被清掉"）·
+`search::tests::read_attachment_text_*` 两条 · `db::tests::derived_schema_matches_the_ts_source_of_truth`。
+
+> ⚠️ **一条实现期踩到的坑，已写进 `schema.ts` 顶部**：那条 DDL 一致性判据把 `schema.ts`
+> **按反引号切分**取模板字符串体 ⇒ 我在注释里写的反引号**当场把判据变红**（解析出 7 条而不是 6 条）。
+> 判据红得对（它守的就是"两侧逐字相同"），要改的是注释的写法。
+>
+**读侧第二处：全库报告也读了这份读数**（同日补完，`extract/coverageReport.ts`）——
+报告原先只问"**进了检索面没有**"（有块就算已索引），于是混合 PDF 只抽到正文页时它是**绿的**，
+而库里 `complete:false` 明明在。现在多一类 `partial`：**已索引 ＋ 抽取器报了缺口**，`attachments.partial` 单列、
+`gaps` 里带抽取器名与缺口说明、摘要里写成"已索引 N/M（其中 K 份**没抽全**）"。
+两条口径写死了：**没读数 ＝ 未知**（既不算缺口、也不算完整）；`byReason` **只统计"没进检索面"的四类**
+（`partial` 不许混进去，否则与 `notIndexed` 对不上）。
+
+> ⚠️ **已知边界（这格没做，别读成做了）**：报告本身**还没有出口** —— `scanLibraryCoverage`
+> 在 `src/**` 里**只有测试调用它**（无 UI 组件引用、`capabilities.json` 里也没有对应能力）；
+> 所以"库里到底覆盖到哪"目前**用户和 AI 都问不到**。出口走 UI 还是做成一个只读能力，待定。
+
+> ⚠️ **仍没做的一格**：`files.search`（`cap_files_search`）**只有契约级覆盖**，没有行为判据 —— 归 Rust 侧。

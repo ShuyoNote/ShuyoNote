@@ -21,6 +21,27 @@ export function countsFromOutput(output) {
   return null;
 }
 
+/** 首次建立基线（没有历史可保留）时写进 `tests/baseline.json` 的说明。 */
+export const DEFAULT_BASELINE_NOTE =
+  "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；"
+  + "CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。";
+
+/**
+ * `--update-baseline` 该把哪一段 `note` 写回去。
+ *
+ * ★ 为什么单独抽出来（2026-09-23，抬 vitest 下界时踩到）：
+ * 这条路径以前**写死**一段固定文案 ⇒ 每次抬基线都会**静默抹掉** `note` 里累积的手写历史
+ * （"哪条门禁哪天加的、为什么加" —— 那是那个文件里唯一记着「为什么」的地方，抹了只能翻提交）。
+ * 抬基线是高频动作，所以这个损失是**累积**的；而且它自己没有任何信号（文件照样是合法 JSON）。
+ *
+ * 语义（两个方向都要钉住）：
+ *   · 有历史 ⇒ **逐字保留**（抬读数不许动它）；
+ *   · 空白／缺失（首次建立）⇒ 写默认说明，别写一个空 `note`。
+ */
+export function baselineNoteFor(previous) {
+  return typeof previous === "string" && previous.trim() ? previous : DEFAULT_BASELINE_NOTE;
+}
+
 /**
  * 「基线太旧」的**提示**（不是失败）—— 与 `baselineViolations` 分工不同：
  *

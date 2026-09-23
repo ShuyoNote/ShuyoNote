@@ -7,6 +7,7 @@
       "extractor": "pdf.text@1",
       "srcHash": "sha256:abc",
       "now": 1758259200000,
+      "coverage": "{\"complete\":false,\"gapIndexes\":[1]}",
       "segments": [
         { "kind": "para", "text": "第一段", "loc": "p1" },
         { "kind": "para", "text": "第二段  with spaces", "loc": "" }
@@ -33,6 +34,7 @@
   ],
   "queries": [
     { "op": "attachmentTextSegments", "attId": "att-1" },
+    { "op": "attachmentTextCoverage", "attId": "att-1" },
     { "op": "chunkRows", "owner": { "kind": "attachment", "attId": "att-1" } },
     { "op": "chunkStats" },
     { "op": "attachmentTextStats" }

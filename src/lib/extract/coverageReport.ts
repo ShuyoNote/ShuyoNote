@@ -16,13 +16,20 @@
 //    `page_empty`（页面在检索面没内容 → **但它的附件可能是被索引的**，见下）。
 // 3. **明细只放"有问题的"**（`gaps`）。全库清单没有信息量，反而让人不看。
 //
+// ## ★ 第四类（2026-09-23）：**`partial` —— 搜得到，但没抽全**
+// 前三类问的都是"**进了检索面没有**"。而 §15.10 那条"成功 ≠ 抽全了"还有另一半：
+// 混合 PDF 只抽到正文页时，**有块、搜得到**（不是缺口），但那几页扫描件**搜不到** ——
+// 只按"有没有块"判，报告会把它算成**绿的**。这一格靠抽取器自己报的覆盖度读数
+// （`attachment_text.coverage`，落库见 `§15.10.1`）来判：**有读数且 `complete === false`** ⇒ `partial`。
+// ⚠️ **没有读数 ⇒ 未知**（旧数据 / 抽取器没报）：既不算缺口也**不算完整**（猜完整 = 把没抽到说成没有）。
+//
 // ## ⚠️ 一个容易误读的地方，报告里必须说清
 // **页面没有块 ≠ 这个页面的内容没被索引**：页面的图片/附件/数据库块**本来就不在 `content_text` 里**，
 // 它们由**附件侧**（`attachment_text` / 附件块）负责。所以"页面空"与"附件已索引"是**互补**关系，
 // 不是矛盾。报告里的 reason 文案就是这么写的，免得看报告的人去"修"一个不是问题的问题。
 //
 // ## 成本
-// 每页一次 `chunksOf`、每附件一次 `segmentsOf` + `chunksOf` ⇒ **O(N) 次查询**。
+// 每页一次 `chunksOf`、每附件一次 `segmentsOf` + `chunksOf` + **`coverageOf`** ⇒ **O(N) 次查询**。
 // 对"用户主动点一下检查覆盖"这个场景足够；真要跑几十万附件，应先加批量查询（见文件末尾 TODO）。
 
 import type { ChunkStore } from "./chunkStore";
@@ -30,8 +37,12 @@ import type { Extractor } from "./types";
 import { pickExtractor, REGISTRY } from "./registry";
 import type { AttachmentTextStore } from "./store";
 
-/** 未被索引的原因（**分类**，因为处置方式不同）。 */
-export type GapReason = "no_extractor" | "no_content" | "not_chunked" | "page_empty";
+/** 未被索引的原因（**分类**，因为处置方式不同）。
+ *
+ * ⚠️ `partial` 是**唯一一个"已索引"的 reason**（见 `CoverageReport.attachments.partial` 的注释）：
+ * 它的意思不是"没进检索面"，而是"进了检索面、但抽取器自己承认只抽到一部分"。
+ * 它**不计入** `byReason`（那里统计的是"没进检索面"的原因），只计 `partial` 并进明细。 */
+export type GapReason = "no_extractor" | "no_content" | "not_chunked" | "page_empty" | "partial";
 
 export interface AttachmentCoverage {
   attId: string;
@@ -59,14 +70,28 @@ export interface CoverageReport {
     total: number;
     /** 抽到了文本的数量（**不等于**已索引，见 `not_chunked`）。 */
     extracted: number;
-    /** **有块**的数量 —— 这才是"检索面看得到"。 */
+    /** **有块**的数量 —— 这才是"检索面看得到"。⚠️ 与 `partial` **不互斥**（能搜到 ≠ 抽全了）。 */
     indexed: number;
+    /**
+     * ★ 已索引、**但抽取器自己报了缺口**的数量（`ExtractCoverage.complete === false`，§15.10）。
+     *
+     * 为什么单列而不是并进 `indexed`/`notIndexed`：`indexed` 回答的是"**搜得到吗**"，
+     * 这一格回答的是"**搜到的是全部吗**"。混进任何一头都会让读报告的人得出错误结论 ——
+     * 「混合 PDF 只抽到正文页」那份东西**能被搜到**（不是缺口），
+     * 但它**没有抽全**（是缺口）；这两件事必须同时看得见。
+     */
+    partial: number;
     notIndexed: number;
+    /** ⚠️ **只统计"没进检索面"的四类**（`partial` 不在其中，否则与 `notIndexed` 对不上）。 */
     byReason: Record<string, number>;
   };
   /** 派生层的总量（来自 `text.stats()`，一次查询）。 */
   derived: { extractors: number; segments: number; chars: number };
   chunks: { total: number };
+  /**
+   * 明细 —— **两类东西都在里面**：没进检索面的（`no_extractor` / `no_content` / `not_chunked` / `page_empty`）
+   * 与已索引但没抽全的（`partial`）。所以 `gaps.length` **不等于** `attachments.notIndexed`。
+   */
   gaps: CoverageGap[];
 }
 
@@ -95,6 +120,10 @@ const DETAIL: Record<GapReason, string> = {
   page_empty:
     "页面正文在检索面没有内容 —— ⚠️ **这不一定是缺口**：页面的图片/附件/数据库块本来就不在 content_text 里，" +
     "由附件侧负责。请对照附件侧的覆盖情况再判断",
+  partial:
+    "**抽到了、也进了检索面，但抽取器自己报了缺口** —— 这份内容只是一部分（典型：混合 PDF 里夹的扫描页）。" +
+    "检索能搜到已有的段，但缺的那部分**搜不到**。要不要补：看缺的是不是你要找的内容 —— " +
+    "需要就换更完整的抽取通道重抽一次（视觉/OCR 那路），不需要就把它当作**已知的不完整**记着",
 };
 
 /**
@@ -126,15 +155,36 @@ export async function indexCoverage(
   // ---- 附件 ----
   let attExtracted = 0;
   let attIndexed = 0;
+  let attPartial = 0;
   const byReason: Record<string, number> = {};
   for (const att of subject.attachments) {
     const segments = (await stores.text.segmentsOf(att.id)).length;
     const chunks = (await stores.chunks.chunksOf({ kind: "attachment", attId: att.id })).length;
     if (segments > 0) attExtracted++;
 
+    // ★ **覆盖度读数**（2026-09-23 起落库，§15.10）：抽取器**自己承认**没抽全的那些。
+    //   判据只有一条：**有读数且 `complete === false`**。
+    //   ⚠️ **没有读数 ＝ 未知**（旧数据 / 那个抽取器没报）—— 既不算缺口，**也不算完整**：
+    //   猜"完整"会把没抽到说成没有；猜"缺口"会造出假警报。这条口径在
+    //   `store.ts::storedCoverageFrom` 一处定死，这里不重新解析 JSON。
+    const incomplete = (await stores.text.coverageOf(att.id))
+      .filter((r) => r.coverage?.complete === false)
+      .map((r) => r.extractor)
+      .sort();
+
     // **"已索引"以"有没有块"为准** —— 检索面看到的是块，不是段。
     if (segments > 0 && chunks > 0) {
       attIndexed++;
+      // 已索引 **且** 有缺口读数 ⇒ "搜得到，但没抽全"（与 `indexed` 不互斥，见 `partial` 的注释）。
+      if (incomplete.length > 0) {
+        attPartial++;
+        gaps.push({
+          kind: "attachment",
+          id: att.id,
+          reason: "partial",
+          detail: `${DETAIL.partial}（报缺口的抽取器：${incomplete.join("、")}）`,
+        });
+      }
       continue;
     }
 
@@ -166,6 +216,7 @@ export async function indexCoverage(
       total: subject.attachments.length,
       extracted: attExtracted,
       indexed: attIndexed,
+      partial: attPartial,
       notIndexed: subject.attachments.length - attIndexed,
       byReason,
     },
@@ -187,6 +238,9 @@ export function summarizeCoverage(r: CoverageReport): string {
   return (
     `页面 ${r.pages.indexed}/${r.pages.total} 有块；` +
     `附件 ${r.attachments.indexed}/${r.attachments.total} 已索引` +
+    // ★ "没抽全"必须**与"已索引"并列出现在这一行里**，否则只看摘要的人会把
+    //   "已索引 3/3"读成"内容全都在检索面里"（这正是 §15.10 要防的那种读法）。
+    (r.attachments.partial > 0 ? `（其中 ${r.attachments.partial} 份**没抽全**）` : "") +
     (r.attachments.extracted > r.attachments.indexed
       ? `（其中 ${r.attachments.extracted} 份抽到了文本但未切块）`
       : "") +

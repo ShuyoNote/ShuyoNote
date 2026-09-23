@@ -12,7 +12,7 @@ import { indexCoverage, summarizeCoverage } from "./coverageReport";
 import { DERIVED_SCHEMA_DDL } from "./schema";
 import { createAttachmentTextStore, type SqlRunner } from "./store";
 import { setWasmBytesProvider } from "../platform/sqliteStore";
-import { ok, type Extractor } from "./types";
+import { ok, type Extractor, type ExtractCoverage } from "./types";
 
 beforeAll(() => {
   const bytes = readFileSync(join(process.cwd(), "node_modules/sql.js/dist/sql-wasm.wasm"));
@@ -48,7 +48,8 @@ async function stores() {
   (await text.ensureSchema(DERIVED_SCHEMA_DDL));
   const chunks = createChunkStore(runner);
   (await chunks.ensureSchema(DERIVED_SCHEMA_DDL));
-  return { text, chunks };
+  // `runner` 也带出去：有条判据要**直接改库**（把 `coverage` 写成非法 JSON，模拟旧格式/手改）
+  return { text, chunks, runner };
 }
 
 /** 认领 `.known` 与 `.docx` 的假抽取器（用来验分类：没人认领 vs 认领了但抽出来是空）。 */
@@ -175,5 +176,126 @@ describe("索引覆盖报告", () => {
     (await indexCoverage({ pageIds: ["p1"], attachments: [{ id: "a1", mime: "", filename: "x.docx" }] }, s));
     expect((await s.text.segmentsOf("a1")).map((r) => r.text)).toEqual(before);
     expect((await s.chunks.stats()).chunks).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ★ 第四类：`partial` —— **搜得到，但没抽全**（2026-09-23）
+//
+// 为什么单列一组：前三类问的是"进了检索面没有"，而这一格问的是"**搜到的是全部吗**"。
+// 只按"有没有块"判，混合 PDF（正文页＋扫描页）会被报告算成**绿的** ——
+// 那正是 §15.10 那条"成功 ≠ 抽全了"在全库报告上的最后一个洞。
+// 失败面全是**安静**的：读数没读、把"没读数"猜成完整、或把它算进"未索引"里（那会让
+// `notIndexed` 与 `byReason` 对不上）。
+// ---------------------------------------------------------------------------
+describe("覆盖报告 · `partial`（已索引但抽取器报了缺口）", () => {
+  /** 造一份"已索引"的附件：段 + 块都在。`coverage` 省略 ⇒ 库里那一列是空串（**没有读数**）。 */
+  function indexed(
+    s: Awaited<ReturnType<typeof stores>>,
+    attId: string,
+    coverage?: ExtractCoverage,
+  ) {
+    s.text.replace(attId, "pdf.text@1", "h", [{ kind: "text", text: "正文页", loc: "p.1" }], 1, coverage);
+    s.chunks.replace(
+      { kind: "attachment", attId },
+      chunkSegments({ kind: "attachment", attId }, [{ text: "正文页", loc: "p.1" }]),
+    );
+  }
+
+  it("★ 有块 + 抽取器报 `complete:false` ⇒ 计入 `partial`，且**仍然算已索引**", async () => {
+    const s = await stores();
+    indexed(s, "a1", { complete: false, gapIndexes: [1, 2], note: "2 页没有文本层" });
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+
+    // 两件事必须**同时**看得见：搜得到（indexed）＋ 没抽全（partial）
+    expect(r.attachments).toMatchObject({ total: 1, indexed: 1, partial: 1, notIndexed: 0 });
+    // ⚠️ `byReason` 只统计"没进检索面"的原因 ⇒ partial **不许**混进去（否则与 notIndexed 对不上）
+    expect(r.attachments.byReason).toEqual({});
+    // 明细里要有，且要说清"该不该补"
+    const gap = r.gaps.find((g) => g.id === "a1")!;
+    expect(gap.reason).toBe("partial");
+    expect(gap.detail).toContain("pdf.text@1"); // 报缺口的抽取器点名
+    expect(gap.detail).toContain("只是一部分");
+    // 摘要里也必须看得到 —— 只看摘要的人最容易把"已索引 1/1"读成"内容全在"
+    const line = summarizeCoverage(r);
+    expect(line).toContain("已索引");
+    expect(line).toContain("没抽全");
+  });
+
+  it("★ **没有读数 ⇒ 未知**：既不算缺口，也不算完整（不猜）", async () => {
+    const s = await stores();
+    indexed(s, "a1"); // 不传 coverage ⇒ 库里是空串（= 没有读数）
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+    expect(r.attachments).toMatchObject({ indexed: 1, partial: 0, notIndexed: 0 });
+    expect(r.gaps).toEqual([]); // 既不报缺口（那是假警报），也不说"完整"
+  });
+
+  it("读数是 `complete: true` ⇒ 不算缺口", async () => {
+    const s = await stores();
+    indexed(s, "a1", { complete: true });
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+    expect(r.attachments).toMatchObject({ indexed: 1, partial: 0 });
+    expect(r.gaps).toEqual([]);
+  });
+
+  it("库里那份不是合法 JSON（旧格式/手改）⇒ 也只算**未知**，不报假缺口", async () => {
+    const s = await stores();
+    indexed(s, "a1", { complete: false });
+    // 把那一列写成非法 JSON —— 解析口径（坏 JSON ⇒ 未知）在 `storedCoverageFrom` 一处，
+    // 报告这边不许自己再解析一遍，也不许把"读不出来"当成"有缺口"
+    s.runner.run("UPDATE attachment_text SET coverage = ? WHERE att_id = ?", ["{不是 json", "a1"]);
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+    expect(r.attachments).toMatchObject({ indexed: 1, partial: 0 });
+    expect(r.gaps).toEqual([]);
+  });
+
+  it("换成完整读数后**不再**报缺口（上一次的残值不许留下来）", async () => {
+    const s = await stores();
+    indexed(s, "a1", { complete: false, gapIndexes: [1] });
+    const first = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+    expect(first.attachments.partial).toBe(1);
+
+    // 重抽一次，这次报完整（整体替换 ⇒ 覆盖度跟着换）
+    indexed(s, "a1", { complete: true });
+    const second = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+    expect(second.attachments).toMatchObject({ indexed: 1, partial: 0 });
+    expect(second.gaps).toEqual([]);
+  });
+
+  it("**没进检索面的那份**仍按原来的四类算（`partial` 只统计已索引的）", async () => {
+    const s = await stores();
+    // 抽到了、也有缺口读数，但**没有块** ⇒ 归 not_chunked（更前置的问题），partial 不计
+    s.text.replace("a1", "pdf.text@1", "h", [{ kind: "text", text: "只抽到一半", loc: "p.1" }], 1, {
+      complete: false,
+      gapIndexes: [1],
+    });
+    const r = (await indexCoverage({ pageIds: [], attachments: [{ id: "a1", mime: "", filename: "x.pdf" }] }, s));
+    expect(r.attachments).toMatchObject({ extracted: 1, indexed: 0, partial: 0, notIndexed: 1 });
+    expect(r.attachments.byReason).toEqual({ not_chunked: 1 });
+    expect(r.gaps.map((g) => g.reason)).toEqual(["not_chunked"]);
+  });
+
+  it("多份混在一起时：已索引 / 没抽全 / 未索引 三类计数互不串味", async () => {
+    const s = await stores();
+    indexed(s, "a-ok", { complete: true });
+    indexed(s, "a-part", { complete: false, gapIndexes: [3] });
+    s.text.replace("a-none", "pdf.text@1", "h", [{ kind: "text", text: "抽到了但没块", loc: "" }], 1);
+    const r = (await indexCoverage(
+      {
+        pageIds: [],
+        attachments: [
+          { id: "a-ok", mime: "", filename: "a.pdf" },
+          { id: "a-part", mime: "", filename: "b.pdf" },
+          { id: "a-none", mime: "", filename: "c.pdf" },
+        ],
+      },
+      s,
+    ));
+    expect(r.attachments).toMatchObject({ total: 3, extracted: 3, indexed: 2, partial: 1, notIndexed: 1 });
+    expect(r.attachments.byReason).toEqual({ not_chunked: 1 });
+    expect(r.gaps.map((g) => `${g.id}:${g.reason}`)).toEqual(["a-part:partial", "a-none:not_chunked"]);
+    // gaps 里两类都在 ⇒ 它**不等于** notIndexed（接口注释里写明了这一条）
+    expect(r.gaps).toHaveLength(2);
+    expect(r.attachments.notIndexed).toBe(1);
   });
 });

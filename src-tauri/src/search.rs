@@ -1003,6 +1003,51 @@ pub(crate) struct AttachmentTextSegment {
     pub loc: String,
 }
 
+/// 某个抽取器上一次报的**覆盖度**（§15.10：成功 ≠ 抽全了）。
+///
+/// `coverage` 是**原始 JSON 字符串**，`""` ＝ **没有这一格**（旧数据 / 那个抽取器没报）。
+/// ⚠️ 这里**不解析**：解析口径（空串或坏 JSON ⇒ 未知，而未知**不是**完整）只在 TS 的
+/// `extract/store.ts::storedCoverageFrom` 一处（两个平台共用）。Rust 侧再解析一次就是给同一件事
+/// 写第二份实现，而它漂移的后果是"把没抽全读成抽全了"。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentTextCoverageRow {
+    pub extractor: String,
+    pub coverage: String,
+}
+
+/// `(extractor, coverage)` 读数 —— **这一族的唯一一处 SQL**。
+///
+/// 为什么抽出来：这条读数有**两个**读者（能力面/命令面的 `read_attachment_text` 页面，与运输层的
+/// `attachmentTextCoverage` 查询）。两处各写一份 SQL 就会长出两种语义（去重与否、排序、缺列怎么办），
+/// 而它们的**漂移不会报错** —— 只会让桌面与 Web 给出不同的覆盖度读数。
+///
+/// 三条口径（与 TS 的 `store.ts::coverageOf` 逐条对齐）：
+/// 1. `DISTINCT`：一行一段，但覆盖度是**每次抽取一份** ⇒ 必须去重；
+/// 2. `ORDER BY extractor`：稳定顺序（调用方不必再排）；
+/// 3. **缺列 ⇒ 空**：老库没跑过迁移时 `coverage` 列不存在，此时答复"**没有覆盖度信息**"
+///    （未知），而不是让整条读失败 —— 读不到读数与没有读数是两件事，但对着"未知"这条语义
+///    它们是同一个答复；把整条读变成错误才是更坏的那个选择。
+pub(crate) fn read_attachment_text_coverage_in_conn(
+    c: &Connection,
+    att_id: &str,
+) -> Result<Vec<AttachmentTextCoverageRow>, String> {
+    let mut stmt = match c
+        .prepare("SELECT DISTINCT extractor, coverage FROM attachment_text WHERE att_id = ?1 ORDER BY extractor ASC")
+    {
+        Ok(s) => s,
+        Err(_) => return Ok(Vec::new()), // 老库没有 coverage 列 ⇒ 未知（见上面第 3 条）
+    };
+    let rows = stmt
+        .query_map(params![att_id], |r| {
+            Ok(AttachmentTextCoverageRow { extractor: r.get(0)?, coverage: r.get(1)? })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttachmentTextPage {
@@ -1010,6 +1055,11 @@ pub(crate) struct AttachmentTextPage {
     /// **总段数**（不是本页条数）：没有它，调用方没法知道"自己只看到了一部分"。
     pub total: i64,
     pub truncated: bool,
+    /// 每个抽取器上次报的覆盖度（可能为空 ＝ 未知）。
+    ///
+    /// 为什么跟段一起给：`truncated` 只说"这一页没给全"，覆盖度说的是"**抽取本身**就没抽全"
+    /// —— 两件事都会被读成"内容就这些"。§15.10 的"成功 ≠ 抽全了"要落到读侧才算数。
+    pub coverage: Vec<AttachmentTextCoverageRow>,
 }
 
 /// 读某个附件的派生文本（分页）。
@@ -1032,7 +1082,12 @@ pub(crate) fn read_attachment_text_in_conn(
     }
     if !table_exists(c, "attachment_text") {
         // 老库没迁移过这张表 ⇒ 与"还没抽过"同一种答复（不是错误）
-        return Ok(Some(AttachmentTextPage { segments: Vec::new(), total: 0, truncated: false }));
+        return Ok(Some(AttachmentTextPage {
+            segments: Vec::new(),
+            total: 0,
+            truncated: false,
+            coverage: Vec::new(),
+        }));
     }
 
     let total: i64 = c
@@ -1063,7 +1118,8 @@ pub(crate) fn read_attachment_text_in_conn(
         .map_err(|e| e.to_string())?;
 
     let truncated = (offset as i64 + segments.len() as i64) < total;
-    Ok(Some(AttachmentTextPage { segments, total, truncated }))
+    let coverage = read_attachment_text_coverage_in_conn(c, att_id)?;
+    Ok(Some(AttachmentTextPage { segments, total, truncated, coverage }))
 }
 
 /// `read_attachment_text` 的参数（命令面；能力面走 `plugins.rs::cap_files_read`，同一条读函数）。
@@ -1609,5 +1665,108 @@ mod tests {
         assert_eq!(a, b);
         // 同分按 (page_id, ord) 兜底
         assert_eq!(a, vec!["page:p1#0".to_string(), "page:p1#1".to_string(), "page:p2#0".to_string()]);
+    }
+
+    // ---- 附件派生文本的读取（`files.read` / `read_attachment_text` 共用那一条函数）----
+    //
+    // 补这组判据的理由：`read_attachment_text_in_conn` 此前**一条判据都没有** ——
+    // Web 侧有行为判据（`derivedText.test.ts`），桌面侧只有"命令在不在"的契约级覆盖。
+    // 而这一族最要紧的两条语义（"不存在" ≠ "还没抽过"、覆盖度只是**未知**时不许当成完整）
+    // 都只在读侧才看得见。
+
+    /// 用**真 DDL**（`db::DERIVED_SCHEMA_DDL`，含 `coverage` 列）建派生三表 + 一张最小 `attachments`。
+    /// 不手抄列：抄一份就有一份会漂，而漂的症状是"判据绿、真库红"。
+    fn att_text_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE attachments (id TEXT PRIMARY KEY);").unwrap();
+        for stmt in crate::db::DERIVED_SCHEMA_DDL {
+            c.execute_batch(stmt).unwrap();
+        }
+        c
+    }
+
+    fn add_att_text(c: &Connection, att: &str, extractor: &str, seq: i64, text: &str, coverage: &str) {
+        c.execute(
+            "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage) \
+             VALUES (?1, ?2, ?3, 'para', ?4, '', 'h1', 1, ?5)",
+            params![att, extractor, seq, text, coverage],
+        )
+        .unwrap();
+    }
+
+    /// ★ 判据：`read_attachment_text_in_conn` 的三种答复**必须分开**，且覆盖度原样带出。
+    ///
+    /// 失败面（这条就是为它写的）：把"附件不存在"与"还没抽过"合成一种（都回空）⇒
+    /// AI 会把"还没索引"读成"文件里没有相关内容"；而覆盖度丢了 ⇒ 读侧无法区分
+    /// "抽取本身没抽全"与"内容就这些"（§15.10）。
+    #[test]
+    fn read_attachment_text_separates_missing_from_empty_and_carries_coverage() {
+        let c = att_text_conn();
+        // ① 不存在 ⇒ None（调用方回 null），**不是**空页
+        assert!(read_attachment_text_in_conn(&c, "没有这个附件", 0, 200).unwrap().is_none());
+
+        // ② 存在但还没抽过 ⇒ 空段 + total 0 + **没有覆盖度读数**
+        c.execute("INSERT INTO attachments (id) VALUES ('a1')", []).unwrap();
+        let page = read_attachment_text_in_conn(&c, "a1", 0, 200).unwrap().unwrap();
+        assert!(page.segments.is_empty());
+        assert_eq!(page.total, 0);
+        assert!(!page.truncated);
+        assert!(page.coverage.is_empty(), "没抽过 ⇒ 没有覆盖度（既不是 complete 也不是空字符串一条）");
+
+        // ③ 抽过：两段同一个抽取器（覆盖度去重成**一条**）+ 另一个抽取器没报覆盖度（空串 ⇒ 未知）
+        c.execute("INSERT INTO attachments (id) VALUES ('a2')", []).unwrap();
+        add_att_text(&c, "a2", "pdf.text@1", 0, "第一段", r#"{"complete":false,"gapIndexes":[2]}"#);
+        add_att_text(&c, "a2", "pdf.text@1", 1, "第二段", r#"{"complete":false,"gapIndexes":[2]}"#);
+        add_att_text(&c, "a2", "pdf.ocr@1", 0, "OCR 段", "");
+        let page = read_attachment_text_in_conn(&c, "a2", 0, 200).unwrap().unwrap();
+        assert_eq!(page.total, 2 + 1);
+        assert_eq!(page.segments.len(), 3);
+        assert_eq!(page.coverage.len(), 2, "覆盖度是每次抽取一份：两段不许出两条");
+        assert_eq!(page.coverage[0].extractor, "pdf.ocr@1", "按 extractor 稳定排序");
+        assert_eq!(page.coverage[0].coverage, "", "没报 ⇒ 空串（未知），**不是** complete");
+        assert_eq!(page.coverage[1].extractor, "pdf.text@1");
+        assert_eq!(
+            page.coverage[1].coverage, r#"{"complete":false,"gapIndexes":[2]}"#,
+            "原样字符串：Rust 不解析（解析口径只在 TS 那一处）"
+        );
+
+        // ④ 分页只影响段，**不影响覆盖度**（覆盖度是整次抽取的读数，不是本页的）
+        let head = read_attachment_text_in_conn(&c, "a2", 0, 1).unwrap().unwrap();
+        assert_eq!(head.segments.len(), 1);
+        assert!(head.truncated, "还有没给的段");
+        assert_eq!(head.coverage.len(), 2, "翻到哪一页，覆盖度读数都该是同一份");
+        let tail = read_attachment_text_in_conn(&c, "a2", 5, 200).unwrap().unwrap();
+        assert!(tail.segments.is_empty());
+        assert!(!tail.truncated, "越界不报错，truncated 为假");
+        assert_eq!(tail.coverage.len(), 2);
+    }
+
+    /// ★ 判据：**老库没有 `coverage` 列**时，读取仍要能工作，且覆盖度答复是"**没有读数**"。
+    ///
+    /// 为什么单列一条：`migrate` 会给老库补这一列，但"没跑过迁移的库"照样能被读到（比如直接打开一个
+    /// 旧文件）。此时的正确答复是"未知"（空读数），**不是**让 `files.read` 整条失败 ——
+    /// 前者是"我们不知道抽全没有"，后者是"连内容都读不出来"。
+    #[test]
+    fn read_attachment_text_tolerates_an_old_table_without_the_coverage_column() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE attachments (id TEXT PRIMARY KEY);
+             CREATE TABLE attachment_text (
+               att_id TEXT NOT NULL, extractor TEXT NOT NULL, seq INTEGER NOT NULL,
+               kind TEXT NOT NULL, text TEXT NOT NULL, loc TEXT NOT NULL DEFAULT '',
+               src_hash TEXT NOT NULL, updated_at INTEGER NOT NULL,
+               PRIMARY KEY (att_id, extractor, seq)
+             );
+             INSERT INTO attachments (id) VALUES ('a1');
+             INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at)
+               VALUES ('a1', 'pdf.text@1', 0, 'para', '老库里的段', '', 'h1', 1);",
+        )
+        .unwrap();
+
+        let page = read_attachment_text_in_conn(&c, "a1", 0, 200).unwrap().unwrap();
+        assert_eq!(page.segments.len(), 1, "段照样读得出来（不许因为少了覆盖度列就整条失败）");
+        assert_eq!(page.segments[0].text, "老库里的段");
+        assert!(page.coverage.is_empty(), "缺列 ⇒ 没有覆盖度读数（未知），不是 complete");
+        assert!(read_attachment_text_coverage_in_conn(&c, "a1").unwrap().is_empty());
     }
 }

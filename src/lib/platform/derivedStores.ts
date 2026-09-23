@@ -21,7 +21,8 @@
 import type { Chunk, ChunkOwner } from "../extract/chunk";
 import type { ChunkStore } from "../extract/chunkStore";
 import type { AttachmentTextRow, AttachmentTextStore, ExtractStat } from "../extract/store";
-import type { ExtractedSegment } from "../extract/types";
+import { storedCoverageFrom } from "../extract/store";
+import type { ExtractCoverage, ExtractedSegment } from "../extract/types";
 import { applyOps, queryRows, type DerivedChunk, type DerivedInvoker, type DerivedOwner } from "./derivedTransport";
 
 /** `ChunkOwner`（TS 侧）→ `DerivedOwner`（线上形状）—— 两个类型同形，转换写成一处免得两边漂。 */
@@ -85,7 +86,14 @@ export function desktopDerivedStores(invoker: DerivedInvoker): {
       return needsExtractFromRows(rows, srcHash, extractorIds);
     },
 
-    async replace(attId, extractorId, srcHash, segments: readonly ExtractedSegment[], now) {
+    async replace(
+      attId,
+      extractorId,
+      srcHash,
+      segments: readonly ExtractedSegment[],
+      now,
+      coverage?: ExtractCoverage,
+    ) {
       await applyOps(invoker, [
         {
           op: "replaceAttachmentText",
@@ -93,6 +101,8 @@ export function desktopDerivedStores(invoker: DerivedInvoker): {
           extractor: extractorId,
           srcHash,
           now,
+          // 覆盖度随段一起落库（与同步实现同口径）；没有 ⇒ `''` ＝ **未知**（不是"完整"）
+          coverage: coverage === undefined ? "" : JSON.stringify(coverage),
           segments: segments.map((s) => ({ kind: s.kind, text: s.text, loc: s.loc })),
         },
       ]);
@@ -104,6 +114,15 @@ export function desktopDerivedStores(invoker: DerivedInvoker): {
 
     async segmentsOf(attId) {
       return queryRows<SegmentRowJson[]>(invoker, { op: "attachmentTextSegments", attId });
+    },
+
+    async coverageOf(attId) {
+      // Rust 只给原始行（`coverage` 是 JSON 字符串），**解析与"未知 ≠ 完整"的口径收在共用纯函数里**
+      const rows = await queryRows<{ extractor: string; coverage: string }[]>(invoker, {
+        op: "attachmentTextCoverage",
+        attId,
+      });
+      return storedCoverageFrom(rows);
     },
 
     async stats() {

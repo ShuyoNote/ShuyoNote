@@ -5585,12 +5585,18 @@ register({ id: "t.probe", title: "P", description: "", closeOnRun: false,
         // `__run` 的 try/catch 吞掉），最终表现为一条可见的命令执行错误——正是我们要的。
         let source = r#"register({ id: "t.loop", title: "L", description: "", closeOnRun: false,
   run: function(){ while(true){} } });"#;
-        let started = std::time::Instant::now();
         let err = run_command_msg_in_host_for_test(source, "t.loop", "", &RunState::default())
             .expect_err("死循环应当被循环预算截断成错误，而不是正常返回");
+        // ⚠️ 2026-09-23（AMD 在 Windows 全量并发下实测）：**不许拿墙钟断言"预算生效"**。
+        // 原来这条是 `started.elapsed() < 20s`，而全量 500 条并发会把它顶过 20 s ⇒ **负载假红**
+        // （单跑 0.45 s 绿；Windows 上全量 495 passed / 1 failed，红的就是它）。
+        // 改成按**成因**断言：循环上限是 Boa 的 `RuntimeLimit`，它会让 `eval` 返回含
+        // `loop iteration limit` 的 Rust 层错误（注册表据此归到 `loop_limit` 码，见 `plugin_error_code`）
+        // —— 这条与负载无关，而且它区分的是"预算截断"与"5 s 墙钟兜底"。
+        // 与仓里那条"凡是'要等外部东西'的判据都不要赌时间"同源。
         assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "循环预算没生效（跑到墙钟超时了）"
+            err.contains("loop iteration limit"),
+            "循环预算没生效（拿到的错误不是循环上限那条）：{err}"
         );
         assert!(!err.is_empty(), "错误信息不应为空");
     }
