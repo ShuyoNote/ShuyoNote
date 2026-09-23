@@ -519,9 +519,18 @@ function PageCrdtBinding({
     //    联网后若撞上血统护栏会**报冲突**而不是静默。要更准就得把"页所属空间"传进来（后续片）。
     const claim: PageClaimPort = {
       async claim(id) {
-        // ⚠️ 两处都得 await：`getActiveWorkspaceId()` 是 Promise，命令的返回值也是对象
-        //    （`{granted}`）—— 只有**明确 true** 才算拿到（与 `claimClient.ts` 同一口径）。
-        const spaceId = await api.getActiveWorkspaceId();
+        // ★ S9：用**这一页自己的空间**（`api.getPage` 回的行里有 `workspace_id`），而不是
+        //   "当前工作空间" —— 后者在**跨空间**打开页面时会问错空间（服务端按门禁拒掉 ⇒ 只落
+        //   "离线临时建"那一支：可用但**未裁定**）。
+        //   取不到（页不存在／命令失败）⇒ 如实 `console.warn` 再退回当前工作空间（不静默）。
+        let spaceId = "";
+        try {
+          const page = (await api.getPage(id)) as { workspace_id?: unknown } | null;
+          spaceId = typeof page?.workspace_id === "string" ? page.workspace_id : "";
+        } catch (e) {
+          console.warn("[crdt] 取这一页的空间失败，退回当前工作空间", e);
+        }
+        if (!spaceId) spaceId = await api.getActiveWorkspaceId();
         const res = await api.claimPageLineage({ space_id: spaceId, page_id: id });
         return res?.granted === true;
       },
