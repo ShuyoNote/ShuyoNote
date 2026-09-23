@@ -28,6 +28,7 @@
     "check:android-mobile-shell": "node scripts/android-mobile-shell.mjs --check",
     "android:app-icon": "node scripts/android-app-icon.mjs",
     "check:android-app-icon": "node scripts/android-app-icon.mjs --check",
+    "check:openssl-android": "node scripts/check-openssl-android.mjs",
     "gen:capabilities": "node scripts/gen-capabilities.mjs",
     "check:capabilities": "node scripts/check-capabilities.mjs",
     "check:doc-links": "node scripts/check-doc-links.mjs",
