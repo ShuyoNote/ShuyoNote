@@ -91,7 +91,7 @@ APK 地址与下载入口只在「关于」的 Android 分支；老清单（没�
 
 | 能力 | 移动端 | 为什么 / 边界落在哪 |
 |---|---|---|
-| **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 23 个命令带 `#[cfg(desktop)]`，**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
+| **聚合邮箱（含发信）** | ❌ 不做（2026-09-13 定） | 它走 `native-tls`（桌面用系统 TLS），移动端要为此从源码交叉编译 OpenSSL。Rust 侧 `mod email`/`mod smtp` 与 **31 个命令**带 `#[cfg(desktop)]`（2026-09-23 实查 `lib.rs`），**移动端这些命令不存在**；前端入口用 `emailSupported()` 隐藏 |
 | **插件运行时（Boa）** | ✅ **已修**（2026-09-13 真机复验：那条 panic 在日志里消失） | 见下面「Boa 的 nan-boxing 在 Android 上不成立」 |
 | **应用内更新（in-app updater）** | ✅ **Android 有**（2026-09-15 补齐，见 §2.6） | 说的是 `tauri-plugin-updater`——它**桌面专属**（`lib.rs` 里带 `#[cfg(desktop)]`）。⚠️ 但"这个插件不能用"**不等于**"Android 没有应用内更新"：Android 上走的是**我们自己实现的那条**（Rust 下载 + sha256 校验 + `FileProvider` 拉起系统安装器）。这一条原先写成"❌ 不做"，是当时**只有第一版**（只给「下载 APK」交给系统）留下的旧结论，2026-09-15 已实现第二步并真机验过 |
 

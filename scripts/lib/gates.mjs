@@ -42,6 +42,17 @@ export const GATES = [
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
   {
+    id: "check-doc-facts",
+    group: "contract",
+    label: "文档里的机器事实（门禁 / 能力 / 命令数）与代码一致",
+    cmd: "node scripts/check-doc-facts.mjs",
+    incident:
+      "这三类数字此前散在文档里**靠人手抄**：抄错不报错，只会让照着文档做的人做到一半发现文档是旧的。" +
+      "两条断言：① 注册表里每条门禁都要在 docs/TESTING.md 里有名字（上线当天抓到 7 条漏写）；" +
+      "② docs/TESTING.md 的「机器事实」块必须与代码逐字一致（数字取自 gates.mjs 与另两条门禁的自报输出，不重复实现）",
+    registered: "2026-09-23",
+  },
+  {
     id: "check-workflow-yaml",
     group: "contract",
     label: "workflow YAML 窄规则",

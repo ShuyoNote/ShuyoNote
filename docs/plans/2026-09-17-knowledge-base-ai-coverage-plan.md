@@ -254,7 +254,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
-| `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **契约半已冻结**（`deps.convertLegacy`，§15.8 第 7 项；`types.ts` ＋ `DEP_CAPABILITIES` ＋ 三条夹具已立）—— 现在抽不出来的原因是**平台实装与抽取器都还没写**，而实装要 LibreOffice headless | **抽取器 ＋ 平台实装：macOS**（2026-09-23 认领，他本机能 `brew install --cask libreoffice`）；**契约：AMD ✅ 已落** |
+| `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **代码侧已全落**（2026-09-23）：契约（AMD `eb67bb06`）＋ 抽取器 `src/lib/extract/legacy.ts`（macOS `d64ec291`）＋ 平台半（macOS `772c017b`：Rust 命令 `convert_legacy_office` 走 LibreOffice headless —— 临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须 OOXML；TS 在 `attachmentDeps` 里注入，Web stub 如实 reject ⇒ `provider_error`）。**仍缺的只有「真转换」那一次读数**：这台 macOS 上没有 `soffice`（也没有 brew），所以只有假转换器路径的判据；在装好 LibreOffice 的机器上跑一次即闭 | **契约：AMD ✅** ／ **抽取器 ＋ 平台半：macOS ✅** ／ **真转换读数：待有 LibreOffice 的机器** |
 | **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
 
 **已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**
@@ -1028,7 +1028,7 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
 | 1 | 加不加 `deps.convertLegacy` | **加**，且**不蹭 `vision` / 不许抽取器自己 spawn**。形状：`(bytes: Uint8Array, mime: string, opts: { to: string }) => Promise<Uint8Array>`。理由：① `.doc`/`.xls`/`.ppt` 是 **OLE 复合文档**，抽取层**解不了**，而"调外部程序 / 自带转换器"正是 `isolated.test.ts` 禁的那一类；② 契约本来就是**一个能力一个键**，加它是照既有形状填空；③ 它与前三者**形状都不同**（前三个是"内容 → 文本/图"，这个是"字节 → 字节"） |
 | 2 | **返回什么** | **只返回字节**（`Promise<Uint8Array>`）。`to` 是**目标 MIME**、由**抽取器**决定（`.doc`→docx、`.xls`→xlsx、`.ppt`→pptx）⇒ 调用方自己就是提出 `to` 的那个人，**刻意不返回 mime**（少一处能漂的地方）。**为什么用 MIME 而不是扩展名**：抽取层全程说 MIME（`ExtractInput.mime` / 注册表 `mimes`），再引入一套扩展名词汇就是第二套口径 |
 | 3 | **失败怎么算** | **一律 reject**（转换器不在 / 非零退出 / 超时 / 输出不是合法 OOXML）⇒ 抽取器映射成 `provider_error`（§15.3-7），与 `vision`/`transcribe` 同口径。**超时归平台实现**（LibreOffice headless 会挂），契约层不写超时参数 —— 与 `vision` 一致 |
-| 4 | **谁注入 / 谁落地** | 与前三者同：**平台层**（唯一构造点 `attachmentDeps(...)`）。⚠️ **实装未做** ⇒ 在那之前 `.doc`/`.xls` 一律 `provider_error`（**已知状态不是 bug**）。分工（2026-09-23）：**契约半（`ExtractDeps` ＋ `DEP_CAPABILITIES` ＋ 本节 ＋ conformance 夹具）归 AMD**；**抽取器 `ooxml.legacy@1` ＋ 平台实装归 macOS**（他本机能装 LibreOffice headless） |
+| 4 | **谁注入 / 谁落地** | 与前三者同：**平台层**（唯一构造点 `attachmentDeps(...)`）。✅ **2026-09-23 已落地**：抽取器 `src/lib/extract/legacy.ts`（`d64ec291`）＋ 平台半 `772c017b`（Rust `convert_legacy_office`：临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须是 OOXML；TS 适配器**不吞错误**；Web stub 如实 reject）。⚠️ **没装 LibreOffice 的机器仍一律 `provider_error`** —— 那是**如实答复不是 bug**（命令会给出一条点名怎么装的原话）。分工（2026-09-23）：**契约半归 AMD ✅**；**抽取器 ＋ 平台半归 macOS ✅**；**真转换读数**待有 LibreOffice 的机器 |
 
 落地形态（**契约半已落** —— 就是本节这张表 ＋ `ExtractDeps.convertLegacy` ＋ `DEP_CAPABILITIES` ＋ 下面的夹具；**抽取器与平台实装待 macOS**）：`ooxml.legacy@1` 认 `.doc`/`.xls`/`.ppt`
 （`application/msword` / `application/vnd.ms-excel` / `application/vnd.ms-powerpoint` ＋ 扩展名），
