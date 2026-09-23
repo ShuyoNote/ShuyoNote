@@ -45,7 +45,7 @@
 | **图片** | ❌ | `ImageNode` 是 `DecoratorNode`，**未覆写 `getTextContent`** ⇒ 默认空；只有默认空串的 `altText` |
 | **视频** | ❌ | `VideoNode` 同上，未覆写 |
 | **附件引用（各类文档）** | ❌ | `AttachmentRefNode` 同上，未覆写 |
-| **数据库块 / 表格** | ❌ | `DatabaseView.tsx:842` 直接写 `content_text: ""`；应用自己的注释也把 `table` 与 `image`/`embed` 并列 |
+| **数据库块 / 表格** | ❌（**2026-09-22 重核：证据引错了，缺口仍然成立**） | 原表引的 `DatabaseView.tsx:842` 那处 `content_text: ""` 其实是**「另存为模板」**那条路径（不是页面正文）。**真正的缺口**：数据库页的正文只由 `content_json` 派生（`contentText.ts::deriveContentText` → 写入路径 `docContent.ts` 的 `UPDATE pages SET content_text`），而它的**列 / 行 / 规则根本不进 `content_json`** ⇒ 全仓**没有任何一处**从列/行生成 `content_text`（已 grep 过）。`App.tsx:93` 那段注释（`table` 与 `image`/`embed` 并列）仍成立 |
 
 ### 2.3 应用自己知道这个缺口
 
@@ -459,6 +459,21 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 **交付**：关键帧 → VLM、音轨 → ASR；数据库块序列化；绘图块的节点-连线结构序列化。
 
 **验收**：① 一段 20 分钟会议视频能问出「第 12 分钟提到的截止日期」；② 数据库块能被「找出所有状态=进行中的条目」这类问题覆盖。
+
+#### P3 剩余两格的工作单（2026-09-22 勘察，AMD —— **只勘察与写单，没动别人的文件**）
+
+前提（已核）：页面正文的**唯一实现**是 `lib/contentText.ts::deriveContentText`（走 Lexical 的 `getTextContent`），
+写入路径是 `docContent.ts` 的 `UPDATE pages SET content_text`；**哪一块能进正文，取决于它有没有覆写 `getTextContent`**
+（Mermaid / 公式 / 绘图已各自覆写）。⇒ 这两格都落在**别人的模块**里，按上面那两张表的口径，先写清单交回。
+
+| 格 | 现状（取证） | 缺什么 | 交付形状（建议） | 判据（建议） | 归属（按 git 作者） | 风险 / 边界 |
+|---|---|---|---|---|---|---|
+| **数据库块**（P3-②） | 数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成 `content_text`。原表引的 `DatabaseView.tsx` 那行是「另存为模板」 | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::writeContentTextIfChanged` 那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `writeContentTextIfChanged` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
+| **绘图块**（P3-①） | **已有**：`lib/drawingText.ts` 的 `excalidrawSceneText`（只取**图上文字标签**）＋ `DrawingNode.getTextContent` 返回它 ⇒ **scene text 进正文这一半已完成** | **节点 / 连线结构**（P3 原文："绘图块的节点-连线结构序列化"，`loc` ＝ 块 id） | 新增 `excalidrawStructureText(elements)`（如 `矩形"审批" →箭头→ 矩形"发布"`），在 `getTextContent` 里与 scene text **并列**输出 | ① 结构文本**确定性**（同 scene ⇒ 同文本）；② **纯装饰元素不许写成噪声**（无文字的自由画笔/背景矩形应当被忽略 —— 有判据钉住）；③ 不许改变既有 scene-text 判据的期望 | `drawingText.ts` 作者 **cnzen**；`DrawingNode.tsx` / 内容文本链 **fengjt007** | ⚠️ 绘图块很多时正文会显著变长；结构文本的**方言**要定下来（谁写箭头、嵌套怎么表达），否则后人各写一套 |
+
+> **一句话交接**：这两格都**不需要新契约**（不是 `deps` 能力、不是抽取器），改动落在
+> "页面正文派生 ＋ 两个块的 `getTextContent`"上 ⇒ 归属按 git 作者走（fengjt007 / cnzen），
+> 与抽取层（AMD 这条线）**零重叠**。谁认领说一声，我可以出纯函数与判据（不含编辑器接线）—— 那部分是我的车道。
 
 ### P4 —— 跨库总结管线 ＋ 强制引用
 
