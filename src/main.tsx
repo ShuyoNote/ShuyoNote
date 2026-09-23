@@ -11,6 +11,7 @@ import { installBackBridge } from "./lib/overlayStack";
 import { setCrdtPlaneImpl, setCrdtRemoteApplier } from "./lib/crdt/plane";
 import { roundTripContentJson } from "./lib/crdt/yDocBridge";
 import { mergeRemotePageState } from "./lib/crdt/pageBinding";
+import { toast } from "./store/toast";
 
 // 移动端壳（Android）的两条桥。**必须在 React 挂载之前装好**：
 //   · `installViewportInsets()` 定义 `window.__SHUYONOTE_INSETS__`——壳层在页面
@@ -28,7 +29,16 @@ installBackBridge();
 setCrdtPlaneImpl(roundTripContentJson);
 // S4b-1b：**远端来的状态怎么落地**同样在这里注册（同步路径只认签名、不 import 实现：
 // `web.ts` 会被 Node 侧脚本加载，它一 import `pageBinding` 就会把编辑器节点表拖进去）。
-setCrdtRemoteApplier((db, pageId, state) => mergeRemotePageState(db, pageId, state, Date.now()));
+setCrdtRemoteApplier((db, pageId, state) => {
+  const res = mergeRemotePageState(db, pageId, state, Date.now());
+  // ★ S8：**血统冲突必须报出去**（不许静默）—— 那意味着这一页出现了两条互不相关的编辑历史：
+  //   本机那一版**原样保留、没有合并**（合了就会"一块变两块"，见 `mergeability.test.ts` ①）。
+  //   护栏本身已经 console.warn 过一次；这里再给用户可见的一次提示。
+  if (res.lineageConflict) {
+    console.error("[crdt] 血统冲突：拒绝合并（本机版本保留）", { pageId, ...res.lineageConflict });
+    toast(`这一页出现了两条互不相关的编辑历史，已保留本机版本（未合并）`, "error");
+  }
+});
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
 // module top-level; define `process` in the browser so it doesn't throw
