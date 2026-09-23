@@ -5,7 +5,7 @@
 // 早先用裸 `(\d+)/(\d+)` 兜底解析读数，把 `check-plugin-hosting.mjs` 输出里的进度数字
 // 当成了 "2280/4560 断言" 写进汇总表。下面 "绝不把无关数字当断言数" 那条就是它的回归用例。
 import { describe, expect, it } from "vitest";
-import { baselineViolations, changelogNumberMismatches, countsForGate, countsFromCargoOutput, countsFromOutput, countsFromSmokeJson, countsFromVitestJson, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, staleBaselineNotices, summaryLine, upsertSuiteStatus } from "./report-core.mjs";
+import { DEFAULT_BASELINE_NOTE, baselineNoteFor, baselineViolations, changelogNumberMismatches, countsForGate, countsFromCargoOutput, countsFromOutput, countsFromSmokeJson, countsFromVitestJson, extractFailures, extractSkips, markdownReport, mergeBaselineCounts, outputTail, staleBaselineNotices, summaryLine, upsertSuiteStatus } from "./report-core.mjs";
 
 describe("读数解析（countsFromOutput）", () => {
   it("认仓库的中文汇总格式：[结果] N 通过 / M 失败", () => {
@@ -198,6 +198,29 @@ describe("基线太旧的提示（staleBaselineNotices：**提示**，不是失�
       }),
       "阈值 >100% 时，「下降」也必须被显式排除挡住（否则它会伪装成「下界太旧」）",
     ).toEqual([]);
+  });
+});
+
+describe("抬基线时**保留手写历史**（baselineNoteFor）", () => {
+  const HISTORY = "各门禁的下线。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线），登记进 gates.rust。";
+
+  it("★ 已有历史 ⇒ **逐字**保留（抬读数不许把它抹掉——那段历史就是 `note` 存在的理由）", () => {
+    expect(baselineNoteFor(HISTORY)).toBe(HISTORY);
+  });
+
+  it("首次建立（空 / 缺失 / 只有空白）⇒ 写默认说明，别写空 `note`", () => {
+    expect(baselineNoteFor("")).toBe(DEFAULT_BASELINE_NOTE);
+    expect(baselineNoteFor("   \n")).toBe(DEFAULT_BASELINE_NOTE);
+    expect(baselineNoteFor(undefined)).toBe(DEFAULT_BASELINE_NOTE);
+    expect(baselineNoteFor(null)).toBe(DEFAULT_BASELINE_NOTE);
+    // 读基线文件失败时 `readBaseline()` 给的是**对象**，不是字符串 ⇒ 同样走默认（别把对象写进 JSON）
+    expect(baselineNoteFor({ junk: true })).toBe(DEFAULT_BASELINE_NOTE);
+  });
+
+  it("默认说明自己要被认成「没有历史」（否则第二次抬基线会把默认说明当历史留下）", () => {
+    // 这条钉的是"默认说明不是历史"：它必须与真历史一样能往返，但空值判定只看**内容非空**
+    expect(baselineNoteFor(DEFAULT_BASELINE_NOTE)).toBe(DEFAULT_BASELINE_NOTE);
+    expect(DEFAULT_BASELINE_NOTE).toContain("--update-baseline");
   });
 });
 
