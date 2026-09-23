@@ -35,6 +35,9 @@ mod page_crdt;
 // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**同步载荷里的 CRDT 状态字段**（桌面侧）—— 与前端
 // `src/lib/crdt/wireState.ts` 成对（同一套语义：没有 ⇒ 走今天那条路、版本不认识 ⇒ 不猜、坏载荷 ⇒ 如实报）。
 mod crdt_wire;
+// 桌面「近实时」流通道的**纯函数内核**（SSE 帧解析 ＋ 重连退避）—— 设计稿
+// `docs/plans/2026-09-23-desktop-near-realtime-stream-design.md` §7 第 1 步：先有判据。
+mod sync_stream;
 // 旧二进制 Office → OOXML 的平台转换器（`deps.convertLegacy` 的桌面实装；抽取器在 TS 侧）。
 // 命令面：`convert_legacy_office(data, to)`。详见该文件头注（三条口径：`to` 由抽取器定 / 失败一律 Err / 临时件自清）。
 mod legacy_convert;
