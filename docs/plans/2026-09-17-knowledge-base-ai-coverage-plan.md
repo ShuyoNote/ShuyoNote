@@ -45,7 +45,7 @@
 | **图片** | ❌ | `ImageNode` 是 `DecoratorNode`，**未覆写 `getTextContent`** ⇒ 默认空；只有默认空串的 `altText` |
 | **视频** | ❌ | `VideoNode` 同上，未覆写 |
 | **附件引用（各类文档）** | ❌ | `AttachmentRefNode` 同上，未覆写 |
-| **数据库块 / 表格** | ❌ | `DatabaseView.tsx:842` 直接写 `content_text: ""`；应用自己的注释也把 `table` 与 `image`/`embed` 并列 |
+| **数据库块 / 表格** | ❌（**2026-09-22 重核：证据引错了，缺口仍然成立**） | 原表引的 `DatabaseView.tsx:842` 那处 `content_text: ""` 其实是**「另存为模板」**那条路径（不是页面正文）。**真正的缺口**：数据库页的正文只由 `content_json` 派生（`contentText.ts::deriveContentText` → 写入路径 `docContent.ts` 的 `UPDATE pages SET content_text`），而它的**列 / 行 / 规则根本不进 `content_json`** ⇒ 全仓**没有任何一处**从列/行生成 `content_text`（已 grep 过）。`App.tsx:93` 那段注释（`table` 与 `image`/`embed` 并列）仍成立 |
 
 ### 2.3 应用自己知道这个缺口
 
@@ -204,11 +204,17 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 ## 8. 分步落地（每步独立交付价值，顺序不可颠倒）
 
-### 8.0 现状台账（**一处看全**，2026-09-17 15:3x）
+### 8.0 现状台账（**一处看全**；2026-09-17 建 · **2026-09-22 刷新**，见 §8.0.2）
 
 > **为什么要有这一节**：进展原先散在 P1 / P2 / §15.8 各处的引用块里（**五处**），
 > 接手的人要翻五处才能拼出全貌 —— 而"全貌"恰恰是接手时第一件需要的东西。
 > 这里只做**索引**：每行的"判据"列指到测试文件，"细节"在对应章节的引用块里（那些仍是原始记录）。
+>
+> ★ **2026-09-22 刷新**：本节两张表按**当天实测**重写过一次（被验 commit 见 §8.0.2）。
+> 09-17 原表至少有 **6 行"未做"已不成立**（Rust 建表与调用 / 检索侧 / `files.read` / `av.transcript@1` /
+> `image.caption` / 应用侧「开始索引」）—— 它们**没有被删掉**，而是移进下面的「**已关闭**」表并附
+> "现在由什么证"，免得"已做"与"未做"两头都读错。原始 09-17 版本在 git 历史里
+> （`git show <该次提交>:docs/plans/2026-09-17-knowledge-base-ai-coverage-plan.md`）。
 
 **已落地（全部在 TS 侧 ⇒ 都能在 Windows 上自验）**
 
@@ -232,18 +238,32 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | PNG 编码器（纯 JS，两平台共用） | `pngEncode.ts` | `pngEncode.test.ts` |
 | Web 平台合并写收口（501 次全库快照 → 1 次） | `platform/sqliteStore.ts` | `extract/platformWiring.test.ts` |
 | **Web 端 PDF 渲染桩补完**（Mac 侧，真 Chromium 实测） | `platform/web.ts` | Mac 侧 |
+| **音视频转写** `av.transcript@1`（2026-09-22，AMD） | `extract/avTranscript.ts` ＋ `ExtractDeps.transcribe?` 契约（§15.8 第 6 项） | `avTranscript.test.ts` ＋ conformance 夹具 `av/转写` / `av/没配转写`；平台实装 `ai/localTranscribe.ts` |
+| **图像语义描述** `image.caption@1`（第二档，**只在 OCR 判 `empty` 时被调度**） | `extract/image.ts` | `image.test.ts` ＋ 夹具 `image/语义描述（第二档）` |
+| **P2 后半：块级嵌入 ＋ 混合检索** | `semanticEmbed.ts` · `platform/chunkSearch.ts`（向量加分**有界** `CHUNK_VECTOR_BONUS=6`）· Rust 侧 `src-tauri/src/search.rs` | `semanticEmbed.test.ts` · `platform/chunkSearch.test.ts` · `platform/pageChunks.test.ts` |
+| **派生层接进检索与工具**（`files.search` / `files.read` 两个能力） | `src-tauri/src/capabilities_gen.rs` ＋ `src-tauri/src/plugins.rs`（`cap_files_search` / `cap_files_read`） | `check-capabilities` 门禁 |
+| **应用侧「开始索引」触发与进度** | `libraryIndexing.ts`（运行模型，与 DOM 解耦）＋ AI 设置面板的按钮 | `libraryIndexing.test.ts` · `indexPage.test.ts` |
+| **跨库总结 ＋ 强制引用**（P4） | `ai/librarySummary.ts` | `ai/librarySummary.test.ts` ＋ `ai/librarySummary.live.test.ts`（真模型：回链**全部来自输入**、`droppedInventedRefs=0`） |
+| **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
+| **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
 
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
-| Rust 侧建表与调用（`db.rs`） | **本机不能自验**（§12.1） | 需 Mac / AMD 复核 |
-| 检索侧：块级嵌入写入 / BM25+向量混合 / `files.search` / **查询侧归一化** | 同上（Rust） | **Mac（2026-09-17 已认领）** |
-| `files.read` 工具 | 改 `capabilities.json` ⇒ 连带 `plugins.rs` + 重新生成 + 过门禁，**本机不能自验** | 待可复核环境 |
 | `ooxml.legacy@1`（旧 `.doc` / `.xls`） | 需 LibreOffice headless，**本机没装** | 未定 |
-| `av.transcript@1`（音视频） | 等 **§13 第 7 项**拍板（远程 API vs 本机推理） | **AMD 独占** |
-| `image.caption`（VLM 语义描述） | P3；§13 第 2 项 | 未定 |
-| 应用侧「开始索引」触发与进度 | 未做 | 未定 |
+| **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
+
+**已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**
+
+| 原"未做"项 | 现在由什么证 |
+|---|---|
+| Rust 侧建表与调用（`db.rs`） | `src-tauri/src/db.rs`（15 处）＋ `derived_transport.rs`（55 处）；`search.rs` 68 处 |
+| 检索侧：块级嵌入写入 / BM25+向量混合 / `files.search` / 查询侧归一化 | 见「已落地」表的 P2 后半那行（`semanticEmbed.ts` / `chunkSearch.ts` / Rust `search.rs`） |
+| `files.read` 工具 | `capabilities_gen.rs` 里有 `files.search` 与 `files.read`；`plugins.rs` 实现 `cap_files_search` / `cap_files_read` 并派发 |
+| `av.transcript@1`（音视频） | **2026-09-22 落地**（AMD，含两个本机 ASR 的真读数）；那条"等 §13 第 7 项拍板"已由 owner 选「甲」+ 本机端点收口 |
+| `image.caption`（VLM 语义描述） | 已注册为第二档，只在 OCR 判 `empty` 时被调度 |
+| 应用侧「开始索引」触发与进度 | `libraryIndexing.ts` 的运行模型 ＋ AI 设置面板的「开始索引」按钮（`AiSettingsForm.tsx`） |
 
 **故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
 （docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
@@ -265,6 +285,25 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > ⚠️ **自检的边界**：以上全部是 **Windows 上能跑的**。方案里"未做"的那三项
 > （Rust 侧 / 能力注册表那条链）**不在其中** —— 它们的判据只能由能跑 `cargo test` 的机器给出（见 §8.1）。
 > 换句话说：**这份自检证明的是"我认领的那半边"，不是"整个方案"。**
+
+#### 8.0.2 交付自检（**2026-09-22 刷新**，被验 commit `0fd0dbcc`）
+
+**同 8.0.1 的口径：不把"刷完了"写成一句声称 —— 下面是可复核的数字与命令**（全部在 Windows 本机跑的）。
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 台账引用是否名副其实 | 本节两张表里的 **34 个路径**逐个 `Test-Path`（按目录前缀解析：`extract/xxx` → `src/lib/extract/xxx`、`platform/xxx` → `src/lib/platform/xxx`、裸文件名 → `src/lib/`） | **33 个解析成功**；★ **抓到 1 处错路径**：原表的 `capabilities.json` 其实不存在，真文件是 `src-tauri/capabilities/default.json`（该行已随「已关闭」重写，不再留错路径） |
+| 类型 | `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` | **exit=0** |
+| 单测 | `node node_modules/vitest/vitest.mjs run` | **178 文件 / 1893 通过 ＋ 1 跳过 / 0 失败** |
+| 文档链接 | `node scripts/check-doc-links.mjs` | **127 个 .md / 726 条相对链接全部可达**，方案索引齐全（72 篇），exit=0 |
+| 门禁（默认四组，与 8.0.1 同一命令） | `node scripts/test-report.mjs --group contract,smoke,sync,plugin` | **26 条全绿 / 失败 0 / 跳过 0**（含 `tsc`、`vitest` 1893·1894、`smoke-web` 363/363、`two-device-sync` 84/84、`check-derived-writers`、`check-capabilities`、`check-overlay-registry` 26/26） |
+| 抽取器注册表（**实读，不照抄**） | `src/lib/extract/registry.ts` | **10 个**：`ooxml.docx@1` · `ooxml.xlsx@1` · `ooxml.pptx@1` · `image.ocr@1` · `image.caption@1` · `pdf.text@1` · `pdf.ocr@1` · `text.plain@1` · `text.html@1` · `av.transcript@1` |
+
+> ⚠️ **边界（与 8.0.1 同一条口径，别读宽）**：这份自检证明的是**本机（Windows）能跑的那半边**。
+> 不在其中的是：`ooxml.legacy@1`（需 LibreOffice headless）、**P3 的数据库块 / 绘图结构**（还没人做），
+> 以及"真机 / 人手"类验收（不在本方案内）。
+> Rust 侧那几项**在 dev 上已有文件与门禁级证据**（`check-derived-writers` 57 个 `.rs`／生产写入 0 处／豁免 1，
+> `check-capabilities` 绿），但它们的**行为读数**仍归能跑 `cargo test` 的机器（§8.1）。
 
 
 ### 8.1 被「**本机不能自验**」卡住的三项 —— 附施工单（给能跑 `cargo test` 的那一侧）
@@ -420,6 +459,31 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 **交付**：关键帧 → VLM、音轨 → ASR；数据库块序列化；绘图块的节点-连线结构序列化。
 
 **验收**：① 一段 20 分钟会议视频能问出「第 12 分钟提到的截止日期」；② 数据库块能被「找出所有状态=进行中的条目」这类问题覆盖。
+
+#### P3 剩余两格的工作单（2026-09-22 勘察，AMD —— **只勘察与写单，没动别人的文件**）
+
+前提（已核）：页面正文的**唯一实现**是 `lib/contentText.ts::deriveContentText`（走 Lexical 的 `getTextContent`），
+写入路径是 `docContent.ts` 的 `UPDATE pages SET content_text`；**哪一块能进正文，取决于它有没有覆写 `getTextContent`**
+（Mermaid / 公式 / 绘图已各自覆写）。⇒ 这两格都落在**别人的模块**里，按上面那两张表的口径，先写清单交回。
+
+| 格 | 现状（取证） | 缺什么 | 交付形状（建议） | 判据（建议） | 归属（按 git 作者） | 风险 / 边界 |
+|---|---|---|---|---|---|---|
+| **数据库块**（P3-②） | 数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成 `content_text`。原表引的 `DatabaseView.tsx` 那行是「另存为模板」 | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::writeContentTextIfChanged` 那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `writeContentTextIfChanged` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
+| **绘图块**（P3-①） | **已有**：`lib/drawingText.ts` 的 `excalidrawSceneText`（只取**图上文字标签**）＋ `DrawingNode.getTextContent` 返回它 ⇒ **scene text 进正文这一半已完成** | **节点 / 连线结构**（P3 原文："绘图块的节点-连线结构序列化"，`loc` ＝ 块 id） | 新增 `excalidrawStructureText(elements)`（如 `矩形"审批" →箭头→ 矩形"发布"`），在 `getTextContent` 里与 scene text **并列**输出 | ① 结构文本**确定性**（同 scene ⇒ 同文本）；② **纯装饰元素不许写成噪声**（无文字的自由画笔/背景矩形应当被忽略 —— 有判据钉住）；③ 不许改变既有 scene-text 判据的期望 | `drawingText.ts` 作者 **cnzen**；`DrawingNode.tsx` / 内容文本链 **fengjt007** | ⚠️ 绘图块很多时正文会显著变长；结构文本的**方言**要定下来（谁写箭头、嵌套怎么表达），否则后人各写一套 |
+
+> **一句话交接**：这两格都**不需要新契约**（不是 `deps` 能力、不是抽取器），改动落在
+> "页面正文派生 ＋ 两个块的 `getTextContent`"上 ⇒ 归属按 git 作者走（fengjt007 / cnzen），
+> 与抽取层（AMD 这条线）**零重叠**。谁认领说一声，我可以出纯函数与判据（不含编辑器接线）—— 那部分是我的车道。
+>
+> ★ **2026-09-22：纯函数与判据这一半已经落地**（AMD；**没有碰任何 editor / 数据库文件**）：
+> `src/lib/databaseText.ts` ＋ `src/lib/databaseText.test.ts`（`databaseTextOf`）、
+> `src/lib/drawingStructureText.ts` ＋ `src/lib/drawingStructureText.test.ts`（`excalidrawStructureText`），
+> **共 22 条判据**。三条写进代码头注的设计决定（接线方务必读一眼）：
+> ① **不发明行 ref 的内联方言** —— `databaseTextOf` 返回 `{ text, rowRefs, truncated }`，
+> 行回链要不要挂 `[[标题]]` 由接线侧定；② **"规则"由调用方渲染成人话**（`rules?: string[]`），
+> 纯函数不认识视图 `config` 的 JSON 方言、也不猜；③ 两格都**空输入 ⇒ 空串**（接线侧据此**不写**正文），
+> 数据库超上限时**明说**还剩多少行没进正文。接线形态见上表（数据库走 `writeContentTextIfChanged` 那条既有模式；
+> 绘图是 `sceneText ＋ structureText` **并列**，不是替代）。
 
 ### P4 —— 跨库总结管线 ＋ 强制引用
 

@@ -10,7 +10,7 @@ import { blobStore } from "../lib/platform/blobStore";
 import { toast } from "../store/toast";
 import { inputDialog } from "../store/input";
 import { useNotes } from "../store/notes";
-import { excalidrawSceneText } from "../lib/drawingText";
+import { excalidrawSearchText } from "../lib/drawingText";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
@@ -159,7 +159,10 @@ export default function DrawingEditorModal() {
         mime: "application/json",
         data: Array.from(new TextEncoder().encode(json)),
       });
-      const text = excalidrawSceneText(scene.elements);
+      // ★ P3-①（2026-09-23）：正文要同时带**标签**与**节点/连线结构** —— 此前只有标签，
+      //   于是"审批 → 发布"这种关系在图里有、在正文里没有（搜"谁指向发布"找不到）。
+      //   拼接口径收在 `excalidrawSearchText` 里（单一来源），调用点不自己拼。
+      const text = excalidrawSearchText(scene.elements);
       const editor = useEditorStore.getState().editor;
       if (editor) {
         editor.update(() => {

@@ -9,7 +9,7 @@ export interface ExcalidrawSceneElementLike {
 }
 
 /** Collect the text of every Excalidraw text element (labels, notes). */
-export function excalidrawSceneText(elements: ExcalidrawSceneElementLike[]): string {
+export function excalidrawSceneText(elements: readonly ExcalidrawSceneElementLike[] | undefined): string {
   const out: string[] = [];
   for (const el of elements ?? []) {
     if (el && el.type === "text" && typeof el.text === "string" && el.text.trim()) {
@@ -20,6 +20,51 @@ export function excalidrawSceneText(elements: ExcalidrawSceneElementLike[]): str
 }
 
 /** True when a scene has at least one drawable element (non-deleted). */
-export function excalidrawSceneHasContent(elements: ExcalidrawSceneElementLike[]): boolean {
+export function excalidrawSceneHasContent(elements: readonly ExcalidrawSceneElementLike[] | undefined): boolean {
   return (elements ?? []).some((e) => e && e.isDeleted !== true);
 }
+
+// ── P3-①（2026-09-23）：**节点 / 连线结构**进正文 ────────────────────────────────────────
+//
+// 上面那半边（`excalidrawSceneText`）只取**图上文字标签** —— 于是"审批 → 发布"这种**关系**
+// 在图里有、在正文里没有：搜"审批"找得到这一页，搜"谁指向发布"找不到。
+//
+// ⚠️ **结构那一半的实现不在这里**：它在 `src/lib/drawingStructureText.ts`（AMD，2026-09-23，
+// 方案 P3-① 的纯函数那半）。本文件只负责**把两半合成"进正文的全文"** —— 这是刻意的：
+// 一开始我在本文件里也写了一份结构实现，与他的**同一分钟内撞车**（两套方言、同一个函数名）；
+// 处置＝**保留他那一份**（它的定序与输入顺序无关，比"按元素顺序"更强），本文件退回"合成层"。
+// 这段历史写在这里，是为了让后人别再各写一套 —— 方案 P3 的"方言要定死"说的就是这个。
+//
+// 合成口径（**单一来源**）：`sceneText` 在前、`structureText` 在后，换行分隔；
+// 任一半为空就不加空行。散在调用点上拼，迟早出现"某处漏拼结构文本" —— 那正是这格要消灭的缺口。
+//
+// 边界（两条，写清楚免得被读成"全都覆盖了"）：
+//   · ★ **存量绘图块仍是旧快照**：节点里的 `text` 是**保存那一刻**算出来的 ⇒ 已存在的绘图要带上
+//     结构文本，得**重新打开并保存**那一次绘图（或另做批量重算入口）。这是"正文文本由编辑器那一侧算"
+//     这条既有模式的必然结果（与 P3-② 同源），不是遗漏；
+//   · **总长有上限**：一张上千节点的图足以把搜索索引那一列撑爆，所以这里按字符数封顶并**明说截断**
+//     （结构那一半自己不加上限，因为它不知道标签占了多少）。
+
+import { excalidrawStructureText } from "./drawingStructureText";
+
+/** 进正文全文的字符上限（标签 ＋ 结构）。超了就截断并标注 —— 不许安静地写一个巨型正文。 */
+export const MAX_DRAWING_TEXT_CHARS = 20_000;
+
+/** 截断标注（同时是判据的抓手）。 */
+export const DRAWING_TEXT_TRUNCATED = "…（绘图文本已截断）";
+
+/**
+ * 一个绘图块**进正文的全文**：标签（scene text）＋ 结构（连线/节点）。
+ *
+ * 为什么要有这一个函数、而不是让调用点自己拼：**拼接顺序、分隔符与长度上限都属于口径**。
+ */
+export function excalidrawSearchText(elements: ExcalidrawStructureInput): string {
+  const joined = [excalidrawSceneText(elements), excalidrawStructureText(elements).text]
+    .filter(Boolean)
+    .join("\n");
+  if (joined.length <= MAX_DRAWING_TEXT_CHARS) return joined;
+  return `${joined.slice(0, MAX_DRAWING_TEXT_CHARS)}${DRAWING_TEXT_TRUNCATED}`;
+}
+
+/** 两半都只认这几个字段（结构那一半的输入形状见 `drawingStructureText.ts`）。 */
+type ExcalidrawStructureInput = Parameters<typeof excalidrawStructureText>[0];

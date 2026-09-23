@@ -452,6 +452,12 @@ export function decide({ all, expected, patch = { expected: null, markers: [] },
     const matched = candidates.find(
       (c) => opensslDirMatches(opensslDir.expected, c, { caseInsensitive: !!opensslDir.caseInsensitive }) === true,
     );
+    // ⚠️ **残余假设（写下来，别让后人以为这条管得比实际多）**："候选里有一个对得上" ⇒ 绿。
+    //    也就是说：如果一份产物**同时**链了钉的前缀**和**第二份 OpenSSL（另一条 link-search），
+    //    这条判据**不会**红 —— 而链接顺序会决定符号取自哪一份。
+    //    要盖住它得再进一步：**每个"含 crypto 库文件"的候选目录都必须与声明前缀对得上**
+    //    （`scripts/lib/sm-library-source.mjs` 已有按目录扫库文件的能力，可以直接复用）。
+    //    现在不做，是因为它在真实产物上还没出现过（Windows 那份的多余候选是 MSVC 的 atlmfc，不含 crypto）。
     if (!candidates.length) {
       notices.push(
         `声明了 SHUYONOTE_EXPECT_OPENSSL_DIR=${opensslDir.expected}，但产物里**没解析出 link-search 目录**` +
