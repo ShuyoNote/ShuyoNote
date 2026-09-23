@@ -586,6 +586,10 @@ pub fn run() {
             sync::team_get_session,
             sync::team_get_me,
             sync::team_get_server_email,
+            // 冲刺 CRDT S9（2026-09-23）：**血统 claim** —— 桌面侧与 web 侧同端点
+            // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
+            // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
+            sync::claim_page_lineage,
             sync::list_sync_history,
             sync::clear_sync_history,
             sync::team_list_orgs,

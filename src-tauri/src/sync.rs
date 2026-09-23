@@ -1414,6 +1414,138 @@ pub fn team_get_server_email(db: State<'_, Db>, server_url: String) -> Result<Op
     Ok(get_auth_email(&c, &server_url))
 }
 
+// ---- S9 桌面侧（2026-09-23）：CRDT 血统 claim ----
+//
+// 与 `src/lib/platform/web.ts` 的 `claim_page_lineage` **成对**：同一端点
+// （`POST {server}/lineage-claim`）、同一取配置口径、同一结果形状。
+//
+// ⚠️ 路径**没有 `/sync` 前缀**：服务端把 `sync_routes` 挂在根上（与 `/push` 同一形状）。
+//    上游（TS 侧）第一版写成 `/sync/lineage-claim`，**部署后探针实测 404**
+//    （`/lineage-claim` 回 401＝路由在、只是没带鉴权）⇒ 已于 `f45ab8c3` 改正。
+//    本命令照改后的口径写：**跨仓路径这种东西上线后必须用真探针核一遍**。
+//
+// 为什么要有它：在此之前这条命令**只登记为 web 专属**（`scripts/check-web-commands.mjs`
+// 的 `WEB_ONLY_COMMANDS`）⇒ 桌面侧 `claimVerdict` 永远拿不到端口 ⇒ 一直落"离线临时建"那
+// 一支（**不报错**，但服务端的"首写者裁定"在桌面上从未生效）。接上它才是两侧同行为。
+
+/// claim 的入参（与前端 `api.claimPageLineage({ space_id, page_id })` 成对）。
+#[derive(Deserialize)]
+pub struct LineageClaimArgs {
+    pub space_id: String,
+    pub page_id: String,
+}
+
+/// claim 的结果形状 —— 与 `web.ts` 那一支**逐字对齐**（界面侧 `src/editor/Editor.tsx`
+/// 按 `res.unavailable` / `res.granted` 读）。
+#[derive(Serialize)]
+pub struct LineageClaimResult {
+    /// 只有服务端**真回了话**才有意义：`true` ＝ 本机是这一页的首写者。
+    pub granted: bool,
+    /// 只有"**问不到**"（没配同步／网络不通／401／5xx／载荷读不懂）时才出现 ⇒ 界面侧见到它
+    /// 就把这次 claim 当异常交给 `claimVerdict` 归一成 `unavailable`（离线临时建，照旧能写）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<bool>,
+}
+
+impl LineageClaimResult {
+    /// 服务端**裁定过了**（拿到或没拿到都是裁定）。
+    fn decided(granted: bool) -> Self {
+        Self { granted, unavailable: None }
+    }
+    /// **问不到** —— 这不是错误，是"离线"那一支（离线可用性不能让路）。
+    fn offline() -> Self {
+        Self { granted: false, unavailable: Some(true) }
+    }
+}
+
+/// ★ **纯函数**：把一次 HTTP 回话映射成结果 —— 判据只钉这一处，与前端 `crdt/claimClient.ts`
+/// 的三条口径成对：
+///   ① 只有 `granted === true` 才算拿到（缺字段／别的类型 ⇒ denied，**不猜**）；
+///   ② **403 ⇒ denied**：那不是"问不到"，而是"这一页不是你的／没这个权利"
+///      ⇒ 不许混进离线那一支（混进去就会静默地又建一条血统）；
+///   ③ 其余非 2xx（含 401／5xx）⇒ `offline`（＝"现在问不到"）；
+///   ④ 2xx 但载荷读不懂 ⇒ 同样 `offline`（**不猜**成 granted）。
+fn lineage_claim_verdict(status: u16, body: Option<&serde_json::Value>) -> LineageClaimResult {
+    if status == 403 {
+        return LineageClaimResult::decided(false);
+    }
+    if !(200..300).contains(&status) {
+        return LineageClaimResult::offline();
+    }
+    match body {
+        Some(v) => LineageClaimResult::decided(v["granted"] == serde_json::Value::Bool(true)),
+        None => LineageClaimResult::offline(),
+    }
+}
+
+/// 从库里取 claim 要用的三件（`server_url` / `token` / `device_id`）。
+///
+/// **没有同步配置 ⇒ `None`**（＝"用不了"，**不是错误**）。抽成独立同步函数是为了让判据
+/// 能直接钉"没有配置 ⇒ 不 claim"这条（与 `web.ts` 同一分支），不必起一个 Tauri app。
+///
+/// 取配置的口径与 `web.ts::claim_page_lineage` 完全一致：第一个配了 `server_url` 的档案
+/// （`ORDER BY ws_id`），token 优先用 `auth_sessions` 里那份会话、退回档案里那份；
+/// `device_id` 用**应用级**那一个（与同步请求同一个 id ⇒ 服务端看到的"设备"是同一台）。
+fn claim_config(c: &Connection) -> Result<Option<(String, String, String)>, String> {
+    let profile: Option<(String, String)> = c
+        .query_row(
+            "SELECT server_url, token FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(match profile {
+        None => None,
+        Some((server_url, profile_token)) => {
+            let token = get_auth_token(c, &server_url).unwrap_or(profile_token);
+            let device_id = device_id(c).unwrap_or_default();
+            Some((server_url, token, device_id))
+        }
+    })
+}
+
+/// 冲刺 S9 桌面侧：把"这一页的首条 CRDT 血统归谁"问同步服务（`POST /lineage-claim`）。
+///
+/// 与 web 侧（`src/lib/platform/web.ts` 的 `claim_page_lineage`）同端点、同口径；
+/// 服务端那一侧是 `shuyonote-sync-server` 的 `sync::lineage_claim`。
+///
+/// ⚠️ **不许对"正常情况"抛异常**（2026-09-23 的教训：第 38 轮浏览器门禁抓到
+/// `[web] invoke error claim_page_lineage` —— 没有同步配置时抛异常会被平台 invoke 层记成一条
+/// error）。所以"没有同步配置"与"网络不通"都用**结果标记**回（`offline()`）。
+/// 只有**真出了不该出的错**（库读不了）才 `Err` —— 那是 bug，要响。
+#[tauri::command]
+pub async fn claim_page_lineage(db: State<'_, Db>, args: LineageClaimArgs) -> Result<LineageClaimResult, String> {
+    let (server_url, token, device_id) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        match claim_config(&c)? {
+            // 没有同步配置是**正常情况**（本机就该走"离线"那一支）⇒ 不抛。
+            None => return Ok(LineageClaimResult::offline()),
+            Some(triple) => triple,
+        }
+    };
+
+    let url = format!("{}/lineage-claim", server_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut req = client.post(&url).json(&serde_json::json!({
+        "space_id": args.space_id,
+        "page_id": args.page_id,
+        "device_id": device_id,
+    }));
+    if !token.is_empty() {
+        req = req.bearer_auth(&token);
+    }
+    // 网络不通／超时／DNS 失败 ⇒ 同为"问不到"（离线那一支），**不抛**。
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(_) => return Ok(LineageClaimResult::offline()),
+    };
+    let status = resp.status().as_u16();
+    // 载荷读不懂时 `None` ⇒ `lineage_claim_verdict` 归 `offline`（**不猜**成 granted）。
+    let body: Option<serde_json::Value> = resp.json().await.ok();
+    Ok(lineage_claim_verdict(status, body.as_ref()))
+}
+
 /// List recent sync-history entries (newest first).
 #[tauri::command]
 pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<SyncHistoryEntry>, String> {
@@ -2985,6 +3117,88 @@ mod tests {
         )
         .unwrap();
         c
+    }
+
+    /// `meta.auth_sessions` 的同形建表（与 `db.rs::meta_migrate` 一致）—— `claim_config`
+    /// 的会话 token 那半要用它。
+    fn with_auth_sessions(c: &Connection) {
+        c.execute_batch(
+            "CREATE TABLE meta.auth_sessions (
+                 server_url TEXT PRIMARY KEY,
+                 email      TEXT NOT NULL DEFAULT '',
+                 user_id    TEXT NOT NULL DEFAULT '',
+                 token      TEXT NOT NULL DEFAULT '',
+                 created_at INTEGER NOT NULL DEFAULT 0,
+                 expires_at INTEGER NOT NULL DEFAULT 0
+             );",
+        )
+        .unwrap();
+    }
+
+    /// ★ 与前端 `crdt/claimClient.ts` 的三条口径成对（两侧各一份判据、同一套语义）：
+    /// 200/`granted:true` ⇒ 拿到；200/`granted:false`／缺字段 ⇒ denied；
+    /// **403 ⇒ denied（是裁定，不是"问不到"）**；401／5xx ⇒ "问不到"；2xx 但载荷读不懂 ⇒ 也"问不到"。
+    #[test]
+    fn lineage_claim_verdict_matches_client_semantics() {
+        let got = lineage_claim_verdict(200, Some(&serde_json::json!({ "granted": true })));
+        assert!(got.granted);
+        assert!(got.unavailable.is_none(), "服务端回了话就不该标'问不到'");
+
+        let got = lineage_claim_verdict(200, Some(&serde_json::json!({ "granted": false })));
+        assert!(!got.granted);
+        assert!(got.unavailable.is_none());
+
+        // 缺字段／类型不对 ⇒ denied（**不猜**成 granted）
+        assert!(!lineage_claim_verdict(200, Some(&serde_json::json!({ "ok": 1 }))).granted);
+        assert!(!lineage_claim_verdict(200, Some(&serde_json::json!({ "granted": "true" }))).granted);
+
+        // ★ 403 = "这一页不是你的／没权利" ⇒ denied，**不许**混进离线那一支
+        let got = lineage_claim_verdict(403, None);
+        assert!(!got.granted);
+        assert!(got.unavailable.is_none(), "403 是裁定，不是'问不到'");
+
+        for status in [401u16, 500, 502] {
+            let got = lineage_claim_verdict(status, None);
+            assert!(!got.granted);
+            assert_eq!(got.unavailable, Some(true), "HTTP {status} 应当归'问不到'（离线那一支）");
+        }
+        assert_eq!(
+            lineage_claim_verdict(200, None).unavailable,
+            Some(true),
+            "2xx 但载荷读不懂 ⇒ 不猜成 granted，归'问不到'"
+        );
+    }
+
+    /// 与 `web.ts` 同一分支：**没有同步配置 ⇒ 不 claim**（`None` —— 不是错误，更不该 panic）。
+    #[test]
+    fn claim_config_without_profile_is_none() {
+        let c = conn_with_meta();
+        with_auth_sessions(&c);
+        set_meta_state(&c, KEY_DEVICE_ID, "dev-1").unwrap();
+        // 有档案行但 `server_url` 为空 = 还没配同步（与 web.ts 的 `WHERE server_url <> ''` 同一分支）
+        c.execute_batch("INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES ('ws', '');")
+            .unwrap();
+        assert!(claim_config(&c).unwrap().is_none());
+    }
+
+    /// 会话 token 优先于档案里那份（与 `do_push` 同一口径），`device_id` 取应用级那一个
+    /// （⇒ 服务端看到的"设备"与同步请求是同一台）。
+    #[test]
+    fn claim_config_prefers_session_token_and_carries_device_id() {
+        let c = conn_with_meta();
+        with_auth_sessions(&c);
+        c.execute_batch(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-1');
+             INSERT INTO meta.sync_profiles (ws_id, server_url, token, space_id)
+                 VALUES ('ws', 'http://a/', 'stale', 'sp');
+             INSERT INTO meta.auth_sessions (server_url, token) VALUES ('http://a/', 'fresh');",
+        )
+        .unwrap();
+
+        let (server, token, device) = claim_config(&c).unwrap().expect("有配置就该拿到三件");
+        assert_eq!(server, "http://a/");
+        assert_eq!(token, "fresh");
+        assert_eq!(device, "dev-1");
     }
 
     #[test]
