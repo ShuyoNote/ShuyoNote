@@ -10,7 +10,7 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs, windowsLoadFailure, pinnedPrefixVerdict } from "./check-gm-wired.mjs";
+import { parseTestResult, pickOpensslDir, prefixLooksLinkable, explainPrepareFailure, testPathFor, cargoTestArgs, windowsLoadFailure, pinnedPrefixVerdict, winRunnerPrintArgs, manifestCopyPath, winSelfRunArgs, runPowerShellSafe } from "./check-gm-wired.mjs";
 
 describe("check-gm-wired：挑 OpenSSL 前缀", () => {
   it("给了 OPENSSL_DIR 且目录在 ⇒ 用它", () => {
@@ -239,5 +239,53 @@ describe("check-gm-wired：③ 钉的前缀 vs 产物 link-search（第五格的
       pinnedPrefixVerdict({ expected: "C:\\Vcpkg\\prefix", candidates: ["c:/vcpkg/prefix/lib"], platform: "win32" })
         .verdict,
     ).toBe(true);
+  });
+});
+
+describe("check-gm-wired：win32 **自产读数**那条路（跑器 -PrintExePath ＋ 自跑副本）", () => {
+  it("跑器参数：只构建＋注入＋打印路径（不能顺手跑测试）", () => {
+    const a = winRunnerPrintArgs();
+    expect(a).toContain("-PrintExePath");
+    expect(a).toContain("scripts/win-cargo-test.ps1");
+    expect(a.join(" ")).not.toContain("cargo test");
+  });
+
+  it("★ 从跑器输出里取副本路径：取**最后**一条（子进程的 Write-Host 进度行也会落到 stdout）", () => {
+    const out = [
+      "win-cargo-test: building the test binary",
+      "WIN_CARGO_TEST_EXE=C:\\tmp\\a\\shuyonote-abc.exe",
+      "win-cargo-test: manifest present in the copy (verified by byte scan)",
+      "WIN_CARGO_TEST_EXE=C:\\tmp\\b\\shuyonote-def.exe",
+      "win-cargo-test: done",
+    ].join("\n");
+    expect(manifestCopyPath(out)).toBe("C:\\tmp\\b\\shuyonote-def.exe");
+  });
+
+  it("取不到就返回空串（调用方据此**退回未实查**，不判红也不装绿）", () => {
+    expect(manifestCopyPath("win-cargo-test: manifest present\n")).toBe("");
+    expect(manifestCopyPath("")).toBe("");
+    expect(manifestCopyPath(null)).toBe("");
+    // 只认整行前缀：夹在别的话里的路径不算（避免把日志里随便一个路径当副本）
+    expect(manifestCopyPath("see WIN_CARGO_TEST_EXE=C:\\x.exe for details")).toBe("");
+  });
+
+  it("★ 自跑副本的参数必须**显式 skip** 那一组要真宿主二进制的用例，且与 cargoTestArgs 同口径", () => {
+    expect(winSelfRunArgs()).toEqual(["--skip", "plugins::"]);
+    // 与 win32 的 cargo 参数用同一份 skipModules ⇒ 两处不会各写各的
+    const viaCargo = cargoTestArgs({ platform: "win32", manifest: "M" });
+    expect(viaCargo.slice(-2)).toEqual(winSelfRunArgs());
+    expect(winSelfRunArgs(["a::", "b::"])).toEqual(["--skip", "a::", "--skip", "b::"]);
+  });
+
+  it("runPowerShellSafe：成功时 why 为空；失败时**不抛**且把原话留下来（退回未实查要能说清原因）", () => {
+    const okRun = () => "WIN_CARGO_TEST_EXE=C:\\x.exe\n";
+    expect(runPowerShellSafe(okRun, ["-File", "s.ps1"], {})).toEqual({ output: "WIN_CARGO_TEST_EXE=C:\\x.exe\n", why: "" });
+
+    const boom = Object.assign(new Error("exit 1"), { stdout: "line-a\n", stderr: "details-here\n" });
+    const bad = runPowerShellSafe(() => {
+      throw boom;
+    }, ["-File", "s.ps1"], {});
+    expect(bad.why).toContain("details-here");
+    expect(bad.output).toContain("line-a");
   });
 });

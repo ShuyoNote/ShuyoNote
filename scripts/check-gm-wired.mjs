@@ -190,6 +190,56 @@ export function cargoTestArgs({ platform = process.platform, manifest, skipModul
   return args;
 }
 
+/**
+ * 纯函数：跑器调用参数 —— `-PrintExePath` **只构建＋注入＋打印副本路径**，不跑测试。
+ * 契约见 `scripts/win-cargo-test.ps1` 头部（Windows 侧 2026-09-23 加，正是为了本门禁能自产 win32 读数）。
+ */
+export function winRunnerPrintArgs(script = "scripts/win-cargo-test.ps1") {
+  return ["-ExecutionPolicy", "Bypass", "-File", script, "-PrintExePath"];
+}
+
+/**
+ * 纯函数：从跑器输出里取「**已注入清单的副本**」路径。
+ *
+ * 为什么取**最后**一条、且必须认前缀：
+ *  跑器作为**子进程**时，它的 `Write-Host` 进度行也会落到 stdout（Windows 侧实测：调用方在路径前后
+ *  看到 8 行进度）⇒ 不能"取第一行"或"整段 trim"，只能按稳定前缀筛、取最后一条。
+ * 找不到 ⇒ 空串（调用方据此**退回自报未实查**，不判红也不装绿）。
+ */
+export function manifestCopyPath(output) {
+  const prefix = "WIN_CARGO_TEST_EXE=";
+  const hits = String(output ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith(prefix));
+  return hits.length ? hits[hits.length - 1].slice(prefix.length).trim() : "";
+}
+
+/**
+ * 纯函数：自跑那个副本时的参数 —— **必须显式 `--skip`** 那一组要真宿主二进制的用例。
+ * 与 `cargoTestArgs()` 里 win32 的 skip **同一口径**（同一份 `skipModules`，别各写各的）。
+ */
+export function winSelfRunArgs(skipModules = ["plugins::"]) {
+  return skipModules.flatMap((m) => ["--skip", m]);
+}
+
+/**
+ * 跑一次 PowerShell，**绝不抛**：返回 `{ output, why }`（`why` 只在失败时非空）。
+ *
+ * 为什么单独包一层：跑器不在（脚本被改名、执行策略挡下、非 Windows 上被误调）都是**正常情形**，
+ * 门禁在那种情形下要退回"未实查"，而不是把 `execFileSync` 的错误对象直接倒出来
+ * —— 本文件里已经踩过一次同类（准备步骤没包 ⇒ 栈里只有 `stderr: ''`，看不出是哪一步）。
+ */
+export function runPowerShellSafe(run, args, env, exe = "powershell") {
+  try {
+    return { output: run(exe, args, env), why: "" };
+  } catch (e) {
+    const raw = `${e?.stdout ?? ""}${e?.stderr ?? ""}`;
+    const detail = raw.trim().split("\n").filter(Boolean).slice(-3).join("；");
+    return { output: raw, why: `powershell 调用失败：${detail || e?.message || String(e)}` };
+  }
+}
+
 export function testPathFor(pathValue, opensslDir, platform = process.platform) {
   if (platform !== "win32" || !opensslDir) return pathValue;
   const bin = join(opensslDir, "bin");
@@ -283,32 +333,60 @@ function main() {
     console.log("② `--features sm-library` 下跑全量单测（接线那段的直接证据）");
     let output = "";
     let ok = true;
-    try {
-      // ⚠️ **不能加 `--lib`**：`plugins::tests` 要 `target/debug/shuyonote`（宿主二进制，生产路径是
-      //   同二进制 re-exec），而 `--lib` 只编测试二进制 ⇒ 那一组会红 34 条（本门禁第一版就是这么红的，
-      //   判据自己抓到了 —— 它的报错原文就写着"不要用 `cargo test --lib`"）。
-      if (process.platform === "win32") {
-        // 自报"排除了什么"：跳过必须**看得见**，否则读日志的人会以为这一组也跑过了。
-        console.log(
-          "   ⚠️ win32：显式 `--skip plugins::`（那一组要真宿主进程，本机 cargo test 跑不了；" +
-            "权威读数归 CI/WSL2 的 `rust-plugins-alone` 与 win-cargo-test.ps1）——其余集合仍要求 0 failed",
-        );
+    let selfOwned = false; // 这份读数是**本门禁自己跑出来的**（而不是"借来的"独立读数）
+    if (process.platform === "win32") {
+      // ★ win32 **自产读数**那条路（2026-09-23 走通）：跑器 `-PrintExePath` 构建＋给副本注入 v6 清单
+      //   并打印副本路径，门禁**自己跑那个副本**（`--skip plugins::`）再自己解析 `test result:`。
+      //   为什么必须这样：win32 上 `cargo test` 的测试 exe 加载就会死在缺 v6 清单上（0xC0000139），
+      //   而清单注入**只有**那个跑器做 ⇒ 门禁想自产读数就必须借它的副本。
+      const runner = runPowerShellSafe(run, winRunnerPrintArgs(), env);
+      const copy = manifestCopyPath(runner.output);
+      if (copy) {
+        console.log(`   · win32 自产读数：跑器给的副本 ${copy}（清单已注入）＋ ${winSelfRunArgs().join(" ")}`);
+        try {
+          output = run(copy, winSelfRunArgs(), env);
+        } catch (e) {
+          ok = false;
+          output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+        }
+        selfOwned = parseTestResult(output) !== null;
+        if (!selfOwned) {
+          // 跑起来了但拿不到读数：这是**真问题**（不退回"未实查"），把 cargo 原话留给下一行报错
+          console.log("   ! win32：副本跑起来了但拿不到 `test result:` ⇒ 按红处理（下面会打输出尾部）");
+        }
+      } else {
+        console.log(`   ! win32：跑器没给副本路径（${runner.why}）⇒ 退回 cargo test 那条路`);
       }
-      output = run("cargo", cargoTestArgs({ manifest }), env);
-    } catch (e) {
-      ok = false;
-      output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+    if (!selfOwned) {
+      try {
+        // ⚠️ **不能加 `--lib`**：`plugins::tests` 要 `target/debug/shuyonote`（宿主二进制，生产路径是
+        //   同二进制 re-exec），而 `--lib` 只编测试二进制 ⇒ 那一组会红 34 条（本门禁第一版就是这么红的，
+        //   判据自己抓到了 —— 它的报错原文就写着"不要用 `cargo test --lib`"）。
+        if (process.platform === "win32") {
+          // 自报"排除了什么"：跳过必须**看得见**，否则读日志的人会以为这一组也跑过了。
+          console.log(
+            "   ⚠️ win32：显式 `--skip plugins::`（那一组要真宿主进程，本机 cargo test 跑不了；" +
+              "权威读数归 CI/WSL2 的 `rust-plugins-alone` 与 Windows 自己的 `win-cargo-test.ps1`）——其余集合仍要求 0 failed",
+          );
+        }
+        output = run("cargo", cargoTestArgs({ manifest }), env);
+        selfOwned = true;
+      } catch (e) {
+        ok = false;
+        output = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+      }
     }
     // ★ 装载期失败（win32）⇒ **自报未实查**：这不是接线坏了，而是"这一格在这台机器上跑不起来"。
-    if (process.platform === "win32") {
+    //   注意：只在**没能自产读数**时才允许这样收场；跑器那条路走通时读数是自有的，不许再自报未实查。
+    if (!selfOwned && process.platform === "win32") {
       const loadWhy = windowsLoadFailure(`${output}\n${ok ? "" : ""}`);
       if (loadWhy) {
         console.log(`   ! win32：测试 exe **没有被加载起来** ⇒ 这一格在 Windows 上**未实查**（不判红，也不装绿）`);
         console.log(`     · ${loadWhy}`);
         console.log("     · 已存在的**独立**读数（2026-09-22 AMD 实测，走 `win-cargo-test.ps1` 注入清单后跑）：");
         console.log("       455 passed / 34 failed / 18 ignored，34 条**全在** `plugins::`，国密各组 0 失败");
-        console.log("     · 要这条门禁**自己在 win32 上出读数**：需要跑器把「已注入清单的副本路径」可解析地打印，");
-        console.log("       门禁再跑那个副本（`--skip plugins::`）并自己解析 `test result:` —— 见信箱 `…reply-4.md` §三");
+        console.log("     · 自产读数那条路（`-PrintExePath` ＋ 跑副本）这次没走通：见上面的 `! win32` 行");
         return 0;
       }
     }

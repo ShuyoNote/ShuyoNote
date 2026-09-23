@@ -1197,15 +1197,16 @@ mod tests {
     #[test]
     fn derived_schema_matches_the_ts_source_of_truth() {
         let ts = include_str!("../../src/lib/extract/schema.ts");
-        // 模板字符串体 = 反引号之间的段（schema.ts 里只有 DDL 用反引号）
-        let bodies: Vec<String> = ts
+        // 模板字符串体 = 反引号之间的段；**取全部段**再按 `CREATE` 前缀过滤。
+        //
+        // ★ 为什么不再按 `i % 2 == 1` 取奇数段（2026-09-23，Windows 侧）：注释里出现**落单**的反引号时
+        //   奇偶被翻转 ⇒ 6 条 DDL 全落到偶数位被跳过 ⇒ 报的是"解析出 **0** 条"（把人指向错处）。
+        //   取全部段之后，成对/落单都不再影响结果，规则只剩一条：
+        //   **不许出现以 `CREATE TABLE`/`CREATE INDEX` 开头的反引号段** —— 违反了会报"解析出 7 条"，正指向真原因。
+        //   （口径与处置见 `docs/development.md` §9 那张三格表。）
+        let ddl: Vec<String> = ts
             .split('`')
-            .enumerate()
-            .filter(|(i, _)| i % 2 == 1)
-            .map(|(_, b)| b.trim().to_string())
-            .collect();
-        let ddl: Vec<String> = bodies
-            .into_iter()
+            .map(|b| b.trim().to_string())
             .filter(|b| b.starts_with("CREATE TABLE") || b.starts_with("CREATE INDEX"))
             .collect();
         assert_eq!(ddl.len(), 6, "schema.ts 里应有 6 条 DDL（三条表 + 三条索引），实际解析出 {} 条：{ddl:#?}", ddl.len());
