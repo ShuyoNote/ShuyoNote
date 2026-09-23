@@ -97,13 +97,25 @@ export function readAttachmentTextVia(
 }
 
 /**
- * 覆盖度读数（每个抽取器一份；`DISTINCT` + 按 `extractor` 排序）。
+ * 覆盖度读数（`DISTINCT` + 按 `extractor` 排序）。
  *
- * 三条口径与桌面 `search.rs::read_attachment_text_coverage_in_conn` **逐条对齐**
- * （两边各写一份，所以这里写得跟那边一模一样：去重、排序、**缺列 ⇒ 空**）：
- * 一行一段，但覆盖度是**每次抽取一份** ⇒ 必须去重；而老库（迁移没跑过）没有这一列时，
- * 正确的答复是"**没有读数**"（未知），不是让整条读失败 —— 读不到读数与没有读数是两件事，
- * 但对着"未知"这条语义它们是同一个答复。
+ * 两条口径与桌面 `search.rs::read_attachment_text_coverage_in_conn` **逐条对齐**
+ * （两边各写一份，所以这里写得跟那边一模一样：排序、**只吞缺列**）：
+ *
+ * 1. **`DISTINCT` 去的是整行相同的重复**（同一份读数逐段重复在所有段行上）；
+ *    同一 extractor 若有**两份不同**读数 ⇒ 两行都回（**不替调用方挑** —— 挑就是静默丢一条）。
+ * 2. **老库（迁移没跑过）没有 `coverage` 列 ⇒ 没有读数**（未知），不让整条读失败。
+ *
+ * ⚠️ **口径收窄（2026-09-23，Windows 侧审出来的）**：原来这里是 `catch { return [] }`，
+ * 把**数据库锁住／表损坏／将来 SQL 打错一个字**全都翻译成"没有覆盖度读数" ——
+ * 而"未知"在这条链上是**承重**的答复，不该当所有失败的垃圾桶（同一笔提交里
+ * `db.rs::migrate` 那条 ALTER 就只吞 `duplicate column name`，口径应当一致）。
+ * ⇒ 现在**只认缺列**（`no such column`），其余照原样抛；调用方要降级得**写明**降级。
+ *
+ * ⚠️ **与桌面那半的"故意不对称"**（读的时候别当成漂了）：`search.rs` 那半多吞一种
+ * `no such table` —— 因为运输层的查询**没有**前置守卫（派生层没初始化时照样会被调用）。
+ * 而本函数的唯一调用点在 `readAttachmentTextVia` 的 `hasTable` 检查**之后** ⇒ 表不在这条路走不到，
+ * 所以这里**不写**那个分支（写它就是加一条不可达的代码，比一处写明的不对称更坏）。
  */
 function readCoverageVia(db: DerivedTextQuery, attId: string): AttachmentTextCoverageDto[] {
   try {
@@ -113,7 +125,9 @@ function readCoverageVia(db: DerivedTextQuery, attId: string): AttachmentTextCov
         [attId],
       )
       .map((r) => ({ extractor: r.extractor, coverage: String(r.coverage ?? "") }));
-  } catch {
-    return []; // 缺列（老库）⇒ 没有读数
+  } catch (e) {
+    const msg = String((e as { message?: unknown } | null)?.message ?? e ?? "");
+    if (/no such column/i.test(msg)) return []; // 老库没有 coverage 列 ⇒ 没有读数（未知）
+    throw e; // 锁住/损坏/SQL 打错 ⇒ **照原样抛**，不许静默变成"没有读数"
   }
 }

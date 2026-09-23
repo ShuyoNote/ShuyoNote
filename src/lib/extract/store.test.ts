@@ -108,6 +108,35 @@ describe("覆盖度落库（`coverage` 列）", () => {
     expect(await store.coverageOf("att1")).toEqual([{ extractor: "x@1" }]);
   });
 
+  it("③′ ★ **语法对但形状不对** ⇒ 同样只算未知（未知 ≠ 垃圾）", async () => {
+    // 这一格是 Windows 侧复核出来的边角：只做 `JSON.parse` 的话，下面这些都成了"**有读数**"，
+    // 而其中 `123`/`{}`/`[1,2]` 是 **truthy** —— `if (r.coverage)` 挡不住，
+    // 而 `complete` 读出来是 `undefined` ⇒ 缺口判定又落空。形状按契约收口（非 null 对象 + complete 是布尔）。
+    const junk: [string, string][] = [
+      ["null", "null"],
+      ["123", "123"],
+      ["{}", "{}"],
+      ["[1,2]", "[1,2]"],
+      ['{"complete":"yes"}', "complete 不是布尔"], // 字符串 "yes" 不是 true
+      ['{"coverage":{"complete":false}}', "嵌了一层（不是 ExtractCoverage 的形状）"],
+    ];
+    for (const [raw, why] of junk) {
+      const { db, store } = freshStore();
+      await store.replace("att1", "x@1", "h1", seg, 100, { complete: false });
+      db.run("UPDATE attachment_text SET coverage = ? WHERE att_id = ?", [raw, "att1"]);
+      const got = await store.coverageOf("att1");
+      expect(got, `${raw}（${why}）不许被当成读数`).toEqual([{ extractor: "x@1" }]);
+      expect("coverage" in got[0]!, `${raw}（${why}）`).toBe(false);
+    }
+
+    // 反例（否则上面对"一律 undefined"也成立）：**形状对**的仍然要读出来
+    const { store } = freshStore();
+    await store.replace("att1", "x@1", "h1", seg, 100, { complete: true });
+    expect(await store.coverageOf("att1")).toEqual([
+      { extractor: "x@1", coverage: { complete: true } },
+    ]);
+  });
+
   it("④ 多个抽取器 ⇒ 按 extractor 稳定排序，各带各的（不合并、不串味）", async () => {
     const { store } = freshStore();
     await store.replace("att1", "pdf.ocr@1", "h1", seg, 100, { complete: true });
