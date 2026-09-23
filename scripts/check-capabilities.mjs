@@ -152,6 +152,9 @@ if (aiCaps.length === 0) fail("没有任何能力暴露给 AI（ai:true）——
 
 // ---- 3. 覆盖：实现函数在 plugins.rs 里、能力 id 在作者文档里 ----
 const pluginsRs = read("src-tauri/src/plugins.rs");
+// host: "frontend" 的**反向**判据要读这两份生成物（见下面 3. 里那三条）
+const types = read(OUTPUTS.types);
+const rustCaps = read(OUTPUTS.rust);
 const docs = read(OUTPUTS.docs);
 const shim = files[OUTPUTS.shim];
 
@@ -164,6 +167,27 @@ for (const c of reg.capabilities) {
   if (!docs.includes(c.id)) fail(`能力 ${c.id} 没有出现在作者文档 ${OUTPUTS.docs} 里`);
   if (c.host !== "frontend" && !shim.includes(`"${c.id}"`)) {
     fail(`能力 ${c.id} 没有出现在生成的 shim 里（api.* 暴露不到）`);
+  }
+  // ★ **反向**三条（2026-09-23，macOS 侧审 `host: "frontend"` 时补的那半）：
+  //   上面那句只写"普通能力**必须**在 shim 里"，对 host-only 的能力是**不管**——于是"它不在 shim 里"
+  //   这件事今天恰好成立，但**没有任何判据**。这正是本仓最忌讳的形状：将来生成器多写一行、
+  //   或有人"顺手对称"把它加进插件面，插件作者就会照着 `api.coverage.report` 写，然后拿到 `undefined`
+  //   —— 而那一刻**不会红**。⇒ 把"不许进"也变成断言（三处：shim / 插件类型包 / Rust 绑定表）。
+  if (c.host === "frontend") {
+    if (shim.includes(`"${c.id}"`)) {
+      fail(`能力 ${c.id} 声明 host: "frontend"，但它出现在插件 shim 里（插件调不到它，写进去只会让人拿到 undefined）`);
+    }
+    if (types.includes(`"${c.id}"`)) {
+      fail(`能力 ${c.id} 声明 host: "frontend"，但它出现在插件类型包 ${OUTPUTS.types} 里`);
+    }
+    if (rustCaps.includes(`"${c.id}"`)) {
+      fail(`能力 ${c.id} 声明 host: "frontend"，但它出现在 Rust 绑定表 ${OUTPUTS.rust} 里`);
+    }
+    // 边界 ④（方案 §15.11 第 4 条）：用它的理由必须写在这条能力自己的 desc 里 ——
+    // 否则下一个读到它的人只会看到"为什么它没有 Rust 实现"，然后尝试"补对称"。
+    if (!/只有 AI 宿主/.test(String(c.desc ?? ""))) {
+      fail(`能力 ${c.id} 是 host: "frontend"，但它的 desc 里没写明"只有 AI 宿主"这类理由（边界 ④）`);
+    }
   }
 }
 
