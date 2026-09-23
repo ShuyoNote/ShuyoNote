@@ -209,6 +209,12 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > **为什么要有这一节**：进展原先散在 P1 / P2 / §15.8 各处的引用块里（**五处**），
 > 接手的人要翻五处才能拼出全貌 —— 而"全貌"恰恰是接手时第一件需要的东西。
 > 这里只做**索引**：每行的"判据"列指到测试文件，"细节"在对应章节的引用块里（那些仍是原始记录）。
+>
+> ★ **2026-09-22 刷新**：本节两张表按**当天实测**重写过一次（被验 commit 见 §8.0.2）。
+> 09-17 原表至少有 **6 行"未做"已不成立**（Rust 建表与调用 / 检索侧 / `files.read` / `av.transcript@1` /
+> `image.caption` / 应用侧「开始索引」）—— 它们**没有被删掉**，而是移进下面的「**已关闭**」表并附
+> "现在由什么证"，免得"已做"与"未做"两头都读错。原始 09-17 版本在 git 历史里
+> （`git show <该次提交>:docs/plans/2026-09-17-knowledge-base-ai-coverage-plan.md`）。
 
 **已落地（全部在 TS 侧 ⇒ 都能在 Windows 上自验）**
 
@@ -232,18 +238,32 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | PNG 编码器（纯 JS，两平台共用） | `pngEncode.ts` | `pngEncode.test.ts` |
 | Web 平台合并写收口（501 次全库快照 → 1 次） | `platform/sqliteStore.ts` | `extract/platformWiring.test.ts` |
 | **Web 端 PDF 渲染桩补完**（Mac 侧，真 Chromium 实测） | `platform/web.ts` | Mac 侧 |
+| **音视频转写** `av.transcript@1`（2026-09-22，AMD） | `extract/avTranscript.ts` ＋ `ExtractDeps.transcribe?` 契约（§15.8 第 6 项） | `avTranscript.test.ts` ＋ conformance 夹具 `av/转写` / `av/没配转写`；平台实装 `ai/localTranscribe.ts` |
+| **图像语义描述** `image.caption@1`（第二档，**只在 OCR 判 `empty` 时被调度**） | `extract/image.ts` | `image.test.ts` ＋ 夹具 `image/语义描述（第二档）` |
+| **P2 后半：块级嵌入 ＋ 混合检索** | `semanticEmbed.ts` · `platform/chunkSearch.ts`（向量加分**有界** `CHUNK_VECTOR_BONUS=6`）· Rust 侧 `src-tauri/src/search.rs` | `semanticEmbed.test.ts` · `platform/chunkSearch.test.ts` · `platform/pageChunks.test.ts` |
+| **派生层接进检索与工具**（`files.search` / `files.read` 两个能力） | `src-tauri/src/capabilities_gen.rs` ＋ `src-tauri/src/plugins.rs`（`cap_files_search` / `cap_files_read`） | `check-capabilities` 门禁 |
+| **应用侧「开始索引」触发与进度** | `libraryIndexing.ts`（运行模型，与 DOM 解耦）＋ AI 设置面板的按钮 | `libraryIndexing.test.ts` · `indexPage.test.ts` |
+| **跨库总结 ＋ 强制引用**（P4） | `ai/librarySummary.ts` | `ai/librarySummary.test.ts` ＋ `ai/librarySummary.live.test.ts`（真模型：回链**全部来自输入**、`droppedInventedRefs=0`） |
+| **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
+| **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
 
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
-| Rust 侧建表与调用（`db.rs`） | **本机不能自验**（§12.1） | 需 Mac / AMD 复核 |
-| 检索侧：块级嵌入写入 / BM25+向量混合 / `files.search` / **查询侧归一化** | 同上（Rust） | **Mac（2026-09-17 已认领）** |
-| `files.read` 工具 | 改 `capabilities.json` ⇒ 连带 `plugins.rs` + 重新生成 + 过门禁，**本机不能自验** | 待可复核环境 |
 | `ooxml.legacy@1`（旧 `.doc` / `.xls`） | 需 LibreOffice headless，**本机没装** | 未定 |
-| `av.transcript@1`（音视频） | 等 **§13 第 7 项**拍板（远程 API vs 本机推理） | **AMD 独占** |
-| `image.caption`（VLM 语义描述） | P3；§13 第 2 项 | 未定 |
-| 应用侧「开始索引」触发与进度 | 未做 | 未定 |
+| **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
+
+**已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**
+
+| 原"未做"项 | 现在由什么证 |
+|---|---|
+| Rust 侧建表与调用（`db.rs`） | `src-tauri/src/db.rs`（15 处）＋ `derived_transport.rs`（55 处）；`search.rs` 68 处 |
+| 检索侧：块级嵌入写入 / BM25+向量混合 / `files.search` / 查询侧归一化 | 见「已落地」表的 P2 后半那行（`semanticEmbed.ts` / `chunkSearch.ts` / Rust `search.rs`） |
+| `files.read` 工具 | `capabilities_gen.rs` 里有 `files.search` 与 `files.read`；`plugins.rs` 实现 `cap_files_search` / `cap_files_read` 并派发 |
+| `av.transcript@1`（音视频） | **2026-09-22 落地**（AMD，含两个本机 ASR 的真读数）；那条"等 §13 第 7 项拍板"已由 owner 选「甲」+ 本机端点收口 |
+| `image.caption`（VLM 语义描述） | 已注册为第二档，只在 OCR 判 `empty` 时被调度 |
+| 应用侧「开始索引」触发与进度 | `libraryIndexing.ts` 的运行模型 ＋ AI 设置面板的「开始索引」按钮（`AiSettingsForm.tsx`） |
 
 **故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
 （docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
@@ -265,6 +285,25 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > ⚠️ **自检的边界**：以上全部是 **Windows 上能跑的**。方案里"未做"的那三项
 > （Rust 侧 / 能力注册表那条链）**不在其中** —— 它们的判据只能由能跑 `cargo test` 的机器给出（见 §8.1）。
 > 换句话说：**这份自检证明的是"我认领的那半边"，不是"整个方案"。**
+
+#### 8.0.2 交付自检（**2026-09-22 刷新**，被验 commit `0fd0dbcc`）
+
+**同 8.0.1 的口径：不把"刷完了"写成一句声称 —— 下面是可复核的数字与命令**（全部在 Windows 本机跑的）。
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 台账引用是否名副其实 | 本节两张表里的 **34 个路径**逐个 `Test-Path`（按目录前缀解析：`extract/xxx` → `src/lib/extract/xxx`、`platform/xxx` → `src/lib/platform/xxx`、裸文件名 → `src/lib/`） | **33 个解析成功**；★ **抓到 1 处错路径**：原表的 `capabilities.json` 其实不存在，真文件是 `src-tauri/capabilities/default.json`（该行已随「已关闭」重写，不再留错路径） |
+| 类型 | `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json` | **exit=0** |
+| 单测 | `node node_modules/vitest/vitest.mjs run` | **178 文件 / 1893 通过 ＋ 1 跳过 / 0 失败** |
+| 文档链接 | `node scripts/check-doc-links.mjs` | **127 个 .md / 726 条相对链接全部可达**，方案索引齐全（72 篇），exit=0 |
+| 门禁（默认四组，与 8.0.1 同一命令） | `node scripts/test-report.mjs --group contract,smoke,sync,plugin` | **26 条全绿 / 失败 0 / 跳过 0**（含 `tsc`、`vitest` 1893·1894、`smoke-web` 363/363、`two-device-sync` 84/84、`check-derived-writers`、`check-capabilities`、`check-overlay-registry` 26/26） |
+| 抽取器注册表（**实读，不照抄**） | `src/lib/extract/registry.ts` | **10 个**：`ooxml.docx@1` · `ooxml.xlsx@1` · `ooxml.pptx@1` · `image.ocr@1` · `image.caption@1` · `pdf.text@1` · `pdf.ocr@1` · `text.plain@1` · `text.html@1` · `av.transcript@1` |
+
+> ⚠️ **边界（与 8.0.1 同一条口径，别读宽）**：这份自检证明的是**本机（Windows）能跑的那半边**。
+> 不在其中的是：`ooxml.legacy@1`（需 LibreOffice headless）、**P3 的数据库块 / 绘图结构**（还没人做），
+> 以及"真机 / 人手"类验收（不在本方案内）。
+> Rust 侧那几项**在 dev 上已有文件与门禁级证据**（`check-derived-writers` 57 个 `.rs`／生产写入 0 处／豁免 1，
+> `check-capabilities` 绿），但它们的**行为读数**仍归能跑 `cargo test` 的机器（§8.1）。
 
 
 ### 8.1 被「**本机不能自验**」卡住的三项 —— 附施工单（给能跑 `cargo test` 的那一侧）
