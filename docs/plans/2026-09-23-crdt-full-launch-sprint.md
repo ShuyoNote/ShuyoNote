@@ -58,6 +58,18 @@
 **范围如实收窄（写进计划，免得读成"两侧都好了"）**：本切片 `page_crdt` **两侧都建表**（TS ＋ Rust `db.rs`），
 但**读写只在 TS 那一层**；Rust 的三条镜像函数与会话接线归 **S7「两侧都接」**（`db.rs` 里已就地记档）。
 
+### ★ 真问题（S3 顺手抓到的）：**生产入口早就在用 devDependencies**
+
+`src/main.tsx:12`（**生产入口**）`import { roundTripContentJson } from "./lib/crdt/yDocBridge"` ⇒
+`yjs` / `@lexical/yjs` **早就在打进 app 包**，而 `package.json` 里它们声明在 **devDependencies**
+（Slice B 当时还专门写了"`yjs` 不升格"）。
+
+**读数**（同一台机、同一套门禁）：升格前后产物 **10,658.10 kB → 10,658.84 kB**（+0.74 kB，噪声级）
+⇒ 所以这不是"升格把包变大了"，而是"**清单终于追上事实**"：包里一直有它，只是清单说没有。
+
+⚠️ **教训（写下来免得再犯）**："不升格"这类约定**必须**有门禁看着 —— 否则它会在某次"顺手 import"
+之后就悄悄变成假话；这一轮的代价是查了一遍包体才敢把话说清。
+
 ## 2. 切片清单（顺序即依赖；每片都要有判据 ＋ 当轮 tip 读数）
 
 | # | 切片 | 交付 | 承重判据 |
@@ -65,7 +77,8 @@
 | **S1** ✅ | 可合性红线 | 本文件 §1 ＋ `mergeability.test.ts`（2 条） | 反例：新建血统合 ⇒ 翻倍；正例：同一血统 ⇒ 顺序无关、不重复 |
 | **S2a** ✅ | **同一血统的活会话** | `openPageSession({ state/json })`：载入既有血统 → `edit()` 产增量 → `exportState()` 存回 → `merge()` 收另一端（`yDocBridge.ts` S2 段）＋ `pageSession.test.ts` 5 条 | ① ★ 同血统两台各加一块 ⇒ 合并后 `["blk-1","blk-2","blk-A","blk-B"]`、**两侧一致**、无重复；② 载入复用**不翻倍**（对照 S1 反例）；③ 存回→载入投影不变、合并自己幂等；④ 会话与纯函数路径**同源** |
 | **S2b** ✅ | **状态落盘位置** | 新表 `page_crdt(page_id, state BLOB, updated_at)` **两侧都建**（TS `platform/sqliteStore.ts` ＋ Rust `db.rs`）；读写三条函数（`readPageCrdtState` / `writePageCrdtState` / `clearPageCrdtState`）先在**那一层**（`lib/docContent.ts`，字节在层里是**不透明 BLOB**）＋ `pageStateStore.test.ts` 4 条 | ① 没状态 ⇒ `null`（≠空字节）；写回读**逐字节相同**（含非 UTF-8 字节，堵住"被当文本/base64 存"）；② 同页只留最新（主键 upsert）；③ 驱动回二进制字符串也能还原（**不用 `Buffer`**，Web 里没有）；④ ★ **跨重启仍同一条血统** ⇒ 合并后 `["blk-1","blk-2","blk-B","blk-A"]`、两处都在、不翻倍、两台投影一致 |
-| **S3** | **编辑器绑定真 Y.Doc** | `@lexical/yjs` 升格为生产依赖；编辑器与 Y.Doc 绑定，本地编辑产出**增量更新** | 绑定后：原生编辑 ⇒ 产出 update；两个绑定实例各改一处 ⇒ 合并后**两处都在**（这是全上线的核心判据） |
+| **S3a** ✅ | **活绑定（常驻监听）** | `openPageSession` 把"本地编辑 → yjs"接成**常驻** `registerUpdateListener`（不再每次编辑手动挂一次），并新增 **`dispose()`** 撤监听；回声**由库自己挡**（`syncYjsStateToLexicalV2` 的变更带 `COLLABORATION_TAG`，`syncLexicalUpdateToYjsV2` 见到它就当场返回 —— 读 `@lexical/yjs` 的 V2 实现得到，不是猜的）＋ `pageSession.test.ts` 加 3 条 | ⑥ ★ **回声安全**：两台来回互合**三轮**不增殖、两侧仍一致；⑦ ★ **活绑定真进 doc**：`edit()` 之后**另一个会话**从状态打开就能看到（没有手动同步调用）；⑧ `dispose()` 之后编辑**不再**进 doc（否则 dispose 是假的） |
+| **S3b** | **依赖声明修正 ＋ 真编辑器接线**（下一件） | `yjs` / `@lexical/yjs` 从 devDependencies **移到 dependencies**（见下"真问题"）＋ 把真编辑器（`src/editor/Editor.tsx`）接上会话与 `page_crdt` 的载入/存回 | 真编辑器里打字 ⇒ 状态里出现增量、另一个会话能合；页面切换/卸载 ⇒ `dispose()` 被调到（不泄漏监听） |
 | **S4** | **客户端同步接 update** | outbox 携带 CRDT 更新（而非整份 JSON）＋ 版本标记 | 两台设备交替同步 ⇒ 收敛；离线各改一处 ⇒ 联网后两处都在 |
 | **S5** | **服务端合并（两阶段）** | 阶段 1「只存不算」→ 阶段 2「开算」＋ 总开关（可按空间关） | 阶段 1 行为零变化；阶段 2 服务端合并幂等、可重放、不丢块 |
 | **S6** | **派生与身份口径重定** | `content_text`/FTS 在合并后的重建时机；块身份在 CRDT 下的铸/补种 | 合并后正文不落后（或有痕）；`topLevelBlockIds` 在合并前后**集合不变**（除真正新增块） |

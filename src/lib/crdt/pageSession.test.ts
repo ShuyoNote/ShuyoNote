@@ -132,4 +132,67 @@ describe("冲刺 S2：一页的 CRDT 状态（载入—编辑—存回—合并�
       openPageSession({ json: '{"root":{"type":"root","version":1,"children":[{"type":"paragraph","children":[]}]}}' }),
     ).toThrow(/不造身份/);
   });
+
+  // ---------------------------------------------------------------------------------------
+  // S3：**活绑定**（本地编辑 → yjs 接成常驻监听；回声由 `COLLABORATION_TAG` 挡住）。
+  // 这三条是"S3 真的接上了没有"的证据 —— 少了它们，"活绑定"只是一句注释。
+  // ---------------------------------------------------------------------------------------
+
+  it("⑥ ★ 回声安全：来回合并**三轮**不增殖（既没回声循环、也没重复块）", () => {
+    const a = openPageSession({ json: BASE });
+    const b = openPageSession({ state: a.exportState() });
+
+    a.edit(() => {
+      const p = $createBlockParagraphNode("blk-A");
+      p.append($createTextNode("A"));
+      $getRoot().append(p);
+    });
+    b.edit(() => {
+      const p = $createBlockParagraphNode("blk-B");
+      p.append($createTextNode("B"));
+      $getRoot().append(p);
+    });
+
+    for (let round = 0; round < 3; round += 1) {
+      a.merge(b.exportState());
+      b.merge(a.exportState());
+    }
+
+    const ai = idsOf(a.exportJson());
+    const bi = idsOf(b.exportJson());
+    console.log(`【⑥ 实测】三轮互合后 = ${JSON.stringify(ai)}`);
+    expect(new Set(ai).size).toBe(ai.length); // 没有回声造出来的重复块
+    expect(ai).toEqual(bi); // 两侧仍然一致
+    expect([...ai].sort()).toEqual(["blk-1", "blk-2", "blk-A", "blk-B"]);
+  });
+
+  it("⑦ ★ 活绑定真的写进了 doc：`edit()` 之后**另一个会话**从状态打开就能看到", () => {
+    const s = openPageSession({ json: BASE });
+    s.edit(() => {
+      const p = $createBlockParagraphNode("blk-live");
+      p.append($createTextNode("活绑定写的"));
+      $getRoot().append(p);
+    });
+
+    // 没有手动同步调用 —— 全靠常驻监听把它推进 doc
+    const other = openPageSession({ state: s.exportState() });
+    expect(idsOf(other.exportJson())).toEqual(["blk-1", "blk-2", "blk-live"]);
+    expect(other.exportJson()).toContain("活绑定写的");
+  });
+
+  it("⑧ `dispose()` 撤掉常驻监听之后，编辑**不再**进 doc（否则 dispose 是假的）", () => {
+    const s = openPageSession({ json: BASE });
+    const before = s.exportState();
+    s.dispose();
+    s.edit(() => {
+      const p = $createBlockParagraphNode("blk-after-dispose");
+      p.append($createTextNode("不该进 doc"));
+      $getRoot().append(p);
+    });
+
+    // 状态没变（编辑没被推给 yjs）—— 用"另一个会话看不到它"来证
+    const other = openPageSession({ state: s.exportState() });
+    expect(idsOf(other.exportJson())).toEqual(["blk-1", "blk-2"]);
+    expect(idsOf(yDocToContentJson(before))).toEqual(["blk-1", "blk-2"]);
+  });
 });

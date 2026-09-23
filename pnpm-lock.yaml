@@ -44,6 +44,9 @@ importers:
       '@lexical/utils':
         specifier: ^0.50.0
         version: 0.50.0(typescript@7.0.2)
+      '@lexical/yjs':
+        specifier: 0.50.0
+        version: 0.50.0(typescript@7.0.2)(yjs@13.6.32)
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -101,13 +104,13 @@ importers:
       tesseract.js:
         specifier: ^7.0.0
         version: 7.0.0
+      yjs:
+        specifier: 13.6.32
+        version: 13.6.32
       zustand:
         specifier: ^5.0.15
         version: 5.0.15(@types/react@18.3.31)(react@18.3.1)(use-sync-external-store@1.6.0(react@18.3.1))
     devDependencies:
-      '@lexical/yjs':
-        specifier: 0.50.0
-        version: 0.50.0(typescript@7.0.2)(yjs@13.6.32)
       '@tauri-apps/cli':
         specifier: ^2.11.4
         version: 2.11.4
@@ -144,9 +147,6 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.4.0)(happy-dom@20.12.0)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2))
-      yjs:
-        specifier: 13.6.32
-        version: 13.6.32
 
 packages:
 

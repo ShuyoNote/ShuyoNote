@@ -189,21 +189,13 @@ export const CRDT_ROOT_KEY_V2 = ROOT_KEY_V2;
 // 本会话就是这条用法的**唯一实现**：`openPageSession({ state })` 载入，`edit()` 产增量，
 // `exportState()` 存回，`merge()` 收另一端的更新。
 //
-// ⚠️ 本切片**没有**常驻监听/常驻副作用（每次编辑只在变更窗口内挂一次监听再摘掉，避开回声），
-// 所以刻意**不提供** `dispose()`：生命周期（编辑器实例、绑定）归 S3 的真编辑器绑定那一层。
+// **S3 起是活绑定**：把"本地编辑 → yjs"接成**常驻**监听（不再每次编辑手动挂一次），
+// 因此也**提供 `dispose()`** 撤掉它（S2a 时没有 dispose，因为那时没有常驻副作用）。
+// 回声由库自己挡：`syncYjsStateToLexicalV2` 落进编辑器的变更带 `COLLABORATION_TAG`，而
+// `syncLexicalUpdateToYjsV2` 见到它（且没有规范化节点）就**当场返回**
+// —— 这是读 `@lexical/yjs` 的 V2 实现（`dist/LexicalYjs.dev.mjs:3725`）得到的行为，不是猜的。
 // ⚠️ 仍然**不造身份**：`json` 那条入口沿用 `modelJsonOf` 的口径（缺 `blockId` ⇒ 抛）。
 // =====================================================================================
-
-/** 与 `contentJsonToYDoc` 内联声明同形（这里给模块级别名，供会话复用；不改那个函数）。 */
-type SyncArgs2 = Parameters<typeof syncLexicalUpdateToYjsV2__EXPERIMENTAL>;
-type SyncPayload2 = {
-  prevEditorState: SyncArgs2[2];
-  editorState: SyncArgs2[3];
-  dirtyElements: SyncArgs2[4];
-  dirtyLeaves: SyncArgs2[5];
-  normalizedNodes: SyncArgs2[6];
-  tags: SyncArgs2[7];
-};
 
 /** 一页的**活会话**：载入既有血统 → 本地编辑 → 存回状态 / 合并另一端。 */
 export interface PageSession {
@@ -215,6 +207,12 @@ export interface PageSession {
   edit(mutate: () => void): void;
   /** 合并另一份状态（另一端／服务端来的），并把结果落回编辑器。 */
   merge(remote: Uint8Array): void;
+  /**
+   * 撤掉常驻监听（**S3 起才有意义**：S2a 那次没有常驻副作用）。
+   *
+   * ⚠️ 只是撤监听：不销毁 editor/doc（本切片不持有它们的生命周期），也不动已落盘的状态。
+   */
+  dispose(): void;
 }
 
 /**
@@ -234,18 +232,10 @@ export function openPageSession(opts: { json?: string; state?: Uint8Array }): Pa
   const binding = createBindingV2__EXPERIMENTAL(editor, BINDING_KEY, doc, new Map());
   const provider = providerStub();
 
-  /** 把**一次**编辑器变更手动推给 yjs（与 `contentJsonToYDoc` 同款：只在变更窗口内挂监听）。 */
-  function pushOnce(run: () => void): void {
-    const box: { payload?: SyncPayload2 } = {};
-    const unregister = editor.registerUpdateListener((payload) => {
-      box.payload = payload;
-    });
-    run();
-    unregister();
-    const p = box.payload;
-    if (!p) {
-      throw new Error("openPageSession: 变更没有触发 update 监听器（@lexical/yjs 的用法变了？）");
-    }
+  // ★ **活绑定（S3）**：把"本地编辑 → yjs"接成**常驻**监听 —— 不再每次编辑手动挂一次。
+  // 回声由库自己挡：`syncYjsStateToLexicalV2` 落进编辑器的变更带 `COLLABORATION_TAG`，
+  // 而 `syncLexicalUpdateToYjsV2` 见到这个 tag（且没有规范化节点）就**当场返回**。
+  const unregister = editor.registerUpdateListener((p) => {
     syncLexicalUpdateToYjsV2__EXPERIMENTAL(
       binding,
       provider,
@@ -256,26 +246,31 @@ export function openPageSession(opts: { json?: string; state?: Uint8Array }): Pa
       p.normalizedNodes,
       p.tags,
     );
-  }
+  });
 
   if (opts.state) {
-    // 载入既有血统：先灌 doc，再从 doc 落到编辑器（此时**不**挂监听 ⇒ 不会回声）。
+    // 载入既有血统：先灌 doc，再从 doc 落到编辑器（那一次更新带 `COLLABORATION_TAG` ⇒ 不会回声）。
     Y.applyUpdate(doc, opts.state);
     syncYjsStateToLexicalV2__EXPERIMENTAL(binding, provider);
   } else {
-    pushOnce(() => editor.setEditorState(editor.parseEditorState(modelJsonOf(opts.json!))));
+    // 首次落盘：由这份 JSON **建血统**。这一次 `setEditorState` **不带** collab tag ⇒ 常驻监听会
+    // 把它推给 yjs —— 这正是"建血统"那一步（与 `contentJsonToYDoc` 里手动推的那一次等价）。
+    editor.setEditorState(editor.parseEditorState(modelJsonOf(opts.json!)));
   }
 
   return {
     exportState: () => Y.encodeStateAsUpdate(doc),
     exportJson: () => toLegacyDoc(JSON.stringify(editor.getEditorState().toJSON())),
     edit(mutate) {
-      pushOnce(() => editor.update(mutate, { discrete: true }));
+      editor.update(mutate, { discrete: true });
     },
     merge(remote) {
       Y.applyUpdate(doc, remote);
-      // 把合并结果落回编辑器（同样不挂监听）。
+      // 把合并结果落回编辑器（那一次更新带 collab tag ⇒ 不会回声）。
       syncYjsStateToLexicalV2__EXPERIMENTAL(binding, provider);
+    },
+    dispose() {
+      unregister();
     },
   };
 }
