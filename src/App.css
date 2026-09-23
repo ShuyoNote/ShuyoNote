@@ -17655,6 +17655,13 @@ p:has(> .editor-drawing-container) {
      「OCR」「AI」(拉丁) 23px，同一排按钮都不一样高、字面也不在同一条线上
      （owner 截图："这几个按钮似乎不在一个水平线上？"）。同 18px 之后恒为 26px 高。 */
   line-height: 18px;
+  /* ⚠️ 必须显式继承字体栈（**不是**可有可无的一行）：
+     按钮不吃继承，不给这一行就拿 UA 默认（本机实测 `font-family: Arial`），
+     旁边的「无文本层」span 却继承应用字体栈（PingFang SC…）⇒ 汉字 run 高差 1px
+     ⇒ 门禁 `verify-mobile-views.mjs` 那条「四个字面同线」在 macOS 上红
+     （实测 `文字高 [15,14,14,14]`；Windows/Edge 上两套字体恰好都是 15 所以看不出来）。
+     同一批规则（`.unlinked-mention-link`、`.pdf-page-error-retry` 等）都写了这一行。 */
+  font-family: inherit;
   padding: 4px 10px;
   border-radius: 7px;
   cursor: pointer;
