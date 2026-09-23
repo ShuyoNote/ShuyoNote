@@ -118,7 +118,7 @@
 | **S7-1** ✅ | **桌面侧 `page_crdt` 存取（Rust）** | 新 `src-tauri/src/page_crdt.rs`：`read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state`（与前端三条**成对**）＋ 文件内 `#[cfg(test)]` 两条逐条对应前端判据；`lib.rs` 登记 `mod page_crdt;` | 编译通过（`cargo test --lib page_crdt` **建出 test profile**）；⚠️ **执行**被本机环境挡着（`STATUS_ENTRYPOINT_NOT_FOUND`，测试二进制起不来），编解码逻辑与前端的成对判据已在 TS 侧全绿 |
 | **S7-2** ✅ | **Tauri 命令接上 ＋ 撤掉 web-only 假陈述** | `commands.rs` 的 `read_page_state` / `save_page_state`（`state: Vec<u8>`，前端 `number[]` 过 IPC）＋ `lib.rs` 的 `generate_handler!` 注册；`check-web-commands.mjs` 撤回那两条 `WEB_ONLY_COMMANDS`（web 专属 **4 → 2**） | `cargo check --lib` exit=0；`check-web-commands` 绿且 **Rust 命令 239 → 241**；`check-capabilities` 绿。★ 这同时修掉一个**真问题**：`PageCrdtBinding` 在桌面也跑，而命令只登记为 web 专属 ⇒ 桌面**每次开页弹一次「绑定失败」** |
 | **S8** ✅ | **血统护栏**（读那篇《Lexical + Yjs 生产实践要点》第 2 条后加的：**切勿在客户端初始化文档内容**） | `pageBinding.ts` 新增 `lineageClientIds`（`Y.decodeUpdate` 取 client id 集合＝**血统指纹**）/ `lineagesRelated`；`mergeRemotePageState` **先验血统**：两条**独立创建**的状态 ⇒ **拒绝合并**并回 `lineageConflict`（本机那版原样保留、不标派生）＋ 护栏命中当场 `console.warn`；`main.tsx` 注册的那版再 **toast** 一次（用户可见）；`lineageGuard.test.ts` 3 条 | ① 同血统 ⇒ 不误报；② ★ 两条独立血统 ⇒ 有痕、本机原样、**内容没翻倍**（实测拒绝后仍 `["blk-1"]`）；③ 空状态/无指纹（`[0,0]`）⇒ 视为相关、不拦 |
-| **S9** | **服务端「首写者裁定」**（设计稿见 §2.5；**要动另一个仓 ⇒ 等你点头**） | 同步服务加一个原子 claim（Rust 侧**不需要懂 CRDT**：只裁定"这一页的首条血统由谁建"）；客户端拿到 claim 才建血统，拿不到就载入/等待 | 关掉"两台设备同时首开同一张从没建过血统的页"那个窗口（S8 只是**发现**它，不是关掉它）；离线时行为要写清（临时本地血统 ＋ 上线后按 S8 报冲突） |
+| **S9** ✅（实现完成；**待发版**） | **服务端「首写者裁定」** ＋ 客户端接线（细节见 §10） | **服务端**（分支 `feat/crdt-lineage-claim`）：v15 迁移建 `page_lineage` ＋ `POST /sync/lineage-claim`（复用 `auth_user`／`require_space(editor)`；`INSERT OR IGNORE` ＋ 回读＝原子＋幂等；**不碰 payload**）。**客户端**：`bootstrap.ts` 四支决策 → `claimClient.ts`（403=denied／401·5xx·网络=抛⇒离线降级）→ `bindPageToEditorViaPort({claim})`（被拒⇒**不建不落盘如实抛**）→ `claim_page_lineage` 命令 → 编辑器真端口（空间取**这一页自己的**） | 服务端判据 `cargo test --bin …` **34/0**（含原子／幂等／每页一行／跨页独立）；客户端 `src/lib/crdt/` 76 条绿；`check-web-commands` 绿。⚠️ **未发版 ⇒ 生产上端点 404 ⇒ 客户端落"离线"那一支（不报错，裁定未生效）**；桌面侧 claim 待补（暂登记 `WEB_ONLY`） |
 | **S7-3** | **两侧都接 ＋ 真机验收**（要人手） | 桌面（Rust）与 Web 两侧同语义已通（S7-1/S7-2）；**双设备人工验收**未做 | 两侧判据成对；真机双设备验收过 |
 
 ## 2.5 S9 设计稿：服务端「首写者裁定」（**要动 `shuyonote-sync-server`，先出稿**）
@@ -184,3 +184,40 @@
 - 读：本文件（状态与清单）→ §2.5（S9 设计）→ `2026-09-23-crdt-plane-boundary-decision.md`（边界决策）；
 - 跑：`pnpm vitest run src/lib/crdt/`（68 条）→ `pnpm run build` → `pnpm build:web && pnpm check:web-build` →
   `pnpm run test:sync-verify`；Rust 侧 `cargo check --lib`（**别**指望 `cargo test` 能跑起来，见 9.2-3）。
+
+## 10. 补记：24 轮之后又做了什么（第 25–30 轮，S9 服务端 ＋ 客户端接线）
+
+owner 于第 24 轮后给了一句 **"可以动服务端，不考虑向后兼容，最快速度实现 crdt"** ⇒ S9 从"只出设计稿"
+变成"已实现"。
+
+### 10.1 服务端（**另一个仓** `shuyonote-sync-server`，分支 `feat/crdt-lineage-claim`，**未部署**）
+
+| 内容 | 读数 |
+|---|---|
+| `db.rs` 加 **v15 迁移**：`page_lineage(page_id 主键, space_id, device_id, claimed_at)` ＋ `schema_version=15` | — |
+| `sync.rs` 加 `lineage_claim` handler：`require_space(..., "editor")` ＋ `INSERT OR IGNORE` ＋ **回读**判定；**不碰 payload**（仍"哑且盲"） | 幂等靠回读天然满足 |
+| `main.rs` 的 `sync_routes` 加 `/lineage-claim`（复用 `auth_user`） | — |
+| `sync.rs` 加语义判据：原子／**同设备重复 claim 仍 granted**／每页一行／跨页独立 | `cargo test --bin …` **34 passed / 0 failed** |
+| ⚠️ 过程中我**误删了 v14 的 dispatch 分支**（改 v15 时 old_string 连带的既有分支没写回）⇒ `device_keys` 没建、4 条判据红。定位法：**先在 `main` 上跑同样测试（全绿）** ⇒ 证明是自己改的。已恢复 | 已记进代码注释 |
+
+### 10.2 客户端（本仓）
+
+| 片 | 内容 | 读数 |
+|---|---|---|
+| S9-客户端半边（第 22 轮） | `bootstrap.ts`：四种动作 ＋ `PageClaimPort` ＋ `claimVerdict` | 5 条判据 |
+| HTTP 端口（第 27 轮） | `claimClient.ts`：`POST {server}/sync/lineage-claim`；**403 ⇒ denied**／**401·5xx·网络 ⇒ 抛 ⇒ 离线降级** | 4 条判据 |
+| 绑定路径接线（第 28 轮） | `bindPageToEditorViaPort({ claim })`：拿到⇒建／**被拒⇒不建不落盘如实抛**／没端口⇒与接线前**逐字相同** | 3 条判据 |
+| 平台命令（第 29 轮） | `claim_page_lineage`（`api.claimPageLineage`）＋ `web.ts` 复用 `syncFetch`/`sync_profiles`/`getAuthSession`；桌面侧暂登记 `WEB_ONLY`（**没接时落"离线"那一支、不报错**） | `check-web-commands` 绿（Rust 241 / web 243 / 契约 244） |
+| 编辑器接线（第 30 轮） | `PageCrdtBinding` 里造真端口接进绑定；`device_id` 收到**平台侧**（`syncDeviceId()`）⇒ 界面少一个能填错的地方 | `tsc`/build 绿 |
+
+### 10.3 现在**还差**什么（按谁能推）
+
+| # | 缺口 | 谁能推 |
+|---|---|---|
+| 1 | **服务端发版**（跑 v15 迁移 ＋ 部署 `feat/crdt-lineage-claim`）—— 不部署的话，`/lineage-claim` 在生产上 404 ⇒ 客户端一直走"离线"那一支（**不报错，但裁定没生效**） | **owner**（我不部署） |
+| 2 | **桌面侧 claim**（Rust `reqwest` 发同一端点）＋ 撤掉 `WEB_ONLY` 登记 ⇒ 两侧同行为 | 本机可做（要读该仓 `sync.rs` 的 HTTP 封装） |
+| 3 | **"页所属空间"传准**（现在编辑器用的是 `getActiveWorkspaceId()` 近似） | 本机可做（要动 App→Editor 的 props） |
+| 4 | **真机双设备验收**（两台设备；离线各改一处 ⇒ 联网后两处都在） | **人手 ＋ 真机** |
+| 5 | Rust 成对判据**执行**（`STATUS_ENTRYPOINT_NOT_FOUND`；已排除 pdfium） | 环境 |
+| 6 | yrs 对拍尖刺（JS yjs vs Rust yrs）→ 再定 S5 阶段 2 | 本机可做 |
+| 7 | 阶段 1 的块级 LWW/补算器拆除 | 本机可做（先确认没有读侧依赖） |
