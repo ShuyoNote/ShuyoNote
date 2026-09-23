@@ -252,8 +252,7 @@ export const api = {
    * 语义（服务端判据与客户端 `bootstrap.ts` 对齐）：`granted=true` ⇒ 本机建；`false` ⇒ 别人先建过
    * （本机**不要**建）；**问不到**（没配置/网络/401/5xx）⇒ **抛**，由调用方归一成"离线"那一支。
    */
-  claimPageLineage: (args: { space_id: string; page_id: string; device_id: string }) =>
-    invoke("claim_page_lineage", { args }),
+  claimPageLineage: (args: { space_id: string; page_id: string }) => invoke("claim_page_lineage", { args }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

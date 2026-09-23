@@ -23,6 +23,7 @@ import {
   type AsyncPageBinding,
   type PageStatePort,
 } from "../lib/crdt/pageBinding";
+import type { PageClaimPort } from "../lib/crdt/bootstrap";
 import { useEditorStore } from "../store/editor";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
@@ -508,11 +509,29 @@ function PageCrdtBinding({
       save: (id, state) => api.savePageState(id, state),
     };
 
+    // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：
+    //   · 拿到 ⇒ 由本机建血统（＝今天的行为）；
+    //   · 别人先建过（服务端 403/`granted:false`）⇒ `bindPageToEditorViaPort` 会**不建并抛出**，
+    //     由下面那个 catch **如实 toast**（措辞是给用户看的）；
+    //   · 问不到（没配置同步/离线/401/5xx）⇒ 归一成"离线"那一支 ⇒ **照旧能写**。
+    // ⚠️ 空间 id 这里用 `getActiveWorkspaceId()`（当前工作空间）。**如实记**：若这一页属于
+    //    另一个空间，服务端会按它的门禁拒掉 ⇒ 落到"离线临时建"那一支（可用但未裁定），
+    //    联网后若撞上血统护栏会**报冲突**而不是静默。要更准就得把"页所属空间"传进来（后续片）。
+    const claim: PageClaimPort = {
+      async claim(id) {
+        // ⚠️ 两处都得 await：`getActiveWorkspaceId()` 是 Promise，命令的返回值也是对象
+        //    （`{granted}`）—— 只有**明确 true** 才算拿到（与 `claimClient.ts` 同一口径）。
+        const spaceId = await api.getActiveWorkspaceId();
+        const res = await api.claimPageLineage({ space_id: spaceId, page_id: id });
+        return res?.granted === true;
+      },
+    };
+
     void (async () => {
       try {
         // seed：与保存路径**同一个** serializer（`serializeWithBlockIds`）⇒ 含块身份、不另铸一套
         const seedJson = serializeWithBlockIds(editor.getEditorState(), blockIds.current);
-        const b = await bindPageToEditorViaPort({ port, pageId, editor, seedJson });
+        const b = await bindPageToEditorViaPort({ port, pageId, editor, seedJson, claim });
         if (disposed) {
           b.dispose();
           return;
