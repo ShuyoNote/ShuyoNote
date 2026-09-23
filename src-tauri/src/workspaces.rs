@@ -199,6 +199,39 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
     Ok(out)
 }
 
+/// ★ **新建一个本地空间的那一行**（隐私边界 A=3，2026-09-24）。
+///
+/// **分类由入口决定**：本仓是**个人版入口** ⇒ 这里新建的空间一律标成 `personal`
+/// （团队空间由团队流程走 `space_crypto::set_space_kind(..., Team)` 标）。
+/// 于是"新建 ⇒ 还没加密 ⇒ 绑同步会被闸门拦住并引导设口令"这条链**自动成立**，
+/// 不需要用户先做一次分类动作。
+///
+/// ⚠️ 抽成独立函数就是为了**能被判据直接驱动**（命令那层要 `State<Db>`，测不了）。
+pub(crate) fn insert_new_local_space(
+    c: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    theme: &str,
+    sort_order: f64,
+    now: i64,
+) -> Result<(), String> {
+    c.execute(
+        "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, kind)
+         VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7)",
+        params![
+            id,
+            name,
+            theme,
+            sort_order,
+            now,
+            now,
+            crate::space_crypto::SpaceKind::Personal.as_str()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result<WorkspaceMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
@@ -216,12 +249,7 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
 
     {
         let c = conn(&db);
-        c.execute(
-            "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, ?3, '', ?4, ?5, ?6)",
-            params![id, name, theme, sort_order, now, now],
-        )
-        .map_err(|e| e.to_string())?;
+        insert_new_local_space(&c, &id, &name, &theme, sort_order, now)?;
         c.execute(
             "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

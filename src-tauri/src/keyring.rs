@@ -249,6 +249,51 @@ mod tests {
         .unwrap()
     }
 
+    /// ★★ **D：解锁耗时的实测读数**（owner 2026-09-24：「实测后决定」）。
+    ///
+    /// 测的是**真解锁路径**（`KdfParams::derive_master` ⇒ `crypto::derive_app_keys`，含国密那一步），
+    /// 外加两档"更抗爆破"的参数作为对照（那两档要靠 0a-2 的**参数驱动派生**才用得上，
+    /// 这里只用 `argon2` 直接量成本）。读数靠 `--nocapture` 打印；判据只钉"跑得出来且是正数"，
+    /// **不做时限断言**（`graphLayout` 那条计时判据的教训：墙钟不该当门禁）。
+    #[test]
+    fn unlock_time_reading() {
+        use argon2::{Algorithm, Argon2, Params, Version};
+        let salt = [7u8; 16];
+        let kr = Keyring::new();
+        fn time(f: &mut dyn FnMut()) -> u128 {
+            let t0 = std::time::Instant::now();
+            f();
+            t0.elapsed().as_millis()
+        }
+        let mut cur = || {
+            kr.kdf.derive_master("我家猫叫mimi").unwrap();
+        };
+        let cur_ms: Vec<u128> = (0..3).map(|_| time(&mut cur)).collect();
+        let params_ms = |m_kib: u32, t: u32, p: u32| -> Vec<u128> {
+            (0..3)
+                .map(|_| {
+                    let mut out = [0u8; 32];
+                    time(&mut || {
+                        Argon2::new(
+                            Algorithm::Argon2id,
+                            Version::V0x13,
+                            Params::new(m_kib, t, p, Some(32)).unwrap(),
+                        )
+                        .hash_password_into(b"pw", &salt, &mut out)
+                        .unwrap();
+                    })
+                })
+                .collect()
+        };
+        let mid = params_ms(65536, 3, 1); // 64 MiB / 3 轮
+        let hard = params_ms(262144, 4, 1); // 256 MiB / 4 轮
+        println!(
+            "【实测·解锁耗时】当前参数（m={ARGON2_M_KIB}KiB t={ARGON2_T} p={ARGON2_P}）: {cur_ms:?}ms ｜ \
+             64MiB/t=3: {mid:?}ms ｜ 256MiB/t=4: {hard:?}ms"
+        );
+        assert!(cur_ms.iter().all(|&v| v > 0), "读数要跑得出来");
+    }
+
     /// ★ 本构建记下的 Argon2id 参数必须**就是**库默认 —— 否则"存参数"这件事从第一天起就是错的
     /// （库里默认值哪天变了，这条会红，提醒我们：老袋子要按它自己记的参数解）。
     #[test]

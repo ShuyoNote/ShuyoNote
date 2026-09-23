@@ -611,6 +611,49 @@ mod tests {
         assert!(v.allow && v.unclassified && !v.reason.is_empty(), "未分类：放行但**要说出来**");
     }
 
+    /// ★★ A=3（2026-09-24，owner 拍板）：**分类由入口决定** —— 本地新建的空间是**个人空间**，
+    /// 于是"新建 ⇒ 没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链自动成立。
+    #[test]
+    fn a_locally_created_space_is_personal_so_the_gate_guides_the_user_to_encrypt() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-entrykind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("entry-a", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+
+        // 走"新建空间"那条路（入口 = 本仓 = 个人版）
+        crate::workspaces::insert_new_local_space(&c, "entry-new", "新空间", "blue", 1.0, 1).unwrap();
+
+        // ① 分类落成 **personal**
+        assert_eq!(space_kind(&c, "entry-new"), SpaceKind::Personal, "本地新建 ⇒ 个人空间");
+        // ② 它还没加密 ⇒ **闸门拦**（且理由是"没加密"，不是"没分类"）
+        let st = space_status(&dir, "entry-new");
+        assert!(!st.encrypted_on_disk && !st.in_keyring);
+        match sync_gate(&st, space_kind(&c, "entry-new")) {
+            SyncGate::Blocked(msg) => assert!(msg.contains("没有加密"), "{msg}"),
+            other => panic!("新建的未加密空间必须被拦，实际 {other:?}"),
+        }
+        // ③ 按空间加密之后 ⇒ 放行
+        let mut c2 = c;
+        let _ = crate::space_crypto::enable_space(&mut c2, &dir, "entry-new", Some("我家猫叫mimi"));
+        // （`enable_space` 对"库文件还不存在"是 no-op，但盒子已进袋子 ⇒ 闸门按"袋里有它"放行）
+        assert!(keyring().unwrap().has("entry-new"));
+        assert_eq!(
+            sync_gate(&space_status(&dir, "entry-new"), SpaceKind::Personal),
+            SyncGate::Allowed
+        );
+        // ④ 认不出/没标记的（存量库）⇒ 仍然是"未分类放行"（不掐断老用户）
+        assert_eq!(space_kind(&c2, "entry-a"), SpaceKind::Unknown);
+
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        drop(c2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ★ 空间 id 只从 `spaces/<id>.db` 反推；不是那种文件就 `None`（**不猜**）。
     #[test]
     fn space_id_comes_from_the_file_stem_only() {
