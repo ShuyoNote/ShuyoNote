@@ -10,7 +10,9 @@
 // 用法：
 //   node scripts/sm-library-build.mjs --openssl-dir <Tongsuo 前缀>            # 构建（默认 cargo build）
 //   node scripts/sm-library-build.mjs --openssl-dir <p> --check              # 只做构建前的核对，不构建
-//   node scripts/sm-library-build.mjs --openssl-dir <p> --print              # 只打印将要执行的命令
+//   node scripts/sm-library-build.mjs --openssl-dir <p> --print              # **准备**（建 .gm-build/ 隔离并打好补丁）＋ 打印将要执行的命令（**不构建**）
+//     ⚠️ 2026-09-23（Windows 侧实测报的）：它**不是**纯只读 —— "准备"本来就是打印编译命令的前提（打印出来的命令
+//     默认就带那份隔离）。要纯只读用 `--check` 或 `--print-source-sha256 --no-apply`。
 //   node scripts/sm-library-build.mjs --print-source-sha256                  # 只打印"将要编译的那份源码"的哈希
 //   node scripts/sm-library-build.mjs --revert                                # 把补丁从**全机共享的** registry 源码上撤回
 //   node scripts/sm-library-build.mjs ... --no-apply                          # 不打补丁（**读数会标成 patch=absent**）
