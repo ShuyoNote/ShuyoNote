@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { databaseRulesText, refreshDatabasePageText } from "../lib/databaseTextForPage";
 import { tagColor } from "../lib/tagColor";
 import { useNotes } from "../store/notes";
 import { useTemplates } from "../store/templates";
@@ -318,7 +319,23 @@ export function DatabaseView({ pageId, title }: { pageId: string; title: string 
   };
 
   const load = () => {
-    api.queryDatabase(pageId).then(setQuery).catch((e) => toast(String(e), "error"));
+    api
+      .queryDatabase(pageId)
+      .then((q) => {
+        setQuery(q);
+        // ★ P3-②（2026-09-23）：数据库页的正文 ＝ **列名 ＋ 行 ＋ 规则** —— 此前它永远是空
+        //   （列/行不进 Lexical 派生的输入），于是搜「状态=进行中」这类**行内容**搜不到这一页。
+        //   走的是**只动正文文本**的那条入口（Rust `refresh_page_text` / Web `refreshPageTextIfStale`：
+        //   不动内容 JSON、不动 dirty、不动 updated_at），**空库不写**（接线层返回 false 就不调）。
+        //   规则由调用方渲染成人话（见 `databaseText.ts` 的决定 2），这里只给当前生效的筛选/排序。
+        void refreshDatabasePageText(
+          { refresh: (id, text) => api.refreshPageText(id, text) },
+          pageId,
+          q,
+          { title, rules: databaseRulesText({ filter, sort }) },
+        ).catch(() => {});
+      })
+      .catch((e) => toast(String(e), "error"));
     api.listAttrDefs().then(setAttrs).catch(() => {});
   };
   useEffect(load, [pageId, reloadTick]);
