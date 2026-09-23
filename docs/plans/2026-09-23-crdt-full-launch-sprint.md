@@ -169,6 +169,25 @@
 **当轮全绿读数**：`tsc` 0 ・ `src/lib/crdt/` **14 文件 / 68 条** ・ `pnpm run build` 0 ・
 `check-doc-content-access` 562/562（基线未动）・ `check-web-build` 9/0 ・ `test:sync-verify` 84/0。
 
+### 9.1.1 ★ 预算末（第 40 轮）的**当前 tip 读数** —— 交接以上面这一组为准
+
+前面 §9.1/§10.4 的读数是各片当时跑的数字；预算末在 tip **`b38baeae`**（第 38 轮的修复之后）上重跑：
+
+```
+tsc --noEmit                        ⇒ exit 0
+pnpm vitest run（**全量**）          ⇒ 202 文件通过 | 4 跳过；2117 条通过 | 9 跳过；exit 0
+pnpm run build（全套门禁）           ⇒ exit 0
+build:web ＋ check:web-build        ⇒ 9 通过 / 0 失败（含「打字⇒刷新⇒字还在」「0 未捕获错误」）
+test:sync-verify（双设备同页并发）   ⇒ 84 通过 / 0 失败
+check-doc-content-access            ⇒ 562/562（基线未动）
+check-web-commands / doc-links / doc-facts ⇒ 全绿
+src/lib/crdt/                       ⇒ 16 文件 / 75 条
+```
+
+**这条线上唯一"红过又被修掉"的**（记档，说明门禁确实在干活）：第 38 轮浏览器门禁抓到
+`[web] invoke error claim_page_lineage`（没有同步配置时我让命令抛异常 ⇒ 平台 invoke 层记 error）
+⇒ 改成 `{granted:false, unavailable:true}` 结果标记、UI 侧再转异常交给 `claimVerdict` 归一（提交 `b38baeae`）。
+
 ### 9.2 **没做完的**（不结项的原因，按"谁能推"分组）
 
 | # | 缺口 | 谁能推 | 现状/证据 |
