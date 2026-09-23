@@ -4,7 +4,7 @@ import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
-import { resolveClaimScope, type ClaimScopeRow } from "../crdt/claimScope";
+import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
 import { applyRemoteCrdtState } from "../crdt/plane";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
@@ -1485,12 +1485,12 @@ export function makeInvoke(store: SqliteStore) {
       // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
       //
       // ⚠️ **入参是本地工作空间 id（页所属那一个）**，而请求体里要的是**远端 `space_id`** ——
-      //    两者是两套 id，由 `resolveClaimScope` 从"这个工作空间绑定的档案"里取（见 `claimScope.ts` 文件头：
+      //    两者是两套 id，由 `resolveWorkspaceSyncScope` 从"这个工作空间绑定的档案"里取（见 `claimScope.ts` 文件头：
       //    第一版把本地 id 直接当远端 space 发出去，生产上**必然 403**）。
       //    传输复用 `syncFetch` ⇒ 鉴权/超时/错误口径与同步请求一致。
       const args = a.args ?? a;
       const rows = store.query<ClaimScopeRow>("SELECT ws_id, server_url, space_id, token FROM sync_profiles");
-      const scope = resolveClaimScope(rows, String(args.workspace_id ?? ""));
+      const scope = resolveWorkspaceSyncScope(rows, String(args.workspace_id ?? ""));
       // ⚠️ **不许抛**：没配同步 / 登录了还没选空间都是**正常情况**（本机就该走"离线"那一支）。
       //    抛出去会被平台 invoke 层记成一条 error（`[web] invoke error claim_page_lineage`）⇒
       //    浏览器产物验收门禁当场判红（2026-09-23 实测）。所以"用不了"用**结果标记**回。

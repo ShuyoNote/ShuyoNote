@@ -27,7 +27,7 @@ describe("S9 · 平台层 claim 接线（文本级，防退回旧形状）", () 
     // 入参是工作空间 id（页所属那一个）
     expect(branch).toContain("args.workspace_id");
     // 走唯一的解析处（不是"随便挑第一个档案"）
-    expect(branch).toContain("resolveClaimScope(");
+    expect(branch).toContain("resolveWorkspaceSyncScope(");
     // ★ 承重：请求体里的 space_id 必须是解析出来的**远端** id
     expect(branch).toContain("space_id: scope.spaceId");
     // 服务器/token 也必须来自解析结果（否则会问到别的服务器上）

@@ -45,7 +45,7 @@
 | **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；**覆盖度已落库并读到读侧**（`attachment_text.coverage`；未知 ≠ 完整）＋ 第五类 `partial` ＋ **只读能力 `coverage.report`**（第一条 `host: frontend`）＋ 面板入口「**检查索引覆盖**」（点一下扫全库出报告）；ASR 转写通道（`localTranscribe`）已接，**真模型 live 读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、段＝1 且 `loc=""` 符合契约） | 面板侧「消费抽取结果」未落地；**旧格式 Office 真转换读数**（要一台有 LibreOffice 的机器，本机 macOS 没有 `soffice`）；Web 端 CORS 未测 |
 | **块级 CRDT（阶段 1 已收口；阶段 2 客户端两侧已上、服务端已发版）** | 阶段 2：**每页 CRDT 状态落盘**（新表 `page_crdt`，两侧都建）＋ **真编辑器绑定真 Y.Doc**（浏览器门禁 9/0，含"打字⇒刷新⇒字还在"）＋ **远端状态并进本机**（次序无关）＋ **桌面侧也消费状态**（第 43 轮：pull 收到就收进 `page_crdt_pending`、**打开页面时**合并或**承接**对端血统；push 落 outbox 时挂上状态 —— 两侧同一张 wire 表，见冲刺 §13）＋ **outbox 带状态与版本标记**（推/收两侧，收侧用注入）＋ **血统护栏**（两条独立血统拒绝合并并报出）＋ **派生有痕/投影写回**＋ **服务端 `POST /lineage-claim` 原子裁定首写者**（**已发版**：探针 `/lineage-claim`=401、`/sync/lineage-claim`=404）＋ **桌面侧 claim**（Rust `reqwest`，`WEB_ONLY` 登记已撤）＋ **claim 的两套 id 修正**（本地 `workspace_id` ≠ 远端 `space_id`：按页所属工作空间解析档案、发远端 id；**403 ⇒ `unavailable`**，`denied` 只认 200＋`granted:false`；见冲刺 §12） | ① **真机双设备验收**（要人手）② **桌面那条路的收尾**（第 43 轮已通；还剩：投影列要等下一次保存才跟上、`pendingSkipped > 0` 只到 `console.warn` 还没接"可见 + 可裁决"的出口 —— 见冲刺 §13.3）③ **真账号端到端 claim 探针**（要凭据：期望 200/`granted:true`，第二台 200/`granted:false`）④ 阶段 1 块级 LWW/补算器拆除（**前置未满足**：桌面合并路径里还在用它兜无状态载荷）⑤ S5 阶段 2「服务端开算」（yrs 对拍**已做**：格式层可行；要谈的是隐私/体积/值不值）。详见[全上线冲刺](plans/2026-09-23-crdt-full-launch-sprint.md) §11/§12/§13；三线**联合验收**见 [JOINT-ACCEPTANCE.md](JOINT-ACCEPTANCE.md) |
 | **社区与分发** | 索引规范/签名/两级撤回/TOFU/多源订阅/事实清单 | 市场 UI、一键发布到社区的客户端侧 |
-| **近实时** | 冲突提示/presence/评论@通知/SSE 已落地 | 块级真协同（CRDT 阶段 1 是地基） |
+| **近实时** | 冲突提示/presence/评论@通知/SSE 推送**均已落地**（SSE 仅 Web；桌面走轮询） | 定位随 CRDT 更新：冲突提示降级为辅助（块级合并已接手"不覆盖"），**SSE 升级为 CRDT 体验的延迟环节**；「真·实时」（WebSocket/光标）仍后置。详见[实时协同分析](realtime-collab-analysis.md) §9 |
 
 > ★ **三条线相交的格子已单独登记**：[三平面联合验收](JOINT-ACCEPTANCE.md)（owner 2026-09-23 的要求：
 > 等 AI 全覆盖与 CRDT 具备测试条件时，与国密**一起**联合测试）。就绪面板 `node scripts/joint-acceptance.mjs`，
@@ -97,7 +97,9 @@
 - **附件哈希前缀分桶存储**（v1.84.2）：附件从单目录平铺改为 `attachments/<hash前2>/<hash>.<ext>`，旧数据双读兼容，服务端空间桶内再按哈希前 2 字符分片。
 - **同步一致性加固（seq-LWW + dirty 优先本地）**（v1.84.3）：根治团队多人同改时钟漂移丢改动。
 - **v1.84.3 发布收尾 + 安全审计**（2026-09-09）：三平台安装包（Win/Linux）已发布 gitcode + GitHub + 官网/Pages（应用内「检查更新」通道 `latest/latest.json` 已通）；安全审计修 3 项上线前高危（插件持锁无超时、E2EE 同步不丢数据、import/purge id 校验），详见 `docs/SECURITY.md`。
-- **近实时协作**（开发中，`feat/near-realtime`）：同页冲突提示（P0.1）+ presence 在线/谁在编辑（P0.2）+ 评论/@/通知（P1）+ SSE 推送（P1.5）——服务端 `collab.rs`/`migrate_v10` + 客户端命令/UI，集成回归 `test:sync-collab` 15 断言全绿。
+- **近实时协作**（**已落地并在 dev 上**，不是开发中）：同页冲突提示（P0.1）+ presence 在线/谁在编辑（P0.2）+ 评论/@/通知（P1）+ SSE 推送（P1.5）——服务端 `collab.rs`/`migrate_v10` + 客户端命令/UI（`PresenceBar`／`CommentsDrawer`／`useSyncStream`）。
+  读数：`pnpm run test:sync-collab` **27 通过 / 0 失败**（presence 心跳与离线超时、评论作者邮箱、@ 生成通知、未读/已读/全部已读、非成员 403 角色 gate、SSE 订阅 200 ＋ `text/event-stream` ＋ 推送 **6ms** ＋ LF 帧分隔符）。
+  ⚠️ 三条如实记：① 这条脚本**要一个在跑的服务端**（默认 `127.0.0.1:8787`，不在门禁注册表里 ⇒ 要先起）：本次读数是**本地 debug 服务端**上拿的，6ms 是回环延迟、**不代表生产**；② **SSE 只有 Web 端**（`useSyncStream.ts` 对桌面直接 return）⇒ 桌面的"近实时"实际由**轮询间隔**决定；③ 它的**定位要跟着 CRDT 改**：冲突提示从"防整页覆盖"降级为辅助，presence/评论不变，**SSE 反而更重要**（CRDT 是最终一致，"改动多久可见"就等于这个拉取延迟）。
 
 ## 3. 关键架构
 

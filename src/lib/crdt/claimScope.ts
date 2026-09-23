@@ -1,4 +1,6 @@
-// S9 · **claim 到底该发给谁**（纯函数）：页所属工作空间 ⇒ 它绑定的（服务器，**远端空间 id**）。
+// **「这个工作空间绑定到哪个服务器/远端空间」的唯一一处解析**（纯函数）—— 两个调用方共用：
+// ① claim（`platform/web.ts` ↔ `sync.rs::claim_config`）；② **SSE 变更流**（`hooks/useSyncStream.ts`）。
+// ⚠️ 名字里的 `claim` 只是它**出生**的地方（claim 那片踩出来的 bug）；判定本身是通用的。
 //
 // ## 为什么非要有这一层（这是踩出来的，不是设计洁癖）
 //
@@ -13,10 +15,14 @@
 //     （功能不坏，但**首写者裁定从未生效、层里一条痕都没有**——违反本仓"不静默"的纪律）；
 //   · 桌面：第一版把 403 读成 `denied` ⇒ 绑定被拒 ＋ 一句错话（"另一台设备正在编辑"）。
 //
+// ★ **同一个"挑错档案"的错还藏在 SSE 那条路上**（第 45 轮修）：`useSyncStream.ts` 原先挑的是
+//   "第一个绑定过的档案"（`profiles.find(...)`）⇒ 多工作空间用户会**订到别的空间**上去。
+//   一处解析、两个调用方 —— 正是为了让这类错只可能犯一次。
+//
 // ## 口径（**两侧成对**：Rust 那份在 `src-tauri/src/sync.rs::claim_config`，改一边必须看另一边）
-//   · 只认**这一页所属工作空间**那一条档案 —— 不是"随便挑第一个配了 `server_url` 的"；
+//   · 只认**指定工作空间**那一条档案 —— 不是"随便挑第一个配了 `server_url` 的"；
 //   · 档案缺 `server_url`，或**缺远端 `space_id`**（登录了但还没选空间）⇒ `null`
-//     ⇒ 上层回 `unavailable`（**连请求都不发**：发出去只会换来 403，然后把 403 误读成裁定）；
+//     ⇒ 调用方**什么都不做**（**连请求都不发**：发出去只会换来 403，然后把 403 误读成裁定）；
 //   · 服务端地址归一成**不带结尾斜杠**（与同步请求同一形状）。
 //
 // ## 为什么 403 不算 `denied`（口径只写一处，两端都按它实现）
@@ -35,7 +41,7 @@ export interface ClaimScopeRow {
   token: string;
 }
 
-/** 一次 claim 的目标（服务器 ＋ 远端空间 ＋ token 兜底）。 */
+/** 一次同步操作的目标（服务器 ＋ 远端空间 ＋ token 兜底）。 */
 export interface ClaimScope {
   server: string;
   spaceId: string;
@@ -43,12 +49,16 @@ export interface ClaimScope {
 }
 
 /**
- * 决定这次 claim 发给谁。`null` ⇒ **问不到**（上层回 `unavailable`，不发请求）。
+ * 解析某个工作空间的同步绑定（**唯一一处**）。`null` ⇒ **没绑定/绑不全**
+ * （claim 侧 ⇒ 回 `unavailable`；SSE 侧 ⇒ 什么都不做，退回轮询）。
+ *
+ * ⚠️ 名字：它出生在 claim 那片（历史上的 `resolveClaimScope`），但判定是通用的 ——
+ *    "这个工作空间绑到哪个服务器/远端空间"；SSE 变更流与 claim 共用它。
  *
  * @param rows  `sync_profiles` 的行（至少含本文件声明的四列）
- * @param workspaceId **页所属工作空间**的 id（本地 id —— 由调用方从页那一行取）
+ * @param workspaceId **要问的工作空间**的 id（本地 id）
  */
-export function resolveClaimScope(rows: ClaimScopeRow[], workspaceId: string): ClaimScope | null {
+export function resolveWorkspaceSyncScope(rows: ClaimScopeRow[], workspaceId: string): ClaimScope | null {
   const row = rows.find((r) => r.ws_id === workspaceId);
   if (!row) return null;
   const server = String(row.server_url ?? "").trim().replace(/\/+$/, "");
