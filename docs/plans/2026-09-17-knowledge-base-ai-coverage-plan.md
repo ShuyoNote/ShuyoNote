@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
-| `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **代码侧已全落**（2026-09-23）：契约（AMD `eb67bb06`）＋ 抽取器 `src/lib/extract/legacy.ts`（macOS `d64ec291`）＋ 平台半（macOS `772c017b`：Rust 命令 `convert_legacy_office` 走 LibreOffice headless —— 临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须 OOXML；TS 在 `attachmentDeps` 里注入，Web stub 如实 reject ⇒ `provider_error`）。**仍缺的只有「真转换」那一次读数**：这台 macOS 上没有 `soffice`（也没有 brew），所以只有假转换器路径的判据；在装好 LibreOffice 的机器上跑一次即闭 | **契约：AMD ✅** ／ **抽取器 ＋ 平台半：macOS ✅** ／ **真转换读数：待有 LibreOffice 的机器** |
+| `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **代码侧已全落**（2026-09-23）：契约（AMD `eb67bb06`）＋ 抽取器 `src/lib/extract/legacy.ts`（macOS `d64ec291`）＋ 平台半（macOS `772c017b`：Rust 命令 `convert_legacy_office` 走 LibreOffice headless —— 临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须 OOXML；TS 在 `attachmentDeps` 里注入，Web stub 如实 reject ⇒ `provider_error`）。**仍缺的只有「真转换」那一次读数**：这台 macOS 上没有 `soffice`（也没有 brew），所以只有假转换器路径的判据；在装好 LibreOffice 的机器上跑一次即闭 | **契约：AMD ✅** ／ **抽取器 ＋ 平台半：macOS ✅** ／ **真转换读数：待有 LibreOffice 的机器**（★ **owner 2026-09-23 拍板：形态＝降级** —— 既不要求用户装、也不随包；用户自己装了 LibreOffice 的机器上**自动可用**，错误信息本来就点名要装什么。⇒「真转换读数」从阻塞项降为**可选**复现） |
 | **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
 
 **已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**

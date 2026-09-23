@@ -86,6 +86,12 @@ $env:VCPKG_ROOT  = $env:VCPKG_INSTALLATION_ROOT
 > **CI 用的就是 B（vcpkg）** —— 见 `release.yml` 的 “Setup OpenSSL for SQLCipher (Windows)” 步骤。
 > 本地设好上面变量后，§4 第 5 步的 `cargo check` 即可通过（本机实测 `cargo check` 3m37s 通过）。
 > 这些变量**只在当前终端会话生效**，建议写进用户环境变量或启动脚本。
+>
+> **C. 拿不到 vcpkg 的机器 → 自编一份静态 Tongsuo**（2026-09-23 AMD 实测）：vcpkg 只能从 `github.com` 取，
+> 而被污染 DNS 的机器拿不到 ⇒ 用 `no-shared` 自编（macOS 发的也是自编 `no-shared`）。
+> ⚠️ **只加 `no-shared` 不够**：链接会报 `LNK2001: unresolved external symbol OPENSSL_UplinkTable`
+> （uplink 挂在 `shared` 上，但 VC 目标定义了 `uplink_arch` ⇒ `no-shared` 下它仍默认开着）⇒ Configure 再加 **`no-uplink`**。
+> 读数与判据见 `SM-CRYPTO-DELIVERY.md` §五「本机静态前缀那一格」。
 
 > 这些是 Tauri 官方 pre-requisites（见 [Tauri docs](https://tauri.app/start/prerequisites/) / Linux 需 `libwebkit2gtk-4.1`）。
 
@@ -804,6 +810,20 @@ CLI：`herdsman.exe skill models {list,download --model <名字> [--wait],start,
 `bge-m3`（向量）、`bge-reranker-v2-m3`（重排）；
 **ASR 两个**：`funasr-nano`、`sherpa-onnx-paraformer-zh-small`（79.5 MB，2026-09-22 装）；
 TTS：`sherpa-onnx-vits-melo-tts-zh-en`、`edge-tts`（云端、不占盘）；图片：`zimage-turbo`。
+
+**★ 向量模型走本机（owner 2026-09-23 拍板）—— 接法与实测读数**：应用里 AI 设置选预设
+**`Herdsman（本地）`**（`baseUrl = http://localhost:8080/v1`，`needsKey=false`），
+把**语义检索**开关打开、嵌入模型填 **`bge-m3`**（该预设的模型下拉现在也列了它）。
+接线口径：`semanticEmbed.readEmbedConfig()` 读 `embedProvider/embedBaseUrl/embeddingModel`
+（不填 `embedBaseUrl` 时复用对话那套）。
+- 实测（2026-09-23，AMD 本机，live 判据 `src/lib/semanticEmbed.live.test.ts`）：**维度 1024**；
+  近义句余弦 **0.8259** ＞ 无关句 **0.3891** ⇒ 是**语义级**的，不是噪声。
+- ⚠️ **一个真踩到的坑（已修）**：本仓两个预设的 `baseUrl` **本来就以 `/v1` 结尾**，而
+  `embedUrl()` 旧写法无条件再拼 `/v1/embeddings` ⇒ 实际打 `…/v1/v1/embeddings` ⇒ **404**；
+  而 `embedText` 的失败一律吞成 `null`（静默退回字面兜底）⇒ 表现为"配了也不生效"。现在与
+  `llm.ts::appendV1` 同口径（带了就不再加）。
+- ⚠️ 探测端点时**别用随手编的模型名**：这台服务**先查模型表**，名字错回 **404**（看起来像"没有这个路由"）。
+  先用 `GET /v1/models` 拿真名再打。
 
 ★ **两个 ASR 的差别（同一段音频实测，别让下游静默依赖标点）**：
 

@@ -89,7 +89,7 @@ export const AI_PRESETS: AiPreset[] = [
 export const MODEL_OPTIONS: Record<string, string[]> = {
   deepseek: ["deepseek-v4-flash-vision-exp", "deepseek-chat", "deepseek-reasoner"],
   ollama: ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "nomic-embed-text", "dmeta-embedding-zh"],
-  herdsman: ["Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-0731"],
+  herdsman: ["Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-0731", "bge-m3", "bge-reranker-v2-m3"],
   zhipu: ["glm-4-flash", "glm-4-plus", "embedding-3"],
   qwen: ["qwen-plus", "qwen-turbo", "qwen-max", "text-embedding-v3"],
   kimi: ["moonshot-v1-8k", "moonshot-v1-32k"],
