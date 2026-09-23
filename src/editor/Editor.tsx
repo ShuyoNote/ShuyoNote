@@ -532,6 +532,10 @@ function PageCrdtBinding({
         }
         if (!spaceId) spaceId = await api.getActiveWorkspaceId();
         const res = await api.claimPageLineage({ space_id: spaceId, page_id: id });
+        // ⚠️ "用不了"（没同步配置／网络不通）由平台侧用**结果标记**回（不是异常 —— 异常会被
+        //    平台 invoke 层记成 error，浏览器门禁会红）。这里把它**转成**异常交给上层
+        //    `claimVerdict` 归一成 `unavailable` ⇒ 走"离线临时建"那一支（照旧能写）。
+        if (res?.unavailable) throw new Error("claim 当前用不了（没有同步配置或网络不通）");
         return res?.granted === true;
       },
     };
