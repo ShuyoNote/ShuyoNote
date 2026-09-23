@@ -3,7 +3,7 @@
 // ## 为什么单独一个文件、以及为什么**只做纯函数**
 //
 // 方案 P3 那格缺的是"**列名 ＋ 行 ＋ 规则**进正文文本列"（`loc` ＝ 行 id）。接线那半在
-// `DatabaseView.tsx` / 页面正文派生链（`contentText.ts` → `docContent.ts::writeContentTextIfChanged`）里，
+// `DatabaseView.tsx` / 页面正文派生链（`contentText.ts` → `docContent.ts::refreshPageTextIfStale`；⚠️ 2026-09-23 订正：旧注里写的 `writeContentTextIfChanged` 在仓里**不存在**，是名字在扩散）里，
 // **归属是那两个文件的作者**；本文件只提供可单测的纯函数 ＋ 判据，接线怎么做由他们定
 // （工作单见方案 P3 末尾，2026-09-22）。
 //
@@ -15,7 +15,7 @@
 //  2. **"规则"由调用方渲染成人话**（`rules`）：视图的 `config` 是 JSON 方言，本函数**不认识也不猜**——
 //     猜等于在这儿固化了第二套视图语义。
 //  3. **空库返回空串**（不是"数据库：无行"这类占位）：接线侧据此**不写**正文，与
-//     `writeContentTextIfChanged`「不同才写」的口径一致；截断则**必须明说**（与抽取层"不完整要标注"同源）。
+//     `refreshPageTextIfStale`「不同才写」的口径一致；截断则**必须明说**（与抽取层"不完整要标注"同源）。
 //
 // 纯文本、无 markdown 标记（与 §15.3-3 以及页面正文的既有口径一致）。
 
