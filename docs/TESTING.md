@@ -126,6 +126,21 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 判红就等于逼人每加一批测试都改基线，最后大家会习惯性 `--update-baseline`，**护栏反而失效**。
 后果不同 ⇒ 处置不同。
 
+**当前读数（2026-09-23，AMD 侧复核 `tests/baseline.json` 的 11 个条目）**：
+
+| 条目 | 下界 | 当前 | 比值 | 处置 |
+|---|---|---|---|---|
+| `vitest` | 1955 | 2178 | **90%** | ✅ 已够新（此前 1303 那笔已被抬高） |
+| `smoke-web` / `mobile-views` / `mobile-overlays` | 363 / 307 / 1010 | 363 / 307 / 1010 | 100% | ✅ 一致 |
+| **`mobile-layout`** | **43** | **65**（CI 实读 `52.0s (65/65)`） | **66%** | ⚠️ **仍太旧** ⇒ 该跑 `--update-baseline` |
+
+⚠️ **`mobile-layout` 这条别在本机照本机读数手抬**：它在**默认本地组之外**（默认组是
+`contract,smoke,sync,plugin`），只在 CI / 显式 `--group mobile` 时跑；而"读数**下降**"是**硬红**，
+本机与 CI 的断言条数一旦有差（字体、视口、浏览器版本都会影响），把下界抬到本机值就可能让 **CI 变红**。
+正确做法：在**跑得到那条门禁的环境**（CI，或本机起 `pnpm dev:web` 后 `--only mobile-layout`）跑一次
+`node scripts/test-report.mjs --only mobile-layout --update-baseline`（写入是**按条目合并**的，
+不会碰到别的组）。本笔只记读数、不改基线 —— 这也是"体检只提示不判红"那条设计的正确用法。
+
 ### 写判据的纪律：变异证明不是形式（2026-09-19 的两条实测）
 
 1. **"空输出"≠"零命中"**。我用 `cargo check … | grep -E "^(warning|error)"` 数警告，
