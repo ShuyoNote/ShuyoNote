@@ -22,6 +22,7 @@
       "check-deep-link",
       "check-derived-writers",
       "check-doc-content-access",
+      "check-doc-facts",
       "check-doc-links",
       "check-gitcode-workflow-rules",
       "check-nsis-template",

@@ -84,7 +84,14 @@ const ROOTS = [
 ];
 
 /** 收口后**允许**直接访问的那一层（还没建，先占位；建成后它们本就该在名单里）。 */
-const LAYER_FILES = new Set(["src/lib/docContent.ts", "src-tauri/src/doc_content.rs"]);
+const LAYER_FILES = new Set([
+  "src/lib/docContent.ts",
+  "src-tauri/src/doc_content.rs",
+  // 阶段 2（2026-09-23）：`content_json` ⇄ `ydoc` 的**唯一实现**（Slice A）。它按定义就是"那一层"的新成员：
+  // 唯一能同时提到落盘形态与 CRDT 形态的地方，别的地方一律经它转（判据在 `contentJsonYDoc.test.ts`）。
+  // ⚠️ 加这里等于声明"这个文件本来就该直接访问" —— 以后它不是那一层了（比如改成经 `docContent.ts` 中转）就把它删掉。
+  "src/lib/crdt/contentJsonYDoc.ts",
+]);
 
 // 判据（测试文件 / Rust 生产文本）都在 `scripts/lib/rust-scan.mjs`，见文件头 import 处的说明。
 

@@ -84,7 +84,9 @@ derive(merged)              -> DerivedIndex   // 派生索引重建接口（保�
 > `scripts/doc-content-access-baseline.json`（**生产面 68 文件 / 634 处**），已登记进 `scripts/lib/gates.mjs`（contract 组）。
 > 三条规则：出现**新文件**直接引用 ⇒ 红；某文件计数**超过**基线 ⇒ 红；计数**低于**基线 ⇒ 提示下调基线
 > （`--update`，**只允许变小**；首次创建基线豁免——门禁第一次跑时正是它自己把"创建基线即上涨"抓出来的）。
-> 豁免名单（本该直接访问的那一层）在脚本的 `LAYER_FILES`：`src/lib/docContent.ts`、`src-tauri/src/doc_content.rs`。
+> 豁免名单（本该直接访问的那一层）在脚本的 `LAYER_FILES`：`src/lib/docContent.ts`、`src-tauri/src/doc_content.rs`，
+> **2026-09-23 增加第三个**：`src/lib/crdt/contentJsonYDoc.ts` —— 阶段 2 Slice A 落的「`content_json` ⇄ `ydoc` **唯一实现**」
+> （见 [2026-09-23-crdt-stage2-kickoff.md](2026-09-23-crdt-stage2-kickoff.md) §3）：它按定义同时提到两种形态，别的地方一律经它转。
 >
 > 🔧 **口径修订（macOS 侧，2026-09-18，同日）**：**测试代码从计数里排除**（93 个 `*.test.ts(x)`
 > ＋ 24 个 Rust 文件末尾的 `#[cfg(test)] mod tests`）。原口径把测试也数进去，效果是"**谁为新功能写一条
