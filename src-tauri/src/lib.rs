@@ -29,6 +29,9 @@ mod disk;
 // 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
 // 见 `docs/plans/2026-09-18-doc-content-layer-inventory.md`。
 mod doc_content;
+// 旧二进制 Office → OOXML 的平台转换器（`deps.convertLegacy` 的桌面实装；抽取器在 TS 侧）。
+// 命令面：`convert_legacy_office(data, to)`。详见该文件头注（三条口径：`to` 由抽取器定 / 失败一律 Err / 临时件自清）。
+mod legacy_convert;
 // 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
 // Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
 // 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，
@@ -603,6 +606,7 @@ pub fn run() {
             attachments::list_attachment_hashes,
             attachments::read_attachment_bytes,
             attachments::write_attachment_bytes,
+            legacy_convert::convert_legacy_office,
             attachments::import_attachment_files,
             attachments::list_page_attachments,
             attachments::list_all_pdf_attachments,
