@@ -7,8 +7,11 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { $createParagraphNode, $createTextNode, $getRoot, createEditor } from "lexical";
 import { EDITOR_NODES } from "../../editor/config";
 import { toLegacyDoc } from "../blockIdentity";
-import { isCrdtPlaneEnabled, setCrdtPlaneEnabled, throughCrdtPlane } from "./plane";
-import { roundTripContentJson } from "./contentJsonYDoc";
+import { isCrdtPlaneEnabled, setCrdtPlaneEnabled, setCrdtPlaneImpl, throughCrdtPlane } from "./plane";
+import { roundTripContentJson } from "./yDocBridge";
+
+// 实现由**界面侧**注册（生产在 `src/main.tsx`）—— 判据里就注册真的那一份（与 Slice A 的壳同源）。
+setCrdtPlaneImpl(roundTripContentJson);
 
 /** 一批落盘形态的 fixture（够杂，才配叫「逐字节等价」）。 */
 function fixtures(): string[] {
