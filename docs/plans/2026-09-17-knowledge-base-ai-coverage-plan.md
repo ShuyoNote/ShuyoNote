@@ -247,6 +247,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
 | **★ 覆盖度落库 ＋ 读侧口径**（2026-09-23，AMD）：`attachment_text.coverage` 存 `ExtractCoverage` 的 JSON，空串 ＝ **未知**（不是"完整"）；`files.read` 的返回里带回每个抽取器一条 `{extractor, coverage}` | TS：`extract/schema.ts` · `extract/store.ts` · `extract/pipeline.ts` · `platform/sqliteStore.ts` · `platform/derivedStores.ts` · `platform/derivedText.ts` ／ Rust：`db.rs`（DDL 照抄 ＋ 幂等 ALTER）· `derived_transport.rs`（写/读两格）· `search.rs`（读页面） | `store.test.ts` 7 条（含**老库迁移**、**形状不对只算未知**与"未知 ≠ 完整"）· `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 4 条（含**缺列容忍**与"非缺列失败必须抛"）· `derivedTransport.test.ts`（与夹具逐字相同）· 跨语言夹具 `tests/derived-transport-ops.json` · Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string` · `search::tests::read_attachment_text_separates_missing_from_empty_and_carries_coverage` ＋ `…_tolerates_an_old_table_without_the_coverage_column` · `db::tests::derived_schema_matches_the_ts_source_of_truth` |
 | **★ 覆盖报告的第五类 `partial`**（2026-09-23，AMD）：报告不再只看"**有没有块**" —— 抽取器自己报了 `complete:false` 的**已索引**附件单列（`attachments.partial` ＋ 明细 `reason: "partial"` ＋ 摘要里"其中 N 份**没抽全**"）；**没读数 ＝ 未知**，既不算缺口也**不算完整** | `extract/coverageReport.ts`（读 `coverageOf`） | `coverageReport.test.ts` 6 条（有缺口／没读数／读数是完整／坏 JSON／换读数不留残值／三类混在一起不串味） |
+| **★ 覆盖报告的出口：只读能力 `coverage.report`**（2026-09-23，AMD；owner 拍的这一支） | 注册表 `capabilities/capabilities.json`（`host: "frontend"`，见 §15.11）· `src/lib/capabilities/frontend.ts` 适配器 · `src/lib/libraryCoverage.ts::coverageReportTool`（形状） · 生成器/门禁对 host-only 的支持 | `libraryCoverage.test.ts` 4 条（摘要必须出现「没抽全」／未索引仍按四类／**截断必须说出来**／summary 与报告同源）＋ `ai/tools.test.ts`（工具清单含它）＋ `check-capabilities`（四条 host-only 边界） |
 | **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
@@ -1203,4 +1204,38 @@ Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string`（�
 > 在 `src/**` 里**只有测试调用它**（无 UI 组件引用、`capabilities.json` 里也没有对应能力）；
 > 所以"库里到底覆盖到哪"目前**用户和 AI 都问不到**。出口走 UI 还是做成一个只读能力，待定。
 
+> ✅ **该边界已收口（2026-09-23，AMD）**：owner 拍了**只读能力**这一支 ⇒ 新增 `coverage.report`
+> （见 §15.11）。报告本身仍是同一份纯函数（`indexCoverage` / `summarizeCoverage`），
+> 能力面只是把它**接上一个出口**（`scanLibraryCoverage` → `coverageReportTool`），没写第二份逻辑。
+
+### 15.11 能力面的**两个实现面**，与 `host: "frontend"`（2026-09-23 增补）
+
+**背景**：能力注册表（`capabilities/capabilities.json`）原先隐含一条假设 ——
+**每条能力在 Rust 侧都有一个 `cap_*` 实现**（`check-capabilities` 就是这么查的）。
+而"全库索引覆盖报告"这条能力**做不到**：它必须判"**没人认领这种格式**（`no_extractor`）"，
+而"谁认领什么格式"的**唯一事实源是 TS 侧的抽取器注册表**（`src/lib/extract/registry.ts`）。
+让 Rust 再长一份注册表 = 本方案从头到尾在防的"两份实现"，而它们的漂移**不会报错** ——
+只会让 AI 与插件看到两种答案（这类"不会红的分歧"正是 §8.1 反复记的那种）。
+
+**裁定**：注册表加一个**显式**标记 `host: "frontend"`（只有 AI 宿主实现的能力），并给它四条硬边界：
+
+| # | 规则 | 为什么 |
+|---|---|---|
+| 1 | `host: "frontend"` ⇒ **不许有 `rust`**、**必须 `ai: true`**、**目前只允许无参** | 没参数就不存在"插件侧怎么读参数"那半；有参数就该先把那半定义出来 |
+| 2 | **不进** shim / 插件类型包 / Rust 绑定表（`capabilities_gen.rs`） | 插件根本调不到它 —— 列进去就是"文档说有能力、代码里是 undefined" |
+| 3 | **要进** `aiTools.meta.ts`（AI 宿主）与**作者文档**里**单列的一节**（§4b「只有 AI 宿主可用的工具」） | 不写文档 ⇒ 读文档的人以为注册表少了；混进 `api.*` 表 ⇒ 作者照着写 `api.coverage.report()` 然后拿到 undefined |
+| 4 | 判据把上面三条都钉住（`check-capabilities.mjs`） | 否则下一个人加一条 host-only 能力时，四条边界**没有任何信号** |
+
+**代价与边界（说清楚，免得被当漏洞用）**：这条口子只解决"**某能力的实现只有一侧有**"，
+不解决"两侧行为不一致"——后者仍然要靠两侧实现 + 参数口径判据（既有做法）。
+所以规则是：**能两侧实现就两侧实现**；只有当"另一侧需要一份事实源的副本"时才用它，
+并且必须在这条能力自己的 `desc` 里写清"为什么它只有一侧"。
+
+**落地形态**：`coverage.report`（`kind: read` / `scope: current-space` / 权限 `read:files` / 无参）
+＝ `platform.derivedStores()`（装配）→ `scanLibraryCoverage`（取材）→ `coverageReportTool`（形状）。
+⚠️ **形状里有两件必须给的东西**：① `attachments.partial` 与 `indexed` **并列**，且摘要里明写"其中 K 份没抽全" ——
+否则模型会把"已索引 N/N"答成"内容全在检索面里"（§15.10 那条老坑在 AI 工具面上的翻版）；
+② 明细可能被截断 ⇒ `gapsTotal` / `gapsTruncated` / `note` 三件套明说，**"少给几条"与"只有几条"必须分得开**。
+
 > ⚠️ **仍没做的一格**：`files.search`（`cap_files_search`）**只有契约级覆盖**，没有行为判据 —— 归 Rust 侧。
+> ✅（同日补记）该格已由 Windows 落：6 条行为判据 ＋ 夹具修正后，Windows/macOS 两边执行面均 **508/0/18**。

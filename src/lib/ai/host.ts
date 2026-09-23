@@ -6,7 +6,7 @@
 import { buildSystemPrompt, aiTools, getAiTool } from "./tools";
 import { extractToolCalls, toolResultsPrompt, toLlmMessages } from "./llm";
 import type { LlmTransport } from "./llm";
-import type { AiMessage, AiRunResult, AiTool, AiToolCall } from "./types";
+import type { AiMessage, AiRunResult, AiTool, AiToolCall, AiToolContext } from "./types";
 
 export interface HostOptions {
   transport: LlmTransport;
@@ -81,7 +81,12 @@ function toolNote(
 export async function runAiLoop(
   userPrompt: string,
   pages: Array<{ id: string; title: string }>,
-  ctx: { currentPageId: string | null; allPages: Array<{ id: string; title: string; parent_id: string | null }> },
+  ctx: {
+    currentPageId: string | null;
+    allPages: Array<{ id: string; title: string; parent_id: string | null }>;
+    /** 覆盖报告这类"要读全库派生层"的工具需要它；由有平台的那一层注入（见 `AiToolContext`）。 */
+    derivedStores?: AiToolContext["derivedStores"];
+  },
   opts: HostOptions,
 ): Promise<AiRunResult> {
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
@@ -151,7 +156,11 @@ export async function runAiLoop(
       activity.push({ tool: tool.id, note: toolNote(tool.id, safeArgs, ctx.allPages) });
       let raw: unknown;
       try {
-        raw = await tool.run(safeArgs, { currentPageId: ctx.currentPageId, pages: ctx.allPages });
+        raw = await tool.run(safeArgs, {
+          currentPageId: ctx.currentPageId,
+          pages: ctx.allPages,
+          ...(ctx.derivedStores ? { derivedStores: ctx.derivedStores } : {}),
+        });
       } catch (e) {
         raw = { ok: false, error: String((e as Error)?.message ?? e) };
       }

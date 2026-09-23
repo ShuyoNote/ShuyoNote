@@ -1,6 +1,10 @@
 // Thin-AI layer public types. Everything here crosses the tool boundary between
 // the LLM host loop and the ShuyoNote semantic command layer (`src/lib/api.ts`).
 
+// ⚠️ **只 import type**：`coverageReport` 是纯模块，但这里是"类型只在编译期存在"的位置 ——
+//    用 `import type` 才能保证它**不进 AI 核心包**（那个包只装纯逻辑，见 `AiToolContext` 的注释）。
+import type { CoverageStores } from "../extract/coverageReport";
+
 /** A tool the model may call. Read tools execute immediately; write tools return
  *  a DraftResult that the host must hold for explicit user confirmation. */
 export interface AiTool {
@@ -22,6 +26,16 @@ export interface AiToolContext {
   currentPageId: string | null;
   /** All pages known to the running space (id → title). */
   pages: Array<{ id: string; title: string; parent_id: string | null }>;
+  /**
+   * 派生层的那对 store（覆盖报告这类"要读全库派生层"的工具才需要）。
+   *
+   * ⚠️ **为什么是注入的、而不是工具自己去 `import { platform }`**：这一层（`ai/host` → `ai/tools`
+   * → `capabilities/frontend`）会被 `smoke-web` 的 **AI 核心包**静态打包，而那个包**只装纯逻辑** ——
+   * 一旦 import 平台门面，就会把 `platform/web.ts`（要 `sql.js` 的 `.wasm?url`）拖进去，
+   * esbuild 在 node 侧打不出来（2026-09-18 在 `ai/lexical` 上踩过一次同样的坑，见 `scripts/smoke-web.mjs` 的注释）。
+   * ⇒ 由**有平台的那一层**（`store/ai.ts`）传进来；没传 ⇒ 工具如实回"这个平台没有派生层存储"。
+   */
+  derivedStores?: () => Promise<CoverageStores>;
 }
 
 /** Result of a write tool: a draft that must be confirmed before commit. */

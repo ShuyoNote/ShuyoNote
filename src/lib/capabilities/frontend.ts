@@ -10,12 +10,16 @@
 
 import { codePointLength, sliceByCodePoints } from "../textSnippet";
 import { api } from "../api";
+import { coverageReportTool, scanLibraryCoverage } from "../libraryCoverage";
 import { pageJsonFromText } from "../ai/lexical";
 import type { DraftResult } from "../ai/types";
+import type { CoverageStores } from "../extract/coverageReport";
 
-/** 宿主（AI 宿主）传给适配器的上下文：当前打开的页面。 */
+/** 宿主（AI 宿主）传给适配器的上下文：当前打开的页面 ＋ 派生层 store 的取用口。 */
 export interface AdapterContext {
   currentPageId?: string | null;
+  /** 「全库索引覆盖报告」要的那对 store（由有平台的那一层注入，见 `AiToolContext.derivedStores`）。 */
+  derivedStores?: () => Promise<CoverageStores | undefined>;
 }
 
 export type CapabilityAdapter = (
@@ -262,6 +266,28 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
           : {}),
       },
     };
+  },
+
+  /**
+   * `coverage.report` —— **只有 AI 宿主实现的能力**（注册表里 `host: "frontend"`，插件调不到）。
+   *
+   * 为什么没有 Rust 那半：报告要判"**没人认领这种格式**（`no_extractor`）"，而"谁认领什么格式"
+   * 的唯一事实源是 TS 侧的抽取器注册表（`extract/registry.ts`）。Rust 侧再长一份就是两份实现，
+   * 而它们的漂移**不会报错**（只会让 AI 与插件看到两种答案）——这正是本方案一直在防的事。
+   * ⇒ 这里**复用**现成的三层：`ctx.derivedStores()`（配对 store）→ `scanLibraryCoverage`（取材）
+   * → `coverageReportTool`（形状），一行新逻辑都不写。
+   *
+   * ⚠️ **store 是 `ctx` 注入的，不是这里 `import { platform }`**：这层会被 `smoke-web` 的
+   * AI 核心包静态打包，而那个包只装纯逻辑 —— 见 `AiToolContext.derivedStores` 的注释。
+   */
+  "coverage.report": async (_args, ctx) => {
+    const getStores = ctx?.derivedStores;
+    if (!getStores) {
+      return { ok: false, error: "这条路径没有派生层存储，索引覆盖报告不可用（桌面版/已启用本地库才有）" };
+    }
+    const stores: CoverageStores | undefined = await getStores();
+    if (!stores) return { ok: false, error: "这个平台没有派生层存储，索引覆盖报告不可用" };
+    return coverageReportTool(await scanLibraryCoverage(stores));
   },
 
   "pages.create": async (args) => {

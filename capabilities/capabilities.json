@@ -500,6 +500,27 @@
       "ai": true
     },
     {
+      "id": "coverage.report",
+      "title": "索引覆盖报告",
+      "kind": "read",
+      "scope": "current-space",
+      "permission": "read:files",
+      "since": "1.92.0",
+      "jsPath": [
+        "coverage",
+        "report"
+      ],
+      "args": [],
+      "returns": {
+        "type": "object",
+        "ts": "{ ok: true; summary: string; report: { pages: { total: number; indexed: number; empty: number }; attachments: { total: number; extracted: number; indexed: number; partial: number; notIndexed: number; byReason: Record<string, number> }; derived: { extractors: number; segments: number; chars: number }; chunks: { total: number }; gaps: { kind: string; id: string; reason: string; detail: string }[]; gapsTotal: number; gapsTruncated: boolean; note: string } } | { ok: false; error: string }",
+        "desc": "**一行摘要**（可直接念给用户）＋ 结构化明细：`pages`/`attachments`/`derived`/`chunks` 四组计数与 `gaps` 明细。`attachments.partial` ＝ **搜得到但没抽全**的数量（§15.10）；`gaps[].reason` 是分类：`no_extractor`（没人认领这种格式）/ `no_content`（认领了但抽出来是空）/ `not_chunked`（抽到了没切块）/ `page_empty`（页面正文空）/ `partial`（已索引但抽取器报了缺口）。**缺口只列前若干条**：`gapsTotal` 是总数、`gapsTruncated` 说明是否被截断"
+      },
+      "host": "frontend",
+      "desc": "检查**整个库**的索引覆盖：哪些内容真的进了检索面、哪些没进、哪些**进了但没抽全**。参数: 无。返回 {summary, report}：`summary` 是一行中文摘要（可直接展示）；`report.attachments` 给出 已索引/没抽全/未索引 的计数与分类，`report.gaps` 给出**明细**（每条含 `reason` 与一句「该怎么办」）。⚠️ 三个必须分清的口径：① **没抽到 ≠ 文件里没有**（`no_content` 可能是空文件/加密/纯图）；② **页面正文空 ≠ 这页内容没被索引**（图片/附件/数据库块由附件侧负责）；③ **`partial` 是「搜得到，但只覆盖了一部分」**（典型：混合 PDF 只抽到正文页）—— 别把「已索引 N/N」读成「内容全在检索面里」。**缺口列表可能被截断**（看 `gapsTotal` 与 `gapsTruncated`）。",
+      "ai": true
+    },
+    {
       "id": "editor.insertText",
       "title": "向当前页插入纯文本",
       "kind": "write",

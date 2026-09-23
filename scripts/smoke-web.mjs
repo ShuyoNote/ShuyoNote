@@ -120,7 +120,12 @@ await esbuild.build({
     {
       name: "ai-api-stub",
       setup(build) {
-        build.onResolve({ filter: /^\.\.\/api$/ }, () => ({ path: "ai-api-stub", namespace: "ai-api-stub" }));
+        // ⚠️ 匹配 `./api` **与** `../api`（2026-09-23 修）：原先只匹配 `../api`（`ai/` 那几层的写法），
+        //    于是 `capabilities/frontend.ts → libraryCoverage.ts → ./api` 这条链**绕过了桩**，
+        //    把真的 `api.ts`（→ `platform/index` → `web.ts` → sql.js 的 `.wasm?url`）拖进这个纯逻辑包，
+        //    esbuild 在 node 侧直接报 "No loader is configured for .wasm"。
+        //    ⇒ 桩应当按"**这是 api 模块**"匹配，而不是按"调用方怎么写相对路径"匹配。
+        build.onResolve({ filter: /^\.\.?\/api$/ }, () => ({ path: "ai-api-stub", namespace: "ai-api-stub" }));
         build.onLoad({ filter: /.*/, namespace: "ai-api-stub" }, () => ({
           contents: "export const api = new Proxy({}, { get: () => () => { throw new Error('api stub called'); } });",
           loader: "js",

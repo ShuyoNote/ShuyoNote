@@ -18,8 +18,12 @@ const TOOL_LIST: AiTool[] = AI_TOOL_META.map((meta) => ({
     const adapter = FRONTEND_ADAPTERS[meta.id];
     // 门禁会挡住"注册表声明了 ai:true 却没有前端实现"，这里是运行期的兜底。
     if (!adapter) return { ok: false, error: `能力 ${meta.id} 没有前端实现` };
-    // 把宿主上下文透传下去：适配层据此解析"省略 pageId 时用当前页"。
-    return adapter(args as Record<string, unknown>, { currentPageId: ctx?.currentPageId });
+    // 把宿主上下文透传下去：适配层据此解析"省略 pageId 时用当前页"，
+    // 以及"全库覆盖报告"要的那对派生层 store（由有平台的那一层注入，见 `AiToolContext`）。
+    return adapter(args as Record<string, unknown>, {
+      currentPageId: ctx?.currentPageId,
+      ...(ctx?.derivedStores ? { derivedStores: ctx.derivedStores } : {}),
+    });
   },
 }));
 

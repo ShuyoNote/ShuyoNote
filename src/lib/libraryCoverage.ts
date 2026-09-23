@@ -18,6 +18,7 @@
 import { api } from "./api";
 import {
   indexCoverage,
+  summarizeCoverage,
   type CoverageReport,
   type CoverageStores,
 } from "./extract/coverageReport";
@@ -49,4 +50,58 @@ export async function scanLibraryCoverage(stores: CoverageStores): Promise<Cover
   collect(await api.listPageAttachments(null));
 
   return indexCoverage({ pageIds, attachments: [...attachments.values()] }, stores);
+}
+
+/** 缺口明细最多给 AI 列几条（多了会把上下文吃掉，而且人也不会看）。**截断必须说出来**。 */
+export const COVERAGE_GAP_LIMIT = 20;
+
+/**
+ * 把报告压成**能力面（AI 工具）的返回形状** —— 一行摘要 ＋ 结构化明细。
+ *
+ * 为什么单独一个纯函数：能力面的形状是"给模型读的"，与"给人看的 UI 形状"不完全一样
+ * （模型要**计数 + 分类 + 明细**，UI 要一句话），而这两者的取值口径必须**同一处**决定 ——
+ * 各写一遍就会出现"AI 说 3 份没抽全、界面说 2 份"这种没人会发现的漂移。
+ *
+ * ⚠️ **两条刻意的口径**（都源自 §15.10 那条"成功 ≠ 抽全了"）：
+ * 1. `attachments.partial` 与 `indexed` **并列给出**，且摘要里明写"其中 K 份没抽全" ——
+ *    只给"已索引 3/3"会让模型答"内容全在检索面里"。
+ * 2. **缺口列表可能被截断**（`gapsTotal`/`gapsTruncated`/`note` 三件套明说）——
+ *    "少给几条"与"只有几条"必须分得开，否则模型会把截断当成全部。
+ */
+export function coverageReportTool(
+  report: CoverageReport,
+  gapLimit = COVERAGE_GAP_LIMIT,
+): {
+  ok: true;
+  summary: string;
+  report: {
+    pages: CoverageReport["pages"];
+    attachments: CoverageReport["attachments"];
+    derived: CoverageReport["derived"];
+    chunks: CoverageReport["chunks"];
+    gaps: CoverageReport["gaps"];
+    gapsTotal: number;
+    gapsTruncated: boolean;
+    note: string;
+  };
+} {
+  const lim = Math.max(0, Math.floor(gapLimit) || 0);
+  const gaps = report.gaps.slice(0, lim);
+  const truncated = report.gaps.length > gaps.length;
+  return {
+    ok: true,
+    summary: summarizeCoverage(report),
+    report: {
+      pages: report.pages,
+      attachments: report.attachments,
+      derived: report.derived,
+      chunks: report.chunks,
+      gaps,
+      gapsTotal: report.gaps.length,
+      gapsTruncated: truncated,
+      note: truncated
+        ? `缺口明细只列了前 ${gaps.length} 条（共 ${report.gaps.length} 条）；要全量请用界面里的「检查索引覆盖」`
+        : "",
+    },
+  };
 }

@@ -213,7 +213,16 @@ export const useAiStore = create<AiState>((set, get) => ({
       const result: AiRunResult = await runAiLoop(
         trimmed,
         allPages.map((p) => ({ id: p.id, title: p.title })),
-        { currentPageId: notes.currentId, allPages },
+        {
+          currentPageId: notes.currentId,
+          allPages,
+          // ★ 覆盖报告（`coverage.report`）要的那对派生层 store：**从这一层注入** ——
+          //   本文件本来就有平台门面，而 AI 核心那几层（`ai/host` → `ai/tools` → `capabilities/frontend`）
+          //   被 `smoke-web` 的纯逻辑包静态打包，**不许** import 平台（见 `AiToolContext.derivedStores`）。
+          ...(typeof platform.derivedStores === "function"
+            ? { derivedStores: async () => platform.derivedStores!() }
+            : {}),
+        },
         { transport, history: get().history, onDelta, onThinking },
       );
       // A newer run() or a stop() invalidates this result (stale discard).
