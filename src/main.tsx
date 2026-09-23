@@ -8,8 +8,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { version } from "../package.json";
 import { installViewportInsets } from "./lib/viewportInsets";
 import { installBackBridge } from "./lib/overlayStack";
-import { setCrdtPlaneImpl, setCrdtRemoteApplier } from "./lib/crdt/plane";
-import { roundTripContentJson } from "./lib/crdt/yDocBridge";
+import { setCrdtRemoteApplier } from "./lib/crdt/plane";
 import { mergeRemotePageState } from "./lib/crdt/pageBinding";
 import { toast } from "./store/toast";
 
@@ -23,12 +22,13 @@ import { toast } from "./store/toast";
 installViewportInsets();
 installBackBridge();
 
-// CRDT 平面（Slice B）的**实现注册**：那一层（`src/lib/docContent.ts`）不许静态 import 带编辑器节点表的
-// 实现 —— 那会造出模块初始化环（详见 `src/lib/crdt/plane.ts` 的文件头：当时 9 个 vitest 文件整文件 FAIL）。
-// 默认关 ⇒ 这里只是把实现放好；开关真打开时才用得到（没注册而开着 ⇒ 那一层会如实报错，不静默恒等）。
-setCrdtPlaneImpl(roundTripContentJson);
-// S4b-1b：**远端来的状态怎么落地**同样在这里注册（同步路径只认签名、不 import 实现：
+// S4b-1b：**远端来的状态怎么落地**在启动时注册（同步路径只认签名、不 import 实现：
 // `web.ts` 会被 Node 侧脚本加载，它一 import `pageBinding` 就会把编辑器节点表拖进去）。
+// ⚠️ 第 47 轮：这里**曾经**还有一行 `setCrdtPlaneImpl(roundTripContentJson)` —— 那是**磁盘边界**的
+//    平面开关（构建期 `VITE_CRDT_PLANE=1`）。按边界决策 §6.2 已撤出（存盘这一步只有单版本 ⇒
+//    开着也合并不了任何东西，只会把已落盘 JSON 归一化改写一次）。
+//    连带的收益：**生产入口不再 import 带编辑器节点表的 `yDocBridge`**（上面那行已删）——
+//    它在生产里另有正当入口（`pageBinding` ⇒ `openPageSession`），但少一条无谓的依赖线总是好的。
 setCrdtRemoteApplier((db, pageId, state) => {
   const res = mergeRemotePageState(db, pageId, state, Date.now());
   // ★ S8：**血统冲突必须报出去**（不许静默）—— 那意味着这一页出现了两条互不相关的编辑历史：

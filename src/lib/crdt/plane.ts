@@ -1,11 +1,30 @@
-// Slice B 的**平面开关**：把"保存/加载要不要经过 ydoc 平面"收成一个默认关闭的开关
-// （施工单 `docs/plans/2026-09-23-crdt-slice-b-workorder.md` §2/§3）。
+// **CRDT 平面在客户端的两处"注入点"**。
 //
-// 本文件**只做一件事**：提供开关 ＋ 一个"关着时**逐字节原样返回**"的薄壳；实现由**界面侧注入**。
+// ## 这个文件现在只剩什么（第 47 轮之后）
 //
-// ★★ 为什么实现必须是注入的（2026-09-23 修；`b49c9ed2` 的接线就是这么炸的）
+// 只剩**一件**：`setCrdtRemoteApplier` / `applyRemoteCrdtState` —— **远端载荷里带来的状态怎么落地**。
+// 同步路径（`src/lib/platform/web.ts` 的 `applyChange`）只认这个函数签名，实现在启动时注册
+// （生产：`src/main.tsx` ⇒ `mergeRemotePageState`）。
 //
-// 静态 import 那一层的实现会造出一个**模块初始化环**：
+// ## 撤出去的那半（记在这里，免得有人把它加回来）
+//
+// 本文件**曾经**还有另一半：**磁盘边界的平面开关**（`CrdtPlaneImpl` / `setCrdtPlaneImpl` /
+// `isCrdtPlaneEnabled` / `setCrdtPlaneEnabled` / `throughCrdtPlane`，由**构建期**环境变量
+// `VITE_CRDT_PLANE=1` 打开），被 `docContent.ts` 的**两读一写**三处包着。
+// 它在 [边界决策](docs/plans/2026-09-23-crdt-plane-boundary-decision.md) §6.2 就被判了"**应当撤出**"：
+//   · 存盘这一步**只有一个版本** ⇒ 开着也**合并不了任何东西**，只是把已落盘 JSON **归一化改写一次**
+//     （写得回去的字节与编辑器产出的不同）；
+//   · 决策已改走**服务端合并**，而真正的合并路径是「每页 `page_crdt` 状态 ＋ 载荷里的 `crdt_state`」
+//     —— 与本开关**没有任何关系**（这就是它最容易被人误会的地方：两套东西同住一个文件）。
+// ⇒ 2026-09-23 第 47 轮撤出。撤出的**判据替换**写在 `crdt/plane.withdrawn.test.ts`：
+// 原来那 9 条路径级判据里，随开关作废的（②③⑥）换成"**这一层一个字都不许改**"＋"**开关三件不许回来**"；
+// 与新边界无关的（引用完整性/派生有痕/补算器收口）**留在各自的既有判据里**（`docContent.test.ts` 等）。
+// ⚠️ 路径与文件名**刻意没改**：`scripts/doc-content-access-baseline.json` 是按**文件路径**记基线的
+//    （"基线只许减"），改名会被门禁读成"新增文件"。
+//
+// ## 为什么实现必须是注入的（这一段仍然有效，两处注入同一理由）
+//
+// ★★ 静态 import 那一层的实现会造出一个**模块初始化环**（2026-09-23 修；`b49c9ed2` 的接线就是这么炸的）：
 //
 //     src/lib/docContent.ts（那一层）
 //       → src/lib/crdt/plane.ts（本文件）→ src/lib/crdt/yDocBridge.ts
@@ -21,71 +40,14 @@
 //
 // ⇒ 口径与另外两处同源（`derivedStores` 注入 AI 宿主、正文修复由编辑器侧算完再交回）：
 //   **那一层只认一个函数签名，实现由"有编辑器的那一侧"在启动时注册**（`src/main.tsx`）。
-//   没注册而开关开着 ⇒ **如实报错**，不静默退化成恒等（那会让"开了但没生效"变成静默丢数据）。
-
-// 顺序：先注册"开关"的实现（Slice B/S3 那套），再注册"远端状态落地"的实现（S4b-1b）——
-// 两者都走**注入**，因为这一层要被 Node 侧脚本加载（见文件头与 S4b-1b 那段的注释）。
+//
+// ⚠️ 另一个理由（这条**只对下面这一半**成立）：`src/lib/platform/web.ts`（收载荷的那一端）会被
+//   **Node 侧脚本**加载（`verify-two-device-sync` 这类）⇒ 它一旦 import `crdt/pageBinding`
+//   （→ `yDocBridge` → 整张编辑器节点表），那些脚本就会把编辑器节点表一起拖进 Node 进程。
 import type { ContentSql } from "../docContent";
 
-/** 平面实现：把一个**落盘形态**的字符串往返一次（返回同一形态）。 */
-export type CrdtPlaneImpl = (stored: string) => string;
-
-/** 已注册的实现；`null` ＝ 还没注册（默认关的时候永远用不到它）。 */
-let impl: CrdtPlaneImpl | null = null;
-
-/** 界面侧在启动时注册实现（生产：`src/main.tsx`；判据：直接喂桩或喂真实现）。 */
-export function setCrdtPlaneImpl(fn: CrdtPlaneImpl): void {
-  impl = fn;
-}
-
-/**
- * 默认**关闭**。
- *
- * ⚠️ 语义只有一条，判据也只看这一条：**关着的时候，任何输入都必须原样出来**
- * （不是"内容等价"，是**逐字节**）。迁移不许改未开启用户的行为。
- */
-let enabled = (() => {
-  try {
-    return String(import.meta.env?.VITE_CRDT_PLANE ?? "") === "1";
-  } catch {
-    return false;
-  }
-})();
-
-export function isCrdtPlaneEnabled(): boolean {
-  return enabled;
-}
-
-/** 只给判据/将来的设置项用：显式开关这个平面（默认值就是 false）。 */
-export function setCrdtPlaneEnabled(next: boolean): void {
-  enabled = !!next;
-}
-
-/**
- * 让一份**落盘形态**的正文 JSON 过一遍（或不经过）CRDT 平面。
- *
- * - 关着：**原样返回同一个字符串**（同一引用 —— 判据据此断言"逐字节"而不是"内容等价"）；
- * - 开着：调**注册进来的**那一层实现往返一次；没注册 ⇒ 抛（见文件头：不静默退化成恒等）。
- */
-export function throughCrdtPlane(stored: string): string {
-  if (!enabled) return stored;
-  if (!impl) {
-    throw new Error(
-      "CRDT 平面已开启但没有注册实现：界面侧应在启动时调 setCrdtPlaneImpl(...)（见 src/main.tsx）。" +
-        "这一层不许自己去 import 实现 —— 那会造出模块初始化环（见 crdt/plane.ts 文件头）。",
-    );
-  }
-  return impl(stored);
-}
-
 // =====================================================================================
-// S4b-1b（2026-09-23）：**远端来的状态怎么落地** —— 同样是**注入**，理由与上面一模一样。
-//
-// 为什么不能直接在同步路径里 import 实现：`src/lib/platform/web.ts`（收载荷的那一端）会被
-// **Node 侧脚本**加载（`verify-two-device-sync` 这类）⇒ 它一旦 import `crdt/pageBinding`
-// （→ `yDocBridge` → 整张编辑器节点表），那些脚本就会把编辑器节点表一起拖进 Node 进程。
-// 2026-09-23 那次初始化环就是这么炸的（vitest 9 个文件 ＋ smoke-web ＋ two-device-sync 同时红）。
-// ⇒ 同步路径只认一个**函数签名**，实现在启动时注册（生产：`src/main.tsx`）。
+// S4b-1b（2026-09-23）：**远端来的状态怎么落地** —— 注入，理由见文件头。
 // =====================================================================================
 
 /** 远端状态落地：由"有编辑器的那一侧"注册（生产 `src/main.tsx` ⇒ `mergeRemotePageState`）。 */
@@ -93,7 +55,7 @@ export type CrdtRemoteApplier = (db: ContentSql, pageId: string, state: Uint8Arr
 
 let remoteApplier: CrdtRemoteApplier | null = null;
 
-/** 界面侧在启动时注册（与 `setCrdtPlaneImpl` 成对）。 */
+/** 界面侧在启动时注册。 */
 export function setCrdtRemoteApplier(fn: CrdtRemoteApplier): void {
   remoteApplier = fn;
 }

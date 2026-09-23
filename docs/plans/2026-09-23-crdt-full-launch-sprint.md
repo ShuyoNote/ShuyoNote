@@ -569,5 +569,58 @@ check-web-commands ⇒ Rust 244 / web 245 / CommandMap 246（+2 条命令，两�
 ⇒ 本轮**只出稿**（与 §14.2 同一取舍：先有判据与口径，再写码）。要动手时按设计稿 §7 的顺序，
 判据 5（真机端到端）可以和 §11.9 的真机双设备验收**一次做完**。
 
+## 16. 第 47 轮：**撤出磁盘边界的 CRDT 平面开关**（把 §15.2 那条"该撤没撤"做掉）
+
+### 16.1 撤了什么
+
+| 位置 | 动作 |
+|---|---|
+| `src/lib/docContent.ts` 的**两读一写**三处 | `throughCrdtPlane(...)` 壳撤掉，**各回一行原样**（读一页 / 读全库 / 写一页）；连 `crdt/plane` 的 import 也删了（这一层不再 import 它） |
+| `src/lib/crdt/plane.ts` | **上半段**（`CrdtPlaneImpl` / `setCrdtPlaneImpl` / `isCrdtPlaneEnabled` / `setCrdtPlaneEnabled` / `throughCrdtPlane` ＋ `VITE_CRDT_PLANE` 开关）删除；**下半段**（`setCrdtRemoteApplier` / `applyRemoteCrdtState`，每天在用）**原样保留**，文件头改写为"现在只剩什么 ＋ 撤出去的那半为什么撤" |
+| `src/main.tsx` | 删掉 `setCrdtPlaneImpl(roundTripContentJson)` 与那句 import ⇒ **生产入口不再为这个开关 import 带编辑器节点表的桥接层**（那正是 §1 那条"清单追不上事实"的来源之一） |
+| 文件名/路径 | **刻意不改**：`scripts/doc-content-access-baseline.json` 按**文件路径**记基线（"只许减"）⇒ 改名会被门禁读成"新增文件" |
+
+### 16.2 判据替换（**逐条交代去向**，不许删了不写替代）
+
+撤出前那两份判据共 **12 条**（`plane.test.ts` 3 ＋ `plane.path.test.ts` 9）。删掉它们必须写清替代：
+
+| 原判据 | 去向 |
+|---|---|
+| ① 关着逐字节等价 | ⇒ **新 `crdt/plane.withdrawn.test.ts` ①**（变成**无条件**成立，且断言更硬：直接比对**落库那一行**的字节，而不只是读回来的值）|
+| ② 开着往返不丢东西 / ③ 切开关不改已落盘内容 | **随开关作废**；替代＝**新 ④ 的护栏**（那三件一旦回来就红）|
+| ④ 引用完整性（`topLevelBlockIds` 集合与顺序）| ⇒ **新 ②**（无条件）|
+| ④' 批量读出口与单读一致 | ⇒ **新 ③** |
+| ⑤ / ⑤' / ⑤''（派生列不静默落后 ⇒ 有痕 ＋ 补算器收口）| 与新边界**无关** ⇒ **留在既有判据**：`src/lib/docContent.test.ts` 的 `text_stale` / `staleTextQueue` / `refreshPageTextIfStale` 那一组 |
+| ⑥ 存量未补种身份的页 ⇒ 开着读会如实抛 | **随开关作废**（那正是平面造成的失败模式；边界决策 §6.2 已写明随"前提 4"划掉）|
+| `plane.test.ts` 的「没注册 ⇒ 如实抛」 | **本来就有对应判据**：`crdt/remoteApply.test.ts` ①②（对象是**下半段**那个注入点）|
+
+新增护栏（**文本级**，先剥注释再断言 —— 与 `webClaimScope.wiring.test.ts` 同一个坑）：
+`docContent.ts` 与 `plane.ts` 里**都不许**再出现 `throughCrdtPlane` / `VITE_CRDT_PLANE` / `setCrdtPlaneImpl` /
+`isCrdtPlaneEnabled`；**反向**断言 `applyRemoteCrdtState` 仍在 `plane.ts` 与 `web.ts` 里（防止撤出时把
+在用的那一半一起删掉）；`main.tsx` 里不许再有 `roundTripContentJson`。
+
+### 16.3 为什么这件事值得单独一片
+
+它同时收掉三样东西：① 一条"开着只会把用户库里的 JSON **归一化改写一次**"的**静默改写路径**；
+② 文档与代码的漂移（读代码的人会把它当成 CRDT 的合并路径，而真正的合并走的是
+「每页 `page_crdt` ＋ 载荷 `crdt_state`」）；③ 生产入口对编辑器节点表桥接层的一条**无谓依赖线**。
+
+### 16.4 当轮 tip 读数（一次性跑完、全绿）
+
+```
+tsc --noEmit                        ⇒ exit 0
+pnpm vitest run（全量）              ⇒ 207 文件通过 | 5 跳过（212）；2144 条通过 | 12 跳过（2156）；exit 0
+pnpm run build（全套门禁）           ⇒ exit 0
+check-doc-content-access            ⇒ 562/562（基线未动；撤出**没有**改变任何 literal 计数）
+check-doc-links / check-doc-facts   ⇒ 绿
+test:sync-verify（双设备同页并发）   ⇒ 84 通过 / 0 失败
+build:web ＋ check:web-build        ⇒ 9 通过 / 0 失败
+```
+
+⚠️ **测试条数从 2152 → 2144（−8）是有意的**：删了 12 条（那两份开关判据）、加了 4 条（本 §16.2 的
+新护栏与无条件性质）⇒ **−12 ＋ 4 ＝ −8**。作废的判据没有对象可测，替换映射见 §16.2 —— 不是
+"测试变少了所以更绿"；`check-doc-content-access` 的 562 处**一点没动**（撤出没碰那三个 literal 的计数）。
+
+
 
 

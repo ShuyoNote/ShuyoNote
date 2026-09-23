@@ -1,5 +1,11 @@
 # Slice B 施工单：让**保存/加载**能选走 ydoc（阶段 2 · 第二切片，2026-09-23）
 
+> ⚠️ **本片的产物（磁盘边界那个 `VITE_CRDT_PLANE` 开关）已于 2026-09-23 第 47 轮撤出** ——
+> [边界决策](2026-09-23-crdt-plane-boundary-decision.md) §6.2 判它"应当撤出"（存盘这一步只有一个版本
+> ⇒ 开着也合并不了任何东西），执行记录见[全上线冲刺](2026-09-23-crdt-full-launch-sprint.md) §16。
+> ⇒ 读本文时请把它当**当时的施工记录**：里面"开关怎么接、判据怎么设计"的那些推理仍然有效，
+> 但**今天代码里没有这个开关**（`docContent.ts` 两读一写已各回一行原样）。
+
 > 上位：[阶段 2 开工清单](2026-09-23-crdt-stage2-kickoff.md)（Slice A 已落地：`src/lib/crdt/yDocBridge.ts` ＋ 8 条判据）；
 > 路线与改动面：[全量 CRDT 冲刺计划](2026-09-18-crdt-full-migration-plan.md) §4；
 > 尖刺边界：[CRDT 尖刺结论](2026-09-19-crdt-spike-conclusions.md)。
