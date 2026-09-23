@@ -221,3 +221,19 @@ owner 于第 24 轮后给了一句 **"可以动服务端，不考虑向后兼容
 | 5 | Rust 成对判据**执行**（`STATUS_ENTRYPOINT_NOT_FOUND`；已排除 pdfium） | 环境 |
 | 6 | yrs 对拍尖刺（JS yjs vs Rust yrs）→ 再定 S5 阶段 2 | 本机可做 |
 | 7 | 阶段 1 的块级 LWW/补算器拆除 | 本机可做（先确认没有读侧依赖） |
+
+### 10.4 当轮 tip 的合并读数（第 35 轮，`56570ff6` 上一次性跑完）
+
+§9.1 那些读数是**各片当时**的数字；这里给一份**同一个 tip 上**的合并读数（本仓纪律：别只在旧 tip 上跑过）：
+
+```
+TIP=56570ff6
+tsc --noEmit                     ⇒ exit 0
+vitest run src/lib/crdt/         ⇒ 16 文件 / 75 条全绿（含 S9 的 bootstrap/claimClient/claimWiring）
+pnpm run build（全套门禁）        ⇒ exit 0
+check-doc-content-access         ⇒ 562/562（基线未动）
+test:sync-verify（双设备同页并发）⇒ 84 通过 / 0 失败
+```
+
+⚠️ **这份读数里没有的**（别当成已验证）：服务端那条端点在**生产**上的行为（未发版）、**真机**双设备、
+桌面侧 claim、Rust 成对判据的执行（环境问题）、yrs 对拍 —— 都在 §10.3 的缺口清单里。
