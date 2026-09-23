@@ -29,6 +29,32 @@ Adding pdfium-render v0.9.4 to dependencies
 3. 附带拉进来的依赖：`image 0.25`（图像解码）、`moxcms`（色彩管理）、`zune-jpeg`、`itertools`、`bitflags`、`once_cell` —— 许可均宽松（MIT/Apache/zlib 类），**不引入新的 copyleft**。
 
 > ⚠️ 编译通过 ≠ 跑得起来：**运行时**还需要 `pdfium.dll`（由 `libloading` 运行时加载，路径可指定）。库的获取与固定版本是 P0（§2）。
+>
+> ### 0.1 ★ 自建 PDFium（owner 2026-09-23 拍「做」）—— 在本机的**实测阻塞**与转交清单
+>
+> 现在的交付物是第三方预编译包（`bblanchon/pdfium-binaries`，版本与 sha256 都钉死、可查，见 `scripts/fetch-pdfium.mjs`）。
+> owner 要求改成**自建**。**在本机（AMD/Windows）这条路走不通，四条探针都试过**（2026-09-23 实测）：
+>
+> | 需要的东西 | 主机 | 实测 |
+> |---|---|---|
+> | depot_tools ＋ Chromium 源码 | `chromium.googlesource.com` | **HTTP 000**（本机 DNS 污染/不可达） |
+> | 快照文件 | `commondatastorage.googleapis.com` | **HTTP 000** |
+> | 桶列表页 | `storage.googleapis.com` | 200（但**只有列表**，文件在上一行的主机上） |
+> | 源码镜像 | `gitee.com/mirrors/chromium` | `git ls-remote` **弹凭据框 ⇒ 不可匿名克隆**（超时） |
+>
+> ⇒ **结论：自建 PDFium 必须有"网络干净"的机器**（或先解决这台机的出站限制）。转交清单（给能出网的那台/那个人）：
+> 1. `git clone https://chromium.googlesource.com/chromium/tools/depot_tools`，`gclient config --unmanaged https://pdfium.googlesource.com/pdfium.git`；
+> 2. `gclient sync`（**几十 GB、小时级**；第一次会把 Chromium 依赖树拉全）＋ `gn gen out/Release --args='is_debug=false pdf_enable_v8=false pdf_enable_xfa=false pdf_is_standalone=true target_cpu="x64"'`；
+> 3. `ninja -C out/Release pdfium` ⇒ 产出 `libpdfium.so` / `pdfium.dll` / `libpdfium.dylib`；
+> 4. 把三个平台的产物按 `fetch-pdfium.mjs` 的**同一套机制**入库（钉版本 ＋ **权威 sha256** ＋ `SOURCE.txt` 溯源），
+>    并把 `RELEASE_BASE` 从"第三方 release 资产"改成"我们自己的产物"（这一步是**交付形态**的改变，不只是换个下载地址）；
+> 5. ⚠️ **供应链面**：自建意味着**我们**对这份二进制的构建参数负责（`args.gn` 要随产物归档），
+>    且 `pdfium-render` 的 `pdfium_7881` feature 与自建版本必须对齐（否则绑定与库漂移）。
+> 6. ⚠️ 交付前还要复跑**对拍硬判据**（P3 那四条，逐像素阈值 8）与 `cjk.pdf` 六格读数里的本平台那一格 ——
+>    换构建来源等于换库，"参数一样"不能替代读数。
+>
+> 本机**能做到的部分**已做完：探针读数（上表）、现有供应链的钉死与校验（`fetch-pdfium.mjs` 的 sha256 ＋ attestation 交叉核对）、
+> 以及这条转交清单。**不要**在本机硬试（会白等几十分钟到几小时，且拉不下来）。
 
 ---
 

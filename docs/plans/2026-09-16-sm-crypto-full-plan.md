@@ -815,7 +815,7 @@ GM/T 0024 TLS，不在范围）。
 
 | 平台 | 现状 | 要做的话是什么 | 粗估 |
 |---|---|---|---|
-| **Android** | ❌ 未排。系统**没有** OpenSSL ⇒ 必须**随包**一份 SM 版（Tongsuo 或 stock OpenSSL `no-shared` 交叉编译；AMD 已证过 NDK r29 能编） | ① 交叉编译静态 `libcrypto.a`（arm64-v8a，与 `fetch-pdfium` 同一套 vendor 机制）；② `stage-android` 时把 `OPENSSL_DIR` 指过去并加 `--features sm-library`；③ 产物断言（`check-android-bundle` 加一格：`.so` 里**没有** `libcrypto.so` 依赖 ＋ 页加密标记） | 2–3 人日（编库 0.5 ＋ 接线 0.5 ＋ 判据/真机 1–2） |
+| **Android** | 🟡 **进行中（owner 2026-09-23 拍「做」）**。此前未排、两边都建议"先不做"，owner 覆盖。系统**没有** OpenSSL ⇒ 必须**随包**一份 SM 版 | 已落（AMD，2026-09-23）：① **取库链** `scripts/build-tongsuo-android.sh`（Gitee 镜像 @ 钉死 commit `540603a3` ＋ NDK r29 ⇒ 静态 `libcrypto.a` 10,931,686 字节、SM 符号 190、**不产出 `libcrypto.so`**）＋ `scripts/check-openssl-android.mjs`（**属性判据**：静态/大小带/headers/SM 符号；sha256 只作读数 —— 实测同机同参数连编三遍是三个不同值，见该脚本文件头）；② **产物门禁** `scripts/check-android-crypto.mjs`（包里不该有 `libcrypto.so*`；应用 `.so` 的 DT_NEEDED 里不该有它）；③ **workflow 接线**（android.yml：导出 `ANDROID_NDK_ROOT`、交叉编译、`--print-env` 进 `$GITHUB_ENV`、`sm-library-build --prepare --require-static` 打补丁、构建加 `--features sm-library`）。**仍未做**：CI 那条 job 的读数（等 GitHub 镜像同步）＋ **真机验收**（人手）。★ 一条待判定：Android 的 rusqlite 用的是 `bundled-sqlcipher-vendored-openssl` ⇒ **它本来也随包编一份 OpenSSL**，"库级国密"在 Android 上**可能**只需补丁 ＋ `--features sm-library`，未必需要自编静态库 —— 两条路由 CI/真机读数择一 | 2–3 人日（编库 0.5 ＋ 接线 0.5 ＋ 判据/真机 1–2）—— 取库链与判据已在 2026-09-23 落完 |
 | **iOS** | 范围外（方案 §1：iOS 未立项） | 同 Android 思路（静态 OpenSSL ＋ 同一个特性） | 立项后再说 |
 
 > **建议**：**Android 先不做**。理由：① 国密库级的**用户可见收益**已经由桌面三平台拿到（Linux 支已 CI 证、Windows 待彩排、macOS 待 secrets）；
