@@ -443,6 +443,19 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   > ⚠️ 展开后的路径**必须以 `./` 开头**（`./squashfs-root/usr/lib/...`）才算"包内相对路径"：
   > `squashfs-root` 是打包容器的根名，判据会把它摘掉再数层数。写成 `.squashfs-root/...`（少一个斜杠）
   > 会被判成"位置不对"——我第一版就踩了，而判据的反应是**正确地红**（说明那条位置判据确实在干活）。
+- **取 GitHub 资产：两条路，只有网络类失败才换路；换路不许静默**（2026-09-24 收口，本机实测）：
+  `node scripts/fetch-gh-asset.mjs <owner/repo> <tag|latest> <名子串> <输出> [期望 sha256]`（`--list` 只列资产）。
+  分工：纯逻辑 `scripts/lib/gh-asset.mjs`、网络与落盘 `scripts/lib/gh-asset-fetch.mjs`、薄 CLI 只管参数/打印/退出码；
+  `scripts/fetch-pdfium.mjs` 的退路调**同一份** ⇒ 原先那两份 `.tools/gh-api-asset.mjs`、`.tools/fetch-pdfium-via-api.mjs` 已删。
+  本机读数：Node 直连 `api.github.com` ⇒ `UND_ERR_CONNECT_TIMEOUT`（网络类）⇒ 退 `curl --resolve 140.82.113.6` ⇒ **200**；
+  `node scripts/fetch-pdfium.mjs win-x64` 的直链（`github.com`）⇒ `curl (35) schannel … CRYPT_E_REVOCATION_OFFLINE`（网络类）
+  ⇒ 退 API 资产端点 ⇒ **3,733,154 字节**、sha256 `73cc0de6…` 与平台表钉死值一致、解出 `bin/pdfium.dll` **7,211,520 字节**。
+  判据：`scripts/lib/gh-asset.test.mjs`（纯：选择/路由/状态码/哈希/argv 无凭据/curl 退出码分类）
+  ＋ `scripts/lib/gh-asset-fetch.test.mjs`（注入 `fetchImpl`，**不碰网络**）。
+  > ⚠️ 两条钉过的坑：① `curl -s` **不看状态码** ⇒ 不带 `-w` 时 `releases/tags/<不存在的 tag>` 的 404 体会被当成功读进来，
+  > 于是"这个 tag 不存在"被读成"这个 release 一个资产都没有"（正是本仓禁止的"结果类冒充事实"）；
+  > ② 输出目录不存在时 curl 报 `(23) client returned ERROR on write` —— **像网络故障，其实是路径**（已改成先建目录）。
+  > 凭据一律走 `--config` 临时文件、**绝不进 argv**（2026-09-16 那次 "Bearer token 打进公开日志" 的教训）。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 

@@ -25,6 +25,14 @@
 //     $env:PDFIUM_RESOLVE = "github.com:20.205.243.166,objects.githubusercontent.com:185.199.108.133"
 //   （实测：Fastly 的 .111 不通、.108 通——换一个 IP 往往就好了。）
 //
+// ⭐ **2026-09-24 起的第二条路**（本机 DNS 下第一条整个不通，原先靠 `.tools/fetch-pdfium-via-api.mjs`
+//   手工绕）：直链是**网络类**失败时，自动退到 **`api.github.com` 的资产端点**
+//   （`/repos/…/releases/assets/<id>` ＋ `Accept: application/octet-stream` ⇒ 302 到
+//   `objects.githubusercontent.com`）。这条路**不是新写的**：与 `scripts/fetch-gh-asset.mjs` 调同一份
+//   `scripts/lib/gh-asset-fetch.mjs`（Node 直连 → 网络类失败才退 `curl --resolve`），所以 `PDFIUM_RESOLVE`
+//   只影响第一条路。**判退/不退的规矩**：只有网络类退出码才换路（`lib/gh-asset.mjs` 的 `classifyCurlExit`）
+//   —— HTTP 4xx/5xx 一律不换（换 IP 不会把 404 变成 200）。
+//
 // 交付前建议改为**自建**（Chromium 工具链）并更新本文件的校验和；预编译包仅用于开发期验证。
 
 import { createHash } from "node:crypto";
@@ -34,6 +42,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolvePlatform } from "./lib/pdfium-target.mjs";
+import { classifyCurlExit } from "./lib/gh-asset.mjs";
+import { fetchAssetTo } from "./lib/gh-asset-fetch.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_ROOT = join(root, "src-tauri", "vendor", "pdfium");
@@ -41,6 +51,7 @@ const OUT_ROOT = join(root, "src-tauri", "vendor", "pdfium");
 /** Chromium/PDFium 构建号。改这里 = 换 PDFium 版本（必须同时改 pdfium-render 的对应 feature）。 */
 const PDFIUM_BUILD = "7881";
 const PDFIUM_VERSION = "151.0.7881.0";
+const PDFIUM_REPO = "bblanchon/pdfium-binaries";
 
 const RELEASE_BASE = `https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_BUILD}`;
 
@@ -106,8 +117,8 @@ function sha256File(p) {
   return createHash("sha256").update(readFileSync(p)).digest("hex");
 }
 
-/** 用 curl（可选 --resolve 绕 DNS）下载。返回落盘路径。 */
-function download(url, outFile) {
+/** 第一条路：直链 + curl（可选 `PDFIUM_RESOLVE` 钉 IP）；失败时抛出带 `status` 的错误。 */
+function downloadDirect(url, outFile) {
   const args = ["-L", "-sS", "--fail", "--connect-timeout", "15", "--max-time", "600"];
   const resolveList = (process.env.PDFIUM_RESOLVE ?? "").trim();
   if (resolveList) {
@@ -119,6 +130,44 @@ function download(url, outFile) {
   args.push("-o", outFile, url);
   console.log(`[fetch-pdfium] curl ${args.filter((a) => a !== "-sS").join(" ")}`);
   execFileSync("curl", args, { stdio: "inherit" });
+}
+
+/**
+ * 第二条路：`api.github.com` 的资产端点 —— 与 `scripts/fetch-gh-asset.mjs` **同一份实现**
+ * （`lib/gh-asset-fetch.mjs`）。只在第一条路是网络类失败时走这里。
+ */
+async function downloadViaApi(outFile) {
+  console.log(`[fetch-pdfium] 直链不通 ⇒ 退到 API 资产端点（${PDFIUM_REPO}@chromium/${PDFIUM_BUILD}）`);
+  const r = await fetchAssetTo({
+    repo: PDFIUM_REPO,
+    tag: `chromium%2F${PDFIUM_BUILD}`, // 标签里的 `/` 必须编码（API 路径要用 %2F）
+    match: spec.asset,
+    out: outFile,
+  });
+  for (const s of r.steps) console.log(`[fetch-pdfium]   · ${s}`);
+  if (!r.ok) throw new Error(`API 资产端点也失败：${r.message}`);
+  // 钉死的是"哪个文件"：API 报的名字与字节数都要与对账（子串命中不等于就是那一份）
+  if (r.asset.name !== spec.asset) {
+    throw new Error(`API 给的资产不是钉死的那个（${r.asset.name} ≠ ${spec.asset}）—— 拒绝使用`);
+  }
+  if (r.bytes !== r.asset.size) {
+    throw new Error(`落盘 ${r.bytes} 字节与 API 报告的 ${r.asset.size} 字节不一致（多半被截断）—— 拒绝使用`);
+  }
+}
+
+/** 先直链，**只有网络类失败**才换路（HTTP 4xx/5xx 与证书问题一律不换 —— `classifyCurlExit`）。
+ *  返回实际走通的那条路（记进 SOURCE.txt，别让人以为一定是直链取的）。 */
+async function download(tgz) {
+  try {
+    downloadDirect(url, tgz);
+    return "github.com 直链";
+  } catch (e) {
+    const cls = classifyCurlExit(e?.status);
+    if (!cls.fallback) throw new Error(`直链取包失败：${cls.message}`);
+    console.log(`[fetch-pdfium] ${cls.message}`);
+    await downloadViaApi(tgz);
+    return "api.github.com 资产端点（退路）";
+  }
 }
 
 const argv = process.argv.slice(2);
@@ -175,6 +224,7 @@ if (!spec.sha256) {
     `[fetch-pdfium] ${platform} 的 sha256 尚未实测记录 —— 拒绝下载。\n` +
       `  先人工取回并核对，再把哈希填进本脚本的 PLATFORMS["${platform}"].sha256：\n` +
       `  1) 下载 ${RELEASE_BASE}/${spec.asset}\n` +
+      `     （github.com 不通的机器：node scripts/fetch-gh-asset.mjs ${PDFIUM_REPO} chromium%2F${PDFIUM_BUILD} ${spec.asset} <文件>）\n` +
       `  2) node scripts/fetch-pdfium.mjs --print-sha256 <文件>\n` +
       `  3) 与 release 页披露的构建溯源（pdfium-attestation.json）交叉核对后再填入。`,
   );
@@ -186,7 +236,7 @@ const tgz = join(OUT_ROOT, spec.asset);
 mkdirSync(OUT_ROOT, { recursive: true });
 
 console.log(`[fetch-pdfium] target: PDFium ${PDFIUM_VERSION} (build ${PDFIUM_BUILD}) / ${platform}`);
-download(url, tgz);
+const route = await download(tgz);
 
 const got = sha256File(tgz);
 if (got !== spec.sha256) {
@@ -214,6 +264,7 @@ writeFileSync(
     `asset   : ${spec.asset}`,
     `sha256  : ${spec.sha256}`,
     `source  : ${url}`,
+    `route   : ${route}`,
     `fetched : ${new Date().toISOString()}`,
     ``,
     `VERSION: ${existsSync(versionFile) ? readFileSync(versionFile, "utf8").trim().replace(/\n/g, " ") : "(无)"}`,

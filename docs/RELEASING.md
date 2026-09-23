@@ -481,8 +481,10 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 > 而同一台机器上 `node -e "fetch(...)"` ⇒ `UND_ERR_CONNECT_TIMEOUT`；深检里 `--pinned-ip` 更是
 > `ERR_TLS_CERT_ALTNAME_INVALID`。原因：`Host` 头是 HTTP 层的，TLS 的 **SNI 来自连接目标** ——
 > 而 `curl --resolve` 的设计恰恰把"连到哪个 IP"与"URL 里的主机名"分开（URL 主机名照样用于 SNI/证书，只是不查 DNS）。
-> ⇒ **发版当天取不到就走 `curl --resolve` 那条**（本文上半部分那条老写法）；`--deep --pinned-ip` 在 HTTPS 上
-> 会被如实记成"未实查"（**不是红**）。要让本模块自己实现，只能在"加 `undici` 依赖"与"起 curl 子进程
+> ⇒ **发版当天取不到就走 `curl --resolve` 那条**（本文上半部分那条老写法）——**现在有现成命令，不必手拼 curl**：
+> `node scripts/fetch-gh-asset.mjs <owner/repo> <tag|latest> <资产名子串> <输出> [期望 sha256]`（`--list` 只列资产；
+> 两条路都如实打印、凭据不进 argv、哈希不符即退 1）。判据与实测读数见 `docs/TESTING.md` 的「取 GitHub 资产」；
+> `--deep --pinned-ip` 在 HTTPS 上会被如实记成"未实查"（**不是红**）。要让本模块自己实现，只能在"加 `undici` 依赖"与"起 curl 子进程
 > （第二条 transport）"之间选一个 —— **尚未裁定**（2026-09-23 三方讨论的结论倾向于都不做：
 > 环境里已经有能用的那条路）。
 
