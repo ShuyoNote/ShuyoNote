@@ -16,6 +16,7 @@ import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode
 import { toLegacyDoc } from "../blockIdentity";
 import {
   clearPageCrdtState,
+  ensurePageCrdtState,
   readPageCrdtState,
   writeContent,
   writePageCrdtState,
@@ -151,5 +152,49 @@ describe("冲刺 S2b：CRDT 状态落盘（`page_crdt`）", () => {
     writePageCrdtState(db, "p1", afterRestart.exportState(), 3);
     const again = openPageSession({ state: readPageCrdtState(db, "p1")! });
     expect(idsOf(again.exportJson())).toEqual(ids);
+  });
+
+  it("⑤ ★ 首开只**建一次**血统并立刻落盘；之后（重启／另一台）**不再建**（= 不会有第二套身份）", () => {
+    const { db } = fakeDb();
+    let built = 0;
+    const build = (json: string) => {
+      built += 1;
+      return openPageSession({ json }).exportState();
+    };
+    writeContent(db, "p1", { title: "页", json: BASE, text: "正文" }, 1);
+
+    const first = ensurePageCrdtState(db, "p1", BASE, 2, build);
+    expect(first.seeded).toBe(true);
+    expect(built).toBe(1);
+
+    // 第二台设备／重启后再开这一页：库里已有 ⇒ 只载入
+    const second = ensurePageCrdtState(db, "p1", BASE, 3, build);
+    expect(second.seeded).toBe(false);
+    expect(built).toBe(1); // ★ 没有第二次建血统
+    expect(Array.from(second.state)).toEqual(Array.from(first.state));
+
+    // 两次拿到的是**同一条血统**：从它开会话能继续演进（而不是"只能看"）
+    const s = openPageSession({ state: second.state });
+    expect(idsOf(s.exportJson())).toEqual(["blk-1", "blk-2"]);
+    s.edit(() => {
+      const p = $createBlockParagraphNode("blk-after");
+      p.append($createTextNode("开完之后加的"));
+      $getRoot().append(p);
+    });
+    expect(idsOf(s.exportJson())).toEqual(["blk-1", "blk-2", "blk-after"]);
+  });
+
+  it("⑥ `build` 抛错 ⇒ **一行都不落盘**（不留半条状态），下一次仍能正常建", () => {
+    const { db } = fakeDb();
+    expect(() =>
+      ensurePageCrdtState(db, "p1", BASE, 2, () => {
+        throw new Error("建血统失败");
+      }),
+    ).toThrow(/建血统失败/);
+    expect(readPageCrdtState(db, "p1")).toBeNull(); // 没有半条状态
+
+    const ok = ensurePageCrdtState(db, "p1", BASE, 3, (json) => openPageSession({ json }).exportState());
+    expect(ok.seeded).toBe(true);
+    expect(idsOf(openPageSession({ state: ok.state }).exportJson())).toEqual(["blk-1", "blk-2"]);
   });
 });

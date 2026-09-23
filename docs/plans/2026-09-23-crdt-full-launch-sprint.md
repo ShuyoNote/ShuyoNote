@@ -79,13 +79,15 @@
 | **S2b** ✅ | **状态落盘位置** | 新表 `page_crdt(page_id, state BLOB, updated_at)` **两侧都建**（TS `platform/sqliteStore.ts` ＋ Rust `db.rs`）；读写三条函数（`readPageCrdtState` / `writePageCrdtState` / `clearPageCrdtState`）先在**那一层**（`lib/docContent.ts`，字节在层里是**不透明 BLOB**）＋ `pageStateStore.test.ts` 4 条 | ① 没状态 ⇒ `null`（≠空字节）；写回读**逐字节相同**（含非 UTF-8 字节，堵住"被当文本/base64 存"）；② 同页只留最新（主键 upsert）；③ 驱动回二进制字符串也能还原（**不用 `Buffer`**，Web 里没有）；④ ★ **跨重启仍同一条血统** ⇒ 合并后 `["blk-1","blk-2","blk-B","blk-A"]`、两处都在、不翻倍、两台投影一致 |
 | **S3a** ✅ | **活绑定（常驻监听）** | `openPageSession` 把"本地编辑 → yjs"接成**常驻** `registerUpdateListener`（不再每次编辑手动挂一次），并新增 **`dispose()`** 撤监听；回声**由库自己挡**（`syncYjsStateToLexicalV2` 的变更带 `COLLABORATION_TAG`，`syncLexicalUpdateToYjsV2` 见到它就当场返回 —— 读 `@lexical/yjs` 的 V2 实现得到，不是猜的）＋ `pageSession.test.ts` 加 3 条 | ⑥ ★ **回声安全**：两台来回互合**三轮**不增殖、两侧仍一致；⑦ ★ **活绑定真进 doc**：`edit()` 之后**另一个会话**从状态打开就能看到（没有手动同步调用）；⑧ `dispose()` 之后编辑**不再**进 doc（否则 dispose 是假的） |
 | **S3b-1** ✅ | **绑定既有编辑器 ＋ 「本地编辑」信号** | `openPageSession({ json\|state, editor })` 可绑**既有**编辑器（真编辑器要的就是这条）；新增 `onLocalEdit(cb)` —— **hydration（载入/远端合并落回编辑器）期间不报**，其余 update 报一次（真编辑器的保存路径要挂在它上面，而不是"每次 update 都存"）＋ `pageSession.test.ts` 加 2 条 | ⑨ ★ 直接改**那个**编辑器 ⇒ 会话状态里就有、与纯函数路径同源、另一端看得到；⑩ ★ 建血统/远端合并不报、本地编辑报一次、退订生效 |
-| **S3b-2** | **真编辑器接线**（下一件） | `editor/Editor.tsx`：`useLexicalComposerContext()` 拿编辑器 ⇒ `pageId` 变化时开会话（**state 优先**、json 兜底）、卸载 `dispose()`；保存路径改挂 `onLocalEdit`（不再"每次 update 都存"）；打开页面的那一侧读 `readPageCrdtState` 传下去、保存时 `writePageCrdtState` | 真编辑器里打字 ⇒ 状态里出现增量、另一个会话能合；切页/卸载 ⇒ `dispose()` 被调到（不泄漏监听）；**远端合并落回编辑器不会触发一次多余的落盘**（用 ⑩ 的信号口径验） |
+| **S3b-2a** ✅ | **首开"只建一次"**（把"并发首开两套身份"这个风险堵成一条入口） | 层里新增 `ensurePageCrdtState(db, pageId, json, now, build)`：**有就载入、没有才建一次并立刻落盘**；`build` 是**注入**的（这一层不许 import 桥接层 —— 与 `setCrdtPlaneImpl` 同一手法）＋ `pageStateStore.test.ts` 加 2 条 | ⑤ ★ 首开建一次（`seeded=true`）并落盘；第二台/重启再开 ⇒ `seeded=false`、**builder 没被再调**（= 不会有第二套身份）、拿到的是同一条血统且能继续演进；⑥ `build` 抛错 ⇒ **一行都不落盘**，下一次仍能正常建 |
+| **S3b-2b** | **真编辑器接线**（下一件） | `editor/Editor.tsx`：`useLexicalComposerContext()` 拿编辑器 ⇒ `pageId` 变化时 `ensurePageCrdtState` ＋ 开会话（**state 优先**、json 兜底）、卸载 `dispose()`；保存路径改挂 `onLocalEdit`（不再"每次 update 都存"）；打开页面的那一侧把 `readPageCrdtState` 的结果传下去、保存时 `writePageCrdtState` | 真编辑器里打字 ⇒ 状态里出现增量、另一个会话能合；切页/卸载 ⇒ `dispose()` 被调到（不泄漏监听）；**远端合并落回编辑器不会触发一次多余的落盘**（用 ⑩ 的信号口径验） |
 
-> ⚠️ **S3b-2 的前置判断（本轮读代码时发现的，别跳过）**：`src/editor/Editor.tsx:176` 的
-> `parseEditorState` 在**载入**时就会给缺 `blockId` 的顶层块铸 `newBlockId`（`:190`）。
-> ⇒ 两台设备各自**首开**同一张**旧页**会得到**两套身份** ⇒ 按 S1 红线，合并时一块变两块。
-> 现有路径靠"谁先保存谁铸、之后大家载入状态"来规避，但**并发首开**仍是真风险
-> ⇒ S3b-2 必须把"首开"收敛成**一次性**（补种后再建血统），或接上 S6 的身份口径。
+> ⚠️ **"首开两套身份"这个风险（读代码时发现 → S3b-2a 已收敛，残留窗口归 S5）**：
+> `src/editor/Editor.tsx:176/190` 的 `parseEditorState` 在**载入**时就会给缺 `blockId` 的顶层块铸
+> `newBlockId` ⇒ 若"每台设备打开时各建一次血统"，两台各造一套身份 ⇒ 按 S1 红线合并会翻倍。
+> **处置**：S3b-2a 给出唯一入口 `ensurePageCrdtState`（**有就载入、没有才建一次并立刻落盘**）。
+> **残留（如实写）**：两台设备**同时**首开同一张**从没建过血统**的页、且各自离线时窗口仍在
+> ⇒ 彻底解法在 S5（服务端可以拒绝/收敛第二条血统），本阶段不假装已解决。
 | **S4** | **客户端同步接 update** | outbox 携带 CRDT 更新（而非整份 JSON）＋ 版本标记 | 两台设备交替同步 ⇒ 收敛；离线各改一处 ⇒ 联网后两处都在 |
 | **S5** | **服务端合并（两阶段）** | 阶段 1「只存不算」→ 阶段 2「开算」＋ 总开关（可按空间关） | 阶段 1 行为零变化；阶段 2 服务端合并幂等、可重放、不丢块 |
 | **S6** | **派生与身份口径重定** | `content_text`/FTS 在合并后的重建时机；块身份在 CRDT 下的铸/补种 | 合并后正文不落后（或有痕）；`topLevelBlockIds` 在合并前后**集合不变**（除真正新增块） |

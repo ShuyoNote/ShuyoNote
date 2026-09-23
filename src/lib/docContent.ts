@@ -160,6 +160,51 @@ export function clearPageCrdtState(db: ContentSql, pageId: string): void {
 }
 
 /**
+ * **建血统**的注入点（与 `crdt/plane.ts` 的 `setCrdtPlaneImpl` 同一手法）：
+ * 给一份**落盘 JSON**，回一份 CRDT 状态字节。
+ *
+ * 为什么不在这里直接调实现：这一层不许 import `crdt/yDocBridge`（那会把整张编辑器节点表拖进依赖图，
+ * 见 `crdt/plane.ts` 文件头那条初始化环）⇒ 实现由"有编辑器的那一侧"注入。
+ */
+export type PageStateBuilder = (contentJson: string) => Uint8Array;
+
+/** `ensurePageCrdtState` 的结果。 */
+export interface SeededPageState {
+  state: Uint8Array;
+  /** `true` ⇒ 这一次**新建了血统**（并已落盘）；`false` ⇒ 库里本来就有，原样返回。 */
+  seeded: boolean;
+}
+
+/**
+ * ★ 一页的 CRDT 状态「**有就载入、没有就建一次并立刻落盘**」—— 这是"首开"的**唯一合法入口**。
+ *
+ * 为什么必须收成一条（S3b-2 的前置）：S1 判据实测「**从 JSON 各自新建**的状态**不可合**」
+ * （一块变两块、`blockId` 还重复）。而真编辑器**载入**时本来就会给缺 `blockId` 的顶层块铸身份
+ * （`src/editor/Editor.tsx:176/190`）⇒ 若是"每台设备打开时各建一次"，两台就会各造一套身份。
+ * ⇒ 口径：**先到的那一次建血统并立刻落盘，之后所有人只载入**。
+ *
+ * ⚠️ **已知限制（如实写，别当成已解决）**：两台设备**同时**首开同一张**从没建过血统**的页
+ * （且各自离线）时，这个窗口仍然存在 —— 两边都会自建一条血统 ⇒ 合并会翻倍。
+ * 彻底解法在服务端合并那一层（S5：服务端可以拒绝/收敛第二条血统），本切片不做，
+ * 也不假装已经解决。
+ *
+ * ⚠️ `build` 抛错 ⇒ **一行都不落盘**（不留半条状态给下一次误当成"已有血统"）。
+ */
+export function ensurePageCrdtState(
+  db: ContentSql,
+  pageId: string,
+  contentJson: string,
+  now: number,
+  build: PageStateBuilder,
+): SeededPageState {
+  const existing = readPageCrdtState(db, pageId);
+  if (existing) return { state: existing, seeded: false };
+  const state = build(contentJson);
+  writePageCrdtState(db, pageId, state, now);
+  return { state, seeded: true };
+}
+
+/**
  * 保存时"用新值还是**保留旧值**"的解析 —— **与桌面 `commands::save_page` 的
  * `args.X.unwrap_or(cur.X)` 同语义**：只覆盖调用方**真的带了**的字段。
  *
