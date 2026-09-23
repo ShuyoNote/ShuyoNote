@@ -81,30 +81,36 @@ export function planAttempts(url, { pinnedIp, host } = {}) {
 }
 
 /**
- * ⚠️ **这条兜底在 HTTPS 上会失败，而且失败得"不像网络问题"**（2026-09-23 实测，AMD）：
+ * ⚠️ **这条兜底在 Node 的 `fetch` 上，对 HTTPS 不成立**；但"钉 IP 这条路"本身**是成立的**
+ * —— 成立的是 `curl --resolve`（2026-09-23 两条实测，同一台机器、同一分钟，macOS 侧报的）：
  *
  * ```text
- * node scripts/check-release-state.mjs --deep --pinned-ip 140.82.112.6
- *   [deep] direct: 抛错（network/UND_ERR_CONNECT_TIMEOUT）
- *   [deep] 直连失败且是网络类失败 ⇒ 退到钉 IP 140.82.112.6（Host 仍为 api.github.com）
- *   [deep] pinned-ip: 抛错（network/ERR_TLS_CERT_ALTNAME_INVALID）
+ * ① curl -s -o /dev/null -w '%{http_code}' --resolve api.github.com:443:140.82.112.6 \
+ *      https://api.github.com/repos/ShuyoNote/ShuyoNote                     ⇒ **200**
+ * ② node -e "fetch('https://api.github.com/repos/ShuyoNote/ShuyoNote')"     ⇒ UND_ERR_CONNECT_TIMEOUT
+ * ③ 我这边（Windows）: --deep --pinned-ip 140.82.112.6
+ *      [deep] pinned-ip: 抛错（network/ERR_TLS_CERT_ALTNAME_INVALID）
  * ```
  *
- * 原因：`Host` 头是 **HTTP 层**的，而 TLS 的 **SNI**（决定服务端出示哪张证书）来自**连接目标**。
- * 钉 IP 之后，Node 的 `fetch` 会用 IP 做 SNI ⇒ 服务端给的证书是 `api.github.com` 的 ⇒ 与 IP 不匹配
- * ⇒ `ERR_TLS_CERT_ALTNAME_INVALID`。（这条注释原先写的是"Host 保持原主机名 ⇒ SNI/证书校验不会乱"
- * —— **那句话是错的**，实测把它推翻了。）
+ * 机制：`Host` 头是 **HTTP 层**的，而 TLS 的 **SNI**（决定服务端出示哪张证书）来自**连接目标** ⇒
+ * 本模块把 URL 换成 IP 之后，Node 用 IP 做 SNI ⇒ 证书主机名不匹配 ⇒ `ERR_TLS_CERT_ALTNAME_INVALID`。
+ * 而 `curl --resolve host:port:ip` 的设计恰恰是**把"连到哪个 IP"与"URL 里的主机名"分开**：
+ * URL 里的主机名照样用于 SNI 与证书校验，只是不再查 DNS ⇒ 在"直连超时/DNS 被投毒"的机器上仍能 200。
  *
- * ⇒ **现状与取舍**（写清楚，免得下一个人以为"兜底能救 HTTPS"）：
- *   · 真正能修的是给 undici 一个自定义 dispatcher（`connect: { servername: targetHost }`）——
- *     那要引入 `undici` 依赖、或改用 `https.request`（后者会**长出第二条 fetch 路径**，与约束②冲突）；
- *   · **在那之前**，这条兜底对 HTTPS 的净效果是"多花一次握手"，最终由三态判定记成 **未实查**
- *     （`lib/remote-fact.mjs`：网络类失败 ⇒ 未实查，**不是红**）—— 即"我们没查成"，而不是"线上不对"。
- *   · 对 **明文 HTTP**（本项目里没有这种远端）或证书本身覆盖该 IP 的场景，`Host` 头是够的。
+ * ⇒ **收窄后的结论与取舍**（我第一版写成"钉 IP 在 HTTPS 上不成立"——**那句话太宽**，已按实测收窄）：
+ *   · **Node `fetch` ＋ `Host` 头**：对 HTTPS **不行**（就是上面那个证书错）；
+ *   · **`curl --resolve`**：**行**，而且它本来就是 `docs/RELEASING.md` 里"发版当天取不到就钉 IP"那条路；
+ *   · 真要让本模块自己搞定，两条路各有一个代价（**都还没做，需要一次明确裁定**）：
+ *     (a) `undici` 自定义 dispatcher（`connect: { servername: targetHost }`）⇒ 多一个**运行时依赖**；
+ *     (b) 起 `curl` 子进程 ⇒ 多一条 **transport**，与"唯一一条取远端文件的路"那条约束冲突
+ *         （⚠️ 要按 `curl` 找可执行文件，**别硬编码 `curl.exe`** —— macOS 侧 2026-09-22 就为这个修过一次门禁）。
+ *   · 在那之前：HTTPS 上这条兜底的净效果是"多花一次握手"，最终由三态判定记成 **未实查**
+ *     （`lib/remote-fact.mjs`：网络类失败 ⇒ 未实查，**不是红**）——即"我们没查成"，而不是"线上不对"。
  */
 export const PINNED_IP_HTTPS_LIMITATION =
-  "钉 IP 兜底在 HTTPS 上会被 SNI/证书校验拒绝（ERR_TLS_CERT_ALTNAME_INVALID）⇒ 记为「未实查」，不是红；" +
-  "要真修得给 undici 自定义 dispatcher（servername）——见 planAttempts 上方的实测与取舍";
+  "**Node 的 fetch ＋ Host 头**在 HTTPS 上会被 SNI/证书校验拒绝（ERR_TLS_CERT_ALTNAME_INVALID）⇒ 记为「未实查」，不是红；" +
+  "但**钉 IP 这条路本身成立** —— `curl --resolve` 实测 200（发版当天走那条）。要在本模块里自己实现，只能在" +
+  "「加 undici 依赖」与「起 curl 子进程（第二条 transport）」之间选一个，尚未裁定 —— 见 planAttempts 上方的实测与取舍";
 
 /**
  * 取一份远端内容。**唯一的网络入口**（`fetchImpl` 可注入 ⇒ 判据不需要真网络）。

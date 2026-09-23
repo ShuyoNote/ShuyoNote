@@ -352,6 +352,11 @@ export interface CommandMap {
   create_folder: { args: { args: { parent_id: string | null; title?: string } }; result: PageDetail };
   create_database: { args: { args: { parent_id: string | null; title?: string } }; result: PageDetail };
   save_page: { args: { args: { id: string; title?: string; content_json?: string; content_text?: string } }; result: PageDetail };
+  // 冲刺 S3b-2c（2026-09-23）：每页的 **CRDT 状态**读/写（`page_crdt` 表）。
+  // ⚠️ 载荷用 `number[]`（JSON 安全）：状态是二进制，跨 IPC 不能直接过 `Uint8Array`；
+  //    两侧边界各转一次（Web 侧就在分派那里）。桌面实现归切片 S7。
+  read_page_state: { args: { args: { page_id: string } }; result: number[] | null };
+  save_page_state: { args: { args: { page_id: string; state: number[] } }; result: null };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

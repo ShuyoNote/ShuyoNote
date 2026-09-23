@@ -235,6 +235,17 @@ export const api = {
     content_json?: string;
     content_text?: string;
   }) => invoke("save_page", { args }),
+  /**
+   * 冲刺 S3b-2c：读这一页的 **CRDT 状态**（没有 ⇒ `null`）。
+   *
+   * 载荷在 wire 上是 `number[]`（二进制跨 IPC 只能这么走）；这里就换成 `Uint8Array`，
+   * 让界面侧只看到字节。桌面实现归切片 S7。
+   */
+  readPageState: (id: string) =>
+    invoke("read_page_state", { args: { page_id: id } }).then((v) => (v ? new Uint8Array(v) : null)),
+  /** 冲刺 S3b-2c：写这一页的 CRDT 状态（同一页只留最新一份）。 */
+  savePageState: (id: string, state: Uint8Array) =>
+    invoke("save_page_state", { args: { page_id: id, state: Array.from(state) } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

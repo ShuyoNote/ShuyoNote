@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, type RemotePageRow } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, type RemotePageRow } from "../docContent";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -1435,6 +1435,16 @@ export function makeInvoke(store: SqliteStore) {
         recordChange(store, "page", id, "upsert", updatedRow ?? { id, title: next.title, content_json: next.json, content_text: next.text, updated_at: Date.now() }, Date.now());
         return updatedRow as T;
       }
+      return null as T;
+    }
+    if (cmd === "read_page_state") {
+      // 冲刺 S3b-2c：**没有** ⇒ `null`（≠ 空字节；"还没建血统"与"有一份空状态"不是一回事）。
+      const s = readPageCrdtState(store, String((a.args ?? a).page_id ?? ""));
+      return (s ? Array.from(s) : null) as T;
+    }
+    if (cmd === "save_page_state") {
+      const args = a.args ?? a;
+      writePageCrdtState(store, String(args.page_id ?? ""), new Uint8Array(args.state ?? []), Date.now());
       return null as T;
     }
     if (cmd === "delete_page") {

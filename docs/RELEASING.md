@@ -476,11 +476,15 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 > 三态的实现与判据在 `scripts/lib/remote-fact.mjs` ＋ `remote-fact.test.mjs`（逐格钉住，两侧都钉）。
 > **默认不加 `--deep` 时行为与以前逐字相同**（CI/例行自检不受影响）。
 >
-> ⚠️ **钉 IP 那条兜底在 HTTPS 上不成立**（实测）：`Host` 头是 HTTP 层的，而 TLS 的 SNI 来自**连接目标**
-> ⇒ 钉 IP 之后证书主机名对不上，收场是 `ERR_TLS_CERT_ALTNAME_INVALID`。深检下它被如实记成 **未实查**
-> （不是红）。要真修得给 undici 一个自定义 dispatcher（`connect: { servername }`），
-> 或改用 `https.request`（那会长出第二条 fetch 路径）——**取舍写在 `lib/gh-fetch.mjs` 的
-> `PINNED_IP_HTTPS_LIMITATION` 上方**，暂不做。
+> ⚠️ **钉 IP 这条兜底：`curl --resolve` 行，Node 的 `fetch` 不行**（2026-09-23 两条实测收窄过一次口径）：
+> `curl -s -o /dev/null -w '%{http_code}' --resolve api.github.com:443:140.82.112.6 https://api.github.com/...` ⇒ **200**；
+> 而同一台机器上 `node -e "fetch(...)"` ⇒ `UND_ERR_CONNECT_TIMEOUT`；深检里 `--pinned-ip` 更是
+> `ERR_TLS_CERT_ALTNAME_INVALID`。原因：`Host` 头是 HTTP 层的，TLS 的 **SNI 来自连接目标** ——
+> 而 `curl --resolve` 的设计恰恰把"连到哪个 IP"与"URL 里的主机名"分开（URL 主机名照样用于 SNI/证书，只是不查 DNS）。
+> ⇒ **发版当天取不到就走 `curl --resolve` 那条**（本文上半部分那条老写法）；`--deep --pinned-ip` 在 HTTPS 上
+> 会被如实记成"未实查"（**不是红**）。要让本模块自己实现，只能在"加 `undici` 依赖"与"起 curl 子进程
+> （第二条 transport）"之间选一个 —— **尚未裁定**（2026-09-23 三方讨论的结论倾向于都不做：
+> 环境里已经有能用的那条路）。
 
 ## ⑦ Web 版（**必做**，两个入口都要）
 

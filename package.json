@@ -84,6 +84,7 @@
     "@lexical/rich-text": "^0.50.0",
     "@lexical/table": "0.50.0",
     "@lexical/utils": "^0.50.0",
+    "@lexical/yjs": "0.50.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "2.7.2",
     "@tauri-apps/plugin-http": "~2.6.0",
@@ -103,10 +104,10 @@
     "react-i18next": "^17.0.13",
     "sql.js": "^1.14.2",
     "tesseract.js": "^7.0.0",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "yjs": "13.6.32"
   },
   "devDependencies": {
-    "@lexical/yjs": "0.50.0",
     "@tauri-apps/cli": "^2.11.4",
     "@tesseract.js-data/chi_sim": "^1.0.0",
     "@tesseract.js-data/eng": "^1.0.0",
@@ -118,7 +119,6 @@
     "tesseract.js-core": "^7.0.0",
     "typescript": "~7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11",
-    "yjs": "13.6.32"
+    "vitest": "^4.1.11"
   }
 }
