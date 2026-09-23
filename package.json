@@ -106,6 +106,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@lexical/yjs": "0.50.0",
     "@tauri-apps/cli": "^2.11.4",
     "@tesseract.js-data/chi_sim": "^1.0.0",
     "@tesseract.js-data/eng": "^1.0.0",
@@ -117,6 +118,7 @@
     "tesseract.js-core": "^7.0.0",
     "typescript": "~7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "yjs": "13.6.32"
   }
 }
