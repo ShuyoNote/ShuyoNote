@@ -438,7 +438,11 @@ report.ok = failedCount === 0 && violations.length === 0;
 console.log(`\n${"═".repeat(72)}\n回归门禁结果\n${"═".repeat(72)}`);
 for (const r of report.results) {
   const icon = r.status === "passed" ? "✅" : r.status === "failed" ? "❌" : "⏭️ ";
-  const counts = r.counts && typeof r.counts.total === "number" ? ` (${r.counts.passed ?? "?"}/${r.counts.total})` : "";
+  let counts = r.counts && typeof r.counts.total === "number" ? ` (${r.counts.passed ?? "?"}/${r.counts.total})` : "";
+  // 「收集失败」必须**显式**写出来：这类红的用例失败数是 0，光看 (passed/total) 会以为全绿
+  if (r.counts && typeof r.counts.failedSuites === "number" && r.counts.failedSuites > 0) {
+    counts += `　⚠️ 其中 ${r.counts.failedSuites} 个测试文件**收集失败**（用例失败数可能是 0 ⇒ 别只看这一行）`;
+  }
   console.log(`${icon} ${r.id.padEnd(22)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s${counts}`);
 }
 for (const v of violations) console.log(`❌ 基线：${v}`);
