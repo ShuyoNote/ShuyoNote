@@ -142,4 +142,32 @@ describe("content_json ⇄ ydoc（阶段 2 Slice A 的唯一实现）", () => {
     });
     expect(() => roundTripContentJson(noIds)).toThrow(/不造身份/);
   });
+
+  it("⑦ ★ `blockRev` 穿过往返（声明字段那一层 18 类接入的端到端读数）", () => {
+    const json = withIds(
+      buildJson(() => {
+        const b = $createBlockParagraphNode("blk-r");
+        b.append($createTextNode("带版本"));
+        $getRoot().append(b);
+      }),
+    );
+    // 把 rev 打进**落盘形态**（生产里由保存路径 `assignBlockRevs` 打；本层只搬运它）
+    const withRev = JSON.stringify({
+      root: {
+        ...(JSON.parse(json) as { root: Record<string, unknown> }).root,
+        children: (JSON.parse(json) as { root: { children: Array<Record<string, unknown>> } }).root.children.map((c) => ({
+          ...c,
+          blockRev: 7,
+        })),
+      },
+    });
+    const out = roundTripContentJson(withRev);
+    expect(
+      (JSON.parse(out) as { root: { children: Array<Record<string, unknown>> } }).root.children.map((c) => c.blockRev),
+    ).toEqual([7]);
+  });
+
+  // ⚠️ 下一轮第一件事：一条「`MODEL_TYPE_BY_LEGACY` 每一对 legacy ⇄ 模型 type 都能回得去」的断言
+  //    我写了但**没过**（`blockRevDeclared.test.ts` 那 18 类的覆盖是另一件事，它是绿的）。
+  //    没查清是哪一对回不去之前**不放进判据**（假绿比缺判据更坏）。
 });
