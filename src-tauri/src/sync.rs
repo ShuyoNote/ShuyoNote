@@ -1575,6 +1575,194 @@ async fn do_push(
     Ok((count, max_seq, items))
 }
 
+/// 一条变更**应用失败**时的两类处置（2026-09-23，Windows 侧；与 Web `doPull` 的 catch 对齐）。
+///
+/// 改前的写法是 `let unresolved = apply_upsert(...)?` —— **一条坏变更中止整批**、游标不前进
+/// ⇒ 只要服务端还在返回这一条，它就**永久堵住后面所有变更**（Web 侧同处的注释记的就是这条 livelock）。
+/// Web 侧已改成「归档 ＋ 前进」：能定位到页面就存进「待取回的远端版本」（用户可裁决、可收场），
+/// 定位不到也至少留一条 warn，而 `maxSeq` **照旧推进**。这里把 Rust 侧做成同口径。
+enum ApplyFailure {
+    /// **解密失败**：整批中止、游标不前进（**故意不改**）—— 各设备 E1 口令/密钥不一致时，
+    /// "继续跑"只会把读不了的变更**静默消费掉**；`do_pull` 另有一道 `prescan_payload_formats` 整批预扫。
+    Fatal(String),
+    /// 其余（落库失败 / 附件行自愈失败…）：**归档 ＋ 前进 ＋ warn**。
+    Recoverable(String),
+}
+
+impl From<String> for ApplyFailure {
+    fn from(e: String) -> Self {
+        ApplyFailure::Recoverable(e)
+    }
+}
+
+/// 把一批**已取回**的变更应用到本地（**不碰网络**）。
+///
+/// 为什么抽出来：`do_pull` 的另一半是 HTTP / 令牌 / 密文预扫，单测跑不了；而
+/// "**一条坏变更不许中止整批**"（**归档 ＋ 前进 ＋ warn**，与 Web 侧 `doPull` 的 catch 逐条对应）
+/// 这条政策必须有判据能直接钉住 —— 抽成这个函数就是为了它。
+///
+/// 失败分类见 `ApplyFailure`：`Fatal`（解密失败）整批中止；`Recoverable` 归档 ＋ 前进。
+fn apply_pulled_changes(
+    c: &Connection,
+    changes: Vec<IncomingChange>,
+    last_pulled: i64,
+    now: i64,
+) -> Result<PulledApply, String> {
+let mut max_pulled = last_pulled;
+let mut count: usize = 0;
+let mut items: Vec<SyncItem> = Vec::new();
+let mut conflicts: Vec<SyncConflict> = Vec::new();
+// ★ 阶段 1：本轮**留下未裁决块级冲突**的页面（按页面去重 —— 同一页一轮里可能被应用多次）。
+// ⚠️ 与上面那个 `conflicts`（页级 dirty 提示）**含义不同、分开报**：那个要用户选"保留本地/采用远端"，
+// 这个已经有逐块留痕（`page_conflicts`），只需让用户知道"这一页有未裁决冲突"。
+let mut unresolved_page_ids: Vec<String> = Vec::new();
+// ★ B 方案（2026-09-22）：本轮**页级保留本地**的页面（按页面去重）。这些页面的远端那一版
+// 已经存进 `pending_remote_pages`（本地表）⇒ 界面要能告诉用户"有 N 页等你裁决"，
+// 而不是像修好之前那样"游标过去了、什么都没有"（取证文件 §3.2）。
+let mut pending_remote_ids: Vec<String> = Vec::new();
+    for change in changes {
+        let title = item_title(&change.entity, change.payload.as_ref());
+        items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string(), title });
+        // 这一条**能归档的那一版**（解密后的 payload JSON）：若后面应用失败，用它进「待取回的远端版本」
+        //（与 Web 的 `pageRowOfChangeForStash` 同口径：只有 page/非 delete 且能解析出 id 才谈得上归档）。
+        let mut stash_source: Option<String> = None;
+        // ★ 一条变更的"应用"整个包进闭包：内部照旧用 `?`，失败时由下面的统一策略处置
+        //   —— `Fatal` 中止整批（解密），`Recoverable` 归档 ＋ 前进（其余）。
+        let applied: Result<(), ApplyFailure> = (|| {
+            match (change.entity.as_str(), change.op.as_str()) {
+            ("page", "upsert") => {
+                if let Some(payload) = &change.payload {
+                    // Decrypt if E2EE is enabled (passthrough otherwise).
+                    // ⚠️ 解密失败是 `Fatal`（整批中止、游标不前进）—— 与改前一致，见 `ApplyFailure`。
+                    let plain = security::decrypt_payload(&c, payload)
+                        .map_err(|e| ApplyFailure::Fatal(format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）")))?;
+                    if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
+                        // 能解析出 id ⇒ 万一后面应用失败，用**这一版**归档（与 Web 的 pageRowOfChangeForStash 同口径）
+                        stash_source = Some(plain.clone());
+                        // P0.1 冲突提示：应用远端变更前，若本地该页有未推送改动
+                        // （dirty=1），说明"本地未同步 + 服务端有新 seq"——记为冲突，
+                        // 交给前端提示用户选择（保留本地 / 采用服务端）。
+                        let local_dirty: i64 = c
+                            .query_row("SELECT dirty FROM pages WHERE id = ?1", params![page.id], |r| r.get(0))
+                            .unwrap_or(0);
+                        if local_dirty != 0 {
+                            conflicts.push(SyncConflict { entity_id: page.id.clone(), title: page.title.clone() });
+                        }
+                        let unresolved = apply_upsert(&c, &page, change.seq)?;
+                        match unresolved {
+                            UpsertApply::Applied { unresolved } => {
+                                if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
+                                    unresolved_page_ids.push(page.id.clone());
+                                }
+                                // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）
+                                // 已经是陈的，清掉（不清就是"清单永远挂着几条假账"）。
+                                if let Some(stashed) = crate::doc_content::pending_remote_seq(&c, &page.id)? {
+                                    if stashed <= change.seq {
+                                        crate::doc_content::clear_pending_remote(&c, &page.id)?;
+                                    }
+                                }
+                            }
+                            UpsertApply::KeptLocal => {
+                                // ★★ B 方案（2026-09-22）：页级保留本地**语义正确**，但那一版远端内容
+                                // 会被游标吃掉（取证文件 §3.2 的 L）⇒ **在本地存下来**，让用户还能裁决。
+                                // 游标照旧推进（朴素方案 A 会 livelock：这一页可能永远 KeepLocal，
+                                // 后面所有变更都取不到）—— 所以"留痕"是这条路的代价，也是它的收场。
+                                crate::doc_content::stash_pending_remote(&c, &page, change.seq, now)?;
+                                if !pending_remote_ids.contains(&page.id) {
+                                    pending_remote_ids.push(page.id.clone());
+                                }
+                            }
+                        }
+                        count += 1;
+                    }
+                }
+            }
+            ("page", "delete") => {
+                apply_delete(&c, &change.entity_id, change.updated_at)?;
+                count += 1;
+            }
+            ("attachment", "upsert") => {
+                if let Some(payload) = &change.payload {
+                    let plain = security::decrypt_payload(&c, payload)
+                        .map_err(|e| ApplyFailure::Fatal(format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）")))?;
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&plain) {
+                        let id = v["id"].as_str().unwrap_or("").to_string();
+                        if !id.is_empty() {
+                            let page_id: Option<String> = v["page_id"].as_str().map(|s| s.to_string());
+                            let name = v["name"].as_str().unwrap_or("").to_string();
+                            let hash = v["hash"].as_str().unwrap_or("").to_string();
+                            let mime = v["mime"].as_str().unwrap_or("").to_string();
+                            let size = v["size"].as_i64().unwrap_or(0);
+                            // B4-b：先收编 / 自愈"兜底行"，再走正常的 upsert
+                            // （为什么、以及兜底行是什么，见 `adopt_or_heal_fallback_row`）。
+                            adopt_or_heal_fallback_row(&c, &id, &name, page_id.as_deref(), &hash)?;
+                            c.execute(
+                                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                                 ON CONFLICT(id) DO UPDATE SET page_id=excluded.page_id, name=excluded.name, hash=excluded.hash, mime=excluded.mime, size=excluded.size",
+                                params![id, page_id, name, hash, mime, size, crate::db::now_ms()],
+                            )
+                            .map_err(|e| e.to_string())?;
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            ("attachment", "delete") => {
+                c.execute("DELETE FROM attachments WHERE id = ?1", params![change.entity_id])
+                    .map_err(|e| e.to_string())?;
+                count += 1;
+            }
+                _ => {}
+            }
+            Ok(())
+        })();
+        // ★ 一条变更失败的**统一处置**（与 Web 的 `doPull` catch 逐条对应，2026-09-23）：
+        match applied {
+            Ok(()) => {}
+            Err(ApplyFailure::Fatal(e)) => return Err(e), // 解密失败：整批中止（游标不前进）
+            Err(ApplyFailure::Recoverable(e)) => {
+                // 能定位到页面 ⇒ **归档**（与 KeptLocal 同一本账，用户可裁决）；
+                // 定位不到（附件 / 坏 payload）⇒ 至少一条 warn，**不许一声不响**。
+                let archived = stash_source
+                    .as_deref()
+                    .and_then(|plain| serde_json::from_str::<PageDetail>(plain).ok())
+                    .and_then(|page| {
+                        crate::doc_content::stash_pending_remote(c, &page, change.seq, now).ok().map(|_| page.id)
+                    });
+                match archived {
+                    Some(id) => {
+                        if !pending_remote_ids.contains(&id) {
+                            pending_remote_ids.push(id.clone());
+                        }
+                        eprintln!("[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page={id} seq={}：{e}", change.seq);
+                    }
+                    None => eprintln!(
+                        "[sync] 变更应用失败且无法归档（entity={} op={} seq={}）：{e}",
+                        change.entity, change.op, change.seq
+                    ),
+                }
+            }
+        }
+        // ★ 游标**照旧推进**（这一句就是"归档 ＋ 前进"里那个"前进"）：不推进＝这一条会永久堵住
+        //   它后面所有变更（livelock；Web 侧同处的注释记的是同一件事）。
+        if change.seq > max_pulled {
+            max_pulled = change.seq;
+        }
+    }
+    Ok(PulledApply { count, max_pulled, items, conflicts, unresolved_page_ids, pending_remote_ids })
+}
+
+/// `apply_pulled_changes` 的产物（`do_pull` 直接摊平进它的返回元组）。
+struct PulledApply {
+    count: usize,
+    max_pulled: i64,
+    items: Vec<SyncItem>,
+    conflicts: Vec<SyncConflict>,
+    unresolved_page_ids: Vec<String>,
+    pending_remote_ids: Vec<String>,
+}
+
 async fn do_pull(
     db: &State<'_, Db>,
     profile: &SyncProfile,
@@ -1617,138 +1805,26 @@ async fn do_pull(
     //   而用户看到的是"同步了一部分、剩下的老报错"，真正原因却是"这版应用读不了那个空间的数据"。
     prescan_payload_formats(&body.changes)?;
 
-    let mut max_pulled = last_pulled;
-    let mut count: usize = 0;
-    let mut items: Vec<SyncItem> = Vec::new();
-    let mut conflicts: Vec<SyncConflict> = Vec::new();
     let now = crate::db::now_ms();
-    // ★ 阶段 1：本轮**留下未裁决块级冲突**的页面（按页面去重 —— 同一页一轮里可能被应用多次）。
-    // ⚠️ 与上面那个 `conflicts`（页级 dirty 提示）**含义不同、分开报**：那个要用户选"保留本地/采用远端"，
-    // 这个已经有逐块留痕（`page_conflicts`），只需让用户知道"这一页有未裁决冲突"。
-    let mut unresolved_page_ids: Vec<String> = Vec::new();
-    // ★ B 方案（2026-09-22）：本轮**页级保留本地**的页面（按页面去重）。这些页面的远端那一版
-    // 已经存进 `pending_remote_pages`（本地表）⇒ 界面要能告诉用户"有 N 页等你裁决"，
-    // 而不是像修好之前那样"游标过去了、什么都没有"（取证文件 §3.2）。
-    let mut pending_remote_ids: Vec<String> = Vec::new();
-    {
+    let out = {
         let c = db.0.lock().expect("db mutex poisoned");
         // 跨设备 pull 的变更可能引用了「尚未先到达」的父页 / 关联页，触发本地外键约束
-        // （attachments.page_id / pages.parent_id 等）。批量应用期间临时关闭外键，
-        // 应用完恢复原状态，避免整批 pull 被单个外键错误打断。
-        // ⚠️ 用 RAII 守卫：循环里任何 `?` 早退都会 drop 掉它 ⇒ 外键**一定**被恢复
-        //（老写法把恢复放在循环之后，一次失败就永久 OFF，见 `ForeignKeysOff` 的注释）。
+        // （attachments.page_id / pages.parent_id 等）。批量应用期间临时关闭外键，应用完恢复原状态。
+        // ⚠️ RAII 守卫：调用里的 `?` 早退也会 drop 掉它 ⇒ 外键**一定**被恢复。
         let _fk_guard = ForeignKeysOff::new(&c);
-        for change in body.changes {
-            let title = item_title(&change.entity, change.payload.as_ref());
-            items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string(), title });
-            match (change.entity.as_str(), change.op.as_str()) {
-                ("page", "upsert") => {
-                    if let Some(payload) = &change.payload {
-                        // Decrypt if E2EE is enabled (passthrough otherwise).
-                        let plain = security::decrypt_payload(&c, payload)
-                            .map_err(|e| format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）"))?;
-                        if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
-                            // P0.1 冲突提示：应用远端变更前，若本地该页有未推送改动
-                            // （dirty=1），说明"本地未同步 + 服务端有新 seq"——记为冲突，
-                            // 交给前端提示用户选择（保留本地 / 采用服务端）。
-                            let local_dirty: i64 = c
-                                .query_row("SELECT dirty FROM pages WHERE id = ?1", params![page.id], |r| r.get(0))
-                                .unwrap_or(0);
-                            if local_dirty != 0 {
-                                conflicts.push(SyncConflict { entity_id: page.id.clone(), title: page.title.clone() });
-                            }
-                            let unresolved = apply_upsert(&c, &page, change.seq)?;
-                            match unresolved {
-                                UpsertApply::Applied { unresolved } => {
-                                    if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
-                                        unresolved_page_ids.push(page.id.clone());
-                                    }
-                                    // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）
-                                    // 已经是陈的，清掉（不清就是"清单永远挂着几条假账"）。
-                                    if let Some(stashed) = crate::doc_content::pending_remote_seq(&c, &page.id)? {
-                                        if stashed <= change.seq {
-                                            crate::doc_content::clear_pending_remote(&c, &page.id)?;
-                                        }
-                                    }
-                                }
-                                UpsertApply::KeptLocal => {
-                                    // ★★ B 方案（2026-09-22）：页级保留本地**语义正确**，但那一版远端内容
-                                    // 会被游标吃掉（取证文件 §3.2 的 L）⇒ **在本地存下来**，让用户还能裁决。
-                                    // 游标照旧推进（朴素方案 A 会 livelock：这一页可能永远 KeepLocal，
-                                    // 后面所有变更都取不到）—— 所以"留痕"是这条路的代价，也是它的收场。
-                                    crate::doc_content::stash_pending_remote(&c, &page, change.seq, now)?;
-                                    if !pending_remote_ids.contains(&page.id) {
-                                        pending_remote_ids.push(page.id.clone());
-                                    }
-                                }
-                            }
-                            count += 1;
-                            // 仅在该条成功应用后推进游标，失败时不推进，避免静默丢变更。
-                            if change.seq > max_pulled {
-                                max_pulled = change.seq;
-                            }
-                        }
-                    }
-                }
-                ("page", "delete") => {
-                    apply_delete(&c, &change.entity_id, change.updated_at)?;
-                    count += 1;
-                    if change.seq > max_pulled {
-                        max_pulled = change.seq;
-                    }
-                }
-                ("attachment", "upsert") => {
-                    if let Some(payload) = &change.payload {
-                        let plain = security::decrypt_payload(&c, payload)
-                            .map_err(|e| format!("同步解密失败：{e}（可能各设备 E1 口令/密钥不一致，已停止以免静默丢数据）"))?;
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&plain) {
-                            let id = v["id"].as_str().unwrap_or("").to_string();
-                            if !id.is_empty() {
-                                let page_id: Option<String> = v["page_id"].as_str().map(|s| s.to_string());
-                                let name = v["name"].as_str().unwrap_or("").to_string();
-                                let hash = v["hash"].as_str().unwrap_or("").to_string();
-                                let mime = v["mime"].as_str().unwrap_or("").to_string();
-                                let size = v["size"].as_i64().unwrap_or(0);
-                                // B4-b：先收编 / 自愈"兜底行"，再走正常的 upsert
-                                // （为什么、以及兜底行是什么，见 `adopt_or_heal_fallback_row`）。
-                                adopt_or_heal_fallback_row(&c, &id, &name, page_id.as_deref(), &hash)?;
-                                c.execute(
-                                    "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                                     ON CONFLICT(id) DO UPDATE SET page_id=excluded.page_id, name=excluded.name, hash=excluded.hash, mime=excluded.mime, size=excluded.size",
-                                    params![id, page_id, name, hash, mime, size, crate::db::now_ms()],
-                                )
-                                .map_err(|e| e.to_string())?;
-                                count += 1;
-                                if change.seq > max_pulled {
-                                    max_pulled = change.seq;
-                                }
-                            }
-                        }
-                    }
-                }
-                ("attachment", "delete") => {
-                    c.execute("DELETE FROM attachments WHERE id = ?1", params![change.entity_id])
-                        .map_err(|e| e.to_string())?;
-                    count += 1;
-                    if change.seq > max_pulled {
-                        max_pulled = change.seq;
-                    }
-                }
-                _ => {}
-            }
-        }
-        set_profile_field(&c, &profile.ws_id, "last_pulled_seq", max_pulled)?;
+        let out = apply_pulled_changes(&c, body.changes, last_pulled, now)?;
+        set_profile_field(&c, &profile.ws_id, "last_pulled_seq", out.max_pulled)?;
         // 外键由 `_fk_guard` 在离开作用域时恢复（成功路径也一样，顺序与原来一致）。
-    }
+        out
+    };
 
     Ok((
-        count,
-        max_pulled,
-        items,
-        conflicts,
-        unresolved_page_ids.len(),
-        pending_remote_ids.len(),
+        out.count,
+        out.max_pulled,
+        out.items,
+        out.conflicts,
+        out.unresolved_page_ids.len(),
+        out.pending_remote_ids.len(),
     ))
 }
 
@@ -3503,5 +3579,83 @@ mod tests {
         for bad in ["", "remote", "local", "Merge", "take-remote"] {
             assert_eq!(PendingChoice::parse(bad), None, "{bad} 不该被认");
         }
+    }
+
+    // ---- 「一条坏变更不许中止整批」（W2，2026-09-23，Windows 侧）-----------------------------
+    //
+    // 改前：`let unresolved = apply_upsert(...)?` ⇒ 一条坏变更**中止整批**、游标不前进
+    // ⇒ 只要服务端还在返回这一条，它后面的变更**永远取不到**（livelock）。
+    // 改后（与 Web `doPull` 的 catch 同口径）：`Recoverable` ⇒ **归档 ＋ 前进 ＋ warn**；
+    // `Fatal`（解密失败）⇒ 仍然整批中止。下面两条钉住这个分界，另一条钉住"不连坐"。
+
+    /// 造一条 `page/upsert` 的入站变更（载荷就是 `PageDetail` 的 JSON）。
+    fn page_change(seq: i64, id: &str, json: &str) -> IncomingChange {
+        IncomingChange {
+            seq,
+            entity: "page".to_string(),
+            entity_id: id.to_string(),
+            op: "upsert".to_string(),
+            payload: Some(serde_json::to_string(&remote_page(id, json)).unwrap()),
+            updated_at: seq,
+        }
+    }
+
+    /// ★ 正面：一条落库失败的变更 ⇒ **不连坐**（其余变更照常落库）＋ **游标前进** ＋ **留痕**（归档）。
+    #[test]
+    fn a_failing_change_is_archived_and_the_batch_continues() {
+        let c = pages_conn();
+        // 只让 p2 的落库失败（真库 + 一条只对它生效的触发器）：其余页面完全正常。
+        c.execute_batch(
+            "CREATE TRIGGER boom BEFORE INSERT ON pages WHEN NEW.id = 'p2'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+
+        let changes = vec![
+            page_change(1, "p1", &page_json("b1", 1, "甲")),
+            page_change(2, "p2", &page_json("b1", 1, "乙")),
+            page_change(3, "p3", &page_json("b1", 1, "丙")),
+        ];
+        let out = apply_pulled_changes(&c, changes, 0, 1_000).unwrap();
+
+        // ① 游标**前进到批尾**（"归档 ＋ 前进"里那个"前进"；改前这里会 Err ⇒ 游标停在 0）
+        assert_eq!(out.max_pulled, 3, "坏变更不许把游标钉住");
+        // ② 同批其余变更照常落库（一条坏变更不许连坐）
+        for id in ["p1", "p3"] {
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = ?1", params![id], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 1, "{id} 应当被应用");
+        }
+        let p2: i64 = c.query_row("SELECT COUNT(*) FROM pages WHERE id = 'p2'", [], |r| r.get(0)).unwrap();
+        assert_eq!(p2, 0, "p2 自己没落库（触发器拦的）");
+        // ③ **留痕**：坏的那一版远端进了「待取回的远端版本」（与页级保留本地同一本账，用户可裁决）
+        assert_eq!(
+            crate::doc_content::pending_remote_seq(&c, "p2").unwrap(),
+            Some(2),
+            "应用失败也要留下那一版远端，不能静默消费"
+        );
+        assert_eq!(out.pending_remote_ids, vec!["p2".to_string()]);
+    }
+
+    /// ★ 反面：**解密失败仍然是 Fatal**（整批中止、游标不前进）—— 这是**故意保留**的例外，
+    /// 别被"归档＋前进"顺手改成一律 Recoverable。
+    ///
+    /// 为什么用**源码级**判据而不是构造一段真解不开的载荷：那需要打开 E2EE（会话密钥是**进程全局**
+    /// + `SEC_LOCK`），而 cargo 的测试是同进程多线程 ⇒ 会与别的用例互相踩（`security` 那几条自己带锁）。
+    /// 真正"读不了的载荷"在批量层面还有一道整批预扫（`prescan_payload_formats_refuses_the_whole_batch`
+    /// 已经钉住）。这里钉的是**分类**：默认 Recoverable、两处解密都必须是 Fatal。
+    #[test]
+    fn the_failure_split_defaults_to_recoverable_and_keeps_decrypt_fatal() {
+        // 默认（落库失败 / 附件行自愈失败…）⇒ Recoverable
+        assert!(matches!(ApplyFailure::from("boom".to_string()), ApplyFailure::Recoverable(_)));
+
+        // 两处解密（page / attachment）都必须归 Fatal —— 数它出现的次数，少一处就红。
+        let src = include_str!("sync.rs");
+        let fatal_decrypt_sites = src.matches("ApplyFailure::Fatal(format!(\"同步解密失败").count();
+        assert_eq!(
+            fatal_decrypt_sites, 2,
+            "page 与 attachment 两处解密都必须走 Fatal（否则读不了的变更会被'归档＋前进'静默消费）：{fatal_decrypt_sites}"
+        );
     }
 }
