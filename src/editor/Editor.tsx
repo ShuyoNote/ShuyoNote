@@ -18,6 +18,11 @@ import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } fr
 import { applyConflictBadges, installConflictBadges } from "./blockConflictBadge";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
+import {
+  bindPageToEditorViaPort,
+  type AsyncPageBinding,
+  type PageStatePort,
+} from "../lib/crdt/pageBinding";
 import { useEditorStore } from "../store/editor";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
@@ -470,6 +475,74 @@ const DrawingEditorModal = lazy(() => import("../components/DrawingEditorModal")
  * 于是这里趁**编辑器已经把文档解析好**的时候按编辑器语义算一遍，交给那一层去比、不同才写回 ——
  * 只动正文（不动内容、不动 `dirty`）。**比较在那一层里做**（界面文件读那一列会把收口门禁顶红）。
  */
+/**
+ * 冲刺 S3b-2d（2026-09-23）：**把这一页绑到真编辑器上**。
+ *
+ * 它是整条冲刺唯一"真应用侧"的接线点，做四件事（顺序不能变，理由见 `lib/crdt/pageBinding.ts`）：
+ *   1. 用编辑器**当前内容**（走保存路径同一个 serializer ⇒ 含块身份）当 seed；
+ *   2. `bindPageToEditorViaPort`：**先读状态**（有 ⇒ 载入；没有 ⇒ 由 seed 建一次并立刻落盘）；
+ *   3. 订阅 `onLocalEdit` ⇒ 每次**真·本地编辑**把状态存回（远端合并/载入**不**触发，见 S3b-1）；
+ *   4. 卸载/换页时 `dispose()`（撤监听）。
+ *
+ * 三条纪律：
+ *   · **不静默**：绑定失败如实 `toast` ＋ 控制台报错；状态存失败也如实报（页面本身仍可编辑）；
+ *   · **不挡住编辑器**：绑定是异步的，失败也不让页面打不开；
+ *   · 存的失败**不吞**：`persist()` 的 promise 必须 `.catch`（它是 IPC/平台命令）。
+ */
+function PageCrdtBinding({
+  pageId,
+  blockIds,
+}: {
+  pageId: string;
+  blockIds: { current: Map<string, string> };
+}) {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    if (!pageId) return;
+    let disposed = false;
+    let binding: AsyncPageBinding | null = null;
+
+    const port: PageStatePort = {
+      read: (id) => api.readPageState(id),
+      save: (id, state) => api.savePageState(id, state),
+    };
+
+    void (async () => {
+      try {
+        // seed：与保存路径**同一个** serializer（`serializeWithBlockIds`）⇒ 含块身份、不另铸一套
+        const seedJson = serializeWithBlockIds(editor.getEditorState(), blockIds.current);
+        const b = await bindPageToEditorViaPort({ port, pageId, editor, seedJson });
+        if (disposed) {
+          b.dispose();
+          return;
+        }
+        binding = b;
+        b.session.onLocalEdit(() => {
+          void b.persist().catch((e) => {
+            console.error("[crdt] 状态保存失败", e);
+            toast(`CRDT 状态保存失败：${e instanceof Error ? e.message : String(e)}`, "error");
+          });
+        });
+      } catch (e) {
+        console.error("[crdt] 绑定失败", e);
+        toast(`CRDT 绑定失败：${e instanceof Error ? e.message : String(e)}`, "error");
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      binding?.dispose();
+      binding = null;
+    };
+    // ⚠️ 依赖刻意只有 `pageId`：`editor`/`blockIds` 由 composer 与本组件同生命周期持有，
+    //    把它们放进依赖会让每次渲染都重绑（那会反复重建血统）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageId]);
+
+  return null;
+}
+
 function PageTextRepairPlugin({ pageId }: { pageId: string }) {
   const [editor] = useLexicalComposerContext();
   useEffect(() => {
@@ -564,6 +637,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <TableMenuPlugin />
         <TableResizerPlugin />
         <EditorStoreSync />
+        <PageCrdtBinding pageId={pageId} blockIds={blockIdMapRef} />
         <Suspense fallback={null}>
           <DrawingEditorModal />
         </Suspense>

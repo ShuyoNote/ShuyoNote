@@ -90,3 +90,104 @@ export function loadJsonForEditor(db: ContentSql, pageId: string, storedJson: st
   const state = readPageCrdtState(db, pageId);
   return state ? projectStateToJson(state) : storedJson;
 }
+
+// =====================================================================================
+// S4a：**远端来的状态怎么并进本机**（"真正的合并同步"在客户端这一侧的唯一入口）
+//
+// 与 `bindPageToEditor`/`ensurePageCrdtState` 的分工：那两个管"打开页面"（首开建血统），
+// 这个管"**别人那一版到了**"。两条路都必须走在同一个血统上 —— 这正是 S1 红线（从 JSON 各自新建
+// ⇒ 一块变两块）在**同步路径**上的落点。
+// =====================================================================================
+
+/** 把远端状态并进来的结果。 */
+export interface MergedRemoteState {
+  /** `true` ⇒ 本机原先**没有**这一页的状态，这一版被**采用**（不是"从 JSON 重建"）。 */
+  adopted: boolean;
+  /** 合并后本机持有的状态（调用方一般不用它，判据用）。 */
+  state: Uint8Array;
+}
+
+/**
+ * ★ 把**远端来的**一版状态并进本机这一页（唯一入口）。
+ *
+ * - 本机还没有 ⇒ **直接采用**它（它自己带着血统，别在这儿另起一条）；
+ * - 本机已有 ⇒ 载入**本机的血统**、把远端那笔 `merge` 进去、再存回。
+ *
+ * ⚠️ 本函数**只动 CRDT 状态**，**不碰**落盘的那份投影（`pages` 里那两列）—— 投影怎么跟上
+ * 是 S6 的口径（今天编辑器打开时会用状态的投影覆盖，所以界面上看到的是对的内容）。
+ * ⚠️ 也**不**标脏：合并产物该不该回推由调用方决定（S5 服务端合并那一侧）。
+ */
+export function mergeRemotePageState(
+  db: ContentSql,
+  pageId: string,
+  remote: Uint8Array,
+  now: number,
+): MergedRemoteState {
+  const mine = readPageCrdtState(db, pageId);
+  if (!mine) {
+    writePageCrdtState(db, pageId, remote, now);
+    return { adopted: true, state: remote };
+  }
+  const session = openPageSession({ state: mine });
+  try {
+    session.merge(remote);
+    const merged = session.exportState();
+    writePageCrdtState(db, pageId, merged, now);
+    return { adopted: false, state: merged };
+  } finally {
+    session.dispose();
+  }
+}
+
+// =====================================================================================
+// S3b-2d：**端口版**绑定 —— 界面侧（`editor/Editor.tsx`）手里没有 `ContentSql`，只有 `api`
+// （Web 走平台命令 `read_page_state` / `save_page_state`；桌面将来同理）⇒ 存取收成一个**端口**，
+// 顺序逻辑（"先读、没有才建一次并立刻落盘"）仍然只写在**这一个文件**里，不在组件里重写一遍。
+// =====================================================================================
+
+/** 状态的**存取端口**。界面侧用 `lib/api` 实现即可（也就是那两条平台命令）。 */
+export interface PageStatePort {
+  read(pageId: string): Promise<Uint8Array | null>;
+  save(pageId: string, state: Uint8Array): Promise<unknown>;
+}
+
+/** 端口版绑定：`persist` 是**异步**的（IPC/平台命令），**调用方必须处理失败**（不许静默）。 */
+export interface AsyncPageBinding {
+  session: PageSession;
+  seeded: boolean;
+  persist(): Promise<void>;
+  dispose(): void;
+}
+
+/**
+ * ★ 端口版：把一页绑到既有编辑器上（界面侧的入口）。
+ *
+ * 与 `bindPageToEditor` 同一套顺序，只是存取换成了异步端口：
+ *   1. **先读**状态；有 ⇒ 载入（`seeded=false`），没有 ⇒ 由 `seedJson` **建一次**（`seeded=true`）
+ *      并**立刻落盘**（这就是"首开只建一次"的落地点）；
+ *   2. 两种情形都把会话挂在**传入的**编辑器上（hydration 会把内容落到编辑器里）。
+ *
+ * ⚠️ 与 `ensurePageCrdtState` 同一个已知限制：两台设备**同时**首开一张从没建过血统的页、且各自
+ * 离线时，两条血统仍可能各自被建出来 ⇒ 彻底解法在 S5（服务端拒绝/收敛第二条血统）。
+ */
+export async function bindPageToEditorViaPort(opts: {
+  port: PageStatePort;
+  pageId: string;
+  editor: LexicalEditor;
+  seedJson: string;
+}): Promise<AsyncPageBinding> {
+  const { port, pageId, editor, seedJson } = opts;
+  const state = await port.read(pageId);
+  const session = openPageSession(state ? { state, editor } : { json: seedJson, editor });
+  if (!state) await port.save(pageId, session.exportState());
+  return {
+    session,
+    seeded: !state,
+    async persist() {
+      await port.save(pageId, session.exportState());
+    },
+    dispose() {
+      session.dispose();
+    },
+  };
+}

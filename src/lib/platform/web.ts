@@ -3,6 +3,7 @@ import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, type RemotePageRow } from "../docContent";
+import { withCrdtWire } from "../crdt/wireState";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -730,7 +731,14 @@ function recordChange(
   payload: unknown,
   updatedAt: number,
 ): void {
-  const payloadStr = payload == null ? "" : typeof payload === "string" ? payload : JSON.stringify(payload);
+  // ★ 冲刺 S4b-1（2026-09-23）：**页面**的变更若这一页已有 CRDT 状态 ⇒ 随载荷带上（含版本标记）。
+  //   · 没有状态 ⇒ `withCrdtWire` 回**同一引用** ⇒ 载荷字节与接线前**逐字相同**（老路径零感知）；
+  //   · 只在这一处挂：outbox 是本平台唯一的"推"出口。
+  const augmented =
+    entity === "page" && op === "upsert"
+      ? withCrdtWire(payload, readPageCrdtState(store, entityId))
+      : payload;
+  const payloadStr = augmented == null ? "" : typeof augmented === "string" ? augmented : JSON.stringify(augmented);
   const did = syncDeviceId();
   store.run(
     "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?)",
