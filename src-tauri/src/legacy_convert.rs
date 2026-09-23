@@ -16,7 +16,24 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+/// 临时目录名的**进程内单调序号**。不是装饰 —— 见 `tmp_dir_name` 的注释（macOS 实测撞名）。
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 纯函数：这一次用的临时目录名。
+///
+/// ⚠️ **名字里必须有序号**（2026-09-23 实测撞名）：原名是 `shuyonote-legacy-{pid}-{nanos}`，
+/// 而 macOS 上 `SystemTime::now()` 的分辨率粗（微秒级）⇒ `cargo test` **并行首启**的几条判据
+/// 会在同一刻取到同一个值 ⇒ **同一个目录**；先跑完的那条的 `TempDirGuard` 把目录 `remove_dir_all` 掉，
+/// 另一条随后就找不到 `input.docx`（或读目录 Err(NotFound)）。
+/// 症状是"随机换着哪条红、单线程必绿"，很容易被当成环境问题放过去。
+/// 加一个 `AtomicU64` 序号即可：它不依赖时钟精度，进程内严格单调。
+/// （`workspace_io.rs` 的测试助手早就因为同一个坑加过 `TMP_SEQ` —— 这里补上同一味。）
+fn tmp_dir_name(pid: u32, nanos: u128, seq: u64) -> String {
+    format!("shuyonote-legacy-{pid}-{nanos}-{seq}")
+}
 
 /// 一条转换给多久。90 秒对"一份旧 Office 文档 → OOXML"是很宽的上限；
 /// 到点就杀进程并如实报错（宁可让用户看到"转换超时"，也不要无限等）。
@@ -125,7 +142,11 @@ pub(crate) fn convert_with(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = tmp_root.join(format!("shuyonote-legacy-{}-{}", std::process::id(), stamp));
+    let dir = tmp_root.join(tmp_dir_name(
+        std::process::id(),
+        stamp,
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+    ));
     std::fs::create_dir_all(&dir).map_err(|e| format!("建临时目录失败（{}）：{e}", dir.display()))?;
     let _guard = TempDirGuard(dir.clone());
 
@@ -214,13 +235,28 @@ mod tests {
     use std::fs;
 
     fn tmp() -> PathBuf {
+        // 与 `tmp_dir_name` 同一个理由加序号：并行判据在同一微秒取到同一个纳秒值时会撞名。
         let d = std::env::temp_dir().join(format!(
-            "legacy-convert-test-{}-{}",
+            "legacy-convert-test-{}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+            TMP_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// ★ 判据：临时目录名在**同一个进程、同一个纳秒**下也不许撞。
+    ///
+    /// 事故原样见 `tmp_dir_name` 的注释：macOS 时钟分辨率粗 ⇒ 并行首启的判据撞名 ⇒
+    /// 一条的 `TempDirGuard` 把另一条正在用的目录删掉 ⇒ "随机换着哪条红、单线程必绿"。
+    /// 这条判据钉的是**名字里有进程内单调序号**，而不是"时钟够细"。
+    #[test]
+    fn temp_dir_names_do_not_collide_when_the_clock_repeats() {
+        let pid = std::process::id();
+        let a = tmp_dir_name(pid, 42, TMP_SEQ.fetch_add(1, Ordering::Relaxed));
+        let b = tmp_dir_name(pid, 42, TMP_SEQ.fetch_add(1, Ordering::Relaxed));
+        assert_ne!(a, b, "同一 pid ＋ 同一纳秒必须靠序号区分（否则并行判据会互删目录）");
     }
 
     /// 造一个假 `soffice`（Unix），行为按 `mode`：ok / fail / sleep / garbage / silent。
@@ -318,6 +354,67 @@ exit 0
         assert!(args.contains("--convert-to"), "argv 里要有 --convert-to：{args}");
         assert!(args.contains("docx"), "argv 里要有目标格式：{args}");
         assert!(args.contains("--outdir"), "argv 里要有 --outdir：{args}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **夹具脚本的移植性判据**（2026-09-23 dev 连红 4 次之后加）。
+    ///
+    /// 事故原样：夹具里写的是 `printf 'PK\x03\x04fake-ooxml'`，而 `\xHH` 是 **bash 扩展**。
+    /// Ubuntu 的 `/bin/sh` 是 **dash** ⇒ 按字面输出 ⇒ 产出 **20 字节**的 `PK\x03\x04fake-ooxml`
+    /// ⇒ `convert_with` 如实拒绝（"前 4 字节不是 zip 魔数"）⇒ `rust-test` / `rust-no-sm-crypto` /
+    /// `rust-sm-wired` **三条门禁一起红**；而 macOS（`/bin/sh` 是 bash 系）一直绿、
+    /// Windows 又因 `#[cfg(unix)]` 根本不跑 ⇒ **这个坑只在 Linux 上现形**。
+    ///
+    /// 两条断言分开证明两件事（都不依赖"CI 上碰巧是 dash"）：
+    ///   ① **字面**：夹具脚本里**不许**出现 `\x` 转义 —— 平台无关，任何机器上都能拦住"又写回去"；
+    ///   ② **行为**：拿一个**真的是 dash** 的解释器把脚本跑一遍，断言产出的前 4 字节就是 zip 魔数。
+    ///      macOS 自带 `/bin/dash`（本机实测：旧写法 20 字节 `50 4b 5c 78 30 33 …` ／
+    ///      新写法 14 字节 `50 4b 03 04 …`），Linux 的 `/bin/sh` 本身就是 dash。
+    #[cfg(unix)]
+    #[test]
+    fn fake_soffice_script_stays_posix_and_builds_a_zip_under_dash() {
+        let dir = tmp();
+        let args_file = dir.join("args.txt");
+        let bin = fake_soffice(&dir, "ok", &args_file);
+        let script = fs::read_to_string(&bin).unwrap();
+
+        // ① 字面：`\xHH` 是 bash 扩展，dash 的 `printf` 不展开它（会原样输出 4 个字符）。
+        assert!(
+            !script.contains("\\x"),
+            "夹具脚本里出现了 `\\x` 转义（bash 扩展）—— dash 会按字面输出 ⇒ 请写 POSIX 八进制 `\\ooo`：\n{script}"
+        );
+
+        // ② 行为：优先用**真的是 dash** 的那个；退到 /bin/sh 时行为那半的证明力较弱（如实打出来）。
+        let interp = ["/bin/dash", "/bin/sh"]
+            .into_iter()
+            .find(|p| Path::new(p).exists());
+        let Some(interp) = interp else {
+            println!("! 跳过行为那半：本机没有 /bin/dash 也没有 /bin/sh（`#[cfg(unix)]` 下不该发生）");
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        };
+        if interp != "/bin/dash" {
+            println!("! 注意：本机没有 /bin/dash，行为那半跑在 {interp} 上（它不一定是 dash ⇒ 证明力较弱）");
+        }
+        let outdir = dir.join("out");
+        fs::create_dir_all(&outdir).unwrap();
+        let status = std::process::Command::new(interp)
+            .arg(&bin)
+            .arg("--headless")
+            .arg("--convert-to")
+            .arg("docx")
+            .arg("--outdir")
+            .arg(&outdir)
+            .arg(dir.join("in.doc"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "{interp} 跑夹具脚本失败了");
+        let produced = fs::read(outdir.join("input.docx")).unwrap();
+        assert!(
+            produced.len() >= 4 && produced[..4] == [0x50, 0x4b, 0x03, 0x04],
+            "{interp} 下产出的前 4 字节不是 zip 魔数（字节数 {}）—— 夹具又用了 bash-only 的写法？",
+            produced.len()
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -48,7 +48,7 @@ node scripts/joint-acceptance.mjs --check --require sm,crdt   # 只要求某几�
 平面 3 条 · 联合格子 8 个（已落地 2 / 待施工 3 / 真机或外部 3）
 sm：探针 6 条（外部待读 1）· 单独读数 4 条
 coverage：探针 9 条（外部待读 3）· 单独读数 3 条
-crdt：探针 8 条（外部待读 1）· 单独读数 3 条
+crdt：探针 9 条（外部待读 2）· 单独读数 3 条
 j1 landed macos sm+coverage+crdt
 j2 todo macos sm+coverage+crdt
 j3 todo macos coverage+crdt
