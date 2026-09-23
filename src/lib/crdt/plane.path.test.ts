@@ -5,8 +5,11 @@
 // 用一个极小的内存假库（只认 UPDATE/SELECT 两种形状），不依赖测试夹具，读起来一眼能对上是哪条。
 import { describe, expect, it, beforeEach } from "vitest";
 import { readAllContents, readContent, writeContent, type ContentSql, type DocContent } from "../docContent";
-import { setCrdtPlaneEnabled } from "./plane";
-import { roundTripContentJson } from "./contentJsonYDoc";
+import { setCrdtPlaneEnabled, setCrdtPlaneImpl } from "./plane";
+import { roundTripContentJson } from "./yDocBridge";
+
+// 实现由界面侧注册（生产 `src/main.tsx`）；判据里注册真的那一份（开着时走的就是它）。
+setCrdtPlaneImpl(roundTripContentJson);
 
 /** 极简内存库：够 `readContent` / `readAllContents` / `writeContent` 三条用（别扩成通用 mock）。 */
 function fakeDb() {
