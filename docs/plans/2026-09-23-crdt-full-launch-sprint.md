@@ -84,6 +84,13 @@
 | **S3b-2c** ✅ | **平台 API：状态的读/写**（组件接线的前置件） | `commands.ts` 加 `read_page_state` / `save_page_state`（载荷 `number[]`，二进制跨 IPC 只能这么走）；`api.ts` 包成 `readPageState(id): Promise<Uint8Array\|null>` / `savePageState(id, state)`（界面侧只看到字节）；`web.ts` 用那一层的 `readPageCrdtState` / `writePageCrdtState` 实现（`null` ≠ 空字节）；桌面未实现 ⇒ 登记进 `check-web-commands` 的 `WEB_ONLY_COMMANDS` 并写明归 **S7** | `check-web-commands` **绿**（Rust 239 个命令、web 共 242、契约 243 个含 web 专属 4 个）⇒ 新命令确实被那三条线（契约/桌面/Web）对上了；`tsc` ＋ build 绿 |
 | **S3b-2d** ✅ | **真接线（真应用侧）** | 两件：① `pageBinding.ts` 加**端口版** `bindPageToEditorViaPort({port,pageId,editor,seedJson})`（界面侧手里没有 `ContentSql`、只有 `api` ⇒ 存取收成端口 `PageStatePort`，**顺序逻辑仍只写在 pageBinding 一个文件里**）；② `editor/Editor.tsx` 新增小子组件 `PageCrdtBinding`（挂在 composer 内、与 `<EditorStoreSync/>` 并列）：seed 用保存路径同一个 `serializeWithBlockIds` ⇒ 绑定 ⇒ `onLocalEdit` ⇒ `persist()`（失败**如实 toast ＋ 控制台**，不吞）⇒ 卸载 `dispose()`。**App.tsx 一行未改** | `check:web-build`（**浏览器级**）**8 通过 / 0 失败** —— 含"点新建页面之后编辑器起来了（DB 写入链路通）""**0 未捕获错误**""0 失败请求"；`pageBinding.test.ts` 加 ⑭（端口版：首开建一次并落盘、第二次只载入、两条绑定能合）⇒ `src/lib/crdt/` **7 文件 / 42 条全绿**；`tsc`／`build` 绿 |
 
+| **S3b-2e** ✅ | **浏览器级判据：打字 ⇒ 刷新 ⇒ 字还在**（把上一轮"没有断言 CRDT 真生效"的缺口堵上） | `scripts/check-web-build.mjs` 加一条断言：新建页面后往 `[contenteditable]` 打字（`crdt-probe-2026`）⇒ 等保存去抖 ＋ 状态存回 ⇒ **刷新** ⇒ 轮询确认字还在；`tests/baseline.json` 的 `check-web-build` 下界 8 → 9 | ★ **变异实测**：把 `PageCrdtBinding` 里的 `onLocalEdit` 订阅去掉（＝本地编辑不存回状态）⇒ 恰好**这一条**红（**8 通过 / 1 失败**）；还原后 **9 通过 / 0 失败**。⇒ 这条断言**真的咬人**，也证明"刷新后编辑器被库里的状态 hydration 覆盖"确实发生（状态落后 ⇒ 刚打的字被抹掉） |
+
+> 💡 **为什么这条能验 CRDT（别把它读成"刷新后字还在"这么弱）**：刷新后编辑器先按落盘的**投影**渲染，
+> 随后被 `PageCrdtBinding` 用**库里的 CRDT 状态** hydration 覆盖 ⇒ 只要"本地编辑 ⇒ 状态存回"没接对，
+> 刷回来的就是那份**旧状态**，刚打的字会被**抹掉**。所以它同时守住两条路：本地编辑 ⇒ 状态存回、
+> 状态 ⇒ 载入。变异实测就是它的证据。
+
 > 🧯 **本轮两条踩坑（都记档，免得重犯）**：
 > ① **门禁按字面量算 —— 连 import 的函数名也算**：`pageBinding.ts` 第一版直接
 >    `import { yDocToContentJson }` 就被 `check-doc-content-access` 判红（"新增文件直接引用（不在基线里）：1 处"）

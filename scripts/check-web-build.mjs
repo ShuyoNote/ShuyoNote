@@ -154,6 +154,34 @@ try {
     await new Promise((r) => setTimeout(r, 1500));
     const hasEditor = await page.$(".editor, .lexical-root, [contenteditable=true]");
     ok(!!hasEditor, "点「新建页面」之后编辑器起来了（说明 DB 写入链路是通的）");
+
+    // ★ 冲刺 CRDT（S3b-2e，2026-09-23）：**打字 ⇒ 刷新 ⇒ 字还在**。
+    //   为什么这一条能验 CRDT：刷新之后编辑器会被**库里的 CRDT 状态 hydration 覆盖**
+    //   （`editor/Editor.tsx` 的 `PageCrdtBinding`）⇒ 只要"本地编辑 ⇒ 状态存回"这条没接对，
+    //   刷回来的就是那份**旧状态**，刚打的字会**被抹掉**。所以它同时守住两条路：
+    //   本地编辑 ⇒ 状态存回、状态 ⇒ 载入。而"绑定/存回失败"还会以 console.error 落到上面那个
+    //   `errors` 收集器里 ⇒ 由最后那条"没有未捕获错误"一并兜住（本仓把 console.error 也算错误）。
+    if (hasEditor) {
+      const MARK = "crdt-probe-2026";
+      await page.click("[contenteditable=true]").catch(() => {});
+      await page.keyboard.type(MARK, { delay: 15 });
+      await new Promise((r) => setTimeout(r, 1800)); // 保存去抖（600ms）＋ 状态存回
+      await page.reload({ waitUntil: "networkidle2", timeout: 60000 });
+      let survived = false;
+      const t0 = Date.now();
+      for (;;) {
+        const txt = await page.evaluate(
+          () => document.querySelector("[contenteditable=true]")?.textContent ?? "",
+        );
+        if (txt.includes(MARK)) {
+          survived = true;
+          break;
+        }
+        if (Date.now() - t0 > 15000) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      ok(survived, `打字后刷新，字还在（本地编辑 ⇒ 状态存回、状态 ⇒ 载入：${MARK}）`);
+    }
   } else {
     console.error("  ! 没找到「新建页面」按钮（界面文案可能变了），跳过写入探针");
   }
