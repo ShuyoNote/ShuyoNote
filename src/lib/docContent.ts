@@ -22,6 +22,7 @@
 // 任何**行为**改动必须另开一次提交并在提交信息里写明 —— 见 `doc_content.rs` 文件头同款纪律。
 
 import { assignBlockRevs, blockRevOf, canonicalContent } from "./blockRev";
+import { throughCrdtPlane } from "./crdt/plane";
 import { newBlockId } from "./blockIdentity";
 import { repairPageTextIfStale } from "./pageTextRepair";
 
@@ -53,7 +54,8 @@ export function readContent(db: ContentSql, pageId: string): DocContent | null {
   if (!row) return null;
   return {
     title: String(row.title ?? ""),
-    json: String(row.content_json ?? ""),
+    // CRDT 平面（Slice B）：开关**默认关** ⇒ 这一句是恒等的原样返回（逐字节等价，见 `crdt/plane.ts`）。
+    json: throughCrdtPlane(String(row.content_json ?? "")),
     text: String(row.content_text ?? ""),
   };
 }
@@ -92,10 +94,13 @@ export function readAllContents(db: ContentSql): ContentRow[] {
  * 它是"版本历史策略"，不是"内容形态"；换 CRDT 后它的输入会变，但调用时机仍由保存路径决定。
  */
 export function writeContent(db: ContentSql, pageId: string, content: DocContent, now: number): void {
+  // CRDT 平面（Slice B）：写入前过一遍开关。**默认关 ⇒ 原样**（同一引用，逐字节等价）。
+  // ⚠️ 只在这一条写出口上包，别撒到调用方 —— "只经一层"的门禁 `check-doc-content-access` 看着这里。
+  const json = throughCrdtPlane(content.json);
   db.run(
     `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1
      WHERE id = ?`,
-    [content.title, content.json, content.text, now, pageId],
+    [content.title, json, content.text, now, pageId],
   );
 }
 
