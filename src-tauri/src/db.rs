@@ -242,9 +242,9 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     }
 
     // Open the active space's DB as the MAIN connection, then ATTACH meta.db as `meta`.
-    let (active, enc_on) = {
+    let active: String = {
         let meta_conn = Connection::open(meta_path(&app_data_dir))?;
-        let active: String = meta_conn
+        meta_conn
             .query_row(
                 "SELECT value FROM sync_state WHERE key = ?1",
                 params![ACTIVE_KEY],
@@ -253,20 +253,22 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
             .map_err(|_| rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(1),
                 Some("no active workspace".to_string()),
-            ))?;
-        let enc_on = security::encryption_enabled_base(&meta_conn);
-        (active, enc_on)
+            ))?
     };
 
-    // E1 startup gate: if encryption is on and the session is locked (the default
-    // after a restart — no key is persisted), the active space DB may be
-    // SQLCipher-encrypted and is NOT readable yet. We must NOT open the space file
-    // (even a bare open + ATTACH touches the encrypted main header and fails with
-    // "file is not a database"). So the restored main connection is an EMPTY in-memory
-    // base with meta.db attached as `meta` — the app shell (workspace list, encryption
-    // status, unlock screen) works from plaintext meta.db, and the space DB is keyed and
-    // re-opened via reopen_space when the passphrase is entered.
-    if enc_on && !security::session_has_key() {
+    // E1 startup gate: if **the active space's own DB file** is SQLCipher-encrypted and the
+    // session is locked (the default after a restart — no key is persisted), that file is
+    // NOT readable yet. We must NOT open it (even a bare open + ATTACH touches the encrypted
+    // main header and fails with "file is not a database"). So the restored main connection is
+    // an EMPTY in-memory base with meta.db attached as `meta` — the app shell (workspace list,
+    // encryption status, unlock screen) works from plaintext meta.db, and the space DB is keyed
+    // and re-opened via reopen_space when the passphrase is entered.
+    //
+    // ★ 隐私边界第 1 步（1b-2b，2026-09-23）：判据从"**应用级**开关"改成"**嗅活动空间自己的库文件**"
+    //   —— 那才是"现在能不能打开它"的事实依据（判据本体在 `security::startup_needs_unlock`，有单测）。
+    //   后果：一个**明文**空间（例如团队空间）不再因为"别的空间开着加密"而被拦在解锁屏后面；
+    //   而任何**密文**空间（按空间的或旧路的）照样被拦。库文件不存在（新空间还没落库）⇒ 嗅不出来 ⇒ 不拦。
+    if security::startup_needs_unlock(&space_db_path(&app_data_dir, &active)) {
         let conn = Connection::open_in_memory()?;
         let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
         conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])

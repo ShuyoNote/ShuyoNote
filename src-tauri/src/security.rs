@@ -38,8 +38,24 @@ fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, Connection> {
 // make the app unable to start). They therefore live in meta.db (plaintext), the
 // only readable place on a fresh, locked launch.
 
-/// Whether encryption is on for the app (read from meta.db, never from a space DB).
+/// Whether encryption is on **for this connection's space** (read from meta.db, never from a space DB).
+///
+/// ★ 第 1 步（1b-2b，2026-09-23）：先按**空间**判 —— 这个连接的库文件是密的 **或** 钥匙袋里有
+/// 这个空间 ⇒ 它就是加密的；再退回**旧路**（应用级标志，给"没有钥匙袋的老库/老用户"）。
+/// 于是"一个加密空间 ＋ 一个明文空间"能同时成立（原先一开全都加密、一关全都明文）。
 fn encryption_enabled(c: &Connection) -> bool {
+    if let Some(path) = c.path() {
+        let p = Path::new(path);
+        if crate::security::space_db_is_encrypted(p) {
+            return true;
+        }
+        if let Some(id) = crate::space_crypto::space_id_from_path(p) {
+            if crate::space_crypto::keyring().map(|k| k.has(&id)).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    // 旧路：应用级标志（老库、老用户没有钥匙袋）
     sync::get_meta_state(c, crypto::ENC_ENABLED).as_deref() == Some("1")
 }
 
@@ -282,6 +298,15 @@ fn apply_gm_page_settings(conn: &Connection) -> Result<(), String> {
         // 那是**这条连接**的问题，应该在后面的读上失败并给出可操作文本（`cipher_open_error`）。
         Err(_) => Ok(()),
     }
+}
+
+/// ★ 第 1 步（1b-2b）：**启动闸门**——"这个空间的库现在能不能直接打开？"
+///
+/// 判据是**嗅这个文件**（不是应用级开关）：密的 **且** 会话里没有钥匙 ⇒ 不能（退回内存库 ＋
+/// attach meta，让解锁屏能用）；否则能。
+/// ⇒ 好处：一个**明文**空间不再因为"别的空间开着加密"而被拦在解锁屏后面。
+pub(crate) fn startup_needs_unlock(space_path: &Path) -> bool {
+    space_db_is_encrypted(space_path) && !session_has_key()
 }
 
 /// Apply `PRAGMA key` to a fresh connection if (and only if) its DB file is
@@ -1118,6 +1143,55 @@ mod tests {
         crate::space_crypto::set_keyring_for_test(None);
         *SESSION_KEY.lock().unwrap() = None;
         drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 第 1 步（1b-2b）：**开关与启动闸门都看"这个空间自己"** ——
+    /// `encryption_enabled` 不再只读应用级标志；启动闸门嗅的是那个空间的文件。
+    #[test]
+    fn per_space_switch_and_startup_gate_look_at_the_space_itself() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(uniq_tmp("perspace"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        *SESSION_KEY.lock().unwrap() = None;
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+
+        // 一个**明文**空间（连接开着它 ⇒ `c.path()` 指到 spaces/sc-flag.db）
+        let c = crate::db::open_space_conn_at("sc-flag", &dir).unwrap();
+        let path = space_db_path(&dir, "sc-flag");
+
+        // ① 明文 ＋ 应用级开关没开 ＋ 袋里没有 ⇒ **不算加密**（老行为）
+        assert!(!encryption_enabled(&c), "什么都没开 ⇒ 不是加密空间");
+        // ② 袋里有它（哪怕文件还是明文）⇒ 算加密（"这个空间本该是密的"）
+        let mut kr = crate::keyring::Keyring::new();
+        let master = kr.kdf.derive_master("pw").unwrap();
+        kr.wrap(&master, "sc-flag", &crate::keyring::random_space_key()).unwrap();
+        crate::space_crypto::set_keyring_for_test(Some(kr));
+        assert!(encryption_enabled(&c), "★ 袋里有它 ⇒ 这个空间是加密的（按空间）");
+        crate::space_crypto::set_keyring_for_test(None);
+        // ③ 旧路：应用级标志开着 ⇒ 仍然算加密（老库/老用户）
+        sync::set_meta_state(&c, crypto::ENC_ENABLED, "1").unwrap();
+        assert!(encryption_enabled(&c), "旧路兜底：应用级开关开着");
+        sync::set_meta_state(&c, crypto::ENC_ENABLED, "0").unwrap();
+        assert!(!encryption_enabled(&c));
+
+        // ④ 启动闸门：明文 ⇒ 不用解锁；换成密文 ⇒ 没钥匙就要解锁；有钥匙就不用
+        //    ⚠️ 转换前**必须让开这个空间的连接**（Windows 上文件被占用 ⇒ `os error 5`）
+        drop(c);
+        assert!(!startup_needs_unlock(&path), "明文库 ⇒ 直接能开");
+        let key = crate::keyring::random_space_key();
+        convert_space_db(&path, true, Some(&key)).unwrap();
+        assert!(space_db_is_encrypted(&path));
+        assert!(startup_needs_unlock(&path), "密文库 ＋ 没有钥匙 ⇒ 走解锁屏");
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only(key));
+        assert!(!startup_needs_unlock(&path), "有钥匙 ⇒ 不用再拦");
+
+        *SESSION_KEY.lock().unwrap() = None;
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

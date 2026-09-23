@@ -15,27 +15,26 @@
 | 第 1 步 1b-1 | **wire 载荷按空间**（`encrypt_payload`/`decrypt_payload`）：袋里有它但锁着 ⇒ **报错**，绝不静默放明文 | `54fc18ab` |
 | 第 1 步 1b-2a | **按空间启用/禁用**（`enable_space`/`disable_space`，只动那一个空间；连接开着它时先让开）＋ **按空间状态**挂进 `encryption_status.active_space` | `36ff643a` |
 | 第 2 步 | **同步闸门**：`space_crypto::sync_gate`（纯函数）＋ `sync::sync_bind_gate` 接进 `set_sync_profile`；分类标记 `meta.workspaces.kind` | `e0563d50` |
+| 交接 | 本文（进度 ＋ 施工点 ＋ 纪律） | `2f9f1579` |
+| 第 2 步补 | 闸门裁决做进状态命令（`active_space_gate`） | `14893b9d` |
+| 第 1 步 1b-2b | **`encryption_enabled` 按空间**（这个连接的库是密的 **或** 袋里有它）＋ **启动闸门改成嗅活动空间的文件**（`security::startup_needs_unlock`） | 见本行之后的提交 |
 
 **当轮 tip 读数**（`e0563d50` 那棵树上）：Rust 全量 **572 passed / 0 failed / 18 ignored**；
 vitest 全量 **2194 passed / 12 skipped**；`pnpm run build` 0；doc 门禁 137 篇 / 44 条 / 562 处（基线 562）。
 
-## 2. 下一片：**1b-2b**（把"开关"与"启动闸门"也改成按空间）
+## 2. 下一片：~~1b-2b~~（**已完成**：开关与启动闸门按空间；剩下的是"命令面/UI"与"分类来源"）
 
-要动的四处（按风险从小到大）：
-
-1. **启动闸门**（`src-tauri/src/db.rs` ~L269：`if enc_on && !security::session_has_key()`）——
-   今天是"应用级标志 ＋ 没钥匙 ⇒ 不打开活动空间、退回内存库 ＋ attach meta"。
-   按空间后应改成 **嗅活动空间的库文件**（`security::space_db_is_encrypted(&space_db_path(dir, &active))`）——
-   它不需要钥匙，正是为这一步准备的（`space_crypto::space_status` 已经在用同一手法）。
-2. **`security::encryption_enabled(c)`**（`security.rs:36`，今天读 meta 的应用级标志）——
-   改成"这个**连接**对应的空间库是不是密的（或袋里有它）"，**保留**应用级标志作为**旧路兜底**
-   （老库/老用户没有袋子 ⇒ 一切照旧）。⚠️ 调用点不少（`lock/unlock/enable/disable`、`encryption_status`、
-   `key_if_enabled`），逐个确认语义：**锁是主密钥级的**（见决策稿 §3.1 的更正），不要试图做"分空间上锁"。
-3. **按空间启用/禁用的命令面**：`space_crypto::enable_space` / `disable_space` 已经是 lib 函数 ⇒
+1. ~~**启动闸门**~~ ✅：`src-tauri/src/db.rs`（原来 `if enc_on && !session_has_key()`）已改成
+   `security::startup_needs_unlock(&space_db_path(dir, &active))` —— **嗅活动空间自己的文件**。
+   后果：**明文空间（例如团队空间）不再因为"别的空间开着加密"被拦在解锁屏后面**（有单测：
+   `per_space_switch_and_startup_gate_look_at_the_space_itself`）。
+2. ~~**`security::encryption_enabled(c)`**~~ ✅：改成"这个**连接**对应的空间是加密的吗"
+   （库文件是密的 **或** 袋里有它），旧的应用级标志作为**兜底**保留（老库/老用户照旧）。
+3. **按空间启用/禁用的命令面**（**待做**）：`space_crypto::enable_space` / `disable_space` 已经是 lib 函数 ⇒
    加两条命令（`commands.rs` ＋ `lib.rs` 注册）＋ 契约 `commands.ts` ＋ web 平台（Web 上按空间加密**不适用**，
    按先例登记 `DESKTOP_ONLY_COMMANDS` 并写清理由）＋ `api.ts`。⚠️ 命令面一变，`check-web-commands` 会红，
    必须**同批**改完。
-4. **UI**（可后置）：设置面板里"这个空间加密/不加密" ＋ "个人/团队"分类（分类是闸门的输入，见 §3）。
+4. **UI**（**待做**，可后置）：设置面板里"这个空间加密/不加密" ＋ "个人/团队"分类（分类是闸门的输入，见 §3）。
 
 ## 3. 待 owner 拍 / 硬前置（别自己决定）
 
