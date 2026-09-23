@@ -20,6 +20,7 @@ import type { ExtractDeps, RasterizedPage } from "../extract/types";
 import type { AttachmentMeta } from "../../types";
 import { rgbaToPng } from "../pngEncode";
 import { platform } from "./index";
+import { legacyConverterFor } from "./legacyConvert";
 
 export interface AttachmentDepsOptions {
   /**
@@ -57,6 +58,12 @@ export interface AttachmentDepsOptions {
  */
 export function attachmentDeps(attId: string, opts: AttachmentDepsOptions = {}): ExtractDeps {
   const deps: ExtractDeps = {
+    // ★ 旧二进制 Office（`.doc`/`.xls`/`.ppt`）的平台转换（2026-09-23）：桌面走命令面
+    //   （`convert_legacy_office` → LibreOffice headless），**Web/移动端的 stub 会 reject**
+    //   ⇒ 抽取器映射成 `provider_error`（如实答复"这个平台做不了"，§15.3-7）。
+    //   与 `vision`/`transcribe` 的差别是刻意的：那两个是**模型驱动**（平台还没有那一层，由调用方给），
+    //   而格式转换不需要端点/密钥/模型，属于**平台命令面**能给的东西。
+    convertLegacy: legacyConverterFor(platform.executor),
     rasterize: async (_bytes, pageIndex, scale): Promise<RasterizedPage> => {
       // 平台驱动给的是**裸 RGBA**（阅读器也吃这个，所以驱动接口不改），
       // 而契约要求 `rasterize` 产出**编码图**（`vision` 只接受编码图）⇒ 在这里编码。

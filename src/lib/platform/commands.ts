@@ -851,6 +851,9 @@ export interface CommandMap {
   // ---- Platform-internal commands (not routed via api.ts, but still part of
   // the backend contract; declared so CommandMap covers every Rust command) ----
   write_attachment_bytes: { args: { hash: string; data: number[]; mime: string; name: string }; result: AttachmentMeta };
+  // 旧二进制 Office → OOXML 的平台转换（桌面只有：spawn LibreOffice headless；Web 的 stub 会如实 reject）。
+  // `to` 由抽取器决定（OOXML 的目标 MIME），失败一律 reject ⇒ 抽取器映射成 provider_error。
+  convert_legacy_office: { args: { data: number[]; to: string }; result: number[] };
   list_attachment_hashes: { args: undefined; result: string[] };
   render_pdf_page: { args: { args: { attachment_id: string; page_index: number; scale: number } }; result: unknown };
 }

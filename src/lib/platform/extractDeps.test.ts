@@ -20,6 +20,7 @@ import { setWasmBytesProvider } from "./sqliteStore";
 import type { Platform } from "./types";
 import { platform, setPlatform } from "./index";
 import { attachmentDeps, extractAttachment } from "./extractDeps";
+import { legacyExtractor } from "../extract/legacy";
 
 // ---------------------------------------------------------------- 基础设施
 
@@ -352,5 +353,66 @@ describe("自证", () => {
     const marker = fakePlatform();
     setPlatform(marker);
     expect(platform.executor).toBe(marker.executor);
+  });
+});
+
+// ---------------------------------------------------------------- 旧格式转换（2026-09-23）
+
+describe("attachmentDeps：旧二进制 Office 的转换从**平台命令面**装上", () => {
+  it("★ `convertLegacy` 在：调用它会发 `convert_legacy_office{data,to}`，并把回来的 number[] 变成字节", async () => {
+    const calls: { cmd: string; args: Record<string, unknown> | undefined }[] = [];
+    setPlatform(
+      fakePlatform({
+        executor: {
+          invoke: async (cmd: string, args?: Record<string, unknown>) => {
+            calls.push({ cmd, args });
+            return [0x50, 0x4b, 0x03, 0x04];
+          },
+        },
+      } as unknown as Partial<Platform>),
+    );
+
+    const deps = attachmentDeps("att-1");
+    expect(typeof deps.convertLegacy).toBe("function");
+    const out = await deps.convertLegacy!(new Uint8Array([1, 2, 3]), "application/vnd.ms-excel", {
+      to: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].cmd).toBe("convert_legacy_office");
+    // `to` **原样**转发（由抽取器决定）；字节按命令面约定走 number[]
+    expect(calls[0].args).toEqual({
+      data: [1, 2, 3],
+      to: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect([...out]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+  });
+
+  it("★ 平台拒绝（Web stub / 没装 LibreOffice）⇒ 抽取器如实报 `provider_error`，**不是** `empty`", async () => {
+    setPlatform(
+      fakePlatform({
+        executor: {
+          invoke: async () => {
+            throw new Error("Web 版不支持旧格式转换（请用桌面版）");
+          },
+        },
+      } as unknown as Partial<Platform>),
+    );
+
+    const deps = attachmentDeps("att-2");
+    const r = await legacyExtractor.extract({
+      bytes: new Uint8Array([0xd0, 0xcf, 0x11, 0xe0]), // OLE 魔数：旧 .doc 的真实形态
+      filename: "旧报告.doc",
+      mime: "application/msword",
+      hash: "fixture",
+      deps,
+    });
+
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("provider_error");
+    expect(r.message).toContain("Web 版不支持旧格式转换"); // 平台那句话要透出来
+    expect(r.code).not.toBe("empty"); // "抽不了" 与 "文件里没内容" 必须分得开
   });
 });

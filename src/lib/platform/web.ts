@@ -2317,6 +2317,11 @@ export function makeInvoke(store: SqliteStore) {
     // reads/writes bytes through blobStore in save_image/get_attachment/
     // read_attachment_bytes. Implement them for completeness so a future caller
     // doesn't hit the unknown-command throw.
+    if (cmd === "convert_legacy_office") {
+      // Web 端**跑不了外部进程** ⇒ 如实说不支持（而不是回一份空字节让上层以为"转换成功但没内容"）。
+      // 抽取器会把它映射成 provider_error：与"这台机器没装 LibreOffice"同一条答复（§15.3-7）。
+      throw new Error("Web 版不支持旧格式转换（.doc/.xls/.ppt 需要本机的 LibreOffice；请用桌面版）。");
+    }
     if (cmd === "write_attachment_bytes") {
       const hash = String(a.hash ?? "");
       const data = (a.data as number[]) ?? [];
