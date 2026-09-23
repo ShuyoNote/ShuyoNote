@@ -26,6 +26,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMain } from "./lib/is-main.mjs";
 import { opensslEnvFor } from "./lib/sm-library-plan.mjs";
+// ★ 复用**唯一实现**：产物扫描与 link-search 解析都在 `check-crypto-backend.mjs` 里，
+//   本门禁只做"把它的结论与钉的前缀对着判"——绝不复制第二份解析（本仓吃过太多两套口径的亏）。
+import { classifyOutput, collect, looksLikeCargoOutDir, opensslDirMatches, selectForHost, targetDirOf } from "./check-crypto-backend.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = join(root, "src-tauri", "Cargo.toml");
@@ -144,6 +147,41 @@ export function windowsLoadFailure(output) {
     return "0xC0000135 STATUS_DLL_NOT_FOUND —— 测试 exe 找不到依赖 DLL（先看 PATH 里有没有 `<前缀>\\bin`）";
   }
   return null;
+}
+
+/**
+ * 纯函数：**产物里 OpenSSL 的 link-search 候选，是否对得上我们钉的那个前缀**。
+ *
+ * 为什么在 `rust-sm-wired` 里也判一次（`check-crypto-backend` 已经有第五格）：那一条**依赖产物标记**、
+ * 而标记是"上一次构建"留下的；本门禁是**刚刚**用 `OPENSSL_DIR=<前缀>` 编出来的，所以在**同一个 job 里**
+ * 立刻核一次，读数属于**这次构建**，而不是"某个可能过期的产物"。
+ * ⇒ 这也把第五格的 Linux 读数从"等一次带 tag 的真发版"变成"**每次 CI 都验**"。
+ *
+ * 判据与 `check-crypto-backend` 的第五格**同一口径**（相等或在其子目录下；`win32` 折叠大小写）：
+ *   · 候选为空 ⇒ `null`（**未实查**，不判红 —— 与"旧产物⇒未实查"同一条纪律）；
+ *   · 有一个对得上 ⇒ `true`；
+ *   · 一个都对不上：候选**全是 cargo 产物目录** ⇒ 抛"没走发现路径"那一种（第二种形态）；否则 false。
+ */
+export function pinnedPrefixVerdict({ expected, candidates, platform = process.platform } = {}) {
+  const list = (candidates ?? []).filter(Boolean);
+  if (!list.length) return { verdict: null, reason: "产物里没解析出 link-search 目录 ⇒ 未实查" };
+  const caseInsensitive = platform === "win32";
+  const matched = list.find((c) => opensslDirMatches(expected, c, { caseInsensitive }) === true);
+  if (matched) return { verdict: true, matched, reason: `实际链的目录 ${matched}` };
+  if (list.every((c) => looksLikeCargoOutDir(c))) {
+    return {
+      verdict: false,
+      reason:
+        "产物里**没有 OpenSSL 的 link-search 行**（解析到的是 cargo 产物目录）⇒ 这次构建没走 OPENSSL_DIR 发现路径：" +
+        "检查 `--prepare` 之后有没有把三个变量导出给**构建那一步**",
+    };
+  }
+  return {
+    verdict: false,
+    reason:
+      `产物实际链的目录是 ${list.join("、")}，与钉的前缀 ${expected} 对不上 —— ` +
+      "⚠️ 最常见成因：`OPENSSL_LIB_DIR`/`OPENSSL_INCLUDE_DIR` **优先于** `OPENSSL_DIR`，而它们可能来自用户级环境变量",
+  };
 }
 
 export function cargoTestArgs({ platform = process.platform, manifest, skipModules = ["plugins::"] } = {}) {
@@ -289,6 +327,28 @@ function main() {
       console.error("❌ 库级国密接线构建不过：见上面的失败行");
       return 1;
     }
+
+    // ★ ③ 第五格的**同 job 版**：刚刚这次构建（`OPENSSL_DIR=<钉的前缀>`）链的是哪个目录？
+    //   为什么值得多这一步：`check-crypto-backend` 的第五格读的是**产物标记**（上一次构建留下的），
+    //   而这里读的是**刚刚编出来的 link-search**；两者互补 ⇒ Linux 那一格不再"等带 tag 的真发版"。
+    console.log("③ 产物里 OpenSSL 的 link-search 是否对得上钉的前缀（第五格的同 job 版）");
+    let candidates = [];
+    try {
+      const all = selectForHost(collect(targetDirOf(process.env)), process.platform);
+      const opensslOutput = all.find((x) => x && x.kind === "openssl");
+      candidates = opensslOutput?.searchDirs ?? (opensslOutput?.searchDir ? [opensslOutput.searchDir] : []);
+    } catch (e) {
+      console.log(`   ! 解析产物失败（${String(e?.message ?? e).split("\n")[0]}）⇒ 这一格未实查`);
+    }
+    const verdict = pinnedPrefixVerdict({ expected: opensslDir, candidates });
+    if (verdict.verdict === null) {
+      console.log(`   ! ${verdict.reason}（自报未实查，不判红）`);
+    } else if (verdict.verdict === false) {
+      console.error(`❌ 钉的前缀与产物对不上：${verdict.reason}`);
+      return 1;
+    } else {
+      console.log(`   ✓ ${verdict.reason}（钉的前缀 ${opensslDir}）`);
+    }
     console.log("✓ 库级国密接线构建：全量单测在 `--features sm-library` 下通过");
     return 0;
   };
@@ -322,7 +382,7 @@ function main() {
           }
         }
         run("cargo", ["build", "--lib", "--manifest-path", manifest], restoreEnv);
-        console.log("③ 已还原补丁，并把默认特性重新编好（不留混态给后面的门禁）");
+        console.log("收尾：已还原补丁，并把默认特性重新编好（不留混态给后面的门禁）");
       } catch (e) {
         console.error(`⚠️ 收尾失败（下一格门禁可能读到混态）：${e.message}`);
         if (exitCode === 0) exitCode = 1;

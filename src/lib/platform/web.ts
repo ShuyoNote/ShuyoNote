@@ -801,6 +801,24 @@ function discardUnsentPageChanges(store: SqliteStore, pageId: string): number {
 
 // Apply the payload of a pulled change to local tables (LWW, mirror sync.rs).
 // exported for the sync LWW unit test.
+/**
+ * 纯函数：把一个变更**变成可归档的远端页面版本**（能定位到页面才归档，否则 `null`）。
+ *
+ * 为什么单独抽出来：`doPull` 的 catch 分支要判"这条能不能归档"，而那是**口径**不是实现细节
+ * ——判据直接钉它（坏 payload / 非 page 实体 / 没有 id 都不许被当成"归档成功"）。
+ */
+export function pageRowOfChangeForStash(change: SyncChange): RemotePageRow | null {
+  const c = change as unknown as { entity?: string; op?: string; payload?: string | null };
+  if (c.entity !== "page" || c.op === "delete") return null;
+  try {
+    const p = parseJson(c.payload || "{}") as Record<string, unknown>;
+    if (!p || typeof p.id !== "string" || !p.id) return null;
+    return p as unknown as RemotePageRow;
+  } catch {
+    return null; // 坏 JSON ⇒ 定位不到 ⇒ 如实返回 null（调用方走"无法归档"那条）
+  }
+}
+
 export function applyChange(store: SqliteStore, change: SyncChange): void {
   const op = change.op;
   const entity = change.entity;
@@ -960,8 +978,22 @@ async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulle
   for (const c of changes) {
     try {
       applyChange(store, c);
-    } catch {
-      /* skip bad change */
+    } catch (e) {
+      // ★ 2026-09-23（macOS）：**不许静默**。抛错 ⇒ 这一条**没有被应用**，而下面照样推进游标 ——
+      //   与取证 L 是同一族（"没应用却消费了"），只是成因从"页级保留本地"换成"应用时抛错"；
+      //   此前这里是一句 `catch { /* skip bad change */ }` ⇒ **层里一条痕都没有**。
+      //   处置与 B 同一本账：能定位到页面就存进「待取回的远端版本」（用户可裁决、可收场）；
+      //   定位不到（附件/标签/属性，或坏 payload）⇒ 至少留一条 warn，**不许一声不响**。
+      const row = pageRowOfChangeForStash(c);
+      if (row) {
+        stashPendingRemote(store, row, Number((c as { seq?: number }).seq ?? 0), Date.now());
+        console.warn(`[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page=${row.id} seq=${(c as { seq?: number }).seq}`);
+      } else {
+        console.warn(
+          `[sync] 变更应用失败且无法归档（entity=${(c as { entity?: string }).entity} ` +
+            `op=${(c as { op?: string }).op} seq=${(c as { seq?: number }).seq}）：${String(e)}`,
+        );
+      }
     }
     if (typeof (c as any).seq === "number" && (c as any).seq > maxSeq) maxSeq = (c as any).seq;
   }
