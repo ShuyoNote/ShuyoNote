@@ -6,6 +6,7 @@ import { localTranscribe } from "../lib/ai/localTranscribe";
 import { localVision } from "../lib/ai/localVision";
 import { platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
+import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
 import {
   AI_PRESETS,
   MODEL_OPTIONS,
@@ -60,6 +61,12 @@ export function AiSettingsForm({
   const [indexNote, setIndexNote] = useState<string | null>(null);
 
   const indexAvail = indexAvailability(platform);
+  // 「检查索引覆盖」（owner 2026-09-23 拍的出口之二：**人也能看**）：
+  // 走的是与 AI 能力**同一份**取材与形状（`scanLibraryCoverage` → `coverageReportTool`）——
+  // 各写一遍会出现"AI 说 3 份没抽全、界面说 2 份"这种没人会发现的漂移。
+  const [coverage, setCoverage] = useState<ReturnType<typeof coverageReportTool> | null>(null);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
+  const [checkingCoverage, setCheckingCoverage] = useState(false);
 
   const isOpenAI = provider === "openai";
 
@@ -111,6 +118,27 @@ export function AiSettingsForm({
       setTesting(false);
     }
   };
+
+  // 「检查索引覆盖」：**只读**扫一遍（不触发抽取、不写库），结果是"现在覆盖到哪"。
+  // ⚠️ 失败要**如实报错**，不许吞成"空报告" —— 空报告会被读成"什么都没有"，那是完全不同的事实。
+  async function checkCoverage() {
+    setCheckingCoverage(true);
+    setCoverageError(null);
+    try {
+      const stores = await platform.derivedStores?.();
+      if (!stores) {
+        setCoverage(null);
+        setCoverageError("这个平台不提供派生层（索引只存在于桌面端/Web 端各自那份库）");
+        return;
+      }
+      setCoverage(coverageReportTool(await scanLibraryCoverage(stores)));
+    } catch (e) {
+      setCoverage(null);
+      setCoverageError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCheckingCoverage(false);
+    }
+  }
 
   // 「开始索引」：把整库内容变成可被 AI 检索的派生文本与块。
   //
@@ -364,6 +392,41 @@ export function AiSettingsForm({
               <div className="ai-settings-test-msg bad">{indexAvail.reason}</div>
             )}
             {indexNote && <div className="ai-settings-test-msg">{indexNote}</div>}
+          </div>
+
+          {/* 检查索引覆盖：AI 能问「库里覆盖到哪」，人来这里看同一条答案 */}
+          <div className="ai-settings-test">
+            <button className="ai-settings-test-btn" onClick={checkCoverage} disabled={checkingCoverage}>
+              {checkingCoverage ? "检查中…" : "检查索引覆盖"}
+            </button>
+            <span className="ai-settings-brief" style={{ marginLeft: 8 }}>
+              只读：不会触发抽取，也不会写库。
+            </span>
+            {coverageError && <div className="ai-settings-test-msg bad">{`检查失败：${coverageError}`}</div>}
+            {coverage?.ok && (
+              <div className="ai-settings-test-msg ok">
+                {coverage.summary}
+                <div className="ai-settings-brief" style={{ marginTop: 4 }}>
+                  {`附件：已索引 ${coverage.report.attachments.indexed} · 没抽全 ${coverage.report.attachments.partial} · ` +
+                    `未索引 ${coverage.report.attachments.notIndexed}（共 ${coverage.report.attachments.total}）｜` +
+                    `页面 ${coverage.report.pages.indexed}/${coverage.report.pages.total} 有正文｜` +
+                    `派生 ${coverage.report.derived.segments} 段 / ${coverage.report.derived.chars} 字｜块 ${coverage.report.chunks.total}`}
+                </div>
+                {coverage.report.gaps.length > 0 && (
+                  <div className="ai-settings-brief" style={{ marginTop: 4 }}>
+                    {`缺口 ${coverage.report.gapsTotal} 条` +
+                      (coverage.report.gapsTruncated ? `（只列前 ${coverage.report.gaps.length} 条，不是全部）` : "")}
+                    ：
+                    {coverage.report.gaps.map((g) => `\n· [${g.reason}] ${g.id} ${g.detail}`).join("")}
+                  </div>
+                )}
+                {coverage.report.note && (
+                  <div className="ai-settings-brief" style={{ marginTop: 4 }}>
+                    {coverage.report.note}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
