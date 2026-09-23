@@ -9294,9 +9294,15 @@ register({ id: "s.run", title: "结构化", run: function () {
     }
 
     fn add_cap_chunk(c: &Connection, id: &str, att: Option<&str>, ord: i64, loc: &str, text: &str) {
+        // ★ 2026-09-23（macOS 侧修，Windows 侧的夹具）：`page_id` 以前**写死 NULL** ⇒ 命中的
+        //   `pageId` 恒为 null，而"只命中活动空间"那条判据里 `arr[0]["pageId"] == "p1"` 与
+        //   `all(|h| h["pageId"] != "p9")` 就变成 `null == "p1"`（红）与 `null != "p9"`（**恒真**）。
+        //   回链的 `page_id`/`att_id` 是**表里的列**（`search.rs` 的 ChunkHit 直接读它们，
+        //   不从 `page:p1#0` 这个 id 串里拆）⇒ 夹具必须把列填对。
+        let page_id = id.strip_prefix("page:").map(|rest| rest.split('#').next().unwrap_or(rest));
         c.execute(
-            "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) VALUES (?1, NULL, ?2, ?3, ?4, '', ?5, 'h1')",
-            params![id, att, ord, loc, text],
+            "INSERT INTO chunks (id, page_id, att_id, ord, loc, lang, text, hash) VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, 'h1')",
+            params![id, page_id, att, ord, loc, text],
         )
         .unwrap();
     }
