@@ -259,8 +259,15 @@ fn apply_gm_page_settings(conn: &Connection) -> Result<(), String> {
 /// encrypted at rest, using the session key. Errors when the file is encrypted but
 /// the session is locked (no key) — callers must only reach here unlocked, except
 /// the startup gate which avoids opening a keyed space DB until unlock.
+///
+/// ★ **第 1 步（按空间）**：先问**这个空间自己的**钥匙（钥匙袋里有没有它的盒子）——
+/// 有 ⇒ 用它自己的；没有袋子 / 这个空间不在袋里 ⇒ 走**今天那条路**（应用级 session key）
+/// ⇒ **零回归**。袋子有这个空间但会话锁着 ⇒ 报错（见 `space_crypto::space_key`：绝不静默退旧钥匙）。
 pub fn key_space_conn(conn: &Connection, path: &Path) -> Result<(), String> {
     if space_db_is_encrypted(path) {
+        if let Some(key) = crate::space_crypto::space_key_for_path(path)? {
+            return set_cipher_key(conn, &key);
+        }
         let key = session_key().ok_or("工作空间已加密但会话未解锁".to_string())?;
         set_cipher_key(conn, &key)?;
     }
@@ -707,6 +714,8 @@ pub(crate) fn lock_encryption_impl(conn: &mut Connection, app_data_dir: &Path) -
         return Err("未开启端到端加密".to_string());
     }
     *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = None;
+    // ★ 第 1 步：锁定时连**主密钥**一起卸下（袋子的公开材料留着无妨：它本来就是公开的）。
+    crate::space_crypto::set_session_master(None)?;
     LOCKED.store(true, Ordering::SeqCst);
     let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
     let meta = crate::db::meta_path(app_data_dir).display().to_string().replace('\'', "''");
@@ -745,6 +754,11 @@ pub(crate) fn unlock_encryption_impl(
     let active = crate::workspaces::active_workspace_id(conn)?;
     *SESSION_KEY.lock().map_err(|_| "会话锁失效".to_string())? = Some(keys);
     LOCKED.store(false, Ordering::SeqCst);
+    // ★ 第 1 步（按空间）：同一句口令也用来**载入公开材料 ＋ 推出主密钥**（袋子没有 ⇒ 全 `None`，
+    //   与接线前逐字相同）。袋子坏了 ⇒ 在这里**报错**（不许静默降级成明文路径）。
+    crate::space_crypto::carry_keyring(conn)?;
+    let master = crate::space_crypto::master_from_passphrase(conn, &passphrase)?;
+    crate::space_crypto::set_session_master(master)?;
     // Re-open the active space DB keyed — without this PRAGMA key the app would fail to
     // read it after a locked restart.
     reopen_keyed(conn, &active, app_data_dir)?;
@@ -921,6 +935,70 @@ mod tests {
     ///   · **生产口径**（`convert_space_db` 用的那个原语 `rebuild_space_db`）写的库 ⇒ 必须能往返；
     ///   · **裸 ATTACH（另一套库级参数）写的库** ⇒ **必须读不开**（快路的后果，响亮报错；
     ///     这是"跨参数不可读"的正例，只在 `sm-library` 构建上判 —— 默认构建读得开它，那是对的）。
+    /// ★ 隐私边界**第 1 步（按空间）**：**开库路径**优先用这个空间**自己的**钥匙
+    /// （钥匙袋里有它的盒子），而不是应用级 session key —— 并证明"用错钥匙真的打不开"
+    /// （不是碰巧读开了）。没有袋子时走旧路，那条由 `space_crypto` 的单测钉着。
+    #[test]
+    fn key_space_conn_prefers_the_space_key_from_the_keyring() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(uniq_tmp("spacekey"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        // 明文源（真 schema，`rebuild_space_db` 是整表拷贝，列数要对得上）。
+        let src = dir.join("src.db");
+        {
+            let c = Connection::open(&src).unwrap();
+            crate::db::migrate(&c, "sc-space-1").unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
+                 VALUES ('p1', 'sc-space-1', NULL, 'hi', '{\"root\":{}}', 'hi', 'page', 0, 1, 1, NULL)",
+                [],
+            )
+            .unwrap();
+            c.close().unwrap();
+        }
+        // 用**空间自己的钥匙**造一个密文库，放在我们约定的路径上。
+        let space_key = crate::keyring::random_space_key();
+        let space_path = space_db_path(&dir, "sc-space-1");
+        rebuild_space_db(&src, &space_path, true, Some(&space_key), "sc-space-1").unwrap();
+        assert!(space_db_is_encrypted(&space_path));
+
+        // 袋子里放它的盒子；会话主密钥装上；**应用级 session key 故意装一把错的**
+        //   ⇒ 只有"真的按空间取钥匙"才可能读开。
+        let mut kr = crate::keyring::Keyring::new();
+        let master = kr.kdf.derive_master("pw").unwrap();
+        kr.wrap(&master, "sc-space-1", &space_key).unwrap();
+        crate::space_crypto::set_keyring_for_test(Some(kr));
+        crate::space_crypto::set_session_master(Some(master)).unwrap();
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only([9u8; 32]));
+
+        // ① 开库：读得到（尽管应用级那把是错的）
+        {
+            let c = Connection::open(&space_path).unwrap();
+            key_space_conn(&c, &space_path).unwrap();
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1, "按空间取钥匙：应用级会话钥匙是错的，也该读得开");
+        }
+
+        // ② 把袋子清掉（＝旧路）⇒ 同一路径用那把错的 session key **读不开**
+        //    ⇒ 证明 ① 用的确实是空间自己的钥匙（而不是"SQLCipher 随便给什么钥都开"）。
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        {
+            let c = Connection::open(&space_path).unwrap();
+            let _ = key_space_conn(&c, &space_path);
+            assert!(
+                c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err(),
+                "没有袋子 ⇒ 走旧路 ⇒ 错钥匙必须读不开"
+            );
+        }
+
+        // ③ 收尾：别把全局状态留给别的判据（袋子/主密钥/session key 全清）
+        *SESSION_KEY.lock().unwrap() = None;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn encrypted_db_roundtrip_and_sniff() {
         let _g = SEC_LOCK.lock().unwrap();

@@ -43,6 +43,10 @@ mod lineage_conflict;
 // ⚠️ 本步**只落格式与判据、不接线**：现有 `encryption_enabled` / `key_space_conn` / `encrypt_payload`
 // 一字不动（按空间是第 1 步、同步闸门是第 2 步）。见 `docs/plans/2026-09-23-keyring-step0-workorder.md`。
 pub mod keyring;
+// 隐私边界**第 1 步（第一半）**（2026-09-23）：**按空间**的开关与钥匙解析 ——
+// 空间 id 从库文件主干反推、钥匙袋放 meta（公开材料）、会话里存主密钥；
+// **袋子优先、旧路兜底** ⇒ 没有钥匙袋时行为与接线前**逐字相同**。
+pub mod space_crypto;
 // 桌面「近实时」流通道的**纯函数内核**（SSE 帧解析 ＋ 重连退避）—— 设计稿
 // `docs/plans/2026-09-23-desktop-near-realtime-stream-design.md` §7 第 1 步：先有判据。
 mod sync_stream;
