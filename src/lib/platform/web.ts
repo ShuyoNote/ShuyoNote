@@ -1482,7 +1482,9 @@ export function makeInvoke(store: SqliteStore) {
       const res = (await syncFetch(server, "/sync/lineage-claim", token || null, {
         space_id: String(args.space_id ?? ""),
         page_id: String(args.page_id ?? ""),
-        device_id: String(args.device_id ?? ""),
+        // ⚠️ `device_id` 由**这里**填（`syncDeviceId()` 与同步请求用的是同一个 id）——
+        //    界面侧不必知道设备 id，少一个能填错的地方。
+        device_id: syncDeviceId(),
       })) as { granted?: unknown };
       return { granted: res?.granted === true } as T;
     }
