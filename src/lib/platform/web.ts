@@ -1476,16 +1476,25 @@ export function makeInvoke(store: SqliteStore) {
       // 传输也复用 `syncFetch` ⇒ 鉴权/超时/错误口径与同步请求一致。
       const args = a.args ?? a;
       const profile = store.query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id")[0];
-      if (!profile) throw new Error("没有配置同步服务：claim 无从发起（本机应当走离线那一支）");
+      // ⚠️ **不许抛**：没有同步配置是**正常情况**（本机就该走"离线"那一支）。
+      //    抛出去会被平台 invoke 层记成一条 error（`[web] invoke error claim_page_lineage`）⇒
+      //    浏览器产物验收门禁当场判红（2026-09-23 实测）。所以"用不了"用**结果标记**回。
+      if (!profile) return { granted: false, unavailable: true } as T;
       const server = profile.server_url.replace(/\/+$/, "");
       const token = getAuthSession(store, server).token || profile.token;
-      const res = (await syncFetch(server, "/sync/lineage-claim", token || null, {
-        space_id: String(args.space_id ?? ""),
-        page_id: String(args.page_id ?? ""),
-        // ⚠️ `device_id` 由**这里**填（`syncDeviceId()` 与同步请求用的是同一个 id）——
-        //    界面侧不必知道设备 id，少一个能填错的地方。
-        device_id: syncDeviceId(),
-      })) as { granted?: unknown };
+      let res: { granted?: unknown };
+      try {
+        res = (await syncFetch(server, "/sync/lineage-claim", token || null, {
+          space_id: String(args.space_id ?? ""),
+          page_id: String(args.page_id ?? ""),
+          // ⚠️ `device_id` 由**这里**填（`syncDeviceId()` 与同步请求用的是同一个 id）——
+          //    界面侧不必知道设备 id，少一个能填错的地方。
+          device_id: syncDeviceId(),
+        })) as { granted?: unknown };
+      } catch {
+        // 网络/鉴权失败 ⇒ 同样归"用不了"（离线那一支），**不抛**（同上：抛会被记成 error）
+        return { granted: false, unavailable: true } as T;
+      }
       return { granted: res?.granted === true } as T;
     }
     if (cmd === "delete_page") {

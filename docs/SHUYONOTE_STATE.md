@@ -43,7 +43,7 @@
 | **国密** | 四层走完 ＋ **单一口味拍板** ＋ 落进发布链（应用层 v2 默认；库级 SM4 页 ＋ SM3 页 MAC/库 KDF；产物五条断言）；**带 tag 的真读数已有**：`v1.91.24/25/26` 三次 release run 在 Linux ＋ Windows 两个 build job 上「产物断言：页加密＝SM4」全绿 | **真机验收**（Android / 桌面新装加密·重启解锁·迁移）· **Apple 签名公证凭据**（macOS 档未启用）· Windows **本机**静态前缀复现（发版链已用 vcpkg 静态档 ＋ `--require-static` 卡住）· 补丁残留的**根除**（现为常开门禁 `gm-registry-clean` 发现并拦住）。细节与归属见 [SM-CRYPTO-DELIVERY.md](SM-CRYPTO-DELIVERY.md) §五 |
 | **PDFium** | 桌面光栅化可切换（`SHUYONOTE_PDF_ENGINE=pdfium`）；P3 对拍四样本硬判据 4/4；**Linux 非嵌入字体后端已落地**（随包 OFL 中文字体 ＋ `set_custom_font_provider`） | 真机逐条验收；macOS 公证/GUI 人工归 owner |
 | **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；**覆盖度已落库并读到读侧**（`attachment_text.coverage`；未知 ≠ 完整）＋ 第五类 `partial` ＋ **只读能力 `coverage.report`**（第一条 `host: frontend`）＋ 面板入口「**检查索引覆盖**」（点一下扫全库出报告）；ASR 转写通道（`localTranscribe`）已接，**真模型 live 读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、段＝1 且 `loc=""` 符合契约） | 面板侧「消费抽取结果」未落地；**旧格式 Office 真转换读数**（要一台有 LibreOffice 的机器，本机 macOS 没有 `soffice`）；Web 端 CORS 未测 |
-| **块级 CRDT（阶段 1 ✅ / 阶段 2 冲刺 S1–S8 ✅）** | 阶段 1：块身份 ＋ `blockRev`（Rust/TS 双份判据）＋ 写层。阶段 2 冲刺：平面（`content_json` ⇄ `ydoc` **唯一实现**，默认关 ⇒ 逐字节不变）＋ 编辑器**真绑定**（含浏览器级判据「打字 ⇒ 刷新 ⇒ 字还在」＋ 变异实测）＋ 每页状态落盘 `page_crdt`（TS 与 Rust 两侧建表 ＋ Tauri 命令）＋ wire 载荷版本标记与「推/收」两侧接线（**注入**，避免初始化环）＋ 血统护栏（两条独立创建的状态**拒绝合并**、有痕） | **S7-3 双设备真机验收**（要人手）· 用户可见的**平面设置项**（今天靠 `VITE_CRDT_PLANE=1`）· S5 阶段 2 服务端开算（勘察结论：建议推迟，先走「客户端合并 ＋ 哑中转」）· S9 服务端首写者裁定（要动另一个仓，等 owner 点头）。三线**联合验收**见 [JOINT-ACCEPTANCE.md](JOINT-ACCEPTANCE.md) |
+| **块级 CRDT（阶段 1 已收口；阶段 2 客户端已上、服务端待发版）** | 阶段 2：**每页 CRDT 状态落盘**（新表 `page_crdt`，两侧都建）＋ **真编辑器绑定真 Y.Doc**（浏览器门禁 9/0，含"打字⇒刷新⇒字还在"）＋ **远端状态并进本机**（次序无关）＋ **outbox 带状态与版本标记**（推/收两侧，收侧用注入）＋ **血统护栏**（两条独立血统拒绝合并并报出）＋ **派生有痕/投影写回**＋ **服务端 `POST /sync/lineage-claim` 原子裁定首写者**（分支 `feat/crdt-lineage-claim`，判据 34/0） | ① **服务端发版**（跑 v15 迁移 ＋ 部署，否则端点 404 ⇒ 客户端落"离线"那一支）② **真机双设备验收** ③ **桌面侧 claim**（Rust，暂登记 web-only）④ Rust 成对判据执行（本机 DLL 环境）⑤ yrs 对拍 → 再定"服务端开算"。详见[全上线冲刺](plans/2026-09-23-crdt-full-launch-sprint.md) §9/§10；三线**联合验收**见 [JOINT-ACCEPTANCE.md](JOINT-ACCEPTANCE.md) |
 | **社区与分发** | 索引规范/签名/两级撤回/TOFU/多源订阅/事实清单 | 市场 UI、一键发布到社区的客户端侧 |
 | **近实时** | 冲突提示/presence/评论@通知/SSE 已落地 | 块级真协同（CRDT 阶段 1 是地基） |
 
@@ -166,7 +166,7 @@
 1. **国密收尾的四个外部格子**（实现已完，缺的是"别人那台的读数"）：Windows 真机做"产物实际链的 OpenSSL 前缀"的**变异证明**；
    Linux 带 tag 的真发版给那一格的最终读数；macOS 公证凭 Apple 凭据；老库迁移三步（无真实用户 ⇒ 零成本）。见 [交付说明](SM-CRYPTO-DELIVERY.md)。
 2. **全库 AI 覆盖的面板侧**：抽取的**触发点**已定在"导入 / 附件"那条路（与 OCR 同一处），但**消费层**（面板把已有抽取结果当素材做问答/总结）还没落地。
-3. **块级 CRDT 阶段 1 收口**：写回与冲突提示的最后一跳（[写层施工单](plans/2026-09-22-block-rev-write-layer.md)）。
+3. **块级 CRDT 阶段 2 收尾**：客户端全链路已通（见上面那一行）；**卡在服务端发版**（`/sync/lineage-claim` 的 v15 迁移 ＋ 部署）与**真机双设备验收**（[全上线冲刺](plans/2026-09-23-crdt-full-launch-sprint.md) §10.3）。
 4. **真机验收（要人手）**：Android 装机开 PDF / 导出 / 加密锁屏；Linux AppImage 真跑；Windows 安装器默认目录复验。
 5. **PDFium 收尾**：真机逐条验收（Linux 非嵌入字体后端已按路线 D 落地，见[施工单](plans/2026-09-20-pdfium-linux-font-backend-workorder.md)）。
 6. **社区与分发**：市场 UI（c）与「一键发布到社区」客户端侧（[方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md)）；闸门不变（作者文档 ＋ ≥3 真实第三方插件）。
