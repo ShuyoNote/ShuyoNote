@@ -530,6 +530,12 @@ pub fn run() {
             // 交给界面侧在打开页面时合并；Web 平台恒为空 —— 它当场合并）。
             commands::read_pending_page_states,
             commands::clear_pending_page_states,
+            // 桌面「近实时」流通道（2026-09-23 第 48 轮）：订 SSE 变更流、把"有变更"发成事件，
+            // **拉取仍由前端发起**（这样自动经过 C2 闸门/防重入/状态行）。
+            // ⚠️ 这三条**登记为 web 专属**（浏览器自带 SSE，Web 侧是 `useSyncStream.ts` 自己那条流）。
+            sync_stream::sync_stream_start,
+            sync_stream::sync_stream_stop,
+            sync_stream::sync_stream_status,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,

@@ -53,6 +53,15 @@ const DESKTOP_ONLY_COMMANDS = new Map([
     "派生文本层（attachment_text/chunks）的**桌面运输通道**：桌面库是 SQLCipher、连接在 Rust 手里，TS 没有别的写入途径；Web 平台 TS 直接跑 sql.js，不需要这条命令（写第二份实现 = 同一段 SQL 抄两遍）。调用点按平台选实现，见 src/lib/platform/derivedStores.ts",
   ],
   ["derived_query", "同上（读那一半）：Web 侧直接用自家 store 读 sql.js"],
+  // 桌面「近实时」流通道（2026-09-23 第 48 轮）：**只有桌面**需要这三条 —— Web 平台浏览器自带 SSE，
+  // `src/hooks/useSyncStream.ts` 里那条 fetch 读流就是它的客户端 ⇒ 硬在 `web.ts` 里再实现一遍等于把
+  // 同一件事写两份（同一语义两处漂移正是本表要防的）。调用点按平台收口：`useSyncStream` 的桌面分支
+  // （`isDesktopPlatform()`）＋ `lib/nearRealtime.ts::applyNearRealtime`（内部先判平台）。
+  // ⚠️ 别和反方向的 `WEB_ONLY_COMMANDS` 搞混（本表下面那张）：那张是"契约有、Rust 没有"，
+  //    这张是"Rust 有、Web 故意没有" —— `claim_page_lineage` 当年属于前者，这三条属于后者。
+  ["sync_stream_start", "桌面专属：Rust 订 SSE 变更流（Web 侧浏览器自带 SSE，`useSyncStream.ts` 自己那条）"],
+  ["sync_stream_stop", "同上（桌面专属：断开且不再重连）"],
+  ["sync_stream_status", "同上（桌面专属：流通道读数，排错用）"],
 ]);
 
 const missingWeb = [...rustCommands]

@@ -11,6 +11,7 @@ import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform } from "../lib/platform";
+import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
@@ -101,6 +102,19 @@ export function SyncPanel() {
   const setAuto = (ms: number) => {
     try { localStorage.setItem("shuyonote:autoSync", String(ms)); } catch { /* ignore */ }
     setAutoMs(ms);
+  };
+  // 「近实时推送」（桌面流通道，第 48 轮）：默认开。开关本身与读写口径都在 `lib/nearRealtime.ts`
+  //（挂载时起流那条路也读它）—— 这里只做界面：拨一下 ⇒ **立刻**起/停（不等重开页面）。
+  const [nearRealtime, setNearRealtime] = useState<boolean>(() => isNearRealtimeEnabled());
+  const toggleNearRealtime = async (on: boolean) => {
+    setNearRealtime(on); // 先动界面（乐观），失败再回滚并如实说
+    try {
+      await applyNearRealtime(on);
+      setStatus(on ? "已开启近实时推送" : "已关闭近实时推送（改为按间隔轮询）");
+    } catch (e) {
+      setNearRealtime(!on);
+      setStatus(`近实时切换失败：${e instanceof Error ? e.message : String(e)}`);
+    }
   };
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -996,6 +1010,26 @@ export function SyncPanel() {
                 <option value="300000">每 5 分钟</option>
               </select>
             </div>
+
+            {/* 近实时推送（桌面流通道，第 48 轮）：Rust 订 SSE 变更流 ⇒ 对端一改就拉。
+                **只在桌面显示**：Web 那条流是浏览器自带 SSE、一直默认开着；给它加开关要能中途
+                abort 那条 fetch，是另一件事（本片没做，别在这里假装做了）。 */}
+            {isDesktopPlatform() && (
+              <label className="sync-att sync-near-realtime">
+                <input
+                  type="checkbox"
+                  checked={nearRealtime}
+                  onChange={(e) => void toggleNearRealtime(e.target.checked)}
+                />
+                <span className="sync-att-text">
+                  <span className="sync-att-name">近实时推送</span>
+                  <span className="sync-hint">
+                    连着同步服务时，对端一有改动就立刻拉一次（不必等下一次轮询）。
+                    关掉即断开连接、按上面的间隔轮询——有些代理会掐长连接，那时关掉它更省心。
+                  </span>
+                </span>
+              </label>
+            )}
 
             {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
                 与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}

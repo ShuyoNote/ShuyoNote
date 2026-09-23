@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, SyncBudget } from "./platform/commands";
+import type { CommandMap, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -320,6 +320,18 @@ export const api = {
     emitSyncCompleted(r ? [r] : []);
     return r;
   },
+  /**
+   * 桌面「近实时」流通道（2026-09-23 第 48 轮）：让 Rust 订这一页工作空间的 SSE 变更流。
+   *
+   * ⚠️ **只有桌面**（Web 平台浏览器自带 SSE，见 `hooks/useSyncStream.ts` 那条路）——
+   * `sync_stream_*` 在 `check-web-commands` 里登记为 web 专属。
+   * ⚠️ 没绑定/绑不全 ⇒ 返回 `running=false, reason="no-binding"`（**正常情况，不抛**）。
+   */
+  syncStreamStart: (wsId: string) => invoke("sync_stream_start", { wsId }) as Promise<SyncStreamStatus>,
+  /** 断开且不再重连（关开关/切工作空间/退出登录时调）。幂等。 */
+  syncStreamStop: () => invoke("sync_stream_stop") as Promise<SyncStreamStatus>,
+  /** 读数（排错用）：`running` / `last_event_at` / `reconnects` / `last_error` / `reason`。 */
+  syncStreamStatus: () => invoke("sync_stream_status") as Promise<SyncStreamStatus>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，

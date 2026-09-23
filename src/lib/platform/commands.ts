@@ -145,6 +145,25 @@ export interface SyncConflict {
 }
 
 /**
+ * 桌面「近实时」流通道的**读数**（`sync_stream_status` 的形状，见 `src-tauri/src/sync_stream.rs`）。
+ *
+ * `running=false` 是**正常情况**（没绑服务器/没选空间/用户关掉了开关）—— 不是错误；
+ * `reason` 说明是哪种，`last_error` 只装"真出过的问题"（**不静默**：界面据此能说清为什么没有近实时）。
+ */
+export interface SyncStreamStatus {
+  running: boolean;
+  ws_id: string;
+  server: string;
+  /** 最近一次收到帧的时刻（ms；`0` ＝ 还没收到过）。 */
+  last_event_at: number;
+  /** 当前这轮**连续**重连次数（收到帧后清零）—— 持续变大说明这条流一直连不上。 */
+  reconnects: number;
+  last_error: string;
+  /** 为什么没在跑：`"no-binding"` / `""`。 */
+  reason: string;
+}
+
+/**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
  * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
@@ -367,6 +386,14 @@ export interface CommandMap {
   //    由界面侧在打开页面时合并；Web 平台在 `applyChange` 里**当场**合并 ⇒ 恒为空数组 / 0 条。
   read_pending_page_states: { args: { args: { page_id: string } }; result: { seq: number; state: number[] }[] };
   clear_pending_page_states: { args: { args: { page_id: string } }; result: number };
+  // 桌面「近实时」流通道（2026-09-23 第 48 轮）：Rust 订 SSE 变更流，**只发"有变更"事件**
+  //（`sync-stream-change`），拉取仍由前端 `syncWorkspace` 发起 ⇒ 自动过 C2 闸门/防重入/状态行。
+  // ⚠️ 这三条**只有桌面**：浏览器自带 SSE（Web 侧是 `useSyncStream.ts` 自己那条流）⇒ 硬在 `web.ts`
+  //    里再实现一遍等于把同一件事写两份。登记进 `check-web-commands` 的 **`DESKTOP_ONLY_COMMANDS`**
+  //    （"Rust 有、Web 故意没有"；桌面专属 2 → 5）—— 别与反方向的 `WEB_ONLY_COMMANDS` 混淆。
+  sync_stream_start: { args: { wsId: string }; result: SyncStreamStatus };
+  sync_stream_stop: { args: undefined; result: SyncStreamStatus };
+  sync_stream_status: { args: undefined; result: SyncStreamStatus };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

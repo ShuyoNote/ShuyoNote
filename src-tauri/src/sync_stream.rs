@@ -1,24 +1,29 @@
-//! 桌面「近实时」流通道的**纯函数内核**（设计稿 §4.1 / §7 第 1 步：**先有判据**）。
+//! 桌面「近实时」流通道：**纯函数内核**（设计稿 §7 第 1 步）＋ **订阅任务与命令面**（第 2 步）。
 //!
-//! 这里只放**不碰网络、不碰 Tauri**的两件事 —— 它们是最容易写错、也最值得先钉住的部分：
-//!   ① **SSE 帧解析**：半帧/粘包/`\r\n\r\n`/注释帧（keep-alive）/多行 `data:`；
-//!   ② **重连退避表**：`1s → 2s → 4s → … → 30s` 封顶。
+//! 纯函数那一半（`drain_sse_frames` / `backoff_ms` / `frame_kind` / `stream_url`）**不碰网络、不碰
+//! Tauri** —— 它们是最容易写错、也最值得先钉住的部分；下半段（`sync_stream_*` 三条命令）只负责
+//! "把字节流接起来、把状态如实说出来"。
 //!
-//! 设计稿：`docs/plans/2026-09-23-desktop-near-realtime-stream-design.md`（§5 判据 1/2）。
+//! 设计稿：`docs/plans/2026-09-23-desktop-near-realtime-stream-design.md`（判据 1/2/3/6/7）。
 //!
-//! ## 两条口径（与设计稿逐条对应，别在这里"顺手优化"）
+//! ## 三条口径（与设计稿逐条对应，别在这里"顺手优化"）
 //!
 //! 1. **半帧必须留在缓冲里**：SSE 是流式协议，一次 `read` 回来的可能是"半个事件"
-//!    ⇒ 本模块收**累计缓冲**、吐**切出来的帧 ＋ 新的剩余缓冲**，调用方负责把剩余缓冲带进下一次。
+//!    ⇒ 纯函数收**累计缓冲**、吐**切出来的帧 ＋ 新的剩余缓冲**；调用方（本文件下半段）把剩余带进下一次。
 //! 2. **注释帧不算事件、但算"连接活着"**：服务端 axum 的 `KeepAlive` 约 15s 发一条 `:`
-//!    注释帧。⇒ `drain_sse_frames` 只切它、不产出载荷；而"收到任何字节就重置退避"这条由
-//!    **调用方**按"这一次 read 成功"来判（不是按"有没有帧"）—— 这里如实写清，免得接线时搞反。
-//!
-//! ⚠️ **`ping` 不是心跳**（设计稿 §6.2）：服务端在订阅者**落后**（broadcast 容量 64）时发的
-//! `{"type":"ping"}` 意味着**可能漏了事件** ⇒ 调用方必须**立刻拉一次**，与收到 `push` 同待遇。
-//! `frame_kind` 只负责把它**分类**（给事件载荷里的 `kind` 用），**不**决定"拉不拉"。
+//!    注释帧 ⇒ 只切它、不产出载荷；退避在"连上了"那一刻就清零（不是按"有没有帧"）。
+//! 3. ⚠️ **`ping` 不是心跳**（设计稿 §6.2）：服务端在订阅者**落后**（broadcast 容量 64）时发的
+//!    `{"type":"ping"}` 意味着**可能漏了事件** ⇒ 调用方必须**立刻拉一次**，与收到 `push` 同待遇。
+//!    `frame_kind` 只负责**分类**（给事件载荷里的 `kind` 用），**不**决定"拉不拉"。
 
+use std::sync::{Mutex, OnceLock};
+
+use futures_util::StreamExt;
+use serde::Serialize;
 use serde_json::Value;
+use tauri::{AppHandle, Emitter, State};
+
+use crate::db::Db;
 
 /// 退避起点（第 0 次失败后的等待）。
 pub const BACKOFF_START_MS: u64 = 1_000;
@@ -90,6 +95,205 @@ pub fn frame_kind(payload: &str) -> &'static str {
         Err(_) => "other",
     }
 }
+
+// =====================================================================================
+// 订阅任务 ＋ 状态机 ＋ 命令面（设计稿 §4.1/§4.2/§7 第 2 步）
+// =====================================================================================
+
+/// 订阅地址（纯函数，方便判据）：`{server}/spaces/{space_id}/changes-stream`。
+///
+/// 与前端 `useSyncStream.ts` 拼的是**同一条路径**（服务端 `main.rs` 的 `sync_routes`）。
+/// ⚠️ 服务端地址的结尾斜杠在这里归一（前端也是这么做的）；`space_id` 是服务端生成的十六进制，
+/// **不需要**百分号编码（与前端 `encodeURIComponent` 的效果一致，这里不为它引一层依赖）。
+pub fn stream_url(server: &str, space_id: &str) -> String {
+    format!("{}/spaces/{}/changes-stream", server.trim_end_matches('/'), space_id)
+}
+
+/// 发给前端的事件载荷：**只是"有变更"这个信号**，不含任何页面内容（与服务端一致）。
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamChange {
+    pub ws_id: String,
+    pub server: String,
+    /// `push` / `ping` / `other`（见 `frame_kind`）。
+    pub kind: String,
+}
+
+/// 订阅的**读数**（界面/排错要看的就是这几个数，别让它石沉大海）。
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct StreamStatus {
+    pub running: bool,
+    pub ws_id: String,
+    pub server: String,
+    /// 最近一次收到帧的时刻（ms；`0` ＝ 还没收到过）。
+    pub last_event_at: i64,
+    /// 当前这轮**连续**重连次数（成功收到帧后清零）。
+    pub reconnects: u32,
+    /// 最近一次失败的原因 —— **不静默**：界面要能说出"为什么没有近实时"。
+    /// 没有同步配置时它是空的（那不是错误，是**正常情况**）。
+    pub last_error: String,
+    /// 为什么没在跑（正常情况也走它）：`"no-binding"` / `""`。
+    pub reason: String,
+}
+
+struct Running {
+    status: StreamStatus,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+fn slot() -> &'static Mutex<Option<Running>> {
+    static SLOT: OnceLock<Mutex<Option<Running>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 读一份当前状态（`None` 的槽位 ⇒ "没在跑"，不是错误）。
+fn snapshot() -> StreamStatus {
+    let guard = slot().lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().map(|r| r.status.clone()).unwrap_or_default()
+}
+
+/// 就地改状态（**只做极短的锁内操作**，绝不在持锁时 await —— 那是本仓踩过的坑）。
+fn with_status<F: FnOnce(&mut StreamStatus)>(f: F) {
+    let mut guard = slot().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = guard.as_mut() {
+        f(&mut r.status);
+    }
+}
+
+/// 停掉当前订阅（幂等）。返回停止**之后**的状态。
+fn stop_locked() -> StreamStatus {
+    let mut guard = slot().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = guard.take() {
+        r.handle.abort();
+    }
+    StreamStatus::default()
+}
+
+/// **起（或重起）订阅**：`ws_id` ⇒ 复用 `sync::claim_config` 解析绑定。
+///
+/// ⚠️ **没绑定/绑不全 ⇒ 不起流、也不抛**（＝"用不了"，不是错误 —— 与 claim / 第 38 轮那条同一口径）。
+/// 返回的状态里 `running=false` ＋ `reason="no-binding"`，界面据此**如实**说"没配同步"。
+#[tauri::command]
+pub async fn sync_stream_start(
+    app: AppHandle,
+    db: State<'_, Db>,
+    ws_id: String,
+) -> Result<StreamStatus, String> {
+    // ① 解析绑定（锁只在**同步**代码里，不跨 await）
+    let resolved = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        crate::sync::claim_config(&c, &ws_id)?
+    };
+    let Some((server, token, space_id)) = resolved else {
+        stop_locked();
+        return Ok(StreamStatus {
+            running: false,
+            ws_id,
+            reason: "no-binding".to_string(),
+            ..Default::default()
+        });
+    };
+
+    // ② 停掉旧的，装上新的
+    stop_locked();
+    let url = stream_url(&server, &space_id);
+    let status = StreamStatus {
+        running: true,
+        ws_id: ws_id.clone(),
+        server: server.clone(),
+        ..Default::default()
+    };
+    let app2 = app.clone();
+    let ws2 = ws_id.clone();
+    let server2 = server.clone();
+    let handle = tokio::spawn(async move {
+        let mut attempt: u32 = 0;
+        loop {
+            let client = reqwest::Client::new();
+            let mut req = client.get(&url);
+            if !token.is_empty() {
+                req = req.bearer_auth(&token);
+            }
+            let outcome: Result<(), String> = match req.send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    with_status(|s| {
+                        s.reconnects = 0;
+                        s.last_error.clear();
+                    });
+                    attempt = 0;
+                    let mut buf = String::new();
+                    let mut stream = resp.bytes_stream();
+                    let mut err = None;
+                    while let Some(chunk) = stream.next().await {
+                        match chunk {
+                            Ok(bytes) => {
+                                buf.push_str(&String::from_utf8_lossy(&bytes));
+                                let (frames, rest) = drain_sse_frames(&buf);
+                                buf = rest;
+                                for f in frames {
+                                    let kind = frame_kind(&f).to_string();
+                                    let _ = app2.emit(
+                                        "sync-stream-change",
+                                        StreamChange {
+                                            ws_id: ws2.clone(),
+                                            server: server2.clone(),
+                                            kind,
+                                        },
+                                    );
+                                    with_status(|s| s.last_event_at = now_ms());
+                                }
+                            }
+                            Err(e) => {
+                                err = Some(e.to_string());
+                                break;
+                            }
+                        }
+                    }
+                    match err {
+                        Some(e) => Err(e),
+                        None => Err("连接被服务端关闭".to_string()),
+                    }
+                }
+                Ok(resp) => Err(format!("HTTP {}", resp.status())),
+                Err(e) => Err(e.to_string()),
+            };
+
+            if let Err(e) = outcome {
+                // **不静默**：留痕（界面能读到 `last_error`），然后退避重连。
+                with_status(|s| s.last_error = e);
+            }
+            // 退避后重连（`stop` 会 abort 掉这个任务本身，所以这里不必再查"该不该继续"）。
+            attempt = attempt.saturating_add(1);
+            with_status(|s| s.reconnects = attempt);
+            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms(attempt - 1))).await;
+        }
+    });
+
+    {
+        let mut guard = slot().lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(Running { status: status.clone(), handle });
+    }
+    Ok(status)
+}
+
+/// **断开且不再重连**（用户关开关、退出登录、切工作空间时调）。幂等。
+#[tauri::command]
+pub fn sync_stream_stop() -> StreamStatus {
+    stop_locked()
+}
+
+/// 当前读数（界面排错用）。没在跑 ⇒ 全默认（`running=false`）。
+#[tauri::command]
+pub fn sync_stream_status() -> StreamStatus {
+    snapshot()
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -178,5 +382,36 @@ mod tests {
         assert_eq!(frame_kind(r#"{"type":"whatever"}"#), "other");
         assert_eq!(frame_kind("不是 JSON"), "other", "认不出来 ⇒ other，**不猜**");
         assert_eq!(frame_kind(""), "other");
+    }
+
+    /// 判据 3（前半）：**订谁的地址** —— 与前端拼的是同一条路径，且结尾斜杠要归一。
+    #[test]
+    fn stream_url_matches_the_web_side_and_normalizes_slashes() {
+        assert_eq!(
+            stream_url("https://shuyo.cn/sync", "ab12"),
+            "https://shuyo.cn/sync/spaces/ab12/changes-stream"
+        );
+        assert_eq!(
+            stream_url("https://shuyo.cn/sync/", "ab12"),
+            "https://shuyo.cn/sync/spaces/ab12/changes-stream",
+            "结尾斜杠要被归一（与前端 `server.replace(/\\/+$/,'')` 同一效果）"
+        );
+        assert_eq!(stream_url("http://127.0.0.1:8787", "sp"), "http://127.0.0.1:8787/spaces/sp/changes-stream");
+    }
+
+    /// 判据 6/7（可判的那一半）：**没在跑时读数是"全默认"**（`running=false`），
+    /// 而 `reason` 能说出"为什么没在跑"（`no-binding` 是**正常情况**，不是错误）。
+    #[test]
+    fn status_defaults_say_not_running_and_can_explain_why() {
+        let s = StreamStatus::default();
+        assert!(!s.running);
+        assert_eq!(s.last_event_at, 0);
+        assert_eq!(s.reconnects, 0);
+        assert!(s.last_error.is_empty(), "没跑 ≠ 有错");
+        let s = StreamStatus {
+            reason: "no-binding".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(s.reason, "no-binding");
     }
 }

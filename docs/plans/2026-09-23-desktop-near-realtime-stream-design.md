@@ -1,9 +1,17 @@
 # 桌面「近实时」流通道：设计稿（2026-09-23，**未实现**）
 
-> **进度（2026-09-23）**：§7 第 1 步 ✅ **已落** —— `src-tauri/src/sync_stream.rs`（SSE 帧解析 ＋
-> 退避表，**7 条判据全绿**，对应 §5 判据 1/2）；第 2–4 步（订阅任务 ＋ 三条命令 ＋ 前端 hook ＋ 设置项）
-> **待做**。⚠️ 那一层现在**还没有调用方**（`cargo check` 会报 6 条 `never used` 警告 —— 这是**如实的**：
-> 判据先落、接线在后，不是漏了）。
+> **进度（2026-09-23 第 48 轮）**：§7 **第 1–4 步已落** ——
+> ① `src-tauri/src/sync_stream.rs` 纯函数（帧解析/退避/`stream_url`，**9 条判据全绿**）；
+> ② 订阅任务 ＋ 状态机 ＋ 三条命令 `sync_stream_{start,stop,status}`（复用 `sync::claim_config` 选绑定，
+> **没绑就不起流也不抛**；`ping`/断开都走**退避重连**、`last_error`/`reason` **不静默**）；
+> ③ 契约/API/平台收口；④ `useSyncStream` 的桌面分支（**先挂监听再起流**、去抖 300ms、`ping` 立刻拉、
+> 走既有 **C2 闸门 ＋ 防重入 ＋ 状态行配对**）＋ `components/SyncPanel.tsx` 的「近实时推送」开关。
+>
+> **判据现状（如实）**：1/2 ✅（Rust 单测）・3 ✅（`stream_url` ＋ 复用的 `claim_config` 判据）・
+> 4 ✅（`check-web-commands`：Rust **247** / web 245 / 契约 **249**，桌面专属 **2 → 5**）・
+> 6/7 ✅**部分**（状态默认值＋`reason`/`last_error` 有判据；"关掉立即断""拔网重连"的**真行为**
+> 要跑起来才算）・**5 ✗ 未验**（端到端 <2s / 拔网重连需要 `tauri dev` 或真机 —— 与 §5 给它标的
+> "人工/脚本"一致，本机没有 Tauri 应用可跑）。⇒ **这条片还没"做完"，差的就是判据 5 那一跑。**
 
 > 起因：[实时协同分析](../realtime-collab-analysis.md) §9.3 的第一条缺口 ——
 > **桌面没有推送通道**（`src/hooks/useSyncStream.ts` 首句 `if (isDesktopPlatform()) return;`）
@@ -75,15 +83,17 @@
 
 | 命令 | 作用 | Web 侧 |
 |---|---|---|
-| `sync_stream_start(ws_id)` | 起/重起订阅（切工作空间时调） | **登记 web-only** |
-| `sync_stream_stop()` | 断开且不再重连（用户关开关/退出登录时调） | **登记 web-only** |
-| `sync_stream_status()` | 读数：`{running, ws_id, server, last_event_at, reconnects, last_error}` | **登记 web-only** |
+| `sync_stream_start(ws_id)` | 起/重起订阅（切工作空间时调） | **桌面专属**（见下） |
+| `sync_stream_stop()` | 断开且不再重连（用户关开关/退出登录时调） | **桌面专属**（见下） |
+| `sync_stream_status()` | 读数：`{running, ws_id, server, last_event_at, reconnects, last_error, reason}` | **桌面专属**（见下） |
 
-⚠️ **这三条与刚撤掉的 `claim_page_lineage` 相反**：Web 平台**不需要**它们（浏览器自带 SSE，
+⚠️ **这三条与刚撤掉的 `claim_page_lineage` 是相反方向**：Web 平台**不需要**它们（浏览器自带 SSE，
 `useSyncStream.ts` 自己就是那个客户端）⇒ 硬在 `web.ts` 里实现一遍等于把同一件事写两份。
-⇒ 登记进 `check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS`（**web 专属 2 → 5**），
-**理由与调用点收口方式**都写在登记项里（调用点只在桌面分支跑，例如 `when: () => isDesktopPlatform()`）。
-（这正是那份登记表的用途；`claim` 那条撤销是因为它**两侧都要做**，不是"登记不好"。）
+⇒ 登记进 `check-web-commands.mjs` 的 **`DESKTOP_ONLY_COMMANDS`**（"Rust 有、Web 故意没有"；
+**桌面专属 2 → 5**），**理由与调用点收口方式**都写在登记项里。
+⚠️ **本文这里原来写成"web 专属 / `WEB_ONLY_COMMANDS`"，是错的**（第 48 轮实现时被门禁当场纠正）：
+那张表是**反方向**——"契约里有、Rust 没有"（`claim_page_lineage` 当年属于它）。
+两张表的区别一句话：**"两侧是不是都要做"** —— claim 两侧都要（所以它撤销登记），流通道只有桌面要。
 
 ### 4.3 前端接线
 
@@ -109,7 +119,7 @@
 | 1 | **帧解析**：半帧/粘包/`\r\n\r\n`/注释帧/多行 `data:`/`data:` 无空格 | Rust 单测（纯函数，照 `crdt_wire.rs`）|
 | 2 | **退避表**：1→2→4→…→30 封顶；收到帧即清零 | Rust 单测 |
 | 3 | **订谁**：没绑定/绑不全 ⇒ 不起流且**不抛**；切工作空间 ⇒ 重订 | Rust 单测（复用 `claim_config`）|
-| 4 | **命令面**：三条注册；`check-web-commands` 绿且 web 专属 2 → 5（理由写在登记项）| 门禁 |
+| 4 | **命令面**：三条注册；`check-web-commands` 绿且**桌面专属 2 → 5**（理由写在登记项）| 门禁 |
 | 5 | **端到端**（真机/集成）：本地服务端 ＋ 桌面在跑 ⇒ A 改一处 ⇒ 桌面 B **< 2s** 拉到；**拔网再插** ⇒ 自动重连并恢复 | 人工/脚本（`test:sync-collab` 已有服务端那一半）|
 | 6 | **可关**：关开关 ⇒ 连接数立刻归零、`status.running=false`、不再重连 | 单测（状态机）＋ 人工 |
 | 7 | **不静默**：连不上/被代理掐 ⇒ `status.last_error` 有痕，且**不影响**轮询（照旧能同步）| 单测 ＋ 人工 |

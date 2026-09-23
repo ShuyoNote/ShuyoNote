@@ -1541,7 +1541,10 @@ fn lineage_claim_verdict(status: u16, body: Option<&serde_json::Value>) -> Linea
 ///
 /// `device_id` 不在这里取（它不是"配置"，是应用级事实）—— 由命令自己 `device_id()` 拿，
 /// 保证与同步请求用的是同一个 id（服务端看到的"设备"是同一台）。
-fn claim_config(c: &Connection, workspace_id: &str) -> Result<Option<(String, String, String)>, String> {
+///
+/// ⚠️ `pub(crate)`：**桌面流通道**（`sync_stream.rs`）也用它来回答"这个工作空间该订哪台服务器/哪个
+/// 远端空间"—— 与 claim 共用**同一处**解析（设计稿 §4.1："订谁复用既有解析"），不另写一份。
+pub(crate) fn claim_config(c: &Connection, workspace_id: &str) -> Result<Option<(String, String, String)>, String> {
     let profile: Option<(String, String, String)> = c
         .query_row(
             "SELECT server_url, token, space_id FROM sync_profiles WHERE ws_id = ?1",
