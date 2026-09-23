@@ -125,13 +125,42 @@ if (-not $env:OPENSSL_DIR) {
 }
 
 $profile = if ($Release) { 'release' } else { 'debug' }
-$cargoArgs = @('test', '--no-run', '--manifest-path', $crateRel, '--lib') + $CargoArgs
-if ($Release) { $cargoArgs += '--release' }
+# WARNING: PowerShell variable names are CASE-INSENSITIVE. This script has a param `$CargoArgs`,
+# so a local `$cargoArgs` would be THE SAME variable -- the first version of the host-bin step
+# below appended the test args to `cargo build` (measured 2026-09-23: hostbin line showed
+# "build ... --bin shuyonote test --no-run ... --lib"). Hence the distinct name `$noRunArgs`.
+$noRunArgs = @('test', '--no-run', '--manifest-path', $crateRel, '--lib') + $CargoArgs
+if ($Release) { $noRunArgs += '--release' }
+
+# ---- Build the host binary first (target/<profile>/shuyonote.exe) ----
+# WHY: the 34 `plugins::tests::*` cases spawn the host binary; without it they panic with
+#   "cannot find the host binary ... use `cargo test` (which builds the app), not `cargo test --lib`".
+# This script only runs `--lib`, so whenever that exe is missing -- e.g. right after
+#   `node scripts/sm-library-build.mjs --prepare` (its `cargo clean -p` removes it) --
+#   the run reports 34 failures that look like "the plugin system is broken".
+# Measured 2026-09-23: after --prepare, `--lib` alone => 485 passed / 34 failed / 18 ignored;
+#                      with this step first      => 519 passed /  0 failed / 18 ignored.
+# This is the same failure mode already written down in docs/TESTING.md (the row "plugins:: tests
+# all red -> the host binary is missing -> run `cargo build --bin shuyonote` first"); this step
+# just does it for you instead of relying on the reader to remember.
+# Cost: a warm target makes this a no-op (<1s); a cold one is the build that had to happen anyway.
+$binArgs = @('build', '--manifest-path', $crateRel, '--bin', 'shuyonote') + $CargoArgs
+if ($Release) { $binArgs += '--release' }
+Write-Host "win-cargo-test: hostbin = $($binArgs -join ' ')"
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+  & cargo @binArgs 2>&1 | Select-Object -Last 2 | ForEach-Object { Write-Host "  $_" }
+  $binCode = $LASTEXITCODE
+} finally {
+  $ErrorActionPreference = $prevEap
+}
+if ($binCode -ne 0) { Fail "host binary build failed (exit $binCode)" $binCode }
 
 Write-Host "win-cargo-test: root    = $root"
 Write-Host "win-cargo-test: crate   = $crateRel"
 Write-Host "win-cargo-test: mt.exe  = $mt"
-Write-Host "win-cargo-test: cargo   = $($cargoArgs -join ' ')"
+Write-Host "win-cargo-test: cargo   = $($noRunArgs -join ' ')"
 Write-Host ""
 
 Push-Location $root
@@ -144,7 +173,7 @@ try {
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & cargo @cargoArgs *> $log
+    & cargo @noRunArgs *> $log
     $code = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $prevEap

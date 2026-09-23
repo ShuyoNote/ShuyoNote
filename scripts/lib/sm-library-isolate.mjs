@@ -71,6 +71,13 @@ export function cargoHomeOfRegistrySrc(srcDir) {
  *
  * 路径用 TOML **字面字符串**（单引号）：Windows 的 `C:\a\b` 在双引号里要转义反斜杠，
  * 字面串不用 —— 少一类只在 Windows 上炸的写法。
+ *
+ * ⚠️ **继承时要剥掉真实 config 开头的 BOM**（2026-09-23 实测，AMD/Windows）：
+ * 真实 `~/.cargo/config.toml` 完全可能**带 BOM**（本机就是：DSH 代理写的那份以 `EF BB BF` 开头，
+ * cargo 自己**容忍**文件开头的 BOM）。而我们把 header 拼在它前面 ⇒ 那个 BOM 落到**第 4 行行首**
+ * ⇒ 不再是"文件开头"，TOML 直接解析失败：`key with no value, expected =` ⇒ 私有 `CARGO_HOME` 下
+ * **任何 cargo 调用都炸**（现场：`--prepare` exit 101）。
+ * ⇒ "逐字复制"要收窄成"**逐字，除了那个编码标记**"：它只在**首位**才合法。
  */
 export function gmConfigToml({ realConfigText = "", copyDir }) {
   const header = [
@@ -80,7 +87,9 @@ export function gmConfigToml({ realConfigText = "", copyDir }) {
     "",
   ].join("\n");
   const patch = ["[patch.crates-io]", `libsqlite3-sys = { path = '${copyDir}' }`, ""].join("\n");
-  const inherited = realConfigText.trim() ? `${realConfigText.trimEnd()}\n\n` : "";
+  // 只剥**开头**那一个 BOM（真实文件里出现的 U+FEFF 属于内容，不动它）
+  const inheritedText = realConfigText.replace(/^\uFEFF/, "");
+  const inherited = inheritedText.trim() ? `${inheritedText.trimEnd()}\n\n` : "";
   return `${header}${inherited}${patch}`;
 }
 
