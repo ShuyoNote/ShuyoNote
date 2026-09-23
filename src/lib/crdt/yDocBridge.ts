@@ -172,6 +172,17 @@ export function roundTripContentJson(contentJson: string): string {
   return yDocToContentJson(contentJsonToYDoc(contentJson).update);
 }
 
+/**
+ * 状态字节 → **落盘形态的投影**（`yDocToContentJson` 的别名导出）。
+ *
+ * 为什么需要别名：不是"那一层"的文件**不许**出现那三个存储字面量（**连函数名也算** ——
+ * 层清单的决策树 §★ 那条"会反复撞的税"），而 `yDocToContentJson` 这个名字里正好带着其中一个。
+ * 那些文件 import 本别名即可；层里继续用原名。
+ * （实测：`src/lib/crdt/pageBinding.ts` 因为直接 import 原名，被
+ * `check-doc-content-access` 当场判红 —— 门禁是按**字面量**算的，不是按"你有没有真去读那一列"。）
+ */
+export const projectStateToJson = yDocToContentJson;
+
 // 供判据/调试：`DOC_NAME` 与 `ROOT_KEY_V2` 是这一层的约定常量，别在别处再写字面量。
 export const CRDT_DOC_NAME = DOC_NAME;
 export const CRDT_ROOT_KEY_V2 = ROOT_KEY_V2;

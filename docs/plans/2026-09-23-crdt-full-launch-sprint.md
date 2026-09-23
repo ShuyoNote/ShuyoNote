@@ -80,8 +80,19 @@
 | **S3a** ✅ | **活绑定（常驻监听）** | `openPageSession` 把"本地编辑 → yjs"接成**常驻** `registerUpdateListener`（不再每次编辑手动挂一次），并新增 **`dispose()`** 撤监听；回声**由库自己挡**（`syncYjsStateToLexicalV2` 的变更带 `COLLABORATION_TAG`，`syncLexicalUpdateToYjsV2` 见到它就当场返回 —— 读 `@lexical/yjs` 的 V2 实现得到，不是猜的）＋ `pageSession.test.ts` 加 3 条 | ⑥ ★ **回声安全**：两台来回互合**三轮**不增殖、两侧仍一致；⑦ ★ **活绑定真进 doc**：`edit()` 之后**另一个会话**从状态打开就能看到（没有手动同步调用）；⑧ `dispose()` 之后编辑**不再**进 doc（否则 dispose 是假的） |
 | **S3b-1** ✅ | **绑定既有编辑器 ＋ 「本地编辑」信号** | `openPageSession({ json\|state, editor })` 可绑**既有**编辑器（真编辑器要的就是这条）；新增 `onLocalEdit(cb)` —— **hydration（载入/远端合并落回编辑器）期间不报**，其余 update 报一次（真编辑器的保存路径要挂在它上面，而不是"每次 update 都存"）＋ `pageSession.test.ts` 加 2 条 | ⑨ ★ 直接改**那个**编辑器 ⇒ 会话状态里就有、与纯函数路径同源、另一端看得到；⑩ ★ 建血统/远端合并不报、本地编辑报一次、退订生效 |
 | **S3b-2a** ✅ | **首开"只建一次"**（把"并发首开两套身份"这个风险堵成一条入口） | 层里新增 `ensurePageCrdtState(db, pageId, json, now, build)`：**有就载入、没有才建一次并立刻落盘**；`build` 是**注入**的（这一层不许 import 桥接层 —— 与 `setCrdtPlaneImpl` 同一手法）＋ `pageStateStore.test.ts` 加 2 条 | ⑤ ★ 首开建一次（`seeded=true`）并落盘；第二台/重启再开 ⇒ `seeded=false`、**builder 没被再调**（= 不会有第二套身份）、拿到的是同一条血统且能继续演进；⑥ `build` 抛错 ⇒ **一行都不落盘**，下一次仍能正常建 |
-| **S3b-2b** | **真编辑器接线**（下一件） | `editor/Editor.tsx`：`useLexicalComposerContext()` 拿编辑器 ⇒ `pageId` 变化时 `ensurePageCrdtState` ＋ 开会话（**state 优先**、json 兜底）、卸载 `dispose()`；保存路径改挂 `onLocalEdit`（不再"每次 update 都存"）；打开页面的那一侧把 `readPageCrdtState` 的结果传下去、保存时 `writePageCrdtState` | 真编辑器里打字 ⇒ 状态里出现增量、另一个会话能合；切页/卸载 ⇒ `dispose()` 被调到（不泄漏监听）；**远端合并落回编辑器不会触发一次多余的落盘**（用 ⑩ 的信号口径验） |
+| **S3b-2b** ✅ | **一页 ↔ 真编辑器 的绑定（唯一实现）** | 新 `crdt/pageBinding.ts`：`bindPageToEditor({db,pageId,editor,seedJson,now})`（**先** `ensurePageCrdtState`、**再**开会话挂在**传入的**编辑器上）＋ `loadJsonForEditor(db,pageId,storedJson)`（**有状态 ⇒ 用状态的投影**；没有 ⇒ 原样返回）；桥接层加别名导出 `projectStateToJson`（见下面踩坑①）＋ `pageBinding.test.ts` 3 条 | ⑪ 首绑 `seeded=true`、状态落盘、编辑器与会话同血统；⑫ ★★ **真编辑器打字 → 存回 → 重开页面** ⇒ `seeded=false`、看得到"真编辑器打的字"、与重开后又打的那笔合并 ⇒ `["blk-1","blk-2","blk-live","blk-reopened"]`（两处都在、不翻倍、存回后一致）；⑬ 没状态 ⇒ 逐字节原样返回 |
+| **S3b-2c** | **组件接线**（下一件） | `editor/Editor.tsx` ＋"打开页面的那一侧"：load 改走 `loadJsonForEditor`、挂载时 `bindPageToEditor`（`seedJson` = 保存路径那个 serializer 的产物）、保存改挂 `onLocalEdit` ＋ `persist`、卸载 `dispose` | 真应用里打字 ⇒ 库里的状态跟着变；切页/卸载不泄漏监听；**未建血统的页面行为不变** |
 
+> 🧯 **本轮两条踩坑（都记档，免得重犯）**：
+> ① **门禁按字面量算 —— 连 import 的函数名也算**：`pageBinding.ts` 第一版直接
+>    `import { yDocToContentJson }` 就被 `check-doc-content-access` 判红（"新增文件直接引用（不在基线里）：1 处"）
+>    ⇒ 桥接层给了一个**别名** `projectStateToJson`，非层文件一律用它。这就是层清单决策树里那条
+>    "会反复撞的税"的又一次实证：**名字也算**。
+> ② **绝对不要用 PowerShell 的 `Get-Content -Raw | Set-Content` 改源码**：我用它做一次纯改名，
+>    结果**加了 BOM（`EF BB BF`）＋ 中文全变乱码**，两个新文件只能按原内容重建。
+>    本仓"不许用 `Set-Content` / `-replace` 动源文件"这条纪律**是血的教训** —— 这次是第三次撞。
+>    ⇒ 源文件只用 `edit` / `write` 工具改（改完顺手查一次首三字节是不是 `47,47,32`＝`// `）。
+>
 > ⚠️ **"首开两套身份"这个风险（读代码时发现 → S3b-2a 已收敛，残留窗口归 S5）**：
 > `src/editor/Editor.tsx:176/190` 的 `parseEditorState` 在**载入**时就会给缺 `blockId` 的顶层块铸
 > `newBlockId` ⇒ 若"每台设备打开时各建一次血统"，两台各造一套身份 ⇒ 按 S1 红线合并会翻倍。

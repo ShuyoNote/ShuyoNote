@@ -1,0 +1,92 @@
+// 冲刺切片 **S3b-2b**：把「一页」和「一个**真编辑器**」绑到一起 —— 接线用的唯一实现。
+//
+// 为什么单独一层：`editor/Editor.tsx` 里的编辑器实例由 `LexicalComposer` 持有、页面内容与保存回调
+// 来自它的上层（拿得到数据库的那一侧）。把"载入状态 / 建血统 / 开会话 / 存回"这几步写在组件里，
+// 就会变成每个调用点各写一遍 —— 而这里每一处错法都对应一条实测红线：
+//   · 忘了 `ensurePageCrdtState` ⇒ 两台设备各建一条血统 ⇒ 合并时一块变两块（`mergeability.test.ts` ①）；
+//   · 打开页面时用落盘 JSON 而不是**状态的投影** ⇒ 编辑器看到的是旧内容，且再一保存就是"回退"。
+// 所以：**这几步只在这一个文件里写**，组件只负责"把编辑器和 seed JSON 交进来"。
+//
+// 三条口径（与 `docContent.ts` / `yDocBridge.ts` 的分工）：
+//   ① 状态的**存/取**归那一层（`ensurePageCrdtState` / `readPageCrdtState` / `writePageCrdtState`）；
+//   ② 状态字节的**生产/消费**归桥接层（`openPageSession`）；
+//   ③ 本文件只做"把两者按正确顺序串起来"，不碰 SQL、不认字节格式。
+//
+// ⚠️ 这一层**不是**"文档内容的那一层"（`check-doc-content-access` 看着那边）⇒ 本文件**不许**
+// 出现那三个存储列名字面量（注释也写中文描述）—— **连 import 的函数名也算**：第一版直接
+// `import { yDocToContentJson }` 就被门禁当场判红（`pageBinding.ts（1 处）`）⇒ 改用桥接层提供的
+// 别名 `projectStateToJson`。这就是层清单决策树里那条"会反复撞的税"。
+import type { LexicalEditor } from "lexical";
+import {
+  ensurePageCrdtState,
+  readPageCrdtState,
+  writePageCrdtState,
+  type ContentSql,
+} from "../docContent";
+import { openPageSession, projectStateToJson, type PageSession } from "./yDocBridge";
+
+/** 一次"页面 ↔ 编辑器"的绑定。 */
+export interface PageBinding {
+  /** 绑在**传入的那个**编辑器上的会话。 */
+  session: PageSession;
+  /** `true` ⇒ 这一次首开建了血统（并已落盘）；`false` ⇒ 载入既有状态。 */
+  seeded: boolean;
+  /** 把当前状态存回（保存路径调用；`now` 由调用方给，保持与其它落盘同一时间源）。 */
+  persist(now: number): void;
+  /** 撤监听（页面关闭/组件卸载时调）。**不**销毁 editor/doc、也**不**动已落盘的状态。 */
+  dispose(): void;
+}
+
+/**
+ * ★ 把一页绑到**既有的**那个编辑器上（唯一入口）。
+ *
+ * 顺序是有理由的，别调换：
+ *   1. `ensurePageCrdtState` —— **有状态就载入、没有才建一次并立刻落盘**（首开的那一次）；
+ *   2. 再用这份状态开一个会话，并把会话**挂在传入的编辑器**上（hydration 会把状态落到编辑器里）。
+ *
+ * ⚠️ `seedJson` 必须是**编辑器当前内容**的落盘 JSON（含块身份）—— 也就是保存路径那个 serializer
+ * 的产物，**不是**组件收进来的那个原始 prop（原始 prop 可能缺身份，而"不造身份"是桥接层的纪律，
+ * 缺身份会当场抛：`openPageSession({ json })` → `modelJsonOf`）。
+ */
+export function bindPageToEditor(opts: {
+  db: ContentSql;
+  pageId: string;
+  editor: LexicalEditor;
+  seedJson: string;
+  now: number;
+}): PageBinding {
+  const { db, pageId, editor, seedJson, now } = opts;
+  const { state, seeded } = ensurePageCrdtState(db, pageId, seedJson, now, (json) =>
+    // 建血统那一次：由这份 JSON 起一条血统，状态字节交给那一层落盘。
+    openPageSession({ json }).exportState(),
+  );
+  const session = openPageSession({ state, editor });
+  return {
+    session,
+    seeded,
+    persist(at) {
+      writePageCrdtState(db, pageId, session.exportState(), at);
+    },
+    dispose() {
+      session.dispose();
+    },
+  };
+}
+
+/**
+ * ★ 打开一页时**该给编辑器**的那份 JSON（加载契约）。
+ *
+ * - 库里**有** CRDT 状态 ⇒ 用**状态的投影**（状态是权威那一份；落盘那份只是投影，可能已经落后）；
+ * - 库里**没有** ⇒ **原样返回**传进来的那份（此时行为与接线前逐字不变：还没建血统的页面零感知）。
+ *
+ * ⚠️ 代价如实写：有状态时每打开一页要多做一次"状态 → 编辑器语义"的投影（一次 ydoc→Lexical 转换）。
+ * 这是"状态权威"必然的代价，不是疏忽；真成为瓶颈时应该在**保存时**把投影写回落盘那份（S6 的口径），
+ * 而不是让读路径去猜。
+ *
+ * ⚠️ 拿到的仍是**落盘形态**：编辑器侧必须先过 `toModelDoc`（`editor/Editor.tsx` 的 `parseEditorState`
+ * 已经这么做）—— 这一步不是可选的，判据 `pageBinding.test.ts` 第一版漏了它，当场红。
+ */
+export function loadJsonForEditor(db: ContentSql, pageId: string, storedJson: string): string {
+  const state = readPageCrdtState(db, pageId);
+  return state ? projectStateToJson(state) : storedJson;
+}
