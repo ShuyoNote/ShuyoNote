@@ -358,8 +358,10 @@ export interface CommandMap {
   read_page_state: { args: { args: { page_id: string } }; result: number[] | null };
   save_page_state: { args: { args: { page_id: string; state: number[] } }; result: null };
   // 冲刺 S9（2026-09-23）：**CRDT 血统 claim** —— 原子裁定"谁先给这一页建血统"。
-  // 服务端端点 `/sync/lineage-claim`（`shuyonote-sync-server` 的 `sync_routes`）。
-  claim_page_lineage: { args: { args: { space_id: string; page_id: string } }; result: { granted: boolean; unavailable?: boolean } };
+  // 服务端端点 `/lineage-claim`（`shuyonote-sync-server` 的 sync 路由，**挂在根上**）。
+  // ⚠️ 入参是**本地工作空间 id**（页所属那一个）：远端 `space_id` 由平台层从该工作空间的档案里取
+  //    （两者是两套 id，见 `crdt/claimScope.ts` 文件头）。
+  claim_page_lineage: { args: { args: { workspace_id: string; page_id: string } }; result: { granted: boolean; unavailable?: boolean } };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

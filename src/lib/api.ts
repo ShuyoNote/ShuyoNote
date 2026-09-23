@@ -249,10 +249,16 @@ export const api = {
   /**
    * 冲刺 S9：**CRDT 血统 claim** —— 问同步服务"这一页的首条血统归谁"。
    *
+   * ⚠️ `workspace_id` 是**本地**工作空间 id（页所属那一个）——**不是**远端 `space_id`。
+   * 平台层会按它找到该工作空间绑定的档案，再用档案里的**远端** `space_id` 发请求；没绑定 ⇒
+   * `unavailable`（连请求都不发）。两者是两套 id，第一版传错过，见 `crdt/claimScope.ts` 文件头。
+   *
    * 语义（服务端判据与客户端 `bootstrap.ts` 对齐）：`granted=true` ⇒ 本机建；`false` ⇒ 别人先建过
-   * （本机**不要**建）；**问不到**（没配置/网络/401/5xx）⇒ **抛**，由调用方归一成"离线"那一支。
+   * （本机**不要**建）；**问不到**（没配置／没选空间／网络／401／**403**／5xx）⇒ 结果标记 `unavailable`，
+   * 由调用方归一成"离线临时建"那一支（照旧能写）。
+   * ⚠️ 注释里别写"星号紧跟斜杠"那种连写（它会**提前关掉块注释** —— 本行第一版写 403 时就那么炸过一次）。
    */
-  claimPageLineage: (args: { space_id: string; page_id: string }) => invoke("claim_page_lineage", { args }),
+  claimPageLineage: (args: { workspace_id: string; page_id: string }) => invoke("claim_page_lineage", { args }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

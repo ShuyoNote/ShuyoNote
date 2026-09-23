@@ -4,6 +4,7 @@ import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
+import { resolveClaimScope, type ClaimScopeRow } from "../crdt/claimScope";
 import { applyRemoteCrdtState } from "../crdt/plane";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
@@ -1472,29 +1473,33 @@ export function makeInvoke(store: SqliteStore) {
     }
     if (cmd === "claim_page_lineage") {
       // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
-      // 与 `doPush` 用**同一套**取配置/取 token 的方式（`sync_profiles` ＋ `getAuthSession`），
-      // 传输也复用 `syncFetch` ⇒ 鉴权/超时/错误口径与同步请求一致。
+      //
+      // ⚠️ **入参是本地工作空间 id（页所属那一个）**，而请求体里要的是**远端 `space_id`** ——
+      //    两者是两套 id，由 `resolveClaimScope` 从"这个工作空间绑定的档案"里取（见 `claimScope.ts` 文件头：
+      //    第一版把本地 id 直接当远端 space 发出去，生产上**必然 403**）。
+      //    传输复用 `syncFetch` ⇒ 鉴权/超时/错误口径与同步请求一致。
       const args = a.args ?? a;
-      const profile = store.query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id")[0];
-      // ⚠️ **不许抛**：没有同步配置是**正常情况**（本机就该走"离线"那一支）。
+      const rows = store.query<ClaimScopeRow>("SELECT ws_id, server_url, space_id, token FROM sync_profiles");
+      const scope = resolveClaimScope(rows, String(args.workspace_id ?? ""));
+      // ⚠️ **不许抛**：没配同步 / 登录了还没选空间都是**正常情况**（本机就该走"离线"那一支）。
       //    抛出去会被平台 invoke 层记成一条 error（`[web] invoke error claim_page_lineage`）⇒
       //    浏览器产物验收门禁当场判红（2026-09-23 实测）。所以"用不了"用**结果标记**回。
-      if (!profile) return { granted: false, unavailable: true } as T;
-      const server = profile.server_url.replace(/\/+$/, "");
-      const token = getAuthSession(store, server).token || profile.token;
+      if (!scope) return { granted: false, unavailable: true } as T;
+      const token = getAuthSession(store, scope.server).token || scope.token;
       let res: { granted?: unknown };
       try {
         // ⚠️ 路径**没有 `/sync` 前缀**：服务端把 sync 路由挂在根上（与 `/push` 同一形状）。
         //    第一版写成 `/sync/lineage-claim` ⇒ 部署后实测 404（`/lineage-claim` 回 401＝路由在）。
-        res = (await syncFetch(server, "/lineage-claim", token || null, {
-          space_id: String(args.space_id ?? ""),
+        res = (await syncFetch(scope.server, "/lineage-claim", token || null, {
+          space_id: scope.spaceId,
           page_id: String(args.page_id ?? ""),
           // ⚠️ `device_id` 由**这里**填（`syncDeviceId()` 与同步请求用的是同一个 id）——
           //    界面侧不必知道设备 id，少一个能填错的地方。
           device_id: syncDeviceId(),
         })) as { granted?: unknown };
       } catch {
-        // 网络/鉴权失败 ⇒ 同样归"用不了"（离线那一支），**不抛**（同上：抛会被记成 error）
+        // 网络/鉴权失败（**含 403**：不是这个空间的成员）⇒ 归"用不了"（离线那一支），**不抛**。
+        // 口径：`denied` **只**由 200 ＋ `granted:false` 表达（服务端就是这么区分两件事的）。
         return { granted: false, unavailable: true } as T;
       }
       return { granted: res?.granted === true } as T;

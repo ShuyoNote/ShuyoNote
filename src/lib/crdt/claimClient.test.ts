@@ -1,9 +1,13 @@
 // 冲刺 S9 · 客户端接线（第一片）的判据：HTTP claim 端口的形状与状态码口径。
 //
-// 这里要钉死的是"**一个失败到底是哪种失败**"—— 三种必须分得开，混成一种就会出错：
+// 这里要钉死的是"**一个失败到底是哪种失败**"—— 两种必须分得开，混成一种就会出错：
 //   · 拿到（granted）        ⇒ 由本机建血统；
-//   · 明确没有（403/denied） ⇒ **不许**建（别人的页/没权利），等对端；
-//   · 问不到（401/5xx/网络） ⇒ 抛 ⇒ 上层归一成 `unavailable` ⇒ **离线照旧能写**（不挡用户）。
+//   · **明确没有（200 ＋ `granted:false`）** ⇒ `denied` ⇒ **不许**建（别人先 claim 了），等对端；
+//   · 问不到（401/403/5xx/网络） ⇒ 抛 ⇒ 上层归一成 `unavailable` ⇒ **离线照旧能写**（不挡用户）。
+//
+// ⚠️ 第 42 轮改：**403 从 denied 挪到 unavailable**。服务端把"别人先 claim"表达成 200＋false、
+// 把"你不是这个空间的成员/空间没选"表达成 403 —— 把 403 当 denied 会给用户一句错话，还会让这台
+// 设备在这一页上永远 `wait-for-remote`（详见 `claimScope.ts` 文件头）。
 import { describe, expect, it } from "vitest";
 import { claimVerdict } from "./bootstrap";
 import { createHttpClaimPort, LINEAGE_CLAIM_PATH, type FetchLike } from "./claimClient";
@@ -65,11 +69,16 @@ describe("冲刺 S9 · HTTP claim 端口", () => {
     expect(f.calls[0].init.headers.authorization).toBeUndefined();
   });
 
-  it("③ ★ **403 ⇒ denied**（不是离线！）：不许混进离线那一支去静默建血统", async () => {
+  it("③ ★ **403 ⇒ 抛 ⇒ `unavailable`**（不是 denied）：403 是「你不是这个空间的人」，不是「别人先 claim」", async () => {
     const f = fakeFetch(403);
     const port = createHttpClaimPort({ server: "https://s", token: "tk", spaceId: "sp1", fetchImpl: f.impl });
-    expect(await port.claim("p1", "devA")).toBe(false);
-    expect(await claimVerdict(port, "p1", "devA")).toBe("denied"); // ⇒ 决策走 `wait-for-remote`
+    await expect(port.claim("p1", "devA")).rejects.toThrow(/claim 失败/);
+    // ⇒ 决策走「离线临时建」（照旧能写）；`denied`（wait-for-remote）**只**由 200＋false 触发
+    expect(await claimVerdict(port, "p1", "devA")).toBe("unavailable");
+    // 对照：200 ＋ granted:false 才是 denied —— 两条别混（混了就是第 42 轮那个 bug）
+    const no = fakeFetch(200, { granted: false });
+    const portNo = createHttpClaimPort({ server: "https://s", token: "tk", spaceId: "sp1", fetchImpl: no.impl });
+    expect(await claimVerdict(portNo, "p1", "devA")).toBe("denied");
   });
 
   it("④ 环境里没有 fetch ⇒ **如实抛**（不静默返回一个「看起来能用」的端口）", async () => {

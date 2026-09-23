@@ -402,3 +402,56 @@ src/lib/crdt/yrsInterop.spike.test.ts ⇒ 2 通过（尖刺；没有那个二进
 | 3 | 阶段 1 的块级 LWW / 补算器拆除 | 本机可做，但**前置未满足**（§11.5） |
 | 4 | S5 阶段 2（服务端开算） | 本机可做（格式层已证可行，§11.3），**要不要做**是产品/隐私决策 |
 
+## 12. 第 42 轮：★ 修一条**已经上线**的 claim bug（本地 id 当远端 space 发）＋ 403 口径两端统一
+
+### 12.1 怎么发现的
+
+§11 收口后我按"接下来做什么"复核了自己镜像的那段取配置口径（`web.ts` 的 claim 分支），
+发现它挑的是"**第一个配了 `server_url` 的档案**"，而请求体里的 `space_id` 用的是**编辑器传来的
+本地工作空间 id**。顺着查下去，这是个真 bug，而且**服务端刚发版 ⇒ 它现在就生效**。
+
+### 12.2 事实链（两套 id，没有任何路径对齐）
+
+| # | 事实 | 出处 |
+|---|---|---|
+| 1 | 服务端 `require_space` 查的是 `space_members(space_id, user_id)`，而 space id 是**服务端生成的 32 位十六进制** | `shuyonote-sync-server/src/space.rs:39` / `:31`（`gen_id`）|
+| 2 | 本地工作空间 id 是 `uuid::Uuid::new_v4()`（首库是 `default`） | `src-tauri/src/workspaces.rs:204` |
+| 3 | 绑定关系存在 `sync_profiles.space_id`（面板写的是**远端** `sp.id`）| `src/components/SyncPanel.tsx:617` |
+| 4 | claim 发的却是本地 id ⇒ `require_space` 查不到成员行 ⇒ **必然 403** | `Editor.tsx`（第 41 轮前）+ `web.ts` / `sync.rs` |
+
+### 12.3 后果（分平台不一样，两条都不好）
+
+| 平台 | 403 的处置（修前） | 现象 |
+|---|---|---|
+| Web | `syncFetch` 非 2xx 就抛 ⇒ `{unavailable:true}` | **静默**降级回"离线临时建"：功能不坏，但**首写者裁定从未生效、层里一条痕都没有** |
+| 桌面（第 41 轮刚接的那条） | 403 ⇒ `granted:false` ⇒ `denied` | `wait-for-remote` ⇒ **绑定被拒 ＋ 一句错话**（"这一页正在另一台设备上编辑"），**每一张没本地状态的页**都会这样 |
+
+⇒ 第 41 轮我按 `crdt/claimClient.ts` 的口径写桌面侧，而**生产上真正跑的**是 `web.ts`（403 ⇒
+`unavailable`）—— 那个 HTTP 端口在生产里根本没人调用，我读错了参照物。两条一起修。
+
+### 12.4 修了什么（四件，两侧成对）
+
+1. **新纯函数 `src/lib/crdt/claimScope.ts`**：`resolveClaimScope(rows, workspaceId)` ⇒ 只认
+   **这一页所属工作空间**的档案；缺地址或**缺远端 `space_id`**（登录了还没选空间）⇒ `null`
+   ⇒ 上层回 `unavailable`（**连请求都不发**：发出去只会换来 403，而 403 会被误读成裁定）。
+2. **入参改名 `space_id` → `workspace_id`**（`commands.ts` / `api.ts` / `Editor.tsx` / Rust
+   `LineageClaimArgs`）：语义写实，免得下一个人再把它当远端 id 发出去。
+3. **403 口径两端统一**：**403 ⇒ `unavailable`**（授权/配置问题），`denied` **只认
+   200 ＋ `granted:false`**（服务端就是这么表达"别人先 claim"的）。改动落在 `claimClient.ts`
+   （含文件头那张表）＋ `sync.rs::lineage_claim_verdict` ＋ `web.ts` 的注释。
+4. **两侧判据**：`crdt/claimScope.test.ts` 3 条（**承重**：发出去的是远端 id、不是本地 id）
+   ↔ `sync::tests::claim_config_*` 2 条；`claimClient.test.ts` ③ 改成"403 ⇒ unavailable"并
+   加一条"200＋false 才是 denied"的对照；另加**文本级接线判据**
+   `platform/webClaimScope.wiring.test.ts` 3 条（防接线退回旧形状 —— 这段接线没有别的判据，
+   浏览器门禁不配同步、走的是"没配置"那一支）。
+
+⚠️ **记一条自己刚踩的坑**：`api.ts` 的注释里写了 `**403**/5xx`，其中"星号紧跟斜杠"**提前关掉了块注释**
+⇒ `tsc` 一口气报 20 多个 TS1005。与"中文里直引号套直引号"同一族：**注释里的字符序列也会被解析器当真**。
+
+### 12.5 这一轮**还没关**的
+
+**真账号端到端探针**（需要凭据 ⇒ owner 或人手）：用真 token claim 一次 ⇒ 期望 **200 ＋
+`granted:true`**；第二台设备再 claim 同一页 ⇒ 期望 **200 ＋ `granted:false`**。
+这一条同时把"发版后端点真的生效"验掉 —— **本轮的判据都到不了这里**（它们验的是"发给谁/怎么读回话"，
+不验"服务端真的按这个 space 认得你"）。在那之前，只能说"**必然 403 的那条路已经拆了**"。
+

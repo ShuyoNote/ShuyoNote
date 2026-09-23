@@ -511,29 +511,28 @@ function PageCrdtBinding({
 
     // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：
     //   · 拿到 ⇒ 由本机建血统（＝今天的行为）；
-    //   · 别人先建过（服务端 403/`granted:false`）⇒ `bindPageToEditorViaPort` 会**不建并抛出**，
-    //     由下面那个 catch **如实 toast**（措辞是给用户看的）；
-    //   · 问不到（没配置同步/离线/401/5xx）⇒ 归一成"离线"那一支 ⇒ **照旧能写**。
-    // ⚠️ 空间 id 这里用 `getActiveWorkspaceId()`（当前工作空间）。**如实记**：若这一页属于
-    //    另一个空间，服务端会按它的门禁拒掉 ⇒ 落到"离线临时建"那一支（可用但未裁定），
-    //    联网后若撞上血统护栏会**报冲突**而不是静默。要更准就得把"页所属空间"传进来（后续片）。
+    //   · 别人先 claim 过（服务端 **200 ＋ `granted:false`**）⇒ `bindPageToEditorViaPort` 会
+    //     **不建并抛出**，由下面那个 catch **如实 toast**（措辞是给用户看的）；
+    //   · 问不到（没配置同步／没选空间／离线／401／**403**／5xx）⇒ 归一成"离线"那一支 ⇒ **照旧能写**。
+    // ⚠️ **传下去的是本地工作空间 id（页所属那一个）**，不是远端 `space_id` —— 后者由平台层从
+    //    该工作空间的档案里取（两套 id，传错必然 403：见 `crdt/claimScope.ts` 文件头）。
     const claim: PageClaimPort = {
       async claim(id) {
-        // ★ S9：用**这一页自己的空间**（`api.getPage` 回的行里有 `workspace_id`），而不是
-        //   "当前工作空间" —— 后者在**跨空间**打开页面时会问错空间（服务端按门禁拒掉 ⇒ 只落
+        // ★ S9：用**这一页自己的工作空间**（`api.getPage` 回的行里有 `workspace_id`），而不是
+        //   "当前工作空间" —— 后者在**跨工作空间**打开页面时会问错地方（服务端按门禁拒掉 ⇒ 只落
         //   "离线临时建"那一支：可用但**未裁定**）。
         //   取不到（页不存在／命令失败）⇒ 如实 `console.warn` 再退回当前工作空间（不静默）。
-        let spaceId = "";
+        let workspaceId = "";
         try {
           const page = (await api.getPage(id)) as { workspace_id?: unknown } | null;
-          spaceId = typeof page?.workspace_id === "string" ? page.workspace_id : "";
+          workspaceId = typeof page?.workspace_id === "string" ? page.workspace_id : "";
         } catch (e) {
-          console.warn("[crdt] 取这一页的空间失败，退回当前工作空间", e);
+          console.warn("[crdt] 取这一页的工作空间失败，退回当前工作空间", e);
         }
-        if (!spaceId) spaceId = await api.getActiveWorkspaceId();
-        const res = await api.claimPageLineage({ space_id: spaceId, page_id: id });
-        // ⚠️ "用不了"（没同步配置／网络不通）由平台侧用**结果标记**回（不是异常 —— 异常会被
-        //    平台 invoke 层记成 error，浏览器门禁会红）。这里把它**转成**异常交给上层
+        if (!workspaceId) workspaceId = await api.getActiveWorkspaceId();
+        const res = await api.claimPageLineage({ workspace_id: workspaceId, page_id: id });
+        // ⚠️ "用不了"（没同步配置／没选空间／网络不通）由平台侧用**结果标记**回（不是异常 ——
+        //    异常会被平台 invoke 层记成 error，浏览器门禁会红）。这里把它**转成**异常交给上层
         //    `claimVerdict` 归一成 `unavailable` ⇒ 走"离线临时建"那一支（照旧能写）。
         if (res?.unavailable) throw new Error("claim 当前用不了（没有同步配置或网络不通）");
         return res?.granted === true;

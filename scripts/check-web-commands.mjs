@@ -69,8 +69,9 @@ const WEB_ONLY_COMMANDS = new Map([
   ["request_persistent_storage", "浏览器的 Storage API，桌面端没有对应概念（UI 按 supported 决定显不显示）"],
   ["export_wiki", "静态 HTML wiki 导出目前只在 web 平台实现（桌面端命令面板按平台隐藏它）"],
   // 冲刺 S9（2026-09-23，第 41 轮撤登记）：`claim_page_lineage` **两侧都接了** ——
-  // 桌面侧 `sync::claim_page_lineage`（reqwest 发同一端点 `/sync/lineage-claim`）、
-  // Web 侧 `platform/web.ts` 那一支；两侧口径一致（403 ⇒ denied；没配置/网络 ⇒ `unavailable`）。
+  // 桌面侧 `sync::claim_page_lineage`（reqwest 发同一端点 `{server}/lineage-claim`）、
+  // Web 侧 `platform/web.ts` 那一支；两侧同一张状态码表（**403 ⇒ `unavailable`**，第 42 轮改：
+  // 403 是"你不是这个空间的成员"，`denied` 只由 200 ＋ `granted:false` 表达）。
   // ⇒ 它**不再**是 web 专属，撤销登记正是"两侧同行为"这件事的判据。
 ]);
 const missingRust = [...contractCommands]

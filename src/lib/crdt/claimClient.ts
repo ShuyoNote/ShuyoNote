@@ -6,12 +6,14 @@
 //   · "服务端地址/token/空间 id 从哪来"由**同步那一层**给（下一片接：`platform/web.ts` 的
 //     `syncFetch` 那套配置）⇒ 本文件只收一个 `endpoint` ＋ 一个 `token`。
 //
-// 三条口径（判据钉住）：
-//   ① `200 {"granted":true|false}` ⇒ 原样回布尔；
-//   ② **401/5xx/网络错** ⇒ **抛**（＝"现在问不到" ⇒ 上层归一成 `unavailable` ⇒ 离线临时建血统，
+// 三条口径（判据钉住；**与 Rust 侧 `sync::lineage_claim_verdict` 同一张表**）：
+//   ① `200 {"granted":true|false}` ⇒ 原样回布尔（`false` ＝ **别人先 claim 了这一页** ⇒ `denied`）；
+//   ② **401/403/5xx/网络错** ⇒ **抛**（＝"现在问不到" ⇒ 归一成 `unavailable` ⇒ 离线临时建血统，
 //      照旧能写、不挡住用户）；
-//   ③ ★ **403 ⇒ `false`（denied）**：那不是"问不到"，而是"**你没这个权利／这一页不是你的**"
-//      ⇒ 不许混进离线那一支（混进去就会静默地又建一条血统）。
+//   ③ ★ **403 不算 `denied`**（2026-09-23 第 42 轮改）：服务端把"**别人先 claim**"表达成
+//      **200 ＋ `granted:false`**，把"**你不是这个空间的成员／空间没选**"表达成 **403** —— 两件不同的事。
+//      第一版把 403 读成 denied ⇒ "没选空间"会变成一句错话（"另一台设备正在编辑"），而且这台设备
+//      在这一页上会**永远**走 `wait-for-remote`。口径只写一处，见 `claimScope.ts` 文件头。
 import type { PageClaimPort } from "./bootstrap";
 
 /**
@@ -36,7 +38,8 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
  *
  * @param opts.server   服务端根地址（结尾斜杠可有可无）
  * @param opts.token    当前会话的 Bearer token（`null` ⇒ 不带 Authorization 头，服务端会 401 ⇒ 抛）
- * @param opts.spaceId  这一页所在空间（服务端按它做 `require_space(..., "editor")`）
+ * @param opts.spaceId  **远端**空间 id（服务端按它做 `require_space(..., "editor")`）。
+ *                      ⚠️ 不是本地工作空间 id —— 两者是两套 id，传错必然 403（`claimScope.ts` 文件头）。
  * @param opts.fetchImpl 注入的 fetch（生产不传 ⇒ 用全局 `fetch`）
  */
 export function createHttpClaimPort(opts: {
@@ -59,14 +62,13 @@ export function createHttpClaimPort(opts: {
         headers,
         body: JSON.stringify({ space_id: opts.spaceId, page_id: pageId, device_id: deviceId }),
       });
-      // ★ ③ 403 是"没权利/不是你的"，不是"问不到" ⇒ 明确当 denied（不许静默建血统）
-      if (res.status === 403) return false;
       if (!res.ok) {
-        // ② 别的失败（401 没登录／5xx／网关）⇒ 抛 ⇒ 上层归一成 unavailable（离线降级）
+        // ② 一律抛（**403 也在内**）：401 没登录／403 不是这个空间的人／5xx ⇒ 都归"问不到"
+        //    ⇒ `unavailable` ⇒ 离线临时建（不挡用户，也不把 403 误读成"别人先建了血统"）。
         throw new Error(`claim 失败：HTTP ${res.status}`);
       }
       const body = (await res.json()) as { granted?: unknown };
-      return body?.granted === true; // ① 只有明确 true 才算拿到（缺字段/别的类型 ⇒ false）
+      return body?.granted === true; // ① 只有明确 true 才算拿到（缺字段/别的类型 ⇒ false ＝ denied）
     },
   };
 }

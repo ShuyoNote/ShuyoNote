@@ -1424,14 +1424,21 @@ pub fn team_get_server_email(db: State<'_, Db>, server_url: String) -> Result<Op
 //    （`/lineage-claim` 回 401＝路由在、只是没带鉴权）⇒ 已于 `f45ab8c3` 改正。
 //    本命令照改后的口径写：**跨仓路径这种东西上线后必须用真探针核一遍**。
 //
+// ⚠️ **两套 id 别混**（第 42 轮修的真 bug）：入参是**本地工作空间 id**（页所属那一个），
+//    发出去的 `space_id` 必须是该工作空间档案里的**远端** `space_id`（服务端生成的 32 位十六进制）。
+//    第一版把本地 id 直接当远端 space 发 ⇒ 服务端 `require_space` 查不到成员行 ⇒ **必然 403**；
+//    而 403 又被读成 `denied` ⇒ 每张没本地状态的页在桌面上都会被拒建血统 ＋ 弹一句错话。
+//    完整来龙去脉见 TS 侧 `src/lib/crdt/claimScope.ts` 文件头（那一份是口径的唯一说明处）。
+//
 // 为什么要有它：在此之前这条命令**只登记为 web 专属**（`scripts/check-web-commands.mjs`
 // 的 `WEB_ONLY_COMMANDS`）⇒ 桌面侧 `claimVerdict` 永远拿不到端口 ⇒ 一直落"离线临时建"那
 // 一支（**不报错**，但服务端的"首写者裁定"在桌面上从未生效）。接上它才是两侧同行为。
 
-/// claim 的入参（与前端 `api.claimPageLineage({ space_id, page_id })` 成对）。
+/// claim 的入参（与前端 `api.claimPageLineage({ workspace_id, page_id })` 成对）。
+/// ⚠️ `workspace_id` 是**本地**工作空间 id —— 远端 `space_id` 由 `claim_config` 从档案里取。
 #[derive(Deserialize)]
 pub struct LineageClaimArgs {
-    pub space_id: String,
+    pub workspace_id: String,
     pub page_id: String,
 }
 
@@ -1441,8 +1448,9 @@ pub struct LineageClaimArgs {
 pub struct LineageClaimResult {
     /// 只有服务端**真回了话**才有意义：`true` ＝ 本机是这一页的首写者。
     pub granted: bool,
-    /// 只有"**问不到**"（没配同步／网络不通／401／5xx／载荷读不懂）时才出现 ⇒ 界面侧见到它
-    /// 就把这次 claim 当异常交给 `claimVerdict` 归一成 `unavailable`（离线临时建，照旧能写）。
+    /// 只有"**问不到**"（没配同步／没选空间／网络不通／401／**403**／5xx／载荷读不懂）时才出现
+    /// ⇒ 界面侧见到它就把这次 claim 当异常交给 `claimVerdict` 归一成 `unavailable`
+    /// （离线临时建，照旧能写）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable: Option<bool>,
 }
@@ -1459,17 +1467,16 @@ impl LineageClaimResult {
 }
 
 /// ★ **纯函数**：把一次 HTTP 回话映射成结果 —— 判据只钉这一处，与前端 `crdt/claimClient.ts`
-/// 的三条口径成对：
+/// 的同一张表成对（改一边必须看另一边）：
 ///   ① 只有 `granted === true` 才算拿到（缺字段／别的类型 ⇒ denied，**不猜**）；
-///   ② **403 ⇒ denied**：那不是"问不到"，而是"这一页不是你的／没这个权利"
-///      ⇒ 不许混进离线那一支（混进去就会静默地又建一条血统）；
+///   ② **403 ⇒ `offline`**（第 42 轮改）：服务端把"别人先 claim"表达成 **200 ＋ `granted:false`**，
+///      把"你不是这个空间的成员／空间没选"表达成 **403** —— 两件不同的事。把 403 当 `denied`
+///      会给用户一句错话（"另一台设备正在编辑"），还会让这台设备在这一页上**永远** `wait-for-remote`；
 ///   ③ 其余非 2xx（含 401／5xx）⇒ `offline`（＝"现在问不到"）；
 ///   ④ 2xx 但载荷读不懂 ⇒ 同样 `offline`（**不猜**成 granted）。
 fn lineage_claim_verdict(status: u16, body: Option<&serde_json::Value>) -> LineageClaimResult {
-    if status == 403 {
-        return LineageClaimResult::decided(false);
-    }
     if !(200..300).contains(&status) {
+        // 含 403（授权/配置）与 401/5xx（会话/服务）—— 都归"问不到"。
         return LineageClaimResult::offline();
     }
     match body {
@@ -1478,29 +1485,37 @@ fn lineage_claim_verdict(status: u16, body: Option<&serde_json::Value>) -> Linea
     }
 }
 
-/// 从库里取 claim 要用的三件（`server_url` / `token` / `device_id`）。
+/// 从库里取 claim 要用的三件（`server_url` / `token` / **远端 `space_id`**）。
 ///
-/// **没有同步配置 ⇒ `None`**（＝"用不了"，**不是错误**）。抽成独立同步函数是为了让判据
-/// 能直接钉"没有配置 ⇒ 不 claim"这条（与 `web.ts` 同一分支），不必起一个 Tauri app。
+/// **口径与 TS 侧 `resolveClaimScope` 完全一致**（两侧成对，改一边必须看另一边）：
+///   · 只认**这一页所属工作空间**（`workspace_id`）那一条档案 —— 不是"第一个配了 `server_url` 的"；
+///   · 档案缺 `server_url`，或**缺远端 `space_id`**（登录了但还没选空间）⇒ `None`
+///     ⇒ 上层回 `unavailable`（**连请求都不发**：发出去只会换来 403，然后把 403 误读成裁定）；
+///   · token 优先用 `auth_sessions` 里那份会话、退回档案里那份。
 ///
-/// 取配置的口径与 `web.ts::claim_page_lineage` 完全一致：第一个配了 `server_url` 的档案
-/// （`ORDER BY ws_id`），token 优先用 `auth_sessions` 里那份会话、退回档案里那份；
-/// `device_id` 用**应用级**那一个（与同步请求同一个 id ⇒ 服务端看到的"设备"是同一台）。
-fn claim_config(c: &Connection) -> Result<Option<(String, String, String)>, String> {
-    let profile: Option<(String, String)> = c
+/// `device_id` 不在这里取（它不是"配置"，是应用级事实）—— 由命令自己 `device_id()` 拿，
+/// 保证与同步请求用的是同一个 id（服务端看到的"设备"是同一台）。
+fn claim_config(c: &Connection, workspace_id: &str) -> Result<Option<(String, String, String)>, String> {
+    let profile: Option<(String, String, String)> = c
         .query_row(
-            "SELECT server_url, token FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id LIMIT 1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            "SELECT server_url, token, space_id FROM sync_profiles WHERE ws_id = ?1",
+            rusqlite::params![workspace_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .map_err(|e| e.to_string())?;
     Ok(match profile {
         None => None,
-        Some((server_url, profile_token)) => {
+        Some((server_url, profile_token, space_id)) => {
+            let server_url = server_url.trim().trim_end_matches('/').to_string();
+            let space_id = space_id.trim().to_string();
+            // 只填了地址还没选空间（登录+选空间是两步）是**正常中间态**，不是错误：
+            // 但那一步的请求必然是 403 ⇒ 干脆不发。
+            if server_url.is_empty() || space_id.is_empty() {
+                return Ok(None);
+            }
             let token = get_auth_token(c, &server_url).unwrap_or(profile_token);
-            let device_id = device_id(c).unwrap_or_default();
-            Some((server_url, token, device_id))
+            Some((server_url, token, space_id))
         }
     })
 }
@@ -1512,23 +1527,26 @@ fn claim_config(c: &Connection) -> Result<Option<(String, String, String)>, Stri
 ///
 /// ⚠️ **不许对"正常情况"抛异常**（2026-09-23 的教训：第 38 轮浏览器门禁抓到
 /// `[web] invoke error claim_page_lineage` —— 没有同步配置时抛异常会被平台 invoke 层记成一条
-/// error）。所以"没有同步配置"与"网络不通"都用**结果标记**回（`offline()`）。
+/// error）。所以"没有同步配置"、"没选空间"与"网络不通"都用**结果标记**回（`offline()`）。
 /// 只有**真出了不该出的错**（库读不了）才 `Err` —— 那是 bug，要响。
 #[tauri::command]
 pub async fn claim_page_lineage(db: State<'_, Db>, args: LineageClaimArgs) -> Result<LineageClaimResult, String> {
-    let (server_url, token, device_id) = {
+    let (server_url, token, space_id, device_id) = {
         let c = db.0.lock().expect("db mutex poisoned");
-        match claim_config(&c)? {
-            // 没有同步配置是**正常情况**（本机就该走"离线"那一支）⇒ 不抛。
+        match claim_config(&c, &args.workspace_id)? {
+            // 没配同步／没选空间都是**正常情况**（本机就该走"离线"那一支）⇒ 不抛。
             None => return Ok(LineageClaimResult::offline()),
-            Some(triple) => triple,
+            Some((server_url, token, space_id)) => {
+                (server_url, token, space_id, device_id(&c).unwrap_or_default())
+            }
         }
     };
 
     let url = format!("{}/lineage-claim", server_url.trim_end_matches('/'));
     let client = reqwest::Client::new();
     let mut req = client.post(&url).json(&serde_json::json!({
-        "space_id": args.space_id,
+        // ★ **远端** space id（档案里那一个），不是 `args.workspace_id`。
+        "space_id": space_id,
         "page_id": args.page_id,
         "device_id": device_id,
     }));
@@ -3152,10 +3170,12 @@ mod tests {
         assert!(!lineage_claim_verdict(200, Some(&serde_json::json!({ "ok": 1 }))).granted);
         assert!(!lineage_claim_verdict(200, Some(&serde_json::json!({ "granted": "true" }))).granted);
 
-        // ★ 403 = "这一页不是你的／没权利" ⇒ denied，**不许**混进离线那一支
+        // ★ 403 = "你不是这个空间的成员／空间没选" ⇒ **`offline`**（第 42 轮改）。
+        //   它**不是**"别人先 claim"—— 那件事由 200 ＋ `granted:false` 表达（上一段）。
+        //   第一版把 403 当 denied ⇒ 每张没本地状态的页在桌面上都被拒建血统 ＋ 弹一句错话。
         let got = lineage_claim_verdict(403, None);
         assert!(!got.granted);
-        assert!(got.unavailable.is_none(), "403 是裁定，不是'问不到'");
+        assert_eq!(got.unavailable, Some(true), "403 是授权/配置问题 ⇒ 归'问不到'（离线那一支）");
 
         for status in [401u16, 500, 502] {
             let got = lineage_claim_verdict(status, None);
@@ -3169,36 +3189,55 @@ mod tests {
         );
     }
 
-    /// 与 `web.ts` 同一分支：**没有同步配置 ⇒ 不 claim**（`None` —— 不是错误，更不该 panic）。
+    /// 与 TS 侧 `claimScope.test.ts` ② 成对：**问不到就不发请求**（`None` —— 不是错误，更不该 panic）。
+    /// 三种"正常但没法 claim"的中间态都要落这一支：没档案／只填了地址／只填了空间。
     #[test]
-    fn claim_config_without_profile_is_none() {
+    fn claim_config_without_a_complete_binding_is_none() {
         let c = conn_with_meta();
         with_auth_sessions(&c);
         set_meta_state(&c, KEY_DEVICE_ID, "dev-1").unwrap();
-        // 有档案行但 `server_url` 为空 = 还没配同步（与 web.ts 的 `WHERE server_url <> ''` 同一分支）
-        c.execute_batch("INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES ('ws', '');")
+        // ① 完全没有档案
+        assert!(claim_config(&c, "ws").unwrap().is_none());
+
+        // ② 解绑后只留地址（登录了但**还没选空间**：保存地址与选空间是两步）
+        c.execute_batch("INSERT INTO meta.sync_profiles (ws_id, server_url) VALUES ('ws', 'http://a');")
             .unwrap();
-        assert!(claim_config(&c).unwrap().is_none());
+        assert!(claim_config(&c, "ws").unwrap().is_none());
+
+        // ③ 只填了空间、没有地址
+        c.execute_batch("UPDATE meta.sync_profiles SET server_url = '', space_id = 'SP' WHERE ws_id = 'ws';")
+            .unwrap();
+        assert!(claim_config(&c, "ws").unwrap().is_none());
+
+        // ④ 档案在**别人**名下 ⇒ 这一页的工作空间仍然拿不到（不是"随便挑一个"）
+        c.execute_batch(
+            "UPDATE meta.sync_profiles SET server_url = 'http://a', space_id = 'SP' WHERE ws_id = 'ws';
+             INSERT INTO meta.sync_profiles (ws_id, server_url, space_id) VALUES ('other', 'http://b', 'SP-B');",
+        )
+        .unwrap();
+        let got = claim_config(&c, "ws").unwrap().expect("自己的档案该找得到");
+        assert_eq!(got.2, "SP", "必须取**这一页那个工作空间**的档案，不是排序第一个");
     }
 
-    /// 会话 token 优先于档案里那份（与 `do_push` 同一口径），`device_id` 取应用级那一个
-    /// （⇒ 服务端看到的"设备"与同步请求是同一台）。
+    /// 与 TS 侧 `claimScope.test.ts` ①/③ 成对：**发出去的是远端 `space_id`**（不是本地工作空间 id），
+    /// 地址归一成不带结尾斜杠，会话 token 优先于档案里那份（与 `do_push` 同一口径）。
     #[test]
-    fn claim_config_prefers_session_token_and_carries_device_id() {
+    fn claim_config_resolves_remote_space_and_prefers_session_token() {
         let c = conn_with_meta();
         with_auth_sessions(&c);
         c.execute_batch(
-            "INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-1');
-             INSERT INTO meta.sync_profiles (ws_id, server_url, token, space_id)
-                 VALUES ('ws', 'http://a/', 'stale', 'sp');
-             INSERT INTO meta.auth_sessions (server_url, token) VALUES ('http://a/', 'fresh');",
+            "INSERT INTO meta.sync_profiles (ws_id, server_url, token, space_id)
+                 VALUES ('ws', 'http://a/', 'stale', 'REMOTE-SP');
+             INSERT INTO meta.auth_sessions (server_url, token) VALUES ('http://a', 'fresh');",
         )
         .unwrap();
 
-        let (server, token, device) = claim_config(&c).unwrap().expect("有配置就该拿到三件");
-        assert_eq!(server, "http://a/");
-        assert_eq!(token, "fresh");
-        assert_eq!(device, "dev-1");
+        let (server, token, space_id) = claim_config(&c, "ws").unwrap().expect("有配置就该拿到三件");
+        assert_eq!(server, "http://a", "结尾斜杠归一（与同步请求同一形状）");
+        assert_eq!(token, "fresh", "会话 token 优先于档案里那份");
+        // ★ 承重：这是**远端** space id；本地工作空间 id 是 "ws" —— 第一版就是把 "ws" 发出去的
+        assert_eq!(space_id, "REMOTE-SP");
+        assert_ne!(space_id, "ws");
     }
 
     #[test]
