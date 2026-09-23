@@ -621,7 +621,6 @@ export const FIXTURES: readonly ExtractFixture[] = [
       convertLegacy: async (_bytes, _mime, opts) => legacyFakeXlsx(opts.to),
     },
     expect: { ok: true, kinds: ["sheet"], contains: ["差旅\t住宿", "合计\t\t3000"], locs: ["S预算"] },
-    planned: true,
   },
   {
     id: "ooxml/doc-旧格式",
@@ -636,7 +635,6 @@ export const FIXTURES: readonly ExtractFixture[] = [
       convertLegacy: async (_bytes, _mime, opts) => legacyFakeDocx(opts.to),
     },
     expect: { ok: true, kinds: ["text"], contains: ["旧文档正文"], locs: [""] },
-    planned: true,
   },
   {
     id: "ooxml/旧格式·没配转换",
@@ -648,7 +646,6 @@ export const FIXTURES: readonly ExtractFixture[] = [
     mime: "application/vnd.ms-excel",
     make: oleBytes,
     expect: { ok: false, code: "provider_error" },
-    planned: true,
   },
   // ===== 音视频转写（2026-09-22 落地；`deps.transcribe` 那一格与抽取器**同批**进契约）=====
   {
