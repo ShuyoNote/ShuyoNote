@@ -955,6 +955,21 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         )",
         [],
     )?;
+    // 冲刺 §11.4 收口（2026-09-23 第 42 轮）· **待并的远端状态**：桌面 pull 收到带 `crdt_state`
+    // 的页载荷时收在这里，由 WebView 里那份 TS 实现（`mergeRemotePageState`，唯一实现）在**打开页面时**
+    // 合并 —— Rust 侧没有 Yjs，不在这里长第二份合并实现。
+    // ⚠️ **按 `seq` 逐条留**（不是每页一行）：服务端 pull 不回 `device_id`，而不同设备的**全量**
+    //    状态互相并不包含对方的编辑 ⇒ "每页一行"会真丢。上限与理由见 `page_crdt.rs`。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_crdt_pending (
+            page_id    TEXT NOT NULL,
+            seq        INTEGER NOT NULL,
+            state      BLOB NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (page_id, seq)
+        )",
+        [],
+    )?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at)",
         [],
