@@ -544,8 +544,17 @@ function PageCrdtBinding({
           });
         });
       } catch (e) {
-        console.error("[crdt] 绑定失败", e);
-        toast(`CRDT 绑定失败：${e instanceof Error ? e.message : String(e)}`, "error");
+        const msg = e instanceof Error ? e.message : String(e);
+        // ★ S9（2026-09-23）：**"claim 被拒"不是"绑定失败"** —— 那是**故意的等待**
+        //   （这一页的首条血统属于另一台设备，本机**没有**建新的）。把它报成"绑定失败"会让用户
+        //   以为编辑器坏了；所以分开报，且用 `info` 而不是 `error`。
+        if (/属于另一台设备/.test(msg)) {
+          console.warn("[crdt] 未建血统（claim 被拒，等对端同步下来）", pageId);
+          toast("这一页正在另一台设备上编辑：等它同步下来再打开（本机没有新建编辑历史）", "info");
+        } else {
+          console.error("[crdt] 绑定失败", e);
+          toast(`CRDT 绑定失败：${msg}`, "error");
+        }
       }
     })();
 
