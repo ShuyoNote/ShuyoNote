@@ -474,6 +474,16 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > **一句话交接**：这两格都**不需要新契约**（不是 `deps` 能力、不是抽取器），改动落在
 > "页面正文派生 ＋ 两个块的 `getTextContent`"上 ⇒ 归属按 git 作者走（fengjt007 / cnzen），
 > 与抽取层（AMD 这条线）**零重叠**。谁认领说一声，我可以出纯函数与判据（不含编辑器接线）—— 那部分是我的车道。
+>
+> ★ **2026-09-22：纯函数与判据这一半已经落地**（AMD；**没有碰任何 editor / 数据库文件**）：
+> `src/lib/databaseText.ts` ＋ `src/lib/databaseText.test.ts`（`databaseTextOf`）、
+> `src/lib/drawingStructureText.ts` ＋ `src/lib/drawingStructureText.test.ts`（`excalidrawStructureText`），
+> **共 22 条判据**。三条写进代码头注的设计决定（接线方务必读一眼）：
+> ① **不发明行 ref 的内联方言** —— `databaseTextOf` 返回 `{ text, rowRefs, truncated }`，
+> 行回链要不要挂 `[[标题]]` 由接线侧定；② **"规则"由调用方渲染成人话**（`rules?: string[]`），
+> 纯函数不认识视图 `config` 的 JSON 方言、也不猜；③ 两格都**空输入 ⇒ 空串**（接线侧据此**不写**正文），
+> 数据库超上限时**明说**还剩多少行没进正文。接线形态见上表（数据库走 `writeContentTextIfChanged` 那条既有模式；
+> 绘图是 `sceneText ＋ structureText` **并列**，不是替代）。
 
 ### P4 —— 跨库总结管线 ＋ 强制引用
 
