@@ -331,6 +331,16 @@ export class SqliteStore {
         resolved_choice TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at);
+      -- 冲刺 S2b（2026-09-23）· 每页的 CRDT 状态（以后是**权威**那一份；pages 里那份暂时仍是投影）。
+      -- ⚠️ 与上面那两张"本地表"**不同族**：它**最终要上服务端**（已拍板 = 服务端合并）⇒ 同步字段
+      --    （rev/dirty/seq）在 S4 加；本切片只做本地落盘。
+      -- state 是 BLOB：这一层不认识它的格式（生产/消费它的是 crdt/yDocBridge.ts 的会话）——
+      -- 这正是 docContent.ts 头注那条纪律：那一层不许把编辑器节点表拖进依赖图。
+      CREATE TABLE IF NOT EXISTS page_crdt (
+        page_id    TEXT PRIMARY KEY,
+        state      BLOB NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       -- B 方案（2026-09-22）·「未取回的远端版本」（本地表，不同步/不进备份导出）：页级"保留本地"时
       -- 那条远端变更会被游标吃掉（doPull 的 maxSeq 照旧推进）⇒ 在这里存下**那一版远端内容**，
       -- 让用户还能裁决（merge / take_remote / keep_local —— 三个都真的动数据）。

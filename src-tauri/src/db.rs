@@ -940,6 +940,21 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         )",
         [],
     )?;
+
+    // 冲刺 S2b（2026-09-23）· **每页的 CRDT 状态**（以后是**权威**那一份；`pages` 里那份暂时仍是投影）。
+    // ⚠️ 与上面那两张"本地表"**不同族**：它**最终要上服务端**（已拍板 = 服务端合并）⇒ 同步字段
+    //    （rev/dirty/seq）在 S4 加；本切片只做本地落盘。
+    // ⚠️ **桌面侧本切片只建表**：读/写 `page_crdt` 的四个函数（`doc_content.rs` 的
+    //    `read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state` ＋ 会话接线的镜像）
+    //    归切片 **S7「两侧都接」**；那之前桌面不会读写它 —— 这里如实记档，别让它看起来"已经两侧都有了"。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_crdt (
+            page_id    TEXT PRIMARY KEY,
+            state      BLOB NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at)",
         [],

@@ -47,18 +47,29 @@
 ⇒ 唯一可走的用法被证成：**`openPageSession({ state })` 载入 → `edit()` → `exportState()` 存回 → `merge()` 收另一端**。
 `contentJsonToYDoc` 从此只用于**首次落盘**（建血统那一次），**不许**再当保存形态。
 
+### S2b 实测（同一天，`pageStateStore.test.ts`）：**落盘之后重启还是同一条血统**
+
+```
+④ 跨重启（从库里的 BLOB 重新开会话）两台各加一块 ⇒ 合并后 = ["blk-1","blk-2","blk-B","blk-A"]
+   两处都在、无重复、两台投影（含顺序）完全一致；合并后的状态再存回、再读回还能继续用
+① 写回的字节含 0x00/0xFF/0x80 这类**非 UTF-8** ⇒ 读回逐字节相同（堵住"被当文本/base64 存"这条路）
+```
+
+**范围如实收窄（写进计划，免得读成"两侧都好了"）**：本切片 `page_crdt` **两侧都建表**（TS ＋ Rust `db.rs`），
+但**读写只在 TS 那一层**；Rust 的三条镜像函数与会话接线归 **S7「两侧都接」**（`db.rs` 里已就地记档）。
+
 ## 2. 切片清单（顺序即依赖；每片都要有判据 ＋ 当轮 tip 读数）
 
 | # | 切片 | 交付 | 承重判据 |
 |---|---|---|---|
 | **S1** ✅ | 可合性红线 | 本文件 §1 ＋ `mergeability.test.ts`（2 条） | 反例：新建血统合 ⇒ 翻倍；正例：同一血统 ⇒ 顺序无关、不重复 |
 | **S2a** ✅ | **同一血统的活会话** | `openPageSession({ state/json })`：载入既有血统 → `edit()` 产增量 → `exportState()` 存回 → `merge()` 收另一端（`yDocBridge.ts` S2 段）＋ `pageSession.test.ts` 5 条 | ① ★ 同血统两台各加一块 ⇒ 合并后 `["blk-1","blk-2","blk-A","blk-B"]`、**两侧一致**、无重复；② 载入复用**不翻倍**（对照 S1 反例）；③ 存回→载入投影不变、合并自己幂等；④ 会话与纯函数路径**同源** |
-| **S2b** | **状态落盘位置**（下一件） | 新表 `page_crdt(page_id, state BLOB, updated_at)`（旁路，**不动** `content_json`：它继续当 S6 之前的投影）＋ Web/桌面两侧读写 | 存回-重启-载入仍是同一条血统（不是从 JSON 重建）；`content_json` 作为投影与 `exportJson()` 一致；两侧（Rust/TS）语义成对 |
+| **S2b** ✅ | **状态落盘位置** | 新表 `page_crdt(page_id, state BLOB, updated_at)` **两侧都建**（TS `platform/sqliteStore.ts` ＋ Rust `db.rs`）；读写三条函数（`readPageCrdtState` / `writePageCrdtState` / `clearPageCrdtState`）先在**那一层**（`lib/docContent.ts`，字节在层里是**不透明 BLOB**）＋ `pageStateStore.test.ts` 4 条 | ① 没状态 ⇒ `null`（≠空字节）；写回读**逐字节相同**（含非 UTF-8 字节，堵住"被当文本/base64 存"）；② 同页只留最新（主键 upsert）；③ 驱动回二进制字符串也能还原（**不用 `Buffer`**，Web 里没有）；④ ★ **跨重启仍同一条血统** ⇒ 合并后 `["blk-1","blk-2","blk-B","blk-A"]`、两处都在、不翻倍、两台投影一致 |
 | **S3** | **编辑器绑定真 Y.Doc** | `@lexical/yjs` 升格为生产依赖；编辑器与 Y.Doc 绑定，本地编辑产出**增量更新** | 绑定后：原生编辑 ⇒ 产出 update；两个绑定实例各改一处 ⇒ 合并后**两处都在**（这是全上线的核心判据） |
 | **S4** | **客户端同步接 update** | outbox 携带 CRDT 更新（而非整份 JSON）＋ 版本标记 | 两台设备交替同步 ⇒ 收敛；离线各改一处 ⇒ 联网后两处都在 |
 | **S5** | **服务端合并（两阶段）** | 阶段 1「只存不算」→ 阶段 2「开算」＋ 总开关（可按空间关） | 阶段 1 行为零变化；阶段 2 服务端合并幂等、可重放、不丢块 |
 | **S6** | **派生与身份口径重定** | `content_text`/FTS 在合并后的重建时机；块身份在 CRDT 下的铸/补种 | 合并后正文不落后（或有痕）；`topLevelBlockIds` 在合并前后**集合不变**（除真正新增块） |
-| **S7** | **两侧都接 ＋ 真机验收** | 桌面（Rust）与 Web 两侧同语义；双设备人工验收 | 两侧判据成对；真机双设备验收过 |
+| **S7** | **两侧都接 ＋ 真机验收** | 桌面（Rust）与 Web 两侧同语义 —— 含 **`page_crdt` 读写三条镜像**（`doc_content.rs` 的 `read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state`）与会话接线；双设备人工验收 | 两侧判据成对；真机双设备验收过 |
 
 ## 3. 本冲刺**不做**
 
