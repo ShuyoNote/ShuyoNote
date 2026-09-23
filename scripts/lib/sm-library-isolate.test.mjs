@@ -69,6 +69,22 @@ describe("sm-library-isolate：config.toml", () => {
     expect(toml).toContain("path = 'C:\\repo\\.gm-build\\libsqlite3-sys-0.38.2'");
     expect(toml).not.toContain("C:\\\\repo");
   });
+
+  it("★ 真实 config 带 **BOM** 时要剥掉 —— 否则 BOM 落到第 4 行行首，TOML 解析直接失败", () => {
+    // 现场（2026-09-23，AMD/Windows）：真实 ~/.cargo/config.toml 以 EF BB BF 开头（DSH 代理写的），
+    // cargo 自己容忍**文件开头**的 BOM；但我们把 header 拼在它前面 ⇒ BOM 不再是首位 ⇒
+    // `--prepare` 在私有 CARGO_HOME 下报 `key with no value, expected =`（exit 101）。
+    const realWithBom = "\uFEFF[source.crates-io]\nreplace-with = 'rsproxy'\n";
+    const toml = gmConfigToml({ realConfigText: realWithBom, copyDir: "/repo/.gm-build/x" });
+    // ① 生成物里**任何位置**都不许再有 BOM（它只在文件首位才合法，而这里首位是 header）
+    expect(toml.includes("\uFEFF")).toBe(false);
+    // ② 镜像配置照旧逐字继承（剥的只是那个编码标记，不是内容）
+    expect(toml).toContain("[source.crates-io]");
+    expect(toml).toContain("replace-with = 'rsproxy'");
+    // ③ 反例：**内容里**的 U+FEFF（不是开头那个）不许被顺手删掉
+    const inner = "# 说明\n\uFEFF 这里是内容里的一个零宽字符\n";
+    expect(gmConfigToml({ realConfigText: inner, copyDir: "/x" }).includes("\uFEFF")).toBe(true);
+  });
 });
 
 describe("sm-library-isolate：真目录下的隔离（核心不变量）", () => {
