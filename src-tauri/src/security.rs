@@ -20,6 +20,12 @@ static SESSION_KEY: Mutex<Option<crypto::AppKeys>> = Mutex::new(None);
 /// the passphrase without persisting the key at rest.
 const VERIFY_MSG: &str = "shuyonote-encryption-verify";
 
+/// 会话态（`SESSION_KEY` / `LOCKED` / 钥匙袋 / 主密钥）都是**进程级全局** ⇒
+/// 凡是会动它们的**测试**（`security::tests` 与 `space_crypto::tests`）必须共用这一把锁串行跑，
+/// 否则 cargo test 的多线程会把它们交错（表现：隔离跑绿、**全量跑红**）。
+#[cfg(test)]
+pub(crate) static SEC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn conn<'a>(db: &'a State<'_, Db>) -> std::sync::MutexGuard<'a, Connection> {
     db.0.lock().expect("db mutex poisoned")
 }
@@ -698,6 +704,10 @@ pub struct EncryptionStatus {
     pub space_format: u8,
     /// 上一条的稳定算法名（未记录时是空串）。
     pub space_algorithm: String,
+    /// ★ 第 1 步（1b-2）：**当前活动空间的按空间读数**（库文件是不是密的／袋里有没有它／拿不拿得到钥匙）。
+    /// 与上面的 `space_format` 互补：那个说"数据是哪一版"，这个说"**这个空间到底加不加密、钥匙在不在**"——
+    /// 第 2 步的同步闸门与设置面板都读它。
+    pub active_space: crate::space_crypto::SpaceCryptoStatus,
 }
 
 #[tauri::command]
@@ -714,6 +724,16 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
         .as_deref()
         .and_then(|sid| space_format(&c, sid))
         .unwrap_or(0);
+    // ★ 第 1 步（1b-2）：活动空间的**按空间**读数（纯读：嗅文件 ＋ 看本进程的钥匙袋/会话）。
+    let active_space = match (crate::db::app_data_dir_ref(), crate::workspaces::active_workspace_id(&c).ok()) {
+        (Some(dir), Some(sid)) => crate::space_crypto::space_status(dir, &sid),
+        _ => crate::space_crypto::SpaceCryptoStatus {
+            space_id: String::new(),
+            encrypted_on_disk: false,
+            in_keyring: false,
+            key_available: false,
+        },
+    };
     Ok(EncryptionStatus {
         enabled,
         locked,
@@ -725,6 +745,7 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
         } else {
             crypto::format_name(space_format).to_string()
         },
+        active_space,
     })
 }
 
@@ -875,7 +896,11 @@ mod tests {
     // SESSION_KEY / LOCKED are process-wide statics. These tests set them, so they
     // must not run concurrently with each other (or the key_space_conn reopen in
     // header_sniff could read an overwritten session key).
-    static SEC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    //
+    // ★ 2026-09-23：**同一把锁也给 `space_crypto::tests` 用**（那里同样改 `KEYRING` /
+    // `SESSION_MASTER` 这两个进程级全局）—— 隔离跑绿、全量跑红就是这么来的
+    // （cargo test 的线程会把这些测试交错）。⇒ 提到模块级 `pub(crate)`，两处共用一把。
+    use super::SEC_LOCK;
 
     /// A temp dir owning a real on-disk meta.db + a plaintext space DB, with `meta`
     /// ATTACHed on the returned space connection so the meta-slot config helpers and

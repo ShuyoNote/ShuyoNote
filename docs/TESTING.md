@@ -368,6 +368,18 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   不要 `| Select-*` 之后看**；两者不一致时以**重定向那次**为准，并把不一致如实记下来
   （既不把工具链的退出码噪声当回归，也不反过来把真红当噪声放过去 —— 判据是
   **命令自己的输出 ＋ 重定向后的退出码**，两者都要对）。
+- ★ **改源文件只用 `edit` / `write` 工具，绝不用 PowerShell 的 `Set-Content` / `-replace`**
+  （2026-09-23 第 49 轮**真踩了**，代价＝一次 `git checkout` 还原 ＋ 重做那一整片）：
+  PowerShell 5.1 的 `Set-Content` 默认按**本机 ANSI** 写 ⇒ 一个好好的 UTF-8 源文件当场变成
+  非 UTF-8（`read` 工具直接报 `invalid UTF-8 text`，中文全乱）。⇒ 需要批量替换时：
+  **要么用 `edit`（`replace_all: true`），要么先 `git checkout -- <file>` 再重做**，
+  没有第三条路。这条比"省几次工具调用"重要得多。
+- ★ **进程级全局状态的测试必须共用一把锁**（2026-09-23 第 49 轮，同一天第二类假红）：
+  `SESSION_KEY` / `LOCKED` / 钥匙袋 / 主密钥都是**进程级** `static`；cargo test 默认多线程
+  ⇒ 两个模块的测试会**交错**（现场：`space_crypto` 的用例**隔离跑绿、全量跑红**，报的是
+  `space_key` 里一句"未解锁"）。⇒ 做法：把锁提到**模块级** `#[cfg(test)] pub(crate) static SEC_LOCK`
+  （`security.rs`），`security::tests` 与 `space_crypto::tests` **共用同一把**（各自 `let _g = …lock()`）。
+  ⚠️ 判读顺序：**隔离绿、全量红 ⇒ 先怀疑进程级全局被别人踩了**，而不是先怀疑业务逻辑。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 - **看到 `plugins::` 大批红，先确认宿主二进制在不在**（2026-09-19：macOS 侧交底、AMD 复现）：
