@@ -17,6 +17,7 @@
 // `import { yDocToContentJson }` 就被门禁当场判红（`pageBinding.ts（1 处）`）⇒ 改用桥接层提供的
 // 别名 `projectStateToJson`。这就是层清单决策树里那条"会反复撞的税"。
 import type { LexicalEditor } from "lexical";
+import * as Y from "yjs";
 import {
   ensurePageCrdtState,
   markTextStale,
@@ -100,6 +101,36 @@ export function loadJsonForEditor(db: ContentSql, pageId: string, storedJson: st
 // ⇒ 一块变两块）在**同步路径**上的落点。
 // =====================================================================================
 
+/**
+ * 这条状态里出现过的 **client id** —— 也就是它的**血统指纹**。
+ *
+ * 为什么需要：S1 实测过"从 JSON **各自新建**的两份状态合起来 ⇒ 一块变两块且 `blockId` 重复"
+ * （`mergeability.test.ts` ①）。而生产路径上那个窗口是真实存在的（两台设备**同时**首开同一张
+ * 从没建过血统的页、且各自离线）。⇒ 光靠"首开只建一次"（S3b-2a）挡不住**已经发生**的两条血统，
+ * 所以在**合并**这一处再补一道护栏：**先看血统相不相关，再决定合不合**。
+ *
+ * 判据：两份状态里的 client id 集合**有交集** ⇒ 同一条血统（同源或一方继承另一方）；
+ * 两份都非空却**完全不相交** ⇒ 各自独立创建 ⇒ **不许合**（合了就是 S1 那个损坏）。
+ */
+export function lineageClientIds(state: Uint8Array): Set<number> {
+  const out = new Set<number>();
+  try {
+    const decoded = Y.decodeUpdate(state) as { structs: Array<{ id: { client: number } }> };
+    for (const s of decoded.structs) out.add(s.id.client);
+  } catch {
+    // 解不出来 ⇒ 空集（调用方按"没有指纹"处理：那种情况不拦，但也别当成"相关"的证据）
+    return out;
+  }
+  return out;
+}
+
+/** 两条血统相不相关：有交集 ⇒ 相关；任一方**没有指纹**（空状态）⇒ 视为相关（没什么可冲突的）。 */
+export function lineagesRelated(a: Set<number>, b: Set<number>): boolean {
+  if (a.size === 0 || b.size === 0) return true;
+  for (const id of a) if (b.has(id)) return true;
+  return false;
+}
+
 /** 把远端状态并进来的结果。 */
 export interface MergedRemoteState {
   /** `true` ⇒ 本机原先**没有**这一页的状态，这一版被**采用**（不是"从 JSON 重建"）。 */
@@ -114,13 +145,22 @@ export interface MergedRemoteState {
    * （`refreshPageTextIfStale` 的两条出口）⇒ 这一处宁可多标一次，也不漏标。
    */
   derivedStale: boolean;
+  /**
+   * ★ **血统冲突**（有值 ⇒ 这次**没有合并**，本机那一版被原样保留）。
+   *
+   * 这是"两条独立血统"的现实出口：宁可不合、如实报出来，也不合出"一块变两块"。
+   * 调用方**必须**把它报出去（`main.tsx` 注册的那一版会 toast ＋ 控制台报错）—— 静默吞掉
+   * 会让两台设备各自继续长，问题更难查。
+   */
+  lineageConflict?: { mine: number[]; remote: number[] };
 }
 
 /**
  * ★ 把**远端来的**一版状态并进本机这一页（唯一入口）。
  *
  * - 本机还没有 ⇒ **直接采用**它（它自己带着血统，别在这儿另起一条）；
- * - 本机已有 ⇒ 载入**本机的血统**、把远端那笔 `merge` 进去、再存回。
+ * - 本机已有 ⇒ **先验血统**（见 `lineageClientIds`）：不相关 ⇒ **拒绝合并并报出来**；
+ *   相关 ⇒ 载入**本机的血统**、把远端那笔 `merge` 进去、再存回。
  *
  * ⚠️ 本函数**只动 CRDT 状态 ＋ 那个"待重建"标记**，**不碰**落盘的那份投影（`pages` 里那两列）
  * —— 投影怎么跟上归 S6 的口径（今天编辑器打开时会用状态的投影覆盖，所以界面上看到的是对的内容）。
@@ -139,6 +179,21 @@ export function mergeRemotePageState(
     markTextStale(db, pageId);
     return { adopted: true, state: remote, derivedStale: true };
   }
+
+  // ★ 血统护栏：两条**独立创建**的状态不许合（合了就是 S1 那个"一块变两块"）。
+  const mineIds = lineageClientIds(mine);
+  const remoteIds = lineageClientIds(remote);
+  if (!lineagesRelated(mineIds, remoteIds)) {
+    const conflict = {
+      mine: [...mineIds].sort((x, y) => x - y),
+      remote: [...remoteIds].sort((x, y) => x - y),
+    };
+    // ★ **立刻有痕**（不依赖调用方）：这条路径一旦发生就说明"两台设备各自建过血统"，
+    //   静默吞掉会让两台各自继续长、问题更难查。调用方（`main.tsx` 注册的那版）还会再 toast 一次。
+    console.warn(`[crdt] 血统冲突：拒绝合并（本机版本保留）page=${pageId}`, conflict);
+    return { adopted: false, state: mine, derivedStale: false, lineageConflict: conflict };
+  }
+
   const session = openPageSession({ state: mine });
   try {
     session.merge(remote);
