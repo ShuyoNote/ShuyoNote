@@ -39,6 +39,10 @@ mod crdt_wire;
 // ⚠️ 与块级 `page_conflicts` **不是一族**：两条独立血统在 Yjs 结构上就合不了（S1 红线），
 // 只能"留本机 / 用对端 / 两个都要（一页变两页）"。
 mod lineage_conflict;
+// 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。
+// ⚠️ 本步**只落格式与判据、不接线**：现有 `encryption_enabled` / `key_space_conn` / `encrypt_payload`
+// 一字不动（按空间是第 1 步、同步闸门是第 2 步）。见 `docs/plans/2026-09-23-keyring-step0-workorder.md`。
+pub mod keyring;
 // 桌面「近实时」流通道的**纯函数内核**（SSE 帧解析 ＋ 重连退避）—— 设计稿
 // `docs/plans/2026-09-23-desktop-near-realtime-stream-design.md` §7 第 1 步：先有判据。
 mod sync_stream;

@@ -222,6 +222,16 @@ pub fn random_salt() -> [u8; SALT_LEN] {
     s
 }
 
+/// 32 字节随机（**钥匙袋每空间的密钥**用它；见 `keyring.rs` 头注）。
+///
+/// 为什么收在这里而不是让调用方自己引 `OsRng`：随机数入口只有这一处 ⇒
+/// "换 CSPRNG / 加 DRBG"这类改动只有一个落点（与 `random_salt` 同一条纪律）。
+pub fn random_32() -> [u8; 32] {
+    let mut b = [0u8; 32];
+    OsRng.fill_bytes(&mut b);
+    b
+}
+
 /// Lowercase hex of a 32-byte SQLCipher raw key, for
 /// `PRAGMA key = "x'<hex>'";` when opening an encrypted space DB.
 pub fn key_hex(key: &[u8; 32]) -> String {

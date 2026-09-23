@@ -349,6 +349,15 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ **纪律**：Rust 全量与 vitest 全量**不要并行**跑（两边都在 spawn 进程）；看到 `Test timed out` 先隔离复跑。
   ⚠️ 注意与"假红"区分开：那次同批里的 `src/lib/crdt/lineageGuard.test.ts` ② 是**真红**
   （新加的留痕 SQL 没被那个测试的假库认识）—— **隔离复跑仍然红的是真回归**，这一条永远成立。
+  ★★ **怎么区分"机器慢"与"代码红"：量 `git status`（2026-09-23 同日第二次，判据可量化）** ——
+  刚跑完一次 Rust 全量（往 `src-tauri/target` 写了 **10.5 GB**）之后，vitest 全量里 **6 个文件成片超时**
+  （全是 **spawn 外部进程**那一类：`plugin-fragment` / `sm-library-patch` /
+  `check-changelog-version-parity` / `test-report` / `yrsInterop.spike`），而且**隔离复跑仍然超时**
+  （看起来像真红）。**先量客观指标**：`git status --short` 从常态 **~0.2s 涨到 5.1s**（25×）⇒
+  判为机器/杀软在扫刚写出来的大目录；**等它恢复**（同一指标回到 **339ms**）后，同一批文件 **44/44 全过**、
+  随后全量 **2194 passed** 全绿。⇒ **判读顺序**：① 超时的都在 spawn 那一类吗；② `git status` >1s 就别急着重跑；
+  ③ 隔离复跑；**隔离仍红 ＋ `git status` 正常 ⇒ 才是真回归**。
+  ⚠️ **不许**为了变绿去调大超时阈值（那是"把门槛改松"）—— 正确动作是**等机器安静**再跑一次全量。
 - ★ **读退出码时别经过管道过滤**（2026-09-23 一天内撞到**两次**，形状相同）：
   ① `scripts\win-cargo-test.ps1 -Filter sync_stream` 自己打印了 `test result: ok. 13 passed; 0 failed`
   且脚本收了 `test exe exit code = 0`，但外层被报成 **exit 1** —— 那条命令的形状是
