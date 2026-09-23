@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [1.91.25] - 2026-09-23
+
+> 修 1.91.24 里「社区链接存笔记」与「Markdown 导入为页面」在**打包后**崩掉（Lexical #365）
+
+### 修复
+
+- **「从社区链接存一篇笔记」存不进去**（用户实测：`存进笔记失败：Minified Lexical error #365`）：
+  `lib/mdPreview.ts` 的 Lexical 节点表写在**模块顶层**，而它处在一个循环 import 里
+  （`mdPreview → editor/nodes/ColumnsBlockNode → store/notes → store/filePreview → mdPreview`）。
+  dev / vitest（原生 ESM）里 import 求值顺序**必然**先把那个类初始化好，所以单测与 CI 全绿；
+  而**打包产物**把模块拼平后数组字面量先跑 ⇒ `nodes[9]`（`ColumnsBlockNode`）是 `undefined`
+  ⇒ `createEditor` 当场抛错。改成函数**惰性取值**后与求值顺序无关。同一个函数还有第二个调用方
+  **「Markdown 导入为页面」**，那一处也一并好了。
+
+- **文件管理器的默认封面 404**：`row.cover` 存的是 **CSS 值**（`url("covers/…")`），而网格缩略图
+  把它直接塞进了 `<img src>` ⇒ 浏览器去取 `/url(%22covers/default-cover.jpg%22)` ⇒ 404
+  （默认封面那张必现；桌面版同样中招）。现在先剥掉 `url(...)` 外壳再当 URL 用。
+
+### 变更
+
+- **web 产物验收多一条判据**（`scripts/check-web-build.mjs`）：产物里
+  `createEditor({ nodes: … })` 的实参必须是**调用/内联**，不能是"模块顶层那个数组标识符" ——
+  正是上面那个 bug 的形状（单测抓不到它：ESM 下永远绿，所以判据只能钉在产物上）。
+  顺手把这条流水线的语言钉成 zh-CN（CI 的 runner 是 en-US，按中文找入口会假红）。
+
 ## [1.91.24] - 2026-09-22
 
 > 发布链修复（第三刀）：Windows 的**产物级断言**把正常的包判红了 —— 是断言自己挑错了那条 link-search

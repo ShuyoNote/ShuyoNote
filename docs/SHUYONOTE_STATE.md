@@ -14,14 +14,23 @@
 - **产品**：ShuyoNote 数友笔记 —— 本地优先 · 类 Notion 的知识管理桌面应用。
 - **技术栈**：Tauri 2（桌面）＋ React 18.3.1 ＋ Lexical 0.50（编辑器）＋ SQLite（本地优先）；Web 版用 sql.js（浏览器）。
 - **平台**：桌面（Tauri）＋ 浏览器 Web（平台无关 core ＋ 可插拔 driver）。
-- **版本**：对外交付线最新 **`1.91.24`**（2026-09-22）；**`main` 已包含 `dev` 的全部内容** ——
+- **版本**：对外交付线最新 **`1.91.25`**（2026-09-23）；**`main` 已包含 `dev` 的全部内容** ——
   1.91.21 那次把 `dev` 显式合进了 `main`（`dev` 不再是分叉状态；上一版 1.91.20 时还差 64 个提交）。
-  **安装包的三次返工**（1.91.21 与 1.91.22 都没出包，1.91.23 只绿了 Linux/Android）：
-  ① 冷 registry 上没有 SQLCipher 源码 ⇒ 加 `cargo fetch --locked`；② 它放晚了（Linux 的
-  `Linux system deps` 那一格自己就会调 `sm-library-build --print-env`）⇒ 挪到 `Setup pnpm` 之后；
-  ③ Windows 的产物级断言把正常的包判红（它只取"最后一条外部 link-search 目录"，真 CI 里末尾是
-  MSVC 的 atlmfc 目录）⇒ 改成"全部外部候选里有一个对得上"。**1.91.24 预期是第一个全绿出包的版本**。
-  对外的桌面安装包/更新通道在它之前仍停在 1.91.20；Web 版不受影响（已随 1.91.23 上线）。
+  **安装包出了三次返工才全绿**（1.91.21 与 1.91.22 都没出包，1.91.23 只绿了 Linux/Android，
+  **1.91.24 三平台齐全并已发布到 GitCode**）：① 冷 registry 上没有 SQLCipher 源码 ⇒ 加
+  `cargo fetch --locked`；② 它放晚了（Linux 的 `Linux system deps` 那一格自己就会调
+  `sm-library-build --print-env`）⇒ 挪到 `Setup pnpm` 之后；③ Windows 的产物级断言把正常的包判红
+  （它只取"最后一条外部 link-search 目录"，真 CI 里末尾是 MSVC 的 atlmfc 目录）⇒ 改成"全部外部
+  候选里有一个对得上"。
+- **1.91.25 修两个"只在打包产物里坏"的 bug**（dev/CI 全绿、装出来的包才崩，值得记住这一类）：
+  ① `lib/mdPreview.ts` 的 Lexical 节点表写在**模块顶层**，而它在一个循环 import 里
+  （mdPreview → ColumnsBlockNode → store/notes → store/filePreview → mdPreview）⇒ 打包产物里
+  数组先求值、`nodes[9]`（`ColumnsBlockNode`）是 `undefined` ⇒ `createEditor` 抛
+  `Minified Lexical error #365`（用户实测：「从社区链接存一篇笔记」存不进去；「Markdown 导入为
+  页面」同一处）⇒ 改成惰性函数 `mdNodes()`；② `FileManagerView` 把 `row.cover`（CSS 值
+  `url("…")`）直接塞进 `<img src>` ⇒ 默认封面 404 ⇒ 加 `coverUrlOf()` 剥壳。
+  判据：`scripts/check-web-build.mjs` 新增一档"产物里 `nodes:` 实参必须是调用/内联"
+  （单测抓不到：ESM 下永远绿）。
   `dev` 工作区的 `package.json` 版本号落后于交付线是**预期的**：bump 发生在发布线上
   （口径见 [RELEASING](RELEASING.md) ④）。
 - **许可证**：客户端 **AGPL-3.0**；配套自建同步服务端 **商业**（`shuyonote-sync-server`，见其仓库）。
