@@ -457,6 +457,25 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   > ② 输出目录不存在时 curl 报 `(23) client returned ERROR on write` —— **像网络故障，其实是路径**（已改成先建目录）。
   > 凭据一律走 `--config` 临时文件、**绝不进 argv**（2026-09-16 那次 "Bearer token 打进公开日志" 的教训）。
 
+## 三条线**相交**的格子：三平面联合验收（**不在默认门禁里**，2026-09-23 加）
+
+三条在飞战役（国密 / 全库 AI 覆盖 / 块级 CRDT）各自都有常开门禁、各自都绿，但它们**两两/三三相交的格子
+此前没有任何人负责**：三个平面的数据住在同一张空间库、走同一条写路径、还要一起过加密 / 备份 / 同步 / 全库扫描。
+**分开绿 ≠ 一起绿。**
+
+```bash
+node scripts/joint-acceptance.mjs                       # 就绪面板 ＋ 格子矩阵（只读）
+node scripts/joint-acceptance.mjs --check               # 就绪 ⇒ 0；未就绪 ⇒ 2；探针坏了 ⇒ 1
+node scripts/joint-acceptance.mjs --run j1              # 跑一格（cargo 格有**下限**：空跑即红）
+```
+
+- 登记表是 `scripts/lib/joint-planes.mjs`（平面 / 探针 / 联合格子 / 每格判据），**计划本身**就是它的文档视图：
+  `docs/JOINT-ACCEPTANCE.md` 里那块机器事实由 `scripts/lib/joint-planes.test.mjs` **逐字核对**（该测试随默认组跑）。
+- **为什么不进 CI**：它要真 SM 前缀、会打补丁重建、还要真机 ⇒ 属于**发版窗口**的动作（与 `RELEASING.md` 的配方同一档）。
+  CI 里已经常开覆盖的是它的其中一格（`rust-sm-wired`：打补丁 ＋ `--features sm-library` 跑**全量 lib** ⇒ 含 CRDT 与派生那几族）。
+- **三态**：就绪 / 未就绪（**不是红**）/ **未实查**（真机、Windows 静态前缀、LibreOffice、真模型、Web CORS）。
+  「自报跳过」在联合验收里**不算通过**（`forbidSkip`）—— 否则一份全绿的报告里可能有两格根本没跑。
+
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 
 **为什么单列一节**：那天默认组连红三次（`7a6df321` / `bb993251` / `6569e2b9`，其中一次还是**纯文档提交**），

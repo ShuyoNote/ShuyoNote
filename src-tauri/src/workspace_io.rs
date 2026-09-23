@@ -628,6 +628,81 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ★ **三平面联合格子 j1**（2026-09-23）：导出/导入走的是**整库在线备份**，
+    /// 所以"另两个平面新加的表/列也会被带走"这件事，看起来是不证自明的 —— 而"看起来"正是要钉的东西。
+    ///
+    /// 为什么不能靠上面那条判据：它只断言了 `pages` 里那一行。而联合验收要问的是**交界处**：
+    ///   · **块级 CRDT** 把每页的**权威状态**放进 `page_crdt`（血统；丢了就等于"一页变两页"）；
+    ///   · **全库 AI 覆盖**把覆盖度放进 `attachment_text.coverage`（"抽到哪"的读数；丢了就成了"未知"）；
+    ///   · 而源库是**加密**的（国密或 AES 页，取决于构建）⇒ 快照要把这三件事一起抬过去。
+    ///
+    /// 三条断言（缺一条就不是同一个故事）：
+    ///   ① 快照产物**不给任何钥**读得开（导出契约：zip 里那份是明文）；
+    ///   ② `page_crdt` 的**字节逐字节相同**（血统不能被截断/重编码）；
+    ///   ③ `attachment_text.coverage` 的**文本逐字相同**（未知 ≠ 完整，所以空串与 `{"complete":false}` 是两件事）。
+    ///
+    /// ⚠️ 它**不**证明"跨后端也能读"（那是格子 j2：两份页加密夹具）；也不证明"平面开着时的全库扫描"
+    /// （那是 j3）。本格只管**这条快照路径**——见 `docs/JOINT-ACCEPTANCE.md` 的格子表。
+    #[test]
+    fn snapshot_carries_the_other_two_planes_new_tables() {
+        let dir = std::env::temp_dir().join(uniq_tmp("wsjoint"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("default.db");
+        make_space_db(&src, "default");
+
+        // CRDT 那半：一页的权威状态（这里不关心格式，只关心**字节**能原样过去）。
+        let lineage: Vec<u8> = vec![0x00, 0x53, 0x02, 0xff, 0x10, 0x7f, 0x80, 0x01];
+        // AI 覆盖那半：一份**非空**覆盖度（空串是"没算过"，正是最容易被顺手丢掉的形态）。
+        let coverage = r#"{"complete":false,"pages":[{"from":1,"to":50,"total":120}]}"#;
+        {
+            let c = Connection::open(&src).unwrap();
+            c.execute(
+                "INSERT INTO page_crdt (page_id, state, updated_at) VALUES ('p1', ?1, 7)",
+                [&lineage],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage) \
+                 VALUES ('a1', 'pdf.text@1', 0, 'text', '正文', '', 'hash-a1', 7, ?1)",
+                [coverage],
+            )
+            .unwrap();
+            c.close().unwrap();
+        }
+
+        let key = crate::crypto::derive_key("hunter2", &crate::crypto::random_salt()).unwrap();
+        crate::security::convert_space_db(&src, true, Some(&key)).unwrap();
+        assert!(crate::security::space_db_is_encrypted(&src), "前置：源库应当是加密的");
+
+        let dst = dir.join("plain.db");
+        {
+            let c = Connection::open(&src).unwrap();
+            crate::security::key_conn_with(&c, &key).unwrap();
+            snapshot_plaintext(&c, Some(&key), &dst).unwrap();
+        }
+        assert!(!crate::security::space_db_is_encrypted(&dst), "导出契约要求明文库");
+
+        {
+            // 故意不设任何 PRAGMA key：快照必须自己就能读。
+            let c = Connection::open(&dst).unwrap();
+            let got_state: Vec<u8> = c
+                .query_row("SELECT state FROM page_crdt WHERE page_id='p1'", [], |r| r.get(0))
+                .expect("快照里必须有 page_crdt 那一行（CRDT 血统）");
+            assert_eq!(got_state, lineage, "page_crdt 的字节必须逐字节过去");
+            let got_cov: String = c
+                .query_row(
+                    "SELECT coverage FROM attachment_text WHERE att_id='a1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("快照里必须有 attachment_text.coverage（AI 覆盖读数）");
+            assert_eq!(got_cov, coverage, "覆盖度文本必须逐字过去（未知 ≠ 完整）");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn extract_workspace_zip_parses_db_meta_att() {
         let tmp = std::env::temp_dir().join(format!("shuyonote-wsio-test-{}", std::process::id()));

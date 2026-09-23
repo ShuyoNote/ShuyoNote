@@ -23,6 +23,7 @@
 | UI/UX 设计交付 | [设计交付](#设计交付-design) |
 | 怎么构建 / 测试 / 提版 | [开发指南](development.md) |
 | 回归门禁有哪些 / 结果在哪看 | [回归测试体系](TESTING.md) |
+| **国密 × 全库 AI 覆盖 × 块级 CRDT 三条线怎么一起验收** | [三平面联合验收](JOINT-ACCEPTANCE.md) |
 | 版本演进 | [变更记录](#变更记录-changelog) |
 
 ## 目录结构
@@ -46,6 +47,7 @@ docs/
 ├── RELEASING.md                 # 发布 runbook（桌面 + Android + 国密单一口味）
 ├── macos-updater.md             # macOS 签名 / 公证 / 自动更新
 ├── SM-CRYPTO-DELIVERY.md        # 国密交付说明（按平台分列，含边界声明）
+├── JOINT-ACCEPTANCE.md          # 三平面联合验收（国密 × AI 覆盖 × CRDT：准入 / 格子 / 责任方）
 │
 │   ── 同步 / 身份 / 安全 ──
 ├── SYNC.md                      # 同步机制详解（增量 changes / LWW / 空间隔离）
@@ -271,6 +273,7 @@ CHANGELOG.md                     # 版本变更日志
 | [development.md](development.md) | **开发指南**：技术栈与目录 / 环境准备 / 运行（web·桌面·构建）/ 测试与验证权威循环（`scripts/smoke-web.mjs` + `tsc` + `vite build` + `cargo check`）/ **版本号提升规则** / CHANGELOG 与文档约定 / 常见坑（UTF-8、autocrlf、强刷、pwsh 退出码、缓存） |
 | [SM-CRYPTO-DELIVERY.md](SM-CRYPTO-DELIVERY.md) | **国密（SM 系列）交付说明 · 按平台分列**：交付文本要照抄的**边界声明**（数据面国密／传输层标准 TLS／控制面与摘要不换，别写成"全链路国密"）＋ 密文格式 v0/v1/v2 与套件常量 ＋ **跨实现黄金向量** ＋ 各平台现状矩阵（应用层 vs 库级一列分得清）＋ 已取证清单（每条带判据与读数）＋ 未取证清单（写明归属：provider＝AMD、MSVC＝Windows、真机＝人手）＋ 构建/验证命令（含 `OPENSSL_DIR` 与 `cargo clean -p libsqlite3-sys` 那个坑）＋ 升级运维须知 |
 | [TESTING.md](TESTING.md) | **回归测试体系**：门禁清单的单一事实来源（`scripts/lib/gates.mjs`）/ `pnpm verify` 一键本地验收 / 断言数基线 `tests/baseline.json`（只增不减是硬校验）/ 结果公开在 step summary 与 artifact / **覆盖边界**（`sync-*-regression` 在私有服务端仓库、GitCode 只跑纯 Node 组） |
+| [JOINT-ACCEPTANCE.md](JOINT-ACCEPTANCE.md) | **三平面联合验收**（国密 × 全库 AI 覆盖 × 块级 CRDT）：为什么"分开绿 ≠ 一起绿" / **准入三态**（就绪·未就绪·未实查，未实查不算红）＋ 就绪面板 `node scripts/joint-acceptance.mjs` / **联合格子 j1–j8**（跨平面、责任方、判据与下限、`▶`已落地 `✎`施工单 `◻`真机）/ j1 已落地（快照带血统与覆盖度）/ 真机剧本 / 已知缺口 |
 
 ## 社区互动（社区接入）
 

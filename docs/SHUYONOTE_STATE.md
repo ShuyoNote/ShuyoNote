@@ -42,10 +42,15 @@
 |---|---|---|
 | **国密** | 四层走完 ＋ **单一口味拍板** ＋ 落进发布链（应用层 v2 默认；库级 SM4 页 ＋ SM3 页 MAC/库 KDF；产物五条断言）；**带 tag 的真读数已有**：`v1.91.24/25/26` 三次 release run 在 Linux ＋ Windows 两个 build job 上「产物断言：页加密＝SM4」全绿 | **真机验收**（Android / 桌面新装加密·重启解锁·迁移）· **Apple 签名公证凭据**（macOS 档未启用）· Windows **本机**静态前缀复现（发版链已用 vcpkg 静态档 ＋ `--require-static` 卡住）· 补丁残留的**根除**（现为常开门禁 `gm-registry-clean` 发现并拦住）。细节与归属见 [SM-CRYPTO-DELIVERY.md](SM-CRYPTO-DELIVERY.md) §五 |
 | **PDFium** | 桌面光栅化可切换（`SHUYONOTE_PDF_ENGINE=pdfium`）；P3 对拍四样本硬判据 4/4；**Linux 非嵌入字体后端已落地**（随包 OFL 中文字体 ＋ `set_custom_font_provider`） | 真机逐条验收；macOS 公证/GUI 人工归 owner |
-| **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；ASR 转写通道（`localTranscribe`）已接，**真模型 live 读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、段＝1 且 `loc=""` 符合契约） | 面板侧「消费抽取结果」未落地；Web 端 CORS 未测 |
-| **块级 CRDT（阶段 1）** | 块身份 ＋ `blockRev`（Rust/TS 双份判据）＋ 写层施工单 | 阶段 1 写回收口；阶段 2+ 未开工 |
+| **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；**覆盖度已落库并读到读侧**（`attachment_text.coverage`；未知 ≠ 完整）＋ 第五类 `partial` ＋ **只读能力 `coverage.report`**（第一条 `host: frontend`）＋ 面板入口「**检查索引覆盖**」（点一下扫全库出报告）；ASR 转写通道（`localTranscribe`）已接，**真模型 live 读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、段＝1 且 `loc=""` 符合契约） | 面板侧「消费抽取结果」未落地；**旧格式 Office 真转换读数**（要一台有 LibreOffice 的机器，本机 macOS 没有 `soffice`）；Web 端 CORS 未测 |
+| **块级 CRDT（阶段 1 ✅ / 阶段 2 冲刺 S1–S8 ✅）** | 阶段 1：块身份 ＋ `blockRev`（Rust/TS 双份判据）＋ 写层。阶段 2 冲刺：平面（`content_json` ⇄ `ydoc` **唯一实现**，默认关 ⇒ 逐字节不变）＋ 编辑器**真绑定**（含浏览器级判据「打字 ⇒ 刷新 ⇒ 字还在」＋ 变异实测）＋ 每页状态落盘 `page_crdt`（TS 与 Rust 两侧建表 ＋ Tauri 命令）＋ wire 载荷版本标记与「推/收」两侧接线（**注入**，避免初始化环）＋ 血统护栏（两条独立创建的状态**拒绝合并**、有痕） | **S7-3 双设备真机验收**（要人手）· 用户可见的**平面设置项**（今天靠 `VITE_CRDT_PLANE=1`）· S5 阶段 2 服务端开算（勘察结论：建议推迟，先走「客户端合并 ＋ 哑中转」）· S9 服务端首写者裁定（要动另一个仓，等 owner 点头）。三线**联合验收**见 [JOINT-ACCEPTANCE.md](JOINT-ACCEPTANCE.md) |
 | **社区与分发** | 索引规范/签名/两级撤回/TOFU/多源订阅/事实清单 | 市场 UI、一键发布到社区的客户端侧 |
 | **近实时** | 冲突提示/presence/评论@通知/SSE 已落地 | 块级真协同（CRDT 阶段 1 是地基） |
+
+> ★ **三条线相交的格子已单独登记**：[三平面联合验收](JOINT-ACCEPTANCE.md)（owner 2026-09-23 的要求：
+> 等 AI 全覆盖与 CRDT 具备测试条件时，与国密**一起**联合测试）。就绪面板 `node scripts/joint-acceptance.mjs`，
+> 格子 j1–j8（跨哪几个平面 / 谁跑 / 判据与下限），其中 **j1 与 j5 今天就能跑**（j1 是导出快照带血统与覆盖度，
+> 已落地并实测 4/4），j3/j4 的前提（CRDT S4b-1b）也已落地 ⇒ 可施工。口径一句话：**分开绿 ≠ 一起绿**。
 
 ### 更早的批次（v1.82 → v1.91.3，保留用于查历史与教训）
 
