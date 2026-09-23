@@ -507,6 +507,9 @@ function PageCrdtBinding({
     const port: PageStatePort = {
       read: (id) => api.readPageState(id),
       save: (id, state) => api.savePageState(id, state),
+      // §11.4 收口：桌面 pull 收下的**待并远端状态**（Web 平台恒为空 —— 它当场合并）。
+      readPending: (id) => api.readPendingPageStates(id),
+      clearPending: (id) => api.clearPendingPageStates(id),
     };
 
     // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：

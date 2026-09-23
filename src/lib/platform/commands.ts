@@ -362,6 +362,11 @@ export interface CommandMap {
   // ⚠️ 入参是**本地工作空间 id**（页所属那一个）：远端 `space_id` 由平台层从该工作空间的档案里取
   //    （两者是两套 id，见 `crdt/claimScope.ts` 文件头）。
   claim_page_lineage: { args: { args: { workspace_id: string; page_id: string } }; result: { granted: boolean; unavailable?: boolean } };
+  // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**待并的远端状态**（桌面 pull 收下的）。
+  // ⚠️ **两侧行为不同是平台事实**：桌面 Rust 没有 Yjs ⇒ 只能先把字节收进 `page_crdt_pending`，
+  //    由界面侧在打开页面时合并；Web 平台在 `applyChange` 里**当场**合并 ⇒ 恒为空数组 / 0 条。
+  read_pending_page_states: { args: { args: { page_id: string } }; result: { seq: number; state: number[] }[] };
+  clear_pending_page_states: { args: { args: { page_id: string } }; result: number };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

@@ -32,6 +32,9 @@ mod doc_content;
 // 冲刺 CRDT S7（2026-09-23）：每页的 **CRDT 状态**存取（`page_crdt` 表）—— 与前端那一层
 // `readPageCrdtState` / `writePageCrdtState` / `clearPageCrdtState` 成对，判据也成对。
 mod page_crdt;
+// 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**同步载荷里的 CRDT 状态字段**（桌面侧）—— 与前端
+// `src/lib/crdt/wireState.ts` 成对（同一套语义：没有 ⇒ 走今天那条路、版本不认识 ⇒ 不猜、坏载荷 ⇒ 如实报）。
+mod crdt_wire;
 // 旧二进制 Office → OOXML 的平台转换器（`deps.convertLegacy` 的桌面实装；抽取器在 TS 侧）。
 // 命令面：`convert_legacy_office(data, to)`。详见该文件头注（三条口径：`to` 由抽取器定 / 失败一律 Err / 临时件自清）。
 mod legacy_convert;
@@ -520,6 +523,10 @@ pub fn run() {
             // 与 Web 同行为（在此之前它俩只登记为 web 专用，桌面上每次打开页面都会绑定失败）。
             commands::read_page_state,
             commands::save_page_state,
+            // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**待并的远端状态**（桌面 pull 收下的，
+            // 交给界面侧在打开页面时合并；Web 平台恒为空 —— 它当场合并）。
+            commands::read_pending_page_states,
+            commands::clear_pending_page_states,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,

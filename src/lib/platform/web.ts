@@ -1471,6 +1471,16 @@ export function makeInvoke(store: SqliteStore) {
       writePageCrdtState(store, String(args.page_id ?? ""), new Uint8Array(args.state ?? []), Date.now());
       return null as T;
     }
+    if (cmd === "read_pending_page_states") {
+      // 冲刺 §11.4 收口：Web 平台**没有**旁路表 —— 它在 `applyChange` 里收到载荷就**当场**合并
+      //（`applyRemoteCrdtState` ⇒ `mergeRemotePageState`）⇒ 不存在"待并"的状态。恒为空是**正确**的，
+      // 不是没实现；桌面侧才有（Rust 没有 Yjs，只能先把字节收下来，等界面打开这一页时再合）。
+      return [] as T;
+    }
+    if (cmd === "clear_pending_page_states") {
+      // 同上：Web 上没有待并状态 ⇒ 恒清 0 条（与"清了 0 条"同一读数，不是错误）。
+      return 0 as T;
+    }
     if (cmd === "claim_page_lineage") {
       // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
       //

@@ -399,6 +399,27 @@ pub fn save_page_state(db: State<Db>, args: SavePageStateArgs) -> Result<(), Str
     crate::page_crdt::write_page_crdt_state(&c, &args.page_id, &args.state, now_ms())
 }
 
+/// 冲刺 §11.4 收口（2026-09-23 第 42 轮）：这一页**待并的远端状态**。
+///
+/// 桌面 pull 收到带状态的页载荷时把它收进 `page_crdt_pending`（Rust **没有** Yjs，不在这里合并），
+/// 由界面侧在**打开页面**时交给那份唯一实现（`crdt/pageBinding.ts` 的 `mergeRemotePageState` 同族逻辑）。
+/// Web 平台**恒为空**（它在 `applyChange` 里当场合并）—— 两侧行为不同是**平台事实**，不是漏实现。
+#[tauri::command]
+pub fn read_pending_page_states(
+    db: State<Db>,
+    args: PageStateArgs,
+) -> Result<Vec<crate::page_crdt::PendingCrdtState>, String> {
+    let c = conn(&db);
+    crate::page_crdt::read_pending_states(&c, &args.page_id)
+}
+
+/// 合并完就清（返回值＝**清了几条**：`0` 是"本来就没有"，不是错误 —— 与 `clear_page_crdt_state` 同一口径）。
+#[tauri::command]
+pub fn clear_pending_page_states(db: State<Db>, args: PageStateArgs) -> Result<usize, String> {
+    let c = conn(&db);
+    crate::page_crdt::clear_pending_states(&c, &args.page_id)
+}
+
 #[tauri::command]
 pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String> {
     let c = conn(&db);

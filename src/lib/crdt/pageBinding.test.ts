@@ -272,4 +272,116 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     mergeRemotePageState(db2, "p1", stateA, 2);
     expect(idsOf(projectStateToJson(readPageCrdtState(db2, "p1")!))).toEqual(ids);
   });
+
+  // ---------------------------------------------------------------------------------------
+  // §11.4 收口（第 42 轮）：桌面 pull 收下的**待并远端状态** —— 打开页面时合并
+  // ---------------------------------------------------------------------------------------
+
+  /** 造一台"对端设备"的状态：从 `base` 那条血统出发，加一块。 */
+  function peerStateFrom(base: Uint8Array | { json: string }, blockId: string, text: string): Uint8Array {
+    const s = "json" in base ? openPageSession({ json: base.json }) : openPageSession({ state: base });
+    s.edit(() => {
+      const p = $createBlockParagraphNode(blockId);
+      p.append($createTextNode(text));
+      $getRoot().append(p);
+    });
+    const out = s.exportState();
+    s.dispose();
+    return out;
+  }
+
+  it("⑱ ★ 本机**没有**状态但收下了对端的（待并）⇒ 打开页面就**承接**那条血统：不 claim、不新建", async () => {
+    const peerState = peerStateFrom({ json: BASE }, "blk-peer", "对端加的");
+
+    const store = new Map<string, Uint8Array>();
+    let pending: Array<{ seq: number; state: Uint8Array }> = [{ seq: 7, state: peerState }];
+    let claimCalls = 0;
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+      readPending: async () => pending,
+      clearPending: async () => {
+        const n = pending.length;
+        pending = [];
+        return n;
+      },
+    };
+    const claim = {
+      claim: async () => {
+        claimCalls += 1;
+        return true;
+      },
+    };
+
+    const e = appEditor(BASE);
+    const b = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e, seedJson: serialize(e), claim, deviceId: "dev" });
+
+    console.log(`【⑱ 实测】承接后 = ${JSON.stringify(idsOf(b.session.exportJson()))}`);
+    expect(b.seeded).toBe(false); // 血统**不是**本机建的
+    expect(b.adopted).toBe(true); // 是**承接**对端那条
+    expect(claimCalls).toBe(0); // ★ 根本没问服务端（血统已经由对端建了）
+    expect(store.has("p1")).toBe(true); // 承接的那条立刻落盘（下次打开就是"载入既有血统"）
+    expect(pending).toEqual([]); // 合并过就清（不清就是每次打开都再并一遍）
+    expect(idsOf(b.session.exportJson())).toEqual(["blk-1", "blk-2", "blk-peer"]);
+    expect(idsOf(serialize(e))).toEqual(["blk-1", "blk-2", "blk-peer"]); // hydration 落进了编辑器
+    b.dispose();
+  });
+
+  it("⑲ ★ 本机有状态 ＋ 待并 ⇒ 合并（两处都在）并清空；**两条独立血统** ⇒ 拒绝合并（留痕、本机保留）", async () => {
+    const store = new Map<string, Uint8Array>();
+    let pending: Array<{ seq: number; state: Uint8Array }> = [];
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+      readPending: async () => pending,
+      clearPending: async () => {
+        const n = pending.length;
+        pending = [];
+        return n;
+      },
+    };
+
+    // 本机首开建血统，并打一块
+    const e0 = appEditor(BASE);
+    const b0 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
+    expect(b0.seeded).toBe(true);
+    typeBlock(e0, "blk-mine", "本机打的");
+    await b0.persist();
+    const mineState = store.get("p1")!;
+    b0.dispose();
+
+    // ① 同血统的对端状态 ⇒ 合并：两处都在、不重复，pending 清空
+    pending = [{ seq: 8, state: peerStateFrom(mineState, "blk-peer", "对端加的") }];
+    const e1 = appEditor(projectStateToJson(mineState));
+    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    const mergedIds = idsOf(b1.session.exportJson());
+    console.log(`【⑲ 实测】合并后 = ${JSON.stringify(mergedIds)}`);
+    expect(b1.adopted).toBe(false); // 本机本来就有状态
+    expect(b1.pendingSkipped).toBe(0);
+    expect(new Set(mergedIds).size).toBe(mergedIds.length); // 没有重复块
+    expect([...mergedIds].sort()).toEqual(["blk-1", "blk-2", "blk-mine", "blk-peer"]);
+    expect(pending).toEqual([]);
+    expect(idsOf(projectStateToJson(store.get("p1")!))).toEqual(mergedIds); // 合并结果已落盘
+    b1.dispose();
+
+    // ② **独立血统**（对端从 JSON 新建 ⇒ 另一套身份）⇒ 拒绝合并、留痕、本机保留
+    const independent = peerStateFrom({ json: BASE }, "blk-other", "另一套身份");
+    pending = [{ seq: 9, state: independent }];
+    const before = idsOf(projectStateToJson(store.get("p1")!));
+    const e2 = appEditor(projectStateToJson(store.get("p1")!));
+    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    const after = idsOf(b2.session.exportJson());
+    console.log(`【⑲② 实测】独立血统被拒后 = ${JSON.stringify(after)}`);
+    expect(b2.pendingSkipped).toBe(1); // ★ 有痕（调用方能如实报出来）
+    expect(after).toEqual(before); // 本机版本原样保留（没有被并进来）
+    expect(after).not.toContain("blk-other");
+    expect(pending).toEqual([]); // 拒了也要清（否则每次打开都重试同一批）
+    b2.dispose();
+  });
 });

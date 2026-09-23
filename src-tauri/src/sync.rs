@@ -126,6 +126,14 @@ pub fn record_change(
 
 pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
+    // ★ §11.4 收口（第 42 轮）· **推**那一半：这一页有 CRDT 状态 ⇒ 把它挂到载荷上
+    //   （与 TS 的 `withCrdtWire` 同一形状、同一字段名）。在此之前**桌面推出去的载荷从不带状态**
+    //   ⇒ 桌面↔Web 之间那条 CRDT 链路是断的（Web 对端只能按块级 LWW 收）。
+    //   ⚠️ **没有状态 ⇒ 载荷逐字不变**（老路径零感知：这条路不经过序列化改写）。
+    let payload = match crate::page_crdt::read_page_crdt_state(c, &page.id)? {
+        Some(state) if !state.is_empty() => crate::crdt_wire::with_wire_state(&payload, &state)?,
+        _ => payload,
+    };
     record_change(c, "page", &page.id, "upsert", Some(&payload), page.updated_at)
 }
 
@@ -148,6 +156,44 @@ pub enum UpsertApply {
     /// ⚠️ 调用方**必须**为这一支留痕（`doc_content::stash_pending_remote`）—— 否则就是取证里的 L：
     /// 游标过去了、对端那笔编辑再也取不回、层里什么都没有。
     KeptLocal,
+}
+
+/// ★ §11.4 收口（第 42 轮）：把页载荷里的 **CRDT 状态**收进旁路表。
+///
+/// **收到就收** —— 与"这一条变更最后用谁的版本"**无关**：页级保留本地（`KeptLocal`）时那一版状态
+/// 同样不能丢，否则桌面永远追不上对端（编辑器 hydration 以本地状态为准 ⇒ 跨设备编辑被静默覆盖）。
+///
+/// 三种情形**分开**处置（混成一种的下场是静默丢块，与 `wireState.ts` 同一张表）：
+///   · 解出来        ⇒ 收进 `page_crdt_pending`（同一 `seq` 重放幂等）；
+///   · 版本不认识    ⇒ **不猜**，留一条 warn；
+///   · 载荷坏了      ⇒ 同样**留痕**（不静默截断、不当空状态）；
+///   · 没有这一项    ⇒ 什么也不做（老载荷 ⇒ 与接线前**逐字相同**）。
+///
+/// 抽成独立函数是为了让判据能直接钉它（不必起一次真 pull）；返回值＝"这次有没有收下"。
+fn absorb_incoming_crdt_state(
+    c: &Connection,
+    page_id: &str,
+    seq: i64,
+    plain: &str,
+    now: i64,
+) -> Result<bool, String> {
+    match crate::crdt_wire::extract_wire_state(plain) {
+        Ok(crate::crdt_wire::WireState::None) => Ok(false),
+        Ok(crate::crdt_wire::WireState::Ok(bytes)) => {
+            crate::page_crdt::put_pending_state(c, page_id, seq, &bytes, now)?;
+            Ok(true)
+        }
+        Ok(crate::crdt_wire::WireState::UnknownVersion(v)) => {
+            eprintln!(
+                "[sync] page {page_id} 的 CRDT 状态版本 {v} 本机不认识 ⇒ **未收下**（不猜；内容按今天那条路落库）"
+            );
+            Ok(false)
+        }
+        Err(e) => {
+            eprintln!("[sync] page {page_id} 的 CRDT 载荷坏了：{e}（**未收下**；内容按今天那条路落库）");
+            Ok(false)
+        }
+    }
 }
 
 fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<UpsertApply, String> {
@@ -1789,6 +1835,10 @@ let mut pending_remote_ids: Vec<String> = Vec::new();
                     if let Ok(page) = serde_json::from_str::<PageDetail>(&plain) {
                         // 能解析出 id ⇒ 万一后面应用失败，用**这一版**归档（与 Web 的 pageRowOfChangeForStash 同口径）
                         stash_source = Some(plain.clone());
+                        // ★ §11.4 收口（第 42 轮）：载荷里带了 **CRDT 状态** ⇒ **收到就收进旁路表**。
+                        //   与"最后用谁的版本"无关（`KeptLocal` 那一支的状态同样不能丢）；真正的合并在
+                        //   **打开页面**时由 WebView 里那份唯一实现（`mergeRemotePageState`）做。
+                        absorb_incoming_crdt_state(&c, &page.id, change.seq, &plain, now)?;
                         // P0.1 冲突提示：应用远端变更前，若本地该页有未推送改动
                         // （dirty=1），说明"本地未同步 + 服务端有新 seq"——记为冲突，
                         // 交给前端提示用户选择（保留本地 / 采用服务端）。
@@ -3238,6 +3288,69 @@ mod tests {
         // ★ 承重：这是**远端** space id；本地工作空间 id 是 "ws" —— 第一版就是把 "ws" 发出去的
         assert_eq!(space_id, "REMOTE-SP");
         assert_ne!(space_id, "ws");
+    }
+
+    /// ★ §11.4 收口（第 42 轮）：页载荷里的 **CRDT 状态**要**收进旁路表**；没有/不认识/坏了
+    /// 三种情形**分开**处置（"没有"⇒ 与接线前逐字相同；后两种 ⇒ **不猜**且留痕）。
+    #[test]
+    fn absorb_incoming_crdt_state_keeps_bytes_and_never_guesses() {
+        let (c, dir) = pending_conn("absorb-crdt");
+        let page = "p1";
+
+        // ① 有状态 ⇒ 收下（逐字节）
+        let with_state = r#"{"id":"p1","title":"t","crdt_state":{"v":1,"state":[0,255,128]}}"#;
+        assert_eq!(absorb_incoming_crdt_state(&c, page, 11, with_state, 1).unwrap(), true);
+        let got = crate::page_crdt::read_pending_states(&c, page).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].state, vec![0, 255, 128]);
+
+        // ② 没有这一项 ⇒ 什么也不做（**与接线前逐字相同**），原来那条不动
+        assert_eq!(absorb_incoming_crdt_state(&c, page, 12, r#"{"id":"p1"}"#, 2).unwrap(), false);
+        assert_eq!(crate::page_crdt::read_pending_states(&c, page).unwrap().len(), 1);
+
+        // ③ 版本不认识 ⇒ **不猜**、不落库（内容按今天那条路走）
+        let unknown = r#"{"id":"p1","crdt_state":{"v":99,"state":[1]}}"#;
+        assert_eq!(absorb_incoming_crdt_state(&c, page, 13, unknown, 3).unwrap(), false);
+        assert_eq!(crate::page_crdt::read_pending_states(&c, page).unwrap().len(), 1);
+
+        // ④ 载荷坏了 ⇒ 同样不收（**留痕**），更不许当空状态
+        let broken = r#"{"id":"p1","crdt_state":{"v":1,"state":[1,300]}}"#;
+        assert_eq!(absorb_incoming_crdt_state(&c, page, 14, broken, 4).unwrap(), false);
+        assert_eq!(crate::page_crdt::read_pending_states(&c, page).unwrap().len(), 1);
+
+        // ⑤ 同一笔重放（同 seq）⇒ 幂等，不新增行
+        assert_eq!(absorb_incoming_crdt_state(&c, page, 11, with_state, 5).unwrap(), true);
+        assert_eq!(crate::page_crdt::read_pending_states(&c, page).unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// ★ §11.4 收口 · **推**那一半：有状态才挂字段，没状态**载荷逐字不变**（老路径零感知）。
+    #[test]
+    fn record_page_upsert_attaches_crdt_state_only_when_present() {
+        let (c, dir) = pending_conn("push-crdt");
+        let page = remote_page("p1", &page_json("b1", 1, "字"));
+
+        // ① 没有状态 ⇒ 载荷与"直接序列化 PageDetail"**逐字节相同**
+        record_page_upsert(&c, &page).unwrap();
+        let plain: String = c
+            .query_row("SELECT payload FROM changes WHERE entity_id = 'p1' ORDER BY seq DESC LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(plain, serde_json::to_string(&page).unwrap(), "没状态时载荷必须逐字不变");
+
+        // ② 有状态 ⇒ 挂上 crdt_state，且能按同一张表读回来
+        crate::page_crdt::write_page_crdt_state(&c, "p1", &[7, 8, 9], 1).unwrap();
+        record_page_upsert(&c, &page).unwrap();
+        let tagged: String = c
+            .query_row("SELECT payload FROM changes WHERE entity_id = 'p1' ORDER BY seq DESC LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_ne!(tagged, plain);
+        assert_eq!(
+            crate::crdt_wire::extract_wire_state(&tagged).unwrap(),
+            crate::crdt_wire::WireState::Ok(vec![7, 8, 9])
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

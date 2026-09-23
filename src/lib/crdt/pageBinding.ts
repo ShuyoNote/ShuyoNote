@@ -227,16 +227,37 @@ export function mergeRemotePageState(
 // 顺序逻辑（"先读、没有才建一次并立刻落盘"）仍然只写在**这一个文件**里，不在组件里重写一遍。
 // =====================================================================================
 
-/** 状态的**存取端口**。界面侧用 `lib/api` 实现即可（也就是那两条平台命令）。 */
+/** 一条**待并的远端状态**（桌面 Rust 收下的；Web 平台恒为空 —— 它当场合并）。 */
+export interface PendingPageState {
+  /** 服务端那一笔变更的 `seq`（只用于稳定排序与留痕，不参与合并语义）。 */
+  seq: number;
+  state: Uint8Array;
+}
+
+/** 状态的**存取端口**。界面侧用 `lib/api` 实现即可（也就是那几条平台命令）。 */
 export interface PageStatePort {
   read(pageId: string): Promise<Uint8Array | null>;
   save(pageId: string, state: Uint8Array): Promise<unknown>;
+  /**
+   * 冲刺 §11.4 收口：**待并的远端状态**（桌面才有内容）。
+   * 不实现 ⇒ 等同于"没有待并状态"（与接线前**逐字相同** —— 老调用方零感知）。
+   */
+  readPending?(pageId: string): Promise<PendingPageState[]>;
+  /** 合并完就清（不实现 ⇒ 什么都不做）。 */
+  clearPending?(pageId: string): Promise<unknown>;
 }
 
 /** 端口版绑定：`persist` 是**异步**的（IPC/平台命令），**调用方必须处理失败**（不许静默）。 */
 export interface AsyncPageBinding {
   session: PageSession;
   seeded: boolean;
+  /**
+   * 本机**没有**状态、但收下了对端的（待并）状态 ⇒ 这一页的血统**由对端建**，本机只是**承接**。
+   * ⚠️ 与 `seeded` 互斥：`adopted=true` 时 seeded 必为 `false`（没"首开建一次"这回事）。
+   */
+  adopted?: boolean;
+  /** 待并状态里因为"不是同一条血统"被**拒绝合并**的条数（> 0 ⇒ 有痕，调用方该如实报出来）。 */
+  pendingSkipped?: number;
   persist(): Promise<void>;
   dispose(): void;
 }
@@ -264,12 +285,46 @@ export async function bindPageToEditorViaPort(opts: {
 }): Promise<AsyncPageBinding> {
   const { port, pageId, editor, seedJson } = opts;
   const state = await port.read(pageId);
-  if (state) {
-    // ① 本地已有血统 ⇒ 载入。**不 claim、不重建**（这是 S1 红线那个入口）。
-    const session = openPageSession({ state, editor });
+  const pending = (await port.readPending?.(pageId)) ?? [];
+
+  // ★★ §11.4 收口（第 42 轮）：**先把收下的远端状态并掉，再谈建不建血统**。
+  //   顺序很重要：本机已有状态 ⇒ 在它上面继续；本机没有但收下了对端的 ⇒ **承接对端那条血统**
+  //   （这正是 `bootstrap.ts` 里 `wait-for-remote` 想要的"等它同步下来"）—— 两者都**不 claim**。
+  if (state || pending.length > 0) {
+    // 起点：本机状态优先；没有就取**最旧**那条待并状态（它自带对端的血统）。
+    const base = state ?? pending[0].state;
+    const session = openPageSession({ state: base, editor });
+    let ids = lineageClientIds(base);
+    let merged = false;
+    let skipped = 0;
+    for (const p of state ? pending : pending.slice(1)) {
+      const remoteIds = lineageClientIds(p.state);
+      // ★ 与 `mergeRemotePageState` **同一条护栏**（复用同一对纯函数，不另写一份判定）：
+      //   两条**独立创建**的血统不许合（合了就是 S1 那个"一块变两块"）⇒ 拒绝并**留痕**。
+      if (!lineagesRelated(ids, remoteIds)) {
+        skipped += 1;
+        console.warn(
+          `[crdt] 待并的远端状态与这条血统无关 ⇒ 拒绝合并（本机版本保留）page=${pageId} seq=${p.seq}`,
+        );
+        continue;
+      }
+      session.merge(p.state);
+      merged = true;
+      ids = new Set([...ids, ...remoteIds]);
+    }
+    // 只有**动过**才回写（与 `mergeRemotePageState` 同一纪律：没变就一次写库都不做）
+    if (merged || state === null) {
+      await port.save(pageId, session.exportState());
+    }
+    // 合并过就清（不实现 `clearPending` ⇒ 不清 —— 那会让同一批状态每次打开都再并一遍；调用方该实现它）
+    if (pending.length > 0) {
+      await port.clearPending?.(pageId);
+    }
     return {
       session,
       seeded: false,
+      adopted: state === null,
+      pendingSkipped: skipped,
       async persist() {
         await port.save(pageId, session.exportState());
       },
@@ -279,7 +334,7 @@ export async function bindPageToEditorViaPort(opts: {
     };
   }
 
-  // ②③④ 本地没有 ⇒ 走 S9 的决策（`bootstrap.ts`，四支都有判据）。
+  // ②③④ 本地没有（也**没有收下任何**对端状态）⇒ 走 S9 的决策（`bootstrap.ts`，四支都有判据）。
   const verdict = await claimVerdict(opts.claim, pageId, opts.deviceId ?? "");
   const decision = decideBootstrap({ hasLocalState: false, claim: verdict });
   if (decision.action === "wait-for-remote") {

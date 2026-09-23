@@ -259,6 +259,19 @@ export const api = {
    * ⚠️ 注释里别写"星号紧跟斜杠"那种连写（它会**提前关掉块注释** —— 本行第一版写 403 时就那么炸过一次）。
    */
   claimPageLineage: (args: { workspace_id: string; page_id: string }) => invoke("claim_page_lineage", { args }),
+  /**
+   * 冲刺 §11.4 收口（2026-09-23 第 42 轮）：这一页**待并的远端状态**。
+   *
+   * 桌面 Rust **没有** Yjs（要不要引进 `yrs` 是 S5 阶段 2 的决策）⇒ 它只把同步收到的字节**收下来**，
+   * 由这里交给界面侧在**打开页面**时合并（那份唯一实现）；Web 平台在 `applyChange` 里**当场**合并
+   * ⇒ 这个清单在 Web 上**恒为空**（两侧行为不同是平台事实，不是漏实现）。
+   */
+  readPendingPageStates: (id: string) =>
+    invoke("read_pending_page_states", { args: { page_id: id } }).then((rows) =>
+      (rows ?? []).map((r) => ({ seq: Number(r.seq), state: new Uint8Array(r.state) })),
+    ),
+  /** 合并完就清（返回**清了几条**：`0` 是"本来就没有"，不是错误）。 */
+  clearPendingPageStates: (id: string) => invoke("clear_pending_page_states", { args: { page_id: id } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
