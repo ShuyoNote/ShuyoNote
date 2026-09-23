@@ -104,19 +104,42 @@ pub fn decrypt_attachment_bytes(key: Option<&crypto::AppKeys>, data: &[u8]) -> R
 }
 
 /// Encrypt a plaintext payload for the wire if encryption is enabled.
+///
+/// ★ **第 1 步（1b）**：先问**这个连接对应的空间**（钥匙袋里有没有它的盒子）——
+/// 有 ⇒ 用**它自己的**钥匙（v1）；没有 ⇒ 旧路（应用级开关）。
+/// ⚠️ `Err` 只出现在"袋子里有它、但会话锁着 / 盒子坏了"：那种情况**必须报出来**，
+/// 绝不许像"没有钥匙"那样**把明文原样放行**（那是静默的明文上云）。
 pub fn encrypt_payload(c: &Connection, payload: &str) -> Result<String, String> {
-    match key_if_enabled(c) {
+    match wire_keys_for_conn(c)? {
         Some(k) => crypto::encrypt_str(payload, &k),
         None => Ok(payload.to_string()),
     }
 }
 
 /// Decrypt an incoming payload if encryption is enabled; passthrough otherwise.
+///
+/// ⚠️ 与 `encrypt_payload` 同一条按空间规则。**放行条件**收得更紧：只有"这个空间本来就不该是密文"
+/// （袋子没有它 ＋ 应用级开关没开）才原样返回；否则解不开就**报错**（不许把密文当明文读）。
 pub fn decrypt_payload(c: &Connection, payload: &str) -> Result<String, String> {
-    match key_if_enabled(c) {
+    match wire_keys_for_conn(c)? {
         Some(k) => crypto::decrypt_str(payload, &k),
         None => Ok(payload.to_string()),
     }
+}
+
+/// ★ 第 1 步（1b）：**这个连接**（＝这个空间库）在 wire 上该用哪把钥匙。
+///
+/// 出口只有三种：
+/// · 袋子里真有这个空间 ⇒ `Ok(Some(它自己的 AppKeys))`；
+/// · 袋子里有它、**但**会话锁着或盒子坏了 ⇒ `Err`（**响亮**，不许静默退回旧钥匙或放明文）；
+/// · 袋子没有它 / 这个连接没有空间上下文（内存连接）⇒ 旧路：应用级开关 ＋ 会话钥匙。
+fn wire_keys_for_conn(c: &Connection) -> Result<Option<crypto::AppKeys>, String> {
+    if let Some(path) = c.path() {
+        if let Some(keys) = crate::space_crypto::space_app_keys_for_path(Path::new(path))? {
+            return Ok(Some(keys));
+        }
+    }
+    Ok(key_if_enabled(c))
 }
 
 /// 一段同步载荷（base64）里那段的密文版本 —— **不解密、不要密钥**。
@@ -996,6 +1019,63 @@ mod tests {
 
         // ③ 收尾：别把全局状态留给别的判据（袋子/主密钥/session key 全清）
         *SESSION_KEY.lock().unwrap() = None;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 第 1 步（1b）：**wire 载荷按空间** —— 袋子里真有这个空间 ⇒ 用它**自己**的钥匙
+    /// （而不是应用级那把）；锁着 ⇒ **报错**（绝不静默放明文）；没有袋子 ⇒ 与今天逐字相同。
+    #[test]
+    fn wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(uniq_tmp("wirekey"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // 一个真文件连接（内容不用加密，只为让 `c.path()` 指到 `spaces/sc-wire-1.db`）
+        let space_path = space_db_path(&dir, "sc-wire-1");
+        let c = Connection::open(&space_path).unwrap();
+
+        // ① 没有袋子 ＋ 应用级开关没开 ⇒ 原样（今天的行为）
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        *SESSION_KEY.lock().unwrap() = None;
+        assert_eq!(encrypt_payload(&c, "abc").unwrap(), "abc", "没开加密 ⇒ 原样");
+
+        // ② 袋子里有这个空间 ⇒ 用**它自己的**钥匙：空间钥匙解得开、应用级那把解不开
+        let space_key = crate::keyring::random_space_key();
+        let mut kr = crate::keyring::Keyring::new();
+        let master = kr.kdf.derive_master("pw").unwrap();
+        kr.wrap(&master, "sc-wire-1", &space_key).unwrap();
+        crate::space_crypto::set_keyring_for_test(Some(kr));
+        crate::space_crypto::set_session_master(Some(master)).unwrap();
+        // 应用级那把**故意**是另一把（错的），用来证明 ② 真的没走旧路
+        *SESSION_KEY.lock().unwrap() = Some(crypto::AppKeys::legacy_only([9u8; 32]));
+
+        let sealed = encrypt_payload(&c, "机密").unwrap();
+        assert_ne!(sealed, "机密", "袋里的空间必须真的加密");
+        assert_eq!(
+            crate::crypto::decrypt_str(&sealed, &crypto::AppKeys::legacy_only(space_key)).unwrap(),
+            "机密",
+            "★ 用的是**空间自己的**钥匙"
+        );
+        assert!(
+            crate::crypto::decrypt_str(&sealed, &crypto::AppKeys::legacy_only([9u8; 32])).is_err(),
+            "不是应用级那把钥匙（否则就是没按空间）"
+        );
+        assert_eq!(decrypt_payload(&c, &sealed).unwrap(), "机密", "收回来也要解得开");
+
+        // ③ 锁着（主密钥卸下）⇒ **报错**，绝不静默放明文
+        crate::space_crypto::set_session_master(None).unwrap();
+        let err = match encrypt_payload(&c, "机密") {
+            Ok(v) => panic!("锁着还把明文放行了：{v}"),
+            Err(e) => e,
+        };
+        assert!(err.contains("未解锁"), "{err}");
+        assert!(decrypt_payload(&c, &sealed).is_err(), "锁着也不许把密文当明文读");
+
+        // ④ 收尾：清干净（别留给别的判据）
+        crate::space_crypto::set_keyring_for_test(None);
+        *SESSION_KEY.lock().unwrap() = None;
+        drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

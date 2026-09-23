@@ -134,6 +134,18 @@ pub fn space_key_for_path(path: &Path) -> Result<Option<[u8; 32]>, String> {
     }
 }
 
+/// **wire 载荷**用的钥匙材料：把按空间取到的 32 字节包成 `AppKeys`（`legacy` 那一把）。
+///
+/// ⚠️ 为什么是 `legacy_only`：空间钥匙是**随机 32 字节**，没有"口令 ⇒ SM 那一对"的派生链
+/// ⇒ 这个空间的载荷一律写 **v1（XChaCha20-Poly1305）**。国密构建下的空间级 SM 派生是**后续**的事，
+/// 不在这里假装支持（假支持会让"本构建解不开"变成"能读但读出错"）。
+pub fn space_app_keys_for_path(path: &Path) -> Result<Option<AppKeys>, String> {
+    match space_key_for_path(path)? {
+        Some(k) => Ok(Some(AppKeys::legacy_only(k))),
+        None => Ok(None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
