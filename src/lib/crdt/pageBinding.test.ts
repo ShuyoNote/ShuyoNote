@@ -14,7 +14,7 @@ import { EDITOR_NODES } from "../../editor/config";
 import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode";
 import { toLegacyDoc, toModelDoc } from "../blockIdentity";
 import { readPageCrdtState, type ContentSql } from "../docContent";
-import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor } from "./pageBinding";
+import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor, mergeRemotePageState } from "./pageBinding";
 import { openPageSession, projectStateToJson } from "./yDocBridge";
 
 /** 只认 `page_crdt` 三条 SQL 的极简库（不认识的形状当场抛）。 */
@@ -216,5 +216,56 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect([...ids].sort()).toEqual(["blk-1", "blk-2", "blk-port", "blk-port2"]);
     b3.dispose();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // S4a：远端来的状态并进本机（"真正的合并同步"在客户端这一侧）
+  // ---------------------------------------------------------------------------------------
+
+  it("⑮⑯⑰ 远端状态并进本机：本机没有 ⇒ **采用**；两端各改一处 ⇒ 都在且不重复；**次序无关**", () => {
+    const { db } = fakeDb();
+
+    // 造两条**同血统**的编辑（模拟两台设备：都从同一条血统出发，各改一处）
+    const base = openPageSession({ json: BASE });
+    const s0 = base.exportState();
+    base.dispose();
+    const devA = openPageSession({ state: s0 });
+    const devB = openPageSession({ state: s0 });
+    devA.edit(() => {
+      const p = $createBlockParagraphNode("blk-A");
+      p.append($createTextNode("A 那边加的"));
+      $getRoot().append(p);
+    });
+    devB.edit(() => {
+      const p = $createBlockParagraphNode("blk-B");
+      p.append($createTextNode("B 那边加的"));
+      $getRoot().append(p);
+    });
+    const stateA = devA.exportState();
+    const stateB = devB.exportState();
+    devA.dispose();
+    devB.dispose();
+
+    // ⑮ 本机还没有这一页的状态 ⇒ **采用**远端那一版（不是从 JSON 重建）
+    const first = mergeRemotePageState(db, "p1", stateA, 1);
+    expect(first.adopted).toBe(true);
+    const afterA = idsOf(projectStateToJson(readPageCrdtState(db, "p1")!));
+    expect([...afterA].sort()).toEqual(["blk-1", "blk-2", "blk-A"]);
+
+    // ⑯ 再并 B 那一版 ⇒ **两处都在、不重复**；重复并同一版 ⇒ 幂等
+    const second = mergeRemotePageState(db, "p1", stateB, 2);
+    expect(second.adopted).toBe(false);
+    const ids = idsOf(projectStateToJson(readPageCrdtState(db, "p1")!));
+    console.log(`【⑯ 实测】两版并进本机 = ${JSON.stringify(ids)}`);
+    expect(new Set(ids).size).toBe(ids.length); // 没有重复块（＝没有各起一条血统）
+    expect([...ids].sort()).toEqual(["blk-1", "blk-2", "blk-A", "blk-B"]);
+    mergeRemotePageState(db, "p1", stateB, 3);
+    expect(idsOf(projectStateToJson(readPageCrdtState(db, "p1")!))).toEqual(ids);
+
+    // ⑰ **次序无关**：换一个库，先 B 后 A ⇒ 最终投影与上面**完全一致**（含顺序）
+    const db2 = fakeDb().db;
+    mergeRemotePageState(db2, "p1", stateB, 1);
+    mergeRemotePageState(db2, "p1", stateA, 2);
+    expect(idsOf(projectStateToJson(readPageCrdtState(db2, "p1")!))).toEqual(ids);
   });
 });
