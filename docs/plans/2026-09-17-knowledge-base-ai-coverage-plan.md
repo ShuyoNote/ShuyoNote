@@ -468,7 +468,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 | 格 | 现状（取证） | 缺什么 | 交付形状（建议） | 判据（建议） | 归属（按 git 作者） | 风险 / 边界 |
 |---|---|---|---|---|---|---|
-| **数据库块**（P3-②） | 数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成 `content_text`。原表引的 `DatabaseView.tsx` 那行是「另存为模板」 | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::writeContentTextIfChanged` 那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `writeContentTextIfChanged` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
+| **数据库块**（P3-②） | **✅ 已落地**（纯函数 AMD `81b0657e` ＋ 接线 macOS `1e68f680`）。**缺的是什么**：数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成正文文本。原表引的 `DatabaseView.tsx` 那行是「另存为模板」（订正见 `2026-09-22-coverage-p3-remaining-two-cells.md` §一）。**接线形态**：`src/lib/databaseTextForPage.ts`（纯函数层：`databasePageText` ⇒ **空库 `null`**／`databaseRulesText` ⇒ 人读规则短句／`refreshDatabasePageText` ⇒ 非空才调那条入口）＋ `DatabaseView.load()` 一处调 `api.refreshPageText`（**只动正文文本**：不动内容 JSON、不动 `dirty`、不动 `updated_at`；两侧的同名实现本来就有判据：`docContent.test.ts` 与 `doc_content.rs::tests`） | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::writeContentTextIfChanged` 那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `writeContentTextIfChanged` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
 | **绘图块**（P3-①） | **✅ 已落地**。分工是**两份合起来的**（撞车后由 `43decd56` 收口）：<br>· **结构纯函数 ＝ AMD** `src/lib/drawingStructureText.ts`（`excalidrawStructureText` ⇒ `{text,nodeCount,edgeCount}`，定序 **y→x→id**、装饰忽略、已删除忽略）；<br>· **合成层 ＝ cnzen** `src/lib/drawingText.ts::excalidrawSearchText`（**进正文的全文 ＝ 标签 ＋ 结构**，标签在前、换行分隔、任一半为空不加空行；总长 `MAX_DRAWING_TEXT_CHARS = 20_000` **封顶并明说截断**）；<br>· 接线一处：`DrawingEditorModal.tsx` 保存绘图时调 `excalidrawSearchText` | 无（已完成） | **方言以 `drawingStructureText.ts` 为准**（`drawingText.ts:32` 的注释就指着它）：一行一条连线 `A → B`、端点无文字退类型名、无连线但有文字的节点单独成行；上限/截断由合成层负责（结构函数不加上限 —— 它不知道标签占了多少） | 结构侧 **11 条**（AMD，含"**打乱输入顺序 ⇒ 逐字相同**"）＋ 合成层 **4 条**（cnzen：两半都在／不加空行／封顶截断／`excalidrawSceneText` 回归守护） | AMD（结构）＋ cnzen（合成与接线） | ⚠️ **存量绘图块仍是旧快照** —— 节点里的 `text` 是"保存那一刻"算的 ⇒ 已存在的绘图要**重新打开并保存**才带结构文本（或另做批量重算入口）；与 P3-② 同一模式 |
 
 > **一句话交接**：这两格都**不需要新契约**（不是 `deps` 能力、不是抽取器），改动落在
@@ -480,7 +480,9 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >   cnzen 在 `drawingText.ts` 里，方言 `矩形"审批" →箭头→ 矩形"发布"`）。收口提交 **`43decd56`**（cnzen）的处置是
 >   **保留 AMD 那份结构函数**（`drawingText.ts` 退成**合成层**：`sceneText ＋ structureText`、字符封顶、
 >   截断明说、回归守护），并删掉他们自己那份结构实现与判据 —— ⇒ **方言现以 `drawingStructureText.ts` 为准**；
-> · **P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS**（cnzen `reply-1` §三 认领，
+> · **P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS（cnzen `1e68f680`，12 条判据：含"空库一次都不调"、**源码级接线判据**与**路由判据**——后者盯"接没接上"，因为这一格最容易的坏法是"算法绿、接线掉了"）**
+> · **边界**：**存量数据库页要重新打开一次**才会带上新正文（触发点就是"打开数据库页"）；`rowRefs` 暂不挂内联回链（等真有消费方再一次定死）
+> · 旧注：P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS（cnzen `reply-1` §三 认领，
 >   并同意按工作单第 ③ 条验收「**改正文列之后页面不许变脏**」—— 那是这格里最贵的坑）。
 >   纯函数：`src/lib/databaseText.ts`（`databaseTextOf`，14 条判据）＋ `.test.ts`。三条设计决定（接线方务必读一眼）：
 >   ① **不发明行 ref 的内联方言** —— 返回 `{ text, rowRefs, truncated }`，行回链要不要挂 `[[标题]]` 由接线侧定；
