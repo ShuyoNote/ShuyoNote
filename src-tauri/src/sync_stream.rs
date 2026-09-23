@@ -109,6 +109,83 @@ pub fn stream_url(server: &str, space_id: &str) -> String {
     format!("{}/spaces/{}/changes-stream", server.trim_end_matches('/'), space_id)
 }
 
+// -------------------------------------------------------------------------------------
+// **一次连接** 与 **重连循环**（设计稿 §4.1；判据 5 就靠这两个函数被直接驱动）
+//
+// 为什么要把它们从命令里抽出来：命令那一半要 `AppHandle` 才能跑（发事件），而"连上 ⇒ 收帧 ⇒ 断开 ⇒
+// 退避 ⇒ 重连 ⇒ 再收帧"这条**语义**才是判据 5 要钉的东西。抽成两个吃**回调**的函数之后，
+// 端到端判据可以喂给它一个**假的 SSE 服务端**（本文件 `tests` 里那个），确定性拿到读数 ——
+// 不必起一个 Tauri 应用。命令那一半只是把这些回调接到"全局状态 ＋ `app.emit`"上。
+// -------------------------------------------------------------------------------------
+
+/// **一次连接**：读到断开为止；每次成功连上 ⇒ 回调一次"连上了"，每切出一帧 ⇒ 回调一次载荷。
+///
+/// 返回 `Err` ＝ 这一轮**没连上或读断了**（调用方据此**留痕**并退避重连）——
+/// 注意"服务端正常关闭"也走 `Err`（那就是"该重连了"）。
+///
+/// ⚠️ 回调上那个 `+ Send` 不是装饰：命令那一半要把循环 `tokio::spawn` 出去
+/// （`spawn` 要求 future `Send`），而 `&mut dyn FnMut(..)` 不带 `Send` 时整条 future 就不是 `Send`
+/// —— 编译期会报"future cannot be sent between threads safely"（第一版就是这么被挡下的）。
+pub async fn read_stream_once(
+    url: &str,
+    token: &str,
+    on_connected: &mut (dyn FnMut() + Send),
+    on_frame: &mut (dyn FnMut(&str) + Send),
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut req = client.get(url);
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    // 连上了才回调（调用方用它清"连续重连计数"与 `last_error`）。
+    on_connected();
+    let mut buf = String::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| e.to_string())?;
+        buf.push_str(&String::from_utf8_lossy(&bytes));
+        let (frames, rest) = drain_sse_frames(&buf);
+        buf = rest;
+        for f in frames {
+            on_frame(&f);
+        }
+    }
+    Err("连接被服务端关闭".to_string())
+}
+
+/// **重连循环**：连不上/断了 ⇒ 退避（1s→2s→…→30s）再试，直到 `should_stop()` 说停。
+///
+/// `should_stop` 是给**判据**用的（跑够两轮就收工）；生产那条路靠 `stop()` abort 任务本身。
+pub async fn run_stream_with_reconnect(
+    url: &str,
+    token: &str,
+    on_connected: &mut (dyn FnMut() + Send),
+    on_frame: &mut (dyn FnMut(&str) + Send),
+    on_error: &mut (dyn FnMut(&str) + Send),
+    on_retry: &mut (dyn FnMut(u32) + Send),
+    should_stop: &mut (dyn FnMut() -> bool + Send),
+) {
+    let mut attempt: u32 = 0;
+    loop {
+        if should_stop() {
+            return;
+        }
+        if let Err(e) = read_stream_once(url, token, on_connected, on_frame).await {
+            on_error(&e);
+        }
+        if should_stop() {
+            return;
+        }
+        attempt = attempt.saturating_add(1);
+        on_retry(attempt);
+        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms(attempt - 1))).await;
+    }
+}
+
 /// 发给前端的事件载荷：**只是"有变更"这个信号**，不含任何页面内容（与服务端一致）。
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamChange {
@@ -213,66 +290,45 @@ pub async fn sync_stream_start(
     let ws2 = ws_id.clone();
     let server2 = server.clone();
     let handle = tokio::spawn(async move {
-        let mut attempt: u32 = 0;
-        loop {
-            let client = reqwest::Client::new();
-            let mut req = client.get(&url);
-            if !token.is_empty() {
-                req = req.bearer_auth(&token);
-            }
-            let outcome: Result<(), String> = match req.send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    with_status(|s| {
-                        s.reconnects = 0;
-                        s.last_error.clear();
-                    });
-                    attempt = 0;
-                    let mut buf = String::new();
-                    let mut stream = resp.bytes_stream();
-                    let mut err = None;
-                    while let Some(chunk) = stream.next().await {
-                        match chunk {
-                            Ok(bytes) => {
-                                buf.push_str(&String::from_utf8_lossy(&bytes));
-                                let (frames, rest) = drain_sse_frames(&buf);
-                                buf = rest;
-                                for f in frames {
-                                    let kind = frame_kind(&f).to_string();
-                                    let _ = app2.emit(
-                                        "sync-stream-change",
-                                        StreamChange {
-                                            ws_id: ws2.clone(),
-                                            server: server2.clone(),
-                                            kind,
-                                        },
-                                    );
-                                    with_status(|s| s.last_event_at = now_ms());
-                                }
-                            }
-                            Err(e) => {
-                                err = Some(e.to_string());
-                                break;
-                            }
-                        }
-                    }
-                    match err {
-                        Some(e) => Err(e),
-                        None => Err("连接被服务端关闭".to_string()),
-                    }
-                }
-                Ok(resp) => Err(format!("HTTP {}", resp.status())),
-                Err(e) => Err(e.to_string()),
-            };
-
-            if let Err(e) = outcome {
-                // **不静默**：留痕（界面能读到 `last_error`），然后退避重连。
-                with_status(|s| s.last_error = e);
-            }
-            // 退避后重连（`stop` 会 abort 掉这个任务本身，所以这里不必再查"该不该继续"）。
-            attempt = attempt.saturating_add(1);
-            with_status(|s| s.reconnects = attempt);
-            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms(attempt - 1))).await;
-        }
+        // 把"一次连接 / 重连循环"（本文件上半段那两个可测函数）接到**全局状态 ＋ `app.emit`** 上。
+        // ⚠️ 这一段刻意很薄：语义都在 `run_stream_with_reconnect` 里（那里有判据）。
+        let mut on_connected = || {
+            with_status(|s| {
+                s.reconnects = 0;
+                s.last_error.clear();
+            });
+        };
+        let mut on_frame = |payload: &str| {
+            let kind = frame_kind(payload).to_string();
+            let _ = app2.emit(
+                "sync-stream-change",
+                StreamChange {
+                    ws_id: ws2.clone(),
+                    server: server2.clone(),
+                    kind,
+                },
+            );
+            with_status(|s| s.last_event_at = now_ms());
+        };
+        let mut on_error = |e: &str| {
+            // **不静默**：留痕（界面能读到 `last_error`），随后由循环退避重连。
+            with_status(|s| s.last_error = e.to_string());
+        };
+        let mut on_retry = |n: u32| {
+            with_status(|s| s.reconnects = n);
+        };
+        // `stop()` 用 abort 停这条任务本身 ⇒ 这里不需要第二个停止条件。
+        let mut should_stop = || false;
+        run_stream_with_reconnect(
+            &url,
+            &token,
+            &mut on_connected,
+            &mut on_frame,
+            &mut on_error,
+            &mut on_retry,
+            &mut should_stop,
+        )
+        .await;
     });
 
     {
@@ -413,5 +469,252 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(s.reason, "no-binding");
+    }
+
+    // ---------------------------------------------------------------------------------
+    // 判据 5（客户端那一半）：端到端 —— **断开 ⇒ 退避 ⇒ 重连 ⇒ 恢复**
+    //
+    // 为什么能在单测里做：`run_stream_with_reconnect` 吃的是**回调**（见文件上半段），所以这里喂它一个
+    // **假的 SSE 服务端**就够 —— 那个小服务端每接受一次连接就发一帧、然后**关掉连接**
+    // （＝模拟"被代理掐断/网络抖动"），于是循环必须退避后再连一次，才能拿到第二帧。
+    // 这样"重连并恢复"是**确定性**读数，不需要停真服务端、也不需要起 Tauri 应用。
+    // ---------------------------------------------------------------------------------
+
+    /// 假 SSE 服务端：`frames.len()` 次"接受 ⇒ 发一帧 ⇒ 关闭"。
+    /// 返回 `(port, 句柄)`。用裸 TCP（tokio `net`）写最小的 HTTP 响应，不引额外依赖。
+    async fn fake_sse_server(frames: Vec<String>) -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = tokio::spawn(async move {
+            for f in frames {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                // 先读掉请求（免得对端写阻塞）；这里只读一次，够用。
+                let mut buf = [0u8; 1024];
+                let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                let body = format!("data: {f}\n\n");
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n",
+                    body.len()
+                );
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(body.as_bytes()).await;
+                let _ = sock.flush().await;
+                // ⚠️ **关掉连接** —— 这一步就是"拔网"的替身：循环必须自己退避重连。
+                drop(sock);
+            }
+            // 帧发完了：保持 listener 活着，别让客户端连出"端口拒绝"（那是另一种失败，另有判据）。
+            loop {
+                let Ok((sock, _)) = listener.accept().await else { return };
+                drop(sock);
+            }
+        });
+        (port, handle)
+    }
+
+    /// ★ 判据 5：**断开 ⇒ 退避（≥ 一个退避窗口）⇒ 重连 ⇒ 第二帧照样收到**。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reconnects_after_a_drop_and_recovers() {
+        let (port, server) = fake_sse_server(vec![
+            r#"{"type":"push","accepted":1}"#.to_string(),
+            r#"{"type":"push","accepted":2}"#.to_string(),
+        ])
+        .await;
+        let url = stream_url(&format!("http://127.0.0.1:{port}"), "sp");
+
+        let got: std::sync::Arc<std::sync::Mutex<Vec<(i64, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connects = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let retries = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u32>::new()));
+        let errors = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let (g, c, r, e, s) = (got.clone(), connects.clone(), retries.clone(), errors.clone(), stop.clone());
+        let mut on_connected = || {
+            c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        };
+        let mut on_frame = |p: &str| {
+            let mut v = g.lock().unwrap();
+            v.push((now_ms(), p.to_string()));
+            if v.len() >= 2 {
+                // 两帧都到手 ⇒ 让循环收工（判据不该靠超时结束）
+                s.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        };
+        let mut on_error = |msg: &str| {
+            e.lock().unwrap().push(msg.to_string());
+        };
+        let mut on_retry = |n: u32| {
+            r.lock().unwrap().push(n);
+        };
+        let mut should_stop = || s.load(std::sync::atomic::Ordering::SeqCst);
+
+        let started = now_ms();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            run_stream_with_reconnect(
+                &url,
+                "tk",
+                &mut on_connected,
+                &mut on_frame,
+                &mut on_error,
+                &mut on_retry,
+                &mut should_stop,
+            ),
+        )
+        .await
+        .expect("10s 内应当收满两帧（重连循环没停）");
+
+        let frames = got.lock().unwrap().clone();
+        let retry_seq = retries.lock().unwrap().clone();
+        let errs = errors.lock().unwrap().clone();
+        let connects = connects.load(std::sync::atomic::Ordering::SeqCst);
+        server.abort();
+
+        println!(
+            "【判据 5 实测】连接 {connects} 次 · 帧 {} 条 · 重试序列 {retry_seq:?} · 首条错 {:?} · 两帧间隔 {}ms",
+            frames.len(),
+            errs.first(),
+            frames.get(1).map(|f| f.0 - frames[0].0).unwrap_or(-1)
+        );
+
+        assert_eq!(frames.len(), 2, "两帧都要收到（第二帧只在重连之后才可能到）");
+        assert_eq!(frame_kind(&frames[0].1), "push");
+        assert_eq!(frame_kind(&frames[1].1), "push");
+        assert!(connects >= 2, "必须**重连**过一次（连接数 ≥ 2），实际 {connects}");
+        assert_eq!(retry_seq.first(), Some(&1), "第一次断开后应当记一次重试（从 1 开始）");
+        assert!(
+            !errs.is_empty(),
+            "断开必须**有痕**（`on_error` 被调到）—— 静默重连是本仓最忌的形状"
+        );
+        let gap = frames[1].0 - frames[0].0;
+        assert!(
+            gap >= 900,
+            "两帧之间必须**真的退避过**（≈1s 起步），实际间隔 {gap}ms —— 小于它就是紧凑重连（打服务端）"
+        );
+        assert!(frames[1].0 - started < 10_000, "恢复要在 10s 内");
+    }
+
+    /// 判据 5：**连不上 ⇒ `Err` 且带原因**（"有痕"，不是静默死循环）。
+    ///
+    /// 用 127.0.0.1:1（保留端口，必然拒绝）当"拔网"的替身。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unreachable_server_surfaces_an_error() {
+        let mut connected = || panic!("不该连上");
+        let mut frames = |_: &str| panic!("不该收到帧");
+        let err = read_stream_once("http://127.0.0.1:1/spaces/sp/changes-stream", "tk", &mut connected, &mut frames)
+            .await
+            .expect_err("连不上就该是 Err");
+        println!("【判据 5 实测】连不上时的原因 = {err}");
+        assert!(!err.is_empty(), "错误文本不能空（界面要能说出来）");
+    }
+
+    /// 判据 5（**与真服务端**的那一半）：注册 ⇒ 建空间 ⇒ 订阅 ⇒ `/push` 一笔 ⇒ **收到推送**。
+    ///
+    /// ⚠️ **自报跳过**：没设 `SHUYONOTE_STREAM_E2E_SERVER`（例如 `http://127.0.0.1:8787`）就跳过 ——
+    /// 与 `rust-sm-wired` / artifact 组同一条纪律：**宁可自报跳过，也不假装绿**。
+    /// 本机跑法（设计稿 §5 有记）：先起本地服务端，再
+    /// `SHUYONOTE_STREAM_E2E_SERVER=http://127.0.0.1:8787 win-cargo-test.ps1 -Filter e2e_`。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn e2e_receives_a_push_from_a_real_server() {
+        let Ok(server) = std::env::var("SHUYONOTE_STREAM_E2E_SERVER") else {
+            eprintln!("[自报跳过] 没设 SHUYONOTE_STREAM_E2E_SERVER ⇒ 与真服务端的端到端判据**未跑**");
+            return;
+        };
+        let server = server.trim_end_matches('/').to_string();
+        let client = reqwest::Client::new();
+        let uniq = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        // ① 注册（老服务端可能不要 display / register_code，两种都试）
+        let email = format!("stream-e2e-{uniq}@test.local");
+        let body = serde_json::json!({ "email": email, "password": "stream-e2e-pass", "display": "streamE2E" });
+        let reg = client
+            .post(format!("{server}/auth/register"))
+            .json(&body)
+            .send()
+            .await
+            .expect("register 请求发出");
+        assert!(reg.status().is_success(), "注册失败：HTTP {}", reg.status());
+        let token = reg.json::<Value>().await.expect("register 返回 JSON")["token"]
+            .as_str()
+            .expect("register 返回 token")
+            .to_string();
+        // ② 建空间
+        let sp = client
+            .post(format!("{server}/spaces"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "name": "stream-e2e" }))
+            .send()
+            .await
+            .expect("create space 请求发出");
+        assert!(sp.status().is_success(), "建空间失败：HTTP {}", sp.status());
+        let space = sp.json::<Value>().await.expect("space JSON")["id"]
+            .as_str()
+            .expect("space id")
+            .to_string();
+
+        // ③ 订阅（后台任务）：收到帧就记时间
+        let url = stream_url(&server, &space);
+        let got: std::sync::Arc<std::sync::Mutex<Vec<(i64, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (g, s) = (got.clone(), stop.clone());
+        let (u, t) = (url.clone(), token.clone());
+        let sub = tokio::spawn(async move {
+            let mut on_connected = || {};
+            let mut on_frame = |p: &str| {
+                let mut v = g.lock().unwrap();
+                v.push((now_ms(), p.to_string()));
+                s.store(true, std::sync::atomic::Ordering::SeqCst);
+            };
+            let mut on_error = |_e: &str| {};
+            let mut on_retry = |_n: u32| {};
+            let mut should_stop = || s.load(std::sync::atomic::Ordering::SeqCst);
+            run_stream_with_reconnect(
+                &u,
+                &t,
+                &mut on_connected,
+                &mut on_frame,
+                &mut on_error,
+                &mut on_retry,
+                &mut should_stop,
+            )
+            .await;
+        });
+
+        // 订阅是"连接建立后才挂到服务端 broadcast 上"的 ⇒ 给一点时间再推（与 JS 回归脚本同一手法）
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        let sent = now_ms();
+        let pushed = client
+            .post(format!("{server}/push"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "device_id": format!("dev-{uniq}"),
+                "space_id": space,
+                "changes": [{
+                    "device_seq": 1, "entity": "page", "entity_id": "page-stream-e2e",
+                    "op": "upsert", "payload": "{}", "updated_at": uniq,
+                }],
+            }))
+            .send()
+            .await
+            .expect("push 请求发出");
+        assert!(pushed.status().is_success(), "push 失败：HTTP {}", pushed.status());
+
+        // ④ 断言"2s 内收到"（判据 5 的延迟口径）
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline && got.lock().unwrap().is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let frames = got.lock().unwrap().clone();
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        sub.abort();
+        assert!(!frames.is_empty(), "订阅 2s 内**没有**收到推送（判据 5 红）");
+        let latency = frames[0].0 - sent;
+        println!("【判据 5 实测·真服务端】订阅 ⇒ 推送 ⇒ 收到：**{latency}ms**；帧 = {}", frames[0].1);
+        assert!(latency >= 0 && latency < 2000, "延迟要在 2s 内（实际 {latency}ms）");
+        assert_eq!(frame_kind(&frames[0].1), "push");
     }
 }
