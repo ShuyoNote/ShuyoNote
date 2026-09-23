@@ -1470,6 +1470,22 @@ export function makeInvoke(store: SqliteStore) {
       writePageCrdtState(store, String(args.page_id ?? ""), new Uint8Array(args.state ?? []), Date.now());
       return null as T;
     }
+    if (cmd === "claim_page_lineage") {
+      // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
+      // 与 `doPush` 用**同一套**取配置/取 token 的方式（`sync_profiles` ＋ `getAuthSession`），
+      // 传输也复用 `syncFetch` ⇒ 鉴权/超时/错误口径与同步请求一致。
+      const args = a.args ?? a;
+      const profile = store.query<SyncProfile>("SELECT * FROM sync_profiles WHERE server_url <> '' ORDER BY ws_id")[0];
+      if (!profile) throw new Error("没有配置同步服务：claim 无从发起（本机应当走离线那一支）");
+      const server = profile.server_url.replace(/\/+$/, "");
+      const token = getAuthSession(store, server).token || profile.token;
+      const res = (await syncFetch(server, "/sync/lineage-claim", token || null, {
+        space_id: String(args.space_id ?? ""),
+        page_id: String(args.page_id ?? ""),
+        device_id: String(args.device_id ?? ""),
+      })) as { granted?: unknown };
+      return { granted: res?.granted === true } as T;
+    }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
       // children, databases' pages, ...), so removing a folder empties it from

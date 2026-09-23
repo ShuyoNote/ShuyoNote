@@ -68,6 +68,11 @@ const missingContract = [...rustCommands].filter((c) => !contractCommands.has(c)
 const WEB_ONLY_COMMANDS = new Map([
   ["request_persistent_storage", "浏览器的 Storage API，桌面端没有对应概念（UI 按 supported 决定显不显示）"],
   ["export_wiki", "静态 HTML wiki 导出目前只在 web 平台实现（桌面端命令面板按平台隐藏它）"],
+  // 冲刺 S9（2026-09-23）：**暂时**只有 web 实现 —— 桌面侧的 claim（Rust 侧 `reqwest` 发
+  // `/sync/lineage-claim`）待补。客户端决策（`crdt/bootstrap.ts`）与 HTTP 端口
+  // （`crdt/claimClient.ts`）两侧都已就绪；桌面没接 ⇒ 那里会落到"离线临时建"那一支
+  // （行为与本轮之前一致，不会报错）。
+  ["claim_page_lineage", "CRDT 血统 claim：桌面侧实现待补（没接时落'离线'那一支，行为与之前一致）"],
 ]);
 const missingRust = [...contractCommands]
   .filter((c) => !rustCommands.has(c) && !WEB_ONLY_COMMANDS.has(c))
