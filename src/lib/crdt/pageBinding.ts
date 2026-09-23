@@ -27,6 +27,8 @@ import {
   type ContentSql,
 } from "../docContent";
 import { openPageSession, projectStateToJson, type PageSession } from "./yDocBridge";
+// S9：打开一页时"要不要建血统"的决策与 claim 端口（纯函数，四支都有判据）。
+import { claimVerdict, decideBootstrap, type PageClaimPort } from "./bootstrap";
 
 /** 一次"页面 ↔ 编辑器"的绑定。 */
 export interface PageBinding {
@@ -255,14 +257,45 @@ export async function bindPageToEditorViaPort(opts: {
   pageId: string;
   editor: LexicalEditor;
   seedJson: string;
+  /** S9：claim 端口（不传 ⇒ 归一成 `unavailable` ⇒ 走"离线临时建"⇒ 与接线前**逐字相同**）。 */
+  claim?: PageClaimPort;
+  /** S9：本机 device id（claim 要带上；不传时只影响 claim，不影响其它）。 */
+  deviceId?: string;
 }): Promise<AsyncPageBinding> {
   const { port, pageId, editor, seedJson } = opts;
   const state = await port.read(pageId);
-  const session = openPageSession(state ? { state, editor } : { json: seedJson, editor });
-  if (!state) await port.save(pageId, session.exportState());
+  if (state) {
+    // ① 本地已有血统 ⇒ 载入。**不 claim、不重建**（这是 S1 红线那个入口）。
+    const session = openPageSession({ state, editor });
+    return {
+      session,
+      seeded: false,
+      async persist() {
+        await port.save(pageId, session.exportState());
+      },
+      dispose() {
+        session.dispose();
+      },
+    };
+  }
+
+  // ②③④ 本地没有 ⇒ 走 S9 的决策（`bootstrap.ts`，四支都有判据）。
+  const verdict = await claimVerdict(opts.claim, pageId, opts.deviceId ?? "");
+  const decision = decideBootstrap({ hasLocalState: false, claim: verdict });
+  if (decision.action === "wait-for-remote") {
+    // ★ **不建**：这一页的首条血统属于别的设备。抛出去让调用方**如实报出来**（不静默建一条，
+    //   也不静默变空页）—— 措辞要给用户看得懂的信息。
+    throw new Error(
+      "这一页的首条编辑历史属于另一台设备：等它同步下来再打开（本机这次**没有**新建血统）",
+    );
+  }
+  // `mint` 与 `mint-provisional-offline` 都建（后者是**未裁定**的：联网后若撞上血统护栏，
+  // 由 `mergeRemotePageState` 如实报冲突，而不是假装它就是权威）。
+  const session = openPageSession({ json: seedJson, editor });
+  await port.save(pageId, session.exportState());
   return {
     session,
-    seeded: !state,
+    seeded: true,
     async persist() {
       await port.save(pageId, session.exportState());
     },
