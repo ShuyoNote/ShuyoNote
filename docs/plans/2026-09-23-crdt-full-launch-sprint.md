@@ -114,7 +114,7 @@
 | **S4b-1b** | **"收"那一侧接上**（下一件，**必须用注入**） | `applyChange` 的页面分支：`decodeCrdtWire` ⇒ `ok` 交给**已注册的 applier**（`mergeRemotePageState`）／`none` ⇒ 今天那条路（逐字相同）／`unknown-version` ⇒ 如实报出（不猜）。⚠️ **不许**在 `web.ts` 里 import `pageBinding`：那会把编辑器节点表拖进 `web.ts` 的依赖图，而它会被 Node 侧脚本加载（2026-09-23 那次初始化环就是这么炸的：vitest 9 文件 ＋ smoke-web ＋ two-device-sync 同时红）⇒ 按 `setCrdtPlaneImpl` 同一手法注入 | 带状态的载荷 ⇒ 本机并进同一条血统（两端各改一处 ⇒ 都在、不重复）；不带状态的载荷 ⇒ 行为与今天**逐字相同**；版本不认识 ⇒ **有痕**（不静默） |
 | **S5** | **服务端合并（两阶段）** | 阶段 1「只存不算」→ 阶段 2「开算」＋ 总开关（可按空间关） | 阶段 1 行为零变化；阶段 2 服务端合并幂等、可重放、不丢块 |
 | **S6a** ✅ | **派生文本：合并之后要**有痕**（不静默落后，也不造假账） | `mergeRemotePageState` 返回 `derivedStale`，两种情形打「待重建」：**采用**别人的一版、**合并真有新内容**（判定用**投影比**，**不用字节比** —— 字节不同未必内容不同，拿它当判据会多标）＋ 复用**既有**补算器链路（不引第二份派生实现）＋ 新 `derivedStale.test.ts` 2 条 | ⑱ ★ 真有新内容 ⇒ `text_stale` 打上、补算器收口后正文列跟上且标记清掉；⑲ ★ 重复并同一版 ⇒ **不**打（无假账）、状态仍在（幂等≠丢弃） |
-| **S6b** | **块身份口径收口**（下一件） | "首开补种 vs 保存路径铸身份"的**唯一口径**（`editor/Editor.tsx:190` 载入时就铸 ⇒ 已由 S3b-2a 的 `ensurePageCrdtState` 收成一次）；补上"合并前后 `topLevelBlockIds`"的断言 | 合并前后 `topLevelBlockIds` **集合不变**（除真正新增块）；两设备各自首开不再可能各铸一套 |
+| **S6b** ✅ | **块身份穿过合并**（口径 ＋ 判据） | 口径写死在判据文件头：**铸身份只发生在一处**（保存路径／首开补种，已由 S3b-2a 的 `ensurePageCrdtState` 收成一次），**转换层与合并路径一律不铸**；新 `identityThroughMerge.test.ts` 用**产品自己的** `topLevelBlockIds` 验（不是自己数 JSON） | ⑳ ★ 合并后块身份 = `["blk-1","blk-2","blk-A","blk-B"]`：**并集**、无重复（S1 红线的症状）、**没有任何新面孔**；㉑ ★ 幂等（同一版再并一字不变）＋ 换顺序仍是同一集合 |
 | **S7** | **两侧都接 ＋ 真机验收** | 桌面（Rust）与 Web 两侧同语义 —— 含 **`page_crdt` 读写三条镜像**（`doc_content.rs` 的 `read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state`）与会话接线；双设备人工验收 | 两侧判据成对；真机双设备验收过 |
 
 ## 3. 本冲刺**不做**
