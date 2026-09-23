@@ -513,6 +513,24 @@ jobs:
           node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
+      - name: 随包静态 SM 加密库（Android，库级国密）
+        # 与 android.yml 同名同步（`check:release-parity` 核对步骤名）。**发版包必须有这一步**：
+        # Android 系统**不带** OpenSSL ⇒ 静态 SM 库要么随包、要么用户机器上根本找不到。
+        # owner 2026-09-23 拍「Android 库级国密：**做**」⇒ 自检包与发版件走**同一条链**。
+        # ⚠️ 顺序：必须在 `Init Android project` 与任何 cargo 构建**之前**（补丁要打在"将要编译的那份源码"上）。
+        run: |
+          set -e
+          sh scripts/build-tongsuo-android.sh
+          node scripts/check-openssl-android.mjs
+          node scripts/check-openssl-android.mjs --print-env >> "$GITHUB_ENV"
+
+      - name: 打上 SQLCipher 的国密 provider 补丁（与桌面同一条链）
+        # 与 android.yml 同名同步；桌面发版用的是同一个 `sm-library-build.mjs --prepare`
+        #（打补丁 ＋ 清两个 crate × 两个 profile 的产物，防"复用旧 SQLCipher"）。
+        # 这里只是把 `--openssl-dir` 指到 Android 那份静态前缀（上一步 `--print-env` 已经把
+        # `OPENSSL_DIR` 写进 `$GITHUB_ENV`）。
+        run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
@@ -524,12 +542,25 @@ jobs:
             echo "❌ 发版包不允许带测试钩子：VITE_TEST_HOOKS=${VITE_TEST_HOOKS}"
             exit 1
           fi
-          pnpm tauri android build --target aarch64 --apk --ci
+          # ⚠️ `--features sm-library` **必须带**（与 android.yml 同名步骤一致，`check:release-parity`
+          #   现在也逐字核对这一条）：库级由上面那份静态库 ＋ 补丁决定，而**应用层接线**
+          #   （`security.rs::apply_gm_page_settings` 那段）整段在 `#[cfg(feature = "sm-library")]` 后面
+          #   ⇒ 不带的话它根本不会被编译，而且**编译期零信号**（同一族：本文件上面那条对桌面
+          #   `tauri build` 的警告 —— "不带的话应用接线那段 `#[cfg]` 不会被编译"）。
+          pnpm tauri android build --target aarch64 --apk --ci --features sm-library
 
       - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
         # 与 android.yml 同名同步；发版包更需要这条（`libpdfium.so` 是**运行时**加载的 ⇒
         # 包里没有它时"装完不报错"，只有用户开 PDF 才变成打不开）。
         run: pnpm check:android-bundle
+
+      - name: 自检：APK 的「库级国密」是**静态随包**
+        # 与 android.yml 同名同步。**发版包更要这条**（用户装的就是它）：静态随包国密库如果没进包，
+        # 症状与上面那条同类 —— 装完不报错，用户真去开加密库时才炸。
+        #   ① 包里不该有 `lib/<abi>/libcrypto.so*`；② 应用 .so 的 DT_NEEDED 里不该有它。
+        # ⚠️ 正向那一半（SM provider 真编进去了）这里**验不了** —— release 包 `strip = true`，
+        #    符号被剥掉；最终证据是真机跑一次，属人手。
+        run: pnpm check:android-crypto
 
       - name: 用正式密钥签名 APK（逻辑与 android.yml 逐字一致）
         # 全部逻辑照抄 `.github/workflows/android.yml` 的同名步骤：

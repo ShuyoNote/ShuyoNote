@@ -148,5 +148,87 @@ for (const k of MUST_HAVE_BOTH) {
   );
 }
 
+// 5) ★ **构建参数**也要两条流水线一致（2026-09-23 补）
+//
+// 为什么上面那套"步骤名集合比较"不够：它只看**名字**。同一天的红是"自检包多了两步、发版件没有"，
+// 顺着查还发现**发版的 Android 构建没带 `--features sm-library`** —— 步骤名一模一样，门禁看不见。
+// 不带它的后果与 v1.91.0 同一族：应用层国密接线（`#[cfg(feature = "sm-library")]` 后面那段）
+// **根本不会被编译**，而编译期**零信号**（本文件上面那条对桌面 `tauri build` 的警告就是这么写的）。
+const SM_FEATURE = "--features sm-library";
+
+/**
+ * 取某个 job 里名字以 `namePrefix` 开头的步骤的 **`run:` 块正文**（已剥掉 YAML 注释）。
+ *
+ * ⚠️ 两条都必须做到，否则这条判据会被**自己写的注释**骗过去（第一版就是）：
+ *   ① 只取 `run:` 块 —— 整段 step body 里那句"⚠️ `--features sm-library` 必须带"的**注释**
+ *      会让 `includes()` 为真，于是"把命令里的参数删掉"照样绿（变异实测当场证伪）；
+ *   ② 再剥 `#` 注释 —— 与 `check-capabilities.mjs` 的 `stripComments` 同一手法。
+ *
+ * 返回 `null` ⇒ **没找到**（没有这一步 / 这一步没有 `run:`）：调用方必须据此判红
+ *（"解析不到就静默放行"是这类文本门禁最坏的假绿，与上面 `>= 10` 那两条自证同一个理由）。
+ */
+function stepRunBody(file, jobName, namePrefix) {
+  const lines = readFileSync(file, "utf8").split(/\r?\n/);
+  let from = 0;
+  let to = lines.length;
+  if (jobName) {
+    const start = lines.findIndex((l) => new RegExp(`^  ${jobName}:\\s*$`).test(l));
+    if (start < 0) return null;
+    from = start;
+    for (let i = start + 1; i < lines.length; i++) {
+      if (/^  [A-Za-z_][\w-]*:\s*$/.test(lines[i])) {
+        to = i;
+        break;
+      }
+    }
+  }
+  for (let i = from; i < to; i++) {
+    const m = lines[i].match(/^\s{6}- name:\s*(.+?)\s*$/);
+    if (!m || !m[1].startsWith(namePrefix)) continue;
+    // 这一步的结束：下一个 `- name:`（6 空格）
+    let end = to;
+    for (let j = i + 1; j < to; j++) {
+      if (/^\s{6}- name:/.test(lines[j])) {
+        end = j;
+        break;
+      }
+    }
+    const stripYamlComment = (l) => l.replace(/#.*$/, "");
+    for (let j = i + 1; j < end; j++) {
+      const r = lines[j].match(/^(\s+)run:\s*(.*)$/);
+      if (!r) continue;
+      const indent = r[1].length;
+      const inline = r[2].trim();
+      // 块标量（`run: |` / `>`）⇒ 取缩进更深的那些行；行内写法 ⇒ 就这一行
+      if (inline && inline !== "|" && inline !== ">") return stripYamlComment(inline);
+      const body = [];
+      for (let t = j + 1; t < end; t++) {
+        const line = lines[t];
+        if (line.trim() === "") continue;
+        const ind = /^\s*/.exec(line)[0].length;
+        if (ind <= indent) break;
+        body.push(stripYamlComment(line));
+      }
+      return body.join("\n");
+    }
+    return null; // 找到了这一步，但它没有 `run:`（例如纯 `uses:`）
+  }
+  return null;
+}
+
+for (const [file, job, label] of [
+  [SELF, null, "自检流水线"],
+  [REL, REL_JOB, "发版 android job"],
+]) {
+  const body = stepRunBody(file, job, "Build APK");
+  ok(body !== null, `${label}：解析到了「Build APK」的 \`run:\` 块（解析不到＝门禁自己坏了，不许静默放行）`);
+  if (body !== null) {
+    ok(
+      body.includes(SM_FEATURE),
+      `${label}的「Build APK」**命令**里带了 \`${SM_FEATURE}\`（不带 ⇒ 应用层国密接线不会被编译，且编译期零信号）`,
+    );
+  }
+}
+
 console.log(`[结果] release-parity ${failed === 0 ? "通过" : `${failed} 项失败`}`);
 process.exit(failed === 0 ? 0 : 1);
