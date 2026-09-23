@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **跨库总结 ＋ 强制引用**（P4） | `ai/librarySummary.ts` | `ai/librarySummary.test.ts` ＋ `ai/librarySummary.live.test.ts`（真模型：回链**全部来自输入**、`droppedInventedRefs=0`） |
 | **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
 | **★ 覆盖度落库 ＋ 读侧口径**（2026-09-23，AMD）：`attachment_text.coverage` 存 `ExtractCoverage` 的 JSON，空串 ＝ **未知**（不是"完整"）；`files.read` 的返回里带回每个抽取器一条 `{extractor, coverage}` | TS：`extract/schema.ts` · `extract/store.ts` · `extract/pipeline.ts` · `platform/sqliteStore.ts` · `platform/derivedStores.ts` · `platform/derivedText.ts` ／ Rust：`db.rs`（DDL 照抄 ＋ 幂等 ALTER）· `derived_transport.rs`（写/读两格）· `search.rs`（读页面） | `store.test.ts` 6 条（含**老库迁移**与"未知 ≠ 完整"）· `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含**缺列容忍**）· `derivedTransport.test.ts`（与夹具逐字相同）· 跨语言夹具 `tests/derived-transport-ops.json` · Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string` · `search::tests::read_attachment_text_separates_missing_from_empty_and_carries_coverage` ＋ `…_tolerates_an_old_table_without_the_coverage_column` · `db::tests::derived_schema_matches_the_ts_source_of_truth` |
+| **★ 覆盖报告的第五类 `partial`**（2026-09-23，AMD）：报告不再只看"**有没有块**" —— 抽取器自己报了 `complete:false` 的**已索引**附件单列（`attachments.partial` ＋ 明细 `reason: "partial"` ＋ 摘要里"其中 N 份**没抽全**"）；**没读数 ＝ 未知**，既不算缺口也**不算完整** | `extract/coverageReport.ts`（读 `coverageOf`） | `coverageReport.test.ts` 6 条（有缺口／没读数／读数是完整／坏 JSON／换读数不留残值／三类混在一起不串味） |
 | **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
@@ -1137,4 +1138,15 @@ Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string`（�
 > **按反引号切分**取模板字符串体 ⇒ 我在注释里写的反引号**当场把判据变红**（解析出 7 条而不是 6 条）。
 > 判据红得对（它守的就是"两侧逐字相同"），要改的是注释的写法。
 >
+**读侧第二处：全库报告也读了这份读数**（同日补完，`extract/coverageReport.ts`）——
+报告原先只问"**进了检索面没有**"（有块就算已索引），于是混合 PDF 只抽到正文页时它是**绿的**，
+而库里 `complete:false` 明明在。现在多一类 `partial`：**已索引 ＋ 抽取器报了缺口**，`attachments.partial` 单列、
+`gaps` 里带抽取器名与缺口说明、摘要里写成"已索引 N/M（其中 K 份**没抽全**）"。
+两条口径写死了：**没读数 ＝ 未知**（既不算缺口、也不算完整）；`byReason` **只统计"没进检索面"的四类**
+（`partial` 不许混进去，否则与 `notIndexed` 对不上）。
+
+> ⚠️ **已知边界（这格没做，别读成做了）**：报告本身**还没有出口** —— `scanLibraryCoverage`
+> 在 `src/**` 里**只有测试调用它**（无 UI 组件引用、`capabilities.json` 里也没有对应能力）；
+> 所以"库里到底覆盖到哪"目前**用户和 AI 都问不到**。出口走 UI 还是做成一个只读能力，待定。
+
 > ⚠️ **仍没做的一格**：`files.search`（`cap_files_search`）**只有契约级覆盖**，没有行为判据 —— 归 Rust 侧。
