@@ -17,7 +17,34 @@
 | 第 2 步 | **同步闸门**：`space_crypto::sync_gate`（纯函数）＋ `sync::sync_bind_gate` 接进 `set_sync_profile`；分类标记 `meta.workspaces.kind` | `e0563d50` |
 | 交接 | 本文（进度 ＋ 施工点 ＋ 纪律） | `2f9f1579` |
 | 第 2 步补 | 闸门裁决做进状态命令（`active_space_gate`） | `14893b9d` |
-| 第 1 步 1b-2b | **`encryption_enabled` 按空间**（这个连接的库是密的 **或** 袋里有它）＋ **启动闸门改成嗅活动空间的文件**（`security::startup_needs_unlock`） | 见本行之后的提交 |
+| 第 1 步 1b-2b | **`encryption_enabled` 按空间**（这个连接的库是密的 **或** 袋里有它）＋ **启动闸门改成嗅活动空间的文件**（`security::startup_needs_unlock`） | `63fc5506` |
+| **A=3** | owner 拍板"分类由入口决定" ⇒ 本地新建空间标 `personal`（`workspaces::insert_new_local_space`）＋ **D 的 KDF 实测读数**（8 秒大头在 SM3 那条腿） | `4fa9d6d4` ⚠️ **只在本地，推送被 TLS 挡住**（见 §6） |
+
+### 6. ⚠️ 2026-09-24 推送事故（未解决，留给接手的人）
+
+`git push origin feat/crdt-json-ydoc:dev` 从某个时刻起持续失败：
+
+```
+schannel: SEC_E_UNTRUSTED_ROOT (0x80090325)          ← 默认后端
+SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=openssl
+```
+
+**两个后端都失败** ⇒ 判为**服务端证书链**问题（不是本地代理问题也不是我们的代码）；
+**不要**用 `http.sslVerify=false` 绕过（那会把 TLS 校验关掉）。`4fa9d6d4` 之前的提交都已推上；
+**`4fa9d6d4` 及之后的提交只在本地**，TLS 恢复后 `git push origin feat/crdt-json-ydoc:dev` 即可。
+（另有一个 `github` 远端走 SSH，但**没有**往那儿推 —— 口径是 `origin/dev`，别改道。）
+
+### 7. owner 2026-09-24 的六条拍板（已按此执行）
+
+| | 拍板 | 落地情况 |
+|---|---|---|
+| **A** | **3**（分类由入口决定） | ✅ 本仓＝个人版入口 ⇒ 本地新建 = `personal`（团队空间由团队流程标 `team`）。**存量空间仍 `''`（未分类）⇒ 照旧放行** |
+| **B** | **甲**（加密的个人空间在 Web 上**直接不能开**，绝不许降级明文） | ⏳ **待做**：Web 侧识别"密文载荷"并明确拒绝 + 提示"请在桌面端打开" |
+| **C** | **1**（存量迁移：**报错** ＋ 说清怎么办） | ⏳ **待做**：迁移前**先备份**，失败停住报错（**不做**双读、**不做**清库重同步） |
+| **D** | 实测后决定 | ✅ 已出读数（决策稿 §7.2）：今天解锁 **~8 秒**，其中 **~7 秒在 PBKDF2-HMAC-SM3 200k 轮**（纯 Rust、无硬件加速；**不能随手调小**）；256 MiB/t=4 单独就要 **20 秒** ⇒ 取舍的是**两条腿的总预算**；改 `SM_KDF_ROUNDS` 会让**存量 v2 解不开** ⇒ 0a-2 必须把 SM 迭代数纳入"随袋子存的参数"。⚠️ 低端 Android 还没量 |
+| **E** | **你做，任何时候可以** | ★ **`shuyonote-sync-server` 就在本机**（`C:\Users\cnzen\zhai\shuyonote-sync-server`）⇒ 0b 可做（服务端加"公开材料的存放/取回"） |
+| **F** | 按建议 ⇒ **不做**「用对端」 | ✅ 不排期 |
+
 
 **当轮 tip 读数**（`e0563d50` 那棵树上）：Rust 全量 **572 passed / 0 failed / 18 ignored**；
 vitest 全量 **2194 passed / 12 skipped**；`pnpm run build` 0；doc 门禁 137 篇 / 44 条 / 562 处（基线 562）。
