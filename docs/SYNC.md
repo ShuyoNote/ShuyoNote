@@ -64,12 +64,21 @@ GET {server}/pull?since={last_pulled_seq}&limit=500&space_id=..&exclude_device={
 
 ## 五、"实时"程度
 
-这不是 WebSocket 推送，而是**增量轮询**：
+**三条通道并存**（同一条 push/pull 语义，三种"什么时候去拉"）：
 
-- **手动**：点同步按钮 → 立即 push + pull。
-- **定时**：应用内每隔一段时间（秒～分钟级）自动 push+pull，检测到新变更就应用 → 接近"实时"。
+| 通道 | 何时触发 | 现状 |
+|---|---|---|
+| **手动** | 点同步按钮 | 立即 push + pull |
+| **定时轮询** | 应用内每隔一段时间（秒～分钟级，用户可配） | 桌面与 Web 都有；**它是兜底，不会被下面那条取代** |
+| **SSE 变更流**（P1.5） | 服务端 `GET {server}/spaces/{space_id}/changes-stream` 推来一帧 ⇒ 立刻拉一次 | ⚠️ **只有 Web 端**（`src/hooks/useSyncStream.ts` 对桌面直接 `return`，桌面靠 reqwest 定时器）。桌面侧的通道**设计稿**见 [plans/2026-09-23-desktop-near-realtime-stream-design.md](plans/2026-09-23-desktop-near-realtime-stream-design.md)（**未实现**） |
 
-> 结论：**近实时**（基于轮询间隔），不是毫秒级。跨设备在一台改完，另一台在下一次轮询/手动同步后看到。
+- SSE 端点是 axum `Sse` ＋ `KeepAlive`（约 15s 注释帧），服务端只发"**有变更**"这个信号，
+  **不解析 payload**（仍"哑且盲"）；收到帧的客户端仍走上面那条 pull。
+- 订阅按**当前工作空间**那条绑定（与 claim 共用 `crdt/claimScope.ts` 的唯一解析）——
+  旧实现挑"第一个绑定过的档案"，多工作空间下会订到别的空间（2026-09-23 已修）。
+
+> 结论：**近实时**，不是毫秒级；延迟＝"这一次拉取什么时候发生"。Web 上由推送决定、桌面上由轮询间隔决定。
+> ⚠️ 对 **CRDT 协同**来说这条延迟更重要了：CRDT 是**最终一致**，"对端的编辑多久能看到"就等于这个延迟。
 
 ## 六、冲突合并（服务端 seq 基准 + dirty 优先本地，v1.84.3）
 

@@ -168,7 +168,7 @@
 1. **国密收尾的四个外部格子**（实现已完，缺的是"别人那台的读数"）：Windows 真机做"产物实际链的 OpenSSL 前缀"的**变异证明**；
    Linux 带 tag 的真发版给那一格的最终读数；macOS 公证凭 Apple 凭据；老库迁移三步（无真实用户 ⇒ 零成本）。见 [交付说明](SM-CRYPTO-DELIVERY.md)。
 2. **全库 AI 覆盖的面板侧**：抽取的**触发点**已定在"导入 / 附件"那条路（与 OCR 同一处），但**消费层**（面板把已有抽取结果当素材做问答/总结）还没落地。
-3. **块级 CRDT 阶段 2 收尾**：客户端 **Web** 全链路已通、服务端**已发版**（`/lineage-claim` 探针 401）、桌面侧 claim 已接；**卡在两件**：★ **桌面侧消费 `crdt_state`**（新发现：桌面同步路径只走块级 LWW ⇒ 跨设备编辑在桌面会被自己的旧状态静默覆盖）与**真机双设备验收**（[全上线冲刺](plans/2026-09-23-crdt-full-launch-sprint.md) §11）。
+3. **块级 CRDT 阶段 2 收尾**：客户端**两侧**都已消费 `crdt_state`（第 41–43 轮：桌面收进 `page_crdt_pending`、打开页面时合并/承接，并把状态挂到推出去的载荷上）、服务端**已发版**（`/lineage-claim` 探针 401）、桌面 claim 与"两套 id"修正都已接；**卡在两件**：**真机双设备验收**（要人手）与**真账号端到端 claim 探针**（要凭据）。S5 阶段 2 见[决策稿](plans/2026-09-23-s5-server-merge-decision.md)（**建议暂缓**）。
 4. **真机验收（要人手）**：Android 装机开 PDF / 导出 / 加密锁屏；Linux AppImage 真跑；Windows 安装器默认目录复验。
 5. **PDFium 收尾**：真机逐条验收（Linux 非嵌入字体后端已按路线 D 落地，见[施工单](plans/2026-09-20-pdfium-linux-font-backend-workorder.md)）。
 6. **社区与分发**：市场 UI（c）与「一键发布到社区」客户端侧（[方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md)）；闸门不变（作者文档 ＋ ≥3 真实第三方插件）。
