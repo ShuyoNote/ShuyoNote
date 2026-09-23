@@ -20,19 +20,19 @@
 | 第 1 步 1b-2b | **`encryption_enabled` 按空间**（这个连接的库是密的 **或** 袋里有它）＋ **启动闸门改成嗅活动空间的文件**（`security::startup_needs_unlock`） | `63fc5506` |
 | **A=3** | owner 拍板"分类由入口决定" ⇒ 本地新建空间标 `personal`（`workspaces::insert_new_local_space`）＋ **D 的 KDF 实测读数**（8 秒大头在 SM3 那条腿） | `4fa9d6d4` ⚠️ **只在本地，推送被 TLS 挡住**（见 §6） |
 
-### 6. ⚠️ 2026-09-24 推送事故（未解决，留给接手的人）
+### 6. ✅ 2026-09-24 推送事故：**已恢复**（瞬时，非我们这侧）
 
-`git push origin feat/crdt-json-ydoc:dev` 从某个时刻起持续失败：
+`git push origin feat/crdt-json-ydoc:dev` 曾连续失败约十分钟：
 
 ```
 schannel: SEC_E_UNTRUSTED_ROOT (0x80090325)          ← 默认后端
 SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=openssl
 ```
 
-**两个后端都失败** ⇒ 判为**服务端证书链**问题（不是本地代理问题也不是我们的代码）；
-**不要**用 `http.sslVerify=false` 绕过（那会把 TLS 校验关掉）。`4fa9d6d4` 之前的提交都已推上；
-**`4fa9d6d4` 及之后的提交只在本地**，TLS 恢复后 `git push origin feat/crdt-json-ydoc:dev` 即可。
-（另有一个 `github` 远端走 SSH，但**没有**往那儿推 —— 口径是 `origin/dev`，别改道。）
+**两个后端都失败** ⇒ 判为**服务端证书链**的瞬时问题（不是本地代理、不是我们的代码）。
+**处置**：**没有**用 `http.sslVerify=false` 绕过（那等于关掉 TLS 校验），而是**隔几分钟重试** ——
+随后同一条命令**一次成功**（`63fc5506..05a56890`）。⇒ 教训：这类 TLS 失败**先重试**，别急着改配置；
+真要做诊断再看 `curl -v` 的证书链，不要动校验开关。
 
 ### 7. owner 2026-09-24 的六条拍板（已按此执行）
 
