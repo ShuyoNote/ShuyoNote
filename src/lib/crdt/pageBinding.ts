@@ -90,3 +90,56 @@ export function loadJsonForEditor(db: ContentSql, pageId: string, storedJson: st
   const state = readPageCrdtState(db, pageId);
   return state ? projectStateToJson(state) : storedJson;
 }
+
+// =====================================================================================
+// S3b-2d：**端口版**绑定 —— 界面侧（`editor/Editor.tsx`）手里没有 `ContentSql`，只有 `api`
+// （Web 走平台命令 `read_page_state` / `save_page_state`；桌面将来同理）⇒ 存取收成一个**端口**，
+// 顺序逻辑（"先读、没有才建一次并立刻落盘"）仍然只写在**这一个文件**里，不在组件里重写一遍。
+// =====================================================================================
+
+/** 状态的**存取端口**。界面侧用 `lib/api` 实现即可（也就是那两条平台命令）。 */
+export interface PageStatePort {
+  read(pageId: string): Promise<Uint8Array | null>;
+  save(pageId: string, state: Uint8Array): Promise<unknown>;
+}
+
+/** 端口版绑定：`persist` 是**异步**的（IPC/平台命令），**调用方必须处理失败**（不许静默）。 */
+export interface AsyncPageBinding {
+  session: PageSession;
+  seeded: boolean;
+  persist(): Promise<void>;
+  dispose(): void;
+}
+
+/**
+ * ★ 端口版：把一页绑到既有编辑器上（界面侧的入口）。
+ *
+ * 与 `bindPageToEditor` 同一套顺序，只是存取换成了异步端口：
+ *   1. **先读**状态；有 ⇒ 载入（`seeded=false`），没有 ⇒ 由 `seedJson` **建一次**（`seeded=true`）
+ *      并**立刻落盘**（这就是"首开只建一次"的落地点）；
+ *   2. 两种情形都把会话挂在**传入的**编辑器上（hydration 会把内容落到编辑器里）。
+ *
+ * ⚠️ 与 `ensurePageCrdtState` 同一个已知限制：两台设备**同时**首开一张从没建过血统的页、且各自
+ * 离线时，两条血统仍可能各自被建出来 ⇒ 彻底解法在 S5（服务端拒绝/收敛第二条血统）。
+ */
+export async function bindPageToEditorViaPort(opts: {
+  port: PageStatePort;
+  pageId: string;
+  editor: LexicalEditor;
+  seedJson: string;
+}): Promise<AsyncPageBinding> {
+  const { port, pageId, editor, seedJson } = opts;
+  const state = await port.read(pageId);
+  const session = openPageSession(state ? { state, editor } : { json: seedJson, editor });
+  if (!state) await port.save(pageId, session.exportState());
+  return {
+    session,
+    seeded: !state,
+    async persist() {
+      await port.save(pageId, session.exportState());
+    },
+    dispose() {
+      session.dispose();
+    },
+  };
+}

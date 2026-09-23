@@ -14,8 +14,8 @@ import { EDITOR_NODES } from "../../editor/config";
 import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode";
 import { toLegacyDoc, toModelDoc } from "../blockIdentity";
 import { readPageCrdtState, type ContentSql } from "../docContent";
-import { bindPageToEditor, loadJsonForEditor } from "./pageBinding";
-import { openPageSession } from "./yDocBridge";
+import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor } from "./pageBinding";
+import { openPageSession, projectStateToJson } from "./yDocBridge";
 
 /** 只认 `page_crdt` 三条 SQL 的极简库（不认识的形状当场抛）。 */
 function fakeDb() {
@@ -174,5 +174,47 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     const projected = loadJsonForEditor(db, "p1", BASE);
     expect(projected).not.toBe(BASE);
     expect(idsOf(projected)).toEqual(["blk-1", "blk-2", "blk-x"]);
+  });
+
+  it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {
+    const store = new Map<string, Uint8Array>();
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+    };
+
+    const e1 = appEditor(BASE);
+    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    expect(b1.seeded).toBe(true);
+    expect(store.has("p1")).toBe(true); // 首开那次已经落盘
+
+    typeBlock(e1, "blk-port", "端口版写的");
+    await b1.persist();
+    b1.dispose();
+
+    // 换一个编辑器（＝重开页面）：这一次必须**只载入**（给编辑器的内容用状态的投影）
+    const seedForSecond = projectStateToJson(store.get("p1")!);
+    const e2 = appEditor(seedForSecond);
+    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    expect(b2.seeded).toBe(false);
+    expect(idsOf(b2.session.exportJson())).toEqual(["blk-1", "blk-2", "blk-port"]);
+
+    // ⚠️ 顺序有讲究：**先在还挂着的会话里改**，再取状态、最后 dispose
+    //    （dispose 之后监听已撤，编辑不再进 doc —— 第一版就是把这两步写反了，判据当场红）
+    typeBlock(e2, "blk-port2", "端口版再写");
+    const stateB2 = b2.session.exportState();
+    b2.dispose();
+
+    // 两个绑定是**同一条血统**：与 b1 那一支的状态合并 ⇒ 两处都在
+    const e1Again = appEditor(seedForSecond);
+    const b3 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1Again, seedJson: serialize(e1Again) });
+    b3.session.merge(stateB2);
+    const ids = idsOf(b3.session.exportJson());
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...ids].sort()).toEqual(["blk-1", "blk-2", "blk-port", "blk-port2"]);
+    b3.dispose();
   });
 });
