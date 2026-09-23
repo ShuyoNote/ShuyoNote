@@ -175,3 +175,107 @@ export function roundTripContentJson(contentJson: string): string {
 // 供判据/调试：`DOC_NAME` 与 `ROOT_KEY_V2` 是这一层的约定常量，别在别处再写字面量。
 export const CRDT_DOC_NAME = DOC_NAME;
 export const CRDT_ROOT_KEY_V2 = ROOT_KEY_V2;
+
+// =====================================================================================
+// S2（冲刺切片 S2，2026-09-23）：**同一血统的活会话**
+//
+// 为什么非要有它 —— 是 S1 那条例外红线逼出来的：
+// `contentJsonToYDoc` **每次新建** doc，若拿它当保存形态，两台设备把同一页各转一次就得到
+// **两套 CRDT 身份**，合起来一块变两块、而且两块 `blockId` 相同
+// （`mergeability.test.ts` ① 实测：`["paragraph#blk-1","paragraph#blk-1"]`）。
+//
+// ⇒ 能合的用法只有一种：**载入既有状态、在它上面继续演进**（"血统" = doc 的 clientID ＋ 时钟，
+// 它随 update 字节一起走，所以 `Y.applyUpdate` 到新 doc 上**仍然延续**同一条血统）。
+// 本会话就是这条用法的**唯一实现**：`openPageSession({ state })` 载入，`edit()` 产增量，
+// `exportState()` 存回，`merge()` 收另一端的更新。
+//
+// ⚠️ 本切片**没有**常驻监听/常驻副作用（每次编辑只在变更窗口内挂一次监听再摘掉，避开回声），
+// 所以刻意**不提供** `dispose()`：生命周期（编辑器实例、绑定）归 S3 的真编辑器绑定那一层。
+// ⚠️ 仍然**不造身份**：`json` 那条入口沿用 `modelJsonOf` 的口径（缺 `blockId` ⇒ 抛）。
+// =====================================================================================
+
+/** 与 `contentJsonToYDoc` 内联声明同形（这里给模块级别名，供会话复用；不改那个函数）。 */
+type SyncArgs2 = Parameters<typeof syncLexicalUpdateToYjsV2__EXPERIMENTAL>;
+type SyncPayload2 = {
+  prevEditorState: SyncArgs2[2];
+  editorState: SyncArgs2[3];
+  dirtyElements: SyncArgs2[4];
+  dirtyLeaves: SyncArgs2[5];
+  normalizedNodes: SyncArgs2[6];
+  tags: SyncArgs2[7];
+};
+
+/** 一页的**活会话**：载入既有血统 → 本地编辑 → 存回状态 / 合并另一端。 */
+export interface PageSession {
+  /** 当前血统的状态字节（可落盘、可传输；合并 = 交换它）。 */
+  exportState(): Uint8Array;
+  /** 落盘形态投影（还没换形态的下游继续用；与 `yDocToContentJson(exportState())` 同源）。 */
+  exportJson(): string;
+  /** 本地编辑：在**同一血统**上产生增量（`mutate` 在 Lexical 的更新窗口内执行）。 */
+  edit(mutate: () => void): void;
+  /** 合并另一份状态（另一端／服务端来的），并把结果落回编辑器。 */
+  merge(remote: Uint8Array): void;
+}
+
+/**
+ * 打开一页的会话。
+ *
+ * - `state`：既有页（**首选**：这是唯一能延续血统的入口）；
+ * - `json`：首次落盘（此刻还没有任何 CRDT 状态，由这份 JSON 建血统）。
+ * - 两者都没给 ⇒ **抛**（"你想从哪来"必须明确，别默认空页 —— 那会把一页的真实内容当空页处理）。
+ */
+export function openPageSession(opts: { json?: string; state?: Uint8Array }): PageSession {
+  if (!opts.state && opts.json === undefined) {
+    throw new Error("openPageSession: 必须给 state（既有页）或 json（首次落盘），不许两者都空");
+  }
+  const doc = new Y.Doc();
+  doc.get(ROOT_KEY_V2, Y.XmlElement);
+  const editor = newEditor();
+  const binding = createBindingV2__EXPERIMENTAL(editor, BINDING_KEY, doc, new Map());
+  const provider = providerStub();
+
+  /** 把**一次**编辑器变更手动推给 yjs（与 `contentJsonToYDoc` 同款：只在变更窗口内挂监听）。 */
+  function pushOnce(run: () => void): void {
+    const box: { payload?: SyncPayload2 } = {};
+    const unregister = editor.registerUpdateListener((payload) => {
+      box.payload = payload;
+    });
+    run();
+    unregister();
+    const p = box.payload;
+    if (!p) {
+      throw new Error("openPageSession: 变更没有触发 update 监听器（@lexical/yjs 的用法变了？）");
+    }
+    syncLexicalUpdateToYjsV2__EXPERIMENTAL(
+      binding,
+      provider,
+      p.prevEditorState,
+      p.editorState,
+      p.dirtyElements,
+      p.dirtyLeaves,
+      p.normalizedNodes,
+      p.tags,
+    );
+  }
+
+  if (opts.state) {
+    // 载入既有血统：先灌 doc，再从 doc 落到编辑器（此时**不**挂监听 ⇒ 不会回声）。
+    Y.applyUpdate(doc, opts.state);
+    syncYjsStateToLexicalV2__EXPERIMENTAL(binding, provider);
+  } else {
+    pushOnce(() => editor.setEditorState(editor.parseEditorState(modelJsonOf(opts.json!))));
+  }
+
+  return {
+    exportState: () => Y.encodeStateAsUpdate(doc),
+    exportJson: () => toLegacyDoc(JSON.stringify(editor.getEditorState().toJSON())),
+    edit(mutate) {
+      pushOnce(() => editor.update(mutate, { discrete: true }));
+    },
+    merge(remote) {
+      Y.applyUpdate(doc, remote);
+      // 把合并结果落回编辑器（同样不挂监听）。
+      syncYjsStateToLexicalV2__EXPERIMENTAL(binding, provider);
+    },
+  };
+}
