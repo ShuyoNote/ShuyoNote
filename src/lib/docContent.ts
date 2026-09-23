@@ -79,7 +79,8 @@ export function readAllContents(db: ContentSql): ContentRow[] {
   return rows.map((row) => ({
     id: String(row.id ?? ""),
     title: String(row.title ?? ""),
-    json: String(row.content_json ?? ""),
+    // 批量读出口同样过平面（与 `readContent` 同口径；默认关 ⇒ 原样）。
+    json: throughCrdtPlane(String(row.content_json ?? "")),
     text: String(row.content_text ?? ""),
   }));
 }
