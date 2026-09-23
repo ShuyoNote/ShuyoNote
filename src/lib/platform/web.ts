@@ -3,7 +3,8 @@ import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, type RemotePageRow } from "../docContent";
-import { withCrdtWire } from "../crdt/wireState";
+import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
+import { applyRemoteCrdtState } from "../crdt/plane";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -867,6 +868,20 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
         // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
         applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
+        // ★ 冲刺 S4b-1b（2026-09-23）：载荷里若带了 **CRDT 状态** ⇒ 把它并进本机**同一条血统**。
+        //   三种情形**分开**处置（混成一种的下场是静默丢块）：
+        //     · `ok`             ⇒ 交给**已注册的**落地实现（`applyRemoteCrdtState` ⇒ `mergeRemotePageState`）；
+        //     · `none`（老载荷） ⇒ 什么也不做 ⇒ 与接线前**逐字相同**（如实降级）；
+        //     · `unknown-version`⇒ **如实报出**（不猜着解 —— 猜错＝静默丢块）。
+        //   ⚠️ 落地实现是**注入**的：这一层（会被 Node 侧脚本加载）不许 import `pageBinding`。
+        const wire = decodeCrdtWire((p as Record<string, unknown>).crdt_state);
+        if (wire.kind === "ok") {
+          applyRemoteCrdtState(store, String(p.id), wire.state);
+        } else if (wire.kind === "unknown-version") {
+          console.warn(
+            `[sync] page ${p.id} 的 CRDT 状态版本 ${String(wire.v)} 本机不认识 ⇒ 未合并（不猜；内容按今天那条路落库）`,
+          );
+        }
         // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）已经是陈的，清掉
         //（与 Rust `do_pull` 里那一段逐字对应：不清就是"清单永远挂着几条假账"）。
         const stashed = pendingRemoteSeq(store, String(p.id));
