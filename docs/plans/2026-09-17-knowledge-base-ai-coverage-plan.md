@@ -469,21 +469,31 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | 格 | 现状（取证） | 缺什么 | 交付形状（建议） | 判据（建议） | 归属（按 git 作者） | 风险 / 边界 |
 |---|---|---|---|---|---|---|
 | **数据库块**（P3-②） | 数据库页正文只由 `content_json` 派生，而**列/行/规则不进 `content_json`**；全仓**没有一处**从列/行生成 `content_text`。原表引的 `DatabaseView.tsx` 那行是「另存为模板」 | **列名 ＋ 行 ＋ 规则**的文本化；`loc` ＝ **行 id** | ① 纯函数 `databaseTextOf({ columns, rows, rules })`（列名 ＋ 每行一行文本 ＋ 汇总/规则）；② 接线**沿用既有模式**：`docContent.ts::writeContentTextIfChanged` 那条 —— "有编辑器的那一侧在打开页面时按编辑器语义算一遍，与库里不同才写回"，且**只动正文文本**（不动 `content_json`、**不动 `dirty`**） | ① 同数据 ⇒ 同文本（确定性）；② 空库 ⇒ **不许**写空串糊过去、也不许编造行；③ **改了正文列之后页面不能变脏**（否则会被当成用户编辑推上去 —— 与 `writeContentTextIfChanged` 的三条纪律同源）；④ 端到端：用「状态=进行中」这类**行内容**能检索到该页 | 数据库视图 / 内容文本那条链最近作者是 **fengjt007** | ⚠️ 正文变长会影响 FTS 命中与片段；空库/大库（上千行）要有上限（否则正文列爆） |
-| **绘图块**（P3-①） | **已有**：`lib/drawingText.ts` 的 `excalidrawSceneText`（只取**图上文字标签**）＋ `DrawingNode.getTextContent` 返回它 ⇒ **scene text 进正文这一半已完成** | **节点 / 连线结构**（P3 原文："绘图块的节点-连线结构序列化"，`loc` ＝ 块 id） | 新增 `excalidrawStructureText(elements)`（如 `矩形"审批" →箭头→ 矩形"发布"`），在 `getTextContent` 里与 scene text **并列**输出 | ① 结构文本**确定性**（同 scene ⇒ 同文本）；② **纯装饰元素不许写成噪声**（无文字的自由画笔/背景矩形应当被忽略 —— 有判据钉住）；③ 不许改变既有 scene-text 判据的期望 | `drawingText.ts` 作者 **cnzen**；`DrawingNode.tsx` / 内容文本链 **fengjt007** | ⚠️ 绘图块很多时正文会显著变长；结构文本的**方言**要定下来（谁写箭头、嵌套怎么表达），否则后人各写一套 |
+| **绘图块**（P3-①） | **✅ 已落地**。分工是**两份合起来的**（撞车后由 `43decd56` 收口）：<br>· **结构纯函数 ＝ AMD** `src/lib/drawingStructureText.ts`（`excalidrawStructureText` ⇒ `{text,nodeCount,edgeCount}`，定序 **y→x→id**、装饰忽略、已删除忽略）；<br>· **合成层 ＝ cnzen** `src/lib/drawingText.ts::excalidrawSearchText`（**进正文的全文 ＝ 标签 ＋ 结构**，标签在前、换行分隔、任一半为空不加空行；总长 `MAX_DRAWING_TEXT_CHARS = 20_000` **封顶并明说截断**）；<br>· 接线一处：`DrawingEditorModal.tsx` 保存绘图时调 `excalidrawSearchText` | 无（已完成） | **方言以 `drawingStructureText.ts` 为准**（`drawingText.ts:32` 的注释就指着它）：一行一条连线 `A → B`、端点无文字退类型名、无连线但有文字的节点单独成行；上限/截断由合成层负责（结构函数不加上限 —— 它不知道标签占了多少） | 结构侧 **11 条**（AMD，含"**打乱输入顺序 ⇒ 逐字相同**"）＋ 合成层 **4 条**（cnzen：两半都在／不加空行／封顶截断／`excalidrawSceneText` 回归守护） | AMD（结构）＋ cnzen（合成与接线） | ⚠️ **存量绘图块仍是旧快照** —— 节点里的 `text` 是"保存那一刻"算的 ⇒ 已存在的绘图要**重新打开并保存**才带结构文本（或另做批量重算入口）；与 P3-② 同一模式 |
 
 > **一句话交接**：这两格都**不需要新契约**（不是 `deps` 能力、不是抽取器），改动落在
 > "页面正文派生 ＋ 两个块的 `getTextContent`"上 ⇒ 归属按 git 作者走（fengjt007 / cnzen），
 > 与抽取层（AMD 这条线）**零重叠**。谁认领说一声，我可以出纯函数与判据（不含编辑器接线）—— 那部分是我的车道。
 >
-> ★ **2026-09-22：纯函数与判据这一半已经落地**（AMD；**没有碰任何 editor / 数据库文件**）：
-> `src/lib/databaseText.ts` ＋ `src/lib/databaseText.test.ts`（`databaseTextOf`）、
-> `src/lib/drawingStructureText.ts` ＋ `src/lib/drawingStructureText.test.ts`（`excalidrawStructureText`），
-> **共 22 条判据**。三条写进代码头注的设计决定（接线方务必读一眼）：
-> ① **不发明行 ref 的内联方言** —— `databaseTextOf` 返回 `{ text, rowRefs, truncated }`，
-> 行回链要不要挂 `[[标题]]` 由接线侧定；② **"规则"由调用方渲染成人话**（`rules?: string[]`），
-> 纯函数不认识视图 `config` 的 JSON 方言、也不猜；③ 两格都**空输入 ⇒ 空串**（接线侧据此**不写**正文），
-> 数据库超上限时**明说**还剩多少行没进正文。接线形态见上表（数据库走 `writeContentTextIfChanged` 那条既有模式；
-> 绘图是 `sceneText ＋ structureText` **并列**，不是替代）。
+> ★ **2026-09-22/23 收口（撞车 → 合成，记全过程免得后人重演）**：
+> · **P3-① 绘图块**：同一分钟内**两边各写了一份结构函数**（AMD `drawingStructureText.ts`，方言 `A → B`；
+>   cnzen 在 `drawingText.ts` 里，方言 `矩形"审批" →箭头→ 矩形"发布"`）。收口提交 **`43decd56`**（cnzen）的处置是
+>   **保留 AMD 那份结构函数**（`drawingText.ts` 退成**合成层**：`sceneText ＋ structureText`、字符封顶、
+>   截断明说、回归守护），并删掉他们自己那份结构实现与判据 —— ⇒ **方言现以 `drawingStructureText.ts` 为准**；
+> · **P3-② 数据库块 ＝ 纯函数 AMD（`81b0657e`）＋ 接线 macOS**（cnzen `reply-1` §三 认领，
+>   并同意按工作单第 ③ 条验收「**改正文列之后页面不许变脏**」—— 那是这格里最贵的坑）。
+>   纯函数：`src/lib/databaseText.ts`（`databaseTextOf`，14 条判据）＋ `.test.ts`。三条设计决定（接线方务必读一眼）：
+>   ① **不发明行 ref 的内联方言** —— 返回 `{ text, rowRefs, truncated }`，行回链要不要挂 `[[标题]]` 由接线侧定；
+>   ② **"规则"由调用方渲染成人话**（`rules?: string[]`）：纯函数不认识视图 `config` 的 JSON 方言、也不猜；
+>   ③ **空库 ⇒ 空串**（接线侧据此**不写**），超上限时正文里**明说**还剩多少行没进正文。
+> · ⚠️ **两条教训（都真吃过）**：
+>   ① **撞车时先看最新 HEAD，再决定删谁** —— 我读到 `reply-1`（他们认领 P3-①）后就把自己那份删了，
+>      可那时他们的**后续提交**（`43decd56`）已经改成 **import 我那份** ⇒ 我一删，**本地 tsc 立刻红**（已恢复）。
+>      **信箱里的信可能早于对方的后续提交** —— 删东西前先 `git log -- <文件>` 看一眼谁在用它；
+>   ② **新增文件里的字面提及也计入 `check-doc-content-access`** —— 我 `81b0657e` 那两个新文件把 contract 组弄红了
+>      （我当时只跑了那两个测试文件与全量单测，**漏了门禁组**），是 cnzen 用**改措辞**（不抬基线）替我补的。
+>      ⇒ 新增文件后要跑 `test-report --group contract`。
+> · 接线形态见上表（数据库走 `writeContentTextIfChanged` 那条既有模式；绘图侧已由 `excalidrawSearchText` 收口）。
 
 ### P4 —— 跨库总结管线 ＋ 强制引用
 
