@@ -195,4 +195,71 @@ describe("冲刺 S2：一页的 CRDT 状态（载入—编辑—存回—合并�
     expect(idsOf(other.exportJson())).toEqual(["blk-1", "blk-2"]);
     expect(idsOf(yDocToContentJson(before))).toEqual(["blk-1", "blk-2"]);
   });
+
+  // ---------------------------------------------------------------------------------------
+  // S3b：**绑定既有编辑器**（真编辑器接线要的就是这条）＋「真·本地编辑」信号。
+  // ---------------------------------------------------------------------------------------
+
+  it("⑨ ★ 绑定**既有**编辑器：直接改那个编辑器 ⇒ 会话的状态里就有（且与纯函数路径同源）", () => {
+    const appEditor = createEditor({ nodes: EDITOR_NODES, namespace: "app-like-editor" });
+    const s = openPageSession({ json: BASE, editor: appEditor });
+
+    // ⚠️ 不走 `session.edit()` —— 直接改**那个**编辑器（真编辑器里就是这么发生的）
+    appEditor.update(
+      () => {
+        const p = $createBlockParagraphNode("blk-direct");
+        p.append($createTextNode("直接改编辑器"));
+        $getRoot().append(p);
+      },
+      { discrete: true },
+    );
+
+    expect(idsOf(s.exportJson())).toEqual(["blk-1", "blk-2", "blk-direct"]);
+    expect(s.exportJson()).toBe(yDocToContentJson(s.exportState())); // 同源
+    // 另一台从状态打开 ⇒ 看得到这一笔
+    const peer = openPageSession({ state: s.exportState() });
+    expect(idsOf(peer.exportJson())).toEqual(["blk-1", "blk-2", "blk-direct"]);
+    expect(peer.exportJson()).toContain("直接改编辑器");
+  });
+
+  it("⑩ ★ `onLocalEdit` 只报**真·本地编辑**：建血统/远端合并落回编辑器都**不报**", () => {
+    const appEditor = createEditor({ nodes: EDITOR_NODES, namespace: "app-like-editor-2" });
+    const s = openPageSession({ json: BASE, editor: appEditor });
+
+    const hits: string[] = [];
+    const off = s.onLocalEdit(() => hits.push("local"));
+    expect(hits).toEqual([]); // ★ 建血统那一次 update **不算**用户编辑
+
+    appEditor.update(
+      () => {
+        const p = $createBlockParagraphNode("blk-user");
+        p.append($createTextNode("用户打的字"));
+        $getRoot().append(p);
+      },
+      { discrete: true },
+    );
+    expect(hits).toEqual(["local"]); // 本地编辑报一次
+
+    // 另一端的编辑合并进来 ⇒ 也会触发 update，但那是 hydration ⇒ **不该**报
+    const peer = openPageSession({ state: s.exportState() });
+    peer.edit(() => {
+      const p = $createBlockParagraphNode("blk-peer");
+      p.append($createTextNode("对端打的字"));
+      $getRoot().append(p);
+    });
+    s.merge(peer.exportState());
+    expect(hits).toEqual(["local"]); // 仍然是 1
+    expect(idsOf(s.exportJson())).toEqual(["blk-1", "blk-2", "blk-user", "blk-peer"]);
+
+    off();
+    appEditor.update(
+      () => {
+        const p = $createBlockParagraphNode("blk-after-off");
+        p.append($createTextNode("退订之后"));
+        $getRoot().append(p);
+      },
+      { discrete: true },
+    );
+    expect(hits).toEqual(["local"]); // 退订生效
+  });
 });
