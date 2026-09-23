@@ -2,7 +2,7 @@
 //
 // ## 与 `drawingText.ts` 的关系（别读成两套口径）
 //
-// `drawingText.ts`（cnzen）的 `excalidrawSceneText` 已经把**图上文字标签**送进 `content_text` 了 ——
+// `drawingText.ts`（cnzen）的 `excalidrawSceneText` 已经把**图上文字标签**送进正文列了 ——
 // 那一半**已完成**。P3 原文要的还有"**节点-连线结构**序列化"（`loc` ＝ 块 id）：一张
 // 「审批 → 发布 → 归档」的流程图，光有标签文字搜得到词，但**关系**（谁指向谁）看不见。
 // ⇒ 本文件是**补充**，不是替代：接线时应当 `sceneText ＋ structureText` 并列输出。

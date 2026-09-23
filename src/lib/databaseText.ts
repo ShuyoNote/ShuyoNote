@@ -2,7 +2,7 @@
 //
 // ## 为什么单独一个文件、以及为什么**只做纯函数**
 //
-// 方案 P3 那格缺的是"**列名 ＋ 行 ＋ 规则**进 `content_text`"（`loc` ＝ 行 id）。接线那半在
+// 方案 P3 那格缺的是"**列名 ＋ 行 ＋ 规则**进正文文本列"（`loc` ＝ 行 id）。接线那半在
 // `DatabaseView.tsx` / 页面正文派生链（`contentText.ts` → `docContent.ts::writeContentTextIfChanged`）里，
 // **归属是那两个文件的作者**；本文件只提供可单测的纯函数 ＋ 判据，接线怎么做由他们定
 // （工作单见方案 P3 末尾，2026-09-22）。
@@ -24,7 +24,7 @@ import type { AttrDef, DatabaseRow } from "../types";
 /** 选择型列的候选值也属于"规则"的一部分（用户按它筛，AI 也该看得见）。 */
 const SELECT_TYPES = new Set(["select", "multi_select"]);
 
-/** 默认单次进正文的行数上限：`content_text` 是**正文列**，不是数据导出。 */
+/** 默认单次进正文的行数上限：那是**正文列**，不是数据导出（大库不许把整张表灌进去）。 */
 export const DEFAULT_MAX_ROWS = 200;
 
 export interface DatabaseTextInput {
@@ -39,7 +39,7 @@ export interface DatabaseTextInput {
 }
 
 export interface DatabaseTextResult {
-  /** 进 `content_text` 的纯文本。**空库 ⇒ 空串**（调用方据此不写）。 */
+  /** 进正文列的纯文本。**空库 ⇒ 空串**（调用方据此不写）。 */
   text: string;
   /** 每行的 (page_id, 标题) —— 接线侧要挂回链时用它；本函数不发明内联方言。 */
   rowRefs: { pageId: string; title: string }[];
