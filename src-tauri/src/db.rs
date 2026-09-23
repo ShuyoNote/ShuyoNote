@@ -326,7 +326,11 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             -- §0-C：这个空间的数据是**哪一版密文**（0 = 未记录/明文；1 = XChaCha20；2 = 国密 v2）。
             -- 为什么必须有它：只靠密文头，老端要**读到某一条**时才知道读不了；有了它，
             -- 「同步之前 / 用这个空间之前」就能明确拒绝并提示升级（`security::ensure_space_format_supported`）。
-            cipher_format INTEGER NOT NULL DEFAULT 0
+            cipher_format INTEGER NOT NULL DEFAULT 0,
+            -- ★ 隐私边界第 2 步（2026-09-23）：**这个空间是个人空间还是团队空间**。
+            -- 它**只是本地标记**：`''` = 未分类（**默认**，闸门对未分类一律放行 —— 绝不因为"没分类"就掐断同步）；
+            -- `'personal'` = 个人空间（**必须**按空间加密后才允许绑定同步）；`'team'` = 团队空间（**免检**）。
+            kind        TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -1109,6 +1113,16 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     )?;
     if ws_has_sort == 0 {
         conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+    // ★ 隐私边界第 2 步（2026-09-23）：个人/团队空间的**本地分类标记**。
+    // 存量库补列时**默认空串 = 未分类** ⇒ 闸门对未分类一律放行（老库行为一字不变）。
+    let ws_has_kind: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'kind'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_kind == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
     }
 
     // Membership rule for database pages (query-type database: auto-collect by rule).

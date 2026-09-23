@@ -828,6 +828,29 @@ pub fn list_sync_profiles(db: State<'_, Db>) -> Result<Vec<SyncProfile>, String>
     list_profiles(&c)
 }
 
+/// ★ 隐私边界**第 2 步**（2026-09-23）：**绑定同步关系**那一刻的闸门。
+///
+/// 返回 `Ok(Some(提示))` ＝ 放行但**这个空间还没分类**（上层该如实说出来，不静默）；
+/// `Ok(None)` ＝ 正常放行；`Err` ＝ **拦住**（可操作文本：先按空间加密，或把它标成团队空间）。
+///
+/// ⚠️ 抽成独立函数就是为了**能被判据直接驱动**（命令那层要 `State<Db>`，测不了）。
+pub(crate) fn sync_bind_gate(
+    c: &Connection,
+    dir: &Path,
+    ws_id: &str,
+) -> Result<Option<String>, String> {
+    let st = crate::space_crypto::space_status(dir, ws_id);
+    let kind = crate::space_crypto::space_kind(c, ws_id);
+    match crate::space_crypto::sync_gate(&st, kind) {
+        crate::space_crypto::SyncGate::Allowed => Ok(None),
+        crate::space_crypto::SyncGate::Blocked(msg) => Err(msg),
+        crate::space_crypto::SyncGate::AllowedUnclassified => Ok(Some(format!(
+            "空间「{ws_id}」还没分类（个人/团队）：同步闸门这次**没有管到它** —— \
+             若它是个人空间，请先按空间加密再绑定同步。"
+        ))),
+    }
+}
+
 #[tauri::command]
 pub fn set_sync_profile(
     db: State<'_, Db>,
@@ -838,6 +861,12 @@ pub fn set_sync_profile(
     email: Option<String>,
 ) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
+    // ★ 第 2 步：**绑定之前**过闸门（个人空间没加密 ⇒ 拦；团队空间免检；未分类 ⇒ 放行但留痕）。
+    if let Some(dir) = crate::db::app_data_dir_ref() {
+        if let Some(note) = sync_bind_gate(&c, dir, &ws_id)? {
+            eprintln!("[sync] {note}");
+        }
+    }
     set_profile(&c, &ws_id, &server_url, token.as_deref().unwrap_or(""), space_id.as_deref().unwrap_or(""))?;
     // 记住本次填的登录邮箱（供重开面板预填），只更新 email，保留已有 token/user_id。
     if let Some(e) = email.filter(|e| !e.trim().is_empty()) {
@@ -3772,6 +3801,48 @@ mod tests {
         let c = crate::db::open_space_conn_at("ws", &dir).unwrap();
         set_meta_state(&c, "device_id", "test-device").unwrap();
         (c, dir)
+    }
+
+    /// ★★ 隐私边界**第 2 步**：**绑定同步关系那一刻的闸门**（真库、真路径）。
+    ///
+    /// 四支都要有读数：个人空间没加密 ⇒ **拦**；加密过（袋里有它）⇒ 放行；
+    /// 团队空间 ⇒ **免检**（明文也放行）；未分类 ⇒ 放行但**带一条提示**（不静默）。
+    #[test]
+    fn the_sync_bind_gate_blocks_only_personal_spaces_without_encryption() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let (c, dir) = pending_conn("syncgate");
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES ('ws', '甲', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        // ① 未分类 ⇒ 放行 ＋ 提示（这是**今天所有空间**的状态：闸门不掐断任何人的同步）
+        let note = sync_bind_gate(&c, &dir, "ws").unwrap();
+        assert!(note.is_some(), "未分类要如实报出来");
+        assert!(note.unwrap().contains("没分类"));
+
+        // ② 标成个人空间 ⇒ **拦**（库是明文）
+        crate::space_crypto::set_space_kind(&c, "ws", crate::space_crypto::SpaceKind::Personal).unwrap();
+        let err = sync_bind_gate(&c, &dir, "ws").unwrap_err();
+        assert!(err.contains("明文"), "{err}");
+
+        // ③ 给它按空间加密 ⇒ 放行
+        let mut c2 = c;
+        crate::space_crypto::enable_space(&mut c2, &dir, "ws", Some("我家猫叫mimi")).unwrap();
+        assert!(sync_bind_gate(&c2, &dir, "ws").unwrap().is_none(), "加密过就该放行");
+
+        // ④ 团队空间 ⇒ **免检**（即使明文）
+        crate::space_crypto::set_space_kind(&c2, "ws", crate::space_crypto::SpaceKind::Team).unwrap();
+        crate::space_crypto::disable_space(&mut c2, &dir, "ws").unwrap();
+        assert!(
+            crate::security::space_db_is_encrypted(&crate::db::space_db_path(&dir, "ws")) == false,
+            "前置：已经回明文"
+        );
+        assert!(sync_bind_gate(&c2, &dir, "ws").unwrap().is_none(), "★ 团队空间明文也免检");
+
+        drop(c2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn insert_local_page(c: &Connection, id: &str, json: &str, sync_seq: i64, dirty: i64) {

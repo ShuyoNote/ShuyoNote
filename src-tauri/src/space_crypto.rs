@@ -146,6 +146,95 @@ pub fn space_app_keys_for_path(path: &Path) -> Result<Option<AppKeys>, String> {
     }
 }
 
+/// 空间类型（**闸门唯一的输入**）。今天是**本地标记**，默认 `Unknown`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpaceKind {
+    /// 个人空间：**必须**按空间加密之后才允许绑定同步（口径里"服务端只落密文"那一半）。
+    Personal,
+    /// 团队空间：**免检**（服务端明文是它刻意换来的：协同 / 检索 / AI）。
+    Team,
+    /// 未分类：**放行**（老库/未标记的空间都走这条 —— 绝不因为"没分类"就掐断同步）。
+    Unknown,
+}
+
+impl SpaceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpaceKind::Personal => "personal",
+            SpaceKind::Team => "team",
+            SpaceKind::Unknown => "",
+        }
+    }
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "personal" => SpaceKind::Personal,
+            "team" => SpaceKind::Team,
+            _ => SpaceKind::Unknown, // 认不出来 ⇒ 未分类（**不猜**）
+        }
+    }
+}
+
+/// 同步闸门的裁决。**三种出口必须能区分**：拦 / 放行 / 放行但"这个空间还没分类"。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncGate {
+    Allowed,
+    /// 放行 —— 但这个空间**没分类**（上层该如实告诉用户"闸门没管到它"，不静默）。
+    AllowedUnclassified,
+    /// 拦住（带一句**可操作**的话）。
+    Blocked(String),
+}
+
+/// ★★ **同步闸门（第 2 步）**：只有"**明确是个人空间**且**没有按空间加密**"才拦。
+///
+/// 三条口径（与 [数据可见边界](../docs/sync-server-data-boundary.md) §0.5 一一对应）：
+/// · **团队空间免检** —— 服务端明文正是它换来的东西，拦它等于把那份取舍白扔；
+/// · **个人空间**：库文件是密的 **或** 袋里有它的盒子 ⇒ 放行；否则拦（否则就是明文上云，
+///   而且**不可回溯**：服务端历史/备份/WAL 都会留底）；
+/// · **未分类**：放行（老库、还没标记的空间），但把"没管到"这个事实**报出去**。
+pub fn sync_gate(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
+    match kind {
+        SpaceKind::Team => SyncGate::Allowed,
+        SpaceKind::Unknown => SyncGate::AllowedUnclassified,
+        SpaceKind::Personal => {
+            if st.encrypted_on_disk || st.in_keyring {
+                SyncGate::Allowed
+            } else {
+                SyncGate::Blocked(format!(
+                    "空间「{}」是个人空间但还没有加密：先给它设一句口令（按空间加密），再绑定同步 —— \
+                     否则它的内容会**明文**发到服务端，而且事后加密也撤不回已经落库的那份。\
+                     （如果你要的是团队空间，请在空间设置里把它标成团队空间。）",
+                    st.space_id
+                ))
+            }
+        }
+    }
+}
+
+/// 读这个空间的**本地分类标记**（读不到/没那条 ⇒ `Unknown`）。
+pub fn space_kind(c: &Connection, space_id: &str) -> SpaceKind {
+    c.query_row(
+        "SELECT COALESCE(kind, '') FROM meta.workspaces WHERE id = ?1",
+        [space_id],
+        |r| r.get::<_, String>(0),
+    )
+    .map(|s| SpaceKind::parse(&s))
+    .unwrap_or(SpaceKind::Unknown)
+}
+
+/// 写这个空间的本地分类标记（`Unknown` ⇒ 写回空串＝取消分类）。
+pub fn set_space_kind(c: &Connection, space_id: &str, kind: SpaceKind) -> Result<(), String> {
+    let n = c
+        .execute(
+            "UPDATE meta.workspaces SET kind = ?1 WHERE id = ?2",
+            rusqlite::params![kind.as_str(), space_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err(format!("空间「{space_id}」不存在"));
+    }
+    Ok(())
+}
+
 /// **这个空间现在的加密状态**（给第 2 步的同步闸门与界面读的三条读数）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SpaceCryptoStatus {
@@ -393,6 +482,75 @@ mod tests {
         // 收尾
         set_keyring_for_test(None);
         set_session_master(None).unwrap();
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ 第 2 步（同步闸门）：**只有"明确是个人空间且没加密"才拦**；团队空间免检；
+    /// 未分类放行但**要报出来**（不静默）。
+    #[test]
+    fn the_sync_gate_only_blocks_personal_spaces_that_are_not_encrypted() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let plain = SpaceCryptoStatus {
+            space_id: "s".into(),
+            encrypted_on_disk: false,
+            in_keyring: false,
+            key_available: false,
+        };
+        let enc = SpaceCryptoStatus {
+            encrypted_on_disk: true,
+            ..plain.clone()
+        };
+        let boxed = SpaceCryptoStatus {
+            in_keyring: true,
+            key_available: true,
+            ..plain.clone()
+        };
+
+        // ① 个人空间没加密 ⇒ **拦**，且那句话要可操作（说清后果与两条出路）
+        let blocked = match sync_gate(&plain, SpaceKind::Personal) {
+            SyncGate::Blocked(m) => m,
+            other => panic!("个人空间没加密必须拦，实际 {other:?}"),
+        };
+        assert!(blocked.contains("明文"), "{blocked}");
+        assert!(blocked.contains("团队空间"), "要给出另一条出路：{blocked}");
+        // ② 个人空间已加密（文件是密的 **或** 袋里有它）⇒ 放行
+        assert_eq!(sync_gate(&enc, SpaceKind::Personal), SyncGate::Allowed);
+        assert_eq!(sync_gate(&boxed, SpaceKind::Personal), SyncGate::Allowed);
+        // ③ 团队空间**免检**（明文也不拦 —— 那正是它换来的东西）
+        assert_eq!(sync_gate(&plain, SpaceKind::Team), SyncGate::Allowed);
+        // ④ 未分类 ⇒ 放行，但把"没管到"这个事实报出来
+        assert_eq!(sync_gate(&plain, SpaceKind::Unknown), SyncGate::AllowedUnclassified);
+    }
+
+    /// 分类标记的读写：认不出来 ⇒ `Unknown`（**不猜**）；写不存在的空间 ⇒ 报错。
+    #[test]
+    fn space_kind_round_trips_and_unknown_values_are_not_guessed() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-spacekind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("sk-a", &dir).unwrap();
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES ('sk-a', '甲', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Unknown, "默认就是未分类");
+        set_space_kind(&c, "sk-a", SpaceKind::Personal).unwrap();
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal);
+        c.execute("UPDATE meta.workspaces SET kind = 'PERSONAL' WHERE id = 'sk-a'", []).unwrap();
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "大小写不敏感");
+        c.execute("UPDATE meta.workspaces SET kind = '别的' WHERE id = 'sk-a'", []).unwrap();
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Unknown, "★ 认不出来 ⇒ 未分类，**不猜**");
+        assert_eq!(space_kind(&c, "不存在"), SpaceKind::Unknown, "没那条 ⇒ 未分类");
+        assert!(set_space_kind(&c, "不存在", SpaceKind::Team).is_err(), "写不存在的空间要报错");
+        // 取消分类 ⇒ 写回空串
+        set_space_kind(&c, "sk-a", SpaceKind::Unknown).unwrap();
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Unknown);
+
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }
