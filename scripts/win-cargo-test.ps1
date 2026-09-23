@@ -32,6 +32,27 @@ USAGE
   powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Release
   powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -NoRun   # build + inject only
   powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -CargoArgs '--features','sm-crypto'
+  powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Skip plugins::,gm_conformance::
+  powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -PrintExePath   # print the injected copy path
+
+-PrintExePath (added 2026-09-23, Windows side)
+  After build+inject, print the *injected copy's* absolute path and exit (no run), so a gate can drive it:
+      $exe = (& powershell -File scripts\win-cargo-test.ps1 -PrintExePath |
+              Select-String '^WIN_CARGO_TEST_EXE=' | Select-Object -Last 1) -replace '^WIN_CARGO_TEST_EXE=',''
+      & $exe --skip plugins::
+  NOTE: the line carries a stable prefix on purpose -- Write-Host output also lands on stdout when the
+  script runs as a CHILD process (measured 2026-09-23: the caller saw 8 progress lines around the path).
+  Why it exists: the win32 `rust-sm-wired` grid has to run the manifested copy itself with `--skip`,
+  and `-NoRun` only says "do not run" -- it does not tell you where the copy is.
+
+-Skip <string[]> (added 2026-09-23, Windows side)
+  Expands to one `--skip <pattern>` per entry (native libtest flag), so callers stop writing
+  `-ExtraArgs '--skip','plugins::'` -- PowerShell binds that silently wrong (measured by AMD 2026-09-23).
+  On win32 the 34 `plugins::` cases need a REAL host binary and this script only builds `--lib`
+  => without a prior `cargo build` they fail; the script warns about that right before running.
+
+NOTE (2026-09-23): keep this file ASCII-ONLY (gate `check-ps1-ascii`, and powershell.exe 5.1 reads a
+BOM-less .ps1 as ANSI -- non-ASCII comments get mangled and can silently swallow the next code line).
 #>
 [CmdletBinding()]
 param(
@@ -39,6 +60,8 @@ param(
   [string]$Filter = "",
   [string[]]$ExtraArgs = @(),
   [string[]]$CargoArgs = @(),
+  [string[]]$Skip = @(),
+  [switch]$PrintExePath,
   [switch]$NoRun
 )
 
@@ -229,13 +252,30 @@ if ($asText -notmatch 'Common-Controls') {
 }
 Write-Host "win-cargo-test: manifest present in the copy (verified by byte scan)"
 
+if ($PrintExePath) {
+  # Machine-readable line: the caller keys on the stable prefix (see the header note on why a bare
+  # `Write-Output $copy` is not enough when this script runs as a child process).
+  Write-Output ("WIN_CARGO_TEST_EXE={0}" -f $copy)
+  exit 0
+}
+
 if ($NoRun) {
   Write-Host "win-cargo-test: -NoRun set, not executing."
   exit 0
 }
 
+# Without a prior `cargo build` the 34 `plugins::` cases must fail -- they need a REAL host binary.
+# Say so before running, otherwise the reading looks like a real red (hit on 2026-09-23, Windows side).
+$hostExe = Join-Path $crateDir "target\$profile\shuyonote.exe"
+if (-not (Test-Path -LiteralPath $hostExe)) {
+  Write-Host "win-cargo-test: note: $hostExe is missing => the 34 plugins:: cases need a real host binary and will fail." -ForegroundColor Yellow
+  Write-Host "win-cargo-test:       run cargo build first (or pass -Skip plugins::) -- this would NOT be a code red." -ForegroundColor Yellow
+}
+
 $exeArgs = @()
 if ($Filter) { $exeArgs += $Filter }
+# `--skip` is expanded here (not via -ExtraArgs): PowerShell binds `-ExtraArgs --skip,'plugins::'` silently wrong.
+foreach ($s in $Skip) { if ($s) { $exeArgs += @('--skip', $s) } }
 if ($ExtraArgs.Count -gt 0) { $exeArgs += $ExtraArgs }
 
 Write-Host "win-cargo-test: running $copy $($exeArgs -join ' ')"
