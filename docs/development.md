@@ -606,6 +606,17 @@ toast(`已删除 ${n} 项`);   // 或 t("trash.deleted", { n })
   （它自己的命令行里就含这个字符串）⇒ 连带把宿主 job runner 一起杀掉、工具报 `0xFFFFFFFF`；
   同一天换成 `'start-desktop-dev.ps1'` 又中了一次。⇒ 只按**进程名**＋**端口所有者 PID**，或用**精确 PID**；
   这条与"读别的进程 EDIT 必须用 `WM_GETTEXT`"同族：**进程操作要用身份，不要用文本**。
+- **BOM 只在**文件首位**合法 —— 把两份文本拼起来会让那个编码标记变成非法**（2026-09-23，AMD 在 Windows 上实测、我记档）：
+  国密构建要"继承真实的 `~/.cargo/config.toml`"（镜像源必须带上），于是把 header 拼在它**前面**；
+  而那份真实 config 在这台机器上以 `EF BB BF`（UTF-8 BOM）开头 —— cargo **容忍文件开头的 BOM**，
+  但拼过之后它落到**第 4 行行首**，就不再是"首位"⇒ TOML 直接不认：
+  `could not parse TOML configuration in .gm-build/cargo-home/config.toml` / `key with no value, expected =`（exit 101），
+  而**私有 `CARGO_HOME` 下任何 cargo 调用都会炸**。
+  **处置**：拼接前只剥**开头那一个** BOM（`text.replace(/^\uFEFF/, "")`）——"逐字复制"收窄成
+  "逐字，**除了那个只在首位合法的编码标记**"；⚠️ **不要**全局删 `U+FEFF`：内容里的零宽字符是**内容**。
+  **这类 bug 的特征**：在写它的那台机器上**永远看不见**（谁的 config 没 BOM，谁就不会撞）——
+  所以"两份文本拼一份"的地方都要问一句"如果第一份以 BOM 开头会怎样"。
+  判据：`scripts/lib/sm-library-isolate.test.mjs`（生成物**任何位置**都不含 BOM ＋ 镜像仍逐字继承 ＋ 内容里的 U+FEFF 不许被删）。
 - **中文乱码**：只能用编辑工具写 UTF-8；shell 重写会坏（`>` 重定向在 PowerShell 里写的是 UTF-16，`Get-Content`/`Set-Content` 往返会把中文写成 GBK 乱码——本项目已因此损坏过 `commands.ts` 与两个预览文件）。从 git 取回旧版本用 `git checkout <commit> -- <path>`，让 git 自己写字节。
 - **验证与提交分两步**：PowerShell 的 `;` 不会因前一条失败而中断，`tsc/build` 失败后 `git commit && git push` 照样会跑——曾因此把编译不过的版本推上远端。先跑验证、看退出码，再单独提交。
 - **换行符（autocrlf）**：仓库用 `.gitattributes`（`* text=auto eol=lf`）钉死 LF，各平台检出都是 LF；Windows 上若仍看到 `LF will be replaced by CRLF`，说明改动没走到这条规则上，**别当成正常忽略**。历史教训：v1.84.6 首次发布时 Windows runner 因默认 `core.autocrlf=true` 把文本检出成 CRLF，而 `check-capabilities` 对生成物做逐字节比对 → `pnpm build`（Tauri 的 `beforeBuildCommand`）失败 → Windows 构建整个红掉而 Linux 正常。**新写「比对生成物」的检查时必须按行尾无关比较**（`\r\n` → `\n` 后再比），否则等于给 Windows 埋一颗必炸的雷。
