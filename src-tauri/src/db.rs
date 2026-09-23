@@ -941,6 +941,36 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         [],
     )?;
 
+    // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）· **页级血统冲突**（"两条独立编辑历史撞在一起"）。
+    //
+    // ⚠️ 与上面那张**块级** `page_conflicts` **不是一族**：那种是"同一块被判成两版、选一侧"（可逐块裁决）；
+    //    这里撞上的是**两条独立血统** —— Yjs 结构上就不是同一棵树，**合并在数学上做不到**
+    //    （S1 红线：硬合 ⇒ 一块变两块）⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"三条路。
+    //    所以**不许**把页级的行塞进块级表（会让"未决块数"失去意义 —— `doc_content.rs` 那条纪律）。
+    //
+    // ⚠️ 与 `page_conflicts` 同族的两条：① 这是**本地证据**（别的设备没有这行、服务端也没有这张表）；
+    //    ② `resolved_at` 为空 ＝ **未决**，界面**不许**读成"已处理"。
+    //
+    // `remote_doc` 存**对端那一版的整页投影 JSON**：被拒的待并状态在合并之后会被 `clearPending` 清掉，
+    // 不在这里留一份快照，"另存为新页"到时候就**无从下手**。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_lineage_conflicts (
+            id              TEXT PRIMARY KEY,
+            page_id         TEXT NOT NULL,
+            mine_fp         TEXT NOT NULL,
+            remote_fp       TEXT NOT NULL,
+            remote_doc      TEXT NOT NULL DEFAULT '',
+            detected_at     INTEGER NOT NULL,
+            resolved_at     INTEGER,
+            resolved_choice TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_lineage_conflicts_page ON page_lineage_conflicts(page_id, resolved_at)",
+        [],
+    )?;
+
     // 冲刺 S2b（2026-09-23）· **每页的 CRDT 状态**（以后是**权威**那一份；`pages` 里那份暂时仍是投影）。
     // ⚠️ 与上面那两张"本地表"**不同族**：它**最终要上服务端**（已拍板 = 服务端合并）⇒ 同步字段
     //    （rev/dirty/seq）在 S4 加；本切片只做本地落盘。

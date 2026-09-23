@@ -872,6 +872,64 @@ pub fn list_page_conflicts(
     crate::doc_content::unresolved_page_conflicts(&c, &page_id)
 }
 
+// =====================================================================================
+// 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）· **页级血统冲突**的三条命令
+//
+// 与块级那两条**并列但不同族**：那种冲突可以逐块选一侧；这里撞上的是**两条独立血统**
+//（Yjs 结构上合不了）⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"。
+// ⚠️ 判定"这两条血统相不相关"的**只有界面侧**（要 Yjs）⇒ 记录由界面侧发起，Rust 只负责存与裁决。
+// =====================================================================================
+
+/// 记一次页级血统冲突的载荷：两条指纹 ＋ **对端那一版的整页投影 JSON**。
+///
+/// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `PageProjectionArgs` / `StaleTextPage` 同一处置）。
+#[derive(serde::Deserialize)]
+pub struct RecordLineageConflictArgs {
+    pub page_id: String,
+    pub mine_fp: String,
+    pub remote_fp: String,
+    pub doc_json: String,
+}
+
+/// 记一次（**去重**：同一对指纹只提一次；同一页只留一条未决）。返回**是否真的新建了一行**。
+#[tauri::command]
+pub fn record_lineage_conflict(
+    db: State<Db>,
+    args: RecordLineageConflictArgs,
+) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::lineage_conflict::record_lineage_conflict(
+        &c,
+        &args.page_id,
+        &args.mine_fp,
+        &args.remote_fp,
+        &args.doc_json,
+        now_ms(),
+    )
+}
+
+/// 这一页**未决**的页级血统冲突（至多一条；`null` ＝ 没有 —— 这是常态，不是错误）。
+#[tauri::command]
+pub fn list_lineage_conflicts(
+    db: State<Db>,
+    page_id: String,
+) -> Result<Option<crate::lineage_conflict::PageLineageConflict>, String> {
+    let c = conn(&db);
+    crate::lineage_conflict::unresolved_lineage_conflict(&c, &page_id)
+}
+
+/// **裁决一条**：`choice` = `"local"`（保留本机）/ `"saved-as-new"`（已把对端那版另存为新页），
+/// 其余值一律报错（**不默认选边** —— 与 `resolve_page_conflict` 同一纪律）。
+#[tauri::command]
+pub fn resolve_lineage_conflict(
+    db: State<Db>,
+    conflict_id: String,
+    choice: String,
+) -> Result<(), String> {
+    let c = conn(&db);
+    crate::lineage_conflict::resolve_lineage_conflict(&c, &conflict_id, &choice, now_ms())
+}
+
 /// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。
 ///
 /// 落库那一笔是**一次本地编辑**（`dirty = 1`）⇒ 会被推上去 —— "留本地"就是这么生效的。

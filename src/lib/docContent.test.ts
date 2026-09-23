@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, upsertRemoteContent, writeContent, writeContentText, writePageProjectionIfChanged, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordLineageConflict, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolveLineageConflict, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, unresolvedLineageConflict, upsertRemoteContent, writeContent, writeContentText, writePageProjectionIfChanged, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs, canonicalContent } from "./blockRev";
 
 beforeAll(() => {
@@ -923,5 +923,85 @@ describe("★ §13.3 投影写回（writePageProjectionIfChanged）", () => {
   it("页面不存在 ⇒ `false`（无事可做，不是错误 —— 与 clear_pending_page_states 同一口径）", async () => {
     const db = await freshDb();
     expect(writePageProjectionIfChanged(db, "nope", doc(blk("b1", 1, "x")))).toBe(false);
+  });
+});
+
+// ★ 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁）。
+//
+// 与 Rust `lineage_conflict.rs` 的判据**逐条对应**（改一边看另一边）。Web 平台的三条命令
+// （`record/list/resolve_lineage_conflicts`）**直接调这几个函数** ⇒ 这四条就是 Web 侧的全部语义。
+describe("★ §13.3 页级血统冲突（page_lineage_conflicts）", () => {
+  // 与上面两节同一套最小夹具（块身份 ＋ 块体）。
+  const blk = (blockId: string | undefined, rev: number | null, body: string) => ({
+    blockId,
+    rev,
+    type: "paragraph",
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+
+  const FP_MINE = "7";
+  const FP_PEER = "42";
+
+  it("★ 同一对指纹只提一次：未决时只刷新快照，已裁决过则**不再提**", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+
+    expect(recordLineageConflict(db, "p1", FP_MINE, FP_PEER, doc(blk("b9", 1, "对端v1")), 10)).toBe(
+      true,
+    );
+    // 同一对再来 ⇒ 不新建，但快照刷新成最新那一版（对端可能又推了新的）
+    expect(recordLineageConflict(db, "p1", FP_MINE, FP_PEER, doc(blk("b9", 1, "对端v2")), 11)).toBe(
+      false,
+    );
+    const row = unresolvedLineageConflict(db, "p1")!;
+    expect(row.remoteDoc).toContain("对端v2");
+    expect(row.mineFp).toBe(FP_MINE);
+    expect(row.remoteFp).toBe(FP_PEER);
+
+    // 裁决之后**同一对**不再提（否则用户每开一次页面就被打扰一次）
+    resolveLineageConflict(db, row.id, "saved-as-new");
+    expect(recordLineageConflict(db, "p1", FP_MINE, FP_PEER, doc(blk("b9", 1, "对端v3")), 12)).toBe(
+      false,
+    );
+    expect(unresolvedLineageConflict(db, "p1")).toBeUndefined();
+
+    // 但**换一条新血统**（新的指纹对）是一件新事 ⇒ 要提
+    expect(recordLineageConflict(db, "p1", FP_MINE, "99", doc(blk("bz", 1, "新对端")), 13)).toBe(true);
+  });
+
+  it("同一页只留一条未决（旧的指纹对被新事实取代，不堆积）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    recordLineageConflict(db, "p1", "7", "42", "{}", 10);
+    recordLineageConflict(db, "p1", "7", "99", "{}", 11);
+    const rows = db.query<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM page_lineage_conflicts WHERE page_id = ? AND resolved_at IS NULL",
+      ["p1"],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it("★ 裁决**不默认选边**：只认两个字面量；已裁决的再裁决要**报错**", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    recordLineageConflict(db, "p1", FP_MINE, FP_PEER, "{}", 10);
+    const id = unresolvedLineageConflict(db, "p1")!.id;
+
+    for (const bad of ["", "remote", "use-remote", "LOCAL"]) {
+      expect(() => resolveLineageConflict(db, id, bad)).toThrow();
+    }
+    resolveLineageConflict(db, id, "local");
+    expect(() => resolveLineageConflict(db, id, "local")).toThrow();
+    expect(unresolvedLineageConflict(db, "p1")).toBeUndefined();
+  });
+
+  it("冲突只记在**那一页**身上（别的页/不存在的页都读不到）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    seedPage(db, "p2", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    recordLineageConflict(db, "p1", FP_MINE, FP_PEER, "{}", 10);
+    expect(unresolvedLineageConflict(db, "p2")).toBeUndefined();
+    expect(unresolvedLineageConflict(db, "nope")).toBeUndefined();
   });
 });

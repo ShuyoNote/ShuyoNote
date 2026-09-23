@@ -394,6 +394,29 @@ export interface CommandMap {
   //    这一份 JSON 由**界面侧**算好传进来（Rust 没有 Yjs ⇒ 它算不出"状态 ⇒ JSON"）。
   // 返回**是否真的写了**（`false` ＝ 无事可做：没变／数据库页／页面不存在）。
   write_page_projection: { args: { args: { page_id: string; doc_json: string } }; result: boolean };
+  // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
+  // ⚠️ 与块级那两条（`list_page_conflicts` / `resolve_page_conflict`）**不同族**：块级可逐块选一侧；
+  //    页级是"两条**独立血统**撞上" —— Yjs 结构上合不了（S1 红线）⇒ 只有
+  //    "留本机 / 用对端 / 两个都要（一页变两页）"三条路。字段名刻意叫 `doc_json`（不是存储列名）。
+  // ⚠️ 判定"血统相不相关"**只有界面侧做得了**（要 Yjs）⇒ 记录由界面侧发起，这两侧只管存与裁决。
+  record_lineage_conflict: {
+    args: { args: { page_id: string; mine_fp: string; remote_fp: string; doc_json: string } };
+    result: boolean;
+  };
+  list_lineage_conflicts: {
+    args: { pageId: string };
+    result: {
+      id: string;
+      page_id: string;
+      mine_fp: string;
+      remote_fp: string;
+      remote_doc: string;
+      detected_at: number;
+      resolved_at: number | null;
+      resolved_choice: string | null;
+    } | null;
+  };
+  resolve_lineage_conflict: { args: { conflictId: string; choice: string }; result: null };
   // 桌面「近实时」流通道（2026-09-23 第 48 轮）：Rust 订 SSE 变更流，**只发"有变更"事件**
   //（`sync-stream-change`），拉取仍由前端 `syncWorkspace` 发起 ⇒ 自动过 C2 闸门/防重入/状态行。
   // ⚠️ 这三条**只有桌面**：浏览器自带 SSE（Web 侧是 `useSyncStream.ts` 自己那条流）⇒ 硬在 `web.ts`

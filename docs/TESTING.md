@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 248 / web 246 / CommandMap 250
+门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 251 / web 249 / CommandMap 253
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -340,6 +340,15 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ **保留的判读纪律**：看到计时类判据红，先**单独重跑该文件**；单独也红才是回归。
   ⚠️ 同时记住：**推送前要求"当轮 tip 全绿"** ⇒ 遇到假红，正确动作是**再跑一次全量**取到全绿 tip，
   并把这次假红如实记在提交里，而不是当成代码问题去改产品代码。
+  ★ **同一族还有第二个来源（2026-09-23 第 49 轮实测）**：**5s 默认超时**也会在负载下假红 ——
+  那次把 `npx vitest run` 与 Rust 全量**并行**跑，`scripts/plugin-fragment.test.mjs`、
+  `scripts/lib/sm-library-patch.test.mjs`、`scripts/check-sys-deps.test.mjs`、
+  `scripts/check-changelog-version-parity.test.mjs`、`src/lib/crdt/yrsInterop.spike.test.ts` 一起报
+  `Error: Test timed out in 5000ms`（它们都要 **spawn 外部进程**：esbuild / `git apply` / dpkg / 真跑尖刺），
+  而**隔离复跑同一批文件 16/16 全绿**、随后**串行**跑全量也全绿（2194 passed）。
+  ⇒ **纪律**：Rust 全量与 vitest 全量**不要并行**跑（两边都在 spawn 进程）；看到 `Test timed out` 先隔离复跑。
+  ⚠️ 注意与"假红"区分开：那次同批里的 `src/lib/crdt/lineageGuard.test.ts` ② 是**真红**
+  （新加的留痕 SQL 没被那个测试的假库认识）—— **隔离复跑仍然红的是真回归**，这一条永远成立。
 - ★ **读退出码时别经过管道过滤**（2026-09-23 一天内撞到**两次**，形状相同）：
   ① `scripts\win-cargo-test.ps1 -Filter sync_stream` 自己打印了 `test result: ok. 13 passed; 0 failed`
   且脚本收了 `test exe exit code = 0`，但外层被报成 **exit 1** —— 那条命令的形状是

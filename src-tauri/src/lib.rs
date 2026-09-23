@@ -35,6 +35,10 @@ mod page_crdt;
 // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**同步载荷里的 CRDT 状态字段**（桌面侧）—— 与前端
 // `src/lib/crdt/wireState.ts` 成对（同一套语义：没有 ⇒ 走今天那条路、版本不认识 ⇒ 不猜、坏载荷 ⇒ 如实报）。
 mod crdt_wire;
+// 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**的留痕与裁决（表 `page_lineage_conflicts`）。
+// ⚠️ 与块级 `page_conflicts` **不是一族**：两条独立血统在 Yjs 结构上就合不了（S1 红线），
+// 只能"留本机 / 用对端 / 两个都要（一页变两页）"。
+mod lineage_conflict;
 // 桌面「近实时」流通道的**纯函数内核**（SSE 帧解析 ＋ 重连退避）—— 设计稿
 // `docs/plans/2026-09-23-desktop-near-realtime-stream-design.md` §7 第 1 步：先有判据。
 mod sync_stream;
@@ -542,6 +546,11 @@ pub fn run() {
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,
+            // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
+            // ⚠️ 与上面那两条**不同族**：块级可逐块选一侧；页级是"两条独立血统撞上"（合不了）。
+            commands::record_lineage_conflict,
+            commands::list_lineage_conflicts,
+            commands::resolve_lineage_conflict,
             // 阶段 1 · 正文文本的本地修复（合并/裁决之后由"有编辑器的那一侧"喂正确文本）
             commands::refresh_page_text,
             // 阶段 1 · B1："正文待重建"队列（补算器按它把合并/裁决过的页面补上）

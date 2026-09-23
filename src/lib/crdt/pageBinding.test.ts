@@ -532,4 +532,75 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     b3.dispose();
     warn.mockRestore();
   });
+
+  // ---------------------------------------------------------------------------------------
+  // ★ 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突当场留痕**
+  //
+  // 判定"这两条血统相不相关"只有这一层做得了（要 Yjs），而"存到哪"是平台的事（端口）。
+  // 留痕里必须带上**对端那一版的投影快照** —— 上面那条 `clearPending` 会把它清掉，
+  // 不留快照，用户之后点"另存为新页"就**无米下锅**（这正是这一片要防的数据丢失）。
+  // ⚠️ 端口**不实现** `recordLineageConflict` ⇒ 行为与接线前逐字相同（⑲ 那条用的就是这种端口）。
+  // ---------------------------------------------------------------------------------------
+
+  it("㉑ ★ 独立血统被拒 ⇒ 当场留痕（两条指纹 ＋ 对端那版的快照）；同血统合并 ⇒ 不留痕", async () => {
+    const store = new Map<string, Uint8Array>();
+    let pending: Array<{ seq: number; state: Uint8Array }> = [];
+    const records: Array<{ pageId: string; mineFp: string; remoteFp: string; docJson: string }> = [];
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+      readPending: async () => pending,
+      clearPending: async () => {
+        const n = pending.length;
+        pending = [];
+        return n;
+      },
+      recordLineageConflict: async (opts: {
+        pageId: string;
+        mineFp: string;
+        remoteFp: string;
+        docJson: string;
+      }) => {
+        records.push(opts);
+        return true;
+      },
+    };
+
+    // 本机首开建血统，并打一块
+    const e0 = appEditor(BASE);
+    const b0 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
+    typeBlock(e0, "blk-mine", "本机打的");
+    await b0.persist();
+    const mineState = store.get("p1")!;
+    b0.dispose();
+
+    // ① **同血统**的正常合并 ⇒ 这不是冲突，不许留痕
+    pending = [{ seq: 8, state: peerStateFrom(mineState, "blk-peer", "对端加的") }];
+    const e1 = appEditor(projectStateToJson(mineState));
+    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    expect(b1.pendingSkipped).toBe(0);
+    expect(records.length, "合得上就不是冲突 ⇒ 不该留痕").toBe(0);
+    b1.dispose();
+
+    // ② **独立血统** ⇒ 拒绝合并 ⇒ 留痕，且快照必须是**对端那一版**
+    const independent = peerStateFrom({ json: BASE }, "blk-other", "另一套身份");
+    pending = [{ seq: 9, state: independent }];
+    const e2 = appEditor(projectStateToJson(store.get("p1")!));
+    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    expect(b2.pendingSkipped).toBe(1);
+    expect(records.length, "被拒就要留痕（不然用户永远不知道有东西没合进来）").toBe(1);
+    expect(records[0].pageId).toBe("p1");
+    expect(records[0].mineFp, "本机这条血统的指纹不能为空").not.toBe("");
+    expect(records[0].remoteFp, "对端那条血统的指纹不能为空").not.toBe("");
+    expect(records[0].mineFp, "两条独立血统的指纹不该相同（去重键靠它）").not.toBe(records[0].remoteFp);
+    expect(
+      idsOf(records[0].docJson),
+      "快照必须是**对端那一版**（救援就靠它；待并状态随后会被清掉）",
+    ).toContain("blk-other");
+    expect(idsOf(records[0].docJson)).not.toContain("blk-mine");
+    b2.dispose();
+  });
 });

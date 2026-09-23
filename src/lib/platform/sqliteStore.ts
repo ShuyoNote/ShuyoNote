@@ -331,6 +331,23 @@ export class SqliteStore {
         resolved_choice TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at);
+      -- 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）· **页级血统冲突**（本地表，不同步/不进备份导出）。
+      -- ⚠️ 与上面那张**块级** page_conflicts **不是一族**：块级是"同一块被判成两版、选一侧"（可逐块裁决）；
+      --    这里撞上的是**两条独立血统** —— Yjs 结构上就不是同一棵树，**合并在数学上做不到**（S1 红线）
+      --    ⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"三条路。别把页级的行塞进块级表。
+      -- remote_doc ＝ **对端那一版的整页投影快照**：待并状态随后会被清掉，不留它就无从"另存为新页"。
+      -- 与桌面 db.rs 的同名表**同形**（字段名逐字一致）。
+      CREATE TABLE IF NOT EXISTS page_lineage_conflicts (
+        id TEXT PRIMARY KEY,
+        page_id TEXT NOT NULL,
+        mine_fp TEXT NOT NULL,
+        remote_fp TEXT NOT NULL,
+        remote_doc TEXT NOT NULL DEFAULT '',
+        detected_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        resolved_choice TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_page_lineage_conflicts_page ON page_lineage_conflicts(page_id, resolved_at);
       -- 冲刺 S2b（2026-09-23）· 每页的 CRDT 状态（以后是**权威**那一份；pages 里那份暂时仍是投影）。
       -- ⚠️ 与上面那两张"本地表"**不同族**：它**最终要上服务端**（已拍板 = 服务端合并）⇒ 同步字段
       --    （rev/dirty/seq）在 S4 加；本切片只做本地落盘。

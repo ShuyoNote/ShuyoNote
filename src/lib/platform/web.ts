@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
 import { applyRemoteCrdtState } from "../crdt/plane";
@@ -3367,6 +3367,37 @@ export function makeInvoke(store: SqliteStore) {
         throw new Error(`choice 只能是 local 或 remote，收到 ${choice}`);
       }
       resolvePageConflict(store, conflictId, choice);
+      return null as T;
+    }
+    if (cmd === "record_lineage_conflict") {
+      // 冲刺 §13.3 第 2 条：**页级**血统冲突的留痕（去重口径在那一层 —— 同一对指纹只提一次）。
+      // ⚠️ 字段名对齐 Rust 侧的 snake_case（前端两边同一套读法，与上面块级那两条同一手法）。
+      const args = a.args ?? a;
+      return recordLineageConflict(
+        store,
+        String(args.page_id ?? ""),
+        String(args.mine_fp ?? ""),
+        String(args.remote_fp ?? ""),
+        String(args.doc_json ?? ""),
+      ) as T;
+    }
+    if (cmd === "list_lineage_conflicts") {
+      const row = unresolvedLineageConflict(store, String(a.pageId ?? a.page_id ?? ""));
+      if (!row) return null as T;
+      return {
+        id: row.id,
+        page_id: row.pageId,
+        mine_fp: row.mineFp,
+        remote_fp: row.remoteFp,
+        remote_doc: row.remoteDoc,
+        detected_at: row.detectedAt,
+        resolved_at: row.resolvedAt,
+        resolved_choice: row.resolvedChoice,
+      } as T;
+    }
+    if (cmd === "resolve_lineage_conflict") {
+      const conflictId = String(a.conflictId ?? a.conflict_id ?? "");
+      resolveLineageConflict(store, conflictId, String(a.choice ?? ""));
       return null as T;
     }
     if (cmd === "list_stale_text_pages") {

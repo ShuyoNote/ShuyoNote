@@ -1,5 +1,15 @@
-# 血统冲突的「可裁决」那一半：方案稿（2026-09-23，**只出稿、未实现**）
+# 血统冲突的「可裁决」那一半：方案稿（2026-09-23，**留痕 ＋ 另存为新页已实现**）
 
+> ★ **已实现（2026-09-23 第 49 轮）**：按 **B 的骨架 ＋ C 的动作**落地（owner 在"自动救援 vs 显式按钮"
+> 里选了**显式按钮**）——
+> · 新表 `page_lineage_conflicts`（页级、本地；**含对端那一版的投影快照** `remote_doc`）＋ 三条命令
+>   `record/list/resolve_lineage_conflict`（两侧同形）；
+> · 两处记录点：web 当场合并（`mergeRemotePageState`）与桌面端口（`PageStatePort.recordLineageConflict`），
+>   **共用同一份指纹口径** `lineageFingerprint`；去重（**同一对指纹只提一次**）在存储那一层；
+> · 小横幅 `components/LineageConflictBanner.tsx`（挂在 `App.tsx`，与块级 `ConflictBanner` 并列）：
+>   **「另存为新页」**（＝③ 的第一步）与**「保留本机」**（＝① 的显式确认）。
+> 读数与判据见 §9。**②「用对端」仍未做**（要动本机血统的取舍），见 §9 末尾。
+>
 > 起因：冲刺 §13.3 第 2 条。2026-09-23 第 49 轮已经把「**可见 + 有痕**」那一半接上了
 > （`src/lib/crdt/lineageNotice.ts` 一处措辞、pull 与"打开页面"两条路共用，`Editor.tsx` 真的读了
 > `pendingSkipped` ⇒ toast ＋ 日志）。**本文只谈剩下那一半**：用户**能不能选**。
@@ -130,3 +140,48 @@ B 补齐后，C 就退化成 ③ 的一个实现方式（`save-remote-as-new`）
 2. **B**：新表 ＋ 两侧命令 ＋ 裁决 UI（放在 `ConflictBanner` **上方**，不复用它的块级行）＋ 三个选项；
    判据 1/4/6/7。
 3. 文档：设计稿 §5 的判据表补一行"页级裁决"，`SHUYONOTE_STATE.md` 缺口 ② 收口。
+
+## 9. ★ 落地读数（2026-09-23 第 49 轮，本机实跑）
+
+**实装了什么**（owner 拍了**显式按钮**，所以走"B 的骨架 ＋ C 的动作"）：
+
+| 层 | 改动 |
+|---|---|
+| 存储 | 新表 `page_lineage_conflicts`（**本地、不同步、不进导出**；与块级 `page_conflicts` 同族但**不同表**）：`id/page_id/mine_fp/remote_fp/**remote_doc**/detected_at/resolved_at/resolved_choice`。两侧各一份 schema（Rust `db.rs` / web `sqliteStore.ts`，字段名逐字一致） |
+| Rust | 新模块 `src-tauri/src/lineage_conflict.rs`：`record`（**去重**：同一对指纹未决 ⇒ 只刷新快照；已裁决 ⇒ **不再提**；否则删掉这一页别的未决行再插）/ `unresolved`（至多一条）/ `resolve`（**只认 `local` / `saved-as-new`**，已裁决再裁决**报错**）＋ 3 条命令 |
+| TS 层 | `docContent.ts` 同语义镜像（Web 的三条命令**直接调它**，不在平台层写第二份判定）＋ 契约/api/web 分派 |
+| 记录点 | ① web 当场合并（`mergeRemotePageState` 的护栏命中处，直接落库）；② 桌面端口（`PageStatePort.recordLineageConflict` → 命令）。两处**共用** `lineageFingerprint()` 算去重键；`docJson` 都是 `projectStateToJson(对端状态)` ⇒ **快照就是救援时唯一还在的那一份**（`clearPending` 随后会清掉待并状态） |
+| UI | `components/LineageConflictBanner.tsx`（挂在 `App.tsx`，与块级 `ConflictBanner` **并列**、样式复用 `.conflict-banner`）：「另存为新页」（建页 ＋ 标题加后缀「（另一条编辑历史）」＋ 内容用快照 ＋ 正文按编辑器语义 `deriveContentText` 派生 ＋ 记 `saved-as-new`）／「保留本机」（记 `local`）。刷新时机与块级那条**同两处**：挂载/换页 ＋ 一次同步结束 |
+
+**判据（全绿）**：
+
+```
+Rust lineage_conflict::tests（4 条）：同一对只记一次 + 快照刷新 ／ 已裁决过不再提（换新血统则要提）
+                                    ／ 只认两个字面量 + 已裁决再裁报错 ／ 冲突只落在那一页
+TS docContent.test.ts（4 条）：同上去重的四条语义（Web 侧的全部语义）
+TS crdt/pageBinding.test.ts（1 条 ㉑）：独立血统被拒 ⇒ 当场留痕（两条指纹 ＋ **对端那版快照**）；同血统合并 ⇒ 不留痕
+TS components/LineageConflictBanner.test.ts（5 条，happy-dom）：无未决不渲染 ／ 只有两个按钮 ／
+                                    「另存为新页」真的建页（标题后缀＋内容是快照＋正文派生）＋ 记 saved-as-new
+                                    ／ 「保留本机」记 local 且**不建页** ／ 裁决后整条消失
+TS crdt/lineageNotice.wiring.test.ts（+1 条，文本级）：App 里**挂上了**横幅 ＋ 两处记录点都在 ＋ 指纹口径同一份
+```
+
+**变异实测**：把 TS 侧去重闸门短路（`if (false && existing)`）⇒「同一对指纹只提一次」**红**；还原 ⇒ 全绿。
+
+**当轮 tip 读数**：Rust 全量 **573 tests / 555 passed / 0 failed / 18 ignored**；
+vitest 全量 **213 files passed（2194 passed / 12 skipped）**；
+`tsc` 0；`pnpm run build` 0；`build:web` ＋ `check:web-build` 9/0；`test:sync-verify` 84/0；
+`check-web-commands` 绿（**Rust 251 / web 249 / 契约 253**）；`check-doc-content-access` 562（基线 562）。
+
+⚠️ **这一轮撞到一次负载假红，如实记**：把 vitest 全量与 Rust 全量**并行**跑时，五个 **spawn 外部进程**的
+脚本测试一起报 `Test timed out in 5000ms`（`plugin-fragment` / `sm-library-patch` / `check-sys-deps` /
+`check-changelog-version-parity` / `yrsInterop.spike`）；**隔离复跑 16/16 全绿**、**串行**全量也全绿。
+同批里 `lineageGuard.test.ts` ② 是**真红**（新加的留痕 SQL 没被那个测试的假库认识）⇒ 已修。
+判读纪律已写进 `docs/TESTING.md` 的「计时类判据」那条。
+
+⚠️ **仍未做的（如实）**：
+1. **② 「用对端」**（放弃本机这条血统、改接对端那条）没做 —— 它要动**本机血统的取舍**，
+   而且必须先有"本机这版也不丢"的去处（否则就是把本机的编辑丢掉换一份）。今天用户可以走 ③（另存为新页）
+   达到"两边都在"，所以 ② 的边际价值低于它的风险。
+2. **救援是"另存一份"，不是"合并"** —— 这与 S1 红线一致（结构上合不了），不是偷懒。
+3. 页级行**不进同步、不进导出**（与 `page_conflicts` 同族）：别的设备看不到这一页在这台机器上撞过车。

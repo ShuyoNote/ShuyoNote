@@ -553,6 +553,33 @@ export const api = {
   listPageConflicts: (pageId: string) => invoke("list_page_conflicts", { pageId }),
   resolvePageConflict: (conflictId: string, choice: "local" | "remote") =>
     invoke("resolve_page_conflict", { conflictId, choice }),
+  /**
+   * ★ 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁）。
+   *
+   * 与块级那两条**不同族**：块级可逐块选一侧；这里撞上的是**两条独立血统** ——
+   * Yjs 结构上合不了（S1 红线）⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"。
+   * ⚠️ "这两条血统相不相关"**只有界面侧判得了**（要 Yjs）⇒ 记录由界面侧发起。
+   * `docJson` ＝ **对端那一版的整页投影**（快照；待并状态会被清掉，不留它就无从救援）。
+   */
+  recordLineageConflict: (args: {
+    pageId: string;
+    mineFp: string;
+    remoteFp: string;
+    docJson: string;
+  }) =>
+    invoke("record_lineage_conflict", {
+      args: {
+        page_id: args.pageId,
+        mine_fp: args.mineFp,
+        remote_fp: args.remoteFp,
+        doc_json: args.docJson,
+      },
+    }),
+  /** 这一页**未决**的页级血统冲突（`null` ＝ 没有，是常态不是错误）。 */
+  listLineageConflicts: (pageId: string) => invoke("list_lineage_conflicts", { pageId }),
+  /** 裁决：`"local"`（保留本机）/ `"saved-as-new"`（已另存为新页）。其余值报错（不默认选边）。 */
+  resolveLineageConflict: (conflictId: string, choice: "local" | "saved-as-new") =>
+    invoke("resolve_lineage_conflict", { conflictId, choice }),
   /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
   refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),
   /**

@@ -30,6 +30,7 @@ import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { ConflictBanner } from "./components/ConflictBanner";
+import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
@@ -423,6 +424,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
     <div className="main">
       {/* 阶段 1 · 冲突提示条：同一块被两端改过时**看得见**（裁定 (iii) 的"不静默选边"） */}
       <ConflictBanner pageId={pageId} />
+      {/* 冲刺 §13.3 第 2 条 · **页级**血统冲突提示条：两条独立编辑历史撞上时，给"另存为新页/保留本机" */}
+      <LineageConflictBanner pageId={pageId} />
       <div className="editor-toolbar-bar">
         {breadcrumbs.length > 0 && (
           <div className="breadcrumbs">

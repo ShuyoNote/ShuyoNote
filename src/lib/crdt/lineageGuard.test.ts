@@ -18,6 +18,9 @@ import { openPageSession, projectStateToJson } from "./yDocBridge";
 
 function fakeDb() {
   const rows = new Map<string, Uint8Array>();
+  // ★ §13.3 第 2 条（第 49 轮）：护栏命中时还会**页级留痕**（表 `page_lineage_conflicts`）——
+  //   这里把那一族的形状也认下来，并**记下它到底落没落**（判据 ② 顺带断言"有痕"）。
+  const lineage: Array<Record<string, unknown>> = [];
   const db = {
     run(sql: string, params: unknown[]) {
       if (/INSERT INTO page_crdt/.test(sql)) {
@@ -27,6 +30,19 @@ function fakeDb() {
       if (/UPDATE pages SET text_stale = 1/.test(sql)) return;
       // S6 尾巴起：合并会把**投影写回**那一列（本判据不关心值，只要求形状被认）。
       if (/UPDATE pages SET content_json = \?/.test(sql)) return;
+      if (/DELETE FROM page_lineage_conflicts/.test(sql)) return;
+      if (/INSERT INTO page_lineage_conflicts/.test(sql)) {
+        lineage.push({
+          id: params[0],
+          page_id: params[1],
+          mine_fp: params[2],
+          remote_fp: params[3],
+          remote_doc: params[4],
+          detected_at: params[5],
+          resolved_at: null,
+        });
+        return;
+      }
       throw new Error(`fakeDb 不认这条 run：${sql.slice(0, 48)}`);
     },
     query(sql: string, params?: unknown[]) {
@@ -34,10 +50,13 @@ function fakeDb() {
         const s = rows.get(String((params ?? [])[0]));
         return s ? [{ state: s }] : [];
       }
+      if (/FROM page_lineage_conflicts/.test(sql)) {
+        return lineage.filter((r) => r.page_id === String((params ?? [])[0]) && r.resolved_at === null);
+      }
       return [];
     },
   };
-  return { db: db as unknown as ContentSql };
+  return { db: db as unknown as ContentSql, lineage };
 }
 
 function buildJson(build: (editor: LexicalEditor) => void): string {
@@ -93,7 +112,7 @@ describe("冲刺 · 血统护栏：两条独立血统**不许合**（宁可不�
   });
 
   it("② ★ 两条**独立创建**的血统 ⇒ **拒绝合并**：有痕、本机那一版原样保留、**内容没翻倍**", () => {
-    const { db } = fakeDb();
+    const { db, lineage } = fakeDb();
     // 两台设备各自把**同一份 JSON** 变成状态 ⇒ 两条互不相交的血统（S1 红线的成因）
     const devA = openPageSession({ json: BASE });
     const devB = openPageSession({ json: BASE });
@@ -118,6 +137,11 @@ describe("冲刺 · 血统护栏：两条独立血统**不许合**（宁可不�
     console.log(`【② 实测】拒绝合并后本机块身份 = ${JSON.stringify(after)}`);
     expect(after).toEqual(before); // ★ 本机那一版原样保留
     expect(new Set(after).size).toBe(after.length); // ★ 没有重复块（没有被合出损坏）
+    // ★ §13.3 第 2 条（第 49 轮）：同时**页级留痕**（含对端那一版的投影快照）——
+    //   "拒绝"必须留下可裁决的对象，否则用户事后点"另存为新页"时无米下锅。
+    expect(lineage.length, "拒绝合并要留一条页级痕").toBe(1);
+    expect(lineage[0].mine_fp, "两条血统的指纹都要记下来（去重键）").not.toBe(lineage[0].remote_fp);
+    expect(String(lineage[0].remote_doc), "快照是对端那一版").toContain("blk-1");
   });
 
   it("③ 空状态/没有指纹 ⇒ **不**误判（视为相关：没什么可冲突的）", () => {

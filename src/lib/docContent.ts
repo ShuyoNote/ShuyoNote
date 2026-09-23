@@ -798,6 +798,152 @@ export function resolvePageConflict(db: ContentSql, conflictId: string, choice: 
 }
 
 /**
+ * ★ **从一份文档 JSON 建一个新页**要的入参（冲刺 §13.3 第 2 条"另存为新页"用）。
+ *
+ * 为什么要在这里组装：那三个存储列名**只许出现在这一层**（`check-doc-content-access` 按 token 计数，
+ * 新建的界面文件一旦拼出 `content_json` 就当场红）。界面侧只需要说"标题 ＋ 文档 JSON ＋ 派生正文"，
+ * 由这一层负责把它翻成落库形状 —— 这正是门禁"处置第 2 条：把收 JSON 文本的参数改名/收口"的走法。
+ *
+ * ⚠️ `textPlain` 由**调用方**按编辑器语义算（`contentText.ts::deriveContentText`）——
+ *    这一层不许 import 它（那头注写着：别把编辑器节点表拖进这一层的依赖图）。
+ * ⚠️ `parent_id: null`：救回来的页放顶层（**不猜**父页面；用户自己收拾）。
+ */
+export function pageCreationArgsFromDocJson(
+  title: string,
+  docJson: string,
+  textPlain: string,
+): { parent_id: string | null; title: string; content_json: string; content_text: string } {
+  return { parent_id: null, title, content_json: docJson, content_text: textPlain };
+}
+
+/**
+ * 一条**页级血统冲突**（表 `page_lineage_conflicts` 的一行；与 Rust `lineage_conflict.rs` 逐字段对应）。
+ *
+ * 与块级 `PageConflictRow` **不是一族**：那种是"同一块被判成两版、选一侧"；这里撞上的是
+ * **两条独立血统** —— Yjs 结构上就不是同一棵树，**合并在数学上做不到**（S1 红线）⇒
+ * 只有"留本机 / 用对端 / 两个都要（一页变两页）"三条路。
+ */
+export interface PageLineageConflictRow {
+  id: string;
+  pageId: string;
+  /** 本机这条血统的指纹（client id，逗号分隔、已排序）。 */
+  mineFp: string;
+  /** 对端那条血统的指纹。 */
+  remoteFp: string;
+  /**
+   * 对端那一版的**整页投影 JSON**。
+   * ⚠️ 必须有它：被拒的待并状态在合并之后会被 `clearPending` 清掉 ⇒ 不留快照，
+   * 用户点"另存为新页"时**已经无米下锅**。
+   */
+  remoteDoc: string;
+  detectedAt: number;
+  resolvedAt: number | null;
+  resolvedChoice: string | null;
+}
+
+/** 裁决：留本机（＝我知道了，别管它）。 */
+export const LINEAGE_CHOICE_LOCAL = "local";
+/** 裁决：已把对端那一版**另存为新页**（★ 唯一不丢数据的那条路）。 */
+export const LINEAGE_CHOICE_SAVED_AS_NEW = "saved-as-new";
+
+type LineageRowRaw = {
+  id: string;
+  page_id: string;
+  mine_fp: string;
+  remote_fp: string;
+  remote_doc: string;
+  detected_at: number;
+  resolved_at: number | null;
+  resolved_choice: string | null;
+};
+
+const lineageRowOf = (r: LineageRowRaw): PageLineageConflictRow => ({
+  id: String(r.id ?? ""),
+  pageId: String(r.page_id ?? ""),
+  mineFp: String(r.mine_fp ?? ""),
+  remoteFp: String(r.remote_fp ?? ""),
+  remoteDoc: String(r.remote_doc ?? ""),
+  detectedAt: Number(r.detected_at ?? 0),
+  resolvedAt: r.resolved_at === null || r.resolved_at === undefined ? null : Number(r.resolved_at),
+  resolvedChoice: r.resolved_choice ?? null,
+});
+
+/**
+ * 记一次页级血统冲突。返回**是否真的新建了一行**（`false` ＝ 这一对指纹已经记过/已裁决过）。
+ *
+ * 去重口径（**同一对指纹只提一次** —— "不许每开一次页面就打扰一次"的落脚点）：
+ * 同一 `(pageId, mineFp, remoteFp)` 已有未决 ⇒ 只刷新快照；同一对已裁决过 ⇒ **不再提**；
+ * 否则先把这一页别的未决行删掉（旧指纹对已被新事实取代），再插一条。与 Rust 侧逐条对应。
+ */
+export function recordLineageConflict(
+  db: ContentSql,
+  pageId: string,
+  mineFp: string,
+  remoteFp: string,
+  remoteDoc: string,
+  now = Date.now(),
+): boolean {
+  const existing = db.query<{ id: string; resolved_at: number | null }>(
+    `SELECT id, resolved_at FROM page_lineage_conflicts
+     WHERE page_id = ? AND mine_fp = ? AND remote_fp = ? ORDER BY detected_at DESC LIMIT 1`,
+    [pageId, mineFp, remoteFp],
+  )[0];
+  if (existing) {
+    if (existing.resolved_at === null || existing.resolved_at === undefined) {
+      db.run("UPDATE page_lineage_conflicts SET remote_doc = ?, detected_at = ? WHERE id = ?", [
+        remoteDoc,
+        now,
+        String(existing.id),
+      ]);
+    }
+    return false; // 未决 ⇒ 只刷新；已裁决 ⇒ 不再提
+  }
+  db.run("DELETE FROM page_lineage_conflicts WHERE page_id = ? AND resolved_at IS NULL", [pageId]);
+  db.run(
+    `INSERT INTO page_lineage_conflicts
+       (id, page_id, mine_fp, remote_fp, remote_doc, detected_at, resolved_at, resolved_choice)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    // 与块身份共用**同一个** id 生成器（别在这一层再写第二份 —— 与 `recordPageConflicts` 同一处置）
+    [newBlockId(), pageId, mineFp, remoteFp, remoteDoc, now],
+  );
+  return true;
+}
+
+/** 这一页**未决**的页级冲突（**至多一条** —— 记的时候就把旧的未决删了）。 */
+export function unresolvedLineageConflict(
+  db: ContentSql,
+  pageId: string,
+): PageLineageConflictRow | undefined {
+  const r = db.query<LineageRowRaw>(
+    `SELECT id, page_id, mine_fp, remote_fp, remote_doc, detected_at, resolved_at, resolved_choice
+     FROM page_lineage_conflicts WHERE page_id = ? AND resolved_at IS NULL
+     ORDER BY detected_at DESC LIMIT 1`,
+    [pageId],
+  )[0];
+  return r ? lineageRowOf(r) : undefined;
+}
+
+/**
+ * ★ 裁决一条：`choice` 只认 `local` / `saved-as-new`，其余**抛错**（**不默认选边** ——
+ * 与 `resolvePageConflict` 同一纪律）；已裁决的再裁决也**抛错**（不静默成功）。
+ */
+export function resolveLineageConflict(db: ContentSql, conflictId: string, choice: string): void {
+  if (choice !== LINEAGE_CHOICE_LOCAL && choice !== LINEAGE_CHOICE_SAVED_AS_NEW) {
+    throw new Error(`choice 只能是 ${LINEAGE_CHOICE_LOCAL} 或 ${LINEAGE_CHOICE_SAVED_AS_NEW}，收到 ${choice}`);
+  }
+  const before = db.query<{ id: string }>(
+    "SELECT id FROM page_lineage_conflicts WHERE id = ? AND resolved_at IS NULL",
+    [conflictId],
+  )[0];
+  if (!before) throw new Error("冲突不存在或已裁决");
+  db.run("UPDATE page_lineage_conflicts SET resolved_at = ?, resolved_choice = ? WHERE id = ?", [
+    Date.now(),
+    choice,
+    conflictId,
+  ]);
+}
+
+/**
  * **正文文本的本地修复**（阶段 1 · "正文待重建"那条边界的收口）—— 与 Rust 侧 `write_text` 同一语义。
  *
  * 什么时候需要它：合并 / 裁决产物是**拼出来**的，正文文本仍是页级胜方那一份 ⇒ 那一页的 FTS 会有一段时间

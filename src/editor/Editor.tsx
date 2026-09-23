@@ -515,6 +515,9 @@ function PageCrdtBinding({
       //   不写它，反链/插件/AI/导出要等**下一次保存**才看到刚并进来的内容
       //   （`json` 由 `pageBinding` 那一层按状态算好；判据与纪律全在文档内容层）。
       writeProjection: (id, json) => api.writePageProjection(id, json),
+      // ★ §13.3 第 2 条（第 49 轮）：被拒的远端状态**当场留痕**（含对端那一版的投影快照）——
+      //   判定"血统相不相关"只有这一侧做得了（要 Yjs），存到哪是平台的事；去重在存储那一层。
+      recordLineageConflict: (args) => api.recordLineageConflict(args),
     };
 
     // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：

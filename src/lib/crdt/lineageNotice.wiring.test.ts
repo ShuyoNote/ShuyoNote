@@ -19,6 +19,8 @@ const editor = read("src/editor/Editor.tsx");
 const main = read("src/main.tsx");
 const binding = read("src/lib/crdt/pageBinding.ts");
 const notice = read("src/lib/crdt/lineageNotice.ts");
+const banner = read("src/components/LineageConflictBanner.tsx");
+const app = read("src/App.tsx");
 
 describe("血统拒绝合并 · 两条路的出口（文本级，防退回静默）", () => {
   it("★ 打开页面那条路真的**读了** `pendingSkipped`（不是算出来就丢）", () => {
@@ -51,5 +53,20 @@ describe("血统拒绝合并 · 两条路的出口（文本级，防退回静默
     // 至少日志里还有。删掉它＝把"静默"的门槛降回第 43 轮。
     expect(binding, "端口版绑定里那条「拒绝合并」的当场留痕不见了").toContain("拒绝合并");
     expect(binding).toContain("console.warn");
+  });
+
+  it("★ 页级「可裁决」的出口也接着（第 49 轮）：挂载了横幅 ＋ 两处记录点都在", () => {
+    // ① 横幅真的挂上了（不然表里记了也没人看得见 —— 又回到"算出来没人读"）
+    expect(app, "App 里没有挂 LineageConflictBanner ⇒ 页级冲突用户看不见").toContain(
+      "<LineageConflictBanner",
+    );
+    // ② 两处记录点：web 当场合并那条（直接落库）＋ 桌面端口那条（走平台命令）
+    expect(binding, "web 当场合并那条少了页级留痕").toContain("recordLineageConflict(");
+    expect(binding, "桌面端口那条少了页级留痕").toContain("port.recordLineageConflict?.(");
+    // ③ 去重键必须是**同一份指纹口径**（两处各算一次 ⇒ 口径漂了去重就失效）
+    expect(binding).toContain("lineageFingerprint(");
+    // ④ 横幅的两个动作都接到命令上（断一个就变成"看得见、按不动"）
+    expect(banner).toContain('resolveLineageConflict(row.id, "saved-as-new")');
+    expect(banner).toContain('resolveLineageConflict(row.id, "local")');
   });
 });

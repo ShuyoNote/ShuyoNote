@@ -111,6 +111,14 @@ export default {
     useRemote: "用远端",
     resolved: "已按你的选择合并这一块",
   },
+  // 冲刺 §13.3 第 2 条 · **页级血统冲突**提示条（`components/LineageConflictBanner.tsx`）
+  lineage: {
+    title: "这一页有另一条编辑历史的改动没有合进来",
+    hint: "两条编辑历史不是同一棵树，合在一起会变成两块。本机这一版原样保留；对端那一版可以另存成新页，就不会丢。",
+    keepLocal: "保留本机",
+    savedAsNew: "另存为新页",
+    rescued: "对端那一版已另存为新页",
+  },
   // 阶段 1 · 正文索引的补算器（`components/TextRepairRunner.tsx`，B1）
   textRepair: {
     pending: "还有 {{count}} 页正文待重建（合并进来的内容暂时搜不到，打开那一页即可）",

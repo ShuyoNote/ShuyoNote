@@ -22,6 +22,7 @@ import {
   ensurePageCrdtState,
   markTextStale,
   readPageCrdtState,
+  recordLineageConflict,
   writeContentProjection,
   writePageCrdtState,
   type ContentSql,
@@ -134,6 +135,16 @@ export function lineagesRelated(a: Set<number>, b: Set<number>): boolean {
   return false;
 }
 
+/**
+ * 血统指纹 ⇒ **表里存的那一列**（排序后用逗号连起来；空集 ⇒ 空串）。
+ *
+ * 为什么要有它：页级血统冲突的**去重键**就是这一对指纹（"同一对指纹只提一次"）——
+ * 两处记录点（web 当场合并 / 桌面端口）必须算出**逐字相同**的那两个字符串，否则去重会失效。
+ */
+export function lineageFingerprint(ids: Set<number>): string {
+  return [...ids].sort((a, b) => a - b).join(",");
+}
+
 /** 把远端状态并进来的结果。 */
 export interface MergedRemoteState {
   /** `true` ⇒ 本机原先**没有**这一页的状态，这一版被**采用**（不是"从 JSON 重建"）。 */
@@ -197,6 +208,18 @@ export function mergeRemotePageState(
     // ★ **立刻有痕**（不依赖调用方）：这条路径一旦发生就说明"两台设备各自建过血统"，
     //   静默吞掉会让两台各自继续长、问题更难查。调用方（`main.tsx` 注册的那版）还会再 toast 一次。
     console.warn(`[crdt] 血统冲突：拒绝合并（本机版本保留）page=${pageId}`, conflict);
+    // ★ §13.3 第 2 条（第 49 轮）：**页级留痕**（含对端那一版的**投影快照**）。
+    //   为什么快照必须在这里存：这条路的对端那一版在 web 上是"当场合并、过了就没了"，
+    //   桌面上则在 `clearPending` 之后没了 ⇒ 不留它，用户点"另存为新页"时就无米下锅。
+    //   去重（同一对指纹只提一次）在那一层 —— 这里只管"如实把事实交出去"。
+    recordLineageConflict(
+      db,
+      pageId,
+      lineageFingerprint(mineIds),
+      lineageFingerprint(remoteIds),
+      projectStateToJson(remote),
+      now,
+    );
     return { adopted: false, state: mine, derivedStale: false, lineageConflict: conflict };
   }
 
@@ -256,6 +279,20 @@ export interface PageStatePort {
    *    这一层不许出现那三个存储列的字面量（`check-doc-content-access` 按 token 计数）。
    */
   writeProjection?(pageId: string, docJson: string): Promise<unknown>;
+  /**
+   * ★ 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**把一次页级血统冲突交出去留痕**。
+   *
+   * 为什么要走端口：判定"这两条血统相不相关"**只有这一层做得了**（要 Yjs），而"存到哪"是平台的事
+   *（桌面 Rust 表 / Web 的本地库）。去重（同一对指纹只提一次）在存储那一层。
+   * `docJson` ＝ **对端那一版的整页投影**（救援靠它 —— 待并状态随后会被清掉）。
+   * 不实现 ⇒ 与接线前**逐字相同**（老调用方零感知）。
+   */
+  recordLineageConflict?(opts: {
+    pageId: string;
+    mineFp: string;
+    remoteFp: string;
+    docJson: string;
+  }): Promise<unknown>;
 }
 
 /** 端口版绑定：`persist` 是**异步**的（IPC/平台命令），**调用方必须处理失败**（不许静默）。 */
@@ -317,6 +354,18 @@ export async function bindPageToEditorViaPort(opts: {
         console.warn(
           `[crdt] 待并的远端状态与这条血统无关 ⇒ 拒绝合并（本机版本保留）page=${pageId} seq=${p.seq}`,
         );
+        // ★ §13.3 第 2 条（第 49 轮）：**页级留痕**（含对端那一版的投影快照 —— 下面 `clearPending`
+        //   会把它清掉，不留就无从"另存为新页"）。失败**不许静默**，但也别把"打开页面"拖红 ⇒ warn。
+        try {
+          await port.recordLineageConflict?.({
+            pageId,
+            mineFp: lineageFingerprint(ids),
+            remoteFp: lineageFingerprint(remoteIds),
+            docJson: projectStateToJson(p.state),
+          });
+        } catch (e) {
+          console.warn("[crdt] 血统冲突留痕失败（下一次打开这一页会再试）", e);
+        }
         continue;
       }
       session.merge(p.state);
