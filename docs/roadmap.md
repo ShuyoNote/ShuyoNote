@@ -32,11 +32,11 @@
 
 > 这一节只写**用户可感知或可验证**的新能力，一行一件事；每条都能在仓库里找到判据或读数。
 
-- **国密（SM 系列）走完四层**：应用层密文格式 **v2**（SM4-CBC ＋ HMAC-SM3，PBKDF2-HMAC-SM3）已是**默认写法**；库级**页加密 SM4 ＋ 页 MAC/库 KDF SM3**（SQLCipher provider 补丁 v4）；owner 拍板**单一口味**（所有平台只发国密那一套），发布链上用**五条产物断言**把"看起来是国密、其实不是"的每个入口挡住。交付口径见 [SM-CRYPTO-DELIVERY](SM-CRYPTO-DELIVERY.md)，方案与读数见[国密全链路方案](plans/2026-09-16-sm-crypto-full-plan.md)。
+- **国密（SM 系列）走完四层**：应用层密文格式 **v2**（SM4-CBC ＋ HMAC-SM3，PBKDF2-HMAC-SM3）已是**默认写法**；库级**页加密 SM4 ＋ 页 MAC/库 KDF SM3**（SQLCipher provider 补丁 v4）；owner 拍板**单一口味**（所有平台只发国密那一套），发布链上用**五条产物断言**把"看起来是国密、其实不是"的每个入口挡住；**带 tag 的真发版读数已有**：`v1.91.24/25/26` 三次 release run 在 Linux ＋ Windows 两个 build job 上把产物断言跑绿。交付口径见 [SM-CRYPTO-DELIVERY](SM-CRYPTO-DELIVERY.md)，方案与读数见[国密全链路方案](plans/2026-09-16-sm-crypto-full-plan.md)。
 - **PDF 桌面引擎换成 PDFium（可切换）**：`SHUYONOTE_PDF_ENGINE=pdfium` 走 PDFium、缺省仍 MuPDF；**两引擎对拍**出了硬判据报告（四样本逐像素最大差 0–1、阈值 8、超阈 0.000%）。见 [PDFium 方案](plans/2026-09-16-pdfium-engine-plan.md) 与 [P3 对拍报告](plans/2026-09-19-pdfium-p3-report.md)。
-- **「全库 AI 覆盖」落地了大半**：附件/页面 → 派生文本 ＋ 块 ＋ 嵌入三层（抽取器注册表按 mime 分派、跨实现的 conformance 夹具）；**本机模型端点**是唯一出入口（红线：抽取不得走远程 provider）。进度总账见[覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md) §8.0。
+- **「全库 AI 覆盖」落地了大半**：附件/页面 → 派生文本 ＋ 块 ＋ 嵌入三层（抽取器注册表按 mime 分派、跨实现的 conformance 夹具）；**本机模型端点**是唯一出入口（红线：抽取不得走远程 provider）。**覆盖度已落库并读到读侧**（`attachment_text.coverage`；**未知 ≠ 完整**）＋ 报告的**第五类 `partial`**（搜得到但没抽全）＋ **只读能力 `coverage.report`**（AI 可以问"库里覆盖到哪"，是第一条 `host: frontend` 的能力）＋ 旧二进制 Office 抽取器 `ooxml.legacy@1`（平台侧走 LibreOffice headless，转换器缺席时**如实** `provider_error`）。进度总账见[覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md) §8.0。
 - **语音转写（ASR）接线**：`av.transcript@1` 抽取器 ＋ 契约四处 ＋ **平台侧转写通道**（`localTranscribe`：只许本机端点、带时间戳分段、默认 `funasr-nano`）。见 [ASR 接线方案](plans/2026-09-22-asr-wiring-plan.md)。
-- **块级 CRDT 的阶段 1 地基**：块身份（`blockId` 归属）、**块版本 `blockRev`**（纯函数 Rust ↔ TS 双份判据）、写层与就绪度盘点都已落地（**阶段 1 本身仍在飞**，见 §3.5）。
+- **块级 CRDT**：**阶段 1 已落地**（块身份 `blockId` 归属、**块版本 `blockRev`** 纯函数 Rust ↔ TS 双份判据、写层与就绪度盘点）；**阶段 2 已开工**——Slice A/B 落地（`content_json` ⇄ `ydoc` 的**唯一实现** ＋ 一个**默认关闭**的平面开关：关着时逐字节原样返回），见 §3.5。
 - **社区与插件分发**：`plugin-index.json` 规范 ＋ 索引签名 ＋ 撤回（两级、离线生效）＋ 发布者公钥固定（TOFU）＋ 多源订阅 ＋ **事实清单（只摆事实不评分）**；社区侧另有「一键发布到社区」的客户端方案。
 - **近实时协作**：同页冲突提示、presence（谁在编辑）、评论/@/通知、SSE 推送——服务端 `collab.rs` 与客户端命令/UI 已落地（**块级 CRDT 仍是后置**，见 [实时协同分析](realtime-collab-analysis.md)）。
 - **发布线 1.91.x**：Windows 安装器默认目录改到 `%LOCALAPPDATA%\Programs\ShuyoNote`（fork 上游 NSIS 模板、逐行对照）、Android 发版件走正式密钥签名 + 指纹硬比对、macOS 签名脚本补 hardened runtime（公证待 Apple 凭据）。
@@ -71,10 +71,10 @@
 | **P0** | **团队版（自建协作）** | Notion 团队版 / 语雀 / 飞书知识库 | 多用户 + 权限（协同后置）；不接外部通讯 App，全自建；组织空间放弃零知识（个人空间保留 E2E） | 🔶 **M27 部分**（服务端 S1–S8 + 客户端 per-space 同步 + 账户 UI（U1–U4）+ 本地加密（E1）已落地；协同后置，[身份与隐私子路线图](identity-privacy-roadmap.md)） |
 | **P0** | **多账户切换 UI**（空间身份标签 / 当前目标 pill / SyncPanel 登录+空间下拉） | 多账号工作流 | 一人多服务器×多空间时看清「我在同步到哪」；低成本 | ✅ M27-UI（U1–U4 落地，[身份与隐私子路线图](identity-privacy-roadmap.md)） |
 | **P1** | **本地静置加密**（口令→Argon2id→密钥→加密 DB+附件，默认关） | Notion 本地加密 / 思源 | 个人无服务器也想私密；与同步 E2E（M2）互补 | ✅ E1 已落地（SQLCipher 空间库 + 附件加密 + 锁定门控，v1.64.16）；**E2 解锁/锁定 UX + 忘记口令提醒已落地**（同一轮修掉"加密安装重启即崩溃屏、锁定屏从没出现过"的 hooks 早退错），见[身份与隐私子路线图](identity-privacy-roadmap.md) |
-| **P0** | **国密（SM 系列）合规准入** | 等保/密评门槛（政企交付） | 唯一硬收益＝**合规准入**；代价与"档 2 vs 档 3"的账在[利弊补充](plans/2026-09-17-sm-crypto-tradeoff.md)里 | ✅ **四层走完 ＋ 单一口味已拍板 ＋ 落进发布链**（应用层 v2 默认 / 库级 SM4 页 ＋ SM3 KDF / 五条产物断言）；见 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号) 与 [交付说明](SM-CRYPTO-DELIVERY.md) |
-| **P1** | **全库 AI 覆盖**（派生文本 → 块 → 嵌入，抽取器注册表按 mime 分派） | Obsidian 插件生态 / 思源 AI | 让"整库可被 AI 检索/总结"成立，而不是只覆盖当前页 | 🔶 **大部分已落地**（三层派生 ＋ 本机模型红线 ＋ 抽取器 conformance）；**ASR 转写接线**已补（[方案](plans/2026-09-22-asr-wiring-plan.md)）；总账见[覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md) §8.0 |
-| **P2** | **PDF 引擎：PDFium（桌面光栅化）** | 闭源商业授权版的许可前置 | 只换光栅化、不碰坐标与前端契约；两引擎可切换 | ✅ **可切换 ＋ P3 对拍 4/4 硬判据**（[方案](plans/2026-09-16-pdfium-engine-plan.md) / [对拍报告](plans/2026-09-19-pdfium-p3-report.md)）；仍待：Linux 字体后端、真机验收 |
-| **P1** | **块级协同地基（阶段 1：块版本 ＋ 冲突提示）** | 思源/语雀的近实时编辑体验 | 页级 LWW 会把同页并发编辑整页覆盖；阶段 1 先让"谁改了哪块"可见、可合 | 🔶 **在飞**（块身份 ＋ `blockRev` ＋ 写层已落地；就绪度与剩余见[阶段 1 方案](plans/2026-09-19-stage1-block-lww-readiness.md) 与 [blockRev 写层](plans/2026-09-22-block-rev-write-layer.md)） |
+| **P0** | **国密（SM 系列）合规准入** | 等保/密评门槛（政企交付） | 唯一硬收益＝**合规准入**；代价与"档 2 vs 档 3"的账在[利弊补充](plans/2026-09-17-sm-crypto-tradeoff.md)里 | ✅ **四层走完 ＋ 单一口味已拍板 ＋ 落进发布链**（应用层 v2 默认 / 库级 SM4 页 ＋ SM3 KDF / 五条产物断言），且**带 tag 的真发版已证**（`v1.91.24/25/26` 两个平台均绿）；见 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号) 与 [交付说明](SM-CRYPTO-DELIVERY.md) |
+| **P1** | **全库 AI 覆盖**（派生文本 → 块 → 嵌入，抽取器注册表按 mime 分派） | Obsidian 插件生态 / 思源 AI | 让"整库可被 AI 检索/总结"成立，而不是只覆盖当前页 | 🔶 **大部分已落地**（三层派生 ＋ 本机模型红线 ＋ 抽取器 conformance ＋ **覆盖度落库/读侧** ＋ **`coverage.report` 出口** ＋ **旧格式 Office 抽取器与平台转换器**）；**ASR 转写接线**已补（[方案](plans/2026-09-22-asr-wiring-plan.md)）；仍缺面板侧消费层与**旧格式真转换读数**（要有 LibreOffice 的机器）；总账见[覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md) §8.0 |
+| **P2** | **PDF 引擎：PDFium（桌面光栅化）** | 闭源商业授权版的许可前置 | 只换光栅化、不碰坐标与前端契约；两引擎可切换 | ✅ **可切换 ＋ P3 对拍 4/4 硬判据**（[方案](plans/2026-09-16-pdfium-engine-plan.md) / [对拍报告](plans/2026-09-19-pdfium-p3-report.md)）；Linux 字体后端**已按路线 D 落地**（随包 OFL 中文字体 ＋ `Pdfium::set_custom_font_provider`，代码在 `pdfium_native.rs`）；仍待：真机逐条验收 |
+| **P1** | **块级协同地基（阶段 1：块版本 ＋ 冲突提示）** | 思源/语雀的近实时编辑体验 | 页级 LWW 会把同页并发编辑整页覆盖；阶段 1 先让"谁改了哪块"可见、可合 | ✅ **阶段 1 已落地**（块身份 ＋ `blockRev` ＋ 写层）／**阶段 2 在飞**（Slice A/B：`content_json` ⇄ `ydoc` 唯一实现 ＋ 默认关闭的平面开关）；见[阶段 1 就绪度](plans/2026-09-19-stage1-block-lww-readiness.md)、[blockRev 写层](plans/2026-09-22-block-rev-write-layer.md) 与[阶段 2 开工](plans/2026-09-23-crdt-stage2-kickoff.md) |
 | **P2** | **社区与插件分发生态** | Obsidian 社区 / 思源集市 | 供给先于市场：协议 ＋ 索引 ＋ 签名/撤回 ＋ 一方先行插件 | 🔶 **协议与治理已落地**（索引签名、两级撤回、TOFU 公钥固定、多源订阅、事实清单）；**市场 UI 与"一键发布到社区"仍在飞**（[发布方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md)） |
 
 ## 3. 里程碑规划
@@ -123,6 +123,8 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 
 ### M11 — 插件（P1，[原始方案](plans/2026-08-22-plugin-plan.md) + [**进化方案**](plans/2026-09-10-plugin-evolution-plan.md)）
 
+> 📌 **数字口径（2026-09-23 记）**：本节各档里写的「**N 条能力 / M 项权限**」是**那一档落地当时**的读数（保留作历史）；**当前**以 `capabilities/capabilities.json` 为准（今天是 **25 条能力 / 12 项权限**），由门禁 `check-capabilities` 与 `check-doc-facts` 守 —— 别拿旧数字对账。
+>
 > **重基线（2026-09-10）**：L1 三档（M11.1 / M11.2 / M11.2b）已达成；后续按[插件体系进化方案](plans/2026-09-10-plugin-evolution-plan.md)重排为 **M11.5–M11.13**，顺序刚性——**先补时限与故障可见性 → 再冻结 ABI 与权限 → 然后才扩能力 → 触发面 → 声明式贡献面 →（闸门）UI →（闸门）分发**；另有 **M11.13 隔离强度（子进程化 + OS 级资源限制）已判定必有**（Boa 无分配预算 API 已核实），但**不阻塞 M11.7**，改为 **M11.11 分发的硬前置**、并在出现 Boa 段错误时升 P0。原 M11.3（UI 型）/ M11.4（市场）的「后置」结论不变，重编号为 **M11.10 / M11.11** 并补上明确启动闸门。
 >
 > **定位（北极星，2026-09-10）**：**做第一，不做更大**——目标是**第一个「有权限模型的可信插件体系」，且作用在端到端加密、可自托管的本地数据上**。对标三家各缺一块：Figma 有沙箱与域白名单但数据在云上；VS Code 有进程隔离但不在其问题域；**Obsidian 官方承认做不到权限限制**（插件继承应用访问级别、可读本机文件/联网/装程序）。**没人把「插件 + 权限模型 + E2EE + 自托管」凑齐**。因此**不以"能力条数对标 Obsidian"为判据**（那要交出 renderer 全信任，是放弃红线）；判据是「**用户敢装**」与「**插件碰不到加密边界之外**」——见方案 §1.1、§3.9。
@@ -144,7 +146,7 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
   - ✅ **测试与 CI**：新增 19 条 Rust 单测（沙箱逃逸回归 / 循环预算 / discovery 快失败 / with_timeout / id 白名单 / `main` 矩阵 / `read_manifest` 矩阵 / 启停往返 / 卸载清理 / **分配炸弹只终结该次调用** / 分配器自身 5 条 / 日志与 `__toast` 3 条）与 12 条前端单测；**`cargo test --lib` 已进 CI**（`ci.yml` 新增 `rust-tests` job，依赖与工具链照抄 `release.yml`）。
   - **验收状态（全部达成）**：死循环插件不再挂调用方、分配炸弹只终结该次调用（均有测试断言）；失败路径 UI 可见；禁用插件 IPC 不可执行；运行中的插件有可见状态且能取消。
 - **M11.6 ABI v1 冻结 + 能力注册表 + 权限模型** ✅（**已落地**，含作者工具链）：
-  - ✅ **单一事实源 + 代码生成 + 门禁**：`capabilities/capabilities.json` 是唯一事实源；`scripts/gen-capabilities.mjs` 由它生成 **4 类产物**——`capabilities/plugin-api-shim.js`（插件看到的 `api.*`）、`src-tauri/src/capabilities_gen.rs`（id → 权限/scope/实现函数名）、`packages/plugin-types/index.d.ts`（作者类型包）、**`docs/plugin-api.md`（面向作者，含快速开始/权限/能力/错误码/沙箱边界，不读源码即可写插件）**；`scripts/check-capabilities.mjs` 做门禁（注册表完整性 + 生成物一致 + 每条能力的实现函数真的在 `plugins.rs` 里 + 出现在作者文档与 shim 里 + 无死权限 + `legacyGlobals` 指向存在），**已进 CI 与 `pnpm build`**，并已验证它会真的失败。
+  - ✅ **单一事实源 + 代码生成 + 门禁**：`capabilities/capabilities.json` 是唯一事实源；`scripts/gen-capabilities.mjs` 由它生成 **9 个文件**（其中**插件/作者面四件**：`capabilities/plugin-api-shim.js`（插件看到的 `api.*`）、`src-tauri/src/capabilities_gen.rs`（id → 权限/scope/实现函数名）、`packages/plugin-types/index.d.ts`（作者类型包）、**`docs/plugin-api.md`（面向作者，含快速开始/权限/能力/错误码/沙箱边界，不读源码即可写插件）**；另五件是 `globals.d.ts`、类型包包清单与主题/菜单/AI 工具的元数据）；`scripts/check-capabilities.mjs` 做门禁（注册表完整性 + 生成物一致 + 每条能力的实现函数真的在 `plugins.rs` 里 + 出现在作者文档与 shim 里 + 无死权限 + `legacyGlobals` 指向存在；⚠️ **2026-09-23 起有一类例外**：`host: "frontend"` 的能力（今天只有 `coverage.report`）**没有** Rust 实现、**也不进** shim／插件类型包／Rust 绑定表 —— 三条都是**反向断言**，且它的 `desc` 必须写明「只有 AI 宿主」的理由，见覆盖方案 §15.11），**已进 CI 与 `pnpm build`**，并已验证它会真的失败。
   - ✅ **`api.*` 成为唯一 ABI 面**：宿主只注册 `__cap(method, argsJson)` 一个原语 + 老全局别名；老写法（`__toast`/`__insert`/`__pages`/`__get_current_page`/`__log`）内部走**同一套派发**，不构成绕过点。`__cap` 统一返回 JSON 字符串，shim 侧解析。
   - ✅ **权限模型**：manifest `permissions` 为**带 `reason` 的声明**；**后端逐次调用校验**（测试覆盖：未声明 → `permission_denied`，连老全局写法也拒）；未知权限忽略并告警（前向兼容）；没写 `permissions` 的老 manifest 走 **v1 基线授权 + 警告**（避免升级即失效）；没写 `reason` 告警。
   - ✅ **ABI 闸门**：manifest `apiVersion` 主版本不认识**直接拒载**（而不是运行时零碎失败）。
@@ -351,10 +353,10 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 
 | 战役 | 现在到哪（可验证的读数/事实） | 卡在哪 / 下一步 | 权威文档 |
 |---|---|---|---|
-| **国密** | 四层走完（应用层 v2 默认 / 库级 SM4 页 ＋ SM3 页 MAC/库 KDF / 单一口味拍板 / 发布链五条产物断言）；Linux CI 上新门禁 `rust-sm-wired` 真跑 **491 passed / 0 failed**；macOS 真产物 `otool -L` 无 `libcrypto/libssl`、`strings` 见 `HMAC-SM3`/`SM4-CBC` | ① Windows 做"产物实际链的 OpenSSL 前缀"这一格的**真机变异证明**；② Linux 发版链上那格要等**带 tag 的真发版**；③ macOS 公证待 Apple 凭据；④ 老库（AES＋SHA512）迁移三步（无真实用户 ⇒ 零成本） | [全链路方案](plans/2026-09-16-sm-crypto-full-plan.md) ＋ [交付说明](SM-CRYPTO-DELIVERY.md) ＋ [利弊补充](plans/2026-09-17-sm-crypto-tradeoff.md) |
-| **PDFium** | 两引擎可切换；P3 对拍四样本**硬判据 4/4**（逐像素最大差 0–1，阈值 8） | Linux 非嵌入字体后端（施工单已出）、真机逐条验收 | [方案](plans/2026-09-16-pdfium-engine-plan.md) ＋ [对拍报告](plans/2026-09-19-pdfium-p3-report.md) |
-| **全库 AI 覆盖** | 派生文本 ✅ / 块 ✅ / 嵌入 ✅；抽取器注册表按 mime 分派 ＋ 跨实现 conformance；**本机端点红线**（抽取不得走远程 provider）；**ASR 真模型读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、本机 herdsman 不返回 `segments` ⇒ 契约上退成一段、`loc=""`） | 面板侧"消费抽取结果"那一层未落地（触发点在导入/附件那条路）；Web 端 CORS 未实测 | [覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md)（总账 §8.0） |
-| **块级 CRDT（阶段 1）** | 块身份归属已拍板；`blockRev` 纯函数（Rust 14 条 ↔ TS 15 条判据）＋ 18 类节点声明字段全接入；写层施工单已出 | 阶段 1 的写回与冲突提示收口；阶段 2+ 的 CRDT 迁移路线未开工 | [块 ID 归属](plans/2026-09-18-crdt-block-id-ownership.md) ＋ [阶段 1 就绪度](plans/2026-09-19-stage1-block-lww-readiness.md) ＋ [blockRev 写层](plans/2026-09-22-block-rev-write-layer.md) |
+| **国密** | 四层走完（应用层 v2 默认 / 库级 SM4 页 ＋ SM3 页 MAC/库 KDF / 单一口味拍板 / 发布链五条产物断言）；**带 tag 的真发版已证**（`v1.91.24/25/26` 三次 release run 在 Linux ＋ Windows 上把产物断言跑绿）；门禁侧 `rust-sm-wired` 现在**在 win32 也能自产读数**（跑器 `-PrintExePath` ＋ 门禁自跑已注入清单的副本）；macOS 真产物 `otool -L` 无 `libcrypto/libssl` | ① **真机验收**（Android 口令→加密→重启解锁→读写；桌面新装加密/重启解锁/双向迁移）；② macOS 公证待 **Apple 凭据**；③ Windows **本机**静态前缀复现（发版链已用 vcpkg 静态档 ＋ `--require-static` 卡住）；④ 补丁残留的**根除**（现为常开门禁 `gm-registry-clean` 发现并拦住） | [全链路方案](plans/2026-09-16-sm-crypto-full-plan.md) ＋ [交付说明](SM-CRYPTO-DELIVERY.md) ＋ [利弊补充](plans/2026-09-17-sm-crypto-tradeoff.md) |
+| **PDFium** | 两引擎可切换；P3 对拍四样本**硬判据 4/4**（逐像素最大差 0–1，阈值 8）；**Linux 非嵌入字体后端已按路线 D 落地**（随包 OFL 中文字体 ＋ `set_custom_font_provider`） | 真机逐条验收；macOS 公证/GUI 人工那半归 owner 凭据与人手 | [方案](plans/2026-09-16-pdfium-engine-plan.md) ＋ [对拍报告](plans/2026-09-19-pdfium-p3-report.md) |
+| **全库 AI 覆盖** | 派生文本 ✅ / 块 ✅ / 嵌入 ✅；抽取器注册表按 mime 分派 ＋ 跨实现 conformance；**本机端点红线**（抽取不得走远程 provider）；**覆盖度落库并读到读侧**（未知 ≠ 完整）＋ **第五类 `partial`** ＋ **只读能力 `coverage.report`**（AI 可问"库里覆盖到哪"）＋ `files.search` 六条行为判据 ＋ **旧格式 Office 抽取器 `ooxml.legacy@1`**（平台半已落：LibreOffice headless ＋ 临时目录/超时/清理）；**ASR 真模型读数已拿到**（AMD 那台） | ① 面板侧"消费抽取结果"那一层未落地（触发点在导入/附件那条路）；② **旧格式真转换读数**需要一台装了 LibreOffice 的机器（本机 macOS 没有 `soffice`）；③ Web 端 CORS 未实测 | [覆盖方案](plans/2026-09-17-knowledge-base-ai-coverage-plan.md)（总账 §8.0） |
+| **块级 CRDT（阶段 1 ✅ / 阶段 2 在飞）** | 阶段 1：块身份归属已拍板；`blockRev` 纯函数（Rust 14 条 ↔ TS 15 条判据）＋ 18 类节点声明字段全接入；写层已落地。阶段 2：**Slice A**（`content_json` ⇄ `ydoc` 唯一实现 ＋ 6 条判据）＋ **Slice B**（开关接进 `docContent` 两条出入口，默认关 ⇒ 逐字节不变，＋ 3 条路径级判据）都在 dev 上 | **Slice B 现存两条红在修**（① 模块初始化环：`docContent → crdt/plane → contentJsonYDoc → editor/config`，`EDITOR_NODES` 未初始化；② `plane.ts` 计数来自**模块名**而非访问）⇒ 修完按[层清单决策树](plans/2026-09-18-doc-content-layer-inventory.md)逐个判 Slice C/D 的新文件 | [块 ID 归属](plans/2026-09-18-crdt-block-id-ownership.md) ＋ [阶段 1 就绪度](plans/2026-09-19-stage1-block-lww-readiness.md) ＋ [blockRev 写层](plans/2026-09-22-block-rev-write-layer.md) |
 | **社区与分发** | 索引规范 ＋ 索引签名 ＋ 两级撤回（离线生效）＋ TOFU 公钥固定 ＋ 多源订阅 ＋ 事实清单；社区侧版本线独立 | 市场 UI（c）与「一键发布到社区」客户端侧仍在飞；闸门不变（作者文档 ＋ ≥3 真实第三方插件） | [分发策略](plans/2026-09-10-plugin-distribution-strategy.md) ＋ [发布方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md) ＋ [社区现状](community-integration-status.md) |
 | **近实时协作** | 同页冲突提示 / presence / 评论@通知 / SSE 推送均已落地（服务端 `collab.rs` ＋ 客户端命令/UI） | 块级真协同后置（CRDT 阶段 1 是它的地基）；**明确不做**的是实时聊天 | [实时协同分析](realtime-collab-analysis.md) ＋ [SYNC](SYNC.md) |
 
@@ -382,4 +384,4 @@ Tauri 移动端（iOS/Android）核心编辑 / 浏览 / 搜索可用。**路线�
 | 团队协作 / 多用户 | 单用户、无账号、无权限、无实时协同 | **M27 团队版**（账号/认证 + 权限，协同后置，全自建，方案见私有仓库 `shuyonote-sync-server`，规划） |
 | 合规准入（等保/密评） | 无国密算法面 | **国密四层 ＋ 单一口味**（已落地；[交付说明](SM-CRYPTO-DELIVERY.md)） |
 | 本地 AI（不出网） | 竞品多以云端 AI 为主 | **本机端点红线**（抽取/转写/嵌入一律走本机 provider，非 loopback ⇒ 拒绝注入能力）——差异点是"数据不出网"这件事有**代码级**判据，不是声明 |
-| 同页并发编辑 | 页级 LWW ⇒ 同页并发可能整页覆盖 | **块级 CRDT 阶段 1**（`blockRev` ＋ 冲突提示，在飞，见 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号)） |
+| 同页并发编辑 | 页级 LWW ⇒ 同页并发可能整页覆盖 | **块级 CRDT**：阶段 1 ✅（`blockRev` ＋ 冲突提示）／**阶段 2 在飞**（`ydoc` 平面，默认关；见 [§3.5](#35-2026-09-在飞战役按方案-p-阶段跟踪不进-m-编号)） |
