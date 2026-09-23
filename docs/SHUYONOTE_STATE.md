@@ -41,7 +41,7 @@
 | 战役 | 现在到哪 | 还没关的格子 |
 |---|---|---|
 | **国密** | 四层走完 ＋ **单一口味拍板** ＋ 落进发布链（应用层 v2 默认；库级 SM4 页 ＋ SM3 页 MAC/库 KDF；产物五条断言）；**带 tag 的真读数已有**：`v1.91.24/25/26` 三次 release run 在 Linux ＋ Windows 两个 build job 上「产物断言：页加密＝SM4」全绿 | **真机验收**（Android / 桌面新装加密·重启解锁·迁移）· **Apple 签名公证凭据**（macOS 档未启用）· Windows **本机**静态前缀复现（发版链已用 vcpkg 静态档 ＋ `--require-static` 卡住）· 补丁残留的**根除**（现为常开门禁 `gm-registry-clean` 发现并拦住）。细节与归属见 [SM-CRYPTO-DELIVERY.md](SM-CRYPTO-DELIVERY.md) §五 |
-| **PDFium** | 桌面光栅化可切换（`SHUYONOTE_PDF_ENGINE=pdfium`）；P3 对拍四样本硬判据 4/4 | Linux 非嵌入字体后端、真机逐条验收 |
+| **PDFium** | 桌面光栅化可切换（`SHUYONOTE_PDF_ENGINE=pdfium`）；P3 对拍四样本硬判据 4/4；**Linux 非嵌入字体后端已落地**（随包 OFL 中文字体 ＋ `set_custom_font_provider`） | 真机逐条验收；macOS 公证/GUI 人工归 owner |
 | **全库 AI 覆盖** | 派生文本/块/嵌入三层 ＋ 抽取器 conformance ＋ **本机端点红线**；ASR 转写通道（`localTranscribe`）已接，**真模型 live 读数已拿到**（AMD 那台：`funasr-nano` 逐字带标点、Paraformer 只差标点、段＝1 且 `loc=""` 符合契约） | 面板侧「消费抽取结果」未落地；Web 端 CORS 未测 |
 | **块级 CRDT（阶段 1）** | 块身份 ＋ `blockRev`（Rust/TS 双份判据）＋ 写层施工单 | 阶段 1 写回收口；阶段 2+ 未开工 |
 | **社区与分发** | 索引规范/签名/两级撤回/TOFU/多源订阅/事实清单 | 市场 UI、一键发布到社区的客户端侧 |
@@ -163,7 +163,7 @@
 2. **全库 AI 覆盖的面板侧**：抽取的**触发点**已定在"导入 / 附件"那条路（与 OCR 同一处），但**消费层**（面板把已有抽取结果当素材做问答/总结）还没落地。
 3. **块级 CRDT 阶段 1 收口**：写回与冲突提示的最后一跳（[写层施工单](plans/2026-09-22-block-rev-write-layer.md)）。
 4. **真机验收（要人手）**：Android 装机开 PDF / 导出 / 加密锁屏；Linux AppImage 真跑；Windows 安装器默认目录复验。
-5. **PDFium 收尾**：Linux 非嵌入字体后端（[施工单](plans/2026-09-20-pdfium-linux-font-backend-workorder.md)）＋ 真机逐条验收。
+5. **PDFium 收尾**：真机逐条验收（Linux 非嵌入字体后端已按路线 D 落地，见[施工单](plans/2026-09-20-pdfium-linux-font-backend-workorder.md)）。
 6. **社区与分发**：市场 UI（c）与「一键发布到社区」客户端侧（[方案](plans/2026-09-20-shuyonote-publish-to-community-plan.md)）；闸门不变（作者文档 ＋ ≥3 真实第三方插件）。
 
 ### 更早几轮的候选（细节保留）

@@ -8,6 +8,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { version } from "../package.json";
 import { installViewportInsets } from "./lib/viewportInsets";
 import { installBackBridge } from "./lib/overlayStack";
+import { setCrdtPlaneImpl } from "./lib/crdt/plane";
+import { roundTripContentJson } from "./lib/crdt/yDocBridge";
 
 // 移动端壳（Android）的两条桥。**必须在 React 挂载之前装好**：
 //   · `installViewportInsets()` 定义 `window.__SHUYONOTE_INSETS__`——壳层在页面
@@ -18,6 +20,11 @@ import { installBackBridge } from "./lib/overlayStack";
 // 两者在浏览器 / 桌面上都是**空转**（没有任何东西调用它们），行为与改动前一致。
 installViewportInsets();
 installBackBridge();
+
+// CRDT 平面（Slice B）的**实现注册**：那一层（`src/lib/docContent.ts`）不许静态 import 带编辑器节点表的
+// 实现 —— 那会造出模块初始化环（详见 `src/lib/crdt/plane.ts` 的文件头：当时 9 个 vitest 文件整文件 FAIL）。
+// 默认关 ⇒ 这里只是把实现放好；开关真打开时才用得到（没注册而开着 ⇒ 那一层会如实报错，不静默恒等）。
+setCrdtPlaneImpl(roundTripContentJson);
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
 // module top-level; define `process` in the browser so it doesn't throw

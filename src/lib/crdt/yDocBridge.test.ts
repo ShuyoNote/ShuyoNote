@@ -17,7 +17,7 @@ import { $createListItemNode, $createListNode } from "@lexical/list";
 import { EDITOR_NODES } from "../../editor/config";
 import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode";
 import { MODEL_TYPE_BY_LEGACY, toLegacyDoc, toModelDoc } from "../blockIdentity";
-import { contentJsonToYDoc, roundTripContentJson, yDocToContentJson } from "./contentJsonYDoc";
+import { contentJsonToYDoc, roundTripContentJson, yDocToContentJson } from "./yDocBridge";
 
 /** 用真编辑器搭一份**合法**的 Lexical JSON（模型形态：块级节点是 `shuyo-*` 新 type）。 */
 function buildJson(build: (editor: LexicalEditor) => void): string {
@@ -34,7 +34,7 @@ function buildJson(build: (editor: LexicalEditor) => void): string {
 
 /**
  * 落盘形态 ＋ **给每个顶层块一个确定性 id** —— 生产里这一步由保存路径的 `serializeWithBlockIds` 做，
- * 本层**不造身份**（缺 id 就报错，见 `contentJsonYDoc.ts::modelJsonOf`）。
+ * 本层**不造身份**（缺 id 就报错，见 `yDocBridge.ts::modelJsonOf`）。
  */
 function withIds(json: string): string {
   const d = JSON.parse(toLegacyDoc(json)) as { root: { children: Array<Record<string, unknown>> } };

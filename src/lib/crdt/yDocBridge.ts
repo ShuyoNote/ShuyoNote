@@ -2,7 +2,7 @@
 //
 // ## 它是什么 / 不是什么
 // - 是：把**落盘形态**的 `content_json` 换成 yjs 的 update 字节、再换回来的一对纯函数
-//   ＋「一步往返」的壳。判据在 `contentJsonYDoc.test.ts`。
+//   ＋「一步往返」的壳。判据在 `yDocBridge.test.ts`。
 // - **不是**：没有改任何持久化形态、没有加同步字段、没有碰服务端、没有碰插件契约
 //   —— 见 `docs/plans/2026-09-23-crdt-stage2-kickoff.md` 的 Slice A 边界。
 //

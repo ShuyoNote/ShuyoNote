@@ -36,11 +36,23 @@ describe("读数解析（countsFromOutput）", () => {
 });
 
 describe("读数解析（JSON 来源）", () => {
-  it("vitest JSON：取 numTotalTests / numPassedTests / numFailedTests", () => {
+  it("vitest JSON：取 numTotalTests / numPassedTests / numFailedTests（＋两个「套件」字段）", () => {
+    expect(
+      countsFromVitestJson({
+        numTotalTests: 702,
+        numPassedTests: 700,
+        numFailedTests: 2,
+        numTotalTestSuites: 60,
+        numFailedTestSuites: 1,
+      }),
+    ).toEqual({ total: 702, passed: 700, failed: 2, failedSuites: 1, totalSuites: 60 });
+    // 老报告没有那两个字段 ⇒ null（别猜成 0：0 与"没这个信息"在这条门禁里是两件事）
     expect(countsFromVitestJson({ numTotalTests: 702, numPassedTests: 700, numFailedTests: 2 })).toEqual({
       total: 702,
       passed: 700,
       failed: 2,
+      failedSuites: null,
+      totalSuites: null,
     });
   });
 
@@ -76,7 +88,7 @@ describe("读数解析（JSON 来源）", () => {
   it("countsForGate 按 counters 路由，并注入 readJson（IO 留在调用方）", () => {
     const gate = { id: "vitest", counters: "vitest" };
     expect(countsForGate(gate, "", (name) => (name === "vitest.json" ? { numTotalTests: 5, numPassedTests: 5, numFailedTests: 0 } : null))).toEqual(
-      { total: 5, passed: 5, failed: 0 },
+      { total: 5, passed: 5, failed: 0, failedSuites: null, totalSuites: null },
     );
     // 文件不存在（readJson 返回 null）→ null，而不是抛异常
     expect(countsForGate(gate, "", () => null)).toBeNull();
@@ -86,6 +98,27 @@ describe("读数解析（JSON 来源）", () => {
       failed: 1,
       total: 4,
     });
+  });
+});
+
+describe("vitest 读数里必须带「测试文件收集失败」（用例 0 失败也要看得见）", () => {
+  it("★ 收集失败 7 个文件、用例 0 失败 ⇒ 读数里两条都在（AMD 2026-09-23 那条红的形状）", () => {
+    const c = countsFromVitestJson({
+      numTotalTests: 1978,
+      numPassedTests: 1977,
+      numFailedTests: 0,
+      numTotalTestSuites: 188,
+      numFailedTestSuites: 7,
+    });
+    expect(c.failed).toBe(0);
+    expect(c.failedSuites).toBe(7); // ← 只看 failed 会漏掉它
+    expect(c.totalSuites).toBe(188);
+  });
+
+  it("没有这两个字段（老报告 / 别的 reporter）⇒ 记为 null，不编数", () => {
+    const c = countsFromVitestJson({ numTotalTests: 3, numPassedTests: 3, numFailedTests: 0 });
+    expect(c.failedSuites).toBeNull();
+    expect(c.totalSuites).toBeNull();
   });
 });
 
