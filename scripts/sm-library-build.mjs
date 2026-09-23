@@ -70,7 +70,8 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
 import { requireStaticCrypto } from "./lib/sm-library-source.mjs";
 import { cleanCommands, envFileLines, opensslEnvFor, shouldBuild } from "./lib/sm-library-plan.mjs";
-import { ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
+import { canApplyPatch, ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
+import { cargoHomeOfRegistrySrc, gmCargoHome, gmCopyDir, isolateSqlcipherSource, removeIsolation } from "./lib/sm-library-isolate.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
 const NO_APPLY = argv.includes("--no-apply");
 
@@ -81,7 +82,11 @@ try {
 } catch (e) {
   fail(e.message);
 }
+// ⚠️ `srcDir` = **全机共享**的 registry 源码（只用来读状态/做 legacy 撤回）。
+//    国密构建真正编译的是 `buildSrc`（私有副本，见 §0.5b）—— 共享那份**全程不被改写**。
 const srcDir = pick.dir;
+let buildSrc = srcDir;
+let iso = null;
 console.log(`sm-library-build: 源码 = ${srcDir}（libsqlite3-sys ${pick.version}，via=${pick.via}）`);
 
 // ---- 0.4) `--revert`：把这份**全机共享的** registry 源码撤回原版（mac 2026-09-20 提的第 2 条修法）----
@@ -90,7 +95,11 @@ console.log(`sm-library-build: 源码 = ${srcDir}（libsqlite3-sys ${pick.versio
 // **行为中性**的，但"一键回到原版"仍是做 A/B（以及判"这条红是不是补丁引起的"）的前提。
 // ⚠️ 与 `--print-source-sha256` 一样**不需要后端**（撤回与编不编得起来无关）。
 if (has("--revert")) {
-  let r;
+  // 新语义（2026-09-23）：删掉**私有副本**即可 —— 共享 registry 本来就没被碰过。
+  // 同时兼容**老机器**：如果共享那份里还留着补丁（那是旧流程的残留），这里一并撤回。
+  const removed = removeIsolation(root);
+  console.log(`sm-library-build: 私有副本（.gm-build/）= ${removed ? "已删除" : "本来就没有"}`);
+  let r = { status: "absent", tool: null };
   try {
     r = revertPatch(srcDir, patchFileOf(root));
   } catch (e) {
@@ -98,8 +107,8 @@ if (has("--revert")) {
   }
   const hits = (readFileSync(join(srcDir, "sqlite3.c"), "utf8").match(/SM3/g) || []).length;
   console.log(
-    `sm-library-build: 撤回 = ${r.status}${r.tool ? `（工具=${r.tool}）` : ""}；` +
-      `撤回后源码里 SM3 命中 = ${hits}${r.status === "reverted" ? "（原版应当是 0）" : "（本来就没打）"}`,
+    `sm-library-build: 共享 registry 撤回 = ${r.status}${r.tool ? `（工具=${r.tool}）` : ""}；` +
+      `共享源码里 SM3 命中 = ${hits}${hits === 0 ? "（原版 ✓）" : "（⚠️ 仍不是原版）"}`,
   );
   process.exit(0);
 }
@@ -115,9 +124,40 @@ if (has("--revert")) {
 //   （我自己踩到：跑完 `--check` 想确认源码是不是干净的，结果它把源码变成了打过补丁的样子，
 //   于是"我刚还原过"这句话当场变成假的）。核对就该不改状态 —— 要改状态请显式跑构建或 `--revert`。
 const CHECK_ONLY = has("--check");
+const decision = patchApplyDecision({ noApply: NO_APPLY, checkOnly: CHECK_ONLY });
 let patchState;
 try {
-  patchState = ensurePatch(srcDir, patchFileOf(root), patchApplyDecision({ noApply: NO_APPLY, checkOnly: CHECK_ONLY }));
+  if (decision.apply) {
+    // ---- 0.5b) ★ 补丁打在**私有副本**上，共享 registry 全程不被触碰（2026-09-23，消灭 G 格）----
+    iso = isolateSqlcipherSource({
+      repoRoot: root,
+      srcDir,
+      version: pick.version,
+      patchFile: patchFileOf(root),
+      ensurePatch,
+    });
+    buildSrc = iso.copySrc;
+    patchState = iso.patch;
+    console.log(
+      `sm-library-build: 隔离 ✓ 补丁打在私有副本 ${iso.copyDir}\n` +
+        `  · 私有 CARGO_HOME = ${iso.cargoHome}（继承真实 config：${iso.realCargoHome}/config.toml；挂上 ${iso.linked.join("、") || "（无需挂载）"}）\n` +
+        `  · 共享 registry **未被触碰**（${srcDir}）⇒ 默认构建不会受影响；--revert 只是删这个目录`,
+    );
+  } else {
+    // --check / --no-apply：**只读**。不建副本、不改共享源码；用探针回答"补丁还能不能应用"。
+    patchState = ensurePatch(srcDir, patchFileOf(root), decision);
+    if (CHECK_ONLY) {
+      const probe = canApplyPatch(srcDir, patchFileOf(root));
+      const copy = gmCopyDir(root, pick.version);
+      const copyState = existsSync(join(copy, "sqlite3.c"))
+        ? (readFileSync(join(copy, "sqlite3.c"), "utf8").includes("SQLCIPHER_HMAC_SM3_LABEL") ? "副本=已打补丁" : "副本=原版")
+        : "副本=不存在";
+      console.log(
+        `sm-library-build: [--check 只读] 共享 registry 补丁状态=${patchState.status}；` +
+          `补丁可应用=${probe.ok ? "是" : `否（${probe.why}）`}；${copyState}`,
+      );
+    }
+  }
 } catch (e) {
   fail(e.message);
 }
@@ -134,7 +174,7 @@ console.log(`sm-library-build: 补丁 = ${PATCH_NOTE}`);
 //    两边要能对上就得在同一状态上取。`patch=` 那格是给"读到过期标记"时用的：
 //    哈希对不上时先看这格是不是 absent（那是**假红**，不是补丁过期）。
 if (PRINT_SHA) {
-  const file = markerFileOf(srcDir) ?? join(srcDir, "sqlite3.c");
+  const file = markerFileOf(buildSrc) ?? join(buildSrc, "sqlite3.c");
   if (!existsSync(file)) {
     console.error(`sm-library-build: 找不到可哈希的文件：${file}`);
     process.exit(1);
@@ -157,7 +197,7 @@ if (!opensslDir) {
 if (!existsSync(opensslDir)) fail(`--openssl-dir 指向的目录不存在：${opensslDir}`);
 
 // 标记扫描与上面 `markerFileOf()` 同序（单一实现的又一处：CLI 的 --print-source-sha256 与这里共用它）
-const markerPath = markerFileOf(srcDir);
+const markerPath = markerFileOf(buildSrc);
 const markerHit = markerPath ? basename(markerPath) : null;
 
 if (!markerHit) {
@@ -168,10 +208,13 @@ if (!markerHit) {
       "  修法：打 patches/0001-sqlcipher-sm3-provider.patch（见 patches/README.md 的三格核对）。",
   );
 }
-console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${srcDir}，src_sha256=${sha256OfFile(markerPath).slice(0, 12)}…）`);
+console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${buildSrc}，src_sha256=${sha256OfFile(markerPath).slice(0, 12)}…）`);
 
 // ---- 3) 命令（固定两步：先 clean 再 build）----
 const env = { ...process.env, OPENSSL_DIR: opensslDir };
+// ★ 关键一行：把 cargo 指到**私有 CARGO_HOME**（config 里带 [patch.crates-io] ⇒ 走打过补丁的副本）。
+//   这样连 `tauri build` 内部那条 cargo 也自动吃到补丁，不必给每个调用点加 `--config`。
+if (iso) env.CARGO_HOME = iso.cargoHome;
 // 清产物：**两个 profile 都要清**（dev ＋ release）。为什么 —— 见 `lib/sm-library-plan.mjs` 头注
 // 里那次真实事故：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用**，
 // 于是"按发版链构建"出来的包表面全对（补丁标记也在）而**库级根本不是国密**。
@@ -197,7 +240,16 @@ if (has("--print-env")) {
   if (!envForSsl) {
     fail(`找不到 OpenSSL 开发文件（${opensslDir || "(没给 --openssl-dir)"}）⇒ 无法给出可链接的环境变量`);
   }
-  console.log(envFileLines(envForSsl));
+  const lines = envFileLines(envForSsl);
+  const gmHome = gmCargoHome(root);
+  // ★ 国密构建必须把 CARGO_HOME 一起传下去：它带来 `[patch.crates-io]`，是"补丁打在私有副本上"的载体。
+  const withHome = existsSync(gmHome) ? `${lines}\nCARGO_HOME=${gmHome}` : lines;
+  console.log(withHome);
+  if (!existsSync(gmHome)) {
+    console.error(
+      "sm-library-build: ⚠️ 没有 .gm-build/ ⇒ 少了 CARGO_HOME 那一行。先跑一次 `--prepare`（它会建隔离），再 --print-env。",
+    );
+  }
   process.exit(0);
 }
 
@@ -243,42 +295,49 @@ console.log(
     "cargo test --features sm-library --lib gm_provider::",
 );
 
-// ★ 收尾横幅（2026-09-20；**刻意不自动 revert**，见下面那条"为什么"）
+// ★ 收尾横幅（2026-09-23 改写：**补丁不再留在共享 registry 上**）
 //
-// 决策记录：AMD 提的两个选项里，我原先选了「甲（默认自动 revert）」，**实测后改判成「乙+（保留 ＋ 大横幅）」**：
-//   · 「自动 revert」看着更安全，但它会制造一个**新的**静默态：`build.rs` 对源码目录打了
-//     `rerun-if-changed` ⇒ 还原源码后，下一次 `cargo …` 会让**构建脚本重跑**（重建的仍是上次那份
-//     libsqlite3-sys 产物，而标记会按**已还原的源码**重新打印）⇒ "源码是 AES、产物是 SM4"，
-//     而**你下一次读到的读数描述的是源码、不是产物** —— 这正是我们反复吃的"绿得不是它声称的那件事"。
-//   · 保留补丁则"源码与产物一致"，代价是**同机其它 OpenSSL 构建会跟着变成 SM4 页**（Apple 的 CC 构建不受影响，
-//     因为那个 `#define` 在 `#ifdef SQLCIPHER_CRYPTO_OPENSSL` 里）⇒ 用**横幅**把这个后果说响，而不是用
-//     一个更隐蔽的状态去掩盖它。
-//   要回到原版：`node scripts/sm-library-build.mjs --revert`（幂等，且会复扫标记）。
+// 旧流程（已废）：补丁打在 cargo registry 那份**全机共享**的源码上 ⇒ 跑完不还原，同一台机器后续的
+// **默认**构建编的也是打过补丁的源码 —— macOS 上默认（CommonCrypto）构建会红 12＋7 条，现场像「加密库坏了」；
+// Linux/Windows 上不报错，但后续默认构建被**静默**改成写 SM4 页。判据只能"发现并拦住"，救不了根。
+// 新流程：补丁只打在 `.gm-build/libsqlite3-sys-<ver>/`（**私有副本**），并用**私有 CARGO_HOME**
+// （config.toml 里的 `[patch.crates-io]`）把 cargo 指过去 ⇒ 共享 registry **全程不被触碰**，
+// 残留**不可能发生**（不是"被发现"，是不存在）。要清掉私有副本：`--revert`（就是删 `.gm-build/`）。
 {
-  const hits = (readFileSync(join(srcDir, "sqlite3.c"), "utf8").match(/SM3/g) || []).length;
+  const text = readFileSync(join(buildSrc, "sqlite3.c"), "utf8");
+  const hits = (text.match(/SM3/g) || []).length;
   let pageCipher = "unknown";
-  for (const line of readFileSync(join(srcDir, "sqlite3.c"), "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     const t = line.trim();
     if (t.startsWith("#define OPENSSL_CIPHER")) {
       pageCipher = t.includes("EVP_sm4_cbc") ? "sm4" : t.includes("EVP_aes_256_cbc") ? "aes" : "other";
       break;
     }
   }
-  const lines = [
-    "",
-    "════════════════════════════════════════════════════════════════════════",
-    `⚠️ 补丁**留在**共享 registry 源码上（SM3 命中=${hits}，**page_cipher=${pageCipher}**）`,
-    "   · 这是**刻意**的：源码与产物必须一致，否则下一次 cargo 命令会让标记描述源码、而你测的是产物",
-    "   · 后果（2026-09-20 起，补丁 v3 去掉了 #ifdef）：**同机后续任何 OpenSSL/Tongsuo 构建都是 SM4 页**",
-    "     （Apple 的 CommonCrypto 构建不受影响）；跑默认门禁或别的项目前请先：",
-    "       node scripts/sm-library-build.mjs --revert",
-    "   · 本构建的页加密也会写进产物标记（`page_cipher=`）—— 用 check-crypto-backend 读，别靠回忆",
-    "   · ★ 读**应用层**的国密读数必须带 `--features sm-library`：胶水只把它加在 `cargo build` 上，",
-    "     裸 `cargo test` 会把接线那段 `#[cfg(feature = \"sm-library\")]` **编掉** ⇒ 你会以为在测接线构建，",
-    "     其实在测一个「没接线」的应用（我 2026-09-22 踩过：探针读数自相矛盾，根因就是这个）",
-    "       例：cargo test --features sm-library --lib security::",
-    "════════════════════════════════════════════════════════════════════════",
-    "",
-  ];
-  console.error(lines.join("\n"));
+  const sharedHits = (readFileSync(join(srcDir, "sqlite3.c"), "utf8").match(/SM3/g) || []).length;
+  if (iso) {
+    console.log(
+      [
+        "",
+        "════════════════════════════════════════════════════════════════════════",
+        `★ 补丁位置 = **私有副本**（SM3 命中=${hits}，**page_cipher=${pageCipher}**）：`,
+        `    ${buildSrc}`,
+        `★ 共享 registry 命中=${sharedHits}${sharedHits === 0 ? "（原版 ✓ —— 默认构建不受影响，不用再 revert 它）" : "（⚠️ 非原版：老残留，跑一次 --revert）"}`,
+        `★ 编译/测试请带上私有 CARGO_HOME（它带来 [patch.crates-io]）：`,
+        `    CARGO_HOME=${iso.cargoHome}`,
+        "    或先 `node scripts/sm-library-build.mjs --print-env`（它会打印这一行，CI 里写进 $GITHUB_ENV）。",
+        "★ 读**应用层**国密读数必须带 `--features sm-library`（裸 cargo test 会把接线那段 #[cfg] 编掉）：",
+        "    例：CARGO_HOME=<上面那个> cargo test --features sm-library --lib security::",
+        "★ 清掉私有副本：node scripts/sm-library-build.mjs --revert（幂等）",
+        "   · 本构建的页加密也写进了产物标记（page_cipher=）—— 用 check-crypto-backend 读，别靠回忆",
+        "════════════════════════════════════════════════════════════════════════",
+        "",
+      ].join("\n"),
+    );
+  } else {
+    console.log(
+      `\nsm-library-build: 本次没有打补丁（--check/--no-apply）⇒ 共享 registry 命中=${sharedHits}` +
+        `${sharedHits === 0 ? "（原版 ✓）" : "（⚠️ 非原版）"}`,
+    );
+  }
 }

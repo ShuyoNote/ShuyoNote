@@ -70,6 +70,33 @@ pub enum SourcePick {
     NotFound { wanted: Option<String>, found: Vec<String> },
 }
 
+/// 私有副本目录（`<repo>/.gm-build/libsqlite3-sys-<ver>/sqlcipher`）—— 2026-09-23「消灭补丁残留」那一格带来的新形态。
+///
+/// 背景：补丁不再打在**全机共享**的 registry 源码上，而是打在**私有副本**上，cargo 由私有 `CARGO_HOME`
+/// （config.toml 里的 `[patch.crates-io]`）指过去。于是"将要编译的那份源码"有两种可能，必须**按证据选**：
+///   · 隔离模式：进程环境里的 `CARGO_HOME` 指向 `<repo>/.gm-build/cargo-home`（调用方按 `--print-env` 导出的），
+///     或依赖构建产物里的 `cargo:include=` 指向 `.gm-build/` ⇒ 编译的是**副本**；
+///   · 老模式：都不是 ⇒ 编译的是 registry 那份（此时补丁必须打在它上面，否则当场失败）。
+pub fn isolation_source_dir(repo_root: &Path, version: Option<&str>) -> Option<(PathBuf, String)> {
+    let v = version?;
+    let dir = repo_root.join(".gm-build").join(format!("libsqlite3-sys-{v}")).join("sqlcipher");
+    if dir.is_dir() {
+        Some((dir, v.to_string()))
+    } else {
+        None
+    }
+}
+
+/// `CARGO_HOME` 是否指向我们的私有 `CARGO_HOME`（`<repo>/.gm-build/…`）。
+pub fn cargo_home_is_isolated(cargo_home: &Path, repo_root: &Path) -> bool {
+    cargo_home.starts_with(repo_root.join(".gm-build"))
+}
+
+/// 某个路径是否落在私有构建目录里（用于读依赖产物那条 `cargo:include=` 时判"cargo 编的是副本"）。
+pub fn is_under_gm_build(dir: &Path, repo_root: &Path) -> bool {
+    dir.starts_with(repo_root.join(".gm-build"))
+}
+
 /// 在若干 `registry/src/*` 根下找 `libsqlite3-sys-<version>/sqlcipher`。
 ///
 /// ⚠️ `wanted` 为 `None`（拿不到锁版本）时**不猜**：返回 `NotFound`，由调用方带着说明失败。
@@ -254,5 +281,38 @@ checksum = "abc"
     fn filetime_set(p: &Path, t: std::time::SystemTime) -> std::io::Result<()> {
         let f = std::fs::File::open(p)?;
         f.set_modified(t)
+    }
+
+    // ---- 隔离副本（2026-09-23「消灭补丁残留」） ------------------------------------------
+
+    #[test]
+    fn isolation_source_dir_points_at_the_private_copy() {
+        let dir = std::env::temp_dir().join(format!("gm-iso-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sc = dir.join(".gm-build").join("libsqlite3-sys-0.38.2").join("sqlcipher");
+        std::fs::create_dir_all(&sc).unwrap();
+        let got = isolation_source_dir(&dir, Some("0.38.2"));
+        assert_eq!(got.map(|(d, v)| (d, v)), Some((sc.clone(), "0.38.2".to_string())));
+        // 版本对不上 ⇒ None（绝不退而求其次）
+        assert!(isolation_source_dir(&dir, Some("0.30.1")).is_none());
+        // 没有版本 ⇒ None
+        assert!(isolation_source_dir(&dir, None).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cargo_home_is_isolated_only_inside_gm_build() {
+        let repo = PathBuf::from("/repo");
+        assert!(cargo_home_is_isolated(&repo.join(".gm-build").join("cargo-home"), &repo));
+        assert!(!cargo_home_is_isolated(&PathBuf::from("/Users/x/.cargo"), &repo));
+        // 前缀像但不是（`.gm-build-old`）⇒ 不算 —— 这条防的是"用 starts_with 判字符串"那类假阳性
+        assert!(!cargo_home_is_isolated(&repo.join(".gm-build-old").join("cargo-home"), &repo));
+    }
+
+    #[test]
+    fn is_under_gm_build_recognizes_the_copy_path() {
+        let repo = PathBuf::from("/repo");
+        assert!(is_under_gm_build(&repo.join(".gm-build").join("libsqlite3-sys-0.38.2").join("sqlcipher"), &repo));
+        assert!(!is_under_gm_build(&PathBuf::from("/Users/x/.cargo/registry/src/i/libsqlite3-sys-0.38.2/sqlcipher"), &repo));
     }
 }

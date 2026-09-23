@@ -102,3 +102,6 @@ tools/gm-conformance/target/
 
 # check-nsis-template 的缓存：它把上游 tauri-bundler 的 NSIS 模板下到这里做逐行比对
 /target/
+
+# 国密构建的私有副本 ＋ 私有 CARGO_HOME（scripts/sm-library-build.mjs 生成，--revert 删除）
+.gm-build/
