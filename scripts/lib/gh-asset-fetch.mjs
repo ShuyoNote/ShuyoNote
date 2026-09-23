@@ -82,7 +82,7 @@ export function parseJson(text) {
 
 /**
  * 跑一次 curl（`--resolve` 路线）。`out` 给了就落盘，否则 body 从 stdout 返回。
- * **状态码一律带回**：`curl -s` 不看状态码 ⇒ 404 体会被当成功读进来（2026-09-24 实测）。
+ * **状态码一律带回**：`curl -s` 不看状态码 ⇒ 404 体会被当成功读进来（2026-09-23 实测）。
  * 凭据写成临时 `--config` 并在 `finally` 里删掉。
  */
 function curlGet(url, { ip, out, token, headers = [] } = {}) {

@@ -443,7 +443,7 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   > ⚠️ 展开后的路径**必须以 `./` 开头**（`./squashfs-root/usr/lib/...`）才算"包内相对路径"：
   > `squashfs-root` 是打包容器的根名，判据会把它摘掉再数层数。写成 `.squashfs-root/...`（少一个斜杠）
   > 会被判成"位置不对"——我第一版就踩了，而判据的反应是**正确地红**（说明那条位置判据确实在干活）。
-- **取 GitHub 资产：两条路，只有网络类失败才换路；换路不许静默**（2026-09-24 收口，本机实测）：
+- **取 GitHub 资产：两条路，只有网络类失败才换路；换路不许静默**（2026-09-23 收口，本机实测）：
   `node scripts/fetch-gh-asset.mjs <owner/repo> <tag|latest> <名子串> <输出> [期望 sha256]`（`--list` 只列资产）。
   分工：纯逻辑 `scripts/lib/gh-asset.mjs`、网络与落盘 `scripts/lib/gh-asset-fetch.mjs`、薄 CLI 只管参数/打印/退出码；
   `scripts/fetch-pdfium.mjs` 的退路调**同一份** ⇒ 原先那两份 `.tools/gh-api-asset.mjs`、`.tools/fetch-pdfium-via-api.mjs` 已删。

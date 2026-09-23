@@ -25,7 +25,7 @@
 //     $env:PDFIUM_RESOLVE = "github.com:20.205.243.166,objects.githubusercontent.com:185.199.108.133"
 //   （实测：Fastly 的 .111 不通、.108 通——换一个 IP 往往就好了。）
 //
-// ⭐ **2026-09-24 起的第二条路**（本机 DNS 下第一条整个不通，原先靠 `.tools/fetch-pdfium-via-api.mjs`
+// ⭐ **2026-09-23 起的第二条路**（本机 DNS 下第一条整个不通，原先靠 `.tools/fetch-pdfium-via-api.mjs`
 //   手工绕）：直链是**网络类**失败时，自动退到 **`api.github.com` 的资产端点**
 //   （`/repos/…/releases/assets/<id>` ＋ `Accept: application/octet-stream` ⇒ 302 到
 //   `objects.githubusercontent.com`）。这条路**不是新写的**：与 `scripts/fetch-gh-asset.mjs` 调同一份

@@ -69,7 +69,7 @@ export function shouldFallbackToCurl(fetchResult) {
  * 3. **token 绝不进 argv**：argv 会被 `ps`/`Get-Process` 与错误信息捞到（本仓 2026-09-16 出过一次
  *    "Bearer token 打进 CI 公开日志"）。要带凭据就用 `--config <文件>`（调用方建临时文件并自己删）。
  *
- * ⚠️ 第 4 条是 2026-09-24 补的：**`curl -s` 不看状态码** ⇒ 不加 `--fail*` 或 `-w` 的话，404 的
+ * ⚠️ 第 4 条是 2026-09-23 补的：**`curl -s` 不看状态码** ⇒ 不加 `--fail*` 或 `-w` 的话，404 的
  * `{"message":"Not Found"}` 会被当成功体读进来，于是"这个 tag 不存在"被读成"这个 release 一个资产都没有"
  * —— 正是本仓禁止的"结果类冒充事实"。所以给 `writeOut` 时用 `-w` 把**状态码带回 stdout**，由调用方判。
  */

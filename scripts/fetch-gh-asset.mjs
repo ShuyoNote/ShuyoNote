@@ -18,7 +18,7 @@
 //   · **凭据绝不进 argv**：带 token 时写进 `--config` 的临时文件（`Authorization: Bearer …`），
 //     用完即删（argv 会被 `ps`/错误信息捞到 —— 本仓 2026-09-16 出过 token 进公开日志的事故）；
 //   · 走过的路**如实打出来**（`[direct]` / `[curl --resolve <ip>]`），不要让调用方猜。
-//   · **状态码必须判**（2026-09-24 实测补的第 4 条）：`curl -s` 不看状态码 ⇒ 不带 `-w` 的话
+//   · **状态码必须判**（2026-09-23 实测补的第 4 条）：`curl -s` 不看状态码 ⇒ 不带 `-w` 的话
 //     `releases/tags/<不存在的 tag>` 的 404 体会被当成功读进来，于是"这个 tag 不存在"被读成
 //     "这个 release 一个资产都没有"。现在两条路都按状态码判：404/401/403/5xx 一律**如实报、不换路**，
 //     curl 路下载到非 200 时还会**把落盘的错误页删掉**（别让错误页混进 sha256 校验）。
@@ -64,7 +64,7 @@ try {
   }
 
   console.log(`取 ${repo}@${tag} 里名字含 "${match}" 的资产`);
-  // 输出目录不存在就建（否则 curl 报 "(23) client returned ERROR on write"，像网络故障其实不是 —— 2026-09-24 踩过）
+  // 输出目录不存在就建（否则 curl 报 "(23) client returned ERROR on write"，像网络故障其实不是 —— 2026-09-23 踩过）
   mkdirSync(dirname(out), { recursive: true });
 
   const r = await fetchAssetTo({ repo, tag, match, out, wantSha, ip: IP });
