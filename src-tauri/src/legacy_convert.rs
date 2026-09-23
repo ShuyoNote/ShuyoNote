@@ -228,6 +228,14 @@ mod tests {
     /// ⚠️ **把"记参数的文件"写死在脚本里**，不走环境变量：`std::env::set_var` 是**进程级**的，
     /// 而 cargo 的测试是**多线程并行** ⇒ 两个用例会互相覆盖彼此的环境变量（我第一版就这么假红过：
     /// 有的用例读到别人的路径、有的甚至跑成了另一个用例的脚本行为）。判据之间**不许有共享可变状态**。
+    /// ⚠️ **脚本里的字节一律用 POSIX 八进制转义 `\ooo`，不许用 `\xHH`**（2026-09-23 CI 实测红）：
+    /// `\xHH` 是 **bash 的扩展**，而 Ubuntu 的 `/bin/sh` 是 **dash**（macOS 的是 bash）——
+    /// dash 的 `printf` 不认 `\x03`，**原样输出字面字符**，于是 `printf 'PK\x03\x04fake-ooxml'`
+    /// 得到的是 20 字节的 `PK\x03\x04fake-ooxml` 字面串（不是 zip），
+    /// `convert_with` 如实以「产出的不是 OOXML 容器（20 字节，前 4 字节不是 zip 魔数）」拒绝
+    /// ⇒ 这条 `#[cfg(unix)]` 的判据**在 macOS 绿、在 Linux CI 红**（Windows 上因 `cfg(unix)` 根本不跑）。
+    /// 实测（WSL dash）：`\x03\x04` ⇒ `50 4b 5c 78 30 33 5c 78 30 34 …`（20 字节）；
+    /// `\003\004` ⇒ `50 4b 03 04 …`（14 字节）✓。
     #[cfg(unix)]
     fn fake_soffice(dir: &Path, mode: &str, args_file: &Path) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
@@ -239,7 +247,7 @@ outdir=""
 prev=""
 for a in "$@"; do if [ "$prev" = "--outdir" ]; then outdir="$a"; fi; prev="$a"; done
 case "{mode}" in
-  ok) printf 'PK\x03\x04fake-ooxml' > "$outdir/input.docx" ;;
+  ok) printf 'PK\003\004fake-ooxml' > "$outdir/input.docx" ;;
   fail) echo "Error: source file could not be loaded" >&2; exit 3 ;;
   sleep) sleep 5 ;;
   garbage) printf 'not a zip at all' > "$outdir/input.docx" ;;
