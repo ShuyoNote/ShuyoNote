@@ -210,6 +210,38 @@ pub fn sync_gate(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
     }
 }
 
+/// 闸门裁决的**可序列化视图**（给状态命令/界面读；`SyncGate` 本身不带 `Serialize`，
+/// 因为它是给内部调用方 match 的）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SyncGateView {
+    pub allow: bool,
+    /// 放行的同时"这个空间还没分类"（＝闸门**没管到它**，界面该如实说）。
+    pub unclassified: bool,
+    /// 拦住的原因 / 放行时的空串。
+    pub reason: String,
+}
+
+/// 把裁决投影成视图。**三种出口一个都不许丢**（拦 / 放行 / 放行但未分类）。
+pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
+    match sync_gate(st, kind) {
+        SyncGate::Allowed => SyncGateView {
+            allow: true,
+            unclassified: false,
+            reason: String::new(),
+        },
+        SyncGate::AllowedUnclassified => SyncGateView {
+            allow: true,
+            unclassified: true,
+            reason: "这个空间还没分类（个人/团队）：同步闸门这次没有管到它".to_string(),
+        },
+        SyncGate::Blocked(reason) => SyncGateView {
+            allow: false,
+            unclassified: false,
+            reason,
+        },
+    }
+}
+
 /// 读这个空间的**本地分类标记**（读不到/没那条 ⇒ `Unknown`）。
 pub fn space_kind(c: &Connection, space_id: &str) -> SpaceKind {
     c.query_row(
@@ -553,6 +585,30 @@ mod tests {
 
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 闸门视图：三种出口都投影出来（拦 / 放行 / 放行但未分类），**一个都不许丢**。
+    #[test]
+    fn the_gate_view_keeps_all_three_outcomes() {
+        let plain = SpaceCryptoStatus {
+            space_id: "s".into(),
+            encrypted_on_disk: false,
+            in_keyring: false,
+            key_available: false,
+        };
+        let enc = SpaceCryptoStatus {
+            encrypted_on_disk: true,
+            ..plain.clone()
+        };
+
+        let v = sync_gate_view(&plain, SpaceKind::Personal);
+        assert!(!v.allow && !v.unclassified && !v.reason.is_empty(), "拦：要有原因");
+        let v = sync_gate_view(&enc, SpaceKind::Personal);
+        assert!(v.allow && !v.unclassified && v.reason.is_empty(), "放行：没有原因");
+        let v = sync_gate_view(&plain, SpaceKind::Team);
+        assert!(v.allow && !v.unclassified, "团队：放行且**不算未分类**");
+        let v = sync_gate_view(&plain, SpaceKind::Unknown);
+        assert!(v.allow && v.unclassified && !v.reason.is_empty(), "未分类：放行但**要说出来**");
     }
 
     /// ★ 空间 id 只从 `spaces/<id>.db` 反推；不是那种文件就 `None`（**不猜**）。

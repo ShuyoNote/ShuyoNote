@@ -708,6 +708,9 @@ pub struct EncryptionStatus {
     /// 与上面的 `space_format` 互补：那个说"数据是哪一版"，这个说"**这个空间到底加不加密、钥匙在不在**"——
     /// 第 2 步的同步闸门与设置面板都读它。
     pub active_space: crate::space_crypto::SpaceCryptoStatus,
+    /// ★ 第 2 步：**闸门对当前活动空间的裁决**（拦 / 放行 / 放行但未分类 ＋ 原因）。
+    /// 放在这里是为了让 owner/UI **一眼看到**"这个空间会不会被闸门拦住"，而不是只能从绑定失败里猜。
+    pub active_space_gate: crate::space_crypto::SyncGateView,
 }
 
 #[tauri::command]
@@ -725,13 +728,26 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
         .and_then(|sid| space_format(&c, sid))
         .unwrap_or(0);
     // ★ 第 1 步（1b-2）：活动空间的**按空间**读数（纯读：嗅文件 ＋ 看本进程的钥匙袋/会话）。
-    let active_space = match (crate::db::app_data_dir_ref(), crate::workspaces::active_workspace_id(&c).ok()) {
-        (Some(dir), Some(sid)) => crate::space_crypto::space_status(dir, &sid),
+    let active_id = crate::workspaces::active_workspace_id(&c).ok();
+    let active_space = match (crate::db::app_data_dir_ref(), active_id.as_deref()) {
+        (Some(dir), Some(sid)) => crate::space_crypto::space_status(dir, sid),
         _ => crate::space_crypto::SpaceCryptoStatus {
             space_id: String::new(),
             encrypted_on_disk: false,
             in_keyring: false,
             key_available: false,
+        },
+    };
+    // ★ 第 2 步：闸门裁决（同一份读数 ＋ 本地分类标记 ⇒ 视图）。
+    let active_space_gate = match active_id.as_deref() {
+        Some(sid) => crate::space_crypto::sync_gate_view(
+            &active_space,
+            crate::space_crypto::space_kind(&c, sid),
+        ),
+        None => crate::space_crypto::SyncGateView {
+            allow: true,
+            unclassified: true,
+            reason: "还没有活动空间".to_string(),
         },
     };
     Ok(EncryptionStatus {
@@ -746,6 +762,7 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
             crypto::format_name(space_format).to_string()
         },
         active_space,
+        active_space_gate,
     })
 }
 
