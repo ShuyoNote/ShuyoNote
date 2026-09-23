@@ -23,6 +23,7 @@ import {
   type AsyncPageBinding,
   type PageStatePort,
 } from "../lib/crdt/pageBinding";
+import type { PageClaimPort } from "../lib/crdt/bootstrap";
 import { useEditorStore } from "../store/editor";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
@@ -508,11 +509,38 @@ function PageCrdtBinding({
       save: (id, state) => api.savePageState(id, state),
     };
 
+    // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：
+    //   · 拿到 ⇒ 由本机建血统（＝今天的行为）；
+    //   · 别人先建过（服务端 403/`granted:false`）⇒ `bindPageToEditorViaPort` 会**不建并抛出**，
+    //     由下面那个 catch **如实 toast**（措辞是给用户看的）；
+    //   · 问不到（没配置同步/离线/401/5xx）⇒ 归一成"离线"那一支 ⇒ **照旧能写**。
+    // ⚠️ 空间 id 这里用 `getActiveWorkspaceId()`（当前工作空间）。**如实记**：若这一页属于
+    //    另一个空间，服务端会按它的门禁拒掉 ⇒ 落到"离线临时建"那一支（可用但未裁定），
+    //    联网后若撞上血统护栏会**报冲突**而不是静默。要更准就得把"页所属空间"传进来（后续片）。
+    const claim: PageClaimPort = {
+      async claim(id) {
+        // ★ S9：用**这一页自己的空间**（`api.getPage` 回的行里有 `workspace_id`），而不是
+        //   "当前工作空间" —— 后者在**跨空间**打开页面时会问错空间（服务端按门禁拒掉 ⇒ 只落
+        //   "离线临时建"那一支：可用但**未裁定**）。
+        //   取不到（页不存在／命令失败）⇒ 如实 `console.warn` 再退回当前工作空间（不静默）。
+        let spaceId = "";
+        try {
+          const page = (await api.getPage(id)) as { workspace_id?: unknown } | null;
+          spaceId = typeof page?.workspace_id === "string" ? page.workspace_id : "";
+        } catch (e) {
+          console.warn("[crdt] 取这一页的空间失败，退回当前工作空间", e);
+        }
+        if (!spaceId) spaceId = await api.getActiveWorkspaceId();
+        const res = await api.claimPageLineage({ space_id: spaceId, page_id: id });
+        return res?.granted === true;
+      },
+    };
+
     void (async () => {
       try {
         // seed：与保存路径**同一个** serializer（`serializeWithBlockIds`）⇒ 含块身份、不另铸一套
         const seedJson = serializeWithBlockIds(editor.getEditorState(), blockIds.current);
-        const b = await bindPageToEditorViaPort({ port, pageId, editor, seedJson });
+        const b = await bindPageToEditorViaPort({ port, pageId, editor, seedJson, claim });
         if (disposed) {
           b.dispose();
           return;
@@ -525,8 +553,17 @@ function PageCrdtBinding({
           });
         });
       } catch (e) {
-        console.error("[crdt] 绑定失败", e);
-        toast(`CRDT 绑定失败：${e instanceof Error ? e.message : String(e)}`, "error");
+        const msg = e instanceof Error ? e.message : String(e);
+        // ★ S9（2026-09-23）：**"claim 被拒"不是"绑定失败"** —— 那是**故意的等待**
+        //   （这一页的首条血统属于另一台设备，本机**没有**建新的）。把它报成"绑定失败"会让用户
+        //   以为编辑器坏了；所以分开报，且用 `info` 而不是 `error`。
+        if (/属于另一台设备/.test(msg)) {
+          console.warn("[crdt] 未建血统（claim 被拒，等对端同步下来）", pageId);
+          toast("这一页正在另一台设备上编辑：等它同步下来再打开（本机没有新建编辑历史）", "info");
+        } else {
+          console.error("[crdt] 绑定失败", e);
+          toast(`CRDT 绑定失败：${msg}`, "error");
+        }
       }
     })();
 
