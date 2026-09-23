@@ -157,6 +157,31 @@ function oleBytes(): Uint8Array {
   return b;
 }
 
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/**
+ * 旧格式夹具用的**假转换器**：按 `to` 分派，给一份与 `ooxml/docx-*` / `ooxml/xlsx-*` **同源**的 OOXML。
+ *
+ * 为什么按 `to` 分派而不是"无论要什么都返回同一份"：这样"**转换后必须复用同一套解析**"才**可核** ——
+ * 抽取器若把目标格式要错（或干脆自己解析旧格式），拿到的就不是这份 OOXML，夹具立刻红。
+ * 目标不在预期内 ⇒ reject（那条路本来就该以 `provider_error` 收场）。
+ */
+function legacyFakeDocx(to: string): Uint8Array {
+  if (to !== DOCX_MIME) throw new Error(`假转换器只认 docx，收到 ${to}`);
+  return docxBody(p("旧文档正文"));
+}
+
+function legacyFakeXlsx(to: string): Uint8Array {
+  if (to !== XLSX_MIME) throw new Error(`假转换器只认 xlsx，收到 ${to}`);
+  return zipOf({
+    "xl/workbook.xml": `<workbook ${S_NS}><sheets><sheet name="预算" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    "xl/_rels/workbook.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    "xl/sharedStrings.xml": `<sst ${S_NS}><si><t>差旅</t></si><si><t>住宿</t></si></sst>`,
+    "xl/worksheets/sheet1.xml": `<worksheet ${S_NS}><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>合计</t></is></c><c r="B2"/><c r="C2"><v>3000</v></c></row></sheetData></worksheet>`,
+  });
+}
+
 // ---------------------------------------------------------------- 夹具集
 
 export const FIXTURES: readonly ExtractFixture[] = [
@@ -582,12 +607,47 @@ export const FIXTURES: readonly ExtractFixture[] = [
   },
   {
     id: "ooxml/xls-旧格式",
-    pins: "旧 .xls 不是 OOXML（是 OLE），需要 LibreOffice headless 转换 —— 属另一族",
+    pins:
+      "旧 .xls 不是 OOXML（是 OLE 复合文档）⇒ 抽取器**自己解不了**，必须走 `deps.convertLegacy` " +
+      "转成 OOXML 再**复用同一套解析**（段/表格/loc 口径与 `ooxml/xlsx-*` 逐条相同）。" +
+      "这条**注入假转换器** ⇒ 走成功路径；不注入的那条见 `ooxml/旧格式·没配转换`（§15.8 第 7 项）",
     extractor: "ooxml.legacy@1",
     filename: "旧表.xls",
     mime: "application/vnd.ms-excel",
     make: oleBytes,
-    expect: { ok: true, kinds: ["sheet"], contains: [] },
+    // 假转换器**按 `to` 分派**：抽取器要 xlsx 就给一份最小 xlsx（内容与 `ooxml/xlsx-多表` 同源，
+    // 于是"转换后必须复用同一套解析"这条是可核的）；要别的目标 ⇒ reject（那条路本来就该 provider_error）
+    deps: {
+      convertLegacy: async (_bytes, _mime, opts) => legacyFakeXlsx(opts.to),
+    },
+    expect: { ok: true, kinds: ["sheet"], contains: ["差旅\t住宿", "合计\t\t3000"], locs: ["S预算"] },
+    planned: true,
+  },
+  {
+    id: "ooxml/doc-旧格式",
+    pins:
+      "旧 .doc（同为 OLE）→ 经 `deps.convertLegacy` 转成 .docx 后**复用 docx 同一套解析**：" +
+      "`loc` 一律为空、跨 run 拼接不插空格（与 `ooxml/docx-基本` 同口径）",
+    extractor: "ooxml.legacy@1",
+    filename: "旧报告.doc",
+    mime: "application/msword",
+    make: oleBytes,
+    deps: {
+      convertLegacy: async (_bytes, _mime, opts) => legacyFakeDocx(opts.to),
+    },
+    expect: { ok: true, kinds: ["text"], contains: ["旧文档正文"], locs: [""] },
+    planned: true,
+  },
+  {
+    id: "ooxml/旧格式·没配转换",
+    pins:
+      "**§15.3-7**：没有 `deps.convertLegacy` 必须立刻 `provider_error`，**不许自己 spawn LibreOffice / " +
+      "自带转换器**（抽取层禁止外部程序；Web 也不该因此崩）。这是「旧格式现在抽不了」的**如实答复**",
+    extractor: "ooxml.legacy@1",
+    filename: "旧表.xls",
+    mime: "application/vnd.ms-excel",
+    make: oleBytes,
+    expect: { ok: false, code: "provider_error" },
     planned: true,
   },
   // ===== 音视频转写（2026-09-22 落地；`deps.transcribe` 那一格与抽取器**同批**进契约）=====

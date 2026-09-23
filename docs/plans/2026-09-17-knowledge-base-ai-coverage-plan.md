@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
-| `ooxml.legacy@1`（旧 `.doc` / `.xls`） | 需 LibreOffice headless，**本机没装** | 未定 |
+| `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **契约半已冻结**（`deps.convertLegacy`，§15.8 第 7 项；`types.ts` ＋ `DEP_CAPABILITIES` ＋ 三条夹具已立）—— 现在抽不出来的原因是**平台实装与抽取器都还没写**，而实装要 LibreOffice headless | **抽取器 ＋ 平台实装：macOS**（2026-09-23 认领，他本机能 `brew install --cask libreoffice`）；**契约：AMD ✅ 已落** |
 | **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
 
 **已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**
@@ -932,7 +932,7 @@ export function pickExtractor(
 1. 先改**本节**（契约）→ 2. 再改**实现** → 3. 若改的是 `id` 的版本号，同时更新 §6.1 的重跑口径与 §13 待拍板里相关项。
 **禁止**先改实现再回头补契约。
 
-### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe`**（2026-09-17 增补；`transcribe` 2026-09-22 补）
+### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe` / `convertLegacy`**（2026-09-17 增补；`transcribe` 2026-09-22、`convertLegacy` 2026-09-23 预置）
 
 起因：Mac 侧要做 `pdf.ocr`，先做了五分钟可行性核对就发现**路是堵的** —— 扫描件要"页 → 像素"，
 而契约不给它要像素的路（抽取器只有 `bytes`；平台原有的渲染入口要的是 **attachmentId**）。
@@ -1015,6 +1015,26 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
 落地形态：`src/lib/extract/avTranscript.ts` —— `av.transcript@1`、`cost: "gpu"`、段 `kind: "transcript"`、
 `loc: "HH:MM:SS"`（时间码是这类内容唯一的定位）。登记在 `DEP_CAPABILITIES`（`depsCatalog.ts`）⇒
 **本表与 `ExtractDeps` 由 `_DEP_EXHAUSTIVE` 双向卡住，漏登记一处 `tsc` 就红**。
+
+**第 7 项：`convertLegacy`（旧二进制 Office → OOXML，2026-09-23 预置）** —— 同一条通用规则的**第三次**兑现。
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| 1 | 加不加 `deps.convertLegacy` | **加**，且**不蹭 `vision` / 不许抽取器自己 spawn**。形状：`(bytes: Uint8Array, mime: string, opts: { to: string }) => Promise<Uint8Array>`。理由：① `.doc`/`.xls`/`.ppt` 是 **OLE 复合文档**，抽取层**解不了**，而"调外部程序 / 自带转换器"正是 `isolated.test.ts` 禁的那一类；② 契约本来就是**一个能力一个键**，加它是照既有形状填空；③ 它与前三者**形状都不同**（前三个是"内容 → 文本/图"，这个是"字节 → 字节"） |
+| 2 | **返回什么** | **只返回字节**（`Promise<Uint8Array>`）。`to` 是**目标 MIME**、由**抽取器**决定（`.doc`→docx、`.xls`→xlsx、`.ppt`→pptx）⇒ 调用方自己就是提出 `to` 的那个人，**刻意不返回 mime**（少一处能漂的地方）。**为什么用 MIME 而不是扩展名**：抽取层全程说 MIME（`ExtractInput.mime` / 注册表 `mimes`），再引入一套扩展名词汇就是第二套口径 |
+| 3 | **失败怎么算** | **一律 reject**（转换器不在 / 非零退出 / 超时 / 输出不是合法 OOXML）⇒ 抽取器映射成 `provider_error`（§15.3-7），与 `vision`/`transcribe` 同口径。**超时归平台实现**（LibreOffice headless 会挂），契约层不写超时参数 —— 与 `vision` 一致 |
+| 4 | **谁注入 / 谁落地** | 与前三者同：**平台层**（唯一构造点 `attachmentDeps(...)`）。⚠️ **实装未做** ⇒ 在那之前 `.doc`/`.xls` 一律 `provider_error`（**已知状态不是 bug**）。分工（2026-09-23）：**契约半（`ExtractDeps` ＋ `DEP_CAPABILITIES` ＋ 本节 ＋ conformance 夹具）归 AMD**；**抽取器 `ooxml.legacy@1` ＋ 平台实装归 macOS**（他本机能装 LibreOffice headless） |
+
+落地形态（**契约半已落** —— 就是本节这张表 ＋ `ExtractDeps.convertLegacy` ＋ `DEP_CAPABILITIES` ＋ 下面的夹具；**抽取器与平台实装待 macOS**）：`ooxml.legacy@1` 认 `.doc`/`.xls`/`.ppt`
+（`application/msword` / `application/vnd.ms-excel` / `application/vnd.ms-powerpoint` ＋ 扩展名），
+**先 `convertLegacy` 转成 OOXML，再复用 `ooxml.ts` 那一族现成的解析** —— **不许写第二套 docx/xlsx 解析**
+（那正是本方案反复在防的"两份实现"）。段 / 表格 / `loc` 的口径必须与 `ooxml/docx-*` / `ooxml/xlsx-*` **逐条相同**：
+夹具 `ooxml/xls-旧格式` 与 `ooxml/doc-旧格式` 就是拿这个钉的 —— **假转换器按 `to` 返回同源的 OOXML**
+（要错目标就 reject）⇒ "转换后必须复用同一套解析"这条**可核**，而不是靠自觉。
+没注入 ⇒ `provider_error`（夹具 `ooxml/旧格式·没配转换`）。
+⚠️ 这三条夹具现在都标着 `planned: true`，而 `conformance.test.ts` 有**双向**判据：
+"目标抽取器没注册 ⇒ 必须标 planned" ＋ "**抽取器已注册 ⇒ 不许再标 planned**" ⇒
+**实现一落地、夹具自动开始跑**，不靠人记得（ASR 那次也是这么绑的）。
 
 所以规则是通用的：**凡是"只有平台能做"的事，都加 `deps`；一律可选、一律没注入就 `provider_error`、一律不许抽取器自己想办法。**
 

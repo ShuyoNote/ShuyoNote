@@ -55,6 +55,18 @@ export const DEP_CAPABILITIES = [
       "(audio: Uint8Array, mime: string, opts: { model?: string; language?: string }) => Promise<{ text: string; segments?: readonly { start: number; end: number; text: string }[] }>",
     usedBy: ["av.transcript@1"],
   },
+  {
+    name: "convertLegacy",
+    purpose:
+      "旧二进制 Office（.doc/.xls/.ppt，OLE 复合文档）→ 现代 OOXML：抽取层解不了旧格式，" +
+      "这一步只有平台能做（桌面 LibreOffice headless；Web 没有这条路）",
+    whenAbsent: "provider_error",
+    injectedBy: "platform",
+    signature:
+      "(bytes: Uint8Array, mime: string, opts: { to: string }) => Promise<Uint8Array>" +
+      "（to = **目标 MIME**，由抽取器决定；刻意不返回 mime。任何失败一律 reject ⇒ 抽取器映射 provider_error）",
+    usedBy: ["ooxml.legacy@1"],
+  },
 ] as const satisfies readonly DepCapability[];
 
 /** 登记表里出现过的能力名。 */

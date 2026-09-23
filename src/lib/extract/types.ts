@@ -111,6 +111,31 @@ export interface ExtractDeps {
     text: string;
     segments?: readonly { start: number; end: number; text: string }[];
   }>;
+  /** 旧二进制 Office（`.doc` / `.xls` / `.ppt`，OLE 复合文档）→ **现代 OOXML**。**由平台层注入**。
+   *  未注入时，`ooxml.legacy@1` 必须返回 `provider_error`，不许抛（§15.3-7）。
+   *
+   *  **为什么必须是 `deps`（而不是抽取器自己 spawn `soffice`）**：抽取层**禁止 import 平台、
+   *  禁自带外部程序**（`isolated.test.ts` 有源码级断言），而这一步**只有平台能安排**
+   *  （桌面 spawn `soffice --headless --convert-to …`；Web 没有这条路）。
+   *  这正是 §15.8 那条通用规则的第三次兑现（前两次：`rasterize`、`transcribe`）。
+   *
+   *  **为什么 `to` 是 MIME 而不是"目标扩展名"**：抽取层全程说 MIME（`ExtractInput.mime`、
+   *  注册表的 `mimes`）—— 再引入一套扩展名词汇就是第二套口径。
+   *  **谁决定目标格式**：抽取器（`.doc`→docx、`.xls`→xlsx、`.ppt`→pptx）；平台只负责"按你给的目标转出来"。
+   *  于是本能力**刻意不返回 mime**（调用方自己就是提出 `to` 的那个人）。
+   *
+   *  ⚠️ **失败一律 reject**（转换器不在 / 非零退出 / 超时 / 输出不是合法 OOXML）
+   *  ⇒ 抽取器把它映射成 `provider_error`，与 `vision` / `transcribe` 同一条口径。
+   *  **超时归平台实现**（LibreOffice headless 会挂），契约层不写超时参数 —— 与 `vision` 一致。
+   *
+   *  ⚠️ **实装在平台层**（唯一构造点 `attachmentDeps(...)`）；本层只出契约与抽取器。
+   *  在该实装落地之前，`.doc` / `.xls` 一律 `provider_error` —— **这是已知状态不是 bug**。
+   *  分工（2026-09-23）：契约归 AMD、抽取器 `ooxml.legacy@1` 归 macOS（见方案 §15.8 第 7 项）。 */
+  convertLegacy?: (
+    bytes: Uint8Array,
+    mime: string,
+    opts: { to: string },
+  ) => Promise<Uint8Array>;
 }
 
 export interface ExtractInput {
