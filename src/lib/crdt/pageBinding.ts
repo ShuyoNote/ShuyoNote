@@ -22,6 +22,7 @@ import {
   ensurePageCrdtState,
   markTextStale,
   readPageCrdtState,
+  writeContentProjection,
   writePageCrdtState,
   type ContentSql,
 } from "../docContent";
@@ -175,6 +176,9 @@ export function mergeRemotePageState(
   const mine = readPageCrdtState(db, pageId);
   if (!mine) {
     writePageCrdtState(db, pageId, remote, now);
+    // ★ S6 尾巴：落盘那一列（反链/插件/AI/导出读的**投影**）也跟上 —— 由**状态**重新序列化。
+    //   （只动那一列、不动 `dirty`；正文文本那一半仍走「待重建」标记 ＋ 补算器。）
+    writeContentProjection(db, pageId, projectStateToJson(remote));
     // 采用了别人的一版 ⇒ 本机那一列正文**很可能**落后（也可能恰好一致 ⇒ 由补算器清掉，见上）。
     markTextStale(db, pageId);
     return { adopted: true, state: remote, derivedStale: true };
@@ -204,7 +208,11 @@ export function mergeRemotePageState(
     //   但"字节不同"未必意味着内容不同，拿它当判据会多标。
     const changed = projectStateToJson(mine) !== projectStateToJson(merged);
     writePageCrdtState(db, pageId, merged, now);
-    if (changed) markTextStale(db, pageId);
+    if (changed) {
+      // ★ S6 尾巴：**内容真的变了**才把投影写回（没变就一次写库都不做，免得制造假账）。
+      writeContentProjection(db, pageId, projectStateToJson(merged));
+      markTextStale(db, pageId);
+    }
     return { adopted: false, state: merged, derivedStale: changed };
   } finally {
     session.dispose();

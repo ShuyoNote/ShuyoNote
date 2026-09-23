@@ -806,6 +806,20 @@ export function writeContentText(db: ContentSql, pageId: string, text: string): 
 }
 
 /**
+ * **把投影写回落盘那一列**（冲刺 S6 尾巴，2026-09-23）—— 与 `writeContentText` 同一手法：
+ * **只动那一列**：① 不改别的列、② **不动 `dirty`**（它不是用户编辑，标脏会把它当本地改动推上去）。
+ *
+ * 什么时候用：CRDT 状态被**采用/合并**之后，落盘那一列（反链、插件、AI、导出读的**投影**）会落后
+ * ⇒ 由**状态**重新序列化一份写回。这样"搜不到刚并进来的字"只可能剩**正文文本**那一半，
+ * 而那一半有「待重建」标记 ＋ 补算器（`markTextStale` / `refreshPageTextIfStale`）兜着。
+ *
+ * ⚠️ 别拿它当"保存"：不盖章、不快照、不标脏 —— 那些是保存路径的事。
+ */
+export function writeContentProjection(db: ContentSql, pageId: string, json: string): void {
+  db.run("UPDATE pages SET content_json = ? WHERE id = ?", [json, pageId]);
+}
+
+/**
  * **正文文本的本地修复（带判据的那一个）**：拿库里那一份与算出来的比，**不同才写回**
  * （相同 ⇒ 正文列一次写库都没有）。返回**是否修了**。
  *

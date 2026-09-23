@@ -32,6 +32,8 @@ function fakeDb() {
       }
       // S6 起：合并（`mergeRemotePageState`）会给这一页打「待重建」标记 ⇒ 这个形状要认。
       if (/UPDATE pages SET text_stale = 1/.test(sql)) return;
+      // S6 尾巴起：合并会把**投影写回**那一列（本判据不关心值，只要求形状被认）。
+      if (/UPDATE pages SET content_json = \?/.test(sql)) return;
       throw new Error(`fakeDb 不认这条 run：${sql.slice(0, 48)}`);
     },
     query(sql: string, params?: unknown[]) {
