@@ -115,7 +115,31 @@
 | **S5** | **服务端合并（两阶段）** | 阶段 1「只存不算」→ 阶段 2「开算」＋ 总开关（可按空间关） | 阶段 1 行为零变化；阶段 2 服务端合并幂等、可重放、不丢块 |
 | **S6a** ✅ | **派生文本：合并之后要**有痕**（不静默落后，也不造假账） | `mergeRemotePageState` 返回 `derivedStale`，两种情形打「待重建」：**采用**别人的一版、**合并真有新内容**（判定用**投影比**，**不用字节比** —— 字节不同未必内容不同，拿它当判据会多标）＋ 复用**既有**补算器链路（不引第二份派生实现）＋ 新 `derivedStale.test.ts` 2 条 | ⑱ ★ 真有新内容 ⇒ `text_stale` 打上、补算器收口后正文列跟上且标记清掉；⑲ ★ 重复并同一版 ⇒ **不**打（无假账）、状态仍在（幂等≠丢弃） |
 | **S6b** ✅ | **块身份穿过合并**（口径 ＋ 判据） | 口径写死在判据文件头：**铸身份只发生在一处**（保存路径／首开补种，已由 S3b-2a 的 `ensurePageCrdtState` 收成一次），**转换层与合并路径一律不铸**；新 `identityThroughMerge.test.ts` 用**产品自己的** `topLevelBlockIds` 验（不是自己数 JSON） | ⑳ ★ 合并后块身份 = `["blk-1","blk-2","blk-A","blk-B"]`：**并集**、无重复（S1 红线的症状）、**没有任何新面孔**；㉑ ★ 幂等（同一版再并一字不变）＋ 换顺序仍是同一集合 |
-| **S7** | **两侧都接 ＋ 真机验收** | 桌面（Rust）与 Web 两侧同语义 —— 含 **`page_crdt` 读写三条镜像**（`doc_content.rs` 的 `read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state`）与会话接线；双设备人工验收 | 两侧判据成对；真机双设备验收过 |
+| **S7-1** ✅ | **桌面侧 `page_crdt` 存取（Rust）** | 新 `src-tauri/src/page_crdt.rs`：`read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state`（与前端三条**成对**）＋ 文件内 `#[cfg(test)]` 两条逐条对应前端判据；`lib.rs` 登记 `mod page_crdt;` | 编译通过（`cargo test --lib page_crdt` **建出 test profile**）；⚠️ **执行**被本机环境挡着（`STATUS_ENTRYPOINT_NOT_FOUND`，测试二进制起不来），编解码逻辑与前端的成对判据已在 TS 侧全绿 |
+| **S7-2** ✅ | **Tauri 命令接上 ＋ 撤掉 web-only 假陈述** | `commands.rs` 的 `read_page_state` / `save_page_state`（`state: Vec<u8>`，前端 `number[]` 过 IPC）＋ `lib.rs` 的 `generate_handler!` 注册；`check-web-commands.mjs` 撤回那两条 `WEB_ONLY_COMMANDS`（web 专属 **4 → 2**） | `cargo check --lib` exit=0；`check-web-commands` 绿且 **Rust 命令 239 → 241**；`check-capabilities` 绿。★ 这同时修掉一个**真问题**：`PageCrdtBinding` 在桌面也跑，而命令只登记为 web 专属 ⇒ 桌面**每次开页弹一次「绑定失败」** |
+| **S8** ✅ | **血统护栏**（读那篇《Lexical + Yjs 生产实践要点》第 2 条后加的：**切勿在客户端初始化文档内容**） | `pageBinding.ts` 新增 `lineageClientIds`（`Y.decodeUpdate` 取 client id 集合＝**血统指纹**）/ `lineagesRelated`；`mergeRemotePageState` **先验血统**：两条**独立创建**的状态 ⇒ **拒绝合并**并回 `lineageConflict`（本机那版原样保留、不标派生）＋ 护栏命中当场 `console.warn`；`main.tsx` 注册的那版再 **toast** 一次（用户可见）；`lineageGuard.test.ts` 3 条 | ① 同血统 ⇒ 不误报；② ★ 两条独立血统 ⇒ 有痕、本机原样、**内容没翻倍**（实测拒绝后仍 `["blk-1"]`）；③ 空状态/无指纹（`[0,0]`）⇒ 视为相关、不拦 |
+| **S9** | **服务端「首写者裁定」**（设计稿见 §2.5；**要动另一个仓 ⇒ 等你点头**） | 同步服务加一个原子 claim（Rust 侧**不需要懂 CRDT**：只裁定"这一页的首条血统由谁建"）；客户端拿到 claim 才建血统，拿不到就载入/等待 | 关掉"两台设备同时首开同一张从没建过血统的页"那个窗口（S8 只是**发现**它，不是关掉它）；离线时行为要写清（临时本地血统 ＋ 上线后按 S8 报冲突） |
+| **S7-3** | **两侧都接 ＋ 真机验收**（要人手） | 桌面（Rust）与 Web 两侧同语义已通（S7-1/S7-2）；**双设备人工验收**未做 | 两侧判据成对；真机双设备验收过 |
+
+## 2.5 S9 设计稿：服务端「首写者裁定」（**要动 `shuyonote-sync-server`，先出稿**）
+
+**要解决的问题**（那篇文章第 2 条点名、我们已量化）：两台设备**同时**首开同一张**从没建过血统**的页、
+且各自离线 ⇒ 各建一条血统。S8 的护栏只能**发现并拒绝合并**（不损坏），关不掉窗口本身。
+
+**方案（不需要 yrs、不需要服务端看得懂内容）**：
+1. 服务端加**一条原子 claim**（例如 `POST /pages/{id}/lineage-claim`）：库里一行一个 `page_id`，
+   首次插入成功者即"首写者"（`INSERT OR IGNORE` ＋ 看 `changes()`）；**载荷只是 claim 记录本身**
+   （device_id ＋ 时间戳），**不含内容** ⇒ 服务端仍然"哑且盲"。
+   ⚠️ 这一条要动**另一个仓**（`shuyonote-sync-server`，Rust/axum，独立发布线）⇒ 未获点头前只出稿。
+2. 客户端：打开一张**没有本地状态**的页时先 claim：
+   · 拿到 ⇒ 由它建血统（＝今天的 `ensurePageCrdtState` 那一步）；
+   · 拿不到（别人已 claim）⇒ **等待/拉取**对方的初始状态（联机时）；**离线**时按下面的降级走。
+3. **离线降级（必须写清，否则会把"离线可用"弄坏）**：离线时允许建**临时本地血统**并打标记
+   （"未 claim"）；联网后若发现已有人 claim ⇒ 走 S8 的冲突出口（**报出来**，本机版本保留），
+   后续再决定要不要提供"把它并过来"的裁决路径（今天的 `page_conflicts` 裁决 UI 是同一类东西）。
+4. **不做什么**：不做"把两条血统重新**rebase** 成一条"（那需要在权威血统上重放本地编辑，
+   而重放的内容只能从投影 JSON 来 ⇒ 正是"从 JSON 重建"那个陷阱）⇒ 留作将来单独一片，
+   且必须先有判据证明 rebase 不丢块身份。
 
 ## 3. 本冲刺**不做**
 
