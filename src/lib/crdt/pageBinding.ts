@@ -19,6 +19,7 @@
 import type { LexicalEditor } from "lexical";
 import {
   ensurePageCrdtState,
+  markTextStale,
   readPageCrdtState,
   writePageCrdtState,
   type ContentSql,
@@ -105,6 +106,14 @@ export interface MergedRemoteState {
   adopted: boolean;
   /** 合并后本机持有的状态（调用方一般不用它，判据用）。 */
   state: Uint8Array;
+  /**
+   * S6：这次合并**是否可能让派生文本（正文列/FTS）落后** ⇒ 已打「待重建」标记。
+   *
+   * 为什么要有它：合并产物是**拼出来**的，而正文列还是旧的 —— 不落痕就会"搜不到刚并进来的字"
+   * （裁定 (iii) 同一精神：不许静默落后）。补算器拾起后标记会清掉；**算出来与库里相同也会清**
+   * （`refreshPageTextIfStale` 的两条出口）⇒ 这一处宁可多标一次，也不漏标。
+   */
+  derivedStale: boolean;
 }
 
 /**
@@ -113,9 +122,9 @@ export interface MergedRemoteState {
  * - 本机还没有 ⇒ **直接采用**它（它自己带着血统，别在这儿另起一条）；
  * - 本机已有 ⇒ 载入**本机的血统**、把远端那笔 `merge` 进去、再存回。
  *
- * ⚠️ 本函数**只动 CRDT 状态**，**不碰**落盘的那份投影（`pages` 里那两列）—— 投影怎么跟上
- * 是 S6 的口径（今天编辑器打开时会用状态的投影覆盖，所以界面上看到的是对的内容）。
- * ⚠️ 也**不**标脏：合并产物该不该回推由调用方决定（S5 服务端合并那一侧）。
+ * ⚠️ 本函数**只动 CRDT 状态 ＋ 那个"待重建"标记**，**不碰**落盘的那份投影（`pages` 里那两列）
+ * —— 投影怎么跟上归 S6 的口径（今天编辑器打开时会用状态的投影覆盖，所以界面上看到的是对的内容）。
+ * ⚠️ 也**不**标脏（`dirty`）：合并产物该不该回推由调用方决定（S5 服务端那一侧）。
  */
 export function mergeRemotePageState(
   db: ContentSql,
@@ -126,14 +135,22 @@ export function mergeRemotePageState(
   const mine = readPageCrdtState(db, pageId);
   if (!mine) {
     writePageCrdtState(db, pageId, remote, now);
-    return { adopted: true, state: remote };
+    // 采用了别人的一版 ⇒ 本机那一列正文**很可能**落后（也可能恰好一致 ⇒ 由补算器清掉，见上）。
+    markTextStale(db, pageId);
+    return { adopted: true, state: remote, derivedStale: true };
   }
   const session = openPageSession({ state: mine });
   try {
     session.merge(remote);
     const merged = session.exportState();
+    // ★ 只在**内容真的变了**时才标（与 `applyRemoteContent` 的 `keptLocal` 同一纪律：
+    //   否则就是**假账** —— 补算器白解析一遍再清掉）。
+    //   判据用**投影**比（内容级），不用字节比：同一份状态两次编码在 yjs 里是稳定的，
+    //   但"字节不同"未必意味着内容不同，拿它当判据会多标。
+    const changed = projectStateToJson(mine) !== projectStateToJson(merged);
     writePageCrdtState(db, pageId, merged, now);
-    return { adopted: false, state: merged };
+    if (changed) markTextStale(db, pageId);
+    return { adopted: false, state: merged, derivedStale: changed };
   } finally {
     session.dispose();
   }
