@@ -19,6 +19,7 @@ const stripComments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 const read = (p: string) => stripComments(readFileSync(join(process.cwd(), p), "utf8"));
 const src = read("src/hooks/useSyncStream.ts");
 const nearRealtime = read("src/lib/nearRealtime.ts");
+const app = read("src/App.tsx");
 
 describe("近实时 · 订阅目标与接线（文本级，防退回旧形状）", () => {
   it("① Web 侧按**当前工作空间**解析绑定，并用解析结果拼 URL（不是「第一个绑定过的档案」）", () => {
@@ -84,5 +85,16 @@ describe("近实时 · 订阅目标与接线（文本级，防退回旧形状）
     expect(nearRealtime).toContain('!== "0"');
     // hook 也读同一个开关（关掉 ⇒ 什么都不做，与今天逐字相同）
     expect(src).toContain("isNearRealtimeEnabled()");
+  });
+
+  it("⑧ 流通道**不碰轮询**：它不拥有定时器、也不去关别人的（判据 7 的「不影响轮询」那一半）", () => {
+    // "不影响轮询"在本仓是**结构性**的：两条路互不引用，轮询由 `useAutoSync` 无条件挂着。
+    // 这条判据钉的就是那个结构 —— 一旦有人给流通道塞一个定时器、或让"开近实时"变成"停轮询"，
+    // 它就红（那时"流断了 ⇒ 什么都不更新"会安静地回来）。
+    expect(src, "`useSyncStream` 自己起了定时器 ⇒ 两条路开始互相影响").not.toContain("setInterval(");
+    expect(src, "`useSyncStream` 去关别人的定时器 ⇒ 轮询会被流通道影响").not.toContain("clearInterval(");
+    expect(src, "流通道不该引用轮询那条路（引用就会出现「谁关谁」的分支）").not.toContain("useAutoSync");
+    expect(app, "轮询必须**无条件**挂在 App 上（不是「开近实时就不轮询」）").toContain("useAutoSync();");
+    expect(app, "流通道也是无条件的（开关在 hook 内部读，不是在 App 里加条件）").toContain("useSyncStream();");
   });
 });

@@ -340,6 +340,16 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   ⇒ **保留的判读纪律**：看到计时类判据红，先**单独重跑该文件**；单独也红才是回归。
   ⚠️ 同时记住：**推送前要求"当轮 tip 全绿"** ⇒ 遇到假红，正确动作是**再跑一次全量**取到全绿 tip，
   并把这次假红如实记在提交里，而不是当成代码问题去改产品代码。
+- ★ **读退出码时别经过管道过滤**（2026-09-23 一天内撞到**两次**，形状相同）：
+  ① `scripts\win-cargo-test.ps1 -Filter sync_stream` 自己打印了 `test result: ok. 13 passed; 0 failed`
+  且脚本收了 `test exe exit code = 0`，但外层被报成 **exit 1** —— 那条命令的形状是
+  `powershell -File … | Select-String …`；把**同一条命令**改成 `*> "$env:TEMP\x.txt"` 再读文件 ⇒
+  **exit 0**（连跑两次都是 0）。② 同一天 `npx vitest run | Select-Object -Last 60` 也出现过一次
+  "用例全绿却 exit 1"（同一棵树改成 `*> 文件` ⇒ exit 0）。
+  ⚠️ **机制未归因**（不等于"已知会这样"），但纪律是确定的：**当轮要读退出码就重定向到文件，
+  不要 `| Select-*` 之后看**；两者不一致时以**重定向那次**为准，并把不一致如实记下来
+  （既不把工具链的退出码噪声当回归，也不反过来把真红当噪声放过去 —— 判据是
+  **命令自己的输出 ＋ 重定向后的退出码**，两者都要对）。
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 - **看到 `plugins::` 大批红，先确认宿主二进制在不在**（2026-09-19：macOS 侧交底、AMD 复现）：

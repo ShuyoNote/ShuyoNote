@@ -186,6 +186,56 @@ pub async fn run_stream_with_reconnect(
     }
 }
 
+/// 把「一次连接 / 重连循环」接到 **全局状态** 上，并把每帧交给 `notify` 去"告诉前端"。
+///
+/// 抽出来的理由（照本文件上半段那条同一逻辑）：**状态那几笔账**（`reconnects` 清零、
+/// `last_error` 留痕、`last_event_at` 记时刻）与 `StreamChange` 的构造是**语义**，
+/// 而"发给谁"只是**出口**。生产那条路传的是 `|ch| app.emit("sync-stream-change", ch)`；
+/// 判据里没有 `AppHandle`，于是传一个"只记 kind"的闭包 —— 这样**判据 6 走的就不是复制品**：
+/// 起流、收帧、`reconnects/last_error` 这几笔账全是生产那一份代码，只有出口被换掉。
+///
+/// `notify` 是 `Fn + Send + 'static`：它会被移进 `on_frame`（那个闭包要满足
+/// `read_stream_once` 的 `+ Send` 约束 —— 见那边的注释）。
+pub async fn run_stream_task<F>(url: String, token: String, ws_id: String, server: String, notify: F)
+where
+    F: Fn(StreamChange) + Send + 'static,
+{
+    let mut on_connected = || {
+        with_status(|s| {
+            s.reconnects = 0;
+            s.last_error.clear();
+        });
+    };
+    let mut on_frame = move |payload: &str| {
+        let kind = frame_kind(payload).to_string();
+        notify(StreamChange {
+            ws_id: ws_id.clone(),
+            server: server.clone(),
+            kind,
+        });
+        with_status(|s| s.last_event_at = now_ms());
+    };
+    let mut on_error = |e: &str| {
+        // **不静默**：留痕（界面能读到 `last_error`），随后由循环退避重连。
+        with_status(|s| s.last_error = e.to_string());
+    };
+    let mut on_retry = |n: u32| {
+        with_status(|s| s.reconnects = n);
+    };
+    // `stop()` 用 abort 停这条任务本身 ⇒ 这里不需要第二个停止条件。
+    let mut should_stop = || false;
+    run_stream_with_reconnect(
+        &url,
+        &token,
+        &mut on_connected,
+        &mut on_frame,
+        &mut on_error,
+        &mut on_retry,
+        &mut should_stop,
+    )
+    .await;
+}
+
 /// 发给前端的事件载荷：**只是"有变更"这个信号**，不含任何页面内容（与服务端一致）。
 #[derive(Debug, Clone, Serialize)]
 pub struct StreamChange {
@@ -287,49 +337,10 @@ pub async fn sync_stream_start(
         ..Default::default()
     };
     let app2 = app.clone();
-    let ws2 = ws_id.clone();
-    let server2 = server.clone();
-    let handle = tokio::spawn(async move {
-        // 把"一次连接 / 重连循环"（本文件上半段那两个可测函数）接到**全局状态 ＋ `app.emit`** 上。
-        // ⚠️ 这一段刻意很薄：语义都在 `run_stream_with_reconnect` 里（那里有判据）。
-        let mut on_connected = || {
-            with_status(|s| {
-                s.reconnects = 0;
-                s.last_error.clear();
-            });
-        };
-        let mut on_frame = |payload: &str| {
-            let kind = frame_kind(payload).to_string();
-            let _ = app2.emit(
-                "sync-stream-change",
-                StreamChange {
-                    ws_id: ws2.clone(),
-                    server: server2.clone(),
-                    kind,
-                },
-            );
-            with_status(|s| s.last_event_at = now_ms());
-        };
-        let mut on_error = |e: &str| {
-            // **不静默**：留痕（界面能读到 `last_error`），随后由循环退避重连。
-            with_status(|s| s.last_error = e.to_string());
-        };
-        let mut on_retry = |n: u32| {
-            with_status(|s| s.reconnects = n);
-        };
-        // `stop()` 用 abort 停这条任务本身 ⇒ 这里不需要第二个停止条件。
-        let mut should_stop = || false;
-        run_stream_with_reconnect(
-            &url,
-            &token,
-            &mut on_connected,
-            &mut on_frame,
-            &mut on_error,
-            &mut on_retry,
-            &mut should_stop,
-        )
-        .await;
-    });
+    let handle = tokio::spawn(run_stream_task(url, token, ws_id.clone(), server.clone(), move |ch| {
+        // 出口：把"有变更"这个信号发给前端（**不带内容**）。语义在 `run_stream_task` 里（有判据）。
+        let _ = app2.emit("sync-stream-change", ch);
+    }));
 
     {
         let mut guard = slot().lock().unwrap_or_else(|e| e.into_inner());
@@ -607,6 +618,136 @@ mod tests {
             .expect_err("连不上就该是 Err");
         println!("【判据 5 实测】连不上时的原因 = {err}");
         assert!(!err.is_empty(), "错误文本不能空（界面要能说出来）");
+    }
+
+    // ---------------------------------------------------------------------------------
+    // 判据 6 的**真行为**：连上、收到帧之后关开关 ⇒ 立刻断、状态翻 false、**不再重连/不再收帧**
+    //
+    // 与判据 5 同一个手法（假 SSE 服务端），但这次服务端**保持连接、持续推**：
+    // 于是"关掉之后还收不收得到帧"是可判的 —— 如果 `abort` 没真的把任务停掉，
+    // 帧计数会继续涨（连接还开着，循环也不会"重连"，所以只有这条断言抓得住它）。
+    // ---------------------------------------------------------------------------------
+
+    /// 持续推送的假 SSE 服务端：一条连接上每 `interval_ms` 发一帧、**不主动关闭**。
+    ///
+    /// 记账（判据读它）：`connects` = 一共接受了几次连接（**"有没有重连"就看它**）、
+    /// `sent` = 成功写出去了几帧。写失败（对端断开/任务被 abort 后 socket 关闭）⇒ 只结束**这条**
+    /// 连接，外层继续 `accept` —— 这样"关掉之后又连回来了"会被 `connects` 抓住。
+    async fn streaming_sse_server(
+        interval_ms: u64,
+        connects: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        sent: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        use std::sync::atomic::Ordering::SeqCst;
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                connects.fetch_add(1, SeqCst);
+                let sent2 = sent.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+                    // ⚠️ 没有 `Content-Length` + `Connection: close` ⇒ hyper 按"读到 EOF 为止"收流，
+                    //    于是每帧写完就能被 `bytes_stream()` 立刻吐出来（不需要自己拼 chunked 分块）。
+                    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+                    if sock.write_all(head.as_bytes()).await.is_err() || sock.flush().await.is_err() {
+                        return;
+                    }
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+                        let n = sent2.load(SeqCst) + 1;
+                        let body = format!("data: {{\"type\":\"push\",\"accepted\":{n}}}\n\n");
+                        if sock.write_all(body.as_bytes()).await.is_err() || sock.flush().await.is_err() {
+                            return; // 对端关了 ⇒ 这条连接结束（外层继续等下一次连接）
+                        }
+                        sent2.fetch_add(1, SeqCst);
+                    }
+                });
+            }
+        });
+        (port, handle)
+    }
+
+    /// ★ 判据 6（**真行为**）：连上并收到帧之后关开关 ⇒ 立刻断、`running=false`、不再收帧、不再重连。
+    ///
+    /// 走的是**生产那一份代码**：`run_stream_task`（状态那几笔账 ＋ `StreamChange` 构造）
+    /// ＋ `sync_stream_stop`（真正的停止路径，`stop_locked` 里 `abort` 任务）。
+    /// 唯一被替掉的只有 `app.emit` 那个**出口**（单测里没有 `AppHandle`，喂一个只记 `kind` 的闭包）。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_while_streaming_disconnects_and_stops_reconnecting() {
+        use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
+        let connects = std::sync::Arc::new(AtomicU32::new(0));
+        let sent = std::sync::Arc::new(AtomicU32::new(0));
+        let (port, server) = streaming_sse_server(60, connects.clone(), sent.clone()).await;
+        let server_url = format!("http://127.0.0.1:{port}");
+        let url = stream_url(&server_url, "sp");
+
+        // 按生产的方式"装上"：状态进槽位、任务跑 `run_stream_task`
+        let kinds: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let k2 = kinds.clone();
+        let status = StreamStatus {
+            running: true,
+            ws_id: "ws-1".to_string(),
+            server: server_url.clone(),
+            ..Default::default()
+        };
+        let handle = tokio::spawn(run_stream_task(url.clone(), "tk".to_string(), "ws-1".to_string(), server_url.clone(), move |ch: StreamChange| {
+            k2.lock().unwrap().push(ch.kind);
+        }));
+        {
+            let mut g = slot().lock().unwrap_or_else(|e| e.into_inner());
+            *g = Some(Running { status, handle });
+        }
+
+        // ① 连上并**正在流**（等到 ≥2 帧 —— 一帧也可能只是"刚好收到"，两帧才说明流是活的）
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline && kinds.lock().unwrap().len() < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let before = snapshot();
+        assert!(before.running, "起流之后状态必须 running=true");
+        assert_eq!(before.ws_id, "ws-1", "状态要如实说出订的是哪个工作空间");
+        assert_eq!(before.server, server_url, "状态要如实说出连的是哪个服务端");
+        assert!(before.last_event_at > 0, "收到帧要记下时刻（界面排错靠它）");
+        assert!(kinds.lock().unwrap().len() >= 2, "持续推送的服务端应当已经送来 ≥2 帧");
+        assert_eq!(connects.load(SeqCst), 1, "只该连一次（还没发生任何断开）");
+
+        // ② 关开关（**生产命令**）
+        let after = sync_stream_stop();
+        let frames_at_stop = kinds.lock().unwrap().len();
+        let sent_at_stop = sent.load(SeqCst);
+        assert!(!after.running, "关掉之后**返回的**状态必须 running=false");
+        assert!(!sync_stream_status().running, "槽位也要真的清空（`sync_stream_status` 读的就是它）");
+
+        // ③ 再等 500ms（服务端还在推：这条连接每 60ms 一帧，5 倍以上窗口）
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let frames_later = kinds.lock().unwrap().len();
+        let connects_later = connects.load(SeqCst);
+        let sent_later = sent.load(SeqCst);
+        server.abort();
+
+        println!(
+            "【判据 6 实测】关前：running=true · 已收 {frames_at_stop} 帧 · 连接 1 次；\
+             关后 500ms：帧仍 {frames_later} 条（服务端那 500ms 里只又写出去 {} 帧就写不动了）\
+              · 连接仍 {connects_later} 次 ⇒ **立刻断、不重连、不再收帧**",
+            sent_later - sent_at_stop
+        );
+
+        assert_eq!(
+            frames_later, frames_at_stop,
+            "关掉之后**不许再收到帧**（`abort` 必须真的停掉任务；否则连接还开着，帧会继续到）"
+        );
+        assert_eq!(connects_later, 1, "关掉之后**不许重连**（实际连接 {connects_later} 次）");
+        // "立刻断"不只是"回调没人调了"：socket 也得真的关掉 —— 服务端那边**写不进去**了，
+        // 所以停掉之后它最多再写成 1 帧（可能正在写的那一帧进了内核缓冲），之后所有写都失败。
+        assert!(
+            sent_later - sent_at_stop <= 1,
+            "关掉之后服务端居然还能写出去 {} 帧 ⇒ 连接没真的断（`abort` 没关掉 socket）",
+            sent_later - sent_at_stop
+        );
     }
 
     /// 判据 5（**与真服务端**的那一半）：注册 ⇒ 建空间 ⇒ 订阅 ⇒ `/push` 一笔 ⇒ **收到推送**。
