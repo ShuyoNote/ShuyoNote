@@ -29,6 +29,9 @@ mod disk;
 // 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
 // 见 `docs/plans/2026-09-18-doc-content-layer-inventory.md`。
 mod doc_content;
+// 冲刺 CRDT S7（2026-09-23）：每页的 **CRDT 状态**存取（`page_crdt` 表）—— 与前端那一层
+// `readPageCrdtState` / `writePageCrdtState` / `clearPageCrdtState` 成对，判据也成对。
+mod page_crdt;
 // 旧二进制 Office → OOXML 的平台转换器（`deps.convertLegacy` 的桌面实装；抽取器在 TS 侧）。
 // 命令面：`convert_legacy_office(data, to)`。详见该文件头注（三条口径：`to` 由抽取器定 / 失败一律 Err / 临时件自清）。
 mod legacy_convert;
