@@ -1,5 +1,9 @@
-# 投影与派生滞后：方案稿（2026-09-23，**只出稿、未实现**）
+# 投影与派生滞后：方案稿（2026-09-23，**已按 §2-B2 实现**）
 
+> ★ **已实现（2026-09-23 第 49 轮）**：按 §2 的 **B2** 落地 —— 新增平台命令
+> `write_page_projection`（两侧）＋ 端口 `PageStatePort.writeProjection` ＋ 调用点（"内容变了才写"）。
+> 读数与判据见 §7。下面 §1–§6 是**决策记录**（为什么是 B2 而不是 A/C/D），保持原样。
+>
 > 起因：冲刺 §13.3 第 1 条 —— 「打开页面时合并/承接**只写状态**，`pages` 那两列要等**下一次保存**
 > 才跟上 ⇒ 在那之前这一台的 FTS/反链看不到刚并进来的字」。
 >
@@ -108,3 +112,45 @@
 3. 判据 **1 / 4 / 5 / 6 / 8**（决定性的那五条）→ 绿；再补 **2 / 3 / 7** 的读数。
 4. 文档：冲刺 §13.3 第 1 条收口；`SHUYONOTE_STATE.md` 缺口 ② 里删掉"投影列要等下一次保存"这半句；
    把 §4.2 那条"依赖正文的引用仍可能滞后"如实例外记一笔。
+
+## 7. ★ 落地读数（2026-09-23 第 49 轮，本机实跑）
+
+**实装了什么**（与 §2-B2 逐条对应）：
+
+| 层 | 改动 |
+|---|---|
+| 文档内容层（两侧各一处，语义唯一） | Rust `doc_content::write_page_projection`（读 `kind`/旧内容 ⇒ 数据库页与"没变"直接返回 `false`；否则写回那一列 ＋ `rebuild_block_graph` ＋ `mark_text_stale`）；TS `docContent.writePageProjectionIfChanged` ＋ `isDatabasePage`（同语义；Web 侧反链是按需扫列 ⇒ 不需要重建块图） |
+| 平台命令 | 新命令 `write_page_projection`（**字段名刻意叫 `doc_json`**，不是存储列名 —— 收口门禁按 token 计数，见 §4 第 2 条处置）；契约 ＋ `web.ts` 分支（**只调那一层的实现**，不写第二份判定）＋ `api.writePageProjection` |
+| 端口与调用点 | `PageStatePort.writeProjection?`（不实现 ⇒ 与接线前逐字相同）＋ `bindPageToEditorViaPort` 在**有待并状态**且（承接了 或 投影真的变了）时调它；失败**只 `console.warn`**（状态已落盘、页面可用 ⇒ 不许把开页拖红，但也不许静默） |
+
+**判据（8 条里落地的 7 条；第 7 条"两平面一致"由 ①③ 两条覆盖）**：
+
+```
+Rust doc_content::tests（3 条，全绿）：
+  write_page_projection_closes_the_projection_lag_without_saving   ⇒ 写列＋text_stale＝1＋dirty＝0
+                                                                    ＋blocks＝2（块图当场重建）＋版本历史 0 条
+  write_page_projection_is_a_no_op_when_unchanged                  ⇒ false ＋ text_stale 仍 0 ＋ 块图未重建
+  write_page_projection_skips_database_pages                       ⇒ false ＋ 内容列仍是 `{}` ＋ text_stale 仍 0
+TS docContent.test.ts（4 条，全绿）：同上四条语义（Web 那侧就靠它，`web.ts` 只转发）
+TS crdt/pageBinding.test.ts（2 条，全绿）：
+  ⑳  合并⇒按合并结果写 / 被拒⇒**一次都不写** / 承接⇒必写 / 无待并⇒**连调用都没有**
+  ⑳②端口不实现 `writeProjection` ⇒ 零回归；实现里抛错 ⇒ 绑定仍成功且**有痕**（console.warn）
+TS platform/webPageProjection.wiring.test.ts（2 条，文本级）：平台层只转发；端口→api→命令三层都接着
+```
+
+**变异实测**（证明判据咬人，不是把判据改瞎）：
+
+| 变异 | 结果 |
+|---|---|
+| Rust：把"没变就不写"那道闸门短路（`if false && …`） | `write_page_projection_is_a_no_op_when_unchanged` **红** |
+| TS：把调用点的"变了才写"改成恒真（`if (true \|\| …)`） | `⑳` **红**（"被拒 ⇒ 一次都不该发生"实测 1 次） |
+| 两处还原 | 全绿 |
+
+**当轮 tip 读数**：Rust 全量 **569 tests / 551 passed / 0 failed / 18 ignored**；`vitest` 全量
+**212 files passed（2183 passed / 12 skipped）**；`tsc` 0；`pnpm run build` 0；
+`build:web` ＋ `check:web-build` **9/0**；`test:sync-verify` **84/0**；
+`check-web-commands` 绿（**Rust 248 / web 246 / 契约 250**）；`check-doc-content-access` **562（基线 562，未增长）**。
+
+⚠️ **仍然如实的边界**（与 §4.2 同一条）：块图重建用的是**库里那一列**的正文 ⇒
+**依赖正文的引用（`[[标题]]`）**仍可能滞后到补算器跑完；**块级引用（来自 JSON）当场就对**。
+这一条**没有**被本片解决，也没有假装解决。

@@ -511,6 +511,10 @@ function PageCrdtBinding({
       // §11.4 收口：桌面 pull 收下的**待并远端状态**（Web 平台恒为空 —— 它当场合并）。
       readPending: (id) => api.readPendingPageStates(id),
       clearPending: (id) => api.clearPendingPageStates(id),
+      // ★ §13.3 第 1 条（第 49 轮）：合并/承接之后把**投影**也写回落盘那一列 ——
+      //   不写它，反链/插件/AI/导出要等**下一次保存**才看到刚并进来的内容
+      //   （`json` 由 `pageBinding` 那一层按状态算好；判据与纪律全在文档内容层）。
+      writeProjection: (id, json) => api.writePageProjection(id, json),
     };
 
     // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：

@@ -121,6 +121,58 @@ pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) 
 }
 
 // =====================================================================================
+// 「投影写回」（冲刺 §13.3 第 1 条，2026-09-23 第 49 轮）：**状态 ⇒ 落盘列**的那一步
+//
+// 背景：桌面的"打开页面"那条路（读 `page_crdt` ＋ 界面侧合并）原先**只写状态**，
+// 而 `pages` 那一列（反链、插件、AI、导出读的**投影**）要等**下一次保存**才跟上 ⇒
+// 在那之前这一台"看不到刚并进来的字"。Web 侧当场合并那条路**会**写这一列 ⇒ 这里补的是
+// "桌面少走的那一步"，语义与 `writeContentProjection` 逐字一致。
+// =====================================================================================
+
+/// 把**状态重新序列化**出来的那一份写回落盘列（**只动那一列 ＋ 派生**）。返回**是否真的写了**。
+///
+/// 三条纪律（与 `mergeRemotePageState` / TS `writeContentProjection` 同一口径）：
+///   ① **不是保存**：不动 `dirty`、不盖章、不快照（`page_versions` 一条都不加）——
+///      它是**采用/合并**的收尾，不是用户编辑；
+///   ② **没变就不写**：内容与库里那份相同 ⇒ **一次写库都不做**（否则是假账，还会白重建一次块图）；
+///   ③ **数据库页排除**：那类页的内容 ＝ 列名 ＋ 行 ＋ 规则（在别的表/视图侧）⇒ 拿它当"这一页的内容"
+///      写回是**有损**的（与 `mark_text_stale` 同一条理由，实测撞过）。
+///
+/// ⚠️ 派生分两半（与 Web 侧同一分工）：**块图/反链当场重建**（桌面是**物化表**，Web 是**按需扫列**
+/// ⇒ 这一步只有桌面需要）；**正文文本那一半仍然只打「待重建」标记** —— 正文要编辑器语义，
+/// 补算器在打开页面时算（`refresh_page_text_if_stale`）。⇒ "依赖正文的引用（`[[标题]]`）"仍可能
+/// 滞后到补算器跑完；**块级引用（来自 JSON）当场就对**。
+pub fn write_page_projection(c: &Connection, page_id: &str, json: &str) -> Result<bool, String> {
+    let row: Option<(String, String, String)> = c
+        .query_row(
+            "SELECT kind, content_json, content_text FROM pages WHERE id = ?1",
+            params![page_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((kind, cur_json, cur_text)) = row else {
+        return Ok(false); // 页面不存在 ⇒ 什么都不做（不是错误）
+    };
+    if kind == "database" {
+        return Ok(false); // ③
+    }
+    if cur_json == json {
+        return Ok(false); // ②
+    }
+    c.execute(
+        "UPDATE pages SET content_json = ?1 WHERE id = ?2",
+        params![json, page_id],
+    )
+    .map_err(|e| e.to_string())?;
+    // 块图/反链当场重建。用的是**库里那一列**的正文（可能仍是旧的）—— 与 `resolve_page_conflict`
+    // 同一已知边界（那段注释写了"正文这一次不重算"）：正文相关的引用等补算器，块级引用当场就对。
+    crate::blocks::rebuild_block_graph(c, page_id, json, &cur_text)?;
+    mark_text_stale(c, page_id)?;
+    Ok(true)
+}
+
+// =====================================================================================
 // 「正文待重建」标记（B1，2026-09-22）：**本地派生索引的工作队列**
 //
 // 为什么需要它：合并产物与冲突裁决都是"内容拼出来的"，而正文列与 FTS 仍是页级胜方那一份
@@ -1550,6 +1602,95 @@ mod tests {
             rusqlite::params![id, json],
         )
         .unwrap();
+    }
+
+    /// ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**投影写回** —— 写列 ＋ 当场重建块图 ＋ 打「待重建」，
+    /// 而且**不是保存**（不动 `dirty`、一条版本历史都不加）。
+    #[test]
+    fn write_page_projection_closes_the_projection_lag_without_saving() {
+        let (c, dir) = conflict_conn("projection");
+        let old = jdoc(vec![jblk(Some("b1"), Some(1), "旧的")]);
+        let new = jdoc(vec![
+            jblk(Some("b1"), Some(1), "旧的"),
+            jblk(Some("b2"), Some(1), "刚并进来的"),
+        ]);
+        insert_conflict_page(&c, "p1", &old);
+
+        assert!(
+            write_page_projection(&c, "p1", &new).unwrap(),
+            "内容变了 ⇒ 必须真的写（不然反链/导出要等下一次保存才跟上）"
+        );
+        let (json, stale, dirty): (String, i64, i64) = c
+            .query_row(
+                "SELECT content_json, COALESCE(text_stale, 0), dirty FROM pages WHERE id = 'p1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(json, new, "投影必须**当场**跟上（这就是「少走的那一步」）");
+        assert_eq!(stale, 1, "正文那一半要留痕（补算器在打开页面时按编辑器语义算）");
+        assert_eq!(dirty, 0, "★ **不是保存**：标脏就会把刚收下的对端内容当本机改动推上去");
+        let blocks: i64 = c
+            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blocks, 2, "块图要**当场**重建（桌面是物化表；Web 才是按需扫列）");
+        let versions: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_versions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(versions, 0, "不是保存 ⇒ 一条版本历史都不加");
+
+        // 页面不存在 ⇒ `false`（"无事可做"不是错误 —— 与 `clear_pending_page_states` 同一口径）
+        assert!(!write_page_projection(&c, "nope", &new).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 没变就不写：内容与库里那份相同 ⇒ **一次写库都不做**（连「待重建」都不打、块图也不重建）。
+    #[test]
+    fn write_page_projection_is_a_no_op_when_unchanged() {
+        let (c, dir) = conflict_conn("projection-noop");
+        let same = jdoc(vec![jblk(Some("b1"), Some(1), "一样")]);
+        insert_conflict_page(&c, "p1", &same);
+
+        assert!(
+            !write_page_projection(&c, "p1", &same).unwrap(),
+            "内容没变 ⇒ 无事可做（返回 false，不写库）"
+        );
+        let stale: i64 = c
+            .query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stale, 0, "没变连「待重建」都不许打（那会让补算器白跑一趟）");
+        let blocks: i64 = c
+            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blocks, 0, "块图也不许被重建（白干）");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 数据库页排除：那类页的内容 ＝ 列名 ＋ 行 ＋ 规则（在别的表/视图侧）⇒ 写回是**有损**的
+    /// （与 `mark_text_stale` 同一条实测撞过的坑）。
+    #[test]
+    fn write_page_projection_skips_database_pages() {
+        let (c, dir) = conflict_conn("projection-db");
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, dirty) \
+             VALUES ('db1', 's1', '数据库页', '{}', '行文本', 'database', 0, 0, NULL, 0)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            !write_page_projection(&c, "db1", &jdoc(vec![jblk(Some("b1"), Some(1), "x")])).unwrap(),
+            "数据库页 ⇒ 不写（`false` ＝ 无事可做）"
+        );
+        let (json, stale): (String, i64) = c
+            .query_row(
+                "SELECT content_json, COALESCE(text_stale, 0) FROM pages WHERE id = 'db1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(json, "{}", "数据库页的内容列不许被投影覆盖");
+        assert_eq!(stale, 0, "也不许打「待重建」—— 补算器会把行文本抹掉");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

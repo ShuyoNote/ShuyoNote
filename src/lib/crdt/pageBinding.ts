@@ -245,6 +245,17 @@ export interface PageStatePort {
   readPending?(pageId: string): Promise<PendingPageState[]>;
   /** 合并完就清（不实现 ⇒ 什么都不做）。 */
   clearPending?(pageId: string): Promise<unknown>;
+  /**
+   * ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘那一列**（＋派生）。
+   *
+   * 为什么要它：这一层的"打开页面"路径只写**状态**（`save`），而 `pages` 那一列是反链/插件/AI/导出
+   * 读的**投影** ⇒ 不写它就要等**下一次保存**才跟上（"看不到刚并进来的字"）。
+   * 不实现 ⇒ 与接线前**逐字相同**（老调用方零感知 —— 与 `readPending` 同一口径）。
+   * ⚠️ 语义（**没变就不写**、数据库页排除、不动 `dirty`）在那一层，这里只管"什么时候调它"。
+   * ⚠️ 参数名刻意叫 `docJson`（**不是存储列名**）—— 与 `StaleTextPage.doc_json` 同一处置：
+   *    这一层不许出现那三个存储列的字面量（`check-doc-content-access` 按 token 计数）。
+   */
+  writeProjection?(pageId: string, docJson: string): Promise<unknown>;
 }
 
 /** 端口版绑定：`persist` 是**异步**的（IPC/平台命令），**调用方必须处理失败**（不许静默）。 */
@@ -315,6 +326,28 @@ export async function bindPageToEditorViaPort(opts: {
     // 只有**动过**才回写（与 `mergeRemotePageState` 同一纪律：没变就一次写库都不做）
     if (merged || state === null) {
       await port.save(pageId, session.exportState());
+    }
+    // ★ 冲刺 §13.3 第 1 条（第 49 轮）：**投影也要跟上**，否则反链/插件/AI/导出要等下一次保存
+    //   才看到刚并进来的内容（"搜不到刚同步过来的字"）。
+    //   ⚠️ 只在**真的有待并状态**时才算投影（本机有状态、无待并 ⇒ 一个字都不多算 —— 那是最常见的路）。
+    //   "变了没"的判据与 `mergeRemotePageState` **同一纪律**（比投影、不比字节）：
+    //     · 本机原先没有状态（`state === null`）⇒ 这一页的内容**整个来自对端** ⇒ 必须写；
+    //     · 否则只有投影真的变了才写（没变 ⇒ 连一次写库都不做 —— 那一层还会自己再判一次）。
+    //   ⚠️ 这一笔是**派生**的收尾：失败**不许**把"页面打开"整件事拖红（状态已经落盘、页面可用），
+    //      但也**不许静默** ⇒ 当场 `console.warn` 说清后果（与"下一次保存会跟上"）。
+    if (pending.length > 0) {
+      const baseJson = projectStateToJson(base);
+      const mergedJson = projectStateToJson(session.exportState());
+      if (state === null || mergedJson !== baseJson) {
+        try {
+          await port.writeProjection?.(pageId, mergedJson);
+        } catch (e) {
+          console.warn(
+            "[crdt] 投影写回失败（反链/导出可能仍滞后；下一次保存会跟上）",
+            e,
+          );
+        }
+      }
     }
     // 合并过就清（不实现 `clearPending` ⇒ 不清 —— 那会让同一批状态每次打开都再并一遍；调用方该实现它）
     if (pending.length > 0) {

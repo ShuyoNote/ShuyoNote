@@ -386,6 +386,14 @@ export interface CommandMap {
   //    由界面侧在打开页面时合并；Web 平台在 `applyChange` 里**当场**合并 ⇒ 恒为空数组 / 0 条。
   read_pending_page_states: { args: { args: { page_id: string } }; result: { seq: number; state: number[] }[] };
   clear_pending_page_states: { args: { args: { page_id: string } }; result: number };
+  // 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘列**（＋派生）。
+  // 为什么要有它：桌面"打开页面"那条路只写状态 ⇒ 反链/插件/AI/导出读的**投影**要等下一次保存才跟上；
+  // 语义与三条纪律（**不是保存**：不动 `dirty`、不盖章、不快照；没变不写；数据库页排除）见
+  // `doc_content::write_page_projection` 与 TS 侧 `writePageProjectionIfChanged`。
+  // ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
+  //    这一份 JSON 由**界面侧**算好传进来（Rust 没有 Yjs ⇒ 它算不出"状态 ⇒ JSON"）。
+  // 返回**是否真的写了**（`false` ＝ 无事可做：没变／数据库页／页面不存在）。
+  write_page_projection: { args: { args: { page_id: string; doc_json: string } }; result: boolean };
   // 桌面「近实时」流通道（2026-09-23 第 48 轮）：Rust 订 SSE 变更流，**只发"有变更"事件**
   //（`sync-stream-change`），拉取仍由前端 `syncWorkspace` 发起 ⇒ 自动过 C2 闸门/防重入/状态行。
   // ⚠️ 这三条**只有桌面**：浏览器自带 SSE（Web 侧是 `useSyncStream.ts` 自己那条流）⇒ 硬在 `web.ts`

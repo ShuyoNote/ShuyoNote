@@ -3,7 +3,7 @@
 // 这一条把前面几片串起来：真编辑器（`createEditor` ＋ `setEditorState`，与 `LexicalComposer` 同款做法）
 // ＋ 首开只建一次血统（S3b-2a）＋ 活会话（S3a/S3b-1）＋ 状态落盘（S2b）。
 // 少了任何一片，这里就红。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   $createTextNode,
   $getRoot,
@@ -383,5 +383,153 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     expect(after).not.toContain("blk-other");
     expect(pending).toEqual([]); // 拒了也要清（否则每次打开都重试同一批）
     b2.dispose();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**投影也要跟上**
+  //
+  // 原先这条路只写状态 ⇒ `pages` 那一列（反链/插件/AI/导出读的投影）要等**下一次保存**才跟上
+  // （"搜不到刚同步过来的字"）。下面钉的就是"什么时候必须调 `writeProjection`"，
+  // **以及什么时候一个字都不许写**（没变 / 没有待并状态）。
+  // ⚠️ 端口**不实现** `writeProjection` 时行为必须与接线前逐字相同（老调用方零感知）——
+  //    上面 ⑭/⑲ 两条用例用的就是不实现它的端口，它们照样绿**就是**这条零回归判据。
+  // ---------------------------------------------------------------------------------------
+
+  it("⑳ ★ 有待并状态时投影写回：合并⇒按合并结果写；被拒⇒不写；承接⇒必写；无待并⇒不调用", async () => {
+    const store = new Map<string, Uint8Array>();
+    let pending: Array<{ seq: number; state: Uint8Array }> = [];
+    const writes: Array<{ id: string; json: string }> = [];
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+      readPending: async () => pending,
+      clearPending: async () => {
+        const n = pending.length;
+        pending = [];
+        return n;
+      },
+      writeProjection: async (id: string, json: string) => {
+        writes.push({ id, json });
+        return true;
+      },
+    };
+
+    // ① 本机有状态 ＋ **同血统**待并 ⇒ 合并 ⇒ 按**合并结果**写
+    const e0 = appEditor(BASE);
+    const b0 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e0, seedJson: serialize(e0) });
+    typeBlock(e0, "blk-mine", "本机打的");
+    await b0.persist();
+    const mineState = store.get("p1")!;
+    b0.dispose();
+
+    pending = [{ seq: 8, state: peerStateFrom(mineState, "blk-peer", "对端加的") }];
+    const e1 = appEditor(projectStateToJson(mineState));
+    const b1 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e1, seedJson: serialize(e1) });
+    expect(writes.length, "合并改变了内容 ⇒ 必须写一次投影").toBe(1);
+    expect(writes[0].id).toBe("p1");
+    expect(idsOf(writes[0].json), "写的必须是**合并后**那一版（不是旧的、也不是只有对端的）").toEqual(
+      idsOf(b1.session.exportJson()),
+    );
+    expect(idsOf(writes[0].json)).toContain("blk-mine");
+    expect(idsOf(writes[0].json)).toContain("blk-peer");
+    b1.dispose();
+
+    // ② **独立血统**（被拒 ⇒ 内容没变）⇒ 一次都不许写
+    writes.length = 0;
+    const before = store.get("p1")!;
+    pending = [{ seq: 9, state: peerStateFrom({ json: BASE }, "blk-other", "另一套身份") }];
+    const e2 = appEditor(projectStateToJson(before));
+    const b2 = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e2, seedJson: serialize(e2) });
+    expect(b2.pendingSkipped).toBe(1);
+    expect(writes.length, "没有并进来任何东西 ⇒ 一次写库都不该发生").toBe(0);
+    b2.dispose();
+
+    // ③ 本机**没有**状态 ＋ 有待并 ⇒ **承接**（整页内容都来自对端）⇒ 必须写
+    writes.length = 0;
+    pending = [{ seq: 10, state: peerStateFrom({ json: BASE }, "blk-adopt", "对端建的") }];
+    const e3 = appEditor(BASE);
+    const b3 = await bindPageToEditorViaPort({ port, pageId: "p2", editor: e3, seedJson: serialize(e3) });
+    expect(b3.adopted).toBe(true);
+    expect(writes.length, "承接 ⇒ 这一页的内容整个来自对端，投影必须写").toBe(1);
+    expect(idsOf(writes[0].json)).toContain("blk-adopt");
+    b3.dispose();
+
+    // ④ **没有待并状态**（今天最常见的那条路）⇒ 连调用都不该有
+    writes.length = 0;
+    pending = [];
+    const e4 = appEditor(BASE);
+    const b4 = await bindPageToEditorViaPort({ port, pageId: "p3", editor: e4, seedJson: serialize(e4) });
+    expect(writes.length, "没有待并 ⇒ 一个字都不多算、一次都不调").toBe(0);
+    b4.dispose();
+  });
+
+  it("⑳② 端口**不实现** writeProjection ⇒ 行为与接线前逐字相同（零回归）；实现里抛错 ⇒ 有痕但不拖垮开页", async () => {
+    // ① 不实现：有待并状态、真合并 ⇒ 绑定照样成功
+    const store = new Map<string, Uint8Array>();
+    let pending: Array<{ seq: number; state: Uint8Array }> = [];
+    const bare = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+      readPending: async () => pending,
+      clearPending: async () => {
+        const n = pending.length;
+        pending = [];
+        return n;
+      },
+    };
+    const e0 = appEditor(BASE);
+    const b0 = await bindPageToEditorViaPort({ port: bare, pageId: "q1", editor: e0, seedJson: serialize(e0) });
+    typeBlock(e0, "blk-mine", "本机");
+    await b0.persist();
+    const mine = store.get("q1")!;
+    b0.dispose();
+
+    pending = [{ seq: 1, state: peerStateFrom(mine, "blk-peer", "对端") }];
+    const e1 = appEditor(projectStateToJson(mine));
+    const b1 = await bindPageToEditorViaPort({ port: bare, pageId: "q1", editor: e1, seedJson: serialize(e1) });
+    expect(b1.seeded).toBe(false);
+    expect(idsOf(b1.session.exportJson())).toEqual(["blk-1", "blk-2", "blk-mine", "blk-peer"]);
+    b1.dispose();
+
+    // ② 实现里抛错 ⇒ 绑定**不该**因此失败；但必须**有痕**（console.warn），不许静默吞
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store2 = new Map<string, Uint8Array>();
+    let pending2: Array<{ seq: number; state: Uint8Array }> = [];
+    const angry = {
+      read: async (id: string) => store2.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store2.set(id, state);
+        return null;
+      },
+      readPending: async () => pending2,
+      clearPending: async () => {
+        const n = pending2.length;
+        pending2 = [];
+        return n;
+      },
+      writeProjection: async () => {
+        throw new Error("投影写不进去");
+      },
+    };
+    const e2 = appEditor(BASE);
+    const b2 = await bindPageToEditorViaPort({ port: angry, pageId: "q2", editor: e2, seedJson: serialize(e2) });
+    typeBlock(e2, "blk-mine", "本机");
+    await b2.persist();
+    const mine2 = store2.get("q2")!;
+    b2.dispose();
+
+    pending2 = [{ seq: 2, state: peerStateFrom(mine2, "blk-peer", "对端") }];
+    const e3 = appEditor(projectStateToJson(mine2));
+    const b3 = await bindPageToEditorViaPort({ port: angry, pageId: "q2", editor: e3, seedJson: serialize(e3) });
+    expect(idsOf(b3.session.exportJson())).toContain("blk-peer"); // 绑定成功、合并生效
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("投影写回失败")), "失败必须留痕").toBe(true);
+    b3.dispose();
+    warn.mockRestore();
   });
 });

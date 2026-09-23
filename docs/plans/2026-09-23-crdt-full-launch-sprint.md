@@ -503,6 +503,19 @@ check-web-commands ⇒ Rust 244 / web 245 / CommandMap 246（+2 条命令，两�
    —— 关键事实是"桌面这条路**少走了 web 那一步**"，而且**两平面反链实现不同**（桌面物化表、web 按需扫列）
    ⇒ 只补投影列在桌面**还不够**；**建议**新增 `write_page_projection` 命令（写投影列 ＋ 打 `text_stale`
    ＋ **重建块图**），**不许**用"合并后触发一次保存"当修法（`dirty=1` ⇒ 把对端内容当本机改动推回去＝假账）。
+   ★ **第 49 轮已按 B2 实现**（方案稿 §7 有读数与判据）：
+   · 文档内容层各一处（语义唯一）：Rust `doc_content::write_page_projection`（数据库页/没变 ⇒ `false`；
+     否则写回 ＋ `rebuild_block_graph` ＋ `mark_text_stale`）、TS `writePageProjectionIfChanged`；
+   · 新平台命令 `write_page_projection`（**字段名 `doc_json`**，不是存储列名）+ 端口
+     `PageStatePort.writeProjection?` + `bindPageToEditorViaPort` 里"**待并有 ＋ (承接了 或 投影变了)**"才写；
+     失败只 `console.warn`（状态已落盘、页面可用 ⇒ 不拖红，但不静默）；
+   · 判据 **3（Rust）＋ 4（docContent）＋ 2（pageBinding）＋ 2（文本级接线）** 全绿；
+     **变异实测**：短路"没变就不写" ⇒ Rust **红**；恒真"变了才写" ⇒ TS `⑳` **红**；还原全绿；
+   · 当轮读数：Rust 全量 **551 passed / 0 failed**、vitest 全量 **2183 passed**、build 0、
+     `build:web`＋`check:web-build` **9/0**、`test:sync-verify` **84/0**、
+     命令 **Rust 248 / web 246 / 契约 250**、收口门禁 **562（基线 562）**。
+   ⚠️ **没解决的**：块图重建用的是库里那一列**可能仍是旧的**正文 ⇒ 依赖正文的引用（`[[标题]]`）
+   仍可能滞后到补算器跑完（**块级引用当场就对**）。这一条如实留在方案稿 §4.2。
 2. **`pendingSkipped > 0` 现在只到 `console.warn`**：没有走 S8 那条"冲突可见 + 用户可裁决"的出口
    （那要动 `page_conflicts` / 裁决 UI）。**下一片**该把它接上（与 `mergeRemotePageState` 的
    `lineageConflict` 合流）。

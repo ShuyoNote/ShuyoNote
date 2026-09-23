@@ -824,6 +824,41 @@ export function writeContentProjection(db: ContentSql, pageId: string, json: str
 }
 
 /**
+ * 这一页是不是**数据库页**（`kind='database'`）。页面不存在 ⇒ `false`。
+ *
+ * 为什么要有它：**投影写回**与「待重建」标记都必须排除数据库页 —— 那两件事都会拿 `content_json`
+ * 当"这一页的内容"，而数据库页的内容 ＝ **列名 ＋ 行 ＋ 规则**（在别的表/视图侧）⇒ 写回是**有损**的
+ * （实测撞过：搜索里整页行内容消失，直到那页被重新打开）。
+ * 标记侧本来在自己的 SQL 里带了 `kind <> 'database'`；投影写回这条路要**同一道闸门** ⇒ 抽出来共用。
+ */
+export function isDatabasePage(db: ContentSql, pageId: string): boolean {
+  const row = db.query<{ kind: string }>("SELECT kind FROM pages WHERE id = ?", [pageId])[0];
+  return String(row?.kind ?? "") === "database";
+}
+
+/**
+ * ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘列**（＋打「待重建」）。
+ *
+ * 与 `writeContentProjection` 的关系：那条是"只动那一列"的原语；这一条是**带判据的入口**
+ * （页面不存在 / 数据库页 / **内容没变** ⇒ 一次写库都不做）。返回**是否真的写了**。
+ *
+ * 为什么要它：桌面的"打开页面"那条路（读 `page_crdt` ＋ 界面侧合并）原先**只写状态** ⇒
+ * 反链/插件/AI/导出读的**投影**要等**下一次保存**才跟上。Web 侧当场合并那条路**会**写这一列
+ * ⇒ 这一步补的是"桌面少走的那一步"（两平面同名同义：`doc_content::write_page_projection`）。
+ *
+ * ⚠️ **不是保存**：不动 `dirty`、不盖章、不快照 —— 它是"采用/合并"的收尾，不是用户编辑。
+ * ⚠️ 正文那一半仍然只**打标记**（正文要编辑器语义，补算器在打开页面时算）。
+ */
+export function writePageProjectionIfChanged(db: ContentSql, pageId: string, json: string): boolean {
+  if (isDatabasePage(db, pageId)) return false;
+  const cur = readContent(db, pageId);
+  if (!cur || cur.json === json) return false;
+  writeContentProjection(db, pageId, json);
+  markTextStale(db, pageId);
+  return true;
+}
+
+/**
  * **正文文本的本地修复（带判据的那一个）**：拿库里那一份与算出来的比，**不同才写回**
  * （相同 ⇒ 正文列一次写库都没有）。返回**是否修了**。
  *

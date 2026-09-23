@@ -2,7 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, type RemotePageRow } from "../docContent";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
 import { applyRemoteCrdtState } from "../crdt/plane";
@@ -1480,6 +1480,15 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "clear_pending_page_states") {
       // 同上：Web 上没有待并状态 ⇒ 恒清 0 条（与"清了 0 条"同一读数，不是错误）。
       return 0 as T;
+    }
+    if (cmd === "write_page_projection") {
+      // 冲刺 §13.3 第 1 条：把状态投影写回落盘列（**只动那一列** ＋ 打「待重建」）。
+      // ⚠️ 语义全在那一层（`writePageProjectionIfChanged`）：页面不存在 / 数据库页 / **内容没变**
+      //    ⇒ 一次写库都不做。这里不再写第二份判定（那条判据要两侧一致，只能有一处实现）。
+      // ⚠️ Web 侧的反链是**按需扫内容列**（`get_backlinks` 直接查那一列）⇒ 不需要重建物化块图
+      //    （桌面才需要 —— 见 `doc_content::write_page_projection`）。
+      const args = a.args ?? a;
+      return writePageProjectionIfChanged(store, String(args.page_id ?? ""), String(args.doc_json ?? "")) as T;
     }
     if (cmd === "claim_page_lineage") {
       // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。

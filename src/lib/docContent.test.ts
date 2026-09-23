@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, upsertRemoteContent, writeContent, writeContentText, writePageProjectionIfChanged, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs, canonicalContent } from "./blockRev";
 
 beforeAll(() => {
@@ -871,5 +871,57 @@ describe("docContent 的「未取回的远端版本」（B 方案）", () => {
     expect(localState(db, "p1")!.dirty).toBe(0);
     markPageDirty(db, "p1");
     expect(localState(db, "p1")!.dirty).toBe(1);
+  });
+});
+
+// ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**投影写回**。
+//
+// 与 Rust 侧 `doc_content::write_page_projection` 的判据**逐条对应**（改一边看另一边）：
+// "写列 ＋ 打标记 ＋ 不标脏" / "没变就不写" / "数据库页排除" / "页面不存在 ⇒ false"。
+// 为什么值得在 TS 侧也判一遍：Web 平台的那条命令**直接调这个函数**（`web.ts` 不再写第二份判定），
+// 所以这四条就是 Web 侧的全部语义。
+describe("★ §13.3 投影写回（writePageProjectionIfChanged）", () => {
+  // 与上面「正文待重建」那一节同一套最小夹具（块身份 ＋ 块体）。
+  const blk = (blockId: string | undefined, rev: number | null, body: string) => ({
+    blockId,
+    rev,
+    type: "paragraph",
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+
+  it("内容变了 ⇒ 写回那一列 ＋ 打「待重建」；**不标脏**（这不是保存）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "旧的")), text: "" }, { dirty: 0 });
+
+    const next = doc(blk("b1", 1, "旧的"), blk("b2", 1, "刚并进来的"));
+    expect(writePageProjectionIfChanged(db, "p1", next)).toBe(true);
+    expect(readContent(db, "p1")!.json).toBe(next); // 当场跟上
+    expect(textStale(db, "p1")).toBe(true); // 正文那一半留痕（补算器收口）
+    expect(localState(db, "p1")!.dirty).toBe(0); // ★ 不是保存：标脏就会把对端内容当本机改动推上去
+  });
+
+  it("内容没变 ⇒ **一次写库都不做**（连「待重建」都不打）", async () => {
+    const db = await freshDb();
+    const same = doc(blk("b1", 1, "一样"));
+    seedPage(db, "p1", { title: "页", json: same, text: "" });
+
+    expect(writePageProjectionIfChanged(db, "p1", same)).toBe(false);
+    expect(textStale(db, "p1")).toBe(false);
+  });
+
+  it("数据库页 ⇒ 不写（那类页的内容在别的表/视图侧 —— 写回会抹掉行文本）", async () => {
+    const db = await freshDb();
+    const before = doc(blk("b1", 1, "旧的"));
+    seedPage(db, "db1", { title: "数据库页", json: before, text: "行文本" }, { kind: "database" });
+
+    expect(writePageProjectionIfChanged(db, "db1", doc(blk("b1", 1, "新的")))).toBe(false);
+    expect(readContent(db, "db1")!.json).toBe(before);
+    expect(textStale(db, "db1")).toBe(false);
+  });
+
+  it("页面不存在 ⇒ `false`（无事可做，不是错误 —— 与 clear_pending_page_states 同一口径）", async () => {
+    const db = await freshDb();
+    expect(writePageProjectionIfChanged(db, "nope", doc(blk("b1", 1, "x")))).toBe(false);
   });
 });

@@ -530,6 +530,9 @@ pub fn run() {
             // 交给界面侧在打开页面时合并；Web 平台恒为空 —— 它当场合并）。
             commands::read_pending_page_states,
             commands::clear_pending_page_states,
+            // 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把投影写回落盘列**
+            //（界面侧算好 JSON 传进来 —— Rust 没有 Yjs；不写这一列时反链/导出要等下一次保存才跟上）。
+            commands::write_page_projection,
             // 桌面「近实时」流通道（2026-09-23 第 48 轮）：订 SSE 变更流、把"有变更"发成事件，
             // **拉取仍由前端发起**（这样自动经过 C2 闸门/防重入/状态行）。
             // ⚠️ 这三条**登记为 web 专属**（浏览器自带 SSE，Web 侧是 `useSyncStream.ts` 自己那条流）。

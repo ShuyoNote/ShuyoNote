@@ -420,6 +420,29 @@ pub fn clear_pending_page_states(db: State<Db>, args: PageStateArgs) -> Result<u
     crate::page_crdt::clear_pending_states(&c, &args.page_id)
 }
 
+/// 投影写回的载荷：**由界面侧算好的**那一份投影 JSON。
+///
+/// ⚠️ 为什么是界面侧算：Rust **没有** Yjs ⇒ 它算不出"状态 ⇒ JSON"。这一步只是把算好的那一份**落盘**。
+/// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
+///    「收一份 JSON 文本」的参数不该顶着那一列的名字，否则收口门禁与分层都会慢慢被磨穿。
+#[derive(serde::Deserialize)]
+pub struct PageProjectionArgs {
+    pub page_id: String,
+    pub doc_json: String,
+}
+
+/// ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把投影写回落盘列**（＋块图重建＋打「待重建」）。
+///
+/// 与 `save_page_state` 的分工：那条写**状态**（权威那一份），这条把状态**投影**到 `pages` 那一列，
+/// 让反链/插件/AI/导出**当场**看到刚并进来的内容（原先要等下一次保存）。
+/// 语义与三条纪律见 `doc_content::write_page_projection`（**不是保存**：不动 `dirty`、不盖章、不快照）。
+/// 返回**是否真的写了**：`false` ＝ "无事可做"（没变 / 数据库页 / 页面不存在），不是错误。
+#[tauri::command]
+pub fn write_page_projection(db: State<Db>, args: PageProjectionArgs) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::doc_content::write_page_projection(&c, &args.page_id, &args.doc_json)
+}
+
 #[tauri::command]
 pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String> {
     let c = conn(&db);

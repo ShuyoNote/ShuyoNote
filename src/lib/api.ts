@@ -272,6 +272,18 @@ export const api = {
     ),
   /** 合并完就清（返回**清了几条**：`0` 是"本来就没有"，不是错误）。 */
   clearPendingPageStates: (id: string) => invoke("clear_pending_page_states", { args: { page_id: id } }),
+  /**
+   * 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘列**（＋派生）。
+   *
+   * 什么时候用：CRDT 状态被**采用/合并**之后，`pages` 那一列（反链、插件、AI、导出读的**投影**）会落后
+   * ⇒ 由**状态**重新序列化一份写回（这份 JSON 由界面侧算 —— 桌面 Rust **没有** Yjs）。
+   * ⚠️ 参数名刻意叫 `docJson`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
+   *    「收一份 JSON 文本」的参数不该顶着那一列的名字（收口门禁按 token 计数，会当场红）。
+   * ⚠️ **不是保存**：不动 `dirty`、不盖章、不快照（那三件是保存路径的事）。
+   * 返回**是否真的写了**（`false` ＝ 无事可做：没变／数据库页／页面不存在）。
+   */
+  writePageProjection: (id: string, docJson: string) =>
+    invoke("write_page_projection", { args: { page_id: id, doc_json: docJson } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
