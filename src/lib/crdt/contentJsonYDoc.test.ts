@@ -16,7 +16,7 @@ import { $createCodeNode } from "@lexical/code";
 import { $createListItemNode, $createListNode } from "@lexical/list";
 import { EDITOR_NODES } from "../../editor/config";
 import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode";
-import { toLegacyDoc } from "../blockIdentity";
+import { MODEL_TYPE_BY_LEGACY, toLegacyDoc, toModelDoc } from "../blockIdentity";
 import { contentJsonToYDoc, roundTripContentJson, yDocToContentJson } from "./contentJsonYDoc";
 
 /** 用真编辑器搭一份**合法**的 Lexical JSON（模型形态：块级节点是 `shuyo-*` 新 type）。 */
@@ -167,7 +167,28 @@ describe("content_json ⇄ ydoc（阶段 2 Slice A 的唯一实现）", () => {
     ).toEqual([7]);
   });
 
-  // ⚠️ 下一轮第一件事：一条「`MODEL_TYPE_BY_LEGACY` 每一对 legacy ⇄ 模型 type 都能回得去」的断言
-  //    我写了但**没过**（`blockRevDeclared.test.ts` 那 18 类的覆盖是另一件事，它是绿的）。
-  //    没查清是哪一对回不去之前**不放进判据**（假绿比缺判据更坏）。
+  // ★ ⑧ 形态映射。这一条**第一版是我自己写错的**，记在这里免得再犯：`MODEL_TYPE_BY_LEGACY` 的
+  //   键是 legacy、值是模型 type，我却把解构写成 `[model, legacy]` ⇒ 造出 `type: "shuyo-paragraph"`
+  //   的"老形态"再要求它变回 `paragraph`，当然红。逐对打印过（7 对全对、反向表 7 个键齐全、
+  //   `blockId` 全保住）之后按正确方向重写；写层 §5 说的"18 类"是**节点类**层面的声明字段覆盖，
+  //   判据在 `src/editor/nodes/blockRevDeclared.test.ts`，两件事别混。
+  it("⑧ 形态映射：7 对 legacy ⇄ 模型 type 都能来回，且已有身份时**不铸 id**", () => {
+    const pairs = Object.entries(MODEL_TYPE_BY_LEGACY);
+    expect(pairs.length).toBe(7);
+    for (const [legacy, model] of pairs) {
+      const one = JSON.stringify({
+        root: { type: "root", version: 1, children: [{ type: legacy, version: 1, blockId: "x" }] },
+      });
+      const modeled = JSON.parse(toModelDoc(one, () => "MINTED")) as {
+        root: { children: Array<{ type: string; blockId?: string }> };
+      };
+      expect(modeled.root.children[0].type).toBe(model);
+      // 已有身份 ⇒ `makeId` **不该被调用**（「本层不造身份」那条纪律的正面判据）
+      expect(modeled.root.children[0].blockId).toBe("x");
+      const back = JSON.parse(toLegacyDoc(toModelDoc(one, () => "MINTED"))) as {
+        root: { children: Array<{ type: string }> };
+      };
+      expect(back.root.children[0].type).toBe(legacy);
+    }
+  });
 });
