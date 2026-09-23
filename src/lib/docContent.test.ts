@@ -34,10 +34,11 @@ async function freshDb() {
 function seedPage(store: SqliteStore, id: string, content: DocContent, extra: Record<string, unknown> = {}) {
   store.run(
     `INSERT INTO pages (id, workspace_id, parent_id, title, kind, sort_order, created_at, updated_at, deleted_at, content_json, content_text, dirty, sync_seq)
-     VALUES (?, 'active', NULL, ?, 'page', 0, 1, 1, NULL, ?, ?, ?, ?)`,
+     VALUES (?, 'active', NULL, ?, ?, 0, 1, 1, NULL, ?, ?, ?, ?)`,
     [
       id,
       content.title,
+      (extra.kind as string) ?? "page",
       content.json,
       content.text,
       (extra.dirty as number) ?? 0,
@@ -752,6 +753,40 @@ describe("docContent 的「正文待重建」标记与队列（B1）", () => {
     expect(staleTextQueue(db, 10).total).toBe(0);
     // 页面不存在 ⇒ 不猜（也不报错）
     expect(textStale(db, "nope")).toBeUndefined();
+  });
+
+  // ── 2026-09-23（Windows 侧）：数据库页与这条队列的**交叉口子** ────────────────────────
+  // P3-② 接线（`1e68f680`）之后，数据库页的正文 ＝ 列名 ＋ 行 ＋ 规则，由**视图侧**写进去；
+  // 而它**不在 `content_json` 里** ⇒ 补算器从 JSON 派生出来的是空 ⇒ 一旦入队就会把行文本**抹掉**。
+  it("★ 数据库页不打「待重建」：它的正文不来自 JSON，补算只会抹掉行文本", async () => {
+    const db = await freshDb();
+    const ROWS_TEXT = "数据库：任务库\n列：状态（选项：待办、进行中）\n行：\n审批：状态＝进行中";
+    seedPage(db, "db1", { title: "任务库", json: "{}", text: "" }, { kind: "database" });
+    db.run("UPDATE pages SET content_text = ? WHERE id = ?", [ROWS_TEXT, "db1"]);
+
+    markTextStale(db, "db1");
+
+    expect(textStale(db, "db1")).toBe(false);
+    expect(staleTextQueue(db, 10).total).toBe(0);
+    // 行文本一个字节都没动（这才是这条判据真正要守的东西）
+    expect(db.query<{ t: string }>("SELECT content_text AS t FROM pages WHERE id = ?", ["db1"])[0].t).toBe(ROWS_TEXT);
+  });
+
+  it("★ 存量库：接线之前被标过的数据库页也不入队（双保险）", async () => {
+    const db = await freshDb();
+    seedPage(db, "db1", { title: "任务库", json: "{}", text: "" }, { kind: "database" });
+    // 绕过 markTextStale，直接置标记 —— 模拟接线之前留下的存量行
+    db.run("UPDATE pages SET text_stale = 1 WHERE id = ?", ["db1"]);
+    expect(staleTextQueue(db, 10).total).toBe(0);
+    expect(staleTextQueue(db, 10).pages).toHaveLength(0);
+  });
+
+  it("普通页面照旧：标记 + 入队（回归守护 —— 别把整类页面一起排除掉）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "正文")), text: "" });
+    markTextStale(db, "p1");
+    expect(textStale(db, "p1")).toBe(true);
+    expect(staleTextQueue(db, 10).total).toBe(1);
   });
 });
 

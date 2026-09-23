@@ -145,9 +145,19 @@ pub fn text_stale(c: &Connection, page_id: &str) -> Result<Option<bool>, String>
 }
 
 /// 打上"待重建"（合并产物 / 裁决写回之后调它）。
+///
+/// ★ **数据库页不打**（2026-09-23，P3-② 接线之后才成立的事实）：数据库页的正文 ＝ **列名 ＋ 行 ＋ 规则**，
+/// 它们**不在 `content_json` 里**（建数据库页时 JSON 缺省就是 `{}`）⇒ 补算器从 JSON 派生的**必然是空**
+/// ⇒ 一旦入队，`refresh_page_text_if_stale` 会把数据库视图写进去的行文本**抹成空串**（搜索里整页行内容
+/// 消失），直到那一页被重新打开一次。⇒ 这里就排除掉（`kind` 在 `pages` 表里本来就有）。
+///
+/// 这不是"少修一点"：数据库页的正文**没有任何一半**能从 JSON 重建，进队列只会有损。
 pub fn mark_text_stale(c: &Connection, page_id: &str) -> Result<(), String> {
-    c.execute("UPDATE pages SET text_stale = 1 WHERE id = ?1", params![page_id])
-        .map_err(|e| e.to_string())?;
+    c.execute(
+        "UPDATE pages SET text_stale = 1 WHERE id = ?1 AND kind <> 'database'",
+        params![page_id],
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -184,7 +194,7 @@ pub fn stale_text_queue(c: &Connection, limit: usize) -> Result<StaleTextQueue, 
     let limit = limit.clamp(1, 50);
     let total: i64 = c
         .query_row(
-            "SELECT COUNT(*) FROM pages WHERE text_stale = 1 AND deleted_at IS NULL",
+            "SELECT COUNT(*) FROM pages WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'",
             [],
             |row| row.get(0),
         )
@@ -192,7 +202,7 @@ pub fn stale_text_queue(c: &Connection, limit: usize) -> Result<StaleTextQueue, 
     let mut stmt = c
         .prepare(
             "SELECT id, title, content_json FROM pages
-             WHERE text_stale = 1 AND deleted_at IS NULL
+             WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'
              ORDER BY updated_at DESC, id ASC LIMIT ?1",
         )
         .map_err(|e| e.to_string())?;
@@ -2067,6 +2077,40 @@ mod tests {
 
         assert_eq!(text_stale(&c, "p1").unwrap(), Some(false), "但标记必须清掉（它不该留在队列里）");
         assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 2026-09-23（Windows 侧）：**数据库页不进这条队列**。
+    ///
+    /// P3-② 接线（`1e68f680`）之后，数据库页的正文 ＝ 列名 ＋ 行 ＋ 规则，由**视图侧**写进去；
+    /// 而它**不在 `content_json` 里**（建库时 JSON 就是 `{}`）⇒ 补算器派生出来的是空
+    /// ⇒ 一旦入队，`refresh_page_text_if_stale` 会把行文本**抹成空串**（搜索里整页行内容消失）。
+    #[test]
+    fn database_pages_stay_out_of_the_stale_text_queue() {
+        let (c, dir) = conflict_conn("stale-database");
+        // ① 标记侧：数据库页打不上标记
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, dirty)
+             VALUES ('db1', 's1', '任务库', '{}', '数据库：任务库\n行：\n审批：状态＝进行中', 'database', 0, 0, NULL, 0)",
+            [],
+        )
+        .unwrap();
+        mark_text_stale(&c, "db1").unwrap();
+        assert_eq!(text_stale(&c, "db1").unwrap(), Some(false), "数据库页不该被打上待重建");
+
+        // ② 队列侧（双保险）：存量库里已经被标过的数据库页也不列出来
+        c.execute("UPDATE pages SET text_stale = 1 WHERE id = 'db1'", []).unwrap();
+        assert_eq!(stale_text_queue(&c, 10).unwrap().total, 0, "存量标记也不许把数据库页带进来");
+        assert!(stale_text_queue(&c, 10).unwrap().pages.is_empty());
+
+        // ③ 回归守护：普通页面照旧（别把整类页面一起排除掉）
+        insert_conflict_page(&c, "p1", &jdoc(vec![jblk(Some("b1"), Some(1), "正文")]));
+        mark_text_stale(&c, "p1").unwrap();
+        assert_eq!(text_stale(&c, "p1").unwrap(), Some(true));
+        let q = stale_text_queue(&c, 10).unwrap();
+        assert_eq!(q.total, 1);
+        assert_eq!(q.pages[0].page_id, "p1");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

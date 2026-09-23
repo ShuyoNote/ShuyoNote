@@ -740,9 +740,19 @@ export function textStale(db: ContentSql, pageId: string): boolean | undefined {
   return row ? Number(row.text_stale ?? 0) !== 0 : undefined;
 }
 
-/** 打上"待重建"（合并产物 / 裁决写回之后调它）。 */
+/**
+ * 打上"待重建"（合并产物 / 裁决写回之后调它）。
+ *
+ * ★ **数据库页不打**（2026-09-23，P3-② 接线之后才成立的事实）：数据库页的正文 ＝ **列名 ＋ 行 ＋ 规则**，
+ * 而它们**不在 `content_json` 里**（`create_node` 给数据库页的 JSON 缺省就是 `{}`）⇒ 补算器
+ * （`TextRepairRunner` → `deriveContentText`）从 JSON 算出来的**必然是空** ⇒ 一旦入队，
+ * `refreshPageTextIfStale` 会把数据库视图写进去的行文本**抹成空串**（搜索里整页行内容消失），
+ * 直到那一页被重新打开一次。⇒ 这里就把它排除掉（`kind` 在 `pages` 表里本来就有）。
+ *
+ * 这不是"少修一点"：数据库页的正文**没有任何一半**能从 JSON 重建，进队列只会有损。
+ */
 export function markTextStale(db: ContentSql, pageId: string): void {
-  db.run("UPDATE pages SET text_stale = 1 WHERE id = ?", [pageId]);
+  db.run("UPDATE pages SET text_stale = 1 WHERE id = ? AND kind <> 'database'", [pageId]);
 }
 
 /** 清掉"待重建"（正文列刚被重建过一次）。**没置着就一次写库都不做**。 */
@@ -763,18 +773,24 @@ export interface StaleTextQueue {
   pages: StaleTextPage[];
 }
 
-/** ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。 */
+/**
+ * ★ **待重建正文的队列**：按"最近改过的优先"给补算器一批页面（`limit` 夹到 1..=50）。
+ *
+ * ⚠️ **双保险：数据库页不入队**（见 `markTextStale` 的注释）。标记侧已经不打数据库页了，这里再排除一次，
+ * 是为了**存量库**——在接线（`1e68f680`）之前被标过的数据库页，`text_stale` 还是 1，而它们一旦被补算
+ * 就会把行文本抹掉。两处口径必须一致（Rust 侧同名函数同步改）。
+ */
 export function staleTextQueue(db: ContentSql, limit = 10): StaleTextQueue {
   const total =
     Number(
       db.query<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM pages WHERE text_stale = 1 AND deleted_at IS NULL",
+        "SELECT COUNT(*) AS n FROM pages WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'",
       )[0]?.n ?? 0,
     ) || 0;
   const lim = Math.max(1, Math.min(50, Math.trunc(limit) || 10));
   const rows = db.query<{ id: string; title: string; doc_json: string }>(
     `SELECT id, title, content_json AS doc_json FROM pages
-     WHERE text_stale = 1 AND deleted_at IS NULL
+     WHERE text_stale = 1 AND deleted_at IS NULL AND kind <> 'database'
      ORDER BY updated_at DESC, id ASC LIMIT ?`,
     [lim],
   );
