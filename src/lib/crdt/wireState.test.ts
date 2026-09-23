@@ -4,7 +4,7 @@
 // 因为它们的处置完全不同（照旧发 / 走今天那条路 / 如实说 / 如实报错）。混成一种的下场是静默丢块。
 import { describe, expect, it } from "vitest";
 import { CRDT_WIRE_VERSION } from "./wireConstants";
-import { decodeCrdtWire, encodeCrdtWire } from "./wireState";
+import { decodeCrdtWire, encodeCrdtWire, withCrdtWire, CRDT_WIRE_FIELD } from "./wireState";
 
 describe("冲刺 S4b-0：wire 载荷里的 CRDT 状态字段", () => {
   it("① 往返：`encode` → `decode` 逐字节相同（含非 UTF-8 字节）", () => {
@@ -41,5 +41,37 @@ describe("冲刺 S4b-0：wire 载荷里的 CRDT 状态字段", () => {
     expect(() => decodeCrdtWire({ v: CRDT_WIRE_VERSION, state: [1, 256] })).toThrow(/0\.\.255/);
     expect(() => decodeCrdtWire({ v: CRDT_WIRE_VERSION, state: [1, -1] })).toThrow(/0\.\.255/);
     expect(() => decodeCrdtWire({ v: CRDT_WIRE_VERSION, state: [1, 1.5] })).toThrow(/0\.\.255/);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // S4b-1：把状态挂到载荷上（outbox 那一处调用的就是它）
+  // ---------------------------------------------------------------------------------------
+
+  it("⑥ ★ 没有状态 ⇒ 返回**同一个引用**（序列化字节与接线前逐字相同 ⇒ 老路径零感知）", () => {
+    const payload = { id: "p1", title: "页" };
+    expect(withCrdtWire(payload, null)).toBe(payload);
+    expect(withCrdtWire(payload, undefined)).toBe(payload);
+    expect(withCrdtWire(payload, new Uint8Array(0))).toBe(payload);
+    expect(JSON.stringify(withCrdtWire(payload, null))).toBe(JSON.stringify(payload));
+  });
+
+  it("⑦ 有状态 ⇒ 加上 `crdt_state`（带版本标记），原字段**一个不改**", () => {
+    const payload = { id: "p1", title: "页", content_json: "{}" };
+    const state = new Uint8Array([1, 2, 255]);
+    const out = withCrdtWire(payload, state) as Record<string, unknown>;
+    expect(out).not.toBe(payload); // 是**拷贝**，不动调用方那份
+    expect(out[CRDT_WIRE_FIELD]).toEqual({ v: CRDT_WIRE_VERSION, state: [1, 2, 255] });
+    expect(out.id).toBe("p1");
+    expect(out.title).toBe("页");
+    expect(out.content_json).toBe("{}");
+    expect(payload).toEqual({ id: "p1", title: "页", content_json: "{}" }); // 原对象没被改
+  });
+
+  it("⑧ 载荷不是普通对象（字符串/null/数组）⇒ **原样返回**（不包一层：那会静默改写老载荷的形态）", () => {
+    expect(withCrdtWire("已经序列化好的", new Uint8Array([9]))).toBe("已经序列化好的");
+    expect(withCrdtWire(null, new Uint8Array([9]))).toBeNull();
+    expect(withCrdtWire(undefined, new Uint8Array([9]))).toBeUndefined();
+    const arr = [1, 2, 3];
+    expect(withCrdtWire(arr, new Uint8Array([9]))).toBe(arr);
   });
 });

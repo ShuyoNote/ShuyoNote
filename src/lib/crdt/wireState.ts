@@ -32,6 +32,31 @@ export function encodeCrdtWire(state: Uint8Array | null | undefined): CrdtWireSt
   return { v: CRDT_WIRE_VERSION, state: Array.from(state) };
 }
 
+/** 载荷里那一项的名字（只在这里写一次字面量）。 */
+export const CRDT_WIRE_FIELD = "crdt_state";
+
+/**
+ * ★ 把状态挂到一份载荷上（S4b-1 的**唯一**做法）。
+ *
+ * - **没有状态** ⇒ 返回**同一个引用**（⇒ 序列化出来的字节与接线前**逐字相同**，老路径零感知）；
+ * - 有状态 ⇒ 浅拷贝一份并加上 `crdt_state`（原字段一个不改）；
+ * - 载荷**不是普通对象**（字符串/null/数组）⇒ **原样返回**：那种载荷的形态是别人定的，
+ *   在这儿包一层会改掉它的字节（＝静默改写），不做。
+ */
+export function withCrdtWire(payload: unknown, state: Uint8Array | null | undefined): unknown {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    (payload as { constructor?: unknown }).constructor !== Object
+  ) {
+    return payload;
+  }
+  const wire = encodeCrdtWire(state);
+  if (!wire) return payload;
+  return { ...(payload as Record<string, unknown>), [CRDT_WIRE_FIELD]: wire };
+}
+
 /** 载荷字段 ⇒ 状态。四种结果，**没有 `undefined`**（"没有"与"不认识"必须分得开）。 */
 export function decodeCrdtWire(raw: unknown): DecodedWireState {
   if (raw === null || raw === undefined) return { kind: "none" };
