@@ -53,6 +53,25 @@ export function patchApplyDecision({ noApply = false, checkOnly = false } = {}) 
   return { apply: !noApply && !checkOnly };
 }
 
+/**
+ * 纯只读探针：**这份源码能不能打上这个补丁**（`git apply --check`，不写任何字节）。
+ *
+ * 为什么要它（2026-09-23，消灭"补丁残留"那一格时加）：补丁现在打在**私有副本**上，
+ * 而 `--check` 必须保持**只读**（它曾经因为顺手 apply 把共享源码改掉，让"我刚还原过"当场变成假话）。
+ * ⇒ `--check` 用这个探针回答"补丁还能不能应用"，而**不**创建副本、**不**改共享源码。
+ */
+export function canApplyPatch(dir, patchFile) {
+  if (!existsSync(join(dir, "sqlite3.c"))) return { ok: false, why: `找不到 ${join(dir, "sqlite3.c")}` };
+  if (!existsSync(patchFile)) return { ok: false, why: `找不到补丁文件 ${patchFile}` };
+  try {
+    run("git", [...GIT_APPLY, "--check", "-p1", patchFile], dir);
+    return { ok: true, why: "" };
+  } catch (e) {
+    const first = String(e.stderr || e.message).trim().split("\n")[0];
+    return { ok: false, why: first };
+  }
+}
+
 export function ensurePatch(dir, patchFile, { apply = true } = {}) {
   const file = join(dir, "sqlite3.c");
   if (!existsSync(file)) throw new Error(`ensurePatch: 找不到 ${file}`);

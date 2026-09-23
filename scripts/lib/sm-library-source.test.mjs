@@ -229,3 +229,27 @@ describe("sm-library-source：静态前缀守卫（Windows 的那一支）", () 
     expect(v.why).toMatch(/libcrypto-3-x64\.dll/);
   });
 });
+
+describe("★ 隔离副本优先（2026-09-23「消灭补丁残留」）", () => {
+  it("有 `.gm-build/libsqlite3-sys-<ver>/sqlcipher` ⇒ 用它（否则每次国密构建都会被判成「标记过期」= 假红）", () => {
+    const { lockPath, roots } = fixture({});
+    const repoRoot = join(lockPath, ".."); // fixture 的 dir 就是"仓库根"
+    // 没有副本 ⇒ 走 registry
+    expect(resolveSqlcipherSource({ lockPath, roots }).via).toBe("cargo.lock");
+    expect(resolveSqlcipherSource({ lockPath, roots, repoRoot }).via).toBe("cargo.lock");
+    // 造副本 ⇒ 优先它（`repoRoot` 必须传，且 `sourceFingerprint` 也要转发）
+    const iso = join(repoRoot, ".gm-build", "libsqlite3-sys-0.38.2", "sqlcipher");
+    mkdirSync(iso, { recursive: true });
+    writeFileSync(join(iso, "sqlite3.c"), "/* patched (isolation) */\n", "utf8");
+    expect(resolveSqlcipherSource({ lockPath, roots, repoRoot })).toMatchObject({ via: "isolation", dir: iso });
+    // `sourceFingerprint` 那条路也要能选中它（我第一版忘了转发 repoRoot ⇒ 表现为"标记过期"假红）
+    expect(sourceFingerprint({ lockPath, roots, repoRoot }).via).toBe("isolation");
+  });
+
+  it("副本目录在、但里面没有 sqlite3.c（半成品）⇒ **不**当副本，退回 registry", () => {
+    const { lockPath, roots } = fixture({});
+    const repoRoot = join(lockPath, "..");
+    mkdirSync(join(repoRoot, ".gm-build", "libsqlite3-sys-0.38.2", "sqlcipher"), { recursive: true });
+    expect(resolveSqlcipherSource({ lockPath, roots, repoRoot }).via).toBe("cargo.lock");
+  });
+});

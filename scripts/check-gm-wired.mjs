@@ -25,6 +25,7 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMain } from "./lib/is-main.mjs";
+import { gmCargoHome } from "./lib/sm-library-isolate.mjs";
 import { opensslEnvFor } from "./lib/sm-library-plan.mjs";
 // ★ 复用**唯一实现**：产物扫描与 link-search 解析都在 `check-crypto-backend.mjs` 里，
 //   本门禁只做"把它的结论与钉的前缀对着判"——绝不复制第二份解析（本仓吃过太多两套口径的亏）。
@@ -322,6 +323,10 @@ function main() {
     //   栈里只有 `stderr: ''`，看不出是哪一步。
     try {
       run("node", ["scripts/sm-library-build.mjs", "--openssl-dir", opensslDir, "--prepare"], env);
+      // ★ 隔离（2026-09-23）：补丁打在 `.gm-build/libsqlite3-sys-<ver>/` 私有副本上，
+      //   而 cargo 要靠**私有 CARGO_HOME**（config 里带 `[patch.crates-io]`）才找得到它。
+      //   不设这个变量 ⇒ 编的是 registry 那份原版 ⇒ `build.rs` 的补丁检查会**当场失败**（响亮的红，不是静默）。
+      env.CARGO_HOME = gmCargoHome(root);
     } catch (e) {
       const detail = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim().split("\n").slice(-8).join("\n   | ");
       console.error(`❌ 准备步骤失败（打补丁/清产物）。原始输出尾部：\n   | ${detail || e.message}`);

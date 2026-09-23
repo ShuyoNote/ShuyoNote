@@ -61,7 +61,10 @@ fn warn_if_patched_source_without_sm_library_feature() {
 mod gm_patch_probe {
     include!("src/gm_patch_probe.rs");
 }
-use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_roots, SourcePick};
+use gm_patch_probe::{
+    cargo_home_is_isolated, find_marker, is_under_gm_build, isolation_source_dir, lock_version,
+    pick_source_dir, registry_src_roots, SourcePick,
+};
 
 /// 补丁文件名 —— 与 `scripts/lib/sm-library-patch.mjs` 的 `PATCH_BASENAME` 是同一个对象
 /// （那边是 JS 侧唯一实现，这里是 Rust 侧唯一出现；改了名字两边一起改，`patches/README.md` 有登记）。
@@ -267,6 +270,40 @@ fn resolve_sqlcipher_source() -> Option<(std::path::PathBuf, String, &'static st
 
     // ② 与依赖构建产物交叉核对（有产物时）
     let from_output = include_hint_from_build_output(manifest);
+
+    // ②b ★ **隔离模式**（2026-09-23「消灭补丁残留」）：补丁打在 `<repo>/.gm-build/…` 的私有副本上，
+    //     cargo 由私有 CARGO_HOME 指过去。此时"将要编译的那份源码"是**副本**，不是 registry 那份 ——
+    //     **按证据选**（顺序即可信度）：
+    //       ⒈ 产物里的 `cargo:include=` 指向 `.gm-build/`（那是 cargo 自己的自我陈述，最硬）；
+    //       ⒉ 进程环境里的 `CARGO_HOME` 指向 `.gm-build/`（调用方按 `--print-env` 导出的）。
+    //     两者都不成立 ⇒ 走下面的老路（registry），**并且**会因"registry 里没有标记"当场失败 —— 那是对的：
+    //     忘了导出 CARGO_HOME 就等于"编了一份没有国密的库"，绝不能静默放过。
+    let repo_root = manifest.parent().unwrap_or(manifest);
+    let isolation = isolation_source_dir(repo_root, wanted.as_deref());
+    if let Some((dir, version)) = &isolation {
+        let output_says_copy = from_output
+            .as_ref()
+            .map(|(d, _)| is_under_gm_build(d, repo_root))
+            .unwrap_or(false);
+        let env_says_copy = cargo_home_is_isolated(&cargo_home, repo_root);
+        if output_says_copy || env_says_copy {
+            if let Some((_, hint_ver)) = &from_output {
+                if hint_ver != version {
+                    panic!(
+                        "`sm-library`：私有副本是 {version}，但依赖的构建产物说 {hint_ver} ⇒ 不挑一个继续。\n\
+                         修法：`node scripts/sm-library-build.mjs --prepare` 重新做隔离，再 `cargo clean -p libsqlite3-sys`。"
+                    );
+                }
+            }
+            return Some((dir.clone(), version.clone(), "isolation"));
+        }
+    } else if cargo_home_is_isolated(&cargo_home, repo_root) {
+        panic!(
+            "`sm-library`：`CARGO_HOME` 指向私有隔离目录，但**私有副本不存在**（<repo>/.gm-build/libsqlite3-sys-*/）。\n\
+             修法：先 `node scripts/sm-library-build.mjs --openssl-dir <前缀> --prepare`（它会建隔离并打好补丁），\n\
+             然后按它打印的 `CARGO_HOME=` 走构建（CI 里用 `--print-env` 写进 $GITHUB_ENV）。"
+        );
+    }
     if let SourcePick::Found { dir, version } = &pick {
         if let Some((hint_dir, hint_ver)) = &from_output {
             if hint_ver != version {
