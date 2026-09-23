@@ -108,7 +108,8 @@
 > **残留（如实写）**：两台设备**同时**首开同一张**从没建过血统**的页、且各自离线时窗口仍在
 > ⇒ 彻底解法在 S5（服务端可以拒绝/收敛第二条血统），本阶段不假装已解决。
 | **S4a** ✅ | **远端来的状态怎么并进本机**（"真正的合并同步"在客户端这一侧的唯一入口） | `pageBinding.ts` 新增 `mergeRemotePageState(db, pageId, remote, now)`：本机**没有** ⇒ 直接**采用**它（它自带血统，别另起一条）；本机**有** ⇒ 载入本机血统 ⇒ `session.merge(remote)` ⇒ 存回。**只动状态，不碰投影、不标脏**（投影口径归 S6，回推与否归 S5）＋ `pageBinding.test.ts` 加 1 条（三问合一） | ⑮ 本机没有 ⇒ `adopted=true`、投影＝远端内容；⑯ ★★ 两端**各改一处** ⇒ 依次并进同一个库 ⇒ **两处都在、不重复**（实测 `["blk-1","blk-2","blk-A","blk-B"]`），重复并同一版**幂等**；⑰ ★ **次序无关**：先 A 后 B 与先 B 后 A ⇒ 最终投影**完全一致（含顺序）** |
-| **S4b** | **wire/outbox 携带状态 ＋ 版本标记**（下一件） | 变更记录里带上一页的 CRDT 状态（`number[]`）＋ 一个版本标记；远端应用时改走 `mergeRemotePageState`（而不是整页 LWW 直接覆盖） | 两条变更交错应用 ⇒ 收敛；标记缺失的老载荷 ⇒ **如实降级**（不静默改写、不丢块）；服务端**只存不算**（S5 阶段 1）时行为与今天一致 |
+| **S4b-0** ✅ | **wire 载荷的形状 ＋ 版本标记**（纯函数，接线前先把语义钉死） | 新 `crdt/wireConstants.ts`（`CRDT_WIRE_VERSION`，三方共用一个数字，避免各写字面量）＋ `crdt/wireState.ts`：`encodeCrdtWire(state)`（**没有状态 ⇒ `undefined`**，不发空壳）/ `decodeCrdtWire(raw)` ⇒ `none`（老载荷 ⇒ 走今天那条路）｜`ok`（解出来）｜`unknown-version`（**不猜**）⇒ `wireState.test.ts` 5 条 | ① 往返逐字节相同（含非 UTF-8）；② 没有/空状态 ⇒ `undefined`；③ 老载荷三种形态 ⇒ `none`（**缺字段 ≠ 空状态**）；④ ★ 版本不认识 ⇒ `unknown-version`（不当 v1 解）；⑤ 载荷坏了（`state` 非数组／字节越界）⇒ **如实抛**，不静默截断 |
+| **S4b-1** | **接进同步路径**（下一件） | `recordChange` 带上这一页的 wire 状态；`applyChange`/`applyRemoteContent` 收到 `ok` ⇒ 改走 `mergeRemotePageState`（不再整页覆盖）、`none` ⇒ 走今天那条路、`unknown-version` ⇒ **如实报出**（不猜）；服务端面只**存**不算（S5 阶段 1） | 两条变更交错应用 ⇒ 收敛；老载荷不静默改写、不丢块；**双设备脚本**（`verify-two-device-sync`）在当轮 tip 上仍绿 |
 | **S5** | **服务端合并（两阶段）** | 阶段 1「只存不算」→ 阶段 2「开算」＋ 总开关（可按空间关） | 阶段 1 行为零变化；阶段 2 服务端合并幂等、可重放、不丢块 |
 | **S6** | **派生与身份口径重定** | `content_text`/FTS 在合并后的重建时机；块身份在 CRDT 下的铸/补种 | 合并后正文不落后（或有痕）；`topLevelBlockIds` 在合并前后**集合不变**（除真正新增块） |
 | **S7** | **两侧都接 ＋ 真机验收** | 桌面（Rust）与 Web 两侧同语义 —— 含 **`page_crdt` 读写三条镜像**（`doc_content.rs` 的 `read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state`）与会话接线；双设备人工验收 | 两侧判据成对；真机双设备验收过 |
