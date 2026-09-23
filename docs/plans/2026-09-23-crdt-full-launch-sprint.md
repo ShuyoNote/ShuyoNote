@@ -256,3 +256,149 @@ test:sync-verify（双设备同页并发）⇒ 84 通过 / 0 失败
 
 ⚠️ **这份读数里没有的**（别当成已验证）：服务端那条端点在**生产**上的行为（未发版）、**真机**双设备、
 桌面侧 claim、Rust 成对判据的执行（环境问题）、yrs 对拍 —— 都在 §10.3 的缺口清单里。
+
+## 11. 第 41 轮：缺口 §10.3-2 / -5 / -6 收口 ＋ **新发现一个缺口**（2026-09-23）
+
+> 本轮开工时的 tip 是 `6dc61ba4`；期间**另一个会话在同一工作树**提交了 `f45ab8c3`
+> （claim 路径去掉 `/sync` 前缀：部署后探针实测 `/sync/lineage-claim`=404、`/lineage-claim`=401）
+> 并**完成了服务端发版**。本轮所有改动都按 `f45ab8c3` 之后的路径口径写。
+
+### 11.1 缺口 2：桌面侧 claim（Rust）—— 已接，且**登记已撤**
+
+| 内容 | 位置 |
+|---|---|
+| `claim_page_lineage` 命令（`reqwest` POST `{server}/lineage-claim`，Bearer 优先取 `auth_sessions`） | `src-tauri/src/sync.rs`（`claim_page_lineage` / `claim_config` / `lineage_claim_verdict`） |
+| 注册进 `generate_handler!` | `src-tauri/src/lib.rs` |
+| 撤掉 `WEB_ONLY_COMMANDS` 登记（web 专属 **3 → 2**） | `scripts/check-web-commands.mjs` |
+| 与前端成对的判据 3 条（403⇒denied／401·5xx⇒"问不到"／200 缺字段⇒denied） | `sync.rs` 的 `#[cfg(test)]`（`lineage_claim_verdict_matches_client_semantics` 等） |
+
+**口径与 web 侧逐条对齐**（这不是"再写一份"）：403 ⇒ `granted:false`（**不许**混进离线那一支）；
+401/5xx/网络/载荷读不懂 ⇒ `{granted:false, unavailable:true}`；**没有同步配置也算"用不了"、不抛**
+（第 38 轮浏览器门禁就是被"抛异常"抓住的）。
+
+**读数**：`cargo check --lib` exit=0；`check-web-commands` 绿且 **Rust 命令 241 → 242**；
+Rust 侧 524/0（见 §11.2）。
+
+### 11.2 缺口 5：Rust 成对判据**执行** —— 已解，根因与"换依赖查看器"的结论一致
+
+**根因（本机 PE 依赖查看器实测）**：测试 exe 直接导入 `comctl32.dll` 的 **`TaskDialogIndirect`**，
+而 `C:\Windows\System32\comctl32.dll` 是 **5.82**（不含该导出）⇒ 加载期 `0xC0000139`。
+它不是缺 DLL、不是 CRT、不是 PATH —— 是**测试 exe 没有应用清单**（`Microsoft.Windows.Common-Controls`
+v6 只能靠 SxS 清单绑到），与 `docs/TESTING.md`「已知边界」和 `scripts/win-cargo-test.ps1` 文件头
+写的**是同一件事**。
+
+⚠️ **所以缺口 §9.2-3 / §10.3-5 这条登记本身是旧的**：答案早在仓里（脚本 ＋ 文档），只是没人把它
+和"缺口"对上。⇒ **别再重复"把 pdfium.dll 放到 target/debug 旁边"那类实验**。
+
+**读数**（`powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1`）：
+
+```
+524 passed / 0 failed / 18 ignored      ← 含本轮新加的 3 条 claim 判据与 page_crdt 两条
+```
+
+### 11.3 缺口 6：yrs 对拍尖刺 —— 已做，结论**格式层可行**
+
+独立 crate `spikes/yrs-interop`（**不进 app 依赖树**）＋ 尖刺判据
+`src/lib/crdt/yrsInterop.spike.test.ts`（没有那个二进制就自报跳过）。完整结论见
+[yrs 对拍尖刺：结论](2026-09-23-yrs-interop-spike-conclusions.md)。三条读数：
+
+1. **互操作成立**：JS 合并与 Rust 合并同一批 fixtures ⇒ 投影**逐字节相同**
+   （`["blk-1","blk-2","blk-A","blk-B"]`），Rust 侧 `root_children=4` 与 JS 侧读到的一致；
+2. **失败形态是"卡死"不是报错**：读事务还活着时再调 `get_or_insert_*` ⇒ **不返回**（实测挂住
+   ≥45s，另一次整条命令 120s 超时）；
+3. ⚠️ **一条被我读错过、必须纠正的**：并发共享一个 `Doc` **没有**复现失败 —— 第一版把它读成
+   "共享 Doc 就会卡"，那是错的（当时的卡死来自 ① 那种写法）。⇒ "每页独立、请求内短命 Doc"这条
+   设计**没有被推翻**，但也没因此获得新证据；它仍是**最省心**的口径。
+
+⇒ **对 S5 阶段 2 的影响**：成本从"Rust 侧从零写一份 Yjs 实现"降到"接 `yrs` ＋ 写合并/存储"，
+剩下的前置是**隐私口径（服务端从此看得懂内容）／状态体积／并发口径**——**能不能做**已回答，
+**值不值得做**没回答。
+
+### 11.4 ★★ 新发现的缺口（原清单里没有）：**桌面侧同步路径根本不消费 `crdt_state`**
+
+这是本轮做 §11.5 的勘察时撞上的，**比原缺口 2 严重**（缺口 2 是"桌面不问"，这条是"桌面收不到"）。
+
+**证据（每条都可当场复核）**：
+
+| # | 事实 | 出处 |
+|---|---|---|
+| 1 | `src-tauri` 全仓 grep `crdt` 只有 `page_crdt.rs`（存取不透明字节）＋注释；**没有任何 wire 解码** | `grep -i crdt src-tauri/src` |
+| 2 | 桌面 pull 的落库唯一入口是**块级 LWW**：`sync::apply_upsert` → `doc_content::apply_remote_page` → `merge_remote_content` | `sync.rs:153`、`doc_content.rs:913` |
+| 3 | `decodeCrdtWire` **只出现在 Web 平台**（`platform/web.ts` 的 `applyChange`） | `src/lib/platform/web.ts:877` |
+| 4 | 桌面**推**出去的载荷也没有状态：`record_page_upsert` 序列化的是 `PageDetail`（没有 crdt 字段） | `sync.rs:127`、`models.rs:20` |
+| 5 | `PageDetail` **没有** `deny_unknown_fields` ⇒ Web 端推来的 `crdt_state` 在桌面被**静默丢掉**（不报错、不留痕） | `models.rs:20` |
+
+**后果**：桌面拿到的远端页只走 LWW（不合并状态）；而编辑器的 hydration 以**本地状态**为准
+（S3b-2e 那条 💡 自己写着："刷新后编辑器先按落盘的投影渲染，随后被 `PageCrdtBinding` 用库里的
+CRDT 状态 hydration 覆盖"）⇒ 库里的状态一旦落后于对端，**桌面上的跨设备编辑会被自己的旧状态覆盖**，
+而且**一声不响**。Web 侧那半（`applyChange` 消费 `crdt_state`）是真的通了，所以 §9.1/§10.4 说的
+"客户端全链路已通" **只对 Web 成立**。
+
+**本轮为什么不顺手补**：补它只有两条路，两条都要先出设计 ＋ 判据（本仓纪律：判据不许删了不写替代）：
+① Rust 侧真合并（`yrs`，§11.3 已证可行）—— 要连带回答隐私/体积；
+② 中间方案：桌面把收到的状态**原样存进旁路表**，交给 WebView 里那份 TS 实现在**打开页面时**合并
+—— 改动小，但要么给出"什么时候合"的口径、要么会在合并前先丢一次内容，**不能不带判据就上**。
+
+### 11.5 缺口 7（阶段 1 过渡量拆除）的勘察结论：**它们今天不是死代码**
+
+原话是"口径 1 作废后块级 LWW / 补算器是过渡量 ⇒ 可以拆"。**勘察结果：今天拆不了**，三条理由：
+
+1. **桌面还在用它**：§11.4 证据 2 —— 桌面 pull 的合并**就是** `merge_remote_content`；
+   拆掉它等于让桌面"没有合并"；
+2. **无状态载荷仍然存在**：桌面推的页载荷**从不带**状态（§11.4 证据 4），没建过血统的页也没有状态
+   ⇒ S4b-1b 那条"`none` ⇒ 走今天那条路"**每天都在走**，不是历史遗留；
+3. **"补算器"根本不是过渡量**：`text_stale` / `refresh_page_text_if_stale` 是**投影的修复通道**，
+   S6a 明确复用它（"不引第二份派生实现"）⇒ 它服务的是 CRDT 路径，不是阶段 1 专属。
+   而 `pages.content_json` / `content_text` 两列本身是**读侧投影**（FTS/反链/导出/插件都读它），
+   按 §0 的口径它们**本来就要留**。
+
+**拆除的前置条件**（写清楚，免得下次又当"死代码"删）：先关掉 §11.4（桌面消费状态）或等服务端合并
+（S5 阶段 2）落地，**并且**确认每一页都有血统；两件都成立之前，"块级 LWW"是**唯一**兜底合并路径。
+
+### 11.6 缺口 1（服务端发版）：**已关**（另一个会话做的，本轮独立复核）
+
+```
+POST https://shuyo.cn/sync/health         -> 405（路由在，只是不收 POST）
+POST https://shuyo.cn/sync/lineage-claim  -> 401（★ 路由在、要鉴权 ⇒ 裁定生效）
+POST https://shuyo.cn/sync/sync/lineage-claim -> 404（旧的错路径）
+```
+
+### 11.7 缺口 3（"页所属空间"传准）：**登记已过期**
+
+`src/editor/Editor.tsx` 自 `0aeb8ab9` 起就用**这一页自己的** `workspace_id`
+（`api.getPage(id)` ⇒ `workspace_id`，取不到才 `console.warn` 并退回当前工作空间）。
+⇒ §10.3-3 这条可以划掉。
+
+### 11.8 当轮 tip 读数（第 41 轮，**一次性跑完、全绿**）
+
+工作树 = `f45ab8c3` ＋ 本轮改动（下面这组就是这个工作树上的读数）：
+
+```
+tsc --noEmit                        ⇒ exit 0
+pnpm vitest run（全量）              ⇒ 204 文件通过 | 4 跳过（208）；2138 条通过 | 9 跳过（2147）；exit 0
+pnpm run build（全套门禁）           ⇒ exit 0
+check-doc-content-access            ⇒ 562/562（基线未动）
+check-web-commands                  ⇒ 绿：Rust 242 / web 243 / CommandMap 244（**web 专属 3 → 2**）
+check-doc-links                     ⇒ 绿（131 个 .md / 771 条相对链接）
+check-doc-facts                     ⇒ 绿
+test:sync-verify（双设备同页并发）   ⇒ 84 通过 / 0 失败
+build:web ＋ check:web-build        ⇒ 9 通过 / 0 失败（含「打字⇒刷新⇒字还在」「0 未捕获错误」）
+cargo check --lib                   ⇒ exit 0
+scripts\win-cargo-test.ps1（Rust）   ⇒ 526 passed / 0 failed / 18 ignored（含本轮新加的 3 条 claim 判据）
+src/lib/crdt/yrsInterop.spike.test.ts ⇒ 2 通过（尖刺；没有那个二进制时**自报跳过**）
+```
+
+⚠️ **两次全量跑之间唯一红过一次的地方**（如实记，因为它教了一件事）：第一次全量里
+`src/lib/graphLayout.test.ts` 的**计时**判据（250 节点收敛 ≤250ms）实测 **260ms** ⇒ 红；
+**单独重跑 7/7 绿**、最终全量也绿。那一刻同一台机上并行跑着 build／浏览器门禁／另一个会话的命令
+⇒ 计时类判据在负载下会**假红**，不能当回归信号（判断方法：单独重跑一次）。
+
+### 11.9 本轮**仍然没有**关闭的（按谁能推）
+
+| # | 缺口 | 谁能推 |
+|---|---|---|
+| 1 | **真机双设备验收**（两台设备；离线各改一处 ⇒ 联网后两处都在）—— 本机脚本 84/0 **不等于**真机 | **人手 ＋ 真机** |
+| 2 | **桌面侧消费 `crdt_state`**（§11.4 新发现，比原缺口 2 严重） | 本机可做，但**先要出设计 ＋ 判据**（两条路见 §11.4） |
+| 3 | 阶段 1 的块级 LWW / 补算器拆除 | 本机可做，但**前置未满足**（§11.5） |
+| 4 | S5 阶段 2（服务端开算） | 本机可做（格式层已证可行，§11.3），**要不要做**是产品/隐私决策 |
+
