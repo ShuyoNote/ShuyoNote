@@ -1,0 +1,528 @@
+From 144da95b0fb1c45f88abbc230503894fe6d08e56 Mon Sep 17 00:00:00 2001
+From: cnzen <zhaizy@qq.com>
+Date: Thu, 24 Sep 2026 10:06:41 +0800
+Subject: [PATCH] =?UTF-8?q?feat(keyring):=200b=20=E5=85=AC=E5=BC=80?=
+ =?UTF-8?q?=E6=9D=90=E6=96=99=20=E2=80=94=E2=80=94=20=E7=AC=AC=E4=BA=8C?=
+ =?UTF-8?q?=E5=8F=B0=E8=AE=BE=E5=A4=87**=E5=8F=AA=E5=87=AD=E4=B8=BB?=
+ =?UTF-8?q?=E5=8F=A3=E4=BB=A4**=E8=A7=A3=E5=BC=80=E8=87=AA=E5=B7=B1?=
+ =?UTF-8?q?=E7=9A=84=E7=A9=BA=E9=97=B4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+背景：客户端那边"钥匙袋"分成两半 —— **公开的那一半**（盐 ＋ KDF 参数 ＋ 被主密钥包裹过的
+空间钥匙）与**私密的那一半**（主口令、解出来的空间钥匙）。以前换设备只能**手工搬**公开那半
+（导出 JSON、拷过去、导入），因为服务端没地方放它。这一版给它一处落脚点：
+输了主口令 ⇒ 拉公开材料 ⇒ 推主密钥 ⇒ 解盒子。
+
+- `src/db.rs`：v16 迁移 `space_keyrings(space_id PK, keyring_json, updated_at, updated_by)`。
+  连带把 `migration_creates_team_schema_and_is_idempotent` 里写死的版本号 15 ⇒ 16
+  并加上新表的断言（那条断言写死就是为了让"忘了记版本号"当场红 —— 这次它果然当场红了）。
+- `src/space_keyring.rs`（新）：`get` / `put`（UPSERT，一个空间只有一行）/ `delete` ＋ 三个 handler；
+  路由 `GET|PUT|DELETE /spaces/{id}/keyring`（接在 `space_routes` 里，走同一个 `auth_user`）。
+- **权限：读要 `viewer`，写/删要 `admin`**。理由：读的是"本来就可以公开"的那一半；
+  而写/删会影响到**别的设备还能不能解开**，所以不能给普通成员。
+- **服务端不解析 `keyring_json`**：原样存、原样取（逐字节相同），不认字段、不验内容 ⇒
+  以后客户端换 KDF 参数 / 换盒子格式，这个服务端一行都不用改。
+- **真伪不靠服务端**：客户端解盒子时 AEAD 会认出来（被换过的盒子解不开）。
+  服务端因此可以"不可信"而我们照样安全 —— 它也**不该假装校验**（假装校验会让人以为安全来自服务端）。
+- 上限 `MAX_KEYRING_BYTES = 64 KiB`：空 ⇒ 400，超了 ⇒ 413。这是**任何人写一次就能长期占位**的
+  接口，不设上限等于送人一块廉价存储。
+- 审计只记 `bytes=<n>`，**绝不记那份材料本身**（它是公开的不假，但日志会被抄走且撤不回）。
+
+判据（`cargo test`，本机实测 **bin 41 passed / 0 failed / 1 ignored ＋ 集成 4 passed**）：
+① 存进去取回来**逐字节相同**（含非 ASCII、未知字段、换行）；
+② 一个空间**只有一行**，第二次 PUT 是覆盖（＝轮换语义：取回的是新那一份，`updated_by` 跟着变）；
+③ 没有那一行 ⇒ `None`（不是空串）；`delete` 幂等（第二次返回 false，handler 据此回 404）；
+④ 空间隔离：`sp1` 的材料不会串到 `sp2`；
+⑤ 表**恰好**那四列且 `space_id` 是主键（这一列里没有地方可以顺手塞明文空间数据）；
+⑥ 大小闸门：0 ⇒ 400、64 KiB ⇒ 放行、64 KiB+1 ⇒ 413；
+⑦ `require_space`：成员读得到、外人读不到、写要 admin（viewer 不够）。
+
+⚠️ 落地时还要在两处补一笔（不在本补丁里，避免与在写的 `docs/api.md` 撞车）：
+1. `docs/api.md` 加一节：
+
+   ### GET|PUT|DELETE /spaces/{id}/keyring
+   存放/取回**公开材料**（钥匙袋里可以公开的那一半：盐 / KDF 参数 / 被口令包裹的盒子）。
+   服务端**解不开**它。读要 viewer，写/删要 admin；PUT body `{ "keyring_json": "<客户端 Keyring::to_json()>" }`，
+   上限 64 KiB；没有那一行时 GET/DELETE 回 404。
+
+2. `README.md` 的接口清单（若有）同步一行。
+
+本机门禁读数（克隆于 `ede92a2`，干净 HEAD）：
+`cargo test` 全绿；`cargo clippy --all-targets` 只有 1 条**既有**警告（`sync.rs` 测试段
+`unused doc comment`，不是本补丁引入）；`rustfmt --check` 对本补丁三个文件干净
+（`src/main.rs:211/253` 与 `src/device_key.rs` 的 fmt 差异是 HEAD 既有的，**没有**顺手改它）。
+另外三条门禁在 HEAD 上本来就红（`check-doc-links` 指向 `../../ShuyoNote/...`、
+`check-release-discipline` 说 v1.2.3 的 tag 已存在、`cargo fmt` 既有差异），与本补丁无关。
+---
+ src/db.rs            |  32 +++-
+ src/main.rs          |  11 ++
+ src/space_keyring.rs | 373 +++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 415 insertions(+), 1 deletion(-)
+ create mode 100644 src/space_keyring.rs
+
+diff --git a/src/db.rs b/src/db.rs
+index 42efbc7..c92d15d 100644
+--- a/src/db.rs
++++ b/src/db.rs
+@@ -257,6 +257,31 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+     if current < 15 {
+         migrate_v15(conn)?;
+     }
++    // v16 — 公开材料（0b，2026-09-24）：把"钥匙袋"里那一份**可以公开**的东西
++    //（盐 / KDF 参数 / 被口令包裹的盒子）存到服务端，使**第二台设备只凭主口令**就能解开自己的空间。
++    // ⚠️ 服务端**解不开**它：这一列里没有任何明文钥匙、也没有口令 —— 服务端只是搬运一个它读不懂的串。
++    //    真伪不靠服务端校验：客户端解盒子时 AEAD 会认出来（被换过的盒子解不开）⇒ 服务端不可信也不怕。
++    if current < 16 {
++        migrate_v16(conn)?;
++    }
++    Ok(())
++}
++
++/// v16 — 公开材料（`src/space_keyring.rs`）。
++///
++/// 一行一个空间。`keyring_json` 是**客户端自己那份 `Keyring::to_json()`**，服务端**不解析**它
++/// （不认字段、不验内容）⇒ 以后客户端换 KDF 参数 / 换盒子格式，服务端一行都不用改。
++/// `updated_by` 只是审计用（谁最后换的这一份），拿不到也不影响取回。
++fn migrate_v16(conn: &Connection) -> rusqlite::Result<()> {
++    conn.execute_batch(
++        "CREATE TABLE IF NOT EXISTS space_keyrings (
++            space_id     TEXT PRIMARY KEY,
++            keyring_json TEXT NOT NULL,
++            updated_at   INTEGER NOT NULL,
++            updated_by   TEXT
++         );
++         INSERT INTO schema_version (version) VALUES (16);",
++    )?;
+     Ok(())
+ }
+ 
+@@ -942,10 +967,15 @@ mod tests {
+             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+             .unwrap();
+         // v15 — CRDT 血统 claim（冲刺 S9）：记"谁先给这一页建血统"。
++        // v16 — 公开材料（0b）：第二台设备只凭主口令解开自己的空间。
+         // ⚠️ 这个断言是**加迁移的连带项**：每加一版迁移就要把它 +1（写死是为了让"忘了记版本号"当场红）。
+-        assert_eq!(version, 15);
++        assert_eq!(version, 16);
+         // v15 的表也要在（与上面的断言配套，免得只改数字、没真建表）
+         assert!(table_exists(&conn, "page_lineage").unwrap());
++        // v16 — 公开材料（`src/space_keyring.rs`）：**只有**那一列公开的东西，没有别的地方塞空间数据。
++        assert!(table_exists(&conn, "space_keyrings").unwrap());
++        assert!(column_exists(&conn, "space_keyrings", "keyring_json").unwrap());
++        assert!(column_exists(&conn, "space_keyrings", "updated_by").unwrap());
+         // v13 — project registry + change attribution.
+         assert!(table_exists(&conn, "projects").unwrap());
+         assert!(table_exists(&conn, "project_members").unwrap());
+diff --git a/src/main.rs b/src/main.rs
+index c20cff2..2cee8bf 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -13,6 +13,7 @@ mod device_key;
+ mod org;
+ mod project;
+ mod space;
++mod space_keyring;
+ mod sync;
+ 
+ use axum::{
+@@ -345,6 +346,16 @@ async fn main() {
+             "/spaces/{id}/device-keys/{key_id}/revoke",
+             post(device_key::revoke_key),
+         )
++        // 0b 公开材料（2026-09-24）：第二台设备**只凭主口令**解开自己的空间。
++        // 存的是"钥匙袋"里可以公开的那一半（盐 / KDF 参数 / 被口令包裹的盒子）——
++        // 服务端**解不开**它（没有口令就推不出主密钥，没有主密钥就开不了盒子）。
++        // 读要 `viewer`（成员），写/删要 `admin`：改这一份会影响**别的设备还能不能解开**。
++        .route("/spaces/{id}/keyring", get(space_keyring::get_keyring))
++        .route("/spaces/{id}/keyring", put(space_keyring::put_keyring))
++        .route(
++            "/spaces/{id}/keyring",
++            delete(space_keyring::delete_keyring),
++        )
+         .route_layer(middleware::from_fn_with_state(
+             state.clone(),
+             auth::auth_user,
+diff --git a/src/space_keyring.rs b/src/space_keyring.rs
+new file mode 100644
+index 0000000..067ed1d
+--- /dev/null
++++ b/src/space_keyring.rs
+@@ -0,0 +1,373 @@
++//! 公开材料（0b）：让**第二台设备只凭主口令**就能解开自己的空间。
++//!
++//! ## 为什么服务端可以存这个
++//!
++//! 客户端那边的"钥匙袋"（公开仓 `src-tauri/src/keyring.rs`）由两半组成：
++//! · **公开的那一半**：盐 ＋ KDF 参数 ＋ **被主密钥包裹过的**空间钥匙（盒子）；
++//! · **私密的那一半**：主口令（只在人脑子里 / 密码管理器里）与解出来的空间钥匙（只在内存里）。
++//!
++//! 只有**公开的那一半**会到这里。服务端拿到它**解不开**任何空间：没有口令就推不出主密钥，
++//! 没有主密钥就开不了盒子（AEAD：改一个字节都解不开）。所以这一列存的是"**搬运凭据**"，不是秘密 ——
++//! 把它交给自己跑的服务端，等于把"换设备要手工搬文件"换成"输一次口令"。
++//!
++//! ## 三条设计决定
++//!
++//! 1. **服务端不解析**：`keyring_json` 原样存、原样取（逐字节相同）。不认字段、不验内容 ——
++//!    以后客户端换 KDF 参数或换盒子格式，这个服务端**一行都不用改**。
++//! 2. **真伪不靠服务端**：客户端解盒子时 AEAD 会认出来（被换过的盒子解不开，客户端报错）。
++//!    服务端因此可以"不可信"而我们照样安全 —— 这也正是它**不该假装校验**的原因：
++//!    假装校验会让人以为安全来自服务端，而真实来源是口令 ＋ AEAD。
++//! 3. **写比读严**：读只要 `viewer`（空间成员）；写/删要 `admin` —— 改这一份会影响到
++//!    **别的设备还能不能解开**，所以不能给普通成员（能读空间数据 ≠ 能改别人的钥匙来源）。
++use rusqlite::{params, Connection, OptionalExtension};
++
++use axum::{
++    extract::{Path, State},
++    http::StatusCode,
++    Extension, Json,
++};
++
++use crate::auth::UserId;
++use crate::db::AppState;
++use crate::space::require_space;
++
++/// 单份公开材料的上限（字节）。
++///
++/// 客户端那一份现在是 ~1–2 KiB（盐 ＋ 参数 ＋ 一个盒子）；留 64 KiB 是给"一个空间多个盒子 /
++/// 以后换格式"的余量。超了 ⇒ `413`。
++/// 为什么必须有上限：这是一条**任何人写一次就能长期占位**的接口，不设上限等于送人一块廉价存储。
++pub const MAX_KEYRING_BYTES: usize = 64 * 1024;
++
++/// 取回来的公开材料（`keyring_json` 就是客户端自己那份 `Keyring::to_json()`）。
++#[derive(Debug, Clone, serde::Serialize)]
++pub struct SpaceKeyring {
++    pub keyring_json: String,
++    pub updated_at: i64,
++    pub updated_by: Option<String>,
++}
++
++/// 大小闸门（纯函数，便于**直接判据**）：空 ⇒ `400`，超上限 ⇒ `413`。
++pub fn check_size(len: usize) -> Result<(), StatusCode> {
++    if len == 0 {
++        return Err(StatusCode::BAD_REQUEST);
++    }
++    if len > MAX_KEYRING_BYTES {
++        return Err(StatusCode::PAYLOAD_TOO_LARGE);
++    }
++    Ok(())
++}
++
++/// 取回某个空间的公开材料（没有那一行 ⇒ `None`，**不是**空串）。
++pub fn get(conn: &Connection, space_id: &str) -> rusqlite::Result<Option<SpaceKeyring>> {
++    conn.query_row(
++        "SELECT keyring_json, updated_at, updated_by FROM space_keyrings WHERE space_id = ?1",
++        params![space_id],
++        |r| {
++            Ok(SpaceKeyring {
++                keyring_json: r.get(0)?,
++                updated_at: r.get(1)?,
++                updated_by: r.get(2)?,
++            })
++        },
++    )
++    .optional()
++}
++
++/// 存放/覆盖某个空间的公开材料（UPSERT：**一个空间只有一行**）。返回 `updated_at`。
++///
++/// ⚠️ 覆盖写是**轮换**的语义（客户端换了盒子之后必须能把它推上来）；旧的那一份就此消失，
++/// 这正是想要的 —— 留着旧盒子等于留着一条早已作废的入口。
++pub fn put(
++    conn: &Connection,
++    space_id: &str,
++    keyring_json: &str,
++    updated_by: &str,
++) -> rusqlite::Result<i64> {
++    let at = crate::device_key::now_ms();
++    conn.execute(
++        "INSERT INTO space_keyrings (space_id, keyring_json, updated_at, updated_by)
++         VALUES (?1, ?2, ?3, ?4)
++         ON CONFLICT(space_id) DO UPDATE SET
++             keyring_json = excluded.keyring_json,
++             updated_at   = excluded.updated_at,
++             updated_by   = excluded.updated_by",
++        params![space_id, keyring_json, at, updated_by],
++    )?;
++    Ok(at)
++}
++
++/// 删掉某个空间的公开材料（客户端"关闭加密"之后不该留着旧盒子）。返回是否真的删了。
++pub fn delete(conn: &Connection, space_id: &str) -> rusqlite::Result<bool> {
++    let n = conn.execute(
++        "DELETE FROM space_keyrings WHERE space_id = ?1",
++        params![space_id],
++    )?;
++    Ok(n > 0)
++}
++
++// ---------------------------------------------------------------- HTTP 接口
++
++#[derive(serde::Deserialize)]
++pub struct PutReq {
++    pub keyring_json: String,
++}
++
++/// 取回公开材料。空间成员（`viewer` 起）即可 —— 它本来就是**可以公开**的那一半。
++/// 没有那一行 ⇒ `404`（客户端据此知道"这台服务器上还没有我的公开材料"，而不是"空的材料"）。
++pub async fn get_keyring(
++    State(state): State<AppState>,
++    Extension(user): Extension<UserId>,
++    Path(space_id): Path<String>,
++) -> Result<Json<SpaceKeyring>, StatusCode> {
++    let conn = state.read_conn();
++    require_space(&conn, &user.0, &space_id, "viewer")?;
++    match get(&conn, &space_id).map_err(|e| {
++        eprintln!("space keyring get: {e}");
++        StatusCode::INTERNAL_SERVER_ERROR
++    })? {
++        Some(k) => Ok(Json(k)),
++        None => Err(StatusCode::NOT_FOUND),
++    }
++}
++
++/// 存放/覆盖公开材料。需要 `admin`。
++pub async fn put_keyring(
++    State(state): State<AppState>,
++    Extension(user): Extension<UserId>,
++    Path(space_id): Path<String>,
++    Json(req): Json<PutReq>,
++) -> Result<Json<serde_json::Value>, StatusCode> {
++    check_size(req.keyring_json.len())?;
++    let conn = state.write_conn();
++    require_space(&conn, &user.0, &space_id, "admin")?;
++    let at = put(&conn, &space_id, &req.keyring_json, &user.0).map_err(|e| {
++        eprintln!("space keyring put: {e}");
++        StatusCode::INTERNAL_SERVER_ERROR
++    })?;
++    // ⚠️ 审计里**只记字节数**，绝不记那份材料本身：它是公开的不假，但日志会被抄走、
++    //    而且记进去以后就没人再能"撤回"了。
++    let detail = format!("bytes={}", req.keyring_json.len());
++    crate::audit::log(
++        &conn,
++        Some(&space_id),
++        Some(&user.0),
++        "space_keyring.put",
++        "space_keyring",
++        None,
++        Some(detail.as_str()),
++    );
++    Ok(Json(serde_json::json!({
++        "ok": true,
++        "space_id": space_id,
++        "updated_at": at,
++        "bytes": req.keyring_json.len()
++    })))
++}
++
++/// 删掉公开材料（客户端"关闭加密"之后调）。需要 `admin`；没有那一行 ⇒ `404`。
++pub async fn delete_keyring(
++    State(state): State<AppState>,
++    Extension(user): Extension<UserId>,
++    Path(space_id): Path<String>,
++) -> Result<Json<serde_json::Value>, StatusCode> {
++    let conn = state.write_conn();
++    require_space(&conn, &user.0, &space_id, "admin")?;
++    let changed = delete(&conn, &space_id).map_err(|e| {
++        eprintln!("space keyring delete: {e}");
++        StatusCode::INTERNAL_SERVER_ERROR
++    })?;
++    if !changed {
++        return Err(StatusCode::NOT_FOUND);
++    }
++    crate::audit::log(
++        &conn,
++        Some(&space_id),
++        Some(&user.0),
++        "space_keyring.delete",
++        "space_keyring",
++        None,
++        None,
++    );
++    Ok(Json(serde_json::json!({ "ok": true })))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn db() -> (Connection, std::path::PathBuf) {
++        // ⚠️ 名字里必须带**自增序号**：测试并行跑，只用 `pid + now_ms()` 时两个用例可能落在
++        //    同一毫秒 ⇒ 共用同一个库文件 ⇒ 互相看见对方的 `sp1`（device_key 那边踩过这个坑）。
++        use std::sync::atomic::{AtomicU64, Ordering};
++        static N: AtomicU64 = AtomicU64::new(0);
++        let dir = std::env::temp_dir().join(format!(
++            "shuyo-sk-{}-{}-{}",
++            std::process::id(),
++            crate::device_key::now_ms(),
++            N.fetch_add(1, Ordering::Relaxed)
++        ));
++        std::fs::create_dir_all(&dir).unwrap();
++        let path = dir.join("sync.db");
++        let conn = crate::db::init_db(&path).unwrap();
++        (conn, path)
++    }
++
++    fn space(conn: &Connection, id: &str) {
++        conn.execute(
++            "INSERT INTO spaces (id, name, owner_id, created_at) VALUES (?1, ?1, ?3, ?4)",
++            params![
++                id,
++                id,
++                crate::device_key::LOCAL_OWNER,
++                crate::device_key::now_ms()
++            ],
++        )
++        .unwrap();
++    }
++
++    /// 一份**看着像真的**公开材料（形状与客户端 `Keyring::to_json()` 同族）：
++    /// 有非 ASCII、有未知字段、有换行 —— 服务端必须一个字节都不动地还回来。
++    const MATERIAL: &str = "{\n  \"v\": 1,\n  \"kdf\": {\"alg\":\"argon2id\",\"m\":19456,\"t\":2,\"p\":1,\"salt\":\"9f8e\"},\n  \"boxes\": {\"default\": \"AAECAwQ=\"},\n  \"未来字段\": \"这个服务端不认识它\"\n}";
++
++    #[test]
++    fn storing_then_reading_returns_the_exact_bytes() {
++        let (conn, _p) = db();
++        space(&conn, "sp1");
++
++        let at = put(&conn, "sp1", MATERIAL, "user-1").unwrap();
++        let got = get(&conn, "sp1").unwrap().expect("刚存进去的应当取得回来");
++        assert_eq!(
++            got.keyring_json, MATERIAL,
++            "★ 逐字节相同：服务端不许解析、不许重排"
++        );
++        assert_eq!(got.updated_at, at);
++        assert_eq!(got.updated_by.as_deref(), Some("user-1"));
++    }
++
++    #[test]
++    fn one_space_has_exactly_one_row_and_a_second_put_replaces_it() {
++        let (conn, _p) = db();
++        space(&conn, "sp1");
++
++        put(&conn, "sp1", "旧盒子", "user-1").unwrap();
++        put(&conn, "sp1", "新盒子", "user-2").unwrap();
++
++        let n: i64 = conn
++            .query_row(
++                "SELECT COUNT(*) FROM space_keyrings WHERE space_id = 'sp1'",
++                [],
++                |r| r.get(0),
++            )
++            .unwrap();
++        assert_eq!(n, 1, "★ 一个空间只有一行（UPSERT），不是每次都插一条");
++        let got = get(&conn, "sp1").unwrap().unwrap();
++        assert_eq!(
++            got.keyring_json, "新盒子",
++            "★ 覆盖＝轮换：取回的是**新**那一份"
++        );
++        assert_eq!(
++            got.updated_by.as_deref(),
++            Some("user-2"),
++            "谁最后换的要记下来"
++        );
++    }
++
++    #[test]
++    fn missing_material_reads_as_none_and_delete_is_idempotent() {
++        let (conn, _p) = db();
++        space(&conn, "sp1");
++
++        assert!(
++            get(&conn, "sp1").unwrap().is_none(),
++            "没有那一行 ⇒ None（不是空串）"
++        );
++        put(&conn, "sp1", "盒子", "user-1").unwrap();
++        assert!(delete(&conn, "sp1").unwrap());
++        assert!(get(&conn, "sp1").unwrap().is_none(), "删掉之后取不回来");
++        assert!(
++            !delete(&conn, "sp1").unwrap(),
++            "再删一次 ⇒ false（幂等，界面据此回 404）"
++        );
++    }
++
++    /// ★ 空间隔离：一个空间的材料不会串到另一个空间（同一张表、按 `space_id` 分行）。
++    #[test]
++    fn material_is_scoped_to_one_space() {
++        let (conn, _p) = db();
++        space(&conn, "sp1");
++        space(&conn, "sp2");
++
++        put(&conn, "sp1", "甲的盒子", "user-1").unwrap();
++        assert!(
++            get(&conn, "sp2").unwrap().is_none(),
++            "sp2 不该看见 sp1 的材料"
++        );
++        delete(&conn, "sp1").unwrap();
++        assert!(get(&conn, "sp2").unwrap().is_none());
++    }
++
++    /// ★★ 这一列里**只可能**是公开材料：表的列就是那四列 ——
++    /// 没有地方可以顺手塞"明文空间数据"（判据钉的是**结构**，因为服务端的代码本来也不解析它）。
++    #[test]
++    fn the_table_has_exactly_the_four_public_material_columns() {
++        let (conn, _p) = db();
++        let mut stmt = conn.prepare("PRAGMA table_info(space_keyrings)").unwrap();
++        let cols: Vec<String> = stmt
++            .query_map([], |r| r.get::<_, String>(1))
++            .unwrap()
++            .collect::<Result<_, _>>()
++            .unwrap();
++        assert_eq!(
++            cols,
++            vec!["space_id", "keyring_json", "updated_at", "updated_by"]
++        );
++        // 主键是 space_id（一个空间一行这件事由库自己保证，不靠调用方自觉）
++        let pk: i64 = conn
++            .query_row(
++                "SELECT pk FROM pragma_table_info('space_keyrings') WHERE name = 'space_id'",
++                [],
++                |r| r.get(0),
++            )
++            .unwrap();
++        assert_eq!(pk, 1, "space_id 必须是主键");
++    }
++
++    /// 大小闸门：空 ⇒ 400；超上限 ⇒ 413；正好等于上限 ⇒ 放行。
++    #[test]
++    fn the_size_gate_refuses_empty_and_oversized_material() {
++        assert_eq!(check_size(0), Err(StatusCode::BAD_REQUEST));
++        assert_eq!(check_size(MAX_KEYRING_BYTES), Ok(()));
++        assert_eq!(
++            check_size(MAX_KEYRING_BYTES + 1),
++            Err(StatusCode::PAYLOAD_TOO_LARGE)
++        );
++    }
++
++    /// 权限：成员读得到；**不是成员读不到**；写/删要更严的角色（`admin`）。
++    ///
++    /// 直接驱动 `require_space`（handler 那层要 `AppState`，测不了）：把"读 = viewer / 写 = admin"
++    /// 这件事钉在它真正生效的那一层。
++    #[test]
++    fn read_needs_membership_and_write_needs_admin() {
++        let (conn, _p) = db();
++        space(&conn, "sp1");
++        conn.execute(
++            "INSERT INTO space_members (space_id, user_id, role) VALUES ('sp1', 'member-1', 'viewer')",
++            [],
++        )
++        .unwrap();
++        conn.execute(
++            "INSERT INTO space_members (space_id, user_id, role) VALUES ('sp1', 'admin-1', 'admin')",
++            [],
++        )
++        .unwrap();
++
++        // 读：成员可以（viewer 够），外人不行
++        assert!(require_space(&conn, "member-1", "sp1", "viewer").is_ok());
++        assert!(require_space(&conn, "outsider", "sp1", "viewer").is_err());
++        // 写：viewer 不够，admin 够；外人还是不行
++        assert!(require_space(&conn, "member-1", "sp1", "admin").is_err());
++        assert!(require_space(&conn, "admin-1", "sp1", "admin").is_ok());
++        assert!(require_space(&conn, "outsider", "sp1", "admin").is_err());
++    }
++}
+-- 
+2.51.0.windows.1
+

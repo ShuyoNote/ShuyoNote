@@ -21,7 +21,8 @@
 | **A=3** | owner 拍板"分类由入口决定" ⇒ 本地新建空间标 `personal`（`workspaces::insert_new_local_space`）＋ **D 的 KDF 实测读数**（8 秒大头在 SM3 那条腿） | `4fa9d6d4` ⚠️ **只在本地，推送被 TLS 挡住**（见 §6） |
 | 第 1 步 1b-2c | **按空间启用/禁用的命令面**（`enable_space_encryption` / `disable_space_encryption`；Web 侧登记**桌面专属**）＋ 顺手把 `disable` 的载荷从 `PageStateArgs`（`page_id`）换成 `SpaceIdArgs`（`space_id`） | `988d756f` |
 | **②b 后端** | **分类的手动出口** `set_space_kind`（命令面**窄进**：只认 3 个值，别的串报错）＋ **一次读全的隐私读数** `space_security_overview`（`SpaceSecurityView`：分类 ＋ 加密状态 ＋ 闸门裁决；**未分类照样列出来**）＋ 判据 1 条（14/14 绿） | `0cdf9d99` |
-| **②b 界面** | **最小界面**：`SpacePrivacySection`（挂在**同步面板**里 —— 闸门拦的就是「绑同步」这个动作）＋ 8 条判据（含 Web 不调 api / 两步确认 / 接线） | 本轮（见 §2 第 4 条） |
+| **②b 界面** | **最小界面**：`SpacePrivacySection`（挂在**同步面板**里 —— 闸门拦的就是「绑同步」这个动作）＋ 8 条判据（含 Web 不调 api / 两步确认 / 接线） | `87d189ab` |
+| **③ 0b 服务端** | **公开材料**：v16 `space_keyrings` ＋ `GET\|PUT\|DELETE /spaces/{id}/keyring`（读 viewer / 写删 admin、不解析、64 KiB 上限）⇒ 补丁 `docs/plans/patches/0001-feat-keyring-0b.patch`（**没碰**那一仓的在写工作树；已在那棵脏树上 `git apply --check` **exit 0**） | 本仓本轮（见 §7.0） |
 
 ### 6. ✅ 2026-09-24 推送事故：**已恢复**（瞬时，非我们这侧）
 
@@ -56,6 +57,14 @@ SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=open
 （这一节**不是**浮层，是 `sync` 浮层里的一节 ⇒ 不需要新登记）；doc 门禁 138 篇 / 863 条链接 / 84 篇方案 /
 44 条 / 562 处（基线 562 未动）。
 （对照：②b **后端**那一轮 `0cdf9d99` ⇒ Rust 579 / vitest 2198 / 214 文件。）
+
+**③ 的服务端读数**（在 `shuyonote-sync-server` 的**干净克隆** `ede92a2` 上跑，不是他们那棵在写的树）：
+`cargo test` ⇒ **bin 41 passed / 0 failed / 1 ignored** ＋ **集成 4 passed / 0 failed**；
+`cargo clippy --all-targets` ⇒ 仅 1 条**既有**警告（`sync.rs` 测试段）；
+`rustfmt --check` ⇒ 本补丁三个文件干净；`node website/check.mjs` ⇒ 绿。
+⚠️ 那一仓 HEAD 自己就有三条门禁是红的（`check-doc-links` / `check-release-discipline` / `cargo fmt` 既有差异），
+详见 §7.0 —— **不是**本补丁弄红的，也**不许**顺手替他们把那些改掉（那是另一个人的活）。
+本轮我这一仓的代码**没动**（只多了一份补丁与文档）⇒ 上面那一套读数继续有效。
 
 ## 2. 下一片：~~1b-2b~~（**已完成**：开关与启动闸门按空间；剩下的是"命令面/UI"与"分类来源"）
 
@@ -152,6 +161,48 @@ SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=open
 **要拍参数，就得有一台真机（最好是低端机）跑一次**；在那之前不许按桌面读数下结论。
 
 ## 7. ③ 0b（公开材料可同步）：服务端落点计划（下一轮直接照着做）
+
+### 7.0 ✅ 已落地（2026-09-24 本轮）：**补丁就绪 ＋ 判据全绿 ＋ 落点已验证**
+
+⚠️ 为什么是**补丁**而不是直接提交：那个仓的工作树里**有别人正在写的未提交改动**
+（22 个已跟踪文件 ＋ 几十个未跟踪文档，其中 `src/main.rs` 本身也改过），而路由必须加在 `main.rs`。
+直接在那儿提交＝把**别人的改动混进我的提交**（静默）；直接改＝可能在对方写入时互相覆盖。
+⇒ 做法：**克隆一份干净 HEAD** 到 `C:\Users\cnzen\zhai\_scratch\sync-server-keyring`，在那儿实现＋跑判据，
+交付一份可直接 `git apply` 的补丁（**没碰他们的工作树**）。
+
+- 补丁：`docs/plans/patches/0001-feat-keyring-0b.patch`（24 KB，1 个新文件 ＋ 2 个文件各一处小改）。
+- **落点已验证**：在**他们那棵有未提交改动的树**上 `git apply --check` **exit 0**（能干净落下）。
+  （`git apply --3way --check` 会报 `src/main.rs: does not match index` —— 那是"它本来就脏"的正常结果。）
+- 内容：v16 迁移 `space_keyrings(space_id PK, keyring_json, updated_at, updated_by)` ＋
+  `src/space_keyring.rs`（`get` / `put` UPSERT / `delete` ＋ 三个 handler）＋
+  路由 `GET|PUT|DELETE /spaces/{id}/keyring`（接在 `space_routes` 里，走同一个 `auth_user`）。
+  **读要 `viewer`，写/删要 `admin`**；`keyring_json` 服务端**不解析**（原样存原样取）；
+  上限 64 KiB（空 ⇒ 400，超 ⇒ 413）；审计**只记字节数**，绝不记材料本身。
+- 判据（`cargo test`，本机实测）：**bin 41 passed / 0 failed / 1 ignored ＋ 集成 4 passed**；
+  我这一族 7 条全过（逐字节相同 / 一个空间只有一行且覆盖＝轮换 / 缺行 ⇒ `None` 且删除幂等 /
+  空间隔离 / 表恰好四列且 `space_id` 是主键 / 大小闸门三个边界 / `require_space` 三个角色）。
+  ⚠️ 加迁移时**它仓自己的判据当场红了**（`migration_creates_team_schema_and_is_idempotent`
+  里版本号写死 15）⇒ 同批改成 16 并加上新表断言 —— 那条断言写死就是为了这个。
+- 本机门禁读数（克隆于干净 HEAD `ede92a2`）：`cargo clippy --all-targets` 只有 **1 条既有警告**
+  （`sync.rs` 测试段的 `unused doc comment`，不是本补丁引入）；`rustfmt --check` 对本补丁三个文件干净
+  （`src/main.rs:211/253` 与 `src/device_key.rs` 的 fmt 差异是 **HEAD 既有**的，我**没有**顺手改它）。
+  ⚠️ 那个仓 **HEAD 上本来就有三条自己的门禁是红的**（与本补丁无关，别当成我弄红的）：
+  `check-doc-links`（`docs/SESSION_CONTINUE.md` 等指向 `../../ShuyoNote/docs/SHUYONOTE_STATE.md`）、
+  `check-release-discipline`（"已存在指向 1.2.3 的 tag（v1.2.3）"）、`cargo fmt`（`device_key.rs` 既有差异）。
+  `website/check.mjs` 绿。
+- **还差一笔（落地时补）**：`docs/api.md` 加一节 `GET|PUT|DELETE /spaces/{id}/keyring`
+  （README 若有接口清单也同步一行）。**故意没放进补丁**：那个文件在他们的工作树里也是脏的，
+  放进去会让补丁更容易撞车。那一节的正文写在补丁的提交说明里（`git am` 之后仍可查）。
+
+**还差的另一半（客户端"第二台设备"路径，下一轮）**：服务端现在存得下、取得回，
+但客户端**还没有**"输口令 ⇒ 拉公开材料 ⇒ 解盒子"那条路（今天只有手工搬文件）。
+要做的三件：① `sync.rs` 加 `fetch_space_keyring` / `push_space_keyring`（POST/GET 那两个端点，
+复用现有 HTTP 与错误映射）；② 解锁路径接上"本地没有袋子 ⇒ 先拉一次"；
+③ 判据：**两台设备的端到端**（A 开加密 ⇒ 推公开材料 ⇒ B 只输口令 ⇒ 解出同一把空间钥匙并读到数据）。
+⚠️ 设计上要先定一件事：**这算不算用户的显式动作**（自动拉 vs 点一下"从服务器取回钥匙"）
+—— 这牵涉到"口令输给谁"的用户理解，别自己默默决定。
+
+### 7.1 落点计划（补丁按此实现；留着看当时的取舍）
 
 已侦察（`C:\Users\cnzen\zhai\shuyonote-sync-server`，**另一个仓**，按它自己的门禁走）：
 axum ＋ rusqlite；`src/` 有 `space.rs` / `db.rs` / `sync.rs` / `device_key.rs` / `main.rs`；
