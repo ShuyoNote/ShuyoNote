@@ -43,12 +43,14 @@ pub const KEYRING_VERSION: u16 = 1;
 /// 每空间密钥的长度（32 字节，与 `AppKeys.legacy` 同宽）。
 pub const SPACE_KEY_LEN: usize = 32;
 
-/// 本构建**今天的** Argon2id 参数（与 `crypto::derive_app_keys` 里的 `Argon2::default()` 一致）。
+/// 本构建**新建袋子时**记下的 Argon2id 参数（**这是我们选的**，不再"跟着库默认走"）。
 ///
-/// ⚠️ 这三个数字是"要写进公开材料"的东西：写下来、跟着袋子走 ⇒ 将来默认值变了，
-/// 老袋子仍按**它自己记的**参数解（0a-2 做参数驱动派生；本步先做到"不一致就报错"）。
-/// 判据 `current_params_match_the_library_default` 会盯着它们不许和库默认悄悄漂开。
-pub const ARGON2_M_KIB: u32 = 19456; // 19 MiB
+/// ⚠️ 这三个数字是"要写进公开材料"的东西：写下来、跟着袋子走 ⇒ 默认值哪天变了，
+/// 老袋子仍按**它自己记的**参数解（`KdfParams::derive_master` 走 `crypto::derive_app_keys_with`）。
+/// 判据 `our_params_are_chosen_while_the_sqlcipher_path_stays_on_the_library_default` 钉着这个数字；
+/// 判据 `an_old_bag_recorded_with_the_previous_params_still_derives_its_old_key` 钉着"老袋子照样能解"。
+/// ⚠️ 与 `crypto::derive_key`（SQLCipher 那条库级口径）**不是一回事**，改这里**不许**动那条。
+pub const ARGON2_M_KIB: u32 = 65536; // 64 MiB（owner 件1=B：抬内存硬化；真机实测见交接文档 §6）
 pub const ARGON2_T: u32 = 2;
 pub const ARGON2_P: u32 = 1;
 
@@ -79,15 +81,26 @@ impl KdfParams {
         }
     }
 
-    /// 与"本构建当前的参数"是否一致。**不一致 ⇒ 报错**（不许静默换一套参数推出另一把钥匙）。
+    /// 这份材料记的参数**本版能不能用**。**不能用 ⇒ 报错**（不许静默换一套参数推出另一把钥匙）。
+    ///
+    /// ⚠️ 这里**刻意不再要求"与本版常量完全相等"**（2026-09-24，owner 件1=B 的前置）：
+    /// 派生已经是**按材料自己记的参数**走的（`derive_app_keys_with`），所以"和本版默认不同"根本
+    /// 不是错误 —— 那是**老袋子**，它就该按它自己那套解。留下来的守卫只管两件真会出错的事：
+    /// ① 算法不认识；② 参数落在明显不合理的区间（会被 argon2 拒绝、或让派生慢到不可用）。
+    /// 为什么必须放宽：不放宽的话，把默认值往上一抬，**所有老袋子会被判"参数与本版不同"直接打不开**。
     pub fn ensure_supported(&self) -> Result<(), String> {
         if self.algo != "argon2id" {
             return Err(format!("钥匙袋用的 KDF 是 {}，本版只认 argon2id", self.algo));
         }
-        if (self.m_kib, self.t, self.p) != (ARGON2_M_KIB, ARGON2_T, ARGON2_P) {
+        // 合理区间（**宽进严出**：只要 argon2 真的算得出来、且不至于把机器拖死，就放行）。
+        // 下界 8 MiB / 上界 1 GiB；t 1..=16；p 1..=8。越界 ⇒ 报错（而不是静默当成默认值）。
+        let ok = (8 * 1024..=1024 * 1024).contains(&self.m_kib)
+            && (1..=16).contains(&self.t)
+            && (1..=8).contains(&self.p);
+        if !ok {
             return Err(format!(
-                "钥匙袋的 KDF 参数（m={} t={} p={}）与本版（m={ARGON2_M_KIB} t={ARGON2_T} p={ARGON2_P}）不同 —— \
-                 参数驱动派生还没落地（0a-2）：**不要**用另一套参数去解，那会得到一把错钥匙并报成'口令错'",
+                "钥匙袋的 KDF 参数（m={} KiB t={} p={}）不在本版支持的区间里（m 8 MiB..1 GiB / t 1..16 / p 1..8）—— \
+                 参数驱动派生是按它自己记的那套算，但这一套本版不敢用",
                 self.m_kib, self.t, self.p
             ));
         }
@@ -106,9 +119,11 @@ impl KdfParams {
     ///
     /// ⚠️ 参数校验在派生**之前**：宁可报"参数不支持"，也不要静默用另一套参数算出一把错钥匙
     /// （那会把"钥匙袋坏了"伪装成"口令输错了"）。
+    /// ★ 派生用的是**这份材料自己记的**参数（不是本构建的默认值）—— 这就是"参数随袋子走"：
+    /// 本版默认抬到 64 MiB 之后，19 MiB 的老袋子照样解得出原来那把主密钥（判据钉着这件事）。
     pub fn derive_master(&self, passphrase: &str) -> Result<AppKeys, String> {
         self.ensure_supported()?;
-        crypto::derive_app_keys(passphrase, &self.salt()?)
+        crypto::derive_app_keys_with(passphrase, &self.salt()?, self.m_kib, self.t, self.p)
     }
 }
 
@@ -294,25 +309,82 @@ mod tests {
         assert!(cur_ms.iter().all(|&v| v > 0), "读数要跑得出来");
     }
 
-    /// ★ 本构建记下的 Argon2id 参数必须**就是**库默认 —— 否则"存参数"这件事从第一天起就是错的
-    /// （库里默认值哪天变了，这条会红，提醒我们：老袋子要按它自己记的参数解）。
+    /// ★ 参数是我们**选的**（不再是"跟着库默认走"）—— 把这个数字写死钉住，别让它悄悄漂。
+    /// ⚠️ 同时钉住**不许动的那条**：`crypto::derive_key` 仍是库默认 —— 它同时是既有加密库的
+    /// SQLCipher 原始密钥（`crypto.rs` 那条警告），改了 = 既有加密库全部打不开。
+    /// 这两件事**必须分开钉**：以前那条判据要求"两者相等"，一旦默认值要抬就成了打架的枷锁。
     #[test]
-    fn current_params_match_the_library_default() {
+    fn our_params_are_chosen_while_the_sqlcipher_path_stays_on_the_library_default() {
         use argon2::{Algorithm, Argon2, Params, Version};
         let salt = [3u8; 16];
-        let mut with_params = [0u8; 32];
+        let mut default = [0u8; 32];
+        Argon2::default()
+            .hash_password_into(b"pw", &salt, &mut default)
+            .unwrap();
+        // ① 库级那条路**不许动**
+        assert_eq!(
+            crypto::derive_key("pw", &salt).unwrap(),
+            default,
+            "SQLCipher 那条口径被动过了（既有加密库会全打不开）"
+        );
+        // ② 我们选的数字写死在这里；改它必须是有意识的（owner 拍板 ＋ 真机实测），并连带改这条判据与文档
+        assert_eq!(ARGON2_M_KIB, 65536, "★ 默认参数若要变，这条判据与文档要同批改");
+        // ③ 我们自己那套**故意不等于**库默认（owner 件1=B：抬内存硬化）——
+        //    这条从 `assert_eq` 翻成 `assert_ne` 正是"默认值抬上去了"的那个记号。
+        //    ⚠️ 无论如何 ① 那行（SQLCipher 那条不许动）永远不动。
+        let mut ours = [0u8; 32];
         Argon2::new(
             Algorithm::Argon2id,
             Version::V0x13,
             Params::new(ARGON2_M_KIB, ARGON2_T, ARGON2_P, Some(32)).unwrap(),
         )
-        .hash_password_into(b"pw", &salt, &mut with_params)
+        .hash_password_into(b"pw", &salt, &mut ours)
         .unwrap();
+        assert_ne!(ours, default, "★ 我们选的参数必须比库默认更硬（改了这条要连带改文档）");
+    }
 
-        let mut default = [0u8; 32];
-        Argon2::default().hash_password_into(b"pw", &salt, &mut default).unwrap();
-        assert_eq!(with_params, default, "记下的参数与库默认漂开了：老袋子会解不开");
-        assert_eq!(crypto::derive_key("pw", &salt).unwrap(), default, "`crypto::derive_key` 也要是同一条");
+    /// ★★ **"老袋子不许被锁在外面"**（owner 件1=B 的前置）：一份**用 19 MiB 记的**老袋子，
+    /// 在本版下**照样**解得出**原来那把**主密钥（19 MiB 正是库默认 ⇒ 等于旧的 `crypto::derive_key`）。
+    /// 没有这条判据，"把默认值往上抬"就等于把所有老袋子作废。
+    #[test]
+    fn an_old_bag_recorded_with_the_previous_params_still_derives_its_old_key() {
+        let mut kp = KdfParams::fresh();
+        kp.m_kib = 19456;
+        kp.t = 2;
+        kp.p = 1;
+        assert!(kp.ensure_supported().is_ok(), "老参数必须被认（宽进）");
+        let old_key = crypto::derive_key("我家猫叫mimi", &kp.salt().unwrap()).unwrap();
+        assert_eq!(
+            kp.derive_master("我家猫叫mimi").unwrap().legacy,
+            old_key,
+            "★ 老袋子解的必须还是原来那把（不然抬默认值 = 把老用户锁在外面）"
+        );
+        // 参数**真的**在起作用：换一套参数就该推出**另一把**（否则"按材料记的参数派生"是假的）
+        let mut other = kp.clone();
+        other.m_kib = 32768;
+        assert_ne!(
+            other.derive_master("我家猫叫mimi").unwrap().legacy,
+            old_key,
+            "换参数必须换钥匙"
+        );
+    }
+
+    /// 守卫只管两件真会出错的事：**算法不认识** / **参数明显不合理**；**宽进**不该把老参数挡在外面。
+    #[test]
+    fn the_guard_rejects_unknown_algorithms_and_absurd_params_only() {
+        let mut bad_algo = KdfParams::fresh();
+        bad_algo.algo = "pbkdf2".to_string();
+        assert!(bad_algo.ensure_supported().is_err(), "不认识的算法要挡");
+        let mut too_small = KdfParams::fresh();
+        too_small.m_kib = 4;
+        assert!(too_small.ensure_supported().is_err(), "小到没意义的参数要挡");
+        let mut too_big = KdfParams::fresh();
+        too_big.m_kib = 4 * 1024 * 1024;
+        assert!(too_big.ensure_supported().is_err(), "大到会把机器拖死的参数要挡");
+        let mut fine = KdfParams::fresh();
+        fine.m_kib = 32768;
+        fine.t = 3;
+        assert!(fine.ensure_supported().is_ok(), "合理区间内的非默认参数要放行（宽进）");
     }
 
     #[test]

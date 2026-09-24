@@ -153,6 +153,32 @@ fn derive_sm_keys(_passphrase: &str, _salt: &[u8]) -> Option<SmKeys> {
     None
 }
 
+/// 同 `derive_app_keys`，但 **Argon2id 的三个参数由调用方给**。
+///
+/// 谁用：**钥匙袋**那一条线（`keyring::KdfParams::derive_master`）—— 它记着"这份材料当初是用哪套参数
+/// 派生的"，就得**按它自己记的**去派生。这是"参数随袋子走"的兑现：本版默认抬到 64 MiB 之后，
+/// 19 MiB 的老袋子**照样**解得出原来那把主密钥。
+///
+/// ⚠️ 只有 `legacy` 这一半跟着参数走；`sm` 那一半仍按 `crypto_sm` 的口径（今天不吃参数）。
+/// ⚠️ **不要**拿它去替代 `derive_key`：那条同时是既有加密库的 **SQLCipher 原始密钥**，
+/// 口径不许动（`crypto.rs` 里那条警告）；这里只服务钥匙袋的主密钥，不碰库级那条。
+/// ⚠️ 参数合法性由 `argon2::Params::new` 把关（越界 ⇒ `Err`，不静默降级）。
+pub fn derive_app_keys_with(
+    passphrase: &str,
+    salt: &[u8],
+    m_kib: u32,
+    t: u32,
+    p: u32,
+) -> Result<AppKeys, String> {
+    let params = argon2::Params::new(m_kib, t, p, Some(32))
+        .map_err(|e| format!("Argon2 参数不合法（m={m_kib} t={t} p={p}）: {e}"))?;
+    let a = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut legacy = [0u8; 32];
+    a.hash_password_into(passphrase.as_bytes(), salt, &mut legacy)
+        .map_err(|e| format!("密钥派生失败: {e}"))?;
+    Ok(AppKeys { legacy, sm: derive_sm_keys(passphrase, salt) })
+}
+
 /// 这段密钥材料**写新数据**时会用哪个版本。
 ///
 /// "国密开关"**不是**运行时能随便翻的：默认构建里国密代码整个不存在（§0-E），

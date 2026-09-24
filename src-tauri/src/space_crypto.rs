@@ -1381,10 +1381,17 @@ mod tests {
         let m2 = on_device_b.kdf.derive_master("我家猫叫mimi").unwrap();
         assert_eq!(m.legacy, m2.legacy, "★ 换设备靠公开材料 ＋ 口令就能推出同一把主密钥");
         assert_ne!(m.legacy, on_device_b.kdf.derive_master("别的口令").unwrap().legacy);
-        // 参数不一致 ⇒ 拒绝（不静默算出另一把）
+        // 参数被改过 ⇒ 推出来的是**另一把**主密钥（盒子因此打不开）。
+        // ⚠️ 这里**不再是**"拒绝"：守卫已放宽成"参数合理就放行"（owner 件1=B 的前置 —— 不放宽的话，
+        //    默认值一抬，所有老袋子会被判"与本版不同"直接打不开）。真正的保护在下一步：
+        //    钥匙算错了 ⇒ 盒子解不开（AEAD 会认出来）。
         let mut tampered = on_device_b.clone();
         tampered.kdf.t = 9;
-        assert!(tampered.kdf.derive_master("我家猫叫mimi").is_err());
+        let wrong = tampered.kdf.derive_master("我家猫叫mimi").unwrap();
+        assert_ne!(
+            wrong.legacy, m.legacy,
+            "★ 改过参数必须推出另一把（否则'按材料记的参数派生'就是假的）"
+        );
         assert_eq!(KdfParams::fresh().algo, "argon2id");
     }
 }
