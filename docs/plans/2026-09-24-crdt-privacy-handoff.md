@@ -23,6 +23,7 @@
 | **②b 后端** | **分类的手动出口** `set_space_kind`（命令面**窄进**：只认 3 个值，别的串报错）＋ **一次读全的隐私读数** `space_security_overview`（`SpaceSecurityView`：分类 ＋ 加密状态 ＋ 闸门裁决；**未分类照样列出来**）＋ 判据 1 条（14/14 绿） | `0cdf9d99` |
 | **②b 界面** | **最小界面**：`SpacePrivacySection`（挂在**同步面板**里 —— 闸门拦的就是「绑同步」这个动作）＋ 8 条判据（含 Web 不调 api / 两步确认 / 接线） | `87d189ab` |
 | **③ 0b 服务端** | **公开材料**：v16 `space_keyrings` ＋ `GET\|PUT\|DELETE /spaces/{id}/keyring`（读 viewer / 写删 admin、不解析、64 KiB 上限）⇒ 补丁 `docs/plans/patches/0001-feat-keyring-0b.patch`（**没碰**那一仓的在写工作树；已在那棵脏树上 `git apply --check` **exit 0**） | 本仓本轮（见 §7.0） |
+| **③ 0b 客户端** | **公开材料的推 / 取**：`sync::push_space_keyring` / `pull_space_keyring` ＋ `space_crypto::stored_material`（推之前先验）＋ `adopt_material`（**默认不覆盖**）＋ 界面两个按钮 ＋ **端到端判据**（A 推 ⇒ B 全新目录取回 ⇒ **只凭口令**解出**同一把**空间钥匙） | 本轮（见 §7.0.1） |
 
 ### 6. ✅ 2026-09-24 推送事故：**已恢复**（瞬时，非我们这侧）
 
@@ -65,6 +66,21 @@ SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=open
 ⚠️ 那一仓 HEAD 自己就有三条门禁是红的（`check-doc-links` / `check-release-discipline` / `cargo fmt` 既有差异），
 详见 §7.0 —— **不是**本补丁弄红的，也**不许**顺手替他们把那些改掉（那是另一个人的活）。
 本轮我这一仓的代码**没动**（只多了一份补丁与文档）⇒ 上面那一套读数继续有效。
+
+**当轮 tip 读数**（③ 0b **客户端**这一轮，提交后即 `origin/dev`）：Rust 全量 **584 passed / 0 failed / 18 ignored**
+（`test exe exit code = 0`，569.6 s —— 比上一轮慢一倍，因为**机器上同时有另一会话在编译/测试**）；
+`npx tsc --noEmit` 0；`pnpm run build` 0；`build:web` 0 ＋ `check:web-build` **9 通过 / 0 失败**；
+`check-web-commands` 绿（**Rust 257 / web 249 / 契约 259**）；`check-overlay-registry` 绿；
+doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未动）；
+新增判据：`SpacePrivacySection.test.ts` **10 条**（上一轮 8）＋ Rust **5 条**
+（②b 读数面 1 ＋ 采纳/坏材料 2 ＋ 端到端/404/状态码 3）。
+
+⚠️ **vitest 全量这一轮没拿到干净读数（不是代码问题，是机器）**：连跑两次全量都在"spawn 密集"的
+那几个文件上超时（第一次 3 文件 4 条、第二次 3 文件 10 条），而且**每次红的文件都不一样**
+（`yrsInterop.spike` / `sm-library-patch` / `check-changelog-version-parity` / `check-sys-deps`），
+这些文件**隔离复跑全过**（42/42、31/31）；同一时刻机器上跑着**另一会话的 2 个 cargo ＋ 2 个 rustc
+＋ 24 个 node**（Rust 全量也从 293 s 涨到 569 s）。⇒ 记成**负载 flake**，**没有**拿它当绿，
+也**没有**重试到绿了算数。
 
 ## 2. 下一片：~~1b-2b~~（**已完成**：开关与启动闸门按空间；剩下的是"命令面/UI"与"分类来源"）
 
@@ -124,6 +140,9 @@ SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=open
    `#[cfg(test)] pub(crate) static SEC_LOCK`，`space_crypto::tests` 与 `security::tests` 共用。
 3. **Rust 全量与 vitest 全量别并行跑**；`Test timed out` 先量 `git status --short`（>1s ＝ 机器在忙，
    等它恢复再跑）—— 那天**隔离复跑仍超时**的 6 个文件，机器恢复后同一批 44/44 全过。
+   （2026-09-24 更明确的一次：**另一会话**在同一台机器上编译/跑测试时，vitest 全量连跑两次都红，
+   且**每次红的文件不同**；隔离复跑全过 ⇒ 判据是"**隔离绿 ＋ 负载证据**"，
+   不是"重试到绿了就算绿"。）
 4. **Windows 上 SQLCipher 负例的 stderr 噪声会让外层退出码变成 1**（2026-09-24 实测）：
    `hmac check failed for pgno=1` 正是"错钥匙必须解不开"那条判据在生效的证据，但 PowerShell 把原生命令的
    stderr 记成 `NativeCommandError` ⇒ **外层 1、测试全绿**。判绿看 `test result: ok` 与
@@ -194,13 +213,41 @@ SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=open
   （README 若有接口清单也同步一行）。**故意没放进补丁**：那个文件在他们的工作树里也是脏的，
   放进去会让补丁更容易撞车。那一节的正文写在补丁的提交说明里（`git am` 之后仍可查）。
 
-**还差的另一半（客户端"第二台设备"路径，下一轮）**：服务端现在存得下、取得回，
+**~~还差的另一半（客户端"第二台设备"路径）~~ ✅ 本轮做完了**（下面这几句留着看当时的计划）：服务端现在存得下、取得回，
 但客户端**还没有**"输口令 ⇒ 拉公开材料 ⇒ 解盒子"那条路（今天只有手工搬文件）。
 要做的三件：① `sync.rs` 加 `fetch_space_keyring` / `push_space_keyring`（POST/GET 那两个端点，
 复用现有 HTTP 与错误映射）；② 解锁路径接上"本地没有袋子 ⇒ 先拉一次"；
 ③ 判据：**两台设备的端到端**（A 开加密 ⇒ 推公开材料 ⇒ B 只输口令 ⇒ 解出同一把空间钥匙并读到数据）。
 ⚠️ 设计上要先定一件事：**这算不算用户的显式动作**（自动拉 vs 点一下"从服务器取回钥匙"）
 —— 这牵涉到"口令输给谁"的用户理解，别自己默默决定。
+
+### 7.0.1 ✅ 客户端那一半（本轮做完）
+
+- `sync::push_space_keyring` / `sync::pull_space_keyring`（`PUT` / `GET /spaces/{id}/keyring`）：
+  同步档案复用 `claim_config` —— 与血统 claim **同一处解析**（不另写一份"该找哪台服务器/哪个远端空间"）。
+  "正常的不顺利"（没配同步 / 服务端上没有 / 连不上 / 被拒）用 `outcome` 回，**不抛异常**
+  （与 `claim_page_lineage` 同一纪律：抛出去会被平台 invoke 层记成 error）。
+- `space_crypto::stored_material`：推之前**先验**能不能解析 —— 坏材料**不许推上去**
+  （推上去等于把服务端那份好副本也弄坏，而且没有第二个人能替你发现）。
+- `space_crypto::adopt_material`：取回来装进本机；**默认拒绝覆盖**已有的那一份
+  （闷头覆盖可能让本机**打不开自己的空间**：别的设备轮换过之后，服务端那份与能开当前库的那把未必一致）。
+- 界面：`SpacePrivacySection` 每行两个按钮「推到服务器」/「从服务器取回」＋「允许覆盖本机已有的材料」勾选框；
+  结果**原样**显示后端那句话（`ok` / `warn` / `err` 三档）。两条命令登记为**桌面专属**（Web 无钥匙袋）。
+
+★ **端到端判据**（`sync.rs::tests::a_second_device_unlocks_the_space_with_the_passphrase_alone`）：
+A 设备建袋子（口令）＋给本机空间包一把钥匙 ⇒ 推给**桩 HTTP 服务端** ⇒ B 设备（**全新目录、什么都没拷**）
+取回 ⇒ 装进本机 ⇒ **只凭主口令**解出**同一把**空间钥匙，且采纳之后闸门眼里这个空间就是"已加密"。
+⚠️ 写这条判据时当场踩到一个坑（值得记）：桩服务端读 body **必须按字节收齐再转字符串** ——
+分块读在多字节字符中间切开会让中文变乱码，于是"存进去的"与"取回来的"会被判成不一样。
+
+⚠️ **我替口径做了一个决定，要 owner 过目**：推 / 取做成了**显式两个按钮**，**不做**自动拉。
+理由：自动拉意味着在解锁屏上先联网、先取材料，而用户看不到"这一步在跟谁说话"；
+显式动作把因果摆在眼前（先取回、再输口令）。要改成自动拉只是**界面/流程**改动，机制这边不用动。
+
+**仍然没做的两件（都不许写成"已做到"）**：
+1. **真机双设备验收**：上面那条跑的是**桩服务端**；用真服务端 ＋ 两台真设备（含"输错口令"那一支）还没跑。
+2. **服务端补丁还没落进那个仓**（对方工作树在写，见 §7.0 开头）：`git apply --check` 已经过了，
+   但**没有**在他们的树上编译过（在那棵树上编译会把他们的半成品一起编进来）。
 
 ### 7.1 落点计划（补丁按此实现；留着看当时的取舍）
 

@@ -8,7 +8,9 @@
 //   ⑤ 「关闭加密」是**两步确认**：第一下**不调** api，第二下才调（这是会把库换回明文的动作）；
 //   ⑥ Web（`isDesktopPlatform() === false`）⇒ 只渲染解释句，**一次 api 都不调**；
 //   ⑦ 主口令填了就**原样传给后端**（不传口令时给 `undefined`）；
-//   ⑧ 接线：`SyncPanel.tsx` 里真的挂了这一节（文本级判据 —— 防它变成没人用的孤儿组件）。
+//   ⑧ 接线：`SyncPanel.tsx` 里真的挂了这一节（文本级判据 —— 防它变成没人用的孤儿组件）；
+//   ⑨ ③ 0b：「推到服务器」真调 `pushSpaceKeyring(id)`，并把后端那句话**原样**显示；
+//   ⑩ ③ 0b：「从服务器取回」**默认不许覆盖**（`overwrite=false`），勾了「允许覆盖」才传 `true`。
 import { readFileSync } from "node:fs";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -23,6 +25,8 @@ const spaceSecurityOverview = vi.fn();
 const setSpaceKind = vi.fn();
 const enableSpaceEncryption = vi.fn();
 const disableSpaceEncryption = vi.fn();
+const pushSpaceKeyring = vi.fn();
+const pullSpaceKeyring = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -30,6 +34,8 @@ vi.mock("../lib/api", () => ({
     setSpaceKind: (...a: unknown[]) => setSpaceKind(...a),
     enableSpaceEncryption: (...a: unknown[]) => enableSpaceEncryption(...a),
     disableSpaceEncryption: (...a: unknown[]) => disableSpaceEncryption(...a),
+    pushSpaceKeyring: (...a: unknown[]) => pushSpaceKeyring(...a),
+    pullSpaceKeyring: (...a: unknown[]) => pullSpaceKeyring(...a),
   },
 }));
 
@@ -96,7 +102,15 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    for (const m of [spaceSecurityOverview, setSpaceKind, enableSpaceEncryption, disableSpaceEncryption]) m.mockReset();
+    for (const m of [
+      spaceSecurityOverview,
+      setSpaceKind,
+      enableSpaceEncryption,
+      disableSpaceEncryption,
+      pushSpaceKeyring,
+      pullSpaceKeyring,
+    ])
+      m.mockReset();
   });
 
   afterEach(() => {
@@ -193,6 +207,50 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     });
 
     expect(enableSpaceEncryption).toHaveBeenCalledWith("default", "我家猫叫mimi");
+  });
+
+  it("⑨ ★ 「推到服务器」⇒ 真调 `pushSpaceKeyring(id)`，并把后端那句话**原样**显示", async () => {
+    spaceSecurityOverview.mockResolvedValue([personal]);
+    pushSpaceKeyring.mockResolvedValue({
+      outcome: "ok",
+      bytes: 812,
+      status: 200,
+      message: "已把这一份公开材料（812 字节）交给同步服务；第二台设备从此只凭主口令就能解开",
+    });
+    await render();
+    const push = buttons().find((b) => b.textContent === "推到服务器")!;
+    await act(async () => {
+      push.click();
+    });
+    expect(pushSpaceKeyring).toHaveBeenCalledWith("default");
+    expect(container.textContent).toContain("已把这一份公开材料（812 字节）交给同步服务");
+  });
+
+  it("⑩ ★ 「从服务器取回」默认**不许覆盖**（false）；勾了「允许覆盖」才传 true", async () => {
+    spaceSecurityOverview.mockResolvedValue([personal]);
+    pullSpaceKeyring.mockResolvedValue({
+      outcome: "already_local",
+      bytes: 0,
+      status: 0,
+      message: "本机已经有这一份公开材料了，所以**没有动它**；确实要用服务端那一份覆盖，请显式选「覆盖本机」",
+    });
+    await render();
+    const pull = () => buttons().find((b) => b.textContent === "从服务器取回")!;
+
+    await act(async () => {
+      pull().click();
+    });
+    expect(pullSpaceKeyring).toHaveBeenLastCalledWith("default", false);
+    expect(container.textContent).toContain("没有动它");
+
+    const box = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => {
+      box.click(); // 勾上「允许覆盖本机已有的材料」（React 的 checkbox onChange 走 click）
+    });
+    await act(async () => {
+      pull().click();
+    });
+    expect(pullSpaceKeyring).toHaveBeenLastCalledWith("default", true);
   });
 
   it("⑧ 接线：SyncPanel 里真的挂了这一节（防孤儿组件）", () => {

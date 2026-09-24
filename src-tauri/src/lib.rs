@@ -638,6 +638,14 @@ pub fn run() {
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
             sync::claim_page_lineage,
+            // 隐私边界 ③ 0b（2026-09-24）：**公开材料的推 / 取** —— 换设备时只凭主口令解开自己的空间。
+            // ⚠️ 推上去的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子），
+            //    服务端解不开它；它仍然是**元数据**（服务端能看到你有几个盒子、它们的本地空间 id）。
+            // ⚠️ 桌面专属？**不是** —— 但 Web 侧今天没有实现（钥匙柜在 Web 上不存在），
+            //    所以这两条与按空间加解密一起登记为**桌面专属**（`check-web-commands` 的
+            //    `DESKTOP_ONLY_COMMANDS`，理由写在那里）。
+            sync::push_space_keyring,
+            sync::pull_space_keyring,
             sync::list_sync_history,
             sync::clear_sync_history,
             sync::team_list_orgs,

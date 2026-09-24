@@ -1642,6 +1642,282 @@ pub async fn claim_page_lineage(db: State<'_, Db>, args: LineageClaimArgs) -> Re
     Ok(lineage_claim_verdict(status, body.as_ref()))
 }
 
+// ─────────────────────── ③ 0b（2026-09-24）：公开材料的**推**与**取**
+
+/// ③ 0b 的载荷：**本地**工作空间 id；远端 space id 由同步档案解析（与 `claim_page_lineage` 同口径）。
+#[derive(serde::Deserialize)]
+pub struct SpaceKeyringArgs {
+    pub workspace_id: String,
+    /// 取回时是否允许**覆盖**本机已有的公开材料（默认 false）。
+    ///
+    /// ⚠️ 为什么要这个开关：本机已经有袋子时覆盖它是**危险动作** —— 别的设备轮换过之后，
+    /// 服务端那一份是新的、而本机这一份才可能是能开当前库的那一把；闷头覆盖会让本机
+    /// **打不开自己的空间**。所以默认拒绝并把这件事说出来，要覆盖必须显式传 `true`。
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// ③ 0b 的结果。**"正常的不顺利"不抛异常**（与 `claim_page_lineage` 同一纪律：
+/// 没配同步 / 服务端上没有 / 网络不通都不是 bug，抛出去会被平台 invoke 层记成一条 error）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SpaceKeyringResult {
+    /// `ok` / `not_configured` / `no_material` / `not_on_server` / `already_local` / `offline` / `rejected`
+    pub outcome: String,
+    /// `ok` 时是材料的字节数。
+    pub bytes: usize,
+    /// 服务端 HTTP 状态码（没走到服务端 ⇒ 0）。
+    pub status: u16,
+    /// 一句**人话**（说清下一步该做什么）。
+    pub message: String,
+}
+
+impl SpaceKeyringResult {
+    fn plain(outcome: &str, message: &str) -> Self {
+        Self {
+            outcome: outcome.to_string(),
+            bytes: 0,
+            status: 0,
+            message: message.to_string(),
+        }
+    }
+    fn ok(bytes: usize, status: u16, message: String) -> Self {
+        Self {
+            outcome: "ok".to_string(),
+            bytes,
+            status,
+            message,
+        }
+    }
+    fn rejected(status: u16) -> Self {
+        Self {
+            outcome: "rejected".to_string(),
+            bytes: 0,
+            status,
+            message: keyring_status_message(status),
+        }
+    }
+}
+
+/// 状态码 ⇒ **可操作**的人话（只照着服务端实际会回的那几个说，**不猜**"为什么"）。
+fn keyring_status_message(status: u16) -> String {
+    match status {
+        401 => "同步服务说这个身份无效（401）：先重新登录 / 重绑这个空间的同步，再试一次".to_string(),
+        403 => "同步服务说你不该动这个空间的公开材料（403）：改它会影响**别的设备还能不能解开**，所以要管理员 / 所有者".to_string(),
+        404 => "同步服务上没有这个空间（404）".to_string(),
+        413 => "这一份公开材料超过了服务端的上限（413）—— 它现在只有几 KB，先看是不是推错了东西".to_string(),
+        _ => format!("同步服务拒绝了这一次（{status}）"),
+    }
+}
+
+/// PUT 那一半 —— **可被判据直接驱动**（不碰 `State`，也不碰库）。
+pub(crate) async fn http_put_keyring(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    remote_space_id: &str,
+    material: &str,
+) -> SpaceKeyringResult {
+    let url = format!(
+        "{}/spaces/{}/keyring",
+        server_url.trim_end_matches('/'),
+        remote_space_id
+    );
+    let mut req = client.put(&url).json(&serde_json::json!({ "keyring_json": material }));
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    match req.send().await {
+        Err(e) => SpaceKeyringResult::plain(
+            "offline",
+            &format!("没能连上同步服务（{e}）：材料还在本机，网络好了再推一次"),
+        ),
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            if (200..300).contains(&status) {
+                SpaceKeyringResult::ok(
+                    material.len(),
+                    status,
+                    format!(
+                        "已把这一份公开材料（{} 字节）交给同步服务；第二台设备从此只凭主口令就能解开",
+                        material.len()
+                    ),
+                )
+            } else {
+                SpaceKeyringResult::rejected(status)
+            }
+        }
+    }
+}
+
+/// GET 那一半：返回 `(读数, 拿到的材料原文)`（没拿到时第二个是 `None`）。
+pub(crate) async fn http_get_keyring(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    remote_space_id: &str,
+) -> (SpaceKeyringResult, Option<String>) {
+    let url = format!(
+        "{}/spaces/{}/keyring",
+        server_url.trim_end_matches('/'),
+        remote_space_id
+    );
+    let mut req = client.get(&url);
+    if !token.is_empty() {
+        req = req.bearer_auth(token);
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                SpaceKeyringResult::plain(
+                    "offline",
+                    &format!("没能连上同步服务（{e}）：这一次没取到，本机什么都没改"),
+                ),
+                None,
+            )
+        }
+    };
+    let status = resp.status().as_u16();
+    if status == 404 {
+        return (
+            // ⚠️ 别用 `plain()` 造这一支：它把 `status` 填 0，而这里**真的**从服务端收到了 404 ——
+            //    "没到服务端"与"服务端说没有"是两件事，读数必须分得开（判据当场抓过这一处）。
+            SpaceKeyringResult {
+                outcome: "not_on_server".to_string(),
+                bytes: 0,
+                status,
+                message: "这台服务器上还没有这个空间的公开材料（404）：先在原来那台设备上推一次"
+                    .to_string(),
+            },
+            None,
+        );
+    }
+    if !(200..300).contains(&status) {
+        return (SpaceKeyringResult::rejected(status), None);
+    }
+    match resp.json::<serde_json::Value>().await {
+        Ok(v) => match v["keyring_json"].as_str() {
+            Some(s) if !s.trim().is_empty() => {
+                let s = s.to_string();
+                let r = SpaceKeyringResult::ok(
+                    s.len(),
+                    status,
+                    format!("从服务端取回了公开材料（{} 字节）", s.len()),
+                );
+                (r, Some(s))
+            }
+            // 2xx 但载荷里没有那一列 ⇒ **不猜**成空材料（空材料写进本机比不写危险得多）
+            _ => (
+                SpaceKeyringResult {
+                    outcome: "rejected".to_string(),
+                    bytes: 0,
+                    status,
+                    message: "服务端的回话里没有 keyring_json（读不懂就不猜，本机什么都没改）"
+                        .to_string(),
+                },
+                None,
+            ),
+        },
+        Err(_) => (
+            SpaceKeyringResult {
+                outcome: "rejected".to_string(),
+                bytes: 0,
+                status,
+                message: "服务端的回话不是 JSON（本机什么都没改）".to_string(),
+            },
+            None,
+        ),
+    }
+}
+
+/// ③ 0b 桌面侧：把本机这一份**公开材料**推到同步服务（`PUT /spaces/{id}/keyring`）。
+///
+/// 什么时候用：在这台设备上开启了（或轮换了）加密之后，把它交给自己那台服务端 ——
+/// 这样**第二台设备**只凭主口令就能解开，不必再手工拷贝那份 JSON。
+/// ⚠️ 推的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子）；
+/// 服务端**解不开**它（没有口令推不出主密钥，没有主密钥开不了盒子）。
+/// ⚠️ 但它仍然是一份**元数据**：服务端因此能看到你有几个盒子、以及它们的**本地空间 id**
+/// （不是内容、不是钥匙）—— 别在文档里写成"服务端什么都看不到"。
+#[tauri::command]
+pub async fn push_space_keyring(
+    db: State<'_, Db>,
+    args: SpaceKeyringArgs,
+) -> Result<SpaceKeyringResult, String> {
+    let (server_url, token, remote_space_id, material) = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        let Some((server_url, token, space_id)) = claim_config(&c, &args.workspace_id)? else {
+            return Ok(SpaceKeyringResult::plain(
+                "not_configured",
+                "这个空间还没绑好同步（缺服务地址，或登录了还没选空间）：先在上面绑好，再推公开材料",
+            ));
+        };
+        let Some(material) = crate::space_crypto::stored_material(&c)? else {
+            return Ok(SpaceKeyringResult::plain(
+                "no_material",
+                "本机还没有公开材料：先在这个空间上「开启加密」（那一步会建钥匙袋）",
+            ));
+        };
+        (server_url, token, space_id, material)
+    };
+    Ok(
+        http_put_keyring(
+            &reqwest::Client::new(),
+            &server_url,
+            &token,
+            &remote_space_id,
+            &material,
+        )
+        .await,
+    )
+}
+
+/// ③ 0b 桌面侧：从同步服务**取回**公开材料并**装进本机**（第二台设备的那一步）。
+///
+/// ⚠️ 默认**不覆盖**本机已有的那一份（回 `already_local`）：覆盖是危险动作，理由见 `SpaceKeyringArgs`。
+/// ⚠️ 取回之后**不会自动解锁**：主口令仍然由人来输 —— 这正是"服务端拿不到你的钥匙"的原因。
+#[tauri::command]
+pub async fn pull_space_keyring(
+    db: State<'_, Db>,
+    args: SpaceKeyringArgs,
+) -> Result<SpaceKeyringResult, String> {
+    let (server_url, token, remote_space_id) = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        let Some((server_url, token, space_id)) = claim_config(&c, &args.workspace_id)? else {
+            return Ok(SpaceKeyringResult::plain(
+                "not_configured",
+                "这个空间还没绑好同步（缺服务地址，或登录了还没选空间）：先绑好再来取",
+            ));
+        };
+        (server_url, token, space_id)
+    };
+    let (result, body) = http_get_keyring(
+        &reqwest::Client::new(),
+        &server_url,
+        &token,
+        &remote_space_id,
+    )
+    .await;
+    let Some(json) = body else { return Ok(result) };
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let report = crate::space_crypto::adopt_material(&c, &json, args.overwrite)?;
+    if report.already_local {
+        return Ok(SpaceKeyringResult::plain(
+            "already_local",
+            "本机已经有这一份公开材料了，所以**没有动它**；确实要用服务端那一份覆盖，请显式选「覆盖本机」",
+        ));
+    }
+    Ok(SpaceKeyringResult {
+        outcome: "ok".to_string(),
+        bytes: json.len(),
+        status: result.status,
+        message: format!(
+            "已取回并装进本机（{} 个盒子，{} 字节）；现在输入主口令就能解开这个空间",
+            report.spaces,
+            json.len()
+        ),
+    })
+}
+
 /// List recent sync-history entries (newest first).
 #[tauri::command]
 pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<SyncHistoryEntry>, String> {
@@ -3081,6 +3357,191 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ───── ③ 0b（2026-09-24）：公开材料的推 / 取 ＋ **第二台设备只凭口令**的端到端判据
+
+    /// 假同步服务端：`PUT /spaces/{id}/keyring` 把材料存下来，`GET` 再原样回给它。
+    /// 返回 `(port, 句柄)`。用裸 TCP 写最小 HTTP 响应，不引额外依赖（同 `sync_stream` 那族）。
+    ///
+    /// ⚠️ 读 body **按字节收齐再转字符串**：分块读时在多字节字符中间切开会让中文变乱码
+    /// （这一条当场踩过 —— 材料里有中文 key 时会把"存进去的"和"取回来的"弄成不一样）。
+    async fn fake_keyring_server() -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = tokio::spawn(async move {
+            let mut stored: Option<String> = None;
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut raw: Vec<u8> = Vec::new();
+                let mut tmp = [0u8; 4096];
+                let head_end = loop {
+                    if let Some(p) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break p + 4;
+                    }
+                    let n = sock.read(&mut tmp).await.unwrap_or(0);
+                    if n == 0 {
+                        break 0;
+                    }
+                    raw.extend_from_slice(&tmp[..n]);
+                };
+                if head_end == 0 {
+                    continue; // 半截请求：丢掉这条连接
+                }
+                let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
+                let want: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        if k.eq_ignore_ascii_case("content-length") {
+                            v.trim().parse().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                while raw.len() < head_end + want {
+                    let n = sock.read(&mut tmp).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    raw.extend_from_slice(&tmp[..n]);
+                }
+                let body = String::from_utf8_lossy(&raw[head_end..]).to_string();
+                let method = head.split_whitespace().next().unwrap_or("").to_string();
+                let (status, payload) = match method.as_str() {
+                    "PUT" => {
+                        let v: serde_json::Value =
+                            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                        stored = v["keyring_json"].as_str().map(|s| s.to_string());
+                        (200u16, "{\"ok\":true}".to_string())
+                    }
+                    _ => match stored.clone() {
+                        Some(m) => (200u16, serde_json::json!({ "keyring_json": m }).to_string()),
+                        None => (404u16, "{\"error\":\"none\"}".to_string()),
+                    },
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    payload.len(),
+                    payload
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
+                drop(sock); // 一条连接一次（reqwest 会自己重连）
+            }
+        });
+        (port, handle)
+    }
+
+    /// 造一个全新的"设备目录"（带 meta，丢弃连接）。
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "shuyo-0b-{tag}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(crate::db::spaces_dir(&d)).unwrap();
+        drop(crate::db::open_meta_conn_at(&d).unwrap());
+        d
+    }
+
+    /// ★★ ③ 0b 的**端到端判据**：A 设备把公开材料推上去 ⇒ B 设备（全新目录、什么都没拷）
+    /// 取回来装进本机 ⇒ **只凭主口令**解出**同一把**空间钥匙 —— 这就是"换设备只输一次口令"本身。
+    ///
+    /// ⚠️ 用**单线程 flavor**（`#[tokio::test]`）：本判据要握着 `SEC_LOCK` 走完整个流程
+    /// （`KEYRING`/`SESSION_MASTER` 是进程级全局），而 `std::sync::MutexGuard` 不是 `Send`
+    /// ⇒ 多线程 flavor 编译不过。
+    #[tokio::test]
+    async fn a_second_device_unlocks_the_space_with_the_passphrase_alone() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let (port, server) = fake_keyring_server().await;
+        let base = format!("http://127.0.0.1:{port}");
+        let client = reqwest::Client::new();
+
+        // ── 设备 A：用口令建袋子 ＋ 给本机的 default 空间包一把钥匙 ⇒ 把材料推上去
+        let dir_a = temp_dir("a");
+        let c_a = crate::db::open_space_conn_at("default", &dir_a).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        let mut kr = crate::keyring::Keyring::new();
+        let master_a = kr.kdf.derive_master("我家猫叫mimi").unwrap();
+        let key_a = crate::keyring::random_space_key();
+        kr.wrap(&master_a, "default", &key_a).unwrap();
+        crate::space_crypto::store_keyring(&c_a, &kr).unwrap();
+        let material = crate::space_crypto::stored_material(&c_a)
+            .unwrap()
+            .expect("A 本机应当有材料");
+
+        let pushed = http_put_keyring(&client, &base, "tok", "remote-sp", &material).await;
+        assert_eq!(pushed.outcome, "ok", "{}", pushed.message);
+        assert_eq!(pushed.bytes, material.len());
+        assert_eq!(pushed.status, 200);
+
+        // ── 设备 B：全新目录，本机什么都没有（＝换了一台机器、什么都没拷）
+        let dir_b = temp_dir("b");
+        let c_b = crate::db::open_space_conn_at("default", &dir_b).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        assert!(
+            crate::space_crypto::stored_material(&c_b).unwrap().is_none(),
+            "B 本机一开始不该有材料"
+        );
+        assert!(!crate::space_crypto::space_status(&dir_b, "default").in_keyring);
+
+        // 取回 ⇒ 装进本机
+        let (got, body) = http_get_keyring(&client, &base, "tok", "remote-sp").await;
+        assert_eq!(got.outcome, "ok", "{}", got.message);
+        let body = body.expect("取回成功就要有材料原文");
+        let report = crate::space_crypto::adopt_material(&c_b, &body, false).unwrap();
+        assert!(report.adopted && report.spaces == 1, "{report:?}");
+
+        // ★★ 只凭主口令
+        let master_b = crate::space_crypto::master_from_passphrase(&c_b, "我家猫叫mimi")
+            .unwrap()
+            .expect("B 有了袋子 ⇒ 口令能推出主密钥");
+        let key_b = crate::space_crypto::keyring()
+            .unwrap()
+            .unwrap_key(&master_b, "default")
+            .unwrap();
+        assert_eq!(key_b, key_a, "★★ 第二台设备只凭口令就把同一把空间钥匙拿回来了");
+        assert!(
+            crate::space_crypto::space_status(&dir_b, "default").in_keyring,
+            "采纳之后：闸门眼里这个空间就是「已加密」"
+        );
+
+        server.abort();
+        let _ = std::fs::remove_dir_all(&dir_a);
+        let _ = std::fs::remove_dir_all(&dir_b);
+    }
+
+    /// 服务端上**还没有**那一份 ⇒ `not_on_server`（不是一个"空材料"，更不是错误）；
+    /// 而且**不许给出 body** —— 空材料写进本机比不写危险得多。
+    #[tokio::test]
+    async fn pulling_from_a_server_that_has_nothing_is_a_plain_result_not_an_error() {
+        let (port, server) = fake_keyring_server().await;
+        let base = format!("http://127.0.0.1:{port}");
+        let (r, body) = http_get_keyring(&reqwest::Client::new(), &base, "tok", "remote-sp").await;
+        assert_eq!(r.outcome, "not_on_server");
+        assert_eq!(r.status, 404);
+        assert!(body.is_none(), "没取到就不许给上层一个 body");
+        assert!(r.message.contains("先在原来那台设备上推一次"), "{}", r.message);
+        server.abort();
+    }
+
+    /// 状态码 ⇒ 人话：**可操作**（说清是谁的问题、下一步怎么办），不把码原样丢给用户。
+    #[test]
+    fn keyring_status_messages_are_actionable() {
+        assert!(keyring_status_message(403).contains("管理员"), "403 要说清要管理员");
+        assert!(keyring_status_message(401).contains("重新登录"), "401 要说清下一步");
+        assert!(keyring_status_message(413).contains("上限"), "413 要说清是上限");
+        assert!(keyring_status_message(500).contains("500"), "认不出的码要把它报出来");
+    }
 
     /// ★ 外键守卫：**循环里任何一条变更失败（`?` 早退）都不能把外键永久关掉**。
     /// 老写法（恢复那句放在循环之后）在这条用例下会留下 `foreign_keys=0`，

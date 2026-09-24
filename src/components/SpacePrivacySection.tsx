@@ -8,6 +8,7 @@
 // （调了就是「command not found」抛错，而那一屏本来就不该有这条动作）。
 import { useCallback, useEffect, useState } from "react";
 import { api, type SpaceKind, type SpaceSecurityView } from "../lib/api";
+import type { SpaceKeyringOutcome } from "../lib/platform/commands";
 import { isDesktopPlatform } from "../lib/platform";
 
 const KIND_LABEL: Record<SpaceKind, string> = {
@@ -31,6 +32,10 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   // 「关闭加密」是**会把库换回明文**的动作 ⇒ 两步确认（不用 `window.confirm`：
   // 那个在 Tauri 里不保证有实现，静默返回 false 就成了"点了没反应"的静默失败）。
   const [confirming, setConfirming] = useState("");
+  // ③ 0b：是否允许「从服务器取回」**覆盖**本机已有的公开材料（默认不许 —— 覆盖是危险动作）。
+  const [allowOverwrite, setAllowOverwrite] = useState(false);
+  // ③ 0b：每行的推/取结果（**原样**显示后端那句话）。
+  const [rowMsg, setRowMsg] = useState<{ id: string; text: string; kind: string } | null>(null);
 
   const reload = useCallback(async () => {
     if (!desktop) return;
@@ -64,6 +69,29 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
     }
   };
 
+  /// ③ 0b：推 / 取公开材料。与 `run` 分开，是因为这两条**正常的不顺利也不抛**（用 `outcome` 回），
+  /// 所以要把 `outcome` 映射成"提示 / 警告 / 错误"三档，并把那句话**原样**显示出来。
+  const runKeyring = async (
+    spaceId: string,
+    what: string,
+    fn: () => Promise<SpaceKeyringOutcome>,
+  ) => {
+    setBusy(spaceId);
+    setNote("");
+    setErr("");
+    setRowMsg(null);
+    try {
+      const r = await fn();
+      const kind = r.outcome === "ok" ? "ok" : r.outcome === "rejected" ? "err" : "warn";
+      setRowMsg({ id: spaceId, text: `${what}：${r.message}`, kind });
+      if (r.outcome === "ok") await reload();
+    } catch (e) {
+      setErr(`${what}失败：${String(e)}`);
+    } finally {
+      setBusy("");
+    }
+  };
+
   if (!desktop) {
     return (
       <section className="space-privacy" data-testid="space-privacy">
@@ -82,6 +110,9 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       <div className="space-privacy-hint">
         口径：**个人空间**必须先按空间加密（服务端只落密文）；**团队空间**免检（服务端存明文 ——
         那是它换来的协同 / 检索 / AI）。**未分类**的会放行，但闸门其实**没有管到**它。
+        <br />
+        换设备：在**旧设备**上「推到服务器」，在**新设备**上「从服务器取回」，然后输主口令 ——
+        公开的那一半走服务端，口令**永远不离开本机**。
       </div>
 
       {views === null && <div className="sync-empty-state">正在读…</div>}
@@ -146,6 +177,43 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                 </button>
               )}
             </div>
+            {/* ③ 0b：换设备那一半 —— 旧设备「推到服务器」，新设备「从服务器取回」＋输主口令。
+                ⚠️ 覆盖默认**关着**：闷头覆盖可能让本机打不开自己的空间（见 Rust 侧注释）。 */}
+            <div className="space-privacy-actions">
+              <button
+                className="sync-btn ghost"
+                disabled={busy === v.space_id}
+                onClick={() =>
+                  void runKeyring(v.space_id, "推到服务器", () => api.pushSpaceKeyring(v.space_id))
+                }
+              >
+                推到服务器
+              </button>
+              <button
+                className="sync-btn ghost"
+                disabled={busy === v.space_id}
+                onClick={() =>
+                  void runKeyring(v.space_id, "从服务器取回", () =>
+                    api.pullSpaceKeyring(v.space_id, allowOverwrite),
+                  )
+                }
+              >
+                从服务器取回
+              </button>
+              <label className="space-privacy-overwrite">
+                <input
+                  type="checkbox"
+                  checked={allowOverwrite}
+                  onChange={(e) => setAllowOverwrite(e.target.checked)}
+                />
+                允许覆盖本机已有的材料
+              </label>
+            </div>
+            {rowMsg?.id === v.space_id && (
+              <div className={`space-privacy-gate is-${rowMsg.kind === "ok" ? "allow" : "block"}`}>
+                {rowMsg.text}
+              </div>
+            )}
             {confirming === v.space_id && (
               <div className="space-privacy-gate is-block">
                 关掉加密会把**这一个**空间的库换回明文（别的空间不受影响）；换回之后闸门会拦住它的同步

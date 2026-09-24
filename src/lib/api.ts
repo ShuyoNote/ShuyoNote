@@ -342,6 +342,25 @@ export const api = {
         gate: r.gate,
       })),
     ),
+  /**
+   * ★ 隐私边界 ③ 0b（2026-09-24）：把本机这一份**公开材料**推到同步服务。**桌面专属**。
+   *
+   * 推的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子）——
+   * 服务端**解不开**它。这样第二台设备只凭主口令就能解开自己的空间，不必再手工拷文件。
+   * ⚠️ 它仍然是**元数据**：服务端因此能看到你有几个盒子、以及它们的**本地空间 id**（不是内容）。
+   * ⚠️ "正常的不顺利"用 `outcome` 表达（**不抛异常**）：`not_configured` / `no_material` / `offline` …
+   */
+  pushSpaceKeyring: (workspaceId: string) =>
+    invoke("push_space_keyring", { args: { workspace_id: workspaceId } }),
+  /**
+   * ★ 同上（取回那一半）：从同步服务取回公开材料并**装进本机**（第二台设备的那一步）。
+   *
+   * ⚠️ `overwrite` 默认 `false`：本机**已经有**那一份时**拒绝并说清**（`already_local`）——
+   * 闷头覆盖可能让本机**打不开自己的空间**（别的设备轮换过之后，服务端那份与能开当前库的那把未必一致）。
+   * ⚠️ 取回之后**不会自动解锁**：主口令仍然由人来输。
+   */
+  pullSpaceKeyring: (workspaceId: string, overwrite = false) =>
+    invoke("pull_space_keyring", { args: { workspace_id: workspaceId, overwrite } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

@@ -1326,6 +1326,13 @@ html[data-platform="win"] .app-body {
 .space-privacy-gate.is-block { color: var(--danger); }
 .space-privacy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .space-privacy-actions select { font-size: 12px; max-width: 100%; }
+.space-privacy-overwrite {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
 .space-privacy-pass { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
 .space-privacy-pass input { flex: 1; min-width: 0; font-size: 12px; }
 .space-privacy-note { font-size: 11px; color: var(--text-dim); }

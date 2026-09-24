@@ -72,6 +72,58 @@ pub fn store_keyring(c: &Connection, kr: &Keyring) -> Result<(), String> {
     Ok(())
 }
 
+/// ③ 0b：本机现在那一份**公开材料**的原文（没有 ⇒ `None`）。
+///
+/// ⚠️ 从 **meta** 读（不是从进程内存读）：没解锁时内存里可能没有，而 meta 里有 ——
+/// 「推给服务端」这件事**不需要会话解锁**（材料本来就是可以公开的那一半）。
+/// ⚠️ 读出来**先验一遍能不能解析**：坏的/半截的材料**不许推上去**
+/// （推上去等于把服务端上那份好副本也弄坏，而且没有第二个人能替你发现）。
+pub fn stored_material(c: &Connection) -> Result<Option<String>, String> {
+    match sync::get_meta_state(c, META_KEYRING) {
+        Some(text) => {
+            Keyring::from_json(&text)?; // 坏了 ⇒ Err（不静默推一份垃圾）
+            Ok(Some(text))
+        }
+        None => Ok(None),
+    }
+}
+
+/// 采纳一份公开材料的读数（给命令面拼人话用）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdoptReport {
+    /// 真的写进本机了吗。
+    pub adopted: bool,
+    /// 本机**本来就有**一份，所以这次没动它（不是错误）。
+    pub already_local: bool,
+    /// 采纳之后袋子里有几个盒子。
+    pub spaces: usize,
+}
+
+/// ③ 0b：**采纳从服务端取回的公开材料**（第二台设备那一步）。
+///
+/// ⚠️ `overwrite=false` 时，本机**已经有袋子就拒绝**（返回 `already_local`，一个字节都不改）。
+/// 为什么不是"新的覆盖旧的"：别的设备**轮换**过之后，服务端那一份可能是新的、而本机这一份
+/// 才是能开当前库的那一把 —— 闷头覆盖会让本机**打不开自己的空间**。要覆盖得显式说。
+/// ⚠️ 坏材料 ⇒ `Err`（**本机一个字节都不改**），并且那句话要说清这一点。
+pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<AdoptReport, String> {
+    if stored_material(c)?.is_some() && !overwrite {
+        return Ok(AdoptReport {
+            adopted: false,
+            already_local: true,
+            spaces: 0,
+        });
+    }
+    let kr = Keyring::from_json(json)
+        .map_err(|e| format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}"))?;
+    let spaces = kr.spaces.len();
+    store_keyring(c, &kr)?; // 落 meta ＋ 装进本进程
+    Ok(AdoptReport {
+        adopted: true,
+        already_local: false,
+        spaces,
+    })
+}
+
 /// 本进程当前的公开材料（没有 ⇒ `None`）。
 pub fn keyring() -> Option<Keyring> {
     KEYRING.lock().ok().and_then(|g| g.clone())
@@ -753,6 +805,75 @@ mod tests {
         assert!(v.allow && !v.unclassified, "团队：放行且**不算未分类**");
         let v = sync_gate_view(&plain, SpaceKind::Unknown);
         assert!(v.allow && v.unclassified && !v.reason.is_empty(), "未分类：放行但**要说出来**");
+    }
+
+    /// ★★ ③ 0b：**采纳从服务端取回的公开材料** —— 本地已经有袋子时**默认拒绝**
+    /// （不许闷头覆盖：别的设备轮换过之后，覆盖本机那一份可能让本机**打不开自己的空间**）；
+    /// 显式 `overwrite=true` 才采纳，采纳之后**只凭那个口令**就能解出盒子里的钥匙。
+    #[test]
+    fn adopting_remote_material_refuses_to_overwrite_a_local_bag_unless_told_to() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-adopt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("adopt-a", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+
+        // 本机这一份（本地口令）
+        let mut local = Keyring::new();
+        let m_local = local.kdf.derive_master("本机口令八个字").unwrap();
+        local.wrap(&m_local, "adopt-a", &random_space_key()).unwrap();
+        store_keyring(&c, &local).unwrap();
+        let before = stored_material(&c).unwrap().unwrap();
+
+        // 服务端那一份：**另一个**袋子（新盐 ⇒ 另一份 JSON），里面是我们想要的那把钥匙
+        let k_remote = random_space_key();
+        let mut remote = Keyring::new();
+        let m_remote = remote.kdf.derive_master("对端口令八个字").unwrap();
+        remote.wrap(&m_remote, "adopt-a", &k_remote).unwrap();
+        let remote_json = remote.to_json().unwrap();
+
+        // ① 默认**拒绝**覆盖，且一个字节都没改
+        let r = adopt_material(&c, &remote_json, false).unwrap();
+        assert!(!r.adopted && r.already_local, "本地已有袋子 ⇒ 默认不许覆盖");
+        assert_eq!(stored_material(&c).unwrap().unwrap(), before, "★ 一个字节都没改");
+
+        // ② 显式 overwrite ⇒ 采纳
+        let r = adopt_material(&c, &remote_json, true).unwrap();
+        assert!(r.adopted && !r.already_local && r.spaces == 1);
+
+        // ③ ★ 采纳之后：**只凭那个口令**就能解出盒子里的钥匙
+        let m = master_from_passphrase(&c, "对端口令八个字").unwrap().unwrap();
+        assert_eq!(
+            keyring().unwrap().unwrap_key(&m, "adopt-a").unwrap(),
+            k_remote,
+            "★ 第二台设备只凭口令就把空间钥匙拿回来了"
+        );
+
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 坏材料**两头都不许过**：不许被推给服务端（读出来先验）、不许被写进本机。
+    #[test]
+    fn garbage_material_is_refused_on_both_ends() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-garbage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("gb-a", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+
+        sync::set_meta_state(&c, META_KEYRING, "这不是材料").unwrap();
+        assert!(stored_material(&c).is_err(), "★ 读出来先验：坏材料不许推给服务端");
+        assert!(adopt_material(&c, "也不是材料", true).is_err(), "★ 坏材料不许写进本机");
+
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ★★ ②b 的读数面：一个列表里同时给出**分类 ＋ 加密状态 ＋ 闸门裁决**，而且
