@@ -532,6 +532,24 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             [],
         )?;
     }
+    // ★★ 空间分类标记（`kind`）：**老 meta.db 必须补列**（owner 2026-09-24 现场抓到的真 bug）。
+    //
+    // 为什么原来会漏：这个列只在上面 `CREATE TABLE IF NOT EXISTS workspaces` 的定义里，
+    // 而老库**已经有那张表** ⇒ 建表语句是 **no-op**，列永远补不上（与 `encrypted`/`cipher_format`
+    // 不同，那两个当初就配了幂等 ALTER）。后果是**静默的**两件事：
+    //   · `space_crypto::space_kind` 的 SQL 读失败被 `unwrap_or(Unknown)` 吞掉 ⇒ 面板里**每个空间
+    //     都显示"未分类"**、闸门对它们**一律放行**（看着一切正常）；
+    //   · `set_space_kind` 直接报 `no such column: kind` ⇒ 分类**根本改不了**（闸门永远不生效）。
+    // 判据 `meta_migrate_adds_the_kind_column_to_an_existing_workspaces_table` 钉的就是"老库能补上"——
+    // 光靠"新建库"的夹具永远抓不到这一类（当时 11 条空间判据全绿就是这么来的）。
+    let has_kind: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'kind'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_kind == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
+    }
     // sync_history.items was added later; backfill on pre-existing meta dbs.
     let has_items: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('sync_history') WHERE name = 'items'",

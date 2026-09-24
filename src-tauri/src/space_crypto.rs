@@ -721,6 +721,71 @@ mod tests {
         assert_eq!(sync_gate(&plain, SpaceKind::Unknown), SyncGate::AllowedUnclassified);
     }
 
+    /// ★★ **老 meta.db 必须补上 `kind` 列**（owner 2026-09-24 现场抓到的真 bug）。
+    ///
+    /// 现场（截图）：改分类报 `no such column: kind`，而面板里**每个空间都显示"未分类"**。
+    /// 根因不是这一片：那个列只写在 `meta_migrate` 的 `CREATE TABLE IF NOT EXISTS workspaces` 里，
+    /// 而**老库已经有那张表** ⇒ 建表语句是 no-op ⇒ 列永远补不上（`encrypted`/`cipher_format` 当初都配了
+    /// 幂等 ALTER，`kind` 漏了）。后果是**静默**的：`space_kind` 的 SQL 错误被 `unwrap_or(Unknown)`
+    /// 吞掉 ⇒ "改不了分类"看起来像"还没分类"，闸门于是对所有空间放行。
+    ///
+    /// ⚠️ 为什么当时 11 条空间判据全绿：它们都在**全新的** meta.db 上跑（`CREATE TABLE` 一步到位）
+    /// ⇒ 这一类"只有老库才会中"的迁移缺陷**天然抓不到**。这条判据**刻意造一张老表**。
+    #[test]
+    fn an_old_meta_db_gets_the_kind_column_so_classification_actually_sticks() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-oldmeta-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        // ① 造"老库"：meta.db 的 workspaces **没有 kind 列**（＝ 2026-09-23 之前建的库）。
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let m = Connection::open(crate::db::meta_path(&dir)).unwrap();
+            m.execute_batch(
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, theme TEXT, \
+                 icon TEXT NOT NULL DEFAULT '', sort_order REAL NOT NULL DEFAULT 0, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deleted_at INTEGER, \
+                 encrypted INTEGER NOT NULL DEFAULT 0, cipher_format INTEGER NOT NULL DEFAULT 0);\
+                 INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('old-a', '老库', 1, 1);",
+            )
+            .unwrap();
+        }
+
+        // ② 正常启动路径：meta 迁移（幂等补列）→ 再开一个空间连接（它会 ATTACH meta）。
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("old-a", &dir).unwrap();
+
+        // ③ 列真的补上了。⚠️ 直接**读那一列**，别用 `pragma_table_info('meta.workspaces')`：
+        //    带 schema 的名字在 table-valued pragma 里要么报错要么返回空（我第一版就踩了这个，
+        //    于是"探针"红得毫无意义）；而"能不能 SELECT 到 kind"与现场那句
+        //    `no such column: kind` 本来就是同一件事。
+        let probe: Result<String, _> = c.query_row(
+            "SELECT COALESCE(kind, '') FROM meta.workspaces WHERE id = 'old-a'",
+            [],
+            |r| r.get(0),
+        );
+        assert_eq!(
+            probe.unwrap(),
+            "",
+            "★ 老 meta.db 缺 kind 列 ⇒ 分类改不了、闸门永远放行（而且是静默的）"
+        );
+
+        // ④ 而且分类**真的改得动、读得回**（这才是用户在面板上做的那个动作）
+        set_space_kind(&c, "old-a", SpaceKind::Personal).unwrap();
+        assert_eq!(space_kind(&c, "old-a"), SpaceKind::Personal);
+        // ⑤ 补列的默认值是空串＝未分类（老库行为一字不变：闸门对未分类一律放行）
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES ('old-b', '另一个老空间', 1, 1)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(space_kind(&c, "old-b"), SpaceKind::Unknown);
+
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 分类标记的读写：认不出来 ⇒ `Unknown`（**不猜**）；写不存在的空间 ⇒ 报错。
     #[test]
     fn space_kind_round_trips_and_unknown_values_are_not_guessed() {
