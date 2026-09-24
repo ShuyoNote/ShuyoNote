@@ -1421,7 +1421,7 @@ function AboutPane() {
 }
 
 // 独立设置中心：左侧标签栏 + 右侧内容。把原先散落在主题弹层里的
-// 外观 / 插件 / 端到端加密，以及 AI 配置统一收口，避免「危险开关藏在
+// 外观 / 插件 / 空间隐私与会话锁定，以及 AI 配置统一收口，避免「危险开关藏在
 // 调色板里」这种语义错位。
 export function SettingsDialog() {
   const { t } = useTranslation();

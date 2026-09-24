@@ -8,7 +8,11 @@
 import { api } from "./api";
 
 export type VaultState = {
-  /** 是否已开启端到端加密。 */
+  /**
+   * 本机**有没有加密空间**（读的是内核给的"活动空间"读数）。
+   * ⚠️ 加密是**按空间**的（owner 第三轮拍板后只剩这一条路）⇒ 它**不是**"整个应用开没开加密"；
+   * 界面靠 `enabled && locked` 决定要不要出解锁屏。
+   */
   enabled: boolean;
   /** 本次会话是否需要口令才能读库（启动默认锁定，`PRAGMA key` 没落盘）。 */
   locked: boolean;

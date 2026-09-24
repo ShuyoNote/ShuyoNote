@@ -142,11 +142,12 @@ describe("加密锁定的启动闸门", () => {
 
   it("解锁失败不改变状态：仍然锁定，错误照常抛出给界面显示", async () => {
     mocks.status.mockResolvedValue({ enabled: true, locked: true });
-    mocks.unlockEncryption.mockRejectedValue(new Error("口令不正确"));
+    // ★ 内核文案（owner 第三轮拍板后）：口令对不对由**解盒子**回答
+    mocks.unlockEncryption.mockRejectedValue(new Error("打不开（口令不对或盒子被改过）"));
     await render();
 
     await act(async () => {
-      await expect(unlockVault("错的")).rejects.toThrow("口令不正确");
+      await expect(unlockVault("错的")).rejects.toThrow("打不开");
     });
 
     expect(vaultState().locked, "口令不对就不能变成已解锁").toBe(true);
