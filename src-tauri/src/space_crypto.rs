@@ -279,6 +279,59 @@ pub fn migrate_legacy_space_into_keyring(
     Ok(true)
 }
 
+/// ★★ **C 第二半：把"旧钥匙"换成真随机的空间钥匙**（owner 拍板 C=1：先备份、失败报错、不做双读）。
+///
+/// 与第一半的区别：第一半只是"把旧钥匙装进袋子"（不动数据）；这一步要**真的重加密那个库**，
+/// 所以：① **先留一份备份**（`<space>.db.pre-rotate.bak`，覆盖式）；② 两次转换
+/// （旧钥匙解 ⇒ 新随机钥匙写）任何一步失败 ⇒ **停住报错**并把备份路径说给用户；
+/// ③ 成功后**才**换盒子（顺序：先备份 → 转换 → 换盒子，失败时旧盒子仍指向旧钥匙、库也回到旧钥匙那一版）。
+///
+/// ⚠️ 转换前必须让开这个空间的连接（Windows 文件占用 ⇒ `os error 5`）。
+/// 幂等性说明：**轮换本身不是幂等的**（每调一次就是换一把新钥匙）；幂等的是"失败后状态不变"——
+/// 失败时库与盒子都还在旧钥匙那一版（判据钉的就是这个）。
+pub fn rotate_legacy_space_to_random_key(
+    conn: &Connection,
+    app_data_dir: &Path,
+    space_id: &str,
+) -> Result<[u8; 32], String> {
+    let path = crate::db::space_db_path(app_data_dir, space_id);
+    if !crate::security::space_db_is_encrypted(&path) {
+        return Err(format!("空间「{space_id}」的库不是密文 ⇒ 没什么可轮换的"));
+    }
+    let mut kr = keyring().ok_or("钥匙袋不存在：先把旧钥匙迁进来（第一半）")?;
+    let old = kr
+        .unwrap_key(&session_master().ok_or("会话未解锁：先输口令再轮换")?, space_id)
+        .map_err(|e| format!("取不出旧的空间钥匙（不能在没有旧钥匙的情况下重加密）：{e}"))?;
+
+    // ① 先备份（**失败也要留下它**；覆盖式，避免备份文件无限堆积）
+    let backup = path.with_extension("db.pre-rotate.bak");
+    std::fs::copy(&path, &backup)
+        .map_err(|e| format!("轮换前备份失败（未做任何改动）：{e}"))?;
+
+    // ② 两次转换：旧钥匙 ⇒ 明文（中间态只短暂存在）⇒ 新随机钥匙
+    let new_key = random_space_key();
+    if let Err(e) = crate::security::convert_space_db(&path, false, Some(&old)) {
+        return Err(format!(
+            "轮换失败在「解密到明文」这一步：{e}（备份在 {}，库未被破坏）",
+            backup.display()
+        ));
+    }
+    if let Err(e) = crate::security::convert_space_db(&path, true, Some(&new_key)) {
+        // 尽量把它开回旧钥匙那一版（明文中间态不能留着）
+        let _ = crate::security::convert_space_db(&path, true, Some(&old));
+        return Err(format!(
+            "轮换失败在「用新钥匙加密」这一步：{e}（已尽力回退到旧钥匙；备份在 {}）",
+            backup.display()
+        ));
+    }
+
+    // ③ 换盒子（到这一步为止，库已经是新钥匙那一版了）
+    kr.wrap(&session_master().ok_or("会话未解锁")?, space_id, &new_key)?;
+    store_keyring(conn, &kr)?;
+    crate::security::set_space_encrypted_marked(conn, space_id, true)?;
+    Ok(new_key)
+}
+
 /// 读这个空间的**本地分类标记**（读不到/没那条 ⇒ `Unknown`）。
 pub fn space_kind(c: &Connection, space_id: &str) -> SpaceKind {
     c.query_row(
@@ -742,6 +795,79 @@ mod tests {
 
         // ④ 幂等：再来一次 ⇒ Ok(false)，不重复做
         assert!(!migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap());
+
+        crate::security::tests_set_session_key(None);
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ C 第二半：**轮换成真随机的空间钥匙**（先备份、失败不动、之后仍打得开）。
+    #[test]
+    fn rotating_to_a_random_key_backs_up_first_and_keeps_the_space_readable() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-rotate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        // 造"今天那种"已加密空间：旧应用级钥匙加密 ＋ 一份数据
+        let legacy = crate::keyring::random_space_key();
+        let path = crate::db::space_db_path(&dir, "rot-a");
+        {
+            let a = crate::db::open_space_conn_at("rot-a", &dir).unwrap();
+            a.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
+                 VALUES ('p1', 'rot-a', '机密', '{\"root\":{}}', '', 'page', 0, 1, 1, NULL)",
+                [],
+            )
+            .unwrap();
+            a.close().unwrap();
+        }
+        crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
+        let c = crate::db::open_space_conn_at("rot-b", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        crate::security::tests_set_session_key(None);
+
+        // 前置：用第一半把旧钥匙迁进袋子
+        let mut kr = Keyring::new();
+        let master = kr.kdf.derive_master("我家猫叫mimi").unwrap();
+        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
+        set_keyring_for_test(Some(kr));
+        set_session_master(Some(master)).unwrap();
+        crate::security::tests_set_session_key(Some(legacy));
+        assert!(migrate_legacy_space_into_keyring(&c, &dir, "rot-a").unwrap());
+
+        // ① 明文空间 ⇒ Err（没什么可轮换）
+        let err = rotate_legacy_space_to_random_key(&c, &dir, "rot-b").unwrap_err();
+        assert!(err.contains("不是密文"), "{err}");
+
+        // ② 轮换：钥匙真的换了 ＋ 留了备份
+        let new_key = rotate_legacy_space_to_random_key(&c, &dir, "rot-a").unwrap();
+        assert_ne!(new_key, legacy, "轮换要真的换一把");
+        assert_eq!(keyring().unwrap().unwrap_key(&master, "rot-a").unwrap(), new_key, "盒子里是新钥匙");
+        let backup = path.with_extension("db.pre-rotate.bak");
+        assert!(backup.exists(), "先备份：备份文件要在");
+        // ③ 新钥匙打得开（库真被重加密了），且数据还在
+        {
+            let probe = Connection::open(&path).unwrap();
+            crate::security::key_space_conn(&probe, &path).unwrap();
+            let n: i64 = probe.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1, "★ 重加密往返之后数据没丢");
+        }
+        // ④ 旧钥匙**打不开**了（证明真的换了钥匙，而不是只换了个盒子）
+        {
+            let probe = Connection::open(&path).unwrap();
+            let _ = probe.execute_batch(&format!(
+                "PRAGMA key = \"x'{}';\";",
+                crate::crypto::key_hex(&legacy)
+            ));
+            assert!(
+                probe.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err(),
+                "旧钥匙不该还能开"
+            );
+        }
 
         crate::security::tests_set_session_key(None);
         set_keyring_for_test(None);
