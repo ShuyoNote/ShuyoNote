@@ -620,6 +620,23 @@ wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext
 - 其余七条同族：凡出现 `set_encryption_impl(...)` / `enable_meta(...)` / `ENC_ENABLED` /
   `ENC_SALT` / `ENC_VERIFY` / `SESSION_KEY` 的**造状态**与**断言**，都按上面两条的路子换成"按空间"。
 
+**★ 第二次试探（改共享助手 `enable_meta` 一处 ⇒ 想一次翻 3 条）：更糟，红到 14 条 ⇒ 也回退了。**
+多出来的 5 条说明耦合比名单更深（它们间接依赖那个助手造出的应用级状态）：
+
+```
+lock_gates_key_and_sync / open_space_conn_reports_an_actionable_error_for_a_mismatched_page_db /
+encrypted_db_roundtrip_and_sniff / key_space_conn_prefers_the_space_key_from_the_keyring /
+lock_closes_connection_unlock_reopens / convert_space_db_encrypt_back_to_readable /
+national_crypto_covers_all_three_paths_and_keeps_the_library_key_unchanged /
+open_space_conn_reads_encrypted_space / convert_space_db_is_idempotent_for_already_encrypted /
+per_space_switch_and_startup_gate_look_at_the_space_itself / payload_roundtrip_when_enabled /
+space_format_is_recorded_on_enable_and_cleared_on_disable / space_guard_allows_v2_in_the_sm_build /
+wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext
+```
+
+⇒ **结论（两次实测后）**：这批**不能靠"改一处"省**，只能**逐条改写**（14 条），
+并且**改写与生产代码改动同一批**做。⇒ 它需要一次**专门、完整的**预算，不适合夹在别的工作之间做。
+
 1. **解锁改从"钥匙袋"派生**：`unlock_encryption_impl` 不再用应用级盐/哨兵，改为
    用袋子记的 KDF 参数推主密钥；**错口令靠解盒子的 AEAD 认**（报"打不开（口令不对或盒子被改过）"）。
    判据：错口令 ⇒ 明确报错（且**不是**"口令不正确"这种旧文案）；正确口令 ⇒ 能解出盒子里的空间钥匙；
