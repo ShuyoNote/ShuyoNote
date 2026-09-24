@@ -587,6 +587,25 @@ B 自己的库**真的**变成密文，而且到这一步闸门才放行（分�
 
 **分阶段（每阶段自带判据；每阶段跑满门禁、全绿再推）**：
 
+**★ 2026-09-24 晚：动手试了阶段 2 的"安全那半"（wire 去掉应用级兜底），当场红了 9 条既有判据 ⇒
+按纪律回退（不留半截、不推红的 tip），但把名单钉死在下面 —— 这就是"整批"的具体内容，下一轮照它改**：
+
+```
+payload_roundtrip_when_enabled
+encrypted_db_roundtrip_and_sniff
+national_crypto_covers_all_three_paths_and_keeps_the_library_key_unchanged
+convert_space_db_is_idempotent_for_already_encrypted
+lock_gates_key_and_sync
+space_format_is_recorded_on_enable_and_cleared_on_disable
+space_guard_allows_v2_in_the_sm_build
+wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext
+（＋本轮新加的那条 a_ciphertext_space_without_a_box_is_refused_… 也要在同一批里调通）
+```
+⇒ **结论：阶段 1 与阶段 2 必须与这 9 条的改写同批提交** —— 它们都是"**用应用级加密造状态，
+再走 wire/解锁路径**"的形态，脱开应用级那把钥匙就必然要改写。
+我自己动手那条改法本身是对的（`wire_keys_for_conn` 里"密文文件 ＋ 无盒子 ⇒ `Err("…应用级加密已不再支持…")`"），
+已经在本轮验证到"红在哪"，下一轮直接从"改写这 9 条"开始。
+
 1. **解锁改从"钥匙袋"派生**：`unlock_encryption_impl` 不再用应用级盐/哨兵，改为
    用袋子记的 KDF 参数推主密钥；**错口令靠解盒子的 AEAD 认**（报"打不开（口令不对或盒子被改过）"）。
    判据：错口令 ⇒ 明确报错（且**不是**"口令不正确"这种旧文案）；正确口令 ⇒ 能解出盒子里的空间钥匙；
