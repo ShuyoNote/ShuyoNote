@@ -402,7 +402,27 @@ export interface CommandMap {
     args: { args: { space_id: string; passphrase?: string } };
     result: number[];
   };
-  disable_space_encryption: { args: { args: { page_id: string } }; result: null };
+  disable_space_encryption: { args: { args: { space_id: string } }; result: null };
+  // 隐私边界 A=3（2026-09-24）：空间分类的**手动出口**（正常路径由"本地新建 ⇒ 个人空间"自动落）。
+  // ⚠️ 命令面**窄进**：只接受 "personal" / "team" / ""（空串＝取消分类），别的串**直接报错** ——
+  //    界面把 team 拼错时不许被静默当成"取消分类"（那会让闸门在用户以为已归类时**松开**）。
+  // ⚠️ 桌面专属（同下面那条读数面）：Web 侧没有钥匙柜，分类在 Web 上管不到任何东西。
+  set_space_kind: { args: { args: { space_id: string; kind: string } }; result: null };
+  // ②b 的读数面（2026-09-24）：**一次读全所有空间**的分类 ＋ 加密状态 ＋ 闸门裁决。
+  // `kind` 是 "personal" / "team" / ""（未分类）—— 未分类的**照样列出来**（它们正是"闸门没管到"的那批）。
+  // ⚠️ 桌面专属：Web 没有钥匙柜，`in_keyring` 恒假、`encrypted_on_disk` 无从嗅探 ⇒ 给了也是误导。
+  space_security_overview: {
+    args: undefined;
+    result: Array<{
+      space_id: string;
+      kind: string;
+      encrypted_on_disk: boolean;
+      in_keyring: boolean;
+      key_available: boolean;
+      gate: { allow: boolean; unclassified: boolean; reason: string };
+    }>;
+  };
+
   // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
   // ⚠️ 与块级那两条（`list_page_conflicts` / `resolve_page_conflict`）**不同族**：块级可逐块选一侧；
   //    页级是"两条**独立血统**撞上" —— Yjs 结构上合不了（S1 红线）⇒ 只有

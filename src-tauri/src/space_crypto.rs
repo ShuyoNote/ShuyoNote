@@ -381,6 +381,60 @@ pub fn space_status(app_data_dir: &Path, space_id: &str) -> SpaceCryptoStatus {
     }
 }
 
+/// ★ **一个空间的完整隐私读数**（②b 的界面就靠这一个列表）：分类 ＋ 加密状态 ＋ 闸门裁决。
+///
+/// 为什么合成一条：界面要同时说清"这是个人还是团队空间、加没加密、现在能不能绑同步"，
+/// 而这三条答案今天分散在 `meta.workspaces.kind`、库文件头、钥匙袋里。让界面自己拼 ⇒
+/// 界面就得知道"钥匙袋"这个东西存在 ⇒ **口径漏到界面层**。这里一次读全，界面只做显示。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SpaceSecurityView {
+    pub space_id: String,
+    /// `"personal"` / `"team"` / `""`（未分类 —— 界面要**如实**显示"没分类"，不许默认成个人）。
+    pub kind: String,
+    pub encrypted_on_disk: bool,
+    pub in_keyring: bool,
+    pub key_available: bool,
+    /// 闸门裁决（含"放行但这个空间没分类"那一种）。
+    pub gate: SyncGateView,
+}
+
+/// 列出**当前所有空间**的隐私读数。
+///
+/// ⚠️ 未分类的空间**照样列出来**（不许为了列表好看把它们藏掉）：它们正是"闸门没管到"的那批，
+/// 藏起来就等于把"这道闸门今天还没真正生效"这件事从界面上抹掉。
+/// 范围与 `workspaces::list_workspaces` 同口径（未删除；排序也一致）。
+/// 读不到空间列表 ⇒ `Err`（不静默给空列表：空列表看起来像"这台机器上没有空间"）。
+pub fn space_security_views(
+    conn: &Connection,
+    app_data_dir: &Path,
+) -> Result<Vec<SpaceSecurityView>, String> {
+    let ids: Vec<String> = conn
+        .prepare(
+            "SELECT id FROM meta.workspaces WHERE deleted_at IS NULL \
+             ORDER BY sort_order ASC, created_at ASC, id ASC",
+        )
+        .map_err(|e| e.to_string())?
+        .query_map([], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids
+        .into_iter()
+        .map(|id| {
+            let st = space_status(app_data_dir, &id);
+            let kind = space_kind(conn, &id);
+            SpaceSecurityView {
+                space_id: id,
+                kind: kind.as_str().to_string(),
+                encrypted_on_disk: st.encrypted_on_disk,
+                in_keyring: st.in_keyring,
+                key_available: st.key_available,
+                gate: sync_gate_view(&st, kind),
+            }
+        })
+        .collect())
+}
+
 /// 这个连接**是不是正开着**这个空间的库（决定转换前要不要先让开 —— Windows 文件占用）。
 fn holds_space(conn: &Connection, space_id: &str) -> bool {
     conn.path()
@@ -699,6 +753,63 @@ mod tests {
         assert!(v.allow && !v.unclassified, "团队：放行且**不算未分类**");
         let v = sync_gate_view(&plain, SpaceKind::Unknown);
         assert!(v.allow && v.unclassified && !v.reason.is_empty(), "未分类：放行但**要说出来**");
+    }
+
+    /// ★★ ②b 的读数面：一个列表里同时给出**分类 ＋ 加密状态 ＋ 闸门裁决**，而且
+    /// **未分类的空间不许被藏掉**（它们正是"闸门没管到"的那批），已删除的空间不许出现。
+    #[test]
+    fn the_security_overview_lists_every_space_including_the_unclassified_ones() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-overview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("ov-a", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+
+        // ① 个人 ＋ 没加密（走新建那条路）⇒ 该**拦**
+        crate::workspaces::insert_new_local_space(&c, "ov-p", "个人甲", "blue", 5.0, 1).unwrap();
+        // ② 团队 ⇒ **免检**
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at, kind, sort_order) \
+             VALUES ('ov-t', '团队乙', 2, 2, 'team', 6.0)",
+            [],
+        )
+        .unwrap();
+        // ③ 未分类（存量库的形状：kind 是空串）
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at, sort_order) \
+             VALUES ('ov-u', '老库丙', 3, 3, 7.0)",
+            [],
+        )
+        .unwrap();
+        // ④ 已删除的**不许**出现在读数里（与 `list_workspaces` 同口径）
+        c.execute(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at, sort_order, deleted_at) \
+             VALUES ('ov-d', '删掉的', 4, 4, 8.0, 9)",
+            [],
+        )
+        .unwrap();
+
+        let views = space_security_views(&c, &dir).unwrap();
+        let ids: Vec<&str> = views.iter().map(|v| v.space_id.as_str()).collect();
+        assert_eq!(ids, vec!["ov-p", "ov-t", "ov-u"], "三个都在、删掉的不在（按 sort_order）");
+
+        let p = &views[0];
+        assert_eq!(p.kind, "personal");
+        assert_eq!(p.kind.as_str(), SpaceKind::Personal.as_str(), "视图里的串与内部口径是同一个");
+        assert!(!p.gate.allow && !p.gate.reason.is_empty(), "个人＋没加密 ⇒ 拦且有理由");
+        let t = &views[1];
+        assert_eq!(t.kind, "team");
+        assert!(t.gate.allow && !t.gate.unclassified, "团队 ⇒ 免检放行");
+        let u = &views[2];
+        assert_eq!(u.kind, "", "★ 未分类**照样列出来**，而不是被默认成个人");
+        assert!(u.gate.allow && u.gate.unclassified, "★ 放行，但要把「没管到」说出来");
+        assert!(u.gate.reason.contains("没分类"), "{}", u.gate.reason);
+
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ★★ A=3（2026-09-24，owner 拍板）：**分类由入口决定** —— 本地新建的空间是**个人空间**，

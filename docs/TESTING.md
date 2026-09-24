@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 253 / web 249 / CommandMap 255
+门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 249 / CommandMap 257
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -185,6 +185,29 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 
 汇总里刻意区分 **`skipped`（没跑）** 与 `passed`：缺环境变量的门禁显示为"显式跳过"并列出原因，
 加 `--strict` 时按失败计。**空白不许冒充绿。**
+
+## Windows 上"红"的两种假象（2026-09-24 实测）
+
+`scripts\win-cargo-test.ps1` 跑**负例**时 SQLCipher 会往 **stderr** 打诊断：
+
+```
+ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+ERROR CORE sqlite3Codec: error decrypting page 1 data: 1
+```
+
+这正是"错钥匙必须解不开"那条判据在生效的**证据**，不是红。但 PowerShell 会把原生命令的 stderr
+记成 `NativeCommandError`，于是**外层退出码可能是 1，而测试全绿**（同一条命令去掉 stderr 噪声后
+exit 0 —— 已实测）。
+
+判绿看这两行，**不要**看外层退出码：
+
+```
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 583 filtered out
+win-cargo-test: test exe exit code = 0
+```
+
+反过来同样成立：`test exe exit code != 0` 才是真红。**不许**因为"反正外层是 1"就把真红当噪声 ——
+这两个方向都得认，否则这条注释本身就成了绕过门禁的借口。
 
 ## flake 与重试（不许静默重试）
 

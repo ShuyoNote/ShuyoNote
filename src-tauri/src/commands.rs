@@ -433,6 +433,15 @@ pub struct SpaceEncryptionArgs {
     pub passphrase: Option<String>,
 }
 
+/// 「只要一个空间 id」的载荷（按空间禁用这类**不需要口令**的命令用）。
+///
+/// ⚠️ 为什么不为省事复用 `PageStateArgs`：那条的字段名是 `page_id`，而这里装的是**空间 id** ——
+///    名字与语义不符的载荷正是"分层被慢慢磨穿"的那类东西（与 `doc_json` 同一处置）。
+#[derive(serde::Deserialize)]
+pub struct SpaceIdArgs {
+    pub space_id: String,
+}
+
 /// ★ 隐私边界第 1 步的命令面：**按空间加密**这一个空间（只换它自己的库）。
 ///
 /// 与旧的 `set_encryption`（应用级：把所有空间一起换成同一把钥匙）**不是一条路** ——
@@ -450,10 +459,56 @@ pub fn enable_space_encryption(
 
 /// ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子（别的空间不受影响）。
 #[tauri::command]
-pub fn disable_space_encryption(db: State<Db>, args: PageStateArgs) -> Result<(), String> {
+pub fn disable_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<(), String> {
     let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
     let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    crate::space_crypto::disable_space(&mut c, &dir, &args.page_id)
+    crate::space_crypto::disable_space(&mut c, &dir, &args.space_id)
+}
+
+/// 分类标记的载荷：`kind` 取 `"personal"` / `"team"` / `""`（空串 ＝ 取消分类）。
+#[derive(serde::Deserialize)]
+pub struct SpaceKindArgs {
+    pub space_id: String,
+    pub kind: String,
+}
+
+/// ★ 隐私边界 A=3 的**手动出口**：把某个空间标成个人/团队（或取消分类）。
+///
+/// 正常路径**不用点它**（本地新建 ⇒ 自动 `personal`，见 `workspaces::insert_new_local_space`）。
+/// 它存在是因为**存量空间**（分类列落地之前建的）与团队流程之外建的空间没有分类，
+/// 而"没分类" ＝ 闸门放行 ＝ 那道闸门对它们**没生效**。想让它生效，就得有个地方能标。
+///
+/// ⚠️ 与内部的 `SpaceKind::parse` **刻意不同口径**：`parse` 对存量数据是**宽进**
+/// （认不出来就成了未分类 —— 不猜），命令面是**窄进**（认不出的字符串直接报错）。
+/// 理由：前者读的是别人写进库里的数据，后者读的是界面传来的参数 —— 界面把 `team` 拼错成
+/// `teams` 时若被静默当成"取消分类"，闸门会在用户以为"已归类"的情况下**松开**，那是静默失败。
+#[tauri::command]
+pub fn set_space_kind(db: State<Db>, args: SpaceKindArgs) -> Result<(), String> {
+    let kind = match args.kind.trim().to_ascii_lowercase().as_str() {
+        "" => crate::space_crypto::SpaceKind::Unknown,
+        "personal" => crate::space_crypto::SpaceKind::Personal,
+        "team" => crate::space_crypto::SpaceKind::Team,
+        other => {
+            return Err(format!(
+                "认不出的空间分类「{other}」：只接受 personal / team / 空串（空串＝取消分类）"
+            ))
+        }
+    };
+    let c = conn(&db);
+    crate::space_crypto::set_space_kind(&c, &args.space_id, kind)
+}
+
+/// ★ ②b 的读数面：**一次读全所有空间**的分类 ＋ 加密状态 ＋ 闸门裁决。
+///
+/// 为什么是一条命令而不是让界面自己拼三条：见 `space_crypto::SpaceSecurityView` 的说明
+/// （拼三条 ＝ 界面得知道钥匙袋存在 ⇒ 口径漏到界面层）。
+#[tauri::command]
+pub fn space_security_overview(
+    db: State<Db>,
+) -> Result<Vec<crate::space_crypto::SpaceSecurityView>, String> {
+    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let c = conn(&db);
+    crate::space_crypto::space_security_views(&c, &dir)
 }
 
 /// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：

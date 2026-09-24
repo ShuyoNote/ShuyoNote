@@ -24,6 +24,24 @@ const invoke = <K extends keyof CommandMap>(
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult } from "./platform/commands";
 
+/** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
+export type SpaceKind = "personal" | "team" | "";
+
+/** ★ 一个空间的**完整隐私读数**（与 Rust `space_crypto::SpaceSecurityView` 一一对应）。 */
+export interface SpaceSecurityView {
+  space_id: string;
+  /** `""` ＝ 未分类 ⇒ 闸门对它**没生效**（界面要如实显示，不许默认成个人空间）。 */
+  kind: SpaceKind;
+  /** 库文件本身是不是密的（嗅文件头）。 */
+  encrypted_on_disk: boolean;
+  /** 钥匙袋里有没有它的盒子。 */
+  in_keyring: boolean;
+  /** 现在拿得到钥匙吗（袋里有它 ＋ 会话已解锁）。 */
+  key_available: boolean;
+  /** 闸门裁决：`allow` 能绑同步吗；`unclassified` 放行了但**没管到**；`reason` 拦的原因。 */
+  gate: { allow: boolean; unclassified: boolean; reason: string };
+}
+
 /** 聚合邮箱的 IMAP 账号配置（与后端 email::EmailAccountArgs 对应）。 */
 export interface EmailAccount {
   host: string;
@@ -296,7 +314,34 @@ export const api = {
     ),
   /** ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子。桌面专属。 */
   disableSpaceEncryption: (spaceId: string) =>
-    invoke("disable_space_encryption", { args: { page_id: spaceId } }),
+    invoke("disable_space_encryption", { args: { space_id: spaceId } }),
+  /**
+   * ★ 隐私边界 A=3（2026-09-24）：把某个空间标成个人/团队（`""` ＝ **取消分类**）。**桌面专属**。
+   *
+   * 正常路径**不用点它**（本地新建 ⇒ 自动 `personal`）；它存在是为了**存量空间**与团队流程之外
+   * 建的空间 —— "没分类"＝闸门放行＝闸门对它们**没生效**，想让它生效就得有个地方能标。
+   * ⚠️ 认不出的 `kind`（例如拼错的 `"teams"`）**会抛**，不会被静默当成"取消分类"。
+   */
+  setSpaceKind: (spaceId: string, kind: SpaceKind) =>
+    invoke("set_space_kind", { args: { space_id: spaceId, kind } }),
+  /**
+   * ★ ②b 的读数面（2026-09-24）：**一次读全所有空间**的分类 ＋ 加密状态 ＋ 闸门裁决。
+   *
+   * ⚠️ 未分类的空间**照样在列表里**（`kind === ""`）：它们正是闸门**没管到**的那批，
+   * 界面要如实显示成"未分类"，**不许**默认成个人空间（那会把缺口显示成"已覆盖"）。
+   */
+  spaceSecurityOverview: (): Promise<SpaceSecurityView[]> =>
+    invoke("space_security_overview").then((rows) =>
+      rows.map((r) => ({
+        space_id: r.space_id,
+        // 认不出来的值 ⇒ `""`（与 Rust 读侧同口径：**不猜**）
+        kind: (r.kind === "personal" || r.kind === "team" ? r.kind : "") as SpaceKind,
+        encrypted_on_disk: r.encrypted_on_disk,
+        in_keyring: r.in_keyring,
+        key_available: r.key_available,
+        gate: r.gate,
+      })),
+    ),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

@@ -68,6 +68,13 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   // 在 `web.ts` 里再实现一遍"启用/禁用加密"等于**假装浏览器有钥匙**（比不实现危险得多）。
   ["enable_space_encryption", "桌面专属：按空间加密那一个空间（Web 无钥匙柜；加密空间在 Web 上被明确拒收）"],
   ["disable_space_encryption", "同上（另一半）：按空间禁用（只把它自己的库换回明文）"],
+  // 隐私边界 A=3 ＋ ②b 的读数面（2026-09-24）：**桌面专属**。
+  // 分类（`set_space_kind`）在 Web 上管不到任何东西（Web 没有钥匙柜 ⇒ 没有"按空间加密"这回事，
+  // 闸门的输入没有下游）；读数（`space_security_overview`）在 Web 上更是**误导**：
+  // `in_keyring` 恒假、`encrypted_on_disk` 无从嗅探（sql.js 手里没有文件头）。
+  // ⚠️ 这不是"Web 也做到了"，而是**记下缺口**：闸门今天在 Web 上不生效（交接文档 §5）。
+  ["set_space_kind", "桌面专属：空间分类标记（Web 无钥匙柜 ⇒ 分类在那里没有下游）"],
+  ["space_security_overview", "桌面专属：隐私读数（Web 无钥匙柜 ⇒ 读数会是误导）"],
 ]);
 
 const missingWeb = [...rustCommands]

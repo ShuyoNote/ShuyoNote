@@ -550,6 +550,13 @@ pub fn run() {
             // ⚠️ 登记为**桌面专属**：Web 平台没有钥匙柜（`ciphertextSniff` 那条会把密文拒掉）。
             commands::enable_space_encryption,
             commands::disable_space_encryption,
+            // 隐私边界 A=3 ＋ ②b 的读数面（2026-09-24）：空间分类的**手动出口**
+            //（正常路径由"本地新建 ⇒ personal"自动落）＋ **一次读全**的隐私读数
+            //（分类 ＋ 加密状态 ＋ 闸门裁决 —— 界面不用知道"钥匙袋"存在）。
+            // ⚠️ 同样登记为**桌面专属**：Web 没有钥匙柜 ⇒ `in_keyring`/`encrypted_on_disk` 读不出来，
+            //    真给它一份读数只会是**误导**（缺口已记在交接文档 §5，不是"已做到"）。
+            commands::set_space_kind,
+            commands::space_security_overview,
             // 桌面「近实时」流通道（2026-09-23 第 48 轮）：订 SSE 变更流、把"有变更"发成事件，
             // **拉取仍由前端发起**（这样自动经过 C2 闸门/防重入/状态行）。
             // ⚠️ 这三条**登记为 web 专属**（浏览器自带 SSE，Web 侧是 `useSyncStream.ts` 自己那条流）。
