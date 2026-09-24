@@ -361,6 +361,22 @@ export const api = {
    */
   pullSpaceKeyring: (workspaceId: string, overwrite = false) =>
     invoke("pull_space_keyring", { args: { workspace_id: workspaceId, overwrite } }),
+  /**
+   * ★ ① 第一半（2026-09-24）：把"旧的应用级钥匙"装进这个空间的盒子。**桌面专属**。
+   *
+   * **不动库文件一个字节**（把旧钥匙原样包成盒子 ⇒ 空间钥匙 == 旧钥匙）⇒ 安全、可重复调：
+   * 袋子里早就有它时返回 `false`（幂等）。什么时候用：库是密文、但钥匙还是"应用级那一把"。
+   */
+  migrateLegacySpaceEncryption: (spaceId: string) =>
+    invoke("migrate_legacy_space_encryption", { args: { space_id: spaceId } }),
+  /**
+   * ★ ① 第二半（2026-09-24）：把旧钥匙换成**真随机**的空间钥匙（**会重写库**）。**桌面专属**。
+   *
+   * ⚠️ 界面必须**两步确认**（与"关闭加密"同一条纪律）：库里那份会被重加密，
+   * 备份落在 `<space>.db.pre-rotate.bak`；失败会**停住报错并把备份路径说给你**（库回到旧钥匙那一版）。
+   */
+  rotateLegacySpaceEncryption: (spaceId: string) =>
+    invoke("rotate_legacy_space_encryption", { args: { space_id: spaceId } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

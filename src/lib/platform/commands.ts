@@ -460,6 +460,11 @@ export interface CommandMap {
     args: { args: { workspace_id: string; overwrite?: boolean } };
     result: SpaceKeyringOutcome;
   };
+  // ① 存量迁移（2026-09-24）：第一半＝把"旧的应用级钥匙"装进盒子（**不动库文件**，可重复调，
+  // 第二次返回 `false`）；第二半＝换成真随机钥匙（**会重写库**：先备份、失败报错、失败后状态不变）。
+  // ⚠️ **桌面专属**（登记进 `DESKTOP_ONLY_COMMANDS`）：Web 没有钥匙袋，也没有"应用级旧钥匙"这回事。
+  migrate_legacy_space_encryption: { args: { args: { space_id: string } }; result: boolean };
+  rotate_legacy_space_encryption: { args: { args: { space_id: string } }; result: null };
 
   // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
   // ⚠️ 与块级那两条（`list_page_conflicts` / `resolve_page_conflict`）**不同族**：块级可逐块选一侧；

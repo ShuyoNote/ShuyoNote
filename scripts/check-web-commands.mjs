@@ -80,6 +80,11 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   // 硬实现一遍＝让 Web 看起来也能做 E2EE 换设备，而它其实连钥匙柜都没有。
   ["push_space_keyring", "桌面专属：把本机钥匙袋的公开那一半推给同步服务（Web 无钥匙柜）"],
   ["pull_space_keyring", "桌面专属：从同步服务取回公开材料并装进本机（Web 无钥匙柜）"],
+  // ① 存量迁移（2026-09-24）：第一半＝把旧的应用级钥匙装进盒子（不动库文件）；
+  // 第二半＝换成真随机钥匙（会重写库，先备份）。**桌面专属**：Web 上没有钥匙袋，
+  // 也没有"应用级旧钥匙"这回事（那两个概念都活在桌面库与本地钥匙柜里）。
+  ["migrate_legacy_space_encryption", "桌面专属：把旧的应用级钥匙装进这个空间的盒子（Web 无钥匙袋）"],
+  ["rotate_legacy_space_encryption", "桌面专属：换成真随机空间钥匙（会重写库；Web 无钥匙袋）"],
 ]);
 
 const missingWeb = [...rustCommands]

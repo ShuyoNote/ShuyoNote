@@ -557,6 +557,11 @@ pub fn run() {
             //    真给它一份读数只会是**误导**（缺口已记在交接文档 §5，不是"已做到"）。
             commands::set_space_kind,
             commands::space_security_overview,
+            // ① 存量迁移的命令面（2026-09-24）：第一半＝把旧的应用级钥匙装进盒子（**不动库文件**）；
+            // 第二半＝换成真随机钥匙（**会重写库**：先备份、失败报错、失败后状态不变）。
+            // ⚠️ 桌面专属（同上面两条）：Web 没有钥匙袋，也没有"应用级旧钥匙"这回事。
+            commands::migrate_legacy_space_encryption,
+            commands::rotate_legacy_space_encryption,
             // 桌面「近实时」流通道（2026-09-23 第 48 轮）：订 SSE 变更流、把"有变更"发成事件，
             // **拉取仍由前端发起**（这样自动经过 C2 闸门/防重入/状态行）。
             // ⚠️ 这三条**登记为 web 专属**（浏览器自带 SSE，Web 侧是 `useSyncStream.ts` 自己那条流）。
