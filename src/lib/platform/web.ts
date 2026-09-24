@@ -2,6 +2,7 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
+import { ciphertextRefusalMessage, looksLikeCiphertext } from "../ciphertextSniff";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
@@ -833,6 +834,13 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
   const op = change.op;
   const entity = change.entity;
   const eid = change.entity_id;
+  // ★ B=甲（owner 拍板 2026-09-24）：**密文载荷不许当明文处理**。网页版没有钥匙 ⇒
+  //   认出密文就**明确拒绝并说清去哪儿**。今天那种"当坏 JSON ⇒ `p.id` 上抛一句
+  //   `Cannot read properties of null`"既看不懂、也没告诉用户该干什么；而"悄悄按明文落库"
+  //   更是直接破掉口径（见 `lib/ciphertextSniff.ts` 头注与数据可见边界 §0.5）。
+  if (looksLikeCiphertext(change.payload ?? "")) {
+    throw new Error(ciphertextRefusalMessage());
+  }
   if (entity === "page") {
     if (op === "delete") {
       store.run("DELETE FROM pages WHERE id = ?", [eid]);
