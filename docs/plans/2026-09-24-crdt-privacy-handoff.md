@@ -258,9 +258,43 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
   ＋ Android 目标）⇒ **Windows 上交叉编 vendored OpenSSL for Android 这条链本身不通**。
   ⚠️ 想手工复刻 Tauri 的交叉编译环境也不轻松：我直接跑那条 `cargo build --target aarch64-linux-android`
   时，卡在 `ring` 找不到 `aarch64-linux-android-clang`（缺 Tauri 会设的 `CC_…`/NDK PATH）。
-- ⇒ **结论（不再往这个兔子洞里钻）**：App 的 Android 包请在**本来就会出 Android 包的机器/流水线**上做
-  （他们那边是 Linux CI，这活在那儿是常规操作）。本机缺的不是 Python/Perl 这类单点，而是
-  "Windows ＋ NDK ＋ vendored OpenSSL" 这一整条链。
+- ~~⇒ **结论：本机出不了安卓包，请在 CI/会出包的机器上做**~~ ❌ **这个结论是错的，当天就自己推翻了**：
+  仓里 `docs/TESTING.md` §474–517 **早就写着本机出安卓包的完整配方**（2026-09-21 就打通了），
+  我前面是**在瞎试**。按配方跑**一次就成**，见下。
+
+**★★ 2026-09-24：按仓里的配方，**本机真的把安卓包出出来了**（全过程与读数）**
+
+配方（`docs/TESTING.md` §501–517，`init` 会重新生成 `gen/` ⇒ 之后每一步都要重跑）：
+```powershell
+node scripts/setup-local-perl.ps1        # 只抓"缺的那几个纯 Perl 模块"到 ~/.local-perl5/lib（不用装完整 Perl）
+$env:PERL5LIB = "$env:USERPROFILE\.local-perl5\lib"
+$env:PATH = "$env:PATH;C:\Program Files\Git\usr\bin"     # openssl 的 Makefile 要 sh
+$ndk = "…\ndk\29.0.13846066\toolchains\llvm\prebuilt\windows-x86_64\bin".Replace('\','/')
+# ★ 关键：工具链用**正斜杠**喂（否则 msys sh 把反斜杠吃掉 ⇒ clang 路径变 C:Users… 报 Error 127）
+foreach ($v in 'CC','AR','RANLIB') { … "${v}_aarch64_linux_android" = $ndk/clang.exe | llvm-ar.exe | llvm-ranlib.exe }
+$env:TARGET_CC/AR/RANLIB = 同上；$env:CFLAGS_aarch64_linux_android = "--target=aarch64-linux-android24"
+node_modules\.bin\tauri.CMD android init --ci
+node scripts/android-platform-verifier.mjs ; node scripts/android-mobile-shell.mjs ;
+node scripts/android-app-icon.mjs ; node scripts/stage-android-pdfium.mjs ;
+node scripts/patch-android-buildtask.mjs   # 本机那份 BuildTask.kt 会 `node tauri …` 找不到模块
+node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci
+```
+**本机读数**：`Finished 1 APK at … app-universal-release-unsigned.apk` ⇒ **53.8 MB**，exit 0。
+⚠️ 我另外用配置文件把 `beforeBuildCommand` 置空绕开了那个 pnpm 无 TTY 的坑（`dist/` 已是最新）。
+⚠️ 想手工复刻 Tauri 的环境**没用**：直接 `cargo build --target aarch64-linux-android` 会卡在
+`ring` 找不到 `aarch64-linux-android-clang`（缺 Tauri 设的那些 `CC_*`）——**必须走上面这条**。
+
+**签名与安装（也是现成的）**：keystore 在 `~/.shuyonote-release-keystore/`（含 `PASSWORD.txt`，
+README 里连命令都写好了）⇒ `zipalign -f -p 4` → `apksigner sign --ks … --ks-key-alias shuyonote`
+→ `apksigner verify --print-certs` 读数 **`6ee89e6f0f9326a40d3eac48b520c470d3fb6a7111a94fbe606510b489457a88`**
+（与文档里的正式指纹**逐字符一致**）→ `adb install -r -d` ⇒ **Success**（覆盖安装，数据没动）。
+
+**❌ 但"整体解锁"这次**还是没量到**，原因不是技术**：那台手机上**没人知道加密空间的主口令**
+⇒ 做不了一次成功解锁 ⇒ 那行 `[unlock]`（打在成功路径上）根本不会出现；owner 随后选择**卸载**该包
+（已执行，`Success`；按他的确认，手机上的 App 数据一并删除）。
+⇒ 下次要量它，得在**一台能自由摆弄的设备**上：自己新建一个加密空间（口令自定）再解锁，
+或者由知道口令的人配合解锁一次。
+⇒ 顺带更正上面那条：`_scratch/shuyonote-signed.apk`（53.8 MB）**留着**，任何时候 `adb install -r -d` 就能装回去。
 - ✅ **但明天的低端机 KDF 读数不依赖它**：那个微基准只用 NDK clang 交叉编一个纯 Rust 小程序，
   **本机已经跑通过**（真机 0.4–0.55 s 就是这么量出来的）⇒ 明天插上低端机就能立刻量。
 
