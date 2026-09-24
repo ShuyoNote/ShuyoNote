@@ -1360,8 +1360,16 @@ html[data-platform="win"] .app-body {
   font-size: 11px;
   color: var(--text-dim);
 }
-.space-privacy-pass { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
-.space-privacy-pass input { flex: 1; min-width: 0; font-size: 12px; }
+/* 主口令：**标签一行、输入框单独一行**（owner 2026-09-24：挤在同一行时标签被折行、输入框被压到最右边）。
+   竖排后输入框占满宽度，等于一个正常的"设置口令"字段。 */
+.space-privacy-pass {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.space-privacy-pass input { width: 100%; min-width: 0; font-size: 12px; }
 .space-privacy-note { font-size: 11px; color: var(--text-dim); }
 .space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
 .sync-card {

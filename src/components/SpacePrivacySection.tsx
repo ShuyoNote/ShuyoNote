@@ -247,9 +247,10 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
         );
       })}
 
-      {/* 主口令的说明进 label 本身（原来单独占一行 hint，而它只对"第一次开启加密"有用）。 */}
+      {/* 主口令：**标签一行、输入框单独一行**（挤在同一行时标签被折行、输入框被压到最右边）。
+          说明并进标签里 —— 它只对"第一次开启加密"有用，不值得再占一行。 */}
       <label className="space-privacy-pass">
-        主口令（首次开启加密时设定，忘了就打不开）
+        主口令（第一次开启加密时设定；忘了就打不开）
         <input
           type="password"
           value={pass}
