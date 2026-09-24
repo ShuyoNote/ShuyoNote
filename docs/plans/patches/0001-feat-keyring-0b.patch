@@ -1,4 +1,4 @@
-From 144da95b0fb1c45f88abbc230503894fe6d08e56 Mon Sep 17 00:00:00 2001
+From 2433138fa99f79b9cfaaa26c3f74552bdb4e91d6 Mon Sep 17 00:00:00 2001
 From: cnzen <zhaizy@qq.com>
 Date: Thu, 24 Sep 2026 10:06:41 +0800
 Subject: [PATCH] =?UTF-8?q?feat(keyring):=200b=20=E5=85=AC=E5=BC=80?=
@@ -29,6 +29,8 @@ Content-Transfer-Encoding: 8bit
 - 上限 `MAX_KEYRING_BYTES = 64 KiB`：空 ⇒ 400，超了 ⇒ 413。这是**任何人写一次就能长期占位**的
   接口，不设上限等于送人一块廉价存储。
 - 审计只记 `bytes=<n>`，**绝不记那份材料本身**（它是公开的不假，但日志会被抄走且撤不回）。
+- `scripts/verify-space-keyring.mjs`（新）＋ `package.json` 的 `verify:space-keyring`：
+  按本仓 `verify-*.mjs` 惯例写的**真服务端**探针（用法写在文件头注释里）。
 
 判据（`cargo test`，本机实测 **bin 41 passed / 0 failed / 1 ignored ＋ 集成 4 passed**）：
 ① 存进去取回来**逐字节相同**（含非 ASCII、未知字段、换行）；
@@ -38,6 +40,13 @@ Content-Transfer-Encoding: 8bit
 ⑤ 表**恰好**那四列且 `space_id` 是主键（这一列里没有地方可以顺手塞明文空间数据）；
 ⑥ 大小闸门：0 ⇒ 400、64 KiB ⇒ 放行、64 KiB+1 ⇒ 413；
 ⑦ `require_space`：成员读得到、外人读不到、写要 admin（viewer 不够）。
+
+**真服务端**端到端（不是桩）：本机起 `--issue-device-key --space sp-e2e` 拿一把真设备密钥，
+再起服务，`scripts/verify-space-keyring.mjs` ⇒ **8 通过 / 0 失败**（exit 0）：
+401（无 token）／200 ＋ 字节数／取回**逐字节相同**／拿这把 key 读别的空间 **403**／
+覆盖＝轮换／删 ⇒ 404／再删仍 404／**审计里有 put 且明细只有 `bytes=306`、没有材料本身**。
+⚠️ 写这条探针时踩到一处（已修，留着当路标）：`/spaces/{id}/audit` 的回话是 `{ items: [...] }`，
+我第一版按 `entries` 取 ⇒ 取到 0 条 ⇒ 把"审计没记"判成红；**是脚本错，不是服务端错**。
 
 ⚠️ 落地时还要在两处补一笔（不在本补丁里，避免与在写的 `docs/api.md` 撞车）：
 1. `docs/api.md` 加一节：
@@ -51,17 +60,177 @@ Content-Transfer-Encoding: 8bit
 
 本机门禁读数（克隆于 `ede92a2`，干净 HEAD）：
 `cargo test` 全绿；`cargo clippy --all-targets` 只有 1 条**既有**警告（`sync.rs` 测试段
-`unused doc comment`，不是本补丁引入）；`rustfmt --check` 对本补丁三个文件干净
+`unused doc comment`，不是本补丁引入）；`rustfmt --check` 对本补丁的文件干净
 （`src/main.rs:211/253` 与 `src/device_key.rs` 的 fmt 差异是 HEAD 既有的，**没有**顺手改它）。
 另外三条门禁在 HEAD 上本来就红（`check-doc-links` 指向 `../../ShuyoNote/...`、
 `check-release-discipline` 说 v1.2.3 的 tag 已存在、`cargo fmt` 既有差异），与本补丁无关。
 ---
- src/db.rs            |  32 +++-
- src/main.rs          |  11 ++
- src/space_keyring.rs | 373 +++++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 415 insertions(+), 1 deletion(-)
+ package.json                     |   3 +-
+ scripts/verify-space-keyring.mjs | 138 ++++++++++++
+ src/db.rs                        |  32 ++-
+ src/main.rs                      |  11 +
+ src/space_keyring.rs             | 373 +++++++++++++++++++++++++++++++
+ 5 files changed, 555 insertions(+), 2 deletions(-)
+ create mode 100644 scripts/verify-space-keyring.mjs
  create mode 100644 src/space_keyring.rs
 
+diff --git a/package.json b/package.json
+index 94cdad7..f55c5ce 100644
+--- a/package.json
++++ b/package.json
+@@ -6,6 +6,7 @@
+     "check:website": "node website/check.mjs",
+     "check:doc-links": "node scripts/check-doc-links.mjs",
+     "verify:cross-space-attachments": "node scripts/verify-cross-space-attachments.mjs",
+-    "verify:project-attribution": "node scripts/verify-project-attribution.mjs"
++    "verify:project-attribution": "node scripts/verify-project-attribution.mjs",
++    "verify:space-keyring": "node scripts/verify-space-keyring.mjs"
+   }
+ }
+diff --git a/scripts/verify-space-keyring.mjs b/scripts/verify-space-keyring.mjs
+new file mode 100644
+index 0000000..d4dcde5
+--- /dev/null
++++ b/scripts/verify-space-keyring.mjs
+@@ -0,0 +1,138 @@
++// Space keyring (public material) endpoints — v16 / 0b.
++//
++// What this asserts: the public half of a client "keyring" (KDF salt/params + passphrase-wrapped
++// space keys) can be stored on and fetched from the server, and the server neither parses it nor
++// leaks it into the audit log. The server CANNOT open a space with it (no passphrase ⇒ no master
++// key ⇒ AEAD refuses); authenticity is the client's AEAD check, not a server-side signature.
++//
++// Usage (K1 deployment — the personal/no-account key, which acts as the bearer token):
++//
++//   ./target/release/shuyonote-sync-server --issue-device-key --space sp-e2e --db <tmp>/sync.db
++//   ./target/release/shuyonote-sync-server --port 8788 --db <tmp>/sync.db --backup-interval-hours 0
++//   node scripts/verify-space-keyring.mjs http://127.0.0.1:8788 sk_<the key printed above>
++//
++// Exit code is the number of failures (0 = all good). NOTE: we set `process.exitCode` instead of
++// calling `process.exit()` — on Windows, exiting with fetch keep-alive handles still open trips
++// libuv (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`, exit -1073740791), which makes
++// "the probe failed" and "node crashed" indistinguishable.
++const SERVER = (process.argv[2] || "http://127.0.0.1:8787").replace(/\/+$/, "");
++const TOKEN = process.argv[3] || "";
++const SP = "sp-e2e";
++const OTHER = "sp-other";
++
++let failures = 0;
++
++function ok(cond, label, extra = "") {
++  if (cond) {
++    console.log(`  PASS  ${label}`);
++  } else {
++    failures++;
++    console.log(`  FAIL  ${label}${extra ? ` — ${extra}` : ""}`);
++  }
++}
++
++async function req(method, path, { token = TOKEN, body } = {}) {
++  const headers = {};
++  if (token) headers.Authorization = `Bearer ${token}`;
++  let payload;
++  if (body !== undefined) {
++    headers["Content-Type"] = "application/json";
++    payload = JSON.stringify(body);
++  }
++  const res = await fetch(`${SERVER}${path}`, { method, headers, body: payload });
++  const text = await res.text();
++  let json = null;
++  try {
++    json = JSON.parse(text);
++  } catch {
++    /* not JSON — leave null, callers assert on the status code */
++  }
++  return { status: res.status, text, json };
++}
++
++// Shaped like the client's `Keyring::to_json()`: a salt, KDF params, one wrapped box, plus a
++// non-ASCII key and an unknown field — the server must hand all of it back byte for byte.
++const MATERIAL = JSON.stringify(
++  {
++    v: 1,
++    kdf: { alg: "argon2id", m: 19456, t: 2, p: 1, salt: "9f8eadbeef" },
++    spaces: { default: { box: "AAECAwQFBgcICQ==", wrapped_at: 1758600000000 } },
++    "未来字段": "this server does not know this field — it must still come back unchanged",
++  },
++  null,
++  2,
++);
++const MATERIAL2 = MATERIAL.replace("9f8eadbeef", "0011223344");
++
++if (!TOKEN) {
++  console.log("usage: node scripts/verify-space-keyring.mjs <server> <device-key>");
++  process.exitCode = 1;
++} else {
++  const url = (sp) => `/spaces/${sp}/keyring`;
++
++  // 1. unauthenticated read is refused by the auth layer
++  {
++    const r = await req("GET", url(SP), { token: "" });
++    ok(r.status === 401, "unauthenticated GET is 401", `status=${r.status}`);
++  }
++  // 2. the owner may store it, and the server reports how many bytes it took
++  {
++    const r = await req("PUT", url(SP), { body: { keyring_json: MATERIAL } });
++    const want = Buffer.byteLength(MATERIAL, "utf8");
++    ok(
++      r.status === 200 && r.json?.bytes === want,
++      "owner PUT is 200 and echoes the byte count",
++      `status=${r.status} bytes=${r.json?.bytes} want=${want}`,
++    );
++  }
++  // 3. and gets the exact same string back (no parsing, no re-ordering)
++  {
++    const r = await req("GET", url(SP));
++    ok(
++      r.status === 200 && r.json?.keyring_json === MATERIAL,
++      "GET returns keyring_json byte for byte",
++      `status=${r.status} identical=${r.json?.keyring_json === MATERIAL}`,
++    );
++  }
++  // 4. a device key is scoped to exactly one space
++  {
++    const r = await req("GET", url(OTHER));
++    ok(r.status === 403, "a key scoped to another space gets 403", `status=${r.status}`);
++  }
++  // 5. overwriting is rotation: only the new copy survives
++  {
++    const p = await req("PUT", url(SP), { body: { keyring_json: MATERIAL2 } });
++    const g = await req("GET", url(SP));
++    ok(
++      p.status === 200 && g.status === 200 && g.json?.keyring_json === MATERIAL2,
++      "a second PUT replaces the stored material (rotation)",
++      `put=${p.status} get=${g.status} is_new=${g.json?.keyring_json === MATERIAL2}`,
++    );
++  }
++  // 6. delete, and deleting nothing must not pretend to have succeeded
++  {
++    const d = await req("DELETE", url(SP));
++    const g = await req("GET", url(SP));
++    ok(d.status === 200 && g.status === 404, "DELETE is 200 and GET is then 404", `delete=${d.status} get=${g.status}`);
++    const d2 = await req("DELETE", url(SP));
++    ok(d2.status === 404, "a second DELETE is 404 (idempotent, not a fake success)", `status=${d2.status}`);
++  }
++  // 7. the audit trail records the write by size only — never the material itself
++  {
++    const r = await req("GET", `/spaces/${SP}/audit`);
++    // NOTE: the body is `{ items: [...] }` — asserted here because the first draft of this probe
++    // looked for `entries`, saw 0 rows, and wrongly reported "the audit did not record it".
++    const rows = Array.isArray(r.json) ? r.json : (r.json?.items ?? []);
++    const text = JSON.stringify(rows);
++    const recorded = text.includes("space_keyring.put");
++    const leaked = text.includes("9f8eadbeef") || text.includes("未来字段") || text.includes("AAECAwQFBgcICQ");
++    ok(
++      r.status === 200 && recorded && !leaked,
++      "audit records the PUT by byte count and never copies the material",
++      `status=${r.status} recorded=${recorded} leaked=${leaked} rows=${rows.length}`,
++    );
++  }
++
++  console.log(`\n${failures === 0 ? "OK" : "FAILED"} — space keyring: ${failures} failure(s)`);
++  process.exitCode = failures === 0 ? 0 : 1;
++}
 diff --git a/src/db.rs b/src/db.rs
 index 42efbc7..c92d15d 100644
 --- a/src/db.rs

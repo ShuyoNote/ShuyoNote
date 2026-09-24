@@ -22,7 +22,7 @@
 | 第 1 步 1b-2c | **按空间启用/禁用的命令面**（`enable_space_encryption` / `disable_space_encryption`；Web 侧登记**桌面专属**）＋ 顺手把 `disable` 的载荷从 `PageStateArgs`（`page_id`）换成 `SpaceIdArgs`（`space_id`） | `988d756f` |
 | **②b 后端** | **分类的手动出口** `set_space_kind`（命令面**窄进**：只认 3 个值，别的串报错）＋ **一次读全的隐私读数** `space_security_overview`（`SpaceSecurityView`：分类 ＋ 加密状态 ＋ 闸门裁决；**未分类照样列出来**）＋ 判据 1 条（14/14 绿） | `0cdf9d99` |
 | **②b 界面** | **最小界面**：`SpacePrivacySection`（挂在**同步面板**里 —— 闸门拦的就是「绑同步」这个动作）＋ 8 条判据（含 Web 不调 api / 两步确认 / 接线） | `87d189ab` |
-| **③ 0b 服务端** | **公开材料**：v16 `space_keyrings` ＋ `GET\|PUT\|DELETE /spaces/{id}/keyring`（读 viewer / 写删 admin、不解析、64 KiB 上限）⇒ 补丁 `docs/plans/patches/0001-feat-keyring-0b.patch`（**没碰**那一仓的在写工作树；已在那棵脏树上 `git apply --check` **exit 0**） | 本仓本轮（见 §7.0） |
+| **③ 0b 服务端** | **公开材料**：v16 `space_keyrings` ＋ `GET\|PUT\|DELETE /spaces/{id}/keyring`（读 viewer / 写删 admin、不解析、64 KiB 上限）⇒ 补丁 `docs/plans/patches/0001-feat-keyring-0b.patch`（5 个文件，含**真服务端探针** `scripts/verify-space-keyring.mjs`；**没碰**那一仓的在写工作树；脏树上 `git apply --check` **exit 0**；真服务端 **8 通过 / 0 失败**） | 本仓本轮（见 §7.0） |
 | **③ 0b 客户端** | **公开材料的推 / 取**：`sync::push_space_keyring` / `pull_space_keyring` ＋ `space_crypto::stored_material`（推之前先验）＋ `adopt_material`（**默认不覆盖**）＋ 界面两个按钮 ＋ **端到端判据**（A 推 ⇒ B 全新目录取回 ⇒ **只凭口令**解出**同一把**空间钥匙） | 本轮（见 §7.0.1） |
 
 ### 6. ✅ 2026-09-24 推送事故：**已恢复**（瞬时，非我们这侧）
@@ -81,6 +81,10 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 这些文件**隔离复跑全过**（42/42、31/31）；同一时刻机器上跑着**另一会话的 2 个 cargo ＋ 2 个 rustc
 ＋ 24 个 node**（Rust 全量也从 293 s 涨到 569 s）。⇒ 记成**负载 flake**，**没有**拿它当绿，
 也**没有**重试到绿了算数。
+
+**当轮读数（③ 0b 真服务端这一轮）**：我这一仓**代码没动**（只换了补丁 ＋ 文档）⇒ 上面那一套读数继续有效。
+这一轮的新证据是 §7.0 第 3 条：**真设备密钥 ＋ 真 axum 服务 ⇒ 8 通过 / 0 失败**；
+探针脚本已并进补丁，`git apply --check` 在**他们那棵脏树**上仍然 **exit 0**（他们树仍 78 项，一个字节没被碰）。
 
 ## 2. 下一片：~~1b-2b~~（**已完成**：开关与启动闸门按空间；剩下的是"命令面/UI"与"分类来源"）
 
@@ -189,9 +193,21 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 ⇒ 做法：**克隆一份干净 HEAD** 到 `C:\Users\cnzen\zhai\_scratch\sync-server-keyring`，在那儿实现＋跑判据，
 交付一份可直接 `git apply` 的补丁（**没碰他们的工作树**）。
 
-- 补丁：`docs/plans/patches/0001-feat-keyring-0b.patch`（24 KB，1 个新文件 ＋ 2 个文件各一处小改）。
-- **落点已验证**：在**他们那棵有未提交改动的树**上 `git apply --check` **exit 0**（能干净落下）。
-  （`git apply --3way --check` 会报 `src/main.rs: does not match index` —— 那是"它本来就脏"的正常结果。）
+- 补丁：`docs/plans/patches/0001-feat-keyring-0b.patch`（**32 KB，5 个文件**：新模块 `src/space_keyring.rs`
+  ＋ `src/db.rs` 的 v16 迁移 ＋ `src/main.rs` 的三条路由 ＋ 新探针 `scripts/verify-space-keyring.mjs`
+  ＋ `package.json` 的 `verify:space-keyring`）。
+- **落点已验证**：在**他们那棵有未提交改动的树**上 `git apply --check` **exit 0**（能干净落下；他们树仍是 78 项，
+  一个字节都没被我碰过）。（`git apply --3way --check` 会报 `src/main.rs: does not match index` ——
+  那是"它本来就脏"的正常结果。）
+- ★★ **真服务端已验证（不是桩）**：在克隆里 `--issue-device-key --space sp-e2e` 拿一把**真设备密钥**，
+  起真的 axum 服务，再跑 `scripts/verify-space-keyring.mjs` ⇒ **8 通过 / 0 失败（exit 0）**：
+  ① 无 token ⇒ 401；② owner PUT ⇒ 200 ＋ `bytes=306`；③ GET 回**逐字节相同**的 `keyring_json`（含中文与未知字段）；
+  ④ 拿这把 key 读**别的空间** ⇒ 403；⑤ 覆盖 PUT ＝ 轮换（取回的是新那份）；⑥ DELETE ⇒ 200，再 GET ⇒ 404，
+  再 DELETE 仍 404（**不假装成功**）；⑦ **审计里有 `space_keyring.put`，明细只有 `bytes=306`** ——
+  **没有**把材料本身抄进日志。
+  ⚠️ 这条探针当场踩到一处并修掉（留个路标）：`/spaces/{id}/audit` 的回话是 `{ items: [...] }`，
+  我第一版按 `entries` 取 ⇒ 取到 0 条 ⇒ 把"审计没记"误判成红。**是脚本错，不是服务端错。**
+  ⚠️ 这条读数的边界要说清：服务是**克隆里那棵含补丁的树**跑起来的，**不是**他们那棵在写的树。
 - 内容：v16 迁移 `space_keyrings(space_id PK, keyring_json, updated_at, updated_by)` ＋
   `src/space_keyring.rs`（`get` / `put` UPSERT / `delete` ＋ 三个 handler）＋
   路由 `GET|PUT|DELETE /spaces/{id}/keyring`（接在 `space_routes` 里，走同一个 `auth_user`）。
@@ -245,7 +261,9 @@ A 设备建袋子（口令）＋给本机空间包一把钥匙 ⇒ 推给**桩 H
 显式动作把因果摆在眼前（先取回、再输口令）。要改成自动拉只是**界面/流程**改动，机制这边不用动。
 
 **仍然没做的两件（都不许写成"已做到"）**：
-1. **真机双设备验收**：上面那条跑的是**桩服务端**；用真服务端 ＋ 两台真设备（含"输错口令"那一支）还没跑。
+1. ~~真服务端那一半~~ ✅ **本轮补上了**（§7.0 第 3 条：真设备密钥 ＋ 真 axum 服务 ⇒ 8/0，含 401/403/404/审计）。
+   **还差的**是**真机双设备**：两台跑 Tauri 应用的设备，一台推、另一台**只输口令**取回并读到数据
+   （含"输错口令"那一支）。上面那条是"服务端对不对"，这条是"整条链路对不对"。
 2. **服务端补丁还没落进那个仓**（对方工作树在写，见 §7.0 开头）：`git apply --check` 已经过了，
    但**没有**在他们的树上编译过（在那棵树上编译会把他们的半成品一起编进来）。
 
