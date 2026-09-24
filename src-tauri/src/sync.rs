@@ -3543,6 +3543,81 @@ mod tests {
         assert!(keyring_status_message(500).contains("500"), "认不出的码要把它报出来");
     }
 
+    /// ★★ ③ 0b 的**真服务端**判据（默认 `#[ignore]`：它要一台真服务端 ＋ 一把真设备密钥）。
+    ///
+    /// **为什么不能只在桩服务端上验**：桩服务端**不看 `Authorization`**、也**不在乎路径** ——
+    /// 而"客户端到底有没有带 bearer、打的是不是 `/spaces/{id}/keyring`"正是最容易写错、
+    /// 而桩一定发现不了的那一处（写错路径的客户端在桩上全绿，在真服务端上 404）。
+    ///
+    /// 跑法（详见交接文档 `docs/plans/2026-09-24-crdt-privacy-handoff.md` §7.0）：
+    /// ```text
+    /// # ① 拿一把真设备密钥（服务端仓库）
+    /// shuyonote-sync-server --issue-device-key --space sp-e2e --db <tmp>/sync.db
+    /// # ② 起服务
+    /// shuyonote-sync-server --bind 127.0.0.1 --port 8799 --db <tmp>/sync.db
+    /// # ③ 跑这一条
+    /// $env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
+    /// cargo test --lib the_client_talks_to_a_real_server -- --ignored --nocapture
+    /// ```
+    /// ⚠️ 跑完会在那台服务端上**留下一份公开材料**（客户端侧没有"删"这条路：删是"关闭加密"那一步的事）。
+    #[tokio::test]
+    #[ignore = "需要真服务端与真设备密钥（SYNCSRV_BASE / SYNCSRV_DEVICE_KEY），见交接文档 §7.0"]
+    async fn the_client_talks_to_a_real_server_and_needs_its_bearer() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let base = std::env::var("SYNCSRV_BASE").expect("要设 SYNCSRV_BASE（例如 http://127.0.0.1:8799）");
+        let token = std::env::var("SYNCSRV_DEVICE_KEY").expect("要设 SYNCSRV_DEVICE_KEY（sk_…）");
+        let client = reqwest::Client::new();
+
+        // ① 先钉一件事：**真服务端要 bearer** —— 空 token 必须被它挡回来（401 或 403，都算挡）
+        let (no_auth, _) = http_get_keyring(&client, &base, "", "sp-e2e").await;
+        assert!(
+            no_auth.status == 401 || no_auth.status == 403,
+            "★ 没带 token 竟然没被挡：outcome={} status={} msg={}",
+            no_auth.outcome,
+            no_auth.status,
+            no_auth.message
+        );
+        assert_ne!(no_auth.outcome, "ok", "没带 token 不许当成功");
+
+        // ② 设备 A：口令建袋 ＋ 包一把钥匙 ⇒ 推给**真服务端**
+        let dir_a = temp_dir("real-a");
+        let c_a = crate::db::open_space_conn_at("default", &dir_a).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        let mut kr = crate::keyring::Keyring::new();
+        let master_a = kr.kdf.derive_master("真服务端口令八个字").unwrap();
+        let key_a = crate::keyring::random_space_key();
+        kr.wrap(&master_a, "default", &key_a).unwrap();
+        crate::space_crypto::store_keyring(&c_a, &kr).unwrap();
+        let material = crate::space_crypto::stored_material(&c_a).unwrap().unwrap();
+
+        let pushed = http_put_keyring(&client, &base, &token, "sp-e2e", &material).await;
+        assert_eq!(pushed.outcome, "ok", "推失败：{}", pushed.message);
+
+        // ③ 设备 B：全新目录 ⇒ 从真服务端取回 ⇒ 只凭口令解出**同一把**钥匙
+        let dir_b = temp_dir("real-b");
+        let c_b = crate::db::open_space_conn_at("default", &dir_b).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        let (got, body) = http_get_keyring(&client, &base, &token, "sp-e2e").await;
+        assert_eq!(got.outcome, "ok", "取失败：{}", got.message);
+        let body = body.expect("取回成功就要有材料原文");
+        assert_eq!(body, material, "真服务端上取回来的必须与推上去的**逐字节相同**");
+        let report = crate::space_crypto::adopt_material(&c_b, &body, false).unwrap();
+        assert!(report.adopted, "{report:?}");
+        let master_b = crate::space_crypto::master_from_passphrase(&c_b, "真服务端口令八个字")
+            .unwrap()
+            .unwrap();
+        let key_b = crate::space_crypto::keyring()
+            .unwrap()
+            .unwrap_key(&master_b, "default")
+            .unwrap();
+        assert_eq!(key_b, key_a, "★★ 真服务端这条链路上，第二台设备只凭口令也拿回了同一把钥匙");
+
+        let _ = std::fs::remove_dir_all(&dir_a);
+        let _ = std::fs::remove_dir_all(&dir_b);
+    }
+
     /// ★ 外键守卫：**循环里任何一条变更失败（`?` 早退）都不能把外键永久关掉**。
     /// 老写法（恢复那句放在循环之后）在这条用例下会留下 `foreign_keys=0`，
     /// 而它作用在**长命的主连接**上 ⇒ 之后整个应用的外键约束都不生效。

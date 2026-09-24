@@ -209,6 +209,28 @@ win-cargo-test: test exe exit code = 0
 反过来同样成立：`test exe exit code != 0` 才是真红。**不许**因为"反正外层是 1"就把真红当噪声 ——
 这两个方向都得认，否则这条注释本身就成了绕过门禁的借口。
 
+## 需要"真服务端"的判据（`#[ignore]`，要显式点名才跑）
+
+有些判据**必须**打真服务（桩服务端不看 `Authorization`、也不在乎路径 ⇒ "客户端有没有带 bearer、
+打的是不是那个端点"这类错误它**一定发现不了**）。它们一律 `#[ignore]`，默认不跑，也不会拖慢全量；
+要跑就显式点名（**跑不了的原因要当场喊出来**，不许静默跳过 —— 所以它们直接 `expect` 环境变量）：
+
+```powershell
+# ① 拿一把真设备密钥（同步服务端仓库；会顺手建空间）
+shuyonote-sync-server --issue-device-key --space sp-e2e --db <tmp>\sync.db
+# ② 起服务
+shuyonote-sync-server --bind 127.0.0.1 --port 8799 --db <tmp>\sync.db
+# ③ 点名跑（⚠️ 这个包装脚本的 -ExtraArgs 要传**数组**，`"--ignored --nocapture"` 会被当成一个参数 ⇒ 报
+#    `Unrecognized option: 'ignored --nocapture'`）
+$env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
+& .\scripts\win-cargo-test.ps1 -Filter the_client_talks_to_a_real_server `
+    -ExtraArgs "--ignored","--nocapture"
+```
+
+现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
+（③ 0b 公开材料：空 token 必须被挡 / 取回来逐字节相同 / 第二台设备只凭口令解出同一把钥匙）。
+服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。
+
 ## flake 与重试（不许静默重试）
 
 browser / mobile 两组要真实 Chromium（+ dev server），是仓库里唯一有 flake 风险的档。
