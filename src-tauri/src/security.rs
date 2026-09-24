@@ -834,6 +834,10 @@ pub(crate) fn unlock_encryption_impl(
     if !encryption_enabled(conn) {
         return Err("未开启端到端加密".to_string());
     }
+    // ★ 件5 的实测口径（2026-09-24）：**整条解锁**的真实代价 ＝ 两次 KDF（下面 `derive_app_keys`
+    //   那条应用级的 ＋ `master_from_passphrase` 那条钥匙袋的）＋ 开库。微基准只量了 KDF 本身，
+    //   所以这里自己记一条时间线 —— 真机上量"整体解锁"就靠它。
+    let t_unlock = std::time::Instant::now();
     let salt_b64 = sync::get_meta_state(conn, crypto::ENC_SALT).ok_or("加密状态缺失".to_string())?;
     let salt = crypto::b64_decode(&salt_b64).map_err(|e| format!("盐值无效: {e}"))?;
     let keys = crypto::derive_app_keys(&passphrase, &salt)?;
@@ -855,6 +859,12 @@ pub(crate) fn unlock_encryption_impl(
     // Re-open the active space DB keyed — without this PRAGMA key the app would fail to
     // read it after a locked restart.
     reopen_keyed(conn, &active, app_data_dir)?;
+    // ★ 件5：一行**耗时日志**（桌面直接可见；Android 侧看它能不能进 logcat —— 进不了就下一版换落盘）。
+    //   读数要点：这里量的是**两遍 KDF ＋ 开库**，所以会明显大于 §6 那个只量一遍 KDF 的微基准。
+    eprintln!(
+        "[unlock] 整条解锁 {} ms（含两次 KDF：应用级那条 ＋ 钥匙袋那条，以及开库）",
+        t_unlock.elapsed().as_millis()
+    );
     Ok(())
 }
 
