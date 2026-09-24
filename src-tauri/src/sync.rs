@@ -3543,6 +3543,66 @@ mod tests {
         assert!(keyring_status_message(500).contains("500"), "认不出的码要把它报出来");
     }
 
+    /// ★★ **"服务端不可信也不怕"这句话的判据**：服务端交过来的那份材料**不是你那一袋**
+    /// （换过了 / 本来就是别人的），第二台设备装进去之后**解不开**，而且报一句**可操作**的话 ——
+    /// 既不静默、也不会给出一把**错的**钥匙。
+    ///
+    /// 为什么必须有这一条：服务端**不解析、也不校验**那份材料（这是刻意的：真伪靠客户端解盒子时的
+    /// AEAD）⇒ 如果没人钉住"换过的材料 ⇒ 打不开"，"服务端可以悄悄换盒子"这个洞就没人守。
+    #[test]
+    fn a_server_that_hands_over_a_different_bag_makes_the_second_device_fail_loudly() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = temp_dir("swapped");
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+
+        // ① 我自己那份（口令 P）—— 只是拿来对照，不进本机
+        let mut mine = crate::keyring::Keyring::new();
+        let m_mine = mine.kdf.derive_master("我的口令八个字").unwrap();
+        mine.wrap(&m_mine, "default", &crate::keyring::random_space_key())
+            .unwrap();
+
+        // ② 服务端交过来的却是**别人那一袋**（口令 Q ＋ 另一把盐 ⇒ 另一把主密钥）
+        let mut theirs = crate::keyring::Keyring::new();
+        let m_theirs = theirs.kdf.derive_master("别人的口令八个字").unwrap();
+        theirs
+            .wrap(&m_theirs, "default", &crate::keyring::random_space_key())
+            .unwrap();
+        let swapped = theirs.to_json().unwrap();
+
+        // ③ 装进本机（本机还没有袋子 ⇒ 采纳这一层不该拒绝：它**只验格式**，不验真伪）
+        assert!(
+            crate::space_crypto::adopt_material(&c, &swapped, false)
+                .unwrap()
+                .adopted,
+            "格式合法就该装进来（真伪不在这里判）"
+        );
+
+        // ④ ★ 用**我的口令**去解 ⇒ 必须**报错**（AEAD 认出来），而且要说清两种可能
+        let master = crate::space_crypto::master_from_passphrase(&c, "我的口令八个字")
+            .unwrap()
+            .unwrap();
+        match crate::space_crypto::keyring().unwrap().unwrap_key(&master, "default") {
+            Ok(k) => panic!(
+                "★ 换过的盒子竟然解开了（拿到 {} 字节的钥匙）—— 这条判据塌了",
+                k.len()
+            ),
+            Err(e) => {
+                assert!(e.contains("盒子打不开"), "{e}");
+                assert!(e.contains("口令不对或盒子被改过"), "要说清两种可能：{e}");
+            }
+        }
+
+        // ⑤ 连那个空间的盒子都没有时，也要是一句人话（不是 panic、更不是空钥匙）
+        let mut empty = crate::keyring::Keyring::new();
+        let m_empty = empty.kdf.derive_master("空袋口令八个字").unwrap();
+        let e = empty.unwrap_key(&m_empty, "default").unwrap_err();
+        assert!(e.contains("没有空间"), "{e}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ★★ ③ 0b 的**真服务端**判据（默认 `#[ignore]`：它要一台真服务端 ＋ 一把真设备密钥）。
     ///
     /// **为什么不能只在桩服务端上验**：桩服务端**不看 `Authorization`**、也**不在乎路径** ——
