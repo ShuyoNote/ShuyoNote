@@ -498,6 +498,16 @@ jobs:
         # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线）。
         run: pnpm check:android-app-icon
 
+      - name: Android 应用显示名（备案/软著/商店同名）
+        # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线）。
+        # 依据：备案的「App 名称」＝ 安装后图标下方那行字 ＝ 商店上架名 ＝ 软著全称
+        # （`ShuyoNote 数友笔记`）；`tauri android init` 只会写 `productName`，所以要脚本化覆盖。
+        run: pnpm android:app-name
+
+      - name: 自检：应用显示名确实是备案那一个
+        # 发版件的显示名错了 ⇒ 商店/管局看到的和备案表上的名字对不上，且**只有装到手机上才发现**。
+        run: pnpm check:android-app-name
+
       - name: 随包 PDFium 库（Android）
         # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
         # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。

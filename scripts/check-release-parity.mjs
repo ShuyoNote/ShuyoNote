@@ -140,7 +140,13 @@ for (const [k, why] of Object.entries(ALLOWED.releaseOnly)) {
 }
 
 // 4) 关键构建输入：**逐条点名**（不依赖集合比较的写法），确保以后重构也不会把这几步弄丢
-const MUST_HAVE_BOTH = ["注入 rustls-platform-verifier 的 JVM 组件", "注入 Android 壳适配层", "Init Android project", "Build APK"];
+const MUST_HAVE_BOTH = [
+  "注入 rustls-platform-verifier 的 JVM 组件",
+  "注入 Android 壳适配层",
+  "Android 应用显示名",
+  "Init Android project",
+  "Build APK",
+];
 for (const k of MUST_HAVE_BOTH) {
   ok(
     selfNorm.has(k) && relNorm.has(k),
