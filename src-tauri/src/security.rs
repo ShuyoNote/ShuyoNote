@@ -472,9 +472,37 @@ fn rebuild_space_db(
     // migrate() seeds the target's `workspaces` row with the space id; drop it so the
     // source's real workspace row replaces it without a UNIQUE conflict.
     let _ = dst.execute_batch("DELETE FROM main.workspaces;");
+    // ★★ 逐表拷贝：**按列名求交集**，不许再写 `SELECT *`。
+    //
+    // 为什么（owner 2026-09-24 现场）：源库是**老 schema**（比如某个"很久没被打开过"的空间文件
+    // 还没有 09-23 才加的那一列），而目标是 `migrate()` 刚建出来的**当前 schema** ⇒ 两边列数不同
+    // ⇒ `INSERT INTO main.t SELECT * FROM plain.t` 当场报
+    // 「table main.workspaces has 9 columns but 8 values were supplied」，
+    // 而这条路径是**开/关加密**（现在唯一的加密开关）⇒ 那个空间**根本加不了密**。
+    // ⚠️ 以前的判据全绿，是因为夹具都是"刚 migrate 过的新库"—— 又一类**只有老库才会中**的缺陷。
+    // 口径（不静默）：
+    //   · 目标有、源没有的列 ⇒ 不拷（让它取目标默认值）—— 这正是"老库补列"该有的样子；
+    //   · **源有、目标没有的列** ⇒ **拒绝转换并报错**：那说明这个文件比本版新，硬拷会**静默丢数据**。
     for t in &tables {
-        dst.execute(&format!("INSERT INTO main.\"{t}\" SELECT * FROM plain.\"{t}\""), [])
-            .map_err(|e| format!("拷贝表 {t} 失败: {e}"))?;
+        let src_cols = table_columns(&dst, &format!("plain.\"{t}\""))?;
+        let dst_cols = table_columns(&dst, &format!("main.\"{t}\""))?;
+        let missing_in_target: Vec<&String> =
+            src_cols.iter().filter(|c| !dst_cols.iter().any(|d| d.eq_ignore_ascii_case(c))).collect();
+        if !missing_in_target.is_empty() {
+            return Err(format!(
+                "表 {t} 里有本版不认识的列（{}）—— 这个库比本版**新**，硬转换会丢数据 ⇒ 拒绝转换。\
+                 请升级应用后再开/关这个空间的加密。",
+                missing_in_target.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        let common: Vec<&String> =
+            src_cols.iter().filter(|c| dst_cols.iter().any(|d| d.eq_ignore_ascii_case(c))).collect();
+        let cols = common.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        dst.execute(
+            &format!("INSERT INTO main.\"{t}\" ({cols}) SELECT {cols} FROM plain.\"{t}\""),
+            [],
+        )
+        .map_err(|e| format!("拷贝表 {t} 失败: {e}"))?;
     }
     dst.execute_batch("DETACH DATABASE plain;")
         .map_err(|e| format!("DETACH 源库失败: {e}"))?;
@@ -488,6 +516,18 @@ fn rebuild_space_db(
 
     dst.close().map_err(|(_c, e)| format!("关闭目标库失败: {e}"))?;
     Ok(())
+}
+
+/// 读一个（可能被 ATTACH 的）表的列名。
+///
+/// ⚠️ 用 `SELECT * … LIMIT 0` 的 `column_names()`，**不用** `pragma_table_info`：
+/// 后者带 schema 的名字要么报错要么返回空（我在判据里踩过一次），而这里要的是"这个连接看到的
+/// 真实列序"，`column_names()` 就是权威。表名来自 `sqlite_master`（我们自己建的），已加引号。
+fn table_columns(conn: &Connection, qualified_table: &str) -> Result<Vec<String>, String> {
+    let stmt = conn
+        .prepare(&format!("SELECT * FROM {qualified_table} LIMIT 0"))
+        .map_err(|e| format!("读列名失败（{qualified_table}）：{e}"))?;
+    Ok(stmt.column_names().into_iter().map(|s| s.to_string()).collect())
 }
 
 /// Convert a space DB file between plaintext and SQLCipher-encrypted at rest,
@@ -1496,6 +1536,71 @@ mod tests {
         drop(locked);
 
         LOCKED.store(false, Ordering::SeqCst);
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ **老 schema 的空间库也要能开加密**（owner 2026-09-24 现场抓到的真 bug）。
+    ///
+    /// 现场：`开启加密失败：拷贝表 workspaces 失败: table main.workspaces has 9 columns but 8
+    /// values were supplied`。根因：`convert_space_db` 的逐表拷贝原来写的是 `SELECT *`，
+    /// 而**源库是老 schema**（这个空间文件很久没被打开过 ⇒ 还缺 09-23 才加的那一列），
+    /// 目标是 `migrate()` 刚建出来的当前 schema ⇒ 两边列数不同就当场失败 ——
+    /// 而这是**现在唯一的加密开关**，等于那个空间加不了密。
+    ///
+    /// ⚠️ 以前判据全绿，因为夹具都是"刚 migrate 过的新库"；**又一类只有老库才会中的缺陷**
+    /// （与 `meta.workspaces.kind` 那次同一个教训，所以这条夹具**刻意手写老表结构**）。
+    #[test]
+    fn convert_space_db_tolerates_an_old_schema_space_file() {
+        let _g = SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(uniq_tmp("oldschema"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let space = dir.join("old-space.db");
+        // 手工造"老 schema"：`workspaces` 只有最早那 4 列（不含 kind 等后加的列），
+        // `pages` 也停在当时的形态（没有 db_rule / sync_seq / dirty / text_stale）。
+        {
+            let c = Connection::open(&space).unwrap();
+            c.execute_batch(
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); \
+                 CREATE TABLE pages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, parent_id TEXT, \
+                 title TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '{}', \
+                 content_text TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'page', \
+                 sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, \
+                 updated_at INTEGER NOT NULL, deleted_at INTEGER);",
+            )
+            .unwrap();
+            c.execute_batch(
+                "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('old-space','老空间',1,1);\
+                 INSERT INTO pages (id, workspace_id, title, content_text, created_at, updated_at) \
+                 VALUES ('p1','old-space','hello','hello',1,1);",
+            )
+            .unwrap();
+        }
+
+        let key = crypto::derive_key("hunter2", &crypto::random_salt()).unwrap();
+        // ★ 老库 ⇒ 也必须转得动（改前这里报 "has 9 columns but 8 values were supplied"）
+        convert_space_db(&space, true, Some(&key)).unwrap();
+        assert!(space_db_is_encrypted(&space), "转换后应当是密文");
+
+        // 数据没丢，而且**新列取目标默认值**（不是被"补"成源里的东西）
+        crate::space_crypto::set_space_box_for_test("old-space", &key, "pw");
+        {
+            let c = Connection::open(&space).unwrap();
+            key_space_conn(&c, &space).unwrap();
+            let title: String = c.query_row("SELECT title FROM pages WHERE id='p1'", [], |r| r.get(0)).unwrap();
+            assert_eq!(title, "hello", "★ 老库转换后数据没丢");
+            let name: String = c.query_row("SELECT name FROM workspaces WHERE id='old-space'", [], |r| r.get(0)).unwrap();
+            assert_eq!(name, "老空间");
+            // 目标 schema 的后加列都在（老库缺的那一列由迁移补上）
+            let kind: String = c.query_row("SELECT COALESCE(kind,'') FROM workspaces WHERE id='old-space'", [], |r| r.get(0)).unwrap();
+            assert_eq!(kind, "", "老库缺的列取默认值（空串＝未分类）");
+        }
+        // 也能转回来（两个方向同一段拷贝代码）
+        convert_space_db(&space, false, Some(&key)).unwrap();
+        assert!(!space_db_is_encrypted(&space));
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
         let _ = std::fs::remove_dir_all(&dir);

@@ -486,6 +486,19 @@ fn holds_space(conn: &Connection, space_id: &str) -> bool {
         == Some(space_id)
 }
 
+/// 转换失败时撤掉"**这一次刚造**"的盒子（本来就有的**不许动** —— 那是这个空间的真实状态）。
+///
+/// 为什么必须有它（owner 2026-09-24 现场）：`enable_space` 为了"紧随其后的重新打开能按空间拿到钥匙"，
+/// 是**先把袋子落进 meta 再转换**的。转换一旦失败而盒子留下，`space_status` 的
+/// `encrypted = 库是密的 OR 袋里有它` 就会判成"已加密" ⇒ 面板显示"已加密"、闸门**放行它的同步**，
+/// 而库里其实一个字都没加密。宁可让它失败得干干净净。
+fn discard_minted_box(conn: &Connection, kr: &mut Keyring, space_id: &str) {
+    kr.remove(space_id);
+    if let Err(re) = store_keyring(conn, kr) {
+        eprintln!("[space] 撤掉刚造的盒子失败（内存里已撤，meta 里可能还在）：{re}");
+    }
+}
+
 /// ★ **按空间启用**：只把这个空间**自己**的库换成密文（钥匙是**新随机**一把，装进钥匙袋）。
 ///
 /// 与已删掉的 `set_encryption_impl`（应用级：把所有空间一起换成同一把钥匙）**不是一条路** ——
@@ -518,6 +531,8 @@ pub fn enable_space(
     // ② 盒子：已有 ⇒ **复用**（不换钥匙）；没有 ⇒ **只有在库还是明文时才**新随机一把
     let path = crate::db::space_db_path(app_data_dir, space_id);
     let mut kr = keyring().ok_or("钥匙袋缺失")?;
+    // ★ 记住这个盒子是不是**这一次刚造的** —— 转换失败时要把它撤掉（见 ③ 后面那段）。
+    let mut minted_here = false;
     let key = if kr.has(space_id) {
         kr.unwrap_key(&master, space_id)?
     } else {
@@ -539,6 +554,7 @@ pub fn enable_space(
         }
         let k = random_space_key();
         kr.wrap(&master, space_id, &k)?;
+        minted_here = true;
         k
     };
     // ★ **先把袋子落下去（内存 ＋ meta）再转换**：这样紧接着的"重新打开这个空间"
@@ -556,11 +572,19 @@ pub fn enable_space(
         // 无论成败都把空间**按当前真实状态**重新打开（失败时它还是明文库）
         let reopened = crate::db::reopen_space_at(conn, space_id, app_data_dir);
         if let Err(e) = converted {
+            if minted_here {
+                discard_minted_box(conn, &mut kr, space_id);
+            }
             return Err(format!("{e}（已重新打开这个空间；转换未生效）"));
         }
         reopened?;
     }
-    converted?;
+    if let Err(e) = converted {
+        if minted_here {
+            discard_minted_box(conn, &mut kr, space_id);
+        }
+        return Err(format!("{e}（转换未生效）"));
+    }
 
     // ④ 记下"这个空间的数据是哪一版密文"（§0-C 的 per-space 标记）
     crate::security::set_space_encrypted_marked(conn, space_id, true)?;
@@ -1068,6 +1092,68 @@ mod tests {
             let _ = set_session_master(None);
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    /// ★★ **转换失败要失败得干净**（owner 2026-09-24 现场引出的两条）：
+    ///
+    /// ① **比本版新的库 ⇒ 拒绝转换**：源里有目标没有的列 ⇒ 硬拷会**静默丢数据**，
+    ///    所以 `convert_space_db` 的逐表拷贝按列名求交集，并在这条上**响亮拒绝**；
+    /// ② **这次刚造的盒子必须撤掉**：`enable_space` 是"先落袋子再转换"的
+    ///    （为了让紧随其后的"重新打开"能按空间拿到钥匙），转换失败而盒子留下 ⇒
+    ///    `space_status` 的 `encrypted = 库是密的 OR 袋里有它` 会判成"已加密" ⇒
+    ///    面板说"已加密"、闸门**放行它的同步**，而库里一个字都没加密。
+    ///
+    /// ③ 还要能**再试一次**：第一次失败不该把这个空间锁进"以后都开不了"的状态。
+    #[test]
+    fn a_failed_conversion_refuses_newer_columns_and_throws_away_the_box_it_just_minted() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-futcol-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        // 连接开在**别的**空间上（＝现场的形状：用户待在「工作」里，去给「新建工作区」开加密）
+        let mut c = crate::db::open_space_conn_at("fut-z", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        // 造一个"比本版新"的空间库：多一列本版不认识的
+        let path = crate::db::space_db_path(&dir, "fut-a");
+        {
+            let a = crate::db::open_space_conn_at("fut-a", &dir).unwrap();
+            a.close().unwrap();
+        }
+        {
+            let x = Connection::open(&path).unwrap();
+            x.execute_batch("ALTER TABLE pages ADD COLUMN zzz_future TEXT NOT NULL DEFAULT '';")
+                .unwrap();
+        }
+        assert!(!crate::security::space_db_is_encrypted(&path), "前提：它还是明文");
+
+        // ① 拒绝转换（而不是静默把那列丢掉）
+        let err = enable_space(&mut c, &dir, "fut-a", Some("我家猫叫mimi")).unwrap_err();
+        assert!(err.contains("本版不认识的列"), "要说清为什么拒绝：{err}");
+        assert!(!crate::security::space_db_is_encrypted(&path), "拒绝之后文件必须原样（还是明文）");
+
+        // ② ★ 这次刚造的盒子**不许留下**（否则界面说"已加密"、闸门放行，而库里是明文）
+        assert!(
+            !keyring().unwrap().has("fut-a"),
+            "★ 转换失败却留下了盒子 ⇒ 面板会显示「已加密」、闸门会放行它的同步"
+        );
+        assert!(!space_status(&dir, "fut-a").in_keyring);
+        assert!(!space_status(&dir, "fut-a").encrypted_on_disk);
+
+        // ③ 升级到"认识那一列"的版本（模拟）⇒ 同一次会话里**还能再试**，这次应当成功
+        {
+            let x = Connection::open(&path).unwrap();
+            x.execute_batch("ALTER TABLE pages DROP COLUMN zzz_future;").unwrap();
+        }
+        let key = enable_space(&mut c, &dir, "fut-a", None).expect("第一次失败不该锁死这个空间");
+        assert!(crate::security::space_db_is_encrypted(&path));
+        assert_eq!(keyring().unwrap().unwrap_key(&keyring().unwrap().kdf.derive_master("我家猫叫mimi").unwrap(), "fut-a").unwrap(), key);
+
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ★★ 承重判据：库**已经是密文**而袋里没有它的盒子时，`enable_space` **必须报错**，
