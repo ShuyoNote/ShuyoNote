@@ -98,8 +98,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       <section className="space-privacy" data-testid="space-privacy">
         <div className="space-privacy-head">🔐 空间隐私（要在桌面端操作）</div>
         <div className="space-privacy-hint">
-          Web 版没有钥匙柜：<b>加密空间在 Web 上不可同步、不可编辑</b>，也不会被降级成明文上传。
-          要给空间加密或改分类，请在桌面端打开这个面板。
+          Web 版没有钥匙柜：加密空间在 Web 上不可同步、不可编辑，也不会被降级成明文上传。
         </div>
       </section>
     );
@@ -108,13 +107,20 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   return (
     <section className="space-privacy" data-testid="space-privacy">
       <div className="space-privacy-head">🔐 空间隐私 —— 每个空间能不能绑同步</div>
+      {/* 首屏只留一句结论；口径与换设备步骤收进折叠（解释不该挡在动作前面）。 */}
       <div className="space-privacy-hint">
-        口径：<b>个人空间</b>必须先按空间加密（服务端只落密文）；<b>团队空间</b>免检（服务端存明文 ——
-        那是它换来的协同 / 检索 / AI）。<b>未分类</b>的会放行，但闸门其实<b>没有管到</b>它。
-        <br />
-        换设备：在<b>旧设备</b>上「推到服务器」，在<b>新设备</b>上「从服务器取回」，然后输主口令 ——
-        公开的那一半走服务端，口令<b>永远不离开本机</b>。
+        个人空间要先加密才能绑同步；团队空间免检（服务端存明文）；未分类的放行，但闸门没管到它。
       </div>
+      <details className="space-privacy-more">
+        <summary>口径与换设备</summary>
+        <div>
+          口径：<b>个人空间</b>必须先按空间加密（服务端只落密文）；<b>团队空间</b>免检（服务端存明文 ——
+          那是它换来的协同 / 检索 / AI）；<b>未分类</b>的会放行，但闸门其实<b>没有管到</b>它。
+          <br />
+          换设备：在<b>旧设备</b>上「推到服务器」，在<b>新设备</b>上「从服务器取回」，然后输主口令 ——
+          公开的那一半走服务端，口令<b>永远不离开本机</b>。
+        </div>
+      </details>
 
       {views === null && <div className="sync-empty-state">正在读…</div>}
       {views !== null && views.length === 0 && <div className="sync-empty-state">还没有空间</div>}
@@ -135,7 +141,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
             <div className={`space-privacy-gate ${v.gate.allow ? "is-allow" : "is-block"}`}>
               {v.gate.allow
                 ? v.gate.unclassified
-                  ? "⚠️ 可以绑同步 —— 但这个空间还没分类，闸门这次没有管到它"
+                  ? "⚠️ 已放行，但它还没分类 —— 闸门没管到它"
                   : "✅ 可以绑同步"
                 : <>⛔ {inlineMd(v.gate.reason)}</>}
             </div>
@@ -148,9 +154,9 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                   void run(v.space_id, "改分类", () => api.setSpaceKind(v.space_id, e.target.value as SpaceKind))
                 }
               >
-                <option value="">未分类（闸门放行，但它没管到）</option>
-                <option value="personal">个人空间（必须先加密才让绑同步）</option>
-                <option value="team">团队空间（免检：服务端存明文）</option>
+                <option value="">未分类（放行，但没管到）</option>
+                <option value="personal">个人空间（要先加密）</option>
+                <option value="team">团队空间（免检）</option>
               </select>
               {encrypted ? (
                 <button
@@ -224,8 +230,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
             )}
             {confirming === v.space_id && (
               <div className="space-privacy-gate is-block">
-                关掉加密会把<b>这一个</b>空间的库换回明文（别的空间不受影响）；换回之后闸门会拦住它的同步
-                （个人空间必须先加密）。再点一次那个按钮才真的执行。
+                关掉加密会把<b>这一个</b>空间的库换回明文（别的空间不受影响）。再点一次按钮才真的执行。
               </div>
             )}
           </div>
@@ -243,8 +248,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
         />
       </label>
       <div className="space-privacy-hint">
-        主口令<b>只在还没设过钥匙袋时</b>用得上（第一次开启加密时设定它）；已经设过 ⇒ 这里填什么都不影响。
-        忘了口令 ＝ 加密空间打不开，所以请把它记在你能找回来的地方。
+        主口令<b>只在还没设过钥匙袋时</b>用得上；忘了口令 ＝ 加密空间打不开（没有找回流程）。
       </div>
 
       {note && <div className="space-privacy-note">{note}</div>}

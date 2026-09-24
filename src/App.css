@@ -1295,6 +1295,20 @@ html[data-platform="win"] .app-body {
 }
 .space-privacy-head { font-size: 12px; font-weight: 600; color: var(--text); }
 .space-privacy-hint { font-size: 11px; line-height: 1.6; color: var(--text-dim); }
+/* 口径 / 换设备这类"解释性"内容收进折叠：首屏只留动作与一句结论（owner 2026-09-24：太啰嗦）。
+   与 `.pm-index-fold` 同族，不另起视觉语言。 */
+.space-privacy-more { font-size: 11px; color: var(--text-dim); }
+.space-privacy-more > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-faint);
+  width: fit-content;
+}
+.space-privacy-more > summary::-webkit-details-marker { display: none; }
+.space-privacy-more > summary::before { content: "▸ "; font-size: 10px; }
+.space-privacy-more[open] > summary::before { content: "▾ "; }
+.space-privacy-more > summary:hover { color: var(--accent); }
+.space-privacy-more > div { padding-top: 4px; line-height: 1.6; }
 .space-privacy-row {
   display: flex;
   flex-direction: column;
