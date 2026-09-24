@@ -245,6 +245,25 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 
 **因此"整体解锁"的真机读数目前仍只有推算值（≈0.75–0.9 s）**，而**微基准的真机读数（0.4–0.55 s）是真的量过的**。
 
+**★ 2026-09-24 晚：装了正经 Perl（Strawberry 便携版）之后又往前走了两步，仍卡在同一处**
+
+- 网络坑（先记下来，下东西要用）：本机 **`github.com` 直连不通**，但 **`api.github.com` 与 CDN
+  （`objects.githubusercontent.com` / `release-assets.githubusercontent.com`）通** ⇒ 从 GitHub 下资产
+  要走 **API 资产端点**（`/repos/<o>/<r>/releases/assets/<id>` ＋ `Accept: application/octet-stream`，
+  它 302 到 CDN），**不能**用 `browser_download_url`（那是 `github.com`，第一步就连不上）。
+- Perl 到手且**校验过 sha256**（Strawberry 便携版 5.42.3.1，304,765,269 字节，
+  sha256 `6a081a81…a10690`，解在 `_scratch/perl`，**没装进系统**，只在构建命令里加 PATH）。
+- 带着它重跑：`openssl-sys` 这次**认到了 perl**，但 OpenSSL 的 `Configure` 报
+  **`'perl' reported failure with exit code: 255`**（`running "perl" "./Configure" --prefix=C:/Users/…`
+  ＋ Android 目标）⇒ **Windows 上交叉编 vendored OpenSSL for Android 这条链本身不通**。
+  ⚠️ 想手工复刻 Tauri 的交叉编译环境也不轻松：我直接跑那条 `cargo build --target aarch64-linux-android`
+  时，卡在 `ring` 找不到 `aarch64-linux-android-clang`（缺 Tauri 会设的 `CC_…`/NDK PATH）。
+- ⇒ **结论（不再往这个兔子洞里钻）**：App 的 Android 包请在**本来就会出 Android 包的机器/流水线**上做
+  （他们那边是 Linux CI，这活在那儿是常规操作）。本机缺的不是 Python/Perl 这类单点，而是
+  "Windows ＋ NDK ＋ vendored OpenSSL" 这一整条链。
+- ✅ **但明天的低端机 KDF 读数不依赖它**：那个微基准只用 NDK clang 交叉编一个纯 Rust 小程序，
+  **本机已经跑通过**（真机 0.4–0.55 s 就是这么量出来的）⇒ 明天插上低端机就能立刻量。
+
 ### ★★ 由此更正一条之前的口径：那个"桌面 ~8 秒"是**debug 构建**量出来的
 
 同一份 bench 在同一台桌面机上：**debug ≈ 3.0 s，release ≈ 0.13 s（差约 23 倍）**。
