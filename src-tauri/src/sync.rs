@@ -807,7 +807,8 @@ pub async fn download_attachment(
         return Err("请先配置同步服务器".to_string());
     }
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：单个附件也下到**这个空间自己**的目录里。
+    let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &profile.ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
     let att_base = attachment_base(&profile);
@@ -2887,7 +2888,9 @@ async fn sync_attachments(
     profile: &SyncProfile,
 ) -> Result<AttachmentSyncOutcome, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：本轮的字节都落在**这个空间自己**的目录里
+    //   （`profile.ws_id` 就是本轮同步的那个空间）。
+    let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &profile.ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     let mut att_items: Vec<SyncItem> = Vec::new();
     // P6.1：本轮是否"因开关被关掉而中途停止"（与"入口就没开"区分——后者不算 paused）。
@@ -2929,7 +2932,13 @@ async fn sync_attachments(
     let remote_set: HashSet<String> = remote.items.iter().map(|i| i.hash.clone()).collect();
 
     // 2. Local hashes (files on disk).
-    let local_set = scan_local_attachment_hashes(&attachments_dir);
+    //    ★ 按空间分之后：本空间目录 ＋ **老位置**（`<根>/<桶>/…` 与 `<根>/<hash>.<ext>`）。
+    //      老位置那份照样算"本地已有"——否则升级后每台设备都会把老附件重新下一遍
+    //      （而读路径本来就回退得到它）。
+    let mut local_set = scan_local_attachment_hashes(&attachments_dir);
+    local_set.extend(scan_local_attachment_hashes(&crate::attachments::attachments_root(
+        &app_data_dir,
+    )));
 
     // 3/4 步的待传清单：**一次算清**，既是循环的输入，也是"未上传/未下载 N 个"的来源。
     let up_items: Vec<String> = local_set.difference(&remote_set).cloned().collect();
@@ -2970,7 +2979,8 @@ async fn sync_attachments(
                 break;
             }
         }
-        let path = match find_file_by_stem(&attachments_dir, hash) {
+        // ★ 按空间找（本空间目录 → 老位置）：老附件在升级后照样传得上去。
+        let path = match crate::attachments::find_attachment(&app_data_dir, &profile.ws_id, hash) {
             Some(p) => p,
             None => continue,
         };
@@ -3192,32 +3202,6 @@ fn scan_local_attachment_hashes(dir: &Path) -> HashSet<String> {
 /// a malicious/compromised sync server returns e.g. `../../meta.db` as a hash.
 fn is_valid_attachment_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn find_file_by_stem(dir: &PathBuf, stem: &str) -> Option<PathBuf> {
-    // Bucketed layout first: `attachments/<stem[0..2]>/<stem>.<ext>`.
-    if stem.len() >= 2 {
-        if let Ok(entries) = std::fs::read_dir(dir.join(&stem[0..2])) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".part") { continue; }
-                if name.split('.').next() == Some(stem) {
-                    return Some(entry.path());
-                }
-            }
-        }
-    }
-    // Legacy flat dir fallback.
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".part") { continue; }
-            if name.split('.').next() == Some(stem) {
-                return Some(entry.path());
-            }
-        }
-    }
-    None
 }
 
 /// B4-b：**收编 / 自愈"兜底行"**（调用点与完整来龙去脉见 `do_pull` 的附件分支）。

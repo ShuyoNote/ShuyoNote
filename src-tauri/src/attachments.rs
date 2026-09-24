@@ -70,6 +70,80 @@ pub(crate) fn find_path_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
     None
 }
 
+/// 附件树的**根**（所有空间共用这一棵树）：`<app_data>/attachments`。
+pub(crate) fn attachments_root(app_data_dir: &Path) -> PathBuf {
+    app_data_dir.join("attachments")
+}
+
+/// 某个空间的附件目录：`<根>/<空间 id>`。
+///
+/// ★★ owner 2026-09-24 拍板（②）：附件库**按空间分**。hash 仍按**明文**算（空间内去重照旧），
+/// 但**每个空间各存自己那一份**。为什么必须分：附件原来是**全局一份**，而钥匙从"应用级一把"
+/// 改成"按空间"之后，同一份内容被"**一个加密空间 ＋ 一个明文空间**"同时引用时，
+/// 谁先落盘谁决定那份字节是密文还是明文 —— 后读的那一方拿不到写它那把钥匙，解不开会被
+/// **透传**（安静地交出一个坏文件）。分空间之后每个空间只读自己那份，这条缺口就不存在了。
+/// 代价是**跨空间去重没了**，而那正是决策稿 §5.1 早就写下的取舍。
+///
+/// ⚠️ 空间 id 进路径前必须过 `db::is_safe_space_id`（挡 `../` 之类）；不合法 ⇒ 落到 `_invalid`，
+/// **绝不**拼出树外的路径。
+pub(crate) fn space_attachments_dir(app_data_dir: &Path, space_id: &str) -> PathBuf {
+    let safe = if crate::db::is_safe_space_id(space_id) { space_id } else { "_invalid" };
+    attachments_root(app_data_dir).join(safe)
+}
+
+/// 当前（活动）空间的 id；拿不到就退回空串（＝落到"根"，即老布局）—— **绝不 panic**。
+pub(crate) fn active_space_id(c: &rusqlite::Connection) -> String {
+    crate::workspaces::active_workspace_id(c).unwrap_or_default()
+}
+
+/// **读**一个空间的附件：先在这个空间**自己**的目录里找，找不到再回退到**老的全局布局**
+/// （`<根>/<桶>/…` 与 `<根>/<hash>.<ext>`）。
+///
+/// ⚠️ 老文件**不搬**（owner 拍板）：纯位置回退，不涉及密钥、不静默降级 ⇒
+/// 升级之后你原来那些附件照样读得到，一个文件都不用动。
+pub(crate) fn find_attachment(app_data_dir: &Path, space_id: &str, hash: &str) -> Option<PathBuf> {
+    find_path_by_hash(&space_attachments_dir(app_data_dir, space_id), hash)
+        .or_else(|| find_path_by_hash(&attachments_root(app_data_dir), hash))
+}
+
+/// 在**整棵附件树**里按 hash 找（**不知道空间**的只读场景：存储统计/清理/按 hash 定位）。
+/// 先看各空间目录（目录名排序，结果稳定），再看根下的老布局。
+pub(crate) fn find_attachment_anywhere(root: &Path, hash: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(root) {
+        let mut dirs: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        dirs.sort();
+        for d in dirs {
+            if let Some(p) = find_path_by_hash(&d, hash) {
+                return Some(p);
+            }
+        }
+    }
+    find_path_by_hash(root, hash)
+}
+
+/// 递归列出附件树里的**所有文件**（三种布局都算：`<根>/<空间>/<桶>/f`、`<根>/<桶>/f`、`<根>/f`）。
+/// 给"不知道空间"的那些路径用：存储统计 / 孤儿清理 / 临时文件清理。
+pub(crate) fn walk_attachment_files(root: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out
+}
+
 #[derive(Clone, serde::Serialize)]
 pub struct ImportProgress {
     pub index: usize,
@@ -256,7 +330,6 @@ pub struct SaveImageArgs {
 #[tauri::command]
 pub fn get_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
     let c = db.0.lock().expect("db mutex poisoned");
     let (name, hash, mime, size): (String, String, String, i64) = c
         .query_row(
@@ -265,14 +338,17 @@ pub fn get_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> R
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|_| "附件不存在".to_string())?;
-    let path = find_path_by_hash(&attachments_dir, &hash)
+    // ★ 按空间找（`<根>/<空间>/…`），老位置（全局那份）仍回退得动。
+    let path = find_attachment(&app_data_dir, &active_space_id(&c), &hash)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     Ok(AttachmentMeta { id, name, hash, mime, size, path })
 }
 
-/// 按 hash 在附件目录里把文件读出来（纯函数：把"找路径 + 读字节 + 出错怎么说"这三件事
-/// 从命令里拆出来，好测）。
+/// 按 hash 在**某个目录**里把文件读出来（"找路径 + 读字节 + 出错怎么说"三件事的纯函数）。
+/// ⚠️ 生产路径现在走 [`read_attachment_bytes_at`]（按空间 + 老位置回退）；这一条**只剩判据在用**
+/// （它把"桶布局/扁平布局/找不到"三种形态钉在一处）。
+#[cfg(test)]
 pub(crate) fn read_bytes_at(dir: &Path, hash: &str) -> Result<Vec<u8>, String> {
     let path = find_path_by_hash(dir, hash).ok_or_else(|| {
         // 说清是"文件不在盘上"，而不是笼统的"读取失败"：这一条最常见的成因是
@@ -282,10 +358,27 @@ pub(crate) fn read_bytes_at(dir: &Path, hash: &str) -> Result<Vec<u8>, String> {
     std::fs::read(&path).map_err(|e| format!("读取附件失败：{e}"))
 }
 
+/// **按空间**读字节：先本空间目录，再回退老位置（老库升级后仍然读得到）。
+pub(crate) fn read_attachment_bytes_at(
+    app_data_dir: &Path,
+    space_id: &str,
+    hash: &str,
+) -> Result<Vec<u8>, String> {
+    let path = find_attachment(app_data_dir, space_id, hash).ok_or_else(|| {
+        "附件文件不存在（可能被移动或删除）".to_string()
+    })?;
+    std::fs::read(&path).map_err(|e| format!("读取附件失败：{e}"))
+}
+
 #[tauri::command]
 pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
+    // ★ 写入位置与钥匙都**按空间**（两者必须在同一把锁里取，免得中间空间被切走）。
+    let (space, key) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        (active_space_id(&c), crate::security::key_if_enabled(&c))
+    };
+    let attachments_dir = space_attachments_dir(&app_data_dir, &space);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
     // Content-addressed storage: filename = sha256 + ext inside a 2-char bucket dir.
@@ -298,16 +391,15 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    // Dedup: write only if not already present, encrypting at rest when this space is
-    // encrypted+unlocked (the hash is over the PLAINTEXT, so dedup still works).
+    // Dedup: write only if not already present **in this space**, encrypting at rest when this
+    // space is encrypted+unlocked (the hash is over the PLAINTEXT, so dedup still works).
     //
-    // ★ owner 第三轮拍板（2026-09-24）：钥匙**按空间**取（`key_if_enabled` ⇒ `space_crypto`）——
-    //   原先那句"用全局会话钥匙"随应用级加密一起没了。⚠️ 已知缺口（**不是**这一片引入的）：
-    //   附件库是**全局内容寻址**的，而钥匙是按空间的 ⇒ 同一份内容被"一个加密空间 ＋ 一个明文空间"
-    //   同时引用时，谁先落盘谁决定那份字节是密文还是明文（后读的那一方若拿不到写它那把钥匙，
-    //   解不开会被**透传**）。要真正收口得让附件库也按空间分，那是另一片的事。
+    // ★ owner 第三轮拍板（2026-09-24）：钥匙**按空间**取（`key_if_enabled` ⇒ `space_crypto`）。
+    // ★ owner 2026-09-24 拍板（②）：**去重也按空间** —— 去重只查本空间自己那份，
+    //   于是"加密空间 ＋ 明文空间引用同一份内容"不再互相踩（各自留各自那份）。
+    //   ⚠️ 刻意**不**把老位置（全局那份）算进去：算了就会跳过写入，让一个加密空间继续
+    //   读着老位置的**明文**副本 —— 那是"加密空间里躺着明文"的静默形态。
     if !path.exists() {
-        let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &args.data)?;
         std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     }
@@ -365,10 +457,12 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
 }
 
 #[tauri::command]
-pub fn attachment_path(app: tauri::AppHandle, hash: String) -> Result<String, String> {
+pub fn attachment_path(app: tauri::AppHandle, db: State<'_, Db>, hash: String) -> Result<String, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
-    find_path_by_hash(&attachments_dir, &hash)
+    // ★ 按空间找（老位置仍回退）。⚠️ **不做**"满树乱找"：别的空间那一份可能是**另一种密文**
+    //   （那把钥匙不属于当前空间），把它交给系统去打开 = 安静地交出一个坏文件。
+    let space = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+    find_attachment(&app_data_dir, &space, &hash)
         .map(|p| p.to_string_lossy().into_owned())
         .ok_or_else(|| "附件不存在".to_string())
 }
@@ -379,9 +473,11 @@ pub fn attachment_path(app: tauri::AppHandle, hash: String) -> Result<String, St
 #[tauri::command]
 pub fn copy_attachment(app: tauri::AppHandle, db: State<'_, Db>, hash: String, dest_path: String) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
-    let p = find_path_by_hash(&attachments_dir, &hash).ok_or("附件不存在")?;
-    let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+    let (space, key) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        (active_space_id(&c), crate::security::key_if_enabled(&c))
+    };
+    let p = find_attachment(&app_data_dir, &space, &hash).ok_or("附件不存在")?;
     // Android：保存对话框给的是 `content://` URI，`std::fs::write(uri)` 会 EROFS（真机实测）。
     // 走 SaveTarget：桌面=直接写（行为不变），URI=先写缓存再整份搬进去。
     // ⚠️ P2a/B3 复核过：`write_path()` 在**桌面**是目标本身、在 **Android URI** 目标是缓存里的
@@ -419,37 +515,17 @@ fn export_attachment_to(src: &Path, write_path: &Path, key: Option<&crate::crypt
 #[tauri::command]
 pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    let root = attachments_root(&app_data_dir);
     let mut hashes = Vec::new();
-    // Bucketed layout: `attachments/<hh>/<hash>.<ext>` — hash is the stem.
-    if let Ok(bucket_entries) = std::fs::read_dir(&attachments_dir) {
-        for be in bucket_entries.flatten() {
-            let bname = be.file_name().to_string_lossy().into_owned();
-            // Only two-hex bucket dirs (skip ".part" and other stray files).
-            if bname.len() == 2 && bname.chars().all(|c| c.is_ascii_hexdigit()) && be.path().is_dir() {
-                if let Ok(files) = std::fs::read_dir(be.path()) {
-                    for f in files.flatten() {
-                        let n = f.file_name().to_string_lossy().into_owned();
-                        // Ignore stray .part files.
-                        if n.ends_with(".part") { continue; }
-                        if let Some(stem) = n.split('.').next() {
-                            if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
-                                hashes.push(stem.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    // Legacy flat layout: `attachments/<hash>.<ext>`.
-    if let Ok(entries) = std::fs::read_dir(&attachments_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(stem) = name.split('.').next() {
-                if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
-                    hashes.push(stem.to_string());
-                }
+    // ★ 递归扫**整棵树**：`<根>/<空间>/<桶>/<hash>.<ext>`（新）、`<根>/<桶>/…` 与 `<根>/<hash>.<ext>`
+    //   （老布局）三种都算 —— 这是一条"盘上到底有哪些附件字节"的读数，不该因为分层就漏。
+    for p in walk_attachment_files(&root) {
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        // Ignore stray .part files.
+        if name.ends_with(".part") { continue; }
+        if let Some(stem) = name.split('.').next() {
+            if stem.len() == 64 && stem.chars().all(|c| c.is_ascii_hexdigit()) {
+                hashes.push(stem.to_string());
             }
         }
     }
@@ -461,11 +537,13 @@ pub fn list_attachment_hashes(app: tauri::AppHandle) -> Result<Vec<String>, Stri
 #[tauri::command]
 pub(crate) fn attachment_bytes(app: tauri::AppHandle, db: State<'_, Db>, hash: &str) -> Result<Vec<u8>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir: PathBuf = app_data_dir.join("attachments");
+    let (space, key) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        (active_space_id(&c), crate::security::key_if_enabled(&c))
+    };
     // 找不到文件时说清是"文件不在盘上"：这一条最常见的成因是外部把文件删了/移走了，
     // 而数据库里那行还在——笼统的"附件不存在"会让人以为是数据库的问题。
-    let raw = read_bytes_at(&attachments_dir, hash)?;
-    let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
+    let raw = read_attachment_bytes_at(&app_data_dir, &space, hash)?;
     crate::security::decrypt_attachment_bytes(key.as_ref(), &raw)
 }
 
@@ -492,7 +570,11 @@ pub fn write_attachment_bytes(
     data: Vec<u8>,
 ) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
+    let (space, key) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        (active_space_id(&c), crate::security::key_if_enabled(&c))
+    };
+    let attachments_dir = space_attachments_dir(&app_data_dir, &space);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
     // `hash` is IPC-supplied and joined into a path below; validate it before
@@ -507,7 +589,6 @@ pub fn write_attachment_bytes(
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     if !path.exists() {
-        let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &data)?;
         std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     }
@@ -543,7 +624,9 @@ pub fn import_attachment_files(
     paths: Vec<String>,
 ) -> Result<Vec<AttachmentMeta>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
+    // ★ 导入进来的文件落进**当前空间**的目录（老位置只读回退，不再往里写）。
+    let space = { let c = db.0.lock().expect("db mutex poisoned"); active_space_id(&c) };
+    let attachments_dir = space_attachments_dir(&app_data_dir, &space);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
 
     let total_files = paths.len();
@@ -590,8 +673,8 @@ pub fn import_attachment_files(
         }
         let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         if final_path.exists() {
-            // Content-addressed dedup: identical file already stored (may have been
-            // written before encryption; leave as-is, the read path decrypts/passthroughs).
+            // Content-addressed dedup **within this space**: identical file already stored
+            // here (leave as-is, the read path decrypts/passthroughs).
             let _ = std::fs::remove_file(&tmp);
         } else if let Err(e) = std::fs::rename(&tmp, &final_path) {
             let _ = std::fs::remove_file(&tmp);
@@ -637,9 +720,8 @@ pub fn list_page_attachments(
     page_id: Option<String>,
 ) -> Result<Vec<AttachmentRow>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
-
     let c = db.0.lock().expect("db mutex poisoned");
+    let space = active_space_id(&c);
     // `page_id = NULL` 永远不成立，所以「空间根下的未整理文件」必须走 IS NULL 分支。
     //
     // `created_at` 从 2026-09-19 起**选出来**：文件管理表里有「创建时间 / 上次修改时间」两列，
@@ -671,7 +753,7 @@ pub fn list_page_attachments(
     let mut out = Vec::new();
     for r in rows {
         let (id, name, hash, mime, size, created_at) = r.map_err(|e| e.to_string())?;
-        let path = find_path_by_hash(&attachments_dir, &hash)
+        let path = find_attachment(&app_data_dir, &space, &hash)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         let meta = AttachmentMeta { id, name, hash, mime, size, path };
@@ -791,9 +873,8 @@ pub fn list_all_pdf_attachments(
     db: State<'_, Db>,
 ) -> Result<Vec<AttachmentMeta>, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
-
     let c = db.0.lock().expect("db mutex poisoned");
+    let space = active_space_id(&c);
     let mut stmt = c
         .prepare(
             "SELECT id, name, hash, mime, size FROM attachments
@@ -815,7 +896,7 @@ pub fn list_all_pdf_attachments(
     let mut out = Vec::new();
     for r in rows {
         let (id, name, hash, mime, size) = r.map_err(|e| e.to_string())?;
-        let path = find_path_by_hash(&attachments_dir, &hash)
+        let path = find_attachment(&app_data_dir, &space, &hash)
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
         out.push(AttachmentMeta { id, name, hash, mime, size, path });
@@ -826,8 +907,7 @@ pub fn list_all_pdf_attachments(
 #[tauri::command]
 pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<(), String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
-    remove_attachment_inner(&db, &attachments_dir, &id)
+    remove_attachment_inner(&db, &app_data_dir, &id)
 }
 
 /// **除当前空间之外**其他空间引用的 hash（严格版）；读不全 ⇒ `None` 且原因打进 stderr。
@@ -870,22 +950,28 @@ fn bytes_are_freeable(local_count: i64, other_refs: &Option<std::collections::Ha
 
 // Delete a single attachment row; remove its on-disk bytes only when no row **in any space**
 // references the hash (true global zero-reference).
+//
+// ★ 2026-09-24（附件按空间分之后）：要删的字节现在是**本空间自己**那份，
+//   但**老位置**（全局那份）可能还在 —— 两份都处理：
+//   · 本空间那份：`other_refs` 只影响"老位置"那一份的取舍，本空间自己那份在这条规则成立时一起删；
+//   · 老位置那份：**只在别的空间也不引用**时才删（`bytes_are_freeable` 的老语义，一字不改）。
 fn remove_attachment_inner(
     db: &State<'_, Db>,
-    attachments_dir: &Path,
+    app_data_dir: &Path,
     id: &str,
 ) -> Result<(), String> {
     let other_refs = other_spaces_refs(db);
-    remove_attachment_inner_with(db, attachments_dir, id, &other_refs)
+    remove_attachment_inner_with(db, app_data_dir, id, &other_refs)
 }
 
 fn remove_attachment_inner_with(
     db: &State<'_, Db>,
-    attachments_dir: &Path,
+    app_data_dir: &Path,
     id: &str,
     other_refs: &Option<std::collections::HashSet<String>>,
 ) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
+    let space = active_space_id(&c);
     let hash: Option<String> = c
         .query_row(
             "SELECT hash FROM attachments WHERE id = ?1",
@@ -910,9 +996,12 @@ fn remove_attachment_inner_with(
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    // ⚠️ 这一行**必须**带 `other_refs`：只数当前空间 = 把别的空间还在用的字节删掉（缺陷帖 #6）。
+    // ⚠️ 这一行**必须**带 `other_refs`：只数当前空间 = 把别的空间还在用的**老位置**字节删掉（缺陷帖 #6）。
     if bytes_are_freeable(count, other_refs, &hash) {
-        if let Some(p) = find_path_by_hash(attachments_dir, &hash) {
+        if let Some(p) = find_path_by_hash(&space_attachments_dir(app_data_dir, &space), &hash) {
+            let _ = std::fs::remove_file(p);
+        }
+        if let Some(p) = find_path_by_hash(&attachments_root(app_data_dir), &hash) {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -924,12 +1013,11 @@ fn remove_attachment_inner_with(
 #[tauri::command]
 pub fn remove_attachments(app: tauri::AppHandle, db: State<'_, Db>, ids: Vec<String>) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
     // 跨空间那一份**只算一次**（批量删除时逐条重算是 O(n×空间数) 次开库）。
     let other_refs = other_spaces_refs(&db);
     let mut removed = 0usize;
     for id in &ids {
-        remove_attachment_inner_with(&db, &attachments_dir, id, &other_refs)?;
+        remove_attachment_inner_with(&db, &app_data_dir, id, &other_refs)?;
         removed += 1;
     }
     Ok(removed)
@@ -1034,8 +1122,8 @@ pub fn restore_attachment(
     source_id: String,
 ) -> Result<AttachmentMeta, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
     let c = db.0.lock().expect("db mutex poisoned");
+    let space = active_space_id(&c);
     let (name, hash, mime, size): (String, String, String, i64) = c
         .query_row(
             "SELECT name, hash, mime, size FROM attachments WHERE id = ?1",
@@ -1054,7 +1142,7 @@ pub fn restore_attachment(
     let now = now_ms();
     let payload = serde_json::json!({ "id": &id, "page_id": &target_page_id, "name": &name, "hash": &hash, "mime": &mime, "size": size }).to_string();
     record_change(&c, "attachment", &id, "upsert", Some(&payload), now)?;
-    let path = find_path_by_hash(&attachments_dir, &hash)
+    let path = find_attachment(&app_data_dir, &space, &hash)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     Ok(AttachmentMeta { id, name, hash, mime, size, path })
@@ -1099,6 +1187,141 @@ mod read_bytes_tests {
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&flat);
+    }
+}
+
+/// ★★ **附件库按空间分**（owner 2026-09-24 拍板 ②）—— 这一组判据钉的是"缺口真的没了"。
+///
+/// 缺口原话（收口前）：附件是**全局一份**内容寻址，而钥匙按空间 ⇒ 同一份内容被
+/// "一个加密空间 ＋ 一个明文空间"同时引用时，**谁先落盘谁决定那份字节是密文还是明文**，
+/// 后读的那一方解不开会被透传（安静地交出坏文件）。
+#[cfg(test)]
+mod per_space_layout_tests {
+    use super::*;
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-attspace-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 按空间**写**一份（与命令里那条写入路径同形状：`<根>/<空间>/<桶>/<hash>.<ext>`）。
+    fn put(app_data_dir: &Path, space: &str, hash: &str, bytes: &[u8]) -> PathBuf {
+        let dir = space_attachments_dir(app_data_dir, space);
+        let path = bucket_path(&dir, hash, "bin");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    /// ① ★ 同一条 hash 在两个空间里**各自一份**：路径不同、字节不同（＝缺口不存在了）。
+    /// 这条就是本次改动的**承重判据**：改回"全局一份"（`find_attachment` 退化成只查根）就红。
+    #[test]
+    fn the_same_hash_is_two_independent_files_in_two_spaces() {
+        let app = temp_root("two-spaces");
+        let hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        let a = put(&app, "space-a", hash, b"ciphertext written by A");
+        let b = put(&app, "space-b", hash, b"plaintext written by B");
+        assert_ne!(a, b, "两个空间必须是两份文件（而不是共用一份）");
+
+        // 各读各的：谁也不会拿到对方那份
+        assert_eq!(find_attachment(&app, "space-a", hash).unwrap(), a);
+        assert_eq!(find_attachment(&app, "space-b", hash).unwrap(), b);
+        assert_eq!(read_attachment_bytes_at(&app, "space-a", hash).unwrap(), b"ciphertext written by A");
+        assert_eq!(read_attachment_bytes_at(&app, "space-b", hash).unwrap(), b"plaintext written by B");
+
+        // 路径也必须**在各自空间目录下**（不是"两个名字指向同一处"）
+        assert!(a.starts_with(space_attachments_dir(&app, "space-a")));
+        assert!(b.starts_with(space_attachments_dir(&app, "space-b")));
+
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// ② 老位置（全局那份）**照样读得到** —— 升级不搬文件，谁都不会因为分层而丢附件。
+    #[test]
+    fn a_legacy_global_file_is_still_readable_from_any_space() {
+        let app = temp_root("legacy");
+        let root = attachments_root(&app);
+        let hash = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+        // 老布局两种形态：分桶 ＋ 扁平
+        let bucketed = root.join(&hash[..2]).join(format!("{hash}.png"));
+        std::fs::create_dir_all(bucketed.parent().unwrap()).unwrap();
+        std::fs::write(&bucketed, b"legacy bucketed").unwrap();
+        let flat_hash = "0011223344556677889900112233445566778899001122334455667788990011";
+        std::fs::write(root.join(format!("{flat_hash}.png")), b"legacy flat").unwrap();
+
+        for space in ["space-a", "space-b"] {
+            assert_eq!(
+                read_attachment_bytes_at(&app, space, hash).unwrap(),
+                b"legacy bucketed",
+                "{space} 应当回退读到老位置那份"
+            );
+            assert_eq!(
+                read_attachment_bytes_at(&app, space, flat_hash).unwrap(),
+                b"legacy flat",
+                "{space} 应当回退读到老位置（扁平）那份"
+            );
+        }
+        // 而**写**永远落在空间目录里（`space_attachments_dir` 不改老位置）
+        let mine = put(&app, "space-a", hash, b"mine");
+        assert_eq!(read_attachment_bytes_at(&app, "space-a", hash).unwrap(), b"mine", "本空间那份优先");
+        assert_eq!(read_attachment_bytes_at(&app, "space-b", hash).unwrap(), b"legacy bucketed", "别的空间不受影响");
+        assert!(mine.starts_with(space_attachments_dir(&app, "space-a")));
+
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// ③ 统计/清理那几条路要能看见**所有布局**（递归遍历），否则按空间分之后它们会漏掉新目录。
+    #[test]
+    fn walking_the_tree_covers_every_layout() {
+        let app = temp_root("walk");
+        let root = attachments_root(&app);
+        let h_new = "1111111111111111111111111111111111111111111111111111111111111111";
+        let h_old = "2222222222222222222222222222222222222222222222222222222222222222";
+        let h_flat = "3333333333333333333333333333333333333333333333333333333333333333";
+
+        put(&app, "space-a", h_new, b"new layout");
+        std::fs::create_dir_all(root.join(&h_old[..2])).unwrap();
+        std::fs::write(root.join(&h_old[..2]).join(format!("{h_old}.bin")), b"old bucketed").unwrap();
+        std::fs::write(root.join(format!("{h_flat}.bin")), b"old flat").unwrap();
+
+        let mut found: Vec<String> = walk_attachment_files(&root)
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![format!("{h_new}.bin"), format!("{h_old}.bin"), format!("{h_flat}.bin")],
+            "三种布局都要被遍历到（统计/孤儿清理靠它）"
+        );
+        // `find_attachment_anywhere`：不知道空间时也找得到（存储/清理那两条路用）
+        assert!(find_attachment_anywhere(&root, h_new).is_some(), "新布局找得到");
+        assert!(find_attachment_anywhere(&root, h_old).is_some(), "老桶布局找得到");
+        assert!(find_attachment_anywhere(&root, h_flat).is_some(), "老扁平布局找得到");
+
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// ④ 空间 id **不许**穿出附件树（`is_safe_space_id` 把关）。
+    #[test]
+    fn a_hostile_space_id_cannot_escape_the_attachments_tree() {
+        let app = temp_root("traversal");
+        let dir = space_attachments_dir(&app, "../../evil");
+        assert!(
+            dir.starts_with(attachments_root(&app)),
+            "空间 id 进路径前必须过白名单，实际：{}",
+            dir.display()
+        );
+        let _ = std::fs::remove_dir_all(&app);
     }
 }
 

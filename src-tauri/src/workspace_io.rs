@@ -198,7 +198,10 @@ pub async fn export_workspace(
     };
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
+    // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：导出的是**这个空间自己**的附件
+    //   （`space.id` 就是活动空间 id）；老位置那份由 `find_attachment` 回退照顾。
+    let app_data_dir2 = app_data_dir.clone();
+    let space_id2 = space.id.clone();
     // 目标位置：桌面=路径；Android=保存对话框给的 `content://` URI ⇒ 先写缓存再搬
     // （zip 需要 Seek，URI 只能顺序写）。见 `save_target` 模块头。
     let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-space")?;
@@ -215,7 +218,6 @@ pub async fn export_workspace(
     }
 
     let app2 = app.clone();
-    let attachments2 = attachments_dir;
     let dest2 = dest.clone();
     let dest_report = dest_path.clone();
     let tmp_db2 = tmp_db;
@@ -241,7 +243,7 @@ pub async fn export_workspace(
         let total = hashes2.len();
         let mut matched = 0usize;
         for hash in &hashes2 {
-            let path = find_by_hash(&attachments2, hash);
+            let path = crate::attachments::find_attachment(&app_data_dir2, &space_id2, hash);
             if let Some(p) = path {
                 let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 let name = format!("attachments/{fname}");
@@ -291,7 +293,6 @@ pub async fn import_workspace(
     }
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
     let spaces_dir = app_data_dir.join("spaces");
 
     let tmp_dir = crate::tempdir::dir("shuyonote-wsin").map_err(|e| e.to_string())?;
@@ -370,7 +371,10 @@ pub async fn import_workspace(
     let mut bytes = 0u64;
     if let Some(d) = &att_src {
         if d.exists() {
-            copy_attachments_into_store(app.clone(), d, &attachments_dir, &mut done, &mut bytes).await?;
+            // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：导入的附件落进**这个新空间自己**的目录。
+            //   （zip 里是扁平的 `attachments/<hash>.<ext>`；`find_path_by_hash` 桶/扁平两种都认。）
+            let dest = crate::attachments::space_attachments_dir(&app_data_dir, &new_id);
+            copy_attachments_into_store(app.clone(), d, &dest, &mut done, &mut bytes).await?;
         }
     }
 
@@ -430,18 +434,6 @@ pub async fn import_workspace(
         },
     )
     .map_err(|e| e.to_string())
-}
-
-fn find_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.split('.').next() == Some(hash) {
-                return Some(entry.path());
-            }
-        }
-    }
-    None
 }
 
 /// Join a zip entry name onto a base dir, refusing any entry that could escape
