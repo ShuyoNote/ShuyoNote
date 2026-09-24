@@ -1,4 +1,4 @@
-From 3995bee541ea46c71477c502a76a961abad03182 Mon Sep 17 00:00:00 2001
+From 0a6cd5b880f2bf1af98e3b536c8b680b19107911 Mon Sep 17 00:00:00 2001
 From: cnzen <zhaizy@qq.com>
 Date: Thu, 24 Sep 2026 10:06:41 +0800
 Subject: [PATCH] =?UTF-8?q?feat(keyring):=200b=20=E5=85=AC=E5=BC=80?=
@@ -75,12 +75,12 @@ Content-Transfer-Encoding: 8bit
  create mode 100644 src/space_keyring.rs
 
 diff --git a/package.json b/package.json
-index 94cdad7..f55c5ce 100644
+index 4159307..07d4bf4 100644
 --- a/package.json
 +++ b/package.json
-@@ -6,6 +6,7 @@
-     "check:website": "node website/check.mjs",
-     "check:doc-links": "node scripts/check-doc-links.mjs",
+@@ -4,6 +4,7 @@
+   "description": "ShuyoNote 同步服务端（Rust 主仓库，无 JS 依赖；少量回归脚本用 node）",
+   "scripts": {
      "verify:cross-space-attachments": "node scripts/verify-cross-space-attachments.mjs",
 -    "verify:project-attribution": "node scripts/verify-project-attribution.mjs"
 +    "verify:project-attribution": "node scripts/verify-project-attribution.mjs",
@@ -285,7 +285,7 @@ index 42efbc7..c92d15d 100644
          assert!(table_exists(&conn, "projects").unwrap());
          assert!(table_exists(&conn, "project_members").unwrap());
 diff --git a/src/main.rs b/src/main.rs
-index c20cff2..2cee8bf 100644
+index 598a643..52a2022 100644
 --- a/src/main.rs
 +++ b/src/main.rs
 @@ -13,6 +13,7 @@ mod device_key;
@@ -296,7 +296,7 @@ index c20cff2..2cee8bf 100644
  mod sync;
  
  use axum::{
-@@ -345,6 +346,16 @@ async fn main() {
+@@ -348,6 +349,16 @@ async fn main() {
              "/spaces/{id}/device-keys/{key_id}/revoke",
              post(device_key::revoke_key),
          )

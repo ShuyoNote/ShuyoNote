@@ -256,7 +256,16 @@ debug 构建**下的读数 ⇒ **不能拿它当"用户实际要等多久"**。
   他们树仍 76 项、**一个字节没被碰**。
   ⚠️ 仍然**没有**落进他们仓：`src/main.rs` **还是脏的**（是他们在写的东西）—— 往那儿提交会把他们的改动
   一起提交（静默混别人的活），把工作树改回"没有我的改动"又会让他们的下一次提交**把我的路由删掉**。
-  两条都不能做 ⇒ 交付物仍是**等价于一次提交的补丁**（`git am` 一条命令的事）。
+  两条都不能做 ⇒ 交付物曾是**等价于一次提交的补丁**（`git am` 一条命令的事）。
+  ✅ **2026-09-24 已落地**：他们那棵树终于干净了（0 项）⇒ 我 rebase 到他们当时的新 HEAD（`b68b8f8`）
+  → 克隆里 `cargo test` **41 + 5 全绿** → 重生成补丁 → `git apply --check` 通过 →
+  **`git am` 落进他们仓**：提交 `d391be9`（`src/db.rs` 的 v16 迁移 ＋ `src/space_keyring.rs`（新）
+  ＋ `src/main.rs` 三条路由 ＋ `scripts/verify-space-keyring.mjs`（新）＋ `package.json` 的
+  `verify:space-keyring`，5 文件 / +555 行），树仍是干净的。
+  ⚠️ **没有 push**：他们那边的本地 main 本来就领先 `origin/main` 若干笔（我一 push 会把别人的提交
+  一起发出去）⇒ 推不推由他们决定。⚠️ 落地时**没**在他们那棵树上再跑一遍门禁（克隆里跑的同一份内容），
+  CI 上那三条既有红灯（`check-doc-links` / `check-release-discipline` / `cargo fmt` 既有差异）
+  与本补丁无关。
 - **落点已验证**：在**他们那棵有未提交改动的树**上 `git apply --check` **exit 0**（能干净落下；他们树仍是 78 项，
   一个字节都没被我碰过）。（`git apply --3way --check` 会报 `src/main.rs: does not match index` ——
   那是"它本来就脏"的正常结果。）
