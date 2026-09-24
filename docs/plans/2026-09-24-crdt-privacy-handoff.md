@@ -220,6 +220,31 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 **出一次 Android 包 → 装上 → 解锁一次 → `adb logcat -s RustStdoutStderr`** 读那行 `[unlock] … ms`。
 （⚠️ 仍未量到的：低端机上的整体解锁；顺带也能量到"**两遍 KDF**"在真机上到底各占多少。）
 
+**★★ 2026-09-24：试过出包了，卡在环境上（三个坑都记下来，下次省一整轮）**
+
+链路是 `npx tauri android init` → `npx tauri android build --apk`。按顺序撞到：
+
+1. **缺 `src-tauri/gen/android`** ⇒ 先 `tauri android init`（会生成 `gen/android`；它自带 `.gitignore`，
+   **工作树不会被弄脏**，实测 `git status` 仍 0 项）。
+2. **`beforeBuildCommand: pnpm build` 在后台任务里失败**：pnpm 的依赖状态检查判定 `node_modules`
+   要重装，而**没有 TTY** 时它自己中止 —— `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`。
+   ⚠️ **不要**为此跑 `pnpm install`（网络不通会把 `node_modules` 弄成半成品，还会连累同工作树的另一个会话）；
+   本机对策：用**配置文件**把 `beforeBuildCommand` 置空（前端产物 `dist/` 已是当前 tip 的）：
+   `_scratch/tauri-android-override.json` = `{"build":{"beforeBuildCommand":""}}`，然后
+   `npx tauri android build --apk --config <那个文件>`。
+   ⚠️ 顺带记一条 PowerShell 坑：`--config '{"build":{...}}'` 里的引号会被 PS 5.1 吃掉
+   （CLI 收到 `{build:{...}}` ⇒ `key must be a string`）⇒ **配置一律走文件**。
+3. ★ **最后卡在 `perl`**：Android 侧的 `rusqlite` 要用 vendored OpenSSL（`openssl-src`），
+   而它编之前要 **Perl**。本机**没装** ⇒ `error: failed to run custom build command for openssl-sys`。
+   试过用 **Git 自带的那份 msys perl**（`C:\Program Files\Git\usr\bin\perl.exe`，v5.38.2）加到 PATH：
+   它能被找到，但 OpenSSL 的 `Configure` **报错退出 2**（msys Perl 驱动不了 Android 目标那套构建）
+   ⇒ 这条路**不通**。
+   ⇒ **结论**：要出安卓包，本机需要**一份正经 Perl（Strawberry Perl 那种）**；那是**系统级安装**，
+   需要 owner 点头（或者在一台已经能出包的机器/CI 上量）。
+   ⚠️ 这也正是仓里 `docs/plans/2026-09-17-sm-crypto-tradeoff.md` 早写过的坑（"Android NDK 的 Perl 是硬坑"）。
+
+**因此"整体解锁"的真机读数目前仍只有推算值（≈0.75–0.9 s）**，而**微基准的真机读数（0.4–0.55 s）是真的量过的**。
+
 ### ★★ 由此更正一条之前的口径：那个"桌面 ~8 秒"是**debug 构建**量出来的
 
 同一份 bench 在同一台桌面机上：**debug ≈ 3.0 s，release ≈ 0.13 s（差约 23 倍）**。
