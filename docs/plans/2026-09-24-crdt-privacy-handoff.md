@@ -20,7 +20,8 @@
 | 第 1 步 1b-2b | **`encryption_enabled` 按空间**（这个连接的库是密的 **或** 袋里有它）＋ **启动闸门改成嗅活动空间的文件**（`security::startup_needs_unlock`） | `63fc5506` |
 | **A=3** | owner 拍板"分类由入口决定" ⇒ 本地新建空间标 `personal`（`workspaces::insert_new_local_space`）＋ **D 的 KDF 实测读数**（8 秒大头在 SM3 那条腿） | `4fa9d6d4` ⚠️ **只在本地，推送被 TLS 挡住**（见 §6） |
 | 第 1 步 1b-2c | **按空间启用/禁用的命令面**（`enable_space_encryption` / `disable_space_encryption`；Web 侧登记**桌面专属**）＋ 顺手把 `disable` 的载荷从 `PageStateArgs`（`page_id`）换成 `SpaceIdArgs`（`space_id`） | `988d756f` |
-| **②b 后端** | **分类的手动出口** `set_space_kind`（命令面**窄进**：只认 3 个值，别的串报错）＋ **一次读全的隐私读数** `space_security_overview`（`SpaceSecurityView`：分类 ＋ 加密状态 ＋ 闸门裁决；**未分类照样列出来**）＋ 判据 1 条（14/14 绿） | 本轮（见 §2 第 3–4 条） |
+| **②b 后端** | **分类的手动出口** `set_space_kind`（命令面**窄进**：只认 3 个值，别的串报错）＋ **一次读全的隐私读数** `space_security_overview`（`SpaceSecurityView`：分类 ＋ 加密状态 ＋ 闸门裁决；**未分类照样列出来**）＋ 判据 1 条（14/14 绿） | `0cdf9d99` |
+| **②b 界面** | **最小界面**：`SpacePrivacySection`（挂在**同步面板**里 —— 闸门拦的就是「绑同步」这个动作）＋ 8 条判据（含 Web 不调 api / 两步确认 / 接线） | 本轮（见 §2 第 4 条） |
 
 ### 6. ✅ 2026-09-24 推送事故：**已恢复**（瞬时，非我们这侧）
 
@@ -48,11 +49,13 @@ SSL certificate problem: EE certificate key too weak ← -c http.sslBackend=open
 | **F** | 按建议 ⇒ **不做**「用对端」 | ✅ 不排期 |
 
 
-**当轮 tip 读数**（②b 后端这一轮，提交后即 `origin/dev`）：Rust 全量 **579 passed / 0 failed / 18 ignored**
-（`test exe exit code = 0`，313.8 s）；vitest 全量 **214 文件通过 / 2198 passed / 12 skipped**（exit 0，186.0 s）；
-`npx tsc --noEmit` 0；`pnpm run build` 0；`check-web-commands` 绿（**Rust 255 / web 249 / 契约 257**）；
-doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线 562 未动）。
-（上一轮树上的旧读数，作为对照：Rust 572 / vitest 2194 / 137 篇。）
+**当轮 tip 读数**（②b **界面**这一轮，提交后即 `origin/dev`）：Rust 全量 **579 passed / 0 failed / 18 ignored**
+（`test exe exit code = 0`，293.1 s）；vitest 全量 **215 文件通过 / 2206 passed / 12 skipped**（exit 0）；
+`npx tsc --noEmit` 0；`pnpm run build` 0；`build:web` 0 ＋ `check:web-build` **9 通过 / 0 失败**（真 Chromium 里跑）；
+`check-web-commands` 绿（**Rust 255 / web 249 / 契约 257**）；`check-overlay-registry` **26 通过 / 0 失败**
+（这一节**不是**浮层，是 `sync` 浮层里的一节 ⇒ 不需要新登记）；doc 门禁 138 篇 / 863 条链接 / 84 篇方案 /
+44 条 / 562 处（基线 562 未动）。
+（对照：②b **后端**那一轮 `0cdf9d99` ⇒ Rust 579 / vitest 2198 / 214 文件。）
 
 ## 2. 下一片：~~1b-2b~~（**已完成**：开关与启动闸门按空间；剩下的是"命令面/UI"与"分类来源"）
 
@@ -67,8 +70,18 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线 56
    Web 侧登记进 `DESKTOP_ONLY_COMMANDS` 并写清理由（Web 无钥匙柜，加密空间由 `ciphertextSniff` 明确拒收）。
    ⚠️ 顺手把 `disable_space_encryption` 的载荷从 `PageStateArgs`（字段名 `page_id`）换成新的
    `SpaceIdArgs`（`space_id`）—— 名字与语义不符的载荷会被后来的人照着抄。
-4. **UI**（**待做**，可后置）：设置面板里"这个空间加密/不加密" ＋ "个人/团队"分类（分类是闸门的输入，见 §3）。
-   **后端已就绪**（本轮）：`set_space_kind`（分类的**手动出口**）＋ `space_security_overview`
+4. ~~**UI**（待做）~~ ✅ **最小界面已做**（②b）：`src/components/SpacePrivacySection.tsx`，
+   **挂在同步面板里**（`SyncPanel.tsx`）。为什么是这一屏：闸门拦的正是「绑同步」这个动作
+   （`sync::sync_bind_gate`）⇒ 读数与动作必须**同屏**，否则用户得自己去别处找「为什么绑不上」。
+   每个空间一行：名字 ＋ 分类徽标 ＋ 已加密/明文 ＋ **闸门裁决**（拦 ⇒ 原样显示后端那句可操作的原因；
+   未分类 ⇒ 明确写「闸门这次没有管到它」，**不许**沉默放行），动作＝改分类下拉 ＋ 开启/关闭加密。
+   ⚠️ 三条纪律写在组件里：① **唯一的平台判定点**（Web 上只渲染解释句、**一次 api 都不调** ——
+   调了就是 `command not found`）；② 「关闭加密」是**两步确认**（不用 `window.confirm`：Tauri 里不保证有实现，
+   静默返回 false 就成了「点了没反应」的静默失败）；③ 后端报错**原样**显示（自己改写一遍＝把"可操作"抄第二份）。
+   判据 `src/components/SpacePrivacySection.test.ts` **8 条**（含 Web 不调 api、两步确认、主口令原样透传，
+   以及**接线判据**：`SyncPanel.tsx` 里真的挂了这一节，防孤儿组件）。样式在 `App.css`（`.space-privacy*`，
+   与 `.sync-card` 同族，不另起视觉语言）。
+   **后端**（上一轮已推）：`set_space_kind`（分类的**手动出口**）＋ `space_security_overview`
    （**一次读全**所有空间的分类 ＋ 加密状态 ＋ 闸门裁决，`SpaceSecurityView`）。
    界面侧不用知道"钥匙袋"存在；未分类的空间**照样在列表里**（`kind === ""`），界面要如实显示成
    "未分类"，**不许**默认成个人空间。

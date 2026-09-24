@@ -12,6 +12,7 @@ import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform } from "../lib/platform";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
+import { SpacePrivacySection } from "./SpacePrivacySection";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
@@ -724,6 +725,11 @@ export function SyncPanel() {
               </div>
             </div>
           )}
+          {/* 隐私边界 ②b（2026-09-24）：**这个空间敢不敢绑同步**（分类 ＋ 加密 ＋ 闸门裁决）。
+              ⚠️ 放在这一屏是因为闸门拦的正是「绑同步」这个动作（`sync::sync_bind_gate`）——
+              读数与动作同屏，用户不用去别处找「为什么绑不上」。
+              平台判定在组件内部（Web 上只渲染解释句、一次 api 都不调）。 */}
+          <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
             {rows.map((r) => {

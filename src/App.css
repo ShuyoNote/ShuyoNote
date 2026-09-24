@@ -1279,6 +1279,57 @@ html[data-platform="win"] .app-body {
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
 }
+/* 空间隐私（②b）：同步面板里那一节「这个空间敢不敢绑同步」。
+ * ⚠️ 与 `.sync-card` 同族（同一屏里上下相邻）⇒ 沿用同一套变量与圆角，别另起一套视觉语言。
+ * 为什么放在同步面板里：闸门拦的正是「绑同步」这个动作（Rust `sync::sync_bind_gate`），
+ * 读数与动作必须**同屏**，否则用户得自己去别处找「为什么绑不上」。 */
+.space-privacy {
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.space-privacy-head { font-size: 12px; font-weight: 600; color: var(--text); }
+.space-privacy-hint { font-size: 11px; line-height: 1.6; color: var(--text-dim); }
+.space-privacy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.space-privacy-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.space-privacy-name {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-privacy-kind,
+.space-privacy-enc {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.space-privacy-kind.is-personal,
+.space-privacy-kind.is-team { border-color: var(--border-strong); color: var(--text); }
+.space-privacy-gate { font-size: 11px; line-height: 1.6; }
+.space-privacy-gate.is-allow { color: var(--text-dim); }
+.space-privacy-gate.is-block { color: var(--danger); }
+.space-privacy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.space-privacy-actions select { font-size: 12px; max-width: 100%; }
+.space-privacy-pass { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+.space-privacy-pass input { flex: 1; min-width: 0; font-size: 12px; }
+.space-privacy-note { font-size: 11px; color: var(--text-dim); }
+.space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
 .sync-card {
   display: flex;
   flex-direction: column;
