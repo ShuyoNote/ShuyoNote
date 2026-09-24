@@ -573,6 +573,38 @@ B 自己的库**真的**变成密文，而且到这一步闸门才放行（分�
 → `node scripts/check-doc-facts.mjs` → `vitest run src/components/SpacePrivacySection.test.ts` →
 `pnpm run build`。全绿再提交推送。
 
+### 7.0.6 ★★ owner 拍板（第三轮）：**去掉应用级那套（连兜底也删），不向后兼容** —— 施工单
+
+**拍板**：设置面板里那节"端到端加密"（应用级：全局一把钥匙）**去掉**；**连"读老库/解锁"的兜底也删**
+（选乙）。⇒ 后果（已向 owner 说明并确认）：**应用级加密的存量库从此打不开**（按 C=1：**报错＋说清**，
+不静默），并且 **① 的迁移/轮换失去对象**（它们是"把旧钥匙搬进袋子"），函数、命令、界面按钮、判据**一并删**。
+
+**爆炸半径（实测 grep，63 处引用）**：`security.rs`（哨兵 `ENC_SALT`/`ENC_VERIFY`、`session_key()`、
+`encryption_enabled` 的兜底、`set_encryption_impl`、`enable/disable_encryption(_impl)`、`wire_keys_for_conn`
+的兜底 ＋ **6 条判据**）、`backup.rs`（快照要按旧钥匙读）、`space_crypto.rs`（① 的两函数 ＋ 9 处
+`tests_set_session_key`）、`crypto.rs`（三个 meta 常量）、`lib.rs`（注册）、UI（`SettingsDialog` 与
+`SpacePrivacySection`）、契约/`api.ts`/`check-web-commands`。
+
+**分阶段（每阶段自带判据；每阶段跑满门禁、全绿再推）**：
+
+1. **解锁改从"钥匙袋"派生**：`unlock_encryption_impl` 不再用应用级盐/哨兵，改为
+   用袋子记的 KDF 参数推主密钥；**错口令靠解盒子的 AEAD 认**（报"打不开（口令不对或盒子被改过）"）。
+   判据：错口令 ⇒ 明确报错（且**不是**"口令不正确"这种旧文案）；正确口令 ⇒ 能解出盒子里的空间钥匙；
+   没有袋子时解锁**不报错**（旧路已无，等价于"什么都还没加密"）。
+2. **去掉 wire / backup 里的旧兜底**：`wire_keys_for_conn` 只走**空间钥匙**；空间没有盒子而其文件是密文
+   ⇒ **报错＋说清**（这是第 3 阶段之后唯一可能的"老库"形态）。`backup.rs` 的快照同理。
+   判据：没有盒子的密文空间 ⇒ 载荷路径**响亮失败**，绝不退回明文；明文空间照旧。
+3. **删应用级命令与界面**：`enable_encryption`/`disable_encryption`（＋`set_encryption_impl`/
+   `disable_encryption_impl` 若无人再用）、契约、`api.ts`、`SettingsDialog` 那一节（换成
+   **挂 `SpacePrivacySection`**）、`check-web-commands` ＋ `docs/TESTING.md` 计数同批。
+4. **删 ① 的迁移/轮换**：`migrate_legacy_space_into_keyring`、`rotate_legacy_space_to_random_key`、
+   两条命令、界面两个按钮、`api.ts` 两条、组件判据两条、Rust 判据若干 ＋ 文档里 ① 的段落标注"已作废"。
+5. **文档收尾**：口径（§0.5 / 决策稿 §7 与 §3.1）、`docs/TESTING.md`、遗留文案（"应用级加密"字样）。
+
+⚠️ **顺序不能反**：先让"解锁/载荷"不再依赖应用级钥匙（1、2），再删开关与命令（3、4）——
+反过来会留下一段**没人守的加密路径**，而它恰恰是最容易静默降级成明文的地方。
+⚠️ 每一步都要**同一批**改完（Rust ＋ 契约 ＋ api ＋ UI ＋ 计数），否则中间态推不出去（门禁会红，这是好事）。
+
 ### 7.1 落点计划（补丁按此实现；留着看当时的取舍）
 
 已侦察（`C:\Users\cnzen\zhai\shuyonote-sync-server`，**另一个仓**，按它自己的门禁走）：
