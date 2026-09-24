@@ -839,14 +839,17 @@ pub(crate) fn sync_bind_gate(
     dir: &Path,
     ws_id: &str,
 ) -> Result<Option<String>, String> {
-    let st = crate::space_crypto::space_status(dir, ws_id);
+    let mut st = crate::space_crypto::space_status(dir, ws_id);
+    // ★ 名字（不是 uuid）：拦人的那句话与"没分类"那句提示都要说名字（owner 2026-09-24 指出）。
+    crate::space_crypto::fill_space_name(c, &mut st);
     let kind = crate::space_crypto::space_kind(c, ws_id);
     match crate::space_crypto::sync_gate(&st, kind) {
         crate::space_crypto::SyncGate::Allowed => Ok(None),
         crate::space_crypto::SyncGate::Blocked(msg) => Err(msg),
         crate::space_crypto::SyncGate::AllowedUnclassified => Ok(Some(format!(
-            "空间「{ws_id}」还没分类（个人/团队）：同步闸门这次**没有管到它** —— \
-             若它是个人空间，请先按空间加密再绑定同步。"
+            "{}还没分类（个人/团队）：同步闸门这次**没有管到它** —— \
+             若它是个人空间，请先按空间加密再绑定同步。",
+            st.label()
         ))),
     }
 }

@@ -655,9 +655,15 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     // ★ 第 1 步（1b-2）：活动空间的**按空间**读数（纯读：嗅文件 ＋ 看本进程的钥匙袋/会话）。
     let active_id = crate::workspaces::active_workspace_id(&c).ok();
     let active_space = match (crate::db::app_data_dir_ref(), active_id.as_deref()) {
-        (Some(dir), Some(sid)) => crate::space_crypto::space_status(dir, sid),
+        (Some(dir), Some(sid)) => {
+            let mut st = crate::space_crypto::space_status(dir, sid);
+            // ★ 名字（不是 uuid）：闸门那句拦人的话要说名字（owner 2026-09-24 指出）。
+            crate::space_crypto::fill_space_name(&c, &mut st);
+            st
+        }
         _ => crate::space_crypto::SpaceCryptoStatus {
             space_id: String::new(),
+            name: String::new(),
             encrypted_on_disk: false,
             in_keyring: false,
             key_available: false,

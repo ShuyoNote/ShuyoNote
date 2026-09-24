@@ -296,10 +296,10 @@ pub fn sync_gate(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
                 SyncGate::Allowed
             } else {
                 SyncGate::Blocked(format!(
-                    "空间「{}」是个人空间但还没有加密：先给它设一句口令（按空间加密），再绑定同步 —— \
+                    "{}是个人空间但还没有加密：先给它设一句口令（按空间加密），再绑定同步 —— \
                      否则它的内容会**明文**发到服务端，而且事后加密也撤不回已经落库的那份。\
                      （如果你要的是团队空间，请在空间设置里把它标成团队空间。）",
-                    st.space_id
+                    st.label()
                 ))
             }
         }
@@ -367,6 +367,13 @@ pub fn set_space_kind(c: &Connection, space_id: &str, kind: SpaceKind) -> Result
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SpaceCryptoStatus {
     pub space_id: String,
+    /// 这个空间的**显示名**（给用户看的那句话用它，而不是 id）。
+    ///
+    /// ⚠️ 它是**可选**的：`space_status` 是"不需要 conn 的纯读"，拿不到名字 ⇒ 空串。
+    /// 有 conn 的调用方（`space_security_views` / `sync::sync_bind_gate` /
+    /// `security::encryption_status`）**应当**把它填上 —— 否则界面上会出现
+    /// `空间「119738aa-6bc1-…」…` 这种 uuid（owner 2026-09-24 当场指出："空间名称不对"）。
+    pub name: String,
     /// 库文件本身是不是密的（**嗅文件头**，不需要钥匙 —— 启动闸门就靠它）。
     pub encrypted_on_disk: bool,
     /// 钥匙袋里有没有它的盒子。
@@ -375,15 +382,43 @@ pub struct SpaceCryptoStatus {
     pub key_available: bool,
 }
 
+impl SpaceCryptoStatus {
+    /// 给用户看的称谓：**有名字用名字，没有才退回 id**（id 只在排错时有意义）。
+    pub fn label(&self) -> String {
+        if self.name.trim().is_empty() {
+            format!("空间「{}」", self.space_id)
+        } else {
+            format!("空间「{}」", self.name)
+        }
+    }
+}
+
 /// 读一个空间的三条读数（纯读：不写库、不解密、不需要 conn）。
+///
+/// ⚠️ **拿不到名字**（`name` 留空）⇒ 调用方若有 conn 应当自己填（见 [`SpaceCryptoStatus::name`]）。
 pub fn space_status(app_data_dir: &Path, space_id: &str) -> SpaceCryptoStatus {
     let path = crate::db::space_db_path(app_data_dir, space_id);
     let in_keyring = keyring().map(|k| k.has(space_id)).unwrap_or(false);
     SpaceCryptoStatus {
         space_id: space_id.to_string(),
+        name: String::new(),
         encrypted_on_disk: crate::security::space_db_is_encrypted(&path),
         in_keyring,
         key_available: in_keyring && session_master().is_some(),
+    }
+}
+
+/// 给一个读数补上**显示名**（有 conn 的调用方用；空间已被删/查不到 ⇒ 原样返回）。
+pub fn fill_space_name(c: &Connection, st: &mut SpaceCryptoStatus) {
+    if !st.name.is_empty() || st.space_id.is_empty() {
+        return;
+    }
+    if let Ok(name) = c.query_row(
+        "SELECT COALESCE(name, '') FROM meta.workspaces WHERE id = ?1",
+        [&st.space_id],
+        |r| r.get::<_, String>(0),
+    ) {
+        st.name = name;
     }
 }
 
@@ -427,7 +462,9 @@ pub fn space_security_views(
     Ok(ids
         .into_iter()
         .map(|id| {
-            let st = space_status(app_data_dir, &id);
+            let mut st = space_status(app_data_dir, &id);
+            // ★ 名字一起读出来：闸门那句拦人的话要说**名字**（不是 uuid）。
+            fill_space_name(conn, &mut st);
             let kind = space_kind(conn, &id);
             SpaceSecurityView {
                 space_id: id,
@@ -691,6 +728,7 @@ mod tests {
         let _g = crate::security::SEC_LOCK.lock().unwrap();
         let plain = SpaceCryptoStatus {
             space_id: "s".into(),
+            name: "我的空间".into(),
             encrypted_on_disk: false,
             in_keyring: false,
             key_available: false,
@@ -712,6 +750,9 @@ mod tests {
         };
         assert!(blocked.contains("明文"), "{blocked}");
         assert!(blocked.contains("团队空间"), "要给出另一条出路：{blocked}");
+        // ★ 说的是**名字**而不是 uuid（owner 2026-09-24："空间名称不对"）
+        assert!(blocked.contains("我的空间"), "拦人的话要说空间名：{blocked}");
+        assert!(!blocked.contains("\"s\""), "不该把内部 id 当名字：{blocked}");
         // ② 个人空间已加密（文件是密的 **或** 袋里有它）⇒ 放行
         assert_eq!(sync_gate(&enc, SpaceKind::Personal), SyncGate::Allowed);
         assert_eq!(sync_gate(&boxed, SpaceKind::Personal), SyncGate::Allowed);
@@ -823,6 +864,7 @@ mod tests {
     fn the_gate_view_keeps_all_three_outcomes() {
         let plain = SpaceCryptoStatus {
             space_id: "s".into(),
+            name: String::new(), // 视图判据不关心称谓：留空 ⇒ 退回 id（见 `label()`）
             encrypted_on_disk: false,
             in_keyring: false,
             key_available: false,
@@ -956,6 +998,10 @@ mod tests {
         assert_eq!(p.kind, "personal");
         assert_eq!(p.kind.as_str(), SpaceKind::Personal.as_str(), "视图里的串与内部口径是同一个");
         assert!(!p.gate.allow && !p.gate.reason.is_empty(), "个人＋没加密 ⇒ 拦且有理由");
+        // ★★ 拦人的那句话要说**空间名**，不是内部 id（owner 2026-09-24 截图当场指出：
+        //    行头写着"新建工作区"，可理由里却是 `空间「119738aa-…」…`）。
+        assert!(p.gate.reason.contains("个人甲"), "闸门理由要用空间名：{}", p.gate.reason);
+        assert!(!p.gate.reason.contains("ov-p"), "闸门理由里不许出现内部 id：{}", p.gate.reason);
         let t = &views[1];
         assert_eq!(t.kind, "team");
         assert!(t.gate.allow && !t.gate.unclassified, "团队 ⇒ 免检放行");
