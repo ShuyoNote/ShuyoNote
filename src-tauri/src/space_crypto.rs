@@ -573,11 +573,25 @@ pub fn enable_space(
             m
         }
     };
-    // ② 盒子：已有 ⇒ **复用**（不换钥匙）；没有 ⇒ 新随机一把
+    // ② 盒子：已有 ⇒ **复用**（不换钥匙）；没有 ⇒ **只有在库还是明文时才**新随机一把
+    let path = crate::db::space_db_path(app_data_dir, space_id);
     let mut kr = keyring().ok_or("钥匙袋缺失")?;
     let key = if kr.has(space_id) {
         kr.unwrap_key(&master, space_id)?
     } else {
+        // ★★ 承重：库**已经是密文**而袋里没有它的盒子 ⇒ 那把钥匙**不是**我们刚随机出来的这把
+        //（最常见的来源：早先「应用级一把钥匙」加密的存量空间）。
+        // ⚠️ 这时**绝不能**凭空造盒子：`convert_space_db` 对"已经是目标状态"是 **no-op**（不会重加密）
+        //    ⇒ 盒子里的新钥匙与库文件对不上，那个空间**打不开**，而且是**静默**的（盒子看着好好的）。
+        // ⇒ 报错，并把两条出路说清（这是 C=1「报错＋说清」那条口径在这里的落点）。
+        if crate::security::space_db_is_encrypted(&path) {
+            return Err(format!(
+                "空间「{space_id}」的库已经是密文，但钥匙袋里没有它的盒子（最常见的是早先「应用级一把钥匙」加密的存量空间）。\
+                 这时不能凭空造新盒子：库不会被重新加密，装上新盒子之后这个空间就**打不开**了。\
+                 两条出路：① 先「把旧钥匙迁进钥匙袋」（第一半，不动库文件），再决定要不要换随机钥匙；\
+                 ② 或者在旧设备上把公开材料推给同步服务、在这台设备上取回。"
+            ));
+        }
         let k = random_space_key();
         kr.wrap(&master, space_id, &k)?;
         k
@@ -588,7 +602,6 @@ pub fn enable_space(
 
     // ③ ★ 只换**这一个**空间的库。⚠️ 若这个空间**正被本连接开着**，必须先让开：
     //   Windows 上文件被占用时"替换库文件"会 `os error 5`（`set_encryption_impl` 里同样的换法）。
-    let path = crate::db::space_db_path(app_data_dir, space_id);
     let holds = holds_space(conn, space_id);
     if holds {
         let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
@@ -1235,6 +1248,54 @@ mod tests {
                 .expect("meta 里的袋子也应当能解出新钥匙"),
             "★ 内存与 meta 里那份必须是同一把钥匙（别只换了一半）"
         );
+    }
+
+    /// ★★ 承重判据：库**已经是密文**而袋里没有它的盒子时，`enable_space` **必须报错**，
+    /// 而且**一个盒子都不许造** —— 造了就与库文件对不上（`convert_space_db` 对"已经是目标状态"
+    /// 是 no-op，不会重加密），那个空间会**打不开**，还算**静默**（盒子看着好好的）。
+    /// 这正是"存量空间"最常见的入口，所以这条判据守的是数据可达性。
+    #[test]
+    fn enabling_a_space_whose_db_is_already_encrypted_refuses_to_mint_a_box() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-enable-enc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let _guard = CleanupGuard(dir.clone());
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let path = crate::db::space_db_path(&dir, "enc-a");
+
+        // 造一个"应用级旧钥匙加密"的空间（这就是存量空间的形状）
+        let legacy = crate::crypto::random_32();
+        {
+            let a = crate::db::open_space_conn_at("enc-a", &dir).unwrap();
+            a.close().unwrap();
+        }
+        crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
+
+        crate::security::tests_set_session_key(Some(legacy));
+        let mut c = crate::db::open_space_conn_at("enc-a", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+
+        // 有袋子（还是空的）＋ 会话已解锁 ⇒ 正是"要不要凭空造盒子"的那一刻
+        let kr = Keyring::new();
+        let master = kr.kdf.derive_master("我家猫叫mimi").unwrap();
+        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
+        set_keyring_for_test(Some(kr));
+        set_session_master(Some(master)).unwrap();
+
+        let err = enable_space(&mut c, &dir, "enc-a", None).unwrap_err();
+        assert!(err.contains("打不开"), "要说清后果：{err}");
+        assert!(err.contains("迁"), "要给出第一条出路：{err}");
+        // ★ 关键：**一个盒子都没造**
+        assert!(!keyring().unwrap().has("enc-a"), "★ 不许凭空造盒子（造了就打不开）");
+        // 而且那个空间**照样打得开**（旧钥匙还在会话里，没被弄坏）
+        assert!(crate::security::space_db_is_encrypted(&path));
+        let probe = Connection::open(&path).unwrap();
+        crate::security::key_space_conn(&probe, &path).unwrap();
+        probe
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
+            .expect("旧钥匙还应当开得动这个空间");
     }
 
     /// ★ 空间 id 只从 `spaces/<id>.db` 反推；不是那种文件就 `None`（**不猜**）。
