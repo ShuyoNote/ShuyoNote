@@ -2119,6 +2119,182 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// ★★ **生成"老库"夹具**（默认不跑；`--ignored` 手动跑；owner 2026-09-24 拍板）。
+    ///
+    /// 为什么要它：连着三个 bug 都是"**只有老库才会中**"（`meta.workspaces.kind` 漏 ALTER、
+    /// 空间 schema 的 kind 列、`convert_space_db` 的 `SELECT *` 拷贝），而判据夹具一律是
+    /// "刚 migrate 过的新库" ⇒ **全绿也抓不到**。⇒ 把两份"老库"**钉成仓库里的字节**
+    /// （同 `gen_backend_fixture` 那一族的做法），让
+    /// `legacy_databases_survive_the_real_migrations` 每次都拿真文件过一遍真实迁移路径。
+    ///
+    /// ⚠️ 夹具**刻意取最早的列集**（meta 的 workspaces 只有 4 列、空间库的 pages 停在 11 列），
+    /// 也就是比任何真实历史文件都更老 —— 判据要的正是"迁移必须把缺的列**一个不落**地补上"。
+    /// ⚠️ 重生成前先想清楚：这两份文件是**判据的输入**，改了它们等于换了判据。
+    #[test]
+    #[ignore = "夹具生成器（手动跑；须确认 DDL 就是想要的\"老库\"形状）"]
+    fn gen_legacy_db_fixtures() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        // ① 老 meta.db：workspaces 只有最早的 4 列（kind/encrypted/cipher_format/theme/… 都没有）
+        let meta = dir.join("legacy-meta.db");
+        let _ = std::fs::remove_file(&meta);
+        {
+            let c = Connection::open(&meta).unwrap();
+            c.execute_batch(
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); \
+                 CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL); \
+                 INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('legacy-a', '老空间 A', 1, 1); \
+                 INSERT INTO sync_state (key, value) VALUES ('active_workspace', 'legacy-a'); \
+                 INSERT INTO sync_state (key, value) VALUES ('device_id', 'legacy-device');",
+            )
+            .unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        }
+        // ② 老空间库：workspaces 4 列、pages 停在当时的形态（没有 db_rule/sync_seq/dirty/text_stale）
+        let space = dir.join("legacy-space.db");
+        let _ = std::fs::remove_file(&space);
+        {
+            let c = Connection::open(&space).unwrap();
+            c.execute_batch(
+                "CREATE TABLE workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); \
+                 CREATE TABLE pages (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, parent_id TEXT, \
+                 title TEXT NOT NULL DEFAULT '', content_json TEXT NOT NULL DEFAULT '{}', \
+                 content_text TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'page', \
+                 sort_order REAL NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, \
+                 updated_at INTEGER NOT NULL, deleted_at INTEGER); \
+                 INSERT INTO workspaces (id, name, created_at, updated_at) VALUES ('legacy-a', '老空间 A', 1, 1); \
+                 INSERT INTO pages (id, workspace_id, title, content_json, content_text, created_at, updated_at) \
+                 VALUES ('legacy-p1', 'legacy-a', '老页面', '{\"root\":{}}', '老页面正文', 1, 1);",
+            )
+            .unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        }
+        for (p, min) in [(&meta, "legacy-meta.db"), (&space, "legacy-space.db")] {
+            let n = std::fs::metadata(p).unwrap().len();
+            println!("老库夹具已生成：{}（{n} 字节）", p.display());
+            assert!(n > 2048, "{min} 太小，像个空库：{n} 字节");
+        }
+    }
+
+    /// ★★ **老库过一遍真实迁移路径之后，必须处处与"新库"一致**（通用兜底，owner 2026-09-24 拍板）。
+    ///
+    /// 判据的形状（**故意的通用写法**：不是逐个断言"某列在不在"，而是**逐表逐列对比**）：
+    ///   ① 把 `tests/legacy-meta.db` / `tests/legacy-space.db` 复制成一个真实 app 目录；
+    ///   ② 走**真实入口** `db::open_meta_conn_at` / `db::open_space_conn_at`（它们会跑完整迁移）；
+    ///   ③ 与"全新库迁移后"的 schema **逐表逐列**对比：**新库有的列，老库迁移后必须都有**
+    ///      ⇒ 以后任何一次"加了列却忘了幂等 ALTER"都会在这里当场红；
+    ///   ④ 再验几件**功能面**：老数据还在、分类能写、开/关加密转得动（老 schema 的拷贝路径）。
+    ///
+    /// 这正是前三个 bug 缺的那道网：`meta.workspaces.kind` 漏 ALTER（③ 会红）、
+    /// 空间 schema 的 kind 列（③ 对空间库同样查）、`convert_space_db` 的 `SELECT *`（④ 会红）。
+    #[test]
+    fn legacy_databases_survive_the_real_migrations() {
+        let _g = SEC_LOCK.lock().unwrap();
+
+        // ---- ① 老库落地成一个真实 app 目录 ----
+        let old = std::env::temp_dir().join(uniq_tmp("legacy"));
+        let _ = std::fs::remove_dir_all(&old);
+        std::fs::create_dir_all(crate::db::spaces_dir(&old)).unwrap();
+        std::fs::write(
+            crate::db::meta_path(&old),
+            include_bytes!("../tests/legacy-meta.db"),
+        )
+        .unwrap();
+        let old_space_path = space_db_path(&old, "legacy-a");
+        std::fs::write(&old_space_path, include_bytes!("../tests/legacy-space.db")).unwrap();
+
+        // ---- ② 走真实入口（＝跑完整迁移）----
+        let old_meta = crate::db::open_meta_conn_at(&old).unwrap();
+        let old_space = crate::db::open_space_conn_at("legacy-a", &old).unwrap();
+
+        // ---- ③ 通用兜底：与"全新库"逐表逐列对比 ----
+        let fresh = std::env::temp_dir().join(uniq_tmp("fresh"));
+        let _ = std::fs::remove_dir_all(&fresh);
+        std::fs::create_dir_all(crate::db::spaces_dir(&fresh)).unwrap();
+        let fresh_meta = crate::db::open_meta_conn_at(&fresh).unwrap();
+        let fresh_space = crate::db::open_space_conn_at("legacy-a", &fresh).unwrap();
+
+        for (what, fresh_c, old_c) in [
+            ("meta.db", &fresh_meta, &old_meta),
+            ("spaces/legacy-a.db", &fresh_space, &old_space),
+        ] {
+            let fresh_tables = schema_tables(fresh_c);
+            assert!(!fresh_tables.is_empty(), "{what} 的新库里一个表都没有？");
+            for t in &fresh_tables {
+                let want = table_columns(fresh_c, &format!("\"{t}\"")).unwrap();
+                let got = table_columns(old_c, &format!("\"{t}\"")).unwrap_or_default();
+                let missing: Vec<&String> =
+                    want.iter().filter(|c| !got.iter().any(|g| g.eq_ignore_ascii_case(c))).collect();
+                assert!(
+                    missing.is_empty(),
+                    "★ {what} 的表 {t} 迁移后缺列 {missing:?} —— 多半是「加了列却忘了幂等 ALTER」\
+                     （新库有、老库没有；这正是连着三次踩的那一类）。新库列={want:?} 老库列={got:?}"
+                );
+            }
+        }
+
+        // ---- ④ 功能面 ----
+        // (a) 老数据还在
+        let title: String = old_space
+            .query_row("SELECT title FROM pages WHERE id = 'legacy-p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(title, "老页面", "迁移不能动数据");
+        let ws_name: String = old_meta
+            .query_row("SELECT name FROM workspaces WHERE id = 'legacy-a'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ws_name, "老空间 A");
+        // (b) 分类写得进（`meta.workspaces.kind` 那条漏 ALTER 就是死在这一步）。
+        //     ⚠️ 用**空间连接**（它 ATTACH 了 meta ⇒ `meta.workspaces` 才是那张表）；
+        //     `old_meta` 是 meta-only 连接，那里 `meta` 这个 schema 并不存在。
+        assert_eq!(
+            crate::space_crypto::space_kind(&old_space, "legacy-a"),
+            crate::space_crypto::SpaceKind::Unknown,
+            "老库补的列取默认值＝未分类（行为一字不变）"
+        );
+        crate::space_crypto::set_space_kind(&old_space, "legacy-a", crate::space_crypto::SpaceKind::Personal)
+            .unwrap();
+        assert_eq!(
+            crate::space_crypto::space_kind(&old_space, "legacy-a"),
+            crate::space_crypto::SpaceKind::Personal
+        );
+        // (c) 开/关加密转得动（`SELECT *` 那条拷贝就是死在这一步）。
+        //     ⚠️ 转换前必须**让开这个空间的连接**（Windows 上文件被占用 ⇒ `os error 5`）。
+        drop(old_space);
+        let key = crypto::derive_key("hunter2", &crypto::random_salt()).unwrap();
+        convert_space_db(&old_space_path, true, Some(&key)).unwrap();
+        assert!(space_db_is_encrypted(&old_space_path));
+        crate::space_crypto::set_space_box_for_test("legacy-a", &key, "pw");
+        {
+            let c = Connection::open(&old_space_path).unwrap();
+            key_space_conn(&c, &old_space_path).unwrap();
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 1, "老库加密之后数据仍读得到");
+        }
+        convert_space_db(&old_space_path, false, Some(&key)).unwrap();
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
+
+        // `old_space` 已经在上面（转换之前）drop 掉了 —— 这里只剩其余三个。
+        drop(old_meta);
+        drop(fresh_space);
+        drop(fresh_meta);
+        let _ = std::fs::remove_dir_all(&old);
+        let _ = std::fs::remove_dir_all(&fresh);
+    }
+
+    /// 一个库里的**真实用户表**（排除 sqlite_* 与 FTS5 的虚拟表/影子表族）。
+    fn schema_tables(c: &Connection) -> Vec<String> {
+        let mut stmt = c
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' \
+                 AND name NOT LIKE 'page_fts%' AND name NOT LIKE 'chunk_fts%' ORDER BY name",
+            )
+            .unwrap();
+        let rows = stmt.query_map([], |r| r.get(0)).unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
     /// ★★ **换加密后端前后，旧库仍必须可读**（方案 §7 风险表里那条验收项）。
     ///
     /// 为什么这条是**硬**要求：SQLCipher 的页加密后端是**编译期**决定的（`SQLCIPHER_CRYPTO_CC`

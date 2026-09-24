@@ -512,6 +512,45 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute("ALTER TABLE plugin_install ADD COLUMN approved_json TEXT", [])?;
     }
     // E1 per-space at-rest encryption marker (idempotent for existing meta.db).
+    //
+    // ★★ 2026-09-24：这一段前面**曾经漏了四列**（theme / icon / sort_order / deleted_at）——
+    //    它们只写在上面 `CREATE TABLE IF NOT EXISTS workspaces` 的定义里，而**老库已经有那张表**
+    //    ⇒ 建表语句是 no-op ⇒ 那四列对老库**永远补不上**。是那条新的"老库夹具"判据
+    //    （`security::tests::legacy_databases_survive_the_real_migrations`）**第一次跑就抓到的**
+    //    ——它逐表逐列拿"全新库"和"老库迁移后"对比。
+    //    口径（**加列就要配一条幂等 ALTER**）：
+    let has_theme: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'theme'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_theme == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN theme TEXT", [])?;
+    }
+    let has_icon: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'icon'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_icon == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    let has_sort_order: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'sort_order'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_sort_order == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+    let has_deleted_at: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'deleted_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_deleted_at == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN deleted_at INTEGER", [])?;
+    }
     let has_enc: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'encrypted'",
         [],
