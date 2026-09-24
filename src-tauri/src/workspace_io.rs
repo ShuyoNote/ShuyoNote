@@ -337,18 +337,25 @@ pub async fn import_workspace(
     std::fs::create_dir_all(spaces_dir).map_err(|e| e.to_string())?;
     std::fs::copy(&db_snapshot, &target_db).map_err(|e| e.to_string())?;
 
-    // E1: when at-rest encryption is on and the session is unlocked, encrypt the
-    // imported plaintext DB so it matches every other space. Record the state so
-    // the meta row below is marked consistently.
+    // E1（按空间）：本机**已经解锁**（会话里有主密钥）⇒ 给这个**新空间**现造一把随机钥匙、
+    // 按它的 id 装进袋子，再用那把钥匙把这个明文库换成密文 ⇒ 它与别的加密空间**同族**。
+    //
+    // ⚠️ owner 第三轮拍板（2026-09-24）改写的**关键点**：原来这里用的是"应用级一把会话钥匙"
+    // （`key_if_enabled` 返回全局那把）—— 在**按空间**的世界里那是**错的**：新空间没有对应的盒子，
+    // 用别人的钥匙加密出来的库**永远打不开**，而且是静默的（界面看着"已加密"）。
+    // ⇒ 现在的规则：拿得到袋子 ＋ 主密钥 ⇒ 现造盒子；否则（会话没解锁 / 还没有钥匙袋）**留明文**，
+    // 由空间隐私那一节引导用户显式开启加密 —— 绝不"偷偷用一个对不上的钥匙"。
     let encrypted = {
         let c = db.0.lock().expect("db mutex poisoned");
-        match crate::security::key_if_enabled(&c) {
-            Some(k) => {
-                // 库级（SQLCipher）用 legacy 那 32 字节。
-                crate::security::convert_space_db(&target_db, true, Some(&k.legacy))?;
+        match (crate::space_crypto::session_master(), crate::space_crypto::keyring()) {
+            (Some(master), Some(mut kr)) => {
+                let key = crate::keyring::random_space_key();
+                kr.wrap(&master, &new_id, &key)?;
+                crate::space_crypto::store_keyring(&c, &kr)?;
+                crate::security::convert_space_db(&target_db, true, Some(&key))?;
                 true
             }
-            None => false,
+            _ => false,
         }
     };
 
@@ -388,6 +395,10 @@ pub async fn import_workspace(
             params![new_id, import_name, theme, icon, sort_order, now, now, if encrypted { 1 } else { 0 }],
         )
         .map_err(|e| e.to_string())?;
+        // §0-C：加密的那一支还要记下"这个空间的数据是哪一版密文"（`encrypted` 那一列只说"是密的"）。
+        if encrypted {
+            crate::security::set_space_encrypted_marked(&c, &new_id, true)?;
+        }
     }
 
     emit(&app, "import", files, files, bytes, "导入完成…");

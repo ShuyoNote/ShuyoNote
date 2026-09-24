@@ -2000,20 +2000,18 @@ async fn do_push(
         let changes = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        // If E2EE is enabled, encrypt each payload before it leaves the device.
-        let changes = if security::key_if_enabled(&c).is_some() {
-            let mut out = Vec::with_capacity(changes.len());
-            for mut ch in changes {
-                if let Some(p) = ch.payload.take() {
-                    ch.payload = Some(security::encrypt_payload(&c, &p)?);
-                }
-                out.push(ch);
+        // ★ 每一段载荷**都**过 `encrypt_payload`（**不许**先拿 `key_if_enabled().is_some()` 当闸门）：
+        //   那个写法在"袋里有它、但会话没解锁/盒子拿不到"时会**跳过加密** ⇒ 明文上云（静默降级）。
+        //   `encrypt_payload` 自己判三种出口：明文空间 ⇒ 原样；有盒子 ⇒ 加密；
+        //   密文库而袋里没有它（应用级加密的存量库）⇒ `Err`（整条推不出去，这是对的）。
+        let mut out = Vec::with_capacity(changes.len());
+        for mut ch in changes {
+            if let Some(p) = ch.payload.take() {
+                ch.payload = Some(security::encrypt_payload(&c, &p)?);
             }
-            out
-        } else {
-            changes
-        };
-        (device_id, last_pushed, changes)
+            out.push(ch);
+        }
+        (device_id, last_pushed, out)
     };
 
     if changes.is_empty() {

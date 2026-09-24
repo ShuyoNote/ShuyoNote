@@ -3212,8 +3212,10 @@ export function makeInvoke(store: SqliteStore) {
     }
 
     // ---- Encryption ----
-    // Web 形态没有静态加密（`web.ts` 的 set/lock/unlock/disable 都是空实现）：报"未开启"，
-    // 算法字段与本构建的默认写入版本一致（v1 = XChaCha20），别写成国密。
+    // Web 形态没有静态加密（`web.ts` 的 lock/unlock 都是空实现）：报"未开启"，
+    // 算法字段与本构建的默认写入版本一致，别写成国密。
+    // ★ owner 第三轮拍板（2026-09-24）：`set_encryption` / `disable_encryption`（应用级那两条）
+    //   已从命令面删掉 ⇒ 这里也不再给它们空实现（Web 侧本来就没有"一开全加密"这回事）。
     if (cmd === "encryption_status") {
       return {
         enabled: false,
@@ -3225,7 +3227,7 @@ export function makeInvoke(store: SqliteStore) {
         space_algorithm: "",
       } as T;
     }
-    if (cmd === "set_encryption" || cmd === "lock_encryption" || cmd === "unlock_encryption" || cmd === "disable_encryption") {
+    if (cmd === "lock_encryption" || cmd === "unlock_encryption") {
       return undefined as T;
     }
 

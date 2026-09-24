@@ -557,11 +557,10 @@ pub fn run() {
             //    真给它一份读数只会是**误导**（缺口已记在交接文档 §5，不是"已做到"）。
             commands::set_space_kind,
             commands::space_security_overview,
-            // ① 存量迁移的命令面（2026-09-24）：第一半＝把旧的应用级钥匙装进盒子（**不动库文件**）；
-            // 第二半＝换成真随机钥匙（**会重写库**：先备份、失败报错、失败后状态不变）。
-            // ⚠️ 桌面专属（同上面两条）：Web 没有钥匙袋，也没有"应用级旧钥匙"这回事。
-            commands::migrate_legacy_space_encryption,
-            commands::rotate_legacy_space_encryption,
+            // ① 存量迁移的命令面（2026-09-24）：★ owner 第三轮拍板后**整条删掉** ——
+            // 它的对象是"应用级加密留下的旧钥匙"，而那套（含解锁/读老库的兜底）已按拍板删净，
+            // 迁移/轮换也就没有对象了。现在"密文库 ＋ 袋里没有它的盒子"这条路的出路只有一条：
+            // 从别处取回公开材料（界面那句报错说的就是它）。
             // 桌面「近实时」流通道（2026-09-23 第 48 轮）：订 SSE 变更流、把"有变更"发成事件，
             // **拉取仍由前端发起**（这样自动经过 C2 闸门/防重入/状态行）。
             // ⚠️ 这三条**登记为 web 专属**（浏览器自带 SSE，Web 侧是 `useSyncStream.ts` 自己那条流）。
@@ -795,9 +794,11 @@ pub fn run() {
             plugins::clear_plugin_logs,
             plugins::plugin_audit,
             plugins::clear_plugin_audit,
-            security::set_encryption,
+            // ★ owner 第三轮拍板（2026-09-24）：**应用级加密（全局一把钥匙）那两条命令已删**
+            //（`set_encryption` / `disable_encryption`）—— 连同它们的 meta 配置、契约、界面一起删净。
+            // 留下的是**会话级**的锁定/解锁（解锁按钥匙袋记的 KDF 参数推主密钥、由解盒子回答口令对不对）
+            // 与 `encryption_status`（界面靠它决定要不要出解锁屏）。
             security::encryption_status,
-            security::disable_encryption,
             security::lock_encryption,
             security::unlock_encryption,
             ai::ai_complete,

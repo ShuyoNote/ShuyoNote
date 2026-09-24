@@ -53,26 +53,19 @@ export async function refreshVault(): Promise<VaultState> {
   }
 }
 
-/** 开启加密。口令即密钥，成功后本会话即为已解锁。 */
-export async function enableVault(passphrase: string): Promise<VaultState> {
-  await api.setEncryption(passphrase);
-  return publish({ enabled: true, locked: false, ready: true });
-}
-
 /** 解锁。口令不对时**状态不变**（仍然锁定），异常交给调用方显示。 */
 export async function unlockVault(passphrase: string): Promise<VaultState> {
   await api.unlockEncryption(passphrase);
   return publish({ enabled: true, locked: false, ready: true });
 }
 
-/** 锁定：丢掉会话密钥并关掉已解锁的连接，之后读不到内容，同步也会被拒。 */
+/** 锁定：丢掉会话主密钥并关掉已解锁的连接，之后读不到内容，同步也会被拒。 */
 export async function lockVault(): Promise<VaultState> {
   await api.lockEncryption();
   return publish({ enabled: true, locked: true, ready: true });
 }
 
-/** 关闭加密（全库解密回明文）。只在已解锁时可做，内核会再挡一道。 */
-export async function disableVault(): Promise<VaultState> {
-  await api.disableEncryption();
-  return publish({ enabled: false, locked: false, ready: true });
-}
+// ★ owner 第三轮拍板（2026-09-24）：原先还有一对 `enableVault` / `disableVault`
+//（＝"应用级加密：全局一把钥匙，一开全加密"那套）。那两条命令与整套口径**一起删掉了** ——
+// 加密现在**按空间**做（`SpacePrivacySection` 里的开启/关闭加密，走 `enable_space_encryption`），
+// 所以"在这里开一次加密"这件事本身不再存在。

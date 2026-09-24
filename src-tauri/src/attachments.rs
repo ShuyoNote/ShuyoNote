@@ -298,8 +298,14 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    // Dedup: write only if not already present, encrypting at rest with the session key
-    // when encryption is on+unlocked (the hash is over the PLAINTEXT, so dedup still works).
+    // Dedup: write only if not already present, encrypting at rest when this space is
+    // encrypted+unlocked (the hash is over the PLAINTEXT, so dedup still works).
+    //
+    // ★ owner 第三轮拍板（2026-09-24）：钥匙**按空间**取（`key_if_enabled` ⇒ `space_crypto`）——
+    //   原先那句"用全局会话钥匙"随应用级加密一起没了。⚠️ 已知缺口（**不是**这一片引入的）：
+    //   附件库是**全局内容寻址**的，而钥匙是按空间的 ⇒ 同一份内容被"一个加密空间 ＋ 一个明文空间"
+    //   同时引用时，谁先落盘谁决定那份字节是密文还是明文（后读的那一方若拿不到写它那把钥匙，
+    //   解不开会被**透传**）。要真正收口得让附件库也按空间分，那是另一片的事。
     if !path.exists() {
         let key = { let c = db.0.lock().expect("db mutex poisoned"); crate::security::key_if_enabled(&c) };
         let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &args.data)?;

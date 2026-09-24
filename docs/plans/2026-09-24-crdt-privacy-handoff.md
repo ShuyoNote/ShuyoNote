@@ -26,6 +26,7 @@
 | **③ 0b 客户端** | **公开材料的推 / 取**：`sync::push_space_keyring` / `pull_space_keyring` ＋ `space_crypto::stored_material`（推之前先验）＋ `adopt_material`（**默认不覆盖**）＋ 界面两个按钮 ＋ **端到端判据**（A 推 ⇒ B 全新目录取回 ⇒ **只凭口令**解出**同一把**空间钥匙） | 本轮（见 §7.0.1） |
 | **①-2 修** | **轮换"正开着"的那个空间**：函数自己让开连接（签名改 `&mut`）＋ 成功后**先换内存盒子再重开**、失败什么都不换；新增 `set_keyring_memory`（只更新内存、不写 meta）；判据 1 条（含内存/meta 一致）＋ 测试用 `CleanupGuard`（失败也清进程级全局） | `bb31bc80` |
 | **①-3 修** | ★★ **存量空间会被静默锁死**那处：库已是密文而袋里没盒子时，`enable_space` 原来会**凭空造新盒子**（而 `convert_space_db` 对"已经是密文"是 no-op ⇒ 盒子与库对不上 ⇒ 打不开）⇒ 现在**拒绝并说清两条出路**，判据 1 条（报错要可操作 / **一个盒子都不造** / 空间照样打得开） | 本轮（见 §7.0.3） |
+| **去应用级** | ★★ **owner 第三轮拍板落地**（§7.0.7）：应用级加密（全局一把钥匙）**整套删净**（含解锁哨兵与**读老库的兜底**）＋ ① 的迁移/轮换**同批删除**（失去对象）；设置面板那节换成挂 `SpacePrivacySection`；解锁改按**袋子记的 KDF 参数**派生、**由解盒子回答口令对不对**；`wire`/`backup`/开库三条路只认**空间盒子**。**不向后兼容**：应用级加密的存量库打不开（C=1 报错＋说清）。判据 14 条改写 ＋ 1 条新增 | 本轮（见 §7.0.7） |
 
 ### 6. ✅ 2026-09-24 推送事故：**已恢复**（瞬时，非我们这侧）
 
@@ -132,8 +133,8 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
    取多少要**实测解锁耗时**（本机 ＋ 低端 Android）再定（决策稿 §7.2）。
 3. **0b（公开材料可同步）**：要动 `shuyonote-sync-server` 那个仓（本会话碰不到）⇒
    在那之前，"换设备能用"只支持**手工搬**公开材料（`Keyring::to_json` 就是那份可公开的文件）。
-4. **第 3 步存量迁移**：口径是"不考虑向后兼容"⇒ 一次性迁移、**不做双读**；
-   但**失败必须如实报错**（密文打不开＝数据丢失，不许静默）。
+4. ~~**第 3 步存量迁移**~~ ✅ **已按 owner 第三轮拍板结清（§7.0.7）**：不是"迁移"，而是
+   **应用级加密整套删除** ⇒ 存量（应用级）库**打不开**、**报错＋说清**，**不做双读、也不留兜底**。
 5. **第 4 步 Web 口径**：加密的个人空间在 Web 上应"不可同步、不可编辑"，不许悄悄降级成明文上传。
 
 ## 4. 本会话踩出来的三条纪律（都写进 `docs/TESTING.md` 了）
@@ -654,6 +655,61 @@ wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext
 ⚠️ **顺序不能反**：先让"解锁/载荷"不再依赖应用级钥匙（1、2），再删开关与命令（3、4）——
 反过来会留下一段**没人守的加密路径**，而它恰恰是最容易静默降级成明文的地方。
 ⚠️ 每一步都要**同一批**改完（Rust ＋ 契约 ＋ api ＋ UI ＋ 计数），否则中间态推不出去（门禁会红，这是好事）。
+
+### 7.0.7 ✅ **本轮做完：应用级加密整套删净（含兜底）＋ ① 的迁移/轮换一并删**
+
+**拍板落地（owner 第三轮，§7.0.6）**：设置面板那节「端到端加密」→ 换成挂 `SpacePrivacySection`
+（**按空间**）；应用级那套（全局一把钥匙、`ENC_ENABLED`/`ENC_SALT`/`ENC_VERIFY` 三个 meta 键、
+哨兵、`set_encryption_impl` / `enable/disable_encryption` 两条命令、`session_key()` 与
+`wire_keys_for_conn`/`key_space_conn`/`key_if_enabled`/解锁里的**所有**兜底）**整条删除**；
+① 的 `migrate_legacy_space_into_keyring` / `rotate_legacy_space_to_random_key`＋两条命令＋界面两个按钮
+＋`api.ts` 两条＋契约两条＋全部判据**同批删除**（**失去对象**）。**不向后兼容**：应用级加密的存量库
+**打不开**，按 C=1 报错＋说清（唯一出路：从还有那份旧材料的设备取回公开材料）。
+
+**解锁的新形状**：`carry_keyring` ＋ `master_from_passphrase`（**按袋子记的 KDF 参数**）
+⇒ 口令对不对**由解盒子回答**（`space_crypto::verify_master_against_keyring`，AEAD）；
+**没有袋子 / 袋里一个盒子都没有 ⇒ 解锁不报错**；应用级存量库在**开库那一步**响亮失败。
+⇒ 解锁的耗时口径随之变成**一遍 KDF**（`[unlock]` 那行日志已改；旧读数里"两次 KDF"作废）。
+
+**★★ 实测：为什么"阶段 1/2"与"阶段 3/4"必须**同批**（这是 §7.0.6 两次试探之后的第三次实测）**：
+只改生产代码两处（wire 去掉兜底 ＋ 解锁改袋子派生）时，`space_crypto::tests` 有**两条判据的成立前提
+直接消失** —— `migrating_a_legacy_space_wraps_the_old_key_without_touching_the_file` 与
+`rotating_the_space_the_connection_currently_holds_works_and_reopens_it`：它们要先把
+"**用应用级旧钥匙加密的库**"打开（靠 `key_space_conn` 的 `session_key()` 兜底）才谈得上迁移/轮换。
+兜底一删，这两条连"把库打开"都做不到 ⇒ panic 在 `SEC_LOCK` 里 ⇒ **整片 14 条 PoisonError 连坐**。
+⇒ 想留住它们只有一条路：**把兜底留着** —— 而那条兜底正是"附件/导出这一路拿不到空间钥匙时
+静默写出明文"的窗口（`key_if_enabled` 返回 `None` ⇒ 透传）。
+**所以本轮把 1/2/3/4 合成同一批做**（不是图省事）：① 的迁移/轮换与"应用级钥匙"**同生共死**，
+中间态只可能是"留着一条没人守的加密路径"，那正是纪律里最不许出现的东西。
+
+**改判据清单（14 条全部改写 ＋ 说明）**：
+· `security.rs`：`key_space_conn_prefers_the_space_key_from_the_keyring`（改成"盒子里换另一把 ⇒ 读不开；
+  清掉袋子 ⇒ **响亮报错**"）、`wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext`、
+  **新增** `a_ciphertext_space_without_a_box_is_refused_on_the_wire_never_plaintext`（承重）、
+  `per_space_switch_and_startup_gate_look_at_the_space_itself`（删掉"应用级标志"那段 ＋ ④ 段改按空间）、
+  `encrypted_db_roundtrip_and_sniff`、`open_space_conn_reports_an_actionable_error_for_a_mismatched_page_db`、
+  `convert_space_db_encrypt_back_to_readable`、`convert_space_db_is_idempotent_for_already_encrypted`、
+  `full_loop_enable_restart_unlock_readable_disable`（整条重写：`enable_space` → 锁 → 错口令**报"打不开"**
+  （不再是"口令不正确"）→ 对口令 → 可读 → `disable_space`）、`open_space_conn_reads_encrypted_space`、
+  `lock_closes_connection_unlock_reopens`、`payload_roundtrip_when_enabled`、
+  `space_format_is_recorded_on_enable_and_cleared_on_disable`、`lock_gates_key_and_sync`、
+  `national_crypto_covers_all_three_paths_…`（改名 `…_the_paths_it_still_has_and_the_space_path_stays_v1`：
+  空间钥匙是随机字节 ⇒ 空间级载荷**按设计是 v1**，国密覆盖落在**盒子**上（含 v1 盒子双读））；
+  删 `verify_sentinel_roundtrip`（哨兵没了）、删助手 `enable_meta`（换成 `enable_space_meta`）。
+· `space_crypto.rs`：删 3 条（迁移 1 ＋ 轮换 2）；`enabling_a_space_whose_db_is_already_encrypted_…`
+  改成断言"**应用级加密已不再支持** ＋ 唯一出路是取回公开材料"，并且连接**不再开在**那个存量库上
+  （存量库打不开**本身就是**这条拍板的事实）。干净侧新增 `set_space_box_for_test` 助手（跨模块用）。
+· `backup.rs`：`snapshot_spaces` 改成**按空间取钥匙**（判据 `snapshot_spaces_keys_the_encrypted_space_…` 同改）。
+· TS：`vaultGate.test.ts` 删 1 例（`enableVault` 那例）、`SpacePrivacySection.test.ts` 删 2 例（迁移/轮换按钮）。
+· 顺带修掉一处**真的会静默降级**的地方：`sync.rs` 推载荷原来先问 `key_if_enabled().is_some()` 再加密
+  ⇒ "袋里有它但拿不到钥匙"时会**跳过加密、明文上云**。现在**一律**走 `encrypt_payload`（它自己三出口判）。
+
+**当轮 tip 读数（本轮，提交后即 `origin/dev`）**：Rust 全量 **586 passed / 0 failed / 19 ignored**
+（`win-cargo-test: test exe exit code = 0`，251.8 s）；vitest 全量 **215 文件通过 / 2207 passed / 12 skipped**
+（exit 0）；`npx tsc --noEmit` 0；`pnpm run build` 0；
+`check-web-commands` 绿（**Rust 255 / web 247 / CommandMap 257**，`docs/TESTING.md` facts 行同改）；
+`check-doc-facts` / `check-doc-links`（138 篇 / 861 条）/ `check-doc-content-access`（67 文件 / 562 处，基线未动）
+/ `check-overlay-registry`（26/0）/ `check-capabilities`（25 条）/ `check-panel-layout`（40/0）全绿。
 
 ### 7.1 落点计划（补丁按此实现；留着看当时的取舍）
 

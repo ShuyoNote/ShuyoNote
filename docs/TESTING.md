@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 259 / web 249 / CommandMap 261
+门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -425,11 +425,15 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   **要么用 `edit`（`replace_all: true`），要么先 `git checkout -- <file>` 再重做**，
   没有第三条路。这条比"省几次工具调用"重要得多。
 - ★ **进程级全局状态的测试必须共用一把锁**（2026-09-23 第 49 轮，同一天第二类假红）：
-  `SESSION_KEY` / `LOCKED` / 钥匙袋 / 主密钥都是**进程级** `static`；cargo test 默认多线程
+  `LOCKED` / 钥匙袋（`KEYRING`）/ 会话主密钥（`SESSION_MASTER`）都是**进程级** `static`；cargo test 默认多线程
   ⇒ 两个模块的测试会**交错**（现场：`space_crypto` 的用例**隔离跑绿、全量跑红**，报的是
   `space_key` 里一句"未解锁"）。⇒ 做法：把锁提到**模块级** `#[cfg(test)] pub(crate) static SEC_LOCK`
-  （`security.rs`），`security::tests` 与 `space_crypto::tests` **共用同一把**（各自 `let _g = …lock()`）。
+  （`security.rs`），`security::tests`、`space_crypto::tests` 与 `backup::tests` **共用同一把**（各自 `let _g = …lock()`）。
   ⚠️ 判读顺序：**隔离绿、全量红 ⇒ 先怀疑进程级全局被别人踩了**，而不是先怀疑业务逻辑。
+  ⚠️⚠️ 还有一类**连坐**：任何一条持锁判据 **panic** 都会把 `SEC_LOCK` 弄成 **poisoned**，
+  于是**其余 10+ 条**报的全是 `PoisonError`（2026-09-24 第 51 轮实测：2 条真失败 ⇒ 14 条红）。
+  ⇒ 看到一片 `PoisonError` **不要逐条查**，先找**第一个 panic**（`--test-threads=1` 或按模块过滤跑）。
+  （`SESSION_KEY` 已随"应用级加密"一起删掉，见交接文档 §7.0.7。）
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 - **看到 `plugins::` 大批红，先确认宿主二进制在不在**（2026-09-19：macOS 侧交底、AMD 复现）：

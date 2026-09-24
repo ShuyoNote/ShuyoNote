@@ -460,11 +460,8 @@ export interface CommandMap {
     args: { args: { workspace_id: string; overwrite?: boolean } };
     result: SpaceKeyringOutcome;
   };
-  // ① 存量迁移（2026-09-24）：第一半＝把"旧的应用级钥匙"装进盒子（**不动库文件**，可重复调，
-  // 第二次返回 `false`）；第二半＝换成真随机钥匙（**会重写库**：先备份、失败报错、失败后状态不变）。
-  // ⚠️ **桌面专属**（登记进 `DESKTOP_ONLY_COMMANDS`）：Web 没有钥匙袋，也没有"应用级旧钥匙"这回事。
-  migrate_legacy_space_encryption: { args: { args: { space_id: string } }; result: boolean };
-  rotate_legacy_space_encryption: { args: { args: { space_id: string } }; result: null };
+  // ① 存量迁移（2026-09-24）：★ owner 第三轮拍板后**整条删掉**（两条命令与它们的契约一起）——
+  // 它的对象是"应用级加密留下的旧钥匙"，而那套（含解锁/读老库的兜底）已按拍板删净。
 
   // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
   // ⚠️ 与块级那两条（`list_page_conflicts` / `resolve_page_conflict`）**不同族**：块级可逐块选一侧；
@@ -687,13 +684,16 @@ export interface CommandMap {
   set_plugin_setting: { args: { pluginId: string; key: string; value: string }; result: void };
 
   // ---- Encryption (local at-rest) ----
-  set_encryption: { args: { passphrase: string }; result: void };
+  // ★ owner 第三轮拍板（2026-09-24）：`set_encryption` / `disable_encryption`（**应用级**：
+  //   全局一把钥匙、一开全加密）已删 —— 加密现在**按空间**（`enable_space_encryption` /
+  //   `disable_space_encryption`，见上面那一族）。留下的这三条是**会话级**的：
+  //   锁定 / 解锁（口令对不对由解盒子回答）/ 状态读数（界面靠它决定要不要出解锁屏）。
   // `format` / `algorithm`：本会话写新数据用的密文版本与稳定算法名（§0-C 的算法标识）。
   // ★ 2026-09-20 起**默认构建恒为 2="sm4-cbc+hmac-sm3"**（国密已是默认特性，方案 §3.4）；
   // 只有 `--no-default-features` 的回滚通道才是 1="xchacha20-poly1305"。
   // `space_format` / `space_algorithm`：**当前活动空间**记录在案的密文版本与算法名（0/空串 = 未记录）。
   // §0-C：算法标识要落到空间状态上 —— 界面/诊断得能说出「这个空间的数据是哪一版」，
-  // 而不是等到读到某一条才发现读不了。
+  // 而不是等到读到哪一条才发现读不了。
   encryption_status: {
     args: undefined;
     result: {
@@ -707,7 +707,6 @@ export interface CommandMap {
   };
   lock_encryption: { args: undefined; result: void };
   unlock_encryption: { args: { passphrase: string }; result: void };
-  disable_encryption: { args: undefined; result: void };
 
   // ---- Templates ----
   list_templates: { args: { spaceId?: string | null }; result: TemplateMeta[] };

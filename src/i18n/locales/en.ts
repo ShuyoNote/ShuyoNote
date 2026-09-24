@@ -42,7 +42,7 @@ export default {
     plugins: "Plugins",
     pluginsHint: "Enable/disable extensions",
     security: "Security",
-    securityHint: "E2E encryption & lock",
+    securityHint: "Per-space privacy & lock",
     ai: "AI",
     aiHint: "Provider & models",
     about: "About & updates",

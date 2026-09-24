@@ -187,11 +187,11 @@ export const api = {
   emitPluginEvent: (event: string, payloadJson?: string) => invoke("emit_plugin_event", { event, payloadJson }),
   // 插件目录指纹：热重载用（面板打开期间低频轮询，变了就重新扫描）。
   pluginDirStamp: () => invoke("plugin_dir_stamp"),
-  setEncryption: (passphrase: string) => invoke("set_encryption", { passphrase }),
+  // ★ owner 第三轮拍板（2026-09-24）：**应用级加密那两条命令已删**（`set_encryption` /
+  // `disable_encryption`，连同"全局一把钥匙"那整套口径与界面）。留下的是**会话级**三条：
   encryptionStatus: () => invoke("encryption_status"),
   lockEncryption: () => invoke("lock_encryption"),
   unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
-  disableEncryption: () => invoke("disable_encryption"),
   getPage: (id: string) => invoke("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; kind?: string; database_json?: string; space_id?: string | null }) =>
@@ -303,8 +303,9 @@ export const api = {
   writePageProjection: (id: string, docJson: string) =>
     invoke("write_page_projection", { args: { page_id: id, doc_json: docJson } }),
   /**
-   * ★ 隐私边界第 1 步（2026-09-23）：**按空间**启用加密 —— 只换这一个空间的库
-   *（与"应用级一次全加密"的 `setEncryption` 不是一条路）。**桌面专属**（Web 无钥匙柜）。
+   * ★ 隐私边界第 1 步（2026-09-23）：**按空间**启用加密 —— 只换这一个空间的库。
+   * **桌面专属**（Web 无钥匙柜）。**这是唯一的加密入口**：应用级那套（全局一把钥匙，
+   * `setEncryption` / `disableEncryption`）已按 owner 第三轮拍板删净。
    * `passphrase` 只在"钥匙袋还不存在"时用到；已有袋子 ⇒ 省略（用会话里的主密钥）。
    * 返回那把空间钥匙（界面一般不用，判据/排错用）。
    */
@@ -361,22 +362,6 @@ export const api = {
    */
   pullSpaceKeyring: (workspaceId: string, overwrite = false) =>
     invoke("pull_space_keyring", { args: { workspace_id: workspaceId, overwrite } }),
-  /**
-   * ★ ① 第一半（2026-09-24）：把"旧的应用级钥匙"装进这个空间的盒子。**桌面专属**。
-   *
-   * **不动库文件一个字节**（把旧钥匙原样包成盒子 ⇒ 空间钥匙 == 旧钥匙）⇒ 安全、可重复调：
-   * 袋子里早就有它时返回 `false`（幂等）。什么时候用：库是密文、但钥匙还是"应用级那一把"。
-   */
-  migrateLegacySpaceEncryption: (spaceId: string) =>
-    invoke("migrate_legacy_space_encryption", { args: { space_id: spaceId } }),
-  /**
-   * ★ ① 第二半（2026-09-24）：把旧钥匙换成**真随机**的空间钥匙（**会重写库**）。**桌面专属**。
-   *
-   * ⚠️ 界面必须**两步确认**（与"关闭加密"同一条纪律）：库里那份会被重加密，
-   * 备份落在 `<space>.db.pre-rotate.bak`；失败会**停住报错并把备份路径说给你**（库回到旧钥匙那一版）。
-   */
-  rotateLegacySpaceEncryption: (spaceId: string) =>
-    invoke("rotate_legacy_space_encryption", { args: { space_id: spaceId } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

@@ -36,8 +36,6 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   // ③ 0b：每行的推/取结果（**原样**显示后端那句话）。
   const [rowMsg, setRowMsg] = useState<{ id: string; text: string; kind: string } | null>(null);
-  // ① 存量迁移：轮换**会重写库** ⇒ 与「关闭加密」同一条纪律，两步确认。
-  const [confirmingRotate, setConfirmingRotate] = useState("");
 
   const reload = useCallback(async () => {
     if (!desktop) return;
@@ -179,43 +177,11 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                 </button>
               )}
             </div>
-            {/* ① 存量迁移（2026-09-24）：把旧的应用级钥匙装进盒子（**不动库文件**）／换成真随机钥匙
-                （**会重写库** ⇒ 两步确认）。⚠️ 顺序要紧：**先迁移、再轮换** ——
-                没有盒子时轮换会拒绝（库已是密文而袋里没盒子那条守卫，见交接文档 §7.0.3）。 */}
-            <div className="space-privacy-actions">
-              <button
-                className="sync-btn ghost"
-                disabled={busy === v.space_id}
-                onClick={() =>
-                  void run(v.space_id, "把旧钥匙迁进钥匙袋", () =>
-                    api.migrateLegacySpaceEncryption(v.space_id),
-                  )
-                }
-              >
-                把旧钥匙迁进钥匙袋
-              </button>
-              <button
-                className="sync-btn ghost"
-                disabled={busy === v.space_id}
-                onClick={() => {
-                  if (confirmingRotate !== v.space_id) {
-                    setConfirmingRotate(v.space_id);
-                    return;
-                  }
-                  void run(v.space_id, "换成真随机钥匙", () =>
-                    api.rotateLegacySpaceEncryption(v.space_id),
-                  );
-                }}
-              >
-                {confirmingRotate === v.space_id ? "确认：换成随机钥匙" : "换成真随机钥匙"}
-              </button>
-            </div>
-            {confirmingRotate === v.space_id && (
-              <div className="space-privacy-gate is-block">
-                换钥匙会把**这一个**空间的库**就地重加密**（备份落在 `&lt;空间&gt;.db.pre-rotate.bak`）；
-                失败会停住报错并告诉你备份在哪。再点一次那个按钮才真的执行。
-              </div>
-            )}
+            {/* ★ owner 第三轮拍板（2026-09-24）：原先这里还有 ① 的两个按钮
+                （「把旧钥匙迁进钥匙袋」/「换成真随机钥匙」）。那两条命令与它们背后的整套
+                应用级加密**一起删掉了** ⇒ 不再有"把旧钥匙搬进袋子"这条出路。
+                现在"密文库 ＋ 袋里没有它的盒子"（应用级加密的存量库）唯一的出路是**从别处取回
+                公开材料**（下面那两个按钮；报错那句说的就是它）。 */}
             {/* ③ 0b：换设备那一半 —— 旧设备「推到服务器」，新设备「从服务器取回」＋输主口令。
                 ⚠️ 覆盖默认**关着**：闷头覆盖可能让本机打不开自己的空间（见 Rust 侧注释）。 */}
             <div className="space-privacy-actions">

@@ -66,10 +66,16 @@ fn backup_db(src: &rusqlite::Connection, dst: &Path, key: Option<&[u8; 32]>) -> 
 /// 老代码要么让**整个导出硬失败**（`workspace_io` 那条路径），要么**静默少一个空间**
 /// （只在 stderr 打一行）。两种都不是备份产品该有的行为：前者让用户根本导不出，
 /// 后者让用户以为导全了。现在的契约是**能导的导、不能导的明说**。
+///
+/// ★ owner 第三轮拍板（2026-09-24）：钥匙**按空间取**（`space_crypto::space_key_for_path`），
+/// 不再是"应用级一把会话钥匙 `session_key`"（那把已删）。所以每个空间各取各的钥匙 ——
+/// 恰好也是"按空间加密"该有的样子：一个空间拿不到钥匙，**不影响**别的空间进备份。
+/// ⚠️ 本进程还没载入公开材料（未解锁 / 之前是应用级加密的存量库）⇒ `space_key_for_path` 要么
+/// `Err`（袋里有它但锁着）要么 `None`（袋里没有 / 没有袋子）⇒ 两种都记进 `skipped` 并**继续**，
+/// 绝不"拿一把错的钥匙去快照"（那会写出一个打不开的备份）。
 fn snapshot_spaces(
     spaces_dir: &Path,
     tmp_root: &Path,
-    session_key: Option<&[u8; 32]>,
 ) -> Result<(Vec<(String, PathBuf)>, Vec<String>), String> {
     let mut snapshots: Vec<(String, PathBuf)> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
@@ -88,24 +94,31 @@ fn snapshot_spaces(
         let conn = rusqlite::Connection::open(&path).map_err(|e| e.to_string())?;
         // 加密空间：连接要加钥，**快照目标也要同一把钥**（见 `backup_db` 注释）。
         let key = if crate::security::space_db_is_encrypted(&path) {
-            match session_key {
-                Some(k) => Some(k),
-                None => {
-                    skipped.push(format!("{id}: 空间已加密但会话未解锁 ⇒ 这个空间没进备份"));
+            match crate::space_crypto::space_key_for_path(&path) {
+                Ok(Some(k)) => Some(k),
+                Ok(None) => {
+                    skipped.push(format!(
+                        "{id}: 空间是密文但钥匙袋里没有它的盒子（应用级加密的存量库，本版已不再支持）\
+                         ⇒ 这个空间没进备份"
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    skipped.push(format!("{id}: 空间已加密但拿不到它的钥匙（{e}）⇒ 这个空间没进备份"));
                     continue;
                 }
             }
         } else {
             None
         };
-        if let Some(k) = key {
+        if let Some(k) = key.as_ref() {
             if let Err(e) = crate::security::key_conn_with(&conn, k) {
                 skipped.push(format!("{id}: 加钥失败（{e}）⇒ 没进备份"));
                 continue;
             }
         }
         // 单个空间的失败**不中断整个备份**，而是记进 `skipped`。
-        if let Err(e) = backup_db(&conn, &out, key) {
+        if let Err(e) = backup_db(&conn, &out, key.as_ref()) {
             skipped.push(format!("{id}: 快照失败（{e}）⇒ 没进备份"));
             continue;
         }
@@ -207,8 +220,8 @@ pub async fn export_backup(
     }
 
     // ★ 被跳过的空间要**带回给用户**（原来只在 stderr 打一行，包看起来是成功的）。
-    let (space_snapshots, skipped) =
-        snapshot_spaces(&spaces_dir, &tmp_root, crate::security::session_key().as_ref())?;
+    //   钥匙**按空间**在 `snapshot_spaces` 里各取各的（应用级那把会话钥匙已随应用级加密一起删）。
+    let (space_snapshots, skipped) = snapshot_spaces(&spaces_dir, &tmp_root)?;
 
     let app2 = app.clone();
     let attachments2 = attachments_dir;
@@ -643,8 +656,13 @@ mod tests {
 
     // F2 回归锚点（E1 磁盘加密）：加密空间**必须真的进快照**（目标同钥），
     // 拿不到钥时必须「少一份但明说」，不能硬失败、更不能静默少一个空间。
+    //
+    // ★ owner 第三轮拍板（2026-09-24）改写：钥匙**按空间**取（不再有"应用级一把会话钥匙"）
+    //   ⇒ ① 的夹具从"传一把会话钥匙"改成"袋子里放它的盒子 ＋ 会话装上主密钥"。
+    //   ⚠️ 这会动**进程级全局**（KEYRING / SESSION_MASTER）⇒ 必须与其它会话态判据串行（`SEC_LOCK`）。
     #[test]
     fn snapshot_spaces_keys_the_encrypted_space_and_names_what_it_skips() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
         let dir = uniq_tmp("spaces");
         let _ = std::fs::remove_dir_all(&dir);
         let spaces = dir.join("spaces");
@@ -660,9 +678,11 @@ mod tests {
         crate::security::convert_space_db(&enc, true, Some(&key)).unwrap();
         assert!(crate::security::space_db_is_encrypted(&enc));
 
-        // ① 解锁态：两个空间都进快照；加密那份本身是**密文**，但用同一把钥能读出页面
-        //（证明它是真数据 —— 不是「写坏/写空之后看起来成功」的那种快照）。
-        let (snaps, skipped) = snapshot_spaces(&spaces, &out_root, Some(&key)).unwrap();
+        // ① 解锁态：袋子里有 enc 的盒子 ＋ 会话有主密钥 ⇒ 两个空间都进快照；
+        //    加密那份本身是**密文**，但用同一把钥能读出页面（证明它是真数据 ——
+        //    不是「写坏/写空之后看起来成功」的那种快照）。
+        crate::space_crypto::set_space_box_for_test("enc", &key, "pw");
+        let (snaps, skipped) = snapshot_spaces(&spaces, &out_root).unwrap();
         assert!(skipped.is_empty(), "解锁态不该有跳过：{skipped:?}");
         assert_eq!(
             snaps.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
@@ -682,17 +702,23 @@ mod tests {
             assert_eq!(t, "hi");
         }
 
-        // ② 锁定态（没有会话钥）：明文那份照导，加密那份**记名跳过**（带空间 id 和原因）。
+        // ② 锁定态（袋子里没有它的盒子）：明文那份照导，加密那份**记名跳过**（带空间 id 和原因）。
+        crate::space_crypto::set_keyring_for_test(None);
+        crate::space_crypto::set_session_master(None).unwrap();
         let out2 = dir.join("out2");
         std::fs::create_dir_all(out2.join("spaces")).unwrap();
-        let (snaps2, skipped2) = snapshot_spaces(&spaces, &out2, None).unwrap();
+        let (snaps2, skipped2) = snapshot_spaces(&spaces, &out2).unwrap();
         assert_eq!(
             snaps2.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
             vec!["plain"]
         );
         assert_eq!(skipped2.len(), 1, "跳过必须被记下来：{skipped2:?}");
         assert!(skipped2[0].starts_with("enc:"), "{}", skipped2[0]);
-        assert!(skipped2[0].contains("未解锁"), "{}", skipped2[0]);
+        assert!(
+            skipped2[0].contains("钥匙袋"),
+            "跳过原因要说清「为什么拿不到钥匙」：{}",
+            skipped2[0]
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

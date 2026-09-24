@@ -2,18 +2,19 @@
 //!
 //! ## 为什么需要它
 //!
-//! 今天的开关是**应用级**的（`security.rs` 的 `encryption_enabled` 读 meta.db 一个标志，
+//! 原先的开关是**应用级**的（`security.rs` 的 `encryption_enabled` 读 meta.db 一个标志，
 //! `encrypt_payload` 只看它）⇒ **一开全都加密、一关全都明文**，而口径要求
 //! "个人空间密文 / 团队空间明文"**同时成立**。
 //!
-//! ## 本片的形状（**加性**：袋子没有 ⇒ 一字不改）
+//! ## 现在的形状（★ owner 第三轮拍板 2026-09-24：**应用级那套整条删掉，不向后兼容**）
 //!
 //! · **空间 id 从库文件主干反推**（`…/spaces/<id>.db`）⇒ `key_space_conn` 不必改签名就能"按空间取钥匙"；
-//! · **钥匙袋放 meta.db**（明文，和今天的盐/哨兵同一族；它是**公开材料**，见 `keyring.rs` 头注）；
+//! · **钥匙袋放 meta.db**（明文，和原先的盐/哨兵同一族；它是**公开材料**，见 `keyring.rs` 头注）；
 //! · **会话里存主密钥**（`SESSION_MASTER`）：解锁时从口令 ＋ 袋子里记的 KDF 参数现派生，用完即散（不落盘）；
-//! · **袋子优先，旧路兜底**：`space_key_for_path` 只有"袋子里真有这个空间的盒子"时才返回钥匙；
-//!   没有袋子 / 这个空间不在袋里 ⇒ `None` ⇒ 调用方走**今天那条路**（应用级 session key）⇒ **零回归**。
-//!   ⚠️ 这条兜底是**过渡**用的（`不考虑向后兼容` ⇒ 第 3 步的存量迁移把大家都搬进袋子之后删掉它）。
+//! · **袋子是唯一的钥匙来源**：`space_key_for_path` 只在"袋子里真有这个空间的盒子"时才返回钥匙；
+//!   没有袋子 / 这个空间不在袋里 ⇒ `None` ⇒ 调用方按**明文空间**处理（**不再有"应用级旧钥匙"那条兜底**）。
+//!   ⚠️ 因此"密文库 ＋ 袋里没有它"＝ 应用级加密的存量库，本版**打不开** ⇒ 由调用方
+//!   （`security::key_space_conn` / `wire_keys_for_conn`）**响亮报错**，绝不静默降级成明文。
 //!
 //! ## 两条纪律
 //!
@@ -69,17 +70,6 @@ pub fn carry_keyring(c: &Connection) -> Result<(), String> {
 pub fn store_keyring(c: &Connection, kr: &Keyring) -> Result<(), String> {
     sync::set_meta_state(c, META_KEYRING, &kr.to_json()?)?;
     *KEYRING.lock().map_err(|_| "钥匙袋锁失效".to_string())? = Some(kr.clone());
-    Ok(())
-}
-
-/// 只更新**进程内存**里那份公开材料（**不写 meta**）。
-///
-/// 为什么要单独有它：轮换时走的是"让开连接 → 转换 → **重新打开**"，而重新打开那一步要按
-/// **新盒子**取钥匙 —— 可此刻 `conn` 已经是内存库，用 `store_keyring` 会去写 `meta.sync_state`
-/// 而当场 `no such table`。所以顺序只能是：**先只换内存那份 → 重新打开 → 再用真正的连接写 meta**。
-/// （教训出处：`enable_space` 里那句"先把袋子落下去再转换"，以及交接文档 §7.0.2。）
-pub fn set_keyring_memory(kr: Keyring) -> Result<(), String> {
-    *KEYRING.lock().map_err(|_| "钥匙袋锁失效".to_string())? = Some(kr);
     Ok(())
 }
 
@@ -140,10 +130,52 @@ pub fn keyring() -> Option<Keyring> {
     KEYRING.lock().ok().and_then(|g| g.clone())
 }
 
+/// 本进程**载入了**公开材料吗（袋子在 meta 里、但还没载进内存 ⇒ `false`）。
+///
+/// 为什么要单有一条：`space_key` 对"没有袋子"与"文件是旧的应用级密文"都给不出钥匙，
+/// 而这两件事的**出路完全不同**（前者先解锁，后者本版根本打不开）—— 报错必须分得开。
+pub fn keyring_loaded() -> bool {
+    KEYRING.lock().map(|g| g.is_some()).unwrap_or(false)
+}
+
+/// 用主密钥**试解袋子里的盒子**：解得开任何一个 ⇒ 口令对；**一个都解不开 ⇒ `Err`**。
+///
+/// 这是解锁时"口令对不对"的**唯一**判据（owner 第三轮拍板：哨兵已随应用级加密一起删，
+/// 由解盒子的 AEAD 回答）。袋子里**一个盒子都没有** ⇒ `Ok(())`：
+/// 那等价于"什么都还没加密"，没有可验证的东西，也不该因此报错。
+pub fn verify_master_against_keyring(kr: &Keyring, master: &AppKeys) -> Result<(), String> {
+    if kr.spaces.is_empty() {
+        return Ok(());
+    }
+    let mut last = String::new();
+    for id in kr.spaces.keys() {
+        match kr.unwrap_key(master, id) {
+            Ok(_) => return Ok(()),
+            Err(e) => last = e,
+        }
+    }
+    Err(format!("打不开（口令不对或盒子被改过）：{last}"))
+}
+
 /// 测试用：直接装/卸公开材料（**跨模块的集成判据**要用；生产路径走 `carry_keyring` / `store_keyring`）。
 #[cfg(test)]
 pub(crate) fn set_keyring_for_test(kr: Option<Keyring>) {
     *KEYRING.lock().unwrap() = kr;
+}
+
+/// 测试用：给**一个空间**装上盒子（钥匙由调用方给）＋ 装上会话主密钥。
+///
+/// 为什么要有它：owner 第三轮拍板之后"已解锁的加密空间"只有这一种造法
+/// （袋子里的盒子 ＋ 会话里的主密钥），而 `backup` 这类**别的模块**的判据也要造它。
+/// 返回主密钥（有些判据要拿它去解盒子）。
+#[cfg(test)]
+pub(crate) fn set_space_box_for_test(space_id: &str, key: &[u8; 32], passphrase: &str) -> AppKeys {
+    let mut kr = Keyring::new();
+    let master = kr.kdf.derive_master(passphrase).unwrap();
+    kr.wrap(&master, space_id, key).unwrap();
+    *KEYRING.lock().unwrap() = Some(kr);
+    *SESSION_MASTER.lock().unwrap() = Some(master);
+    master
 }
 
 /// 会话主密钥（没解锁 ⇒ `None`）。
@@ -170,12 +202,13 @@ pub fn master_from_passphrase(c: &Connection, passphrase: &str) -> Result<Option
     }
 }
 
-/// **按空间的钥匙**（核心入口）：`Ok(Some(k))` ＝ 用这个空间自己的钥匙；`Ok(None)` ＝ 走旧路。
+/// **按空间的钥匙**（核心入口）：`Ok(Some(k))` ＝ 用这个空间自己的钥匙；`Ok(None)` ＝ 这个空间**不是**
+/// 按钥匙袋加密的（明文空间）。
 ///
 /// 三条出口（与文件头两条纪律一一对应）：
-/// · 没有袋子 / 这个空间不在袋里 ⇒ `Ok(None)`（**旧路，一字不改**）；
+/// · 没有袋子 / 这个空间不在袋里 ⇒ `Ok(None)`（**明文空间**，不再是"旧路"——应用级那条已删）；
 /// · 袋里有它、会话有主密钥 ⇒ `Ok(Some(解出来的钥匙))`；
-/// · 袋里有它、会话锁着 ⇒ `Err`（**不许**静默退回旧钥匙）；盒子里程坏/被换过也在这里报出来。
+/// · 袋里有它、会话锁着 ⇒ `Err`（**不许**静默退回旧钥匙）；盒子坏了/被换过也在这里报出来。
 pub fn space_key(space_id: &str) -> Result<Option<[u8; 32]>, String> {
     let Some(kr) = keyring() else {
         return Ok(None); // 没有袋子 ⇒ 旧路
@@ -305,134 +338,6 @@ pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
     }
 }
 
-/// ★★ **C（owner 拍板 1）：存量迁移的第一半 —— 把"旧的应用级钥匙"装进袋子。**
-///
-/// **为什么不重加密**：今天已加密空间的库是用**旧的应用级钥匙**（`security::session_key()` 那 32 字节）写的。
-/// 最省的迁法是"**把旧钥匙原样包成这个空间的盒子**"⇒ 空间钥匙 == 旧钥匙 ⇒ **库文件一个字节都不用动**，
-/// 风险面最小（不重写数据，所以也不需要"先备份再重写"）。
-/// 以后要换成真随机的空间钥匙，走 `rotate` ＋ 一次重加密（那是第二步）。
-///
-/// 四个出口**都要响亮**（对应 owner 的 C=1「报错＋说清怎么办」）：
-/// · 库文件**不是密的** ⇒ `Err`（没什么可迁的 —— 明文空间不该有盒子）；
-/// · 会话**没解锁** ⇒ `Err`（先输口令再迁移）；袋子也还没有 ⇒ `Err`（先用口令建袋子）；
-/// · 袋子**已经有它** ⇒ `Ok(false)`（**幂等**，不重复做）；
-/// · 成功 ⇒ `Ok(true)`。
-pub fn migrate_legacy_space_into_keyring(
-    conn: &Connection,
-    app_data_dir: &Path,
-    space_id: &str,
-) -> Result<bool, String> {
-    let path = crate::db::space_db_path(app_data_dir, space_id);
-    if !crate::security::space_db_is_encrypted(&path) {
-        return Err(format!(
-            "空间「{space_id}」的库文件不是密文 ⇒ 没有可迁移的旧钥匙（明文空间本来就不该有盒子）"
-        ));
-    }
-    let master = session_master().ok_or("会话未解锁：先输口令，再迁移")?;
-    let mut kr = keyring().ok_or("钥匙袋还不存在：先用口令建它（点一次「开启加密」即可）")?;
-    if kr.has(space_id) {
-        return Ok(false); // 幂等
-    }
-    // ★ 旧钥匙就是"空间钥匙"：库文件因此**一个字节都不用动**
-    let legacy = crate::security::session_key()
-        .ok_or("会话里没有旧钥匙（未解锁？）—— 先输口令再迁移")?;
-    kr.wrap(&master, space_id, &legacy)?;
-    store_keyring(conn, &kr)?;
-    crate::security::set_space_encrypted_marked(conn, space_id, true)?;
-    Ok(true)
-}
-
-/// ★★ **C 第二半：把"旧钥匙"换成真随机的空间钥匙**（owner 拍板 C=1：先备份、失败报错、不做双读）。
-///
-/// 与第一半的区别：第一半只是"把旧钥匙装进袋子"（不动数据）；这一步要**真的重加密那个库**，
-/// 所以：① **先留一份备份**（`<space>.db.pre-rotate.bak`，覆盖式）；② 两次转换
-/// （旧钥匙解 ⇒ 新随机钥匙写）任何一步失败 ⇒ **停住报错**并把备份路径说给用户；
-/// ③ 成功后**才**换盒子（顺序：先备份 → 转换 → 换盒子，失败时旧盒子仍指向旧钥匙、库也回到旧钥匙那一版）。
-///
-/// ⚠️ 转换前必须让开这个空间的连接（Windows 文件占用 ⇒ `os error 5`）。**函数自己负责这件事**：
-/// 正开着就换成内存库 → 转换 → **无论成败**按当前真实状态重新打开（失败时它还是旧钥匙那一版）。
-/// ⚠️ 顺序上有个坑（这里是第二遍才做对的，见交接文档 §7.0.2）：**重新打开那一步是按盒子取钥匙的**
-/// ⇒ 成功时必须**先**把新盒子放进内存（**只放内存**：此刻 `conn` 是内存库，写 meta 会 `no such table`），
-/// 再重新打开；失败时**什么都别换**（盒子里还是旧钥匙 ⇒ 与"库还在旧钥匙那一版"对得上）。
-/// ⇒ 与 `enable_space` 的差别正在这里：那条是**复用**盒子（先落袋子再转换没问题），
-/// 这条是**换一把新钥匙**，先换盒子而转换失败的话，那个空间就**打不开**了（旧库配新盒子）。
-/// 幂等性说明：**轮换本身不是幂等的**（每调一次就是换一把新钥匙）；幂等的是"失败后状态不变"——
-/// 失败时库与盒子都还在旧钥匙那一版（判据钉的就是这个）。
-pub fn rotate_legacy_space_to_random_key(
-    conn: &mut Connection,
-    app_data_dir: &Path,
-    space_id: &str,
-) -> Result<[u8; 32], String> {
-    let path = crate::db::space_db_path(app_data_dir, space_id);
-    if !crate::security::space_db_is_encrypted(&path) {
-        return Err(format!("空间「{space_id}」的库不是密文 ⇒ 没什么可轮换的"));
-    }
-    let master = session_master().ok_or("会话未解锁：先输口令再轮换")?;
-    let mut kr = keyring().ok_or("钥匙袋不存在：先把旧钥匙迁进来（第一半）")?;
-    let old = kr
-        .unwrap_key(&master, space_id)
-        .map_err(|e| format!("取不出旧的空间钥匙（不能在没有旧钥匙的情况下重加密）：{e}"))?;
-
-    // ① 先备份（**失败也要留下它**；覆盖式，避免备份文件无限堆积）
-    let backup = path.with_extension("db.pre-rotate.bak");
-    std::fs::copy(&path, &backup)
-        .map_err(|e| format!("轮换前备份失败（未做任何改动）：{e}"))?;
-
-    // ② 让开这个空间（如果正开着它）—— Windows 上文件被占用时"替换库文件"会 `os error 5`
-    let holds = holds_space(conn, space_id);
-    if holds {
-        let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
-    }
-
-    // ③ 两次转换：旧钥匙 ⇒ 明文（中间态只短暂存在）⇒ 新随机钥匙
-    let converted: Result<[u8; 32], String> = (|| {
-        let new_key = random_space_key();
-        if let Err(e) = crate::security::convert_space_db(&path, false, Some(&old)) {
-            return Err(format!(
-                "轮换失败在「解密到明文」这一步：{e}（备份在 {}，库未被破坏）",
-                backup.display()
-            ));
-        }
-        if let Err(e) = crate::security::convert_space_db(&path, true, Some(&new_key)) {
-            // 尽量把它开回旧钥匙那一版（明文中间态不能留着）
-            let _ = crate::security::convert_space_db(&path, true, Some(&old));
-            return Err(format!(
-                "轮换失败在「用新钥匙加密」这一步：{e}（已尽力回退到旧钥匙；备份在 {}）",
-                backup.display()
-            ));
-        }
-        Ok(new_key)
-    })();
-
-    // ④ 按成败分别处理：都要把连接**开回来**，但"成功"那一支必须先让盒子跟上
-    let new_key = match converted {
-        Ok(new_key) => {
-            kr.wrap(&master, space_id, &new_key)?;
-            if holds {
-                // 重新打开那一步查的就是这份内存袋子 ⇒ 先换内存，meta 留到开回来之后再写
-                set_keyring_memory(kr.clone())?;
-                crate::db::reopen_space_at(conn, space_id, app_data_dir)?;
-            }
-            new_key
-        }
-        Err(e) => {
-            if holds {
-                // 库里还是旧钥匙那一版，盒子里也还是旧钥匙 ⇒ 直接开回来
-                if let Err(re) = crate::db::reopen_space_at(conn, space_id, app_data_dir) {
-                    return Err(format!("{e}（而且重新打开也失败了：{re}）"));
-                }
-                return Err(format!("{e}（已重新打开这个空间）"));
-            }
-            return Err(e);
-        }
-    };
-
-    // ⑤ 落 meta（held 那一支内存已经换过 ⇒ 这里幂等）＋ 打标记
-    store_keyring(conn, &kr)?;
-    crate::security::set_space_encrypted_marked(conn, space_id, true)?;
-    Ok(new_key)
-}
-
 /// 读这个空间的**本地分类标记**（读不到/没那条 ⇒ `Unknown`）。
 pub fn space_kind(c: &Connection, space_id: &str) -> SpaceKind {
     c.query_row(
@@ -546,7 +451,7 @@ fn holds_space(conn: &Connection, space_id: &str) -> bool {
 
 /// ★ **按空间启用**：只把这个空间**自己**的库换成密文（钥匙是**新随机**一把，装进钥匙袋）。
 ///
-/// 与旧的 `set_encryption_impl`（应用级：把所有空间一起换成同一把钥匙）**不是一条路** ——
+/// 与已删掉的 `set_encryption_impl`（应用级：把所有空间一起换成同一把钥匙）**不是一条路** ——
 /// 那一条给团队空间会连坐（服务端从此读不懂，合并/检索/AI 全废）。
 ///
 /// `passphrase` 只在"**钥匙袋还不存在**"时用到（用它建袋子）；袋子已在 ⇒ 传 `None` 即可。
@@ -580,16 +485,19 @@ pub fn enable_space(
         kr.unwrap_key(&master, space_id)?
     } else {
         // ★★ 承重：库**已经是密文**而袋里没有它的盒子 ⇒ 那把钥匙**不是**我们刚随机出来的这把
-        //（最常见的来源：早先「应用级一把钥匙」加密的存量空间）。
+        //（唯一的来源：早先「应用级一把钥匙」加密的存量空间）。
         // ⚠️ 这时**绝不能**凭空造盒子：`convert_space_db` 对"已经是目标状态"是 **no-op**（不会重加密）
         //    ⇒ 盒子里的新钥匙与库文件对不上，那个空间**打不开**，而且是**静默**的（盒子看着好好的）。
-        // ⇒ 报错，并把两条出路说清（这是 C=1「报错＋说清」那条口径在这里的落点）。
+        // ⇒ 报错，并把**唯一还有救的那条路**说清（C=1「报错＋说清」在这里的落点）。
+        //    ⚠️ owner 第三轮拍板（2026-09-24）之后不再有"把旧钥匙迁进钥匙袋"这条出路了
+        //    （① 那套迁移/轮换连函数一起删了）—— 所以这里**只**剩"从别处取回公开材料"。
         if crate::security::space_db_is_encrypted(&path) {
             return Err(format!(
-                "空间「{space_id}」的库已经是密文，但钥匙袋里没有它的盒子（最常见的是早先「应用级一把钥匙」加密的存量空间）。\
+                "空间「{space_id}」的库已经是密文，但钥匙袋里没有它的盒子 —— 那是早先「应用级加密」\
+                 （全局一把钥匙）留下的存量库，而那一套**已不再支持**。\
                  这时不能凭空造新盒子：库不会被重新加密，装上新盒子之后这个空间就**打不开**了。\
-                 两条出路：① 先「把旧钥匙迁进钥匙袋」（第一半，不动库文件），再决定要不要换随机钥匙；\
-                 ② 或者在旧设备上把公开材料推给同步服务、在这台设备上取回。"
+                 唯一还有救的一条路：在**还有那份旧材料**的设备上把公开材料推给同步服务，\
+                 再在这台设备上取回（公开材料里带着这个空间的盒子）；否则这个空间打不开。"
             ));
         }
         let k = random_space_key();
@@ -601,7 +509,7 @@ pub fn enable_space(
     store_keyring(conn, &kr)?;
 
     // ③ ★ 只换**这一个**空间的库。⚠️ 若这个空间**正被本连接开着**，必须先让开：
-    //   Windows 上文件被占用时"替换库文件"会 `os error 5`（`set_encryption_impl` 里同样的换法）。
+    //   Windows 上文件被占用时"替换库文件"会 `os error 5`（`convert_space_db` 里同样的换法）。
     let holds = holds_space(conn, space_id);
     if holds {
         let _ = std::mem::replace(conn, Connection::open_in_memory().map_err(|e| e.to_string())?);
@@ -1038,222 +946,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ★★ C（owner 拍板 1）：**存量迁移 = 把旧钥匙装进袋子**（库文件不动）＋ 四条响亮出口。
-    #[test]
-    fn migrating_a_legacy_space_wraps_the_old_key_without_touching_the_file() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuyonote-migrate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
-        drop(crate::db::open_meta_conn_at(&dir).unwrap());
-        let c = crate::db::open_space_conn_at("mig-a", &dir).unwrap();
-        set_keyring_for_test(None);
-        set_session_master(None).unwrap();
-        crate::security::tests_set_session_key(None);
-
-        // ① 明文空间 ⇒ Err（说清"没什么可迁的"）
-        let err = migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap_err();
-        assert!(err.contains("不是密文"), "{err}");
-
-        // 做一份**用旧应用级钥匙加密**的库（＝今天所有已加密空间的样子）
-        let legacy = crate::keyring::random_space_key();
-        let path = crate::db::space_db_path(&dir, "mig-a");
-        drop(c); // Windows：转换前必须让开这个空间的连接
-        crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
-        assert!(crate::security::space_db_is_encrypted(&path));
-        let c = crate::db::open_space_conn_at("mig-b", &dir).unwrap(); // 换一个别的空间当连接
-
-        // ② 没解锁 / 没袋子 ⇒ Err（两条各说各的）
-        let err = migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap_err();
-        assert!(err.contains("未解锁") || err.contains("钥匙袋"), "{err}");
-
-        // 装上袋子（口令）＋ 会话旧钥匙 ⇒ ③ 迁移成功
-        let mut kr = Keyring::new();
-        let master = kr.kdf.derive_master("我家猫叫mimi").unwrap();
-        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
-        set_keyring_for_test(Some(kr));
-        set_session_master(Some(master)).unwrap();
-        crate::security::tests_set_session_key(Some(legacy));
-        assert!(migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap(), "第一次要真的迁");
-
-        // ★ 盒子里装的**就是旧钥匙** ⇒ 库文件不必动，开库那条路照样开得开
-        let boxed = keyring().unwrap().unwrap_key(&master, "mig-a").unwrap();
-        assert_eq!(boxed, legacy, "★ 空间钥匙 == 旧钥匙（所以一个字节都不用重写）");
-        {
-            let probe = Connection::open(&path).unwrap();
-            crate::security::key_space_conn(&probe, &path).unwrap();
-            probe.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).unwrap();
-        }
-        // 迁移之后：闸门把它当**加密空间**（袋里有它）
-        assert!(space_status(&dir, "mig-a").in_keyring);
-
-        // ④ 幂等：再来一次 ⇒ Ok(false)，不重复做
-        assert!(!migrate_legacy_space_into_keyring(&c, &dir, "mig-a").unwrap());
-
-        crate::security::tests_set_session_key(None);
-        set_keyring_for_test(None);
-        set_session_master(None).unwrap();
-        drop(c);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// ★★ C 第二半：**轮换成真随机的空间钥匙**（先备份、失败不动、之后仍打得开）。
-    #[test]
-    fn rotating_to_a_random_key_backs_up_first_and_keeps_the_space_readable() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuyonote-rotate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
-        drop(crate::db::open_meta_conn_at(&dir).unwrap());
-        // 造"今天那种"已加密空间：旧应用级钥匙加密 ＋ 一份数据
-        let legacy = crate::keyring::random_space_key();
-        let path = crate::db::space_db_path(&dir, "rot-a");
-        {
-            let a = crate::db::open_space_conn_at("rot-a", &dir).unwrap();
-            a.execute(
-                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
-                 VALUES ('p1', 'rot-a', '机密', '{\"root\":{}}', '', 'page', 0, 1, 1, NULL)",
-                [],
-            )
-            .unwrap();
-            a.close().unwrap();
-        }
-        crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
-        let mut c = crate::db::open_space_conn_at("rot-b", &dir).unwrap();
-        set_keyring_for_test(None);
-        set_session_master(None).unwrap();
-        crate::security::tests_set_session_key(None);
-
-        // 前置：用第一半把旧钥匙迁进袋子
-        let mut kr = Keyring::new();
-        let master = kr.kdf.derive_master("我家猫叫mimi").unwrap();
-        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
-        set_keyring_for_test(Some(kr));
-        set_session_master(Some(master)).unwrap();
-        crate::security::tests_set_session_key(Some(legacy));
-        assert!(migrate_legacy_space_into_keyring(&c, &dir, "rot-a").unwrap());
-
-        // ① 明文空间 ⇒ Err（没什么可轮换）
-        let err = rotate_legacy_space_to_random_key(&mut c, &dir, "rot-b").unwrap_err();
-        assert!(err.contains("不是密文"), "{err}");
-
-        // ② 轮换：钥匙真的换了 ＋ 留了备份
-        let new_key = rotate_legacy_space_to_random_key(&mut c, &dir, "rot-a").unwrap();
-        assert_ne!(new_key, legacy, "轮换要真的换一把");
-        assert_eq!(keyring().unwrap().unwrap_key(&master, "rot-a").unwrap(), new_key, "盒子里是新钥匙");
-        let backup = path.with_extension("db.pre-rotate.bak");
-        assert!(backup.exists(), "先备份：备份文件要在");
-        // ③ 新钥匙打得开（库真被重加密了），且数据还在
-        {
-            let probe = Connection::open(&path).unwrap();
-            crate::security::key_space_conn(&probe, &path).unwrap();
-            let n: i64 = probe.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
-            assert_eq!(n, 1, "★ 重加密往返之后数据没丢");
-        }
-        // ④ 旧钥匙**打不开**了（证明真的换了钥匙，而不是只换了个盒子）
-        {
-            let probe = Connection::open(&path).unwrap();
-            let _ = probe.execute_batch(&format!(
-                "PRAGMA key = \"x'{}';\";",
-                crate::crypto::key_hex(&legacy)
-            ));
-            assert!(
-                probe.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0)).is_err(),
-                "旧钥匙不该还能开"
-            );
-        }
-
-        crate::security::tests_set_session_key(None);
-        set_keyring_for_test(None);
-        set_session_master(None).unwrap();
-        drop(c);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// 清理守卫：这条判据会动**进程级全局**（`KEYRING` / `SESSION_MASTER` / `SESSION_KEY`），
+    /// 清理守卫：这条判据会动**进程级全局**（`KEYRING` / `SESSION_MASTER`），
     /// 所以**失败路径也必须清干净** —— 上一轮真踩过：判据在清理之前 panic，把后面 5 条空间判据
     /// 连坐弄红（`space_kind_round_trips…` / `the_security_overview…` 之类），根因只有一条。
     /// `Drop` 守卫是这里最省事的做法：不管从哪一行炸，都会清。
     struct CleanupGuard(std::path::PathBuf);
     impl Drop for CleanupGuard {
         fn drop(&mut self) {
-            crate::security::tests_set_session_key(None);
             set_keyring_for_test(None);
             let _ = set_session_master(None);
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 
-    /// ★★ "轮换**正开着**的那个空间"才是最常见的用法（用户就待在这个空间里点它）——
-    /// 实现必须在转换前**自己**让开连接（Windows 文件占用 ⇒ `os error 5`），转完再把连接
-    /// **按真实状态**开回来，而且**成功时要先让内存里的盒子跟上**（重新打开是按盒子取钥匙的）。
-    /// ⚠️ 这条路径原来没人守：已有的判据拿的是**别的空间**的连接（`open_space_conn_at("rot-b")`）。
-    #[test]
-    fn rotating_the_space_the_connection_currently_holds_works_and_reopens_it() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
-        let dir = std::env::temp_dir().join(format!("shuyonote-rot-held-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
-        let _guard = CleanupGuard(dir.clone());
-        drop(crate::db::open_meta_conn_at(&dir).unwrap());
-        let path = crate::db::space_db_path(&dir, "held-a");
-
-        // 造一个**旧的（应用级钥匙加密的）**空间，里面有一页数据
-        let legacy = crate::crypto::random_32();
-        {
-            let a = crate::db::open_space_conn_at("held-a", &dir).unwrap();
-            a.execute(
-                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at) \
-                 VALUES ('p1', 'held-a', '机密', '{\"root\":{}}', '', 'page', 0, 1, 1, NULL)",
-                [],
-            )
-            .unwrap();
-            a.close().unwrap();
-        }
-        crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
-
-        // ⚠️ 顺序要紧：**先**把旧钥匙放进会话，**再**开这个加密空间（开的时候就要用钥匙）
-        crate::security::tests_set_session_key(Some(legacy));
-        // ★ 这次的连接**就开着** held-a（＝用户正待在这个空间里）
-        let mut c = crate::db::open_space_conn_at("held-a", &dir).unwrap();
-        set_keyring_for_test(None);
-        set_session_master(None).unwrap();
-
-        let mut kr = Keyring::new();
-        let master = kr.kdf.derive_master("我家猫叫mimi").unwrap();
-        sync::set_meta_state(&c, META_KEYRING, &kr.to_json().unwrap()).unwrap();
-        set_keyring_for_test(Some(kr));
-        set_session_master(Some(master)).unwrap();
-        assert!(migrate_legacy_space_into_keyring(&c, &dir, "held-a").unwrap());
-
-        // ① ★ 轮换**正开着**的这个空间：不许因为文件占用而失败
-        let new_key = rotate_legacy_space_to_random_key(&mut c, &dir, "held-a")
-            .expect("★ 轮换正开着的空间必须能成（函数自己负责让开连接、并让盒子跟上）");
-        assert_ne!(new_key, legacy, "轮换要真的换一把");
-
-        // ② ★ 连接被**按真实状态**开了回来：还能查、数据还在
-        let n: i64 = c
-            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
-            .expect("★ 转完必须把连接开回来（不然用户眼前那个空间就废了）");
-        assert_eq!(n, 1, "★ 重加密往返之后数据没丢");
-        // ③ 盒子里是新钥匙，磁盘上那份确实是密的，元数据里的标记也在
-        assert_eq!(keyring().unwrap().unwrap_key(&master, "held-a").unwrap(), new_key);
-        assert!(crate::security::space_db_is_encrypted(&path));
-        // ④ meta 里那一份也换过了（"只放内存"那一步的后续：真连接写 meta）
-        assert_eq!(
-            keyring().unwrap().unwrap_key(&master, "held-a").unwrap(),
-            sync::get_meta_state(&c, META_KEYRING)
-                .and_then(|t| Keyring::from_json(&t).ok())
-                .and_then(|k| k.unwrap_key(&master, "held-a").ok())
-                .expect("meta 里的袋子也应当能解出新钥匙"),
-            "★ 内存与 meta 里那份必须是同一把钥匙（别只换了一半）"
-        );
-    }
-
     /// ★★ 承重判据：库**已经是密文**而袋里没有它的盒子时，`enable_space` **必须报错**，
     /// 而且**一个盒子都不许造** —— 造了就与库文件对不上（`convert_space_db` 对"已经是目标状态"
     /// 是 no-op，不会重加密），那个空间会**打不开**，还算**静默**（盒子看着好好的）。
-    /// 这正是"存量空间"最常见的入口，所以这条判据守的是数据可达性。
+    /// 这正是"应用级加密存量空间"唯一的形态，所以这条判据守的是数据可达性。
+    ///
+    /// ★ owner 第三轮拍板（2026-09-24）改写：① 那套"把旧钥匙迁进钥匙袋"已经删掉，
+    /// 所以断言从「要给出第一条出路（迁）」改成「**应用级加密已不再支持** ＋ 说清唯一的出路」；
+    /// 而且这条判据的连接**不再**开在 `enc-a` 上（存量库根本开不开 —— 那正是这一片要的事实）。
     #[test]
     fn enabling_a_space_whose_db_is_already_encrypted_refuses_to_mint_a_box() {
         let _g = crate::security::SEC_LOCK.lock().unwrap();
@@ -1272,8 +985,15 @@ mod tests {
         }
         crate::security::convert_space_db(&path, true, Some(&legacy)).unwrap();
 
-        crate::security::tests_set_session_key(Some(legacy));
-        let mut c = crate::db::open_space_conn_at("enc-a", &dir).unwrap();
+        // ★ 存量库**打不开**（本版不再退回旧钥匙）—— 这条本身就是 owner 拍板的后果，钉在下面
+        {
+            let probe = Connection::open(&path).unwrap();
+            let err = crate::security::key_space_conn(&probe, &path).unwrap_err();
+            assert!(err.contains("应用级加密"), "{err}");
+        }
+
+        // 连接开在一个**别的（明文）空间**上：正是"用户打开应用、去给那个存量空间点开启加密"那一刻
+        let mut c = crate::db::open_space_conn_at("enc-b", &dir).unwrap();
         set_keyring_for_test(None);
         set_session_master(None).unwrap();
 
@@ -1286,16 +1006,11 @@ mod tests {
 
         let err = enable_space(&mut c, &dir, "enc-a", None).unwrap_err();
         assert!(err.contains("打不开"), "要说清后果：{err}");
-        assert!(err.contains("迁"), "要给出第一条出路：{err}");
+        assert!(err.contains("应用级加密"), "要说清这是应用级加密留下的：{err}");
+        assert!(err.contains("公开材料"), "要给出唯一还有救的那条路：{err}");
         // ★ 关键：**一个盒子都没造**
         assert!(!keyring().unwrap().has("enc-a"), "★ 不许凭空造盒子（造了就打不开）");
-        // 而且那个空间**照样打得开**（旧钥匙还在会话里，没被弄坏）
-        assert!(crate::security::space_db_is_encrypted(&path));
-        let probe = Connection::open(&path).unwrap();
-        crate::security::key_space_conn(&probe, &path).unwrap();
-        probe
-            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get::<_, i64>(0))
-            .expect("旧钥匙还应当开得动这个空间");
+        assert!(crate::security::space_db_is_encrypted(&path), "库文件本身一个字节都不该被动");
     }
 
     /// ★ 空间 id 只从 `spaces/<id>.db` 反推；不是那种文件就 `None`（**不猜**）。

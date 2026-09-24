@@ -42,7 +42,7 @@ export default {
     plugins: "插件",
     pluginsHint: "启用/禁用扩展",
     security: "安全",
-    securityHint: "端到端加密与锁定",
+    securityHint: "空间隐私与锁定",
     ai: "AI",
     aiHint: "服务商与模型",
     about: "关于与更新",

@@ -40,15 +40,8 @@ pub const CURRENT_FORMAT: u8 = VERSION_XCHACHA;
 /// 头部长度（magic + version）。
 pub const HEADER_LEN: usize = 2;
 
-/// `sync_state` keys for the opt-in per-workspace encryption.
-pub const ENC_ENABLED: &str = "encryption_enabled";
-pub const ENC_SALT: &str = "encryption_salt";
-/// Sentinel ciphertext used to verify the passphrase on unlock (no key persisted at rest).
-pub const ENC_VERIFY: &str = "encryption_verify";
-// `ENC_KEY` 只在测试里用来断言「密钥未落盘」（security.rs 单测）；非测试构建未被引用，属预期。
+/// base64（标准字母表）—— 载荷/密文的文本形态。★ 应用级加密删掉之后只剩判据在用（同上）。
 #[allow(dead_code)]
-pub const ENC_KEY: &str = "encryption_key";
-
 pub fn b64_encode(data: &[u8]) -> String {
     B64.encode(data)
 }
@@ -121,6 +114,12 @@ pub fn decrypt_str(s: &str, keys: &AppKeys) -> Result<String, String> {
 ///
 /// ⚠️ **这个函数的口径不许动**：它的输出就是 SQLCipher 的原始密钥，改了它 = 既有加密库全部打不开。
 /// 国密的应用层 KDF 是**另一条**（`crypto_sm::derive_keys`，PBKDF2-HMAC-SM3），见 `derive_app_keys`。
+///
+/// ★ owner 第三轮拍板（2026-09-24）之后：应用级加密（含它的解锁/哨兵）整条删掉 ⇒
+/// **这条默认参数派生不再有生产调用方**（空间钥匙是随机的；口令派生走 `derive_app_keys_with`）。
+/// 留着的理由只有一条：它是**库级口径的参照物**（判据拿它钉"SQLCipher 那条 KDF 没被动过"），
+/// 所以既不能删、也不该被谁拿去做新的密钥派生。
+#[allow(dead_code)]
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     let mut key = [0u8; 32];
     Argon2::default()
@@ -138,6 +137,10 @@ pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
 ///   · `sm` = PBKDF2-HMAC-SM3（§0.1 钉死的应用层 KDF），只喂应用层 AEAD。
 /// 两条都用同一个 16 字节盐：域不同（Argon2id / PBKDF2-HMAC-SM3），复用不引入额外风险，
 /// 而 §0.1 只钉了"盐 16 字节"，没钉"两个 KDF 必须用不同的盐"。
+///
+/// ★ owner 第三轮拍板（2026-09-24）之后同样**只剩判据在用**（口令派生现在都走
+/// `derive_app_keys_with`，因为参数要随钥匙袋走）—— 保留理由与 `derive_key` 相同。
+#[allow(dead_code)]
 pub fn derive_app_keys(passphrase: &str, salt: &[u8]) -> Result<AppKeys, String> {
     let legacy = derive_key(passphrase, salt)?;
     Ok(AppKeys { legacy, sm: derive_sm_keys(passphrase, salt) })

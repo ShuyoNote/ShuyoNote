@@ -511,30 +511,6 @@ pub fn space_security_overview(
     crate::space_crypto::space_security_views(&c, &dir)
 }
 
-/// ★ ① 第一半的命令面：把"**旧的应用级钥匙**"装进这个空间的盒子（**不动库文件一个字节**）。
-///
-/// 什么时候用：这个空间的库**已经是密文**、但那是"应用级一把钥匙"加密的（早于按空间加密）——
-/// 迁进来它才有自己的盒子，闸门与按空间解锁这条路才认它。
-/// 返回**是否真的做了**（`false` ＝ 幂等：袋子里早就有它）。四个出口都可操作，见库函数注释。
-#[tauri::command]
-pub fn migrate_legacy_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<bool, String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
-    let c = conn(&db);
-    crate::space_crypto::migrate_legacy_space_into_keyring(&c, &dir, &args.space_id)
-}
-
-/// ★ ① 第二半的命令面：把旧钥匙换成**真随机**的空间钥匙（**先备份、就地对库重加密**）。
-///
-/// ⚠️ 这是**会重写库**的动作：备份落在 `<space>.db.pre-rotate.bak`；界面必须**两步确认**
-/// （与"关闭加密"同一条纪律）。失败会**停住报错**并把备份路径说清，库回到旧钥匙那一版。
-/// ⚠️ 返回值**故意不给那把钥匙**（`()`）：界面不需要它，少一处泄漏面。
-#[tauri::command]
-pub fn rotate_legacy_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<(), String> {
-    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
-    let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    crate::space_crypto::rotate_legacy_space_to_random_key(&mut c, &dir, &args.space_id).map(|_| ())
-}
-
 /// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
 ///    「收一份 JSON 文本」的参数不该顶着那一列的名字，否则收口门禁与分层都会慢慢被磨穿。
 #[derive(serde::Deserialize)]
