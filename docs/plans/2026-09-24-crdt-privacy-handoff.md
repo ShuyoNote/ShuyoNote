@@ -606,6 +606,20 @@ wire_payloads_use_the_space_key_and_never_silently_fall_back_to_plaintext
 我自己动手那条改法本身是对的（`wire_keys_for_conn` 里"密文文件 ＋ 无盒子 ⇒ `Err("…应用级加密已不再支持…")`"），
 已经在本轮验证到"红在哪"，下一轮直接从"改写这 9 条"开始。
 
+**已逐条看过的两条（该改什么，就写在这，省下一轮勘察）**：
+
+- `per_space_switch_and_startup_gate_look_at_the_space_itself`（`security.rs` 1168–1215）：
+  它的 **③ 段就是"旧路兜底"本身** —— `sync::set_meta_state(&c, ENC_ENABLED, "1")` 之后断言
+  `encryption_enabled(&c) == true`。这一段**要删**（旧模型没了）；
+  **④ 段**结尾用 `*SESSION_KEY = Some(legacy_only(key))` 表示"有钥匙 ⇒ 不用解锁"，
+  要改成**按空间**的写法（把钥匙放进袋子/会话主密钥，而不是应用级 `SESSION_KEY`）。
+- `payload_roundtrip_when_enabled`（`security.rs` 1667–1680）：它用测试助手 `enable_meta(&c, "supersecret")`
+  （＝造应用级状态）＋ `temp_ws()`；要改成"**建袋子 ＋ 给这个空间一个盒子**
+  （`Keyring::new()` → `derive_master` → `wrap(space_id)` → `set_keyring_for_test` ＋ `set_session_master`）"，
+  末尾那两条"密钥不落盘"的断言（`ENC_KEY` 不在 state/meta）**保留**。
+- 其余七条同族：凡出现 `set_encryption_impl(...)` / `enable_meta(...)` / `ENC_ENABLED` /
+  `ENC_SALT` / `ENC_VERIFY` / `SESSION_KEY` 的**造状态**与**断言**，都按上面两条的路子换成"按空间"。
+
 1. **解锁改从"钥匙袋"派生**：`unlock_encryption_impl` 不再用应用级盐/哨兵，改为
    用袋子记的 KDF 参数推主密钥；**错口令靠解盒子的 AEAD 认**（报"打不开（口令不对或盒子被改过）"）。
    判据：错口令 ⇒ 明确报错（且**不是**"口令不正确"这种旧文案）；正确口令 ⇒ 能解出盒子里的空间钥匙；
