@@ -69,6 +69,8 @@ mod smtp;
 mod graph;
 mod models;
 mod net;
+// 局域网发现（甲-1 纯函数内核）：见 [`lan`] 模块头 —— UDP 收发与「代言」在下一片接线。
+mod lan;
 mod capabilities_gen;
 // MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
 // PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
