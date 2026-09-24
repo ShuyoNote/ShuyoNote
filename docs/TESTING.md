@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 251 / web 249 / CommandMap 253
+门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 253 / web 249 / CommandMap 255
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -358,6 +358,11 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   随后全量 **2194 passed** 全绿。⇒ **判读顺序**：① 超时的都在 spawn 那一类吗；② `git status` >1s 就别急着重跑；
   ③ 隔离复跑；**隔离仍红 ＋ `git status` 正常 ⇒ 才是真回归**。
   ⚠️ **不许**为了变绿去调大超时阈值（那是"把门槛改松"）—— 正确动作是**等机器安静**再跑一次全量。
+- ★ **另一条已知 flake（2026-09-23/24，同一天撞到两次）**：`src/components/communityPublishDialog.test.tsx`
+  在**全量**跑里偶发 1/42 红，形状是 `AssertionError: expected { title: … } to deeply equal { … }`
+  且差异是 **`board: undefined`（期望 `"plugins"`）**；**隔离复跑两次都 42/42 全过**，随后全量也绿。
+  ⇒ 判读同一条纪律：**隔离绿 ＝ 不是回归**；但它已经出现两次，值得单独治一片（怀疑是套件内的
+  模块级状态/顺序耦合，不是这套改动引入的 —— 两次都与我改的代码无关）。
 - ★ **读退出码时别经过管道过滤**（2026-09-23 一天内撞到**两次**，形状相同）：
   ① `scripts\win-cargo-test.ps1 -Filter sync_stream` 自己打印了 `test result: ok. 13 passed; 0 failed`
   且脚本收了 `test exe exit code = 0`，但外层被报成 **exit 1** —— 那条命令的形状是

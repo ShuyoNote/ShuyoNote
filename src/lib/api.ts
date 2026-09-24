@@ -284,6 +284,19 @@ export const api = {
    */
   writePageProjection: (id: string, docJson: string) =>
     invoke("write_page_projection", { args: { page_id: id, doc_json: docJson } }),
+  /**
+   * ★ 隐私边界第 1 步（2026-09-23）：**按空间**启用加密 —— 只换这一个空间的库
+   *（与"应用级一次全加密"的 `setEncryption` 不是一条路）。**桌面专属**（Web 无钥匙柜）。
+   * `passphrase` 只在"钥匙袋还不存在"时用到；已有袋子 ⇒ 省略（用会话里的主密钥）。
+   * 返回那把空间钥匙（界面一般不用，判据/排错用）。
+   */
+  enableSpaceEncryption: (spaceId: string, passphrase?: string) =>
+    invoke("enable_space_encryption", { args: { space_id: spaceId, passphrase } }).then(
+      (v) => new Uint8Array(v as number[]),
+    ),
+  /** ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子。桌面专属。 */
+  disableSpaceEncryption: (spaceId: string) =>
+    invoke("disable_space_encryption", { args: { page_id: spaceId } }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),

@@ -62,6 +62,12 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   ["sync_stream_start", "桌面专属：Rust 订 SSE 变更流（Web 侧浏览器自带 SSE，`useSyncStream.ts` 自己那条）"],
   ["sync_stream_stop", "同上（桌面专属：断开且不再重连）"],
   ["sync_stream_status", "同上（桌面专属：流通道读数，排错用）"],
+  // 隐私边界第 1 步（2026-09-23）：**按空间**启用/禁用加密 —— **桌面专属**。
+  // 理由：Web 平台没有钥匙柜（E2EE 在浏览器里是空操作，见 `docs/web-sync-boundary.md`），
+  // 而加密空间在 Web 上由 `src/lib/ciphertextSniff.ts` **明确拒掉**（提示去桌面端）⇒
+  // 在 `web.ts` 里再实现一遍"启用/禁用加密"等于**假装浏览器有钥匙**（比不实现危险得多）。
+  ["enable_space_encryption", "桌面专属：按空间加密那一个空间（Web 无钥匙柜；加密空间在 Web 上被明确拒收）"],
+  ["disable_space_encryption", "同上（另一半）：按空间禁用（只把它自己的库换回明文）"],
 ]);
 
 const missingWeb = [...rustCommands]

@@ -423,6 +423,39 @@ pub fn clear_pending_page_states(db: State<Db>, args: PageStateArgs) -> Result<u
 /// 投影写回的载荷：**由界面侧算好的**那一份投影 JSON。
 ///
 /// ⚠️ 为什么是界面侧算：Rust **没有** Yjs ⇒ 它算不出"状态 ⇒ JSON"。这一步只是把算好的那一份**落盘**。
+/// 按空间启用/禁用的载荷。
+///
+/// ⚠️ `space_id` 是**本地空间 id**（不是远端 `space_id`）；`passphrase` 只在"**钥匙袋还不存在**"
+/// 时用到（用它建袋子），已有袋子 ⇒ 传 `None`（用会话里的主密钥）。
+#[derive(serde::Deserialize)]
+pub struct SpaceEncryptionArgs {
+    pub space_id: String,
+    pub passphrase: Option<String>,
+}
+
+/// ★ 隐私边界第 1 步的命令面：**按空间加密**这一个空间（只换它自己的库）。
+///
+/// 与旧的 `set_encryption`（应用级：把所有空间一起换成同一把钥匙）**不是一条路** ——
+/// 那一条给团队空间会连坐（服务端从此读不懂，合并/检索/AI 全废）。
+/// 失败一律 `Err` 且文本可操作（口径：不静默）。
+#[tauri::command]
+pub fn enable_space_encryption(
+    db: State<Db>,
+    args: SpaceEncryptionArgs,
+) -> Result<[u8; 32], String> {
+    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::space_crypto::enable_space(&mut c, &dir, &args.space_id, args.passphrase.as_deref())
+}
+
+/// ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子（别的空间不受影响）。
+#[tauri::command]
+pub fn disable_space_encryption(db: State<Db>, args: PageStateArgs) -> Result<(), String> {
+    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::space_crypto::disable_space(&mut c, &dir, &args.page_id)
+}
+
 /// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
 ///    「收一份 JSON 文本」的参数不该顶着那一列的名字，否则收口门禁与分层都会慢慢被磨穿。
 #[derive(serde::Deserialize)]

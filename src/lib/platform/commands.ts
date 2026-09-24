@@ -394,6 +394,15 @@ export interface CommandMap {
   //    这一份 JSON 由**界面侧**算好传进来（Rust 没有 Yjs ⇒ 它算不出"状态 ⇒ JSON"）。
   // 返回**是否真的写了**（`false` ＝ 无事可做：没变／数据库页／页面不存在）。
   write_page_projection: { args: { args: { page_id: string; doc_json: string } }; result: boolean };
+  // 隐私边界第 1 步的命令面（2026-09-23）：**按空间**启用/禁用加密。
+  // ⚠️ **桌面专属**（登记进 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS`）：Web 没有钥匙柜，
+  //    加密空间在 Web 上会被 `lib/ciphertextSniff.ts` 明确拒掉 ⇒ 在 `web.ts` 里再实现一遍等于假装有钥匙。
+  // `passphrase` 只在"钥匙袋还不存在"时用到（用它建袋子）；已有袋子 ⇒ 省略（用会话里的主密钥）。
+  enable_space_encryption: {
+    args: { args: { space_id: string; passphrase?: string } };
+    result: number[];
+  };
+  disable_space_encryption: { args: { args: { page_id: string } }; result: null };
   // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
   // ⚠️ 与块级那两条（`list_page_conflicts` / `resolve_page_conflict`）**不同族**：块级可逐块选一侧；
   //    页级是"两条**独立血统**撞上" —— Yjs 结构上合不了（S1 红线）⇒ 只有
