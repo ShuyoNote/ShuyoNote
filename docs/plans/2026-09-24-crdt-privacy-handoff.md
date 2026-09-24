@@ -413,6 +413,53 @@ B 自己的库**真的**变成密文，而且到这一步闸门才放行（分�
 ② 给解锁路径加一行**耗时日志**再出一次 Android 构建装上去（要跑 Tauri 的 Android 打包，
 是"出包"级别的活，不是一次调用能完的）。⇒ 件5 建议按 ② 做，但要单独排一片。
 
+### 7.0.5 ①-1 的**施工单**（照抄即可；下一轮第一件）
+
+**目标**：让 ① 的两个迁移函数**用户够得到**（现在只有它们自己的判据在调用）。五处改动**必须同批**做
+（漏了契约 `check-web-commands` 就红；漏了计数 `check-doc-facts` 就红）：
+
+1. `src-tauri/src/commands.rs`（命令 ＋ 载荷）——放在 `space_security_overview` 之后：
+   ```rust
+   /// ★ ① 第一半：把"旧的应用级钥匙"装进这个空间的盒子（**不动库文件一个字节**，可重复调）。
+   #[tauri::command]
+   pub fn migrate_legacy_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<bool, String> {
+       let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+       let c = conn(&db);
+       crate::space_crypto::migrate_legacy_space_into_keyring(&c, &dir, &args.space_id)
+   }
+
+   /// ★ ① 第二半：换成**真随机**空间钥匙（会重写库 ⇒ 界面必须两步确认）。
+   /// ⚠️ 返回值故意不给钥匙（界面不需要，少一处泄漏面）。
+   #[tauri::command]
+   pub fn rotate_legacy_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<(), String> {
+       let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+       let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+       crate::space_crypto::rotate_legacy_space_to_random_key(&mut c, &dir, &args.space_id).map(|_| ())
+   }
+   ```
+   （`SpaceIdArgs` 已存在：`space_security_overview` 那一批加的。）
+2. `src-tauri/src/lib.rs`：注册这两条（桌面专属，理由：Web 没有钥匙袋、也没有"应用级旧钥匙"）。
+3. `src/lib/platform/commands.ts`：
+   ```ts
+   migrate_legacy_space_encryption: { args: { args: { space_id: string } }; result: boolean };
+   rotate_legacy_space_encryption: { args: { args: { space_id: string } }; result: null };
+   ```
+4. `scripts/check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS` 各加一条（含理由）；
+   然后**计数会变成 Rust 259 / web 249 / CommandMap 261** ⇒
+5. `docs/TESTING.md` 的 facts 行同改（`check-doc-facts` 会核对）。
+
+**界面**（`src/components/SpacePrivacySection.tsx`，与「推到服务器/从服务器取回」同一节）：
+- 「把旧钥匙迁进钥匙袋」→ `api.migrateLegacySpaceEncryption(space_id)`，把**后端那句话原样**显示；
+- 「换成真随机钥匙」→ **两步确认**（照「关闭加密」那套：第一下只把按钮改成「确认：换成随机钥匙」，
+  第二下才真调）——它会重写库，失败会报错并给出备份路径；
+- `api.ts` 加两个包装（照 `pullSpaceKeyring` 的写法）；
+- 判据：在 `SpacePrivacySection.test.ts` 里补两条（真调 `migrate…`；轮换**第一下不调**、第二下才调），
+  并保留既有的"接线"判据。
+
+**跑门禁**：`win-cargo-test.ps1` 全量 → `npx tsc --noEmit` → `node scripts/check-web-commands.mjs`
+→ `node scripts/check-doc-facts.mjs` → `vitest run src/components/SpacePrivacySection.test.ts` →
+`pnpm run build`。全绿再提交推送。
+
 ### 7.1 落点计划（补丁按此实现；留着看当时的取舍）
 
 已侦察（`C:\Users\cnzen\zhai\shuyonote-sync-server`，**另一个仓**，按它自己的门禁走）：
