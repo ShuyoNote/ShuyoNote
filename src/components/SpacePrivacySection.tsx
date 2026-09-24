@@ -146,6 +146,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
             )}
             <div className="space-privacy-actions">
               <select
+                className="sync-input"
                 aria-label="空间分类"
                 value={v.kind}
                 disabled={busy === v.space_id}
@@ -252,6 +253,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       <label className="space-privacy-pass">
         主口令（第一次开启加密时设定；忘了就打不开）
         <input
+          className="sync-input"
           type="password"
           value={pass}
           onChange={(e) => setPass(e.target.value)}

@@ -1352,7 +1352,11 @@ html[data-platform="win"] .app-body {
 .space-privacy-verdict.is-note { color: var(--text-faint); }
 .space-privacy-verdict.is-block { border-color: var(--danger); color: var(--danger); }
 .space-privacy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.space-privacy-actions select { font-size: 12px; max-width: 100%; }
+/* 下拉与输入框**复用仓库既有的 `.sync-input` 盒子**（`padding:7px 10px`、同圆角、同聚焦环）
+   —— 与旁边的 `.sync-btn`（`padding:7px 14px`）本来就配成一对。
+   ⚠️ 之前这里只给了 `font-size: 12px`，于是浏览器原生控件比按钮**矮一截**、也不吃主题色，
+   看着不协调（owner 2026-09-24 指出）。这里只保留"别撑满整行"这一条覆盖。 */
+.space-privacy-actions select.sync-input { width: auto; max-width: 100%; }
 .space-privacy-overwrite {
   display: flex;
   align-items: center;
@@ -1361,7 +1365,7 @@ html[data-platform="win"] .app-body {
   color: var(--text-dim);
 }
 /* 主口令：**标签一行、输入框单独一行**（owner 2026-09-24：挤在同一行时标签被折行、输入框被压到最右边）。
-   竖排后输入框占满宽度，等于一个正常的"设置口令"字段。 */
+   竖排后输入框占满宽度，等于一个正常的"设置口令"字段；盒子本身用 `.sync-input`（与下拉、按钮同高）。 */
 .space-privacy-pass {
   display: flex;
   flex-direction: column;
@@ -1369,7 +1373,6 @@ html[data-platform="win"] .app-body {
   font-size: 12px;
   color: var(--text-dim);
 }
-.space-privacy-pass input { width: 100%; min-width: 0; font-size: 12px; }
 .space-privacy-note { font-size: 11px; color: var(--text-dim); }
 .space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
 .sync-card {
