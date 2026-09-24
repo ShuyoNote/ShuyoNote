@@ -18,13 +18,29 @@
 //! 3. **发现不到不许变得更差**：没有中枢时照旧用配置的地址（`Configured`）—— 发现层是**加分项**，
 //!    它挂了不能让本来能同步的用户同步不了。
 //!
-//! ## ⚠️ 本片未接线
+//! ## ⚠️ 还没接线
 //!
-//! 除 `#[cfg(test)]` 外，本模块**还没有调用方**（UDP 广播/监听、对端表、状态行都在下一片）。
+//! 除 `#[cfg(test)]` 外，本模块**还没有调用方**：纯函数内核（公告 / 路由）与运行时
+//! （`PeerTable` / `bind_listener` / `announce_once` / `recv_into`）都已就位，
+//! 但**启动时拉起监听、把解析结果用进 6 处 URL、状态行**都在接线那一片。
 //! 所以整个模块显式放行 `dead_code` —— **接线那一片必须把这行删掉**（留着它会盖住真死码）。
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Mutex;
+use tokio::net::UdpSocket;
+
+/// 所有设备在网段里**收发公告的固定 UDP 端口**。
+///
+/// ⚠️ 为什么一个进程独占它、还不用 `SO_REUSEADDR`：本应用装了
+/// `tauri-plugin-single-instance`（见 `Cargo.toml`）⇒ **同一台机器上不会有两个实例**。
+/// 判据要造「两个实例」时用的是**显式单播目标 ＋ 临时端口**（见 §判据 ⑦），不依赖端口复用。
+pub const LAN_PORT: u16 = 47821;
+
+/// 对端表的存活期：超过这么久没再发声 ⇒ 视为已离开（对端表不是只增不减的历史）。
+pub const PEER_TTL_MS: i64 = 90_000;
 
 /// 公告的**线版本**。不认识 ⇒ **不猜**（如实丢弃，绝不按老版本解）。
 ///
@@ -110,6 +126,8 @@ pub struct Peer {
     pub announce: LanAnnounce,
     /// 收到这条公告的来源地址（`ip`，不含端口）。
     pub addr: String,
+    /// 最后一次听到它的时刻（毫秒）—— 过 [`PEER_TTL_MS`] 就不再算数。
+    pub seen_at_ms: i64,
 }
 
 /// 基址是**怎么来的** —— 状态行必须说得出这一档（施工单 §2 ④）。
@@ -221,6 +239,148 @@ fn is_private_ipv4(host: &str) -> bool {
     }
 }
 
+// ── 运行时（甲-1 第二片）：真的收发 ＋ 对端表 ────────────────────────────────────────────
+//
+// 这一层只做三件事：**收**（解不开就丢）、**记**（按 `device_id` 去重 ＋ TTL）、**发**。
+// 刻意**不做**任何路由判断 —— 那是上面 `resolve_base` 的活（纯函数、判据在那儿）。
+// ⚠️ 也刻意**不在这里读配置/写库**：本层不知道 `SyncProfile`，接线那一片才把两边接起来。
+
+/// 网段里的**对端表**。按 `device_id` 去重：同一台设备再发声就是**刷新**，不是新增一行。
+pub struct PeerTable {
+    local_device_id: String,
+    inner: Mutex<HashMap<String, Peer>>,
+}
+
+impl PeerTable {
+    /// `local_device_id` 用来**挡掉自己**：发给回环的公告会原样回到自己手上，
+    /// 不挡的话每台设备都会把自己当中枢。
+    pub fn new(local_device_id: String) -> Self {
+        Self { local_device_id, inner: Mutex::new(HashMap::new()) }
+    }
+
+    /// 记一条。返回 `false` ＝ **这条是我自己的**（不许进表）。
+    pub fn upsert(&self, p: Peer) -> bool {
+        if p.announce.device_id == self.local_device_id {
+            return false;
+        }
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        g.insert(p.announce.device_id.clone(), p);
+        true
+    }
+
+    /// 还在发声的那些（`now_ms` 由调用方给 ⇒ 判据能造"时间过去了"）。
+    pub fn live(&self, now_ms: i64) -> Vec<Peer> {
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out: Vec<Peer> = g
+            .values()
+            .filter(|p| now_ms.saturating_sub(p.seen_at_ms) <= PEER_TTL_MS)
+            .cloned()
+            .collect();
+        // 顺序稳定（HashMap 的顺序不定）：按 device_id 排，免得状态行/判据抖。
+        out.sort_by(|a, b| a.announce.device_id.cmp(&b.announce.device_id));
+        out
+    }
+
+    /// 表里现在有什么（**不过滤 TTL**，给诊断用）。
+    pub fn snapshot(&self) -> Vec<Peer> {
+        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out: Vec<Peer> = g.values().cloned().collect();
+        out.sort_by(|a, b| a.announce.device_id.cmp(&b.announce.device_id));
+        out
+    }
+
+    /// 腾掉过期的行（别让表随着"设备来过又走了"无限长）。
+    pub fn sweep(&self, now_ms: i64) -> usize {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let before = g.len();
+        g.retain(|_, p| now_ms.saturating_sub(p.seen_at_ms) <= PEER_TTL_MS);
+        before - g.len()
+    }
+}
+
+/// 绑监听口并打开广播（`255.255.255.255` 需要它；不开的话发广播会直接报错）。
+pub async fn bind_listener(port: u16) -> Result<UdpSocket, String> {
+    let sock = UdpSocket::bind(("0.0.0.0", port))
+        .await
+        .map_err(|e| format!("监听 UDP {port} 失败：{e}"))?;
+    sock.set_broadcast(true)
+        .map_err(|e| format!("打开 UDP 广播失败：{e}"))?;
+    Ok(sock)
+}
+
+/// 默认要发的目标：**广播**（网段里的别人）＋ **回环**（同一台机器上的另一个进程/窗口）。
+///
+/// ⚠️ 回环那一条是**能自验**的关键：判据与"两个实例同机互看"都靠它，
+/// 而广播在 CI/受限网段里未必可用 ⇒ 两条一起发，**任何一条成功就算发出去**。
+pub fn default_targets(port: u16) -> Vec<SocketAddr> {
+    let mut out = Vec::new();
+    if let Ok(a) = format!("255.255.255.255:{port}").parse::<SocketAddr>() {
+        out.push(a);
+    }
+    if let Ok(a) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
+        out.push(a);
+    }
+    out
+}
+
+/// 把一条公告发给这些目标。返回**成功发出去的条数**；
+/// 一条都没成功才报错（某一条目标不可达 —— 例如广播被禁 —— 不该让整轮发现失败）。
+pub async fn announce_once(
+    sock: &UdpSocket,
+    targets: &[SocketAddr],
+    a: &LanAnnounce,
+) -> Result<usize, String> {
+    let raw = encode_announce(a)?;
+    let mut sent = 0usize;
+    let mut last_err: Option<String> = None;
+    for t in targets {
+        match sock.send_to(raw.as_bytes(), t).await {
+            Ok(_) => sent += 1,
+            Err(e) => last_err = Some(e.to_string()),
+        }
+    }
+    if sent == 0 {
+        return Err(format!(
+            "一条公告都没发出去：{}",
+            last_err.unwrap_or_else(|| "没有目标地址".into())
+        ));
+    }
+    Ok(sent)
+}
+
+/// 收**一条**并入库。三种结果，故意分得清清楚楚：
+///
+/// - `Ok(Some(peer))` ＝ 收了、记了；
+/// - `Ok(None)` ＝ 是我自己的公告（回环回来的），**忽略**（不是错误）；
+/// - `Err(原因)` ＝ 报文不合法，**丢弃**且**不入表**（原因从 [`AnnounceReject::reason`] 来）。
+pub async fn recv_into(
+    sock: &UdpSocket,
+    table: &PeerTable,
+    now_ms: i64,
+) -> Result<Option<Peer>, String> {
+    // 缓冲比上限多 1 字节 ⇒ 超长能被**识别成超长**，而不是被截断后误判成"不是 JSON"。
+    let mut buf = vec![0u8; MAX_ANNOUNCE_BYTES + 1];
+    let (n, from) = sock
+        .recv_from(&mut buf)
+        .await
+        .map_err(|e| format!("收公告失败：{e}"))?;
+    if n > MAX_ANNOUNCE_BYTES {
+        return Err(AnnounceReject::TooLong.reason().to_string());
+    }
+    let raw = std::str::from_utf8(&buf[..n])
+        .map_err(|_| AnnounceReject::BadJson.reason().to_string())?;
+    let announce = decode_announce(raw).map_err(|r| r.reason().to_string())?;
+    let peer = Peer {
+        announce,
+        addr: from.ip().to_string(),
+        seen_at_ms: now_ms,
+    };
+    if !table.upsert(peer.clone()) {
+        return Ok(None);
+    }
+    Ok(Some(peer))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +396,7 @@ mod tests {
                 fp: "fp".into(),
             },
             addr: "192.168.1.9".into(),
+            seen_at_ms: 0,
         }
     }
 
@@ -360,5 +521,116 @@ mod tests {
     fn the_link_kind_is_what_the_status_line_shows() {
         assert_eq!(LinkKind::Lan.as_str(), "lan");
         assert_eq!(LinkKind::Configured.as_str(), "configured");
+    }
+
+    // ---- 运行时（甲-1 第二片）----
+
+    fn announce_of(device: &str, base: Option<&str>, spaces: &[&str]) -> LanAnnounce {
+        LanAnnounce {
+            v: WIRE_VERSION,
+            device_id: device.to_string(),
+            device_name: format!("{device} 的机器"),
+            hub_base: base.map(|s| s.to_string()),
+            hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+            fp: "fp".into(),
+        }
+    }
+
+    /// ★ 判据 ⑦：**真的**走一次 UDP 收发（显式单播 ＋ 临时端口，不依赖广播与端口复用），
+    /// 并且**从收进对端表一路串到地址解析** —— 这条把"纯函数内核"与"传输层"接起来验：
+    /// 收侧表里有它 ⇒ `resolve_base` 当场给出局域网路由。
+    #[tokio::test]
+    async fn two_instances_find_each_other_over_a_real_datagram() {
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b_addr = b.local_addr().unwrap();
+        let table = PeerTable::new("dev-b".to_string());
+
+        let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
+        assert_eq!(announce_once(&a, &[b_addr], &ann).await.unwrap(), 1);
+
+        let got = recv_into(&b, &table, 1_000).await.unwrap().expect("应当收到对端");
+        assert_eq!(got.announce.device_id, "dev-a");
+        assert_eq!(got.addr, "127.0.0.1", "来源地址要如实记下（诊断用）");
+        assert_eq!(got.seen_at_ms, 1_000);
+
+        // ★ 打通：收进来的公告**真的**能让这一轮的地址解析走局域网。
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", &table.live(1_000)).unwrap();
+        assert_eq!(route.url, "http://192.168.1.5:8787");
+        assert_eq!(route.kind, LinkKind::Lan);
+    }
+
+    /// 判据 ⑧：坏报文**永远不许**进对端表，而且**原因说得出来**。
+    #[tokio::test]
+    async fn a_garbled_datagram_never_enters_the_peer_table() {
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let table = PeerTable::new("dev-b".to_string());
+
+        // 不是 JSON
+        a.send_to(b"hello", b.local_addr().unwrap()).await.unwrap();
+        assert_eq!(
+            recv_into(&b, &table, 1_000).await.unwrap_err(),
+            AnnounceReject::BadJson.reason()
+        );
+        // 版本不认识（合法 JSON，但 v 不是我们的）
+        let mut other = announce_of("dev-a", None, &[]);
+        other.v = WIRE_VERSION + 1;
+        a.send_to(
+            encode_announce(&other).unwrap().as_bytes(),
+            b.local_addr().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            recv_into(&b, &table, 1_000).await.unwrap_err(),
+            AnnounceReject::UnknownVersion.reason()
+        );
+
+        assert!(table.snapshot().is_empty(), "坏报文不许留下任何痕迹");
+    }
+
+    /// 判据 ⑨：**自己的公告**不许成为对端（回环会把我们发的原样送回来，
+    /// 不挡的话每台设备都会把自己当成中枢）。
+    #[tokio::test]
+    async fn my_own_announce_never_becomes_a_peer() {
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let table = PeerTable::new("dev-a".to_string()); // ← 表的主人就是发公告这台
+        let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
+        announce_once(&a, &[b.local_addr().unwrap()], &ann).await.unwrap();
+
+        assert!(recv_into(&b, &table, 1_000).await.unwrap().is_none(), "自己的公告要回 None");
+        assert!(table.snapshot().is_empty());
+    }
+
+    /// 判据 ⑩：不再发声的对端会过期；表不是只增不减的（同一台再发声则是**刷新**）。
+    #[test]
+    fn a_peer_that_stopped_announcing_expires() {
+        let table = PeerTable::new("dev-me".to_string());
+        assert!(table.upsert(peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"])));
+        // `peer()` 造的 seen_at_ms = 0
+        assert_eq!(table.live(PEER_TTL_MS).len(), 1, "还没到 TTL 就算还在");
+        assert!(table.live(PEER_TTL_MS + 1).is_empty(), "过了 TTL 就不该再算数");
+        assert_eq!(table.snapshot().len(), 1, "snapshot 不过滤 TTL（诊断要看得见）");
+        assert_eq!(table.sweep(PEER_TTL_MS + 1), 1, "sweep 要把过期的腾掉");
+        assert!(table.snapshot().is_empty());
+
+        // 同一台再发声 ⇒ 刷新时刻，不新增行
+        let mut again = peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
+        again.seen_at_ms = 5_000;
+        assert!(table.upsert(again));
+        assert_eq!(table.live(5_000).len(), 1);
+        assert_eq!(table.live(5_000)[0].seen_at_ms, 5_000);
+    }
+
+    /// 判据 ⑪：默认目标要**同时**含广播与回环 —— 广播在受限网段未必可用，
+    /// 回环是"同一台机器上也能自验"的那一条（两条都发，任一成功即算发出）。
+    #[test]
+    fn the_default_targets_cover_broadcast_and_loopback() {
+        let t = default_targets(LAN_PORT);
+        assert!(t.iter().any(|a| a.ip().to_string() == "255.255.255.255"), "要发广播");
+        assert!(t.iter().any(|a| a.ip().is_loopback()), "要有回环那条");
+        assert!(t.iter().all(|a| a.port() == LAN_PORT));
     }
 }
