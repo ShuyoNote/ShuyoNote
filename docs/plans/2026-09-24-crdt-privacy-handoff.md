@@ -213,9 +213,12 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 让钥匙袋主密钥从应用级密钥材料派生（HKDF）而不是再跑一遍 Argon2 —— 那会把解锁砍掉近一半。
 ⚠️ 但**不能随手做**：已经存在的袋子记的是"自己那套 Argon2 参数"，换派生成 HKDF 会让它们解不开。
 
-**Android 侧还没量**：这行是 `eprintln!`（stderr），**它能不能进 logcat 还没验**（要看 Tauri 的
-Android 端有没有把 stderr 接到 logcat）。下一片：出一次 Android 包，先看 logcat 有没有这行；
-没有就把它改成落盘（或用一个只读命令暴露出来）。
+**Android 侧还没量，但"这行能不能出去"已经查清了**：本仓 `src-tauri/Cargo.toml` 的安卓依赖那一段里
+留着一条**真机 logcat 原话**（`E/RustStdoutStderr: Expect rustls-platform-verifier to be initialized`）⇒
+**Rust 进程的 stdout/stderr 在真机上是被 Android 侧接进 logcat 的**（tag **`RustStdoutStderr`**）。
+所以这行 `eprintln!` **不需要**改通道，也不用加日志库。下一片只剩纯体力活：
+**出一次 Android 包 → 装上 → 解锁一次 → `adb logcat -s RustStdoutStderr`** 读那行 `[unlock] … ms`。
+（⚠️ 仍未量到的：低端机上的整体解锁；顺带也能量到"**两遍 KDF**"在真机上到底各占多少。）
 
 ### ★★ 由此更正一条之前的口径：那个"桌面 ~8 秒"是**debug 构建**量出来的
 
