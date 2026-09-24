@@ -215,16 +215,54 @@ pub(crate) fn insert_new_local_space(
     sort_order: f64,
     now: i64,
 ) -> Result<(), String> {
+    // 走同一个写入口：**分类只在这里定义一次**（新建与导入共用，免得两处口径漂）。
+    insert_space_row(c, id, name, theme, "", sort_order, now, false)
+}
+
+/// ★ **导入一个空间包时写 meta 那一行**（owner 2026-09-24 拍板**选项 ②**）。
+///
+/// 口径与 [`insert_new_local_space`] **完全一致**：**分类由入口决定** ⇒ 导入进来的也是 `personal`。
+/// 于是"导入 ⇒ 还没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链对导入**同样**自动成立 ——
+/// 不需要用户事后自己去面板里分类（那正是"未分类＝闸门没管到它"的漏洞面）。
+///
+/// `encrypted` 是"导入时**顺手按空间加密了没有**"（见 `workspace_io::import_workspace`：
+/// 本机已解锁且有袋子 ⇒ 给新空间现造盒子并加密；否则**留明文**并由面板引导）。
+pub(crate) fn insert_imported_space(
+    c: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    theme: &str,
+    icon: &str,
+    sort_order: f64,
+    now: i64,
+    encrypted: bool,
+) -> Result<(), String> {
+    insert_space_row(c, id, name, theme, icon, sort_order, now, encrypted)
+}
+
+/// 新建 / 导入 **共用**的那一条 INSERT（`kind` 只有一个来源，见两个公开入口的注释）。
+fn insert_space_row(
+    c: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    theme: &str,
+    icon: &str,
+    sort_order: f64,
+    now: i64,
+    encrypted: bool,
+) -> Result<(), String> {
     c.execute(
-        "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, kind)
-         VALUES (?1, ?2, ?3, '', ?4, ?5, ?6, ?7)",
+        "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted, kind)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             id,
             name,
             theme,
+            icon,
             sort_order,
             now,
             now,
+            if encrypted { 1 } else { 0 },
             crate::space_crypto::SpaceKind::Personal.as_str()
         ],
     )

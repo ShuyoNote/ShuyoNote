@@ -389,12 +389,20 @@ pub async fn import_workspace(
     let now = now_ms();
     {
         let c = db.0.lock().expect("db mutex poisoned");
-        c.execute(
-            "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![new_id, import_name, theme, icon, sort_order, now, now, if encrypted { 1 } else { 0 }],
-        )
-        .map_err(|e| e.to_string())?;
+        // ★ owner 2026-09-24 拍板（选项 ②）：**导入的空间也是「个人空间」**（分类由入口决定）——
+        //   与"本地新建"同一个写入口，`kind` 只有一处定义（`workspaces::insert_space_row`）。
+        //   于是"导入 ⇒ 还没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链对导入同样自动成立，
+        //   不会有"导入进来的空间是未分类 ⇒ 闸门没管到它"这个漏洞面。
+        crate::workspaces::insert_imported_space(
+            &c,
+            &new_id,
+            &import_name,
+            &theme,
+            &icon,
+            sort_order,
+            now,
+            encrypted,
+        )?;
         // §0-C：加密的那一支还要记下"这个空间的数据是哪一版密文"（`encrypted` 那一列只说"是密的"）。
         if encrypted {
             crate::security::set_space_encrypted_marked(&c, &new_id, true)?;

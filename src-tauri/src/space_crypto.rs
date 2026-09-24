@@ -1038,6 +1038,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ★ owner 2026-09-24 拍板（选项 ②）：**导入的空间也是「个人空间」**（分类由入口决定）。
+    ///
+    /// 于是"导入 ⇒ 还没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链与"本地新建"**完全一样** ——
+    /// 口径只有一条，不靠用户事后自己去面板里分类（那正是"未分类＝闸门没管到它"的漏洞面）。
+    #[test]
+    fn an_imported_space_is_personal_so_the_gate_guides_encryption() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("shuyonote-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("imp-z", &dir).unwrap();
+        set_keyring_for_test(None);
+        set_session_master(None).unwrap();
+
+        // ① 导入时**没**加密（本机还没解锁/没袋子）⇒ personal ＋ 闸门拦
+        crate::workspaces::insert_imported_space(&c, "imp-a", "导入的甲", "blue", "", 1.0, 1, false)
+            .unwrap();
+        assert_eq!(space_kind(&c, "imp-a"), SpaceKind::Personal, "★ 导入 ⇒ 个人空间");
+        let st = space_status(&dir, "imp-a");
+        assert!(!st.encrypted_on_disk && !st.in_keyring);
+        match sync_gate(&st, space_kind(&c, "imp-a")) {
+            SyncGate::Blocked(msg) => assert!(msg.contains("没有加密"), "{msg}"),
+            other => panic!("导入的未加密空间必须被拦，实际 {other:?}"),
+        }
+
+        // ② 导入时**顺手加密了**（本机已解锁且有袋子）⇒ 同样是 personal，标记也落了
+        crate::workspaces::insert_imported_space(&c, "imp-b", "导入的乙", "blue", "", 2.0, 2, true)
+            .unwrap();
+        assert_eq!(space_kind(&c, "imp-b"), SpaceKind::Personal);
+        let marked: i64 = c
+            .query_row(
+                "SELECT COALESCE(encrypted, 0) FROM meta.workspaces WHERE id = 'imp-b'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(marked, 1, "导入时就加密过 ⇒ 那一列也要落");
+
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ★★ A=3（2026-09-24，owner 拍板）：**分类由入口决定** —— 本地新建的空间是**个人空间**，
     /// 于是"新建 ⇒ 没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链自动成立。
     #[test]
