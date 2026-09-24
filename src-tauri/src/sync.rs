@@ -3485,7 +3485,7 @@ mod tests {
 
         // ── 设备 B：全新目录，本机什么都没有（＝换了一台机器、什么都没拷）
         let dir_b = temp_dir("b");
-        let c_b = crate::db::open_space_conn_at("default", &dir_b).unwrap();
+        let mut c_b = crate::db::open_space_conn_at("default", &dir_b).unwrap();
         crate::space_crypto::set_keyring_for_test(None);
         crate::space_crypto::set_session_master(None).unwrap();
         assert!(
@@ -3513,6 +3513,35 @@ mod tests {
         assert!(
             crate::space_crypto::space_status(&dir_b, "default").in_keyring,
             "采纳之后：闸门眼里这个空间就是「已加密」"
+        );
+
+        // ★★ 把这一步走完 —— 这才是"换设备"真正的用途：B 在**自己**这个空间上开加密时，
+        //    用的应当是**取回来的那把**空间钥匙（不是又随机一把）⇒ 两台设备的库被同一把钥匙保护。
+        //    （闸门那一步也靠它：B 本机这个空间是"个人 ＋ 还没加密" ⇒ 不加密就**绑不上同步**。）
+        crate::space_crypto::set_session_master(Some(master_b)).unwrap();
+        let key_b2 = crate::space_crypto::enable_space(&mut c_b, &dir_b, "default", None)
+            .expect("取回材料 ＋ 输过口令 ⇒ 开加密应当成功");
+        assert_eq!(key_b2, key_a, "★★ 新设备开加密复用的是**同一把**空间钥匙（不是又随机一把）");
+        assert!(
+            crate::space_crypto::space_status(&dir_b, "default").encrypted_on_disk,
+            "开完之后 B 自己的库应当**真的**是密文"
+        );
+        // ⚠️ 分类要**真的写进库**再让闸门参战：拿 `SpaceKind::Personal` 硬编码去调 `sync_gate`
+        //    会把这条判据弄软（它测的就只剩"我把参数填对了"）。B 本机这个空间走的就是 A=3 那条路
+        //    （本地新建 ⇒ 个人空间）⇒ 直接调那个真 API，再用**库里读出来的**分类去问闸门。
+        crate::workspaces::insert_new_local_space(&c_b, "default", "新设备", "blue", 1.0, 1).unwrap();
+        assert_eq!(
+            crate::space_crypto::space_kind(&c_b, "default"),
+            crate::space_crypto::SpaceKind::Personal,
+            "本地新建 ⇒ 个人空间（A=3）"
+        );
+        assert_eq!(
+            crate::space_crypto::sync_gate(
+                &crate::space_crypto::space_status(&dir_b, "default"),
+                crate::space_crypto::space_kind(&c_b, "default")
+            ),
+            crate::space_crypto::SyncGate::Allowed,
+            "★ 到这一步闸门才放行：B 的空间现在敢绑同步了"
         );
 
         server.abort();
