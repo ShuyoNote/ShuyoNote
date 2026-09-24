@@ -145,6 +145,24 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     expect(container.textContent).toContain("明文");
   });
 
+  it("②b ★ 后端文案里的 `**强调**` 渲染成 <b>，界面上**不许**出现两个星号", async () => {
+    // 后端（Rust）那几句是按 Markdown 行内写法写的；这条钉"显示的最后一跳"把它渲染掉
+    //（owner 2026-09-24 拿截图当场指出过：面板上直接露着 `**`）。
+    const withMd: SpaceSecurityView = {
+      ...personal,
+      gate: {
+        allow: false,
+        unclassified: false,
+        reason: "空间「default」是个人空间但还没有加密：先给它**开启加密**",
+      },
+    };
+    spaceSecurityOverview.mockResolvedValue([withMd]);
+    await render();
+    expect(container.textContent).not.toContain("**");
+    expect(container.textContent).toContain("开启加密");
+    expect(container.querySelector(".space-privacy-gate b")?.textContent).toBe("开启加密");
+  });
+
   it("③ 团队空间 ⇒ 说明可以绑同步（免检）", async () => {
     spaceSecurityOverview.mockResolvedValue([team]);
     await render();

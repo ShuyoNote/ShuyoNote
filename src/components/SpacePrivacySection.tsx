@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type SpaceKind, type SpaceSecurityView } from "../lib/api";
 import type { SpaceKeyringOutcome } from "../lib/platform/commands";
 import { isDesktopPlatform } from "../lib/platform";
+import { inlineMd } from "../lib/inlineMd";
 
 const KIND_LABEL: Record<SpaceKind, string> = {
   personal: "个人空间",
@@ -97,7 +98,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       <section className="space-privacy" data-testid="space-privacy">
         <div className="space-privacy-head">🔐 空间隐私（要在桌面端操作）</div>
         <div className="space-privacy-hint">
-          Web 版没有钥匙柜：**加密空间在 Web 上不可同步、不可编辑**，也不会被降级成明文上传。
+          Web 版没有钥匙柜：<b>加密空间在 Web 上不可同步、不可编辑</b>，也不会被降级成明文上传。
           要给空间加密或改分类，请在桌面端打开这个面板。
         </div>
       </section>
@@ -108,11 +109,11 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
     <section className="space-privacy" data-testid="space-privacy">
       <div className="space-privacy-head">🔐 空间隐私 —— 每个空间能不能绑同步</div>
       <div className="space-privacy-hint">
-        口径：**个人空间**必须先按空间加密（服务端只落密文）；**团队空间**免检（服务端存明文 ——
-        那是它换来的协同 / 检索 / AI）。**未分类**的会放行，但闸门其实**没有管到**它。
+        口径：<b>个人空间</b>必须先按空间加密（服务端只落密文）；<b>团队空间</b>免检（服务端存明文 ——
+        那是它换来的协同 / 检索 / AI）。<b>未分类</b>的会放行，但闸门其实<b>没有管到</b>它。
         <br />
-        换设备：在**旧设备**上「推到服务器」，在**新设备**上「从服务器取回」，然后输主口令 ——
-        公开的那一半走服务端，口令**永远不离开本机**。
+        换设备：在<b>旧设备</b>上「推到服务器」，在<b>新设备</b>上「从服务器取回」，然后输主口令 ——
+        公开的那一半走服务端，口令<b>永远不离开本机</b>。
       </div>
 
       {views === null && <div className="sync-empty-state">正在读…</div>}
@@ -129,12 +130,14 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
               <span className={`space-privacy-kind is-${v.kind || "unknown"}`}>{KIND_LABEL[v.kind]}</span>
               <span className="space-privacy-enc">{encrypted ? "已加密" : "明文"}</span>
             </div>
+            {/* ⚠️ 后端（Rust）那几句是**按 Markdown 行内写法**写的 ⇒ 显示前必须过 `inlineMd`，
+                否则用户看到的是一串 `**`（owner 2026-09-24 截图当场指出过这一点）。 */}
             <div className={`space-privacy-gate ${v.gate.allow ? "is-allow" : "is-block"}`}>
               {v.gate.allow
                 ? v.gate.unclassified
-                  ? "⚠️ 可以绑同步 —— 但这个空间**还没分类**，闸门这次没有管到它"
+                  ? "⚠️ 可以绑同步 —— 但这个空间还没分类，闸门这次没有管到它"
                   : "✅ 可以绑同步"
-                : `⛔ ${v.gate.reason}`}
+                : <>⛔ {inlineMd(v.gate.reason)}</>}
             </div>
             <div className="space-privacy-actions">
               <select
@@ -216,12 +219,12 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
             </div>
             {rowMsg?.id === v.space_id && (
               <div className={`space-privacy-gate is-${rowMsg.kind === "ok" ? "allow" : "block"}`}>
-                {rowMsg.text}
+                {inlineMd(rowMsg.text)}
               </div>
             )}
             {confirming === v.space_id && (
               <div className="space-privacy-gate is-block">
-                关掉加密会把**这一个**空间的库换回明文（别的空间不受影响）；换回之后闸门会拦住它的同步
+                关掉加密会把<b>这一个</b>空间的库换回明文（别的空间不受影响）；换回之后闸门会拦住它的同步
                 （个人空间必须先加密）。再点一次那个按钮才真的执行。
               </div>
             )}
@@ -240,12 +243,12 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
         />
       </label>
       <div className="space-privacy-hint">
-        主口令**只在还没设过钥匙袋时**用得上（第一次开启加密时设定它）；已经设过 ⇒ 这里填什么都不影响。
+        主口令<b>只在还没设过钥匙袋时</b>用得上（第一次开启加密时设定它）；已经设过 ⇒ 这里填什么都不影响。
         忘了口令 ＝ 加密空间打不开，所以请把它记在你能找回来的地方。
       </div>
 
       {note && <div className="space-privacy-note">{note}</div>}
-      {err && <div className="space-privacy-err">{err}</div>}
+      {err && <div className="space-privacy-err">{inlineMd(err)}</div>}
     </section>
   );
 }

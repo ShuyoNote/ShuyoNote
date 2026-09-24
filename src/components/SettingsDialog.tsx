@@ -1339,6 +1339,7 @@ function SecurityPane() {
   // 整个界面会立刻切到锁定屏——旧写法只改了设置页自己的状态，用户会继续看着已经
   // 读不出来的内容（E2 补的就是这一刀）。
   const { enabled, locked } = useVault();
+  const spaces = useSpaceStore((s) => s.spaces);
   const [busy, setBusy] = useState(false);
 
   const lock = async () => {
@@ -1363,7 +1364,7 @@ function SecurityPane() {
             <b>{!enabled ? "本机还没有加密空间" : locked ? "已加密 · 会话已锁定" : "已加密 · 已解锁"}</b>
             <span>
               {!enabled
-                ? "加密是**按空间**做的（下面那一节）：每个空间各加各的密，团队空间可以保持明文。"
+                ? <>加密是<b>按空间</b>做的（下面那一节）：每个空间各加各的密，团队空间可以保持明文。</>
                 : locked
                   ? "内容不可读，解锁后才会加载；同步在解锁前会被拒绝。"
                   : "本会话已解锁：加密空间的内容可读，同步带的就是密文。"}
@@ -1382,7 +1383,8 @@ function SecurityPane() {
           口令不存本机、不上传，也没有找回流程 —— 忘了口令 ＝ 加密空间打不开。
         </div>
       </section>
-      <SpacePrivacySection />
+      {/* 名字从空间列表反查（与同步面板同一口径）：面板里显示 UUID 对用户没有意义。 */}
+      <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
     </>
   );
 }
