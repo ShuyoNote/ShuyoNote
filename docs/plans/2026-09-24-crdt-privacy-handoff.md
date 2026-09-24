@@ -477,7 +477,10 @@ B 自己的库**真的**变成密文，而且到这一步闸门才放行（分�
   第二下才真调）——它会重写库，失败会报错并给出备份路径；
 - `api.ts` 加两个包装（照 `pullSpaceKeyring` 的写法）；
 - 判据：在 `SpacePrivacySection.test.ts` 里补两条（真调 `migrate…`；轮换**第一下不调**、第二下才调），
-  并保留既有的"接线"判据。
+  并保留既有的"接线"判据。✅ **已做**（`SpacePrivacySection.test.ts` 12 条：⑪ 迁进钥匙袋真调
+  `migrateLegacySpaceEncryption(id)`／⑫ 换钥匙**两步**，第一下不调、第二下才调）。
+  ⚠️ 写这两条时记一个坑：**别按下标选按钮**（这一行里前面还有「开启加密/关闭加密」「迁进钥匙袋」），
+  按**文字**找（`buttons().find(b => b.textContent === …)`）。
 
 **跑门禁**：`win-cargo-test.ps1` 全量 → `npx tsc --noEmit` → `node scripts/check-web-commands.mjs`
 → `node scripts/check-doc-facts.mjs` → `vitest run src/components/SpacePrivacySection.test.ts` →

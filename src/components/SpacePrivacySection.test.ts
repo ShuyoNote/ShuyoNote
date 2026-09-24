@@ -27,6 +27,8 @@ const enableSpaceEncryption = vi.fn();
 const disableSpaceEncryption = vi.fn();
 const pushSpaceKeyring = vi.fn();
 const pullSpaceKeyring = vi.fn();
+const migrateLegacySpaceEncryption = vi.fn();
+const rotateLegacySpaceEncryption = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -36,6 +38,8 @@ vi.mock("../lib/api", () => ({
     disableSpaceEncryption: (...a: unknown[]) => disableSpaceEncryption(...a),
     pushSpaceKeyring: (...a: unknown[]) => pushSpaceKeyring(...a),
     pullSpaceKeyring: (...a: unknown[]) => pullSpaceKeyring(...a),
+    migrateLegacySpaceEncryption: (...a: unknown[]) => migrateLegacySpaceEncryption(...a),
+    rotateLegacySpaceEncryption: (...a: unknown[]) => rotateLegacySpaceEncryption(...a),
   },
 }));
 
@@ -109,6 +113,8 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
       disableSpaceEncryption,
       pushSpaceKeyring,
       pullSpaceKeyring,
+      migrateLegacySpaceEncryption,
+      rotateLegacySpaceEncryption,
     ])
       m.mockReset();
   });
@@ -207,6 +213,38 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     });
 
     expect(enableSpaceEncryption).toHaveBeenCalledWith("default", "我家猫叫mimi");
+  });
+
+  it("⑪ ★ 「把旧钥匙迁进钥匙袋」⇒ 真调 `migrateLegacySpaceEncryption(id)`（不动库文件那条）", async () => {
+    spaceSecurityOverview.mockResolvedValue([personal]);
+    migrateLegacySpaceEncryption.mockResolvedValue(true);
+    await render();
+    const migrate = buttons().find((b) => b.textContent === "把旧钥匙迁进钥匙袋")!;
+    await act(async () => {
+      migrate.click();
+    });
+    expect(migrateLegacySpaceEncryption).toHaveBeenCalledWith("default");
+    expect(container.textContent).toContain("已完成");
+  });
+
+  it("⑫ ★ 「换成真随机钥匙」也是**两步**（它会重写库）：第一下不调、第二下才调", async () => {
+    spaceSecurityOverview.mockResolvedValue([personal]);
+    rotateLegacySpaceEncryption.mockResolvedValue(null);
+    await render();
+    // ⚠️ 按文字找，不按下标：这一行里前面还有「开启加密 / 迁进钥匙袋」两个按钮
+    const rotateBtn = () =>
+      buttons().find(
+        (b) => b.textContent === "换成真随机钥匙" || b.textContent === "确认：换成随机钥匙",
+      )!;
+    await act(async () => {
+      rotateBtn().click();
+    });
+    expect(rotateLegacySpaceEncryption).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("再点一次");
+    await act(async () => {
+      rotateBtn().click();
+    });
+    expect(rotateLegacySpaceEncryption).toHaveBeenCalledWith("default");
   });
 
   it("⑨ ★ 「推到服务器」⇒ 真调 `pushSpaceKeyring(id)`，并把后端那句话**原样**显示", async () => {
