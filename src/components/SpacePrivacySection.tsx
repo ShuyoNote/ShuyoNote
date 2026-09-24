@@ -107,20 +107,11 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   return (
     <section className="space-privacy" data-testid="space-privacy">
       <div className="space-privacy-head">🔐 空间隐私 —— 每个空间能不能绑同步</div>
-      {/* 首屏只留一句结论；口径与换设备步骤收进折叠（解释不该挡在动作前面）。 */}
+      {/* 首屏只留一句结论。**"闸门没管到未分类"这句话只在这里说一次** —— 每行再说一遍就是纯噪声
+          （行里的分类徽标已经写着「未分类」，下拉里那句也说清了它为什么被放行）。 */}
       <div className="space-privacy-hint">
         个人空间要先加密才能绑同步；团队空间免检（服务端存明文）；未分类的放行，但闸门没管到它。
       </div>
-      <details className="space-privacy-more">
-        <summary>口径与换设备</summary>
-        <div>
-          口径：<b>个人空间</b>必须先按空间加密（服务端只落密文）；<b>团队空间</b>免检（服务端存明文 ——
-          那是它换来的协同 / 检索 / AI）；<b>未分类</b>的会放行，但闸门其实<b>没有管到</b>它。
-          <br />
-          换设备：在<b>旧设备</b>上「推到服务器」，在<b>新设备</b>上「从服务器取回」，然后输主口令 ——
-          公开的那一半走服务端，口令<b>永远不离开本机</b>。
-        </div>
-      </details>
 
       {views === null && <div className="sync-empty-state">正在读…</div>}
       {views !== null && views.length === 0 && <div className="sync-empty-state">还没有空间</div>}
@@ -135,16 +126,24 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
               </span>
               <span className={`space-privacy-kind is-${v.kind || "unknown"}`}>{KIND_LABEL[v.kind]}</span>
               <span className="space-privacy-enc">{encrypted ? "已加密" : "明文"}</span>
+              {/* ★ 判决做成**同一行的短徽标**（不是单独一句）：它才是这一列的主信息，不该被省掉；
+                  但"解释"不在这行 —— 未分类为什么放行、个人空间为什么被拦，分别由标题下那一句
+                  与被拦时的下一行（**可操作**的那句）负责。 */}
+              <span
+                className={`space-privacy-verdict ${
+                  v.gate.allow ? (v.gate.unclassified ? "is-note" : "is-ok") : "is-block"
+                }`}
+              >
+                {v.gate.allow ? (v.gate.unclassified ? "⚠️ 闸门没管到" : "✅ 可以绑同步") : "⛔ 不能绑同步"}
+              </span>
             </div>
-            {/* ⚠️ 后端（Rust）那几句是**按 Markdown 行内写法**写的 ⇒ 显示前必须过 `inlineMd`，
-                否则用户看到的是一串 `**`（owner 2026-09-24 截图当场指出过这一点）。 */}
-            <div className={`space-privacy-gate ${v.gate.allow ? "is-allow" : "is-block"}`}>
-              {v.gate.allow
-                ? v.gate.unclassified
-                  ? "⚠️ 已放行，但它还没分类 —— 闸门没管到它"
-                  : "✅ 可以绑同步"
-                : <>⛔ {inlineMd(v.gate.reason)}</>}
-            </div>
+            {/* ⚠️ 只有**被拦住**时才占一行 —— 那一行是**可操作**的（为什么拦、怎么解）；
+                后端（Rust）文案是 Markdown 行内写法 ⇒ 过 `inlineMd`（否则界面露出 `**`）。 */}
+            {!v.gate.allow && (
+              <div className="space-privacy-gate is-block">
+                <>⛔ {inlineMd(v.gate.reason)}</>
+              </div>
+            )}
             <div className="space-privacy-actions">
               <select
                 aria-label="空间分类"
@@ -188,41 +187,52 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
             </div>
             {/* ★ owner 第三轮拍板（2026-09-24）：原先这里还有 ① 的两个按钮
                 （「把旧钥匙迁进钥匙袋」/「换成真随机钥匙」）。那两条命令与它们背后的整套
-                应用级加密**一起删掉了** ⇒ 不再有"把旧钥匙搬进袋子"这条出路。
+                应用级加密一起删掉了 ⇒ 不再有"把旧钥匙搬进袋子"这条出路。
                 现在"密文库 ＋ 袋里没有它的盒子"（应用级加密的存量库）唯一的出路是**从别处取回
-                公开材料**（下面那两个按钮；报错那句说的就是它）。 */}
-            {/* ③ 0b：换设备那一半 —— 旧设备「推到服务器」，新设备「从服务器取回」＋输主口令。
+                公开材料**（下面那句折叠里的按钮；报错那句说的就是它）。 */}
+            {/* ③ 0b 换设备：一次设备变更才用一次的动作 ⇒ 收进折叠、**且只在"这个空间真的加密了"时出现**
+                （明文空间没有公开材料可推可取，两个按钮只会报错）。
                 ⚠️ 覆盖默认**关着**：闷头覆盖可能让本机打不开自己的空间（见 Rust 侧注释）。 */}
-            <div className="space-privacy-actions">
-              <button
-                className="sync-btn ghost"
-                disabled={busy === v.space_id}
-                onClick={() =>
-                  void runKeyring(v.space_id, "推到服务器", () => api.pushSpaceKeyring(v.space_id))
-                }
-              >
-                推到服务器
-              </button>
-              <button
-                className="sync-btn ghost"
-                disabled={busy === v.space_id}
-                onClick={() =>
-                  void runKeyring(v.space_id, "从服务器取回", () =>
-                    api.pullSpaceKeyring(v.space_id, allowOverwrite),
-                  )
-                }
-              >
-                从服务器取回
-              </button>
-              <label className="space-privacy-overwrite">
-                <input
-                  type="checkbox"
-                  checked={allowOverwrite}
-                  onChange={(e) => setAllowOverwrite(e.target.checked)}
-                />
-                允许覆盖本机已有的材料
-              </label>
-            </div>
+            {encrypted && (
+              <details className="space-privacy-more">
+                <summary>换设备（推 / 取公开材料）</summary>
+                <div>
+                  <div className="space-privacy-hint">
+                    旧设备「推到服务器」→ 新设备「从服务器取回」＋输主口令；公开材料里没有裸钥匙。
+                  </div>
+                  <div className="space-privacy-actions">
+                    <button
+                      className="sync-btn ghost"
+                      disabled={busy === v.space_id}
+                      onClick={() =>
+                        void runKeyring(v.space_id, "推到服务器", () => api.pushSpaceKeyring(v.space_id))
+                      }
+                    >
+                      推到服务器
+                    </button>
+                    <button
+                      className="sync-btn ghost"
+                      disabled={busy === v.space_id}
+                      onClick={() =>
+                        void runKeyring(v.space_id, "从服务器取回", () =>
+                          api.pullSpaceKeyring(v.space_id, allowOverwrite),
+                        )
+                      }
+                    >
+                      从服务器取回
+                    </button>
+                    <label className="space-privacy-overwrite">
+                      <input
+                        type="checkbox"
+                        checked={allowOverwrite}
+                        onChange={(e) => setAllowOverwrite(e.target.checked)}
+                      />
+                      允许覆盖本机已有的材料
+                    </label>
+                  </div>
+                </div>
+              </details>
+            )}
             {rowMsg?.id === v.space_id && (
               <div className={`space-privacy-gate is-${rowMsg.kind === "ok" ? "allow" : "block"}`}>
                 {inlineMd(rowMsg.text)}
@@ -237,8 +247,9 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
         );
       })}
 
+      {/* 主口令的说明进 label 本身（原来单独占一行 hint，而它只对"第一次开启加密"有用）。 */}
       <label className="space-privacy-pass">
-        主口令
+        主口令（首次开启加密时设定，忘了就打不开）
         <input
           type="password"
           value={pass}
@@ -247,9 +258,6 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
           aria-label="主口令"
         />
       </label>
-      <div className="space-privacy-hint">
-        主口令<b>只在还没设过钥匙袋时</b>用得上；忘了口令 ＝ 加密空间打不开（没有找回流程）。
-      </div>
 
       {note && <div className="space-privacy-note">{note}</div>}
       {err && <div className="space-privacy-err">{inlineMd(err)}</div>}

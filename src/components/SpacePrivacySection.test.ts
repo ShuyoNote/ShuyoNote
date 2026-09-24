@@ -228,7 +228,9 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
   });
 
   it("⑨ ★ 「推到服务器」⇒ 真调 `pushSpaceKeyring(id)`，并把后端那句话**原样**显示", async () => {
-    spaceSecurityOverview.mockResolvedValue([personal]);
+    // ⚠️ 用 `encrypted` 夹具：换设备那一组动作现在**只对真的加密了的空间**出现
+    //    （明文空间没有公开材料可推可取，那两个按钮只会报错）⇒ 折叠里才有按钮。
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
     pushSpaceKeyring.mockResolvedValue({
       outcome: "ok",
       bytes: 812,
@@ -245,7 +247,7 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
   });
 
   it("⑩ ★ 「从服务器取回」默认**不许覆盖**（false）；勾了「允许覆盖」才传 true", async () => {
-    spaceSecurityOverview.mockResolvedValue([personal]);
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
     pullSpaceKeyring.mockResolvedValue({
       outcome: "already_local",
       bytes: 0,

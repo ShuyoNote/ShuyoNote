@@ -1358,26 +1358,25 @@ function SecurityPane() {
     <>
       <section className="set-section">
         <div className="set-section-title">会话锁定</div>
-        <div className={`set-status set-status-${!enabled ? "off" : locked ? "locked" : "on"}`}>
-          <span className="set-status-dot" />
-          <div className="set-status-text">
-            <b>{!enabled ? "本机还没有加密空间" : locked ? "已加密 · 会话已锁定" : "已加密 · 已解锁"}</b>
-            <span>
-              {!enabled
-                ? "加密按空间做（见下面一节）。"
-                : locked
-                  ? "解锁前读不到内容，同步也会被拒绝。"
-                  : "锁定会丢弃本会话的主密钥，界面切回锁定屏。"}
-            </span>
+        {/* 一行状态 ＋（需要时）一个按钮。**没有加密空间时不再解释** —— 那一节下面就是空间列表，
+            说明写在那儿（owner 2026-09-24：这一屏的解释都在挡动作）。 */}
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">
+              {!enabled ? "本机还没有加密空间" : locked ? "已加密 · 已锁定" : "已加密 · 已解锁"}
+            </div>
+            {enabled && (
+              <div className="set-row-sub">
+                {locked ? "解锁前读不到内容，同步也会被拒绝。" : "锁定会丢弃本会话的主密钥，界面切回锁定屏。"}
+              </div>
+            )}
           </div>
-        </div>
-        {enabled && !locked && (
-          <div className="set-actions">
+          {enabled && !locked && (
             <button className="set-btn" disabled={busy} onClick={lock}>
               立即锁定
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </section>
       {/* 名字从空间列表反查（与同步面板同一口径）：面板里显示 UUID 对用户没有意义。 */}
       <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />

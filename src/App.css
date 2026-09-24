@@ -1338,6 +1338,19 @@ html[data-platform="win"] .app-body {
 .space-privacy-gate { font-size: 11px; line-height: 1.6; }
 .space-privacy-gate.is-allow { color: var(--text-dim); }
 .space-privacy-gate.is-block { color: var(--danger); }
+/* 行内判决徽标（与 `.space-privacy-kind` / `.space-privacy-enc` 同族）：把"能不能绑同步"收进名字那一行，
+   而不是让它单独占一句（owner 2026-09-24：一屏里最不缺的就是解释）。 */
+.space-privacy-verdict {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.space-privacy-verdict.is-ok { border-color: var(--border-strong); color: var(--text); }
+.space-privacy-verdict.is-note { color: var(--text-faint); }
+.space-privacy-verdict.is-block { border-color: var(--danger); color: var(--danger); }
 .space-privacy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .space-privacy-actions select { font-size: 12px; max-width: 100%; }
 .space-privacy-overwrite {
