@@ -324,6 +324,16 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                 className="sync-input space-privacy-pairtext"
                 aria-label="配对码"
               />
+              {pairExport.qr_svg && (
+                <div>
+                  <div>用另一台设备的<b>系统相机</b>扫这张码，扫出来的就是上面那段文本：</div>
+                  <img
+                    className="space-privacy-qr"
+                    alt="配对码二维码"
+                    src={"data:image/svg+xml;charset=utf-8," + encodeURIComponent(pairExport.qr_svg)}
+                  />
+                </div>
+              )}
             </div>
           )}
           <hr />

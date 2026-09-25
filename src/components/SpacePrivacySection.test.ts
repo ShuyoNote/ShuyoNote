@@ -307,6 +307,7 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
       spaces: 2,
       device_id: "dev-1",
       qr_fits: true,
+      qr_svg: "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
       message: "把下面这段配对码交给第二台设备（2 个空间）。**只交给你自己那台设备**。",
     });
     await render();
@@ -319,6 +320,10 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     expect(area.value).toContain('"material"');
     expect(container.textContent).not.toContain("**"); // 后端那句里的强调要渲染掉（本仓 ②b 的纪律）
     expect(container.textContent).toContain("只交给你自己那台设备");
+    // ★ 装得下 ⇒ 真的显示一张二维码，而且走 **data URI**（不是把 SVG 注进 DOM）
+    const img = container.querySelector(".space-privacy-qr") as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.getAttribute("src")!.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
   });
 
   it("⑫ ★ 比对码：填了才传 confirmed_check_code；没填传 undefined（不是空串）", async () => {

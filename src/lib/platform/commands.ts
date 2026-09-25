@@ -347,6 +347,12 @@ export interface PairingExportOutcome {
   device_id: string;
   /** 装得进一张二维码吗。`false` 时 `message` 里会说明走文本/拆码。 */
   qr_fits: boolean;
+  /**
+   * 装得下时：**一张二维码的 SVG**（界面当 data URI 贴进 `<img>`）；装不下 ⇒ `null`。
+   *
+   * ⚠️ 装不下就一定是 `null` —— 后端绝不画一张装不下的码。
+   */
+  qr_svg: string | null;
   /** 一句**人话**（界面原样显示）。 */
   message: string;
 }

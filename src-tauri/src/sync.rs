@@ -1961,6 +1961,10 @@ pub struct PairingExportResult {
     pub device_id: String,
     /// 这段载荷**装得进一张二维码**吗。装不下时 `message` 里会说明走文本/拆码。
     pub qr_fits: bool,
+    /// 装得下时：**一张二维码的 SVG**（前端当 data URI 贴进 `<img>`）；装不下 ⇒ `None`。
+    ///
+    /// ⚠️ **装不下就一定是 `None`** —— 绝不画一张装不下的码（扫出来是残缺材料，见 `pairing::qr_svg`）。
+    pub qr_svg: Option<String>,
     pub message: String,
 }
 
@@ -1996,6 +2000,7 @@ pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> 
             spaces: 0,
             device_id: String::new(),
             qr_fits: false,
+            qr_svg: None,
             message: "本机还没有钥匙袋（公开材料）⇒ 没有东西可以配对过去。\
                       先在本机启用加密、或先从别处取回一份，再来换设备。"
                 .to_string(),
@@ -2015,6 +2020,12 @@ pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> 
         .map(|k| k.spaces.len())
         .unwrap_or(0);
     let qr_fits = crate::pairing::fits_single_qr(&text);
+    // ⚠️ 装得下却画不出来 = **真问题**（只有编码器坏了这一种可能）⇒ 不静默当 None，直接报错。
+    let qr_svg = if qr_fits {
+        Some(crate::pairing::qr_svg(&text).map_err(|e| format!("二维码没画出来：{e}"))?)
+    } else {
+        None
+    };
     let mut message = format!(
         "把下面这段配对码交给第二台设备（{} 个空间，{} 字节）。\
          它**不是秘密**，但请只交给你自己那台设备 —— 收下它的人才可能解开你的空间。",
@@ -2037,6 +2048,7 @@ pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> 
         spaces,
         device_id: device,
         qr_fits,
+        qr_svg,
         message,
     })
 }
