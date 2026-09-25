@@ -38,7 +38,6 @@ function ItemIcon({ kind }: { kind: string }) {
 }
 
 export function TrashPanel() {
-  const { loadPages } = useNotes();
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
   // 与搜索浮层同根因（都在竖条里、都是 `position:fixed`），滚动锁一并挂上。
   useOverlayScrollLock(open);
@@ -65,7 +64,7 @@ export function TrashPanel() {
     try {
       await api.restorePage(id);
       load();
-      await loadPages();
+      await useNotes.getState().loadPages();
       toast("已恢复", "success");
     } catch (e) {
       toast(`恢复失败：${e}`, "error");
@@ -94,7 +93,7 @@ export function TrashPanel() {
     try {
       await api.clearTrash();
       setItems([]);
-      await loadPages();
+      await useNotes.getState().loadPages();
       toast("回收站已清空", "success");
     } catch (e) {
       toast(`清空失败：${e}`, "error");
@@ -112,7 +111,7 @@ export function TrashPanel() {
     try {
       for (const p of items) await api.restorePage(p.id);
       setItems([]);
-      await loadPages();
+      await useNotes.getState().loadPages();
       toast(`已恢复全部 ${items.length} 项`, "success");
     } catch (e) {
       toast(`恢复失败：${e}`, "error");

@@ -80,7 +80,6 @@ function MockPreview({ cover, content }: { cover: string; content?: string }) {
 // "我的模板" (persisted in DB). Clicking a card creates a page with content.
 export function TemplateCenterView() {
   const setOpen = useTemplateCenterStore((s) => s.setOpen);
-  const { createPage, createDatabase, bumpReload } = useNotes();
   const userTemplates = useTemplates((s) => s.userTemplates);
   const loadTemplates = useTemplates((s) => s.load);
   const removeTemplate = useTemplates((s) => s.remove);
@@ -131,7 +130,9 @@ export function TemplateCenterView() {
       } catch {
         config = null;
       }
-      const dbId = await createDatabase(null, t.name);
+      // createDatabase / createPage / bumpReload 都是 store 动作（引用恒定）⇒ getState()
+      // 现取：本视图不读 notes 的 state 字段，订阅整店只会被每次自动保存白白唤醒。
+      const dbId = await useNotes.getState().createDatabase(null, t.name);
       if (dbId && config && Array.isArray(config.columns)) {
         // attr_defs.name 唯一：同名属性已存在(上次建库)时复用，否则新建。
         const existing = await api.listAttrDefs().catch(() => []);
@@ -154,7 +155,7 @@ export function TemplateCenterView() {
         }
       }
       // 加列后刷新 DatabaseView，避免其已在加列完成前加载(读到空列)。
-      bumpReload();
+      useNotes.getState().bumpReload();
       setOpen(false);
       return;
     }
@@ -165,7 +166,7 @@ export function TemplateCenterView() {
     const vars = { date: today(), title: t.name, selected, owner: "我" };
     const json = substituteTemplateVars(t.content_json, vars);
     const text = substituteTemplateVars(t.content_text, vars);
-    const pid = await createPage(null, { content_json: json, content_text: text, title: t.name });
+    const pid = await useNotes.getState().createPage(null, { content_json: json, content_text: text, title: t.name });
     // 把模板封面(题头图) + 页面图标应用到创建后的页面。
     if (pid && t.cover) await api.setPageCover(pid, t.cover);
     if (pid && t.icon) await api.setPageIcon(pid, t.icon);

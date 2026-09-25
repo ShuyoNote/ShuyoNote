@@ -36,7 +36,6 @@ function Highlighted({ text }: { text: string }) {
 }
 
 export function SearchPanel() {
-  const { openPage, setSearchQuery } = useNotes();
   // 面板比默认弹层宽，把真实尺寸告诉 usePopover，靠边打开才不会被裁切。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 468,
@@ -102,8 +101,10 @@ export function SearchPanel() {
         if (ok) await useNotes.getState().loadPages();
       }
     }
-    openPage(id);
-    setSearchQuery(q);
+    // openPage / setSearchQuery 都是 store 动作（引用恒定）⇒ 走 getState() 现取：
+    // 本面板不读 notes 的任何 state 字段，订阅整店只会被每次自动保存白白唤醒。
+    useNotes.getState().openPage(id);
+    useNotes.getState().setSearchQuery(q);
     setQuery("");
     setShowResults(false);
     close();

@@ -9,8 +9,6 @@ import { useNotes } from "../store/notes";
 import { isDesktopPlatform } from "../lib/platform";
 
 export function useSyncStream() {
-  const { loadPages } = useNotes();
-
   useEffect(() => {
     if (isDesktopPlatform()) return;
 
@@ -39,7 +37,9 @@ export function useSyncStream() {
           for (const frame of frames) {
             if (!frame.includes("data:")) continue;
             void api.syncWorkspace(bound.ws_id).catch(() => null).then(() => {
-              if (!cancelled) void loadPages();
+              // loadPages 是 store 动作（引用恒定），走 getState() 现取——本 hook 不读
+              // notes 的任何 state，订阅整店只会被每次自动保存白白唤醒。
+              if (!cancelled) void useNotes.getState().loadPages();
             });
           }
         }
@@ -52,5 +52,5 @@ export function useSyncStream() {
       cancelled = true;
       ctrl?.abort();
     };
-  }, [loadPages]);
+  }, []);
 }

@@ -5,7 +5,6 @@ import { useNotes } from "../store/notes";
 import type { BlockBacklink, PageMeta } from "../types";
 
 export function BacklinksPanel({ pageId }: { pageId: string }) {
-  const { openPage } = useNotes();
   const [pageLinks, setPageLinks] = useState<PageMeta[]>([]);
   const [blockLinks, setBlockLinks] = useState<BlockBacklink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,9 +55,11 @@ export function BacklinksPanel({ pageId }: { pageId: string }) {
   if (pageLinks.length === 0 && blockLinks.length === 0) return null;
 
   // Jump to a block: set the pending focus id, switch page if needed.
+  // 注意：openPage 是 store 动作，引用恒定 ⇒ 走 getState() 现取，**不为它订阅整个 store**
+  // （本组件从不读 notes 的任何 state 字段；订阅整店只会被每次自动保存白白唤醒）。
   const goToBlock = (blockId: string, targetPageId: string) => {
     useEditorStore.getState().setFocusBlockId(blockId);
-    if (targetPageId !== pageId) openPage(targetPageId);
+    if (targetPageId !== pageId) useNotes.getState().openPage(targetPageId);
   };
 
   return (
@@ -102,7 +103,7 @@ export function BacklinksPanel({ pageId }: { pageId: string }) {
           <div className="backlinks-subtitle">页面引用</div>
           <div className="backlinks-list">
             {pageLinks.map((l) => (
-              <button key={l.id} className="backlink-item" onClick={() => openPage(l.id)}>
+              <button key={l.id} className="backlink-item" onClick={() => useNotes.getState().openPage(l.id)}>
                 {l.title || "未命名"}
               </button>
             ))}
