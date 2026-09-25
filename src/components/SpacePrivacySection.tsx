@@ -15,6 +15,7 @@ import type {
 } from "../lib/platform/commands";
 import { isDesktopPlatform } from "../lib/platform";
 import { inlineMd } from "../lib/inlineMd";
+import { refreshVault } from "../lib/vault";
 
 const KIND_LABEL: Record<SpaceKind, string> = {
   personal: "个人空间",
@@ -108,6 +109,11 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       await fn();
       setNote(`${what}：已完成`);
       await reload();
+      // ★ 2026-09-25（真机缺陷，MIX 2）：`reload()` 只刷新**本节自己的视图**，而「会话锁定」整节
+      // 由 `SettingsDialog` 里的 `useVault().enabled`（＝**内核读数**）控制 ⇒ 少了这一句，开/关加密
+      // 成功后那一节**要等重启才出现/消失**（现场：靠重启才拿到「立即锁定」）。
+      // 判据：`SpacePrivacySection.test.ts` 里「开启加密成功后 ⇒ 状态中枢必须跟着变」。
+      await refreshVault();
     } catch (e) {
       // ⚠️ **原样**显示后端那句话：它本来就是可操作的（说清下一步该做什么）。
       //    自己改写一遍＝把"可操作"抄第二份，两份迟早漂。
@@ -132,7 +138,12 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       const r = await fn();
       const kind = r.outcome === "ok" ? "ok" : r.outcome === "rejected" ? "err" : "warn";
       setRowMsg({ id: spaceId, text: `${what}：${r.message}`, kind });
-      if (r.outcome === "ok") await reload();
+      // 「取回公开材料」同样会改变**内核读数**（这个空间从此有钥匙了）⇒ 与 `run()` 一样要刷新中枢，
+      // 否则「会话锁定」整节的状态与本节的读数会各说各话（同 2026-09-25 那条真机缺陷）。
+      if (r.outcome === "ok") {
+        await reload();
+        await refreshVault();
+      }
     } catch (e) {
       setErr(`${what}失败：${String(e)}`);
     } finally {

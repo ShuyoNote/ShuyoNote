@@ -119,3 +119,88 @@ export function hygieneVerdict({
       `**静默**改成写 SM4 页。跑默认门禁前建议：\`${revert}\``,
   };
 }
+
+// ---------------------------------------------------------------------------
+// 第二处残渣：`src-tauri/Cargo.lock` 里那条**丢了 source/checksum** 的 `libsqlite3-sys`
+// ---------------------------------------------------------------------------
+//
+// 2026-09-25 实测到机制（此前只是本机一句"记得 `git checkout`"，从没验过）：
+//   `node scripts/sm-library-build.mjs --prepare` 之后，锁里那一条**少了两行**：
+//       -source = "registry+https://github.com/rust-lang/crates.io-index"
+//       -checksum = "f1d20bef…"
+//   因为 cargo 拿私有 CARGO_HOME 的 `[patch.crates-io]` 重新解析了一遍 ⇒ 它认为这个 crate
+//   来自"本地补丁路径"。而 `--revert` **只删私有副本，不还原锁**（`git status` 里就留着 M）。
+//
+// ⚠️ 为什么它比"看着脏"严重：这种锁一旦**提交**，**别人机器上**（没有那份私有 config）任何
+// `--locked` 构建会立刻红 —— 锁说 libsqlite3-sys 是 path 依赖，而他们的 config 里没有那条 patch。
+// 现场同样**不像**"补丁残渣"，像"依赖解析坏了"。⇒ 值得变成断言。
+
+/**
+ * 纯函数：`Cargo.lock` 文本里，`<crate>` 那一条还带不带 `source` ＋ `checksum`。
+ *
+ * @returns `{ state: "clean" | "residue" | "unknown", why: string }`
+ *   · `clean`   —— 两行都在（原版形态，任何时候都安全）；
+ *   · `residue` —— 缺其一/其二（＝ `--prepare` 留下的残渣）；
+ *   · `unknown` —— 锁里根本没有这条（**不是**"干净"：读不出来就说读不出来）。
+ */
+export function lockResidueOf(lockText, crate = "libsqlite3-sys") {
+  const lines = String(lockText ?? "").split(/\r?\n/);
+  const hits = [];
+  let cur = null;
+  const flush = () => {
+    if (cur && cur.name === crate) hits.push(cur);
+    cur = null;
+  };
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (t === "[[package]]") {
+      flush();
+      cur = { name: "", source: false, checksum: false };
+      continue;
+    }
+    if (t.startsWith("[")) {
+      // 进到别的段（如 `[metadata]`）⇒ 当前包条目结束
+      flush();
+      continue;
+    }
+    if (!cur) continue;
+    if (t.startsWith("name = ")) cur.name = t.slice(7).trim().replace(/"/g, "");
+    else if (t.startsWith("source = ")) cur.source = true;
+    else if (t.startsWith("checksum = ")) cur.checksum = true;
+  }
+  flush();
+  if (hits.length === 0) return { state: "unknown", why: `锁里没有 \`${crate}\` 那一条` };
+  const bad = hits.find((h) => !h.source || !h.checksum);
+  if (!bad) return { state: "clean", why: `${crate} 那一条带着 source ＋ checksum` };
+  const missing = [!bad.source && "source", !bad.checksum && "checksum"].filter(Boolean).join(" 与 ");
+  return { state: "residue", why: `${crate} 那一条**缺** ${missing}（货来自本地补丁，不是 crates.io）` };
+}
+
+/**
+ * 纯函数：把锁的残渣状态翻成档位。与 `hygieneVerdict` 同一条口径（**"读不出来"不判红**），
+ * 但多一档语境：**本次就是 `sm-library` 构建**时锁本来该长这样 ⇒ 不拦，只响亮提醒"别提交"。
+ *
+ * @returns `{ level: "ok" | "notice" | "block", why: string }`
+ */
+export function lockResidueVerdict({ residue, featureSmLibrary = false } = {}) {
+  if (!residue || residue.state === "clean") return { level: "ok", why: "" };
+  if (residue.state === "unknown") {
+    return { level: "notice", why: `未实查：${residue.why} —— 这一格不判红` };
+  }
+  const fix = "git checkout -- src-tauri/Cargo.lock";
+  if (featureSmLibrary) {
+    return {
+      level: "notice",
+      why:
+        `\`src-tauri/Cargo.lock\` 留着 \`--prepare\` 的残渣（${residue.why}）—— 本次就是 \`sm-library\` ` +
+        "构建 ⇒ **不拦**；但**别把它提交**（这份锁只对你这台机器的私有 config 成立）。",
+    };
+  }
+  return {
+    level: "block",
+    why:
+      `\`src-tauri/Cargo.lock\` 留着 \`--prepare\` 的残渣（${residue.why}），而 \`--revert\` **不还原锁**。` +
+      "⚠️ 这种锁一旦提交，**别人机器上**任何 `--locked` 构建会立刻红（锁说它是 path 依赖、" +
+      `而他们的 config 里没有那条 patch），现场看起来像"依赖解析坏了"。修法：\`${fix}\``,
+  };
+}

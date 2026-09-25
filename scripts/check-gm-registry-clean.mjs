@@ -24,11 +24,11 @@
 //   node scripts/check-gm-registry-clean.mjs --feature-sm-library   # 核对"我刚跑完国密构建"这个语境 ⇒ 带补丁也算 ok
 //   node scripts/check-gm-registry-clean.mjs --platform=darwin      # 在别的平台上判"若是 macOS 会怎样"（给判据/复现用）
 //   node scripts/check-gm-registry-clean.mjs --json
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { hygieneVerdict, registryStateOf } from "./lib/sm-library-hygiene.mjs";
+import { hygieneVerdict, lockResidueOf, lockResidueVerdict, registryStateOf } from "./lib/sm-library-hygiene.mjs";
 import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -65,27 +65,45 @@ export function platformFromArgv(args, fallback = process.platform) {
 
 /**
  * 纯函数：把一次"读到的状态 ＋ 这次是什么语境"翻成**退出码与要说的话**（便于判据，不碰磁盘）。
+ *
+ * 判**两处**残渣：① 全机共享 registry 上的补丁（本门禁原本就管的那一格）；
+ * ② `src-tauri/Cargo.lock` 里那条丢了 `source`/`checksum` 的 `libsqlite3-sys`（2026-09-25 加，
+ * 机制与后果见 `lib/sm-library-hygiene.mjs::lockResidueOf`）。两处**取更重的那一档**。
+ *
  * @returns `{ code: 0|1, level, lines: string[] }`
  */
-export function decideFromState(state, { platform = process.platform, featureSmLibrary = false } = {}) {
+export function decideFromState(state, { platform = process.platform, featureSmLibrary = false, lockResidue } = {}) {
+  const lines = [];
+  let level = "ok";
+  const worse = (a, b) => (["ok", "notice", "block"].indexOf(a) >= ["ok", "notice", "block"].indexOf(b) ? a : b);
+
   if (!state.ok) {
     // 读不出来 ⇒ **不判红**（干净机器 / 还没 fetch 过 registry 都会走到这里）
-    return {
-      code: 0,
-      level: "notice",
-      lines: [
-        `gm-registry-clean: 未实查（${state.reason}）—— 读不到共享 registry 的 SQLCipher 源码，这一格不判红`,
-        `  · ${state.message}`,
-        "  · 真核对要在**跑过 cargo** 的机器上：那时源码已在 registry 里",
-      ],
-    };
+    level = worse(level, "notice");
+    lines.push(
+      `gm-registry-clean: 未实查（${state.reason}）—— 读不到共享 registry 的 SQLCipher 源码，这一格不判红`,
+      `  · ${state.message}`,
+      "  · 真核对要在**跑过 cargo** 的机器上：那时源码已在 registry 里",
+    );
+  } else {
+    const v = hygieneVerdict({ patched: state.patched, pageCipher: state.pageCipher, platform, featureSmLibrary });
+    level = worse(level, v.level);
+    lines.push(
+      `gm-registry-clean: libsqlite3-sys ${state.version} @ ${state.srcDir}`,
+      `  补丁标记 = ${state.patched ? "有（源码已被改成国密版）" : "无（原版）"} · page_cipher = ${state.pageCipher}`,
+      `  ${v.level === "block" ? "❌" : v.level === "notice" ? "⚠️" : "✅"} ${v.why}`,
+    );
   }
-  const { level, why } = hygieneVerdict({ patched: state.patched, pageCipher: state.pageCipher, platform, featureSmLibrary });
-  const head = `gm-registry-clean: libsqlite3-sys ${state.version} @ ${state.srcDir}`;
-  const mark = `  补丁标记 = ${state.patched ? "有（源码已被改成国密版）" : "无（原版）"} · page_cipher = ${state.pageCipher}`;
-  if (level === "ok") return { code: 0, level, lines: [`${head}`, mark, `  ✅ ${why}`] };
-  const badge = level === "block" ? "❌" : "⚠️";
-  return { code: level === "block" ? 1 : 0, level, lines: [`${head}`, mark, `  ${badge} ${why}`] };
+
+  if (lockResidue) {
+    const lv = lockResidueVerdict({ residue: lockResidue, featureSmLibrary });
+    if (lv.level !== "ok") {
+      level = worse(level, lv.level);
+      lines.push(`  ${lv.level === "block" ? "❌" : "⚠️"} ${lv.why}`);
+    }
+  }
+
+  return { code: level === "block" ? 1 : 0, level, lines };
 }
 
 function main() {
@@ -101,10 +119,17 @@ function main() {
   }
   const featureSmLibrary = has("--feature-sm-library");
   const state = registryStateOf({ lockPath: LOCK });
-  const r = decideFromState(state, { platform, featureSmLibrary });
+  // ② 锁上那处残渣：读**文本**（读不到就交给 `lockResidueOf` 报 unknown ⇒ 不判红）
+  let lockResidue;
+  try {
+    lockResidue = lockResidueOf(readFileSync(LOCK, "utf8"));
+  } catch (e) {
+    lockResidue = { state: "unknown", why: `读不了 ${LOCK}：${String(e?.message ?? e).slice(0, 80)}` };
+  }
+  const r = decideFromState(state, { platform, featureSmLibrary, lockResidue });
 
   if (has("--json")) {
-    console.log(JSON.stringify({ ...r, platform, featureSmLibrary, state: { ...state } }, null, 2));
+    console.log(JSON.stringify({ ...r, platform, featureSmLibrary, state: { ...state }, lockResidue }, null, 2));
   } else {
     for (const line of r.lines) console.log(line);
     if (r.level === "notice" && state.ok) {
