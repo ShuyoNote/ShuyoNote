@@ -20,7 +20,7 @@
 // 为什么在夹具里跑**真 CLI**（而不是只测守卫函数）："守卫装上了没有"才是载重点 —— 只测函数的话，
 // 谁把那两行装配删掉，判据照样全绿。夹具用假 `HOME` ＋ 假 registry，**不依赖本机 cargo/Tongsuo**。
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,7 +150,10 @@ describe("`--print-env` 只读：它只翻译环境，不建隔离、不打补�
       mkdirSync(join(fx.repo, ".gm-build", "cargo-home"), { recursive: true });
       const r = runCli(fx, ["--print-env", "--openssl-dir", fx.prefix]);
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain(`CARGO_HOME=${join(fx.repo, ".gm-build", "cargo-home")}`);
+      // ⚠️ 必须比 **realpath**：脚本报的是它 `resolve()` 之后的路径，而 macOS 上 `tmpdir()` 给的
+      //   `/var/folders/…` 实际是 `/private/var/folders/…` 这条符号链接（Linux/Windows 上不体现）
+      //   ⇒ 直接比 `fx.repo` 会**在 macOS 上假红**（2026-09-25 我这台实测；CI 是 Linux，所以那边看不出来）。
+      expect(r.stdout).toContain(`CARGO_HOME=${realpathSync(join(fx.repo, ".gm-build", "cargo-home"))}`);
     } finally {
       rmSync(fx.dir, { recursive: true, force: true });
     }
