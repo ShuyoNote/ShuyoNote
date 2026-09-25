@@ -13,7 +13,7 @@ import type {
   PairingImportOutcome,
   SpaceKeyringOutcome,
 } from "../lib/platform/commands";
-import { isDesktopPlatform } from "../lib/platform";
+import { isDesktopPlatform, platform } from "../lib/platform";
 import { inlineMd } from "../lib/inlineMd";
 import { refreshVault } from "../lib/vault";
 
@@ -102,6 +102,42 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       setErr(String(e));
     } finally {
       setPairBusy(false);
+    }
+  };
+
+  /// ★ B 片 ①-a 的"存/读文件"那一半：把那段配对码存成文件（默认名里带**比对码**，
+  /// 这样两台设备对不上时一眼能看出传错了哪一份）。
+  const savePairToFile = async () => {
+    if (!pairExport) return;
+    try {
+      const path = await platform.dialog.save({
+        title: "保存配对码",
+        defaultPath: `shuyonote-pair-${pairExport.check_code}.txt`,
+        filters: [{ name: "文本", extensions: ["txt"] }],
+      });
+      if (!path) return; // 用户取消：什么都不做（**不报错**）
+      await api.writeTextFile(typeof path === "string" ? path : path[0], pairExport.text);
+      setNote("配对码已存成文件：把它交给新设备（U 盘 / 共享目录都行），在那边点「从文件读取」。");
+    } catch (e) {
+      setErr(`存文件失败：${String(e)}`);
+    }
+  };
+
+  /// 从文件里读回一段配对码，填进下面的文本框（**不自动采纳** —— 采纳永远要人点第二步）。
+  const loadPairFromFile = async () => {
+    try {
+      const picked = await platform.dialog.open({
+        title: "选择配对码文件",
+        multiple: false,
+        filters: [{ name: "文本", extensions: ["txt"] }],
+      });
+      if (!picked) return;
+      const path = Array.isArray(picked) ? picked[0] : picked;
+      const text = await api.readTextFile(path);
+      setPairText(text);
+      setNote("已读入配对码——请核对**上面**旧设备显示的比对码，一致再点「核对并采纳」。");
+    } catch (e) {
+      setErr(`读文件失败：${String(e)}`);
     }
   };
 
@@ -355,6 +391,21 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
           <div className="space-privacy-actions">
             <button className="sync-btn ghost" disabled={pairBusy} onClick={() => void runPairExport()}>
               生成配对码
+            </button>
+            {/* ★ B 片 ①-a 的"存/读文件"那一半（2026-09-25）：<b>两台设备不在同一屏时</b>，
+                复制粘贴要走一遍"发给自己"（邮件/IM/网盘），而**存成文件再传**是本地优先那条路
+                （U 盘/共享目录/直接拖过去）—— 两条都给，别替用户选。
+                ⚠️ 存出来的是**明文载荷**（里面没有裸钥匙，但有每空间的盒子密文）⇒ 提示语里说清
+                "这不是秘密，但只交给自己的设备"（与上面那句同一口径）。 */}
+            <button
+              className="sync-btn ghost"
+              disabled={pairBusy || !pairExport}
+              onClick={() => void savePairToFile()}
+            >
+              存成文件
+            </button>
+            <button className="sync-btn ghost" disabled={pairBusy} onClick={() => void loadPairFromFile()}>
+              从文件读取
             </button>
           </div>
           {pairExport && (

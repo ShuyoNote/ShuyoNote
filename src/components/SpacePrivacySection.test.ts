@@ -30,6 +30,11 @@ const pullSpaceKeyring = vi.fn();
 // B 片 ①-a（2026-09-25）：不经服务器的换设备（配对码）。
 const pairingExport = vi.fn();
 const pairingImport = vi.fn();
+// ★ B 片 ①-a 的"存/读文件"（2026-09-25）：平台 dialog ＋ 文本读写。
+const dialogSave = vi.fn();
+const dialogOpen = vi.fn();
+const writeTextFile = vi.fn();
+const readTextFile = vi.fn();
 // ★ 2026-09-25：开/关加密之后**必须重读状态中枢**（`vault.ts::refreshVault` 走的就是这条内核读数）
 // —— 否则「会话锁定」整节（`SettingsDialog` 里由 `useVault().enabled` 控制）要等**重启**才出现。
 const encryptionStatus = vi.fn();
@@ -44,12 +49,21 @@ vi.mock("../lib/api", () => ({
     pullSpaceKeyring: (...a: unknown[]) => pullSpaceKeyring(...a),
     pairingExport: (...a: unknown[]) => pairingExport(...a),
     pairingImport: (...a: unknown[]) => pairingImport(...a),
+    writeTextFile: (...a: unknown[]) => writeTextFile(...a),
+    readTextFile: (...a: unknown[]) => readTextFile(...a),
     encryptionStatus: (...a: unknown[]) => encryptionStatus(...a),
   },
 }));
 
 vi.mock("../lib/platform", () => ({
   isDesktopPlatform: () => flags.desktop,
+  // ★ B 片 ①-a 的"存/读文件"那一半（2026-09-25）：走平台 dialog ＋ api 的文本读写。
+  platform: {
+    dialog: {
+      save: (...a: unknown[]) => dialogSave(...a),
+      open: (...a: unknown[]) => dialogOpen(...a),
+    },
+  },
 }));
 
 import type { SpaceSecurityView } from "../lib/api";
@@ -121,6 +135,10 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
       pullSpaceKeyring,
       pairingExport,
       pairingImport,
+      dialogSave,
+      dialogOpen,
+      writeTextFile,
+      readTextFile,
       encryptionStatus,
     ])
       m.mockReset();
@@ -509,5 +527,66 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
       byText("我确认，覆盖本机")!.click();
     });
     expect(pairingImport).toHaveBeenLastCalledWith(expect.objectContaining({ overwrite: true }));
+  });
+
+  // ---------------------------------------------------------------------------
+  // ★ B 片 ①-a 的"存/读文件"那一半（2026-09-25）
+  // ---------------------------------------------------------------------------
+  //
+  // 为什么要有这两条：复制粘贴那条路在两台设备**不在同一屏**时要走一遍"发给自己"
+  // （邮件/IM/网盘），而"存成文件再传"是本地优先那条路。两条都给，别替用户选 ——
+  // 而这条路上有两个**静默失败**的常见形态，正是这两条判据要挡的：
+  //   ① 没生成码就点"存成文件"（存出个空文件）；
+  //   ② 用户**取消**了另存对话框，而代码照样往下写（写出一个半截文件 / 报一句莫名其妙的错）。
+  it("⑭ ★ 存成文件：默认名里带**比对码**，内容就是那段载荷；取消另存 ⇒ **一个字都不写**", async () => {
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
+    pairingExport.mockResolvedValue({
+      check_code: "1111 2222 3333 4444 5555",
+      text: '{"v":1,"material":{}}',
+      message: "已生成配对码",
+    });
+    writeTextFile.mockResolvedValue(undefined);
+    await render();
+
+    // ① 还没生成码 ⇒「存成文件」是灰的（否则会存出一个空文件）
+    const saveBtn = () => byText("存成文件") as HTMLButtonElement;
+    expect(saveBtn().disabled).toBe(true);
+    await act(async () => {
+      byText("生成配对码")!.click();
+    });
+    expect(saveBtn().disabled).toBe(false);
+
+    // ② 用户取消 ⇒ 不许写盘
+    dialogSave.mockResolvedValue(null);
+    await act(async () => {
+      saveBtn().click();
+    });
+    expect(dialogSave).toHaveBeenCalled();
+    expect(writeTextFile).not.toHaveBeenCalled();
+
+    // ③ 真的选了路径 ⇒ 写的就是那段载荷，且默认名带比对码（两台设备对不上时一眼看出传错哪份）
+    dialogSave.mockResolvedValue("C:\\tmp\\pair.txt");
+    await act(async () => {
+      saveBtn().click();
+    });
+    expect(writeTextFile).toHaveBeenCalledWith("C:\\tmp\\pair.txt", '{"v":1,"material":{}}');
+    const opts = dialogSave.mock.calls[dialogSave.mock.calls.length - 1][0] as { defaultPath: string };
+    expect(opts.defaultPath).toContain("1111 2222 3333 4444 5555");
+  });
+
+  it("⑮ ★ 从文件读取：把内容填进文本框，但**绝不自动采纳**（采纳永远要人点第二步）", async () => {
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
+    dialogOpen.mockResolvedValue(["C:\\tmp\\pair.txt"]);
+    readTextFile.mockResolvedValue('{"v":1,"material":{"spaces":{}}}');
+    await render();
+
+    await act(async () => {
+      byText("从文件读取")!.click();
+    });
+    const area = container.querySelector('textarea[aria-label="粘贴配对码"]') as HTMLTextAreaElement;
+    expect(area.value).toBe('{"v":1,"material":{"spaces":{}}}');
+    // ★ 读进来只是"填好"，**没有**调过采纳 —— 用户还要核对比对码再点那一下
+    expect(pairingImport).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("一致再点");
   });
 });
