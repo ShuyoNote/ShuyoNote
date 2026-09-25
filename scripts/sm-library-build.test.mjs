@@ -20,7 +20,7 @@
 // 为什么在夹具里跑**真 CLI**（而不是只测守卫函数）："守卫装上了没有"才是载重点 —— 只测函数的话，
 // 谁把那两行装配删掉，判据照样全绿。夹具用假 `HOME` ＋ 假 registry，**不依赖本机 cargo/Tongsuo**。
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,8 +37,11 @@ const ENV_LINE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /**
  * 搭一个"看起来像本仓"的夹具：CLI 与它的 lib 是**真文件**（复制），
  * Cargo.lock、registry 源码、OpenSSL 前缀是**假的** —— 让它走完整条数据路径而不碰本机任何东西。
+ *
+ * `pristine: true` ⇒ 假源码**不带**补丁标记，这正是**共享 registry 的真实形态**（补丁只在私有副本上）。
+ * 只读那条判据需要它：带标记的源码会让"没有标记就跳过断言"这条分支**空过**。
  */
-function makeFixture() {
+function makeFixture({ pristine = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "sm-build-fixture-"));
   const repo = join(dir, "repo");
   const home = join(dir, "home");
@@ -50,16 +53,18 @@ function makeFixture() {
     join(repo, "src-tauri", "Cargo.lock"),
     `version = 4\n\n[[package]]\nname = "libsqlite3-sys"\nversion = "${LOCKED}"\n`,
   );
-  // 假 registry 源码：**带上补丁标记** ⇒ `--no-apply` 也能过"标记在场"那一关，从而走到 emit
+  // 假 registry 源码：默认**带上补丁标记** ⇒ `--no-apply` 也能过"标记在场"那一关，从而走到 emit；
+  // `pristine` 时**不带**（＝共享 registry 的真实形态）
   const sc = join(home, ".cargo", "registry", "src", "index.fixture", `libsqlite3-sys-${LOCKED}`, "sqlcipher");
   mkdirSync(sc, { recursive: true });
-  writeFileSync(join(sc, "sqlite3.c"), `/* 夹具占位（不是真 sqlite3.c） */\n#define ${MARKER} 1\n`);
+  const sourcePath = join(sc, "sqlite3.c");
+  writeFileSync(sourcePath, `/* 夹具占位（不是真 sqlite3.c） */\n${pristine ? "" : `#define ${MARKER} 1\n`}`);
   // 假 OpenSSL 前缀：`opensslEnvFor` 只要求 `lib/` 里有 `libcrypto.*`（这样 `--print-env` 才走得到 emit）
   const prefix = join(dir, "openssl-prefix");
   mkdirSync(join(prefix, "lib"), { recursive: true });
   mkdirSync(join(prefix, "include"), { recursive: true });
   writeFileSync(join(prefix, "lib", "libcrypto.a"), "");
-  return { dir, repo, home, prefix };
+  return { dir, repo, home, prefix, sourcePath };
 }
 
 /** 跑夹具里的真 CLI；`--no-apply` ⇒ 连夹具的假源码也不改。 */
@@ -100,6 +105,52 @@ describe("sm-library-build.mjs：stdout 是数据、stderr 是日志", () => {
       expect(r.code).toBe(0);
       expect(r.stdout).toContain("sm-library-build: 源码 =");
       expect(r.stdout).toMatch(/^[0-9a-f]{64} /m);
+    } finally {
+      rmSync(fx.dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ★ 2026-09-25 加：`--print-env` **本身必须只读**
+// ---------------------------------------------------------------------------
+//
+// 来历（发版线 Linux job 的真红，macOS 侧从 job 日志捞出来的）：`--print-env` 原先会自己**建隔离**
+// 并把**私有** `CARGO_HOME` 交进 `$GITHUB_ENV`；同一个 job 里紧随其后的 `--prepare` 于是拿私有 home
+// 去解析"共享 registry 源码" ⇒
+//   `ENOENT …/.gm-build/cargo-home/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2`
+// —— 现场读起来像"源码没了"，其实是**交接早了**。这类"靠副作用先后顺序吃饭"的顺序依赖，
+// 光加一条"顺序判据"（`check-workflow-yaml` 第四条）只是把纪律变成断言；**根上**应该是：
+// `--print-env` 只翻译环境，`--prepare` 只做准备，谁都不改状态。
+describe("`--print-env` 只读：它只翻译环境，不建隔离、不打补丁", () => {
+  it("★ 共享源码上**没有**标记时也 exit 0，且**不许建 `.gm-build/`、不许改源码**", () => {
+    const fx = makeFixture({ pristine: true });
+    try {
+      // ⚠️ 故意**不带** `--no-apply`：这正是 CI 里的写法（`… --print-env >> "$GITHUB_ENV"`）。
+      //    夹具源码不带标记 ＝ 共享 registry 的真实形态（补丁只在私有副本上）。
+      const r = runCli(fx, ["--print-env", "--openssl-dir", fx.prefix]);
+      expect(r.code).toBe(0);
+      // ① 数据仍然是 `$GITHUB_ENV` 吃得下的
+      const lines = r.stdout.split("\n").filter(Boolean);
+      expect(lines.filter((l) => !ENV_LINE.test(l))).toEqual([]);
+      expect(lines).toContain(`OPENSSL_DIR=${fx.prefix}`);
+      // ② ★ **只读**：没有建隔离目录，也没有把补丁打到那份源码上
+      expect(existsSync(join(fx.repo, ".gm-build"))).toBe(false);
+      expect(readFileSync(fx.sourcePath, "utf8")).not.toContain(MARKER);
+      // ③ 它要明说自己跳过了标记断言（免得有人以为"没打补丁也照样绿"是漏判）
+      expect(r.stderr).toContain("跳过补丁标记断言");
+    } finally {
+      rmSync(fx.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("★ 隔离**已经存在**（＝`--prepare` 跑过）时，它照样把 `CARGO_HOME` 那一行交出去", () => {
+    const fx = makeFixture({ pristine: true });
+    try {
+      mkdirSync(join(fx.repo, ".gm-build", "cargo-home"), { recursive: true });
+      const r = runCli(fx, ["--print-env", "--openssl-dir", fx.prefix]);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain(`CARGO_HOME=${join(fx.repo, ".gm-build", "cargo-home")}`);
     } finally {
       rmSync(fx.dir, { recursive: true, force: true });
     }
