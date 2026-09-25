@@ -38,10 +38,13 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 
 <!-- facts:begin -->
 门禁 46 条（contract 22 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
+基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 43 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
 > 同一条门禁还要求**每条门禁的名字都出现在本表里**（新门禁不许只进代码、不进文档）。
+> 块里的**第 2 行是各门禁的读数下限**（取自 `tests/baseline.json`，逐字核对）—— 要给数字就指到那一行去，
+> **别在本表里手写**：2026-09-25 实测，本表手写的「`vitest` 885 用例」在下界与实测都已到 2262 之后还在原地。
 > 表里的"断言数"会随测试增减，**数字以 `tests/baseline.json` 与每次运行的读数为准**，别照着这里的旧数字对账。
 
 | 组 | 门禁 | 挡什么 |
@@ -69,7 +72,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | rust | `rust-no-sm-crypto` | **回滚通道**：`--no-default-features`（不编国密）仍要能编译 ＋ 全量单测通过 —— 它是"一行可逆"那个承诺的实现，没人编就会腐烂 |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
-| smoke | `vitest` | 单测回归（**885 用例**） |
+| smoke | `vitest` | 单测回归（读数下限见上方「机器事实」块第 2 行；**别在本表里手写这个数字** —— 手写的那个曾经停在 885，而实际早就到 2262） |
 | smoke | `smoke-web` | web 平台行为（**350 断言**，事实标准） |
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
