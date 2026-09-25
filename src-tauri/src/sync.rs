@@ -1,4 +1,6 @@
 use crate::db::Db;
+use crate::lan::{self, Peer};
+use crate::lan_state::LanState;
 use crate::models::PageDetail;
 use crate::search;
 use crate::security;
@@ -731,6 +733,29 @@ pub fn set_sync_attachments(db: State<'_, Db>, ws_id: String, enabled: bool) -> 
     set_attachments_enabled(&c, &ws_id, enabled)
 }
 
+/// **基址只出一处**（甲-1 接线第 2 件的第一步）：这次同步该往哪个地址说话。
+///
+/// 口径（owner 2026-09-25 拍板 ② 的下游）：局域网发现到的中枢优先，否则配置地址。
+/// ⚠️ 纯函数（对端表由调用方给）⇒ 判据**不需要**去动进程级单例，也就不会污染同进程里别的测试。
+fn base_for(profile: &SyncProfile, peers: &[Peer]) -> String {
+    lan::resolve_base(&profile.space_id, &profile.server_url, peers)
+        .map(|r| r.url)
+        .unwrap_or_default()
+}
+
+/// 生产路径的那一层薄壳：把**进程级**对端表接进 `base_for`。
+///
+/// ⚠️ 归属已由 owner 拍板为**应用级单例 ＋ 按需启用**（`lan_state`）：
+/// 未启用时 `peers()` 返回空 ⇒ 这里拿到空 ⇒ **基址逐字节等于今天**（发现层是加分项，不是必经路）。
+fn effective_base(c: &Connection, profile: &SyncProfile) -> String {
+    let peers = match device_id(c) {
+        Ok(id) => LanState::global(&id).peers(crate::db::now_ms()),
+        // 拿不到 device_id（老库/异常）⇒ **不挡同步**：回落到"没发现到任何对端"。
+        Err(_) => Vec::new(),
+    };
+    base_for(profile, &peers)
+}
+
 /// 附件接口的 URL 前缀。**同步下载与按需下载必须走同一处**（P6.3 抽出）：
 /// 绑了团队空间走 space 作用域，否则退回旧的全局路径 —— 服务端两条路由都在，
 /// 但"哪一条"由 `space_id` 决定，两边各写一遍迟早会漂。
@@ -738,12 +763,12 @@ pub fn set_sync_attachments(db: State<'_, Db>, ws_id: String, enabled: bool) -> 
 /// ⚠️ 顺手按本文件的既有约定 `trim_end_matches('/')`（见 presence/comments/notifications 那批）：
 /// `set_profile` 落库前本来就会 trim，所以这只是防"手改过的 / 老库里的带斜杠地址"拼出
 /// `https://host//spaces/x` 这种带双斜杠的 URL。
-fn attachment_base(profile: &SyncProfile) -> String {
-    let server = profile.server_url.trim_end_matches('/');
-    if profile.space_id.is_empty() {
+fn attachment_base(base: &str, space_id: &str) -> String {
+    let server = base.trim_end_matches('/');
+    if space_id.is_empty() {
         server.to_string()
     } else {
-        format!("{server}/spaces/{}", profile.space_id)
+        format!("{server}/spaces/{space_id}")
     }
 }
 
@@ -811,7 +836,11 @@ pub async fn download_attachment(
     let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &profile.ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
     // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
-    let att_base = attachment_base(&profile);
+    // ★ 甲-1 接线：基址也走同一个 `effective_base`（局域网中枢优先）——两处**同源**才不会漂。
+    let att_base = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        attachment_base(&effective_base(&c, &profile), &profile.space_id)
+    };
     let session_key = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::key_if_enabled(&c)
@@ -3122,7 +3151,11 @@ async fn sync_attachments(
     };
 
     let client = reqwest::Client::new();
-    let att_base = attachment_base(profile);
+    // ★ 甲-1 接线：基址走 `effective_base`（局域网中枢优先；未发现/未启用 ⇒ 与今天逐字节相同）。
+    let att_base = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        attachment_base(&effective_base(&c, profile), &profile.space_id)
+    };
 
     // 1. List remote hashes.
     let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
@@ -4357,13 +4390,73 @@ mod tests {
             last_pulled_seq: 0,
             sync_attachments: 1,
         };
+        // 没发现到任何对端 ⇒ 基址就是配置地址（下面那条判据单独钉这个）
+        let base = |space: &str| base_for(&mk(space), &[]);
         // 绑了空间：`<server>/spaces/<id>`（服务端 space 作用域路由）。
-        assert_eq!(attachment_base(&mk("sp-1")), "https://s.example.com/spaces/sp-1");
+        assert_eq!(attachment_base(&base("sp-1"), "sp-1"), "https://s.example.com/spaces/sp-1");
         // 没绑（个人自建 / 旧配置）：就是 server_url 本身（旧的全局路由）。
-        assert_eq!(attachment_base(&mk("")), "https://s.example.com");
+        assert_eq!(attachment_base(&base(""), ""), "https://s.example.com");
         // ⚠️ **不产生双斜杠**：地址末尾带 `/` 时也要拼对（`set_profile` 会 trim，
         //    但老库 / 手改过的值不能靠这个假设）。
-        assert!(!attachment_base(&mk("sp-1")).contains("//spaces"));
+        assert!(!attachment_base(&base("sp-1"), "sp-1").contains("//spaces"));
+    }
+
+    fn profile_for(space: &str, server: &str) -> SyncProfile {
+        SyncProfile {
+            ws_id: "ws".into(),
+            server_url: server.into(),
+            token: "t".into(),
+            space_id: space.into(),
+            last_pushed_seq: 0,
+            last_pulled_seq: 0,
+            sync_attachments: 1,
+        }
+    }
+
+    fn lan_peer(device: &str, base: &str, spaces: &[&str]) -> Peer {
+        Peer {
+            announce: crate::lan::LanAnnounce {
+                v: crate::lan::WIRE_VERSION,
+                device_id: device.into(),
+                device_name: device.into(),
+                hub_base: Some(base.into()),
+                hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                fp: "fp".into(),
+            },
+            addr: "192.168.1.9".into(),
+            seen_at_ms: 0,
+        }
+    }
+
+    /// ★ 承重判据（甲-1 接线第 2 件）：**没发现到对端时，基址逐字节等于今天**。
+    /// 发现层是加分项 —— 它没东西时，**不许**改变任何一条既有请求的地址（含末尾斜杠的规整）。
+    #[test]
+    fn with_nothing_discovered_the_base_is_byte_identical_to_today() {
+        assert_eq!(base_for(&profile_for("sp-1", "https://s.example.com/"), &[]), "https://s.example.com");
+        assert_eq!(base_for(&profile_for("", "http://localhost:8787"), &[]), "http://localhost:8787");
+        // 没绑 server_url ⇒ 空（与今天"没绑定"的处境一致，调用方照旧按未绑定处理）
+        assert_eq!(base_for(&profile_for("", ""), &[]), "");
+    }
+
+    /// ★ 判据：发现到**服务本空间**的局域网中枢 ⇒ **附件那条路的基址也跟着换**
+    /// ——"基址只出一处"的实测（不是只改了 push/pull 那条，附件漏在外头）。
+    /// 顺带钉住"用对了那一个"：别个空间的中枢不许改变本空间的地址。
+    #[test]
+    fn a_discovered_hub_moves_the_attachment_base_to_the_lan_address() {
+        let p = profile_for("sp-1", "https://s.example.com");
+        let mine = vec![lan_peer("dev-a", "http://192.168.1.5:8787", &["sp-1"])];
+        assert_eq!(base_for(&p, &mine), "http://192.168.1.5:8787");
+        assert_eq!(
+            attachment_base(&base_for(&p, &mine), "sp-1"),
+            "http://192.168.1.5:8787/spaces/sp-1",
+            "space 作用域要照旧拼上去"
+        );
+        // 只服务**别个空间**的中枢 ⇒ 回落配置地址
+        let other = vec![lan_peer("dev-b", "http://192.168.1.6:8787", &["sp-other"])];
+        assert_eq!(base_for(&p, &other), "https://s.example.com");
+        // 公网地址的公告 ⇒ 不许当直连（`lan::is_lan_base` 那条口径在基址这一层的实测）
+        let bogus = vec![lan_peer("dev-c", "http://8.8.8.8:8787", &["sp-1"])];
+        assert_eq!(base_for(&p, &bogus), "https://s.example.com");
     }
 
     // ---- B4-b：兜底行的收编与自愈 ----
