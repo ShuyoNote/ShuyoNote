@@ -26,6 +26,7 @@
       "check-doc-facts",
       "check-doc-links",
       "check-gitcode-workflow-rules",
+      "check-main-only-commits",
       "check-nsis-template",
       "check-ocr-assets",
       "check-overlay-registry",

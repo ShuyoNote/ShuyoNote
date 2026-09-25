@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 45 条（contract 21 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
+门禁 46 条（contract 22 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -63,6 +63,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-nsis-template` | NSIS 安装器模板＝fork 的一行改动 ＋ CLI 版本核对：模板被上游改写后**装出来的东西**与声明不符 |
 | contract | `check-derived-writers` | 派生表的**唯一写入者**：Rust 生产代码不许写派生表（唯一写入口在 TS 侧平台层）——两处写就是两份语义 |
 | contract | `check-doc-content-access` | 「文档内容」的直接访问**只减不增**：换 CRDT 时要改的就是这批位置（当前 562 处，基线在 `scripts/doc-content-access-baseline.json`）；新文件直接引用或超基线即红 |
+| contract | `check-main-only-commits` | **发布线上不许有"开发线永远拿不到"的内容改动**：非 merge 的发布线独有提交只许动**发布产物**（`RELEASE_ARTIFACTS`），merge 则要求除第一父外的父都能从 `dev` 走到。2026-09-25 实测：`dev` 与 `origin/main` 分叉（208 / 7），7 笔里三笔带着开发线没有的内容——包括一笔**标题写着 `release:` 却夹带了 `mdPreview.ts` 修复**的（那个 bug 只在**打包产物**里显形，dev/vitest 永远绿）⇒ 所以判据按**文件集**、不按标题。⚠️ 非浅克隆才能判（残缺祖先图上 `rev-list A..B` 会静默给偏少的答案）⇒ 浅克隆一律 **exit 3** |
 | mobile | `mobile-views` | 主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**：窄屏下"整块视图不能用"这类坏法，布局门禁照不到 |
 | rust | `gm-conformance` | 国密对拍：这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo）⇒ 漂移的后果是"跨设备读不出对方的数据"，而它没有任何编译期信号 |
 | rust | `rust-no-sm-crypto` | **回滚通道**：`--no-default-features`（不编国密）仍要能编译 ＋ 全量单测通过 —— 它是"一行可逆"那个承诺的实现，没人编就会腐烂 |
