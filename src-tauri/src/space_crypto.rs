@@ -98,6 +98,11 @@ pub struct AdoptReport {
     pub already_local: bool,
     /// 采纳之后袋子里有几个盒子。
     pub spaces: usize,
+    /// `already_local` 时：**本机已有的**空间 id（升序）。给"确认覆盖"那一屏用。
+    pub local_spaces: Vec<String>,
+    /// `already_local` 时：覆盖之后会**失去**的空间 id（＝本机有、而这份材料没有）。
+    /// ⚠️ 这才是"覆盖会动到什么"里**最贵**的那一半：失去的空间＝那台设备再也开不开它自己的库。
+    pub would_lose: Vec<String>,
 }
 
 /// ③ 0b：**采纳从服务端取回的公开材料**（第二台设备那一步）。
@@ -106,13 +111,32 @@ pub struct AdoptReport {
 /// 为什么不是"新的覆盖旧的"：别的设备**轮换**过之后，服务端那一份可能是新的、而本机这一份
 /// 才是能开当前库的那一把 —— 闷头覆盖会让本机**打不开自己的空间**。要覆盖得显式说。
 /// ⚠️ 坏材料 ⇒ `Err`（**本机一个字节都不改**），并且那句话要说清这一点。
+///
+/// ★ **2026-09-25 补（B 片 ★判据 ③ 的字面要求）**：拒绝之外还要**说清"会覆盖什么"**
+/// —— `already_local` 这一路上会把两边的空间 id 摆出来（`local_spaces` / `would_lose`），
+/// 否则界面只能问一句空洞的"确定要覆盖吗？"。**两边的材料都会在拒绝路径上被解析**
+/// （解析失败当场 `Err`）：拒绝时说"这份读不懂"，比让人点了确认之后才炸好得多。
 pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<AdoptReport, String> {
-    if stored_material(c)?.is_some() && !overwrite {
-        return Ok(AdoptReport {
-            adopted: false,
-            already_local: true,
-            spaces: 0,
-        });
+    if let Some(local_text) = stored_material(c)? {
+        if !overwrite {
+            let mine = Keyring::from_json(&local_text)?;
+            let theirs = Keyring::from_json(json).map_err(|e| {
+                format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}")
+            })?;
+            let local_spaces: Vec<String> = mine.spaces.keys().cloned().collect(); // BTreeMap ⇒ 已升序
+            let would_lose: Vec<String> = local_spaces
+                .iter()
+                .filter(|id| !theirs.spaces.contains_key(*id))
+                .cloned()
+                .collect();
+            return Ok(AdoptReport {
+                adopted: false,
+                already_local: true,
+                spaces: 0,
+                local_spaces,
+                would_lose,
+            });
+        }
     }
     let kr = Keyring::from_json(json)
         .map_err(|e| format!("这份公开材料读不懂（**没有采纳，本机一个字节都没改**）：{e}"))?;
@@ -122,6 +146,8 @@ pub fn adopt_material(c: &Connection, json: &str, overwrite: bool) -> Result<Ado
         adopted: true,
         already_local: false,
         spaces,
+        local_spaces: Vec::new(),
+        would_lose: Vec::new(),
     })
 }
 
@@ -922,28 +948,45 @@ mod tests {
         set_keyring_for_test(None);
         set_session_master(None).unwrap();
 
-        // 本机这一份（本地口令）
+        // 本机这一份（本地口令）：**两个**空间，其中 `adopt-b` 是对面**没有**的
         let mut local = Keyring::new();
         let m_local = local.kdf.derive_master("本机口令八个字").unwrap();
         local.wrap(&m_local, "adopt-a", &random_space_key()).unwrap();
+        local.wrap(&m_local, "adopt-b", &random_space_key()).unwrap();
         store_keyring(&c, &local).unwrap();
         let before = stored_material(&c).unwrap().unwrap();
 
-        // 服务端那一份：**另一个**袋子（新盐 ⇒ 另一份 JSON），里面是我们想要的那把钥匙
+        // 服务端那一份：**另一个**袋子（新盐 ⇒ 另一份 JSON），里面是我们想要的那把钥匙；
+        // 它还有一个 `adopt-c` 是**本机没有**的（用来把两个方向分开）
         let k_remote = random_space_key();
         let mut remote = Keyring::new();
         let m_remote = remote.kdf.derive_master("对端口令八个字").unwrap();
         remote.wrap(&m_remote, "adopt-a", &k_remote).unwrap();
+        remote.wrap(&m_remote, "adopt-c", &random_space_key()).unwrap();
         let remote_json = remote.to_json().unwrap();
 
-        // ① 默认**拒绝**覆盖，且一个字节都没改
+        // ① 默认**拒绝**覆盖，且一个字节都没改 —— 并且**说得出"会覆盖什么"**
         let r = adopt_material(&c, &remote_json, false).unwrap();
         assert!(!r.adopted && r.already_local, "本地已有袋子 ⇒ 默认不许覆盖");
         assert_eq!(stored_material(&c).unwrap().unwrap(), before, "★ 一个字节都没改");
+        // ★ 判据 ③ 的字面要求（2026-09-25 补）：拒绝之外还要摆出代价 ——
+        //   否则界面只能问一句空洞的"确定要覆盖吗？"，用户没有依据可判。
+        assert_eq!(r.local_spaces, vec!["adopt-a", "adopt-b"], "要摆出本机已有的空间");
+        assert_eq!(
+            r.would_lose,
+            vec!["adopt-b"],
+            "★ 覆盖会**失去** `adopt-b`（本机有、这份材料没有）—— 那台设备再也开不开它自己的库"
+        );
 
-        // ② 显式 overwrite ⇒ 采纳
+        // ①b 拒绝路径上也要**当场**把"这份材料读不懂"说掉（别等人点了确认才炸）
+        assert!(
+            adopt_material(&c, "不是材料", false).is_err(),
+            "拒绝路径也要解析来料：读不懂就当场报错"
+        );
+
+        // ② 显式 overwrite ⇒ 采纳（对面有两个空间）
         let r = adopt_material(&c, &remote_json, true).unwrap();
-        assert!(r.adopted && !r.already_local && r.spaces == 1);
+        assert!(r.adopted && !r.already_local && r.spaces == 2, "{r:?}");
 
         // ③ ★ 采纳之后：**只凭那个口令**就能解出盒子里的钥匙
         let m = master_from_passphrase(&c, "对端口令八个字").unwrap().unwrap();
