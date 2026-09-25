@@ -212,6 +212,23 @@ export const GATES = [
   },
 
   {
+    id: "check-prism-components",
+    group: "contract",
+    label: "代码块高亮只有一条装配路径（不许再有 vendored 的 Prism script）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒（只读 index.html ＋ 两个源文件 ＋ 目录是否还在）。
+    cmd: "node scripts/check-prism-components.mjs",
+    incident:
+      "2026-09-25 清冗余文件时实测：仓库里本来有**两条并行的 Prism 装配路径** —— " +
+      "① `index.html` 里 10 行 `<script src=\"prism/prism-*.js\">` ＋ `public/prism/` 下 10 份 vendored 组件（77 KB，且是**阻塞式** script）；" +
+      "② `src/editor/prismSetup.ts`（`Editor.tsx` 启动时 import）：prismjs 核心 ＋ 16 个组件 ＋ `window.Prism ??= Prism` —— 它自己的注释就写着 " +
+      "\"independent of the index.html plain <script> loading\"。两条路做的事完全重合 ⇒ ①是纯冗余。" +
+      "真 Chromium 实测（把①整条去掉后重新加载）：`window.Prism` 照旧能 highlight json / rust / sql / go / markdown、页面零 JS 报错 ⇒ 已删。" +
+      "⚠️ 本门禁的第一版把方向判反了（写成「vendored ⇒ 必须在 index.html 里被加载」）：那条规则会**逼着**冗余的第二条路继续存在，" +
+      "而它唯一的「证据」（`prism-json.js` 没被加载）真相是**两条路都不该有①** —— 先量事实再写判据，这条留作记录。" +
+      "另有**只报告不判红**的静态对账：选择器列了、而 `prismSetup.ts` 没显式 import 的语言（今天 markdown / yaml）。",
+    registered: "2026-09-25",
+  },
+  {
     id: "check-store-subscriptions",
     group: "contract",
     label: "Zustand 订阅粒度（组件不许整店订阅；只减不增）",

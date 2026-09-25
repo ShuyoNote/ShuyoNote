@@ -56,6 +56,19 @@
   ⚠️ 顺带查出一处**真缺口**（不是死代码，所以留了收据而不是删掉）：**收侧没有 `observe`** ——
   对端时钟快时，"因果上更晚的改动"会判给远端。修法要单独一片，判据写在 `hlc.rs::observe` 上方。
 
+- **删掉一份重复的图标（清冗余文件）**：`public/icons/mark.svg` 与设计母版
+  `design/logo/shuyonote-mark.svg` **逐字节相同**（`sha256 5D64933A…`），而 `manifest.webmanifest`
+  与 `index.html` 列出的每一份图标里都**没有它** —— 「关于」对话框早就改成内联 SVG（理由写在
+  `AboutDialog.tsx` 里：桌面端取不到那个绝对路径）⇒ 它只是那次改动留下的副本，而 `public/` 是
+  整目录进产物的，每个用户白下一份。审计口径：把"没人按任何写法引用过"与"与保留文件逐字节相同"
+  两条**同时**成立才算冗余（同类里 `signed-plugin-alt.zip` 与 `signed-plugin.zip` 也逐字节相同，
+  但那是**有意**的 —— 同一份包被两把不同密钥各签一次，`tests/fixtures/README.md` 写着理由）。
+
+- **新增门禁 `check-prism-components`**：**代码块高亮只许有一条装配路径**（`src/editor/prismSetup.ts`
+  的模块化 import）—— `public/prism/` 下不许再有 vendored 组件、`index.html` 里不许再有
+  `<script src="prism/…">`；另有只报告不判红的静态对账（选择器列了、而 `prismSetup.ts` 没显式
+  import 的语言，今天 markdown / yaml）。它起于下面那条真事，自测 8 条含两条变异实测。
+
 ### 修复
 
 - **拖动页面树时不再重渲染整个侧栏**。跟着光标走的那个拖影原先写在 `PageTree` 内部，而它订阅的
@@ -102,6 +115,22 @@
   不依赖 Chromium）。**变异实测**：把两组改回两个绝对角标 ⇒ (6c) 当场红，报的正是那 111.5 × 27px。
   ⚠️ 图片预览今天**只接了 wheel**（触屏放不大）—— 那是另一件事（捏合缩放），CSS 里留了那句
   "真接上时改成只显示百分比"的删除条件，不把"窄屏藏了提示"说成"窄屏故意没有缩放"。
+
+- **代码块高亮本来有两条并行的装配路径，删掉其中冗余的那一条**（清冗余文件时翻出来的）。
+  `index.html` 里 10 行 `<script src="prism/prism-*.js">` ＋ `public/prism/` 下 10 份 vendored 组件
+  （**77 KB**，而且是**阻塞式** script），与 `src/editor/prismSetup.ts`（`Editor.tsx` 启动时 import：
+  prismjs 核心 ＋ 16 个组件 ＋ `window.Prism ??= Prism`，注释自己就写着 "independent of the index.html
+  plain `<script>` loading"）**做的事完全重合**。判据不是读注释，是**真 Chromium 里量**：把前一条
+  整条去掉、重新加载，`window.Prism` 照旧能 highlight `json` / `rust` / `sql` / `go` / `markdown`
+  （token 都出来了）、页面零 JS 报错 ⇒ 那 10 个文件与 10 行 script 是纯冗余，已删，并由新门禁
+  `check-prism-components` 钉住"别再长回来"。
+  ⚠️ 记一笔我自己的弯路：这条链我先按"文件在、没人加载 ⇒ 是漏接线"判过一次（甚至把
+  `prism-json.js` 补回了 index.html），是运行期探针把它否掉的 —— **同一个能力有两条路时，
+  "某条路上少一环"未必是漏，往往是那条路本身就该消失**；第一版门禁还写成"vendored ⇒ 必须被加载"，
+  等于逼着冗余那条路继续存在。
+  ⚠️ 同批查出一个**静态对账**（门禁只报告不判红）：语言选择器列了 18 种语言，其中 `markdown` /
+  `yaml` 在 `prismSetup.ts` 里没有显式 import（运行期 `markdown` 实测可用 —— 静态看不到它从哪来，
+  所以不下结论，只摆出来）。
 
 ## [1.91.26] - 2026-09-23
 
