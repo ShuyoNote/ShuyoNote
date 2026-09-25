@@ -76,7 +76,9 @@ pub struct LanAnnounce {
     /// 该 `hub_base` 服务的空间（**远端 `space_id`**，见模块头口径 1）。
     #[serde(default)]
     pub hub_spaces: Vec<String>,
-    /// 身份指纹。本片只透传与展示（配对/防呆留给 B 片）。
+    /// 身份指纹。★ **＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：
+    /// 填的是**应用级事实**（设备标识），**不是**"设备密钥材料的指纹" ——
+    /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
     #[serde(default)]
     pub fp: String,
 }
@@ -257,6 +259,12 @@ fn is_private_ipv4(host: &str) -> bool {
 ///
 /// 取 `Option` 而不是"尽力产出"：**没资格时代言就该是空的** —— 往网段里灌一条永远不会被
 /// 采纳的公告，会让别人状态行里的「发现 N 台」虚高。
+///
+/// ★ **`fp` ＝ `device_id`**（owner 2026-09-25 拍板，B 片施工单 §8.3）：字段注释原话说"本片只透传
+/// 与展示（配对/防呆留给 B 片）"，现在这一半补上了。⚠️ **它填的是应用级事实 `device_id`，不是
+/// "设备密钥材料的指纹"** —— 理由三条：① 它已经在服务端与公告里流通，不是新暴露面；
+/// ② 稳定（轮换钥匙不会让用户看到"设备名变了"）；③ 它要挡的是**掉包**，不是"同一台设备换了钥匙"。
+/// 真需要后者时那是**另一条判据、另立字段**，不许把 `fp` 的语义悄悄改掉。
 pub fn announce_for_own_hub(
     local_device_id: &str,
     device_name: &str,
@@ -281,8 +289,8 @@ pub fn announce_for_own_hub(
         device_name: device_name.trim().to_string(),
         hub_base: Some(base.to_string()),
         hub_spaces: vec![space.to_string()],
-        // 指纹属于 B 片（配对/防呆）；本片只透传，所以留空而不是编一个假的。
-        fp: String::new(),
+        // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
+        fp: dev.to_string(),
     })
 }
 
@@ -804,6 +812,30 @@ mod tests {
         // 没有设备身份 / 没有空间身份 ⇒ 代言不成立（空身份只会产出没人能用的公告）。
         assert!(announce_for_own_hub("", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
         assert!(announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "  ").is_none());
+    }
+
+    /// ★ 判据 ⑰（B 片施工单 §8.3 的收口）：**`fp` 真的填了，且填的是 `device_id`**。
+    ///
+    /// 这条口径是 owner 2026-09-25 拍的：`fp` ＝ **应用级事实 `device_id`**（设备标识），
+    /// **不是**"设备密钥材料的指纹"。三个理由：① 它已经在服务端与公告里流通，不是新暴露面；
+    /// ② 稳定（轮换钥匙不会让用户看到"设备名变了"）；③ 它要挡的是**掉包**。
+    ///
+    /// 为什么值得钉：字段一直在协议里、只是一直是空串 ⇒ **谁都没发现它没接线**。
+    /// 而真需要"密钥材料指纹"时，那是**另一条判据、另立字段** —— 这条同时挡住
+    /// "有人顺手把 `fp` 的语义换成密钥指纹"（那会让老接收方读到一串它解释不了的东西）。
+    #[test]
+    fn the_fingerprint_is_the_device_id_and_is_actually_filled() {
+        let a = announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "sp-1")
+            .expect("该代言");
+        assert_eq!(a.fp, "dev-me", "fp 必须就是 device_id（不是密钥材料指纹）");
+        assert_eq!(a.fp, a.device_id, "两者是同一个应用级事实，不许各填一份");
+        // 前后空白照 trim（与 device_id 同一把尺，免得出现"身份一样但 fp 字符串不同"）
+        let b = announce_for_own_hub("  dev-me  ", "本机", "http://192.168.1.5:8787", "sp-1")
+            .expect("该代言");
+        assert_eq!(b.fp, "dev-me");
+        assert_eq!(b.fp, b.device_id, "trim 之后两者也必须一致");
+        // 空身份 ⇒ 根本产出不了公告（这条与判据 ⑫ 同一支），所以不存在"fp 是空串"的合法产出
+        assert!(announce_for_own_hub("   ", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
     }
 
     /// ★ 判据 ⑬：状态行要能把**三件处置不同的事**分开 —— 走了局域网 / 网段里什么都没有 /

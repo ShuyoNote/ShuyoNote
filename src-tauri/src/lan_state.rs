@@ -183,7 +183,10 @@ pub fn announces_for(
                 device_name: device_name.trim().to_string(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
-                fp: String::new(),
+                // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
+                //   **没资格代言**（`hub_base: None`），而 `fp` 留空会让它在"谁在说话"这件事上
+                //   完全隐形 —— 掉包判据要看的就是这个。
+                fp: dev.to_string(),
             });
         a.hub_spaces =
             if a.hub_base.is_some() { vec![space.to_string()] } else { Vec::new() };
@@ -422,6 +425,8 @@ mod tests {
         assert_eq!(got[1].hub_spaces, vec!["sp-2".to_string()]);
         assert_eq!(got[0].device_id, "dev-me");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
+        // ★ 代言那一条也带指纹（owner 2026-09-25 拍板：fp ＝ device_id）
+        assert_eq!(got[0].fp, "dev-me");
     }
 
     /// ★ 判据 ⑧：**"没在代言"也照样要发一条存在声明** —— 配置地址是公网时
@@ -435,6 +440,9 @@ mod tests {
         assert_eq!(got[0].hub_base, None, "公网地址 ⇒ 不代言");
         assert!(got[0].hub_spaces.is_empty(), "不代言就不带空间（`resolve_base` 只认 hub_base 那一条）");
         assert_eq!(got[0].device_id, "dev-me");
+        // ★ 存在声明**也带指纹**（owner 2026-09-25 拍板）：没资格代言的设备同样要说清"我是谁"，
+        //   否则它在"谁在说话"这件事上对 B 片的掉包判据完全隐形。
+        assert_eq!(got[0].fp, "dev-me", "`fp` 是 device_id，不是密钥材料指纹");
         // 空公告也要**是自己会收下的那种**（往返性质，见 `lan.rs` 判据 ⑫）
         let raw = crate::lan::encode_announce(&got[0]).unwrap();
         assert_eq!(crate::lan::decode_announce(&raw).unwrap(), got[0]);
