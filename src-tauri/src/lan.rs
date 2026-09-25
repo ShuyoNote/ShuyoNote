@@ -904,6 +904,70 @@ mod tests {
         );
     }
 
+    /// ★ 判据 ⑱（接线那一片的**端到端**）：**两台"设备"在真 socket 上互相发现，并一路走到地址解析**。
+    ///
+    /// 与判据 ⑦（`two_instances_find_each_other_over_a_real_datagram`）的差别：那条只验**一次**
+    /// 收发；这条把**生产那几件**串起来跑 —— `lan_state::announces_for`（产出侧，含
+    /// `bound_profile_count` / `announce_due` 那套口径）→ `announce_once`（真发）→
+    /// `recv_into_within`（真收，带超时）→ `LanState` 开关 → `resolve_base`（真路由）。
+    ///
+    /// ⚠️ 为什么值得单立一条：单测里每一件都绿，**接起来**却可能什么都不发生
+    /// （`fp` 空串那次就是"协议里那一格是空的而全线绿"的现实样本）。
+    /// ⚠️ 边界要说清：这里走的是**显式单播 ＋ 回环**（`127.0.0.1`），**不证明"广播在真网段里能到"**
+    /// —— 那要两台真机（见本文件 §判据 ⑦ 与施工单 §9 末尾那条如实记录）。
+    #[tokio::test]
+    async fn two_devices_discover_each_other_through_the_production_path() {
+        use crate::lan_state::{announce_due, announces_for, bound_profile_count, ANNOUNCE_INTERVAL_MS};
+
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let a_addr = a.local_addr().unwrap();
+        let b_addr = b.local_addr().unwrap();
+
+        // 两台设备各自的档案：地址是**私有网段** ⇒ 有资格代言（`announce_for_own_hub` 的尺）。
+        let profiles = vec![("sp-1".to_string(), "http://192.168.1.5:8787".to_string(), "ws".to_string())];
+        assert!(bound_profile_count(&profiles) > 0, "有绑定才该发声");
+
+        let st_a = crate::lan_state::LanState::new("dev-a".to_string());
+        let st_b = crate::lan_state::LanState::new("dev-b".to_string());
+        st_a.set_enabled(true);
+        st_b.set_enabled(true);
+
+        // ① 产出侧：两台各产一条（第一轮就该发 —— `announce_due(0, …)` 为真）。
+        let out_a = announces_for("dev-a", "A 的机器", &profiles);
+        let out_b = announces_for("dev-b", "B 的机器", &profiles);
+        assert_eq!(out_a.len(), 1);
+        assert_eq!(out_b.len(), 1);
+        assert!(announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS), "第一轮必须发声");
+        // ★ 产出侧带指纹（B 片 §8.3 的收口）：这条把"协议里那一格不是空的"也串进端到端。
+        assert_eq!(out_a[0].fp, "dev-a");
+        assert_eq!(out_b[0].fp, "dev-b");
+
+        // ② 真发（显式单播到对端，避免依赖广播）+ ③ 真收。
+        assert_eq!(announce_once(&a, &[b_addr], &out_a[0]).await.unwrap(), 1);
+        assert_eq!(announce_once(&b, &[a_addr], &out_b[0]).await.unwrap(), 1);
+        let got_b = recv_into_within(&b, &st_b, 2_000).await.unwrap().expect("B 应当收到 A");
+        assert_eq!(got_b.announce.device_id, "dev-a");
+        assert_eq!(got_b.addr, "127.0.0.1");
+        let got_a = recv_into_within(&a, &st_a, 2_000).await.unwrap().expect("A 应当收到 B");
+        assert_eq!(got_a.announce.device_id, "dev-b");
+
+        // ④ 后置条件：生产代码判"还在不在"用的是**真实时钟**（`crate::db::now_ms()`）——
+        //    这里不去推时钟，就按真的来（判据不该靠人造时间；TTL 那两支另有判据 ⑩）。
+        let now = crate::db::now_ms();
+        assert_eq!(st_a.peers(now).len(), 1, "A 的表里应当有 B（且开关是开的）");
+        assert_eq!(st_b.peers(now).len(), 1);
+
+        // ⑤ 一路走到路由：这次同步**真的**会走局域网那一档。
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", &st_a.peers(now)).unwrap();
+        assert_eq!(route.url, "http://192.168.1.5:8787");
+        assert_eq!(route.kind, LinkKind::Lan);
+        // 状态行也要如实说出"直连"与中枢名字（施工单 §2 ④）。
+        let line = status_line(Some(&route), &st_a.peers(now), "sp-1", 1);
+        assert!(line.contains("直连（局域网）"), "{line}");
+        assert!(line.contains("B 的机器"), "要点出中枢是谁：{line}");
+    }
+
     /// ★ 判据 ⑮（接线那一片的收口）：**"关掉＝看不见"必须一路穿透到地址解析** ——
     /// 用**真的** `LanState`（不是假的对端列表）走一遍：没启用 ⇒ `peers()` 空 ⇒
     /// 解析结果与"网段里一个人都没有"**逐字节相同**。

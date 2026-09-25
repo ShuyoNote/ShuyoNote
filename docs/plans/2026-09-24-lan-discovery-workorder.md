@@ -160,12 +160,15 @@ owner 2026-09-25 对「待拍清单」逐条拍了板。下面四条**就是接�
 | 收口（4 处各一条） | `a_discovered_hub_moves_the_push_url_to_the_lan_address`／`…pull_url_and_keeps_its_filters`／`…lineage_claim_url_too`／`…stream_url_to_the_lan_address` | 4 passed（＋附件那条 `…attachment_base…` 共 5 条一起绿） |
 | 逐字节不变 | `with_nothing_discovered_the_base_is_byte_identical_to_today` | 1 passed |
 | 启动循环（纯函数） | `we_only_speak_up_when_some_space_is_actually_bound`／`a_half_configured_profile_does_not_count_as_bound`／`we_announce_only_the_spaces_that_are_actually_bound`／`a_device_with_nothing_to_vouch_for_still_says_it_is_here`／`the_peer_ttl_outlives_the_announce_interval` | `lan_state::` **9 passed / 0 failed** |
-| 收 ＋ 解析打通 | `two_instances_find_each_other_over_a_real_datagram`（真 UDP）／`a_disabled_state_resolves_exactly_as_if_nobody_were_on_the_network` | `lan::` **16 passed / 0 failed** |
+| 收 ＋ 解析打通 | `two_instances_find_each_other_over_a_real_datagram`（真 UDP）／`a_disabled_state_resolves_exactly_as_if_nobody_were_on_the_network` | `lan::` **17 passed / 0 failed** |
+| ★ **端到端（生产那几件串起来跑）** | `two_devices_discover_each_other_through_the_production_path`：产出侧（`announces_for` ＋ `bound_profile_count` ＋ `announce_due`，**含 `fp`**）→ 真发 → 真收（`recv_into_within`，带超时）→ 开关 → `resolve_base` → 状态行说"直连（局域网）＋ 中枢名字" | 1 passed（⚠️ 边界：走的是**显式单播 ＋ 回环**，**不证明"广播在真网段里能到"**） |
 | 状态行的两个新口径 | `the_line_tells_apart_seen_now_from_seen_before`（来过又走了）／`the_status_line_reports_the_space_that_was_actually_asked_for`（报哪个空间） | 各 1 passed |
 
 > ⚠️ **本片没做的**（别读成"局域网已经做完了"）：**不做内嵌接待窗口**（甲-2，§8 ③ 先不排）；
-> 真机两台互看**没跑**（本机只有一条网线/一块网卡，广播那条路按 `win-cargo-test` 只在回环上验过）；
-> 手填地址之外的**发现入口**（二维码/短码）是 B 片；`fp`（指纹）仍只透传、不参与任何判定。
+> 真机两台互看**没跑**（本机只有一条网线/一块网卡 —— 新增的端到端那条判据也只走**回环单播**，
+> 它证明的是"生产那几件接得起来"，**不是**"广播在真网段里能到"）；
+> 手填地址之外的**发现入口**（二维码/短码）是 B 片；`fp` 已按 owner 2026-09-25 拍板填成
+> `device_id`（B 片施工单 §8.3），但**仍不参与任何路由判定**（只透传与展示）。
 
 
 > ⚠️ 已接的那两处留下的**判据样板**，后面 4 处可以直接照抄（`sync::tests`）：
