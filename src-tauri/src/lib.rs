@@ -71,6 +71,9 @@ mod models;
 mod net;
 // 局域网发现（甲-1 纯函数内核）：见 [`lan`] 模块头 —— UDP 收发与「代言」在下一片接线。
 mod lan;
+// 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
+// ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
+mod pairing;
 mod capabilities_gen;
 // MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
 // PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
