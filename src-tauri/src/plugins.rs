@@ -555,7 +555,7 @@ pub(crate) struct Manifest {
     #[serde(default)]
     description: String,
     #[serde(default)]
-    #[allow(dead_code)] // parsed manifest metadata; not currently surfaced
+    #[allow(dead_code)] // 2026-09-25 收据：清单里**有**这个字段，解析进来是为了"不因多一个字段就拒收"；产品里还没展示它。删除条件 = 展示它，或确认清单规范里没有它
     author: Option<String>,
     #[serde(default = "default_main")]
     main: String,

@@ -21,6 +21,12 @@ mod gm_provider;
 // 「哪份 SQLCipher 源码 / 有没有 SM3 标记」的解析 —— **同一份代码被 `build.rs`（`include!`）与本 crate
 // 的判据共用**，免得"构建期判据"和"判据里的判据"各写一份、各自漂移
 // （2026-09-19 macOS 侧的受控实验证明第一版取法错了：按 mtime 挑版本会挑到陈旧副本）。
+//
+// ★ **2026-09-25 清理**：这个模块在产品二进制里**根本不需要存在** —— 它在本 crate 里唯一的使用者
+// 就是判据（构建期那一半走的是 `build.rs` 的 `include!`，那是**另一次编译**，与本行无关）
+// ⇒ 声明成 `#[cfg(test)] mod` 比"整模块 `#[allow(dead_code)]`"更诚实：不是"编进来了但没人用"，
+// 而是"没编进去"。8 处逐项豁免（5 个 `#[allow]` ＋ 3 个 `cfg_attr`）随之全部删除。
+#[cfg(test)]
 mod gm_patch_probe;
 mod database;
 mod db;
@@ -42,13 +48,13 @@ mod lineage_conflict;
 // **丙（真网状）**：**HLC 判序** —— 纯函数（`tick` / `observe` / 全序 / 定长可排序编码）
 // ＋ LWW 折叠与投影 ＋ **戳挂到记录载荷上**（丙-②）。它替掉的是"只能由一个地方发"的 `changes.seq`，
 // 见 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §4/§6 与 §12/§13。
-// ⚠️ 下面那行 `allow` 是**"还没全接线"的收据**，不是长期豁免 —— 现在的实况（2026-09-25，丙-③-a）：
-//   · **已经在用**：`Hlc` / `with_stamp` / `stamp_of_payload` / `PayloadStamp` / `Verdict` / `verdict`
-//     （`sync.rs` 的页 upsert 与收侧判序都走它们）；
-//   · **还只有判据在用**：`StampedRecord` / `merge_record` / `projection` / `winner` / `without_stamp`
-//     —— 前者是**仿真夹具**那一族（`mesh_sim.rs`），`without_stamp` 要等"内容比较那一处"接上。
-//   ⇒ 等 ③-b 或内容比较那一处接完，逐条核一遍再删这一行（与 `lan.rs` 当初同一条纪律）。
-#[allow(dead_code)]
+// ★ **2026-09-25 清理**：③-b 落地后按 `hlc.rs` 文件头那张清单**逐条核了一遍**，"还没全接线"的
+// 模块级 `#[allow(dead_code)]` 收据**已撤**（收据兑现了：那时写着"等 ③-b 接完再核"）：
+//   · **产品路径在用**：`Hlc` / `with_stamp` / `stamp_of_payload` / `PayloadStamp` / `Verdict` / `verdict`
+//     （`sync.rs` 的页 upsert 与收侧判序、`mesh.rs` 的对等交换面）；
+//   · **只服务判据与仿真夹具**：`StampedRecord` / `merge_record` / `projection` / `winner` /
+//     `without_stamp` —— 各自在 `hlc.rs` 里带 `#[cfg(test)]`（夹具 `mesh_sim.rs` 本身也在测试里）。
+//     哪天内容比较那一处真接上 `without_stamp`，就把那一条 `#[cfg(test)]` 摘掉（而不是复活整模块豁免）。
 mod hlc;
 // 丙 的**仿真夹具**（N 对端 / 乱序 / 重复 / 无中枢）—— 只在判据里用，**不进产品二进制**。
 // 真机验不了"任意投递顺序"，所以收敛这条承重判据必须先在这里可编排、可复现。

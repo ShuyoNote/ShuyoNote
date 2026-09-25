@@ -143,7 +143,7 @@ MuPDF 的公开面只有 `has_document`/`forget`/`render_page`/`compact_rgba` �
 | 平时 | 默认构建**根本不编 MuPDF** ⇒ 少一个重量级 C 依赖（构建、体积、供应链、一处 unsafe FFI） |
 | 回滚 | `cargo build --release --features mupdf-rollback`（或 `pnpm tauri build --features mupdf-rollback`）重编一次即可；`SHUYONOTE_PDF_ENGINE=mupdf` 语义不变 |
 | 没编时的行为 | 显式要 MuPDF **不静默换 PDFium、也不 panic**，而是回一句能照着做的话（`commands::MUPDF_NOT_COMPILED`：点名 `mupdf-rollback` ＋ 当下用 `pdfium`） |
-| 判据 | `commands::pdf_engine_tests` **4 → 5 条**：新增 `asking_for_mupdf_says_what_to_do_when_the_feature_is_off`（两种构建各断言自己那一半；`mupdf_compiled()` 必须等于 `cfg!(feature)`）；P3 对拍模块 `pdf_engine_compare` 改成 `#[cfg(all(test, feature = "mupdf-rollback"))]`（它同时用两个引擎，没编 MuPDF 时没有意义） |
+| 判据 | `commands::pdf_engine_tests` **4 → 5 条**：新增 `asking_for_mupdf_says_what_to_do_when_the_feature_is_off`（两种构建各断言自己那一半；`mupdf_compiled()` 必须等于 `cfg!(feature)`）；P3 对拍模块 `pdf_engine_compare` 改成 `#[cfg(all(test, feature = "mupdf-rollback"))]`（它同时用两个引擎，没编 MuPDF 时没有意义）<br>⚠️ **2026-09-25 清理（原记录不改，改的是代码）**：`mupdf_compiled()` 已删 —— 它的 body 就是 `cfg!(feature = "mupdf-rollback")`，那句"必须等于 `cfg!(feature)`"因此是 `assert_eq!(cfg!(f), cfg!(f))`，**恒真、零覆盖**；函数在非测试构建里也没有调用点。"编没编"现在由 `ensure_mupdf_available()` 的两份 cfg 实现回答，判据直接对着它断言（放行 / 拒绝＋出路，两种构建各跑一边） |
 
 **为什么不是"直接删"**：删了就没有退路，而 §4 的"渲染等价"里中文/扫描件两类**仍未完全达成**、
 macOS 装完开 PDF 与 Android 真机开 PDF**都还没验**。这一步把"背不背它"从**产品决定**降成**构建参数**：

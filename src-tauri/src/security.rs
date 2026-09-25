@@ -1187,7 +1187,6 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let salt = crypto::random_salt();
         let key = crypto::derive_key("hunter2", &salt).unwrap();
-        let hex = crypto::key_hex(&key);
 
         // 明文源：**用真 app schema**（`rebuild_space_db` 是按表名整表拷贝的，列数必须对得上）。
         let src = dir.join("default.db");
@@ -2028,14 +2027,6 @@ mod tests {
     // A raw SQLCipher key (x'hex') created on one connection is readable on a fresh
     // connection with the same key and fails with a wrong key — the disk-encryption
     // foundation that convert_space_db builds on.
-    /// 夹具的**生成器**（默认不跑；`--ignored` 手动跑）。它刻意留在仓库里，因为夹具必须在
-    /// "**另一种后端**"下才能重新生成 —— 那是 ⑤ 的验收条件之一，别人要复现得知道怎么造。
-    ///
-    /// ⚠️ 生成时必须确认当时编进去的是哪个后端（`node scripts/check-crypto-backend.mjs`）：
-    /// 这份夹具要的是"**macOS 默认（CommonCrypto）写下的密文**"，换后端之后不要拿新后端重生成它，
-    /// 否则"换后端前后旧库仍可读"这条判据就变成了"用同一个后端验证自己"。
-    #[test]
-    #[ignore = "夹具生成器（手动跑；须核对当时编入的后端）"]
     /// **SM4 页**夹具生成器（2026-09-20，配合补丁 v3「无条件 SM4 页加密」）。
     ///
     /// ⚠️ **必须在"页加密＝SM4"的构建里跑**（`scripts/sm-library-build.mjs --openssl-dir <Tongsuo>`
@@ -2076,6 +2067,19 @@ mod tests {
         assert!(n > 4096, "夹具太小，像个空库：{n} 字节");
     }
 
+    /// 夹具的**生成器**（默认不跑；`--ignored` 手动跑）。它刻意留在仓库里，因为夹具必须在
+    /// "**另一种后端**"下才能重新生成 —— 那是 ⑤ 的验收条件之一，别人要复现得知道怎么造。
+    ///
+    /// ⚠️ 生成时必须确认当时编进去的是哪个后端（`node scripts/check-crypto-backend.mjs`）：
+    /// 这份夹具要的是"**macOS 默认（CommonCrypto）写下的密文**"，换后端之后不要拿新后端重生成它，
+    /// 否则"换后端前后旧库仍可读"这条判据就变成了"用同一个后端验证自己"。
+    ///
+    /// ★ 2026-09-25：这一段文档与下面两行属性**一度被留在了上一个函数下面**（函数自己丢了它们）
+    /// ⇒ ① `gen_sm4_page_fixture` 带上两个 `#[test]`、被 libtest **注册两遍、跑两遍**；
+    /// ② 这个生成器彻底不可达（一条 `never used` 告警），而两条判据的注释还指着它。
+    /// 判据 `the_manual_fixture_generators_keep_their_attributes_next_to_them` 钉住这一格。
+    #[test]
+    #[ignore = "夹具生成器（手动跑；须核对当时编入的后端）"]
     fn gen_backend_fixture() {
         let hex = crypto::key_hex(&[7u8; 32]);
         let key_sql = format!("PRAGMA key = \"x'{hex}'\";");
@@ -2119,6 +2123,39 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// ★ 三个**手动夹具生成器**的文档与属性必须紧挨着**各自的**函数。
+    ///
+    /// 2026-09-25 实测过一次腐化：`gen_backend_fixture` 的那两行属性与那段文档被留在了**上一个函数**
+    /// 下面（函数自己丢了它们）⇒ ① `gen_sm4_page_fixture` 带上两个 test 属性、被 libtest
+    /// **注册两遍、跑两遍**；② `gen_backend_fixture` 彻底不可达（一条 `never used` 告警），
+    /// 而两条判据的注释还指着它"生成器见 …"。这种腐化**不报错、只是安静地多做/少做**，
+    /// 所以只能靠判据钉住它。
+    ///
+    /// ⚠️ 这条判据**不靠读告警**（告警不是门禁）：它数每个生成器**上方那一小段**里的属性行个数。
+    /// 数的是**行首带缩进的属性行**（不是任意出现）—— 否则下面断言里那些提到属性名的散文也会被数进去。
+    #[test]
+    fn the_manual_fixture_generators_keep_their_attributes_next_to_them() {
+        let src = include_str!("security.rs");
+        for name in ["gen_legacy_db_fixtures", "gen_sm4_page_fixture", "gen_backend_fixture"] {
+            let at = src
+                .find(&format!("fn {name}()"))
+                .unwrap_or_else(|| panic!("生成器不见了：{name}"));
+            // 往前取 400 个**字符**：`&str` 按**字节**切会在多字节字符中间 panic。
+            let start = src[..at].char_indices().rev().nth(400).map(|(i, _)| i).unwrap_or(0);
+            let window = &src[start..at];
+            assert_eq!(
+                window.matches("\n    #[test]").count(),
+                1,
+                "{name} 上方必须**恰好一个** test 属性（两个 ⇒ libtest 会把它跑两遍）"
+            );
+            assert_eq!(
+                window.matches("\n    #[ignore").count(),
+                1,
+                "{name} 上方必须**恰好一个** ignore 属性（丢了它就成了自动跑的夹具生成器）"
+            );
+        }
+    }
+
     /// ★★ **生成"老库"夹具**（默认不跑；`--ignored` 手动跑；owner 2026-09-24 拍板）。
     ///
     /// 为什么要它：连着三个 bug 都是"**只有老库才会中**"（`meta.workspaces.kind` 漏 ALTER、
@@ -2129,7 +2166,11 @@ mod tests {
     ///
     /// ⚠️ 夹具**刻意取最早的列集**（meta 的 workspaces 只有 4 列、空间库的 pages 停在 11 列），
     /// 也就是比任何真实历史文件都更老 —— 判据要的正是"迁移必须把缺的列**一个不落**地补上"。
+    ///
     /// ⚠️ 重生成前先想清楚：这两份文件是**判据的输入**，改了它们等于换了判据。
+    ///
+    /// ★ 2026-09-25：这三个**手动夹具生成器**的文档与属性必须紧挨着**各自的**函数 ——
+    /// 上面那条同名判据（在本段之前）就是为此加的，理由写在它自己的注释里。
     #[test]
     #[ignore = "夹具生成器（手动跑；须确认 DDL 就是想要的\"老库\"形状）"]
     fn gen_legacy_db_fixtures() {

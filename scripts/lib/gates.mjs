@@ -223,6 +223,23 @@ export const GATES = [
       "叠加「自动保存（600ms 去抖）每次都 `updateCurrent()` ＋ `loadPages()` 全量重拉」⇒ 打一次字停 1 秒就唤醒 ~24 个树节点实例，外加 DatabaseView(1751 行) / FileManagerView(1208 行) / SyncPanel(1071 行) / GraphView / CommandPalette 一起重跑 render。" +
       "它与 check-hook-order 同族：**不炸、不报错、测试全绿**，只是安静地多渲染；写的人也没写错，是没人告诉过他「这行是订阅」⇒ 只能靠机器判据钉住（判据是**订阅关系**，不是渲染耗时，边界写在脚本头部）。",
   },
+  {
+    id: "check-dead-code-receipts",
+    group: "contract",
+    label: "死代码收据（`allow(dead_code)` 必须带日期 ＋ 删除条件）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒（只读 `src-tauri/src` 与 `build.rs` 的文本）。
+    // ⚠️ 它**不判**理由好不好、也不判那段代码该不该留：它只保证"有人签过字"（边界写在脚本头部）。
+    cmd: "node scripts/check-dead-code-receipts.mjs",
+    incident:
+      "2026-09-25 给「清掉编译器报的死代码」收尾时做了一轮全仓稽查，发现的不是「有几个警告要修」，而是**这一整类东西没人管**（`allow(dead_code)` 不产生任何输出，所以过期了也没人会去看）：" +
+      "① `sync.rs::IncomingChange.seq` 挂着豁免，而它其实被生产代码读了 8 处 —— 豁免早就过期；" +
+      "② `commands.rs::mupdf_compiled()` 的 body 就是 `cfg!(feature)`，唯一使用者是一条 `assert_eq!(cfg!(f), cfg!(f))` 的**空转判据** —— 死代码还自己长了一条判据；" +
+      "③ `security.rs` 一次「文档与属性被留在上一个函数下面」的事故让一个夹具生成器被 libtest **注册两遍**（跑两遍），另一条生成器彻底不可达；" +
+      "④ `build.rs` 里留着一份搬走后的 `find_gm_marker_deprecated` 副本，靠无名无期的豁免挂着（本次删除）。" +
+      "共同点：**一行豁免就让一整块东西免检**。本门禁把纪律变成断言：每处豁免要么删掉、要么门进 `#[cfg(test)]`、要么写一句 `// ★ YYYY-MM-DD 收据：为什么留 ＋ 什么时候删`。" +
+      "⚠️ 命中必须**在代码里**（复用 `lib/rust-scan.mjs` 掩码）：仓里有十几处注释**在讲**这件事，grep 式扫描会把它们全算成违规（自测里有这一格）。",
+    registered: "2026-09-25",
+  },
 
   // ---- smoke ----
   { id: "tsc", group: "smoke", label: "类型检查（tsc --noEmit）", cmd: "pnpm exec tsc --noEmit" },

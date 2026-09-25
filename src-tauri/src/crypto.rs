@@ -41,6 +41,9 @@ pub const CURRENT_FORMAT: u8 = VERSION_XCHACHA;
 pub const HEADER_LEN: usize = 2;
 
 /// base64（标准字母表）—— 载荷/密文的文本形态。★ 应用级加密删掉之后只剩判据在用（同上）。
+///
+/// ⚠️ **2026-09-25 清理**：收据补日期。删除条件 = 连"文本形态的 base64"都不再有判据要用它的那天
+/// （`b64_decode` 仍有生产调用方，这一对是**成对保留**，别只删一半）。
 #[allow(dead_code)]
 pub fn b64_encode(data: &[u8]) -> String {
     B64.encode(data)
@@ -67,6 +70,7 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
 /// panic 信息、错误上报里（那种泄漏一旦发生就收不回来）。要比对就在测试里比字段。
 // 默认构建（不带国密 feature）里这两个字段**构造得出来但没人读** —— 刻意如此：
 // `derive_sm_keys` 在那种构建下恒返回 `None`，而类型形状保持一致能让上层代码不分叉。
+// ⚠️ **2026-09-25 清理**：收据补日期。删除条件 = `sm-crypto` 不再是可选特性那天（那两行豁免一起删）。
 #[cfg_attr(not(feature = "sm-crypto"), allow(dead_code))]
 #[derive(Clone, Copy)]
 pub struct SmKeys {
@@ -77,6 +81,7 @@ pub struct SmKeys {
 }
 
 /// 一次会话手里的应用层密钥材料（同样**不派生 `Debug`**，理由见 `SmKeys`）。
+// ⚠️ **2026-09-25 清理**：收据补日期（与 `SmKeys` 同一条件、同一天）。
 #[cfg_attr(not(feature = "sm-crypto"), allow(dead_code))]
 #[derive(Clone, Copy)]
 pub struct AppKeys {

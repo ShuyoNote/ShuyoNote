@@ -527,7 +527,6 @@ struct PushRequest {
 
 #[derive(Deserialize)]
 pub(crate) struct IncomingChange {
-    #[allow(dead_code)]
     pub(crate) seq: i64,
     pub(crate) entity: String,
     pub(crate) entity_id: String,
@@ -4312,7 +4311,7 @@ mod tests {
         }
 
         // ⑤ 连那个空间的盒子都没有时，也要是一句人话（不是 panic、更不是空钥匙）
-        let mut empty = crate::keyring::Keyring::new();
+        let empty = crate::keyring::Keyring::new();
         let m_empty = empty.kdf.derive_master("空袋口令八个字").unwrap();
         let e = empty.unwrap_key(&m_empty, "default").unwrap_err();
         assert!(e.contains("没有空间"), "{e}");

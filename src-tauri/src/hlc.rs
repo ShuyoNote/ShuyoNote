@@ -26,20 +26,28 @@
 //!   别把 HLC 当时间审计用（`wall_ms` 不是可信时间）。
 //! - **它还没接线**：本片只落纯函数与判据，产品路径一行没动（接线清单见文件末 §接线）。
 //!
-//! ## §接线（决策简报 §13）—— 2026-09-25 的实况
+//! ## §接线（决策简报 §13）—— 2026-09-25 清理后的实况
 //!
-//! **② ＋ ③-a 已落**（纯函数那一半在上面，接线在 `sync.rs`）：
+//! **② ＋ ③-a ＋ ③-b 都已落**（纯函数那一半在上面，接线在 `sync.rs` / `mesh.rs`）：
 //! 1. **推那一侧**：`sync::record_page_upsert` 给页 upsert 挂上本机戳
 //!    （`sync::local_stamp` ⇒ `with_stamp`），并把"本页当前那枚戳"记进 `meta.sync_state` 的 KV；
 //! 2. **收那一侧**：`sync::apply_pulled_changes` 解密后 `stamp_of_payload` ⇒ `verdict`；
 //!    `ByStamp` 才按戳判（注入点是 `doc_content::merge_with_stamp` —— **唯一的合并点**），
-//!    `Today` 就**原样走今天那条路**并把原因**留痕**（`eprintln!("[sync] …")`，与 F7b 同一手法）。
+//!    `Today` 就**原样走今天那条路**并把原因**留痕**（`eprintln!("[sync] …")`，与 F7b 同一手法）；
+//! 3. **对等交换面（③-b）**：`mesh.rs` 让客户端之间直接收发带戳的记录（`serve_own_records` /
+//!    `absorb_peer_batch` / per-peer 水位）—— 那一格 ★"去掉中枢仍然收敛"由仿真夹具承重。
+//!    随之，`lib.rs` 里原先那行模块级 `#[allow(dead_code)]` 收据**已撤**（收据的删除条件兑现了）。
 //!
-//! **③-b 还没做**（＝简报 §13 那一格 ★"去掉中枢仍然收敛"）：
-//! 1. **对等交换面**：客户端之间直接收 / 发带戳的记录（今天仍然经中枢的 `push` / `pull`）；
-//! 2. `sync_profiles.last_pushed_seq` 那套水位推广成 **per-peer**（"我见过 A 到某时某刻"）；
-//! 3. 把 `StampedRecord` / `merge_record` / `projection` / `without_stamp` 接上
-//!    （或认定它们只服务仿真夹具），然后删掉 `lib.rs` 里 `mod hlc;` 上面那行 `#[allow(dead_code)]`。
+//! ★★ **清理时查出的一处真缺口（2026-09-25）**：**收侧没有 `observe`**。`apply_pulled_changes`
+//! 拿到远端戳之后只做了 `verdict`，**没有把本机时钟推过它** ⇒ 对端时钟快时，本机随后的一次编辑
+//! 可能拿到**小于**刚收到那枚戳的新戳，于是"因果上更晚的改动"在 `verdict` 里反而判给远端。
+//! `Hlc::observe` 因此今天**没有产品调用方**，它带着一条有日期的收据（删除条件写在函数上方）。
+//! ⇒ 这是**接线缺口，不是可以删的死代码**；修它要单独一片（含"时钟快一小时的对端也压不住后续本地编辑"这条判据）。
+//!
+//! **只服务判据与仿真夹具的那一族**（各带 `#[cfg(test)]`，产品二进制里根本不存在）：
+//! `StampedRecord` / `winner` / `merge_record` / `projection` / `without_stamp`（夹具见 `mesh_sim.rs`）
+//! ＋两个取值器 `Hlc::counter` / `Hlc::device_id`。真接上它们那天把对应的 `#[cfg(test)]` 摘掉 ——
+//! **别再退回模块级豁免**（那会盖住真死码）。
 //!
 //! ⚠️ **不新开 schema 列**：戳随**载荷**走（`_hlc` 这一项），老对端读不懂就忽略 ——
 //! 与 `crdt_wire` 把 `crdt_state` 挂在载荷上同一手法。`encode()` 那份"字典序 == HLC 序"的
@@ -91,6 +99,14 @@ impl Hlc {
     ///
     /// 这就是"因果一定在序里"的全部实现：`observe` 保证 `stamp(收) > stamp(发)`，
     /// 于是"先收到再改"的改动在任何一台设备上都会赢过"被收到的那一版"。
+    ///
+    /// ⚠️⚠️ **2026-09-25 的实况（清理时查出来的，不是清理顺手改的）**：这个函数**没有产品调用方** ——
+    /// `sync.rs` 收侧只做了 `stamp_of_payload` ⇒ `verdict`，**没把远端戳 `observe` 进本机时钟**。
+    /// 后果是上面那句话在**对端时钟快**时不成立：本机随后的一次编辑可能拿到小于刚收到那枚戳的新戳，
+    /// 于是"因果上更晚的改动"被判给远端。⇒ 这是**接线缺口，不是死代码**，所以留一条带日期的收据，
+    /// 而**不是**把它 `#[cfg(test)]` 掉（那正好会把缺口藏起来）。
+    /// 删除条件 = 收侧接上 `observe` **且**有一条判据：时钟快一小时的对端也压不住后续本地编辑。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn observe(&mut self, remote: &Hlc, now_ms: i64) -> Hlc {
         let now = now_ms.max(0);
         let max_wall = self.wall_ms.max(remote.wall_ms);
@@ -124,10 +140,14 @@ impl Hlc {
         self.wall_ms
     }
 
+    /// ⚠️ `counter` / `device_id` 两个取值器**只服务判据与仿真夹具**（产品路径只读 `wall_ms`）
+    /// ⇒ 各自带 `#[cfg(test)]`。真要按"同毫秒谁赢 / 这枚戳是谁发的"做产品判断时，把 `#[cfg(test)]` 摘掉。
+    #[cfg(test)]
     pub fn counter(&self) -> u32 {
         self.counter
     }
 
+    #[cfg(test)]
     pub fn device_id(&self) -> &str {
         &self.device_id
     }
@@ -172,6 +192,10 @@ impl Hlc {
 /// ⚠️ 这**不是** wire 格式，只是把语义钉死的最小形状：`id` 定身份、`stamp` 定版本、
 /// `tombstone` 定"这条是删除还是内容"。真正的 wire 还要带空间 / 类型 / 载荷编码，
 /// 那些属于接线那一片，本片不占坑。
+///
+/// ⚠️ **2026-09-25 清理**：这一族（含下面的 `winner` / `merge_record` / `projection`）今天**只服务
+/// 仿真夹具** `mesh_sim.rs` ⇒ 各自 `#[cfg(test)]`（产品二进制里不存在）。真接上时摘掉即可。
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StampedRecord {
@@ -182,6 +206,7 @@ pub struct StampedRecord {
     pub tombstone: bool,
 }
 
+#[cfg(test)]
 impl StampedRecord {
     pub fn upsert(id: impl Into<String>, stamp: Hlc, body: impl Into<String>) -> Self {
         StampedRecord { id: id.into(), stamp, body: body.into(), tombstone: false }
@@ -197,6 +222,7 @@ impl StampedRecord {
 /// 戳那一格在正常情况下已经分出胜负（每枚戳唯一）；`墓碑` / `内容` 两格是**防脏数据**的：
 /// 要是载荷坏了、或者有人重放了"同一枚戳但内容不同"的一条，结果也**由数据本身决定**，
 /// 而不是由"谁先把它塞进来"决定 —— 后者会让两台设备算出不同的投影，正是本片要守的性质。
+#[cfg(test)]
 pub fn winner<'a>(a: &'a StampedRecord, b: &'a StampedRecord) -> &'a StampedRecord {
     if (&a.stamp, a.tombstone, &a.body) > (&b.stamp, b.tombstone, &b.body) {
         a
@@ -209,6 +235,7 @@ pub fn winner<'a>(a: &'a StampedRecord, b: &'a StampedRecord) -> &'a StampedReco
 ///
 /// 两条性质：**幂等**（同一条再来一次，一字不变）与**与到达顺序无关**（先来后到不影响结果）。
 /// 靠的是 `winner` 这个全序，而不是"本地那版优先"或"先到者优先"。
+#[cfg(test)]
 pub fn merge_record(store: &mut std::collections::BTreeMap<String, StampedRecord>, rec: StampedRecord) {
     /// 库里现有那一版该不该让位 —— **只看数据**，不看它是本地还是远端、也不看谁先到。
     fn incoming_wins(rec: &StampedRecord, current: &StampedRecord) -> bool {
@@ -231,6 +258,7 @@ pub fn merge_record(store: &mut std::collections::BTreeMap<String, StampedRecord
 ///
 /// 墓碑不进投影（它已经不是内容了），但它**留在库里**：没有它，一条迟到的旧编辑会把
 /// 已经删掉的东西又复活。墓碑的清理（GC）是另一件事，本片不做，也不假装做了。
+#[cfg(test)]
 pub fn projection(store: &std::collections::BTreeMap<String, StampedRecord>) -> String {
     #[derive(Serialize)]
     struct Live<'a> {
@@ -313,6 +341,10 @@ pub fn with_stamp(payload_json: &str, stamp: &Hlc) -> Result<String, String> {
 /// **每一次重发**都会被判成"内容变了"（`block_rev` 当初撞过同一堵墙，见它的口径 3）。
 ///
 /// 任何解析不出来的输入**原样返回**（这里不抛：它只是"把注解擦掉"，擦不掉就不擦）。
+///
+/// ⚠️ **2026-09-25 清理**：**今天只有判据在用**（`sync.rs` 那条"只差一枚戳 ⇒ 内容必须相同"）——
+/// "内容比较那一处"还没接上它 ⇒ 这条 `#[cfg(test)]` 就是那个事实的收据。接线时摘掉即可。
+#[cfg(test)]
 pub fn without_stamp(payload_json: &str) -> String {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(payload_json) else {
         return payload_json.to_string();

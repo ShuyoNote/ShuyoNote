@@ -820,13 +820,13 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     })
 }
 
-/// 这个构建**有没有编入 MuPDF**（构建期特性 `mupdf-rollback`）——配置的**单一事实来源**：
-/// 命令的分派与下面的判据都问它，免得"注释说没编、代码却还在调"。
-pub(crate) fn mupdf_compiled() -> bool {
-    cfg!(feature = "mupdf-rollback")
-}
-
 /// 请求了 MuPDF、但这个构建没编入它时给的那句话。
+///
+/// ⚠️ **2026-09-25 清理**：这里原本还有一个 `pub(crate) fn mupdf_compiled()`，body 就是
+/// `cfg!(feature = "mupdf-rollback")`；它**唯一的调用点**是一条"它必须等于 `cfg!(feature)`"的判据 ——
+/// 也就是 `assert_eq!(cfg!(f), cfg!(f))`，**恒真、零覆盖**；函数本身在非测试构建里也没人用。
+/// 于是删掉函数与那条空转断言。"这个构建编没编 MuPDF"由 `ensure_mupdf_available()` 的两份 cfg 实现回答，
+/// 下面那条判据直接断言它（两种构建各断言自己那一半，那才是真的在验）。
 ///
 /// 为什么要这么长：这不是"内部错误"，而是**用户（或灰度时的人）敲了一个开关却得不到想要的东西**
 /// —— 必须一句话说清"现在没有它 + 换哪个开关 + 想要它怎么构建"。
@@ -928,13 +928,12 @@ mod pdf_engine_tests {
     ///
     /// 这条在两种构建下都跑（各断言各的那一半）：默认构建断言"拒绝 + 出路"，
     /// `--features mupdf-rollback` 构建断言"放行"。
+    ///
+    /// ⚠️ **2026-09-25 清理**：本条原来第一句是 `assert_eq!(mupdf_compiled(), cfg!(feature = …))`，
+    /// 而 `mupdf_compiled()` 的 body 就是那个 `cfg!` ⇒ **恒真、零覆盖**（函数已删）。
+    /// 现在"编没编"由下面两半**真的**验：放行 / 拒绝＋出路，两种构建各跑一边。
     #[test]
     fn asking_for_mupdf_says_what_to_do_when_the_feature_is_off() {
-        assert_eq!(
-            super::mupdf_compiled(),
-            cfg!(feature = "mupdf-rollback"),
-            "`mupdf_compiled()` 必须与 feature 一致（它是配置的单一事实来源）"
-        );
         if cfg!(feature = "mupdf-rollback") {
             assert!(super::ensure_mupdf_available().is_ok(), "编了就该放行");
         } else {

@@ -17,6 +17,7 @@
 //!
 //! 除 `#[cfg(test)]` 外本模块**还没有调用方**：二维码的生成/扫描、短码 PAKE、界面入口都在接线那一片。
 //! 所以整个模块显式放行 `dead_code` —— **接线那一片必须把这行删掉**（留着它会盖住真死码）。
+//! （收据日期：**2026-09-25**，与 `pairing.rs` 落地同一天；删除条件 = 上面那两句接线落地。）
 //!
 //! ## 本片**不做**密码学
 //!
@@ -207,7 +208,6 @@ pub fn qr_svg(payload_text: &str) -> Result<String, String> {
         return Err(why);
     }
     use fast_qr::convert::svg::SvgBuilder;
-    use fast_qr::convert::Builder;
     use fast_qr::QRBuilder;
     let qr = QRBuilder::new(payload_text.to_string())
         .build()

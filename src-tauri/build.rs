@@ -415,26 +415,7 @@ fn sqlcipher_source_dir_deprecated_mtime() -> Option<std::path::PathBuf> {
     best.map(|(_, d)| d)
 }
 
-/// 在源码目录里找 SM3 标签标记（返回命中的文件名）。
-///
-/// ⚠️ 实现已搬到 `src/gm_patch_probe.rs`（`include!` 进来的那份），这样**判据能直接驱动它**。
-#[allow(dead_code)]
-fn find_gm_marker_deprecated(dir: &std::path::Path) -> Option<String> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    for e in entries.flatten() {
-        let p = e.path();
-        let is_c = p
-            .extension()
-            .map(|x| x == "c" || x == "h")
-            .unwrap_or(false);
-        if !is_c {
-            continue;
-        }
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            if text.contains("SQLCIPHER_HMAC_SM3_LABEL") {
-                return Some(p.file_name().unwrap_or_default().to_string_lossy().to_string());
-            }
-        }
-    }
-    None
-}
+// ★ 2026-09-25 清理：这里原本还留着一份 `find_gm_marker_deprecated`（实现早搬到 `src/gm_patch_probe.rs`
+// 的 `include!` 那份，为的是**判据能直接驱动它**），靠一条无名无期的 `#[allow(dead_code)]` 挂着。
+// 全仓无人引用（判据驱动的是 `gm_patch_probe::find_marker`）⇒ 连同豁免一起删除，而不是补一句收据。
+// 需要它的话，历史里有；而"搬走了却留副本"正是让两侧漂移的经典形状。

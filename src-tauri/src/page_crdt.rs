@@ -40,6 +40,11 @@ pub fn write_page_crdt_state(c: &Connection, page_id: &str, state: &[u8], now: i
 }
 
 /// 清掉这一页的状态（页面被删除/彻底重建时用）⇒ 之后读回 `None`。
+///
+/// ⚠️ **只服务判据**：命令面今天只接了读 / 写那一对，"清"这一条还没有调用方 ——
+/// 它与前端 `docContent.ts::clearPageCrdtState` **成对存在**（这一层的口径是三条函数配对）。
+/// **删页时该不该清它**是接线决定，不在这里顺手接上；真接的时候删掉下面这一行。
+#[cfg(test)]
 pub fn clear_page_crdt_state(c: &Connection, page_id: &str) -> Result<(), String> {
     c.execute("DELETE FROM page_crdt WHERE page_id = ?1", [page_id])
         .map_err(|e| e.to_string())?;

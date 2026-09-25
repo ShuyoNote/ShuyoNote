@@ -188,6 +188,8 @@ pub fn write_page_projection(c: &Connection, page_id: &str, json: &str) -> Resul
 // =====================================================================================
 
 /// 这一页的正文列是不是"待重建"；页面不存在 ⇒ `Ok(None)`。
+/// ⚠️ **只服务判据**（生产路径今天不读它）：加回生产调用方时编译器会立刻说话。
+#[cfg(test)]
 pub fn text_stale(c: &Connection, page_id: &str) -> Result<Option<bool>, String> {
     c.query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = ?1", params![page_id], |row| {
         Ok(row.get::<_, i64>(0)? != 0)
@@ -468,6 +470,8 @@ pub struct BlockSnapshot {
 }
 
 impl BlockSnapshot {
+    /// ⚠️ **只服务判据**（块表在别的路径上是直接构造的）：接上生产调用方时删掉这一行。
+    #[cfg(test)]
     pub fn new(block_id: &str, rev: Option<i64>, json: &str) -> Self {
         BlockSnapshot {
             block_id: block_id.to_string(),
@@ -496,6 +500,8 @@ pub enum BlockChoice {
 
 impl BlockChoice {
     /// 这一项是不是"要用户裁决" —— 调用方用它决定要不要提示。
+    /// ⚠️ **只服务判据**：生产者侧的"这次留下了几处冲突"由 `apply_remote_page` 直接回报。
+    #[cfg(test)]
     pub fn is_conflict(&self) -> bool {
         matches!(self, BlockChoice::Conflict(_))
     }
@@ -649,6 +655,10 @@ pub fn merge_blocks(
 }
 
 /// 阶段 1 的**合成入口**：先页级（`dirty` 优先本地），再逐块。
+///
+/// ⚠️ **只服务判据**：页级＋块级的合成入口，生产路径今天走的是 `merge_remote_content`。
+/// 接线那一片（块级 LWW 接上 apply）删掉这一行。
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageMerge {
     /// 页级判定说留本地（`dirty != 0` 或本地 `seq` 更靠后）⇒ **整页都不动**。
@@ -659,6 +669,9 @@ pub enum PageMerge {
 }
 
 /// ★ 阶段 1 合并的**唯一调用顺序**（免得调用方各写一遍、写岔）。
+/// ⚠️ **只服务判据**：`merge` 的"页级 ＋ 块级"合成入口（`PageMerge` 那条路）。
+/// 生产路径今天只用 `merge_remote_content`；接线那一片删掉这一行。
+#[cfg(test)]
 pub fn merge_page_and_blocks(
     local_state: Option<LocalState>,
     remote_seq: i64,
