@@ -87,3 +87,38 @@ struct Route { url: String, kind: LinkKind }   // LinkKind = Lan | Configured
 ## 6. 下一步
 
 甲-1 落地 ⇒ **B 片（二维码 / 短码 PAKE 换设备）** ⇒ 甲-2 ⇒ 丙（目标）。
+
+## 7. 进度（2026-09-25 更新，macOS 侧实测）
+
+**已判**（判据都在 `src-tauri/src/lan.rs` 的 `#[cfg(test)]` 里，本机 `cargo test --lib lan::` 实测 **14 passed / 0 failed**）：
+
+| §4 判据 | 覆盖它的判据（测试名） |
+|---|---|
+| ① ★ | `a_discovered_lan_hub_wins_over_the_configured_public_url` |
+| ② ★ | `with_no_hub_in_sight_the_configured_url_is_still_used` |
+| ③ ★ | `a_peer_that_does_not_serve_this_space_is_not_a_route` |
+| ④ | `an_announce_is_dropped_when_it_is_malformed_or_from_another_version` ＋ `a_garbled_datagram_never_enters_the_peer_table` |
+| ⑤ | `the_link_kind_is_what_the_status_line_shows` |
+
+**2026-09-25 新加**（§2 ③ 代言的产出侧 ＋ §2 ④ 状态行文本这两块的**纯函数**，都带 ★ 判据）：
+
+| 新判据 | 内容 | 退化了会怎样 |
+|---|---|---|
+| ⑫ ★ | `announce_for_own_hub` 产出的公告，必须能被 `resolve_base` 采纳成 `Lan`（**往返性质**） | 产出侧与消费侧用了两把尺 ⇒ 公告发得出去、永远被跳过 ⇒「代言开着，网段里却没人被找到」，**没有编译期信号、单测也照绿** |
+| ⑬ ★ | 状态行分得开「走了局域网 / 网段里什么都没有 / 有人但都不服务这个空间」 | 后两件长得一样 ⇒ 用户不知道是"没辙"还是"配置不对" |
+| ⑭ ★ | 档位**只能由 `Route` 决定**，状态行不许自己再判一次 | 配置地址本身是私有网段时，状态行会说「局域网」而实际走的是公网 ⇒ 简报 §7 的「口径不成立」 |
+
+两条 ★ 都做了**变异实测**：把产出侧的尺放宽 ⇒ ⑫ 红；让状态行自己按地址形状判档 ⇒ ⑭ 红；复原后回绿且文件字节未变。
+
+**还没做（接线那一片，一件都还没开始）**：
+
+1. 启动时拉起监听/广播循环，并把 `PeerTable` 挂到一个**说得清归属**的地方（现在是"谁都能 `new`"）；
+2. 把 `resolve_base` 的结果用进 §3 那 6 处 URL 拼装（"基址只出一处"）；
+3. 把 `status_line` 的文本接到界面上；
+4. "谁有资格代言"那个开关读哪个配置、以及在哪个时机重报。
+
+> ⚠️ 现状如实记：`lan.rs` 被 `lib.rs` 的 `mod lan;` 引进来，但**除 `#[cfg(test)]` 外没有任何调用方**
+> （2026-09-25 实测：`PeerTable::new` / `bind_listener` / `announce_once` / `recv_into` /
+> `resolve_base` 在 `lan.rs` 之外调用点**全部为 0**）。所以甲-1 现在是**纯库层**：
+> 能验、但用户看不到任何变化 —— 与 §0 那句"实话"（要等「代言」接上才有人用得上）一致。
+> 模块里那行 `#![allow(dead_code)]` **必须由接线那一片删掉**。

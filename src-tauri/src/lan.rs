@@ -20,9 +20,14 @@
 //!
 //! ## ⚠️ 还没接线
 //!
-//! 除 `#[cfg(test)]` 外，本模块**还没有调用方**：纯函数内核（公告 / 路由）与运行时
-//! （`PeerTable` / `bind_listener` / `announce_once` / `recv_into`）都已就位，
-//! 但**启动时拉起监听、把解析结果用进 6 处 URL、状态行**都在接线那一片。
+//! 除 `#[cfg(test)]` 外，本模块**还没有调用方**。已就位的是：
+//! 纯函数内核（公告编解码 / 路由 [`resolve_base`] / **代言的产出侧** [`announce_for_own_hub`] /
+//! **状态行文本** [`status_line`]）与运行时（`PeerTable` / `bind_listener` / `announce_once` / `recv_into`）。
+//! **还差的是接线那一片**，它至少含四件（都还没有判据）：
+//!   ① 启动时拉起监听/广播循环，并把 `PeerTable` 挂到一个**说得清归属**的地方（现在是"谁都能 new"）；
+//!   ② 把 [`resolve_base`] 的结果用进那 6 处 URL 拼装（施工单 §3 的"基址只出一处"）；
+//!   ③ 把 [`status_line`] 的文本接到界面上；
+//!   ④ "谁有资格代言"那个开关读哪个配置、以及在哪个时机重报。
 //! 所以整个模块显式放行 `dead_code` —— **接线那一片必须把这行删掉**（留着它会盖住真死码）。
 #![allow(dead_code)]
 
@@ -237,6 +242,96 @@ fn is_private_ipv4(host: &str) -> bool {
         [169, 254, ..] => true,
         _ => false,
     }
+}
+
+/// ★ **代言的产出侧**：我这台设备该不该替某个地址代言？该 ⇒ 产出那条公告。
+///
+/// 常开的那台桌面版**自己就是照着某个基址在同步的** ⇒ 如果那个基址本身就是局域网地址，
+/// 它就有资格替它代言（**只转述地址、不服务请求** —— 施工单 §2 ③，所以不撞许可墙）。
+///
+/// ⚠️ **这里必须和消费侧用同一把尺**（[`is_lan_base`]）。若产出侧改用一把更松的尺
+/// （比如"只要是非空 http 就行"），公告**发得出去、却永远被 [`resolve_base`] 跳过** ——
+/// 现象是「代言开着，网段里却没人被找到」，而它**没有编译期信号、单测也照绿**。
+/// 判据 ⑫（`an_announce_we_produce_is_always_one_we_would_accept`）钉的就是这条**往返性质**。
+///
+/// 取 `Option` 而不是"尽力产出"：**没资格时代言就该是空的** —— 往网段里灌一条永远不会被
+/// 采纳的公告，会让别人状态行里的「发现 N 台」虚高。
+pub fn announce_for_own_hub(
+    local_device_id: &str,
+    device_name: &str,
+    configured_url: &str,
+    space_id: &str,
+) -> Option<LanAnnounce> {
+    let base = configured_url.trim().trim_end_matches('/');
+    // ① 自己用的地址都不是局域网地址 ⇒ 没什么可代言的。
+    if !is_lan_base(base) {
+        return None;
+    }
+    let dev = local_device_id.trim();
+    let space = space_id.trim();
+    // ② 没有设备身份 / 没有空间身份 ⇒ 代言不成立：`resolve_base` 的匹配键就是 `hub_spaces`
+    //    （模块头口径 1），空身份只会产出没人能用的公告。
+    if dev.is_empty() || space.is_empty() {
+        return None;
+    }
+    Some(LanAnnounce {
+        v: WIRE_VERSION,
+        device_id: dev.to_string(),
+        device_name: device_name.trim().to_string(),
+        hub_base: Some(base.to_string()),
+        hub_spaces: vec![space.to_string()],
+        // 指纹属于 B 片（配对/防呆）；本片只透传，所以留空而不是编一个假的。
+        fp: String::new(),
+    })
+}
+
+/// ★ **状态行**：如实说出这次走的是哪一档，以及网段里看到了什么。
+///
+/// 口径（施工单 §2 ④ ／ 简报 §7）：**「没走成直连」必须是一个可断言的结果，不是静默降级**。
+/// 用户要能分辨三件**处置完全不同**的事：
+///   ① 走了局域网（`Lan`）；
+///   ② 网段里**根本没有**别的设备（没辙）；
+///   ③ 网段里有设备，但**都不服务这个空间**（配置/身份不匹配 —— 有得救）。
+/// ②③ 长得一样正是这条要堵的：只说一句「公网」，两件事就分不开了。
+///
+/// ⚠️ **档位只能由 [`Route`] 决定**，状态行**不许自己再判一次**（判据 ⑭ 钉这条）：
+/// 用户把配置地址直接填成 `http://192.168.1.5:8787` 是常见事，而网段里一个对端都没有时
+/// `resolve_base` 给的是 `Configured`；若这里按"地址形状"自己判，就会说出「局域网」。
+pub fn status_line(route: Option<&Route>, peers: &[Peer], space_id: &str) -> String {
+    let Some(route) = route else {
+        return "同步地址：尚未绑定".to_string();
+    };
+
+    let seen = peers.len();
+    let want = space_id.trim();
+    // 代言人 = 公告里的 `hub_base` 正好是当前基址的那一台（`Lan` 档一定找得到它）。
+    let hub = peers.iter().find_map(|p| {
+        let base = p.announce.hub_base.as_deref()?.trim().trim_end_matches('/');
+        let name = p.announce.device_name.trim();
+        (base == route.url && !name.is_empty()).then(|| name.to_string())
+    });
+
+    let mut line = match route.kind {
+        LinkKind::Lan => format!("同步地址：直连（局域网）{}", route.url),
+        LinkKind::Configured => format!("同步地址：公网 {}", route.url),
+    };
+    line.push_str(&format!(" ｜ 本网段发现 {seen} 台"));
+
+    if route.kind == LinkKind::Lan {
+        match hub {
+            Some(name) => line.push_str(&format!(" ｜ 中枢：{name}")),
+            // 找到了地址、但那一台没报名字 ⇒ **如实说没报**，不编一个。
+            None => line.push_str(" ｜ 中枢：只报了地址"),
+        }
+    } else if seen > 0
+        && !want.is_empty()
+        && !peers
+            .iter()
+            .any(|p| p.announce.hub_spaces.iter().any(|s| s.trim() == want))
+    {
+        line.push_str(" ｜ 其中没有服务这个空间的中枢");
+    }
+    line
 }
 
 // ── 运行时（甲-1 第二片）：真的收发 ＋ 对端表 ────────────────────────────────────────────
@@ -632,5 +727,94 @@ mod tests {
         assert!(t.iter().any(|a| a.ip().to_string() == "255.255.255.255"), "要发广播");
         assert!(t.iter().any(|a| a.ip().is_loopback()), "要有回环那条");
         assert!(t.iter().all(|a| a.port() == LAN_PORT));
+    }
+
+    // ---- 代言（产出侧）＋ 状态行 ----
+
+    /// ★ 判据 ⑫：**我们自己发出去的代言公告，必须是我们自己会采纳的那种**。
+    ///
+    /// 这是**往返性质**：`announce_for_own_hub` 与 `resolve_base` 必须用**同一把尺**
+    /// （[`is_lan_base`]）。若产出侧改用一把更松的尺（例如"只要是非空 http"），公告发得出去、
+    /// 却永远被消费侧跳过 ⇒ 现象是「代言开着，网段里却没人被找到」，**没有编译期信号、单测也照绿**。
+    /// 退化了这条就红。
+    #[test]
+    fn an_announce_we_produce_is_always_one_we_would_accept() {
+        let cases = [
+            ("http://192.168.1.5:8787", true),  // 该代言
+            ("http://10.0.0.7", true),          // 该代言（不带端口也认）
+            ("http://169.254.1.1:8787", true),  // 该代言（链路本地）
+            ("https://shuyo.cn/sync", false),   // 公网 ⇒ 不许代言
+            ("http://127.0.0.1:8787", false),   // 回环不是"网段里的别人" ⇒ 不许代言
+            ("http://172.32.0.1:8787", false),  // 出了 172.16/12 ⇒ 不许代言
+            ("", false),                        // 没配置 ⇒ 不许代言
+        ];
+        for (url, should_produce) in cases {
+            let mine = announce_for_own_hub("dev-me", "本机", url, "sp-1");
+            assert_eq!(
+                mine.is_some(),
+                should_produce,
+                "该/不该代言判错了：{url:?}"
+            );
+            let Some(announce) = mine else { continue };
+            // 产出侧的东西，交给消费侧 —— 必须被采纳成局域网路由。
+            let peer = Peer { announce, addr: "192.168.1.5".into(), seen_at_ms: 0 };
+            let got = resolve_base("sp-1", "https://shuyo.cn/sync", &[peer])
+                .expect("有对端就该有路由");
+            assert_eq!(got.kind, LinkKind::Lan, "自己发出去的公告被自己跳过了：{url:?}");
+            assert_eq!(got.url, url.trim_end_matches('/'), "采纳的基址必须就是公告里那个");
+        }
+
+        // 没有设备身份 / 没有空间身份 ⇒ 代言不成立（空身份只会产出没人能用的公告）。
+        assert!(announce_for_own_hub("", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
+        assert!(announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "  ").is_none());
+    }
+
+    /// ★ 判据 ⑬：状态行要能把**三件处置不同的事**分开 —— 走了局域网 / 网段里什么都没有 /
+    /// 网段里有人但**都不服务这个空间**。后者是配置或身份不匹配（有得救），前者是没辙；
+    /// 「没走成直连」必须是**可断言的结果**，不能是静默降级（施工单 §2 ④）。
+    #[test]
+    fn the_status_line_tells_the_three_situations_apart() {
+        // ① 走了局域网：点出中枢是谁
+        let hub = peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]);
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&hub)).unwrap();
+        let line = status_line(Some(&route), std::slice::from_ref(&hub), "sp-1");
+        assert!(line.contains("局域网"), "{line}");
+        assert!(line.contains("dev-hub 的机器"), "要点出中枢是谁：{line}");
+
+        // ② 网段里什么都没有 ⇒ 只是"公网"，**不许**说"有人但不服务本空间"
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", &[]).unwrap();
+        let line = status_line(Some(&route), &[], "sp-1");
+        assert!(line.contains("公网"), "{line}");
+        assert!(line.contains("0 台"), "{line}");
+        assert!(!line.contains("没有服务这个空间的中枢"), "一个对端都没有时不许说这句：{line}");
+
+        // ③ 有对端、但都不服务本空间 ⇒ **必须说出来**（与 ② 分开）
+        let other = peer("dev-other", Some("http://192.168.1.6:8787"), &["sp-9"]);
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&other)).unwrap();
+        let line = status_line(Some(&route), std::slice::from_ref(&other), "sp-1");
+        assert!(
+            line.contains("没有服务这个空间的中枢"),
+            "「有人但都不是本空间的」必须与「没人」分得开：{line}"
+        );
+
+        // ④ 尚未绑定
+        assert!(status_line(None, &[], "sp-1").contains("尚未绑定"));
+    }
+
+    /// ★ 判据 ⑭（同源）：**档位只能由 [`Route`] 决定**，状态行不许自己再判一次。
+    ///
+    /// 反例非常常见：用户把配置地址直接填成 `http://192.168.1.5:8787`（本来就是私有网段），
+    /// 而网段里一个对端都没有 ⇒ `resolve_base` 给的是 `Configured`。
+    /// 此时若状态行按"地址是不是私有网段"自己判，它会说「局域网」—— **与真实走的路由矛盾**，
+    /// 正是简报 §7 要堵的"口径不成立"。
+    #[test]
+    fn the_line_never_claims_lan_the_route_did_not_take() {
+        let route = resolve_base("sp-1", "http://192.168.1.5:8787", &[]).unwrap();
+        assert_eq!(route.kind, LinkKind::Configured, "没发现到中枢就不是直连档");
+        let line = status_line(Some(&route), &[], "sp-1");
+        assert!(
+            !line.contains("局域网"),
+            "档位只能来自 Route；状态行自己按地址形状再判一次就会说出与路由矛盾的档：{line}"
+        );
     }
 }
