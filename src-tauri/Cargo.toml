@@ -126,6 +126,7 @@ tauri-plugin-http = "2"
 # Android 的系统选择器返回 `content://` URI，`std::fs` 打不开，只有它的 `Fs::open` 能开
 # （Android 经 Kotlin 的 ContentResolver 取 fd；桌面就是 `std::fs::OpenOptions`，等价）。
 tauri-plugin-fs = "2"
+fast_qr = { version = "0.14.0", default-features = false, features = ["svg"] }
 
 # 聚合邮箱（**桌面专属**，2026-09-13 定）：邮件解析（mailparse）+ IMAP 拉取
 # （async-imap，契合 app 已是 tokio），TLS 走 tokio-native-tls（桌面走系统 TLS：

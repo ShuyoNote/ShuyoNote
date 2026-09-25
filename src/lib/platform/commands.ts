@@ -347,6 +347,12 @@ export interface PairingExportOutcome {
   device_id: string;
   /** 装得进一张二维码吗。`false` 时 `message` 里会说明走文本/拆码。 */
   qr_fits: boolean;
+  /**
+   * 装得下时：**一张二维码的 SVG**（界面当 data URI 贴进 `<img>`）；装不下 ⇒ `null`。
+   *
+   * ⚠️ 装不下就一定是 `null` —— 后端绝不画一张装不下的码。
+   */
+  qr_svg: string | null;
   /** 一句**人话**（界面原样显示）。 */
   message: string;
 }
@@ -500,8 +506,11 @@ export interface CommandMap {
   // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**
   //（Web 上没有钥匙柜，也就没有"公开材料"可搬；理由写在 `check-web-commands` 的
   //  `DESKTOP_ONLY_COMMANDS` 里）。
+  // 无参命令的惯例（照 `space_security_overview`）：`args: undefined` ＋ `invoke(cmd)` 不传入参对象。
+  // ⚠️ 注释**不许**夹在 `{` 与 `args` 之间 —— `check-web-commands` 认条目用的是
+  //    `name: {\s*args`，夹一行注释这条命令就对门禁**不可见**（2026-09-25 实测踩到）。
   pairing_export: {
-    args: Record<string, never>;
+    args: undefined;
     result: PairingExportOutcome;
   };
   pairing_import: {

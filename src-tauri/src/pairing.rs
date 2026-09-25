@@ -192,6 +192,28 @@ pub fn verify_confirm_code(payload_text: &str, confirmed: Option<&str>) -> Resul
     Ok(computed)
 }
 
+
+/// 把配对载荷画成**一张二维码的 SVG**（前端直接当 data URI 贴进 `<img>`）。
+///
+/// ★ 三条口径（判据钉着）：
+///   1. **装不下 ⇒ `Err`**（与 [`qr_capacity_error`] 同一口径）—— **绝不返回画不全的码**；
+///   2. **确定性**：同一份载荷画两次逐字节相同（否则两次显示不一致、也没法比对）；
+///   3. 形状：返回的东西必须真的是一张 SVG（`<svg` 开头、`</svg>` 结尾）。
+///
+/// ⚠️ 用 `fast_qr`（**纯 Rust、无 C 依赖**，只开 `svg` 特性）—— 这是本片唯一的**新依赖**，
+/// 由 owner 2026-09-25「按建议执行」放行；选它的理由是它只做编码（非密码学）、且不引 C 工具链。
+pub fn qr_svg(payload_text: &str) -> Result<String, String> {
+    if let Some(why) = qr_capacity_error(payload_text) {
+        return Err(why);
+    }
+    use fast_qr::convert::svg::SvgBuilder;
+    use fast_qr::convert::Builder;
+    use fast_qr::QRBuilder;
+    let qr = QRBuilder::new(payload_text.to_string())
+        .build()
+        .map_err(|e| format!("画二维码失败（载荷没超上限却被拒，多半是编码器版本问题）：{e:?}"))?;
+    Ok(SvgBuilder::default().to_str(&qr))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +517,35 @@ mod tests {
         assert!(err.contains(&truth), "要把**算出来的**那个码摆出来：{err}");
         assert!(err.contains("1111 2222 3333 4444 5555"), "也要把用户记下的摆出来：{err}");
         assert!(err.contains("被换过"), "要点明「可能是被换过」：{err}");
+    }
+
+    /// ★ 判据：**装不下就 `Err`，绝不返回画不全的码**（既有判据 ④ 的另一半）。
+    ///
+    /// 退化会怎样：为了「让它扫得出来」而画一张装不下的码 —— 扫出来是**残缺的材料**，
+    /// 而它一路走到「解不开盒子」才暴露，现场看起来像二维码坏了或口令错了。
+    #[test]
+    fn a_qr_is_never_drawn_for_an_oversized_payload() {
+        let ids: Vec<String> = (0..80).map(|i| format!("sp-{i:03}")).collect();
+        let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let raw = encode_payload(&payload_from_material(&material_with(&refs), "").unwrap()).unwrap();
+        assert!(!fits_single_qr(&raw), "样本必须真的超限，否则这条判据是空的");
+        let err = qr_svg(&raw).unwrap_err();
+        assert!(err.contains("装不下"), "{err}");
+    }
+
+    /// ★ 判据：**确定性 ＋ 形状** —— 同一份载荷画两次逐字节相同；不同载荷画出不同的码。
+    ///
+    /// 退化会怎样：两次画出来不一样 ⇒ 两台设备/两次打开看到的码不同，人眼比对与截图核对都无从谈起。
+    #[test]
+    fn the_qr_is_deterministic_and_well_shaped() {
+        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        let a = qr_svg(&raw).unwrap();
+        let b = qr_svg(&raw).unwrap();
+        assert_eq!(a, b, "同一份载荷两次画出来必须逐字节相同");
+        let head = &a[..a.len().min(60)];
+        assert!(a.trim_start().starts_with("<svg"), "要是一张 SVG：{head}");
+        assert!(a.trim_end().ends_with("</svg>"), "SVG 要收尾");
+        let other = encode_payload(&payload_from_material(&material_with(&["sp-b"]), "fp-1").unwrap()).unwrap();
+        assert_ne!(qr_svg(&other).unwrap(), a, "不同载荷必须画出不同的码");
     }
 }

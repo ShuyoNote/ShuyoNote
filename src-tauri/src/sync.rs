@@ -1961,6 +1961,10 @@ pub struct PairingExportResult {
     pub device_id: String,
     /// 这段载荷**装得进一张二维码**吗。装不下时 `message` 里会说明走文本/拆码。
     pub qr_fits: bool,
+    /// 装得下时：**一张二维码的 SVG**（前端当 data URI 贴进 `<img>`）；装不下 ⇒ `None`。
+    ///
+    /// ⚠️ **装不下就一定是 `None`** —— 绝不画一张装不下的码（扫出来是残缺材料，见 `pairing::qr_svg`）。
+    pub qr_svg: Option<String>,
     pub message: String,
 }
 
@@ -1996,14 +2000,18 @@ pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> 
             spaces: 0,
             device_id: String::new(),
             qr_fits: false,
+            qr_svg: None,
             message: "本机还没有钥匙袋（公开材料）⇒ 没有东西可以配对过去。\
                       先在本机启用加密、或先从别处取回一份，再来换设备。"
                 .to_string(),
         });
     };
-    // 设备指纹取应用级事实 `device_id`（与局域网公告用的是同一个值，非秘密）。
-    // ⚠️ 留一个**没答的问题**在明面上：`fp` 到底该是"设备标识"还是"设备**密钥材料**的指纹"
-    //    （后者会在轮换后变化）—— 这是设计决定，不由本命令顺手定。见施工单 §8。
+    // 设备指纹取应用级事实 `device_id`（与局域网公告用的是同一个值，**非秘密**）。
+    // ✅ **2026-09-25 拍板（owner「按建议执行」）**：`fp` 就用**设备标识**，不用"设备密钥材料的指纹"。
+    //    理由：① 它已经在服务端与局域网公告里流通，不是新暴露面；② 稳定 —— 轮换钥匙不会让用户
+    //    看到"设备名变了"；③ 它要挡的是**掉包**（这段码是不是你那台设备给的），而不是"同一台设备
+    //    换了钥匙"那种更细的区分。⚠️ 真需要后者时（例如"钥匙轮换后要认出还是这台机器"），
+    //    那是**另一条**判据、要另立一处字段——**不要**把这里的语义悄悄改成密钥材料指纹。
     let device = device_id(&c)?;
     let payload = crate::pairing::payload_from_material(&material, &device)?;
     let text = crate::pairing::encode_payload(&payload)?;
@@ -2012,6 +2020,12 @@ pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> 
         .map(|k| k.spaces.len())
         .unwrap_or(0);
     let qr_fits = crate::pairing::fits_single_qr(&text);
+    // ⚠️ 装得下却画不出来 = **真问题**（只有编码器坏了这一种可能）⇒ 不静默当 None，直接报错。
+    let qr_svg = if qr_fits {
+        Some(crate::pairing::qr_svg(&text).map_err(|e| format!("二维码没画出来：{e}"))?)
+    } else {
+        None
+    };
     let mut message = format!(
         "把下面这段配对码交给第二台设备（{} 个空间，{} 字节）。\
          它**不是秘密**，但请只交给你自己那台设备 —— 收下它的人才可能解开你的空间。",
@@ -2034,6 +2048,7 @@ pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> 
         spaces,
         device_id: device,
         qr_fits,
+        qr_svg,
         message,
     })
 }

@@ -27,6 +27,9 @@ const enableSpaceEncryption = vi.fn();
 const disableSpaceEncryption = vi.fn();
 const pushSpaceKeyring = vi.fn();
 const pullSpaceKeyring = vi.fn();
+// B 片 ①-a（2026-09-25）：不经服务器的换设备（配对码）。
+const pairingExport = vi.fn();
+const pairingImport = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -36,6 +39,8 @@ vi.mock("../lib/api", () => ({
     disableSpaceEncryption: (...a: unknown[]) => disableSpaceEncryption(...a),
     pushSpaceKeyring: (...a: unknown[]) => pushSpaceKeyring(...a),
     pullSpaceKeyring: (...a: unknown[]) => pullSpaceKeyring(...a),
+    pairingExport: (...a: unknown[]) => pairingExport(...a),
+    pairingImport: (...a: unknown[]) => pairingImport(...a),
   },
 }));
 
@@ -109,6 +114,8 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
       disableSpaceEncryption,
       pushSpaceKeyring,
       pullSpaceKeyring,
+      pairingExport,
+      pairingImport,
     ])
       m.mockReset();
   });
@@ -278,5 +285,111 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     expect(panel, "SyncPanel 里没有挂 SpacePrivacySection ⇒ 用户在同步面板里看不到").toContain(
       "<SpacePrivacySection",
     );
+  });
+
+  // ── B 片 ①-a（2026-09-25）：不经服务器的换设备（配对码）────────────────────────
+  //   这一组动作是**钥匙袋级**的（载荷带全部空间）⇒ 界面上只该有一份。
+  const byText = (text: string) =>
+    buttons().find((b) => (b.textContent ?? "").trim() === text) as HTMLButtonElement | undefined;
+  /** textarea 要用**它自己**的 value 描述符：拿 Input 的会 illegal invocation。 */
+  const setArea = (el: HTMLTextAreaElement, value: string) => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  it("⑪ ★ 「生成配对码」真调 pairingExport()，把**比对码**与那段文本显示出来（且不露 `**`）", async () => {
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
+    pairingExport.mockResolvedValue({
+      outcome: "ok",
+      text: '{"v":1,"material":"M","fp":"dev-1"}',
+      check_code: "1234 5678 9012 3456 7890",
+      bytes: 38,
+      spaces: 2,
+      device_id: "dev-1",
+      qr_fits: true,
+      qr_svg: "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+      message: "把下面这段配对码交给第二台设备（2 个空间）。**只交给你自己那台设备**。",
+    });
+    await render();
+    await act(async () => {
+      byText("生成配对码")!.click();
+    });
+    expect(pairingExport).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("1234 5678 9012 3456 7890");
+    const area = container.querySelector('textarea[aria-label="配对码"]') as HTMLTextAreaElement;
+    expect(area.value).toContain('"material"');
+    expect(container.textContent).not.toContain("**"); // 后端那句里的强调要渲染掉（本仓 ②b 的纪律）
+    expect(container.textContent).toContain("只交给你自己那台设备");
+    // ★ 装得下 ⇒ 真的显示一张二维码，而且走 **data URI**（不是把 SVG 注进 DOM）
+    const img = container.querySelector(".space-privacy-qr") as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.getAttribute("src")!.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
+  });
+
+  it("⑫ ★ 比对码：填了才传 confirmed_check_code；没填传 undefined（不是空串）", async () => {
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
+    pairingImport.mockResolvedValue({
+      outcome: "ok",
+      check_code: "9999 8888 7777 6666 5555",
+      spaces: 2,
+      local_spaces: [],
+      would_lose: [],
+      message: "已装进本机（2 个盒子）",
+    });
+    await render();
+    const area = container.querySelector('textarea[aria-label="粘贴配对码"]') as HTMLTextAreaElement;
+    await act(async () => {
+      setArea(area, '{"v":1}');
+    });
+
+    await act(async () => {
+      byText("核对并采纳")!.click();
+    });
+    expect(pairingImport).toHaveBeenLastCalledWith({
+      text: '{"v":1}',
+      confirmed_check_code: undefined,
+      overwrite: false,
+    });
+
+    const code = container.querySelector('input[aria-label="比对码"]') as HTMLInputElement;
+    await act(async () => {
+      setValue(code, "9999 8888 7777 6666 5555");
+    });
+    await act(async () => {
+      byText("核对并采纳")!.click();
+    });
+    expect(pairingImport).toHaveBeenLastCalledWith({
+      text: '{"v":1}',
+      confirmed_check_code: "9999 8888 7777 6666 5555",
+      overwrite: false,
+    });
+  });
+
+  it("⑬ ★ already_local ⇒ 摆出「会失去哪些空间」，且**默认那次 overwrite 必须是 false**", async () => {
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
+    pairingImport.mockResolvedValue({
+      outcome: "already_local",
+      check_code: "1111 2222 3333 4444 5555",
+      spaces: 0,
+      local_spaces: ["default"],
+      would_lose: ["old-b"],
+      message: "覆盖会**失去**这些空间：old-b —— 覆盖之后那台设备再也开不开它自己的库。",
+    });
+    await render();
+    const area = container.querySelector('textarea[aria-label="粘贴配对码"]') as HTMLTextAreaElement;
+    await act(async () => {
+      setArea(area, '{"v":1}');
+    });
+    await act(async () => {
+      byText("核对并采纳")!.click();
+    });
+    expect(pairingImport).toHaveBeenLastCalledWith(expect.objectContaining({ overwrite: false }));
+    expect(container.textContent).toContain("old-b");
+    expect(container.textContent).not.toContain("**");
+
+    await act(async () => {
+      byText("我确认，覆盖本机")!.click();
+    });
+    expect(pairingImport).toHaveBeenLastCalledWith(expect.objectContaining({ overwrite: true }));
   });
 });

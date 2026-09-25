@@ -8,7 +8,11 @@
 // （调了就是「command not found」抛错，而那一屏本来就不该有这条动作）。
 import { useCallback, useEffect, useState } from "react";
 import { api, type SpaceKind, type SpaceSecurityView } from "../lib/api";
-import type { SpaceKeyringOutcome } from "../lib/platform/commands";
+import type {
+  PairingExportOutcome,
+  PairingImportOutcome,
+  SpaceKeyringOutcome,
+} from "../lib/platform/commands";
 import { isDesktopPlatform } from "../lib/platform";
 import { inlineMd } from "../lib/inlineMd";
 
@@ -37,6 +41,49 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   // ③ 0b：每行的推/取结果（**原样**显示后端那句话）。
   const [rowMsg, setRowMsg] = useState<{ id: string; text: string; kind: string } | null>(null);
+  // B 片 ①-a（2026-09-25）：**不经服务器**的换设备（配对码）。
+  // ⚠️ 它是**整个钥匙袋**级的动作（载荷里带全部空间）⇒ 放在 map 之外，只渲染一份。
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairExport, setPairExport] = useState<PairingExportOutcome | null>(null);
+  const [pairImport, setPairImport] = useState<PairingImportOutcome | null>(null);
+  const [pairText, setPairText] = useState("");
+  const [pairCode, setPairCode] = useState("");
+
+  // B 片 ①-a：产出侧（生成配对码）。
+  const runPairExport = async () => {
+    setPairBusy(true);
+    setErr("");
+    setNote("");
+    try {
+      setPairExport(await api.pairingExport());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setPairBusy(false);
+    }
+  };
+
+  // B 片 ①-a：采纳侧。
+  // ⚠️ 比对码只在用户真的填了的时候才传 —— 传了后端就**必须**逐位相同（防「换码」的那一步）。
+  const runPairImport = async (overwrite: boolean) => {
+    setPairBusy(true);
+    setErr("");
+    setNote("");
+    const code = pairCode.trim();
+    try {
+      setPairImport(
+        await api.pairingImport({
+          text: pairText,
+          confirmed_check_code: code === "" ? undefined : code,
+          overwrite,
+        }),
+      );
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setPairBusy(false);
+    }
+  };
 
   const reload = useCallback(async () => {
     if (!desktop) return;
@@ -247,6 +294,82 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
           </div>
         );
       })}
+
+      {/* B 片 ①-a（2026-09-25）：**不经服务器**的换设备 —— 一段可以复制/粘贴（或存成文件再传）的配对码。
+          ⚠️ 它是**钥匙袋级**的动作（载荷带全部空间）⇒ 只渲染一份，放在 per-space 的 map 之外。
+          ⚠️ 这条路不做「6 位短码」：那需要 PAKE（要往客户端加一个密码学实现）。
+          防「换码」靠**比对码**：两端各显示同一串数字，人核对一致再采纳；填进下面的框里就是真的核过了。 */}
+      <details className="space-privacy-more">
+        <summary>换设备（不经服务器：配对码）</summary>
+        <div>
+          <div className="space-privacy-hint">
+            两台设备都在手上时用这条：旧设备「生成配对码」→ 把那段文本交给新设备（复制粘贴，或存成文件再传）
+            → 新设备贴进来「核对并采纳」。<b>全程不经过服务器。</b> 这段码不是秘密，但请只交给你自己那台设备。
+          </div>
+          <div className="space-privacy-actions">
+            <button className="sync-btn ghost" disabled={pairBusy} onClick={() => void runPairExport()}>
+              生成配对码
+            </button>
+          </div>
+          {pairExport && (
+            <div className="space-privacy-hint">
+              <div>
+                <b>比对码</b>（另一台上必须对得上）：<code>{pairExport.check_code}</code>
+              </div>
+              <div>{inlineMd(pairExport.message)}</div>
+              <textarea
+                readOnly
+                value={pairExport.text}
+                rows={4}
+                className="sync-input space-privacy-pairtext"
+                aria-label="配对码"
+              />
+              {pairExport.qr_svg && (
+                <div>
+                  <div>用另一台设备的<b>系统相机</b>扫这张码，扫出来的就是上面那段文本：</div>
+                  <img
+                    className="space-privacy-qr"
+                    alt="配对码二维码"
+                    src={"data:image/svg+xml;charset=utf-8," + encodeURIComponent(pairExport.qr_svg)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          <hr />
+          <div className="space-privacy-hint">新设备：把旧设备给的那段文本贴进来，并填上它的比对码。</div>
+          <textarea
+            value={pairText}
+            onChange={(e) => setPairText(e.target.value)}
+            rows={4}
+            placeholder="粘贴配对码…"
+            className="sync-input space-privacy-pairtext"
+            aria-label="粘贴配对码"
+          />
+          <input
+            className="sync-input"
+            value={pairCode}
+            onChange={(e) => setPairCode(e.target.value)}
+            placeholder="比对码（填了就必须逐位对得上）"
+            aria-label="比对码"
+          />
+          <div className="space-privacy-actions">
+            <button
+              className="sync-btn ghost"
+              disabled={pairBusy || pairText.trim() === ""}
+              onClick={() => void runPairImport(false)}
+            >
+              核对并采纳
+            </button>
+            {pairImport?.outcome === "already_local" && (
+              <button className="sync-btn ghost" disabled={pairBusy} onClick={() => void runPairImport(true)}>
+                我确认，覆盖本机
+              </button>
+            )}
+          </div>
+          {pairImport && <div className="space-privacy-hint">{inlineMd(pairImport.message)}</div>}
+        </div>
+      </details>
 
       {/* 主口令：**标签一行、输入框单独一行**（挤在同一行时标签被折行、输入框被压到最右边）。
           说明并进标签里 —— 它只对"第一次开启加密"有用，不值得再占一行。 */}
