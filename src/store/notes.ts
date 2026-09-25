@@ -27,6 +27,22 @@ export interface NoteState {
   renamePage: (id: string, title: string) => Promise<void>;
   movePage: (id: string, parentId: string | null, sortOrder: number) => Promise<void>;
   updateCurrent: (patch: Partial<PageDetail>) => void;
+  /**
+   * 用一次保存的结果**就地**更新 `pages` 里那一条，替代"保存后 `loadPages()` 全量重拉"。
+   *
+   * 保存只可能改动 `PageMeta` 里的少数几个字段（标题 / `updated_at`）⇒ 没必要为它重查
+   * 整张 page 表，也没必要付 `set(loading)` + `set(pages)` 两次全量广播（自动保存每
+   * 600ms 就可能来一次，而 `pages` 的消费者里既有每个树节点一个的 TreeItem，也有
+   * DatabaseView / FileManagerView 这种千行组件）。
+   *
+   * 返回 `false` 表示**列表里没有这一条**（例如刚在别处新建、本地 `pages` 还没刷新），
+   * 调用方应回退到 `loadPages()`。返回 `true` 且没有任何字段真的变化时**不写 state**
+   * （`pages` 引用保持不变）⇒ 订阅者一次都不会重渲染。
+   *
+   * ⚠️ 只合并 `PageMeta` 真的有的字段：调用方通常传的是整个 `PageDetail`（**还带正文**），
+   * 整包塞进列表条目会把正文泄进侧栏数据里。
+   */
+  patchPageMeta: (page: Partial<PageMeta> & { id: string }) => boolean;
   bumpReload: () => void;
   setSearchQuery: (q: string) => void;
   clearSearchQuery: () => void;
@@ -166,6 +182,42 @@ export const useNotes = create<NoteState>((set, get) => ({
   updateCurrent: (patch) => {
     const { current } = get();
     if (current) set({ current: { ...current, ...patch } });
+  },
+
+  // 见接口上的长注释：保存路径用这个**就地**更新，别为一次标题改动重拉整表。
+  patchPageMeta: (page) => {
+    const { pages } = get();
+    const i = pages.findIndex((p) => p.id === page.id);
+    // 列表里没有这一条 ⇒ 让调用方回退到 loadPages()，不要在这里悄悄吞掉。
+    if (i < 0) return false;
+
+    const cur = pages[i];
+    const merged: PageMeta = { ...cur };
+    let changed = false;
+    const assign = <K extends keyof PageMeta>(k: K, v: PageMeta[K] | undefined) => {
+      if (v !== undefined && v !== cur[k]) {
+        merged[k] = v;
+        changed = true;
+      }
+    };
+    // 只列可变的元数据字段：id / workspace_id / created_at 是身份，不该由一次保存改写。
+    // 逐个列（而不是遍历 keys）是为了让"哪些字段允许被保存路径改写"在代码里看得见，
+    // 也避免 `any`。
+    assign("title", page.title);
+    assign("icon", page.icon);
+    assign("kind", page.kind);
+    assign("parent_id", page.parent_id);
+    assign("sort_order", page.sort_order);
+    assign("updated_at", page.updated_at);
+    assign("deleted_at", page.deleted_at);
+
+    // 一个字段都没变 ⇒ **不写 state**：pages 引用不变，所有订阅者一次都不重渲染。
+    if (!changed) return true;
+
+    const next = pages.slice();
+    next[i] = merged;
+    set({ pages: next });
+    return true;
   },
 
   bumpReload: () => set((s) => ({ reloadTick: s.reloadTick + 1 })),

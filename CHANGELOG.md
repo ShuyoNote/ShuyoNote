@@ -25,6 +25,16 @@
 
 ### 修复
 
+- **自动保存不再全量重拉页面列表**。`App.tsx` 的保存路径原本每次都 `loadPages()`：它为一次标题改动
+  重查整张 page 表，并触发 `set(loading)` + `set(pages)` **两次全量广播** —— 而这条路每停 600ms
+  打字就可能走一次，`pages` 的订阅者里还有「每个可见树节点一个」的 `TreeItem` 与 `DatabaseView` /
+  `FileManagerView` 这种千行组件。现在改为 `patchPageMeta()` **就地更新**列表那一条（标题 /
+  `updated_at`；**一个字段都没变时不写 state**，连 `pages` 引用都不换）。三种情况仍回退到
+  `loadPages()`：后端没回页面、本地列表里没有这一条、列表上次加载失败——最后一种顺带重试并清掉那个
+  `error` 角标（旧代码正是靠这个副作用清的，走近路时必须显式保留）。判据 `src/store/notes.test.ts`
+  6 条（含"同值不换引用"这条性能承诺）。`updated_at` 之所以必须一起补：它被 `FileManagerView` 的
+  "更新时间"列、`lib/pluginViews.ts` 的"N 天前"排序与 `lib/mention.ts` 的打分读着，只补标题会留陈旧值。
+
 - **三条移动端门禁在 CI 上假红：runner 的浏览器是 en-US**。`src/i18n` 按 `navigator.language`
   选语言 ⇒ 活动栏标题渲染成 `Notes` / `Files` / `Board`……，而门禁里到处是**按中文 title 找按钮**
   （`title^="笔记（编辑器）"` / `"文件管理"`…）⇒ 每个视图都"打不开"，最后抛
