@@ -393,6 +393,36 @@ pub fn merge(local: Option<LocalState>, remote_seq: i64) -> MergeDecision {
     }
 }
 
+/// ★ 丙-③（2026-09-25）：**页级胜负改由 HLC 戳说了算**时的覆盖。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StampWins {
+    /// 远端那枚戳更大 ⇒ **采用远端**（页级；块级怎么合仍然照旧）。
+    Remote,
+    /// 本地那枚戳更大（或"同一枚戳重放"）⇒ **保留本地**。
+    Local,
+}
+
+/// ★ **合并点**（带戳的那一版）—— 丙-③ 在**唯一合并点**上的注入。
+///
+/// 口径两条：
+/// 1. **戳只决定页级谁赢**；块级仍然走 `merge_blocks` / `apply_remote_page`
+///    （两侧改**不同块**时两边都留 —— 丙 不改块级语义）。
+/// 2. `stamp == None` ⇒ 下面那三条**逐字**是今天的规则（"没戳就完全不碰"）。
+///    ⚠️ 只有**两边都带戳**时调用方才会传 `Some` —— "缺一边就走今天那条路"这条判定写在
+///    `hlc::verdict` 里（一处），**不在这里重复第二遍**。
+pub fn merge_with_stamp(
+    local: Option<LocalState>,
+    remote_seq: i64,
+    stamp: Option<StampWins>,
+) -> MergeDecision {
+    match stamp {
+        Some(StampWins::Remote) => MergeDecision::TakeRemote,
+        Some(StampWins::Local) => MergeDecision::KeepLocal,
+        // 没戳 ⇒ **原样**走今天那条路（连代码都是同一处：`merge`）
+        None => merge(local, remote_seq),
+    }
+}
+
 // =====================================================================================
 // 阶段 1 · **块级 LWW**（第一切片：纯函数）
 //

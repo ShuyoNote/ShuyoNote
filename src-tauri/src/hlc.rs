@@ -26,19 +26,20 @@
 //!   别把 HLC 当时间审计用（`wall_ms` 不是可信时间）。
 //! - **它还没接线**：本片只落纯函数与判据，产品路径一行没动（接线清单见文件末 §接线）。
 //!
-//! ## §接线（决策简报 §13 的 ② / ③，别漏）
+//! ## §接线（决策简报 §13）—— 2026-09-25 的实况
 //!
-//! **②（纯函数这一半已经落了）**：`with_stamp` / `stamp_of_payload` / `without_stamp` / `verdict`
-//! —— 推那一侧挂戳、收那一侧**先读戳再决定走哪条路**。
-//! ⚠️ **② 的接线还没做**：今天产品路径**一个戳都不挂** ⇒ 这一层眼下**没有调用方**
-//! （`lib.rs` 里那行 `#[allow(dead_code)]` 就是它）。
+//! **② ＋ ③-a 已落**（纯函数那一半在上面，接线在 `sync.rs`）：
+//! 1. **推那一侧**：`sync::record_page_upsert` 给页 upsert 挂上本机戳
+//!    （`sync::local_stamp` ⇒ `with_stamp`），并把"本页当前那枚戳"记进 `meta.sync_state` 的 KV；
+//! 2. **收那一侧**：`sync::apply_pulled_changes` 解密后 `stamp_of_payload` ⇒ `verdict`；
+//!    `ByStamp` 才按戳判（注入点是 `doc_content::merge_with_stamp` —— **唯一的合并点**），
+//!    `Today` 就**原样走今天那条路**并把原因**留痕**（`eprintln!("[sync] …")`，与 F7b 同一手法）。
 //!
-//! **③（对等交换面）**：
-//! 1. 推那一侧：给每条记录挂上**本机**的戳（`tick`）—— `with_stamp` 已经写好；
-//! 2. 收那一侧：`stamp_of_payload` ⇒ `verdict`；`ByStamp` 才按戳判，`Today` 就**原样走今天那条路**
-//!    并把原因**留痕**（`eprintln!("[sync] …")`，与 F7b 同一手法）；
-//! 3. `sync_profiles.last_pushed_seq` 那套水位推广成 **per-peer**（"我见过 A 到某时某刻"）；
-//! 4. 删掉 `lib.rs` 里 `mod hlc;` 上面那行 `#[allow(dead_code)]`（它只是"还没接线"的收据）。
+//! **③-b 还没做**（＝简报 §13 那一格 ★"去掉中枢仍然收敛"）：
+//! 1. **对等交换面**：客户端之间直接收 / 发带戳的记录（今天仍然经中枢的 `push` / `pull`）；
+//! 2. `sync_profiles.last_pushed_seq` 那套水位推广成 **per-peer**（"我见过 A 到某时某刻"）；
+//! 3. 把 `StampedRecord` / `merge_record` / `projection` / `without_stamp` 接上
+//!    （或认定它们只服务仿真夹具），然后删掉 `lib.rs` 里 `mod hlc;` 上面那行 `#[allow(dead_code)]`。
 //!
 //! ⚠️ **不新开 schema 列**：戳随**载荷**走（`_hlc` 这一项），老对端读不懂就忽略 ——
 //! 与 `crdt_wire` 把 `crdt_state` 挂在载荷上同一手法。`encode()` 那份"字典序 == HLC 序"的

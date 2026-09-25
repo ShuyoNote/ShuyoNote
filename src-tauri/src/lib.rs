@@ -39,12 +39,15 @@ mod crdt_wire;
 // ⚠️ 与块级 `page_conflicts` **不是一族**：两条独立血统在 Yjs 结构上就合不了（S1 红线），
 // 只能"留本机 / 用对端 / 两个都要（一页变两页）"。
 mod lineage_conflict;
-// **丙（真网状）第一片**（2026-09-25）：**HLC 判序** —— 纯函数（`tick` / `observe` / 全序 /
-// 定长可排序编码）＋ LWW 折叠与投影。它替掉的是"只能由一个地方发"的 `changes.seq`，
-// 见 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §4/§6 与 §12。
-// ⚠️ 下面那行 `allow` 是**"还没接线"的收据**，不是长期豁免：本片只落纯函数与判据，
-// 产品路径一行没动（接线清单写在 `hlc.rs` 文件末）。接线那一片**顺手删掉它**
-// —— 与 `lan.rs` 当初同一条纪律（那个 allow 在甲-1 收口时已经删了）。
+// **丙（真网状）**：**HLC 判序** —— 纯函数（`tick` / `observe` / 全序 / 定长可排序编码）
+// ＋ LWW 折叠与投影 ＋ **戳挂到记录载荷上**（丙-②）。它替掉的是"只能由一个地方发"的 `changes.seq`，
+// 见 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §4/§6 与 §12/§13。
+// ⚠️ 下面那行 `allow` 是**"还没全接线"的收据**，不是长期豁免 —— 现在的实况（2026-09-25，丙-③-a）：
+//   · **已经在用**：`Hlc` / `with_stamp` / `stamp_of_payload` / `PayloadStamp` / `Verdict` / `verdict`
+//     （`sync.rs` 的页 upsert 与收侧判序都走它们）；
+//   · **还只有判据在用**：`StampedRecord` / `merge_record` / `projection` / `winner` / `without_stamp`
+//     —— 前者是**仿真夹具**那一族（`mesh_sim.rs`），`without_stamp` 要等"内容比较那一处"接上。
+//   ⇒ 等 ③-b 或内容比较那一处接完，逐条核一遍再删这一行（与 `lan.rs` 当初同一条纪律）。
 #[allow(dead_code)]
 mod hlc;
 // 丙 的**仿真夹具**（N 对端 / 乱序 / 重复 / 无中枢）—— 只在判据里用，**不进产品二进制**。

@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::hlc::Hlc;
 use crate::lan::{self, Peer};
 use crate::lan_state::LanState;
 use crate::models::PageDetail;
@@ -54,6 +55,63 @@ pub fn set_meta_state(c: &Connection, key: &str, value: &str) -> Result<(), Stri
         params![key, value],
     )
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ─────────────── 丙-③（2026-09-25）：本机时钟 ＋ "这一页当前那枚戳" ───────────────
+//
+// 两件都放 `meta.sync_state` 的 KV 里，**不新开 schema 列**：值就是 `Hlc::encode()` 那串
+// 定长文本（字典序 == HLC 序），将来真需要索引时直接落成一列。键按设备 / 空间命名，互不串味。
+
+/// KV 键：本机时钟上一次发出的戳 —— **跨重启单调**的保证就在这一格。
+fn clock_key(device: &str) -> String {
+    format!("hlc:{device}")
+}
+
+/// KV 键：某一页**当前那一版**的戳（收侧拿它跟远端那枚比）。
+fn page_stamp_key(ws: &str, page_id: &str) -> String {
+    format!("hlc_page:{ws}:{page_id}")
+}
+
+/// ★ 本机产生一枚戳：读回上次那枚 ⇒ `tick(now_ms)` ⇒ **写回**。
+///
+/// ⚠️ **每次都要落库**：只在内存里推进的话，"进程重启 ＋ 物理钟回拨"会让戳**倒退**，
+/// 而戳是判序的依据（倒退 ＝ 两台设备对"谁更新"各执一词）。
+/// ⚠️ `now_ms` 是**参数**：判据要能编排"物理钟回拨"这一格（不在这里读表）。
+/// ⚠️ 存着的那格**读不出来就报错**，**不猜着重置** —— 重置会让戳倒退，比什么都糟。
+pub fn local_stamp(c: &Connection, now_ms: i64) -> Result<Hlc, String> {
+    let device = device_id(c)?;
+    let key = clock_key(&device);
+    let mut clock = match get_meta_state(c, &key) {
+        None => Hlc::genesis(&device),
+        Some(stored) => Hlc::decode(&stored).ok_or_else(|| {
+            format!("本机时钟那一格（{key}）读不出来：{stored}（**不猜着重置**：重置会让戳倒退）")
+        })?,
+    };
+    let next = clock.tick(now_ms);
+    set_meta_state(c, &key, &next.encode())?;
+    Ok(next)
+}
+
+/// 这一页**当前那一版**的戳。⚠️ 读不出来 / 没有 ⇒ `None`（＝"没带戳"⇒ 收侧走今天那条路）。
+///
+/// 这一格是**缓存性质**的：丢了只会让下一笔退回老判序（不会丢数据），
+/// 所以这里读不出来时**不当致命**，只当"没有"。
+pub fn page_stamp(c: &Connection, ws: &str, page_id: &str) -> Option<Hlc> {
+    get_meta_state(c, &page_stamp_key(ws, page_id)).and_then(|s| Hlc::decode(&s))
+}
+
+fn set_page_stamp(c: &Connection, ws: &str, page_id: &str, stamp: &Hlc) -> Result<(), String> {
+    set_meta_state(c, &page_stamp_key(ws, page_id), &stamp.encode())
+}
+
+/// 把"这一页当前那枚戳"**清掉** —— 用在"本地那一版被一个**没带戳**的远端覆盖了"之后。
+///
+/// ⚠️ 不清就是留着一个**指向已经不是当前版本**的旧戳：下一轮拿它比会判错边，而那一错就是丢更新。
+/// 清掉之后下一笔自然退回今天那条路（缺一边）——**安全的方向**。
+fn clear_page_stamp(c: &Connection, ws: &str, page_id: &str) -> Result<(), String> {
+    c.execute("DELETE FROM meta.sync_state WHERE key = ?1", params![page_stamp_key(ws, page_id)])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -136,6 +194,25 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
         Some(state) if !state.is_empty() => crate::crdt_wire::with_wire_state(&payload, &state)?,
         _ => payload,
     };
+    // ★ 丙-③（2026-09-25）：把**本机这一刻的戳**挂进载荷，并把"本页当前那一版"记下来。
+    //   挂在这里（而不是推的那一侧）是因为戳要反映"**改的时候**"：一批积压的改动若在发送时
+    //   才一起取戳，它们的先后会被压平成一个晚戳。
+    //   ⚠️ 只挂**页 upsert** 这一条路（丙的页级 LWW 就是改它）；附件与页删除的路今天不动。
+    //   ⚠️ 老对端读不懂这一项就忽略 ⇒ 与接线前**逐字节相同**（`with_stamp` 只加一项）。
+    //   ⚠️ **这是保存路径**：取不到戳 / 戳写不进 KV **都不许**让保存失败 —— 如实打一行，
+    //      这一条就不带戳（收侧自然按今天那条路判）。丢的是"丙的判序"，不是用户的编辑。
+    let payload = match local_stamp(c, crate::db::now_ms()) {
+        Ok(stamp) => {
+            if let Err(e) = set_page_stamp(c, &page.workspace_id, &page.id, &stamp) {
+                eprintln!("[sync] page {} 的「本页戳」没写进去（只影响下一轮判序）：{e}", page.id);
+            }
+            crate::hlc::with_stamp(&payload, &stamp)?
+        }
+        Err(e) => {
+            eprintln!("[sync] page {} 取不到本机戳 ⇒ **这一条不带戳**（收侧按今天那条路判）：{e}", page.id);
+            payload
+        }
+    };
     record_change(c, "page", &page.id, "upsert", Some(&payload), page.updated_at)
 }
 
@@ -198,11 +275,21 @@ fn absorb_incoming_crdt_state(
     }
 }
 
-fn apply_upsert(c: &Connection, page: &PageDetail, sync_seq: i64) -> Result<UpsertApply, String> {
+/// ★ 丙-③：页级胜负改由**戳**说了算 —— 判定来自 `crate::hlc::verdict`，`None` ⇒ 今天那条路。
+///
+/// ⚠️ `stamp == None` 时**逐字节等于今天**（连代码都是同一处：`doc_content::merge`）——这条由
+/// 既有那一整批 `doc_content` / `sync` 判据看着（它们一条都不带戳）。
+/// ⚠️ 戳**只决定页级**谁赢；块级怎么合仍然在 `apply_remote_page` 里（两侧改不同块 ⇒ 两边都留）。
+fn apply_upsert(
+    c: &Connection,
+    page: &PageDetail,
+    sync_seq: i64,
+    stamp: Option<crate::doc_content::StampWins>,
+) -> Result<UpsertApply, String> {
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
     let local = crate::doc_content::local_state(c, &page.id)?;
-    if crate::doc_content::merge(local, sync_seq) == crate::doc_content::MergeDecision::KeepLocal {
+    if crate::doc_content::merge_with_stamp(local, sync_seq, stamp) == crate::doc_content::MergeDecision::KeepLocal {
         return Ok(UpsertApply::KeptLocal);
     }
 
@@ -2462,11 +2549,54 @@ let mut unrecognized: Vec<String> = Vec::new();
                         if local_dirty != 0 {
                             conflicts.push(SyncConflict { entity_id: page.id.clone(), title: page.title.clone() });
                         }
-                        let unresolved = apply_upsert(&c, &page, change.seq)?;
+                        // ★ 丙-③（2026-09-25）：**页级胜负先看戳** —— 判定只有一处（`hlc::verdict`）。
+                        //   两边都带戳 ⇒ 戳说了算；**缺一边（含"带了但读不出来"）⇒ 原样走今天那条路**，
+                        //   并**留痕**：不留痕的话，"为什么这一笔按老规矩判"就只能靠猜。
+                        let remote_stamp = crate::hlc::stamp_of_payload(&plain);
+                        let local_stamp_kv = page_stamp(&c, &page.workspace_id, &page.id)
+                            .map_or(crate::hlc::PayloadStamp::Missing, crate::hlc::PayloadStamp::Ok);
+                        let stamp_wins = match crate::hlc::verdict(&local_stamp_kv, &remote_stamp) {
+                            crate::hlc::Verdict::ByStamp { remote_wins } => Some(if remote_wins {
+                                crate::doc_content::StampWins::Remote
+                            } else {
+                                crate::doc_content::StampWins::Local
+                            }),
+                            crate::hlc::Verdict::Today(why) => {
+                                eprintln!(
+                                    "[sync] page {} 这一笔按**今天那条路**判（{why}）—— \
+                                     戳不全时不许按戳判（否则升级方会永久压过未升级方的后改）",
+                                    page.id
+                                );
+                                None
+                            }
+                        };
+                        let unresolved = apply_upsert(&c, &page, change.seq, stamp_wins)?;
                         match unresolved {
                             UpsertApply::Applied { unresolved } => {
                                 if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
                                     unresolved_page_ids.push(page.id.clone());
+                                }
+                                // ★ 丙-③：远端这一版**已经应用** ⇒ "本页当前那一版"就是它。
+                                //   ⚠️ 远端**没带戳**而本地原来有一枚 ⇒ 要把那枚**清掉**：留着它就是一个
+                                //   指向"已经不是当前版本"的旧戳，下一轮拿它比会判错边（那一错就是丢更新）。
+                                //   清掉之后下一笔自然退回今天那条路（缺一边）——**安全的方向**。
+                                //   ⚠️ 这一格是**缓存性质**的：写不进去只影响下一轮判序，**不许**因此让
+                                //   已经落库的这一笔失败（更不许连坐整批）。
+                                let write_back = match (&remote_stamp, &local_stamp_kv) {
+                                    (crate::hlc::PayloadStamp::Ok(s), _) => {
+                                        set_page_stamp(&c, &page.workspace_id, &page.id, s)
+                                    }
+                                    (_, crate::hlc::PayloadStamp::Ok(_)) => {
+                                        clear_page_stamp(&c, &page.workspace_id, &page.id)
+                                    }
+                                    // 两边本来都没有戳 ⇒ 没什么可动的
+                                    _ => Ok(()),
+                                };
+                                if let Err(e) = write_back {
+                                    eprintln!(
+                                        "[sync] page {} 的「本页戳」没写进去（只影响下一轮判序，这一次落库照旧）：{e}",
+                                        page.id
+                                    );
                                 }
                                 // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）
                                 // 已经是陈的，清掉（不清就是"清单永远挂着几条假账"）。
@@ -4413,12 +4543,28 @@ mod tests {
         let (c, dir) = pending_conn("push-crdt");
         let page = remote_page("p1", &page_json("b1", 1, "字"));
 
-        // ① 没有状态 ⇒ 载荷与"直接序列化 PageDetail"**逐字节相同**
+        // ① **没有 CRDT 状态** ⇒ 载荷里**不许凭空长出一个 `crdt_state`**。
+        //    ⚠️ **判据替换（2026-09-25，丙-③）**：这里原先断言"载荷与直接序列化 `PageDetail`
+        //    **逐字节相同**"。在"每条页 upsert 都要带 HLC 戳"之后那句**不再成立** ——
+        //    戳是**无条件**挂的（它是判序的依据），所以"逐字不变"这个**形式**已经错了，
+        //    不是判据被放宽了。真正的意图用下面三条钉住：没有 `crdt_state` ＋ **戳在**
+        //    ＋ **去掉戳之后**与裸 `PageDetail` 同值。
         record_page_upsert(&c, &page).unwrap();
         let plain: String = c
             .query_row("SELECT payload FROM changes WHERE entity_id = 'p1' ORDER BY seq DESC LIMIT 1", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(plain, serde_json::to_string(&page).unwrap(), "没状态时载荷必须逐字不变");
+        assert_eq!(
+            crate::crdt_wire::extract_wire_state(&plain).unwrap(),
+            crate::crdt_wire::WireState::None,
+            "没有状态 ⇒ 不许凭空长出一个 `crdt_state`"
+        );
+        assert!(
+            matches!(crate::hlc::stamp_of_payload(&plain), crate::hlc::PayloadStamp::Ok(_)),
+            "丙-③ 之后，页 upsert 的载荷必须带本机戳：{plain}"
+        );
+        let bare: serde_json::Value = serde_json::from_str(&serde_json::to_string(&page).unwrap()).unwrap();
+        let after: serde_json::Value = serde_json::from_str(&crate::hlc::without_stamp(&plain)).unwrap();
+        assert_eq!(after, bare, "去掉那枚戳之后，载荷必须**同值于**直接序列化的 PageDetail");
 
         // ② 有状态 ⇒ 挂上 crdt_state，且能按同一张表读回来
         crate::page_crdt::write_page_crdt_state(&c, "p1", &[7, 8, 9], 1).unwrap();
@@ -5000,7 +5146,7 @@ mod tests {
         .unwrap();
 
         // 同 rev、不同内容 ⇒ 判不了 ⇒ 落表 + 回报条数
-        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9).unwrap();
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9, None).unwrap();
         assert_eq!(out, UpsertApply::Applied { unresolved: 1 }, "必须把『有 1 处未裁决冲突』交回来");
         let recorded: i64 = c
             .query_row("SELECT COUNT(*) FROM page_conflicts WHERE page_id='p1' AND resolved_at IS NULL", [], |r| r.get(0))
@@ -5009,7 +5155,7 @@ mod tests {
 
         // 同一页再来一次干净的应用（内容逐字相同）⇒ 这一轮没有未裁决冲突 ⇒ 回报 0
         c.execute("UPDATE pages SET sync_seq = 1, dirty = 0 WHERE id='p1'", []).unwrap();
-        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10).unwrap();
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10, None).unwrap();
         assert_eq!(
             out,
             UpsertApply::Applied { unresolved: 0 },
@@ -5129,7 +5275,7 @@ mod tests {
         insert_local_page(&c, "p1", &mine, 1, 1); // dirty ⇒ 页级判定 = 保留本地
 
         assert_eq!(
-            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9).unwrap(),
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None).unwrap(),
             UpsertApply::KeptLocal,
             "本地有未推送改动 ⇒ 这一支是『没应用』，不许当成『应用干净』"
         );
@@ -5138,7 +5284,7 @@ mod tests {
         // 把本地清零（已同步）⇒ 同一笔远端变更这次真的应用了
         c.execute("UPDATE pages SET dirty = 0 WHERE id = 'p1'", []).unwrap();
         assert_eq!(
-            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9).unwrap(),
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None).unwrap(),
             UpsertApply::Applied { unresolved: 0 },
             "应用了且没有未裁决冲突 ⇒ 另一支"
         );
@@ -5376,5 +5522,172 @@ mod tests {
             fatal_decrypt_sites, 2,
             "page 与 attachment 两处解密都必须走 Fatal（否则读不了的变更会被'归档＋前进'静默消费）：{fatal_decrypt_sites}"
         );
+    }
+
+    // ═══════════════ 丙-③（2026-09-25）：戳真的过网 ＋ **页级胜负按戳判** ═══════════════
+
+    /// 空间表（`db::migrate`）**＋** `meta` 的 KV / 档案表 —— 丙-③ 的判据两边都要用。
+    fn stamped_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&c, "ws").unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY,
+                 server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '',
+                 space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0,
+                 last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1
+             );",
+        )
+        .unwrap();
+        set_meta_state(&c, "device_id", "A").unwrap();
+        c
+    }
+
+    fn stamp_of(device: &str, wall: i64) -> Hlc {
+        let mut h = Hlc::genesis(device);
+        h.tick(wall)
+    }
+
+    /// 造一条 `page/upsert` 变更；`Some(..)` ⇒ 载荷上带那枚戳，`None` ⇒ **老对端的形状**（不带戳）。
+    fn stamped_change(seq: i64, page: &PageDetail, s: Option<&Hlc>) -> IncomingChange {
+        let plain = serde_json::to_string(page).unwrap();
+        let payload = match s {
+            Some(s) => crate::hlc::with_stamp(&plain, s).unwrap(),
+            None => plain,
+        };
+        IncomingChange {
+            seq,
+            entity: "page".to_string(),
+            entity_id: page.id.clone(),
+            op: "upsert".to_string(),
+            payload: Some(payload),
+            updated_at: page.updated_at,
+        }
+    }
+
+    /// 先让"本地那一版"**走真 apply 路径**落地（不手写 INSERT：`pages` 的列集不归本判据管），
+    /// 再把两个**判定输入**调成想要的样子（`sync_seq` / `dirty`）。
+    fn seed_local(c: &Connection, content_json: &str, sync_seq: i64, dirty: i64) {
+        let p = remote_page("p1", content_json);
+        apply_pulled_changes(c, vec![stamped_change(1, &p, None)], 0, 1).unwrap();
+        c.execute("UPDATE pages SET sync_seq = ?1, dirty = ?2 WHERE id = 'p1'", params![sync_seq, dirty])
+            .unwrap();
+    }
+
+    /// 本页现在那份内容（`remote_page` 造出来的**标题恒为"页"** ⇒ 区分版本只能看正文）。
+    fn content_of(c: &Connection) -> String {
+        c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap()
+    }
+
+    /// ★ 丙-③：**两边都带戳 ⇒ 按戳判**，哪怕今天的规则一定会保留本地（`dirty=1` 且 `seq` 更大）。
+    #[test]
+    fn a_stamped_remote_is_judged_by_the_stamp_even_when_today_would_keep_local() {
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本地那一版"), 99, 1); // dirty=1 ＋ seq 更大 ⇒ 今天必留本地
+        set_page_stamp(&c, "ws", "p1", &stamp_of("A", 1_000)).unwrap();
+
+        let late = stamp_of("B", 2_000);
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1).unwrap();
+
+        assert!(
+            content_of(&c).contains("远端那一版"),
+            "两边都带戳 ⇒ 按戳判（戳更晚的远端必须赢）：{}",
+            content_of(&c)
+        );
+        assert_eq!(page_stamp(&c, "ws", "p1"), Some(late), "本页当前那枚戳要跟到赢家");
+    }
+
+    /// ★ 反面：本地那枚戳更晚 ⇒ **保留本地**，哪怕远端的 `seq` 大得多（今天那条路会采用远端）。
+    #[test]
+    fn a_stamped_local_that_is_later_is_kept_even_against_a_much_bigger_remote_seq() {
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 2, "本地那一版"), 1, 0); // 干净、seq 小 ⇒ 今天必采用远端
+        let late = stamp_of("A", 5_000);
+        set_page_stamp(&c, "ws", "p1", &late).unwrap();
+
+        let early = stamp_of("B", 2_000);
+        let p = remote_page("p1", &page_json("b1", 3, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(900, &p, Some(&early))], 0, 1).unwrap();
+
+        assert!(
+            content_of(&c).contains("本地那一版"),
+            "本地那枚戳更晚 ⇒ 保留本地（远端的 seq 再大也不算数）：{}",
+            content_of(&c)
+        );
+        assert_eq!(page_stamp(&c, "ws", "p1"), Some(late), "赢家是本地 ⇒ 那枚戳不动");
+    }
+
+    /// ★★ 丙-② 定下的那条规则在**真 apply 路径**上成立：**远端没带戳 ⇒ 整条走今天那条路**。
+    ///
+    /// 今天那条路（`dirty` 优先本地 ＋ `seq` 权威）在下面两个方向上各验一次，两次都**逐字节**
+    /// 是接线前的结论 —— 老对端零感知。
+    #[test]
+    fn a_remote_without_a_stamp_still_follows_exactly_todays_rule() {
+        // ① dirty=1 且本地 seq 更大 ⇒ 保留本地（今天）
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本地那一版"), 99, 1);
+        set_page_stamp(&c, "ws", "p1", &stamp_of("A", 9_000)).unwrap(); // 本地有戳，远端没有 ⇒ 仍走今天
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1).unwrap();
+        assert!(content_of(&c).contains("本地那一版"), "缺一边 ⇒ 不许按戳判：{}", content_of(&c));
+
+        // ② 干净且本地 seq 更小 ⇒ 采用远端（今天）
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本地那一版"), 1, 0);
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1).unwrap();
+        assert!(content_of(&c).contains("远端那一版"), "缺一边 ⇒ 走今天那条路：{}", content_of(&c));
+    }
+
+    /// ★ 一个**不带戳**的远端把本地覆盖掉之后，本页那枚旧戳**必须被清掉**。
+    ///
+    /// 不清的后果是实打实的：那一枚指向"已经不是当前版本"的旧戳，下一轮拿它比会判错边 ——
+    /// 而判错边就是丢更新。清掉之后下一笔自然退回今天那条路（缺一边），是安全的方向。
+    #[test]
+    fn an_unstamped_remote_that_wins_clears_the_page_stamp_instead_of_leaving_a_stale_one() {
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本地那一版"), 1, 0);
+        set_page_stamp(&c, "ws", "p1", &stamp_of("A", 9_000)).unwrap();
+
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1).unwrap();
+
+        assert!(content_of(&c).contains("远端那一版"), "这一笔按今天那条路判、采用远端");
+        assert_eq!(page_stamp(&c, "ws", "p1"), None, "旧戳必须清掉（留着会误导下一轮）");
+    }
+
+    /// ★ 本机时钟：**每条页 upsert 都带戳**，戳**只增不减**（含物理钟回拨 / 进程重启）。
+    #[test]
+    fn every_recorded_page_upsert_carries_a_stamp_and_the_local_clock_only_moves_forward() {
+        let c = stamped_conn();
+        let p = remote_page("p1", &page_json("b1", 1, "甲"));
+
+        record_page_upsert(&c, &p).unwrap();
+        let payload: String =
+            c.query_row("SELECT payload FROM changes ORDER BY seq DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        let first = match crate::hlc::stamp_of_payload(&payload) {
+            crate::hlc::PayloadStamp::Ok(s) => s,
+            other => panic!("记下来的那一条必须带戳：{other:?}"),
+        };
+        assert_eq!(page_stamp(&c, "ws", "p1"), Some(first.clone()), "本页当前戳跟着本地这一版");
+
+        record_page_upsert(&c, &p).unwrap();
+        let second = local_stamp(&c, crate::db::now_ms()).unwrap();
+        assert!(second > first, "第二笔的戳必须更晚");
+
+        // 物理钟**回拨**（甚至拨到 0）：戳仍然只增不减 —— 每次从 KV 读回上次那枚就是为这个。
+        let third = local_stamp(&c, 0).unwrap();
+        assert!(third > second, "表被拨回去也不许倒退（倒退＝两台设备对'谁更新'各执一词）");
+
+        // 存着的那格**读不出来就报错**，不猜着重演（重置会让戳倒退）
+        let device = device_id(&c).unwrap();
+        set_meta_state(&c, &clock_key(&device), "不是一枚戳").unwrap();
+        assert!(local_stamp(&c, 1).is_err(), "读不出来不许猜着重置");
     }
 }
