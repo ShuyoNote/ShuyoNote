@@ -264,6 +264,30 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 （`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「局域网直连」
 那一行显示的地址是否真的被同步请求用上（读数是 `sync::effective_base`，界面只显示 Rust 给的原文）。
 
+## 真机（Android）怎么把"新界面"验到
+
+2026-09-25 实测走通的一条链（Mate 40 · `UJN0221310000547` · Android 12 · WebView 114），
+**不用手工点**：CDP 按 DOM 驱动（`_scratch/dev-mate.mjs`：`adb forward` 到
+`localabstract:webview_devtools_remote_<pid>` ＋ `Runtime.evaluate`）。
+
+```powershell
+# ① 出包（配方见上面「本机出安卓包」那一段；⚠️ 每次都 `tauri android init --ci` 之后再跑那五个脚本）
+# ② 签名 ＋ 安装 ＋ 扫包里的新文案（脚本是纯 ASCII，中文针用 \uXXXX 写 —— 门禁 check-ps1-ascii）
+powershell -ExecutionPolicy Bypass -File C:\Users\cnzen\zhai\_scratch\sign-install-mate.ps1
+# ③ 按 DOM 驱动
+node C:\Users\cnzen\zhai\_scratch\dev-mate.mjs eval "document.body.innerText.replace(/\s+/g,' ').slice(-800)"
+```
+
+⚠️ **三条踩过的坑（省一整轮的那种）**：
+1. **签名不匹配就必须先卸载** —— `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 只在签名不同时出现，
+   而卸载会**连 App 数据一起删**。所以动手前先 `apksigner verify --print-certs` 读一下
+   **设备上那个包**（`adb pull $(adb shell pm path <pkg> | cut -d: -f2)`）的指纹，别猜。
+2. **APK 里没有前端的明文**：Tauri 把整个前端嵌进 `lib/arm64-v8a/libshuyonote_lib.so`（压缩存储）
+   ⇒ 想用"扫 .so 找中文文案"来确认打进去的是哪一版，**只能看到压缩流**，
+   那条路走过一次、结论是"看着像假的"（本次改用"跑起来按 DOM 读文字"来判）。
+3. `adb exec-out screencap -p > x.png` **别走 PowerShell 的 `>`**（二进制会被改写、图读不出来），
+   要 `cmd /c "... > x.png"`。
+
 ## flake 与重试（不许静默重试）
 
 browser / mobile 两组要真实 Chromium（+ dev server），是仓库里唯一有 flake 风险的档。
