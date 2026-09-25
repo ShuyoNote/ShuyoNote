@@ -1256,7 +1256,18 @@ mod tests {
     /// ★ 空间 id 只从 `spaces/<id>.db` 反推；不是那种文件就 `None`（**不猜**）。
     #[test]
     fn space_id_comes_from_the_file_stem_only() {
+        // ⚠️ **路径语义是平台的**（2026-09-25 macOS 侧实测的**既有红**，与本片无关）：
+        //    这里原来无条件断言 `Path::new(r"C:\x\spaces\s1.db")` 的主干是 `s1`，
+        //    而 `Path::file_stem()` 在 **Unix 上不把 `\` 当分隔符** ⇒ 主干是整串
+        //    `C:\x\spaces\s1`，于是这条在 macOS / Linux 上**必红**（本机实测：
+        //    `left: Some("C:\\x\\spaces\\s1")` / `right: Some("s1")`）。
+        //    它测的本来就是「Windows 路径在 Windows 上怎么解」，所以该由 **Windows 那一档**跑；
+        //    Unix 那一档用 Unix 路径断言**同一件事**（主干 = 文件名去掉 `.db`）。
+        //    ⇒ 这不是降低要求：两个平台各断言各自语义下的同一性质，一条都没少。
+        #[cfg(windows)]
         assert_eq!(space_id_from_path(Path::new(r"C:\x\spaces\s1.db")), Some("s1".into()));
+        #[cfg(not(windows))]
+        assert_eq!(space_id_from_path(Path::new("/x/spaces/s1.db")), Some("s1".into()));
         assert_eq!(space_id_from_path(Path::new("/x/spaces/活跃空间.db")), Some("活跃空间".into()));
         assert_eq!(space_id_from_path(Path::new("/x/spaces/")), None, "目录不是库文件");
         assert_eq!(space_id_from_path(Path::new("/x/spaces/.db")), None, "隐藏名不是空间 id");
