@@ -18,6 +18,7 @@
       "check-capabilities",
       "check-changelog",
       "check-changelog-numbers",
+      "check-changelog-tags",
       "check-changelog-version-parity",
       "check-deep-link",
       "check-derived-writers",

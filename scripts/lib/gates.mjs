@@ -38,6 +38,25 @@ export const GATES = [
     cmd: "node scripts/check-changelog-gate-numbers.mjs",
     incident: "发版说明里的断言数一直靠人从终端抄：抄错了下一次改动后就成假话，而散文不参与构建，没人会发现",
   },
+  {
+    id: "check-changelog-tags",
+    group: "contract",
+    label: "每个 tag 的树自带本版台账段头",
+    // 为什么挂在 contract：纯 Node + 只读 git，约 1 秒。**故意不进 `pnpm build`** ——
+    // build 会在 release/macos/android 那几个 job 里跑，而那些 checkout 是默认深度（浅克隆）
+    // ⇒ 一个 tag 都没有 ⇒ 本门禁判「判不了」（exit 3）⇒ 把发版链整条弄红。
+    // 跑它的 `ci.yml` 的 `checks` job 已显式 `fetch-depth: 0`。
+    cmd: "node scripts/check-changelog-tags.mjs",
+    incident:
+      "2026-08-31 一天里连发 7 个 tag（`v1.64.10` … `v1.64.16`），而**每一个的树顶格都还停在 `1.64.10`**" +
+      "（`v1.64.10` 自己停在 `1.64.9`）—— 版本号 bump 了、台账一段没写。" +
+      "`release-preflight` ③ 查的是「打 tag 之前的工作区」，它挡不住「tag 打在了台账陈旧的提交上」这个形状" +
+      "（`git tag` 指哪个提交是手给的）；本门禁对**所有** tag 问「你这棵树里有没有你自己那一段」，是全量历史审计。" +
+      "另记一条基线教训：第一版拿「当前 checkout 的 CHANGELOG」去比 tag，报出 4 个假缺失" +
+      "（1.85.2 / 1.91.4 / 1.91.25 / 1.91.26）—— 真因是发布提交切在 `main`、`dev` 台账本来就落后两个版本；" +
+      "判据的基线必须是被审计的那个对象自己（tag 的树）",
+    registered: "2026-09-25",
+  },
   { id: "check-web-commands", group: "contract", label: "命令契约（web/桌面两侧）", cmd: "node scripts/check-web-commands.mjs" },
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },

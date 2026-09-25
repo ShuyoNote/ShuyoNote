@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
+门禁 45 条（contract 21 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -59,6 +59,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
 | contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现）。工具链探针**两张表**：macOS（`xcode-select`/SDK/`notarytool`/`codesign`/`clang`）与 **Windows（2026-09-20 补）**——硬判据 `vswhere-msvc`（VC 工具链）/`windows-sdk`/`webview2`（运行时：没它装完打不开），`kind: "info"` 的 `makensis`/`signtool` **只报不判**（tauri 自己取 NSIS、签名只在发版要） |
 | contract | `check-changelog-version-parity` | 已发布标题与版本文件**同改**：只把 CHANGELOG 的标题往前挪、忘了 bump 版本号（或反过来）⇒ 用户看到的"新版本"里没有这次改动 |
+| contract | `check-changelog-tags` | **发布出去的那棵树必须自带它自己那一版的台账段**：判据是"每个 tag 的树里有没有 `## [该版本]`"，不是"CHANGELOG 里写了没写"。2026-08-31 一天里连发 7 个 tag（`v1.64.10`…`v1.64.16`）而每一个的树顶格都还停在 `1.64.10`。`release-preflight` 查的是**打 tag 之前的工作区**，挡不住"tag 打在了台账陈旧的提交上"；这条对**所有** tag 全量审计（历史 8 条只登记、**不补写**，见脚本内 `KNOWN_GAPS`）。⚠️ 一个版本 tag 都看不见（浅克隆/没取 tag）⇒ **判不了（3），不是通过** |
 | contract | `check-nsis-template` | NSIS 安装器模板＝fork 的一行改动 ＋ CLI 版本核对：模板被上游改写后**装出来的东西**与声明不符 |
 | contract | `check-derived-writers` | 派生表的**唯一写入者**：Rust 生产代码不许写派生表（唯一写入口在 TS 侧平台层）——两处写就是两份语义 |
 | contract | `check-doc-content-access` | 「文档内容」的直接访问**只减不增**：换 CRDT 时要改的就是这批位置（当前 562 处，基线在 `scripts/doc-content-access-baseline.json`）；新文件直接引用或超基线即红 |
