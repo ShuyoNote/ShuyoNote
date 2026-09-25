@@ -159,3 +159,37 @@ describe("`--print-env` 只读：它只翻译环境，不建隔离、不打补�
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// ★ 2026-09-25 加：`--print-source-sha256` 那条**当时没被覆盖的边界**
+// ---------------------------------------------------------------------------
+//
+// macos 侧复核我的只读修法时指出（`reply-6` §五）：`--print-source-sha256` **仍然**在补丁段之后 ——
+// 那是**设计**（它算的就是"将要编译的那份"的哈希，所以必须 `--prepare` 之后），但也因此
+// **不能**被放进"下游要重定向 stdout"的位置（`--print-env` 的两类坑都可能在那条路上重演）。
+//
+// 我先核了这条边界的**现实风险**：仓里**没有任何 workflow** 把它的 stdout 重定向（`git grep` 只命中
+// 文档与脚本注释），也**没有门禁**解析它 ⇒ 加一条 workflow 规则会是"没有事故依据的门禁"
+// （本仓纪律：每条门禁都对应一次真实事故）⇒ 不加。
+//
+// 但它的文件头自称这一行是"**给另一侧（macOS 的门禁）用**"的 —— 一个**声明了却没人钉**的跨机器契约，
+// 正是本仓最防的"两套实现各自漂移"那一族。⇒ 这里只钉**格式**（最便宜、也最真的那一条）。
+describe("`--print-source-sha256`：输出格式是**跨机器契约**", () => {
+  it("★ 那一行必须是 `<sha256> <path> <version> via=<…> patch=<already|applied|absent>`（五格）", () => {
+    const fx = makeFixture();
+    try {
+      // 只钉**格式** ⇒ 用 `--no-apply`，不碰"它会不会打补丁"那件事（那是另一条语义）
+      const r = runCli(fx, ["--print-source-sha256", "--no-apply", "--openssl-dir", fx.prefix]);
+      expect(r.code).toBe(0);
+      const line = r.stdout.split("\n").find((l) => /^[0-9a-f]{64} /.test(l));
+      expect(line, "stdout 里应当有 `<sha256> …` 那一行").toBeTruthy();
+      // ⚠️ `patch=` 只许这三个词：另一侧按它区分「真过期」与「假红（读到未打补丁的源码）」
+      expect(String(line)).toMatch(/^[0-9a-f]{64} \S+ \d+\.\d+\.\d+ via=[\w.-]+ patch=(already|applied|absent)$/);
+      // ⚠️ 它与 `--print-env` 的契约**不同**：这里**不要求** stdout 纯净（它是给解析器读的一行，
+      //    不是要整体喂给 `$GITHUB_ENV`）。钉住这一点，免得有人照着 `--print-env` 的守卫来改它。
+      expect(r.stdout).toContain("sm-library-build: 源码 =");
+    } finally {
+      rmSync(fx.dir, { recursive: true, force: true });
+    }
+  });
+});
