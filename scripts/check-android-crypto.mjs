@@ -4,18 +4,30 @@
 // 「编的时候带了」与「包里真的是那个形状」是两件事 —— 本仓在 pdfium 上吃过两次
 // （"装包里没有 pdfium.dll" / "包里有但位置不对"），所以同类问题一律落到产物判据上。
 //
-// 判什么（两条）：
+// 判什么（三条）：
 //   ① 包里**不该**出现 `lib/<abi>/libcrypto.so*`：静态随包 ⇒ 没有独立的动态 crypto 库；
 //   ② 应用自己的 `.so`（`lib<name>.so`）的 **DT_NEEDED 里不该有** `libcrypto.so*`：
 //      有的话用户机器得能自己找到那份库，而 Android 系统**不带** OpenSSL。
+//   ③ ★ **正向那一半**：应用 `.so` 里必须找得到**补丁引入的字面量**（`PBKDF2_HMAC_SM3`/`HMAC_SM3`）
+//      ⇒ "随包的这份 SQLCipher **真的打过国密补丁**"。挡住的是"编的时候带了
+//      `--features sm-library`、库里却是原版 SQLCipher"那种**看起来是国密**的形态。
 //
-// ⚠️ **正向那一半（"SM provider 真的编进去了"）这里验不了**，如实报「没验」：
-//   `src-tauri/Cargo.toml` 的 `[profile.release] strip = true` ⇒ release 包的符号表被剥掉，
-//   数不了 SM3/SM4 符号；而"没被 strip 的包"又不是我们要发的那个。**最终证据是真机跑一次**
-//   （口令→加密→重启解锁→读写），属**人手**。绝不把"没验"写成"通过"。
+//   ③ 为什么成立（2026-09-25 在真产物上实测，推翻了本文件原来那句"验不了"）：
+//   原来写的是"release 包被 `strip = true` 剥了符号 ⇒ 数不了 SM3/SM4 符号"—— **strip 剥掉的是
+//   符号表（`.symtab`/`.dynsym`），不是 `.rodata` 里的字符串字面量**。真产物上数了一遍：
+//     `PBKDF2_HMAC_SM3` ×3、`HMAC_SM3` ×6、`sqlcipher_openssl_hmac` ×11、`EVP_sm3` ×1
+//   （52.9 MB 的 `app-universal-release-unsigned.apk`，`lib/arm64-v8a/libshuyonote_lib.so`）
+//   而这三个字面量在**未打补丁**的那份 registry 源码里出现 **0** 次
+//   （`.cargo/registry/src/*/libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c`，`SHUYONOTE-GM` 命中 0）
+//   ⇒ 它们是**补丁独有**的：出现 ⇔ "打过补丁的那份源码被编进来了"。
 //
-// 退出码：0 = 通过；1 = 有问题（动态 crypto 库随包 / 应用 .so 依赖它）；2 = **没验**
-//   （找不到 APK / 包里的 app .so 不在 / 本机没有 readelf 或 llvm-readelf）。与 `check-android-bundle`
+//   ⚠️ ③ 证不到的还剩一层，仍属**人手**：字面量在库里 ≠ **运行期 provider 真的支持 SM3**
+//   （SQLCipher 的后端能力门与 OpenSSL provider 支持是两件事）。最终证据还是真机跑一次
+//   （口令→加密→重启解锁→读写）。绝不把"没验"写成"通过"。
+//
+// 退出码：0 = 通过；1 = 有问题（动态 crypto 库随包 / 应用 .so 依赖它 / **补丁字面量不在**）；
+//   2 = **没验**（找不到 APK / 包里的 app .so 不在 / 本机没有 readelf 或 llvm-readelf /
+//   **判据自身的字面量清单已与补丁文件脱节**）。与 `check-android-bundle`
 //   分开成两个脚本，正是因为两件事的"没验"不该互相污染。
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -34,6 +46,47 @@ export const APP_LIB = "libshuyonote_lib.so";
 export const ABI_DIRS = ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"];
 /** 动态 crypto 库的形态（`libcrypto.so` / `libcrypto.so.3`）。 */
 export const CRYPTO_SHARED_RE = /^libcrypto\.so(\.\d+)*$/;
+
+/**
+ * ③ 用的字面量：由 `patches/0001-sqlcipher-sm3-provider.patch` 引入、**上游没有**的字符串。
+ *
+ * 挑的是"补丁改了它、上游一定没有"这两个条件同时成立的：
+ *   · `PBKDF2_HMAC_SM3` —— `SQLCIPHER_PBKDF2_HMAC_SM3_LABEL` 的值，PRAGMA `cipher_kdf_algorithm` 回的就是它；
+ *   · `HMAC_SM3`        —— `SQLCIPHER_HMAC_SM3_LABEL` 的值。
+ * 两个都在 `.rodata` ⇒ 与符号表无关，`strip = true` 也留得住（实测见文件头）。
+ */
+export const SM_PROVIDER_LITERALS = ["PBKDF2_HMAC_SM3", "HMAC_SM3"];
+/** 判据自身的新鲜度靠它：清单与补丁文件脱节时**报「没验」**，而不是继续判（见 `patchDeclaresLiterals`）。 */
+export const SM_PATCH_FILE = "patches/0001-sqlcipher-sm3-provider.patch";
+
+/**
+ * 纯函数：这些字面量在字节里各有没有。**空输入 ⇒ 全部 missing**（不拿"空"当"有"）。
+ *
+ * 为什么用 latin1 逐字节找（而不是先转字符串）：`.so` 是二进制，`toString("utf8")` 会把
+ * 非 UTF-8 序列替换成 U+FFFD，可能**跨过**本该命中的边界；逐字节 `includes` 没有这层解释。
+ */
+export function smProviderEvidence(bytes, literals = SM_PROVIDER_LITERALS) {
+  const hay = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes ?? []);
+  const found = [];
+  const missing = [];
+  for (const l of literals) {
+    if (hay.length > 0 && hay.includes(Buffer.from(l, "latin1"))) found.push(l);
+    else missing.push(l);
+  }
+  return { found, missing };
+}
+
+/**
+ * 纯函数：补丁文件里**还写着**这些字面量吗？
+ *
+ * 为什么需要：③ 的两条字面量是**抄**进本文件的。哪天补丁把标签改了（或改成分片拼接），
+ * ③ 就会对着一份**打过补丁**的产物报红 —— 那种假红会把这门禁训练成"可以忽略"。
+ * ⇒ 每次判之前先在补丁文件里核对一遍；对不上就报「没验」（2），并点名是哪一条。
+ */
+export function patchDeclaresLiterals(patchText, literals = SM_PROVIDER_LITERALS) {
+  const t = String(patchText ?? "");
+  return { declared: literals.filter((l) => t.includes(l)), missing: literals.filter((l) => !t.includes(l)) };
+}
 
 /** 从 APK 条目名里挑出 `lib/<abi>/libcrypto.so*`（**不该有**）。纯函数，判据直接钉它。 */
 export function cryptoLibEntries(entries) {
@@ -152,6 +205,33 @@ export function check({ apk, log = console.log, err = console.error, run } = {})
     return 2;
   }
 
+  // ③ 正向那一半：补丁引入的字面量必须在这个 .so 里（`buf` 就是它，不用再解一次）
+  const patchPath = join(root, SM_PATCH_FILE);
+  let patchText = null;
+  try {
+    patchText = readFileSync(patchPath, "utf8");
+  } catch (e) {
+    err(`✗ 没验：读不了判据自己的补丁文件 ${SM_PATCH_FILE}：${String(e?.message ?? e).slice(0, 120)}`);
+    return 2;
+  }
+  const fresh = patchDeclaresLiterals(patchText);
+  if (fresh.missing.length > 0) {
+    err(
+      `✗ 没验：③ 的字面量清单已与补丁脱节 —— ${fresh.missing.join("、")} 在 ${SM_PATCH_FILE} 里找不到。` +
+        `\n  ⇒ 要么补丁改了标签（那就要同步改 SM_PROVIDER_LITERALS），要么清单抄错了。` +
+        `\n  这**不是**产物有问题，是判据自己过期；不许当成通过。`,
+    );
+    return 2;
+  }
+  const ev = smProviderEvidence(buf);
+  if (ev.missing.length > 0) {
+    err(`✗ ${apps[0].entry} 里找不到补丁字面量：${ev.missing.join("、")}（找到的是：${ev.found.join("、") || "（无）"}）`);
+    err("  ⇒ 随包的这份 SQLCipher **不是**打过国密补丁的那份（典型成因：编译时没用私有 CARGO_HOME，");
+    err("    于是 [patch.crates-io] 没生效、编的是 registry 里的原版）。这是「看起来是国密」的形态。");
+    return 1;
+  }
+  log(`✓ ${apps[0].entry} 里有补丁字面量 ${ev.found.join("、")}（⇒ 打过补丁的那份 SQLCipher 真的编进来了）`);
+
   const tmp = mkdtempSync(join(tmpdir(), "android-crypto-"));
   try {
     const soPath = join(tmp, APP_LIB);
@@ -175,8 +255,8 @@ export function check({ apk, log = console.log, err = console.error, run } = {})
     }
   }
 
-  log("✓ 库级国密的「静态随包」两条件都过");
-  log("! 没验的那一半：SM provider 是否真的编进去了 —— release 包被 strip，符号不可读；");
+  log("✓ 库级国密：三条都过 —— ① 无动态 crypto 库 ② 无 DT_NEEDED 依赖 ③ 补丁字面量在包里");
+  log("! 仍未验的那一层：运行期 provider 真的支持 SM3（字面量在库里 ≠ 算法可用）；");
   log("  最终证据是真机跑一次（口令→加密→重启解锁→读写），属人手。");
   return 0;
 }
