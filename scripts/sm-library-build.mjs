@@ -41,6 +41,22 @@ const argValue = (name) => {
 };
 const has = (name) => argv.includes(name);
 
+// ★ stdout 是**数据**、stderr 是**日志** —— 这条在 `--print-env` 上是硬要求：它的 stdout 会被 CI
+//   用 `>> "$GITHUB_ENV"` **整体重定向**，混进任何一行人类可读的日志，runner 就报
+//   `Invalid format 'sm-library-build: …'` ＋ `Unable to process file command 'env' successfully`
+//   ⇒ **这一步自己红**，紧随其后的构建步被 skip（2026-09-25 CI 实测：run 36096199288 的 step 23
+//   就是「把私有 CARGO_HOME 交给构建步骤」，它红了、`Build APK` 被跳过）。
+//   ⇒ 不靠"记得别用 console.log"：`--print-env` 下装一层**守卫**（`installEnvStdoutGuard`），
+//     stdout 默认改道 stderr，只有 `emitEnv()` 期间放行 —— 后人再加一行日志也不会把洞捅回来。
+//     守卫本身在 `lib/sm-library-plan.mjs`，判据在它的 `.test.mjs` 里（用假流，不依赖本机有没有 Tongsuo）。
+const PRINT_ENV = has("--print-env");
+const envOut = PRINT_ENV ? installEnvStdoutGuard({ stdout: process.stdout, stderr: process.stderr }) : null;
+if (envOut) {
+  process.stdout.write = (chunk, ...rest) => envOut.write(chunk, ...rest);
+}
+/** 唯一放行 stdout 的出口：只有 `KEY=value` 行该走这里。 */
+const emitEnv = (text) => (envOut ? envOut.emit(text) : process.stdout.write(text));
+
 // ⚠️ 不要用 `import.meta.dirname`（Node ≥ 20.11 才有）：本仓要在 CI/旧 Node 上跑，
 //    在 Node 18 上它是 `undefined` ⇒ `resolve(undefined, "..")` 直接抛
 //    `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string`（2026-09-19 在 WSL 的 Node 18 上实测到）。
@@ -71,7 +87,7 @@ const LOCK = join(root, "src-tauri", "Cargo.lock");
 //   本文件只负责：① 环境核对；② 用库定位源码并扫标记；③ 固定两步命令（clean → build）。
 import { MARKER, markerFileOf, resolveSqlcipherSource, sha256OfFile } from "./lib/sm-library-source.mjs";
 import { requireStaticCrypto } from "./lib/sm-library-source.mjs";
-import { cleanCommands, envFileLines, opensslEnvFor, shouldBuild } from "./lib/sm-library-plan.mjs";
+import { cleanCommands, envFileLines, installEnvStdoutGuard, opensslEnvFor, shouldBuild } from "./lib/sm-library-plan.mjs";
 import { canApplyPatch, ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 import { cargoHomeOfRegistrySrc, gmCargoHome, gmCopyDir, isolateSqlcipherSource, removeIsolation } from "./lib/sm-library-isolate.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
@@ -246,7 +262,7 @@ if (has("--print-env")) {
   const gmHome = gmCargoHome(root);
   // ★ 国密构建必须把 CARGO_HOME 一起传下去：它带来 `[patch.crates-io]`，是"补丁打在私有副本上"的载体。
   const withHome = existsSync(gmHome) ? `${lines}\nCARGO_HOME=${gmHome}` : lines;
-  console.log(withHome);
+  emitEnv(`${withHome}\n`);
   if (!existsSync(gmHome)) {
     console.error(
       "sm-library-build: ⚠️ 没有 .gm-build/ ⇒ 少了 CARGO_HOME 那一行。先跑一次 `--prepare`（它会建隔离），再 --print-env。",

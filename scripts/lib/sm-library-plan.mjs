@@ -107,3 +107,38 @@ export function envFileLines(env) {
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
 }
+
+/**
+ * `--print-env` 的 stdout **只许**有 `KEY=value` 行 —— 它的下游是 CI 的 `>> "$GITHUB_ENV"`。
+ *
+ * 来历（2026-09-25，真 CI，run 36096199288 的 step 23）：两条 android job 把 `--print-env` 的
+ * stdout **整体**重定向进 `$GITHUB_ENV`，而 CLI 那时把「源码 = …」「隔离 ✓ 补丁打在私有副本 …」
+ * 这些**给人看的行**也打在 stdout ⇒ runner 报
+ *   `Invalid format 'sm-library-build: 隔离 ✓ 补丁打在私有副本 /home/runner/…'`
+ *   `Unable to process file command 'env' successfully.`
+ * ⇒ **交接这一步自己红**，紧随其后的 `Build APK` 被 skip。现场看着像"补丁没打完"，
+ *   其实是"这一步的 stdout 不干净" —— 与 2026-09-12 那次"非法 YAML ⇒ 0 个 job"同一类：
+ *   **把人的可读输出喂给机器**。
+ *
+ * ⇒ 守卫而不是纪律：`console.log` 最终走 `process.stdout.write`，所以把 stdout 换成
+ *   `write()`（默认改道 stderr）即可 —— 后人再加一行日志会**自动**落到 stderr，不会再捅回来；
+ *   真正的数据行必须显式走 `emit()`。
+ *
+ * @param {{ stdout: { write: Function }, stderr: { write: Function } }} streams 两个可写流（测试里给假流）
+ * @returns {{ write: Function, emit: (text: string) => void }}
+ */
+export function installEnvStdoutGuard({ stdout, stderr }) {
+  let allow = false;
+  return {
+    write: (chunk, ...rest) => (allow ? stdout.write(chunk, ...rest) : stderr.write(chunk, ...rest)),
+    emit(text) {
+      allow = true;
+      try {
+        stdout.write(text);
+      } finally {
+        allow = false;
+      }
+    },
+  };
+}
+

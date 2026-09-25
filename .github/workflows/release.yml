@@ -552,7 +552,12 @@ jobs:
         # 如实 panic（日志原文：`启用了 sm-library，但**找不到 §3.1 的 SM3/SM4 provider 补丁** …
         # 查的是 /home/runner/.cargo/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2/sqlcipher`）。
         # 桌面发版（本文件上面的 Linux/Windows 段）一直是这么接的 ⇒ 两条 android job 补齐同一句。
-        run: node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"
+        # ⚠️ 2026-09-25 当天又补两处（同形，别只改一处）：后端显式给
+        # `--openssl-dir "$OPENSSL_DIR"`（脚本 fail-fast），且 **stdout 必须干净** ——
+        # `>> "$GITHUB_ENV"` 把整条 stdout 当 env 文件，混进一行 `sm-library-build: …` 就报
+        # `Invalid format` ⇒ 这一步自己红、构建被 skip（run 36096199288 step 23 的形状；
+        # 桌面那两处同形，只是 release 只在 tags 上跑、还没轮到它红）。
+        run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
 
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。

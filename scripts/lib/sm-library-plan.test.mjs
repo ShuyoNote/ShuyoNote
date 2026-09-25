@@ -11,7 +11,7 @@ import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cleanCommands, envFileLines, opensslEnvFor, shouldBuild } from "./sm-library-plan.mjs";
+import { cleanCommands, envFileLines, installEnvStdoutGuard, opensslEnvFor, shouldBuild } from "./sm-library-plan.mjs";
 
 const manifest = "/repo/src-tauri/Cargo.toml";
 
@@ -104,5 +104,35 @@ describe("sm-library-plan：OpenSSL 前缀 → 两个 crate 都认的环境变�
   it("envFileLines：渲染成 `KEY=value`（丢掉 undefined，给 `$GITHUB_ENV` 用）", () => {
     expect(envFileLines({ A: "1", B: undefined, C: "/x" })).toBe("A=1\nC=/x");
     expect(envFileLines(null)).toBe("");
+  });
+
+  it("installEnvStdoutGuard：`emit` 之外的写入一律改道 stderr（后人加一行日志也不会污染 `$GITHUB_ENV`）", () => {
+    const mk = () => {
+      const chunks = [];
+      return { chunks, write: (c) => chunks.push(String(c)) };
+    };
+    const out = mk();
+    const err = mk();
+    const g = installEnvStdoutGuard({ stdout: out, stderr: err });
+    g.write("sm-library-build: 隔离 ✓ 补丁打在私有副本 /x\n"); // 模拟 console.log
+    g.emit("OPENSSL_DIR=/p\nCARGO_HOME=/p/.gm-build/cargo-home\n"); // 唯一的数据出口
+    g.write("sm-library-build: 补丁标记 ✓\n");
+    expect(out.chunks.join("")).toBe("OPENSSL_DIR=/p\nCARGO_HOME=/p/.gm-build/cargo-home\n");
+    expect(err.chunks.join("")).toContain("隔离 ✓");
+    expect(err.chunks.join("")).toContain("补丁标记 ✓");
+  });
+
+  it("installEnvStdoutGuard：`emit` 返回后立刻收回放行（放行不是永久的）", () => {
+    const mk = () => {
+      const chunks = [];
+      return { chunks, write: (c) => chunks.push(String(c)) };
+    };
+    const out = mk();
+    const err = mk();
+    const g = installEnvStdoutGuard({ stdout: out, stderr: err });
+    g.emit("A=1\n");
+    g.write("B=2\n");
+    expect(out.chunks.join("")).toBe("A=1\n");
+    expect(err.chunks.join("")).toBe("B=2\n");
   });
 });

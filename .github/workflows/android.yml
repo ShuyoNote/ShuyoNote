@@ -344,7 +344,15 @@ jobs:
         # 桌面发版（release.yml 的 Linux/Windows 段）一直是这么接的：`--prepare` 之后紧跟一句
         # `--print-env >> "$GITHUB_ENV"`；两条 android job 都漏了 ⇒ 这里与 release.yml **同名同步**
         #（`check:release-parity` 逐字核对步骤名）。
-        run: node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"
+        #
+        # ⚠️⚠️ 2026-09-25 当天**第三处**（同一天连踩三下，都在这一个 workflow 上）：
+        #   ① 后端必须显式给：`--openssl-dir "$OPENSSL_DIR"`（脚本对后端是 fail-fast 的，
+        #      与上面「随包静态 SM 加密库」那一步、以及 `docs/RELEASING.md` 的规范命令同形）；
+        #   ② **stdout 必须干净**：`>> "$GITHUB_ENV"` 把整条 stdout 当 env 文件，混进一行
+        #      `sm-library-build: …` 就是 `Invalid format` ⇒ **这一步自己红**、`Build APK` 被 skip
+        #      （run 36096199288 的 step 23 逐字就是这个形态）。脚本侧由 `installEnvStdoutGuard`
+        #      兜住（判据 `scripts/sm-library-build.test.mjs`），这里不再靠"记得别 console.log"。
+        run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
 
       - name: Build APK (arm64, unsigned)
         # `--features sm-library`：库级国密的**应用层接线**那一半（`#[cfg(feature = "sm-library")]`）；
