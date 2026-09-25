@@ -542,6 +542,7 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   node scripts/android-mobile-shell.mjs
   node scripts/android-app-icon.mjs
   node scripts/android-splash-theme.mjs   # ★ 开屏主题（品牌色 ＋ 居中图标）：gen/ 不进库 ⇒ 每次 init 后都要重跑
+  node scripts/android-portrait-lock.mjs  # ★ 竖屏锁（owner 2026-09-25 拍板）：同样只在 gen/ 里 ⇒ 每次 init 后都要重跑
   node scripts/stage-android-pdfium.mjs
   node scripts/patch-android-buildtask.mjs
   node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci   # ⇒ gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
