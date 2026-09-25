@@ -258,9 +258,24 @@ mod tests {
 
     /// 量纲自检：本模块的尺寸预期要跟施工单 §1 F3 的实测对得上。
     /// （一旦 keyring 的格式变大，这条会先红 —— 比"某天二维码突然装不下"早得多。）
+    ///
+    /// ★ 它同时是**读数源**：选型设计稿附录里那条命令靠它给出数字。
+    /// ⚠️ 过滤器要写准：真实路径是 `pairing::tests::the_measured_sizes_still_match_the_workorder`，
+    ///    写成 `pairing::the_measured_sizes` 会**安静地跑 0 条**（2026-09-25 我自己踩到过）。
     #[test]
     fn the_measured_sizes_still_match_the_workorder() {
         let one = encode_payload(&payload_from_material(&material_with(&["sp-000"]), "").unwrap()).unwrap();
+        println!("PAIRING-SIZE 1 个空间：载荷 {} 字节（二维码上限 {}）", one.len(), QR_SINGLE_BYTE_LIMIT);
+        for n in [3usize, 5, 10] {
+            let ids: Vec<String> = (0..n).map(|i| format!("sp-{i:03}")).collect();
+            let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+            let raw = encode_payload(&payload_from_material(&material_with(&refs), "").unwrap()).unwrap();
+            println!(
+                "PAIRING-SIZE {n} 个空间：载荷 {} 字节 ⇒ {}",
+                raw.len(),
+                if fits_single_qr(&raw) { "单张二维码装得下" } else { "**装不下**" }
+            );
+        }
         // 施工单 F3 实测：1 个空间的**紧凑材料**是 360 字节；载荷还多包了一层，
         // 所以这里只断言"同一量级"（材料自身 300~500，载荷比它大但不到两倍）。
         assert!(one.len() > 360, "载荷比裸材料大（外面还包了一层）：{}", one.len());
