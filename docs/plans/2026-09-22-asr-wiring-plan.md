@@ -53,7 +53,7 @@ export type ExtractErrorCode = … | "provider_error";   // VLM/ASR 端点不可
 - 算力档位（`ExtractCost`：`cpu`/`gpu`）大概率为 **`gpu`**（要和 VLM／嵌入排队错峰）。
 
 ⚠️ 因此**"加一个抽取器"是 gate 耦合的改动**（我读了目录，这条链有 5+ 个文件会被牵动）：
-`src/lib/extract/audio.ts`（新）＋ **`registry.ts`**（登记）＋ **`depsCatalog.ts`**（能力目录，且有 `depsCatalog.test.ts`）
+`src/lib/extract/avTranscript.ts`（新）＋ **`registry.ts`**（登记）＋ **`depsCatalog.ts`**（能力目录，且有 `depsCatalog.test.ts`）
 ＋ **`docs/plans/2026-09-17-knowledge-base-ai-coverage-plan.md §15`**（契约文档的那张矩阵）
 ＋ `conformance.test.ts` / `coverage.test.ts` / `registry.test.ts` 这几条一致性判据。
 ⇒ **半截落地会直接把门禁弄红**，所以下一轮按这 6 处**一次做齐**，不自作主张只加一个模块。
@@ -110,7 +110,8 @@ src/lib/extract/depsCatalog.ts(59,14): error TS2741:
 
 
 
-模块位置：`src/lib/extract/audio.ts`（与 `image.ts`/`text.ts`/`pdf.ts` 同族：都是"外部东西 → 文本"）。
+模块位置：`src/lib/extract/avTranscript.ts`（与 `image.ts`/`text.ts`/`pdf.ts` 同族：都是"外部东西 → 文本"）。
+⚠️ 本文件里原先起草的名字是 `audio.ts` —— **落地名是 `avTranscript.ts`**（§5.0 的清单与覆盖方案 §8.0 都是这个名）。
 
 | 函数 | 签名（拟） | 判据要点 |
 |---|---|---|

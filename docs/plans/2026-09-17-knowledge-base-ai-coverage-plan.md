@@ -215,6 +215,8 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > `image.caption` / 应用侧「开始索引」）—— 它们**没有被删掉**，而是移进下面的「**已关闭**」表并附
 > "现在由什么证"，免得"已做"与"未做"两头都读错。原始 09-17 版本在 git 历史里
 > （`git show <该次提交>:docs/plans/2026-09-17-knowledge-base-ai-coverage-plan.md`）。
+> ★ **2026-09-25 再补一行**：**P3 长尾（数据库块 / 绘图结构）那时还没做，后来落了** ——
+> 已从"未做"表挪进「已关闭」（本文件 §P3 那两张表早就写着 ✅，两张表当时互相矛盾）。
 
 **已落地（全部在 TS 侧 ⇒ 都能在 Windows 上自验）**
 
@@ -256,7 +258,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
 | `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **代码侧已全落**（2026-09-23）：契约（AMD `eb67bb06`）＋ 抽取器 `src/lib/extract/legacy.ts`（macOS `d64ec291`）＋ 平台半（macOS `772c017b`：Rust 命令 `convert_legacy_office` 走 LibreOffice headless —— 临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须 OOXML；TS 在 `attachmentDeps` 里注入，Web stub 如实 reject ⇒ `provider_error`）。**仍缺的只有「真转换」那一次读数**：这台 macOS 上没有 `soffice`（也没有 brew），所以只有假转换器路径的判据；在装好 LibreOffice 的机器上跑一次即闭 | **契约：AMD ✅** ／ **抽取器 ＋ 平台半：macOS ✅** ／ **真转换读数：待有 LibreOffice 的机器**（★ **owner 2026-09-23 拍板：形态＝降级** —— 既不要求用户装、也不随包；用户自己装了 LibreOffice 的机器上**自动可用**，错误信息本来就点名要装什么。⇒「真转换读数」从阻塞项降为**可选**复现） |
-| **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
+| **P3 长尾：数据库块 / 绘图结构** | ✅ **2026-09-25 更正：两格都已落地** —— 数据库块＝纯函数 AMD `81b0657e` ＋ 接线 macOS `1e68f680`；绘图块＝AMD `drawingStructureText.ts` ＋ 收口 `43decd56`（细节见下面 §「P3 剩余两格的工作单」那两张表）。<br>⚠️ **本条原写"还没人做"，与本文件 §P3 那两张表互相矛盾**（同一份文档两处相反）—— 以 §P3 为准 | 无（已关闭，见下表） |
 
 **已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**
 
@@ -268,6 +270,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | `av.transcript@1`（音视频） | **2026-09-22 落地**（AMD，含两个本机 ASR 的真读数）；那条"等 §13 第 7 项拍板"已由 owner 选「甲」+ 本机端点收口 |
 | `image.caption`（VLM 语义描述） | 已注册为第二档，只在 OCR 判 `empty` 时被调度 |
 | 应用侧「开始索引」触发与进度 | `libraryIndexing.ts` 的运行模型 ＋ AI 设置面板的「开始索引」按钮（`AiSettingsForm.tsx`） |
+| **P3 长尾：数据库块 / 绘图结构** | **2026-09-25 补进本表**（原表把它列成"还没人做"）：数据库块 `81b0657e` ＋ `1e68f680`；绘图块 `drawingStructureText.ts` ＋ 收口 `43decd56` —— 判据与分工见 §「P3 剩余两格的工作单」两张表 |
 
 **故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
 （docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
