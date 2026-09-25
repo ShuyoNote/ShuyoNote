@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { decideFromState, platformFromArgv } from "../check-gm-registry-clean.mjs";
-import { hygieneVerdict, pageCipherOf, registryStateOf } from "./sm-library-hygiene.mjs";
+import { hygieneVerdict, lockResidueOf, lockResidueVerdict, pageCipherOf, registryStateOf } from "./sm-library-hygiene.mjs";
 import { MARKER } from "./sm-library-source.mjs";
 
 const LOCK = `
@@ -147,5 +147,115 @@ describe("platformFromArgv：参数解析不许静默降级", () => {
     const bad = platformFromArgv(["--platform=dawrin"], "win32");
     expect(bad.error).toMatch(/dawrin/);
     expect(bad.platform).toBe("dawrin"); // 原样返回，便于报错里说清
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ★ 2026-09-25 加：第二处残渣 —— `src-tauri/Cargo.lock` 里那条丢了 source/checksum 的 libsqlite3-sys
+// ---------------------------------------------------------------------------
+//
+// 机制是**本机实测**出来的（不是推的）：`sm-library-build.mjs --prepare` 之后，锁里那一条少两行
+//   -source = "registry+https://github.com/rust-lang/crates.io-index"
+//   -checksum = "f1d20bef…"
+// 而 `--revert` **只删私有副本、不还原锁**。此前这条只在 `docs/TESTING.md` 里是一句"记得 git checkout"。
+describe("lockResidueOf：`Cargo.lock` 上那处残渣", () => {
+  const cleanLock = `version = 4
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1d20bef17f513b9b3004532233187769cd072d790971f4e4da0e346eb6401e8"
+dependencies = [
+ "cc",
+]
+`;
+
+  it("★ 带 source ＋ checksum ⇒ clean", () => {
+    expect(lockResidueOf(cleanLock)).toEqual({
+      state: "clean",
+      why: "libsqlite3-sys 那一条带着 source ＋ checksum",
+    });
+  });
+
+  it("★ 少了那两行 ⇒ residue，并**说清缺的是哪一个**（实测 `--prepare` 删的就是这两行）", () => {
+    const residue = cleanLock.replace(/^source = .*\n/m, "").replace(/^checksum = .*\n/m, "");
+    const r = lockResidueOf(residue);
+    expect(r.state).toBe("residue");
+    expect(r.why).toMatch(/source 与 checksum/);
+    // 只缺一行也要判出来（缺 source 但 checksum 还在，同样是"货来自本地补丁"）
+    expect(lockResidueOf(cleanLock.replace(/^checksum = .*\n/m, "")).state).toBe("residue");
+  });
+
+  it("★ 锁里根本没有这条 ⇒ **unknown**（不是 clean：读不出来就说读不出来）", () => {
+    const r = lockResidueOf('version = 4\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n');
+    expect(r.state).toBe("unknown");
+    expect(r.why).toMatch(/没有 `libsqlite3-sys`/);
+  });
+
+  it("★ 按 `[[package]]` 切段：别的 crate 缺 checksum 不算，后面那条缺也不算在前面（不串味）", () => {
+    const other = `version = 4
+
+[[package]]
+name = "serde"
+version = "1.0.0"
+
+[[package]]
+name = "libsqlite3-sys"
+version = "0.38.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abc"
+`;
+    expect(lockResidueOf(other).state).toBe("clean"); // serde 没 source/checksum 与它无关
+  });
+});
+
+describe("lockResidueVerdict：语境决定拦不拦", () => {
+  it("clean ⇒ ok；unknown ⇒ notice（**不判红**，与 registry 那条同口径）", () => {
+    expect(lockResidueVerdict({ residue: { state: "clean", why: "" } }).level).toBe("ok");
+    const u = lockResidueVerdict({ residue: { state: "unknown", why: "锁里没有这条" } });
+    expect(u.level).toBe("notice");
+    expect(u.why).toMatch(/未实查/);
+  });
+
+  it("★ residue ∧ 默认构建 ⇒ **block** ＋ 给出那一行修法（这种锁提交后别人机器上 `--locked` 会红）", () => {
+    const v = lockResidueVerdict({ residue: { state: "residue", why: "缺 source 与 checksum" } });
+    expect(v.level).toBe("block");
+    expect(v.why).toMatch(/git checkout -- src-tauri\/Cargo\.lock/);
+    expect(v.why).toMatch(/别人机器/);
+  });
+
+  it("★ residue ∧ 本次就是 `sm-library` 构建 ⇒ **notice**（这份锁本来该长这样；不拦，但别提交）", () => {
+    const v = lockResidueVerdict({ residue: { state: "residue", why: "缺 source 与 checksum" }, featureSmLibrary: true });
+    expect(v.level).toBe("notice");
+    expect(v.why).toMatch(/别把它提交/);
+  });
+});
+
+describe("decideFromState：两处残渣取**更重**的那一档", () => {
+  const cleanState = { ok: true, version: "0.38.2", srcDir: "/x", patched: false, pageCipher: "aes" };
+
+  it("★ registry 干净但锁有残渣 ⇒ **exit 1**（改之前这一格会漏 —— 原实现只看 registry）", () => {
+    const r = decideFromState(cleanState, {
+      lockResidue: { state: "residue", why: "缺 source 与 checksum" },
+    });
+    expect(r.code).toBe(1);
+    expect(r.level).toBe("block");
+    expect(r.lines.join("\n")).toMatch(/Cargo\.lock/);
+  });
+
+  it("registry 干净 ∧ 锁也干净 ⇒ exit 0（不因为新加的判据天天红）", () => {
+    const r = decideFromState(cleanState, { lockResidue: { state: "clean", why: "" } });
+    expect(r.code).toBe(0);
+    expect(r.level).toBe("ok");
+  });
+
+  it("★ 读不出来（registry）∧ 锁有残渣 ⇒ 仍然是 exit 1：**能读出来的那半照样判**", () => {
+    const r = decideFromState(
+      { ok: false, reason: "version-mismatch", message: "registry 里没有锁定的版本" },
+      { lockResidue: { state: "residue", why: "缺 source 与 checksum" } },
+    );
+    expect(r.code).toBe(1);
+    expect(r.lines.join("\n")).toMatch(/未实查/);
   });
 });
