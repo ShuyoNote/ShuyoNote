@@ -519,6 +519,16 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   node scripts/patch-android-buildtask.mjs
   node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci   # ⇒ gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
   ```
+
+  **★ AMD 2026-09-25：本机从零装起、一次走通的实录（配方没问题，坑全在环境上）**
+  | 坑 | 症状（原文/读数） | 修法 |
+  |---|---|---|
+  | **perl 选错** | `This perl implementation doesn't produce Unix like paths ... Makefile wasn't produced`，Configure exit **255** | 用 **MSYS/Cygwin 那份**（`C:\msys64\msys64\usr\bin\perl.exe`，5.42）；原生 `mingw64\bin` 的 MSWin32 perl **会被拒** ⇒ 它必须排在 PATH 前面 |
+  | **缺 `make`** | `cargo:warning=building OpenSSL dependencies: Command 'make' not found` | 这台机 Git 与 msys64 都**没有 make** ⇒ 用 **NDK 自带**的 `<ndk>\prebuilt\windows-x86_64\bin\make.exe`（Android 目标走 Unix make，不是 nmake） |
+  | **rustup 卡死** | `rustup target add aarch64-linux-android` **10 分钟无输出**（小探针通、真下载被掐） | `RUSTUP_DIST_SERVER=https://rsproxy.cn`（一次就成） |
+  | **Gradle wrapper 下不动** | `java.net.SocketTimeoutException` on `gradlew.bat`；`services.gradle.org` 是 **307** 跳到不可达的 `downloads.gradle-dn.com`（000） | `gen/android/gradle/wrapper/gradle-wrapper.properties` 的 `distributionUrl` 换成 **`https://mirrors.cloud.tencent.com/gradle/gradle-8.14.3-bin.zip`**（实测 206；131 MB）。⚠️ `gen/` 不进 git 且 `init` 会重生成 ⇒ 每次 init 后都要再改一次 |
+  | **`CARGO_HOME` 没带** | build.rs **正确地**报 `启用了 sm-library，但找不到 §3.1 的 SM3/SM4 provider 补丁`（它查的是**共享** registry 那份） | `--prepare` 把补丁打在**私有副本** `.gm-build/`，只有 `--print-env` 给出的 `CARGO_HOME=<repo>\.gm-build\cargo-home` 才让 cargo 看见补丁 ⇒ 必须像 android.yml 那样把它吃进环境 |
+  > 另两条读数：① `sm-library-build.mjs --revert` **不还原 `src-tauri/Cargo.lock`**（`[patch.crates-io]` 那两行会留下）⇒ `--prepare` 之后要么手动 `git checkout -- src-tauri/Cargo.lock`，要么提交前看清 `git status`；② 真产物 **52.9 MB**，`check-android-crypto` 在其上 **exit=0**（`lib/arm64-v8a/libshuyonote_lib.so` 52,847,416 字节、DT_NEEDED 里没有 `libcrypto.so`）—— 本机跑这条门禁要把 **NDK 的 `toolchains/llvm/prebuilt/windows-x86_64/bin` 放进 PATH**（`llvm-readelf` 在那儿；否则它如实报"没验"）。
   出包后按 ⑨ 的签名步骤用**正式密钥**签（`zipalign -f -p 4` → `apksigner sign --ks … --ks-key-alias shuyonote`
   → `apksigner verify --print-certs` 指纹应为 `6ee89e6f…7a88`），装到手机时注意：
   **本机构建的 versionCode 取自 `dev` 的版本号，通常低于已发布版 ⇒ `adb install -r -d`**（`-d` 允许降级；

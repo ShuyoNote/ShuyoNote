@@ -24,7 +24,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isMain } from "./lib/is-main.mjs";
-import { listZipEntries, readZipEntry } from "./lib/zip.mjs";
+import { listZipEntries, readZipEntryByName } from "./lib/zip.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -136,7 +136,17 @@ export function check({ apk, log = console.log, err = console.error, run } = {})
     err(`✗ 没验：包里没有应用自己的 ${APP_LIB} ⇒ DT_NEEDED 那一半没验`);
     return 2;
   }
-  const buf = readApkEntry(found.path, apps[0].entry);
+  // 用**共享**的"按名字取条目"（2026-09-25：这里原先写成一个并不存在的 `readApkEntry(...)`，
+  // 单元判据测不到、本机没 APK 也走不到 ⇒ 一直到真产物上才以 `ReferenceError` 崩出来。
+  // 教训：两个安卓门禁都要这一步 ⇒ 它只能有一份实现，见 `lib/zip.mjs::readZipEntryByName`。）
+  let apkBuf;
+  try {
+    apkBuf = readFileSync(found.path);
+  } catch (e) {
+    err(`✗ 没验：读不了 APK：${String(e?.message ?? e).slice(0, 120)}`);
+    return 2;
+  }
+  const buf = readZipEntryByName(apkBuf, apps[0].entry);
   if (buf === null) {
     err(`✗ 没验：${apps[0].entry} 解不出来`);
     return 2;

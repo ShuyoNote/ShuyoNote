@@ -63,6 +63,24 @@ export function readZipEntry(buf, e) {
   throw new Error(`${e.name}：不支持的压缩方式 ${e.method}`);
 }
 
+/**
+ * 按**条目名**取解压后的字节；没有这条或解不开 ⇒ `null`（调用方据此判"没验"，而不是当成"没有"）。
+ *
+ * 为什么收在这里（2026-09-25）：`check-android-bundle.mjs` 与 `check-android-crypto.mjs` 都要
+ * "从 APK 里把某个 `.so` 抠出来"这一步 —— 一个读 `lib/<abi>/libpdfium.so`、一个读应用自己的
+ * `lib<name>.so`。原来各写一份，结果后者**漏了导入**（写成 `readApkEntry(...)` 却从没定义过），
+ * 而单元判据只测纯函数、本机又没有 APK ⇒ 那条路径**一直到真产物上才崩**（`ReferenceError`）。
+ * 同一件事有两份实现就是这样：它们的 bug 也各不相同、且各自都不会被发现。
+ */
+export function readZipEntryByName(buf, name) {
+  try {
+    const found = listZipEntries(buf).find((e) => e.name === name || e.name === `./${name}`);
+    return found ? readZipEntry(buf, found) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 把一个 ZIP 整包解到 destDir（保持目录结构），返回写出的文件数。 */
 export function extractZip(buf, destDir) {
   let n = 0;
