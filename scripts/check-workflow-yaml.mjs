@@ -146,7 +146,7 @@ export function gmCargoHomeHandoffProblems(text, { file = "workflow" } = {}) {
       `${file}：job \`${job}\` 跑了 \`sm-library-build.mjs … --prepare\`，但**同一个 job 里没有**把私有 \`CARGO_HOME\` 交出去` +
         "（隔离后补丁在 `.gm-build/libsqlite3-sys-<ver>/`，cargo 靠私有 `CARGO_HOME` 的 `[patch.crates-io]` 才走那份副本；" +
         "`$GITHUB_ENV` 是 **job 级**的，别的 job 导了不算）" +
-        "；修法：在补丁那一步补一行 `node scripts/sm-library-build.mjs --openssl-dir \"$OPENSSL_DIR\" --print-env >> \"$GITHUB_ENV\"`" +
+        "；修法：在**这个 job 里**补一行 `node scripts/sm-library-build.mjs --openssl-dir \"$OPENSSL_DIR\" --print-env >> \"$GITHUB_ENV\"`（单独一步、或并进补丁那一步都行）" +
         "（少这一行 ⇒ `build.rs` 在 `sm-library` 上如期 panic：run 36092999092 第 23 步；现场像「补丁没打」，其实打了没交接）",
     );
   }
