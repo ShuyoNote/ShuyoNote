@@ -14215,11 +14215,32 @@ p:has(> .editor-drawing-container) {
   transform-origin: center center;
   cursor: unset;
 }
-.fm-img-hint {
+/* 图片预览的**顶栏**：提示胶囊 ＋（旋转 / 查看原图）按钮组。
+   ⚠️ 它们是**同一条 flex 行里的两半**，不是两个各自 `position:absolute` 的角标 ——
+   后者在窄屏上必然互相压：两个都钉在 `top:14px`，左边那个还按 `left:50%` 居中，
+   360px 视口下实测重叠 ~111px（GitCode issue #12「窄屏时内置图片阅览的控制按钮重叠了」）。
+   ⇒ 布局不许靠"算两边宽度刚好不撞"，只许靠"**它们在同一行里，谁也盖不住谁**"：
+   左边那半放不下就在自己的盒子里截断（`min-width:0` ＋ 省略号），右边那组 `flex:none`。
+   bar 自己不吃指针事件（空白处的滚轮缩放 / 拖动平移照旧落在图片上），
+   只有右边那组按钮把 `pointer-events` 打开。 */
+.fm-img-bar {
   position: absolute;
   top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+.fm-img-hint {
+  /* 行里的**左半**（原来这里是绝对定位 ＋ `translateX(-50%)` 居中）。 */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 4px 12px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg) 80%, transparent);
@@ -14229,14 +14250,16 @@ p:has(> .editor-drawing-container) {
   user-select: none;
   pointer-events: none;
 }
-/* 旋转按钮组 + 查看原图：合并成一组右上角工具栏，统一高度/圆角。 */
+/* 旋转按钮组 + 查看原图：这一行的**右半**。
+   `margin-left:auto` 是给窄屏兜底的：那时左边的提示被藏起来（见窄屏那一段），
+   只剩一个子项，`space-between` 会把它推到**左边** —— 那是视觉回退。 */
 .fm-img-actions {
-  position: absolute;
-  top: 14px;
-  right: 14px;
+  margin-left: auto;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  pointer-events: auto;
 }
 .fm-img-btn {
   display: grid;
@@ -22130,6 +22153,15 @@ body.is-plugin-panel-open .main {
   .fm-img-original {
     min-width: 44px;
     min-height: 44px;
+  }
+  /* 图片预览那条提示写的是**桌面手势**（滚轮缩放 / 拖动平移）：触屏上没有滚轮，
+     留着只会被截成"滚轮缩放 · 拖…"，既不好看也没用 ⇒ 窄屏不显示它（按钮组照旧）。
+     ⚠️ 这一条**不是**"窄屏没有缩放"的声明：图片预览今天确实**只接了 wheel**
+     （触屏放不大）—— 那是另一件事（捏合缩放）。真接上时，这里要改成
+     "只显示百分比"（`.fm-img-hint` 里那个 zoom 读数），别让这条 `display:none`
+     变成一句"窄屏故意没有缩放"的假话。 */
+  .fm-img-hint {
+    display: none;
   }
 
   /* 命令面板：整宽 + 顶部对齐，列表只纵向滚（横向溢出 46~73px 是坐标/宽度算错，

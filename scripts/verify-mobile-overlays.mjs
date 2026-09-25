@@ -98,6 +98,78 @@ const note = (msg) => {
   console.log(`  · ${msg}`);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 一位小数的取整 —— **Node 侧**用（页面里那个 `r1` 只在 `probeLayer` 的上下文里存在，
+ *  早期版本在断言里直接用它，于是"有 2 组可量"时才抛 `r1 is not defined`：
+ *  1 组时那条断言**空过**（看起来绿），2 组时才炸 —— 变异实测正好把这个坑照出来了）。 */
+const round1 = (n) => Math.round(n * 10) / 10;
+
+/**
+ * 图片预览顶栏（GitCode issue #12「窄屏时内置图片阅览的控制按钮重叠了」）。
+ *
+ * 量的是**那个容器里当前可见的子节点两两之间**，不是两个写死的选择器：判据要管的是
+ * **布局形状**（它们必须在同一行里），把两组挪回"两个各自绝对定位的角标"也必须在这里红。
+ *
+ * `touchish` = 命中"窄或矮"那条触屏查询（`(max-width:768px), (max-height:520px)`）：
+ * 那时提示被藏起来（"滚轮缩放 · 拖动平移"是**桌面手势**的说明，触屏上没有滚轮），
+ * 只留按钮组。两条分支**都要有覆盖**：只在窄屏量的话，"把提示全局删掉"会一路绿，
+ * 而 1280 宽下那条提示是有用的（真能滚轮缩放 / 拖动平移）⇒ 桌面那一档也调这个函数。
+ */
+async function assertImgTopBar(page, m, { touchish, where }) {
+  const kids = m.imgBarRects;
+  const at = kids.map((k) => `${k.cls} ${k.left}..${k.right}`).join("；") || "（一个都没有）";
+  ok(m.hasImgBar, `${where}：顶栏是**一条**容器（\`.fm-img-bar\`）—— 不是两个各自绝对定位的角标（实测 ${kids.length} 组可见）`);
+  let hit = null;
+  for (let i = 0; i < kids.length && !hit; i++) {
+    for (let j = i + 1; j < kids.length; j++) {
+      const dx = Math.min(kids[i].right, kids[j].right) - Math.max(kids[i].left, kids[j].left);
+      const dy = Math.min(kids[i].bottom, kids[j].bottom) - Math.max(kids[i].top, kids[j].top);
+      if (dx > 0.5 && dy > 0.5) {
+        hit = { a: kids[i].cls, b: kids[j].cls, dx: round1(dx), dy: round1(dy) };
+        break;
+      }
+    }
+  }
+  ok(
+    !hit,
+    hit
+      ? `${where}：顶栏两组**重叠**了：${hit.a} × ${hit.b}（横 ${hit.dx} × 竖 ${hit.dy}px）`
+      : `${where}：顶栏各组互不重叠（${at}）`,
+  );
+  // 组数也要钉住，否则"两边都藏起来"混得过上面那条。
+  if (touchish) {
+    ok(
+      kids.length === 1 && /fm-img-actions/.test(kids[0].cls),
+      `${where}：触屏（窄或矮）只留按钮组（实测 ${kids.length} 组可见：${at}）`,
+    );
+  } else {
+    ok(kids.length === 2, `${where}：宽屏提示 ＋ 按钮组都在（实测 ${kids.length} 组可见：${at}）`);
+  }
+  // 各组都别越出这一层：越界＝"看得见、点不着"（与本文件开头那三条根因同一族）。
+  ok(
+    kids.every((k) => k.left >= m.root.left - 0.5 && k.right <= m.root.right + 0.5),
+    `${where}：顶栏各组都在层内（层 ${m.root.left}..${m.root.right}；${at}）`,
+  );
+  // 真点一下：`elementFromPoint` 打在按钮中心，命中的必须还是那个按钮。
+  // 这条管的是"`pointer-events` 那一对配平了没有"—— bar 为了放行滚轮而
+  // `pointer-events:none`，按钮组如果忘了收回 `auto`，几何全对、**一个都点不动**，
+  // 而上面那些断言（尺寸、位置、不重叠）**全都是绿的**。
+  const hits = await safeEval(page, () => {
+    const out = [];
+    document.querySelectorAll(".fm-img-actions button").forEach((b) => {
+      const r = b.getBoundingClientRect();
+      const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      out.push({
+        label: b.getAttribute("aria-label") || (b.textContent || "").trim() || "按钮",
+        hit: el ? (b === el || b.contains(el) ? "self" : String(el.className || el.tagName).slice(0, 24)) : "none",
+      });
+    });
+    return out;
+  });
+  ok(
+    Array.isArray(hits) && hits.length > 0 && hits.every((h) => h.hit === "self"),
+    `${where}：顶栏按钮中心真的能点到自己（${(hits ?? []).map((h) => `${h.label}=${h.hit}`).join("；")}）`,
+  );
+}
 
 /**
  * `page.evaluate` 的加固版。
@@ -507,6 +579,24 @@ function probeLayer(rootSel, boxSel) {
     };
   });
 
+  // 图片预览顶栏：把**同一行里的那几组**都量回去（相交与否的判定留在 Node 侧）。
+  // 为什么量"那个容器里的可见子节点"、而不是两个写死的选择器：判据要管的是**布局形状**
+  // （它们必须在同一行里）。写死选择器的话，把两组挪回"两个各自绝对定位的角标"也照样能骗过它
+  // —— 而那正是 issue #12 的形状（同一个 `top:14px` ＋ 左边那个 `left:50%` 居中 ⇒ 窄屏重叠）。
+  const imgBar = root.querySelector(".fm-img-bar");
+  const imgBarRects = imgBar
+    ? [...imgBar.children].filter(isVisible).map((el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          cls: String(el.className || el.tagName).slice(0, 40),
+          left: r1(r.left),
+          right: r1(r.right),
+          top: r1(r.top),
+          bottom: r1(r.bottom),
+        };
+      })
+    : [];
+
   const noteScroll = document.querySelector(".note-scroll");
   // 锁的**真实对象**：我们只给锁到的容器写内联 `overflow-y:hidden`，
   // 所以"内联是 hidden"就是"被这把锁锁住了"的判据（不受视图换了容器影响）。
@@ -550,6 +640,8 @@ function probeLayer(rootSel, boxSel) {
     docScrollWidth: document.documentElement.scrollWidth,
     clipped: clipped.slice(0, 6),
     buttons,
+    hasImgBar: !!imgBar,
+    imgBarRects,
     noteScrollOverflowY: noteScroll ? getComputedStyle(noteScroll).overflowY : null,
     noteScrollTop: noteScroll ? noteScroll.scrollTop : null,
     hasNoteScroll: !!noteScroll,
@@ -1181,6 +1273,17 @@ async function main() {
             );
           }
 
+          // (6c) 图片预览顶栏：**同一行里的各组互不重叠**（GitCode issue #12）。
+          //      断言本体在 `assertImgTopBar`（桌面那一档也调它，理由是"两条分支都要有覆盖"）。
+          if (layer.id === "filePreview") {
+            await assertImgTopBar(page, m, {
+              // 与 CSS 那条查询同源：**窄（≤768）或矮（≤520）**都算触屏那一档
+              // （横屏手机 792×360 就是靠"矮"进来的 —— 只按宽度判会把它的提示留在屏上）。
+              touchish: vp.width <= 768 || vp.height <= SHORT_VIEWPORT_MAX_PX,
+              where: `${vp.name} · ${layer.label}`,
+            });
+          }
+
           // (7) 浮层打开时内容区不许横向溢出（`.palette-list` 横向溢出 46~73px 那类）
           await shot(page, `${vp.width}-${layer.id}`);
 
@@ -1614,6 +1717,19 @@ async function main() {
       pdfMoreOnDesk === "none",
       `桌面视口里 PDF 的「⋯」入口是 display:none（实际 ${pdfMoreOnDesk}）——桌面一次放得下，不需要它`,
     );
+
+    // ---- 桌面：图片预览顶栏（issue #12 的另一半）----
+    // ⚠️ 必须在**桌面**量一次：窄屏那一档把提示藏起来了，若这里不量，"干脆把提示全局删掉"
+    // 也能一路绿 —— 而 1280 宽下那条提示是有用的（真能滚轮缩放 / 拖动平移）。
+    await safeEval(desk, openOverlay, "filePreview");
+    await sleep(700);
+    const dImg = await safeEval(desk, probeLayer, ".fm-preview-overlay", ".fm-preview");
+    ok(dImg.found, "桌面打开了图片预览");
+    if (dImg.found) {
+      await assertImgTopBar(desk, dImg, { touchish: false, where: "1280x800 · 文件预览" });
+    }
+    await safeEval(desk, closeAllOverlays);
+    await sleep(300);
     await deskCtx.close();
   } finally {
     await browser.close();
