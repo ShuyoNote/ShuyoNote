@@ -106,7 +106,17 @@ function hasBlockContent(contentJson: string): boolean {
 }
 
 function NoteEditor({ pageId }: { pageId: string }) {
-  const { current, updateCurrent, loadPages, error, searchQuery, pages, reloadTick } = useNotes();
+  // 逐字段订阅：这 5 个 state 字段都真的进了渲染（正文 / 错误角标 / 搜索高亮 / 页面树 / 编辑器重挂载 key），
+  // 而 `updateCurrent`/`loadPages` 是动作（引用恒定 ⇒ 选择器不产生额外重渲染）。
+  // 原先的整店订阅会让本组件被 `currentId`/`loading` 等字段的变化一并唤醒（`loading` 每次
+  // loadPages 都会翻转）。
+  const current = useNotes((s) => s.current);
+  const error = useNotes((s) => s.error);
+  const searchQuery = useNotes((s) => s.searchQuery);
+  const pages = useNotes((s) => s.pages);
+  const reloadTick = useNotes((s) => s.reloadTick);
+  const updateCurrent = useNotes((s) => s.updateCurrent);
+  const loadPages = useNotes((s) => s.loadPages);
   const [title, setTitle] = useState(current?.title ?? "");
   const [saved, setSaved] = useState(true);
   const [coverOpen, setCoverOpen] = useState(false);
@@ -271,7 +281,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
         const updated = await api.savePage({ id: p.pageId, ...p.patch });
         updateCurrent(updated);
         setSaved(true);
-        loadPages();
+        // 保存只可能改动 PageMeta 里的少数几个字段（标题 / `updated_at`）⇒ **就地更新列表
+        // 那一条**，不再 `loadPages()` 全量重拉：后者会 `set(loading)` + `set(pages)` 两次
+        // 全量广播，并为一次标题改动重查整张 page 表——而这条路每 600ms 就可能走一次，
+        // `pages` 的订阅者里还有「每个树节点一个」的 TreeItem 与 DatabaseView 这种千行组件。
+        // 三种情况回退到全量重拉，保证不漏：① 后端没回页面；② 本地列表里没有这一条
+        // （例如刚在别处新建）；③ 列表上次加载就失败了 —— 顺便重试并清掉那个 `error` 角标
+        // （旧代码每次都靠 loadPages() 顺手清，走近路时必须显式保留这个语义）。
+        const notes = useNotes.getState();
+        if (!updated || notes.error || !notes.patchPageMeta(updated)) loadPages();
         // Invalidate block-reference/embed caches so mirrors refresh.
         useBlockCache.getState().bump();
         // 保存后派发事件（M11.8）：只有**声明订阅了 page.saved** 的启用插件会收到。
@@ -655,7 +673,11 @@ function App() {
 }
 
 function AppShell() {
-  const { pages, currentId, loadPages, error } = useNotes();
+  // 逐字段订阅（`loadPages` 是动作，引用恒定）。
+  const pages = useNotes((s) => s.pages);
+  const currentId = useNotes((s) => s.currentId);
+  const error = useNotes((s) => s.error);
+  const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useTemplateCenterStore((s) => s.open);

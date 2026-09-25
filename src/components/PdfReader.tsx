@@ -388,7 +388,13 @@ function PdfContinuousPage({
  * 窄屏（以及单页独立窗口）仍然按全屏浮层渲染。
  */
 export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
-  const { open, attachmentId, name, bytes, targetPage, close } = usePdfReader();
+  // 逐字段订阅（`close` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
+  const open = usePdfReader((s) => s.open);
+  const attachmentId = usePdfReader((s) => s.attachmentId);
+  const name = usePdfReader((s) => s.name);
+  const bytes = usePdfReader((s) => s.bytes);
+  const targetPage = usePdfReader((s) => s.targetPage);
+  const close = usePdfReader((s) => s.close);
   useOverlayScrollLock(open);
   // Android 返回键：**只在它确实以覆盖层身份出现时才登记**。
   // `inline` 模式下它就是内容区里的一种视图（和 Markdown 阅读器一样铺满 `.main`），

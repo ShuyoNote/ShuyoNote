@@ -50,7 +50,6 @@ function saveSteps(d: Record<string, boolean>) {
 // Empty-state guide for a fresh page (Notion-style): a subtitle, an action list,
 // and a "create as database" view row.
 export function NewPageGuide() {
-  const { createDatabase } = useNotes();
   const [dismissed, setDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
   const [stepsDone, setStepsDone] = useState<Record<string, boolean>>(loadSteps);
@@ -169,7 +168,7 @@ export function NewPageGuide() {
                   key={v.key}
                   className="npg-db-item"
                   title={`创建${v.name}数据库`}
-                  onClick={() => createDatabase(null)}
+                  onClick={() => void useNotes.getState().createDatabase(null)}
                 >
                   <v.Icon className="npg-db-icon" />
                   <span className="npg-db-name">{v.name}</span>

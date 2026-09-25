@@ -159,8 +159,14 @@ export function FileManagerView() {
   // ——与 `.pdf-reader` 那条"浮层形态下不许写内联宽度"是同一条纪律（内联样式优先级更高，
   // 两边各改一半必然有一边不生效）。
   const isSheet = useMobileOverlayViewport();
-  const { pages, openPage, createPage, createFolder } = useNotes();
-  const { folderId, setFolderId } = useFileManagerStore();
+  // 只订真正渲染用到的 `pages`；三个动作引用恒定 ⇒ 用选择器订阅（值恒定，不产生额外重渲染），
+  // 这样本视图不再因为 `currentId` / `loading` / `searchQuery` / `reloadTick` 等无关字段变化而重渲染。
+  const pages = useNotes((s) => s.pages);
+  const openPage = useNotes((s) => s.openPage);
+  const createPage = useNotes((s) => s.createPage);
+  const createFolder = useNotes((s) => s.createFolder);
+  const folderId = useFileManagerStore((s) => s.folderId);
+  const setFolderId = useFileManagerStore((s) => s.setFolderId);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);

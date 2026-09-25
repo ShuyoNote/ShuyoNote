@@ -30,7 +30,11 @@ const PULL_DEBOUNCE_MS = 300;
 const STREAM_EVENT = "sync-stream-change";
 
 export function useSyncStream() {
-  const { loadPages } = useNotes();
+  // ★ 2026-09-25（合并 `fix/mobile-gate-locale` 时定的形态）：这里必须**字段级**取这个动作，
+  //   不许 `const { loadPages } = useNotes()`（整店订阅）—— 本 hook 不读 notes 的任何 state，
+  //   整店订阅只会被每次自动保存白白唤醒（判据 `scripts/check-store-subscriptions.mjs`，
+  //   基线只减不增）。取动作两种合法写法：字段选择器（这里）或回调里 `useNotes.getState()`。
+  const loadPages = useNotes((s) => s.loadPages);
 
   useEffect(() => {
     // 开关（默认开）：关掉 ⇒ 什么都不做，**与今天逐字相同**（纯轮询）。
@@ -136,6 +140,9 @@ export function useSyncStream() {
             if (!frame.includes("data:")) continue;
             // ★ 同步的是**当前工作空间**（解析出来那一个），不是"档案里第一个"；
             //   与桌面同一套：闸门 ＋ 状态行配对 ＋ 刷新（`pullOnce` 一处实现）。
+            //   （分支那版写的是 `api.syncWorkspace(bound.ws_id)` ＋ 就地 `loadPages()` ——
+            //    本行之上这条 `pullOnce` 是更新形态：它过 C2 闸门、`withSyncStatus` 配对
+            //    状态行、并且有防重入与去抖；直接调 `api` 会把这三件都绕过。）
             void pullOnce(wsId);
           }
         }
@@ -148,5 +155,5 @@ export function useSyncStream() {
       cancelled = true;
       ctrl?.abort();
     };
-  }, [loadPages]);
+  }, []);
 }

@@ -25,8 +25,6 @@ export function isSidebarToggleKey(e: {
 }
 
 export function useGlobalShortcuts(onToggleView: () => void) {
-  const { createPage } = useNotes();
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -57,7 +55,8 @@ export function useGlobalShortcuts(onToggleView: () => void) {
       // Ctrl+N: new page.
       if (key === "n" && !inEditable) {
         e.preventDefault();
-        createPage(null);
+        // createPage 是 store 动作（引用恒定）：走 getState() 现取，本 hook 不为它订阅整店。
+        void useNotes.getState().createPage(null);
         return;
       }
 
@@ -86,5 +85,5 @@ export function useGlobalShortcuts(onToggleView: () => void) {
 
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [createPage, onToggleView]);
+  }, [onToggleView]);
 }

@@ -57,6 +57,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉）＋ 跑了 `--prepare` 的 job 必须**自己**交接私有 `CARGO_HOME`（2026-09-25：隔离后少这一次交接，Android 自检包在 step 23 如实 panic；按 job 切，按文件找会假绿） |
 | contract | `check-gitcode-workflow-rules` | `.gitcode/workflows/*.yml` 的三条**平台**约束（runs-on 白名单 / 每个 step 必须有合法 `name` / action 用 `actions/xxx@vN`）——不合法时整条流水线不会被调度；规则由 GitCode 校验接口实测得出 |
 | contract | `check-overlay-registry` | 浮层没登记进返回栈 ⇒ 真机返回键直接退出应用（2026-09-15 第 6 个真机问题） |
+| contract | `check-store-subscriptions` | **组件对 Zustand store 整店订阅**（`const { openPage } = useNotes();`）：action 引用恒定却订阅了整个 state ⇒ 任何一次 `set()` 都把组件唤醒。判据是**订阅关系**、不是渲染耗时，基线（`scripts/store-subscription-baseline.json`）**只减不增**；行内 `// gate-allow: <理由>` 可显式放行。2026-09-25 实测 39 处 / 32 文件，最重的是 `PageTree.tsx` 的 `TreeItem`（**每个可见树节点渲染一次**）；同一笔里已修 16 处（`PageTree` 三处改字段级选择器，13 处只用到 action 的与 `SyncPanel` 的 `useSyncStatus` 改走 `getState()`），基线 39 → 23 —— 与 `check-hook-order` 同族：不炸不报错、测试全绿，只是安静地多渲染。<br>⚠️ **已知盲区**：它管"订阅**形状**"，管不到"订阅**者多大**、那个字段**多久变一次**"——`PageTree` 订阅 `treeDrag` 的 `x`/`y`（每帧都在变）在它眼里完全正确，却等于拖着整侧栏 60fps 重渲染（2026-09-25 拆成 `TreeDragGhost` 才修掉） |
+| contract | `check-hook-order` | **早退越过 hooks**（同一类错发生过两次，两次都是"界面直接没了"）：v1.85.1 `CommandPalette` 把 `useState` 放在 `if (!open) return null` 之后 ⇒ 按 Ctrl+K 白屏；2026-09-16 `App` 的加密闸门排在七八个 hooks **之前** ⇒ 加密安装重启即抛 `Rendered fewer hooks than expected`，用户看到崩溃屏而锁定屏一次都没出现过。两次都不是写错，是**看漏了**（早退与 hooks 隔着几十行）。<br>⚠️ 它 **2026-09-25 才补进本注册表**——此前只挂在 `pnpm build` 链上，本地一键验收与 CI 的 `checks` job 都**跑不到它**（同一个坑 `mobile-views` 2026-09-22 踩过）：只在 build 链上的门禁在 verify 路径上是隐形的 |
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
@@ -567,7 +569,10 @@ node scripts/test-report.mjs --baseline-from rust-report.json
    ⚠️ 但**打包与验收那几小步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）、
      `pnpm android:app-icon`（把品牌图标铺进 `res/`；不铺的话 APK 桌面图标是 Tauri 默认图，
      见 `scripts/android-app-icon.mjs` 的模块头；**改图标本身**走 `node scripts/build-android-icons.mjs`，
-     源是 `design/logo/android-*.svg` ＋ `android-icon.json`，见 `design/logo/README.md`）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
+     源是 `design/logo/android-*.svg` ＋ `android-icon.json`，见 `design/logo/README.md`）、
+     `pnpm android:app-name`（把**应用显示名**写成 `ShuyoNote 数友笔记` —— 备案的「App 名称」按阿里云口径就是
+     安装后图标下方那行字，需与软著全称/商店上架名一致；`tauri android init` 只会写 `productName`，
+     见 `scripts/android-app-name.mjs`）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
      `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
      2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
      这正是 P4 安卓格那条缺口的真产物读数。

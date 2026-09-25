@@ -68,9 +68,17 @@ type Item =
 
 export function CommandPalette() {
   const { t } = useTranslation();
-  const { pages, currentId, openPage } = useNotes();
+  // 逐个字段订阅：`pages`/`currentId` 是渲染与命令上下文要的，`openPage` 是动作（引用恒定）。
+  // 整店订阅会让这个面板被任何一次 `set()` 唤醒——它在每次自动保存时都会醒（`pages` 真的变了
+  // 才需要重算候选，其余字段与它无关）。
+  const pages = useNotes((s) => s.pages);
+  const currentId = useNotes((s) => s.currentId);
+  const openPage = useNotes((s) => s.openPage);
   // 开关与查询词在 store 里：编辑器 `/` 菜单要把「带参数的命令」转交到这里的参数表单。
-  const { open, setOpen, query, setQuery } = usePalette();
+  const open = usePalette((s) => s.open);
+  const setOpen = usePalette((s) => s.setOpen);
+  const query = usePalette((s) => s.query);
+  const setQuery = usePalette((s) => s.setQuery);
   // 命令面板打开时锁住内容区滚动（锁 `.note-scroll`，不是 body）。
   useOverlayScrollLock(open);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。

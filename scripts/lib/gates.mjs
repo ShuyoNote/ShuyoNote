@@ -116,6 +116,22 @@ export const GATES = [
     incident: "2026-09-15：版本历史弹层没登记 ⇒ 真机上返回键直接退出应用（第 6 个真机问题）",
   },
   {
+    id: "check-hook-order",
+    group: "contract",
+    label: "hooks 顺序（早退不许越过 hooks）",
+    // 为什么现在才进注册表：它此前只挂在 `package.json` 的 build 链上，**没进本注册表**
+    // ⇒ `pnpm verify`（本地一键验收与 CI 的 checks job 共用）**跑不到它**。
+    // 2026-09-25 复核 Zustand 订阅粒度时发现的 —— 同一个坑 `mobile-views` 在 2026-09-22 踩过
+    // （见上面 mobile 组那段注释）。"只挂在 build 链上"的门禁在 CI 的 verify 路径上是隐形的。
+    cmd: "node scripts/check-hook-order.mjs",
+    incident:
+      "同一类错在这份代码里发生过**两次**，两次都是「用户的界面直接没了」：" +
+      "① v1.85.1：`CommandPalette` 把参数表单的三个 `useState` 放在 `if (!open) return null` **之后** ⇒ 按 Ctrl+K 抛错（生产是 Minified React error #310）⇒ 整棵树被卸载成白屏；" +
+      "② 2026-09-16：`App` 的加密锁定闸门是一句**排在七八个 hooks 之前**的早退 ⇒ 加密安装**重启即抛 `Rendered fewer hooks than expected`**，被根部 ErrorBoundary 接住 ⇒ 用户看到崩溃屏，而锁定屏**一次都没出现过**（真机只验了设置页开关）。" +
+      "两次都不是「写错了」，是「**看漏了**」——早退和 hooks 隔着几十行，人眼很难可靠发现；渲染级测试只能证明「某一个组件当前是对的」，这条管的是「仓库里别再出现这种写法」。" +
+      "自测：`node scripts/check-hook-order.mjs --self-test`（里面放的是两次真事故的**真实写法**，必须判红）。",
+  },
+  {
     id: "check-ps1-ascii",
     group: "contract",
     label: "PowerShell 脚本编码（纯 ASCII 或 BOM）",
@@ -193,6 +209,19 @@ export const GATES = [
     cmd: "node scripts/check-doc-content-access.mjs",
     incident:
       "同页并发 → 全量 CRDT（路线 C）要换实现时，全仓直接摸 content_json / content_text / contentJson 的面是 746 次 / 80 个文件；不把「只经一层（read/write/merge/derive）」做成单调收敛的机器判据，收口就只能靠一次大爆炸重构，而且新写的直接访问没有任何东西会拦（今天已经有人把 542 行 / 26 文件这个错口径当成规模）",
+  },
+
+  {
+    id: "check-store-subscriptions",
+    group: "contract",
+    label: "Zustand 订阅粒度（组件不许整店订阅；只减不增）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒。
+    cmd: "node scripts/check-store-subscriptions.mjs",
+    incident:
+      "2026-09-25 复核技术选型评估里「Zustand 在多空间/多视图的规模下需警惕隐式依赖导致的重渲染」这一条时实测：213 个 store 调用点里 **39 处 / 32 个文件**是 `const { openPage } = useNotes();` 这种**不带选择器**的整店订阅，" +
+      "而 action 引用恒定、本来一次都不该被唤醒——其中 13 处**一个 state 字段都没读**。最重的一处是 `PageTree.tsx:189` 的 `TreeItem`：它**每个可见树节点渲染一次**，却也整店订阅；" +
+      "叠加「自动保存（600ms 去抖）每次都 `updateCurrent()` ＋ `loadPages()` 全量重拉」⇒ 打一次字停 1 秒就唤醒 ~24 个树节点实例，外加 DatabaseView(1751 行) / FileManagerView(1208 行) / SyncPanel(1071 行) / GraphView / CommandPalette 一起重跑 render。" +
+      "它与 check-hook-order 同族：**不炸、不报错、测试全绿**，只是安静地多渲染；写的人也没写错，是没人告诉过他「这行是订阅」⇒ 只能靠机器判据钉住（判据是**订阅关系**，不是渲染耗时，边界写在脚本头部）。",
   },
 
   // ---- smoke ----

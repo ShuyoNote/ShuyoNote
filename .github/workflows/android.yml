@@ -287,6 +287,17 @@ jobs:
       - name: 自检：桌面图标确实是品牌那套
         run: pnpm check:android-app-icon
 
+      - name: Android 应用显示名（备案/软著/商店同名）
+        # 为什么需要（2026-09-22，owner 拍板「方案 A」）：`tauri android init` 每次都把
+        # `productName`（`ShuyoNote`）写进 gen 的 `res/values/strings.xml`，而备案的
+        # 「App 名称」按阿里云口径就是**安装后图标下方那行字** ⇒ 它与软著全称
+        # （`ShuyoNote 数友笔记`）、商店上架名不一致时，商店/管局审核要多解释一轮。
+        # 同样是改 gen/（生成物、不入库），只能在 init 之后脚本化写一遍。
+        run: pnpm android:app-name
+
+      - name: 自检：应用显示名确实是备案那一个
+        run: pnpm check:android-app-name
+
       - name: 随包 PDFium 库（Android）
         # 为什么需要（2026-09-20 补，P4 的安卓格）：`libpdfium.so` 是 `libloading` **运行时**加载的
         # ⇒ 包里没有它时**装完不会立刻报错**，只有用户开 PDF（P5 之后默认走 PDFium）才变成

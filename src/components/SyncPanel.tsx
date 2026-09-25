@@ -85,7 +85,6 @@ interface EditRow {
 // (server + token + space_id), so one person can sync different spaces to
 // different servers/accounts (multi-server × multi-space).
 export function SyncPanel() {
-  const { loadPages } = useNotes();
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
@@ -126,7 +125,17 @@ export function SyncPanel() {
   // 而不是拿 UA / 平台名去近似（`network_type` 在非 Android 上回 `"n/a"` = 不适用）。
   const [netKind, setNetKind] = useState<string>("n/a");
   // 实时同步状态（正在推送/拉取/附件进度），由同步引擎在 web.ts 上报。
-  const syncStatus = useSyncStatus();
+  // ⚠️ 与上面那个**本面板自己的** `syncing`（手动同步在跑）不是一个东西，故叫 liveSyncing。
+  // 收窄到具体字段：整店订阅会让"任何一次 setProgress"都重渲染整个面板（1171 行，
+  // 含冲突列表与历史），而同步期间每传一件附件就写一次进度。字段级订阅与
+  // `PageTree` 里 label/x/y/kind 的写法一致（本仓既有风格，不引入 useShallow）。
+  const liveSyncing = useSyncStatus((s) => s.syncing);
+  const syncPhase = useSyncStatus((s) => s.phase);
+  const syncMessage = useSyncStatus((s) => s.message);
+  const attCurrent = useSyncStatus((s) => s.attCurrent);
+  const attTotal = useSyncStatus((s) => s.attTotal);
+  const attName = useSyncStatus((s) => s.attName);
+  const syncDurationMs = useSyncStatus((s) => s.durationMs);
   const [loggingIn, setLoggingIn] = useState(false);
   const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -168,7 +177,7 @@ export function SyncPanel() {
       setStatus(`裁决失败：${e}`);
     }
     await loadPendingRemote();
-    await loadPages();
+    await useNotes.getState().loadPages();
   };
 
   /** 横幅上那两颗按钮：对**当前这批冲突页**批量按同一口径收场。 */
@@ -190,7 +199,7 @@ export function SyncPanel() {
         : `已采用服务端版本（${done} 页；本地未推送的改动已真的放弃）`,
     );
     await loadPendingRemote();
-    await loadPages();
+    await useNotes.getState().loadPages();
   };
 
   const refresh = async () => {
@@ -380,7 +389,7 @@ export function SyncPanel() {
           setConflicts(c.map((x) => ({ ws_id: r.ws_id, entity_id: x.entity_id, title: x.title })));
         }
       }
-      await loadPages();
+      await useNotes.getState().loadPages();
       await loadHistory();
       await loadPendingRemote();
     } catch (e) {
@@ -658,7 +667,7 @@ export function SyncPanel() {
       <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
         <CloudSyncIcon width={14} height={14} />
         <span>同步</span>
-        {syncStatus.syncing && <span className="sync-pulse" aria-hidden />}
+        {liveSyncing && <span className="sync-pulse" aria-hidden />}
       </button>
       {open && (
         <div
@@ -1109,22 +1118,22 @@ export function SyncPanel() {
                 </p>
               </details>
             )}
-            {syncStatus.syncing ? (
-              <div className={`sync-status is-progress${syncStatus.phase === "error" ? " is-err" : ""}`}>
+            {syncing ? (
+              <div className={`sync-status is-progress${syncPhase === "error" ? " is-err" : ""}`}>
                 <div className="sync-progress-row">
                   <span className="sync-spin" aria-hidden />
-                  <span className="sync-status-text">{syncStatus.message || "正在同步…"}</span>
-                  {syncStatus.attTotal > 0 && (
-                    <span className="sync-progress-count" title={syncStatus.attName || ""}>
-                      {syncStatus.attCurrent}/{syncStatus.attTotal}
+                  <span className="sync-status-text">{syncMessage || "正在同步…"}</span>
+                  {attTotal > 0 && (
+                    <span className="sync-progress-count" title={attName || ""}>
+                      {attCurrent}/{attTotal}
                     </span>
                   )}
                 </div>
-                {syncStatus.phase === "attachments" && syncStatus.attTotal > 0 && (
+                {syncPhase === "attachments" && attTotal > 0 && (
                   <div className="sync-progressbar">
                     <div
                       className="sync-progressbar-fill"
-                      style={{ width: `${(syncStatus.attCurrent / syncStatus.attTotal) * 100}%` }}
+                      style={{ width: `${(attCurrent / attTotal) * 100}%` }}
                     />
                   </div>
                 )}
@@ -1132,8 +1141,8 @@ export function SyncPanel() {
             ) : status ? (
               <div className={`sync-status is-${statusKind(status)}`}>
                 {status}
-                {syncStatus.durationMs > 0 && (
-                  <span className="sync-duration">耗时 {fmtDuration(syncStatus.durationMs)}</span>
+                {syncDurationMs > 0 && (
+                  <span className="sync-duration">耗时 {fmtDuration(syncDurationMs)}</span>
                 )}
               </div>
             ) : null}

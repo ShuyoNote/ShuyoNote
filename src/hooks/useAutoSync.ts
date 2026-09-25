@@ -8,7 +8,6 @@ const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 // Auto-sync on startup and periodically, when a server is configured.
 export function useAutoSync() {
-  const { loadPages } = useNotes();
   const syncing = useRef(false);
 
   useEffect(() => {
@@ -35,7 +34,9 @@ export function useAutoSync() {
           // 自动这条路原先没人 `end()` ⇒ 面板会**永远停在"正在同步…"**（真机实测过），
           // 手动同步的结果文案也被那段进度分支挡住（正是 B2 修过的那个 bug）。
           await withSyncStatus("正在自动同步…", () => api.syncNow());
-          if (!cancelled) await loadPages();
+          // loadPages 是 store 动作（引用恒定），走 getState() 现取：
+          // 这个 hook 不读 notes 的任何 state，订阅整店只会被每次自动保存唤醒。
+          if (!cancelled) await useNotes.getState().loadPages();
         } finally {
           syncing.current = false;
         }
@@ -54,5 +55,5 @@ export function useAutoSync() {
       clearTimeout(initial);
       clearInterval(interval);
     };
-  }, [loadPages]);
+  }, []);
 }

@@ -299,7 +299,7 @@ pnpm tauri build   # 打包桌面安装包
 本仓库负责的是**客户端接入**：装好 shuyonote-sync-server 后，到侧边栏「同步」里配置即可。
 
 1. 侧边栏点击「同步」。
-2. 填写服务地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址；官方可用实例 `https://shuyo.cn/sync`）。
+2. 填写服务地址（如 `http://localhost:8787`，跨设备填局域网 IP 或公网地址；官方可用实例 `https://sync.shuyo.cn`，老写法 `https://shuyo.cn/sync` 同样有效）。
 3. 可选填写访问令牌。
 4. 点击「立即同步」。
 

@@ -4,6 +4,72 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **新增门禁 `check-store-subscriptions`（Zustand 订阅粒度），并同批修掉 16 处**。挡住
+  "组件对整个 store 订阅"这一种写法：`const { openPage } = useNotes();` 读起来像取几个字段，
+  实际是**订阅整个 state** —— 任何一次 `set()` 都会把它唤醒，而它用到的 action 引用恒定、
+  本来一次都不该被唤醒。复核状态管理选型评估时实测：213 个 store 调用点里这种写法占 39 处 / 32 个
+  文件（其中 13 处**一个 state 字段都没读**），最重的是 `src/components/PageTree.tsx` 里的
+  `TreeItem` —— 它是**每个可见树节点渲染一次**的组件却也整店订阅，叠加自动保存路径每次都全量
+  重拉页面表 ⇒ 打一次字停 1 秒就会唤醒 N 个树节点实例，外加 `DatabaseView` / `FileManagerView` /
+  `SyncPanel` 一起重跑 render。已改的 16 处：`PageTree` 三处（`TreeItem` / 批量工具条 / 树本身）
+  改为字段级选择器，13 处"只用到 action"的与 `SyncPanel` 的 `useSyncStatus()` 改为动作走
+  `getState()`。这类写法与 `check-hook-order` 同族：**不炸、不报错、测试全绿**，只是
+  安静地多渲染。基线 `scripts/store-subscription-baseline.json` **只减不增**（与
+  `check-doc-content-access` 同口径），且**按文件计数、不记行号** —— 第一版记了行号，当天就因为在
+  一处订阅上方加了 8 行注释而误报"新增 1 处"（实际一处没多）；行内 `// gate-allow: <理由>` 可显式
+  放行；已接进 `pnpm build` 与 `pnpm verify` 的 contract 组，自测
+  `node scripts/check-store-subscriptions.mjs --self-test`。
+
+- **其余 23 处整店订阅也全部收窄，基线清空（`{}`）** —— 门禁从"只减不增的存量清单"变成**无例外的硬规则**。
+  本轮改的是 `FileManagerView` / `DatabaseView` / `GraphView` / `CommandPalette`（四个大组件：
+  只订 `pages`/`currentId` 等真正渲染用到的字段，动作走选择器或 `getState()`，不再被
+  `loading`/`searchQuery` 等无关字段唤醒）、`App.tsx` 的两处（`NoteEditor` / `AppShell`）、
+  以及 `AiAssistantPanel` / `AiSettingsForm` / `SettingsDialog` ×2 / `PdfReader` / `FilePreviewDialog` /
+  `FormulaEditorDialog` / `EmojiPicker` / `PluginViewOverlay` / `PluginViewPanel` / `PluginIndexPanel` /
+  `InlineAiDraftBar` / `UnlinkedMentionsPanel` / `PageLinkSuggestPlugin`。**唯一保留的整店订阅是
+  `PluginManager`**，用行内 `gate-allow` 显式放行：它要 `usePlugins` 约 30 个字段（其中 18 个是
+  恒定引用的动作），拆成选择器只是把一行变成 18 行、零收益 —— 理由写在代码里而不是人脑里。
+  顺带修掉 `FilePreviewDialog` 里那处**渲染期 `getState()` 快照**（`folderId` 变了组件不重渲染 ⇒
+  "导入为页面"会落到旧目录），改成在点击时现取。
+
+- **`check-hook-order` 补进门禁注册表**（`scripts/lib/gates.mjs` 的 contract 组）。它此前**只挂在
+  `pnpm build` 链上**，于是本地一键验收与 CI 的 `checks` job 都**跑不到它** —— 同一个坑
+  `mobile-views` 在 2026-09-22 踩过（`gates.mjs` 里那段注释就是为它写的）。只在 build 链上的门禁
+  在 verify 路径上是隐形的，等于没有。契约组因此从 20 条变成 21 条。
+
+### 修复
+
+- **拖动页面树时不再重渲染整个侧栏**。跟着光标走的那个拖影原先写在 `PageTree` 内部，而它订阅的
+  `x`/`y` 是**每帧都在变**的（`treeDrag.cursor()` 在 `mousemove` 里写）⇒ **拖一次树 = 整个侧栏
+  （1180 行，含空间列表与整棵页面树的 JSX）以 60fps 重渲染**。现拆成独立组件
+  `src/components/TreeDragGhost.tsx`，每帧重渲染的只剩这 20 行；`PageTree` 本身不再有任何
+  `treeDrag` 订阅（剩下的都在 `TreeItem` 里，是按节点按需的）。判据
+  `src/components/TreeDragGhost.test.tsx` 5 条（没在拖时不渲染 / 标题与 +12+8 偏移 / 光标移动
+  真的跟着更新 / 结束后消失 / 三种 kind 图标互不相同）。⚠️ 这类问题
+  **`check-store-subscriptions` 看不到**——那几个订阅都是字段级选择器，在门禁眼里是绿的
+  （它管"有没有整店订阅"，不管"谁在订阅"）⇒ 边界写在该文件头部，靠评审守。
+
+- **自动保存不再全量重拉页面列表**。`App.tsx` 的保存路径原本每次都 `loadPages()`：它为一次标题改动
+  重查整张 page 表，并触发 `set(loading)` + `set(pages)` **两次全量广播** —— 而这条路每停 600ms
+  打字就可能走一次，`pages` 的订阅者里还有「每个可见树节点一个」的 `TreeItem` 与 `DatabaseView` /
+  `FileManagerView` 这种千行组件。现在改为 `patchPageMeta()` **就地更新**列表那一条（标题 /
+  `updated_at`；**一个字段都没变时不写 state**，连 `pages` 引用都不换）。三种情况仍回退到
+  `loadPages()`：后端没回页面、本地列表里没有这一条、列表上次加载失败——最后一种顺带重试并清掉那个
+  `error` 角标（旧代码正是靠这个副作用清的，走近路时必须显式保留）。判据 `src/store/notes.test.ts`
+  6 条（含"同值不换引用"这条性能承诺）。`updated_at` 之所以必须一起补：它被 `FileManagerView` 的
+  "更新时间"列、`lib/pluginViews.ts` 的"N 天前"排序与 `lib/mention.ts` 的打分读着，只补标题会留陈旧值。
+
+- **三条移动端门禁在 CI 上假红：runner 的浏览器是 en-US**。`src/i18n` 按 `navigator.language`
+  选语言 ⇒ 活动栏标题渲染成 `Notes` / `Files` / `Board`……，而门禁里到处是**按中文 title 找按钮**
+  （`title^="笔记（编辑器）"` / `"文件管理"`…）⇒ 每个视图都"打不开"，最后抛
+  `No element found for selector: .activity-group .activity-btn[title^="文件管理"]`。开发机浏览器是
+  zh-CN，所以**本地永远复现不出来**。现在三条门禁（9 处页面）在导航前用产品自己的
+  `shuyonote:lang` 键把语言钉成 zh-CN（`scripts/lib/pin-locale.mjs`）——钉的是**测试环境**，
+  不是改产品去迎合断言。验证：本机把 `navigator.language` 改成 en-US 复现出 CI 那串英文标题，
+  钉回 zh-CN 后标题恢复中文（`Notes` → `笔记`、`Files` → `文件管理`）。
+
 ## [1.91.26] - 2026-09-23
 
 > 修「社区文章存进笔记后，属性区不能及时看到，需重新打开才有」
