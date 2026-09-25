@@ -30,6 +30,9 @@ const pullSpaceKeyring = vi.fn();
 // B 片 ①-a（2026-09-25）：不经服务器的换设备（配对码）。
 const pairingExport = vi.fn();
 const pairingImport = vi.fn();
+// ★ 2026-09-25：开/关加密之后**必须重读状态中枢**（`vault.ts::refreshVault` 走的就是这条内核读数）
+// —— 否则「会话锁定」整节（`SettingsDialog` 里由 `useVault().enabled` 控制）要等**重启**才出现。
+const encryptionStatus = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -41,6 +44,7 @@ vi.mock("../lib/api", () => ({
     pullSpaceKeyring: (...a: unknown[]) => pullSpaceKeyring(...a),
     pairingExport: (...a: unknown[]) => pairingExport(...a),
     pairingImport: (...a: unknown[]) => pairingImport(...a),
+    encryptionStatus: (...a: unknown[]) => encryptionStatus(...a),
   },
 }));
 
@@ -49,6 +53,7 @@ vi.mock("../lib/platform", () => ({
 }));
 
 import type { SpaceSecurityView } from "../lib/api";
+import { __resetVaultForTests, vaultState } from "../lib/vault";
 import { SpacePrivacySection } from "./SpacePrivacySection";
 
 const personal: SpaceSecurityView = {
@@ -116,6 +121,7 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
       pullSpaceKeyring,
       pairingExport,
       pairingImport,
+      encryptionStatus,
     ])
       m.mockReset();
   });
@@ -232,6 +238,61 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     });
 
     expect(enableSpaceEncryption).toHaveBeenCalledWith("default", "我家猫叫mimi");
+  });
+
+  // ---------------------------------------------------------------------------
+  // ★ 2026-09-25（Windows 侧定性、AMD 侧落）：**"改了数据、忘了刷新一个状态中枢"**这一族
+  // ---------------------------------------------------------------------------
+  //
+  // 现场（MIX 2 真机）：给活动空间**开启加密成功后**，「设置 → 安全」里那行「已加密 · 已解锁」＋
+  // **「立即锁定」按钮直到重启才出现**。根因不是条件写窄，而是 `run()` 成功后只 `reload()` 了
+  // **本节自己的视图**，没有刷新 `vault` 状态中枢 —— 而整节由 `SettingsDialog` 里
+  // `useVault().enabled` 控制（那读的是内核读数）。
+  //
+  // 为什么必须补这条判据：这个 bug **不会让任何既有判据变红**（既有用例都直接打桩 api、
+  // 不经过 UI 的 store 刷新路径）⇒ 没有它就会以"重启才生效"的形态复发。
+  // 判据形态刻意选**行为**（vault 读数真的变了），而不是"调用了 refreshVault"：
+  // 前者是用户会撞上的那件事，后者只是实现细节。
+  it("★ 开启加密成功后 ⇒ **状态中枢**必须跟着变（否则「会话锁定」整节要等重启才出现）", async () => {
+    __resetVaultForTests();
+    spaceSecurityOverview.mockResolvedValue([personal]);
+    enableSpaceEncryption.mockResolvedValue([]);
+    // 内核读数：这一步之后活动空间**已经是加密的**了（这正是 refreshVault 要去问的东西）
+    encryptionStatus.mockResolvedValue({ enabled: true, locked: false });
+
+    await render();
+    expect(vaultState().enabled).toBe(false); // 起点：中枢还不知道
+
+    const input = container.querySelector<HTMLInputElement>('input[type="password"]')!;
+    await act(async () => {
+      setValue(input, "我家猫叫mimi");
+    });
+    await act(async () => {
+      buttons()[0].click();
+    });
+
+    expect(enableSpaceEncryption).toHaveBeenCalledWith("default", "我家猫叫mimi");
+    expect(encryptionStatus).toHaveBeenCalled(); // 真的去问了一次内核
+    expect(vaultState().enabled).toBe(true); // ← 这一条就是「会话锁定」整节会不会出现
+  });
+
+  it("★ 关掉加密成功后同样刷新（反向也要：否则那一节会一直留着「立即锁定」）", async () => {
+    __resetVaultForTests();
+    spaceSecurityOverview.mockResolvedValue([encrypted]);
+    disableSpaceEncryption.mockResolvedValue(null);
+    encryptionStatus.mockResolvedValue({ enabled: false, locked: false });
+
+    await render();
+    // 「关闭加密」是两步：第一下只确认，第二下才真的动库
+    await act(async () => {
+      buttons()[0].click();
+    });
+    await act(async () => {
+      buttons()[0].click();
+    });
+
+    expect(disableSpaceEncryption).toHaveBeenCalledWith("default");
+    expect(vaultState().enabled).toBe(false);
   });
 
   it("⑨ ★ 「推到服务器」⇒ 真调 `pushSpaceKeyring(id)`，并把后端那句话**原样**显示", async () => {
