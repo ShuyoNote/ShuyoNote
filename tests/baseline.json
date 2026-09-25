@@ -1,5 +1,5 @@
 {
-  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。 2026-09-22：新增门禁 `gm-registry-clean`（共享 registry 没留国密补丁；只读、不构建，读不出来只提示不判红），登记进 gates.rust —— 它没有 `counters`（不按用例数计），故不计入 `counts`。 2026-09-22：新增门禁 `mobile-views`（主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**；需 Chromium 与 dev server），登记进 gates.mobile。",
+  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。 2026-09-22：新增门禁 `gm-registry-clean`（共享 registry 没留国密补丁；只读、不构建，读不出来只提示不判红），登记进 gates.rust —— 它没有 `counters`（不按用例数计），故不计入 `counts`。 2026-09-22：新增门禁 `mobile-views`（主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**；需 Chromium 与 dev server），登记进 gates.mobile。 2026-09-25：新增门禁 `check-store-subscriptions`（Zustand 订阅粒度：组件不许整店订阅，基线与 `check-doc-content-access` 同口径**只减不增**；纯 Node、自带 `--self-test`），登记进 gates.contract —— 它另有自己的基线文件 `scripts/store-subscription-baseline.json`，不按用例数计，故不计入 `counts`。",
   "counts": {
     "vitest": 1303,
     "smoke-web": 363,
@@ -30,6 +30,7 @@
       "check-pdfjs-shim",
       "check-plugin-hosting",
       "check-ps1-ascii",
+      "check-store-subscriptions",
       "check-sys-deps",
       "check-versions",
       "check-web-commands",

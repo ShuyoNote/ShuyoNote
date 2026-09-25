@@ -4,6 +4,25 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **新增门禁 `check-store-subscriptions`（Zustand 订阅粒度），并同批修掉 16 处**。挡住
+  "组件对整个 store 订阅"这一种写法：`const { openPage } = useNotes();` 读起来像取几个字段，
+  实际是**订阅整个 state** —— 任何一次 `set()` 都会把它唤醒，而它用到的 action 引用恒定、
+  本来一次都不该被唤醒。复核状态管理选型评估时实测：213 个 store 调用点里这种写法占 39 处 / 32 个
+  文件（其中 13 处**一个 state 字段都没读**），最重的是 `src/components/PageTree.tsx` 里的
+  `TreeItem` —— 它是**每个可见树节点渲染一次**的组件却也整店订阅，叠加自动保存路径每次都全量
+  重拉页面表 ⇒ 打一次字停 1 秒就会唤醒 N 个树节点实例，外加 `DatabaseView` / `FileManagerView` /
+  `SyncPanel` 一起重跑 render。已改的 16 处：`PageTree` 三处（`TreeItem` / 批量工具条 / 树本身）
+  改为字段级选择器，13 处"只用到 action"的与 `SyncPanel` 的 `useSyncStatus()` 改为动作走
+  `getState()` —— **基线由 39 收紧到 23，行为不变**（`tsc` 与全量单测为准；`TreeItem` 现在只订
+  `currentId` 一个字段）。这类写法与 `check-hook-order` 同族：**不炸、不报错、测试全绿**，只是
+  安静地多渲染。基线 `scripts/store-subscription-baseline.json` **只减不增**（与
+  `check-doc-content-access` 同口径），且**按文件计数、不记行号** —— 第一版记了行号，当天就因为在
+  一处订阅上方加了 8 行注释而误报"新增 1 处"（实际一处没多）；行内 `// gate-allow: <理由>` 可显式
+  放行；已接进 `pnpm build` 与 `pnpm verify` 的 contract 组，自测
+  `node scripts/check-store-subscriptions.mjs --self-test`。
+
 ### 修复
 
 - **三条移动端门禁在 CI 上假红：runner 的浏览器是 en-US**。`src/i18n` 按 `navigator.language`

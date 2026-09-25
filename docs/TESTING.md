@@ -45,6 +45,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉） |
 | contract | `check-gitcode-workflow-rules` | `.gitcode/workflows/*.yml` 的三条**平台**约束（runs-on 白名单 / 每个 step 必须有合法 `name` / action 用 `actions/xxx@vN`）——不合法时整条流水线不会被调度；规则由 GitCode 校验接口实测得出 |
 | contract | `check-overlay-registry` | 浮层没登记进返回栈 ⇒ 真机返回键直接退出应用（2026-09-15 第 6 个真机问题） |
+| contract | `check-store-subscriptions` | **组件对 Zustand store 整店订阅**（`const { openPage } = useNotes();`）：action 引用恒定却订阅了整个 state ⇒ 任何一次 `set()` 都把组件唤醒。判据是**订阅关系**、不是渲染耗时，基线（`scripts/store-subscription-baseline.json`）**只减不增**；行内 `// gate-allow: <理由>` 可显式放行。2026-09-25 实测 39 处 / 32 文件，最重的是 `PageTree.tsx` 的 `TreeItem`（**每个可见树节点渲染一次**）；同一笔里已修 16 处（`PageTree` 三处改字段级选择器，13 处只用到 action 的与 `SyncPanel` 的 `useSyncStatus` 改走 `getState()`），基线 39 → 23 —— 与 `check-hook-order` 同族：不炸不报错、测试全绿，只是安静地多渲染 |
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |

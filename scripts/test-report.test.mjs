@@ -38,6 +38,7 @@ const REQUIRED_GATE_IDS = [
   "check-deep-link",
   "check-derived-writers",
   "check-plugin-hosting",
+  "check-store-subscriptions",
   "tsc",
   "vitest",
   "smoke-web",
