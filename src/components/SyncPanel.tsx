@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -117,6 +117,33 @@ export function SyncPanel() {
     }
   };
   const [status, setStatus] = useState("");
+  // 甲-1 接线第 3 件：**局域网发现的读数**（`lan_status`）。只在**桌面且面板开着**时轮询 ——
+  // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
+  // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
+  const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  useEffect(() => {
+    if (!open || !isDesktopPlatform()) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const st = await api.lanStatus(activeId);
+        if (alive) setLanStatus(st);
+      } catch {
+        // 读不到（命令没注册 / 老构建）⇒ 这一行**不显示**，别把它装成"没有发现到对端"。
+        if (alive) setLanStatus(null);
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open, activeId]);
+  // ⚠️ 只有**当前空间这条档案绑全了**才显示那一行：`lan_status` 没绑定时会回落"第一条绑定"
+  //（那是给无参调用兜底的），在面板上显示**别的空间**的地址是错的。
+  const activeRow = rows.find((r) => r.ws_id === activeId);
+  const lanRowBound = !!activeRow && !!activeRow.server_url.trim() && !!activeRow.space_id.trim();
   const [syncing, setSyncing] = useState(false);
   // C1 预算刹车：设备级设置（null = 还没读到，此时不渲染这一块）。
   const [budget, setBudget] = useState<SyncBudget | null>(null);
@@ -1044,6 +1071,23 @@ export function SyncPanel() {
                   </span>
                 </span>
               </label>
+            )}
+
+            {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）。
+                口径：**「没走成直连」必须是可断言的结果，不是静默降级** —— 所以这里显示的是
+                Rust 侧 `lan::status_line` 的**原文**（"直连（局域网）…" ／ "公网 … ｜ 本网段发现 N 台"
+                ／ "…其中没有服务这个空间的中枢" ／ "尚未绑定"），界面**不**自己按地址形状再判一次档。
+                只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
+            {isDesktopPlatform() && lanStatus && lanRowBound && (
+              <div className="sync-att sync-lan" title="同一网段里自动找到这个空间的中枢时，同步就走局域网地址">
+                <span className="sync-att-text">
+                  {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
+                  <span className="sync-att-name">
+                    {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
+                  </span>
+                  <span className="sync-hint">{lanStatus.line}</span>
+                </span>
+              </div>
             )}
 
             {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。

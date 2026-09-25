@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -22,7 +22,7 @@ const invoke = <K extends keyof CommandMap>(
 // `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
-export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult } from "./platform/commands";
+export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";
@@ -442,6 +442,14 @@ export const api = {
   syncStreamStop: () => invoke("sync_stream_stop") as Promise<SyncStreamStatus>,
   /** 读数（排错用）：`running` / `last_event_at` / `reconnects` / `last_error` / `reason`。 */
   syncStreamStatus: () => invoke("sync_stream_status") as Promise<SyncStreamStatus>,
+  /**
+   * 甲-1 接线第 3 件：**局域网发现的读数 ＋ 状态行**（施工单 §2 ④）。
+   *
+   * ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，界面**直接显示**（不要自己再拼一次档位）。
+   * ⚠️ 没传 `workspaceId` ⇒ 用第一条绑定（界面上是"当前空间"那条）。
+   */
+  lanStatus: (workspaceId?: string | null) =>
+    invoke("lan_status", { workspaceId: workspaceId ?? null }) as Promise<LanStatus>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，

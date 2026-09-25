@@ -19,6 +19,11 @@
 //   node scripts/sm-library-build.mjs ... --prepare                           # **只做准备**：打补丁 ＋ 清两个 crate 的产物，
 //                                                                             #   不构建（CI 里接着自己跑 `tauri build --features sm-library`）
 //   node scripts/sm-library-build.mjs ... --print-env                         # 打印 `OPENSSL_DIR/…LIB_DIR/…INCLUDE_DIR`（给 CI 写 $GITHUB_ENV）
+//     ★ 2026-09-25：它**现在是只读的**（与 `--check` 同档）。此前它会自己建隔离、把**私有** `CARGO_HOME`
+//     提前交进 `$GITHUB_ENV`，于是同一个 job 里紧随其后的 `--prepare` 会拿私有 home 去解析
+//     "共享 registry 源码" ⇒ 一条**不存在**的路径（发版线 Linux job 的真红，现场读起来像"源码没了"，
+//     其实是**交接早了**）。⇒ 约定改成：**`--prepare` 只做准备，`--print-env` 只翻译环境**，
+//     谁都不许靠副作用的先后顺序吃饭。没跑过 `--prepare` 时它少打那一行 `CARGO_HOME` 并给出提示（原本就这样）。
 //   node scripts/sm-library-build.mjs ... --require-static                    # **要求 OPENSSL_DIR 里只有静态 libcrypto**
 //                                                                             #   （单一口味要自包含：有 .dylib/.so 就当场失败）
 //
@@ -91,7 +96,12 @@ import { cleanCommands, envFileLines, installEnvStdoutGuard, opensslEnvFor, shou
 import { canApplyPatch, ensurePatch, patchApplyDecision, patchFileOf, revertPatch } from "./lib/sm-library-patch.mjs";
 import { cargoHomeOfRegistrySrc, gmCargoHome, gmCopyDir, isolateSqlcipherSource, removeIsolation } from "./lib/sm-library-isolate.mjs";
 const PRINT_SHA = argv.includes("--print-source-sha256");
-const NO_APPLY = argv.includes("--no-apply");
+// ★ 2026-09-25：`--print-env` **也算"不打补丁"** —— 它是"翻译环境"这条命令，不是"准备"那条。
+//   为什么必须这样（发版线 Linux job 的真红）：`--print-env` 原先会自己建隔离并把**私有** `CARGO_HOME`
+//   交进 `$GITHUB_ENV`；同一个 job 里紧随其后的 `--prepare` 于是拿私有 home 去解析"共享 registry 源码"
+//   ⇒ `ENOENT …/.gm-build/cargo-home/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2`，现场像"源码没了"。
+//   判据：`scripts/sm-library-build.test.mjs` 里"`--print-env` 不许建 `.gm-build/`、不许改共享源码"那条。
+const NO_APPLY = argv.includes("--no-apply") || PRINT_ENV;
 
 // ---- 0) 定位源码（**只定位一次**，后面补丁/哈希/标记扫描都用这一个 srcDir）----
 let pick;
@@ -218,7 +228,12 @@ if (!existsSync(opensslDir)) fail(`--openssl-dir 指向的目录不存在：${op
 const markerPath = markerFileOf(buildSrc);
 const markerHit = markerPath ? basename(markerPath) : null;
 
-if (!markerHit) {
+// ★ 2026-09-25：`--print-env` 时**跳过这条断言**。两个理由：
+//   ① 它现在是只读的（不打补丁）⇒ 它读的是**共享 registry**那份源码，而补丁只落在私有副本上
+//      ⇒ 在那里**永远**没有标记，断言必然假红（我改这一版时当场就撞上了）；
+//   ② "没补丁却去编译"真正必须被拦住的地方是 **build.rs**（它按 `Cargo.lock` 的版本去查标记，
+//      缺了当场 panic —— CI run 322 的 step 23 就是这么如实红的）。断言留在 `--prepare`/构建那条路上。
+if (!markerHit && !PRINT_ENV) {
   fail(
     `将要编译的那份 SQLCipher 源码里**没有** \`${MARKER}\` 标记：\n` +
       `  ${srcDir}\n` +
@@ -226,7 +241,14 @@ if (!markerHit) {
       "  修法：打 patches/0001-sqlcipher-sm3-provider.patch（见 patches/README.md 的三格核对）。",
   );
 }
-console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${buildSrc}，src_sha256=${sha256OfFile(markerPath).slice(0, 12)}…）`);
+if (markerHit) {
+  console.log(`sm-library-build: 补丁标记 ✓（${markerHit} @ ${buildSrc}，src_sha256=${sha256OfFile(markerPath).slice(0, 12)}…）`);
+} else {
+  console.log(
+    "sm-library-build: [--print-env 只读] 跳过补丁标记断言（它不编译任何东西；" +
+      "拦「没补丁却编译」的是 `build.rs`）—— 这里只翻译环境变量",
+  );
+}
 
 // ---- 3) 命令（固定两步：先 clean 再 build）----
 const env = { ...process.env, OPENSSL_DIR: opensslDir };
@@ -354,7 +376,7 @@ console.log(
     );
   } else {
     console.log(
-      `\nsm-library-build: 本次没有打补丁（--check/--no-apply）⇒ 共享 registry 命中=${sharedHits}` +
+      `\nsm-library-build: 本次没有打补丁（--check/--no-apply/--print-env ⇒ **只读**）⇒ 共享 registry 命中=${sharedHits}` +
         `${sharedHits === 0 ? "（原版 ✓）" : "（⚠️ 非原版）"}`,
     );
   }

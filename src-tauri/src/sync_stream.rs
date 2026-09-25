@@ -102,6 +102,10 @@ pub fn frame_kind(payload: &str) -> &'static str {
 
 /// 订阅地址（纯函数，方便判据）：`{server}/spaces/{space_id}/changes-stream`。
 ///
+/// ⚠️ `server` 现在是**已经解析好的基址**（甲-1 接线：局域网发现到的中枢优先，见
+/// `sync::effective_base_for`）—— 本函数**不**自己去查对端表：它要保持纯函数（有判据），
+/// 而"这一轮走哪个地址"必须与 push/pull/附件**同源**（"基址只出一处"）。
+///
 /// 与前端 `useSyncStream.ts` 拼的是**同一条路径**（服务端 `main.rs` 的 `sync_routes`）。
 /// ⚠️ 服务端地址的结尾斜杠在这里归一（前端也是这么做的）；`space_id` 是服务端生成的十六进制，
 /// **不需要**百分号编码（与前端 `encodeURIComponent` 的效果一致，这里不为它引一层依赖）。
@@ -312,10 +316,17 @@ pub async fn sync_stream_start(
     db: State<'_, Db>,
     ws_id: String,
 ) -> Result<StreamStatus, String> {
-    // ① 解析绑定（锁只在**同步**代码里，不跨 await）
+    // ① 解析绑定 ＋ 基址（锁只在**同步**代码里，不跨 await）
     let resolved = {
         let c = db.0.lock().expect("db mutex poisoned");
-        crate::sync::claim_config(&c, &ws_id)?
+        crate::sync::claim_config(&c, &ws_id)?.map(|(server, token, space_id)| {
+            // ★ 甲-1 接线：订流也走**解析后的基址**（局域网中枢优先）—— 它与 push/pull/附件
+            //   必须同源，否则"push 走局域网、流还连着公网"，而那种漂**只有真机拔网线才看得出来**。
+            // ⚠️ 凭证仍按**配置地址**取（`claim_config` 就是这么取的），只有地址换档。
+            let base = crate::sync::effective_base_for(&c, &space_id, &server)
+                .unwrap_or_else(|| server.clone());
+            (base, token, space_id)
+        })
     };
     let Some((server, token, space_id)) = resolved else {
         stop_locked();

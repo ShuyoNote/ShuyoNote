@@ -399,6 +399,19 @@ pub fn run() {
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
+            // 甲-1 接线第 1 件（2026-09-25）：**启动时就把局域网发现的循环拉起来**。
+            //
+            // ⚠️ 为什么必须在**这里**（而不是等界面第一次 `lan_status`）：发现层要在
+            // **每次同步请求**之前就有对端表（`sync::effective_base` 读的就是它）—— 若等用户
+            // 打开同步面板才起，那"面板没开过"的会话里**永远不会有局域网路由**，而现象是
+            // "装好了却一直走公网"（没有报错、没有日志、`cargo test` 也照绿）。
+            //
+            // ⚠️ 起它**不等于开始广播**：循环每轮重读"绑了同步的空间数"（`should_enable`），
+            // 一个都没绑 ⇒ 开关是关的 ⇒ **不发一条公告**（用户看不见，但那是隐私与噪音的两重错）。
+            // 绑不上 UDP（端口被占 / 系统限制）⇒ 只记一行日志，**不挡同步**（发现层是加分项）。
+            if let Err(e) = lan_state::start(app.handle().clone()) {
+                eprintln!("[lan] 发现层没起来（同步不受影响，照旧走配置地址）：{e}");
+            }
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
             // 会节流 JS timer，所以放在 Rust 侧做）。**桌面专属**，见 mod email 的说明。
             #[cfg(desktop)]
@@ -574,6 +587,10 @@ pub fn run() {
             sync_stream::sync_stream_start,
             sync_stream::sync_stream_stop,
             sync_stream::sync_stream_status,
+            // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
+            // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
+            //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
+            sync::lan_status,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,

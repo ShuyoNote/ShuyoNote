@@ -1531,6 +1531,23 @@ export function makeInvoke(store: SqliteStore) {
       }
       return { granted: res?.granted === true } as T;
     }
+    if (cmd === "lan_status") {
+      // 甲-1 接线第 3 件：局域网发现的读数。**Web 上没有发现层**（UDP 收发在 Rust 侧，
+      // 见 `src-tauri/src/lan.rs`）—— 所以这里如实回"配置地址那一档 ＋ 局域网不可用"，
+      // 而不是假装发现了谁（那会让状态行说出与真实路由矛盾的档，`lan::status_line` 判据 ⑭ 钉这条）。
+      //
+      // ⚠️ 口径与桌面侧**同一条**：没绑定 ⇒ 「尚未绑定」；绑了 ⇒ 「公网 <地址> ｜ 本网段发现 0 台」。
+      //    这里是 Web 侧的唯一实现（**不**登记成 `DESKTOP_ONLY_COMMANDS`）："这一轮走哪个地址"
+      //    在浏览器里也存在，不该让调用点自己判平台。
+      const args = a.args ?? a;
+      const rows = store.query<ClaimScopeRow>("SELECT ws_id, server_url, space_id, token FROM sync_profiles");
+      const wanted = String(args.workspaceId ?? "");
+      // 指定了工作空间就走**那一处**解析（与 claim / SSE 同源）；没指定 ⇒ 第一条绑定（面板兜底）。
+      const server = (wanted ? resolveWorkspaceSyncScope(rows, wanted)?.server : undefined)
+        ?? String(rows[0]?.server_url ?? "").trim().replace(/\/+$/, "");
+      const line = server ? `同步地址：公网 ${server} ｜ 本网段发现 0 台` : "同步地址：尚未绑定";
+      return { enabled: false, peers: 0, kind: server ? "configured" : "", line } as T;
+    }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
       // children, databases' pages, ...), so removing a folder empties it from

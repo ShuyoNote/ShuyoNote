@@ -164,6 +164,31 @@ export interface SyncStreamStatus {
 }
 
 /**
+ * 局域网发现的**读数 ＋ 状态行**（`lan_status` 的形状，见 `src-tauri/src/sync.rs::LanStatus`）。
+ *
+ * 口径（施工单 §2 ④ ／ 简报 §7）：**「没走成直连」是一个可断言的结果，不是静默降级** ——
+ * 用户要能分辨"走了局域网"／"网段里没人"／"有人但都不服务这个空间"这三件**处置完全不同**的事。
+ *
+ * ⚠️ `line` 是 **Rust 侧 `lan::status_line` 的原文**：界面直接显示它，**不要**自己按地址形状
+ * 再拼一次档位（那样会在"用户把配置地址填成私有网段"时说出与真实路由矛盾的档，判据 ⑭ 钉这条）。
+ */
+export interface LanStatus {
+  /** 发现层现在开着吗（没绑同步 ⇒ 关，广播/监听整条不起）。 */
+  enabled: boolean;
+  /** **活着**的对端数（过对端存活期的不算）—— 与状态行里那个"N 台"是同一个数。 */
+  peers: number;
+  /**
+   * 这一次走的是哪一档：`"lan"` / `"configured"` / `""`（尚未绑定）。
+   *
+   * ⚠️ 来自 Rust 的 `Route`（`lan::LinkKind::as_str`）：界面**只能拿它换标题**，
+   * **不许**按地址形状自己再判一次档（判据 ⑭ 钉这条）。
+   */
+  kind: "lan" | "configured" | "";
+  /** 状态行原文：「同步地址：直连（局域网）… ｜ 本网段发现 N 台 ｜ 中枢：<名字>」那一串。 */
+  line: string;
+}
+
+/**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
  * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
@@ -558,6 +583,11 @@ export interface CommandMap {
   sync_stream_start: { args: { wsId: string }; result: SyncStreamStatus };
   sync_stream_stop: { args: undefined; result: SyncStreamStatus };
   sync_stream_status: { args: undefined; result: SyncStreamStatus };
+  // 甲-1 接线第 3 件（2026-09-25）：局域网发现的**读数 ＋ 状态行**（施工单 §2 ④）。
+  // ⚠️ **两侧都实现**（不登记成 web 专属）：Web 平台没有 UDP 发现层，但它**照旧有**"这一轮走哪个
+  //    地址"这件事 —— 那边的实现如实回"配置地址那一档 ＋ 发现层不可用"（见 `platform/web.ts`
+  //    那一支），而不是假装发现了谁。契约形状与 `src-tauri/src/sync.rs::LanStatus` 逐字段相同。
+  lan_status: { args: { workspaceId?: string | null }; result: LanStatus };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };
