@@ -128,13 +128,18 @@ export function envFileLines(env) {
  * @returns {{ write: Function, emit: (text: string) => void }}
  */
 export function installEnvStdoutGuard({ stdout, stderr }) {
+  // ★ 先**抓住原版写函数**：调用方紧接着会把 `process.stdout.write` 换成 `write()`，
+  //   若这里在调用时才取 `stdout.write`，拿到的就是被换过的那一个 ⇒ **无限递归**
+  //   （2026-09-25 本机端到端复刻抓到；当时的单测用假流、假流没人替换它的 `write`，所以是**假绿**）。
+  const rawStdout = stdout.write.bind(stdout);
+  const rawStderr = stderr.write.bind(stderr);
   let allow = false;
   return {
-    write: (chunk, ...rest) => (allow ? stdout.write(chunk, ...rest) : stderr.write(chunk, ...rest)),
+    write: (chunk, ...rest) => (allow ? rawStdout(chunk, ...rest) : rawStderr(chunk, ...rest)),
     emit(text) {
       allow = true;
       try {
-        stdout.write(text);
+        rawStdout(text);
       } finally {
         allow = false;
       }

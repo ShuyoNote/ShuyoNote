@@ -122,6 +122,24 @@ describe("sm-library-plan：OpenSSL 前缀 → 两个 crate 都认的环境变�
     expect(err.chunks.join("")).toContain("补丁标记 ✓");
   });
 
+  it("installEnvStdoutGuard：调用方把 stdout.write 换成守卫之后，emit 与 write 都不许递归（★ 2026-09-25 真踩过）", () => {
+    const mk = () => {
+      const chunks = [];
+      return { chunks, write: (c) => chunks.push(String(c)) };
+    };
+    const out = mk();
+    const err = mk();
+    const g = installEnvStdoutGuard({ stdout: out, stderr: err });
+    // 模拟 CLI 的装配：把流的 write 换成守卫（若守卫在**调用时**才取 stdout.write ⇒ 这里必爆栈）
+    out.write = (chunk, ...rest) => g.write(chunk, ...rest);
+    out.write("sm-library-build: 日志\n");
+    g.emit("OPENSSL_DIR=/p\n");
+    out.write("sm-library-build: 又来一行日志\n");
+    expect(err.chunks.join("")).toContain("日志");
+    expect(err.chunks.join("")).toContain("又来一行");
+    expect(out.chunks.join("")).toContain("OPENSSL_DIR=/p");
+  });
+
   it("installEnvStdoutGuard：`emit` 返回后立刻收回放行（放行不是永久的）", () => {
     const mk = () => {
       const chunks = [];
