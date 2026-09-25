@@ -56,6 +56,7 @@ const ICON = {
 import { SyncPanel } from "./SyncPanel";
 import { EmailPanel } from "./EmailPanel";
 import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
+import { TreeDragGhost } from "./TreeDragGhost";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -607,6 +608,9 @@ function BatchToolbar({ pages }: { pages: PageMeta[] }) {
   );
 }
 
+// 拖影已拆到 `./TreeDragGhost`：它订阅的 x/y 每帧都在变，留在这里会让整个侧栏跟着
+// 60fps 重渲染（原因与边界写在那个文件头部）。
+//
 // 视图切换已收编进左侧竖条 <ActivityBar />，这里不再需要 view / onViewChange，
 // 但 App 仍按老签名传参，故保留可选 props 以免调用点大改。
 export function PageTree(_props: {
@@ -712,16 +716,6 @@ export function PageTree(_props: {
       })
       .catch(() => {});
   }, [spaceChooser.open]);
-
-  // Drag-ghost state (title + cursor position while dragging a tree node).
-  const dragLabel = useTreeDrag((s) => s.label);
-  const dragX = useTreeDrag((s) => s.x);
-  const dragY = useTreeDrag((s) => s.y);
-  const dragKind = useTreeDrag((s) => s.kind);
-  const dragIcon =
-    dragKind === "folder" ? <FolderIcon width={15} height={15} /> :
-    dragKind === "database" ? <DatabaseIcon width={15} height={15} /> :
-    <PageIcon width={15} height={15} />;
 
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
@@ -1168,13 +1162,9 @@ export function PageTree(_props: {
           <SpaceTransferProgress /> 订阅 useSpaceTransfer 统一渲染 —— 这样
           任何面板关掉后进度仍然可见。 */}
 
-      {/* Drag ghost: follows the cursor to show what's being moved. */}
-      {dragLabel && (
-        <div className="tree-drag-ghost" style={{ left: dragX + 12, top: dragY + 8 }}>
-          <span className="tree-ghost-icon">{dragIcon}</span>
-          <span className="tree-ghost-title">{dragLabel}</span>
-        </div>
-      )}
+      {/* Drag ghost: follows the cursor to show what's being moved.
+          独立组件 —— 它订阅的 x/y 每帧都在变，放在这里会让整个侧栏跟着 60fps 重渲染。 */}
+      <TreeDragGhost />
     </div>
   );
 }

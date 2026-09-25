@@ -25,6 +25,16 @@
 
 ### 修复
 
+- **拖动页面树时不再重渲染整个侧栏**。跟着光标走的那个拖影原先写在 `PageTree` 内部，而它订阅的
+  `x`/`y` 是**每帧都在变**的（`treeDrag.cursor()` 在 `mousemove` 里写）⇒ **拖一次树 = 整个侧栏
+  （1180 行，含空间列表与整棵页面树的 JSX）以 60fps 重渲染**。现拆成独立组件
+  `src/components/TreeDragGhost.tsx`，每帧重渲染的只剩这 20 行；`PageTree` 本身不再有任何
+  `treeDrag` 订阅（剩下的都在 `TreeItem` 里，是按节点按需的）。判据
+  `src/components/TreeDragGhost.test.tsx` 5 条（没在拖时不渲染 / 标题与 +12+8 偏移 / 光标移动
+  真的跟着更新 / 结束后消失 / 三种 kind 图标互不相同）。⚠️ 这类问题
+  **`check-store-subscriptions` 看不到**——那几个订阅都是字段级选择器，在门禁眼里是绿的
+  （它管"有没有整店订阅"，不管"谁在订阅"）⇒ 边界写在该文件头部，靠评审守。
+
 - **自动保存不再全量重拉页面列表**。`App.tsx` 的保存路径原本每次都 `loadPages()`：它为一次标题改动
   重查整张 page 表，并触发 `set(loading)` + `set(pages)` **两次全量广播** —— 而这条路每停 600ms
   打字就可能走一次，`pages` 的订阅者里还有「每个可见树节点一个」的 `TreeItem` 与 `DatabaseView` /
