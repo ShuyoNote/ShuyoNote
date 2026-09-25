@@ -52,7 +52,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 
 | 平台 | 应用层 SM4（附件/同步载荷；导出包里的附件同此） | 库级（页加密 · 页 HMAC · 库 KDF） | 构建前置 | 归属 | 取证状态 |
 |---|---|---|---|---|---|
-| **macOS** | ✅ | ✅ **`sm-library` 构建：P2 已接线 ＋ P3（SM4 页）已落地** ⇒ 页加密 SM4、页 MAC/KDF SM3（本机实测：XOR 判据打印「本构建的**页加密** = SM4 页」—— ⚠️ **更正**：那条判据**只判页加密**，夹具是裸钥默认参数写的）；**默认包仍是 CommonCrypto（AES ＋ SHA512）** | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；库级 ✅（`security::` 22/0、`gm_provider::` 9/0，接线构建实测）；⚠️ 有一条 macOS-only 风险见 §五 |
+| **macOS** | ✅ | ✅ **`sm-library` 构建：P2 已接线 ＋ P3（SM4 页）已落地** ⇒ 页加密 SM4、页 MAC/KDF SM3（本机实测：XOR 判据打印「本构建的**页加密** = SM4 页」—— ⚠️ **更正**：那条判据**只判页加密**，夹具是裸钥默认参数写的）。<br>⚠️ **【历史口径 · 已被 2026-09-22 取代】** 本格原写「**默认包仍是 CommonCrypto（AES ＋ SHA512）**」—— 那是 **2026-09-19** 的拍板（"macOS 不切默认、国密版另发"）。**2026-09-22 owner 改判「单一口味＝国密」并已落进 `release.yml`** ⇒ **发出去的包一律 SM4 页**（macOS 走自编 `no-shared`）。本机**不带补丁的默认构建**仍是 CommonCrypto —— 那只是**开发时的默认**，**不再是发布形态** | Tongsuo **已在本机构建**（commit `540603a3`）；`sm-library` 打开时 `build.rs` **fail-fast**（不给 `OPENSSL_DIR` 就当场失败） | 本侧 | 应用层 ✅；**三段自证在本机全绿**（见 §四）；库级 ✅（`security::` 22/0、`gm_provider::` 9/0，接线构建实测）；⚠️ 有一条 macOS-only 风险见 §五 |
 | **Windows** | ✅（纯 Rust，全平台同一份实现） | 🔶 **代码同一份 ⇒ 接线也在**（其后端本来就是 OpenSSL）；⚠️ **本侧无独立库级读数** | 据信箱：**AMD 2026-09-18 报过 `tongsuo build: msvc=ok`**（附三条前置踩坑）；⚠️ **本侧没有独立复核** | Windows 侧 | 应用层：本机需走 `scripts/win-cargo-test.ps1`（测试 exe 手工挂 v6 清单；**真因是清单，不是 PATH/同名 DLL** —— 我原来的 PATH 假设已被 Windows 侧实测证伪，见信箱 `…crypto-backend.reply-3.md`）⇒ 行为另有 Linux/CI 证；库级未取证 |
 | **Linux** | ✅ | 🔶 **代码同一份 ⇒ 接线也在**（AMD 在 WSL2 上有 provider 层读数；**接线后的库级读数归 AMD**，见 §3.5） | 后端**已是 OpenSSL**（读 `libsqlite3-sys/build.rs` 的最后一支：非 Apple/非 Windows 且未给 `OPENSSL_DIR` ⇒ `link-lib=dylib=crypto`；Linux CI 的 `rust-test` 常绿也印证系统 `libcrypto` 在位）；换 Tongsuo 只需 `OPENSSL_DIR` | AMD（provider） | 应用层 ✅（Linux 376/376） |
 | **Android** | ✅（纯 Rust） | ❌ 未做（P2/P3 的 Android 构建链未排） | Tongsuo 交叉编译**已被 AMD 证过**（NDK r29）；真机验收未做 | 真机＝**人手** | ❌ 未取证 |
@@ -133,7 +133,7 @@ SM4 密钥 = 前 16 字节    MAC 密钥 = 后 32 字节
 | Android 真机（口令→加密→重启解锁→读写） | **人手** | 真机 |
 | 桌面真机：新装加密 / 重启解锁 / 加密开关双向迁移不丢数据 | **人手** | 真机 |
 | 端到端"旧版库 ＋ 旧版附件 → 新版打开" | **人手** | 真机（本版只有单测层的跨后端夹具与 v0 金标夹具） |
-| **macOS 默认切掉 CommonCrypto** | **已拍板：不切**（owner，2026-09-19，选项 A） | 维持"**默认包＝Apple CommonCrypto ＋ 国密版另发**"（方案 §0-E 的形态）。依据：翻了默认＝要求每个 macOS 开发者与默认 CI 都先编 Tongsuo，而此刻**用户可见行为零变化**（页加密仍 AES、页 HMAC 仍 SHA512、库 KDF 仍 PBKDF2-SHA512），只多一个 dylib 的打包/`@rpath`/签名/公证负担。⇒ 国密版的正确形态＝显式 `OPENSSL_DIR` ＋ `sm-library` fail-fast ＋ `check-crypto-backend` 严格模式。**改判触发条件**：① client 要求「装机即国密」② 重启路径 3（TLCP/RFC 8998，那时 Tongsuo 反正要进构建）③ 双 provider 维护成本高于打包成本 |
+| **macOS 默认切掉 CommonCrypto** | ⚠️ **【历史口径 · 已被 2026-09-22 取代】** 原记「**已拍板：不切**（owner，2026-09-19，选项 A）」⇒ 维持"默认包＝Apple CommonCrypto ＋ 国密版另发"。**2026-09-22 owner 改判「单一口味＝国密」**：所有平台**发出去的包**一律 SM4 页 ＋ SM3 页 MAC/库 KDF，并已落进 `release.yml`（macOS＝自编 `no-shared`）。⇒ 这条**不再是发布口径**；本机不带补丁的默认构建仍是 CommonCrypto，仅供开发。<br>当时的依据（保留作过程记录）：翻了默认＝要求每个 macOS 开发者与默认 CI 都先编 Tongsuo，而那一刻**用户可见行为零变化**（页加密仍 AES、页 HMAC 仍 SHA512、库 KDF 仍 PBKDF2-SHA512），只多一个 dylib 的打包/`@rpath`/签名/公证负担。⇒ 国密版的形态＝显式 `OPENSSL_DIR` ＋ `sm-library` fail-fast ＋ `check-crypto-backend` 严格模式 |
 | 传输层国密（TLCP / RFC 8998） | 未排期 | 方案 §5.2 的重启条件：客户明确要求"传输层协议本身必须是国密"，或招标点名 TLCP |
 | 更新包 / 插件索引签名换 SM2 | **不做**（已决定） | 见 §一 |
 

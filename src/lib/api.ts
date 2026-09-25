@@ -110,7 +110,9 @@ export const api = {
   setWorkspaceSettings: (id: string, theme?: string | null, icon?: string | null, sortOrder?: number | null) =>
     invoke("set_workspace_settings", { id, theme, icon, sortOrder }),
   listWorkspaces: () => invoke("list_workspaces"),
-  createWorkspace: (name?: string | null) => invoke("create_workspace", { name }),
+  /** ★ A1：`kind` ＝ 用户在"新建空间"那一刻选的分类（没给 ⇒ 后端按 `personal`）。 */
+  createWorkspace: (name?: string | null, kind?: "personal" | "team" | null) =>
+    invoke("create_workspace", { name, kind: kind ?? null }),
   getActiveWorkspaceId: () => invoke("get_active_workspace_id"),
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),

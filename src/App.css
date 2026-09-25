@@ -1364,6 +1364,28 @@ html[data-platform="win"] .app-body {
   font-size: 11px;
   color: var(--text-dim);
 }
+/* ★ A1：单选对话框（"这个空间是个人还是团队"）的按钮列。
+   与 `.confirm-box` 同一视觉语言 —— **不另起一套**（owner 2026-09-24 那条纪律：
+   同类控件形状要一致，别让人以为进了另一个界面）。 */
+.input-choice-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
+.input-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.input-choice:hover { border-color: var(--accent); }
+.input-choice-label { font-size: 13px; }
+.input-choice-hint { font-size: 11px; line-height: 1.5; color: var(--text-dim); }
 /* 主口令：**标签一行、输入框单独一行**（owner 2026-09-24：挤在同一行时标签被折行、输入框被压到最右边）。
    竖排后输入框占满宽度，等于一个正常的"设置口令"字段；盒子本身用 `.sync-input`（与下拉、按钮同高）。 */
 .space-privacy-pass {

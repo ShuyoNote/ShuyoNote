@@ -201,7 +201,7 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
 
 /// ★ **新建一个本地空间的那一行**（隐私边界 A=3，2026-09-24）。
 ///
-/// **分类由入口决定**：本仓是**个人版入口** ⇒ 这里新建的空间一律标成 `personal`
+/// **分类由入口决定**：本仓是**个人版入口** ⇒ 没显式指定时一律标成 `personal`
 /// （团队空间由团队流程走 `space_crypto::set_space_kind(..., Team)` 标）。
 /// 于是"新建 ⇒ 还没加密 ⇒ 绑同步会被闸门拦住并引导设口令"这条链**自动成立**，
 /// 不需要用户先做一次分类动作。
@@ -216,7 +216,52 @@ pub(crate) fn insert_new_local_space(
     now: i64,
 ) -> Result<(), String> {
     // 走同一个写入口：**分类只在这里定义一次**（新建与导入共用，免得两处口径漂）。
-    insert_space_row(c, id, name, theme, "", sort_order, now, false)
+    insert_space_row(
+        c,
+        id,
+        name,
+        theme,
+        "",
+        sort_order,
+        now,
+        false,
+        crate::space_crypto::SpaceKind::Personal,
+    )
+}
+
+/// ★★ **用户在"新建空间"那一刻选的那一类**（owner 2026-09-25 拍板 A1）。
+///
+/// 为什么必须走"入口决定"而不是"先建再改"：`sync_gate` 对**未分类**的空间**一律放行**
+/// （`AllowedUnclassified`）⇒ 一个本该加密的个人空间如果在"建完到改分类"之间被绑了同步，
+/// 它的内容就**明文上云**了。把这一问放在创建那一刻，中间没有那个窗口。
+///
+/// ⚠️ `raw` 是**界面传来的参数** ⇒ 走 [`parse_new_space_kind`] 的**窄进**（只认两个字面量，
+/// 别的串**报错**），与读库里那列用的 `SpaceKind::parse`（宽进、认不出算未分类）刻意相反。
+pub(crate) fn insert_chosen_space(
+    c: &rusqlite::Connection,
+    id: &str,
+    name: &str,
+    theme: &str,
+    sort_order: f64,
+    now: i64,
+    raw: &str,
+) -> Result<(), String> {
+    let kind = parse_new_space_kind(raw)?;
+    insert_space_row(c, id, name, theme, "", sort_order, now, false, kind)
+}
+
+/// 建空间时**只认两个值**（`"personal"` / `"team"`）。
+///
+/// 为什么窄进：这是**界面传进来的参数**。把 `"tem"` 这类拼错**静默当成"取消分类"**，会让闸门
+/// 在用户以为已经归类的时候**松开**（与 `set_space_kind` 的窄进口径一致）。
+fn parse_new_space_kind(raw: &str) -> Result<crate::space_crypto::SpaceKind, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "personal" => Ok(crate::space_crypto::SpaceKind::Personal),
+        "team" => Ok(crate::space_crypto::SpaceKind::Team),
+        other => Err(format!(
+            "空间类型只认「personal」或「team」，收到的是「{other}」——不猜（猜错会让同步闸门松开）"
+        )),
+    }
 }
 
 /// ★ **导入一个空间包时写 meta 那一行**（owner 2026-09-24 拍板**选项 ②**）。
@@ -237,7 +282,17 @@ pub(crate) fn insert_imported_space(
     now: i64,
     encrypted: bool,
 ) -> Result<(), String> {
-    insert_space_row(c, id, name, theme, icon, sort_order, now, encrypted)
+    insert_space_row(
+        c,
+        id,
+        name,
+        theme,
+        icon,
+        sort_order,
+        now,
+        encrypted,
+        crate::space_crypto::SpaceKind::Personal,
+    )
 }
 
 /// 新建 / 导入 **共用**的那一条 INSERT（`kind` 只有一个来源，见两个公开入口的注释）。
@@ -250,6 +305,7 @@ fn insert_space_row(
     sort_order: f64,
     now: i64,
     encrypted: bool,
+    kind: crate::space_crypto::SpaceKind,
 ) -> Result<(), String> {
     c.execute(
         "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted, kind)
@@ -263,7 +319,7 @@ fn insert_space_row(
             now,
             now,
             if encrypted { 1 } else { 0 },
-            crate::space_crypto::SpaceKind::Personal.as_str()
+            kind.as_str()
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -271,7 +327,11 @@ fn insert_space_row(
 }
 
 #[tauri::command]
-pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result<WorkspaceMeta, String> {
+pub async fn create_workspace(
+    db: State<'_, Db>,
+    name: Option<String>,
+    kind: Option<String>,
+) -> Result<WorkspaceMeta, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     let trimmed = name.unwrap_or_default().trim().to_string();
@@ -287,7 +347,12 @@ pub async fn create_workspace(db: State<'_, Db>, name: Option<String>) -> Result
 
     {
         let c = conn(&db);
-        insert_new_local_space(&c, &id, &name, &theme, sort_order, now)?;
+        // ★ A1（owner 2026-09-25 拍板）：界面**在创建那一刻**已经问过"个人 / 团队"。
+        // 没传 kind（老调用方 / Web）⇒ 走原来的默认（`personal`），行为逐字不变。
+        match kind.as_deref() {
+            Some(k) => insert_chosen_space(&c, &id, &name, &theme, sort_order, now, k)?,
+            None => insert_new_local_space(&c, &id, &name, &theme, sort_order, now)?,
+        }
         c.execute(
             "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -586,4 +651,81 @@ pub fn copy_page_to_workspace(
     // The temporary target connection (if any) drops at end of scope; the ref
     // binding `tgt` borrows either it or the main conn.
     Ok(id_map.get(&page_id).cloned().unwrap_or_default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 只够 `insert_space_row` 用的最小 `meta.workspaces`（列与 `db::meta_migrate` 同形）。
+    fn conn_with_workspaces() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch(
+            "CREATE TABLE meta.workspaces (
+                 id TEXT PRIMARY KEY,
+                 name TEXT NOT NULL DEFAULT '',
+                 theme TEXT NOT NULL DEFAULT '',
+                 icon TEXT NOT NULL DEFAULT '',
+                 sort_order REAL NOT NULL DEFAULT 0,
+                 created_at INTEGER NOT NULL DEFAULT 0,
+                 updated_at INTEGER NOT NULL DEFAULT 0,
+                 deleted_at INTEGER,
+                 encrypted INTEGER NOT NULL DEFAULT 0,
+                 kind TEXT NOT NULL DEFAULT ''
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn kind_of(c: &rusqlite::Connection, id: &str) -> String {
+        c.query_row("SELECT kind FROM meta.workspaces WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+    }
+
+    /// ★ A1 判据：**用户在创建那一刻选的那一类，必须真的落库**（个人 / 团队各一条）。
+    ///
+    /// 为什么承重：分类是**同步闸门唯一的输入**。落错了的表现不是报错，而是
+    /// "个人空间没加密也能绑同步"（内容明文上云）——**能编译、别处单测也照绿**。
+    #[test]
+    fn the_kind_chosen_at_creation_is_what_lands_in_the_row() {
+        let c = conn_with_workspaces();
+        insert_chosen_space(&c, "s-personal", "我的", "#e11", 1.0, 1_000, "personal").unwrap();
+        insert_chosen_space(&c, "s-team", "大家的", "#e22", 2.0, 1_000, "team").unwrap();
+        assert_eq!(kind_of(&c, "s-personal"), "personal");
+        assert_eq!(kind_of(&c, "s-team"), "team");
+        // 大小写与空白照收（界面给的是字面量，但别为多一个空格就报错）
+        insert_chosen_space(&c, "s-team2", "大家的2", "#e33", 3.0, 1_000, " Team ").unwrap();
+        assert_eq!(kind_of(&c, "s-team2"), "team");
+    }
+
+    /// ★ A1 判据（**窄进**）：界面传了别的东西 ⇒ **报错**，而且**一行都不写**。
+    ///
+    /// 为什么不能"认不出就当未分类"：未分类在闸门眼里是**放行**的 ⇒ 那会让用户
+    /// "以为自己选了个类型、其实闸门松开了"。所以这里刻意与读库那侧（`SpaceKind::parse` 宽进）相反。
+    #[test]
+    fn an_unknown_kind_is_refused_instead_of_silently_becoming_unclassified() {
+        let c = conn_with_workspaces();
+        for bad in ["", "  ", "tem", "personal!", "team-ish", "1", "Personal Team"] {
+            let err = insert_chosen_space(&c, "s-bad", "x", "#e11", 1.0, 1_000, bad)
+                .expect_err("认不出的类型必须报错（静默当未分类＝闸门松开）");
+            assert!(err.contains("personal") && err.contains("team"), "报错要可操作：{err}");
+        }
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM meta.workspaces", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "报错那几次不许留下半行");
+    }
+
+    /// ★ 老口径不许变：**不传类型** ⇒ 与今天逐字节相同（`personal`，见 `insert_new_local_space`）。
+    /// 这条挡的是"为了加 A1 顺手把默认值改掉了"——那会让所有老调用方建出未分类的空间。
+    #[test]
+    fn without_an_explicit_choice_the_default_stays_personal() {
+        let c = conn_with_workspaces();
+        insert_new_local_space(&c, "s-default", "默认", "#e11", 1.0, 1_000).unwrap();
+        assert_eq!(kind_of(&c, "s-default"), "personal");
+        // 导入那条路同样（口径与新建完全一致）
+        insert_imported_space(&c, "s-import", "导入的", "#e12", "", 2.0, 1_000, false).unwrap();
+        assert_eq!(kind_of(&c, "s-import"), "personal");
+    }
 }

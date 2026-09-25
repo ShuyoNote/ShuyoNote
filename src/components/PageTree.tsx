@@ -25,10 +25,41 @@ import { useWindowChrome } from "../store/windowChrome";
 import { syncTagLabel, syncTagColor } from "../lib/syncTag";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
+import { inputDialog, chooseDialog, useInputStore } from "../store/input";
+import { isDesktopPlatform } from "../lib/platform";
+
+/**
+ * ★ A1：「新建空间」第一步 —— 问名字。`null` ＝ 用户取消。
+ *
+ * ⚠️ 取消也必须兑现这个等待（点背景 / 取消按钮 / Esc 都走输入框的 `close()`）——
+ * 否则 `createSpace` 永远挂在这一行，现场就是"点了新建没反应"。
+ * 兑现靠 `subscribe` 看槽位被清空，而不是只挂 `onSubmit`（那只覆盖"确定"那一半）。
+ */
+function promptSpaceName(): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    let done = false;
+    const finish = (v: string | null) => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    const unsub = useInputStore.subscribe((s, prev) => {
+      if (prev.options !== null && s.options === null) {
+        unsub();
+        finish(null);
+      }
+    });
+    inputDialog({
+      title: "新建空间",
+      placeholder: "空间名字",
+      defaultValue: "新建工作区",
+      onSubmit: (v) => finish(v),
+    });
+  });
+}
 
 // 统一风格的 SVG 菜单图标：16px、stroke currentColor、统一描边/圆角。
-function MenuIcon({ d }: { d: string }) {
-  return (
+function MenuIcon({ d }: { d: string }) {  return (
     <svg className="menu-svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={d} />
     </svg>
@@ -771,12 +802,49 @@ export function PageTree(_props: {
   };
 
   const createSpace = async () => {
-    const ok = await useSpaceStore.getState().create();
+    // ★ A1（owner 2026-09-25 拍板）：**分类由入口决定** —— 建空间那一刻就问「个人 / 团队」。
+    // 先问名字（沿用既有输入框），再问类型；两步都过才建，取消任一步就什么都不建。
+    //
+    // ⚠️ 为什么不能"先建了再回头去隐私面板里改"：闸门对**未分类**的空间**一律放行**
+    //（`space_crypto::sync_gate` 的 `AllowedUnclassified`）⇒ 用户点两下就可能把一个本该加密的个人空间
+    // 同步上去。分类唯一可靠的时刻就是**创建这一刻**。
+    // ⚠️ 只有桌面端问：按空间加密是桌面专属（Web 没有钥匙柜），那里的"个人/团队"没有下游。
+    const name = await promptSpaceName();
+    if (name === null) {
+      spaceChooser.close();
+      return;
+    }
+
+    let kind: "personal" | "team" = "personal";
+    if (isDesktopPlatform()) {
+      const picked = await chooseDialog({
+        title: `「${name}」是哪一类空间？`,
+        choices: [
+          {
+            value: "personal",
+            label: "个人空间（推荐）",
+            hint: "只有我自己用。要先给这个空间设主口令才能绑同步（服务端只存密文）。",
+          },
+          {
+            value: "team",
+            label: "团队空间",
+            hint: "要和别人协作。服务端存明文以便合并/检索，不接受零知识。",
+          },
+        ],
+      });
+      if (picked === null) {
+        spaceChooser.close();
+        return;
+      }
+      kind = picked === "team" ? "team" : "personal";
+    }
+
+    const ok = await useSpaceStore.getState().create(name, kind);
     if (ok) {
       await useNotes.getState().loadPages();
       const newActive = useSpaceStore.getState().activeId;
-      const name = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
-      if (name) setWorkspaceName(name);
+      const name2 = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
+      if (name2) setWorkspaceName(name2);
     }
     spaceChooser.close();
   };

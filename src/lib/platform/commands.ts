@@ -601,7 +601,13 @@ export interface CommandMap {
   set_active_workspace_id: { args: { id: string }; result: void };
   rename_workspace: { args: { id: string; name: string }; result: void };
   set_workspace_settings: { args: { id: string; theme?: string | null; icon?: string | null; sortOrder?: number | null }; result: void };
-  create_workspace: { args: { name?: string | null }; result: WorkspaceMeta };
+  // ★ A1（owner 2026-09-25 拍板）：新建空间时**当场**选"个人 / 团队"。
+  // `kind` 不传 ⇒ 按原来的默认（桌面侧 `personal`，行为逐字不变）；传了就必须是这两个字面量之一
+  // （Rust 侧窄进校验：别的串**报错**，不静默当成"未分类"——那会让同步闸门松开）。
+  create_workspace: {
+    args: { name?: string | null; kind?: "personal" | "team" | null };
+    result: WorkspaceMeta;
+  };
   delete_workspace: { args: { id: string }; result: void };
   copy_page_to_workspace: { args: { pageId: string; targetWorkspaceId: string; newParentId?: string | null }; result: string };
 

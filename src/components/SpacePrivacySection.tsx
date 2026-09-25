@@ -24,6 +24,22 @@ const KIND_LABEL: Record<SpaceKind, string> = {
 };
 
 /**
+ * ★ **开启加密前必须让用户读到的那句真话**（owner 2026-09-25 拍板 A2）。
+ *
+ * 口径来自零知识：主口令**只在本机**派生出钥匙，我们没有它、也没有第二把备份钥匙 ⇒
+ * 「忘记口令」不是"重置一下"，是**这个空间的数据永久打不开**。
+ *
+ * ⚠️ 这句话**必须说在"开启"那一刻**。锁定屏（`LockScreen`）也会说，但那时候用户已经记不住了
+ * —— 只在锁定屏说，等于**事后通知**。`docs/identity-privacy-roadmap.md` 早就写着"开启前必须勾选确认"，
+ * 而代码里一直没有这个勾选（随旧的应用级加密那节一起丢了）⇒ 这一条把它补回来。
+ *
+ * 抽成常量是为了让判据（`SpacePrivacySection.test.ts`）**钉住这句话本身** —— 改文案要连着判据一起改
+ * （否则它悄悄变回一句轻飘飘的提示，"用户真的被告知了"这件事就没有判据了）。
+ */
+export const PASSPHRASE_NO_RECOVERY =
+  "主口令忘了就**真的打不开了**：钥匙只在本机派生，我们没有它，也没有第二把备份钥匙——没有找回、没有重置、没有客服。";
+
+/**
  * 同步面板里的「空间隐私」一节。
  *
  * `nameOf` 只影响显示（空间 id 反查名字）；不给就显示 id。
@@ -40,6 +56,9 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   const [confirming, setConfirming] = useState("");
   // ③ 0b：是否允许「从服务器取回」**覆盖**本机已有的公开材料（默认不许 —— 覆盖是危险动作）。
   const [allowOverwrite, setAllowOverwrite] = useState(false);
+  // ★ A2（owner 2026-09-25 拍板）：**"我知道口令我记不住就没了"** —— 按空间记（可能同时开着好几个）。
+  // 默认 false ⇒ 「开启加密」按钮是灰的，用户必须先把这句话读完、勾上，才点得动。
+  const [ackNoRecovery, setAckNoRecovery] = useState<Record<string, boolean>>({});
   // ③ 0b：每行的推/取结果（**原样**显示后端那句话）。
   const [rowMsg, setRowMsg] = useState<{ id: string; text: string; kind: string } | null>(null);
   // B 片 ①-a（2026-09-25）：**不经服务器**的换设备（配对码）。
@@ -231,17 +250,33 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                   {confirming === v.space_id ? "确认：换回明文" : "关闭加密（换回明文）"}
                 </button>
               ) : (
-                <button
-                  className="sync-btn"
-                  disabled={busy === v.space_id}
-                  onClick={() =>
-                    void run(v.space_id, "开启加密", () =>
-                      api.enableSpaceEncryption(v.space_id, pass || undefined),
-                    )
-                  }
-                >
-                  开启加密
-                </button>
+                <>
+                  {/* ★ A2：**先读到、再点**。这一行与那个勾选框是"开启加密"的前置 ——
+                      没勾上时按钮是灰的（`disabled`），而不是点了之后弹一个提示（弹窗会被一路点掉）。 */}
+                  <div className="space-privacy-gate is-block">{inlineMd(PASSPHRASE_NO_RECOVERY)}</div>
+                  <label className="space-privacy-overwrite">
+                    <input
+                      type="checkbox"
+                      aria-label="我已保管好主口令"
+                      checked={ackNoRecovery[v.space_id] === true}
+                      onChange={(e) =>
+                        setAckNoRecovery((m) => ({ ...m, [v.space_id]: e.target.checked }))
+                      }
+                    />
+                    我已保管好主口令，知道它丢了就打不开
+                  </label>
+                  <button
+                    className="sync-btn"
+                    disabled={busy === v.space_id || ackNoRecovery[v.space_id] !== true}
+                    onClick={() =>
+                      void run(v.space_id, "开启加密", () =>
+                        api.enableSpaceEncryption(v.space_id, pass || undefined),
+                      )
+                    }
+                  >
+                    开启加密
+                  </button>
+                </>
               )}
             </div>
             {/* ★ owner 第三轮拍板（2026-09-24）：原先这里还有 ① 的两个按钮

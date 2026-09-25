@@ -139,6 +139,15 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
   const rows = () => Array.from(container.querySelectorAll(".space-privacy-row"));
   const buttons = () => Array.from(container.querySelectorAll("button"));
   const selects = () => Array.from(container.querySelectorAll("select"));
+  /** ★ A2：那一枚「我已保管好主口令」勾选框（开启加密的前置）。 */
+  const ackBox = () =>
+    container.querySelector<HTMLInputElement>('input[aria-label="我已保管好主口令"]')!;
+  /** ★ A2：走完"开启加密"的前置 —— 勾上那句话。 */
+  const ackNoRecovery = async () => {
+    await act(async () => {
+      ackBox().click();
+    });
+  };
 
   it("① ★ 未分类的空间**照样显示**，并把「闸门没管到它」说出来（不沉默、不显示成个人空间）", async () => {
     spaceSecurityOverview.mockResolvedValue([unclassified]);
@@ -233,11 +242,58 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     await act(async () => {
       setValue(input, "我家猫叫mimi");
     });
+    await ackNoRecovery(); // ★ A2：开启加密的前置
     await act(async () => {
       buttons()[0].click();
     });
 
     expect(enableSpaceEncryption).toHaveBeenCalledWith("default", "我家猫叫mimi");
+  });
+
+  // ---------------------------------------------------------------------------
+  // ★ A2（owner 2026-09-25 拍板）：**开启加密之前必须先把"忘了就没了"读进去**
+  // ---------------------------------------------------------------------------
+  //
+  // 为什么要有这两条：零知识＝零恢复，口令丢了**数据永久打不开**。这句真话今天只在
+  // **锁定屏**（连错 3 次之后）说 —— 那时候用户已经记不住了，等于事后通知。
+  // `docs/identity-privacy-roadmap.md:34` 早就写着"开启前必须勾选确认"，而代码里一直没有
+  // ⇒ 这两条把"用户真的被告知过"这件事钉成可执行的判据（改文案会连判据一起红）。
+  it("⑪ ★ 没勾「我已保管好主口令」⇒ **点不动**开启加密（且那句真话在屏幕上）", async () => {
+    spaceSecurityOverview.mockResolvedValue([personal]);
+    enableSpaceEncryption.mockResolvedValue([]);
+    await render();
+
+    // ① 那句话必须在**开启之前**就看得见（不是点了才弹）
+    expect(container.textContent).toContain("真的打不开了");
+    expect(container.textContent).toContain("没有第二把备份钥匙");
+    // ② 没勾 ⇒ 按钮是灰的，而且**点了也真的不调 api**（disabled 不只是视觉）
+    const open = buttons().find((b) => b.textContent === "开启加密")!;
+    expect(open.disabled).toBe(true);
+    await act(async () => {
+      open.click();
+    });
+    expect(enableSpaceEncryption).not.toHaveBeenCalled();
+    expect(ackBox().checked).toBe(false);
+  });
+
+  it("⑫ ★ 勾上之后才点得动 —— 而且勾选框**按空间记**（一行勾了不算另一行）", async () => {
+    // 两个都没加密的空间：勾了第一个，第二个的按钮必须还是灰的
+    const other: SpaceSecurityView = { ...personal, space_id: "sp-2" };
+    spaceSecurityOverview.mockResolvedValue([personal, other]);
+    enableSpaceEncryption.mockResolvedValue([]);
+    await render();
+
+    const openButtons = () => buttons().filter((b) => b.textContent === "开启加密");
+    expect(openButtons()).toHaveLength(2);
+    await ackNoRecovery();
+
+    expect(openButtons()[0].disabled).toBe(false);
+    expect(openButtons()[1].disabled, "勾的是第一个空间，第二个不该跟着解锁").toBe(true);
+
+    await act(async () => {
+      openButtons()[0].click();
+    });
+    expect(enableSpaceEncryption).toHaveBeenCalledWith("default", undefined);
   });
 
   // ---------------------------------------------------------------------------
@@ -267,6 +323,7 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     await act(async () => {
       setValue(input, "我家猫叫mimi");
     });
+    await ackNoRecovery(); // ★ A2：开启加密的前置
     await act(async () => {
       buttons()[0].click();
     });
