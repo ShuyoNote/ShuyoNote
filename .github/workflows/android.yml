@@ -304,6 +304,16 @@ jobs:
           node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
+      - name: 取依赖（补丁要打在 registry 里那份 vendored SQLCipher 上）
+        # ⚠️ 这一步是 2026-09-25 被 CI 教出来的：`sm-library-build --prepare` 打补丁的对象是
+        # **cargo registry 里那份 `libsqlite3-sys` 的 vendored SQLCipher 源码**，而我把补丁步骤
+        # 放在了**任何 cargo 取依赖之前** ⇒ runner 上 registry 是空的，脚本如实拒绝：
+        #     ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，但 registry 里找到的是 [（无）]
+        # 本机没露头是因为我这儿早就编过、registry 早有货 —— 又一条"本机绿掩盖了缺前置"。
+        # `--target aarch64-linux-android` 是为了把**该目标专属**的依赖（含 android 段的
+        # `bundled-sqlcipher-vendored-openssl`）也取下来。
+        run: cargo fetch --manifest-path src-tauri/Cargo.toml --locked --target aarch64-linux-android
+
       - name: 随包静态 SM 加密库（Android，库级国密）
         # owner 2026-09-23 拍「Android 库级国密：**做**」。Android 系统**不带** OpenSSL ⇒ 必须随包一份
         # **静态** SM 库；`scripts/build-tongsuo-android.sh` 交叉编译（Gitee 镜像 @ 钉死 commit，
