@@ -39,6 +39,23 @@
   `mobile-views` 在 2026-09-22 踩过（`gates.mjs` 里那段注释就是为它写的）。只在 build 链上的门禁
   在 verify 路径上是隐形的，等于没有。契约组因此从 20 条变成 21 条。
 
+- **新增门禁 `check-dead-code-receipts`：`#[allow(dead_code)]` 不许无名无期**。清死代码时查出的不是
+  "几个小毛病"，而是**一整类没人管的东西** —— 豁免**不产生任何输出**，所以它过期了、挡住了什么，
+  都不会有人看见：`sync.rs::IncomingChange.seq` 挂着豁免却**被生产代码读了 8 处**；
+  `commands.rs::mupdf_compiled()` 的 body 就是 `cfg!(feature)`，唯一使用者是一条
+  `assert_eq!(cfg!(f), cfg!(f))` 的**空转判据**；`security.rs` 一次"文档与属性留在上一个函数下面"的
+  事故让一个夹具生成器**被 libtest 注册两遍**（跑两遍）、另一个彻底不可达；`build.rs` 里还留着一份
+  搬走后的 `find_gm_marker_deprecated` 副本。门禁只做一件机器能做的事：每处豁免要么**删掉那段代码**、
+  要么把"只服务判据 / 仿真夹具"的项门进 `#[cfg(test)]`（"产品里根本不存在"比"编进来了没人用"诚实）、
+  要么带一句 `// ★ YYYY-MM-DD 收据：为什么留 ＋ 什么时候删`。它**不判**理由好不好（那要人读），
+  只判"**有没有人会想起来它**"；命中必须**在代码里**（复用 `lib/rust-scan.mjs` 的区域掩码 ——
+  仓里有十几处注释**在讲**这件事，grep 式扫描会把它们全算成违规）；生成物
+  （`capabilities_gen.rs`，豁免由生成器统一决定）显式列进 `EXEMPT` 并每次打印。自测
+  `scripts/check-dead-code-receipts.test.mjs` 14 条，含**三条变异实测**（抹掉真实文件里的日期 ⇒
+  那一条当场红）。同批把编译告警从 `cargo check --lib` 11 条 ＋ `--lib --tests` 7 条清到 **0 / 0**。
+  ⚠️ 顺带查出一处**真缺口**（不是死代码，所以留了收据而不是删掉）：**收侧没有 `observe`** ——
+  对端时钟快时，"因果上更晚的改动"会判给远端。修法要单独一片，判据写在 `hlc.rs::observe` 上方。
+
 ### 修复
 
 - **拖动页面树时不再重渲染整个侧栏**。跟着光标走的那个拖影原先写在 `PageTree` 内部，而它订阅的
@@ -69,6 +86,22 @@
   `shuyonote:lang` 键把语言钉成 zh-CN（`scripts/lib/pin-locale.mjs`）——钉的是**测试环境**，
   不是改产品去迎合断言。验证：本机把 `navigator.language` 改成 en-US 复现出 CI 那串英文标题，
   钉回 zh-CN 后标题恢复中文（`Notes` → `笔记`、`Files` → `文件管理`）。
+
+- **窄屏（缩小窗口）时内置图片预览的控制按钮重叠了**（社区帖转入
+  [issue #12](https://gitcode.com/shuyo-cn/ShuyoNote/issues/12)，Windows 11 / 1.91.26）。根因是
+  **形状**、不是数值：提示胶囊与「旋转 / 查看原图」按钮组各自 `position:absolute`、都钉在
+  `top:14px`，左边那个还按 `left:50%` ＋ `translateX(-50%)` 居中 ⇒ 360px 视口下两者**必然相交**
+  （实测重叠 111.5 × 27px）。现在两者是**同一条 flex 行**（`.fm-img-bar`）的两半：左边那半放不下
+  就在自己的盒子里截断（`min-width:0` ＋ 省略号），右边那组 `flex:none`；bar 自己
+  `pointer-events:none`（空白处的滚轮缩放 / 拖动平移照旧落在图片上），只有按钮组把 `auto` 收回来。
+  触屏那一档（**窄或矮**，与 App.css 自己的断点同源）不再显示「滚轮缩放 · 拖动平移」—— 它是
+  **桌面手势**的说明，触屏上没有滚轮，留着只会被截成半句。判据两层：几何在
+  `scripts/verify-mobile-overlays.mjs` 的 (6c)（三个手机视口 ＋ 1280×800 桌面：两组同容器、
+  两两不重叠、都在层内、`elementFromPoint` 真的点得到），形状回退在
+  `src/components/filePreviewImageBar.wiring.test.ts` 5 条（文本级，跑在默认 `pnpm verify` 路径上，
+  不依赖 Chromium）。**变异实测**：把两组改回两个绝对角标 ⇒ (6c) 当场红，报的正是那 111.5 × 27px。
+  ⚠️ 图片预览今天**只接了 wheel**（触屏放不大）—— 那是另一件事（捏合缩放），CSS 里留了那句
+  "真接上时改成只显示百分比"的删除条件，不把"窄屏藏了提示"说成"窄屏故意没有缩放"。
 
 ## [1.91.26] - 2026-09-23
 
