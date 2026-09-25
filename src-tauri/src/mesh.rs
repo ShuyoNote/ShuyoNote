@@ -469,11 +469,66 @@ pub fn ensure_window(
     Ok(Some(addr))
 }
 
+/// 网格设置的**读数**（设置面回给界面的东西）。
+///
+/// ⚠️ **不回口令本身**，只说"设没设"：那东西没有任何理由被界面再拿回去一遍。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshConfigState {
+    pub enabled: bool,
+    pub bind: Option<String>,
+    pub token_set: bool,
+    /// 窗口**实际**绑在哪儿（`http://…`；没开 ⇒ `None`）。
+    pub window: Option<String>,
+    /// 一句人话：开没开、开在哪、**别人拉不拉得到**。
+    pub note: String,
+}
+
+/// 把"设置 ＋ 窗口实际地址"变成给人看的读数 —— **纯函数**（判据不打桩）。
+///
+/// ★ 它要回答的最要紧的一件事：**这个窗口别人拉得到吗**。绑在回环上时网格自己照常工作
+/// （它能拉别人），但**没人能拉它** —— 那正是"不装服务端也能同步"只做了一半的形态，
+/// 必须说出来，不能只回一句"已保存"。
+pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>) -> MeshConfigState {
+    let enabled = cfg.bind.is_some();
+    let note = match (enabled, window) {
+        (false, _) => "网格这一档关着（没配监听地址 ⇒ 不听也不喊）".to_string(),
+        (true, None) => "配了监听地址，但窗口还没起来（见日志）".to_string(),
+        (true, Some(addr)) => match announced_base(addr) {
+            Some(base) => format!("网格开着：窗口在 {base}，**能被别人拉到**"),
+            None => format!(
+                "网格开着：窗口在 {addr} —— ⚠️ 回环 / 端口 0，**别人拉不到**（这一台只能拉别人）"
+            ),
+        },
+    };
+    MeshConfigState {
+        enabled,
+        bind: cfg.bind.clone(),
+        token_set: cfg.token.is_some(),
+        window: window.map(|a| format!("http://{a}")),
+        note,
+    }
+}
+
 /// 关掉这个空间的窗口（没开 ⇒ 幂等的成功）。设置改了 / 空间停了就该调它。
 pub fn stop_window(space_id: &str) -> Result<(), String> {
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     guard.remove(space_id);
     Ok(())
+}
+
+/// ★ 丙-③-b-2b：这个**实际绑上的**窗口地址该不该写进公告（＝别人能不能来拉我）。
+///
+/// 三条**都要**满足，一条不满足就**不宣告**（宁可这一轮不露面，也不要报一个拉不到的地址）：
+/// 1. **端口不是 0** —— 端口 0 的意思是"还没绑上"，宣告它等于报一个没人算得出的端口；
+/// 2. **不是回环** —— `lan::is_lan_base` 明确把 `127/8` 排除（"回环不是网段里的别人"），
+///    宣告一个本机地址只会往网段里灌噪音；
+/// 3. **是本网段地址**（`is_lan_only`，与开窗那一关同一把尺）。
+pub fn announced_base(addr: SocketAddr) -> Option<String> {
+    if addr.port() == 0 || addr.ip().is_loopback() || !is_lan_only(addr.ip()) {
+        return None;
+    }
+    Some(format!("http://{addr}"))
 }
 
 // ─────────────────────────── 供的那一侧（最小 HTTP/1.1，不引依赖） ───────────────────────────
@@ -644,7 +699,6 @@ struct Request {
     method: String,
     target: String,
     headers: Vec<(String, String)>,
-    body: Vec<u8>,
 }
 
 impl Request {
@@ -703,7 +757,11 @@ fn read_request(sock: &mut TcpStream) -> Result<Request, String> {
         body.extend_from_slice(&buf[..n]);
     }
     body.truncate(want);
-    Ok(Request { method, target, headers, body })
+    // ⚠️ 网格的端点**都不吃体**（`GET /mesh/pull`）。这里仍然把它读掉：不读的话，
+    // 一个带体的请求会把体字节留在连接上 —— 现在是 `Connection: close` 所以无害，
+    // 但"读干净"这个习惯别丢（将来若接 keep-alive，那就是一串解析错误）。
+    let _ = body;
+    Ok(Request { method, target, headers })
 }
 
 fn respond(sock: &mut TcpStream, code: u16, reason: &str, body: &str) -> std::io::Result<()> {
@@ -821,7 +879,6 @@ fn handle_pull(state: &State, target: &str) -> (u16, &'static str, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hlc::Hlc;
     use crate::lan::{LanAnnounce, Peer};
     use crate::models::PageDetail;
 
@@ -846,11 +903,6 @@ mod tests {
         .unwrap();
         crate::sync::set_meta_state(&c, "device_id", device).unwrap();
         c
-    }
-
-    fn stamp_of(device: &str, wall: i64) -> Hlc {
-        let mut h = Hlc::genesis(device);
-        h.tick(wall)
     }
 
     fn page(id: &str, text: &str, updated_at: i64) -> PageDetail {
@@ -1170,6 +1222,41 @@ mod tests {
         let code = text.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
         let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
         (code, body)
+    }
+
+    /// ★ 丙-③-b-2b：**报不出去**的地址一个都不许写进公告（端口 0 / 回环 / 公网）——
+    /// 宁可这一轮不露面，也不要报一个别人拉不到的地址（那只会往网段里灌噪音）。
+    #[test]
+    fn only_a_real_lan_window_address_may_be_announced() {
+        let ok: SocketAddr = "192.168.1.5:8788".parse().unwrap();
+        assert_eq!(announced_base(ok).as_deref(), Some("http://192.168.1.5:8788"));
+        for bad in ["127.0.0.1:8788", "0.0.0.0:8788", "8.8.8.8:8788", "192.168.1.5:0"] {
+            let a: SocketAddr = bad.parse().unwrap();
+            assert_eq!(announced_base(a), None, "{bad} 不该被宣告");
+        }
+    }
+
+    /// ★ 设置面的读数必须说清**"别人拉不拉得到"** —— 绑回环时网格自己照常工作，
+    /// 但那正是"只做了一半"的形态，不许只回一句"已保存"。
+    #[test]
+    fn the_config_readout_says_whether_others_can_actually_reach_you() {
+        let off = MeshSettings::default();
+        assert!(!config_state(&off, None).enabled);
+        assert!(config_state(&off, None).note.contains("关着"));
+
+        let on = MeshSettings { bind: Some("192.168.1.5:8788".into()), token: Some("t".into()) };
+        let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()));
+        assert!(good.enabled && good.token_set);
+        assert!(good.note.contains("能被别人拉到"), "{}", good.note);
+        assert_eq!(good.window.as_deref(), Some("http://192.168.1.5:8788"));
+
+        let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()));
+        assert!(loopback.note.contains("别人拉不到"), "{}", loopback.note);
+
+        // ⚠️ **不回口令本身**
+        let json = serde_json::to_string(&good).unwrap();
+        assert!(json.contains("tokenSet"), "{json}");
+        assert!(!json.contains("\"t\""), "读数里不许带口令本身：{json}");
     }
 
     /// ⚠️ **变异实测**：把服务侧那条 SQL 的 `device_id = 我自己` 去掉 ⇒ "没有账本"那条判据

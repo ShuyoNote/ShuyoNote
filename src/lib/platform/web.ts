@@ -1563,6 +1563,18 @@ export function makeInvoke(store: SqliteStore) {
         window: null,
       } as T;
     }
+    if (cmd === "mesh_set_config") {
+      // 丙-③-b-2b：**写网格设置**。Web 上同样不可用（没有发现层、开不了端口）——
+      // 但这里**不抛错**：设置面回一个"关着 ＋ 为什么"的读数，界面照常能渲染，
+      // 用户看到的是"这一档在浏览器里没有"，而不是一句看不懂的异常。
+      return {
+        enabled: false,
+        bind: null,
+        tokenSet: false,
+        window: null,
+        note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用（设置没有落下）",
+      } as T;
+    }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
       // children, databases' pages, ...), so removing a folder empties it from

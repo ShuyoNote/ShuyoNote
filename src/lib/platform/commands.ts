@@ -210,6 +210,17 @@ export interface MeshRoundReport {
   window: string | null;
 }
 
+/** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */
+export interface MeshConfigState {
+  enabled: boolean;
+  bind: string | null;
+  /** ⚠️ **只说"设没设"**：口令本身不会回给界面（没有任何理由再拿回去一遍）。 */
+  tokenSet: boolean;
+  window: string | null;
+  /** 一句人话：开没开、开在哪、**别人拉不拉得到**。 */
+  note: string;
+}
+
 /**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
@@ -619,6 +630,18 @@ export interface CommandMap {
    * 契约形状与 `src-tauri/src/mesh.rs::MeshRoundReport` 逐字段相同。
    */
   mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
+  /**
+   * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
+   *
+   * 两条口径（与 Rust 侧同一套）：
+   * 1. **`null` ＝ 不动这一项；`""` ＝ 清除它** —— 所以"关掉网格"就是 `bind: ""`；
+   * 2. 公网地址**在写的时候就被拒**，错误原样抛给调用方；
+   *    关掉时**立刻松口**（窗口随之停掉，不留一个还在听的端口）。
+   */
+  mesh_set_config: {
+    args: { workspaceId?: string | null; bind?: string | null; token?: string | null };
+    result: MeshConfigState;
+  };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

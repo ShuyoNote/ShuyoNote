@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -23,7 +23,7 @@ const invoke = <K extends keyof CommandMap>(
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
-export type { MeshRoundReport, MeshPeerPullReport } from "./platform/commands";
+export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";
@@ -461,6 +461,18 @@ export const api = {
    */
   meshSyncNow: (workspaceId?: string | null) =>
     invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
+  /**
+   * 丙-③-b-2b：**写网格设置**（监听地址 / 口令）。
+   *
+   * ⚠️ **`null` ＝ 不动这一项；`""` ＝ 清除它** —— 关掉网格就是 `meshSetConfig(ws, "")`。
+   * 回的是**读数**（含"别人拉不拉得到"那句人话），**不含口令本身**。
+   */
+  meshSetConfig: (workspaceId?: string | null, bind?: string | null, token?: string | null) =>
+    invoke("mesh_set_config", {
+      workspaceId: workspaceId ?? null,
+      bind: bind ?? null,
+      token: token ?? null,
+    }) as Promise<MeshConfigState>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，

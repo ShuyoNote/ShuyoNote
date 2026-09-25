@@ -157,10 +157,32 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 ///
 /// 绑了多个空间 ⇒ 多条（一条公告只替**一个**空间代言，`hub_spaces` 就是那个匹配键）。
 /// `profiles` 的形状与 [`bound_profile_count`] 同一套：`(space_id, server_url, ws_id)`。
+/// ⚠️ **只有判据在用**：产品路径一律走 [`announces_for_with_mesh`]（真循环那条）。
+/// 留着三参数这一版，是为了让"**没开网格**那条路"有一条**照着老样子写**的对照可比对 ——
+/// 它调用的是同一段代码（`mesh_bases` 传空），所以"逐字节相同"不是靠人盯，是靠**同一处实现**。
+#[cfg(test)]
 pub fn announces_for(
     local_device_id: &str,
     device_name: &str,
     profiles: &[(String, String, String)],
+) -> Vec<lan::LanAnnounce> {
+    announces_for_with_mesh(local_device_id, device_name, profiles, &[])
+}
+
+/// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
+///
+/// `mesh_bases` ＝ `(space_id, "http://<窗口实际绑上的地址>")`（由 `mesh::announced_base` 把关）。
+/// 两条语义要说清，否则会被读歪：
+/// 1. **字段没变、语义变宽**：甲-1 的 `hub_base` 是"本网段的服务端在 `<base>`，它服务这些空间"；
+///    丙 里同一格读作"**你可以直接来拉我**，我在 `<base>`"（简报 §13 ③-b-1 已经把同一格读成"谁可以被直接拉"）。
+/// 2. **网格只覆盖 `hub_base`，不覆盖"该不该发言"**：发言的判据仍然是"这个空间有东西可说"——
+///    甲是"绑了服务端"，丙是"开了网格"（见下面的 `or` 那一支）。**一个没有任何服务端、
+///    只开了网格的空间**正是靠这一支才露面的（这就是"不装服务端也能同步"在发现层这一格的样子）。
+pub fn announces_for_with_mesh(
+    local_device_id: &str,
+    device_name: &str,
+    profiles: &[(String, String, String)],
+    mesh_bases: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
     let dev = local_device_id.trim();
     // ⚠️ 没有设备身份 ⇒ **一条都不发**：`decode_announce` 会以 `NoDeviceId` 丢掉它，
@@ -173,7 +195,10 @@ pub fn announces_for(
         let space = space_id.trim();
         let url = server_url.trim();
         // 只填了地址还没选空间 ⇒ 不发言（与 `bound_profile_count` 同一把尺：算不算绑上）。
-        if !is_fully_bound(space_id, server_url) {
+        // ★ 丙-③-b-2b：**例外是"这个空间开了网格"** —— 那种情况下本来就不需要服务端地址
+        //   （宣告的是我自己的窗口），它正是靠这一支才在网段里露面的。
+        let mesh_base = mesh_bases.iter().find(|(s, _)| s.trim() == space).map(|(_, b)| b.trim());
+        if !is_fully_bound(space_id, server_url) && mesh_base.is_none() {
             continue;
         }
         let mut a = lan::announce_for_own_hub(dev, device_name, url, space)
@@ -188,11 +213,25 @@ pub fn announces_for(
                 //   完全隐形 —— 掉包判据要看的就是这个。
                 fp: dev.to_string(),
             });
+        // 网格开着 ⇒ **覆盖**成我自己的窗口地址（字段没变、语义变宽，见函数头口径 1）。
+        // ⚠️ 覆盖之后 `hub_base` **一定有值**，"不代言"那一支（`hub_base: None`）在这里不成立。
+        if let Some(base) = mesh_base.filter(|b| !b.is_empty()) {
+            a.hub_base = Some(base.to_string());
+        }
         a.hub_spaces =
             if a.hub_base.is_some() { vec![space.to_string()] } else { Vec::new() };
         out.push(a);
     }
     out
+}
+
+/// ★ 丙-③-b-2b：这一轮**要不要开发现层** —— 绑了同步（甲）**或**开了网格（丙）。
+///
+/// ⚠️ 为什么必须加这一支：发现层的开关原来只看"绑了同步的空间数"，
+/// 而**"只开网格、不绑服务端"**恰恰是丙 要支持的那种配置 ⇒ 不加这一支，
+/// 那台设备**既不听也不喊**，网格永远找不到它（而每一片单测都照绿）。
+pub fn should_run_discovery(profiles: &[(String, String, String)], meshed_spaces: &[String]) -> bool {
+    should_enable(bound_profile_count(profiles)) || !meshed_spaces.is_empty()
 }
 
 // ── 接线（甲-1 接线第 1 件）：真循环 ─────────────────────────────────────────────────────
@@ -246,10 +285,37 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //    ⚠️ 判别式走 `should_enable(bound_profile_count(..))` —— 与判据用的是**同一把尺**
             //    （不是 `profiles.len()`）：只填了地址还没选空间的行**不许**让我们开始广播。
             let profiles = bound_profiles(&app2);
-            state.set_enabled(should_enable(bound_profile_count(&profiles)));
+            // ★ 丙-③-b-2b：先看哪几个空间开了网格 ⇒ ① 把窗口确保跑起来 ② 拿**实际绑上的地址**
+            //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。
+            // ⚠️ 发现层开关用的是 `meshed`（**配了**网格的空间），不是 `mesh_bases`（**宣告得出去**的）：
+            //    绑在回环上的那台宣告不出去，但它**照样要听**（它是客户端那一侧，要能拉别人）。
+            let mesh_cfgs: Vec<(String, crate::mesh::MeshSettings)> = {
+                let db = app2.state::<Db>();
+                let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+                profiles
+                    .iter()
+                    .map(|(s, _, _)| (s.clone(), crate::mesh::settings(&c, s)))
+                    .filter(|(_, cfg)| cfg.bind.is_some())
+                    .collect()
+            };
+            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _)| s.clone()).collect();
+            let mut mesh_bases: Vec<(String, String)> = Vec::new();
+            for (space, cfg) in &mesh_cfgs {
+                match crate::mesh::ensure_window(space, &device_id, cfg) {
+                    Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
+                        Some(base) => mesh_bases.push((space.clone(), base)),
+                        None => eprintln!(
+                            "[mesh] 空间 {space} 的窗口绑在 {addr}（回环 / 端口 0）⇒ **不宣告**：别人拉不到，报出去只会往网段里灌噪音"
+                        ),
+                    },
+                    Ok(None) => {}
+                    Err(e) => eprintln!("[mesh] 空间 {space} 的窗口起不来（这一轮不宣告它）：{e}"),
+                }
+            }
+            state.set_enabled(should_run_discovery(&profiles, &meshed));
             // ③ 到点就喊一轮。
             if state.is_enabled() && announce_due(last_announce_ms, now, ANNOUNCE_INTERVAL_MS) {
-                for a in announces_for(&device_id, &device_name, &profiles) {
+                for a in announces_for_with_mesh(&device_id, &device_name, &profiles, &mesh_bases) {
                     let _ = lan::announce_once(&sock, &targets, &a).await;
                 }
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"
@@ -381,6 +447,59 @@ mod tests {
         rows.iter()
             .map(|(space, url)| (space.to_string(), url.to_string(), "ws".to_string()))
             .collect()
+    }
+
+    // ---- 丙-③-b-2b：网格开着时，公告报的是**我自己的窗口** ----
+
+    fn mesh_bases_of(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+        rows.iter().map(|(s, b)| (s.to_string(), b.to_string())).collect()
+    }
+
+    /// ★ 丙-③-b-2b：**只开网格、不绑服务端**的空间 —— 它照样要发言，而且报的是**我自己的窗口**。
+    ///
+    /// 咬人的地方：少了"网格也算有话可说"这一支 ⇒ 这种配置**既不听也不喊**
+    /// （发现层不起、公告一条没有），网段里的别人**永远找不到它** —— 而每一片单测都照绿。
+    /// 这就是"不装服务端也能同步"落在发现层这一格的样子。
+    #[test]
+    fn a_mesh_only_space_is_announced_and_opens_the_discovery_layer() {
+        let profiles = profiles_of(&[("sp-1", "")]); // **没有**服务端地址
+        assert!(!should_enable(bound_profile_count(&profiles)), "前提：按甲的口径它没绑");
+        let bases = mesh_bases_of(&[("sp-1", "http://192.168.1.5:8788")]);
+
+        assert!(should_run_discovery(&profiles, &["sp-1".to_string()]), "开了网格 ⇒ 发现层要起");
+        let got = announces_for_with_mesh("dev-me", "本机", &profiles, &bases);
+        assert_eq!(got.len(), 1, "{got:#?}");
+        assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
+        assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
+        assert_eq!(got[0].device_id, "dev-me");
+    }
+
+    /// ★ 网格开着 ⇒ 公告里的基址是**窗口**，不是配置的服务端（同一格在丙里的读法）。
+    #[test]
+    fn a_mesh_base_overrides_the_configured_server_in_the_announce() {
+        let profiles = profiles_of(&[("sp-1", "https://s.example.com")]);
+        let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
+        let got = announces_for_with_mesh("dev-me", "本机", &profiles, &bases);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].hub_base.as_deref(), Some("http://10.0.0.7:9000"), "覆盖成我自己的窗口");
+    }
+
+    /// ★ 没开网格 ⇒ **两道口径都是老样子**（走的是**同一段代码**：`mesh_bases` 传空）。
+    #[test]
+    fn without_the_mesh_the_gate_and_the_announce_are_what_they_were() {
+        // ① 半截配置（有地址没空间）：不开发现层、不发言
+        let half = profiles_of(&[("", "http://192.168.1.5:8787")]);
+        assert!(!should_run_discovery(&half, &[]));
+        assert!(announces_for_with_mesh("dev-me", "本机", &half, &[]).is_empty());
+        // ② 绑上了：开，而且报的是配置地址（甲那条路）
+        let bound = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
+        assert!(should_run_discovery(&bound, &[]));
+        let got = announces_for_with_mesh("dev-me", "本机", &bound, &[]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
+        // ③ 什么都没配：不开、不发言
+        assert!(!should_run_discovery(&[], &[]));
+        assert!(announces_for_with_mesh("dev-me", "本机", &[], &[]).is_empty());
     }
 
     /// ★ 判据 ⑥（口径 2 的直接上游）：**"绑了同步"才算绑** —— 只填了地址还没选空间

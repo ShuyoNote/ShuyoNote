@@ -2818,41 +2818,8 @@ pub async fn mesh_sync_now(
     db: State<'_, Db>,
     workspace_id: Option<String>,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
-    // ① 认空间（与 `lan_status` 同一套读法：profiles × 未删除的 workspaces）
-    let (device_id, rows) = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        let mut stmt = c
-            .prepare(
-                "SELECT p.space_id, p.ws_id FROM sync_profiles p
-                 WHERE EXISTS (
-                     SELECT 1 FROM meta.workspaces w
-                     WHERE w.id = p.ws_id AND w.deleted_at IS NULL
-                 )",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        (device_id(&c).unwrap_or_default(), rows)
-    };
-    let pick = match workspace_id.as_deref().filter(|w| !w.is_empty()) {
-        Some(want) => rows
-            .iter()
-            .find(|(_, ws)| ws == want)
-            .cloned()
-            .ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}"))?,
-        None => match rows.len() {
-            1 => rows[0].clone(),
-            0 => return Err("本机还没有任何绑过同步的空间 —— 网格交换要先有一个空间".to_string()),
-            n => return Err(format!("本机有 {n} 个空间，`mesh_sync_now` 要指名其中一个")),
-        },
-    };
-    let (space_id, _ws_id) = pick;
-    if space_id.trim().is_empty() {
-        return Err("这个空间的同步档案还没有 space_id（网格交换要它来对暗号）".to_string());
-    }
+    // ① 认空间
+    let (space_id, device_id) = mesh_scope(&db, workspace_id.as_deref())?;
 
     // ② 设置 ＋ 发现层（没开发现层 ⇒ 对端表是空的，**如实**回"网段里没人"）
     let (cfg, peers) = {
@@ -2872,6 +2839,82 @@ pub async fn mesh_sync_now(
         report.note.push_str("（⚠️ 设置里配了监听地址，但窗口没起来）");
     }
     Ok(report)
+}
+
+/// 丙-③-b-2b 的**设置面**：写网格设置（监听地址 / 口令），并把窗口的开关跟着改。
+///
+/// 两条口径：
+/// 1. **`None` ＝ 不动这一项；`Some("")` ＝ 清除它**（所以"关掉网格"就是 `bind: Some("")`）——
+///    两条参数同一套规则，不要各写一套；
+/// 2. **公网地址在写的时候就被拒**（`set_mesh_bind` 里把关），错误原样带回给调用方；
+///    关掉时**立刻松口**（`stop_window`），不留一个还在听着的窗口。
+///
+/// ⚠️ 回的是**读数**（`MeshConfigState`）—— 含"**别人拉不拉得到**"那句人话，**不含口令本身**。
+#[tauri::command]
+pub fn mesh_set_config(
+    db: State<'_, Db>,
+    workspace_id: Option<String>,
+    bind: Option<String>,
+    token: Option<String>,
+) -> Result<crate::mesh::MeshConfigState, String> {
+    let (space_id, device_id) = mesh_scope(&db, workspace_id.as_deref())?;
+    let cfg = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        if let Some(b) = bind.as_deref() {
+            crate::mesh::set_mesh_bind(&c, &space_id, Some(b))?;
+        }
+        if let Some(t) = token.as_deref() {
+            crate::mesh::set_mesh_token(&c, &space_id, Some(t))?;
+        }
+        crate::mesh::settings(&c, &space_id)
+    };
+    if cfg.bind.is_none() {
+        // 关掉 ⇒ **立刻松口**（不留一个还在听的窗口）。
+        crate::mesh::stop_window(&space_id)?;
+        return Ok(crate::mesh::config_state(&cfg, None));
+    }
+    let window = crate::mesh::ensure_window(&space_id, &device_id, &cfg)?;
+    Ok(crate::mesh::config_state(&cfg, window))
+}
+
+/// 认空间：`(space_id, device_id)` —— `mesh_sync_now` 与 `mesh_set_config` **共用一处**
+/// （两份各自写一遍的下场是"设置面认得、同步面不认得"，而那种不一致没有任何编译期信号）。
+fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<(String, String), String> {
+    // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
+    let (device_id, rows) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut stmt = c
+            .prepare(
+                "SELECT p.space_id, p.ws_id FROM sync_profiles p
+                 WHERE EXISTS (
+                     SELECT 1 FROM meta.workspaces w
+                     WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+                 )",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        (device_id(&c).unwrap_or_default(), rows)
+    };
+    let pick = match workspace_id.filter(|w| !w.is_empty()) {
+        Some(want) => rows
+            .iter()
+            .find(|(_, ws)| ws == want)
+            .cloned()
+            .ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}"))?,
+        None => match rows.len() {
+            1 => rows[0].clone(),
+            0 => return Err("本机还没有任何绑过同步的空间 —— 网格交换要先有一个空间".to_string()),
+            n => return Err(format!("本机有 {n} 个空间，这条命令要指名其中一个")),
+        },
+    };
+    if pick.0.trim().is_empty() {
+        return Err("这个空间的同步档案还没有 space_id（网格交换要它来对暗号）".to_string());
+    }
+    Ok((pick.0, device_id))
 }
 
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
