@@ -541,6 +541,7 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   node scripts/android-platform-verifier.mjs
   node scripts/android-mobile-shell.mjs
   node scripts/android-app-icon.mjs
+  node scripts/android-splash-theme.mjs   # ★ 开屏主题（品牌色 ＋ 居中图标）：gen/ 不进库 ⇒ 每次 init 后都要重跑
   node scripts/stage-android-pdfium.mjs
   node scripts/patch-android-buildtask.mjs
   node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci   # ⇒ gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
