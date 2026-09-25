@@ -1,4 +1,4 @@
-﻿name: ci
+name: ci
 
 # 为什么要有这个文件：项目主站是 GitCode，而 GitCode 侧此前**一条测试都不跑**
 # ——build-linux.yml 只在打 tag 时构建 .deb/.AppImage。于是"门禁全绿"在主站完全不可见：
@@ -40,6 +40,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: 取全历史与 tag（两条门禁要靠它）
+        # 为什么必须显式取：本组里有两条门禁要读**历史的形状**，而 checkout 默认是浅克隆：
+        #   · `check-changelog-tags` —— 判据是「**每个 tag 自己的树**里有没有它那一版的台账段」；
+        #   · `check-main-only-commits` —— 判据要算 `origin/main` 与 `origin/dev` 的祖先关系，
+        #     而浅克隆下 `git rev-list A..B` 会**静默**给出偏少的答案 ⇒ 那条门禁判「判不了」（exit 3）⇒ 红。
+        # GitHub 侧的 `checks` job 用 `with: fetch-depth: 0`；这里**故意不用那个参数** ——
+        # 本文件一条都没在 GitCode runner 上实跑过（见文件头 ⚠️），凡没被校验器验过的写法加进去，
+        # 风险是「整条流水线不被调度」，那种红比这个难查得多。所以只用已验过的 `run:` step + `name`。
+        # `--unshallow` 只在浅克隆上合法 ⇒ 失败就退回普通 fetch（万一 runner 给的是完整仓库，走那一条）。
+        # 读数（macOS 2026-09-25，真实仓库的浅克隆上实测）：
+        #   取之前 0 个 tag、祖先图残缺 ⇒ `check-changelog-tags` 判 exit 3；
+        #   取之后 123 个 tag ⇒ 与全量克隆**同读数**（114 个自带段头 ＋ 8 条历史豁免）⇒ exit 0。
+        run: |
+          cd repo_workspace 2>/dev/null || true
+          git fetch --unshallow --tags --force origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*' \
+            || git fetch --tags --force origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
 
       - name: Install Node
         uses: actions/setup-node@v4

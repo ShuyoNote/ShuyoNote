@@ -37,11 +37,14 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 44 条（contract 20 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
+门禁 46 条（contract 22 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
+基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
 > 同一条门禁还要求**每条门禁的名字都出现在本表里**（新门禁不许只进代码、不进文档）。
+> 块里的**第 2 行是各门禁的读数下限**（取自 `tests/baseline.json`，逐字核对）—— 要给数字就指到那一行去，
+> **别在本表里手写**：2026-09-25 实测，本表手写的「`vitest` 885 用例」在下界与实测都已到 2262 之后还在原地。
 > 表里的"断言数"会随测试增减，**数字以 `tests/baseline.json` 与每次运行的读数为准**，别照着这里的旧数字对账。
 
 | 组 | 门禁 | 挡什么 |
@@ -59,15 +62,17 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
 | contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现）。工具链探针**两张表**：macOS（`xcode-select`/SDK/`notarytool`/`codesign`/`clang`）与 **Windows（2026-09-20 补）**——硬判据 `vswhere-msvc`（VC 工具链）/`windows-sdk`/`webview2`（运行时：没它装完打不开），`kind: "info"` 的 `makensis`/`signtool` **只报不判**（tauri 自己取 NSIS、签名只在发版要） |
 | contract | `check-changelog-version-parity` | 已发布标题与版本文件**同改**：只把 CHANGELOG 的标题往前挪、忘了 bump 版本号（或反过来）⇒ 用户看到的"新版本"里没有这次改动 |
+| contract | `check-changelog-tags` | **发布出去的那棵树必须自带它自己那一版的台账段**：判据是"每个 tag 的树里有没有 `## [该版本]`"，不是"CHANGELOG 里写了没写"。2026-08-31 一天里连发 7 个 tag（`v1.64.10`…`v1.64.16`）而每一个的树顶格都还停在 `1.64.10`。`release-preflight` 查的是**打 tag 之前的工作区**，挡不住"tag 打在了台账陈旧的提交上"；这条对**所有** tag 全量审计（历史 8 条只登记、**不补写**，见脚本内 `KNOWN_GAPS`）。⚠️ 一个版本 tag 都看不见（浅克隆/没取 tag）⇒ **判不了（3），不是通过**：GitHub 侧靠 `checks` job 的 `fetch-depth: 0`，GitCode 侧靠 `.gitcode/workflows/ci.yml` 里那一步显式 `git fetch --tags` |
 | contract | `check-nsis-template` | NSIS 安装器模板＝fork 的一行改动 ＋ CLI 版本核对：模板被上游改写后**装出来的东西**与声明不符 |
 | contract | `check-derived-writers` | 派生表的**唯一写入者**：Rust 生产代码不许写派生表（唯一写入口在 TS 侧平台层）——两处写就是两份语义 |
 | contract | `check-doc-content-access` | 「文档内容」的直接访问**只减不增**：换 CRDT 时要改的就是这批位置（当前 562 处，基线在 `scripts/doc-content-access-baseline.json`）；新文件直接引用或超基线即红 |
+| contract | `check-main-only-commits` | **发布线上不许有"开发线永远拿不到"的内容改动**：非 merge 的发布线独有提交只许动**发布产物**（`RELEASE_ARTIFACTS`），merge 则要求除第一父外的父都能从 `dev` 走到。2026-09-25 实测：`dev` 与 `origin/main` 分叉（208 / 7），7 笔里三笔带着开发线没有的内容——包括一笔**标题写着 `release:` 却夹带了 `mdPreview.ts` 修复**的（那个 bug 只在**打包产物**里显形，dev/vitest 永远绿）⇒ 所以判据按**文件集**、不按标题。⚠️ 非浅克隆才能判（残缺祖先图上 `rev-list A..B` 会静默给偏少的答案）⇒ 浅克隆一律 **exit 3** |
 | mobile | `mobile-views` | 主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**：窄屏下"整块视图不能用"这类坏法，布局门禁照不到 |
 | rust | `gm-conformance` | 国密对拍：这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo）⇒ 漂移的后果是"跨设备读不出对方的数据"，而它没有任何编译期信号 |
 | rust | `rust-no-sm-crypto` | **回滚通道**：`--no-default-features`（不编国密）仍要能编译 ＋ 全量单测通过 —— 它是"一行可逆"那个承诺的实现，没人编就会腐烂 |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
-| smoke | `vitest` | 单测回归（**885 用例**） |
+| smoke | `vitest` | 单测回归（读数下限见上方「机器事实」块第 2 行；**别在本表里手写这个数字** —— 手写的那个曾经停在 885，而实际早就到 2262） |
 | smoke | `smoke-web` | web 平台行为（**350 断言**，事实标准） |
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
@@ -141,6 +146,11 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 `node scripts/test-report.mjs --only mobile-layout --update-baseline`（写入是**按条目合并**的，
 不会碰到别的组）。本笔只记读数、不改基线 —— 这也是"体检只提示不判红"那条设计的正确用法。
 
+> **2026-09-25 跟进**：上面那条待办**已办** —— `mobile-layout` 下界已按**本表记录的 CI 读数**
+> 从 **43 抬到 65**（写进 `tests/baseline.json`，并同步进上方「机器事实」块）。
+> ⚠️ 它**不是**本机读数（本机根本没跑这条），所以上面那段约束仍然成立：
+> 若 CI 下次报得比 65 少，**先当成"真下降"查**，不要直接改回来。
+
 ### 写判据的纪律：变异证明不是形式（2026-09-19 的两条实测）
 
 1. **"空输出"≠"零命中"**。我用 `cargo check … | grep -E "^(warning|error)"` 数警告，
@@ -158,6 +168,14 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
      而我把输出丢进 `/dev/null` ⇒ 后面"构建"根本没重编，**两轮 A/B 的数字全是装饰**
      （AMD 这轮实测：v1 与 v2 给出逐条相同的结果就是这么来的）；
    - **管道截断**：`cmd | Select-Object -First N` 会让上游拿到 `SIGPIPE` ⇒ 命令是成功的、退出码却是 1。
+   - **"命令根本没跑起来"会被读成"0 处问题"**（2026-09-25，macOS 侧在交叉审计里踩到、并当场复现）：
+     `cargo fmt --all -- --check` 在**本仓根目录**跑会失败（manifest 在 `src-tauri/`），
+     退出码 **1** 而 **stdout 里 `^Diff in` 是 0 行** ⇒ 任何"用 `grep -c 'Diff in'` 判断干净"的写法
+     都得到**假绿**。**正确跑法**：`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+     （2026-09-25 实测读数：**1523 处 hunk / 67 个 `.rs` 里的 62 个**；1.98.1 / 1.94.0 / 1.94
+     三个工具链读数一致 ⇒ 与工具链无关）。
+     ⇒ 纪律：**fmt/lint 这类"没有输出=通过"的工具，必须先确认它真的跑了**（看退出码 + 看它有没有报
+     "找不到清单/编译失败"），不能只看有没有 diff 行。
    ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
    再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
    ⚠️ **更正（2026-09-20，macOS 侧指出）**：本条初稿把"macOS 侧那条假红"当成"管道取错退出码"的例子 ——

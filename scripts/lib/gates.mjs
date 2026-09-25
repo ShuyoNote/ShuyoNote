@@ -38,6 +38,45 @@ export const GATES = [
     cmd: "node scripts/check-changelog-gate-numbers.mjs",
     incident: "发版说明里的断言数一直靠人从终端抄：抄错了下一次改动后就成假话，而散文不参与构建，没人会发现",
   },
+  {
+    id: "check-changelog-tags",
+    group: "contract",
+    label: "每个 tag 的树自带本版台账段头",
+    // 为什么挂在 contract：纯 Node + 只读 git，约 1 秒。**故意不进 `pnpm build`** ——
+    // build 会在 release/macos/android 那几个 job 里跑，而那些 checkout 是默认深度（浅克隆）
+    // ⇒ 一个 tag 都没有 ⇒ 本门禁判「判不了」（exit 3）⇒ 把发版链整条弄红。
+    // 跑它的 `ci.yml` 的 `checks` job 已显式 `fetch-depth: 0`。
+    cmd: "node scripts/check-changelog-tags.mjs",
+    incident:
+      "2026-08-31 一天里连发 7 个 tag（`v1.64.10` … `v1.64.16`），而**每一个的树顶格都还停在 `1.64.10`**" +
+      "（`v1.64.10` 自己停在 `1.64.9`）—— 版本号 bump 了、台账一段没写。" +
+      "`release-preflight` ③ 查的是「打 tag 之前的工作区」，它挡不住「tag 打在了台账陈旧的提交上」这个形状" +
+      "（`git tag` 指哪个提交是手给的）；本门禁对**所有** tag 问「你这棵树里有没有你自己那一段」，是全量历史审计。" +
+      "另记一条基线教训：第一版拿「当前 checkout 的 CHANGELOG」去比 tag，报出 4 个假缺失" +
+      "（1.85.2 / 1.91.4 / 1.91.25 / 1.91.26）—— 真因是发布提交切在 `main`、`dev` 台账本来就落后两个版本；" +
+      "判据的基线必须是被审计的那个对象自己（tag 的树）",
+    registered: "2026-09-25",
+  },
+  {
+    id: "check-main-only-commits",
+    group: "contract",
+    label: "发布线独占提交（漏在 main 上的开发改动）",
+    // 为什么挂在 contract：纯 Node + 只读 git，约 1 秒。
+    // ⚠️ 它**必须跑在非浅克隆上**：判据要算 `origin/main` 与 `origin/dev` 的祖先关系，而浅克隆下
+    // `git rev-list A..B` 会**静默**给出偏少的答案 ⇒ 一律判「判不了」（exit 3），绝不当通过。
+    // GitHub 的 `checks` job 是 `fetch-depth: 0`；GitCode 侧由「取全历史与 tag」那一步 `--unshallow`。
+    cmd: "node scripts/check-main-only-commits.mjs",
+    incident:
+      "2026-09-25：`dev` 与 `origin/main` 分叉（dev 独有 208 笔、main 独有 7 笔），那 7 笔里**三笔带着开发线没有的内容**：" +
+      "`a3cbd44a`（社区帖存成笔记后属性区不刷新）、`64a415a1`（团队版方案文档）、以及 **`686d0480 release: 1.91.25`**" +
+      "—— 标题像纯发布，实际夹带了 `src/lib/mdPreview.ts` 的修复，而那是个**只在打包产物里显形**的 bug：" +
+      "节点表在**模块顶层**求值 ＋ 循环 import ⇒ dev/vitest 走原生 ESM 永远绿，打包拼平后 `nodes[9]` 是 `undefined`。" +
+      "⇒ 危害不是台账落后，是开发线**长期带着一个已经发出去的 bug**，且下次 `dev → main` 合并冲突取 dev 侧时会静默改回去。" +
+      "⇒ **不能只看提交标题判**（那三笔里恰好有一笔就叫 `release:`）⇒ 判据改成按**文件集**：非 merge 的发布线独有提交" +
+      "只许动发布产物（`RELEASE_ARTIFACTS`，与 `check-versions` 认的 7 处同源、并由自测钉住不许漂）；" +
+      "merge 则要求除第一父外的父都能从 dev 走到（实测那三笔合并的第二父都在 dev 里 ⇒ 不是开后门）。",
+    registered: "2026-09-25",
+  },
   { id: "check-web-commands", group: "contract", label: "命令契约（web/桌面两侧）", cmd: "node scripts/check-web-commands.mjs" },
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
