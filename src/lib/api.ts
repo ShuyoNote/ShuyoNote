@@ -362,6 +362,26 @@ export const api = {
    */
   pullSpaceKeyring: (workspaceId: string, overwrite = false) =>
     invoke("pull_space_keyring", { args: { workspace_id: workspaceId, overwrite } }),
+  /**
+   * B 片 ①-a：**不经服务器**的换设备 —— 产出侧。把本机钥匙袋的**公开材料**包成一段文本
+   * （可以复制/粘贴，也可以存成文件再传），并算出**比对码**。
+   *
+   * ⚠️ 这段文本**不是秘密**（公开材料本来就可以公开：盐 ＋ KDF 参数 ＋ 被口令包裹的盒子）；
+   * 它今天本来就躺在服务端上。**真正要防的是「掉包」** —— 所以另一端必须核对 check_code。
+   * ⚠️ 这条路**不做 6 位短码**：那需要 PAKE（要往客户端加一个密码学实现），
+   * 见 docs/plans/2026-09-25-b-slice-pake-selection.md。
+   */
+  pairingExport: () => invoke("pairing_export"),
+  /**
+   * B 片 ①-a：换设备的**采纳侧** —— 把另一端给的配对码装进本机。
+   *
+   * ⚠️ confirmed_check_code **传了就必须逐位相同**（空格/短横忽略），否则**拒绝且本机一个字节都不改**。
+   * 这是这条路**唯一**能挡住「换码」的机制：不传就等于「我自己看了眼说没问题」。
+   * ⚠️ 本机已有公开材料且 overwrite=false ⇒ 回 already_local，**并把「会失去哪些空间」摆出来**
+   * （覆盖后那台设备再也开不开它自己的库）。确认要覆盖时必须显式传 overwrite: true。
+   */
+  pairingImport: (args: { text: string; confirmed_check_code?: string; overwrite?: boolean }) =>
+    invoke("pairing_import", { args }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
