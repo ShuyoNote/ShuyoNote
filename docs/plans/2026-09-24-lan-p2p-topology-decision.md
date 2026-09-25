@@ -23,13 +23,14 @@ F3）**仍然需要一个序** —— 这就是甲/乙/丙 三档的全部差别
 
 | # | 事实 | 证据 |
 |---|---|---|
-| F1 | **客户端不留账本**：apply 路径把远端变更**只写进 `pages` / `attachments`**，**不写进 `changes`** ⇒ 客户端的 `changes` 表 ＝ **自己的待推队列**，不是账本 | `src-tauri/src/sync.rs:2138`–`:2226`（apply 的那个 `match`，全篇没有 `INSERT INTO changes`）；`changes` 的定义在 `src-tauri/src/db.rs:769` |
-| F2 | **推完就没了**：水位一推进，本地那些 `changes` 行只是「已推过的历史」；**权威账本在服务端** | `sync.rs:311`（`unsent_page_change_count`）与 `sync.rs:328`（`discard_unsent_page_changes`）都以 `pushed_watermark_for_page`（`sync_profiles.last_pushed_seq`）为界 |
-| F3 | **过网实体只有 4 种组合**，其余一律 `_ => {}` 静默忽略：`page` upsert（**整行 `PageDetail`**）/ `page` delete（墓碑）/ `attachment` upsert / `attachment` delete | `sync.rs:2138`–`:2226`；整行定义见 `src-tauri/src/models.rs:20`（`id, workspace_id, parent_id, title, content_json, content_text, cover, icon, cover_height, cover_pos, kind, sort_order, created_at, updated_at` ＝ **14 列一版**） |
-| F4 | **正文不需要权威序**：每页持久化**同一血统**的 CRDT 状态；收侧「收到就收进旁路表」，真正的合并由 WebView 里**那一份唯一实现**在打开页面时做 | `sync.rs:2151`（`absorb_incoming_crdt_state`）；`page_crdt` / `page_crdt_pending` 见冲刺 §11–§14 |
+| F1 | **客户端不留账本**：apply 路径把远端变更**只写进 `pages` / `attachments`**，**不写进 `changes`** ⇒ 客户端的 `changes` 表 ＝ **自己的待推队列**，不是账本 | `src-tauri/src/sync.rs:2412`（`fn apply_pulled_changes`）全篇没有 `INSERT INTO changes`（那种语句只在 `:114` 的**记录**路径上）；`changes` 的定义在 `src-tauri/src/db.rs:769` |
+| F2 | **推完就没了**：水位一推进，本地那些 `changes` 行只是「已推过的历史」；**权威账本在服务端** | `sync.rs:313`（`unsent_page_change_count`）与 `sync.rs:330`（`discard_unsent_page_changes`）都以 `pushed_watermark_for_page`（`sync.rs:293` ⇒ `sync_profiles.last_pushed_seq`）为界 |
+| F3 | **过网实体只有 4 种组合**，其余一律 `_ => {}` 静默忽略：`page` upsert（**整行 `PageDetail`**）/ `page` delete（墓碑）/ `attachment` upsert / `attachment` delete | `sync.rs:2439`（`match (change.entity, change.op)`）→ `:2527`（`_ => {}`）；整行定义见 `src-tauri/src/models.rs:20`（`id, workspace_id, parent_id, title, content_json, content_text, cover, icon, cover_height, cover_pos, kind, sort_order, created_at, updated_at` ＝ **14 列一版**） |
+| F4 | **正文不需要权威序**：每页持久化**同一血统**的 CRDT 状态；收侧「收到就收进旁路表」，真正的合并由 WebView 里**那一份唯一实现**在打开页面时做 | `sync.rs:2452` 调 `absorb_incoming_crdt_state`（定义在 `:175`）；`page_crdt` / `page_crdt_pending` 见冲刺 §11–§14 |
 | F5 | **发现层是三档共用的同一块砖**（mDNS 通告 ＋ 对端表：指纹 / 地址 / 端口 / 服务哪些空间 / 是不是中枢），与后文三档**解耦** | 本文 §3 的三档都建立在它之上；它本身是唯一「本机可验」的新基建 |
 | F6 | ★ **许可约束**：客户端 **AGPL-3.0 开源**，`shuyonote-sync-server` 是**私有商业授权组件** ⇒ **不许**把服务端内嵌进客户端（否则被迫开源，或需一份例外授权） | `README.md`「多设备同步」章：客户端 AGPL-3.0；服务端为独立商业授权组件、私有仓库 |
-| F7 | ⚠️ **待确认（不影响本文结论）**：Web 侧 `recordChange` 还发 `page_tag` / `attr` / `prop` 三种实体，而桌面 apply 的 `_ => {}` 会把它们**静默丢掉**。按「Web 版不支持多设备同步」的口径这**可能是有意为之** —— 但它决定「协议里的实体集合到底是 3 种还是 7 种」 | `src/lib/platform/web.ts:1880`（`page_tag`）、`:2527`（`attr`）、`:2557`（`prop`）对 `sync.rs:2226` 的 `_ => {}` |
+| F7 | **Web 版「不提供」多设备同步**（**产品决定** 2026-09-15 裁定；2026-09-25 owner 再次确认）。⚠️ 口径是「不提供」，**不是「没有实现」**：`web.ts` 里那套 TypeScript 同步引擎是**两份实现之一、完整存在、且按裁定保持** —— 说成"没实现"与代码相反，还会诱使下一个人把它当死代码删掉。用户可见表现＝配置区在非 Tauri 平台**整体置灰、不可交互** | `docs/web-sync-boundary.md`「结论先行」（该文自注：原文写"Web 侧根本没有实现同步引擎"**与代码相反**，已改正）；`README.md` §「多设备同步」首行「**仅桌面版**」；`SyncPanel.tsx:769` 的 `` isDesktopPlatform() ? "" : " is-disabled" `` ＋ 同文件 `:720` 的提示行 |
+| F7b | ⚠️ **仍未定（不影响本文结论）**：Web 侧 `recordChange` 还发 `page_tag` / `attr` / `prop` 三种实体，而桌面 apply 的 `_ => {}` 把它们**静默丢掉**。**F7 只回答了"Web 那边不提供"，没有回答"协议里的实体集合是 4 种还是 7 种"，也没有说这个静默丢弃可接受**。谁会真在网线上产生它们：生产上到不了（Web 同步产品上不提供），但 **Web driver 同时是本仓的测试装置**（`scripts/verify-two-device-sync.mjs` 把 `web.ts` 打成 ESM 当两个"设备"跑）⇒ 拿它去跑那三条命令就会撞上这一格 | 发：`src/lib/platform/web.ts:1897`/`:1906`（`page_tag`）、`:2544`/`:2553`/`:2557`（`attr`）、`:2574`/`:2579`（`prop`）；收：`src-tauri/src/sync.rs:2527` 的 `_ => {}`（同处只认 `("page","upsert")` / `("page","delete")` / `("attachment","upsert")` / `("attachment","delete")` 四种） |
 
 ## 2. 三档对照
 
@@ -110,6 +111,9 @@ E2EE 的公开材料本身：有空间钥匙才读得懂内容，所以局域网
 - **跳过乙：✅**
 - **B 片（二维码 / 短码 PAKE 换设备）：✅，顺序在甲之后**
 - 备注：顺序是 **甲 → B → 丙（目标）**。
+- **附（2026-09-25 追认）：Web 版产品上「不提供」多设备同步 —— 与 2026-09-15 裁定一致，见 F7。**
+  ⚠️ 这一条**只**确认「Web 不开同步」，**没有**确认 F7b（协议里那三种实体要不要进、
+  桌面 `_ => {}` 的静默丢弃要不要改成留痕）—— F7b 仍待定，别把这次追认读成把 F7b 一起拍了。
 
 ## 10. 落地顺序（拍板之后）
 
@@ -193,9 +197,16 @@ A 先走了，B 继续改；第二天在办公室又遇上 ⇒ B 把昨天那段
 - **没决定「删除 vs 并发编辑」的策略**：现在按**戳大的赢**（＝后删除压过先编辑），要不要改成
   add-wins 是**策略**，见 §4；`hlc.rs` 的「不决定的事」一节把这条写死了，免得后面把它当承诺；
 - **没有第二份实现**：本片只落 **Rust 一侧**。丙 需要判序的是**非正文那半边**（整页 14 列 ＋
-  删除墓碑 ＋ 附件元数据），它只在桌面（Rust）上被应用；Web 不参与多设备同步（F7）⇒
-  这时写一份 TS 镜像只会多出一份**没有调用方**的实现、两边各自漂移。
-  等真有消费方再镜像 —— 这与 `block_rev` / `crdt_wire` 那两对「两侧成对」的区别就在这里，如实写清楚，不留白。
+  删除墓碑 ＋ 附件元数据），它只在桌面（Rust）上被应用。Web 那边是「**产品上不提供**多设备同步」
+  （F7：2026-09-15 产品决定，2026-09-25 owner 再确认）——这条的**准确读法**是：不是「没有实现」，
+  `web.ts` 那份 TS 同步引擎**完整存在、且按裁定保持**，只是**不跟着演进**（删了平台层不完整）。
+  ⇒ 这时写 TS 镜像收益是零（产品上根本打不开），代价是多一份**没有消费方**的实现跟着漂移。
+  真要开 Web 同步，那一格应与该开的 UI / CORS 一起做。这与 `block_rev` / `crdt_wire` 那两对
+  「两侧成对」的区别就在这里（那两对是**两侧今天都在跑**），如实写清楚，不留白。
+- ⚠️ **给接线那一片的前置约束**（从 F7 读出来的，本片已按它写代码）：丙 的戳一旦上 wire，
+  **Web 那份"按裁定保持"的实现会读到不认识的字段**。所以戳的读法必须与
+  `crdt_wire` / `wireState` 同一条纪律：**不认识就如实报、不猜**（`crdt_wire.rs` 的
+  `UnknownVersion` 就是先例），**绝不许"读不出来就当空"** —— 那等于把对端那一版静默丢掉。
 
 ⚠️ 一条**收据**：`lib.rs` 里 `mod hlc;` 上面那行 `#[allow(dead_code)]` 是「**还没接线**」的标记
 （本片它确实没有调用方）。**接线那一片顺手删掉它** —— 与 `lan.rs` 当初那条是同一纪律。
