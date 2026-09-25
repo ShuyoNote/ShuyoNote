@@ -1,4 +1,4 @@
-﻿name: ci
+name: ci
 
 # 为什么要有这个文件：项目主站是 GitCode，而 GitCode 侧此前**一条测试都不跑**
 # ——build-linux.yml 只在打 tag 时构建 .deb/.AppImage。于是"门禁全绿"在主站完全不可见：
@@ -40,6 +40,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: 取回 tag（check-changelog-tags 要在每个 tag 的树上审计）
+        # 为什么必须显式取：`check-changelog-tags` 的判据是「**每个 tag 自己的树**里有没有它那一版
+        # 的台账段」，所以它得先能看见 tag。checkout 默认是浅克隆且不取 tag ⇒ 一个都看不见
+        # ⇒ 门禁判「判不了」（exit 3）⇒ 整条流水线红。
+        # GitHub 侧的 `checks` job 用 `with: fetch-depth: 0`；这里**故意不用那个参数** ——
+        # 本文件是一条都没在 GitCode runner 上实跑过的（见文件头 ⚠️），凡没被校验器验过的写法
+        # 加进去的风险是「整条流水线不被调度」，那种红比现在这个难查得多。
+        # `--depth=1` 够用：判据只需要每个 tag 那一棵树的 `CHANGELOG.md`。
+        # 读数（macOS 2026-09-25，真实仓库的浅克隆上实测）：取前 0 个 tag ⇒ exit 3；
+        # 取后 123 个 ⇒ 与全量克隆**同读数**（114 个自带段头 ＋ 8 条历史豁免）⇒ exit 0。
+        run: |
+          cd repo_workspace 2>/dev/null || true
+          git fetch --tags --force --depth=1 origin '+refs/tags/*:refs/tags/*'
 
       - name: Install Node
         uses: actions/setup-node@v4
