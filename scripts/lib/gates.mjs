@@ -64,6 +64,22 @@ export const GATES = [
     incident: "2026-09-15：版本历史弹层没登记 ⇒ 真机上返回键直接退出应用（第 6 个真机问题）",
   },
   {
+    id: "check-hook-order",
+    group: "contract",
+    label: "hooks 顺序（早退不许越过 hooks）",
+    // 为什么现在才进注册表：它此前只挂在 `package.json` 的 build 链上，**没进本注册表**
+    // ⇒ `pnpm verify`（本地一键验收与 CI 的 checks job 共用）**跑不到它**。
+    // 2026-09-25 复核 Zustand 订阅粒度时发现的 —— 同一个坑 `mobile-views` 在 2026-09-22 踩过
+    // （见上面 mobile 组那段注释）。"只挂在 build 链上"的门禁在 CI 的 verify 路径上是隐形的。
+    cmd: "node scripts/check-hook-order.mjs",
+    incident:
+      "同一类错在这份代码里发生过**两次**，两次都是「用户的界面直接没了」：" +
+      "① v1.85.1：`CommandPalette` 把参数表单的三个 `useState` 放在 `if (!open) return null` **之后** ⇒ 按 Ctrl+K 抛错（生产是 Minified React error #310）⇒ 整棵树被卸载成白屏；" +
+      "② 2026-09-16：`App` 的加密锁定闸门是一句**排在七八个 hooks 之前**的早退 ⇒ 加密安装**重启即抛 `Rendered fewer hooks than expected`**，被根部 ErrorBoundary 接住 ⇒ 用户看到崩溃屏，而锁定屏**一次都没出现过**（真机只验了设置页开关）。" +
+      "两次都不是「写错了」，是「**看漏了**」——早退和 hooks 隔着几十行，人眼很难可靠发现；渲染级测试只能证明「某一个组件当前是对的」，这条管的是「仓库里别再出现这种写法」。" +
+      "自测：`node scripts/check-hook-order.mjs --self-test`（里面放的是两次真事故的**真实写法**，必须判红）。",
+  },
+  {
     id: "check-ps1-ascii",
     group: "contract",
     label: "PowerShell 脚本编码（纯 ASCII 或 BOM）",

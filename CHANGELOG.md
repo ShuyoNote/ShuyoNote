@@ -15,13 +15,29 @@
   重拉页面表 ⇒ 打一次字停 1 秒就会唤醒 N 个树节点实例，外加 `DatabaseView` / `FileManagerView` /
   `SyncPanel` 一起重跑 render。已改的 16 处：`PageTree` 三处（`TreeItem` / 批量工具条 / 树本身）
   改为字段级选择器，13 处"只用到 action"的与 `SyncPanel` 的 `useSyncStatus()` 改为动作走
-  `getState()` —— **基线由 39 收紧到 23，行为不变**（`tsc` 与全量单测为准；`TreeItem` 现在只订
-  `currentId` 一个字段）。这类写法与 `check-hook-order` 同族：**不炸、不报错、测试全绿**，只是
+  `getState()`。这类写法与 `check-hook-order` 同族：**不炸、不报错、测试全绿**，只是
   安静地多渲染。基线 `scripts/store-subscription-baseline.json` **只减不增**（与
   `check-doc-content-access` 同口径），且**按文件计数、不记行号** —— 第一版记了行号，当天就因为在
   一处订阅上方加了 8 行注释而误报"新增 1 处"（实际一处没多）；行内 `// gate-allow: <理由>` 可显式
   放行；已接进 `pnpm build` 与 `pnpm verify` 的 contract 组，自测
   `node scripts/check-store-subscriptions.mjs --self-test`。
+
+- **其余 23 处整店订阅也全部收窄，基线清空（`{}`）** —— 门禁从"只减不增的存量清单"变成**无例外的硬规则**。
+  本轮改的是 `FileManagerView` / `DatabaseView` / `GraphView` / `CommandPalette`（四个大组件：
+  只订 `pages`/`currentId` 等真正渲染用到的字段，动作走选择器或 `getState()`，不再被
+  `loading`/`searchQuery` 等无关字段唤醒）、`App.tsx` 的两处（`NoteEditor` / `AppShell`）、
+  以及 `AiAssistantPanel` / `AiSettingsForm` / `SettingsDialog` ×2 / `PdfReader` / `FilePreviewDialog` /
+  `FormulaEditorDialog` / `EmojiPicker` / `PluginViewOverlay` / `PluginViewPanel` / `PluginIndexPanel` /
+  `InlineAiDraftBar` / `UnlinkedMentionsPanel` / `PageLinkSuggestPlugin`。**唯一保留的整店订阅是
+  `PluginManager`**，用行内 `gate-allow` 显式放行：它要 `usePlugins` 约 30 个字段（其中 18 个是
+  恒定引用的动作），拆成选择器只是把一行变成 18 行、零收益 —— 理由写在代码里而不是人脑里。
+  顺带修掉 `FilePreviewDialog` 里那处**渲染期 `getState()` 快照**（`folderId` 变了组件不重渲染 ⇒
+  "导入为页面"会落到旧目录），改成在点击时现取。
+
+- **`check-hook-order` 补进门禁注册表**（`scripts/lib/gates.mjs` 的 contract 组）。它此前**只挂在
+  `pnpm build` 链上**，于是本地一键验收与 CI 的 `checks` job 都**跑不到它** —— 同一个坑
+  `mobile-views` 在 2026-09-22 踩过（`gates.mjs` 里那段注释就是为它写的）。只在 build 链上的门禁
+  在 verify 路径上是隐形的，等于没有。契约组因此从 20 条变成 21 条。
 
 ### 修复
 
