@@ -109,6 +109,58 @@ pub fn qr_capacity_error(raw: &str) -> Option<String> {
     ))
 }
 
+// ── 比对码（路线 ①：路线 ③ 的 PAKE 未做，见 docs/plans/2026-09-25-b-slice-pake-selection.md）──────
+//
+// 为什么需要它：二维码那条通道**不经网络**，所以它缺的不是机密性，而是**来源真实性**
+// —— 有人把自己的码换上去，收下的人就会把数据同步进一个**攻击者知道钥匙**的空间。
+// 而"材料 ＋ 口令"里的口令**不在本片保护范围内**（盒子是口令包的，这是既有设计）。
+// ⇒ 两端各算一个**比对码**、由人核对一致，这就是路线 ① 的那一半承重。
+
+/// 比对码的**熵下限**（bit）。
+///
+/// ⚠️ 这个数字不是拍脑袋：攻击者**不需要**爆破这个码，他可以**离线改自己的假载荷**、
+/// 试到比对码撞上为止（第二原像）。所以长度必须让这种搜索不可行 ——
+/// 2³⁰ 秒级、2⁴⁰ 分钟级、**2⁶⁰ 才是"要花掉很大一笔算力"**。设计稿 §3 那张表把这三行分开写了。
+pub const CHECK_CODE_MIN_BITS: u32 = 60;
+
+/// 比对码的**域分隔串**。
+///
+/// 为什么要它：同一个哈希函数在这个仓里被用去好几件事（附件寻址、书签、指纹…），
+/// 不隔开的话，"某个别的用途的哈希前缀"可能恰好能当比对码用。
+/// ⚠️ 字面量只写这一处，改它要一次改全（与 `crdt_wire` / `WIRE_VERSION` 同一条纪律）。
+const CHECK_DOMAIN: &[u8] = b"shuyo-pair-check-v1";
+
+/// 从**整段载荷文本**派生比对码（20 位十进制，按 4 位一组给人念）。
+///
+/// 两条性质是**承重**的（判据钉着）：
+/// 1. **确定性** —— 同一份载荷在任何一台设备上派生出同一个码（否则两个人没法"对一下"）；
+/// 2. **整段参与** —— 载荷里**任何一个字节**变了，码就变。若只取材料的一部分参与派生，
+///    攻击者就能在与派生无关的那部分上自由改动而保持码不变 ⇒ "换码"照样能过。
+///
+/// 渲染：20 位十进制。为什么不是词：**本仓没有词表**（2048 词那种要另引一份资源并谈许可），
+/// 而"念起来顺口"是**渲染**问题 —— 安全性只取决于上面那两条 ＋ [`CHECK_CODE_MIN_BITS`]，
+/// 换成词表渲染不动这条判据。词表留作 UX 决定（见施工单 §8）。
+pub fn check_code(payload_text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(CHECK_DOMAIN);
+    h.update([0u8]); // 分隔符：域串与载荷的拼接不许有歧义（否则两个不同输入可能拼出同一串）
+    h.update(payload_text.as_bytes());
+    let d = h.finalize();
+    // 取前 11 字节 = 88 bit，再 `% 10^20`（≈2^66.4）⇒ 有效熵约 66 bit，满足 ≥60。
+    let mut v: u128 = 0;
+    for b in d.iter().take(11) {
+        v = (v << 8) | u128::from(*b);
+    }
+    let n = v % 10u128.pow(20);
+    let s = format!("{n:020}");
+    s.as_bytes()
+        .chunks(4)
+        .map(|c| std::str::from_utf8(c).unwrap_or("????"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +332,92 @@ mod tests {
         // 所以这里只断言"同一量级"（材料自身 300~500，载荷比它大但不到两倍）。
         assert!(one.len() > 360, "载荷比裸材料大（外面还包了一层）：{}", one.len());
         assert!(one.len() < 720, "载荷不该比裸材料大出一倍：{}", one.len());
+    }
+
+    // ── 比对码（路线 ①）────────────────────────────────────────────────────────────
+
+    /// 判据：**确定性 ＋ 形状** —— 两端要能"对一下"，所以同一份载荷必须派生出同一个码。
+    #[test]
+    fn the_check_code_is_deterministic_and_well_shaped() {
+        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        let a = check_code(&raw);
+        let b = check_code(&raw);
+        assert_eq!(a, b, "同一份载荷必须派生出同一个码（否则两个人没法对）");
+
+        let groups: Vec<&str> = a.split(' ').collect();
+        assert_eq!(groups.len(), 5, "给人念的形状：4 位一组、共 5 组：{a}");
+        for g in &groups {
+            assert_eq!(g.len(), 4, "每组 4 位：{a}");
+            assert!(g.chars().all(|c| c.is_ascii_digit()), "只许十进制数字：{a}");
+        }
+    }
+
+    /// ★ 判据：**整段参与派生** —— 载荷里任何一个字节变了，码就变。
+    ///
+    /// 退化会怎样：若只拿材料的一部分参与派生，攻击者就能在**与派生无关的那部分**上
+    /// 自由改动而保持比对码不变 ⇒ 人眼核对照样通过，"换码"就防不住了。
+    #[test]
+    fn the_check_code_covers_the_whole_payload() {
+        let m1 = material_with(&["sp-a"]);
+        let m2 = material_with(&["sp-b"]);
+        let base = encode_payload(&payload_from_material(&m1, "fp-1").unwrap()).unwrap();
+        let other_material = encode_payload(&payload_from_material(&m2, "fp-1").unwrap()).unwrap();
+        let other_fp = encode_payload(&payload_from_material(&m1, "fp-2").unwrap()).unwrap();
+
+        assert_ne!(check_code(&base), check_code(&other_material), "★ 材料变了，码必须变");
+        assert_ne!(check_code(&base), check_code(&other_fp), "★ 指纹变了，码必须变");
+        // 连"只多一个空格"也要变（说明是按字节派生的，不是按解析后的字段）
+        assert_ne!(
+            check_code(&base),
+            check_code(&format!("{base} ")),
+            "★ 末尾多一个空格也要变：按**字节**派生，不按解析后的字段"
+        );
+    }
+
+    /// ★ 判据：**域分隔真的在起作用**。
+    ///
+    /// 退化会怎样：去掉域分隔串，`check_code` 就退化成"某个裸 SHA-256 的前缀渲染" ——
+    /// 而同一个哈希在这个仓里被用去好几件事（附件寻址、书签…），
+    /// 于是"别处那个哈希的前缀"可能恰好能当比对码用。这条把"域串必须在"钉住。
+    #[test]
+    fn the_check_code_is_domain_separated() {
+        fn render_without_domain(payload: &str) -> String {
+            use sha2::{Digest, Sha256};
+            let d = Sha256::digest(payload.as_bytes());
+            let mut v: u128 = 0;
+            for b in d.iter().take(11) {
+                v = (v << 8) | u128::from(*b);
+            }
+            let s = format!("{:020}", v % 10u128.pow(20));
+            s.as_bytes()
+                .chunks(4)
+                .map(|c| std::str::from_utf8(c).unwrap_or("????"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "").unwrap()).unwrap();
+        assert_ne!(
+            check_code(&raw),
+            render_without_domain(&raw),
+            "★ 去掉域分隔串就会与裸 SHA-256 的前缀渲染相同 —— 这条就是用来发现那件事的"
+        );
+    }
+
+    /// 判据：**熵下限**（设计稿 §3 那张表：第二原像的代价）。
+    /// 这条是"数字自己别漂"的自检：谁把下限调低、或把渲染空间改小，都会在这里红。
+    #[test]
+    fn the_check_code_stays_above_the_agreed_entropy_floor() {
+        assert!(
+            CHECK_CODE_MIN_BITS >= 60,
+            "下限不许低于 60 bit（设计稿 §3）：{}",
+            CHECK_CODE_MIN_BITS
+        );
+        // 渲染空间 10^20 ≈ 2^66.4，必须不小于下限
+        let bits = (10f64.powi(20)).log2();
+        assert!(
+            bits >= f64::from(CHECK_CODE_MIN_BITS),
+            "渲染空间只有 {bits:.1} bit，低于下限 {}",
+            CHECK_CODE_MIN_BITS
+        );
     }
 }
