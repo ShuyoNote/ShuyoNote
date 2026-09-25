@@ -266,6 +266,15 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 
 ### ★ 2026-09-25 两台真机跑通的做法（含一条**没跑通**的，别照抄那半）
 
+**两个脚本已经收进仓库**（`_scratch` 里那套散件的通用版，别人照着就能跑）：
+- `node scripts/android-cdp.mjs <serial> text|pid|eval <文件.js>|click <文字>` —— 按 DOM 驱动真机 WebView
+  （**按本 App 的 pid 挑 devtools 套接字**，见下面那条坑）。
+- `node scripts/verify-lan-two-device.mjs --listener <serial> --hub http://192.168.x.y:8787 --space <id>`
+  —— 从 PC 单播一条合法公告，读被测那台的 `lan_status` 状态行，**前/后两句都打印**并按
+  「换成了局域网 ＋ 点出了中枢」判 PASS/FAIL（2026-09-25 实测 exit 0）。
+
+手动那套步骤（脚本就是照它写的，改脚本前先读一遍）：
+
 链路：**Mate 40 是热点主机**（`192.168.43.1`）→ 小米 MIX 2（`.96`）与 PC（`.206`）都是它的客户端。
 同步服务在本机（`shuyonote-sync-server --bind 0.0.0.0 --port 8787 --db <tmp>`）。
 
