@@ -138,3 +138,21 @@ owner 2026-09-25 对「待拍清单」逐条拍了板。下面四条**就是接�
 > ⚠️ ② 是这一族里唯一「**能编译、单测照绿，但错了会让整个发现层白做**」的那类决定，
 > 所以它先前被刻意留白（见 §7 末尾那两段）。现在有口径了：**应用级单例 ＋ 按需启用**。
 > ⚠️ ③ 与 ④ 是**范围**决定，不是技术决定 —— 记在这里，免得后来者把它们读成"还没做"。
+
+## 9. 接线那一片的进度（2026-09-25 晚，Windows 侧）—— 与 §7 那张表**逐条对账**
+
+§7 那四件的现状（**别按旧印象开工**）：
+
+| §7 | 件 | 现状 | 锚点 |
+|---|---|---|---|
+| — | **对端表归属**（第 1 件的前置门闩，§8 ②） | ✅ **已落**（`834b7071`）：`LanState::global`／`set_enabled`／`peers`／`should_enable` ＋ 5 条判据 | `src-tauri/src/lan_state.rs` |
+| **2** | `resolve_base` 用进 6 处 URL | 🚧 **2/6**：附件那两处已接（`ad36486a`）——`sync_attachments` 的清单/传输 与 单件下载都走 `effective_base`；**剩 4 处**：`push`、`pull`、`lineage-claim`（在 `claim_config` 里）、SSE 订流（`sync_stream::stream_url`） | `sync.rs` 的 `base_for`／`effective_base`／`attachment_base` |
+| **1** | 启动拉起监听/广播 | ❌ 未做。口径已定（§8 ②）：挂 `LanState::global`，按 `should_enable(绑了同步的档案数)` 决定启不启；目标是 `lan::default_targets`（广播 ＋ 回环） | `lan::bind_listener`／`announce_once`／`recv_into` |
+| **3** | `status_line` 接 UI | ❌ 未做（要动 `platform/web.ts` ＋ 契约 ⇒ 前端三闸一起跑） | `lan::status_line`（甲-1 第三片已写） |
+| **4** | 代言开关的配置来源／重报时机 | ❌ 未做 | `lan::announce_for_own_hub`（甲-1 第三片已写） |
+| — | 收尾 | ❌ 未做：删掉 `lan.rs` 与 `lan_state.rs` 顶上**各一行** `#![allow(dead_code)]`（两处都写明了"接线那一片删掉"） | 两个模块头部 |
+
+> ⚠️ 已接的那两处留下的**判据样板**，后面 4 处可以直接照抄（`sync::tests`）：
+> ★ `with_nothing_discovered_the_base_is_byte_identical_to_today`（**没发现到对端时逐字节等于今天**）
+> 与 ★ `a_discovered_hub_moves_the_attachment_base_to_the_lan_address`（发现到本空间中枢 ⇒ 地址跟着换；
+> 别个空间的中枢／公网公告 ⇒ 回落）。**每接一处都该配一条同形的判据**。

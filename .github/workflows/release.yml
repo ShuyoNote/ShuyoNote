@@ -524,6 +524,23 @@ jobs:
         # 发版件的显示名错了 ⇒ 商店/管局看到的和备案表上的名字对不上，且**只有装到手机上才发现**。
         run: pnpm check:android-app-name
 
+      - name: 品牌开屏主题（安卓，品牌底色 ＋ 居中图标）
+        # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线）。
+        # 发版包尤其需要：`tauri android init` 会把默认主题写回 gen/ ⇒ 用户看到"开屏一块白"。
+        run: pnpm android:splash-theme
+
+      - name: 自检：开屏主题确实是品牌那套
+        # 与 android.yml 同名同步。
+        run: pnpm check:android-splash-theme
+
+      - name: 竖屏锁（安卓，owner 2026-09-25 拍板）
+        # 与 android.yml 同名同步。方向锁写在生成物 `AndroidManifest.xml` 里 ⇒ 发版件也必须脚本化重跑。
+        run: pnpm android:portrait-lock
+
+      - name: 自检：竖屏锁确实钉在清单里
+        # 与 android.yml 同名同步。
+        run: pnpm check:android-portrait-lock
+
       - name: 随包 PDFium 库（Android）
         # 与 android.yml 同名同步（`check:release-parity` 会核对两条流水线；缺这一步的话
         # **发版 APK 会缺库** —— 那正是"v1.91.0 漏了壳适配层注入"那一类事故的同族）。
