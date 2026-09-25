@@ -1,12 +1,12 @@
 {
-  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。 2026-09-22：新增门禁 `gm-registry-clean`（共享 registry 没留国密补丁；只读、不构建，读不出来只提示不判红），登记进 gates.rust —— 它没有 `counters`（不按用例数计），故不计入 `counts`。 2026-09-22：新增门禁 `mobile-views`（主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**；需 Chromium 与 dev server），登记进 gates.mobile。 2026-09-23：vitest 下界 1303 → 1955（抬到实际值：此前下界只有当前读数的 67%，`staleBaselineNotices` 的 80% 阈值一直提示它拦不住任何东西；1955 里含本批新加的 3 条）。同批修掉一个**静默**缺陷：`--update-baseline` 以前会把这整段手写历史**抹掉**（写死固定文案 ⇒ 文件仍是合法 JSON、没有任何信号），现在由 `report-core::baselineNoteFor` 逐字保留 —— 这段历史本来就是被手工补回去过的，所以以后抬读数不必再补。",
+  "note": "各门禁的断言/用例数下限。由 `node scripts/test-report.mjs --group <组> --update-baseline` 写入；CI 校验不得低于此值——把它调低等于删断言，请在 PR 里说明理由。 2026-09-22：新增门禁 `rust-sm-wired`（库级国密接线：打补丁 ＋ `--features sm-library` 全量单测；无 SM 版 OpenSSL 前缀时自报跳过），登记进 gates.rust。 2026-09-22：新增门禁 `gm-registry-clean`（共享 registry 没留国密补丁；只读、不构建，读不出来只提示不判红），登记进 gates.rust —— 它没有 `counters`（不按用例数计），故不计入 `counts`。 2026-09-22：新增门禁 `mobile-views`（主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**；需 Chromium 与 dev server），登记进 gates.mobile。 2026-09-23：vitest 下界 1303 → 1955（抬到实际值：此前下界只有当前读数的 67%，`staleBaselineNotices` 的 80% 阈值一直提示它拦不住任何东西；1955 里含本批新加的 3 条）。同批修掉一个**静默**缺陷：`--update-baseline` 以前会把这整段手写历史**抹掉**（写死固定文案 ⇒ 文件仍是合法 JSON、没有任何信号），现在由 `report-core::baselineNoteFor` 逐字保留 —— 这段历史本来就是被手工补回去过的，所以以后抬读数不必再补。 2026-09-25：`mobile-layout` 下界 43 → 65（**这个数是 CI 上量出来的**，见 docs/TESTING.md 那张 2026-09-23 的读数表 `52.0s (65/65)`，不是本机读数 —— 该文件第 139 行明确警告过「别照本机读数手抬」，因为它依赖字体/视口/浏览器版本）。若 CI 下次报得更少，先当**真下降**查，不要直接改回来。",
   "counts": {
     "vitest": 2262,
     "smoke-web": 363,
     "check-pdf-reload": 8,
     "check-panel-layout": 40,
     "check-web-build": 9,
-    "mobile-layout": 43,
+    "mobile-layout": 65,
     "mobile-overlays": 1010,
     "mobile-views": 307,
     "rust-test": 386,

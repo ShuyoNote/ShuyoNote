@@ -38,7 +38,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 
 <!-- facts:begin -->
 门禁 46 条（contract 22 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 255 / web 247 / CommandMap 257
-基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 43 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -146,6 +146,11 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 `node scripts/test-report.mjs --only mobile-layout --update-baseline`（写入是**按条目合并**的，
 不会碰到别的组）。本笔只记读数、不改基线 —— 这也是"体检只提示不判红"那条设计的正确用法。
 
+> **2026-09-25 跟进**：上面那条待办**已办** —— `mobile-layout` 下界已按**本表记录的 CI 读数**
+> 从 **43 抬到 65**（写进 `tests/baseline.json`，并同步进上方「机器事实」块）。
+> ⚠️ 它**不是**本机读数（本机根本没跑这条），所以上面那段约束仍然成立：
+> 若 CI 下次报得比 65 少，**先当成"真下降"查**，不要直接改回来。
+
 ### 写判据的纪律：变异证明不是形式（2026-09-19 的两条实测）
 
 1. **"空输出"≠"零命中"**。我用 `cargo check … | grep -E "^(warning|error)"` 数警告，
@@ -163,6 +168,14 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
      而我把输出丢进 `/dev/null` ⇒ 后面"构建"根本没重编，**两轮 A/B 的数字全是装饰**
      （AMD 这轮实测：v1 与 v2 给出逐条相同的结果就是这么来的）；
    - **管道截断**：`cmd | Select-Object -First N` 会让上游拿到 `SIGPIPE` ⇒ 命令是成功的、退出码却是 1。
+   - **"命令根本没跑起来"会被读成"0 处问题"**（2026-09-25，macOS 侧在交叉审计里踩到、并当场复现）：
+     `cargo fmt --all -- --check` 在**本仓根目录**跑会失败（manifest 在 `src-tauri/`），
+     退出码 **1** 而 **stdout 里 `^Diff in` 是 0 行** ⇒ 任何"用 `grep -c 'Diff in'` 判断干净"的写法
+     都得到**假绿**。**正确跑法**：`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+     （2026-09-25 实测读数：**1523 处 hunk / 67 个 `.rs` 里的 62 个**；1.98.1 / 1.94.0 / 1.94
+     三个工具链读数一致 ⇒ 与工具链无关）。
+     ⇒ 纪律：**fmt/lint 这类"没有输出=通过"的工具，必须先确认它真的跑了**（看退出码 + 看它有没有报
+     "找不到清单/编译失败"），不能只看有没有 diff 行。
    ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
    再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
    ⚠️ **更正（2026-09-20，macOS 侧指出）**：本条初稿把"macOS 侧那条假红"当成"管道取错退出码"的例子 ——
