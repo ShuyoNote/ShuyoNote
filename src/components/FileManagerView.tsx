@@ -64,6 +64,19 @@ type FileRow = {
   versions?: AttachmentMeta[];
 };
 
+/**
+ * `row.cover` 存的是 **CSS 值**（`url("covers/x.jpg")`，见 `lib/covers.ts` 与 `CoverPicker`），
+ * 而这里要用的是 `<img src>` ⇒ 必须剥掉 `url(...)` 外壳。
+ *
+ * ⚠️ 2026-09-23：原来直接把 CSS 值塞进 `src`，浏览器去取 `/url(%22covers/default-cover.jpg%22)`
+ * ⇒ 404（默认封面那张必现）。这条是 web 产物验收新加的 Markdown 探针顺手抓到的。
+ * 认不出外壳时原样返回（用户自己上传的封面可能是 data: URL，那种本来就能直接当 src）。
+ */
+export function coverUrlOf(css: string): string {
+  const m = /^url\((['"]?)(.*?)\1\)$/.exec(String(css ?? "").trim());
+  return m ? m[2] : String(css ?? "");
+}
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KB", "MB", "GB", "TB"];
@@ -917,7 +930,11 @@ export function FileManagerView() {
                   ) : pageCover && !brokenCovers.has(row.key) ? (
                     <img
                       className="fm-grid-thumb"
-                      src={pageCover}
+                      // ⚠️ `row.cover` 存的是**CSS 值**（`url("covers/x.jpg")`，见 `lib/covers.ts`
+                      //    与 `CoverPicker`）；直接塞进 `src` 会让浏览器去取
+                      //    `/url(%22covers/default-cover.jpg%22)` ⇒ 404（默认封面那张必现，
+                      //    2026-09-23 由 web 产物验收的新探针抓到）。这里先剥掉 `url(...)` 外壳。
+                      src={coverUrlOf(pageCover)}
                       alt={row.name}
                       loading="lazy"
                       onError={() => setBrokenCovers((prev) => new Set(prev).add(row.key))}

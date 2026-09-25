@@ -21,7 +21,8 @@
 
 import { createServer } from "node:http";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { pinAppLanguage } from "./lib/pin-locale.mjs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,6 +135,10 @@ page.on("response", (r) => {
 });
 
 try {
+  // 语言钉成 zh-CN：CI 的 runner 是 en-US，而下面「文件管理」「上传」这些入口的 title/文案
+  // 都走 i18n（见 `src/i18n/index.ts`）—— 只按中文找必然找不到（2026-09-22 三条移动端门禁
+  // 就是这么在 CI 上假红的）。这里钉的是**测试环境**，不是改产品去迎合断言。
+  await pinAppLanguage(page);
   await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
   await page.waitForSelector(".sidebar, .app, #root", { timeout: 30000 });
 
@@ -291,6 +296,47 @@ try {
     // `extractFailures` 收进报告、并被 CI 注解带出来 ⇒ 下一次红自带原因与现场。
     console.error(`  ✗ 插件入口没走到（${pluginsOk.steps.join("；")}）—— 这会让 2 条断言被跳过，基线会报退步`);
     console.error(`  ✗ 现场按钮文案（前 40 个）：${pluginsOk.labels.slice(0, 1200)}`);
+  }
+
+  // 先把上一步打开的「设置 / 插件管理」浮层关掉：它们是**模态**的，留着的话下面点「上传」那一击
+  // 会落在浮层上（2026-09-23 实测：文件管理器的 DOM 在、`button` 也在，但点击不触发它的 onClick
+  // ⇒ `uploadFiles` 根本没跑 ⇒ 抓不到动态创建的 file input）。Esc 关浮层是本应用的既有行为。
+  for (let i = 0; i < 3; i++) {
+    await page.keyboard.press("Escape");
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  // ── 打包产物里「markdown → Lexical」的节点表不能是模块顶层求值 ──────────────
+  //
+  // 为什么必须有这一档（2026-09-23，用户实测报的 bug）：`src/lib/mdPreview.ts` 的节点表原来是
+  // **模块顶层**的数组，而它处在一个循环 import 里：
+  //   lib/mdPreview → editor/nodes/ColumnsBlockNode → store/notes → store/filePreview → lib/mdPreview
+  // dev / vitest（原生 ESM）下 import 求值顺序**必然**先初始化好那个类，所以单测永远绿；
+  // 而**打包产物**把模块拼平后，数组字面量先跑 ⇒ `nodes[9]`（`ColumnsBlockNode`）是 `undefined`
+  // ⇒ `createEditor` 抛 `Minified Lexical error #365`。受害者是 `markdownToPageContent` 的两个
+  // 调用方：「从社区链接存一篇笔记」与「Markdown 导入为页面」。
+  // ⇒ 判据只能钉在**产物形状**上：`createEditor({ nodes: … })` 那个实参必须是**调用/内联数组**，
+  //    不能是"模块顶层那个数组标识符"（修好后是 `nodes: ZGr()`；修前是 `nodes: ia`）。
+  //    细节见 `mdPreview.ts` 的 `mdNodes()` 头注。
+  if (!LIVE_URL) {
+    const chunk = readdirSync(join(DIR, "assets"))
+      .filter((f) => f.startsWith("index-") && f.endsWith(".js"))
+      .map((f) => readFileSync(join(DIR, "assets", f), "utf8"))
+      .find((t) => t.includes("shuyonote-md-preview"));
+    const callSite = chunk ? chunk.slice(Math.max(0, chunk.indexOf("shuyonote-md-preview") - 400), chunk.indexOf("shuyonote-md-preview")) : "";
+    const bare = /nodes:\s*([A-Za-z_$][\w$]*)\s*,/.exec(callSite);
+    const lazy = /nodes:\s*(?:[A-Za-z_$][\w$]*\(\)|\[)/.test(callSite);
+    ok(
+      Boolean(chunk) && lazy && !bare,
+      "产物里 markdown 的节点表是**调用/内联**（不是模块顶层那个数组）—— " +
+        `实参形态 ${lazy ? "✓ 惰性" : "✗ 裸标识符"}${bare ? `（nodes: ${bare[1]}）` : ""}` +
+        "；这一档钉的是「循环 import + 模块顶层求值 ⇒ 打包后节点表里是 undefined」那个 bug",
+    );
+    if (chunk && (bare || !lazy)) {
+      console.error("  ✗ 修法：把节点表挪进函数（见 src/lib/mdPreview.ts 的 mdNodes()），别在模块顶层建数组");
+    }
+  } else {
+    console.log("  · 线上模式（--url）拿不到产物文件 ⇒ 跳过「节点表惰性」这一档形状检查");
   }
 
   if (SHOTS) {

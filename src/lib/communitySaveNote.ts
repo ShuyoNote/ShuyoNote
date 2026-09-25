@@ -21,6 +21,7 @@ import type { CommunityPost } from "./communityPost";
 import { noteForPost } from "./communitySave";
 import { markdownToPageContent } from "./mdPreview";
 import { useTagManagerStore } from "../store/tagManager";
+import { usePropertyUiStore } from "../store/propertyUi";
 
 /**
  * `create_page` 要的正文载荷：**从笔记 store 的 `createPage` 签名派生**，不在这里重写一遍字段名。
@@ -126,6 +127,7 @@ export async function savePostAsNote(post: CommunityPost, deps: SavePostDeps): P
     发布于: communityDateTime(post.createdAt),
     存于: localNow(deps.now),
   };
+  let propsWritten = 0;
   try {
     const defs = await deps.invoke<AttrDef[]>("list_attr_defs");
     for (const spec of NOTE_ATTR_SPECS) {
@@ -138,10 +140,16 @@ export async function savePostAsNote(post: CommunityPost, deps: SavePostDeps): P
         });
       }
       await deps.invoke("set_page_prop", { args: { page_id: pageId, attr_id: def.id, value } });
+      propsWritten += 1;
     }
   } catch (e) {
     warnings.push(`属性没写上（${msg(e)}）`);
   }
+  // 属性区是**自己拉** `getPageProps` 的（本地 state），而这些属性是绕过它那条写路径打的命令
+  // ⇒ 不通知它，就得**重新打开这一页**才看得到（2026-09-23 用户实测）。
+  // 标签那边同理，靠的是 `useTagManagerStore.bump()`；属性这边是 `usePropertyUiStore.bumpProps()`。
+  // 只在**真写了**的时候 bump：CREATE 都没写就别让它白重拉一次。
+  if (propsWritten > 0) usePropertyUiStore.getState().bumpProps();
 
   return { pageId, error: "", warnings };
 }
