@@ -2,7 +2,13 @@
 //      ＋ 私有 CARGO_HOME 的**按 job** 交接（2026-09-25 CI 实测教出来的）
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkText, gmPipelineRequirements, gmCargoHomeHandoffProblems, splitJobs } from "./check-workflow-yaml.mjs";
+import {
+  checkText,
+  gmCargoHomeHandoffProblems,
+  gmHandoffOrderProblems,
+  gmPipelineRequirements,
+  splitJobs,
+} from "./check-workflow-yaml.mjs";
 
 const GOOD = `
       - name: ★ 库级国密（单一口味）
@@ -150,5 +156,36 @@ jobs:
       - run: node scripts/sm-library-build.mjs --prepare
 `;
     expect(gmCargoHomeHandoffProblems(text, { file: "x.yml" }).length).toBe(1);
+  });
+});
+
+describe("第四条规则：交接不能早于 `--prepare`（2026-09-25 dry run：release.yml 的 ubuntu step 15 就是这么红的）", () => {
+  const JOB = (body) => `jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n${body}`;
+  const PREP = `      - name: ★ 库级国密\n        run: node scripts/sm-library-build.mjs --prepare\n`;
+  const HAND = `      - name: 交接\n        run: node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"\n`;
+
+  it("prepare 在前 ⇒ 绿", () => {
+    expect(gmHandoffOrderProblems(JOB(PREP + HAND), { file: "release.yml" })).toEqual([]);
+  });
+
+  it("★ 变异：交接挪到 prepare 之前 ⇒ 红，且点名那个 job", () => {
+    const p = gmHandoffOrderProblems(JOB(HAND + PREP), { file: "release.yml" });
+    expect(p.length).toBe(1);
+    expect(p[0]).toContain("`build`");
+    expect(p[0]).toContain("--prepare");
+  });
+
+  it("同一个 `run:` 里先 prepare 再交接（Windows 桌面那种写法）⇒ 绿", () => {
+    const same = `      - name: ★ 库级国密\n        run: |\n          node scripts/sm-library-build.mjs --prepare --require-static\n          node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"\n`;
+    expect(gmHandoffOrderProblems(JOB(same), { file: "release.yml" })).toEqual([]);
+  });
+
+  it("只写了 prepare、没写交接 ⇒ 不归这条管（第三条规则管它）", () => {
+    expect(gmHandoffOrderProblems(JOB(PREP), { file: "release.yml" })).toEqual([]);
+  });
+
+  it("只在**注释**里提到交接 ⇒ 不算（注释不能替命令背书）", () => {
+    const commented = `      - name: ★ 库级国密\n        # node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"\n        run: node scripts/sm-library-build.mjs --prepare\n`;
+    expect(gmHandoffOrderProblems(JOB(commented), { file: "release.yml" })).toEqual([]);
   });
 });

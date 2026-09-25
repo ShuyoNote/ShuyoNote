@@ -38,6 +38,14 @@
 //   按文件找"有没有那一行"会得到"有"，**那正是这一版之前会有的假绿**。
 //   ⚠️ 边界与前两条一样：它证明"交接那一行在场"，不证明"它指对了路径"。
 //
+// ★ 第四条规则（2026-09-25 加，**同一天第二回 CI 实测教出来的**）：同一个 job 里，**交接不能早于 `--prepare`**。
+//   为什么：`--print-env` **目前不是只读的**（补丁那段的 `patchApplyDecision` 没给 `--check`/`--no-apply` 时默认为真）
+//   ⇒ 提前调它会把 `CARGO_HOME` 指到 `.gm-build/cargo-home`（并把它写进 `$GITHUB_ENV`）；
+//   此后同 job 的 `--prepare` 解析"共享 registry 源码"时就会去私有 home 里找 ⇒ `ENOENT`。
+//   实测：run 36098799341（release dry-run，`release.yml` 的 ubuntu job **step 15** 红、`Build bundles` 被 skip），
+//   原文 `sm-library-build: ❌ ENOENT: … .gm-build/cargo-home/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2`。
+//   ⚠️ 这条与第三条是一对：第三条管"有没有交接"，这条管"交接得早不早"。
+//
 // 覆盖范围：`.github/workflows/*.yml|yaml` 与 `.gitcode/workflows/*.yml|yaml`，
 // 用 readdirSync 枚举（不写死文件名）。
 //
@@ -153,6 +161,42 @@ export function gmCargoHomeHandoffProblems(text, { file = "workflow" } = {}) {
   return problems;
 }
 
+/**
+ * 纯函数：**交接不能早于 `--prepare`**（同一个 job 内，按行序看）。
+ *
+ * 为什么（2026-09-25 的 release dry-run 实测，run 36098799341 的 ubuntu job step 15）：
+ * `--print-env` **目前不是只读的** —— 补丁那一段的 `patchApplyDecision` 在没有 `--check`/`--no-apply`
+ * 时**默认为真**，所以 `--print-env` 自己就会建隔离（`.gm-build/cargo-home` 出现）并因此把
+ * **私有** `CARGO_HOME` 写进 `$GITHUB_ENV`。此后同一个 job 里的 `--prepare` 就会拿私有 home 去解析
+ * "共享 registry 源码" ⇒ 一条不存在的路径 ⇒ `ENOENT`（现场像"源码没了"，其实是**交接早了**）：
+ *
+ *     Linux system deps:  node … --print-env >> "$GITHUB_ENV"   ← 提前交接（隔离被它建出来）
+ *     ★ 库级国密:          node … --prepare                     ← 此时 CARGO_HOME 已是私有 home ⇒ 红
+ *
+ * 判据只看 `--print-env >> …` 这种写法：`CARGO_HOME: …/.gm-build/…` 那种是 job 级 env，无先后可言。
+ * 与第三条一样，**只看非注释行**、**按 job 切**。
+ */
+export function gmHandoffOrderProblems(text, { file = "workflow" } = {}) {
+  const problems = [];
+  for (const { job, text: body } of splitJobs(text)) {
+    const lines = body.split("\n");
+    const firstMatch = (re) => lines.findIndex((l) => !l.trim().startsWith("#") && re.test(l));
+    const prep = firstMatch(/sm-library-build\.mjs[^\n]*--prepare/);
+    const handoff = firstMatch(/sm-library-build\.mjs[^\n]*--print-env[^\n]*>>/);
+    if (prep < 0 || handoff < 0) continue;
+    if (handoff < prep) {
+      problems.push(
+        `${file}：job \`${job}\` 里 \`sm-library-build.mjs … --print-env >> "$GITHUB_ENV"\` 出现在 \`--prepare\` **之前**` +
+          "（`--print-env` **不是只读的**：它会自己建隔离 ⇒ 于是把**私有** `CARGO_HOME` 提前交出去，" +
+          "后面的 `--prepare` 就会拿私有 home 去解析共享 registry 源码 ⇒ `ENOENT`；" +
+          "2026-09-25 dry run：`release.yml` 的 Linux 桌面 job step 15 就是这么红的，`Build bundles` 被 skip）" +
+          "；修法：把交接挪到 `--prepare` **之后**（`release.yml` 的规范位置是国密那一步的末尾，与 android job 同名同形）",
+      );
+    }
+  }
+  return problems;
+}
+
 function indentWidth(line) {
   let n = 0;
   for (const ch of line) {
@@ -257,6 +301,8 @@ for (const f of files) {
   }
   // ★ 第三条规则对**所有** workflow 生效：哪个 job 跑了 `--prepare`，那个 job 就得自己交接私有 `CARGO_HOME`
   for (const p of gmCargoHomeHandoffProblems(text, { file: path })) gmBad.push(p);
+  // ★ 第四条规则（2026-09-25，同一天第二回 CI 实测教出来的）：交接**不能早于** `--prepare`
+  for (const p of gmHandoffOrderProblems(text, { file: path })) gmBad.push(p);
 }
 
 if (gmBad.length) {

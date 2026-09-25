@@ -113,8 +113,14 @@ jobs:
           #   （`/usr/lib/x86_64-linux-gnu/`），而 `openssl-sys` 只看 `<OPENSSL_DIR>/lib|lib64`
           #   ⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64","/usr/lib"]
           #   does not contain the required files…`）。⇒ 交给唯一实现去翻译这三个变量。
+          #
+          # ⚠️⚠️ 但**这里不要再翻译一次**（2026-09-25 release dry-run 实测，run 36098799341 的 ubuntu step 15）：
+          #   `--print-env` **不是只读的** —— 它会自己建隔离（`.gm-build/cargo-home` 于是存在），
+          #   因而把**私有** `CARGO_HOME` 提前交进后续 step；而紧接着的「★ 库级国密」要跑 `--prepare`，
+          #   它会拿那个私有 home 去解析"共享 registry 源码" ⇒ 一条不存在的路径 ⇒ `ENOENT`，
+          #   现场读起来像"源码没了"，其实是**交接早了**（`Build bundles` 被 skip）。
+          #   ⇒ 前缀在本步只 `export` 给自己用；**规范的交接在国密那一步的末尾**（与 android job 同名同形）。
           export OPENSSL_DIR=/usr
-          node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
 
       - name: Install frontend deps
         run: pnpm install --no-frozen-lockfile
@@ -195,6 +201,9 @@ jobs:
           else
             # Linux runner 的 OpenSSL 3 自带 SM3/SM4；这里**不要求**静态（系统库是共享的，
             # 依赖由 deb 的 shlibs 声明）—— 各平台口径写在 docs/RELEASING.md 的「单一口味」一节
+            # ★ 前缀在本步自己钉（2026-09-25 从「Linux system deps」挪过来）：那一步只 `export` 给自己用，
+            #   因为**在这里之前**交接私有 `CARGO_HOME` 会让下面这句 `--prepare` 必红（见那一步的注释）。
+            export OPENSSL_DIR=/usr
             node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare
           fi
           # ★ 把前缀翻译成**两个 crate 都认**的三个变量，写进后续 step 的环境
