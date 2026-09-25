@@ -26,14 +26,23 @@
 //!   别把 HLC 当时间审计用（`wall_ms` 不是可信时间）。
 //! - **它还没接线**：本片只落纯函数与判据，产品路径一行没动（接线清单见文件末 §接线）。
 //!
-//! ## §接线（下一片要做的事，别漏）
+//! ## §接线（决策简报 §13 的 ② / ③，别漏）
 //!
-//! 1. 在 `db.rs` 给"过网的那几条记录"各加一列版本戳（文本、可比、可索引 —— `encode()` 就是
-//!    为它准备的：**字典序 == HLC 序**）；
-//! 2. `sync.rs` 的 apply 分支（今天那个 `match` 里"没有 `INSERT INTO changes`"的地方）改成
-//!    "读对端戳 ⇒ `observe` ⇒ 与本地戳比 ⇒ 谁赢写谁"，并把本地戳一并存下；
+//! **②（纯函数这一半已经落了）**：`with_stamp` / `stamp_of_payload` / `without_stamp` / `verdict`
+//! —— 推那一侧挂戳、收那一侧**先读戳再决定走哪条路**。
+//! ⚠️ **② 的接线还没做**：今天产品路径**一个戳都不挂** ⇒ 这一层眼下**没有调用方**
+//! （`lib.rs` 里那行 `#[allow(dead_code)]` 就是它）。
+//!
+//! **③（对等交换面）**：
+//! 1. 推那一侧：给每条记录挂上**本机**的戳（`tick`）—— `with_stamp` 已经写好；
+//! 2. 收那一侧：`stamp_of_payload` ⇒ `verdict`；`ByStamp` 才按戳判，`Today` 就**原样走今天那条路**
+//!    并把原因**留痕**（`eprintln!("[sync] …")`，与 F7b 同一手法）；
 //! 3. `sync_profiles.last_pushed_seq` 那套水位推广成 **per-peer**（"我见过 A 到某时某刻"）；
 //! 4. 删掉 `lib.rs` 里 `mod hlc;` 上面那行 `#[allow(dead_code)]`（它只是"还没接线"的收据）。
+//!
+//! ⚠️ **不新开 schema 列**：戳随**载荷**走（`_hlc` 这一项），老对端读不懂就忽略 ——
+//! 与 `crdt_wire` 把 `crdt_state` 挂在载荷上同一手法。`encode()` 那份"字典序 == HLC 序"的
+//! 定长文本仍然留着：将来真要把戳落成一列时直接可用。
 
 use serde::{Deserialize, Serialize};
 
@@ -236,6 +245,110 @@ pub fn projection(store: &std::collections::BTreeMap<String, StampedRecord>) -> 
     serde_json::to_string(&live).expect("投影由本层构造，序列化不可能失败")
 }
 
+// ─────────────────────── 丙-②：戳挂到**记录载荷**上（纯函数） ───────────────────────
+//
+// 决策简报 §13 的 ②：「戳挂到记录上：读 / 挂 / 去掉 ＋ **有戳按戳判胜负、没戳走今天那条路**」。
+//
+// 戳放在**载荷对象里的一项**（`_hlc`），不新开 schema 列 —— 与 `crdt_wire` 把 `crdt_state`
+// 挂在载荷上同一手法。理由：**老对端零感知**（它读不懂就忽略），而且不用动 `changes` 表。
+// ⚠️ 代价也同 `crdt_wire`：重新序列化会按 `serde_json` 的默认键序（BTreeMap）输出 ⇒
+//    只给"挂 / 读 / 比较"用，**不是**落盘形态的原样保证。
+
+/// 载荷里那一项的名字（只在这里写一次字面量）。
+///
+/// ⚠️ 以 `_` 开头是**故意**的：它是一个"我们自己的注解"，不是页面内容的一部分 ——
+/// 谁看到它都该当成元数据，而 `without_stamp` 会在**内容比较**之前把它去掉。
+pub const HLC_PAYLOAD_FIELD: &str = "_hlc";
+
+/// 从记录载荷里读戳。**三种情形必须分得开**（与 `crdt_wire::WireState` 同一条纪律）：
+/// "没有"与"有但读不出来"混成一种，就会把对端的版本**静默**当成"没带戳"。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PayloadStamp {
+    /// 载荷里**没有**这一项（或载荷不是对象 / 根本不是 JSON）⇒ 老对端 ⇒ 走今天那条路。
+    Missing,
+    /// 读出来了。
+    Ok(Hlc),
+    /// 有这一项，但**不是一枚合法的戳** ⇒ **不猜**（调用方留痕）。
+    Malformed(String),
+}
+
+/// 读载荷里的戳。**不抛错**：三种情形都在返回值里（调用方按它决定走哪条路）。
+pub fn stamp_of_payload(payload_json: &str) -> PayloadStamp {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(payload_json) else {
+        // 载荷不是 JSON / 解析不出来：**不是本函数的事**（调用方本来也会因为解析不出记录而跳过）
+        // ⇒ 如实回"没有这一项"，不制造第二种失败。
+        return PayloadStamp::Missing;
+    };
+    let Some(obj) = value.as_object() else {
+        return PayloadStamp::Missing; // 形状不是对象 ⇒ 当"没有"（与 `crdt_wire` 同一口径）
+    };
+    match obj.get(HLC_PAYLOAD_FIELD) {
+        None => PayloadStamp::Missing,
+        Some(serde_json::Value::Null) => PayloadStamp::Missing,
+        Some(serde_json::Value::String(s)) => match Hlc::decode(s) {
+            Some(hlc) => PayloadStamp::Ok(hlc),
+            // 有一项、形状也对，但**不是一枚合法的戳** ⇒ 不猜（短写、缺格、负数都会被 `decode` 拒掉）。
+            None => PayloadStamp::Malformed(format!("`{HLC_PAYLOAD_FIELD}` 不是一枚合法的戳：{s}")),
+        },
+        Some(other) => PayloadStamp::Malformed(format!("`{HLC_PAYLOAD_FIELD}` 应当是字符串，收到 {other}")),
+    }
+}
+
+/// 把戳挂到载荷上（**推**那一侧用）。与 `crdt_wire::with_wire_state` 同一形状与同一口径：
+/// **不是 JSON ⇒ 响亮报错**（那是我们自己的载荷坏了，不该猜）；JSON 但非对象 ⇒ **原样返回**
+/// （形态是别人定的，包一层会改掉它的字节）。
+pub fn with_stamp(payload_json: &str, stamp: &Hlc) -> Result<String, String> {
+    let mut value: serde_json::Value = serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+    let Some(obj) = value.as_object_mut() else {
+        return Ok(payload_json.to_string());
+    };
+    obj.insert(HLC_PAYLOAD_FIELD.to_string(), serde_json::Value::String(stamp.encode()));
+    serde_json::to_string(&value).map_err(|e| e.to_string())
+}
+
+/// 把戳**去掉** —— ★ **只给内容比较用**，不是落盘形态。
+///
+/// 为什么必须有它：戳是"我们自己的注解"，要是拿它参与"这一页变没变"的比较，
+/// **每一次重发**都会被判成"内容变了"（`block_rev` 当初撞过同一堵墙，见它的口径 3）。
+///
+/// 任何解析不出来的输入**原样返回**（这里不抛：它只是"把注解擦掉"，擦不掉就不擦）。
+pub fn without_stamp(payload_json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(payload_json) else {
+        return payload_json.to_string();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return payload_json.to_string();
+    };
+    obj.remove(HLC_PAYLOAD_FIELD);
+    serde_json::to_string(&value).unwrap_or_else(|_| payload_json.to_string())
+}
+
+/// **该谁赢** —— 丙的判序；两条混用时的那条规则就写死在这里（简报 §13 ②）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// 两边**都**带戳 ⇒ 按戳判。`remote_wins == false` ＝ 本地那版留（含"同一枚戳再来一次"）。
+    ByStamp { remote_wins: bool },
+    /// 只要有**一边**没带戳（含"带了但读不出来"）⇒ 这一笔**整条走今天那条路**
+    /// （调用方**不去看戳**），并把原因带上 —— 退化了就要能说出来。
+    Today(&'static str),
+}
+
+/// ★ 判序：**两边都有戳才按戳判**；只要缺一边，就**完全**走今天那条路。
+///
+/// 为什么缺一边要**整条退回**，而不是"有戳的那边赢"：混用期里升级方每一笔都带戳、
+/// 未升级方一笔都不带 —— 若"有戳的赢"，升级方就会**永久压过**未升级方**后发生**的编辑，
+/// 那是**静默丢更新**。退回今天那条路则是"这一笔按老规矩判"，两边算出来一样，
+/// 而且**逐字节等于没上这一片之前**（这正是本片的 ★ 判据）。
+pub fn verdict(local: &PayloadStamp, remote: &PayloadStamp) -> Verdict {
+    match (local, remote) {
+        (PayloadStamp::Ok(l), PayloadStamp::Ok(r)) => Verdict::ByStamp { remote_wins: r > l },
+        (PayloadStamp::Malformed(_), _) => Verdict::Today("本地那版带了戳但读不出来（不猜）"),
+        (_, PayloadStamp::Malformed(_)) => Verdict::Today("远端那版带了戳但读不出来（不猜）"),
+        (PayloadStamp::Missing, _) => Verdict::Today("本地那版没带戳（老对端 / 还没升级）"),
+        (_, PayloadStamp::Missing) => Verdict::Today("远端那版没带戳（老对端 / 还没升级）"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,5 +540,128 @@ mod tests {
             projection(&store),
             r#"[{"id":"k1","stamp":{"wallMs":1,"counter":0,"deviceId":"A"},"body":"一"},{"id":"k2","stamp":{"wallMs":2,"counter":0,"deviceId":"A"},"body":"二"}]"#
         );
+    }
+
+    // ═══════════════ 丙-②：戳挂到记录载荷上 ＋ 混用规则 ═══════════════
+
+    /// 一份"页面载荷"（就是真载荷的形状：一个 JSON 对象）。
+    fn payload(title: &str) -> String {
+        serde_json::json!({ "id": "p1", "title": title, "content_json": "{}" }).to_string()
+    }
+
+    #[test]
+    fn a_stamp_rides_in_the_payload_and_comes_back_out_unchanged() {
+        let stamp = hlc(1_700_000_000_123, 7, "device-A");
+        let stamped = with_stamp(&payload("标题"), &stamp).unwrap();
+        assert_eq!(stamp_of_payload(&stamped), PayloadStamp::Ok(stamp.clone()));
+        // 挂上之后**内容没变**（只是多了一项注解）
+        let stripped = without_stamp(&stamped);
+        assert!(!stripped.contains(HLC_PAYLOAD_FIELD), "{stripped}");
+        let a: serde_json::Value = serde_json::from_str(&payload("标题")).unwrap();
+        let b: serde_json::Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(a, b, "去掉戳之后必须与原载荷同值");
+    }
+
+    /// ★ 三种情形**分得开**：没有 / 有且合法 / 有但坏（**不猜**）。
+    #[test]
+    fn the_three_stamp_states_are_told_apart() {
+        assert_eq!(stamp_of_payload(&payload("没有这一项")), PayloadStamp::Missing);
+        assert_eq!(
+            stamp_of_payload(r#"{"id":"p1","_hlc":null}"#),
+            PayloadStamp::Missing,
+            "null 与'没有'同义"
+        );
+        // 形状不对 / 值不合法 ⇒ **Malformed**（不是 Missing：混成一种就会静默当成"老对端"）
+        for bad in [
+            r#"{"_hlc":123}"#,
+            r#"{"_hlc":"1000:1:A"}"#,       // 短写（`decode` 只认规范形态）
+            r#"{"_hlc":"0000000000000001000:0000000001:"}"#, // 空设备号
+            r#"{"_hlc":["x"]}"#,
+        ] {
+            assert!(
+                matches!(stamp_of_payload(bad), PayloadStamp::Malformed(_)),
+                "{bad} 应当如实报'读不出来'，而不是当成没带戳"
+            );
+        }
+        // 不是对象 / 根本不是 JSON ⇒ "没有这一项"（不是本函数的事，不制造第二种失败）
+        assert_eq!(stamp_of_payload("[1,2]"), PayloadStamp::Missing);
+        assert_eq!(stamp_of_payload("not json"), PayloadStamp::Missing);
+    }
+
+    #[test]
+    fn attaching_a_stamp_never_edits_someone_elses_bytes() {
+        // 非对象 ⇒ 原样返回（形态是别人定的，包一层会改掉它的字节）
+        assert_eq!(with_stamp("[1,2]", &hlc(1, 0, "A")).unwrap(), "[1,2]");
+        // 根本不是一个 JSON 对象字符串 ⇒ **响亮报错**（那是我们自己的载荷坏了，不猜）
+        assert!(with_stamp("not json", &hlc(1, 0, "A")).is_err());
+        // 去掉戳对读不出来的输入**不抛**（擦不掉就不擦）
+        assert_eq!(without_stamp("not json"), "not json");
+    }
+
+    /// ★ 去戳**只给比较用**：同一内容、只差戳 ⇒ 去戳之后逐字节相同（否则每次重发都算"内容变了"）。
+    #[test]
+    fn the_stamp_is_excluded_from_content_comparison() {
+        let one = with_stamp(&payload("同"), &hlc(10, 0, "A")).unwrap();
+        let two = with_stamp(&payload("同"), &hlc(20, 0, "B")).unwrap();
+        assert_ne!(one, two);
+        assert_eq!(without_stamp(&one), without_stamp(&two), "只差一枚戳 ⇒ 内容必须相同");
+        // 与"键序不同"也无关（serde_json 默认键序 ⇒ 两侧都走同一条规范化）
+        let reordered = r#"{"content_json":"{}","title":"同","id":"p1"}"#;
+        assert_eq!(without_stamp(&one), without_stamp(reordered));
+    }
+
+    /// ★ 两边都有戳 ⇒ **按戳判**，且与"谁先算"无关（两边算出来同一个赢家）。
+    #[test]
+    fn both_sides_stamped_is_decided_by_the_stamp_and_is_order_independent() {
+        let early = PayloadStamp::Ok(hlc(1_000, 0, "A"));
+        let late = PayloadStamp::Ok(hlc(1_001, 0, "B"));
+        assert_eq!(verdict(&early, &late), Verdict::ByStamp { remote_wins: true });
+        assert_eq!(verdict(&late, &early), Verdict::ByStamp { remote_wins: false });
+        // 同一枚戳再来一次 ⇒ **不算更新**（幂等：本地留着，别把同一版又写一遍）
+        assert_eq!(verdict(&late, &late), Verdict::ByStamp { remote_wins: false });
+        // 同一毫秒并发 ⇒ 由**设备号**分开（判序是全序，不会平局）
+        let a = PayloadStamp::Ok(hlc(7, 0, "A"));
+        let b = PayloadStamp::Ok(hlc(7, 0, "B"));
+        assert_eq!(verdict(&a, &b), Verdict::ByStamp { remote_wins: true });
+        assert_eq!(verdict(&b, &a), Verdict::ByStamp { remote_wins: false });
+    }
+
+    /// ★★ 混用规则：**只要有一边没带戳，这一笔整条走今天那条路**，并且**说得出原因**。
+    ///
+    /// 咬人的地方：把这一支改成"有戳的那边赢"⇒ 升级方会永久压过未升级方后发生的编辑
+    /// （静默丢更新），而这条判据会当场红。
+    #[test]
+    fn one_side_without_a_stamp_falls_back_to_today_and_says_why() {
+        let stamped = PayloadStamp::Ok(hlc(1_000, 0, "A"));
+        let missing = PayloadStamp::Missing;
+        let broken = PayloadStamp::Malformed("坏了".to_string());
+
+        for (local, remote) in [
+            (&missing, &stamped),
+            (&stamped, &missing),
+            (&missing, &missing),
+            (&stamped, &broken),
+            (&broken, &stamped),
+        ] {
+            match verdict(local, remote) {
+                Verdict::Today(why) => assert!(!why.is_empty(), "退回了就要说得出为什么"),
+                other => panic!("混用时**不许**按戳判（否则会静默丢更新）：{other:?}"),
+            }
+        }
+        // 理由要能把三种情形分开（否则"留痕"等于没留）
+        let reasons: Vec<&str> = [
+            verdict(&missing, &stamped),
+            verdict(&stamped, &missing),
+            verdict(&stamped, &broken),
+        ]
+        .into_iter()
+        .map(|v| match v {
+            Verdict::Today(w) => w,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+        assert_eq!(reasons[0], "本地那版没带戳（老对端 / 还没升级）");
+        assert_eq!(reasons[1], "远端那版没带戳（老对端 / 还没升级）");
+        assert!(reasons[2].contains("读不出来"), "{}", reasons[2]);
     }
 }
