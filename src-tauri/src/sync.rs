@@ -756,6 +756,61 @@ fn effective_base(c: &Connection, profile: &SyncProfile) -> String {
     base_for(profile, &peers)
 }
 
+/// 同 [`effective_base`]，但**直接吃 `(space_id, server_url)`** —— 给 `claim_config`
+/// 那一族用：`lineage-claim` 读的是 `sync_profiles` 的列，**手上没有 `SyncProfile`**
+/// （见 `claim_config` 的注释），所以基址解析不能只认 `SyncProfile` 这一种入参形状。
+///
+/// ⚠️ `None` 而不是空串：调用方本来就有一支"没绑定 ⇒ 连请求都不发"（`claim_config` 给 `None`），
+/// 返回空串会让那条分支多一个"地址为空"的暗礁。`Some("")` 在 `claim_config` 那条路上不可达
+/// （它已经把空 `server_url` 挡在外面了）。
+pub(crate) fn effective_base_for(c: &Connection, space_id: &str, server_url: &str) -> Option<String> {
+    let peers = match device_id(c) {
+        Ok(id) => LanState::global(&id).peers(crate::db::now_ms()),
+        Err(_) => Vec::new(),
+    };
+    if peers.is_empty() {
+        // 没发现到任何对端 ⇒ **逐字节**就是配置地址（连 `resolve_base` 的 URL 规整都不抄一遍）。
+        return Some(server_url.to_string());
+    }
+    effective_base_from(space_id, server_url, &peers)
+}
+
+/// [`effective_base_for`] 的**纯函数**那一半（对端表由调用方给）⇒ 判据不去动进程级单例。
+///
+/// ⚠️ 没有对端时**不做任何规整**（原样回配置地址）：发现层没东西时，基址必须与今天逐字节相同。
+fn effective_base_from(space_id: &str, server_url: &str, peers: &[Peer]) -> Option<String> {
+    if peers.is_empty() {
+        return Some(server_url.to_string());
+    }
+    lan::resolve_base(space_id, server_url, peers).map(|r| r.url)
+}
+
+/// 上面那一族拼出来的**三条 URL**（纯函数 ⇒ 每一处的地址都有判据钉着）。
+///
+/// 抽出来的理由与 `attachment_base` 同一条：这几条 URL 以前散在 `do_push` / `do_pull` /
+/// `claim_page_lineage` 里各写一遍格式串，而甲-1 要把**基址**换掉 —— 只改一处、别处漏掉
+/// 的表现是"push 走局域网、pull 还走公网"，**能编译、单测照绿**，只有真机拔网线才看得出来。
+fn push_url(base: &str) -> String {
+    format!("{}/push", base.trim_end_matches('/'))
+}
+
+/// `since` 与两个可选的过滤参数（`space_id` / `exclude_device`）都要**原样拼上**：
+/// 少了 `space_id` 服务端会按"没绑空间"那一支回，少了 `exclude_device` 会把自己推的拉回来。
+fn pull_url(base: &str, since: i64, space_id: &str, exclude_device: Option<&str>) -> String {
+    let mut url = format!("{}/pull?since={since}&limit=500", base.trim_end_matches('/'));
+    if !space_id.is_empty() {
+        url.push_str(&format!("&space_id={space_id}"));
+    }
+    if let Some(d) = exclude_device {
+        url.push_str(&format!("&exclude_device={d}"));
+    }
+    url
+}
+
+fn lineage_claim_url(base: &str) -> String {
+    format!("{}/lineage-claim", base.trim_end_matches('/'))
+}
+
 /// 附件接口的 URL 前缀。**同步下载与按需下载必须走同一处**（P6.3 抽出）：
 /// 绑了团队空间走 space 作用域，否则退回旧的全局路径 —— 服务端两条路由都在，
 /// 但"哪一条"由 `space_id` 决定，两边各写一遍迟早会漂。
@@ -1642,18 +1697,26 @@ pub(crate) fn claim_config(c: &Connection, workspace_id: &str) -> Result<Option<
 /// 只有**真出了不该出的错**（库读不了）才 `Err` —— 那是 bug，要响。
 #[tauri::command]
 pub async fn claim_page_lineage(db: State<'_, Db>, args: LineageClaimArgs) -> Result<LineageClaimResult, String> {
-    let (server_url, token, space_id, device_id) = {
+    let (token, space_id, device_id, effective) = {
         let c = db.0.lock().expect("db mutex poisoned");
         match claim_config(&c, &args.workspace_id)? {
             // 没配同步／没选空间都是**正常情况**（本机就该走"离线"那一支）⇒ 不抛。
             None => return Ok(LineageClaimResult::offline()),
             Some((server_url, token, space_id)) => {
-                (server_url, token, space_id, device_id(&c).unwrap_or_default())
+                // ★ 甲-1 接线：`claim_config` 手上只有 `(space_id, server_url)`（不是 `SyncProfile`）
+                //   ⇒ 基址由 `effective_base_for` 解析（局域网发现到的中枢优先）。
+                let effective = effective_base_for(&c, &space_id, &server_url);
+                (token, space_id, device_id(&c).unwrap_or_default(), effective)
             }
         }
     };
-
-    let url = format!("{}/lineage-claim", server_url.trim_end_matches('/'));
+    // 没发现到对端 ⇒ 逐字节就是配置地址；`effective_base_for` 只在配置地址为空时给 `None`
+    //（那条路 `claim_config` 已经挡掉了）⇒ 这里`None` 等同于"没有地址可发"。
+    let Some(base) = effective else {
+        return Ok(LineageClaimResult::offline());
+    };
+    // 凭证仍按**配置地址**取（`claim_config` 就是这么取的），只有请求地址换档。
+    let url = lineage_claim_url(&base);
     let client = reqwest::Client::new();
     let mut req = client.post(&url).json(&serde_json::json!({
         // ★ **远端** space id（档案里那一个），不是 `args.workspace_id`。
@@ -2271,8 +2334,12 @@ async fn do_push(
         .collect();
 
     let client = reqwest::Client::new();
+    // ★ 甲-1 接线：基址走 `effective_base`（局域网中枢优先；没发现到对端 ⇒ 与今天逐字节相同）。
+    // ⚠️ 只有**请求地址**换档；凭证仍然按**配置地址**取（`auth_sessions` 是按配置的
+    //    `server_url` 存的，拿局域网地址去查必然查不到 ⇒ 会静默退化成档案里那份旧 token）。
+    let base = { let c = db.0.lock().expect("db mutex poisoned"); effective_base(&c, profile) };
     let mut req = client
-        .post(format!("{}/push", profile.server_url))
+        .post(push_url(&base))
         .json(&PushRequest { device_id, space_id: profile.space_id.clone(), changes });
     let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
     if !token.is_empty() {
@@ -2522,13 +2589,15 @@ async fn do_pull(
         let c = db.0.lock().expect("db mutex poisoned");
         device_id(&c).ok()
     };
-    let mut url = format!("{}/pull?since={last_pulled}&limit=500", profile.server_url);
-    if !profile.space_id.is_empty() {
-        url.push_str(&format!("&space_id={}", profile.space_id));
-    }
-    if let Some(d) = &my_device {
-        url.push_str(&format!("&exclude_device={d}"));
-    }
+    // ★ 甲-1 接线：基址同样走 `effective_base`（"基址只出一处"——与 push/附件同源）。
+    // 凭证按**配置地址**取（理由同 `do_push` 那一处）。
+    let base = { let c = db.0.lock().expect("db mutex poisoned"); effective_base(&c, profile) };
+    let url = pull_url(
+        &base,
+        last_pulled,
+        &profile.space_id,
+        my_device.as_deref(),
+    );
     let mut req = client.get(&url);
     let token = { let c = db.0.lock().expect("db mutex poisoned"); get_auth_token(&c, &profile.server_url).unwrap_or_else(|| profile.token.clone()) };
     if !token.is_empty() {
@@ -2570,6 +2639,107 @@ async fn do_pull(
         out.unresolved_page_ids.len(),
         out.pending_remote_ids.len(),
     ))
+}
+
+/// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
+///
+/// 口径（简报 §7）：**「没走成直连」必须是一个可断言的结果，不是静默降级** ——
+/// 所以这里回的是 `lan::status_line` 的**原文**加几个可断言的读数，界面直接显示：
+///   · `enabled`：发现层现在开着吗（没绑同步 ⇒ 关，广播/监听整条不起）；
+///   · `peers`：**活着**的对端数（过 TTL 的不算 —— 与地址解析用的是同一把尺）。
+///
+/// ⚠️ **档位只由 `Route` 决定**（`lan::status_line` 内部那条纪律）：这里**不**按地址形状
+/// 自己判一次，否则用户把配置地址填成 `http://192.168.x.y` 时界面会说「局域网」而实际走公网。
+/// ⚠️ 这是**唯一**会把地址解析结果拿出来给人看的地方（同步请求本身照旧不打印地址）。
+#[tauri::command]
+pub fn lan_status(
+    db: State<'_, Db>,
+    workspace_id: Option<String>,
+) -> Result<LanStatus, String> {
+    let now = crate::db::now_ms();
+    let (device_id, profiles) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut stmt = c
+            .prepare(
+                "SELECT p.space_id, p.server_url, p.ws_id FROM sync_profiles p
+                 WHERE EXISTS (
+                     SELECT 1 FROM meta.workspaces w
+                     WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+                 )",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| e.to_string())?;
+        let profiles: Vec<(String, String, String)> =
+            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+        (device_id(&c).unwrap_or_default(), profiles)
+    };
+
+    // ★ 启动监听/广播（施工单 §7 第 1 件）由 **Tauri `setup`** 在进程起来时就做了
+    //   （见 `lib.rs` 里那一段的注释：不等界面第一次调本命令 —— 否则"面板没开过"的会话
+    //   永远不会有局域网路由）。这里只如实读数，**不再**顺手起一次（起两次虽然幂等，
+    //   但那是第二个入口，多一条能走岔的路）。
+    let state = LanState::global(&device_id);
+    let enabled = state.is_enabled();
+    // ⚠️ 状态行的"N 台"用**活着**的（与地址解析同源，同一把尺）；`observed` 只作诊断
+    //   （表里一共有过多少台 —— "来过又走了"由状态行自己如实说出来）。
+    let peers = state.peers(now);
+    let observed = state.observed_all().len();
+
+    // 这一轮要显示的是**哪个空间**：指定了就用它，否则第一条绑定（面板是"当前空间"的）。
+    // ⚠️ 选哪个空间是**纯函数**（`pick_lan_scope`，带判据）：选错空间的表现是状态行说
+    //    "其中没有服务这个空间的中枢"，而用户明明配的就是那一个 —— 这种错单测之外的抓不住。
+    let picked = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let explicit = workspace_id.as_deref().and_then(|ws| get_profile(&c, ws).ok());
+        let fallback = profiles
+            .first()
+            .and_then(|(_, _, ws)| get_profile(&c, ws).ok());
+        pick_lan_scope(explicit, fallback)
+    };
+    let (space_id, server_url) = match picked {
+        Some((space, url)) => (space, url),
+        None => (String::new(), String::new()),
+    };
+    let route = lan::resolve_base(&space_id, &server_url, &peers);
+    // ★ 契约字面量由 `LinkKind::as_str` 出（与 `lan::tests` 判据 ⑥ 同一处）：
+    //   界面据此**只换标题、不重判档位**（重判就会说出与真实路由矛盾的档）。
+    let kind = route.as_ref().map(|r| r.kind.as_str()).unwrap_or("").to_string();
+    let line = lan::status_line(route.as_ref(), &peers, &space_id, observed);
+
+    Ok(LanStatus { enabled, peers: peers.len(), kind, line })
+}
+
+/// 状态行该报**哪个空间**（纯函数，带判据）：显式指定的那条优先，否则第一条绑定。
+///
+/// ⚠️ 两条路都可能"查不到"（指定的工作空间其实没配、或库里一条都没有）⇒ 一律回落，
+/// **不许**报错：这只是"面板上那一行字显示哪个空间"，不是同步请求。
+fn pick_lan_scope(
+    explicit: Option<SyncProfile>,
+    fallback: Option<SyncProfile>,
+) -> Option<(String, String)> {
+    let p = explicit.or(fallback)?;
+    Some((p.space_id, p.server_url))
+}
+
+/// `lan_status` 的形状（**前端契约**，见 `src/lib/platform/commands.ts` 的同名 interface）。
+#[derive(Serialize)]
+pub struct LanStatus {
+    /// 发现层现在开着吗（没绑同步 ⇒ 关）。
+    pub enabled: bool,
+    /// **活着**的对端数（过 `lan::PEER_TTL_MS` 的不算）。
+    ///
+    /// ⚠️ 与状态行里那个"N 台"**是同一个数**：界面不该自己再数一遍（数两遍就会漂）。
+    pub peers: usize,
+    /// 这一次走的是哪一档：`"lan"` / `"configured"` / `""`（尚未绑定）。
+    ///
+    /// ⚠️ 它来自 `Route`（`LinkKind::as_str`）—— 界面**只能拿它换标题**，
+    /// **不许**按地址形状自己再判一次档（判据 ⑭ 钉这条）。
+    pub kind: String,
+    /// **状态行原文**（`lan::status_line`）—— 界面直接显示这一串，
+    /// **不要**自己按地址形状再拼一次档位（那会说出与真实路由矛盾的档）。
+    pub line: String,
 }
 
 #[derive(Serialize)]
@@ -4457,6 +4627,124 @@ mod tests {
         // 公网地址的公告 ⇒ 不许当直连（`lan::is_lan_base` 那条口径在基址这一层的实测）
         let bogus = vec![lan_peer("dev-c", "http://8.8.8.8:8787", &["sp-1"])];
         assert_eq!(base_for(&p, &bogus), "https://s.example.com");
+    }
+
+    // ---- 甲-1 接线第 2 件的剩下 4 处（push / pull / lineage-claim / SSE 订流）----
+    //
+    // 手法与上面那两处**同形**：★ 没发现到对端时**逐字节等于今天**；
+    // ★ 发现到服务本空间的中枢 ⇒ 地址跟着换。四处共用 `effective_base` / `effective_base_from`
+    // 与三个 `*_url` 纯函数 ⇒ 判据喂**假的 `Peer` 列表**就够，**不碰进程级单例**
+    // （`cargo test` 是同进程多线程，动单例会污染别的测试）。
+
+    /// ★ 判据：**push 这条路的地址**。没发现到对端时逐字节等于今天（含 `https://…/` 的规整
+    /// 与"没绑地址 ⇒ 空"），发现到本空间的中枢时换成局域网地址。
+    #[test]
+    fn a_discovered_hub_moves_the_push_url_to_the_lan_address() {
+        let p = profile_for("sp-1", "https://s.example.com/");
+        // 没发现到任何对端 ⇒ 与今天**逐字节相同**
+        assert_eq!(effective_base_from("sp-1", &p.server_url, &[]).unwrap(), "https://s.example.com/");
+        assert_eq!(push_url(&p.server_url), "https://s.example.com/push");
+        // 发现到服务本空间的中枢 ⇒ 换成局域网地址
+        let mine = vec![lan_peer("dev-a", "http://192.168.1.5:8787", &["sp-1"])];
+        let base = effective_base_from("sp-1", &p.server_url, &mine).unwrap();
+        assert_eq!(push_url(&base), "http://192.168.1.5:8787/push");
+        // 别个空间的中枢 / 公网公告 ⇒ 回落配置地址
+        for peers in [
+            vec![lan_peer("dev-b", "http://192.168.1.6:8787", &["sp-other"])],
+            vec![lan_peer("dev-c", "http://8.8.8.8:8787", &["sp-1"])],
+        ] {
+            let base = effective_base_from("sp-1", &p.server_url, &peers).unwrap();
+            assert_eq!(push_url(&base), "https://s.example.com/push", "不许换档");
+        }
+    }
+
+    /// ★ 判据：**pull 这条路的地址**（基址换档，而 `since` / `space_id` / `exclude_device`
+    /// 这三段过滤参数**一个都不许少** —— 少了 `space_id` 服务端按"没绑空间"回，
+    /// 少了 `exclude_device` 会把自己推的又拉回来）。
+    #[test]
+    fn a_discovered_hub_moves_the_pull_url_and_keeps_its_filters() {
+        let p = profile_for("sp-1", "https://s.example.com/");
+        let today = pull_url(&p.server_url, 42, "sp-1", Some("dev-me"));
+        assert_eq!(today, "https://s.example.com/pull?since=42&limit=500&space_id=sp-1&exclude_device=dev-me");
+        // 没发现到对端 ⇒ 与今天逐字节相同；没绑空间 / 没设备 id 时那两段也不许凭空冒出来
+        assert_eq!(pull_url(&p.server_url, 7, "", None), "https://s.example.com/pull?since=7&limit=500");
+        let mine = vec![lan_peer("dev-a", "http://192.168.1.5:8787", &["sp-1"])];
+        let base = effective_base_from("sp-1", &p.server_url, &mine).unwrap();
+        assert_eq!(
+            pull_url(&base, 42, "sp-1", Some("dev-me")),
+            "http://192.168.1.5:8787/pull?since=42&limit=500&space_id=sp-1&exclude_device=dev-me",
+            "只换基址，三段过滤参数原样"
+        );
+    }
+
+    /// ★ 判据：**`lineage-claim` 这条路的地址**。
+    ///
+    /// ⚠️ 这一处**不许**复用 `base_for(&SyncProfile)`：`claim_config` 手上只有
+    /// `(space_id, server_url)` 两列，没有 `SyncProfile` ⇒ 它走 `effective_base_for` 那一支。
+    /// 这条判据顺便钉住"两把尺同源"：同样的对端列表下，这一支与 `base_for` **给出同一个地址**。
+    #[test]
+    fn a_discovered_hub_moves_the_lineage_claim_url_too() {
+        let p = profile_for("sp-1", "https://s.example.com/");
+        assert_eq!(lineage_claim_url(&p.server_url), "https://s.example.com/lineage-claim");
+        let mine = vec![lan_peer("dev-a", "http://192.168.1.5:8787", &["sp-1"])];
+        let base = effective_base_from("sp-1", &p.server_url, &mine).unwrap();
+        assert_eq!(lineage_claim_url(&base), "http://192.168.1.5:8787/lineage-claim");
+        assert_eq!(base, base_for(&p, &mine), "与 SyncProfile 那一支必须同源（两把尺会漂）");
+        // 别个空间的中枢 ⇒ 回落
+        let other = vec![lan_peer("dev-b", "http://192.168.1.6:8787", &["sp-other"])];
+        let base = effective_base_from("sp-1", &p.server_url, &other).unwrap();
+        assert_eq!(lineage_claim_url(&base), "https://s.example.com/lineage-claim");
+    }
+
+    /// ★ 判据：**SSE 订流这条路的地址**（`sync_stream::stream_url` 吃的是**解析后的基址**）。
+    /// 与 push/pull/附件同源；没发现到对端时逐字节等于今天（前端 `useSyncStream.ts` 那条也是）。
+    #[test]
+    fn a_discovered_hub_moves_the_stream_url_to_the_lan_address() {
+        let p = profile_for("sp-1", "https://s.example.com/");
+        assert_eq!(
+            crate::sync_stream::stream_url(&p.server_url, "sp-1"),
+            "https://s.example.com/spaces/sp-1/changes-stream"
+        );
+        let mine = vec![lan_peer("dev-a", "http://192.168.1.5:8787", &["sp-1"])];
+        let base = effective_base_from("sp-1", &p.server_url, &mine).unwrap();
+        assert_eq!(
+            crate::sync_stream::stream_url(&base, "sp-1"),
+            "http://192.168.1.5:8787/spaces/sp-1/changes-stream"
+        );
+        // 别个空间的中枢 / 公网公告 ⇒ 回落配置地址
+        for peers in [
+            vec![lan_peer("dev-b", "http://192.168.1.6:8787", &["sp-other"])],
+            vec![lan_peer("dev-c", "http://8.8.8.8:8787", &["sp-1"])],
+        ] {
+            let base = effective_base_from("sp-1", &p.server_url, &peers).unwrap();
+            assert_eq!(
+                crate::sync_stream::stream_url(&base, "sp-1"),
+                "https://s.example.com/spaces/sp-1/changes-stream"
+            );
+        }
+    }
+
+    /// ★ 判据（`lan_status` 的那一半）：状态行报的**是哪一个空间** —— 显式指定的优先，
+    /// 查不到就回落第一条绑定，一条都没有 ⇒ `None`（那时状态行说「尚未绑定」）。
+    ///
+    /// 钉的是"选错空间"这一种：选错的话状态行会说「其中没有服务这个空间的中枢」，
+    /// 而用户配的明明就是那一个 —— 它**能编译、别处单测照绿**，只有真机看得见。
+    #[test]
+    fn the_status_line_reports_the_space_that_was_actually_asked_for() {
+        let mine = profile_for("sp-mine", "https://s.example.com");
+        let other = profile_for("sp-other", "https://other.example.com");
+        // 指定了就报指定那个（**不是**第一条）
+        assert_eq!(
+            pick_lan_scope(Some(mine.clone()), Some(other.clone())),
+            Some(("sp-mine".to_string(), "https://s.example.com".to_string()))
+        );
+        // 指定的查不到（工作空间没配）⇒ 回落第一条绑定，**不报错**
+        assert_eq!(
+            pick_lan_scope(None, Some(other.clone())),
+            Some(("sp-other".to_string(), "https://other.example.com".to_string()))
+        );
+        // 一条都没有 ⇒ None（调用方据此走 `resolve_base("", "")` ⇒ 状态行「尚未绑定」）
+        assert_eq!(pick_lan_scope(None, None), None);
     }
 
     // ---- B4-b：兜底行的收编与自愈 ----

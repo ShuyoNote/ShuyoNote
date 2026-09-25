@@ -110,18 +110,19 @@ struct Route { url: String, kind: LinkKind }   // LinkKind = Lan | Configured
 
 两条 ★ 都做了**变异实测**：把产出侧的尺放宽 ⇒ ⑫ 红；让状态行自己按地址形状判档 ⇒ ⑭ 红；复原后回绿且文件字节未变。
 
-**还没做（接线那一片，一件都还没开始）**：
+**§7 当时列的"还没做"四件** —— 2026-09-25 接线那一片已经全部落掉，**现状见 §9**（那张表逐条对账）：
 
-1. 启动时拉起监听/广播循环，并把 `PeerTable` 挂到一个**说得清归属**的地方（现在是"谁都能 `new`"）；
-2. 把 `resolve_base` 的结果用进 §3 那 6 处 URL 拼装（"基址只出一处"）；
-3. 把 `status_line` 的文本接到界面上；
-4. "谁有资格代言"那个开关读哪个配置、以及在哪个时机重报。
+1. ~~启动时拉起监听/广播循环，并把 `PeerTable` 挂到一个**说得清归属**的地方~~ ⇒ §9 第 1 件；
+2. ~~把 `resolve_base` 的结果用进 §3 那 6 处 URL 拼装（"基址只出一处"）~~ ⇒ §9 第 2 件（6/6）；
+3. ~~把 `status_line` 的文本接到界面上~~ ⇒ §9 第 3 件；
+4. ~~"谁有资格代言"那个开关读哪个配置、以及在哪个时机重报~~ ⇒ §9 第 4 件。
 
-> ⚠️ 现状如实记：`lan.rs` 被 `lib.rs` 的 `mod lan;` 引进来，但**除 `#[cfg(test)]` 外没有任何调用方**
+> ⚠️ 下面这两段是**接线前**的现状记录（保留原样，读它时要记住已经在 §9 收口了）：
+> `lan.rs` 被 `lib.rs` 的 `mod lan;` 引进来，但**除 `#[cfg(test)]` 外没有任何调用方**
 > （2026-09-25 实测：`PeerTable::new` / `bind_listener` / `announce_once` / `recv_into` /
 > `resolve_base` 在 `lan.rs` 之外调用点**全部为 0**）。所以甲-1 现在是**纯库层**：
 > 能验、但用户看不到任何变化 —— 与 §0 那句"实话"（要等「代言」接上才有人用得上）一致。
-> 模块里那行 `#![allow(dead_code)]` **必须由接线那一片删掉**。
+> 模块里那行 `#![allow(dead_code)]` **必须由接线那一片删掉**（§9 收尾那一行：已删）。
 
 ## 8. owner 拍板（2026-09-25）：接线那一片的四个口径
 
@@ -146,11 +147,26 @@ owner 2026-09-25 对「待拍清单」逐条拍了板。下面四条**就是接�
 | §7 | 件 | 现状 | 锚点 |
 |---|---|---|---|
 | — | **对端表归属**（第 1 件的前置门闩，§8 ②） | ✅ **已落**（`834b7071`）：`LanState::global`／`set_enabled`／`peers`／`should_enable` ＋ 5 条判据 | `src-tauri/src/lan_state.rs` |
-| **2** | `resolve_base` 用进 6 处 URL | 🚧 **2/6**：附件那两处已接（`ad36486a`）——`sync_attachments` 的清单/传输 与 单件下载都走 `effective_base`；**剩 4 处**：`push`、`pull`、`lineage-claim`（在 `claim_config` 里）、SSE 订流（`sync_stream::stream_url`） | `sync.rs` 的 `base_for`／`effective_base`／`attachment_base` |
-| **1** | 启动拉起监听/广播 | ❌ 未做。口径已定（§8 ②）：挂 `LanState::global`，按 `should_enable(绑了同步的档案数)` 决定启不启；目标是 `lan::default_targets`（广播 ＋ 回环） | `lan::bind_listener`／`announce_once`／`recv_into` |
-| **3** | `status_line` 接 UI | ❌ 未做（要动 `platform/web.ts` ＋ 契约 ⇒ 前端三闸一起跑） | `lan::status_line`（甲-1 第三片已写） |
-| **4** | 代言开关的配置来源／重报时机 | ❌ 未做 | `lan::announce_for_own_hub`（甲-1 第三片已写） |
-| — | 收尾 | ❌ 未做：删掉 `lan.rs` 与 `lan_state.rs` 顶上**各一行** `#![allow(dead_code)]`（两处都写明了"接线那一片删掉"） | 两个模块头部 |
+| **2** | `resolve_base` 用进 6 处 URL | ✅ **6/6 已接**（附件 2 处 `ad36486a`；push／pull／`lineage-claim`／SSE 订流这 4 处在 `2026-09-25` 那片）。基址只从 `effective_base`（push／pull／附件）与 `effective_base_for`（claim／订流）两处出；凭证仍按**配置地址**取（`auth_sessions` 是按配置地址存的） | `sync.rs` 的 `base_for`／`effective_base`／`effective_base_for`／`push_url`／`pull_url`／`lineage_claim_url` |
+| **1** | 启动拉起监听/广播 | ✅ **已落**：`lan_state::start`（幂等；绑不上 UDP ⇒ 只记一行日志、**不挡同步**）由 `sync::lan_status` 在**已绑同步**时拉起；每 `RECV_SLICE_MS=1s` 回一次头（周期广播 `ANNOUNCE_INTERVAL_MS=30s` ＋ 收报入库 ＋ 按 `PEER_TTL_MS` 腾过期行）；绑定数**每轮重读** ⇒ 删掉同步配置即停止发声 | `lan_state::start`／`announce_due`／`announces_for`／`bound_profile_count` |
+| **3** | `status_line` 接 UI | ✅ **已落**：`sync::lan_status` 命令（Rust 258 个命令，web.ts 亦有实现）⇒ 契约 `LanStatus`／`api.lanStatus` ⇒ `SyncPanel` 「局域网直连」那一行（面板开着时 5s 轮询）。⚠️ 界面**只显示 Rust 给的原文 ＋ 按 `kind` 换标题**，不自己重判档位 | `sync::lan_status`／`commands.ts`／`web.ts`／`SyncPanel.tsx` |
+| **4** | 代言开关的配置来源／重报时机 | ✅ **已落**：**配置来源＝本机自己的同步档案**（`announce_for_own_hub` 只在"配置地址本身是私有网段"时代言，不引新配置项、不动 schema）；**重报时机＝每 `ANNOUNCE_INTERVAL_MS` 重算一次**（地址一改下一轮就跟着变）；**没得代言也发一条存在声明**（否则那台设备在网段里整个消失） | `lan_state::announces_for` ＋ `lan::announce_for_own_hub` |
+| — | 收尾 | ✅ 已删：`lan.rs` 与 `lan_state.rs` 顶上那两行 `#![allow(dead_code)]`（两个模块头部各一行，连同模块头的"还没接线"那一段一起改成了接线现状） | 两个模块头部 |
+
+**接线那一片的判据（都在 `cargo test` 里，本机实测）**：
+
+| 位置 | 判据（测试名） | 读数 |
+|---|---|---|
+| 收口（4 处各一条） | `a_discovered_hub_moves_the_push_url_to_the_lan_address`／`…pull_url_and_keeps_its_filters`／`…lineage_claim_url_too`／`…stream_url_to_the_lan_address` | 4 passed（＋附件那条 `…attachment_base…` 共 5 条一起绿） |
+| 逐字节不变 | `with_nothing_discovered_the_base_is_byte_identical_to_today` | 1 passed |
+| 启动循环（纯函数） | `we_only_speak_up_when_some_space_is_actually_bound`／`a_half_configured_profile_does_not_count_as_bound`／`we_announce_only_the_spaces_that_are_actually_bound`／`a_device_with_nothing_to_vouch_for_still_says_it_is_here`／`the_peer_ttl_outlives_the_announce_interval` | `lan_state::` **9 passed / 0 failed** |
+| 收 ＋ 解析打通 | `two_instances_find_each_other_over_a_real_datagram`（真 UDP）／`a_disabled_state_resolves_exactly_as_if_nobody_were_on_the_network` | `lan::` **16 passed / 0 failed** |
+| 状态行的两个新口径 | `the_line_tells_apart_seen_now_from_seen_before`（来过又走了）／`the_status_line_reports_the_space_that_was_actually_asked_for`（报哪个空间） | 各 1 passed |
+
+> ⚠️ **本片没做的**（别读成"局域网已经做完了"）：**不做内嵌接待窗口**（甲-2，§8 ③ 先不排）；
+> 真机两台互看**没跑**（本机只有一条网线/一块网卡，广播那条路按 `win-cargo-test` 只在回环上验过）；
+> 手填地址之外的**发现入口**（二维码/短码）是 B 片；`fp`（指纹）仍只透传、不参与任何判定。
+
 
 > ⚠️ 已接的那两处留下的**判据样板**，后面 4 处可以直接照抄（`sync::tests`）：
 > ★ `with_nothing_discovered_the_base_is_byte_identical_to_today`（**没发现到对端时逐字节等于今天**）

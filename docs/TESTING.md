@@ -37,7 +37,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 48 条（contract 24 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 257 / web 247 / CommandMap 259
+门禁 48 条（contract 24 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 258 / web 248 / CommandMap 260
 基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -250,6 +250,19 @@ $env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
 现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
 （③ 0b 公开材料：空 token 必须被挡 / 取回来逐字节相同 / 第二台设备只凭口令解出同一把钥匙）。
 服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。
+
+## 局域网发现（甲-1 接线之后怎么验）
+
+**不需要服务端**（发现层只交换 UDP 公告，不服务请求），本机一条命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan'
+# ⇒ lan:: 16 ＋ lan_state:: 9 ＋ sync:: 那 5 条基址判据（2026-09-25 实测 31 passed / 0 failed）
+```
+
+两条**只能真机看**的（单测覆盖不到，别把它当成"已经验过"）：① 两台设备在同一网段里互看
+（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「局域网直连」
+那一行显示的地址是否真的被同步请求用上（读数是 `sync::effective_base`，界面只显示 Rust 给的原文）。
 
 ## flake 与重试（不许静默重试）
 

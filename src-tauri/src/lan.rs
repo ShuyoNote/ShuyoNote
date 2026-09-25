@@ -18,18 +18,19 @@
 //! 3. **发现不到不许变得更差**：没有中枢时照旧用配置的地址（`Configured`）—— 发现层是**加分项**，
 //!    它挂了不能让本来能同步的用户同步不了。
 //!
-//! ## ⚠️ 还没接线
+//! ## 接线现状（甲-1 接线那一片）
 //!
-//! 除 `#[cfg(test)]` 外，本模块**还没有调用方**。已就位的是：
 //! 纯函数内核（公告编解码 / 路由 [`resolve_base`] / **代言的产出侧** [`announce_for_own_hub`] /
-//! **状态行文本** [`status_line`]）与运行时（`PeerTable` / `bind_listener` / `announce_once` / `recv_into`）。
-//! **还差的是接线那一片**，它至少含四件（都还没有判据）：
-//!   ① 启动时拉起监听/广播循环，并把 `PeerTable` 挂到一个**说得清归属**的地方（现在是"谁都能 new"）；
-//!   ② 把 [`resolve_base`] 的结果用进那 6 处 URL 拼装（施工单 §3 的"基址只出一处"）；
-//!   ③ 把 [`status_line`] 的文本接到界面上；
-//!   ④ "谁有资格代言"那个开关读哪个配置、以及在哪个时机重报。
-//! 所以整个模块显式放行 `dead_code` —— **接线那一片必须把这行删掉**（留着它会盖住真死码）。
-#![allow(dead_code)]
+//! **状态行文本** [`status_line`]）与运行时（[`PeerTable`] / [`bind_listener`] /
+//! [`announce_once`] / [`recv_into`]）**都已经有调用方**：
+//!   · 地址解析：`sync::effective_base`（push／pull／附件）与 `sync::effective_base_for`
+//!     （`lineage-claim` 与 SSE 订流）—— 基址只从这两处出；
+//!   · 状态行：`sync::lan_status`（接界面）；
+//!   · 收发：`lan_state::start` 那条循环（周期广播 ＋ 收报入库 ＋ 腾过期行）。
+//!
+//! ⚠️ 因此**模块顶上的 `#![allow(dead_code)]` 已经删掉**（它是接线前的临时放行；留着会盖住真死码）。
+//! 本文件里没有"只给判据用"的旁路：生产路径与判据走的是**同一批函数**
+//! （`PeerTable` 那几个访问器经 `LanState` 被 `lan_state::start` 与 `sync::effective_base` 用到）。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -297,7 +298,15 @@ pub fn announce_for_own_hub(
 /// ⚠️ **档位只能由 [`Route`] 决定**，状态行**不许自己再判一次**（判据 ⑭ 钉这条）：
 /// 用户把配置地址直接填成 `http://192.168.1.5:8787` 是常见事，而网段里一个对端都没有时
 /// `resolve_base` 给的是 `Configured`；若这里按"地址形状"自己判，就会说出「局域网」。
-pub fn status_line(route: Option<&Route>, peers: &[Peer], space_id: &str) -> String {
+///
+/// `seen` 是**活着**的对端数、`observed` 是表里一共有过多少台（诊断用，不过滤 TTL）——
+/// 两者不等时状态行会**如实**把"来过又走了"说出来，而不是让"N 台"这个数悄悄变来变去。
+pub fn status_line(
+    route: Option<&Route>,
+    peers: &[Peer],
+    space_id: &str,
+    observed: usize,
+) -> String {
     let Some(route) = route else {
         return "同步地址：尚未绑定".to_string();
     };
@@ -316,6 +325,10 @@ pub fn status_line(route: Option<&Route>, peers: &[Peer], space_id: &str) -> Str
         LinkKind::Configured => format!("同步地址：公网 {}", route.url),
     };
     line.push_str(&format!(" ｜ 本网段发现 {seen} 台"));
+    if observed > seen {
+        // ⚠️ 只说事实（"还见过 N 台，现在不发声了"），不替用户下结论（那可能是关机、也可能只是丢包）。
+        line.push_str(&format!("（还见过 {} 台，现在不发声了）", observed - seen));
+    }
 
     if route.kind == LinkKind::Lan {
         match hub {
@@ -377,7 +390,10 @@ impl PeerTable {
     }
 
     /// 表里现在有什么（**不过滤 TTL**，给诊断用）。
-    pub fn snapshot(&self) -> Vec<Peer> {
+    ///
+    /// ⚠️ 生产路径**不直接调它**：上层是 `LanState::observed_all`（同一个语义，但走那条路
+    /// 才说得清"诊断读数"与"能用的对端"是两件事，见 `lan_state.rs` 口径 3）。
+    pub(crate) fn snapshot(&self) -> Vec<Peer> {
         let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let mut out: Vec<Peer> = g.values().cloned().collect();
         out.sort_by(|a, b| a.announce.device_id.cmp(&b.announce.device_id));
@@ -448,9 +464,12 @@ pub async fn announce_once(
 /// - `Ok(Some(peer))` ＝ 收了、记了；
 /// - `Ok(None)` ＝ 是我自己的公告（回环回来的），**忽略**（不是错误）；
 /// - `Err(原因)` ＝ 报文不合法，**丢弃**且**不入表**（原因从 [`AnnounceReject::reason`] 来）。
+///
+/// ⚠️ 入库那一步走的是 `LanState::record_datagram`（**解码只有那一处**）—— 本函数只负责
+/// "从 socket 收字节 ＋ 长报文那一关"，语义与状态在 `lan_state.rs`（那里是判据的主场）。
 pub async fn recv_into(
     sock: &UdpSocket,
-    table: &PeerTable,
+    state: &crate::lan_state::LanState,
     now_ms: i64,
 ) -> Result<Option<Peer>, String> {
     // 缓冲比上限多 1 字节 ⇒ 超长能被**识别成超长**，而不是被截断后误判成"不是 JSON"。
@@ -464,16 +483,28 @@ pub async fn recv_into(
     }
     let raw = std::str::from_utf8(&buf[..n])
         .map_err(|_| AnnounceReject::BadJson.reason().to_string())?;
-    let announce = decode_announce(raw).map_err(|r| r.reason().to_string())?;
-    let peer = Peer {
-        announce,
-        addr: from.ip().to_string(),
-        seen_at_ms: now_ms,
-    };
-    if !table.upsert(peer.clone()) {
-        return Ok(None);
+    state.record_datagram(raw, &from.ip().to_string(), now_ms)
+}
+
+/// [`recv_into`] 的**带超时**外壳：最多等 `slice_ms` 就回 `Ok(None)`（＝这一片没收到东西）。
+///
+/// ⚠️ 为什么必须有它：`recv_from` 在"网段里一个人都不说话"时会**一直等**，而驱动循环
+/// （`lan_state::start`）还要**周期广播**与**腾过期行** —— 没有这个上限，那两件事就永远轮不上。
+pub async fn recv_into_within(
+    sock: &UdpSocket,
+    state: &crate::lan_state::LanState,
+    slice_ms: u64,
+) -> Result<Option<Peer>, String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_millis(slice_ms),
+        recv_into(sock, state, crate::db::now_ms()),
+    )
+    .await
+    {
+        // 超时 ＝ "这一片没人说话"，不是错误（与 `Ok(None)` 同形，调用方不必分辨）。
+        Err(_) => Ok(None),
+        Ok(r) => r,
     }
-    Ok(Some(peer))
 }
 
 #[cfg(test)]
@@ -639,18 +670,21 @@ mod tests {
         let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let b_addr = b.local_addr().unwrap();
-        let table = PeerTable::new("dev-b".to_string());
+        let st = crate::lan_state::LanState::new("dev-b".to_string());
 
         let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
         assert_eq!(announce_once(&a, &[b_addr], &ann).await.unwrap(), 1);
 
-        let got = recv_into(&b, &table, 1_000).await.unwrap().expect("应当收到对端");
+        let got = recv_into(&b, &st, 1_000).await.unwrap().expect("应当收到对端");
         assert_eq!(got.announce.device_id, "dev-a");
         assert_eq!(got.addr, "127.0.0.1", "来源地址要如实记下（诊断用）");
         assert_eq!(got.seen_at_ms, 1_000);
 
         // ★ 打通：收进来的公告**真的**能让这一轮的地址解析走局域网。
-        let route = resolve_base("sp-1", "https://shuyo.cn/sync", &table.live(1_000)).unwrap();
+        // ⚠️ 这里连**开关**一起验（`peers` 尊重它）：未启用 ⇒ 看不见 ⇒ 解析照旧走配置地址。
+        assert!(st.peers(1_000).is_empty(), "还没启用 ⇒ 看不见（口径 3）");
+        st.set_enabled(true);
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap();
         assert_eq!(route.url, "http://192.168.1.5:8787");
         assert_eq!(route.kind, LinkKind::Lan);
     }
@@ -660,12 +694,13 @@ mod tests {
     async fn a_garbled_datagram_never_enters_the_peer_table() {
         let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let table = PeerTable::new("dev-b".to_string());
+        let st = crate::lan_state::LanState::new("dev-b".to_string());
+        st.set_enabled(true); // 开着也照样不许进（坏报文那一关在解码，不在开关）
 
         // 不是 JSON
         a.send_to(b"hello", b.local_addr().unwrap()).await.unwrap();
         assert_eq!(
-            recv_into(&b, &table, 1_000).await.unwrap_err(),
+            recv_into(&b, &st, 1_000).await.unwrap_err(),
             AnnounceReject::BadJson.reason()
         );
         // 版本不认识（合法 JSON，但 v 不是我们的）
@@ -678,11 +713,12 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            recv_into(&b, &table, 1_000).await.unwrap_err(),
+            recv_into(&b, &st, 1_000).await.unwrap_err(),
             AnnounceReject::UnknownVersion.reason()
         );
 
-        assert!(table.snapshot().is_empty(), "坏报文不许留下任何痕迹");
+        assert!(st.observed_all().is_empty(), "坏报文不许留下任何痕迹");
+        assert!(st.peers(1_000).is_empty());
     }
 
     /// 判据 ⑨：**自己的公告**不许成为对端（回环会把我们发的原样送回来，
@@ -691,32 +727,33 @@ mod tests {
     async fn my_own_announce_never_becomes_a_peer() {
         let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let table = PeerTable::new("dev-a".to_string()); // ← 表的主人就是发公告这台
+        let st = crate::lan_state::LanState::new("dev-a".to_string()); // ← 主人就是发公告这台
+        st.set_enabled(true);
         let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
         announce_once(&a, &[b.local_addr().unwrap()], &ann).await.unwrap();
 
-        assert!(recv_into(&b, &table, 1_000).await.unwrap().is_none(), "自己的公告要回 None");
-        assert!(table.snapshot().is_empty());
+        assert!(recv_into(&b, &st, 1_000).await.unwrap().is_none(), "自己的公告要回 None");
+        assert!(st.observed_all().is_empty());
     }
 
     /// 判据 ⑩：不再发声的对端会过期；表不是只增不减的（同一台再发声则是**刷新**）。
     #[test]
     fn a_peer_that_stopped_announcing_expires() {
-        let table = PeerTable::new("dev-me".to_string());
-        assert!(table.upsert(peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"])));
+        let st = crate::lan_state::LanState::new("dev-me".to_string());
+        st.set_enabled(true);
+        assert!(st.observe(peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"])));
         // `peer()` 造的 seen_at_ms = 0
-        assert_eq!(table.live(PEER_TTL_MS).len(), 1, "还没到 TTL 就算还在");
-        assert!(table.live(PEER_TTL_MS + 1).is_empty(), "过了 TTL 就不该再算数");
-        assert_eq!(table.snapshot().len(), 1, "snapshot 不过滤 TTL（诊断要看得见）");
-        assert_eq!(table.sweep(PEER_TTL_MS + 1), 1, "sweep 要把过期的腾掉");
-        assert!(table.snapshot().is_empty());
+        assert_eq!(st.peers(PEER_TTL_MS).len(), 1, "还没到 TTL 就算还在");
+        assert!(st.peers(PEER_TTL_MS + 1).is_empty(), "过了 TTL 就不该再算数");
+        assert_eq!(st.sweep(PEER_TTL_MS + 1), 1, "sweep 要把过期的腾掉");
+        assert!(st.observed_all().is_empty(), "腾完表里就该是空的");
 
         // 同一台再发声 ⇒ 刷新时刻，不新增行
         let mut again = peer("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
         again.seen_at_ms = 5_000;
-        assert!(table.upsert(again));
-        assert_eq!(table.live(5_000).len(), 1);
-        assert_eq!(table.live(5_000)[0].seen_at_ms, 5_000);
+        assert!(st.observe(again));
+        assert_eq!(st.peers(5_000).len(), 1);
+        assert_eq!(st.peers(5_000)[0].seen_at_ms, 5_000);
     }
 
     /// 判据 ⑪：默认目标要**同时**含广播与回环 —— 广播在受限网段未必可用，
@@ -777,13 +814,13 @@ mod tests {
         // ① 走了局域网：点出中枢是谁
         let hub = peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]);
         let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&hub)).unwrap();
-        let line = status_line(Some(&route), std::slice::from_ref(&hub), "sp-1");
+        let line = status_line(Some(&route), std::slice::from_ref(&hub), "sp-1", 1);
         assert!(line.contains("局域网"), "{line}");
         assert!(line.contains("dev-hub 的机器"), "要点出中枢是谁：{line}");
 
         // ② 网段里什么都没有 ⇒ 只是"公网"，**不许**说"有人但不服务本空间"
         let route = resolve_base("sp-1", "https://shuyo.cn/sync", &[]).unwrap();
-        let line = status_line(Some(&route), &[], "sp-1");
+        let line = status_line(Some(&route), &[], "sp-1", 0);
         assert!(line.contains("公网"), "{line}");
         assert!(line.contains("0 台"), "{line}");
         assert!(!line.contains("没有服务这个空间的中枢"), "一个对端都没有时不许说这句：{line}");
@@ -791,14 +828,31 @@ mod tests {
         // ③ 有对端、但都不服务本空间 ⇒ **必须说出来**（与 ② 分开）
         let other = peer("dev-other", Some("http://192.168.1.6:8787"), &["sp-9"]);
         let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&other)).unwrap();
-        let line = status_line(Some(&route), std::slice::from_ref(&other), "sp-1");
+        let line = status_line(Some(&route), std::slice::from_ref(&other), "sp-1", 1);
         assert!(
             line.contains("没有服务这个空间的中枢"),
             "「有人但都不是本空间的」必须与「没人」分得开：{line}"
         );
 
         // ④ 尚未绑定
-        assert!(status_line(None, &[], "sp-1").contains("尚未绑定"));
+        assert!(status_line(None, &[], "sp-1", 0).contains("尚未绑定"));
+    }
+
+    /// ★ 判据 ⑯：**"来过又走了"要如实说出来** —— 活着的是 `seen`，表里一共有过的是 `observed`。
+    /// 两者不等时不许让"N 台"这个数悄悄变来变去（用户看到 3 台变 0 台会以为坏了，
+    /// 而那句"还见过 N 台，现在不发声了"才说得清那是**别人走了**）。
+    #[test]
+    fn the_line_tells_apart_seen_now_from_seen_before() {
+        let other = peer("dev-other", Some("http://192.168.1.6:8787"), &["sp-9"]);
+        let route = resolve_base("sp-1", "https://shuyo.cn/sync", &[]).unwrap();
+        // 还活着：不许多出那句
+        let line = status_line(Some(&route), std::slice::from_ref(&other), "sp-1", 1);
+        assert!(line.contains("发现 1 台"), "{line}");
+        assert!(!line.contains("还见过"), "活着的不许算进'来过又走了'：{line}");
+        // 已经走了（表里还在、但不发声了）：如实说
+        let line = status_line(Some(&route), &[], "sp-1", 1);
+        assert!(line.contains("发现 0 台"), "{line}");
+        assert!(line.contains("还见过 1 台"), "{line}");
     }
 
     /// ★ 判据 ⑭（同源）：**档位只能由 [`Route`] 决定**，状态行不许自己再判一次。
@@ -811,10 +865,34 @@ mod tests {
     fn the_line_never_claims_lan_the_route_did_not_take() {
         let route = resolve_base("sp-1", "http://192.168.1.5:8787", &[]).unwrap();
         assert_eq!(route.kind, LinkKind::Configured, "没发现到中枢就不是直连档");
-        let line = status_line(Some(&route), &[], "sp-1");
+        let line = status_line(Some(&route), &[], "sp-1", 0);
         assert!(
             !line.contains("局域网"),
             "档位只能来自 Route；状态行自己按地址形状再判一次就会说出与路由矛盾的档：{line}"
         );
+    }
+
+    /// ★ 判据 ⑮（接线那一片的收口）：**"关掉＝看不见"必须一路穿透到地址解析** ——
+    /// 用**真的** `LanState`（不是假的对端列表）走一遍：没启用 ⇒ `peers()` 空 ⇒
+    /// 解析结果与"网段里一个人都没有"**逐字节相同**。
+    ///
+    /// 这条钉的是接线那一片最容易出错的那种：`sync::effective_base` 若忘了尊重开关
+    /// （比如直接读 `PeerTable` 而不是 `LanState::peers`），那么**用户没绑同步、我们从没广播过**，
+    /// 却仍可能把上一次会话残留的一行当成路由 —— 而这种错**编译期没有信号、单测也照绿**。
+    ///
+    /// ⚠️ 用 `LanState::new`（**不碰进程级单例**）：`cargo test` 是同进程多线程，动单例会污染别的测试。
+    #[test]
+    fn a_disabled_state_resolves_exactly_as_if_nobody_were_on_the_network() {
+        let st = crate::lan_state::LanState::new("dev-me".into());
+        st.observe(peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]));
+        let want = resolve_base("sp-1", "https://shuyo.cn/sync", &[]).unwrap();
+        // 关着：表里明明有那一台，解析也必须与"空网段"一模一样（口径 3 的实测）
+        assert_eq!(resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap(), want);
+        assert!(!st.is_enabled());
+        // 开着：同一张表立刻能当路由（开关是唯一的分叉）
+        st.set_enabled(true);
+        let got = resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap();
+        assert_eq!(got.url, "http://192.168.1.5:8787");
+        assert_eq!(got.kind, LinkKind::Lan);
     }
 }
