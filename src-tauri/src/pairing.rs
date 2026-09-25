@@ -161,6 +161,37 @@ pub fn check_code(payload_text: &str) -> String {
         .join(" ")
 }
 
+/// 只留十进制数字（人念/人抄的时候会带空格或短横，不该因此判错）。
+fn digits_only(s: &str) -> String {
+    s.chars().filter(char::is_ascii_digit).collect()
+}
+
+/// ★ **把"人眼核过"变成机器可执行的那一步**（路线 ① 唯一的防换码手段）。
+///
+/// - `confirmed = None` ⇒ **不检查**：两台设备就在一起、用眼睛对屏幕看比对码的那条路；
+/// - `confirmed = Some(用户记下的码)` ⇒ **必须逐位相同**（空格/短横忽略），否则 `Err`。
+///
+/// 为什么要它：如果比对码只是"显示出来让人看一眼"，那么**绕过去是零成本的** ——
+/// 一次赶时间的点击就能把被换过的载荷收进来，而没有任何东西会记录这件事。
+/// 做成参数以后，"我核过了"就有了一个**可断言**的落点：界面上必须真核过才拿得到那个值。
+///
+/// 成功时返回**这段载荷算出来的**比对码（界面拿它去显示/复述）。
+pub fn verify_confirm_code(payload_text: &str, confirmed: Option<&str>) -> Result<String, String> {
+    let computed = check_code(payload_text);
+    let Some(user) = confirmed else {
+        return Ok(computed);
+    };
+    if digits_only(&computed) != digits_only(user) {
+        return Err(format!(
+            "比对码对不上 ⇒ **没有采纳，本机一个字节都没改**。\n\
+             这段码算出来是：{computed}\n\
+             你记下的是：    {user}\n\
+             ⚠️ 这**可能意味着这段码被换过**（也可能只是抄错了）—— 请回到给出这段码的那台设备上重新核对。"
+        ));
+    }
+    Ok(computed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,5 +450,50 @@ mod tests {
             "渲染空间只有 {bits:.1} bit，低于下限 {}",
             CHECK_CODE_MIN_BITS
         );
+    }
+
+    /// ★ 判据：**"我核过了"必须能被机器判定**（路线 ① 唯一的防换码手段）。
+    ///
+    /// 三种情形分别钉住：对不上 ⇒ **拒**；对得上（含带空格/短横的写法）⇒ 过；
+    /// 不给 ⇒ 过（两台设备就在一起、用眼睛对屏幕那条路）。
+    #[test]
+    fn a_confirmed_check_code_is_enforced_when_given() {
+        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        let truth = check_code(&raw);
+
+        // ① 对得上（原样 / 去掉空格 / 换成短横，都算对）⇒ 过，并返回算出来的那个码
+        assert_eq!(verify_confirm_code(&raw, Some(&truth)).unwrap(), truth);
+        assert_eq!(
+            verify_confirm_code(&raw, Some(&truth.replace(' ', ""))).unwrap(),
+            truth,
+            "人抄的时候不带空格也算对"
+        );
+        assert_eq!(
+            verify_confirm_code(&raw, Some(&truth.replace(' ', "-"))).unwrap(),
+            truth,
+            "人抄的时候用短横也算对"
+        );
+
+        // ② ★ 对不上 ⇒ **拒**，且话要说清"本机一个字节都没改"
+        let wrong = "0000 0000 0000 0000 0000";
+        assert_ne!(truth, wrong, "这条用例要的是真的对不上");
+        let err = verify_confirm_code(&raw, Some(wrong)).unwrap_err();
+        assert!(err.contains("对不上"), "{err}");
+        assert!(err.contains("一个字节都没改"), "★ 要说清本机没被改动：{err}");
+
+        // ③ 不给比对码 ⇒ 过（旁边核对那条路）
+        assert_eq!(verify_confirm_code(&raw, None).unwrap(), truth);
+    }
+
+    /// 判据：对不上的拒绝**必须给出两边各自的读数** ——
+    /// 只回一句"码不对"，人没法判断是自己抄错了，还是这段码真被换过。
+    #[test]
+    fn a_rejected_check_code_shows_both_sides() {
+        let raw = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "").unwrap()).unwrap();
+        let truth = check_code(&raw);
+        let err = verify_confirm_code(&raw, Some("1111 2222 3333 4444 5555")).unwrap_err();
+        assert!(err.contains(&truth), "要把**算出来的**那个码摆出来：{err}");
+        assert!(err.contains("1111 2222 3333 4444 5555"), "也要把用户记下的摆出来：{err}");
+        assert!(err.contains("被换过"), "要点明「可能是被换过」：{err}");
     }
 }

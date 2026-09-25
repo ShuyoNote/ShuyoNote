@@ -1922,6 +1922,196 @@ pub async fn pull_space_keyring(
     })
 }
 
+// ── B 片 ①-a：换设备的**文本搬运**（复制/粘贴、存/读文件）──────────────────────────────
+//
+// 路线 ①（owner 2026-09-25 拍板）：不做 6 位短码 ⇒ **不引任何密码学实现**；
+// "来源真实性"由**比对码**兜（见 `pairing::check_code` 与 `verify_confirm_code`）。
+// ⚠️ 这里**只搬运**：载荷本身（公开材料 ＋ 设备标识）**不含任何新秘密** ——
+// 它今天就在服务端上躺着。真正要防的是**掉包**，所以 `confirmed_check_code` 那条不是装饰。
+
+/// B 片 ①-a：**换设备的载体**（粘贴的文本 / 存成文件的那份内容）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct PairingImportArgs {
+    /// 另一端给出的配对载荷原文。
+    pub text: String,
+    /// 用户**在另一端念/抄下来的比对码**（可选）。
+    ///
+    /// ⚠️ 传了就必须与这段载荷算出来的**逐位相同**，否则拒绝 —— 这是路线 ① 唯一能挡住
+    /// "换码"的机制。两台设备就在一起、用眼睛对屏幕看的那条路可以不传。
+    #[serde(default)]
+    pub confirmed_check_code: Option<String>,
+    /// 本机已有公开材料时是否允许覆盖（默认 false）。理由与 `SpaceKeyringArgs::overwrite` 同。
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+/// B 片 ①-a 产出侧读数。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PairingExportResult {
+    /// `ok` / `no_material`
+    pub outcome: String,
+    /// 配对载荷原文（紧凑 JSON）。`no_material` 时是空串。
+    pub text: String,
+    /// **比对码**：另一端算出来的必须与这个逐位相同。
+    pub check_code: String,
+    pub bytes: usize,
+    /// 袋子里有几个盒子。
+    pub spaces: usize,
+    /// 本机设备标识（给界面显示"来自哪台设备"）。**不是秘密**（服务端与局域网公告都用它）。
+    pub device_id: String,
+    /// 这段载荷**装得进一张二维码**吗。装不下时 `message` 里会说明走文本/拆码。
+    pub qr_fits: bool,
+    pub message: String,
+}
+
+/// B 片 ①-a 采纳侧读数。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PairingImportResult {
+    /// `ok` / `already_local` / `rejected`
+    pub outcome: String,
+    /// 这段载荷的比对码 —— 界面**必须把它显示出来**让人核对（`rejected` 时为空）。
+    pub check_code: String,
+    pub spaces: usize,
+    /// `already_local` 时：本机已有的空间（给人看"你本来有这些"）。
+    pub local_spaces: Vec<String>,
+    /// `already_local` 时：覆盖之后会**失去**的空间 —— 最贵的那一半
+    /// （失去的空间＝那台设备再也开不开它自己的库）。
+    pub would_lose: Vec<String>,
+    pub message: String,
+}
+
+/// B 片 ①-a 桌面侧：**导出**一段配对载荷（换设备那一步的"给出去"）。
+///
+/// ⚠️ 产出的载荷**不含任何秘密**（公开材料本来就可以公开）；它唯一的作用是让第二台设备
+/// 能解开自己的空间 —— 而**主口令仍然由人来输**（这正是"服务端拿不到你的钥匙"的原因）。
+#[tauri::command]
+pub fn pairing_export(db: State<'_, Db>) -> Result<PairingExportResult, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let Some(material) = crate::space_crypto::stored_material(&c)? else {
+        return Ok(PairingExportResult {
+            outcome: "no_material".to_string(),
+            text: String::new(),
+            check_code: String::new(),
+            bytes: 0,
+            spaces: 0,
+            device_id: String::new(),
+            qr_fits: false,
+            message: "本机还没有钥匙袋（公开材料）⇒ 没有东西可以配对过去。\
+                      先在本机启用加密、或先从别处取回一份，再来换设备。"
+                .to_string(),
+        });
+    };
+    // 设备指纹取应用级事实 `device_id`（与局域网公告用的是同一个值，非秘密）。
+    // ⚠️ 留一个**没答的问题**在明面上：`fp` 到底该是"设备标识"还是"设备**密钥材料**的指纹"
+    //    （后者会在轮换后变化）—— 这是设计决定，不由本命令顺手定。见施工单 §8。
+    let device = device_id(&c)?;
+    let payload = crate::pairing::payload_from_material(&material, &device)?;
+    let text = crate::pairing::encode_payload(&payload)?;
+    let check_code = crate::pairing::check_code(&text);
+    let spaces = crate::keyring::Keyring::from_json(&material)
+        .map(|k| k.spaces.len())
+        .unwrap_or(0);
+    let qr_fits = crate::pairing::fits_single_qr(&text);
+    let mut message = format!(
+        "把下面这段配对码交给第二台设备（{} 个空间，{} 字节）。\
+         它**不是秘密**，但请只交给你自己那台设备 —— 收下它的人才可能解开你的空间。",
+        spaces,
+        text.len()
+    );
+    if !qr_fits {
+        if let Some(warn) = crate::pairing::qr_capacity_error(&text) {
+            message.push('\n');
+            message.push_str(&warn);
+        }
+    }
+    // ⚠️ 长度要**在移动进返回值之前**取好（结构体字面量按书写顺序求值）。
+    let bytes = text.len();
+    Ok(PairingExportResult {
+        outcome: "ok".to_string(),
+        text,
+        check_code,
+        bytes,
+        spaces,
+        device_id: device,
+        qr_fits,
+        message,
+    })
+}
+
+/// B 片 ①-a 桌面侧：**采纳**一段配对载荷（换设备那一步的"收下来"）。
+///
+/// 三条都**先说清、再动手**：载荷读不懂 / 比对码对不上 ⇒ 拒绝，**本机一个字节都不改**；
+/// 本机已有材料且没给 `overwrite` ⇒ 回 `already_local` **并把"会失去哪些空间"摆出来**。
+#[tauri::command]
+pub fn pairing_import(db: State<'_, Db>, args: PairingImportArgs) -> Result<PairingImportResult, String> {
+    // ① 解码（严格：版本 / 字段白名单 / 材料得像钥匙袋 —— 见 `pairing::decode_payload`）
+    let payload = match crate::pairing::decode_payload(&args.text) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(PairingImportResult {
+                outcome: "rejected".to_string(),
+                check_code: String::new(),
+                spaces: 0,
+                local_spaces: Vec::new(),
+                would_lose: Vec::new(),
+                message: format!("这段配对码没用上（**本机一个字节都没改**）：{e}"),
+            })
+        }
+    };
+    // ② 比对码（传了就必须对得上 —— 路线 ① 唯一的防换码手段）
+    let check_code = match crate::pairing::verify_confirm_code(&args.text, args.confirmed_check_code.as_deref()) {
+        Ok(code) => code,
+        Err(e) => {
+            return Ok(PairingImportResult {
+                outcome: "rejected".to_string(),
+                check_code: crate::pairing::check_code(&args.text),
+                spaces: 0,
+                local_spaces: Vec::new(),
+                would_lose: Vec::new(),
+                message: e,
+            })
+        }
+    };
+    // ③ 采纳（`adopt_material` 自己保证：拒绝/出错时一个字节都不改）
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let report = crate::space_crypto::adopt_material(&c, &payload.material, args.overwrite)?;
+    if report.already_local {
+        let message = if report.would_lose.is_empty() {
+            format!(
+                "本机已经有这一份公开材料（{} 个空间），覆盖**不会失去**任何空间。\
+                 确认要用这一段覆盖，就再来一次并选「覆盖本机」。",
+                report.local_spaces.len()
+            )
+        } else {
+            format!(
+                "本机已经有这一份公开材料。覆盖会**失去**这些空间：{} —— \
+                 覆盖之后那台设备**再也开不开它自己的库**。\
+                 确认要覆盖，就再来一次并选「覆盖本机」。",
+                report.would_lose.join("、")
+            )
+        };
+        return Ok(PairingImportResult {
+            outcome: "already_local".to_string(),
+            check_code,
+            spaces: 0,
+            local_spaces: report.local_spaces,
+            would_lose: report.would_lose,
+            message,
+        });
+    }
+    Ok(PairingImportResult {
+        outcome: "ok".to_string(),
+        check_code,
+        spaces: report.spaces,
+        local_spaces: Vec::new(),
+        would_lose: Vec::new(),
+        message: format!(
+            "已装进本机（{} 个盒子）；现在输入主口令就能解开这个空间",
+            report.spaces
+        ),
+    })
+}
+
 /// List recent sync-history entries (newest first).
 #[tauri::command]
 pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<SyncHistoryEntry>, String> {

@@ -655,6 +655,11 @@ pub fn run() {
             //    `DESKTOP_ONLY_COMMANDS`，理由写在那里）。
             sync::push_space_keyring,
             sync::pull_space_keyring,
+            // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）。
+            // 同样是**桌面专属**：Web 上没有钥匙柜，也就没有"公开材料"可搬
+            // （理由写在 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS` 里）。
+            sync::pairing_export,
+            sync::pairing_import,
             sync::list_sync_history,
             sync::clear_sync_history,
             sync::team_list_orgs,

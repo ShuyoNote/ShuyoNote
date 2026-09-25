@@ -328,6 +328,43 @@ export interface SpaceKeyringOutcome {
   message: string;
 }
 
+/**
+ * B 片 ①-a：换设备的**产出侧**读数（`pairing_export`）。
+ *
+ * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
+ * 不引任何密码学实现**；防"换码"靠**比对码** —— 所以 `check_code` 必须显示给人看。
+ */
+export interface PairingExportOutcome {
+  outcome: "ok" | "no_material";
+  /** 配对载荷原文（紧凑 JSON）。`no_material` 时是空串。**不是秘密**，但要只交给自己那台设备。 */
+  text: string;
+  /** **比对码**：另一端算出来的必须与这个逐位相同。 */
+  check_code: string;
+  bytes: number;
+  /** 袋子里有几个盒子。 */
+  spaces: number;
+  /** 本机设备标识（显示"来自哪台设备"用）。**不是秘密**。 */
+  device_id: string;
+  /** 装得进一张二维码吗。`false` 时 `message` 里会说明走文本/拆码。 */
+  qr_fits: boolean;
+  /** 一句**人话**（界面原样显示）。 */
+  message: string;
+}
+
+/** B 片 ①-a：换设备的**采纳侧**读数（`pairing_import`）。 */
+export interface PairingImportOutcome {
+  outcome: "ok" | "already_local" | "rejected";
+  /** 这段载荷的比对码 —— 界面**必须显示出来**让人核对（`rejected` 时为空）。 */
+  check_code: string;
+  spaces: number;
+  /** `already_local` 时：本机已有的空间。 */
+  local_spaces: string[];
+  /** `already_local` 时：覆盖之后会**失去**的空间（覆盖后那台设备再也开不开它自己的库）。 */
+  would_lose: string[];
+  /** 一句**人话**（界面原样显示）。 */
+  message: string;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -459,6 +496,24 @@ export interface CommandMap {
   pull_space_keyring: {
     args: { args: { workspace_id: string; overwrite?: boolean } };
     result: SpaceKeyringOutcome;
+  };
+  // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**
+  //（Web 上没有钥匙柜，也就没有"公开材料"可搬；理由写在 `check-web-commands` 的
+  //  `DESKTOP_ONLY_COMMANDS` 里）。
+  pairing_export: {
+    args: Record<string, never>;
+    result: PairingExportOutcome;
+  };
+  pairing_import: {
+    args: {
+      args: {
+        text: string;
+        /** 用户**在另一端念/抄下来的比对码**（可选）：传了就必须逐位相同，否则拒绝。 */
+        confirmed_check_code?: string;
+        overwrite?: boolean;
+      };
+    };
+    result: PairingImportOutcome;
   };
   // ① 存量迁移（2026-09-24）：★ owner 第三轮拍板后**整条删掉**（两条命令与它们的契约一起）——
   // 它的对象是"应用级加密留下的旧钥匙"，而那套（含解锁/读老库的兜底）已按拍板删净。
