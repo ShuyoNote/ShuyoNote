@@ -526,14 +526,14 @@ struct PushRequest {
 }
 
 #[derive(Deserialize)]
-struct IncomingChange {
+pub(crate) struct IncomingChange {
     #[allow(dead_code)]
-    seq: i64,
-    entity: String,
-    entity_id: String,
-    op: String,
-    payload: Option<String>,
-    updated_at: i64,
+    pub(crate) seq: i64,
+    pub(crate) entity: String,
+    pub(crate) entity_id: String,
+    pub(crate) op: String,
+    pub(crate) payload: Option<String>,
+    pub(crate) updated_at: i64,
 }
 
 #[derive(Deserialize)]
@@ -2496,7 +2496,7 @@ impl From<String> for ApplyFailure {
 /// 这条政策必须有判据能直接钉住 —— 抽成这个函数就是为了它。
 ///
 /// 失败分类见 `ApplyFailure`：`Fatal`（解密失败）整批中止；`Recoverable` 归档 ＋ 前进。
-fn apply_pulled_changes(
+pub(crate) fn apply_pulled_changes(
     c: &Connection,
     changes: Vec<IncomingChange>,
     last_pulled: i64,
@@ -2710,8 +2710,8 @@ let mut unrecognized: Vec<String> = Vec::new();
 }
 
 /// `apply_pulled_changes` 的产物（`do_pull` 直接摊平进它的返回元组）。
-struct PulledApply {
-    count: usize,
+pub(crate) struct PulledApply {
+    pub(crate) count: usize,
     max_pulled: i64,
     items: Vec<SyncItem>,
     conflicts: Vec<SyncConflict>,
