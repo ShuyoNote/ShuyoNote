@@ -421,6 +421,14 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   随后全量 **2194 passed** 全绿。⇒ **判读顺序**：① 超时的都在 spawn 那一类吗；② `git status` >1s 就别急着重跑；
   ③ 隔离复跑；**隔离仍红 ＋ `git status` 正常 ⇒ 才是真回归**。
   ⚠️ **不许**为了变绿去调大超时阈值（那是"把门槛改松"）—— 正确动作是**等机器安静**再跑一次全量。
+- ★ **重启之后：本机模型服务是「冷」的 ⇒ live 判据会红**（2026-09-25，AMD 实测，第三次同族）——
+  重启后 `llama-server` 要**加载几分钟**（实测：`herdsman` 10:45:47 起、`llama-server` **10:55:56** 才起来并把
+  6.5 GB 载进内存），而**在这之前**打 `127.0.0.1:8080` 的 live 判据（`image.localVlm` / `librarySummary*`）会红；
+  **加载完成后同一批 4 文件 10 条全绿**（隔离复跑读数：2 failed → 10 passed）。
+  ⇒ 纪律：重启/刚开机后**不要立刻**把 live 的红当回归 —— 先看 `llama-server` 的内存不再涨（模型加载完）再跑。
+  ⚠️ 一条**探针本身的教训**（同一轮，我自己的错）：拿 `POST /v1/chat/completions` 配 `max_tokens=16` 探活会得到
+  **空 content**（`src/lib/ai/llm.ts` 文件头早写着：预算太小会出现「只有思考、content 为空」）——
+  **空回复 ≠ 服务坏了**；探活要用足够大的 `max_tokens`，或直接看 `/v1/models` 与进程内存。
 - ★ **另一条已知 flake（2026-09-23/24，同一天撞到两次）**：`src/components/communityPublishDialog.test.tsx`
   在**全量**跑里偶发 1/42 红，形状是 `AssertionError: expected { title: … } to deeply equal { … }`
   且差异是 **`board: undefined`（期望 `"plugins"`）**；**隔离复跑两次都 42/42 全过**，随后全量也绿。
