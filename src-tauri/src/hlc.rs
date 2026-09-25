@@ -38,11 +38,12 @@
 //!    `absorb_peer_batch` / per-peer 水位）—— 那一格 ★"去掉中枢仍然收敛"由仿真夹具承重。
 //!    随之，`lib.rs` 里原先那行模块级 `#[allow(dead_code)]` 收据**已撤**（收据的删除条件兑现了）。
 //!
-//! ★★ **清理时查出的一处真缺口（2026-09-25）**：**收侧没有 `observe`**。`apply_pulled_changes`
-//! 拿到远端戳之后只做了 `verdict`，**没有把本机时钟推过它** ⇒ 对端时钟快时，本机随后的一次编辑
-//! 可能拿到**小于**刚收到那枚戳的新戳，于是"因果上更晚的改动"在 `verdict` 里反而判给远端。
-//! `Hlc::observe` 因此今天**没有产品调用方**，它带着一条有日期的收据（删除条件写在函数上方）。
-//! ⇒ 这是**接线缺口，不是可以删的死代码**；修它要单独一片（含"时钟快一小时的对端也压不住后续本地编辑"这条判据）。
+//! ★★ **收侧的 `observe` 已接上（2026-09-25）**：`sync.rs::apply_pulled_changes` 拿到远端戳之后
+//! **先 `observe` 再判胜负**（`sync::observe_remote_stamp`）。清死代码那轮查出过这个缺口 ——
+//! 当时收侧只做了 `stamp_of_payload` ⇒ `verdict`，**没把本机时钟推过远端** ⇒ 对端时钟快时，
+//! 本机随后的一次编辑会拿到**小于**刚收到那枚戳的新戳，于是"因果上更晚的改动"被判给远端（丢更新）。
+//! 现在有承重判据：`sync::tests::absorbing_a_fast_peers_stamp_pushes_the_local_clock_past_it`
+//! （造一个表快一小时的对端，要求它压不住后续本地编辑；**变异实测**：去掉那次 `observe` ⇒ 当场红）。
 //!
 //! **只服务判据与仿真夹具的那一族**（各带 `#[cfg(test)]`，产品二进制里根本不存在）：
 //! `StampedRecord` / `winner` / `merge_record` / `projection` / `without_stamp`（夹具见 `mesh_sim.rs`）
@@ -100,13 +101,11 @@ impl Hlc {
     /// 这就是"因果一定在序里"的全部实现：`observe` 保证 `stamp(收) > stamp(发)`，
     /// 于是"先收到再改"的改动在任何一台设备上都会赢过"被收到的那一版"。
     ///
-    /// ⚠️⚠️ **2026-09-25 的实况（清理时查出来的，不是清理顺手改的）**：这个函数**没有产品调用方** ——
-    /// `sync.rs` 收侧只做了 `stamp_of_payload` ⇒ `verdict`，**没把远端戳 `observe` 进本机时钟**。
-    /// 后果是上面那句话在**对端时钟快**时不成立：本机随后的一次编辑可能拿到小于刚收到那枚戳的新戳，
-    /// 于是"因果上更晚的改动"被判给远端。⇒ 这是**接线缺口，不是死代码**，所以留一条带日期的收据，
-    /// 而**不是**把它 `#[cfg(test)]` 掉（那正好会把缺口藏起来）。
-    /// 删除条件 = 收侧接上 `observe` **且**有一条判据：时钟快一小时的对端也压不住后续本地编辑。
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// ★ **2026-09-25 已接线**（收据兑现）：收侧 `sync::apply_pulled_changes` 拿到远端戳之后
+    /// **先 `observe` 再判胜负**（`sync::observe_remote_stamp`，与 `local_stamp` 共用同一格 KV）。
+    /// 在此之前它没有产品调用方，于是"对端时钟快 ⇒ 本机后改的那一版被判输"是真的会发生的
+    /// ——判据 `sync::tests::absorbing_a_fast_peers_stamp_pushes_the_local_clock_past_it`
+    /// 盯住这一格（**变异实测**：把那次 `observe` 去掉 ⇒ 当场红）。
     pub fn observe(&mut self, remote: &Hlc, now_ms: i64) -> Hlc {
         let now = now_ms.max(0);
         let max_wall = self.wall_ms.max(remote.wall_ms);

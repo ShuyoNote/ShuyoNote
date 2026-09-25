@@ -80,17 +80,39 @@ fn page_stamp_key(ws: &str, page_id: &str) -> String {
 /// ⚠️ `now_ms` 是**参数**：判据要能编排"物理钟回拨"这一格（不在这里读表）。
 /// ⚠️ 存着的那格**读不出来就报错**，**不猜着重置** —— 重置会让戳倒退，比什么都糟。
 pub fn local_stamp(c: &Connection, now_ms: i64) -> Result<Hlc, String> {
+    let mut clock = read_clock(c)?;
+    let next = clock.tick(now_ms);
+    set_meta_state(c, &clock_key(&device_id(c)?), &next.encode())?;
+    Ok(next)
+}
+
+/// 读回本机时钟（不存在 ⇒ `genesis`）。**读不出来就报错、不猜着重置**（见 `local_stamp`）。
+fn read_clock(c: &Connection) -> Result<Hlc, String> {
     let device = device_id(c)?;
     let key = clock_key(&device);
-    let mut clock = match get_meta_state(c, &key) {
-        None => Hlc::genesis(&device),
+    match get_meta_state(c, &key) {
+        None => Ok(Hlc::genesis(&device)),
         Some(stored) => Hlc::decode(&stored).ok_or_else(|| {
             format!("本机时钟那一格（{key}）读不出来：{stored}（**不猜着重置**：重置会让戳倒退）")
-        })?,
-    };
-    let next = clock.tick(now_ms);
-    set_meta_state(c, &key, &next.encode())?;
-    Ok(next)
+        }),
+    }
+}
+
+/// ★★ 丙-③ **收侧**：把收到的这枚戳**并进本机时钟**（HLC 的 `observe`）⇒ 本机时钟严格越过它。
+///
+/// 为什么必须在收这一侧做：HLC 那条"因果一定在序里"（`stamp(收) > stamp(发)`）**只由 `observe`
+/// 提供**。不 observe 的话，对端时钟快时，本机随后的一次编辑会拿到**小于**刚收到那枚戳的戳
+/// ⇒ "因果上更晚的改动"在 `verdict` 里反而被判给远端 —— **那一错就是丢更新**。
+/// 判据：`absorbing_a_fast_peers_stamp_pushes_the_local_clock_past_it`（含变异实测）。
+///
+/// ⚠️ 与 `local_stamp` 共用同一格 KV（`hlc:<device>`）⇒ **跨重启单调**那条保证照旧。
+/// ⚠️ **与"这一笔谁赢"无关**：输了的那一枚戳同样要 observe（不然下一个本地编辑还会栽在它上面）。
+/// ⚠️ 缓存性质：写不进去只影响后续判序，**绝不让已经落库的这一笔失败**（更不连坐整批）。
+fn observe_remote_stamp(c: &Connection, remote: &Hlc, now_ms: i64) -> Result<(), String> {
+    let mut clock = read_clock(c)?;
+    clock.observe(remote, now_ms);
+    set_meta_state(c, &clock_key(&device_id(c)?), &clock.encode())?;
+    Ok(())
 }
 
 /// 这一页**当前那一版**的戳。⚠️ 读不出来 / 没有 ⇒ `None`（＝"没带戳"⇒ 收侧走今天那条路）。
@@ -2552,6 +2574,22 @@ let mut unrecognized: Vec<String> = Vec::new();
                         //   两边都带戳 ⇒ 戳说了算；**缺一边（含"带了但读不出来"）⇒ 原样走今天那条路**，
                         //   并**留痕**：不留痕的话，"为什么这一笔按老规矩判"就只能靠猜。
                         let remote_stamp = crate::hlc::stamp_of_payload(&plain);
+                        // ★★ 丙-③ **收侧先把收到的戳并进本机时钟**（HLC 的 `observe`），再判胜负。
+                        //   为什么不能省：`verdict` 只回答"这一笔谁赢"，它**不推进本机时钟** ——
+                        //   不 observe 的话，对端时钟快时本机随后的一次编辑会拿到小于刚收到那枚戳的戳
+                        //   ⇒ "因果上更晚的改动"反而被判给远端（丢更新）。
+                        //   ⚠️ 与"这一笔谁赢"无关：**输了的那一枚同样要 observe**（否则下一个本地编辑
+                        //      还会栽在它上面）；⚠️ 与 `record_page_upsert` 共用同一格 KV，跨重启单调照旧。
+                        //   ⚠️ 缓存性质：写不进去只影响后续判序，**不许**因此让这一笔失败、更不许连坐整批。
+                        //   判据：`absorbing_a_fast_peers_stamp_pushes_the_local_clock_past_it`。
+                        if let crate::hlc::PayloadStamp::Ok(s) = &remote_stamp {
+                            if let Err(e) = observe_remote_stamp(&c, s, now) {
+                                eprintln!(
+                                    "[sync] page {} 的远端戳没并进本机时钟（只影响后续判序，这一笔照旧）：{e}",
+                                    page.id
+                                );
+                            }
+                        }
                         let local_stamp_kv = page_stamp(&c, &page.workspace_id, &page.id)
                             .map_or(crate::hlc::PayloadStamp::Missing, crate::hlc::PayloadStamp::Ok);
                         let stamp_wins = match crate::hlc::verdict(&local_stamp_kv, &remote_stamp) {
@@ -5753,6 +5791,63 @@ mod tests {
             content_of(&c)
         );
         assert_eq!(page_stamp(&c, "ws", "p1"), Some(late), "赢家是本地 ⇒ 那枚戳不动");
+    }
+
+    /// ★★ 丙-③ **收侧必须把收到的戳并进本机时钟**（HLC 的 `observe`）——
+    /// 否则"对端时钟快"会把本机**后改**的那一版判输（**那一错就是丢更新**）。
+    ///
+    /// 编排全走**产品路径**（不手搓 KV）：
+    ///   ① `apply_pulled_changes` 收下一枚"来自未来"的远端戳（对端的表快一小时）；
+    ///   ② 本机随后改一次这一页（`record_page_upsert`）；
+    ///   ③ 问 `verdict`：本机这一版必须赢。
+    ///
+    /// ⚠️ 第 ① 步之后是**直接读时钟那一格**（不是调 `local_stamp`）—— 调它会顺手 tick 一次，
+    /// 那样就算库里根本没 observe 过，断言也会绿（判据自己把缺口补上了）。
+    ///
+    /// **变异实测**：把收侧那句 `observe_remote_stamp(…)` 去掉 ⇒ 本机时钟仍停在物理钟上
+    /// （比那枚快戳小）⇒ 下面两条断言当场红。
+    #[test]
+    fn absorbing_a_fast_peers_stamp_pushes_the_local_clock_past_it() {
+        let c = stamped_conn();
+        let now = 1_000_000i64;
+        let far = stamp_of("FAST", now + 3_600_000); // 对端的表快一小时
+        let clock_now = |c: &Connection| -> Hlc {
+            let dev = device_id(c).unwrap();
+            Hlc::decode(&get_meta_state(c, &clock_key(&dev)).expect("本机时钟那一格必须已经写过")).unwrap()
+        };
+
+        // ① 收下这条"来自未来"的页 upsert（真收侧路径）
+        let p = remote_page("p1", &page_json("b1", 1, "远端那一版（它的表快一小时）"));
+        apply_pulled_changes(&c, vec![stamped_change(2, &p, Some(&far))], 0, 1).unwrap();
+
+        assert!(
+            clock_now(&c) > far,
+            "收下一枚更晚的远端戳之后，本机时钟必须**严格越过**它（HLC 的 observe）：\
+             现在是 {}，那枚是 {}",
+            clock_now(&c).encode(),
+            far.encode()
+        );
+
+        // ② 本机随后改一次（真推侧路径）——它拿到的戳必须比刚收到那枚更晚
+        let local_page = remote_page("p1", &page_json("b1", 2, "本机收下之后改的那一版"));
+        record_page_upsert(&c, &local_page).unwrap();
+        let local_after = page_stamp(&c, "ws", "p1").expect("推侧会给这一页记下当前那枚戳");
+
+        assert!(
+            local_after > far,
+            "收下之后发生的本地改动，序上**一定**比收到的那枚更晚：本地 {} vs 对端 {}",
+            local_after.encode(),
+            far.encode()
+        );
+        // ③ 后果（这才是"丢更新"那一格）：胜负必须判给本地
+        assert_eq!(
+            crate::hlc::verdict(
+                &crate::hlc::PayloadStamp::Ok(local_after),
+                &crate::hlc::PayloadStamp::Ok(far)
+            ),
+            crate::hlc::Verdict::ByStamp { remote_wins: false },
+            "对端时钟快**不该**压住本机后改的那一版（不 observe 就会压住）"
+        );
     }
 
     /// ★★ 丙-② 定下的那条规则在**真 apply 路径**上成立：**远端没带戳 ⇒ 整条走今天那条路**。

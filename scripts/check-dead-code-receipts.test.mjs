@@ -104,17 +104,41 @@ describe("什么不是收据", () => {
 });
 
 describe("变异实测：判据塌掉就当场红", () => {
-  it("把真实文件里的日期抹掉 ⇒ 那一条立刻变成违规（`hlc.rs::observe` 现场）", () => {
-    const rel = "src-tauri/src/hlc.rs";
-    const text = readFileSync(resolve(root, rel), "utf8");
-    expect(offendersOf(text)).toEqual([]); // 现状绿
-    const hit = findAllowDeadCode(text).find((h) => /allow\(dead_code\)/.test(text.split("\n")[h.line - 1]) && h.line > 100);
-    expect(hit, "`observe` 那条豁免必须在（它是这组用例的被测对象）").toBeTruthy();
-    // 只动收据里的日期：说明文字一字不改 —— 这一格红的理由必须是"没有日期"，不是"没写理由"
-    const mutated = text.replace(/2026-09-25 的实况/, "不明日期的实况");
-    expect(mutated).not.toBe(text);
+  /**
+   * 在**真实文件**里挑一处收据，只把它的**日期**抹掉（说明文字一字不改）。
+   *
+   * ⚠️ 这一格原来写死了 `hlc.rs::observe` 那一条 —— 而那条收据**当天就被兑现删掉了**
+   * （收侧接上了 `observe`），于是用例自己红了：**变异用例不该依赖"某条具体的收据还在"**。
+   * 现在改成从门禁**当前**扫到的收据里挑第一条，并往上找到它那行日期：
+   * 收据挪了、删了，这条用例照旧成立（找不到收据才是真的该红 —— 那时判据已无处可依）。
+   */
+  function mutateOneDate() {
+    const { occurrences } = check(root);
+    expect(occurrences.length, "本仓应当还有带日期的收据（否则这条用例失去对象）").toBeGreaterThan(0);
+    const target = occurrences[0];
+    const text = readFileSync(resolve(root, target.file), "utf8");
+    expect(offendersOf(text), `${target.file} 现状应当是绿的`).toEqual([]);
+    const lines = text.split("\n");
+    const DATE = /\b20\d\d-\d\d-\d\d\b/;
+    let i = target.line - 1;
+    // 日期可能就在属性那一行，也可能在它上面的注释块里（往上找，遇到代码行就停）。
+    for (; i >= 0; i--) {
+      const t = lines[i];
+      if (DATE.test(t)) break;
+      if (/^\s*$/.test(t) || /^\s*\/\//.test(t) || /^\s*#!?\[/.test(t)) continue;
+      break;
+    }
+    expect(i, `在 ${target.file}:${target.line} 附近找不到日期`).toBeGreaterThanOrEqual(0);
+    const before = lines[i];
+    lines[i] = before.replace(DATE, "不明日期");
+    expect(lines[i], "日期应当被换掉").not.toBe(before);
+    return { file: target.file, line: target.line, mutated: lines.join("\n") };
+  }
+
+  it("把真实文件里的一处日期抹掉 ⇒ 那一条立刻变成违规", () => {
+    const { file, line, mutated } = mutateOneDate();
     const bad = offendersOf(mutated);
-    expect(bad.map((o) => o.line)).toContain(hit.line);
+    expect(bad.map((o) => o.line), `${file} 里被抹掉日期的那一条必须红`).toContain(line);
   });
 
   it("缩进注释那条：把日期拿掉 ⇒ 红（否则上面那条可能只是「注释被判成代码」而假绿）", () => {
