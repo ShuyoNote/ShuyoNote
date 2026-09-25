@@ -280,6 +280,8 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
    ⚠️ 这也正是仓里 `docs/plans/2026-09-17-sm-crypto-tradeoff.md` 早写过的坑（"Android NDK 的 Perl 是硬坑"）。
 
 **因此"整体解锁"的真机读数目前仍只有推算值（≈0.75–0.9 s）**，而**微基准的真机读数（0.4–0.55 s）是真的量过的**。
+> ✅ **2026-09-25 已收口**：真机 **742 ms**（MIX 2 / release）—— 见下面「2026-09-25：件5 量到了」那一段；
+> 顺带在那台机器上堵掉两个"Android 上应用根本起不来"的缺陷（`build.target` ＋ 十项 polyfill）。
 
 **★ 2026-09-24 晚：装了正经 Perl（Strawberry 便携版）之后又往前走了两步，仍卡在同一处**
 
@@ -319,6 +321,45 @@ node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci
 ⚠️ 我另外用配置文件把 `beforeBuildCommand` 置空绕开了那个 pnpm 无 TTY 的坑（`dist/` 已是最新）。
 ⚠️ 想手工复刻 Tauri 的环境**没用**：直接 `cargo build --target aarch64-linux-android` 会卡在
 `ring` 找不到 `aarch64-linux-android-clang`（缺 Tauri 设的那些 `CC_*`）——**必须走上面这条**。
+
+**★★★ 2026-09-25：件5 量到了 —— 但先把两个「Android 上应用根本起不来」的缺陷堵了**
+
+**先证实手上那个包是旧口径**（不靠时间戳猜）：旧 `shuyonote-signed.apk`（9/24 17:09 构建）里的
+`lib/arm64-v8a/libshuyonote_lib.so` **含 `两次 KDF` 与 `应用级那条`、不含 `一遍 KDF`**（字节扫）；
+而删掉应用级加密的提交在 **9/24 19:07** ⇒ 那个包**必须重出**（量它只会得到一个作废口径）。
+```powershell
+tar -xf <apk> -C $tmp lib/arm64-v8a/libshuyonote_lib.so   # APK 就是 zip；bsdtar 认
+$t = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes("$tmp\lib\arm64-v8a\libshuyonote_lib.so"))
+$t.IndexOf('一遍 KDF'); $t.IndexOf('两次 KDF')
+```
+
+**重出包之后，应用在那台机器上起不来 —— 两个真缺陷（都在 Android 侧，都不在加密那条链上）**：
+
+| # | 症状 | 根因 | 修法 |
+|---|---|---|---|
+| ① | `Uncaught SyntaxError: Unexpected token '='`（**整页挂**） | 产物里有 `??=` ×135 / `||=` ×518 / `&&=` ×88（逻辑赋值，**Chrome 85+**），而 `vite.config.ts` 没设 `build.target` ⇒ 走 Vite 8 的现代默认；该机系统 WebView 是 **Chromium 80** | `vite.config.ts` 加 **`build.target: "chrome80"`**（与"目前能实测到的最老设备"对齐）⇒ `??=`/`||=` 归零；剩下 2 处 `&&=` 经查在 **Prism 的 operator 正则字面量**里（`/--\|\+\+\|\*\*=?\|=>\|&&=?\|…/`，无害） |
+| ② | `Object.hasOwn is not a function` | 同一处版本差：WebView 80 缺一串**运行时 API**，而**应用自己的代码一处都没用**（全是依赖在用）⇒ 只能补 | `public/es-polyfills.js` 补十项：`Object.hasOwn`(93) / `replaceAll`(85) / `Array·String.at`(92) / `findLast`·`findLastIndex`(97) / `crypto.randomUUID`(92) / **`structuredClone`(98，降级)** / `Element·DocumentFragment.replaceChildren`(86) / `reportError`(95) / **`Intl.Segmenter`(87，降级)** |
+
+⚠️ **这就是"声称支持"与"真能跑"的差**：`minSdk = 24`（Android 7），而这台 WebView 80 的 Android 9
+**在修之前连启动页都到不了**（`SyntaxError` 是整页挂，不是某功能降级）。修完之后一路可用 ——
+新建页面 / 设置 / 开启加密 / 重启锁定 / 解锁都走通了。
+⇒ 判据：`scripts/es-polyfills.test.mjs` 从 **4 条扩到 15 条**（新增那组**先把原生实现删掉**、
+装出"WebView 80"的处境再逐条钉语义：`structuredClone` 的循环引用、`crypto.randomUUID` 的 v4 版本位/变体位、
+`replaceAll` 的 `$&` 展开与非全局正则抛错、以及 **`reportError` 真的派发 error 事件**这条承重的）。
+
+**★ 件5 读数（真机 release，一次成功解锁）**：
+
+| 机器 / 构建 | **整条解锁** | 其中：钥匙袋 KDF（微基准） | 其余（解盒子 ＋ 开库） |
+|---|---|---|---|
+| **Xiaomi MIX 2 · Android 9 · WebView 80（release）** | **742 ms** | 468–476 ms | ≈ 270 ms |
+
+- 日志行（`adb logcat -s RustStdoutStderr`）：`[unlock] 整条解锁 742 ms（一遍 KDF：钥匙袋那条；＋解盒子 ＋开库）`
+- ⇒ **推算值（≈0.75–0.9 s）被实测取代**（这次推算相当准），而且**"一遍 KDF"的口径在真机上得到确认**。
+- 怎么驱动的 UI：这台机器 **`adb shell input tap` 是能用的**（与华为那台的记录相反），但最终走的是
+  **WebView 的 CDP 口**（`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>` ＋
+  `Runtime.evaluate`）—— 按 DOM 点比按坐标稳得多，路是 设置 → 安全 → 主口令 → 开启加密 → **重启** → 解锁。
+- ⚠️ **顺带发现一处 UI 疑问（待查，不阻塞读数）**：「安全」页里**没有「立即锁定」按钮**
+  （加密已开启、主口令已设），本次的锁定是靠**重启**拿到的。是条件写窄了还是刻意如此，另开一片核。
 
 **签名与安装（也是现成的）**：keystore 在 `~/.shuyonote-release-keystore/`（含 `PASSWORD.txt`，
 README 里连命令都写好了）⇒ `zipalign -f -p 4` → `apksigner sign --ks … --ks-key-alias shuyonote`
