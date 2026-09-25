@@ -186,6 +186,11 @@ export interface LanStatus {
   kind: "lan" | "configured" | "";
   /** 状态行原文：「同步地址：直连（局域网）… ｜ 本网段发现 N 台 ｜ 中枢：<名字>」那一串。 */
   line: string;
+  /**
+   * ★ 丙-③-b-2b-2：**网格（对等交换）这一档的读数**（与 Rust `mesh::MeshConfigState` 同形）。
+   * 面板据此开关与显示；`lan_status` 只**读**它，不开窗。
+   */
+  mesh: MeshConfigState;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */

@@ -144,6 +144,67 @@ export function SyncPanel() {
   //（那是给无参调用兜底的），在面板上显示**别的空间**的地址是错的。
   const activeRow = rows.find((r) => r.ws_id === activeId);
   const lanRowBound = !!activeRow && !!activeRow.server_url.trim() && !!activeRow.space_id.trim();
+  // 丙-③-b-2b-2：**网格（对等交换）**那一档的设置面。
+  // ⚠️ 三个输入各自独立，保存时按命令面的口径给值（`""` ＝ 清除那一项、`null` ＝ 不动）——
+  //   这里**不再自己解释一遍**（两处各解释一次，迟早会有一处说错）。
+  // ⚠️ 它的门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要求这个空间有 `space_id`
+  //   （"只开网格、不绑服务端"正是这一档要支持的配置）。
+  const [meshBind, setMeshBind] = useState("");
+  const [meshToken, setMeshToken] = useState("");
+  const [meshBusy, setMeshBusy] = useState(false);
+  const meshSavedBind = lanStatus?.mesh.bind ?? "";
+  // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
+  useEffect(() => {
+    setMeshBind(meshSavedBind);
+  }, [meshSavedBind]);
+  const saveMeshBind = async () => {
+    setMeshBusy(true);
+    try {
+      const st = await api.meshSetConfig(activeId, meshBind.trim(), null);
+      setStatus(st.note);
+    } catch (e) {
+      setStatus(`网格设置没保存：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+  const saveMeshToken = async () => {
+    if (!meshToken.trim()) return;
+    setMeshBusy(true);
+    try {
+      const st = await api.meshSetConfig(activeId, null, meshToken.trim());
+      setMeshToken("");
+      setStatus(st.note);
+    } catch (e) {
+      setStatus(`网格口令没保存：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+  const disableMesh = async () => {
+    setMeshBusy(true);
+    try {
+      // `""` ＝ **清除监听地址** ⇒ 网格关掉、窗口立刻松口（与命令面同一套口径）。
+      const st = await api.meshSetConfig(activeId, "", null);
+      setStatus(st.note);
+    } catch (e) {
+      setStatus(`网格没关掉：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+  const meshRoundNow = async () => {
+    setMeshBusy(true);
+    try {
+      const rep = await api.meshSyncNow(activeId);
+      // ⚠️ 显示的是 Rust 侧拼好的那句人话（含"哪一台没拉动"）—— 界面**不**自己数一遍。
+      setStatus(rep.note);
+    } catch (e) {
+      setStatus(`网格交换失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
   const [syncing, setSyncing] = useState(false);
   // C1 预算刹车：设备级设置（null = 还没读到，此时不渲染这一块）。
   const [budget, setBudget] = useState<SyncBudget | null>(null);
@@ -1087,6 +1148,55 @@ export function SyncPanel() {
                   </span>
                   <span className="sync-hint">{lanStatus.line}</span>
                 </span>
+              </div>
+            )}
+
+            {/* 丙-③-b-2b-2：**网格（对等交换）** —— "不装服务端也能同步"在这里有一个可点的入口。
+                ⚠️ 门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要这个空间有 `space_id`
+                （"只开网格、不绑服务端"正是这一档要支持的配置）。
+                ⚠️ 读数那句人话来自 Rust（`mesh::config_state`）—— 界面**不**自己判断
+                "别人拉不拉得到"（那要按地址形状判档，而档位只许由 Rust 出，与上面那条同一纪律）。 */}
+            {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
+              <div className="sync-att sync-mesh">
+                <span className="sync-att-text">
+                  <span className="sync-att-name">网格（设备之间直接同步）</span>
+                  <span className="sync-hint">{lanStatus.mesh.note}</span>
+                  <span className="sync-hint">
+                    {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
+                  </span>
+                </span>
+                <div className="sync-field">
+                  <input
+                    className="sync-input"
+                    placeholder="监听地址，如 192.168.1.5:8788"
+                    value={meshBind}
+                    disabled={meshBusy}
+                    onChange={(e) => setMeshBind(e.target.value)}
+                  />
+                  <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
+                    保存地址
+                  </button>
+                </div>
+                <div className="sync-field">
+                  <input
+                    className="sync-input"
+                    placeholder="口令（留空 ＝ 不动已有口令）"
+                    value={meshToken}
+                    disabled={meshBusy}
+                    onChange={(e) => setMeshToken(e.target.value)}
+                  />
+                  <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
+                    设口令
+                  </button>
+                </div>
+                <div className="sync-field">
+                  <button className="sync-btn" disabled={meshBusy} onClick={() => void meshRoundNow()}>
+                    立刻交换一轮
+                  </button>
+                  <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
+                    关掉网格
+                  </button>
+                </div>
               </div>
             )}
 

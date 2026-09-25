@@ -510,6 +510,14 @@ pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>) -> MeshConfi
     }
 }
 
+/// ★ 这个空间现在**开着窗口吗**、开在哪儿（**只读**，不开窗）。
+///
+/// 给设置面板的读数用：面板打开一次不该顺手开一个端口（开窗归 `ensure_window` 的调用方）。
+pub fn window_addr(space_id: &str) -> Option<SocketAddr> {
+    let guard = windows().lock().ok()?;
+    guard.get(space_id).map(|h| h.addr())
+}
+
 /// 关掉这个空间的窗口（没开 ⇒ 幂等的成功）。设置改了 / 空间停了就该调它。
 pub fn stop_window(space_id: &str) -> Result<(), String> {
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;

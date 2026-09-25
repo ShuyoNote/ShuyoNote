@@ -2984,7 +2984,21 @@ pub fn lan_status(
     let kind = route.as_ref().map(|r| r.kind.as_str()).unwrap_or("").to_string();
     let line = lan::status_line(route.as_ref(), &peers, &space_id, observed);
 
-    Ok(LanStatus { enabled, peers: peers.len(), kind, line })
+    // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
+    //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
+    //   面板打开一次不该顺手开一个端口；已经开着的话 `window_addr` 会把**实际地址**读出来。
+    let mesh = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let cfg = if space_id.trim().is_empty() {
+            crate::mesh::MeshSettings::default()
+        } else {
+            crate::mesh::settings(&c, &space_id)
+        };
+        let window = crate::mesh::window_addr(&space_id);
+        crate::mesh::config_state(&cfg, window)
+    };
+
+    Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh })
 }
 
 /// 状态行该报**哪个空间**（纯函数，带判据）：显式指定的那条优先，否则第一条绑定。
@@ -3016,6 +3030,11 @@ pub struct LanStatus {
     /// **状态行原文**（`lan::status_line`）—— 界面直接显示这一串，
     /// **不要**自己按地址形状再拼一次档位（那会说出与真实路由矛盾的档）。
     pub line: String,
+    /// ★ 丙-③-b-2b-2：**网格（对等交换）这一档的读数** —— 设置、窗口实际地址，以及
+    /// "**别人拉不拉得到**"那句人话（`mesh::config_state`，与设置面同一处口径）。
+    ///
+    /// ⚠️ 它在这里**只读**：`lan_status` 不负责开窗（那是 `mesh_set_config` 与发现层循环的事）。
+    pub mesh: crate::mesh::MeshConfigState,
 }
 
 #[derive(Serialize)]

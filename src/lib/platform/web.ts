@@ -1546,7 +1546,22 @@ export function makeInvoke(store: SqliteStore) {
       const server = (wanted ? resolveWorkspaceSyncScope(rows, wanted)?.server : undefined)
         ?? String(rows[0]?.server_url ?? "").trim().replace(/\/+$/, "");
       const line = server ? `同步地址：公网 ${server} ｜ 本网段发现 0 台` : "同步地址：尚未绑定";
-      return { enabled: false, peers: 0, kind: server ? "configured" : "", line } as T;
+      return {
+        enabled: false,
+        peers: 0,
+        kind: server ? "configured" : "",
+        line,
+        // 丙-③-b-2b-2：网格那一档在浏览器里**不可用**（没有发现层、开不了本机端口）。
+        // 与 `mesh_sync_now` / `mesh_set_config` 两支**同一句人话**：界面只要渲染它就行，
+        // 不用在组件里判平台（判一次就会有两处真相）。
+        mesh: {
+          enabled: false,
+          bind: null,
+          tokenSet: false,
+          window: null,
+          note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用",
+        },
+      } as T;
     }
     if (cmd === "mesh_sync_now") {
       // 丙-③-b ③：**对等交换（网格）**。Web 上这一档**根本不可用**，而且是两件硬事实：
