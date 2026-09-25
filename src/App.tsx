@@ -105,7 +105,17 @@ function hasBlockContent(contentJson: string): boolean {
 }
 
 function NoteEditor({ pageId }: { pageId: string }) {
-  const { current, updateCurrent, loadPages, error, searchQuery, pages, reloadTick } = useNotes();
+  // 逐字段订阅：这 5 个 state 字段都真的进了渲染（正文 / 错误角标 / 搜索高亮 / 页面树 / 编辑器重挂载 key），
+  // 而 `updateCurrent`/`loadPages` 是动作（引用恒定 ⇒ 选择器不产生额外重渲染）。
+  // 原先的整店订阅会让本组件被 `currentId`/`loading` 等字段的变化一并唤醒（`loading` 每次
+  // loadPages 都会翻转）。
+  const current = useNotes((s) => s.current);
+  const error = useNotes((s) => s.error);
+  const searchQuery = useNotes((s) => s.searchQuery);
+  const pages = useNotes((s) => s.pages);
+  const reloadTick = useNotes((s) => s.reloadTick);
+  const updateCurrent = useNotes((s) => s.updateCurrent);
+  const loadPages = useNotes((s) => s.loadPages);
   const [title, setTitle] = useState(current?.title ?? "");
   const [saved, setSaved] = useState(true);
   const [coverOpen, setCoverOpen] = useState(false);
@@ -660,7 +670,11 @@ function App() {
 }
 
 function AppShell() {
-  const { pages, currentId, loadPages, error } = useNotes();
+  // 逐字段订阅（`loadPages` 是动作，引用恒定）。
+  const pages = useNotes((s) => s.pages);
+  const currentId = useNotes((s) => s.currentId);
+  const error = useNotes((s) => s.error);
+  const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useTemplateCenterStore((s) => s.open);

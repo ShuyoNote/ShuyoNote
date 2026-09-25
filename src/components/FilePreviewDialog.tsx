@@ -130,7 +130,13 @@ function collectOutline(root: Element): MdOutlineItem[] {
 }
 
 export function FilePreviewDialog() {
-  const { target, mdHtml, mdLoading, mdImporting, close, importAsPage } = useFilePreview();
+  // 逐字段订阅（`close`/`importAsPage` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
+  const target = useFilePreview((s) => s.target);
+  const mdHtml = useFilePreview((s) => s.mdHtml);
+  const mdLoading = useFilePreview((s) => s.mdLoading);
+  const mdImporting = useFilePreview((s) => s.mdImporting);
+  const close = useFilePreview((s) => s.close);
+  const importAsPage = useFilePreview((s) => s.importAsPage);
   const bodyRef = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme(); // re-render mermaid when theme changes
   const [outline, setOutline] = useState<MdOutlineItem[]>([]);
@@ -145,7 +151,9 @@ export function FilePreviewDialog() {
   const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
-  const folderId = useFileManagerStore.getState().folderId;
+  // ⚠️ 这里原先写的是 `const folderId = useFileManagerStore.getState().folderId`（**渲染期快照**）：
+  // 它既不是订阅（folderId 变了本组件不会重渲染 ⇒ 用户点了"导入为页面"落到的还是旧目录），
+  // 也不比"点击时现取"更好。动作里读 `getState()` 才是这份状态唯一正确的用法（见下面的按钮）。
 
   const openPdf = () => {
     if (target && target.mime === "application/pdf") {
@@ -321,7 +329,7 @@ export function FilePreviewDialog() {
             </button>
           )}
           {target.mime === "text/markdown" && (
-            <button className="fm-preview-read" onClick={() => void importAsPage(folderId)} disabled={mdImporting}>
+            <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} disabled={mdImporting}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
                 <path d="M14 3v6h6" />

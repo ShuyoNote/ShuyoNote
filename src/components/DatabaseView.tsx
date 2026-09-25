@@ -118,7 +118,11 @@ function computeRollup(
 }
 
 export function DatabaseView({ pageId, title }: { pageId: string; title: string }) {
-  const { openPage, pages } = useNotes();
+  // 只订渲染用到的两个字段；`openPage` 是动作（引用恒定）⇒ 选择器订阅，值不变、不额外重渲染。
+  // 原先的整店订阅意味着本视图（1790 行）会被 `currentId` / `loading` / `searchQuery` 等
+  // 与它无关的字段变化唤醒。
+  const pages = useNotes((s) => s.pages);
+  const openPage = useNotes((s) => s.openPage);
   const reloadTick = useNotes((s) => s.reloadTick);
   const [query, setQuery] = useState<DatabaseQuery | null>(null);
   const [attrs, setAttrs] = useState<AttrDef[]>([]);

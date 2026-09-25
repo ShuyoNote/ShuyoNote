@@ -32,7 +32,9 @@ export function AiSettingsForm({
   onDone: () => void;
   showCancel?: boolean;
 }) {
-  const { config, update } = useAiStore();
+  // 逐字段订阅（`update` 是动作，引用恒定）。
+  const config = useAiStore((s) => s.config);
+  const update = useAiStore((s) => s.update);
   const [enabled, setEnabled] = useState(config.enabled);
   const [provider, setProvider] = useState<AiProvider>(config.provider);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);

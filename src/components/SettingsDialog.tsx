@@ -689,7 +689,13 @@ function EmailPane() {
 // 需要状态常驻可见的动作。这里只做「我是谁、连了哪些服务器」。
 function AccountPane() {
   const spaces = useSpaceStore((s) => s.spaces);
-  const { authed, serverUrl, token, email, clear } = useAuth();
+  // 逐字段订阅（`clear` 是动作，引用恒定；本面板是设置中心里很大的一个子面板，
+  // 不该被 auth store 的无关字段唤醒）。
+  const authed = useAuth((s) => s.authed);
+  const serverUrl = useAuth((s) => s.serverUrl);
+  const token = useAuth((s) => s.token);
+  const email = useAuth((s) => s.email);
+  const clear = useAuth((s) => s.clear);
   const [groups, setGroups] = useState<{ server_url: string; wss: { ws_id: string; name: string; spaceId: string; token: string }[] }[]>([]);
   const [status, setStatus] = useState("");
   const [syncing, setSyncing] = useState(false);
@@ -1169,7 +1175,11 @@ function AccountPane() {
 
 
 function AppearancePane() {
-  const { theme, accent, setTheme, setAccent } = useTheme();
+  // 逐字段订阅（`setTheme`/`setAccent` 是动作，引用恒定）。
+  const theme = useTheme((s) => s.theme);
+  const accent = useTheme((s) => s.accent);
+  const setTheme = useTheme((s) => s.setTheme);
+  const setAccent = useTheme((s) => s.setAccent);
   const { i18n } = useTranslation();
   const setLang = (lng: string) => {
     try { localStorage.setItem("shuyonote:lang", lng === "system" ? "" : lng); } catch { /* ignore */ }

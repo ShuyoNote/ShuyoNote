@@ -27,24 +27,25 @@ const EMPTY_POOL = [
 ];
 
 export function AiAssistantPanel() {
-  const {
-    config,
-    running,
-    reply,
-    drafts,
-    error,
-    activity,
-    history,
-    currentPrompt,
-    thinking,
-    run,
-    stop,
-    confirm,
-    dismiss,
-    clearResult,
-    resetError,
-    summarizeLibrary,
-  } = useAiStore();
+  // 逐字段订阅。⚠️ 不要写成 `const { … } = useAiStore()`（整店订阅 ⇒ 每次 `set()` 都重渲染），
+  // 也不要写成 `useAiStore.getState()`（那是**渲染期快照**，store 变了组件不重渲染 ⇒ 面板卡住不动）。
+  const config = useAiStore((s) => s.config);
+  const running = useAiStore((s) => s.running);
+  const reply = useAiStore((s) => s.reply);
+  const drafts = useAiStore((s) => s.drafts);
+  const error = useAiStore((s) => s.error);
+  const activity = useAiStore((s) => s.activity);
+  const history = useAiStore((s) => s.history);
+  const currentPrompt = useAiStore((s) => s.currentPrompt);
+  const thinking = useAiStore((s) => s.thinking);
+  // 动作引用恒定 ⇒ 选择器订阅不产生额外重渲染（下面这些在 JSX 里直接当值用）。
+  const run = useAiStore((s) => s.run);
+  const stop = useAiStore((s) => s.stop);
+  const confirm = useAiStore((s) => s.confirm);
+  const dismiss = useAiStore((s) => s.dismiss);
+  const clearResult = useAiStore((s) => s.clearResult);
+  const resetError = useAiStore((s) => s.resetError);
+  const summarizeLibrary = useAiStore((s) => s.summarizeLibrary);
   const open = useRightPanel((s) => s.ai);
   useOverlayScrollLock(open);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。

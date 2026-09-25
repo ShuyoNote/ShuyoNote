@@ -29,10 +29,14 @@ import {
  * 摊开权限。
  */
 export function PluginIndexPanel() {
-  const {
-    installFromIndex, plugins,
-    subscriptions, loadSubscriptions, subscribeIndex, unsubscribeIndex, checkSubscriptions,
-  } = usePlugins();
+  // 逐字段订阅（五个动作引用恒定 ⇒ 选择器不产生额外重渲染）。
+  const plugins = usePlugins((s) => s.plugins);
+  const subscriptions = usePlugins((s) => s.subscriptions);
+  const installFromIndex = usePlugins((s) => s.installFromIndex);
+  const loadSubscriptions = usePlugins((s) => s.loadSubscriptions);
+  const subscribeIndex = usePlugins((s) => s.subscribeIndex);
+  const unsubscribeIndex = usePlugins((s) => s.unsubscribeIndex);
+  const checkSubscriptions = usePlugins((s) => s.checkSubscriptions);
   // 已装的版本：升级 / 重装 / 拒绝降级全靠它（与后端同一套版本比较口径）。
   const installedOf = (id: string) => plugins.find((p) => p.id === id) ?? null;
   // 上次填过的地址 / 公钥只读一次：它不是"信任配置"，只是省得每次重打。

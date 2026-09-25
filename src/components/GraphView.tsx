@@ -73,7 +73,9 @@ function nodeClusterKey(n: SimNode, dimension: string): string | null {
 }
 
 export function GraphView() {
-  const { currentId, openPage } = useNotes();
+  // 只订 `currentId`（用来高亮当前页 / 决定局部图焦点）；`openPage` 是动作 ⇒ 选择器订阅。
+  const currentId = useNotes((s) => s.currentId);
+  const openPage = useNotes((s) => s.openPage);
   const spaceId = useSpaceStore((s) => s.activeId);
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);

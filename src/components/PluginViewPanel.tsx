@@ -19,7 +19,10 @@ import { PluginViewTable } from "./PluginViewTable";
  * 那个抽屉"。表格本体与浮层共用 `PluginViewTable`。
  */
 export function PluginViewPanel() {
-  const { pluginId, pluginName, view } = usePluginViewStore();
+  // 逐字段订阅（这个面板只是"当前这个视图是不是该由抽屉渲染"）。
+  const pluginId = usePluginViewStore((s) => s.pluginId);
+  const pluginName = usePluginViewStore((s) => s.pluginName);
+  const view = usePluginViewStore((s) => s.view);
   const activeKey = useRightPanel((s) => s.plugin);
   const closePanel = useRightPanel((s) => s.openPlugin);
   const openPage = useNotes((s) => s.openPage);
