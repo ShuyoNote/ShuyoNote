@@ -278,15 +278,34 @@ powershell -ExecutionPolicy Bypass -File C:\Users\cnzen\zhai\_scratch\sign-insta
 node C:\Users\cnzen\zhai\_scratch\dev-mate.mjs eval "document.body.innerText.replace(/\s+/g,' ').slice(-800)"
 ```
 
-⚠️ **三条踩过的坑（省一整轮的那种）**：
+⚠️ **四条踩过的坑（省一整轮的那种）**：
 1. **签名不匹配就必须先卸载** —— `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 只在签名不同时出现，
    而卸载会**连 App 数据一起删**。所以动手前先 `apksigner verify --print-certs` 读一下
    **设备上那个包**（`adb pull $(adb shell pm path <pkg> | cut -d: -f2)`）的指纹，别猜。
+   ★ 也别被自己的脚本骗：**对同一个 apk 连签两次，最后那次赢** ——
+   第一次用正式 key、第二次用测试 key，装上去的就是**测试 key 那个**（2026-09-25 真踩）。
 2. **APK 里没有前端的明文**：Tauri 把整个前端嵌进 `lib/arm64-v8a/libshuyonote_lib.so`（压缩存储）
    ⇒ 想用"扫 .so 找中文文案"来确认打进去的是哪一版，**只能看到压缩流**，
    那条路走过一次、结论是"看着像假的"（本次改用"跑起来按 DOM 读文字"来判）。
 3. `adb exec-out screencap -p > x.png` **别走 PowerShell 的 `>`**（二进制会被改写、图读不出来），
    要 `cmd /c "... > x.png"`。
+4. **`adb push` 进去的文件不会自动进 MediaStore** ⇒ 系统选择器（SAF）里看不到它。
+   先 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///…` 再打开选择器。
+   ⚠️ 华为的 DocumentsUI 顶部那一行（`「下载」中的文件`）**点一次才会展开文件列表**，
+   且列表项的无障碍标签是「预览 "x.txt" 文件」——`uiautomator dump` 里拿它的 `bounds` 再 `input tap`。
+
+## 一段真实教训：真机验出来的那个 bug（2026-09-25）
+
+B 片"配对码存/读文件"在本机（happy-dom 打桩 dialog）**全绿**，第一次上真机就发现
+**「从文件读取」什么都没发生**。根因不在界面，在 Rust：`backup.rs::read_text_file` 当时是
+`std::fs::read_to_string(&path)`，而 Android 的选择器给回来的是 **`content://…` URI**
+（`Path::new` 把它当普通相对文件名 ⇒ 必然读不到）。**写的那一半早就走 `SaveTarget` 处理了这件事，
+读的那一半一直漏着**（因为它当时没有调用方）。
+⇒ 修法：读也走 `picked_file::materialize`（与 `import_backup` 同一条路；桌面逐字不变）。
+⇒ 判据（文本级，`src/lib/platform/pickedFileRead.wiring.test.ts`）：
+**这两个命令里必须出现"落成真实路径 / 走 SaveTarget"的调用，且不许把参数直接喂给 `std::fs`**。
+⇒ 一般结论：**"用户选来的那份东西"是一个独立的输入类别** —— 它的值可能是 URI 而不是路径，
+`std::fs` / `Path` 全都不能直接吃。凡是新增"让用户选个文件"的功能，两条路（读、写）都要各过一遍这道闸。
 
 ## flake 与重试（不许静默重试）
 

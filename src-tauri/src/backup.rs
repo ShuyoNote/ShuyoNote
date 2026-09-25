@@ -620,9 +620,20 @@ pub fn write_binary_file(app: tauri::AppHandle, path: String, data: Vec<u8>) -> 
     target.commit()
 }
 
+/// 读一个用户**选**来的文本文件。
+///
+/// ⚠️ **2026-09-25 真机实测抓到的一处真 bug**：这一条原来只有
+/// `std::fs::read_to_string(&path)` —— 而 Android 的系统选择器给回来的是
+/// **`content://…` URI**（`Path::new("content://…")` 是个普通相对文件名，`fs::read_to_string`
+/// 必然失败）。写那一半（[`write_text_file`]）早就走 `SaveTarget` 把这件事处理掉了，
+/// **读这一半一直漏着** —— 因为它当时没有调用方（B 片"配对码存/读文件"是第一个）。
+///
+/// 修法照 `import_backup` 的同一条路：**先 `picked_file::materialize` 落成真实临时路径**
+/// （桌面原样返回 ⇒ 桌面行为逐字不变），再读。
 #[tauri::command]
-pub fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+pub fn read_text_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let picked = crate::picked_file::materialize(&app, &path)?;
+    std::fs::read_to_string(picked.path()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
