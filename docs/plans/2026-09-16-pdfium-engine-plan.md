@@ -83,7 +83,8 @@ node scripts/fetch-pdfium.mjs --print-sha256 <tgz>   # 补记某平台的校验�
 三个设计点（都是"别让来路不明的二进制进交付物"这条原则的落地）：
 
 1. **校验和不符直接删档退出**，不给"跳过校验"的口子；
-2. **没实测记录校验和的平台硬失败**（其余平台 `sha256: null`）——宁可让人补一次，也不静默下载；
+2. **没实测记录校验和的平台硬失败**（表里写 `sha256: null` 的那些）——宁可让人补一次，也不静默下载
+   （⚠️ 2026-09-25 核对：**五个平台今天都已经有校验和**，这条现在只在"将来加了新平台"时才会触发）；
 3. 解包后写 `SOURCE.txt`（版本 / 资产 / sha256 / 来源 URL / 时间 / `VERSION` / `args.gn` 原文），`src-tauri/vendor/pdfium/` 已进 `.gitignore`（**二进制不入库**）。
 
 **⚠️ 本机 DNS 被污染时的取法**（实测踩过）：
@@ -205,7 +206,9 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
       —— ✅ **两份独立读数**（2026-09-19）：同一被验 commit `23985ef`，Windows 侧 WSL2 与 AMD 侧各自独立复现，
       **数字逐格一致**（RGB 最大差 0/0/1/1、超阈 0.000%、`语义不一致` 四份全零）；目视也是两份
       （本轮 4 张对照图已入库 `docs/media/pdfium-p3-compare/`，AMD 侧 7 张 PNG 留档在信箱 `pdfium-p3/visual-check-23985eff/`）。
-      ⚠️ **中文与扫描件样本仍未实现**（生成脚本自己声明未覆盖、不拿近似样本充数）⇒ 本项**尚未完全达成**（其余四类已达成）。
+      ✅ **2026-09-25 更正：这两类样本后来都补了**（同文件 §0.3-M 新增 `scan.pdf` / `cjk.pdf` 两类样本，
+      §0.3-O 给出**六格读数**：Windows/macOS/Linux 三平台各自的墨迹数与"非矩形墨迹"；判据分"硬判据"与"只报不判"两档）
+      ⇒ 本项**已达成**（原来这里那句"中文与扫描件样本仍未实现 ⇒ 尚未完全达成"是当时的实况）。
 - [ ] **性能不退化**：单页耗时对比记录在案（PDFium 不得明显慢于 MuPDF；扫描件通常更快）
       —— ✅ 读数见 [P3 报告 §五](2026-09-19-pdfium-p3-report.md)（对拍模块本身没有耗时口径，用临时探针补的；探针未入库）
 - [ ] **契约不变**：`parseNativePageResponse` 与前端零改动即可工作 —— ✅ 前端零改动（P2 那条分派本来就只动 Rust 侧）
@@ -218,8 +221,9 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
       —— Windows ✅ `tauri.windows.conf.json`（1.91.5 起）。本轮独立复核三条：`7z l` 命中 `pdfium.dll`（时间戳=源文件）、
       静默安装后 dll 与 exe 同级、该 dll `LoadLibraryW` 成功且 `FPDF_InitLibraryWithConfig`/`FPDF_LoadDocument` 都在；
       并做了**运行时 A/B**（藏库 ⇒ 控制台出现 pdf.js 回退日志；库在位 ⇒ 无该日志且正常渲染）。
-      —— macOS ⚠️ 配置已随包（`tauri.macos.conf.json` → `.app/Contents/Frameworks`，含方向修复 `4c6f83c`），
-      但**真出包/公证读数仍缺**（归 Mac）。
+      —— macOS ✅ **2026-09-25 更正：签名链与"包里那份库真能渲"的读数都有了**（同文件 §0.3-Q：
+      签名前后字节变化量、"包级对拍 **1 passed / 0 failed**"、`cjk.pdf` 墨迹 29582 与开发期逐字一致）。
+      归 Mac 的那两格（**公证 `spctl`**、人工挂 dmg 目视）**仍缺**。
       —— Linux ✅ 代码已在 dev（`library_dir()` 的 `resource_dir()` 探测 + `tauri.linux.conf.json` + CI 取库 +
       产物断言 `check-linux-bundle`）；**1.91.6 起 Linux 包会真的带库**（上一版 1.91.5 的 deb 解包实测：无 `libpdfium`）。
       **2026-09-20 补**：真 deb 端到端已验（`libpdfium.so` + **随包中文字体** 都在资源目录那一层、sha256 与钉死值一致），
@@ -279,8 +283,11 @@ if (attachmentId && platform.pdfRender.nativeAvailable()) {
 无论哪条：**版本与校验和必须入库**，构建脚本要**校验后使用**，不许"下载了就塞进安装包"。
 
 **✅ 已定（2026-09-17，见 §0.2-G）**：**开发期走第 2 条**——先把四个平台的校验和**实测补齐**（`--print-sha256`，与 `win-x64` 同套路），
-把多平台跑通；**交付前**再评估第 1 条（自建）。⚠️ 现状：平台表里只有 `win-x64` 有校验和，其余**四个都是 `sha256: null`**，
-脚本对它们硬失败 ⇒ **P4 多平台打包现在就是被这一条卡住的**。
+把多平台跑通；**交付前**再评估第 1 条（自建）。
+✅ **2026-09-25 更正：这一步已经做完了** —— `scripts/fetch-pdfium.mjs` 里 **五个平台
+（`win-x64` / `win-arm64` / `linux-x64` / `mac-univ` / `android-arm64`）都已经有校验和字面量**
+（核对过那几行；施工单 `2026-09-20-pdfium-linux-font-backend-workorder.md` §8 也是这个说法）。
+⇒ "只有 `win-x64` 有校验和 ⇒ P4 被卡住"这句**已不成立**（它是当时的实况）。
 
 ---
 

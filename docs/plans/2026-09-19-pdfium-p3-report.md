@@ -18,7 +18,7 @@
 | 执行机 | 本机 Windows 的 **WSL2 Ubuntu 24.04.4 LTS**（kernel `6.6.87.2-microsoft-standard-WSL2`），20 vCPU / 31 GiB |
 | 为什么走 WSL | 本机 Windows 上 `cargo test` 是 `0xC0000139`（本仓已知的**环境级**限制，已复核过不是旧二进制）；对拍模块的文件头也写明"只能在 AMD(WSL2)/Mac 上执行" ⇒ 这次由 Windows 侧用 WSL2 顶了 AMD 那一棒 |
 | Rust | rustc / cargo **1.98.1** stable（rustup minimal）；crates 源 = rsproxy（与 Windows 侧同一面，直连 crates.io 在国内太慢） |
-| PDFium 库 | `pdfium-binaries` build **7881**，linux-x64，`libpdfium.so` **7,645,184 B**，sha256 `1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d`（与方案 §6 平台表一致；`fetch-pdfium.mjs` 自校验通过） |
+| PDFium 库 | `pdfium-binaries` build **7881**，linux-x64，`libpdfium.so` **7,645,184 B**，sha256 `f7289309…`（＝ vendor 里那份 `.so`；与方案 §0.3-P① 一致）。<br>⚠️ **2026-09-25 更正**：本行原来写的 `1470e21b8b4a3b4ad7f85684e2da11d94f3b69a86d81dee11b9b6709d927ac1d` **不是 `.so` 的哈希，而是 `pdfium-linux-x64.tgz` 资产包**的哈希（`scripts/fetch-pdfium.mjs` 里两条都在，大小接近、对象不同）⇒ 别拿它当"库文件指纹"用 |
 | 系统依赖 | `libwebkit2gtk-4.1-dev` / `libssl-dev` / `cmake` / `libclang-dev` / `build-essential` 等（口径取自仓库自己的 `scripts/check-sys-deps.mjs`） |
 
 ## 二、命令（可复现）
