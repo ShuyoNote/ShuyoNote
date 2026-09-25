@@ -2427,6 +2427,9 @@ let mut unresolved_page_ids: Vec<String> = Vec::new();
 // 已经存进 `pending_remote_pages`（本地表）⇒ 界面要能告诉用户"有 N 页等你裁决"，
 // 而不是像修好之前那样"游标过去了、什么都没有"（取证文件 §3.2）。
 let mut pending_remote_ids: Vec<String> = Vec::new();
+// ★ F7b（2026-09-25）：本轮收到**本端不认识的「对象种类 ＋ 动作」搭配**（去重后的 `entity:op`）。
+// 见下面 `_` 那一支的说明 —— 以前那里是无条件 `_ => {}`：**照旧忽略，但不再无声**。
+let mut unrecognized: Vec<String> = Vec::new();
     for change in changes {
         let title = item_title(&change.entity, change.payload.as_ref());
         items.push(SyncItem { entity: change.entity.clone(), entity_id: change.entity_id.clone(), op: change.op.clone(), dir: "pull".to_string(), title });
@@ -2524,8 +2527,20 @@ let mut pending_remote_ids: Vec<String> = Vec::new();
                     .map_err(|e| e.to_string())?;
                 count += 1;
             }
-                _ => {}
+            // ★ F7b（2026-09-25）：**这一格以前是无条件 `_ => {}`** —— 真到了就一句话不说地丢掉。
+            // 桌面只认上面 4 种搭配（`page` / `attachment` 各自的 `upsert` / `delete`），而 Web 那套
+            // TypeScript 引擎还会写 `page_tag` / `attr` / `prop` 三类对象（`web.ts` 的 `recordChange`）。
+            // 它们今天到不了生产（Web 产品上**不提供**多设备同步，简报 F7），但"**收到读不懂的东西
+            // 就静默丢掉**"正是本仓已经付过一次账的那种 bug（冲刺 §11.4：桌面静默丢掉 `crdt_state`，
+            // 专门开了一轮才查出来）。口径与 `crdt_wire::WireState::UnknownVersion` 同一条：
+            // **照旧忽略（前向兼容），但不许无声** —— 去重后由 `do_pull` 打一行实情日志。
+            _ => {
+                let tag = format!("{}:{}", change.entity, change.op);
+                if !unrecognized.contains(&tag) {
+                    unrecognized.push(tag);
+                }
             }
+        }
             Ok(())
         })();
         // ★ 一条变更失败的**统一处置**（与 Web 的 `doPull` catch 逐条对应，2026-09-23）：
@@ -2561,7 +2576,7 @@ let mut pending_remote_ids: Vec<String> = Vec::new();
             max_pulled = change.seq;
         }
     }
-    Ok(PulledApply { count, max_pulled, items, conflicts, unresolved_page_ids, pending_remote_ids })
+    Ok(PulledApply { count, max_pulled, items, conflicts, unresolved_page_ids, pending_remote_ids, unrecognized })
 }
 
 /// `apply_pulled_changes` 的产物（`do_pull` 直接摊平进它的返回元组）。
@@ -2572,6 +2587,11 @@ struct PulledApply {
     conflicts: Vec<SyncConflict>,
     unresolved_page_ids: Vec<String>,
     pending_remote_ids: Vec<String>,
+    /// ★ F7b：本轮**本端不认识**的 `entity:op`（去重、按首次出现顺序）。空 = 全都认识。
+    /// ⚠️ 它**不是**失败：那些变更被**有意忽略**（前向兼容），只是不许无声 —— `do_pull` 会把它打出来。
+    /// ⚠️ 别把它读成"游标停住了"：游标照旧前进（见下面那段"必须前进"的注释），
+    /// 否则一种读不懂的搭配会把它后面所有变更**永久堵死**。
+    unrecognized: Vec<String>,
 }
 
 async fn do_pull(
@@ -2630,6 +2650,18 @@ async fn do_pull(
         // 外键由 `_fk_guard` 在离开作用域时恢复（成功路径也一样，顺序与原来一致）。
         out
     };
+
+    // ★ F7b（2026-09-25）：**不静默**。忽略是对的（前向兼容），但要让实情有地方可查 ——
+    // 以前这一格是无条件 `_ => {}`，"收到读不懂的变更"在场面上与"什么都没收到"完全一样。
+    if !out.unrecognized.is_empty() {
+        eprintln!(
+            "[sync] 收到 {} 种本端**不认识**的变更类型 ⇒ 已忽略（如实留痕，不静默）：{}。\
+             本端只认 page / attachment 的 upsert / delete；出现别的种类说明对端写的协议比本端宽\
+             （Web 那套引擎还会写 page_tag / attr / prop —— 见简报 F7b）。",
+            out.unrecognized.len(),
+            out.unrecognized.join("、")
+        );
+    }
 
     Ok((
         out.count,
@@ -5234,6 +5266,57 @@ mod tests {
             payload: Some(serde_json::to_string(&remote_page(id, json)).unwrap()),
             updated_at: seq,
         }
+    }
+
+    /// 造一条**任意** `entity` / `op` 的入站变更 —— 给"本端不认识"那一格（F7b）用。
+    fn odd_change(seq: i64, entity: &str, op: &str) -> IncomingChange {
+        IncomingChange {
+            seq,
+            entity: entity.to_string(),
+            entity_id: format!("{entity}-{seq}"),
+            op: op.to_string(),
+            payload: Some("{}".to_string()),
+            updated_at: seq,
+        }
+    }
+
+    /// ★ F7b 判据（2026-09-25）：本端**不认识**的变更类型 —— **照旧忽略，但不许无声**。
+    ///
+    /// 咬人的地方：把它改回无条件 `_ => {}` ⇒ `unrecognized` 是空的 ⇒ 这条立刻红。
+    /// 同时钉住三件容易写坏的事：
+    ///   ① 认识的照常落库（不许连坐）；
+    ///   ② 不认识的**一条都不落库**（禁的是"顺手当 page 处理"）；
+    ///   ③ ★ **游标照旧前进** —— 否则一种读不懂的搭配会把它**后面所有变更永久堵死**（livelock）。
+    #[test]
+    fn unrecognized_entity_kinds_are_ignored_loudly_and_never_wedge_the_cursor() {
+        let c = pages_conn();
+        let changes = vec![
+            page_change(1, "p1", &page_json("b1", 1, "甲")),
+            odd_change(2, "prop", "upsert"),
+            odd_change(3, "attr", "delete"),
+            odd_change(4, "prop", "upsert"), // 同一种搭配再来一次 ⇒ 只记一次（否则一次 pull 能刷几百行）
+            page_change(5, "p2", &page_json("b1", 1, "乙")),
+        ];
+        let out = apply_pulled_changes(&c, changes, 0, 1_000).unwrap();
+
+        // ① **留痕**：两种不认识的搭配、去重、按首次出现顺序 —— 这就是"不静默"的可断言形态。
+        assert_eq!(
+            out.unrecognized,
+            vec!["prop:upsert".to_string(), "attr:delete".to_string()],
+            "本端不认识的搭配必须被数出来（把它改回无条件忽略那一支，这条就空）"
+        );
+        // ② 认识的两条照常落库；不认识的一条都不落。
+        assert_eq!(out.count, 2, "只有那两条 page 变更该被应用");
+        for id in ["p1", "p2"] {
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = ?1", params![id], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 1, "{id} 应当被应用");
+        }
+        // ③ ★ 游标走到批尾（不认识的搭配不许把后面堵死），且它们**不是失败**：不归档、不报冲突。
+        assert_eq!(out.max_pulled, 5, "游标必须走到批尾 —— 否则下一条读不懂的搭配就是死锁");
+        assert!(out.pending_remote_ids.is_empty(), "忽略 ≠ 失败归档");
+        assert!(out.conflicts.is_empty(), "忽略 ≠ 冲突");
     }
 
     /// ★ 正面：一条落库失败的变更 ⇒ **不连坐**（其余变更照常落库）＋ **游标前进** ＋ **留痕**（归档）。
