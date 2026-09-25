@@ -248,6 +248,9 @@ pub async fn pull_from_peer(
 }
 
 /// 一轮对等交换的结果（给人看的读数，不是业务数据）。
+///
+/// ⚠️ **失败也在这里**：一只对端拉不动**不许**把整轮打断（别的对端、别的空间照拉）——
+/// 这与同步主路那条"一条坏变更不连坐整批"是同一条纪律。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerPullReport {
@@ -255,13 +258,33 @@ pub struct PeerPullReport {
     pub fetched: usize,
     pub applied: usize,
     pub cursor: i64,
+    /// 拉不动时**如实写在这里**（`None` ＝ 这一台这一轮没问题）。
+    pub error: Option<String>,
+}
+
+/// 一轮对等交换的**总读数**（`mesh_sync_now` 回给界面的就是它）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshRoundReport {
+    /// 网格这一档现在**能不能用** —— 判据是"配没配监听地址"（见 [`settings`]）。
+    pub enabled: bool,
+    /// **说得出为什么**：用户要能分辨"没开"／"开了但网段里没人"／"有人但都拉不动"这三件
+    /// 处置完全不同的事（与甲-1 状态行同一条口径）。
+    pub note: String,
+    /// 发现层里**够格当网格对端**的台数（＝下面 `peers` 的行数）。
+    pub candidates: usize,
+    pub peers: Vec<PeerPullReport>,
+    /// 本机窗口**实际**绑在哪儿（没开 ⇒ `None`）。⚠️ 它由**命令面**填（`round` 本身不开窗）。
+    pub window: Option<String>,
 }
 
 /// 跟**一台**对端交换一轮：读水位 ⇒ 拉 ⇒ 收下 ⇒ **水位推进到批尾**。
 ///
 /// ⚠️ 锁**不跨 `await`**：读一次、放掉、拉完再拿一次（否则一次网络卡顿会把整个库锁住）。
+/// ⚠️ 签名收的是 `&Mutex<Connection>`（不是 `Arc`）：窗口那一侧需要 `Arc` 来跨线程持有，
+/// **客户端这一侧不需要** —— 而 `State<'_, Db>` 给的正好是一个 `&Mutex<Connection>`。
 pub async fn pull_and_absorb(
-    conn: &Arc<Mutex<Connection>>,
+    conn: &Mutex<Connection>,
     client: &reqwest::Client,
     peer: &MeshPeer,
     space_id: &str,
@@ -278,7 +301,179 @@ pub async fn pull_and_absorb(
     if tail > since {
         set_peer_cursor(&g, space_id, &peer.device_id, tail)?;
     }
-    Ok(PeerPullReport { peer: peer.device_id.clone(), fetched, applied, cursor: tail.max(since) })
+    Ok(PeerPullReport { peer: peer.device_id.clone(), fetched, applied, cursor: tail.max(since), error: None })
+}
+
+// ─────────────────────────── 控制面：网格开不开、口令牌、一轮交换 ───────────────────────────
+
+/// 网格这一档的设置（都放 `meta.sync_state` 的 KV，**不新开 schema 列**）。
+///
+/// ★ **"开"的定义只有一个**：**配了监听地址**。没配 ⇒ 整档关着（不猜默认端口 ——
+/// 悄悄开一个口比不开更糟）。口令可选；没有口令时窗口会用**很大声**的日志说明这是不设防的。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MeshSettings {
+    /// `IP:端口`（或 `localhost:端口`）。`None`/空 ⇒ **网格这一档没开**。
+    pub bind: Option<String>,
+    /// 对端要带的口令（可选）。⚠️ 口令的**来源与形状**与 B 片（成员凭证）同批设计，本片只留格子。
+    pub token: Option<String>,
+}
+
+fn setting_key(prefix: &str, space_id: &str) -> String {
+    format!("{prefix}:{space_id}")
+}
+
+fn read_setting(c: &Connection, prefix: &str, space_id: &str) -> Option<String> {
+    crate::sync::get_meta_state(c, &setting_key(prefix, space_id))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 空串 ＝ **关**（用空串当"清除"，省掉一个 KV 删除接口；`read_setting` 两侧都按空当没有）。
+fn write_setting(c: &Connection, prefix: &str, space_id: &str, value: Option<&str>) -> Result<(), String> {
+    let v = value.map(str::trim).unwrap_or("");
+    crate::sync::set_meta_state(c, &setting_key(prefix, space_id), v)
+}
+
+pub fn settings(c: &Connection, space_id: &str) -> MeshSettings {
+    MeshSettings {
+        bind: read_setting(c, "mesh_bind", space_id),
+        token: read_setting(c, "mesh_token", space_id),
+    }
+}
+
+pub fn set_mesh_bind(c: &Connection, space_id: &str, bind: Option<&str>) -> Result<(), String> {
+    if let Some(b) = bind.map(str::trim).filter(|b| !b.is_empty()) {
+        // 配的时候就**当场**把关（而不是等开窗那一步才报错）：公网地址一律不收。
+        checked_bind(b)?;
+    }
+    write_setting(c, "mesh_bind", space_id, bind)
+}
+
+pub fn set_mesh_token(c: &Connection, space_id: &str, token: Option<&str>) -> Result<(), String> {
+    write_setting(c, "mesh_token", space_id, token)
+}
+
+/// ★ **产品入口的那一层**：一轮网格交换 —— 读设置 ⇒ 挑对端 ⇒ 逐个拉。
+///
+/// 三条口径：
+/// 1. **没配监听地址 ⇒ 整档关着，一个字节都不动**（连对端表都不看）—— 这是"默认零行为变化"；
+/// 2. **一只对端拉不动不许连坐**：它的错记在它自己那一行，别的照拉（回到 `error` 字段）；
+/// 3. **与 `server_url` 无关**：这一层只认"空间 ＋ 网格设置 ＋ 对端表" ⇒
+///    **一个没有服务端可绑的空间照样能靠网格同步**（这正是 ③-b-2 要兑现的那件事）。
+pub async fn round(
+    conn: &Mutex<Connection>,
+    space_id: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+) -> Result<MeshRoundReport, String> {
+    let cfg = {
+        let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        settings(&g, space_id)
+    };
+    let Some(_bind) = cfg.bind.clone() else {
+        return Ok(MeshRoundReport {
+            enabled: false,
+            note: "没有配网格监听地址 ⇒ 网格这一档关着（这一轮一个字节都没动）".to_string(),
+            candidates: 0,
+            peers: Vec::new(),
+            window: None,
+        });
+    };
+    let candidates = mesh_peers(space_id, my_device, peers);
+    if candidates.is_empty() {
+        return Ok(MeshRoundReport {
+            enabled: true,
+            note: "网格开着，但这个网段里没有能直接拉的对端（没人代言这个空间 / 只有我自己）".to_string(),
+            candidates: 0,
+            peers: Vec::new(),
+            window: None,
+        });
+    }
+    round_candidates(conn, space_id, &cfg, candidates).await
+}
+
+/// `round` 的**后半**：对端由调用方给，只做"逐个拉 ＋ 不连坐 ＋ 把读数整理成人话"。
+///
+/// ⚠️ 为什么把这一半单独开出来：**本机判据只能用回环地址**（`127/8`），
+/// 而 `lan::is_lan_base` **明确把回环排除**在"网段里的别人"之外（甲-1 的口径）⇒
+/// `round` 前半挑出来的对端在判据里必然是空集。所以：
+/// **前半（设置 ＋ 挑对端）与后半各有判据**，"合起来那一趟"要两个真内网地址（真机/两进程）。
+pub async fn round_candidates(
+    conn: &Mutex<Connection>,
+    space_id: &str,
+    cfg: &MeshSettings,
+    candidates: Vec<MeshPeer>,
+) -> Result<MeshRoundReport, String> {
+    let client = reqwest::Client::new();
+    let mut out: Vec<PeerPullReport> = Vec::with_capacity(candidates.len());
+    for p in &candidates {
+        match pull_and_absorb(conn, &client, p, space_id, cfg.token.as_deref()).await {
+            Ok(rep) => out.push(rep),
+            // ⚠️ **不连坐**：这一台拉不动，别的照拉；错原样带回给界面。
+            Err(e) => out.push(PeerPullReport {
+                peer: p.device_id.clone(),
+                fetched: 0,
+                applied: 0,
+                cursor: 0,
+                error: Some(e),
+            }),
+        }
+    }
+    let failed = out.iter().filter(|r| r.error.is_some()).count();
+    let note = if failed == 0 {
+        format!("网格：拉了 {} 台对端", out.len())
+    } else {
+        format!("网格：拉了 {} 台对端，其中 {failed} 台没拉动（见每一行的 error）", out.len())
+    };
+    Ok(MeshRoundReport { enabled: true, note, candidates: out.len(), peers: out, window: None })
+}
+
+// ─────────────────────────── 窗口的进程级注册表（一个空间一个窗口） ───────────────────────────
+
+static WINDOWS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, MeshHandle>>> =
+    std::sync::OnceLock::new();
+
+fn windows() -> &'static Mutex<std::collections::HashMap<String, MeshHandle>> {
+    WINDOWS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 确保这个空间的窗口开着（**配了监听地址才开**）。已经在开 ⇒ 原样返回它的地址（幂等）。
+///
+/// ⚠️ 窗口用**自己那条**空间库连接（`db::open_space_conn`）：不与界面那条抢锁，
+/// 也不会因为界面切空间而被换掉。**代价如实写**：加密空间**必须已解锁**，
+/// 否则这条连接打不开 ⇒ 这里如实报错（"开不起来"比"开着一个读不了库的窗口"好）。
+pub fn ensure_window(
+    space_id: &str,
+    device_id: &str,
+    cfg: &MeshSettings,
+) -> Result<Option<SocketAddr>, String> {
+    let Some(bind) = cfg.bind.clone() else {
+        return Ok(None);
+    };
+    let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    if let Some(h) = guard.get(space_id) {
+        return Ok(Some(h.addr()));
+    }
+    let conn = crate::db::open_space_conn(space_id)?;
+    let handle = start(
+        MeshConfig {
+            bind,
+            space_id: space_id.to_string(),
+            device_id: device_id.to_string(),
+            token: cfg.token.clone(),
+        },
+        Arc::new(Mutex::new(conn)),
+    )?;
+    let addr = handle.addr();
+    guard.insert(space_id.to_string(), handle);
+    Ok(Some(addr))
+}
+
+/// 关掉这个空间的窗口（没开 ⇒ 幂等的成功）。设置改了 / 空间停了就该调它。
+pub fn stop_window(space_id: &str) -> Result<(), String> {
+    let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    guard.remove(space_id);
+    Ok(())
 }
 
 // ─────────────────────────── 供的那一侧（最小 HTTP/1.1，不引依赖） ───────────────────────────
@@ -993,5 +1188,143 @@ mod tests {
             .unwrap();
         assert_eq!(n, 2, "库里确实有两条（一条是我的、一条不是）");
         assert_eq!(serve_own_records(&c, "A", 0, 500).unwrap().len(), 1, "而我只服务我自己的那条");
+    }
+
+    // ═══════════════ 丙-③-b-2a：控制面（设置 / 窗口 / 一轮交换） ═══════════════
+
+    /// ★ **没配监听地址 ⇒ 整档关着，一个字节都不动**（默认零行为变化）。
+    ///
+    /// 咬人的地方：把这一支改成"没配就用默认端口" ⇒ 这条红 —— 而**悄悄开一个口**比不开更糟。
+    /// 判据怎么证明"没动过"：对端表里给一个**根本连不上**的地址 ——
+    /// 真去拉了就会在报告里留一行 `error`；这里要求**一行都没有**。
+    #[tokio::test]
+    async fn without_a_configured_bind_the_mesh_is_off_and_touches_nothing() {
+        let b = Mutex::new(space_conn("B"));
+        assert_eq!(settings(&b.lock().unwrap(), "space-x"), MeshSettings::default(), "默认是关的");
+
+        let peers = vec![announced("A", "http://127.0.0.1:9", &["space-x"])]; // 端口 9：连不上
+        let rep = round(&b, "space-x", "B", &peers).await.unwrap();
+        assert!(!rep.enabled, "{rep:?}");
+        assert_eq!(rep.candidates, 0);
+        assert!(rep.peers.is_empty(), "没开就不许碰任何对端：{rep:?}");
+        assert!(rep.note.contains("关着"), "要说得出为什么：{}", rep.note);
+    }
+
+    /// ★ **网格不需要服务端档案** —— 设置那一格与 `sync_profiles` 完全无关
+    /// （这正是甲-2 冻结之后"不装服务端也能同步"落到的地方）。
+    #[test]
+    fn a_space_with_no_server_profile_can_still_turn_the_mesh_on() {
+        let c = space_conn("A");
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM sync_profiles", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "这一格判据的前提：一个服务端档案都没有");
+
+        set_mesh_bind(&c, "space-x", Some("192.168.1.5:8788")).unwrap();
+        set_mesh_token(&c, "space-x", Some("lan-token")).unwrap();
+        let s = settings(&c, "space-x");
+        assert_eq!(s.bind.as_deref(), Some("192.168.1.5:8788"));
+        assert_eq!(s.token.as_deref(), Some("lan-token"));
+        // 空串 ＝ 关（用空串当"清除"）
+        set_mesh_bind(&c, "space-x", Some("   ")).unwrap();
+        assert_eq!(settings(&c, "space-x").bind, None);
+        // 另一个空间互不串味
+        assert_eq!(settings(&c, "space-y").bind, None);
+    }
+
+    /// 公网地址在**配的时候**就拒绝（而不是等开窗那一步才报错）。
+    #[test]
+    fn configuring_a_public_bind_address_is_refused_at_configure_time() {
+        let c = space_conn("A");
+        let e = set_mesh_bind(&c, "space-x", Some("0.0.0.0:8788")).unwrap_err();
+        assert!(e.contains("内网"), "{e}");
+        assert_eq!(settings(&c, "space-x").bind, None, "拒绝了就不许落库");
+    }
+
+    /// ★★ **产品入口那一层**：`round` 真的把发现到的对端拉回来了（真环回、没有服务端）。
+    #[tokio::test]
+    async fn the_product_entry_pulls_from_a_discovered_peer_over_loopback() {
+        let a = Arc::new(Mutex::new(space_conn("A")));
+        let win = start(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                space_id: "space-x".into(),
+                device_id: "A".into(),
+                token: Some("lan-token".into()),
+            },
+            a.clone(),
+        )
+        .unwrap();
+        {
+            let c = a.lock().unwrap();
+            local_edit(&c, &page("p1", "甲写的", 1_000));
+        }
+
+        let b = Mutex::new(space_conn("B"));
+        {
+            let c = b.lock().unwrap();
+            set_mesh_bind(&c, "space-x", Some("127.0.0.1:0")).unwrap();
+            set_mesh_token(&c, "space-x", Some("lan-token")).unwrap();
+        }
+        let peers = vec![announced("A", &format!("http://{}", win.addr()), &["space-x"])];
+
+        // ⚠️ 这里走 `round_candidates`（而不是 `round`）：回环地址会被 `mesh_peers` 正确过滤掉
+        //    （`lan::is_lan_base` 明确排除 `127/8` —— "回环不是网段里的别人"），
+        //    所以本机判据只能在**后半**上跑真环回；`mesh_peers` 的过滤自有一条判据。
+        let candidates = mesh_peers("space-x", "B", &peers);
+        assert!(candidates.is_empty(), "前提：回环基址会被挑对端那一步过滤掉（甲-1 的口径）");
+        let cands = vec![mesh_peer("A", &format!("http://{}", win.addr()))];
+        let cfg = settings(&b.lock().unwrap(), "space-x");
+
+        let rep = round_candidates(&b, "space-x", &cfg, cands.clone()).await.unwrap();
+        assert!(rep.enabled && rep.candidates == 1, "{rep:?}");
+        assert_eq!(rep.peers.len(), 1);
+        assert_eq!((rep.peers[0].fetched, rep.peers[0].applied), (1, 1), "{rep:?}");
+        assert_eq!(rep.peers[0].error, None);
+        assert_eq!(
+            projection_of(&b.lock().unwrap(), "p1"),
+            projection_of(&a.lock().unwrap(), "p1"),
+            "产品入口拉回来的东西必须与对端一致"
+        );
+
+        // 再跑一轮：水位到批尾 ⇒ 什么都不再拉（幂等，不重复搬运）
+        let again = round_candidates(&b, "space-x", &cfg, cands).await.unwrap();
+        assert_eq!(again.peers[0].fetched, 0, "{again:?}");
+    }
+
+    /// ★ **一只对端拉不动不连坐**：它的错记在自己那一行，别的照拉。
+    #[tokio::test]
+    async fn a_peer_that_is_down_is_reported_in_its_own_row_and_does_not_block_the_others() {
+        let a = Arc::new(Mutex::new(space_conn("A")));
+        let win = start(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                space_id: "space-x".into(),
+                device_id: "A".into(),
+                token: None,
+            },
+            a.clone(),
+        )
+        .unwrap();
+        {
+            let c = a.lock().unwrap();
+            local_edit(&c, &page("p1", "甲写的", 1_000));
+        }
+        let b = Mutex::new(space_conn("B"));
+        {
+            let c = b.lock().unwrap();
+            set_mesh_bind(&c, "space-x", Some("127.0.0.1:0")).unwrap();
+        }
+        // 两台够格的对端：一台活着、一台连不上（端口 9）
+        let cands = vec![
+            mesh_peer("A", &format!("http://{}", win.addr())),
+            mesh_peer("Z", "http://127.0.0.1:9"),
+        ];
+        let cfg = settings(&b.lock().unwrap(), "space-x");
+        let rep = round_candidates(&b, "space-x", &cfg, cands).await.unwrap();
+        assert_eq!(rep.candidates, 2);
+        let down = rep.peers.iter().find(|r| r.peer == "Z").expect("连不上的那台也要有一行");
+        assert!(down.error.is_some(), "拉不动要如实写在自己那一行：{down:?}");
+        let up = rep.peers.iter().find(|r| r.peer == "A").expect("活着的那台");
+        assert_eq!((up.fetched, up.applied, up.error.is_none()), (1, 1, true), "{up:?}");
+        assert!(rep.note.contains("1 台没拉动"), "总读数要把失败数说出来：{}", rep.note);
     }
 }

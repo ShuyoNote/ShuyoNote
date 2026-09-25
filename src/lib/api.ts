@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -23,6 +23,7 @@ const invoke = <K extends keyof CommandMap>(
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
+export type { MeshRoundReport, MeshPeerPullReport } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";
@@ -452,6 +453,14 @@ export const api = {
    */
   lanStatus: (workspaceId?: string | null) =>
     invoke("lan_status", { workspaceId: workspaceId ?? null }) as Promise<LanStatus>,
+  /**
+   * 丙-③-b ③：**对等交换（网格）跑一轮**。
+   *
+   * 读数是**给人看的**（开了没开、拉了几台、哪一台没拉动），**不含内容**；
+   * 没配网格 ⇒ 回 `enabled:false` ＋ 一句为什么，**一个字节都不动**。
+   */
+  meshSyncNow: (workspaceId?: string | null) =>
+    invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，

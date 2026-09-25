@@ -1548,6 +1548,21 @@ export function makeInvoke(store: SqliteStore) {
       const line = server ? `同步地址：公网 ${server} ｜ 本网段发现 0 台` : "同步地址：尚未绑定";
       return { enabled: false, peers: 0, kind: server ? "configured" : "", line } as T;
     }
+    if (cmd === "mesh_sync_now") {
+      // 丙-③-b ③：**对等交换（网格）**。Web 上这一档**根本不可用**，而且是两件硬事实：
+      //   ① 没有发现层（UDP 广播/监听在 Rust 侧，浏览器不给）；
+      //   ② 开不了本机端口（`GET /mesh/pull` 那个窗口要有 `TcpListener`）。
+      // ⇒ 回一个**结构完整、`enabled:false`、说得出为什么**的报告（形状与 Rust 侧逐字段相同），
+      //   而不是抛错、也不是回空壳假装读过：
+      //   "回空壳"会让界面显示"网格：拉了 0 台"，用户分不清"没人"与"这一档压根没有"。
+      return {
+        enabled: false,
+        note: "Web 版没有局域网发现层，也开不了本机端口 ⇒ 网格这一档只在桌面版可用（这一轮一个字节都没动）",
+        candidates: 0,
+        peers: [],
+        window: null,
+      } as T;
+    }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
       // children, databases' pages, ...), so removing a folder empties it from

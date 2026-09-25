@@ -188,6 +188,28 @@ export interface LanStatus {
   line: string;
 }
 
+/** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
+export interface MeshPeerPullReport {
+  peer: string;
+  fetched: number;
+  applied: number;
+  cursor: number;
+  /** 拉不动时**如实写在这里**（`null` ＝ 这一台这一轮没问题）。 */
+  error: string | null;
+}
+
+/** 一轮网格交换的总读数（与 Rust `mesh::MeshRoundReport` 逐字段相同）。 */
+export interface MeshRoundReport {
+  /** 网格这一档现在能不能用 —— 判据是"配没配监听地址"。 */
+  enabled: boolean;
+  /** **说得出为什么**：用户要能分辨"没开"／"开了但网段里没人"／"有人但都拉不动"。 */
+  note: string;
+  candidates: number;
+  peers: MeshPeerPullReport[];
+  /** 本机窗口**实际**绑在哪儿（没开 ⇒ `null`）。 */
+  window: string | null;
+}
+
 /**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
@@ -588,6 +610,15 @@ export interface CommandMap {
   //    地址"这件事 —— 那边的实现如实回"配置地址那一档 ＋ 发现层不可用"（见 `platform/web.ts`
   //    那一支），而不是假装发现了谁。契约形状与 `src-tauri/src/sync.rs::LanStatus` 逐字段相同。
   lan_status: { args: { workspaceId?: string | null }; result: LanStatus };
+  /**
+   * 丙-③-b ③：**对等交换（网格）跑一轮** —— 确认本机窗口 ＋ 从发现到的对端各拉一批。
+   *
+   * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 平台**既没有发现层、也开不了本机端口**
+   * （UDP 与监听都在 Rust 侧）⇒ 那边的实现**如实回**"这一档不可用"的报告
+   * （`enabled:false` ＋ 一句为什么），而不是假装拉过谁。
+   * 契约形状与 `src-tauri/src/mesh.rs::MeshRoundReport` 逐字段相同。
+   */
+  mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

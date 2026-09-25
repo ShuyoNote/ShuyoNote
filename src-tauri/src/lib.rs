@@ -56,9 +56,11 @@ mod hlc;
 mod mesh_sim;
 // **丙-③-b：对等交换面** —— 客户端之间**直接**收发带戳的记录（没有中枢、没有号牌、没有账本）。
 // 见 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §13 的 ③-b。
-// ⚠️ 这一行 `allow` 同 `hlc`：**"还没接线"的收据** —— 本片落了内核与 ★★ 判据
-// （两台客户端、没有服务端进程、真环回 ⇒ 两侧投影逐字节相同），但**产品入口还没做**
-// （谁开窗、开在哪个端口、什么时候交换）。接线那一片**顺手删掉它**。
+// ⚠️ 这一行 `allow` 的实况（2026-09-25，③-b-2a 之后）：
+//   · **已经在用**：`settings` / `round` / `ensure_window` / `start` / `serve_own_records`
+//     —— 产品入口是 `sync::mesh_sync_now`（命令面）；
+//   · **还只有判据在用**：`stop_window` / `set_mesh_bind` / `set_mesh_token`
+//     —— 它们是**设置面**，等界面（网格开关 / 监听地址 / 口令）落地时接上，那一片刻删掉这一行。
 #[allow(dead_code)]
 mod mesh;
 // 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。
@@ -625,6 +627,8 @@ pub fn run() {
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
             sync::lan_status,
+            // 丙-③-b：**对等交换的产品入口**（确认窗口 ＋ 从发现到的对端各拉一轮）。
+            sync::mesh_sync_now,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,
