@@ -332,6 +332,20 @@ jobs:
         # 的产物，防"复用旧 SQLCipher"）。这里只是把 `--openssl-dir` 指到 Android 那份静态前缀。
         run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
 
+      - name: 把私有 CARGO_HOME 交给构建步骤（不带 ⇒ build.rs 查的是共享 registry 那份原版）
+        # ⚠️ 2026-09-25 被 CI 教出来的**第二处**（第一处是上面那条 `cargo fetch`）：
+        # `--prepare` 把补丁打在 `.gm-build/libsqlite3-sys-<ver>/` 的**私有副本**上，而 cargo 只有在
+        # `CARGO_HOME` 指向 `.gm-build/cargo-home`（那份 `config.toml` 里带 `[patch.crates-io]`）时
+        # 才会去编副本。少了这一行，`build.rs` 会拿 `Cargo.lock` 的版本去**共享** registry 里找标记
+        # ⇒ 如实 panic（run 322 的 step 23，日志原文）：
+        #     `启用了 sm-library，但**找不到 §3.1 的 SM3/SM4 provider 补丁** … 查的是
+        #      /home/runner/.cargo/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2/sqlcipher`
+        #      —— 那是**原版**那一份（补丁自 2026-09-23 起就不再落在共享 registry 上了）。
+        # 桌面发版（release.yml 的 Linux/Windows 段）一直是这么接的：`--prepare` 之后紧跟一句
+        # `--print-env >> "$GITHUB_ENV"`；两条 android job 都漏了 ⇒ 这里与 release.yml **同名同步**
+        #（`check:release-parity` 逐字核对步骤名）。
+        run: node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"
+
       - name: Build APK (arm64, unsigned)
         # `--features sm-library`：库级国密的**应用层接线**那一半（`#[cfg(feature = "sm-library")]`）；
         # 库级本身由上面那份静态库与补丁决定。⚠️ 不带这个特性的话，接线那段根本不会被编译。

@@ -531,6 +531,17 @@ jobs:
         # `OPENSSL_DIR` 写进 `$GITHUB_ENV`）。
         run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
 
+      - name: 把私有 CARGO_HOME 交给构建步骤（不带 ⇒ build.rs 查的是共享 registry 那份原版）
+        # 与 android.yml 同名同步（`check:release-parity` 核对步骤名）。
+        # ⚠️ 2026-09-25 补（AMD 侧**读 run 322 的真 CI 日志**时发现的）：本 job 与自检包那边都漏了
+        # 这一步。`--prepare` 把补丁打在 `.gm-build/libsqlite3-sys-<ver>/` 的**私有副本**上，而 cargo
+        # 只有在 `CARGO_HOME` 指向 `.gm-build/cargo-home`（那份 `config.toml` 里带 `[patch.crates-io]`）
+        # 时才会去编副本。少了它，`build.rs` 拿 `Cargo.lock` 的版本去**共享** registry 找标记 ⇒
+        # 如实 panic（日志原文：`启用了 sm-library，但**找不到 §3.1 的 SM3/SM4 provider 补丁** …
+        # 查的是 /home/runner/.cargo/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2/sqlcipher`）。
+        # 桌面发版（本文件上面的 Linux/Windows 段）一直是这么接的 ⇒ 两条 android job 补齐同一句。
+        run: node scripts/sm-library-build.mjs --print-env >> "$GITHUB_ENV"
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
