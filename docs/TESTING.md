@@ -285,8 +285,14 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 
 ⚠️ **没跑通的那半（重要发现）**：两台手机在同一热点上、`ping` 双向 0% 丢包，
 但**彼此的 UDP 广播都收不到**（双方都「发现 0 台」）。换成单播**立刻**生效
-⇒ 收报逻辑没问题，挡住的是 **Android 的 Wi-Fi 广播/组播过滤**（通常要 `WifiManager.MulticastLock`）。
-**在补上那一层之前，"两台安卓靠广播互看"不许写成已验。**
+⇒ 收报逻辑没问题，挡住的是 **Android 的 Wi-Fi 广播/组播过滤** —— **要拿一把
+`WifiManager.MulticastLock`**（`src-tauri/src/lan_android.rs` ＋ manifest 的
+`CHANGE_WIFI_MULTICAST_STATE`，由 `android-mobile-shell.mjs` 注入；`lib.rs` 的 setup 里调一次）。
+✅ **补上之后复验通过**：小米（客户端）代言 ⇒ Mate 40（绑一个死地址 `127.0.0.1`、自己不代言）
+**自己**把状态行变成「直连（局域网）http://192.168.43.206:8787 ｜ 发现 1 台 ｜ 中枢：只报了地址」
+—— **全自动、没有人喂包**。⚠️ 但记住一条**方向性**限制：**手机当热点主机（AP）时，它自己发的广播
+到不了它的客户端**（45 秒里 PC 一包都没收到来自 AP 的公告；客户端发的 PC 和 AP 都收到了）。
+真实部署（普通路由器）没有这个不对称。
 
 ## 真机（Android）怎么把"新界面"验到
 

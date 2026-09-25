@@ -117,6 +117,11 @@ mod derived_transport;
 // 为什么是个独立模块、以及为什么要在两套 jni 之间做裸指针桥接，见模块头注释。
 #[cfg(target_os = "android")]
 mod tls_android;
+// Android 专属：局域网发现要收 **UDP 广播/组播**，而 Android 在应用不持有
+// `WifiManager.MulticastLock` 时会把这些入站帧过滤掉（2026-09-25 真机实测：两台手机同热点、
+// ping 通、广播收不到；改成单播立刻生效 ⇒ 挡的就是这一层）。见模块头。
+#[cfg(target_os = "android")]
+mod lan_android;
 mod security;
 mod storage;
 mod sync;
@@ -480,6 +485,13 @@ pub fn run() {
             // 详见 `mod tls_android` 与 docs/MOBILE.md §2.4。
             #[cfg(target_os = "android")]
             tls_android::init(&_window);
+
+            // 局域网发现的前置：拿一把 MulticastLock（否则 Android 会把入站的 UDP 广播/组播
+            // 过滤掉 ⇒ 两台手机同热点也互相发现不了）。**必须在这里**（窗口建好之后），
+            // 与 `tls_android::init` 同一个理由：`exec` 需要一个能取 `jni_handle()` 的窗口。
+            // 失败只记一行日志（发现层是加分项，拿不到锁就退化成"只有单播/回环能用"）。
+            #[cfg(target_os = "android")]
+            lan_android::ensure_multicast_lock(&_window);
 
             Ok(())
         })

@@ -184,6 +184,16 @@ rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"]
 rustls-platform-verifier = "0.7"
 jni = "0.22"
 
+# 局域网发现（甲-1）：Android 要收 **UDP 广播/组播** 必须先拿一把 `WifiManager.MulticastLock`，
+# 而那条调用要**带参数**（`getSystemService("wifi")`、`createMulticastLock(tag)`）⇒ 需要 jni 0.21 的
+# `JValue`（`tls_android.rs` 那一路只传过空参数，所以此前没暴露这个需要）。
+#
+# ⚠️ 为什么要**改名**引第二份 jni：wry 0.55.1 用的是 jni **0.21.1**，而上面那行（给
+# `rustls-platform-verifier` 用的）是 **0.22.4** —— 两版**类型不能互换**。`jni_handle().exec`
+# 给我们的 `&mut JNIEnv` 是 0.21 那一份，所以 `JValue` 也必须取 0.21 那一份；两份共存靠
+# `package = "jni"` 别名（Cargo 允许同名包的不同大版本共存，Cargo.lock 里本来就有这两条）。
+jni021 = { package = "jni", version = "0.21" }
+
 # 移动端专属（iOS 一并开着，同一个理由）：boa 的 **nan-boxing 在 Android 上不成立**
 # ——2026-09-13 真机实测（HUAWEI Mate 40 / Android 12）。它的 `tag_pointer()` 断言指针必须
 # 落在 `MASK_POINTER_VALUE`（低 48 位）内，而真机上拿到的是 **0xB400007D1B960000**
