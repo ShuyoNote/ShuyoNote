@@ -513,6 +513,18 @@ jobs:
           node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
+      - name: 取依赖（补丁要打在 registry 里那份 vendored SQLCipher 上）
+        # 与 android.yml 同名同步（`check:release-parity` 核对步骤名）。
+        # ⚠️ 2026-09-25 补（macOS 侧**读真 CI 日志**时发现的）：本 job 原先**没有**这一步，
+        #    而下面两步（静态 SM 库 ＋ SQLCipher 补丁）打补丁的对象是 **cargo registry 里那份
+        #    `libsqlite3-sys` 的 vendored SQLCipher 源码** ⇒ registry 是空的时候脚本如实拒绝：
+        #        ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，但 registry 里找到的是 [（无）]
+        #    自检包那边（android.yml）已被 CI 教过一次并补上了这一步（`619c4877`），
+        #    **发版件这条一直漏着** —— 且它只在"冷缓存"的 runner 上才露头，而发版恰恰常是冷缓存。
+        #    `--target aarch64-linux-android`：把该目标专属的依赖（含 android 段的
+        #    `bundled-sqlcipher-vendored-openssl`）也取下来。
+        run: cargo fetch --manifest-path src-tauri/Cargo.toml --locked --target aarch64-linux-android
+
       - name: 随包静态 SM 加密库（Android，库级国密）
         # 与 android.yml 同名同步（`check:release-parity` 核对步骤名）。**发版包必须有这一步**：
         # Android 系统**不带** OpenSSL ⇒ 静态 SM 库要么随包、要么用户机器上根本找不到。
