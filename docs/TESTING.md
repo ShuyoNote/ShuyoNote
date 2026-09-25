@@ -293,6 +293,12 @@ node C:\Users\cnzen\zhai\_scratch\dev-mate.mjs eval "document.body.innerText.rep
    先 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///…` 再打开选择器。
    ⚠️ 华为的 DocumentsUI 顶部那一行（`「下载」中的文件`）**点一次才会展开文件列表**，
    且列表项的无障碍标签是「预览 "x.txt" 文件」——`uiautomator dump` 里拿它的 `bounds` 再 `input tap`。
+   小米的路径更简单：**把测试文件 push 到一个首屏就看得见的目录**（例如 `/sdcard/accmeta/`），
+   点进去勾选那个单选圈 → 点「确定」（`uiautomator dump` 在 MIUI 上会 `null root node`，**用截图定位坐标**）。
+5. ★ **`webview_devtools_remote` 套接字不一定是本 App 的** —— 同一台机器上别的 App（2026-09-25 实测撞上
+   一个视频 App）也有 WebView ⇒ CDP 会连到**别人**的页面上（现场是读出一段完全无关的界面）。
+   **按本 App 的 pid 挑**：`pidof cn.shuyo.shuyonote` → `webview_devtools_remote_<pid>`
+   （`_scratch/drive.mjs` 已按这条改）。
 
 ## 一段真实教训：真机验出来的那个 bug（2026-09-25）
 
@@ -304,8 +310,17 @@ B 片"配对码存/读文件"在本机（happy-dom 打桩 dialog）**全绿**，
 ⇒ 修法：读也走 `picked_file::materialize`（与 `import_backup` 同一条路；桌面逐字不变）。
 ⇒ 判据（文本级，`src/lib/platform/pickedFileRead.wiring.test.ts`）：
 **这两个命令里必须出现"落成真实路径 / 走 SaveTarget"的调用，且不许把参数直接喂给 `std::fs`**。
+⇒ ★ **修完在真机上验掉了**（同日，**小米 MIX 2 / Android 9 / WebView 80**）：系统文件选择器里选中
+`pair-test.txt` ⇒ 回到应用，**那个文本框真的被填成了文件里的内容**
+（`PAIR-FROM-FILE-TEST`，附"已读入配对码——请核对比对码，一致再点"的提示、无报错、**没有自动采纳**）。
 ⇒ 一般结论：**"用户选来的那份东西"是一个独立的输入类别** —— 它的值可能是 URI 而不是路径，
 `std::fs` / `Path` 全都不能直接吃。凡是新增"让用户选个文件"的功能，两条路（读、写）都要各过一遍这道闸。
+
+> ★ 顺带在同一天的那台老机上验到两件（都属于"老 WebView 也得能用"这一档）：
+> ① 新界面（隐私那一节 / 配对码那三个按钮）在 **WebView 80** 上渲染正常，
+> 且「存成文件」在**没生成码时是灰的**（闸门在真机上成立）；
+> ② **没有钥匙袋时的报错是可操作的**：点「生成配对码」如实说
+> 「本机还没有钥匙袋（公开材料）⇒ 没有东西可以配对过去。先在本机启用加密、或先从别处取回一份，再来换设备。」
 
 ## flake 与重试（不许静默重试）
 
