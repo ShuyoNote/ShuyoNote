@@ -94,9 +94,11 @@ export const GATES = [
   {
     id: "check-workflow-yaml",
     group: "contract",
-    label: "workflow YAML 窄规则",
+    label: "workflow YAML 窄规则 ＋ 私有 CARGO_HOME 交接（按 job）",
     cmd: "node scripts/check-workflow-yaml.mjs",
-    incident: "2026-09-12：`--lib plugins::` 行尾冒号 ⇒ 非法 YAML ⇒ 0 个 job 的红 run，49 次 push 全红无人察觉",
+    incident:
+      "2026-09-12：`--lib plugins::` 行尾冒号 ⇒ 非法 YAML ⇒ 0 个 job 的红 run，49 次 push 全红无人察觉；" +
+      "2026-09-25：国密隔离后「打补丁」与「构建」之间少一次私有 `CARGO_HOME` 交接 ⇒ Android 自检包在 step 23 如实 panic（`release.yml` 恰好桌面 job 导了、android job 没导 ⇒ 判据必须按 job 切，按文件找会假绿）",
   },
   {
     id: "check-gitcode-workflow-rules",
