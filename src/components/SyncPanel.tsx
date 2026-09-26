@@ -280,9 +280,14 @@ export function SyncPanel() {
     await useNotes.getState().loadPages();
   };
 
-  /** 横幅上那两颗按钮：对**当前这批冲突页**批量按同一口径收场。 */
-  const resolveAll = async (choice: "take_remote" | "keep_local") => {
-    const ids = Array.from(new Set(conflicts.map((c) => c.entity_id)));
+  /**
+   * 横幅上那两颗按钮：对**这一批冲突页**批量按同一口径收场。
+   *
+   * ★ 丙-⑤（2026-09-26）：现在**只对"确实存下了远端那一版"的页**生效（`ids` 由调用方给）。
+   * 另一类页（戳判"用远端"、本机那一版已被盖掉）**没有**待取回的版本可裁决 —— 对它们调
+   * `resolvePendingRemote` 只会报错，而那正是"按钮看着能点、其实什么都没发生"的老毛病。
+   */
+  const resolveAll = async (ids: string[], choice: "take_remote" | "keep_local") => {
     let done = 0;
     for (const id of ids) {
       try {
@@ -301,6 +306,11 @@ export function SyncPanel() {
     await loadPendingRemote();
     await useNotes.getState().loadPages();
   };
+
+  /** 这批冲突页里，哪些**有**待取回的远端版本（＝ `resolveAll` 真能收场的那一类）。 */
+  const conflictsWithStash = conflicts.filter((c) => pending.some((p) => p.page_id === c.entity_id));
+  /** 另一类：戳判"用远端"已生效 ⇒ 本机那一版**进了版本历史**（不是"待取回"），没有可裁决的对象。 */
+  const conflictsTakenRemote = conflicts.filter((c) => !pending.some((p) => p.page_id === c.entity_id));
 
   const refresh = async () => {
     try {
@@ -815,23 +825,50 @@ export function SyncPanel() {
           {conflicts.length > 0 && (
             <div className="sync-conflict-banner" role="alert">
               <div className="sync-conflict-title">⚠️ 有页面被多人同时修改</div>
-              <ul className="sync-conflict-list">
-                {conflicts.map((c) => (
-                  <li key={c.entity_id}>《{c.title}》</li>
-                ))}
-              </ul>
-              <div className="sync-conflict-actions">
-                <button onClick={() => void resolveAll("keep_local")} className="btn-sync-conflict keep">
-                  保留本地
-                </button>
-                <button onClick={() => void resolveAll("take_remote")} className="btn-sync-conflict adopt">
-                  采用服务端
-                </button>
-              </div>
-              <div className="sync-conflict-hint">
-                提示：你在这些页有未推送的改动，另一台设备改了同一页。**远端那一版已经存在本地**（不会因为游标走过去而丢）：
-                选「保留本地」= 你这份优先（下次同步推上去）；选「采用服务端」= 真的放弃本地未推送的改动。
-              </div>
+              {/* ★ 丙-⑤（2026-09-26）：**分两类说**，因为两类页能做的事**不一样**：
+                  · 有「待取回的远端版本」的（页级保留了本地）⇒ 两颗按钮**真的**动数据；
+                  · 戳判"用远端"已生效的 ⇒ 本机那一版**已经进了版本历史**（`sync.rs` 在覆盖前
+                    先存了一份），**没有**待取回的版本可裁决 ⇒ 说清去哪找回，而不是摆两颗假按钮。 */}
+              {conflictsWithStash.length > 0 && (
+                <>
+                  <ul className="sync-conflict-list">
+                    {conflictsWithStash.map((c) => (
+                      <li key={c.entity_id}>《{c.title}》</li>
+                    ))}
+                  </ul>
+                  <div className="sync-conflict-actions">
+                    <button
+                      onClick={() => void resolveAll(conflictsWithStash.map((c) => c.entity_id), "keep_local")}
+                      className="btn-sync-conflict keep"
+                    >
+                      保留本地
+                    </button>
+                    <button
+                      onClick={() => void resolveAll(conflictsWithStash.map((c) => c.entity_id), "take_remote")}
+                      className="btn-sync-conflict adopt"
+                    >
+                      采用服务端
+                    </button>
+                  </div>
+                  <div className="sync-conflict-hint">
+                    提示：你在这些页有未推送的改动，另一台设备改了同一页。**远端那一版已经存在本地**（不会因为游标走过去而丢）：
+                    选「保留本地」= 你这份优先（下次同步推上去）；选「采用服务端」= 真的放弃本地未推送的改动。
+                  </div>
+                </>
+              )}
+              {conflictsTakenRemote.length > 0 && (
+                <>
+                  <ul className="sync-conflict-list">
+                    {conflictsTakenRemote.map((c) => (
+                      <li key={c.entity_id}>《{c.title}》</li>
+                    ))}
+                  </ul>
+                  <div className="sync-conflict-hint">
+                    这些页**已经按判序采用了远端**（对端那枚戳更晚）：你本地未推送的那一版在覆盖前
+                    **已存进版本历史** —— 在编辑器工具栏点「版本历史」就能找到它、恢复它。
+                  </div>
+                </>
+              )}
             </div>
           )}
           {pending.length > 0 && (

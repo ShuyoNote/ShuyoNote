@@ -2607,6 +2607,47 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 None
                             }
                         };
+                        // ★★ 丙-⑤（2026-09-26）：**戳判"用远端"而本机有未推送改动 ⇒ 先把本机那一版
+                        //   存进版本历史**，再让远端覆盖它。
+                        //
+                        // 为什么必须补这一刀：`doc_content::apply_remote_page` **刻意不快照**
+                        // （它的头注写着"不是保存：不快照"）—— 那条设计成立的前提是**老路径里
+                        // "本地脏 ⇒ 保留本地"**，本机那一版永远不会输。**戳改掉了这条保证**：
+                        // 对端的戳更晚时，未推送的本机改动会被直接盖掉 ⇒ 而"待取回的远端版本"里
+                        // 存的是**远端**那一版（保留本地时才存）⇒ 用户那一版**哪儿都没留**，
+                        // 裁决面上的「保留本地」于是成了一个**假选项**。
+                        //
+                        // ⚠️ 只在**真要覆盖**时做：`stamp_wins == Some(Remote)` **且** `local_dirty != 0`。
+                        //    远端不带戳（`None`）时照旧走老规矩（本地脏 ⇒ 保留本地）⇒ **逐字不变**，
+                        //    由本文件下面那条反面判据看着。
+                        // ⚠️ 失败**不许**让这一笔失败（更不连坐整批）：留痕即可 —— 与"本页戳写不进去"
+                        //    那一格同一条纪律。
+                        if matches!(stamp_wins, Some(crate::doc_content::StampWins::Remote)) && local_dirty != 0
+                        {
+                            // ⚠️ 本机那一版**走内容层读**（`doc_content::read`），不在这里手写 SQL
+                            //    去捞正文那两列 —— 那两列的直接访问有门禁
+                            //    （`check-doc-content-access`，只减不增），而"只经一层"正是它的口径。
+                            //    ⚠️ **生产面里连注释都别把那两列的列名写出来**：那条门禁数的是**文本**，
+                            //       注释里的列名也会被算成一次访问（写这一笔时我自己踩过一次，红在
+                            //       `sync.rs（2 处）`）。测试尾部被它排除在外，那里写列名没事。
+                            match crate::doc_content::read(&c, &page.id) {
+                                Ok(Some(cur)) => {
+                                    if let Err(e) = crate::versions::snapshot_before_save(
+                                        &c, &page.id, &cur.title, &cur.json, &cur.text,
+                                    ) {
+                                        eprintln!(
+                                            "[sync] page {} 的本机那一版没能进版本历史（它马上会被远端盖掉）：{e}",
+                                            page.id
+                                        );
+                                    }
+                                }
+                                Ok(None) => {}
+                                Err(e) => eprintln!(
+                                    "[sync] page {} 的本机那一版读不出来 ⇒ 没能进版本历史（它马上会被远端盖掉）：{e}",
+                                    page.id
+                                ),
+                            }
+                        }
                         let unresolved = apply_upsert(&c, &page, change.seq, stamp_wins)?;
                         match unresolved {
                             UpsertApply::Applied { unresolved } => {
@@ -5911,6 +5952,65 @@ mod tests {
             flat.contains("crate::mesh::stop_window(&scope.space)"),
             "关窗的键必须与开窗一致（远端 id），否则窗口会留着不放"
         );
+    }
+
+    /// ★★ 丙-⑤ 第一片：**戳判"用远端"而本机有未推送改动**时，本机那一版必须先落进**版本历史**。
+    ///
+    /// 为什么这条是承重的：`doc_content::apply_remote_page` **刻意不快照**（它的头注写着
+    /// "不是保存：不快照"），而那条设计成立的前提是**老路径"本地脏 ⇒ 保留本地"** ——
+    /// 本机那一版永远不会输。**戳改掉了这条保证**：对端戳更晚时，未推送的本机改动会被直接盖掉，
+    /// 而"待取回的远端版本"里存的是**远端**那一版 ⇒ 用户那一版**哪儿都没留**，
+    /// 裁决面上的「保留本地」于是成了一个**假选项**。
+    #[test]
+    fn a_stamp_losing_local_edit_goes_into_history_before_the_remote_overwrites_it() {
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本机未推送的那一版"), 5, 1); // dirty=1 ＝ 未推送
+        set_page_stamp(&c, "ws", "p1", &stamp_of("A", 1_000)).unwrap();
+
+        // 对端更晚的戳 ⇒ 戳判"用远端"（老路径在这一格会**保留本地** —— 正是戳改掉的语义）
+        // ⚠️ 断言要落在 **`content_json`** 上：`remote_page()` 那个助手把 `content_text` 写死成
+        //    "远端正文"（两侧都一样）⇒ 拿 `content_text` 比是比不出"哪一版"的。
+        let local_json_before: String = c
+            .query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        let late = stamp_of("B", 9_000);
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1).unwrap();
+
+        assert!(content_of(&c).contains("远端那一版"), "戳更晚 ⇒ 采用远端：{}", content_of(&c));
+        let remote_json_after = content_of(&c);
+        assert_ne!(
+            local_json_before, remote_json_after,
+            "两次的正文必须真的不同，否则这条判据测不出东西"
+        );
+        let kept: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM page_versions WHERE page_id = 'p1' AND content_json = ?1",
+                params![local_json_before],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1, "本机那一版必须**先进版本历史**再被覆盖 —— 否则它哪儿都没留（「保留本地」= 假选项）");
+    }
+
+    /// ★ 反面：**远端不带戳**（老规矩：本地脏 ⇒ 保留本地）⇒ 远端**没有**盖掉任何东西
+    /// ⇒ 不该凭空多出一条版本历史。这条钉的是"**老路径逐字不变**"那一半。
+    #[test]
+    fn a_remote_without_a_stamp_leaves_no_history_snapshot_because_nothing_was_overwritten() {
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本机未推送的那一版"), 5, 1);
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1).unwrap();
+
+        assert!(
+            content_of(&c).contains("本机未推送"),
+            "缺一边 ⇒ 老规矩：本地脏就保留本地：{}",
+            content_of(&c)
+        );
+        let n: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_versions WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "远端没盖掉任何东西 ⇒ 不该凭空多一条版本历史（老路径逐字不变）");
     }
 
     /// ★★ 丙-② 定下的那条规则在**真 apply 路径**上成立：**远端没带戳 ⇒ 整条走今天那条路**。
