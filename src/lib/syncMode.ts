@@ -10,6 +10,12 @@
 //
 // ⚠️ 这里是读写的**唯一一处**：面板只调 `settingsForMode`，不再"左边改一个、右边改一个"
 //    （那种写法的下场是两处口径漂开，而漂开时没有任何东西会红）。
+//
+// ⚠️ 单向依赖：本文件 import `nearRealtime`（因为**有效间隔**是两个键的函数，见
+//    `effectiveAutoSyncMs`），**反向不许** —— 那边要广播就调 `broadcastAutoSyncChanged`，
+//    事件名只在本文件里写一次（写成互相 import 就是一个环）。
+import { isNearRealtimeEnabled } from "./nearRealtime";
+
 export type SyncMode = "off" | "interval" | "realtime";
 
 /**
@@ -76,11 +82,48 @@ export function readAutoSyncMs(): number {
   }
 }
 
+/**
+ * ★★ **行为侧的唯一入口**：App 那条定时器该按多少毫秒跑（`App.tsx` 读它，不读 `readAutoSyncMs`）。
+ *
+ * 为什么不能直接用 `readAutoSyncMs()`（2026-09-26 两台真机实测的口径不一致）：
+ * 「近实时」那一档的开关**默认就是开**（`lib/nearRealtime.ts`），而"间隔"那个键**只有用户动过
+ * 下拉框才会被写**。于是**从没动过下拉框**的机器落在 `{间隔: 没写(=0), 近实时: 开}` 这个状态 ——
+ * 面板显示「近实时」、那句人话承诺"连不上时**退回每 5 分钟兜底一次**"，而**定时器压根没挂**：
+ * 一次自动同步都不会发生。方向是最坏的那种（用户以为在自动同步，其实没有）。
+ * ⚠️ 这个状态**本来就是判据里的坏设置**：`syncMode.test.ts` 把不变式写成谓词
+ *    `pollingStillMounted({autoMs: 0, nearRealtime: true}) === false`（"轮询必须无条件挂着"）。
+ *    以前只有**写**那一侧守它（`settingsForMode("realtime")` 给 5 分钟），**读**这一侧没兑现。
+ *
+ * 口径（一句话）：**近实时开着 ⇒ 兜底轮询必须挂着**，值与 `settingsForMode("realtime")` 同源。
+ * ⚠️ 近实时关着而档位是 0 ⇒ **真的是"关闭"**（一个字都不自动跑），这里不偷加。
+ */
+export function effectiveAutoSyncMs(): number {
+  const raw = readAutoSyncMs();
+  if (raw > 0) return raw;
+  return isNearRealtimeEnabled() ? SYNC_REALTIME_FALLBACK_MS : 0;
+}
+
+/**
+ * 广播"**有效间隔**变了"（`writeAutoSyncMs` 与面板都走这一处，事件名只写一次）。
+ *
+ * ⚠️ 为什么面板还要**再喊一次**：有效间隔是 `f(间隔, 近实时)` 两个键的函数，而写这两个键是
+ * 两步（先 `writeAutoSyncMs`、后 `applyNearRealtime` 落盘）。第一步广播时近实时还是**旧值** ——
+ * 「近实时 → 关闭」那一刻就会算成"还开着 ⇒ 挂 5 分钟兜底"，于是用户选了「关闭」却每 5 分钟
+ * 自动同步一次。所以两半都落定之后必须再广播一次（面板 `applySyncMode` 里那一句）。
+ */
+export function broadcastAutoSyncChanged(): void {
+  try {
+    window.dispatchEvent(new Event(AUTO_SYNC_CHANGED_EVENT));
+  } catch {
+    /* 没有 window（Node 侧脚本）⇒ 没人订阅，也就不必喊 */
+  }
+}
+
 /** 写档位并**广播**（面板改档的唯一入口）。 */
 export function writeAutoSyncMs(ms: number): void {
   try {
     localStorage.setItem(AUTO_SYNC_KEY, String(ms));
-    window.dispatchEvent(new Event(AUTO_SYNC_CHANGED_EVENT));
+    broadcastAutoSyncChanged();
   } catch {
     /* localStorage 不可用（隐私模式等）⇒ 只影响"记住档位"，不影响本次行为 */
   }

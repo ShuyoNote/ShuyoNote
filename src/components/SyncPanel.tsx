@@ -13,6 +13,7 @@ import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform } from "../lib/platform";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
 import {
+  broadcastAutoSyncChanged,
   readAutoSyncMs,
   settingsForMode,
   syncModeHint,
@@ -135,7 +136,13 @@ export function SyncPanel() {
     setAuto(next.autoMs);
     // ⚠️ 近实时那半边不只是改 state：`applyNearRealtime` 会**立刻**起/停那条流（不等重开页面），
     //    并且把开关落盘（`lib/nearRealtime.ts` 一处实现）。
-    void toggleNearRealtime(next.nearRealtime);
+    void toggleNearRealtime(next.nearRealtime).then(() => {
+      // ★★ 2026-09-26（口径对齐）：**两半都落定之后再广播一次** —— 有效间隔是
+      //    `f(间隔档位, 近实时开关)` 的函数，而上面 `setAuto` 那次广播发生在近实时**还是旧值**的时候。
+      //    不补这一下的现场：「近实时 → 关闭」会被算成"近实时还开着 ⇒ 挂 5 分钟兜底"
+      //    ⇒ 用户选了「关闭」，机器却每 5 分钟自动同步一次（正好是这一轮在修的那类不一致）。
+      broadcastAutoSyncChanged();
+    });
   };
   const [status, setStatus] = useState("");
   // 甲-1 接线第 3 件：**局域网发现的读数**（`lan_status`）。只在**桌面且面板开着**时轮询 ——

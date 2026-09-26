@@ -2637,21 +2637,27 @@ let mut unrecognized: Vec<String> = Vec::new();
                             //       `sync.rs（2 处）`）。测试尾部被它排除在外，那里写列名没事。
                             match crate::doc_content::read(&c, &page.id) {
                                 Ok(Some(cur)) => {
-                                    match crate::versions::snapshot_before_save(
+                                    // ★★ 2026-09-26（真机收尾那轮读出来的）：**两边是同一页
+                                    //   （标题 ＋ 正文都一样）⇒ 这一版其实没输** ⇒ 不快照、也不记账。
+                                    //   现场：把测试页恢复成空之后两台内容完全相同，读数照样说
+                                    //   "你本机那一版让给了远端" —— 不算撒谎（那一版确实在版本历史里，
+                                    //   只是 `snapshot_before_save` 去重了），但一个字的 new information
+                                    //   都没有；状态行里这种话多了，用户就会开始**不看它**。
+                                    //   判据：`a_stamp_losing_edit_that_is_the_same_page_is_not_a_loss`。
+                                    if crate::doc_content::same_page(&cur, &page) {
+                                        // 什么都不做：没有东西被换掉。
+                                    } else if let Err(e) = crate::versions::snapshot_before_save(
                                         &c, &page.id, &cur.title, &cur.json, &cur.text,
                                     ) {
+                                        eprintln!(
+                                            "[sync] page {} 的本机那一版没能进版本历史（它马上会被远端盖掉）：{e}",
+                                            page.id
+                                        );
+                                    } else if !superseded_page_ids.contains(&page.id) {
                                         // ★ 只有**真存下了**才记账：下面那句人话要对用户说
                                         // "你那一版在版本历史里"，说了就得是真的（"存失败"那条路
                                         // 只留痕、不改口）。
-                                        Ok(()) => {
-                                            if !superseded_page_ids.contains(&page.id) {
-                                                superseded_page_ids.push(page.id.clone());
-                                            }
-                                        }
-                                        Err(e) => eprintln!(
-                                            "[sync] page {} 的本机那一版没能进版本历史（它马上会被远端盖掉）：{e}",
-                                            page.id
-                                        ),
+                                        superseded_page_ids.push(page.id.clone());
                                     }
                                 }
                                 Ok(None) => {}
@@ -6101,6 +6107,34 @@ mod tests {
             out.pending_remote_ids
         );
         assert_eq!(crate::doc_content::pending_remote_queue(&c, 10).unwrap().total, 0);
+    }
+
+    /// ★★ 丙-⑤（2026-09-26，**真机收尾那轮读出来的**）：戳判"用远端"、但**两边是同一页**
+    /// （标题 ＋ 正文都一样）⇒ **这一版其实没输** ⇒ 不记账、也不快照。
+    ///
+    /// 现场：把两台手机的测试页都恢复成空白之后，那一轮读数照样说"你本机那一版让给了远端"。
+    /// 它**不算撒谎**（那一版确实在版本历史里 —— `snapshot_before_save` 去重了），但一个字的
+    /// new information 都没有；状态行里这种话多了，用户就会开始**不看它**（而这句人话的全部价值
+    /// 就是"你输了，但东西在这儿"）。
+    /// 口径与 `doc_content::same_page` **同一处实现**（「待取回」那边同一句话也别记）。
+    #[test]
+    fn a_stamp_losing_edit_that_is_the_same_page_is_not_a_loss() {
+        let c = stamped_conn();
+        let same = page_json("b1", 1, "两边一模一样的这一版");
+        seed_local(&c, &same, 5, 1); // 本机脏（未推送）
+        set_page_stamp(&c, "ws", "p1", &stamp_of("A", 1_000)).unwrap();
+
+        // 对端那一版**逐字相同**，只是戳更晚（真机现场就是"两台都被恢复成空"那一格）
+        let p = remote_page("p1", &same);
+        let out = apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&stamp_of("B", 9_000)))], 0, 1).unwrap();
+
+        assert!(
+            out.superseded_page_ids.is_empty(),
+            "两边同一页 ⇒ 没有东西被换掉 ⇒ 不许报「你本机那一版让给了远端」：{:?}",
+            out.superseded_page_ids
+        );
+        // ⚠️ 反面那一半仍由 `a_stamp_losing_local_edit_goes_into_history_before_the_remote_overwrites_it`
+        //    看着（内容真的不同时才记）—— 这两条一起才说明"只在真输了的时候才说"。
     }
 
     /// ★★ 丙-② 定下的那条规则在**真 apply 路径**上成立：**远端没带戳 ⇒ 整条走今天那条路**。

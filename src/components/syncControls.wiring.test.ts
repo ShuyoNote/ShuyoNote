@@ -66,8 +66,19 @@ describe("地址只说一处", () => {
     expect(app, "订阅必须是 `addEventListener`（不是只在渲染时读一次）").toContain(
       "window.addEventListener(AUTO_SYNC_CHANGED_EVENT",
     );
+    expect(panel, "面板改档要经 `applySyncMode`（一处写入口）").toContain("applySyncMode(");
     expect(panel, "面板写档位要走 `writeAutoSyncMs`（它负责广播）").toContain("writeAutoSyncMs(");
     expect(panel, "面板不该再自己 `localStorage.setItem` 那个键").not.toContain('setItem("shuyonote:autoSync"');
+    // ★★ 2026-09-26（口径对齐）：光有 `writeAutoSyncMs` 那一次广播**不够** ——
+    //   有效间隔是 `f(间隔档位, 近实时开关)` 的函数，而那一刻近实时**还是旧值**：
+    //   「近实时 → 关闭」会被算成"还开着 ⇒ 挂 5 分钟兜底" ⇒ 用户选了「关闭」，
+    //   机器却每 5 分钟自动同步一次。所以两半都落定之后必须**再喊一次**。
+    const at = panel.indexOf("toggleNearRealtime(next.nearRealtime)");
+    expect(at, "找不到 applySyncMode 里近实时那半（结构变了？）").toBeGreaterThan(-1);
+    expect(
+      panel.slice(at, at + 400),
+      "第二次广播必须跟在「近实时那半落定」之后（否则那一刻读到的还是旧开关）",
+    ).toContain("broadcastAutoSyncChanged()");
   });
 
   it("⑥ 合一那一行的门槛要**同时**认「绑了服务端」与「只开了网格」", () => {

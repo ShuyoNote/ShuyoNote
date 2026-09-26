@@ -49,7 +49,7 @@ import { Editor } from "./editor/Editor";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
-import { AUTO_SYNC_CHANGED_EVENT, readAutoSyncMs } from "./lib/syncMode";
+import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
@@ -380,11 +380,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
   // ⚠️ **为什么把 `useAutoSync` 删了**：它自带一条**固定 5 分钟**、且走**老的全局配置**
   // （`api.syncNow()`）的循环，与这条"按面板间隔、按每空间档案"的路并行 ⇒ 同一个用户两份间隔、
   // 两套语义、还会互相叠加（`syncGate.ts` 当初就写着"两条路各写一份判断也迟早会漂"，这次把路合成一条）。
-  const [autoSyncMs, setAutoSyncMs] = useState(() => readAutoSyncMs());
-  // 面板改了「同步方式」⇒ 它会广播（`writeAutoSyncMs`）⇒ 这里跟一下，定时器才会按新档位重挂。
+  // ★ 2026-09-26（口径对齐）：这里读的是 **`effectiveAutoSyncMs()`**、不是 `readAutoSyncMs()`。
+  //   理由：有效间隔是 `f(间隔档位, 近实时开关)` 两个键的函数，而"近实时"**默认就开着** ——
+  //   从来没人动过下拉框的机器上，间隔那个键一个字都没写(=0) ⇒ 读裸值会让定时器**不挂**，
+  //   而面板显示的是「近实时」＋承诺"连不上时退回每 5 分钟兜底一次"（真机实测抓到的口径不一致）。
+  const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
+  // 面板改了「同步方式」⇒ 它会广播（`writeAutoSyncMs` / `broadcastAutoSyncChanged`）⇒ 这里跟一下，
+  // 定时器才会按新档位重挂。
   // ⚠️ 没有这一步的话：面板改档 → App 不重渲染 → 定时器还按**老**间隔跑（"我选了按间隔，可它没动"）。
   useEffect(() => {
-    const onChanged = () => setAutoSyncMs(readAutoSyncMs());
+    const onChanged = () => setAutoSyncMs(effectiveAutoSyncMs());
     window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
     return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
   }, []);

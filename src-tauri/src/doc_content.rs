@@ -1091,6 +1091,20 @@ fn same_document(a: &str, b: &str) -> bool {
     }
 }
 
+/// **本机现在那一版**与这一版远端是不是**同一页**（标题 ＋ 正文；正文按"同一份文档"比）。
+///
+/// ★★ 丙-⑤：**两处必须同一个口径**（所以是**一处实现**）：
+///   · `stash_pending_remote` —— 一样就别记「待取回」（记了是一条用户点了没反应的**假账**）；
+///   · `sync::apply_pulled_changes` 覆盖前那一刀快照 —— 一样就**没什么可保存的**：
+///     本机那一版**并没有输**（真机收尾那轮读出来的：两台内容都是空的时候，读数照样说
+///     "你本机那一版让给了远端" —— 不算撒谎，但一个字的 new information 都没有，
+///     而状态行里这种话多了，用户就会开始**不看它**）。
+/// ⚠️ 装饰字段（图标 / 封面 / 排序）不在比较范围内：判它要把整行读出来，见
+///    `stash_pending_remote` 头注里那段代价说明。
+pub(crate) fn same_page(cur: &DocContent, page: &crate::models::PageDetail) -> bool {
+    cur.title == page.title && same_document(&cur.json, &page.content_json)
+}
+
 /// 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。
 ///
 /// ★ 丙-⑤（2026-09-26）：**与本地同一份文档的那一版不记** —— 记了就是一条**假账**：
@@ -1115,7 +1129,7 @@ pub fn stash_pending_remote(
     now: i64,
 ) -> Result<bool, String> {
     if let Ok(Some(cur)) = read(c, &page.id) {
-        if cur.title == page.title && same_document(&cur.json, &page.content_json) {
+        if same_page(&cur, page) {
             return Ok(false);
         }
     }

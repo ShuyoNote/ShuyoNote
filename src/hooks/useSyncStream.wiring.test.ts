@@ -98,7 +98,13 @@ describe("近实时 · 订阅目标与接线（文本级，防退回旧形状）
     //    这条判据守的**还是那件事**：轮询必须是**无条件**挂上的，不能因为开了近实时就不挂。
     //    （原来是 `localStorage.getItem(...)` 直接读；2026-09-26 收进 `lib/syncMode.ts` 的
     //     `readAutoSyncMs()` —— 因为面板改档要能**通知**这一条路重挂定时器，见那条判据 ⑦。）
-    expect(app, "轮询必须**无条件**挂在 App 上（不是「开近实时就不轮询」）").toContain("readAutoSyncMs()");
+    // ★ 2026-09-26 再进一步（真机抓到）：App 读的是 **`effectiveAutoSyncMs()`**、不是裸的
+    //   `readAutoSyncMs()`。"近实时默认开 ＋ 间隔从没写过"这个组合下裸值 = 0 ⇒ 定时器**不挂**，
+    //   那其实就是"开近实时就不轮询"、只是绕了一圈。有效值由 `syncMode` 一处算（判据在
+    //   `syncMode.test.ts`：「近实时开着 ⇒ 兜底轮询必须挂着」）。
+    expect(app, "轮询必须**无条件**挂在 App 上（不是「开近实时就不轮询」）").toContain(
+      "effectiveAutoSyncMs()",
+    );
     expect(app, "轮询必须**无条件**挂在 App 上（启动后先跑一次，与间隔设没设无关）").toContain(
       "setTimeout(tick, 3000)",
     );
