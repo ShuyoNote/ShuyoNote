@@ -2694,6 +2694,13 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 if let Some(stashed) = crate::doc_content::pending_remote_seq(&c, &page.id)? {
                                     if stashed <= change.seq {
                                         crate::doc_content::clear_pending_remote(&c, &page.id)?;
+                                        // ★★ 丙-⑤（2026-09-26，**真机现场抓到的**）：清了库里的那一条，
+                                        //   就**必须**把读数里的这一页也去掉 —— 否则"这一轮有几页等你裁决"
+                                        //   会把一个**刚刚被同一批里更晚的那一版盖过**的页算进去。
+                                        //   真机现场（Mate 40，一轮 5 条）：`awaiting: 1` 而面板的
+                                        //   「待取回的远端版本」是**空的** —— 通知与现场对不上，用户只会
+                                        //   以为那一页丢了。口径一句话：**读数里的每一项，落库后都得还在。**
+                                        pending_remote_ids.retain(|id| id != &page.id);
                                     }
                                 }
                             }
@@ -6050,6 +6057,50 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM page_versions WHERE page_id = 'p1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0, "远端没盖掉任何东西 ⇒ 不该凭空多一条版本历史（老路径逐字不变）");
+    }
+
+    /// ★★ 丙-⑤（2026-09-26，**真机现场抓出来的**）：同一批里一页**先输后赢** ⇒
+    /// 读数里**不许**再留着"这一页等你裁决"。
+    ///
+    /// 现场（Mate 40，一轮 5 条）：报告说 `awaiting: 1`，而面板「待取回的远端版本」是**空的** ——
+    /// 因为那一页在**同一批的后一条**里被更晚的版本盖过了，`clear_pending_remote` 把库里那条清了，
+    /// 却没把读数里的 id 去掉。通知与现场对不上，用户只会以为那一页丢了。
+    /// 口径一句话：**读数里的每一项，落完库之后还得真的在。**
+    #[test]
+    fn a_page_that_wins_later_in_the_same_batch_leaves_no_pending_claim_behind() {
+        let c = stamped_conn();
+        seed_local(&c, &page_json("b1", 1, "本机那一版"), 5, 1);
+        set_page_stamp(&c, "ws", "p1", &stamp_of("A", 5_000)).unwrap();
+
+        // ① 更早的那一版（戳 1_000 < 本机 5_000）⇒ 保留本地 ⇒ 远端那一版进「待取回」
+        let older = remote_page("p1", &page_json("b1", 2, "对端更早的那一版"));
+        // ② 同一批里紧接着一条更晚的（戳 9_000 > 5_000）⇒ 采用远端 ⇒ 上面那条已经陈了，被清掉
+        let newer = remote_page("p1", &page_json("b1", 3, "对端更晚的那一版"));
+        let out = apply_pulled_changes(
+            &c,
+            vec![
+                stamped_change(10, &older, Some(&stamp_of("B", 1_000))),
+                stamped_change(11, &newer, Some(&stamp_of("B", 9_000))),
+            ],
+            0,
+            1,
+        )
+        .unwrap();
+
+        // 库里那一条**确实**被清掉了（既有行为，这条判据钉住它别退化）
+        assert_eq!(
+            crate::doc_content::pending_remote_seq(&c, "p1").unwrap(),
+            None,
+            "更晚的那一版已经应用 ⇒ 之前存下那条是陈的"
+        );
+        assert!(content_of(&c).contains("对端更晚的那一版"), "{}", content_of(&c));
+        // ★ 读数必须跟着库走：既不许报"有页等你裁决"（库里没有），也不许把它算成"输了"。
+        assert!(
+            out.pending_remote_ids.is_empty(),
+            "同一批里后来那一版已经赢并盖过它 ⇒ 读数不该再提这一页：{:?}",
+            out.pending_remote_ids
+        );
+        assert_eq!(crate::doc_content::pending_remote_queue(&c, 10).unwrap().total, 0);
     }
 
     /// ★★ 丙-② 定下的那条规则在**真 apply 路径**上成立：**远端没带戳 ⇒ 整条走今天那条路**。
