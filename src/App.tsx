@@ -49,6 +49,7 @@ import { Editor } from "./editor/Editor";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
+import { AUTO_SYNC_CHANGED_EVENT, readAutoSyncMs } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
@@ -379,7 +380,14 @@ function NoteEditor({ pageId }: { pageId: string }) {
   // ⚠️ **为什么把 `useAutoSync` 删了**：它自带一条**固定 5 分钟**、且走**老的全局配置**
   // （`api.syncNow()`）的循环，与这条"按面板间隔、按每空间档案"的路并行 ⇒ 同一个用户两份间隔、
   // 两套语义、还会互相叠加（`syncGate.ts` 当初就写着"两条路各写一份判断也迟早会漂"，这次把路合成一条）。
-  const autoSyncMs = Number(localStorage.getItem("shuyonote:autoSync")) || 0;
+  const [autoSyncMs, setAutoSyncMs] = useState(() => readAutoSyncMs());
+  // 面板改了「同步方式」⇒ 它会广播（`writeAutoSyncMs`）⇒ 这里跟一下，定时器才会按新档位重挂。
+  // ⚠️ 没有这一步的话：面板改档 → App 不重渲染 → 定时器还按**老**间隔跑（"我选了按间隔，可它没动"）。
+  useEffect(() => {
+    const onChanged = () => setAutoSyncMs(readAutoSyncMs());
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+  }, []);
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
     let initial: ReturnType<typeof setTimeout> | undefined;

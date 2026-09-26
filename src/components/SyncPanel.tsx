@@ -12,6 +12,14 @@ import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform } from "../lib/platform";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
+import {
+  readAutoSyncMs,
+  settingsForMode,
+  syncModeHint,
+  syncModeOf,
+  writeAutoSyncMs,
+  type SyncMode,
+} from "../lib/syncMode";
 import { SpacePrivacySection } from "./SpacePrivacySection";
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -98,9 +106,11 @@ export function SyncPanel() {
   const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
   // 自动同步间隔（毫秒；0=关闭），存 localStorage 供 App 级定时器使用。
-  const [autoMs, setAutoMs] = useState<number>(() => Number(localStorage.getItem("shuyonote:autoSync")) || 0);
+  // ⚠️ 写入口只有 `writeAutoSyncMs`（它会顺便**广播**，让 App 那条定时器重挂 —— 否则面板改了档
+  //    而 App 不重渲染，定时器就还按老间隔跑）。
+  const [autoMs, setAutoMs] = useState<number>(() => readAutoSyncMs());
   const setAuto = (ms: number) => {
-    try { localStorage.setItem("shuyonote:autoSync", String(ms)); } catch { /* ignore */ }
+    writeAutoSyncMs(ms);
     setAutoMs(ms);
   };
   // 「近实时推送」（桌面流通道，第 48 轮）：默认开。开关本身与读写口径都在 `lib/nearRealtime.ts`
@@ -115,6 +125,17 @@ export function SyncPanel() {
       setNearRealtime(!on);
       setStatus(`近实时切换失败：${e instanceof Error ? e.message : String(e)}`);
     }
+  };
+  // 「同步方式」（2026-09-26 口径收敛）：原来这里是**两个**控件 —— 自动同步间隔四档 ＋ 近实时开关；
+  // 它们管的是同一件事的两个旋钮，用户还得在脑子里把两件事叠起来算。现在合成**一个**三选一，
+  // 映射与那句人话都在 `lib/syncMode.ts`（**唯一一处**），这里只负责调它。
+  const syncMode = syncModeOf(autoMs, nearRealtime);
+  const applySyncMode = (mode: SyncMode) => {
+    const next = settingsForMode(mode);
+    setAuto(next.autoMs);
+    // ⚠️ 近实时那半边不只是改 state：`applyNearRealtime` 会**立刻**起/停那条流（不等重开页面），
+    //    并且把开关落盘（`lib/nearRealtime.ts` 一处实现）。
+    void toggleNearRealtime(next.nearRealtime);
   };
   const [status, setStatus] = useState("");
   // 甲-1 接线第 3 件：**局域网发现的读数**（`lan_status`）。只在**桌面且面板开着**时轮询 ——
@@ -1111,53 +1132,40 @@ export function SyncPanel() {
 
           <footer className="sync-foot">
             <div className="sync-auto">
-              <span className="sync-auto-label">自动同步</span>
+              <span className="sync-auto-label">同步方式</span>
               <select
                 className="sync-input"
-                value={String(autoMs)}
-                onChange={(e) => setAuto(Number(e.target.value))}
+                value={syncMode}
+                onChange={(e) => applySyncMode(e.target.value as SyncMode)}
               >
-                <option value="0">关闭</option>
-                <option value="10000">每 10 秒</option>
-                <option value="30000">每 30 秒</option>
-                <option value="60000">每 1 分钟</option>
-                <option value="300000">每 5 分钟</option>
+                <option value="off">关闭</option>
+                <option value="interval">按间隔（每 30 秒）</option>
+                {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
+                    `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
+                {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
               </select>
             </div>
+            <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
 
-            {/* 近实时推送（桌面流通道，第 48 轮）：Rust 订 SSE 变更流 ⇒ 对端一改就拉。
-                **只在桌面显示**：Web 那条流是浏览器自带 SSE、一直默认开着；给它加开关要能中途
-                abort 那条 fetch，是另一件事（本片没做，别在这里假装做了）。 */}
-            {isDesktopPlatform() && (
-              <label className="sync-att sync-near-realtime">
-                <input
-                  type="checkbox"
-                  checked={nearRealtime}
-                  onChange={(e) => void toggleNearRealtime(e.target.checked)}
-                />
-                <span className="sync-att-text">
-                  <span className="sync-att-name">近实时推送</span>
-                  <span className="sync-hint">
-                    连着同步服务时，对端一有改动就立刻拉一次（不必等下一次轮询）。
-                    关掉即断开连接、按上面的间隔轮询——有些代理会掐长连接，那时关掉它更省心。
-                  </span>
-                </span>
-              </label>
-            )}
-
-            {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）。
+            {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）＋ 丙-③-b 的**网格读数**。
                 口径：**「没走成直连」必须是可断言的结果，不是静默降级** —— 所以这里显示的是
                 Rust 侧 `lan::status_line` 的**原文**（"直连（局域网）…" ／ "公网 … ｜ 本网段发现 N 台"
                 ／ "…其中没有服务这个空间的中枢" ／ "尚未绑定"），界面**不**自己按地址形状再判一次档。
+                ★ 2026-09-26 口径收敛：**地址只说一处** —— 网格那一块的"窗口在哪、别人拉不拉得到"
+                （`lanStatus.mesh.note`）也并到这一行里。两处各说一遍地址，看起来就像两个互相矛盾的读数。
+                ⚠️ 门槛同时收 `mesh.enabled`：**"只开网格、不绑服务端"** 是丙要支持的配置，
+                那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
                 只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
-            {isDesktopPlatform() && lanStatus && lanRowBound && (
+            {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
               <div className="sync-att sync-lan" title="同一网段里自动找到这个空间的中枢时，同步就走局域网地址">
                 <span className="sync-att-text">
                   {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
                   <span className="sync-att-name">
                     {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
                   </span>
-                  <span className="sync-hint">{lanStatus.line}</span>
+                  <span className="sync-hint">
+                    {[lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ ")}
+                  </span>
                 </span>
               </div>
             )}
@@ -1171,12 +1179,13 @@ export function SyncPanel() {
               <div className="sync-att sync-mesh">
                 <span className="sync-att-text">
                   <span className="sync-att-name">网格（设备之间直接同步）</span>
-                  <span className="sync-hint">{lanStatus.mesh.note}</span>
+                  {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
+                      已经在上面那一行"局域网直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
+                      （监听地址 / 口令）与开关。 */}
                   <span className="sync-hint">
                     {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
                   </span>
-                  {/* ★ 2026-09-26 口径收敛：交换**并进「同步」**，这里不再有自己的按钮
-                      （同一件事原本两个按钮、用户要记两个动作）。*/}
+                  {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
                   <span className="sync-hint">开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。</span>
                 </span>
                 <div className="sync-field">

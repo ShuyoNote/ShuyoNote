@@ -96,9 +96,9 @@ describe("近实时 · 订阅目标与接线（文本级，防退回旧形状）
     // ⚠️ 2026-09-26 口径收敛：轮询那条路**从 hook 收回了 App 里那一段**（原来 `useAutoSync` 自带一条
     //   固定 5 分钟、走老全局配置的循环，与"按面板间隔、按每空间档案"那条并行 ⇒ 合成一条）。
     //    这条判据守的**还是那件事**：轮询必须是**无条件**挂上的，不能因为开了近实时就不挂。
-    expect(app, "轮询必须**无条件**挂在 App 上（不是「开近实时就不轮询」）").toContain(
-      'localStorage.getItem("shuyonote:autoSync")',
-    );
+    //    （原来是 `localStorage.getItem(...)` 直接读；2026-09-26 收进 `lib/syncMode.ts` 的
+    //     `readAutoSyncMs()` —— 因为面板改档要能**通知**这一条路重挂定时器，见那条判据 ⑦。）
+    expect(app, "轮询必须**无条件**挂在 App 上（不是「开近实时就不轮询」）").toContain("readAutoSyncMs()");
     expect(app, "轮询必须**无条件**挂在 App 上（启动后先跑一次，与间隔设没设无关）").toContain(
       "setTimeout(tick, 3000)",
     );

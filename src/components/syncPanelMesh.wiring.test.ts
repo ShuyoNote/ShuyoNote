@@ -44,9 +44,11 @@ describe("网格（丙-③-b）· 面板接线", () => {
   it("② 门槛是 `space_id`，**不是** `lanRowBound`（网格不需要服务端地址）", () => {
     // 网格那一块：只要求这个空间有 space_id —— "只开网格、不绑服务端"正是这一档要支持的配置。
     expect(panel).toContain("isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (");
-    // 甲那一行的门槛**照旧**要求服务端地址。两条门槛必须在，而且必须**不一样**：
-    // 若网格那一条也写成 `lanRowBound`，没有服务端地址的空间就永远看不到这个入口。
-    expect(panel).toContain("isDesktopPlatform() && lanStatus && lanRowBound && (");
+    // 2026-09-26（地址一处）：`lanRowBound` 那一行现在**同时**认"只开了网格"的空间 ——
+    // 否则只开网格、不绑服务端的空间连地址读数都没有（那一档恰恰是丙要支持的）。
+    expect(panel, "地址那一行的门槛必须同时认「绑了服务端」与「只开了网格」").toContain(
+      "(lanRowBound || lanStatus.mesh.enabled)",
+    );
   });
 
   it("③ 「关掉网格」走**清除**（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
@@ -54,7 +56,9 @@ describe("网格（丙-③-b）· 面板接线", () => {
   });
 
   it("④ 「别人拉不拉得到」那句人话**来自 Rust**（界面不自己按地址形状判档）", () => {
-    expect(panel).toContain("{lanStatus.mesh.note}");
+    // 2026-09-26（地址一处）：这句现在与 `lanStatus.line` 拼在**同一行**里 —— 仍然是 Rust 出的原文
+    // （`lanStatus.mesh.note`），界面只是把它摆到那一行去。
+    expect(panel).toContain("lanStatus.mesh.note");
     // 面板里不许出现"自己判回环/公网"的痕迹：档位只许由 Rust 出（与 `lan_status` 那条同一纪律）。
     expect(panel).not.toContain("127.0.0.1");
   });
