@@ -151,7 +151,10 @@ capabilities → vite build),又慢又容易被无关报错带偏。它是**发�
 
 ## 10. CI 在哪跑(改 CI 前必读)
 
-主站是 **GitCode**(`origin`),跑 **GitLab CI 语法**;GitHub 是镜像。**两侧都在跑,但跑的东西不同:**
+主站是 **GitCode**(`origin`,代码托管国内可达),**但 CI 在 GitHub 上跑**。
+实测(2026-09-26):GitHub 侧 **1391 次运行**、最近全绿;GitCode 侧 3 个 workflow
+虽然都注册成 `active`,**`runs` 是 0**(它自己的文件头就写着「仍未在 GitCode runner 上实跑过」)。
+**别往 GitCode 那侧加 CI。**
 
 | 侧 | 文件 | 跑什么 |
 |---|---|---|
@@ -166,6 +169,10 @@ capabilities → vite build),又慢又容易被无关报错带偏。它是**发�
   `runs-on` 只在白名单内、每个 step 必须有非空 `name`、不接受简写 action。
   **不合法时整条流水线不会被调度,而且不报错。**门禁:`pnpm gitcode:validate`。
 - ⚠️ GitCode 的 `on` **仅有** `workflow_dispatch` 时,文件必须在**默认分支**才会出现在 Actions 页。
+- 🔁 **GitHub 侧是镜像,而 CI 在那边跑** —— **镜像落后就等于 CI 在测旧代码。**
+  本机一条命令同步全部仓(含本仓的 `dev` / `main`):
+  `powershell -File C:\Users\cnzen\zhai\mirror-github.ps1`(脚本在工作区根,**不随仓库分发**)。
+  2026-09-26 首跑实测:本仓 `dev` 在 GitHub 上**落后 52 笔**,而 CI 的触发分支正是 `[main, dev]`。
 
 ## 11. 发版
 
@@ -196,5 +203,5 @@ capabilities → vite build),又慢又容易被无关报错带偏。它是**发�
 - ❌ 把"跳过"当"通过",或让本机跑不了的门禁静默变绿(§7)。
 - ❌ 为了让 CI 变绿去改 `tests/baseline.json` 的读数(§5)。
 - ❌ 用 shell 重写含中文的文件,或改 `.gitattributes`(§9)。
-- ❌ 改 `.github/workflows/ci.yml` 就以为改了 CI —— 本仓两侧都跑,要改两条(§10)。
+- ❌ 以为 GitCode 那侧在跑 —— 实测它 **0 次运行**;CI 就在 GitHub 侧(§10)。
 - ❌ 新增文档不登记进 `docs/README.md`(有 `check-doc-links` 管链接可达)。
