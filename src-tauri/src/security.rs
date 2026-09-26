@@ -1244,6 +1244,12 @@ mod tests {
         //    ⇒ 把它写成"先量这份文件到底是哪一套参数，再断言对应结论"，两种世界下都是真话。
         #[cfg(feature = "sm-library")]
         {
+            // ⚠️ 这一行是**补上的**（2026-09-26）：本块下面的两处 `format!("…x'{hex}'…")` 一直在用
+            //    一个**从未绑定**的 `hex` ⇒ `--features sm-library` 下 `error[E0423]: expected value,
+            //    found crate hex`（两次）⇒ 整条门禁 `rust-sm-wired` 红、`dev` 的 CI 红。
+            //    默认特性下这个块被 `#[cfg]` 编掉，所以 `cargo test` 一直没暴露它。
+            //    钥匙就是本测试开头那把：`let key = crypto::derive_key("hunter2", &salt)`。
+            let hex = crypto::key_hex(&key);
             let legacy = dir.join("raw_attach.db");
             {
                 let c = Connection::open(&src).unwrap();
