@@ -273,7 +273,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 return;
             }
         };
-        let targets = lan::default_targets(lan::LAN_PORT);
+        // ⚠️ 这里**不再**预先把目标算死（原来是这样）——目标要每一轮带上"已经认识的对端"，
+        //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);
         let mut last_announce_ms: i64 = 0;
         loop {
@@ -317,6 +318,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             state.set_enabled(should_run_discovery(&profiles, &meshed));
             // ③ 到点就喊一轮。
             if state.is_enabled() && announce_due(last_announce_ms, now, ANNOUNCE_INTERVAL_MS) {
+                // ★★ 2026-09-26（真机抓到的**单向发现**）：目标**每一轮重算**，而且要带上
+                //    **已经认识的对端地址**（单播）。理由见 `lan::announce_targets` 的头注：
+                //    热点主机那条 `255.255.255.255` 按默认路由走**蜂窝** ⇒ 底下的客户端永远收不到；
+                //    单播那一条把反方向补回来（客户端先被主机听见 ⇒ 主机直接发回给它）。
+                // ⚠️ 以前这里是循环外算一次的 `default_targets` ⇒ 表里就算有对端也发不到它们。
+                let targets = lan::announce_targets(lan::LAN_PORT, &state.peers(now));
                 for a in announces_for_with_mesh(&device_id, &device_name, &profiles, &mesh_bases) {
                     let _ = lan::announce_once(&sock, &targets, &a).await;
                 }
@@ -567,6 +574,33 @@ mod tests {
         // 空公告也要**是自己会收下的那种**（往返性质，见 `lan.rs` 判据 ⑫）
         let raw = crate::lan::encode_announce(&got[0]).unwrap();
         assert_eq!(crate::lan::decode_announce(&raw).unwrap(), got[0]);
+    }
+
+    /// ★★ 2026-09-26（真机抓到的**单向发现**）：那轮广播的目标必须**按活的表现算**。
+    ///
+    /// 为什么是源码级：那条循环是**无限 async 循环**（`loop { 收 … 按需喊 … 腾表 }`），
+    /// 本机判据起不来它（要真网卡 ＋ 真 30 秒节拍）。所以这里钉**接线**：
+    /// 目标必须是 `announce_targets(…, &state.peers(now))` 现算的，而不是循环外算一次的
+    /// `default_targets` —— 后者正是"表里明明有对端、却永远发不到它"的形状（单向发现的成因）。
+    /// ⚠️ 断言对着**去过注释**的源码：这个文件的注释里到处在讲这件事。
+    #[test]
+    fn the_announce_loop_recomputes_targets_from_the_live_peer_table() {
+        let code = include_str!("lan_state.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains("lan::announce_targets(lan::LAN_PORT, &state.peers(now))"),
+            "公告目标没有按「活的表」现算 ⇒ 认识的对端也发不到（单向发现会回来）"
+        );
+        // ⚠️ 这条"不许出现"的模式**必须拼出来**：`include_str!` 把**本判据自己**也读进去了，
+        //    写成字面量就会自己命中自己（第一版就是这么假红的）。
+        let forbidden = format!("let targets = lan::{}(", "default_targets");
+        assert!(
+            !code.contains(&forbidden),
+            "又退回「循环外算一次」了 ⇒ 补方向的那条单播没了"
+        );
     }
 
     /// ★ 判据 ⑨：**广播间隔与存活期的关系** —— 存活期必须**明显大于**广播间隔，

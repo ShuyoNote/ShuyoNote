@@ -34,7 +34,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
 use tokio::net::UdpSocket;
 
@@ -442,14 +442,46 @@ pub fn default_targets(port: u16) -> Vec<SocketAddr> {
     out
 }
 
+/// ★★ 2026-09-26（真机抓到的**单向发现**）：这一轮公告到底发到哪些地址。
+///
+/// = [`default_targets`]（广播 ＋ 回环）**＋ 已经认识的对端各自的地址（单播）**。
+///
+/// ## 为什么必须补单播那一条（现场：Mate 40 看得见 MIX 2，MIX 2 看不见 Mate 40）
+///
+/// `255.255.255.255` 是**受限广播**：它按**默认路由**挑出口。热点**主机**（Mate 40）的默认路由是
+/// **蜂窝**（`network_type` 实测就是 `cellular`）⇒ 那条广播发到蜂窝上去了，**热点底下的客户端
+/// 永远收不到**；而客户端（MIX 2）的默认路由就是 wlan0 ⇒ 它的广播主机收得到 ⇒ 于是**只有单向**。
+/// 单播那一条把方向补回来：客户端先被主机听见（它的表里就有了客户端的地址），
+/// 主机下一轮把公告**直接发回那个地址** ⇒ 客户端也听得见主机。
+///
+/// ⚠️ **代价如实写**：冷启动那一次（表还空着）仍然只能靠广播 ⇒ 单向的那一半最多要等
+/// **一个广播间隔**（`ANNOUNCE_INTERVAL_MS`，30 秒）才被补上。这不影响收敛，只影响"多久露面"。
+/// ⚠️ 台数上限：目标里每多一台就多一条 UDP（30 秒一轮）——网段里 N 台时是 N 条，噪音可控。
+/// ⚠️ 解析不出来的 `addr`（空串 / 非 IP）**跳过**：公告的来路是外部输入，不许在这里 panic。
+pub fn announce_targets(port: u16, peers: &[Peer]) -> Vec<SocketAddr> {
+    let mut out = default_targets(port);
+    for p in peers {
+        let ip = p.addr.trim();
+        if ip.is_empty() {
+            continue;
+        }
+        // 只认字面 IPv4/IPv6（`addr` 是**报文来源**，不是我们编的）。
+        let Ok(ip) = ip.parse::<IpAddr>() else { continue };
+        let a = SocketAddr::new(ip, port);
+        if !out.contains(&a) {
+            out.push(a);
+        }
+    }
+    out
+}
+
 /// 把一条公告发给这些目标。返回**成功发出去的条数**；
 /// 一条都没成功才报错（某一条目标不可达 —— 例如广播被禁 —— 不该让整轮发现失败）。
 pub async fn announce_once(
     sock: &UdpSocket,
     targets: &[SocketAddr],
     a: &LanAnnounce,
-) -> Result<usize, String> {
-    let raw = encode_announce(a)?;
+) -> Result<usize, String> {    let raw = encode_announce(a)?;
     let mut sent = 0usize;
     let mut last_err: Option<String> = None;
     for t in targets {
@@ -772,6 +804,53 @@ mod tests {
         assert!(t.iter().any(|a| a.ip().to_string() == "255.255.255.255"), "要发广播");
         assert!(t.iter().any(|a| a.ip().is_loopback()), "要有回环那条");
         assert!(t.iter().all(|a| a.port() == LAN_PORT));
+    }
+
+    /// ★★ 2026-09-26（**真机抓到的单向发现**）：公告目标里必须**带上已知对端的单播地址**。
+    ///
+    /// 现场：Mate 40（热点主机）看得见 MIX 2，MIX 2 **看不见** Mate 40。机制是
+    /// `255.255.255.255` 按**默认路由**挑出口，而热点主机的默认路由是**蜂窝**
+    /// （`network_type` 实测就是 `cellular`）⇒ 那条广播到不了热点底下的客户端。
+    /// 单播那一条把方向补回来 ⇒ **判据必须钉住"表里有对端时，目标里就有它的地址"**。
+    /// 变异实测：把 `announce_targets` 退回只回 `default_targets` ⇒ 当场红。
+    #[test]
+    fn announce_targets_add_a_unicast_hop_to_every_peer_we_have_heard() {
+        // 空表 ⇒ 就是默认那两条（老行为不变）
+        let none = announce_targets(LAN_PORT, &[]);
+        assert_eq!(none, default_targets(LAN_PORT));
+        assert!(
+            !none.iter().any(|a| a.ip().to_string().starts_with("192.168.")),
+            "没听过谁的时候不许凭空造地址：{none:?}"
+        );
+
+        // 听过一台 ⇒ 目标里出现**它的单播地址**（这就是"热点主机也能被听见"的那条路）
+        let mut p = peer("dev-client", Some("http://192.168.43.96:47832"), &["sp-1"]);
+        p.addr = "192.168.43.96".to_string();
+        let one = announce_targets(LAN_PORT, &[p.clone()]);
+        assert!(
+            one.iter().any(|a| a.to_string() == format!("192.168.43.96:{LAN_PORT}")),
+            "已知对端的地址必须在目标里（否则单向发现照旧）：{one:?}"
+        );
+        assert!(one.iter().any(|a| a.ip().to_string() == "255.255.255.255"), "广播那条不许丢");
+        // 同一台重复 / 回环重复 ⇒ 去重（别自己给自己刷同一条）
+        let mut same = p.clone();
+        same.announce.device_id = "dev-other".to_string();
+        let mut loopback = p.clone();
+        loopback.addr = "127.0.0.1".to_string();
+        let multi = announce_targets(LAN_PORT, &[p, same, loopback]);
+        let mut sorted = multi.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(multi.len(), sorted.len(), "目标里有重复 ⇒ 会往同一个地址刷两遍：{multi:?}");
+        assert_eq!(multi.iter().filter(|a| a.ip().is_loopback()).count(), 1, "回环只留一条");
+
+        // 报文来源是外部输入 ⇒ 解析不出来的地址**跳过**（不 panic、也不发出坏目标）
+        let mut bad = peer("dev-bad", None, &[]);
+        bad.addr = "不是地址".to_string();
+        let mut with_port = peer("dev-with-port", None, &[]);
+        with_port.addr = "192.168.43.7:9999".to_string();
+        let safe = announce_targets(LAN_PORT, &[bad, with_port]);
+        assert_eq!(safe, default_targets(LAN_PORT), "坏地址要被跳过：{safe:?}");
     }
 
     // ---- 代言（产出侧）＋ 状态行 ----
