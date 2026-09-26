@@ -183,7 +183,8 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 **设备（如实记录）**：HUAWEI **OCE-AN10**（Mate 40E）· **Kirin 9000E** · 8 核 · 7.7 GB · Android 12 · arm64。
 ⚠️ 这是 **2021 年的旗舰**，**不是"低端机"** ⇒ 下面的读数是**乐观下界**；真正的低端机仍未实测。
 
-**怎么量的**（临时件在 `_scratch/kdfbench`，不进仓）：一个微基准，**crate 版本与参数对齐主仓**
+**怎么量的**（临时件在 `_scratch/kdfbench`，不进仓 —— ⚠️ **该目录已于 2026-09-26 被删且全机无副本**，
+见本文件 §6 的追加说明）：一个微基准，**crate 版本与参数对齐主仓**
 （`argon2 0.5.3` / `sm3 0.5` / `hmac 0.13` / `pbkdf2 0.13`；Argon2id m=19456 KiB·t=2·p=1
 ＋ PBKDF2-HMAC-SM3 **200 000** 轮），**release**（opt-level 3 ＋ LTO）交叉编到
 `aarch64-linux-android`（NDK 29 的 clang 当 linker），`adb push` 后在机器上跑，各 3 遍：
@@ -231,6 +232,18 @@ doc 门禁 138 篇 / 863 条链接 / 84 篇方案 / 44 条 / 562 处（基线未
 
 **复跑办法（约一分钟，全自动）**：
 `powershell -ExecutionPolicy Bypass -File _scratch\kdfbench\run-on-device.ps1`
+
+> ### ⚠️ 2026-09-26 追加：**这个脚本已经不存在了**
+>
+> `_scratch/kdfbench/`（微基准源码 + `run-on-device.ps1`）已在本日的工作区整理中被删除，
+> **全机无副本**；而 `shuyo-site/docs/migration-record.md` 那条 09-24 的清账记录
+> **明确写着它"故意保留（基准数据）"**（删它的决策没有先读那份记录）。
+>
+> ⇒ **下面这段对它的描述，是它现在仅存的规格说明。** 要重建就照这段重写：
+> 基于本节的参数、**标签由实参拼出来**（不要硬编码 —— 上一版就因此产生过假读数）、
+> 一次量两组。完整记录见 `AI-NATIVE-DEV.md` §6.5。
+>
+> ⚠️ **同时把本节的口径从"约一分钟，全自动"改为"需重建脚本"** —— 它不再是一分钟的事。
 —— 它自己编 aarch64 release（NDK 29 的 clang 当 linker），然后**每 5 秒看一次 adb**，
 设备一出现就打印机器信息并跑两遍（每遍内含每组参数各 3 次，落机器可读的 `RESULT` 行）。
 ⚠️ 这一轮顺手修掉了微基准里一个**会污染文档的 bug**：上一版的 `println!` 标签是**硬编码**的
@@ -422,6 +435,10 @@ debug 构建**下的读数 ⇒ **不能拿它当"用户实际要等多久"**。
 直接在那儿提交＝把**别人的改动混进我的提交**（静默）；直接改＝可能在对方写入时互相覆盖。
 ⇒ 做法：**克隆一份干净 HEAD** 到 `C:\Users\cnzen\zhai\_scratch\sync-server-keyring`，在那儿实现＋跑判据，
 交付一份可直接 `git apply` 的补丁（**没碰他们的工作树**）。
+
+> ⚠️ **2026-09-26 追加**：那个临时克隆目录已随 `_scratch` 清理删掉。
+> 这不影响本节的**做法**（它本来就是可随时重建的干净克隆），但**别去找那个路径** ——
+> 重做时自己重新 `git clone` 一份到 `_tmp/scratch/` 下即可。
 
 - 补丁：`docs/plans/patches/0001-feat-keyring-0b.patch`（**32 KB，5 个文件**：新模块 `src/space_keyring.rs`
   ＋ `src/db.rs` 的 v16 迁移 ＋ `src/main.rs` 的三条路由 ＋ 新探针 `scripts/verify-space-keyring.mjs`
