@@ -255,8 +255,8 @@ export function FileManagerView() {
   // `loadFiles()` 只在切换文件夹、导入、删除之后才跑，于是「未下载」标记要**重载页面**
   // 才看得见，而那恰好是 P6.1 + P6.2 的主流程（关掉开关 → 同步 → 看哪些没下来）。
   //
-  // 判据取 `useSyncStatus` 的下降沿：手动同步（`SyncPanel`）、自动同步（`useAutoSync` /
-  // `App.tsx` 的定时器）与 Web 引擎（`web.ts`）**三条路都会配对 begin/end** ⇒ 一处挂载全覆盖。
+  // 判据取 `useSyncStatus` 的下降沿：手动同步（`SyncPanel`）、自动同步（`App.tsx` 那一段定时器，
+  // 2026-09-26 起只有它一条）与 Web 引擎（`web.ts`）**三条路都会配对 begin/end** ⇒ 一处挂载全覆盖。
   const syncing = useSyncStatus((s) => s.syncing);
   const wasSyncing = useRef(false);
   useEffect(() => {

@@ -193,18 +193,9 @@ export function SyncPanel() {
       setMeshBusy(false);
     }
   };
-  const meshRoundNow = async () => {
-    setMeshBusy(true);
-    try {
-      const rep = await api.meshSyncNow(activeId);
-      // ⚠️ 显示的是 Rust 侧拼好的那句人话（含"哪一台没拉动"）—— 界面**不**自己数一遍。
-      setStatus(rep.note);
-    } catch (e) {
-      setStatus(`网格交换失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ 这里原来还有一个 `meshRoundNow()`（配一个「立刻交换一轮」按钮）。2026-09-26 **口径收敛**：
+  //    交换并进「同步」（见 `syncOne` 里那一段）⇒ 函数与按钮**一起删掉**，不留在那儿当"看起来
+  //    还该有个按钮"的线索（本仓对死代码的纪律在 TS 这半边同样适用）。
   const [syncing, setSyncing] = useState(false);
   // C1 预算刹车：设备级设置（null = 还没读到，此时不渲染这一块）。
   const [budget, setBudget] = useState<SyncBudget | null>(null);
@@ -475,6 +466,19 @@ export function SyncPanel() {
         const c = (res.conflicts ?? []) as { entity_id: string; title: string }[];
         if (c.length > 0) {
           setConflicts(c.map((x) => ({ ws_id: r.ws_id, entity_id: x.entity_id, title: x.title })));
+        }
+      }
+      // ★ 丙-③-b（2026-09-26 口径收敛）：**网格那一档并进「同步」**——同一个按钮先走服务端那条，
+      //   再对这个空间跑一轮对等交换（原来它有一个单独的「立刻交换一轮」按钮：同一个意图两个动作）。
+      //   ⚠️ 只在**这一行就是面板上显示的那行**、且网格真开着时才跑：`lanStatus.mesh` 是**当前那条档案**
+      //      的读数（面板只为它显示网格那一块），拿别行的 ws_id 去跑会与读数对不上。
+      //   ⚠️ "没配网格 ⇒ 一个字节都不动"由 Rust 侧（`mesh_sync_now` 早退）保证，这里**不重判一遍**。
+      if (lanStatus?.mesh.enabled && r.ws_id === activeId) {
+        try {
+          const rep = await api.meshSyncNow(r.ws_id);
+          setStatus((prev) => `${prev}${prev ? "；" : ""}网格：${rep.note}`);
+        } catch (e) {
+          setStatus((prev) => `${prev}${prev ? "；" : ""}网格交换失败：${e instanceof Error ? e.message : String(e)}`);
         }
       }
       await useNotes.getState().loadPages();
@@ -1164,6 +1168,9 @@ export function SyncPanel() {
                   <span className="sync-hint">
                     {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
                   </span>
+                  {/* ★ 2026-09-26 口径收敛：交换**并进「同步」**，这里不再有自己的按钮
+                      （同一件事原本两个按钮、用户要记两个动作）。*/}
+                  <span className="sync-hint">开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。</span>
                 </span>
                 <div className="sync-field">
                   <input
@@ -1190,9 +1197,6 @@ export function SyncPanel() {
                   </button>
                 </div>
                 <div className="sync-field">
-                  <button className="sync-btn" disabled={meshBusy} onClick={() => void meshRoundNow()}>
-                    立刻交换一轮
-                  </button>
                   <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
                     关掉网格
                   </button>

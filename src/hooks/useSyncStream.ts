@@ -6,7 +6,7 @@
 //   · **桌面**：WebView 里没有"能带鉴权的 SSE"，且桌面同步在 Rust 里 ⇒ 由 Rust 订流
 //     （`sync_stream_start`，`src-tauri/src/sync_stream.rs`），**只发一个事件**（"有变更"），
 //     **拉取仍由前端发起** —— 这样自动经过 C2 Wi-Fi 闸门 / 防重入 / 状态行这三件既有件
-//     （设计稿 §3 形态 B 的唯一理由）。桌面**没有**流时退回轮询（`useAutoSync`），行为与今天一致。
+//     （设计稿 §3 形态 B 的唯一理由）。桌面**没有**流时退回轮询（`App.tsx` 里那一段自动同步），行为与今天一致。
 //
 // ⚠️ 第 45 轮修：Web 侧订的是**当前工作空间**那条绑定，不是"第一个绑定过的档案"
 //    （多工作空间下会**订到别的空间**）—— 与 claim 那条"把本地工作空间 id 当远端 space_id 发"
@@ -47,7 +47,7 @@ export function useSyncStream() {
     let ctrl: AbortController | null = null;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     let unlisten: (() => void) | null = null;
-    // 防重入：上一次"流触发的拉取"还没结束就跳过（与 `useAutoSync` 的 `syncing` 同一纪律）
+    // 防重入：上一次"流触发的拉取"还没结束就跳过（与自动同步那一段的 `busy` 同一纪律）
     let busy = false;
 
     /** ★ **拉一次**：闸门 → 状态行配对 → 刷新列表。两条平台路共用它（一处实现）。 */

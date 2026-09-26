@@ -46,7 +46,6 @@ import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PanelBoundary } from "./components/PanelBoundary";
 import { Editor } from "./editor/Editor";
-import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
@@ -366,28 +365,41 @@ function NoteEditor({ pageId }: { pageId: string }) {
       .then(() => emitHostEvent("app.started", {}));
   }, []);
 
-  // 自动同步：按 SyncPanel 里设置的间隔（localStorage "shuyonote:autoSync"），
-  // 对每个已绑定服务器的空间定时 push+pull（面板关闭也生效）。
-  // 防重入：上一次自动同步尚未结束就跳过本次 tick，避免多次同步叠加/互相打断。
+  // 自动同步：**只有这一条路**（2026-09-26 口径收敛）。
+  //
+  // · 间隔来自 SyncPanel（localStorage `shuyonote:autoSync`）：`0` ＝ 关；
+  // · **启动后 3 秒先跑一次**（`0` 也跑）—— 这是原 `useAutoSync` 的行为，现在并进这里；
+  // · 每轮对**每个有 `space_id` 的空间**：走服务端那条（`syncWorkspace`）＋ **顺手跑一轮网格**
+  //   （`meshSyncNow`）。⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**
+  //   （`mesh_sync_now` 自己早退）—— 前端**不重复判一遍**（两处各解释一遍迟早漂）。
+  //   ⚠️ 网格那一条**不要求 `server_url`**："只开网格、不绑服务端"正是丙要支持的配置。
+  // · 网络闸门 `shouldAutoSyncNow()` 一处实现（`lib/syncGate.ts`）。
+  // · 防重入：上一次还没结束就跳过本次 tick。
+  //
+  // ⚠️ **为什么把 `useAutoSync` 删了**：它自带一条**固定 5 分钟**、且走**老的全局配置**
+  // （`api.syncNow()`）的循环，与这条"按面板间隔、按每空间档案"的路并行 ⇒ 同一个用户两份间隔、
+  // 两套语义、还会互相叠加（`syncGate.ts` 当初就写着"两条路各写一份判断也迟早会漂"，这次把路合成一条）。
   const autoSyncMs = Number(localStorage.getItem("shuyonote:autoSync")) || 0;
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
+    let initial: ReturnType<typeof setTimeout> | undefined;
     let busy = false;
     const tick = () => {
       if (busy) return;
       busy = true;
       (async () => {
         try {
-          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了
-          // `useAutoSync` 里那道检查——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
+          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了闸门检查
+          // ——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
           // 判据只有一处实现，见 `lib/syncGate.ts`。
           if (!(await shouldAutoSyncNow())) return;
           const profiles = await api.listSyncProfiles();
-          const bound = (profiles || []).filter((p: any) => p.server_url && p.space_id);
+          const withSpace = (profiles || []).filter((p: any) => p.space_id);
+          const bound = withSpace.filter((p: any) => p.server_url);
           if (bound.length) {
-            // P1：与 `useAutoSync` 同理——**自动同步必须配对 begin/end**
-            // （`withSyncStatus` 保证），否则 Rust 侧的附件进度事件会把 store 置成
-            // "正在同步"且没人收尾，面板就永远停在"正在同步…"（真机实测过）。
+            // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
+            // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
+            // 面板就永远停在"正在同步…"（真机实测过）。
             await withSyncStatus("正在自动同步…", () =>
               Promise.all(
                 bound.map((p: any) =>
@@ -395,6 +407,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
                 ),
               ),
             );
+          }
+          // ★ 网格（丙）：同一批空间顺手各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
+          if (withSpace.length) {
+            await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
             await loadPages();
           }
         } catch {
@@ -404,11 +420,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
         }
       })();
     };
-    const ms = autoSyncMs;
-    if (ms > 0) {
-      timer = setInterval(tick, ms);
+    if (autoSyncMs > 0) {
+      timer = setInterval(tick, autoSyncMs);
     }
-    return () => { if (timer) clearInterval(timer); };
+    // 启动后先来一次（与原来那条路一致：不管间隔设没设都跑）。
+    initial = setTimeout(tick, 3000);
+    return () => {
+      if (timer) clearInterval(timer);
+      if (initial) clearTimeout(initial);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, loadPages, autoSyncMs]);
 
@@ -681,7 +701,6 @@ function AppShell() {
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useTemplateCenterStore((s) => s.open);
-  useAutoSync();
   usePresence();
   useSyncStream();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。

@@ -2944,9 +2944,11 @@ export function makeInvoke(store: SqliteStore) {
     //   ③ **别删这段实现**：删了会让平台层不完整、口径退回"没实现"，将来若要开放（先得解决
     //      浏览器存储被回收的问题）还得重写。
     //
-    // 触发路径（供判断"这段到底还会不会跑"）：`useAutoSync`（`App.tsx:618`）在 Web 上**仍会**
-    // 调用 `api.syncNow()`，但它只处理**已有 `space_id` 的 profile**（下面 :2432 的 `continue`）；
-    // 而配置入口在所有浏览器里都置灰 ⇒ 只有"历史遗留已配置过 profile"时才会真正走到这里。
+    // 触发路径（供判断"这段到底还会不会跑"）：**自动同步那一条路已经改走 `syncWorkspace`**
+    // （2026-09-26 口径收敛：那条固定 5 分钟、走老全局配置 `api.syncNow()` 的循环删了）⇒
+    // `sync_now` 今天只剩**显式调用**（例如插件事件/兼容路径）才会走到；它仍然只处理**已有
+    // `space_id` 的 profile**（下面 :2432 的 `continue`），而配置入口在所有浏览器里都置灰
+    // ⇒ 只有"历史遗留已配置过 profile"时才会真正做点什么。
     if (cmd === "sync_now") {
       const out: any[] = [];
       for (const profile of listProfiles(store)) {

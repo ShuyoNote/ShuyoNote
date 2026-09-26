@@ -18,7 +18,21 @@ describe("网格（丙-③-b）· 面板接线", () => {
 
   it("① 面板真的调了命令面那两个命令（少一个就有一半功能点不到）", () => {
     expect(panel, "面板没接 `mesh_set_config` ⇒ 用户没法开网格").toContain("api.meshSetConfig(");
-    expect(panel, "面板没接 `mesh_sync_now` ⇒ 开了也换不动").toContain("api.meshSyncNow(");
+    // ★ 2026-09-26 口径收敛：**交换并进「同步」**（原来有一个单独的「立刻交换一轮」按钮）。
+    //   所以这条断言从"面板里有这个词"改成"**`syncOne` 那段里有它**" —— 否则把调用挪到别处
+    //   （比如某一个已经没人点的按钮里）也照样绿。
+    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
+    expect(syncOne, "「同步」那条路没有跑网格 ⇒ 用户点同步时网格不动").toContain("api.meshSyncNow(");
+    expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
+    expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
+  });
+
+  it("①b **自动同步也对网格生效**（不是只有手点「同步」才换）", () => {
+    const app = read("src/App.tsx");
+    expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncNow(");
+    // ⚠️ gate 只许有一处：Rust 侧 `mesh_sync_now` 自己早退；前端**不重判一遍**。
+    //    （这条断言钉的是"别在 App 里再写一个 if (mesh.enabled)"那种第二份解释。）
+    expect(app, "自动同步那条路里不该自己判网格开没开（gate 在 Rust 侧一处实现）").not.toContain("mesh.enabled");
   });
 
   it("② 门槛是 `space_id`，**不是** `lanRowBound`（网格不需要服务端地址）", () => {
