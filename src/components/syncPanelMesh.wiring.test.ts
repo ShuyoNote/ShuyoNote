@@ -23,6 +23,12 @@ describe("网格（丙-③-b）· 面板接线", () => {
     //   （比如某一个已经没人点的按钮里）也照样绿。
     const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
     expect(syncOne, "「同步」那条路没有跑网格 ⇒ 用户点同步时网格不动").toContain("api.meshSyncNow(");
+    // ★ 它在 `finally` 里，**不在 `try` 里** —— 真机实测踩过：服务端那条抛错（"会话已失效"）时
+    //   `try` 里剩下的语句一行都不跑 ⇒ 网格被**连坐**跳过，而它根本不依赖服务端。
+    const catchAt = syncOne.indexOf("} catch (e) {");
+    const meshAt = syncOne.indexOf("api.meshSyncNow(");
+    expect(catchAt, "`syncOne` 里没找到 catch（结构变了？）").toBeGreaterThan(-1);
+    expect(meshAt, "网格那一步必须放在 **catch 之后**（＝ finally 里）").toBeGreaterThan(catchAt);
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
   });

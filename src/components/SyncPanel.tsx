@@ -468,19 +468,6 @@ export function SyncPanel() {
           setConflicts(c.map((x) => ({ ws_id: r.ws_id, entity_id: x.entity_id, title: x.title })));
         }
       }
-      // ★ 丙-③-b（2026-09-26 口径收敛）：**网格那一档并进「同步」**——同一个按钮先走服务端那条，
-      //   再对这个空间跑一轮对等交换（原来它有一个单独的「立刻交换一轮」按钮：同一个意图两个动作）。
-      //   ⚠️ 只在**这一行就是面板上显示的那行**、且网格真开着时才跑：`lanStatus.mesh` 是**当前那条档案**
-      //      的读数（面板只为它显示网格那一块），拿别行的 ws_id 去跑会与读数对不上。
-      //   ⚠️ "没配网格 ⇒ 一个字节都不动"由 Rust 侧（`mesh_sync_now` 早退）保证，这里**不重判一遍**。
-      if (lanStatus?.mesh.enabled && r.ws_id === activeId) {
-        try {
-          const rep = await api.meshSyncNow(r.ws_id);
-          setStatus((prev) => `${prev}${prev ? "；" : ""}网格：${rep.note}`);
-        } catch (e) {
-          setStatus((prev) => `${prev}${prev ? "；" : ""}网格交换失败：${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
       await useNotes.getState().loadPages();
       await loadHistory();
       await loadPendingRemote();
@@ -488,6 +475,26 @@ export function SyncPanel() {
       syncErr = String(e);
       setStatus(`「${r.name}」同步失败：${e}`);
     } finally {
+      // ★ 丙-③-b（2026-09-26 口径收敛）：**网格那一档并进「同步」**——同一个按钮，服务端那条走完
+      //   再对这个空间跑一轮对等交换（原来它有一个单独的「立刻交换一轮」按钮：一个意图两个动作）。
+      //
+      // ⚠️ ⚠️ **必须放在 `finally` 里，不许放在 `try` 里** —— 真机上实测踩过：服务端那条**抛错**时
+      //   （现场是"会话已失效，请重新登录"），`try` 里剩下的语句**一行都不会跑** ⇒ 网格这一档被
+      //   连坐跳过，而它**根本不依赖服务端**（网格是客户端之间直连）。与 `round` 里那条
+      //   "一只对端拉不动不连坐"是同一条纪律。
+      // ⚠️ 只在**这一行就是面板上显示的那行**、且网格真开着时才跑：`lanStatus.mesh` 是**当前那条档案**
+      //   的读数（面板只为它显示网格那一块），拿别行的 ws_id 去跑会与读数对不上。
+      // ⚠️ "没配网格 ⇒ 一个字节都不动"由 Rust 侧（`mesh_sync_now` 早退）保证，这里**不重判一遍**。
+      if (lanStatus?.mesh.enabled && r.ws_id === activeId) {
+        try {
+          const rep = await api.meshSyncNow(r.ws_id);
+          // ⚠️ `rep.note` **自带**「网格：」前缀（Rust 拼好的人话）—— 这里别再写一遍，
+          //    否则真机上会看到 `网格：网格：拉了 1 台对端`（第一版就是这么出去的）。
+          setStatus((prev) => `${prev}${prev ? "；" : ""}${rep.note}`);
+        } catch (e) {
+          setStatus((prev) => `${prev}${prev ? "；" : ""}网格交换失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       setSyncing(false);
       useSyncStatus.getState().end(syncErr);
     }
