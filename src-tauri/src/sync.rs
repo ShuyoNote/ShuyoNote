@@ -954,23 +954,46 @@ fn set_attachments_enabled(c: &Connection, ws_id: &str, enabled: bool) -> Result
 
 /// P6.3「按需取字节」（2026-09-15）：用户**主动**要求下载其中一件附件。
 ///
+/// ★★ 丙-④（2026-09-26）：**字节可以从两个地方来，按"跟谁要哪份"依次试** ——
+///   ① 绑了服务端 ⇒ 先问服务端（甲那条路，**原样保留**：能用服务器时行为不变）；
+///   ② 再按发现到的**对端依次试**（顺序由 `mesh::mesh_peers` 定：确定性排序、去重、
+///      只认"代言这个空间的内网窗口"）—— **一个都没有/都拿不到时如实说**。
+///   为什么顺序是"服务端优先"：这台设备**已经配了服务端**时，那条路是它既有的事实来源；
+///   而对端只在自己网段里、随时可能走开。反过来（对端优先）会让"服务器上明明有"的场景变慢。
+///
 /// 复用 `download_one_attachment()` —— **同一个函数，不允许再写第二份下载实现**
 /// （见 `docs/plans/2026-09-15-attachment-on-demand-plan.md` §七：P6.3 若复制一份循环
 /// 就会变成两套下载逻辑，落盘 / 加密 / 落库三件事只要有一边忘了改就是数据问题）。
+/// 丙-④ 把"怎么要"（请求怎么组）提到调用方、把"拿到之后怎么办"留在那一个函数里，
+/// 两条路因此仍然是**一份**实现。
 ///
 /// ⚠️ **刻意不受 C1 预算闸门约束**（单文件阈值 / 本轮总量上限 / 磁盘余量下限都不拦）：
 /// C1 管的是"**自动**拉取别在用户不知情时把设备填满"（scope plan 的上架判据），
 /// 而这里是用户明确点了"下载这一件"——与"手动点同步不受 C2 仅 Wi-Fi 限制"
 /// 是同一条原则：**显式操作照做**。磁盘真满了由写失败兜底（错误会原样返回）。
 ///
-/// 成功返回落盘的**明文字节数**（界面据此提示"已下载 X"）。
+/// 回的是**读数**（`AttachmentFetch`）：界面拿 `note` 原样显示（那句话由这一侧拼，
+/// 因为只有这一侧知道字节到底是从哪儿来的 —— 与网格那轮 `note` 同一条口径）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentFetch {
+    /// 落盘的**明文字节数**。
+    pub size: i64,
+    /// `server` ｜ `peer`（**只有这两处来源**；界面不该自己猜）。
+    pub source: String,
+    /// 从哪一台对端取的（`source == "peer"` 时才有；服务端 ⇒ `None`）。
+    pub peer: Option<String>,
+    /// 一句人话，界面原样显示。
+    pub note: String,
+}
+
 #[tauri::command]
 pub async fn download_attachment(
     app: tauri::AppHandle,
     db: State<'_, Db>,
     ws_id: String,
     hash: String,
-) -> Result<i64, String> {
+) -> Result<AttachmentFetch, String> {
     // 这个 hash 会被拼进文件路径 ⇒ 先当成**不可信输入**校验（与同步下载同一道门）。
     if !is_valid_attachment_hash(&hash) {
         return Err("附件标识不合法".to_string());
@@ -991,19 +1014,10 @@ pub async fn download_attachment(
             .unwrap_or_else(|| "application/octet-stream".to_string());
         (p, mime)
     };
-    if profile.server_url.is_empty() {
-        return Err("请先配置同步服务器".to_string());
-    }
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：单个附件也下到**这个空间自己**的目录里。
     let attachments_dir: PathBuf = crate::attachments::space_attachments_dir(&app_data_dir, &profile.ws_id);
     std::fs::create_dir_all(&attachments_dir).map_err(|e| e.to_string())?;
-    // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
-    // ★ 甲-1 接线：基址也走同一个 `effective_base`（局域网中枢优先）——两处**同源**才不会漂。
-    let att_base = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        attachment_base(&effective_base(&c, &profile), &profile.space_id)
-    };
     let session_key = {
         let c = db.0.lock().expect("db mutex poisoned");
         security::key_if_enabled(&c)
@@ -1012,7 +1026,99 @@ pub async fn download_attachment(
     // 凭证取法与同步下载保持一致（都用 `profile.token`）：两条路若取不同的 token，就会出现
     // "同步能下、点按钮下不了"这种最难查的不一致。
     let item = RemoteAttachment { hash: hash.clone(), mime };
-    download_one_attachment(&client, &att_base, &profile.token, &item, &attachments_dir, session_key.as_ref(), &db).await
+
+    // ── ① 服务端那条（绑了才走；不绑 ⇒ **不再是错误**，丙-④ 之前这里直接报"请先配置同步服务器"）
+    let mut server_err: Option<String> = None;
+    if !profile.server_url.is_empty() {
+        // URL 组装规则与 `sync_attachments` **完全一致**（同一个 `attachment_base`，不是各写一遍）。
+        // ★ 甲-1 接线：基址也走同一个 `effective_base`（局域网中枢优先）——两处**同源**才不会漂。
+        let att_base = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            attachment_base(&effective_base(&c, &profile), &profile.space_id)
+        };
+        let mut req = client.get(format!("{att_base}/attachments/{hash}"));
+        if !profile.token.is_empty() {
+            req = req.bearer_auth(&profile.token);
+        }
+        let sent = req.send().await.map_err(|e| format!("服务端请求发不出去：{e}"));
+        match sent {
+            Ok(resp) => match download_one_attachment(resp, "服务端", &item, &attachments_dir, session_key.as_ref(), &db).await {
+                Ok(size) => {
+                    return Ok(AttachmentFetch {
+                        size,
+                        source: "server".to_string(),
+                        peer: None,
+                        note: format!("已从服务器取回这一件（{} 字节）", size),
+                    })
+                }
+                Err(e) => server_err = Some(e),
+            },
+            Err(e) => server_err = Some(e),
+        }
+    }
+
+    // ── ② 对端那条（丙）：按 `mesh_peers` 定的顺序**依次**试
+    let (candidates, mesh_token, proto_space) = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let device = device_id(&c).unwrap_or_default();
+        let proto = profile.space_id.trim().to_string();
+        if proto.is_empty() {
+            (Vec::new(), None, proto)
+        } else {
+            let peers = crate::lan_state::LanState::global(&device).peers(crate::db::now_ms());
+            let candidates = crate::mesh::mesh_peers(&proto, &device, &peers);
+            (candidates, crate::mesh::settings(&c, &proto).token, proto)
+        }
+    };
+    let mut tried: Vec<String> = Vec::new();
+    for p in &candidates {
+        match crate::mesh::request_attachment_from_peer(&client, p, &proto_space, &hash, mesh_token.as_deref()).await {
+            Ok(resp) => match download_one_attachment(resp, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
+                Ok(size) => {
+                    return Ok(AttachmentFetch {
+                        size,
+                        source: "peer".to_string(),
+                        peer: Some(p.device_id.clone()),
+                        note: format!("已从对端「{}」取回这一件（{size} 字节）", p.device_id),
+                    })
+                }
+                Err(e) => tried.push(format!("{}：{e}", p.device_id)),
+            },
+            Err(e) => tried.push(format!("{}：{e}", p.device_id)),
+        }
+    }
+
+    // ── ③ 一个都取不到 ⇒ **如实说**，而且要说清是哪一种"取不到"
+    Err(attachment_fetch_failure(server_err.as_deref(), &profile.space_id, candidates.len(), &tried))
+}
+
+/// 三个来源都试过之后那句**如实的话**（纯函数 ⇒ 判据能直接钉它，不必起网络）。
+///
+/// ★ 丙-④ 的口径："取不到"有**四种**成因，用户的下一步完全不同：
+///   · 服务端那条报了什么（会话失效 / 404 / 超时）—— 先原样带上；
+///   · 这个空间**没绑组织空间 id** ⇒ 网格这一档根本不知道跟谁对暗号（配置问题）；
+///   · 网段里**没有**能问的对端（没人代言这个空间 / 只有我自己）—— 不是失败，是"没人"；
+///   · 有对端但**都没拿到**（每家回 404 / 连不上）—— 把每一家的原文带上，别合成一句"失败"。
+/// ⚠️ 与网格那轮的 `round_note` 同一条纪律：**没发生的事一个字都不许多说**
+/// （比如没有对端时不许说"问了 N 台"）。
+pub(crate) fn attachment_fetch_failure(server_err: Option<&str>, proto_space: &str, candidates: usize, tried: &[String]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(e) = server_err {
+        parts.push(format!("服务端：{e}"));
+    }
+    if candidates == 0 {
+        parts.push(if proto_space.trim().is_empty() {
+            "这个空间没绑组织空间 id ⇒ 网格这一档不知道跟谁对暗号".to_string()
+        } else {
+            "本网段里没有能问的对端（没人代言这个空间 / 只有我自己）".to_string()
+        });
+    } else if tried.is_empty() {
+        // 有对端、却一条尝试记录都没有 ⇒ 只可能是循环没跑（防御性：真出现就是代码问题）
+        parts.push(format!("网段里有 {} 台对端，但一台都没问到", candidates));
+    } else {
+        parts.push(format!("问了 {} 台对端：{}", candidates, tried.join("；")));
+    }
+    format!("这一件的字节哪儿都没取到 —— {}", parts.join("；"))
 }
 
 #[tauri::command]
@@ -3562,23 +3668,24 @@ pub fn set_sync_budget(db: State<'_, Db>, budget: SyncBudget) -> Result<SyncBudg
 /// （原先这里是 `?`，一次网络抖动就让整轮同步失败，也就谈不上"优雅停止"）；
 /// ② P6.3 的"按需取字节"要复用它，**不许再写第二份下载实现**
 /// （见 `docs/plans/2026-09-15-attachment-on-demand-plan.md` §七）。
+/// ★ 丙-④ 起：收的是**已经发出去的响应** ＋ 一个"问的是谁"的标签，而不是 `(client, base, token)`。
+///
+/// 为什么这么改：附件字节现在**有两个来源**（甲：服务端 `GET /attachments/<hash>`；
+/// 丙：对端窗口 `GET /mesh/attachment?…`），而落盘 / 加密 / 落库 / 唯一临时文件这几件事
+/// **必须只有一份实现**（原来那段注释就写着"P6.3 不许再写第二份下载实现"）。
+/// 把"怎么要"留给调用方、把"拿到之后怎么办"留在这里，是唯一能让两条路共用它的切法。
+/// `who` 只进错误文案（"服务端返回 404" / "对端 Mate40 返回 404" —— 用户的下一步不一样）。
 #[allow(clippy::too_many_arguments)]
 async fn download_one_attachment(
-    client: &reqwest::Client,
-    att_base: &str,
-    token: &str,
+    resp: reqwest::Response,
+    who: &str,
     item: &RemoteAttachment,
     attachments_dir: &Path,
     session_key: Option<&crate::crypto::AppKeys>,
     db: &State<'_, Db>,
 ) -> Result<i64, String> {
-    let mut req = client.get(format!("{att_base}/attachments/{}", item.hash));
-    if !token.is_empty() {
-        req = req.bearer_auth(token);
-    }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("服务端返回 {}", resp.status()));
+        return Err(format!("{who} 返回 {}", resp.status()));
     }
     let ext = ext_from_mime(&item.mime);
     let path = attachments_dir.join(&item.hash[0..2]).join(format!("{}.{}", item.hash, ext));
@@ -3977,7 +4084,20 @@ async fn sync_attachments(
         //
         // P1：上报进度（与 `web.ts` 的时机、文案、字段一致）。
         emit_attachment_progress(app, "down", idx + 1, down_items.len(), &item.hash[..8.min(item.hash.len())]);
-        match download_one_attachment(&client, &att_base, &profile.token, item, &attachments_dir, session_key.as_ref(), db).await {
+        // 甲那条路：**要**的这一步留在这里（`download_one_attachment` 只负责"拿到之后怎么办"）。
+        let mut att_req = client.get(format!("{att_base}/attachments/{}", item.hash));
+        if !profile.token.is_empty() {
+            att_req = att_req.bearer_auth(&profile.token);
+        }
+        let att_resp = match att_req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                failed += 1;
+                eprintln!("[sync] 附件 {} 请求发不出去（跳过）：{e}", item.hash);
+                continue;
+            }
+        };
+        match download_one_attachment(att_resp, "服务端", item, &attachments_dir, session_key.as_ref(), db).await {
             Ok(size) => {
                 bytes_downloaded = bytes_downloaded.saturating_add(size.max(0) as u64);
                 att_items.push(SyncItem { entity: "attachment".to_string(), entity_id: item.hash.clone(), op: "upsert".to_string(), dir: "pull".to_string(), title: String::new() });
@@ -4053,7 +4173,10 @@ fn scan_local_attachment_hashes(dir: &Path) -> HashSet<String> {
 /// Canonical SHA-256 hex (64 chars). Used to validate server-supplied hashes
 /// before joining them into a local filesystem path — prevents path traversal if
 /// a malicious/compromised sync server returns e.g. `../../meta.db` as a hash.
-fn is_valid_attachment_hash(hash: &str) -> bool {
+///
+/// ★ 丙-④ 起也是 `pub(crate)`：**网格窗口**发附件时那个 `hash` 同样是对端给的不可信输入，
+/// 同一道门必须只有一处（两边各写一份"64 位十六进制"迟早会漂）。
+pub(crate) fn is_valid_attachment_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())
 }
 

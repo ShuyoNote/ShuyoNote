@@ -565,6 +565,9 @@ pub(crate) fn open_window_at(
             space_id: proto_space.to_string(),
             device_id: device_id.to_string(),
             token,
+            // ★ 丙-④：附件字节在这棵树下的 `<本地空间>/…` ⇒ 窗口要能发它
+            //   （`dir` 就是 app data 目录；判据里是临时目录）。
+            data_dir: Some(dir.to_path_buf()),
         },
         Arc::new(Mutex::new(conn)),
     )
@@ -647,6 +650,11 @@ pub fn announced_base(addr: SocketAddr) -> Option<String> {
 pub enum Route {
     /// `GET /mesh/pull`
     Pull,
+    /// ★ 丙-④：`GET /mesh/attachment?space_id=…&hash=…` —— **本机手上那一份附件字节**。
+    ///
+    /// 口径与 `/mesh/pull` 同一条：**只服务我有的东西**（没有账本、不去问别人、也不代收）。
+    /// 没有 ⇒ `404` ＋ 一句人话（"这一台没有" ≠ "网络故障"，这两件用户的下一步完全不同）。
+    Attachment,
     /// 同步协议里**有**、但**不是网格这一档**的端点 ⇒ `501` ＋ 一句人话。
     NotYet(&'static str),
     /// 协议里根本没有这个路径 ⇒ `404`。
@@ -658,6 +666,7 @@ pub fn route(method: &str, target: &str) -> Route {
     let path = if path.len() > 1 { path.trim_end_matches('/') } else { path };
     match method.to_ascii_uppercase().as_str() {
         "GET" if path == "/mesh/pull" => Route::Pull,
+        "GET" if path == "/mesh/attachment" => Route::Attachment,
         _ => match not_yet(path) {
             Some(what) => Route::NotYet(what),
             None => Route::Unknown,
@@ -744,6 +753,12 @@ pub struct MeshConfig {
     pub device_id: String,
     /// 对端要带的口令。`None` ⇒ 任何请求都收（启动时**大声**说一次）。
     pub token: Option<String>,
+    /// ★ 丙-④：**数据目录**（附件字节在这棵树下的 `<本地空间>/…`）——
+    /// `None` ⇒ 这一档**不服务附件**，`/mesh/attachment` 如实回 501（不是 404：
+    /// "没配"和"这一台没有这份文件"是两件不同的事）。
+    /// ⚠️ 由 `open_window_at` 从调用方给的目录填（判据因此能塞一个临时目录，
+    /// 不去碰 `APP_DATA_DIR` 那个全局 —— 那个全局会让"单跑红、全量绿"）。
+    pub data_dir: Option<std::path::PathBuf>,
 }
 
 pub struct MeshHandle {
@@ -873,14 +888,41 @@ fn read_request(sock: &mut TcpStream) -> Result<Request, String> {
     Ok(Request { method, target, headers })
 }
 
-fn respond(sock: &mut TcpStream, code: u16, reason: &str, body: &str) -> std::io::Result<()> {
+/// 一个响应：状态码 ＋ 原因 ＋ 体（**字节**）＋ 内容类型。
+///
+/// ⚠️ 为什么从三件套 `(u16, &'static str, String)` 改成结构体：丙-④ 要让这个窗口**发附件字节**
+/// （几十 MB 的二进制），而原来的 `respond` 把 `Content-Type` 写死成 JSON、且只收 `&str`。
+/// 给二进制另开一条 `respond_bytes` 会让"写头 / Content-Length / flush"变成两份实现 ——
+/// 而两份里只要有一边写错长度，症状就是"偶尔截断"，是最难查的那一类。
+struct Reply {
+    code: u16,
+    reason: &'static str,
+    content_type: &'static str,
+    body: Vec<u8>,
+}
+
+impl Reply {
+    fn json(code: u16, reason: &'static str, body: String) -> Self {
+        Reply { code, reason, content_type: "application/json; charset=utf-8", body: body.into_bytes() }
+    }
+
+    /// 原始字节（附件）：`application/octet-stream` —— 具体 mime 由**收侧**按本地元数据判
+    /// （与甲那条 `GET /attachments/<hash>` 同一口径：**字节就是字节**，元数据各机自己有一份）。
+    fn bytes(code: u16, reason: &'static str, body: Vec<u8>) -> Self {
+        Reply { code, reason, content_type: "application/octet-stream", body }
+    }
+}
+
+fn respond(sock: &mut TcpStream, reply: &Reply) -> std::io::Result<()> {
     let head = format!(
-        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json; charset=utf-8\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.as_bytes().len()
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        reply.code,
+        reply.reason,
+        reply.content_type,
+        reply.body.len()
     );
     sock.write_all(head.as_bytes())?;
-    sock.write_all(body.as_bytes())?;
+    sock.write_all(&reply.body)?;
     sock.flush()
 }
 
@@ -892,21 +934,23 @@ fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
     let req = match read_request(&mut sock) {
         Ok(r) => r,
         Err(e) => {
-            let _ = respond(&mut sock, 400, "Bad Request", &json_error(&format!("请求读不出来：{e}")));
+            let reply = Reply::json(400, "Bad Request", json_error(&format!("请求读不出来：{e}")));
+            let _ = respond(&mut sock, &reply);
             return Ok(());
         }
     };
-    let (code, reason, body) = dispatch(&state, &req);
-    respond(&mut sock, code, reason, &body).map_err(|e| e.to_string())
+    let reply = dispatch(&state, &req);
+    respond(&mut sock, &reply).map_err(|e| e.to_string())
 }
 
-fn dispatch(state: &State, req: &Request) -> (u16, &'static str, String) {
+fn dispatch(state: &State, req: &Request) -> Reply {
     if !authorized(state, req) {
-        return (401, "Unauthorized", json_error("这个网格窗口要口令（Authorization: Bearer …），对不上"));
+        return Reply::json(401, "Unauthorized", json_error("这个网格窗口要口令（Authorization: Bearer …），对不上"));
     }
     match route(&req.method, &req.target) {
         Route::Pull => handle_pull(state, &req.target),
-        Route::NotYet(what) => (
+        Route::Attachment => handle_attachment(state, &req.target),
+        Route::NotYet(what) => Reply::json(
             501,
             "Not Implemented",
             serde_json::json!({
@@ -916,7 +960,7 @@ fn dispatch(state: &State, req: &Request) -> (u16, &'static str, String) {
             })
             .to_string(),
         ),
-        Route::Unknown => (
+        Route::Unknown => Reply::json(
             404,
             "Not Found",
             json_error("这个路径不在网格协议里（'协议里有但这一档没有'是另一回事，那种回 501）"),
@@ -951,14 +995,14 @@ fn query_get(target: &str, key: &str) -> Result<Option<String>, String> {
     Ok(None)
 }
 
-fn handle_pull(state: &State, target: &str) -> (u16, &'static str, String) {
+fn handle_pull(state: &State, target: &str) -> Reply {
     let space = match query_get(target, "space_id") {
         Ok(v) => v,
-        Err(e) => return (400, "Bad Request", json_error(&e)),
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
     };
     if let Some(space) = space {
         if space != state.cfg.space_id {
-            return (
+            return Reply::json(
                 403,
                 "Forbidden",
                 json_error(&format!("这个窗口只服务空间 {}（收到 {space}）", state.cfg.space_id)),
@@ -968,21 +1012,104 @@ fn handle_pull(state: &State, target: &str) -> (u16, &'static str, String) {
     let since = match query_get(target, "since") {
         Ok(Some(v)) => v.parse::<i64>().unwrap_or(0),
         Ok(None) => 0,
-        Err(e) => return (400, "Bad Request", json_error(&e)),
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
     };
     let limit = match query_get(target, "limit") {
         Ok(Some(v)) => v.parse::<i64>().unwrap_or(MAX_LIMIT),
         Ok(None) => MAX_LIMIT,
-        Err(e) => return (400, "Bad Request", json_error(&e)),
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
     };
     let g = match state.conn.lock() {
         Ok(g) => g,
-        Err(_) => return (500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
     };
     match serve_own_records(&g, &state.cfg.device_id, since, limit) {
-        Ok(records) => (200, "OK", serde_json::json!({ "records": records }).to_string()),
-        Err(e) => (500, "Internal Server Error", json_error(&e)),
+        Ok(records) => Reply::json(200, "OK", serde_json::json!({ "records": records }).to_string()),
+        Err(e) => Reply::json(500, "Internal Server Error", json_error(&e)),
     }
+}
+
+/// ★ 丙-④：`GET /mesh/attachment?space_id=…&hash=…` —— 把**本机手上那一份**附件的字节发出去。
+///
+/// 四条口径（每条都对应一种"用户的下一步完全不同"的情形，所以分开说）：
+/// 1. **空间对不上 ⇒ 403**（与 `/mesh/pull` 同一道门，同一句话）；
+/// 2. **`hash` 是不可信输入** ⇒ 先校验形状（它会被拼进文件路径，见 `attachments` 那侧的同一道门）；
+/// 3. **这一台没有这份字节 ⇒ 404 ＋ 一句人话** —— "我这儿没有"和"网络不通"是两件事：
+///    前者该去问另一个对端，后者该重试（收侧靠 404 与 5xx 的区别决定要不要继续试下一台）；
+/// 4. **发的是明文**（与甲那条 `GET /attachments/<hash>` 一致）：盘上可能是加密存的（E1），
+///    解密在**这一侧**做；收侧自己按它那把钥匙重新加密落盘。
+fn handle_attachment(state: &State, target: &str) -> Reply {
+    let space = match query_get(target, "space_id") {
+        Ok(v) => v,
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    };
+    if let Some(space) = space {
+        if space != state.cfg.space_id {
+            return Reply::json(
+                403,
+                "Forbidden",
+                json_error(&format!("这个窗口只服务空间 {}（收到 {space}）", state.cfg.space_id)),
+            );
+        }
+    }
+    let hash = match query_get(target, "hash") {
+        Ok(Some(v)) => v,
+        Ok(None) => return Reply::json(400, "Bad Request", json_error("缺 hash：这一档按**内容**要字节（内容寻址）")),
+        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    };
+    if !crate::sync::is_valid_attachment_hash(&hash) {
+        return Reply::json(400, "Bad Request", json_error("附件标识不合法（要 64 位十六进制的内容指纹）"));
+    }
+    let Some(data_dir) = state.cfg.data_dir.as_deref() else {
+        return Reply::json(
+            501,
+            "Not Implemented",
+            json_error("这个窗口没配数据目录 ⇒ 不服务附件字节（设置面该重开一次窗口）"),
+        );
+    };
+    // 附件按**空间**分目录，而"本地空间 id"只能从这条连接的 meta 里读（真机上它 ≠ 对暗号的 id）。
+    let (space_id, key) = match state.conn.lock() {
+        Ok(g) => (crate::attachments::active_space_id(&g), crate::security::key_if_enabled(&g)),
+        Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
+    };
+    match crate::attachments::read_attachment_bytes_at(data_dir, &space_id, &hash) {
+        Ok(raw) => match crate::security::decrypt_attachment_bytes(key.as_ref(), &raw) {
+            Ok(plain) => Reply::bytes(200, "OK", plain),
+            Err(e) => Reply::json(500, "Internal Server Error", json_error(&format!("本机这份字节解不开：{e}"))),
+        },
+        Err(e) => Reply::json(
+            404,
+            "Not Found",
+            json_error(&format!("这一台没有这份附件字节（去问别的对端）：{e}")),
+        ),
+    }
+}
+
+/// 向**一台**对端要一件附件的字节（丙-④ 的「跟谁要哪份」由调用方决定顺序）。
+///
+/// 回的是**还没读体的响应**：调用方把它交给**那条唯一的落盘路径**
+/// （`sync::download_one_attachment`）去流式写 —— 于是"下载"在甲、丙两条路上**只有一份实现**
+/// （甲那条的注释明写着"P6.3 不许再写第二份下载实现"，这里沿用同一条纪律）。
+///
+/// ⚠️ 与 `/mesh/pull` 同一套凭证（`Authorization: Bearer <网格口令>`）。
+pub async fn request_attachment_from_peer(
+    client: &reqwest::Client,
+    peer: &MeshPeer,
+    space_id: &str,
+    hash: &str,
+    token: Option<&str>,
+) -> Result<reqwest::Response, String> {
+    let url = format!(
+        "{}/mesh/attachment?space_id={}&hash={}",
+        peer.base.trim_end_matches('/'),
+        space_id,
+        hash
+    );
+    let mut req = client.get(&url);
+    if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
+        req = req.bearer_auth(t);
+    }
+    req.send().await.map_err(|e| format!("问对端 {} 失败：{e}", peer.device_id))
 }
 
 #[cfg(test)]
@@ -1177,6 +1304,9 @@ mod tests {
                 space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("lan-token".into()),
+                // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
+                // 要验附件那条路的判据自己塞临时目录。
+                data_dir: None,
             },
             a.clone(),
         )
@@ -1187,6 +1317,9 @@ mod tests {
                 space_id: "space-x".into(),
                 device_id: "B".into(),
                 token: Some("lan-token".into()),
+                // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
+                // 要验附件那条路的判据自己塞临时目录。
+                data_dir: None,
             },
             b.clone(),
         )
@@ -1461,6 +1594,137 @@ mod tests {
         assert!(e.contains("其中 1 台没拉动"), "{e}");
     }
 
+    /// ★★ 丙-④（2026-09-26）：**附件按内容从"任意一个"对等体取到** —— 真环回、两个窗口。
+    ///
+    /// 现场形状就是产品里的那一个：网段里有两台对端，**第一台手上没有**这份字节，
+    /// **第二台有** ⇒ 客户端按顺序试，从第二台拿到，而且**字节逐字节相同**。
+    /// 三种"取不到"也一并钉住（每一种用户的下一步都不同）：
+    ///   · 空间不对 ⇒ **403**（与 `/mesh/pull` 同一道门）；
+    ///   · 这一台没有 ⇒ **404 ＋ "这一台没有…"**（≠ 网络故障 ⇒ 该去问另一台）；
+    ///   · 窗口没配数据目录 ⇒ **501**（"没配"与"没有这份文件"是两件事）。
+    ///
+    /// 变异实测：把 `handle_attachment` 里那次 `read_attachment_bytes_at` 换成"回空体" ⇒ 当场红。
+    #[tokio::test]
+    async fn an_attachment_comes_from_whichever_peer_actually_has_it() {
+        let bytes: Vec<u8> = b"\x89PNG\r\n\x1a\n-not-a-real-png-but-real-bytes".to_vec();
+        let hash = "ab".repeat(32); // 64 位十六进制（过形状校验）
+        let dir_a = temp_dir("att-a");
+        let dir_b = temp_dir("att-b");
+        let a = Arc::new(Mutex::new(space_conn("A")));
+        let b = Arc::new(Mutex::new(space_conn("B")));
+        // B 的盘上有这份字节 —— 写的位置走**产品那条布局**（`space_attachments_dir` ＋ `bucket_path`），
+        // 空间 id 也用那一侧自己的读法（`active_space_id`），免得判据手抄一份布局。
+        let (space_of_b, bucket) = {
+            let g = b.lock().unwrap();
+            let space = crate::attachments::active_space_id(&g);
+            let root = crate::attachments::space_attachments_dir(&dir_b, &space);
+            (space, root)
+        };
+        std::fs::create_dir_all(&bucket).unwrap();
+        let file = crate::attachments::bucket_path(&bucket, &hash, "png");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, &bytes).unwrap();
+        assert!(!space_of_b.is_empty() || bucket.exists(), "夹具：B 的附件目录应当建好了");
+
+        let win_a = start(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                space_id: "space-x".into(),
+                device_id: "A".into(),
+                token: Some("lan-token".into()),
+                data_dir: Some(dir_a.clone()),
+            },
+            a.clone(),
+        )
+        .unwrap();
+        let win_b = start(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                space_id: "space-x".into(),
+                device_id: "B".into(),
+                token: Some("lan-token".into()),
+                data_dir: Some(dir_b.clone()),
+            },
+            b.clone(),
+        )
+        .unwrap();
+        // 第三个窗口：**没配数据目录**（配置问题，不是"没有这份文件"）
+        let win_c = start(
+            MeshConfig {
+                bind: "127.0.0.1:0".into(),
+                space_id: "space-x".into(),
+                device_id: "C".into(),
+                token: Some("lan-token".into()),
+                data_dir: None,
+            },
+            Arc::new(Mutex::new(space_conn("C"))),
+        )
+        .unwrap();
+
+        let client = reqwest::Client::new();
+        let pa = mesh_peer("A", &format!("http://{}", win_a.addr()));
+        let pb = mesh_peer("B", &format!("http://{}", win_b.addr()));
+        let pc = mesh_peer("C", &format!("http://{}", win_c.addr()));
+
+        // ① 第一台没有 ⇒ 404，而且**说清"这一台没有"**（客户端据此去问下一台）
+        let resp = request_attachment_from_peer(&client, &pa, "space-x", &hash, Some("lan-token")).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 404, "第一台没有这份字节");
+        let body = resp.text().await.unwrap();
+        assert!(body.contains("这一台没有"), "404 必须说清是「这一台没有」，不是笼统失败：{body}");
+
+        // ② 第二台有 ⇒ 200 ＋ **字节逐字节相同**（这就是"按内容从任意一个对等体取到"）
+        let resp = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("lan-token")).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200, "第二台手上就有这份字节");
+        assert_eq!(resp.bytes().await.unwrap().to_vec(), bytes, "取回来的必须**逐字节**是那一份");
+
+        // ③ 空间对不上 ⇒ 403（与 pull 同一道门）
+        let resp = request_attachment_from_peer(&client, &pb, "other-space", &hash, Some("lan-token")).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 403, "窗口只服务它代言的空间");
+        // ④ 口令不对 ⇒ 401（同一道门，同一句话）
+        let resp = request_attachment_from_peer(&client, &pb, "space-x", &hash, Some("wrong")).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 401);
+        // ⑤ 没配数据目录 ⇒ 501（"没配"≠"没有这份文件"）
+        let resp = request_attachment_from_peer(&client, &pc, "space-x", &hash, Some("lan-token")).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 501, "没配数据目录要如实说（不是 404）");
+        // ⑥ 形状不合法的 hash ⇒ 400（它会被拼进文件路径 ⇒ 与产品同一道门）
+        let resp = request_attachment_from_peer(&client, &pb, "space-x", "../../meta.db", Some("lan-token")).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 400, "不可信的 hash 必须当场拒绝");
+
+        let _ = std::fs::remove_dir_all(&dir_a);
+        let _ = std::fs::remove_dir_all(&dir_b);
+    }
+
+    /// ★ 丙-④：**"取不到"那句话要说得清是四种里的哪一种**（纯函数，判据不打桩、不看网络）。
+    #[test]
+    fn the_attachment_failure_note_says_which_kind_of_nowhere() {
+        // ① 没绑组织空间 id ⇒ 配置问题
+        let s = crate::sync::attachment_fetch_failure(None, "", 0, &[]);
+        assert!(s.contains("没绑组织空间 id"), "{s}");
+        assert!(!s.contains("没有能问的对端"), "没绑 id 时不许说成「网段里没人」：{s}");
+        // ② 绑了 id、网段里没人 ⇒ 这不是失败，是"没人"
+        let s = crate::sync::attachment_fetch_failure(None, "space-x", 0, &[]);
+        assert!(s.contains("本网段里没有能问的对端"), "{s}");
+        assert!(!s.contains("问了"), "一台都没问过，不许说「问了 N 台」：{s}");
+        // ③ 有对端但都拿不到 ⇒ 每一家的原文都要带上（别合成一句"失败"）
+        let tried = vec!["A：对端 A 返回 404".to_string(), "B：问对端 B 失败：连接被拒".to_string()];
+        let s = crate::sync::attachment_fetch_failure(None, "space-x", 2, &tried);
+        assert!(s.contains("问了 2 台对端"), "{s}");
+        assert!(s.contains("A：对端 A 返回 404") && s.contains("连接被拒"), "每一家的原文都要在：{s}");
+        // ④ 服务端那条也报过错 ⇒ 一并带上（用户要能分辨"服务器没成"与"对端没有"）
+        let s = crate::sync::attachment_fetch_failure(Some("服务端 返回 401"), "space-x", 1, &["A：x".to_string()]);
+        assert!(s.contains("服务端：服务端 返回 401"), "{s}");
+    }
+
+    /// ★ 丙-④：窗口那条路由**认得**新端点（不认得就会被 `not_yet` 抢走回 501）。
+    #[test]
+    fn the_attachment_endpoint_is_a_route_not_a_not_yet() {
+        assert_eq!(route("GET", "/mesh/attachment?space_id=s&hash=h"), Route::Attachment);
+        assert_eq!(route("GET", "/mesh/attachment/"), Route::Attachment);
+        assert_eq!(route("POST", "/mesh/attachment"), Route::Unknown, "只认 GET");
+        // ⚠️ 中枢那条 `/attachments/<hash>` **仍然**是"这一档不支持"（两条路不能混为一谈）
+        assert!(matches!(route("GET", "/attachments/abc"), Route::NotYet(_)));
+    }
+
     /// 窗口设了口令 ⇒ 对不上的一律 401；中枢那一套端点 ⇒ **501 ＋ 人话**（不是 404、不是空 200）。
     #[test]
     fn an_unimplemented_endpoint_answers_explicitly_over_real_http() {
@@ -1471,6 +1735,7 @@ mod tests {
                 space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("right".into()),
+                data_dir: None,
             },
             c,
         )
@@ -1621,6 +1886,9 @@ mod tests {
                 space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("lan-token".into()),
+                // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
+                // 要验附件那条路的判据自己塞临时目录。
+                data_dir: None,
             },
             a.clone(),
         )
@@ -1672,6 +1940,7 @@ mod tests {
                 space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: None,
+                data_dir: None,
             },
             a.clone(),
         )

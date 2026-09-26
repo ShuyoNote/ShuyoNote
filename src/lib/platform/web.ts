@@ -3099,7 +3099,15 @@ export function makeInvoke(store: SqliteStore) {
       const blob = await attachmentByteDownload(`${server}${scoped}/attachments/${hash}`, token);
       if (!blob || blob.size === 0) throw new Error("服务端没有这个附件的字节（可能尚未上传）");
       await blobStore.put(hash, blob);
-      return blob.size as T;
+      // ★ 丙-④：回的是**读数**（与 Rust 侧同形）—— Web 上只有服务端这一个来源
+      //   （没有发现层、也开不了本机端口），所以 `source` 恒为 `server`，`peer` 恒为 `null`。
+      //   ⚠️ `note` 也必须给：界面**只显示这一句**，不给就会在 Web 上显示成空白。
+      return {
+        size: blob.size,
+        source: "server",
+        peer: null,
+        note: `已从服务器取回这一件（${blob.size} 字节）`,
+      } as T;
     }
     // ---- C1 预算刹车 / C2 网络闸门（2026-09-15）设备级设置 ----
     //

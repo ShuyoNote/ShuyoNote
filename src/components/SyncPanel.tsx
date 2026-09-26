@@ -807,11 +807,53 @@ export function SyncPanel() {
 
   const initial = (s: string) => (s.trim()[0] ?? "?").toUpperCase();
 
+  /**
+   * ★★ 丙-⑤（2026-09-26）：**侧栏那颗「同步」上的数字角标** —— "有几页等你裁决"。
+   *
+   * 为什么值得单开一条读法：后台的自动同步（近实时/按间隔那两档）**不弹任何话**（那条路是
+   * 静默设计，每轮都弹就是噪声），而"有页等你裁决"恰好是**要用户动手**的事 ⇒ 它得有一个
+   * **持久**的去处告诉他一共有几件、点哪儿去处理。
+   * ⚠️ 读的是**库里那张队列表**（`listPendingRemotePages` 的 `total`），**不是**某一轮同步的临时
+   *    读数 —— 后者转瞬即逝，而真机现场刚抓到过"读数说有、清单里没有"那类不一致。
+   * ⚠️ 这个组件**常驻挂载**（它就是侧栏那颗按钮），所以弹层开没开都在刷；`open` 那条路
+   *    （`refresh()`）读的是同一张表 ⇒ 两处口径一致，不存在"角标与清单对不上"。
+   */
+  useEffect(() => {
+    let stop = false;
+    const read = () => {
+      void api
+        .listPendingRemotePages(1)
+        .then((q) => {
+          if (!stop) setPendingTotal(Number(q?.total ?? 0));
+        })
+        .catch(() => {
+          /* 提示面读不到就不显示 —— 它只是角标，不该因为一次读失败打扰用户 */
+        });
+    };
+    read();
+    const t = setInterval(read, 30_000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  }, []);
+
   return (
     <div className="sync-panel">
-      <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
+      <button
+        ref={triggerRef}
+        className="btn-sync"
+        onClick={toggle}
+        title={pendingTotal > 0 ? `同步设置（有 ${pendingTotal} 页等你裁决）` : "同步设置"}
+      >
         <CloudSyncIcon width={14} height={14} />
         <span>同步</span>
+        {/* ★ 角标：只报"要你动手"的那一件事（待取回的远端版本），不报"你输了但没丢" */}
+        {pendingTotal > 0 && (
+          <span className="sync-badge" aria-label={`有 ${pendingTotal} 页等你裁决`}>
+            {pendingTotal}
+          </span>
+        )}
         {liveSyncing && <span className="sync-pulse" aria-hidden />}
       </button>
       {open && (

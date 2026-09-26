@@ -959,9 +959,24 @@ export interface CommandMap {
    *  ⚠️ **刻意独立成命令**、不复用 `set_sync_profile`——后者对未传字段是"清空"语义，
    *  拿它翻转开关会把该空间的 `token` / `space_id` 清掉。 */
   set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void };
-  /** P6.3「按需取字节」：用户主动下载**单件**附件，返回落盘字节数（失败即 throw）。
-   *  ⚠️ 与同步下载**同一个实现**；且**不受 C1 预算闸门约束**——显式操作照做。 */
-  download_attachment: { args: { wsId: string; hash: string }; result: number };
+  /** P6.3「按需取字节」：用户主动下载**单件**附件（失败即 throw）。
+   *  ⚠️ 与同步下载**同一个实现**；且**不受 C1 预算闸门约束**——显式操作照做。
+   *  ★★ 丙-④（2026-09-26）：**字节有两个来源**（绑了服务端 ⇒ 先问服务端；再按发现到的
+   *  对端依次试），所以回的是**读数**而不是一个数字：`note` 由 Rust 拼好（界面原样显示，
+   *  别自己按 `source` 再写一句 —— 那样就有两处口径）。 */
+  download_attachment: {
+    args: { wsId: string; hash: string };
+    result: {
+      /** 落盘的明文字节数。 */
+      size: number;
+      /** `server` ＝ 从同步服务器取的；`peer` ＝ 从网段里某一台对端取的。 */
+      source: "server" | "peer";
+      /** 从哪一台对端取的（`source === "server"` ⇒ `null`）。 */
+      peer: string | null;
+      /** 一句人话，界面原样显示。 */
+      note: string;
+    };
+  };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };

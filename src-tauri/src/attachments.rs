@@ -37,7 +37,10 @@ fn bucket_of(hash: &str) -> &str {
 /// OS-openable path (so `openPath`/`revealFile`/asset protocol all work); the
 /// extension also mirrors the DB `mime` so it stays consistent. Bucketing by the
 /// first two hex chars keeps a single attachment dir from growing unbounded.
-fn bucket_path(attachments_dir: &Path, hash: &str, ext: &str) -> PathBuf {
+///
+/// ★ 丙-④ 起 `pub(crate)`：网格那条"发附件字节"的判据要按**这个布局**造现场
+/// （判据里手写一遍 `hash[0..2]/hash.ext` 就等于把布局抄成两份，抄的那份迟早会漂）。
+pub(crate) fn bucket_path(attachments_dir: &Path, hash: &str, ext: &str) -> PathBuf {
     attachments_dir.join(bucket_of(hash)).join(format!("{hash}.{ext}"))
 }
 

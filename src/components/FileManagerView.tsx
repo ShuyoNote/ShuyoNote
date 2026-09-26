@@ -274,9 +274,11 @@ export function FileManagerView() {
     }
     setFetching(f.hash);
     try {
-      await api.downloadAttachment(wsId, f.hash);
+      // ★ 丙-④：字节可能来自服务器、也可能来自网段里的对端 ⇒ 显示 Rust 拼好的那句原文
+      //   （写死"已下载"看着一样，但用户看不出"到底是谁给的" —— 而对端那条路正是丙要兑现的）。
+      const res = await api.downloadAttachment(wsId, f.hash);
       loadOnDisk();
-      toast(`已下载「${f.name}」`, "success");
+      toast(res.note, "success");
       return true;
     } catch (e) {
       // 与打开路径共用同一套分类（`attachmentFetchHint`）："取不回"要说清怎么办，

@@ -2122,6 +2122,24 @@ select.sync-input {
   flex-shrink: 0;
   animation: sync-pulse 1.1s ease-in-out infinite;
 }
+
+/* ★ 丙-⑤（2026-09-26）：侧栏「同步」上的**数字角标** —— "有几页等你裁决"。
+   只报"要你动手"的那一件事（「待取回的远端版本」）；"你输了但没丢"（已进版本历史）不报，
+   因为那件事不需要用户做任何事，报了就是噪声（状态行里那句已经说清了）。
+   配色用信息色（`--accent`）而不是危险色：这是"有东西等你处理"，不是"出错了"。 */
+.sync-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-1);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  text-align: center;
+  flex: none;
+}
 @keyframes sync-pulse {
   50% { opacity: 0.25; }
 }
