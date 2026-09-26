@@ -418,7 +418,7 @@ export const GATES = [
     // 读不出来（没跑过 cargo / 拿不到 Cargo.lock）⇒ 只提示，**不判红**。
     cmd: "node scripts/check-gm-registry-clean.mjs",
     incident:
-      "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。",
+      "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。 ★ 2026-09-26 补记：**上面这一档自 2026-09-23 起已是历史形态** —— 补丁改为打在**私有副本**（`.gm-build/`）上，共享 registry **全程不被改写**（见 `sm-library-build.mjs` §0.5b 与 `patches/README.md`）。本门禁今天守的是两处**残渣**：① 老机器上遗留的共享补丁（legacy 撤回分支仍在）；② `Cargo.lock` 被 `--prepare` 改过。实测（2026-09-26 本机）：`--prepare` 前后共享 `sqlite3.c` 的 sha256 都是 `EA0BF0B0…`（未变）⇒ 隔离生效。**留这段是因为旧描述会让人不敢跑那一步 —— 过期的危害描述与过期的安全承诺一样贵。**",
   },
   {
     id: "check-crypto-backend",
