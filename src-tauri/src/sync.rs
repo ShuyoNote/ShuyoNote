@@ -2850,26 +2850,30 @@ async fn do_pull(
 ///
 /// ⚠️ 窗口与本轮拉取都用**这条空间自己的**连接（窗口那条由 `mesh::ensure_window` 自己开），
 /// 不碰界面那条 —— 否则一次网络卡顿会把整个库锁住。
+/// ⚠️ ★★ 2026-09-26 真机修：**开库要按"本地空间 id"**（`spaces/<本地 id>.db`），
+/// 而"对暗号"用的是**远端组织空间 id** —— 两个 id 在真机上**不同名**。这里把 `MeshScope`
+/// 的两个字段分别喂给两个用途（改前把远端 id 当库名 ⇒ 窗口服务一个空库、一条也换不过去）。
 #[tauri::command]
 pub async fn mesh_sync_now(
     db: State<'_, Db>,
     workspace_id: Option<String>,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
-    // ① 认空间
-    let (space_id, device_id) = mesh_scope(&db, workspace_id.as_deref())?;
+    // ① 认空间（**两个**空间 id ＋ 本机设备号）
+    let scope = mesh_scope(&db, workspace_id.as_deref())?;
 
     // ② 设置 ＋ 发现层（没开发现层 ⇒ 对端表是空的，**如实**回"网段里没人"）
     let (cfg, peers) = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let cfg = crate::mesh::settings(&c, &space_id);
-        let peers = crate::lan_state::LanState::global(&device_id).peers(crate::db::now_ms());
+        let cfg = crate::mesh::settings(&c, &scope.space);
+        let peers = crate::lan_state::LanState::global(&scope.device).peers(crate::db::now_ms());
         (cfg, peers)
     };
 
     // ③ 开窗（配了地址才开）＋ 拉一轮
-    let window = crate::mesh::ensure_window(&space_id, &device_id, &cfg)?
+    //    窗口的库 = **本地空间那一份**（`scope.db_space`）；它服务/匹配的空间 = `scope.space`。
+    let window = crate::mesh::ensure_window(&scope.db_space, &scope.space, &scope.device, &cfg)?
         .map(|a| format!("http://{a}"));
-    let mut report = crate::mesh::round(&db.0, &space_id, &device_id, &peers).await?;
+    let mut report = crate::mesh::round(&db.0, &scope.space, &scope.device, &peers).await?;
     report.window = window;
     if report.enabled && report.window.is_none() {
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
@@ -2894,29 +2898,45 @@ pub fn mesh_set_config(
     bind: Option<String>,
     token: Option<String>,
 ) -> Result<crate::mesh::MeshConfigState, String> {
-    let (space_id, device_id) = mesh_scope(&db, workspace_id.as_deref())?;
+    let scope = mesh_scope(&db, workspace_id.as_deref())?;
     let cfg = {
         let c = db.0.lock().expect("db mutex poisoned");
         if let Some(b) = bind.as_deref() {
-            crate::mesh::set_mesh_bind(&c, &space_id, Some(b))?;
+            crate::mesh::set_mesh_bind(&c, &scope.space, Some(b))?;
         }
         if let Some(t) = token.as_deref() {
-            crate::mesh::set_mesh_token(&c, &space_id, Some(t))?;
+            crate::mesh::set_mesh_token(&c, &scope.space, Some(t))?;
         }
-        crate::mesh::settings(&c, &space_id)
+        crate::mesh::settings(&c, &scope.space)
     };
     if cfg.bind.is_none() {
         // 关掉 ⇒ **立刻松口**（不留一个还在听的窗口）。
-        crate::mesh::stop_window(&space_id)?;
+        crate::mesh::stop_window(&scope.space)?;
         return Ok(crate::mesh::config_state(&cfg, None));
     }
-    let window = crate::mesh::ensure_window(&space_id, &device_id, &cfg)?;
+    // 窗口的库 = **本地空间那一份**（`scope.db_space`）；服务/匹配的空间 = `scope.space`。
+    let window = crate::mesh::ensure_window(&scope.db_space, &scope.space, &scope.device, &cfg)?;
     Ok(crate::mesh::config_state(&cfg, window))
 }
 
-/// 认空间：`(space_id, device_id)` —— `mesh_sync_now` 与 `mesh_set_config` **共用一处**
+/// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
 /// （两份各自写一遍的下场是"设置面认得、同步面不认得"，而那种不一致没有任何编译期信号）。
-fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<(String, String), String> {
+///
+/// ★★ **为什么必须是两个、不许合成一个**（2026-09-26 真机实测的教训）：档案表里
+/// `sync_profiles.space_id` 是**远端组织空间 id**（对暗号用），`sync_profiles.ws_id` 是**本地空间 id**
+/// —— 也就是 `spaces/<id>.db` 的文件名那一半。真机上两者**不同名**（本地 `default` / 远端
+/// `8be69ab5…`）：把它们当成同一个，窗口就会去开一个**按远端 id 新建的空库**，
+/// 然后安静地服务 0 条记录（HTTP 200、不报错）。
+struct MeshScope {
+    /// 远端组织空间 id：**对暗号**用（窗口的 403 检查、对端匹配、设置的 KV 键）。
+    space: String,
+    /// 本地空间 id：**开库**用（`spaces/<db_space>.db`）。
+    db_space: String,
+    /// 本机设备号（发现层与"只服务我自己产生的记录"都用它）。
+    device: String,
+}
+
+fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -2951,7 +2971,7 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<(String,
     if pick.0.trim().is_empty() {
         return Err("这个空间的同步档案还没有 space_id（网格交换要它来对暗号）".to_string());
     }
-    Ok((pick.0, device_id))
+    Ok(MeshScope { space: pick.0, db_space: pick.1, device: device_id })
 }
 
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
@@ -5847,6 +5867,49 @@ mod tests {
             ),
             crate::hlc::Verdict::ByStamp { remote_wins: false },
             "对端时钟快**不该**压住本机后改的那一版（不 observe 就会压住）"
+        );
+    }
+
+    /// ★★ 网格那两个空间 id **各司其职**：**开库**用本地空间 id（`MeshScope.db_space`），
+    /// **对暗号 / 匹配对端 / 设置 KV 键**用远端空间 id（`MeshScope.space`）。
+    ///
+    /// 为什么这一格用**源码级**判据：这两个 id 都来自 `sync_profiles` 那一行，要在这里造出
+    /// "真档案 ＋ 真库文件"的现场得拉起 `State<Db>` 那套（`mesh_sync_now` 是 `#[tauri::command]`）
+    /// —— 而那正是"单跑红、全量绿"那一族（本仓吃过亏，见 `rust-plugins-alone` 那条门禁的来历）。
+    /// 所以分工是：
+    ///   · **行为**那一半由 `mesh::tests::the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id`
+    ///     在**真库文件**上钉住（含变异实测：把开库那一格换回远端 id ⇒ 当场红）；
+    ///   · 这里钉**调用点有没有把两个 id 喂对** —— 2026-09-26 真机就是因为喂错了（开库喂了远端 id）
+    ///     才会"两台手机互相拉得动、却一条也换不过去"。
+    ///
+    /// ⚠️ 匹配时先把空白**压平**：rustfmt 会在参数之间换行，按整行字面量匹配会在某次格式化后假红。
+    #[test]
+    fn the_two_mesh_space_ids_are_wired_to_their_own_purposes() {
+        let flat = include_str!("sync.rs").split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains("crate::mesh::ensure_window(&scope.db_space, &scope.space, &scope.device, &cfg)"),
+            "开窗必须是（本地 id 开库, 远端 id 对暗号, 设备号）—— 喂错就是真机那条：窗口服务一个空库"
+        );
+        assert!(
+            flat.contains("SELECT p.space_id, p.ws_id FROM sync_profiles p"),
+            "`mesh_scope` 必须**两个** id 一起取（少一个就只剩一个 id 可用）"
+        );
+        assert!(
+            flat.contains("db_space: pick.1"),
+            "`MeshScope::db_space` 必须取那一行的 `ws_id`（＝ `spaces/<id>.db` 的文件名那一半）"
+        );
+        // 设置 KV 键、对端匹配、关窗键 —— 三处都还是**远端**那个 id（注册表按远端空间记一份窗口）。
+        assert!(
+            flat.contains("let cfg = crate::mesh::settings(&c, &scope.space);"),
+            "设置是**按远端空间**记的 KV（`mesh_bind:<远端 id>`），别顺手改成库名那个 id"
+        );
+        assert!(
+            flat.contains("crate::mesh::round(&db.0, &scope.space, &scope.device, &peers)"),
+            "挑对端 / 服务哪个空间都按**远端** id"
+        );
+        assert!(
+            flat.contains("crate::mesh::stop_window(&scope.space)"),
+            "关窗的键必须与开窗一致（远端 id），否则窗口会留着不放"
         );
     }
 

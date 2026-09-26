@@ -289,19 +289,21 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。
             // ⚠️ 发现层开关用的是 `meshed`（**配了**网格的空间），不是 `mesh_bases`（**宣告得出去**的）：
             //    绑在回环上的那台宣告不出去，但它**照样要听**（它是客户端那一侧，要能拉别人）。
-            let mesh_cfgs: Vec<(String, crate::mesh::MeshSettings)> = {
+            let mesh_cfgs: Vec<(String, String, crate::mesh::MeshSettings)> = {
                 let db = app2.state::<Db>();
                 let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
                 profiles
+                    // ⚠️ 两个 id 都要留着：`space` 是对暗号（公告里报的就是它），`ws` 才是**库文件名**
+                    //    —— 2026-09-26 真机修（把远端 id 当库名 ⇒ 窗口服务一个新建的空库）。
                     .iter()
-                    .map(|(s, _, _)| (s.clone(), crate::mesh::settings(&c, s)))
-                    .filter(|(_, cfg)| cfg.bind.is_some())
+                    .map(|(s, _, ws)| (s.clone(), ws.clone(), crate::mesh::settings(&c, s)))
+                    .filter(|(_, _, cfg)| cfg.bind.is_some())
                     .collect()
             };
-            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _)| s.clone()).collect();
+            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
             let mut mesh_bases: Vec<(String, String)> = Vec::new();
-            for (space, cfg) in &mesh_cfgs {
-                match crate::mesh::ensure_window(space, &device_id, cfg) {
+            for (space, ws, cfg) in &mesh_cfgs {
+                match crate::mesh::ensure_window(ws, space, &device_id, cfg) {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
                         Some(base) => mesh_bases.push((space.clone(), base)),
                         None => eprintln!(

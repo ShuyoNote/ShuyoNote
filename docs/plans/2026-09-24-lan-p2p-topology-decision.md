@@ -287,3 +287,42 @@ owner 让"清冗余代码"，于是先做了一件最便宜也最该先做的事
 （仓里有十几处注释**在讲**这件事，grep 式扫描会把它们全算成违规——自测里有这一格），
 生成物（`capabilities_gen.rs`）显式列进 `EXEMPT` 并每次打印。
 
+## 15. 真机复验（丙-③-b，2026-09-26）：**协议全通、数据面为空** —— 抓到并修掉一处 id 混用
+
+owner 让"两台手机测丙的网格"。这一轮把链路真的跑到了真机上，结论分两半：
+
+**通的**（都是真机读数）：两台手机装上带网格的新包（旧包里**根本没有** `mesh_sync_now`，见 §16 的读数）；
+互相发现（`本网段发现 1 台`，而且 Mate 40 **自动把同步地址切成了 MIX 2 的网格窗口** —— ③-b-2b-1
+"只开网格也发言、报的是自己的窗口"在真机上成立）；两台窗口都起来了（PC 直连两次都通）；
+同一个空间、同一个口令（空间不同会回 403、口令不对会 401 —— 两种拒绝都由窗口自己说清）。
+
+**不通的**：MIX 2 上新建一页（走界面同一个命令）后，Mate 40 点「立刻交换一轮」⇒
+`fetched 0 / applied 0`，那一页过不去；从 PC 直接问两台窗口也都是 `records: 0`。
+
+**根因（在 `mesh.rs::ensure_window` 里）**：窗口开库用的是
+
+```rust
+let conn = crate::db::open_space_conn(space_id)?;   // 传进来的却是**远端**空间 id
+```
+
+而库文件名用的是**本地空间 id**（`spaces/<本地 id>.db`，`command.rs` 也是拿 `workspace_id` 去
+`open_space_conn`）。真机上两者**不同名**（本地 `default` / 远端 `8be69ab5…`）⇒ 窗口对着一个
+**按远端 id 新建的空库**在服务：HTTP 照常 200、`records: []`、**一个错都不报**。
+
+**为什么原判据抓不到**：§13 那条 ★★（两台客户端走真回环、互换一笔改动、投影逐字节相同）是
+**直接把已经打开的连接**交给窗口，协议 id 与库名在测试里**恰好是同一个字符串**（`space-x`）——
+两个命名空间重合，怎么写都绿。**真机是唯一会把它们分开的地方**，这正是"必须做真机复验"的实证。
+
+**修法**（两个 id 各司其职，不再混用）：`ensure_window(db_space, proto_space, device_id, cfg)`
+—— `db_space` 开库、`proto_space` 进 `MeshConfig`（403 检查 / 对端匹配）；`mesh_scope` 改成带回
+`MeshScope { space, db_space, device }`；发现层循环（`lan_state.rs`）同样把 `ws_id` 喂给开库那一格。
+
+**判据（两层，含变异实测）**：
+1. `mesh::tests::the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id`
+   —— **真库文件**上造"两个 id 不同名"的现场（本地 `default` ＋ 远端 `space-x`），要求窗口把那一条
+   服务出来、并且问错 id 必须 403。**变异实测**：把开库那一格换回远端 id ⇒ 当场红，
+   报的正是真机那句症状：`窗口服务的是空库…：{"records":[]}`；
+2. `sync::tests::the_two_mesh_space_ids_are_wired_to_their_own_purposes`（源码级）
+   —— 钉**调用点**把两个 id 喂对（`mesh_sync_now` / `mesh_set_config` 是 `#[tauri::command]`，
+   造 `State<Db>` 现场会踩"单跑红、全量绿"那一族，所以这两处用源码级）。
+

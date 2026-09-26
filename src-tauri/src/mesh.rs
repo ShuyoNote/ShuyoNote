@@ -27,13 +27,16 @@
 //!
 //! ## 本片**没做**的
 //!
-//! - **没有接线进应用**：谁开窗、开在哪个端口、什么时候交换，都还没有产品入口
-//!   （`lib.rs` 里那行 `#[allow(dead_code)]` 就是收据）；
+//! - **已经接线**（2026-09-25 ③-b-2a/2b）：命令面 `mesh_sync_now` / `mesh_set_config`、
+//!   发现层循环里"开了网格的空间照样发言"（公告报的是**自己的窗口**）、同步面板那一块
+//!   （保存地址 / 设口令 / 立刻交换一轮 / 关掉网格）。⚠️ 真机复验 2026-09-26 抓到一处
+//!   **两个空间 id 混用**（本地 id 才是库名）⇒ 见 `ensure_window` 的头注；已修 ＋ 两条判据；
 //! - 不做 NAT 穿透 / 跨网段 / 中继 / Web 参与（简报 §7 一字不改）；
 //! - 不做附件的对端选择（简报 §13 的 ④）。
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -439,11 +442,21 @@ fn windows() -> &'static Mutex<std::collections::HashMap<String, MeshHandle>> {
 
 /// 确保这个空间的窗口开着（**配了监听地址才开**）。已经在开 ⇒ 原样返回它的地址（幂等）。
 ///
-/// ⚠️ 窗口用**自己那条**空间库连接（`db::open_space_conn`）：不与界面那条抢锁，
+/// ⚠️ **两个空间 id 不是一回事**（2026-09-26 真机实测踩到，改前它把两者混用了）：
+///   · `db_space` ＝ **本地空间 id**，就是 `spaces/<id>.db` 的文件名那一半 ⇒ 决定**开哪一份库**；
+///   · `proto_space` ＝ **远端组织空间 id**（档案里 `sync_profiles.space_id`）⇒ 决定窗口**服务哪个空间**
+///     （`handle_pull` 的 403 检查；对端挑人时也是按它匹配）。
+///   真机上这两个 id **不同名**（本地 `default` / 远端 `8be69ab5…`）。早期实现拿后者当库名 ⇒
+///   窗口对着一个**按远端 id 新建的空库**在服务：HTTP 照常 200、`records: []`、**一个错都不报**，
+///   而两台手机"互相拉得动"却**一条也换不过去**。
+///   判据：`the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id`。
+///
+/// ⚠️ 窗口用**自己那条**空间库连接（`db::open_space_conn_at`）：不与界面那条抢锁，
 /// 也不会因为界面切空间而被换掉。**代价如实写**：加密空间**必须已解锁**，
 /// 否则这条连接打不开 ⇒ 这里如实报错（"开不起来"比"开着一个读不了库的窗口"好）。
 pub fn ensure_window(
-    space_id: &str,
+    db_space: &str,
+    proto_space: &str,
     device_id: &str,
     cfg: &MeshSettings,
 ) -> Result<Option<SocketAddr>, String> {
@@ -451,22 +464,41 @@ pub fn ensure_window(
         return Ok(None);
     };
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
-    if let Some(h) = guard.get(space_id) {
+    // 注册表按 `proto_space` 记：一个**远端空间**一份窗口（`stop_window` / `window_addr` 用同一个键）。
+    if let Some(h) = guard.get(proto_space) {
         return Ok(Some(h.addr()));
     }
-    let conn = crate::db::open_space_conn(space_id)?;
-    let handle = start(
+    let dir = crate::db::app_data_dir_ref().ok_or_else(|| "app data dir not initialised".to_string())?;
+    let handle = open_window_at(db_space, proto_space, device_id, &bind, cfg.token.clone(), dir)?;
+    let addr = handle.addr();
+    guard.insert(proto_space.to_string(), handle);
+    Ok(Some(addr))
+}
+
+/// `ensure_window` 的**可测那一半**：显式给库目录（判据用它造"两个 id 不同名"的现场，
+/// 不碰 `APP_DATA_DIR` 全局 —— 那个全局会让"单跑红、全量绿"，本仓吃过这个亏）。
+///
+/// ★ 开库用的是 **`db_space`（本地空间 id）**；`proto_space` 只进 `MeshConfig`（对暗号用）。
+/// 这两者**混用**过一次（把远端 id 当库名）：窗口会安静地服务一个**新建的空库**
+/// —— `handle_pull` 照常 200、`records: []`、一个错都不报，而两台手机**一条也换不过去**。
+pub(crate) fn open_window_at(
+    db_space: &str,
+    proto_space: &str,
+    device_id: &str,
+    bind: &str,
+    token: Option<String>,
+    dir: &Path,
+) -> Result<MeshHandle, String> {
+    let conn = crate::db::open_space_conn_at(db_space, dir)?;
+    start(
         MeshConfig {
-            bind,
-            space_id: space_id.to_string(),
+            bind: bind.to_string(),
+            space_id: proto_space.to_string(),
             device_id: device_id.to_string(),
-            token: cfg.token.clone(),
+            token,
         },
         Arc::new(Mutex::new(conn)),
-    )?;
-    let addr = handle.addr();
-    guard.insert(space_id.to_string(), handle);
-    Ok(Some(addr))
+    )
 }
 
 /// 网格设置的**读数**（设置面回给界面的东西）。
@@ -1142,6 +1174,69 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(again.fetched, 0, "水位已经到批尾 ⇒ 不该再拉回东西：{again:?}");
+    }
+
+    /// ★★ 窗口要开**本地空间那一份库**，而不是"对暗号那个远端 id"的同名文件。
+    ///
+    /// 现场就是**真机上的形状**（2026-09-26 两台手机实测抓到）：
+    ///   · 本地空间 id ＝ `default`（`spaces/default.db`，用户内容在这儿）；
+    ///   · 档案里的远端组织空间 id ＝ `space-x`（**两个 id 不同名**）。
+    /// 改前 `ensure_window` 拿后者当库名 ⇒ 开出一个**新建的空库** ⇒ 窗口 HTTP 照常 200、
+    /// `records: []`、一个错都不报，于是"两台手机互相拉得动、却**一条也换不过去**"
+    /// （真机读数：`fetched 0 / applied 0`，而另一台上刚新建的那一页过不去）。
+    ///
+    /// 这条判据**为什么以前没有**：上面那条 ★★（两台客户端回环收敛）是直接把**已经打开的连接**
+    /// 交给窗口，协议 id 与库名在测试里**恰好是同一个字符串** ⇒ 两个命名空间重合，怎么写都绿。
+    /// 这里故意**让它们不同名**，缺口就露出来了。
+    #[tokio::test]
+    async fn the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id() {
+        let dir = temp_dir("mesh-db-id");
+        // `spaces/` 这一层得先有：SQLite 不会替你建目录（少了它报
+        // `unable to open database file: …\spaces\default.db`）。
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // ① 本地空间库 `default`：写进一条**本机产生的**记录（走真 outbox 路径）
+        {
+            let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+            // 真机上 `meta.sync_state` 由应用启动时的迁移建好；判据按 `space_conn` 那份最小形状补上
+            // （不补就是 `no such table: meta.sync_state`）。
+            c.execute_batch("CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
+            // ⚠️ 这一页的 `workspace_id` 必须是**这个空间自己的 id**（`default`）：
+            // `pages.workspace_id` 有 FK 指向 `workspaces(id)`，而 `page()` 助手默认写的是
+            // `"ws"` —— 在真库上那会直接 `FOREIGN KEY constraint failed`。
+            let mut pg = page("p1", "本机写的那一版", 1_000);
+            pg.workspace_id = "default".to_string();
+            local_edit(&c, &pg);
+        }
+        // ② 窗口：库名 `default`、对暗号的空间 id `space-x` —— **故意让两个 id 不同名**
+        let win = open_window_at("default", "space-x", "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+            .expect("窗口应当起得来");
+        // ③ 直接问它：那条记录必须**服务得出来**
+        let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 200, "{body}");
+        assert!(
+            body.contains("p1") && body.contains("本机写的那一版"),
+            "窗口服务的是**空库**（改前的真机症状：fetched=0、一条也换不过去）：{body}"
+        );
+        // ④ 反向：**对暗号仍然按远端那个 id**（问本地那个 id 必须 403）
+        let (code, _) = http_get(win.addr(), "/mesh/pull?space_id=default&since=0", Some("lan-token"));
+        assert_eq!(code, 403, "这个窗口服务的是 space-x ⇒ 问 default 必须被拒（两个 id 各司其职）");
+        // ⑤ 别把窗口留在**进程级**注册表里（后面的判据还会用同一张表）
+        crate::mesh::stop_window("space-x").unwrap();
+    }
+
+    /// 判据自己的临时目录（同一个进程里多次调用不许撞车 —— 用计数器，不用时间）。
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let d = std::env::temp_dir().join(format!(
+            "shuyo-mesh-{tag}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        d
     }
 
     /// ★ 服务出去的那一批**必须带戳** —— 丙 的判序全靠它。
