@@ -22,6 +22,10 @@ import {
   type SyncMode,
 } from "../lib/syncMode";
 import { SpacePrivacySection } from "./SpacePrivacySection";
+import {
+  publishPendingRemoteTotal,
+  subscribePendingRemoteTotal,
+} from "../lib/pendingRemoteBadge";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
@@ -254,15 +258,17 @@ export function SyncPanel() {
   const [pending, setPending] = useState<{ page_id: string; title: string; seq: number }[]>([]);
   const [pendingTotal, setPendingTotal] = useState(0);
 
-  /** 读待取回清单（面板打开 / 每次同步之后）。失败不打扰用户：它只是提示面。 */
+  /** 读待取回清单（面板打开 / 每次同步 / 每次裁决之后）。失败不打扰用户：它只是提示面。 */
   const loadPendingRemote = async () => {
     try {
       const q = await api.listPendingRemotePages(20);
       setPending((q?.pages ?? []) as { page_id: string; title: string; seq: number }[]);
-      setPendingTotal(Number(q?.total ?? 0));
+      // ★ 角标那个数字**公布给单例**（`lib/pendingRemoteBadge.ts`）：它与这里的清单读的是
+      //   **同一张表**，公布进去就省掉一次读，而且两处永远是同一个数（不会"角标说有、清单没有"）。
+      publishPendingRemoteTotal(Number(q?.total ?? 0));
     } catch {
       setPending([]);
-      setPendingTotal(0);
+      // ⚠️ 读失败**不公布 0**：那是"清空角标"，比"暂时不更新"更容易骗人（单例自己也守着这条）。
     }
   };
 
@@ -815,28 +821,12 @@ export function SyncPanel() {
    * **持久**的去处告诉他一共有几件、点哪儿去处理。
    * ⚠️ 读的是**库里那张队列表**（`listPendingRemotePages` 的 `total`），**不是**某一轮同步的临时
    *    读数 —— 后者转瞬即逝，而真机现场刚抓到过"读数说有、清单里没有"那类不一致。
-   * ⚠️ 这个组件**常驻挂载**（它就是侧栏那颗按钮），所以弹层开没开都在刷；`open` 那条路
-   *    （`refresh()`）读的是同一张表 ⇒ 两处口径一致，不存在"角标与清单对不上"。
+   * ⚠️ **轮询本身在 `lib/pendingRemoteBadge.ts` 里做成单例**：手机上这个组件同时挂了**两个**实例
+   *    （侧栏那颗 ＋ 底部槽位那颗），第一版是每个实例各起一个 30 秒定时器 ⇒ 同一张表每 30 秒
+   *    被问两次。两处显示同一个数字 ⇒ **只有一份真相、一个轮询**（那边有判据钉着）。
+   * ⚠️ 它常驻挂载（就是侧栏那颗按钮），所以弹层开没开都在对账。
    */
-  useEffect(() => {
-    let stop = false;
-    const read = () => {
-      void api
-        .listPendingRemotePages(1)
-        .then((q) => {
-          if (!stop) setPendingTotal(Number(q?.total ?? 0));
-        })
-        .catch(() => {
-          /* 提示面读不到就不显示 —— 它只是角标，不该因为一次读失败打扰用户 */
-        });
-    };
-    read();
-    const t = setInterval(read, 30_000);
-    return () => {
-      stop = true;
-      clearInterval(t);
-    };
-  }, []);
+  useEffect(() => subscribePendingRemoteTotal(setPendingTotal), []);
 
   return (
     <div className="sync-panel">
