@@ -1716,6 +1716,38 @@ select.sync-input {
   accent-color: var(--accent);
 }
 
+/* ★ 网格那一块（丙-③-b）：它是**竖排**的 —— 读数 ＋「输入＋按钮」两行 ＋ 按钮一行。
+   ⚠️ 它一开始复用了 `.sync-att`，而那个类是**横排**（"说明文字 ＋ 一个复选框"，见上面的注释）
+   ⇒ 四个孩子在窄屏里并排。2026-09-26 owner 截图 ＋ 真机实测的读数：
+   `.sync-mesh` 是 `display:flex; flex-direction:row`，318px 宽里
+   **输入框只剩 50px**（两个字，屏幕上就是 `192.`）、**按钮 44~50px 宽 × 64~112px 高**
+   （「保存地址」被折成"保/存/地/址"一列）。
+   ⇒ 这里把它覆盖成块级竖排，并规定每一行是"**输入框吃掉宽度 ＋ 按钮不缩、不断行**"。 */
+.sync-att.sync-mesh {
+  display: block;
+}
+.sync-mesh .sync-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* 输入框吃掉这一行剩下的宽度（`min-width:0` 才能在窄屏**真的收缩**，而不是把容器撑破）。 */
+.sync-mesh .sync-field > .sync-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 按钮**不缩、不断行**：`white-space:nowrap` 就是"一个字一行"那条的直接解药。 */
+.sync-mesh .sync-field > .sync-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* 读数里有长 URL（`http://192.168.43.1:47832`）：长串按任意位置折，别撑破卡片。 */
+.sync-mesh .sync-hint {
+  overflow-wrap: anywhere;
+}
+
 .sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
 .sync-auto-label { font-size: 12px; color: var(--text-faint); flex-shrink: 0; }
 .sync-auto select.sync-input { width: auto; padding: 4px 6px; font-size: 12px; }

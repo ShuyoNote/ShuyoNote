@@ -597,6 +597,14 @@ function probeLayer(rootSel, boxSel) {
       })
     : [];
 
+  // 同步面板的**网格那一块**（丙-③-b）：它是"读数 ＋ 两行输入 ＋ 一行按钮"。
+  // ⚠️ 这段曾经复用了 `.sync-att`（那个类是"说明文字 ＋ 一个复选框"的**横排**）⇒ 窄屏上
+  // 三行被挤成并排：输入框只剩两个字宽（截图里是 `192.`）、按钮一个字一行（`保 存 地 址`）。
+  // ⚠️ **本门禁量不到它**：它在 `isDesktopPlatform()`（＝有没有 Rust 内核）后面，而这条门禁跑的是
+  //    **Web** 平台 ⇒ 网格块根本不渲染（`meshBox` 会是 null，写断言就是死断言）。
+  //    所以这一格由**真机**量（手机上的 CDP，见 `_scratch/measure-mesh-block.js` 那类探针）＋
+  //    文本级判据（`syncPanelMesh.wiring.test.ts` 钉 CSS 形状）两头合起来守。
+
   const noteScroll = document.querySelector(".note-scroll");
   // 锁的**真实对象**：我们只给锁到的容器写内联 `overflow-y:hidden`，
   // 所以"内联是 hidden"就是"被这把锁锁住了"的判据（不受视图换了容器影响）。

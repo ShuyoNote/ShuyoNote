@@ -46,4 +46,35 @@ describe("网格（丙-③-b）· 面板接线", () => {
     // Web 的 `lan_status` 必须回同一形状：**如实说"这一档不可用"**，而不是少一个字段。
     expect(webTs).toContain("Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用");
   });
+
+  // ★ 2026-09-26：网格那一块的**形状**（owner 截图 ＋ 真机实测：输入框 50px、按钮 44~50px 宽 ×
+  //   64~112px 高 —— 就是"192."两个字母宽、"保存地址"一个字一行）。
+  //   为什么用**文本级**判据：它在 `isDesktopPlatform()`（＝有没有 Rust 内核）后面，
+  //   而 `verify-mobile-overlays.mjs` 跑的是 **Web** 平台 ⇒ 那里根本渲染不出来（写断言就是死断言）；
+  //   桌面/手机的真机几何只能靠人。所以这里钉"形状不许回退"：
+  //   谁把 `.sync-mesh` 改回横排、或去掉那句 `white-space:nowrap`，这几条立刻红。
+  it("⑥ 网格那一块是**竖排**，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
+    const css = read("src/App.css");
+    // ⚠️ 选择器写**裸**的（`.` 不用转义）：`rule()` 自己会把正则元字符转义 ——
+    //    再写一层 `\\.` 会被它转义成"要匹配一个字面反斜杠"，于是永远匹配不上（第一版就踩了）。
+    const rule = (sel: string) => {
+      const m = new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css);
+      return m ? m[1] : "";
+    };
+    // ① 它必须把 `.sync-att` 的横排覆盖掉（`.sync-att` 是"文字＋一个复选框"的横排类）。
+    expect(rule(".sync-att.sync-mesh"), "`.sync-att.sync-mesh` 没有覆盖 display（横排会挤成并排）").toMatch(
+      /display:\s*block/,
+    );
+    // ② 每一行是**横排**的"输入＋按钮"（不是把两个输入竖着堆成并排的四个孩子）。
+    expect(rule(".sync-mesh .sync-field"), "网格的行不是 flex row").toMatch(/flex-direction:\s*row/);
+    // ③ 输入框吃宽（`min-width:0` 才能真的收缩而不是撑破容器）。
+    expect(rule(".sync-mesh .sync-field > .sync-input"), "输入框没有 `flex: 1 1 auto`").toMatch(/flex:\s*1 1 auto/);
+    expect(rule(".sync-mesh .sync-field > .sync-input")).toMatch(/min-width:\s*0/);
+    // ④ 按钮不缩、不断行 —— 这一句就是"一个字一行"的直接解药。
+    const btn = rule(".sync-mesh .sync-field > .sync-btn");
+    expect(btn, "按钮少了 `flex: 0 0 auto`（会被压窄）").toMatch(/flex:\s*0 0 auto/);
+    expect(btn, "按钮少了 `white-space: nowrap`（会一个字一行）").toMatch(/white-space:\s*nowrap/);
+    // ⑤ 读数里的长 URL 要能按任意位置折行（否则撑破卡片）。
+    expect(rule(".sync-mesh .sync-hint"), "hint 少了 `overflow-wrap: anywhere`").toMatch(/overflow-wrap:\s*anywhere/);
+  });
 });
