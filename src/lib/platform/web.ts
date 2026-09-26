@@ -867,6 +867,9 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         // ★★ B 方案（2026-09-22）：页级保留本地**语义正确**，但那一版远端内容会被游标吃掉
         // （`doPull` 之后 `maxSeq` 照旧推进）⇒ **在本地存下来**，让用户还能裁决。
         // 游标不做"没应用就不推进"（那会 livelock：这一页可能永远 KeepLocal，它后面的变更全取不到）。
+        // ★ 丙-⑤（2026-09-26）：`stashPendingRemote` 现在**如实回"记下了没有"** —— `false`
+        //   （与本地同一份文档）时**什么都没发生**，别把它记成一次"保留了远端版本"
+        //   （Rust 侧同一条：`stash_pending_remote` → `bool`）。
         stashPendingRemote(store, p as RemotePageRow, change.seq, Date.now());
         return;
       }
@@ -1018,8 +1021,15 @@ async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulle
       //   定位不到（附件/标签/属性，或坏 payload）⇒ 至少留一条 warn，**不许一声不响**。
       const row = pageRowOfChangeForStash(c);
       if (row) {
-        stashPendingRemote(store, row, Number((c as { seq?: number }).seq ?? 0), Date.now());
-        console.warn(`[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page=${row.id} seq=${(c as { seq?: number }).seq}`);
+        // ★ 丙-⑤：**只有真记下了**才说"已存进待取回"（`false` ＝ 本机那一版与它是同一份文档
+        //   ⇒ 一行都没写，说了就是假账）。与 Rust 侧 `apply_pulled_changes` 那三支一一对应。
+        if (stashPendingRemote(store, row, Number((c as { seq?: number }).seq ?? 0), Date.now())) {
+          console.warn(`[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page=${row.id} seq=${(c as { seq?: number }).seq}`);
+        } else {
+          console.warn(
+            `[sync] 变更应用失败，但本机那一版与它是**同一份文档** ⇒ 不记「待取回」（没丢东西）：page=${row.id}`,
+          );
+        }
       } else {
         console.warn(
           `[sync] 变更应用失败且无法归档（entity=${(c as { entity?: string }).entity} ` +

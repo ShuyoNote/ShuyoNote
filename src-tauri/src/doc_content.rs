@@ -1078,13 +1078,47 @@ pub struct PendingRemoteQueue {
     pub pages: Vec<PendingRemotePage>,
 }
 
+/// 两份正文是不是**同一份文档**：**解析成值再比**（`serde_json` 的 `Map` 按键排序 ⇒
+/// **键序不算数**），数组顺序算数（块的顺序是内容的一部分）。解析不了（坏 JSON）⇒ 退回逐字节比。
+///
+/// ★ 丙-⑤：为什么不能直接比字符串 —— 一份是**载荷原文**、一份是**落库后的形态**，
+/// 序列化形态天然会差一点（键序 / 规范化；`mesh.rs` 那边的 `projection_of` 头注记着同一件事）。
+/// 拿字节比会把"同一份文档"判成不同 ⇒ 假账照样记下来（第一版就是这么写的，一到重放就露馅）。
+fn same_document(a: &str, b: &str) -> bool {
+    match (serde_json::from_str::<serde_json::Value>(a), serde_json::from_str::<serde_json::Value>(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
 /// 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。
+///
+/// ★ 丙-⑤（2026-09-26）：**与本地同一份文档的那一版不记** —— 记了就是一条**假账**：
+/// 用户点「采用服务端」实际是个 no-op（内容本来就一样），而清单永远挂着它，界面还会因此
+/// 报一句"有 N 页等你裁决"。什么时候会走到这一格：**同一批重放**（收侧失败 ⇒ 水位没推 ⇒
+/// 下一轮再拉一遍同一批），而老规矩"同一 `seq`／同一枚戳重放 ⇒ 保留本地"⇒ 每次都往这儿记一条。
+/// ⚠️ 比的是**用户看得见的那两样**（标题 ＋ 正文，正文按"同一份文档"比，见 `same_document`）——
+///    这一层能读的就是 `read()`（正文那两列只许经这一层读，见 `check-doc-content-access`）；
+///    装饰字段（图标 / 封面 / 排序）的差异**不**在这里判：判它要把整行读出来，而多一次全行比较
+///    换来的只是"少一条几乎不会发生的假账"。
+/// ⚠️ 读不出来（该页刚被软删 / 读出错）⇒ **照旧记**（fail-open：宁可多一条痕，不许少一条）。
+///
+/// ★★ **返回值 = 这一版到底记下了没有**（`false` ＝ 与本地同一份文档 ⇒ 一行都没写）。
+/// 为什么必须是返回值而不是只写一行日志：调用方要拿它决定"**要不要告诉用户有页等他裁决**"。
+/// 拿"调用过"当"记下了"，界面就会报一句清单里**根本没有的账** —— 这条在网格那侧当场露馅过
+/// （`mesh` 那条盘外招判据就是这么抓到的：清单是空的、而"另有 N 页等你裁决"照样说得出口）。
+/// 口径与 `sync::UpsertApply` 同一条：**返回值先要说清"发生了什么"，再谈计数**。
 pub fn stash_pending_remote(
     c: &Connection,
     page: &crate::models::PageDetail,
     seq: i64,
     now: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    if let Ok(Some(cur)) = read(c, &page.id) {
+        if cur.title == page.title && same_document(&cur.json, &page.content_json) {
+            return Ok(false);
+        }
+    }
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
     c.execute(
         "INSERT INTO pending_remote_pages (page_id, seq, title, payload, remote_updated_at, stashed_at)
@@ -1098,7 +1132,7 @@ pub fn stash_pending_remote(
         params![page.id, seq, page.title, payload, page.updated_at, now],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(true)
 }
 
 /// 待取回的远端版本队列（`limit` 由调用方夹住 —— 这是界面列表，不是批量作业）。
@@ -2352,6 +2386,35 @@ mod tests {
         assert_eq!(pending_remote_queue(&c, 1).unwrap().pages.len(), 1);
         assert_eq!(pending_remote_queue(&c, 0).unwrap().pages.len(), 0, "SQL LIMIT 0 ⇒ 这一批是空的");
         assert_eq!(pending_remote_queue(&c, 0).unwrap().total, 1, "但总数照旧");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ 丙-⑤（2026-09-26）：**与本地逐字相同的那一版不进「待取回」清单** —— 那是假账。
+    ///
+    /// 为什么这条是承重的：这份清单是要用户**裁决**的。一条"采用了也什么都没变"的条目，用户点
+    /// 下去只会以为坏了；而它出现的时机很平常 —— **同一批重放**（收侧失败 ⇒ 水位没推 ⇒ 下一轮
+    /// 再拉一遍同一批），而"同一 `seq` 重放 ⇒ 保留本地"会每次都往这儿记一条。
+    /// 两侧成对：TS 的 `stashPendingRemote`（`docContent.test.ts`）判的是同一件事。
+    #[test]
+    fn a_stash_that_matches_what_is_already_local_is_a_fake_entry_and_is_not_recorded() {
+        let (c, dir) = conflict_conn("pending-identical");
+        let same = jdoc(vec![jblk(Some("b1"), Some(1), "同一份")]);
+        insert_conflict_page(&c, "p1", &same);
+
+        // ① 逐字相同 ⇒ 不记（记了就是"采用了也没变化"的假账）
+        stash_pending_remote(&c, &stashed_page("p1", &same, "页"), 3, 100).unwrap();
+        assert_eq!(pending_remote_queue(&c, 10).unwrap().total, 0, "与本地逐字相同 ⇒ 不进清单");
+
+        // ② 正文变了 ⇒ **照旧记**（这条判断不是把这条路关掉：它正是 B 方案要留的那条痕）
+        let other = jdoc(vec![jblk(Some("b1"), Some(2), "远端另一版")]);
+        stash_pending_remote(&c, &stashed_page("p1", &other, "页"), 4, 200).unwrap();
+        let q = pending_remote_queue(&c, 10).unwrap();
+        assert_eq!(q.total, 1, "内容真的不同 ⇒ 必须留痕");
+        assert_eq!(q.pages[0].seq, 4);
+
+        // ③ 只有**标题**变了（正文一样）⇒ 也要记：用户裁决的是"整页用谁的"，不只是正文
+        stash_pending_remote(&c, &stashed_page("p1", &other, "新标题"), 5, 300).unwrap();
+        assert_eq!(pending_remote_queue(&c, 10).unwrap().pages[0].seq, 5, "标题差异同样要裁决");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

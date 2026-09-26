@@ -142,16 +142,35 @@ pub fn set_peer_cursor(
 
 // ─────────────────────────── 收下（走 ③-a 那条 apply 路径） ───────────────────────────
 
-/// 把对端给的一批收下并应用。返回 `(这一批里被应用了几条, 批尾的 device_seq)`。
+/// 收下一批对端记录的**产物** —— **不只是计数**。
+///
+/// ★★ 丙-⑤（2026-09-26）：为什么不能只回 `(applied, tail)`：网格这一档**没有服务端**，
+/// 也就**没有**"HTTP 应答里那份冲突清单"——`MeshRoundReport` 是用户唯一能看到的窗口。
+/// 只回计数的话，"你本机那一版被远端盖掉了"这件**已经发生过的数据事件**在网格路径上
+/// 一句痕迹都没有（= 静默覆盖）；而这两项正是要说的那两句话。两项都**按页去重**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Absorbed {
+    /// 这一批里被应用了几条（幂等重放也会算，与改前一致）。
+    pub applied: usize,
+    /// 批尾的 `device_seq`（水位推进到这里）。
+    pub tail: i64,
+    /// ★ 本机那一版**让给了远端**的页数（戳判远端 ＋ 本机有未推送改动）⇒ 已在覆盖前
+    /// **存进版本历史**（`sync.rs` 那一刀）。用户想找回那一版，路是编辑器工具栏的「版本历史」。
+    pub superseded: usize,
+    /// ★ 这些页**等你裁决**（页级保留本地 ⇒ 远端那一版进了「待取回的远端版本」）。
+    pub awaiting: usize,
+}
+
+/// 把对端给的一批收下并应用。
 ///
 /// ★ 复用 `sync::apply_pulled_changes`（**不在这里长第二份 apply**）：它带着 ③-a 的按戳判序、
 /// "一条坏变更不许连坐"、"失败要归档不留白"这些口径。
 ///
 /// ⚠️ 交给它的 `seq`：**有戳 ⇒ 用戳的毫秒；没戳 ⇒ 用发送方的 `device_seq`**。
 /// 理由与缺口见模块头「已知缺口」那一段。
-pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<(usize, i64), String> {
+pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, String> {
     if rows.is_empty() {
-        return Ok((0, 0));
+        return Ok(Absorbed { applied: 0, tail: 0, superseded: 0, awaiting: 0 });
     }
     let incoming: Vec<crate::sync::IncomingChange> = rows
         .iter()
@@ -172,7 +191,12 @@ pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<(usize, i64
         .collect();
     let out = crate::sync::apply_pulled_changes(c, incoming, 0, crate::db::now_ms())?;
     let tail = rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
-    Ok((out.count, tail))
+    Ok(Absorbed {
+        applied: out.count,
+        tail,
+        superseded: out.superseded_page_ids.len(),
+        awaiting: out.pending_remote_ids.len(),
+    })
 }
 
 // ─────────────────────────── 纯函数：这次要拉哪些对端 ───────────────────────────
@@ -261,6 +285,11 @@ pub struct PeerPullReport {
     pub fetched: usize,
     pub applied: usize,
     pub cursor: i64,
+    /// ★★ 丙-⑤：这一轮里**本机那一版让给了远端**的页数（⇒ 已在覆盖前存进**版本历史**）。
+    /// 见 [`Absorbed::superseded`] —— 网格这一档没有服务端那份冲突清单，这一项就是全部凭证。
+    pub superseded: usize,
+    /// ★★ 丙-⑤：这一轮里**等你裁决**的页数（⇒ 远端那一版进了「待取回的远端版本」）。
+    pub awaiting: usize,
     /// 拉不动时**如实写在这里**（`None` ＝ 这一台这一轮没问题）。
     pub error: Option<String>,
 }
@@ -300,11 +329,19 @@ pub async fn pull_and_absorb(
     let rows = pull_from_peer(client, peer, space_id, since, token).await?;
     let fetched = rows.len();
     let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-    let (applied, tail) = absorb_peer_batch(&g, &rows)?;
-    if tail > since {
-        set_peer_cursor(&g, space_id, &peer.device_id, tail)?;
+    let ab = absorb_peer_batch(&g, &rows)?;
+    if ab.tail > since {
+        set_peer_cursor(&g, space_id, &peer.device_id, ab.tail)?;
     }
-    Ok(PeerPullReport { peer: peer.device_id.clone(), fetched, applied, cursor: tail.max(since), error: None })
+    Ok(PeerPullReport {
+        peer: peer.device_id.clone(),
+        fetched,
+        applied: ab.applied,
+        cursor: ab.tail.max(since),
+        superseded: ab.superseded,
+        awaiting: ab.awaiting,
+        error: None,
+    })
 }
 
 // ─────────────────────────── 控制面：网格开不开、口令牌、一轮交换 ───────────────────────────
@@ -418,17 +455,49 @@ pub async fn round_candidates(
                 fetched: 0,
                 applied: 0,
                 cursor: 0,
+                // 拉不动 ⇒ 一个字节都没换过，这两项必然是 0（不是"不知道"，是"没发生"）。
+                superseded: 0,
+                awaiting: 0,
                 error: Some(e),
             }),
         }
     }
-    let failed = out.iter().filter(|r| r.error.is_some()).count();
-    let note = if failed == 0 {
-        format!("网格：拉了 {} 台对端", out.len())
-    } else {
-        format!("网格：拉了 {} 台对端，其中 {failed} 台没拉动（见每一行的 error）", out.len())
-    };
+    let note = round_note(&out);
     Ok(MeshRoundReport { enabled: true, note, candidates: out.len(), peers: out, window: None })
+}
+
+/// 把每一台的读数拼成**一句人话** —— 纯函数（判据不打桩、不看网络）。
+///
+/// ★★ 丙-⑤（2026-09-26）：**必须把"用户输了/等裁决"的那两件事说出来**。网格这一档没有服务端，
+/// `MeshRoundReport` 就是用户唯一的窗口；只说"拉了 N 台对端"的话，一次"对端戳更晚 ⇒ 本机那一版
+/// 被盖掉"的交换与一次"什么都没发生"的交换**长得一模一样**（静默覆盖）。
+///   · `superseded` ⇒ 你本机那一版让给了远端，**已存进版本历史**（找回它的路在编辑器工具栏）；
+///   · `awaiting`   ⇒ 有页等你裁决（在面板「待取回的远端版本」那一段）。
+/// ⚠️ 老那两句（拉了几台 / 几台没拉动）**逐字不变** —— 它们是既有判据钉着的形状，
+/// 也是"没开/没人/拉不动"三件事的分辨器。
+pub fn round_note(peers: &[PeerPullReport]) -> String {
+    let failed = peers.iter().filter(|r| r.error.is_some()).count();
+    let base = if failed == 0 {
+        format!("网格：拉了 {} 台对端", peers.len())
+    } else {
+        format!("网格：拉了 {} 台对端，其中 {failed} 台没拉动（见每一行的 error）", peers.len())
+    };
+    let superseded: usize = peers.iter().map(|r| r.superseded).sum();
+    let awaiting: usize = peers.iter().map(|r| r.awaiting).sum();
+    let mut tail: Vec<String> = Vec::new();
+    if superseded > 0 {
+        tail.push(format!(
+            "其中 {superseded} 页你本机那一版让给了远端（远端更晚）—— 那一版**已存进版本历史**，编辑器工具栏点「版本历史」能找回"
+        ));
+    }
+    if awaiting > 0 {
+        tail.push(format!("另有 {awaiting} 页等你裁决（见下面「待取回的远端版本」）"));
+    }
+    if tail.is_empty() {
+        base
+    } else {
+        format!("{base}；{}", tail.join("；"))
+    }
 }
 
 // ─────────────────────────── 窗口的进程级注册表（一个空间一个窗口） ───────────────────────────
@@ -1269,14 +1338,127 @@ mod tests {
         let rows = serve_own_records(&src, "A", 0, 500).unwrap();
         assert_eq!(rows.len(), 2);
 
-        let (applied, tail) = absorb_peer_batch(&c, &rows).unwrap();
-        assert_eq!(applied, 2);
-        assert_eq!(tail, rows.iter().map(|r| r.device_seq).max().unwrap());
+        let ab = absorb_peer_batch(&c, &rows).unwrap();
+        assert_eq!(ab.applied, 2);
+        assert_eq!(ab.tail, rows.iter().map(|r| r.device_seq).max().unwrap());
+        // ★ 丙-⑤：这两条对端都是**本机没有的页** ⇒ 既没有"让给远端"的，也没有"等裁决"的。
+        //   （"不是 0 才对"由下面 `absorb_reports_what_the_user_lost` 那一条正面钉住。）
+        assert_eq!((ab.superseded, ab.awaiting), (0, 0), "{ab:?}");
         // 重复收同一批：幂等（内容不再变）
         let before = content_of(&c, "p1");
-        let (applied2, _) = absorb_peer_batch(&c, &rows).unwrap();
+        let ab2 = absorb_peer_batch(&c, &rows).unwrap();
         assert_eq!(content_of(&c, "p1"), before);
-        assert_eq!(applied2, 2, "仍然走完 apply（幂等），但内容一字不变");
+        assert_eq!(ab2.applied, 2, "仍然走完 apply（幂等），但内容一字不变");
+        // ⚠️ 这里为 0 靠的是 丙-⑤ 在 `doc_content::stash_pending_remote` 里新加的那一句
+        //    "**与本地同一份文档的那一版不记**"＋它**如实回 false**（调用方据此不计数）：
+        //    老规矩"同一 seq 重放 ⇒ 保留本地"会把这一批再记两条「待取回」（内容是同一份 ⇒
+        //    用户点「采用服务端」是个 no-op）＝ 假账。这条断言就是那两句的**行为面**见证
+        //    （正面判据在 `doc_content` 那侧）。
+        //    ⚠️ 它抓过一次真的：第一版只改了 stash、**没改计数**（`pending_remote_ids` 照旧无条件推），
+        //    于是"清单是空的、而读数说另有 2 页等你裁决"—— 这条断言当场红。
+        assert_eq!((ab2.superseded, ab2.awaiting), (0, 0), "幂等重放不该多出裁决项（假账）：{ab2:?}");
+    }
+
+    /// ★★ 丙-⑤（2026-09-26）：**网格一轮里用户输了/等裁决的那两件事必须被报出来**。
+    ///
+    /// 为什么这条是承重的：网格这一档**没有服务端**，`MeshRoundReport` 是用户唯一能看到的窗口。
+    /// 只回 `(applied, tail)` 的话，"对端戳更晚 ⇒ 你本机那一版被盖掉"这一趟与
+    /// "什么都没发生"的那一趟**长得一模一样** —— 那正是本项目最看重的那种静默。
+    /// 一格判据同时钉住两个**方向相反**的结局：
+    ///   · 对端戳更晚 ⇒ `superseded = 1`（本机那一版**已存进版本历史**，不是丢了）；
+    ///   · 本机戳更晚 ⇒ `awaiting   = 1`（远端那一版进了「待取回的远端版本」，等用户裁决）。
+    /// **变异实测**：把 `sync.rs` 里那一刀挪到 `apply_upsert` 之后 ⇒ `superseded` 归零、当场红。
+    #[test]
+    fn absorb_reports_what_the_user_lost_so_a_mesh_round_is_never_silent() {
+        // ── 本机：一页**未推送**（dirty=1）＋ 一枚**早**的本机戳
+        let c = space_conn("B");
+        let mine = page("p1", "本机未推送的那一版", 10);
+        local_edit(&c, &mine); // 落库 ＋ 挂本机戳（走真路径）
+        // ⚠️ `dirty` 必须在 `local_edit` **之后**置 1：它内部借的是远端写入口，
+        //    那一条把 `dirty` 写 0（就是这个原因，本判据的顺序不能反）。
+        c.execute("UPDATE pages SET dirty = 1 WHERE id = 'p1'", []).unwrap();
+        let mine_stamp = crate::sync::page_stamp(&c, "ws", "p1").unwrap();
+
+        // ── 对端那一版：戳**更晚**（同一页、改了同一块）⇒ 戳判"用远端"
+        let theirs = page("p1", "对端更晚的那一版", 20);
+        let later = crate::hlc::Hlc::genesis("A").tick(mine_stamp.wall_ms() + 1_000);
+        let rows = vec![MeshRow {
+            device_seq: 1,
+            entity: "page".to_string(),
+            entity_id: "p1".to_string(),
+            op: "upsert".to_string(),
+            payload: Some(crate::hlc::with_stamp(&serde_json::to_string(&theirs).unwrap(), &later).unwrap()),
+            updated_at: 20,
+        }];
+        let ab = absorb_peer_batch(&c, &rows).unwrap();
+        assert_eq!(ab.applied, 1, "{ab:?}");
+        assert_eq!(ab.superseded, 1, "戳判远端 ＋ 本机脏 ⇒ 必须报成「你那一版让给了远端」：{ab:?}");
+        assert_eq!(ab.awaiting, 0, "远端赢了就没有「等裁决」的东西：{ab:?}");
+        assert!(content_of(&c, "p1").contains("对端更晚的那一版"), "{}", content_of(&c, "p1"));
+        // ★ 那句人话必须对得上账：报出来的页**真的**在版本历史里（不然就是"说了但没做"）。
+        let kept: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM page_versions WHERE page_id = 'p1' AND content_json LIKE '%本机未推送的那一版%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 1, "报成 superseded 的页，本机那一版必须真的在版本历史里");
+
+        // ── 反面方向：换一页，**本机戳更晚** ⇒ 远端那一版进「待取回的远端版本」，等用户裁决
+        let mine2 = page("p2", "本机更晚的那一版", 30);
+        local_edit(&c, &mine2);
+        c.execute("UPDATE pages SET dirty = 1 WHERE id = 'p2'", []).unwrap();
+        let mine2_stamp = crate::sync::page_stamp(&c, "ws", "p2").unwrap();
+        let older = crate::hlc::Hlc::genesis("A").tick(mine2_stamp.wall_ms().saturating_sub(1_000));
+        let rows2 = vec![MeshRow {
+            device_seq: 2,
+            entity: "page".to_string(),
+            entity_id: "p2".to_string(),
+            op: "upsert".to_string(),
+            payload: Some(
+                crate::hlc::with_stamp(&serde_json::to_string(&page("p2", "对端更早的那一版", 40)).unwrap(), &older)
+                    .unwrap(),
+            ),
+            updated_at: 40,
+        }];
+        let ab2 = absorb_peer_batch(&c, &rows2).unwrap();
+        assert_eq!((ab2.superseded, ab2.awaiting), (0, 1), "本机赢了 ⇒ 远端那一版进「待取回」等裁决：{ab2:?}");
+        assert!(content_of(&c, "p2").contains("本机更晚的那一版"), "{}", content_of(&c, "p2"));
+    }
+
+    /// ★ 丙-⑤：**那两句人话**（纯函数，判据不打桩、不看网络）—— 老那两句逐字不变，
+    /// 新的两句只在真有那两件事时出现（没有就**一个字都不多说**，免得变成噪声）。
+    #[test]
+    fn the_round_note_says_what_the_user_lost_and_keeps_the_old_two_sentences() {
+        let ok = |superseded: usize, awaiting: usize| PeerPullReport {
+            peer: "A".to_string(),
+            fetched: 3,
+            applied: 3,
+            cursor: 3,
+            superseded,
+            awaiting,
+            error: None,
+        };
+        assert_eq!(round_note(&[ok(0, 0)]), "网格：拉了 1 台对端", "老那一句**逐字不变**");
+        assert_eq!(round_note(&[]), "网格：拉了 0 台对端");
+        let s = round_note(&[ok(2, 0)]);
+        assert!(s.starts_with("网格：拉了 1 台对端；"), "{s}");
+        assert!(s.contains("2 页你本机那一版让给了远端"), "{s}");
+        assert!(s.contains("已存进版本历史"), "要给出找回的去处：{s}");
+        assert!(s.contains("版本历史"), "{s}");
+        let a = round_note(&[ok(0, 1)]);
+        assert!(a.contains("1 页等你裁决"), "{a}");
+        assert!(!a.contains("让给了远端"), "没发生的事一个字都不许说：{a}");
+        // 两台对端：**跨台累加**（用户关心的是"这一轮我一共输了几页"，不是"哪一台"）
+        let two = round_note(&[ok(1, 1), ok(2, 0)]);
+        assert!(two.contains("拉了 2 台对端"), "{two}");
+        assert!(two.contains("3 页你本机那一版让给了远端"), "3 = 1 + 2：{two}");
+        // 拉不动那台：老那句（分辨"没人"／"都拉不动"）不许被新句子盖掉
+        let mut bad = ok(0, 0);
+        bad.error = Some("连接被拒".to_string());
+        let e = round_note(&[bad]);
+        assert!(e.contains("其中 1 台没拉动"), "{e}");
     }
 
     /// 窗口设了口令 ⇒ 对不上的一律 401；中枢那一套端点 ⇒ **501 ＋ 人话**（不是 404、不是空 200）。

@@ -101,4 +101,35 @@ describe("网格（丙-③-b）· 面板接线", () => {
     // ⑤ 读数里的长 URL 要能按任意位置折行（否则撑破卡片）。
     expect(rule(".sync-mesh .sync-hint"), "hint 少了 `overflow-wrap: anywhere`").toMatch(/overflow-wrap:\s*anywhere/);
   });
+
+  // ★★ 丙-⑤（2026-09-26）：**网格那一轮也要如实收场** —— 报得出 ＋ 说得到就做得到。
+  //
+  // 为什么这两条是承重的：网格这一档**没有服务端**，"你本机那一版让给了远端"与"有页等你裁决"
+  // 这两件事**只能**由 `mesh_sync_now` 的读数报出来（Rust 侧 `round_note` 拼好那句话）。
+  // 而且**说到了就必须做得到**：通知是「有 2 页等你裁决」，下面那一段却还是空的 —— 用户只会
+  // 以为那两页丢了（那份清单是在网格**开跑之前**读的）。
+  it("⑦ 人话来自 Rust（面板不自己数 superseded/awaiting 拼句子）", () => {
+    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
+    expect(syncOne, "网格那轮的结果没有原样显示 `rep.note`").toContain("${rep.note}");
+    // 面板**不许**自己遍历 `rep.peers` 去数「输了几页」：那是第二份真相（Rust 里刚数过一遍）。
+    expect(panel, "面板自己遍历网格读数拼句子了（应当是 `rep.note` 原文）").not.toContain("rep.peers");
+    // 两侧成对：Rust `PeerPullReport` 新加的两项必须在契约里（否则界面拿到的是 undefined）。
+    expect(commandsTs, "`MeshPeerPullReport` 少了 `superseded`").toContain("superseded: number;");
+    expect(commandsTs, "`MeshPeerPullReport` 少了 `awaiting`").toContain("awaiting: number;");
+  });
+
+  it("⑧ 网格那轮**之后**两份清单跟着刷新（不然通知与现场对不上）", () => {
+    const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
+    const meshAt = syncOne.indexOf("api.meshSyncNow(");
+    expect(meshAt, "`syncOne` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
+    const after = syncOne.slice(meshAt);
+    // ⚠️ 断言必须落在**网格那一轮之后**：`try` 里那两个刷新调用在网格**之前**跑
+    //    （服务端那条走完就读），拿它们冒充就是「测了个寂寞」。
+    expect(after, "网格那轮之后没重拉页面列表 ⇒ 换过来的内容要切一次空间才看得见").toContain(
+      "useNotes.getState().loadPages()",
+    );
+    expect(after, "网格那轮之后没重读「待取回的远端版本」⇒ 刚说有页等你裁决、那一段还是空的").toContain(
+      "await loadPendingRemote()",
+    );
+  });
 });

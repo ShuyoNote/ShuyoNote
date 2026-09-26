@@ -521,7 +521,15 @@ export function SyncPanel() {
           const rep = await api.meshSyncNow(r.ws_id);
           // ⚠️ `rep.note` **自带**「网格：」前缀（Rust 拼好的人话）—— 这里别再写一遍，
           //    否则真机上会看到 `网格：网格：拉了 1 台对端`（第一版就是这么出去的）。
+          // ★ 丙-⑤（2026-09-26）：`rep.note` 里现在还会带上"**你本机那一版让给了远端**
+          //    （已存进版本历史）"与"**有几页等你裁决**"—— 同样由 Rust 拼，这里**不重判**。
           setStatus((prev) => `${prev}${prev ? "；" : ""}${rep.note}`);
+          // ★★ 丙-⑤：**网格这一轮也换了数据**，所以那两份清单必须跟着刷新。
+          //   它们是在上面 `try` 里读的 —— 也就是**网格开跑之前**。不补这一下的话，用户刚被
+          //   告知"有 2 页等你裁决"，而下面「待取回的远端版本」那一段**还是空的**（页面列表
+          //   同样停在交换前）：通知与现场对不上，用户只会以为那两页丢了。
+          await useNotes.getState().loadPages();
+          await loadPendingRemote();
         } catch (e) {
           setStatus((prev) => `${prev}${prev ? "；" : ""}网格交换失败：${e instanceof Error ? e.message : String(e)}`);
         }

@@ -199,6 +199,14 @@ export interface MeshPeerPullReport {
   fetched: number;
   applied: number;
   cursor: number;
+  /**
+   * ★★ 丙-⑤：这一轮里**你本机那一版让给了远端**的页数（⟹ 已存进**版本历史**）。
+   * ⚠️ 网格这一档**没有服务端**那份冲突清单 ⇒ 这一项是"你输了但没丢"的唯一凭证；
+   * 界面上它只出现在 `note` 那句人话里（由 Rust 拼好），**不要在组件里自己数或自己判**。
+   */
+  superseded: number;
+  /** ★★ 丙-⑤：这一轮里**等你裁决**的页数（⟹ 远端那一版在「待取回的远端版本」里）。 */
+  awaiting: number;
   /** 拉不动时**如实写在这里**（`null` ＝ 这一台这一轮没问题）。 */
   error: string | null;
 }

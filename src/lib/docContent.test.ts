@@ -829,6 +829,39 @@ describe("docContent 的「未取回的远端版本」（B 方案）", () => {
     expect(pendingRemoteQueue(db, 0).total).toBe(1);
   });
 
+  // ★★ 丙-⑤（2026-09-26）：**与本地逐字相同的那一版不进「待取回」清单** —— 那是假账。
+  // 与 Rust `doc_content.rs::a_stash_that_matches_what_is_already_local_…` **逐条对应**：
+  // 这份清单是要用户裁决的，一条"采用了也什么都没变"的条目，用户点下去只会以为坏了；
+  // 而它出现的时机很平常 —— 同一批重放（收侧失败 ⇒ 水位没推 ⇒ 下一轮再拉一遍）。
+  it("与本地逐字相同的那一版不记进清单（假账），内容/标题真的不同则照旧记", async () => {
+    const db = await freshDb();
+    const same = doc(blk("b1", 1, "同一份"));
+    seedPage(db, "p1", { title: "页", json: same, text: "" });
+
+    // ① 逐字相同 ⇒ 不记（**返回值也要如实说"没记"** —— 调用方靠它决定要不要宣布"已存进待取回"）
+    expect(stashPendingRemote(db, { ...remoteRow("p1", same), title: "页" }, 3, 100)).toBe(false);
+    expect(pendingRemoteQueue(db, 10).total).toBe(0);
+
+    // ② 正文变了 ⇒ 照旧记（这条判断**不是**把这条路关掉）
+    const other = doc(blk("b1", 2, "远端另一版"));
+    expect(stashPendingRemote(db, { ...remoteRow("p1", other), title: "页" }, 4, 200)).toBe(true);
+    expect(pendingRemoteQueue(db, 10).total).toBe(1);
+    expect(pendingRemoteSeq(db, "p1")).toBe(4);
+
+    // ③ 只有标题变了（正文一样）⇒ 也要记：用户裁决的是"整页用谁的"
+    expect(stashPendingRemote(db, { ...remoteRow("p1", other), title: "新标题" }, 5, 300)).toBe(true);
+    expect(pendingRemoteSeq(db, "p1")).toBe(5);
+
+    // ④ **键序不算数**（载荷原文 vs 落库形态天然会差一点）：同一份文档、键序不同 ⇒ 照样不记。
+    //    这一格是真事逼出来的：网格那条重放判据上，本地是落库形态、远端是载荷原文。
+    db.run("UPDATE pages SET content_json = ? WHERE id = 'p1'", [
+      doc({ type: "paragraph", blockId: "b1", blockRev: 2, children: [{ type: "text", text: "远端另一版" }] }),
+    ]);
+    const reordered = doc({ children: [{ text: "远端另一版", type: "text" }], blockRev: 2, blockId: "b1", type: "paragraph" });
+    expect(stashPendingRemote(db, { ...remoteRow("p1", reordered), title: "页" }, 6, 400)).toBe(false);
+    expect(pendingRemoteSeq(db, "p1")).toBe(5);
+  });
+
   it("没存着 ⇒ 清一次、查一次都不报错（绝大多数页面走这条）", async () => {
     const db = await freshDb();
     seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本地")), text: "" });

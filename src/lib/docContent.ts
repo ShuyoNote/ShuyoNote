@@ -1197,8 +1197,27 @@ export interface PendingRemoteQueue {
   pages: PendingRemotePage[];
 }
 
-/** 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。 */
-export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: number, now: number): void {
+/**
+ * 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。
+ *
+ * ★ 丙-⑤（2026-09-26）：**与本地逐字相同的那一版不记** —— 记了就是一条**假账**：用户点
+ * 「采用服务端」实际是个 no-op（内容本来就一样），而清单永远挂着它，界面还会因此报一句
+ * "有 N 页等你裁决"。走到这一格的时机：**同一批重放**（收侧失败 ⇒ 水位没推 ⇒ 下一轮再拉
+ * 同一批），而"同一 `seq` 重放 ⇒ 保留本地"⇒ 每次都往这儿记一条。
+ * ⚠️ 与 Rust 侧 `doc_content.rs::stash_pending_remote` **逐条对应**（同一句判断、同一处收口）：
+ * 比的是**用户看得见的那两样**（标题 ＋ 正文）;装饰字段（图标 / 封面 / 排序）的差异不在这里判。
+ * ⚠️ 读不出来（该页刚被软删）⇒ **照旧记**（fail-open：宁可多一条痕，不许少一条）。
+ *
+ * ★★ **返回值 = 这一版到底记下了没有**（`false` ＝ 与本地同一份文档 ⇒ 一行都没写）。
+ * 为什么必须是返回值而不是只写一行日志：调用方要拿它决定"**要不要说'已存进待取回'**"。
+ * 拿"调用过"当"记下了"，界面/日志就会报一句清单里**根本没有的账**。
+ * 口径与 Rust `doc_content.rs::stash_pending_remote` 同一条：**先要说清"发生了什么"，再谈计数**。
+ */
+export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: number, now: number): boolean {
+  const cur = readContent(db, String(row.id));
+  if (cur && cur.title === String(row.title ?? "") && sameDocument(cur.json, String(row.content_json ?? ""))) {
+    return false;
+  }
   db.run(
     `INSERT INTO pending_remote_pages (page_id, seq, title, payload, remote_updated_at, stashed_at)
      VALUES (?,?,?,?,?,?)
@@ -1207,6 +1226,37 @@ export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: numb
        remote_updated_at = excluded.remote_updated_at, stashed_at = excluded.stashed_at`,
     [String(row.id), seq, String(row.title ?? ""), JSON.stringify(row), Number(row.updated_at ?? 0), now],
   );
+  return true;
+}
+
+/**
+ * 两份正文是不是**同一份文档**：解析后**按键排序**再看（**键序不算数**），数组顺序算数
+ * （块的顺序是内容的一部分）。解析不了（坏 JSON）⇒ 退回逐字节比。
+ *
+ * ★ 丙-⑤：为什么不能直接比字符串 —— 一份是**载荷原文**、一份是**落库后的形态**，序列化形态
+ * 天然会差一点（键序 / 规范化）。拿字节比会把"同一份文档"判成不同 ⇒ 假账照样记下来。
+ * ⚠️ 与 Rust `doc_content.rs::same_document` **逐条对应**（那边是 `serde_json::Value` 比，
+ * 默认 `Map` 按键排序 ⇒ 键序天然不算数）。
+ */
+function sameDocument(a: string, b: string): boolean {
+  try {
+    return stableJson(JSON.parse(a)) === stableJson(JSON.parse(b));
+  } catch {
+    return a === b;
+  }
+}
+
+/** 稳定序列化：对象的键**排序**后输出（数组保持顺序）。`undefined` 不会出现在 `JSON.parse` 的结果里。 */
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
 }
 
 /** 待取回的远端版本队列（`limit` 由调用方给 —— 这是界面列表，不是批量作业）。 */

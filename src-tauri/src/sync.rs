@@ -2535,6 +2535,11 @@ let mut unresolved_page_ids: Vec<String> = Vec::new();
 // 已经存进 `pending_remote_pages`（本地表）⇒ 界面要能告诉用户"有 N 页等你裁决"，
 // 而不是像修好之前那样"游标过去了、什么都没有"（取证文件 §3.2）。
 let mut pending_remote_ids: Vec<String> = Vec::new();
+// ★★ 丙-⑤（2026-09-26）：本轮**本机那一版让给了远端**的页面（按页去重；见下面那一刀）。
+//   ⚠️ 它与 `pending_remote_ids` 是**两件相反的事**，都是"别让用户的东西无声消失"：
+//     · `pending_remote_ids` ⇒ 远端那一版进了「待取回的远端版本」（**本机赢了**，等用户裁决）；
+//     · 这个               ⇒ 本机那一版进了**版本历史**（**远端赢了**，找回它的路是版本历史）。
+let mut superseded_page_ids: Vec<String> = Vec::new();
 // ★ F7b（2026-09-25）：本轮收到**本端不认识的「对象种类 ＋ 动作」搭配**（去重后的 `entity:op`）。
 // 见下面 `_` 那一支的说明 —— 以前那里是无条件 `_ => {}`：**照旧忽略，但不再无声**。
 let mut unrecognized: Vec<String> = Vec::new();
@@ -2632,13 +2637,21 @@ let mut unrecognized: Vec<String> = Vec::new();
                             //       `sync.rs（2 处）`）。测试尾部被它排除在外，那里写列名没事。
                             match crate::doc_content::read(&c, &page.id) {
                                 Ok(Some(cur)) => {
-                                    if let Err(e) = crate::versions::snapshot_before_save(
+                                    match crate::versions::snapshot_before_save(
                                         &c, &page.id, &cur.title, &cur.json, &cur.text,
                                     ) {
-                                        eprintln!(
+                                        // ★ 只有**真存下了**才记账：下面那句人话要对用户说
+                                        // "你那一版在版本历史里"，说了就得是真的（"存失败"那条路
+                                        // 只留痕、不改口）。
+                                        Ok(()) => {
+                                            if !superseded_page_ids.contains(&page.id) {
+                                                superseded_page_ids.push(page.id.clone());
+                                            }
+                                        }
+                                        Err(e) => eprintln!(
                                             "[sync] page {} 的本机那一版没能进版本历史（它马上会被远端盖掉）：{e}",
                                             page.id
-                                        );
+                                        ),
                                     }
                                 }
                                 Ok(None) => {}
@@ -2689,9 +2702,14 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 // 会被游标吃掉（取证文件 §3.2 的 L）⇒ **在本地存下来**，让用户还能裁决。
                                 // 游标照旧推进（朴素方案 A 会 livelock：这一页可能永远 KeepLocal，
                                 // 后面所有变更都取不到）—— 所以"留痕"是这条路的代价，也是它的收场。
-                                crate::doc_content::stash_pending_remote(&c, &page, change.seq, now)?;
-                                if !pending_remote_ids.contains(&page.id) {
-                                    pending_remote_ids.push(page.id.clone());
+                                // ★ 丙-⑤（2026-09-26）：**只有真记下了才把这一页算进"等你裁决"**。
+                                //   `stash_pending_remote` 现在会如实回 false（与本地同一份文档 ⇒
+                                //   没有可裁决的东西，一行都没写）—— 拿"调用过"当"记下了"，界面就会
+                                //   报一句清单里根本没有的账（网格那侧当场露过馅）。
+                                if crate::doc_content::stash_pending_remote(&c, &page, change.seq, now)? {
+                                    if !pending_remote_ids.contains(&page.id) {
+                                        pending_remote_ids.push(page.id.clone());
+                                    }
                                 }
                             }
                         }
@@ -2758,19 +2776,33 @@ let mut unrecognized: Vec<String> = Vec::new();
             Err(ApplyFailure::Recoverable(e)) => {
                 // 能定位到页面 ⇒ **归档**（与 KeptLocal 同一本账，用户可裁决）；
                 // 定位不到（附件 / 坏 payload）⇒ 至少一条 warn，**不许一声不响**。
-                let archived = stash_source
+                // ★ 丙-⑤：`stash_pending_remote` 现在回**"到底记下了没有"** —— `false` 时
+                //   （本机那一版与它**是同一份文档**）**不算归档**，也不许改口说"已存进待取回"
+                //   （那是假账）。每一支**正好**留一条痕，不重不漏。
+                let page_of_source = stash_source
                     .as_deref()
-                    .and_then(|plain| serde_json::from_str::<PageDetail>(plain).ok())
-                    .and_then(|page| {
-                        crate::doc_content::stash_pending_remote(c, &page, change.seq, now).ok().map(|_| page.id)
-                    });
-                match archived {
-                    Some(id) => {
-                        if !pending_remote_ids.contains(&id) {
-                            pending_remote_ids.push(id.clone());
+                    .and_then(|plain| serde_json::from_str::<PageDetail>(plain).ok());
+                match page_of_source.as_ref() {
+                    Some(page) => match crate::doc_content::stash_pending_remote(c, page, change.seq, now) {
+                        Ok(true) => {
+                            if !pending_remote_ids.contains(&page.id) {
+                                pending_remote_ids.push(page.id.clone());
+                            }
+                            eprintln!(
+                                "[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page={} seq={}：{e}",
+                                page.id, change.seq
+                            );
                         }
-                        eprintln!("[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page={id} seq={}：{e}", change.seq);
-                    }
+                        Ok(false) => eprintln!(
+                            "[sync] 变更应用失败，但本机那一版与它是**同一份文档** ⇒ 不记「待取回」（没丢东西）：page={}",
+                            page.id
+                        ),
+                        Err(err) => eprintln!(
+                            "[sync] 变更应用失败，**归档也没成**（这一版远端内容会随游标丢掉）：page={} seq={}：{err}",
+                            page.id, change.seq
+                        ),
+                    },
+                    // 定位不到页面（附件 / 坏 payload 解析不出）—— 这一格只能靠这一行说话
                     None => eprintln!(
                         "[sync] 变更应用失败且无法归档（entity={} op={} seq={}）：{e}",
                         change.entity, change.op, change.seq
@@ -2784,7 +2816,7 @@ let mut unrecognized: Vec<String> = Vec::new();
             max_pulled = change.seq;
         }
     }
-    Ok(PulledApply { count, max_pulled, items, conflicts, unresolved_page_ids, pending_remote_ids, unrecognized })
+    Ok(PulledApply { count, max_pulled, items, conflicts, unresolved_page_ids, pending_remote_ids, superseded_page_ids, unrecognized })
 }
 
 /// `apply_pulled_changes` 的产物（`do_pull` 直接摊平进它的返回元组）。
@@ -2794,7 +2826,14 @@ pub(crate) struct PulledApply {
     items: Vec<SyncItem>,
     conflicts: Vec<SyncConflict>,
     unresolved_page_ids: Vec<String>,
-    pending_remote_ids: Vec<String>,
+    /// ★ 丙-⑤ 起 `pub(crate)`：网格那一档（`mesh.rs`）要把它数成"**有几页等你裁决**"——
+    /// 网格路径上没有任何"服务端返回的冲突清单"，不从这里拿就只能对用户闭嘴。
+    pub(crate) pending_remote_ids: Vec<String>,
+    /// ★★ 丙-⑤：本轮**本机那一版让给了远端**的页面（戳判远端 ＋ 本机有未推送改动）——
+    /// 它们的那一版**已经存进版本历史**。与 `pending_remote_ids` **方向相反**（那一类是等用户裁决）。
+    /// ⚠️ 网格那一档没有"服务端返回的冲突清单"，`mesh.rs` 只能从这里拿 ⇒ 这一项**就是**
+    /// 网格路径上"用户输了但没丢"的唯一凭证（不然就是静默覆盖）。
+    pub(crate) superseded_page_ids: Vec<String>,
     /// ★ F7b：本轮**本端不认识**的 `entity:op`（去重、按首次出现顺序）。空 = 全都认识。
     /// ⚠️ 它**不是**失败：那些变更被**有意忽略**（前向兼容），只是不许无声 —— `do_pull` 会把它打出来。
     /// ⚠️ 别把它读成"游标停住了"：游标照旧前进（见下面那段"必须前进"的注释），
