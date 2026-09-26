@@ -268,7 +268,7 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 
 ### ★ 2026-09-25 两台真机跑通的做法（含一条**没跑通**的，别照抄那半）
 
-**两个脚本已经收进仓库**（`_scratch` 里那套散件的通用版，别人照着就能跑）：
+**两个脚本已经收进仓库**（`_tmp/scratch` 里那套散件的通用版，别人照着就能跑）：
 - `node scripts/android-cdp.mjs <serial> text|pid|eval <文件.js>|click <文字>` —— 按 DOM 驱动真机 WebView
   （**按本 App 的 pid 挑 devtools 套接字**，见下面那条坑）。
 - `node scripts/verify-lan-two-device.mjs --listener <serial> --hub http://192.168.x.y:8787 --space <id>`
@@ -308,16 +308,21 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 ## 真机（Android）怎么把"新界面"验到
 
 2026-09-25 实测走通的一条链（Mate 40 · `UJN0221310000547` · Android 12 · WebView 114），
-**不用手工点**：CDP 按 DOM 驱动（`_scratch/dev-mate.mjs`：`adb forward` 到
+**不用手工点**：CDP 按 DOM 驱动（`_tmp/scratch/dev-mate.mjs`，2026-09-26 前在 `_scratch/`：`adb forward` 到
 `localabstract:webview_devtools_remote_<pid>` ＋ `Runtime.evaluate`）。
 
 ```powershell
 # ① 出包（配方见上面「本机出安卓包」那一段；⚠️ 每次都 `tauri android init --ci` 之后再跑那五个脚本）
 # ② 签名 ＋ 安装 ＋ 扫包里的新文案（脚本是纯 ASCII，中文针用 \uXXXX 写 —— 门禁 check-ps1-ascii）
-powershell -ExecutionPolicy Bypass -File C:\Users\cnzen\zhai\_scratch\sign-install-mate.ps1
+powershell -ExecutionPolicy Bypass -File C:\Users\cnzen\zhai\_tmp\scratch\sign-install-mate.ps1
 # ③ 按 DOM 驱动
-node C:\Users\cnzen\zhai\_scratch\dev-mate.mjs eval "document.body.innerText.replace(/\s+/g,' ').slice(-800)"
+node C:\Users\cnzen\zhai\_tmp\scratch\dev-mate.mjs eval "document.body.innerText.replace(/\s+/g,' ').slice(-800)"
 ```
+
+> ⚠️ **路径已于 2026-09-26 变更**：`_scratch\` 收敛为 `_tmp\scratch\`（见根 `AGENTS.md` §7）。
+> 上面两个脚本**仍在**（`_tmp\scratch\sign-install-mate.ps1` / `_tmp\scratch\dev-mate.mjs`），
+> 只是换了位置；而 `_tmp\scratch\` 是 **7 天保留区**——要用就先确认它还在，
+> 否则按本节的描述重建（它们是可重建的驱动脚本，不是唯一数据）。
 
 ⚠️ **四条踩过的坑（省一整轮的那种）**：
 1. **签名不匹配就必须先卸载** —— `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 只在签名不同时出现，
@@ -339,7 +344,7 @@ node C:\Users\cnzen\zhai\_scratch\dev-mate.mjs eval "document.body.innerText.rep
 5. ★ **`webview_devtools_remote` 套接字不一定是本 App 的** —— 同一台机器上别的 App（2026-09-25 实测撞上
    一个视频 App）也有 WebView ⇒ CDP 会连到**别人**的页面上（现场是读出一段完全无关的界面）。
    **按本 App 的 pid 挑**：`pidof cn.shuyo.shuyonote` → `webview_devtools_remote_<pid>`
-   （`_scratch/drive.mjs` 已按这条改）。
+   （`_tmp/scratch/drive.mjs` 已按这条改）。
 
 ## 一段真实教训：真机验出来的那个 bug（2026-09-25）
 
