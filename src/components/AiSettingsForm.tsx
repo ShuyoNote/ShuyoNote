@@ -412,6 +412,10 @@ export function AiSettingsForm({
                   {`附件：已索引 ${coverage.report.attachments.indexed} · 没抽全 ${coverage.report.attachments.partial} · ` +
                     `未索引 ${coverage.report.attachments.notIndexed}（共 ${coverage.report.attachments.total}）｜` +
                     `页面 ${coverage.report.pages.indexed}/${coverage.report.pages.total} 有正文｜` +
+                    // ★ 联合格子 j3：**派生落后**单独一栏 —— 与"没抽全"同一处置：
+                    //   "有正文"回答"搜得到吗"，这一栏回答"搜到的是新的吗"。
+                    //   ⚠️ `null`（没查）显示成「未知」而**不是** 0：这两件事不许长得一样。
+                    `派生落后 ${coverage.report.pages.stale === null ? "未知" : `${coverage.report.pages.stale} 页`}｜` +
                     `派生 ${coverage.report.derived.segments} 段 / ${coverage.report.derived.chars} 字｜块 ${coverage.report.chunks.total}`}
                 </div>
                 {coverage.report.gaps.length > 0 && (

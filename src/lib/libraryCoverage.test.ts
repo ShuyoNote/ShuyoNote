@@ -13,6 +13,10 @@ vi.mock("./api", () => ({
   api: {
     listPages: vi.fn(),
     listPageAttachments: vi.fn(),
+    // ★ 联合格子 j3（2026-09-27）：取材层要**顺带**问一次"哪些页的派生文本落后"
+    //   （`pages.text_stale=1`）—— 不 mock 它 ⇒ 那条路走 catch ⇒ 报告记成"未知"，
+    //   于是这一层的判据就永远看不见"取到了"那一支。
+    listStaleTextPages: vi.fn(),
   },
 }));
 
@@ -66,7 +70,11 @@ async function stores() {
 const att = (id: string, name = `${id}.docx`) => ({ id, name, mime: "", hash: "h", size: 1, path: "" });
 
 describe("scanLibraryCoverage（取材层）", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // 默认：问过了、没有落后的（`0` 与"没查"是两件事，见 j3 那两条判据）
+    (api.listStaleTextPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ total: 0, pages: [] });
+  });
 
   it("**`null` 那一路要单独取**：只调它会漏掉归属页面的附件（大多数）", async () => {
     (api.listPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "p1" }, { id: "p2" }]);
@@ -122,6 +130,43 @@ describe("scanLibraryCoverage（取材层）", () => {
     // 同样是按 kind 找（页面缺口排在前面）
     expect(r.gaps.find((g) => g.kind === "attachment")?.reason).toBe("not_chunked"); // 抽了但没切块
     expect(r.derived).toMatchObject({ segments: 1, chars: 2 });
+  });
+
+  // ★ 联合格子 j3（2026-09-27）：取材层要**真的去问**「哪些页的派生文本落后」，并**原话**带进报告。
+  //   取材漏了这一问 ⇒ 纯函数那一层的判据全绿也白搭（报告会说"没查"）。这是本文件一贯的重点：
+  //   报告算得再对，取错清单就全错。
+  it("★ j3：`派生落后`的清单要**真的问过** —— 问到了就原话进报告（total ＋ 明细点名）", async () => {
+    (api.listPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "p1" }]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.listStaleTextPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      total: 7,
+      pages: [{ page_id: "p1" }],
+    });
+
+    const s = await stores();
+    const r = await scanLibraryCoverage(s);
+
+    // 问过一次，且**给了 limit**（队列会把 limit 夹到 1..=50；这里要的是 total，不是"这一批"）
+    const calls = (api.listStaleTextPages as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(typeof calls[0][0]).toBe("number");
+    expect(r.pages.stale).toBe(7);
+  });
+
+  it("★ j3：**取不到 ⇒ 记成未知（null），不是 0** —— 且不许把整份报告弄挂", async () => {
+    (api.listPages as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: "p1" }]);
+    (api.listPageAttachments as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.listStaleTextPages as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("命令不可用"));
+    // "取不到"必须**有痕**（否则一次失败会被静默成"这次没查"，而没人知道为什么）
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const s = await stores();
+      const r = await scanLibraryCoverage(s); // 不抛
+      expect(r.pages.stale).toBeNull(); // ★ 不是 0 —— "没查"不许印成"没有落后的"
+      expect(warn.mock.calls.flat().join(" ")).toContain("未知");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

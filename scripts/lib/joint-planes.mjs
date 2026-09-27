@@ -307,20 +307,27 @@ export const JOINT_CELLS = [
   },
   {
     id: "j3",
-    title: "平面开着 ＋ 存量老页面：全库扫描路径不炸（覆盖报告 × 平面）",
+    title: "派生落后（CRDT 合并的痕）**不许**被覆盖报告算成「已覆盖」",
     planes: ["coverage", "crdt"],
-    state: "todo",
+    state: "landed",
     owner: "macos",
-    cmd: null,
+    cmd: "npx vitest run src/lib/extract/coverageReport.test.ts src/lib/libraryCoverage.test.ts src/components/aiSettingsCoverage.test.tsx",
+    // 空跑即红：三个文件今天 37 条（纯函数 21 ＋ 取材 12 ＋ 面板 4）。删掉任一条都会掉到下限以下。
+    minPassed: 37,
     criterion:
-      "平面**开着**、库里放一页**没有补种块身份**的存量内容 ⇒ `scanLibraryCoverage` 那条全库读路径" +
-      "要么正常出报告、要么如实降级（有痕），**不许抛**",
+      "**五条口径**（与 §15.10 的 `partial` 逐条对齐）：① 落后的页面**照旧计入 `indexed`**（它确实搜得到）" +
+      "＋ 另开一条 `text_stale` gap（两件事同时看得见）；② **没查**（清单不传）⇒ `pages.stale === null` 且摘要不打印" +
+      "（「不知道」不许印成「0 页落后」）；③ 查过了、没有落后的（`{total:0}`）⇒ `stale === 0`（与 ② 分得开）；" +
+      "④ 又落后又没块 ⇒ 报 `page_empty`（同一件事不说两遍），落后的总数仍如实计；" +
+      "⑤ 取材层**真的问过**队列（`listStaleTextPages`）并原话带进报告；取不到 ⇒ `null` ＋ **有痕**，且不把整份报告弄挂",
     why:
-      "这条是 CRDT 自己**实测撞出来的**红线（全库扫描会读到未补种的页面）。而覆盖报告恰恰是「一次扫全库」的入口：" +
-      "两条线各自绿，交点没人跑过。",
+      "★ 这是**交界处**那条：覆盖报告回答「**搜得到吗**」，而 CRDT 合并会把页面标成「派生待重建」" +
+      "（`mergeRemotePageState` ⇒ `markTextStale` ⇒ `pages.text_stale=1`）—— 那些页面**搜得到**，" +
+      "但搜到的是**合并前那版**。报告此前完全不看这个标记 ⇒ 「页面 5/5 有正文」会被读成" +
+      "「检索面里都是最新的」—— 与 §15.10「成功 ≠ 抽全了」同一处置：这里多一格「搜到 ≠ 是新的」。",
     ref:
-      "施工：`src/lib/crdt/plane.path.test.ts` 已有的前置条件清单 ＋ `src/lib/libraryCoverage.test.ts`（平面开那一轮）；" +
-      "口径出处 docs/plans/2026-09-23-crdt-slice-b-workorder.md §0.6",
+      "落地：`src/lib/extract/coverageReport.ts`（`text_stale` ＋ `pages.stale: number | null`）／" +
+      "`src/lib/libraryCoverage.ts`（取材那一问）／`src/components/AiSettingsForm.tsx`（单列一栏，`null` 显示「未知」）",
   },
   {
     id: "j4",

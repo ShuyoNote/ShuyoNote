@@ -299,3 +299,73 @@ describe("覆盖报告 · `partial`（已索引但抽取器报了缺口）", () 
     expect(r.attachments.notIndexed).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ★ 联合格子 j3（2026-09-27）：**派生落后** × **覆盖报告** —— "搜得到" ≠ "搜到的是新的"
+//
+// 这个交界此前没人管：覆盖报告回答"有没有进检索面"，而 CRDT 合并会**把页面标成待重建**
+// （`mergeRemotePageState` ⇒ `markTextStale` ⇒ `pages.text_stale=1`）—— 那些页面照样有块、
+// 照样搜得到，**只是内容是合并前那版**。报告如果不说，读的人会把"5/5 有块"读成"检索面里都是最新的"。
+//
+// 三条口径（与 §15.10 的 `partial` 逐条对齐）：
+//   ① 落后 ⇒ 仍有块（**照旧计入 `indexed`**）＋ 另开一条 `text_stale` gap（两件事同时看得见）；
+//   ② **没查**（清单不传）⇒ `pages.stale === null`，摘要**不打印** —— 不许把"不知道"印成"0 页落后"；
+//   ③ 查过了、没有落后的（`{total:0}`）⇒ `pages.stale === 0`（与 ② 分得开）。
+// ---------------------------------------------------------------------------
+describe("覆盖报告 × 派生落后（联合格子 j3）", () => {
+  const withChunk = async (pageId: string) => {
+    const s = await stores();
+    s.chunks.replace({ kind: "page", pageId }, chunkText({ kind: "page", pageId }, "合并后还没补算的旧正文。"));
+    return s;
+  };
+
+  it("① 落后的页面**照旧算已索引**，但另开一条 `text_stale` gap（两件事都看得见）", async () => {
+    const s = await withChunk("p1");
+    const r = await indexCoverage(
+      { pageIds: ["p1", "p2"], attachments: [], stalePages: { total: 1, pageIds: ["p1"] } },
+      s,
+    );
+    expect(r.pages).toMatchObject({ total: 2, indexed: 1, empty: 1, stale: 1 });
+    // p1 有块 ⇒ 不是 page_empty；它是**另一类**缺口（搜得到但是旧的）
+    expect(r.gaps.map((g) => `${g.id}:${g.reason}`)).toEqual(["p1:text_stale", "p2:page_empty"]);
+    expect(r.gaps[0].detail).toContain("合并前");
+    // ★ 摘要里必须**并列**出现（只看一行的人不会把"有块"读成"是最新的"）
+    expect(summarizeCoverage(r)).toContain("1 页**派生落后**");
+  });
+
+  it("② **没查**（不传清单）⇒ `stale === null` 且摘要不打印（「不知道」不许印成「0 页落后」）", async () => {
+    const s = await withChunk("p1");
+    const r = await indexCoverage({ pageIds: ["p1"], attachments: [] }, s);
+    expect(r.pages.stale).toBeNull();
+    expect(r.gaps.map((g) => g.reason)).not.toContain("text_stale");
+    expect(summarizeCoverage(r)).not.toContain("派生落后");
+  });
+
+  it("③ **查过了、没有落后的** ⇒ `stale === 0`（与 ② 是两件事）", async () => {
+    const s = await withChunk("p1");
+    const r = await indexCoverage({ pageIds: ["p1"], attachments: [], stalePages: { total: 0 } }, s);
+    expect(r.pages.stale).toBe(0);
+    expect(summarizeCoverage(r)).not.toContain("派生落后"); // 0 不打印，但**值**是 0 不是 null
+  });
+
+  it("④ 又落后、**又没块**（两条都成立）⇒ 报 `page_empty`；落后的总数仍如实计数", async () => {
+    const s = await stores(); // p9 没有块
+    const r = await indexCoverage(
+      { pageIds: ["p9"], attachments: [], stalePages: { total: 1, pageIds: ["p9"] } },
+      s,
+    );
+    // 没块 ⇒ 主要缺口就是"检索面里没有它"；此时再报一条"内容是旧的"只会把同一件事说两遍
+    expect(r.gaps.map((g) => g.reason)).toEqual(["page_empty"]);
+    expect(r.pages.stale).toBe(1);
+  });
+
+  it("⑤ 清单里点名了**不在本次取材范围**的页 ⇒ 不凭空多出 gap（口径与 `pageIds` 对齐）", async () => {
+    const s = await withChunk("p1");
+    const r = await indexCoverage(
+      { pageIds: ["p1"], attachments: [], stalePages: { total: 3, pageIds: ["p1", "p-别的空间"] } },
+      s,
+    );
+    expect(r.gaps.map((g) => g.id)).toEqual(["p1"]);
+    expect(r.pages.stale).toBe(3); // total 是队列给的原话，不按本次范围改写
+  });
+});

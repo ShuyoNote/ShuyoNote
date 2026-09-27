@@ -165,6 +165,28 @@ function runCell(cell, { dry = false } = {}) {
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   const tail = out.split("\n").filter((l) => l.trim()).slice(-6);
   const isCargo = /cargo test/.test(cell.cmd);
+  const isVitest = /\bvitest\b/.test(cell.cmd);
+  if (isVitest) {
+    // ★ vitest 也要下限（2026-09-27 加）：`vitest run <file>` 在**文件里没有用例**时退出码是 1，
+    //   但"文件还在、用例被删光/被 skip 光"这种形态退出码却是 0 ⇒ 只看出退码会把"这一格空了"读成通过。
+    //   口径与 cargo 那条一致：**空跑即红**。
+    const m = out.match(/Tests\s+(?:(\d+) failed \| )?(\d+) passed/);
+    const failed = Number(m?.[1] ?? 0);
+    const passed = Number(m?.[2] ?? 0);
+    if (!m) {
+      console.error(`❌ ${cell.id}：拿不到 \`Tests … passed\` 行 —— 这一格等于没跑（空跑即红）。尾部：`);
+      for (const l of tail) console.error(`   | ${l}`);
+      return "red";
+    }
+    const floor = cell.minPassed ?? 1;
+    if (failed !== 0 || passed < floor) {
+      console.error(`❌ ${cell.id}：${passed} passed / ${failed} failed（下限 ${floor}/0，${secs}s）`);
+      for (const l of tail) console.error(`   | ${l}`);
+      return "red";
+    }
+    console.log(`✅ ${cell.id}：${passed} passed / 0 failed（${secs}s）`);
+    return "green";
+  }
   if (isCargo) {
     const counts = parseTestResult(out);
     if (!counts) {
