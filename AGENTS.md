@@ -138,6 +138,10 @@ capabilities → vite build),又慢又容易被无关报错带偏。它是**发�
 - **`check-overlay-registry`** —— 新增浮层必须登记,否则**安卓返回键直接退出应用**。
 - **`check-web-commands`** —— Rust 命令必须 ⊆ `src/lib/platform/commands.ts` 的 `CommandMap`。
   新增后端命令时两处一起改。
+- **`check-plan-status`** —— `docs/plans/*.md` 的**头部**要有 `状态：`;取值含
+  `已完成/已实现/已收口/已落地/已拍板/已定` 的**必须带可核 `证据：`**(反引号或 markdown
+  链接指向的仓内路径要真实存在)。⚠️ **取值是自由文本,门禁不发明词表**;旧账冻结在
+  `scripts/plan-status-baseline.json`(**只减不增**)。**新增方案别忘了写状态行。**
 
 ## 9. 编码与行尾(都是真事故驱动)
 

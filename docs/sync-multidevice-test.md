@@ -134,6 +134,12 @@ node scripts/sync-3way.mjs --server http://127.0.0.1:8787 --token 'sk_……'
 
 ## 4. Windows 侧（我这边）
 
+> ⚠️ **路径提醒（2026-09-27）**：本文 §1 / §2 / §2b 那几条 `cd ~/zhai/…` 是 **Mac 侧**的路径，
+> 保持原样 —— **Mac 那一侧的目录布局没有核实过，不替它猜**。
+> 但 **Windows 侧**的工作区在 2026-09-27 收敛过：六个仓从 `<zhai>\` 收进 **`<zhai>\repos\`**
+> （即 `C:\Users\cnzen\zhai\ShuyoNote` → **`C:\Users\cnzen\zhai\repos\ShuyoNote`**）。
+> 下面这些命令都是在仓内跑的相对路径，不受影响；但**手工 cd 时要带上 `repos\`**。
+
 拿 Mac 给的地址跑：
 
 ```bash

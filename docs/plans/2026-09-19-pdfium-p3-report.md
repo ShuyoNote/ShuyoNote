@@ -33,6 +33,15 @@ SHUYONOTE_PDFIUM_DIR=/mnt/c/Users/cnzen/zhai/ShuyoNote-pdfmerge/src-tauri/vendor
   cargo test pdf_engine_compare -- --nocapture
 ```
 
+> ⚠️ **上面那条 `SHUYONOTE_PDFIUM_DIR` 是当时的记录，路径今天已不存在**（2026-09-27 标注）：
+> `ShuyoNote-pdfmerge/` 是一个 worktree，**已于 2026-09-26 回收**（判据：HEAD 已并入 `main`，
+> 见根 `AGENTS.md` §3）。**并且** Windows 侧工作区在 2026-09-27 又收敛了一层 ——
+> 六个仓从 `<zhai>\` 收进 `<zhai>\repos\`（即 `…\zhai\ShuyoNote` → `…\zhai\repos\ShuyoNote`）。
+>
+> ⇒ 要用这条配方，**别照抄那个路径**：先 `node scripts/fetch-pdfium.mjs --platform linux-x64`
+> 把库取到**当前检出**的 `src-tauri/vendor/pdfium/linux-x64/lib`，再把 `SHUYONOTE_PDFIUM_DIR`
+> 指到它。**下面三节的读数不受影响** —— 那是当时真跑出来的结果，本标注只说明"复现命令的路径要更新"。
+
 ## 三、结果（硬判据）
 
 | 样本 | 尺寸 | RGB 最大差 | RGB 超阈像素 | A 最大差 | A 超阈 | 语义不一致 | 双透明 | 结论 |

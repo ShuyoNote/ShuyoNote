@@ -252,6 +252,7 @@ CHANGELOG.md                     # 版本变更日志
 
 | 文档 | 内容 |
 |---|---|
+| [plans/2026-09-27-sync-panel-mobile-density.md](plans/2026-09-27-sync-panel-mobile-density.md) | **同步面板在窄屏的密度问题（方案，待拍板）**：390×844 实测「可见 819 / 内容 996」⇒ 必滚 177px；高度构成（空间卡 594 + 脚 134 + 头 66 + Web 提示 54）；四个选项 A 折叠卡 / B 收窄提示 / C 动作吸底 / D 走全屏；附「零滚动」等三条建议断言，以及明确不碰加密那块 |
 | [sync-multidevice-test.md](sync-multidevice-test.md) | **跨机器多端同步会合测试**（Windows ⇄ Mac，服务器放 Mac）：两侧各一条命令、互相等、各自出 PASS/FAIL；含 Mac 侧起服务端/发设备密钥/真客户端肉眼确认的步骤、常见不通过的四种原因、以及"还剩什么没覆盖"（冲突合并 / 跨机附件 / 断网重连） |
 
 

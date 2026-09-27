@@ -3,7 +3,10 @@
 > 本文件是**客户端权威现状**——新会话先读本文件，即可精确了解 ShuyoNote 客户端当前进度、已做取舍与下一步候选，无需依赖模糊回忆。**对齐到 2026-09-23**（对外交付线 `1.91.26`；`main` 与 `dev` 继续互相合并，见 §1）。
 > 📌 本文里的**机器事实**（门禁条数 / 能力条数 / 命令数）由 `scripts/check-doc-facts.mjs` 门禁核对 `docs/TESTING.md` 的「机器事实」块；
 > 而**每条门禁的名字与挡住的事故**在 `docs/TESTING.md` 的表里 —— 查门禁请以那份表 ＋ `pnpm verify:list` 为准。
-> 项目根：`~/zhai/ShuyoNote`（Mac）/ `C:\Users\cnzen\zhai\ShuyoNote`（Windows）；远端 gitcode（`origin`，权威）+ github（`github`，镜像）。
+> 项目根：`~/zhai/ShuyoNote`（Mac）/ `C:\Users\cnzen\zhai\repos\ShuyoNote`（Windows）；远端 gitcode（`origin`，权威）+ github（`github`，镜像）。
+> ⚠️ **2026-09-27 Windows 侧工作区收敛**：六个仓从 `<zhai>\` 收进 `<zhai>\repos\`（worktree 收进 `<zhai>\worktrees\`，
+> 后来也已回收）。**上行的旧写法 `C:\Users\cnzen\zhai\ShuyoNote` 在 Windows 上已失效**；
+> **Mac 那一侧是否同样收敛未核实**，所以那半句保持原样、没有替它猜一个新路径。
 > 服务端现状见 `shuyonote-sync-server/docs/SYNC_SERVER_STATE.md`；**跨平台开发接续（环境事实、待办与下一步、
 > 换到 Mac 怎么接）见 `docs/SESSION_CONTINUE.md`（服务端仓库）**——本文件只写"现状"，不写操作步骤。
 > ★ **三机协作（2026-09 起）**：Mac / Windows / AMD 三台机器并行推进，**信道是信箱仓 `ShuyoNote-collab`**
