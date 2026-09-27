@@ -399,6 +399,16 @@ export const GATES = [
     cmd: "node scripts/check-gm-conformance.mjs",
     incident:
       "国密这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo，见方案 §0-F）——两份漂移的后果是「跨设备读不出对方的数据」，而它没有任何编译期信号、本机单测也照绿。夹具来自 AMD 2026-09-17（信箱仓 gm-conformance），2026-09-19 搬进本仓：去 target/、驱动重写成跨平台 Node（原 driver.sh 是 Linux 专用：stat -c/sha256sum/$HOME/tongsuo-build）、Tongsuo 缺席自报跳过；并加「空跑即红」下限——固定下限会漏掉「Tongsuo 分支整段被删」，所以下限随 Tongsuo 是否参与而变（3 或 8）",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 实测（dev CI，run #613 / `139072b6`）：本门禁在 CI 上报「自报跳过 1 条」，
+    // 跳的是**跨实现对拍 9 项**（T1 标准向量 2 ＋ T2/T3 双向互解 2 ＋ T4 密文一致/HMAC 一致 2 ＋ T5 KDF 口径 3），
+    // 原因是 CI **没装 Tongsuo**；同一次跑里 `gm-conformance: ✅ 通过 —— 跑成 3 个用例`（R1–R4 覆盖的是「实现没被改坏」）。
+    // ⚠️ **它与 `check-sys-deps` 那种「平台分工」不同**：这 9 项**没有第二个平台会跑**
+    //    （CI 没装；Windows 本机 `node scripts/check-gm-conformance.mjs` ⇒ exit 1）⇒ **这是真的没验过**。
+    // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**、并在严格模式里豁免这一条。
+    // 目标仍是**在有 Tongsuo 的环境里真跑**（CI 装 Tongsuo 是一个小项目；先向 macOS/AMD 要一次那 9 项的读数）。
+    // ⚠️ **发版说明必须记「未验」** —— 本版不得把这一格当成「跨实现一致已验」的证据。
+    selfSkipOk: "CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」；**发版说明须记「未验」**）；目标是在有 Tongsuo 的环境真跑",
   },
   {
     id: "rust-no-sm-crypto",
