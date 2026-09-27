@@ -469,6 +469,15 @@ for (const r of report.results) {
 }
 for (const v of violations) console.log(`❌ 基线：${v}`);
 for (const n of baselineNotices) console.log(`! 基线提示：${n}`);
+// ⭐ 2026-09-27：**本机没覆盖哪几组**必须写出来 —— 否则"本机全绿"会被读成"全部验过"。
+//   来由（实测）：本机 `pnpm verify` 的 DEFAULT_GROUPS 只含纯 Node 组，**不含 rust**；
+//   而 CI 的 `rust-tests` / `rust-sm-wired` 在**另一个 job** 里 ⇒ 本机那份绿覆盖不到它。
+//   出口有三处（终端 / 报告 JSON / CI 摘要），因为读它的人可能只看得见其中一处。
+const uncoveredGroups = GROUP_ORDER.filter((g) => !groups.includes(g));
+if (uncoveredGroups.length) {
+  console.log(`\n! 本机**未覆盖**的组：${uncoveredGroups.join("、")}（由 CI 的其它 job 跑）—— **本机全绿 ≠ 全部验过**`);
+}
+report.uncoveredGroups = uncoveredGroups;
 if (selfSkipped.length) {
   console.log(`\n! 自报跳过 ${selfSkipped.length} 条（**绿 ≠ 全查过**）${STRICT_SELF_SKIP ? " ｜ 严格模式已开" : ""}：`);
   for (const r of selfSkipped) {
@@ -492,7 +501,13 @@ if (jsonPath) {
 }
 // 发版说明要用的那一行：机器生成，直接复制，不要人肉从终端里抄数字。
 if (LINE) console.log(`\n${summaryLine(report)}`);
-const md = markdown(report);
+// ⭐ 摘要里也带上"未覆盖哪几组"（`$GITHUB_STEP_SUMMARY` 用同一份 md）——
+//   跑 CI 的人看摘要就够，不必去翻终端或下载工件。
+const md =
+  markdown(report) +
+  (uncoveredGroups.length
+    ? `\n> ⚠️ **本机未覆盖的组**：${uncoveredGroups.join("、")} —— 它们由 CI 的其它 job 跑；**本机全绿 ≠ 全部验过**。\n`
+    : "");
 if (summaryPath) {
   const p = resolve(root, summaryPath);
   mkdirSync(dirname(p), { recursive: true });
