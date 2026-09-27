@@ -241,8 +241,38 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 # ② 只留静态库（`--require-static` 会拒绝共享版前缀：产物会依赖构建机那份）
 rm -f "$PREFIX"/lib/libcrypto.*.dylib "$PREFIX"/lib/libcrypto.dylib
 OPENSSL_DIR="$PREFIX" node scripts/sm-library-build.mjs --prepare --require-static
+# ②.5 ⚠️ **预签嵌套 dylib —— Tauri 不会做这一步**（2026-09-27 本机实测逼出来的，同日的第二个订正）
+#   现象：一旦设了 `APPLE_SIGNING_IDENTITY`，`tauri build` 走到签名阶段就中止，**dmg 根本没生成**：
+#     Signing .../Contents/MacOS/shuyonote
+#     .../shuyonote: code object is not signed at all
+#     In subcomponent: .../Contents/Frameworks/libpdfium.dylib
+#     failed to bundle project: failed codesign application: failed to run command codesign
+#   根因：Tauri 签主可执行文件时**不签** `bundle.macOS.files` 带进来的嵌套 dylib。
+#        （这也解释了 `macos.yml` 为什么一直没事：它**不设签名身份**，走的是未签名分支。）
+#   修法：**在打包之前**把 vendor 里那份源文件签好 —— Tauri 会把它**整份复制**进包，
+#        复制保留签名 ⇒ 主签名不再撞"子组件未签名"。
+#        `src-tauri/vendor/pdfium/` 是 gitignore 的，所以这一步不弄脏仓库（重取库用 fetch-pdfium.mjs）。
+codesign -f --options runtime --timestamp \
+  -s "Developer ID Application: <你的名字> (<TEAMID>)" \
+  src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
+#   实测（2026-09-27）：修好后 `tauri build --bundles app,dmg` 依次签了
+#   **主可执行文件 → .app → .dmg**，`Finished 2 bundles`；随后
+#   `codesign --verify --deep --strict` ✅ · `pnpm check:macos-bundle` ✅ ·
+#   `otool -L` 里 0 个 libcrypto/libssl（真静态）· 国密五条断言 ✅ ·
+#   `spctl -a -t exec` = `rejected, source=Unnotarized Developer ID`（＝只差公证）。
 # ③ 打包（必须带特性）
-OPENSSL_DIR="$PREFIX" pnpm tauri build --bundles app,dmg --features sm-library
+# ⚠️ **2026-09-27 订正**：这一步原来只有 `OPENSSL_DIR`，**在私有副本机制（09-23）之后必红** ——
+#    `build.rs` 会去 `$CARGO_HOME/registry/src/…/libsqlite3-sys-<ver>/sqlcipher` 找补丁标记，
+#    而补丁打在 `.gm-build/libsqlite3-sys-<ver>/` 的**私有副本**上，只有把 **私有 `CARGO_HOME`**
+#    交给 cargo（那份 `config.toml` 带 `[patch.crates-io]`）才走得到。漏了的现场是一条看起来
+#    像"补丁没打"的 build.rs panic（本机 2026-09-27 逐字复现）：
+#      `启用了 sm-library，但找不到 §3.1 的 SM3/SM4 provider 补丁`
+#    实测（订正后）：`patch=72df3f9a target=macos page_cipher=sm4 sm_crypto=on
+#    src_sha256=741d999b7933…`（与本节 09-22 那份读数逐位一致）。
+#    更稳的取法：`node scripts/sm-library-build.mjs --openssl-dir "$PREFIX" --print-env`
+#    会一并给出 `CARGO_HOME`（还有 `OPENSSL_LIB_DIR` / `OPENSSL_INCLUDE_DIR`）。
+OPENSSL_DIR="$PREFIX" CARGO_HOME="$(pwd)/.gm-build/cargo-home" \
+  pnpm tauri build --bundles app,dmg --features sm-library
 # ④ 产物断言（同 release.yml 的那五条）
 SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied \
 SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 SHUYONOTE_EXPECT_SM_CRYPTO=on \
