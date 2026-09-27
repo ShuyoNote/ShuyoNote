@@ -55,6 +55,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_DIRS = [".github/workflows", ".gitcode/workflows"];
@@ -265,62 +266,70 @@ function checkFile(file) {
   return checkText(readFileSync(file, "utf8"));
 }
 
-const argDirs = process.argv.slice(2);
-const dirs = argDirs.length ? argDirs.map((d) => resolve(d)) : DEFAULT_DIRS.map((d) => join(root, d));
+// ⚠️ 2026-09-27 补守卫（由 macOS 侧的 import 安全普查点出）：**flag 解析与动作一起**放进 `main()`。
+//    此前它们全在顶层 ⇒ 谁 `import` 这个文件，宿主的 argv 就漏进来 —— 
+//    实测（本机探针）：import 即把整条检查跑完并输出；带 `--update*` 时会写基线。
+function main() {
+  const argDirs = process.argv.slice(2);
+  const dirs = argDirs.length ? argDirs.map((d) => resolve(d)) : DEFAULT_DIRS.map((d) => join(root, d));
 
-const files = [];
-for (const dir of dirs) {
-  let names;
-  try {
-    names = readdirSync(dir);
-  } catch {
-    continue; // 目录不存在（例如只有 GitHub、没有 GitCode）就跳过
+  const files = [];
+  for (const dir of dirs) {
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue; // 目录不存在（例如只有 GitHub、没有 GitCode）就跳过
+    }
+    for (const name of names.sort()) {
+      if (!/\.ya?ml$/i.test(name)) continue;
+      const p = join(dir, name);
+      if (!statSync(p).isFile()) continue;
+      files.push(p);
+    }
   }
-  for (const name of names.sort()) {
-    if (!/\.ya?ml$/i.test(name)) continue;
-    const p = join(dir, name);
-    if (!statSync(p).isFile()) continue;
-    files.push(p);
+
+  if (files.length === 0) {
+    console.error(`没扫到任何 workflow 文件：${dirs.join("、")}——目录结构变了？`);
+    process.exit(1);
   }
-}
 
-if (files.length === 0) {
-  console.error(`没扫到任何 workflow 文件：${dirs.join("、")}——目录结构变了？`);
-  process.exit(1);
-}
-
-const bad = [];
-const gmBad = [];
-for (const f of files) {
-  const path = f.startsWith(root) ? relative(root, f) : f;
-  for (const hit of checkFile(f)) bad.push({ path, ...hit });
-  const text = readFileSync(f, "utf8");
-  // ★ 第二条规则只作用在发版工作流上（别的 workflow 不发布，不该被它管）
-  if (/release\.ya?ml$/i.test(path)) {
-    for (const p of gmPipelineRequirements(text, { file: path })) gmBad.push(p);
+  const bad = [];
+  const gmBad = [];
+  for (const f of files) {
+    const path = f.startsWith(root) ? relative(root, f) : f;
+    for (const hit of checkFile(f)) bad.push({ path, ...hit });
+    const text = readFileSync(f, "utf8");
+    // ★ 第二条规则只作用在发版工作流上（别的 workflow 不发布，不该被它管）
+    if (/release\.ya?ml$/i.test(path)) {
+      for (const p of gmPipelineRequirements(text, { file: path })) gmBad.push(p);
+    }
+    // ★ 第三条规则对**所有** workflow 生效：哪个 job 跑了 `--prepare`，那个 job 就得自己交接私有 `CARGO_HOME`
+    for (const p of gmCargoHomeHandoffProblems(text, { file: path })) gmBad.push(p);
+    // ★ 第四条规则（2026-09-25，同一天第二回 CI 实测教出来的）：交接**不能早于** `--prepare`
+    for (const p of gmHandoffOrderProblems(text, { file: path })) gmBad.push(p);
   }
-  // ★ 第三条规则对**所有** workflow 生效：哪个 job 跑了 `--prepare`，那个 job 就得自己交接私有 `CARGO_HOME`
-  for (const p of gmCargoHomeHandoffProblems(text, { file: path })) gmBad.push(p);
-  // ★ 第四条规则（2026-09-25，同一天第二回 CI 实测教出来的）：交接**不能早于** `--prepare`
-  for (const p of gmHandoffOrderProblems(text, { file: path })) gmBad.push(p);
+
+  if (gmBad.length) {
+    console.error("国密链的必备项不全（配置少一行、构建照样绿/红在别处、用户端才暴露）：");
+    for (const p of gmBad) console.error(`  - ${p}`);
+    console.error(
+      "  决定与理由见 docs/RELEASING.md「库级国密：单一口味」；这几件的分工写在 `.github/workflows/release.yml` 那两步的注释里，" +
+        "私有 `CARGO_HOME` 那条见 scripts/lib/sm-library-isolate.mjs 头注。",
+    );
+    process.exit(1);
+  }
+
+  if (bad.length) {
+    console.error("workflow 里有**裸标量以 `:` 结尾**——这是非法 YAML，整个 workflow 文件编译不过：");
+    for (const b of bad) console.error(`  - ${b.path}:${b.line}\n      ${b.text.trim()}`);
+    console.error("  症状：GitHub 不给行号、不给日志，只产出一条 **0 个 job** 的红色 run，且无视 branches 过滤。");
+    console.error("  修法：把整个值加引号（如 `run: \"…plugins::\"`），或去掉行尾那个冒号。");
+    process.exit(1);
+  }
+
+  console.log(`workflow YAML 窄规则通过：${files.length} 个文件，没有裸标量以冒号结尾`);
 }
 
-if (gmBad.length) {
-  console.error("国密链的必备项不全（配置少一行、构建照样绿/红在别处、用户端才暴露）：");
-  for (const p of gmBad) console.error(`  - ${p}`);
-  console.error(
-    "  决定与理由见 docs/RELEASING.md「库级国密：单一口味」；这几件的分工写在 `.github/workflows/release.yml` 那两步的注释里，" +
-      "私有 `CARGO_HOME` 那条见 scripts/lib/sm-library-isolate.mjs 头注。",
-  );
-  process.exit(1);
-}
+if (isMain(import.meta.url)) main();
 
-if (bad.length) {
-  console.error("workflow 里有**裸标量以 `:` 结尾**——这是非法 YAML，整个 workflow 文件编译不过：");
-  for (const b of bad) console.error(`  - ${b.path}:${b.line}\n      ${b.text.trim()}`);
-  console.error("  症状：GitHub 不给行号、不给日志，只产出一条 **0 个 job** 的红色 run，且无视 branches 过滤。");
-  console.error("  修法：把整个值加引号（如 `run: \"…plugins::\"`），或去掉行尾那个冒号。");
-  process.exit(1);
-}
-
-console.log(`workflow YAML 窄规则通过：${files.length} 个文件，没有裸标量以冒号结尾`);

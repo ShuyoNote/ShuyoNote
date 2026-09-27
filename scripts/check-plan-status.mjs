@@ -53,6 +53,7 @@
 import { readdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./lib/is-main.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = resolve(HERE, "..");
@@ -284,79 +285,87 @@ function selfTest() {
 }
 
 // --------------------------------------------------------------------- main
-const argv = process.argv.slice(2);
-if (argv.includes("--self-test")) process.exit(selfTest() ? 0 : 1);
+// ⚠️ 2026-09-27 补守卫（由 macOS 侧的 import 安全普查点出）：**flag 解析与动作一起**放进 `main()`。
+//    此前它们全在顶层 ⇒ 谁 `import` 这个文件，宿主的 argv 就漏进来 —— 
+//    实测（本机探针）：import 即把整条检查跑完并输出；带 `--update*` 时会写基线。
+function main() {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--self-test")) process.exit(selfTest() ? 0 : 1);
 
-const rArg = argv.indexOf("--root");
-const root = resolve(rArg >= 0 ? argv[rArg + 1] : DEFAULT_ROOT);
+  const rArg = argv.indexOf("--root");
+  const root = resolve(rArg >= 0 ? argv[rArg + 1] : DEFAULT_ROOT);
 
-const plans = loadPlans(root);
-if (plans === null) {
-  console.error(`环境不具备：找不到 ${join(root, "docs", "plans")} —— **什么都没检查不算通过**。`);
-  process.exit(2);
-}
+  const plans = loadPlans(root);
+  if (plans === null) {
+    console.error(`环境不具备：找不到 ${join(root, "docs", "plans")} —— **什么都没检查不算通过**。`);
+    process.exit(2);
+  }
 
-const existsFn = (rel) => {
-  const p = resolve(join(root, "docs", "plans"), rel);
-  try { return statSync(p).isFile(); } catch { return false; }
-};
+  const existsFn = (rel) => {
+    const p = resolve(join(root, "docs", "plans"), rel);
+    try { return statSync(p).isFile(); } catch { return false; }
+  };
 
-const { problems, notices } = judgePlans({ plans, existsFn });
-const counts = countsByKind(problems);
+  const { problems, notices } = judgePlans({ plans, existsFn });
+  const counts = countsByKind(problems);
 
-const bArg = argv.indexOf("--baseline");
-const baselinePath = bArg >= 0
-  ? resolve(argv[bArg + 1])
-  : join(root, "scripts", "plan-status-baseline.json");
-let baseline = {};
-try { baseline = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { baseline = {}; }
+  const bArg = argv.indexOf("--baseline");
+  const baselinePath = bArg >= 0
+    ? resolve(argv[bArg + 1])
+    : join(root, "scripts", "plan-status-baseline.json");
+  let baseline = {};
+  try { baseline = JSON.parse(readFileSync(baselinePath, "utf8")); } catch { baseline = {}; }
 
-if (argv.includes("--update-baseline")) {
-  const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
-  writeFileSync(baselinePath, JSON.stringify(sorted, null, 2) + "\n", "utf8");
-  console.log(`基线已更新：${baselinePath}`);
-  console.log(`  ${JSON.stringify(sorted)}`);
+  if (argv.includes("--update-baseline")) {
+    const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
+    writeFileSync(baselinePath, JSON.stringify(sorted, null, 2) + "\n", "utf8");
+    console.log(`基线已更新：${baselinePath}`);
+    console.log(`  ${JSON.stringify(sorted)}`);
+    process.exit(0);
+  }
+
+  console.log(`方案文档：${plans.length} 篇`);
+  console.log(`判据：头部有 \`状态：\`；报完成（${DONE_WORDS.join("/")}）必须带可核 \`证据：\``);
+  if (notices.length) {
+    const words = [...new Set(notices.map((n) => n.word))];
+    console.log(`\n提醒（不判红）：${notices.length} 篇用了没见过的首个状态词：${words.slice(0, 12).join(" / ")}${words.length > 12 ? " …" : ""}`);
+  }
+
+  const { raised, lowerable } = compareCounts(counts, baseline);
+
+  if (raised.length) {
+    console.log(`\n★ 比基线**多**了 ${raised.length} 类（新增了没状态 / 空口说完成的方案）：`);
+    for (const r of raised) console.log(`    [${r.kind}] ${r.now} 篇（基线 ${r.was}）`);
+  }
+  if (lowerable.length) {
+    console.log(`\n↓ 比基线**少**了（可用 --update-baseline 收紧）：${lowerable.join(", ")}`);
+  }
+
+  console.log(`\n当前各类发现：${JSON.stringify(counts)}`);
+  console.log(`基线（${baselinePath.replace(root + "/", "")}）：${JSON.stringify(baseline)}`);
+
+  if (problems.length) {
+    console.log(`\n明细（共 ${problems.length} 处）：`);
+    const byKind = {};
+    for (const p of problems) (byKind[p.kind] ??= []).push(p);
+    for (const [kind, arr] of Object.entries(byKind)) {
+      console.log(`\n  [${kind}] ${arr.length} 篇`);
+      for (const p of arr.slice(0, 8)) console.log(`    · docs/plans/${p.file}  —— ${p.msg}`);
+      if (arr.length > 8) console.log(`    … 另有 ${arr.length - 8} 篇`);
+    }
+  }
+
+  if (raised.length) {
+    console.log(`\n结果：红 —— 比基线多（${raised.map((r) => r.kind + " " + r.now).join(", ")}）`);
+    process.exit(1);
+  }
+  if (problems.length && Object.keys(baseline).length === 0) {
+    console.log(`\n结果：红 —— 基线为空但有 ${problems.length} 处发现。先修，或显式跑 --update-baseline 冻结旧账。`);
+    process.exit(1);
+  }
+  console.log(`\n结果：干净（发现数与基线持平或更少；` + (problems.length ? `${problems.length} 处旧账已冻结` : "无发现") + `）`);
   process.exit(0);
 }
 
-console.log(`方案文档：${plans.length} 篇`);
-console.log(`判据：头部有 \`状态：\`；报完成（${DONE_WORDS.join("/")}）必须带可核 \`证据：\``);
-if (notices.length) {
-  const words = [...new Set(notices.map((n) => n.word))];
-  console.log(`\n提醒（不判红）：${notices.length} 篇用了没见过的首个状态词：${words.slice(0, 12).join(" / ")}${words.length > 12 ? " …" : ""}`);
-}
+if (isMain(import.meta.url)) main();
 
-const { raised, lowerable } = compareCounts(counts, baseline);
-
-if (raised.length) {
-  console.log(`\n★ 比基线**多**了 ${raised.length} 类（新增了没状态 / 空口说完成的方案）：`);
-  for (const r of raised) console.log(`    [${r.kind}] ${r.now} 篇（基线 ${r.was}）`);
-}
-if (lowerable.length) {
-  console.log(`\n↓ 比基线**少**了（可用 --update-baseline 收紧）：${lowerable.join(", ")}`);
-}
-
-console.log(`\n当前各类发现：${JSON.stringify(counts)}`);
-console.log(`基线（${baselinePath.replace(root + "/", "")}）：${JSON.stringify(baseline)}`);
-
-if (problems.length) {
-  console.log(`\n明细（共 ${problems.length} 处）：`);
-  const byKind = {};
-  for (const p of problems) (byKind[p.kind] ??= []).push(p);
-  for (const [kind, arr] of Object.entries(byKind)) {
-    console.log(`\n  [${kind}] ${arr.length} 篇`);
-    for (const p of arr.slice(0, 8)) console.log(`    · docs/plans/${p.file}  —— ${p.msg}`);
-    if (arr.length > 8) console.log(`    … 另有 ${arr.length - 8} 篇`);
-  }
-}
-
-if (raised.length) {
-  console.log(`\n结果：红 —— 比基线多（${raised.map((r) => r.kind + " " + r.now).join(", ")}）`);
-  process.exit(1);
-}
-if (problems.length && Object.keys(baseline).length === 0) {
-  console.log(`\n结果：红 —— 基线为空但有 ${problems.length} 处发现。先修，或显式跑 --update-baseline 冻结旧账。`);
-  process.exit(1);
-}
-console.log(`\n结果：干净（发现数与基线持平或更少；` + (problems.length ? `${problems.length} 处旧账已冻结` : "无发现") + `）`);
-process.exit(0);
