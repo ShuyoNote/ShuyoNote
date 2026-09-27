@@ -191,6 +191,15 @@ export const GATES = [
     cmd: "node scripts/check-sys-deps.mjs --checks registration,toolchain",
     incident:
       "两类真事故各一条：①2026-09-17 发版机清构建期依赖（libssl-dev）⇒ 社区端 openssl-sys 编译失败；②同日 15:51 本机 Xcode 27 装完许可未接受 ⇒ git/python3/cc/xcrun 全线不可用（notarytool 一条探针就能提前发现）",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 实测（dev CI，run #613，`139072b6`）本组在 Linux 上报「自报跳过 1 条」，跳过的是
+    // **平台工具链探针**那一档（`check-sys-deps.mjs` 的 `probeSkipped`：macOS / Windows 各一张表，
+    // 别的平台显式跳过 —— 见该脚本 436 行前后）。
+    // 而 Linux 侧该跑的那半是 **deb 实查**：它**故意不带 `deb`** 挂在本组、另挂在 rust 组的
+    // `check-sys-deps-linux`（那条跑在**装了 Tauri 依赖**的 `rust-tests` job 里，见本条目上方注释）
+    // ⇒ **跳过是平台分工，不是漏验**（每台机器只跑它那一侧的判据）。
+    // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**，并在 `--strict-self-skip` 里豁免这一条。
+    selfSkipOk: "Linux 上跳过的是平台工具链探针（macOS/Windows 各一张表）；Linux 侧该跑的 deb 实查另挂在 rust 组的 check-sys-deps-linux（装了 Tauri 依赖的 job）⇒ 平台分工，不是漏验",
   },
   {
     id: "check-derived-writers",
