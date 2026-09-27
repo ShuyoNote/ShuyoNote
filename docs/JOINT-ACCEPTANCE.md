@@ -47,14 +47,14 @@ node scripts/joint-acceptance.mjs --check --require sm,crdt   # 只要求某几�
 ## 2. 机器事实（**由 `scripts/lib/joint-planes.test.mjs` 逐字核对，别手改**）
 
 <!-- joint:begin -->
-平面 3 条 · 联合格子 8 个（已落地 3 / 待施工 2 / 真机或外部 3）
+平面 3 条 · 联合格子 8 个（已落地 4 / 待施工 1 / 真机或外部 3）
 sm：探针 6 条（外部待读 1）· 单独读数 4 条
 coverage：探针 9 条（外部待读 3）· 单独读数 3 条
 crdt：探针 9 条（外部待读 2）· 单独读数 3 条
 j1 landed macos sm+coverage+crdt
 j2 todo macos sm+coverage+crdt
 j3 landed macos coverage+crdt
-j4 todo macos crdt+coverage
+j4 landed macos crdt+coverage
 j5 landed macos sm+coverage+crdt
 j6 manual owner sm+coverage+crdt
 j7 manual amd sm+coverage+crdt
@@ -72,16 +72,17 @@ j8 manual macos coverage+crdt
 > ⚠️ **2026-09-25 更正（j2/j3/j4 三格）**：这三格原先都写成"**平面开着**（`VITE_CRDT_PLANE=1`）"，
 > 而**那个开关已经在第 47 轮撤出**（`plane.ts` 上半段删除，见冲刺 §16 ＋ `plane.withdrawn.test.ts`）
 > ⇒ 它们的**施工对象不存在了**：不是"施工单已写、判据没落"，而是**这一格得先重写**。
-> **进展（2026-09-27）**：**j3 已按新口径落地**（见下面「j3 已落地」那一节 —— 对象换成
-> 「CRDT 合并留下的**派生落后**标记 × 覆盖报告的读数」，这比原来那条更像交界处的事）；
-> **j2 与开关无关、照原施工单仍可做**；**j4 的口径还没重写**（下一件）。
+> **进展（2026-09-27）**：**j3 与 j4 都已按新口径落地**（各见下面那一节）——
+> j3 的对象换成「CRDT 合并留下的**派生落后**标记 × 覆盖报告的读数」；
+> j4 的对象换成「**载荷里的状态 × 真 `applyChange` × 注入的落地实现**」。
+> 只剩 **j2**（与开关无关，照原施工单仍可做）。
 
 | # | 状态 | 责任方 | 跨平面 | 这一格问的问题 | 命令 |
 | --- | --- | --- | --- | --- | --- |
 | **j1** | ▶ | macos | sm+coverage+crdt | 导出的快照把另两平面的新表/新列一起带走了吗？（血统与覆盖度） | `cargo test --lib workspace_io::` |
 | **j2** | ✎ | macos | sm+coverage+crdt | 两份**页加密不同**的夹具里，另两个平面写进去的东西还读得出来吗？（**与平面开关无关** ⇒ 照原施工单仍可做） | 施工：`security.rs` 两份夹具生成器 |
 | **j3** | ▶ | macos | coverage+crdt | 派生落后（CRDT 合并的痕）**不许**被覆盖报告算成「已覆盖」 | `npx vitest run src/lib/extract/coverageReport.test.ts src/lib/libraryCoverage.test.ts src/components/aiSettingsCoverage.test.tsx` |
-| **j4** | ✎⚠️ | macos | crdt+coverage | ⚠️ 原问"平面开着时，块级合并走真同步路径对不对" —— 开关已撤 ⇒ **口径要重写**（今天该问：块级合并走真同步路径对不对？） | 施工：`verify-two-device-sync.mjs` 加一轮 |
+| **j4** | ▶ | macos | crdt+coverage | 载荷里的 CRDT 状态走**真 `applyChange`** ⇒ 逐字节交给落地实现（老载荷/未知版本不许被调） | `node scripts/verify-two-device-sync.mjs` |
 | **j5** | ▶ | macos | sm+coverage+crdt | 国密构建下**全量 lib** 是否 0 失败（含 `page_crdt` / 派生 / 导出那几族）？ | `node scripts/check-gm-wired.mjs` |
 | **j6** | ◻ | owner | sm+coverage+crdt | 真机一次走完：加密开 → CRDT 编辑 → 抽取 → 覆盖报告 → **重启** → 仍可读？ | 真机剧本（§5） |
 | **j7** | ◻ | amd | sm+coverage+crdt | Windows **静态前缀**下 j1/j5 是否同绿？ | 静态前缀就绪后复跑 |
@@ -117,6 +118,33 @@ j8 manual macos coverage+crdt
 `src/lib/libraryCoverage.ts`（取材那一问，`api.listStaleTextPages(50)`）、
 `src/components/AiSettingsForm.tsx`（单列一栏，`null` 显示「未知」）。
 `--run j3` 走的是三个文件的 vitest（下限 37 条 ⇒ **空跑即红**）。
+
+### j4 已落地（2026-09-27）
+
+**它也换过对象**：原来是「平面开着时，块级合并走真同步路径对不对」，平面开关第 47 轮撤了。
+新对象是那一段**谁也没跑过的中间链**：
+
+```text
+wireState.test.ts        验编解码          ┐
+remoteApply.test.ts      验「注册了就用它」 ├─ 三段各自有判据
+pageBinding.test.ts      验真实现能合      ┘
+真 applyChange 拿到载荷里的状态、按字节交给落地实现   ← ★ 这一段此前没人验（场景 O 补上）
+```
+
+`scripts/verify-two-device-sync.mjs` 场景 O（7 条判据）：
+真 wire 编码（`withCrdtWire`）⇒ 载荷里**真的**挂上 `crdt_state` ⇒ 真 `applyChange`
+⇒ 状态**逐字节**交给已注册的落地实现；**老载荷**（无该字段）与**版本不认识**两种情形
+**一次都不许调**（"没有"与"不认识"必须分得开），且都不阻塞主路径。
+
+⚠️ 两个**实测撞出来**的施工约束（写在脚本注释里）：
+1. **必须一个入口打一个包**（`web.ts` ＋ `crdt/plane.ts` ＋ `crdt/wireState.ts`）——
+   分成两个 bundle 会得到**两份** `plane.ts` 模块实例，注册的落地实现在另一份里读不到，
+   判据会永远"没被调用"而红得毫无线索；
+2. **不能把 `crdt/pageBinding.ts` 拉进这个包**（实测 61 个 esbuild 报错：它 → `yDocBridge`
+   → `editor/config` ⇒ excalidraw 的 CSS、katex 的字体全进包）⇒ 「**合得对不对**」那半条链
+   留在 vitest（`remoteApply.test.ts` ③ 注册的**就是**真实现 `mergeRemotePageState`）。
+
+`--run j4` 走 `node scripts/verify-two-device-sync.mjs`（下限 **91** 条 ⇒ 空跑即红）。
 
 ### j5 已落地，但它**不能**替代 j3/j4
 
@@ -176,8 +204,9 @@ pnpm tauri dev        # 什么都不用设：今天没有"平面开关"这种东
   哪个说法对需要拍：要么承认「派生表随包走、导入后可重建」，要么让导出真的排除它们。
 - **缺口（2026-09-25 改口径；2026-09-27 有进展）**：j2/j3/j4 三格**不再是"施工单已写、判据没落"** ——
   j3/j4 原来的对象是「**平面开着**」（`VITE_CRDT_PLANE=1`），而那个开关**第 47 轮已经撤出**。
-  ⇒ **j3 已于 2026-09-27 按新口径落地**（对象换成「派生落后 × 覆盖报告的读数」，见 §3 下面那一节）；
-  **j4 的口径还没重写**（下一件）；j2 与开关无关，**仍可照原施工单直接落**。
+  ⇒ **j3 与 j4 已于 2026-09-27 按新口径落地**（对象分别换成「派生落后 × 覆盖报告的读数」与
+  「载荷里的状态 × 真 `applyChange` × 注入的落地实现」，见 §3 下面两节）；
+  只剩 **j2** —— 它与开关无关，**仍可照原施工单直接落**。
   前提侧的好消息：CRDT 冲刺的 **S4b-1b**（「收」那一侧）、**S7-1/S7-2**（桌面侧 `page_crdt`）与
   **桌面侧消费 `crdt_state`**（第 43 轮）都已落地；剩下的外部件是**真机双设备验收**（S7-3）。
 - ✅ **已做（2026-09-23 第 47 轮）**：上面那条"**磁盘边界平面开关该撤没撤**"已经撤出 ——
@@ -186,8 +215,8 @@ pnpm tauri dev        # 什么都不用设：今天没有"平面开关"这种东
   [全上线冲刺](plans/2026-09-23-crdt-full-launch-sprint.md) §16；新护栏在 `src/lib/crdt/plane.withdrawn.test.ts`。
   ⇒ 本文 §5 的 j6 剧本**不再需要** `VITE_CRDT_PLANE=1` 那一步（**§5 已按这条改掉**）；
   剧本第 2 步照常做（CRDT 编辑那条路走的是 `page_crdt` ＋ 载荷状态，与本开关无关）。
-  ⚠️ **仍然要记的一条**：三格里 **j3 已按新口径落地**（2026-09-27）、**j4 的口径仍待重写**（对象已撤）、
-  **j2 仍可施工**；**真机双设备验收**照旧缺。
+  ⚠️ **仍然要记的一条**：三格里 **j3/j4 已按新口径落地**（2026-09-27）、**j2 仍可施工**；
+  **真机双设备验收**照旧缺。
 - **Web 端**：`platform/web.ts` 用 sql.js，**没有 SQLCipher** ⇒ 国密那一维在 Web 上不存在（j8）。
   把「Web 也绿了」写成联合结论，等于用一半的证据说两倍的话。
 

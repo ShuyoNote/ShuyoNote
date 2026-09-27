@@ -333,18 +333,27 @@ export const JOINT_CELLS = [
     id: "j4",
     title: "平面开着 ＋ 两设备同步（块级合并走真同步路径）",
     planes: ["crdt", "coverage"],
-    state: "todo",
+    state: "landed",
     owner: "macos",
-    cmd: null,
+    cmd: "node scripts/verify-two-device-sync.mjs",
+    // 空跑即红：这条命令今天 **91** 条（原 84 ＋ 场景 O 的 7 条）。判据被删光时它会打印
+    // 「0 通过 / 0 失败」并 `exit 0` ⇒ 只看退出码会把"这一格空了"读成通过。
+    minPassed: 91,
     criterion:
-      "`verify-two-device-sync.mjs` 的基础上加一轮**平面开着**（`setCrdtPlaneEnabled(true)` ＋ 注入真实现）：" +
-      "两台各加一块 ⇒ 两处都在、顺序一致；派生读数（块/嵌入）在合并后**不出现重复**",
+      "**场景 O**：真 wire 编码（`withCrdtWire`）＋ 真 `applyChange` ⇒ ① 载荷里**真的**挂上 `crdt_state`；" +
+      "② 状态被**逐字节**交给**已注册的**落地实现；③ 页面本身照常落库（状态那一格不吃掉主路径）；" +
+      "④ **老载荷**（无 `crdt_state`）⇒ 落地实现**一次都不被调**；⑤ **版本不认识**⇒ 也不交给它、" +
+      "但内容按今天那条路落库（不猜、也不阻塞）",
     why:
-      "现有同步门禁跑的是**默认（平面关）**那一档 ⇒ 它证明的是「老路径没坏」，不是「新路径能合」。" +
-      "★ 前提（S4b-1b 的「收」那一侧）2026-09-23 已落地 ⇒ 这一格现在**可以施工**了。",
+      "这条链此前**三段各自有判据、中间两段没人验**：`wireState.test.ts` 验编解码、" +
+      "`remoteApply.test.ts` 验「注册了就用它」、`pageBinding.test.ts` 验真实现能合 —— 而" +
+      "「**真 `applyChange` 拿到载荷里的状态、并按字节交给落地实现**」这一段谁也没跑过。" +
+      "这正是同步路径上「两个平面」的交界：状态**跟着载荷走**，而收侧靠**注入**（不许 import " +
+      "`pageBinding`，那会把编辑器节点表拖进 `web.ts` 的依赖图）。",
     ref:
-      "施工：`scripts/verify-two-device-sync.mjs`（Node 侧注入平面实现，见 `src/lib/crdt/plane.ts` 的 " +
-      "`setCrdtPlaneImpl` / `setCrdtRemoteApplier` 注入约定）",
+      "落地：`scripts/verify-two-device-sync.mjs` 场景 O（单入口合并包：`web.ts` ＋ `crdt/plane.ts` ＋ " +
+      "`crdt/wireState.ts` 同一个模块图 —— 分两个包会得到两份 `plane.ts` 实例，注册就失效）；" +
+      "「合得对不对」那半条链在 `src/lib/crdt/remoteApply.test.ts` ③（注册真实现 `mergeRemotePageState`）",
   },
   {
     id: "j5",

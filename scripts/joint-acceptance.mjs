@@ -166,6 +166,27 @@ function runCell(cell, { dry = false } = {}) {
   const tail = out.split("\n").filter((l) => l.trim()).slice(-6);
   const isCargo = /cargo test/.test(cell.cmd);
   const isVitest = /\bvitest\b/.test(cell.cmd);
+  const isSyncScript = /verify-two-device-sync/.test(cell.cmd);
+  if (isSyncScript) {
+    // 与 vitest 同一条理由：这个脚本在**一条判据都不剩**时会打印「0 通过 / 0 失败」并 `exit 0`
+    // ⇒ 只看退出码会把"这一格空了"读成通过。所以同样吃**下限**（空跑即红）。
+    const m = out.match(/\[结果\]\s*(\d+)\s*通过\s*\/\s*(\d+)\s*失败/);
+    const passed = Number(m?.[1] ?? 0);
+    const failed = Number(m?.[2] ?? 0);
+    if (!m) {
+      console.error(`❌ ${cell.id}：拿不到 \`[结果] N 通过 / M 失败\` 行 —— 这一格等于没跑（空跑即红）。尾部：`);
+      for (const l of tail) console.error(`   | ${l}`);
+      return "red";
+    }
+    const floor = cell.minPassed ?? 1;
+    if (failed !== 0 || passed < floor) {
+      console.error(`❌ ${cell.id}：${passed} 通过 / ${failed} 失败（下限 ${floor}/0，${secs}s）`);
+      for (const l of tail) console.error(`   | ${l}`);
+      return "red";
+    }
+    console.log(`✅ ${cell.id}：${passed} 通过 / 0 失败（${secs}s）`);
+    return "green";
+  }
   if (isVitest) {
     // ★ vitest 也要下限（2026-09-27 加）：`vitest run <file>` 在**文件里没有用例**时退出码是 1，
     //   但"文件还在、用例被删光/被 skip 光"这种形态退出码却是 0 ⇒ 只看出退码会把"这一格空了"读成通过。
