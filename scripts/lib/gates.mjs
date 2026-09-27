@@ -463,6 +463,15 @@ export const GATES = [
     cmd: "node scripts/check-gm-registry-clean.mjs",
     incident:
       "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。 ★ 2026-09-26 补记：**上面这一档自 2026-09-23 起已是历史形态** —— 补丁改为打在**私有副本**（`.gm-build/`）上，共享 registry **全程不被改写**（见 `sm-library-build.mjs` §0.5b 与 `patches/README.md`）。本门禁今天守的是两处**残渣**：① 老机器上遗留的共享补丁（legacy 撤回分支仍在）；② `Cargo.lock` 被 `--prepare` 改过。实测（2026-09-26 本机）：`--prepare` 前后共享 `sqlite3.c` 的 sha256 都是 `EA0BF0B0…`（未变）⇒ 隔离生效。**留这段是因为旧描述会让人不敢跑那一步 —— 过期的危害描述与过期的安全承诺一样贵。**",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 本门禁在**读不到共享 registry 源码**时**有意不判红**（干净机器 / 还没跑过 cargo 都会走到那里；
+    // 判红就等于逼人在无依赖机器上红 —— 见上面第 462 行那句「读不出来 ⇒ 只提示，**不判红**」）。
+    // ⚠️ 但"没查"必须**看得见**：2026-09-27 之前那两行消息**不以 `! ` 开头** ⇒ `report-core.mjs` 的
+    // `extractSkips()`（只认**行首** `⏭`/`!`/`✗ skip`/`SKIP`）**采集不到** ⇒ 这一格在报告里是**静默绿**，
+    // 而那正是隔壁 `check-sys-deps` 明写反对的形状（它的原话：「不能当成『没 dpkg 所以跳过』，那正是『没查却显示绿』」）。
+    // ⇒ 本轮给那两行加 `! ` 前缀，并加测试 `scripts/check-gm-registry-clean.test.mjs`（4 条，
+    //   含「去掉前缀 ⇒ 采集不到」的反事实）。登记 ≠ 通过：首选路径仍是在**跑过 cargo** 的机器上真核对。
+    selfSkipOk: "读不到共享 registry 源码时不判红（干净机器/没跑过 cargo 的常态；判红会逼人在无依赖机器上红）—— 已改为走自报跳过通道，可见可登记",
   },
   {
     id: "check-crypto-backend",

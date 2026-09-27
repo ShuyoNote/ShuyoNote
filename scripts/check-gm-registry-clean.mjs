@@ -89,9 +89,13 @@ export function decideFromState(state, { platform = process.platform, featureSmL
 
   if (!state.ok) {
     // 读不出来 ⇒ **不判红**（干净机器 / 还没 fetch 过 registry 都会走到这里）
+    // ⚠️ 2026-09-27：这一行**必须**以 `! ` 开头 —— `report-core.mjs` 的 `extractSkips()`
+    //   只认**行首**的 `⏭` / `!` / `✗ skip` / `SKIP`；不带前缀时它**采集不到** ⇒
+    //   这一格在报告里是**静默绿**（"没查却显示绿"）—— 而那正是隔壁 `check-sys-deps` 明写反对的形状。
+    //   带上前缀后它进「自报跳过（绿 ≠ 全查过）」通道 ⇒ 可见、可登记、也受 `--strict-self-skip` 约束。
     level = worse(level, "notice");
     lines.push(
-      `gm-registry-clean: 未实查（${state.reason}）—— 读不到共享 registry 的 SQLCipher 源码，这一格不判红`,
+      `! gm-registry-clean: 未实查（${state.reason}）—— 读不到共享 registry 的 SQLCipher 源码，这一格不判红`,
       `  · ${state.message}`,
       "  · 真核对要在**跑过 cargo** 的机器上：那时源码已在 registry 里",
     );
@@ -118,7 +122,8 @@ export function decideFromState(state, { platform = process.platform, featureSmL
 
 function main() {
   if (!existsSync(LOCK)) {
-    console.log(`gm-registry-clean: 未实查（没有 ${LOCK}）—— 这一格不判红`);
+    // ⚠️ 同样要带 `! ` 前缀（理由见 `decideFromState` 里那段注释）：不带就**采集不到** ⇒ 静默绿。
+    console.log(`! gm-registry-clean: 未实查（没有 ${LOCK}）—— 这一格不判红（走「自报跳过」通道 ⇒ 报告里可见）`);
     process.exit(0);
   }
   const { platform, error } = platformFromArgv(argv);
