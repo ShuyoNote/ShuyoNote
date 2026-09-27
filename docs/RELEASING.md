@@ -624,7 +624,17 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 > PowerShell 5.1 的 `Set-Content -Encoding ascii`（以及 `Out-File`）写的是 **CRLF**，每行尾多一个 `\r`，
 > 而服务器 `find | sort` 出来的是 LF ⇒ 两边**没有一行相等** ⇒ `comm -23` 把**全部**文件判成"服务器多余"。
 > 现场读数：`本地清单 311 个文件 / 服务器原有 416 个 / 服务器多余（将删）416 个 ⇒ 同步后 0 个文件`。
-> **修法**（写 LF，别用 `Set-Content`）：
+> **修法（首选，2026-09-27 起）**：用 [`scripts/gen-deploy-manifest.mjs`](../scripts/gen-deploy-manifest.mjs) ——
+> **它自己写 LF**（不经过任何 shell 重定向），**写完重读自检**；上传前再 `--check` 一次
+> （同一次会查 **CRLF / BOM / 排序 / 与目录逐行一致**，任何一项不对就 `exit 1` 并告诉你"先别拿它去 `comm`"）：
+> ```bash
+> node scripts/gen-deploy-manifest.mjs --dir dist-web --out "$TEMP/web-manifest.txt"
+> node scripts/gen-deploy-manifest.mjs --check "$TEMP/web-manifest.txt" --dir dist-web
+> ```
+> ⚠️ **别把输出重定向到文件**：PowerShell 的 `>` / `Out-File` 写的正是 CRLF/UTF-16 —— **那正是这次事故的形状**。
+> 缺 `--out` 时脚本会**拒绝运行**（`exit 2`，不算通过）并说明原因。自测：`--self-test`（7 条，含「CRLF ⇒ 判红」）。
+>
+> **手动等价物**（能不用就别用；下面每一行都必须保证 LF）：
 > ```powershell
 > $root = (Resolve-Path dist-web).Path
 > $lines = Get-ChildItem dist-web -Recurse -File |
