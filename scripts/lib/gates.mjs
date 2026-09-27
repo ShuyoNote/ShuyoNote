@@ -422,6 +422,13 @@ export const GATES = [
     //   ⚠️ 它跑完会**还原补丁并把默认特性重新编好** —— 否则同一 job 里后面的 `check-crypto-backend`
     //   会读到"补丁态 ＋ openssl 最新产物"而按平台默认声明判红。
     cmd: "node scripts/check-gm-wired.mjs",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 为什么这台机器上跳过是可接受的：本门禁要的是**装了 SM 版（Tongsuo / SM-OpenSSL）的 OpenSSL 前缀**，
+    // Linux runner 用 `/usr` 拿得到，Windows 开发机上没有那个前缀是常态。
+    // ⚠️ 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**，并在严格模式里豁免这一条。
+    //    实测（2026-09-27，本机聚合器）：`--only rust-sm-wired` ⇒ `status=passed`、`ok=true`，
+    //    而 `skips` 里躺着门禁自己写的「! 跳过（自报跳过，不装绿）…」—— 采到了却没人看，这就是登记的理由。
+    selfSkipOk: "需要 SM 版 OpenSSL 前缀；Windows 开发机没有该前缀是常态（Linux CI 的 /usr 有）",
     incident:
       "2026-09-22：接线那段（`set_cipher_key` → 能力探针/设标签/回显校验）没有任何 CI 门禁覆盖；同时在 macOS 本机发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 发出非国密包」。两者一起促成本门禁：打补丁 ＋ 清两个 profile ＋ `--features sm-library` 跑全量单测（内部下限 380 passed/0 failed，空跑即红），跑完还原补丁并重建默认特性，避免留下混态。",
   },

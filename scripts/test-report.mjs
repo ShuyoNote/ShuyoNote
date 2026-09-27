@@ -23,6 +23,10 @@
 // 环境变量：
 //   GITHUB_STEP_SUMMARY  —— 设置了就自动把 markdown 摘要追加上去（CI 里公开可见）
 //   TEST_REPORT_STRICT=1 —— 等价于 --strict：被跳过的门禁按失败计
+//   TEST_REPORT_STRICT_SKIPS=1 —— 等价于 --strict-self-skip（2026-09-27 加）：门禁**自报跳过**的，
+//     凡没在 gates.mjs 里用 `selfSkipOk` 声明理由的，按失败计。
+//     ⚠️ **故意不默认开、也没接进 CI**：实测本机 `--group contract,smoke,sync,plugin` 34 条里 `skips` 是 0 条，
+//     但 Linux CI 上会不会有别的门禁自报跳过，**只有在那儿跑一遍才知道** —— 铺开由产品仓决定（先看下面那段注释）。
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -44,6 +48,13 @@ function argValue(name) {
 }
 const LIST = argv.includes("--list");
 const STRICT = argv.includes("--strict") || process.env.TEST_REPORT_STRICT === "1";
+// 2026-09-27：**自报跳过**的严格档。为什么单列（而不是并进 `--strict`）：
+//   `--strict` 管的是"运行器层面跳过"（缺环境变量 ⇒ `status: skipped`）；
+//   而这里管的是"门禁自己跑完了、但在输出里说『这一项跳过了』"（`status` 仍是 passed）。
+//   实测证据（本机，产品仓自己的聚合器）：`--only rust-sm-wired` ⇒ `status=passed`、`ok=true`，
+//   而 `skips=["! 跳过（自报跳过，不装绿）：…没有开发用的 crypto 库文件…"]`
+//   ⇒ **一条明说"不装绿"的门禁，工件里是绿的**。`extractSkips` 早就采到了，缺的只是"谁看它"。
+const STRICT_SELF_SKIP = argv.includes("--strict-self-skip") || process.env.TEST_REPORT_STRICT_SKIPS === "1";
 const UPDATE_BASELINE = argv.includes("--update-baseline");
 // 只在**显式**给 `--retry N` 时才对标记 `flaky: true` 的门禁重试，且重试次数会写进报告
 // （摘要里单独列一节"靠重试才通过的"）。CI 默认 0 次：**flake 要吵，不要被抹平**。
@@ -421,6 +432,9 @@ const report = {
     // ⚠️ 显式列出来：报告对象是**逐字段**构造的，漏一个字段就等于那个信息不存在
     //（第一版就漏了它：`skips` 在结果里算了，却没进报告 ⇒ `--json` 里看不到）。
     skips: r.skips || [],
+    // 2026-09-27：自报跳过的**登记理由**（`gates.mjs` 里的 `selfSkipOk`）。逐字段构造 ⇒ 必须显式列，
+    // 否则严格模式读不到它（**我第一版就栽在这**：`report.results` 里没有这个字段 ⇒ 永远判"未登记"）。
+    selfSkipOk: r.selfSkipOk || "",
     incident: r.incident || "",
     durationMs: r.durationMs,
     attempts: r.attempts || 1,
@@ -433,7 +447,15 @@ const report = {
 };
 const failedCount = report.results.filter((r) => r.status === "failed").length;
 const skippedCount = report.results.filter((r) => r.status === "skipped").length;
-report.ok = failedCount === 0 && violations.length === 0;
+// ⚠️ 2026-09-27：**"绿 ≠ 全查过"** —— 自报跳过原先只进工件、不进判定（见 `extractSkips` 的注释）。
+//   现在两件事：① **任何模式下都印出来**（否则"少跑了几条"只在 JSON 里，等于看不见）；
+//   ② 开了 `--strict-self-skip` 时，**未登记**（gate 里没有 `selfSkipOk` 理由）的按失败计。
+// ⚠️ 用**运行时那份** `results`（它带 `...gate` ⇒ 有 `selfSkipOk`），**不是** `report.results`
+//    （那是逐字段构造的 JSON 形状）。这一处踩过：第一版读 `report.results` ⇒ 永远判"未登记"。
+const selfSkipped = results.filter((r) => (r.skips ?? []).length > 0);
+const unregisteredSelfSkips = selfSkipped.filter((r) => !r.selfSkipOk);
+report.selfSkips = selfSkipped.map((r) => ({ id: r.id, registered: Boolean(r.selfSkipOk), reason: r.selfSkipOk || "", skips: r.skips }));
+report.ok = failedCount === 0 && violations.length === 0 && !(STRICT_SELF_SKIP && unregisteredSelfSkips.length > 0);
 
 console.log(`\n${"═".repeat(72)}\n回归门禁结果\n${"═".repeat(72)}`);
 for (const r of report.results) {
@@ -447,9 +469,19 @@ for (const r of report.results) {
 }
 for (const v of violations) console.log(`❌ 基线：${v}`);
 for (const n of baselineNotices) console.log(`! 基线提示：${n}`);
+if (selfSkipped.length) {
+  console.log(`\n! 自报跳过 ${selfSkipped.length} 条（**绿 ≠ 全查过**）${STRICT_SELF_SKIP ? " ｜ 严格模式已开" : ""}：`);
+  for (const r of selfSkipped) {
+    console.log(`   · ${r.id}${r.selfSkipOk ? `（已登记：${r.selfSkipOk}）` : "（**未登记** —— 要留在绿里就得在 gates.mjs 里补 selfSkipOk 理由）"}`);
+    for (const s of r.skips) console.log(`       ${s}`);
+  }
+  if (STRICT_SELF_SKIP && unregisteredSelfSkips.length) {
+    console.log(`   ❌ 未登记的自报跳过按**失败**计：${unregisteredSelfSkips.map((r) => r.id).join("、")}`);
+  }
+}
 console.log(
   `\n${report.ok ? "全部通过" : "存在失败"}：${report.results.length} 条门禁，失败 ${failedCount} 条，跳过 ${skippedCount} 条，`
-    + `总耗时 ${(totalMs / 1000).toFixed(1)}s`,
+    + `自报跳过 ${selfSkipped.length} 条，总耗时 ${(totalMs / 1000).toFixed(1)}s`,
 );
 
 if (jsonPath) {
