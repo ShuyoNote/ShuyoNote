@@ -1,0 +1,47 @@
+# 不变式清单（本仓当前契约）
+
+> **收录条件（两条，缺一不可）**：① 能指到**一条会红的判据**；② 那条判据有**「看过它红」的证据**
+> （`_workspace/mutation-evidence.json` 里按脚本 sha 绑定；**判据代码一改，证据自动过期**）。
+> ⇒ **过期即从本表撤下**（先重做证据，再放回）。本表不是"愿望清单"。
+>
+> 「口径」一列**逐字引自** `scripts/lib/gates.mjs` 的 `label`（本仓门禁注册表＝单一事实来源）；
+> 「挡的是哪次事故」见同处 `incident` 字段。**本表不重写口径、不复述实现**。
+>
+> 收录范围与「为什么不收其余 34 条」见 [README.md](README.md) §现状。
+
+| id | 口径（引自注册表 `label`） | 判据 | 会红证据 |
+|---|---|---|---|
+| **INV-CHANGELOG-structure** | CHANGELOG 结构 | `scripts/check-changelog.mjs`（可传目标文件注入） | ✅ 账本 `exit=1`（sha `d850ec3a8688`）｜2026-09-28 夹具实测：合法 exit 0 ／ 让 `###` 出现在任何 `##` 之前 ⇒ **exit 1** |
+| **INV-CHANGELOG-gate-numbers** | CHANGELOG 门禁数字（与基线一致） | `scripts/check-changelog-gate-numbers.mjs`（`--root`） | ✅ 账本 `exit=1`（sha `48cff11c1047`）｜夹具实测：台账写 999 / 基线 1000 ⇒ **exit 1**（逐字判语「vitest：写的是 999，基线是 1000」） |
+| **INV-RELEASE-tag-tree** | 每个 tag 的树自带本版台账段头 | `scripts/check-changelog-tags.mjs` | ✅ 账本 `exit=1`（sha `0867f9f96165`） |
+| **INV-RELEASE-version-parity** | CHANGELOG 已发布标题与版本文件同改 | `scripts/check-changelog-version-parity.mjs`（`--repo` / `--commit` / `--range`） | ✅ 账本 `exit=1`（sha `3ec4f858809c`） |
+| **INV-RUST-deadcode-receipts** | 死代码收据（`allow(dead_code)` 必须带日期 ＋ 删除条件） | `scripts/check-dead-code-receipts.mjs`（`--root`） | ✅ 账本 `exit=1`（sha `0189cd725058`）｜夹具实测：**只删掉那行收据注释** ⇒ **exit 1**；空扫 ⇒ 拒绝给绿 |
+| **INV-STORE-derived-writers** | 派生表唯一写入者（Rust 生产代码不许写 attachment_text / chunks） | `scripts/check-derived-writers.mjs`（`--root`） | ✅ 账本 `exit=1`（sha `c712fd808842`）｜夹具实测：生产代码里加一句 `INSERT INTO attachment_text` ⇒ **exit 1** |
+| **INV-STORE-doc-content-layer** | 文档内容直接访问（只减不增：新文件 / 超基线即红） | `scripts/check-doc-content-access.mjs`（`--root`） | ✅ 账本 `exit=1`（sha `a90819ac28ec`）｜夹具实测：同文件 1 → 2 处 ⇒ **exit 1**（逐字判语「直接访问变多：src/lib/a.ts 1 → 2」） |
+| **INV-UI-hook-order** | hooks 顺序（早退不许越过 hooks） | `scripts/check-hook-order.mjs --self-test` | ✅ 账本 `exit=1`（sha `2205ea7a24ba`）＋ 脚本自测里放的是**两次真事故的真实写法**（必须判红） |
+| **INV-BRANCH-release-line** | 发布线独占提交（漏在 main 上的开发改动） | `scripts/check-main-only-commits.mjs` | ✅ 账本 `exit=1`（sha `18ff6c24af18`） |
+| **INV-PLAN-status-evidence** | 方案状态位与完成的证据（每篇 plan 头部要有 `状态：`；报完成必须带可核证据；只减不增） | `scripts/check-plan-status.mjs --self-test`（`--root`） | ✅ 账本 `exit=1`（sha `8e8cec4edebd`） |
+| **INV-UI-store-subscriptions** | Zustand 订阅粒度（组件不许整店订阅；只减不增） | `scripts/check-store-subscriptions.mjs --self-test`（`--root`） | ✅ 账本 `exit=1`（sha `2cc253f5a955`） |
+
+## 怎么核（**别信本表，跑命令**）
+
+```bash
+# 1) 这 11 条判据现在是否都绿（走注册表 ＝ CI 同款路径）
+node scripts/test-report.mjs --only check-changelog,check-changelog-numbers,check-changelog-tags,check-changelog-version-parity,check-dead-code-receipts,check-derived-writers,check-doc-content-access,check-hook-order,check-main-only-commits,check-plan-status,check-store-subscriptions
+
+# 2) 本表「会红证据」是否还新鲜（判据代码一改，账本里那条就过期 ⇒ 判据 D2 会红）
+node _workspace/bin/check-gate-manifest.mjs
+node _workspace/bin/check-all.mjs
+```
+
+> 判据 D2 的口径（工作区 `AGENTS.md` §10 那份表）：每条仓内 `check-*.mjs` 都要有
+> **真变异证据**（`exit` ∈ {1,2,3}、逐字 `finding`、`gateSha256`）或**带理由的豁免**。
+> ⇒ 「本层的会红证据」与「D2 的账本」是**同一本账**，不是两套。
+
+## 本层**故意不含**的（免得被当成遗漏）
+
+- **其余 34 条门禁**：理由（缺可跑性 / 平台绑定造不出夹具）见 [README.md](README.md) §现状；
+  普查与复现命令在 `_workspace/notes/2026-09-28-spec-layer-readiness.md`。
+- **跨仓契约**（对外表述红线、定价口径）：唯一出处是 `shuyo-site/docs/red-lines.md` 与
+  `shuyo-site/ops/business/contract-outline.md`，**不在此处复制**。
+- **还在 plan 里的、没有判据兜着的规矩**：它们留在 `docs/plans/`，**不进这一层**（这正是本层的门槛）。
