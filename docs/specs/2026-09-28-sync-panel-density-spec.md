@@ -109,9 +109,70 @@ D 动 UI（规格第 5 步）—— 功能落地的主体
   D4 对齐 ✅ **已做**（A3）。
   D5 状态置顶 ＋「这一轮走的是」：**读数现成** —— `LanStatus.kind`（"lan"/"configured"/""）
      ＋ `.peers`（N 台，注释逐字：「与状态行里那个"N 台"是同一个数」）⇒ **前端可做**。
-     ⚠️ 但**「刚刚」这个时间没有现成读数**：`SyncProfile` 只有 `last_pushed_seq` / `last_pulled_seq`
-        （**序号，不是时间**）⇒ 要么先**不显示时间**（只显示状态），要么 Rust 侧新加一个 `last_sync_at`。
-        ⇒ **这一条要先定，否则 hero 里那个"刚刚"是编的。**
+     ✅ **「刚刚」这个时间也有现成读数**（2026-09-28 晚更正，见 §3.3）：
+        `api.listSyncHistory(1)` ⇒ `SyncHistoryEntry.at` 是**时间戳**，还带 `pushed` / `pulled` / `ok`。
+        ⇒ **hero 那三行零 Rust 改动可做**（我先前只看了 `SyncProfile` 就说"没有时间读数"，
+           没往旁边的 `sync_history` 表看 —— 又一处"我以为的全貌"。）
+
+### 3.2 合并清单（**已实测**，2026-09-28 晚）
+
+> 做法：在 `origin/dev`（`135f54ef`）上建集成分支，**按序把五笔合进去**，每合一笔跑门禁；
+> 合完再在主检出上量整档读数（集成分支自己的 :5180 dev server 因两个 vite 共用 `.vite` 缓存
+> 导致 PDF 解析不出来，读数不可用 —— 那是测试环境产物，不是合并产物）。
+
+```text
+顺序  分支                              合并   合并后门禁
+ 1   feat/copy-discipline-gate         ✅ 干净  check-copy-discipline exit 0（＋--self-test 13/13）
+ 2   fix/mobile-views-false-pass       ✅ 干净  check-copy-discipline exit 0
+ 3   fix/sync-mesh-alignment           ✅ 干净  check-copy-discipline exit 0
+ 4   spec/sync-panel-density           ✅ 干净  check-doc-links exit 0
+ 5   spec/user-facing-copy             ✅ 干净  check-doc-links exit 0
+⇒ **五笔 0 冲突**（唯一文件交叠是两条 spec 分支都加同一张效果图，但 git blob 相同 `f4c4623`）
+```
+
+**合完之后在可靠环境（主检出 :5173）上量的整档读数：**
+```text
+verify-mobile-views (APP_SHELL=web)   **307 通过 / 0 失败**   ← 与 dev 逐字相同 ✓
+verify-mobile-overlays                **1034 通过 / 0 失败**  ← dev 是 1031，+3 条新断言 ✓
+check-doc-links                       exit 0 ｜ 151 个 .md（含图片与任意后缀）
+check-plan-status                     exit 0 ｜ 干净
+check-copy-discipline                 exit 0 ｜ 没有新增
+⇒ 临时打进主检出的 4 个文件 + 2 个新文件，量完**按字节还原一致**、`git status` 干净 ✓
+```
+⚠️ **`test/sync-panel-density-assertions`（`90a163b`）不在上面五笔里** —— 它有 3 条红，
+   要等 §3.1 A6 的过渡口径定了再合。
+
+### 3.3 D5 的读数普查（三壳实测，2026-09-28 晚）
+
+```text
+读数                 Web 390×844              Tauri 手机 390×844        Tauri 桌面 1280×800
+lan_status           ✅ enabled:false          ✅ enabled:true            ✅ enabled:true
+                        peers:0  kind:""          peers:2  kind:"lan"        peers:2  kind:"lan"
+                        line:"同步地址：尚未绑定"    （mesh 一并可用）           （mesh 一并可用）
+                        mesh.note:"Web 版开不了本机端口 ⇒ 网格这一档……"
+sync_profiles        ✅ []                     ✅ 1 条                    ✅ 1 条
+listSyncHistory(1)   ✅ []                     ✅ [{at:…, pushed:5,          ✅ 同左
+                                                   pulled:3, ok:1, …}]
+⇒ **三壳都拿得到；hero 那三行【零 Rust 改动】可做。**
+```
+
+**hero 三行与读数的对应（都是现成的）：**
+```text
+「已同步 / 未同步」            ← listSyncHistory(1).ok
+「刚刚 · 我的工作空间」        ← listSyncHistory(1).at（时间戳）＋ 空间名
+「这一轮走的是：局域网 · 2 台可用」← lan_status.kind ＋ lan_status.peers
+「今天同步了 N 项」            ← listSyncHistory 里今天各条的 pushed + pulled 之和
+```
+
+⚠️ **一条硬约束**（`src/lib/platform/commands.ts:186` 注释逐字）：
+> 「来自 Rust 的 `Route`（`lan::LinkKind::as_str`）：界面**只能拿它换标题**，
+> **不许**按地址形状自己再判一次档（判据 ⑭ 钉这条）。」
+⇒ 所以「局域网 / 服务器」这两个词必须**由 `kind` 映射**，不许前端 parse `server_url` 猜。
+
+⚠️ **Web 那一档不可忘**：Web 的 `kind` 是 `""`、`enabled:false`，而 Rust 已经给了一句人话解释
+（`mesh.note`）。⇒ hero 在 Web 上应当显示「尚未绑定同步」，**不是**「同步失败」。
+
+---
 
 E 分工与边界
   · macOS（我）：判据、规格、CSS 对齐、读数普查 —— 已交（A1/A3/A4/A5/A6 ＋ B 的记录器结论）
