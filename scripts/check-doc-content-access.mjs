@@ -64,7 +64,8 @@
 // 用法：
 //   node scripts/check-doc-content-access.mjs            # 校验（CI / 本地门禁）
 //   node scripts/check-doc-content-access.mjs --update   # 把基线下调到当前实测（只允许变小）
-import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+//   node scripts/check-doc-content-access.mjs --root <dir>   # 夹具/自测用（2026-09-28 加）
+import { readdirSync, readFileSync, statSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 // 判据（测试文件 / Rust 生产文本）在 `scripts/lib/rust-scan.mjs`，那里有自己的回归判据
@@ -73,10 +74,21 @@ import { fileURLToPath } from "node:url";
 import { isTestFile, productionText } from "./lib/rust-scan.mjs";
 import { isMain } from "./lib/is-main.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : join(HERE, ".."));
 const BASELINE = join(root, "scripts", "doc-content-access-baseline.json");
 const PATTERNS = [/content_json/g, /content_text/g, /contentJson/g];
-const UPDATE = process.argv.includes("--update");
+const UPDATE = argv.includes("--update");
+
+// ⚠️ 2026-09-28 加的守卫（与 check-derived-writers / check-dead-code-receipts 同形）：
+//    **两个扫描根都不存在 ⇒ 拒绝给绿** —— 此前会一路走空、打印「0 个文件 / 0 处」并 **exit 0**，
+//    那是「没查却显示绿」（错根、错检出、目录被搬走时最危险）。
+if (isMain(import.meta.url) && !existsSync(join(root, "src")) && !existsSync(join(root, "src-tauri", "src"))) {
+  console.error(`✗ ${root} 下既没有 src/ 也没有 src-tauri/src/ ⇒ 判据没东西可扫（拒绝给绿）`);
+  process.exit(1);
+}
 
 /** 需要扫的目录与扩展名。 */
 const ROOTS = [
@@ -153,6 +165,10 @@ function main() {
       process.exit(1);
     }
     const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
+    // ⚠️ 2026-09-28：**先建父目录再写** —— 真仓里 `scripts/` 本来就在，所以"不建目录"从来没暴露；
+    //    直到拿 `--root <夹具根>` 跑（2026-09-28 实测）：`writeFileSync` 直接 `ENOENT` 崩掉，
+    //    于是夹具拿到的是"基线没写成 ⇒ 下一个文件都算新增 ⇒ 控制组也红"，**看起来像判据坏了**。
+    mkdirSync(dirname(BASELINE), { recursive: true });
     writeFileSync(BASELINE, JSON.stringify(sorted, null, 2) + "\n", "utf8");
     const total = Object.values(sorted).reduce((a, b) => a + b, 0);
     console.log(`✓ 基线已下调：${Object.keys(sorted).length} 个文件 / ${total} 处`);
@@ -183,7 +199,7 @@ function main() {
   const lowerable = Object.entries(baseline).filter(([f, n]) => (counts[f] ?? 0) < n);
   console.log(
     `✓ 文档内容直接访问（生产面）：${Object.keys(counts).length} 个文件 / ${nowTotal} 处（基线 ${wasTotal} 处）` +
-      `　—　已排除 ${skippedTestFiles} 个测试文件、${trimmedRustTails} 个 Rust 测试尾部`,
+      `　—　已排除 ${skippedTestFiles} 个测试文件、${trimmedRustTails} 个 Rust 测试尾部｜根：${root}`,
   );
   if (lowerable.length) {
     console.log(`  ℹ️ 有 ${lowerable.length} 个文件的计数已经低于基线，可下调基线让它继续收敛：`);
