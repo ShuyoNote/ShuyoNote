@@ -152,7 +152,9 @@ const sources = walk(join(root, "src")).map((file) => {
 });
 
 // `OVERLAYS` 清单（**解析**移动端验收脚本，不在这里抄一遍：抄一遍就又成了两份手写清单）
-const overlaysText = readFileSync(OVERLAYS_SCRIPT, "utf8");
+// ⚠️ 2026-09-28：**先归一化行尾** —— 下面用 "\n];" 这样的**跨行针**找数组结尾，而 Windows 检出是 CRLF（入库 LF）
+  //   ⇒ 那个针永不命中 ⇒ 本脚本会假报"解析不到"并 exit 1。（由工作区门禁 check-line-endings-needles 抓到）
+  const overlaysText = readFileSync(OVERLAYS_SCRIPT, "utf8").replace(/\r\n/g, "\n");
 const overlaysStart = overlaysText.indexOf("const OVERLAYS = [");
 const overlaysEnd = overlaysText.indexOf("\n];", overlaysStart);
 if (overlaysStart < 0 || overlaysEnd < 0) {
