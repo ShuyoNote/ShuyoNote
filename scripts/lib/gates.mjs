@@ -93,6 +93,17 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-agent-surface",
+    group: "contract",
+    label: "外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识",
+    cmd: "node scripts/check-agent-surface.mjs",
+    incident:
+      "2026-09-28：注册表里 `ai: true` 恰好 10 条（read 8 / write 2，实测 ✓），而 MCP 规格把写判定写成查 `isWrite`" +
+      "——该字段在原始 JSON 里出现 0 次 ✗（真实字段是 `kind`）。同一份 `desc` 里 `content_json` 只出现在**非 ai** 的能力上，" +
+      "⇒ 面必须由注册表生成；只读面出现写能力、或描述里写进内部标识 ⇒ 红",
+    registered: "2026-09-28",
+  },
+  {
     id: "check-doc-facts",
     group: "contract",
     label: "文档里的机器事实（门禁 / 能力 / 命令数）与代码一致",
