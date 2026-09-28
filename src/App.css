@@ -1488,6 +1488,11 @@ html[data-platform="win"] .app-body {
 .sync-input {
   width: 100%;
   box-sizing: border-box;
+  /* ⚠️ 2026-09-28：**命中区**。原来靠 `padding: 7px 10px` ＋ `font-size: 13px` 算出来约 **32px 高**，
+     而本仓的规则是"可点控件高度一律 ≥44"（`verify-mobile-views.mjs:223`）——
+     那条判据的选择器**含 `input`**，但它跑的时候同步面板没被打开 ⇒ 一直没扫到这里。
+     实测：面板里 10 个输入控件有 **9 个 < 44**（8 个是 32px）而三个门禁全绿。 */
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 10px;
@@ -1742,6 +1747,13 @@ select.sync-input {
 .sync-mesh .sync-field > .sync-btn {
   flex: 0 0 auto;
   white-space: nowrap;
+  /* ⚠️ 2026-09-28：**给同一列的按钮一个共同的最小宽度** ——
+     原来只有 `flex: 0 0 auto`，于是按钮按【文案字数】自适应：
+     「保存地址」(4 字) = 78px、「设口令」(3 字) = 66px ⇒ **差 12px**，
+     而它把这一行的输入框也带得不齐（270 vs 282，右边缘差 12px）。
+     用 `min-width` 而不是 `width`：短标签被撑到同一宽度，**将来更长的标签仍然安全**。 */
+  min-width: 78px;
+  justify-content: center;
 }
 /* 读数里有长 URL（`http://192.168.43.1:47832`）：长串按任意位置折，别撑破卡片。 */
 .sync-mesh .sync-hint {
