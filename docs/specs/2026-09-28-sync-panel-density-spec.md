@@ -49,7 +49,7 @@ isDesktopPlatform()  ≡  isTauri()  ≡  ("__TAURI_INTERNALS__" in window)     
 | id | 口径（一句话） | 判据（要立的那条） | 会红证据 |
 |---|---|---|---|
 | **INV-UI-sync-panel-shell-matrix** | **凡"窄屏／移动端"的断言，必须声明它在哪个壳里；Web ／ Tauri 桌面 ／ Tauri 移动是三个对象，不许用其中一个的读数代表另外两个** | `scripts/verify-mobile-views.mjs` ⇒ **给现有断言加"壳"这一维**：对每个视口各跑两遍（无壳 ＝ Web ／ 注入 `__TAURI_INTERNALS__` ＝ 移动壳），**两遍的断言集合必须分别通过** | **❌ 无**（要立。**怎么证明它会红**：把 Tauri 注入那一路删掉 ⇒ 只跑 Web ⇒ 断言必须红，因为"移动壳这一路根本没跑"） |
-| **INV-UI-sync-panel-persistent-chrome** | **常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里不许有需要阅读与填写的表单** —— 读数行可以有，设置控件不行 | `scripts/verify-mobile-views.mjs` ⇒ 断言：**Tauri 移动壳**下 `.sync-foot` 内 `input, textarea, select` 的数量为 0（按钮另按"是否主操作"单独列） | **❌ 无**（要立。**怎么证明它会红**：实测 `.sync-foot` 里 `input/textarea/select` ＝ **Web 4 ／ app 手机 3 ／ app 桌面 3** ⇒ **三个对象上现在都红**，它同时是"当前缺陷的证据"与"改完的回归守卫"） |
+| **INV-UI-sync-panel-persistent-chrome** | **常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里不许有需要阅读与填写的表单** —— 读数行可以有，设置控件不行 | `scripts/verify-mobile-views.mjs` ⇒ 断言：**Tauri 移动壳**下 `.sync-foot` 内**可见**的 `input, textarea, select` 数量为 0（⚠️ **必须是「可见」**：`display:none` 不摘 DOM ⇒ 数 `querySelectorAll` 会假绿。判据用 `el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== "none"`；按钮另按「是否主操作」单独列） | **❌ 无**（要立。**怎么证明它会红**：实测 `.sync-foot` 里 `input/textarea/select` ＝ **Web 4 ／ app 手机 3 ／ app 桌面 3** ⇒ **三个对象上现在都红**，它同时是"当前缺陷的证据"与"改完的回归守卫"） |
 | **INV-UI-sync-panel-desktop-no-scroll** | **Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`） | `scripts/verify-mobile-views.mjs` ⇒ 新增桌面视口那一路 ＋ 一条 `scrollHeight ≤ clientHeight` 断言 | **❌ 无**（要立。**怎么证明它会红**：打开"局域网直连 ＋ 网格"两段 ⇒ 实测 **711 > 606**（两次实测分别 111px 与 92px）⇒ **现在就是红的**；关掉 P2P 后 `0`，可作对照） |
 
 ---
@@ -85,6 +85,32 @@ isDesktopPlatform()  ≡  isTauri()  ≡  ("__TAURI_INTERNALS__" in window)     
 | **本文件** | **规格**：不变式 ＋ 判据指针 ＋ 会红证据现状 ＋ 落地顺序 | 三对象读数（引用需求 §2）、选项权衡（引用方案 §3） |
 
 ---
+
+## 4.5 ⭐ 预期效果（模拟，2026-09-28 补）与它暴露的一个坑
+
+**模拟方式**：**真 CSS 注入**（`display:none` 掉 `.sync-foot .sync-att.sync-mesh`），不改源码。
+手机 app（Tauri 壳）390×844：
+
+| 指标 | 现状 | 改后（模拟） |
+|---|---|---|
+| 需滚 | **505px** | **308px** |
+| `.sync-foot` 高 | **352px**（占视口 42%） | **155px**（占视口 18%） |
+| `.sync-mesh` | 195px | **0px** |
+| foot 里的表单控件（`querySelectorAll`） | 3 个 | **3 个** ← ⚠️ |
+
+⚠️ **⚠️ 那最后一行是本节的重点**：把 `.sync-mesh` 设成 `display:none` 之后，
+**`querySelectorAll("input,textarea,select")` 数出来【还是 3 个】** —— 因为 `display:none`
+**不把节点从 DOM 里摘掉**。
+⇒ **⇒ 所以 §2 那条断言如果写成 `querySelectorAll(...).length === 0`，它会【假绿】**：
+   面板看起来搬干净了，判据说"通过"，而 DOM 里那三个控件还在（随时可能被别的 CSS 放回来）。
+⇒ **⇒ 断言必须数「可见」的控件**（`getBoundingClientRect().height > 0` ＋ `display !== "none"`）。
+   **这一条是本次模拟【唯一】的新增发现，已回写进 §2 那一行。**
+
+⚠️ 另外两处**如实说**：
+- 我在模拟里给 `.sync-lan` 加了 `padding: 4px`，结果它从 **39px 涨到 47px**（我个人为的偏好反而让它更大）
+  ⇒ 说明"顺手加点间距"这类改动**必须由断言兜住**，不能凭手感。
+- 模拟**只搬走了网格设置**，**没有动** `.space-privacy`（269px，加密相关 ⇒ §12 要先问）
+  与空间卡（586px）。⇒ 所以 308px 的滚动**仍在**；要消掉它需要第 5 步（需求 §3.3 的分层）。
 
 ## 5. 本文件**故意不含**的
 
