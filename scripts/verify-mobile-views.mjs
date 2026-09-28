@@ -1352,7 +1352,8 @@ function assertPdfReader(rr, vp) {
 async function main() {  const executablePath = findChrome();
   if (!executablePath) {
     console.error("找不到 Chrome/Chromium。请安装 Google Chrome，或用 PUPPETEER_EXECUTABLE_PATH 指定路径。");
-    process.exit(1);
+    console.error("⇒ 环境不具备：**不算通过**（exit 2）—— 这**不是**「有发现」，别读成代码有问题。");
+    process.exit(2);
   }
   console.log(`浏览器: ${executablePath}`);
 
@@ -1365,7 +1366,8 @@ async function main() {  const executablePath = findChrome();
   }
   if (!reachable) {
     console.error(`应用地址不可达：${APP_URL}\n请先启动：pnpm dev:web（或设置 APP_URL 指向已运行的服务）。`);
-    process.exit(1);
+    console.error("⇒ 环境不具备：**不算通过**（exit 2）—— 这**不是**「有发现」，别读成代码有问题。");
+    process.exit(2);
   }
   console.log(`应用地址: ${APP_URL}\n`);
 
