@@ -60,6 +60,14 @@ const IS_TAURI_SHELL = APP_SHELL === "tauri";
  *  必须在 page.goto **之前**调用（evaluateOnNewDocument 只对之后的文档生效）。 */
 async function applyShell(page) {
   if (!IS_TAURI_SHELL) return;
+  // ⭐ 记录器（`APP_SHELL_TRACE=1` 时启用）：把页面里的 [shell-cmd] / [shell-unknown] 转发到 node stdout。
+  if (process.env.APP_SHELL_TRACE === "1") {
+    page.on("console", (m) => {
+      const s = m.text();
+      if (s.startsWith("[shell-cmd]") || s.startsWith("[shell-unknown]")) console.log("  " + s);
+    });
+    await page.evaluateOnNewDocument(() => { window.__SHELL_TRACE__ = true; });
+  }
   // ⭐ 桩由 macOS 侧提供（`ShuyoNote-collab/2026-09-28-sync-panel-density-spec-by-macos.reply-4.md` §1），**逐字**装上。
   //    · 那 16 个命令清单是他们在页面上**实测记下来的**（不是猜的）；
   //    · ⚠️ 但桩里的**数据是编的占位**（`peers: 2`、地址、`window` 等）⇒
@@ -87,6 +95,12 @@ async function applyShell(page) {
     };
     window.__TAURI_INTERNALS__ = {
       invoke: async (cmd) => {
+        // ⭐ SHELL TRACE（2026-09-28，macOS 侧要的）：把每次调用记下来；**未知命令单独标** ——
+        //    这样一条命门"缺哪些命令"就能一次量出来（他们那套"记录调用 + 空返回"法的固化）。
+        if (window.__SHELL_TRACE__) {
+          console.log((cmd in M ? "[shell-cmd] " : "[shell-unknown] ") + cmd);
+          (window.__SHELL_CALLS__ = window.__SHELL_CALLS__ || []).push(cmd);
+        }
         if (cmd in M) return M[cmd];
         if (/^list_|_list_|fetch_all/.test(cmd)) return [];
         return null;
