@@ -1,20 +1,20 @@
-# MCP 宿主 M1 施工单（只读）—— 注册表第 10 件生成物 ＋ 应用内宿主面 ＋ stdio 桥
+# MCP 宿主 M1 施工单（先把「读」打通）—— 注册表第 10 件生成物 ＋ 应用内宿主面 ＋ stdio 桥
 
 > 状态：施工单（**未开工**；前置 = [总方案](2026-09-28-agent-mcp-integration-plan.md) §10 第 1、2 项拍板）
-> 范围：**只做只读**。不做写回（M2）、不做多空间切换（M3）、**不碰**服务端、不改 wire / schema / 插件契约。
+> 范围：**本档只做只读** —— 它是「**能读写**」的**前半**；⚠️ **写属 M2 且必做**，不是被排除（目标口径见[总方案](2026-09-28-agent-mcp-integration-plan.md) §1）。不做多空间切换（M3）、**不碰**服务端、不改 wire / schema / 插件契约。
 
 ---
 
 ## 1. 目标
 
-让四个外部 agent 产品（Claude Code / CodeBuddy / WorkBuddy / DSH）通过 **stdio MCP** 读到本机已解锁空间的笔记，且：
+让四个外部 agent 产品（Claude Code / CodeBuddy / WorkBuddy / DSH）通过 **stdio MCP** **读到**本机已解锁空间的笔记 —— 这是「**能读写**」的**前半**（**写通**见[总方案](2026-09-28-agent-mcp-integration-plan.md) §9 的 M2），且：
 
 - 工具清单**不是手写的**（从 `capabilities/capabilities.json` 生成，与插件、应用内 AI 宿主同一份源）；
 - 权限**复用唯一校验点**（`plugins.rs::dispatch_capability`），不新开第二条鉴权；
 - 未解锁**明确报** `space_locked`（不静默给空结果）；
 - 关掉开关 ⇒ 桥**立刻**失效。
 
-**不做**：写能力（`pages.create` / `blocks.append` 一律不出现在 M1 的工具清单里）、附件字节下载、跨空间切换、SSE、把任何笔记内容写进日志。
+**本档不做**：写能力（`pages.create` / `blocks.append` **在 M1 的清单里不出现**；它们属 M2，⚠️ **不是被排除在目标之外**）、附件字节下载、跨空间切换、SSE、把任何笔记内容写进日志。
 
 ## 2. 为什么必须落在应用进程内（不是偏好）
 

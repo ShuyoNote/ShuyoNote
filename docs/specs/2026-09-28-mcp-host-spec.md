@@ -5,7 +5,7 @@
 >
 > ⚠️ **本层的第一优先级不是"多一份文档"，是"每条不变式都得有一条会红的判据"。**
 > 本文件 §2 的不变式，第四列**全部是 `❌ 无`** ⇒ **按 `README.md` 的铁律，它们【现在都不在 `INVARIANTS.md` 里】**。
-> 本文件的作用是把"要立哪条判据、怎么证明它会红"写成 M1 的**可执行前置条件**，而不是让读者以为它们已经被守住了。**§3 给落地顺序。**
+> 本文件的作用是把"要立哪条判据、怎么证明它会红"写成 **M1（读）与 M2（写）** 的**可执行前置条件**，而不是让读者以为它们已经被守住了。**§3 给落地顺序。**
 
 ---
 
@@ -27,7 +27,7 @@ id          INV-MCP-<短名>              稳定标识；改口径不许改 id�
 
 ---
 
-## 1. 本规格要解决的**一个口径问题**（比六条不变式更根本）
+## 1. 本规格要解决的**一个口径问题**（比下面七条不变式更根本）
 
 ```text
 今天："谁能读写笔记库" 只有一个入口 —— WebView IPC（lib.rs 的 invoke_handler）
@@ -50,6 +50,7 @@ MCP 面："同一个能力" 会多出第二个入口 —— 外部 agent 经过�
 | **INV-MCP-single-authz** | **外部宿主的每次能力调用都经同一处权限校验（`dispatch_capability`），不存在第二条鉴权路径；宿主面不许自己开库、不许自己判权限** | 新增 `scripts/check-mcp-host-authz.mjs`（只读静态扫 `src-tauri/src/mcp_host.rs`：出现自建权限判定 / 直接 `db::open_space_conn*` / 直连 SQLCipher 即红） | **❌ 无**（要立。**怎么证明它会红**：在 `mcp_host.rs` 里加一句自己写的 `permissions.contains(...)`，或在宿主面里直接开空间库 ⇒ 必须报红） |
 | **INV-MCP-tools-generated** | **MCP 工具清单是 `capabilities/capabilities.json` 的生成物，不许手写第二份语义工具清单** | `scripts/check-capabilities.mjs` 现有的「生成物一致」那一段**加上这一件**（不新开门禁：它已在注册表里、`--self-test` 已在） | **❌ 无**（要立。**怎么证明它会红**：手改 `capabilities/mcp-tools.json` 一行（如把某条 desc 改掉）⇒ 必须报红） |
 | **INV-MCP-readonly-first** | **M1 的工具清单里不许出现写能力**（`isWrite: true` 的 `pages.create` / `blocks.append` 一律不出现在清单里） | 同上那一条判据（`check-capabilities.mjs` 扩一条反向断言） | **❌ 无**（要立。**怎么证明它会红**：把 `pages.create` 塞进清单 ⇒ 必须报红） |
+| **INV-MCP-write-requires-confirm** | **外部 agent 的写请求在用户确认之前不许落库**（落库仍只在 `src/lib/ai/apply.ts` 一处；`--allow-write` 若开，必须是显式开关且每次写留审计） | Rust/TS 判据（外部走一次 `pages.create` ⇒ 只拿到草稿；**库逐字节不变**） | **❌ 无**（要立。**怎么证明它会红**：把宿主面里的写能力直接接到 `create_page` 落库、绕过草稿 ⇒ 必须报红） |
 | **INV-MCP-locked-fails-loud** | **未解锁 / 锁定空间 ⇒ 明确报 `space_locked`，不许返回空结果**（"读不到"不等于"库里没有"） | Rust 判据（承重通道＝`scripts/criteria-mutations.json`；⚠️ **本机跑不了 rust 组**，见 §3 末） | **❌ 无**（要立。**怎么证明它会红**：把那条路径从"报错"改成"返回空数组" ⇒ 必须报红） |
 | **INV-MCP-bridge-dumb** | **桥不碰库、不碰密钥；它的 stdout 只许出现合法 MCP 消息**（日志/调试一律走 stderr） | 桥自己的判据（Node，本机可跑）：喂一条请求 ⇒ 逐行可解析为 JSON-RPC；`stderr` 可有内容、`stdout` 不可有非协议行 | **❌ 无**（要立。**怎么证明它会红**：往桥里插一句 `console.log("hi")` ⇒ 客户端侧解析必须失败 ⇒ 判据报红） |
 | **INV-MCP-channel-guarded** | **通道默认关；开启时 per-session token ＋ `Origin`/`Host` 校验；坏 Origin / 过期 token 必须被拒**（关掉开关后旧 token 立刻失效） | 桥与宿主面各一条（Node + Rust）；⚠️ 若最终选的是**命名管道**而不是回环，本条的注入方式要跟着换（拍板项 2） | **❌ 无**（要立。**怎么证明它会红**：① 删掉 `Origin` 校验 ⇒ 坏 Origin 也放行 ⇒ 必须报红；② 关开关后拿旧 token 再连一次 ⇒ 必须被拒） |
@@ -71,11 +72,13 @@ MCP 面："同一个能力" 会多出第二个入口 —— 外部 agent 经过�
 
 第 3 步  宿主面 + Rust 判据（承重通道＝CI / WSL2）
          ⇒ 立 INV-MCP-single-authz ｜ INV-MCP-locked-fails-loud
+         ⇒ ⚠️ INV-MCP-write-requires-confirm 随 **M2 的写能力**一起立
+            （读那一档里写能力根本不在清单上，这条无从验起）
          ⚠️ AGENTS.md §7：Windows 本机跑不了 rust 组（测试 exe 缺 v6 清单，
             `plugins::` 那 34 条本机跑不了）⇒ 这两条的"看过它红"**必须在 WSL2 / CI 上做**，
             本机只能如实标注"未实查"
 
-第 4 步  六条都拿到"看过它红"的证据，写进 `_workspace/mutation-evidence.json` 的 `_repo_mutations`
+第 4 步  七条都拿到"看过它红"的证据，写进 `_workspace/mutation-evidence.json` 的 `_repo_mutations`
          ⚠️ **这一步不在本仓里** —— 漏了就是"看着立了不变式、其实没有证据"
          （工作区判据 D2 会按脚本 sha 校验；判据一改，证据自动过期）
 
@@ -104,3 +107,4 @@ MCP 面："同一个能力" 会多出第二个入口 —— 外部 agent 经过�
 - ❌ **四家客户端的配置片段**（在方案 §8；本层只钉"对外面是 stdio"这条口径）。
 - ❌ **通道的具体形态**（回环 vs 命名管道）—— 它还是**待拍板项 2**；本层只钉"默认关 + token + `Origin`/`Host`"这条**与形态无关**的要求。
 - ❌ **token 的存放路径与权限位**（实现细节，属施工单；且它会随平台不同）。
+- ❌ **写的落地方式（草稿确认 vs `--allow-write`）** —— 它是[方案 §10](../plans/2026-09-28-agent-mcp-integration-plan.md) 第 3 项拍板；本层只钉「**用户确认之前不许落库**」这条**与形态无关**的要求（`INV-MCP-write-requires-confirm`）。
