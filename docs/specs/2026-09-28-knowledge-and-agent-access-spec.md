@@ -29,19 +29,20 @@
 
 | id | 口径（一句话） | 判据（要立的那条） | 会红证据（再注入） | 今天能跑吗 | 承重渠道 |
 |---|---|---|---|---|---|
-| **INV-KB-ontology-generated** | **本体表是注册表的生成物，不许手写第二份** | ⚠️ **与 `INV-MCP-tools-generated` 同源**（同一个生成器 ⇒ 判据合并立一条 ✓） | 手改本体表一行 ⇒ 对账红 ✓ | 待立 | 本机 Node |
-| **INV-KB-apiversion-bump** | **改 id／删能力／改语义 ⇒ 必须 bump `apiVersion`** | 生成物指纹 vs `apiVersion`：指纹变了而版本没变 ⇒ 红 | 删掉 `tags.list` 不升版本 ⇒ 红 ✓ | 待立 | 本机 Node |
-| **INV-KB-readonly-surface** | **只读面（M1）里 `kind === 'write'` 的条数 = 0** | ⚠️ **归属 `INV-MCP-readonly-first`**（不在本表重复 ✗） | 往 M1 清单塞 `pages.create` ⇒ 红 ✓ | 待立 | 本机 Node |
-| **INV-KB-tool-desc-clean** | **工具描述里不出现仓内路径与内部字段名** | 扫生成物描述串：命中 `src/`、`content_json`、`workspace_id` 等 ⇒ 红 | 描述里写 `` `content_json` `` ⇒ 红 ✓ | 待立 | 本机 Node |
+| **INV-KB-ontology-generated** | **本体表是注册表的生成物，不许手写第二份** | ⚠️ **与 `INV-MCP-tools-generated` 同源**（同一个生成器 ⇒ 判据合并立一条 ✓） | 手改本体表一行 ⇒ 对账红 ✓ | **能**（`check-ontology-generated`） | 本机 Node |
+| **INV-KB-apiversion-bump** | **改 id／删能力／改语义 ⇒ 必须 bump `apiVersion`** | 生成物指纹 vs `apiVersion`：指纹变了而版本没变 ⇒ 红 | 删掉 `tags.list` 不升版本 ⇒ 红 ✓ | **能**（`check-api-surface-version`） | 本机 Node |
+| **INV-KB-readonly-surface** | **只读面（M1）里 `kind === 'write'` 的条数 = 0** | ⚠️ **归属 `INV-MCP-readonly-first`**（不在本表重复 ✗） | 往 M1 清单塞 `pages.create` ⇒ 红 ✓ | **能**（`check-agent-surface`；与 `INV-MCP-readonly-first` 同一条，以已实现判据为准 ✓） | 本机 Node |
+| **INV-KB-tool-desc-clean** | **工具描述里不出现仓内路径与内部字段名** | 扫生成物描述串：命中 `src/`、`content_json`、`workspace_id` 等 ⇒ 红 | 描述里写 `` `content_json` `` ⇒ 红 ✓ | **能**（`check-agent-surface`） | 本机 Node |
 | **INV-KB-space-split** | **个人空间一分内容不出本机；团队空间按已声明口径** | 个人侧的网络目标清单必须为空；团队侧逐条对 `docs/sync-server-data-boundary.md` | 给个人侧加一个 http 目标 ⇒ 红 ✓ | **待立**（个人侧可机检；团队侧需人核） | 人 ＋ 本机 Node |
 | **INV-KB-audit-subject** | **审计能区分「人／插件／外部 Agent」三类主体** | ⚠️ **与 `INV-MCP-single-authz` 相关**，但"主体标识"是**新增**的（不在其内 ✓） | 把主体字段写死成一类 ⇒ 红 ✓ | **待立**（前置未定） | Rust/CI |
 | **INV-KB-single-semantics** | **外部经桥与 App 内走同一校验点、同一过滤语义**（软删／工作空间／`content_json` 收口） | ⚠️ **归属 `INV-MCP-single-authz`**（不在本表重复 ✗） | 让桥自己写一遍过滤（少一个软删条件）⇒ 红 ✓ | 待立 | 本机 Node ＋ Rust |
-| **INV-KB-derived-rebuildable** | **索引／wiki／地图都是派生物，可重建** | 删索引 ⇒ 功能不降级（只是慢）；重建后**同一查询同结果集** | 让索引成为唯一真相（删了就查不到）⇒ 红 ✓ | 待立 | 本机 Node |
+| **INV-KB-derived-rebuildable** | **索引／wiki／地图都是派生物，可重建** | 删索引 ⇒ 功能不降级（只是慢）；重建后**同一查询同结果集** | 让索引成为唯一真相（删了就查不到）⇒ 红 ✓ | **部分**（"可重建"半边能跑：`check-generated-artifacts`；"删索引不降级"顺延 Phase 1 ✗） | 本机 Node |
 | **INV-KB-citation-stale** | **生成物每条断言带回链；源一改即标脏；页脚写「派生，非出处」** | 三条各一机检：回链可达 ／ 源 sha 变 ⇒ 页面标脏 ／ 页脚串存在 | 改一个源文件不标脏 ⇒ 红 ✓ | 待立 | 本机 Node |
 | **INV-KB-locked-loud** | **锁定/未解锁 ⇒ 明确报错，不许返回空结果** | ⚠️ **归属 `INV-MCP-locked-fails-loud`**（不在本表重复 ✗） | 让锁定路径返回 `[]` ⇒ 红 ✓ | 待立（与 MCP 那条合并立） | Rust/CI |
 
-> ⚠️ **本表今天"能跑"的是 0 条** —— 这不是坏事，是**如实**：规格层存在的前提就是"先立判据" ✓
-> ⇒ 收录进 `INVARIANTS.md` 的三条件（能指到会红判据 ／ 看过它红 ／ 能原地重做）**一条都还没满足** ✗
+> ✅ **2026-09-28 收口：本表"能跑"的是 5 条**（其中 `INV-KB-derived-rebuildable` 只跑通"可重建"半边 ✗）
+> ⇒ 它们**已按仓规收录进 [`INVARIANTS.md`](INVARIANTS.md)**（三条条件：能指到会红判据 ✓ ／ 有"看过它红"证据（账本 D2，绑脚本 sha ✓）／ 证据能原地重做（各判据都有 `--self-test` 或夹具口子 ✓））
+> ⚠️ 其余 5 条仍是 `待立`（各自的判据还没写出来 ⇒ **不算通过** ✗）
 
 ## 3. 落地顺序（**先让判据能跑，再进 `INVARIANTS.md`**）
 

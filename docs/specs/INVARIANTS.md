@@ -43,6 +43,11 @@
 | **INV-PLUGIN-capabilities-parity** | 能力注册表 | `scripts/check-capabilities.mjs` | ✅ 账本 `exit=1`（sha `c2455b3c6d75`）｜配方：对照组 = 真 `capabilities/` + `packages/plugin-types/` + `src/lib/capabilities/frontend.ts` + 真生成物（25 条能力 / 10 个 TS 适配器两侧参数口径都比对）⇒ `exit 0`；变异组**只**把 `blocks.list` 适配器里 `intArg(args, "limit", BLOCKS_LIMIT… |
 | **INV-SM-registry-clean** | 共享 registry 没留国密补丁（默认构建别被它悄悄改掉） | `scripts/check-gm-registry-clean.mjs` | ✅ 账本 `exit=1`（sha `e43e90508225`）｜配方：假根（真 `scripts/` 的副本 ＋ 最小 `src-tauri/Cargo.lock`）里 `libsqlite3-sys` 那一条**只删掉 `source` 与 `checksum` 两行**（＝ `--prepare` 留下的残渣形态）⇒ 必须报红。⚠️ 单变量：对照组只有这两行之别。… |
 
+| **INV-KB-ontology-generated** | 本体表与能力注册表一致（生成物不许手改） | `scripts/check-ontology-generated.mjs`（`--self-test` ／ `--file` 夹具 ／ 出口码 0-1-2） | ✅ 账本 D2 `exit=1`（sha `a1dae878b872`）｜2026-09-28 实测：删掉生成物 ⇒ **exit 1**（逐字「✗ 本体表缺失：…」）／生成后 exit 0 ／**手改生成物一行 ⇒ exit 1**（指出第 17 行＋两边原文）／`--self-test` **4/4** ✓ |
+| **INV-KB-apiversion-bump** | 外部接口指纹与 `apiVersion` 一致（改了接口必须升版本） | `scripts/check-api-surface-version.mjs`（`--update` 是文档化出口 ／ `--self-test`） | ✅ 账本 D2 `exit=1`（sha `707981c8f57d`）｜实测：删记录 ⇒ exit 1 ／ `--update` ⇒ exit 0 ／**篡改指纹 ⇒ exit 1**（逐字「✗ **接口变了但 `apiVersion` 没变**（1.0.0）—— 正在用它的外部程序会**没有信号地坏掉**」）／`--self-test` **5/5** ✓。指纹**刻意不含 `desc`**（改文案不算破坏接口 ✓） |
+| **INV-KB-derived-rebuildable**（**只收录"可重建"半边** ✗） | 生成物自证来源（sha）且可重建（生成命令的脚本存在） | `scripts/check-generated-artifacts.mjs`（`--dir` 夹具 ／ `--self-test` ／ 出口码 0-1-2-3） | ✅ 账本 D2 `exit=1`（sha `f67c38772197`）｜实测：控制组 3 个生成物 exit 0 ／**删掉「注册表 sha256」行 ⇒ exit 1** ／**篡改 sha ⇒ exit 1**（逐字「已标脏」）／`--self-test` **5/5** ✓。⚠️ "删索引 ⇒ 功能不降级"那半**要等索引面成形**（Phase 1）⇒ 本表**没收录** ✗ |
+| **INV-KB-readonly-surface** | 外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 | `scripts/check-agent-surface.mjs`（`--phase` ／ `--file` 夹具 ／ `--self-test`） | ✅ 账本 D2 `exit=1`（sha `3e086e7aa4bc`）｜实测：**注入 `pages.create` ⇒ exit 1**（逐字「只读面里出现写能力」）／`--self-test` **5/5** ✓。⚠️ **与 `INV-MCP-readonly-first` 是同一条**：那份仍是它的正文，**本条以"已实现的判据"入表** ✓ |
+| **INV-KB-tool-desc-clean** | 外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 | `scripts/check-agent-surface.mjs`（同上：`--phase` ／ `--file` ／ `--self-test`） | ✅ 同一条账本证据（sha `3e086e7aa4bc`）｜实测：**描述里注入 `content_json` ⇒ exit 1** ／ 收窄为"只扫 desc 格"后，表头里合法的 `capabilities.json` 不再假红 ✓ ／ `--self-test` **5/5** ✓ |
 ## 怎么核（**别信本表，跑命令**）
 
 ```bash
