@@ -9,6 +9,7 @@
 | `apiVersion` | 1.0.0 |
 | 取用条件 | `ai === true` **且** `kind === "write"` |
 | 条数 | **2** |
+| 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m2` |
 
 | id | scope | permission | desc |
 |---|---|---|---|

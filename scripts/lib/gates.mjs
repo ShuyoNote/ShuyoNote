@@ -93,6 +93,24 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-generated-artifacts",
+    group: "contract",
+    label: "生成物自证来源（sha）且可重建（生成命令的脚本存在）",
+    cmd: "node scripts/check-generated-artifacts.mjs",
+    incident:
+      "工作区栽过不止一次「生成物与实际脱节而没人发现」——最典型那句：「缺口还开着」在写下 13 分钟后就过期，两天没人看过。知识层的本体表 / 工具面 / 接口指纹都是给人看、给外部程序看的 ⇒ 源改了而生成物没跟上，读的人就照旧结构做 ✗",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-api-surface-version",
+    group: "contract",
+    label: "外部接口指纹与 `apiVersion` 一致（改了接口必须升版本）",
+    cmd: "node scripts/check-api-surface-version.mjs",
+    incident:
+      "2026-09-28：注册表顶层本来就有 registryVersion / apiVersion ✓，但没有任何东西强制它 ✗ —— 改 id / 删能力 / 改语义时，正在用它的外部程序会在没有信号的情况下坏掉；同一天还实测出 MCP 规格把写判定写成查 isWrite（该字段出现 0 次 ✗）⇒ 接口形状必须机器可查 ✓",
+    registered: "2026-09-28",
+  },
+  {
     id: "check-agent-surface",
     group: "contract",
     label: "外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识",

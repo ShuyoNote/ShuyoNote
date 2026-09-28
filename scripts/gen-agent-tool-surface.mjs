@@ -41,6 +41,7 @@ export function renderSurface(registryText, phase) {
   L.push("| `apiVersion` | " + (j.apiVersion ?? "（无）") + " |");
   L.push("| 取用条件 | `ai === true` **且** `kind === \"" + want + "\"` |");
   L.push("| 条数 | **" + caps.length + "** |");
+  L.push("| 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase " + phase + "` |");
   L.push("");
   L.push("| id | scope | permission | desc |");
   L.push("|---|---|---|---|");
