@@ -1,6 +1,10 @@
 # 外部 Agent 接入（MCP / CLI）总方案 —— 让 Claude Code / CodeBuddy / WorkBuddy / DSH **能读写** ShuyoNote
 
 > 状态：规划（**未实装**；待拍板 6 项见 §10）
+> 🔗 **分工（2026-09-28 windows 侧补）**：**知识层**（RAG / LLM Wiki / Ontology）与"两种空间"的分档见
+> [`2026-09-28-knowledge-and-agent-access-plan.md`](2026-09-28-knowledge-and-agent-access-plan.md) ✓ ——
+> **本文只管"外部接入本身"**（四家怎么接 ／ 工具面与上下文成本 ／ 安全边界 ／ 里程碑 ✓），两份**不互相抄** ✗
+> 判据：本文 §4/§5/§6/§7/§8/§9/§11/§12 在知识层那份里**没有对应内容** ⇒ 合并会丢这 8 节 ✗
 > 目标版本：M28（提议，**未排期** —— 真要排期时补一篇 `../roadmap.md` 的 M28 小节）
 > 关联：[薄 Agent 接口方案](2026-08-24-thin-agent-interface-plan.md)（M17，应用内 AI 宿主工具层的由来）· [插件体系进化方案](2026-09-10-plugin-evolution-plan.md)（能力注册表与权限模型）· [插件宿主子进程化](2026-09-10-plugin-host-isolation-plan.md)（同二进制 argv 分流的先例）· [全库 AI 覆盖方案](2026-09-17-knowledge-base-ai-coverage-plan.md)（`host: "frontend"` 那类能力的由来）
 
