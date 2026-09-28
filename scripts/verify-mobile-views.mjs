@@ -36,6 +36,51 @@ import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
 
+// ── 壳（shell）这一维 ── 2026-09-28 加，对应 macOS 侧规格 `docs/specs/2026-09-28-sync-panel-density-spec.md` 的【第 1 步】。
+// ⚠️ **默认 web** ⇒ 现有读数一字不变；打开 tauri 后页面会认为自己在 Tauri 壳里。
+// 为什么必须有这一维：`isDesktopPlatform() ≡ isTauri() ≡ ("__TAURI_INTERNALS__" in window)`
+//   ⇒ 它的语义是「有没有 Rust 内核」，**不是**「是不是桌面」（源码注释逐字：「Tauri 的 Android/iOS 壳同样为真」）
+//   ⇒ **同一个 390×844，Web 与 Tauri 手机是两块不同的面板**；不区分壳时，断言测的不是同一个对象。
+// 用法：`APP_SHELL=tauri node scripts/verify-mobile-views.mjs`（或 `--shell tauri`）。
+// ⚠️ **故意不用 `SHELL` 这个环境变量** —— POSIX 上它默认是 `/bin/bash`，会让开关在 macOS/Linux 上直接判错。
+const APP_SHELL = (() => {
+  const i = process.argv.indexOf("--shell");
+  const v = String(i > -1 ? process.argv[i + 1] : process.env.APP_SHELL || "web").toLowerCase();
+  if (v !== "web" && v !== "tauri") {
+    console.error(`--shell/APP_SHELL=${v} 不对，只能是 web 或 tauri`);
+    process.exit(2);
+  }
+  return v;
+})();
+const IS_TAURI_SHELL = APP_SHELL === "tauri";
+
+/** 让页面认为自己在 Tauri 壳里（注入 `__TAURI_INTERNALS__`）。
+ *  ⚠️ 这只是【壳维开关】，**断言还没加** —— 按规格的顺序：先让判据可跑，再进 `INVARIANTS.md`。
+ *  ⚠️ 返回值是**桩**（未知命令一律 null）⇒ **布局真、数据假**，与规格 §2 的如实标注一致。
+ *  必须在 page.goto **之前**调用（evaluateOnNewDocument 只对之后的文档生效）。 */
+async function applyShell(page) {
+  if (!IS_TAURI_SHELL) return;
+  await page.evaluateOnNewDocument(() => {
+    let cbId = 0;
+    const invoke = async (cmd) => (Object.prototype.hasOwnProperty.call(MOCKS, cmd) ? MOCKS[cmd] : null);
+    const MOCKS = {
+      // Tauri v2 在启动期最常问的几个；其余一律 null（桩）
+      "plugin:app|version": "0.0.0-shellstub",
+      "plugin:os|platform": "android",
+      "plugin:event|listen": 0,
+      "plugin:window|scale_factor": 2,
+    };
+    window.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
+      transformCallback: (cb) => { cbId += 1; window["_" + cbId] = cb; return cbId; },
+      invoke,
+      convertFileSrc: (p) => p,
+      plugins: {},
+    };
+    window.__TAURI__ = { core: { invoke } };
+  });
+}
+
 // 断点与 `src/hooks/useMobile.ts` 的 `MOBILE_BREAKPOINT_PX` 是**同一个数**（768）：
 // JS 说"这是手机"而 CSS 说"这是桌面"会同时废掉两边的分支。
 const PHONES = [
@@ -1370,6 +1415,7 @@ async function main() {  const executablePath = findChrome();
     process.exit(2);
   }
   console.log(`应用地址: ${APP_URL}\n`);
+      console.log(`壳: ${APP_SHELL}${IS_TAURI_SHELL ? "（注入 __TAURI_INTERNALS__；数据是桩）" : ""}\n`);
 
   const { default: puppeteer } = await import("puppeteer-core");
   const browser = await launchChrome({ executablePath });
@@ -1404,6 +1450,7 @@ async function main() {  const executablePath = findChrome();
       const pageErrors = [];
       page.on("pageerror", (e) => pageErrors.push(String(e).slice(0, 200)));
       await page.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+      await applyShell(page);
       await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
       await waitForApp(page);
       await sleep(600);
@@ -1712,6 +1759,7 @@ async function main() {  const executablePath = findChrome();
         const perrs = [];
         ppage.on("pageerror", (e) => perrs.push(String(e).slice(0, 160)));
         await ppage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+        await applyShell(ppage);
         await ppage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
         await waitForApp(ppage);
         await sleep(600);
@@ -1851,6 +1899,7 @@ async function main() {  const executablePath = findChrome();
         const rerrs = [];
         rpage.on("pageerror", (e) => rerrs.push(String(e).slice(0, 160)));
         await rpage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+        await applyShell(rpage);
         await rpage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
         await waitForApp(rpage);
         await sleep(600);
@@ -1866,6 +1915,7 @@ async function main() {  const executablePath = findChrome();
     const desk = await deskCtx.newPage();
     await pinAppLanguage(desk);
     await desk.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
+    await applyShell(desk);
     await desk.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
     await waitForApp(desk);
     await sleep(500);
