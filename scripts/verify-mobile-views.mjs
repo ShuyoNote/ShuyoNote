@@ -1519,10 +1519,16 @@ async function main() {  const executablePath = findChrome();
         if (v.name === "files") {
           // 表格本来就有 6 列：**能横滑**是它可用的前提（改前外层只有 overflow-y，
           // 右边四列被 `overflow:hidden` 裁掉且滚不到）。
+          // ⚠️ 2026-09-28：原来只有一句判语，元素不在时会印出
+          //    `scrollWidth undefined ≥ clientWidth undefined` —— 读起来像"它真的横滑了" ✗。
+          //    判红照旧（该在的东西不在，确实该红），但**话说准**：分成"量到了"与"没量到"两种。
+          const tw = s.tableWrap;
           ok(
-            !!s.tableWrap && s.tableWrap.sw >= s.tableWrap.cw,
-            `文件表格可横滑（scrollWidth ${s.tableWrap?.sw} ≥ clientWidth ${s.tableWrap?.cw}）——` +
-              `宽内容要"滚得到"，不能被裁掉`,
+            !!tw && tw.sw >= tw.cw,
+            tw
+              ? `文件表格可横滑（scrollWidth ${tw.sw} ≥ clientWidth ${tw.cw}）——宽内容要"滚得到"，不能被裁掉`
+              : `文件表格**没量到**（外层滚动容器不在或不可见）—— 这条判红是因为"该在的东西不在"，` +
+                `**不是**因为它横滑了（别把"没量到"读成一条读数）`,
           );
         }
         if (v.name === "notes" || v.name === "board") {
