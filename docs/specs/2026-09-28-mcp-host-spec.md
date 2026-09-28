@@ -1,6 +1,6 @@
 # 规格：外部 Agent 接入（MCP 宿主）
 
-> 起草：Windows 侧（本机）｜**2026-09-28**｜需求见 [`2026-09-28-mcp-host-requirements.md`](2026-09-28-mcp-host-requirements.md)
+> 起草：Windows 侧（本机）｜**2026-09-28**｜需求见 [`2026-09-28-knowledge-and-agent-access-requirements.md`](2026-09-28-knowledge-and-agent-access-requirements.md)
 > 依据：`_workspace/AI-NATIVE-DEV.md` §5.1（规格层）＋ 本仓 [`docs/specs/README.md`](README.md)（这一层的三条"不是什么"）
 >
 > ⚠️ **本层的第一优先级不是"多一份文档"，是"每条不变式都得有一条会红的判据"。**
@@ -112,7 +112,7 @@ MCP 面："同一个能力" 会多出第二个入口 —— 外部 agent 经过�
 |---|---|---|
 | [`../plans/2026-09-28-agent-mcp-integration-plan.md`](../plans/2026-09-28-agent-mcp-integration-plan.md) | **方案**：现状取证全表、三条路线取舍、推荐架构、四家配置、里程碑、待拍板 | 判据与不变式 |
 | [`../plans/2026-09-28-mcp-host-m1-workorder.md`](../plans/2026-09-28-mcp-host-m1-workorder.md) | **施工单**：逐文件改动、判据清单、门禁登记三处、回滚 | —— |
-| [`2026-09-28-mcp-host-requirements.md`](2026-09-28-mcp-host-requirements.md) | **需求**：要什么/不要什么/边界、决定形状的那几条读数 | 判据与不变式 |
+| [`2026-09-28-knowledge-and-agent-access-requirements.md`](2026-09-28-knowledge-and-agent-access-requirements.md) | **需求**：要什么/不要什么/边界、决定形状的那几条读数 | 判据与不变式 |
 | **本文件** | **规格**：不变式 ＋ 判据指针 ＋ 会红证据现状 ＋ 落地顺序 | 配置片段（引用方案 §8）、逐文件改动（引用施工单 §3） |
 
 ---

@@ -145,7 +145,7 @@ DSH 那段（**注意 `insert:` 这一层不能省** —— 裸写一个新 id �
 | **M3 多空间与治理** | 按空间开关、按工具授权、GUI 里的可见状态 | ① 关掉后桥的连接被拒 ② 状态行如实显示"几个外部会话在用" ③ 锁定空间不因开关被隐式解锁 |
 
 施工细节见[配套施工单](2026-09-28-mcp-host-m1-workorder.md)（M1 精确到文件与判据）；
-**需求与规格在规格层**：[需求](../specs/2026-09-28-mcp-host-requirements.md)（要什么/不要什么/边界）＋ [规格](../specs/2026-09-28-mcp-host-spec.md)（七条不变式，⚠️ 其「会红证据」**全部是 `❌ 无`** ⇒ 按 `docs/specs/README.md` 的铁律，**它们现在都还没进 `INVARIANTS.md`**）。
+**需求与规格在规格层**：[需求](../specs/2026-09-28-knowledge-and-agent-access-requirements.md)（要什么/不要什么/边界）＋ [规格](../specs/2026-09-28-mcp-host-spec.md)（七条不变式，⚠️ 其「会红证据」**全部是 `❌ 无`** ⇒ 按 `docs/specs/README.md` 的铁律，**它们现在都还没进 `INVARIANTS.md`**）。
 
 ## 10. 待拍板（6 项）
 

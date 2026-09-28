@@ -7,7 +7,7 @@
 > 施工步骤看 [`2026-09-28-knowledge-m1-workorder.md`](2026-09-28-knowledge-m1-workorder.md) ✓。
 > **外部接入（MCP）那部分不在这里重写** ✗ —— 它有自己的一份 ⇒
 > [`2026-09-28-agent-mcp-integration-plan.md`](2026-09-28-agent-mcp-integration-plan.md)（方案）／
-> [`../specs/2026-09-28-mcp-host-requirements.md`](../specs/2026-09-28-mcp-host-requirements.md)（需求）／
+> [`../specs/2026-09-28-knowledge-and-agent-access-requirements.md`](../specs/2026-09-28-knowledge-and-agent-access-requirements.md)（需求）／
 > [`../specs/2026-09-28-mcp-host-spec.md`](../specs/2026-09-28-mcp-host-spec.md)（规格）／
 > [`2026-09-28-mcp-host-m1-workorder.md`](2026-09-28-mcp-host-m1-workorder.md)（施工单）✓ —— 本文只写**它们与知识层怎么接** ✓
 

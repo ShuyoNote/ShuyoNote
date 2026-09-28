@@ -57,6 +57,12 @@
 | 11 | 审计现状 | `push_audit(...)` 首参是 **`plugin_id`** ⇒ **答不出"哪个外部会话"** | `src-tauri/src/plugins.rs:491` |
 | 12 | MCP 落地物 | 方案／需求／规格／施工单已在 `main`（另一会话作者 ✓） | `docs/plans/2026-09-28-agent-mcp-integration-plan.md` 等 |
 | 13 | 规格层准入 | 每条不变式必须挂**一条会红的判据**；机器化那步是「生成器 ＋ 等值门禁」（**未做**） | `docs/specs/README.md` |
+| 14 | 四个产品**都原生支持 MCP**（Claude Code / CodeBuddy IDE+CLI / WorkBuddy / DSH） | 各自官方文档（方案 §8 附链接与核实程度） |
+| 15 | 客户端这一侧 **MCP 零命中**、面向外部进程的通道**一条都没有** | `rg -i "\bmcp\b" src src-tauri scripts package.json` ⇒ 0 |
+| 16 | ⭐ **钥匙只在应用进程内存**（用完即散、不落盘），且**没接任何 OS keyring** | `src-tauri/src/space_crypto.rs`；`Cargo.toml` 里 `keyring`/`wincred`/`secret-service` 零命中 |
+| 17 | 注册表 **25 条，其中 `ai:true` 10 条**，每条带 `permission`/`scope`/LLM 可读 `desc` | `node -e "const c=require('./capabilities/capabilities.json');console.log(c.capabilities.length, c.capabilities.filter(x=>x.ai).length)"` |
+| 18 | 权限与审计**只有一个校验点** | `src-tauri/src/plugins.rs::dispatch_capability` |
+| 19 | 四家**共同传输只有 stdio**（DSH 无 SSE；WorkBuddy 只文档了 stdio） | 方案 §8 |
 
 > ⚠️ **订正留痕（同一天，我方两次）**：第 3/4 行是**量错后重量的结果** —— ① 曾把 `capabilities` 数组当对象数
 > （打印出 `Count/Length/…`）；② 曾据 **6 条样本**断言"`pages.create`/`blocks.append` 不在注册表里" ✗（**实际在** ✓）。
@@ -71,14 +77,15 @@
 3. **外部只读面不含写能力（限 M1）**：**M1** 工具面里 **`kind === 'write'` 的条数 = 0**
    —— ⚠️ **口径澄清**：**只读限 M1**；写能力（`pages.create` / `blocks.append`）**属范围、只是顺序在后** ✓
    —— 判据：可机检 ✓（⚠️ 不是查不存在的 `isWrite` ✗）
+   —— ⚠️ **补充条件（2026-09-28 并入）**：写能力**必须**在"用户确认对**外部**调用同样成立"被证明之后才上 ✓
 4. **一份配置形状接四家**：桥对外只提供 **stdio**，四个客户端各用自己那份配置接上
    （配置片段看 `../plans/2026-09-28-agent-mcp-integration-plan.md` §8 ✓，本文件不抄 ✗）
 5. **关掉即失效**：用户在应用里关掉「外部接入」⇒ 旧 token **立刻**不能用（不是"下次重启才失效"）
 6. **用户看得见**：应用内能看到"外部接入开着 / 有几个会话在用"，每次外部调用可在审计轨迹里查
 
-> ⚠️ **4–6 条是 2026-09-28 从 [`2026-09-28-mcp-host-requirements.md`](2026-09-28-mcp-host-requirements.md) §3
+> ⚠️ **4–6 条是 2026-09-28 从 [`2026-09-28-knowledge-and-agent-access-requirements.md`](2026-09-28-knowledge-and-agent-access-requirements.md) §3
 > 逐条核对后补进来的** —— 当时发现本"四合一需求"**没覆盖它们**（配置形状／关掉即失效／用户看得见 ✗）
-> ⇒ 所以**那份文件暂时不能删** ✓。补齐（连同上面第 3 条的口径澄清 ✓）之后，才具备"合并清理"的前提 ✓
+> ⇒ **2026-09-28 清理：该文件的独有内容已全部并入本文（含它的 6 条读数、3 条排除、1 条边界与那条写能力条件 ✓），原文件已删除** ✓
 7. **工具描述不许泄漏内部**：描述里不出现仓内路径与内部字段名 —— 判据：可机检 ✓
 8. **按空间分档**：个人空间**一分内容不出本机**（含检索/索引）；团队空间按 `docs/sync-server-data-boundary.md` 的口径
    —— 判据：个人空间侧抓包看不到明文/向量出网 ✓ ／ 团队侧按已声明口径 ✓
@@ -103,8 +110,11 @@
 | ❌ **为 ontology 而 ontology** | 本体是**派生物**，描述**结构**不描述内容 ✓ |
 | ❌ **抄外部综述的前提**（"内容在云上、可版本、可共享"） | 我们的前提是"内容只在用户机器上" ⇒ 形态不同 ✓（该综述的三层分工／评估口径可参考 ✓） |
 | ❌ **wiki 与规范正文并存当真相** | 第二真相源；wiki 必须标"派生，非出处"，正文不许引用 wiki ✓ |
-| ❌ **先写用户向文档** | 文档先于功能是本仓踩过的坑（同 `2026-09-28-mcp-host-requirements.md` §4） |
+| ❌ **先写用户向文档** | 文档先于功能是本仓踩过的坑（同 `2026-09-28-knowledge-and-agent-access-requirements.md` §4） |
 | ❌ **工具描述里的内部路径** | 工具面＝对外暴露面 ✓ |
+| ❌ **不做服务端笔记 API** | 别把"同步 API"当"读取面"；个人空间 E2EE、服务端只做透明中继不解析 payload ✓ |
+| ❌ **不把 mesh 网格窗口改造成 MCP 通道** | 它默认关闭、没配 token 时鉴权放行、手写 HTTP 无 JSON-RPC 基建 ⇒ 会造出**第二套鉴权** ✓ |
+| ❌ **不新开绕过用户确认的写路径** | 写属目标（§3.3），但**落库仍只在 `src/lib/ai/apply.ts` 一处** ✓ |
 
 ## 5. 边界（如实说，不把推断写成结论）
 
@@ -114,6 +124,7 @@
 4. **未定**：审计**主体标识**字段（`plugin_id` 之外加 `source`？）—— 阻塞写入面 ✓
 5. **未定**：本体机器化对账（`specs/README.md` 说那一步＝「生成器 ＋ 等值门禁」，**未做** ✓）
 6. **未验**：MCP 通道**端到端从未真跑过**（MCP 需求自己写着"没跑过一次真实连接" ✓）
+7. **不预设**：写的落地方式（草稿确认 vs `--allow-write`）与 M3（多空间/治理）的形态 —— 但 §3 的 3–6 条对它们同样适用 ✓
 
 ## 6. 变更记录
 
