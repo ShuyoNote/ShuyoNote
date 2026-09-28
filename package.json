@@ -21,6 +21,7 @@
     "check:overlays": "node scripts/check-overlay-registry.mjs",
     "check:hook-order": "node scripts/check-hook-order.mjs",
     "check:store-subscriptions": "node scripts/check-store-subscriptions.mjs",
+    "check:copy-discipline": "node scripts/check-copy-discipline.mjs",
     "check:ocr-assets": "node scripts/check-ocr-assets.mjs",
     "check:web-commands": "node scripts/check-web-commands.mjs",
     "check:deep-link": "node scripts/check-deep-link.mjs",

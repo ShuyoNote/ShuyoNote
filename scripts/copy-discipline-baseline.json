@@ -1,0 +1,15 @@
+{
+  "::inlineMd-sites": 8,
+  "::rust-star-strings": 116,
+  "src-tauri/src/backup.rs": 4,
+  "src-tauri/src/db.rs": 1,
+  "src-tauri/src/keyring.rs": 3,
+  "src-tauri/src/mesh.rs": 1,
+  "src-tauri/src/page_crdt.rs": 1,
+  "src-tauri/src/plugin_host.rs": 2,
+  "src-tauri/src/plugin_validate.rs": 3,
+  "src-tauri/src/plugins.rs": 13,
+  "src-tauri/src/security.rs": 3,
+  "src-tauri/src/space_crypto.rs": 3,
+  "src-tauri/src/sync.rs": 1
+}
