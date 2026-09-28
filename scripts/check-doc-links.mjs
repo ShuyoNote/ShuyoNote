@@ -35,17 +35,30 @@ function collect(dir, acc = []) {
   return acc;
 }
 
+// ⭐ 2026-09-28：**先把代码围栏与行内代码挖掉再匹配** ——
+//    写在反引号里的 `[文字](不存在的.md)` 是在**讲语法本身**，不是链接 ✗。
+//    （macOS 侧用夹具证明：现判据会把它当坏链报出来；真仓当前恰好 **0 条**这种形态
+//      ⇒ 是"**恰好没爆**"，不是"**不会爆**"。）
+//    ⚠️ 掩码必须**等长且保留换行** —— 否则行号会整体错位（下面就是按偏移算行号的）。
+function maskCodeSpans(text) {
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  let out = text.replace(/^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1[^\n]*$/gm, blank); // 成对围栏
+  out = out.replace(/^[ \t]*(```|~~~)[\s\S]*$/m, blank); // 未闭合的围栏（一直掩到文末）
+  out = out.replace(/`[^`\n]*`/g, blank); // 行内代码
+  return out;
+}
 const files = collect(root);
 const broken = [];
 let links = 0;
 for (const file of files) {
   const text = readFileSync(file, "utf8");
-  for (const m of text.matchAll(LINK)) {
+  const scan = maskCodeSpans(text); // ⭐ 代码围栏/行内代码先挖掉（等长掩码 ⇒ 偏移与行号不变）
+  for (const m of scan.matchAll(LINK)) {
     links++;
     const target = resolve(dirname(file), m[1]);
     if (!existsSync(target)) {
       // 行号便于直接定位
-      const line = text.slice(0, m.index).split("\n").length;
+      const line = scan.slice(0, m.index).split("\n").length;
       broken.push(`${relative(root, file)}:${line} → ${m[1]}`);
     }
   }
