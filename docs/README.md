@@ -149,11 +149,19 @@ CHANGELOG.md                     # 版本变更日志
 
 | 文档 | 内容 |
 |---|---|
-| [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓 45 条门禁里只有 11 条入层**（其余：缺可跑性 / 平台绑定造不出夹具） |
-| [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：11 条 `INV-*`，每条带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**） |
+| [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓的门禁只有一部分入层**（其余：缺可跑性 / 平台绑定造不出夹具）。⚠️ **计数别写死，见本表后的命令** |
+| [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 都带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**）；当前条数见下表后的命令 |
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
+
+> ⚠️ **两个计数一律以命令为准**（2026-09-28 实测并订正：上一格原先写死「45 条门禁里只有 11 条入层」、下一格写死「11 条 `INV-*`」；当天复量是 **62** 个 `scripts/check-*.mjs`、**51** 条注册表门禁、**27** 条 `INV-*` —— 与 [`specs/README.md`](specs/README.md) §现状 自己记过的那次「17 条已过期」同形：**写死的计数会过期**）。
+
+```bash
+node -e "console.log((require('fs').readFileSync('docs/specs/INVARIANTS.md','utf8').match(/^\| \*\*INV-/gm)||[]).length)"  # 本层实际条目
+node -e "console.log(require('fs').readdirSync('scripts').filter(f=>/^check-.*\.mjs$/.test(f)).length)"                     # 判据脚本总量
+node scripts/test-report.mjs --list                                                                                        # 注册表门禁（CI 同款路径）
+```
 
 ## 方案与规划（plans）
 
