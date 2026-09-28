@@ -149,6 +149,7 @@ CHANGELOG.md                     # 版本变更日志
 
 | 文档 | 内容 |
 |---|---|
+| [specs/2026-09-28-personal-knowledge-requirements.md](specs/2026-09-28-personal-knowledge-requirements.md) | **需求**：把「知识」做成可用的一层（RAG / LLM Wiki / Ontology）—— 原话逐字 ＋ 10 条读数 ＋ 要什么 6 条 ＋ 不要什么 6 条 ＋ 边界 5 条；**个人空间不出网、团队空间按已声明口径** ✓ |
 | [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓的门禁只有一部分入层**（其余：缺可跑性 / 平台绑定造不出夹具）。⚠️ **计数别写死，见本表后的命令** |
 | [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 都带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**）；当前条数见下表后的命令 |
 
