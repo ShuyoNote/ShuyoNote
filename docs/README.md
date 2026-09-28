@@ -149,8 +149,10 @@ CHANGELOG.md                     # 版本变更日志
 
 | 文档 | 内容 |
 |---|---|
-| [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓 45 条门禁里只有 11 条入层**（其余：缺可跑性 / 平台绑定造不出夹具） |
-| [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：11 条 `INV-*`，每条带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**） |
+| [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么入层的只是一部分**（其余：缺可跑性 / 平台绑定造不出夹具）。⚠️ **条数以命令为准、别写死**：`grep -c "^| \*\*INV-" docs/specs/INVARIANTS.md`（当次读数 2026-09-28：**27**） |
+| [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**） |
+| [specs/2026-09-28-llm-wiki-requirements.md](specs/2026-09-28-llm-wiki-requirements.md) | **需求：LLM wiki（库地图 / 专题页）（待 owner 拍板）**：一句话＝"库能「被回答」，但还不能「被浏览」"；六段（诉求原话 / 现状读数 / 要什么 / 不要什么 / 边界 / ＋成功判据、砍掉条件）；⚠️ **痛点的量级没有读数**（前置测量在 §8，其中"模型成本"是 **go/no-go**） |
+| [specs/2026-09-28-llm-wiki-spec.md](specs/2026-09-28-llm-wiki-spec.md) | **规格：LLM wiki 的入口与边界（三条不变式，第四列全 `❌ 无`）**：`INV-WIKI-provenance` / `-coverage-visible` / `-readonly-default`；含每条"怎么弄红"的负例与对照、落地三步（先纯函数断言 → 弄红记账本 → 够条件才进 `INVARIANTS.md`）；**按本层铁律现在还不在 `INVARIANTS.md` 里** |
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
