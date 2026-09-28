@@ -760,7 +760,7 @@ jobs:
           RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | jq -r '.id // empty')
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"安装包：Windows 安装版 / Linux .deb + .AppImage / Android APK（arm64，正式密钥签名，可直接 adb install 或侧载）。桌面版安装后可在应用内「检查更新」下载并安装；Android 版可在应用内「检查更新」发现自己有新版本，并从这里下载同名 APK 覆盖安装（应用内不装机，交给系统）。\"}" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"安装包：Windows 安装版 / Linux .deb + .AppImage / Android APK（arm64，正式密钥签名，可直接 adb install 或侧载）。桌面版安装后可在应用内「检查更新」下载并安装；Android 版可在应用内「检查更新」发现自己有新版本，并从这里下载同名 APK 覆盖安装（应用内不装机，交给系统）。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 \`docs/RELEASING.md\`。\"}" \
               "$API/releases")
             RID=$(echo "$RESP" | jq -r '.id // empty')
             [ -z "$RID" ] && { echo "release create failed: $RESP"; exit 1; }
