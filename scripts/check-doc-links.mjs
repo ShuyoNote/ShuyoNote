@@ -1,4 +1,4 @@
-// 文档相对链接检查：扫描仓库内所有 .md，校验形如 `[文字](相对路径.md)` 的链接
+// 文档相对链接检查：扫描仓库内所有 .md，校验形如 `[文字](相对路径)` 的链接 —— **任意相对路径**（2026-09-28 前只认 `.md`，图片链接因此无人看管）
 // 目标文件真实存在（忽略 http(s) 外链与纯锚点）。
 //
 // 起因：`docs/plans/*.md` 里长期存在「按自己在 docs/ 根目录」写的链接
@@ -13,8 +13,17 @@ import { fileURLToPath } from "node:url";
 import { plansIndexProblems } from "./lib/docs-index.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SKIP = /(^|[\\/])(node_modules|tmp|dist|dist-web|target|\.git)([\\/]|$)/;
-const LINK = /\]\((?!https?:|#|mailto:)([^)#\s]+\.md)(?:#[^)\s]*)?\)/g;
+// ⚠️ 2026-09-28 把 `vendor` 明确排除 —— **放宽面之后第一次出现死链，全部来自上游 vendor 文件**：
+//    `src-tauri/vendor/pdfium/**/licenses/libjpeg_turbo.md → README.ijg`（3 处，实测）。
+//    那是**上游自己的文档**，不是我们的：**改它 = 改 vendor（不许）**，**藏它 = 静默（也不许）**
+//    ⇒ 所以选择**明确排除 ＋ 写明理由**：判据的面收在"**我们自己的文档**"上。
+const SKIP = /(^|[\\/])(node_modules|tmp|dist|dist-web|target|\.git|vendor)([\\/]|$)/;
+// ⭐ 2026-09-28：面从「只认 `.md`」放宽到「**任意相对路径**」—— 之前**图片 `![..](..)` 没有任何门禁看着**：
+//    macOS 侧实测（放一条死图链接）⇒ 本门禁照报"全部可达、exit 0" ✗。
+//    · 两种形态都认：`[文字](目标)` 与 `![图注](目标)`；
+//    · 只排除外链/锚点/邮件/内联（`https?:` `#` `mailto:` `data:`）；
+//    · 解析（`existsSync` ⇒ **目录也算可达**）一个字没动 —— 那处本来就对；扫描面只加了 `vendor`（理由见下方 SKIP 注释）。
+const LINK = /!?\[[^\]]*\]\((?!https?:|#|mailto:|data:)([^)\s#]+)(?:#[^)\s]*)?\)/g;
 
 function collect(dir, acc = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -43,7 +52,7 @@ for (const file of files) {
 }
 
 if (broken.length) {
-  console.error(`文档死链 ${broken.length} 处（共扫描 ${files.length} 个 .md / ${links} 条相对链接）：`);
+  console.error(`文档死链 ${broken.length} 处（共扫描 ${files.length} 个 .md / ${links} 条相对链接，**含图片与任意后缀**）：`);
   for (const b of broken) console.error("  - " + b);
   process.exit(1);
 }
@@ -100,5 +109,5 @@ const plansDir = join(root, "docs", "plans");
     console.error("  为什么必须有这一条：**写完方案忘了登记，死链判据抓不到**（链接没坏，只是没人找得到）。");
     process.exit(1);
   }
-  console.log(`文档链接完整：${files.length} 个 .md，${links} 条相对链接全部可达；「快速导航」左列形态正确；方案索引齐全（${planFiles.length} 篇）。`);
+  console.log(`文档链接完整（**含图片与任意后缀**）：${files.length} 个 .md，${links} 条相对链接全部可达；「快速导航」左列形态正确；方案索引齐全（${planFiles.length} 篇）。`);
 }
