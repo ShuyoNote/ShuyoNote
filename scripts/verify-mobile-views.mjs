@@ -29,8 +29,9 @@
 //   pnpm test:mobile-views             # 有失败即非零退出
 //   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-views
 //   node scripts/verify-mobile-views.mjs --shots /tmp/shots
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
@@ -1410,6 +1411,32 @@ function assertPdfReader(rr, vp) {
   );
 }
 
+// ── 同步面板那两条不变式：**已知红基线**（只减不增）────────────────────────────
+// 为什么要基线（先例逐字，`scripts/check-plan-status.mjs:44`）：
+//   「之所以要有基线：上线当天就有 64 处旧账。**没有基线，门禁第一天就得被绕开或被删」」
+// 这两条断言落地时**就是红的** —— 规格 §3 第 2、3 步逐字写着「它现在是红的 ⇒ 正好满足"看过它红"」，
+// 而真正的修复（§3 第 5 步 D1/D2）在后面 ⇒ **中间这段窗口不能没有基线**。
+// 形状与 `check-store-subscriptions` / `check-copy-discipline` 同一套：
+//   值 ≤ 基线 ⇒ 过（并把"可收紧"印出来）；值 > 基线 ⇒ **红**。
+// ⚠️ **"没量到"不吃基线** —— 那是"这条没验过"，不是"0 处违规"（单列在下面，无条件判红）。
+const VIEWS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const VIEWS_BASELINE_PATH = join(VIEWS_ROOT, "scripts", "mobile-views-baseline.json");
+const SYNC_PANEL_BASELINE = (() => {
+  try {
+    return JSON.parse(readFileSync(VIEWS_BASELINE_PATH, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    return {};
+  }
+})();
+const baselineFor = (k) => SYNC_PANEL_BASELINE[k] ?? 0;
+/** 与基线比：返回 { allowed, line } —— `line` 是给判语用的尾巴。 */
+function vsBaseline(key, value) {
+  const base = baselineFor(key);
+  const allowed = value <= base;
+  const tail = base > 0 ? `（已知红基线 ${base}；改完请 --update-views-baseline 收紧）` : "";
+  return { allowed, tail, base };
+}
+
 // ── 同步面板：常驻 chrome ＋ 桌面不滚 ─────────────────────────────────────────
 // 对应 `docs/specs/2026-09-28-sync-panel-density-spec.md` §2 的第 2、3 条不变式。
 //
@@ -1475,12 +1502,18 @@ function assertPersistentChrome(m, vp) {
     ok(true, `[壳=${APP_SHELL}] ${vp.name} 没有 .sync-foot（这一壳的常驻 chrome 不在这里）—— 这条对它不适用`);
     return;
   }
+  const key = `persistent-chrome|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, m.footForms);
+  const { allowed, tail } = vsBaseline(key, m.footForms);
   ok(
-    m.footForms === 0,
+    allowed,
     `[壳=${APP_SHELL}] ${vp.name} 常驻 chrome（.sync-foot, position:${m.footPos}）里【可见】的表单控件 = ${m.footForms} 个（应 0）` +
       (m.footForms ? `：${m.footFormsDetail.join(" / ")}` : "") +
-      `；面板滚动量 ${m.scrollH} / ${m.clientH}`,
+      `；面板滚动量 ${m.scrollH} / ${m.clientH}${tail}`,
   );
+  if (m.footForms < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${m.footForms}`);
+  }
 }
 
 /**
@@ -1492,11 +1525,25 @@ function assertDesktopNoScroll(m, vp) {
     ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 桌面不滚这条【没验过】，按 fail 记`);
     return;
   }
+  const key = `desktop-no-scroll|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, Math.max(0, m.need));
+  const { allowed, tail } = vsBaseline(key, Math.max(0, m.need));
   ok(
-    m.scrollH <= m.clientH,
+    allowed,
     `[壳=${APP_SHELL}] ${vp.name} 同步面板不该滚（scrollHeight ${m.scrollH} ≤ clientHeight ${m.clientH}；` +
-      `要滚 ${m.need}px；常驻 chrome 里可见表单 ${m.formCount ?? m.footForms} 个）`,
+      `要滚 ${m.need}px；常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
   );
+  if (Math.max(0, m.need) < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${Math.max(0, m.need)}`);
+  }
+}
+
+/** 把同步面板那两条的**当前**读数写成基线（`--update-views-baseline`）。
+ *  与 `check-store-subscriptions --update-baseline` / `check-copy-discipline --update-baseline` 同形。
+ *  ⚠️ 只在**读数走的是预期方向**时才该收紧（修好了才收）；脚本不做判断，由人负责。 */
+const VIEWS_BASELINE_SEEN = {};
+function recordForBaseline(key, value) {
+  if (!(key in VIEWS_BASELINE_SEEN)) VIEWS_BASELINE_SEEN[key] = value;
 }
 
 async function main() {  const executablePath = findChrome();
@@ -2171,6 +2218,23 @@ async function main() {  const executablePath = findChrome();
     }
   } finally {
     await browser.close();
+    if (process.argv.includes("--update-views-baseline")) {
+      // ⚠️ **合并**而不是覆盖：基线是"按【壳 × 视口】各一条"，而一次运行只跑一个壳
+      //    （tauri 那档还会因桩缺口中途抛异常 ⇒ 只走到第一个视口）
+      //    ⇒ 覆盖的话，跑 tauri 会把上一趟 web 的键全冲掉（2026-09-28 踩过）。
+      let merged = {};
+      try {
+        merged = JSON.parse(readFileSync(VIEWS_BASELINE_PATH, "utf8").replace(/^\uFEFF/, ""));
+      } catch {
+        merged = {};
+      }
+      Object.assign(merged, VIEWS_BASELINE_SEEN);
+      const sorted = Object.fromEntries(Object.entries(merged).sort(([a], [b]) => a.localeCompare(b)));
+      writeFileSync(VIEWS_BASELINE_PATH, JSON.stringify(sorted, null, 2) + "\n", "utf8");
+      console.log(
+        `\n[views-baseline] 已写入 ${VIEWS_BASELINE_PATH}（本次 ${Object.keys(VIEWS_BASELINE_SEEN).length} 个键，合并后 ${Object.keys(sorted).length} 个）`,
+      );
+    }
   }
 
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
