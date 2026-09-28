@@ -21,12 +21,19 @@ id          INV-WIKI-<短名>    稳定标识；改口径不许改 id（改 id =
 
 | id | 口径 | 判据（载体 ＋ 注入方式） | 会红证据 |
 |---|---|---|---|
-| `INV-WIKI-provenance` | wiki 页的每条结论都能指回库内来源（**回链全部来自输入**） | `src/lib/ai/librarySummary.test.ts`（现有载体；把 wiki 输出也纳入**同一口径**）—— 注入＝纯函数夹具，喂"含编造回链的输入" | ❌ 无 |
-| `INV-WIKI-coverage-visible` | wiki 页必须显式表达覆盖度；**没有读数 → 写"未知"，不许留空** | `src/lib/extract/coverageReport.test.ts`（现有载体）＋ 涉 UI 时 `src/components/aiSettingsCoverage.test.tsx` —— 注入＝纯函数夹具：coverage 空串 ／ 坏 JSON | ❌ 无 |
-| `INV-WIKI-readonly-default` | 生成动作**不改任何 `pages` 行** | ⚠️ 载体待定：优先挂现有测试（候选 `src/lib/libraryIndexing.test.ts`）；**不新建载体** | ❌ 无 |
+| `INV-WIKI-provenance` | wiki 页的每条结论都能指回库内来源（**回链全部来自输入**） | `src/lib/ai/libraryMap.test.ts`（`sources` 必须是输入里出现过的 id ＋ **截断必须说出来**）＋ 真模型现场：`scripts/measure-wiki-cost.mjs` 的 `[n]` 越界检查 ⇒ **均在分支 `feat/llm-wiki-map` 上** | ❌ 无 |
+| `INV-WIKI-coverage-visible` | wiki 页必须显式表达覆盖度；**没有读数 → 写"未知"，不许留空** | 纯函数层 `src/lib/ai/libraryMap.test.ts`（`null` ⇒ `tone=unknown`、`coverageComplete=false`；不是数字也按未知）＋ **渲染级** `src/components/LibraryMapView.test.tsx`（成对断言：`null` ⇒ 画「未知」且不出现 0 ／ `0` ⇒ 画 0 且不出现「未知」） | ❌ 无 |
+| `INV-WIKI-readonly-default` | 生成动作**不改任何 `pages` 行** | `src/lib/ai/libraryMap.test.ts`（深冻结输入仍能跑完 ＋ 两次调用结果深相等 ＋ 静态断言"不 import `api`/`platform`/`store`"）。⚠️ **目前只覆盖"地图与视图不改数据"**；"生成层不改 `pages`"要等第三块才有载体 | ❌ 无 |
 
 **三条都满足准入条件③（证据能原地重做）**：都是**纯函数 ＋ 夹具**（vitest 直接喂输入），
 不需要真机、不需要平台、不需要网络 ✓ —— **只差①②**（判据本身 ＋ "看过它红"）。落地顺序见 §3。
+
+> ⭐ **2026-09-28 补两条**（都只改这一节，不动第四列）：
+> ① **判据已经存在**：上面三条的载体已按第 2 步实现并跑绿（**在分支 `feat/llm-wiki-map` 上**，未合 dev）；
+> ② `INV-WIKI-provenance` 拿到了第一次**真模型**现场观察 —— 98.8 GB 本机模型的量测里它引用的 `[n]`
+>    最大号 **2 / 8 / 10**，**都没超过输入段数**（读数见需求 §8.1）。
+> ⚠️ 但**绿读数 ≠ 会红证据**：第四列仍是 `❌ 无` —— 要进 `INVARIANTS.md`，
+> 还需要"把输入改坏 ⇒ 它必须红"的那一次（配方在 §2）＋"证据能原地重做"的注入方式。
 
 ## 2. 怎么弄红（每条的具体负例；这是准入条件②的配方）
 
@@ -69,4 +76,5 @@ id          INV-WIKI-<短名>    稳定标识；改口径不许改 id（改 id =
   写一个不存在的路径，机器判据分不出我是在记录还是在声称（本文件的自检脚本第一版就被它绊了一次）。
 - **没复制任何判据正文**：本文只写 id ＋ 指向载体的指针；
 - **没有 ops 内容**（`shuyo-site/ops/**` 的红线）；**没有密钥**；
-- ⚠️ **待确认项**：Q1a / Q1b / Q1c 与 A24 的适用范围（已发信，24h 无人回 ⇒ 按 **AMD 侧不动任何仓** 处理）。
+- ⚠️ **待确认项（2026-09-28 已收口）**：Q1a / Q1b / Q1c 与 A24 的适用范围**windows 已裁**（见 §5）；
+  本文件的滞后项已按裁决改完（需求那份改成六段、A24 读数段可带行号、条数去数字化）。
