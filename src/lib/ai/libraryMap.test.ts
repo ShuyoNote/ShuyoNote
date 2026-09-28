@@ -131,6 +131,17 @@ describe("INV-WIKI-coverage-visible —— 未知 ≠ 0，也 ≠ 完整", () =>
     expect(unknown.tone).not.toBe(zero.tone);
   });
 
+  it("③′ 不是数字（老数据 / 夹具漏写）⇒ 也按**未知**，不许被静默漏掉", () => {
+    const r = makeReport();
+    delete (r.pages as { stale?: unknown }).stale;
+    const m = buildLibraryMap(r);
+    const it0 = allItems(m).find((it) => it.key === "pages.stale")!;
+    expect(it0, "这一格不该从地图里消失").toBeTruthy();
+    expect(it0.count).toBeNull();
+    expect(it0.tone).toBe("unknown");
+    expect(m.coverageComplete).toBe(false);
+  });
+
   it("④ 没进检索面的四类全列出来，`0` 是读数（不是「没有这一格」）", () => {
     const m = buildLibraryMap(makeReport({ byReason: { no_extractor: 2 } }));
     const keys = allItems(m).map((it) => it.key);

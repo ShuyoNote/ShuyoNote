@@ -22748,3 +22748,93 @@ body.is-plugin-panel-open .main {
   box-shadow: inset 3px 0 0 var(--danger);
 }
 
+/* ===== LLM wiki 第二块着陆点：库地图（只读派生视图，`components/LibraryMapView.tsx`） =====
+   为什么单独一块样式：它画的是"读数"而不是"设置项"，所以**每种读数状态都要看得出来**
+   （ok / partial / missing / unknown）—— 尤其是 `unknown`：它必须长得**跟 0 不一样**，
+   否则界面上"没查"与"查过了、没有"就分不出来了（`LibraryMapView.test.tsx` 成对断言这两件事）。 */
+.ai-libmap {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.ai-libmap-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ai-libmap-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-libmap-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.ai-libmap-sec {
+  margin-top: 10px;
+}
+.ai-libmap-sec-label {
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.ai-libmap-sec-summary {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.ai-libmap-items {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.ai-libmap-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--border);
+}
+.ai-libmap-item:last-child {
+  border-bottom: none;
+}
+.ai-libmap-item-label {
+  color: var(--text);
+}
+.ai-libmap-item-count {
+  min-width: 2.5em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-libmap-item-note,
+.ai-libmap-item-src {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* 四种读数状态：**未知必须是灰的、且不加粗** —— 它不是一个数字 */
+.ai-libmap-item.is-ok .ai-libmap-item-count {
+  color: var(--success, #0f7b3f);
+}
+.ai-libmap-item.is-partial .ai-libmap-item-count {
+  color: var(--warning, #9a6a00);
+}
+.ai-libmap-item.is-missing .ai-libmap-item-count {
+  color: var(--danger, #c0392b);
+}
+.ai-libmap-item.is-unknown .ai-libmap-item-count {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.ai-libmap-warn {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+

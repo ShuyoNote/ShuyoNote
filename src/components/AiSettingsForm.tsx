@@ -7,6 +7,8 @@ import { localVision } from "../lib/ai/localVision";
 import { platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
 import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
+import { buildLibraryMap, type LibraryMap } from "../lib/ai/libraryMap";
+import { LibraryMapView } from "./LibraryMapView";
 import {
   AI_PRESETS,
   MODEL_OPTIONS,
@@ -69,6 +71,9 @@ export function AiSettingsForm({
   const [coverage, setCoverage] = useState<ReturnType<typeof coverageReportTool> | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [checkingCoverage, setCheckingCoverage] = useState(false);
+  // 「库地图」（LLM wiki 第二块着陆点）：**与上面那份摘要共用同一次扫描**（不扫两遍，取材是 O(页面数) 次调用），
+  // 只做"把已有的读数重排成地图"——不生成正文、不调模型、不写库。
+  const [libraryMap, setLibraryMap] = useState<LibraryMap | null>(null);
 
   const isOpenAI = provider === "openai";
 
@@ -130,12 +135,16 @@ export function AiSettingsForm({
       const stores = await platform.derivedStores?.();
       if (!stores) {
         setCoverage(null);
+        setLibraryMap(null);
         setCoverageError("这个平台不提供派生层（索引只存在于桌面端/Web 端各自那份库）");
         return;
       }
-      setCoverage(coverageReportTool(await scanLibraryCoverage(stores)));
+      const scanned = await scanLibraryCoverage(stores);
+      setCoverage(coverageReportTool(scanned));
+      setLibraryMap(buildLibraryMap(scanned));
     } catch (e) {
       setCoverage(null);
+      setLibraryMap(null);
       setCoverageError(e instanceof Error ? e.message : String(e));
     } finally {
       setCheckingCoverage(false);
@@ -433,6 +442,8 @@ export function AiSettingsForm({
                 )}
               </div>
             )}
+            {/* 库地图：同一份读数的另一种读法（分节 + 覆盖三态 + 来源回链）。只读派生视图。 */}
+            {libraryMap && <LibraryMapView map={libraryMap} />}
           </div>
         </div>
       </div>

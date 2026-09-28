@@ -91,6 +91,9 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
   const truncated = gapsTotal > shown.length;
 
   const stale = report.pages.stale;
+  // ⚠️ **不是数字 ⇒ 一律按「没读数」**：`number|null` 之外的形态（老数据、夹具漏写）不许被静默漏掉 ——
+  //    漏掉会让"这一格"从地图里消失，比显示成 0 更坏（消失＝没人会去补）。
+  const staleKnown = typeof stale === "number";
 
   // ① 进了检索面（能搜到 —— ⚠️ 这一节**只说"搜得到"**，"抽全了吗"在下一节）
   const indexed: MapItem[] = [
@@ -123,7 +126,7 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
       sources: shown.filter((g) => g.reason === "partial").map((g) => g.id),
     },
   ];
-  if (typeof stale === "number") {
+  if (staleKnown) {
     incomplete.push({
       key: "pages.stale",
       label: "页面派生落后",
@@ -155,7 +158,7 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
     {
       key: "incomplete",
       label: "二、抽到了，但不算完整",
-      summary: `没抽全的附件 ${report.attachments.partial} 个；派生落后的页面 ${typeof stale === "number" ? stale : "未知"} 页。`,
+      summary: `没抽全的附件 ${report.attachments.partial} 个；派生落后的页面 ${staleKnown ? stale : "未知"} 页。`,
       items: incomplete,
     },
     {
@@ -167,7 +170,7 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
   ];
 
   // ④ 没读数的那一格**单列一节**：不许并进任何数字里（未知 ≠ 0）
-  if (stale === null) {
+  if (!staleKnown) {
     sections.push({
       key: "unknown",
       label: "四、这次没查（未知）",
