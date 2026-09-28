@@ -20,7 +20,7 @@
 // 用法：
 //   node scripts/measure-wiki-cost.mjs --base-url http://127.0.0.1:11434 --model qwen2.5:7b
 //   node scripts/measure-wiki-cost.mjs --base-url http://127.0.0.1:1234/v1 --model qwen2.5-7b-instruct
-//   node scripts/measure-wiki-cost.mjs --segments 2,8,32,128 --chars 800
+//   node scripts/measure-wiki-cost.mjs --segments 2,8,32,128 --chars 800 --no-warmup
 
 const args = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -29,10 +29,23 @@ const arg = (name, dflt) => {
 };
 
 const BASE = (arg("base-url", process.env.WIKI_LLM_BASE ?? "http://127.0.0.1:11434")).replace(/\/$/, "");
-const MODEL = arg("model", process.env.WIKI_LLM_MODEL ?? "");
+// ⭐ 默认模型取**产品默认值**（`src/lib/ai/llm.ts` 的 `OLLAMA_DEFAULT_MODEL = "qwen2.5:7b"`）——
+//    量测要量用户真会遇到的那个组合，不是随手挑一个模型。
+const MODEL = arg("model", process.env.WIKI_LLM_MODEL ?? "qwen2.5:7b");
 const SEGMENTS = arg("segments", "2,8,32").split(",").map((x) => Number(x.trim())).filter((n) => n > 0);
 const CHARS = Number(arg("chars", "800"));
 const TIMEOUT_MS = Number(arg("timeout-ms", "600000"));
+const WARMUP = !args.includes("--no-warmup");
+
+/** ⚠️ 这只是**本脚本的提醒**，不是产品判据 —— 产品那条在 `src/lib/ai/localVision.ts::isLoopbackBaseUrl`。 */
+function looksLoopback(url) {
+  try {
+    const h = new URL(url).hostname;
+    return h === "localhost" || h === "::1" || h === "[::1]" || /^127\./.test(h);
+  } catch {
+    return false;
+  }
+}
 
 /** OpenAI 兼容端点的判据：URL 里带 `/v1`（Ollama 的原生 API 不带）。 */
 const OPENAI_STYLE = /\/v1$/.test(BASE);
@@ -102,8 +115,22 @@ async function callOnce(context) {
 }
 
 await probe();
+if (!looksLoopback(BASE)) {
+  console.log(
+    `⚠️ ${BASE} **不是 loopback**：产品红线（\`localVision.ts::isLoopbackBaseUrl\`）会**拒绝**把能力注入到这种地址 ——\n` +
+      "   所以下面这组数字**不代表用户会遇到的形态**（只作对照）。要判 go/no-go，请在 127.0.0.1 / localhost 上量。\n",
+  );
+}
 console.log(`量测端点：${BASE}（${OPENAI_STYLE ? "OpenAI 兼容" : "Ollama 原生"}）· 模型：${MODEL}`);
 console.log(`每段 ${CHARS} 字 · 段数梯度：${SEGMENTS.join(" / ")}\n`);
+
+// ⭐ **先热身一次**：第一次调用含模型加载（几秒到几十秒），把它混进梯度里会让"最小那一档"看起来最慢。
+//    热身读数单独印出来，不参与下面的表。
+if (WARMUP) {
+  const t = await callOnce(makeContext(2));
+  console.log(`热身（含模型加载，**不计入下表**）：${t.wallMs} ms\n`);
+}
+
 console.log("段数 | 上下文字数 | 墙钟(ms) | prompt tokens | completion tokens | 结论字数 | 最大回链号");
 console.log("---- | ---------- | -------- | ------------- | ----------------- | -------- | ----------");
 
