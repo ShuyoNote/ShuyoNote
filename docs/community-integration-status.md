@@ -41,7 +41,7 @@
 | 元信息落到**该去的地方** | ✅ **2026-09-21 起** | owner 拍板的口径（`communitySaveNote.ts`）：**标签**落成笔记的**真标签**（`add_tag`，左侧标签栏/筛选都认它）；**来源 / 作者 / 发布于 / 存于** 落成**属性**（首次保存时按需创建 `attr_defs`；`来源` 同时以**纯文本**留在正文最前面 —— 幂等与导出靠它）。三层结果分开说：什么都没成 ⇒ 报错；笔记成了但标签/属性没写上 ⇒ `toast` 明说哪几样。8 条判据 |
 | 幂等（同一帖不存第二篇） | ✅ | 搜到候选后**逐字核对**来源地址；4 条测试。⚠️ 因此**来源地址不能只放属性**：属性值不进全文索引，只放属性 ⇒ 幂等静默失效、每次存都多一篇 |
 | 正文里的图**在笔记里看得见** | ✅ **2026-09-21 补** | 社区正文里的图是站内相对地址（`/attachments/<hash>`），存进笔记后"相对于谁"就不存在了 ⇒ 破图。现在落库前统一绝对化（`absolutizeCommunityLinks`：Markdown `](…)` 与 HTML `src/href` 两种写法都覆盖；`https://` / `//` / `data:` / `attachment:` / 锚点 / 不带头斜杠的相对路径**一律不碰**）；5 条判据。**仍未做**：把图**落到本地附件库**（离线也能看、社区删帖也不丢图） |
-| **社区侧提供 JSON** | ✅ **已通（2026-09-20）** | 社区 `0.71.24` 起 `GET /post/{slug}` 支持内容协商：带 `Accept: application/json` 返回**落库的原始 Markdown**（`body_markdown`）＋ `Vary: Accept`，机器取数不计浏览；`0.71.25` 修掉上线实测抓到的 `url` 被拼成相对路径（应用会按白名单拒掉）。线上实测 18/18，应用侧另有一条**活判据** `community::tests::live_community_json_is_accepted_by_this_parser`（`#[ignore]`）拿真站点喂自己的解析器。Web 版另需 `Access-Control-Allow-Origin`（社区仓库没有 CORS 先例，**仍未做**，要 owner 拍板） |
+| **社区侧提供 JSON** | ✅ **已通（2026-09-20；CORS 那半 2026-09-23 复核已落地）** | 社区 `0.71.24` 起 `GET /post/{slug}` 支持内容协商：带 `Accept: application/json` 返回**落库的原始 Markdown**（`body_markdown`）＋ `Vary: Accept`，机器取数不计浏览；`0.71.25` 修掉上线实测抓到的 `url` 被拼成相对路径（应用会按白名单拒掉）。线上实测 18/18，应用侧另有一条**活判据** `community::tests::live_community_json_is_accepted_by_this_parser`（`#[ignore]`）拿真站点喂自己的解析器。**Web 版的跨源读取已解决**（owner 2026-09-23 拍「开」）：社区 `0.71.26` 起给 **JSON 这一支**加 `Access-Control-Allow-Origin: *`（HTML 那一支**不加** —— 没有跨源需求就不开口），`tower-http` 的 `cors` 特性本来就在依赖里；社区仓另有「CORS 四态（JSON 开 / HTML 关）」的线上校验判据。⚠️ 应用侧**无需改动**：`src/lib/communityPost.ts` 本来就带 `Accept: application/json` 去要 |
 
 ## 三、导入产物（`import`）
 

@@ -13,6 +13,7 @@ import { pdfOcrExtractor } from "./pdfOcr";
 import { OOXML_EXTRACTORS } from "./ooxml";
 import { textExtractor } from "./text";
 import { avTranscriptExtractor } from "./avTranscript";
+import { legacyExtractor } from "./legacy";
 import type { Extractor } from "./types";
 
 /** 去掉 mime 参数并按小写归一：`Text/Plain; charset=utf-8` → `text/plain`。 */
@@ -110,10 +111,17 @@ export function pickExtractor(
  *  - ✅ 音视频转写（`av.transcript@1`），cost=gpu —— 2026-09-22 落地；**能力与抽取器同批进契约**
  *    （`ExtractDeps.transcribe?` ＋ `DEP_CAPABILITIES` ＋ 方案 §15.8 ＋ 本表 ＋ conformance 夹具，
  *    五处必须同批：只登记能力不落地抽取器、或落了抽取器不带夹具，判据都会当场红）
- *  - ⏳ 待补：`ooxml.xls`（旧格式，需 LibreOffice headless）
+ *  - ✅ 旧二进制 Office（`ooxml.legacy@1`），cost=cpu —— 2026-09-23 落地：`.doc` / `.xls` / `.ppt` 是 OLE 复合文档，
+ *    抽取层自己解不了 ⇒ 走平台转换器（`deps.convertLegacy`）转成 OOXML 再**复用 `ooxml.ts` 那一族**。
+ *    ⚠️ **没注入 `convertLegacy` ⇒ `provider_error`**（本平台没有转换器时这是**如实答复不是 bug**，§15.3-7）；
+ *    平台实装（桌面侧 LibreOffice headless）在平台层，见方案 §15.8 第 7 项。
  */
 export const REGISTRY: readonly Extractor[] = [
   ...OOXML_EXTRACTORS,
+  // ⚠️ 旧二进制 Office 紧跟 OOXML 一族：它**转换完就是交给那一族解析**的，放一起读起来才是一条线。
+  //    在线旧格式的 mime（`application/msword` / `application/vnd.ms-excel` / `application/vnd.ms-powerpoint`）
+  //    与 OOXML 的 mime **零重叠**，所以顺序不影响分派（`candidates()` 先按 mime 再看扩展名）。
+  legacyExtractor,
   imageOcrExtractor,
   // ⚠️ 顺序即优先级：`image.ocr` 排在 `image.caption` **前面** —— 图里有文字就用文字
   //    （检索要的是可命中的原文），**只有 OCR 判 `empty`（照片/纯图形）才轮到语义描述**

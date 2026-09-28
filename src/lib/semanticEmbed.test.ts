@@ -69,6 +69,18 @@ describe("embedUrl / embedBody", () => {
     expect(embedUrl("http://localhost:11434", "ollama")).toBe("http://localhost:11434/api/embed");
     expect(embedBody("m", "ollama", "hi")).toEqual({ model: "m", input: "hi" });
   });
+
+  it("★ baseUrl 已经带 /v1 时**不再加第二个**（两个真实预设就是这个形状，旧写法得到 …/v1/v1/embeddings ⇒ 404）", () => {
+    // 本机 herdsman（owner 拍板"向量模型在本机跑"走它）与 openai 预设
+    expect(embedUrl("http://localhost:8080/v1", "openai")).toBe("http://localhost:8080/v1/embeddings");
+    expect(embedUrl("https://api.openai.com/v1", "openai")).toBe("https://api.openai.com/v1/embeddings");
+    // 大小写/尾斜杠一起收：`/V1/` 也算带了
+    expect(embedUrl("http://localhost:8080/V1/", "openai")).toBe("http://localhost:8080/V1/embeddings");
+    // 没带 /v1 的老写法仍要正确（回归面不许缩小）
+    expect(embedUrl("https://api.example.com", "openai")).toBe("https://api.example.com/v1/embeddings");
+    // 空 base 仍然是空串（调用方据此跳过，而不是发一个相对路径出去）
+    expect(embedUrl("", "openai")).toBe("");
+  });
 });
 
 describe("embeddingText / embedHash", () => {

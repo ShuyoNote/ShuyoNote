@@ -57,8 +57,11 @@ async function ensureAttachmentBytesOnce(hash: string): Promise<boolean> {
     return false;
   }
   try {
-    await api.downloadAttachment(wsId, hash);
-    toast("已从服务器取回文件", "success");
+    // ★ 丙-④（2026-09-26）：**字节可能来自服务器、也可能来自网段里的某一台对端** ——
+    //   所以这句话由 Rust 拼好（`note`）后原样显示。界面自己写死"是从服务器来的"就是**说假话**：
+    //   用户明明没连服务器（网格那一档正是为"不连服务器"准备的）。
+    const res = await api.downloadAttachment(wsId, hash);
+    toast(res.note, "success");
     return true;
   } catch (e) {
     // 原文进 `attachmentFetchHint` 分类：**"取不回"与"暂时取不回"要给不同的下一步**

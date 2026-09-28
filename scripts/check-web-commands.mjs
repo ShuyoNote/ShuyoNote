@@ -11,7 +11,14 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `--root <dir>`：**夹具/自测用**（2026-09-28 加，约定同 check-store-subscriptions）。
+// 这条判据的承重证明本来就是「在**假根**上只建一处、看它红」（见账本 D2 证据）——
+// 有了 `--root` 就不必再**拷一份脚本**进假根（那种拷贝型夹具还得保证副本逐字节相同）。
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : resolve(HERE, ".."));
+if (rootArg >= 0) console.log(`（夹具根：${root}）`);
 const read = (p) => {
   try {
     return readFileSync(resolve(root, p), "utf8");
@@ -53,6 +60,42 @@ const DESKTOP_ONLY_COMMANDS = new Map([
     "派生文本层（attachment_text/chunks）的**桌面运输通道**：桌面库是 SQLCipher、连接在 Rust 手里，TS 没有别的写入途径；Web 平台 TS 直接跑 sql.js，不需要这条命令（写第二份实现 = 同一段 SQL 抄两遍）。调用点按平台选实现，见 src/lib/platform/derivedStores.ts",
   ],
   ["derived_query", "同上（读那一半）：Web 侧直接用自家 store 读 sql.js"],
+  // 桌面「近实时」流通道（2026-09-23 第 48 轮）：**只有桌面**需要这三条 —— Web 平台浏览器自带 SSE，
+  // `src/hooks/useSyncStream.ts` 里那条 fetch 读流就是它的客户端 ⇒ 硬在 `web.ts` 里再实现一遍等于把
+  // 同一件事写两份（同一语义两处漂移正是本表要防的）。调用点按平台收口：`useSyncStream` 的桌面分支
+  // （`isDesktopPlatform()`）＋ `lib/nearRealtime.ts::applyNearRealtime`（内部先判平台）。
+  // ⚠️ 别和反方向的 `WEB_ONLY_COMMANDS` 搞混（本表下面那张）：那张是"契约有、Rust 没有"，
+  //    这张是"Rust 有、Web 故意没有" —— `claim_page_lineage` 当年属于前者，这三条属于后者。
+  ["sync_stream_start", "桌面专属：Rust 订 SSE 变更流（Web 侧浏览器自带 SSE，`useSyncStream.ts` 自己那条）"],
+  ["sync_stream_stop", "同上（桌面专属：断开且不再重连）"],
+  ["sync_stream_status", "同上（桌面专属：流通道读数，排错用）"],
+  // 隐私边界第 1 步（2026-09-23）：**按空间**启用/禁用加密 —— **桌面专属**。
+  // 理由：Web 平台没有钥匙柜（E2EE 在浏览器里是空操作，见 `docs/web-sync-boundary.md`），
+  // 而加密空间在 Web 上由 `src/lib/ciphertextSniff.ts` **明确拒掉**（提示去桌面端）⇒
+  // 在 `web.ts` 里再实现一遍"启用/禁用加密"等于**假装浏览器有钥匙**（比不实现危险得多）。
+  ["enable_space_encryption", "桌面专属：按空间加密那一个空间（Web 无钥匙柜；加密空间在 Web 上被明确拒收）"],
+  ["disable_space_encryption", "同上（另一半）：按空间禁用（只把它自己的库换回明文）"],
+  // 隐私边界 A=3 ＋ ②b 的读数面（2026-09-24）：**桌面专属**。
+  // 分类（`set_space_kind`）在 Web 上管不到任何东西（Web 没有钥匙柜 ⇒ 没有"按空间加密"这回事，
+  // 闸门的输入没有下游）；读数（`space_security_overview`）在 Web 上更是**误导**：
+  // `in_keyring` 恒假、`encrypted_on_disk` 无从嗅探（sql.js 手里没有文件头）。
+  // ⚠️ 这不是"Web 也做到了"，而是**记下缺口**：闸门今天在 Web 上不生效（交接文档 §5）。
+  ["set_space_kind", "桌面专属：空间分类标记（Web 无钥匙柜 ⇒ 分类在那里没有下游）"],
+  ["space_security_overview", "桌面专属：隐私读数（Web 无钥匙柜 ⇒ 读数会是误导）"],
+  // ③ 0b（2026-09-24）：公开材料的**推 / 取**（换设备只凭主口令解开自己的空间）—— **桌面专属**。
+  // 理由与上面两条同族：Web 上没有钥匙袋，也就没有"公开材料"这件东西可推可取；
+  // 硬实现一遍＝让 Web 看起来也能做 E2EE 换设备，而它其实连钥匙柜都没有。
+  ["push_space_keyring", "桌面专属：把本机钥匙袋的公开那一半推给同步服务（Web 无钥匙柜）"],
+  ["pull_space_keyring", "桌面专属：从同步服务取回公开材料并装进本机（Web 无钥匙柜）"],
+  // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**，同族理由。
+  // 另有一条更硬的：这两条的承重部分是**比对码核对**（`pairing::verify_confirm_code`：传了就必须
+  // 逐位相同，否则拒绝），而比对码存在的意义**就是防"掉包"**；Web 上没有钥匙柜、没有公开材料，
+  // 给它写个 web 实现等于"让浏览器假装能换设备"，比不实现危险得多（与 `enable_space_encryption` 同型）。
+  ["pairing_export", "桌面专属：把本机钥匙袋的公开材料包成一段配对载荷（Web 无钥匙柜）"],
+  ["pairing_import", "桌面专属：采纳另一端给来的配对载荷（Web 无钥匙柜；比对码核对在桌面侧才有意义）"],
+  // ① 存量迁移（2026-09-24）：★ owner 第三轮拍板后**整条删掉** —— `migrate_legacy_space_encryption`
+  // 与 `rotate_legacy_space_to_random_key`（含命令、契约、界面按钮、判据）一起没了：它们的对象是
+  // "应用级加密留下的旧钥匙"，而那套（含解锁/读老库的兜底）已按拍板删净。⇒ 这里也不再登记。
 ]);
 
 const missingWeb = [...rustCommands]
@@ -68,6 +111,11 @@ const missingContract = [...rustCommands].filter((c) => !contractCommands.has(c)
 const WEB_ONLY_COMMANDS = new Map([
   ["request_persistent_storage", "浏览器的 Storage API，桌面端没有对应概念（UI 按 supported 决定显不显示）"],
   ["export_wiki", "静态 HTML wiki 导出目前只在 web 平台实现（桌面端命令面板按平台隐藏它）"],
+  // 冲刺 S9（2026-09-23，第 41 轮撤登记）：`claim_page_lineage` **两侧都接了** ——
+  // 桌面侧 `sync::claim_page_lineage`（reqwest 发同一端点 `{server}/lineage-claim`）、
+  // Web 侧 `platform/web.ts` 那一支；两侧同一张状态码表（**403 ⇒ `unavailable`**，第 42 轮改：
+  // 403 是"你不是这个空间的成员"，`denied` 只由 200 ＋ `granted:false` 表达）。
+  // ⇒ 它**不再**是 web 专属，撤销登记正是"两侧同行为"这件事的判据。
 ]);
 const missingRust = [...contractCommands]
   .filter((c) => !rustCommands.has(c) && !WEB_ONLY_COMMANDS.has(c))

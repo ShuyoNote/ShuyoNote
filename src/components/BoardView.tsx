@@ -14,7 +14,6 @@ interface Group {
 }
 
 export function BoardView() {
-  const { openPage, loadPages } = useNotes();
   const spaceId = useSpaceStore((s) => s.activeId);
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupField, setGroupField] = useState("tag");
@@ -223,7 +222,9 @@ export function BoardView() {
       }
       setDragOver(null);
       load();
-      await loadPages();
+      // openPage / loadPages 都是 store 动作（引用恒定）⇒ getState() 现取，
+      // 本视图不读 notes 的 state 字段，不必为它们订阅整店。
+      await useNotes.getState().loadPages();
     } catch (e) {
       console.error(e);
     }
@@ -321,7 +322,7 @@ export function BoardView() {
                   onClick={() => {
                     // 拖拽后的释放不当作"打开"(is via dragMovedRef)；纯点击才打开。
                     if (dragMovedRef.current) return;
-                    openPage(p.id);
+                    useNotes.getState().openPage(p.id);
                   }}
                 >
                   <TruncatedText className="board-card-title" text={p.title || "未命名"} />

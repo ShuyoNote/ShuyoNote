@@ -242,9 +242,9 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
     }
 
     // Open the active space's DB as the MAIN connection, then ATTACH meta.db as `meta`.
-    let (active, enc_on) = {
+    let active: String = {
         let meta_conn = Connection::open(meta_path(&app_data_dir))?;
-        let active: String = meta_conn
+        meta_conn
             .query_row(
                 "SELECT value FROM sync_state WHERE key = ?1",
                 params![ACTIVE_KEY],
@@ -253,20 +253,22 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection, rusqlite::Error> {
             .map_err(|_| rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(1),
                 Some("no active workspace".to_string()),
-            ))?;
-        let enc_on = security::encryption_enabled_base(&meta_conn);
-        (active, enc_on)
+            ))?
     };
 
-    // E1 startup gate: if encryption is on and the session is locked (the default
-    // after a restart — no key is persisted), the active space DB may be
-    // SQLCipher-encrypted and is NOT readable yet. We must NOT open the space file
-    // (even a bare open + ATTACH touches the encrypted main header and fails with
-    // "file is not a database"). So the restored main connection is an EMPTY in-memory
-    // base with meta.db attached as `meta` — the app shell (workspace list, encryption
-    // status, unlock screen) works from plaintext meta.db, and the space DB is keyed and
-    // re-opened via reopen_space when the passphrase is entered.
-    if enc_on && !security::session_has_key() {
+    // E1 startup gate: if **the active space's own DB file** is SQLCipher-encrypted and the
+    // session is locked (the default after a restart — no key is persisted), that file is
+    // NOT readable yet. We must NOT open it (even a bare open + ATTACH touches the encrypted
+    // main header and fails with "file is not a database"). So the restored main connection is
+    // an EMPTY in-memory base with meta.db attached as `meta` — the app shell (workspace list,
+    // encryption status, unlock screen) works from plaintext meta.db, and the space DB is keyed
+    // and re-opened via reopen_space when the passphrase is entered.
+    //
+    // ★ 隐私边界第 1 步（1b-2b，2026-09-23）：判据从"**应用级**开关"改成"**嗅活动空间自己的库文件**"
+    //   —— 那才是"现在能不能打开它"的事实依据（判据本体在 `security::startup_needs_unlock`，有单测）。
+    //   后果：一个**明文**空间（例如团队空间）不再因为"别的空间开着加密"而被拦在解锁屏后面；
+    //   而任何**密文**空间（按空间的或旧路的）照样被拦。库文件不存在（新空间还没落库）⇒ 嗅不出来 ⇒ 不拦。
+    if security::startup_needs_unlock(&space_db_path(&app_data_dir, &active)) {
         let conn = Connection::open_in_memory()?;
         let meta = meta_path(&app_data_dir).display().to_string().replace('\'', "''");
         conn.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
@@ -326,7 +328,11 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             -- §0-C：这个空间的数据是**哪一版密文**（0 = 未记录/明文；1 = XChaCha20；2 = 国密 v2）。
             -- 为什么必须有它：只靠密文头，老端要**读到某一条**时才知道读不了；有了它，
             -- 「同步之前 / 用这个空间之前」就能明确拒绝并提示升级（`security::ensure_space_format_supported`）。
-            cipher_format INTEGER NOT NULL DEFAULT 0
+            cipher_format INTEGER NOT NULL DEFAULT 0,
+            -- ★ 隐私边界第 2 步（2026-09-23）：**这个空间是个人空间还是团队空间**。
+            -- 它**只是本地标记**：`''` = 未分类（**默认**，闸门对未分类一律放行 —— 绝不因为"没分类"就掐断同步）；
+            -- `'personal'` = 个人空间（**必须**按空间加密后才允许绑定同步）；`'team'` = 团队空间（**免检**）。
+            kind        TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -506,6 +512,45 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute("ALTER TABLE plugin_install ADD COLUMN approved_json TEXT", [])?;
     }
     // E1 per-space at-rest encryption marker (idempotent for existing meta.db).
+    //
+    // ★★ 2026-09-24：这一段前面**曾经漏了四列**（theme / icon / sort_order / deleted_at）——
+    //    它们只写在上面 `CREATE TABLE IF NOT EXISTS workspaces` 的定义里，而**老库已经有那张表**
+    //    ⇒ 建表语句是 no-op ⇒ 那四列对老库**永远补不上**。是那条新的"老库夹具"判据
+    //    （`security::tests::legacy_databases_survive_the_real_migrations`）**第一次跑就抓到的**
+    //    ——它逐表逐列拿"全新库"和"老库迁移后"对比。
+    //    口径（**加列就要配一条幂等 ALTER**）：
+    let has_theme: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'theme'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_theme == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN theme TEXT", [])?;
+    }
+    let has_icon: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'icon'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_icon == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN icon TEXT NOT NULL DEFAULT ''", [])?;
+    }
+    let has_sort_order: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'sort_order'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_sort_order == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+    let has_deleted_at: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'deleted_at'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_deleted_at == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN deleted_at INTEGER", [])?;
+    }
     let has_enc: i64 = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'encrypted'",
         [],
@@ -525,6 +570,24 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             "ALTER TABLE workspaces ADD COLUMN cipher_format INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
+    }
+    // ★★ 空间分类标记（`kind`）：**老 meta.db 必须补列**（owner 2026-09-24 现场抓到的真 bug）。
+    //
+    // 为什么原来会漏：这个列只在上面 `CREATE TABLE IF NOT EXISTS workspaces` 的定义里，
+    // 而老库**已经有那张表** ⇒ 建表语句是 **no-op**，列永远补不上（与 `encrypted`/`cipher_format`
+    // 不同，那两个当初就配了幂等 ALTER）。后果是**静默的**两件事：
+    //   · `space_crypto::space_kind` 的 SQL 读失败被 `unwrap_or(Unknown)` 吞掉 ⇒ 面板里**每个空间
+    //     都显示"未分类"**、闸门对它们**一律放行**（看着一切正常）；
+    //   · `set_space_kind` 直接报 `no such column: kind` ⇒ 分类**根本改不了**（闸门永远不生效）。
+    // 判据 `meta_migrate_adds_the_kind_column_to_an_existing_workspaces_table` 钉的就是"老库能补上"——
+    // 光靠"新建库"的夹具永远抓不到这一类（当时 11 条空间判据全绿就是这么来的）。
+    let has_kind: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'kind'",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_kind == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
     }
     // sync_history.items was added later; backfill on pre-existing meta dbs.
     let has_items: i64 = conn.query_row(
@@ -940,6 +1003,66 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
         )",
         [],
     )?;
+
+    // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）· **页级血统冲突**（"两条独立编辑历史撞在一起"）。
+    //
+    // ⚠️ 与上面那张**块级** `page_conflicts` **不是一族**：那种是"同一块被判成两版、选一侧"（可逐块裁决）；
+    //    这里撞上的是**两条独立血统** —— Yjs 结构上就不是同一棵树，**合并在数学上做不到**
+    //    （S1 红线：硬合 ⇒ 一块变两块）⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"三条路。
+    //    所以**不许**把页级的行塞进块级表（会让"未决块数"失去意义 —— `doc_content.rs` 那条纪律）。
+    //
+    // ⚠️ 与 `page_conflicts` 同族的两条：① 这是**本地证据**（别的设备没有这行、服务端也没有这张表）；
+    //    ② `resolved_at` 为空 ＝ **未决**，界面**不许**读成"已处理"。
+    //
+    // `remote_doc` 存**对端那一版的整页投影 JSON**：被拒的待并状态在合并之后会被 `clearPending` 清掉，
+    // 不在这里留一份快照，"另存为新页"到时候就**无从下手**。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_lineage_conflicts (
+            id              TEXT PRIMARY KEY,
+            page_id         TEXT NOT NULL,
+            mine_fp         TEXT NOT NULL,
+            remote_fp       TEXT NOT NULL,
+            remote_doc      TEXT NOT NULL DEFAULT '',
+            detected_at     INTEGER NOT NULL,
+            resolved_at     INTEGER,
+            resolved_choice TEXT
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_page_lineage_conflicts_page ON page_lineage_conflicts(page_id, resolved_at)",
+        [],
+    )?;
+
+    // 冲刺 S2b（2026-09-23）· **每页的 CRDT 状态**（以后是**权威**那一份；`pages` 里那份暂时仍是投影）。
+    // ⚠️ 与上面那两张"本地表"**不同族**：它**最终要上服务端**（已拍板 = 服务端合并）⇒ 同步字段
+    //    （rev/dirty/seq）在 S4 加；本切片只做本地落盘。
+    // ⚠️ **桌面侧本切片只建表**：读/写 `page_crdt` 的四个函数（`doc_content.rs` 的
+    //    `read_page_crdt_state` / `write_page_crdt_state` / `clear_page_crdt_state` ＋ 会话接线的镜像）
+    //    归切片 **S7「两侧都接」**；那之前桌面不会读写它 —— 这里如实记档，别让它看起来"已经两侧都有了"。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_crdt (
+            page_id    TEXT PRIMARY KEY,
+            state      BLOB NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    // 冲刺 §11.4 收口（2026-09-23 第 42 轮）· **待并的远端状态**：桌面 pull 收到带 `crdt_state`
+    // 的页载荷时收在这里，由 WebView 里那份 TS 实现（`mergeRemotePageState`，唯一实现）在**打开页面时**
+    // 合并 —— Rust 侧没有 Yjs，不在这里长第二份合并实现。
+    // ⚠️ **按 `seq` 逐条留**（不是每页一行）：服务端 pull 不回 `device_id`，而不同设备的**全量**
+    //    状态互相并不包含对方的编辑 ⇒ "每页一行"会真丢。上限与理由见 `page_crdt.rs`。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS page_crdt_pending (
+            page_id    TEXT NOT NULL,
+            seq        INTEGER NOT NULL,
+            state      BLOB NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (page_id, seq)
+        )",
+        [],
+    )?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_page_conflicts_page ON page_conflicts(page_id, resolved_at)",
         [],
@@ -1049,6 +1172,16 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     )?;
     if ws_has_sort == 0 {
         conn.execute("ALTER TABLE workspaces ADD COLUMN sort_order REAL NOT NULL DEFAULT 0", [])?;
+    }
+    // ★ 隐私边界第 2 步（2026-09-23）：个人/团队空间的**本地分类标记**。
+    // 存量库补列时**默认空串 = 未分类** ⇒ 闸门对未分类一律放行（老库行为一字不变）。
+    let ws_has_kind: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('workspaces') WHERE name = 'kind'",
+        [],
+        |row| row.get(0),
+    )?;
+    if ws_has_kind == 0 {
+        conn.execute("ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT ''", [])?;
     }
 
     // Membership rule for database pages (query-type database: auto-collect by rule).
@@ -1197,15 +1330,16 @@ mod tests {
     #[test]
     fn derived_schema_matches_the_ts_source_of_truth() {
         let ts = include_str!("../../src/lib/extract/schema.ts");
-        // 模板字符串体 = 反引号之间的段（schema.ts 里只有 DDL 用反引号）
-        let bodies: Vec<String> = ts
+        // 模板字符串体 = 反引号之间的段；**取全部段**再按 `CREATE` 前缀过滤。
+        //
+        // ★ 为什么不再按 `i % 2 == 1` 取奇数段（2026-09-23，Windows 侧）：注释里出现**落单**的反引号时
+        //   奇偶被翻转 ⇒ 6 条 DDL 全落到偶数位被跳过 ⇒ 报的是"解析出 **0** 条"（把人指向错处）。
+        //   取全部段之后，成对/落单都不再影响结果，规则只剩一条：
+        //   **不许出现以 `CREATE TABLE`/`CREATE INDEX` 开头的反引号段** —— 违反了会报"解析出 7 条"，正指向真原因。
+        //   （口径与处置见 `docs/development.md` §9 那张三格表。）
+        let ddl: Vec<String> = ts
             .split('`')
-            .enumerate()
-            .filter(|(i, _)| i % 2 == 1)
-            .map(|(_, b)| b.trim().to_string())
-            .collect();
-        let ddl: Vec<String> = bodies
-            .into_iter()
+            .map(|b| b.trim().to_string())
             .filter(|b| b.starts_with("CREATE TABLE") || b.starts_with("CREATE INDEX"))
             .collect();
         assert_eq!(ddl.len(), 6, "schema.ts 里应有 6 条 DDL（三条表 + 三条索引），实际解析出 {} 条：{ddl:#?}", ddl.len());

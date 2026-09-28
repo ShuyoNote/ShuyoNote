@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { SqliteStore, setWasmBytesProvider } from "./platform/sqliteStore";
-import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, upsertRemoteContent, writeContent, writeContentText, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
+import { applyBlockSnapshots, applyRemoteContent, blockSnapshotsOf, clearPendingRemote, localState, markPageDirty, markTextStale, mergeBlocks, mergePageBlocks, mergeRemoteContent, pageConflictsOf, pendingRemotePayload, pendingRemoteQueue, pendingRemoteSeq, readAllContents, readContent, recordLineageConflict, recordPageConflicts, refreshPageTextIfStale, replaceBlockContent, resolveLineageConflict, resolvePageConflict, resolveSaveContent, shouldTakeRemote, staleTextQueue, stashPendingRemote, takeRemoteWholePage, textStale, unresolvedLineageConflict, upsertRemoteContent, writeContent, writeContentText, writePageProjectionIfChanged, type BlockMergeOutcome, type BlockSnapshot, type DocContent } from "./docContent";
 import { assignBlockRevs, canonicalContent } from "./blockRev";
 
 beforeAll(() => {
@@ -829,6 +829,39 @@ describe("docContent 的「未取回的远端版本」（B 方案）", () => {
     expect(pendingRemoteQueue(db, 0).total).toBe(1);
   });
 
+  // ★★ 丙-⑤（2026-09-26）：**与本地逐字相同的那一版不进「待取回」清单** —— 那是假账。
+  // 与 Rust `doc_content.rs::a_stash_that_matches_what_is_already_local_…` **逐条对应**：
+  // 这份清单是要用户裁决的，一条"采用了也什么都没变"的条目，用户点下去只会以为坏了；
+  // 而它出现的时机很平常 —— 同一批重放（收侧失败 ⇒ 水位没推 ⇒ 下一轮再拉一遍）。
+  it("与本地逐字相同的那一版不记进清单（假账），内容/标题真的不同则照旧记", async () => {
+    const db = await freshDb();
+    const same = doc(blk("b1", 1, "同一份"));
+    seedPage(db, "p1", { title: "页", json: same, text: "" });
+
+    // ① 逐字相同 ⇒ 不记（**返回值也要如实说"没记"** —— 调用方靠它决定要不要宣布"已存进待取回"）
+    expect(stashPendingRemote(db, { ...remoteRow("p1", same), title: "页" }, 3, 100)).toBe(false);
+    expect(pendingRemoteQueue(db, 10).total).toBe(0);
+
+    // ② 正文变了 ⇒ 照旧记（这条判断**不是**把这条路关掉）
+    const other = doc(blk("b1", 2, "远端另一版"));
+    expect(stashPendingRemote(db, { ...remoteRow("p1", other), title: "页" }, 4, 200)).toBe(true);
+    expect(pendingRemoteQueue(db, 10).total).toBe(1);
+    expect(pendingRemoteSeq(db, "p1")).toBe(4);
+
+    // ③ 只有标题变了（正文一样）⇒ 也要记：用户裁决的是"整页用谁的"
+    expect(stashPendingRemote(db, { ...remoteRow("p1", other), title: "新标题" }, 5, 300)).toBe(true);
+    expect(pendingRemoteSeq(db, "p1")).toBe(5);
+
+    // ④ **键序不算数**（载荷原文 vs 落库形态天然会差一点）：同一份文档、键序不同 ⇒ 照样不记。
+    //    这一格是真事逼出来的：网格那条重放判据上，本地是落库形态、远端是载荷原文。
+    db.run("UPDATE pages SET content_json = ? WHERE id = 'p1'", [
+      doc({ type: "paragraph", blockId: "b1", blockRev: 2, children: [{ type: "text", text: "远端另一版" }] }),
+    ]);
+    const reordered = doc({ children: [{ text: "远端另一版", type: "text" }], blockRev: 2, blockId: "b1", type: "paragraph" });
+    expect(stashPendingRemote(db, { ...remoteRow("p1", reordered), title: "页" }, 6, 400)).toBe(false);
+    expect(pendingRemoteSeq(db, "p1")).toBe(5);
+  });
+
   it("没存着 ⇒ 清一次、查一次都不报错（绝大多数页面走这条）", async () => {
     const db = await freshDb();
     seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本地")), text: "" });
@@ -871,5 +904,137 @@ describe("docContent 的「未取回的远端版本」（B 方案）", () => {
     expect(localState(db, "p1")!.dirty).toBe(0);
     markPageDirty(db, "p1");
     expect(localState(db, "p1")!.dirty).toBe(1);
+  });
+});
+
+// ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**投影写回**。
+//
+// 与 Rust 侧 `doc_content::write_page_projection` 的判据**逐条对应**（改一边看另一边）：
+// "写列 ＋ 打标记 ＋ 不标脏" / "没变就不写" / "数据库页排除" / "页面不存在 ⇒ false"。
+// 为什么值得在 TS 侧也判一遍：Web 平台的那条命令**直接调这个函数**（`web.ts` 不再写第二份判定），
+// 所以这四条就是 Web 侧的全部语义。
+describe("★ §13.3 投影写回（writePageProjectionIfChanged）", () => {
+  // 与上面「正文待重建」那一节同一套最小夹具（块身份 ＋ 块体）。
+  const blk = (blockId: string | undefined, rev: number | null, body: string) => ({
+    blockId,
+    rev,
+    type: "paragraph",
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+
+  it("内容变了 ⇒ 写回那一列 ＋ 打「待重建」；**不标脏**（这不是保存）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "旧的")), text: "" }, { dirty: 0 });
+
+    const next = doc(blk("b1", 1, "旧的"), blk("b2", 1, "刚并进来的"));
+    expect(writePageProjectionIfChanged(db, "p1", next)).toBe(true);
+    expect(readContent(db, "p1")!.json).toBe(next); // 当场跟上
+    expect(textStale(db, "p1")).toBe(true); // 正文那一半留痕（补算器收口）
+    expect(localState(db, "p1")!.dirty).toBe(0); // ★ 不是保存：标脏就会把对端内容当本机改动推上去
+  });
+
+  it("内容没变 ⇒ **一次写库都不做**（连「待重建」都不打）", async () => {
+    const db = await freshDb();
+    const same = doc(blk("b1", 1, "一样"));
+    seedPage(db, "p1", { title: "页", json: same, text: "" });
+
+    expect(writePageProjectionIfChanged(db, "p1", same)).toBe(false);
+    expect(textStale(db, "p1")).toBe(false);
+  });
+
+  it("数据库页 ⇒ 不写（那类页的内容在别的表/视图侧 —— 写回会抹掉行文本）", async () => {
+    const db = await freshDb();
+    const before = doc(blk("b1", 1, "旧的"));
+    seedPage(db, "db1", { title: "数据库页", json: before, text: "行文本" }, { kind: "database" });
+
+    expect(writePageProjectionIfChanged(db, "db1", doc(blk("b1", 1, "新的")))).toBe(false);
+    expect(readContent(db, "db1")!.json).toBe(before);
+    expect(textStale(db, "db1")).toBe(false);
+  });
+
+  it("页面不存在 ⇒ `false`（无事可做，不是错误 —— 与 clear_pending_page_states 同一口径）", async () => {
+    const db = await freshDb();
+    expect(writePageProjectionIfChanged(db, "nope", doc(blk("b1", 1, "x")))).toBe(false);
+  });
+});
+
+// ★ 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁）。
+//
+// 与 Rust `lineage_conflict.rs` 的判据**逐条对应**（改一边看另一边）。Web 平台的三条命令
+// （`record/list/resolve_lineage_conflicts`）**直接调这几个函数** ⇒ 这四条就是 Web 侧的全部语义。
+describe("★ §13.3 页级血统冲突（page_lineage_conflicts）", () => {
+  // 与上面两节同一套最小夹具（块身份 ＋ 块体）。
+  const blk = (blockId: string | undefined, rev: number | null, body: string) => ({
+    blockId,
+    rev,
+    type: "paragraph",
+    children: [{ type: "text", text: body }],
+  });
+  const doc = (...blocks: unknown[]) => JSON.stringify({ root: { children: blocks } });
+
+  const FP_MINE = "7";
+  const FP_PEER = "42";
+
+  it("★ 同一对指纹只提一次：未决时只刷新快照，已裁决过则**不再提**", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+
+    expect(recordLineageConflict(db, "p1", FP_MINE, FP_PEER, doc(blk("b9", 1, "对端v1")), 10)).toBe(
+      true,
+    );
+    // 同一对再来 ⇒ 不新建，但快照刷新成最新那一版（对端可能又推了新的）
+    expect(recordLineageConflict(db, "p1", FP_MINE, FP_PEER, doc(blk("b9", 1, "对端v2")), 11)).toBe(
+      false,
+    );
+    const row = unresolvedLineageConflict(db, "p1")!;
+    expect(row.remoteDoc).toContain("对端v2");
+    expect(row.mineFp).toBe(FP_MINE);
+    expect(row.remoteFp).toBe(FP_PEER);
+
+    // 裁决之后**同一对**不再提（否则用户每开一次页面就被打扰一次）
+    resolveLineageConflict(db, row.id, "saved-as-new");
+    expect(recordLineageConflict(db, "p1", FP_MINE, FP_PEER, doc(blk("b9", 1, "对端v3")), 12)).toBe(
+      false,
+    );
+    expect(unresolvedLineageConflict(db, "p1")).toBeUndefined();
+
+    // 但**换一条新血统**（新的指纹对）是一件新事 ⇒ 要提
+    expect(recordLineageConflict(db, "p1", FP_MINE, "99", doc(blk("bz", 1, "新对端")), 13)).toBe(true);
+  });
+
+  it("同一页只留一条未决（旧的指纹对被新事实取代，不堆积）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    recordLineageConflict(db, "p1", "7", "42", "{}", 10);
+    recordLineageConflict(db, "p1", "7", "99", "{}", 11);
+    const rows = db.query<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM page_lineage_conflicts WHERE page_id = ? AND resolved_at IS NULL",
+      ["p1"],
+    );
+    expect(rows[0].n).toBe(1);
+  });
+
+  it("★ 裁决**不默认选边**：只认两个字面量；已裁决的再裁决要**报错**", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    recordLineageConflict(db, "p1", FP_MINE, FP_PEER, "{}", 10);
+    const id = unresolvedLineageConflict(db, "p1")!.id;
+
+    for (const bad of ["", "remote", "use-remote", "LOCAL"]) {
+      expect(() => resolveLineageConflict(db, id, bad)).toThrow();
+    }
+    resolveLineageConflict(db, id, "local");
+    expect(() => resolveLineageConflict(db, id, "local")).toThrow();
+    expect(unresolvedLineageConflict(db, "p1")).toBeUndefined();
+  });
+
+  it("冲突只记在**那一页**身上（别的页/不存在的页都读不到）", async () => {
+    const db = await freshDb();
+    seedPage(db, "p1", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    seedPage(db, "p2", { title: "页", json: doc(blk("b1", 1, "本机")), text: "" });
+    recordLineageConflict(db, "p1", FP_MINE, FP_PEER, "{}", 10);
+    expect(unresolvedLineageConflict(db, "p2")).toBeUndefined();
+    expect(unresolvedLineageConflict(db, "nope")).toBeUndefined();
   });
 });

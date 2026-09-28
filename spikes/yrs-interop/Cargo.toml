@@ -1,0 +1,16 @@
+[package]
+name = "yrs-interop"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# 独立的尖刺 crate：**故意不并进 `src-tauri` 的依赖树**。
+# 理由：本尖刺要回答的是"阶段 2 到底要不要把 `yrs` 引进生产"，在答案出来之前
+# 把 `yrs` 加进 app crate 会污染它的依赖面（体积/编译时间/审计），而这个问题
+# 恰恰是尖刺要回答的。判据（`src/lib/crdt/yrsInterop.spike.test.ts`）只驱动这个二进制的
+# `target/debug/yrs-interop.exe`，不碰 app crate。
+[dependencies]
+yrs = "0.23"
+
+# 空 `[workspace]`：这个 crate 自成一体，不被任何上层 workspace 收编。
+[workspace]

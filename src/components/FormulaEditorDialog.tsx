@@ -97,7 +97,14 @@ const CATEGORIES: { label: string; tabSym: string; items: Sym[] }[] = [
 ];
 
 export function FormulaEditorDialog() {
-  const { open, initial, original, anchor, livePreview, onCommit, close } = useFormulaEditorStore();
+  // 逐字段订阅（`onCommit`/`close` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
+  const open = useFormulaEditorStore((s) => s.open);
+  const initial = useFormulaEditorStore((s) => s.initial);
+  const original = useFormulaEditorStore((s) => s.original);
+  const anchor = useFormulaEditorStore((s) => s.anchor);
+  const livePreview = useFormulaEditorStore((s) => s.livePreview);
+  const onCommit = useFormulaEditorStore((s) => s.onCommit);
+  const close = useFormulaEditorStore((s) => s.close);
   useOverlayScrollLock(open);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("formulaEditor", open, () => useFormulaEditorStore.getState().close());

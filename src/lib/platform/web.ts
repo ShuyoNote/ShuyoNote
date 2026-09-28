@@ -2,7 +2,11 @@ import { semanticScore } from "../searchSemantic";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
-import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, type RemotePageRow } from "../docContent";
+import { ciphertextRefusalMessage, looksLikeCiphertext } from "../ciphertextSniff";
+import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, readPageCrdtState, writePageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
+import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
+import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
+import { applyRemoteCrdtState } from "../crdt/plane";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
@@ -730,7 +734,14 @@ function recordChange(
   payload: unknown,
   updatedAt: number,
 ): void {
-  const payloadStr = payload == null ? "" : typeof payload === "string" ? payload : JSON.stringify(payload);
+  // ★ 冲刺 S4b-1（2026-09-23）：**页面**的变更若这一页已有 CRDT 状态 ⇒ 随载荷带上（含版本标记）。
+  //   · 没有状态 ⇒ `withCrdtWire` 回**同一引用** ⇒ 载荷字节与接线前**逐字相同**（老路径零感知）；
+  //   · 只在这一处挂：outbox 是本平台唯一的"推"出口。
+  const augmented =
+    entity === "page" && op === "upsert"
+      ? withCrdtWire(payload, readPageCrdtState(store, entityId))
+      : payload;
+  const payloadStr = augmented == null ? "" : typeof augmented === "string" ? augmented : JSON.stringify(augmented);
   const did = syncDeviceId();
   store.run(
     "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?)",
@@ -823,6 +834,13 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
   const op = change.op;
   const entity = change.entity;
   const eid = change.entity_id;
+  // ★ B=甲（owner 拍板 2026-09-24）：**密文载荷不许当明文处理**。网页版没有钥匙 ⇒
+  //   认出密文就**明确拒绝并说清去哪儿**。今天那种"当坏 JSON ⇒ `p.id` 上抛一句
+  //   `Cannot read properties of null`"既看不懂、也没告诉用户该干什么；而"悄悄按明文落库"
+  //   更是直接破掉口径（见 `lib/ciphertextSniff.ts` 头注与数据可见边界 §0.5）。
+  if (looksLikeCiphertext(change.payload ?? "")) {
+    throw new Error(ciphertextRefusalMessage());
+  }
   if (entity === "page") {
     if (op === "delete") {
       store.run("DELETE FROM pages WHERE id = ?", [eid]);
@@ -849,6 +867,9 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         // ★★ B 方案（2026-09-22）：页级保留本地**语义正确**，但那一版远端内容会被游标吃掉
         // （`doPull` 之后 `maxSeq` 照旧推进）⇒ **在本地存下来**，让用户还能裁决。
         // 游标不做"没应用就不推进"（那会 livelock：这一页可能永远 KeepLocal，它后面的变更全取不到）。
+        // ★ 丙-⑤（2026-09-26）：`stashPendingRemote` 现在**如实回"记下了没有"** —— `false`
+        //   （与本地同一份文档）时**什么都没发生**，别把它记成一次"保留了远端版本"
+        //   （Rust 侧同一条：`stash_pending_remote` → `bool`）。
         stashPendingRemote(store, p as RemotePageRow, change.seq, Date.now());
         return;
       }
@@ -859,6 +880,20 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         // 裁定 (iii) 要求"不静默选边"，而提示 UI 还没做，所以这一片必须先回落。
         // ⚠️ 那一行的**正文文本**仍是远端那一份（派生文本要编辑器语义，不能在同步路径现算）。
         applyRemoteContent(store, String(p.id), { ...p, id: String(p.id) }, change.seq);
+        // ★ 冲刺 S4b-1b（2026-09-23）：载荷里若带了 **CRDT 状态** ⇒ 把它并进本机**同一条血统**。
+        //   三种情形**分开**处置（混成一种的下场是静默丢块）：
+        //     · `ok`             ⇒ 交给**已注册的**落地实现（`applyRemoteCrdtState` ⇒ `mergeRemotePageState`）；
+        //     · `none`（老载荷） ⇒ 什么也不做 ⇒ 与接线前**逐字相同**（如实降级）；
+        //     · `unknown-version`⇒ **如实报出**（不猜着解 —— 猜错＝静默丢块）。
+        //   ⚠️ 落地实现是**注入**的：这一层（会被 Node 侧脚本加载）不许 import `pageBinding`。
+        const wire = decodeCrdtWire((p as Record<string, unknown>).crdt_state);
+        if (wire.kind === "ok") {
+          applyRemoteCrdtState(store, String(p.id), wire.state);
+        } else if (wire.kind === "unknown-version") {
+          console.warn(
+            `[sync] page ${p.id} 的 CRDT 状态版本 ${String(wire.v)} 本机不认识 ⇒ 未合并（不猜；内容按今天那条路落库）`,
+          );
+        }
         // B 方案：**更新的远端版本已经应用** ⇒ 之前存下的那一版（seq 更小）已经是陈的，清掉
         //（与 Rust `do_pull` 里那一段逐字对应：不清就是"清单永远挂着几条假账"）。
         const stashed = pendingRemoteSeq(store, String(p.id));
@@ -986,8 +1021,15 @@ async function doPull(store: SqliteStore, profile: SyncProfile): Promise<{ pulle
       //   定位不到（附件/标签/属性，或坏 payload）⇒ 至少留一条 warn，**不许一声不响**。
       const row = pageRowOfChangeForStash(c);
       if (row) {
-        stashPendingRemote(store, row, Number((c as { seq?: number }).seq ?? 0), Date.now());
-        console.warn(`[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page=${row.id} seq=${(c as { seq?: number }).seq}`);
+        // ★ 丙-⑤：**只有真记下了**才说"已存进待取回"（`false` ＝ 本机那一版与它是同一份文档
+        //   ⇒ 一行都没写，说了就是假账）。与 Rust 侧 `apply_pulled_changes` 那三支一一对应。
+        if (stashPendingRemote(store, row, Number((c as { seq?: number }).seq ?? 0), Date.now())) {
+          console.warn(`[sync] 变更应用失败 ⇒ 已存进「待取回的远端版本」：page=${row.id} seq=${(c as { seq?: number }).seq}`);
+        } else {
+          console.warn(
+            `[sync] 变更应用失败，但本机那一版与它是**同一份文档** ⇒ 不记「待取回」（没丢东西）：page=${row.id}`,
+          );
+        }
       } else {
         console.warn(
           `[sync] 变更应用失败且无法归档（entity=${(c as { entity?: string }).entity} ` +
@@ -1436,6 +1478,127 @@ export function makeInvoke(store: SqliteStore) {
         return updatedRow as T;
       }
       return null as T;
+    }
+    if (cmd === "read_page_state") {
+      // 冲刺 S3b-2c：**没有** ⇒ `null`（≠ 空字节；"还没建血统"与"有一份空状态"不是一回事）。
+      const s = readPageCrdtState(store, String((a.args ?? a).page_id ?? ""));
+      return (s ? Array.from(s) : null) as T;
+    }
+    if (cmd === "save_page_state") {
+      const args = a.args ?? a;
+      writePageCrdtState(store, String(args.page_id ?? ""), new Uint8Array(args.state ?? []), Date.now());
+      return null as T;
+    }
+    if (cmd === "read_pending_page_states") {
+      // 冲刺 §11.4 收口：Web 平台**没有**旁路表 —— 它在 `applyChange` 里收到载荷就**当场**合并
+      //（`applyRemoteCrdtState` ⇒ `mergeRemotePageState`）⇒ 不存在"待并"的状态。恒为空是**正确**的，
+      // 不是没实现；桌面侧才有（Rust 没有 Yjs，只能先把字节收下来，等界面打开这一页时再合）。
+      return [] as T;
+    }
+    if (cmd === "clear_pending_page_states") {
+      // 同上：Web 上没有待并状态 ⇒ 恒清 0 条（与"清了 0 条"同一读数，不是错误）。
+      return 0 as T;
+    }
+    if (cmd === "write_page_projection") {
+      // 冲刺 §13.3 第 1 条：把状态投影写回落盘列（**只动那一列** ＋ 打「待重建」）。
+      // ⚠️ 语义全在那一层（`writePageProjectionIfChanged`）：页面不存在 / 数据库页 / **内容没变**
+      //    ⇒ 一次写库都不做。这里不再写第二份判定（那条判据要两侧一致，只能有一处实现）。
+      // ⚠️ Web 侧的反链是**按需扫内容列**（`get_backlinks` 直接查那一列）⇒ 不需要重建物化块图
+      //    （桌面才需要 —— 见 `doc_content::write_page_projection`）。
+      const args = a.args ?? a;
+      return writePageProjectionIfChanged(store, String(args.page_id ?? ""), String(args.doc_json ?? "")) as T;
+    }
+    if (cmd === "claim_page_lineage") {
+      // 冲刺 S9 接线（2026-09-23）：把"谁先给这一页建 CRDT 血统"的裁定发给同步服务。
+      //
+      // ⚠️ **入参是本地工作空间 id（页所属那一个）**，而请求体里要的是**远端 `space_id`** ——
+      //    两者是两套 id，由 `resolveWorkspaceSyncScope` 从"这个工作空间绑定的档案"里取（见 `claimScope.ts` 文件头：
+      //    第一版把本地 id 直接当远端 space 发出去，生产上**必然 403**）。
+      //    传输复用 `syncFetch` ⇒ 鉴权/超时/错误口径与同步请求一致。
+      const args = a.args ?? a;
+      const rows = store.query<ClaimScopeRow>("SELECT ws_id, server_url, space_id, token FROM sync_profiles");
+      const scope = resolveWorkspaceSyncScope(rows, String(args.workspace_id ?? ""));
+      // ⚠️ **不许抛**：没配同步 / 登录了还没选空间都是**正常情况**（本机就该走"离线"那一支）。
+      //    抛出去会被平台 invoke 层记成一条 error（`[web] invoke error claim_page_lineage`）⇒
+      //    浏览器产物验收门禁当场判红（2026-09-23 实测）。所以"用不了"用**结果标记**回。
+      if (!scope) return { granted: false, unavailable: true } as T;
+      const token = getAuthSession(store, scope.server).token || scope.token;
+      let res: { granted?: unknown };
+      try {
+        // ⚠️ 路径**没有 `/sync` 前缀**：服务端把 sync 路由挂在根上（与 `/push` 同一形状）。
+        //    第一版写成 `/sync/lineage-claim` ⇒ 部署后实测 404（`/lineage-claim` 回 401＝路由在）。
+        res = (await syncFetch(scope.server, "/lineage-claim", token || null, {
+          space_id: scope.spaceId,
+          page_id: String(args.page_id ?? ""),
+          // ⚠️ `device_id` 由**这里**填（`syncDeviceId()` 与同步请求用的是同一个 id）——
+          //    界面侧不必知道设备 id，少一个能填错的地方。
+          device_id: syncDeviceId(),
+        })) as { granted?: unknown };
+      } catch {
+        // 网络/鉴权失败（**含 403**：不是这个空间的成员）⇒ 归"用不了"（离线那一支），**不抛**。
+        // 口径：`denied` **只**由 200 ＋ `granted:false` 表达（服务端就是这么区分两件事的）。
+        return { granted: false, unavailable: true } as T;
+      }
+      return { granted: res?.granted === true } as T;
+    }
+    if (cmd === "lan_status") {
+      // 甲-1 接线第 3 件：局域网发现的读数。**Web 上没有发现层**（UDP 收发在 Rust 侧，
+      // 见 `src-tauri/src/lan.rs`）—— 所以这里如实回"配置地址那一档 ＋ 局域网不可用"，
+      // 而不是假装发现了谁（那会让状态行说出与真实路由矛盾的档，`lan::status_line` 判据 ⑭ 钉这条）。
+      //
+      // ⚠️ 口径与桌面侧**同一条**：没绑定 ⇒ 「尚未绑定」；绑了 ⇒ 「公网 <地址> ｜ 本网段发现 0 台」。
+      //    这里是 Web 侧的唯一实现（**不**登记成 `DESKTOP_ONLY_COMMANDS`）："这一轮走哪个地址"
+      //    在浏览器里也存在，不该让调用点自己判平台。
+      const args = a.args ?? a;
+      const rows = store.query<ClaimScopeRow>("SELECT ws_id, server_url, space_id, token FROM sync_profiles");
+      const wanted = String(args.workspaceId ?? "");
+      // 指定了工作空间就走**那一处**解析（与 claim / SSE 同源）；没指定 ⇒ 第一条绑定（面板兜底）。
+      const server = (wanted ? resolveWorkspaceSyncScope(rows, wanted)?.server : undefined)
+        ?? String(rows[0]?.server_url ?? "").trim().replace(/\/+$/, "");
+      const line = server ? `同步地址：公网 ${server} ｜ 本网段发现 0 台` : "同步地址：尚未绑定";
+      return {
+        enabled: false,
+        peers: 0,
+        kind: server ? "configured" : "",
+        line,
+        // 丙-③-b-2b-2：网格那一档在浏览器里**不可用**（没有发现层、开不了本机端口）。
+        // 与 `mesh_sync_now` / `mesh_set_config` 两支**同一句人话**：界面只要渲染它就行，
+        // 不用在组件里判平台（判一次就会有两处真相）。
+        mesh: {
+          enabled: false,
+          bind: null,
+          tokenSet: false,
+          window: null,
+          note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用",
+        },
+      } as T;
+    }
+    if (cmd === "mesh_sync_now") {
+      // 丙-③-b ③：**对等交换（网格）**。Web 上这一档**根本不可用**，而且是两件硬事实：
+      //   ① 没有发现层（UDP 广播/监听在 Rust 侧，浏览器不给）；
+      //   ② 开不了本机端口（`GET /mesh/pull` 那个窗口要有 `TcpListener`）。
+      // ⇒ 回一个**结构完整、`enabled:false`、说得出为什么**的报告（形状与 Rust 侧逐字段相同），
+      //   而不是抛错、也不是回空壳假装读过：
+      //   "回空壳"会让界面显示"网格：拉了 0 台"，用户分不清"没人"与"这一档压根没有"。
+      return {
+        enabled: false,
+        note: "Web 版没有局域网发现层，也开不了本机端口 ⇒ 网格这一档只在桌面版可用（这一轮一个字节都没动）",
+        candidates: 0,
+        peers: [],
+        window: null,
+      } as T;
+    }
+    if (cmd === "mesh_set_config") {
+      // 丙-③-b-2b：**写网格设置**。Web 上同样不可用（没有发现层、开不了端口）——
+      // 但这里**不抛错**：设置面回一个"关着 ＋ 为什么"的读数，界面照常能渲染，
+      // 用户看到的是"这一档在浏览器里没有"，而不是一句看不懂的异常。
+      return {
+        enabled: false,
+        bind: null,
+        tokenSet: false,
+        window: null,
+        note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用（设置没有落下）",
+      } as T;
     }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
@@ -2317,6 +2480,11 @@ export function makeInvoke(store: SqliteStore) {
     // reads/writes bytes through blobStore in save_image/get_attachment/
     // read_attachment_bytes. Implement them for completeness so a future caller
     // doesn't hit the unknown-command throw.
+    if (cmd === "convert_legacy_office") {
+      // Web 端**跑不了外部进程** ⇒ 如实说不支持（而不是回一份空字节让上层以为"转换成功但没内容"）。
+      // 抽取器会把它映射成 provider_error：与"这台机器没装 LibreOffice"同一条答复（§15.3-7）。
+      throw new Error("Web 版不支持旧格式转换（.doc/.xls/.ppt 需要本机的 LibreOffice；请用桌面版）。");
+    }
     if (cmd === "write_attachment_bytes") {
       const hash = String(a.hash ?? "");
       const data = (a.data as number[]) ?? [];
@@ -2786,9 +2954,11 @@ export function makeInvoke(store: SqliteStore) {
     //   ③ **别删这段实现**：删了会让平台层不完整、口径退回"没实现"，将来若要开放（先得解决
     //      浏览器存储被回收的问题）还得重写。
     //
-    // 触发路径（供判断"这段到底还会不会跑"）：`useAutoSync`（`App.tsx:618`）在 Web 上**仍会**
-    // 调用 `api.syncNow()`，但它只处理**已有 `space_id` 的 profile**（下面 :2432 的 `continue`）；
-    // 而配置入口在所有浏览器里都置灰 ⇒ 只有"历史遗留已配置过 profile"时才会真正走到这里。
+    // 触发路径（供判断"这段到底还会不会跑"）：**自动同步那一条路已经改走 `syncWorkspace`**
+    // （2026-09-26 口径收敛：那条固定 5 分钟、走老全局配置 `api.syncNow()` 的循环删了）⇒
+    // `sync_now` 今天只剩**显式调用**（例如插件事件/兼容路径）才会走到；它仍然只处理**已有
+    // `space_id` 的 profile**（下面 :2432 的 `continue`），而配置入口在所有浏览器里都置灰
+    // ⇒ 只有"历史遗留已配置过 profile"时才会真正做点什么。
     if (cmd === "sync_now") {
       const out: any[] = [];
       for (const profile of listProfiles(store)) {
@@ -2929,7 +3099,15 @@ export function makeInvoke(store: SqliteStore) {
       const blob = await attachmentByteDownload(`${server}${scoped}/attachments/${hash}`, token);
       if (!blob || blob.size === 0) throw new Error("服务端没有这个附件的字节（可能尚未上传）");
       await blobStore.put(hash, blob);
-      return blob.size as T;
+      // ★ 丙-④：回的是**读数**（与 Rust 侧同形）—— Web 上只有服务端这一个来源
+      //   （没有发现层、也开不了本机端口），所以 `source` 恒为 `server`，`peer` 恒为 `null`。
+      //   ⚠️ `note` 也必须给：界面**只显示这一句**，不给就会在 Web 上显示成空白。
+      return {
+        size: blob.size,
+        source: "server",
+        peer: null,
+        note: `已从服务器取回这一件（${blob.size} 字节）`,
+      } as T;
     }
     // ---- C1 预算刹车 / C2 网络闸门（2026-09-15）设备级设置 ----
     //
@@ -3113,8 +3291,10 @@ export function makeInvoke(store: SqliteStore) {
     }
 
     // ---- Encryption ----
-    // Web 形态没有静态加密（`web.ts` 的 set/lock/unlock/disable 都是空实现）：报"未开启"，
-    // 算法字段与本构建的默认写入版本一致（v1 = XChaCha20），别写成国密。
+    // Web 形态没有静态加密（`web.ts` 的 lock/unlock 都是空实现）：报"未开启"，
+    // 算法字段与本构建的默认写入版本一致，别写成国密。
+    // ★ owner 第三轮拍板（2026-09-24）：`set_encryption` / `disable_encryption`（应用级那两条）
+    //   已从命令面删掉 ⇒ 这里也不再给它们空实现（Web 侧本来就没有"一开全加密"这回事）。
     if (cmd === "encryption_status") {
       return {
         enabled: false,
@@ -3126,7 +3306,7 @@ export function makeInvoke(store: SqliteStore) {
         space_algorithm: "",
       } as T;
     }
-    if (cmd === "set_encryption" || cmd === "lock_encryption" || cmd === "unlock_encryption" || cmd === "disable_encryption") {
+    if (cmd === "lock_encryption" || cmd === "unlock_encryption") {
       return undefined as T;
     }
 
@@ -3276,6 +3456,37 @@ export function makeInvoke(store: SqliteStore) {
         throw new Error(`choice 只能是 local 或 remote，收到 ${choice}`);
       }
       resolvePageConflict(store, conflictId, choice);
+      return null as T;
+    }
+    if (cmd === "record_lineage_conflict") {
+      // 冲刺 §13.3 第 2 条：**页级**血统冲突的留痕（去重口径在那一层 —— 同一对指纹只提一次）。
+      // ⚠️ 字段名对齐 Rust 侧的 snake_case（前端两边同一套读法，与上面块级那两条同一手法）。
+      const args = a.args ?? a;
+      return recordLineageConflict(
+        store,
+        String(args.page_id ?? ""),
+        String(args.mine_fp ?? ""),
+        String(args.remote_fp ?? ""),
+        String(args.doc_json ?? ""),
+      ) as T;
+    }
+    if (cmd === "list_lineage_conflicts") {
+      const row = unresolvedLineageConflict(store, String(a.pageId ?? a.page_id ?? ""));
+      if (!row) return null as T;
+      return {
+        id: row.id,
+        page_id: row.pageId,
+        mine_fp: row.mineFp,
+        remote_fp: row.remoteFp,
+        remote_doc: row.remoteDoc,
+        detected_at: row.detectedAt,
+        resolved_at: row.resolvedAt,
+        resolved_choice: row.resolvedChoice,
+      } as T;
+    }
+    if (cmd === "resolve_lineage_conflict") {
+      const conflictId = String(a.conflictId ?? a.conflict_id ?? "");
+      resolveLineageConflict(store, conflictId, String(a.choice ?? ""));
       return null as T;
     }
     if (cmd === "list_stale_text_pages") {

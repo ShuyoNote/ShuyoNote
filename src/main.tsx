@@ -8,6 +8,12 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { version } from "../package.json";
 import { installViewportInsets } from "./lib/viewportInsets";
 import { installBackBridge } from "./lib/overlayStack";
+import { setCrdtRemoteApplier } from "./lib/crdt/plane";
+import { mergeRemotePageState } from "./lib/crdt/pageBinding";
+// ⚠️ `lineageNotice` 刻意是**零依赖的纯模块**（不 import 任何东西）⇒ 拉它进来不会把编辑器节点表
+//    或别的实现拖进启动路径（这正是上面那条"同步路径只认签名"的约束要防的事）。
+import { lineageRefusalNotice } from "./lib/crdt/lineageNotice";
+import { toast } from "./store/toast";
 
 // 移动端壳（Android）的两条桥。**必须在 React 挂载之前装好**：
 //   · `installViewportInsets()` 定义 `window.__SHUYONOTE_INSETS__`——壳层在页面
@@ -18,6 +24,29 @@ import { installBackBridge } from "./lib/overlayStack";
 // 两者在浏览器 / 桌面上都是**空转**（没有任何东西调用它们），行为与改动前一致。
 installViewportInsets();
 installBackBridge();
+
+// S4b-1b：**远端来的状态怎么落地**在启动时注册（同步路径只认签名、不 import 实现：
+// `web.ts` 会被 Node 侧脚本加载，它一 import `pageBinding` 就会把编辑器节点表拖进去）。
+// ⚠️ 第 47 轮：这里**曾经**还有一行 `setCrdtPlaneImpl(roundTripContentJson)` —— 那是**磁盘边界**的
+//    平面开关（构建期 `VITE_CRDT_PLANE=1`）。按边界决策 §6.2 已撤出（存盘这一步只有单版本 ⇒
+//    开着也合并不了任何东西，只会把已落盘 JSON 归一化改写一次）。
+//    连带的收益：**生产入口不再 import 带编辑器节点表的 `yDocBridge`**（上面那行已删）——
+//    它在生产里另有正当入口（`pageBinding` ⇒ `openPageSession`），但少一条无谓的依赖线总是好的。
+setCrdtRemoteApplier((db, pageId, state) => {
+  const res = mergeRemotePageState(db, pageId, state, Date.now());
+  // ★ S8：**血统冲突必须报出去**（不许静默）—— 那意味着这一页出现了两条互不相关的编辑历史：
+  //   本机那一版**原样保留、没有合并**（合了就会"一块变两块"，见 `mergeability.test.ts` ①）。
+  //   护栏本身已经 console.warn 过一次；这里再给用户可见的一次提示。
+  //   ★ 第 49 轮：措辞改从 `lineageRefusalNotice` 取 —— **与"打开页面"那条路
+  //   （`Editor.tsx` 的 `pendingSkipped`）共用一处实现**，两条路不许各自长一句话。
+  const refusal = res.lineageConflict
+    ? lineageRefusalNotice({ pageId, mine: res.lineageConflict.mine, remote: res.lineageConflict.remote })
+    : null;
+  if (refusal) {
+    console.error(refusal.log);
+    toast(refusal.message, "error");
+  }
+});
 
 // The lazily-loaded @excalidraw/excalidraw bundle reads `process.env.NODE_ENV` at
 // module top-level; define `process` in the browser so it doesn't throw

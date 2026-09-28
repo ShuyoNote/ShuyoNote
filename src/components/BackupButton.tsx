@@ -21,7 +21,6 @@ type BackupProgress = {
 // `label` 为空时渲染成侧栏那种小图标按钮；给了 label 就渲染成带文字的按钮，
 // 供设置中心「数据」页使用——同一份备份/恢复逻辑，两种外壳，不复制实现。
 export function BackupButton({ label }: { label?: string } = {}) {
-  const { loadPages } = useNotes();
   const { open: openMenu, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>();
   useOverlayScrollLock(openMenu);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
@@ -102,7 +101,8 @@ export function BackupButton({ label }: { label?: string } = {}) {
       if (!(await confirmDialog({ title: "导入备份", message: "导入会把备份中的空间合并进来（作为新空间，不覆盖现有空间），附件按内容去重。确定继续？" }))) return;
       setBusying("正在导入备份…");
       const res = await api.importBackup(path as string);
-      await loadPages();
+      // loadPages 是 store 动作（引用恒定）：本组件不读 notes 的 state，走 getState() 现取。
+      await useNotes.getState().loadPages();
       // Reload workspaces so the sidebar space name/list react to the imported
       // spaces (import_backup registers them in meta; it never overwrites).
       useSpaceStore.getState().load();

@@ -11,7 +11,11 @@ import { PluginViewTable } from "./PluginViewTable";
  * （与右侧常驻面板共用一份，见那里的注释）。
  */
 export function PluginViewOverlay() {
-  const { close, pluginId, pluginName, view } = usePluginViewStore();
+  // 逐字段订阅（`close` 是动作，引用恒定）。
+  const pluginId = usePluginViewStore((s) => s.pluginId);
+  const pluginName = usePluginViewStore((s) => s.pluginName);
+  const view = usePluginViewStore((s) => s.view);
+  const close = usePluginViewStore((s) => s.close);
   const openPage = useNotes((s) => s.openPage);
 
   // 落点是 rail 的视图由 PluginViewPanel 渲染——两个宿主互斥，不能同时开。

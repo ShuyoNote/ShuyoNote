@@ -11,7 +11,7 @@
 // 现在 Rust 在每传一件附件前 emit 一条 `attachment-sync-progress`
 // （见 `src-tauri/src/sync.rs` 的 `AttachmentSyncProgress`），这里把它落进 store。
 //
-// ⚠️ **挂在 App 级**（和 `useAutoSync` 并列），不挂在 `SyncPanel` 里：
+// ⚠️ **挂在 App 级**（和自动同步那一段并列），不挂在 `SyncPanel` 里：
 // 自动同步在面板关着的时候也会跑，进度必须照样被记录。
 import { useEffect } from "react";
 import { platform } from "../lib/platform";

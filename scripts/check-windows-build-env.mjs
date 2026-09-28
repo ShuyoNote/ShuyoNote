@@ -8,6 +8,16 @@
 // 所以这里主动问，并明确写出"缺了会怎样"。
 //
 // 用法：node scripts/check-windows-build-env.mjs
+//
+// ⚠️ **它故意不注册进 `scripts/lib/gates.mjs`**（2026-09-27 写明，别再当"孤儿"顺手注册）：
+//    它的第一条判据就是「平台是不是 Windows」（L32 的 `add("平台", WIN, …)`）⇒ 注册进
+//    `DEFAULT_GROUPS` 里的 `contract` 组会让**Linux CI 直接变红**。它的合法调用点是
+//    `package.json` 的 `check:win-build-env`，以及 `docs/RELEASING.md` 里"**换一台新的 Windows
+//    构建机之前先跑一遍**"那道流程。§3 那条"新增门禁必须注册"针对的是"本该在 CI 跑却被漏掉"的，
+//    这一条不同：**它按设计只在 Windows 构建机上跑**。
+//    佐证它会被认真跑过：本文件原先有一处语法错（第 147 行双引号串里嵌了 ASCII 直引号），
+//    因为不在注册表里而**在库里躺了很久**（2026-09-27 由工作区侧的变异扫描发现并修）——
+//    ⇒ 这正是"手动门禁"的代价：**它不会被机器提醒，只能靠人记得。**
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -144,7 +154,7 @@ if (WIN) {
     "缺了 `cargo build` / `pnpm tauri build` 会**当场停下**：`tauri-build` 的 `copy_resources` 报 " +
       "「resource path … doesn't exist」（`tauri-utils::Error::ResourcePathNotFound`，出在**构建脚本期**而非打包期）。" +
       "缺了它的后果：装包里没有 pdfium.dll ⇒ 用户端开着默认引擎（PDFium，P5 自 1.91.13 起生效）" +
-      "开 PDF 就会「找不到 PDFium 动态库」——**已经致命**（这条在 P5 之前写的是"暂不致命"，别再照抄）。" +
+      "开 PDF 就会「找不到 PDFium 动态库」——**已经致命**（这条在 P5 之前写的是「暂不致命」，别再照抄）。" +
       "源文件由 `node scripts/fetch-pdfium.mjs --platform win-x64` 现拉，不进 git",
   );
 }

@@ -531,6 +531,22 @@ function injectManifest() {
     )
     changed = true
   }
+  // 局域网发现（甲-1，2026-09-25）：Android 在应用**不持有** `WifiManager.MulticastLock`
+  // 时会把入站的 UDP 广播/组播帧**过滤掉** ⇒ 两台手机在同一个热点上也互相发现不了
+  // （真机实测：同热点、ping 双向 0% 丢包、双方都「发现 0 台」；把公告改成**单播**立刻生效）。
+  // 拿这把锁需要 `CHANGE_WIFI_MULTICAST_STATE` —— 它同样是**普通权限**（安装即授予、不弹窗），
+  // 所以这里只加声明；真正的 `acquire()` 在 Rust 侧（`src-tauri/src/lan_android.rs`）。
+  if (!xml.includes('android.permission.CHANGE_WIFI_MULTICAST_STATE')) {
+    xml = xml.replace(
+      /<manifest([^>]*)>/,
+      (m, attrs) =>
+        `<manifest${attrs}>\n` +
+        '    <!-- 局域网发现：收 UDP 广播/组播要拿 MulticastLock，而它要这个权限。\n' +
+        '         普通权限——安装即授予，不会弹窗。 -->\n' +
+        '    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />',
+    )
+    changed = true
+  }
   if (!xml.includes('shuyo_file_paths')) {
     xml = xml.replace(
       /<\/application>/,

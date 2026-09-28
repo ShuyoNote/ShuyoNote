@@ -8,14 +8,15 @@ import { suggestPageLinks } from "../../lib/mention";
 // (sorted by match/relevance); Enter or click inserts `[[标题]]`.
 export function PageLinkSuggestPlugin() {
   const [editor] = useLexicalComposerContext();
-  const notes = useNotes();
+  // 只订 `pages`（本插件整店订阅时，编辑器里每次自动保存都会把它唤醒一次）。
+  const pages = useNotes((s) => s.pages);
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const [sel, setSel] = useState(0);
 
-  const matches = suggestPageLinks(query, notes.pages.map((p) => ({ id: p.id, title: p.title, updated_at: p.updated_at })));
+  const matches = suggestPageLinks(query, pages.map((p) => ({ id: p.id, title: p.title, updated_at: p.updated_at })));
 
   // Detect an unclosed `[[query` at the caret → show suggestions + position.
   useEffect(() => {

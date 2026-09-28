@@ -25,7 +25,6 @@ function formatWhen(ms: number): string {
 }
 
 export function HistoryPanel({ pageId }: { pageId: string }) {
-  const { openPage, updateCurrent, bumpReload } = useNotes();
   const [versions, setVersions] = useState<PageVersion[]>([]);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -71,13 +70,16 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
     if (!(await confirmDialog({ title: "恢复版本", message: "恢复到该版本？当前内容将被覆盖。" }))) return;
     try {
       const page = await api.restoreVersion(versionId);
-      updateCurrent(page);
+      // 三个都是 store 动作（引用恒定）⇒ 走 getState() 现取：本面板不读 notes 的任何
+      // state 字段，订阅整店只会被每次自动保存白白唤醒。
+      const notes = useNotes.getState();
+      notes.updateCurrent(page);
       // 编辑器以 `reloadTick` 作为 key 才会重挂载并重新读取 content_json；恢复当前页时
       // pageId 不变，必须 bump reload 才能让编辑器刷新成恢复后的内容。
-      bumpReload();
+      notes.bumpReload();
       close();
       load();
-      openPage(page.id);
+      notes.openPage(page.id);
       toast("已恢复该版本", "success");
     } catch (e) {
       toast(`恢复失败：${e}`, "error");

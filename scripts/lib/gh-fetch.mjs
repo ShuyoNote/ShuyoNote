@@ -70,7 +70,7 @@ export function planAttempts(url, { pinnedIp, host } = {}) {
   if (!pinnedIp) return attempts;
   const u = new URL(url);
   const targetHost = host || u.hostname;
-  // 只有显式给了 pinnedIp 才排第二条；`Host` 头保持原主机名，SNI/证书校验才不会被 IP 打乱
+  // 只有显式给了 pinnedIp 才排第二条；`Host` 头保持原主机名（HTTP 层仍然指向对的主机）
   attempts.push({
     label: "pinned-ip",
     url: `${u.protocol}//${pinnedIp}${u.port ? `:${u.port}` : ""}${u.pathname}${u.search}`,
@@ -79,6 +79,38 @@ export function planAttempts(url, { pinnedIp, host } = {}) {
   });
   return attempts;
 }
+
+/**
+ * ⚠️ **这条兜底在 Node 的 `fetch` 上，对 HTTPS 不成立**；但"钉 IP 这条路"本身**是成立的**
+ * —— 成立的是 `curl --resolve`（2026-09-23 两条实测，同一台机器、同一分钟，macOS 侧报的）：
+ *
+ * ```text
+ * ① curl -s -o /dev/null -w '%{http_code}' --resolve api.github.com:443:140.82.112.6 \
+ *      https://api.github.com/repos/ShuyoNote/ShuyoNote                     ⇒ **200**
+ * ② node -e "fetch('https://api.github.com/repos/ShuyoNote/ShuyoNote')"     ⇒ UND_ERR_CONNECT_TIMEOUT
+ * ③ 我这边（Windows）: --deep --pinned-ip 140.82.112.6
+ *      [deep] pinned-ip: 抛错（network/ERR_TLS_CERT_ALTNAME_INVALID）
+ * ```
+ *
+ * 机制：`Host` 头是 **HTTP 层**的，而 TLS 的 **SNI**（决定服务端出示哪张证书）来自**连接目标** ⇒
+ * 本模块把 URL 换成 IP 之后，Node 用 IP 做 SNI ⇒ 证书主机名不匹配 ⇒ `ERR_TLS_CERT_ALTNAME_INVALID`。
+ * 而 `curl --resolve host:port:ip` 的设计恰恰是**把"连到哪个 IP"与"URL 里的主机名"分开**：
+ * URL 里的主机名照样用于 SNI 与证书校验，只是不再查 DNS ⇒ 在"直连超时/DNS 被投毒"的机器上仍能 200。
+ *
+ * ⇒ **收窄后的结论与取舍**（我第一版写成"钉 IP 在 HTTPS 上不成立"——**那句话太宽**，已按实测收窄）：
+ *   · **Node `fetch` ＋ `Host` 头**：对 HTTPS **不行**（就是上面那个证书错）；
+ *   · **`curl --resolve`**：**行**，而且它本来就是 `docs/RELEASING.md` 里"发版当天取不到就钉 IP"那条路；
+ *   · 真要让本模块自己搞定，两条路各有一个代价（**都还没做，需要一次明确裁定**）：
+ *     (a) `undici` 自定义 dispatcher（`connect: { servername: targetHost }`）⇒ 多一个**运行时依赖**；
+ *     (b) 起 `curl` 子进程 ⇒ 多一条 **transport**，与"唯一一条取远端文件的路"那条约束冲突
+ *         （⚠️ 要按 `curl` 找可执行文件，**别硬编码 `curl.exe`** —— macOS 侧 2026-09-22 就为这个修过一次门禁）。
+ *   · 在那之前：HTTPS 上这条兜底的净效果是"多花一次握手"，最终由三态判定记成 **未实查**
+ *     （`lib/remote-fact.mjs`：网络类失败 ⇒ 未实查，**不是红**）——即"我们没查成"，而不是"线上不对"。
+ */
+export const PINNED_IP_HTTPS_LIMITATION =
+  "**Node 的 fetch ＋ Host 头**在 HTTPS 上会被 SNI/证书校验拒绝（ERR_TLS_CERT_ALTNAME_INVALID）⇒ 记为「未实查」，不是红；" +
+  "但**钉 IP 这条路本身成立** —— `curl --resolve` 实测 200（发版当天走那条）。要在本模块里自己实现，只能在" +
+  "「加 undici 依赖」与「起 curl 子进程（第二条 transport）」之间选一个，尚未裁定 —— 见 planAttempts 上方的实测与取舍";
 
 /**
  * 取一份远端内容。**唯一的网络入口**（`fetchImpl` 可注入 ⇒ 判据不需要真网络）。

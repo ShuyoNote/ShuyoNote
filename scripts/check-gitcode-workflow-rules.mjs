@@ -25,7 +25,17 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : resolve(HERE, ".."));
+// ⚠️ `--root <dir>`：**夹具/自测用**（2026-09-28 加，约定同 check-store-subscriptions）
+//    —— 判据的承重证明要「在夹具根上把它弄红」，不必去改真仓的 workflow。
+// ⚠️ 边界（如实写在这里，免得被读成"这条不变式永远成立"）：**`.gitcode/workflows` 不存在或没有 yml 时，
+//    下面两处会「跳过」并 exit 0** —— 那是**有意**的（GitHub-only 检出不该因此变红），
+//    但也意味着**在那种检出上这条不变式没有被检查过**。要改这个语义（改成 exit 3「无可检查对象」）
+//    属于**契约决定**，得连同 `test-report.mjs` 对退出码的处理一起定，不在这里顺手改。
+if (rootArg >= 0) console.log(`（夹具根：${root}）`);
 const DIR = join(root, ".gitcode", "workflows");
 
 const RUNS_ON_WHITELIST = ["default", "ubuntu-latest", "euler-latest", "ubuntu-24", "ubuntu-22"];

@@ -15,26 +15,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import { __resetVaultForTests, enableVault, lockVault, unlockVault, vaultState } from "./lib/vault";
+import { __resetVaultForTests, lockVault, unlockVault, vaultState } from "./lib/vault";
 import "./i18n"; // 外壳里的组件用 useTranslation；先初始化，免得刷一屏 NO_I18NEXT_INSTANCE
 
 const mocks = vi.hoisted(() => ({
   status: vi.fn<() => Promise<{ enabled: boolean; locked: boolean }>>(),
-  setEncryption: vi.fn<(p: string) => Promise<void>>(),
   lockEncryption: vi.fn<() => Promise<void>>(),
   unlockEncryption: vi.fn<(p: string) => Promise<void>>(),
-  disableEncryption: vi.fn<() => Promise<void>>(),
 }));
 
 // 只替换加密那几个命令；外壳里的其它命令一律给空数组，够它安静地渲染。
+// ★ owner 第三轮拍板（2026-09-24）：`set_encryption` / `disable_encryption`（应用级）已删 ⇒
+// 这里也不再桩它们（`enableVault` / `disableVault` 随命令一起没了）。
 vi.mock("./lib/api", () => ({
   api: new Proxy(
     {
       encryptionStatus: mocks.status,
-      setEncryption: mocks.setEncryption,
       lockEncryption: mocks.lockEncryption,
       unlockEncryption: mocks.unlockEncryption,
-      disableEncryption: mocks.disableEncryption,
     },
     {
       get: (target: Record<string, unknown>, name: string) =>
@@ -144,11 +142,12 @@ describe("加密锁定的启动闸门", () => {
 
   it("解锁失败不改变状态：仍然锁定，错误照常抛出给界面显示", async () => {
     mocks.status.mockResolvedValue({ enabled: true, locked: true });
-    mocks.unlockEncryption.mockRejectedValue(new Error("口令不正确"));
+    // ★ 内核文案（owner 第三轮拍板后）：口令对不对由**解盒子**回答
+    mocks.unlockEncryption.mockRejectedValue(new Error("打不开（口令不对或盒子被改过）"));
     await render();
 
     await act(async () => {
-      await expect(unlockVault("错的")).rejects.toThrow("口令不正确");
+      await expect(unlockVault("错的")).rejects.toThrow("打不开");
     });
 
     expect(vaultState().locked, "口令不对就不能变成已解锁").toBe(true);
@@ -163,18 +162,5 @@ describe("加密锁定的启动闸门", () => {
     expect(host.querySelector(".lock-screen")).toBeNull();
     expect(host.querySelector(".app")).not.toBeNull();
     expect(vaultState()).toMatchObject({ enabled: false, locked: false, ready: true });
-  });
-
-  it("开启加密后立刻可用（enable → 已解锁）", async () => {
-    mocks.status.mockResolvedValue({ enabled: false, locked: false });
-    mocks.setEncryption.mockResolvedValue(undefined);
-    await render();
-
-    await act(async () => {
-      await enableVault("至少八位的口令");
-    });
-
-    expect(vaultState()).toMatchObject({ enabled: true, locked: false, ready: true });
-    expect(host.querySelector(".app")).not.toBeNull();
   });
 });

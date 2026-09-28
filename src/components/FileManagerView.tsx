@@ -159,8 +159,14 @@ export function FileManagerView() {
   // ——与 `.pdf-reader` 那条"浮层形态下不许写内联宽度"是同一条纪律（内联样式优先级更高，
   // 两边各改一半必然有一边不生效）。
   const isSheet = useMobileOverlayViewport();
-  const { pages, openPage, createPage, createFolder } = useNotes();
-  const { folderId, setFolderId } = useFileManagerStore();
+  // 只订真正渲染用到的 `pages`；三个动作引用恒定 ⇒ 用选择器订阅（值恒定，不产生额外重渲染），
+  // 这样本视图不再因为 `currentId` / `loading` / `searchQuery` / `reloadTick` 等无关字段变化而重渲染。
+  const pages = useNotes((s) => s.pages);
+  const openPage = useNotes((s) => s.openPage);
+  const createPage = useNotes((s) => s.createPage);
+  const createFolder = useNotes((s) => s.createFolder);
+  const folderId = useFileManagerStore((s) => s.folderId);
+  const setFolderId = useFileManagerStore((s) => s.setFolderId);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
   const [importing, setImporting] = useState(false);
@@ -249,8 +255,8 @@ export function FileManagerView() {
   // `loadFiles()` 只在切换文件夹、导入、删除之后才跑，于是「未下载」标记要**重载页面**
   // 才看得见，而那恰好是 P6.1 + P6.2 的主流程（关掉开关 → 同步 → 看哪些没下来）。
   //
-  // 判据取 `useSyncStatus` 的下降沿：手动同步（`SyncPanel`）、自动同步（`useAutoSync` /
-  // `App.tsx` 的定时器）与 Web 引擎（`web.ts`）**三条路都会配对 begin/end** ⇒ 一处挂载全覆盖。
+  // 判据取 `useSyncStatus` 的下降沿：手动同步（`SyncPanel`）、自动同步（`App.tsx` 那一段定时器，
+  // 2026-09-26 起只有它一条）与 Web 引擎（`web.ts`）**三条路都会配对 begin/end** ⇒ 一处挂载全覆盖。
   const syncing = useSyncStatus((s) => s.syncing);
   const wasSyncing = useRef(false);
   useEffect(() => {
@@ -268,9 +274,11 @@ export function FileManagerView() {
     }
     setFetching(f.hash);
     try {
-      await api.downloadAttachment(wsId, f.hash);
+      // ★ 丙-④：字节可能来自服务器、也可能来自网段里的对端 ⇒ 显示 Rust 拼好的那句原文
+      //   （写死"已下载"看着一样，但用户看不出"到底是谁给的" —— 而对端那条路正是丙要兑现的）。
+      const res = await api.downloadAttachment(wsId, f.hash);
       loadOnDisk();
-      toast(`已下载「${f.name}」`, "success");
+      toast(res.note, "success");
       return true;
     } catch (e) {
       // 与打开路径共用同一套分类（`attachmentFetchHint`）："取不回"要说清怎么办，

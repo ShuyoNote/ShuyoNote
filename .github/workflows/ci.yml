@@ -1,5 +1,17 @@
 name: CI
 
+# 2026-09-28 起：**门禁「自报跳过」必须带登记理由**才留在绿里。
+# 开关＝ `TEST_REPORT_STRICT_SKIPS=1`（≡ `--strict-self-skip`，见 `scripts/test-report.mjs:57`）：
+#   凡门禁**自报跳过**、而 `scripts/lib/gates.mjs` 里没写 `selfSkipOk` 理由的，**按失败计**。
+#   ⇒ 从今天起，**「跳过」与「通过」在 CI 里是可区分的**（此前那一格只写 passed，读不出"验过没"）。
+# 为什么现在敢打开：① 本机 `TEST_REPORT_STRICT_SKIPS=1` 与默认读数**逐字相同**（exit 0，自报跳过 0 条）；
+#   ② CI 侧现存的 2 条自跳（`check-sys-deps`／`gm-conformance`）**都已在 `gates.mjs` 登记理由**
+#      （2026-09-28 复核：`gates.mjs` 共 4 处 `selfSkipOk`；run #622 的工件里两者 `registered=true`）。
+# 跨机口径：macOS 侧 2026-09-28 拍定 **A′**（见其 `…strict-self-skip-decision-windows.reply-3.md`，附"开了会不会红"的读数）。
+# 若将来某条门禁**无理由**自跳 ⇒ 它会在这里红 —— 那是要的：**要留在绿里就得写理由**。
+env:
+  TEST_REPORT_STRICT_SKIPS: "1"
+
 # 单测 / 冒烟 / 布局验收 / 契约检查。
 #
 # 为什么必须有这个 workflow：这些检查此前**只靠人记得跑**。两套既有 CI 都不跑测试

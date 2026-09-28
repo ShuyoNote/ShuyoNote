@@ -15,14 +15,30 @@
 //   node scripts/check-release-state.mjs                    # 用 package.json 的版本
 //   node scripts/check-release-state.mjs --version 1.91.1
 //   node scripts/check-release-state.mjs --skip-remote      # 只跑本地/通道检查（离线兜底）
+//   node scripts/check-release-state.mjs --deep             # ★ 深检：所有远端读取走 `lib/gh-fetch.mjs`
+//                                                          #   （直连为主、**只在网络类失败时**退到钉 IP，
+//                                                          #    走过的路如实打进日志），并按**三态**判定：
+//                                                          #    通过 / 红 / **未实查**（未实查**不算红**）
+//   node scripts/check-release-state.mjs --deep --pinned-ip 140.82.112.6   # 显式给钉 IP（默认不钉）
+//
+// ⚠️ `--deep` 的**四约束**（与 `lib/gh-fetch.mjs` 同一份口径，写在这里免得下一个人"顺手对称"）：
+//   ① **默认关**：不加 `--deep` 时行为与以前逐字相同（CI/发版例行自检不受影响）；
+//   ② **复用同一条路**：深检下所有远端读取都走 `fetchWithFallback`，**不在本文件里再写一份 fetch**；
+//   ③ **取不到 ≠ 不符**：三态判定在 `lib/remote-fact.mjs`（404 是事实⇒红；401/403、5xx、网络耗尽⇒**未实查**，
+//      打印一行"未实查"就过，**不计入失败**）；
+//   ④ **哈希单一来源**：要算哈希就用 `gh-fetch.sha256Hex`（本文件不自己 `createHash`）。
 import { readFileSync } from "node:fs";
 import { redactSecrets } from "./lib/redact.mjs";
+import { fetchWithFallback } from "./lib/gh-fetch.mjs";
+import { fetchVerdict, isRed } from "./lib/remote-fact.mjs";
 
 const argOf = (f) => {
   const i = process.argv.indexOf(f);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 const SKIP_REMOTE = process.argv.includes("--skip-remote");
+const DEEP = process.argv.includes("--deep");
+const PINNED_IP = argOf("--pinned-ip") ?? process.env.GH_PINNED_IP ?? "";
 const VERSION = (argOf("--version") ?? JSON.parse(readFileSync("package.json", "utf8")).version).replace(/^v/, "");
 const TAG = `v${VERSION}`;
 const CHANNEL = "https://gitcode.com/shuyo-cn/ShuyoNote/releases/download/latest/latest.json";
@@ -54,6 +70,36 @@ const ok = (cond, msg) => {
  * （只认带重定向的 GET），1 字节 GET 既跟随 302、又不真下 100MB 的 AppImage。
  */
 async function httpGet(url, { method = "GET", timeout = 25, retries = 2, headers = {} } = {}) {
+  if (!DEEP) return directGet(url, { method, timeout, retries, headers });
+
+  // ---- 深检：走 `lib/gh-fetch.mjs`（约束②），并带上三态判定（约束③）----
+  const r = await fetchWithFallback(url, {
+    ...(PINNED_IP ? { pinnedIp: PINNED_IP, host: new URL(url).hostname } : {}),
+    headers,
+    timeoutMs: timeout * 1000,
+  });
+  // 约束④：走过的路**如实打进日志**（哪一种尝试、为什么退过去、最终哪条成功）
+  for (const line of r.log) console.log(`  · [deep] ${line}`);
+  const verdict = fetchVerdict(r);
+  return {
+    code: r.ok ? r.status : (r.status ?? 0),
+    body: r.ok ? r.body.toString("utf8") : redactSecrets(String(r.log.at(-1) ?? "取不到")),
+    ...(r.ok ? { sha256: r.sha256 } : {}),
+    verdict: verdict.kind,
+    why: verdict.why,
+  };
+}
+
+/** 三态判定的落点：`unverified` ⇒ 打印「未实查」并**不计红**（约束③）；其余照旧走 `ok()`。 */
+function okOrUnverified(res, cond, msg) {
+  if (DEEP && !isRed({ kind: res?.verdict }) && res?.verdict !== "ok") {
+    console.log(`  · 未实查：${msg}（${res?.verdict ?? "unverified"}｜**不是红**——取不到 ≠ 不符）`);
+    return;
+  }
+  ok(cond, msg);
+}
+
+async function directGet(url, { method = "GET", timeout = 25, retries = 2, headers = {} } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await fetch(url, {
@@ -81,16 +127,22 @@ function ghToken() {
 }
 
 console.log(`[release-state] 目标版本 ${VERSION}（tag ${TAG}）`);
+if (DEEP) {
+  console.log(
+    `[release-state] **深检模式**：远端读取走 lib/gh-fetch.mjs（直连为主${PINNED_IP ? `，网络类失败退到钉 IP ${PINNED_IP}` : "，未给 --pinned-ip ⇒ 不钉 IP"}）；` +
+      `判定是三态：通过 / 红 / **未实查（不算红）**`,
+  );
+}
 
 // ---- 1. 更新通道 ----
 const chan = SKIP_REMOTE ? { code: 0, body: "" } : await httpGet(CHANNEL, { timeout: 40 });
 let manifest = null;
 if (!SKIP_REMOTE) {
-  ok(chan.code === 200, `更新通道可达（HTTP ${chan.code}）`);
+  okOrUnverified(chan, chan.code === 200, `更新通道可达（HTTP ${chan.code}）`);
   try {
     manifest = JSON.parse(chan.body);
   } catch {
-    ok(false, `更新通道返回的不是 JSON：${chan.body.slice(0, 120)}`);
+    okOrUnverified(chan, false, `更新通道返回的不是 JSON：${String(chan.body).slice(0, 120)}`);
   }
 }
 if (manifest) {
@@ -108,7 +160,7 @@ if (manifest) {
     if (!SKIP_REMOTE) {
       // HEAD 只探可达性，不下整包（AppImage 有 100MB）。
       const h = await httpGet(e.url, { method: "HEAD", timeout: 40 });
-      ok(h.code === 200 || h.code === 302 || h.code === 206, `${k}：产物 URL 可达（HTTP ${h.code}）`);
+      okOrUnverified(h, h.code === 200 || h.code === 302 || h.code === 206, `${k}：产物 URL 可达（HTTP ${h.code}）`);
     }
   }
 }
@@ -131,7 +183,7 @@ if (!SKIP_REMOTE) {
     try {
       rel = JSON.parse(r.body);
     } catch {
-      ok(false, `取 GitHub Release ${TAG} 失败：HTTP ${r.code} ${redactSecrets(r.body).slice(0, 120)}`);
+      okOrUnverified(r, false, `取 GitHub Release ${TAG} 失败：HTTP ${r.code} ${redactSecrets(r.body).slice(0, 120)}`);
     }
     if (rel) {
       const names = (rel.assets ?? []).map((a) => a.name);
@@ -149,7 +201,10 @@ if (!SKIP_REMOTE) {
         const s = await httpGet(sidecar.browser_download_url, { timeout: 40, retries: 4 });
         const want = String(manifest.platforms["android-aarch64"].signature).replace(/^sha256:/, "").toLowerCase();
         const got = (s.body.match(/[0-9a-f]{64}/i) ?? [""])[0].toLowerCase();
-        if (got === "" && s.code === 0) {
+        if (DEEP && s.verdict === "unverified") {
+          // 约束③：**取不到 ≠ 不符** —— 深检下这一格由三态判定接管（不再是"看到 code!==200 就跳过"）。
+          okOrUnverified(s, false, "APK 指纹互证（取 .sha256）");
+        } else if (got === "" && s.code === 0) {
           // 网络问题 ≠ 指纹不符：**分开报**，否则会把"GitHub 连不上"误当成"发错了包"。
           console.log(`  · 跳过 APK 指纹互证：取 .sha256 失败（HTTP ${s.code}，网络原因）——重跑一次即可`);
         } else {
@@ -174,7 +229,7 @@ if (!SKIP_REMOTE) {
     } catch {
       /* 下面统一报 */
     }
-    ok(v === VERSION, `${base} 的 version.json = ${VERSION}（实测 ${v ?? `HTTP ${r.code}`}）`);
+    okOrUnverified(r, v === VERSION, `${base} 的 version.json = ${VERSION}（实测 ${v ?? `HTTP ${r.code}`}）`);
   }
 }
 

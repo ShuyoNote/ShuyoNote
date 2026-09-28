@@ -75,10 +75,17 @@ export function staleBaselineNotices({ results, baseline, thresholdPct = 80 }) {
 export function countsFromVitestJson(j) {
   if (!j || typeof j !== "object") return null;
   if (typeof j.numTotalTests !== "number") return null;
+  const failedSuites = typeof j.numFailedTestSuites === "number" ? j.numFailedTestSuites : null;
   return {
     total: j.numTotalTests,
     passed: typeof j.numPassedTests === "number" ? j.numPassedTests : null,
     failed: typeof j.numFailedTests === "number" ? j.numFailedTests : null,
+    // ★ 2026-09-23（AMD 报的那条红逼出来的）：**测试文件"收集失败"不算"用例失败"** ——
+    //   `import` 环 / 语法错 / 缺模块会让整个文件收集失败，于是 `numFailedTests` 仍是 **0**、
+    //   汇总行只剩「1977 passed」⇒ **只看汇总行的人会以为全绿**（退出码是非 0，但报告里看不出来）。
+    //   把这一格带进读数，渲染时才会写出「其中 N 个测试文件收集失败」。
+    failedSuites,
+    totalSuites: typeof j.numTotalTestSuites === "number" ? j.numTotalTestSuites : null,
   };
 }
 

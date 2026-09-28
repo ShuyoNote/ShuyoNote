@@ -64,18 +64,31 @@
 // 用法：
 //   node scripts/check-doc-content-access.mjs            # 校验（CI / 本地门禁）
 //   node scripts/check-doc-content-access.mjs --update   # 把基线下调到当前实测（只允许变小）
-import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+//   node scripts/check-doc-content-access.mjs --root <dir>   # 夹具/自测用（2026-09-28 加）
+import { readdirSync, readFileSync, statSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 // 判据（测试文件 / Rust 生产文本）在 `scripts/lib/rust-scan.mjs`，那里有自己的回归判据
 // （`rust-scan.test.mjs`）：其中的「配对证明」是给一次真实漏报立的闸 —— 旧实现按位置比例切尾部，
 // 会在「测试模块之后还有生产代码」时把生产代码一起切掉，新增的直接访问因此**不报红**。
 import { isTestFile, productionText } from "./lib/rust-scan.mjs";
+import { isMain } from "./lib/is-main.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : join(HERE, ".."));
 const BASELINE = join(root, "scripts", "doc-content-access-baseline.json");
 const PATTERNS = [/content_json/g, /content_text/g, /contentJson/g];
-const UPDATE = process.argv.includes("--update");
+const UPDATE = argv.includes("--update");
+
+// ⚠️ 2026-09-28 加的守卫（与 check-derived-writers / check-dead-code-receipts 同形）：
+//    **两个扫描根都不存在 ⇒ 拒绝给绿** —— 此前会一路走空、打印「0 个文件 / 0 处」并 **exit 0**，
+//    那是「没查却显示绿」（错根、错检出、目录被搬走时最危险）。
+if (isMain(import.meta.url) && !existsSync(join(root, "src")) && !existsSync(join(root, "src-tauri", "src"))) {
+  console.error(`✗ ${root} 下既没有 src/ 也没有 src-tauri/src/ ⇒ 判据没东西可扫（拒绝给绿）`);
+  process.exit(1);
+}
 
 /** 需要扫的目录与扩展名。 */
 const ROOTS = [
@@ -84,7 +97,14 @@ const ROOTS = [
 ];
 
 /** 收口后**允许**直接访问的那一层（还没建，先占位；建成后它们本就该在名单里）。 */
-const LAYER_FILES = new Set(["src/lib/docContent.ts", "src-tauri/src/doc_content.rs"]);
+const LAYER_FILES = new Set([
+  "src/lib/docContent.ts",
+  "src-tauri/src/doc_content.rs",
+  // 阶段 2（2026-09-23）：`content_json` ⇄ `ydoc` 的**唯一实现**（Slice A）。它按定义就是"那一层"的新成员：
+  // 唯一能同时提到落盘形态与 CRDT 形态的地方，别的地方一律经它转（判据在 `yDocBridge.test.ts`）。
+  // ⚠️ 加这里等于声明"这个文件本来就该直接访问" —— 以后它不是那一层了（比如改成经 `docContent.ts` 中转）就把它删掉。
+  "src/lib/crdt/yDocBridge.ts",
+]);
 
 // 判据（测试文件 / Rust 生产文本）都在 `scripts/lib/rust-scan.mjs`，见文件头 import 处的说明。
 
@@ -102,79 +122,91 @@ function walk(dir, exts, out = []) {
   return out;
 }
 
-const counts = {};
-let skippedTestFiles = 0;
-let trimmedRustTails = 0;
-for (const { dir, exts } of ROOTS) {
-  if (!existsSync(dir)) continue;
-  for (const file of walk(dir, exts)) {
-    const rel = relative(root, file).replace(/\\/g, "/");
-    // 那一层自己**本来就该**直接访问：计数阶段就跳过（否则 `--update` 会把豁免文件写进基线，
-    // 而基线里躺着豁免文件会让"文件数下降"这个读数失去意义）。
-    if (LAYER_FILES.has(rel)) continue;
-    const raw = readFileSync(file, "utf8");
-    const text = productionText(rel, raw);
-    if (text === null) {
-      skippedTestFiles++;
-      continue;
+// ⚠️ 2026-09-27 补守卫（由 macOS 侧的 import 安全普查点出）：**flag 解析与动作一起**放进 `main()`。
+//    此前它们全在顶层 ⇒ 谁 `import` 这个文件，宿主的 argv 就漏进来 —— 
+//    实测（本机探针）：import 即把整条检查跑完并输出；带 `--update*` 时会写基线。
+function main() {
+  const counts = {};
+  let skippedTestFiles = 0;
+  let trimmedRustTails = 0;
+  for (const { dir, exts } of ROOTS) {
+    if (!existsSync(dir)) continue;
+    for (const file of walk(dir, exts)) {
+      const rel = relative(root, file).replace(/\\/g, "/");
+      // 那一层自己**本来就该**直接访问：计数阶段就跳过（否则 `--update` 会把豁免文件写进基线，
+      // 而基线里躺着豁免文件会让"文件数下降"这个读数失去意义）。
+      if (LAYER_FILES.has(rel)) continue;
+      const raw = readFileSync(file, "utf8");
+      const text = productionText(rel, raw);
+      if (text === null) {
+        skippedTestFiles++;
+        continue;
+      }
+      if (text.length !== raw.length) trimmedRustTails++;
+      let n = 0;
+      for (const re of PATTERNS) n += (text.match(re) ?? []).length;
+      if (n > 0) counts[rel] = n;
     }
-    if (text.length !== raw.length) trimmedRustTails++;
-    let n = 0;
-    for (const re of PATTERNS) n += (text.match(re) ?? []).length;
-    if (n > 0) counts[rel] = n;
   }
-}
 
-const hadBaseline = existsSync(BASELINE);
-const baseline = hadBaseline ? JSON.parse(readFileSync(BASELINE, "utf8")) : {};
+  const hadBaseline = existsSync(BASELINE);
+  const baseline = hadBaseline ? JSON.parse(readFileSync(BASELINE, "utf8")) : {};
 
-if (UPDATE) {
-  // 「只许减」：不允许把基线调高（要调高说明又新增了直接访问，那应该先改代码）。
-  // ⚠️ **首次创建要豁免**：基线还不存在时，每个文件都是"0 → N"，那不叫上涨，那叫 bootstrap。
-  //    这一条是门禁第一次跑时自己抓出来的（它拒绝了创建基线），写下来免得后人再踩。
-  const raised = hadBaseline
-    ? Object.entries(counts).filter(([f, n]) => (baseline[f] ?? 0) < n)
-    : [];
-  if (raised.length) {
-    console.error("✗ 拒绝上调基线（先去掉新增的直接访问）：");
-    for (const [f, n] of raised) console.error(`   · ${f}: ${baseline[f] ?? 0} → ${n}`);
-    process.exit(1);
+  if (UPDATE) {
+    // 「只许减」：不允许把基线调高（要调高说明又新增了直接访问，那应该先改代码）。
+    // ⚠️ **首次创建要豁免**：基线还不存在时，每个文件都是"0 → N"，那不叫上涨，那叫 bootstrap。
+    //    这一条是门禁第一次跑时自己抓出来的（它拒绝了创建基线），写下来免得后人再踩。
+    const raised = hadBaseline
+      ? Object.entries(counts).filter(([f, n]) => (baseline[f] ?? 0) < n)
+      : [];
+    if (raised.length) {
+      console.error("✗ 拒绝上调基线（先去掉新增的直接访问）：");
+      for (const [f, n] of raised) console.error(`   · ${f}: ${baseline[f] ?? 0} → ${n}`);
+      process.exit(1);
+    }
+    const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
+    // ⚠️ 2026-09-28：**先建父目录再写** —— 真仓里 `scripts/` 本来就在，所以"不建目录"从来没暴露；
+    //    直到拿 `--root <夹具根>` 跑（2026-09-28 实测）：`writeFileSync` 直接 `ENOENT` 崩掉，
+    //    于是夹具拿到的是"基线没写成 ⇒ 下一个文件都算新增 ⇒ 控制组也红"，**看起来像判据坏了**。
+    mkdirSync(dirname(BASELINE), { recursive: true });
+    writeFileSync(BASELINE, JSON.stringify(sorted, null, 2) + "\n", "utf8");
+    const total = Object.values(sorted).reduce((a, b) => a + b, 0);
+    console.log(`✓ 基线已下调：${Object.keys(sorted).length} 个文件 / ${total} 处`);
+    process.exit(0);
   }
-  const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)));
-  writeFileSync(BASELINE, JSON.stringify(sorted, null, 2) + "\n", "utf8");
-  const total = Object.values(sorted).reduce((a, b) => a + b, 0);
-  console.log(`✓ 基线已下调：${Object.keys(sorted).length} 个文件 / ${total} 处`);
-  process.exit(0);
-}
 
-const problems = [];
-for (const [file, n] of Object.entries(counts)) {
-  if (LAYER_FILES.has(file)) continue;
-  const was = baseline[file];
-  if (was === undefined) problems.push(`新增文件直接引用（不在基线里）：${file}（${n} 处）`);
-  else if (n > was) problems.push(`直接访问变多：${file} ${was} → ${n}（收口要求只减不增）`);
-}
+  const problems = [];
+  for (const [file, n] of Object.entries(counts)) {
+    if (LAYER_FILES.has(file)) continue;
+    const was = baseline[file];
+    if (was === undefined) problems.push(`新增文件直接引用（不在基线里）：${file}（${n} 处）`);
+    else if (n > was) problems.push(`直接访问变多：${file} ${was} → ${n}（收口要求只减不增）`);
+  }
 
-const wasTotal = Object.values(baseline).reduce((a, b) => a + b, 0);
-const nowTotal = Object.values(counts).reduce((a, b) => a + b, 0);
+  const wasTotal = Object.values(baseline).reduce((a, b) => a + b, 0);
+  const nowTotal = Object.values(counts).reduce((a, b) => a + b, 0);
 
-if (problems.length) {
-  console.error(`✗ 文档内容直接访问门禁未通过（${problems.length} 项）：`);
-  for (const p of problems) console.error("   · " + p);
-  console.error(`
+  if (problems.length) {
+    console.error(`✗ 文档内容直接访问门禁未通过（${problems.length} 项）：`);
+    for (const p of problems) console.error("   · " + p);
+    console.error(`
 这些访问应当只经「那一层」：
    read(spaceId,pageId) / write(...) / merge(local,remote) / derive(merged)
 详见 docs/plans/2026-09-18-doc-content-layer-inventory.md §3/§4。`);
-  process.exit(1);
+    process.exit(1);
+  }
+
+  const lowerable = Object.entries(baseline).filter(([f, n]) => (counts[f] ?? 0) < n);
+  console.log(
+    `✓ 文档内容直接访问（生产面）：${Object.keys(counts).length} 个文件 / ${nowTotal} 处（基线 ${wasTotal} 处）` +
+      `　—　已排除 ${skippedTestFiles} 个测试文件、${trimmedRustTails} 个 Rust 测试尾部｜根：${root}`,
+  );
+  if (lowerable.length) {
+    console.log(`  ℹ️ 有 ${lowerable.length} 个文件的计数已经低于基线，可下调基线让它继续收敛：`);
+    for (const [f, n] of lowerable.slice(0, 10)) console.log(`     · ${f}: ${n} → ${counts[f] ?? 0}`);
+    console.log("     跑 `node scripts/check-doc-content-access.mjs --update`（只允许变小）。");
+  }
 }
 
-const lowerable = Object.entries(baseline).filter(([f, n]) => (counts[f] ?? 0) < n);
-console.log(
-  `✓ 文档内容直接访问（生产面）：${Object.keys(counts).length} 个文件 / ${nowTotal} 处（基线 ${wasTotal} 处）` +
-    `　—　已排除 ${skippedTestFiles} 个测试文件、${trimmedRustTails} 个 Rust 测试尾部`,
-);
-if (lowerable.length) {
-  console.log(`  ℹ️ 有 ${lowerable.length} 个文件的计数已经低于基线，可下调基线让它继续收敛：`);
-  for (const [f, n] of lowerable.slice(0, 10)) console.log(`     · ${f}: ${n} → ${counts[f] ?? 0}`);
-  console.log("     跑 `node scripts/check-doc-content-access.mjs --update`（只允许变小）。");
-}
+if (isMain(import.meta.url)) main();
+

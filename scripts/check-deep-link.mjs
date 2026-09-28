@@ -21,7 +21,13 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `--root <dir>`：**夹具/自测用**（2026-09-28 加，约定同 check-store-subscriptions）——
+// 判据的承重证明要「在夹具根上把它弄红」（拷真仓那几处文件、只改一处），不必去改真仓。
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : resolve(HERE, ".."));
+if (rootArg >= 0) console.log(`（夹具根：${root}）`);
 const read = (p) => {
   try {
     return readFileSync(resolve(root, p), "utf8");

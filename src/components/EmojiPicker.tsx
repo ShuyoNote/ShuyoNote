@@ -26,7 +26,10 @@ function saveRecent(list: string[]) {
 // Page-icon emoji picker: left group tabs + search (also free-text input) +
 // recent + emoji grid, styled like the reference Notion picker.
 export function EmojiPicker() {
-  const { open, onPick, close } = useIconPicker();
+  // 逐字段订阅（`onPick`/`close` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
+  const open = useIconPicker((s) => s.open);
+  const onPick = useIconPicker((s) => s.onPick);
+  const close = useIconPicker((s) => s.close);
   useOverlayScrollLock(open);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("emojiPicker", open, () => useIconPicker.getState().close());

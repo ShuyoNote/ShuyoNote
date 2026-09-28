@@ -546,7 +546,9 @@ export function main() {
   let current = null;
   let currentError = "";
   try {
-    current = sourceFingerprint({ lockPath: join(root, "src-tauri", "Cargo.lock") });
+    // ★ `repoRoot` 一定要传：国密构建用的是**私有副本**（`.gm-build/…`）⇒ 不传的话这里会拿
+    //   registry 那份**原版**去比产物标记的 `src_sha256`，每次国密构建都判成"标记过期"（假红）。
+    current = sourceFingerprint({ lockPath: join(root, "src-tauri", "Cargo.lock"), repoRoot: root });
   } catch (e) {
     currentError = String(e?.message || e).split("\n")[0];
   }

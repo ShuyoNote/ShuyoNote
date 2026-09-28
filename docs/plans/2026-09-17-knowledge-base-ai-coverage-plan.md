@@ -215,6 +215,8 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 > `image.caption` / 应用侧「开始索引」）—— 它们**没有被删掉**，而是移进下面的「**已关闭**」表并附
 > "现在由什么证"，免得"已做"与"未做"两头都读错。原始 09-17 版本在 git 历史里
 > （`git show <该次提交>:docs/plans/2026-09-17-knowledge-base-ai-coverage-plan.md`）。
+> ★ **2026-09-25 再补一行**：**P3 长尾（数据库块 / 绘图结构）那时还没做，后来落了** ——
+> 已从"未做"表挪进「已关闭」（本文件 §P3 那两张表早就写着 ✅，两张表当时互相矛盾）。
 
 **已落地（全部在 TS 侧 ⇒ 都能在 Windows 上自验）**
 
@@ -245,16 +247,18 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | **应用侧「开始索引」触发与进度** | `libraryIndexing.ts`（运行模型，与 DOM 解耦）＋ AI 设置面板的按钮 | `libraryIndexing.test.ts` · `indexPage.test.ts` |
 | **跨库总结 ＋ 强制引用**（P4） | `ai/librarySummary.ts` | `ai/librarySummary.test.ts` ＋ `ai/librarySummary.live.test.ts`（真模型：回链**全部来自输入**、`droppedInventedRefs=0`） |
 | **覆盖度报告**（只读：不抽取、不写库） | `extract/coverageReport.ts` | `coverageReport.test.ts`（含"慢假后端"用例） |
-| **★ 覆盖度落库 ＋ 读侧口径**（2026-09-23，AMD）：`attachment_text.coverage` 存 `ExtractCoverage` 的 JSON，空串 ＝ **未知**（不是"完整"）；`files.read` 的返回里带回每个抽取器一条 `{extractor, coverage}` | TS：`extract/schema.ts` · `extract/store.ts` · `extract/pipeline.ts` · `platform/sqliteStore.ts` · `platform/derivedStores.ts` · `platform/derivedText.ts` ／ Rust：`db.rs`（DDL 照抄 ＋ 幂等 ALTER）· `derived_transport.rs`（写/读两格）· `search.rs`（读页面） | `store.test.ts` 6 条（含**老库迁移**与"未知 ≠ 完整"）· `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含**缺列容忍**）· `derivedTransport.test.ts`（与夹具逐字相同）· 跨语言夹具 `tests/derived-transport-ops.json` · Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string` · `search::tests::read_attachment_text_separates_missing_from_empty_and_carries_coverage` ＋ `…_tolerates_an_old_table_without_the_coverage_column` · `db::tests::derived_schema_matches_the_ts_source_of_truth` |
+| **★ 覆盖度落库 ＋ 读侧口径**（2026-09-23，AMD）：`attachment_text.coverage` 存 `ExtractCoverage` 的 JSON，空串 ＝ **未知**（不是"完整"）；`files.read` 的返回里带回每个抽取器一条 `{extractor, coverage}` | TS：`extract/schema.ts` · `extract/store.ts` · `extract/pipeline.ts` · `platform/sqliteStore.ts` · `platform/derivedStores.ts` · `platform/derivedText.ts` ／ Rust：`db.rs`（DDL 照抄 ＋ 幂等 ALTER）· `derived_transport.rs`（写/读两格）· `search.rs`（读页面） | `store.test.ts` 7 条（含**老库迁移**、**形状不对只算未知**与"未知 ≠ 完整"）· `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 4 条（含**缺列容忍**与"非缺列失败必须抛"）· `derivedTransport.test.ts`（与夹具逐字相同）· 跨语言夹具 `tests/derived-transport-ops.json` · Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string` · `search::tests::read_attachment_text_separates_missing_from_empty_and_carries_coverage` ＋ `…_tolerates_an_old_table_without_the_coverage_column` · `db::tests::derived_schema_matches_the_ts_source_of_truth` |
 | **★ 覆盖报告的第五类 `partial`**（2026-09-23，AMD）：报告不再只看"**有没有块**" —— 抽取器自己报了 `complete:false` 的**已索引**附件单列（`attachments.partial` ＋ 明细 `reason: "partial"` ＋ 摘要里"其中 N 份**没抽全**"）；**没读数 ＝ 未知**，既不算缺口也**不算完整** | `extract/coverageReport.ts`（读 `coverageOf`） | `coverageReport.test.ts` 6 条（有缺口／没读数／读数是完整／坏 JSON／换读数不留残值／三类混在一起不串味） |
+| **★ 覆盖报告的出口之二：人来点的那一格**（2026-09-23，macOS；owner 随后拍「UI 也要」） | `src/components/AiSettingsForm.tsx` 的「全库索引」段加一个「检查索引覆盖」入口：`platform.derivedStores()` → `scanLibraryCoverage` → **同一个** `coverageReportTool`（形状不另写一份）⇒ 人看到的数字与 AI 答的一致 | `src/components/aiSettingsCoverage.test.tsx` 4 条（摘要必须出现「没抽全」／**截断要说出来**／没有派生层时如实报错、不许显示空报告／扫描抛错要带原话） |
+| **★ 覆盖报告的出口：只读能力 `coverage.report`**（2026-09-23，AMD；owner 拍的这一支） | 注册表 `capabilities/capabilities.json`（`host: "frontend"`，见 §15.11）· `src/lib/capabilities/frontend.ts` 适配器 · `src/lib/libraryCoverage.ts::coverageReportTool`（形状） · 生成器/门禁对 host-only 的支持 | `libraryCoverage.test.ts` 4 条（摘要必须出现「没抽全」／未索引仍按四类／**截断必须说出来**／summary 与报告同源）＋ `ai/tools.test.ts`（工具清单含它）＋ `check-capabilities`（四条 host-only 边界） |
 | **派生表唯一写入者门禁** | `scripts/check-derived-writers.mjs`（白名单只留 `src-tauri/src/derived_transport.rs`） | 自身（57 个 `.rs`／生产写入 0 处／豁免 1） |
 
 **未做 × 卡在哪 × 归谁**（这张表是为了让"没做"**不被误读成"忘了"**）
 
 | 未做项 | 卡在哪 | 归谁 |
 |---|---|---|
-| `ooxml.legacy@1`（旧 `.doc` / `.xls`） | 需 LibreOffice headless，**本机没装** | 未定 |
-| **P3 长尾：数据库块 / 绘图结构**（2026-09-22 核过） | 抽取层里**没有**任何对应抽取器或派生路径（在 `src/lib/extract/` 搜 mermaid / 绘图 / 数据库块，只命中文档里的 `drawingml` 命名空间）—— 与音视频同类，属"还没人做"，不是"故意不抽" | 未定 |
+| `ooxml.legacy@1`（旧 `.doc` / `.xls` / `.ppt`） | **代码侧已全落**（2026-09-23）：契约（AMD `eb67bb06`）＋ 抽取器 `src/lib/extract/legacy.ts`（macOS `d64ec291`）＋ 平台半（macOS `772c017b`：Rust 命令 `convert_legacy_office` 走 LibreOffice headless —— 临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须 OOXML；TS 在 `attachmentDeps` 里注入，Web stub 如实 reject ⇒ `provider_error`）。**仍缺的只有「真转换」那一次读数**：这台 macOS 上没有 `soffice`（也没有 brew），所以只有假转换器路径的判据；在装好 LibreOffice 的机器上跑一次即闭 | **契约：AMD ✅** ／ **抽取器 ＋ 平台半：macOS ✅** ／ **真转换读数：待有 LibreOffice 的机器**（★ **owner 2026-09-23 拍板：形态＝降级** —— 既不要求用户装、也不随包；用户自己装了 LibreOffice 的机器上**自动可用**，错误信息本来就点名要装什么。⇒「真转换读数」从阻塞项降为**可选**复现） |
+| **P3 长尾：数据库块 / 绘图结构** | ✅ **2026-09-25 更正：两格都已落地** —— 数据库块＝纯函数 AMD `81b0657e` ＋ 接线 macOS `1e68f680`；绘图块＝AMD `drawingStructureText.ts` ＋ 收口 `43decd56`（细节见下面 §「P3 剩余两格的工作单」那两张表）。<br>⚠️ **本条原写"还没人做"，与本文件 §P3 那两张表互相矛盾**（同一份文档两处相反）—— 以 §P3 为准 | 无（已关闭，见下表） |
 
 **已关闭（2026-09-22 逐条去仓里核过，原表那几行已不成立 —— 别照旧表读）**
 
@@ -266,6 +270,7 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 | `av.transcript@1`（音视频） | **2026-09-22 落地**（AMD，含两个本机 ASR 的真读数）；那条"等 §13 第 7 项拍板"已由 owner 选「甲」+ 本机端点收口 |
 | `image.caption`（VLM 语义描述） | 已注册为第二档，只在 OCR 判 `empty` 时被调度 |
 | 应用侧「开始索引」触发与进度 | `libraryIndexing.ts` 的运行模型 ＋ AI 设置面板的「开始索引」按钮（`AiSettingsForm.tsx`） |
+| **P3 长尾：数据库块 / 绘图结构** | **2026-09-25 补进本表**（原表把它列成"还没人做"）：数据库块 `81b0657e` ＋ `1e68f680`；绘图块 `drawingStructureText.ts` ＋ 收口 `43decd56` —— 判据与分工见 §「P3 剩余两格的工作单」两张表 |
 
 **故意不做**（**别当 bug 修**）：见 P1 节末尾的「已知边界」表
 （docx 页眉页脚＝噪声；xlsx 日期不猜＝怕凭空造数据）。
@@ -355,15 +360,40 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 >    Rust `db.rs` 逐字照抄 ＋ 两侧各一条幂等 `ALTER`），`files.read` 的返回里带回
 >    `coverage: [{ extractor, coverage }]`（`''`／空数组 ＝ **未知**，不许读成"完整"），
 >    `files.search` 仍**没有**判据（这条**没做**，见下）。
->    **处置时踩到并已修的一条真坑（值得记住）**：`db::tests::derived_schema_matches_the_ts_source_of_truth`
->    把 `schema.ts` **按反引号切分**取"模板字符串体" ⇒ 我在注释里写的那几个反引号（例如 `` `coverage` ``）
->    **当场把那条判据变红**（解析出 7 条 DDL 而不是 6 条）。判据**按设计**红得响亮（"解析失败也判红"），
->    修法是在 `schema.ts` 顶部写明"**本文件里只有 DDL 用反引号，注释里也一个都不要写**"。
->    ⇒ 这条是"判据抓住了实现者"的正面例子，不是判据太脆：它守的正是"两侧 DDL 逐字相同"。
+>    **处置时踩到并已修的一条真坑（值得记住，且我在同一处前后订正过两次自己的说法）**：
+>    `db::tests::derived_schema_matches_the_ts_source_of_truth` 把 `schema.ts` **按反引号切分**取
+>    "模板字符串体" ⇒ 我在注释里写的一个反引号段**当场把那条判据变红**。
+>    ⚠️ **精确规则是三格，而且三方各测了一半**（macOS 测到"落单"、Windows 测到"CREATE 前缀"、
+>    我复刻了两者并合并）：
+>
+>    | 在注释里写 | 实测 |
+>    |---|---|
+>    | **成对**的普通反引号段（`exec()` / `run` 那种） | ✅ 绿（当前文件里本来就有 6 对） |
+>    | 一个**落单**的反引号 | ❌ 红，报「**解析出 0 条**」（奇偶翻转 ⇒ 6 条 DDL 全被跳过） |
+>    | 一段**以 CREATE TABLE / CREATE INDEX 开头**的反引号段 | ❌ 红（解析出 **7 条**） |
+>
+>    ★ **我的两次错**：先写成"多一对反引号就打乱奇偶"（把"落单"说成了"成对"）；
+>    被 Windows 订正后又只留下"以 CREATE 开头"那一格、**漏掉"落单 ⇒ 0 条"**（macOS 补上）。
+>    ⇒ 教训不是"要小心"，而是两条可操作的：① 判据红了以后，**"为什么红"必须实测复刻**，
+>    不能对着症状讲故事；② 一条规则只由一个人测，很容易只覆盖自己撞到的那一格 ——
+>    这次是**三方各测一半才拼全**（`schema.ts` 顶部现在就是那张三格表）。
+>    ★ **随后判据本身也改了（`efe721a3`，Windows 侧按 mac 的提议）**：不再按奇偶取段，改成
+>    **按反引号切分取全部段**再按 CREATE 前缀过滤 ⇒ 上面三格里的**"落单"那一格消失**（落单不再影响结果），
+>    只剩一格：**不许出现以 CREATE TABLE / CREATE INDEX 开头的反引号段**（报"解析出 7 条"，正指向真因）。
+>    `schema.ts` 顶部已按**新口径**重写（并保留一段"历史，别照旧读"）；本文这张表留作过程记录。
+>    判据**按设计**红得响亮（"解析失败也判红"），要改的是注释写法；`schema.ts` 顶部保留的保守纪律
+>    是"注释里别写反引号"（便宜、记得住）；真走精确路线该改的是**判据本身**（取全部段 ＋ 前缀后要求表/索引名），
+>    那是 `db.rs` 的文件。
+>    ⇒ 这仍是"判据抓住了实现者"的正面例子：它守的正是"两侧 DDL 逐字相同"。
 > 3. **`files.read` / `files.search` 的判据现状（2026-09-23 复核）**：`read_attachment_text` 两侧都补了 ——
 >    Web 侧 `platform/derivedText.test.ts`（真 sql.js、真 SQL，含覆盖度那一组）＋
->    Rust 侧 `search::tests::read_attachment_text_*` 两条（此前**一条都没有**）；
->    `files.search`（`cap_files_search` → `search_chunks_in_conn`）**仍只有契约级覆盖**，行为判据缺 —— 归 Rust 侧。
+>    Rust 侧 `search::tests::read_attachment_text_*`（此前**一条都没有**）；
+>    **`files.search` 的 6 条行为判据也已落地**（Windows `db34bcbb`：空 query ⇒ `bad_args` / limit 夹取 /
+>    入口归一化 / 只命中活动空间 / `loc` 与 `files.read` 同口径 / 空库 ⇒ 空数组）。
+>    ★ 它的**执行面**是 Windows/AMD 两台各跑一次才对上的：`db34bcbb` 上 macOS 报 **507/1**、我在 Windows
+>    报**逐字相同的** `507/1`（`plugins.rs:9364` `left: Null / right: "p1"`）⇒ 根因在**夹具**
+>    （`add_cap_chunk` 把 `page_id` 写死 NULL，而命中的 `pageId` 读的是**表里的列**；那条判据里
+>    "证明作用域"的第二句因此**恒真空转**）⇒ macOS 修夹具（`300f1f83`）后我复跑 **508/0/18**，6 条全绿。
 
 > 📄 **可套用的补丁草案在同目录的 [`2026-09-17-ai-coverage-handoff-patches.md`](2026-09-17-ai-coverage-handoff-patches.md)**
 > —— 里面是精确的 JSON 条目、TS 适配器代码、Rust 改动的**形状与验收**，
@@ -911,7 +941,7 @@ export function pickExtractor(
 1. 先改**本节**（契约）→ 2. 再改**实现** → 3. 若改的是 `id` 的版本号，同时更新 §6.1 的重跑口径与 §13 待拍板里相关项。
 **禁止**先改实现再回头补契约。
 
-### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe`**（2026-09-17 增补；`transcribe` 2026-09-22 补）
+### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe` / `convertLegacy`**（2026-09-17 增补；`transcribe` 2026-09-22、`convertLegacy` 2026-09-23 预置）
 
 起因：Mac 侧要做 `pdf.ocr`，先做了五分钟可行性核对就发现**路是堵的** —— 扫描件要"页 → 像素"，
 而契约不给它要像素的路（抽取器只有 `bytes`；平台原有的渲染入口要的是 **attachmentId**）。
@@ -994,6 +1024,26 @@ CLI、服务端索引、Headless 复用这些路直接堵死，而抽取层的�
 落地形态：`src/lib/extract/avTranscript.ts` —— `av.transcript@1`、`cost: "gpu"`、段 `kind: "transcript"`、
 `loc: "HH:MM:SS"`（时间码是这类内容唯一的定位）。登记在 `DEP_CAPABILITIES`（`depsCatalog.ts`）⇒
 **本表与 `ExtractDeps` 由 `_DEP_EXHAUSTIVE` 双向卡住，漏登记一处 `tsc` 就红**。
+
+**第 7 项：`convertLegacy`（旧二进制 Office → OOXML，2026-09-23 预置）** —— 同一条通用规则的**第三次**兑现。
+
+| # | 问题 | 裁定 |
+|---|---|---|
+| 1 | 加不加 `deps.convertLegacy` | **加**，且**不蹭 `vision` / 不许抽取器自己 spawn**。形状：`(bytes: Uint8Array, mime: string, opts: { to: string }) => Promise<Uint8Array>`。理由：① `.doc`/`.xls`/`.ppt` 是 **OLE 复合文档**，抽取层**解不了**，而"调外部程序 / 自带转换器"正是 `isolated.test.ts` 禁的那一类；② 契约本来就是**一个能力一个键**，加它是照既有形状填空；③ 它与前三者**形状都不同**（前三个是"内容 → 文本/图"，这个是"字节 → 字节"） |
+| 2 | **返回什么** | **只返回字节**（`Promise<Uint8Array>`）。`to` 是**目标 MIME**、由**抽取器**决定（`.doc`→docx、`.xls`→xlsx、`.ppt`→pptx）⇒ 调用方自己就是提出 `to` 的那个人，**刻意不返回 mime**（少一处能漂的地方）。**为什么用 MIME 而不是扩展名**：抽取层全程说 MIME（`ExtractInput.mime` / 注册表 `mimes`），再引入一套扩展名词汇就是第二套口径 |
+| 3 | **失败怎么算** | **一律 reject**（转换器不在 / 非零退出 / 超时 / 输出不是合法 OOXML）⇒ 抽取器映射成 `provider_error`（§15.3-7），与 `vision`/`transcribe` 同口径。**超时归平台实现**（LibreOffice headless 会挂），契约层不写超时参数 —— 与 `vision` 一致 |
+| 4 | **谁注入 / 谁落地** | 与前三者同：**平台层**（唯一构造点 `attachmentDeps(...)`）。✅ **2026-09-23 已落地**：抽取器 `src/lib/extract/legacy.ts`（`d64ec291`）＋ 平台半 `772c017b`（Rust `convert_legacy_office`：临时目录／90s 超时并杀子进程／**三条路都清临时目录**／输出必须是 OOXML；TS 适配器**不吞错误**；Web stub 如实 reject）。⚠️ **没装 LibreOffice 的机器仍一律 `provider_error`** —— 那是**如实答复不是 bug**（命令会给出一条点名怎么装的原话）。分工（2026-09-23）：**契约半归 AMD ✅**；**抽取器 ＋ 平台半归 macOS ✅**；**真转换读数**待有 LibreOffice 的机器 |
+
+落地形态（**契约半已落** —— 就是本节这张表 ＋ `ExtractDeps.convertLegacy` ＋ `DEP_CAPABILITIES` ＋ 下面的夹具；**抽取器与平台实装待 macOS**）：`ooxml.legacy@1` 认 `.doc`/`.xls`/`.ppt`
+（`application/msword` / `application/vnd.ms-excel` / `application/vnd.ms-powerpoint` ＋ 扩展名），
+**先 `convertLegacy` 转成 OOXML，再复用 `ooxml.ts` 那一族现成的解析** —— **不许写第二套 docx/xlsx 解析**
+（那正是本方案反复在防的"两份实现"）。段 / 表格 / `loc` 的口径必须与 `ooxml/docx-*` / `ooxml/xlsx-*` **逐条相同**：
+夹具 `ooxml/xls-旧格式` 与 `ooxml/doc-旧格式` 就是拿这个钉的 —— **假转换器按 `to` 返回同源的 OOXML**
+（要错目标就 reject）⇒ "转换后必须复用同一套解析"这条**可核**，而不是靠自觉。
+没注入 ⇒ `provider_error`（夹具 `ooxml/旧格式·没配转换`）。
+⚠️ 这三条夹具现在都标着 `planned: true`，而 `conformance.test.ts` 有**双向**判据：
+"目标抽取器没注册 ⇒ 必须标 planned" ＋ "**抽取器已注册 ⇒ 不许再标 planned**" ⇒
+**实现一落地、夹具自动开始跑**，不靠人记得（ASR 那次也是这么绑的）。
 
 所以规则是通用的：**凡是"只有平台能做"的事，都加 `deps`；一律可选、一律没注入就 `provider_error`、一律不许抽取器自己想办法。**
 
@@ -1119,24 +1169,38 @@ AI 工具面只能看到 `truncated`（读取窗口），而它**不是**"抽全
 | **库**：`attachment_text.coverage`（`TEXT NOT NULL DEFAULT ''`） | 存 `ExtractCoverage` 的 JSON；`''` ＝ **没有读数** | 刻意**冗余在段行上**（不另起表）：派生层是可重建缓存、`replace()` 是整体替换 ⇒ 一行一次写；少一张表就少一处漂移 |
 | **写**：`store.replace(..., coverage?)` → `platform/derivedStores.ts` → `derived_query`/`derived_apply` | **线上传的是一段 JSON 字符串**（不是结构体） | 序列化只在 TS 侧做一次。若让 Rust 再序列化，就有了第二个"JSON 长什么样"的地方，与 TS 的解析口径必然漂 |
 | **读**：`AttachmentTextStore.coverageOf` → 新查询 `attachmentTextCoverage` → Rust `search::read_attachment_text_coverage_in_conn` | 一条 SQL、两个读者（运输层 ＋ `read_attachment_text` 页面） | 两处各写一份 SQL 会长出两种语义（去重与否、排序、缺列怎么办），而**漂移不会报错** |
-| **解析**：`storedCoverageFrom(rows)`（纯函数，两平台共用） | 空串／坏 JSON ⇒ **未知**，**不是**"完整" | 这是本条要防的那一件事；它只许有**一处**实现 |
+| **解析**：`storedCoverageFrom(rows)` ＋ `parseStoredCoverage(raw)`（纯函数，两平台共用） | 空串／坏 JSON／**形状不对** ⇒ **未知**，**不是**"完整" | 这是本条要防的那一件事；它只许有**一处**实现 |
 
 **三条刻意的不变量**（各有判据）：
 1. **未知 ≠ 完整**：`''`（没算过／没报）与 `{"complete":true}` 是两件事 —— 不传覆盖度时读回来是
    **"没有这一格"**（不是 `{complete:true}`）。库里那份不是合法 JSON 时**同样**只算未知（不许猜成完整）。
-2. **一次抽取一份**：一行一段，但覆盖度按 `(att_id, extractor)` **去重**（`DISTINCT`），按 `extractor` 稳定排序。
+   ★ 它的**边角**（2026-09-23 Windows 侧复核出来的）：**未知 ≠ 垃圾** ——
+   只做 `JSON.parse` 的话 `"null"`／`"123"`／`"{}"`／`"[1,2]"` 都成了"**有读数**"（后三者是 **truthy**，
+   `if (r.coverage)` 挡不住，而 `complete` 读出来是 `undefined`）。
+   形状按契约收口：**非 null 对象 ＋ `complete` 是布尔**才算读数，其余回 `undefined`（＝未知）。
+2. **"一次抽取一份"要精确到行**（同日订正措辞）：SQL 是 `SELECT DISTINCT extractor, coverage` ⇒
+   去掉的是**整行相同**的重复（同一份读数逐段重复在所有段行上）；同一 extractor 真有**两份不同**读数时
+   **两行都回**（**不替调用方挑**——挑就是静默丢一条）。生产路径上构造不出后者（`replace` 是整体替换）。
 3. **老库与缺列**：两侧各一条幂等 `ALTER TABLE … ADD COLUMN`（`CREATE TABLE IF NOT EXISTS` **不会**给已存在的表加列）；
    而"列真的不在"时读侧答复**"没有读数"**（空），**不是**让 `files.read` 整条失败 ——
    读不到读数与没有读数是两件事，但对着"未知"这条语义它们是同一个答复。
+   ⚠️ **但只许吞这一种失败**（同日收窄）：原来 `catch { return [] }` 把**数据库锁住／表损坏／SQL 打错字**
+   全翻译成"没有读数"，而"未知"是**承重**答复、不该当垃圾桶 ⇒ 现在只认缺列（`no such column`），其余照原样抛
+   （与同一笔里 `db.rs::migrate` 那条只吞 `duplicate column name` 的 ALTER 口径一致）。
 
-**判据（都在本机跑过）**：TS `store.test.ts` 6 条 · `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 3 条（含缺列容忍）·
+**判据（都在本机跑过）**：TS `store.test.ts` 7 条 · `derivedStores.test.ts` 3 条 · `derivedText.test.ts` 4 条
+（含缺列容忍、以及"**非缺列原因的失败必须抛**"）·
 `derivedTransport.test.ts`（与跨语言夹具 `tests/derived-transport-ops.json` **逐字相同**，`coverage` 字段也在夹具里）；
 Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string`（含"重抽不报覆盖度 ⇒ 旧读数必须被清掉"）·
 `search::tests::read_attachment_text_*` 两条 · `db::tests::derived_schema_matches_the_ts_source_of_truth`。
 
-> ⚠️ **一条实现期踩到的坑，已写进 `schema.ts` 顶部**：那条 DDL 一致性判据把 `schema.ts`
-> **按反引号切分**取模板字符串体 ⇒ 我在注释里写的反引号**当场把判据变红**（解析出 7 条而不是 6 条）。
-> 判据红得对（它守的就是"两侧逐字相同"），要改的是注释的写法。
+> ⚠️ **一条实现期踩到的坑，已写进 `schema.ts` 顶部（我在同一处前后订正过两次）**：那条 DDL 一致性判据把
+> `schema.ts` **按反引号切分**取模板字符串体 ⇒ 我写的某个反引号段**当场把判据变红**。
+> 精确规则是**三格**（成对的普通反引号 ✅ 绿 ／ **落单**的反引号 ⇒ 奇偶翻转、报"解析出 **0 条**" ／
+> 段**以 CREATE TABLE / CREATE INDEX 开头** ⇒ 报"**7 条**"），而且是**三方各测一半**才拼全的
+> （macOS 测落单那格、Windows 测 CREATE 前缀那格、我复刻并合并；我的两次错法见 §8.1 的同一段）。
+> ★ **`efe721a3` 起判据改成"取全部段"** ⇒ 只剩**一格**要守：**不许出现以 CREATE TABLE / CREATE INDEX
+> 开头的反引号段**（落单不再影响结果）。判据红得对（它守的就是"两侧逐字相同"），要改的是注释的写法。
 >
 **读侧第二处：全库报告也读了这份读数**（同日补完，`extract/coverageReport.ts`）——
 报告原先只问"**进了检索面没有**"（有块就算已索引），于是混合 PDF 只抽到正文页时它是**绿的**，
@@ -1149,4 +1213,38 @@ Rust `derived_transport::tests::coverage_round_trips_and_stays_a_raw_string`（�
 > 在 `src/**` 里**只有测试调用它**（无 UI 组件引用、`capabilities.json` 里也没有对应能力）；
 > 所以"库里到底覆盖到哪"目前**用户和 AI 都问不到**。出口走 UI 还是做成一个只读能力，待定。
 
+> ✅ **该边界已收口（2026-09-23，AMD）**：owner 拍了**只读能力**这一支 ⇒ 新增 `coverage.report`
+> （见 §15.11）。报告本身仍是同一份纯函数（`indexCoverage` / `summarizeCoverage`），
+> 能力面只是把它**接上一个出口**（`scanLibraryCoverage` → `coverageReportTool`），没写第二份逻辑。
+
+### 15.11 能力面的**两个实现面**，与 `host: "frontend"`（2026-09-23 增补）
+
+**背景**：能力注册表（`capabilities/capabilities.json`）原先隐含一条假设 ——
+**每条能力在 Rust 侧都有一个 `cap_*` 实现**（`check-capabilities` 就是这么查的）。
+而"全库索引覆盖报告"这条能力**做不到**：它必须判"**没人认领这种格式**（`no_extractor`）"，
+而"谁认领什么格式"的**唯一事实源是 TS 侧的抽取器注册表**（`src/lib/extract/registry.ts`）。
+让 Rust 再长一份注册表 = 本方案从头到尾在防的"两份实现"，而它们的漂移**不会报错** ——
+只会让 AI 与插件看到两种答案（这类"不会红的分歧"正是 §8.1 反复记的那种）。
+
+**裁定**：注册表加一个**显式**标记 `host: "frontend"`（只有 AI 宿主实现的能力），并给它四条硬边界：
+
+| # | 规则 | 为什么 |
+|---|---|---|
+| 1 | `host: "frontend"` ⇒ **不许有 `rust`**、**必须 `ai: true`**、**目前只允许无参** | 没参数就不存在"插件侧怎么读参数"那半；有参数就该先把那半定义出来 |
+| 2 | **不进** shim / 插件类型包 / Rust 绑定表（`capabilities_gen.rs`） | 插件根本调不到它 —— 列进去就是"文档说有能力、代码里是 undefined" |
+| 3 | **要进** `aiTools.meta.ts`（AI 宿主）与**作者文档**里**单列的一节**（§4b「只有 AI 宿主可用的工具」） | 不写文档 ⇒ 读文档的人以为注册表少了；混进 `api.*` 表 ⇒ 作者照着写 `api.coverage.report()` 然后拿到 undefined |
+| 4 | 判据把上面三条都钉住（`check-capabilities.mjs`） | 否则下一个人加一条 host-only 能力时，四条边界**没有任何信号** |
+
+**代价与边界（说清楚，免得被当漏洞用）**：这条口子只解决"**某能力的实现只有一侧有**"，
+不解决"两侧行为不一致"——后者仍然要靠两侧实现 + 参数口径判据（既有做法）。
+所以规则是：**能两侧实现就两侧实现**；只有当"另一侧需要一份事实源的副本"时才用它，
+并且必须在这条能力自己的 `desc` 里写清"为什么它只有一侧"。
+
+**落地形态**：`coverage.report`（`kind: read` / `scope: current-space` / 权限 `read:files` / 无参）
+＝ `platform.derivedStores()`（装配）→ `scanLibraryCoverage`（取材）→ `coverageReportTool`（形状）。
+⚠️ **形状里有两件必须给的东西**：① `attachments.partial` 与 `indexed` **并列**，且摘要里明写"其中 K 份没抽全" ——
+否则模型会把"已索引 N/N"答成"内容全在检索面里"（§15.10 那条老坑在 AI 工具面上的翻版）；
+② 明细可能被截断 ⇒ `gapsTotal` / `gapsTruncated` / `note` 三件套明说，**"少给几条"与"只有几条"必须分得开**。
+
 > ⚠️ **仍没做的一格**：`files.search`（`cap_files_search`）**只有契约级覆盖**，没有行为判据 —— 归 Rust 侧。
+> ✅（同日补记）该格已由 Windows 落：6 条行为判据 ＋ 夹具修正后，Windows/macOS 两边执行面均 **508/0/18**。

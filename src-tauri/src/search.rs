@@ -1036,7 +1036,21 @@ pub(crate) fn read_attachment_text_coverage_in_conn(
         .prepare("SELECT DISTINCT extractor, coverage FROM attachment_text WHERE att_id = ?1 ORDER BY extractor ASC")
     {
         Ok(s) => s,
-        Err(_) => return Ok(Vec::new()), // 老库没有 coverage 列 ⇒ 未知（见上面第 3 条）
+        Err(e) => {
+            // ★ 只吞**结构**形态的两种（2026-09-23，Windows 侧复核指出）：
+            //   ① 老库没有 `coverage` 列（迁移没跑过）⇒ "no such column"；
+            //   ② 这张表还没建（连派生层都没初始化）⇒ "no such table"。
+            //   ⚠️ 别写成 `Err(_) => Ok(Vec::new())`：那会把"库被锁 / SQL 打错一个字 /
+            //   视图里引用的函数不存在"**也**翻译成"没有覆盖度读数" —— 而"未知"在这条链上是
+            //   承重答复（§15.10：未知 ≠ 完整），不该当所有失败的垃圾桶。
+            //   同一笔提交里 `db.rs::migrate` 的 ALTER 只吞 `duplicate column name`，这里是它的另一半：
+            //   **收窄到看得懂的那几种，其余照原样往上抛**（调用方要降级就自己写明白）。
+            let msg = e.to_string();
+            if msg.contains("no such column") || msg.contains("no such table") {
+                return Ok(Vec::new());
+            }
+            return Err(msg);
+        }
     };
     let rows = stmt
         .query_map(params![att_id], |r| {
@@ -1768,5 +1782,37 @@ mod tests {
         assert_eq!(page.segments[0].text, "老库里的段");
         assert!(page.coverage.is_empty(), "缺列 ⇒ 没有覆盖度读数（未知），不是 complete");
         assert!(read_attachment_text_coverage_in_conn(&c, "a1").unwrap().is_empty());
+    }
+
+    /// ★ 判据（2026-09-23，Windows 侧复核补）：**表还没建** ⇒ 空读数（不是错误）。
+    ///
+    /// 与上一条同族、但走的是另一条错误形态（`no such table`）：派生层压根没初始化时，
+    /// 运输层的 `attachmentTextCoverage` 查询照样会被调用 ⇒ 正确答复是"没有读数"。
+    #[test]
+    fn read_attachment_text_coverage_tolerates_a_missing_table() {
+        let c = Connection::open_in_memory().unwrap();
+        assert!(read_attachment_text_coverage_in_conn(&c, "a1").unwrap().is_empty(), "缺表 ⇒ 空读数");
+    }
+
+    /// ★ 判据（2026-09-23，Windows 侧复核补）：**非结构错误照原样往上抛**。
+    ///
+    /// 失败面（这条就是为它写的）：`Err(_) => Ok(Vec::new())` 会把"库被锁 / SQL 打错 / 视图里引用的
+    /// 函数不存在"**全都**翻译成"没有覆盖度读数" —— 于是"未知"变成了所有失败的垃圾桶，
+    /// 而它在这条链上是承重答复（§15.10）。这里用一个**结构错误之外的**形态把它钉住：
+    /// `attachment_text` 是一个引用了不存在函数的**视图** ⇒ SQLite 在 prepare 时报
+    /// `no such function: …`（不是 `no such column`/`no such table`）⇒ 必须冒泡成 `Err`。
+    #[test]
+    fn read_attachment_text_coverage_propagates_non_schema_errors() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE VIEW attachment_text AS
+               SELECT no_such_fn(1) AS att_id, '' AS extractor, '' AS coverage;",
+        )
+        .unwrap();
+
+        let out = read_attachment_text_coverage_in_conn(&c, "a1");
+        assert!(out.is_err(), "非结构错误不许被吞成空读数：{out:?}");
+        let msg = out.unwrap_err();
+        assert!(msg.contains("no such function"), "要原样带出 SQLite 的话（便于定位）：{msg}");
     }
 }

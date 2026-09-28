@@ -103,12 +103,14 @@ describe("锁定屏", () => {
   });
 
   it("输错：报错留在屏上、输入被清空、焦点回到输入框、不再尝试解锁", async () => {
-    mocks.unlockEncryption.mockRejectedValue(new Error("口令不正确"));
+    // ★ 用**当前**的内核文案（owner 第三轮拍板后：口令对不对由**解盒子**回答 ⇒ 报的是
+    //   「打不开（口令不对或盒子被改过）」，不再是旧哨兵那句「口令不正确」）。
+    mocks.unlockEncryption.mockRejectedValue(new Error("打不开（口令不对或盒子被改过）"));
 
     await submit("错误口令");
 
     const err = host.querySelector(".lock-error");
-    expect(err?.textContent, "错误要看得见").toContain("口令不正确");
+    expect(err?.textContent, "错误要看得见").toContain("打不开");
     expect(err?.getAttribute("role"), "错误要能被读屏软件念出来").toBe("alert");
     expect(input().value, "错误的输入不该留在框里").toBe("");
     expect(document.activeElement, "焦点要回到输入框").toBe(input());
@@ -119,7 +121,7 @@ describe("锁定屏", () => {
   });
 
   it("连错 3 次：自动摊开「忘记口令？」，并说真话（服务器那份也打不开 / 唯一出路是加密前的备份）", async () => {
-    mocks.unlockEncryption.mockRejectedValue(new Error("口令不正确"));
+    mocks.unlockEncryption.mockRejectedValue(new Error("打不开（口令不对或盒子被改过）"));
     await submit("错1");
     expect(host.querySelector(".lock-forgot"), "错 1 次还不该展开").toBeNull();
     await submit("错2");

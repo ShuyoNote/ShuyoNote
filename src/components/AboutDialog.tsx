@@ -224,7 +224,10 @@ export function AboutDialog() {
       <div className="about">
         <div className="about-hero">
           <div className="about-logo-wrap">
-            {/* 内联正式 App logo（mark），避免 /icons/mark.svg 绝对路径在桌面端取不到而丢图 */}
+            {/* 内联正式 App logo（mark），避免 `/icons/mark.svg` 绝对路径在桌面端取不到而丢图。
+                ★ 2026-09-25 清冗余文件：`public/icons/mark.svg` 那份副本已删 —— 它与设计母版
+                `design/logo/shuyonote-mark.svg` **逐字节相同**，而 `manifest.webmanifest` /
+                `index.html` 列的每一份图标里都没有它（这里又内联了一份）⇒ 每个用户白下一份。 */}
             <svg className="about-logo" viewBox="0 0 1024 1024" aria-label={`${APP_NAME} logo`} role="img">
               <defs><linearGradient id="aboutMarkBg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#4D8DFF"/><stop offset="1" stopColor="#2952CC"/></linearGradient></defs>
               <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#aboutMarkBg)"/>

@@ -8,11 +8,13 @@ import { findUnlinkedMentions } from "../lib/mention";
 // in the current page (not yet wrapped in [[ ]]) and offer one-click linking.
 // Sits below the backlinks panel in the note view; auto-updates as the page saves.
 export function UnlinkedMentionsPanel() {
-  const notes = useNotes();
+  // 只订真正读的两个字段（原先整店订阅 ⇒ 每次自动保存都跟着醒一次，而这个面板的
+  // 计算量是"遍历全部页面标题做未链接提及匹配"，不该被无关字段唤醒）。
+  const current = useNotes((s) => s.current);
+  const pages = useNotes((s) => s.pages);
   const [open, setOpen] = useState(false);
-  const current = notes.current;
   if (!current || current.kind !== "page") return null;
-  const titles = notes.pages.filter((p) => p.kind === "page" && p.id !== current.id).map((p) => p.title);
+  const titles = pages.filter((p) => p.kind === "page" && p.id !== current.id).map((p) => p.title);
   const mentions = findUnlinkedMentions(current.content_text, titles, current.title);
   if (mentions.length === 0) return null;
 

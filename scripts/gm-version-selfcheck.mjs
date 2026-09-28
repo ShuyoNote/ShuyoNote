@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isMain } from "./lib/is-main.mjs";
+import { gmCargoHome } from "./lib/sm-library-isolate.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
@@ -112,7 +113,9 @@ export function legPlan({ opensslDir, expectPatch, tauriDir, withTests, withBuil
         "--manifest-path",
         join(tauriDir, "Cargo.toml"),
       ],
-      env: { OPENSSL_DIR: opensslDir },
+      // ★ 这一腿必须有私有 CARGO_HOME：它编的是**打过补丁的私有副本**（`sm-library` 那半）。
+      //   没有它 ⇒ cargo 编 registry 那份原版 ⇒ `build.rs` 当场失败（这是对的：忘了隔离就等于没有国密）。
+      env: { OPENSSL_DIR: opensslDir, CARGO_HOME: gmCargoHome(dirname(tauriDir)) },
       optional: false,
     });
     legs.push({

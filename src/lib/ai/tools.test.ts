@@ -23,6 +23,7 @@ const EXPECTED = [
   "backlinks.list",
   "blocks.append",
   "blocks.list",
+  "coverage.report",
   "files.list",
   "files.read",
   "files.search",

@@ -1279,6 +1279,124 @@ html[data-platform="win"] .app-body {
   border: 1px dashed var(--border);
   border-radius: var(--radius-md);
 }
+/* 空间隐私（②b）：同步面板里那一节「这个空间敢不敢绑同步」。
+ * ⚠️ 与 `.sync-card` 同族（同一屏里上下相邻）⇒ 沿用同一套变量与圆角，别另起一套视觉语言。
+ * 为什么放在同步面板里：闸门拦的正是「绑同步」这个动作（Rust `sync::sync_bind_gate`），
+ * 读数与动作必须**同屏**，否则用户得自己去别处找「为什么绑不上」。 */
+.space-privacy {
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.space-privacy-head { font-size: 12px; font-weight: 600; color: var(--text); }
+.space-privacy-hint { font-size: 11px; line-height: 1.6; color: var(--text-dim); }
+/* 口径 / 换设备这类"解释性"内容收进折叠：首屏只留动作与一句结论（owner 2026-09-24：太啰嗦）。
+   与 `.pm-index-fold` 同族，不另起视觉语言。 */
+.space-privacy-more { font-size: 11px; color: var(--text-dim); }
+.space-privacy-more > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-faint);
+  width: fit-content;
+}
+.space-privacy-more > summary::-webkit-details-marker { display: none; }
+.space-privacy-more > summary::before { content: "▸ "; font-size: 10px; }
+.space-privacy-more[open] > summary::before { content: "▾ "; }
+.space-privacy-more > summary:hover { color: var(--accent); }
+.space-privacy-more > div { padding-top: 4px; line-height: 1.6; }
+.space-privacy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.space-privacy-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.space-privacy-name {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.space-privacy-kind,
+.space-privacy-enc {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.space-privacy-kind.is-personal,
+.space-privacy-kind.is-team { border-color: var(--border-strong); color: var(--text); }
+.space-privacy-gate { font-size: 11px; line-height: 1.6; }
+.space-privacy-gate.is-allow { color: var(--text-dim); }
+.space-privacy-gate.is-block { color: var(--danger); }
+/* 行内判决徽标（与 `.space-privacy-kind` / `.space-privacy-enc` 同族）：把"能不能绑同步"收进名字那一行，
+   而不是让它单独占一句（owner 2026-09-24：一屏里最不缺的就是解释）。 */
+.space-privacy-verdict {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.space-privacy-verdict.is-ok { border-color: var(--border-strong); color: var(--text); }
+.space-privacy-verdict.is-note { color: var(--text-faint); }
+.space-privacy-verdict.is-block { border-color: var(--danger); color: var(--danger); }
+.space-privacy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 下拉与输入框**复用仓库既有的 `.sync-input` 盒子**（`padding:7px 10px`、同圆角、同聚焦环）
+   —— 与旁边的 `.sync-btn`（`padding:7px 14px`）本来就配成一对。
+   ⚠️ 之前这里只给了 `font-size: 12px`，于是浏览器原生控件比按钮**矮一截**、也不吃主题色，
+   看着不协调（owner 2026-09-24 指出）。这里只保留"别撑满整行"这一条覆盖。 */
+.space-privacy-actions select.sync-input { width: auto; max-width: 100%; }
+.space-privacy-overwrite {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* ★ A1：单选对话框（"这个空间是个人还是团队"）的按钮列。
+   与 `.confirm-box` 同一视觉语言 —— **不另起一套**（owner 2026-09-24 那条纪律：
+   同类控件形状要一致，别让人以为进了另一个界面）。 */
+.input-choice-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
+.input-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.input-choice:hover { border-color: var(--accent); }
+.input-choice-label { font-size: 13px; }
+.input-choice-hint { font-size: 11px; line-height: 1.5; color: var(--text-dim); }
+/* 主口令：**标签一行、输入框单独一行**（owner 2026-09-24：挤在同一行时标签被折行、输入框被压到最右边）。
+   竖排后输入框占满宽度，等于一个正常的"设置口令"字段；盒子本身用 `.sync-input`（与下拉、按钮同高）。 */
+.space-privacy-pass {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.space-privacy-note { font-size: 11px; color: var(--text-dim); }
+.space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
 .sync-card {
   display: flex;
   flex-direction: column;
@@ -1596,6 +1714,38 @@ select.sync-input {
   margin: 1px 0 0;
   cursor: pointer;
   accent-color: var(--accent);
+}
+
+/* ★ 网格那一块（丙-③-b）：它是**竖排**的 —— 读数 ＋「输入＋按钮」两行 ＋ 按钮一行。
+   ⚠️ 它一开始复用了 `.sync-att`，而那个类是**横排**（"说明文字 ＋ 一个复选框"，见上面的注释）
+   ⇒ 四个孩子在窄屏里并排。2026-09-26 owner 截图 ＋ 真机实测的读数：
+   `.sync-mesh` 是 `display:flex; flex-direction:row`，318px 宽里
+   **输入框只剩 50px**（两个字，屏幕上就是 `192.`）、**按钮 44~50px 宽 × 64~112px 高**
+   （「保存地址」被折成"保/存/地/址"一列）。
+   ⇒ 这里把它覆盖成块级竖排，并规定每一行是"**输入框吃掉宽度 ＋ 按钮不缩、不断行**"。 */
+.sync-att.sync-mesh {
+  display: block;
+}
+.sync-mesh .sync-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* 输入框吃掉这一行剩下的宽度（`min-width:0` 才能在窄屏**真的收缩**，而不是把容器撑破）。 */
+.sync-mesh .sync-field > .sync-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 按钮**不缩、不断行**：`white-space:nowrap` 就是"一个字一行"那条的直接解药。 */
+.sync-mesh .sync-field > .sync-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* 读数里有长 URL（`http://192.168.43.1:47832`）：长串按任意位置折，别撑破卡片。 */
+.sync-mesh .sync-hint {
+  overflow-wrap: anywhere;
 }
 
 .sync-auto { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
@@ -1971,6 +2121,24 @@ select.sync-input {
   background: var(--accent);
   flex-shrink: 0;
   animation: sync-pulse 1.1s ease-in-out infinite;
+}
+
+/* ★ 丙-⑤（2026-09-26）：侧栏「同步」上的**数字角标** —— "有几页等你裁决"。
+   只报"要你动手"的那一件事（「待取回的远端版本」）；"你输了但没丢"（已进版本历史）不报，
+   因为那件事不需要用户做任何事，报了就是噪声（状态行里那句已经说清了）。
+   配色用信息色（`--accent`）而不是危险色：这是"有东西等你处理"，不是"出错了"。 */
+.sync-badge {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg-1);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  text-align: center;
+  flex: none;
 }
 @keyframes sync-pulse {
   50% { opacity: 0.25; }
@@ -14097,11 +14265,32 @@ p:has(> .editor-drawing-container) {
   transform-origin: center center;
   cursor: unset;
 }
-.fm-img-hint {
+/* 图片预览的**顶栏**：提示胶囊 ＋（旋转 / 查看原图）按钮组。
+   ⚠️ 它们是**同一条 flex 行里的两半**，不是两个各自 `position:absolute` 的角标 ——
+   后者在窄屏上必然互相压：两个都钉在 `top:14px`，左边那个还按 `left:50%` 居中，
+   360px 视口下实测重叠 ~111px（GitCode issue #12「窄屏时内置图片阅览的控制按钮重叠了」）。
+   ⇒ 布局不许靠"算两边宽度刚好不撞"，只许靠"**它们在同一行里，谁也盖不住谁**"：
+   左边那半放不下就在自己的盒子里截断（`min-width:0` ＋ 省略号），右边那组 `flex:none`。
+   bar 自己不吃指针事件（空白处的滚轮缩放 / 拖动平移照旧落在图片上），
+   只有右边那组按钮把 `pointer-events` 打开。 */
+.fm-img-bar {
   position: absolute;
   top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+.fm-img-hint {
+  /* 行里的**左半**（原来这里是绝对定位 ＋ `translateX(-50%)` 居中）。 */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 4px 12px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--bg) 80%, transparent);
@@ -14111,14 +14300,16 @@ p:has(> .editor-drawing-container) {
   user-select: none;
   pointer-events: none;
 }
-/* 旋转按钮组 + 查看原图：合并成一组右上角工具栏，统一高度/圆角。 */
+/* 旋转按钮组 + 查看原图：这一行的**右半**。
+   `margin-left:auto` 是给窄屏兜底的：那时左边的提示被藏起来（见窄屏那一段），
+   只剩一个子项，`space-between` 会把它推到**左边** —— 那是视觉回退。 */
 .fm-img-actions {
-  position: absolute;
-  top: 14px;
-  right: 14px;
+  margin-left: auto;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  pointer-events: auto;
 }
 .fm-img-btn {
   display: grid;
@@ -17655,6 +17846,13 @@ p:has(> .editor-drawing-container) {
      「OCR」「AI」(拉丁) 23px，同一排按钮都不一样高、字面也不在同一条线上
      （owner 截图："这几个按钮似乎不在一个水平线上？"）。同 18px 之后恒为 26px 高。 */
   line-height: 18px;
+  /* ⚠️ 必须显式继承字体栈（**不是**可有可无的一行）：
+     按钮不吃继承，不给这一行就拿 UA 默认（本机实测 `font-family: Arial`），
+     旁边的「无文本层」span 却继承应用字体栈（PingFang SC…）⇒ 汉字 run 高差 1px
+     ⇒ 门禁 `verify-mobile-views.mjs` 那条「四个字面同线」在 macOS 上红
+     （实测 `文字高 [15,14,14,14]`；Windows/Edge 上两套字体恰好都是 15 所以看不出来）。
+     同一批规则（`.unlinked-mention-link`、`.pdf-page-error-retry` 等）都写了这一行。 */
+  font-family: inherit;
   padding: 4px 10px;
   border-radius: 7px;
   cursor: pointer;
@@ -21512,6 +21710,17 @@ body.is-plugin-panel-open .main {
   /* 「更换图标 / 更换封面」等页面级动作（27 高）。 */
   .page-action-btn { min-height: 44px; }
 
+  /* ---------- 笔记页里那几枚「小字动作按钮」 ----------
+     未链接提及的「改为链接」、反向链接/属性的「重试」：它们的基础规则都是
+     `font-size: 12px; padding: 2px 8px`（≈ 20 高），在窄屏上**点不中**。
+     它们是**真的动作**（改文本 / 重新加载），不是纯指示器 ⇒ 按本仓规矩给 44 的命中区，
+     **不加进豁免清单**（豁免是给"命中区在别处"的指示器留的）。
+     2026-09-23 CI 实测：`button.unlinked-mention-link` 54x20 ⇒ `mobile-views` 判红
+     （「1 类控件低于 44」）；`--retry` 两枚同形，属于同一类，一并收。 */
+  .unlinked-mention-link,
+  .backlinks-retry,
+  .properties-retry { min-height: 44px; }
+
   /* ---------- 右侧悬浮条：窄屏**默认收起**，由右下角的圆钮唤出 ----------
      ⚠️ 断点必须与 `useMobile()` 用的**同一个**（`max-width: 768px`，= `MOBILE_BREAKPOINT_PX`），
      不能跟着浮层那套写成"窄**或矮**"（`max-height:520px`）：这条工具条的**显隐是 JS 决定的**
@@ -21994,6 +22203,15 @@ body.is-plugin-panel-open .main {
   .fm-img-original {
     min-width: 44px;
     min-height: 44px;
+  }
+  /* 图片预览那条提示写的是**桌面手势**（滚轮缩放 / 拖动平移）：触屏上没有滚轮，
+     留着只会被截成"滚轮缩放 · 拖…"，既不好看也没用 ⇒ 窄屏不显示它（按钮组照旧）。
+     ⚠️ 这一条**不是**"窄屏没有缩放"的声明：图片预览今天确实**只接了 wheel**
+     （触屏放不大）—— 那是另一件事（捏合缩放）。真接上时，这里要改成
+     "只显示百分比"（`.fm-img-hint` 里那个 zoom 读数），别让这条 `display:none`
+     变成一句"窄屏故意没有缩放"的假话。 */
+  .fm-img-hint {
+    display: none;
   }
 
   /* 命令面板：整宽 + 顶部对齐，列表只纵向滚（横向溢出 46~73px 是坐标/宽度算错，

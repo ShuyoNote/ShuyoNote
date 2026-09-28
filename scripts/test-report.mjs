@@ -23,8 +23,13 @@
 // 环境变量：
 //   GITHUB_STEP_SUMMARY  —— 设置了就自动把 markdown 摘要追加上去（CI 里公开可见）
 //   TEST_REPORT_STRICT=1 —— 等价于 --strict：被跳过的门禁按失败计
+//   TEST_REPORT_STRICT_SKIPS=1 —— 等价于 --strict-self-skip（2026-09-27 加）：门禁**自报跳过**的，
+//     凡没在 gates.mjs 里用 `selfSkipOk` 声明理由的，按失败计。
+//     ⚠️ **故意不默认开、也没接进 CI**：实测本机 `--group contract,smoke,sync,plugin` 34 条里 `skips` 是 0 条，
+//     但 Linux CI 上会不会有别的门禁自报跳过，**只有在那儿跑一遍才知道** —— 铺开由产品仓决定（先看下面那段注释）。
 
-import { spawn } from "node:child_process";
+// ⚠️ 2026-09-28：预检要用 `spawnSync` ⇒ **同一次 import 里带上**（上一版漏了 ⇒ ReferenceError ⇒ runner 整个崩 ✗）
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +49,13 @@ function argValue(name) {
 }
 const LIST = argv.includes("--list");
 const STRICT = argv.includes("--strict") || process.env.TEST_REPORT_STRICT === "1";
+// 2026-09-27：**自报跳过**的严格档。为什么单列（而不是并进 `--strict`）：
+//   `--strict` 管的是"运行器层面跳过"（缺环境变量 ⇒ `status: skipped`）；
+//   而这里管的是"门禁自己跑完了、但在输出里说『这一项跳过了』"（`status` 仍是 passed）。
+//   实测证据（本机，产品仓自己的聚合器）：`--only rust-sm-wired` ⇒ `status=passed`、`ok=true`，
+//   而 `skips=["! 跳过（自报跳过，不装绿）：…没有开发用的 crypto 库文件…"]`
+//   ⇒ **一条明说"不装绿"的门禁，工件里是绿的**。`extractSkips` 早就采到了，缺的只是"谁看它"。
+const STRICT_SELF_SKIP = argv.includes("--strict-self-skip") || process.env.TEST_REPORT_STRICT_SKIPS === "1";
 const UPDATE_BASELINE = argv.includes("--update-baseline");
 // 只在**显式**给 `--retry N` 时才对标记 `flaky: true` 的门禁重试，且重试次数会写进报告
 // （摘要里单独列一节"靠重试才通过的"）。CI 默认 0 次：**flake 要吵，不要被抹平**。
@@ -147,9 +159,31 @@ function readTmpJson(name) {
 // ---------------------------------------------------------------------------
 // 执行
 // ---------------------------------------------------------------------------
+// ⭐ 2026-09-28（AMD 侧实测）：**「起都起不来」是环境档，不是"有发现"** ——
+//    PATH 里没有 node/pnpm 时，`pnpm exec tsc` 这类命令会 0.0s 失败、被计成 ❌ ✗（它那台 34 条里 3 条）。
+//    ⚠️ 判据用**预检首个 token 能否启动**（确定性、与编码无关）：
+//       **不要解析命令输出** —— 中文 Windows 上 cmd.exe 按 GBK 写「不是内部或外部命令」，按 utf8 解码匹配不上 ✗。
+const PROGRAM_CACHE = new Map();
+function programMissing(cmdline) {
+  const tok = String(cmdline).trim().split(/\s+/)[0];
+  if (!/^[A-Za-z0-9._-]+$/.test(tok)) return false; // 含 && / VAR=1 / 引号 ⇒ 不预检
+  if (PROGRAM_CACHE.has(tok)) return PROGRAM_CACHE.get(tok);
+  const probe = spawnSync(tok, ["--version"], { stdio: "ignore", shell: false, windowsHide: true, timeout: 20000 });
+  const missing = Boolean(probe.error) && (probe.error.code === "ENOENT" || /not found|no such file/i.test(probe.error.message || ""));
+  PROGRAM_CACHE.set(tok, missing);
+  return missing;
+}
+
 function runCommand(cmdline) {
   return new Promise((resolvePromise) => {
     const started = Date.now();
+    // ⭐ 预检：程序不在 PATH ⇒ **没跑起来** ⇒ 环境档（不算通过；也不是"有发现"）
+    if (programMissing(cmdline)) {
+      const msg = `\n[环境不具备] 找不到程序「${String(cmdline).trim().split(/\s+/)[0]}」—— 这条门禁本次**没跑起来**，不算通过。\n`;
+      process.stdout.write(msg);
+      resolvePromise({ status: "env", code: -1, output: msg, durationMs: Date.now() - started, cmdline });
+      return;
+    }
     const child = spawn(cmdline, { cwd: root, shell: true, windowsHide: true });
     let output = "";
     const tee = (buf) => {
@@ -162,11 +196,12 @@ function runCommand(cmdline) {
     child.stderr.on("data", tee);
     child.on("error", (err) => {
       output += `\n[spawn error] ${err.message}\n`;
-      resolvePromise({ status: "failed", code: -1, output, durationMs: Date.now() - started, cmdline });
+      // spawn 本身失败 ⇒ 没跑起来 ⇒ 环境档（不是"有发现"）
+      resolvePromise({ status: "env", code: -1, output, durationMs: Date.now() - started, cmdline });
     });
     child.on("close", (code) => {
       resolvePromise({
-        status: code === 0 ? "passed" : "failed",
+        status: code === 0 ? "passed" : programMissing(cmdline) ? "env" : "failed",
         code,
         output,
         durationMs: Date.now() - started,
@@ -310,7 +345,9 @@ async function runGateOnce(gate) {
   }
   return {
     ...gate,
-    status: results.every((r) => r.status === "passed") ? "passed" : "failed",
+    // ⭐ 2026-09-28：**聚合层也要认 `env`** —— 原来 `every(passed) ? passed : failed` 会把 `env` 压回 `failed` ✗
+        //    （这就是"预检生效、却仍 34 失败"的真因）⇒ 有 failed ⇒ failed／否则有 env ⇒ env／否则 passed
+        status: results.some((r) => r.status === "failed") ? "failed" : results.some((r) => r.status === "env") ? "env" : "passed",
     durationMs: results.reduce((a, r) => a + r.durationMs, 0),
     counts: countsForGate(gate, output, readTmpJson),
     // stdout 行 + 机器可读报告**取并集**：前者覆盖 "✗ …" 那种输出，后者覆盖 JSON reporter
@@ -421,6 +458,9 @@ const report = {
     // ⚠️ 显式列出来：报告对象是**逐字段**构造的，漏一个字段就等于那个信息不存在
     //（第一版就漏了它：`skips` 在结果里算了，却没进报告 ⇒ `--json` 里看不到）。
     skips: r.skips || [],
+    // 2026-09-27：自报跳过的**登记理由**（`gates.mjs` 里的 `selfSkipOk`）。逐字段构造 ⇒ 必须显式列，
+    // 否则严格模式读不到它（**我第一版就栽在这**：`report.results` 里没有这个字段 ⇒ 永远判"未登记"）。
+    selfSkipOk: r.selfSkipOk || "",
     incident: r.incident || "",
     durationMs: r.durationMs,
     attempts: r.attempts || 1,
@@ -433,19 +473,52 @@ const report = {
 };
 const failedCount = report.results.filter((r) => r.status === "failed").length;
 const skippedCount = report.results.filter((r) => r.status === "skipped").length;
-report.ok = failedCount === 0 && violations.length === 0;
+const envCount = report.results.filter((r) => r.status === "env").length;
+// ⚠️ 2026-09-27：**"绿 ≠ 全查过"** —— 自报跳过原先只进工件、不进判定（见 `extractSkips` 的注释）。
+//   现在两件事：① **任何模式下都印出来**（否则"少跑了几条"只在 JSON 里，等于看不见）；
+//   ② 开了 `--strict-self-skip` 时，**未登记**（gate 里没有 `selfSkipOk` 理由）的按失败计。
+// ⚠️ 用**运行时那份** `results`（它带 `...gate` ⇒ 有 `selfSkipOk`），**不是** `report.results`
+//    （那是逐字段构造的 JSON 形状）。这一处踩过：第一版读 `report.results` ⇒ 永远判"未登记"。
+const selfSkipped = results.filter((r) => (r.skips ?? []).length > 0);
+const unregisteredSelfSkips = selfSkipped.filter((r) => !r.selfSkipOk);
+report.selfSkips = selfSkipped.map((r) => ({ id: r.id, registered: Boolean(r.selfSkipOk), reason: r.selfSkipOk || "", skips: r.skips }));
+// ⚠️ 环境不具备 ⇒ ok 仍为 false（**不算通过** ✓）："这次没查过"不许被读成"通过"
+  report.ok = failedCount === 0 && envCount === 0 && violations.length === 0 && !(STRICT_SELF_SKIP && unregisteredSelfSkips.length > 0);
 
 console.log(`\n${"═".repeat(72)}\n回归门禁结果\n${"═".repeat(72)}`);
 for (const r of report.results) {
-  const icon = r.status === "passed" ? "✅" : r.status === "failed" ? "❌" : "⏭️ ";
-  const counts = r.counts && typeof r.counts.total === "number" ? ` (${r.counts.passed ?? "?"}/${r.counts.total})` : "";
+  const icon = r.status === "passed" ? "✅" : r.status === "failed" ? "❌" : r.status === "env" ? "⛔" : "⏭️ ";
+  let counts = r.counts && typeof r.counts.total === "number" ? ` (${r.counts.passed ?? "?"}/${r.counts.total})` : "";
+  // 「收集失败」必须**显式**写出来：这类红的用例失败数是 0，光看 (passed/total) 会以为全绿
+  if (r.counts && typeof r.counts.failedSuites === "number" && r.counts.failedSuites > 0) {
+    counts += `　⚠️ 其中 ${r.counts.failedSuites} 个测试文件**收集失败**（用例失败数可能是 0 ⇒ 别只看这一行）`;
+  }
   console.log(`${icon} ${r.id.padEnd(22)} ${(r.durationMs / 1000).toFixed(1).padStart(6)}s${counts}`);
 }
 for (const v of violations) console.log(`❌ 基线：${v}`);
 for (const n of baselineNotices) console.log(`! 基线提示：${n}`);
+// ⭐ 2026-09-27：**本机没覆盖哪几组**必须写出来 —— 否则"本机全绿"会被读成"全部验过"。
+//   来由（实测）：本机 `pnpm verify` 的 DEFAULT_GROUPS 只含纯 Node 组，**不含 rust**；
+//   而 CI 的 `rust-tests` / `rust-sm-wired` 在**另一个 job** 里 ⇒ 本机那份绿覆盖不到它。
+//   出口有三处（终端 / 报告 JSON / CI 摘要），因为读它的人可能只看得见其中一处。
+const uncoveredGroups = GROUP_ORDER.filter((g) => !groups.includes(g));
+if (uncoveredGroups.length) {
+  console.log(`\n! 本机**未覆盖**的组：${uncoveredGroups.join("、")}（由 CI 的其它 job 跑）—— **本机全绿 ≠ 全部验过**`);
+}
+report.uncoveredGroups = uncoveredGroups;
+if (selfSkipped.length) {
+  console.log(`\n! 自报跳过 ${selfSkipped.length} 条（**绿 ≠ 全查过**）${STRICT_SELF_SKIP ? " ｜ 严格模式已开" : ""}：`);
+  for (const r of selfSkipped) {
+    console.log(`   · ${r.id}${r.selfSkipOk ? `（已登记：${r.selfSkipOk}）` : "（**未登记** —— 要留在绿里就得在 gates.mjs 里补 selfSkipOk 理由）"}`);
+    for (const s of r.skips) console.log(`       ${s}`);
+  }
+  if (STRICT_SELF_SKIP && unregisteredSelfSkips.length) {
+    console.log(`   ❌ 未登记的自报跳过按**失败**计：${unregisteredSelfSkips.map((r) => r.id).join("、")}`);
+  }
+}
 console.log(
-  `\n${report.ok ? "全部通过" : "存在失败"}：${report.results.length} 条门禁，失败 ${failedCount} 条，跳过 ${skippedCount} 条，`
-    + `总耗时 ${(totalMs / 1000).toFixed(1)}s`,
+  `\n${report.ok ? "全部通过" : "存在失败"}：${report.results.length} 条门禁，失败 ${failedCount} 条，**环境不具备 ${envCount} 条（不算通过）**，跳过 ${skippedCount} 条，`
+    + `自报跳过 ${selfSkipped.length} 条，总耗时 ${(totalMs / 1000).toFixed(1)}s`,
 );
 
 if (jsonPath) {
@@ -456,7 +529,13 @@ if (jsonPath) {
 }
 // 发版说明要用的那一行：机器生成，直接复制，不要人肉从终端里抄数字。
 if (LINE) console.log(`\n${summaryLine(report)}`);
-const md = markdown(report);
+// ⭐ 摘要里也带上"未覆盖哪几组"（`$GITHUB_STEP_SUMMARY` 用同一份 md）——
+//   跑 CI 的人看摘要就够，不必去翻终端或下载工件。
+const md =
+  markdown(report) +
+  (uncoveredGroups.length
+    ? `\n> ⚠️ **本机未覆盖的组**：${uncoveredGroups.join("、")} —— 它们由 CI 的其它 job 跑；**本机全绿 ≠ 全部验过**。\n`
+    : "");
 if (summaryPath) {
   const p = resolve(root, summaryPath);
   mkdirSync(dirname(p), { recursive: true });
@@ -478,4 +557,5 @@ try {
   /* 清理失败不影响结论 */
 }
 
-process.exit(report.ok ? 0 : 1);
+// ⭐ 五档退出码（与 `_workspace/AGENTS.md` §3 同源）：干净 0 ／ **有发现 1** ／ **环境不具备 2**；`1` 优先于 `2`
+process.exit(report.ok ? 0 : (failedCount > 0 || violations.length > 0 || (STRICT_SELF_SKIP && unregisteredSelfSkips.length > 0)) ? 1 : 2);

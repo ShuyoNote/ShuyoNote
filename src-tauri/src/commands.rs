@@ -368,6 +368,169 @@ pub fn set_page_icon(db: State<Db>, args: SetIconArgs) -> Result<PageDetail, Str
     fetch_page(&c, &args.id)
 }
 
+/// 冲刺 S7-2（2026-09-23）：读这一页的 **CRDT 状态**（没有 ⇒ `None`）。
+///
+/// 与前端 `api.readPageState`（`src/lib/api.ts`）成对；桌面侧这一层**只存取不透明字节**
+/// （见 `src-tauri/src/page_crdt.rs` 文件头：Rust 不认识 CRDT 格式，也不该认识）。
+/// ⚠️ 在此之前这两条只登记为 **web 专用** ⇒ 桌面上 `PageCrdtBinding` 每次打开页面都会
+/// "绑定失败"并弹一次 toast；接上这条命令才是真正的修复。
+#[derive(serde::Deserialize)]
+pub struct PageStateArgs {
+    pub page_id: String,
+}
+
+/// 写这一页的 CRDT 状态（同一页只留最新一份：主键 upsert）。与 `api.savePageState` 成对。
+#[derive(serde::Deserialize)]
+pub struct SavePageStateArgs {
+    pub page_id: String,
+    /// 状态字节。前端用 `number[]` 过 IPC（二进制不能直接过 `Uint8Array`）。
+    pub state: Vec<u8>,
+}
+
+#[tauri::command]
+pub fn read_page_state(db: State<Db>, args: PageStateArgs) -> Result<Option<Vec<u8>>, String> {
+    let c = conn(&db);
+    crate::page_crdt::read_page_crdt_state(&c, &args.page_id)
+}
+
+#[tauri::command]
+pub fn save_page_state(db: State<Db>, args: SavePageStateArgs) -> Result<(), String> {
+    let c = conn(&db);
+    crate::page_crdt::write_page_crdt_state(&c, &args.page_id, &args.state, now_ms())
+}
+
+/// 冲刺 §11.4 收口（2026-09-23 第 42 轮）：这一页**待并的远端状态**。
+///
+/// 桌面 pull 收到带状态的页载荷时把它收进 `page_crdt_pending`（Rust **没有** Yjs，不在这里合并），
+/// 由界面侧在**打开页面**时交给那份唯一实现（`crdt/pageBinding.ts` 的 `mergeRemotePageState` 同族逻辑）。
+/// Web 平台**恒为空**（它在 `applyChange` 里当场合并）—— 两侧行为不同是**平台事实**，不是漏实现。
+#[tauri::command]
+pub fn read_pending_page_states(
+    db: State<Db>,
+    args: PageStateArgs,
+) -> Result<Vec<crate::page_crdt::PendingCrdtState>, String> {
+    let c = conn(&db);
+    crate::page_crdt::read_pending_states(&c, &args.page_id)
+}
+
+/// 合并完就清（返回值＝**清了几条**：`0` 是"本来就没有"，不是错误 —— 与 `clear_page_crdt_state` 同一口径）。
+#[tauri::command]
+pub fn clear_pending_page_states(db: State<Db>, args: PageStateArgs) -> Result<usize, String> {
+    let c = conn(&db);
+    crate::page_crdt::clear_pending_states(&c, &args.page_id)
+}
+
+/// 投影写回的载荷：**由界面侧算好的**那一份投影 JSON。
+///
+/// ⚠️ 为什么是界面侧算：Rust **没有** Yjs ⇒ 它算不出"状态 ⇒ JSON"。这一步只是把算好的那一份**落盘**。
+/// 按空间启用/禁用的载荷。
+///
+/// ⚠️ `space_id` 是**本地空间 id**（不是远端 `space_id`）；`passphrase` 只在"**钥匙袋还不存在**"
+/// 时用到（用它建袋子），已有袋子 ⇒ 传 `None`（用会话里的主密钥）。
+#[derive(serde::Deserialize)]
+pub struct SpaceEncryptionArgs {
+    pub space_id: String,
+    pub passphrase: Option<String>,
+}
+
+/// 「只要一个空间 id」的载荷（按空间禁用这类**不需要口令**的命令用）。
+///
+/// ⚠️ 为什么不为省事复用 `PageStateArgs`：那条的字段名是 `page_id`，而这里装的是**空间 id** ——
+///    名字与语义不符的载荷正是"分层被慢慢磨穿"的那类东西（与 `doc_json` 同一处置）。
+#[derive(serde::Deserialize)]
+pub struct SpaceIdArgs {
+    pub space_id: String,
+}
+
+/// ★ 隐私边界第 1 步的命令面：**按空间加密**这一个空间（只换它自己的库）。
+///
+/// 与旧的 `set_encryption`（应用级：把所有空间一起换成同一把钥匙）**不是一条路** ——
+/// 那一条给团队空间会连坐（服务端从此读不懂，合并/检索/AI 全废）。
+/// 失败一律 `Err` 且文本可操作（口径：不静默）。
+#[tauri::command]
+pub fn enable_space_encryption(
+    db: State<Db>,
+    args: SpaceEncryptionArgs,
+) -> Result<[u8; 32], String> {
+    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::space_crypto::enable_space(&mut c, &dir, &args.space_id, args.passphrase.as_deref())
+}
+
+/// ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子（别的空间不受影响）。
+#[tauri::command]
+pub fn disable_space_encryption(db: State<Db>, args: SpaceIdArgs) -> Result<(), String> {
+    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let mut c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::space_crypto::disable_space(&mut c, &dir, &args.space_id)
+}
+
+/// 分类标记的载荷：`kind` 取 `"personal"` / `"team"` / `""`（空串 ＝ 取消分类）。
+#[derive(serde::Deserialize)]
+pub struct SpaceKindArgs {
+    pub space_id: String,
+    pub kind: String,
+}
+
+/// ★ 隐私边界 A=3 的**手动出口**：把某个空间标成个人/团队（或取消分类）。
+///
+/// 正常路径**不用点它**（本地新建 ⇒ 自动 `personal`，见 `workspaces::insert_new_local_space`）。
+/// 它存在是因为**存量空间**（分类列落地之前建的）与团队流程之外建的空间没有分类，
+/// 而"没分类" ＝ 闸门放行 ＝ 那道闸门对它们**没生效**。想让它生效，就得有个地方能标。
+///
+/// ⚠️ 与内部的 `SpaceKind::parse` **刻意不同口径**：`parse` 对存量数据是**宽进**
+/// （认不出来就成了未分类 —— 不猜），命令面是**窄进**（认不出的字符串直接报错）。
+/// 理由：前者读的是别人写进库里的数据，后者读的是界面传来的参数 —— 界面把 `team` 拼错成
+/// `teams` 时若被静默当成"取消分类"，闸门会在用户以为"已归类"的情况下**松开**，那是静默失败。
+#[tauri::command]
+pub fn set_space_kind(db: State<Db>, args: SpaceKindArgs) -> Result<(), String> {
+    let kind = match args.kind.trim().to_ascii_lowercase().as_str() {
+        "" => crate::space_crypto::SpaceKind::Unknown,
+        "personal" => crate::space_crypto::SpaceKind::Personal,
+        "team" => crate::space_crypto::SpaceKind::Team,
+        other => {
+            return Err(format!(
+                "认不出的空间分类「{other}」：只接受 personal / team / 空串（空串＝取消分类）"
+            ))
+        }
+    };
+    let c = conn(&db);
+    crate::space_crypto::set_space_kind(&c, &args.space_id, kind)
+}
+
+/// ★ ②b 的读数面：**一次读全所有空间**的分类 ＋ 加密状态 ＋ 闸门裁决。
+///
+/// 为什么是一条命令而不是让界面自己拼三条：见 `space_crypto::SpaceSecurityView` 的说明
+/// （拼三条 ＝ 界面得知道钥匙袋存在 ⇒ 口径漏到界面层）。
+#[tauri::command]
+pub fn space_security_overview(
+    db: State<Db>,
+) -> Result<Vec<crate::space_crypto::SpaceSecurityView>, String> {
+    let dir = crate::db::app_data_dir_ref().ok_or("app data dir not initialised")?.to_path_buf();
+    let c = conn(&db);
+    crate::space_crypto::space_security_views(&c, &dir)
+}
+
+/// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
+///    「收一份 JSON 文本」的参数不该顶着那一列的名字，否则收口门禁与分层都会慢慢被磨穿。
+#[derive(serde::Deserialize)]
+pub struct PageProjectionArgs {
+    pub page_id: String,
+    pub doc_json: String,
+}
+
+/// ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把投影写回落盘列**（＋块图重建＋打「待重建」）。
+///
+/// 与 `save_page_state` 的分工：那条写**状态**（权威那一份），这条把状态**投影**到 `pages` 那一列，
+/// 让反链/插件/AI/导出**当场**看到刚并进来的内容（原先要等下一次保存）。
+/// 语义与三条纪律见 `doc_content::write_page_projection`（**不是保存**：不动 `dirty`、不盖章、不快照）。
+/// 返回**是否真的写了**：`false` ＝ "无事可做"（没变 / 数据库页 / 页面不存在），不是错误。
+#[tauri::command]
+pub fn write_page_projection(db: State<Db>, args: PageProjectionArgs) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::doc_content::write_page_projection(&c, &args.page_id, &args.doc_json)
+}
+
 #[tauri::command]
 pub fn save_page(db: State<Db>, args: SavePageArgs) -> Result<PageDetail, String> {
     let c = conn(&db);
@@ -657,13 +820,13 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     })
 }
 
-/// 这个构建**有没有编入 MuPDF**（构建期特性 `mupdf-rollback`）——配置的**单一事实来源**：
-/// 命令的分派与下面的判据都问它，免得"注释说没编、代码却还在调"。
-pub(crate) fn mupdf_compiled() -> bool {
-    cfg!(feature = "mupdf-rollback")
-}
-
 /// 请求了 MuPDF、但这个构建没编入它时给的那句话。
+///
+/// ⚠️ **2026-09-25 清理**：这里原本还有一个 `pub(crate) fn mupdf_compiled()`，body 就是
+/// `cfg!(feature = "mupdf-rollback")`；它**唯一的调用点**是一条"它必须等于 `cfg!(feature)`"的判据 ——
+/// 也就是 `assert_eq!(cfg!(f), cfg!(f))`，**恒真、零覆盖**；函数本身在非测试构建里也没人用。
+/// 于是删掉函数与那条空转断言。"这个构建编没编 MuPDF"由 `ensure_mupdf_available()` 的两份 cfg 实现回答，
+/// 下面那条判据直接断言它（两种构建各断言自己那一半，那才是真的在验）。
 ///
 /// 为什么要这么长：这不是"内部错误"，而是**用户（或灰度时的人）敲了一个开关却得不到想要的东西**
 /// —— 必须一句话说清"现在没有它 + 换哪个开关 + 想要它怎么构建"。
@@ -765,13 +928,12 @@ mod pdf_engine_tests {
     ///
     /// 这条在两种构建下都跑（各断言各的那一半）：默认构建断言"拒绝 + 出路"，
     /// `--features mupdf-rollback` 构建断言"放行"。
+    ///
+    /// ⚠️ **2026-09-25 清理**：本条原来第一句是 `assert_eq!(mupdf_compiled(), cfg!(feature = …))`，
+    /// 而 `mupdf_compiled()` 的 body 就是那个 `cfg!` ⇒ **恒真、零覆盖**（函数已删）。
+    /// 现在"编没编"由下面两半**真的**验：放行 / 拒绝＋出路，两种构建各跑一边。
     #[test]
     fn asking_for_mupdf_says_what_to_do_when_the_feature_is_off() {
-        assert_eq!(
-            super::mupdf_compiled(),
-            cfg!(feature = "mupdf-rollback"),
-            "`mupdf_compiled()` 必须与 feature 一致（它是配置的单一事实来源）"
-        );
         if cfg!(feature = "mupdf-rollback") {
             assert!(super::ensure_mupdf_available().is_ok(), "编了就该放行");
         } else {
@@ -795,6 +957,64 @@ pub fn list_page_conflicts(
 ) -> Result<Vec<crate::doc_content::PageConflict>, String> {
     let c = conn(&db);
     crate::doc_content::unresolved_page_conflicts(&c, &page_id)
+}
+
+// =====================================================================================
+// 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）· **页级血统冲突**的三条命令
+//
+// 与块级那两条**并列但不同族**：那种冲突可以逐块选一侧；这里撞上的是**两条独立血统**
+//（Yjs 结构上合不了）⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"。
+// ⚠️ 判定"这两条血统相不相关"的**只有界面侧**（要 Yjs）⇒ 记录由界面侧发起，Rust 只负责存与裁决。
+// =====================================================================================
+
+/// 记一次页级血统冲突的载荷：两条指纹 ＋ **对端那一版的整页投影 JSON**。
+///
+/// ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `PageProjectionArgs` / `StaleTextPage` 同一处置）。
+#[derive(serde::Deserialize)]
+pub struct RecordLineageConflictArgs {
+    pub page_id: String,
+    pub mine_fp: String,
+    pub remote_fp: String,
+    pub doc_json: String,
+}
+
+/// 记一次（**去重**：同一对指纹只提一次；同一页只留一条未决）。返回**是否真的新建了一行**。
+#[tauri::command]
+pub fn record_lineage_conflict(
+    db: State<Db>,
+    args: RecordLineageConflictArgs,
+) -> Result<bool, String> {
+    let c = conn(&db);
+    crate::lineage_conflict::record_lineage_conflict(
+        &c,
+        &args.page_id,
+        &args.mine_fp,
+        &args.remote_fp,
+        &args.doc_json,
+        now_ms(),
+    )
+}
+
+/// 这一页**未决**的页级血统冲突（至多一条；`null` ＝ 没有 —— 这是常态，不是错误）。
+#[tauri::command]
+pub fn list_lineage_conflicts(
+    db: State<Db>,
+    page_id: String,
+) -> Result<Option<crate::lineage_conflict::PageLineageConflict>, String> {
+    let c = conn(&db);
+    crate::lineage_conflict::unresolved_lineage_conflict(&c, &page_id)
+}
+
+/// **裁决一条**：`choice` = `"local"`（保留本机）/ `"saved-as-new"`（已把对端那版另存为新页），
+/// 其余值一律报错（**不默认选边** —— 与 `resolve_page_conflict` 同一纪律）。
+#[tauri::command]
+pub fn resolve_lineage_conflict(
+    db: State<Db>,
+    conflict_id: String,
+    choice: String,
+) -> Result<(), String> {
+    let c = conn(&db);
+    crate::lineage_conflict::resolve_lineage_conflict(&c, &conflict_id, &choice, now_ms())
 }
 
 /// **裁决一处冲突**：`choice` = `"local"` / `"remote"`（其余值一律报错，**不默认选边**）。

@@ -65,7 +65,18 @@ export function registryRoots(cargoHome) {
  *   · `no-locked-version` —— 拿不到 `Cargo.lock` 里的版本；
  *   · `version-mismatch`  —— registry 里有别的版本、**没有**要的那个（`err.found` 列出看到哪些）。
  */
-export function resolveSqlcipherSource({ lockPath, cargoHome, roots } = {}) {
+/**
+ * 纯函数：**私有副本**的 sqlcipher 目录（`<repo>/.gm-build/libsqlite3-sys-<ver>/sqlcipher`）。
+ *
+ * 2026-09-23「消灭补丁残留」：补丁现在打在私有副本上（cargo 由私有 `CARGO_HOME` 指过去），
+ * 所以"将要编译的那份源码"有两种；`resolveSqlcipherSource` 的优先级见下面那条注释。
+ */
+export function isolationSourceDir(repoRoot, version) {
+  if (!repoRoot || !version) return null;
+  return join(repoRoot, ".gm-build", `libsqlite3-sys-${version}`, "sqlcipher");
+}
+
+export function resolveSqlcipherSource({ lockPath, cargoHome, roots, repoRoot } = {}) {
   if (!lockPath) {
     const e = new Error("resolveSqlcipherSource 需要 lockPath（不猜仓库位置）");
     e.code = "bad-args";
@@ -92,6 +103,17 @@ export function resolveSqlcipherSource({ lockPath, cargoHome, roots } = {}) {
     }
   }
   found.sort((a, b) => a.version.localeCompare(b.version));
+  // ★ 优先级：**私有副本 ＞ registry**（2026-09-23）。
+  //   为什么副本优先：`--prepare` 之后"将要编译的那份"就是副本（补丁只打在那里），
+  //   而 registry 那份**永远是原版**（这正是消灭残留的手段）⇒ 若还按 registry 比 `src_sha256`，
+  //   每次国密构建都会被判成"标记过期"，于是这条判据会被训练成"可以忽略"（更坏）。
+  //   `--revert` 之后副本没了 ⇒ 自然回落到 registry（此时读数是"没有补丁"的如实答复）。
+  if (repoRoot) {
+    const iso = isolationSourceDir(repoRoot, locked);
+    if (iso && existsSync(join(iso, "sqlite3.c"))) {
+      return { dir: iso, version: locked, via: "isolation" };
+    }
+  }
   const hit = found.find((f) => f.version === locked);
   if (!hit) {
     const e = new Error(
@@ -136,8 +158,10 @@ export function markerFileOf(dir) {
 }
 
 /** 一次性给出"当前将要编译的那份源码"的定位与哈希（给门禁/别的脚本用）。 */
-export function sourceFingerprint({ lockPath, cargoHome, roots } = {}) {
-  const pick = resolveSqlcipherSource({ lockPath, cargoHome, roots });
+export function sourceFingerprint({ lockPath, cargoHome, roots, repoRoot } = {}) {
+  // ⚠️ `repoRoot` 必须**转发**下去（我第一版加了参数却忘了转发 ⇒ 隔离副本永远选不中，
+  //    表现为"产物 src_sha256 与当前源码不是同一份"这条**假红**）。
+  const pick = resolveSqlcipherSource({ lockPath, cargoHome, roots, repoRoot });
   const file = markerFileOf(pick.dir) ?? join(pick.dir, "sqlite3.c");
   if (!existsSync(file)) {
     const e = new Error(`找不到可哈希的文件：${file}`);

@@ -25,18 +25,12 @@
          它们——真机上表现为"打开任何 PDF 都失败"。为什么放 public/ 且要同步引入，
          见该文件头注释。 -->
     <script src="es-polyfills.js"></script>
-    <!-- Prism global (plain synchronous scripts, before any module) so that
-         @lexical/code's bare `Prism` references resolve to window.Prism instead
-         of an ESM-bundled copy that is never set as global. -->
-    <script src="prism/prism-core.js"></script>
-    <script src="prism/prism-markup.js"></script>
-    <script src="prism/prism-clike.js"></script>
-    <script src="prism/prism-javascript.js"></script>
-    <script src="prism/prism-markup-templating.js"></script>
-    <script src="prism/prism-css.js"></script>
-    <script src="prism/prism-bash.js"></script>
-    <script src="prism/prism-python.js"></script>
-    <script src="prism/prism-typescript.js"></script>
+    <!-- Prism：**只留模块化的那一条路**（`src/editor/prismSetup.ts`，在 Editor 启动时 import 组件
+         并 `window.Prism ??= Prism`）。原先这里还有 10 行 `<script src="prism/prism-*.js">`，那是
+         更早的机制，已被它取代（那一行注释自己写着 "independent of the index.html plain <script>
+         loading"）。2026-09-25 清冗余文件时在真 Chromium 里实测：把这 10 行去掉后，
+         `window.Prism` 仍然能 highlight json / rust / sql / go / markdown（token 都出来了）。
+         ⚠️ 别把它们搬回来：真要动这条链，先看 `scripts/check-prism-components.mjs` 的判据。 -->
     <!-- Boot scripts (SW self-heal + boot diagnostic) live in public/boot-scripts.js
          as an EXTERNAL script, so the CSP can use script-src 'self' without
          'unsafe-inline'. A plain <script src> is synchronous, so it still runs

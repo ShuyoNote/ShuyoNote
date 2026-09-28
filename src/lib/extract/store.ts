@@ -86,6 +86,13 @@ export interface AttachmentTextStore {
   /**
    * 读回**每个抽取器**上一次抽取报的覆盖度（按 extractor 稳定排序）。
    *
+   * ⚠️ **口径精确到"行"**（2026-09-23 订正措辞，Windows 侧审出来的一处文档/实现差）：
+   * SQL 是 `SELECT DISTINCT extractor, coverage` ⇒ 去掉的是**整行相同**的重复
+   * （同一份读数**逐段重复**在所有段行上 —— 那是 `replace` 冗余写列的必然结果）；
+   * 万一同一 extractor 真有两份**不同**的读数，**两行都会回** —— 这里**不替调用方挑**
+   * （挑就是静默丢一条，与本仓"多抽取器的行都列出来"同一条口径）。
+   * 生产路径上构造不出后者：`replace` 是 `(att_id, extractor)` 整体替换，且有判据钉着。
+   *
    * 为什么单开一个方法而不是塞进 `segmentsOf`：段与覆盖度是**两个层级**的东西
    * （一行一段 vs 一次抽取一份），混在一起会让"段"的消费方被动拿到一个它不用的结构；
    * 而"读全了没有"恰恰是**读侧**（AI 工具面 / 覆盖报告）才要问的问题。
@@ -110,24 +117,54 @@ export const COVERAGE_COLUMN_MIGRATION =
   "ALTER TABLE attachment_text ADD COLUMN coverage TEXT NOT NULL DEFAULT ''";
 
 /**
- * 纯函数：把库里的 `(extractor, coverage)` 行翻成 `StoredCoverage[]`。
+ * 纯函数：库里那一列 → `ExtractCoverage`；**读不出「形状对」的一律当没有读数**（`undefined`）。
+ *
+ * ## 为什么"JSON 语法通过"还不够（2026-09-23，Windows 侧复核出来的边角）
+ *
+ * 那一条不变量是"**未知 ≠ 完整**"；这一格是它的边角：**未知 ≠ 垃圾**。
+ * 只做 `JSON.parse` 的话，下面这些都会被当成"**有读数**"（实测）：
+ *
+ * ```text
+ * ""／空白／坏 JSON      ⇒ undefined（未知 ✅）
+ * "null"                ⇒ null         ← falsy：`if (r.coverage)` 这类消费方还挡得住
+ * "123"／"{}"／"[1,2]"   ⇒ 123／{}／[1,2]  ← **truthy**：`if (r.coverage)` 挡不住，
+ *                                            而 `complete` 读出来是 `undefined` ⇒ 缺口判定又落空
+ * ```
+ *
+ * ⇒ 形状按契约收口：必须是**非 null 的对象**、且 `complete` 是 **`boolean`**
+ * （`ExtractCoverage` 的必填项，见 `types.ts`）。其余一律回 `undefined` ＝ 没有读数。
+ * ⚠️ 这条与"缺列/坏 JSON ⇒ 未知"是**同一条口径的两个面**：未知是**承重**的答复，
+ * 不许被垃圾数据冒名顶替（否则报告会把"抽到了什么都不知道"说成"抽取器报了一份读数"）。
+ */
+export function parseStoredCoverage(raw: string | null | undefined): ExtractCoverage | undefined {
+  const text = String(raw ?? "").trim();
+  if (!text) return undefined; // 空串 ＝ 没有读数
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined; // 坏 JSON（旧格式/手改）⇒ 未知，**不许猜成完整**
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined; // 标量/数组/null 都不是覆盖度
+  if (typeof (parsed as { complete?: unknown }).complete !== "boolean") return undefined;
+  return parsed as ExtractCoverage;
+}
+
+/**
+ * 把库里的 `(extractor, coverage)` 行翻成 `StoredCoverage[]`。
  *
  * **两个平台的实现在这里共用同一套口径**（同步实现直查 sqlite；桌面走 `derived_query` 由 Rust 取行），
- * 而"解析失败/空串 ⇒ 当作**未知**，而不是完整"这条语义必须在**一处**决定 —— 两份实现各写一遍迟早漂移，
- * 而这处漂移的后果是**把"没抽全"读成"抽全了"**（正是 §15.10 要防的那一件事）。
+ * 而"解析失败/空串/形状不对 ⇒ 当作**未知**，而不是完整"这条语义必须在**一处**决定 ——
+ * 两份实现各写一遍迟早漂移，而这处漂移的后果是**把"没抽全"读成"抽全了"**（正是 §15.10 要防的那一件事）。
+ *
+ * ⚠️ 顺序是**调用方的事**：这里只逐行翻译、不排序、不去重（两个平台的 SQL 都已按 extractor 排序）。
  */
 export function storedCoverageFrom(
   rows: readonly { extractor: string; coverage?: string | null }[],
 ): StoredCoverage[] {
   return rows.map((r) => {
-    const raw = String(r.coverage ?? "").trim();
-    if (!raw) return { extractor: r.extractor }; // 没有 ⇒ **不给** coverage（未知 ≠ 完整）
-    try {
-      return { extractor: r.extractor, coverage: JSON.parse(raw) as ExtractCoverage };
-    } catch {
-      // 库里那份不是合法 JSON（旧格式/手改）⇒ 同样按"未知"处理，**不许猜成完整**
-      return { extractor: r.extractor };
-    }
+    const coverage = parseStoredCoverage(r.coverage);
+    return coverage === undefined ? { extractor: r.extractor } : { extractor: r.extractor, coverage };
   });
 }
 
@@ -187,6 +224,8 @@ export function createAttachmentTextStore(db: SqlRunner): AttachmentTextStore {
     },
 
     coverageOf(attId) {
+      // ⚠️ `DISTINCT` 去的是**整行相同**的重复（同一份读数逐段重复在所有段行上）；
+      //    同一 extractor 若有**两份不同**读数 ⇒ 两行都回（不替调用方挑，见接口注释）。
       return storedCoverageFrom(
         db.query<{ extractor: string; coverage: string }>(
           "SELECT DISTINCT extractor, coverage FROM attachment_text WHERE att_id = ? ORDER BY extractor",

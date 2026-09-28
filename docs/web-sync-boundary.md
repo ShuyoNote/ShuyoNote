@@ -73,7 +73,7 @@ Rust `reqwest`（没有浏览器 origin 概念），**默认拒绝跨源是安�
 - 桌面：会话 token 存在 meta 库的 `auth_sessions` 表（按服务器一条），渲染层拿不到持久副本；at-rest 加密密钥同样由 Rust 侧持有。
 - Web：只能放 IndexedDB / localStorage，**一次 XSS 即等于长期团队凭证失窃**。
 
-个人空间的 E2E 加密同理——密钥留在浏览器里，与「本地优先、数据不出本机」的定位是两个风险档次。团队版本身已明确放弃零知识（见私有仓库 `shuyonote-sync-server` 的 `docs/plans/2026-08-30-team-edition-plan.md`），但那是**在桌面的前提下**做的取舍，不等于可以直接平移到浏览器。
+个人空间的 E2E 加密同理——密钥留在浏览器里，与「本地优先、数据不出本机」的定位是两个风险档次。团队版本身已明确放弃零知识（口径以[数据可见边界](sync-server-data-boundary.md) §0.5 为准；服务端侧详见私有仓库 `shuyonote-sync-server` 的 `docs/plans/2026-08-30-team-edition-plan.md`），但那是**在桌面的前提下**做的取舍，不等于可以直接平移到浏览器。★ 另有一条**待定**：加密的**个人空间**在 Web 上应表现为「**不可同步、不可编辑**」（见[加密作用域决策稿](plans/2026-09-23-encryption-scope-decision.md) §3 第 4 步与 §7.1），**不许**悄悄降级成明文上传。
 
 ## 3. 现状不是缺陷，是声明过的边界
 

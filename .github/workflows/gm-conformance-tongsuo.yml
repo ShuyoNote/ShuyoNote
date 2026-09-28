@@ -1,0 +1,87 @@
+name: gm-conformance (Tongsuo cross-implementation, manual)
+
+# 为什么单开这一条（2026-09-28 立，owner 拍「A 为目标、B 先过渡」）：
+#   `gm-conformance` 的「RustCrypto ↔ Tongsuo 双向对拍 9 项」在日常 CI 上**自报跳过**（CI 未装 Tongsuo），
+#   而这 9 项**没有第二个平台会跑** ⇒ 那是**真漏验**，不是平台分工。
+#   ⚠️ 但**不能**把它塞进日常 CI：Tongsuo 对产品**非必需**（数据面只用 SM3/SM4/PBKDF2-HMAC-SM3，上游 OpenSSL ≥1.1.1 就有；
+#   Tongsuo 的独有价值 GM/T 0024 国密 TLS 不在本项目范围）⇒ 塞进去只会吃掉每次 CI 的分钟数、变慢变脆，
+#   而"能被习惯性绕开的门禁等于没有"。
+#   ⇒ 设计：**手动触发**，需要「多一个独立实现的背书」时（发版前 / 改过 crypto 那几个文件之后）点一次，
+#     把逐项结果作为**工件**上传 ⇒ 读数可核（与"打包读数以工件为准"同一条形状 ✓）。
+# 配方照抄 ShuyoNote/docs/development.md:§90-93（**不要自己发明**）：
+#   · `no-shared`（静态）—— 产品要静态链接；
+#   · ⚠️ Windows/VC 还要 `no-uplink`（`LNK2001: unresolved external symbol OPENSSL_UplinkTable`）；**Linux 不需要**；
+#   · 跨实现对拍读的是环境变量 **SHUYONOTE_TONGSUO_OPENSSL**，不是 OPENSSL_DIR（见 scripts/check-gm-conformance.mjs）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tongsuo_ref:
+        description: "Tongsuo 分支/标签（默认 master）"
+        required: false
+        default: "master"
+      reason:
+        description: "为什么现在跑（写进 run 名字，便于日后追溯）"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: build Tongsuo + run cross-implementation check
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      # 缓存自编结果：重复触发时不必每次重编（键里带 ref ⇒ 换版本会自动重建）
+      - name: Cache Tongsuo install
+        uses: actions/cache@v4
+        with:
+          path: ~/tongsuo/install
+          key: tongsuo-${{ inputs.tongsuo_ref }}-no-shared-${{ runner.os }}-v1
+
+      - name: Build Tongsuo (static, no-shared)
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/tongsuo/install/lib/libcrypto.a" ]; then
+            echo "缓存命中：$HOME/tongsuo/install 已有 libcrypto.a ⇒ 跳过自编"
+            exit 0
+          fi
+          # Tongsuo 的构建要 perl；ubuntu-latest 自带，这里只显式交代依赖
+          sudo apt-get update -qq && sudo apt-get install -y -qq perl make gcc >/dev/null
+          rm -rf "$HOME/tongsuo/src"
+          git clone --depth 1 --branch "${{ inputs.tongsuo_ref }}" https://github.com/Tongsuo-Project/Tongsuo.git "$HOME/tongsuo/src"
+          cd "$HOME/tongsuo/src"
+          # 照 docs/development.md:§90-93：no-shared（静态）。Windows/VC 还需 no-uplink；Linux 不需要。
+          ./Configure no-shared --prefix="$HOME/tongsuo/install"
+          make -j"$(nproc)"
+          make install_sw
+          ls -l "$HOME/tongsuo/install/lib/libcrypto.a"
+
+      - name: Install JS deps (the gate imports from scripts/lib)
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run gm-conformance with Tongsuo (artifact = the reading)
+        id: run
+        run: |
+          # ⚠️ set -o pipefail：否则 `| tee` 会把 gate 的真实退出码吞掉（今天刚栽过的形状）
+          set -euo pipefail
+          SHUYONOTE_TONGSUO_OPENSSL="$HOME/tongsuo/install" \
+            node scripts/check-gm-conformance.mjs 2>&1 | tee gm-conformance.txt
+          echo "---- 关键读数（9 项是 run 还是 skip，以工件为准）----"
+          grep -c '^!' gm-conformance.txt || true   # `!` 行＝跳过项；0 表示全部真跑
+
+      - name: Upload the reading as an artifact (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gm-conformance-${{ github.run_number }}
+          path: gm-conformance.txt
+          if-no-files-found: warn
+          retention-days: 90

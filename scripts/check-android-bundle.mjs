@@ -37,6 +37,11 @@ export const ABI_DIRS = ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"];
 /** 我们随包发的那份（`fetch-pdfium.mjs` 的 `android-arm64` 资产解出来的）。 */
 export const VENDOR_LIB = join("src-tauri", "vendor", "pdfium", "android-arm64", "lib", PDFIUM_LIB);
 
+// 库级国密那一格（静态 SM 库）**不在这里判** —— 它是同级的 `scripts/check-android-crypto.mjs`。
+// 为什么分开：两者的退出码语义不同（这一条是"pdfium 在不在、是不是同一份字节"，
+// 那一条是"crypto 是不是静态随包"），塞进一个退出码会让"pdfium 绿"与"crypto 没验"互相污染
+// —— 本仓的规矩是"没验"必须与"通过"分开，两个独立的问题就该有两个独立的判据。
+
 /** 从 `tar -tf` 的输出里挑出 `lib/<abi>/libpdfium.so`（纯函数，便于判据）。 */
 export function apkLibEntries(entries) {
   const out = [];

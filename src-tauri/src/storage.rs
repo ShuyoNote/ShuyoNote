@@ -1,7 +1,7 @@
 use crate::db::Db;
 use rusqlite::params;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tauri::{Manager, State};
 
 #[derive(Serialize, Clone)]
@@ -38,18 +38,6 @@ fn dir_size(dir: &Path) -> DirSize {
         }
     }
     out
-}
-
-fn find_file_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let stem = name.split('.').next().unwrap_or("").to_string();
-        if stem == hash {
-            return Some(entry.path());
-        }
-    }
-    None
 }
 
 /// M14.1 — Storage breakdown for the space-management panel.
@@ -114,13 +102,12 @@ pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<S
                     }
                 }
             }
-            // leftover .part upload temp files
-            if let Ok(entries) = std::fs::read_dir(&att_dir2) {
-                for e in entries.flatten() {
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    if name.ends_with(".part") {
-                        temp_bytes += std::fs::metadata(&e.path()).map(|m| m.len()).unwrap_or(0) as i64;
-                    }
+            // leftover .part upload temp files（★ 按空间分之后要**递归**找：`.part` 现在
+            // 可能落在 `<根>/<空间>/` 下面，而不是根下）
+            for p in crate::attachments::walk_attachment_files(&att_dir2) {
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                if name.ends_with(".part") {
+                    temp_bytes += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0) as i64;
                 }
             }
             (db_bytes, att.bytes, att.count, temp_bytes)
@@ -298,7 +285,7 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
     let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
         let mut freed: u64 = 0;
         for hash in orphaned {
-            if let Some(p) = find_file_by_hash(&att_dir, &hash) {
+            if let Some(p) = crate::attachments::find_attachment_anywhere(&att_dir, &hash) {
                 freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                 let _ = std::fs::remove_file(p);
             }
@@ -336,17 +323,14 @@ pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>
     let att_dir = attachment_dir;
     let freed = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
         let mut freed: u64 = 0;
-        if let Ok(entries) = std::fs::read_dir(&att_dir) {
-            for e in entries.flatten() {
-                let p = e.path();
-                if p.is_file() {
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    let stem = name.split('.').next().unwrap_or("").to_string();
-                    if !stem.is_empty() && !referenced.contains(&stem) {
-                        freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-                        let _ = std::fs::remove_file(p);
-                    }
-                }
+        // ★ 递归扫**整棵树**（`<根>/<空间>/<桶>/…` 与老布局都算）：按空间分之后
+        //   孤儿可能躺在任何一个空间目录里，"哪些字节没人引用"这条判据本身是全局的。
+        for p in crate::attachments::walk_attachment_files(&att_dir) {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let stem = name.split('.').next().unwrap_or("").to_string();
+            if !stem.is_empty() && !referenced.contains(&stem) {
+                freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                let _ = std::fs::remove_file(&p);
             }
         }
         Ok(freed)
@@ -403,13 +387,12 @@ pub async fn cleanup_temp_files(app: tauri::AppHandle) -> Result<u64, String> {
                 }
             }
         }
-        if let Ok(entries) = std::fs::read_dir(&att_dir) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".part") {
-                    freed += std::fs::metadata(&e.path()).map(|m| m.len()).unwrap_or(0);
-                    let _ = std::fs::remove_file(e.path());
-                }
+        // ★ 递归找 `.part`（按空间分之后它们可能在 `<根>/<空间>/` 下）。
+        for p in crate::attachments::walk_attachment_files(&att_dir) {
+            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if name.ends_with(".part") {
+                freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                let _ = std::fs::remove_file(&p);
             }
         }
         Ok(freed)
@@ -583,7 +566,7 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
     let freed_att_bytes = tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
         let mut freed: u64 = 0;
         for hash in orphaned {
-            if let Some(p) = find_file_by_hash(&att_dir, &hash) {
+            if let Some(p) = crate::attachments::find_attachment_anywhere(&att_dir, &hash) {
                 freed += std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
                 let _ = std::fs::remove_file(p);
             }

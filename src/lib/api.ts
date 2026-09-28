@@ -2,7 +2,7 @@ import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, SyncBudget } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -22,7 +22,26 @@ const invoke = <K extends keyof CommandMap>(
 // `attachments_paused` 时只看了一处，于是 `SyncPanel` 通过 `import type { SyncProfile }
 // from "../lib/api"` 拿到的类型少了新字段、`tsc` 报 TS2339——而这还是**报错**的那种；
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
-export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult } from "./platform/commands";
+export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
+export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
+
+/** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
+export type SpaceKind = "personal" | "team" | "";
+
+/** ★ 一个空间的**完整隐私读数**（与 Rust `space_crypto::SpaceSecurityView` 一一对应）。 */
+export interface SpaceSecurityView {
+  space_id: string;
+  /** `""` ＝ 未分类 ⇒ 闸门对它**没生效**（界面要如实显示，不许默认成个人空间）。 */
+  kind: SpaceKind;
+  /** 库文件本身是不是密的（嗅文件头）。 */
+  encrypted_on_disk: boolean;
+  /** 钥匙袋里有没有它的盒子。 */
+  in_keyring: boolean;
+  /** 现在拿得到钥匙吗（袋里有它 ＋ 会话已解锁）。 */
+  key_available: boolean;
+  /** 闸门裁决：`allow` 能绑同步吗；`unclassified` 放行了但**没管到**；`reason` 拦的原因。 */
+  gate: { allow: boolean; unclassified: boolean; reason: string };
+}
 
 /** 聚合邮箱的 IMAP 账号配置（与后端 email::EmailAccountArgs 对应）。 */
 export interface EmailAccount {
@@ -92,7 +111,9 @@ export const api = {
   setWorkspaceSettings: (id: string, theme?: string | null, icon?: string | null, sortOrder?: number | null) =>
     invoke("set_workspace_settings", { id, theme, icon, sortOrder }),
   listWorkspaces: () => invoke("list_workspaces"),
-  createWorkspace: (name?: string | null) => invoke("create_workspace", { name }),
+  /** ★ A1：`kind` ＝ 用户在"新建空间"那一刻选的分类（没给 ⇒ 后端按 `personal`）。 */
+  createWorkspace: (name?: string | null, kind?: "personal" | "team" | null) =>
+    invoke("create_workspace", { name, kind: kind ?? null }),
   getActiveWorkspaceId: () => invoke("get_active_workspace_id"),
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),
@@ -169,11 +190,11 @@ export const api = {
   emitPluginEvent: (event: string, payloadJson?: string) => invoke("emit_plugin_event", { event, payloadJson }),
   // 插件目录指纹：热重载用（面板打开期间低频轮询，变了就重新扫描）。
   pluginDirStamp: () => invoke("plugin_dir_stamp"),
-  setEncryption: (passphrase: string) => invoke("set_encryption", { passphrase }),
+  // ★ owner 第三轮拍板（2026-09-24）：**应用级加密那两条命令已删**（`set_encryption` /
+  // `disable_encryption`，连同"全局一把钥匙"那整套口径与界面）。留下的是**会话级**三条：
   encryptionStatus: () => invoke("encryption_status"),
   lockEncryption: () => invoke("lock_encryption"),
   unlockEncryption: (passphrase: string) => invoke("unlock_encryption", { passphrase }),
-  disableEncryption: () => invoke("disable_encryption"),
   getPage: (id: string) => invoke("get_page", { id }),
   listTemplates: (spaceId?: string | null) => invoke("list_templates", { spaceId }),
   saveAsTemplate: (args: { name: string; category?: string; icon?: string; cover?: string; summary?: string; content_json: string; content_text?: string; kind?: string; database_json?: string; space_id?: string | null }) =>
@@ -235,6 +256,135 @@ export const api = {
     content_json?: string;
     content_text?: string;
   }) => invoke("save_page", { args }),
+  /**
+   * 冲刺 S3b-2c：读这一页的 **CRDT 状态**（没有 ⇒ `null`）。
+   *
+   * 载荷在 wire 上是 `number[]`（二进制跨 IPC 只能这么走）；这里就换成 `Uint8Array`，
+   * 让界面侧只看到字节。桌面实现归切片 S7。
+   */
+  readPageState: (id: string) =>
+    invoke("read_page_state", { args: { page_id: id } }).then((v) => (v ? new Uint8Array(v) : null)),
+  /** 冲刺 S3b-2c：写这一页的 CRDT 状态（同一页只留最新一份）。 */
+  savePageState: (id: string, state: Uint8Array) =>
+    invoke("save_page_state", { args: { page_id: id, state: Array.from(state) } }),
+  /**
+   * 冲刺 S9：**CRDT 血统 claim** —— 问同步服务"这一页的首条血统归谁"。
+   *
+   * ⚠️ `workspace_id` 是**本地**工作空间 id（页所属那一个）——**不是**远端 `space_id`。
+   * 平台层会按它找到该工作空间绑定的档案，再用档案里的**远端** `space_id` 发请求；没绑定 ⇒
+   * `unavailable`（连请求都不发）。两者是两套 id，第一版传错过，见 `crdt/claimScope.ts` 文件头。
+   *
+   * 语义（服务端判据与客户端 `bootstrap.ts` 对齐）：`granted=true` ⇒ 本机建；`false` ⇒ 别人先建过
+   * （本机**不要**建）；**问不到**（没配置／没选空间／网络／401／**403**／5xx）⇒ 结果标记 `unavailable`，
+   * 由调用方归一成"离线临时建"那一支（照旧能写）。
+   * ⚠️ 注释里别写"星号紧跟斜杠"那种连写（它会**提前关掉块注释** —— 本行第一版写 403 时就那么炸过一次）。
+   */
+  claimPageLineage: (args: { workspace_id: string; page_id: string }) => invoke("claim_page_lineage", { args }),
+  /**
+   * 冲刺 §11.4 收口（2026-09-23 第 42 轮）：这一页**待并的远端状态**。
+   *
+   * 桌面 Rust **没有** Yjs（要不要引进 `yrs` 是 S5 阶段 2 的决策）⇒ 它只把同步收到的字节**收下来**，
+   * 由这里交给界面侧在**打开页面**时合并（那份唯一实现）；Web 平台在 `applyChange` 里**当场**合并
+   * ⇒ 这个清单在 Web 上**恒为空**（两侧行为不同是平台事实，不是漏实现）。
+   */
+  readPendingPageStates: (id: string) =>
+    invoke("read_pending_page_states", { args: { page_id: id } }).then((rows) =>
+      (rows ?? []).map((r) => ({ seq: Number(r.seq), state: new Uint8Array(r.state) })),
+    ),
+  /** 合并完就清（返回**清了几条**：`0` 是"本来就没有"，不是错误）。 */
+  clearPendingPageStates: (id: string) => invoke("clear_pending_page_states", { args: { page_id: id } }),
+  /**
+   * 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘列**（＋派生）。
+   *
+   * 什么时候用：CRDT 状态被**采用/合并**之后，`pages` 那一列（反链、插件、AI、导出读的**投影**）会落后
+   * ⇒ 由**状态**重新序列化一份写回（这份 JSON 由界面侧算 —— 桌面 Rust **没有** Yjs）。
+   * ⚠️ 参数名刻意叫 `docJson`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
+   *    「收一份 JSON 文本」的参数不该顶着那一列的名字（收口门禁按 token 计数，会当场红）。
+   * ⚠️ **不是保存**：不动 `dirty`、不盖章、不快照（那三件是保存路径的事）。
+   * 返回**是否真的写了**（`false` ＝ 无事可做：没变／数据库页／页面不存在）。
+   */
+  writePageProjection: (id: string, docJson: string) =>
+    invoke("write_page_projection", { args: { page_id: id, doc_json: docJson } }),
+  /**
+   * ★ 隐私边界第 1 步（2026-09-23）：**按空间**启用加密 —— 只换这一个空间的库。
+   * **桌面专属**（Web 无钥匙柜）。**这是唯一的加密入口**：应用级那套（全局一把钥匙，
+   * `setEncryption` / `disableEncryption`）已按 owner 第三轮拍板删净。
+   * `passphrase` 只在"钥匙袋还不存在"时用到；已有袋子 ⇒ 省略（用会话里的主密钥）。
+   * 返回那把空间钥匙（界面一般不用，判据/排错用）。
+   */
+  enableSpaceEncryption: (spaceId: string, passphrase?: string) =>
+    invoke("enable_space_encryption", { args: { space_id: spaceId, passphrase } }).then(
+      (v) => new Uint8Array(v as number[]),
+    ),
+  /** ★ 同上（另一半）：**按空间禁用** —— 只把它自己的库换回明文、扔掉它的盒子。桌面专属。 */
+  disableSpaceEncryption: (spaceId: string) =>
+    invoke("disable_space_encryption", { args: { space_id: spaceId } }),
+  /**
+   * ★ 隐私边界 A=3（2026-09-24）：把某个空间标成个人/团队（`""` ＝ **取消分类**）。**桌面专属**。
+   *
+   * 正常路径**不用点它**（本地新建 ⇒ 自动 `personal`）；它存在是为了**存量空间**与团队流程之外
+   * 建的空间 —— "没分类"＝闸门放行＝闸门对它们**没生效**，想让它生效就得有个地方能标。
+   * ⚠️ 认不出的 `kind`（例如拼错的 `"teams"`）**会抛**，不会被静默当成"取消分类"。
+   */
+  setSpaceKind: (spaceId: string, kind: SpaceKind) =>
+    invoke("set_space_kind", { args: { space_id: spaceId, kind } }),
+  /**
+   * ★ ②b 的读数面（2026-09-24）：**一次读全所有空间**的分类 ＋ 加密状态 ＋ 闸门裁决。
+   *
+   * ⚠️ 未分类的空间**照样在列表里**（`kind === ""`）：它们正是闸门**没管到**的那批，
+   * 界面要如实显示成"未分类"，**不许**默认成个人空间（那会把缺口显示成"已覆盖"）。
+   */
+  spaceSecurityOverview: (): Promise<SpaceSecurityView[]> =>
+    invoke("space_security_overview").then((rows) =>
+      rows.map((r) => ({
+        space_id: r.space_id,
+        // 认不出来的值 ⇒ `""`（与 Rust 读侧同口径：**不猜**）
+        kind: (r.kind === "personal" || r.kind === "team" ? r.kind : "") as SpaceKind,
+        encrypted_on_disk: r.encrypted_on_disk,
+        in_keyring: r.in_keyring,
+        key_available: r.key_available,
+        gate: r.gate,
+      })),
+    ),
+  /**
+   * ★ 隐私边界 ③ 0b（2026-09-24）：把本机这一份**公开材料**推到同步服务。**桌面专属**。
+   *
+   * 推的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子）——
+   * 服务端**解不开**它。这样第二台设备只凭主口令就能解开自己的空间，不必再手工拷文件。
+   * ⚠️ 它仍然是**元数据**：服务端因此能看到你有几个盒子、以及它们的**本地空间 id**（不是内容）。
+   * ⚠️ "正常的不顺利"用 `outcome` 表达（**不抛异常**）：`not_configured` / `no_material` / `offline` …
+   */
+  pushSpaceKeyring: (workspaceId: string) =>
+    invoke("push_space_keyring", { args: { workspace_id: workspaceId } }),
+  /**
+   * ★ 同上（取回那一半）：从同步服务取回公开材料并**装进本机**（第二台设备的那一步）。
+   *
+   * ⚠️ `overwrite` 默认 `false`：本机**已经有**那一份时**拒绝并说清**（`already_local`）——
+   * 闷头覆盖可能让本机**打不开自己的空间**（别的设备轮换过之后，服务端那份与能开当前库的那把未必一致）。
+   * ⚠️ 取回之后**不会自动解锁**：主口令仍然由人来输。
+   */
+  pullSpaceKeyring: (workspaceId: string, overwrite = false) =>
+    invoke("pull_space_keyring", { args: { workspace_id: workspaceId, overwrite } }),
+  /**
+   * B 片 ①-a：**不经服务器**的换设备 —— 产出侧。把本机钥匙袋的**公开材料**包成一段文本
+   * （可以复制/粘贴，也可以存成文件再传），并算出**比对码**。
+   *
+   * ⚠️ 这段文本**不是秘密**（公开材料本来就可以公开：盐 ＋ KDF 参数 ＋ 被口令包裹的盒子）；
+   * 它今天本来就躺在服务端上。**真正要防的是「掉包」** —— 所以另一端必须核对 check_code。
+   * ⚠️ 这条路**不做 6 位短码**：那需要 PAKE（要往客户端加一个密码学实现），
+   * 见 docs/plans/2026-09-25-b-slice-pake-selection.md。
+   */
+  pairingExport: () => invoke("pairing_export"),
+  /**
+   * B 片 ①-a：换设备的**采纳侧** —— 把另一端给的配对码装进本机。
+   *
+   * ⚠️ confirmed_check_code **传了就必须逐位相同**（空格/短横忽略），否则**拒绝且本机一个字节都不改**。
+   * 这是这条路**唯一**能挡住「换码」的机制：不传就等于「我自己看了眼说没问题」。
+   * ⚠️ 本机已有公开材料且 overwrite=false ⇒ 回 already_local，**并把「会失去哪些空间」摆出来**
+   * （覆盖后那台设备再也开不开它自己的库）。确认要覆盖时必须显式传 overwrite: true。
+   */
+  pairingImport: (args: { text: string; confirmed_check_code?: string; overwrite?: boolean }) =>
+    invoke("pairing_import", { args }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
@@ -283,6 +433,46 @@ export const api = {
     emitSyncCompleted(r ? [r] : []);
     return r;
   },
+  /**
+   * 桌面「近实时」流通道（2026-09-23 第 48 轮）：让 Rust 订这一页工作空间的 SSE 变更流。
+   *
+   * ⚠️ **只有桌面**（Web 平台浏览器自带 SSE，见 `hooks/useSyncStream.ts` 那条路）——
+   * `sync_stream_*` 在 `check-web-commands` 里登记为 web 专属。
+   * ⚠️ 没绑定/绑不全 ⇒ 返回 `running=false, reason="no-binding"`（**正常情况，不抛**）。
+   */
+  syncStreamStart: (wsId: string) => invoke("sync_stream_start", { wsId }) as Promise<SyncStreamStatus>,
+  /** 断开且不再重连（关开关/切工作空间/退出登录时调）。幂等。 */
+  syncStreamStop: () => invoke("sync_stream_stop") as Promise<SyncStreamStatus>,
+  /** 读数（排错用）：`running` / `last_event_at` / `reconnects` / `last_error` / `reason`。 */
+  syncStreamStatus: () => invoke("sync_stream_status") as Promise<SyncStreamStatus>,
+  /**
+   * 甲-1 接线第 3 件：**局域网发现的读数 ＋ 状态行**（施工单 §2 ④）。
+   *
+   * ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，界面**直接显示**（不要自己再拼一次档位）。
+   * ⚠️ 没传 `workspaceId` ⇒ 用第一条绑定（界面上是"当前空间"那条）。
+   */
+  lanStatus: (workspaceId?: string | null) =>
+    invoke("lan_status", { workspaceId: workspaceId ?? null }) as Promise<LanStatus>,
+  /**
+   * 丙-③-b ③：**对等交换（网格）跑一轮**。
+   *
+   * 读数是**给人看的**（开了没开、拉了几台、哪一台没拉动），**不含内容**；
+   * 没配网格 ⇒ 回 `enabled:false` ＋ 一句为什么，**一个字节都不动**。
+   */
+  meshSyncNow: (workspaceId?: string | null) =>
+    invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
+  /**
+   * 丙-③-b-2b：**写网格设置**（监听地址 / 口令）。
+   *
+   * ⚠️ **`null` ＝ 不动这一项；`""` ＝ 清除它** —— 关掉网格就是 `meshSetConfig(ws, "")`。
+   * 回的是**读数**（含"别人拉不拉得到"那句人话），**不含口令本身**。
+   */
+  meshSetConfig: (workspaceId?: string | null, bind?: string | null, token?: string | null) =>
+    invoke("mesh_set_config", {
+      workspaceId: workspaceId ?? null,
+      bind: bind ?? null,
+      token: token ?? null,
+    }) as Promise<MeshConfigState>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，
@@ -492,6 +682,33 @@ export const api = {
   listPageConflicts: (pageId: string) => invoke("list_page_conflicts", { pageId }),
   resolvePageConflict: (conflictId: string, choice: "local" | "remote") =>
     invoke("resolve_page_conflict", { conflictId, choice }),
+  /**
+   * ★ 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁）。
+   *
+   * 与块级那两条**不同族**：块级可逐块选一侧；这里撞上的是**两条独立血统** ——
+   * Yjs 结构上合不了（S1 红线）⇒ 只有"留本机 / 用对端 / 两个都要（一页变两页）"。
+   * ⚠️ "这两条血统相不相关"**只有界面侧判得了**（要 Yjs）⇒ 记录由界面侧发起。
+   * `docJson` ＝ **对端那一版的整页投影**（快照；待并状态会被清掉，不留它就无从救援）。
+   */
+  recordLineageConflict: (args: {
+    pageId: string;
+    mineFp: string;
+    remoteFp: string;
+    docJson: string;
+  }) =>
+    invoke("record_lineage_conflict", {
+      args: {
+        page_id: args.pageId,
+        mine_fp: args.mineFp,
+        remote_fp: args.remoteFp,
+        doc_json: args.docJson,
+      },
+    }),
+  /** 这一页**未决**的页级血统冲突（`null` ＝ 没有，是常态不是错误）。 */
+  listLineageConflicts: (pageId: string) => invoke("list_lineage_conflicts", { pageId }),
+  /** 裁决：`"local"`（保留本机）/ `"saved-as-new"`（已另存为新页）。其余值报错（不默认选边）。 */
+  resolveLineageConflict: (conflictId: string, choice: "local" | "saved-as-new") =>
+    invoke("resolve_lineage_conflict", { conflictId, choice }),
   /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
   refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),
   /**

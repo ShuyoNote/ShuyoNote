@@ -22,6 +22,7 @@
 // 任何**行为**改动必须另开一次提交并在提交信息里写明 —— 见 `doc_content.rs` 文件头同款纪律。
 
 import { assignBlockRevs, blockRevOf, canonicalContent } from "./blockRev";
+// ⚠️ 第 47 轮起：这一层**不再 import `crdt/plane`** —— 磁盘边界的平面壳已撤出（见 `readContent` 注释）。
 import { newBlockId } from "./blockIdentity";
 import { repairPageTextIfStale } from "./pageTextRepair";
 
@@ -53,6 +54,11 @@ export function readContent(db: ContentSql, pageId: string): DocContent | null {
   if (!row) return null;
   return {
     title: String(row.title ?? ""),
+    // ★ 2026-09-23 第 47 轮：**磁盘边界的 CRDT 平面开关已撤出**（边界决策 §6.2）。
+    //   这里曾经包一层 `throughCrdtPlane(...)`（默认关 ⇒ 恒等）。撤出的理由：存盘这一步**只有一个版本**，
+    //   开着也合并不了任何东西，只会把已落盘 JSON **归一化改写**一次；真正的合并走的是
+    //   「每页 `page_crdt` 状态 ＋ 载荷里的 `crdt_state`」那条路（与本函数无关）。
+    //   ⚠️ 判据 `crdt/plane.withdrawn.test.ts` 钉着"这一层一个字都不许改"。
     json: String(row.content_json ?? ""),
     text: String(row.content_text ?? ""),
   };
@@ -77,6 +83,7 @@ export function readAllContents(db: ContentSql): ContentRow[] {
   return rows.map((row) => ({
     id: String(row.id ?? ""),
     title: String(row.title ?? ""),
+    // 批量读出口与 `readContent` 同口径：**原样**（第 47 轮起不再有任何平面壳，见那里的注释）。
     json: String(row.content_json ?? ""),
     text: String(row.content_text ?? ""),
   }));
@@ -92,11 +99,113 @@ export function readAllContents(db: ContentSql): ContentRow[] {
  * 它是"版本历史策略"，不是"内容形态"；换 CRDT 后它的输入会变，但调用时机仍由保存路径决定。
  */
 export function writeContent(db: ContentSql, pageId: string, content: DocContent, now: number): void {
+  // ⚠️ 第 47 轮：写入前那层平面壳已撤出（见 `readContent` 里的注释）。**这一句必须保持"原样写"** ——
+  //    判据 `crdt/plane.withdrawn.test.ts` 用逐字节比对钉着它（防哪天又有人在这里"顺手归一化"）。
+  // ⚠️ 只在这一条写出口上写，别撒到调用方 —— "只经一层"的门禁 `check-doc-content-access` 看着这里。
   db.run(
     `UPDATE pages SET title = ?, content_json = ?, content_text = ?, updated_at = ?, dirty = 1
      WHERE id = ?`,
     [content.title, content.json, content.text, now, pageId],
   );
+}
+
+// =====================================================================================
+// **CRDT 状态**（冲刺切片 S2b，2026-09-23）—— 每页一份「同一血统」的 CRDT 状态
+//
+// 为什么要有它：S1 判据实测「**从 JSON 新建**的状态**不可合**」（一块变两块、`blockId` 还重复，
+// `crdt/mergeability.test.ts` ①）⇒ 保存形态只能是"**载入既有状态 → 在它上面演进 → 存回**"。
+// 那个状态就得有个地方放 —— 就是这张 `page_crdt`。
+//
+// 三条边界（写清楚，免得这一层被塞进它不该管的事）：
+//   ① `state` 在这一层是**不透明的 BLOB**：这一层不认识它的格式，也不许认识
+//      （认识 = 把编辑器节点表拖进依赖图，见 `crdt/plane.ts` 文件头那条初始化环）；
+//      生产/消费它的是 `crdt/yDocBridge.ts` 的会话，由"有编辑器的那一侧"调用。
+//   ② 与 `content_json` 的关系（**S6 之前**）：`content_json` 仍然是**投影**（FTS/反链/插件/AI 继续读它），
+//      `page_crdt` 是**权威**那一份。本切片不删 `content_json`、不改它的任何读者。
+//   ③ 它**不是**"本地状态"（与 `page_conflicts`/`text_stale` 不同族）：已拍板的**服务端合并**要求
+//      它最终能上服务端 ⇒ 同步字段（rev/dirty/seq）在 S4 加，本切片只做本地落盘。
+//
+// ⚠️ **桌面侧本切片只建表**（`src-tauri/src/db.rs` 同一张），读写这三条函数的 Rust 镜像归切片 S7。
+// =====================================================================================
+
+/**
+ * 读这一页的 CRDT 状态字节。
+ *
+ * **没有**（这一页还没建过血统）⇒ `null` —— 不是空 `Uint8Array`：两者含义不同
+ * （"从零开始建血统" vs "有一份空状态"），调用方要能分开。
+ */
+export function readPageCrdtState(db: ContentSql, pageId: string): Uint8Array | null {
+  const row = db.query<{ state: unknown }>("SELECT state FROM page_crdt WHERE page_id = ?", [pageId])[0];
+  if (!row) return null;
+  const s = row.state;
+  if (s instanceof Uint8Array) return s;
+  // 兜底：驱动若按**二进制字符串**回来（sql.js 的 BLOB 是 Uint8Array，正常走不到这里），
+  // 用逐字节 charCode 还原。⚠️ **别用 `Buffer`**：Web 构建里没有它。
+  if (typeof s === "string") {
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i += 1) out[i] = s.charCodeAt(i) & 0xff;
+    return out;
+  }
+  return null;
+}
+
+/** 写这一页的 CRDT 状态（同一页只留**最新一份**：主键 upsert，不产生第二行）。 */
+export function writePageCrdtState(db: ContentSql, pageId: string, state: Uint8Array, now: number): void {
+  db.run(
+    `INSERT INTO page_crdt (page_id, state, updated_at) VALUES (?,?,?)
+     ON CONFLICT(page_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+    [pageId, state, now],
+  );
+}
+
+/** 清掉这一页的 CRDT 状态（页面被删除/彻底重建时用）⇒ 之后 `readPageCrdtState` 回 `null`。 */
+export function clearPageCrdtState(db: ContentSql, pageId: string): void {
+  db.run("DELETE FROM page_crdt WHERE page_id = ?", [pageId]);
+}
+
+/**
+ * **建血统**的注入点（与 `crdt/plane.ts` 的 `setCrdtPlaneImpl` 同一手法）：
+ * 给一份**落盘 JSON**，回一份 CRDT 状态字节。
+ *
+ * 为什么不在这里直接调实现：这一层不许 import `crdt/yDocBridge`（那会把整张编辑器节点表拖进依赖图，
+ * 见 `crdt/plane.ts` 文件头那条初始化环）⇒ 实现由"有编辑器的那一侧"注入。
+ */
+export type PageStateBuilder = (contentJson: string) => Uint8Array;
+
+/** `ensurePageCrdtState` 的结果。 */
+export interface SeededPageState {
+  state: Uint8Array;
+  /** `true` ⇒ 这一次**新建了血统**（并已落盘）；`false` ⇒ 库里本来就有，原样返回。 */
+  seeded: boolean;
+}
+
+/**
+ * ★ 一页的 CRDT 状态「**有就载入、没有就建一次并立刻落盘**」—— 这是"首开"的**唯一合法入口**。
+ *
+ * 为什么必须收成一条（S3b-2 的前置）：S1 判据实测「**从 JSON 各自新建**的状态**不可合**」
+ * （一块变两块、`blockId` 还重复）。而真编辑器**载入**时本来就会给缺 `blockId` 的顶层块铸身份
+ * （`src/editor/Editor.tsx:176/190`）⇒ 若是"每台设备打开时各建一次"，两台就会各造一套身份。
+ * ⇒ 口径：**先到的那一次建血统并立刻落盘，之后所有人只载入**。
+ *
+ * ⚠️ **已知限制（如实写，别当成已解决）**：两台设备**同时**首开同一张**从没建过血统**的页
+ * （且各自离线）时，这个窗口仍然存在 —— 两边都会自建一条血统 ⇒ 合并会翻倍。
+ * 彻底解法在服务端合并那一层（S5：服务端可以拒绝/收敛第二条血统），本切片不做，
+ * 也不假装已经解决。
+ *
+ * ⚠️ `build` 抛错 ⇒ **一行都不落盘**（不留半条状态给下一次误当成"已有血统"）。
+ */
+export function ensurePageCrdtState(
+  db: ContentSql,
+  pageId: string,
+  contentJson: string,
+  now: number,
+  build: PageStateBuilder,
+): SeededPageState {
+  const existing = readPageCrdtState(db, pageId);
+  if (existing) return { state: existing, seeded: false };
+  const state = build(contentJson);
+  writePageCrdtState(db, pageId, state, now);
+  return { state, seeded: true };
 }
 
 /**
@@ -689,6 +798,152 @@ export function resolvePageConflict(db: ContentSql, conflictId: string, choice: 
 }
 
 /**
+ * ★ **从一份文档 JSON 建一个新页**要的入参（冲刺 §13.3 第 2 条"另存为新页"用）。
+ *
+ * 为什么要在这里组装：那三个存储列名**只许出现在这一层**（`check-doc-content-access` 按 token 计数，
+ * 新建的界面文件一旦拼出 `content_json` 就当场红）。界面侧只需要说"标题 ＋ 文档 JSON ＋ 派生正文"，
+ * 由这一层负责把它翻成落库形状 —— 这正是门禁"处置第 2 条：把收 JSON 文本的参数改名/收口"的走法。
+ *
+ * ⚠️ `textPlain` 由**调用方**按编辑器语义算（`contentText.ts::deriveContentText`）——
+ *    这一层不许 import 它（那头注写着：别把编辑器节点表拖进这一层的依赖图）。
+ * ⚠️ `parent_id: null`：救回来的页放顶层（**不猜**父页面；用户自己收拾）。
+ */
+export function pageCreationArgsFromDocJson(
+  title: string,
+  docJson: string,
+  textPlain: string,
+): { parent_id: string | null; title: string; content_json: string; content_text: string } {
+  return { parent_id: null, title, content_json: docJson, content_text: textPlain };
+}
+
+/**
+ * 一条**页级血统冲突**（表 `page_lineage_conflicts` 的一行；与 Rust `lineage_conflict.rs` 逐字段对应）。
+ *
+ * 与块级 `PageConflictRow` **不是一族**：那种是"同一块被判成两版、选一侧"；这里撞上的是
+ * **两条独立血统** —— Yjs 结构上就不是同一棵树，**合并在数学上做不到**（S1 红线）⇒
+ * 只有"留本机 / 用对端 / 两个都要（一页变两页）"三条路。
+ */
+export interface PageLineageConflictRow {
+  id: string;
+  pageId: string;
+  /** 本机这条血统的指纹（client id，逗号分隔、已排序）。 */
+  mineFp: string;
+  /** 对端那条血统的指纹。 */
+  remoteFp: string;
+  /**
+   * 对端那一版的**整页投影 JSON**。
+   * ⚠️ 必须有它：被拒的待并状态在合并之后会被 `clearPending` 清掉 ⇒ 不留快照，
+   * 用户点"另存为新页"时**已经无米下锅**。
+   */
+  remoteDoc: string;
+  detectedAt: number;
+  resolvedAt: number | null;
+  resolvedChoice: string | null;
+}
+
+/** 裁决：留本机（＝我知道了，别管它）。 */
+export const LINEAGE_CHOICE_LOCAL = "local";
+/** 裁决：已把对端那一版**另存为新页**（★ 唯一不丢数据的那条路）。 */
+export const LINEAGE_CHOICE_SAVED_AS_NEW = "saved-as-new";
+
+type LineageRowRaw = {
+  id: string;
+  page_id: string;
+  mine_fp: string;
+  remote_fp: string;
+  remote_doc: string;
+  detected_at: number;
+  resolved_at: number | null;
+  resolved_choice: string | null;
+};
+
+const lineageRowOf = (r: LineageRowRaw): PageLineageConflictRow => ({
+  id: String(r.id ?? ""),
+  pageId: String(r.page_id ?? ""),
+  mineFp: String(r.mine_fp ?? ""),
+  remoteFp: String(r.remote_fp ?? ""),
+  remoteDoc: String(r.remote_doc ?? ""),
+  detectedAt: Number(r.detected_at ?? 0),
+  resolvedAt: r.resolved_at === null || r.resolved_at === undefined ? null : Number(r.resolved_at),
+  resolvedChoice: r.resolved_choice ?? null,
+});
+
+/**
+ * 记一次页级血统冲突。返回**是否真的新建了一行**（`false` ＝ 这一对指纹已经记过/已裁决过）。
+ *
+ * 去重口径（**同一对指纹只提一次** —— "不许每开一次页面就打扰一次"的落脚点）：
+ * 同一 `(pageId, mineFp, remoteFp)` 已有未决 ⇒ 只刷新快照；同一对已裁决过 ⇒ **不再提**；
+ * 否则先把这一页别的未决行删掉（旧指纹对已被新事实取代），再插一条。与 Rust 侧逐条对应。
+ */
+export function recordLineageConflict(
+  db: ContentSql,
+  pageId: string,
+  mineFp: string,
+  remoteFp: string,
+  remoteDoc: string,
+  now = Date.now(),
+): boolean {
+  const existing = db.query<{ id: string; resolved_at: number | null }>(
+    `SELECT id, resolved_at FROM page_lineage_conflicts
+     WHERE page_id = ? AND mine_fp = ? AND remote_fp = ? ORDER BY detected_at DESC LIMIT 1`,
+    [pageId, mineFp, remoteFp],
+  )[0];
+  if (existing) {
+    if (existing.resolved_at === null || existing.resolved_at === undefined) {
+      db.run("UPDATE page_lineage_conflicts SET remote_doc = ?, detected_at = ? WHERE id = ?", [
+        remoteDoc,
+        now,
+        String(existing.id),
+      ]);
+    }
+    return false; // 未决 ⇒ 只刷新；已裁决 ⇒ 不再提
+  }
+  db.run("DELETE FROM page_lineage_conflicts WHERE page_id = ? AND resolved_at IS NULL", [pageId]);
+  db.run(
+    `INSERT INTO page_lineage_conflicts
+       (id, page_id, mine_fp, remote_fp, remote_doc, detected_at, resolved_at, resolved_choice)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    // 与块身份共用**同一个** id 生成器（别在这一层再写第二份 —— 与 `recordPageConflicts` 同一处置）
+    [newBlockId(), pageId, mineFp, remoteFp, remoteDoc, now],
+  );
+  return true;
+}
+
+/** 这一页**未决**的页级冲突（**至多一条** —— 记的时候就把旧的未决删了）。 */
+export function unresolvedLineageConflict(
+  db: ContentSql,
+  pageId: string,
+): PageLineageConflictRow | undefined {
+  const r = db.query<LineageRowRaw>(
+    `SELECT id, page_id, mine_fp, remote_fp, remote_doc, detected_at, resolved_at, resolved_choice
+     FROM page_lineage_conflicts WHERE page_id = ? AND resolved_at IS NULL
+     ORDER BY detected_at DESC LIMIT 1`,
+    [pageId],
+  )[0];
+  return r ? lineageRowOf(r) : undefined;
+}
+
+/**
+ * ★ 裁决一条：`choice` 只认 `local` / `saved-as-new`，其余**抛错**（**不默认选边** ——
+ * 与 `resolvePageConflict` 同一纪律）；已裁决的再裁决也**抛错**（不静默成功）。
+ */
+export function resolveLineageConflict(db: ContentSql, conflictId: string, choice: string): void {
+  if (choice !== LINEAGE_CHOICE_LOCAL && choice !== LINEAGE_CHOICE_SAVED_AS_NEW) {
+    throw new Error(`choice 只能是 ${LINEAGE_CHOICE_LOCAL} 或 ${LINEAGE_CHOICE_SAVED_AS_NEW}，收到 ${choice}`);
+  }
+  const before = db.query<{ id: string }>(
+    "SELECT id FROM page_lineage_conflicts WHERE id = ? AND resolved_at IS NULL",
+    [conflictId],
+  )[0];
+  if (!before) throw new Error("冲突不存在或已裁决");
+  db.run("UPDATE page_lineage_conflicts SET resolved_at = ?, resolved_choice = ? WHERE id = ?", [
+    Date.now(),
+    choice,
+    conflictId,
+  ]);
+}
+
+/**
  * **正文文本的本地修复**（阶段 1 · "正文待重建"那条边界的收口）—— 与 Rust 侧 `write_text` 同一语义。
  *
  * 什么时候需要它：合并 / 裁决产物是**拼出来**的，正文文本仍是页级胜方那一份 ⇒ 那一页的 FTS 会有一段时间
@@ -698,6 +953,55 @@ export function resolvePageConflict(db: ContentSql, conflictId: string, choice: 
  */
 export function writeContentText(db: ContentSql, pageId: string, text: string): void {
   db.run("UPDATE pages SET content_text = ? WHERE id = ?", [text, pageId]);
+}
+
+/**
+ * **把投影写回落盘那一列**（冲刺 S6 尾巴，2026-09-23）—— 与 `writeContentText` 同一手法：
+ * **只动那一列**：① 不改别的列、② **不动 `dirty`**（它不是用户编辑，标脏会把它当本地改动推上去）。
+ *
+ * 什么时候用：CRDT 状态被**采用/合并**之后，落盘那一列（反链、插件、AI、导出读的**投影**）会落后
+ * ⇒ 由**状态**重新序列化一份写回。这样"搜不到刚并进来的字"只可能剩**正文文本**那一半，
+ * 而那一半有「待重建」标记 ＋ 补算器（`markTextStale` / `refreshPageTextIfStale`）兜着。
+ *
+ * ⚠️ 别拿它当"保存"：不盖章、不快照、不标脏 —— 那些是保存路径的事。
+ */
+export function writeContentProjection(db: ContentSql, pageId: string, json: string): void {
+  db.run("UPDATE pages SET content_json = ? WHERE id = ?", [json, pageId]);
+}
+
+/**
+ * 这一页是不是**数据库页**（`kind='database'`）。页面不存在 ⇒ `false`。
+ *
+ * 为什么要有它：**投影写回**与「待重建」标记都必须排除数据库页 —— 那两件事都会拿 `content_json`
+ * 当"这一页的内容"，而数据库页的内容 ＝ **列名 ＋ 行 ＋ 规则**（在别的表/视图侧）⇒ 写回是**有损**的
+ * （实测撞过：搜索里整页行内容消失，直到那页被重新打开）。
+ * 标记侧本来在自己的 SQL 里带了 `kind <> 'database'`；投影写回这条路要**同一道闸门** ⇒ 抽出来共用。
+ */
+export function isDatabasePage(db: ContentSql, pageId: string): boolean {
+  const row = db.query<{ kind: string }>("SELECT kind FROM pages WHERE id = ?", [pageId])[0];
+  return String(row?.kind ?? "") === "database";
+}
+
+/**
+ * ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘列**（＋打「待重建」）。
+ *
+ * 与 `writeContentProjection` 的关系：那条是"只动那一列"的原语；这一条是**带判据的入口**
+ * （页面不存在 / 数据库页 / **内容没变** ⇒ 一次写库都不做）。返回**是否真的写了**。
+ *
+ * 为什么要它：桌面的"打开页面"那条路（读 `page_crdt` ＋ 界面侧合并）原先**只写状态** ⇒
+ * 反链/插件/AI/导出读的**投影**要等**下一次保存**才跟上。Web 侧当场合并那条路**会**写这一列
+ * ⇒ 这一步补的是"桌面少走的那一步"（两平面同名同义：`doc_content::write_page_projection`）。
+ *
+ * ⚠️ **不是保存**：不动 `dirty`、不盖章、不快照 —— 它是"采用/合并"的收尾，不是用户编辑。
+ * ⚠️ 正文那一半仍然只**打标记**（正文要编辑器语义，补算器在打开页面时算）。
+ */
+export function writePageProjectionIfChanged(db: ContentSql, pageId: string, json: string): boolean {
+  if (isDatabasePage(db, pageId)) return false;
+  const cur = readContent(db, pageId);
+  if (!cur || cur.json === json) return false;
+  writeContentProjection(db, pageId, json);
+  markTextStale(db, pageId);
+  return true;
 }
 
 /**
@@ -893,8 +1197,27 @@ export interface PendingRemoteQueue {
   pages: PendingRemotePage[];
 }
 
-/** 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。 */
-export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: number, now: number): void {
+/**
+ * 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。
+ *
+ * ★ 丙-⑤（2026-09-26）：**与本地逐字相同的那一版不记** —— 记了就是一条**假账**：用户点
+ * 「采用服务端」实际是个 no-op（内容本来就一样），而清单永远挂着它，界面还会因此报一句
+ * "有 N 页等你裁决"。走到这一格的时机：**同一批重放**（收侧失败 ⇒ 水位没推 ⇒ 下一轮再拉
+ * 同一批），而"同一 `seq` 重放 ⇒ 保留本地"⇒ 每次都往这儿记一条。
+ * ⚠️ 与 Rust 侧 `doc_content.rs::stash_pending_remote` **逐条对应**（同一句判断、同一处收口）：
+ * 比的是**用户看得见的那两样**（标题 ＋ 正文）;装饰字段（图标 / 封面 / 排序）的差异不在这里判。
+ * ⚠️ 读不出来（该页刚被软删）⇒ **照旧记**（fail-open：宁可多一条痕，不许少一条）。
+ *
+ * ★★ **返回值 = 这一版到底记下了没有**（`false` ＝ 与本地同一份文档 ⇒ 一行都没写）。
+ * 为什么必须是返回值而不是只写一行日志：调用方要拿它决定"**要不要说'已存进待取回'**"。
+ * 拿"调用过"当"记下了"，界面/日志就会报一句清单里**根本没有的账**。
+ * 口径与 Rust `doc_content.rs::stash_pending_remote` 同一条：**先要说清"发生了什么"，再谈计数**。
+ */
+export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: number, now: number): boolean {
+  const cur = readContent(db, String(row.id));
+  if (cur && cur.title === String(row.title ?? "") && sameDocument(cur.json, String(row.content_json ?? ""))) {
+    return false;
+  }
   db.run(
     `INSERT INTO pending_remote_pages (page_id, seq, title, payload, remote_updated_at, stashed_at)
      VALUES (?,?,?,?,?,?)
@@ -903,6 +1226,37 @@ export function stashPendingRemote(db: ContentSql, row: RemotePageRow, seq: numb
        remote_updated_at = excluded.remote_updated_at, stashed_at = excluded.stashed_at`,
     [String(row.id), seq, String(row.title ?? ""), JSON.stringify(row), Number(row.updated_at ?? 0), now],
   );
+  return true;
+}
+
+/**
+ * 两份正文是不是**同一份文档**：解析后**按键排序**再看（**键序不算数**），数组顺序算数
+ * （块的顺序是内容的一部分）。解析不了（坏 JSON）⇒ 退回逐字节比。
+ *
+ * ★ 丙-⑤：为什么不能直接比字符串 —— 一份是**载荷原文**、一份是**落库后的形态**，序列化形态
+ * 天然会差一点（键序 / 规范化）。拿字节比会把"同一份文档"判成不同 ⇒ 假账照样记下来。
+ * ⚠️ 与 Rust `doc_content.rs::same_document` **逐条对应**（那边是 `serde_json::Value` 比，
+ * 默认 `Map` 按键排序 ⇒ 键序天然不算数）。
+ */
+function sameDocument(a: string, b: string): boolean {
+  try {
+    return stableJson(JSON.parse(a)) === stableJson(JSON.parse(b));
+  } catch {
+    return a === b;
+  }
+}
+
+/** 稳定序列化：对象的键**排序**后输出（数组保持顺序）。`undefined` 不会出现在 `JSON.parse` 的结果里。 */
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
 }
 
 /** 待取回的远端版本队列（`limit` 由调用方给 —— 这是界面列表，不是批量作业）。 */

@@ -42,7 +42,7 @@ export default {
     plugins: "Plugins",
     pluginsHint: "Enable/disable extensions",
     security: "Security",
-    securityHint: "E2E encryption & lock",
+    securityHint: "Per-space privacy & lock",
     ai: "AI",
     aiHint: "Provider & models",
     about: "About & updates",
@@ -110,6 +110,14 @@ export default {
     keepLocal: "Keep local",
     useRemote: "Use remote",
     resolved: "Merged this block as you chose",
+  },
+  // Sprint §13.3 item 2 · page-level lineage conflict banner (`components/LineageConflictBanner.tsx`)
+  lineage: {
+    title: "Edits from another editing history were not merged into this page",
+    hint: "The two editing histories are not the same tree — merging them would duplicate blocks. This device's version is kept as-is; the other side can be saved as a new page so nothing is lost.",
+    keepLocal: "Keep this device's version",
+    savedAsNew: "Save the other side as a new page",
+    rescued: "The other side was saved as a new page",
   },
   // Stage 1 · body-text index repair pass (`components/TextRepairRunner.tsx`, B1)
   textRepair: {

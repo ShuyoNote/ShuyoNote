@@ -224,7 +224,7 @@ registerCommandGroup({
     {
       id: "settings.open",
       title: "打开设置",
-      description: "外观 / 插件 / 安全（加密）/ AI / 关于",
+      description: "外观 / 插件 / 安全（空间隐私）/ AI / 关于",
       closeOnRun: true,
       run: () => {
         useEditorStore.getState().openSettings();
@@ -234,7 +234,9 @@ registerCommandGroup({
     {
       id: "settings.security",
       title: "加密与安全设置",
-      description: "开启/关闭端到端加密、锁定与解锁",
+      // ★ owner 第三轮拍板（2026-09-24）：那一页不再有"开启/关闭端到端加密"（应用级）——
+      //   加密**按空间**（每个空间各加各的密），那一页是"空间隐私 ＋ 会话锁定"。
+      description: "按空间开启/关闭加密、锁定与解锁",
       closeOnRun: true,
       run: () => {
         useEditorStore.getState().openSettings("security");
@@ -252,7 +254,7 @@ registerCommandGroup({
           const st = await api.encryptionStatus();
           if (!st.enabled) {
             useEditorStore.getState().openSettings("security");
-            return "尚未开启加密，已打开安全设置";
+            return "本机还没有加密空间，已打开安全设置（加密是按空间做的）";
           }
           if (st.locked) return "已经处于锁定状态";
           await api.lockEncryption();

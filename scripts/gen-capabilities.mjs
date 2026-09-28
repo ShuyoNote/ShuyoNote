@@ -77,6 +77,7 @@ export function genShim(reg) {
   // 按 jsPath 第一段分组，还原 api.page.current() 这样的嵌套形状。
   const tree = {};
   for (const cap of reg.capabilities) {
+    if (cap.host === "frontend") continue; // 插件 shim 里**不暴露**（只有 AI 宿主能调，见 4b 节）
     const [head, ...rest] = cap.jsPath;
     const leaf = rest.length ? rest[rest.length - 1] : head;
     const ns = rest.length ? rest.slice(0, -1).reduce((o, k) => (o[k] ??= {}), (tree[head] ??= {})) : tree;
@@ -131,6 +132,10 @@ export function genRust(reg) {
   l.push("");
   l.push("pub const CAPABILITIES: &[Capability] = &[");
   for (const c of reg.capabilities) {
+    // ★ `host: "frontend"`（只有 AI 宿主实现的能力）**不进这张插件绑定表** ——
+    //   插件没有对应的 Rust 实现，列进去等于给作者一个"声明了却调不到"的能力。
+    //   （它仍然进 `aiTools.meta.ts` 与作者文档里单列的那一节；见 check-capabilities 的同类分支。）
+    if (c.host === "frontend") continue;
     const perm = c.permission === null ? "None" : `Some(${JSON.stringify(c.permission)})`;
     l.push(
       `    Capability { id: ${JSON.stringify(c.id)}, kind: ${JSON.stringify(c.kind)}, scope: ${JSON.stringify(
@@ -368,6 +373,7 @@ export function genTypes(reg) {
 
   const tree = {};
   for (const cap of reg.capabilities) {
+    if (cap.host === "frontend") continue; // 插件类型包里**不声明**（作者写 api.coverage.report() 会拿不到）
     const path = cap.jsPath;
     let node = tree;
     for (const key of path.slice(0, -1)) node = node[key] ??= {};
@@ -600,6 +606,7 @@ export function genDocs(reg) {
   l.push("| 能力 | 签名 | 需要权限 | scope | 写入中介 | 返回 | 自 |");
   l.push("|---|---|---|---|---|---|---|");
   for (const c of reg.capabilities) {
+    if (c.host === "frontend") continue; // 只有 AI 宿主能调 ⇒ 不进插件能力表（见下面 4b 节）
     l.push(
       `| \`${c.id}\` | \`${jsSig(c)}\` | ${c.permission ? "`" + c.permission + "`" : "—"} | \`${c.scope}\` | ${
         c.kind !== "write" ? "—" : c.mediate === "draft" ? "**草稿确认**" : "即时"
@@ -608,6 +615,7 @@ export function genDocs(reg) {
   }
   l.push("");
   for (const c of reg.capabilities) {
+    if (c.host === "frontend") continue; // 同上：下面 4b 节单列
     l.push(`### \`${c.id}\` — ${c.title}`);
     l.push("");
     l.push(`- 调用：\`${jsSig(c)}\``);
@@ -629,6 +637,37 @@ export function genDocs(reg) {
       }
     }
     l.push("");
+  }
+  // ---- 4b. 只有 AI 宿主可用的工具（`host: "frontend"`）----
+  //
+  // 为什么单列一节而不是混进上面的能力表：这些能力**插件调不到**（它们不在 shim / 类型包 / Rust 绑定表里）。
+  // 混进 `api.*` 的表里，作者会照着写 `api.coverage.report()` 然后拿到 undefined —— 而文档看起来是"有的"。
+  const aiOnly = reg.capabilities.filter((c) => c.host === "frontend");
+  if (aiOnly.length > 0) {
+    l.push("## 4b. 只有 AI 宿主可用的工具（**插件调不到**）");
+    l.push("");
+    l.push(
+      "这些能力**不暴露给插件**（不在 `api.*` 里、也不在 `@shuyonote/plugin-types` 里）：它们的实现只有" +
+        "**应用内的 AI 宿主**那一侧有。原因写在注册表里每条能力的 `desc` 与方案的裁定里 —— " +
+        "典型是「要读**抽取器注册表**（TS 侧的事实源），而 Rust 侧再长一份就是两份实现」。",
+    );
+    l.push("");
+    l.push("| 工具 | 返回 | 自 |");
+    l.push("|---|---|---|");
+    for (const c of aiOnly) {
+      l.push(`| \`${c.id}\` | ${c.returns?.type ?? "void"} | ${c.since} |`);
+    }
+    l.push("");
+    for (const c of aiOnly) {
+      l.push(`### \`${c.id}\` — ${c.title}`);
+      l.push("");
+      l.push(`- **调用方**：只有 AI 宿主（无 \`api.*\` 入口）`);
+      l.push(`- 权限：${c.permission ? "`" + c.permission + "`" : "无需权限"}`);
+      l.push(`- scope：\`${c.scope}\``);
+      if (c.returns?.desc) l.push(`- 返回：${c.returns.desc}`);
+      l.push(`- 说明：${c.desc}`);
+      l.push("");
+    }
   }
   l.push("## 4.5 命令参数（宿主渲染表单）");
   l.push("");

@@ -86,11 +86,22 @@ export function vectorRank<T extends { id: string }>(
     .sort((a, b) => b.score - a.score);
 }
 
-/** Embedding endpoint URL for a provider. */
+/** Embedding endpoint URL for a provider.
+ *
+ *  ⚠️ **baseUrl 已经带 `/v1` 时不许再加一个**（2026-09-23 实测发现）：本仓两个预设的 baseUrl
+ *  **本来就以 `/v1` 结尾** —— `HERDSMAN_DEFAULT_BASE = "http://localhost:8080/v1"`（本机 herdsman，
+ *  owner 2026-09-23 拍板"向量模型在本机跑"就是走它）与 `openai` 预设的 `https://api.openai.com/v1`。
+ *  旧写法无条件拼 `/v1/embeddings` ⇒ 实际请求 `…/v1/v1/embeddings` ⇒ **404**，而 `embedText` 的失败
+ *  一律被吞成 `null`（语义检索静默退回字面兜底）⇒ 表现为"配了也不生效"，很难查。
+ *  口径与 `ai/llm.ts::appendV1`（对话那条路）一致：带了就不再加。 */
 export function embedUrl(baseUrl: string, provider: EmbedConfig["provider"]): string {
   const base = String(baseUrl ?? "").replace(/\/+$/, "");
   if (!base) return "";
-  return provider === "openai" ? `${base}/v1/embeddings` : `${base}/api/embed`;
+  if (provider === "openai") {
+    const root = /\/v1$/i.test(base) ? base : `${base}/v1`;
+    return `${root}/embeddings`;
+  }
+  return `${base}/api/embed`;
 }
 
 /** Request body for an embedding call. */

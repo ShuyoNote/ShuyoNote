@@ -7,6 +7,16 @@
 // 红 12＋7 条且**现场不像补丁问题**（像加密库坏了）；Linux/Windows 上不红、但后续默认构建被**静默**
 // 改成写 SM4 页。原先唯一的防线是横幅 ＋ 人的纪律 —— 这条把纪律变成断言。
 //
+// ⚠️ **2026-09-26 补记：上面那段说的"共享 registry 那一档"，自 2026-09-23 起已是**历史形态**。**
+//   `sm-library-build.mjs` 现在把补丁打在**私有副本**（`.gm-build/`）上，共享那份**全程不被改写**
+//   （见该脚本 §0.5b 与 `patches/README.md` 的「2026-09-23 起」那条）。本门禁今天主要守**两处残渣**：
+//   ① 老机器上遗留的共享补丁（`--revert` 的 legacy 撤回分支仍在）；② `Cargo.lock` 被 `--prepare` 改过。
+//   ⇒ **实测（2026-09-26，本机 Windows）**：跑 `--prepare` 前后，共享 `sqlite3.c` 的 sha256 都是
+//     `EA0BF0B0…`（**未变**）——隔离确实生效。
+//   ⇒ 留这条的目的：那段旧描述会让人以为"跑一次国密构建就把全机弄脏了"从而**不敢跑**
+//     （我本人先被它劝退了几分钟，去查了一个根本不存在的 ProxyCommand 式风险）。
+//     **过期的危害描述，和过期的安全承诺一样贵。**
+//
 // ## 三档（判定都在 `lib/sm-library-hygiene.mjs`，纯函数、有判据）
 //   · **ok**     —— 原版；或"源码带补丁 ∧ 这次就是 `sm-library` 构建"（那正是要的状态）；
 //   · **notice** —— 带补丁 ＋ 本平台不红（非 darwin）⇒ **不判红**，但把"默认构建会被悄悄改掉"说清；
@@ -24,11 +34,11 @@
 //   node scripts/check-gm-registry-clean.mjs --feature-sm-library   # 核对"我刚跑完国密构建"这个语境 ⇒ 带补丁也算 ok
 //   node scripts/check-gm-registry-clean.mjs --platform=darwin      # 在别的平台上判"若是 macOS 会怎样"（给判据/复现用）
 //   node scripts/check-gm-registry-clean.mjs --json
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { hygieneVerdict, registryStateOf } from "./lib/sm-library-hygiene.mjs";
+import { hygieneVerdict, lockResidueOf, lockResidueVerdict, registryStateOf } from "./lib/sm-library-hygiene.mjs";
 import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -65,32 +75,55 @@ export function platformFromArgv(args, fallback = process.platform) {
 
 /**
  * 纯函数：把一次"读到的状态 ＋ 这次是什么语境"翻成**退出码与要说的话**（便于判据，不碰磁盘）。
+ *
+ * 判**两处**残渣：① 全机共享 registry 上的补丁（本门禁原本就管的那一格）；
+ * ② `src-tauri/Cargo.lock` 里那条丢了 `source`/`checksum` 的 `libsqlite3-sys`（2026-09-25 加，
+ * 机制与后果见 `lib/sm-library-hygiene.mjs::lockResidueOf`）。两处**取更重的那一档**。
+ *
  * @returns `{ code: 0|1, level, lines: string[] }`
  */
-export function decideFromState(state, { platform = process.platform, featureSmLibrary = false } = {}) {
+export function decideFromState(state, { platform = process.platform, featureSmLibrary = false, lockResidue } = {}) {
+  const lines = [];
+  let level = "ok";
+  const worse = (a, b) => (["ok", "notice", "block"].indexOf(a) >= ["ok", "notice", "block"].indexOf(b) ? a : b);
+
   if (!state.ok) {
     // 读不出来 ⇒ **不判红**（干净机器 / 还没 fetch 过 registry 都会走到这里）
-    return {
-      code: 0,
-      level: "notice",
-      lines: [
-        `gm-registry-clean: 未实查（${state.reason}）—— 读不到共享 registry 的 SQLCipher 源码，这一格不判红`,
-        `  · ${state.message}`,
-        "  · 真核对要在**跑过 cargo** 的机器上：那时源码已在 registry 里",
-      ],
-    };
+    // ⚠️ 2026-09-27：这一行**必须**以 `! ` 开头 —— `report-core.mjs` 的 `extractSkips()`
+    //   只认**行首**的 `⏭` / `!` / `✗ skip` / `SKIP`；不带前缀时它**采集不到** ⇒
+    //   这一格在报告里是**静默绿**（"没查却显示绿"）—— 而那正是隔壁 `check-sys-deps` 明写反对的形状。
+    //   带上前缀后它进「自报跳过（绿 ≠ 全查过）」通道 ⇒ 可见、可登记、也受 `--strict-self-skip` 约束。
+    level = worse(level, "notice");
+    lines.push(
+      `! gm-registry-clean: 未实查（${state.reason}）—— 读不到共享 registry 的 SQLCipher 源码，这一格不判红`,
+      `  · ${state.message}`,
+      "  · 真核对要在**跑过 cargo** 的机器上：那时源码已在 registry 里",
+    );
+  } else {
+    const v = hygieneVerdict({ patched: state.patched, pageCipher: state.pageCipher, platform, featureSmLibrary });
+    level = worse(level, v.level);
+    lines.push(
+      `gm-registry-clean: libsqlite3-sys ${state.version} @ ${state.srcDir}`,
+      `  补丁标记 = ${state.patched ? "有（源码已被改成国密版）" : "无（原版）"} · page_cipher = ${state.pageCipher}`,
+      `  ${v.level === "block" ? "❌" : v.level === "notice" ? "⚠️" : "✅"} ${v.why}`,
+    );
   }
-  const { level, why } = hygieneVerdict({ patched: state.patched, pageCipher: state.pageCipher, platform, featureSmLibrary });
-  const head = `gm-registry-clean: libsqlite3-sys ${state.version} @ ${state.srcDir}`;
-  const mark = `  补丁标记 = ${state.patched ? "有（源码已被改成国密版）" : "无（原版）"} · page_cipher = ${state.pageCipher}`;
-  if (level === "ok") return { code: 0, level, lines: [`${head}`, mark, `  ✅ ${why}`] };
-  const badge = level === "block" ? "❌" : "⚠️";
-  return { code: level === "block" ? 1 : 0, level, lines: [`${head}`, mark, `  ${badge} ${why}`] };
+
+  if (lockResidue) {
+    const lv = lockResidueVerdict({ residue: lockResidue, featureSmLibrary });
+    if (lv.level !== "ok") {
+      level = worse(level, lv.level);
+      lines.push(`  ${lv.level === "block" ? "❌" : "⚠️"} ${lv.why}`);
+    }
+  }
+
+  return { code: level === "block" ? 1 : 0, level, lines };
 }
 
 function main() {
   if (!existsSync(LOCK)) {
-    console.log(`gm-registry-clean: 未实查（没有 ${LOCK}）—— 这一格不判红`);
+    // ⚠️ 同样要带 `! ` 前缀（理由见 `decideFromState` 里那段注释）：不带就**采集不到** ⇒ 静默绿。
+    console.log(`! gm-registry-clean: 未实查（没有 ${LOCK}）—— 这一格不判红（走「自报跳过」通道 ⇒ 报告里可见）`);
     process.exit(0);
   }
   const { platform, error } = platformFromArgv(argv);
@@ -101,10 +134,17 @@ function main() {
   }
   const featureSmLibrary = has("--feature-sm-library");
   const state = registryStateOf({ lockPath: LOCK });
-  const r = decideFromState(state, { platform, featureSmLibrary });
+  // ② 锁上那处残渣：读**文本**（读不到就交给 `lockResidueOf` 报 unknown ⇒ 不判红）
+  let lockResidue;
+  try {
+    lockResidue = lockResidueOf(readFileSync(LOCK, "utf8"));
+  } catch (e) {
+    lockResidue = { state: "unknown", why: `读不了 ${LOCK}：${String(e?.message ?? e).slice(0, 80)}` };
+  }
+  const r = decideFromState(state, { platform, featureSmLibrary, lockResidue });
 
   if (has("--json")) {
-    console.log(JSON.stringify({ ...r, platform, featureSmLibrary, state: { ...state } }, null, 2));
+    console.log(JSON.stringify({ ...r, platform, featureSmLibrary, state: { ...state }, lockResidue }, null, 2));
   } else {
     for (const line of r.lines) console.log(line);
     if (r.level === "notice" && state.ok) {

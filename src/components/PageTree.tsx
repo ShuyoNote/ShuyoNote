@@ -25,10 +25,41 @@ import { useWindowChrome } from "../store/windowChrome";
 import { syncTagLabel, syncTagColor } from "../lib/syncTag";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
+import { inputDialog, chooseDialog, useInputStore } from "../store/input";
+import { isDesktopPlatform } from "../lib/platform";
+
+/**
+ * ★ A1：「新建空间」第一步 —— 问名字。`null` ＝ 用户取消。
+ *
+ * ⚠️ 取消也必须兑现这个等待（点背景 / 取消按钮 / Esc 都走输入框的 `close()`）——
+ * 否则 `createSpace` 永远挂在这一行，现场就是"点了新建没反应"。
+ * 兑现靠 `subscribe` 看槽位被清空，而不是只挂 `onSubmit`（那只覆盖"确定"那一半）。
+ */
+function promptSpaceName(): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    let done = false;
+    const finish = (v: string | null) => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    const unsub = useInputStore.subscribe((s, prev) => {
+      if (prev.options !== null && s.options === null) {
+        unsub();
+        finish(null);
+      }
+    });
+    inputDialog({
+      title: "新建空间",
+      placeholder: "空间名字",
+      defaultValue: "新建工作区",
+      onSubmit: (v) => finish(v),
+    });
+  });
+}
 
 // 统一风格的 SVG 菜单图标：16px、stroke currentColor、统一描边/圆角。
-function MenuIcon({ d }: { d: string }) {
-  return (
+function MenuIcon({ d }: { d: string }) {  return (
     <svg className="menu-svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={d} />
     </svg>
@@ -56,6 +87,7 @@ const ICON = {
 import { SyncPanel } from "./SyncPanel";
 import { EmailPanel } from "./EmailPanel";
 import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
+import { TreeDragGhost } from "./TreeDragGhost";
 
 interface TreeNode extends PageMeta {
   children: TreeNode[];
@@ -186,7 +218,13 @@ function TreeItem({
   onRowPointerDown: (id: string, e: React.MouseEvent) => void;
 }) {
   const { t } = useTranslation();
-  const { currentId, openPage, createPage, createFolder, deletePage, renamePage } = useNotes();
+  // ⚠️ 本组件**每个可见树节点渲染一次**（含递归子节点）⇒ 只订真正需要响应式的字段。
+  // 这里唯一被渲染用到的是 `currentId`（选中态）；其余都是 store 动作，引用恒定，
+  // 在回调里 `getState()` 现取即可。原先写成 `const { currentId, openPage, … } = useNotes()`
+  // 是**整店订阅**：`loadPages()` 每次全量广播（自动保存每 600ms 就可能来一次）都会把这
+  // 棵树里每个节点重渲染一遍——粒度问题在这一个组件上被节点数放大了 N 倍。
+  // 判据见 `scripts/check-store-subscriptions.mjs`。
+  const currentId = useNotes((s) => s.currentId);
   const selectedIds = useTreeSelection((s) => s.ids);
   const toggleSelect = useTreeSelection((s) => s.toggle);
   const clearSelection = useTreeSelection((s) => s.clear);
@@ -260,7 +298,7 @@ function TreeItem({
     const v = editValue.trim();
     setEditing(false);
     if (v && v !== node.title) {
-      await renamePage(node.id, v);
+      await useNotes.getState().renamePage(node.id, v);
     } else {
       setEditValue(node.title);
     }
@@ -290,7 +328,7 @@ function TreeItem({
       useViewStore.getState().setView("files");
       useTemplateCenterStore.getState().setOpen(false);
     } else {
-      openPage(node.id);
+      useNotes.getState().openPage(node.id);
     }
     // 移动端：选完就自动收起抽屉，把整屏交还给内容（桌面端侧栏常驻，不动）。
     // 不写 localStorage：移动端抽屉的开合不该改变桌面端的侧栏偏好。
@@ -433,7 +471,7 @@ function TreeItem({
               <button
                 onClick={() => {
                   setMenuOpen(false);
-                  createPage(node.id);
+                  void useNotes.getState().createPage(node.id);
                 }}
               >
                 <span className="menu-icon"><MenuIcon d={ICON.plus} /></span><span className="menu-text">{t("trees.newSubPage")}</span>
@@ -442,7 +480,7 @@ function TreeItem({
                 <button
                   onClick={() => {
                     setMenuOpen(false);
-                    createFolder(node.id);
+                    void useNotes.getState().createFolder(node.id);
                   }}
                 >
                   <span className="menu-icon"><MenuIcon d={ICON.folder} /></span><span className="menu-text">{t("trees.newSubFolder")}</span>
@@ -459,7 +497,7 @@ function TreeItem({
                 onClick={async () => {
                   setMenuOpen(false);
                   if (await confirmDialog({ title: "删除页面", message: `删除「${node.title || "未命名"}」及其所有子节点？`, danger: true })) {
-                    await deletePage(node.id);
+                    await useNotes.getState().deletePage(node.id);
                     toast("已移到回收站", "success");
                   }
                 }}
@@ -510,7 +548,7 @@ function TreeItem({
 function BatchToolbar({ pages }: { pages: PageMeta[] }) {
   const selectedIds = useTreeSelection((s) => s.ids);
   const clearSelection = useTreeSelection((s) => s.clear);
-  const { movePage, deletePage } = useNotes();
+  // 只用到 store 动作（引用恒定）⇒ 不订阅整店，回调里 getState() 现取。
   const [moveOpen, setMoveOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const count = selectedIds.size;
@@ -539,7 +577,7 @@ function BatchToolbar({ pages }: { pages: PageMeta[] }) {
         ? Math.max(0, ...pages.filter((p) => p.parent_id === parentId).map((p) => p.sort_order ?? 0)) + 1
         : 0;
       for (const id of selected) {
-        await movePage(id, parentId, order++);
+        await useNotes.getState().movePage(id, parentId, order++);
       }
       clearSelection();
       toast(`已移动 ${selected.length} 个节点`, "success");
@@ -558,7 +596,7 @@ function BatchToolbar({ pages }: { pages: PageMeta[] }) {
     ) {
       try {
         for (const id of selected) {
-          await deletePage(id);
+          await useNotes.getState().deletePage(id);
         }
         clearSelection();
         toast(`已删除 ${selected.length} 个节点`, "success");
@@ -601,6 +639,9 @@ function BatchToolbar({ pages }: { pages: PageMeta[] }) {
   );
 }
 
+// 拖影已拆到 `./TreeDragGhost`：它订阅的 x/y 每帧都在变，留在这里会让整个侧栏跟着
+// 60fps 重渲染（原因与边界写在那个文件头部）。
+//
 // 视图切换已收编进左侧竖条 <ActivityBar />，这里不再需要 view / onViewChange，
 // 但 App 仍按老签名传参，故保留可选 props 以免调用点大改。
 export function PageTree(_props: {
@@ -608,7 +649,9 @@ export function PageTree(_props: {
   onViewChange?: (v: AppView) => void;
 }) {
   const { t } = useTranslation();
-  const { pages, createPage, createFolder, createDatabase, loading, movePage } = useNotes();
+  // 只订真正渲染用到的两个字段；动作走 getState()（引用恒定，不必订阅）。
+  const pages = useNotes((s) => s.pages);
+  const loading = useNotes((s) => s.loading);
   const collapsed = false;
   // 侧栏是否展开由左侧竖条控制（搜索是弹层，不改变侧栏内容）。
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
@@ -705,16 +748,6 @@ export function PageTree(_props: {
       .catch(() => {});
   }, [spaceChooser.open]);
 
-  // Drag-ghost state (title + cursor position while dragging a tree node).
-  const dragLabel = useTreeDrag((s) => s.label);
-  const dragX = useTreeDrag((s) => s.x);
-  const dragY = useTreeDrag((s) => s.y);
-  const dragKind = useTreeDrag((s) => s.kind);
-  const dragIcon =
-    dragKind === "folder" ? <FolderIcon width={15} height={15} /> :
-    dragKind === "database" ? <DatabaseIcon width={15} height={15} /> :
-    <PageIcon width={15} height={15} />;
-
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const activeSpace = spaces.find((s) => s.id === activeSpaceId);
@@ -769,12 +802,49 @@ export function PageTree(_props: {
   };
 
   const createSpace = async () => {
-    const ok = await useSpaceStore.getState().create();
+    // ★ A1（owner 2026-09-25 拍板）：**分类由入口决定** —— 建空间那一刻就问「个人 / 团队」。
+    // 先问名字（沿用既有输入框），再问类型；两步都过才建，取消任一步就什么都不建。
+    //
+    // ⚠️ 为什么不能"先建了再回头去隐私面板里改"：闸门对**未分类**的空间**一律放行**
+    //（`space_crypto::sync_gate` 的 `AllowedUnclassified`）⇒ 用户点两下就可能把一个本该加密的个人空间
+    // 同步上去。分类唯一可靠的时刻就是**创建这一刻**。
+    // ⚠️ 只有桌面端问：按空间加密是桌面专属（Web 没有钥匙柜），那里的"个人/团队"没有下游。
+    const name = await promptSpaceName();
+    if (name === null) {
+      spaceChooser.close();
+      return;
+    }
+
+    let kind: "personal" | "team" = "personal";
+    if (isDesktopPlatform()) {
+      const picked = await chooseDialog({
+        title: `「${name}」是哪一类空间？`,
+        choices: [
+          {
+            value: "personal",
+            label: "个人空间（推荐）",
+            hint: "只有我自己用。要先给这个空间设主口令才能绑同步（服务端只存密文）。",
+          },
+          {
+            value: "team",
+            label: "团队空间",
+            hint: "要和别人协作。服务端存明文以便合并/检索，不接受零知识。",
+          },
+        ],
+      });
+      if (picked === null) {
+        spaceChooser.close();
+        return;
+      }
+      kind = picked === "team" ? "team" : "personal";
+    }
+
+    const ok = await useSpaceStore.getState().create(name, kind);
     if (ok) {
       await useNotes.getState().loadPages();
       const newActive = useSpaceStore.getState().activeId;
-      const name = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
-      if (name) setWorkspaceName(name);
+      const name2 = useSpaceStore.getState().spaces.find((s) => s.id === newActive)?.name;
+      if (name2) setWorkspaceName(name2);
     }
     spaceChooser.close();
   };
@@ -872,7 +942,7 @@ export function PageTree(_props: {
       if (d?.armed) dragJustFinishedRef.current = true;
       if (draggingId && overId) {
         const choice = computeReorder(pages, draggingId, overId, zone ?? "inside");
-        if (choice) await movePage(draggingId, choice.parentId, choice.sortOrder);
+        if (choice) await useNotes.getState().movePage(draggingId, choice.parentId, choice.sortOrder);
       }
     };
     window.addEventListener("mousemove", onMove);
@@ -883,7 +953,7 @@ export function PageTree(_props: {
       if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pages, movePage]);
+  }, [pages]);
 
   const startRenameSpace = (s: { id: string; name: string }) => {
     setRenamingSpace(s.id);
@@ -1096,7 +1166,7 @@ export function PageTree(_props: {
                   className="new-menu-item"
                   onClick={() => {
                     closeNewMenu();
-                    createPage(null);
+                    void useNotes.getState().createPage(null);
                   }}
                 >
                   <span className="new-menu-icon"><PageIcon /></span>
@@ -1110,7 +1180,7 @@ export function PageTree(_props: {
                   className="new-menu-item"
                   onClick={() => {
                     closeNewMenu();
-                    createFolder(null);
+                    void useNotes.getState().createFolder(null);
                   }}
                 >
                   <span className="new-menu-icon"><FolderIcon /></span>
@@ -1123,7 +1193,7 @@ export function PageTree(_props: {
                   className="new-menu-item"
                   onClick={() => {
                     closeNewMenu();
-                    createDatabase(null);
+                    void useNotes.getState().createDatabase(null);
                   }}
                 >
                   <span className="new-menu-icon"><DatabaseIcon /></span>
@@ -1160,13 +1230,9 @@ export function PageTree(_props: {
           <SpaceTransferProgress /> 订阅 useSpaceTransfer 统一渲染 —— 这样
           任何面板关掉后进度仍然可见。 */}
 
-      {/* Drag ghost: follows the cursor to show what's being moved. */}
-      {dragLabel && (
-        <div className="tree-drag-ghost" style={{ left: dragX + 12, top: dragY + 8 }}>
-          <span className="tree-ghost-icon">{dragIcon}</span>
-          <span className="tree-ghost-title">{dragLabel}</span>
-        </div>
-      )}
+      {/* Drag ghost: follows the cursor to show what's being moved.
+          独立组件 —— 它订阅的 x/y 每帧都在变，放在这里会让整个侧栏跟着 60fps 重渲染。 */}
+      <TreeDragGhost />
     </div>
   );
 }

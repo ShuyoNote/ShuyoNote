@@ -18,6 +18,13 @@ import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } fr
 import { applyConflictBadges, installConflictBadges } from "./blockConflictBadge";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
+import {
+  bindPageToEditorViaPort,
+  type AsyncPageBinding,
+  type PageStatePort,
+} from "../lib/crdt/pageBinding";
+import type { PageClaimPort } from "../lib/crdt/bootstrap";
+import { lineageRefusalNotice } from "../lib/crdt/lineageNotice";
 import { useEditorStore } from "../store/editor";
 import { SlashMenuPlugin } from "./plugins/SlashMenuPlugin";import { InsertShortcutPlugin } from "./plugins/InsertShortcutPlugin";
 import { ClickToEditPlugin } from "./plugins/ClickToEditPlugin";
@@ -470,6 +477,133 @@ const DrawingEditorModal = lazy(() => import("../components/DrawingEditorModal")
  * 于是这里趁**编辑器已经把文档解析好**的时候按编辑器语义算一遍，交给那一层去比、不同才写回 ——
  * 只动正文（不动内容、不动 `dirty`）。**比较在那一层里做**（界面文件读那一列会把收口门禁顶红）。
  */
+/**
+ * 冲刺 S3b-2d（2026-09-23）：**把这一页绑到真编辑器上**。
+ *
+ * 它是整条冲刺唯一"真应用侧"的接线点，做四件事（顺序不能变，理由见 `lib/crdt/pageBinding.ts`）：
+ *   1. 用编辑器**当前内容**（走保存路径同一个 serializer ⇒ 含块身份）当 seed；
+ *   2. `bindPageToEditorViaPort`：**先读状态**（有 ⇒ 载入；没有 ⇒ 由 seed 建一次并立刻落盘）；
+ *   3. 订阅 `onLocalEdit` ⇒ 每次**真·本地编辑**把状态存回（远端合并/载入**不**触发，见 S3b-1）；
+ *   4. 卸载/换页时 `dispose()`（撤监听）。
+ *
+ * 三条纪律：
+ *   · **不静默**：绑定失败如实 `toast` ＋ 控制台报错；状态存失败也如实报（页面本身仍可编辑）；
+ *   · **不挡住编辑器**：绑定是异步的，失败也不让页面打不开；
+ *   · 存的失败**不吞**：`persist()` 的 promise 必须 `.catch`（它是 IPC/平台命令）。
+ */
+function PageCrdtBinding({
+  pageId,
+  blockIds,
+}: {
+  pageId: string;
+  blockIds: { current: Map<string, string> };
+}) {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    if (!pageId) return;
+    let disposed = false;
+    let binding: AsyncPageBinding | null = null;
+
+    const port: PageStatePort = {
+      read: (id) => api.readPageState(id),
+      save: (id, state) => api.savePageState(id, state),
+      // §11.4 收口：桌面 pull 收下的**待并远端状态**（Web 平台恒为空 —— 它当场合并）。
+      readPending: (id) => api.readPendingPageStates(id),
+      clearPending: (id) => api.clearPendingPageStates(id),
+      // ★ §13.3 第 1 条（第 49 轮）：合并/承接之后把**投影**也写回落盘那一列 ——
+      //   不写它，反链/插件/AI/导出要等**下一次保存**才看到刚并进来的内容
+      //   （`json` 由 `pageBinding` 那一层按状态算好；判据与纪律全在文档内容层）。
+      writeProjection: (id, json) => api.writePageProjection(id, json),
+      // ★ §13.3 第 2 条（第 49 轮）：被拒的远端状态**当场留痕**（含对端那一版的投影快照）——
+      //   判定"血统相不相关"只有这一侧做得了（要 Yjs），存到哪是平台的事；去重在存储那一层。
+      recordLineageConflict: (args) => api.recordLineageConflict(args),
+    };
+
+    // S9：**claim 端口**。问同步服务"这一页的首条血统归谁"：
+    //   · 拿到 ⇒ 由本机建血统（＝今天的行为）；
+    //   · 别人先 claim 过（服务端 **200 ＋ `granted:false`**）⇒ `bindPageToEditorViaPort` 会
+    //     **不建并抛出**，由下面那个 catch **如实 toast**（措辞是给用户看的）；
+    //   · 问不到（没配置同步／没选空间／离线／401／**403**／5xx）⇒ 归一成"离线"那一支 ⇒ **照旧能写**。
+    // ⚠️ **传下去的是本地工作空间 id（页所属那一个）**，不是远端 `space_id` —— 后者由平台层从
+    //    该工作空间的档案里取（两套 id，传错必然 403：见 `crdt/claimScope.ts` 文件头）。
+    const claim: PageClaimPort = {
+      async claim(id) {
+        // ★ S9：用**这一页自己的工作空间**（`api.getPage` 回的行里有 `workspace_id`），而不是
+        //   "当前工作空间" —— 后者在**跨工作空间**打开页面时会问错地方（服务端按门禁拒掉 ⇒ 只落
+        //   "离线临时建"那一支：可用但**未裁定**）。
+        //   取不到（页不存在／命令失败）⇒ 如实 `console.warn` 再退回当前工作空间（不静默）。
+        let workspaceId = "";
+        try {
+          const page = (await api.getPage(id)) as { workspace_id?: unknown } | null;
+          workspaceId = typeof page?.workspace_id === "string" ? page.workspace_id : "";
+        } catch (e) {
+          console.warn("[crdt] 取这一页的工作空间失败，退回当前工作空间", e);
+        }
+        if (!workspaceId) workspaceId = await api.getActiveWorkspaceId();
+        const res = await api.claimPageLineage({ workspace_id: workspaceId, page_id: id });
+        // ⚠️ "用不了"（没同步配置／没选空间／网络不通）由平台侧用**结果标记**回（不是异常 ——
+        //    异常会被平台 invoke 层记成 error，浏览器门禁会红）。这里把它**转成**异常交给上层
+        //    `claimVerdict` 归一成 `unavailable` ⇒ 走"离线临时建"那一支（照旧能写）。
+        if (res?.unavailable) throw new Error("claim 当前用不了（没有同步配置或网络不通）");
+        return res?.granted === true;
+      },
+    };
+
+    void (async () => {
+      try {
+        // seed：与保存路径**同一个** serializer（`serializeWithBlockIds`）⇒ 含块身份、不另铸一套
+        const seedJson = serializeWithBlockIds(editor.getEditorState(), blockIds.current);
+        const b = await bindPageToEditorViaPort({ port, pageId, editor, seedJson, claim });
+        if (disposed) {
+          b.dispose();
+          return;
+        }
+        binding = b;
+        // ★ 冲刺 §13.3 第 2 条（第 49 轮）：**`pendingSkipped > 0` 不许再只留在 `console.warn` 里**。
+        //   那是"这一页有对端改动因为血统无关被拒、本机那版原样保留"—— 用户必须看得见
+        //   （与 `main.tsx` 的 `lineageConflict` **同一个措辞来源**：`lineageRefusalNotice`）。
+        //   ⚠️ 仍然**没有**裁决 UI（用户不能选"要哪一条血统"）：那要动 `page_conflicts`/裁决面，
+        //   见冲刺 §13.3 的收口口径 —— 这一片只做"可见 + 有痕"这一半。
+        const refusal = lineageRefusalNotice({ pageId, skipped: b.pendingSkipped });
+        if (refusal) {
+          console.error(refusal.log);
+          toast(refusal.message, "error");
+        }
+        b.session.onLocalEdit(() => {
+          void b.persist().catch((e) => {
+            console.error("[crdt] 状态保存失败", e);
+            toast(`CRDT 状态保存失败：${e instanceof Error ? e.message : String(e)}`, "error");
+          });
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // ★ S9（2026-09-23）：**"claim 被拒"不是"绑定失败"** —— 那是**故意的等待**
+        //   （这一页的首条血统属于另一台设备，本机**没有**建新的）。把它报成"绑定失败"会让用户
+        //   以为编辑器坏了；所以分开报，且用 `info` 而不是 `error`。
+        if (/属于另一台设备/.test(msg)) {
+          console.warn("[crdt] 未建血统（claim 被拒，等对端同步下来）", pageId);
+          toast("这一页正在另一台设备上编辑：等它同步下来再打开（本机没有新建编辑历史）", "info");
+        } else {
+          console.error("[crdt] 绑定失败", e);
+          toast(`CRDT 绑定失败：${msg}`, "error");
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      binding?.dispose();
+      binding = null;
+    };
+    // ⚠️ 依赖刻意只有 `pageId`：`editor`/`blockIds` 由 composer 与本组件同生命周期持有，
+    //    把它们放进依赖会让每次渲染都重绑（那会反复重建血统）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageId]);
+
+  return null;
+}
+
 function PageTextRepairPlugin({ pageId }: { pageId: string }) {
   const [editor] = useLexicalComposerContext();
   useEffect(() => {
@@ -564,6 +698,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <TableMenuPlugin />
         <TableResizerPlugin />
         <EditorStoreSync />
+        <PageCrdtBinding pageId={pageId} blockIds={blockIdMapRef} />
         <Suspense fallback={null}>
           <DrawingEditorModal />
         </Suspense>

@@ -9,7 +9,8 @@ interface SpaceState {
   spaces: WorkspaceMeta[];
   activeId: string | null;
   load: () => Promise<void>;
-  create: (name?: string) => Promise<boolean>;
+  /** ★ A1：`kind` ＝ 新建时的分类（`personal` / `team`）；不给 ⇒ 后端按 `personal`。 */
+  create: (name?: string, kind?: "personal" | "team") => Promise<boolean>;
   switchTo: (id: string) => Promise<boolean>;
   rename: (id: string, name: string) => Promise<boolean>;
   setSettings: (id: string, theme?: string | null, icon?: string | null, sortOrder?: number) => Promise<boolean>;
@@ -30,9 +31,9 @@ export const useSpaceStore = create<SpaceState>((set) => ({
       console.error("load spaces failed", e);
     }
   },
-  create: async (name) => {
+  create: async (name, kind) => {
     try {
-      const ws = await api.createWorkspace(name);
+      const ws = await api.createWorkspace(name, kind);
       const spaces = await api.listWorkspaces();
       set({ spaces, activeId: ws.id });
       return true;

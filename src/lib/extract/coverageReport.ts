@@ -41,8 +41,12 @@ import type { AttachmentTextStore } from "./store";
  *
  * ⚠️ `partial` 是**唯一一个"已索引"的 reason**（见 `CoverageReport.attachments.partial` 的注释）：
  * 它的意思不是"没进检索面"，而是"进了检索面、但抽取器自己承认只抽到一部分"。
- * 它**不计入** `byReason`（那里统计的是"没进检索面"的原因），只计 `partial` 并进明细。 */
-export type GapReason = "no_extractor" | "no_content" | "not_chunked" | "page_empty" | "partial";
+ * 它**不计入** `byReason`（那里统计的是"没进检索面"的原因），只计 `partial` 并进明细。
+ *
+ * ⚠️ `text_stale` 是**第二个"已索引"的 reason**（2026-09-27 联合格子 j3 加），
+ * 与 `partial` 同一处置：它的意思不是"没进检索面"，而是"进了检索面、但那是**旧**内容"
+ * （页面被 CRDT 合并标成"派生待重建"，`pages.text_stale=1`，补算器收口后会清掉）。 */
+export type GapReason = "no_extractor" | "no_content" | "not_chunked" | "page_empty" | "partial" | "text_stale";
 
 export interface AttachmentCoverage {
   attId: string;
@@ -65,7 +69,22 @@ export interface CoverageGap {
 }
 
 export interface CoverageReport {
-  pages: { total: number; indexed: number; empty: number };
+  pages: {
+    total: number;
+    indexed: number;
+    empty: number;
+    /**
+     * ★ 派生文本**落后于权威状态**的页数（`pages.text_stale=1`）—— 联合格子 j3（2026-09-27）。
+     *
+     * 为什么单列（与 `attachments.partial` 同一处置）：`indexed` 回答的是"**搜得到吗**"，
+     * 这一格回答的是"**搜到的是新的吗**"。CRDT 合并会把页面标成待重建（`markTextStale`），
+     * 那些页面**照样有块、照样搜得到** —— 只是内容落后。混进任何一头都会让人得出错误结论。
+     *
+     * ⚠️ `null` ＝ **这次没查**（取材层没给清单，或取不到）—— **不是 0**。
+     * 这是本仓"未知 ≠ 完整"那条口径的同一处理：猜 0 会把"没查"说成"没有落后"。
+     */
+    stale: number | null;
+  };
   attachments: {
     total: number;
     /** 抽到了文本的数量（**不等于**已索引，见 `not_chunked`）。 */
@@ -99,6 +118,14 @@ export interface CoverageSubject {
   pageIds: readonly string[];
   /** 附件清单。`mime` / `filename` 给了才能区分"没有抽取器认领"与"抽出来是空"。 */
   attachments: readonly { id: string; mime?: string; filename?: string }[];
+  /**
+   * ★ **派生落后**的页面清单（`pages.text_stale=1`）—— 联合格子 j3（2026-09-27）。
+   *
+   * 两种"没给"是**不同**的意思，别混：
+   *   · 这个字段**整个不传** ⇒ 报告里 `pages.stale = null`（**没查**）；
+   *   · 传 `{ total: 0 }` ⇒ `pages.stale = 0`（**查过了**，没有落后的）。
+   */
+  stalePages?: { total: number; pageIds?: readonly string[] };
 }
 
 export interface CoverageStores {
@@ -124,6 +151,10 @@ const DETAIL: Record<GapReason, string> = {
     "**抽到了、也进了检索面，但抽取器自己报了缺口** —— 这份内容只是一部分（典型：混合 PDF 里夹的扫描页）。" +
     "检索能搜到已有的段，但缺的那部分**搜不到**。要不要补：看缺的是不是你要找的内容 —— " +
     "需要就换更完整的抽取通道重抽一次（视觉/OCR 那路），不需要就把它当作**已知的不完整**记着",
+  text_stale:
+    "**这一页进得了检索面，但内容是旧的** —— 它被 CRDT 合并（或冲突裁决）改过，派生文本标了" +
+    "「待重建」（`pages.text_stale=1`），而补算器还没收口。⇒ 现在搜到的是**合并前那版**。" +
+    "处置：打开这一页（或跑一遍待重建队列）就会自动补上；**别把它读成「没有这一页」**",
 };
 
 /**
@@ -143,10 +174,18 @@ export async function indexCoverage(
 
   // ---- 页面 ----
   let pageIndexed = 0;
+  // ★ 联合格子 j3（2026-09-27）：**派生落后**的页面 —— 搜得到，但搜到的是**旧**内容。
+  //   口径与附件的 `partial` 逐条对齐：不算"没进检索面"（它进了），也不算"没问题"（它落后）。
+  const staleIds = new Set(subject.stalePages?.pageIds ?? []);
+  const staleTotal = subject.stalePages ? Math.max(0, Math.trunc(subject.stalePages.total) || 0) : null;
   for (const pageId of subject.pageIds) {
     const n = (await stores.chunks.chunksOf({ kind: "page", pageId })).length;
+    // 落后的页面**照样计进 `indexed`**（它确实有块、确实搜得到）—— 另开一条 gap 说明"是旧的"。
     if (n > 0) {
       pageIndexed++;
+      if (staleIds.has(pageId)) {
+        gaps.push({ kind: "page", id: pageId, reason: "text_stale", detail: DETAIL.text_stale });
+      }
       continue;
     }
     gaps.push({ kind: "page", id: pageId, reason: "page_empty", detail: DETAIL.page_empty });
@@ -211,6 +250,7 @@ export async function indexCoverage(
       total: subject.pageIds.length,
       indexed: pageIndexed,
       empty: subject.pageIds.length - pageIndexed,
+      stale: staleTotal,
     },
     attachments: {
       total: subject.attachments.length,
@@ -237,6 +277,12 @@ export function summarizeCoverage(r: CoverageReport): string {
     .join(" / ");
   return (
     `页面 ${r.pages.indexed}/${r.pages.total} 有块；` +
+    // ★ 与 `partial` 同一处置：**"落后"必须与"有块"并列出现在这一行里** ——
+    //   否则只看摘要的人会把"页面 5/5 有块"读成"检索面里都是最新的"。
+    //   ⚠️ `null`（没查）**不打印**：打印成 0 或"0 页落后"都是把"不知道"说成"没有"。
+    (typeof r.pages.stale === "number" && r.pages.stale > 0
+      ? `（其中 ${r.pages.stale} 页**派生落后**，检索面里是旧内容）`
+      : "") +
     `附件 ${r.attachments.indexed}/${r.attachments.total} 已索引` +
     // ★ "没抽全"必须**与"已索引"并列出现在这一行里**，否则只看摘要的人会把
     //   "已索引 3/3"读成"内容全都在检索面里"（这正是 §15.10 要防的那种读法）。

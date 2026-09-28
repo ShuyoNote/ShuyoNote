@@ -1,9 +1,15 @@
 // 「cargo 将要编译的那份 SQLCipher 源码在哪」——**单一实现，两处消费**：
-//   · `src-tauri/build.rs`（`include!` 进来，构建期那一格用它）
-//   · 本 crate 的单元测试（判据直接驱动它）
+//   · `src-tauri/build.rs`（`include!` 进来，构建期那一格用它）—— 那是**另一次编译**；
+//   · 本 crate 的单元测试（判据直接驱动它）。
 // 为什么要放成一个普通模块再 `include!`：这套解析逻辑**必须能被判据驱动**。
 // 2026-09-19 macOS 侧用一个受控实验证明了我第一版是错的（见下），而那一版**没有任何判据**，
 // 只能靠人拿真机器去踩。
+//
+// ★ **2026-09-25 清理**：在本 crate 里它**只有判据在用** ⇒ `lib.rs` 把它声明成 `#[cfg(test)] mod`
+// （产品二进制里根本不存在），因此本文件里那 8 处逐项 `#[allow(dead_code)]` / `cfg_attr(…allow…)`
+// **一次删掉**；只剩 `registry_src_roots` 那一条**跨编译边界的结构性收据**（理由写在它上方）。
+// ⚠️ 别把它理解成"可以随便删这个文件" —— `build.rs` 的 `include!` 一直需要它，
+// 而那个 `include!` 不看 `cfg(test)`（构建脚本里 `cfg(test)` 恒假）。
 //
 // ## 第一版错在哪（macOS 侧 `2026-09-19-gm-p1-application-layer.reply-9.md` §一）
 // 我按「registry 里 mtime 最新的那个 `libsqlite3-sys-<版本>` 胜出」挑目录。他那台机器上
@@ -24,7 +30,6 @@ use std::path::{Path, PathBuf};
 ///
 /// 手写解析（不引 toml 依赖）：`Cargo.lock` 的形状是稳定的 `[[package]]` 块，
 /// 每个块里 `name = "…"` + `version = "…"` 各一行。**只认第一个匹配的包**（本仓只有一个）。
-#[allow(dead_code)]
 pub fn lock_version(cargo_lock: &str) -> Option<String> {
     let mut in_pkg = false;
     let mut is_target = false;
@@ -60,7 +65,6 @@ pub fn lock_version(cargo_lock: &str) -> Option<String> {
 /// 挑源码目录的结果。**"挑不到"与"挑到了但不是要的那个版本"必须分开** ——
 /// 前者是环境问题，后者是"判据看的东西 ≠ 它声称看的东西"（正是那族事故）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum SourcePick {
     /// 命中：正是 `Cargo.lock` 锁的那个版本。
     Found { dir: PathBuf, version: String },
@@ -70,10 +74,36 @@ pub enum SourcePick {
     NotFound { wanted: Option<String>, found: Vec<String> },
 }
 
+/// 私有副本目录（`<repo>/.gm-build/libsqlite3-sys-<ver>/sqlcipher`）—— 2026-09-23「消灭补丁残留」那一格带来的新形态。
+///
+/// 背景：补丁不再打在**全机共享**的 registry 源码上，而是打在**私有副本**上，cargo 由私有 `CARGO_HOME`
+/// （config.toml 里的 `[patch.crates-io]`）指过去。于是"将要编译的那份源码"有两种可能，必须**按证据选**：
+///   · 隔离模式：进程环境里的 `CARGO_HOME` 指向 `<repo>/.gm-build/cargo-home`（调用方按 `--print-env` 导出的），
+///     或依赖构建产物里的 `cargo:include=` 指向 `.gm-build/` ⇒ 编译的是**副本**；
+///   · 老模式：都不是 ⇒ 编译的是 registry 那份（此时补丁必须打在它上面，否则当场失败）。
+pub fn isolation_source_dir(repo_root: &Path, version: Option<&str>) -> Option<(PathBuf, String)> {
+    let v = version?;
+    let dir = repo_root.join(".gm-build").join(format!("libsqlite3-sys-{v}")).join("sqlcipher");
+    if dir.is_dir() {
+        Some((dir, v.to_string()))
+    } else {
+        None
+    }
+}
+
+/// `CARGO_HOME` 是否指向我们的私有 `CARGO_HOME`（`<repo>/.gm-build/…`）。
+pub fn cargo_home_is_isolated(cargo_home: &Path, repo_root: &Path) -> bool {
+    cargo_home.starts_with(repo_root.join(".gm-build"))
+}
+
+/// 某个路径是否落在私有构建目录里（用于读依赖产物那条 `cargo:include=` 时判"cargo 编的是副本"）。
+pub fn is_under_gm_build(dir: &Path, repo_root: &Path) -> bool {
+    dir.starts_with(repo_root.join(".gm-build"))
+}
+
 /// 在若干 `registry/src/*` 根下找 `libsqlite3-sys-<version>/sqlcipher`。
 ///
 /// ⚠️ `wanted` 为 `None`（拿不到锁版本）时**不猜**：返回 `NotFound`，由调用方带着说明失败。
-#[allow(dead_code)]
 pub fn pick_source_dir(registry_srcs: &[PathBuf], wanted: Option<&str>) -> SourcePick {
     let mut found: Vec<(String, PathBuf)> = Vec::new();
     for src in registry_srcs {
@@ -100,7 +130,6 @@ pub fn pick_source_dir(registry_srcs: &[PathBuf], wanted: Option<&str>) -> Sourc
 }
 
 /// 在源码目录里找 SM3 标签标记（返回命中的文件名）。
-#[allow(dead_code)]
 pub fn find_marker(dir: &Path) -> Option<String> {
     let entries = std::fs::read_dir(dir).ok()?;
     for e in entries.flatten() {
@@ -122,6 +151,12 @@ pub fn find_marker(dir: &Path) -> Option<String> {
 }
 
 /// 列出所有 `registry/src/*` 根（`$CARGO_HOME/registry/src` 下的每个 registry 目录）。
+///
+/// ⚠️ **2026-09-25 收据（本文件里唯一留下的一条）**：这一条是**本 crate 的判据不驱动**的 ——
+/// 它真正的调用方是 `build.rs`，而那是**另一次编译**，所以在测试构建里它必然"没人用"。
+/// 这不是"还没接线"，是**跨编译边界的结构性事实**，所以留无条件豁免而不是 `#[cfg(test)]`。
+/// **它不会自己到期**：哪天 `build.rs` 不再需要"列出 registry 根"，就删函数本身，
+/// 而不是把这一行留给下一个人（那正是这条豁免当初存在的坏处）。
 #[allow(dead_code)]
 pub fn registry_src_roots(cargo_home: &Path) -> Vec<PathBuf> {
     let base = cargo_home.join("registry").join("src");
@@ -254,5 +289,38 @@ checksum = "abc"
     fn filetime_set(p: &Path, t: std::time::SystemTime) -> std::io::Result<()> {
         let f = std::fs::File::open(p)?;
         f.set_modified(t)
+    }
+
+    // ---- 隔离副本（2026-09-23「消灭补丁残留」） ------------------------------------------
+
+    #[test]
+    fn isolation_source_dir_points_at_the_private_copy() {
+        let dir = std::env::temp_dir().join(format!("gm-iso-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sc = dir.join(".gm-build").join("libsqlite3-sys-0.38.2").join("sqlcipher");
+        std::fs::create_dir_all(&sc).unwrap();
+        let got = isolation_source_dir(&dir, Some("0.38.2"));
+        assert_eq!(got.map(|(d, v)| (d, v)), Some((sc.clone(), "0.38.2".to_string())));
+        // 版本对不上 ⇒ None（绝不退而求其次）
+        assert!(isolation_source_dir(&dir, Some("0.30.1")).is_none());
+        // 没有版本 ⇒ None
+        assert!(isolation_source_dir(&dir, None).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cargo_home_is_isolated_only_inside_gm_build() {
+        let repo = PathBuf::from("/repo");
+        assert!(cargo_home_is_isolated(&repo.join(".gm-build").join("cargo-home"), &repo));
+        assert!(!cargo_home_is_isolated(&PathBuf::from("/Users/x/.cargo"), &repo));
+        // 前缀像但不是（`.gm-build-old`）⇒ 不算 —— 这条防的是"用 starts_with 判字符串"那类假阳性
+        assert!(!cargo_home_is_isolated(&repo.join(".gm-build-old").join("cargo-home"), &repo));
+    }
+
+    #[test]
+    fn is_under_gm_build_recognizes_the_copy_path() {
+        let repo = PathBuf::from("/repo");
+        assert!(is_under_gm_build(&repo.join(".gm-build").join("libsqlite3-sys-0.38.2").join("sqlcipher"), &repo));
+        assert!(!is_under_gm_build(&PathBuf::from("/Users/x/.cargo/registry/src/i/libsqlite3-sys-0.38.2/sqlcipher"), &repo));
     }
 }

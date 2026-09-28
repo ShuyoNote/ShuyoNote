@@ -87,25 +87,32 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
           setRot(0);
         }}
       />
-      <div className="fm-img-hint">
-        {fit ? "滚轮缩放 · 拖动平移" : `${Math.round(zoom * 100)}%`}
-      </div>
-      <div className="fm-img-actions">
-        <button className="fm-img-btn" onClick={() => rotate(-90)} title="逆时针旋转 90°" aria-label="逆时针旋转">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M3 12a9 9 0 1 0 3.3-7" />
-            <path d="M5.5 4v4.5H10" />
-          </svg>
-        </button>
-        <button className="fm-img-btn" onClick={() => rotate(90)} title="顺时针旋转 90°" aria-label="顺时针旋转">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M21 12a9 9 0 1 1-3.3-7" />
-            <path d="M18.5 4v4.5H14" />
-          </svg>
-        </button>
-        {onOpenOriginal && (
-          <button className="fm-img-original" onClick={onOpenOriginal}>查看原图</button>
-        )}
+      {/* 顶栏：提示 ＋ （旋转 / 查看原图）按钮组**在同一条 flex 行里**。
+          ⚠️ 别把它们改回两个各自 `position:absolute` 的角标：两者原来都钉在 `top:14px`、
+          左边那个还按 `left:50%` 居中 ⇒ 窄屏（360px 实测重叠 ~106px）必然互相压，
+          这正是 GitCode issue #12「窄屏时内置图片阅览的控制按钮重叠了」。
+          几何判据在 `scripts/verify-mobile-overlays.mjs` 的 (6c)。 */}
+      <div className="fm-img-bar">
+        <div className="fm-img-hint">
+          {fit ? "滚轮缩放 · 拖动平移" : `${Math.round(zoom * 100)}%`}
+        </div>
+        <div className="fm-img-actions">
+          <button className="fm-img-btn" onClick={() => rotate(-90)} title="逆时针旋转 90°" aria-label="逆时针旋转">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 12a9 9 0 1 0 3.3-7" />
+              <path d="M5.5 4v4.5H10" />
+            </svg>
+          </button>
+          <button className="fm-img-btn" onClick={() => rotate(90)} title="顺时针旋转 90°" aria-label="顺时针旋转">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M21 12a9 9 0 1 1-3.3-7" />
+              <path d="M18.5 4v4.5H14" />
+            </svg>
+          </button>
+          {onOpenOriginal && (
+            <button className="fm-img-original" onClick={onOpenOriginal}>查看原图</button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -130,7 +137,13 @@ function collectOutline(root: Element): MdOutlineItem[] {
 }
 
 export function FilePreviewDialog() {
-  const { target, mdHtml, mdLoading, mdImporting, close, importAsPage } = useFilePreview();
+  // 逐字段订阅（`close`/`importAsPage` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
+  const target = useFilePreview((s) => s.target);
+  const mdHtml = useFilePreview((s) => s.mdHtml);
+  const mdLoading = useFilePreview((s) => s.mdLoading);
+  const mdImporting = useFilePreview((s) => s.mdImporting);
+  const close = useFilePreview((s) => s.close);
+  const importAsPage = useFilePreview((s) => s.importAsPage);
   const bodyRef = useRef<HTMLDivElement>(null);
   const theme = useResolvedTheme(); // re-render mermaid when theme changes
   const [outline, setOutline] = useState<MdOutlineItem[]>([]);
@@ -145,7 +158,9 @@ export function FilePreviewDialog() {
   const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
-  const folderId = useFileManagerStore.getState().folderId;
+  // ⚠️ 这里原先写的是 `const folderId = useFileManagerStore.getState().folderId`（**渲染期快照**）：
+  // 它既不是订阅（folderId 变了本组件不会重渲染 ⇒ 用户点了"导入为页面"落到的还是旧目录），
+  // 也不比"点击时现取"更好。动作里读 `getState()` 才是这份状态唯一正确的用法（见下面的按钮）。
 
   const openPdf = () => {
     if (target && target.mime === "application/pdf") {
@@ -321,7 +336,7 @@ export function FilePreviewDialog() {
             </button>
           )}
           {target.mime === "text/markdown" && (
-            <button className="fm-preview-read" onClick={() => void importAsPage(folderId)} disabled={mdImporting}>
+            <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} disabled={mdImporting}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
                 <path d="M14 3v6h6" />

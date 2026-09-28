@@ -14,14 +14,18 @@ import { Markdown } from "./Markdown";
 // into a highlighted pending draft → 完成(insert into doc & auto-save) / 关闭.
 export function InlineAiDraftBar() {
   const config = useAiStore((s) => s.config);
-  const notes = useNotes();
+  // 只订真正读的三个字段（原先整店订阅 ⇒ 编辑器里每次自动保存都把它唤醒，
+  // 而下面的 `hasContent` 会对正文做 JSON.parse，白跑一次不便宜）。
+  const current = useNotes((s) => s.current);
+  const pages = useNotes((s) => s.pages);
+  const currentId = useNotes((s) => s.currentId);
   // Context-aware dropdown: a page WITH real text gets edit actions, an EMPTY page
   // gets content-generation prompts. An empty placeholder paragraph does NOT count
   // as content — only actual text does.
   const hasContent = (() => {
-    if ((notes.current?.content_text ?? "").trim()) return true;
+    if ((current?.content_text ?? "").trim()) return true;
     try {
-      const j = JSON.parse(notes.current?.content_json ?? "");
+      const j = JSON.parse(current?.content_json ?? "");
       const children = j?.root?.children;
       if (Array.isArray(children)) {
         const realText = (n: any): boolean => {
@@ -76,7 +80,7 @@ export function InlineAiDraftBar() {
     if (!trimmed || running || !config.enabled) return;
     const seq = ++runSeqRef.current;
     stoppedRef.current = false;
-    const allPages = notes.pages.map((p) => ({ id: p.id, title: p.title, parent_id: p.parent_id }));
+    const allPages = pages.map((p) => ({ id: p.id, title: p.title, parent_id: p.parent_id }));
     draftBuf.current = "";
     thinkBuf.current = "";
     setDraft("");
@@ -89,7 +93,7 @@ export function InlineAiDraftBar() {
       // For edit-type actions (总结/翻译/润色/纠错/续写) the model must SEE the
       // current page's text, or it answers "内容为空". Pass the page body with the
       // prompt when the page has real content.
-      const pageContent = (notes.current?.content_text ?? "").trim();
+      const pageContent = (current?.content_text ?? "").trim();
       const promptForModel = pageContent
         ? `${trimmed}\n\n请针对当前页面的如下正文进行处理（不要复述，直接给结果）：\n${pageContent.slice(0, 6000)}`
         : trimmed;
@@ -97,7 +101,7 @@ export function InlineAiDraftBar() {
         config as ProviderConfig,
         promptForModel,
         allPages.map((p) => ({ id: p.id, title: p.title })),
-        { currentPageId: notes.currentId, allPages },
+        { currentPageId: currentId, allPages },
         {
           onDelta: (t) => {
             if (stoppedRef.current || seq !== runSeqRef.current) return;

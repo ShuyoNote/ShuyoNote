@@ -198,7 +198,10 @@ pub async fn export_workspace(
     };
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
+    // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：导出的是**这个空间自己**的附件
+    //   （`space.id` 就是活动空间 id）；老位置那份由 `find_attachment` 回退照顾。
+    let app_data_dir2 = app_data_dir.clone();
+    let space_id2 = space.id.clone();
     // 目标位置：桌面=路径；Android=保存对话框给的 `content://` URI ⇒ 先写缓存再搬
     // （zip 需要 Seek，URI 只能顺序写）。见 `save_target` 模块头。
     let target = crate::save_target::SaveTarget::new(&app, &dest_path, "shuyonote-space")?;
@@ -215,7 +218,6 @@ pub async fn export_workspace(
     }
 
     let app2 = app.clone();
-    let attachments2 = attachments_dir;
     let dest2 = dest.clone();
     let dest_report = dest_path.clone();
     let tmp_db2 = tmp_db;
@@ -241,7 +243,7 @@ pub async fn export_workspace(
         let total = hashes2.len();
         let mut matched = 0usize;
         for hash in &hashes2 {
-            let path = find_by_hash(&attachments2, hash);
+            let path = crate::attachments::find_attachment(&app_data_dir2, &space_id2, hash);
             if let Some(p) = path {
                 let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 let name = format!("attachments/{fname}");
@@ -291,7 +293,6 @@ pub async fn import_workspace(
     }
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let attachments_dir = app_data_dir.join("attachments");
     let spaces_dir = app_data_dir.join("spaces");
 
     let tmp_dir = crate::tempdir::dir("shuyonote-wsin").map_err(|e| e.to_string())?;
@@ -337,18 +338,25 @@ pub async fn import_workspace(
     std::fs::create_dir_all(spaces_dir).map_err(|e| e.to_string())?;
     std::fs::copy(&db_snapshot, &target_db).map_err(|e| e.to_string())?;
 
-    // E1: when at-rest encryption is on and the session is unlocked, encrypt the
-    // imported plaintext DB so it matches every other space. Record the state so
-    // the meta row below is marked consistently.
+    // E1（按空间）：本机**已经解锁**（会话里有主密钥）⇒ 给这个**新空间**现造一把随机钥匙、
+    // 按它的 id 装进袋子，再用那把钥匙把这个明文库换成密文 ⇒ 它与别的加密空间**同族**。
+    //
+    // ⚠️ owner 第三轮拍板（2026-09-24）改写的**关键点**：原来这里用的是"应用级一把会话钥匙"
+    // （`key_if_enabled` 返回全局那把）—— 在**按空间**的世界里那是**错的**：新空间没有对应的盒子，
+    // 用别人的钥匙加密出来的库**永远打不开**，而且是静默的（界面看着"已加密"）。
+    // ⇒ 现在的规则：拿得到袋子 ＋ 主密钥 ⇒ 现造盒子；否则（会话没解锁 / 还没有钥匙袋）**留明文**，
+    // 由空间隐私那一节引导用户显式开启加密 —— 绝不"偷偷用一个对不上的钥匙"。
     let encrypted = {
         let c = db.0.lock().expect("db mutex poisoned");
-        match crate::security::key_if_enabled(&c) {
-            Some(k) => {
-                // 库级（SQLCipher）用 legacy 那 32 字节。
-                crate::security::convert_space_db(&target_db, true, Some(&k.legacy))?;
+        match (crate::space_crypto::session_master(), crate::space_crypto::keyring()) {
+            (Some(master), Some(mut kr)) => {
+                let key = crate::keyring::random_space_key();
+                kr.wrap(&master, &new_id, &key)?;
+                crate::space_crypto::store_keyring(&c, &kr)?;
+                crate::security::convert_space_db(&target_db, true, Some(&key))?;
                 true
             }
-            None => false,
+            _ => false,
         }
     };
 
@@ -363,7 +371,10 @@ pub async fn import_workspace(
     let mut bytes = 0u64;
     if let Some(d) = &att_src {
         if d.exists() {
-            copy_attachments_into_store(app.clone(), d, &attachments_dir, &mut done, &mut bytes).await?;
+            // ★ 附件按空间分（owner 2026-09-24 拍板 ②）：导入的附件落进**这个新空间自己**的目录。
+            //   （zip 里是扁平的 `attachments/<hash>.<ext>`；`find_path_by_hash` 桶/扁平两种都认。）
+            let dest = crate::attachments::space_attachments_dir(&app_data_dir, &new_id);
+            copy_attachments_into_store(app.clone(), d, &dest, &mut done, &mut bytes).await?;
         }
     }
 
@@ -382,12 +393,24 @@ pub async fn import_workspace(
     let now = now_ms();
     {
         let c = db.0.lock().expect("db mutex poisoned");
-        c.execute(
-            "INSERT INTO meta.workspaces (id, name, theme, icon, sort_order, created_at, updated_at, encrypted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![new_id, import_name, theme, icon, sort_order, now, now, if encrypted { 1 } else { 0 }],
-        )
-        .map_err(|e| e.to_string())?;
+        // ★ owner 2026-09-24 拍板（选项 ②）：**导入的空间也是「个人空间」**（分类由入口决定）——
+        //   与"本地新建"同一个写入口，`kind` 只有一处定义（`workspaces::insert_space_row`）。
+        //   于是"导入 ⇒ 还没加密 ⇒ 绑同步被闸门拦住并引导设口令"这条链对导入同样自动成立，
+        //   不会有"导入进来的空间是未分类 ⇒ 闸门没管到它"这个漏洞面。
+        crate::workspaces::insert_imported_space(
+            &c,
+            &new_id,
+            &import_name,
+            &theme,
+            &icon,
+            sort_order,
+            now,
+            encrypted,
+        )?;
+        // §0-C：加密的那一支还要记下"这个空间的数据是哪一版密文"（`encrypted` 那一列只说"是密的"）。
+        if encrypted {
+            crate::security::set_space_encrypted_marked(&c, &new_id, true)?;
+        }
     }
 
     emit(&app, "import", files, files, bytes, "导入完成…");
@@ -411,18 +434,6 @@ pub async fn import_workspace(
         },
     )
     .map_err(|e| e.to_string())
-}
-
-fn find_by_hash(dir: &Path, hash: &str) -> Option<PathBuf> {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.split('.').next() == Some(hash) {
-                return Some(entry.path());
-            }
-        }
-    }
-    None
 }
 
 /// Join a zip entry name onto a base dir, refusing any entry that could escape
@@ -624,6 +635,81 @@ mod tests {
             .filter(|n| n.contains("ws-keyed"))
             .collect();
         assert!(leftovers.is_empty(), "中转文件残留：{leftovers:?}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ **三平面联合格子 j1**（2026-09-23）：导出/导入走的是**整库在线备份**，
+    /// 所以"另两个平面新加的表/列也会被带走"这件事，看起来是不证自明的 —— 而"看起来"正是要钉的东西。
+    ///
+    /// 为什么不能靠上面那条判据：它只断言了 `pages` 里那一行。而联合验收要问的是**交界处**：
+    ///   · **块级 CRDT** 把每页的**权威状态**放进 `page_crdt`（血统；丢了就等于"一页变两页"）；
+    ///   · **全库 AI 覆盖**把覆盖度放进 `attachment_text.coverage`（"抽到哪"的读数；丢了就成了"未知"）；
+    ///   · 而源库是**加密**的（国密或 AES 页，取决于构建）⇒ 快照要把这三件事一起抬过去。
+    ///
+    /// 三条断言（缺一条就不是同一个故事）：
+    ///   ① 快照产物**不给任何钥**读得开（导出契约：zip 里那份是明文）；
+    ///   ② `page_crdt` 的**字节逐字节相同**（血统不能被截断/重编码）；
+    ///   ③ `attachment_text.coverage` 的**文本逐字相同**（未知 ≠ 完整，所以空串与 `{"complete":false}` 是两件事）。
+    ///
+    /// ⚠️ 它**不**证明"跨后端也能读"（那是格子 j2：两份页加密夹具）；也不证明"平面开着时的全库扫描"
+    /// （那是 j3）。本格只管**这条快照路径**——见 `docs/JOINT-ACCEPTANCE.md` 的格子表。
+    #[test]
+    fn snapshot_carries_the_other_two_planes_new_tables() {
+        let dir = std::env::temp_dir().join(uniq_tmp("wsjoint"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("default.db");
+        make_space_db(&src, "default");
+
+        // CRDT 那半：一页的权威状态（这里不关心格式，只关心**字节**能原样过去）。
+        let lineage: Vec<u8> = vec![0x00, 0x53, 0x02, 0xff, 0x10, 0x7f, 0x80, 0x01];
+        // AI 覆盖那半：一份**非空**覆盖度（空串是"没算过"，正是最容易被顺手丢掉的形态）。
+        let coverage = r#"{"complete":false,"pages":[{"from":1,"to":50,"total":120}]}"#;
+        {
+            let c = Connection::open(&src).unwrap();
+            c.execute(
+                "INSERT INTO page_crdt (page_id, state, updated_at) VALUES ('p1', ?1, 7)",
+                [&lineage],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO attachment_text (att_id, extractor, seq, kind, text, loc, src_hash, updated_at, coverage) \
+                 VALUES ('a1', 'pdf.text@1', 0, 'text', '正文', '', 'hash-a1', 7, ?1)",
+                [coverage],
+            )
+            .unwrap();
+            c.close().unwrap();
+        }
+
+        let key = crate::crypto::derive_key("hunter2", &crate::crypto::random_salt()).unwrap();
+        crate::security::convert_space_db(&src, true, Some(&key)).unwrap();
+        assert!(crate::security::space_db_is_encrypted(&src), "前置：源库应当是加密的");
+
+        let dst = dir.join("plain.db");
+        {
+            let c = Connection::open(&src).unwrap();
+            crate::security::key_conn_with(&c, &key).unwrap();
+            snapshot_plaintext(&c, Some(&key), &dst).unwrap();
+        }
+        assert!(!crate::security::space_db_is_encrypted(&dst), "导出契约要求明文库");
+
+        {
+            // 故意不设任何 PRAGMA key：快照必须自己就能读。
+            let c = Connection::open(&dst).unwrap();
+            let got_state: Vec<u8> = c
+                .query_row("SELECT state FROM page_crdt WHERE page_id='p1'", [], |r| r.get(0))
+                .expect("快照里必须有 page_crdt 那一行（CRDT 血统）");
+            assert_eq!(got_state, lineage, "page_crdt 的字节必须逐字节过去");
+            let got_cov: String = c
+                .query_row(
+                    "SELECT coverage FROM attachment_text WHERE att_id='a1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .expect("快照里必须有 attachment_text.coverage（AI 覆盖读数）");
+            assert_eq!(got_cov, coverage, "覆盖度文本必须逐字过去（未知 ≠ 完整）");
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

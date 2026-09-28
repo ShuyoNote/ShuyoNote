@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -11,6 +11,21 @@ import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform } from "../lib/platform";
+import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
+import {
+  broadcastAutoSyncChanged,
+  readAutoSyncMs,
+  settingsForMode,
+  syncModeHint,
+  syncModeOf,
+  writeAutoSyncMs,
+  type SyncMode,
+} from "../lib/syncMode";
+import { SpacePrivacySection } from "./SpacePrivacySection";
+import {
+  publishPendingRemoteTotal,
+  subscribePendingRemoteTotal,
+} from "../lib/pendingRemoteBadge";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
@@ -83,7 +98,6 @@ interface EditRow {
 // (server + token + space_id), so one person can sync different spaces to
 // different servers/accounts (multi-server × multi-space).
 export function SyncPanel() {
-  const { loadPages } = useNotes();
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
@@ -97,12 +111,123 @@ export function SyncPanel() {
   const authEmail = useAuth((s) => s.email);
   const [rows, setRows] = useState<EditRow[]>([]);
   // 自动同步间隔（毫秒；0=关闭），存 localStorage 供 App 级定时器使用。
-  const [autoMs, setAutoMs] = useState<number>(() => Number(localStorage.getItem("shuyonote:autoSync")) || 0);
+  // ⚠️ 写入口只有 `writeAutoSyncMs`（它会顺便**广播**，让 App 那条定时器重挂 —— 否则面板改了档
+  //    而 App 不重渲染，定时器就还按老间隔跑）。
+  const [autoMs, setAutoMs] = useState<number>(() => readAutoSyncMs());
   const setAuto = (ms: number) => {
-    try { localStorage.setItem("shuyonote:autoSync", String(ms)); } catch { /* ignore */ }
+    writeAutoSyncMs(ms);
     setAutoMs(ms);
   };
+  // 「近实时推送」（桌面流通道，第 48 轮）：默认开。开关本身与读写口径都在 `lib/nearRealtime.ts`
+  //（挂载时起流那条路也读它）—— 这里只做界面：拨一下 ⇒ **立刻**起/停（不等重开页面）。
+  const [nearRealtime, setNearRealtime] = useState<boolean>(() => isNearRealtimeEnabled());
+  const toggleNearRealtime = async (on: boolean) => {
+    setNearRealtime(on); // 先动界面（乐观），失败再回滚并如实说
+    try {
+      await applyNearRealtime(on);
+      setStatus(on ? "已开启近实时推送" : "已关闭近实时推送（改为按间隔轮询）");
+    } catch (e) {
+      setNearRealtime(!on);
+      setStatus(`近实时切换失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  // 「同步方式」（2026-09-26 口径收敛）：原来这里是**两个**控件 —— 自动同步间隔四档 ＋ 近实时开关；
+  // 它们管的是同一件事的两个旋钮，用户还得在脑子里把两件事叠起来算。现在合成**一个**三选一，
+  // 映射与那句人话都在 `lib/syncMode.ts`（**唯一一处**），这里只负责调它。
+  const syncMode = syncModeOf(autoMs, nearRealtime);
+  const applySyncMode = (mode: SyncMode) => {
+    const next = settingsForMode(mode);
+    setAuto(next.autoMs);
+    // ⚠️ 近实时那半边不只是改 state：`applyNearRealtime` 会**立刻**起/停那条流（不等重开页面），
+    //    并且把开关落盘（`lib/nearRealtime.ts` 一处实现）。
+    void toggleNearRealtime(next.nearRealtime).then(() => {
+      // ★★ 2026-09-26（口径对齐）：**两半都落定之后再广播一次** —— 有效间隔是
+      //    `f(间隔档位, 近实时开关)` 的函数，而上面 `setAuto` 那次广播发生在近实时**还是旧值**的时候。
+      //    不补这一下的现场：「近实时 → 关闭」会被算成"近实时还开着 ⇒ 挂 5 分钟兜底"
+      //    ⇒ 用户选了「关闭」，机器却每 5 分钟自动同步一次（正好是这一轮在修的那类不一致）。
+      broadcastAutoSyncChanged();
+    });
+  };
   const [status, setStatus] = useState("");
+  // 甲-1 接线第 3 件：**局域网发现的读数**（`lan_status`）。只在**桌面且面板开着**时轮询 ——
+  // 发现层是进程常驻的（`setup` 里就起了），面板关着就没人看这一行（少一次 IPC/秒）。
+  // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
+  const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
+  useEffect(() => {
+    if (!open || !isDesktopPlatform()) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const st = await api.lanStatus(activeId);
+        if (alive) setLanStatus(st);
+      } catch {
+        // 读不到（命令没注册 / 老构建）⇒ 这一行**不显示**，别把它装成"没有发现到对端"。
+        if (alive) setLanStatus(null);
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [open, activeId]);
+  // ⚠️ 只有**当前空间这条档案绑全了**才显示那一行：`lan_status` 没绑定时会回落"第一条绑定"
+  //（那是给无参调用兜底的），在面板上显示**别的空间**的地址是错的。
+  const activeRow = rows.find((r) => r.ws_id === activeId);
+  const lanRowBound = !!activeRow && !!activeRow.server_url.trim() && !!activeRow.space_id.trim();
+  // 丙-③-b-2b-2：**网格（对等交换）**那一档的设置面。
+  // ⚠️ 三个输入各自独立，保存时按命令面的口径给值（`""` ＝ 清除那一项、`null` ＝ 不动）——
+  //   这里**不再自己解释一遍**（两处各解释一次，迟早会有一处说错）。
+  // ⚠️ 它的门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要求这个空间有 `space_id`
+  //   （"只开网格、不绑服务端"正是这一档要支持的配置）。
+  const [meshBind, setMeshBind] = useState("");
+  const [meshToken, setMeshToken] = useState("");
+  const [meshBusy, setMeshBusy] = useState(false);
+  const meshSavedBind = lanStatus?.mesh.bind ?? "";
+  // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
+  useEffect(() => {
+    setMeshBind(meshSavedBind);
+  }, [meshSavedBind]);
+  const saveMeshBind = async () => {
+    setMeshBusy(true);
+    try {
+      const st = await api.meshSetConfig(activeId, meshBind.trim(), null);
+      setStatus(st.note);
+    } catch (e) {
+      setStatus(`网格设置没保存：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+  const saveMeshToken = async () => {
+    if (!meshToken.trim()) return;
+    setMeshBusy(true);
+    try {
+      const st = await api.meshSetConfig(activeId, null, meshToken.trim());
+      setMeshToken("");
+      setStatus(st.note);
+    } catch (e) {
+      setStatus(`网格口令没保存：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+  const disableMesh = async () => {
+    setMeshBusy(true);
+    try {
+      // `""` ＝ **清除监听地址** ⇒ 网格关掉、窗口立刻松口（与命令面同一套口径）。
+      const st = await api.meshSetConfig(activeId, "", null);
+      setStatus(st.note);
+    } catch (e) {
+      setStatus(`网格没关掉：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+  // ⚠️ 这里原来还有一个 `meshRoundNow()`（配一个「立刻交换一轮」按钮）。2026-09-26 **口径收敛**：
+  //    交换并进「同步」（见 `syncOne` 里那一段）⇒ 函数与按钮**一起删掉**，不留在那儿当"看起来
+  //    还该有个按钮"的线索（本仓对死代码的纪律在 TS 这半边同样适用）。
   const [syncing, setSyncing] = useState(false);
   // C1 预算刹车：设备级设置（null = 还没读到，此时不渲染这一块）。
   const [budget, setBudget] = useState<SyncBudget | null>(null);
@@ -111,7 +236,17 @@ export function SyncPanel() {
   // 而不是拿 UA / 平台名去近似（`network_type` 在非 Android 上回 `"n/a"` = 不适用）。
   const [netKind, setNetKind] = useState<string>("n/a");
   // 实时同步状态（正在推送/拉取/附件进度），由同步引擎在 web.ts 上报。
-  const syncStatus = useSyncStatus();
+  // ⚠️ 与上面那个**本面板自己的** `syncing`（手动同步在跑）不是一个东西，故叫 liveSyncing。
+  // 收窄到具体字段：整店订阅会让"任何一次 setProgress"都重渲染整个面板（1171 行，
+  // 含冲突列表与历史），而同步期间每传一件附件就写一次进度。字段级订阅与
+  // `PageTree` 里 label/x/y/kind 的写法一致（本仓既有风格，不引入 useShallow）。
+  const liveSyncing = useSyncStatus((s) => s.syncing);
+  const syncPhase = useSyncStatus((s) => s.phase);
+  const syncMessage = useSyncStatus((s) => s.message);
+  const attCurrent = useSyncStatus((s) => s.attCurrent);
+  const attTotal = useSyncStatus((s) => s.attTotal);
+  const attName = useSyncStatus((s) => s.attName);
+  const syncDurationMs = useSyncStatus((s) => s.durationMs);
   const [loggingIn, setLoggingIn] = useState(false);
   const [history, setHistory] = useState<{ ws_id: string; at: number; pushed: number; pulled: number; ok: boolean; message: string; items: { entity: string; entity_id: string; op: string; dir: string; title: string }[] }[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -123,15 +258,17 @@ export function SyncPanel() {
   const [pending, setPending] = useState<{ page_id: string; title: string; seq: number }[]>([]);
   const [pendingTotal, setPendingTotal] = useState(0);
 
-  /** 读待取回清单（面板打开 / 每次同步之后）。失败不打扰用户：它只是提示面。 */
+  /** 读待取回清单（面板打开 / 每次同步 / 每次裁决之后）。失败不打扰用户：它只是提示面。 */
   const loadPendingRemote = async () => {
     try {
       const q = await api.listPendingRemotePages(20);
       setPending((q?.pages ?? []) as { page_id: string; title: string; seq: number }[]);
-      setPendingTotal(Number(q?.total ?? 0));
+      // ★ 角标那个数字**公布给单例**（`lib/pendingRemoteBadge.ts`）：它与这里的清单读的是
+      //   **同一张表**，公布进去就省掉一次读，而且两处永远是同一个数（不会"角标说有、清单没有"）。
+      publishPendingRemoteTotal(Number(q?.total ?? 0));
     } catch {
       setPending([]);
-      setPendingTotal(0);
+      // ⚠️ 读失败**不公布 0**：那是"清空角标"，比"暂时不更新"更容易骗人（单例自己也守着这条）。
     }
   };
 
@@ -153,12 +290,17 @@ export function SyncPanel() {
       setStatus(`裁决失败：${e}`);
     }
     await loadPendingRemote();
-    await loadPages();
+    await useNotes.getState().loadPages();
   };
 
-  /** 横幅上那两颗按钮：对**当前这批冲突页**批量按同一口径收场。 */
-  const resolveAll = async (choice: "take_remote" | "keep_local") => {
-    const ids = Array.from(new Set(conflicts.map((c) => c.entity_id)));
+  /**
+   * 横幅上那两颗按钮：对**这一批冲突页**批量按同一口径收场。
+   *
+   * ★ 丙-⑤（2026-09-26）：现在**只对"确实存下了远端那一版"的页**生效（`ids` 由调用方给）。
+   * 另一类页（戳判"用远端"、本机那一版已被盖掉）**没有**待取回的版本可裁决 —— 对它们调
+   * `resolvePendingRemote` 只会报错，而那正是"按钮看着能点、其实什么都没发生"的老毛病。
+   */
+  const resolveAll = async (ids: string[], choice: "take_remote" | "keep_local") => {
     let done = 0;
     for (const id of ids) {
       try {
@@ -175,8 +317,13 @@ export function SyncPanel() {
         : `已采用服务端版本（${done} 页；本地未推送的改动已真的放弃）`,
     );
     await loadPendingRemote();
-    await loadPages();
+    await useNotes.getState().loadPages();
   };
+
+  /** 这批冲突页里，哪些**有**待取回的远端版本（＝ `resolveAll` 真能收场的那一类）。 */
+  const conflictsWithStash = conflicts.filter((c) => pending.some((p) => p.page_id === c.entity_id));
+  /** 另一类：戳判"用远端"已生效 ⇒ 本机那一版**进了版本历史**（不是"待取回"），没有可裁决的对象。 */
+  const conflictsTakenRemote = conflicts.filter((c) => !pending.some((p) => p.page_id === c.entity_id));
 
   const refresh = async () => {
     try {
@@ -365,13 +512,41 @@ export function SyncPanel() {
           setConflicts(c.map((x) => ({ ws_id: r.ws_id, entity_id: x.entity_id, title: x.title })));
         }
       }
-      await loadPages();
+      await useNotes.getState().loadPages();
       await loadHistory();
       await loadPendingRemote();
     } catch (e) {
       syncErr = String(e);
       setStatus(`「${r.name}」同步失败：${e}`);
     } finally {
+      // ★ 丙-③-b（2026-09-26 口径收敛）：**网格那一档并进「同步」**——同一个按钮，服务端那条走完
+      //   再对这个空间跑一轮对等交换（原来它有一个单独的「立刻交换一轮」按钮：一个意图两个动作）。
+      //
+      // ⚠️ ⚠️ **必须放在 `finally` 里，不许放在 `try` 里** —— 真机上实测踩过：服务端那条**抛错**时
+      //   （现场是"会话已失效，请重新登录"），`try` 里剩下的语句**一行都不会跑** ⇒ 网格这一档被
+      //   连坐跳过，而它**根本不依赖服务端**（网格是客户端之间直连）。与 `round` 里那条
+      //   "一只对端拉不动不连坐"是同一条纪律。
+      // ⚠️ 只在**这一行就是面板上显示的那行**、且网格真开着时才跑：`lanStatus.mesh` 是**当前那条档案**
+      //   的读数（面板只为它显示网格那一块），拿别行的 ws_id 去跑会与读数对不上。
+      // ⚠️ "没配网格 ⇒ 一个字节都不动"由 Rust 侧（`mesh_sync_now` 早退）保证，这里**不重判一遍**。
+      if (lanStatus?.mesh.enabled && r.ws_id === activeId) {
+        try {
+          const rep = await api.meshSyncNow(r.ws_id);
+          // ⚠️ `rep.note` **自带**「网格：」前缀（Rust 拼好的人话）—— 这里别再写一遍，
+          //    否则真机上会看到 `网格：网格：拉了 1 台对端`（第一版就是这么出去的）。
+          // ★ 丙-⑤（2026-09-26）：`rep.note` 里现在还会带上"**你本机那一版让给了远端**
+          //    （已存进版本历史）"与"**有几页等你裁决**"—— 同样由 Rust 拼，这里**不重判**。
+          setStatus((prev) => `${prev}${prev ? "；" : ""}${rep.note}`);
+          // ★★ 丙-⑤：**网格这一轮也换了数据**，所以那两份清单必须跟着刷新。
+          //   它们是在上面 `try` 里读的 —— 也就是**网格开跑之前**。不补这一下的话，用户刚被
+          //   告知"有 2 页等你裁决"，而下面「待取回的远端版本」那一段**还是空的**（页面列表
+          //   同样停在交换前）：通知与现场对不上，用户只会以为那两页丢了。
+          await useNotes.getState().loadPages();
+          await loadPendingRemote();
+        } catch (e) {
+          setStatus((prev) => `${prev}${prev ? "；" : ""}网格交换失败：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       setSyncing(false);
       useSyncStatus.getState().end(syncErr);
     }
@@ -638,12 +813,38 @@ export function SyncPanel() {
 
   const initial = (s: string) => (s.trim()[0] ?? "?").toUpperCase();
 
+  /**
+   * ★★ 丙-⑤（2026-09-26）：**侧栏那颗「同步」上的数字角标** —— "有几页等你裁决"。
+   *
+   * 为什么值得单开一条读法：后台的自动同步（近实时/按间隔那两档）**不弹任何话**（那条路是
+   * 静默设计，每轮都弹就是噪声），而"有页等你裁决"恰好是**要用户动手**的事 ⇒ 它得有一个
+   * **持久**的去处告诉他一共有几件、点哪儿去处理。
+   * ⚠️ 读的是**库里那张队列表**（`listPendingRemotePages` 的 `total`），**不是**某一轮同步的临时
+   *    读数 —— 后者转瞬即逝，而真机现场刚抓到过"读数说有、清单里没有"那类不一致。
+   * ⚠️ **轮询本身在 `lib/pendingRemoteBadge.ts` 里做成单例**：手机上这个组件同时挂了**两个**实例
+   *    （侧栏那颗 ＋ 底部槽位那颗），第一版是每个实例各起一个 30 秒定时器 ⇒ 同一张表每 30 秒
+   *    被问两次。两处显示同一个数字 ⇒ **只有一份真相、一个轮询**（那边有判据钉着）。
+   * ⚠️ 它常驻挂载（就是侧栏那颗按钮），所以弹层开没开都在对账。
+   */
+  useEffect(() => subscribePendingRemoteTotal(setPendingTotal), []);
+
   return (
     <div className="sync-panel">
-      <button ref={triggerRef} className="btn-sync" onClick={toggle} title="同步设置">
+      <button
+        ref={triggerRef}
+        className="btn-sync"
+        onClick={toggle}
+        title={pendingTotal > 0 ? `同步设置（有 ${pendingTotal} 页等你裁决）` : "同步设置"}
+      >
         <CloudSyncIcon width={14} height={14} />
         <span>同步</span>
-        {syncStatus.syncing && <span className="sync-pulse" aria-hidden />}
+        {/* ★ 角标：只报"要你动手"的那一件事（待取回的远端版本），不报"你输了但没丢" */}
+        {pendingTotal > 0 && (
+          <span className="sync-badge" aria-label={`有 ${pendingTotal} 页等你裁决`}>
+            {pendingTotal}
+          </span>
+        )}
+        {liveSyncing && <span className="sync-pulse" aria-hidden />}
       </button>
       {open && (
         <div
@@ -671,23 +872,50 @@ export function SyncPanel() {
           {conflicts.length > 0 && (
             <div className="sync-conflict-banner" role="alert">
               <div className="sync-conflict-title">⚠️ 有页面被多人同时修改</div>
-              <ul className="sync-conflict-list">
-                {conflicts.map((c) => (
-                  <li key={c.entity_id}>《{c.title}》</li>
-                ))}
-              </ul>
-              <div className="sync-conflict-actions">
-                <button onClick={() => void resolveAll("keep_local")} className="btn-sync-conflict keep">
-                  保留本地
-                </button>
-                <button onClick={() => void resolveAll("take_remote")} className="btn-sync-conflict adopt">
-                  采用服务端
-                </button>
-              </div>
-              <div className="sync-conflict-hint">
-                提示：你在这些页有未推送的改动，另一台设备改了同一页。**远端那一版已经存在本地**（不会因为游标走过去而丢）：
-                选「保留本地」= 你这份优先（下次同步推上去）；选「采用服务端」= 真的放弃本地未推送的改动。
-              </div>
+              {/* ★ 丙-⑤（2026-09-26）：**分两类说**，因为两类页能做的事**不一样**：
+                  · 有「待取回的远端版本」的（页级保留了本地）⇒ 两颗按钮**真的**动数据；
+                  · 戳判"用远端"已生效的 ⇒ 本机那一版**已经进了版本历史**（`sync.rs` 在覆盖前
+                    先存了一份），**没有**待取回的版本可裁决 ⇒ 说清去哪找回，而不是摆两颗假按钮。 */}
+              {conflictsWithStash.length > 0 && (
+                <>
+                  <ul className="sync-conflict-list">
+                    {conflictsWithStash.map((c) => (
+                      <li key={c.entity_id}>《{c.title}》</li>
+                    ))}
+                  </ul>
+                  <div className="sync-conflict-actions">
+                    <button
+                      onClick={() => void resolveAll(conflictsWithStash.map((c) => c.entity_id), "keep_local")}
+                      className="btn-sync-conflict keep"
+                    >
+                      保留本地
+                    </button>
+                    <button
+                      onClick={() => void resolveAll(conflictsWithStash.map((c) => c.entity_id), "take_remote")}
+                      className="btn-sync-conflict adopt"
+                    >
+                      采用服务端
+                    </button>
+                  </div>
+                  <div className="sync-conflict-hint">
+                    提示：你在这些页有未推送的改动，另一台设备改了同一页。**远端那一版已经存在本地**（不会因为游标走过去而丢）：
+                    选「保留本地」= 你这份优先（下次同步推上去）；选「采用服务端」= 真的放弃本地未推送的改动。
+                  </div>
+                </>
+              )}
+              {conflictsTakenRemote.length > 0 && (
+                <>
+                  <ul className="sync-conflict-list">
+                    {conflictsTakenRemote.map((c) => (
+                      <li key={c.entity_id}>《{c.title}》</li>
+                    ))}
+                  </ul>
+                  <div className="sync-conflict-hint">
+                    这些页**已经按判序采用了远端**（对端那枚戳更晚）：你本地未推送的那一版在覆盖前
+                    **已存进版本历史** —— 在编辑器工具栏点「版本历史」就能找到它、恢复它。
+                  </div>
+                </>
+              )}
             </div>
           )}
           {pending.length > 0 && (
@@ -710,6 +938,11 @@ export function SyncPanel() {
               </div>
             </div>
           )}
+          {/* 隐私边界 ②b（2026-09-24）：**这个空间敢不敢绑同步**（分类 ＋ 加密 ＋ 闸门裁决）。
+              ⚠️ 放在这一屏是因为闸门拦的正是「绑同步」这个动作（`sync::sync_bind_gate`）——
+              读数与动作同屏，用户不用去别处找「为什么绑不上」。
+              平台判定在组件内部（Web 上只渲染解释句、一次 api 都不调）。 */}
+          <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
             {rows.map((r) => {
@@ -979,43 +1212,77 @@ export function SyncPanel() {
                 </section>
               );
             })}
-          </div>
 
-          <footer className="sync-foot">
+          {/* ⚠️ 2026-09-28（D1）：**设置类控件搬出吸底条** ——
+             §2 第 2 条 `INV-UI-sync-panel-persistent-chrome` 的口径是：
+             「常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里**不许有需要阅读与填写的表单**
+               —— 读数行可以有，设置控件不行」。
+             实测（改前）：`.sync-foot` 里【可见】表单 = **Web 4 ／ app 手机 3 ／ app 桌面 3**，
+             逐个查是：① `.sync-auto` 的「同步方式」select；②③ `.sync-mesh` 的「监听地址」/「口令」两个 input；
+             ④ web 上还有 `.sync-budget-row` 的三个 select。**三个对象上都是红的。**
+             ⇒ 把这三块搬进【滚动区】（底下仍在 footer 的都是**读数行**与进度/历史：
+               `.sync-lan` 实测 0 个表单控件，`.sync-net` 的 checkbox 是 `display:none`）。
+             ⚠️ 保留在 footer 的 `.sync-lan` 是【读数行】，按上面那条口径**允许**留在常驻区。
+             ⚠️ 本笔只搬位置，**一个字都不改**（文案是另一条不变式的事）。 */}
             <div className="sync-auto">
-              <span className="sync-auto-label">自动同步</span>
+              <span className="sync-auto-label">同步方式</span>
               <select
                 className="sync-input"
-                value={String(autoMs)}
-                onChange={(e) => setAuto(Number(e.target.value))}
+                value={syncMode}
+                onChange={(e) => applySyncMode(e.target.value as SyncMode)}
               >
-                <option value="0">关闭</option>
-                <option value="10000">每 10 秒</option>
-                <option value="30000">每 30 秒</option>
-                <option value="60000">每 1 分钟</option>
-                <option value="300000">每 5 分钟</option>
+                <option value="off">关闭</option>
+                <option value="interval">按间隔（每 30 秒）</option>
+                {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
+                    `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
+                {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
               </select>
             </div>
-
-            {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
-                与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
-            {netKind !== "n/a" && (
-              <label className="sync-att sync-net">
-                <input
-                  type="checkbox"
-                  checked={budget?.wifi_only ?? true}
-                  disabled={budgetBusy}
-                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
-                />
+            <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
+            {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
+              <div className="sync-att sync-mesh">
                 <span className="sync-att-text">
-                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
+                  <span className="sync-att-name">网格（设备之间直接同步）</span>
+                  {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
+                      已经在上面那一行"局域网直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
+                      （监听地址 / 口令）与开关。 */}
                   <span className="sync-hint">
-                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                    {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
                   </span>
+                  {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
+                  <span className="sync-hint">开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。</span>
                 </span>
-              </label>
+                <div className="sync-field">
+                  <input
+                    className="sync-input"
+                    placeholder="监听地址，如 192.168.1.5:8788"
+                    value={meshBind}
+                    disabled={meshBusy}
+                    onChange={(e) => setMeshBind(e.target.value)}
+                  />
+                  <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
+                    保存地址
+                  </button>
+                </div>
+                <div className="sync-field">
+                  <input
+                    className="sync-input"
+                    placeholder="口令（留空 ＝ 不动已有口令）"
+                    value={meshToken}
+                    disabled={meshBusy}
+                    onChange={(e) => setMeshToken(e.target.value)}
+                  />
+                  <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
+                    设口令
+                  </button>
+                </div>
+                <div className="sync-field">
+                  <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
+                    关掉网格
+                  </button>
+                </div>
+              </div>
             )}
-
             {/* C1 预算刹车：磁盘余量下限是**硬性**的（没有"关闭"选项）。 */}
             {budget && (
               <details className="sync-advanced sync-budget">
@@ -1069,22 +1336,74 @@ export function SyncPanel() {
                 </p>
               </details>
             )}
-            {syncStatus.syncing ? (
-              <div className={`sync-status is-progress${syncStatus.phase === "error" ? " is-err" : ""}`}>
+          </div>
+
+          <footer className="sync-foot">
+
+            {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）＋ 丙-③-b 的**网格读数**。
+                口径：**「没走成直连」必须是可断言的结果，不是静默降级** —— 所以这里显示的是
+                Rust 侧 `lan::status_line` 的**原文**（"直连（局域网）…" ／ "公网 … ｜ 本网段发现 N 台"
+                ／ "…其中没有服务这个空间的中枢" ／ "尚未绑定"），界面**不**自己按地址形状再判一次档。
+                ★ 2026-09-26 口径收敛：**地址只说一处** —— 网格那一块的"窗口在哪、别人拉不拉得到"
+                （`lanStatus.mesh.note`）也并到这一行里。两处各说一遍地址，看起来就像两个互相矛盾的读数。
+                ⚠️ 门槛同时收 `mesh.enabled`：**"只开网格、不绑服务端"** 是丙要支持的配置，
+                那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
+                只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
+            {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
+              <div className="sync-att sync-lan" title="同一网段里自动找到这个空间的中枢时，同步就走局域网地址">
+                <span className="sync-att-text">
+                  {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
+                  <span className="sync-att-name">
+                    {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
+                  </span>
+                  <span className="sync-hint">
+                    {[lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ ")}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* 丙-③-b-2b-2：**网格（对等交换）** —— "不装服务端也能同步"在这里有一个可点的入口。
+                ⚠️ 门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要这个空间有 `space_id`
+                （"只开网格、不绑服务端"正是这一档要支持的配置）。
+                ⚠️ 读数那句人话来自 Rust（`mesh::config_state`）—— 界面**不**自己判断
+                "别人拉不拉得到"（那要按地址形状判档，而档位只许由 Rust 出，与上面那条同一纪律）。 */}
+
+            {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
+                与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
+            {netKind !== "n/a" && (
+              <label className="sync-att sync-net">
+                <input
+                  type="checkbox"
+                  checked={budget?.wifi_only ?? true}
+                  disabled={budgetBusy}
+                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
+                />
+                <span className="sync-att-text">
+                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
+                  <span className="sync-hint">
+                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {syncing ? (
+              <div className={`sync-status is-progress${syncPhase === "error" ? " is-err" : ""}`}>
                 <div className="sync-progress-row">
                   <span className="sync-spin" aria-hidden />
-                  <span className="sync-status-text">{syncStatus.message || "正在同步…"}</span>
-                  {syncStatus.attTotal > 0 && (
-                    <span className="sync-progress-count" title={syncStatus.attName || ""}>
-                      {syncStatus.attCurrent}/{syncStatus.attTotal}
+                  <span className="sync-status-text">{syncMessage || "正在同步…"}</span>
+                  {attTotal > 0 && (
+                    <span className="sync-progress-count" title={attName || ""}>
+                      {attCurrent}/{attTotal}
                     </span>
                   )}
                 </div>
-                {syncStatus.phase === "attachments" && syncStatus.attTotal > 0 && (
+                {syncPhase === "attachments" && attTotal > 0 && (
                   <div className="sync-progressbar">
                     <div
                       className="sync-progressbar-fill"
-                      style={{ width: `${(syncStatus.attCurrent / syncStatus.attTotal) * 100}%` }}
+                      style={{ width: `${(attCurrent / attTotal) * 100}%` }}
                     />
                   </div>
                 )}
@@ -1092,8 +1411,8 @@ export function SyncPanel() {
             ) : status ? (
               <div className={`sync-status is-${statusKind(status)}`}>
                 {status}
-                {syncStatus.durationMs > 0 && (
-                  <span className="sync-duration">耗时 {fmtDuration(syncStatus.durationMs)}</span>
+                {syncDurationMs > 0 && (
+                  <span className="sync-duration">耗时 {fmtDuration(syncDurationMs)}</span>
                 )}
               </div>
             ) : null}

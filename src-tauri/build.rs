@@ -61,7 +61,10 @@ fn warn_if_patched_source_without_sm_library_feature() {
 mod gm_patch_probe {
     include!("src/gm_patch_probe.rs");
 }
-use gm_patch_probe::{find_marker, lock_version, pick_source_dir, registry_src_roots, SourcePick};
+use gm_patch_probe::{
+    cargo_home_is_isolated, find_marker, is_under_gm_build, isolation_source_dir, lock_version,
+    pick_source_dir, registry_src_roots, SourcePick,
+};
 
 /// 补丁文件名 —— 与 `scripts/lib/sm-library-patch.mjs` 的 `PATCH_BASENAME` 是同一个对象
 /// （那边是 JS 侧唯一实现，这里是 Rust 侧唯一出现；改了名字两边一起改，`patches/README.md` 有登记）。
@@ -267,6 +270,40 @@ fn resolve_sqlcipher_source() -> Option<(std::path::PathBuf, String, &'static st
 
     // ② 与依赖构建产物交叉核对（有产物时）
     let from_output = include_hint_from_build_output(manifest);
+
+    // ②b ★ **隔离模式**（2026-09-23「消灭补丁残留」）：补丁打在 `<repo>/.gm-build/…` 的私有副本上，
+    //     cargo 由私有 CARGO_HOME 指过去。此时"将要编译的那份源码"是**副本**，不是 registry 那份 ——
+    //     **按证据选**（顺序即可信度）：
+    //       ⒈ 产物里的 `cargo:include=` 指向 `.gm-build/`（那是 cargo 自己的自我陈述，最硬）；
+    //       ⒉ 进程环境里的 `CARGO_HOME` 指向 `.gm-build/`（调用方按 `--print-env` 导出的）。
+    //     两者都不成立 ⇒ 走下面的老路（registry），**并且**会因"registry 里没有标记"当场失败 —— 那是对的：
+    //     忘了导出 CARGO_HOME 就等于"编了一份没有国密的库"，绝不能静默放过。
+    let repo_root = manifest.parent().unwrap_or(manifest);
+    let isolation = isolation_source_dir(repo_root, wanted.as_deref());
+    if let Some((dir, version)) = &isolation {
+        let output_says_copy = from_output
+            .as_ref()
+            .map(|(d, _)| is_under_gm_build(d, repo_root))
+            .unwrap_or(false);
+        let env_says_copy = cargo_home_is_isolated(&cargo_home, repo_root);
+        if output_says_copy || env_says_copy {
+            if let Some((_, hint_ver)) = &from_output {
+                if hint_ver != version {
+                    panic!(
+                        "`sm-library`：私有副本是 {version}，但依赖的构建产物说 {hint_ver} ⇒ 不挑一个继续。\n\
+                         修法：`node scripts/sm-library-build.mjs --prepare` 重新做隔离，再 `cargo clean -p libsqlite3-sys`。"
+                    );
+                }
+            }
+            return Some((dir.clone(), version.clone(), "isolation"));
+        }
+    } else if cargo_home_is_isolated(&cargo_home, repo_root) {
+        panic!(
+            "`sm-library`：`CARGO_HOME` 指向私有隔离目录，但**私有副本不存在**（<repo>/.gm-build/libsqlite3-sys-*/）。\n\
+             修法：先 `node scripts/sm-library-build.mjs --openssl-dir <前缀> --prepare`（它会建隔离并打好补丁），\n\
+             然后按它打印的 `CARGO_HOME=` 走构建（CI 里用 `--print-env` 写进 $GITHUB_ENV）。"
+        );
+    }
     if let SourcePick::Found { dir, version } = &pick {
         if let Some((hint_dir, hint_ver)) = &from_output {
             if hint_ver != version {
@@ -378,26 +415,7 @@ fn sqlcipher_source_dir_deprecated_mtime() -> Option<std::path::PathBuf> {
     best.map(|(_, d)| d)
 }
 
-/// 在源码目录里找 SM3 标签标记（返回命中的文件名）。
-///
-/// ⚠️ 实现已搬到 `src/gm_patch_probe.rs`（`include!` 进来的那份），这样**判据能直接驱动它**。
-#[allow(dead_code)]
-fn find_gm_marker_deprecated(dir: &std::path::Path) -> Option<String> {
-    let entries = std::fs::read_dir(dir).ok()?;
-    for e in entries.flatten() {
-        let p = e.path();
-        let is_c = p
-            .extension()
-            .map(|x| x == "c" || x == "h")
-            .unwrap_or(false);
-        if !is_c {
-            continue;
-        }
-        if let Ok(text) = std::fs::read_to_string(&p) {
-            if text.contains("SQLCIPHER_HMAC_SM3_LABEL") {
-                return Some(p.file_name().unwrap_or_default().to_string_lossy().to_string());
-            }
-        }
-    }
-    None
-}
+// ★ 2026-09-25 清理：这里原本还留着一份 `find_gm_marker_deprecated`（实现早搬到 `src/gm_patch_probe.rs`
+// 的 `include!` 那份，为的是**判据能直接驱动它**），靠一条无名无期的 `#[allow(dead_code)]` 挂着。
+// 全仓无人引用（判据驱动的是 `gm_patch_probe::find_marker`）⇒ 连同豁免一起删除，而不是补一句收据。
+// 需要它的话，历史里有；而"搬走了却留副本"正是让两侧漂移的经典形状。

@@ -121,6 +121,58 @@ pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) 
 }
 
 // =====================================================================================
+// 「投影写回」（冲刺 §13.3 第 1 条，2026-09-23 第 49 轮）：**状态 ⇒ 落盘列**的那一步
+//
+// 背景：桌面的"打开页面"那条路（读 `page_crdt` ＋ 界面侧合并）原先**只写状态**，
+// 而 `pages` 那一列（反链、插件、AI、导出读的**投影**）要等**下一次保存**才跟上 ⇒
+// 在那之前这一台"看不到刚并进来的字"。Web 侧当场合并那条路**会**写这一列 ⇒ 这里补的是
+// "桌面少走的那一步"，语义与 `writeContentProjection` 逐字一致。
+// =====================================================================================
+
+/// 把**状态重新序列化**出来的那一份写回落盘列（**只动那一列 ＋ 派生**）。返回**是否真的写了**。
+///
+/// 三条纪律（与 `mergeRemotePageState` / TS `writeContentProjection` 同一口径）：
+///   ① **不是保存**：不动 `dirty`、不盖章、不快照（`page_versions` 一条都不加）——
+///      它是**采用/合并**的收尾，不是用户编辑；
+///   ② **没变就不写**：内容与库里那份相同 ⇒ **一次写库都不做**（否则是假账，还会白重建一次块图）；
+///   ③ **数据库页排除**：那类页的内容 ＝ 列名 ＋ 行 ＋ 规则（在别的表/视图侧）⇒ 拿它当"这一页的内容"
+///      写回是**有损**的（与 `mark_text_stale` 同一条理由，实测撞过）。
+///
+/// ⚠️ 派生分两半（与 Web 侧同一分工）：**块图/反链当场重建**（桌面是**物化表**，Web 是**按需扫列**
+/// ⇒ 这一步只有桌面需要）；**正文文本那一半仍然只打「待重建」标记** —— 正文要编辑器语义，
+/// 补算器在打开页面时算（`refresh_page_text_if_stale`）。⇒ "依赖正文的引用（`[[标题]]`）"仍可能
+/// 滞后到补算器跑完；**块级引用（来自 JSON）当场就对**。
+pub fn write_page_projection(c: &Connection, page_id: &str, json: &str) -> Result<bool, String> {
+    let row: Option<(String, String, String)> = c
+        .query_row(
+            "SELECT kind, content_json, content_text FROM pages WHERE id = ?1",
+            params![page_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((kind, cur_json, cur_text)) = row else {
+        return Ok(false); // 页面不存在 ⇒ 什么都不做（不是错误）
+    };
+    if kind == "database" {
+        return Ok(false); // ③
+    }
+    if cur_json == json {
+        return Ok(false); // ②
+    }
+    c.execute(
+        "UPDATE pages SET content_json = ?1 WHERE id = ?2",
+        params![json, page_id],
+    )
+    .map_err(|e| e.to_string())?;
+    // 块图/反链当场重建。用的是**库里那一列**的正文（可能仍是旧的）—— 与 `resolve_page_conflict`
+    // 同一已知边界（那段注释写了"正文这一次不重算"）：正文相关的引用等补算器，块级引用当场就对。
+    crate::blocks::rebuild_block_graph(c, page_id, json, &cur_text)?;
+    mark_text_stale(c, page_id)?;
+    Ok(true)
+}
+
+// =====================================================================================
 // 「正文待重建」标记（B1，2026-09-22）：**本地派生索引的工作队列**
 //
 // 为什么需要它：合并产物与冲突裁决都是"内容拼出来的"，而正文列与 FTS 仍是页级胜方那一份
@@ -136,6 +188,8 @@ pub fn refresh_page_text_if_stale(c: &Connection, page_id: &str, derived: &str) 
 // =====================================================================================
 
 /// 这一页的正文列是不是"待重建"；页面不存在 ⇒ `Ok(None)`。
+/// ⚠️ **只服务判据**（生产路径今天不读它）：加回生产调用方时编译器会立刻说话。
+#[cfg(test)]
 pub fn text_stale(c: &Connection, page_id: &str) -> Result<Option<bool>, String> {
     c.query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = ?1", params![page_id], |row| {
         Ok(row.get::<_, i64>(0)? != 0)
@@ -341,6 +395,36 @@ pub fn merge(local: Option<LocalState>, remote_seq: i64) -> MergeDecision {
     }
 }
 
+/// ★ 丙-③（2026-09-25）：**页级胜负改由 HLC 戳说了算**时的覆盖。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StampWins {
+    /// 远端那枚戳更大 ⇒ **采用远端**（页级；块级怎么合仍然照旧）。
+    Remote,
+    /// 本地那枚戳更大（或"同一枚戳重放"）⇒ **保留本地**。
+    Local,
+}
+
+/// ★ **合并点**（带戳的那一版）—— 丙-③ 在**唯一合并点**上的注入。
+///
+/// 口径两条：
+/// 1. **戳只决定页级谁赢**；块级仍然走 `merge_blocks` / `apply_remote_page`
+///    （两侧改**不同块**时两边都留 —— 丙 不改块级语义）。
+/// 2. `stamp == None` ⇒ 下面那三条**逐字**是今天的规则（"没戳就完全不碰"）。
+///    ⚠️ 只有**两边都带戳**时调用方才会传 `Some` —— "缺一边就走今天那条路"这条判定写在
+///    `hlc::verdict` 里（一处），**不在这里重复第二遍**。
+pub fn merge_with_stamp(
+    local: Option<LocalState>,
+    remote_seq: i64,
+    stamp: Option<StampWins>,
+) -> MergeDecision {
+    match stamp {
+        Some(StampWins::Remote) => MergeDecision::TakeRemote,
+        Some(StampWins::Local) => MergeDecision::KeepLocal,
+        // 没戳 ⇒ **原样**走今天那条路（连代码都是同一处：`merge`）
+        None => merge(local, remote_seq),
+    }
+}
+
 // =====================================================================================
 // 阶段 1 · **块级 LWW**（第一切片：纯函数）
 //
@@ -386,6 +470,8 @@ pub struct BlockSnapshot {
 }
 
 impl BlockSnapshot {
+    /// ⚠️ **只服务判据**（块表在别的路径上是直接构造的）：接上生产调用方时删掉这一行。
+    #[cfg(test)]
     pub fn new(block_id: &str, rev: Option<i64>, json: &str) -> Self {
         BlockSnapshot {
             block_id: block_id.to_string(),
@@ -414,6 +500,8 @@ pub enum BlockChoice {
 
 impl BlockChoice {
     /// 这一项是不是"要用户裁决" —— 调用方用它决定要不要提示。
+    /// ⚠️ **只服务判据**：生产者侧的"这次留下了几处冲突"由 `apply_remote_page` 直接回报。
+    #[cfg(test)]
     pub fn is_conflict(&self) -> bool {
         matches!(self, BlockChoice::Conflict(_))
     }
@@ -567,6 +655,10 @@ pub fn merge_blocks(
 }
 
 /// 阶段 1 的**合成入口**：先页级（`dirty` 优先本地），再逐块。
+///
+/// ⚠️ **只服务判据**：页级＋块级的合成入口，生产路径今天走的是 `merge_remote_content`。
+/// 接线那一片（块级 LWW 接上 apply）删掉这一行。
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageMerge {
     /// 页级判定说留本地（`dirty != 0` 或本地 `seq` 更靠后）⇒ **整页都不动**。
@@ -577,6 +669,9 @@ pub enum PageMerge {
 }
 
 /// ★ 阶段 1 合并的**唯一调用顺序**（免得调用方各写一遍、写岔）。
+/// ⚠️ **只服务判据**：`merge` 的"页级 ＋ 块级"合成入口（`PageMerge` 那条路）。
+/// 生产路径今天只用 `merge_remote_content`；接线那一片删掉这一行。
+#[cfg(test)]
 pub fn merge_page_and_blocks(
     local_state: Option<LocalState>,
     remote_seq: i64,
@@ -983,13 +1078,61 @@ pub struct PendingRemoteQueue {
     pub pages: Vec<PendingRemotePage>,
 }
 
+/// 两份正文是不是**同一份文档**：**解析成值再比**（`serde_json` 的 `Map` 按键排序 ⇒
+/// **键序不算数**），数组顺序算数（块的顺序是内容的一部分）。解析不了（坏 JSON）⇒ 退回逐字节比。
+///
+/// ★ 丙-⑤：为什么不能直接比字符串 —— 一份是**载荷原文**、一份是**落库后的形态**，
+/// 序列化形态天然会差一点（键序 / 规范化；`mesh.rs` 那边的 `projection_of` 头注记着同一件事）。
+/// 拿字节比会把"同一份文档"判成不同 ⇒ 假账照样记下来（第一版就是这么写的，一到重放就露馅）。
+fn same_document(a: &str, b: &str) -> bool {
+    match (serde_json::from_str::<serde_json::Value>(a), serde_json::from_str::<serde_json::Value>(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// **本机现在那一版**与这一版远端是不是**同一页**（标题 ＋ 正文；正文按"同一份文档"比）。
+///
+/// ★★ 丙-⑤：**两处必须同一个口径**（所以是**一处实现**）：
+///   · `stash_pending_remote` —— 一样就别记「待取回」（记了是一条用户点了没反应的**假账**）；
+///   · `sync::apply_pulled_changes` 覆盖前那一刀快照 —— 一样就**没什么可保存的**：
+///     本机那一版**并没有输**（真机收尾那轮读出来的：两台内容都是空的时候，读数照样说
+///     "你本机那一版让给了远端" —— 不算撒谎，但一个字的 new information 都没有，
+///     而状态行里这种话多了，用户就会开始**不看它**）。
+/// ⚠️ 装饰字段（图标 / 封面 / 排序）不在比较范围内：判它要把整行读出来，见
+///    `stash_pending_remote` 头注里那段代价说明。
+pub(crate) fn same_page(cur: &DocContent, page: &crate::models::PageDetail) -> bool {
+    cur.title == page.title && same_document(&cur.json, &page.content_json)
+}
+
 /// 把**这一版远端内容**存下来（页级保留本地那一条分支调用）。每页只留最新一条。
+///
+/// ★ 丙-⑤（2026-09-26）：**与本地同一份文档的那一版不记** —— 记了就是一条**假账**：
+/// 用户点「采用服务端」实际是个 no-op（内容本来就一样），而清单永远挂着它，界面还会因此
+/// 报一句"有 N 页等你裁决"。什么时候会走到这一格：**同一批重放**（收侧失败 ⇒ 水位没推 ⇒
+/// 下一轮再拉一遍同一批），而老规矩"同一 `seq`／同一枚戳重放 ⇒ 保留本地"⇒ 每次都往这儿记一条。
+/// ⚠️ 比的是**用户看得见的那两样**（标题 ＋ 正文，正文按"同一份文档"比，见 `same_document`）——
+///    这一层能读的就是 `read()`（正文那两列只许经这一层读，见 `check-doc-content-access`）；
+///    装饰字段（图标 / 封面 / 排序）的差异**不**在这里判：判它要把整行读出来，而多一次全行比较
+///    换来的只是"少一条几乎不会发生的假账"。
+/// ⚠️ 读不出来（该页刚被软删 / 读出错）⇒ **照旧记**（fail-open：宁可多一条痕，不许少一条）。
+///
+/// ★★ **返回值 = 这一版到底记下了没有**（`false` ＝ 与本地同一份文档 ⇒ 一行都没写）。
+/// 为什么必须是返回值而不是只写一行日志：调用方要拿它决定"**要不要告诉用户有页等他裁决**"。
+/// 拿"调用过"当"记下了"，界面就会报一句清单里**根本没有的账** —— 这条在网格那侧当场露馅过
+/// （`mesh` 那条盘外招判据就是这么抓到的：清单是空的、而"另有 N 页等你裁决"照样说得出口）。
+/// 口径与 `sync::UpsertApply` 同一条：**返回值先要说清"发生了什么"，再谈计数**。
 pub fn stash_pending_remote(
     c: &Connection,
     page: &crate::models::PageDetail,
     seq: i64,
     now: i64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
+    if let Ok(Some(cur)) = read(c, &page.id) {
+        if same_page(&cur, page) {
+            return Ok(false);
+        }
+    }
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
     c.execute(
         "INSERT INTO pending_remote_pages (page_id, seq, title, payload, remote_updated_at, stashed_at)
@@ -1003,7 +1146,7 @@ pub fn stash_pending_remote(
         params![page.id, seq, page.title, payload, page.updated_at, now],
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(true)
 }
 
 /// 待取回的远端版本队列（`limit` 由调用方夹住 —— 这是界面列表，不是批量作业）。
@@ -1550,6 +1693,95 @@ mod tests {
             rusqlite::params![id, json],
         )
         .unwrap();
+    }
+
+    /// ★ 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**投影写回** —— 写列 ＋ 当场重建块图 ＋ 打「待重建」，
+    /// 而且**不是保存**（不动 `dirty`、一条版本历史都不加）。
+    #[test]
+    fn write_page_projection_closes_the_projection_lag_without_saving() {
+        let (c, dir) = conflict_conn("projection");
+        let old = jdoc(vec![jblk(Some("b1"), Some(1), "旧的")]);
+        let new = jdoc(vec![
+            jblk(Some("b1"), Some(1), "旧的"),
+            jblk(Some("b2"), Some(1), "刚并进来的"),
+        ]);
+        insert_conflict_page(&c, "p1", &old);
+
+        assert!(
+            write_page_projection(&c, "p1", &new).unwrap(),
+            "内容变了 ⇒ 必须真的写（不然反链/导出要等下一次保存才跟上）"
+        );
+        let (json, stale, dirty): (String, i64, i64) = c
+            .query_row(
+                "SELECT content_json, COALESCE(text_stale, 0), dirty FROM pages WHERE id = 'p1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(json, new, "投影必须**当场**跟上（这就是「少走的那一步」）");
+        assert_eq!(stale, 1, "正文那一半要留痕（补算器在打开页面时按编辑器语义算）");
+        assert_eq!(dirty, 0, "★ **不是保存**：标脏就会把刚收下的对端内容当本机改动推上去");
+        let blocks: i64 = c
+            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blocks, 2, "块图要**当场**重建（桌面是物化表；Web 才是按需扫列）");
+        let versions: i64 = c
+            .query_row("SELECT COUNT(*) FROM page_versions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(versions, 0, "不是保存 ⇒ 一条版本历史都不加");
+
+        // 页面不存在 ⇒ `false`（"无事可做"不是错误 —— 与 `clear_pending_page_states` 同一口径）
+        assert!(!write_page_projection(&c, "nope", &new).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 没变就不写：内容与库里那份相同 ⇒ **一次写库都不做**（连「待重建」都不打、块图也不重建）。
+    #[test]
+    fn write_page_projection_is_a_no_op_when_unchanged() {
+        let (c, dir) = conflict_conn("projection-noop");
+        let same = jdoc(vec![jblk(Some("b1"), Some(1), "一样")]);
+        insert_conflict_page(&c, "p1", &same);
+
+        assert!(
+            !write_page_projection(&c, "p1", &same).unwrap(),
+            "内容没变 ⇒ 无事可做（返回 false，不写库）"
+        );
+        let stale: i64 = c
+            .query_row("SELECT COALESCE(text_stale, 0) FROM pages WHERE id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stale, 0, "没变连「待重建」都不许打（那会让补算器白跑一趟）");
+        let blocks: i64 = c
+            .query_row("SELECT COUNT(*) FROM blocks WHERE page_id = 'p1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blocks, 0, "块图也不许被重建（白干）");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★ 数据库页排除：那类页的内容 ＝ 列名 ＋ 行 ＋ 规则（在别的表/视图侧）⇒ 写回是**有损**的
+    /// （与 `mark_text_stale` 同一条实测撞过的坑）。
+    #[test]
+    fn write_page_projection_skips_database_pages() {
+        let (c, dir) = conflict_conn("projection-db");
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, dirty) \
+             VALUES ('db1', 's1', '数据库页', '{}', '行文本', 'database', 0, 0, NULL, 0)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            !write_page_projection(&c, "db1", &jdoc(vec![jblk(Some("b1"), Some(1), "x")])).unwrap(),
+            "数据库页 ⇒ 不写（`false` ＝ 无事可做）"
+        );
+        let (json, stale): (String, i64) = c
+            .query_row(
+                "SELECT content_json, COALESCE(text_stale, 0) FROM pages WHERE id = 'db1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(json, "{}", "数据库页的内容列不许被投影覆盖");
+        assert_eq!(stale, 0, "也不许打「待重建」—— 补算器会把行文本抹掉");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2168,6 +2400,35 @@ mod tests {
         assert_eq!(pending_remote_queue(&c, 1).unwrap().pages.len(), 1);
         assert_eq!(pending_remote_queue(&c, 0).unwrap().pages.len(), 0, "SQL LIMIT 0 ⇒ 这一批是空的");
         assert_eq!(pending_remote_queue(&c, 0).unwrap().total, 1, "但总数照旧");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ★★ 丙-⑤（2026-09-26）：**与本地逐字相同的那一版不进「待取回」清单** —— 那是假账。
+    ///
+    /// 为什么这条是承重的：这份清单是要用户**裁决**的。一条"采用了也什么都没变"的条目，用户点
+    /// 下去只会以为坏了；而它出现的时机很平常 —— **同一批重放**（收侧失败 ⇒ 水位没推 ⇒ 下一轮
+    /// 再拉一遍同一批），而"同一 `seq` 重放 ⇒ 保留本地"会每次都往这儿记一条。
+    /// 两侧成对：TS 的 `stashPendingRemote`（`docContent.test.ts`）判的是同一件事。
+    #[test]
+    fn a_stash_that_matches_what_is_already_local_is_a_fake_entry_and_is_not_recorded() {
+        let (c, dir) = conflict_conn("pending-identical");
+        let same = jdoc(vec![jblk(Some("b1"), Some(1), "同一份")]);
+        insert_conflict_page(&c, "p1", &same);
+
+        // ① 逐字相同 ⇒ 不记（记了就是"采用了也没变化"的假账）
+        stash_pending_remote(&c, &stashed_page("p1", &same, "页"), 3, 100).unwrap();
+        assert_eq!(pending_remote_queue(&c, 10).unwrap().total, 0, "与本地逐字相同 ⇒ 不进清单");
+
+        // ② 正文变了 ⇒ **照旧记**（这条判断不是把这条路关掉：它正是 B 方案要留的那条痕）
+        let other = jdoc(vec![jblk(Some("b1"), Some(2), "远端另一版")]);
+        stash_pending_remote(&c, &stashed_page("p1", &other, "页"), 4, 200).unwrap();
+        let q = pending_remote_queue(&c, 10).unwrap();
+        assert_eq!(q.total, 1, "内容真的不同 ⇒ 必须留痕");
+        assert_eq!(q.pages[0].seq, 4);
+
+        // ③ 只有**标题**变了（正文一样）⇒ 也要记：用户裁决的是"整页用谁的"，不只是正文
+        stash_pending_remote(&c, &stashed_page("p1", &other, "新标题"), 5, 300).unwrap();
+        assert_eq!(pending_remote_queue(&c, 10).unwrap().pages[0].seq, 5, "标题差异同样要裁决");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

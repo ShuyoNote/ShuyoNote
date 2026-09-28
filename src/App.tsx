@@ -30,6 +30,7 @@ import { InputDialog } from "./components/InputDialog";
 import { PluginManager } from "./components/PluginManager";
 import { EditorToolbar } from "./components/EditorToolbar";
 import { ConflictBanner } from "./components/ConflictBanner";
+import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
@@ -45,10 +46,10 @@ import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PanelBoundary } from "./components/PanelBoundary";
 import { Editor } from "./editor/Editor";
-import { useAutoSync } from "./hooks/useAutoSync";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
+import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
@@ -105,7 +106,17 @@ function hasBlockContent(contentJson: string): boolean {
 }
 
 function NoteEditor({ pageId }: { pageId: string }) {
-  const { current, updateCurrent, loadPages, error, searchQuery, pages, reloadTick } = useNotes();
+  // 逐字段订阅：这 5 个 state 字段都真的进了渲染（正文 / 错误角标 / 搜索高亮 / 页面树 / 编辑器重挂载 key），
+  // 而 `updateCurrent`/`loadPages` 是动作（引用恒定 ⇒ 选择器不产生额外重渲染）。
+  // 原先的整店订阅会让本组件被 `currentId`/`loading` 等字段的变化一并唤醒（`loading` 每次
+  // loadPages 都会翻转）。
+  const current = useNotes((s) => s.current);
+  const error = useNotes((s) => s.error);
+  const searchQuery = useNotes((s) => s.searchQuery);
+  const pages = useNotes((s) => s.pages);
+  const reloadTick = useNotes((s) => s.reloadTick);
+  const updateCurrent = useNotes((s) => s.updateCurrent);
+  const loadPages = useNotes((s) => s.loadPages);
   const [title, setTitle] = useState(current?.title ?? "");
   const [saved, setSaved] = useState(true);
   const [coverOpen, setCoverOpen] = useState(false);
@@ -270,7 +281,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
         const updated = await api.savePage({ id: p.pageId, ...p.patch });
         updateCurrent(updated);
         setSaved(true);
-        loadPages();
+        // 保存只可能改动 PageMeta 里的少数几个字段（标题 / `updated_at`）⇒ **就地更新列表
+        // 那一条**，不再 `loadPages()` 全量重拉：后者会 `set(loading)` + `set(pages)` 两次
+        // 全量广播，并为一次标题改动重查整张 page 表——而这条路每 600ms 就可能走一次，
+        // `pages` 的订阅者里还有「每个树节点一个」的 TreeItem 与 DatabaseView 这种千行组件。
+        // 三种情况回退到全量重拉，保证不漏：① 后端没回页面；② 本地列表里没有这一条
+        // （例如刚在别处新建）；③ 列表上次加载就失败了 —— 顺便重试并清掉那个 `error` 角标
+        // （旧代码每次都靠 loadPages() 顺手清，走近路时必须显式保留这个语义）。
+        const notes = useNotes.getState();
+        if (!updated || notes.error || !notes.patchPageMeta(updated)) loadPages();
         // Invalidate block-reference/embed caches so mirrors refresh.
         useBlockCache.getState().bump();
         // 保存后派发事件（M11.8）：只有**声明订阅了 page.saved** 的启用插件会收到。
@@ -347,28 +366,53 @@ function NoteEditor({ pageId }: { pageId: string }) {
       .then(() => emitHostEvent("app.started", {}));
   }, []);
 
-  // 自动同步：按 SyncPanel 里设置的间隔（localStorage "shuyonote:autoSync"），
-  // 对每个已绑定服务器的空间定时 push+pull（面板关闭也生效）。
-  // 防重入：上一次自动同步尚未结束就跳过本次 tick，避免多次同步叠加/互相打断。
-  const autoSyncMs = Number(localStorage.getItem("shuyonote:autoSync")) || 0;
+  // 自动同步：**只有这一条路**（2026-09-26 口径收敛）。
+  //
+  // · 间隔来自 SyncPanel（localStorage `shuyonote:autoSync`）：`0` ＝ 关；
+  // · **启动后 3 秒先跑一次**（`0` 也跑）—— 这是原 `useAutoSync` 的行为，现在并进这里；
+  // · 每轮对**每个有 `space_id` 的空间**：走服务端那条（`syncWorkspace`）＋ **顺手跑一轮网格**
+  //   （`meshSyncNow`）。⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**
+  //   （`mesh_sync_now` 自己早退）—— 前端**不重复判一遍**（两处各解释一遍迟早漂）。
+  //   ⚠️ 网格那一条**不要求 `server_url`**："只开网格、不绑服务端"正是丙要支持的配置。
+  // · 网络闸门 `shouldAutoSyncNow()` 一处实现（`lib/syncGate.ts`）。
+  // · 防重入：上一次还没结束就跳过本次 tick。
+  //
+  // ⚠️ **为什么把 `useAutoSync` 删了**：它自带一条**固定 5 分钟**、且走**老的全局配置**
+  // （`api.syncNow()`）的循环，与这条"按面板间隔、按每空间档案"的路并行 ⇒ 同一个用户两份间隔、
+  // 两套语义、还会互相叠加（`syncGate.ts` 当初就写着"两条路各写一份判断也迟早会漂"，这次把路合成一条）。
+  // ★ 2026-09-26（口径对齐）：这里读的是 **`effectiveAutoSyncMs()`**、不是 `readAutoSyncMs()`。
+  //   理由：有效间隔是 `f(间隔档位, 近实时开关)` 两个键的函数，而"近实时"**默认就开着** ——
+  //   从来没人动过下拉框的机器上，间隔那个键一个字都没写(=0) ⇒ 读裸值会让定时器**不挂**，
+  //   而面板显示的是「近实时」＋承诺"连不上时退回每 5 分钟兜底一次"（真机实测抓到的口径不一致）。
+  const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
+  // 面板改了「同步方式」⇒ 它会广播（`writeAutoSyncMs` / `broadcastAutoSyncChanged`）⇒ 这里跟一下，
+  // 定时器才会按新档位重挂。
+  // ⚠️ 没有这一步的话：面板改档 → App 不重渲染 → 定时器还按**老**间隔跑（"我选了按间隔，可它没动"）。
+  useEffect(() => {
+    const onChanged = () => setAutoSyncMs(effectiveAutoSyncMs());
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+  }, []);
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined;
+    let initial: ReturnType<typeof setTimeout> | undefined;
     let busy = false;
     const tick = () => {
       if (busy) return;
       busy = true;
       (async () => {
         try {
-          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了
-          // `useAutoSync` 里那道检查——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
+          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了闸门检查
+          // ——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
           // 判据只有一处实现，见 `lib/syncGate.ts`。
           if (!(await shouldAutoSyncNow())) return;
           const profiles = await api.listSyncProfiles();
-          const bound = (profiles || []).filter((p: any) => p.server_url && p.space_id);
+          const withSpace = (profiles || []).filter((p: any) => p.space_id);
+          const bound = withSpace.filter((p: any) => p.server_url);
           if (bound.length) {
-            // P1：与 `useAutoSync` 同理——**自动同步必须配对 begin/end**
-            // （`withSyncStatus` 保证），否则 Rust 侧的附件进度事件会把 store 置成
-            // "正在同步"且没人收尾，面板就永远停在"正在同步…"（真机实测过）。
+            // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
+            // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
+            // 面板就永远停在"正在同步…"（真机实测过）。
             await withSyncStatus("正在自动同步…", () =>
               Promise.all(
                 bound.map((p: any) =>
@@ -376,6 +420,10 @@ function NoteEditor({ pageId }: { pageId: string }) {
                 ),
               ),
             );
+          }
+          // ★ 网格（丙）：同一批空间顺手各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
+          if (withSpace.length) {
+            await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
             await loadPages();
           }
         } catch {
@@ -385,11 +433,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
         }
       })();
     };
-    const ms = autoSyncMs;
-    if (ms > 0) {
-      timer = setInterval(tick, ms);
+    if (autoSyncMs > 0) {
+      timer = setInterval(tick, autoSyncMs);
     }
-    return () => { if (timer) clearInterval(timer); };
+    // 启动后先来一次（与原来那条路一致：不管间隔设没设都跑）。
+    initial = setTimeout(tick, 3000);
+    return () => {
+      if (timer) clearInterval(timer);
+      if (initial) clearTimeout(initial);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, loadPages, autoSyncMs]);
 
@@ -423,6 +475,8 @@ function NoteEditor({ pageId }: { pageId: string }) {
     <div className="main">
       {/* 阶段 1 · 冲突提示条：同一块被两端改过时**看得见**（裁定 (iii) 的"不静默选边"） */}
       <ConflictBanner pageId={pageId} />
+      {/* 冲刺 §13.3 第 2 条 · **页级**血统冲突提示条：两条独立编辑历史撞上时，给"另存为新页/保留本机" */}
+      <LineageConflictBanner pageId={pageId} />
       <div className="editor-toolbar-bar">
         {breadcrumbs.length > 0 && (
           <div className="breadcrumbs">
@@ -652,11 +706,14 @@ function App() {
 }
 
 function AppShell() {
-  const { pages, currentId, loadPages, error } = useNotes();
+  // 逐字段订阅（`loadPages` 是动作，引用恒定）。
+  const pages = useNotes((s) => s.pages);
+  const currentId = useNotes((s) => s.currentId);
+  const error = useNotes((s) => s.error);
+  const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
   const templateOpen = useTemplateCenterStore((s) => s.open);
-  useAutoSync();
   usePresence();
   useSyncStream();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。

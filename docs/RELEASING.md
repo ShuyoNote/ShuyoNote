@@ -215,7 +215,7 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 
 | # | 开关 | 为什么 |
 |---|---|---|
-| 1 | `OPENSSL_DIR` **显式给**，并**用 `--print-env` 翻译成三个变量** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败。<br>⚠️ **不能只给 `OPENSSL_DIR`**：`openssl-sys` 只看 `<OPENSSL_DIR>/lib` 与 `lib64`，而 Ubuntu 的开发文件在**多架构目录**（`/usr/lib/x86_64-linux-gnu/`）⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64", "/usr/lib"] does not contain the required files…`）。⇒ 走唯一实现：`node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"`（它给出 `OPENSSL_DIR` ＋ `OPENSSL_LIB_DIR` ＋ `OPENSSL_INCLUDE_DIR`，两个 crate 都认；判据在 `scripts/lib/sm-library-plan.test.mjs`） |
+| 1 | `OPENSSL_DIR` **显式给**，并**用 `--print-env` 翻译成三个变量** | `src-tauri/build.rs` 在 `sm-library` 上是 **fail-fast**：不给就当场失败。<br>⚠️ **不能只给 `OPENSSL_DIR`**：`openssl-sys` 只看 `<OPENSSL_DIR>/lib` 与 `lib64`，而 Ubuntu 的开发文件在**多架构目录**（`/usr/lib/x86_64-linux-gnu/`）⇒ 编译期直接炸（CI 2026-09-22 实测逐字：`OpenSSL libdir at ["/usr/lib64", "/usr/lib"] does not contain the required files…`）。⇒ 走唯一实现：`node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"`（它给出 `OPENSSL_DIR` ＋ `OPENSSL_LIB_DIR` ＋ `OPENSSL_INCLUDE_DIR`，两个 crate 都认；判据在 `scripts/lib/sm-library-plan.test.mjs`）<br>⚠️⚠️ **这一句的 stdout 会被整体当成 env 文件**（`>> "$GITHUB_ENV"`），而 GitHub 要求那文件**每一行都是 `KEY=value`**：2026-09-25 真 CI（run 36096199288 的 step 23）就是被脚本的诊断行弄脏而红的 —— runner 原文 `Invalid format 'sm-library-build: 隔离 ✓ 补丁打在私有副本 …'` ＋ `Unable to process file command 'env' successfully.`，而**同一条命令退出码是 0**（所以别去查退出码）。脚本侧现在由 `installEnvStdoutGuard()` 结构性兜住（`--print-env` 下 stdout 默认改道 stderr，只有 `emit()` 放行），判据 `scripts/sm-library-build.test.mjs`（**夹具跑真 CLI，且必须走到 emit**，否则是空过）。⚠️ `release.yml` 的**桌面两处**（Linux／Windows 段）与两条 android job 用的是同一句 ⇒ 改这里四处一起改 |
 | 2 | `node scripts/sm-library-build.mjs --prepare` | 把补丁打到「将要编译的那份 SQLCipher 源码」＋ **清两个 crate、两个 profile 的产物**（它的 build.rs 没为 `OPENSSL_DIR` 声明 `rerun-if-env-changed`，不清**不会**换后端）<br>⚠️ **`--release` 那一条不能省**：只清 dev 时，`tauri build`（release）会把旧的 CommonCrypto SQLCipher **原样复用** ⇒ 包表面全对（补丁标记 `page_cipher=sm4` 也在）而**库级根本不是国密**。这是 2026-09-22 在本机把发版链原样跑一遍时**被第 4 条断言抓住**的真实事故；修法＝两个 profile 都清（`--prepare` 已这么做，判据在 `scripts/lib/sm-library-plan.test.mjs`） |
 | 3 | `pnpm tauri build … --features sm-library` | 不带它 → 应用接线那段 `#[cfg]` 被编掉，而产物标记仍写 `page_cipher=sm4`（页加密是补丁的**编译期**行为）⇒ 包看起来是国密、库级页 MAC/KDF 却还是 SHA512 |
 | 4 | 产物断言（`SHUYONOTE_EXPECT_*` **五条**） | 后端＝openssl、补丁 applied、**`page_cipher=sm4`**、**`sm_crypto=on`**、**`SHUYONOTE_EXPECT_OPENSSL_DIR`＝产物实际链的那个前缀** —— 只有产物能回答这五格（`cipher_settings` 回显里没有 algorithm 字段）。<br>★ 最后那一格是 2026-09-22 **实测**逼出来的：`tauri dev` 发的是 `cargo run --no-default-features --features sm-crypto`，而 `tauri build --features sm-library` 发的是 `cargo build --bins --features sm-library,tauri/custom-protocol --release`（**defaults 仍在** ⇒ `sm-crypto` 没被顶掉）。两条路不同 ⇒「发版包一定带应用层国密」不能只靠 CLI 行为不变：它一旦变，包会**静默退回 v1 写路径**（没有国密），而今天没有任何判据会红。⇒ 把 `sm_crypto=on|off` 写进产物标记并断言 |
@@ -233,6 +233,27 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 > （方案里早就更正过这一点）。Tongsuo 的独有价值是 GM/T 0024 那类国密 TLS —— 不在本项目范围（§5.4）。
 > macOS 那份"自己编"用 stock OpenSSL 或 Tongsuo 都可以；本机验证时用的是 Tongsuo。
 
+### ⚠️ 打包读数以**工件**为准（2026-09-28 owner 拍板；此前 macOS 那一格永远没人核）
+
+- [ ] **每次三平台发版后记下两样东西**：release workflow 的 **run 号** ＋ **产物的 sha256**（Windows / macOS / Linux 各一份）。
+- [ ] ⚠️ **macOS 打包本机永远给不出读数**（我们只有 Windows 开发机）⇒ 它的「发过没有、发的是什么」**只能**由工件证明。
+- [ ] **判据**：那个 run 的 4 个 job 全绿，且**工件的 sha256 与发版说明里写的那个一致** ⇒ 「发版前核过的面」与「真正交给用户的面」**重合**（在那之前这两件事照旧不重合）。
+- [ ] **发版说明里的「未验」那一行**（⚠️ **2026-09-28 起已由 `release.yml` 自动写入** ⇒ 人工只需**核它在不在**：已发布的 v1.91.16～v1.91.26 **8 个版本都没写** ✗，所以改成机器写 ✓）：`gm-conformance` 的「跨实现（RustCrypto ↔ Tongsuo）对拍 9 项」在 CI 上**自报跳过**（缺 Tongsuo）⇒ 它**不是**平台分工，是**真漏验**。登记理由见 `scripts/lib/gates.mjs` 的 `selfSkipOk`（那里写着"发版说明须记未验"）。
+      **目标（owner 已拍「A 为目标、B 先过渡」）**：给这 9 项**单开一个手动触发的 job**（自编一份 Tongsuo ⇒ **`SHUYONOTE_TONGSUO_OPENSSL`** 指过去（⚠️ 注意：**不是** `OPENSSL_DIR` —— 后者是 openssl-sys 构建用的标准变量 ✓，两者不是一回事 ✓） ⇒ 跑 `scripts/check-gm-conformance.mjs`），
+      **日常 CI 不动**（Tongsuo 对产品非必需、且不该占日常分钟数 ⇒ 否则会训练人忽略红）。做完后这一行从「未验」改成「已对拍（附 run 号）」。
+
+**现状（2026-09-28，windows 侧）**：
+
+- ✅ 那条手动 job **已写好在 `dev` 上**：`ShuyoNote/.github/workflows/gm-conformance-tongsuo.yml`（**只 `workflow_dispatch`**，日常 CI 完全不受影响）。
+  内容＝自编静态 Tongsuo（照 `docs/development.md` §90–93：`no-shared`；⚠️ Windows/VC 另需 `no-uplink`，Linux 不需要）⇒
+  `SHUYONOTE_TONGSUO_OPENSSL=<install> node scripts/check-gm-conformance.mjs` ⇒ **输出作为工件上传**（90 天）。
+- ⚠️ **在 `dev` 上它点不动**（实测派发 ⇒ **HTTP 404**）：GitHub 规定 `workflow_dispatch` 的 workflow **必须先存在于默认分支**，
+  而本仓默认分支是 `main`（推它会**自动部署 Web 版**）。⇒ **owner 2026-09-28 拍「C」：等下一次发版顺手带上** ——
+  `dev → main` 合并会**自动带上**这个文件 ⇒ **零额外部署、零额外动作**。
+- [ ] **首次合并到 `main` 之后做这一次**：手动派发一次，核对工件的 `gm-conformance.txt` 里 **`!` 行（跳过项）= 0**，
+      再把上面那行「未验」改成「已对拍（附 run 号）」、并按计划改 `scripts/lib/gates.mjs` 里 `gm-conformance` 的 `selfSkipOk` 措辞。
+      （在此之前**保持"未验"** —— 别把"跳过"读成"通过"。）
+
 **macOS 发版档（等 Apple secrets 到位再启用）的配方**：
 
 ```bash
@@ -241,8 +262,38 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 # ② 只留静态库（`--require-static` 会拒绝共享版前缀：产物会依赖构建机那份）
 rm -f "$PREFIX"/lib/libcrypto.*.dylib "$PREFIX"/lib/libcrypto.dylib
 OPENSSL_DIR="$PREFIX" node scripts/sm-library-build.mjs --prepare --require-static
+# ②.5 ⚠️ **预签嵌套 dylib —— Tauri 不会做这一步**（2026-09-27 本机实测逼出来的，同日的第二个订正）
+#   现象：一旦设了 `APPLE_SIGNING_IDENTITY`，`tauri build` 走到签名阶段就中止，**dmg 根本没生成**：
+#     Signing .../Contents/MacOS/shuyonote
+#     .../shuyonote: code object is not signed at all
+#     In subcomponent: .../Contents/Frameworks/libpdfium.dylib
+#     failed to bundle project: failed codesign application: failed to run command codesign
+#   根因：Tauri 签主可执行文件时**不签** `bundle.macOS.files` 带进来的嵌套 dylib。
+#        （这也解释了 `macos.yml` 为什么一直没事：它**不设签名身份**，走的是未签名分支。）
+#   修法：**在打包之前**把 vendor 里那份源文件签好 —— Tauri 会把它**整份复制**进包，
+#        复制保留签名 ⇒ 主签名不再撞"子组件未签名"。
+#        `src-tauri/vendor/pdfium/` 是 gitignore 的，所以这一步不弄脏仓库（重取库用 fetch-pdfium.mjs）。
+codesign -f --options runtime --timestamp \
+  -s "Developer ID Application: <你的名字> (<TEAMID>)" \
+  src-tauri/vendor/pdfium/mac-univ/lib/libpdfium.dylib
+#   实测（2026-09-27）：修好后 `tauri build --bundles app,dmg` 依次签了
+#   **主可执行文件 → .app → .dmg**，`Finished 2 bundles`；随后
+#   `codesign --verify --deep --strict` ✅ · `pnpm check:macos-bundle` ✅ ·
+#   `otool -L` 里 0 个 libcrypto/libssl（真静态）· 国密五条断言 ✅ ·
+#   `spctl -a -t exec` = `rejected, source=Unnotarized Developer ID`（＝只差公证）。
 # ③ 打包（必须带特性）
-OPENSSL_DIR="$PREFIX" pnpm tauri build --bundles app,dmg --features sm-library
+# ⚠️ **2026-09-27 订正**：这一步原来只有 `OPENSSL_DIR`，**在私有副本机制（09-23）之后必红** ——
+#    `build.rs` 会去 `$CARGO_HOME/registry/src/…/libsqlite3-sys-<ver>/sqlcipher` 找补丁标记，
+#    而补丁打在 `.gm-build/libsqlite3-sys-<ver>/` 的**私有副本**上，只有把 **私有 `CARGO_HOME`**
+#    交给 cargo（那份 `config.toml` 带 `[patch.crates-io]`）才走得到。漏了的现场是一条看起来
+#    像"补丁没打"的 build.rs panic（本机 2026-09-27 逐字复现）：
+#      `启用了 sm-library，但找不到 §3.1 的 SM3/SM4 provider 补丁`
+#    实测（订正后）：`patch=72df3f9a target=macos page_cipher=sm4 sm_crypto=on
+#    src_sha256=741d999b7933…`（与本节 09-22 那份读数逐位一致）。
+#    更稳的取法：`node scripts/sm-library-build.mjs --openssl-dir "$PREFIX" --print-env`
+#    会一并给出 `CARGO_HOME`（还有 `OPENSSL_LIB_DIR` / `OPENSSL_INCLUDE_DIR`）。
+OPENSSL_DIR="$PREFIX" CARGO_HOME="$(pwd)/.gm-build/cargo-home" \
+  pnpm tauri build --bundles app,dmg --features sm-library
 # ④ 产物断言（同 release.yml 的那五条）
 SHUYONOTE_EXPECT_CRYPTO_BACKEND=openssl SHUYONOTE_EXPECT_SM_PATCH=applied \
 SHUYONOTE_EXPECT_PAGE_CIPHER=sm4 SHUYONOTE_EXPECT_SM_CRYPTO=on \
@@ -272,8 +323,10 @@ SHUYONOTE_EXPECT_OPENSSL_DIR="$PREFIX" node scripts/check-crypto-backend.mjs
 > 于是"静态"这个前提不成立。**先 `--require-static` 绿了再谈产物静态**，顺序不能反。
 >
 > ⚠️ **别拿 `--require-static`（或 `--print-source-sha256`）当"纯探针"** —— 它们**会先幂等打补丁**再干正事
-> （Windows 侧 2026-09-22 实测：打印 `补丁 = applied（本次打上）`）⇒ 一次"只想看看前缀静不静"的核对，
-> 会把补丁打到**全机共享的** registry 源码上。只想读判据用这条（实测**不打补丁、不构建**）：
+> （Windows 侧 2026-09-22 实测：打印 `补丁 = applied（本次打上）`）。
+> ★ **2026-09-23 起补丁只打在私有副本上**（`<repo>/.gm-build/libsqlite3-sys-<ver>/`，cargo 由私有 `CARGO_HOME`
+> 指过去）⇒ 它**不再改共享 registry**；但"打补丁"这件事仍然发生（建副本），所以**只想读判据**时仍用这条
+> （实测**不打补丁、不建副本、不构建**）：
 >
 > ```bash
 > node -e "import('./scripts/lib/sm-library-source.mjs').then(m => console.log(m.requireStaticCrypto(process.env.OPENSSL_DIR)))"
@@ -459,6 +512,33 @@ CI 取——run artifacts 的 `android-release-apk`，或 GitHub Release 上的
 > 只有真的读到指纹且不一致才红 —— 否则 GitHub 抽风会被误当成"发错包了"。
 > 它**不进 `pnpm build`**（要对线上发请求，不适合构建期跑），是发版当天的手工命令。
 
+**`--deep`（可选深检，2026-09-23 加）**：`node scripts/check-release-state.mjs --deep`
+把**所有远端读取**改走 `scripts/lib/gh-fetch.mjs` 这一条路（直连为主，**只在网络类失败时**才退到钉 IP；
+走过的路如实打进日志），并把判定从"二态"换成**三态**：
+
+| 情形 | 判定 |
+|---|---|
+| HTTP 2xx（且值相符） | ✓ 通过 |
+| **HTTP 404**（资源不在）或 2xx 但值不符 | ✗ **红**（"事实"那一类） |
+| 401/403、5xx/429、网络类失败（含钉 IP 被证书校验拒） | `· 未实查` —— **不算失败** |
+
+> 为什么需要第三态：一个只认 `200` 的检查会把"我这台到不了 GitHub"报成"发版发错了"，
+> 于是要么人去查一个不存在的问题，要么学会"这条红可以忽略"（更坏）。
+> 三态的实现与判据在 `scripts/lib/remote-fact.mjs` ＋ `remote-fact.test.mjs`（逐格钉住，两侧都钉）。
+> **默认不加 `--deep` 时行为与以前逐字相同**（CI/例行自检不受影响）。
+>
+> ⚠️ **钉 IP 这条兜底：`curl --resolve` 行，Node 的 `fetch` 不行**（2026-09-23 两条实测收窄过一次口径）：
+> `curl -s -o /dev/null -w '%{http_code}' --resolve api.github.com:443:140.82.112.6 https://api.github.com/...` ⇒ **200**；
+> 而同一台机器上 `node -e "fetch(...)"` ⇒ `UND_ERR_CONNECT_TIMEOUT`；深检里 `--pinned-ip` 更是
+> `ERR_TLS_CERT_ALTNAME_INVALID`。原因：`Host` 头是 HTTP 层的，TLS 的 **SNI 来自连接目标** ——
+> 而 `curl --resolve` 的设计恰恰把"连到哪个 IP"与"URL 里的主机名"分开（URL 主机名照样用于 SNI/证书，只是不查 DNS）。
+> ⇒ **发版当天取不到就走 `curl --resolve` 那条**（本文上半部分那条老写法）——**现在有现成命令，不必手拼 curl**：
+> `node scripts/fetch-gh-asset.mjs <owner/repo> <tag|latest> <资产名子串> <输出> [期望 sha256]`（`--list` 只列资产；
+> 两条路都如实打印、凭据不进 argv、哈希不符即退 1）。判据与实测读数见 `docs/TESTING.md` 的「取 GitHub 资产」；
+> `--deep --pinned-ip` 在 HTTPS 上会被如实记成"未实查"（**不是红**）。要让本模块自己实现，只能在"加 `undici` 依赖"与"起 curl 子进程
+> （第二条 transport）"之间选一个 —— **尚未裁定**（2026-09-23 三方讨论的结论倾向于都不做：
+> 环境里已经有能用的那条路）。
+
 ## ⑦ Web 版（**必做**，两个入口都要）
 
 > 为什么从"可选"改成"必做"：它从 v1.84.5 起就没人跟了——本次（v1.89.0）自检发现
@@ -565,7 +645,17 @@ node scripts/check-web-build.mjs --url https://shuyonote.github.io/ShuyoNote/
 > PowerShell 5.1 的 `Set-Content -Encoding ascii`（以及 `Out-File`）写的是 **CRLF**，每行尾多一个 `\r`，
 > 而服务器 `find | sort` 出来的是 LF ⇒ 两边**没有一行相等** ⇒ `comm -23` 把**全部**文件判成"服务器多余"。
 > 现场读数：`本地清单 311 个文件 / 服务器原有 416 个 / 服务器多余（将删）416 个 ⇒ 同步后 0 个文件`。
-> **修法**（写 LF，别用 `Set-Content`）：
+> **修法（首选，2026-09-27 起）**：用 [`scripts/gen-deploy-manifest.mjs`](../scripts/gen-deploy-manifest.mjs) ——
+> **它自己写 LF**（不经过任何 shell 重定向），**写完重读自检**；上传前再 `--check` 一次
+> （同一次会查 **CRLF / BOM / 排序 / 与目录逐行一致**，任何一项不对就 `exit 1` 并告诉你"先别拿它去 `comm`"）：
+> ```bash
+> node scripts/gen-deploy-manifest.mjs --dir dist-web --out "$TEMP/web-manifest.txt"
+> node scripts/gen-deploy-manifest.mjs --check "$TEMP/web-manifest.txt" --dir dist-web
+> ```
+> ⚠️ **别把输出重定向到文件**：PowerShell 的 `>` / `Out-File` 写的正是 CRLF/UTF-16 —— **那正是这次事故的形状**。
+> 缺 `--out` 时脚本会**拒绝运行**（`exit 2`，不算通过）并说明原因。自测：`--self-test`（7 条，含「CRLF ⇒ 判红」）。
+>
+> **手动等价物**（能不用就别用；下面每一行都必须保证 LF）：
 > ```powershell
 > $root = (Resolve-Path dist-web).Path
 > $lines = Get-ChildItem dist-web -Recurse -File |

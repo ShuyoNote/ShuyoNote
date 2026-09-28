@@ -17,7 +17,7 @@
 // 各 push 只清【推送方自己】的 dirty（真实 doPush 行为）。
 //
 // 用法：node scripts/verify-two-device-sync.mjs   （有失败即非零退出）
-import { readFileSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,8 +34,27 @@ rmSync(tmpDir, { recursive: true, force: true });
 mkdirSync(tmpDir, { recursive: true });
 const outfile = join(tmpDir, "web.mjs");
 
+// ★ 联合格子 j4（2026-09-27）：**同一个模块图**里同时要 `web.ts`（真 `applyChange`）、
+//   `crdt/plane.ts`（`setCrdtRemoteApplier`）与 `crdt/wireState.ts`（真 wire 编码）。
+//   为什么必须是**一个**入口：分成两个 bundle 会得到**两份** `plane.ts` 模块实例，
+//   在 A 上注册的落地实现在 B 里读不到 ⇒ 判据会永远"没被调用"，而红得毫无线索。
+//   ⚠️ 这里**不能**把 `crdt/pageBinding.ts` 也拉进来：它 → `yDocBridge` → `editor/config`
+//   ⇒ 连 excalidraw 的 CSS 与 katex 的字体都会进包（实测 61 个 esbuild 报错）。
+//   ⇒ 真合并在 vitest 侧（`src/lib/crdt/remoteApply.test.ts` ③ 注册的就是真实现），
+//     本脚本负责"**载荷里的状态原样走到落地实现**"这半条链（字节比对）。
+const crdtEntry = join(tmpDir, "crdt-entry.ts");
+writeFileSync(
+  crdtEntry,
+  [
+    `export * from ${JSON.stringify(join(root, "src/lib/platform/web.ts"))};`,
+    `export { setCrdtRemoteApplier, applyRemoteCrdtState } from ${JSON.stringify(join(root, "src/lib/crdt/plane.ts"))};`,
+    `export { withCrdtWire, decodeCrdtWire } from ${JSON.stringify(join(root, "src/lib/crdt/wireState.ts"))};`,
+    "",
+  ].join("\n"),
+);
+
 await esbuild.build({
-  entryPoints: [join(root, "src/lib/platform/web.ts")],
+  entryPoints: [crdtEntry],
   bundle: true,
   format: "esm",
   platform: "node",
@@ -54,7 +73,7 @@ await esbuild.build({
 });
 
 const mod = await import(pathToFileURL(outfile).href + "?v=" + Date.now());
-const { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter, applyChange, makeInvoke } = mod;
+const { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter, applyChange, makeInvoke, setCrdtRemoteApplier, withCrdtWire } = mod;
 
 // ---- 1b. bundle docContent.ts（阶段 1 的块级合并纯函数；零依赖，很轻）----
 const dcOut = join(tmpDir, "docContent.mjs");
@@ -771,6 +790,62 @@ async function main() {
   ok(staleTextQueue(NB, 10).total === 0, "N: 队列空了");
   // 反判据：相同文本再补一次 ⇒ 一次写库都不做（也不回退标记）
   ok(refreshPageTextIfStale(NB, PN, "A 改的 b1\nB 改的 b2") === false, "N: 相同 ⇒ 不再写");
+
+  // =========== 场景 O：联合格子 j4 —— 载荷里的 CRDT 状态走**真 applyChange** ===========
+  //
+  // 这一格问的是**交界处**：CRDT 的状态是**跟着同步载荷走的**（S4b-1a 把 `crdt_state` 挂上），
+  // 而收侧要由**注册的落地实现**把它并进本机同一条血统（S4b-1b 用**注入**，因为 `web.ts`
+  // 会被 Node 侧脚本加载，不许 import `pageBinding`）。
+  //
+  // 这条链此前**三段各自有判据、中间两段没人验**：`wireState.test.ts` 验编解码、
+  // `remoteApply.test.ts` 验"注册了就用它"、`pageBinding.test.ts` 验真实现能合 ——
+  // 而"**真 `applyChange` 拿到载荷里的状态、并按字节交给落地实现**"这一段谁也没跑过。
+  // 本场景把它跑一遍（用真 wire 编码 ＋ 真 `applyChange` ＋ 记录型落地实现）。
+  console.log("\n== 场景 O（j4）：载荷里的 CRDT 状态走真 applyChange ==");
+  {
+    const PO = "p-crdt-wire";
+    const seen = [];
+    setCrdtRemoteApplier((db, pageId, state) => {
+      seen.push({ pageId, bytes: Array.from(state) });
+      // 真实现是 `mergeRemotePageState(db, pageId, state, Date.now())`（在应用里由 `main.tsx` 注册）。
+      // 本脚本只验**这一段**是通的；"合得对不对"归 vitest 那三条判据。
+    });
+
+    const state = new Uint8Array([0, 83, 2, 200, 1, 255, 7]);
+    const payloadObj = {
+      id: PO, title: "带 CRDT 状态的页", content_text: "正文",
+      // ⚠️ 这里**不用** `contentOf(...)`：它要的是 `{json, rev}` 数组（写路径的形态），
+      //    而本场景只关心 CRDT 状态那一条支路 ⇒ 直接给一份合法的落盘 JSON 更清楚。
+      content_json: JSON.stringify({ root: { children: [{ id: "b1", type: "paragraph", text: "正文" }] } }),
+      updated_at: Date.now(), workspace_id: "ws1",
+    };
+    const wired = JSON.stringify(withCrdtWire(payloadObj, state));
+    ok(wired.includes("crdt_state"), "O: 载荷里**真的**挂上了 `crdt_state`（真 wire 编码，不是手搓字段）");
+
+    const seq = ++serverSeq;
+    applyChange(NA, { seq, entity: "page", op: "upsert", entity_id: PO, from_device: "devB", payload: wired });
+    ok(seen.length === 1 && seen[0].pageId === PO, `O: ★ 真 applyChange 把它交给了**已注册的落地实现**（调用 ${seen.length} 次）`);
+    ok(
+      seen.length === 1 && JSON.stringify(seen[0].bytes) === JSON.stringify(Array.from(state)),
+      `O: ★ 交给落地实现的是**逐字节相同**的状态（收到 ${JSON.stringify(seen[0]?.bytes)}）`,
+    );
+    ok(getRow(NA, PO)?.title === "带 CRDT 状态的页", "O: 页面本身也照常落了库（状态那一格没把主路径吃掉）");
+
+    // 反判据①：**老载荷**（没有 `crdt_state`）⇒ 一次都不该调（"没有状态"与"有状态"必须分得开）
+    const PO2 = "p-legacy-payload";
+    const legacy = JSON.stringify({ id: PO2, title: "老载荷", content_text: "x", updated_at: Date.now(), workspace_id: "ws1" });
+    applyChange(NA, { seq: ++serverSeq, entity: "page", op: "upsert", entity_id: PO2, from_device: "devB", payload: legacy });
+    ok(seen.length === 1, `O: ★ 老载荷（无 crdt_state）⇒ 落地实现**一次都没被调**（仍 ${seen.length} 次）`);
+
+    // 反判据②：**版本不认识** ⇒ 也不该调（不猜着解 —— 猜错就是静默丢块）
+    const PO3 = "p-unknown-version";
+    const future = JSON.stringify({ ...payloadObj, id: PO3, crdt_state: { v: 999, state: Array.from(state) } });
+    applyChange(NA, { seq: ++serverSeq, entity: "page", op: "upsert", entity_id: PO3, from_device: "devB", payload: future });
+    ok(seen.length === 1, `O: ★ 版本不认识 ⇒ 也**不**交给落地实现（仍 ${seen.length} 次；内容按今天那条路落库）`);
+    ok(getRow(NA, PO3)?.title === "带 CRDT 状态的页", "O: 不认识的版本**不阻塞**主路径（页面照常落库）");
+
+    setCrdtRemoteApplier(() => {}); // 收尾：别把记录器留给后面的场景
+  }
 
   // =========== 汇总 ===========
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);

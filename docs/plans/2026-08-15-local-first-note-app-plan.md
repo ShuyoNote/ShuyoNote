@@ -1,5 +1,7 @@
 # ShuyoNote 本地优先类 Notion 笔记应用开发方案
 
+> 状态：**已收口**（本方案即产品基线；已发到 v1.91.26）。证据：[roadmap](../roadmap.md) 的「已实现」清单（页面树 / 属性数据库 / 八视图 / FTS5 全文 / 关系图 / 模板中心）。
+
 > **目标：** 基于 Tauri + Lexical 构建一款本地优先（local-first）、跨平台的类 Notion 笔记应用，数据全部存储在本机，可离线使用，后续支持多设备同步与协作。
 >
 > **架构：** 前端 React + Lexical 编辑器，通过 Tauri IPC 调用 Rust 后端；Rust 后端用 SQLite 存储文档与元数据、FTS5 提供全文检索、文件系统存储附件。核心是「一页 = 一个 Lexical 文档」的文档模型。

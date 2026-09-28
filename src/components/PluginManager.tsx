@@ -15,6 +15,16 @@ import { formatBytes } from "../lib/pluginAudit";
 
 // Plugin manager: list disk-loaded plugins, enable/disable, install from a folder,
 // open the plugin directory, uninstall.
+// 关于下面那个整店订阅（`usePlugins()`）——**这是本仓唯一一处显式豁免**，理由是"拆了没收益"：
+//   · 本组件要 `usePlugins` 的约 30 个字段（12 个 state ＋ 18 个动作），是全仓用得最全的一处；
+//   · 18 个动作的引用**恒定**，拆成 `usePlugins((s) => s.toggle)` 只是把一行变成 18 行，
+//     既不减少重渲染，也不减少 selector 求值；
+//   · 真正剩下的 12 个 state 字段（plugins / logs / audit / facts / validations / settings …）
+//     变化频率都很低，且只在插件管理面板打开时才会动。
+//   ⇒ 收益为零、可读性明显变差。所以这里用行内 `gate-allow` 显式放行（判据见
+//     `scripts/check-store-subscriptions.mjs`：**例外写在代码里，而不是写在人脑里**）。
+//   ⚠️ 真想省掉这份订阅，正确做法不是拆选择器，而是"关着的时候不挂载"——那是另一种改法
+//     （会改变面板内部 state 的存活期），需要单独评估，不要顺手做。
 export function PluginManager() {
   const {
     managerOpen, setManagerOpen, plugins, load, toggle, uninstall, install, openDir,
@@ -25,7 +35,7 @@ export function PluginManager() {
     validations, verify, closeVerify, autoReloadedAt, watchPluginDir,
     settingsFor, settings, openSettings, closeSettings, saveSetting,
     approve,
-  } = usePlugins();
+  } = usePlugins(); // gate-allow: 要用约 30 个字段、其中 18 个是恒定引用的动作，拆选择器零收益（理由见上方注释）
   useOverlayScrollLock(managerOpen);
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("pluginManager", managerOpen, () => usePlugins.getState().setManagerOpen(false));

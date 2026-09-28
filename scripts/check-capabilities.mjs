@@ -75,7 +75,21 @@ for (const c of reg.capabilities) {
     else usedPerms.add(c.permission);
   }
   if (!c.returns?.type || !TYPES.has(c.returns.type)) fail(`能力 ${c.id} 的 returns.type 非法`);
-  if (!c.rust) fail(`能力 ${c.id} 缺 rust 实现函数名`);
+  // ★ **只有 AI 宿主能实现的能力**（2026-09-23，`coverage.report` 是第一个）：
+  //   它可以**没有** `rust`。存在的理由不是"省事"，而是**不能有**：这类能力要读
+  //   **抽取器注册表**（`src/lib/extract/registry.ts`，TS 侧的事实源）—— Rust 侧再长一份
+  //   就是本方案一直在防的"两份实现"，而它们的漂移**不会报错**（只会让 AI 与插件看到两种答案）。
+  //   代价与边界（写清楚免得被当漏洞）：这类能力**不进** shim / 插件类型包 / Rust 绑定表
+  //   ⇒ 插件**调不到**它；它只进 `aiTools.meta.ts` 与作者文档。
+  const frontendOnly = c.host === "frontend";
+  if (frontendOnly) {
+    if (c.rust) fail(`能力 ${c.id} 声明了 host: "frontend"（只有 AI 宿主实现），不该再有 rust`);
+    if (c.ai !== true) fail(`能力 ${c.id} 声明 host: "frontend" 就必须 ai: true（否则没有任何消费者）`);
+    if ((c.args ?? []).length > 0) {
+      fail(`能力 ${c.id} 是 host: "frontend"，目前只允许**无参**（有参数就得同时定"插件侧怎么读"——那正是它没有的那半）`);
+    }
+  }
+  if (!frontendOnly && !c.rust) fail(`能力 ${c.id} 缺 rust 实现函数名`);
   if (c.kind === "write") {
     if (!["draft", "immediate"].includes(c.mediate)) {
       fail(`写能力 ${c.id} 必须声明 mediate（draft = 落库前需用户确认 / immediate）`);
@@ -138,15 +152,43 @@ if (aiCaps.length === 0) fail("没有任何能力暴露给 AI（ai:true）——
 
 // ---- 3. 覆盖：实现函数在 plugins.rs 里、能力 id 在作者文档里 ----
 const pluginsRs = read("src-tauri/src/plugins.rs");
+// host: "frontend" 的**反向**判据要读这两份生成物（见下面 3. 里那三条）
+const types = read(OUTPUTS.types);
+const rustCaps = read(OUTPUTS.rust);
 const docs = read(OUTPUTS.docs);
 const shim = files[OUTPUTS.shim];
 
 for (const c of reg.capabilities) {
-  if (!new RegExp(`fn ${c.rust}\\s*\\(`).test(pluginsRs)) {
+  // host: "frontend" 的能力**只在 AI 宿主那一侧**：没有 Rust fn、不进插件 shim —— 但**要在作者文档里**
+  // （文档里单独一节说明"这些工具只有 AI 有"），否则读文档的人会以为注册表少了一条。
+  if (c.host !== "frontend" && !new RegExp(`fn ${c.rust}\\s*\\(`).test(pluginsRs)) {
     fail(`能力 ${c.id} 声明的实现 fn ${c.rust} 在 src-tauri/src/plugins.rs 里找不到`);
   }
   if (!docs.includes(c.id)) fail(`能力 ${c.id} 没有出现在作者文档 ${OUTPUTS.docs} 里`);
-  if (!shim.includes(`"${c.id}"`)) fail(`能力 ${c.id} 没有出现在生成的 shim 里（api.* 暴露不到）`);
+  if (c.host !== "frontend" && !shim.includes(`"${c.id}"`)) {
+    fail(`能力 ${c.id} 没有出现在生成的 shim 里（api.* 暴露不到）`);
+  }
+  // ★ **反向**三条（2026-09-23，macOS 侧审 `host: "frontend"` 时补的那半）：
+  //   上面那句只写"普通能力**必须**在 shim 里"，对 host-only 的能力是**不管**——于是"它不在 shim 里"
+  //   这件事今天恰好成立，但**没有任何判据**。这正是本仓最忌讳的形状：将来生成器多写一行、
+  //   或有人"顺手对称"把它加进插件面，插件作者就会照着 `api.coverage.report` 写，然后拿到 `undefined`
+  //   —— 而那一刻**不会红**。⇒ 把"不许进"也变成断言（三处：shim / 插件类型包 / Rust 绑定表）。
+  if (c.host === "frontend") {
+    if (shim.includes(`"${c.id}"`)) {
+      fail(`能力 ${c.id} 声明 host: "frontend"，但它出现在插件 shim 里（插件调不到它，写进去只会让人拿到 undefined）`);
+    }
+    if (types.includes(`"${c.id}"`)) {
+      fail(`能力 ${c.id} 声明 host: "frontend"，但它出现在插件类型包 ${OUTPUTS.types} 里`);
+    }
+    if (rustCaps.includes(`"${c.id}"`)) {
+      fail(`能力 ${c.id} 声明 host: "frontend"，但它出现在 Rust 绑定表 ${OUTPUTS.rust} 里`);
+    }
+    // 边界 ④（方案 §15.11 第 4 条）：用它的理由必须写在这条能力自己的 desc 里 ——
+    // 否则下一个读到它的人只会看到"为什么它没有 Rust 实现"，然后尝试"补对称"。
+    if (!/只有 AI 宿主/.test(String(c.desc ?? ""))) {
+      fail(`能力 ${c.id} 是 host: "frontend"，但它的 desc 里没写明"只有 AI 宿主"这类理由（边界 ④）`);
+    }
+  }
 }
 
 // ---- 3b. 参数口径：注册表里声明的必填/可选，必须与 dispatch 里怎么读它一致 ----
@@ -197,6 +239,9 @@ if (!arms) {
 } else {
   const namesIn = (arm, re) => new Set([...arm.matchAll(re)].map((x) => x[1]));
   for (const c of reg.capabilities) {
+    // ★ 只有 AI 宿主实现的能力（`host: "frontend"`）在 plugins.rs 里**本来就没有分支** ⇒ 跳过。
+    //   它没有参数（见注册表），也没有"两侧参数口径"可比。
+    if (c.host === "frontend") continue;
     const arm = arms.get(c.id);
     if (arm === undefined) {
       fail(`能力 ${c.id} 在 dispatch 里没有分支（注册表说有，代码里没有）`);

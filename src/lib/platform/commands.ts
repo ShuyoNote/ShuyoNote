@@ -145,6 +145,96 @@ export interface SyncConflict {
 }
 
 /**
+ * 桌面「近实时」流通道的**读数**（`sync_stream_status` 的形状，见 `src-tauri/src/sync_stream.rs`）。
+ *
+ * `running=false` 是**正常情况**（没绑服务器/没选空间/用户关掉了开关）—— 不是错误；
+ * `reason` 说明是哪种，`last_error` 只装"真出过的问题"（**不静默**：界面据此能说清为什么没有近实时）。
+ */
+export interface SyncStreamStatus {
+  running: boolean;
+  ws_id: string;
+  server: string;
+  /** 最近一次收到帧的时刻（ms；`0` ＝ 还没收到过）。 */
+  last_event_at: number;
+  /** 当前这轮**连续**重连次数（收到帧后清零）—— 持续变大说明这条流一直连不上。 */
+  reconnects: number;
+  last_error: string;
+  /** 为什么没在跑：`"no-binding"` / `""`。 */
+  reason: string;
+}
+
+/**
+ * 局域网发现的**读数 ＋ 状态行**（`lan_status` 的形状，见 `src-tauri/src/sync.rs::LanStatus`）。
+ *
+ * 口径（施工单 §2 ④ ／ 简报 §7）：**「没走成直连」是一个可断言的结果，不是静默降级** ——
+ * 用户要能分辨"走了局域网"／"网段里没人"／"有人但都不服务这个空间"这三件**处置完全不同**的事。
+ *
+ * ⚠️ `line` 是 **Rust 侧 `lan::status_line` 的原文**：界面直接显示它，**不要**自己按地址形状
+ * 再拼一次档位（那样会在"用户把配置地址填成私有网段"时说出与真实路由矛盾的档，判据 ⑭ 钉这条）。
+ */
+export interface LanStatus {
+  /** 发现层现在开着吗（没绑同步 ⇒ 关，广播/监听整条不起）。 */
+  enabled: boolean;
+  /** **活着**的对端数（过对端存活期的不算）—— 与状态行里那个"N 台"是同一个数。 */
+  peers: number;
+  /**
+   * 这一次走的是哪一档：`"lan"` / `"configured"` / `""`（尚未绑定）。
+   *
+   * ⚠️ 来自 Rust 的 `Route`（`lan::LinkKind::as_str`）：界面**只能拿它换标题**，
+   * **不许**按地址形状自己再判一次档（判据 ⑭ 钉这条）。
+   */
+  kind: "lan" | "configured" | "";
+  /** 状态行原文：「同步地址：直连（局域网）… ｜ 本网段发现 N 台 ｜ 中枢：<名字>」那一串。 */
+  line: string;
+  /**
+   * ★ 丙-③-b-2b-2：**网格（对等交换）这一档的读数**（与 Rust `mesh::MeshConfigState` 同形）。
+   * 面板据此开关与显示；`lan_status` 只**读**它，不开窗。
+   */
+  mesh: MeshConfigState;
+}
+
+/** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
+export interface MeshPeerPullReport {
+  peer: string;
+  fetched: number;
+  applied: number;
+  cursor: number;
+  /**
+   * ★★ 丙-⑤：这一轮里**你本机那一版让给了远端**的页数（⟹ 已存进**版本历史**）。
+   * ⚠️ 网格这一档**没有服务端**那份冲突清单 ⇒ 这一项是"你输了但没丢"的唯一凭证；
+   * 界面上它只出现在 `note` 那句人话里（由 Rust 拼好），**不要在组件里自己数或自己判**。
+   */
+  superseded: number;
+  /** ★★ 丙-⑤：这一轮里**等你裁决**的页数（⟹ 远端那一版在「待取回的远端版本」里）。 */
+  awaiting: number;
+  /** 拉不动时**如实写在这里**（`null` ＝ 这一台这一轮没问题）。 */
+  error: string | null;
+}
+
+/** 一轮网格交换的总读数（与 Rust `mesh::MeshRoundReport` 逐字段相同）。 */
+export interface MeshRoundReport {
+  /** 网格这一档现在能不能用 —— 判据是"配没配监听地址"。 */
+  enabled: boolean;
+  /** **说得出为什么**：用户要能分辨"没开"／"开了但网段里没人"／"有人但都拉不动"。 */
+  note: string;
+  candidates: number;
+  peers: MeshPeerPullReport[];
+  /** 本机窗口**实际**绑在哪儿（没开 ⇒ `null`）。 */
+  window: string | null;
+}
+
+/** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */
+export interface MeshConfigState {
+  enabled: boolean;
+  bind: string | null;
+  /** ⚠️ **只说"设没设"**：口令本身不会回给界面（没有任何理由再拿回去一遍）。 */
+  tokenSet: boolean;
+  window: string | null;
+  /** 一句人话：开没开、开在哪、**别人拉不拉得到**。 */
+  note: string;
+}
+
+/**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
  * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
@@ -283,6 +373,75 @@ export interface CommunityTaxonomy {
   error: string;
 }
 
+/**
+ * ③ 0b（2026-09-24）**公开材料**推 / 取的结果（与 Rust `sync::SpaceKeyringResult` 一一对应）。
+ *
+ * ⚠️ "正常的不顺利"（没配同步 / 服务端上没有 / 网络不通）用 `outcome` 表达，**不抛异常** ——
+ * 抛出去会被平台 invoke 层记成一条 error（`claim_page_lineage` 那一轮踩过）。
+ * · `ok` 取回/推成功；`not_configured` 这个空间没绑好同步；`no_material` 本机还没有钥匙袋；
+ * · `not_on_server` 服务端上没有那一份（404）；`already_local` 本机已有，**没有动它**；
+ * · `offline` 连不上；`rejected` 服务端拒绝了（看 `status`）。
+ */
+export interface SpaceKeyringOutcome {
+  outcome:
+    | "ok"
+    | "not_configured"
+    | "no_material"
+    | "not_on_server"
+    | "already_local"
+    | "offline"
+    | "rejected";
+  /** `ok` 时是材料的字节数。 */
+  bytes: number;
+  /** 服务端 HTTP 状态码（没走到服务端 ⇒ 0）。 */
+  status: number;
+  /** 一句**人话**（说清下一步该做什么）——界面**原样**显示，别自己改写。 */
+  message: string;
+}
+
+/**
+ * B 片 ①-a：换设备的**产出侧**读数（`pairing_export`）。
+ *
+ * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
+ * 不引任何密码学实现**；防"换码"靠**比对码** —— 所以 `check_code` 必须显示给人看。
+ */
+export interface PairingExportOutcome {
+  outcome: "ok" | "no_material";
+  /** 配对载荷原文（紧凑 JSON）。`no_material` 时是空串。**不是秘密**，但要只交给自己那台设备。 */
+  text: string;
+  /** **比对码**：另一端算出来的必须与这个逐位相同。 */
+  check_code: string;
+  bytes: number;
+  /** 袋子里有几个盒子。 */
+  spaces: number;
+  /** 本机设备标识（显示"来自哪台设备"用）。**不是秘密**。 */
+  device_id: string;
+  /** 装得进一张二维码吗。`false` 时 `message` 里会说明走文本/拆码。 */
+  qr_fits: boolean;
+  /**
+   * 装得下时：**一张二维码的 SVG**（界面当 data URI 贴进 `<img>`）；装不下 ⇒ `null`。
+   *
+   * ⚠️ 装不下就一定是 `null` —— 后端绝不画一张装不下的码。
+   */
+  qr_svg: string | null;
+  /** 一句**人话**（界面原样显示）。 */
+  message: string;
+}
+
+/** B 片 ①-a：换设备的**采纳侧**读数（`pairing_import`）。 */
+export interface PairingImportOutcome {
+  outcome: "ok" | "already_local" | "rejected";
+  /** 这段载荷的比对码 —— 界面**必须显示出来**让人核对（`rejected` 时为空）。 */
+  check_code: string;
+  spaces: number;
+  /** `already_local` 时：本机已有的空间。 */
+  local_spaces: string[];
+  /** `already_local` 时：覆盖之后会**失去**的空间（覆盖后那台设备再也开不开它自己的库）。 */
+  would_lose: string[];
+  /** 一句**人话**（界面原样显示）。 */
+  message: string;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -352,6 +511,150 @@ export interface CommandMap {
   create_folder: { args: { args: { parent_id: string | null; title?: string } }; result: PageDetail };
   create_database: { args: { args: { parent_id: string | null; title?: string } }; result: PageDetail };
   save_page: { args: { args: { id: string; title?: string; content_json?: string; content_text?: string } }; result: PageDetail };
+  // 冲刺 S3b-2c（2026-09-23）：每页的 **CRDT 状态**读/写（`page_crdt` 表）。
+  // ⚠️ 载荷用 `number[]`（JSON 安全）：状态是二进制，跨 IPC 不能直接过 `Uint8Array`；
+  //    两侧边界各转一次（Web 侧就在分派那里）。桌面实现归切片 S7。
+  read_page_state: { args: { args: { page_id: string } }; result: number[] | null };
+  save_page_state: { args: { args: { page_id: string; state: number[] } }; result: null };
+  // 冲刺 S9（2026-09-23）：**CRDT 血统 claim** —— 原子裁定"谁先给这一页建血统"。
+  // 服务端端点 `/lineage-claim`（`shuyonote-sync-server` 的 sync 路由，**挂在根上**）。
+  // ⚠️ 入参是**本地工作空间 id**（页所属那一个）：远端 `space_id` 由平台层从该工作空间的档案里取
+  //    （两者是两套 id，见 `crdt/claimScope.ts` 文件头）。
+  claim_page_lineage: { args: { args: { workspace_id: string; page_id: string } }; result: { granted: boolean; unavailable?: boolean } };
+  // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**待并的远端状态**（桌面 pull 收下的）。
+  // ⚠️ **两侧行为不同是平台事实**：桌面 Rust 没有 Yjs ⇒ 只能先把字节收进 `page_crdt_pending`，
+  //    由界面侧在打开页面时合并；Web 平台在 `applyChange` 里**当场**合并 ⇒ 恒为空数组 / 0 条。
+  read_pending_page_states: { args: { args: { page_id: string } }; result: { seq: number; state: number[] }[] };
+  clear_pending_page_states: { args: { args: { page_id: string } }; result: number };
+  // 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把状态投影写回落盘列**（＋派生）。
+  // 为什么要有它：桌面"打开页面"那条路只写状态 ⇒ 反链/插件/AI/导出读的**投影**要等下一次保存才跟上；
+  // 语义与三条纪律（**不是保存**：不动 `dirty`、不盖章、不快照；没变不写；数据库页排除）见
+  // `doc_content::write_page_projection` 与 TS 侧 `writePageProjectionIfChanged`。
+  // ⚠️ 字段名刻意叫 `doc_json`（**不是存储列名**，与 `StaleTextPage.doc_json` 同一处置）：
+  //    这一份 JSON 由**界面侧**算好传进来（Rust 没有 Yjs ⇒ 它算不出"状态 ⇒ JSON"）。
+  // 返回**是否真的写了**（`false` ＝ 无事可做：没变／数据库页／页面不存在）。
+  write_page_projection: { args: { args: { page_id: string; doc_json: string } }; result: boolean };
+  // 隐私边界第 1 步的命令面（2026-09-23）：**按空间**启用/禁用加密。
+  // ⚠️ **桌面专属**（登记进 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS`）：Web 没有钥匙柜，
+  //    加密空间在 Web 上会被 `lib/ciphertextSniff.ts` 明确拒掉 ⇒ 在 `web.ts` 里再实现一遍等于假装有钥匙。
+  // `passphrase` 只在"钥匙袋还不存在"时用到（用它建袋子）；已有袋子 ⇒ 省略（用会话里的主密钥）。
+  enable_space_encryption: {
+    args: { args: { space_id: string; passphrase?: string } };
+    result: number[];
+  };
+  disable_space_encryption: { args: { args: { space_id: string } }; result: null };
+  // 隐私边界 A=3（2026-09-24）：空间分类的**手动出口**（正常路径由"本地新建 ⇒ 个人空间"自动落）。
+  // ⚠️ 命令面**窄进**：只接受 "personal" / "team" / ""（空串＝取消分类），别的串**直接报错** ——
+  //    界面把 team 拼错时不许被静默当成"取消分类"（那会让闸门在用户以为已归类时**松开**）。
+  // ⚠️ 桌面专属（同下面那条读数面）：Web 侧没有钥匙柜，分类在 Web 上管不到任何东西。
+  set_space_kind: { args: { args: { space_id: string; kind: string } }; result: null };
+  // ②b 的读数面（2026-09-24）：**一次读全所有空间**的分类 ＋ 加密状态 ＋ 闸门裁决。
+  // `kind` 是 "personal" / "team" / ""（未分类）—— 未分类的**照样列出来**（它们正是"闸门没管到"的那批）。
+  // ⚠️ 桌面专属：Web 没有钥匙柜，`in_keyring` 恒假、`encrypted_on_disk` 无从嗅探 ⇒ 给了也是误导。
+  space_security_overview: {
+    args: undefined;
+    result: Array<{
+      space_id: string;
+      kind: string;
+      encrypted_on_disk: boolean;
+      in_keyring: boolean;
+      key_available: boolean;
+      gate: { allow: boolean; unclassified: boolean; reason: string };
+    }>;
+  };
+  // ③ 0b（2026-09-24）：**公开材料**的推 / 取 —— 换设备时只凭主口令解开自己的空间。
+  // `workspace_id` 是**本地**工作空间 id（远端 space id 由 Rust 侧按同步档案解析，与 claim 同口径）。
+  // ⚠️ **桌面专属**（登记进 `DESKTOP_ONLY_COMMANDS`）：Web 上没有钥匙袋，也就没有"公开材料"可取。
+  // `overwrite` 只对 `pull` 有意义：默认**不覆盖**本机已有的那一份（覆盖是危险动作，见 Rust 侧注释）。
+  push_space_keyring: {
+    args: { args: { workspace_id: string } };
+    result: SpaceKeyringOutcome;
+  };
+  pull_space_keyring: {
+    args: { args: { workspace_id: string; overwrite?: boolean } };
+    result: SpaceKeyringOutcome;
+  };
+  // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**
+  //（Web 上没有钥匙柜，也就没有"公开材料"可搬；理由写在 `check-web-commands` 的
+  //  `DESKTOP_ONLY_COMMANDS` 里）。
+  // 无参命令的惯例（照 `space_security_overview`）：`args: undefined` ＋ `invoke(cmd)` 不传入参对象。
+  // ⚠️ 注释**不许**夹在 `{` 与 `args` 之间 —— `check-web-commands` 认条目用的是
+  //    `name: {\s*args`，夹一行注释这条命令就对门禁**不可见**（2026-09-25 实测踩到）。
+  pairing_export: {
+    args: undefined;
+    result: PairingExportOutcome;
+  };
+  pairing_import: {
+    args: {
+      args: {
+        text: string;
+        /** 用户**在另一端念/抄下来的比对码**（可选）：传了就必须逐位相同，否则拒绝。 */
+        confirmed_check_code?: string;
+        overwrite?: boolean;
+      };
+    };
+    result: PairingImportOutcome;
+  };
+  // ① 存量迁移（2026-09-24）：★ owner 第三轮拍板后**整条删掉**（两条命令与它们的契约一起）——
+  // 它的对象是"应用级加密留下的旧钥匙"，而那套（含解锁/读老库的兜底）已按拍板删净。
+
+  // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
+  // ⚠️ 与块级那两条（`list_page_conflicts` / `resolve_page_conflict`）**不同族**：块级可逐块选一侧；
+  //    页级是"两条**独立血统**撞上" —— Yjs 结构上合不了（S1 红线）⇒ 只有
+  //    "留本机 / 用对端 / 两个都要（一页变两页）"三条路。字段名刻意叫 `doc_json`（不是存储列名）。
+  // ⚠️ 判定"血统相不相关"**只有界面侧做得了**（要 Yjs）⇒ 记录由界面侧发起，这两侧只管存与裁决。
+  record_lineage_conflict: {
+    args: { args: { page_id: string; mine_fp: string; remote_fp: string; doc_json: string } };
+    result: boolean;
+  };
+  list_lineage_conflicts: {
+    args: { pageId: string };
+    result: {
+      id: string;
+      page_id: string;
+      mine_fp: string;
+      remote_fp: string;
+      remote_doc: string;
+      detected_at: number;
+      resolved_at: number | null;
+      resolved_choice: string | null;
+    } | null;
+  };
+  resolve_lineage_conflict: { args: { conflictId: string; choice: string }; result: null };
+  // 桌面「近实时」流通道（2026-09-23 第 48 轮）：Rust 订 SSE 变更流，**只发"有变更"事件**
+  //（`sync-stream-change`），拉取仍由前端 `syncWorkspace` 发起 ⇒ 自动过 C2 闸门/防重入/状态行。
+  // ⚠️ 这三条**只有桌面**：浏览器自带 SSE（Web 侧是 `useSyncStream.ts` 自己那条流）⇒ 硬在 `web.ts`
+  //    里再实现一遍等于把同一件事写两份。登记进 `check-web-commands` 的 **`DESKTOP_ONLY_COMMANDS`**
+  //    （"Rust 有、Web 故意没有"；桌面专属 2 → 5）—— 别与反方向的 `WEB_ONLY_COMMANDS` 混淆。
+  sync_stream_start: { args: { wsId: string }; result: SyncStreamStatus };
+  sync_stream_stop: { args: undefined; result: SyncStreamStatus };
+  sync_stream_status: { args: undefined; result: SyncStreamStatus };
+  // 甲-1 接线第 3 件（2026-09-25）：局域网发现的**读数 ＋ 状态行**（施工单 §2 ④）。
+  // ⚠️ **两侧都实现**（不登记成 web 专属）：Web 平台没有 UDP 发现层，但它**照旧有**"这一轮走哪个
+  //    地址"这件事 —— 那边的实现如实回"配置地址那一档 ＋ 发现层不可用"（见 `platform/web.ts`
+  //    那一支），而不是假装发现了谁。契约形状与 `src-tauri/src/sync.rs::LanStatus` 逐字段相同。
+  lan_status: { args: { workspaceId?: string | null }; result: LanStatus };
+  /**
+   * 丙-③-b ③：**对等交换（网格）跑一轮** —— 确认本机窗口 ＋ 从发现到的对端各拉一批。
+   *
+   * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 平台**既没有发现层、也开不了本机端口**
+   * （UDP 与监听都在 Rust 侧）⇒ 那边的实现**如实回**"这一档不可用"的报告
+   * （`enabled:false` ＋ 一句为什么），而不是假装拉过谁。
+   * 契约形状与 `src-tauri/src/mesh.rs::MeshRoundReport` 逐字段相同。
+   */
+  mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
+  /**
+   * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
+   *
+   * 两条口径（与 Rust 侧同一套）：
+   * 1. **`null` ＝ 不动这一项；`""` ＝ 清除它** —— 所以"关掉网格"就是 `bind: ""`；
+   * 2. 公网地址**在写的时候就被拒**，错误原样抛给调用方；
+   *    关掉时**立刻松口**（窗口随之停掉，不留一个还在听的端口）。
+   */
+  mesh_set_config: {
+    args: { workspaceId?: string | null; bind?: string | null; token?: string | null };
+    result: MeshConfigState;
+  };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };
@@ -365,7 +668,13 @@ export interface CommandMap {
   set_active_workspace_id: { args: { id: string }; result: void };
   rename_workspace: { args: { id: string; name: string }; result: void };
   set_workspace_settings: { args: { id: string; theme?: string | null; icon?: string | null; sortOrder?: number | null }; result: void };
-  create_workspace: { args: { name?: string | null }; result: WorkspaceMeta };
+  // ★ A1（owner 2026-09-25 拍板）：新建空间时**当场**选"个人 / 团队"。
+  // `kind` 不传 ⇒ 按原来的默认（桌面侧 `personal`，行为逐字不变）；传了就必须是这两个字面量之一
+  // （Rust 侧窄进校验：别的串**报错**，不静默当成"未分类"——那会让同步闸门松开）。
+  create_workspace: {
+    args: { name?: string | null; kind?: "personal" | "team" | null };
+    result: WorkspaceMeta;
+  };
   delete_workspace: { args: { id: string }; result: void };
   copy_page_to_workspace: { args: { pageId: string; targetWorkspaceId: string; newParentId?: string | null }; result: string };
 
@@ -542,13 +851,16 @@ export interface CommandMap {
   set_plugin_setting: { args: { pluginId: string; key: string; value: string }; result: void };
 
   // ---- Encryption (local at-rest) ----
-  set_encryption: { args: { passphrase: string }; result: void };
+  // ★ owner 第三轮拍板（2026-09-24）：`set_encryption` / `disable_encryption`（**应用级**：
+  //   全局一把钥匙、一开全加密）已删 —— 加密现在**按空间**（`enable_space_encryption` /
+  //   `disable_space_encryption`，见上面那一族）。留下的这三条是**会话级**的：
+  //   锁定 / 解锁（口令对不对由解盒子回答）/ 状态读数（界面靠它决定要不要出解锁屏）。
   // `format` / `algorithm`：本会话写新数据用的密文版本与稳定算法名（§0-C 的算法标识）。
   // ★ 2026-09-20 起**默认构建恒为 2="sm4-cbc+hmac-sm3"**（国密已是默认特性，方案 §3.4）；
   // 只有 `--no-default-features` 的回滚通道才是 1="xchacha20-poly1305"。
   // `space_format` / `space_algorithm`：**当前活动空间**记录在案的密文版本与算法名（0/空串 = 未记录）。
   // §0-C：算法标识要落到空间状态上 —— 界面/诊断得能说出「这个空间的数据是哪一版」，
-  // 而不是等到读到某一条才发现读不了。
+  // 而不是等到读到哪一条才发现读不了。
   encryption_status: {
     args: undefined;
     result: {
@@ -562,7 +874,6 @@ export interface CommandMap {
   };
   lock_encryption: { args: undefined; result: void };
   unlock_encryption: { args: { passphrase: string }; result: void };
-  disable_encryption: { args: undefined; result: void };
 
   // ---- Templates ----
   list_templates: { args: { spaceId?: string | null }; result: TemplateMeta[] };
@@ -648,9 +959,24 @@ export interface CommandMap {
    *  ⚠️ **刻意独立成命令**、不复用 `set_sync_profile`——后者对未传字段是"清空"语义，
    *  拿它翻转开关会把该空间的 `token` / `space_id` 清掉。 */
   set_sync_attachments: { args: { wsId: string; enabled: boolean }; result: void };
-  /** P6.3「按需取字节」：用户主动下载**单件**附件，返回落盘字节数（失败即 throw）。
-   *  ⚠️ 与同步下载**同一个实现**；且**不受 C1 预算闸门约束**——显式操作照做。 */
-  download_attachment: { args: { wsId: string; hash: string }; result: number };
+  /** P6.3「按需取字节」：用户主动下载**单件**附件（失败即 throw）。
+   *  ⚠️ 与同步下载**同一个实现**；且**不受 C1 预算闸门约束**——显式操作照做。
+   *  ★★ 丙-④（2026-09-26）：**字节有两个来源**（绑了服务端 ⇒ 先问服务端；再按发现到的
+   *  对端依次试），所以回的是**读数**而不是一个数字：`note` 由 Rust 拼好（界面原样显示，
+   *  别自己按 `source` 再写一句 —— 那样就有两处口径）。 */
+  download_attachment: {
+    args: { wsId: string; hash: string };
+    result: {
+      /** 落盘的明文字节数。 */
+      size: number;
+      /** `server` ＝ 从同步服务器取的；`peer` ＝ 从网段里某一台对端取的。 */
+      source: "server" | "peer";
+      /** 从哪一台对端取的（`source === "server"` ⇒ `null`）。 */
+      peer: string | null;
+      /** 一句人话，界面原样显示。 */
+      note: string;
+    };
+  };
   sync_workspace: { args: { wsId: string }; result: WorkspaceSyncResult };
   /** C1 预算刹车（2026-09-15）：设备级设置，存 `meta.sync_state` 的 KV。 */
   get_sync_budget: { args: undefined; result: SyncBudget };
@@ -851,6 +1177,9 @@ export interface CommandMap {
   // ---- Platform-internal commands (not routed via api.ts, but still part of
   // the backend contract; declared so CommandMap covers every Rust command) ----
   write_attachment_bytes: { args: { hash: string; data: number[]; mime: string; name: string }; result: AttachmentMeta };
+  // 旧二进制 Office → OOXML 的平台转换（桌面只有：spawn LibreOffice headless；Web 的 stub 会如实 reject）。
+  // `to` 由抽取器决定（OOXML 的目标 MIME），失败一律 reject ⇒ 抽取器映射成 provider_error。
+  convert_legacy_office: { args: { data: number[]; to: string }; result: number[] };
   list_attachment_hashes: { args: undefined; result: string[] };
   render_pdf_page: { args: { args: { attachment_id: string; page_index: number; scale: number } }; result: unknown };
 }

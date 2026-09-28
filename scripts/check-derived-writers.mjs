@@ -12,6 +12,12 @@
 //
 // 读那一侧（`derivedText.ts` ↔ `search.rs::read_attachment_text_in_conn`）两边各写一份，
 // 那是**另一件事**（要的是跨语言夹具），不在本判据里 —— 本判据只守"写只有一处"。
+//
+// 用法：
+//   node scripts/check-derived-writers.mjs               # 默认扫本仓
+//   node scripts/check-derived-writers.mjs --root <dir>  # **夹具/自测用**：在别的根上跑
+//     ⚠️ `--root` 存在的理由（2026-09-28）：判据的承重证明要"**在夹具根上把它弄红**"，
+//     而不是去改真仓源码。约定与 `check-store-subscriptions.mjs` / `check-plan-status.mjs` 一致。
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +25,10 @@ import { fileURLToPath } from "node:url";
 import { ALLOWED_RUST_WRITERS, scanDerivedWriters } from "./lib/derived-writers.mjs";
 import { productionText } from "./lib/rust-scan.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : join(HERE, ".."));
 const RUST_ROOT = join(root, "src-tauri", "src");
 
 /** 出错时能一眼看出"扫过哪些文件"，避免"目录写错 ⇒ 0 命中 ⇒ 假绿"。 */
@@ -67,6 +76,6 @@ if (violations.length) {
 
 console.log(
   `✓ 派生表唯一写入者：扫过 ${files.length} 个 .rs（已剥测试尾部），生产写入 0 处` +
-    `（豁免 ${ALLOWED_RUST_WRITERS.length} 个已批准的运输通道文件）`,
+    `（豁免 ${ALLOWED_RUST_WRITERS.length} 个已批准的运输通道文件）｜根：${root}`,
 );
 

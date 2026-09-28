@@ -21,6 +21,12 @@ mod gm_provider;
 // 「哪份 SQLCipher 源码 / 有没有 SM3 标记」的解析 —— **同一份代码被 `build.rs`（`include!`）与本 crate
 // 的判据共用**，免得"构建期判据"和"判据里的判据"各写一份、各自漂移
 // （2026-09-19 macOS 侧的受控实验证明第一版取法错了：按 mtime 挑版本会挑到陈旧副本）。
+//
+// ★ **2026-09-25 清理**：这个模块在产品二进制里**根本不需要存在** —— 它在本 crate 里唯一的使用者
+// 就是判据（构建期那一半走的是 `build.rs` 的 `include!`，那是**另一次编译**，与本行无关）
+// ⇒ 声明成 `#[cfg(test)] mod` 比"整模块 `#[allow(dead_code)]`"更诚实：不是"编进来了但没人用"，
+// 而是"没编进去"。8 处逐项豁免（5 个 `#[allow]` ＋ 3 个 `cfg_attr`）随之全部删除。
+#[cfg(test)]
 mod gm_patch_probe;
 mod database;
 mod db;
@@ -29,6 +35,50 @@ mod disk;
 // 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
 // 见 `docs/plans/2026-09-18-doc-content-layer-inventory.md`。
 mod doc_content;
+// 冲刺 CRDT S7（2026-09-23）：每页的 **CRDT 状态**存取（`page_crdt` 表）—— 与前端那一层
+// `readPageCrdtState` / `writePageCrdtState` / `clearPageCrdtState` 成对，判据也成对。
+mod page_crdt;
+// 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**同步载荷里的 CRDT 状态字段**（桌面侧）—— 与前端
+// `src/lib/crdt/wireState.ts` 成对（同一套语义：没有 ⇒ 走今天那条路、版本不认识 ⇒ 不猜、坏载荷 ⇒ 如实报）。
+mod crdt_wire;
+// 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**的留痕与裁决（表 `page_lineage_conflicts`）。
+// ⚠️ 与块级 `page_conflicts` **不是一族**：两条独立血统在 Yjs 结构上就合不了（S1 红线），
+// 只能"留本机 / 用对端 / 两个都要（一页变两页）"。
+mod lineage_conflict;
+// **丙（真网状）**：**HLC 判序** —— 纯函数（`tick` / `observe` / 全序 / 定长可排序编码）
+// ＋ LWW 折叠与投影 ＋ **戳挂到记录载荷上**（丙-②）。它替掉的是"只能由一个地方发"的 `changes.seq`，
+// 见 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §4/§6 与 §12/§13。
+// ★ **2026-09-25 清理**：③-b 落地后按 `hlc.rs` 文件头那张清单**逐条核了一遍**，"还没全接线"的
+// 模块级 `#[allow(dead_code)]` 收据**已撤**（收据兑现了：那时写着"等 ③-b 接完再核"）：
+//   · **产品路径在用**：`Hlc` / `with_stamp` / `stamp_of_payload` / `PayloadStamp` / `Verdict` / `verdict`
+//     （`sync.rs` 的页 upsert 与收侧判序、`mesh.rs` 的对等交换面）；
+//   · **只服务判据与仿真夹具**：`StampedRecord` / `merge_record` / `projection` / `winner` /
+//     `without_stamp` —— 各自在 `hlc.rs` 里带 `#[cfg(test)]`（夹具 `mesh_sim.rs` 本身也在测试里）。
+//     哪天内容比较那一处真接上 `without_stamp`，就把那一条 `#[cfg(test)]` 摘掉（而不是复活整模块豁免）。
+mod hlc;
+// 丙 的**仿真夹具**（N 对端 / 乱序 / 重复 / 无中枢）—— 只在判据里用，**不进产品二进制**。
+// 真机验不了"任意投递顺序"，所以收敛这条承重判据必须先在这里可编排、可复现。
+#[cfg(test)]
+mod mesh_sim;
+// **丙-③-b：对等交换面** —— 客户端之间**直接**收发带戳的记录（没有中枢、没有号牌、没有账本）。
+// 见 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §13 的 ③-b。
+// ⚠️ 收据已撤（2026-09-25，③-b-2b）：设置面（`mesh_set_config`）与同步面（`mesh_sync_now`）
+// 两条命令都在 `generate_handler!` 里 ⇒ 这一层**没有只服务判据的死代码**了。
+mod mesh;
+// 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。
+// ⚠️ 本步**只落格式与判据、不接线**：现有 `encryption_enabled` / `key_space_conn` / `encrypt_payload`
+// 一字不动（按空间是第 1 步、同步闸门是第 2 步）。见 `docs/plans/2026-09-23-keyring-step0-workorder.md`。
+pub mod keyring;
+// 隐私边界**第 1 步（第一半）**（2026-09-23）：**按空间**的开关与钥匙解析 ——
+// 空间 id 从库文件主干反推、钥匙袋放 meta（公开材料）、会话里存主密钥；
+// **袋子优先、旧路兜底** ⇒ 没有钥匙袋时行为与接线前**逐字相同**。
+pub mod space_crypto;
+// 桌面「近实时」流通道的**纯函数内核**（SSE 帧解析 ＋ 重连退避）—— 设计稿
+// `docs/plans/2026-09-23-desktop-near-realtime-stream-design.md` §7 第 1 步：先有判据。
+mod sync_stream;
+// 旧二进制 Office → OOXML 的平台转换器（`deps.convertLegacy` 的桌面实装；抽取器在 TS 侧）。
+// 命令面：`convert_legacy_office(data, to)`。详见该文件头注（三条口径：`to` 由抽取器定 / 失败一律 Err / 临时件自清）。
+mod legacy_convert;
 // 交付通道协议 `shuyonote://` 的 **OS 层**。**两平台共用同一份实现**：桌面靠 argv、
 // Android 靠 intent，但接收 URL 的入口 API 相同（`app.deep_link()` / `on_open_url`）。
 // 这里曾经写着"移动端 `on_open_url` 不存在"并据此把 `plugin()` / `attach()` 收窄到桌面，
@@ -45,6 +95,13 @@ mod smtp;
 mod graph;
 mod models;
 mod net;
+// 局域网发现（甲-1 纯函数内核）：见 [`lan`] 模块头 —— UDP 收发与「代言」在下一片接线。
+mod lan;
+// 发现层的**归属**：对端表 = 应用级单例 ＋ 按需启用（owner 2026-09-25 拍板，见 workorder §8 ②）。
+mod lan_state;
+// 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
+// ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
+mod pairing;
 mod capabilities_gen;
 // MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
 // PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
@@ -86,6 +143,11 @@ mod derived_transport;
 // 为什么是个独立模块、以及为什么要在两套 jni 之间做裸指针桥接，见模块头注释。
 #[cfg(target_os = "android")]
 mod tls_android;
+// Android 专属：局域网发现要收 **UDP 广播/组播**，而 Android 在应用不持有
+// `WifiManager.MulticastLock` 时会把这些入站帧过滤掉（2026-09-25 真机实测：两台手机同热点、
+// ping 通、广播收不到；改成单播立刻生效 ⇒ 挡的就是这一层）。见模块头。
+#[cfg(target_os = "android")]
+mod lan_android;
 mod security;
 mod storage;
 mod sync;
@@ -368,6 +430,19 @@ pub fn run() {
             // launch so the passphrase must be re-entered before any encrypted sync.
             security::startup_lock(&conn);
             app.manage(Db(Mutex::new(conn)));
+            // 甲-1 接线第 1 件（2026-09-25）：**启动时就把局域网发现的循环拉起来**。
+            //
+            // ⚠️ 为什么必须在**这里**（而不是等界面第一次 `lan_status`）：发现层要在
+            // **每次同步请求**之前就有对端表（`sync::effective_base` 读的就是它）—— 若等用户
+            // 打开同步面板才起，那"面板没开过"的会话里**永远不会有局域网路由**，而现象是
+            // "装好了却一直走公网"（没有报错、没有日志、`cargo test` 也照绿）。
+            //
+            // ⚠️ 起它**不等于开始广播**：循环每轮重读"绑了同步的空间数"（`should_enable`），
+            // 一个都没绑 ⇒ 开关是关的 ⇒ **不发一条公告**（用户看不见，但那是隐私与噪音的两重错）。
+            // 绑不上 UDP（端口被占 / 系统限制）⇒ 只记一行日志，**不挡同步**（发现层是加分项）。
+            if let Err(e) = lan_state::start(app.handle().clone()) {
+                eprintln!("[lan] 发现层没起来（同步不受影响，照旧走配置地址）：{e}");
+            }
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
             // 会节流 JS timer，所以放在 Rust 侧做）。**桌面专属**，见 mod email 的说明。
             #[cfg(desktop)]
@@ -436,6 +511,13 @@ pub fn run() {
             // 详见 `mod tls_android` 与 docs/MOBILE.md §2.4。
             #[cfg(target_os = "android")]
             tls_android::init(&_window);
+
+            // 局域网发现的前置：拿一把 MulticastLock（否则 Android 会把入站的 UDP 广播/组播
+            // 过滤掉 ⇒ 两台手机同热点也互相发现不了）。**必须在这里**（窗口建好之后），
+            // 与 `tls_android::init` 同一个理由：`exec` 需要一个能取 `jni_handle()` 的窗口。
+            // 失败只记一行日志（发现层是加分项，拿不到锁就退化成"只有单播/回环能用"）。
+            #[cfg(target_os = "android")]
+            lan_android::ensure_multicast_lock(&_window);
 
             Ok(())
         })
@@ -509,9 +591,56 @@ pub fn run() {
             updates::install_android_update,
             commands::create_database,
             commands::save_page,
+            // 冲刺 CRDT S7-2（2026-09-23）：每页 CRDT 状态的读/写（`page_crdt` 表）。
+            // 与前端 `api.readPageState` / `api.savePageState` 成对 —— 接上之后**桌面**才真正
+            // 与 Web 同行为（在此之前它俩只登记为 web 专用，桌面上每次打开页面都会绑定失败）。
+            commands::read_page_state,
+            commands::save_page_state,
+            // 冲刺 §11.4 收口（2026-09-23 第 42 轮）：**待并的远端状态**（桌面 pull 收下的，
+            // 交给界面侧在打开页面时合并；Web 平台恒为空 —— 它当场合并）。
+            commands::read_pending_page_states,
+            commands::clear_pending_page_states,
+            // 冲刺 §13.3 第 1 条（2026-09-23 第 49 轮）：**把投影写回落盘列**
+            //（界面侧算好 JSON 传进来 —— Rust 没有 Yjs；不写这一列时反链/导出要等下一次保存才跟上）。
+            commands::write_page_projection,
+            // 隐私边界第 1 步的命令面（2026-09-23）：**按空间**启用/禁用加密
+            //（只换那一个空间的库；与旧的 `set_encryption` 应用级那条路并存）。
+            // ⚠️ 登记为**桌面专属**：Web 平台没有钥匙柜（`ciphertextSniff` 那条会把密文拒掉）。
+            commands::enable_space_encryption,
+            commands::disable_space_encryption,
+            // 隐私边界 A=3 ＋ ②b 的读数面（2026-09-24）：空间分类的**手动出口**
+            //（正常路径由"本地新建 ⇒ personal"自动落）＋ **一次读全**的隐私读数
+            //（分类 ＋ 加密状态 ＋ 闸门裁决 —— 界面不用知道"钥匙袋"存在）。
+            // ⚠️ 同样登记为**桌面专属**：Web 没有钥匙柜 ⇒ `in_keyring`/`encrypted_on_disk` 读不出来，
+            //    真给它一份读数只会是**误导**（缺口已记在交接文档 §5，不是"已做到"）。
+            commands::set_space_kind,
+            commands::space_security_overview,
+            // ① 存量迁移的命令面（2026-09-24）：★ owner 第三轮拍板后**整条删掉** ——
+            // 它的对象是"应用级加密留下的旧钥匙"，而那套（含解锁/读老库的兜底）已按拍板删净，
+            // 迁移/轮换也就没有对象了。现在"密文库 ＋ 袋里没有它的盒子"这条路的出路只有一条：
+            // 从别处取回公开材料（界面那句报错说的就是它）。
+            // 桌面「近实时」流通道（2026-09-23 第 48 轮）：订 SSE 变更流、把"有变更"发成事件，
+            // **拉取仍由前端发起**（这样自动经过 C2 闸门/防重入/状态行）。
+            // ⚠️ 这三条**登记为 web 专属**（浏览器自带 SSE，Web 侧是 `useSyncStream.ts` 自己那条流）。
+            sync_stream::sync_stream_start,
+            sync_stream::sync_stream_stop,
+            sync_stream::sync_stream_status,
+            // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
+            // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
+            //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
+            sync::lan_status,
+            // 丙-③-b：**对等交换的产品入口**（确认窗口 ＋ 从发现到的对端各拉一轮）
+            // ＋ **设置面**（写监听地址 / 口令，并把窗口的开关跟着改）。
+            sync::mesh_sync_now,
+            sync::mesh_set_config,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,
+            // 冲刺 §13.3 第 2 条（2026-09-23 第 49 轮）：**页级血统冲突**（记 / 读 / 裁决）。
+            // ⚠️ 与上面那两条**不同族**：块级可逐块选一侧；页级是"两条独立血统撞上"（合不了）。
+            commands::record_lineage_conflict,
+            commands::list_lineage_conflicts,
+            commands::resolve_lineage_conflict,
             // 阶段 1 · 正文文本的本地修复（合并/裁决之后由"有编辑器的那一侧"喂正确文本）
             commands::refresh_page_text,
             // 阶段 1 · B1："正文待重建"队列（补算器按它把合并/裁决过的页面补上）
@@ -575,6 +704,23 @@ pub fn run() {
             sync::team_get_session,
             sync::team_get_me,
             sync::team_get_server_email,
+            // 冲刺 CRDT S9（2026-09-23）：**血统 claim** —— 桌面侧与 web 侧同端点
+            // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
+            // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
+            sync::claim_page_lineage,
+            // 隐私边界 ③ 0b（2026-09-24）：**公开材料的推 / 取** —— 换设备时只凭主口令解开自己的空间。
+            // ⚠️ 推上去的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子），
+            //    服务端解不开它；它仍然是**元数据**（服务端能看到你有几个盒子、它们的本地空间 id）。
+            // ⚠️ 桌面专属？**不是** —— 但 Web 侧今天没有实现（钥匙柜在 Web 上不存在），
+            //    所以这两条与按空间加解密一起登记为**桌面专属**（`check-web-commands` 的
+            //    `DESKTOP_ONLY_COMMANDS`，理由写在那里）。
+            sync::push_space_keyring,
+            sync::pull_space_keyring,
+            // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）。
+            // 同样是**桌面专属**：Web 上没有钥匙柜，也就没有"公开材料"可搬
+            // （理由写在 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS` 里）。
+            sync::pairing_export,
+            sync::pairing_import,
             sync::list_sync_history,
             sync::clear_sync_history,
             sync::team_list_orgs,
@@ -603,6 +749,7 @@ pub fn run() {
             attachments::list_attachment_hashes,
             attachments::read_attachment_bytes,
             attachments::write_attachment_bytes,
+            legacy_convert::convert_legacy_office,
             attachments::import_attachment_files,
             attachments::list_page_attachments,
             attachments::list_all_pdf_attachments,
@@ -718,9 +865,11 @@ pub fn run() {
             plugins::clear_plugin_logs,
             plugins::plugin_audit,
             plugins::clear_plugin_audit,
-            security::set_encryption,
+            // ★ owner 第三轮拍板（2026-09-24）：**应用级加密（全局一把钥匙）那两条命令已删**
+            //（`set_encryption` / `disable_encryption`）—— 连同它们的 meta 配置、契约、界面一起删净。
+            // 留下的是**会话级**的锁定/解锁（解锁按钥匙袋记的 KDF 参数推主密钥、由解盒子回答口令对不对）
+            // 与 `encryption_status`（界面靠它决定要不要出解锁屏）。
             security::encryption_status,
-            security::disable_encryption,
             security::lock_encryption,
             security::unlock_encryption,
             ai::ai_complete,

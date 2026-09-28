@@ -206,4 +206,19 @@ describe("read_attachment_text 的覆盖度读数（web 侧，真 SQL）", () =>
     expect(page.segments.map((s) => s.text)).toEqual(["老库里的段"]);
     expect(page.coverage).toEqual([]); // 未知，**不是** complete
   });
+
+  it("★★ **非「缺列」原因的失败不许被吞成空读数**（未知是承重答复，不是垃圾桶）", async () => {
+    const db = await freshDb();
+    seedWithCoverage(db, [
+      { attId: "a1", extractor: "pdf.text@1", seq: 0, text: "段", coverage: '{"complete":true}' },
+    ]);
+    // 让**覆盖度那条查询**报一个与"缺列"无关的错（真实现里：数据库锁住 / 表损坏 / SQL 打错字）
+    const wrapped = {
+      query<T>(sql: string, params?: readonly unknown[]): T[] {
+        if (sql.includes("extractor, coverage")) throw new Error("database is locked");
+        return (db as unknown as { query<T>(s: string, p?: readonly unknown[]): T[] }).query<T>(sql, params);
+      },
+    };
+    expect(() => readAttachmentTextVia(wrapped, "a1")).toThrow(/database is locked/);
+  });
 });

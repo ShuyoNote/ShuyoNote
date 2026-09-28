@@ -30,11 +30,41 @@ pnpm dev:web                                   # 另开一个终端
 node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 ```
 
+> ### ⚠️ 跑完 mobile 组**记得停掉 `dev:web`**，否则 `pnpm verify` 会假红
+>
+> **2026-09-27 两次对照实测**（同一工作区、同一命令、只差 :5173 在不在）：
+>
+> | :5173 | `vitest` 结果 | `pnpm verify` |
+> |---|---|---|
+> | **在跑** | **2 个测试文件收集失败**（用例失败数为 0 ⇒ 只看汇总行会以为没事） | **exit 1** |
+> | 停掉 | 237 passed / 6 skipped / **0 失败** | **exit 0** |
+>
+> ⇒ **`mobile` 组要求起 dev server，而 `pnpm verify` 要求它不在** —— 两条要求**互相冲突**，
+> 顺序必须是"**起 → 跑 mobile → 停 → 跑 verify**"。
+>
+> ⚠️ 这条属于本文件反复出现的那一族（**假红**），但**成因与 L499/L526/L573 那三条都不同**：
+> 那三条是负载 / 超时 / 进程级全局状态，这一条是**环境冲突**（dev server 占了端口 + 动了被测试的文件）。
+> **判据是两次对照，不是推测。** 遇到时先看 `:5173` 在不在，别去改产品代码。
+>
+> **为什么不直接判红/自动避开**：`vitest` 的收集失败信息在这条路径上**不指出是 5173 造成的**，
+> 而"跑之前要求先停 dev server"会与 mobile 组的前置要求打架。**如实记在这里，让人判断。**
+
 ## 门禁总表
 
 准确清单以 `pnpm verify:list` 为准（下表就是它的摘要）。**每条门禁都对应一次真实事故**，
 理由写在注册表的 `incident` 字段里——门禁存在的代价是每次 push 的几分钟，理由必须留下来，
 否则后人只会看到"一堆跑得慢的检查"。
+
+<!-- facts:begin -->
+门禁 51 条（contract 27 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 260 / web 250 / CommandMap 262
+基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+<!-- facts:end -->
+
+> ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
+> 同一条门禁还要求**每条门禁的名字都出现在本表里**（新门禁不许只进代码、不进文档）。
+> 块里的**第 2 行是各门禁的读数下限**（取自 `tests/baseline.json`，逐字核对）—— 要给数字就指到那一行去，
+> **别在本表里手写**：2026-09-25 实测，本表手写的「`vitest` 885 用例」在下界与实测都已到 2262 之后还在原地。
+> 表里的"断言数"会随测试增减，**数字以 `tests/baseline.json` 与每次运行的读数为准**，别照着这里的旧数字对账。
 
 | 组 | 门禁 | 挡什么 |
 | --- | --- | --- |
@@ -42,16 +72,31 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-changelog-numbers` | 发版说明里的断言数被手抄漂移：**最新一段**里"套件名 + 数字"一对一绑定时必须等于基线（历史段落不碰；多套件/多数字/带 `历史`·`豁免` 的行跳过——宁可不判，也不误报） |
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
-| contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉） |
+| contract | `check-doc-facts` | 文档里的**机器事实**（门禁条数／能力条数／命令数）与代码脱节：这类数字靠人抄，抄错不报错，只会让照文档做的人做到一半发现文档是旧的。它还要求**每条门禁都在本表里有名字**（上线当天抓到 7 条漏写） |
+| contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉）＋ 跑了 `--prepare` 的 job 必须**自己**交接私有 `CARGO_HOME`（2026-09-25：隔离后少这一次交接，Android 自检包在 step 23 如实 panic；按 job 切，按文件找会假绿） |
 | contract | `check-gitcode-workflow-rules` | `.gitcode/workflows/*.yml` 的三条**平台**约束（runs-on 白名单 / 每个 step 必须有合法 `name` / action 用 `actions/xxx@vN`）——不合法时整条流水线不会被调度；规则由 GitCode 校验接口实测得出 |
 | contract | `check-overlay-registry` | 浮层没登记进返回栈 ⇒ 真机返回键直接退出应用（2026-09-15 第 6 个真机问题） |
+| contract | `check-store-subscriptions` | **组件对 Zustand store 整店订阅**（`const { openPage } = useNotes();`）：action 引用恒定却订阅了整个 state ⇒ 任何一次 `set()` 都把组件唤醒。判据是**订阅关系**、不是渲染耗时，基线（`scripts/store-subscription-baseline.json`）**只减不增**；行内 `// gate-allow: <理由>` 可显式放行。2026-09-25 实测 39 处 / 32 文件，最重的是 `PageTree.tsx` 的 `TreeItem`（**每个可见树节点渲染一次**）；同一笔里已修 16 处（`PageTree` 三处改字段级选择器，13 处只用到 action 的与 `SyncPanel` 的 `useSyncStatus` 改走 `getState()`），基线 39 → 23 —— 与 `check-hook-order` 同族：不炸不报错、测试全绿，只是安静地多渲染。<br>⚠️ **已知盲区**：它管"订阅**形状**"，管不到"订阅**者多大**、那个字段**多久变一次**"——`PageTree` 订阅 `treeDrag` 的 `x`/`y`（每帧都在变）在它眼里完全正确，却等于拖着整侧栏 60fps 重渲染（2026-09-25 拆成 `TreeDragGhost` 才修掉） |
+| contract | `check-hook-order` | **早退越过 hooks**（同一类错发生过两次，两次都是"界面直接没了"）：v1.85.1 `CommandPalette` 把 `useState` 放在 `if (!open) return null` 之后 ⇒ 按 Ctrl+K 白屏；2026-09-16 `App` 的加密闸门排在七八个 hooks **之前** ⇒ 加密安装重启即抛 `Rendered fewer hooks than expected`，用户看到崩溃屏而锁定屏一次都没出现过。两次都不是写错，是**看漏了**（早退与 hooks 隔着几十行）。<br>⚠️ 它 **2026-09-25 才补进本注册表**——此前只挂在 `pnpm build` 链上，本地一键验收与 CI 的 `checks` job 都**跑不到它**（同一个坑 `mobile-views` 2026-09-22 踩过）：只在 build 链上的门禁在 verify 路径上是隐形的 |
 | contract | `check-ps1-ascii` | 无 BOM 的 UTF-8 `.ps1` 在 PS 5.1 下报假语法错误（2026-09-11） |
 | contract | `check-pdfjs-shim` | 老 WebView 上打不开 PDF：补齐层的 install 顺序最容易被"顺手整理"破坏 |
 | contract | `check-ocr-assets` / `check-deep-link` / `check-plugin-hosting` | 运行时资源清单、`shuyonote://` 交付通道、插件托管 |
 | contract | `check-sys-deps` | 构建期依赖**登记**与本机工具链：新依赖进来而映射没更新（未登记的 `*-sys` 即红）；同日两类真事故——发布机清掉 `libssl-dev`、本机 Xcode 27 装完许可未接受（`notarytool` 一条探针即可发现）。工具链探针**两张表**：macOS（`xcode-select`/SDK/`notarytool`/`codesign`/`clang`）与 **Windows（2026-09-20 补）**——硬判据 `vswhere-msvc`（VC 工具链）/`windows-sdk`/`webview2`（运行时：没它装完打不开），`kind: "info"` 的 `makensis`/`signtool` **只报不判**（tauri 自己取 NSIS、签名只在发版要） |
+| contract | `check-changelog-version-parity` | 已发布标题与版本文件**同改**：只把 CHANGELOG 的标题往前挪、忘了 bump 版本号（或反过来）⇒ 用户看到的"新版本"里没有这次改动 |
+| contract | `check-changelog-tags` | **发布出去的那棵树必须自带它自己那一版的台账段**：判据是"每个 tag 的树里有没有 `## [该版本]`"，不是"CHANGELOG 里写了没写"。2026-08-31 一天里连发 7 个 tag（`v1.64.10`…`v1.64.16`）而每一个的树顶格都还停在 `1.64.10`。`release-preflight` 查的是**打 tag 之前的工作区**，挡不住"tag 打在了台账陈旧的提交上"；这条对**所有** tag 全量审计（历史 8 条只登记、**不补写**，见脚本内 `KNOWN_GAPS`）。⚠️ 一个版本 tag 都看不见（浅克隆/没取 tag）⇒ **判不了（3），不是通过**：GitHub 侧靠 `checks` job 的 `fetch-depth: 0`，GitCode 侧靠 `.gitcode/workflows/ci.yml` 里那一步显式 `git fetch --tags` |
+| contract | `check-nsis-template` | NSIS 安装器模板＝fork 的一行改动 ＋ CLI 版本核对：模板被上游改写后**装出来的东西**与声明不符 |
+| contract | `check-derived-writers` | 派生表的**唯一写入者**：Rust 生产代码不许写派生表（唯一写入口在 TS 侧平台层）——两处写就是两份语义 |
+| contract | `check-doc-content-access` | 「文档内容」的直接访问**只减不增**：换 CRDT 时要改的就是这批位置（当前 562 处，基线在 `scripts/doc-content-access-baseline.json`）；新文件直接引用或超基线即红 |
+| contract | `check-main-only-commits` | **发布线上不许有"开发线永远拿不到"的内容改动**：非 merge 的发布线独有提交只许动**发布产物**（`RELEASE_ARTIFACTS`），merge 则要求除第一父外的父都能从 `dev` 走到。2026-09-25 实测：`dev` 与 `origin/main` 分叉（208 / 7），7 笔里三笔带着开发线没有的内容——包括一笔**标题写着 `release:` 却夹带了 `mdPreview.ts` 修复**的（那个 bug 只在**打包产物**里显形，dev/vitest 永远绿）⇒ 所以判据按**文件集**、不按标题。⚠️ 非浅克隆才能判（残缺祖先图上 `rev-list A..B` 会静默给偏少的答案）⇒ 浅克隆一律 **exit 3** |
+| contract | `check-prism-components` | **代码块高亮只许有一条装配路径**（`src/editor/prismSetup.ts` 的模块化 import）：`public/prism/` 下不许再有 vendored 组件、`index.html` 里不许再有 `<script src="prism/…">`。2026-09-25 清冗余文件时实测：仓库里本来有**两条并行的 Prism 装配路径**（index.html 的 10 行阻塞 script ＋ 10 份 `public/prism/*.js`，与 `prismSetup.ts` 的 16 个组件 import 完全重合）。把前者整条去掉、在真 Chromium 里重新加载：`window.Prism` 照旧能 highlight json / rust / sql / go / markdown（token 都出来了）、页面零 JS 报错 ⇒ 那 10 个文件（77 KB）＋ 10 行阻塞 script 是纯冗余，已删。门禁钉住「别再长回来」；另有**只报告不判红**的静态对账：选择器列了、而 `prismSetup.ts` 没显式 import 的语言（今天 markdown / yaml —— 静态看不到，运行期 markdown 却可用，所以只摆出来、不下结论） |
+| contract | `check-dead-code-receipts` | **`#[allow(dead_code)]` 不许无名无期**：每处豁免要么删掉、要么把"只服务判据/夹具"的项门进 `#[cfg(test)]`、要么写一句 `// ★ YYYY-MM-DD 收据：为什么留 ＋ 什么时候删`。2026-09-25 清死代码时查出的是**一整类没人管的东西**（豁免不产生输出 ⇒ 过期了也没人看）：`sync.rs::IncomingChange.seq` 挂着豁免却**被生产代码读了 8 处**；`commands.rs::mupdf_compiled()` 的 body 就是 `cfg!(feature)`，唯一使用者是 `assert_eq!(cfg!(f), cfg!(f))` 那种**空转判据**；`security.rs` 一次"文档与属性留在上一个函数下面"的事故让一个夹具生成器**被 libtest 注册两遍**；`build.rs` 里留着一份搬走后的 `find_gm_marker_deprecated` 副本。⚠️ 它**不判**理由好不好、也不判代码该不该留（那要人读）：只判"有没有人会想起来它"；命中必须**在代码里**（掩码判区域，仓里十几处**讲**这件事的注释不算），生成物（`capabilities_gen.rs`）显式列在 `EXEMPT` 里并每次打印 |
+| contract | `check-plan-status` | **每篇方案头部要有 `状态：`，且"报完成"不许空口无凭**：判据只两条 —— ① `docs/plans/*.md` 的**头部**（第一个 `## ` 标题之前）必须有 `状态：` 字段；② 取值含 `已完成/已实现/已收口/已落地/已拍板/已定` 的，必须带 `证据：`，且证据里用**反引号或 markdown 链接**写出的每个仓内相对路径都要**真实存在**。2026-09-27 盘点 91 篇时实测出这条的由来：**「写状态」是 `2026-08-24` 才成为习惯的** —— 08-24 起头部统一是 `> 目标版本：…` ＋ `> 状态：规划（建议）。…`，而 08-22 及更早那批**根本没有这一行**；全文扫出 **51 篇缺状态行 ＋ 13 篇自报完成却无证据**。后果不是洁癖：那批里好几篇的功能**早已落地**（`roadmap.md` 有 `✅ M9（v1.13.0）`…`✅ M14（v1.37.0）`，都带版本号），**可它们在文档里和「未实装」长得一模一样** ⇒ 分不出哪些还有效，于是同一件事会被第二次立项。旧账冻结在 `scripts/plan-status-baseline.json`（**只减不增**）。⚠️ **状态取值是自由文本，门禁不发明词表** —— 它的第一版编了一个词表，据此把 24 篇判成"状态词非法"，而仓库实际在用的词有十几种（`已收口` `已实现` `已拍板` `已定` `规划` `提议` `施工单` `决策/建议` `进度口径` `待拍板` …）⇒ 已改成"没见过的词只提醒、不判红"；第一版还有第二个错：扫**全文**找状态，把正文里别的 `状态：` 字段误判成方案状态 ⇒ 现在只在**头部**找。**它不判状态对不对**（那是语义，靠人），只保证声明不空口 |
+| mobile | `mobile-views` | 主区整视图 ＋ 属性表 ＋ 小控件 ＋ **PDF 阅读器真 DOM**：窄屏下"整块视图不能用"这类坏法，布局门禁照不到 |
+| rust | `gm-conformance` | 国密对拍：这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo）⇒ 漂移的后果是"跨设备读不出对方的数据"，而它没有任何编译期信号 |
+| rust | `rust-no-sm-crypto` | **回滚通道**：`--no-default-features`（不编国密）仍要能编译 ＋ 全量单测通过 —— 它是"一行可逆"那个承诺的实现，没人编就会腐烂 |
 | rust | `check-sys-deps-linux` | 上面那条的 **deb 实查**版：硬判据只能来自 `ci.yml` 的 `Linux system deps` 步，逐条按 `dpkg` 实查（表里凭空要求 CI 不装的包 ⇒ 门禁自己就是假话）。挂在 rust 组是因为**只有**这个 job 装了 Tauri 那套系统包 |
 | smoke | `tsc` | 类型错误 |
-| smoke | `vitest` | 单测回归（**885 用例**） |
+| smoke | `vitest` | 单测回归（读数下限见上方「机器事实」块第 2 行；**别在本表里手写这个数字** —— 手写的那个曾经停在 885，而实际早就到 2262） |
 | smoke | `smoke-web` | web 平台行为（**350 断言**，事实标准） |
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
@@ -60,8 +105,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（8 断言） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |
-| rust | `rust-sm-wired` | ★ **库级国密接线构建**：打补丁 ＋ `--features sm-library` 下跑全量单测。理由＝应用接线（`apply_gm_page_settings`）整段在 `#[cfg(feature = "sm-library")]` 后面，而**其余 rust 门禁全跑默认特性** ⇒ 那条路本来没有任何门禁碰过（2026-09-22：我在本机把发版链原样跑一遍，才发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 包表面全对而库级不是国密」）。无 SM 版 OpenSSL 前缀时**自报跳过**（Linux 自动用 `/usr`；macOS 需给 `OPENSSL_DIR`）。它跑完会**还原补丁并重建默认特性**，不留混态。<br>⚠️ **win32 上显式 `--skip plugins::`**（2026-09-22 AMD 在 Windows 上第一次真跑逼出来的）：那 34 条要**真宿主进程**，Windows 本机跑不了 ⇒ 实测 **455 passed / 34 failed / 18 ignored，34 条全在 `plugins::`，国密各组失败 0 条**。取舍：**显式 skip（自报排除了什么）而不是"允许失败 34 条"** —— 数字豁免会在插件测试增减时悄悄改变含义；**只在 win32 skip，模式精确到 `plugins::`**（判据对两个平台做整数组相等断言，放宽模式当场红）；**其余集合仍要求 `failed === 0`**。那一组的权威读数归 CI/WSL2 的 `rust-plugins-alone` 与 Windows 的 `win-cargo-test.ps1`。<br>★ **win32 上是"未实查"而不是红**（2026-09-22 AMD 把这条路走到底的结论）：Windows 上 `cargo test` 生成测试 exe **不带应用清单** ⇒ **两层、互相独立、都要补**——① `0xC0000135` 缺 DLL（PATH 层，门禁已用 `testPathFor` 把 `<前缀>\bin` 并到最前）；② `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` **缺 v6 清单**（`Microsoft.Windows.Common-Controls`），只有 `win-cargo-test.ps1` 会注入清单。四组读数：裸 `cargo test`（无 PATH 修复）`0xC0000135` → 跑器注入清单但无 PATH **仍** `0xC0000135` → 跑器＋PATH **跑起来**（455/34/18，34 全 `plugins::`）→ 裸 `cargo test`＋PATH 修复 `0xC0000139`。⇒ 门禁认出这类**装载期**失败后**自报未实查并 exit 0**（附独立读数与下一步），与 macOS 缺静态前缀、`check-crypto-backend` 的"旧产物⇒未实查"同一条纪律；要它在 win32 上**自己出读数**，需跑器把「已注入清单的副本路径」可解析地打印（门禁再跑副本并自判）|
-| rust | `gm-registry-clean` | ★ **补丁残留在全机共享 registry 上**（AMD 2026-09-22 落地；方案 §五 里唯一归属他的那一行）。`sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的**新**静默态）⇒ "跑过一次国密构建、忘了 `--revert`"会把这台机器留在**看不见的状态**里：**macOS 上后续默认构建红 12＋7 条，而现场长得像加密库坏了**；Linux/Windows 上不红，但后续默认构建被**静默**改成写 SM4 页。三档判定：原版 / 本次就是 `sm-library` 构建 ⇒ `ok`；带补丁 ∧ 非 darwin ⇒ **`notice`（不判红，但说清会被静默改页加密）**；带补丁 ∧ darwin 默认构建 ⇒ **`block`（exit 1 ＋ 给出 `--revert` 那一行）**；**读不出来**（没跑过 cargo / 拿不到 `Cargo.lock`）⇒ `notice`（与 `check-crypto-backend` 的「旧产物 ⇒ 未实查」同口径）。⚠️ **macOS 上刚跑完国密构建还没 `--revert` 时它会红 —— 这是刻意的**（判据替你记住那件事）。它**只读**（连调 3 次 CLI，源码 SM3 命中恒为 50）；13 条判据 ＋ 变异 2 条 |
+| rust | `rust-sm-wired` | ★ **库级国密接线构建**：打补丁 ＋ `--features sm-library` 下跑全量单测。理由＝应用接线（`apply_gm_page_settings`）整段在 `#[cfg(feature = "sm-library")]` 后面，而**其余 rust 门禁全跑默认特性** ⇒ 那条路本来没有任何门禁碰过（2026-09-22：我在本机把发版链原样跑一遍，才发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 包表面全对而库级不是国密」）。无 SM 版 OpenSSL 前缀时**自报跳过**（Linux 自动用 `/usr`；macOS 需给 `OPENSSL_DIR`）。它跑完会**还原补丁并重建默认特性**，不留混态。<br>⚠️ **win32 上显式 `--skip plugins::`**（2026-09-22 AMD 在 Windows 上第一次真跑逼出来的）：那 34 条要**真宿主进程**，Windows 本机跑不了 ⇒ 实测 **455 passed / 34 failed / 18 ignored，34 条全在 `plugins::`，国密各组失败 0 条**。取舍：**显式 skip（自报排除了什么）而不是"允许失败 34 条"** —— 数字豁免会在插件测试增减时悄悄改变含义；**只在 win32 skip，模式精确到 `plugins::`**（判据对两个平台做整数组相等断言，放宽模式当场红）；**其余集合仍要求 `failed === 0`**。那一组的权威读数归 CI/WSL2 的 `rust-plugins-alone` 与 Windows 的 `win-cargo-test.ps1`。<br>★ **win32 上是"未实查"而不是红**（2026-09-22 AMD 把这条路走到底的结论）：Windows 上 `cargo test` 生成测试 exe **不带应用清单** ⇒ **两层、互相独立、都要补**——① `0xC0000135` 缺 DLL（PATH 层，门禁已用 `testPathFor` 把 `<前缀>\bin` 并到最前）；② `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` **缺 v6 清单**（`Microsoft.Windows.Common-Controls`），只有 `win-cargo-test.ps1` 会注入清单。四组读数：裸 `cargo test`（无 PATH 修复）`0xC0000135` → 跑器注入清单但无 PATH **仍** `0xC0000135` → 跑器＋PATH **跑起来**（455/34/18，34 全 `plugins::`）→ 裸 `cargo test`＋PATH 修复 `0xC0000139`。⇒ 门禁认出这类**装载期**失败后**自报未实查并 exit 0**（附独立读数与下一步），与 macOS 缺静态前缀、`check-crypto-backend` 的"旧产物⇒未实查"同一条纪律；★ **win32 自产读数已走通（2026-09-23）**：跑器加了 `-PrintExePath`（构建＋注入 v6 清单＋打印副本路径）与 `-Skip <patterns>`（展开成原生 `--skip`，避免 `-ExtraArgs` 静默错绑），门禁据此**自己跑那个副本**（`--skip plugins::`）并**自己解析 `test result:` 自判**（`winRunnerPrintArgs` / `manifestCopyPath` / `winSelfRunArgs` / `runPowerShellSafe`，各有判据；`manifestCopyPath` 取**最后**一条带前缀的行 —— 跑器作为子进程时它的进度行也会落到 stdout）。win32 实测：全量 **508 passed / 0 failed / 18 ignored**，`-Skip plugins::` **385 passed / 124 filtered out / exit 0**（门禁自己的下限仍是 380 passed ＋ 0 failed）。⇒ 这条门禁在 win32 上**不再只能自报未实查**；只有跑器那条路走不通（脚本缺失 / 执行策略挡下）才退回未实查，且退回时会把原因打出来|
+| rust | `gm-registry-clean` | ★ **补丁残留在全机共享 registry 上**（AMD 2026-09-22 落地；方案 §五 里唯一归属他的那一行）。`sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的**新**静默态）⇒ "跑过一次国密构建、忘了 `--revert`"会把这台机器留在**看不见的状态**里：**macOS 上后续默认构建红 12＋7 条，而现场长得像加密库坏了**；Linux/Windows 上不红，但后续默认构建被**静默**改成写 SM4 页。三档判定：原版 / 本次就是 `sm-library` 构建 ⇒ `ok`；带补丁 ∧ 非 darwin ⇒ **`notice`（不判红，但说清会被静默改页加密）**；带补丁 ∧ darwin 默认构建 ⇒ **`block`（exit 1 ＋ 给出 `--revert` 那一行）**；**读不出来**（没跑过 cargo / 拿不到 `Cargo.lock`）⇒ `notice`（与 `check-crypto-backend` 的「旧产物 ⇒ 未实查」同口径）。⚠️ **macOS 上刚跑完国密构建还没 `--revert` 时它会红 —— 这是刻意的**（判据替你记住那件事）。它**只读**（连调 3 次 CLI，源码 SM3 命中恒为 50）；13 条判据 ＋ 变异 2 条。<br>★ **2026-09-25 加第二处残渣**：`src-tauri/Cargo.lock` 里 `libsqlite3-sys` 那条**丢了 `source` ＋ `checksum`**（`--prepare` 时 cargo 拿私有 `[patch.crates-io]` 重解析会删掉这两行，而 `--revert` **不还原锁**）⇒ 默认构建下 **`block`**（`exit 1` ＋ 给出 `git checkout -- src-tauri/Cargo.lock`），`--feature-sm-library` 语境下只 `notice`（那份锁本来该长这样，但**别提交**）。⚠️ 后果不是"看着脏"：这种锁一旦提交，**别人机器上**任何 `--locked` 构建会立刻红，现场像"依赖解析坏了"。**机制是实测的**（不是推的）：跑 `--prepare` 后 `git diff src-tauri/Cargo.lock` 逐字就是删掉那两行；两处残渣**取更重的一档**；判据 **23 条** |
 | artifact | `external-index` / `external-package` | 我们打出的包与索引，应用**真**解析器 / 真校验器认不认 |
 | artifact | `plugin-fragment-no-zip` | 打包依赖命令行 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条） |
 
@@ -110,6 +155,26 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 判红就等于逼人每加一批测试都改基线，最后大家会习惯性 `--update-baseline`，**护栏反而失效**。
 后果不同 ⇒ 处置不同。
 
+**当前读数（2026-09-23，AMD 侧复核 `tests/baseline.json` 的 11 个条目）**：
+
+| 条目 | 下界 | 当前 | 比值 | 处置 |
+|---|---|---|---|---|
+| `vitest` | 1955 | 2178 | **90%** | ✅ 已够新（此前 1303 那笔已被抬高） |
+| `smoke-web` / `mobile-views` / `mobile-overlays` | 363 / 307 / 1010 | 363 / 307 / 1010 | 100% | ✅ 一致 |
+| **`mobile-layout`** | **43** | **65**（CI 实读 `52.0s (65/65)`） | **66%** | ⚠️ **仍太旧** ⇒ 该跑 `--update-baseline` |
+
+⚠️ **`mobile-layout` 这条别在本机照本机读数手抬**：它在**默认本地组之外**（默认组是
+`contract,smoke,sync,plugin`），只在 CI / 显式 `--group mobile` 时跑；而"读数**下降**"是**硬红**，
+本机与 CI 的断言条数一旦有差（字体、视口、浏览器版本都会影响），把下界抬到本机值就可能让 **CI 变红**。
+正确做法：在**跑得到那条门禁的环境**（CI，或本机起 `pnpm dev:web` 后 `--only mobile-layout`）跑一次
+`node scripts/test-report.mjs --only mobile-layout --update-baseline`（写入是**按条目合并**的，
+不会碰到别的组）。本笔只记读数、不改基线 —— 这也是"体检只提示不判红"那条设计的正确用法。
+
+> **2026-09-25 跟进**：上面那条待办**已办** —— `mobile-layout` 下界已按**本表记录的 CI 读数**
+> 从 **43 抬到 65**（写进 `tests/baseline.json`，并同步进上方「机器事实」块）。
+> ⚠️ 它**不是**本机读数（本机根本没跑这条），所以上面那段约束仍然成立：
+> 若 CI 下次报得比 65 少，**先当成"真下降"查**，不要直接改回来。
+
 ### 写判据的纪律：变异证明不是形式（2026-09-19 的两条实测）
 
 1. **"空输出"≠"零命中"**。我用 `cargo check … | grep -E "^(warning|error)"` 数警告，
@@ -127,6 +192,14 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
      而我把输出丢进 `/dev/null` ⇒ 后面"构建"根本没重编，**两轮 A/B 的数字全是装饰**
      （AMD 这轮实测：v1 与 v2 给出逐条相同的结果就是这么来的）；
    - **管道截断**：`cmd | Select-Object -First N` 会让上游拿到 `SIGPIPE` ⇒ 命令是成功的、退出码却是 1。
+   - **"命令根本没跑起来"会被读成"0 处问题"**（2026-09-25，macOS 侧在交叉审计里踩到、并当场复现）：
+     `cargo fmt --all -- --check` 在**本仓根目录**跑会失败（manifest 在 `src-tauri/`），
+     退出码 **1** 而 **stdout 里 `^Diff in` 是 0 行** ⇒ 任何"用 `grep -c 'Diff in'` 判断干净"的写法
+     都得到**假绿**。**正确跑法**：`cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+     （2026-09-25 实测读数：**1523 处 hunk / 67 个 `.rs` 里的 62 个**；1.98.1 / 1.94.0 / 1.94
+     三个工具链读数一致 ⇒ 与工具链无关）。
+     ⇒ 纪律：**fmt/lint 这类"没有输出=通过"的工具，必须先确认它真的跑了**（看退出码 + 看它有没有报
+     "找不到清单/编译失败"），不能只看有没有 diff 行。
    ⇒ 纪律：**要判成败就单独跑一次、把退出码取在命令本身上**（`cmd > log 2>&1; echo $?`），
    再让**日志**去做筛选；筛选的输出**永远不能**当成败依据。
    ⚠️ **更正（2026-09-20，macOS 侧指出）**：本条初稿把"macOS 侧那条假红"当成"管道取错退出码"的例子 ——
@@ -154,6 +227,166 @@ node scripts/test-report.mjs --group browser,mobile --update-baseline   # 需要
 
 汇总里刻意区分 **`skipped`（没跑）** 与 `passed`：缺环境变量的门禁显示为"显式跳过"并列出原因，
 加 `--strict` 时按失败计。**空白不许冒充绿。**
+
+## Windows 上"红"的两种假象（2026-09-24 实测）
+
+`scripts\win-cargo-test.ps1` 跑**负例**时 SQLCipher 会往 **stderr** 打诊断：
+
+```
+ERROR CORE sqlcipher_page_cipher: hmac check failed for pgno=1
+ERROR CORE sqlite3Codec: error decrypting page 1 data: 1
+```
+
+这正是"错钥匙必须解不开"那条判据在生效的**证据**，不是红。但 PowerShell 会把原生命令的 stderr
+记成 `NativeCommandError`，于是**外层退出码可能是 1，而测试全绿**（同一条命令去掉 stderr 噪声后
+exit 0 —— 已实测）。
+
+判绿看这两行，**不要**看外层退出码：
+
+```
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 583 filtered out
+win-cargo-test: test exe exit code = 0
+```
+
+反过来同样成立：`test exe exit code != 0` 才是真红。**不许**因为"反正外层是 1"就把真红当噪声 ——
+这两个方向都得认，否则这条注释本身就成了绕过门禁的借口。
+
+## 需要"真服务端"的判据（`#[ignore]`，要显式点名才跑）
+
+有些判据**必须**打真服务（桩服务端不看 `Authorization`、也不在乎路径 ⇒ "客户端有没有带 bearer、
+打的是不是那个端点"这类错误它**一定发现不了**）。它们一律 `#[ignore]`，默认不跑，也不会拖慢全量；
+要跑就显式点名（**跑不了的原因要当场喊出来**，不许静默跳过 —— 所以它们直接 `expect` 环境变量）：
+
+```powershell
+# ① 拿一把真设备密钥（同步服务端仓库；会顺手建空间）
+shuyonote-sync-server --issue-device-key --space sp-e2e --db <tmp>\sync.db
+# ② 起服务
+shuyonote-sync-server --bind 127.0.0.1 --port 8799 --db <tmp>\sync.db
+# ③ 点名跑（⚠️ 这个包装脚本的 -ExtraArgs 要传**数组**，`"--ignored --nocapture"` 会被当成一个参数 ⇒ 报
+#    `Unrecognized option: 'ignored --nocapture'`）
+$env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
+& .\scripts\win-cargo-test.ps1 -Filter the_client_talks_to_a_real_server `
+    -ExtraArgs "--ignored","--nocapture"
+```
+
+现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
+（③ 0b 公开材料：空 token 必须被挡 / 取回来逐字节相同 / 第二台设备只凭口令解出同一把钥匙）。
+服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。
+
+## 局域网发现（甲-1 接线之后怎么验）
+
+**不需要服务端**（发现层只交换 UDP 公告，不服务请求），本机一条命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan'
+# ⇒ lan:: 16 ＋ lan_state:: 9 ＋ sync:: 那 5 条基址判据（2026-09-25 实测 31 passed / 0 failed）
+```
+
+两条**只能真机看**的（单测覆盖不到，别把它当成"已经验过"）：① 两台设备在同一网段里互看
+（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「局域网直连」
+那一行显示的地址是否真的被同步请求用上（读数是 `sync::effective_base`，界面只显示 Rust 给的原文）。
+
+### ★ 2026-09-25 两台真机跑通的做法（含一条**没跑通**的，别照抄那半）
+
+**两个脚本已经收进仓库**（`_tmp/scratch` 里那套散件的通用版，别人照着就能跑）：
+- `node scripts/android-cdp.mjs <serial> text|pid|eval <文件.js>|click <文字>` —— 按 DOM 驱动真机 WebView
+  （**按本 App 的 pid 挑 devtools 套接字**，见下面那条坑）。
+- `node scripts/verify-lan-two-device.mjs --listener <serial> --hub http://192.168.x.y:8787 --space <id>`
+  —— 从 PC 单播一条合法公告，读被测那台的 `lan_status` 状态行，**前/后两句都打印**并按
+  「换成了局域网 ＋ 点出了中枢」判 PASS/FAIL（2026-09-25 实测 exit 0）。
+
+手动那套步骤（脚本就是照它写的，改脚本前先读一遍）：
+
+链路：**Mate 40 是热点主机**（`192.168.43.1`）→ 小米 MIX 2（`.96`）与 PC（`.206`）都是它的客户端。
+同步服务在本机（`shuyonote-sync-server --bind 0.0.0.0 --port 8787 --db <tmp>`）。
+
+1. **造绑定**（不需要登录）：同步面板每张空间卡片上有三个**自由文本**字段 ——
+   服务器 / 组织空间 id / 组织 token（按 `input[placeholder]` 找）⇒ 直接填 ＋ 点「保存」。
+   ⚠️ 这一步足以把 `sync_profiles` 那两列置上（`should_enable` 看的就是它们非空）。
+2. **让对比看得出来**：被测那台配一个**死地址**且**不是局域网基址**
+   （`http://127.0.0.1:8787` —— 回环不算"网段里的别人"）⇒ 它自己不代言；
+   而且不发现对端时同步**必然失败**，"发现之后变成功"才是个可断言的读数。
+3. **喂一条合法公告**（**单播**，绕开广播那条不确定性）：PC 侧
+   `UdpClient.Send(json, n, "<手机IP>", 47821)`，json 形如
+   `{"v":1,"device_id":"pc-announcer","device_name":"PC 代言","hub_base":"http://192.168.43.206:8787","hub_spaces":["<space>"],"fp":"pc-announcer"}`。
+4. **读数（两半都要）**：状态行从「公网 http://127.0.0.1:8787 ｜ 发现 0 台」变成
+   「直连（局域网）http://192.168.43.206:8787 ｜ 发现 1 台 ｜ 中枢：PC 代言」，点「同步」**成功**；
+   然后 > `PEER_TTL_MS`（90 s）不再喂 ⇒ 必须**回落**成「公网 http://127.0.0.1:8787」，
+   点「同步」**失败**，而且报错里**原样打出它真用的那个 URL** ⇒ "用没用上"是可证的。
+
+⚠️ **没跑通的那半（重要发现）**：两台手机在同一热点上、`ping` 双向 0% 丢包，
+但**彼此的 UDP 广播都收不到**（双方都「发现 0 台」）。换成单播**立刻**生效
+⇒ 收报逻辑没问题，挡住的是 **Android 的 Wi-Fi 广播/组播过滤** —— **要拿一把
+`WifiManager.MulticastLock`**（`src-tauri/src/lan_android.rs` ＋ manifest 的
+`CHANGE_WIFI_MULTICAST_STATE`，由 `android-mobile-shell.mjs` 注入；`lib.rs` 的 setup 里调一次）。
+✅ **补上之后复验通过**：小米（客户端）代言 ⇒ Mate 40（绑一个死地址 `127.0.0.1`、自己不代言）
+**自己**把状态行变成「直连（局域网）http://192.168.43.206:8787 ｜ 发现 1 台 ｜ 中枢：只报了地址」
+—— **全自动、没有人喂包**。⚠️ 但记住一条**方向性**限制：**手机当热点主机（AP）时，它自己发的广播
+到不了它的客户端**（45 秒里 PC 一包都没收到来自 AP 的公告；客户端发的 PC 和 AP 都收到了）。
+真实部署（普通路由器）没有这个不对称。
+
+## 真机（Android）怎么把"新界面"验到
+
+2026-09-25 实测走通的一条链（Mate 40 · `UJN0221310000547` · Android 12 · WebView 114），
+**不用手工点**：CDP 按 DOM 驱动（`_tmp/scratch/dev-mate.mjs`，2026-09-26 前在 `_scratch/`：`adb forward` 到
+`localabstract:webview_devtools_remote_<pid>` ＋ `Runtime.evaluate`）。
+
+```powershell
+# ① 出包（配方见上面「本机出安卓包」那一段；⚠️ 每次都 `tauri android init --ci` 之后再跑那五个脚本）
+# ② 签名 ＋ 安装 ＋ 扫包里的新文案（脚本是纯 ASCII，中文针用 \uXXXX 写 —— 门禁 check-ps1-ascii）
+powershell -ExecutionPolicy Bypass -File C:\Users\cnzen\zhai\_tmp\scratch\sign-install-mate.ps1
+# ③ 按 DOM 驱动
+node C:\Users\cnzen\zhai\_tmp\scratch\dev-mate.mjs eval "document.body.innerText.replace(/\s+/g,' ').slice(-800)"
+```
+
+> ⚠️ **路径已于 2026-09-26 变更**：`_scratch\` 收敛为 `_tmp\scratch\`（见根 `AGENTS.md` §7）。
+> 上面两个脚本**仍在**（`_tmp\scratch\sign-install-mate.ps1` / `_tmp\scratch\dev-mate.mjs`），
+> 只是换了位置；而 `_tmp\scratch\` 是 **7 天保留区**——要用就先确认它还在，
+> 否则按本节的描述重建（它们是可重建的驱动脚本，不是唯一数据）。
+
+⚠️ **四条踩过的坑（省一整轮的那种）**：
+1. **签名不匹配就必须先卸载** —— `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 只在签名不同时出现，
+   而卸载会**连 App 数据一起删**。所以动手前先 `apksigner verify --print-certs` 读一下
+   **设备上那个包**（`adb pull $(adb shell pm path <pkg> | cut -d: -f2)`）的指纹，别猜。
+   ★ 也别被自己的脚本骗：**对同一个 apk 连签两次，最后那次赢** ——
+   第一次用正式 key、第二次用测试 key，装上去的就是**测试 key 那个**（2026-09-25 真踩）。
+2. **APK 里没有前端的明文**：Tauri 把整个前端嵌进 `lib/arm64-v8a/libshuyonote_lib.so`（压缩存储）
+   ⇒ 想用"扫 .so 找中文文案"来确认打进去的是哪一版，**只能看到压缩流**，
+   那条路走过一次、结论是"看着像假的"（本次改用"跑起来按 DOM 读文字"来判）。
+3. `adb exec-out screencap -p > x.png` **别走 PowerShell 的 `>`**（二进制会被改写、图读不出来），
+   要 `cmd /c "... > x.png"`。
+4. **`adb push` 进去的文件不会自动进 MediaStore** ⇒ 系统选择器（SAF）里看不到它。
+   先 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///…` 再打开选择器。
+   ⚠️ 华为的 DocumentsUI 顶部那一行（`「下载」中的文件`）**点一次才会展开文件列表**，
+   且列表项的无障碍标签是「预览 "x.txt" 文件」——`uiautomator dump` 里拿它的 `bounds` 再 `input tap`。
+   小米的路径更简单：**把测试文件 push 到一个首屏就看得见的目录**（例如 `/sdcard/accmeta/`），
+   点进去勾选那个单选圈 → 点「确定」（`uiautomator dump` 在 MIUI 上会 `null root node`，**用截图定位坐标**）。
+5. ★ **`webview_devtools_remote` 套接字不一定是本 App 的** —— 同一台机器上别的 App（2026-09-25 实测撞上
+   一个视频 App）也有 WebView ⇒ CDP 会连到**别人**的页面上（现场是读出一段完全无关的界面）。
+   **按本 App 的 pid 挑**：`pidof cn.shuyo.shuyonote` → `webview_devtools_remote_<pid>`
+   （`_tmp/scratch/drive.mjs` 已按这条改）。
+
+## 一段真实教训：真机验出来的那个 bug（2026-09-25）
+
+B 片"配对码存/读文件"在本机（happy-dom 打桩 dialog）**全绿**，第一次上真机就发现
+**「从文件读取」什么都没发生**。根因不在界面，在 Rust：`backup.rs::read_text_file` 当时是
+`std::fs::read_to_string(&path)`，而 Android 的选择器给回来的是 **`content://…` URI**
+（`Path::new` 把它当普通相对文件名 ⇒ 必然读不到）。**写的那一半早就走 `SaveTarget` 处理了这件事，
+读的那一半一直漏着**（因为它当时没有调用方）。
+⇒ 修法：读也走 `picked_file::materialize`（与 `import_backup` 同一条路；桌面逐字不变）。
+⇒ 判据（文本级，`src/lib/platform/pickedFileRead.wiring.test.ts`）：
+**这两个命令里必须出现"落成真实路径 / 走 SaveTarget"的调用，且不许把参数直接喂给 `std::fs`**。
+⇒ ★ **修完在真机上验掉了**（同日，**小米 MIX 2 / Android 9 / WebView 80**）：系统文件选择器里选中
+`pair-test.txt` ⇒ 回到应用，**那个文本框真的被填成了文件里的内容**
+（`PAIR-FROM-FILE-TEST`，附"已读入配对码——请核对比对码，一致再点"的提示、无报错、**没有自动采纳**）。
+⇒ 一般结论：**"用户选来的那份东西"是一个独立的输入类别** —— 它的值可能是 URI 而不是路径，
+`std::fs` / `Path` 全都不能直接吃。凡是新增"让用户选个文件"的功能，两条路（读、写）都要各过一遍这道闸。
+
+> ★ 顺带在同一天的那台老机上验到两件（都属于"老 WebView 也得能用"这一档）：
+> ① 新界面（隐私那一节 / 配对码那三个按钮）在 **WebView 80** 上渲染正常，
+> 且「存成文件」在**没生成码时是灰的**（闸门在真机上成立）；
+> ② **没有钥匙袋时的报错是可操作的**：点「生成配对码」如实说
+> 「本机还没有钥匙袋（公开材料）⇒ 没有东西可以配对过去。先在本机启用加密、或先从别处取回一份，再来换设备。」
 
 ## flake 与重试（不许静默重试）
 
@@ -282,6 +515,90 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   前一个测试目标失败时，后面的目标（`main.rs` / `tests/plugin_host.rs` / doc-tests）**不会跑**，
   于是同样一棵树"红的时候读数会显得更少"（实测：lib 失败 → 298；lib 通过 → 298 + 集成 12 = 310）。
   这是 cargo 的预期行为，不是回归——所以基线校验只比较**状态为 passed** 的门禁。
+- ★ **计时类判据在全量并行下会"假红"**（2026-09-23 一天内**五次**实测，同一条判据）：
+  `src/lib/graphLayout.test.ts` 里"250 节点收敛 ≤ **250ms**"那条曾是**墙钟预算**，于是在**全量
+  `pnpm vitest run`**（两百多个文件并行、CPU 打满）时会超：实测全量里
+  **260 / 276 / 310 / 315 / 347ms** ⇒ 红，而**同一台机、同一棵树单独跑**
+  `pnpm vitest run src/lib/graphLayout.test.ts` **3/3 全绿**（单次收敛实测 **30–34ms**；
+  先前记的"140–232ms"是**该文件整体**的耗时，不是单次收敛）。
+  ⚠️ **五次都发生在同一天的同一条判据上，且每次"再跑一次全量"就过** ⇒ 不是偶发，而是
+  **这条判据在满负载下不可靠**：负载把单次收敛从 31ms 放大到 347ms，**约 11×**。
+  ★ **已治（2026-09-23 第 49 轮，单独一片 ＋ 变异实测）**：**没有**去调大那个 250（那是"把门槛改松
+  让它变绿"），而是**按性质分流**——
+  · **负载无关的性质继续当门禁**（真回归会红）：帧数 ≤160、`stable===true`、铺开 ≥55%、
+    最小间距 ≥15px、单帧位移上限、确定性、常数快照 —— 都在同文件的其它用例里；
+  · **墙钟降级成读数**：该用例现在跑 3 次并打印读数（`console.log` 里的 `【实测·读数】…`），
+    只留 `PREWARM_SANITY_MS = 1500` 的**数量级兜底**。
+  为什么**不**用"相对口径"（我上一轮的建议）：**"取 3 次里最快的一次"**在 ~11× 负载下仍不保证
+  （最坏单次 347ms ⇒ 最快的一次也难压在 250ms 内）；而**"与同一进程内的基准计算比"**若基准也走布局
+  的每帧代码，"每帧变慢"这类回归会在分子分母里**互相约掉**（判据就瞎了）。⇒ 这里的取舍是：
+  **紧数字（闲时 31ms）留作读数给人看漂移；门禁只判"有没有慢一个数量级"**。
+  ⇒ **改完后第一次全量跑的实测（最有力的佐证）**：3 次 **376 / 362 / 260ms**（负载放大 ~8–12×）
+  ⇒ **最快的那一次是 260ms —— 也就是说当初若真按"取 3 次最快 ≤250ms"去改，这一跑**照样红**。
+  而宽松兜底 1500ms 通过（余量 5.8×）。
+  ⇒ **变异实测（证明兜底仍然咬人，不是把判据改瞎）**：给 `settle` 每帧塞 ~15ms 空转（该路径 ~10× 慢）
+  ⇒ **红**：`250 节点同步预热最快 1622ms 超过数量级兜底 1500ms`；
+  `git checkout -- src/lib/graphLayout.ts` 还原 ⇒ **绿**（3 次 30 / 32 / 31ms）。
+  ⇒ **保留的判读纪律**：看到计时类判据红，先**单独重跑该文件**；单独也红才是回归。
+  ⚠️ 同时记住：**推送前要求"当轮 tip 全绿"** ⇒ 遇到假红，正确动作是**再跑一次全量**取到全绿 tip，
+  并把这次假红如实记在提交里，而不是当成代码问题去改产品代码。
+  ★ **同一族还有第二个来源（2026-09-23 第 49 轮实测）**：**5s 默认超时**也会在负载下假红 ——
+  那次把 `npx vitest run` 与 Rust 全量**并行**跑，`scripts/plugin-fragment.test.mjs`、
+  `scripts/lib/sm-library-patch.test.mjs`、`scripts/check-sys-deps.test.mjs`、
+  `scripts/check-changelog-version-parity.test.mjs`、`src/lib/crdt/yrsInterop.spike.test.ts` 一起报
+  `Error: Test timed out in 5000ms`（它们都要 **spawn 外部进程**：esbuild / `git apply` / dpkg / 真跑尖刺），
+  而**隔离复跑同一批文件 16/16 全绿**、随后**串行**跑全量也全绿（2194 passed）。
+  ⇒ **纪律**：Rust 全量与 vitest 全量**不要并行**跑（两边都在 spawn 进程）；看到 `Test timed out` 先隔离复跑。
+  ⚠️ 注意与"假红"区分开：那次同批里的 `src/lib/crdt/lineageGuard.test.ts` ② 是**真红**
+  （新加的留痕 SQL 没被那个测试的假库认识）—— **隔离复跑仍然红的是真回归**，这一条永远成立。
+  ★★ **怎么区分"机器慢"与"代码红"：量 `git status`（2026-09-23 同日第二次，判据可量化）** ——
+  刚跑完一次 Rust 全量（往 `src-tauri/target` 写了 **10.5 GB**）之后，vitest 全量里 **6 个文件成片超时**
+  （全是 **spawn 外部进程**那一类：`plugin-fragment` / `sm-library-patch` /
+  `check-changelog-version-parity` / `test-report` / `yrsInterop.spike`），而且**隔离复跑仍然超时**
+  （看起来像真红）。**先量客观指标**：`git status --short` 从常态 **~0.2s 涨到 5.1s**（25×）⇒
+  判为机器/杀软在扫刚写出来的大目录；**等它恢复**（同一指标回到 **339ms**）后，同一批文件 **44/44 全过**、
+  随后全量 **2194 passed** 全绿。⇒ **判读顺序**：① 超时的都在 spawn 那一类吗；② `git status` >1s 就别急着重跑；
+  ③ 隔离复跑；**隔离仍红 ＋ `git status` 正常 ⇒ 才是真回归**。
+  ⚠️ **不许**为了变绿去调大超时阈值（那是"把门槛改松"）—— 正确动作是**等机器安静**再跑一次全量。
+- ★ **重启之后：本机模型服务是「冷」的 ⇒ live 判据会红**（2026-09-25，AMD 实测，第三次同族）——
+  重启后 `llama-server` 要**加载几分钟**（实测：`herdsman` 10:45:47 起、`llama-server` **10:55:56** 才起来并把
+  6.5 GB 载进内存），而**在这之前**打 `127.0.0.1:8080` 的 live 判据（`image.localVlm` / `librarySummary*`）会红；
+  **加载完成后同一批 4 文件 10 条全绿**（隔离复跑读数：2 failed → 10 passed）。
+  ⇒ 纪律：重启/刚开机后**不要立刻**把 live 的红当回归 —— 先看 `llama-server` 的内存不再涨（模型加载完）再跑。
+  ⚠️ 一条**探针本身的教训**（同一轮，我自己的错）：拿 `POST /v1/chat/completions` 配 `max_tokens=16` 探活会得到
+  **空 content**（`src/lib/ai/llm.ts` 文件头早写着：预算太小会出现「只有思考、content 为空」）——
+  **空回复 ≠ 服务坏了**；探活要用足够大的 `max_tokens`，或直接看 `/v1/models` 与进程内存。
+- ★ **另一条已知 flake（2026-09-23/24，同一天撞到两次）**：`src/components/communityPublishDialog.test.tsx`
+  在**全量**跑里偶发 1/42 红，形状是 `AssertionError: expected { title: … } to deeply equal { … }`
+  且差异是 **`board: undefined`（期望 `"plugins"`）**；**隔离复跑两次都 42/42 全过**，随后全量也绿。
+  ⇒ 判读同一条纪律：**隔离绿 ＝ 不是回归**；但它已经出现两次，值得单独治一片（怀疑是套件内的
+  模块级状态/顺序耦合，不是这套改动引入的 —— 两次都与我改的代码无关）。
+- ★ **读退出码时别经过管道过滤**（2026-09-23 一天内撞到**两次**，形状相同）：
+  ① `scripts\win-cargo-test.ps1 -Filter sync_stream` 自己打印了 `test result: ok. 13 passed; 0 failed`
+  且脚本收了 `test exe exit code = 0`，但外层被报成 **exit 1** —— 那条命令的形状是
+  `powershell -File … | Select-String …`；把**同一条命令**改成 `*> "$env:TEMP\x.txt"` 再读文件 ⇒
+  **exit 0**（连跑两次都是 0）。② 同一天 `npx vitest run | Select-Object -Last 60` 也出现过一次
+  "用例全绿却 exit 1"（同一棵树改成 `*> 文件` ⇒ exit 0）。
+  ⚠️ **机制未归因**（不等于"已知会这样"），但纪律是确定的：**当轮要读退出码就重定向到文件，
+  不要 `| Select-*` 之后看**；两者不一致时以**重定向那次**为准，并把不一致如实记下来
+  （既不把工具链的退出码噪声当回归，也不反过来把真红当噪声放过去 —— 判据是
+  **命令自己的输出 ＋ 重定向后的退出码**，两者都要对）。
+- ★ **改源文件只用 `edit` / `write` 工具，绝不用 PowerShell 的 `Set-Content` / `-replace`**
+  （2026-09-23 第 49 轮**真踩了**，代价＝一次 `git checkout` 还原 ＋ 重做那一整片）：
+  PowerShell 5.1 的 `Set-Content` 默认按**本机 ANSI** 写 ⇒ 一个好好的 UTF-8 源文件当场变成
+  非 UTF-8（`read` 工具直接报 `invalid UTF-8 text`，中文全乱）。⇒ 需要批量替换时：
+  **要么用 `edit`（`replace_all: true`），要么先 `git checkout -- <file>` 再重做**，
+  没有第三条路。这条比"省几次工具调用"重要得多。
+- ★ **进程级全局状态的测试必须共用一把锁**（2026-09-23 第 49 轮，同一天第二类假红）：
+  `LOCKED` / 钥匙袋（`KEYRING`）/ 会话主密钥（`SESSION_MASTER`）都是**进程级** `static`；cargo test 默认多线程
+  ⇒ 两个模块的测试会**交错**（现场：`space_crypto` 的用例**隔离跑绿、全量跑红**，报的是
+  `space_key` 里一句"未解锁"）。⇒ 做法：把锁提到**模块级** `#[cfg(test)] pub(crate) static SEC_LOCK`
+  （`security.rs`），`security::tests`、`space_crypto::tests` 与 `backup::tests` **共用同一把**（各自 `let _g = …lock()`）。
+  ⚠️ 判读顺序：**隔离绿、全量红 ⇒ 先怀疑进程级全局被别人踩了**，而不是先怀疑业务逻辑。
+  ⚠️⚠️ 还有一类**连坐**：任何一条持锁判据 **panic** 都会把 `SEC_LOCK` 弄成 **poisoned**，
+  于是**其余 10+ 条**报的全是 `PoisonError`（2026-09-24 第 51 轮实测：2 条真失败 ⇒ 14 条红）。
+  ⇒ 看到一片 `PoisonError` **不要逐条查**，先找**第一个 panic**（`--test-threads=1` 或按模块过滤跑）。
+  （`SESSION_KEY` 已随"应用级加密"一起删掉，见交接文档 §7.0.7。）
 - **artifact 组**需要先打一个真包（`scripts/plugin-fragment.mjs --ephemeral-key`）并设置
   `SHUYONOTE_*` 环境变量；缺变量时**显式跳过**（`--strict` 下按失败计），不会冒充通过。
 - **看到 `plugins::` 大批红，先确认宿主二进制在不在**（2026-09-19：macOS 侧交底、AMD 复现）：
@@ -363,10 +680,23 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   node scripts/android-platform-verifier.mjs
   node scripts/android-mobile-shell.mjs
   node scripts/android-app-icon.mjs
+  node scripts/android-splash-theme.mjs   # ★ 开屏主题（品牌色 ＋ 居中图标）：gen/ 不进库 ⇒ 每次 init 后都要重跑
+  node scripts/android-portrait-lock.mjs  # ★ 竖屏锁（owner 2026-09-25 拍板）：同样只在 gen/ 里 ⇒ 每次 init 后都要重跑
   node scripts/stage-android-pdfium.mjs
   node scripts/patch-android-buildtask.mjs
   node_modules\.bin\tauri.CMD android build --target aarch64 --apk --ci   # ⇒ gen/android/app/build/outputs/apk/**/release/*-unsigned.apk
   ```
+
+  **★ AMD 2026-09-25：本机从零装起、一次走通的实录（配方没问题，坑全在环境上）**
+  | 坑 | 症状（原文/读数） | 修法 |
+  |---|---|---|
+  | **perl 选错** | `This perl implementation doesn't produce Unix like paths ... Makefile wasn't produced`，Configure exit **255** | 用 **MSYS/Cygwin 那份**（`C:\msys64\msys64\usr\bin\perl.exe`，5.42）；原生 `mingw64\bin` 的 MSWin32 perl **会被拒** ⇒ 它必须排在 PATH 前面 |
+  | **缺 `make`** | `cargo:warning=building OpenSSL dependencies: Command 'make' not found` | 这台机 Git 与 msys64 都**没有 make** ⇒ 用 **NDK 自带**的 `<ndk>\prebuilt\windows-x86_64\bin\make.exe`（Android 目标走 Unix make，不是 nmake） |
+  | **rustup 卡死** | `rustup target add aarch64-linux-android` **10 分钟无输出**（小探针通、真下载被掐） | `RUSTUP_DIST_SERVER=https://rsproxy.cn`（一次就成） |
+  | **Gradle wrapper 下不动** | `java.net.SocketTimeoutException` on `gradlew.bat`；`services.gradle.org` 是 **307** 跳到不可达的 `downloads.gradle-dn.com`（000） | `gen/android/gradle/wrapper/gradle-wrapper.properties` 的 `distributionUrl` 换成 **`https://mirrors.cloud.tencent.com/gradle/gradle-8.14.3-bin.zip`**（实测 206；131 MB）。⚠️ `gen/` 不进 git 且 `init` 会重生成 ⇒ 每次 init 后都要再改一次 |
+  | **`CARGO_HOME` 没带** | build.rs **正确地**报 `启用了 sm-library，但找不到 §3.1 的 SM3/SM4 provider 补丁`（它查的是**共享** registry 那份） | `--prepare` 把补丁打在**私有副本** `.gm-build/`，只有 `--print-env` 给出的 `CARGO_HOME=<repo>\.gm-build\cargo-home` 才让 cargo 看见补丁 ⇒ 必须像 android.yml 那样把它吃进环境 |
+  > 另两条读数：① `sm-library-build.mjs --revert` **不还原 `src-tauri/Cargo.lock`** —— ★ 2026-09-25 **实测到机制**：`--prepare` 时 cargo 拿私有 `[patch.crates-io]` 重解析依赖，会把锁里 `libsqlite3-sys` 那条的 `source` ＋ `checksum` **两行删掉**（`git diff` 逐字就是这两行），于是锁从此认为该 crate 来自本地补丁。**现在这条有门禁了**（`gm-registry-clean` 第二处残渣，默认构建下 `exit 1` 并给出 `git checkout -- src-tauri/Cargo.lock`）—— 不用再靠"记得手动还原"；② 真产物 **52.9 MB**，`check-android-crypto` 在其上 **exit=0 三条全过**（`lib/arm64-v8a/libshuyonote_lib.so` 52,847,416 字节、DT_NEEDED 里没有 `libcrypto.so`、★ `.rodata` 里有补丁字面量 `PBKDF2_HMAC_SM3`/`HMAC_SM3`）—— 本机跑这条门禁要把 **NDK 的 `toolchains/llvm/prebuilt/windows-x86_64/bin` 放进 PATH**（`llvm-readelf` 在那儿；否则它如实报"没验"）。
+  > ★ **一条被推翻的旧结论（2026-09-25）**：这个文件与本仓其它地方曾写「release 包 `strip=true` ⇒ 符号不可读 ⇒ 正一半验不了」——**错的**：strip 剥的是符号表（`.symtab`/`.dynsym`），**不是 `.rodata` 里的字符串字面量**。真产物上直接数：`PBKDF2_HMAC_SM3` ×3、`HMAC_SM3` ×6、`sqlcipher_openssl_hmac` ×11、`EVP_sm3` ×1；而同样的字面量在**未打补丁**的 `libsqlite3-sys-0.38.2/sqlcipher/sqlite3.c` 里命中 **0** ⇒ 它们是**补丁独有**的，`check-android-crypto` 因此补上第③条（正一半）并做了变异：造一份缺字面量的假 APK ⇒ **exit 1** 且指名成因（"编译时没用私有 `CARGO_HOME` ⇒ 编的是原版 SQLCipher"）。**教训**：凡是"这件事验不了"的结论，先问一句"我卡的是哪个具体机制"（这里是**符号表**，我却顺手推断成了"整个二进制的信息都没了"）。
   出包后按 ⑨ 的签名步骤用**正式密钥**签（`zipalign -f -p 4` → `apksigner sign --ks … --ks-key-alias shuyonote`
   → `apksigner verify --print-certs` 指纹应为 `6ee89e6f…7a88`），装到手机时注意：
   **本机构建的 versionCode 取自 `dev` 的版本号，通常低于已发布版 ⇒ `adb install -r -d`**（`-d` 允许降级；
@@ -376,7 +706,10 @@ node scripts/test-report.mjs --baseline-from rust-report.json
    ⚠️ 但**打包与验收那几小步在 Windows 上是可以跑的**（离线、零依赖）：`pnpm android:stage-pdfium`（把库放进 `jniLibs/`）、
      `pnpm android:app-icon`（把品牌图标铺进 `res/`；不铺的话 APK 桌面图标是 Tauri 默认图，
      见 `scripts/android-app-icon.mjs` 的模块头；**改图标本身**走 `node scripts/build-android-icons.mjs`，
-     源是 `design/logo/android-*.svg` ＋ `android-icon.json`，见 `design/logo/README.md`）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
+     源是 `design/logo/android-*.svg` ＋ `android-icon.json`，见 `design/logo/README.md`）、
+     `pnpm android:app-name`（把**应用显示名**写成 `ShuyoNote 数友笔记` —— 备案的「App 名称」按阿里云口径就是
+     安装后图标下方那行字，需与软著全称/商店上架名一致；`tauri android init` 只会写 `productName`，
+     见 `scripts/android-app-name.mjs`）与 `pnpm check:android-bundle`（APK 当 zip 列条目，断言
      `lib/<abi>/libpdfium.so` 在包内且与 vendor 同 sha256）——
      2026-09-20 用 Downloads 里那份 `ShuyoNote_1.90.2_android-arm64-release.apk` 跑过：**包里没有库**（963 个条目，exit 1），
      这正是 P4 安卓格那条缺口的真产物读数。
@@ -427,6 +760,38 @@ node scripts/test-report.mjs --baseline-from rust-report.json
   > ⚠️ 展开后的路径**必须以 `./` 开头**（`./squashfs-root/usr/lib/...`）才算"包内相对路径"：
   > `squashfs-root` 是打包容器的根名，判据会把它摘掉再数层数。写成 `.squashfs-root/...`（少一个斜杠）
   > 会被判成"位置不对"——我第一版就踩了，而判据的反应是**正确地红**（说明那条位置判据确实在干活）。
+- **取 GitHub 资产：两条路，只有网络类失败才换路；换路不许静默**（2026-09-23 收口，本机实测）：
+  `node scripts/fetch-gh-asset.mjs <owner/repo> <tag|latest> <名子串> <输出> [期望 sha256]`（`--list` 只列资产）。
+  分工：纯逻辑 `scripts/lib/gh-asset.mjs`、网络与落盘 `scripts/lib/gh-asset-fetch.mjs`、薄 CLI 只管参数/打印/退出码；
+  `scripts/fetch-pdfium.mjs` 的退路调**同一份** ⇒ 原先那两份 `.tools/gh-api-asset.mjs`、`.tools/fetch-pdfium-via-api.mjs` 已删。
+  本机读数：Node 直连 `api.github.com` ⇒ `UND_ERR_CONNECT_TIMEOUT`（网络类）⇒ 退 `curl --resolve 140.82.113.6` ⇒ **200**；
+  `node scripts/fetch-pdfium.mjs win-x64` 的直链（`github.com`）⇒ `curl (35) schannel … CRYPT_E_REVOCATION_OFFLINE`（网络类）
+  ⇒ 退 API 资产端点 ⇒ **3,733,154 字节**、sha256 `73cc0de6…` 与平台表钉死值一致、解出 `bin/pdfium.dll` **7,211,520 字节**。
+  判据：`scripts/lib/gh-asset.test.mjs`（纯：选择/路由/状态码/哈希/argv 无凭据/curl 退出码分类）
+  ＋ `scripts/lib/gh-asset-fetch.test.mjs`（注入 `fetchImpl`，**不碰网络**）。
+  > ⚠️ 两条钉过的坑：① `curl -s` **不看状态码** ⇒ 不带 `-w` 时 `releases/tags/<不存在的 tag>` 的 404 体会被当成功读进来，
+  > 于是"这个 tag 不存在"被读成"这个 release 一个资产都没有"（正是本仓禁止的"结果类冒充事实"）；
+  > ② 输出目录不存在时 curl 报 `(23) client returned ERROR on write` —— **像网络故障，其实是路径**（已改成先建目录）。
+  > 凭据一律走 `--config` 临时文件、**绝不进 argv**（2026-09-16 那次 "Bearer token 打进公开日志" 的教训）。
+
+## 三条线**相交**的格子：三平面联合验收（**不在默认门禁里**，2026-09-23 加）
+
+三条在飞战役（国密 / 全库 AI 覆盖 / 块级 CRDT）各自都有常开门禁、各自都绿，但它们**两两/三三相交的格子
+此前没有任何人负责**：三个平面的数据住在同一张空间库、走同一条写路径、还要一起过加密 / 备份 / 同步 / 全库扫描。
+**分开绿 ≠ 一起绿。**
+
+```bash
+node scripts/joint-acceptance.mjs                       # 就绪面板 ＋ 格子矩阵（只读）
+node scripts/joint-acceptance.mjs --check               # 就绪 ⇒ 0；未就绪 ⇒ 2；探针坏了 ⇒ 1
+node scripts/joint-acceptance.mjs --run j1              # 跑一格（cargo 格有**下限**：空跑即红）
+```
+
+- 登记表是 `scripts/lib/joint-planes.mjs`（平面 / 探针 / 联合格子 / 每格判据），**计划本身**就是它的文档视图：
+  `docs/JOINT-ACCEPTANCE.md` 里那块机器事实由 `scripts/lib/joint-planes.test.mjs` **逐字核对**（该测试随默认组跑）。
+- **为什么不进 CI**：它要真 SM 前缀、会打补丁重建、还要真机 ⇒ 属于**发版窗口**的动作（与 `RELEASING.md` 的配方同一档）。
+  CI 里已经常开覆盖的是它的其中一格（`rust-sm-wired`：打补丁 ＋ `--features sm-library` 跑**全量 lib** ⇒ 含 CRDT 与派生那几族）。
+- **三态**：就绪 / 未就绪（**不是红**）/ **未实查**（真机、Windows 静态前缀、LibreOffice、真模型、Web CORS）。
+  「自报跳过」在联合验收里**不算通过**（`forbidSkip`）—— 否则一份全绿的报告里可能有两格根本没跑。
 
 ## CI 红了：**先读注解**，不要去猜（2026-09-17 的教训）
 

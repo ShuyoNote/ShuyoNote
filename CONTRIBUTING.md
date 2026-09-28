@@ -5,6 +5,18 @@
 ## 从哪开始（第一次参与）
 
 1. **跑起来**：`pnpm install && pnpm tauri dev`（桌面），或 `pnpm dev:web`（浏览器）。
+   > ✅ **只有这一个仓要 clone。** 验证只需本仓自带的门禁：
+   > ```bash
+   > pnpm verify        # = node scripts/test-report.mjs，默认组全是纯 Node，任何机器都能跑
+   > pnpm verify:list   # 门禁清单（不知道跑哪条时先看这个）
+   > ```
+   > 门禁清单的**唯一出处**是 [`scripts/lib/gates.mjs`](scripts/lib/gates.mjs)；每条的**理由**
+   > （它挡的是哪次真实事故）写在 `incident` 字段里，[`docs/TESTING.md`](docs/TESTING.md) 有摘要表。
+   > **不需要**本仓之外的任何东西：产品门禁 51 条是自足的，GitHub CI 跑的就是这一层。
+   > ⚠️ 两条最容易撞的坑：① 跑完 `mobile` 组**记得停掉 `pnpm dev:web`**，否则 `pnpm verify` 假红
+   > （两次对照实测，见 [`docs/TESTING.md`](docs/TESTING.md) 开头那一节）；
+   > ② 新增 `docs/plans/*.md` 方案时**头部要写 `状态：`**，报完成（已完成/已实现/已收口/…）
+   > 还要带可核的 `证据：`（`check-plan-status` 守这条）。
 2. **找活干**：看 [路线图](docs/roadmap.md) 里还没实现 / 待做的项，或从 `docs/plans/` 挑一份已被拆解的方案；没有想法就从顺手的小事入手（修 UI 细节、补空 / 加载 / 错误态、加单测、修文档）。
 3. **提缺陷 / 建议**：**入口在 [数友社区](https://community.shuyo.cn)**（问答/求助板块，免费注册）——
    用结构化模板填「版本 / 平台 / 复现步骤 / 期望 / 实际」。**可复现的缺陷会由系统转成 issue**

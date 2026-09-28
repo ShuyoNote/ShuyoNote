@@ -266,9 +266,12 @@ fn library_dir() -> PathBuf {
 /// 而不是把 `cargo test` 判红 —— 后者会让"缺一个开发期二进制"看起来像"代码坏了"，
 /// 而真红了以后没人分得清是哪一种（2026-09-19 rust job 就是这么红的）。
 ///
-/// `#[cfg(test)]`：当前唯一调用点是 P3 对拍那条 `#[test]`。不加会在非测试构建里报
-/// "never used"（2026-09-19 复核时发现并修：非测试 lib 目标确实是会warn 的，只看 `--tests` 会漏）。
-#[cfg(test)]
+/// `#[cfg(all(test, feature = "mupdf-rollback"))]`：唯一调用点是 P3 对拍那条 `#[test]`，
+/// **而那条测试本身只在编了 `mupdf-rollback` 的构建里存在**（`mod pdf_engine_compare` 的 cfg）
+/// ⇒ 两边的 cfg 必须一致，否则默认测试构建里它就成了"编了却没人用"。
+/// ⚠️ 2026-09-19 复核发现过同一件事的另一种写法（只看 `--tests` 会漏、非测试 lib 目标照样 warn）；
+/// 2026-09-25 又收紧了这一格（原来只写 `#[cfg(test)]`，默认构建仍然 warn）。
+#[cfg(all(test, feature = "mupdf-rollback"))]
 pub fn library_preflight() -> Result<(), String> {
     let dir = library_dir();
     let lib = Pdfium::pdfium_platform_library_name_at_path(&dir);
@@ -329,7 +332,7 @@ pub fn has_document(cache_key: &str) -> bool {
 /// 与 MuPDF 那条的差别只有一个——**不返回 `stride`**：PDFium 的输出本来就紧凑，无需 `compact_rgba`。
 ///
 /// 若调用方**已经不再需要**这份字节，用 [`render_page_owned`] 可以省掉一次整文件拷贝（AMD 复核第 4 条）。
-#[allow(dead_code)] // 有意保留：借用版，给"还要复用字节"的调用方（P3 对拍脚本可能用）
+#[allow(dead_code)] // 2026-09-25 收据：借用版，给"还要复用字节"的调用方。删除条件 = 那种调用方确认不存在（就删函数本身，而不是留豁免）
 pub fn render_page(
     cache_key: &str,
     bytes: &[u8],
@@ -384,7 +387,7 @@ pub fn forget(cache_key: &str) {
 }
 
 /// 清空整个文档缓存（诊断/测试用）。
-#[allow(dead_code)] // 有意保留：诊断/测试用（清空整个文档缓存）
+#[allow(dead_code)] // 2026-09-25 收据：诊断/测试用（清空整个文档缓存）。删除条件 = 手动排查缓存这条路径被别的手段取代
 pub fn clear() {
     if let Ok(mut cache) = doc_cache().lock() {
         cache.clear();

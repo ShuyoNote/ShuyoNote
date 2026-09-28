@@ -37,12 +37,29 @@ describe("pageRowOfChangeForStash：谁能被归档进「待取回的远端版�
 
 describe("★ 源码级：doPull 的 catch 不许是空的（静默跳过就是取证 L 的同族）", () => {
   const src = readFileSync(join(process.cwd(), "src/lib/platform/web.ts"), "utf8");
+  // ⚠️ 窗口上限是**够用即可**的近似（不是精确解析）：丙-⑤ 往这一支里加了"同一份文档 ⇒ 不记"
+  //    那一段之后，900 不够了（当场红，报的是"找不到 catch 分支"）—— 改实现时同步放这里，
+  //    但别把它当成"随便多长都行"：它钉的是**这一支说了什么**，不是整段代码。
+  const catchBody = () => {
+    const m = src.match(/for \(const c of changes\)[\s\S]{0,1500}?catch \(e\) \{([\s\S]{0,2000}?)\n    \}/);
+    expect(m, "找不到 doPull 里那个 catch 分支（实现变了就更新这条判据）").toBeTruthy();
+    return m![1];
+  };
 
   it("catch 分支里必须出现归档或 warn（二者之一）", () => {
-    const m = src.match(/for \(const c of changes\)[\s\S]{0,1200}?catch \(e\) \{([\s\S]{0,900}?)\n    \}/);
-    expect(m, "找不到 doPull 里那个 catch 分支（实现变了就更新这条判据）").toBeTruthy();
-    const body = m![1];
+    const body = catchBody();
     expect(body).toMatch(/stashPendingRemote\(|console\.warn\(/);
     expect(body).not.toMatch(/^\s*\/\* skip bad change \*\/\s*$/m);
+  });
+
+  // ★ 丙-⑤（2026-09-26）：**"已存进待取回"那句话必须以返回值为准** —— `stashPendingRemote`
+  // 回 `false`（本机那一版与它是同一份文档）时一行都没写，此时再宣布一次就是在报假账。
+  // 与 Rust 侧 `apply_pulled_changes` 那三支一一对应（那边同样是 `Ok(true)` 才 push id）。
+  it("★ 只有 `stashPendingRemote` 回了 true 才敢说「已存进待取回」", () => {
+    const body = catchBody();
+    expect(body, "没判返回值 ⇒ 与本地同一份文档时也会报一句清单里根本没有的账").toMatch(
+      /if \(stashPendingRemote\(/,
+    );
+    expect(body, "得说清「没记」那一路去哪了（不许只留一个 if 没有 else）").toMatch(/同一份文档/);
   });
 });

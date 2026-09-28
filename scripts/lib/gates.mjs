@@ -38,15 +38,67 @@ export const GATES = [
     cmd: "node scripts/check-changelog-gate-numbers.mjs",
     incident: "发版说明里的断言数一直靠人从终端抄：抄错了下一次改动后就成假话，而散文不参与构建，没人会发现",
   },
+  {
+    id: "check-changelog-tags",
+    group: "contract",
+    label: "每个 tag 的树自带本版台账段头",
+    // 为什么挂在 contract：纯 Node + 只读 git，约 1 秒。**故意不进 `pnpm build`** ——
+    // build 会在 release/macos/android 那几个 job 里跑，而那些 checkout 是默认深度（浅克隆）
+    // ⇒ 一个 tag 都没有 ⇒ 本门禁判「判不了」（exit 3）⇒ 把发版链整条弄红。
+    // 跑它的 `ci.yml` 的 `checks` job 已显式 `fetch-depth: 0`。
+    cmd: "node scripts/check-changelog-tags.mjs",
+    incident:
+      "2026-08-31 一天里连发 7 个 tag（`v1.64.10` … `v1.64.16`），而**每一个的树顶格都还停在 `1.64.10`**" +
+      "（`v1.64.10` 自己停在 `1.64.9`）—— 版本号 bump 了、台账一段没写。" +
+      "`release-preflight` ③ 查的是「打 tag 之前的工作区」，它挡不住「tag 打在了台账陈旧的提交上」这个形状" +
+      "（`git tag` 指哪个提交是手给的）；本门禁对**所有** tag 问「你这棵树里有没有你自己那一段」，是全量历史审计。" +
+      "另记一条基线教训：第一版拿「当前 checkout 的 CHANGELOG」去比 tag，报出 4 个假缺失" +
+      "（1.85.2 / 1.91.4 / 1.91.25 / 1.91.26）—— 真因是发布提交切在 `main`、`dev` 台账本来就落后两个版本；" +
+      "判据的基线必须是被审计的那个对象自己（tag 的树）",
+    registered: "2026-09-25",
+  },
+  {
+    id: "check-main-only-commits",
+    group: "contract",
+    label: "发布线独占提交（漏在 main 上的开发改动）",
+    // 为什么挂在 contract：纯 Node + 只读 git，约 1 秒。
+    // ⚠️ 它**必须跑在非浅克隆上**：判据要算 `origin/main` 与 `origin/dev` 的祖先关系，而浅克隆下
+    // `git rev-list A..B` 会**静默**给出偏少的答案 ⇒ 一律判「判不了」（exit 3），绝不当通过。
+    // GitHub 的 `checks` job 是 `fetch-depth: 0`；GitCode 侧由「取全历史与 tag」那一步 `--unshallow`。
+    cmd: "node scripts/check-main-only-commits.mjs",
+    incident:
+      "2026-09-25：`dev` 与 `origin/main` 分叉（dev 独有 208 笔、main 独有 7 笔），那 7 笔里**三笔带着开发线没有的内容**：" +
+      "`a3cbd44a`（社区帖存成笔记后属性区不刷新）、`64a415a1`（团队版方案文档）、以及 **`686d0480 release: 1.91.25`**" +
+      "—— 标题像纯发布，实际夹带了 `src/lib/mdPreview.ts` 的修复，而那是个**只在打包产物里显形**的 bug：" +
+      "节点表在**模块顶层**求值 ＋ 循环 import ⇒ dev/vitest 走原生 ESM 永远绿，打包拼平后 `nodes[9]` 是 `undefined`。" +
+      "⇒ 危害不是台账落后，是开发线**长期带着一个已经发出去的 bug**，且下次 `dev → main` 合并冲突取 dev 侧时会静默改回去。" +
+      "⇒ **不能只看提交标题判**（那三笔里恰好有一笔就叫 `release:`）⇒ 判据改成按**文件集**：非 merge 的发布线独有提交" +
+      "只许动发布产物（`RELEASE_ARTIFACTS`，与 `check-versions` 认的 7 处同源、并由自测钉住不许漂）；" +
+      "merge 则要求除第一父外的父都能从 dev 走到（实测那三笔合并的第二父都在 dev 里 ⇒ 不是开后门）。",
+    registered: "2026-09-25",
+  },
   { id: "check-web-commands", group: "contract", label: "命令契约（web/桌面两侧）", cmd: "node scripts/check-web-commands.mjs" },
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
   {
+    id: "check-doc-facts",
+    group: "contract",
+    label: "文档里的机器事实（门禁 / 能力 / 命令数）与代码一致",
+    cmd: "node scripts/check-doc-facts.mjs",
+    incident:
+      "这三类数字此前散在文档里**靠人手抄**：抄错不报错，只会让照着文档做的人做到一半发现文档是旧的。" +
+      "两条断言：① 注册表里每条门禁都要在 docs/TESTING.md 里有名字（上线当天抓到 7 条漏写）；" +
+      "② docs/TESTING.md 的「机器事实」块必须与代码逐字一致（数字取自 gates.mjs 与另两条门禁的自报输出，不重复实现）",
+    registered: "2026-09-23",
+  },
+  {
     id: "check-workflow-yaml",
     group: "contract",
-    label: "workflow YAML 窄规则",
+    label: "workflow YAML 窄规则 ＋ 私有 CARGO_HOME 交接（按 job）",
     cmd: "node scripts/check-workflow-yaml.mjs",
-    incident: "2026-09-12：`--lib plugins::` 行尾冒号 ⇒ 非法 YAML ⇒ 0 个 job 的红 run，49 次 push 全红无人察觉",
+    incident:
+      "2026-09-12：`--lib plugins::` 行尾冒号 ⇒ 非法 YAML ⇒ 0 个 job 的红 run，49 次 push 全红无人察觉；" +
+      "2026-09-25：国密隔离后「打补丁」与「构建」之间少一次私有 `CARGO_HOME` 交接 ⇒ Android 自检包在 step 23 如实 panic（`release.yml` 恰好桌面 job 导了、android job 没导 ⇒ 判据必须按 job 切，按文件找会假绿）",
   },
   {
     id: "check-gitcode-workflow-rules",
@@ -62,6 +114,22 @@ export const GATES = [
     label: "浮层登记（返回栈 / 移动端量测）",
     cmd: "node scripts/check-overlay-registry.mjs",
     incident: "2026-09-15：版本历史弹层没登记 ⇒ 真机上返回键直接退出应用（第 6 个真机问题）",
+  },
+  {
+    id: "check-hook-order",
+    group: "contract",
+    label: "hooks 顺序（早退不许越过 hooks）",
+    // 为什么现在才进注册表：它此前只挂在 `package.json` 的 build 链上，**没进本注册表**
+    // ⇒ `pnpm verify`（本地一键验收与 CI 的 checks job 共用）**跑不到它**。
+    // 2026-09-25 复核 Zustand 订阅粒度时发现的 —— 同一个坑 `mobile-views` 在 2026-09-22 踩过
+    // （见上面 mobile 组那段注释）。"只挂在 build 链上"的门禁在 CI 的 verify 路径上是隐形的。
+    cmd: "node scripts/check-hook-order.mjs",
+    incident:
+      "同一类错在这份代码里发生过**两次**，两次都是「用户的界面直接没了」：" +
+      "① v1.85.1：`CommandPalette` 把参数表单的三个 `useState` 放在 `if (!open) return null` **之后** ⇒ 按 Ctrl+K 抛错（生产是 Minified React error #310）⇒ 整棵树被卸载成白屏；" +
+      "② 2026-09-16：`App` 的加密锁定闸门是一句**排在七八个 hooks 之前**的早退 ⇒ 加密安装**重启即抛 `Rendered fewer hooks than expected`**，被根部 ErrorBoundary 接住 ⇒ 用户看到崩溃屏，而锁定屏**一次都没出现过**（真机只验了设置页开关）。" +
+      "两次都不是「写错了」，是「**看漏了**」——早退和 hooks 隔着几十行，人眼很难可靠发现；渲染级测试只能证明「某一个组件当前是对的」，这条管的是「仓库里别再出现这种写法」。" +
+      "自测：`node scripts/check-hook-order.mjs --self-test`（里面放的是两次真事故的**真实写法**，必须判红）。",
   },
   {
     id: "check-ps1-ascii",
@@ -123,6 +191,15 @@ export const GATES = [
     cmd: "node scripts/check-sys-deps.mjs --checks registration,toolchain",
     incident:
       "两类真事故各一条：①2026-09-17 发版机清构建期依赖（libssl-dev）⇒ 社区端 openssl-sys 编译失败；②同日 15:51 本机 Xcode 27 装完许可未接受 ⇒ git/python3/cc/xcrun 全线不可用（notarytool 一条探针就能提前发现）",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 实测（dev CI，run #613，`139072b6`）本组在 Linux 上报「自报跳过 1 条」，跳过的是
+    // **平台工具链探针**那一档（`check-sys-deps.mjs` 的 `probeSkipped`：macOS / Windows 各一张表，
+    // 别的平台显式跳过 —— 见该脚本 436 行前后）。
+    // 而 Linux 侧该跑的那半是 **deb 实查**：它**故意不带 `deb`** 挂在本组、另挂在 rust 组的
+    // `check-sys-deps-linux`（那条跑在**装了 Tauri 依赖**的 `rust-tests` job 里，见本条目上方注释）
+    // ⇒ **跳过是平台分工，不是漏验**（每台机器只跑它那一侧的判据）。
+    // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**，并在 `--strict-self-skip` 里豁免这一条。
+    selfSkipOk: "Linux 上跳过的是平台工具链探针（macOS/Windows 各一张表）；Linux 侧该跑的 deb 实查另挂在 rust 组的 check-sys-deps-linux（装了 Tauri 依赖的 job）⇒ 平台分工，不是漏验",
   },
   {
     id: "check-derived-writers",
@@ -141,6 +218,71 @@ export const GATES = [
     cmd: "node scripts/check-doc-content-access.mjs",
     incident:
       "同页并发 → 全量 CRDT（路线 C）要换实现时，全仓直接摸 content_json / content_text / contentJson 的面是 746 次 / 80 个文件；不把「只经一层（read/write/merge/derive）」做成单调收敛的机器判据，收口就只能靠一次大爆炸重构，而且新写的直接访问没有任何东西会拦（今天已经有人把 542 行 / 26 文件这个错口径当成规模）",
+  },
+
+  {
+    id: "check-prism-components",
+    group: "contract",
+    label: "代码块高亮只有一条装配路径（不许再有 vendored 的 Prism script）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒（只读 index.html ＋ 两个源文件 ＋ 目录是否还在）。
+    cmd: "node scripts/check-prism-components.mjs",
+    incident:
+      "2026-09-25 清冗余文件时实测：仓库里本来有**两条并行的 Prism 装配路径** —— " +
+      "① `index.html` 里 10 行 `<script src=\"prism/prism-*.js\">` ＋ `public/prism/` 下 10 份 vendored 组件（77 KB，且是**阻塞式** script）；" +
+      "② `src/editor/prismSetup.ts`（`Editor.tsx` 启动时 import）：prismjs 核心 ＋ 16 个组件 ＋ `window.Prism ??= Prism` —— 它自己的注释就写着 " +
+      "\"independent of the index.html plain <script> loading\"。两条路做的事完全重合 ⇒ ①是纯冗余。" +
+      "真 Chromium 实测（把①整条去掉后重新加载）：`window.Prism` 照旧能 highlight json / rust / sql / go / markdown、页面零 JS 报错 ⇒ 已删。" +
+      "⚠️ 本门禁的第一版把方向判反了（写成「vendored ⇒ 必须在 index.html 里被加载」）：那条规则会**逼着**冗余的第二条路继续存在，" +
+      "而它唯一的「证据」（`prism-json.js` 没被加载）真相是**两条路都不该有①** —— 先量事实再写判据，这条留作记录。" +
+      "另有**只报告不判红**的静态对账：选择器列了、而 `prismSetup.ts` 没显式 import 的语言（今天 markdown / yaml）。",
+    registered: "2026-09-25",
+  },
+  {
+    id: "check-plan-status",
+    group: "contract",
+    label: "方案状态位与完成的证据（每篇 plan 头部要有 `状态：`；报完成必须带可核证据；只减不增）",
+    // 为什么挂在 contract：纯 Node、只读文本、离线、<1 秒。
+    cmd: "node scripts/check-plan-status.mjs",
+    incident:
+      "2026-09-27 给 `docs/plans/`（91 篇）做状态盘点时实测：**「写状态」这件事是 `2026-08-24` 才成为习惯的** —— " +
+      "08-24 起的方案头部统一是 `> 目标版本：…` ＋ `> 状态：规划（建议）。…`，而 08-22 及更早那批是 " +
+      "`# 标题` → `> 目标：…` → `## 1. 背景与竞品对照`，**根本没有状态这一行**。全文扫出来是 **51 篇没有状态行 ＋ 13 篇自报完成却没有证据**。 " +
+      "后果是具体的、不是洁癖：那批里好几篇的功能**早已落地**（`docs/roadmap.md` 有 `✅ M9（v1.13.0）` / `✅ M10（v1.11.0）` / `✅ M12（v1.33.0）` / `✅ M13（v1.25.0）` / `✅ M14（v1.37.0）`，都带版本号）， " +
+      "**可它们在文档里和「未实装」长得一模一样** ⇒ 读文档的人（包括 agent）分不出哪些还有效。本仓 `scripts/lib/docs-index.mjs` 的注释已记着这条后果：「新会话按文档入口找不到那一篇，于是**同一件事被第二次立项**（本仓已经有过\"两份口径\"的教训）」。 " +
+      "⚠️ 本门禁的第一版**发明了一个状态词表**，于是 24 篇被判「状态词非法」—— 而真相是仓库在用的词有十几种（`已收口` `已实现` `已拍板` `已定` `规划` `提议` `施工单` `决策/建议` `进度口径` `待拍板` …）。 " +
+      "⇒ **判据改成自由文本**，只判「头部有没有 `状态：`」＋「报完成（已完成/已实现/已收口/已落地/已拍板/已定）有没有可核的 `证据：`」；没见过的词只提醒、不判红。 " +
+      "第一版还有第二个错：扫**全文**找状态，于是正文里 `状态：施工单（…）` 这种**别的字段**被误判成方案状态 ⇒ 现在只在**第一个 `## ` 标题之前**找。 " +
+      "旧账用 `scripts/plan-status-baseline.json` 冻结（只减不增，与 `check-store-subscriptions` 同一套纪律）—— 上线当天 64 处，**没有基线这门槛第一天就会被绕开或被删**。",
+    registered: "2026-09-27",
+  },
+  {
+    id: "check-store-subscriptions",
+    group: "contract",
+    label: "Zustand 订阅粒度（组件不许整店订阅；只减不增）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒。
+    cmd: "node scripts/check-store-subscriptions.mjs",
+    incident:
+      "2026-09-25 复核技术选型评估里「Zustand 在多空间/多视图的规模下需警惕隐式依赖导致的重渲染」这一条时实测：213 个 store 调用点里 **39 处 / 32 个文件**是 `const { openPage } = useNotes();` 这种**不带选择器**的整店订阅，" +
+      "而 action 引用恒定、本来一次都不该被唤醒——其中 13 处**一个 state 字段都没读**。最重的一处是 `PageTree.tsx:189` 的 `TreeItem`：它**每个可见树节点渲染一次**，却也整店订阅；" +
+      "叠加「自动保存（600ms 去抖）每次都 `updateCurrent()` ＋ `loadPages()` 全量重拉」⇒ 打一次字停 1 秒就唤醒 ~24 个树节点实例，外加 DatabaseView(1751 行) / FileManagerView(1208 行) / SyncPanel(1071 行) / GraphView / CommandPalette 一起重跑 render。" +
+      "它与 check-hook-order 同族：**不炸、不报错、测试全绿**，只是安静地多渲染；写的人也没写错，是没人告诉过他「这行是订阅」⇒ 只能靠机器判据钉住（判据是**订阅关系**，不是渲染耗时，边界写在脚本头部）。",
+  },
+  {
+    id: "check-dead-code-receipts",
+    group: "contract",
+    label: "死代码收据（`allow(dead_code)` 必须带日期 ＋ 删除条件）",
+    // 为什么挂在 contract：纯 Node、离线、零依赖、<1 秒（只读 `src-tauri/src` 与 `build.rs` 的文本）。
+    // ⚠️ 它**不判**理由好不好、也不判那段代码该不该留：它只保证"有人签过字"（边界写在脚本头部）。
+    cmd: "node scripts/check-dead-code-receipts.mjs",
+    incident:
+      "2026-09-25 给「清掉编译器报的死代码」收尾时做了一轮全仓稽查，发现的不是「有几个警告要修」，而是**这一整类东西没人管**（`allow(dead_code)` 不产生任何输出，所以过期了也没人会去看）：" +
+      "① `sync.rs::IncomingChange.seq` 挂着豁免，而它其实被生产代码读了 8 处 —— 豁免早就过期；" +
+      "② `commands.rs::mupdf_compiled()` 的 body 就是 `cfg!(feature)`，唯一使用者是一条 `assert_eq!(cfg!(f), cfg!(f))` 的**空转判据** —— 死代码还自己长了一条判据；" +
+      "③ `security.rs` 一次「文档与属性被留在上一个函数下面」的事故让一个夹具生成器被 libtest **注册两遍**（跑两遍），另一条生成器彻底不可达；" +
+      "④ `build.rs` 里留着一份搬走后的 `find_gm_marker_deprecated` 副本，靠无名无期的豁免挂着（本次删除）。" +
+      "共同点：**一行豁免就让一整块东西免检**。本门禁把纪律变成断言：每处豁免要么删掉、要么门进 `#[cfg(test)]`、要么写一句 `// ★ YYYY-MM-DD 收据：为什么留 ＋ 什么时候删`。" +
+      "⚠️ 命中必须**在代码里**（复用 `lib/rust-scan.mjs` 掩码）：仓里有十几处注释**在讲**这件事，grep 式扫描会把它们全算成违规（自测里有这一格）。",
+    registered: "2026-09-25",
   },
 
   // ---- smoke ----
@@ -257,6 +399,16 @@ export const GATES = [
     cmd: "node scripts/check-gm-conformance.mjs",
     incident:
       "国密这条线**同时保两份 SM4 实现**（应用层 RustCrypto / 库级 Tongsuo，见方案 §0-F）——两份漂移的后果是「跨设备读不出对方的数据」，而它没有任何编译期信号、本机单测也照绿。夹具来自 AMD 2026-09-17（信箱仓 gm-conformance），2026-09-19 搬进本仓：去 target/、驱动重写成跨平台 Node（原 driver.sh 是 Linux 专用：stat -c/sha256sum/$HOME/tongsuo-build）、Tongsuo 缺席自报跳过；并加「空跑即红」下限——固定下限会漏掉「Tongsuo 分支整段被删」，所以下限随 Tongsuo 是否参与而变（3 或 8）",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 实测（dev CI，run #613 / `139072b6`）：本门禁在 CI 上报「自报跳过 1 条」，
+    // 跳的是**跨实现对拍 9 项**（T1 标准向量 2 ＋ T2/T3 双向互解 2 ＋ T4 密文一致/HMAC 一致 2 ＋ T5 KDF 口径 3），
+    // 原因是 CI **没装 Tongsuo**；同一次跑里 `gm-conformance: ✅ 通过 —— 跑成 3 个用例`（R1–R4 覆盖的是「实现没被改坏」）。
+    // ⚠️ **它与 `check-sys-deps` 那种「平台分工」不同**：这 9 项**没有第二个平台会跑**
+    //    （CI 没装；Windows 本机 `node scripts/check-gm-conformance.mjs` ⇒ exit 1）⇒ **这是真的没验过**。
+    // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**、并在严格模式里豁免这一条。
+    // 目标仍是**在有 Tongsuo 的环境里真跑**（CI 装 Tongsuo 是一个小项目；先向 macOS/AMD 要一次那 9 项的读数）。
+    // ⚠️ **发版说明必须记「未验」** —— 本版不得把这一格当成「跨实现一致已验」的证据。
+    selfSkipOk: "CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」；**发版说明须记「未验」**）；目标是在有 Tongsuo 的环境真跑",
   },
   {
     id: "rust-no-sm-crypto",
@@ -289,6 +441,13 @@ export const GATES = [
     //   ⚠️ 它跑完会**还原补丁并把默认特性重新编好** —— 否则同一 job 里后面的 `check-crypto-backend`
     //   会读到"补丁态 ＋ openssl 最新产物"而按平台默认声明判红。
     cmd: "node scripts/check-gm-wired.mjs",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 为什么这台机器上跳过是可接受的：本门禁要的是**装了 SM 版（Tongsuo / SM-OpenSSL）的 OpenSSL 前缀**，
+    // Linux runner 用 `/usr` 拿得到，Windows 开发机上没有那个前缀是常态。
+    // ⚠️ 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**，并在严格模式里豁免这一条。
+    //    实测（2026-09-27，本机聚合器）：`--only rust-sm-wired` ⇒ `status=passed`、`ok=true`，
+    //    而 `skips` 里躺着门禁自己写的「! 跳过（自报跳过，不装绿）…」—— 采到了却没人看，这就是登记的理由。
+    selfSkipOk: "需要 SM 版 OpenSSL 前缀；Windows 开发机没有该前缀是常态（Linux CI 的 /usr 有）",
     incident:
       "2026-09-22：接线那段（`set_cipher_key` → 能力探针/设标签/回显校验）没有任何 CI 门禁覆盖；同时在 macOS 本机发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 发出非国密包」。两者一起促成本门禁：打补丁 ＋ 清两个 profile ＋ `--features sm-library` 跑全量单测（内部下限 380 passed/0 failed，空跑即红），跑完还原补丁并重建默认特性，避免留下混态。",
   },
@@ -303,7 +462,16 @@ export const GATES = [
     // 读不出来（没跑过 cargo / 拿不到 Cargo.lock）⇒ 只提示，**不判红**。
     cmd: "node scripts/check-gm-registry-clean.mjs",
     incident:
-      "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。",
+      "2026-09-22（AMD 侧报的，方案 §五「macOS-only 风险：补丁留在共享 registry 上」）：补丁打在**全机共享**的 `libsqlite3-sys-<v>/sqlcipher/sqlite3.c` 上，而 `sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的新静默态）⇒「跑过一次国密构建、忘了 --revert」会在 macOS 上让后续**默认**构建红 12＋7 条，而**现场长得像「加密库坏了」**（`PRAGMA key = \"x'…'\"` 被拒），不是一眼能认出「这是补丁残留」；Linux/Windows 上不红、但后续默认构建被**静默**改成写 SM4 页。原先唯一的防线是收尾横幅＋人的纪律 ⇒ 这条把纪律变成断言（并且**只读**：`--print-source-sha256`/`--require-static`/`--print-env` 都会先打补丁，想核状态反而会改状态）。 ★ 2026-09-26 补记：**上面这一档自 2026-09-23 起已是历史形态** —— 补丁改为打在**私有副本**（`.gm-build/`）上，共享 registry **全程不被改写**（见 `sm-library-build.mjs` §0.5b 与 `patches/README.md`）。本门禁今天守的是两处**残渣**：① 老机器上遗留的共享补丁（legacy 撤回分支仍在）；② `Cargo.lock` 被 `--prepare` 改过。实测（2026-09-26 本机）：`--prepare` 前后共享 `sqlite3.c` 的 sha256 都是 `EA0BF0B0…`（未变）⇒ 隔离生效。**留这段是因为旧描述会让人不敢跑那一步 —— 过期的危害描述与过期的安全承诺一样贵。**",
+    // ⚠️ 2026-09-27：**自报跳过的登记**（配合 `test-report.mjs` 的 `--strict-self-skip`）。
+    // 本门禁在**读不到共享 registry 源码**时**有意不判红**（干净机器 / 还没跑过 cargo 都会走到那里；
+    // 判红就等于逼人在无依赖机器上红 —— 见上面第 462 行那句「读不出来 ⇒ 只提示，**不判红**」）。
+    // ⚠️ 但"没查"必须**看得见**：2026-09-27 之前那两行消息**不以 `! ` 开头** ⇒ `report-core.mjs` 的
+    // `extractSkips()`（只认**行首** `⏭`/`!`/`✗ skip`/`SKIP`）**采集不到** ⇒ 这一格在报告里是**静默绿**，
+    // 而那正是隔壁 `check-sys-deps` 明写反对的形状（它的原话：「不能当成『没 dpkg 所以跳过』，那正是『没查却显示绿』」）。
+    // ⇒ 本轮给那两行加 `! ` 前缀，并加测试 `scripts/check-gm-registry-clean.test.mjs`（4 条，
+    //   含「去掉前缀 ⇒ 采集不到」的反事实）。登记 ≠ 通过：首选路径仍是在**跑过 cargo** 的机器上真核对。
+    selfSkipOk: "读不到共享 registry 源码时不判红（干净机器/没跑过 cargo 的常态；判红会逼人在无依赖机器上红）—— 已改为走自报跳过通道，可见可登记",
   },
   {
     id: "check-crypto-backend",

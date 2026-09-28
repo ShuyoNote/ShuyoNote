@@ -25,7 +25,11 @@
 pub const NOT_APPLICABLE: &str = "n/a";
 /// Android 上查询失败时的返回值：**未知**（前端按"不自动拉取"处理）。
 /// 只在 Android 分支里被构造 ⇒ 非 Android 构建下会报 dead_code，这里显式放行。
-#[allow(dead_code)]
+///
+/// ⚠️ **2026-09-25 清理**：这条收据原先是个无名无期的 `#[allow(dead_code)]`。改窄成**只在真会死的那两种
+/// 构建**里生效（非 Android **且** 非测试 —— 桌面/Web 的判据还在读它，见文件末那两条）。
+/// **没有"到期自动删"这回事**：哪天 Android 分支不再用它，就删常量本身与那两条判据，而不是继续留着豁免。
+#[cfg_attr(all(not(target_os = "android"), not(test)), allow(dead_code))]
 pub const UNKNOWN: &str = "unknown";
 
 /// 当前网络类型。见模块头注释的返回值契约。

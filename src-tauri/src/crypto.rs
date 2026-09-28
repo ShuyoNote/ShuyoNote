@@ -40,15 +40,11 @@ pub const CURRENT_FORMAT: u8 = VERSION_XCHACHA;
 /// 头部长度（magic + version）。
 pub const HEADER_LEN: usize = 2;
 
-/// `sync_state` keys for the opt-in per-workspace encryption.
-pub const ENC_ENABLED: &str = "encryption_enabled";
-pub const ENC_SALT: &str = "encryption_salt";
-/// Sentinel ciphertext used to verify the passphrase on unlock (no key persisted at rest).
-pub const ENC_VERIFY: &str = "encryption_verify";
-// `ENC_KEY` 只在测试里用来断言「密钥未落盘」（security.rs 单测）；非测试构建未被引用，属预期。
+/// base64（标准字母表）—— 载荷/密文的文本形态。★ 应用级加密删掉之后只剩判据在用（同上）。
+///
+/// ⚠️ **2026-09-25 清理**：收据补日期。删除条件 = 连"文本形态的 base64"都不再有判据要用它的那天
+/// （`b64_decode` 仍有生产调用方，这一对是**成对保留**，别只删一半）。
 #[allow(dead_code)]
-pub const ENC_KEY: &str = "encryption_key";
-
 pub fn b64_encode(data: &[u8]) -> String {
     B64.encode(data)
 }
@@ -74,6 +70,7 @@ pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
 /// panic 信息、错误上报里（那种泄漏一旦发生就收不回来）。要比对就在测试里比字段。
 // 默认构建（不带国密 feature）里这两个字段**构造得出来但没人读** —— 刻意如此：
 // `derive_sm_keys` 在那种构建下恒返回 `None`，而类型形状保持一致能让上层代码不分叉。
+// ⚠️ **2026-09-25 清理**：收据补日期。删除条件 = `sm-crypto` 不再是可选特性那天（那两行豁免一起删）。
 #[cfg_attr(not(feature = "sm-crypto"), allow(dead_code))]
 #[derive(Clone, Copy)]
 pub struct SmKeys {
@@ -84,6 +81,7 @@ pub struct SmKeys {
 }
 
 /// 一次会话手里的应用层密钥材料（同样**不派生 `Debug`**，理由见 `SmKeys`）。
+// ⚠️ **2026-09-25 清理**：收据补日期（与 `SmKeys` 同一条件、同一天）。
 #[cfg_attr(not(feature = "sm-crypto"), allow(dead_code))]
 #[derive(Clone, Copy)]
 pub struct AppKeys {
@@ -121,6 +119,12 @@ pub fn decrypt_str(s: &str, keys: &AppKeys) -> Result<String, String> {
 ///
 /// ⚠️ **这个函数的口径不许动**：它的输出就是 SQLCipher 的原始密钥，改了它 = 既有加密库全部打不开。
 /// 国密的应用层 KDF 是**另一条**（`crypto_sm::derive_keys`，PBKDF2-HMAC-SM3），见 `derive_app_keys`。
+///
+/// ★ owner 第三轮拍板（2026-09-24）之后：应用级加密（含它的解锁/哨兵）整条删掉 ⇒
+/// **这条默认参数派生不再有生产调用方**（空间钥匙是随机的；口令派生走 `derive_app_keys_with`）。
+/// 留着的理由只有一条：它是**库级口径的参照物**（判据拿它钉"SQLCipher 那条 KDF 没被动过"），
+/// 所以既不能删、也不该被谁拿去做新的密钥派生。
+#[allow(dead_code)]
 pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     let mut key = [0u8; 32];
     Argon2::default()
@@ -138,6 +142,10 @@ pub fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32], String> {
 ///   · `sm` = PBKDF2-HMAC-SM3（§0.1 钉死的应用层 KDF），只喂应用层 AEAD。
 /// 两条都用同一个 16 字节盐：域不同（Argon2id / PBKDF2-HMAC-SM3），复用不引入额外风险，
 /// 而 §0.1 只钉了"盐 16 字节"，没钉"两个 KDF 必须用不同的盐"。
+///
+/// ★ owner 第三轮拍板（2026-09-24）之后同样**只剩判据在用**（口令派生现在都走
+/// `derive_app_keys_with`，因为参数要随钥匙袋走）—— 保留理由与 `derive_key` 相同。
+#[allow(dead_code)]
 pub fn derive_app_keys(passphrase: &str, salt: &[u8]) -> Result<AppKeys, String> {
     let legacy = derive_key(passphrase, salt)?;
     Ok(AppKeys { legacy, sm: derive_sm_keys(passphrase, salt) })
@@ -151,6 +159,32 @@ fn derive_sm_keys(passphrase: &str, salt: &[u8]) -> Option<SmKeys> {
 #[cfg(not(feature = "sm-crypto"))]
 fn derive_sm_keys(_passphrase: &str, _salt: &[u8]) -> Option<SmKeys> {
     None
+}
+
+/// 同 `derive_app_keys`，但 **Argon2id 的三个参数由调用方给**。
+///
+/// 谁用：**钥匙袋**那一条线（`keyring::KdfParams::derive_master`）—— 它记着"这份材料当初是用哪套参数
+/// 派生的"，就得**按它自己记的**去派生。这是"参数随袋子走"的兑现：本版默认抬到 64 MiB 之后，
+/// 19 MiB 的老袋子**照样**解得出原来那把主密钥。
+///
+/// ⚠️ 只有 `legacy` 这一半跟着参数走；`sm` 那一半仍按 `crypto_sm` 的口径（今天不吃参数）。
+/// ⚠️ **不要**拿它去替代 `derive_key`：那条同时是既有加密库的 **SQLCipher 原始密钥**，
+/// 口径不许动（`crypto.rs` 里那条警告）；这里只服务钥匙袋的主密钥，不碰库级那条。
+/// ⚠️ 参数合法性由 `argon2::Params::new` 把关（越界 ⇒ `Err`，不静默降级）。
+pub fn derive_app_keys_with(
+    passphrase: &str,
+    salt: &[u8],
+    m_kib: u32,
+    t: u32,
+    p: u32,
+) -> Result<AppKeys, String> {
+    let params = argon2::Params::new(m_kib, t, p, Some(32))
+        .map_err(|e| format!("Argon2 参数不合法（m={m_kib} t={t} p={p}）: {e}"))?;
+    let a = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut legacy = [0u8; 32];
+    a.hash_password_into(passphrase.as_bytes(), salt, &mut legacy)
+        .map_err(|e| format!("密钥派生失败: {e}"))?;
+    Ok(AppKeys { legacy, sm: derive_sm_keys(passphrase, salt) })
 }
 
 /// 这段密钥材料**写新数据**时会用哪个版本。
@@ -220,6 +254,16 @@ pub fn random_salt() -> [u8; SALT_LEN] {
     let mut s = [0u8; SALT_LEN];
     OsRng.fill_bytes(&mut s);
     s
+}
+
+/// 32 字节随机（**钥匙袋每空间的密钥**用它；见 `keyring.rs` 头注）。
+///
+/// 为什么收在这里而不是让调用方自己引 `OsRng`：随机数入口只有这一处 ⇒
+/// "换 CSPRNG / 加 DRBG"这类改动只有一个落点（与 `random_salt` 同一条纪律）。
+pub fn random_32() -> [u8; 32] {
+    let mut b = [0u8; 32];
+    OsRng.fill_bytes(&mut b);
+    b
 }
 
 /// Lowercase hex of a 32-byte SQLCipher raw key, for

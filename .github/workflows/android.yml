@@ -167,6 +167,10 @@ jobs:
           test -n "$NDK" || { echo "runner 上没有任何 NDK，且装不上"; exit 1; }
           echo "NDK_HOME=$NDK" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          # ★ 还要给 `ANDROID_NDK_ROOT`：**名字不同不是笔误** —— NDK 自己的文档用 `_HOME`，
+          #   而 OpenSSL/Tongsuo 的 `Configure` 只读 `_ROOT`（只给 `_HOME` 会在交叉编译那一步报
+          #   `$ANDROID_NDK_ROOT is not defined ... build file wasn't produced`，看起来像"没装 NDK"）。
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
           echo "选用 NDK: $NDK"
           NDKBIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           echo "--- bin 里的相关工具 ---"
@@ -283,6 +287,39 @@ jobs:
       - name: 自检：桌面图标确实是品牌那套
         run: pnpm check:android-app-icon
 
+      - name: Android 应用显示名（备案/软著/商店同名）
+        # 为什么需要（2026-09-22，owner 拍板「方案 A」）：`tauri android init` 每次都把
+        # `productName`（`ShuyoNote`）写进 gen 的 `res/values/strings.xml`，而备案的
+        # 「App 名称」按阿里云口径就是**安装后图标下方那行字** ⇒ 它与软著全称
+        # （`ShuyoNote 数友笔记`）、商店上架名不一致时，商店/管局审核要多解释一轮。
+        # 同样是改 gen/（生成物、不入库），只能在 init 之后脚本化写一遍。
+        run: pnpm android:app-name
+
+      - name: 自检：应用显示名确实是备案那一个
+        run: pnpm check:android-app-name
+
+      - name: 品牌开屏主题（安卓，品牌底色 ＋ 居中图标）
+        # 为什么需要（2026-09-25，owner 拍板 ＋ Windows 侧落的生成器）：`tauri android init`
+        # 每次都把**默认主题**写进 gen 的 `res/themes.xml` ⇒ 装出来的应用**开屏是一块白**。
+        # gen/ 不入库 ⇒ 只能在 init 之后脚本化写一遍（与 app-icon / app-name 同一条理由）。
+        # ⚠️ 与 `check:android-splash-theme` 是**一对**：只加自检不加这一步 ⇒ 流水线红；
+        #    只加这一步不加自检 ⇒ 哪天有人把脚本改坏（或 init 覆盖后没人重跑）**没人拦**。
+        run: pnpm android:splash-theme
+
+      - name: 自检：开屏主题确实是品牌那套
+        # 与 release.yml 同名同步（`check:release-parity` 会核对两条流水线）。
+        run: pnpm check:android-splash-theme
+
+      - name: 竖屏锁（安卓，owner 2026-09-25 拍板）
+        # 为什么需要：方向锁写在 gen 的 `AndroidManifest.xml` 里（`screenOrientation`），
+        # 而 gen/ 是生成物 ⇒ 不脚本化就**每次 init 之后丢一次**（丢了不会报错，只是横过来）。
+        # ⚠️ 平板/折叠屏将来要横屏：另开「按机型/资源目录区分」的口径，**别改这一处**（LAN 施工单 §①）。
+        run: pnpm android:portrait-lock
+
+      - name: 自检：竖屏锁确实钉在清单里
+        # 与 release.yml 同名同步（`check:release-parity` 会核对两条流水线）。
+        run: pnpm check:android-portrait-lock
+
       - name: 随包 PDFium 库（Android）
         # 为什么需要（2026-09-20 补，P4 的安卓格）：`libpdfium.so` 是 `libloading` **运行时**加载的
         # ⇒ 包里没有它时**装完不会立刻报错**，只有用户开 PDF（P5 之后默认走 PDFium）才变成
@@ -300,14 +337,73 @@ jobs:
           node scripts/fetch-pdfium.mjs --platform android-arm64
           pnpm android:stage-pdfium
 
+      - name: 取依赖（补丁要打在 registry 里那份 vendored SQLCipher 上）
+        # ⚠️ 这一步是 2026-09-25 被 CI 教出来的：`sm-library-build --prepare` 打补丁的对象是
+        # **cargo registry 里那份 `libsqlite3-sys` 的 vendored SQLCipher 源码**，而我把补丁步骤
+        # 放在了**任何 cargo 取依赖之前** ⇒ runner 上 registry 是空的，脚本如实拒绝：
+        #     ❌ Cargo.lock 锁的是 libsqlite3-sys **0.38.2**，但 registry 里找到的是 [（无）]
+        # 本机没露头是因为我这儿早就编过、registry 早有货 —— 又一条"本机绿掩盖了缺前置"。
+        # `--target aarch64-linux-android` 是为了把**该目标专属**的依赖（含 android 段的
+        # `bundled-sqlcipher-vendored-openssl`）也取下来。
+        run: cargo fetch --manifest-path src-tauri/Cargo.toml --locked --target aarch64-linux-android
+
+      - name: 随包静态 SM 加密库（Android，库级国密）
+        # owner 2026-09-23 拍「Android 库级国密：**做**」。Android 系统**不带** OpenSSL ⇒ 必须随包一份
+        # **静态** SM 库；`scripts/build-tongsuo-android.sh` 交叉编译（Gitee 镜像 @ 钉死 commit，
+        # 属性自检：静态 / 大小带 / headers / SM 符号 —— **不按字节钉**，理由见该脚本与
+        # `check-openssl-android.mjs` 文件头的"三遍实测"），`--print-env` 把它翻成
+        # openssl-sys / libsqlite3-sys 认的那几个键。
+        # ⚠️ 顺序：必须在 `Init Android project` 与任何 cargo 构建**之前**（补丁要打在"将要编译的那份源码"上）。
+        run: |
+          set -e
+          sh scripts/build-tongsuo-android.sh
+          node scripts/check-openssl-android.mjs
+          node scripts/check-openssl-android.mjs --print-env >> "$GITHUB_ENV"
+
+      - name: 打上 SQLCipher 的国密 provider 补丁（与桌面同一条链）
+        # 桌面发版用的是同一个 `sm-library-build.mjs --prepare`（打补丁 ＋ 清掉两个 crate × 两个 profile
+        # 的产物，防"复用旧 SQLCipher"）。这里只是把 `--openssl-dir` 指到 Android 那份静态前缀。
+        run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --prepare --require-static
+
+      - name: 把私有 CARGO_HOME 交给构建步骤（不带 ⇒ build.rs 查的是共享 registry 那份原版）
+        # ⚠️ 2026-09-25 被 CI 教出来的**第二处**（第一处是上面那条 `cargo fetch`）：
+        # `--prepare` 把补丁打在 `.gm-build/libsqlite3-sys-<ver>/` 的**私有副本**上，而 cargo 只有在
+        # `CARGO_HOME` 指向 `.gm-build/cargo-home`（那份 `config.toml` 里带 `[patch.crates-io]`）时
+        # 才会去编副本。少了这一行，`build.rs` 会拿 `Cargo.lock` 的版本去**共享** registry 里找标记
+        # ⇒ 如实 panic（run 322 的 step 23，日志原文）：
+        #     `启用了 sm-library，但**找不到 §3.1 的 SM3/SM4 provider 补丁** … 查的是
+        #      /home/runner/.cargo/registry/src/index.crates.io-…/libsqlite3-sys-0.38.2/sqlcipher`
+        #      —— 那是**原版**那一份（补丁自 2026-09-23 起就不再落在共享 registry 上了）。
+        # 桌面发版（release.yml 的 Linux/Windows 段）一直是这么接的：`--prepare` 之后紧跟一句
+        # `--print-env >> "$GITHUB_ENV"`；两条 android job 都漏了 ⇒ 这里与 release.yml **同名同步**
+        #（`check:release-parity` 逐字核对步骤名）。
+        #
+        # ⚠️⚠️ 2026-09-25 当天**第三处**（同一天连踩三下，都在这一个 workflow 上）：
+        #   ① 后端必须显式给：`--openssl-dir "$OPENSSL_DIR"`（脚本对后端是 fail-fast 的，
+        #      与上面「随包静态 SM 加密库」那一步、以及 `docs/RELEASING.md` 的规范命令同形）；
+        #   ② **stdout 必须干净**：`>> "$GITHUB_ENV"` 把整条 stdout 当 env 文件，混进一行
+        #      `sm-library-build: …` 就是 `Invalid format` ⇒ **这一步自己红**、`Build APK` 被 skip
+        #      （run 36096199288 的 step 23 逐字就是这个形态）。脚本侧由 `installEnvStdoutGuard`
+        #      兜住（判据 `scripts/sm-library-build.test.mjs`），这里不再靠"记得别 console.log"。
+        run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
+
       - name: Build APK (arm64, unsigned)
-        run: pnpm tauri android build --target aarch64 --apk --ci
+        # `--features sm-library`：库级国密的**应用层接线**那一半（`#[cfg(feature = "sm-library")]`）；
+        # 库级本身由上面那份静态库与补丁决定。⚠️ 不带这个特性的话，接线那段根本不会被编译。
+        run: pnpm tauri android build --target aarch64 --apk --ci --features sm-library
 
       - name: 自检：APK 里**真的带了**随包 PDFium 库（Android）
         # 与 check:macos-bundle / check:linux-bundle 同一族：断言 `lib/<abi>/libpdfium.so` 在包内、
         # 且与 vendor 那份**逐字节相同**（"文件在"和"是同一份字节"是两件事）。
         # 判据的由来：Windows 吃过"装包里没有 pdfium.dll"、macOS 吃过"包里有但位置对不上"。
         run: pnpm check:android-bundle
+
+      - name: 自检：APK 的「库级国密」是**静态随包**
+        # 同级独立门禁（不并在上一条里：两件事的"没验"不该互相污染，详见脚本文件头）：
+        #   ① 包里不该有 `lib/<abi>/libcrypto.so*`；② 应用 .so 的 DT_NEEDED 里不该有它。
+        # ⚠️ 正向那一半（SM provider 真编进去了）这里**验不了** —— release 包 `strip = true`，
+        #    符号被剥掉；最终证据是真机跑一次，属人手。
+        run: pnpm check:android-crypto
 
       - name: 用正式密钥签名 APK（让 CI 出的包直接能装到真机上验）
         # 为什么加这一步：CI 以前出的是**未签名**包，装真机前必须在本机手工
