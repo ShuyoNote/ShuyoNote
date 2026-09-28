@@ -29,8 +29,9 @@
 //   pnpm test:mobile-views             # 有失败即非零退出
 //   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-views
 //   node scripts/verify-mobile-views.mjs --shots /tmp/shots
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
@@ -1424,6 +1425,141 @@ function assertPdfReader(rr, vp) {
   );
 }
 
+// ── 同步面板那两条不变式：**已知红基线**（只减不增）────────────────────────────
+// 为什么要基线（先例逐字，`scripts/check-plan-status.mjs:44`）：
+//   「之所以要有基线：上线当天就有 64 处旧账。**没有基线，门禁第一天就得被绕开或被删」」
+// 这两条断言落地时**就是红的** —— 规格 §3 第 2、3 步逐字写着「它现在是红的 ⇒ 正好满足"看过它红"」，
+// 而真正的修复（§3 第 5 步 D1/D2）在后面 ⇒ **中间这段窗口不能没有基线**。
+// 形状与 `check-store-subscriptions` / `check-copy-discipline` 同一套：
+//   值 ≤ 基线 ⇒ 过（并把"可收紧"印出来）；值 > 基线 ⇒ **红**。
+// ⚠️ **"没量到"不吃基线** —— 那是"这条没验过"，不是"0 处违规"（单列在下面，无条件判红）。
+const VIEWS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const VIEWS_BASELINE_PATH = join(VIEWS_ROOT, "scripts", "mobile-views-baseline.json");
+const SYNC_PANEL_BASELINE = (() => {
+  try {
+    return JSON.parse(readFileSync(VIEWS_BASELINE_PATH, "utf8").replace(/^\uFEFF/, ""));
+  } catch {
+    return {};
+  }
+})();
+const baselineFor = (k) => SYNC_PANEL_BASELINE[k] ?? 0;
+/** 与基线比：返回 { allowed, line } —— `line` 是给判语用的尾巴。 */
+function vsBaseline(key, value) {
+  const base = baselineFor(key);
+  const allowed = value <= base;
+  const tail = base > 0 ? `（已知红基线 ${base}；改完请 --update-views-baseline 收紧）` : "";
+  return { allowed, tail, base };
+}
+
+// ── 同步面板：常驻 chrome ＋ 桌面不滚 ─────────────────────────────────────────
+// 对应 `docs/specs/2026-09-28-sync-panel-density-spec.md` §2 的第 2、3 条不变式。
+//
+// ⚠️ 两条都**必须先声明壳**（§2 第 1 条 `INV-UI-sync-panel-shell-matrix`）：
+//    同一个 390×844，Web 与 Tauri 手机是**两块不同的面板** ⇒ 判语里都带 `壳=${APP_SHELL}`。
+// 用法：`APP_SHELL=web node scripts/verify-mobile-views.mjs`（默认）
+//       `APP_SHELL=tauri node scripts/verify-mobile-views.mjs`
+
+/** 打开同步面板（它挂在侧栏里；窄屏侧栏是抽屉、默认 hidden ⇒ 先把抽屉打开）。 */
+async function openSyncPanel(page) {
+  await safeEval(page, async () => {
+    const loaded = (performance.getEntriesByType?.("resource") ?? [])
+      .map((e) => e.name)
+      .filter((n) => n.includes("/src/store/activity.ts"));
+    const m = await import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : "/src/store/activity.ts"));
+    m.useActivity.getState().setSidebarOpen(true, { persist: false });
+  });
+  await sleep(600);
+  await safeEval(page, () => document.querySelector(".btn-sync")?.click());
+  await sleep(700);
+  return safeEval(page, () => !!document.querySelector(".sync-popover.is-sync"));
+}
+
+/** 量常驻 chrome 里的表单控件与面板滚动量。 */
+async function measureSyncPanel(page) {
+  return safeEval(page, () => {
+    const p = document.querySelector(".sync-popover.is-sync");
+    if (!p) return null;
+    const foot = p.querySelector(".sync-foot");
+    // ⚠️ 判据必须是【可见】的表单控件 —— 规格 §2 第 2 条逐字写了这一条：
+    //    `display:none` **不摘 DOM** ⇒ 数 `querySelectorAll` 会**假绿**。
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden";
+    };
+    const forms = foot ? [...foot.querySelectorAll("input, textarea, select")].filter(vis) : [];
+    return {
+      hasFoot: !!foot,
+      footPos: foot ? getComputedStyle(foot).position : null,
+      footForms: forms.length,
+      footFormsDetail: forms
+        .map((e) => `${e.tagName.toLowerCase()}${e.placeholder ? "「" + String(e.placeholder).slice(0, 10) + "」" : ""}`)
+        .slice(0, 6),
+      scrollH: p.scrollHeight,
+      clientH: p.clientHeight,
+      need: p.scrollHeight - p.clientHeight,
+    };
+  });
+}
+
+/**
+ * `INV-UI-sync-panel-persistent-chrome`（规格 §2 第 2 条）
+ * 口径：常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里**不许有需要阅读与填写的表单**。
+ * ⚠️ "没量到"按 fail 记且判语说得出原因 —— 不重犯 `x?.a === x?.b` 那种两个 undefined 相等 ⇒ 判绿。
+ */
+function assertPersistentChrome(m, vp) {
+  if (!m) {
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 常驻 chrome 这条【没验过】，按 fail 记`);
+    return;
+  }
+  if (!m.hasFoot) {
+    ok(true, `[壳=${APP_SHELL}] ${vp.name} 没有 .sync-foot（这一壳的常驻 chrome 不在这里）—— 这条对它不适用`);
+    return;
+  }
+  const key = `persistent-chrome|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, m.footForms);
+  const { allowed, tail } = vsBaseline(key, m.footForms);
+  ok(
+    allowed,
+    `[壳=${APP_SHELL}] ${vp.name} 常驻 chrome（.sync-foot, position:${m.footPos}）里【可见】的表单控件 = ${m.footForms} 个（应 0）` +
+      (m.footForms ? `：${m.footFormsDetail.join(" / ")}` : "") +
+      `；面板滚动量 ${m.scrollH} / ${m.clientH}${tail}`,
+  );
+  if (m.footForms < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${m.footForms}`);
+  }
+}
+
+/**
+ * `INV-UI-sync-panel-desktop-no-scroll`（规格 §2 第 3 条）
+ * 口径：**Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`）。
+ */
+function assertDesktopNoScroll(m, vp) {
+  if (!m) {
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 桌面不滚这条【没验过】，按 fail 记`);
+    return;
+  }
+  const key = `desktop-no-scroll|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, Math.max(0, m.need));
+  const { allowed, tail } = vsBaseline(key, Math.max(0, m.need));
+  ok(
+    allowed,
+    `[壳=${APP_SHELL}] ${vp.name} 同步面板不该滚（scrollHeight ${m.scrollH} ≤ clientHeight ${m.clientH}；` +
+      `要滚 ${m.need}px；常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
+  );
+  if (Math.max(0, m.need) < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${Math.max(0, m.need)}`);
+  }
+}
+
+/** 把同步面板那两条的**当前**读数写成基线（`--update-views-baseline`）。
+ *  与 `check-store-subscriptions --update-baseline` / `check-copy-discipline --update-baseline` 同形。
+ *  ⚠️ 只在**读数走的是预期方向**时才该收紧（修好了才收）；脚本不做判断，由人负责。 */
+const VIEWS_BASELINE_SEEN = {};
+function recordForBaseline(key, value) {
+  if (!(key in VIEWS_BASELINE_SEEN)) VIEWS_BASELINE_SEEN[key] = value;
+}
+
 async function main() {  const executablePath = findChrome();
   if (!executablePath) {
     console.error("找不到 Chrome/Chromium。请安装 Google Chrome，或用 PUPPETEER_EXECUTABLE_PATH 指定路径。");
@@ -1483,6 +1619,28 @@ async function main() {  const executablePath = findChrome();
       await applyShell(page);
       await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
       await waitForApp(page);
+
+      // ⚠️ 放在**最前面**：这两条的读数不依赖后面任何一步；
+      //    而 tauri 档后面会因为桩缺口提前抛异常 ⇒ 放最后就永远量不到。
+      // ---------- 同步面板：常驻 chrome（规格 §2 第 2 条）----------
+      {
+        console.log(`\n【${vp.name} · 同步面板：常驻 chrome（壳=${APP_SHELL}）】`);
+        const sctx = await browser.createBrowserContext();
+        const spage = await sctx.newPage();
+        await pinAppLanguage(spage);
+        const serrs = [];
+        spage.on("pageerror", (e) => serrs.push(String(e).slice(0, 160)));
+        await spage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+        await applyShell(spage);
+        await spage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+        await waitForApp(spage);
+        await sleep(600);
+        await openSyncPanel(spage);
+        assertPersistentChrome(await measureSyncPanel(spage), vp);
+        await shot(spage, `${vp.name}-sync-panel`);
+        ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
+        await sctx.close();
+      }
       await sleep(600);
 
       for (const v of VIEWS) {
@@ -2050,8 +2208,47 @@ async function main() {  const executablePath = findChrome();
     assertPdfReader(await checkPdfReader(desk, DESKTOP), DESKTOP);
     await shot(desk, `${DESKTOP.name}-pdf-reader`);
     await deskCtx.close();
+
+    // ---------- 同步面板：桌面不滚（规格 §2 第 3 条）----------
+    {
+      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：桌面不滚（壳=${APP_SHELL}）】`);
+      const sctx = await browser.createBrowserContext();
+      const spage = await sctx.newPage();
+      await pinAppLanguage(spage);
+      const serrs = [];
+      spage.on("pageerror", (e) => serrs.push(String(e).slice(0, 160)));
+      await spage.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
+      await applyShell(spage);
+      await spage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await waitForApp(spage);
+      await sleep(600);
+      await openSyncPanel(spage);
+      const sm = await measureSyncPanel(spage);
+      assertDesktopNoScroll(sm, DESKTOP);
+      assertPersistentChrome(sm, DESKTOP);
+      await shot(spage, `${DESKTOP.name}-sync-panel`);
+      ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
+      await sctx.close();
+    }
   } finally {
     await browser.close();
+    if (process.argv.includes("--update-views-baseline")) {
+      // ⚠️ **合并**而不是覆盖：基线是"按【壳 × 视口】各一条"，而一次运行只跑一个壳
+      //    （tauri 那档还会因桩缺口中途抛异常 ⇒ 只走到第一个视口）
+      //    ⇒ 覆盖的话，跑 tauri 会把上一趟 web 的键全冲掉（2026-09-28 踩过）。
+      let merged = {};
+      try {
+        merged = JSON.parse(readFileSync(VIEWS_BASELINE_PATH, "utf8").replace(/^\uFEFF/, ""));
+      } catch {
+        merged = {};
+      }
+      Object.assign(merged, VIEWS_BASELINE_SEEN);
+      const sorted = Object.fromEntries(Object.entries(merged).sort(([a], [b]) => a.localeCompare(b)));
+      writeFileSync(VIEWS_BASELINE_PATH, JSON.stringify(sorted, null, 2) + "\n", "utf8");
+      console.log(
+        `\n[views-baseline] 已写入 ${VIEWS_BASELINE_PATH}（本次 ${Object.keys(VIEWS_BASELINE_SEEN).length} 个键，合并后 ${Object.keys(sorted).length} 个）`,
+      );
+    }
   }
 
   console.log(`\n[结果] ${pass} 通过 / ${fail} 失败`);
