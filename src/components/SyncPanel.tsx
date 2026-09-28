@@ -1212,9 +1212,18 @@ export function SyncPanel() {
                 </section>
               );
             })}
-          </div>
 
-          <footer className="sync-foot">
+          {/* ⚠️ 2026-09-28（D1）：**设置类控件搬出吸底条** ——
+             §2 第 2 条 `INV-UI-sync-panel-persistent-chrome` 的口径是：
+             「常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里**不许有需要阅读与填写的表单**
+               —— 读数行可以有，设置控件不行」。
+             实测（改前）：`.sync-foot` 里【可见】表单 = **Web 4 ／ app 手机 3 ／ app 桌面 3**，
+             逐个查是：① `.sync-auto` 的「同步方式」select；②③ `.sync-mesh` 的「监听地址」/「口令」两个 input；
+             ④ web 上还有 `.sync-budget-row` 的三个 select。**三个对象上都是红的。**
+             ⇒ 把这三块搬进【滚动区】（底下仍在 footer 的都是**读数行**与进度/历史：
+               `.sync-lan` 实测 0 个表单控件，`.sync-net` 的 checkbox 是 `display:none`）。
+             ⚠️ 保留在 footer 的 `.sync-lan` 是【读数行】，按上面那条口径**允许**留在常驻区。
+             ⚠️ 本笔只搬位置，**一个字都不改**（文案是另一条不变式的事）。 */}
             <div className="sync-auto">
               <span className="sync-auto-label">同步方式</span>
               <select
@@ -1230,35 +1239,6 @@ export function SyncPanel() {
               </select>
             </div>
             <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
-
-            {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）＋ 丙-③-b 的**网格读数**。
-                口径：**「没走成直连」必须是可断言的结果，不是静默降级** —— 所以这里显示的是
-                Rust 侧 `lan::status_line` 的**原文**（"直连（局域网）…" ／ "公网 … ｜ 本网段发现 N 台"
-                ／ "…其中没有服务这个空间的中枢" ／ "尚未绑定"），界面**不**自己按地址形状再判一次档。
-                ★ 2026-09-26 口径收敛：**地址只说一处** —— 网格那一块的"窗口在哪、别人拉不拉得到"
-                （`lanStatus.mesh.note`）也并到这一行里。两处各说一遍地址，看起来就像两个互相矛盾的读数。
-                ⚠️ 门槛同时收 `mesh.enabled`：**"只开网格、不绑服务端"** 是丙要支持的配置，
-                那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
-                只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
-            {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
-              <div className="sync-att sync-lan" title="同一网段里自动找到这个空间的中枢时，同步就走局域网地址">
-                <span className="sync-att-text">
-                  {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
-                  <span className="sync-att-name">
-                    {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
-                  </span>
-                  <span className="sync-hint">
-                    {[lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ ")}
-                  </span>
-                </span>
-              </div>
-            )}
-
-            {/* 丙-③-b-2b-2：**网格（对等交换）** —— "不装服务端也能同步"在这里有一个可点的入口。
-                ⚠️ 门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要这个空间有 `space_id`
-                （"只开网格、不绑服务端"正是这一档要支持的配置）。
-                ⚠️ 读数那句人话来自 Rust（`mesh::config_state`）—— 界面**不**自己判断
-                "别人拉不拉得到"（那要按地址形状判档，而档位只许由 Rust 出，与上面那条同一纪律）。 */}
             {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
               <div className="sync-att sync-mesh">
                 <span className="sync-att-text">
@@ -1303,26 +1283,6 @@ export function SyncPanel() {
                 </div>
               </div>
             )}
-
-            {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
-                与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
-            {netKind !== "n/a" && (
-              <label className="sync-att sync-net">
-                <input
-                  type="checkbox"
-                  checked={budget?.wifi_only ?? true}
-                  disabled={budgetBusy}
-                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
-                />
-                <span className="sync-att-text">
-                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
-                  <span className="sync-hint">
-                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
-                  </span>
-                </span>
-              </label>
-            )}
-
             {/* C1 预算刹车：磁盘余量下限是**硬性**的（没有"关闭"选项）。 */}
             {budget && (
               <details className="sync-advanced sync-budget">
@@ -1376,6 +1336,58 @@ export function SyncPanel() {
                 </p>
               </details>
             )}
+          </div>
+
+          <footer className="sync-foot">
+
+            {/* 甲-1 接线第 3 件：**局域网发现的读数**（施工单 §2 ④）＋ 丙-③-b 的**网格读数**。
+                口径：**「没走成直连」必须是可断言的结果，不是静默降级** —— 所以这里显示的是
+                Rust 侧 `lan::status_line` 的**原文**（"直连（局域网）…" ／ "公网 … ｜ 本网段发现 N 台"
+                ／ "…其中没有服务这个空间的中枢" ／ "尚未绑定"），界面**不**自己按地址形状再判一次档。
+                ★ 2026-09-26 口径收敛：**地址只说一处** —— 网格那一块的"窗口在哪、别人拉不拉得到"
+                （`lanStatus.mesh.note`）也并到这一行里。两处各说一遍地址，看起来就像两个互相矛盾的读数。
+                ⚠️ 门槛同时收 `mesh.enabled`：**"只开网格、不绑服务端"** 是丙要支持的配置，
+                那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
+                只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
+            {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
+              <div className="sync-att sync-lan" title="同一网段里自动找到这个空间的中枢时，同步就走局域网地址">
+                <span className="sync-att-text">
+                  {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
+                  <span className="sync-att-name">
+                    {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
+                  </span>
+                  <span className="sync-hint">
+                    {[lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ ")}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {/* 丙-③-b-2b-2：**网格（对等交换）** —— "不装服务端也能同步"在这里有一个可点的入口。
+                ⚠️ 门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要这个空间有 `space_id`
+                （"只开网格、不绑服务端"正是这一档要支持的配置）。
+                ⚠️ 读数那句人话来自 Rust（`mesh::config_state`）—— 界面**不**自己判断
+                "别人拉不拉得到"（那要按地址形状判档，而档位只许由 Rust 出，与上面那条同一纪律）。 */}
+
+            {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
+                与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
+            {netKind !== "n/a" && (
+              <label className="sync-att sync-net">
+                <input
+                  type="checkbox"
+                  checked={budget?.wifi_only ?? true}
+                  disabled={budgetBusy}
+                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
+                />
+                <span className="sync-att-text">
+                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
+                  <span className="sync-hint">
+                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                  </span>
+                </span>
+              </label>
+            )}
+
             {syncing ? (
               <div className={`sync-status is-progress${syncPhase === "error" ? " is-err" : ""}`}>
                 <div className="sync-progress-row">
