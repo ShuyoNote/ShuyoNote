@@ -242,6 +242,18 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
       **目标（owner 已拍「A 为目标、B 先过渡」）**：给这 9 项**单开一个手动触发的 job**（自编一份 Tongsuo ⇒ `OPENSSL_DIR` 指过去 ⇒ 跑 `scripts/check-gm-conformance.mjs`），
       **日常 CI 不动**（Tongsuo 对产品非必需、且不该占日常分钟数 ⇒ 否则会训练人忽略红）。做完后这一行从「未验」改成「已对拍（附 run 号）」。
 
+**现状（2026-09-28，windows 侧）**：
+
+- ✅ 那条手动 job **已写好在 `dev` 上**：`ShuyoNote/.github/workflows/gm-conformance-tongsuo.yml`（**只 `workflow_dispatch`**，日常 CI 完全不受影响）。
+  内容＝自编静态 Tongsuo（照 `docs/development.md` §90–93：`no-shared`；⚠️ Windows/VC 另需 `no-uplink`，Linux 不需要）⇒
+  `SHUYONOTE_TONGSUO_OPENSSL=<install> node scripts/check-gm-conformance.mjs` ⇒ **输出作为工件上传**（90 天）。
+- ⚠️ **在 `dev` 上它点不动**（实测派发 ⇒ **HTTP 404**）：GitHub 规定 `workflow_dispatch` 的 workflow **必须先存在于默认分支**，
+  而本仓默认分支是 `main`（推它会**自动部署 Web 版**）。⇒ **owner 2026-09-28 拍「C」：等下一次发版顺手带上** ——
+  `dev → main` 合并会**自动带上**这个文件 ⇒ **零额外部署、零额外动作**。
+- [ ] **首次合并到 `main` 之后做这一次**：手动派发一次，核对工件的 `gm-conformance.txt` 里 **`!` 行（跳过项）= 0**，
+      再把上面那行「未验」改成「已对拍（附 run 号）」、并按计划改 `scripts/lib/gates.mjs` 里 `gm-conformance` 的 `selfSkipOk` 措辞。
+      （在此之前**保持"未验"** —— 别把"跳过"读成"通过"。）
+
 **macOS 发版档（等 Apple secrets 到位再启用）的配方**：
 
 ```bash
