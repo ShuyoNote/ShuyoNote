@@ -1135,10 +1135,16 @@ function assertPdfReader(rr, vp) {
   // ①c head（顶部工具条）预算。**高度现在是写死的**（owner："系统工具栏高度也要固定，
   // 不能被撑得更大"）⇒ 钉"渲染值 = 声明值"，并钉每一态的渲染值都等于它。
   const headLines = linesOf(rr.headChildren ?? []);
+  // ⚠️ 2026-09-28：**先钉"量到了没有"，再比"渲染=声明"** ——
+  //   原写法 `rr.headBar?.h === rr.headBar?.fixed` 在元素没量到时**两边都是 undefined ⇒ 判绿** ✗
+  //   （判语还会写成「渲染 undefinedpx = 声明 undefinedpx」⇒ 一条假绿 + 一句自相矛盾的判语）。
+  //   同族的正确先例见本文件上面的 `if (h === null) continue;`。
   ok(
-    rr.headBar?.h === rr.headBar?.fixed,
-    `系统工具栏高度固定（渲染 ${rr.headBar?.h}px = 声明 ${rr.headBar?.fixed}px；${headLines} 行）` +
-      `——改前是内容撑的：390 上 115px / 2 行、320 上 165px / 3 行`,
+    rr.headBar != null && rr.headBar.h === rr.headBar.fixed,
+    rr.headBar == null
+      ? `系统工具栏**没量到**（rr.headBar 缺）⇒ 这条【没验过】，按 fail 记`
+      : `系统工具栏高度固定（渲染 ${rr.headBar.h}px = 声明 ${rr.headBar.fixed}px；${headLines} 行）` +
+        `——改前是内容撑的：390 上 115px / 2 行、320 上 165px / 3 行`,
   );
   if (vp.width <= 768) {
     const otherHeadH = rr.after?.headBar?.h;
@@ -1305,10 +1311,16 @@ function assertPdfReader(rr, vp) {
   );
   // 高度**固定**：声明多少就渲染多少（`height` 而不是 `min-height` ⇒ 内容撑不大它），
   // 而且固定高度不许裁到内容（行内可滚高度 = 行视口高）。
+    // ⚠️ 2026-09-28：**先钉"量到了没有"，再比"渲染=声明"** ——
+  //   原写法 `bar?.h === bar?.fixed` 在元素没量到时**两边都是 undefined ⇒ 判绿** ✗
+  //   （判语会写成「渲染 undefinedpx = 声明 undefinedpx」⇒ 假绿 + 自相矛盾的判语）。
+  //   同族正确先例：本文件上面的 `if (h === null) continue;`。
   ok(
-    bar?.h === bar?.fixed,
-    `页内工具栏高度固定（渲染 ${bar?.h}px = 声明 ${bar?.fixed}px）——owner："高度永远固定，不能被撑大"`,
-  );
+    bar != null && bar.h === bar.fixed,
+    bar == null
+      ? `页内工具栏**没量到**（bar 缺）⇒ 这条【没验过】，按 fail 记`
+      : `页内工具栏高度**固定**（渲染 ${bar.h}px = 声明 ${bar.fixed}px）——owner："高度永远固定，不能被内容撑大"`,
+  );;
   ok(
     (bar?.rowScroll ?? 1e9) <= (bar?.rowInner ?? 0) + 1 && (bar?.tallGroup ?? 1e9) <= (bar?.rowInner ?? 0) + 1,
     `固定高度没有裁到内容（行内容高 ${bar?.rowScroll} ≤ 行视口高 ${bar?.rowInner}，最高的那一组 ${bar?.tallGroup}）`,
@@ -1336,10 +1348,16 @@ function assertPdfReader(rr, vp) {
     hbar?.wrap === "nowrap",
     `头部**任何时候**都不换行（computed flex-wrap=${hbar?.wrap}）——改前窄屏是 wrap：390 占 2 行 115px、320 占 3 行 165px`,
   );
+    // ⚠️ 2026-09-28：**先钉"量到了没有"，再比"渲染=声明"** ——
+  //   原写法 `hbar?.h === hbar?.fixed` 在元素没量到时**两边都是 undefined ⇒ 判绿** ✗
+  //   （判语会写成「渲染 undefinedpx = 声明 undefinedpx」⇒ 假绿 + 自相矛盾的判语）。
+  //   同族正确先例：本文件上面的 `if (h === null) continue;`。
   ok(
-    hbar?.h === hbar?.fixed,
-    `头部高度**固定**（渲染 ${hbar?.h}px = 声明 ${hbar?.fixed}px）——owner："系统工具栏高度也要固定，不能被撑得更大"`,
-  );
+    hbar != null && hbar.h === hbar.fixed,
+    hbar == null
+      ? `头部**没量到**（hbar 缺）⇒ 这条【没验过】，按 fail 记`
+      : `头部高度**固定**（渲染 ${hbar.h}px = 声明 ${hbar.fixed}px）——owner："系统工具栏高度也要固定"`,
+  );;
   ok(
     hbar?.rows === 1 && hbar?.overflow === false,
     `头部只有一行、也没有溢出（${hbar?.rows} 行 / 溢出=${hbar?.overflow}，高 ${hbar?.h}px；data-collapse="${hbar?.collapse}"）`,
