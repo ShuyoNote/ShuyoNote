@@ -60,24 +60,40 @@ const IS_TAURI_SHELL = APP_SHELL === "tauri";
  *  必须在 page.goto **之前**调用（evaluateOnNewDocument 只对之后的文档生效）。 */
 async function applyShell(page) {
   if (!IS_TAURI_SHELL) return;
+  // ⭐ 桩由 macOS 侧提供（`ShuyoNote-collab/2026-09-28-sync-panel-density-spec-by-macos.reply-4.md` §1），**逐字**装上。
+  //    · 那 16 个命令清单是他们在页面上**实测记下来的**（不是猜的）；
+  //    · ⚠️ 但桩里的**数据是编的占位**（`peers: 2`、地址、`window` 等）⇒
+  //      **用它量【高度/布局/滚动】是对的**（真 CSS、真字体、真组件）；**别用它量【业务读数】**。
   await page.evaluateOnNewDocument(() => {
-    let cbId = 0;
-    const invoke = async (cmd) => (Object.prototype.hasOwnProperty.call(MOCKS, cmd) ? MOCKS[cmd] : null);
-    const MOCKS = {
-      // Tauri v2 在启动期最常问的几个；其余一律 null（桩）
-      "plugin:app|version": "0.0.0-shellstub",
-      "plugin:os|platform": "android",
-      "plugin:event|listen": 0,
-      "plugin:window|scale_factor": 2,
+    const WS = { id: "ws1", name: "我的工作空间" };
+    const PROF = { ws_id: "ws1", space_id: "sp1", server_url: "http://192.168.43.206:8787",
+      token: "t", device_id: "d1", last_pushed_seq: 0, last_pulled_seq: 0 };
+    const LAN = { enabled: true, peers: 2, kind: "lan",
+      line: "同步地址：直连（局域网）http://192.168.43.206:8787 ｜ 本网段发现 2 台",
+      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" } };
+    const M = {
+      list_workspaces: [WS], get_active_workspace_id: "ws1", get_workspace_name: "我的工作空间",
+      list_sync_profiles: [PROF], list_pages: [], list_deleted: [], list_plugins: [],
+      list_stale_text_pages: [], list_pending_remote_pages: [], email_list_accounts: [],
+      email_fetch_all_months: [],
+      // ⚠️ 少了它：api.ts:338 的 rows.map 会抛（面板里多一行红字）⇒ 必须给 []
+      space_security_overview: [],
+      encryption_status: { enabled: true, unlocked: true, hasKey: true, spaceId: "sp1" },
+      lan_status: LAN, // ← Tauri 壳那两段的唯一数据源
+      sync_stream_stop: null, set_titlebar_theme: null,
+      // ⚠️ 给 null 会读不到 unregisterListener ⇒ 一串 unhandled rejection ⇒ 必须给 {}
+      "plugin:event|listen": {},
+      "plugin:updater|check": null,
     };
     window.__TAURI_INTERNALS__ = {
-      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main", windowLabel: "main" } },
-      transformCallback: (cb) => { cbId += 1; window["_" + cbId] = cb; return cbId; },
-      invoke,
+      invoke: async (cmd) => {
+        if (cmd in M) return M[cmd];
+        if (/^list_|_list_|fetch_all/.test(cmd)) return [];
+        return null;
+      },
+      transformCallback: (cb) => cb,
       convertFileSrc: (p) => p,
-      plugins: {},
     };
-    window.__TAURI__ = { core: { invoke } };
   });
 }
 
