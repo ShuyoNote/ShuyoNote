@@ -76,7 +76,19 @@ export function check(rootDir = root) {
 }
 
 if (isMain(import.meta.url)) {
-  const { files, bad } = check();
+  // ⚠️ 2026-09-28 两处改动：
+  //   ① 加 `--root <dir>`（夹具/自测用，约定同 check-store-subscriptions / check-plan-status）——
+  //      判据的承重证明可以「在夹具根上把它弄红」，不必去改真仓文件；
+  //   ② **一个 `.ps1` 都没扫到 ⇒ 拒绝给绿** —— 此前会打印「编码一致：0 个 .ps1」并 exit 0，
+  //      那是「没查却显示绿」（错根、目录被搬走、检出不含脚本时最危险）。
+  const argv = process.argv.slice(2);
+  const rootArg = argv.indexOf("--root");
+  const runRoot = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : root);
+  const { files, bad } = check(runRoot);
+  if (files.length === 0) {
+    console.error(`✗ ${runRoot} 下一个 .ps1 都没有 ⇒ 拒绝给绿（判据不能空跑）`);
+    process.exit(1);
+  }
   if (bad.length) {
     console.error("`.ps1` 必须是纯 ASCII（或带 UTF-8 BOM）——PowerShell 5.1 会把无 BOM 的 UTF-8 当 ANSI 读：");
     for (const b of bad) {
@@ -85,5 +97,5 @@ if (isMain(import.meta.url)) {
     console.error("  修法：脚本里的提示文字改成英文/ASCII，或把文件存成带 BOM 的 UTF-8。");
     process.exit(1);
   }
-  console.log(`PowerShell 脚本编码一致：${files.length} 个 .ps1，全部纯 ASCII（或带 BOM）`);
+  console.log(`PowerShell 脚本编码一致：${files.length} 个 .ps1，全部纯 ASCII（或带 BOM）｜根：${runRoot}`);
 }

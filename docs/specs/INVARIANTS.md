@@ -22,12 +22,17 @@
 | **INV-BRANCH-release-line** | 发布线独占提交（漏在 main 上的开发改动） | `scripts/check-main-only-commits.mjs` | ✅ 账本 `exit=1`（sha `18ff6c24af18`） |
 | **INV-PLAN-status-evidence** | 方案状态位与完成的证据（每篇 plan 头部要有 `状态：`；报完成必须带可核证据；只减不增） | `scripts/check-plan-status.mjs --self-test`（`--root`） | ✅ 账本 `exit=1`（sha `8e8cec4edebd`） |
 | **INV-UI-store-subscriptions** | Zustand 订阅粒度（组件不许整店订阅；只减不增） | `scripts/check-store-subscriptions.mjs --self-test`（`--root`） | ✅ 账本 `exit=1`（sha `2cc253f5a955`） |
+| **INV-TOOLING-ps1-encoding** | PowerShell 脚本编码（纯 ASCII 或 BOM） | `scripts/check-ps1-ascii.mjs`（`--root`，2026-09-28 加） | ✅ 账本 `exit=1`（sha `c7bffc955a4b`）｜夹具实测：纯 ASCII exit 0 ／ **同一份文件加一行中文注释（仍无 BOM）⇒ exit 1**（逐字「24 个非 ASCII 字节，行 2」）／ 空扫 ⇒ 拒绝给绿 |
+| **INV-RELEASE-sm-pipeline** | workflow YAML 窄规则 ＋ 私有 CARGO_HOME 交接（按 job） | `scripts/check-workflow-yaml.mjs`（窄规则可传目录；**国密四件套那条不在目录参数模式里**） | ✅ 有，但**走另一条通道**：兄弟测试 `scripts/check-workflow-yaml.test.mjs`（**16/16 通过**，含正例 `gmPipelineRequirements(GOOD)` 为空 ＋ **逐条必备文本各一个「删掉 ⇒ 必须红」**）—— 即工作区账本里的 **D3 测试形态判据**那一本。⚠️ 2026-09-28 实测：**用夹具删掉 `--features sm-library` 那一行，门禁仍 exit 0** ⇒ 这条规则的承重**不能**靠目录参数夹具，**只能**靠那个测试文件 |
 
 ## 怎么核（**别信本表，跑命令**）
 
 ```bash
-# 1) 这 11 条判据现在是否都绿（走注册表 ＝ CI 同款路径）
-node scripts/test-report.mjs --only check-changelog,check-changelog-numbers,check-changelog-tags,check-changelog-version-parity,check-dead-code-receipts,check-derived-writers,check-doc-content-access,check-hook-order,check-main-only-commits,check-plan-status,check-store-subscriptions
+# 1) 这 13 条判据现在是否都绿（走注册表 ＝ CI 同款路径）
+node scripts/test-report.mjs --only check-changelog,check-changelog-numbers,check-changelog-tags,check-changelog-version-parity,check-dead-code-receipts,check-derived-writers,check-doc-content-access,check-hook-order,check-main-only-commits,check-plan-status,check-store-subscriptions,check-ps1-ascii,check-workflow-yaml
+
+# 1b) 第 13 条那条规则的承重通道（D3 测试形态判据）—— 必须单独跑它
+pnpm exec vitest run scripts/check-workflow-yaml.test.mjs
 
 # 2) 本表「会红证据」是否还新鲜（判据代码一改，账本里那条就过期 ⇒ 判据 D2 会红）
 node _workspace/bin/check-gate-manifest.mjs
@@ -40,7 +45,7 @@ node _workspace/bin/check-all.mjs
 
 ## 本层**故意不含**的（免得被当成遗漏）
 
-- **其余 34 条门禁**：理由（缺可跑性 / 平台绑定造不出夹具）见 [README.md](README.md) §现状；
+- **其余 32 条门禁**：理由（缺可跑性 / 平台绑定造不出夹具）见 [README.md](README.md) §现状；
   普查与复现命令在 `_workspace/notes/2026-09-28-spec-layer-readiness.md`。
 - **跨仓契约**（对外表述红线、定价口径）：唯一出处是 `shuyo-site/docs/red-lines.md` 与
   `shuyo-site/ops/business/contract-outline.md`，**不在此处复制**。
