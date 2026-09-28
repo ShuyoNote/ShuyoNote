@@ -233,6 +233,15 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 > （方案里早就更正过这一点）。Tongsuo 的独有价值是 GM/T 0024 那类国密 TLS —— 不在本项目范围（§5.4）。
 > macOS 那份"自己编"用 stock OpenSSL 或 Tongsuo 都可以；本机验证时用的是 Tongsuo。
 
+### ⚠️ 打包读数以**工件**为准（2026-09-28 owner 拍板；此前 macOS 那一格永远没人核）
+
+- [ ] **每次三平台发版后记下两样东西**：release workflow 的 **run 号** ＋ **产物的 sha256**（Windows / macOS / Linux 各一份）。
+- [ ] ⚠️ **macOS 打包本机永远给不出读数**（我们只有 Windows 开发机）⇒ 它的「发过没有、发的是什么」**只能**由工件证明。
+- [ ] **判据**：那个 run 的 4 个 job 全绿，且**工件的 sha256 与发版说明里写的那个一致** ⇒ 「发版前核过的面」与「真正交给用户的面」**重合**（在那之前这两件事照旧不重合）。
+- [ ] **发版说明须记「未验」这一行**：`gm-conformance` 的「跨实现（RustCrypto ↔ Tongsuo）对拍 9 项」在 CI 上**自报跳过**（缺 Tongsuo）⇒ 它**不是**平台分工，是**真漏验**。登记理由见 `scripts/lib/gates.mjs` 的 `selfSkipOk`（那里写着"发版说明须记未验"）。
+      **目标（owner 已拍「A 为目标、B 先过渡」）**：给这 9 项**单开一个手动触发的 job**（自编一份 Tongsuo ⇒ `OPENSSL_DIR` 指过去 ⇒ 跑 `scripts/check-gm-conformance.mjs`），
+      **日常 CI 不动**（Tongsuo 对产品非必需、且不该占日常分钟数 ⇒ 否则会训练人忽略红）。做完后这一行从「未验」改成「已对拍（附 run 号）」。
+
 **macOS 发版档（等 Apple secrets 到位再启用）的配方**：
 
 ```bash
