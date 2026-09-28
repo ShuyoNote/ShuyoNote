@@ -36,6 +36,18 @@ const SEGMENTS = arg("segments", "2,8,32").split(",").map((x) => Number(x.trim()
 const CHARS = Number(arg("chars", "800"));
 const TIMEOUT_MS = Number(arg("timeout-ms", "600000"));
 const WARMUP = !args.includes("--no-warmup");
+// 读数标签：这条读数是"哪个形态"的（本机 / 云）——**必须写进输出**，否则两张表会混。
+const LABEL = arg("label", looksLoopback(arg("base-url", "http://127.0.0.1:11434")) ? "本机端点" : "云端点");
+// ⚠️ 单价**不许脚本猜**：要算钱就显式给（元 / 百万 token）。不给 ⇒ 只报 token 数，不报钱。
+const PRICE_IN = arg("price-in", "");
+const PRICE_OUT = arg("price-out", "");
+
+// ⚠️ 密钥**只从文件或环境变量读**（命令行参数会进进程列表与 shell 历史 ⇒ 不许走 argv）；
+//    而且**任何输出都不许带它**（本仓那条教训：扫令牌时输出里只能有路径）。
+const KEY_FILE = arg("api-key-file", "");
+const API_KEY = KEY_FILE
+  ? (await import("node:fs")).readFileSync(KEY_FILE, "utf8").trim()
+  : (process.env.WIKI_LLM_API_KEY ?? "");
 
 /** ⚠️ 这只是**本脚本的提醒**，不是产品判据 —— 产品那条在 `src/lib/ai/localVision.ts::isLoopbackBaseUrl`。 */
 function looksLoopback(url) {
@@ -68,9 +80,10 @@ const PROMPT = `你是本地笔记库的总结器。下面是若干段材料。�
 
 async function probe() {
   const url = OPENAI_STYLE ? `${BASE}/models` : `${BASE}/api/tags`;
+  const headers = API_KEY ? { authorization: `Bearer ${API_KEY}` } : {};
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!r.ok) envMissing(`端点 ${url} 返回 HTTP ${r.status}`, "确认模型服务在跑（Ollama: `ollama serve`）");
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) envMissing(`端点 ${url} 返回 HTTP ${r.status}`, "确认模型服务在跑 / 密钥有效（密钥只从文件读，别贴进命令行）");
     const j = await r.json();
     const names = OPENAI_STYLE ? (j.data ?? []).map((m) => m.id) : (j.models ?? []).map((m) => m.name);
     if (!MODEL) envMissing("没给 `--model`", `可用模型：${names.slice(0, 8).join(", ") || "(端点没报模型列表)"}`);
@@ -90,7 +103,7 @@ async function callOnce(context) {
     : { model: MODEL, stream: false, messages: [{ role: "user", content: `${PROMPT}\n\n${context}` }] };
   const r = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(API_KEY ? { authorization: `Bearer ${API_KEY}` } : {}) },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -114,14 +127,18 @@ async function callOnce(context) {
   };
 }
 
-await probe();
+// ⚠️ 这条提醒必须在**探测之前**印：端点连不上时也要看到"这个地址对哪条路是合法的"。
 if (!looksLoopback(BASE)) {
   console.log(
-    `⚠️ ${BASE} **不是 loopback**：产品红线（\`localVision.ts::isLoopbackBaseUrl\`）会**拒绝**把能力注入到这种地址 ——\n` +
-      "   所以下面这组数字**不代表用户会遇到的形态**（只作对照）。要判 go/no-go，请在 127.0.0.1 / localhost 上量。\n",
+    `⚠️ ${BASE} 是**云端点**。两件事要分开看（别混成一句）：\n` +
+      "   · 对**抽取**（图片 / 音频）：产品红线（`localVision.ts::isLoopbackBaseUrl`）**拒绝**它 —— 这条路量不了；\n" +
+      "   · 对**生成**（跨库总结 / wiki）：它属于**用户可配的 provider**（产品里有 DeepSeek 预设）⇒ 读数有意义，\n" +
+      "     但**库里的内容会离开这台机器** —— 那是 owner 的隐私决策，不是本脚本能替你定的。\n",
   );
 }
-console.log(`量测端点：${BASE}（${OPENAI_STYLE ? "OpenAI 兼容" : "Ollama 原生"}）· 模型：${MODEL}`);
+
+await probe();
+console.log(`形态：${LABEL}｜端点：${BASE}（${OPENAI_STYLE ? "OpenAI 兼容" : "Ollama 原生"}）· 模型：${MODEL}`);
 console.log(`每段 ${CHARS} 字 · 段数梯度：${SEGMENTS.join(" / ")}\n`);
 
 // ⭐ **先热身一次**：第一次调用含模型加载（几秒到几十秒），把它混进梯度里会让"最小那一档"看起来最慢。
@@ -131,19 +148,28 @@ if (WARMUP) {
   console.log(`热身（含模型加载，**不计入下表**）：${t.wallMs} ms\n`);
 }
 
-console.log("段数 | 上下文字数 | 墙钟(ms) | prompt tokens | completion tokens | 结论字数 | 最大回链号");
-console.log("---- | ---------- | -------- | ------------- | ----------------- | -------- | ----------");
+console.log("段数 | 上下文字数 | 墙钟(ms) | prompt tokens | completion tokens | 结论字数 | 最大回链号 | 这一次≈");
+console.log("---- | ---------- | -------- | ------------- | ----------------- | -------- | ---------- | --------");
+
+/** 单价由**调用方**给（元 / 百万 token）；没给 ⇒ 不报钱（不许拿别人的价目表替 owner 算）。 */
+function costOf(r) {
+  if (!PRICE_IN || !PRICE_OUT) return null;
+  if (typeof r.promptTokens !== "number" || typeof r.completionTokens !== "number") return null;
+  return (r.promptTokens / 1e6) * Number(PRICE_IN) + (r.completionTokens / 1e6) * Number(PRICE_OUT);
+}
 
 const rows = [];
 for (const n of SEGMENTS) {
   const ctx = makeContext(n);
   const r = await callOnce(ctx);
   const refBad = r.maxRef > n;
-  rows.push({ n, chars: ctx.length, ...r, refBad });
+  const cost = costOf(r);
+  rows.push({ n, chars: ctx.length, ...r, refBad, cost });
   console.log(
     `${String(n).padStart(4)} | ${String(ctx.length).padStart(10)} | ${String(r.wallMs).padStart(8)} | ` +
       `${String(r.promptTokens ?? "未报").padStart(13)} | ${String(r.completionTokens ?? "未报").padStart(17)} | ` +
-      `${String(r.answerChars).padStart(8)} | ${String(r.maxRef || "-").padStart(10)}${refBad ? "  ⚠️ 越界" : ""}`,
+      `${String(r.answerChars).padStart(8)} | ${String(r.maxRef || "-").padStart(10)} | ` +
+      `${cost === null ? "—" : "¥" + cost.toFixed(4)}`,
   );
 }
 
@@ -152,6 +178,9 @@ console.log("\n=== 怎么判（阈值**待 owner 定**，这里只给读数与�
 console.log(`· 最大那一档：${big.chars} 字上下文 ⇒ ${big.wallMs} ms`);
 if (big.promptTokens) console.log(`· 端点报的 prompt tokens：${big.promptTokens}（≈ ${(big.chars / big.promptTokens).toFixed(2)} 字/token）`);
 console.log("· 粗算：一次「库地图 + 专题页」要跑多少档 × 每档多少 ms ⇒ 就是用户等待时间与电费");
+if (big.cost !== null && big.cost !== undefined) {
+  console.log(`· 按你给的单价：**每 1000 页 ≈ ¥${(big.cost * 1000).toFixed(2)}**（只算这次调用的 token，不含重试 / 增量重算 / 截断重跑）`);
+}
 console.log("· **go/no-go**：若「一页专题」的耗时/占用超出可用范围 ⇒ 按需求 §7 降级为「只做导航索引」（那不需要模型）");
 if (rows.some((r) => r.refBad)) {
   console.log("⚠️ 出现了越界回链（`[n]` 超过输入段数）⇒ 第三块的**强制引用**还没有现场证据，别急着做 UI");
