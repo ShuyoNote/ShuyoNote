@@ -113,7 +113,7 @@ export const GATES = [
   {
     id: "check-agent-surface",
     group: "contract",
-    label: "外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识",
+    label: "外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 ＋ 能力面限于笔记域",
     cmd: "node scripts/check-agent-surface.mjs",
     incident:
       "2026-09-28：注册表里 `ai: true` 恰好 10 条（read 8 / write 2，实测 ✓），而 MCP 规格把写判定写成查 `isWrite`" +

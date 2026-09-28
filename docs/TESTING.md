@@ -73,7 +73,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
 | contract | `check-ontology-generated` | **本体表与能力注册表不一致**（生成物被手改／注册表改了没重新生成）—— 来由：2026-09-28 MCP 规格把 `isWrite: true` 当判据，而该字段在原始 JSON 里**出现 0 次** ✗（真实字段是 `kind`）⇒ 本体只能生成、并逐字节卡漂移 |
-| contract | `check-agent-surface` | **工具面（生成物）与注册表不一致** ／ **只读面里出现写能力** ／ **描述里写进内部标识**（工具面＝对外暴露面）。来由：注册表 `ai:true` 实测 10 条（read 8 / write 2），而规格曾把写判定写成查不存在的 `isWrite` ✗ |
+| contract | `check-agent-surface` | **工具面（生成物）与注册表不一致** ／ **只读面里出现写能力** ／ **描述里写进内部标识**（工具面＝对外暴露面） ／ **能力面超出笔记域**（`ai:true` 的能力不许是库外／host／全局 —— R43：库权限 ≠ 仓库权限）。来由：注册表 `ai:true` 实测 10 条（read 8 / write 2），而规格曾把写判定写成查不存在的 `isWrite` ✗ |
 | contract | `check-doc-facts` | 文档里的**机器事实**（门禁条数／能力条数／命令数）与代码脱节：这类数字靠人抄，抄错不报错，只会让照文档做的人做到一半发现文档是旧的。它还要求**每条门禁都在本表里有名字**（上线当天抓到 7 条漏写） |
 | contract | `check-api-surface-version` | **改接口不升 `apiVersion`**（id／kind／scope／permission 变化 ⇒ 外部程序无信号坏掉）；指纹刻意**不含 desc**（改文案不算破坏接口），`--update` 是文档化出口 |
 | contract | `check-generated-artifacts` | **生成物不自证来源 / 已标脏 / 不可重建**：逐个 `_generated/*.md` 要求「来源路径 ＋ 来源 sha256（与当前源一致）＋ 生成命令且脚本存在」；将来新增生成物**自动被管** |

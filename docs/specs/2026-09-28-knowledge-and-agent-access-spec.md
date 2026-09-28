@@ -40,6 +40,9 @@
 | **INV-KB-citation-stale** | **生成物每条断言带回链；源一改即标脏；页脚写「派生，非出处」** | 三条各一机检：回链可达 ／ 源 sha 变 ⇒ 页面标脏 ／ 页脚串存在 | 改一个源文件不标脏 ⇒ 红 ✓ | 待立 | 本机 Node |
 | **INV-KB-locked-loud** | **锁定/未解锁 ⇒ 明确报错，不许返回空结果** | ⚠️ **归属 `INV-MCP-locked-fails-loud`**（不在本表重复 ✗） | 让锁定路径返回 `[]` ⇒ 红 ✓ | 待立（与 MCP 那条合并立） | Rust/CI |
 
+| **INV-KB-agent-priv-separation** | **能力面必须限于「笔记域」**：`ai:true` 的能力不许是库外／`host` 类／全局 scope（库权限 ≠ 仓库权限） | 扫注册表里 `ai:true` 的能力：id 前缀 ⊆ 笔记域 ／ `kind ∈ {read,write}` ／ `scope === current-space` ⇒ 否则红 | 加一个 `ai:true` 的 `fs.read`(host/global) ⇒ 红 ✓ | **能**（`check-agent-surface` 第 ④ 条） | 本机 Node |
+| **INV-KB-external-content-marked** | **库里的「外部抓来的内容」必须带来源标记**，agent 侧对带标记内容**降权**（不当指令用） | 库条目带来源字段 ＋ agent 侧策略区分「用户写的」与「外部抓的」 | 把一条剪藏当用户笔记喂给 agent ⇒ 红 ✓ | **待立**（需产品改动：字段 ＋ 策略 ✗） | 本机 Node ＋ Rust |
+| **INV-KB-model-provenance** | **agent 用不外用本地模型要能声明**；未声明 ⇒ `unknown`（⛔ 不许默认显示"本机/安全"）；且"本机模型"标记必须与**联网提醒**同屏 | ① 握手带 `model_provenance: local｜cloud｜unknown` ② 未声明显示 `unknown` ③ UI 上标记与提醒同时存在 ④ **服务端零字段**（载荷/日志无 agent 模型信息） | 不声明却显示"本机模型" ⇒ 红 ✓ | **待立**（需产品改动 ＋ 协议字段 ✗） | 本机 Node ＋ Rust |
 > ✅ **2026-09-28 收口：本表"能跑"的是 5 条**（其中 `INV-KB-derived-rebuildable` 只跑通"可重建"半边 ✗）
 > ⇒ 它们**已按仓规收录进 [`INVARIANTS.md`](INVARIANTS.md)**（三条条件：能指到会红判据 ✓ ／ 有"看过它红"证据（账本 D2，绑脚本 sha ✓）／ 证据能原地重做（各判据都有 `--self-test` 或夹具口子 ✓））
 > ⚠️ 其余 5 条仍是 `待立`（各自的判据还没写出来 ⇒ **不算通过** ✗）
