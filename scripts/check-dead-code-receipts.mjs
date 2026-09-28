@@ -170,7 +170,18 @@ export function check(rootDir = root) {
 }
 
 if (isMain(import.meta.url)) {
-  const { files, occurrences, offenders, exempt } = check();
+  // ⚠️ 2026-09-28：加 `--root <dir>`（夹具/自测用，约定同 check-derived-writers）
+  //    ＋ **空扫不许给绿** —— `collectRustFiles` 在目录不存在时 catch 后返回空数组
+  //    （"离线夹具"是有意支持的），于是"扫了 0 个 .rs…全部带日期收据"会**绿**。
+  //    那是「**没查却显示绿**」，不是通过 —— 与 check-derived-writers 那侧的守卫同形。
+  const argv = process.argv.slice(2);
+  const rootArg = argv.indexOf("--root");
+  const runRoot = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : root);
+  const { files, occurrences, offenders, exempt } = check(runRoot);
+  if (files.length === 0) {
+    console.error(`✗ ${join(runRoot, "src-tauri", "src")} 下一个 .rs 都没有 ⇒ 拒绝给绿（判据不能空跑）`);
+    process.exit(1);
+  }
   if (offenders.length) {
     console.error("`#[allow(dead_code)]` 必须带一条**带日期的收据**（为什么留着 ＋ 什么时候删）：");
     for (const o of offenders) {
@@ -188,6 +199,6 @@ if (isMain(import.meta.url)) {
         .join(", ")}）`
     : "";
   console.log(
-    `死代码收据齐备：扫了 ${files.length} 个 .rs，${occurrences.length} 处 \`allow(dead_code)\`，全部带日期收据${exemptNote}`,
+    `死代码收据齐备：扫了 ${files.length} 个 .rs，${occurrences.length} 处 \`allow(dead_code)\`，全部带日期收据${exemptNote}｜根：${runRoot}`,
   );
 }
