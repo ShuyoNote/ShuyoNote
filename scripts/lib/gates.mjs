@@ -81,6 +81,18 @@ export const GATES = [
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
   {
+    id: "check-ontology-generated",
+    group: "contract",
+    label: "本体表与能力注册表一致（生成物不许手改）",
+    cmd: "node scripts/check-ontology-generated.mjs",
+    incident:
+      "2026-09-28：MCP 规格把 `isWrite: true` 当判据（**该字段在 capabilities.json 里出现 0 次** ✗；" +
+      "真实字段是 `kind`：read 15 / write 8 / host 2），于是写出了一条「看着像判据、其实指向空气」的规则；" +
+      "同一天我还从 6 条样本外推「pages.create 不在注册表里」——也错了 ✗。" +
+      "⇒ 本体**由注册表生成**，本门禁逐字节卡漂移",
+    registered: "2026-09-28",
+  },
+  {
     id: "check-doc-facts",
     group: "contract",
     label: "文档里的机器事实（门禁 / 能力 / 命令数）与代码一致",
