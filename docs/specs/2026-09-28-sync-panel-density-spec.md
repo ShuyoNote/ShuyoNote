@@ -71,6 +71,55 @@ isDesktopPlatform()  ≡  isTauri()  ≡  ("__TAURI_INTERNALS__" in window)     
 第 5 步  再谈改动（把 P2P 的设置从吸底条搬走）—— 那时第 2、3 条会自动由红转绿
 ```
 
+### 3.1 落地现状（2026-09-28 晚，macOS 侧记）
+
+> 本节只记**进度与依赖**，不重复 §2 的口径。分界线是：**判据先落地（A–C），UI 改动后落地（D）。**
+
+```text
+A 先合"载体"（都不动 UI；前三笔各自"读数逐字不变"或有基线兜着）
+  A1 feat/copy-discipline-gate           1c47802  ✅ 文案判据载体；自身不红（与基线持平）⇒ 可直接合
+  A2 fix/mobile-views-false-pass         040c8dc  ✅ 修 3 处 `x?.a === x?.b` 假绿；门禁读数逐字不变 ⇒ 可直接合
+  A3 fix/sync-mesh-alignment             bfa33a5  ✅ 对齐（按钮 min-width 6.5em ＋ 输入框 min-height 44）
+                                                   ＋ 把命中区判据从"只量按钮"扩到含 input ⇒ 可直接合
+  A4 spec/sync-panel-density             56d15ab  规格 §4.5 ＋ 效果图（⚠️ 本分支第 2 笔 700f993 还没进 dev）
+  A5 spec/user-facing-copy               b0f8a7c  文案规格 ＋ 效果图
+  A6 test/sync-panel-density-assertions  90a163b  ⚠️ **有 3 条红** ⇒ 需先定过渡口径（甲直接红／乙已知红基线／
+                                                   丙只 tauri 档）才能合；倾向乙（仓内已有两处同形先例）
+
+B 解阻塞：**补 tauri 桩**（这是 C 与 D2 验收的前提）
+  现状：`APP_SHELL=tauri` 整档在 `verify-mobile-views.mjs:1711` 抛异常 ——
+        `.database-view` 建不出、`.mobile-right-toggle` 找不到 ⇒ **手机一路跑不完 ⇒ 桌面一路根本没开始**。
+  我这边调用记录器实测「未知且返回 null」的三条：`team_online` ／ `team_presence_beat` ／ `sync_stream_start`
+  验收：`APP_SHELL=tauri node scripts/verify-mobile-views.mjs` **整档跑完**（不是"跑出一部分"）。
+
+C `INVARIANTS.md` 收录（规格第 4 步）
+  材料：`shell-matrix` 的会红证据（删掉 tauri 注入那一路 ⇒ 红）＋
+        `persistent-chrome` 的三对象读数（Web 4 ／ app 手机 3 ／ app 桌面 3）
+  ⚠️ `desktop-no-scroll` 的 **tauri 档门禁读数**还缺（桌面读数目前来自单独探针）⇒ **等 B**。
+
+D 动 UI（规格第 5 步）—— 功能落地的主体
+  D1 布局：把 `.sync-foot`（`SyncPanel.tsx:1217-1463`，247 行）里的常驻设置搬出吸底条。
+     现状实测：foot 里【可见】表单 = **Web 4 ／ app 手机 3 ／ app 桌面 3**；
+     其中 `sync-mesh`（网格设置）带**两个 input**（监听地址 `:1276` ／ 口令 `:1288`），是主要来源。
+     验收：`persistent-chrome` 转绿（可见表单 → 0 或"foot 不再存在"）。
+  D2 桌面不滚：D1 之后通常自然好转（现 tauri 桌面 **672 / 606 ⇒ 要滚 66px**）；
+     若仍 >0 再收一档。验收：`desktop-no-scroll` 转绿。
+  D3 文案：10 处裸标识（文案规格 §4）＋ 2 处星号 ＋ 3 处相邻分隔。
+     验收：`check-copy-discipline` 的 C1 基线**逐条减少**、C2 的 `inlineMd` 覆盖**上升**。
+  D4 对齐 ✅ **已做**（A3）。
+  D5 状态置顶 ＋「这一轮走的是」：**读数现成** —— `LanStatus.kind`（"lan"/"configured"/""）
+     ＋ `.peers`（N 台，注释逐字：「与状态行里那个"N 台"是同一个数」）⇒ **前端可做**。
+     ⚠️ 但**「刚刚」这个时间没有现成读数**：`SyncProfile` 只有 `last_pushed_seq` / `last_pulled_seq`
+        （**序号，不是时间**）⇒ 要么先**不显示时间**（只显示状态），要么 Rust 侧新加一个 `last_sync_at`。
+        ⇒ **这一条要先定，否则 hero 里那个"刚刚"是编的。**
+
+E 分工与边界
+  · macOS（我）：判据、规格、CSS 对齐、读数普查 —— 已交（A1/A3/A4/A5/A6 ＋ B 的记录器结论）
+  · `SyncPanel.tsx` 的 JSX 改动（D1／D5）属 **windows 写域** ⇒ 由它做，或 owner 明确授权我做
+  · B 的桩改动也在 windows 写域（`verify-mobile-views.mjs` 它有在动）⇒
+    ⚠️ **别两边同时改 applyShell**（我先前已发信说明，避免同时改同一函数）
+```
+
 ⚠️ **第 5 步在最后，是有意的**：需求 §3.4 说"目标不是这次调好看，是把好看变成会红的断言"。
 **先有断言，再有改动** —— 否则改完之后没人能证明它没退回去。
 
