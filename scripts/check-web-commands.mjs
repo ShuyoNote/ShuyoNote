@@ -11,7 +11,14 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// `--root <dir>`：**夹具/自测用**（2026-09-28 加，约定同 check-store-subscriptions）。
+// 这条判据的承重证明本来就是「在**假根**上只建一处、看它红」（见账本 D2 证据）——
+// 有了 `--root` 就不必再**拷一份脚本**进假根（那种拷贝型夹具还得保证副本逐字节相同）。
+const HERE = dirname(fileURLToPath(import.meta.url));
+const argv = process.argv.slice(2);
+const rootArg = argv.indexOf("--root");
+const root = resolve(rootArg >= 0 && argv[rootArg + 1] ? argv[rootArg + 1] : resolve(HERE, ".."));
+if (rootArg >= 0) console.log(`（夹具根：${root}）`);
 const read = (p) => {
   try {
     return readFileSync(resolve(root, p), "utf8");
