@@ -88,6 +88,13 @@ isDesktopPlatform()  ≡  isTauri()  ≡  ("__TAURI_INTERNALS__" in window)     
 
 ## 4.5 ⭐ 预期效果（模拟，2026-09-28 补）与它暴露的一个坑
 
+![最终效果：布局 ＋ 文案 ＋ 对齐 三套修正（左：现状／中：最终·默认／右：最终·展开）](../media/sync-panel/final-layout-and-copy.png)
+
+> 图源：`docs/media/sync-panel/final-layout-and-copy.png`（真 Chromium 渲染，390×844 手机 app 壳）
+> ⚠️ **图里的数据是 mock**（"刚刚"／"今天 8 项"／"2 台可用"都是占位）——**布局、字号、高度是真的**，业务读数不是。
+> ⚠️ 三块面板里的**结构 / 文案 / 尺寸**都是按本规格与《用户可见文案》规格**重排的提案**，不是已落地代码。
+
+
 **模拟方式**：**真 CSS 注入**（`display:none` 掉 `.sync-foot .sync-att.sync-mesh`），不改源码。
 手机 app（Tauri 壳）390×844：
 
