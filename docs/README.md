@@ -253,6 +253,8 @@ CHANGELOG.md                     # 版本变更日志
 | 文档 | 内容 |
 |---|---|
 | [plans/2026-09-27-sync-panel-mobile-density.md](plans/2026-09-27-sync-panel-mobile-density.md) | **同步面板在窄屏的密度问题（方案，待拍板）**：390×844 实测「可见 819 / 内容 996」⇒ 必滚 177px；高度构成（空间卡 594 + 脚 134 + 头 66 + Web 提示 54）；四个选项 A 折叠卡 / B 收窄提示 / C 动作吸底 / D 走全屏；附「零滚动」等三条建议断言，以及明确不碰加密那块 |
+| [plans/2026-09-28-agent-mcp-integration-plan.md](plans/2026-09-28-agent-mcp-integration-plan.md) | **外部 Agent 接入（MCP / CLI）总方案（规划，未实装，待拍板）**：让 Claude Code / CodeBuddy / WorkBuddy / DSH 用上本机笔记库。**结论：四个产品都原生支持 MCP，缺的是客户端这一侧的面**（全仓 MCP 零命中）。含现状取证 10 条（注册表 25 条能力 / 其中 `ai:true` 10 条 · 权限与审计只有一个校验点 `dispatch_capability` · **钥匙只在应用进程内存且没有 OS keyring** · 没有面向外部进程的通道 · mesh 窗口默认关闭）＋ **MCP/CLI/API 不是三选一**（API 是底座，两个薄适配器共用它，硬约束不变）＋ 推荐架构（应用内宿主面 ＋ 哑桥 ＋ 草稿写回）＋ 工具面与**实测上下文成本 1631 字符/会话**＋ 四家官方配置（含 DSH 的 `insert:` 语法订正）＋ M1–M3 里程碑与验收 ＋ 6 项待拍板 ＋ 诚实边界 |
+| [plans/2026-09-28-mcp-host-m1-workorder.md](plans/2026-09-28-mcp-host-m1-workorder.md) | **MCP 宿主 M1 施工单（只读，未开工）**：注册表第 10 件生成物（`capabilities/mcp-tools.json`）＋ 应用内宿主面（`src-tauri/src/mcp_host.rs`）＋ stdio 哑桥（`tools/shuyonote-mcp/`）。含逐文件改动 8 项、**把权限判定从 `RUN_STATE` 抽成一处**（唯一会碰到现有插件路径的一步）、8 条判据（每条附「怎么让它红」）、**门禁要登记的三处**（`scripts/lib/gates.mjs` ／ `docs/TESTING.md` 表 ／ **工作区台账 `_workspace/mutation-evidence.json` 的 `_repo_mutations`** —— 第三条不在本仓、最易漏）、本机跑不了 rust 组的边界与回滚路径 |
 | [sync-multidevice-test.md](sync-multidevice-test.md) | **跨机器多端同步会合测试**（Windows ⇄ Mac，服务器放 Mac）：两侧各一条命令、互相等、各自出 PASS/FAIL；含 Mac 侧起服务端/发设备密钥/真客户端肉眼确认的步骤、常见不通过的四种原因、以及"还剩什么没覆盖"（冲突合并 / 跨机附件 / 断网重连） |
 
 
