@@ -11,6 +11,10 @@ import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform } from "../lib/platform";
+// ⚠️ 2026-09-29（D3）：**行内 Markdown 的契约**。后端（Rust）给人看的话是按行内 Markdown 写的
+// （`**能被别人拉到**` 那种）⇒ 它必须在【渲染边界】过这一道，否则用户看见两个星号。
+// 契约的唯一实现是 `src/lib/inlineMd.tsx`（toast 与 SpacePrivacySection 已在用）⇒ 这里接上它。
+import { inlineMd } from "../lib/inlineMd";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
 import {
   broadcastAutoSyncChanged,
@@ -1250,7 +1254,11 @@ export function SyncPanel() {
                     {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
                   </span>
                   {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
-                  <span className="sync-hint">开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。</span>
+                  <span className="sync-hint">
+                    {/* ⚠️ 2026-09-29（D3）：这句自己就带 `**` ⇒ 必须过 `inlineMd`，
+                        否则渲染出来是「会**顺手**和…」（owner 在真机上看到的就是这个）。 */}
+                    {inlineMd("开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。")}
+                  </span>
                 </span>
                 <div className="sync-field">
                   <input
@@ -1357,7 +1365,10 @@ export function SyncPanel() {
                     {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
                   </span>
                   <span className="sync-hint">
-                    {[lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ ")}
+                    {/* ⚠️ 2026-09-29（D3）：这一行【拼了 Rust 来的文案】（`lanStatus.line` 与 `mesh.note`），
+                        而后端是按行内 Markdown 写的（`mesh.rs:602` 那句就是 `**能被别人拉到**`）
+                        ⇒ 在【渲染边界】过 `inlineMd`。这正是契约推荐的方向：Rust 侧一个字不改。 */}
+                    {inlineMd([lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ "))}
                   </span>
                 </span>
               </div>
