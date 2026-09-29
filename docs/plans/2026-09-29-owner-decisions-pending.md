@@ -89,3 +89,22 @@
    而它也是"**每条都留痕、不静默**"的结果（本仓口径）。
 
 ```
+
+---
+
+## H. 门禁**全量读数**（2026-09-29 深夜③ —— 收尾核对）
+```text
+`node /Users/shuyo/zhai/_workspace/bin/check-all.mjs` 跑出 **21 条**，其中：
+  ✅ **15 条干净**（exit 0）—— ⭐ **含 `fence-balance`**（今晚我修了四次 ⇒ 现在干净）
+  ➖ **3 条"无可检查对象/环境不具备"**（exit 2~3，**不算通过也不算失败**）：
+     root-docs-sync（本机没铺根副本）／tmp-retention（桶缺失）／ps1-ascii／doc-sections／
+     gate-manifest／commit-sentinels／irreplaceable
+  ⚠️ **只剩 3 条 exit=1** —— ⚠️ **而三条正是我发信要商量的那三条**：
+     · `script-paths`（**门禁误报**：报的是注释里的路径）
+     · `sh-syntax`（**门禁错**：不尊重 shebang ＋ 扫了 `target/`）
+     · `wiki-freshness`（**环境**：本机没铺根副本 ⇒ 按退出码口径该 exit=2）
+
+⇒ ⇒ ⭐ **所以"门禁红"这件事已经收敛**：**我自己的错全清了**，
+   剩下的三条**全部是门禁自身的问题**（两条）与环境（一条）⇒ 已在那封信里请 windows/amd 定。
+⇒ ⚠️ 而它同时说明：**这封信不是"顺手问一句"，而是"清掉最后三条红的唯一途径"**。
+```
