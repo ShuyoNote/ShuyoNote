@@ -1546,7 +1546,7 @@ export function makeInvoke(store: SqliteStore) {
       // 见 `src-tauri/src/lan.rs`）—— 所以这里如实回"配置地址那一档 ＋ 局域网不可用"，
       // 而不是假装发现了谁（那会让状态行说出与真实路由矛盾的档，`lan::status_line` 判据 ⑭ 钉这条）。
       //
-      // ⚠️ 口径与桌面侧**同一条**：没绑定 ⇒ 「尚未绑定」；绑了 ⇒ 「公网 <地址> ｜ 本网段发现 0 台」。
+      // ⚠️ 口径与桌面侧**同一条**：没绑定 ⇒ 「尚未绑定」；绑了 ⇒ 「公网 <地址> ｜ 附近发现 0 台」。
       //    这里是 Web 侧的唯一实现（**不**登记成 `DESKTOP_ONLY_COMMANDS`）："这一轮走哪个地址"
       //    在浏览器里也存在，不该让调用点自己判平台。
       const args = a.args ?? a;
@@ -1555,7 +1555,7 @@ export function makeInvoke(store: SqliteStore) {
       // 指定了工作空间就走**那一处**解析（与 claim / SSE 同源）；没指定 ⇒ 第一条绑定（面板兜底）。
       const server = (wanted ? resolveWorkspaceSyncScope(rows, wanted)?.server : undefined)
         ?? String(rows[0]?.server_url ?? "").trim().replace(/\/+$/, "");
-      const line = server ? `同步地址：公网 ${server} ｜ 本网段发现 0 台` : "同步地址：尚未绑定";
+      const line = server ? `同步地址：公网 ${server} ｜ 附近发现 0 台` : "同步地址：尚未绑定";
       return {
         enabled: false,
         peers: 0,
@@ -1574,7 +1574,7 @@ export function makeInvoke(store: SqliteStore) {
         // ★ 丙档「附近设备」（2026-09-29）：**空且说得出为什么** —— 浏览器里没有发现层
         //   （UDP 广播/监听在 Rust 侧，见 `src-tauri/src/lan.rs`），所以这里既不是"网段里没人"，
         //   也不是"还没发现"：**是"这台机器上看不到这一层"**。三件处境的区分靠上面那两个字段
-        //   （`enabled:false` ＋ `line` 里那句"公网 … 本网段发现 0 台"），**不靠这个空数组**。
+        //   （`enabled:false` ＋ `line` 里那句"公网 … 附近发现 0 台"），**不靠这个空数组**。
         //   ⚠️ 不许把这里改成"回一个空数组"就算数（空数组与"不可用"长得一样、含义相反，
         //      `INV-NEARBY-no-web-invite` 钉这条）。
         nearby: [],
@@ -1592,7 +1592,7 @@ export function makeInvoke(store: SqliteStore) {
       //   "回空壳"会让界面显示"网格：拉了 0 台"，用户分不清"没人"与"这一档压根没有"。
       return {
         enabled: false,
-        note: "Web 版没有局域网发现层，也开不了本机端口 ⇒ 网格这一档只在桌面版可用（这一轮一个字节都没动）",
+        note: "Web 版没有设备发现层，也开不了本机端口 ⇒ 网格这一档只在桌面版可用（这一轮一个字节都没动）",
         candidates: 0,
         peers: [],
         window: null,
@@ -1618,8 +1618,8 @@ export function makeInvoke(store: SqliteStore) {
       //   ⇒ 这条路走到这里只可能是"有人在别处调了它"（那种情形更该吵）。
       throw new Error(
         cmd === "nearby_invite_send"
-          ? "Web 版没有局域网发现层 ⇒ 发不出邀请（这一档只在桌面版可用）"
-          : "Web 版没有局域网发现层 ⇒ 没有可接受的邀请（这一档只在桌面版可用）",
+          ? "Web 版没有设备发现层 ⇒ 发不出邀请（这一档只在桌面版可用）"
+          : "Web 版没有设备发现层 ⇒ 没有可接受的邀请（这一档只在桌面版可用）",
       );
     }
     if (cmd === "delete_page") {

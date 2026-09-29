@@ -928,8 +928,8 @@ export function SyncPanel() {
         ? // ★ 2026-09-29（owner 裁定「修」）：与摘要**同一口径** ——
           //   一个对端都没发现时**不说"本网段 0 台可用"**（那会被读成"没有"），
           //   而真相是"还没找到"（看不见 ≠ 不存在，规格 §12.1 ／ 需求 §4.4）。
-          "这一轮走的是：局域网 · 正在找同网段的设备…"
-        : `这一轮走的是：局域网 · 本网段 ${lanStatus.peers} 台可用`
+          "这一轮走的是：设备直连 · 正在找附近的设备…"
+        : `这一轮走的是：设备直连 · ${lanStatus.peers} 台可用`
       : lanStatus?.kind === "configured"
         ? "这一轮走的是：服务器"
         : "这一轮走的是：还没绑同步";
@@ -944,7 +944,7 @@ export function SyncPanel() {
   const serverText = activeRow?.server_url.trim() || "未绑定";
   // 局域网直连：`lanStatus.mesh` 的两个布尔 → 三态（读不到 `lanStatus` 时这一行本来就不渲染）。
   // ★ 2026-09-29（owner 裁定 §9.1）：这一块现在的名字是「局域网直连」——**沿用既有读数行
-  //   `.sync-lan` 的措辞**（"局域网直连（已走局域网）"），不新造词。⚠️ 面板底部那条 `.sync-lan`
+  //   `.sync-lan` 的措辞**（"设备直连（同一网络）"），不新造词。⚠️ 面板底部那条 `.sync-lan`
   //   是**另一条路**（走中枢），两条都叫"局域网…"是历史命名，**本档不合并它们**（规格 §9.1）。
   // ⚠️ 摘要值改成 **开／关**（照效果图那一行）：它现在是一个**开关**行，而"口令设没设"在它
   //    展开后的行体里照样写着一遍（不在两处说同一件事的两半）。
@@ -1003,15 +1003,15 @@ export function SyncPanel() {
    * ⚠️ **绝不出现裸 `space_id`**（`INV-UI-copy-no-internal-ids`）。
    */
   const nearbySecondColumn = (p: NearbyPeer) => {
-    if (p.serves_current) return `同网段 · 服务 ${mySpaceName}`;
-    if (!p.spaces.length) return "同网段 · 没报服务哪个空间";
+    if (p.serves_current) return `附近 · 服务 ${mySpaceName}`;
+    if (!p.spaces.length) return "附近 · 没报服务哪个空间";
     const known = p.spaces
       .map((s) => rows.find((r) => r.space_id === s)?.name?.trim() || "")
       .filter(Boolean);
     const unknown = p.spaces.length - known.length;
     const parts = [...known];
     if (unknown > 0) parts.push(`另外 ${unknown} 个空间`);
-    return `同网段 · 服务 ${parts.join("、")}`;
+    return `附近 · 服务 ${parts.join("、")}`;
   };
   // 空间隐私：`SpacePrivacySection` 那一份读数（`space_security_overview`）**没有上抛**给外面，
   // 本面板不替它再问一次（问了就是第二份真相，两份迟早各说各话）⇒ 这里只放一句中性摘要，
@@ -1214,7 +1214,7 @@ export function SyncPanel() {
                     不新引色值（规格 §9 的落地要求：新增 CSS 只用既有变量）。 */}
               {totalOff && (
                 <div className="sync-web-note is-inline" role="note">
-                  <span>【注意】局域网直连也停着</span>
+                  <span>【注意】设备直连也停着</span>
                   <span>（总闸优先：关了就不动，如实说）</span>
                 </div>
               )}
@@ -1531,7 +1531,7 @@ export function SyncPanel() {
                 </div>
               </details>
 
-              {/* ④ 局域网直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
+              {/* ④ 设备直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
                   （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
                   ★ 2026-09-29（§9.2）：**总闸＝关闭 ⇒ 这一行灰掉**（它是开关；总闸关了它不可能生效）。
                      灰是"不能点"，**不是"藏起来"** —— 用户要看得到"它停着"这件事（上面那个黄框在说为什么）。 */}
@@ -1539,7 +1539,7 @@ export function SyncPanel() {
                 <>
                   <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                     <summary>
-                      <span className="sync-row-label">局域网直连</span>
+                      <span className="sync-row-label">设备直连</span>
                       <span className="sync-row-value">{meshText}</span>
                       <span className="sync-row-caret" aria-hidden>›</span>
                     </summary>
@@ -1547,7 +1547,7 @@ export function SyncPanel() {
                       <div className="sync-att sync-mesh">
                         <span className="sync-att-text">
                           {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
-                              已经在面板底部那一行"局域网直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
+                              已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
                               （监听地址 / 口令）与开关。 */}
                           <span className="sync-hint">
                             {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
@@ -1593,7 +1593,7 @@ export function SyncPanel() {
                   </details>
 
                   {/* ⑤ 「拉取间隔」——**上一行的子项**（缩进 ＋ 竖线，见 `.sync-row.is-child`）。
-                      ★ 规格 §9.3：「局域网直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
+                      ★ 规格 §9.3：「设备直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
                         关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
                       ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
                   {lanDirectOn && (
@@ -1629,7 +1629,7 @@ export function SyncPanel() {
                   )}
 
                   {/* ⑥ 附近设备（丙档需求 §4.1 的那一块）。
-                      ★ 门槛：**与父项同一个 `lanDirectOn`** —— 局域网直连关着 ⇒ 不显示（"没开就不会去发现"）。
+                      ★ 门槛：**与父项同一个 `lanDirectOn`** —— 设备直连直连关着 ⇒ 不显示（"没开就不会去发现"）。
                       ⚠️ 列表**只有一处来源**（`lanStatus.nearby`，与 `peers` 同一次读数）；
                          行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。
                       ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
@@ -1650,7 +1650,7 @@ export function SyncPanel() {
                               ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
                               ③ 有设备 ⇒ 每台一行。 */}
                           {!nearbyReadable || !lanStatus.enabled ? (
-                            <div className="sync-hint">同网段的设备：这台机器上看不到这一层</div>
+                            <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
                           ) : nearby.length === 0 ? (
                             <div className="sync-hint">还没发现别的设备… 正在找</div>
                           ) : (
@@ -1887,11 +1887,11 @@ export function SyncPanel() {
                 那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
                 只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
             {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
-              <div className="sync-att sync-lan" title="同一网段里自动找到这个空间的中枢时，同步就走局域网地址">
+              <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走局域网地址">
                 <span className="sync-att-text">
                   {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
                   <span className="sync-att-name">
-                    {lanStatus.kind === "lan" ? "局域网直连（已走局域网）" : "局域网直连"}
+                    {lanStatus.kind === "lan" ? "设备直连（同一网络）" : "设备直连"}
                   </span>
                   <span className="sync-hint">
                     {/* ⚠️ 2026-09-29（D3）：这一行【拼了 Rust 来的文案】（`lanStatus.line` 与 `mesh.note`），

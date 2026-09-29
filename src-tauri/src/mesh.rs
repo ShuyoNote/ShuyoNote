@@ -747,7 +747,7 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
     if !is_lan_only(addr.ip()) {
         return Err(format!(
             "拒绝启动：{addr} 不是内网地址（简报 §7 的边界：网格只在自己网段里）。\
-             局域网请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x，本机自测用 127.0.0.1。"
+             同一网络请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x，本机自测用 127.0.0.1。"
         ));
     }
     Ok(addr)
@@ -1745,7 +1745,7 @@ mod tests {
         assert!(!s.contains("没有能问的对端"), "没绑 id 时不许说成「网段里没人」：{s}");
         // ② 绑了 id、网段里没人 ⇒ 这不是失败，是"没人"
         let s = crate::sync::attachment_fetch_failure(None, "space-x", 0, &[]);
-        assert!(s.contains("本网段里没有能问的对端"), "{s}");
+        assert!(s.contains("附近没有能问的对端"), "{s}");
         assert!(!s.contains("问了"), "一台都没问过，不许说「问了 N 台」：{s}");
         // ③ 有对端但都拿不到 ⇒ 每一家的原文都要带上（别合成一句"失败"）
         let tried = vec!["A：对端 A 返回 404".to_string(), "B：问对端 B 失败：连接被拒".to_string()];

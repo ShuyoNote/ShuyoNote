@@ -1110,7 +1110,7 @@ pub(crate) fn attachment_fetch_failure(server_err: Option<&str>, proto_space: &s
         parts.push(if proto_space.trim().is_empty() {
             "这个空间没绑组织空间 id ⇒ 网格这一档不知道跟谁对暗号".to_string()
         } else {
-            "本网段里没有能问的对端（没人代言这个空间 / 只有我自己）".to_string()
+            "附近没有能问的对端（没人代言这个空间 / 只有我自己）".to_string()
         });
     } else if tried.is_empty() {
         // 有对端、却一条尝试记录都没有 ⇒ 只可能是循环没跑（防御性：真出现就是代码问题）
@@ -3254,7 +3254,7 @@ fn invite_caveat(c: &Connection, ws_id: &str) -> String {
 ///    `space_crypto::sync_gate` 的旁路（规格 §5.5）。
 ///
 /// ⚠️ **如实说的一句**：接受**只**写"空间身份 ＋ 口令"（规格 §5.6），**不**替对方配本机监听地址
-///    —— 而"局域网直连"这一档的"开"就是"配了监听地址"（`mesh.rs:597`）⇒ 不接受完就能拉。
+///    —— 而"设备直连"这一档的"开"就是"配了监听地址"（`mesh.rs:597`）⇒ 不接受完就能拉。
 ///    这一句必须出现在回给用户的话里（否则用户会以为"接受了就通了"）。
 #[tauri::command]
 pub fn nearby_invite_accept(
@@ -3286,7 +3286,7 @@ pub fn nearby_invite_accept(
     let shown = if ws_name.trim().is_empty() { "当前这个空间" } else { ws_name.trim() };
     Ok(format!(
         "已接受：把本地的「{shown}」接到对方的那个空间上，并记下了这个空间的口令。\
-         ⚠️ 还差一步：在「局域网直连」里给本机配一个**监听地址** —— 没配之前这一档不会跑（别人也拉不到你）。"
+         ⚠️ 还差一步：在「设备直连」里给本机配一个**监听地址** —— 没配之前这一档不会跑（别人也拉不到你）。"
     ))
 }
 
@@ -6834,7 +6834,7 @@ mod tests {
         assert_eq!(kind, "lan");
         assert_eq!(
             line,
-            "同步地址：直连（局域网）http://192.168.1.5:8788 ｜ 本网段发现 2 台 ｜ 中枢：小明的笔记本"
+            "同步地址：直连（同一网络）http://192.168.1.5:8788 ｜ 附近发现 2 台 ｜ 中枢：小明的笔记本"
         );
         // 而**同一份输入**映射出来的列表照样是两行（列表没有反过来影响那三条读数）
         assert_eq!(nearby_of(&peers, "dev-me", "sp-1").len(), 2);
