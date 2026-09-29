@@ -104,6 +104,18 @@ export const GATES = [
     registered: "2026-09-29",
   },
   {
+    id: "check-crdt-plane",
+    group: "contract",
+    label: "CRDT 平面：content_json 是 TEXT（老客户端只认 JSON）／CRDT 状态只进 BLOB 旁路表／Rust 不认识 CRDT／转换与合并各只有一份实现",
+    cmd: "node scripts/check-crdt-plane.mjs",
+    incident:
+      "混版本共存的**地基是三句话**（见 docs/specs/2026-09-29-crdt-mixed-version-degradation.md）：" +
+      "① content_json 永远是 TEXT/JSON（老客户端只认它）② CRDT 状态只进 page_crdt* 的 BLOB ③ Rust 不认识 CRDT。" +
+      "这三句**已经写在代码注释里**，但谁把 BLOB 塞进 content_json、给 Rust 加个 yjs crate、或长出第二份转换实现，" +
+      "**都不会炸、不会报错、测试全绿** —— 只是**老客户端的页打不开** ✗（本仓 §8 那族：违规不炸，只炸用户）。",
+    registered: "2026-09-29",
+  },
+  {
     id: "check-locked-loud",
     group: "contract",
     label: "锁定 ⇒ 大声失败（稳定错误码 space_locked；不许映射成空）",
