@@ -1,6 +1,7 @@
 # 方案：知识层与外部接入（RAG · LLM Wiki · Ontology · MCP）
 
-> 状态：待开工（Phase 0 未启动；判据先行，代码后行）
+> 状态：**Phase 0 已完成**（2026-09-29 windows 侧复核 ✓：M1 的 6 条判据全部在岗、已注册、真跑全绿 ⇒ 「判据先行、不写产品代码」这一期**已经落地** ✓；此前那句「未启动」是**漂移** ✗）。**Phase 1 未启动**（S1 检索／时间复盘页／知识地图 —— 那要写产品代码 ✓）。
+> 证据：`../../scripts/check-agent-surface.mjs`（m1 面 8 条 ✓、写能力 0 ✓、描述无内部标识 ✓）＋ `../../scripts/check-generated-artifacts.mjs`（3 个生成物自证来源且可重建 ✓）＋ `../../scripts/check-ontology-generated.mjs`（本体表 25 条能力逐字节一致 ✓）＋ `../../scripts/check-api-surface-version.mjs`（apiVersion=1.0.0 ✓）；四条都注册在 `../../scripts/lib/gates.mjs` ✓。
 >
 > 本文是**导航 ＋ 取舍**：需求看 [`../specs/2026-09-28-knowledge-and-agent-access-requirements.md`](../specs/2026-09-28-knowledge-and-agent-access-requirements.md) ✓，
 > 必须一直成立的事看 [`../specs/2026-09-28-knowledge-and-agent-access-spec.md`](../specs/2026-09-28-knowledge-and-agent-access-spec.md) ✓，
