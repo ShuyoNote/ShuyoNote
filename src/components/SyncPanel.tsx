@@ -16,7 +16,7 @@ import { isDesktopPlatform } from "../lib/platform";
 // 契约的唯一实现是 `src/lib/inlineMd.tsx`（toast 与 SpacePrivacySection 已在用）⇒ 这里接上它。
 import { inlineMd } from "../lib/inlineMd";
 import { isNearRealtimeEnabled, applyNearRealtime } from "../lib/nearRealtime";
-// ★ 2026-09-29（丙档「局域网直连」）：**「拉取间隔」这一档** —— 用户可见、可持久化，
+// ★ 2026-09-29（丙档「设备直连」）：**「拉取间隔」这一档** —— 用户可见、可持久化，
 //   读写口径都在 `lib/syncMode.ts` 那一处（面板只调它，不自己碰 localStorage）。
 //   ⚠️ 它替换掉了原来"按 `mesh.enabled` 在代码里悄悄换成 5 秒"那条路（见 `effectiveAutoSyncMs`）。
 import {
@@ -204,7 +204,7 @@ export function SyncPanel() {
       window.clearInterval(timer);
     };
   }, [open, activeId]);
-  // ★ 2026-09-29（丙档）：「拉取间隔」—— 局域网直连这一档的节拍。**默认 5 秒**（owner 拍的）。
+  // ★ 2026-09-29（丙档）：「拉取间隔」—— 设备直连这一档的节拍。**默认 5 秒**（owner 拍的）。
   // ⚠️ 写入口只有 `writePullIntervalMs`（它会顺便**广播**，让 App 那条定时器按新节拍重挂）——
   //    与 `setAuto` 同一套纪律：面板不自己碰 localStorage、也不自己算有效间隔。
   const [pullMs, setPullMs] = useState<number>(() => readPullIntervalMs());
@@ -942,8 +942,8 @@ export function SyncPanel() {
   const wifiText = (budget?.wifi_only ?? true) ? "开" : "关";
   // 服务器：owner 明确「未绑定时显示『未绑定』」（不是空白，也不是占位 URL）。
   const serverText = activeRow?.server_url.trim() || "未绑定";
-  // 局域网直连：`lanStatus.mesh` 的两个布尔 → 三态（读不到 `lanStatus` 时这一行本来就不渲染）。
-  // ★ 2026-09-29（owner 裁定 §9.1）：这一块现在的名字是「局域网直连」——**沿用既有读数行
+  // 设备直连：`lanStatus.mesh` 的两个布尔 → 三态（读不到 `lanStatus` 时这一行本来就不渲染）。
+  // ★ 2026-09-29（owner 裁定 §9.1）：这一块现在的名字是「设备直连」——**沿用既有读数行
   //   `.sync-lan` 的措辞**（"设备直连（同一网络）"），不新造词。⚠️ 面板底部那条 `.sync-lan`
   //   是**另一条路**（走中枢），两条都叫"局域网…"是历史命名，**本档不合并它们**（规格 §9.1）。
   // ⚠️ 摘要值改成 **开／关**（照效果图那一行）：它现在是一个**开关**行，而"口令设没设"在它
@@ -954,9 +954,9 @@ export function SyncPanel() {
       ? "开"
       : "开 · 口令未设";
   // ★ 2026-09-29（规格 §9.2／§9.3）：**总闸优先** ——
-  //   · 总闸（「同步方式」）＝ 关闭 ⇒ 局域网直连那一行**灰掉**（它是开关；总闸关了它不可能生效），
+  //   · 总闸（「同步方式」）＝ 关闭 ⇒ 设备直连那一行**灰掉**（它是开关；总闸关了它不可能生效），
   //     而「拉取间隔」与「附近设备」**都不出现**（父项已灰 ⇒ 子项不显示）；
-  //   · 局域网直连 = 关 ⇒ 「拉取间隔」这一行**不出现**（不是灰掉 —— 关了就没有间隔可谈），
+  //   · 设备直连 = 关 ⇒ 「拉取间隔」这一行**不出现**（不是灰掉 —— 关了就没有间隔可谈），
   //     「附近设备」也不显示（**没开就不会去发现**）。
   //   ⇒ 两句话都收在这一个布尔里（**一处判定**，免得两处各判一半）。
   const lanDirectOn = !!lanStatus?.mesh.enabled && syncMode !== "off";
@@ -1207,7 +1207,7 @@ export function SyncPanel() {
                 </div>
               </details>
 
-              {/* ★ 2026-09-29（规格 §9.2）：**总闸关了要说出来** —— 而且要说清"局域网直连也停着"。
+              {/* ★ 2026-09-29（规格 §9.2）：**总闸关了要说出来** —— 而且要说清"设备直连也停着"。
                   owner 原话「服务器不灰」，但他要求**在值旁边标明**「当前不自动同步」，不许让用户
                   以为它已经在跑；这一块就是那句话（照效果图的黄框：位置在「同步方式」下面）。
                   ⚠️ 用的是既有那一类"提示框"的样式（`.sync-web-note` 的**底色来自既有变量**），
@@ -1621,7 +1621,7 @@ export function SyncPanel() {
                               就是随这条拉取一起搬的。说错会让用户以为"正文是实时的"。
                               ⚠️ 本仓口径：**行内 Markdown 只在渲染边界的 `inlineMd` 里生效** ——
                               这里是面板自己写的句子，所以一个星号都不写（写了就会原样显示）。 */}
-                          这条路的节拍：每 {pullIntervalLabel(pullMs)}自动跑一次（服务端那条 ＋ 局域网直连那条
+                          这条路的节拍：每 {pullIntervalLabel(pullMs)}自动跑一次（服务端那条 ＋ 设备直连那条
                           都跟着它走）。正文也在这条路上，不是实时推送。
                         </span>
                       </div>
@@ -1635,7 +1635,7 @@ export function SyncPanel() {
                       ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
                          （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
                          摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行与邀请按钮
-                         **点开才显示**。⚠️ 没开局域网直连时整块**不出现**（不是灰掉，§9.3）。 */}
+                         **点开才显示**。⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
                   {lanDirectOn && (
                     <details className="sync-row">
                       <summary>

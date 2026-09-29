@@ -41,7 +41,7 @@ describe("同步方式：**一个**控件（不是一个间隔下拉 ＋ 一个�
 describe("地址只说一处", () => {
   const panel = read("src/components/SyncPanel.tsx");
 
-  it("④ `lanStatus.mesh.note` 在面板里只出现**一次**（并进了「局域网直连」那一行）", () => {
+  it("④ `lanStatus.mesh.note` 在面板里只出现**一次**（并进了「设备直连」那一行）", () => {
     const hits = panel.split("lanStatus.mesh.note").length - 1;
     expect(hits, "地址/可达性那句被说了多遍 ⇒ 两个读数看起来互相矛盾").toBe(1);
   });

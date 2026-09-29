@@ -28,7 +28,7 @@ export const SYNC_INTERVAL_MS = 30_000;
 export const SYNC_REALTIME_FALLBACK_MS = 5 * 60_000;
 
 /**
- * 「拉取间隔」—— **局域网直连这一档的节拍**（owner 2026-09-29 拍板：默认 **5 秒**）。
+ * 「拉取间隔」—— **设备直连这一档的节拍**（owner 2026-09-29 拍板：默认 **5 秒**）。
  *
  * ## 为什么"局域网那条路"必须有自己的一个数
  *
@@ -45,9 +45,9 @@ export const SYNC_REALTIME_FALLBACK_MS = 5 * 60_000;
  * 在这之前是这样：`lanMeshActive`（＝ Rust 判的"网格开着吗"）一为真，
  * [`effectiveAutoSyncMs`] 就**背着用户把间隔从 5 分钟换成 5 秒**。两个问题：
  * 1. **用户看不见** —— 面板上写着「近实时（连着服务端时立刻拉）」，实际却每 5 秒跑一次；
- * 2. **换不换取决于一个他不在看的开关**（局域网直连）⇒ 同一个下拉在两台机器上手感完全不同。
+ * 2. **换不换取决于一个他不在看的开关**（设备直连）⇒ 同一个下拉在两台机器上手感完全不同。
  * ⇒ 现在：**间隔由用户选**（5 秒 / 30 秒 / 1 分钟），面板上有一行把它显示出来，
- *    落盘在下面那个键里；而"局域网直连关着 ⇒ 这一档不适用"仍然成立（见 [`effectiveAutoSyncMs`]）。
+ *    落盘在下面那个键里；而"设备直连关着 ⇒ 这一档不适用"仍然成立（见 [`effectiveAutoSyncMs`]）。
  *    （老名字 `SYNC_LAN_INTERVAL_MS` 连同"按 `mesh.enabled` 偷偷换"那条路一起撤了 ——
  *     它的理由搬到这里，一个字没丢。一个量只有一个名字。）
  *
@@ -75,7 +75,7 @@ export const PULL_INTERVAL_DEFAULT_MS = 5_000;
  *
  * 口径：**读不出来 / 没设过 / 存了不是三档里的值 ⇒ 回落默认 5 秒**（不是 0）。
  * ⚠️ 为什么"回落默认"而不是"回落 0"：0 的含义是"不自动跑"，而这一档**没有**"关"这个语义
- *    （"关"由父项「局域网直连」表达 —— 那种时候这一行**根本不显示**，见 `SyncPanel`）。
+ *    （"关"由父项「设备直连」表达 —— 那种时候这一行**根本不显示**，见 `SyncPanel`）。
  */
 export function readPullIntervalMs(): number {
   try {
@@ -197,9 +197,9 @@ export function isLanMeshActive(): boolean {
 
 export function effectiveAutoSyncMs(): number {
   const raw = readAutoSyncMs();
-  // ★ 2026-09-29（本档）：**局域网直连那条路的节拍 = 用户选的「拉取间隔」** ——
+  // ★ 2026-09-29（本档）：**设备直连那条路的节拍 = 用户选的「拉取间隔」** ——
   //   不再是"按 `mesh.enabled` 在代码里悄悄换成 5 秒"。两个前提缺一不可：
-  //     · 局域网直连开着（`lanMeshActive`，由拿到 `lan_status` 的那一处喂进来）；
+  //     · 设备直连开着（`lanMeshActive`，由拿到 `lan_status` 的那一处喂进来）；
   //     · 总闸不是「关闭」（`raw > 0`）——**总闸优先**（规格 §9.2）：总闸关了 ⇒
   //       一个字都不自动跑（**含局域网那一档**），面板上那一行也会灰掉。
   //   ⚠️ "轮询必须**无条件**挂着"那条不变式在这一支上仍然成立：`readPullIntervalMs()`
@@ -208,7 +208,7 @@ export function effectiveAutoSyncMs(): number {
   if (raw > 0) return raw;
   if (!isNearRealtimeEnabled()) return 0;
   // 近实时那一档的**兜底**轮询（真机抓到的现场：`autoSync` 从没写过 ⇒ 裸读是 0）：
-  // 局域网直连开着 ⇒ 用这条路的节拍；关着 ⇒ 服务端档那条 5 分钟兜底。
+  // 设备直连开着 ⇒ 用这条路的节拍；关着 ⇒ 服务端档那条 5 分钟兜底。
   return lanMeshActive ? readPullIntervalMs() : SYNC_REALTIME_FALLBACK_MS;
 }
 

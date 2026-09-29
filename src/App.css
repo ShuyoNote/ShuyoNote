@@ -1356,7 +1356,7 @@ html[data-platform="win"] .app-body {
 .sync-row-body > .sync-card + .sync-card,
 .sync-row-body > .sync-empty-state + .sync-card { margin-top: 12px; }
 
-/* ── ★ 2026-09-29（丙档「局域网直连」）：三样新东西的样式 ─────────────────────────────
+/* ── ★ 2026-09-29（丙档「设备直连」）：三样新东西的样式 ─────────────────────────────
    口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /
    `--text-faint` / `--radius-md` / `--accent` / `--text`），**不引入任何新色值**。
    而那个"提示框"直接复用既有的 `.sync-web-note`（它的底色本来就是既有变量），
@@ -1376,7 +1376,7 @@ html[data-platform="win"] .app-body {
   background: var(--border);
 }
 
-/* ★ 规格 §9.2：总闸＝关闭 ⇒ 局域网直连那一行**灰掉**。
+/* ★ 规格 §9.2：总闸＝关闭 ⇒ 设备直连那一行**灰掉**。
    ⚠️ 与 `.sync-profiles.is-disabled` 同一套手法（`opacity` ＋ `pointer-events`）——
       它是"不能点"，不是"藏起来"（用户要看得到"它停着"这件事，上面的黄框在说为什么）。 */
 .sync-row.is-off {

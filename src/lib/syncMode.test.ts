@@ -173,11 +173,11 @@ describe("落盘与广播（面板改档 ⇒ App 那条定时器要重挂）", (
   });
 });
 
-// ══════════ 「拉取间隔」（2026-09-29，丙档「局域网直连」）：从"代码里悄悄换"变成"用户选" ══════════
+// ══════════ 「拉取间隔」（2026-09-29，丙档「设备直连」）：从"代码里悄悄换"变成"用户选" ══════════
 //
 // 现场的两种误读都要被这两条挡住：
 //   ① 「面板上写着近实时，实际每 5 秒跑一次，而用户不知道」⇒ 现在它有一行**显示出来**；
-//   ② 「局域网直连关着，可间隔还是被换成了 5 秒」⇒ 现在那一段**不适用**（见下面第 3 条）。
+//   ② 「设备直连关着，可间隔还是被换成了 5 秒」⇒ 现在那一段**不适用**（见下面第 3 条）。
 describe("「拉取间隔」：用户可见、可持久化、只对局域网那条路生效", () => {
   afterEach(() => {
     localStorage.removeItem(PULL_INTERVAL_KEY);
@@ -213,7 +213,7 @@ describe("「拉取间隔」：用户可见、可持久化、只对局域网那�
     }
   });
 
-  it("★ 局域网直连【开】⇒ 有效间隔就是**用户选的那一档**（不再是写死的 5 秒）", () => {
+  it("★ 设备直连【开】⇒ 有效间隔就是**用户选的那一档**（不再是写死的 5 秒）", () => {
     localStorage.setItem(NEAR_REALTIME_KEY, "1"); // 近实时那一档（局域网这条路没有流）
     localStorage.setItem(AUTO_SYNC_KEY, String(SYNC_REALTIME_FALLBACK_MS));
     setLanMeshActive(true);
@@ -223,7 +223,7 @@ describe("「拉取间隔」：用户可见、可持久化、只对局域网那�
     }
   });
 
-  it("★ 局域网直连【关】⇒ 拉取间隔**不适用**（近实时档回落到 5 分钟兜底）", () => {
+  it("★ 设备直连【关】⇒ 拉取间隔**不适用**（近实时档回落到 5 分钟兜底）", () => {
     localStorage.setItem(NEAR_REALTIME_KEY, "1");
     localStorage.setItem(AUTO_SYNC_KEY, String(SYNC_REALTIME_FALLBACK_MS));
     writePullIntervalMs(5_000);
@@ -234,7 +234,7 @@ describe("「拉取间隔」：用户可见、可持久化、只对局域网那�
     expect(effectiveAutoSyncMs()).toBe(5_000);
   });
 
-  it("★ **总闸优先**：同步方式 = 关闭 ⇒ 局域网直连开着也一个字都不自动跑", () => {
+  it("★ **总闸优先**：同步方式 = 关闭 ⇒ 设备直连开着也一个字都不自动跑", () => {
     localStorage.setItem(AUTO_SYNC_KEY, "0"); // 「关闭」那一档写下去的就是 0
     localStorage.setItem(NEAR_REALTIME_KEY, "0");
     setLanMeshActive(true);
