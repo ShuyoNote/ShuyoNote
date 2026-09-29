@@ -34,6 +34,13 @@
 | **INV-KB-readonly-surface** | **只读面（M1）里 `kind === 'write'` 的条数 = 0** | ⚠️ **归属 `INV-MCP-readonly-first`**（不在本表重复 ✗） | 往 M1 清单塞 `pages.create` ⇒ 红 ✓ | **能**（`check-agent-surface`；与 `INV-MCP-readonly-first` 同一条，以已实现判据为准 ✓） | 本机 Node |
 | **INV-KB-tool-desc-clean** | **工具描述里不出现仓内路径与内部字段名** | 扫生成物描述串：命中 `src/`、`content_json`、`workspace_id` 等 ⇒ 红 | 描述里写 `` `content_json` `` ⇒ 红 ✓ | **能**（`check-agent-surface`） | 本机 Node |
 | **INV-KB-space-split** | **个人空间一分内容不出本机；团队空间按已声明口径** | 个人侧的网络目标清单必须为空；团队侧逐条对 `docs/sync-server-data-boundary.md` | 给个人侧加一个 http 目标 ⇒ 红 ✓ | **待立**（个人侧可机检；团队侧需人核） | 人 ＋ 本机 Node |
+
+> ⚠️ **owner 2026-09-29 订正（按「丙」）**：`INV-KB-space-split` 分两种情况 ——
+> · **已加密的个人空间** ⇒ ⛔ **永不放开**（钥匙交出去＝端到端承诺作废）
+> · **明文个人空间** ⇒ ✅ **用户可显式放开**给外部 Agent／云端大模型，
+>   但**必须显式同意 ＋ 如实说明去向**
+> （因为「不经过我们的服务器」**≠**「数据不出本机」——
+>   与 `personal-edition-requirements` 的 `INV-PER-cloud-agent-needs-consent` 同一条。）
 | **INV-KB-audit-subject** | **审计能区分「人／插件／外部 Agent」三类主体** | ⚠️ **与 `INV-MCP-single-authz` 相关**，但"主体标识"是**新增**的（不在其内 ✓） | 把主体字段写死成一类 ⇒ 红 ✓ | **待立**（前置未定） | Rust/CI |
 | **INV-KB-single-semantics** | **外部经桥与 App 内走同一校验点、同一过滤语义**（软删／工作空间／`content_json` 收口） | ⚠️ **归属 `INV-MCP-single-authz`**（不在本表重复 ✗） | 让桥自己写一遍过滤（少一个软删条件）⇒ 红 ✓ | 待立 | 本机 Node ＋ Rust |
 | **INV-KB-derived-rebuildable** | **索引／wiki／地图都是派生物，可重建** | 删索引 ⇒ 功能不降级（只是慢）；重建后**同一查询同结果集** | 让索引成为唯一真相（删了就查不到）⇒ 红 ✓ | **部分**（"可重建"半边能跑：`check-generated-artifacts`；"删索引不降级"顺延 Phase 1 ✗） | 本机 Node |
