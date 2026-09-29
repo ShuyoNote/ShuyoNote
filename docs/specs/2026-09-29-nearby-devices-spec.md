@@ -1243,3 +1243,64 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
   判据：`CHECK_CODE_MIN_BITS` 的值与渲染位数**一致**；且那条测试仍在岗。
   退化会怎样：强度悄悄降到"可离线试出" ⇒ 而**界面上完全看不出来**。
 ```
+
+---
+
+## §18 本文件**全部不变式**（总表 —— 只索引，**不改各节原文**）
+
+> 由来：欠账「**本文件的不变式散在四处**（§2／§11／§13.6／§13.8.6＋§17.6）」。
+> ⚠️ 按目录里记的做法：**只加索引、不改原文** ⇒ 既收拢了，又**不断引用**。
+> 用法：找不变式**先看本表**（一行定位到节号），再回各节读正文。
+
+### 18.1 全部 24 条（按族分组）
+| id | 一句话 | 在哪节 |
+|---|---|---|
+| **`INV-NEARBY-one-source`** | 「附近有哪几台设备」**只有一处来源**（`lan_status`）；界面不许自己数 | §2 |
+| **`INV-NEARBY-invite-has-no-keyring`** | 邀请载荷**不许含**钥匙袋／任何按空间密钥材料 | §2 |
+| **`INV-NEARBY-mesh-gate`** | **网格门槛一个字不改**（`isDesktopPlatform() && …`） | §2 |
+| **`INV-NEARBY-space-id-not-db-space`** | 远端 `space_id` 与本地 `db_space` **不许合成一个** | §2 |
+| ⚠️ **`INV-NEARBY-no-web-invite`** | **Web 档不许出现邀请入口** ⇒ ⚠️ **该 id 已被改名为 `INV-NEARBY-no-render-without-data`**（撤邀请时） | §2 |
+| `INV-LIC-no-server-in-client` | **不许**把服务端实现搬进客户端（三条禁止） | §10 |
+| **`INV-AWARE-no-wire-version-bump`** | 加光标**不许升** `WIRE_VERSION` | §11 |
+| **`INV-AWARE-idle-zero-traffic`** | **没人动光标时**，网段里没有光标帧 | §11 |
+| **`INV-AWARE-e2ee-not-applicable`** | **加密的个人空间不发也不收**光标 | §11 |
+| **`INV-AWARE-no-second-truth`** | 光标**不进任何持久层** | §11 |
+| **`INV-AWARE-identity-required`** | 每条帧**必须可归因** | §11 |
+| **`INV-AWARE-expiry-on-receiver`** | **过期由接收侧自己判** | §11 |
+| ⚠️ **`INV-NS-pairing-needs-no-acceptance`** | 配对**不需要对方"接受"** ⇒ ⚠️ **名字有误导**：§16.1 已纠正为「不需要**社交同意**，**但必须验证**」<br>⇒ **应与 `INV-NS-pairing-requires-proof` 合并或改名**（见 18.2） | §13.8.6 |
+| **`INV-NS-own-device-cannot-be-proven`** | **不许**声称系统能识别"是不是你的设备"（只许说"已配对"） | §13.8.6 |
+| **`INV-NS-personal-is-single-person`** | 个人空间**不提供邀请**；要协作请用团队空间 | §13.6 |
+| **`INV-NS-shared-secret-cannot-evict-one`** | 共享口令**无法逐台撤销** ⇒ 只适用单人多设备 | §13.6 |
+| **`INV-NS-unencrypted-needs-strong-secret`** | 未加密 ⇒ **口令是唯一防线** ⇒ 必须强度要求＋说明 | §13.8 |
+| **`INV-NS-address-survives-network-change`** | 报出地址要**经得起换网**（优先"自动选"） | §13.3（正文在 13.9） |
+| **`INV-NS-bind-survives-network-change`** | **允许通配绑定** ＋ 系统枚举（⚠️ 要**推翻** `mesh.rs:1916`） | §13.9 |
+| **`INV-NS-one-window-many-spaces`** | **一个窗口服务多空间**（端口数不许随空间数增长） | §13.9 |
+| **`INV-NS-second-person-implies-team`** | 出现第二个人 ⇒ **必须用团队空间** ⇒ ⚠️ **落地方案见** `docs/plans/2026-09-29-inv-ns-second-person-landing.md`<br>（**结论：它更像"口径"而非独立判据 ⇒ 建议不单独取得判据**） | §13.10 |
+| **`INV-NS-pairing-requires-proof`** | 配对**不需要社交同意，但必须验证**（两端对上） | §17.4／§17.6 |
+| **`INV-NS-pairing-code-is-human-compared`** | 配对码**必须由人比对** ⇒ 不许"机器自动通过" | §17.6 |
+| **`INV-NS-pairing-code-length-kept`** | 码长按 `CHECK_CODE_MIN_BITS`（60）**不许缩短** | §17.6 |
+
+### 18.2 ⚠️ 本表暴露的**三处该处理的问题**（我不在本文里改，只点名）
+```text
+① ⚠️ **`INV-NS-pairing-needs-no-acceptance` 的名字与现实相反**
+   · 它说"不需要 accept" ⇒ 而 §16.1／§17 把口径改成「**不需要社交同意，但必须验证**」
+   · 而 `INV-NS-pairing-requires-proof` 已经把"必须验证"说全了
+   ⇒ ⇒ **建议**：**废掉前者、只留后者**（或把前者改名成 `…-needs-no-social-consent`）
+     ⇒ ⚠️ 而**废 id 要留痕**（别静默删：它是"当时的口径"）
+② ⚠️ **`INV-NEARBY-no-web-invite` 已被改名**（撤邀请时改的）⇒ 表里两处都列了 ⇒ 要**明确哪个是现名**
+③ ⚠️ **`INV-NS-address-survives-network-change` 与 `INV-NS-bind-survives-network-change` 高度重叠**
+   （一个讲"报出地址经得起换网"、一个讲"绑定允许通配＋枚举"）
+   ⇒ ⇒ **建议合并成一条**（它们是同一件事的两半：**换网不用人改 = 绑通配 ＋ 报地址都可达**）
+```
+
+### 18.3 ⚠️ 一条**跨文件**的说明
+```text
+本表**只覆盖本文（`nearby-devices-spec`）**的不变式。
+另有两族的**判据载体在别的文件**，别混：
+  · **两版需求的不变式**（`INV-PER-*` 7 条 ＋ `INV-ENT-*` 4 条）⇒ 在
+    `personal-edition-requirements`／`enterprise-edition-requirements` 里（各自 §3）
+  · **知识库/Agent 那一族**（`INV-KB-*`／`INV-MCP-*`）⇒ 在
+    `knowledge-and-agent-access-spec`／`mcp-host-spec` 里
+⇒ ⇒ ⚠️ 而 `INV-KB-space-split` 与 `INV-PER-cloud-agent-needs-consent` 是**同一条的两处**
+   （已在 2026-09-29 按"丙"对齐）⇒ 也**不许各立一份**。
+```
