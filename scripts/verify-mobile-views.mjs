@@ -93,7 +93,44 @@ async function applyShell(page) {
       // ⚠️ 给 null 会读不到 unregisterListener ⇒ 一串 unhandled rejection ⇒ 必须给 {}
       "plugin:event|listen": {},
       "plugin:updater|check": null,
+
+      // ── 2026-09-29 补：**13 个缺的命令**（清单来自 `APP_SHELL_TRACE=1` 实测，不是猜）──────
+      // 来由：windows 在 reply-7 里把记录器加好了并给出清单，同时逐字说明
+      //   「⚠️ 我**只报清单、不擅自替你改桩** ✓（桩是你的件）」⇒ 补桩归我。
+      // 我自己又跑了一遍 trace（覆盖面比它那次全）：**13 个**，比它报的多出
+      //   `get_sync_budget` / `network_type` / `team_get_server_email` / `team_list_spaces` / `list_sync_history`。
+      // ⚠️ **形状一律照 `src/lib/platform/commands.ts` 的命令注册表取**（那里逐条写着 `result:` 类型），
+      //    不是"给个 null 了事" —— 形状不对会让组件读到它时抛，那比缺命令更难查。
+      get_sync_budget: { disk_floor_mb: 1024, max_file_mb: 100, max_run_mb: 0, wifi_only: false }, // :982 → SyncBudget(:131)
+      network_type: "wifi", // :989 → string
+      team_online: [], // :1024 → {user_id, email?, …}[]
+      team_presence_beat: { ok: true }, // :1023 → {ok: boolean}
+      sync_stream_start: {
+        // :629 → SyncStreamStatus(:153)
+        running: false,
+        ws_id: "ws1",
+        server: "http://192.168.43.206:8787",
+        last_event_at: 0,
+        reconnects: 0,
+        last_error: "",
+        reason: "no-binding",
+      },
+      team_get_server_email: null, // :1005 → string | null
+      team_list_spaces: [], // :997 → {id, name, role, owner…}[]
+      list_sync_history: [], // :1006 → {ws_id, ws_name, at, pushed, pulled, ok, …}[]
+      list_attr_defs: [], // :1033 → AttrDef[]（types.ts:604）
+      board_data: [], // :1065 → BoardColumn[]（types.ts:69）
+      get_graph: { pages: [], edges: [], blocks: [], block_edges: [], blocks_supported: false }, // :930 → GraphData（types.ts:584）
+      list_page_attachments: [], // :945 → AttachmentMeta[]（types.ts:50）
+      list_attachment_hashes: [], // :1183 → string[]
     };
+    // ⚠️ 2026-09-29：**事件插件的内部挂点** —— 只给 `"plugin:event|listen": {}` **不够**。
+    //    `@tauri-apps/api/event.js:43` 的 `_unlisten` 会读
+    //      `window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener(event, eventId)`
+    //    ⇒ 缺它时每次退订都抛 `Cannot read properties of undefined (reading 'unregisterListener')`
+    //      （补桩前后都在，不是补桩引入的；它让「同步面板页无 JS 报错」这条一直红）。
+    //    形状照 Tauri 自己的 `@tauri-apps/api/mocks.js:157`（它就是这么挂的）⇒ 不是猜的。
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     window.__TAURI_INTERNALS__ = {
       invoke: async (cmd) => {
         // ⭐ SHELL TRACE（2026-09-28，macOS 侧要的）：把每次调用记下来；**未知命令单独标** ——
@@ -1609,6 +1646,51 @@ async function main() {  const executablePath = findChrome();
   ];
 
   try {
+  // ══ 同步面板：两条不变式的探针（规格 §2 第 2、3 条）══════════════════════════════
+  // ⚠️ **刻意排在所有视图流程之前**（2026-09-29 挪）。理由是实测逼出来的：
+  //    tauri 档跑到后面几个视图时会因【桩还不够仿真】而提前抛异常
+  //    （`文件（网格）` / `窄屏右侧工具条` 两个上下文里 `.activity-group .activity-btn` 超时），
+  //    而桌面那一段原本排在手机循环**之后** ⇒ **永远到不了** ⇒ `desktop-no-scroll` 在 tauri 档量不到。
+  //    这两条的读数**本来就不依赖任何视图流程** ⇒ 放最前面就与那些流程解耦。
+  // ⚠️ 只改执行顺序；判据与判语一个字没动。
+  {
+    for (const vp of ACTIVE_PHONES) {
+      console.log(`\n【${vp.name} · 同步面板：常驻 chrome（壳=${APP_SHELL}）】`);
+      const sctx = await browser.createBrowserContext();
+      const spage = await sctx.newPage();
+      await pinAppLanguage(spage);
+      const serrs = [];
+      spage.on("pageerror", (e) => serrs.push(String(e).slice(0, 160)));
+      await spage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+      await applyShell(spage);
+      await spage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await waitForApp(spage);
+      await sleep(600);
+      await openSyncPanel(spage);
+      assertPersistentChrome(await measureSyncPanel(spage), vp);
+      await shot(spage, `${vp.name}-sync-panel`);
+      ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
+      await sctx.close();
+    }
+    console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：桌面不滚（壳=${APP_SHELL}）】`);
+    const dctx = await browser.createBrowserContext();
+    const dpage = await dctx.newPage();
+    await pinAppLanguage(dpage);
+    const derrs = [];
+    dpage.on("pageerror", (e) => derrs.push(String(e).slice(0, 160)));
+    await dpage.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
+    await applyShell(dpage);
+    await dpage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+    await waitForApp(dpage);
+    await sleep(600);
+    await openSyncPanel(dpage);
+    const sm = await measureSyncPanel(dpage);
+    assertDesktopNoScroll(sm, DESKTOP);
+    assertPersistentChrome(sm, DESKTOP);
+    await shot(dpage, `${DESKTOP.name}-sync-panel`);
+    ok(derrs.length === 0, `同步面板页无 JS 报错${derrs.length ? "：" + derrs.join(" | ") : ""}`);
+    await dctx.close();
+  }
     for (const vp of ACTIVE_PHONES) {
       const ctx = await browser.createBrowserContext();
       const page = await ctx.newPage();
@@ -1620,27 +1702,6 @@ async function main() {  const executablePath = findChrome();
       await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
       await waitForApp(page);
 
-      // ⚠️ 放在**最前面**：这两条的读数不依赖后面任何一步；
-      //    而 tauri 档后面会因为桩缺口提前抛异常 ⇒ 放最后就永远量不到。
-      // ---------- 同步面板：常驻 chrome（规格 §2 第 2 条）----------
-      {
-        console.log(`\n【${vp.name} · 同步面板：常驻 chrome（壳=${APP_SHELL}）】`);
-        const sctx = await browser.createBrowserContext();
-        const spage = await sctx.newPage();
-        await pinAppLanguage(spage);
-        const serrs = [];
-        spage.on("pageerror", (e) => serrs.push(String(e).slice(0, 160)));
-        await spage.setViewport({ ...vp, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
-        await applyShell(spage);
-        await spage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
-        await waitForApp(spage);
-        await sleep(600);
-        await openSyncPanel(spage);
-        assertPersistentChrome(await measureSyncPanel(spage), vp);
-        await shot(spage, `${vp.name}-sync-panel`);
-        ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
-        await sctx.close();
-      }
       await sleep(600);
 
       for (const v of VIEWS) {
@@ -2209,27 +2270,6 @@ async function main() {  const executablePath = findChrome();
     await shot(desk, `${DESKTOP.name}-pdf-reader`);
     await deskCtx.close();
 
-    // ---------- 同步面板：桌面不滚（规格 §2 第 3 条）----------
-    {
-      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：桌面不滚（壳=${APP_SHELL}）】`);
-      const sctx = await browser.createBrowserContext();
-      const spage = await sctx.newPage();
-      await pinAppLanguage(spage);
-      const serrs = [];
-      spage.on("pageerror", (e) => serrs.push(String(e).slice(0, 160)));
-      await spage.setViewport({ width: DESKTOP.width, height: DESKTOP.height });
-      await applyShell(spage);
-      await spage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
-      await waitForApp(spage);
-      await sleep(600);
-      await openSyncPanel(spage);
-      const sm = await measureSyncPanel(spage);
-      assertDesktopNoScroll(sm, DESKTOP);
-      assertPersistentChrome(sm, DESKTOP);
-      await shot(spage, `${DESKTOP.name}-sync-panel`);
-      ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
-      await sctx.close();
-    }
   } finally {
     await browser.close();
     if (process.argv.includes("--update-views-baseline")) {

@@ -1,5 +1,8 @@
 {
+  "desktop-no-scroll|tauri|1280x800": 0,
   "desktop-no-scroll|web|1280x800": 0,
+  "persistent-chrome|tauri|1280x800": 0,
+  "persistent-chrome|tauri|320x568": 0,
   "persistent-chrome|tauri|390x844": 0,
   "persistent-chrome|web|1280x800": 0,
   "persistent-chrome|web|320x568": 0,

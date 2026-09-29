@@ -1336,6 +1336,28 @@ export function SyncPanel() {
                 </p>
               </details>
             )}
+
+              {/* ⚠️ 2026-09-29（D1 补正）：`.sync-net`（「只在 Wi-Fi 下自动同步」那个 checkbox）**也搬出吸底条**。
+                 为什么第一版漏了它：web 上 `netKind === "n/a"` ⇒ 整块不渲染（上面那段注释解释了为什么按能力收起来），
+                 而 web 档正是先前量到 0 的那一档 ⇒ **漏了也不会红**。
+                 ⚠️ 补桩之后 tauri 档把它渲染出来 ⇒ 实测 footer 里还剩 **1 个可见表单 = 这个 checkbox** ⇒ 现形。
+                 按 §2 第 2 条口径「读数行可以有，**设置控件不行**」—— 它是个设置 ⇒ 必须搬。 */}
+            {netKind !== "n/a" && (
+              <label className="sync-att sync-net">
+                <input
+                  type="checkbox"
+                  checked={budget?.wifi_only ?? true}
+                  disabled={budgetBusy}
+                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
+                />
+                <span className="sync-att-text">
+                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
+                  <span className="sync-hint">
+                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                  </span>
+                </span>
+              </label>
+            )}
           </div>
 
           <footer className="sync-foot">
@@ -1371,22 +1393,6 @@ export function SyncPanel() {
 
             {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
                 与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
-            {netKind !== "n/a" && (
-              <label className="sync-att sync-net">
-                <input
-                  type="checkbox"
-                  checked={budget?.wifi_only ?? true}
-                  disabled={budgetBusy}
-                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
-                />
-                <span className="sync-att-text">
-                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
-                  <span className="sync-hint">
-                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
-                  </span>
-                </span>
-              </label>
-            )}
 
             {syncing ? (
               <div className={`sync-status is-progress${syncPhase === "error" ? " is-err" : ""}`}>
