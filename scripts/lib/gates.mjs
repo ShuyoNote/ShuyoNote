@@ -92,6 +92,19 @@ export const GATES = [
       + "本门禁把这三条钉在代码里：服务端实现时**契约先红再绿** ✓",
   },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
+  // ---- deploy（联网 ⇒ 不进 DEFAULT_GROUPS ✓）----
+  {
+    id: "check-web-deploy",
+    group: "deploy",
+    label: "Web 版线上自检（GitHub Pages ＋ 国内主站：版本号与资源可达性）",
+    cmd: "node scripts/check-web-deploy.mjs",
+    incident:
+      "2026-09-29 实测：它此前**只挂在 package.json 的 check:web-deploy 上**——gates.mjs 没注册、"
+      + "CI 工作流与文档都没有调用点 ⇒ 按本仓 AGENTS §3 的铁律（只挂 build/package.json 链＝在 verify 与 CI 上**隐形**），"
+      + "它属于同源事故的第三次：**能抓到问题，但没人跑**。当天顺手跑它即红 ✗ —— GitHub Pages 的 index.html 引用的 "
+      + "`prism/prism-*.js` **404**（v1.84.4 那类\"index 新、资源旧\"）；国内主站 25/25 全可达 ✓。",
+    note: "联网 ⇒ 不进默认组；该由每日定时跑（改工作流待 owner 同意 ✓）",
+  },
   {
     id: "check-ontology-generated",
     group: "contract",
@@ -631,7 +644,7 @@ export const GATES = [
   },
 ];
 
-export const GROUP_ORDER = ["contract", "smoke", "sync", "plugin", "browser", "mobile", "rust", "artifact"];
+export const GROUP_ORDER = ["contract", "smoke", "sync", "plugin", "browser", "mobile", "rust", "artifact", "deploy"];
 
 // 本地默认组：必须**只含纯 Node 门禁**——需要 Chromium / dev server / cargo 的组不进默认，
 // 否则"一键本地验收"在没装浏览器的机器上直接红，很快就没人跑了。
@@ -648,6 +661,7 @@ export const DEFAULT_GROUP_FORBIDDEN = [
   "verify-mobile-layout",
   "verify-mobile-overlays",
   "verify-mobile-views",
+  "deploy", // 联网络判据：不许进一键本地验收 ✓
 ];
 
 export function gateSetOf(list) {
