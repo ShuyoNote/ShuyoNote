@@ -102,3 +102,46 @@ docs  ：c0b87d89 复查台账 ｜ 841d2f3d 容量压测 ｜ 368c1d21 补两节 
 · `mesh::` 有一次**偶发失败**（连跑 3 次 24/0）⇒ 未定位
 · **§13.10 那条判据的落地方案＋任务**未出
 ```
+
+---
+
+## 六、⭐ 追加批次（2026-09-29 深夜 —— 上面那份写完之后又出的一批）
+
+> ⚠️ 上面 §一–§五 写于当日较早；之后又出了 **20 份**。这里**只列新增**，不重述。
+
+### 6.1 两版需求落地（**本轮的主线**）
+| 文件 | 是什么 |
+|---|---|
+| `docs/specs/2026-09-29-enterprise-edition-requirements.md` | **企业版需求（定死）**：MUST 分组 ＋ WON'T ＋ 四条不变式 ＋ 五阶段<br>＋ **§1.1bis**（三个性能指标不在同一个 N 上） |
+| `docs/specs/2026-09-29-personal-edition-requirements.md` | **个人版需求（定死）**：13 条 MUST ＋ WON'T ＋ 七条不变式 |
+| `docs/plans/2026-09-29-requirements-judgment-matrix.md` | **39 条 MUST 逐条"怎么验"** |
+| `docs/plans/2026-09-29-both-editions-difficulty-and-cost.md` | 技术难度与实现成本（人日估算 ＋ 风险） |
+| `docs/plans/2026-09-29-both-editions-iteration-plan.md` | **7 个迭代** |
+| `docs/specs/2026-09-29-personal-edition-{spec,approach,tasks}.md` | 个人版**规格／方案／任务**（514／310／270 行） |
+| `docs/specs/2026-09-29-enterprise-edition-{spec,approach,tasks}.md` | 企业版**规格／方案／任务**（418／222／299 行） |
+
+### 6.2 对标竞品（⚠️ **这批有重复，整理者在处理**）
+`sync-server-vs-competitors`（＋ §9 订正）／`target-benchmark-vs-competitors`／
+`team-edition-vs-competitors`／`strongest-enterprise-benchmark`／`personal-edition-vs-competitors`／
+`edition-boundary`／`team-edition-capability-and-limits`
+
+### 6.3 规模与性能（**实质依据 —— 需求引用它们，别当冗余删**）
+`wps-scale-roadmap`／`l4-page-subscription-limits`／`horizontal-scale-limit-single-space`／
+`read-concurrency-limit`
+
+### 6.4 台账与纪律（本轮还债产出）
+| 文件 | 是什么 |
+|---|---|
+| `docs/plans/2026-09-29-owner-decisions-pending.md` | ⭐ **待 owner 拍板清单（唯一）**：D1–D8，每条写清"卡住谁" |
+| `docs/plans/2026-09-29-git-operation-discipline.md` | **git 操作纪律**：从今天**四次失误**收出六条规则（含可查信号） |
+| `docs/plans/2026-09-29-mesh-flake-diagnosis.md` | ⭐ **`mesh::` 的"偶发失败"＝ 40%**（推翻台账描述） |
+| `docs/plans/2026-09-29-inv-ns-second-person-landing.md` | `INV-NS-second-person-implies-team` 的落地方案（**落不了技术拦截**） |
+| `docs/plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md` | 知识库/Agent/MCP 那一族 vs 两版需求（**不冲突，同一个轴**） |
+
+### 6.5 ⚠️ 而这一批带来的**两条新纪律**（都值得记住）
+```text
+① **"连跑 N 次全绿"在 N 小时不构成"它不红"的证据**
+   —— 40% 失败率下，3 次全绿的概率有 **22%**（`mesh-flake-diagnosis`）
+② **"禁用词"不能机械扫** —— 要区分【提到该动作】与【引用该动作作为依赖】
+   —— 前者可能是裁定本身（如 WON'T「不做邀请」），后者才是失效的引用
+```
