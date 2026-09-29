@@ -70,12 +70,15 @@
 | `{}/spaces/{}/changes-stream`（SSE） | `sync_stream.rs:109` | 否（改近实时，可降级成轮询） |
 | `{att_base}/attachments` | `sync.rs:2600` | 附件才有 |
 | `{}/lineage-claim` | `sync.rs:1627` | CRDT 血统 claim 才有 |
-| `{}/spaces/{}/keyring` | `sync.rs:1725` | 钥匙袋（与 B 片有交集，见那张单） |
-> ⚠️ **2026-09-29 追改**：**这一行已作废** —— `{}/spaces/{}/keyring` 那条（客户端侧）**已整条删除**（`851c1a7b`）。
-> ⇒ 今天客户端**不再有**任何经服务器搬钥匙袋的调用。| `{url}/spaces` ／ `{url}/spaces/{space_id}/members` | `sync.rs:1039` / `1093` | 绑定与成员 |
+| ~~`{}/spaces/{}/keyring`~~ | ~~`sync.rs:1725`~~ | ~~钥匙袋（与 B 片有交集，见那张单）~~ |
+| `{url}/spaces` ／ `{url}/spaces/{space_id}/members` | `sync.rs:1039` / `1093` | 绑定与成员 |
 | `{}/spaces/{}/presence` ／ `{}/spaces/{}/online` | `sync.rs:3263` / `3275` | 否（在线态） |
 | `{}/spaces/{}/pages/{}/comments` | `sync.rs:3284` | 否（评论） |
 | `{server}/auth/register` ／ `{server}/push` ／ `{server}/spaces` | `sync_stream.rs:775` / `832` / `787` | 注册/绑定那一步 |
+
+> ⚠️ **2026-09-29 追改**：**上表 `{}/spaces/{}/keyring` 那一行已作废** —— 它（客户端侧）**已整条删除**
+> （`851c1a7b`）⇒ 今天客户端**不再有**任何经服务器搬钥匙袋的调用。
+> ⇒ 下面"最小面"那句话里**少了这一项**：那一整串现在只剩上表未划掉的那些。
 
 ⇒ **"接待窗口的最小面"不是两个端点，而是上面这一整串**。所以本片必须**分片**，并且把
 "没实现的那几件"变成**显式不支持**（§3）—— 否则用户看到的是"功能悄悄不动"。
