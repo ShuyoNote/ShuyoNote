@@ -429,32 +429,6 @@ export interface CommunityTaxonomy {
 }
 
 /**
- * ③ 0b（2026-09-24）**公开材料**推 / 取的结果（与 Rust `sync::SpaceKeyringResult` 一一对应）。
- *
- * ⚠️ "正常的不顺利"（没配同步 / 服务端上没有 / 网络不通）用 `outcome` 表达，**不抛异常** ——
- * 抛出去会被平台 invoke 层记成一条 error（`claim_page_lineage` 那一轮踩过）。
- * · `ok` 取回/推成功；`not_configured` 这个空间没绑好同步；`no_material` 本机还没有钥匙袋；
- * · `not_on_server` 服务端上没有那一份（404）；`already_local` 本机已有，**没有动它**；
- * · `offline` 连不上；`rejected` 服务端拒绝了（看 `status`）。
- */
-export interface SpaceKeyringOutcome {
-  outcome:
-    | "ok"
-    | "not_configured"
-    | "no_material"
-    | "not_on_server"
-    | "already_local"
-    | "offline"
-    | "rejected";
-  /** `ok` 时是材料的字节数。 */
-  bytes: number;
-  /** 服务端 HTTP 状态码（没走到服务端 ⇒ 0）。 */
-  status: number;
-  /** 一句**人话**（说清下一步该做什么）——界面**原样**显示，别自己改写。 */
-  message: string;
-}
-
-/**
  * B 片 ①-a：换设备的**产出侧**读数（`pairing_export`）。
  *
  * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
@@ -616,18 +590,6 @@ export interface CommandMap {
       key_available: boolean;
       gate: { allow: boolean; unclassified: boolean; reason: string };
     }>;
-  };
-  // ③ 0b（2026-09-24）：**公开材料**的推 / 取 —— 换设备时只凭主口令解开自己的空间。
-  // `workspace_id` 是**本地**工作空间 id（远端 space id 由 Rust 侧按同步档案解析，与 claim 同口径）。
-  // ⚠️ **桌面专属**（登记进 `DESKTOP_ONLY_COMMANDS`）：Web 上没有钥匙袋，也就没有"公开材料"可取。
-  // `overwrite` 只对 `pull` 有意义：默认**不覆盖**本机已有的那一份（覆盖是危险动作，见 Rust 侧注释）。
-  push_space_keyring: {
-    args: { args: { workspace_id: string } };
-    result: SpaceKeyringOutcome;
-  };
-  pull_space_keyring: {
-    args: { args: { workspace_id: string; overwrite?: boolean } };
-    result: SpaceKeyringOutcome;
   };
   // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**
   //（Web 上没有钥匙柜，也就没有"公开材料"可搬；理由写在 `check-web-commands` 的
