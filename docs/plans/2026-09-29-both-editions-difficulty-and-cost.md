@@ -1,4 +1,6 @@
 # 个人版 ＋ 企业版：**技术难度与实现成本**
+> 状态：**已收口**（估算，非实测）。证据：人日逐项引自各依据文档（见 `../specs/2026-09-29-enterprise-edition-requirements.md`）
+
 
 > 由来：owner 2026-09-29「**个人版和企业版的需求定死，分析一下技术难度和实现成本**」
 > 需求出处：[`personal-edition-requirements`](../specs/2026-09-29-personal-edition-requirements.md)

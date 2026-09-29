@@ -1,4 +1,6 @@
 # 两份需求的**判据矩阵**（逐条 MUST → 怎么验）
+> 状态：**已收口**。证据：39 条 MUST 逐条给出判据载体（见 `../specs/2026-09-29-personal-edition-requirements.md`）
+
 
 > 由来：owner 2026-09-29「**以这两个需求为基准…**」＋ 我在
 > [`both-editions-difficulty-and-cost`](2026-09-29-both-editions-difficulty-and-cost.md) §4 里承认的缺口：

@@ -1,4 +1,6 @@
 # 两版需求的**可执行迭代计划**（把 MUST 排进迭代）
+> 状态：**已收口**。证据：7 个迭代；算术已按 `4a747834` 订正（见 `../specs/2026-09-29-enterprise-edition-requirements.md`）
+
 
 > 由来：owner 2026-09-29「继续」。
 > 依据：[`personal-edition-requirements`](../specs/2026-09-29-personal-edition-requirements.md) ／

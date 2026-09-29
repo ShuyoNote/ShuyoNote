@@ -1,4 +1,6 @@
 # 知识库／Agent／MCP 那一族 vs 两版需求 —— **冲突核查**
+> 状态：**已收口**（核查）。证据：四处冲突面全部无冲突（见 `../specs/2026-09-29-personal-edition-requirements.md`）
+
 
 > 由来：owner 2026-09-29「**看看 rag、LLM Wiki、Ontology、MCP 那个需求和这两个是否有冲突**」
 > 核查对象（那一族 11 份）：

@@ -1,4 +1,6 @@
 # 如何提高到 **10000 设备以上**实时规模
+> 状态：**已收口**（分析）。证据：按页订阅降阶的推理（见 `../plans/2026-09-29-server-capacity-loadtest.md`）
+
 
 > upstream：容量压测（M1≈10／M2≈100／M3≈200 台）＋ [三条路线对比](2026-09-29-single-space-limit-three-routes.md)
 > ＋ [L4 深度](2026-09-29-l4-forward-deltas-deep-dive.md)

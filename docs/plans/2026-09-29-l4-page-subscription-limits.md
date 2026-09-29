@@ -1,4 +1,6 @@
 # L4「按页订阅」的极限 ＋ 技术路线
+> 状态：**已收口**（分析）。证据：四道极限 ＋ 三步降阶（见 `../plans/2026-09-29-horizontal-scale-limit-single-space.md`）
+
 
 > L4 ＝ **按页订阅**（收件人从 N 降到 k = 同页人数）—— 路线图里**唯一降阶**的一层。
 > 依据：`wps-scale-roadmap` ／ `ten-thousand-scale` ／ `server-capacity-loadtest`（实测）／ `team-edition-capability-and-limits`

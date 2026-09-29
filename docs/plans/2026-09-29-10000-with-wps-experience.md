@@ -1,4 +1,6 @@
 # 10000+ 设备，做到 WPS / 腾讯文档那样的实时协同
+> 状态：**已收口**（分析）。证据：四笔账 ＋ 要拍的四件（见 `../specs/2026-09-29-strongest-enterprise-benchmark.md`）
+
 
 > 上游：[10000 设备规模](2026-09-29-ten-thousand-scale.md)（按页订阅才降阶）
 > ＋ [L4 深度](2026-09-29-l4-forward-deltas-deep-dive.md) ＋ [增量深度](2026-09-29-payload-increment-deep-dive.md)
