@@ -93,6 +93,18 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-derived-provenance",
+    group: "contract",
+    label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",
+    cmd: "node scripts/check-derived-provenance.mjs",
+    incident:
+      "2026-09-29 读数：派生内容**早已有**「从哪来」的强制字段 —— `ExtractedSegment.kind` ＋ `loc` 都必填 ✓" +
+      "（类型注释：「决定检索侧如何展示与加权，也决定 loc 的格式」）。检索、引用、加权全靠它 ⇒" +
+      "一旦被改成可选（`loc?`），引用与定位会**静默**降级 ✗ ⇒ 值得一条窄判据。⚠️ 同时更正我先前的错话：" +
+      "`source` 列确实存在，但**只属于插件两表**；**内容**层面没有「外部来源」字段 ✗（那是 R55 的真缺口 ✓）",
+    registered: "2026-09-29",
+  },
+  {
     id: "check-audit-shape",
     group: "contract",
     label: "审计的形状（入口唯一 ＋ 条目不含正文 ＋ 只增）",
