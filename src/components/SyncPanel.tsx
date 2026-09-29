@@ -980,27 +980,27 @@ export function SyncPanel() {
               ⚠️ 放在这一屏是因为闸门拦的正是「绑同步」这个动作（`sync::sync_bind_gate`）——
               读数与动作同屏，用户不用去别处找「为什么绑不上」。
               平台判定在组件内部（Web 上只渲染解释句、一次 api 都不调）。 */}
-          {/* ⚠️ 2026-09-29（D5）：**状态置顶** —— 把「现在同步了没有／这一轮走的是哪条路」
-              放到用户第一眼看的地方，而不是埋在底部的日志行里（owner 反复指出的那一条）。
-              ⚠️ 它里面**不许有 input/select/textarea** —— hero 是给人【看状态】的，不是给人填的
-                 （与 `.sync-foot` 那条「设置控件不行」同一口径）。本笔只有【按钮】。 */}
-          <section className="sync-hero">
-            <div className="sync-hero-state">
-              <span className={`sync-hero-dot${heroDot}`} aria-hidden />
-              <span>{heroState}</span>
-            </div>
-            {heroSub && <div className="sync-hero-sub">{heroSub}</div>}
-            <button
-              className="sync-hero-btn"
-              disabled={syncing || !activeRow}
-              onClick={() => activeRow && void syncOne(activeRow)}
-            >
-              {syncing ? "同步中…" : "立即同步"}
-            </button>
-            <div className="sync-hero-route">{heroRoute}</div>
-          </section>
           <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
+            {/* ⚠️ 2026-09-29（D5）：**状态置顶** —— 把「现在同步了没有／这一轮走的是哪条路」
+                放到用户第一眼看的地方，而不是埋在底部的日志行里（owner 反复指出的那一条）。
+                ⚠️ 它里面**不许有 input/select/textarea** —— hero 是给人【看状态】的，不是给人填的
+                   （与 `.sync-foot` 那条「设置控件不行」同一口径）。本笔只有【按钮】。 */}
+            <section className="sync-hero">
+              <div className="sync-hero-state">
+                <span className={`sync-hero-dot${heroDot}`} aria-hidden />
+                <span>{heroState}</span>
+              </div>
+              {heroSub && <div className="sync-hero-sub">{heroSub}</div>}
+              <button
+                className="sync-hero-btn"
+                disabled={syncing || !activeRow}
+                onClick={() => activeRow && void syncOne(activeRow)}
+              >
+                {syncing ? "同步中…" : "立即同步"}
+              </button>
+              <div className="sync-hero-route">{heroRoute}</div>
+            </section>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
             {rows.map((r) => {
               const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
