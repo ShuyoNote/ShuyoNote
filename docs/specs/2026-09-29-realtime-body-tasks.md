@@ -127,8 +127,8 @@ T2（`mesh_sync_only`）／T3（把局域网轮询触发挂上）／T4（按对�
 
 | 任务 | 做什么 | 改哪里（写域） |
 |---|---|---|
-| **迭代 2-②-a**（**不卡 D3，先做**） | **把上传侧变成可读出来的数**：`BodyRealtimeStatus` 补上传侧三个字段（`uploadDebounceMs` / `lastUploadAtMs` / `uploadTrigger`，形状**逐字**见规格 §3.3）；⚠️ 先解决规格 §6-R2（"间隔从哪读"）与 §6-R6（`dfa79e1a` 那 400ms 的确切落点） | 取决于 §6-R2：`src/lib/realtimeBodyStatus.ts`（新建，界面侧）／`src-tauri/src/sync.rs` ＋ `commands.ts` ＋ `web.ts` ＋ `api.ts` ＋ `lib.rs`（走命令） |
-| **迭代 2-②-b**（**⚠️ 卡 D3；拍了才开工**） | **撤两层防抖**（编辑器 ~600ms ＋ 上传 400ms）⇒ "发"不等"存"；⚠️ **本地写入仍先于网络**（D3 的理由逐字就是"会改变'落库时机'的语义"） | `src/App.tsx`（`:420-431` 的 600ms；`:517-534` 的 tick）、`dfa79e1a` 落下的上传触发那一处、`src/lib/crdt/pageBinding.ts`（`onLocalEdit` 一族） |
+| **迭代 2-②-a**（**不卡 D3，先做**） | **把上传侧变成可读出来的数**：`BodyRealtimeStatus` 补上传侧三个字段（`uploadDebounceMs` / `lastUploadAtMs` / `uploadTrigger`，形状**逐字**见规格 §3.3）；⚠️ 先解决规格 §6-R2（"间隔从哪读"）；上传侧那一处的**位置已核**（规格 §6-R6：`App.tsx` 的 effect `onAnyLocalEdit` ⇒ `LOCAL_EDIT_UPLOAD_DEBOUNCE_MS = 400` ＋ `yDocBridge.ts` 的模块级 `onAnyLocalEdit()`），**但"净等待"的读数仍没有** | 取决于 §6-R2：`src/lib/realtimeBodyStatus.ts`（新建，界面侧）／`src-tauri/src/sync.rs` ＋ `commands.ts` ＋ `web.ts` ＋ `api.ts` ＋ `lib.rs`（走命令） |
+| **迭代 2-②-b**（**⚠️ 卡 D3；拍了才开工**） | **撤两层防抖**（保存 ~600ms ＋ 上传 400ms）⇒ "发"不等"存"；⚠️ **本地写入仍先于网络**（D3 的理由逐字就是"会改变'落库时机'的语义"） | `src/App.tsx`（`:420-431` 的 600ms；`:517-534` 的 tick；`dfa79e1a` 那个 effect 的 400ms）、`src/lib/crdt/yDocBridge.ts`（模块级 `onAnyLocalEdit()`）、`src/lib/crdt/pageBinding.ts`（`onLocalEdit` 一族） |
 | **迭代 2-②-c**（与 `-b` 同批） | **闸门与唯一性**：上传触发**必须**过 `shouldAutoSyncNow()`（`src/lib/syncGate.ts:22-30`）；且**不许**出现第二个"自动上传"调用点 | `src/lib/syncGate.ts` 的调用点（新增这一处）、`src/lib/api.ts`（若需要薄包） |
 
 **验收读数**：
@@ -339,7 +339,7 @@ M6（真机量）───────→ 回填 M1 的"代价"那一半
 | 迭代 2-①-b | `src-tauri/src/crdt_wire.rs` |
 | 迭代 2-①-c | `src-tauri/src/sync.rs`（应用路径那一段） |
 | 迭代 2-②-a | `src/lib/realtimeBodyStatus.ts`（新建）／`src-tauri/src/sync.rs`（读数结构体那一段） |
-| 迭代 2-②-b/-c | `src/App.tsx`、`src/lib/crdt/pageBinding.ts`、`src/lib/syncMode.ts`、`src/lib/syncGate.ts`、`src/lib/platform/commands.ts`、`src/lib/api.ts`、`src-tauri/src/sync.rs`、`src-tauri/src/lib.rs` |
+| 迭代 2-②-b/-c | `src/App.tsx`、`src/lib/crdt/yDocBridge.ts`、`src/lib/crdt/pageBinding.ts`、`src/lib/syncMode.ts`、`src/lib/syncGate.ts`、`src/lib/platform/commands.ts`、`src/lib/api.ts`、`src-tauri/src/sync.rs`、`src-tauri/src/lib.rs` |
 | 迭代 2-③ | `src-tauri/src/lan.rs`、`src/editor/Editor.tsx`（光标渲染那一段）、`src/lib/platform/commands.ts`／`api.ts`（若需要） |
 | T1 | `src/lib/realtimeBodyStatus.ts`（新建）／`src-tauri/src/sync.rs`（新结构体那一段） |
 | T5 | `scripts/check-crdt-plane.mjs`、`scripts/check-crdt-plane.test.mjs`、`_workspace/mutation-evidence.json`（**工作区根，不随仓分发**） |
