@@ -4,6 +4,12 @@
 > 依据：`2026-09-29-nearby-devices-spec.md` **§13–§14** ／ `2026-09-29-virtual-lan-requirements-spec.md`
 > ／ owner 重申「**同步服务器不提供个人版**」。
 > ⚠️ 本文件是**边界口径**，不是功能清单 —— 它回答"**为什么这条线画在这里**"。
+> ⇒ **分工（2026-09-29 去重判定：与 `team-edition-capability-and-limits` 【不算冗余】）**：
+> 功能清单与实测极限在 [`team-edition-capability-and-limits`](2026-09-29-team-edition-capability-and-limits.md)；
+> 从**竞品**角度的对标读数在 [`strongest-enterprise-benchmark`](2026-09-29-strongest-enterprise-benchmark.md) §9。
+> ⚠️ **引用注意**：本文件 **§2（踢设备）／§3-②（撤销粒度）已于 2026-09-29 订正**
+> —— 从"只能全员改口令"改为"**设备对秘密 ⇒ 可逐台解除**"。
+> ⇒ 别处若仍引用**订正前**口径（例：`personal-edition-spec` §9-②），**以本文件为准**。
 
 ---
 

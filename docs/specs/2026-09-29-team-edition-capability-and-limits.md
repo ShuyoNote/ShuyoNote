@@ -4,6 +4,11 @@
 > 依据：`2026-09-29-edition-boundary.md`（个人版 vs 团队版）／ `2026-09-29-server-capacity-loadtest.md`（实测）
 > ／ `2026-09-29-client-frame-rate-loadtest.md`（实测）／ `2026-09-29-nearby-devices-spec.md` §14（团队不提供设备直连）。
 > ⚠️ 数字**全部有实测出处**；推算的都标了"推算"。
+>
+> ⚠️ **分工（2026-09-29 去重判定：本文件与 `edition-boundary` 【不算冗余】）**：
+> 本文件＝**功能清单 ＋ 实测极限**（"有什么、到哪"）；[`edition-boundary`](2026-09-29-edition-boundary.md)
+> ＝**边界与依据**（"线为什么画在这里"）。⇒ 同一件事的**两个侧面**，互不替代。
+> ⇒ 从**竞品**角度看同一批数字的读数在 [`strongest-enterprise-benchmark`](2026-09-29-strongest-enterprise-benchmark.md) §9。
 
 ---
 
