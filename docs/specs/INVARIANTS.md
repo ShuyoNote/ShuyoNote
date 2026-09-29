@@ -48,6 +48,10 @@
 | **INV-KB-derived-rebuildable**（**只收录"可重建"半边** ✗） | 生成物自证来源（sha）且可重建（生成命令的脚本存在） | `scripts/check-generated-artifacts.mjs`（`--dir` 夹具 ／ `--self-test` ／ 出口码 0-1-2-3） | ✅ 账本 D2 `exit=1`（sha `f67c38772197`）｜实测：控制组 3 个生成物 exit 0 ／**删掉「注册表 sha256」行 ⇒ exit 1** ／**篡改 sha ⇒ exit 1**（逐字「已标脏」）／`--self-test` **5/5** ✓。⚠️ "删索引 ⇒ 功能不降级"那半**要等索引面成形**（Phase 1）⇒ 本表**没收录** ✗ |
 | **INV-KB-readonly-surface** | 外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 | `scripts/check-agent-surface.mjs`（`--phase` ／ `--file` 夹具 ／ `--self-test`） | ✅ 账本 D2 `exit=1`（sha `3e086e7aa4bc`）｜实测：**注入 `pages.create` ⇒ exit 1**（逐字「只读面里出现写能力」）／`--self-test` **5/5** ✓。⚠️ **与 `INV-MCP-readonly-first` 是同一条**：那份仍是它的正文，**本条以"已实现的判据"入表** ✓ |
 | **INV-KB-tool-desc-clean** | 外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 | `scripts/check-agent-surface.mjs`（同上：`--phase` ／ `--file` ／ `--self-test`） | ✅ 同一条账本证据（sha `3e086e7aa4bc`）｜实测：**描述里注入 `content_json` ⇒ exit 1** ／ 收窄为"只扫 desc 格"后，表头里合法的 `capabilities.json` 不再假红 ✓ ／ `--self-test` **5/5** ✓ |
+| **INV-CRDT-json-authoritative** | 权威落盘形态是 `content_json`（**TEXT**，JSON），CRDT 状态**只**进 `page_crdt`／`page_crdt_pending`（**BLOB**）—— 逐字引自《[CRDT 混版本共存与降级](2026-09-29-crdt-mixed-version-degradation.md)》 | `scripts/check-crdt-plane.mjs` | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） ｜该门禁同时核 4 处 `content_json` 与 2 处 BLOB 声明 ✓ |
+| **INV-CRDT-rust-agnostic** | Rust 侧不引入 Yjs 实现（**不认 CRDT 格式**） | `scripts/check-crdt-plane.mjs`（扫 `src-tauri` 的 Cargo 行 ⇒ 零 Yjs 依赖 ✓） | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） |
+| **INV-CRDT-single-converter** | `content_json` ⇄ `ydoc` 的转换**只有一份实现**（`src/lib/crdt/yDocBridge.ts`）＋ 合并只在 WebView 侧一处 | `scripts/check-crdt-plane.mjs` | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） |
+| **INV-CRDT-pending-per-seq** | 待并的远端状态**按 `seq` 逐条留**（不是每页一行 —— 否则丢编辑）：`page_crdt_pending` 主键必须是 `(page_id, seq)` | `scripts/check-crdt-plane.mjs` | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） |
 ## 怎么核（**别信本表，跑命令**）
 
 ```bash
