@@ -291,6 +291,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md](plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md) | **知识库/Agent/MCP 那一族 vs 两版需求** —— ✅ **不冲突，是同一个轴**（按空间分档） |
 | [plans/2026-09-29-virtual-lan-option.md](plans/2026-09-29-virtual-lan-option.md) | **虚拟局域网分析** —— 三个好消息 ＋ 两处代价 ＋ owner 两条裁定 |
 | [plans/2026-09-29-today-index.md](plans/2026-09-29-today-index.md) | ⭐ **当天全部产出的索引入口** —— 按主题／按「我想知道什么」／按提交 ＋ 未决与欠账 |
+| [plans/2026-09-29-nightly-handoff.md](plans/2026-09-29-nightly-handoff.md) | ⭐ **今晚自主工作的交接单** —— 七节：待拍一处／做完了的／今晚我自己的错／等回信的／门禁现状／最值钱的四个发现／明早的建议顺序 |
 | [sync-multidevice-test.md](sync-multidevice-test.md) | **跨机器多端同步会合测试**（Windows ⇄ Mac，服务器放 Mac）：两侧各一条命令、互相等、各自出 PASS/FAIL；含 Mac 侧起服务端/发设备密钥/真客户端肉眼确认的步骤、常见不通过的四种原因、以及"还剩什么没覆盖"（冲突合并 / 跨机附件 / 断网重连） |
 
 
