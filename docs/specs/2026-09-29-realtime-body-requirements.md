@@ -439,7 +439,7 @@ WPS 官方原理页原话（[open.wps.cn](https://open.wps.cn/documents/app-inte
 
 ### 9.7 落地顺序（与 owner 2026-09-29 的裁定一致）
 ```text
-① 本档：局域网直连开关 ＋ 拉取间隔 ＋ 附近设备（`nearby-devices-*`）  ← 先做
+① 本档：设备直连开关 ＋ 拉取间隔 ＋ 附近设备（`nearby-devices-*`）  ← 先做
 ② 本片：服务器档的【上传触发】＝ 本文件四件套                      ← 后做（owner 已定）
 ③ 局域网光标（`nearby-devices-*` §8/§11/§7）                      ← 更后（与 ① 串行同一块 UDP 代码）
 ```

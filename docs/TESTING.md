@@ -292,7 +292,7 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 ```
 
 两条**只能真机看**的（单测覆盖不到，别把它当成"已经验过"）：① 两台设备在同一网段里互看
-（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「局域网直连」
+（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「设备直连」
 那一行显示的地址是否真的被同步请求用上（读数是 `sync::effective_base`，界面只显示 Rust 给的原文）。
 
 ### ★ 2026-09-25 两台真机跑通的做法（含一条**没跑通**的，别照抄那半）
