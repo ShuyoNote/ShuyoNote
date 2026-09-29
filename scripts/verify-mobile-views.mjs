@@ -1459,6 +1459,94 @@ function vsBaseline(key, value) {
 // 用法：`APP_SHELL=web node scripts/verify-mobile-views.mjs`（默认）
 //       `APP_SHELL=tauri node scripts/verify-mobile-views.mjs`
 
+/**
+ * `INV-UI-sync-panel-scroll-reachable`（2026-09-29 加）
+ * 口径：**面板里任何控件，滚到底都必须够得到。**
+ *
+ * ⚠️ 为什么加它（本仓那条「**判据没红只在它能看见的范围内成立**」的又一例）：
+ *   `desktop-no-scroll` 量的是【外层面板】的 `scrollHeight ≤ clientHeight`，
+ *   而桌面档外层是 `overflow: hidden`（只让 `.sync-profiles` 自己滚）
+ *   ⇒ **滚动容器被挤扁时外层照样相等 ⇒ 判绿**。
+ *   2026-09-29 就是这么漏过去的：D5 的 hero 插错层（落在固定区）把 `.sync-profiles`
+ *   从 **180px 挤到 24px** —— 三条断言全绿，而 owner 在真机上「**滚不动**」。
+ * ⇒ 所以这一条**直接量用户视角的那件事**：滚到底，够不够得到。
+ *   （不量"滚动容器有没有被挤扁"这种代理指标 —— 代理指标会以别的方式坏。）
+ * ⚠️ 它**不依赖"哪个元素是滚动容器"这个先验**：现场找
+ *   （`overflow-y: auto|scroll` 且 `scrollHeight > clientHeight`）。
+ */
+async function measureSyncPanelScroll(page) {
+  return safeEval(page, () => {
+    const p = document.querySelector(".sync-popover.is-sync");
+    if (!p) return null;
+    // ⚠️ 2026-09-29 加固：**默认折叠的 `<details>` 的后代**在 Chrome 里
+    //    `getBoundingClientRect().height` 可能仍 > 0、`display` 也不是 `none`
+    //    ⇒ 只判这两个会把"折叠里的控件"误报成"够不到"（实测多报 3 个：预算那三个 select）。
+    //    再判 `getClientRects().length`（`display:none` 的后代为 0）与 `offsetParent`。
+    const vis = (e) => {
+      const cs = getComputedStyle(e);
+      if (cs.display === "none" || cs.visibility === "hidden") return false;
+      if (e.getClientRects().length === 0) return false;
+      if (e.getBoundingClientRect().height <= 0) return false;
+      if (e.offsetParent === null && cs.position !== "fixed") return false;
+      // ⚠️ 最关键的一条：**折叠 `<details>` 的后代不算"可见"**。
+      //    实测（滚到底截图核对）：`▸ 同步预算` 是折叠的，而它里面那 3 个 select
+      //    前面几个判据全过（rect 高度、display、offsetParent 都不是 0/null）
+      //    ⇒ 被误报成"够不到"。**这正是"判据的切片会坏"**：漏一条，就多三个假红。
+      for (let n = e.parentElement; n; n = n.parentElement) {
+        if (n.tagName === "DETAILS" && !n.open) return false;
+      }
+      return true;
+    };
+    // ⚠️ 2026-09-29 修正：**必须把 `p` 自己也算进来** ——
+    //    D5 修正② 之后（桌面档也改成"整个面板滚"），**滚动容器就是面板本身**；
+    //    而 `p.querySelectorAll("*")` **不包含 `p`** ⇒ 漏掉它 ⇒ 量出 11 个假的"够不到"。
+    //    （这条 bug 与它要抓的那个同族：**探针的切片选错了，就看不见真正在滚的那个**。）
+    const scrollers = [p, ...p.querySelectorAll("*")].filter((e) => {
+      const cs = getComputedStyle(e);
+      return (cs.overflowY === "auto" || cs.overflowY === "scroll") && e.scrollHeight > e.clientHeight + 1;
+    });
+    for (const sc of scrollers) sc.scrollTop = 1e9;
+    const pr = p.getBoundingClientRect();
+    const ctrl = [...p.querySelectorAll("input, textarea, select, button, summary")].filter(vis);
+    // ⚠️ 只看【面板底边之下】的：滚到底后落在面板【上方】的那些，滚回顶部就够得到，不算。
+    const below = ctrl
+      .filter((e) => e.getBoundingClientRect().bottom > pr.bottom + 1)
+      .map((e) => (e.textContent || e.placeholder || e.tagName).trim().replace(/\s+/g, " ").slice(0, 16));
+    return {
+      scrollerCount: scrollers.length,
+      scrollerDetail: scrollers
+        .map((sc) => `${String(sc.className || sc.tagName).split(" ")[0]}:${sc.clientHeight}/${sc.scrollHeight}`)
+        .slice(0, 4),
+      total: ctrl.length,
+      belowCount: below.length,
+      below: below.slice(0, 6),
+      panelClient: p.clientHeight,
+      panelScroll: p.scrollHeight,
+    };
+  });
+}
+
+/** `INV-UI-sync-panel-scroll-reachable` 的断言。 */
+function assertScrollReachable(m, vp) {
+  if (!m) {
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 「滚到底够不够得到」这条【没验过】，按 fail 记`);
+    return;
+  }
+  const key = `scroll-reachable|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, m.belowCount);
+  const { allowed, tail } = vsBaseline(key, m.belowCount);
+  ok(
+    allowed,
+    `[壳=${APP_SHELL}] ${vp.name} 滚到底后【够不到】的控件 = ${m.belowCount} 个（应 0）` +
+      (m.belowCount ? `：${m.below.join(" / ")}` : "") +
+      `；滚动容器 ${m.scrollerCount} 个（${m.scrollerDetail.join("，") || "无"}）` +
+      `；面板 ${m.panelScroll}/${m.panelClient}${tail}`,
+  );
+  if (m.belowCount < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${m.belowCount}`);
+  }
+}
+
 /** 打开同步面板（它挂在侧栏里；窄屏侧栏是抽屉、默认 hidden ⇒ 先把抽屉打开）。 */
 async function openSyncPanel(page) {
   await safeEval(page, async () => {
@@ -1637,6 +1725,7 @@ async function main() {  const executablePath = findChrome();
         await sleep(600);
         await openSyncPanel(spage);
         assertPersistentChrome(await measureSyncPanel(spage), vp);
+        assertScrollReachable(await measureSyncPanelScroll(spage), vp);
         await shot(spage, `${vp.name}-sync-panel`);
         ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
         await sctx.close();
@@ -2226,6 +2315,7 @@ async function main() {  const executablePath = findChrome();
       const sm = await measureSyncPanel(spage);
       assertDesktopNoScroll(sm, DESKTOP);
       assertPersistentChrome(sm, DESKTOP);
+      assertScrollReachable(await measureSyncPanelScroll(dpage), DESKTOP);
       await shot(spage, `${DESKTOP.name}-sync-panel`);
       ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
       await sctx.close();
