@@ -1544,7 +1544,7 @@ export function SyncPanel() {
                       <span className="sync-row-caret" aria-hidden>›</span>
                     </summary>
                     <div className="sync-row-body">
-                      <div className="sync-att sync-mesh">
+                      <div className="sync-att sync-mesh" title="在虚拟网络（VPN）里，要填【虚拟网卡上的地址】—— 填物理网卡的地址，隧道里的对端会连不上。同一个 Wi-Fi 里填本机内网地址即可。">
                         <span className="sync-att-text">
                           {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
                               已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
@@ -1562,7 +1562,7 @@ export function SyncPanel() {
                         <div className="sync-field">
                           <input
                             className="sync-input"
-                            placeholder="监听地址，如 192.168.1.5:8788"
+                            placeholder="监听地址（虚拟网络里填虚拟网卡的地址），如 192.168.1.5:8788"
                             value={meshBind}
                             disabled={meshBusy}
                             onChange={(e) => setMeshBind(e.target.value)}
