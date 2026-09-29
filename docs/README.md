@@ -268,6 +268,29 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-28-knowledge-m1-workorder.md](plans/2026-09-28-knowledge-m1-workorder.md) | **M1 施工单（判据先行，不写产品代码）**：7 个任务，每个都有 `Files:` ＋「先让判据红」＋ `Expected:` 逐字 ＋ 再注入证明 ✓ |
 | [plans/2026-09-28-agent-mcp-integration-plan.md](plans/2026-09-28-agent-mcp-integration-plan.md) | **外部 Agent 接入（MCP / CLI）总方案（规划，未实装，待拍板）**：让 Claude Code / CodeBuddy / WorkBuddy / DSH 用上本机笔记库。**结论：四个产品都原生支持 MCP，缺的是客户端这一侧的面**（全仓 MCP 零命中）。含现状取证 10 条（注册表 25 条能力 / 其中 `ai:true` 10 条 · 权限与审计只有一个校验点 `dispatch_capability` · **钥匙只在应用进程内存且没有 OS keyring** · 没有面向外部进程的通道 · mesh 窗口默认关闭）＋ **MCP/CLI/API 不是三选一**（API 是底座，两个薄适配器共用它，硬约束不变）＋ 推荐架构（应用内宿主面 ＋ 哑桥 ＋ 草稿写回）＋ 工具面与**实测上下文成本 1631 字符/会话**＋ 四家官方配置（含 DSH 的 `insert:` 语法订正）＋ M1–M3 里程碑与验收 ＋ 6 项待拍板 ＋ 诚实边界 |
 | [plans/2026-09-28-mcp-host-m1-workorder.md](plans/2026-09-28-mcp-host-m1-workorder.md) | **MCP 宿主 M1 施工单（只读，未开工）**：注册表第 10 件生成物（`capabilities/mcp-tools.json`）＋ 应用内宿主面（`src-tauri/src/mcp_host.rs`）＋ stdio 哑桥（`tools/shuyonote-mcp/`）。含逐文件改动 8 项、**把权限判定从 `RUN_STATE` 抽成一处**（唯一会碰到现有插件路径的一步）、8 条判据（每条附「怎么让它红」）、**门禁要登记的三处**（`scripts/lib/gates.mjs` ／ `docs/TESTING.md` 表 ／ **工作区台账 `_workspace/mutation-evidence.json` 的 `_repo_mutations`** —— 第三条不在本仓、最易漏）、本机跑不了 rust 组的边界与回滚路径 |
+| [plans/2026-09-29-wps-scale-roadmap.md](plans/2026-09-29-wps-scale-roadmap.md) | **追到 WPS 那样的极限【并且还能扩容】的技术路线** —— 目标拆两层、五层、**按页订阅是第一性**、连接与数据分离 |
+| [plans/2026-09-29-ten-thousand-scale.md](plans/2026-09-29-ten-thousand-scale.md) | **到 10000 台的路** —— ⭐ **按页订阅才降阶** ＋ E2E 元数据边界 |
+| [plans/2026-09-29-l4-page-subscription-limits.md](plans/2026-09-29-l4-page-subscription-limits.md) | **L4「按页订阅」的极限与技术路线** —— 四道极限；⚠️ 并指出**它降阶后瓶颈换到「写」** |
+| [plans/2026-09-29-l4-forward-deltas-deep-dive.md](plans/2026-09-29-l4-forward-deltas-deep-dive.md) | **L4 转发增量深度** —— 三条决定性事实 ＋ ⚠️ **「丢帧＝丢数据」**这个新风险 |
+| [plans/2026-09-29-payload-increment-deep-dive.md](plans/2026-09-29-payload-increment-deep-dive.md) | **增量 payload 深度** —— 三条线的**共同前提**（且**不需要算 diff**） |
+| [plans/2026-09-29-single-space-limit-three-routes.md](plans/2026-09-29-single-space-limit-three-routes.md) | **提高单空间上限的三条路线对比** —— ⚠️ **结论与直觉相反**（换存储帮助最小） |
+| [plans/2026-09-29-horizontal-scale-limit-single-space.md](plans/2026-09-29-horizontal-scale-limit-single-space.md) | **横向扩容扩不了【单个空间】** —— 卡在「一个空间一个写者＋一个序号」；加机器只扩空间数/连接数 |
+| [plans/2026-09-29-read-concurrency-limit.md](plans/2026-09-29-read-concurrency-limit.md) | **并发读的上限** —— 不由 SQL 决定，由**带宽与网关**决定，**且能加机器扩** |
+| [plans/2026-09-29-server-capacity-loadtest.md](plans/2026-09-29-server-capacity-loadtest.md) | **服务端容量压测（实测）** —— M1≈10／M2≈**100**／M3≈200 台；M2→M3 实测 **9.92 倍**；扇出 0.25·N² |
+| [plans/2026-09-29-client-frame-rate-loadtest.md](plans/2026-09-29-client-frame-rate-loadtest.md) | **客户端喂帧压测（实测）** —— **~500 条 update/秒**、天花板 ≈900；＋一条**口径更正** |
+| [plans/2026-09-29-10000-with-wps-experience.md](plans/2026-09-29-10000-with-wps-experience.md) | **10000 台 ＋ WPS 手感** —— 四笔账、与 WPS 的根本差别、要 owner 拍的四件 |
+| [plans/2026-09-29-server-sync-redundancy-inventory.md](plans/2026-09-29-server-sync-redundancy-inventory.md) | **冗余代码盘点** —— 「个人版＋服务器同步」那条废路的 A/B/C/D 四张清单 ＋ ⚠️ **防误删的 C 表** |
+| [plans/2026-09-29-requirements-judgment-matrix.md](plans/2026-09-29-requirements-judgment-matrix.md) | **两份需求的判据矩阵** —— **39 条 MUST 逐条「怎么验」**（补上「判据成本」那个缺口） |
+| [plans/2026-09-29-both-editions-difficulty-and-cost.md](plans/2026-09-29-both-editions-difficulty-and-cost.md) | **两版需求的技术难度与实现成本** —— 逐条人日估算 ＋ 风险排序（⚠️ 含判据要 ×1.3~1.5） |
+| [plans/2026-09-29-both-editions-iteration-plan.md](plans/2026-09-29-both-editions-iteration-plan.md) | **两版需求的可执行迭代计划** —— 把 39 条 MUST 排进 **7 个迭代** ＋ 要 owner 拍的五条 |
+| [plans/2026-09-29-owner-decisions-pending.md](plans/2026-09-29-owner-decisions-pending.md) | ⭐ **待 owner 拍板清单（唯一）** —— **D1–D11**，每条写清「卡住谁」与「为什么非拍不可」 |
+| [plans/2026-09-29-mesh-flake-diagnosis.md](plans/2026-09-29-mesh-flake-diagnosis.md) | ⭐ **`mesh::` 的「偶发失败」＝ 40%**（连跑 15 次失败 6 次）—— **推翻台账描述**；＋「连跑 3 次全绿」为何不值钱 |
+| [plans/2026-09-29-git-operation-discipline.md](plans/2026-09-29-git-operation-discipline.md) | **git 操作纪律** —— 从当天**四次失误**收出**六条规则**（每条配「可查信号」） |
+| [plans/2026-09-29-liveness-vs-working.md](plans/2026-09-29-liveness-vs-working.md) | ⭐ **「在跑」 ≠ 「在做」** —— 从两次同族教训收出四条纪律（含「跑 N 次全绿」的判准） |
+| [plans/2026-09-29-inv-ns-second-person-landing.md](plans/2026-09-29-inv-ns-second-person-landing.md) | **`INV-NS-second-person-implies-team` 的落地方案** —— ⚠️ **它落不了技术拦截**（「第二个人」系统判不出来） |
+| [plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md](plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md) | **知识库/Agent/MCP 那一族 vs 两版需求** —— ✅ **不冲突，是同一个轴**（按空间分档） |
+| [plans/2026-09-29-virtual-lan-option.md](plans/2026-09-29-virtual-lan-option.md) | **虚拟局域网分析** —— 三个好消息 ＋ 两处代价 ＋ owner 两条裁定 |
+| [plans/2026-09-29-today-index.md](plans/2026-09-29-today-index.md) | ⭐ **当天全部产出的索引入口** —— 按主题／按「我想知道什么」／按提交 ＋ 未决与欠账 |
 | [sync-multidevice-test.md](sync-multidevice-test.md) | **跨机器多端同步会合测试**（Windows ⇄ Mac，服务器放 Mac）：两侧各一条命令、互相等、各自出 PASS/FAIL；含 Mac 侧起服务端/发设备密钥/真客户端肉眼确认的步骤、常见不通过的四种原因、以及"还剩什么没覆盖"（冲突合并 / 跨机附件 / 断网重连） |
 
 
