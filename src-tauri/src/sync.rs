@@ -2846,205 +2846,6 @@ pub fn mesh_set_config(
     Ok(crate::mesh::config_state(&cfg, window))
 }
 
-// ─────────────────── 丙-乙片（2026-09-29）：邀请的两条命令（发 / 接受） ───────────────────
-
-/// ★ 丙-乙片：**发一条邀请** —— 把"我这个空间"邀请给同一网段里的**某一台**设备。
-///
-/// 三条口径：
-/// 1. **零字符串搬运**：`space_id` 与口令都由本命令从**本机已有的设置**里取
-///    （`sync_profiles.space_id` ＋ `mesh_token:<空间>`，`mesh.rs:392`）—— 用户一个字节都不用抄；
-/// 2. **载荷里没有钥匙袋**（`nearby_invite::NearbyInvite`：六个字段 ＋ `deny_unknown_fields`）；
-/// 3. **没设口令就不发**（`nearby_invite::build` 拦下来并给一句可操作的话）——
-///    没口令的窗口**同网段谁都能拉**（`mesh.rs:969-974` 的 `None ⇒ return true`）。
-///
-/// ⚠️ **只发给那一条对端记录的来源地址**（单播，`lan::send_unicast`）：**不广播** ——
-///    "我邀请了谁"不该让整个网段都知道。
-/// ⚠️ 发出去之后**不等回执**（规格 §5.3：不做重传、不做超时）⇒ 这里只把"我发过"记在**本进程**里
-///    （`LanState::remember_sent`），界面据此显示「已发出邀请 · 等对方接受」。
-#[tauri::command]
-pub async fn nearby_invite_send(
-    db: State<'_, Db>,
-    workspace_id: Option<String>,
-    device_id: String,
-) -> Result<String, String> {
-    let scope = mesh_scope(&db, workspace_id.as_deref())?;
-    let now = crate::db::now_ms();
-    // ① 取齐要发的载荷 ＋ 目标地址（**锁不跨 await**：这一整块结束就把锁放掉）
-    let (invite, addr, device_name, space_name, caveat) = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        // ⚠️ 开库用**本地**空间 id 取档案，对暗号/设置用**远端**空间 id 取 —— 两个 id 不合成一个。
-        let prof = get_profile(&c, &scope.db_space)?;
-        let token = crate::mesh::settings(&c, &scope.space).token.unwrap_or_default();
-        let name: String = c
-            .query_row(
-                "SELECT name FROM meta.workspaces WHERE id = ?1",
-                rusqlite::params![scope.db_space],
-                |r| r.get(0),
-            )
-            .unwrap_or_default();
-        let state = crate::lan_state::LanState::global(&scope.device);
-        let peers = state.peers(now);
-        let p = peers
-            .iter()
-            .find(|p| p.announce.device_id.trim() == device_id.trim())
-            .ok_or_else(|| {
-                "这一台现在不在网段里（对端存活期 90 秒）⇒ 没有发出邀请；等它再出现一次再点".to_string()
-            })?;
-        // ⚠️ 界面那一行有「邀请」是因为 `invitable`；这里**再问一次同一把尺** ——
-        //    界面上的读数是 5 秒前的快照，而这中间对端可能已经把窗口关了。
-        if crate::mesh::invitable_base(&scope.space, &scope.device, p).is_none() {
-            return Err(
-                "这一台现在不能被直接拉（它没报可以直连的地址，或它服务的不再是这个空间）⇒ 没有发出邀请"
-                    .to_string(),
-            );
-        }
-        let inv = crate::nearby_invite::build(
-            &scope.device,
-            &crate::lan_state::host_name(),
-            &prof.space_id,
-            &token,
-            &name,
-        )?;
-        // ★ 如实说（规格 §5.5）：**个人空间**在这条路上是"直接被拦"或"拉到打不开"，
-        //   不是"要额外一步"。这句话必须在**发起侧**就说出来 —— 不许等对方接受时才在那边撞墙
-        //   （那看起来像"邀请坏了"）。
-        let caveat = invite_caveat(&c, &scope.db_space);
-        (inv, p.addr.trim().to_string(), p.announce.device_name.trim().to_string(), name, caveat)
-    };
-    let raw = crate::nearby_invite::encode(&invite)?;
-    crate::lan::send_unicast(&addr, crate::lan::LAN_PORT, &raw).await?;
-    crate::lan_state::LanState::global(&scope.device).remember_sent(
-        crate::lan_state::SentInvite {
-            device_id: invite.from_device_id.trim().to_string(),
-            device_name,
-            space_id: invite.space_id.clone(),
-            note: invite.note.clone(),
-        },
-    );
-    let shown = if space_name.trim().is_empty() { "这个空间" } else { space_name.trim() };
-    Ok(format!(
-        "已把「{shown}」的邀请发出去（只发给这一台，没有广播）—— 等它在自己那台机器上点「接受」。\
-         邀请里带的是这个空间的口令，**没有**钥匙材料。{caveat}"
-    ))
-}
-
-/// **给同事的邀请只对【团队空间】是顺的** —— 这句话必须在**发起侧**就说出来（规格 §5.5）。
-///
-/// 三条（与 `space_crypto::sync_gate` 同一把尺，**不另判一次**）：
-/// · **团队空间** ⇒ 没有要说的（免检就是这条路顺的原因）；
-/// · **个人空间（已加密）** ⇒ 对方**没有钥匙**：拉到的是**密文**、打不开；
-/// · **个人空间（未加密）** ⇒ 连**接受那一步**都会被闸门拦住 ⇒ 说清是哪一种；
-/// · **未分类** ⇒ 放行但"闸门没管到它"，也说出来。
-///
-/// ⚠️ 返回的是**追加在人话后面**的一句（`""` ＝ 没话可说），**不是**拒发：
-///    owner 的产品边界是"这条路只对团队空间顺"，不是"个人空间不许邀请"（规格 §5.5 第二段）。
-fn invite_caveat(c: &Connection, ws_id: &str) -> String {
-    let Some(dir) = crate::db::app_data_dir_ref() else {
-        return String::new();
-    };
-    let mut st = crate::space_crypto::space_status(dir, ws_id);
-    crate::space_crypto::fill_space_name(c, &mut st);
-    let kind = crate::space_crypto::space_kind(c, ws_id);
-    match crate::space_crypto::sync_gate(&st, kind) {
-        // 团队空间（免检）⇒ 这条路最顺，没有要提醒的。
-        crate::space_crypto::SyncGate::Allowed
-            if kind == crate::space_crypto::SpaceKind::Team =>
-        {
-            String::new()
-        }
-        crate::space_crypto::SyncGate::Allowed => "⚠️ 这是一个**个人空间**：邀请只把**密文**交过去 —— \
-             对方**没有**你的钥匙，拉得到、打不开（给同事的邀请只对**团队空间**是顺的）。"
-            .to_string(),
-        crate::space_crypto::SyncGate::AllowedUnclassified => format!(
-            "⚠️ {}还没分类（个人/团队）：闸门这次**没有管到它** —— 若它是个人空间，对方拿到也打不开。",
-            st.label()
-        ),
-        crate::space_crypto::SyncGate::Blocked(msg) => format!(
-            "⚠️ 这个空间现在会被**同步闸门**拦住（{msg}）—— 对方**接受那一步也会被拦**，\
-             先把这一句解决掉再邀请。"
-        ),
-    }
-}
-
-/// ★★ 丙-乙片：**接受一条邀请** —— 把**当前这个本地空间**接到对方那个空间上。
-///
-/// ## 落点（规格 §5.6，产品决定）
-///
-/// 接的是**面板上当前这个空间**（"我把我这个空间接到他那个空间上"），不是"猜"。
-///
-/// ## 两条承重口径（都在这里，别搬走）
-///
-/// 1. ★★ **两个空间 id 不合成一个**（`sync.rs:3124` 那颗 ★★）：写入
-///    `sync_profiles(space_id = 邀请里的远端 id, ws_id = 当前本地空间 id)` ——
-///    合成一个 ⇒ 窗口会开一个**按远端 id 新建的空库**、安静地服务 0 条。
-/// 2. ★★ **必须过同一道闸门**（`sync_bind_gate`，`sync.rs:1136`）：个人空间没加密 ⇒ **拦住**，
-///    且**本机一个字节都不改**（闸门在**任何写入之前**）。邀请**不是**绕过
-///    `space_crypto::sync_gate` 的旁路（规格 §5.5）。
-///
-/// ⚠️ **如实说的一句**：接受**只**写"空间身份 ＋ 口令"（规格 §5.6），**不**替对方配本机监听地址
-///    —— 而"设备直连"这一档的"开"就是"配了监听地址"（`mesh.rs:597`）⇒ 不接受完就能拉。
-///    这一句必须出现在回给用户的话里（否则用户会以为"接受了就通了"）。
-#[tauri::command]
-pub fn nearby_invite_accept(
-    db: State<'_, Db>,
-    workspace_id: Option<String>,
-    from_device_id: String,
-) -> Result<String, String> {
-    let (ws_id, device, ws_name) = local_scope(&db, workspace_id.as_deref())?;
-    let state = crate::lan_state::LanState::global(&device);
-    let pend = state.pending_invite_from(&from_device_id).ok_or_else(|| {
-        "没有找到这台设备发来的邀请（它可能被同一台的新一条覆盖了，或者发现层刚被关掉）".to_string()
-    })?;
-    let c = db.0.lock().expect("db mutex poisoned");
-    // ① ★★ 闸门：**在任何写入之前**（拦住了 ⇒ 本机一个字节都不改）。
-    if let Some(dir) = crate::db::app_data_dir_ref() {
-        if let Some(note) = sync_bind_gate(&c, dir, &ws_id)? {
-            eprintln!("[sync] {note}");
-        }
-    }
-    // ② 只改"这个空间接到哪个远端空间上"：**服务端那条路的绑定（地址/令牌）原样保留**
-    //    （邀请讲的是网格这条路；顺手把用户原来的服务端绑定擦掉就是越权）。
-    let old = get_profile(&c, &ws_id)?;
-    set_profile(&c, &ws_id, &old.server_url, &old.token, &pend.invite.space_id)?;
-    // ③ 口令写在**远端空间 id** 那个键上（`mesh_token:<空间>`）—— 与 `mesh_set_config` 同一处写。
-    crate::mesh::set_mesh_token(&c, &pend.invite.space_id, Some(&pend.invite.token))?;
-    drop(c);
-    // ④ 接受是一次性的：把这一条从"等你动手"里拿掉（否则界面会一直提示）。
-    state.take_invite_from(&from_device_id);
-    let shown = if ws_name.trim().is_empty() { "当前这个空间" } else { ws_name.trim() };
-    Ok(format!(
-        "已接受：把本地的「{shown}」接到对方的那个空间上，并记下了这个空间的口令。\
-         ⚠️ 还差一步：在「设备直连」里给本机配一个**监听地址** —— 没配之前这一档不会跑（别人也拉不到你）。"
-    ))
-}
-
-/// 接受邀请要的"我这边是谁"：**当前本地空间 id ＋ 本机设备号 ＋ 空间名**。
-///
-/// ⚠️ 为什么**不用** [`mesh_scope`]：那个要求"这个空间已经有同步档案"，而**请邀请恰恰发生在
-///    还没有档案的时候**（用户正是要靠它建起第一条关系）⇒ 用 `mesh_scope` 会让接受路径
-///    在一个**最常见的**现场直接报错（"这个空间没有同步档案"）。
-/// ⚠️ 设备身份取不到（老库）⇒ 照样往下走：`LanState` 的对端/邀请表是按 device_id 归的，
-///    而 `pending_invite_from` 找不到就如实报"没有找到邀请"（不编一个成功）。
-fn local_scope(
-    db: &State<'_, Db>,
-    workspace_id: Option<&str>,
-) -> Result<(String, String, String), String> {
-    let c = db.0.lock().expect("db mutex poisoned");
-    let device = device_id(&c).unwrap_or_default();
-    let ws_id = match workspace_id.map(str::trim).filter(|w| !w.is_empty()) {
-        Some(w) => w.to_string(),
-        None => crate::workspaces::active_workspace_id(&c)?,
-    };
-    let name: String = c
-        .query_row(
-            "SELECT name FROM meta.workspaces WHERE id = ?1",
-            rusqlite::params![ws_id],
-            |r| r.get(0),
-        )
-        .unwrap_or_default();
-    Ok((ws_id, device, name))
-}
-
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
 /// （两份各自写一遍的下场是"设置面认得、同步面不认得"，而那种不一致没有任何编译期信号）。
 /// ★★ **为什么必须是两个、不许合成一个**（2026-09-26 真机实测的教训）：档案表里
@@ -3171,12 +2972,6 @@ pub fn lan_status(
     //      是**恒等式**，而不是"两处各数一遍碰巧相等"。
     let nearby = nearby_of(&peers, &device_id, &space_id);
 
-    // ★ 丙-乙片（2026-09-29）：**两条邀请记录**（收到的 ＋ 我发出的）随同一次读数交出去。
-    //   ⚠️ 为什么挂在 `lan_status` 上而不是另开一条命令：面板**已经在** 5 秒轮一次这条命令
-    //      （`SyncPanel.tsx:193`），邀请是"网段里发生了什么"的同一个面 —— 另开一条就要么多一条
-    //      轮询（多一份 IPC/5 秒）、要么变成"要点一下才刷新"（而收到邀请**没有**可点的东西）。
-    let invites = invite_views(state);
-
     // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
     //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
     //   面板打开一次不该顺手开一个端口；已经开着的话 `window_addr` 会把**实际地址**读出来。
@@ -3191,7 +2986,7 @@ pub fn lan_status(
         crate::mesh::config_state(&cfg, window)
     };
 
-    Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby, invites })
+    Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })
 }
 
 /// 状态行该报**哪个空间**（纯函数，带判据）：显式指定的那条优先，否则第一条绑定。
@@ -3242,11 +3037,6 @@ pub struct LanStatus {
     /// `rename_all`（`#[derive(Serialize)]` 而已），TS 侧照抄 `device_id` / `serves_current`
     /// —— **不许**只给新字段加 `rename_all`（一个结构体两种风格，规格 §3.2）。
     pub nearby: Vec<NearbyPeer>,
-    /// ★ 丙-乙片（2026-09-29）：**两条邀请记录**（收到的 ＋ 我发出的），按设备去重。
-    ///
-    /// ⚠️ 这一项**不在规格 §3.1 的数据形状里**（那一节只写了 `nearby`）—— 它是"界面要显示
-    /// 「已发出邀请 / 有人邀请我」"这件事的**最小读数**，收在同一个 5 秒轮询里（见命令里那段注释）。
-    pub invites: Vec<LanInvite>,
 }
 
 /// 同网段里的一台**别的设备**（给人看的列表用；**不含**任何密钥材料）。
@@ -3274,8 +3064,12 @@ pub struct NearbyPeer {
     /// 这一条与**当前这个空间**相不相关（**由 Rust 判定**，界面直接显示）。
     /// 口径：与 `lan::serves_space` 同一把尺（＝ `mesh_peers` 用的那把）。
     pub serves_current: bool,
-    /// ★ **只有这一台能被直接拉**（＝界面上那一行才有「邀请」）：与 `mesh::invitable_base`
-    /// 同一套过滤（不是我自己 · 服务这个空间 · `hub_base` 是局域网地址）。
+    /// ★ **只有这一台能被直接拉**（＝界面上那一行的第二列有没有落到「它没报可以直连的地址」）：
+    /// 与 `mesh::invitable_base` 同一套过滤（不是我自己 · 服务这个空间 · `hub_base` 是局域网地址）。
+    ///
+    /// ⚠️ 字段名是 2026-09-29 丙-乙片取的（那时它管的是「那一行有没有邀请按钮」）；
+    /// 同日晚 owner 裁定 §14 **撤掉了邀请那套**，这个字段**留下来了** ——
+    /// 它现在是"**能不能被直接拉**"的读数，仍然与 `mesh::mesh_peers` 逐字同一把尺。
     pub invitable: bool,
 }
 
@@ -3313,56 +3107,6 @@ fn spaces_of(p: &lan::Peer) -> Vec<String> {
         }
         out.push(s.to_string());
     }
-    out
-}
-
-/// 一条**邀请**的读数（`LanStatus.invites` 的一行；两条方向共用同一个形状）。
-///
-/// ⚠️ 它是一个**并集视图**：`direction` 说这一条是"收到的"还是"我发出的"。
-/// 用一个形状而不是两个数组，是因为界面渲染的是同一个列表（只是每一行的动作不同）。
-#[derive(Serialize)]
-pub struct LanInvite {
-    /// `"received"` ＝ 别人邀请我；`"sent"` ＝ 我邀请了别人。
-    pub direction: String,
-    /// 对端设备身份（**排障与去重**用）。
-    pub device_id: String,
-    /// 对端设备名（可能是空串 ⇒ 界面如实说没报名字）。
-    pub device_name: String,
-    /// **远端组织空间 id**（对暗号那一个）。⚠️ 界面**不许**把它插进句子（`INV-UI-copy-no-internal-ids`）。
-    pub space_id: String,
-    /// 一句给人看的话（**发起方写的**，接受侧原样显示）。
-    pub note: String,
-}
-
-/// 把 [`crate::lan_state::LanState`] 里那两条邀请记录拼成同一个视图（**唯一一处**）。
-///
-/// ⚠️ 顺序：**收到的排前面**（要用户动一下的那一件），同一组里按 `device_id`（确定性）。
-fn invite_views(state: &crate::lan_state::LanState) -> Vec<LanInvite> {
-    let mut out: Vec<LanInvite> = Vec::new();
-    for p in state.pending_invites() {
-        let i = p.invite;
-        out.push(LanInvite {
-            direction: "received".to_string(),
-            device_id: i.from_device_id.trim().to_string(),
-            device_name: i.from_device_name.trim().to_string(),
-            space_id: i.space_id.trim().to_string(),
-            note: i.note.trim().to_string(),
-        });
-    }
-    for s in state.sent_invites() {
-        out.push(LanInvite {
-            direction: "sent".to_string(),
-            device_id: s.device_id,
-            device_name: s.device_name,
-            space_id: s.space_id,
-            note: s.note,
-        });
-    }
-    out.sort_by(|a, b| {
-        // 收到的在前；其余按 device_id（确定性 ⇒ 判据能逐字节比）。
-        let rank = |d: &str| if d == "received" { 0 } else { 1 };
-        rank(&a.direction).cmp(&rank(&b.direction)).then(a.device_id.cmp(&b.device_id))
-    });
     out
 }
 
@@ -5424,52 +5168,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// ★★ 丙-乙片（2026-09-29，规格 §5.5）：**给同事的邀请只对团队空间是顺的** ——
-    /// 这句话必须在**发起侧**就说出来，而不是让对方在接受那一步撞墙（那看起来像"邀请坏了"）。
-    ///
-    /// 四支都要有读数（与 `space_crypto::sync_gate` 同一把尺）：
-    /// 未分类 ⇒ 放行但要说明"闸门没管到它"；团队 ⇒ **没话可说**；
-    /// 个人（明文）⇒ 会被拦（连接受那一步也会）；个人（库是密的）⇒ 放行但**对方没有钥匙**。
-    #[test]
-    fn the_invite_says_out_loud_that_a_personal_space_is_not_a_gift_for_colleagues() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
-        // ⚠️ `invite_caveat` 读的是**全局** app-data 目录（`db::app_data_dir_ref`）—— 与
-        //    `sync_bind_gate` 那个收 `dir` 参数的兄弟不同。这里就用测试那一个全局目录。
-        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
-        let (c, own) = pending_conn("invitecaveat");
-        let ws = "invite-caveat-ws";
-        c.execute(
-            "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES (?1, '项目A', 1, 1)",
-            params![ws],
-        )
-        .unwrap();
-
-        // ① 未分类 ⇒ 有话说（"闸门这次没有管到它"）
-        let said = invite_caveat(&c, ws);
-        assert!(said.contains("没分类"), "未分类要如实报出来：{said}");
-
-        // ② 团队空间 ⇒ **没话可说**（免检就是这条路顺的原因）
-        crate::space_crypto::set_space_kind(&c, ws, crate::space_crypto::SpaceKind::Team).unwrap();
-        assert_eq!(invite_caveat(&c, ws), "", "团队空间不该有提醒");
-
-        // ③ 个人空间、库还是明文 ⇒ 会被闸门拦（**连同对方接受那一步**）
-        crate::space_crypto::set_space_kind(&c, ws, crate::space_crypto::SpaceKind::Personal).unwrap();
-        let said = invite_caveat(&c, ws);
-        assert!(said.contains("闸门"), "要说清是谁拦的：{said}");
-        assert!(said.contains("接受"), "要说清对方那一步也会被拦：{said}");
-
-        // ④ 个人空间、库是密的 ⇒ 放行，但**对方没有钥匙**（邀请只搬密文）
-        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
-        std::fs::write(crate::db::space_db_path(&dir, ws), b"not-a-sqlite-header-16bytes").unwrap();
-        let said = invite_caveat(&c, ws);
-        assert!(said.contains("个人空间"), "{said}");
-        assert!(said.contains("打不开"), "关键那句：「拉得到、打不开」：{said}");
-
-        drop(c);
-        let _ = std::fs::remove_file(crate::db::space_db_path(&dir, ws));
-        let _ = std::fs::remove_dir_all(&own);
-    }
-
     fn insert_local_page(c: &Connection, id: &str, json: &str, sync_seq: i64, dirty: i64) {        c.execute(
             "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, sync_seq, dirty)
              VALUES (?1, 'ws', '页', ?2, '', 'page', 0, 0, NULL, ?3, ?4)",
@@ -6174,7 +5872,7 @@ mod tests {
 
     // ══════════ 丙档「附近设备」（2026-09-29，T1）：把对端表上抛的三条承重判据 ══════════
     //
-    // 这一片**零网络、零库**：`nearby_of` 与 `invite_views` 都是纯函数，喂一份 `Vec<Peer>` 就能断言。
+    // 这一片**零网络、零库**：`nearby_of` 是纯函数，喂一份 `Vec<Peer>` 就能断言。
     // ⚠️ 三条判据对应方案 §2 片 A 的 ★ 那三条（同源 / 同一把尺 / 反向保护）。
 
     fn nearby_fixture(

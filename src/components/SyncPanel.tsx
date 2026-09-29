@@ -212,29 +212,6 @@ export function SyncPanel() {
     writePullIntervalMs(ms);
     setPullMs(ms);
   };
-  // ★ 丙-乙片（2026-09-29）：邀请的**在跑状态**（按设备身份记，用来禁用那一颗按钮；
-  //   文案与结果都由 Rust 给的人话来说 —— 界面不自己拼一句"成功/失败"）。
-  const [inviteBusy, setInviteBusy] = useState("");
-  const sendInvite = async (deviceId: string) => {
-    setInviteBusy(deviceId);
-    try {
-      setStatus(await api.nearbyInviteSend(activeId, deviceId));
-    } catch (e) {
-      setStatus(`邀请没发出去：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setInviteBusy("");
-    }
-  };
-  const acceptInvite = async (fromDeviceId: string) => {
-    setInviteBusy(fromDeviceId);
-    try {
-      setStatus(await api.nearbyInviteAccept(activeId, fromDeviceId));
-    } catch (e) {
-      setStatus(`这条邀请没能接受：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setInviteBusy("");
-    }
-  };
   // ⚠️ 只有**当前空间这条档案绑全了**才显示那一行：`lan_status` 没绑定时会回落"第一条绑定"
   //（那是给无参调用兜底的），在面板上显示**别的空间**的地址是错的。
   const activeRow = rows.find((r) => r.ws_id === activeId);
@@ -966,10 +943,6 @@ export function SyncPanel() {
   //    **不许**把"读不到列表"渲染成"网段里没人"（空数组与"不可用"长得一样、含义相反）。
   const nearbyReadable = Array.isArray(lanStatus?.nearby);
   const nearby = lanStatus?.nearby ?? [];
-  const inviteRows = lanStatus?.invites ?? [];
-  const receivedInvites = inviteRows.filter((i) => i.direction === "received");
-  const sentTo = (deviceId: string) =>
-    inviteRows.some((i) => i.direction === "sent" && i.device_id === deviceId);
   /**
    * ★ 2026-09-29（规格 §12.1）：「附近设备」那一行的**摘要**（默认折叠 ＝ 只显示这一格）。
    *
@@ -979,21 +952,14 @@ export function SyncPanel() {
    *   · 开着但一台都没发现 ⇒ 「**正在找…**」——⚠️ **永不**说"0 台"：
    *     那会被读成"没有设备"，而真相是"还没找到"（看不见 ≠ 不存在，需求 §4.4）；
    *   · 发现了 N 台 ⇒ 「**N 台**」。
-   *     ⚠️ **有设备但一台都不可邀请，这里照样报台数** —— "能不能邀请"是点开之后
-   *     每台各说各的（那几句如实文案在行体里），不是摘要这一格的事。
    */
   const nearbySummary =
-    (!nearbyReadable || !lanStatus?.enabled
+    !nearbyReadable || !lanStatus?.enabled
       ? "看不到这一层"
       : nearby.length === 0
         ? "正在找…"
-        : `${nearby.length} 台`) +
-    // ★ 2026-09-29（owner 裁定「修」）：**收到的邀请要顶到摘要上** ——
-    //   它在行体里 ⇒ 不点开就看不见；而邀请是**一次性的**，被折叠挡住就等于错过。
-    //   ⚠️ 没有邀请时**不写这一节**（"`· 0 条邀请`"是噪声，与上面"永不说 0 台"同一条精神）；
-    //   ⚠️ 只写**条数**，不写设备名／`device_id`（`INV-UI-copy-no-internal-ids`）。
-    (receivedInvites.length > 0 ? ` · ${receivedInvites.length} 条邀请` : "");
-  // 我这边的空间名（邀请那一颗按钮上要写出来：**不许只写「邀请」**——用户不知道邀请什么）。
+        : `${nearby.length} 台`;
+  // 我这边的空间名（设备行那一列「服务 …」要写出来：**不许只写 id**——用户不知道那是哪个空间）。
   const mySpaceName = activeRow?.name?.trim() || "这个空间";
   /**
    * 一台设备那一行的第二列（照效果图：`（同网段 · 服务 项目A）`）。
@@ -1634,7 +1600,7 @@ export function SyncPanel() {
                          行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。
                       ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
                          （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
-                         摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行与邀请按钮
+                         摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行
                          **点开才显示**。⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
                   {lanDirectOn && (
                     <details className="sync-row">
@@ -1660,51 +1626,12 @@ export function SyncPanel() {
                                     （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
                                 <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
                                 <span className="sync-hint">{nearbySecondColumn(p)}</span>
-                                {p.invitable ? (
-                                  sentTo(p.device_id) ? (
-                                    // 观测不到"对方接受了"（规格 §5.3 不做回执）⇒ 只说已发出。
-                                    <span className="sync-hint">已发出邀请 · 等对方接受</span>
-                                  ) : (
-                                    <button
-                                      className="sync-btn ghost"
-                                      disabled={inviteBusy !== ""}
-                                      onClick={() => void sendInvite(p.device_id)}
-                                      title="邀请这一台把当前这个空间同步过去（不用抄任何字符串）"
-                                    >
-                                      邀请加入「{mySpaceName}」
-                                    </button>
-                                  )
-                                ) : p.serves_current ? (
-                                  // 看得见但拉不到：**如实说为什么**，而且**不给**一个点了会失败的按钮。
+                                {!p.invitable && p.serves_current && (
+                                  // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
                                   <span className="sync-hint">它没报可以直连的地址</span>
-                                ) : null}
+                                )}
                               </div>
                             ))
-                          )}
-                          {/* 收到的邀请：**单独一段**（它要用户动一下手，与"附近有谁"不是一件事）。
-                              文案写出**两个名字**（本地那个 ＋ 对方那句话里的空间名）——
-                              ⚠️ 对方的组织空间 **id 不显示**（`INV-UI-copy-no-internal-ids`；规格 §6 待查 R4
-                              本轮不替它下结论 ⇒ 用发起方自己写的那句 `note`）。 */}
-                          {receivedInvites.map((inv) => (
-                            <div className="sync-nearby-row is-invite" key={`inv-${inv.device_id}`}>
-                              <span className="sync-nearby-name">{inv.device_name || "这台设备没报名字"}</span>
-                              <span className="sync-hint">{inv.note || "它邀请你加入一个空间"}</span>
-                              <button
-                                className="sync-btn primary"
-                                disabled={inviteBusy !== ""}
-                                onClick={() => void acceptInvite(inv.device_id)}
-                                title={`接受后：把本地的「${mySpaceName}」接到对方那个空间上`}
-                              >
-                                接受
-                              </button>
-                            </div>
-                          ))}
-                          {receivedInvites.length > 0 && (
-                            <div className="sync-hint">
-                              接受后会把本地的「{mySpaceName}」接到对方那个空间上（对方的组织空间 id 不显示）。
-                              {/* 邀请**没有时效**（规格 §5.3 本轮不做时效）：这一句是安全属性，必须说出来。 */}
-                              邀请没有有效期，什么时候接受都行。
-                            </div>
                           )}
                           {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：
                               ⚠️ **不写数字** —— 常量是 30s（`lan_state.rs:138`），而真机读数记的是 ≈45 秒
@@ -1932,7 +1859,7 @@ export function SyncPanel() {
             ) : status ? (
               <div className={`sync-status is-${statusKind(status)}`}>
                 {/* ⚠️ 2026-09-29（丙-乙片）：这一行显示的是**后端给的人话**
-                    （`mesh_set_config` / `nearby_invite_*` 的 `note`），而后端是按**行内 Markdown**
+                    （`mesh_set_config` 的 `note`），而后端是按**行内 Markdown**
                     写的（`**没有**钥匙材料`、`**密文**`）⇒ 在**渲染边界**过 `inlineMd`
                     —— 与上面那条读数行、`:1633` 那一处同一口径（`inlineMd` 对不含成对 `**` 的
                     文本**原样返回**，所以既有那几句一个字都不会变）。 */}

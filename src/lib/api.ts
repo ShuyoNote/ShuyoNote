@@ -24,7 +24,7 @@ const invoke = <K extends keyof CommandMap>(
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
-export type { NearbyPeer, LanInvite } from "./platform/commands";
+export type { NearbyPeer } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";
@@ -455,25 +455,6 @@ export const api = {
       bind: bind ?? null,
       token: token ?? null,
     }) as Promise<MeshConfigState>,
-  /**
-   * ★ 丙-乙片（2026-09-29）：**发一条邀请**给同一网段里的某一台设备。
-   *
-   * 回的是**一句给人看的话**（`Err` 那句可操作：没设口令 / 对端不在网段里 / 不能被直接拉）。
-   * ⚠️ 载荷里**没有**钥匙材料；邀请**只发给这一台**（单播，不广播）。
-   */
-  nearbyInviteSend: (workspaceId: string | null | undefined, deviceId: string) =>
-    invoke("nearby_invite_send", { workspaceId: workspaceId ?? null, deviceId }) as Promise<string>,
-  /**
-   * ★ 丙-乙片：**接受一条邀请**（把当前这个本地空间接到对方那个空间上）。
-   *
-   * ⚠️ 个人加密空间会被**闸门**拦住（`Err` 且本机一个字节不改）。
-   * ⚠️ 回的那句话里说清了"还差一步：本机监听地址"。
-   */
-  nearbyInviteAccept: (workspaceId: string | null | undefined, fromDeviceId: string) =>
-    invoke("nearby_invite_accept", {
-      workspaceId: workspaceId ?? null,
-      fromDeviceId,
-    }) as Promise<string>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
   // 传 `server_url` 会被判为「缺少必填键 serverUrl」——这是运行时错误，TS 查不出来，

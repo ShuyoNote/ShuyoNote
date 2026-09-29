@@ -1576,11 +1576,8 @@ export function makeInvoke(store: SqliteStore) {
         //   也不是"还没发现"：**是"这台机器上看不到这一层"**。三件处境的区分靠上面那两个字段
         //   （`enabled:false` ＋ `line` 里那句"公网 … 附近发现 0 台"），**不靠这个空数组**。
         //   ⚠️ 不许把这里改成"回一个空数组"就算数（空数组与"不可用"长得一样、含义相反，
-        //      `INV-NEARBY-no-web-invite` 钉这条）。
+        //      `INV-NEARBY-no-render-without-data` 钉这条）。
         nearby: [],
-        // ★ 丙-乙片：浏览器里**没有邀请这条路**（没有发现层 ⇒ 谁都不发现，也发不出去）。
-        //   与 `nearby` 同一条口径：空 ＋ `enabled:false` 一起读，才不歧义。
-        invites: [],
       } as T;
     }
     if (cmd === "mesh_sync_now") {
@@ -1609,18 +1606,6 @@ export function makeInvoke(store: SqliteStore) {
         window: null,
         note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用（设置没有落下）",
       } as T;
-    }
-    if (cmd === "nearby_invite_send" || cmd === "nearby_invite_accept") {
-      // ★ 丙-乙片（2026-09-29）：**邀请这条路在 Web 上不存在**（产品决定：Web 不提供多设备同步，
-      // `INV-NEARBY-no-web-invite`）。⇒ 这里**抛一句人话**，而不是回一个"已发出"的假读数：
-      // "假装发出去了"是本仓最不能接受的那种错（用户会坐在那儿等一个永远不会到的东西）。
-      // ⚠️ 界面在 Web 档**根本不会渲染邀请入口**（门槛 `isDesktopPlatform() && lanStatus && space_id`）
-      //   ⇒ 这条路走到这里只可能是"有人在别处调了它"（那种情形更该吵）。
-      throw new Error(
-        cmd === "nearby_invite_send"
-          ? "Web 版没有设备发现层 ⇒ 发不出邀请（这一档只在桌面版可用）"
-          : "Web 版没有设备发现层 ⇒ 没有可接受的邀请（这一档只在桌面版可用）",
-      );
     }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'

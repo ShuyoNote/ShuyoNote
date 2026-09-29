@@ -202,14 +202,6 @@ export interface LanStatus {
    *    后者由每一条的 `serves_current` 表达（**界面不许自己算这条交集**）。
    */
   nearby: NearbyPeer[];
-  /**
-   * ★ 丙-乙片（2026-09-29）：**两条邀请记录**（`direction === "received"` ＝ 别人邀请我，
-   * `"sent"` ＝ 我邀请了别人）。
-   *
-   * ⚠️ 「对方**接受**了吗」**观测不到**（规格 §5.3：不做回执）⇒ 界面只说「已发出邀请」，
-   * **不许**说「对方已接受 / 已连接」。
-   */
-  invites: LanInvite[];
 }
 
 /**
@@ -230,22 +222,10 @@ export interface NearbyPeer {
   spaces: string[];
   /** 它跟我**当前这个空间**相不相关（**Rust 判的**，界面直接显示）。 */
   serves_current: boolean;
-  /** ★ 它能不能被直接拉（＝那一行**有没有**「邀请」这个动作），与 `mesh::mesh_peers` 同一把尺。 */
+  /** ★ 它能不能被直接拉（那一行的第二列据此如实说"它没报可以直连的地址"），与 `mesh::mesh_peers` 同一把尺。
+   *  ⚠️ 名字取自 2026-09-29 丙-乙片（当时它管的是「有没有邀请按钮」）——同日晚 owner 裁定 §14 撤掉了邀请，
+   *  这个字段**留下来了**：它现在的语义是"**能不能被直接拉**"，不是"能不能被邀请"。 */
   invitable: boolean;
-}
-
-/** 一条**邀请**的读数（与 Rust `sync::LanInvite` 逐字段相同）。 */
-export interface LanInvite {
-  /** `"received"` ＝ 别人邀请我；`"sent"` ＝ 我邀请了别人。 */
-  direction: "received" | "sent";
-  /** 对端设备身份（排障与去重用）。 */
-  device_id: string;
-  /** 对端设备名（可能是空串）。 */
-  device_name: string;
-  /** 远端组织空间 id。⚠️ 界面**不许**把它插进句子。 */
-  space_id: string;
-  /** 一句给人看的话（**发起方写的**，接受侧原样显示）。 */
-  note: string;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
@@ -671,29 +651,6 @@ export interface CommandMap {
   mesh_set_config: {
     args: { workspaceId?: string | null; bind?: string | null; token?: string | null };
     result: MeshConfigState;
-  };
-  /**
-   * ★ 丙-乙片（2026-09-29）：**发一条邀请**给同一网段里的某一台设备。
-   *
-   * 口径（与 Rust `sync::nearby_invite_send` 同一套）：
-   * · **零字符串搬运** —— `space_id` 与口令都由后端从本机已有的设置里取；
-   * · **载荷里没有钥匙袋**（`nearby_invite::NearbyInvite`）；
-   * · **没设口令就不发**（没口令的窗口同网段谁都能拉）；
-   * · 返回的是**一句给人看的话**（`Err` 那句可操作）。
-   */
-  nearby_invite_send: {
-    args: { workspaceId?: string | null; deviceId: string };
-    result: string;
-  };
-  /**
-   * ★ 丙-乙片：**接受一条邀请** —— 把当前这个本地空间接到对方那个空间上。
-   *
-   * ⚠️ 接受**过同一道加密闸门**（`sync_bind_gate`）：个人空间没加密 ⇒ 拦住且本机一个字节不改。
-   * ⚠️ 返回的人话里必须说清"还差一步：本机监听地址"（接受**不**替对方配它）。
-   */
-  nearby_invite_accept: {
-    args: { workspaceId?: string | null; fromDeviceId: string };
-    result: string;
   };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };

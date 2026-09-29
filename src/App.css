@@ -1411,11 +1411,9 @@ html[data-platform="win"] .app-body {
   color: var(--text);
 }
 /* 第二列说明与右侧动作都靠 `margin-left:auto` 推到右边；换行时动作自己落到下一行。
-   ⚠️ 说明这一格要能换行（窄屏下"等对方接受"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
+   ⚠️ 说明这一格要能换行（窄屏下"没报可以直连的地址"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
 .sync-nearby-row > .sync-hint { margin-left: auto; text-align: right; flex: 0 1 auto; }
 .sync-nearby-row > .sync-btn { margin-left: auto; flex: none; }
-/* 收到的邀请：底色与"附近设备"的行区分开（**只用既有变量**）。 */
-.sync-nearby-row.is-invite { border-color: var(--accent); }
 /* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
  *
  * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。

@@ -18,55 +18,23 @@
 //! 按 TTL 腾过期行）。"这一轮走哪个地址"仍是 `lan::resolve_base` 的活（纯函数、判据在那儿）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use tauri::Manager;
 
 use crate::db::Db;
 use crate::lan::{self, Peer, PeerTable};
 
-/// **收到的一条邀请**（丙-乙片）：载荷 ＋ 它从哪儿来。
-///
-/// ⚠️ 它**不进对端表**（`PeerTable` 是"谁在网段里"，邀请是"谁找过我"）—— 两张表不许混。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingInvite {
-    pub invite: crate::nearby_invite::NearbyInvite,
-    /// 收到它的**来源地址**（ip，不含端口）：只有去重与排障用，**不上界面**。
-    pub addr: String,
-}
-
-/// **我发出的一条邀请**（同一个进程里记着，用来显示"已发出邀请 · 等对方接受"）。
-///
-/// ⚠️ **不落盘**（规格 §5.3：不做回执、不做重传、不做时效）⇒ 重启应用之后这一行会回到
-/// "可以邀请"的样子。这是**如实**的取舍：我们**没有观测到**对方接受（`INV-NEARBY-*` 里
-/// 那一态本轮**不编**），所以这个状态本来就只是"我刚才点过一下"。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SentInvite {
-    pub device_id: String,
-    pub device_name: String,
-    pub space_id: String,
-    pub note: String,
-}
-
-/// 应用级的发现状态：一张对端表 ＋ 一个"要不要听/喊"的开关 ＋ **两条邀请记录**。
+/// 应用级的发现状态：一张对端表 ＋ 一个"要不要听/喊"的开关。
 pub struct LanState {
     table: PeerTable,
     enabled: AtomicBool,
-    /// 收到的邀请（**按来源设备去重**：同一台再来一条就覆盖它自己那一条）。
-    invites: Mutex<Vec<PendingInvite>>,
-    /// 我发出去的邀请（同样按设备去重）。
-    sent: Mutex<Vec<SentInvite>>,
 }
 
 impl LanState {
     /// 造一个（测试与"想自己持有一份"的调用方用）。**生产路径请走 [`LanState::global`]**。
     pub fn new(local_device_id: String) -> Self {
-        Self {
-            table: PeerTable::new(local_device_id),
-            enabled: AtomicBool::new(false),
-            invites: Mutex::new(Vec::new()),
-            sent: Mutex::new(Vec::new()),
-        }
+        Self { table: PeerTable::new(local_device_id), enabled: AtomicBool::new(false) }
     }
 
     /// 进程级的唯一一份。`local_device_id` 只在**第一次**调用时用得上（之后忽略）——
@@ -82,100 +50,27 @@ impl LanState {
         self.table.upsert(p)
     }
 
-    /// 收**一条原始报文**：**先看它是不是一条邀请**（`nearby_invite::decode`），是就收进邀请表；
-    /// 否则按公告解 ⇒ 入库 ⇒ 把入库的那一条还回来（`Ok(Some)`）。
+    /// 收**一条原始报文**：按公告解 ⇒ 入库 ⇒ 把入库的那一条还回来（`Ok(Some)`）。
     ///
     /// 返回值与 [`crate::lan::recv_into`] 一一对应（它就是这一层的薄壳）：
     /// - `Ok(Some(peer))` ＝ 收了、记了；
-    /// - `Ok(None)` ＝ **这一条不是"新的对端"**：① 是我自己的公告（回环回来的）⇒ 忽略；
-    ///   ② **是一条邀请 ⇒ 已收进邀请表**（`pending_invites()`，丙-乙片）。
-    ///   两种都不入对端表、也都不是错误 —— 调用方（那条循环）对两者一视同仁（都只是"这一片收到了东西"）。
+    /// - `Ok(None)` ＝ **这一条不是"新的对端"**：是我自己的公告（回环回来的）⇒ 忽略。
+    ///   它不入对端表、也不是错误 —— 调用方（那条循环）把它读成"这一片收到了东西"。
     /// - `Err(原因)` ＝ 报文不合法 ⇒ **丢弃且不入表**（公告四种原因见 `lan::AnnounceReject::reason`）。
     ///
     /// ⚠️ **解码只在这一处**：`recv_into` 不再自己 `decode_announce` 一遍 —— 两处各解一次
     /// 迟早会漂（那种漂的表现是"某一种坏报文在一处被丢、在另一处被收下"）。
-    /// ⚠️ **分流为什么是"先试邀请"**：两条线各有各的版本号（`nearby_invite` 模块头的最后一段），
-    /// 而两条路都"不认识就丢" ⇒ 谁也不会把对方的报文当成自己的（判据
-    /// `an_announce_and_an_invite_never_decode_as_each_other` 钉这条）。
     /// ⚠️ **`decode_announce` 一个字节都没动**（它的"不认识就不猜"是承重的）。
     pub fn record_datagram(&self, raw: &str, from_ip: &str, now_ms: i64) -> Result<Option<Peer>, String> {
-        let invite_err = match crate::nearby_invite::decode(raw) {
-            Ok(inv) => {
-                self.remember_invite(inv, from_ip);
-                return Ok(None);
-            }
-            Err(e) => e,
-        };
         let announce = match crate::lan::decode_announce(raw) {
             Ok(a) => a,
-            Err(r) => {
-                // ⚠️ 两条路都不认时，**报更贴切的那一句**：这是一条**邀请**（带着邀请的键）
-                //    却解不开（版本不认识 / 字段多出来）⇒ 说"不是合法公告"会把排障引到错的方向
-                //    （对着一条邀请去查公告的格式）。不带邀请的键 ⇒ 照旧报公告那一句（**逐字不变**）。
-                let said = if raw.contains("\"from_device_id\"") {
-                    invite_err.reason()
-                } else {
-                    r.reason()
-                };
-                return Err(said.to_string());
-            }
+            Err(r) => return Err(r.reason().to_string()),
         };
         let peer = Peer { announce, addr: from_ip.to_string(), seen_at_ms: now_ms };
         if !self.observe(peer.clone()) {
             return Ok(None);
         }
         Ok(Some(peer))
-    }
-
-    /// 记一条**收到的**邀请（同一台设备再来一条就覆盖它自己那一条 —— 去重键是设备身份，
-    /// 与对端表同一把尺：**不看名字**）。
-    ///
-    /// ⚠️ 与 `observe` 同一条口径：**未启用时也收**（收下不等于看得见，
-    /// 看不看得见由 [`LanState::pending_invites`] 决定）。
-    pub fn remember_invite(&self, invite: crate::nearby_invite::NearbyInvite, from_ip: &str) {
-        let mut g = self.invites.lock().unwrap_or_else(|e| e.into_inner());
-        let id = invite.from_device_id.trim().to_string();
-        g.retain(|p| p.invite.from_device_id.trim() != id);
-        g.push(PendingInvite { invite, addr: from_ip.trim().to_string() });
-    }
-
-    /// 现在看得到的邀请：**未启用 ⇒ 空**（与 [`LanState::peers`] 同一条口径 3「关掉＝看不见」）。
-    pub fn pending_invites(&self) -> Vec<PendingInvite> {
-        if !self.is_enabled() {
-            return Vec::new();
-        }
-        let g = self.invites.lock().unwrap_or_else(|e| e.into_inner());
-        g.clone()
-    }
-
-    /// 取某一台设备发来的那一条（接受时用）。**同样受启用开关管**（关着 ⇒ 看不到，也就接不了）。
-    pub fn pending_invite_from(&self, device_id: &str) -> Option<PendingInvite> {
-        let want = device_id.trim();
-        self.pending_invites()
-            .into_iter()
-            .find(|p| p.invite.from_device_id.trim() == want)
-    }
-
-    /// 记一条**我发出去的**邀请（界面据此显示"已发出邀请 · 等对方接受"）。
-    pub fn remember_sent(&self, s: SentInvite) {
-        let mut g = self.sent.lock().unwrap_or_else(|e| e.into_inner());
-        let id = s.device_id.trim().to_string();
-        g.retain(|x| x.device_id.trim() != id);
-        g.push(s);
-    }
-
-    /// 我发出的邀请（**不受启用开关管**：这是我自己的动作，不是"网段里有什么"）。
-    pub fn sent_invites(&self) -> Vec<SentInvite> {
-        let g = self.sent.lock().unwrap_or_else(|e| e.into_inner());
-        g.clone()
-    }
-
-    /// 把**已经接受了的那一条**从邀请表里拿掉（接受是一次性的：留着会让界面一直提示"等你接受"）。
-    pub fn take_invite_from(&self, device_id: &str) -> Option<PendingInvite> {
-        let want = device_id.trim().to_string();
-        let mut g = self.invites.lock().unwrap_or_else(|e| e.into_inner());
-        let at = g.iter().position(|p| p.invite.from_device_id.trim() == want)?;
-        Some(g.remove(at))
     }
 
     /// 启用 / 停用。**停用不清表**（网段里还是那些人，只是这一次我们不看）——
@@ -448,10 +343,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 /// 本机名（公告里的 `device_name`，只给人看）：拿不到就留空，**不编**一个假的。
-///
-/// ⚠️ `pub(crate)`：邀请的载荷（`nearby_invite::build`）要用**同一个**名字 ——
-/// 两处各取一次就会漂（用户会看到"列表里那台叫 A，邀请却来自 B"）。
-pub(crate) fn host_name() -> String {
+fn host_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_default()
@@ -539,6 +431,36 @@ mod tests {
         assert!(st.peers(1_000).is_empty());
     }
 
+    /// 判据 ⑤：**收报这一段只有一条路**（公告）—— 合法的入库并**原样还回来**，
+    /// 不合法的**当场丢且不入表**（原因就是公告那一句）。
+    ///
+    /// ⚠️ 这条是 2026-09-29 owner 裁定 §14（撤掉邀请那套）之后**还原**出来的读数：
+    /// `record_datagram` 回到"只走公告"，所以"坏报文报的是公告的原因"重新成为**唯一**行为
+    /// （此前它被"两条线都不认时报更贴切的那句"分过一次流）。
+    #[test]
+    fn a_datagram_is_an_announce_or_nothing() {
+        let st = LanState::new("dev-me".into());
+        st.set_enabled(true);
+        // ① 合法公告 ⇒ 收了、记了，且**还回来的是入库的那一条**
+        let raw = crate::lan::encode_announce(&peer_of("dev-a", "http://192.168.1.5:8787", &["sp-1"]).announce)
+            .unwrap();
+        let got = st.record_datagram(&raw, "192.168.1.9", 1_000).unwrap().expect("合法公告要入库");
+        assert_eq!(got.announce.device_id, "dev-a");
+        assert_eq!(got.addr, "192.168.1.9", "来源地址取自收到的那个 ip");
+        assert_eq!(st.observed_all().len(), 1);
+        // ② 自己的公告（回环）⇒ `Ok(None)`（不是错误，也不入表）
+        let own = crate::lan::encode_announce(&peer_of("dev-me", "http://192.168.1.4:8787", &["sp-1"]).announce)
+            .unwrap();
+        assert_eq!(st.record_datagram(&own, "192.168.1.4", 1_000).unwrap(), None);
+        assert_eq!(st.observed_all().len(), 1, "自己的公告不许进表");
+        // ③ 不合法 ⇒ 报**公告**那一句，且**一个字节都不入表**
+        assert_eq!(
+            st.record_datagram("{ 这不是 json", "192.168.1.9", 1_000).unwrap_err(),
+            crate::lan::AnnounceReject::BadJson.reason(),
+        );
+        assert_eq!(st.observed_all().len(), 1);
+    }
+
     /// 判据 ④（口径 2）：按需启用的判别式 —— **绑了同步才启用**；
     /// 没有绑定就**不在用户的网段里发声**（用户看不见，但那是隐私与噪音的两重错）。
     #[test]
@@ -546,77 +468,6 @@ mod tests {
         assert!(!should_enable(0));
         assert!(should_enable(1));
         assert!(should_enable(3));
-    }
-
-    // ---- 丙-乙片（2026-09-29）：邀请收进哪一行 ----
-
-    fn invite_of(device: &str, space: &str, token: &str) -> crate::nearby_invite::NearbyInvite {
-        crate::nearby_invite::build(device, "小明的笔记本", space, token, "项目A").unwrap()
-    }
-
-    /// ★★ 判据 ⑩：**邀请是邀请，对端是对端 —— 两张表不许混**。
-    ///
-    /// 咬人的地方：把邀请塞进 `PeerTable`（"反正都是一条报文"）⇒ 网段里会凭空多出一台
-    /// **没有公告的设备**（状态行的「发现 N 台」虚高，而那一台根本不来同步）。
-    #[test]
-    fn an_invite_lands_in_the_invite_table_and_never_in_the_peer_table() {
-        let st = LanState::new("dev-me".into());
-        st.set_enabled(true);
-        let raw = crate::nearby_invite::encode(&invite_of("dev-a", "sp-1", "t-1")).unwrap();
-        // 返回值是 `Ok(None)`（**不是** `Err`）：邀请是**合法报文**，只是不入对端表。
-        assert_eq!(st.record_datagram(&raw, "192.168.1.9", 1_000).unwrap(), None);
-        assert!(st.peers(1_000).is_empty(), "邀请不是一台「发现到的设备」");
-        assert_eq!(st.observed_all().len(), 0, "诊断口也不该看见它");
-        let got = st.pending_invites();
-        assert_eq!(got.len(), 1);
-        assert_eq!(got[0].invite.from_device_id, "dev-a");
-        assert_eq!(got[0].invite.space_id, "sp-1");
-        assert_eq!(got[0].addr, "192.168.1.9");
-    }
-
-    /// ★ 判据 ⑪：**关掉＝看不见**（口径 3）也适用于邀请；而"同一台再来一条"是**覆盖**，不是堆两行。
-    #[test]
-    fn invites_follow_the_same_visibility_rule_and_dedupe_by_device() {
-        let st = LanState::new("dev-me".into());
-        let a = crate::nearby_invite::encode(&invite_of("dev-a", "sp-1", "t-1")).unwrap();
-        let b = crate::nearby_invite::encode(&invite_of("dev-a", "sp-2", "t-2")).unwrap();
-        st.record_datagram(&a, "192.168.1.9", 1_000).unwrap();
-        // 关着：看不见（但确实收下了 —— 与对端表同一口径：再打开时不必重等一轮）
-        assert!(st.pending_invites().is_empty());
-        st.set_enabled(true);
-        assert_eq!(st.pending_invites().len(), 1);
-        // 同一台再来一条 ⇒ 覆盖（去重键是**设备身份**，不是空间、不是名字）
-        st.record_datagram(&b, "192.168.1.9", 2_000).unwrap();
-        let got = st.pending_invites();
-        assert_eq!(got.len(), 1, "同一台设备不该堆两行：{got:#?}");
-        assert_eq!(got[0].invite.space_id, "sp-2");
-        // 取走那一条（接受是一次性的）
-        assert!(st.take_invite_from("dev-a").is_some());
-        assert!(st.pending_invites().is_empty());
-        assert!(st.take_invite_from("dev-a").is_none());
-    }
-
-    /// ★ 判据 ⑫：**解不开的邀请要按邀请来报**（不是"不是合法公告"）。
-    ///
-    /// 咬人的地方：两条线都不认时一律报公告那一句 ⇒ 排障的人会对着一条邀请去查公告的格式。
-    /// ⚠️ 而**不带邀请键**的坏报文必须**逐字照旧**（这条别把老读数改掉）。
-    #[test]
-    fn a_broken_invite_is_reported_as_an_invite_not_as_a_broken_announce() {
-        let st = LanState::new("dev-me".into());
-        st.set_enabled(true);
-        let mut inv = invite_of("dev-a", "sp-1", "t-1");
-        inv.v = crate::nearby_invite::NEARBY_INVITE_VERSION + 1;
-        let raw = serde_json::to_string(&inv).unwrap();
-        assert_eq!(
-            st.record_datagram(&raw, "192.168.1.9", 1_000).unwrap_err(),
-            crate::nearby_invite::InviteReject::UnknownVersion.reason()
-        );
-        assert!(st.pending_invites().is_empty(), "不认识的版本不许被收下（不猜）");
-        assert_eq!(
-            st.record_datagram("{ 这不是 json", "192.168.1.9", 1_000).unwrap_err(),
-            crate::lan::AnnounceReject::BadJson.reason(),
-            "不带邀请键的坏报文，报的还是公告那一句（既有读数逐字不变）"
-        );
     }
 
     /// 判据 ⑤：过期的对端会被腾掉（周期任务靠它，免得表只增不减）。
