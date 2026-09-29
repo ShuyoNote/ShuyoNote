@@ -245,15 +245,20 @@ mod tests {
         record_lineage_conflict(&c, "p1", "1", "2", "{}", 10).unwrap();
         let id = unresolved_lineage_conflict(&c, "p1").unwrap().unwrap().id;
 
-        // ★ 不默认选边：其余一律报错（含空串、"remote" 这种"看起来像"的值）
-        for bad in ["", "remote", "use-remote", "LOCAL"] {
+        // ★ 不默认选边：**三个合法值之外**一律报错。
+        // ⚠️ 2026-09-29 订正：原来的坏值表里有 `"remote"`，而 `575a58c6` 已把它放开成
+        //    合法值（见本文件 `CHOICE_REMOTE` 与 :165 那个校验）⇒ 这条判据自那天起就是红的。
+        //    「合法值不许出现在坏值表里」——这是同一条纪律的另一面。
+        for bad in ["", "use-remote", "LOCAL", "whatever", "Remote"] {
             assert!(resolve_lineage_conflict(&c, &id, bad, 11).is_err(), "{bad:?} 不该被接受");
         }
         resolve_lineage_conflict(&c, &id, CHOICE_LOCAL, 11).unwrap();
         assert!(resolve_lineage_conflict(&c, &id, "whatever", 13).is_err(), "**第四个**值仍然拒 ✓");
         assert!(resolve_lineage_conflict(&c, &id, CHOICE_LOCAL, 12).is_err(), "已裁决的再裁决要报错");
         let all = lineage_conflicts_of(&c, "p1").unwrap();
-        assert_eq!(all[0].resolved_choice.as_deref(), Some(CHOICE_REMOTE));   // ★ 三个字面量都收 ✓
+        // ⚠️ 2026-09-29 订正：这里原来断言 `Some(CHOICE_REMOTE)`，而上面明明 resolve 的是
+        //    `CHOICE_LOCAL`（紧接着一行又断言 LOCAL）—— 两句互斥，且与上面那句 resolve 相反。
+        //    ⇒ 改成断言【实际写进去的那个值】。 ✓
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].resolved_choice.as_deref(), Some(CHOICE_LOCAL));
         assert_eq!(all[0].resolved_at, Some(11));

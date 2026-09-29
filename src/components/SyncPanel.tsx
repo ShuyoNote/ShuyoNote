@@ -22,6 +22,7 @@ import {
   settingsForMode,
   syncModeHint,
   syncModeOf,
+  setLanMeshActive,
   writeAutoSyncMs,
   type SyncMode,
 } from "../lib/syncMode";
@@ -175,7 +176,14 @@ export function SyncPanel() {
     const tick = async () => {
       try {
         const st = await api.lanStatus(activeId);
-        if (alive) setLanStatus(st);
+        if (alive) {
+          setLanStatus(st);
+          // ★ 2026-09-29：把"局域网这一档开着吗"喂给 `syncMode`（它就是 `App` 那个自动同步
+          //   定时器的间隔来源）。owner 判定：**局域网档 = 5 秒**（见 `SYNC_LAN_INTERVAL_MS`）。
+          //   ⚠️ 用 `mesh.enabled`（＝ Rust 的 `cfg.bind.is_some()`，"配了监听地址就是开启"）
+          //      的**结论**，不按地址形状自己再判一次档（判据 ⑭ 钉的是后者）。
+          setLanMeshActive(!!st.mesh.enabled);
+        }
       } catch {
         // 读不到（命令没注册 / 老构建）⇒ 这一行**不显示**，别把它装成"没有发现到对端"。
         if (alive) setLanStatus(null);

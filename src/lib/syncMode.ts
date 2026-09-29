@@ -24,8 +24,21 @@ export type SyncMode = "off" | "interval" | "realtime";
  */
 export const SYNC_INTERVAL_MS = 30_000;
 
-/** 「近实时」那一档的**兜底**轮询间隔：流断了也还能自己找回来（5 分钟）。 */
+/** 「近实时」那一档在**服务端档**的**兜底**轮询间隔：流断了也还能自己找回来（5 分钟）。 */
 export const SYNC_REALTIME_FALLBACK_MS = 5 * 60_000;
+/**
+ * 「近实时」那一档在**局域网档**的自动间隔（⚠️ 与上面那个**不是一回事**，见下）。
+ *
+ * ★ 为什么必须分开（2026-09-29，owner 定的 5 秒）：同一个常量在两种档位下含义**完全不同** ——
+ *   · **服务端档**：那条 SSE 流（`sync_stream`）正常时会把变更推过来
+ *     ⇒ 这个轮询只是"**流断了**"的保险 ⇒ 拉长到 5 分钟（省请求）是对的。
+ *   · **局域网档**：**没有 SSE**（`stream_url(server, space_id)` 连的是 `server_url`）
+ *     ⇒ 这个轮询就是【**主发动机**】—— 用 5 分钟当主发动机 ⇒ 手感就是"5 分钟才动一次"。
+ *   ⇒ 同一个数当保险丝是 5 分钟、当发动机是 5 秒。**它们不该共用一个常量**（本仓铁律：
+ *     一个量只该有一个含义）。局域网内一次拉取很便宜（直连、无外网），5 秒是划得来的。
+ * ⚠️ owner 2026-09-29 拍板：**局域网这档 = 5 秒**。
+ */
+export const SYNC_LAN_INTERVAL_MS = 5_000;
 
 /** 当前设置落在哪一档（**读**：老值也能映射回来，不会把用户原来的设置"读没了"）。 */
 export function syncModeOf(autoMs: number, nearRealtime: boolean): SyncMode {
@@ -97,10 +110,36 @@ export function readAutoSyncMs(): number {
  * 口径（一句话）：**近实时开着 ⇒ 兜底轮询必须挂着**，值与 `settingsForMode("realtime")` 同源。
  * ⚠️ 近实时关着而档位是 0 ⇒ **真的是"关闭"**（一个字都不自动跑），这里不偷加。
  */
+/**
+ * 「局域网档现在开着吗」—— 由**拿到 `lan_status` 的那一处**设（今天只有同步面板），
+ * 与 `nearRealtime` 同款：模块级状态 ＋ 变化时广播，让 `App` 那个定时器跟着换间隔。
+ *
+ * ⚠️ 为什么不能用 `lan_status.kind` 在这里现判：它是**异步命令**，而本函数是**同步纯函数**
+ *    （定时器读它）。⇒ 只能由调用方**喂**进来。
+ * ⚠️ 判据 ⑭ 钉的是「界面不许**按地址形状自己再判**一次档」；这里用的是 Rust 判好的
+ *    `mesh.enabled`（＝ `cfg.bind.is_some()`），**不是**自己解析地址 ⇒ 合规。
+ */
+let lanMeshActive = false;
+
+/** 设置「局域网档开着吗」。**值没变就什么都不做**（否则每次轮询都会广播一圈）。 */
+export function setLanMeshActive(on: boolean): void {
+  if (lanMeshActive === on) return;
+  lanMeshActive = on;
+  broadcastAutoSyncChanged();
+}
+
+/** 给判据用：现在的状态（只读，不许拿它当"真相"另存一份）。 */
+export function isLanMeshActive(): boolean {
+  return lanMeshActive;
+}
+
 export function effectiveAutoSyncMs(): number {
   const raw = readAutoSyncMs();
   if (raw > 0) return raw;
-  return isNearRealtimeEnabled() ? SYNC_REALTIME_FALLBACK_MS : 0;
+  if (!isNearRealtimeEnabled()) return 0;
+  // ⚠️ 两种档位含义不同（见 `SYNC_LAN_INTERVAL_MS` 上面那段）：
+  //    局域网档没有流 ⇒ 这个轮询是主发动机 ⇒ 用短的那个。
+  return lanMeshActive ? SYNC_LAN_INTERVAL_MS : SYNC_REALTIME_FALLBACK_MS;
 }
 
 /**
