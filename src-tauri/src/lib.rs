@@ -102,6 +102,10 @@ mod lan_state;
 // 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
 // ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
 mod pairing;
+// 丙-乙片（2026-09-29）：**给同事的邀请** —— 载荷 ＋ 编解码 ＋ 字段白名单（纯函数内核）。
+// ⚠️ 与 `pairing` **不是一条路**：配对载荷带 `material`（钥匙袋级，只该给"你自己那台设备"），
+//    而邀请**不许**带任何密钥材料（`INV-NEARBY-invite-has-no-keyring`）。见该文件头。
+mod nearby_invite;
 mod capabilities_gen;
 // MuPDF 光栅化：**2026-09-21 起是构建期特性**（默认不编，见 Cargo.toml 的 `mupdf-rollback`）。
 // PDFium 从 1.91.13 起是默认引擎，这条只剩"一键回滚"；平时不背它那份重量级 C 依赖。
@@ -633,6 +637,10 @@ pub fn run() {
             // ＋ **设置面**（写监听地址 / 口令，并把窗口的开关跟着改）。
             sync::mesh_sync_now,
             sync::mesh_set_config,
+            // 丙-乙片（2026-09-29）：**邀请的收发**（只对同一网段里发现到的那一台，单播）。
+            // ⚠️ 载荷里没有钥匙材料（`nearby_invite`）；接受侧**过同一道加密闸门**。
+            sync::nearby_invite_send,
+            sync::nearby_invite_accept,
             // 阶段 1 · 冲突留痕与裁决（提示 UI 的两个入口；数据在本地表 `page_conflicts`）
             commands::list_page_conflicts,
             commands::resolve_page_conflict,

@@ -178,7 +178,7 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
     let want = space_id.trim();
     if !want.is_empty() {
         for p in peers {
-            if !p.announce.hub_spaces.iter().any(|s| s.trim() == want) {
+            if !serves_space(space_id, p) {
                 continue;
             }
             let Some(base) = p.announce.hub_base.as_deref() else {
@@ -196,6 +196,21 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
         return None;
     }
     Some(Route { url: configured.to_string(), kind: LinkKind::Configured })
+}
+
+/// ★ 这条公告**服务不服务**这个空间 —— **唯一的一把尺**，凡是"某台设备认不认这个空间"都走它。
+///
+/// 口径：`hub_spaces` 里含这个空间的**去空白字面量相等**（不看格式 —— 网格不检查 `space_id` 是
+/// 哪来的，`lan.rs:181` 的既有口径）。空 `space_id` ⇒ **一律不认**（"没指定空间"不是"谁都算"）。
+///
+/// ⚠️ 为什么必须抽成一个函数（而不是各处写一遍 `iter().any(|s| s.trim() == want)`）：
+/// 丙档有**三处**要问这句话 —— 地址解析（[`resolve_base`]）、谁可以被直接拉（`mesh::invitable_base`）、
+/// 以及界面上那一条"服务 项目A"（`sync::NearbyPeer::serves_current`）。
+/// 三处各写一遍就会漂，而**漂了不炸、不报错、单测全绿**：现场是"列表说它服务这个空间，
+/// 可它就是拉不动"（或反过来）。
+pub fn serves_space(space_id: &str, p: &Peer) -> bool {
+    let want = space_id.trim();
+    !want.is_empty() && p.announce.hub_spaces.iter().any(|s| s.trim() == want)
 }
 
 /// 这个基址是不是**局域网**地址（`http://<私有 IPv4>[:port]`）。
@@ -497,6 +512,36 @@ pub async fn announce_once(
         ));
     }
     Ok(sent)
+}
+
+/// 给**一台**对端发一条**单播**报文（丙-乙片：邀请走的就是它）。
+///
+/// 两条口径：
+/// 1. **不新开端口、不新开进程**（规格 §5.2）：报文发到对方**收公告的那个端口**
+///    （[`LAN_PORT`]）—— 也就是我们**已经在听**的那一个。
+/// 2. **源端口是临时的**（`bind(0.0.0.0:0)`）：单播不需要广播许可，也不需要占住
+///    [`LAN_PORT`]（那个口是发现层那条常驻 socket 的）；对方 `recv_from` 只看**目的**端口。
+///    ⇒ 这一条让"发邀请"不必去够那条循环里的 socket（那条路要跨任务共享一个 `UdpSocket`）。
+///
+/// ⚠️ `raw` 由**调用方**编码好（本函数只管运输）：编码失败必须发生在**这里之前**
+/// （"发出去的东西不许无声地变成空"，与 `announce_once` 同一条纪律）。
+/// ⚠️ `ip` 是**外部输入**（公告的来路）⇒ 解析不出来就如实报错，绝不 panic。
+pub async fn send_unicast(ip: &str, port: u16, raw: &str) -> Result<(), String> {
+    let host = ip.trim();
+    if host.is_empty() {
+        return Err("这条对端记录里没有来源地址 ⇒ 发不出去（它可能只被单播听见）".to_string());
+    }
+    let ip: IpAddr = host
+        .parse()
+        .map_err(|_| format!("这不是一个能发过去的地址：{host}"))?;
+    let to = SocketAddr::new(ip, port);
+    let sock = UdpSocket::bind(("0.0.0.0", 0))
+        .await
+        .map_err(|e| format!("开一个临时 UDP socket 失败：{e}"))?;
+    sock.send_to(raw.as_bytes(), to)
+        .await
+        .map_err(|e| format!("发到 {to} 失败：{e}"))?;
+    Ok(())
 }
 
 /// 收**一条**并入库。三种结果，故意分得清清楚楚：

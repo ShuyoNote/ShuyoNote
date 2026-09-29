@@ -1355,6 +1355,74 @@ html[data-platform="win"] .app-body {
    否则两张卡会贴在一起。 */
 .sync-row-body > .sync-card + .sync-card,
 .sync-row-body > .sync-empty-state + .sync-card { margin-top: 12px; }
+
+/* ── ★ 2026-09-29（丙档「局域网直连」）：三样新东西的样式 ─────────────────────────────
+   口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /
+   `--text-faint` / `--radius-md` / `--accent` / `--text`），**不引入任何新色值**。
+   而那个"提示框"直接复用既有的 `.sync-web-note`（它的底色本来就是既有变量），
+   这里只把它的外边距归零（它原来是给 `.sync-popover` 直接当孩子用的，margin 会重复一圈）。 */
+.sync-web-note.is-inline { margin: 0; }
+
+/* 子项那一行（「拉取间隔」）：**缩进 ＋ 一条竖线**，表示它属于上一行（照效果图）。
+   ⚠️ 竖线用伪元素而不是 `border-left`：`border-left` 会把圆角那一圈也画上，看起来像两个盒子。 */
+.sync-row.is-child { margin-left: 14px; position: relative; }
+.sync-row.is-child::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+
+/* ★ 规格 §9.2：总闸＝关闭 ⇒ 局域网直连那一行**灰掉**。
+   ⚠️ 与 `.sync-profiles.is-disabled` 同一套手法（`opacity` ＋ `pointer-events`）——
+      它是"不能点"，不是"藏起来"（用户要看得到"它停着"这件事，上面的黄框在说为什么）。 */
+.sync-row.is-off {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 「附近设备」那一块：一块**区域标题** ＋ 每台一行（＋ 收到的邀请 ＋ 那句代价说明）。 */
+.sync-nearby { display: flex; flex-direction: column; gap: 8px; }
+.sync-nearby-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+/* 一台设备那一行：名字（可缩）＋ 第二列说明（可缩）＋ 右侧动作（不可缩）。
+   ⚠️ `flex-wrap` 是必须的：`邀请加入「<空间名>」` 在 320px 宽的面板里放不下 ——
+      不换行就会把那一行**撑出面板**（而"越界"正是 mobile-views 那条门禁在量的东西）。 */
+.sync-nearby-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-nearby-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text);
+}
+/* 第二列说明与右侧动作都靠 `margin-left:auto` 推到右边；换行时动作自己落到下一行。
+   ⚠️ 说明这一格要能换行（窄屏下"等对方接受"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
+.sync-nearby-row > .sync-hint { margin-left: auto; text-align: right; flex: 0 1 auto; }
+.sync-nearby-row > .sync-btn { margin-left: auto; flex: none; }
+/* 收到的邀请：底色与"附近设备"的行区分开（**只用既有变量**）。 */
+.sync-nearby-row.is-invite { border-color: var(--accent); }
 /* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
  *
  * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。

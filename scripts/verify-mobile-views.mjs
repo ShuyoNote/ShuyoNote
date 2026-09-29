@@ -77,9 +77,21 @@ async function applyShell(page) {
     const WS = { id: "ws1", name: "我的工作空间" };
     const PROF = { ws_id: "ws1", space_id: "sp1", server_url: "http://192.168.43.206:8787",
       token: "t", device_id: "d1", last_pushed_seq: 0, last_pulled_seq: 0 };
+    // ★ 2026-09-29（丙档「附近设备」）：`nearby` / `invites` 是本档**新增的契约字段**
+    //   （`NearbyPeer` / `LanInvite`，见 `commands.ts:175` 那一族）⇒ **桩必须跟着长**。
+    //   ⚠️ 不跟着长的下场是"门禁量到一个不可能出现的处境"：`enabled:true` 而读数里没有列表
+    //      ⇒ 面板只能渲染「这台机器上看不到这一层」，而真机上永远不是那一态
+    //      （桩是"布局真、数据假"，但**字段的形状必须与契约同形**）。
     const LAN = { enabled: true, peers: 2, kind: "lan",
       line: "同步地址：直连（局域网）http://192.168.43.206:8787 ｜ 本网段发现 2 台",
-      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" } };
+      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" },
+      nearby: [
+        { device_id: "dev-b", device_name: "小王的笔记本", addr: "192.168.43.7",
+          spaces: ["sp1"], serves_current: true, invitable: true },
+        { device_id: "dev-c", device_name: "我的手机", addr: "192.168.43.9",
+          spaces: ["sp1"], serves_current: true, invitable: true },
+      ],
+      invites: [] };
     const M = {
       list_workspaces: [WS], get_active_workspace_id: "ws1", get_workspace_name: "我的工作空间",
       list_sync_profiles: [PROF], list_pages: [], list_deleted: [], list_plugins: [],

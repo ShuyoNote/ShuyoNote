@@ -26,19 +26,81 @@ export const SYNC_INTERVAL_MS = 30_000;
 
 /** 「近实时」那一档在**服务端档**的**兜底**轮询间隔：流断了也还能自己找回来（5 分钟）。 */
 export const SYNC_REALTIME_FALLBACK_MS = 5 * 60_000;
+
 /**
- * 「近实时」那一档在**局域网档**的自动间隔（⚠️ 与上面那个**不是一回事**，见下）。
+ * 「拉取间隔」—— **局域网直连这一档的节拍**（owner 2026-09-29 拍板：默认 **5 秒**）。
  *
- * ★ 为什么必须分开（2026-09-29，owner 定的 5 秒）：同一个常量在两种档位下含义**完全不同** ——
+ * ## 为什么"局域网那条路"必须有自己的一个数
+ *
+ * 同一个数在两种档位下含义**完全不同** ——
  *   · **服务端档**：那条 SSE 流（`sync_stream`）正常时会把变更推过来
  *     ⇒ 这个轮询只是"**流断了**"的保险 ⇒ 拉长到 5 分钟（省请求）是对的。
  *   · **局域网档**：**没有 SSE**（`stream_url(server, space_id)` 连的是 `server_url`）
  *     ⇒ 这个轮询就是【**主发动机**】—— 用 5 分钟当主发动机 ⇒ 手感就是"5 分钟才动一次"。
  *   ⇒ 同一个数当保险丝是 5 分钟、当发动机是 5 秒。**它们不该共用一个常量**（本仓铁律：
  *     一个量只该有一个含义）。局域网内一次拉取很便宜（直连、无外网），5 秒是划得来的。
- * ⚠️ owner 2026-09-29 拍板：**局域网这档 = 5 秒**。
+ *
+ * ## 为什么它必须是一个**用户可见、可持久化**的设置（而不是代码里悄悄换）
+ *
+ * 在这之前是这样：`lanMeshActive`（＝ Rust 判的"网格开着吗"）一为真，
+ * [`effectiveAutoSyncMs`] 就**背着用户把间隔从 5 分钟换成 5 秒**。两个问题：
+ * 1. **用户看不见** —— 面板上写着「近实时（连着服务端时立刻拉）」，实际却每 5 秒跑一次；
+ * 2. **换不换取决于一个他不在看的开关**（局域网直连）⇒ 同一个下拉在两台机器上手感完全不同。
+ * ⇒ 现在：**间隔由用户选**（5 秒 / 30 秒 / 1 分钟），面板上有一行把它显示出来，
+ *    落盘在下面那个键里；而"局域网直连关着 ⇒ 这一档不适用"仍然成立（见 [`effectiveAutoSyncMs`]）。
+ *    （老名字 `SYNC_LAN_INTERVAL_MS` 连同"按 `mesh.enabled` 偷偷换"那条路一起撤了 ——
+ *     它的理由搬到这里，一个字没丢。一个量只有一个名字。）
+ *
+ * ⚠️ 与 `shuyonote:autoSync`（「同步方式」那一档）**是两个键、两个含义**：
+ *    那个管"要不要自动同步、走哪一档"，这个管"局域网那条路的节拍"。
+ *    一个量只该有一个含义（本仓铁律）。
  */
-export const SYNC_LAN_INTERVAL_MS = 5_000;
+export const PULL_INTERVAL_KEY = "shuyonote:lanPullIntervalMs";
+
+/**
+ * 三档（面板那一行就摆这三个）。**默认 5 秒**（owner 拍的，理由见上面 `SYNC_REALTIME_FALLBACK_MS`
+ * 那段：局域网那条路没有流 ⇒ 这个轮询是主发动机）。
+ */
+export const PULL_INTERVALS: { ms: number; label: string }[] = [
+  { ms: 5_000, label: "5 秒" },
+  { ms: 30_000, label: "30 秒" },
+  { ms: 60_000, label: "1 分钟" },
+];
+
+/** 默认那一档（**5 秒**）。它同时是"读不出来 / 没设过"时的回落值。 */
+export const PULL_INTERVAL_DEFAULT_MS = 5_000;
+
+/**
+ * 读「拉取间隔」（**唯一一处读**）。
+ *
+ * 口径：**读不出来 / 没设过 / 存了不是三档里的值 ⇒ 回落默认 5 秒**（不是 0）。
+ * ⚠️ 为什么"回落默认"而不是"回落 0"：0 的含义是"不自动跑"，而这一档**没有**"关"这个语义
+ *    （"关"由父项「局域网直连」表达 —— 那种时候这一行**根本不显示**，见 `SyncPanel`）。
+ */
+export function readPullIntervalMs(): number {
+  try {
+    const raw = Number(localStorage.getItem(PULL_INTERVAL_KEY));
+    return PULL_INTERVALS.some((o) => o.ms === raw) ? raw : PULL_INTERVAL_DEFAULT_MS;
+  } catch {
+    // localStorage 不可用（隐私模式 / Node 侧脚本）⇒ 按默认走，**不抛**（与 `nearRealtime` 同款）。
+    return PULL_INTERVAL_DEFAULT_MS;
+  }
+}
+
+/** 写「拉取间隔」＋**广播**（App 那条定时器要按新节拍重挂）。**唯一一处写**。 */
+export function writePullIntervalMs(ms: number): void {
+  try {
+    localStorage.setItem(PULL_INTERVAL_KEY, String(ms));
+  } catch {
+    /* 存不下只影响"记住这一档"，不影响本次行为 —— 但仍要广播（本次立刻生效） */
+  }
+  broadcastAutoSyncChanged();
+}
+
+/** 那一行右边显示的字（与 [`PULL_INTERVALS`] 的 `label` **同一处口径**，不另写一套）。 */
+export function pullIntervalLabel(ms: number): string {
+  return PULL_INTERVALS.find((o) => o.ms === ms)?.label ?? PULL_INTERVALS[0].label;
+}
 
 /** 当前设置落在哪一档（**读**：老值也能映射回来，不会把用户原来的设置"读没了"）。 */
 export function syncModeOf(autoMs: number, nearRealtime: boolean): SyncMode {
@@ -135,11 +197,19 @@ export function isLanMeshActive(): boolean {
 
 export function effectiveAutoSyncMs(): number {
   const raw = readAutoSyncMs();
+  // ★ 2026-09-29（本档）：**局域网直连那条路的节拍 = 用户选的「拉取间隔」** ——
+  //   不再是"按 `mesh.enabled` 在代码里悄悄换成 5 秒"。两个前提缺一不可：
+  //     · 局域网直连开着（`lanMeshActive`，由拿到 `lan_status` 的那一处喂进来）；
+  //     · 总闸不是「关闭」（`raw > 0`）——**总闸优先**（规格 §9.2）：总闸关了 ⇒
+  //       一个字都不自动跑（**含局域网那一档**），面板上那一行也会灰掉。
+  //   ⚠️ "轮询必须**无条件**挂着"那条不变式在这一支上仍然成立：`readPullIntervalMs()`
+  //      永远 > 0（没设过 ⇒ 默认 5 秒），所以这里不会算出 0。
+  if (lanMeshActive && raw > 0) return readPullIntervalMs();
   if (raw > 0) return raw;
   if (!isNearRealtimeEnabled()) return 0;
-  // ⚠️ 两种档位含义不同（见 `SYNC_LAN_INTERVAL_MS` 上面那段）：
-  //    局域网档没有流 ⇒ 这个轮询是主发动机 ⇒ 用短的那个。
-  return lanMeshActive ? SYNC_LAN_INTERVAL_MS : SYNC_REALTIME_FALLBACK_MS;
+  // 近实时那一档的**兜底**轮询（真机抓到的现场：`autoSync` 从没写过 ⇒ 裸读是 0）：
+  // 局域网直连开着 ⇒ 用这条路的节拍；关着 ⇒ 服务端档那条 5 分钟兜底。
+  return lanMeshActive ? readPullIntervalMs() : SYNC_REALTIME_FALLBACK_MS;
 }
 
 /**
