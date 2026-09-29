@@ -30,7 +30,11 @@ id          INV-RT-<短名>             稳定标识；改口径不许改 id（�
 | `src-tauri/src/mesh.rs` / `sync.rs` / `page_crdt.rs` 的 `tests` 模块 | 本仓 Rust 单测，`cargo test --lib <前缀>::` 可只跑一片（**本机实测可跑**，见需求 §10） | 纯函数与库内行为（触发面、水位、状态落盘）⇒ 判据不吃真网络 |
 | `src/hooks/*.wiring.test.ts` | **文本级接线判据**（先剥注释再断言），先例：`src/hooks/useSyncStream.wiring.test.ts` ⑧、`src/components/syncPanelMesh.wiring.test.ts` | "某条路必须挂上／某条路不许绕过"这类**接线**事实，只有文本级判得住（本仓已两次被真事故证明，见 `AI-NATIVE-DEV.md` §12.7） |
 | `scripts/lib/gates.mjs` 注册的门禁 | 门禁清单的**单一事实来源**（本仓 `AGENTS.md` §3） | 静态面（"界面不许把拉取式说成推送"） |
-| `scripts/criteria-mutations.json` | 跑 cargo 的判据的「看过它红」通道（[`README.md`](README.md) §每条不变式的四个字段） | ⚠️ **本机位置待查**（需求 §7-D6：我只在**另一个仓**找到同名文件）⇒ 这条通道**本轮不敢写 `✅`** |
+| ⚠️ 已订正：见下（原写 `scripts/criteria-mutations.json`） | 跑 cargo 的判据的「看过它红」通道（[`README.md`](README.md) §每条不变式的四个字段） | ⚠️ **本机位置待查**（需求 §7-D6：我只在**另一个仓**找到同名文件）⇒ 这条通道**本轮不敢写 `✅`** |
+
+> ⚠️ **2026-09-29 订正（Windows 侧裁决 ①）**：产品仓里引用 `criteria-mutations.json` 的地方都在指一个**不存在的通道** ⇒ 正确措辞是：
+> Rust 判据（cargo）的「看过它红」证据走 `_workspace/mutation-evidence.json` 的 `_repo_mutations`（⚠️ 产品仓**没有** `scripts/criteria-mutations.json` 这个文件 —— 那句话在指一个不存在的通道 ✗，2026-09-29 订正）
+> 取证：`grep -rn criteria-mutations docs/ scripts/` 在产品仓命中 6 处、而该文件不存在；工作区/信箱里那些指的是 **community 仓**那份（**存在**）⇒ **改的范围只有产品仓**（别把对的地方也改错）。
 
 ---
 
