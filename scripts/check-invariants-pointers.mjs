@@ -99,6 +99,8 @@ if (argv.includes("--self-test")) {
     ["工作区侧判据没进 check-all ⇒ 红", judge(mk("INV-KB-x", "**能**（`check-w2.mjs`）"), gates, wsGates, exists, "INV-KB").some((s) => s.includes("check-all.mjs"))],
     ["待立行 ⇒ 不针对该行报缺判据", judge(mk("INV-KB-x", "**待立**"), gates, wsGates, exists, "INV-KB").every((s) => !s.includes("INV-KB-x"))],
     ["一行都没有 ⇒ 红", judge("nothing", gates, wsGates, exists, "INV-KB").some((s) => s.includes("没检查到东西"))],
+    // ⭐ 2026-09-29：规格文件**不存在**时必须"不算通过"，**不许静默不查** ✗（"没查过 ≠ 通过" ✓）
+    ["规格文件不存在 ⇒ envMissing（真跑 exit 2）", runOne(join(ROOT, "docs", "NOPE.md"), "INV-KB", GATES, WS_GATES).envMissing !== undefined],
   ];
   let pass = 0;
   for (const [n, ok] of cases) { console.log((ok ? "  ✓ " : "  ✗ ") + n); if (ok) pass++; }
