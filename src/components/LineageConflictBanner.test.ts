@@ -18,6 +18,8 @@ const listLineageConflicts = vi.fn();
 const resolveLineageConflict = vi.fn();
 const createPage = vi.fn();
 const getPage = vi.fn();
+const writePageProjection = vi.fn();
+const savePageState = vi.fn();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -25,6 +27,8 @@ vi.mock("../lib/api", () => ({
     resolveLineageConflict: (...args: unknown[]) => resolveLineageConflict(...args),
     createPage: (...args: unknown[]) => createPage(...args),
     getPage: (...args: unknown[]) => getPage(...args),
+    writePageProjection: (...args: unknown[]) => writePageProjection(...args),
+    savePageState: (...args: unknown[]) => savePageState(...args),
   },
 }));
 
@@ -62,6 +66,8 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     resolveLineageConflict.mockReset();
     createPage.mockReset();
     getPage.mockReset();
+    writePageProjection.mockReset();
+    savePageState.mockReset();
   });
 
   afterEach(() => {
@@ -82,15 +88,41 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("② 有一条 ⇒ **只有两个**按钮（留本机 / 另存为新页），并说清「合不了」这件事", async () => {
+  it("② 有一条 ⇒ **三个**按钮（留本机 / 采用对端 / 另存为新页），并说清「合不了」这件事", async () => {
     listLineageConflicts.mockResolvedValue(ROW);
     await render();
-    expect(buttons().map((b) => b.textContent)).toEqual(["lineage.keepLocal", "lineage.savedAsNew"]);
+    expect(buttons().map((b) => b.textContent)).toEqual(["lineage.keepLocal", "lineage.adoptRemote", "lineage.savedAsNew"]);
     expect(container.textContent).toContain("lineage.title");
     expect(container.textContent).toContain("lineage.hint");
   });
 
-  it("③ ★「另存为新页」⇒ 建一个新页（标题带后缀、内容是对端那版）＋ 记成 saved-as-new", async () => {
+  it("⑥ ★「采用对端那一版」⇒ 写回对端正文（经文档层）＋ 清本机 CRDT 状态 ＋ 裁决记 remote", async () => {
+    listLineageConflicts.mockResolvedValue(ROW);
+    getPage.mockResolvedValue({ title: "本页" });
+    await render();
+    await act(async () => {});
+    const btn = buttons().find((b) => b.textContent === "lineage.adoptRemote") as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+    expect(writePageProjection).toHaveBeenCalledTimes(1);
+    expect(writePageProjection).toHaveBeenCalledWith("p1", PEER_JSON);   // ① 写回**对端那版** ✓
+    expect(savePageState).toHaveBeenCalledWith("p1", expect.any(Uint8Array));  // ② 清本机状态 ✓
+    expect(resolveLineageConflict).toHaveBeenCalledWith("lc1", "remote");       // ③ 裁决记 remote ✓
+  });
+
+  it("⑦ 采用对端时「清本机状态」必须发生在「记裁决」之前（顺序错了＝选择会被静默撤销 ✗）", async () => {
+    const order: string[] = [];
+    listLineageConflicts.mockResolvedValue(ROW);
+    getPage.mockResolvedValue({ title: "本页" });
+    writePageProjection.mockImplementation(async () => { order.push("save"); });
+    savePageState.mockImplementation(async () => { order.push("clear"); });
+    resolveLineageConflict.mockImplementation(async () => { order.push("resolve"); });
+    await render();
+    await act(async () => {});
+    const btn = buttons().find((b) => b.textContent === "lineage.adoptRemote") as HTMLButtonElement;
+    await act(async () => { btn.click(); });
+    expect(order).toEqual(["save", "clear", "resolve"]);
+  });
+it("③ ★「另存为新页」⇒ 建一个新页（标题带后缀、内容是对端那版）＋ 记成 saved-as-new", async () => {
     listLineageConflicts.mockResolvedValue(ROW);
     getPage.mockResolvedValue({ id: "p1", title: "会议纪要", content_json: "{}", content_text: "" });
     createPage.mockResolvedValue("new-page-id");
@@ -98,7 +130,7 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     await render();
 
     await act(async () => {
-      buttons()[1].click();
+      buttons().find((b) => b.textContent === "lineage.savedAsNew")!.click();
     });
 
     expect(createPage).toHaveBeenCalledTimes(1);
@@ -122,7 +154,7 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
     await render();
 
     await act(async () => {
-      buttons()[0].click();
+      buttons().find((b) => b.textContent === "lineage.keepLocal")!.click();
     });
     expect(resolveLineageConflict).toHaveBeenCalledWith("lc1", "local");
     expect(createPage, "只是「我知道了」 ⇒ 不许建页").not.toHaveBeenCalled();
@@ -136,7 +168,7 @@ describe("LineageConflictBanner（页级血统冲突）", () => {
 
     listLineageConflicts.mockResolvedValue(null);
     await act(async () => {
-      buttons()[0].click();
+      buttons().find((b) => b.textContent === "lineage.keepLocal")!.click();
     });
     expect(listLineageConflicts).toHaveBeenCalledTimes(2); // 首次 + 裁决后
     expect(container.innerHTML).toBe("");

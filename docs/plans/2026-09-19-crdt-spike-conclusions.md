@@ -28,6 +28,8 @@
 > 施工单：[CRDT spike 施工单](../../docs/plans/2026-09-18-crdt-spike-workorder.md)。
 > **本目录只回答三问，不产出可合并代码**；依赖**钉死**（`package.json` 里无 `^`），否则"当时能跑"无法复现。
 
+> 状态：**已收口**（尖刺线归档，tip `71a3e1db` 不属于交付）。 证据：`./2026-09-18-crdt-spike-workorder.md`
+
 ## 0. 怎么跑
 
 ```bash

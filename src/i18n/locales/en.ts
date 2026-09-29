@@ -117,7 +117,9 @@ export default {
     hint: "The two editing histories are not the same tree — merging them would duplicate blocks. This device's version is kept as-is; the other side can be saved as a new page so nothing is lost.",
     keepLocal: "Keep this device's version",
     savedAsNew: "Save the other side as a new page",
+    adoptRemote: "Use the other side",
     rescued: "The other side was saved as a new page",
+    adopted: "Took the other side (this copy stands down)",
   },
   // Stage 1 · body-text index repair pass (`components/TextRepairRunner.tsx`, B1)
   textRepair: {

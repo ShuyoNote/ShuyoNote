@@ -4,6 +4,8 @@
 > 实测证据：`spike/crdt/README.md` §1.2（阻碍 A）与 §1.5（候选解法实测）、`spike/crdt/a1-output.txt`。
 > **人类所有者已拍：选 (a)，开工。**
 
+> 状态：**已拍板 ＋ 已落地**（方案 a：`blockId` 成声明的节点属性，双形态，18 类节点全接入）。 证据：`../../src/lib/crdt/yDocBridge.ts`
+
 ## 1. 问题（一句话）
 
 今天 `blockId` 不是节点自己的数据，而是 `Editor.tsx::serializeWithBlockIds` 在**序列化时塞进 JSON**
