@@ -707,7 +707,7 @@ export const api = {
   /** 这一页**未决**的页级血统冲突（`null` ＝ 没有，是常态不是错误）。 */
   listLineageConflicts: (pageId: string) => invoke("list_lineage_conflicts", { pageId }),
   /** 裁决：`"local"`（保留本机）/ `"saved-as-new"`（已另存为新页）。其余值报错（不默认选边）。 */
-  resolveLineageConflict: (conflictId: string, choice: "local" | "saved-as-new") =>
+  resolveLineageConflict: (conflictId: string, choice: "local" | "saved-as-new" | "remote") =>
     invoke("resolve_lineage_conflict", { conflictId, choice }),
   /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
   refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),

@@ -238,8 +238,8 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 - [ ] **每次三平台发版后记下两样东西**：release workflow 的 **run 号** ＋ **产物的 sha256**（Windows / macOS / Linux 各一份）。
 - [ ] ⚠️ **macOS 打包本机永远给不出读数**（我们只有 Windows 开发机）⇒ 它的「发过没有、发的是什么」**只能**由工件证明。
 - [ ] **判据**：那个 run 的 4 个 job 全绿，且**工件的 sha256 与发版说明里写的那个一致** ⇒ 「发版前核过的面」与「真正交给用户的面」**重合**（在那之前这两件事照旧不重合）。
-- [ ] **发版说明须记「未验」这一行**：`gm-conformance` 的「跨实现（RustCrypto ↔ Tongsuo）对拍 9 项」在 CI 上**自报跳过**（缺 Tongsuo）⇒ 它**不是**平台分工，是**真漏验**。登记理由见 `scripts/lib/gates.mjs` 的 `selfSkipOk`（那里写着"发版说明须记未验"）。
-      **目标（owner 已拍「A 为目标、B 先过渡」）**：给这 9 项**单开一个手动触发的 job**（自编一份 Tongsuo ⇒ `OPENSSL_DIR` 指过去 ⇒ 跑 `scripts/check-gm-conformance.mjs`），
+- [ ] **发版说明里的「未验」那一行**（⚠️ **2026-09-28 起已由 `release.yml` 自动写入** ⇒ 人工只需**核它在不在**：已发布的 v1.91.16～v1.91.26 **8 个版本都没写** ✗，所以改成机器写 ✓）：`gm-conformance` 的「跨实现（RustCrypto ↔ Tongsuo）对拍 9 项」在 CI 上**自报跳过**（缺 Tongsuo）⇒ 它**不是**平台分工，是**真漏验**。登记理由见 `scripts/lib/gates.mjs` 的 `selfSkipOk`（那里写着"发版说明须记未验"）。
+      **目标（owner 已拍「A 为目标、B 先过渡」）**：给这 9 项**单开一个手动触发的 job**（自编一份 Tongsuo ⇒ **`SHUYONOTE_TONGSUO_OPENSSL`** 指过去（⚠️ 注意：**不是** `OPENSSL_DIR` —— 后者是 openssl-sys 构建用的标准变量 ✓，两者不是一回事 ✓） ⇒ 跑 `scripts/check-gm-conformance.mjs`），
       **日常 CI 不动**（Tongsuo 对产品非必需、且不该占日常分钟数 ⇒ 否则会训练人忽略红）。做完后这一行从「未验」改成「已对拍（附 run 号）」。
 
 **现状（2026-09-28，windows 侧）**：

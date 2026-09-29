@@ -81,6 +81,105 @@ export const GATES = [
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
   {
+    id: "check-ontology-generated",
+    group: "contract",
+    label: "本体表与能力注册表一致（生成物不许手改）",
+    cmd: "node scripts/check-ontology-generated.mjs",
+    incident:
+      "2026-09-28：MCP 规格把 `isWrite: true` 当判据（**该字段在 capabilities.json 里出现 0 次** ✗；" +
+      "真实字段是 `kind`：read 15 / write 8 / host 2），于是写出了一条「看着像判据、其实指向空气」的规则；" +
+      "同一天我还从 6 条样本外推「pages.create 不在注册表里」——也错了 ✗。" +
+      "⇒ 本体**由注册表生成**，本门禁逐字节卡漂移",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-invariants-pointers",
+    group: "contract",
+    label: "规格说能跑的不变式，必须点到存在且已注册的判据",
+    cmd: "node scripts/check-invariants-pointers.mjs",
+    incident:
+      "规格表里写「今天能跑吗 = **能**（`check-xxx`）」是对人下的承诺 ✓。但文档与代码会各自漂移：" +
+      "判据被改名／被删／被摘出注册表之后，规格还在说「能跑」✗，读规格的人就以为有承重渠道 ✓ ——" +
+      "与「文档说能、其实没人跑」同族。本判据只管两件：**判据文件存在** ＋ **它已注册进 gates.mjs**（否则不进 verify/CI）✓",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-crdt-plane",
+    group: "contract",
+    label: "CRDT 平面：content_json 是 TEXT（老客户端只认 JSON）／CRDT 状态只进 BLOB 旁路表／Rust 不认识 CRDT／转换与合并各只有一份实现",
+    cmd: "node scripts/check-crdt-plane.mjs",
+    incident:
+      "混版本共存的**地基是三句话**（见 docs/specs/2026-09-29-crdt-mixed-version-degradation.md）：" +
+      "① content_json 永远是 TEXT/JSON（老客户端只认它）② CRDT 状态只进 page_crdt* 的 BLOB ③ Rust 不认识 CRDT。" +
+      "这三句**已经写在代码注释里**，但谁把 BLOB 塞进 content_json、给 Rust 加个 yjs crate、或长出第二份转换实现，" +
+      "**都不会炸、不会报错、测试全绿** —— 只是**老客户端的页打不开** ✗（本仓 §8 那族：违规不炸，只炸用户）。",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-locked-loud",
+    group: "contract",
+    label: "锁定 ⇒ 大声失败（稳定错误码 space_locked；不许映射成空）",
+    cmd: "node scripts/check-locked-loud.mjs",
+    incident:
+      "加密空间未解锁时，若把错误吞掉、返回空结果，用户看到的是「没内容」而真相是「你还没解锁」✗" +
+      "—— 他会以为数据丢了、去翻备份、去重装。实现其实早就有（plugins.rs:1386 映射成 space_locked，注释原话：" +
+      "「插件调用不能成为绕过启动锁的通路」，并有单测 locked_space_maps_to_a_stable_error_code ✓）⇒" +
+      "本判据不发明新规矩，只把「映射点 ＋ 稳定码 ＋ 不映射成空 ＋ 有单测」钉成机器可核（纯读源码 ⇒ 不需要 cargo ✓）",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-derived-provenance",
+    group: "contract",
+    label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",
+    cmd: "node scripts/check-derived-provenance.mjs",
+    incident:
+      "2026-09-29 读数：派生内容**早已有**「从哪来」的强制字段 —— `ExtractedSegment.kind` ＋ `loc` 都必填 ✓" +
+      "（类型注释：「决定检索侧如何展示与加权，也决定 loc 的格式」）。检索、引用、加权全靠它 ⇒" +
+      "一旦被改成可选（`loc?`），引用与定位会**静默**降级 ✗ ⇒ 值得一条窄判据。⚠️ 同时更正我先前的错话：" +
+      "`source` 列确实存在，但**只属于插件两表**；**内容**层面没有「外部来源」字段 ✗（那是 R55 的真缺口 ✓）",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-audit-shape",
+    group: "contract",
+    label: "审计的形状（入口唯一 ＋ 条目不含正文 ＋ 只增）",
+    cmd: "node scripts/check-audit-shape.mjs",
+    incident:
+      "2026-09-29 读数：`push_audit(plugin_id, capability, scope, ok, error_code)` 是内存环形队列（容量 500），" +
+      "写它的只有 plugins.rs 一个文件 ✓ —— 但当外部助手也能调能力时（M2），审计要答「是谁／哪次会话」，而 plugin_id 答不了 ✗。" +
+      "在补字段之前，先把今天已经成立的三条形状钉死：入口唯一（否则漏记 ✗）／条目不含正文（审计不该变成第二份内容副本 ✗）／只增 ✓",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-generated-artifacts",
+    group: "contract",
+    label: "生成物自证来源（sha）且可重建（生成命令的脚本存在）",
+    cmd: "node scripts/check-generated-artifacts.mjs",
+    incident:
+      "工作区栽过不止一次「生成物与实际脱节而没人发现」——最典型那句：「缺口还开着」在写下 13 分钟后就过期，两天没人看过。知识层的本体表 / 工具面 / 接口指纹都是给人看、给外部程序看的 ⇒ 源改了而生成物没跟上，读的人就照旧结构做 ✗",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-api-surface-version",
+    group: "contract",
+    label: "外部接口指纹与 `apiVersion` 一致（改了接口必须升版本）",
+    cmd: "node scripts/check-api-surface-version.mjs",
+    incident:
+      "2026-09-28：注册表顶层本来就有 registryVersion / apiVersion ✓，但没有任何东西强制它 ✗ —— 改 id / 删能力 / 改语义时，正在用它的外部程序会在没有信号的情况下坏掉；同一天还实测出 MCP 规格把写判定写成查 isWrite（该字段出现 0 次 ✗）⇒ 接口形状必须机器可查 ✓",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-agent-surface",
+    group: "contract",
+    label: "外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 ＋ 能力面限于笔记域",
+    cmd: "node scripts/check-agent-surface.mjs",
+    incident:
+      "2026-09-28：注册表里 `ai: true` 恰好 10 条（read 8 / write 2，实测 ✓），而 MCP 规格把写判定写成查 `isWrite`" +
+      "——该字段在原始 JSON 里出现 0 次 ✗（真实字段是 `kind`）。同一份 `desc` 里 `content_json` 只出现在**非 ai** 的能力上，" +
+      "⇒ 面必须由注册表生成；只读面出现写能力、或描述里写进内部标识 ⇒ 红",
+    registered: "2026-09-28",
+  },
+  {
     id: "check-doc-facts",
     group: "contract",
     label: "文档里的机器事实（门禁 / 能力 / 命令数）与代码一致",

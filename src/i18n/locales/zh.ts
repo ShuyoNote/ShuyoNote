@@ -117,7 +117,9 @@ export default {
     hint: "两条编辑历史不是同一棵树，合在一起会变成两块。本机这一版原样保留；对端那一版可以另存成新页，就不会丢。",
     keepLocal: "保留本机",
     savedAsNew: "另存为新页",
+    adoptRemote: "采用对端那一版",
     rescued: "对端那一版已另存为新页",
+    adopted: "已采用对端那一版（本机这版让位）",
   },
   // 阶段 1 · 正文索引的补算器（`components/TextRepairRunner.tsx`，B1）
   textRepair: {
