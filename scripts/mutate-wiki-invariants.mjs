@@ -33,6 +33,14 @@ const CASES = [
     test: "src/lib/ai/libraryMap.test.ts",
     why: "生成时**改输入** ⇒ 「调用前后输入逐字段未变」/「深冻结也能跑完」必须红",
   },
+  {
+    inv: "INV-WIKI-provenance（第三块：按需单页的草稿层）",
+    file: `${REPO}/src/lib/ai/topicDraft.ts`,
+    from: 'const keptText = filtered.kept.join("\\n");',
+    to: "const keptText = String(answer);", // 变异：绕开既有的 filterClaims ⇒ 编造的回链会原样留在草稿里
+    test: "src/lib/ai/topicDraft.test.ts",
+    why: "**绕开既有校验器**（`filterClaims`）⇒ 模型编造的回链不被丢 ⇒ 「编造回链被丢，droppedInventedRefs 记 1」与「refs 只来自输入」两条必须红",
+  },
 ];
 
 function runVitest(rel) {
