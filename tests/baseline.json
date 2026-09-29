@@ -90,9 +90,6 @@
       "external-index",
       "external-package",
       "plugin-fragment-no-zip"
-    ],
-    "deploy": [
-      "check-web-deploy"
     ]
   }
 }
