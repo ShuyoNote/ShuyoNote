@@ -52,7 +52,7 @@ export function definersOf(srcDir, name) {
 }
 
 /** 纯判据：把"读到的东西"喂进来 ⇒ findings（便于自测 ✓） */
-export function judge({ contentJsonDecls, crdtStateDecls, cargoDeps, converterDefiners, mergeDefiners }) {
+export function judge({ contentJsonDecls, crdtStateDecls, pendingPk, cargoDeps, converterDefiners, mergeDefiners }) {
   const out = [];
   for (const d of contentJsonDecls) {
     if (!/\bTEXT\b/i.test(d)) out.push("✗ `content_json` 必须是 **TEXT**（老客户端只认 JSON ✓）：" + d.trim().slice(0, 90));
@@ -68,6 +68,12 @@ export function judge({ contentJsonDecls, crdtStateDecls, cargoDeps, converterDe
   if (!converterDefiners.length) out.push("✗ 找不到转换实现的**定义**（`contentJsonToYDoc`/`yDocToContentJson`）⇒ 判据什么也没查到（**不算通过** ✗）");
   if (mergeDefiners.length > 1) out.push("✗ `mergeRemotePageState` 有 " + mergeDefiners.length + " 处**定义**（只许一处 —— 合并不许长第二份 ✗）：" + mergeDefiners.join("、"));
   if (!mergeDefiners.length) out.push("✗ 找不到 `mergeRemotePageState` 的定义 ⇒ 判据什么也没查到（**不算通过** ✗）");
+  // ⭐ 2026-09-29：把 `INV-CRDT-pending-per-seq` 从「待立」变成「能跑」✓
+  //   判据＝主键含 `seq` ✓（来由见 `db.rs:1044` 附近：「服务端 pull 不回 `device_id`，
+  //   不同设备的**全量**状态互相不包含对方的编辑 ⇒ 「每页一行」会**真丢**」✓）
+  if (!/PRIMARY\s+KEY\s*\(\s*page_id\s*,\s*seq\s*\)/i.test(pendingPk || "")) {
+    out.push("✗ `page_crdt_pending` 的主键必须是 `(page_id, seq)`（**按 seq 逐条留** —— 「每页一行」会真丢编辑 ✗）：" + String(pendingPk || "（没读到主键）").trim().slice(0, 90));
+  }
   return out;
 }
 
@@ -83,6 +89,13 @@ function gather(root) {
       for (let j = i; j < Math.min(i + 12, db.length); j++) { if (/^\s*state\s+\w+/i.test(db[j])) crdtStateDecls.push(db[j]); if (/\)\s*",?\s*$/.test(db[j])) break; }
     }
   }
+  // `page_crdt_pending` 的主键（`INV-CRDT-pending-per-seq` 的判据 ✓）
+  let pendingPk = "";
+  for (let i = 0; i < db.length; i++) {
+    if (/CREATE TABLE IF NOT EXISTS page_crdt_pending\b/.test(db[i])) {
+      for (let j = i; j < Math.min(i + 12, db.length); j++) { if (/PRIMARY\s+KEY/i.test(db[j])) pendingPk = db[j]; if (/\)\s*",?\s*$/.test(db[j])) break; }
+    }
+  }
   const cargoDeps = [];
   for (const p of walk(join(root, "src-tauri"))) {
     if (!p.endsWith("Cargo.toml")) continue;
@@ -90,7 +103,7 @@ function gather(root) {
   }
   const srcDir = join(root, "src");
   return {
-    contentJsonDecls, crdtStateDecls, cargoDeps,
+    contentJsonDecls, crdtStateDecls, pendingPk, cargoDeps,
     converterDefiners: [...definersOf(srcDir, "contentJsonToYDoc"), ...definersOf(srcDir, "yDocToContentJson")],
     mergeDefiners: definersOf(srcDir, "mergeRemotePageState"),
   };
@@ -98,7 +111,7 @@ function gather(root) {
 
 const argv = process.argv.slice(2);
 if (argv.includes("--self-test")) {
-  const base = { contentJsonDecls: ["content_json TEXT NOT NULL DEFAULT '{}',"], crdtStateDecls: ["    state      BLOB NOT NULL"], cargoDeps: ['serde = "1"'], converterDefiners: [CONVERTER], mergeDefiners: ["lib/crdt/pageSession.ts"] };
+  const base = { contentJsonDecls: ["content_json TEXT NOT NULL DEFAULT '{}',"], crdtStateDecls: ["    state      BLOB NOT NULL"], pendingPk: "    PRIMARY KEY (page_id, seq)", cargoDeps: ['serde = "1"'], converterDefiners: [CONVERTER], mergeDefiners: ["lib/crdt/pageSession.ts"] };
   const cases = [
     ["全绿 ⇒ 空", judge(base).length === 0],
     ["content_json 变 BLOB ⇒ 红", judge({ ...base, contentJsonDecls: ["content_json BLOB,"] }).some((s) => s.includes("TEXT"))],
@@ -108,6 +121,7 @@ if (argv.includes("--self-test")) {
     ["没有转换实现 ⇒ 红（不许假绿）", judge({ ...base, converterDefiners: [] }).some((s) => s.includes("不算通过"))],
     ["两处 merge 定义 ⇒ 红", judge({ ...base, mergeDefiners: ["a.ts", "b.ts"] }).some((s) => s.includes("两处" ) || s.includes("?") || s.includes("处**定义**"))],
     ["没有 merge 定义 ⇒ 红", judge({ ...base, mergeDefiners: [] }).some((s) => s.includes("不算通过"))],
+    ["pending 主键丢了 seq ⇒ 红（每页一行会真丢 ✗）", judge({ ...base, pendingPk: "    PRIMARY KEY (page_id)" }).some((s) => s.includes("page_id, seq"))],
   ];
   let pass = 0;
   for (const [n, ok] of cases) { console.log((ok ? "  ✓ " : "  ✗ ") + n); if (ok) pass++; }
@@ -121,4 +135,4 @@ if (g.envMissing) { console.error("✗ 读不到：" + g.envMissing + "（**不�
 const findings = judge(g);
 if (findings.length) { for (const f of findings) console.error(f); process.exit(1); }
 console.log("✓ CRDT 平面：`content_json` 是 TEXT（" + g.contentJsonDecls.length + " 处）／CRDT 状态是 BLOB（" + g.crdtStateDecls.length + " 处）／"
-  + "Rust 无 Yjs 依赖（查了 " + g.cargoDeps.length + " 条）／转换与合并各只有一份实现（" + g.converterDefiners.join("、") + "）");
+  + "Rust 无 Yjs 依赖（查了 " + g.cargoDeps.length + " 条）／待并状态主键=" + String(g.pendingPk).trim().replace(/\s+/g, " ") + "／转换与合并各只有一份实现（" + g.converterDefiners.join("、") + "）");

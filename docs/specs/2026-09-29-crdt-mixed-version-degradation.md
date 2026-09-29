@@ -47,7 +47,7 @@ TS（`src/lib/crdt/`）：
 | **INV-CRDT-json-authoritative** | 权威落盘形态是 `content_json`（**TEXT**，JSON），CRDT 状态**只**进 `page_crdt`／`page_crdt_pending`（**BLOB**） | `check-crdt-plane` | 见账本 | **能**（`check-crdt-plane.mjs`） | contract 组 |
 | **INV-CRDT-rust-agnostic** | Rust 侧不引入 Yjs 实现（不认 CRDT 格式） | `check-crdt-plane` | 见账本 | **能**（`check-crdt-plane.mjs`） | contract 组 |
 | **INV-CRDT-single-converter** | `content_json` ⇄ `ydoc` 的转换**只有一份实现**（`yDocBridge.ts`） | `check-crdt-plane` | 见账本 | **能**（`check-crdt-plane.mjs`） | contract 组 |
-| **INV-CRDT-pending-per-seq** | 待并的远端状态**按 `seq` 逐条留**（不是每页一行 —— 否则丢编辑） | 无（**待立**：需要一条会红的判据，形状是"同一 page 两条 seq 都留"） | — | **待立** | — |
+| **INV-CRDT-pending-per-seq** | 待并的远端状态**按 `seq` 逐条留**（不是每页一行 —— 否则丢编辑） | `check-crdt-plane`（判据＝`page_crdt_pending` 的主键必须是 `(page_id, seq)` ✓） | 见账本 | **能**（`check-crdt-plane.mjs`） | contract 组 |
 | **INV-CRDT-old-client-reads** | 老客户端读到**新客户端写过的**页必须成功（不许因缺字段/多字段而失败） | 无（**待立**：需要真机或 e2e 通道；本机只能写"矩阵"） | — | **待立** | — |
 
 ## 5. 未决（照实写，别假装策略是完整的 ✗）
