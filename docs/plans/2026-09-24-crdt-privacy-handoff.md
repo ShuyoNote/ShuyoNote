@@ -6,6 +6,27 @@
 >
 > 本文件只讲**"现在到哪、下一步动哪里、有哪些坑"**，不重复口径本身。
 
+> ⚠️⚠️ **2026-09-29 追改（本文是"记录当时判断"的交接件 ⇒ 不改原文，只在此声明新读法）**：
+> 本文里**关于「经服务器搬钥匙袋」与「存量迁移/轮换」的那几段已经作废** —— 它们描述的东西**今天不存在了**。
+> ```text
+> ① `sync::push_space_keyring` / `pull_space_keyring`、`fetch_space_keyring`、`http_put/get_keyring`、
+>    `SpacePrivacySection` 的「推到服务器 / 从服务器取回」两个按钮 ＋「允许覆盖本机已有的材料」勾选框、
+>    （服务端补丁 `docs/plans/patches/0001-feat-keyring-0b.patch` 那三条路由的**客户端调用面**）
+>    ⇒ **整条删除**：提交 `851c1a7b`（owner 裁定「**同步服务器不提供个人版**」，A-3＋A-4）。
+> ② `migrate_legacy_space_encryption` / `rotate_legacy_space_encryption`（§7.0.5 那一整节）
+>    ⇒ 随**应用级加密整套删除**（`§7.0.6` 自己写了这件事）⇒ 那一节的对象已不在。
+> ③ ⇒ **受影响段落**：§4 表格的 **③ 0b 服务端 / ③ 0b 客户端**两格、§7.0 后半（"还差的另一半"起）、
+>    **§7.0.1 整节**、§7.0.4 的「件3」、§7.0.5 整节、以及它们引用的判据名
+>    （`a_second_device_unlocks_the_space_with_the_passphrase_alone`、
+>    `the_client_talks_to_a_real_server_and_needs_its_bearer`、
+>    `a_server_that_hands_over_a_different_bag_makes_the_second_device_fail_loudly`）。
+> ④ ⇒ **换设备今天只剩一条路**：**不经服务器的配对码**（`pairing_export` / `pairing_import`）。
+>    细节以 [`2026-09-25-b-zero-server-pairing-workorder.md`](2026-09-25-b-zero-server-pairing-workorder.md)
+>    与 `src/components/SpacePrivacySection.tsx` 的「换设备（不经服务器：配对码）」那块为准。
+> ⑤ ⚠️ **核不到的**：服务端私有仓里那三条 `/spaces/{id}/keyring` 路由**是否也撤了**，本仓无法核
+>    ⇒ 本文提到"服务端 `d391be9` 已落"是**当时的**事实，别当成今天的现状。
+> ```
+
 > 状态：**已交接**（写给下一个会话的交接件）。 证据：`docs/sync-server-data-boundary.md`
 
 ## 1. 现在到哪（都已推 `origin/dev`）
