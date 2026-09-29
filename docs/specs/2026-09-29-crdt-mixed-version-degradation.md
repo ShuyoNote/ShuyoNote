@@ -3,7 +3,7 @@
 > **上位**：[阶段 2 开工清单](../plans/2026-09-23-crdt-stage2-kickoff.md) §2 前置③（原文：「**混版本降级策略要进设计**（不是实现细节）｜ ❌ 未写」）；
 > [全量 CRDT 冲刺计划](../plans/2026-09-18-crdt-full-migration-plan.md) §3 阶段 2；[尖刺结论](../plans/2026-09-19-crdt-spike-conclusions.md)。
 > **形状**：本文不是散文 —— 每条决策都写成**规则**（**判据 ／ 命令 ／ 反例 ／ 过期条件**，缺一不算 —— 见
-> [`_workspace/HOW-TO-WRITE-A-RULE.md`](../../../../_workspace/HOW-TO-WRITE-A-RULE.md)）。凡标「能跑吗＝能」的，判据必须真实存在且已注册 ⇒ 由
+> `_workspace/HOW-TO-WRITE-A-RULE.md`（⚠️ 故意**不写成链接** ✗ —— CI 上没有 `_workspace`，链接会当场死链 ✓））。凡标「能跑吗＝能」的，判据必须真实存在且已注册 ⇒ 由
 > `scripts/check-invariants-pointers.mjs` 机械核（**含本文的 `INV-CRDT-*`**）。
 
 ## 1. 结论先写（三步说清"混版本时谁读谁"）

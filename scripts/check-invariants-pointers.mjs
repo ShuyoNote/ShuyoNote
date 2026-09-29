@@ -73,13 +73,19 @@ export function judge(specText, gatesText, wsGatesText, exists, prefix = "INV-[A
 
 /** 检查一个目标：返回 { findings, rows } 或 { envMissing } */
 export function runOne(specPath, prefix, gatesPath, wsGatesPath) {
-  for (const [p, what] of [[specPath, "spec"], [gatesPath, "gates.mjs"], [wsGatesPath, "工作区 check-all.mjs"]]) {
+  // ⭐ 2026-09-29（CI 实测）：**CI 上根本没有 `_workspace`** ✗（日志：/home/runner/work/_workspace/... 不存在）
+  //   ⇒ 工作区侧注册表缺失时**不许判成失败** ✗：只核**产品侧** ✓，工作区侧指针降级为**点名提示** ✓
+  const hasWs = existsSync(wsGatesPath);
+  for (const [p, what] of [[specPath, "spec"], [gatesPath, "gates.mjs"]]) {
     if (!existsSync(p)) return { envMissing: what + "：" + p };
   }
+  if (!hasWs) console.log("  ⚠️ 本次**未核工作区侧**（没有 " + wsGatesPath + " ⇒ CI 上本来就没有 `_workspace` ✓）");
   const specText = readFileSync(specPath, "utf8");
   const rowRe = new RegExp("^\\| \\*\\*" + prefix + "-[a-z-]+\\*\\* \\|");
   const rows = specText.split("\n").filter((l) => rowRe.test(l)).length;
-  const findings = judge(specText, readFileSync(gatesPath, "utf8"), readFileSync(wsGatesPath, "utf8"), (rel) => existsSync(join(ROOT, rel)), prefix);
+  const findings = judge(specText, readFileSync(gatesPath, "utf8"), hasWs ? readFileSync(wsGatesPath, "utf8") : "", (rel) => existsSync(join(ROOT, rel)), prefix)
+    // 工作区侧缺失时，凡"该判据本属工作区"的发现降级为提示 ✓（判据看路径前缀 ✓）
+    .filter((f) => { if (hasWs) return true; const isWs = f.includes("_workspace/bin/"); if (isWs) console.log("  ⚠️ 提示（未核）：" + f); return !isWs; });
   return { findings, rows };
 }
 

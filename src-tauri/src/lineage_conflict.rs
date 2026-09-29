@@ -250,10 +250,10 @@ mod tests {
             assert!(resolve_lineage_conflict(&c, &id, bad, 11).is_err(), "{bad:?} 不该被接受");
         }
         resolve_lineage_conflict(&c, &id, CHOICE_LOCAL, 11).unwrap();
-        assert_eq!(all[0].resolved_choice.as_deref(), Some(CHOICE_REMOTE));   // ★ 三个字面量都收 ✓
         assert!(resolve_lineage_conflict(&c, &id, "whatever", 13).is_err(), "**第四个**值仍然拒 ✓");
         assert!(resolve_lineage_conflict(&c, &id, CHOICE_LOCAL, 12).is_err(), "已裁决的再裁决要报错");
         let all = lineage_conflicts_of(&c, "p1").unwrap();
+        assert_eq!(all[0].resolved_choice.as_deref(), Some(CHOICE_REMOTE));   // ★ 三个字面量都收 ✓
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].resolved_choice.as_deref(), Some(CHOICE_LOCAL));
         assert_eq!(all[0].resolved_at, Some(11));
