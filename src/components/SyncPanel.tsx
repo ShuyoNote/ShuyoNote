@@ -58,6 +58,18 @@ const fmtMb = (bytes: number) => {
   const mib = bytes / (1024 * 1024);
   return mib >= 1 ? `${mib.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 };
+/** ★ 2026-09-29（IA）：「同步方式」那一行的右侧摘要值。
+ *  三档的文案与下面 <select> 里的 <option> **逐字一致** —— 不新造词，也不拍扁成
+ *  「自动（推荐）」那种说法（拍扁了就说不清用户现在到底在哪一档）。 */
+const SYNC_MODE_TEXT: Record<SyncMode, string> = {
+  off: "关闭",
+  interval: "按间隔（每 30 秒）",
+  realtime: "近实时（连着服务端时立刻拉）",
+};
+/** ★ 2026-09-29（IA）：「同步预算」那一行的右侧摘要值。
+ *  取值区间与 `.sync-budget-row` 里那些 <option> 一一对应（256/512/1024/2048/5120 MB）
+ *  ⇒ 摘要值念出来与展开后那个下拉里选中的一项**是同一个说法**。 */
+const optMb = (n: number) => (n >= 1024 && n % 1024 === 0 ? `${n / 1024} GB` : `${n} MB`);
 
 interface ServerSpace {
   id: string;
@@ -849,13 +861,13 @@ export function SyncPanel() {
   const heroState = syncing
     ? "正在同步"
     : lastSync
-      ? lastSync.ok === 1
+      ? lastSync.ok
         ? "已同步"
         : "上次同步没成功"
       : heroBound
         ? "还没同步过"
         : "还没绑同步";
-  const heroDot = syncing ? " is-busy" : lastSync && lastSync.ok === 1 ? " is-ok" : "";
+  const heroDot = syncing ? " is-busy" : lastSync && lastSync.ok ? " is-ok" : "";
   const heroSub = [
     activeRow?.name ?? "",
     lastSync ? relTime(lastSync.at) : "",
@@ -869,6 +881,39 @@ export function SyncPanel() {
       : lanStatus?.kind === "configured"
         ? "这一轮走的是：服务器"
         : "这一轮走的是：还没绑同步";
+  // ── ★ 2026-09-29（IA）：分组 ＋ 每行一个可展开项 —— 每行右边那个【摘要值】────────
+  // 口径：**每一行的值都由真实读数算出来**（写死就是在骗人），且尽量复用既有 <option> /
+  //       既有小标题的词 —— 本笔不动任何一句既有文案。
+  //
+  // 只在 Wi-Fi 下同步：默认值与下面那颗复选框**同一处口径**（`?? true`），
+  // 否则会出现"行上写关、点开复选框却是开的"。
+  const wifiText = (budget?.wifi_only ?? true) ? "开" : "关";
+  // 服务器：owner 明确「未绑定时显示『未绑定』」（不是空白，也不是占位 URL）。
+  const serverText = activeRow?.server_url.trim() || "未绑定";
+  // 网格：`lanStatus.mesh` 的两个布尔 → 三态（读不到 `lanStatus` 时这一行本来就不渲染）。
+  const meshText = !lanStatus?.mesh.enabled
+    ? "未开"
+    : lanStatus.mesh.tokenSet
+      ? "已开 · 口令已设"
+      : "已开 · 口令未设";
+  // 空间隐私：`SpacePrivacySection` 那一份读数（`space_security_overview`）**没有上抛**给外面，
+  // 本面板不替它再问一次（问了就是第二份真相，两份迟早各说各话）⇒ 这里只放一句中性摘要，
+  // 用词取自它自己的小标题（`🔐 空间隐私 —— 每个空间能不能绑同步`），不编状态。
+  const privacyText = activeRow ? "每个空间能不能绑同步" : "还没有可配置的空间";
+  // 同步历史：条数 ＋ 今天有没有失败。
+  // ⚠️ 「失败」的判据与历史列表里那个 ✓/✗ **同一个**（`h.ok ? "✓" : "✗"`）。服务端
+  //    `SyncHistoryEntry.ok` 是 Rust 的 `bool`（JSON 里 true/false）⇒ **不能**写 `ok !== 1`
+  //    （`true !== 1` 为真，会把每一次成功都读成失败）。
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayHistory = history.filter((h) => h.at >= todayStart.getTime());
+  const historyText = `${history.length} 条 · 今天 ${todayHistory.length} 项 · ${
+    todayHistory.some((h) => !h.ok) ? "有失败" : "没有失败"
+  }`;
+  // 同步预算：两个档位与展开后下拉里的 <option> 逐字一致（见 `optMb`）。
+  const budgetText = budget
+    ? `磁盘余量 ${optMb(budget.disk_floor_mb)} · 单文件 ${budget.max_file_mb === 0 ? "不限" : optMb(budget.max_file_mb)}`
+    : "";
 
   return (
     <div className="sync-panel">
@@ -1003,402 +1048,562 @@ export function SyncPanel() {
             </button>
             <div className="sync-hero-route">{heroRoute}</div>
           </section>
-          <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
-            {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
-            {rows.map((r) => {
-              const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
-              const state = r.server_url && r.space_id ? "bound" : r.server_url ? "partial" : "none";
-              return (
-                <section key={r.ws_id} className="sync-card">
-                  <div className="sync-card-head">
-                    <span className="sync-card-avatar" aria-hidden>{initial(r.name)}</span>
-                    <span className="sync-card-name" title={r.name}>{r.name}</span>
-                    <span className={`sync-state is-${state}`}>
-                      {state === "bound" ? "已绑定" : state === "partial" ? "待选空间" : "未配置"}
-                    </span>
-                  </div>
+            <div className="sync-group">
+              <div className="sync-group-title">设置</div>
 
-                  <div className="sync-field">
-                    <label htmlFor={`sync-srv-${r.ws_id}`}>服务器</label>
-                    <input
-                      id={`sync-srv-${r.ws_id}`}
+              {/* ⚠️ 2026-09-28（D1）：**设置类控件搬出吸底条** ——
+                 §2 第 2 条 `INV-UI-sync-panel-persistent-chrome` 的口径是：
+                 「常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里**不许有需要阅读与填写的表单**
+                   —— 读数行可以有，设置控件不行」。
+                 实测（改前）：`.sync-foot` 里【可见】表单 = **Web 4 ／ app 手机 3 ／ app 桌面 3**，
+                 逐个查是：① `.sync-auto` 的「同步方式」select；②③ `.sync-mesh` 的「监听地址」/「口令」两个 input；
+                 ④ web 上还有 `.sync-budget-row` 的三个 select。**三个对象上都是红的。**
+                 ⇒ 把这三块搬进【滚动区】（底下仍在 footer 的都是**读数行**与进度/历史：
+                   `.sync-lan` 实测 0 个表单控件，`.sync-net` 的 checkbox 是 `display:none`）。
+                 ⚠️ 保留在 footer 的 `.sync-lan` 是【读数行】，按上面那条口径**允许**留在常驻区。
+                 ⚠️ 本笔只搬位置，**一个字都不改**（文案是另一条不变式的事）。 */}
+
+              {/* ① 同步方式 ← 原来的 `.sync-auto` ＋ `.sync-auto-hint`
+                  （还是同一个 <select>、同一句 `syncModeHint`；行头那颗字是它的 `<label>`） */}
+              <details className="sync-row">
+                <summary>
+                  <span className="sync-row-label">同步方式</span>
+                  <span className="sync-row-value">{SYNC_MODE_TEXT[syncMode]}</span>
+                  <span className="sync-row-caret" aria-hidden>›</span>
+                </summary>
+                <div className="sync-row-body">
+                  <div className="sync-auto">
+                    <select
                       className="sync-input"
-                      value={r.server_url}
-                      placeholder="http://localhost:8787"
-                      onChange={(e) => update(r.ws_id, "server_url", e.target.value)}
-                    />
+                      value={syncMode}
+                      onChange={(e) => applySyncMode(e.target.value as SyncMode)}
+                    >
+                      <option value="off">关闭</option>
+                      <option value="interval">按间隔（每 30 秒）</option>
+                      {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
+                          `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
+                      {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
+                    </select>
                   </div>
+                  <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
+                </div>
+              </details>
 
-                  {/* 已拿到令牌就不再堆登录表单——只留一枚「已登录」胶囊 + 登出。 */}
-                  {r.token ? (
-                    <div className="sync-account">
-                      <span className="sync-account-dot" aria-hidden />
-                      <div className="sync-account-text">
-                        <b>{authEmail || "已登录"}</b>
-                        <span title={r.server_url}>{r.server_url || "—"}</span>
-                      </div>
-                      {/* 管理账号/组织：跳转到设置中心「账户」页（登录身份、组织管理、注销）。 */}
-                      <button className="sync-btn ghost" onClick={() => useEditorStore.getState().openSettings("account")}>管理</button>
-                      <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
-                    </div>
-                  ) : (
-                    <div className="sync-field">
-                      <label htmlFor={`sync-mail-${r.ws_id}`}>账号</label>
-                      {/* 登录/注册 tab：登录只需邮箱+密码；注册需额外 注册邀请码。 */}
-                      <div className="sync-auth-tabs">
-                        <button
-                          className={`sync-tab${r.authMode === "login" ? " on" : ""}`}
-                          onClick={() => update(r.ws_id, "authMode", "login")}
-                        >登录</button>
-                        <button
-                          className={`sync-tab${r.authMode === "register" ? " on" : ""}`}
-                          onClick={() => update(r.ws_id, "authMode", "register")}
-                        >注册</button>
-                      </div>
-                      <div className="sync-auth-grid">
-                        <input
-                          id={`sync-mail-${r.ws_id}`}
-                          className="sync-input"
-                          value={r.loginEmail}
-                          placeholder="邮箱"
-                          autoComplete="username"
-                          onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)}
-                        />
-                        <input
-                          className="sync-input"
-                          type="password"
-                          value={r.loginPassword}
-                          placeholder="密码"
-                          autoComplete="current-password"
-                          onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)}
-                        />
-                      </div>
-                      {r.authMode === "register" && (
-                        <div className="sync-field" style={{ marginTop: 8 }}>
-                          <label htmlFor={`sync-regcode-${r.ws_id}`}>注册邀请码（必填）</label>
-                          <input
-                            id={`sync-regcode-${r.ws_id}`}
-                            className="sync-input"
-                            value={r.loginRegisterCode}
-                            placeholder="比如：SHUYOABC"
-                            onChange={(e) => update(r.ws_id, "loginRegisterCode", e.target.value)}
-                          />
-                          <p className="sync-hint">
-                            {r.server_url ? "注册必须有邀请码。把服务端管理员给你的邀请码填到这里（填错或留空会注册失败）。" : "需先填服务器地址。"}
-                          </p>
-                        </div>
-                      )}
-                      <div className="sync-auth-btns">
-                        {r.authMode === "login" ? (
-                          <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
-                            {loggingIn ? "处理中…" : "登录"}
-                          </button>
-                        ) : (
-                          <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
-                            {loggingIn ? "处理中…" : "注册"}
-                          </button>
-                        )}
-                      </div>
-                      <p className="sync-hint">密码 ≥8 位，注册成功即自动登录。</p>
-                    </div>
-                  )}
-
-                  <div className="sync-field">
-                    <label htmlFor={`sync-space-${r.ws_id}`}>组织空间</label>
-                    {r.remoteSpaces.length > 0 ? (
-                      <div className="sync-space-row">
-                        <select
-                          id={`sync-space-${r.ws_id}`}
-                          className="sync-input"
-                          value={r.space_id}
-                          onChange={(e) => void pickSpace(r, e.target.value)}
-                        >
-                          <option value="">选择我加入的空间…</option>
-                          {r.remoteSpaces.map((sp) => (
-                            <option key={sp.id} value={sp.id}>{sp.name}</option>
-                          ))}
-                        </select>
-                        {myRole && <span className={`sync-role ${roleClass(myRole)}`}>{myRole}</span>}
-                      </div>
-                    ) : (
+              {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
+                  与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
+              {netKind !== "n/a" && (
+                <details className="sync-row">
+                  <summary>
+                    <span className="sync-row-label">只在 Wi-Fi 下自动同步</span>
+                    <span className="sync-row-value">{wifiText}</span>
+                    <span className="sync-row-caret" aria-hidden>›</span>
+                  </summary>
+                  <div className="sync-row-body">
+                    <label className="sync-att sync-net">
                       <input
-                        id={`sync-space-${r.ws_id}`}
-                        className="sync-input"
-                        value={r.space_id}
-                        placeholder="组织空间 id（多设备同步需绑定一个组织空间）"
-                        onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
+                        type="checkbox"
+                        checked={budget?.wifi_only ?? true}
+                        disabled={budgetBusy}
+                        onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
                       />
-                    )}
-                    {/* 已登录但还没有可绑定的组织空间 → 引导 + 创建入口，避免卡住 */}
-                    {r.token && r.remoteSpaces.length === 0 && (
-                      <div className="sync-space-guide">
-                        <p className="sync-hint">还没有组织空间。点「创建空间」新建一个，或让管理员邀请你加入。</p>
-                        <button className="sync-btn primary" onClick={() => createSpace(r)}>创建空间</button>
-                      </div>
-                    )}
-                    {/* 已登录、有空间可选但还没选 → 轻引导 */}
-                    {r.token && !r.space_id && r.remoteSpaces.length > 0 && (
-                      <p className="sync-hint">请在上面下拉选择一个组织空间，才能同步。</p>
-                    )}
+                      <span className="sync-att-text">
+                        <span className="sync-hint">
+                          关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
+                        </span>
+                      </span>
+                    </label>
                   </div>
+                </details>
+              )}
 
-                  {r.space_id && r.token && canManageSpace(r) && (
-                    <div className="sync-field">
-                      <button
-                        className="sync-members-toggle"
-                        aria-expanded={r.memberOpen}
-                        onClick={() => toggleMembers(r)}
-                      >
-                        <span>成员管理</span>
-                        {r.members.length > 0 && <span className="sync-members-count">{r.members.length}</span>}
-                        <span className={`sync-caret${r.memberOpen ? " is-open" : ""}`} aria-hidden>▾</span>
-                      </button>
-                      {r.memberOpen && (
-                        <div className="sync-members">
-                          {r.members.length === 0 ? (
-                            <div className="sync-members-empty">还没有成员</div>
+              {/* ③ 服务器 ← 原来 `.sync-profiles` 里那串 `<section class="sync-card">`
+                  （服务器 / 账号 / 组织空间 / 成员管理 / 附件 / 保存 —— 一块都没删，只是折进这一行） */}
+              <details className="sync-row">
+                <summary>
+                  <span className="sync-row-label">服务器</span>
+                  <span className="sync-row-value" title={serverText}>{serverText}</span>
+                  <span className="sync-row-caret" aria-hidden>›</span>
+                </summary>
+                <div className="sync-row-body">
+                  {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
+                  {rows.map((r) => {
+                    const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
+                    const state = r.server_url && r.space_id ? "bound" : r.server_url ? "partial" : "none";
+                    return (
+                      <section key={r.ws_id} className="sync-card">
+                        <div className="sync-card-head">
+                          <span className="sync-card-avatar" aria-hidden>{initial(r.name)}</span>
+                          <span className="sync-card-name" title={r.name}>{r.name}</span>
+                          <span className={`sync-state is-${state}`}>
+                            {state === "bound" ? "已绑定" : state === "partial" ? "待选空间" : "未配置"}
+                          </span>
+                        </div>
+
+                        <div className="sync-field">
+                          <label htmlFor={`sync-srv-${r.ws_id}`}>服务器</label>
+                          <input
+                            id={`sync-srv-${r.ws_id}`}
+                            className="sync-input"
+                            value={r.server_url}
+                            placeholder="http://localhost:8787"
+                            onChange={(e) => update(r.ws_id, "server_url", e.target.value)}
+                          />
+                        </div>
+
+                        {/* 已拿到令牌就不再堆登录表单——只留一枚「已登录」胶囊 + 登出。 */}
+                        {r.token ? (
+                          <div className="sync-account">
+                            <span className="sync-account-dot" aria-hidden />
+                            <div className="sync-account-text">
+                              <b>{authEmail || "已登录"}</b>
+                              <span title={r.server_url}>{r.server_url || "—"}</span>
+                            </div>
+                            {/* 管理账号/组织：跳转到设置中心「账户」页（登录身份、组织管理、注销）。 */}
+                            <button className="sync-btn ghost" onClick={() => useEditorStore.getState().openSettings("account")}>管理</button>
+                            <button className="sync-btn ghost" onClick={() => void logout(r)}>登出</button>
+                          </div>
+                        ) : (
+                          <div className="sync-field">
+                            <label htmlFor={`sync-mail-${r.ws_id}`}>账号</label>
+                            {/* 登录/注册 tab：登录只需邮箱+密码；注册需额外 注册邀请码。 */}
+                            <div className="sync-auth-tabs">
+                              <button
+                                className={`sync-tab${r.authMode === "login" ? " on" : ""}`}
+                                onClick={() => update(r.ws_id, "authMode", "login")}
+                              >登录</button>
+                              <button
+                                className={`sync-tab${r.authMode === "register" ? " on" : ""}`}
+                                onClick={() => update(r.ws_id, "authMode", "register")}
+                              >注册</button>
+                            </div>
+                            <div className="sync-auth-grid">
+                              <input
+                                id={`sync-mail-${r.ws_id}`}
+                                className="sync-input"
+                                value={r.loginEmail}
+                                placeholder="邮箱"
+                                autoComplete="username"
+                                onChange={(e) => update(r.ws_id, "loginEmail", e.target.value)}
+                              />
+                              <input
+                                className="sync-input"
+                                type="password"
+                                value={r.loginPassword}
+                                placeholder="密码"
+                                autoComplete="current-password"
+                                onChange={(e) => update(r.ws_id, "loginPassword", e.target.value)}
+                              />
+                            </div>
+                            {r.authMode === "register" && (
+                              <div className="sync-field" style={{ marginTop: 8 }}>
+                                <label htmlFor={`sync-regcode-${r.ws_id}`}>注册邀请码（必填）</label>
+                                <input
+                                  id={`sync-regcode-${r.ws_id}`}
+                                  className="sync-input"
+                                  value={r.loginRegisterCode}
+                                  placeholder="比如：SHUYOABC"
+                                  onChange={(e) => update(r.ws_id, "loginRegisterCode", e.target.value)}
+                                />
+                                <p className="sync-hint">
+                                  {r.server_url ? "注册必须有邀请码。把服务端管理员给你的邀请码填到这里（填错或留空会注册失败）。" : "需先填服务器地址。"}
+                                </p>
+                              </div>
+                            )}
+                            <div className="sync-auth-btns">
+                              {r.authMode === "login" ? (
+                                <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => login(r)}>
+                                  {loggingIn ? "处理中…" : "登录"}
+                                </button>
+                              ) : (
+                                <button className="sync-btn primary" disabled={loggingIn || !r.server_url} onClick={() => register(r)}>
+                                  {loggingIn ? "处理中…" : "注册"}
+                                </button>
+                              )}
+                            </div>
+                            <p className="sync-hint">密码 ≥8 位，注册成功即自动登录。</p>
+                          </div>
+                        )}
+
+                        <div className="sync-field">
+                          <label htmlFor={`sync-space-${r.ws_id}`}>组织空间</label>
+                          {r.remoteSpaces.length > 0 ? (
+                            <div className="sync-space-row">
+                              <select
+                                id={`sync-space-${r.ws_id}`}
+                                className="sync-input"
+                                value={r.space_id}
+                                onChange={(e) => void pickSpace(r, e.target.value)}
+                              >
+                                <option value="">选择我加入的空间…</option>
+                                {r.remoteSpaces.map((sp) => (
+                                  <option key={sp.id} value={sp.id}>{sp.name}</option>
+                                ))}
+                              </select>
+                              {myRole && <span className={`sync-role ${roleClass(myRole)}`}>{myRole}</span>}
+                            </div>
                           ) : (
-                            r.members.map((m) => {
-                              const canManage = canManageSpace(r);
-                              const isOwnerRow = m.role === "owner";
-                              return (
-                                <div key={m.user_id} className="sync-member">
-                                  <span className="sync-member-avatar" aria-hidden>{initial(m.email)}</span>
-                                  <span className="sync-member-email" title={m.email}>{m.email}</span>
+                            <input
+                              id={`sync-space-${r.ws_id}`}
+                              className="sync-input"
+                              value={r.space_id}
+                              placeholder="组织空间 id（多设备同步需绑定一个组织空间）"
+                              onChange={(e) => update(r.ws_id, "space_id", e.target.value)}
+                            />
+                          )}
+                          {/* 已登录但还没有可绑定的组织空间 → 引导 + 创建入口，避免卡住 */}
+                          {r.token && r.remoteSpaces.length === 0 && (
+                            <div className="sync-space-guide">
+                              <p className="sync-hint">还没有组织空间。点「创建空间」新建一个，或让管理员邀请你加入。</p>
+                              <button className="sync-btn primary" onClick={() => createSpace(r)}>创建空间</button>
+                            </div>
+                          )}
+                          {/* 已登录、有空间可选但还没选 → 轻引导 */}
+                          {r.token && !r.space_id && r.remoteSpaces.length > 0 && (
+                            <p className="sync-hint">请在上面下拉选择一个组织空间，才能同步。</p>
+                          )}
+                        </div>
+
+                        {r.space_id && r.token && canManageSpace(r) && (
+                          <div className="sync-field">
+                            <button
+                              className="sync-members-toggle"
+                              aria-expanded={r.memberOpen}
+                              onClick={() => toggleMembers(r)}
+                            >
+                              <span>成员管理</span>
+                              {r.members.length > 0 && <span className="sync-members-count">{r.members.length}</span>}
+                              <span className={`sync-caret${r.memberOpen ? " is-open" : ""}`} aria-hidden>▾</span>
+                            </button>
+                            {r.memberOpen && (
+                              <div className="sync-members">
+                                {r.members.length === 0 ? (
+                                  <div className="sync-members-empty">还没有成员</div>
+                                ) : (
+                                  r.members.map((m) => {
+                                    const canManage = canManageSpace(r);
+                                    const isOwnerRow = m.role === "owner";
+                                    return (
+                                      <div key={m.user_id} className="sync-member">
+                                        <span className="sync-member-avatar" aria-hidden>{initial(m.email)}</span>
+                                        <span className="sync-member-email" title={m.email}>{m.email}</span>
+                                        <select
+                                          className={`sync-member-role ${roleClass(m.role)}`}
+                                          value={m.role}
+                                          aria-label={`${m.email} 的角色`}
+                                          disabled={!canManage || isOwnerRow}
+                                          onChange={(e) => void setMemberRole(r, m.email, e.target.value)}
+                                        >
+                                          <option value="viewer">viewer</option>
+                                          <option value="editor">editor</option>
+                                          <option value="admin">admin</option>
+                                        </select>
+                                        <button
+                                          className="sync-member-remove"
+                                          title={isOwnerRow ? "空间所有者不可移除" : "移除成员"}
+                                          aria-label={`移除 ${m.email}`}
+                                          disabled={!canManage || isOwnerRow}
+                                          onClick={() => void removeMember(r, m.user_id)}
+                                        >
+                                          ✕
+                                        </button>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                                <div className="sync-invite">
+                                  <input
+                                    className="sync-input"
+                                    value={r.inviteEmail}
+                                    placeholder="被邀请者邮箱"
+                                    disabled={!canManageSpace(r)}
+                                    onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)}
+                                  />
                                   <select
-                                    className={`sync-member-role ${roleClass(m.role)}`}
-                                    value={m.role}
-                                    aria-label={`${m.email} 的角色`}
-                                    disabled={!canManage || isOwnerRow}
-                                    onChange={(e) => void setMemberRole(r, m.email, e.target.value)}
+                                    className="sync-input sync-invite-role"
+                                    value={r.inviteRole}
+                                    aria-label="邀请角色"
+                                    disabled={!canManageSpace(r)}
+                                    onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)}
                                   >
                                     <option value="viewer">viewer</option>
                                     <option value="editor">editor</option>
                                     <option value="admin">admin</option>
                                   </select>
-                                  <button
-                                    className="sync-member-remove"
-                                    title={isOwnerRow ? "空间所有者不可移除" : "移除成员"}
-                                    aria-label={`移除 ${m.email}`}
-                                    disabled={!canManage || isOwnerRow}
-                                    onClick={() => void removeMember(r, m.user_id)}
-                                  >
-                                    ✕
+                                  <button className="sync-btn" disabled={!canManageSpace(r)} onClick={() => void inviteMember(r)}>
+                                    邀请
                                   </button>
                                 </div>
-                              );
-                            })
-                          )}
-                          <div className="sync-invite">
-                            <input
-                              className="sync-input"
-                              value={r.inviteEmail}
-                              placeholder="被邀请者邮箱"
-                              disabled={!canManageSpace(r)}
-                              onChange={(e) => update(r.ws_id, "inviteEmail", e.target.value)}
-                            />
-                            <select
-                              className="sync-input sync-invite-role"
-                              value={r.inviteRole}
-                              aria-label="邀请角色"
-                              disabled={!canManageSpace(r)}
-                              onChange={(e) => update(r.ws_id, "inviteRole", e.target.value)}
-                            >
-                              <option value="viewer">viewer</option>
-                              <option value="editor">editor</option>
-                              <option value="admin">admin</option>
-                            </select>
-                            <button className="sync-btn" disabled={!canManageSpace(r)} onClick={() => void inviteMember(r)}>
-                              邀请
-                            </button>
+                                {!canManageSpace(r) && (
+                                  <p className="sync-hint">只有 admin / owner 能邀请成员或改角色。</p>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          {!canManageSpace(r) && (
-                            <p className="sync-hint">只有 admin / owner 能邀请成员或改角色。</p>
-                          )}
+                        )}
+
+                        {/* 手动令牌是老配置法的后路，默认收起，避免面板一眼全是输入框。
+                            两用途：① 团队版临时贴一个会话 token；② **「个人自建同步」那一档**
+                            （服务端由自己部署、没有账号）—— 把服务端 CLI 签发的那把 `sk_…` 设备密钥
+                            贴进来即可，**不需要注册/登录**（服务端侧见 sync-server 的 K1：
+                            `--issue-device-key`，持钥即拥有该空间）。 */}
+                        <details className="sync-advanced">
+                          <summary>高级：手动填令牌 / 设备密钥{r.token ? "（已填）" : ""}</summary>
+                          <input
+                            className="sync-input"
+                            type="password"
+                            value={r.token}
+                            placeholder="组织 token，或个人自建部署签发的 sk_ 密钥"
+                            onChange={(e) => update(r.ws_id, "token", e.target.value)}
+                          />
+                          <div className="sync-hint">
+                            自己部署服务端（无账号）时：在服务器上跑
+                            <code> --issue-device-key</code> 拿到一串 <code>sk_…</code>，贴到这里即可；丢了只能重新签发。
+                          </div>
+                        </details>
+
+                        {/* P6.1 每空间附件开关：默认开。关掉只影响附件**字节**，元数据照常
+                            同步——另一端能看到附件条目但打不开，所以文案要说清后果而不是
+                            写成"不同步附件"（那听起来像附件也跟着消失）。 */}
+                        <div className="sync-att">
+                          <div className="sync-att-text">
+                            <div className="sync-att-name">同步附件文件</div>
+                            <div className="sync-hint">
+                              关闭后只同步笔记内容，不传图片 / 附件文件（省流量与磁盘；另一端会看到附件但打不开）。
+                              改变立即生效，正在同步的任务会在传完当前文件后停下。
+                            </div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={r.syncAttachments}
+                            aria-label={`同步「${r.name}」的附件文件`}
+                            onChange={(e) => void setAttachments(r, e.target.checked)}
+                          />
                         </div>
-                      )}
-                    </div>
-                  )}
 
-                  {/* 手动令牌是老配置法的后路，默认收起，避免面板一眼全是输入框。
-                      两用途：① 团队版临时贴一个会话 token；② **「个人自建同步」那一档**
-                      （服务端由自己部署、没有账号）—— 把服务端 CLI 签发的那把 `sk_…` 设备密钥
-                      贴进来即可，**不需要注册/登录**（服务端侧见 sync-server 的 K1：
-                      `--issue-device-key`，持钥即拥有该空间）。 */}
-                  <details className="sync-advanced">
-                    <summary>高级：手动填令牌 / 设备密钥{r.token ? "（已填）" : ""}</summary>
-                    <input
-                      className="sync-input"
-                      type="password"
-                      value={r.token}
-                      placeholder="组织 token，或个人自建部署签发的 sk_ 密钥"
-                      onChange={(e) => update(r.ws_id, "token", e.target.value)}
-                    />
-                    <div className="sync-hint">
-                      自己部署服务端（无账号）时：在服务器上跑
-                      <code> --issue-device-key</code> 拿到一串 <code>sk_…</code>，贴到这里即可；丢了只能重新签发。
-                    </div>
-                  </details>
+                        <div className="sync-card-actions">
+                          {/* 登录/注册与选空间都会自动落盘，这里的「保存」只用于手填
+                              服务器地址或手动粘贴令牌的情况。 */}
+                          <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
+                            保存
+                          </button>
+                          <button className="sync-btn primary" disabled={syncing} onClick={() => syncOne(r)}>
+                            {syncing ? "同步中…" : "同步"}
+                          </button>
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              </details>
 
-                  {/* P6.1 每空间附件开关：默认开。关掉只影响附件**字节**，元数据照常
-                      同步——另一端能看到附件条目但打不开，所以文案要说清后果而不是
-                      写成"不同步附件"（那听起来像附件也跟着消失）。 */}
-                  <div className="sync-att">
-                    <div className="sync-att-text">
-                      <div className="sync-att-name">同步附件文件</div>
-                      <div className="sync-hint">
-                        关闭后只同步笔记内容，不传图片 / 附件文件（省流量与磁盘；另一端会看到附件但打不开）。
-                        改变立即生效，正在同步的任务会在传完当前文件后停下。
+              {/* ④ 网格（设备之间直接同步） ← 原来的 `.sync-att.sync-mesh`
+                  （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`） */}
+              {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
+                <details className="sync-row">
+                  <summary>
+                    <span className="sync-row-label">网格（设备之间直接同步）</span>
+                    <span className="sync-row-value">{meshText}</span>
+                    <span className="sync-row-caret" aria-hidden>›</span>
+                  </summary>
+                  <div className="sync-row-body">
+                    <div className="sync-att sync-mesh">
+                      <span className="sync-att-text">
+                        {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
+                            已经在上面那一行"局域网直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
+                            （监听地址 / 口令）与开关。 */}
+                        <span className="sync-hint">
+                          {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
+                        </span>
+                        {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
+                        <span className="sync-hint">
+                          {/* ⚠️ 2026-09-29（D3）：这句自己就带 `**` ⇒ 必须过 `inlineMd`，
+                              否则渲染出来是「会**顺手**和…」（owner 在真机上看到的就是这个）。 */}
+                          {inlineMd("开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。")}
+                        </span>
+                      </span>
+                      <div className="sync-field">
+                        <input
+                          className="sync-input"
+                          placeholder="监听地址，如 192.168.1.5:8788"
+                          value={meshBind}
+                          disabled={meshBusy}
+                          onChange={(e) => setMeshBind(e.target.value)}
+                        />
+                        <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
+                          保存地址
+                        </button>
+                      </div>
+                      <div className="sync-field">
+                        <input
+                          className="sync-input"
+                          placeholder="口令（留空 ＝ 不动已有口令）"
+                          value={meshToken}
+                          disabled={meshBusy}
+                          onChange={(e) => setMeshToken(e.target.value)}
+                        />
+                        <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
+                          设口令
+                        </button>
+                      </div>
+                      <div className="sync-field">
+                        <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
+                          关掉网格
+                        </button>
                       </div>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={r.syncAttachments}
-                      aria-label={`同步「${r.name}」的附件文件`}
-                      onChange={(e) => void setAttachments(r, e.target.checked)}
-                    />
                   </div>
-
-                  <div className="sync-card-actions">
-                    {/* 登录/注册与选空间都会自动落盘，这里的「保存」只用于手填
-                        服务器地址或手动粘贴令牌的情况。 */}
-                    <button className="sync-btn" onClick={() => save(r)} title="保存手填的服务器地址 / 令牌">
-                      保存
-                    </button>
-                    <button className="sync-btn primary" disabled={syncing} onClick={() => syncOne(r)}>
-                      {syncing ? "同步中…" : "同步"}
-                    </button>
-                  </div>
-                </section>
-              );
-            })}
-
-          {/* ⚠️ 2026-09-28（D1）：**设置类控件搬出吸底条** ——
-             §2 第 2 条 `INV-UI-sync-panel-persistent-chrome` 的口径是：
-             「常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里**不许有需要阅读与填写的表单**
-               —— 读数行可以有，设置控件不行」。
-             实测（改前）：`.sync-foot` 里【可见】表单 = **Web 4 ／ app 手机 3 ／ app 桌面 3**，
-             逐个查是：① `.sync-auto` 的「同步方式」select；②③ `.sync-mesh` 的「监听地址」/「口令」两个 input；
-             ④ web 上还有 `.sync-budget-row` 的三个 select。**三个对象上都是红的。**
-             ⇒ 把这三块搬进【滚动区】（底下仍在 footer 的都是**读数行**与进度/历史：
-               `.sync-lan` 实测 0 个表单控件，`.sync-net` 的 checkbox 是 `display:none`）。
-             ⚠️ 保留在 footer 的 `.sync-lan` 是【读数行】，按上面那条口径**允许**留在常驻区。
-             ⚠️ 本笔只搬位置，**一个字都不改**（文案是另一条不变式的事）。 */}
-            <div className="sync-auto">
-              <span className="sync-auto-label">同步方式</span>
-              <select
-                className="sync-input"
-                value={syncMode}
-                onChange={(e) => applySyncMode(e.target.value as SyncMode)}
-              >
-                <option value="off">关闭</option>
-                <option value="interval">按间隔（每 30 秒）</option>
-                {/* ⚠️ 只有桌面才有那条流（Web 上是浏览器自带 SSE、没有开关；Rust 侧才有
-                    `sync_stream_*`）。Web 上不摆这一档 —— 摆了就是承诺一个不存在的档。 */}
-                {isDesktopPlatform() && <option value="realtime">近实时（连着服务端时立刻拉）</option>}
-              </select>
+                </details>
+              )}
             </div>
-            <span className="sync-hint sync-auto-hint">{syncModeHint(syncMode)}</span>
-            {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
-              <div className="sync-att sync-mesh">
-                <span className="sync-att-text">
-                  <span className="sync-att-name">网格（设备之间直接同步）</span>
-                  {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
-                      已经在上面那一行"局域网直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
-                      （监听地址 / 口令）与开关。 */}
-                  <span className="sync-hint">
-                    {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
-                  </span>
-                  {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
-                  <span className="sync-hint">
-                    {/* ⚠️ 2026-09-29（D3）：这句自己就带 `**` ⇒ 必须过 `inlineMd`，
-                        否则渲染出来是「会**顺手**和…」（owner 在真机上看到的就是这个）。 */}
-                    {inlineMd("开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。")}
-                  </span>
-                </span>
-                <div className="sync-field">
-                  <input
-                    className="sync-input"
-                    placeholder="监听地址，如 192.168.1.5:8788"
-                    value={meshBind}
-                    disabled={meshBusy}
-                    onChange={(e) => setMeshBind(e.target.value)}
-                  />
-                  <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
-                    保存地址
-                  </button>
-                </div>
-                <div className="sync-field">
-                  <input
-                    className="sync-input"
-                    placeholder="口令（留空 ＝ 不动已有口令）"
-                    value={meshToken}
-                    disabled={meshBusy}
-                    onChange={(e) => setMeshToken(e.target.value)}
-                  />
-                  <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
-                    设口令
-                  </button>
-                </div>
-                <div className="sync-field">
-                  <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
-                    关掉网格
-                  </button>
-                </div>
+          </div>
+
+          {/* ⚠️ 2026-09-29（IA）：【进阶】这一组是 `.sync-profiles` 的**兄弟**，不是孩子 ——
+              `SpacePrivacySection` 不能进 `.sync-profiles`（Web 档那一层带 `is-disabled`：
+              `opacity:.45 ＋ pointer-events:none` ⇒ 搬进去就是「变灰且点不动」，
+              见 `.sync-profiles.is-disabled` 的注释与 D5 修正② 那条现场）。 */}
+          <div className="sync-group is-advanced">
+            <div className="sync-group-title">进阶</div>
+
+            {/* ⑤ 空间隐私 ← 原来的 `<SpacePrivacySection>`（组件本身一个字没改） */}
+            <details className="sync-row">
+              <summary>
+                <span className="sync-row-label">空间隐私</span>
+                <span className="sync-row-value">{privacyText}</span>
+                <span className="sync-row-caret" aria-hidden>›</span>
+              </summary>
+              <div className="sync-row-body">
+                <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
               </div>
+            </details>
+
+            {/* ⑥ 同步历史 ← 原来吸底条里的 `.sync-history`（内部结构一个字没改）。
+                它以前是 `.sync-foot` 的常驻内容 —— 折进这里之后吸底条只剩读数行。 */}
+            {history.length > 0 && (
+              <details className="sync-row">
+                <summary>
+                  <span className="sync-row-label">同步历史</span>
+                  <span className="sync-row-value">{historyText}</span>
+                  <span className="sync-row-caret" aria-hidden>›</span>
+                </summary>
+                <div className="sync-row-body">
+                  <div className="sync-history">
+                    <div className="sync-history-head">
+                      <button className="sync-history-toggle" aria-expanded={historyOpen} onClick={() => setHistoryOpen((v) => !v)}>
+                        <span className="sync-history-toggle-title">同步历史</span>
+                        <span className="sync-history-count">{history.length}</span>
+                        <span className={`sync-history-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
+                      </button>
+                      <button className="sync-history-clear" onClick={() => void clearHistory()} title="清空同步历史">清空</button>
+                    </div>
+                    {historyOpen && (
+                      <div className="sync-history-list">
+                        {history.slice(0, 8).map((h, i) => {
+                          const d = new Date(h.at).toLocaleString("zh-CN");
+                          const open = detailOpenIdx === i;
+                          return (
+                            <div key={i} className="sync-history-item">
+                              <span className={`sync-history-status${h.ok ? " is-ok" : " is-err"}`}>{h.ok ? "✓" : "✗"}</span>
+                              <div className="sync-history-main">
+                                <div className="sync-history-title">
+                                  <span className="sync-history-at" title={d}>{relTime(h.at)}</span>
+                                  <span className="sync-history-stats">
+                                    <span className="sync-stat">↑ {h.pushed}</span>
+                                    <span className="sync-stat">↓ {h.pulled}</span>
+                                  </span>
+                                  {h.items.length > 0 && (
+                                    <button
+                                      className="sync-history-detail-toggle"
+                                      onClick={() => setDetailOpenIdx(open ? null : i)}
+                                    >
+                                      {h.items.length} 项明细 ▾
+                                    </button>
+                                  )}
+                                </div>
+                                {h.message && <div className="sync-history-msg">{h.message}</div>}
+                                {open && (
+                                  <div className="sync-history-items">
+                                    {h.items.slice(0, 30).map((it, j) => (
+                                      <div key={j} className="sync-history-item-row">
+                                        <span className={`sync-dir-${it.dir}`}>{it.dir === "push" ? "↑" : "↓"}</span>
+                                        <span className="sync-entity">{entityLabel(it.entity)}</span>
+                                        <span className={`sync-op${it.op === "delete" ? " is-del" : ""}`}>{it.op === "delete" ? "删除" : "变更"}</span>
+                                        <span className="sync-id" title={it.entity_id}>{it.title || it.entity_id.slice(0, 10)}</span>
+                                      </div>
+                                    ))}
+                                    {h.items.length > 30 && <div className="sync-history-more">…等 {h.items.length - 30} 项</div>}
+                                </div>
+                              )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </details>
             )}
+
+            {/* ⑦ 同步预算 ← 原来的 `<details class="sync-advanced sync-budget">`
+                （三个下拉与那段解释一个字没改；`<summary>` 换成统一的行头） */}
             {/* C1 预算刹车：磁盘余量下限是**硬性**的（没有"关闭"选项）。 */}
             {budget && (
-              <details className="sync-advanced sync-budget">
-                <summary>同步预算（磁盘余量 / 单文件上限 / 本次上限）</summary>
-                <div className="sync-budget-row">
-                  <span className="sync-auto-label">磁盘余量下限</span>
-                  <select
-                    className="sync-input"
-                    value={String(budget.disk_floor_mb)}
-                    disabled={budgetBusy}
-                    onChange={(e) => void saveBudget({ ...budget, disk_floor_mb: Number(e.target.value) })}
-                  >
-                    <option value="256">256 MB</option>
-                    <option value="512">512 MB</option>
-                    <option value="1024">1 GB</option>
-                    <option value="2048">2 GB</option>
-                    <option value="5120">5 GB</option>
-                  </select>
+              <details className="sync-row sync-budget">
+                <summary>
+                  <span className="sync-row-label">同步预算</span>
+                  <span className="sync-row-value">{budgetText}</span>
+                  <span className="sync-row-caret" aria-hidden>›</span>
+                </summary>
+                <div className="sync-row-body">
+                  <div className="sync-budget-row">
+                    <span className="sync-auto-label">磁盘余量下限</span>
+                    <select
+                      className="sync-input"
+                      value={String(budget.disk_floor_mb)}
+                      disabled={budgetBusy}
+                      onChange={(e) => void saveBudget({ ...budget, disk_floor_mb: Number(e.target.value) })}
+                    >
+                      <option value="256">256 MB</option>
+                      <option value="512">512 MB</option>
+                      <option value="1024">1 GB</option>
+                      <option value="2048">2 GB</option>
+                      <option value="5120">5 GB</option>
+                    </select>
+                  </div>
+                  <div className="sync-budget-row">
+                    <span className="sync-auto-label">单文件上限</span>
+                    <select
+                      className="sync-input"
+                      value={String(budget.max_file_mb)}
+                      disabled={budgetBusy}
+                      onChange={(e) => void saveBudget({ ...budget, max_file_mb: Number(e.target.value) })}
+                    >
+                      <option value="0">不限</option>
+                      <option value="50">50 MB</option>
+                      <option value="100">100 MB</option>
+                      <option value="500">500 MB</option>
+                    </select>
+                  </div>
+                  <div className="sync-budget-row">
+                    <span className="sync-auto-label">本次下载上限</span>
+                    <select
+                      className="sync-input"
+                      value={String(budget.max_run_mb)}
+                      disabled={budgetBusy}
+                      onChange={(e) => void saveBudget({ ...budget, max_run_mb: Number(e.target.value) })}
+                    >
+                      <option value="0">只报告，不拦</option>
+                      <option value="500">500 MB</option>
+                      <option value="1024">1 GB</option>
+                      <option value="5120">5 GB</option>
+                    </select>
+                  </div>
+                  <p className="sync-hint">
+                    余量低于下限、或超过单文件上限的附件会停在安全的地方：已经下载的字节全部保留，
+                    下次同步接着下（按内容寻址，不会重复下）。磁盘余量下限不可关闭。
+                  </p>
                 </div>
-                <div className="sync-budget-row">
-                  <span className="sync-auto-label">单文件上限</span>
-                  <select
-                    className="sync-input"
-                    value={String(budget.max_file_mb)}
-                    disabled={budgetBusy}
-                    onChange={(e) => void saveBudget({ ...budget, max_file_mb: Number(e.target.value) })}
-                  >
-                    <option value="0">不限</option>
-                    <option value="50">50 MB</option>
-                    <option value="100">100 MB</option>
-                    <option value="500">500 MB</option>
-                  </select>
-                </div>
-                <div className="sync-budget-row">
-                  <span className="sync-auto-label">本次下载上限</span>
-                  <select
-                    className="sync-input"
-                    value={String(budget.max_run_mb)}
-                    disabled={budgetBusy}
-                    onChange={(e) => void saveBudget({ ...budget, max_run_mb: Number(e.target.value) })}
-                  >
-                    <option value="0">只报告，不拦</option>
-                    <option value="500">500 MB</option>
-                    <option value="1024">1 GB</option>
-                    <option value="5120">5 GB</option>
-                  </select>
-                </div>
-                <p className="sync-hint">
-                  余量低于下限、或超过单文件上限的附件会停在安全的地方：已经下载的字节全部保留，
-                  下次同步接着下（按内容寻址，不会重复下）。磁盘余量下限不可关闭。
-                </p>
               </details>
             )}
           </div>
@@ -1437,25 +1642,6 @@ export function SyncPanel() {
                 ⚠️ 读数那句人话来自 Rust（`mesh::config_state`）—— 界面**不**自己判断
                 "别人拉不拉得到"（那要按地址形状判档，而档位只许由 Rust 出，与上面那条同一纪律）。 */}
 
-            {/* C2 网络闸门：只在**真查得到**网络类型的平台上出现（桌面回 "n/a" = 不适用）。
-                与其在桌面上显示一个永远不起作用的开关，不如按能力把它收起来。 */}
-            {netKind !== "n/a" && (
-              <label className="sync-att sync-net">
-                <input
-                  type="checkbox"
-                  checked={budget?.wifi_only ?? true}
-                  disabled={budgetBusy}
-                  onChange={(e) => budget && void saveBudget({ ...budget, wifi_only: e.target.checked })}
-                />
-                <span className="sync-att-text">
-                  <span className="sync-att-name">只在 Wi-Fi 下自动同步</span>
-                  <span className="sync-hint">
-                    关掉后蜂窝网络也会自动同步（可能消耗流量）。手动点「同步」始终可用——这条只管自动同步。
-                  </span>
-                </span>
-              </label>
-            )}
-
             {syncing ? (
               <div className={`sync-status is-progress${syncPhase === "error" ? " is-err" : ""}`}>
                 <div className="sync-progress-row">
@@ -1484,62 +1670,6 @@ export function SyncPanel() {
                 )}
               </div>
             ) : null}
-            {history.length > 0 && (
-              <div className="sync-history">
-                <div className="sync-history-head">
-                  <button className="sync-history-toggle" aria-expanded={historyOpen} onClick={() => setHistoryOpen((v) => !v)}>
-                    <span className="sync-history-toggle-title">同步历史</span>
-                    <span className="sync-history-count">{history.length}</span>
-                    <span className={`sync-history-caret${historyOpen ? " is-open" : ""}`} aria-hidden>▾</span>
-                  </button>
-                  <button className="sync-history-clear" onClick={() => void clearHistory()} title="清空同步历史">清空</button>
-                </div>
-                {historyOpen && (
-                  <div className="sync-history-list">
-                    {history.slice(0, 8).map((h, i) => {
-                      const d = new Date(h.at).toLocaleString("zh-CN");
-                      const open = detailOpenIdx === i;
-                      return (
-                        <div key={i} className="sync-history-item">
-                          <span className={`sync-history-status${h.ok ? " is-ok" : " is-err"}`}>{h.ok ? "✓" : "✗"}</span>
-                          <div className="sync-history-main">
-                            <div className="sync-history-title">
-                              <span className="sync-history-at" title={d}>{relTime(h.at)}</span>
-                              <span className="sync-history-stats">
-                                <span className="sync-stat">↑ {h.pushed}</span>
-                                <span className="sync-stat">↓ {h.pulled}</span>
-                              </span>
-                              {h.items.length > 0 && (
-                                <button
-                                  className="sync-history-detail-toggle"
-                                  onClick={() => setDetailOpenIdx(open ? null : i)}
-                                >
-                                  {h.items.length} 项明细 ▾
-                                </button>
-                              )}
-                            </div>
-                            {h.message && <div className="sync-history-msg">{h.message}</div>}
-                            {open && (
-                              <div className="sync-history-items">
-                                {h.items.slice(0, 30).map((it, j) => (
-                                  <div key={j} className="sync-history-item-row">
-                                    <span className={`sync-dir-${it.dir}`}>{it.dir === "push" ? "↑" : "↓"}</span>
-                                    <span className="sync-entity">{entityLabel(it.entity)}</span>
-                                    <span className={`sync-op${it.op === "delete" ? " is-del" : ""}`}>{it.op === "delete" ? "删除" : "变更"}</span>
-                                    <span className="sync-id" title={it.entity_id}>{it.title || it.entity_id.slice(0, 10)}</span>
-                                  </div>
-                                ))}
-                                {h.items.length > 30 && <div className="sync-history-more">…等 {h.items.length - 30} 项</div>}
-                            </div>
-                          )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
           </footer>
         </div>
       )}
