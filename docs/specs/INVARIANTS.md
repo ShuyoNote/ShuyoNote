@@ -11,6 +11,13 @@
 > 「挡的是哪次事故」见同处 `incident` 字段。**本表不重写口径、不复述实现**。
 >
 > 收录范围与「为什么不收其余 34 条」见 [README.md](README.md) §现状。
+>
+> ⭐ **2026-09-29 补注（windows 裁定，AMD 落地）**：收录条件**没有**"载体必须是 `scripts/check-*.mjs`"这一条 ✗ ——
+> **载体可以是测试**。先例：`INV-RELEASE-sm-pipeline` 走"兄弟测试"通道 ✓；本表 2026-09-29 起另有三条
+> `INV-WIKI-*` 走同一形态。⇒ 对这类条目：
+> **「口径」列引测试里那句断言的逐字原话**（它没有注册表 `label`）、**「判据」列写测试文件名 ＋ 跑它的命令**、
+> **「会红证据」列写 D3 测试形态那本账**（本仓目前用**仓内可复跑**的变异脚本充当"能原地重做"的口子 ✓）。
+> ⚠️ 别再照着"门禁"两个字把测试形态的条目摘出去 ✗。
 
 | id | 口径（引自注册表 `label`） | 判据 | 会红证据 |
 |---|---|---|---|
@@ -43,6 +50,14 @@
 | **INV-PLUGIN-capabilities-parity** | 能力注册表 | `scripts/check-capabilities.mjs` | ✅ 账本 `exit=1`（sha `c2455b3c6d75`）｜配方：对照组 = 真 `capabilities/` + `packages/plugin-types/` + `src/lib/capabilities/frontend.ts` + 真生成物（25 条能力 / 10 个 TS 适配器两侧参数口径都比对）⇒ `exit 0`；变异组**只**把 `blocks.list` 适配器里 `intArg(args, "limit", BLOCKS_LIMIT… |
 | **INV-SM-registry-clean** | 共享 registry 没留国密补丁（默认构建别被它悄悄改掉） | `scripts/check-gm-registry-clean.mjs` | ✅ 账本 `exit=1`（sha `e43e90508225`）｜配方：假根（真 `scripts/` 的副本 ＋ 最小 `src-tauri/Cargo.lock`）里 `libsqlite3-sys` 那一条**只删掉 `source` 与 `checksum` 两行**（＝ `--prepare` 留下的残渣形态）⇒ 必须报红。⚠️ 单变量：对照组只有这两行之别。… |
 
+| **INV-WIKI-provenance** | `每个 sources 都必须在输入里出现过（不许拼、不许猜）`（**逐字引自测试里那句断言** —— 本条载体是测试，没有注册表 `label`） | `src/lib/ai/libraryMap.test.ts`（`pnpm exec vitest run src/lib/ai/libraryMap.test.ts`）＋ 真模型现场：`scripts/measure-wiki-cost.mjs` 的 `[n]` 越界检查 | ✅ 有（**走 D3 测试形态通道**；「能原地重做」的口子＝仓内脚本 `scripts/mutate-wiki-invariants.mjs`，零依赖 ✓）｜2026-09-29 实测：控制组 **exit 0** ／ 变异组（回链里混进 `ghost-source`）**exit 1**，红的用例逐字＝上面那句 ／ 跑完**逐字节还原** ✓ |
+| **INV-WIKI-coverage-visible** | `★ 没读数（null）⇒ 画成「未知」，且这一项里不出现 0`（**逐字引自渲染级测试那句断言**） | `src/components/LibraryMapView.test.tsx` ＋ 纯函数层 `src/lib/ai/libraryMap.test.ts`（成对断言：`null` ⇒ 画「未知」且不出现 0 ／ `0` ⇒ 画 0 且不出现「未知」） | ✅ 有（同上通道与脚本）｜2026-09-29 实测：变异组（把「未知」画成 `0`）**exit 1**，红的用例逐字＝上面那句 ✓ |
+| **INV-WIKI-readonly-default** | `调用前后输入逐字段未变（快照比对）` ＋ `输入被深冻结也能跑完（说明它不写输入），且两次调用结果深度相等`（**逐字引自测试**） | `src/lib/ai/libraryMap.test.ts`（另含静态断言：不 import `api`／`platform`／`store`）。⚠️ 目前只覆盖"地图与视图不改数据"；"生成层不改 `pages`"待第三块才有载体 | ✅ 有（同上通道与脚本）｜2026-09-29 实测：变异组（生成时偷改 `report.pages.indexed`）**exit 1**，红的用例逐字＝上面两句 ✓ |
+
+> ⚠️ **这三行在分支 `feat/llm-wiki-map` 上**（与它们的判据**同批** —— 那三个测试文件也在那条分支上）。
+> **现在不要把这三行合到 `dev`** ✗：`dev` 上那三个测试文件还不存在 ⇒ 合过去就是**假声明**（本层最恨的那种）。
+> 正确顺序：**先把判据合进来，再随判据一起入表** ✓
+
 ## 怎么核（**别信本表，跑命令**）
 
 ```bash
@@ -61,6 +76,10 @@ pnpm check:apk <某个 .apk>
 
 # 1c) 那条走 D3（测试形态判据）通道的规则 —— 必须单独跑它的兄弟测试
 pnpm exec vitest run scripts/check-workflow-yaml.test.mjs
+
+# 1d) 走同一条 D3 通道的**第二批**：三条 `INV-WIKI-*` 的「看过它红」
+#     （控制组绿 ／ 变异组红 ／ 跑完逐字节还原；红的用例逐条点名 ⇒ 三条各一次）
+node scripts/mutate-wiki-invariants.mjs
 
 # 2) 本表「会红证据」是否还新鲜（判据代码一改，账本里那条就过期 ⇒ 判据 D2 会红）
 node _workspace/bin/check-gate-manifest.mjs
