@@ -120,7 +120,23 @@ docs  ：c0b87d89 复查台账 ｜ 841d2f3d 容量压测 ｜ 368c1d21 补两节 
 | `docs/specs/2026-09-29-personal-edition-{spec,approach,tasks}.md` | 个人版**规格／方案／任务**（514／310／270 行） |
 | `docs/specs/2026-09-29-enterprise-edition-{spec,approach,tasks}.md` | 企业版**规格／方案／任务**（418／222／299 行） |
 
-### 6.2 对标竞品（⚠️ **这批有重复，整理者在处理**）
+### 6.2 对标竞品（✅ **已去重整理完毕**，2026-09-29 深夜）
+> ⚠️ **整理结论（`620ba7c8`）**：**以最新两份为正文**，被取代的**保留并置顶标注**（**不删文件**）。
+```text
+**正文（留）**
+  · `strongest-enterprise-benchmark` —— 企业/团队目标态**唯一正文**（22 格）
+    ＋ **新增 §8**（现状→目标差距与优先级）／**§9**（同类对标视角与独有维度）
+    ⚠️ 而 **§0–§7 的编号与 22 格口径一律不变**（判据矩阵逐处引用）
+  · `personal-edition-vs-competitors` —— 个人目标态正文（并订正了一处计数错：六格 → 七格）
+  · `sync-server-vs-competitors` —— 整体**现状**对标 ＋ 独有 §9 教训
+  · `edition-boundary` —— 答「**线为什么画在这里**」（10 处引用）
+  · `team-edition-capability-and-limits` —— 「**有什么 ＋ 实测极限**」（13 处引用）
+      ⚠️ 这两份**不算冗余**（一个"依据"、一个"清单与数字"）
+**被取代（保留 ＋ 置顶标注"已被 X 取代"）**
+  · `target-benchmark-vs-competitors` ⇒ 独有内容搬进 strongest §8
+  · `team-edition-vs-competitors` ⇒ 独有维度搬进 strongest §9
+```
+> ⇒ 本节的**那一行"整理者在处理"已经作废**（它是当时的悬空标记）。
 `sync-server-vs-competitors`（＋ §9 订正）／`target-benchmark-vs-competitors`／
 `team-edition-vs-competitors`／`strongest-enterprise-benchmark`／`personal-edition-vs-competitors`／
 `edition-boundary`／`team-edition-capability-and-limits`
