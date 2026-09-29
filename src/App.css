@@ -1502,13 +1502,18 @@ html[data-platform="win"] .app-body {
      · 它是给人【看状态】的 ⇒ **里面不许有 input/select/textarea**（同 `.sync-foot` 那条口径）
      · 颜色只用既有变量（`--accent` / `--border` / `--card-bg` / `--text-faint`），不新增色值
      · 绿点那个色（`#22a06b`）与 `.sync-account-dot` 已有的成功色一致 */
+/* ⚠️ 2026-09-29（尺寸协调）：hero 原来在 `.sync-profiles`【外面】⇒ 满宽贴边（宽 450 / x 61），
+   而下面那些行在容器 16px 内边距里（宽 418 / x 77）⇒ **左右差 16px、宽差 32px**，
+   owner 一眼看出的"和大卡片与下面的尺寸不协调"就是这个。
+   ⇒ 左右 margin 取 16px 与行对齐；同时把垂直节奏收一档（169px → ~132px），
+     按钮 48 → 42、标题 19 → 17、副标题 13 → 12.5。 */
 .sync-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 12px;
-  padding: 18px 14px 14px;
+  gap: 4px;
+  margin: 12px 16px;
+  padding: 14px 14px 12px;
   text-align: center;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1517,8 +1522,8 @@ html[data-platform="win"] .app-body {
 .sync-hero-state {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 19px;
+  gap: 7px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--text);
 }
@@ -1531,22 +1536,22 @@ html[data-platform="win"] .app-body {
 }
 .sync-hero-dot.is-ok { background: #22a06b; box-shadow: 0 0 0 4px rgba(34, 160, 107, 0.15); }
 .sync-hero-dot.is-busy { background: var(--accent); }
-.sync-hero-sub { font-size: 13px; color: var(--text-faint); }
+.sync-hero-sub { font-size: 12.5px; color: var(--text-faint); }
 .sync-hero-btn {
-  margin-top: 8px;
+  margin-top: 6px;
   width: 100%;
-  padding: 13px 0;
+  padding: 10px 0;
   border: 0;
   border-radius: var(--radius-md);
   background: var(--accent);
   color: #fff;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
 }
 .sync-hero-btn:disabled { opacity: 0.55; cursor: default; }
-.sync-hero-route { font-size: 12.5px; color: var(--text-dim); }
+.sync-hero-route { font-size: 12px; color: var(--text-dim); }
 
 .sync-card {
   display: flex;
