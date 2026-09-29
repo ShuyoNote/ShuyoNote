@@ -1,5 +1,9 @@
 # 任务：正文「真实时」—— 可独立认领的执行清单
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
+> ⚠️ 本份写于 `d021948c` 之前 ⇒ 其"局域网档 5 分钟"前提已作废；
+>   **真正的缺口见 [`2026-09-29-realtime-body-requirements.md`](2026-09-29-realtime-body-requirements.md) §9 补记**（上传侧缺一条线，不是缺通道）。
+>   ⚠️ 补记：那条缺的线**已经补上了**（`dfa79e1a`：编辑信号 ⇒ 防抖 400ms ⇒ 立刻上传）⇒ 下面那句「缺」也已作废。
 > 起草：macOS 侧｜**2026-09-29**｜需求 [`2026-09-29-realtime-body-requirements.md`](2026-09-29-realtime-body-requirements.md)（为什么）·
 > 规格 [`2026-09-29-realtime-body-spec.md`](2026-09-29-realtime-body-spec.md)（什么不许变）·
 > 方案 [`2026-09-29-realtime-body-approach.md`](2026-09-29-realtime-body-approach.md)（怎么落、每片承重判据）
@@ -49,7 +53,7 @@
 | 字段 | 内容 |
 |---|---|
 | **做什么** | ① 修 `lineage_conflict` 那条既存红判据；② 把"本轮读数基线"跑一遍并落进本文档（或它的续篇），作为后续所有任务的对照 |
-| **为什么是它**（读数） | 本轮实测 `cargo test --lib` ＝ **719 passed / 1 failed / 20 ignored**；失败那条：`src-tauri/src/lineage_conflict.rs:250` panic `"remote" 不该被接受`。成因：`575a58c6` 把 `CHOICE_REMOTE` 放开成**合法**值（`lineage_conflict.rs:47`），而这条判据的 `bad` 列表里还留着 `"remote"`；同一条判据后半段还有**互相矛盾**的断言（先 `resolve(..., CHOICE_LOCAL, 11)` 再断言 `Some(CHOICE_REMOTE)`，末了又断言 `Some(CHOICE_LOCAL)`） |
+| **为什么是它**（读数） | 本轮实测 `cargo test --lib` ＝ **719 passed / 1 failed / 20 ignored**；失败那条：`src-tauri/src/lineage_conflict.rs:250` panic `"remote" 不该被接受`（⚠️ **该处代码已不存在**：`d021948c` 已把 `"remote"` 从坏值表里摘掉、并去掉那句互斥断言 ⇒ 这条判据今天全绿；`:248-251` 现在留的是这次订正的注释）。成因：`575a58c6` 把 `CHOICE_REMOTE` 放开成**合法**值（`lineage_conflict.rs:47`），而这条判据的 `bad` 列表里还留着 `"remote"`；同一条判据后半段还有**互相矛盾**的断言（先 `resolve(..., CHOICE_LOCAL, 11)` 再断言 `Some(CHOICE_REMOTE)`，末了又断言 `Some(CHOICE_LOCAL)`） |
 | **改哪里** | `src-tauri/src/lineage_conflict.rs` 的 `#[cfg(test)] mod tests`（**只动判据**，不动实现 —— 实现是对的：三个字面量都该收，第四个别收） |
 | **验收读数** | ① `cd src-tauri && cargo check --tests` ⇒ exit 0（⚠️ **不是 `--lib`**：`--lib` **不查 `#[cfg(test)]`** —— `32f6fef2` 那笔提交的教训逐字在提交信息里）；② `cargo test --lib lineage_conflict::` ⇒ **4 passed / 0 failed**；③ `cargo test --lib` ⇒ **720 passed / 0 failed / 20 ignored** |
 | **依赖** | — |
@@ -66,7 +70,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | 新增 `BodyRealtimeStatus`（形状**逐字**见规格 §3.2）＋ 一条命令把它交出去；⚠️ **先解决规格 §6-R2**（"间隔从哪读"）：档位住在 `localStorage['shuyonote:autoSync']`（`src/lib/syncMode.ts:65`），**Rust 看不到它** |
+| **做什么** | 新增 `BodyRealtimeStatus`（形状**逐字**见规格 §3.2）＋ 一条命令把它交出去；⚠️ **先解决规格 §6-R2**（"间隔从哪读"）：档位住在 `localStorage['shuyonote:autoSync']`（`src/lib/syncMode.ts:140`），**Rust 看不到它** |
 | **改哪里** | 取决于 §6-R2 的答案：<br>· 若读数**住在界面侧** ⇒ `src/lib/realtimeBodyStatus.ts`（新建，纯函数）＋ `src/components/SyncPanel.tsx`（展示那一行）<br>· 若**必须走命令** ⇒ `src-tauri/src/sync.rs`（结构体）＋ `src/lib/platform/commands.ts` ＋ `web.ts` ＋ `src/lib/api.ts` ＋ `src-tauri/src/lib.rs`（`generate_handler!`） |
 | **验收读数** | ① `./node_modules/.bin/tsc --noEmit` ⇒ exit 0；② `node scripts/check-web-commands.mjs` ⇒ exit 0（若加了命令）；③ **承重**：`vitest` 里一条"读数的间隔与 `effectiveAutoSyncMs()` 同源"的断言 —— **变异**：把 `SYNC_INTERVAL_MS`（`src/lib/syncMode.ts:25`）改成 `10_000` 而不动读数 ⇒ 必须红（⚠️ **本机 `vitest` 今天跑不了**，见需求 §10 / 规格 §6 / 方案 §7-1 ⇒ 这条读数本轮**只能标"未跑"**） |
 | **依赖** | —（但**开工前必须**先答规格 §6-R2） |
@@ -76,7 +80,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | 新增 `mesh_sync_only`（形状见规格 §3.3）：**只跑网格那一轮**，**不跑服务端**。必须**复用** `mesh_scope`（`sync.rs:3121-3136`）与 `mesh::round`（`mesh.rs:403`），不抄第二份 |
+| **做什么** | 新增 `mesh_sync_only`（形状见规格 §3.3）：**只跑网格那一轮**，**不跑服务端**。必须**复用** `mesh_scope`（`sync.rs:3336`）与 `mesh::round`（`mesh.rs:417`），不抄第二份 |
 | **改哪里** | `src-tauri/src/sync.rs`（命令）＋ `src-tauri/src/lib.rs`（`generate_handler!`）＋ `src/lib/platform/commands.ts` ＋ `src/lib/platform/web.ts`（如实回"不可用"，照 `web.ts:1565-1576` 的同一句人话）＋ `src/lib/api.ts` |
 | **验收读数** | ① `cargo check --tests` ⇒ exit 0；② `cargo test --lib mesh::` ⇒ **≥ 23 passed / 0 failed**（本机基线，不得减少）；③ `cargo test --lib sync::` ⇒ **≥ 54 passed / 0 failed**；④ `check-web-commands` ⇒ exit 0；⑤ ★ **承重**：一条**文本级**断言 —— `mesh_sync_only` 的实现体里**不许**出现 `sync_workspace` / `do_push` / `do_pull`（**先剥注释再断言**，先例 `src/lib/platform/webClaimScope.wiring.test.ts`）。**变异**：在它里面加一句 `sync_workspace_only(...)` ⇒ 必须红 |
 | **依赖** | — |
@@ -86,12 +90,12 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | 把 `App.tsx` 自动同步那条 `tick` 里的**两条路解耦**：**网格那一轮不许被"有服务端档案"包住**（今天 `App.tsx:405-407` 的 `if (bound.length)` 只包服务端那条，网格那条在 `:425-428`，**已经**在外面 —— ⇒ 本任务其实是**加判据 ＋ 把间隔的选择落成用户可选项**，不是重写逻辑）；＋ 面板那一行的**说明与读数**（照规格 `INV-RT-cadence-honest`） |
-| **改哪里** | `src/App.tsx`（tick 那一段，`:398-446`；网格那一轮在 `:426`）、`src/components/SyncPanel.tsx`（"同步方式"那一行 ＋ 读数展示）、`src/lib/syncMode.ts`（**若**要新档位）、`src/lib/platform/commands.ts` ＋ `src/lib/api.ts`（若 T2 还没加完） |
+| **做什么** | 把 `App.tsx` 自动同步那条 `tick` 里的**两条路解耦**：**网格那一轮不许被"有服务端档案"包住**（今天 `App.tsx:153` 的 `if (bound.length)` 只包服务端那条，网格那条在 `:163-169`，**已经**在外面 —— ⇒ 本任务其实是**加判据 ＋ 把间隔的选择落成用户可选项**，不是重写逻辑）；＋ 面板那一行的**说明与读数**（照规格 `INV-RT-cadence-honest`） |
+| **改哪里** | `src/App.tsx`（tick 那一段，`:517-534`；网格那一轮在 `:167`）、`src/components/SyncPanel.tsx`（"同步方式"那一行 ＋ 读数展示）、`src/lib/syncMode.ts`（**若**要新档位）、`src/lib/platform/commands.ts` ＋ `src/lib/api.ts`（若 T2 还没加完） |
 | **验收读数** | ① `tsc --noEmit` ⇒ exit 0；② `vitest` 的 `src/lib/syncMode.test.ts` ⇒ 全绿（含"近实时开着 ⇒ 兜底轮询必须挂着"那条谓词）；③ ★ **承重**（**复用现成载体**）：`src/components/syncPanelMesh.wiring.test.ts` 已经在断言**两处**都有 `api.meshSyncNow(`（`:25` / `:38`）⇒ **变异**：把网格那一轮挪进 `if (bound.length)` ⇒ 必须红；④ ★ **承重**：`src/hooks/useSyncStream.wiring.test.ts` ⑧（"流通道不碰轮询"）＋ 它里面的 `expect(app, "轮询必须**无条件**挂在 App 上")` ⇒ **变异**：让新触发**代替**那个定时器 ⇒ 必须红；⑤ ★ **承重**：新触发**必须**过 `shouldAutoSyncNow()`（`src/lib/syncGate.ts:22-30`）—— **变异**：不调闸门 ⇒ 必须红（真机实测过"把间隔调成每 10 秒就在蜂窝上照拉"，`syncGate.ts` 文件头逐字） |
 | **依赖** | **T1 ＋ T2**（读数与命令） |
 | **写域** | `src/App.tsx`、`src/lib/syncMode.ts`、`src/components/SyncPanel.tsx`（⚠️ **热点文件**：与 T6/T7 共享 ⇒ 同一时刻只有一个执行者能持它）、`src/lib/platform/commands.ts`、`src/lib/api.ts` |
-| **⚠️ 已知不确定（如实写）** | ⚠️ **"5 秒"这个数的代价我没量**（方案 §7-6）：真要选它，先在**一台真机**上量"每 5 秒一次网格轮询"的请求量／耗电。⇒ 本任务的默认间隔**不许**由实现者自定：**等 owner 给数**（需求 §7-D2） |
+| **⚠️ 已知不确定（如实写）** | ⚠️ **"5 秒"这个数的代价我没量**（方案 §7-6）：真要选它，先在**一台真机**上量"每 5 秒一次网格轮询"的请求量／耗电。⇒ 本任务的默认间隔**数已由 owner 给出（5 秒）**（需求 §7-D2）。<br>⚠️ **2026-09-29 13:47 起已作废**上面"等 owner 给数"那一句：`d021948c` 已把局域网这一档的间隔拍成 **5 秒**，实现是 `src/lib/syncMode.ts:71` 的 `PULL_INTERVAL_DEFAULT_MS = 5_000`（`a5c0f614` 上另有三档用户设置 `PULL_INTERVALS`／`PULL_INTERVAL_KEY`）。 |
 
 ### T4 **片 C：按对端触发（名单式）**（**依赖另一份文档**）
 
@@ -108,7 +112,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | 把 `check-crdt-plane` 的判据④从"`mergeRemotePageState` 定义只许一处"**扩到** `lineagesRelated`（今天它的定义在 `src/lib/crdt/pageBinding.ts:185-190` 一带，**只有一处**） |
+| **做什么** | 把 `check-crdt-plane` 的判据④从"`mergeRemotePageState` 定义只许一处"**扩到** `lineagesRelated`（今天它的定义在 `src/lib/crdt/pageBinding.ts:132` 一带，**只有一处**） |
 | **改哪里** | `scripts/check-crdt-plane.mjs`（**扩判据**）＋ `scripts/check-crdt-plane.test.mjs`（若它自己有自测：**必须两边都验** —— 正例绿 ＋ 负例红）＋ ⚠️ **若改了门禁判据 ⇒ 它自己的「看过它红」证据会过期**（`_workspace/mutation-evidence.json` 按脚本 sha 绑定，`AI-NATIVE-DEV.md` §12.5）⇒ **顺手重做那条证据**，否则 `check-gate-manifest` 的判据 D2 会红、且**提交会被 hook 拦下** |
 | **验收读数** | ① `node scripts/check-crdt-plane.mjs` ⇒ exit 0；② `node scripts/check-crdt-plane.mjs --self-test` ⇒ 全绿（若它支持）；③ ★ **承重（变异实测）**：在 `pageBinding.ts` 里加一个**第二处** `lineagesRelated` 的**定义**（例如一个只在测试里用的包装，但**不用 `export`** 也要能被判到）⇒ 门禁**必须红**；随后**逐字节还原**（`git status --short` 为空 **不算**还原的证据 —— `AI-NATIVE-DEV.md` §12.7 逐字："还原的判据只能是 sha／逐字节比"） |
 | **依赖** | —（与 T1/T2/T3/T4 **完全并行**：只碰 `scripts/`） |
@@ -118,7 +122,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | ① `syncModeHint` 那一句（`src/lib/syncMode.ts:50-64`）**现在只说"连着同步服务时…"** —— 要**补上局域网这一档会发生什么**（并把"多久"换成**读数里的同一个数**）；② 面板上那一行的文案不许暗示"推送"；③ 不许暗示"所有内容立刻同步"（标题／排序仍按页级 LWW） |
+| **做什么** | ① `syncModeHint` 那一句（`src/lib/syncMode.ts:125-137`）**现在只说"连着同步服务时…"** —— 要**补上局域网这一档会发生什么**（并把"多久"换成**读数里的同一个数**）；② 面板上那一行的文案不许暗示"推送"；③ 不许暗示"所有内容立刻同步"（标题／排序仍按页级 LWW） |
 | **改哪里** | `src/lib/syncMode.ts`（文案唯一来源）、`src/components/SyncPanel.tsx`（展示）、`src/lib/i18n/*`（若文案有译文条目） |
 | **验收读数** | ① `tsc --noEmit` ⇒ exit 0；② ★ **承重**：一条**文本级**判据 —— `syncModeHint` 与面板文案里**不许**出现"推送"（除非同句说明"文件里它是拉取式"），且**不许**出现"所有内容/全部内容立刻同步"这类说法 —— **变异**：把文案改成"所有内容立刻同步" ⇒ 必须红（`INV-RT-body-not-all` ＋ `INV-RT-pull-not-push` 的落点） |
 | **依赖** | **T1**（文案里那个数要来自读数，不许各写一遍） |

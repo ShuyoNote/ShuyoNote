@@ -1,5 +1,9 @@
 # 方案：正文「真实时」—— 分片、承重判据、传输路线取舍与代价
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
+> ⚠️ 本份写于 `d021948c` 之前 ⇒ 其"局域网档 5 分钟"前提已作废；
+>   **真正的缺口见 [`2026-09-29-realtime-body-requirements.md`](2026-09-29-realtime-body-requirements.md) 的 §9 补记**（上传侧缺一条线，不是缺通道）。
+>   ⚠️ 补记：那条缺的线**已经补上了**（`dfa79e1a`：编辑信号 ⇒ 防抖 400ms ⇒ 立刻上传）⇒ 下面那句「缺」也已作废。
 > 起草：macOS 侧｜**2026-09-29**｜需求见 [`2026-09-29-realtime-body-requirements.md`](2026-09-29-realtime-body-requirements.md)（为什么）·
 > 规格见 [`2026-09-29-realtime-body-spec.md`](2026-09-29-realtime-body-spec.md)（什么不许变）·
 > 任务见 [`2026-09-29-realtime-body-tasks.md`](2026-09-29-realtime-body-tasks.md)（谁做什么）
@@ -27,8 +31,8 @@
 
 | 项 | 内容 |
 |---|---|
-| **改哪些文件** | `src-tauri/src/mesh.rs`（**若**要把"开窗 ＋ 拉一轮"里与服务端无关的那半抽成可复用的入口，就放在 `round` 紧邻处，不搬进 `sync.rs`）；`src-tauri/src/sync.rs`（`mesh_sync_only` 命令 ＋ `BodyRealtimeStatus`，**复用** `mesh_scope` `sync.rs:3121-3136` 与 `mesh::round` `mesh.rs:403`）；`src-tauri/src/lib.rs`（`generate_handler!` 加一条）；`src/lib/platform/commands.ts`（两条契约 ＋ 参数键 camelCase）；`src/lib/platform/web.ts`（两支如实回"这一档不可用"，照 `web.ts:1565-1576` 的先例）；`src/lib/api.ts`（两个薄包）；`scripts/check-web-commands.mjs` 的**计数会被门禁自己算**（不用手改，但要在提交信息里报新读数） |
-| **动没动协议** | ❌ **零协议**。`LAN_PORT`（`lan.rs:46`）/ `WIRE_VERSION`（`lan.rs:55`）/ `LanAnnounce`（`lan.rs:65-84`）/ `GET /mesh/pull`（`mesh.rs:668`）**一个字不动** |
+| **改哪些文件** | `src-tauri/src/mesh.rs`（**若**要把"开窗 ＋ 拉一轮"里与服务端无关的那半抽成可复用的入口，就放在 `round` 紧邻处，不搬进 `sync.rs`）；`src-tauri/src/sync.rs`（`mesh_sync_only` 命令 ＋ `BodyRealtimeStatus`，**复用** `mesh_scope` `sync.rs:3336` 与 `mesh::round` `mesh.rs:417`）；`src-tauri/src/lib.rs`（`generate_handler!` 加一条）；`src/lib/platform/commands.ts`（两条契约 ＋ 参数键 camelCase）；`src/lib/platform/web.ts`（两支如实回"这一档不可用"，照 `web.ts:1565-1576` 的先例）；`src/lib/api.ts`（两个薄包）；`scripts/check-web-commands.mjs` 的**计数会被门禁自己算**（不用手改，但要在提交信息里报新读数） |
+| **动没动协议** | ❌ **零协议**。`LAN_PORT`（`lan.rs:46`）/ `WIRE_VERSION`（`lan.rs:55`）/ `LanAnnounce`（`lan.rs:65-84`）/ `GET /mesh/pull`（`mesh.rs:682`）**一个字不动** |
 | **能不能本机验证** | ✅ 能。`cargo test --lib mesh::`（23 条，本机实测可跑，见需求 §10）＋ `cargo check --tests`（**注意**：`cargo check --lib` **不查 `#[cfg(test)]`** —— 这是 `32f6fef2` 那笔提交的教训，逐字在它的提交信息里）＋ `pnpm exec tsc --noEmit` ＋ `node scripts/check-web-commands.mjs` |
 | **★ 承重判据** | ① ★ **"只跑网格"不许顺手跑服务端**：`mesh_sync_only` 的实现体里**不许**出现 `sync_workspace` / `do_push` / `do_pull`（文本级断言，**先剥注释再断言** —— 与 `webClaimScope.wiring.test.ts` 同一个坑）—— **变异**：在 `mesh_sync_only` 里加一句 `sync_workspace_only(...)`（"反正顺手"）⇒ 必须红。**为什么这条是承重的**：纯局域网那一档**没有服务端**，顺手跑一次就是**每次触发都白等一个网络超时**（真机表现是"延迟忽大忽小"，而日志里看不出因果）；<br>② ★ **间隔与文案同源**：`BodyRealtimeStatus.intervalMs` 与 `syncModeHint` 承诺的那个数**必须来自同一个函数** —— **变异**：把 `src/lib/syncMode.ts:25` 的 `SYNC_INTERVAL_MS` 改成 `10_000` 而**不动** Reads 那一边 ⇒ 必须红（`INV-RT-cadence-honest` 的落点；⚠️ 这一条**先要定 §6-R2/"间隔从哪读"**，见 §6 没做成第 3 条）；<br>③ ★ **反向保护（不回归）**：`lan_status` 的 `peers` / `kind` / `line` **逐字段不变** —— **变异**：把 `nearby`（另一份文档要加的那个字段）强行置空 ⇒ 这三条读数必须**一个字节都不变**（先例：分片 ③-b-2a 的"没配 ⇒ 一个字节都不动"） |
 | **副证据** | `check-web-commands` 的读数（命令三方向一致 ＋ 参数键 camelCase）；`web.ts` 两支的人话与 `mesh_sync_now` 的**同一句** |
@@ -37,10 +41,10 @@
 
 | 项 | 内容 |
 |---|---|
-| **改哪些文件** | `src/App.tsx`（自动同步那条 `tick`，`App.tsx:398-446`：**把"服务端那条"与"网格那条"的触发解耦** —— 今天两者共用一个间隔，而网格那一档**不需要**服务端）；`src/lib/syncMode.ts`（**若**要新档位，读写口径只在这里一处；今天的三档见 `:36-46`）；`src/components/SyncPanel.tsx`（"同步方式"那一行的**说明文字** ＋ 读数展示）；`src/lib/api.ts`（若片 A 的薄包还没加） |
+| **改哪些文件** | `src/App.tsx`（自动同步那条 `tick`，`App.tsx:517-534`：**把"服务端那条"与"网格那条"的触发解耦** —— 今天两者共用一个间隔，而网格那一档**不需要**服务端）；`src/lib/syncMode.ts`（**若**要新档位，读写口径只在这里一处；今天的三档见 `syncMode.ts:106-109` 的 `syncModeOf`）；`src/components/SyncPanel.tsx`（"同步方式"那一行的**说明文字** ＋ 读数展示）；`src/lib/api.ts`（若片 A 的薄包还没加） |
 | **动没动协议** | ❌ 零协议 |
 | **能不能本机验证** | 🟡 **一半**：① **接线面**（"网格那条不许被服务端那条连坐"）→ 本机可判（文本级，先例 `src/components/syncPanelMesh.wiring.test.ts` 已经在断言**两处**都有 `api.meshSyncNow(`，`:25` / `:38`）；② **真行为**（两台真机隔热点多久可见）→ ❌ **本机做不到**（要人手，见任务 §3 的 M 档） |
-| **★ 承重判据** | ① ★ **解耦**：自动同步那条 tick 里，网格那一轮**不许**被包在 `if (bound.length)` 里（`bound` ＝ 有 `server_url` 的档案，`App.tsx:405-407`）—— **变异**：把 `meshSyncNow` 挪进 `if (bound.length)` ⇒ 必须红。**为什么承重**：`mesh::tests::a_space_with_no_server_profile_can_still_turn_the_mesh_on` 钉着"**只开网格、不绑服务端**是被支持的配置"，而那条配置在界面上**今天就靠这一行不被包住**；<br>② ★ **闸门只有一处**：新触发**必须**过 `shouldAutoSyncNow()`（`src/lib/syncGate.ts:22-30`（函数在 `:26`））—— **变异**：新触发里直接 `await api.meshSyncOnly(...)`、不调闸门 ⇒ 必须红。**为什么承重**：真机实测过"把间隔调成每 10 秒就在蜂窝上照拉"（`syncGate.ts` 文件头逐字），而网格这一档**更要**过闸（它是**自动**行为）；<br>③ ★ **不许有第三条自动路**：面板那个 **5000ms** 定时器（`SyncPanel.tsx:185`）**只读读数**这条口径不许破 —— **变异**：在那个 tick 里加一句拉数据 ⇒ 必须红（`INV-RT-single-source` 的一半：一个"多久跑一次"只能有一处） |
+| **★ 承重判据** | ① ★ **解耦**：自动同步那条 tick 里，网格那一轮**不许**被包在 `if (bound.length)` 里（`bound` ＝ 有 `server_url` 的档案，`App.tsx:153`）—— **变异**：把 `meshSyncNow` 挪进 `if (bound.length)` ⇒ 必须红。**为什么承重**：`mesh::tests::a_space_with_no_server_profile_can_still_turn_the_mesh_on` 钉着"**只开网格、不绑服务端**是被支持的配置"，而那条配置在界面上**今天就靠这一行不被包住**；<br>② ★ **闸门只有一处**：新触发**必须**过 `shouldAutoSyncNow()`（`src/lib/syncGate.ts:22-30`（函数在 `:26`））—— **变异**：新触发里直接 `await api.meshSyncOnly(...)`、不调闸门 ⇒ 必须红。**为什么承重**：真机实测过"把间隔调成每 10 秒就在蜂窝上照拉"（`syncGate.ts` 文件头逐字），而网格这一档**更要**过闸（它是**自动**行为）；<br>③ ★ **不许有第三条自动路**：面板那个 **5000ms** 定时器（`SyncPanel.tsx:201`）**只读读数**这条口径不许破 —— **变异**：在那个 tick 里加一句拉数据 ⇒ 必须红（`INV-RT-single-source` 的一半：一个"多久跑一次"只能有一处） |
 | **副证据** | `pnpm exec tsc --noEmit`；`vitest` 的 `syncMode.test.ts`（"近实时开着 ⇒ 兜底轮询必须挂着"那条谓词）；`useSyncStream.wiring.test.ts` ⑧（"流通道不碰轮询"） |
 
 ### 片 C：**按对端触发（名单式）**（**依赖另一份文档；本轮不一定做**）
@@ -79,21 +83,27 @@
 
 | # | 路线 | 机制 | 延迟量级 | 代价（如实） | **纯局域网无服务端能用吗** |
 |---|---|---|---|---|---|
-| **①** | **轮询**（把网格那一轮按更短的间隔跑） | `App.tsx` 的定时器 → `mesh_sync_only` → `mesh::round` → `GET /mesh/pull` | ＝**间隔**（可配到 5s） | ① 请求量 ＝ 间隔 × **对端数**（每台对端一次 HTTP）；② 空闲时也发（没有"什么都没变"的快路径 —— 有**水位** `mesh_cursor`，`mesh.rs:116-141`，所以返回体是空的，但**请求仍然发出**）；③ **移动端耗电**（安卓也在这一档里，`isDesktopPlatform()` 在安卓为真，`platform/index.ts:36-37`） | ✅ **能用**，而且**只有它**能用（见 3.2） |
+| **①** | **轮询**（把网格那一轮按更短的间隔跑） | `App.tsx` 的定时器 → `mesh_sync_only` → `mesh::round` → `GET /mesh/pull` | ＝**间隔**（可配到 5s） | ① 请求量 ＝ 间隔 × **对端数**（每台对端一次 HTTP）；② 空闲时也发（没有"什么都没变"的快路径 —— 有**水位** `mesh_cursor`，`mesh.rs:116-141`，所以返回体是空的，但**请求仍然发出**）；③ **移动端耗电**（安卓也在这一档里，`isDesktopPlatform()` 在安卓为真，`platform/index.ts:39-41`） | ✅ **能用**，而且**只有它**能用（见 3.2） |
 | **②** | **长连接推送** | 局域网里新起一条通道（UDP 通知 或 每台设备一个小 SSE／WS 端点），"我有新东西了" ⇒ 对端立刻 `GET /mesh/pull` | **毫秒～秒级** | ① **要动协议**（新报文／新端点）；② 要**退避重连 ＋ 状态读数**（形状同 `sync_stream.rs` 872 行那套：`backoff_ms` / `drain_sse_frames` / `SyncStreamStatus`）；③ ⚠️ **它仍然要靠 pull** —— 网格窗口的**服务侧只服务自己产生的记录**（`mesh.rs:78-86`），所以"推送"永远只能是**通知**，不能是**数据**。⇒ 这条路的收益是**延迟**，不是架构 | ✅ 能用（这正是它比 ③ 强的地方） |
-| **③** | **复用既有 SSE** | 订 `{server}/spaces/{id}/changes-stream` | **秒级**（服务端什么时候发帧） | ⚠️ **它今天已经实现了**（桌面 `sync_stream.rs:314`；Web `useSyncStream.ts:118-125`），**代价≈0** | ❌ **不能用**：它订的是**服务端**（`stream_url`，`sync_stream.rs:112-114`），而纯局域网**没有服务端**；且它**根本不驱动网格**（`useSyncStream.ts:71` 的 `pullOnce` 只调 `api.syncWorkspace`）⇒ **它解决不了 owner 的场景** |
+| **③** | **复用既有 SSE** | 订 `{server}/spaces/{id}/changes-stream` | **秒级**（服务端什么时候发帧） | ⚠️ **它今天已经实现了**（桌面 `sync_stream.rs:324`；Web `useSyncStream.ts:118-125`），**代价≈0** | ❌ **不能用**：它订的是**服务端**（`stream_url`，`sync_stream.rs:122-124`），而纯局域网**没有服务端**；且它**根本不驱动网格**（`useSyncStream.ts:54-63` 的 `pullOnce` 只调 `api.syncWorkspace`）⇒ **它解决不了 owner 的场景** |
 
 ### 3.2 结论（**把 owner 场景正面回答掉**）
 
 ```text
 · 有服务端那一档        ⇒ ③ 已经接近成立（秒级），本轮只需把"它不驱动网格"这件事说清楚
 · 纯局域网 + 无服务端   ⇒ 只有 ①（今天）或 ②（要动协议）
-                          ⚠️ 而 ① 的默认值是**5 分钟**（syncMode.ts:108-113）⇒ 本轮 R-2 的最小修法
+                          ⚠️ 而 ① 的默认值是**5 分钟**（syncMode.ts:198-213）⇒ 本轮 R-2 的最小修法
                              就是"把它变成 5 秒"，代价是 3.1-① 那三条
 ```
 
+> ⚠️ **2026-09-29 13:47 起已作废**（`d021948c`，比本份晚）：那个"最小修法"**已经做了** ——
+> 局域网这一档的间隔由 owner 拍成 **5 秒**，实现是 `src/lib/syncMode.ts:71` 的
+> `PULL_INTERVAL_DEFAULT_MS = 5_000`（`a5c0f614` 上另有三档用户设置 `PULL_INTERVALS`／`PULL_INTERVAL_KEY`）。
+> ⇒ 上面"① 的默认值是 5 分钟"与"最小修法就是把它变成 5 秒"**都不再成立**。原文保留，是留痕。
+> ⚠️ 更要紧的是：**真正的缺口不在这儿** —— 见需求 §9 补记（**上传侧缺一条线**，不是缺通道；下载侧已经实时）。
+
 ⚠️ **一条必须写进风险的物理事实**：**无论走 ① 还是 ②，数据的到达永远是"对端来拉"**
-（`GET /mesh/pull`，`mesh.rs:251-262`；服务侧 `serve_own_records` 只服务自己的记录，`mesh.rs:84-107`）。
+（`GET /mesh/pull`，`mesh.rs:265-273`；服务侧 `serve_own_records` 只服务自己的记录，`mesh.rs:84-107`）。
 ⇒ **"推送"这个词在这条链路上只能是"通知"的意思**，它**不改变**"谁发起 HTTP"。
 这条是 `INV-RT-pull-not-push` 的技术根据。
 
@@ -110,15 +120,15 @@
 
 | # | 风险 / 代价 | 读数与出处 | 处置（本轮怎么落） |
 |---|---|---|---|
-| 1 | **短间隔轮询在安卓上是耗电与流量的真实代价** | 安卓也走桌面那条路（`isDesktopPlatform() ≡ isTauri()`，`platform/index.ts:36-37`）；而发现的广播目标里包含**受限广播** `255.255.255.255`（`lan.rs:434-443`），网格那一轮是**真 HTTP** | ① 默认间隔**不许**自己偷偷变短（用户选什么就是什么）；② ②的"只在 Wi-Fi"闸门**必须**过（`syncGate.ts:22-30`，片 B 判据②）；③ **不做**"空闲时也保持更短间隔"的自适应（那是一个会漂的隐藏状态） |
-| 2 | **每台对端一次 HTTP ⇒ 对端数线性放大** | `mesh::round` 对 `candidates` **逐个**拉（`round_candidates`，`mesh.rs:441-470`：`for p in &candidates { pull_and_absorb(...) }`） | 如实写进文案（"网段里 N 台 ⇒ 每轮 N 次请求"）；**不做**合并请求（那是新协议） |
+| 1 | **短间隔轮询在安卓上是耗电与流量的真实代价** | 安卓也走桌面那条路（`isDesktopPlatform() ≡ isTauri()`，`platform/index.ts:39-41`）；而发现的广播目标里包含**受限广播** `255.255.255.255`（`lan.rs:445-458`），网格那一轮是**真 HTTP** | ① 默认间隔**不许**自己偷偷变短（用户选什么就是什么）；② ②的"只在 Wi-Fi"闸门**必须**过（`syncGate.ts:22-30`，片 B 判据②）；③ **不做**"空闲时也保持更短间隔"的自适应（那是一个会漂的隐藏状态） |
+| 2 | **每台对端一次 HTTP ⇒ 对端数线性放大** | `mesh::round` 对 `candidates` **逐个**拉（`round_candidates`，`mesh.rs:455-463`：`for p in &candidates { pull_and_absorb(...) }`） | 如实写进文案（"网段里 N 台 ⇒ 每轮 N 次请求"）；**不做**合并请求（那是新协议） |
 | 3 | **"拉了但合不了"的窗口仍然存在**（需求 §4 那个洞） | 护栏在 `pageBinding.ts:183-227`；局域网里命中它**不报错**（`console.warn` ＋ 留痕 ＋ 界面 toast，`Editor.tsx:568-572`） | 本轮**不假装解决**；片 D 只做"说清楚 ＋ 三选项出口"；**要 owner 拍** |
 | 4 | ⚠️ **接收侧的派生文本会滞后**（"搜不到刚同步过来的字"） | **核实过的事实**：`write_page_projection`（Rust `doc_content.rs:145-173`）**会**把投影写回 `pages.content_json` ＋ 重建块图 ＋ 打 `text_stale`，**但正文文本列与 FTS 要等补算器**；而**接收侧的补算发生在"编辑器打开这一页"时**（`src/editor/Editor.tsx:607-621` 的 `PageTextRepairPlugin`（挂在 `:674`） 调 `api.refreshPageText`） | ① 如实写在这里（**这不是本轮引入的**：它同时是 `mesh` 路径的既有行为）；② **不**用"合并后触发一次保存"当修法（`dirty=1` ⇒ 把对端内容当本机改动推回去＝假账，冲刺 §13.3 逐字警告过）；③ 若这一格要收，是**另一片**（要有"什么时候补算"的口径 ＋ 判据） |
 | 5 | **投影写回只发生在"打开页面"那一刻** | `pageBinding.ts:388-400` 一带（`writeProjection` 的调用点在"有待并状态"那一支里） | ⇒ **对端一直在看这一页**（不重开）时，`pages` 那两列**不会**因为远端合并而更新（只有编辑器里的内容更新了）⇒ 面板／反链／导出看到的仍可能是旧的。**如实记**；要收就得定"合并之后谁的投影先写"（同上，另一片） |
 | 6 | **计时类判据会假红** | 真事故：`graphLayout.test.ts` 的 250ms 判据实测 260ms 红，单独重跑 7/7 绿（冲刺 §11.8） | 按冲刺 §11.8 的治法：**跑 3 次打印最快值 ＋ 数量级兜底（1500ms）**，**不**拿墙钟当门禁（规格 §4.3 已经这么写） |
 | 7 | **回环读数不能代表真网段** | 回环没有丢包／没有 Wi-Fi 重传／没有安卓的 `MulticastLock`（`src-tauri/src/lan_android.rs`） | 回环那条读数只能当**下界**；R-1/R-2 的**验收**必须在真机（任务 §3 M1–M3）⇒ **不许**把回环读数写成"R-2 达成" |
-| 8 | **"多久"这个数今天住在两处**（界面 localStorage vs 库） | `App.tsx:387` 读 `localStorage['shuyonote:autoSync']`（`syncMode.ts:79` `AUTO_SYNC_KEY`）；而**Rust 侧看不到它** | ⚠️ **这是本方案最大的**形状**风险**：`BodyRealtimeStatus` 若放在 Rust，`intervalMs` **算不出来**（规格 §6-R2）。⇒ 处置：**先定这一格**（要么读数住在界面侧，要么把档位搬进库 —— 后者是**第二份真相源**，要谨慎），**没定之前不许开工片 A 的读数那一半** |
-| 9 | **面板那个 5000ms 轮询会让"读数"本身有延迟** | `SyncPanel.tsx:185`：`lan_status` 每 5 秒一次 | 新读数若也走 5 秒轮询，则"上一次拉到是什么时候"这个数**最多滞后 5 秒** ⇒ 文案**不许**说"实时显示"（说"每 5 秒刷新"） |
+| 8 | **"多久"这个数今天住在两处**（界面 localStorage vs 库） | `App.tsx:508` 读的是 `effectiveAutoSyncMs()`（**不再自己读 `localStorage`**；键 `AUTO_SYNC_KEY` 在 `syncMode.ts:140`、`readAutoSyncMs()` 在 `:152-158`）；而**Rust 侧看不到它** | ⚠️ **这是本方案最大的**形状**风险**：`BodyRealtimeStatus` 若放在 Rust，`intervalMs` **算不出来**（规格 §6-R2）。⇒ 处置：**先定这一格**（要么读数住在界面侧，要么把档位搬进库 —— 后者是**第二份真相源**，要谨慎），**没定之前不许开工片 A 的读数那一半** |
+| 9 | **面板那个 5000ms 轮询会让"读数"本身有延迟** | `SyncPanel.tsx:201`：`lan_status` 每 5 秒一次 | 新读数若也走 5 秒轮询，则"上一次拉到是什么时候"这个数**最多滞后 5 秒** ⇒ 文案**不许**说"实时显示"（说"每 5 秒刷新"） |
 | 10 | **测试环境今天不完整**（`vitest` 在本机跑不了） | 需求 §10 最后两行：`Startup Error … Cannot find native binding`；本机**没有系统 node**（只有 harness 那份 v24.21.0） | 片 A/B 的 `vitest` 读数**本轮标"未跑"**；**不许**因为它跑不了就把它从判据里删掉（那正是 `AI-NATIVE-DEV.md` §12.1 的"2 不算通过"） |
 
 ---
@@ -184,7 +194,7 @@ node scripts/test-report.mjs --group browser        # 需要真 Chromium
 
 1. **`vitest` 在这台机上跑不起来**（`Cannot find native binding` / `@rolldown/binding-darwin-arm64` 存在但 `dlopen` 失败；本机**没有系统 node**）。⇒ 本方案里**所有** `src/lib/crdt/` 与 `src/hooks/` 的 `vitest` 判据都是**"要立"**，**我没有跑过它们**。⇒ 这是本方案最大的读数缺口（需求 §7-D5）。
 2. **需求 §4 那个洞我给了七个候选但没有替 owner 拍**（"没有服务端时首写者怎么办"）。理由：它的代价是**用户可见的**，且推荐项（A ＋ F）会让 owner 的场景**在第一分钟**遇到护栏 —— 那不是一个 agent 该替 owner 决定的取舍。
-3. **`BodyRealtimeStatus.intervalMs` 从哪读，我没定**（规格 §6-R2）：档位住在 `localStorage`（`src/lib/syncMode.ts:65`），而 Rust 看不到它。⇒ 三条可能的路：① 读数由**界面侧**拼（不走命令）；② 把档位搬进库（**第二份真相源**，要谨慎）；③ 读数只报"库侧知道的那半"（`server_bound` / `mesh_enabled`），间隔由界面自己显示。**我倾向 ①**，但**没核**"界面侧拼的读数"在这套契约里有没有先例 ⇒ 见规格 §6-R2。
+3. **`BodyRealtimeStatus.intervalMs` 从哪读，我没定**（规格 §6-R2）：档位住在 `localStorage`（`src/lib/syncMode.ts:140` 的 `AUTO_SYNC_KEY`），而 Rust 看不到它。⇒ 三条可能的路：① 读数由**界面侧**拼（不走命令）；② 把档位搬进库（**第二份真相源**，要谨慎）；③ 读数只报"库侧知道的那半"（`server_bound` / `mesh_enabled`），间隔由界面自己显示。**我倾向 ①**，但**没核**"界面侧拼的读数"在这套契约里有没有先例 ⇒ 见规格 §6-R2。
 4. **接收侧派生文本的滞后（风险 4/5）我只核到"有这个滞后"，没核它有多严重**：要真机 ＋ 两个库 ＋ 一个"搜一下刚同步过来的字"的动作才能量。⇒ 本条**没有读数**，只是"读代码得到的结论"。
 5. **`mesh_sync_now` 与 `mesh_sync_only` 的重叠我没量**：两者共用 `mesh::round`，但前者多跑一次服务端。⇒ 若实现者选择"干脆让定时器调 `meshSyncNow`（连服务端一起跑）"，那与本方案的取舍**冲突**（片 A 判据①）—— 但我**没有**它"每次白等多久"的读数（那要一个连不上的服务端地址 ＋ 真机）。
 6. **"5 秒"这个数我没验证过它的代价**（风险 1/2 只有形状、没有读数）：真要选它，应该先在**一台真机上**量"每 5 秒一次网格轮询"的耗电与请求量。⇒ 这也是需求 §7-D2 要 owner 给的数字的一部分。

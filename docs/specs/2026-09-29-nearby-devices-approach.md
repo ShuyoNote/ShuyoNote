@@ -1,5 +1,6 @@
 # 方案：丙档「附近设备」—— 分片、承重判据、风险与代价
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
 > 起草：macOS 侧｜**2026-09-29**｜需求见 [`2026-09-29-nearby-devices-requirements.md`](2026-09-29-nearby-devices-requirements.md)（为什么）·
 > 规格见 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md)（什么不许变）·
 > 任务见 [`2026-09-29-nearby-devices-tasks.md`](2026-09-29-nearby-devices-tasks.md)（谁做什么）
@@ -24,10 +25,10 @@
 
 | 项 | 内容 |
 |---|---|
-| **改哪些文件** | `src-tauri/src/sync.rs`（`NearbyPeer` 新结构 ＋ `LanStatus.nearby` 新字段 ＋ `lan_status` 里一次映射，复用 `:3219` 那次 `state.peers(now)`）；`src-tauri/src/lan.rs` 或 `mesh.rs`（若要把 `mesh_peers` 里那段"逐条过滤"抽成一个可复用的纯函数，**放在 `mesh.rs` 紧邻 `mesh_peers` 处**，别搬进 `sync.rs`） |
+| **改哪些文件** | `src-tauri/src/sync.rs`（`NearbyPeer` 新结构 ＋ `LanStatus.nearby` 新字段 ＋ `lan_status` 里一次映射，复用 `:3417` 那次 `state.peers(now)`）；`src-tauri/src/lan.rs` 或 `mesh.rs`（若要把 `mesh_peers` 里那段"逐条过滤"抽成一个可复用的纯函数，**放在 `mesh.rs` 紧邻 `mesh_peers` 处**，别搬进 `sync.rs`） |
 | **动没动协议** | ❌ **零协议**。线的形态一个字没动（`LAN_PORT` / `WIRE_VERSION` / `LanAnnounce` 都原样） |
 | **能不能本机验证** | ✅ 能。`cargo test --lib sync::` ＋ `cargo test --lib mesh::`（纯函数，无网络） |
-| **★ 承重判据** | ① ★ **同源**：`nearby.len() == peers`（同一个 `Vec<Peer>` 输入）—— **变异**：把 `peers` 改成数 `observed_all()`（`sync.rs:3220`）⇒ 必须红（"活着" vs "来过"，`lan.rs:310-311` 的口径）；<br>② ★ **与 `mesh_peers` 同一把尺**：`nearby.iter().filter(invitable)` 的 `device_id` 集合 == `mesh::mesh_peers(space, me, peers)` 的 `device_id` 集合（输入同一份 `peers`）—— **变异**：把 `invitable` 改成"只要 `hub_spaces` 含这个空间"（去掉 `is_lan_base` 那关）⇒ 必须红；<br>③ ★ **反向保护（不回归）**：把 `nearby` 强行置空 ⇒ **既有**的 `peers` / `kind` / `line` 三条读数**逐字节不变**（先例：分片 ③-b-2a 的"没配 ⇒ 一个字节都不动"，`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内） |
+| **★ 承重判据** | ① ★ **同源**：`nearby.len() == peers`（同一个 `Vec<Peer>` 输入）—— **变异**：把 `peers` 改成数 `observed_all()`（`sync.rs:3418`）⇒ 必须红（"活着" vs "来过"，`lan.rs:325-326` 的口径）；<br>② ★ **与 `mesh_peers` 同一把尺**：`nearby.iter().filter(invitable)` 的 `device_id` 集合 == `mesh::mesh_peers(space, me, peers)` 的 `device_id` 集合（输入同一份 `peers`）—— **变异**：把 `invitable` 改成"只要 `hub_spaces` 含这个空间"（去掉 `is_lan_base` 那关）⇒ 必须红；<br>③ ★ **反向保护（不回归）**：把 `nearby` 强行置空 ⇒ **既有**的 `peers` / `kind` / `line` 三条读数**逐字节不变**（先例：分片 ③-b-2a 的"没配 ⇒ 一个字节都不动"，`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内） |
 | **副证据** | `device_name` 为空时 `nearby` 里那一条**仍然在**（只用 `device_id` 去重与路由）⇒ 它是"列表不许因为名字缺了就少一行"的证据 |
 
 ### 片 B：契约的三处一致（TS ＋ Web）
@@ -37,24 +38,24 @@
 | **改哪些文件** | `src/lib/platform/commands.ts`（`NearbyPeer` 新 interface ＋ `LanStatus.nearby`；**保持 snake_case**，见规格 §3.2 的理由）；`src/lib/platform/web.ts`（`:1544` 那一支的返回对象加 `nearby: []`，**并保留 `enabled:false` 与既有的 `line`**）；`src-tauri/src/sync.rs`（同一字段名 —— 三处逐字段一致） |
 | **动没动协议** | ❌ 零协议（改的是**进程内 IPC 契约**，不是网络线格式） |
 | **能不能本机验证** | ✅ 能。`pnpm check:web-commands`（命令三向一致）＋ `pnpm tsc --noEmit`（类型）＋ `node scripts/test-report.mjs --only <web-commands 的 id>`（⚠️ `--only` 吃 **id** 不是文件名，见 `AI-NATIVE-DEV.md` §12.6） |
-| **★ 承重判据** | ① ★ **不许撒谎**：Web 侧在 `enabled === false` 时 `nearby` 为**空**且**说得出为什么**（不能只回一个空数组）—— 变异：把 Web 侧 `nearby` 改成 `[]` 而**不给** `enabled:false`／`line` 里那句"没有这一层" ⇒ 必须红（空数组与"不可用"长得一样、含义相反，`AI-NATIVE-DEV.md` §12.2 同族）；<br>② ★ **字段名一致**：Rust 发出去的是 `device_id`（`LanStatus` 没有 `rename_all`，`sync.rs:3272-3273`）⇒ TS interface 里写 `device_id` —— 变异：给**新字段**单独加 `rename_all = "camelCase"` 而 TS 不改 ⇒ 类型对不上（这一条由 `tsc` 与人核；**能否机器判**待查 T1） |
+| **★ 承重判据** | ① ★ **不许撒谎**：Web 侧在 `enabled === false` 时 `nearby` 为**空**且**说得出为什么**（不能只回一个空数组）—— 变异：把 Web 侧 `nearby` 改成 `[]` 而**不给** `enabled:false`／`line` 里那句"没有这一层" ⇒ 必须红（空数组与"不可用"长得一样、含义相反，`AI-NATIVE-DEV.md` §12.2 同族）；<br>② ★ **字段名一致**：Rust 发出去的是 `device_id`（`LanStatus` 没有 `rename_all`，`sync.rs:3481-3482`）⇒ TS interface 里写 `device_id` —— 变异：给**新字段**单独加 `rename_all = "camelCase"` 而 TS 不改 ⇒ 类型对不上（这一条由 `tsc` 与人核；**能否机器判**待查 T1） |
 | **副证据** | `pnpm check:web-commands` 的读数（命令覆盖三方向） |
 
 ### 片 C：界面（「同网段的设备」块）
 
 | 项 | 内容 |
 |---|---|
-| **改哪些文件** | `src/components/SyncPanel.tsx`（新块；**门槛复用** `isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()`，即 `:1402` 那一处同一个表达式）；`src/App.css`（新块若需要样式，**加在既有的窄屏那 5 节之外**，见需求 §4 的"不重排"） |
+| **改哪些文件** | `src/components/SyncPanel.tsx`（新块；**门槛复用** `isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()`，即 `:1538` 那一处同一个表达式）；`src/App.css`（新块若需要样式，**加在既有的窄屏那 5 节之外**，见需求 §4 的"不重排"） |
 | **动没动协议** | ❌ 零协议 |
 | **能不能本机验证** | ✅ 能，但要**真 Chromium**：`scripts/verify-mobile-views.mjs` / `node scripts/test-report.mjs --group mobile`（⚠️ 需先起 dev server :5173，见 `AGENTS.md` §2）。⇒ 四种态的渲染**要能在这个门禁里被造出来**（mock `lan_status` 的返回值 —— 既有先例：需求 §2 的读数就是"注入 `__TAURI_INTERNALS__` ＋ mock 16 个命令"造出来的） |
-| **★ 承重判据** | ① ★ **四态可分**：`enabled=false` ⇒ 出「看不到这一层」；`enabled && nearby.length===0` ⇒ 出「正在找」；`nearby.length>0` ⇒ 出**行**；`invitable=false` 的行**没有**邀请按钮 —— 变异：把"不可用"与"正在找"渲染成同一句 ⇒ 必须红（三种处境三句话，`lan.rs:312-356` 的既有纪律）；<br>② ★ **不许自己数**：块里对 `lanStatus.peers` 的引用**只出现在文案**，不参与任何算术 —— 变异：把行数写成 `lanStatus.peers` 而不是 `nearby.length` ⇒ 必须红（第一真相源，`sync.rs:3279` 的注释） |
-| **副证据** | 文案里不出现 `device_id` / `space_id` / 裸 IP（规格 §4）；相邻 inline 有分隔（`SyncPanel.tsx:1269`＋`:1273` 那次真事故的形态） |
+| **★ 承重判据** | ① ★ **四态可分**：`enabled=false` ⇒ 出「看不到这一层」；`enabled && nearby.length===0` ⇒ 出「正在找」；`nearby.length>0` ⇒ 出**行**；`invitable=false` 的行**没有**邀请按钮 —— 变异：把"不可用"与"正在找"渲染成同一句 ⇒ 必须红（三种处境三句话，`lan.rs:312-371` 的既有纪律）；<br>② ★ **不许自己数**：块里对 `lanStatus.peers` 的引用**只出现在文案**，不参与任何算术 —— 变异：把行数写成 `lanStatus.peers` 而不是 `nearby.length` ⇒ 必须红（第一真相源，`sync.rs:3488` 的注释） |
+| **副证据** | 文案里不出现 `device_id` / `space_id` / 裸 IP（规格 §4）；相邻 inline 有分隔（`SyncPanel.tsx:1552`＋`:1556` 那次真事故的形态；`**顺手**` 那句在 `:1559`） |
 
 ### 片 D：前置 —— 把 `space_id` 从「服务器」卡片里提出来成为独立一行「空间身份」
 
 | 项 | 内容 |
 |---|---|
-| **现状（可核）** | `space_id` **只在**「服务器」这一折行**内部**那个「组织空间」栏里（`SyncPanel.tsx:1122` 的 `<details>` → `:1228-1253` 的 `组织空间` 字段）；折行不展开时，面板上**看不到它**。而网格那一行（`:1402`）在 `space_id` 为空时**根本不渲染** ⇒ 用户的自然结论是**"网格要有服务器"**（而这与 `:1401` 那条注释「网格不需要服务端地址，只要这个空间有 space_id」**正好相反**） |
+| **现状（可核）** | `space_id` **只在**「服务器」这一折行**内部**那个「组织空间」栏里（`SyncPanel.tsx:1254` 的 `<details>` → `:1362-1399` 的 `组织空间` 字段）；折行不展开时，面板上**看不到它**。而网格那一行（`:1538`）在 `space_id` 为空时**根本不渲染** ⇒ 用户的自然结论是**"网格要有服务器"**（而这与 `:1535` 那条注释「网格不需要服务端地址，只要这个空间有 space_id」**正好相反**） |
 | **改哪些文件** | `src/components/SyncPanel.tsx`（新增一行「空间身份」；把组织空间那个栏的**读**搬出来，**写**仍留在原处 —— 两处各写一次就是第二份真相源） |
 | **动没动协议** | ❌ 零协议 |
 | **能不能本机验证** | ✅ 能（同片 C 的 Chromium 通道） |
@@ -65,10 +66,10 @@
 
 | 项 | 内容 |
 |---|---|
-| **改哪些文件** | 新模块 `src-tauri/src/nearby_invite.rs`（载荷结构 ＋ 编解码 ＋ 纯函数：字段白名单、去重键）；`src-tauri/src/lan.rs`（在既有 UDP socket 上加"发/收一条非公告报文"的分支 —— **不许改 `decode_announce` 的不猜语义**，`lan.rs:117-129`）；`src-tauri/src/lan_state.rs`（收报那一处按载荷类型分流：公告 → 既有路；邀请 → 新路）；`src-tauri/src/sync.rs`（命令：`nearby_invite_send` / `nearby_invite_accept`；接受侧写档案**必须**过 `sync_bind_gate`，`sync.rs:1136-1160`）；`src/lib/platform/commands.ts` ＋ `web.ts` ＋ `src/lib/api.ts`（三处契约；Web 侧显式"这一档不可用"，照 `mesh_sync_now` 的先例，`commands.ts:641-649`）；`src/components/SyncPanel.tsx`（邀请按钮 ＋ 接受态） |
+| **改哪些文件** | 新模块 `src-tauri/src/nearby_invite.rs`（载荷结构 ＋ 编解码 ＋ 纯函数：字段白名单、去重键）；`src-tauri/src/lan.rs`（在既有 UDP socket 上加"发/收一条非公告报文"的分支 —— **不许改 `decode_announce` 的不猜语义**，`lan.rs:117-129`）；`src-tauri/src/lan_state.rs`（收报那一处按载荷类型分流：公告 → 既有路；邀请 → 新路）；`src-tauri/src/sync.rs`（命令：`nearby_invite_send` / `nearby_invite_accept`；接受侧写档案**必须**过 `sync_bind_gate`，`sync.rs:1136-1160`）；`src/lib/platform/commands.ts` ＋ `web.ts` ＋ `src/lib/api.ts`（三处契约；Web 侧显式"这一档不可用"，照 `mesh_sync_now` 的先例，`commands.ts:694-700`）；`src/components/SyncPanel.tsx`（邀请按钮 ＋ 接受态） |
 | **动没动协议** | ✅ **动了**：新增一条**独立的线版本**（`NearbyInvite.v`，见规格 §5.2），走**同一条** UDP 端口 `47821`（`lan.rs:46`）。⚠️ **不许**把它并进 `LanAnnounce`（`decode_announce` 对版本不认识一律丢弃且不猜，`lan.rs:122-124` —— 并进去会逼两件事共用一个版本号） |
 | **能不能本机验证** | 🟡 **部分能**：<br>① 载荷的编解码／白名单／拒收 ⇒ **能**（`cargo test --lib nearby_invite::`，纯函数）；<br>② 接受侧的写入路径 ⇒ **能**（构造一份载荷 ＋ 调接受函数，断言档案与口令落库、闸门被调用、`ws_id` 与 `space_id` **分别是两个**）；<br>③ **单向容忍**（发起侧不发回执 ⇒ 接受侧照样通）⇒ **能**（本地两个库 ＋ 真环回，形状同 `mesh::tests::two_clients_converge_over_real_loopback_with_no_hub_and_no_server`）；<br>④ **两台真机隔着热点互相看见 ＋ 邀请** ⇒ ❌ **本机做不到**（要人手；先例：③-b-2b-2 的"真机两设备复验没做（要人手）"） |
-| **★ 承重判据** | ① ★★ **载荷里没有钥匙袋**：`nearby_invite` 的字段集是**白名单**且**不含** `material`／任何 `Keyring` 材料 —— 变异：给载荷加一个 `#[serde(default)] material: String`（一个**看起来合法**的改动）⇒ 字段白名单断言必须红；<br>② ★★ **两个空间 id 不合成一个**：接受后的窗口服务的是**本地**空间库 —— 变异：把接受的写入改成 `space_id = ws_id` ⇒ 必须红（`sync.rs:3124` 那条 ★★ 的现场："窗口会开一个空库、安静地服务 0 条"）；<br>③ ★ **闸门不过就是不过**：对未加密的个人空间调接受 ⇒ 返回 `Err` 且**本机一个字节都不改** —— 变异：把接受路径的 `sync_bind_gate` 调用去掉 ⇒ 必须红；<br>④ ★ **没有回执也不影响通**：接受侧不回任何消息，发起侧**不重传**；而接受侧"下一轮就来拉"这条要能被观测 —— 变异：让接受侧**等**回执再落库 ⇒ 必须红（那是把"删掉账本"这件丙的定义又加回来） |
+| **★ 承重判据** | ① ★★ **载荷里没有钥匙袋**：`nearby_invite` 的字段集是**白名单**且**不含** `material`／任何 `Keyring` 材料 —— 变异：给载荷加一个 `#[serde(default)] material: String`（一个**看起来合法**的改动）⇒ 字段白名单断言必须红；<br>② ★★ **两个空间 id 不合成一个**：接受后的窗口服务的是**本地**空间库 —— 变异：把接受的写入改成 `space_id = ws_id` ⇒ 必须红（`sync.rs:3322` 那条 ★★ 的现场："窗口会开一个空库、安静地服务 0 条"）；<br>③ ★ **闸门不过就是不过**：对未加密的个人空间调接受 ⇒ 返回 `Err` 且**本机一个字节都不改** —— 变异：把接受路径的 `sync_bind_gate` 调用去掉 ⇒ 必须红；<br>④ ★ **没有回执也不影响通**：接受侧不回任何消息，发起侧**不重传**；而接受侧"下一轮就来拉"这条要能被观测 —— 变异：让接受侧**等**回执再落库 ⇒ 必须红（那是把"删掉账本"这件丙的定义又加回来） |
 | **副证据** | 失败时那句人话可操作（照 `space_crypto.rs:319-325` 的形状）；`note` 由 Rust 拼好、界面不自己判 |
 
 **⇒ 顺序即依赖**：**A → B → C**（B 依赖 A 的字段名；C 依赖 A/B 的读数）；
@@ -85,9 +86,9 @@
 ### 3.1 落法三条（都是"少即是多"）
 
 1. **不复用 `PairingPayload`**：它带 `material`（`pairing.rs:46`），而那是**全部空间**的公开材料
-   （`SpacePrivacySection.tsx:382-383` 自述"钥匙袋级"）。⇒ 新造 `NearbyInvite`，字段**只有**
+   （`SpacePrivacySection.tsx:380-381` 自述"钥匙袋级"）。⇒ 新造 `NearbyInvite`，字段**只有**
    `v / from_device_id / from_device_name / space_id / token / note`（规格 §5.2）。
-2. **`deny_unknown_fields`**（同 `pairing.rs:44`）⇒ 收到一份"多带了一个字段"的载荷**当场拒**，
+2. **`deny_unknown_fields`**（同 `pairing.rs:42`）⇒ 收到一份"多带了一个字段"的载荷**当场拒**，
    而不是"尽力解一半"。这是**白名单**，也是片 E 承重判据① 能成立的前提。
 3. **接受侧一律过闸门**（`sync_bind_gate`，`sync.rs:1136-1160`）⇒ 邀请**不是**一条绕过
    `space_crypto::sync_gate`（`space_crypto.rs:301-325`）的旁路。
@@ -102,12 +103,12 @@
 ```
 
 ⚠️ **一句必须一起说的事**：`token` 是"能连上这个地址的人都能拉走该空间**密文**"那道闸门的钥匙
-（`mesh.rs:791` 的启动警告逐字），而**没设口令时窗口一律放行**（`mesh.rs:969-974`）。
+（`mesh.rs:805-810` 的启动警告逐字），而**没设口令时窗口一律放行**（`mesh.rs:985-988`）。
 ⇒ 邀请求"**必须带 token**"，否则这条路会退化成"同网段谁都能拉密文"。
 
 ### 3.3 加密的个人空间：**不适用**（不是"要额外一步"）
 
-- 团队空间 ⇒ `SyncGate::Allowed`（`space_crypto.rs:317`）⇒ 邀请顺；
+- 团队空间 ⇒ `SyncGate::Allowed`（`space_crypto.rs:318`）⇒ 邀请顺；
 - 个人空间**已加密** ⇒ `Allowed`（`st.encrypted_on_disk || st.in_keyring`，`space_crypto.rs:320-321`）
   ⇒ **邀请这条路能走通，但对方没有钥匙**（主口令不在载荷里）⇒ **拉到打不开**；
 - 个人空间**未加密** ⇒ `Blocked`（`space_crypto.rs:321-325`）⇒ 接受被拦，给一句可操作的话；
@@ -121,15 +122,15 @@
 
 | # | 风险 / 代价 | 读数与出处 | 处置（本轮怎么落） |
 |---|---|---|---|
-| 1 | **热点主机首轮要等一个广播间隔**（冷启动那次表是空的，只能靠广播 ⇒ 单向那一半要等一轮） | `lan.rs:445-476`（机制）＋ `lan_state.rs:311-313`（每一轮现算目标）＋ `../plans/2026-09-24-lan-p2p-topology-decision.md` §18（代价原话）。⚠️ **常量是 30s**（`lan_state.rs:138`），**真机读数记的是 ≈45 秒**（同 §18 的表） | ① 界面**不说数字**，只说"正在找"（数字两处不一致，见需求 §7 待查 D2）；② **不引自动重试**（那是"自动轮询"，与"手动是口径"冲突，需求 §4.3） |
-| 2 | **"看不见"不等于"不存在"** | 发现层是广播 ＋ 单播，会丢包；`default_targets` 里广播那条在受限网络下**可能发不出去**（`lan.rs:430-443` 注释：回环那一条是"能自验"的关键 ⇒ 说明广播不可靠） | 界面只能说"还没发现 / 正在找"；**永不**说"网段里没有设备"（`lan.rs:457-458` 的"这不影响收敛，只影响多久露面"是同一条口径） |
-| 3 | **多设备重名** | `device_name` ＝ 主机名（`lan_state.rs:343-347`）；而 `device_id` ＝ **`uuid::Uuid::new_v4()`，每台安装写一次**（`db.rs:233-241`）⇒ **`device_id` 不会撞**（除非有人整份拷贝应用数据目录）⇒ **"重名"是显示问题，不是身份问题** | 列表**按 `device_id` 去重**（同 `PeerTable` 的口径，`lan.rs:364`）⇒ 两行同名会在界面上看起来一样，**这是已知的丑**，本轮**不解决**（要解决得有 §待查 D3 的"归属"数据）。⚠️ **不许**回落成 `device_id` 前缀来区分（那是 `INV-UI-copy-no-internal-ids` 管的事） |
-| 4 | **`device_name` 可能是空的** | `#[serde(default)]`（`lan.rs:70-72`）＋ `host_name()` 拿不到就留空、**不编**（`lan_state.rs:343-347`）；既然 `decode_announce` **不**拒空名字（只拒空 `device_id`，`lan.rs:125-127`）⇒ 空名字**会真的发生** | 那一行显示「这台设备没报名字」（**不是**空白、**不是** id） |
-| 5 | **`addr` 是"最后一次听到的来源 IP"** | `PeerTable::upsert` 按 `device_id` 覆盖（`lan.rs:378`）⇒ 一台设备多网卡时，表里只有**最新一次的来源地址** | 本轮**不显示** `addr`（规格 §3.4 只把它留作去重与排障）⇒ 避免"显示一个可能已经过期的地址" |
-| 6 | **轮询代价变大** | 面板开着时 `lan_status` 每 **5000ms** 一次（`SyncPanel.tsx:183`）；新增 `nearby` 每条 ≈ 150–250 字节（4 个短字段 ＋ 空间 id 数组） | ① 只把**活着**的（TTL 内）上抛（既有 `state.peers`，`sync.rs:3219`）；② 空间数组**收敛**：同一台设备的多个空间是 `announces_for_with_mesh` **每个空间一条公告**（`lan_state.rs:181-210`）⇒ 一条公告的 `hub_spaces` 通常只有 **1** 个元素，所以按 `device_id` 归并后数组一般很短；⚠️ **归并**这一步要写在实现里（否则同一台设备会出现多行） |
-| 7 | **`enabled=false` 时列表空，"空"有两种含义** | `LanState::peers` 未启用一律返回空（`lan_state.rs:84-90` 口径 3） | 界面按 `enabled` **先分流**（片 C 判据① ）；`nearby` 里**不**塞"为什么空"（那是 `enabled` ＋ `line` 的活） |
-| 8 | **邀请没有时效、没有去重、没有回执** | 见规格 §5.3（本轮的决定） | ① 接受侧对同一份载荷**重复点接受**是幂等的（写同一行档案 ⇒ `set_profile` 覆盖，`sync.rs:1169`）；② **不落"已处理过的邀请"**（多一个 KV ＝ 多一个会漂的状态）；③ 时效**不做**（一小时后收到一份邀请仍然可用 —— 这一句要写在文案里，因为它是**安全属性**） |
-| 9 | **口令轮换** | 口令是 `mesh_token:<空间>` 一行 KV（`mesh.rs:392`） | 本轮**不做**"换口令"这件事 ⇒ **旧邀请里的口令仍然有效**（这是已知代价，写在任务文档的"不做"里） |
+| 1 | **热点主机首轮要等一个广播间隔**（冷启动那次表是空的，只能靠广播 ⇒ 单向那一半要等一轮） | `lan.rs:460-491`（机制）＋ `lan_state.rs:433`（每一轮现算目标）＋ `../plans/2026-09-24-lan-p2p-topology-decision.md` §18（代价原话）。⚠️ **常量是 30s**（`lan_state.rs:245`），**真机读数记的是 ≈45 秒**（同 §18 的表） | ① 界面**不说数字**，只说"正在找"（数字两处不一致，见需求 §7 待查 D2）；② **不引自动重试**（那是"自动轮询"，与"手动是口径"冲突，需求 §4.3） |
+| 2 | **"看不见"不等于"不存在"** | 发现层是广播 ＋ 单播，会丢包；`default_targets` 里广播那条在受限网络下**可能发不出去**（`lan.rs:445-448` 注释：回环那一条是"能自验"的关键 ⇒ 说明广播不可靠） | 界面只能说"还没发现 / 正在找"；**永不**说"网段里没有设备"（`lan.rs:472-473` 的"这不影响收敛，只影响多久露面"是同一条口径） |
+| 3 | **多设备重名** | `device_name` ＝ 主机名（`lan_state.rs:371` 用它、`:454` 是 `host_name()`）；而 `device_id` ＝ **`uuid::Uuid::new_v4()`，每台安装写一次**（`db.rs:233-241`）⇒ **`device_id` 不会撞**（除非有人整份拷贝应用数据目录）⇒ **"重名"是显示问题，不是身份问题** | 列表**按 `device_id` 去重**（同 `PeerTable` 的口径，`lan.rs:379`）⇒ 两行同名会在界面上看起来一样，**这是已知的丑**，本轮**不解决**（要解决得有 §待查 D3 的"归属"数据）。⚠️ **不许**回落成 `device_id` 前缀来区分（那是 `INV-UI-copy-no-internal-ids` 管的事） |
+| 4 | **`device_name` 可能是空的** | `#[serde(default)]`（`lan.rs:70-72`）＋ `host_name()` 拿不到就留空、**不编**（`lan_state.rs:371` 用它、`:454` 是定义）；既然 `decode_announce` **不**拒空名字（只拒空 `device_id`，`lan.rs:125-127`）⇒ 空名字**会真的发生** | 那一行显示「这台设备没报名字」（**不是**空白、**不是** id） |
+| 5 | **`addr` 是"最后一次听到的来源 IP"** | `PeerTable::upsert` 按 `device_id` 覆盖（`lan.rs:393`）⇒ 一台设备多网卡时，表里只有**最新一次的来源地址** | 本轮**不显示** `addr`（规格 §3.4 只把它留作去重与排障）⇒ 避免"显示一个可能已经过期的地址" |
+| 6 | **轮询代价变大** | 面板开着时 `lan_status` 每 **5000ms** 一次（`SyncPanel.tsx:201`）；新增 `nearby` 每条 ≈ 150–250 字节（4 个短字段 ＋ 空间 id 数组） | ① 只把**活着**的（TTL 内）上抛（既有 `state.peers`，`sync.rs:3417`）；② 空间数组**收敛**：同一台设备的多个空间是 `announces_for_with_mesh` **每个空间一条公告**（`lan_state.rs:288`）⇒ 一条公告的 `hub_spaces` 通常只有 **1** 个元素，所以按 `device_id` 归并后数组一般很短；⚠️ **归并**这一步要写在实现里（否则同一台设备会出现多行） |
+| 7 | **`enabled=false` 时列表空，"空"有两种含义** | `LanState::peers` 未启用一律返回空（`lan_state.rs:192` 口径 3） | 界面按 `enabled` **先分流**（片 C 判据① ）；`nearby` 里**不**塞"为什么空"（那是 `enabled` ＋ `line` 的活） |
+| 8 | **邀请没有时效、没有去重、没有回执** | 见规格 §5.3（本轮的决定） | ① 接受侧对同一份载荷**重复点接受**是幂等的（写同一行档案 ⇒ `set_profile` 覆盖，`sync.rs:1172`）；② **不落"已处理过的邀请"**（多一个 KV ＝ 多一个会漂的状态）；③ 时效**不做**（一小时后收到一份邀请仍然可用 —— 这一句要写在文案里，因为它是**安全属性**） |
+| 9 | **口令轮换** | 口令是 `mesh_token:<空间>` 一行 KV（`mesh.rs:406`） | 本轮**不做**"换口令"这件事 ⇒ **旧邀请里的口令仍然有效**（这是已知代价，写在任务文档的"不做"里） |
 
 ---
 

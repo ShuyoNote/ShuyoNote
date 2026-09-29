@@ -1,6 +1,6 @@
 # 规格：丙档「附近设备」—— 不变式、数据形状、交互与协议取舍
 
-> 行号钉在：`c0b87d89`（2026-09-29）｜核查方式：`git show c0b87d89:<path> | sed -n '<起>,<止>p'`
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
 > 起草：macOS 侧｜**2026-09-29**｜需求见 [`2026-09-29-nearby-devices-requirements.md`](2026-09-29-nearby-devices-requirements.md)
 > 依据：`_workspace/AI-NATIVE-DEV.md` §5.1（规格层）＋ 本仓 [`docs/specs/README.md`](README.md)（这一层的三条"不是什么"）
 > 关联：方案 [`2026-09-29-nearby-devices-approach.md`](2026-09-29-nearby-devices-approach.md) · 任务 [`2026-09-29-nearby-devices-tasks.md`](2026-09-29-nearby-devices-tasks.md)
@@ -44,7 +44,7 @@ id          INV-NEARBY-<短名>         稳定标识；改口径不许改 id（�
 
 ⇒ **两边不是"信息量不同"，是【同一件事在两个地方各有一份表述】**。
 ⇒ 一旦界面开始"自己数对端 / 自己判断某台设备服务哪些空间"，就会出现**第二份真相源**：
-状态行里的「本网段发现 N 台」（`lan.rs:335`）与列表里的行数**会漂**，
+状态行里的「本网段发现 N 台」（`lan.rs:350`）与列表里的行数**会漂**，
 而这类漂**不炸、不报错、测试全绿**（正是 `INVARIANTS.md` 头部那条"本仓花了最多代价去消灭的东西"）。
 
 **⇒ 所以本规格的第一条不变式不是"加一个列表"，是"列表只能有一处来源"。**
@@ -57,7 +57,7 @@ id          INV-NEARBY-<短名>         稳定标识；改口径不许改 id（�
 |---|---|---|---|
 | **INV-NEARBY-one-source** | **"附近有哪几台设备"只有一处来源**（`lan_status` 新增的那个读数）；界面**不许**自己数对端、不许自己判断某台设备服务哪些空间，`peers`（数量）与列表**必须来自同一次 `peers` 读数** | `sync::tests` 里一条**同源判据**：喂同一份 `Vec<Peer>`，断言 `nearby.len() == peers`（数量字段）**且**列表里每条的服务空间判定与既有 `mesh::mesh_peers`（`mesh.rs:243`）**逐条一致**；＋ 前端侧（若静态可判）扫 `SyncPanel.tsx` 里出现 `lanStatus.peers` 的地方只能进**文案**、不许进 `length` 之类的算术 | **❌ 无（要立）**。**怎么证明它会红**：① 把 `peers: peers.len()`（`sync.rs:3466`）改成从 `state.observed_all().len()` 取（＝TLL 之外的历史也数进来）⇒ 同源判据必须红（这正是 `lan.rs:325-326` 那条"活着 vs 来过"的口径）；② 把列表的来源改成"第二次调 `peers()`"（造一个两次读数不一致的夹具）⇒ 必须红 |
 | **INV-NEARBY-invite-has-no-keyring** | **给别人的邀请载荷里不许含钥匙袋 / 任何按空间密钥材料** —— `PairingPayload.material`（`pairing.rs:46`）那一路**不得**出现在邀请这条路上 | ① **纯函数**：`nearby_invite::payload(...)` 的序列化结果里**不含** `material` 键、且字段集是**白名单**（`#[serde(deny_unknown_fields)]` 同 `pairing.rs:42` 的口径）；② **反例判据**：把 `material` 塞进载荷 ⇒ 必须编译／测试双红（不是"人能看出来"） | **❌ 无（要立）**。**怎么证明它会红**：在载荷里加一个 `#[serde(default)] material: String` 字段（合法改动）⇒ 白名单字段集断言必须红（这一条就是"防有人顺手加一个'顺便带上材料'的字段"） |
-| **INV-NEARBY-mesh-gate** | **网格门槛一个字不改**：`isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()`（`SyncPanel.tsx:1527`，注释 `:1525` 逐字「门槛一个字没改」） | 现有前端接线判据（`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内 ③-b-2b-2 行记的 5 条接线判据之一就是"门槛是 `space_id` 而不是 `lanRowBound`"）⇒ 新增的「附近设备」块**复用同一条门槛**，且**不许**放宽成"只要 `lanStatus` 就渲染" | **❌ 无（要立）**。**怎么证明它会红**：把门槛里的 `!!activeRow?.space_id.trim()` 去掉（＝没有空间也渲染邀请入口）⇒ 接线判据必须红。⚠️ 现状：那 5 条判据在**哪**（脚本还是 vitest）我**没核**，见 §6 待查 R1 |
+| **INV-NEARBY-mesh-gate** | **网格门槛一个字不改**：`isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()`（`SyncPanel.tsx:1538`，注释 `:1535` 逐字「门槛一个字没改」） | 现有前端接线判据（`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内 ③-b-2b-2 行记的 5 条接线判据之一就是"门槛是 `space_id` 而不是 `lanRowBound`"）⇒ 新增的「附近设备」块**复用同一条门槛**，且**不许**放宽成"只要 `lanStatus` 就渲染" | **❌ 无（要立）**。**怎么证明它会红**：把门槛里的 `!!activeRow?.space_id.trim()` 去掉（＝没有空间也渲染邀请入口）⇒ 接线判据必须红。⚠️ 现状：那 5 条判据在**哪**（脚本还是 vitest）我**没核**，见 §6 待查 R1 |
 | **INV-NEARBY-space-id-not-db-space** | **远端 `space_id` 与本地 `db_space` 不许合成一个**（沿用 `sync.rs:3322` 那条 ★★ 教训）：邀请写入的是**对暗号用的那个** id，开库用本地 id | `mesh::tests::the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id`（`mesh.rs`，已存在，`cargo test --lib mesh::` 里绿）＋ **新增**一条：邀请这条路**也**走 `MeshScope`（`sync.rs:3327`），断言"接受邀请后开的窗口库是本地空间库" | **✅ 已有半边**（既有那条判据，属**既有承重**，不是本轮新立）；**本轮新增的邀请路径那半边 = ❌ 无（要立）**。**怎么证明它会红**：把邀请写入的 `space_id` 改成本地 `ws_id`（真机上就是"开一个空库"）⇒ 新增那条必须红 |
 | **INV-NEARBY-no-web-invite** | **Web 档不许出现邀请入口**（产品决定：Web 不提供多设备同步） | ① `src/lib/platform/web.ts:1544` 那一支继续**如实回**"没有发现层"（不得改成为空数组冒充"网段里没人"）；② 一条断言：`nearby` 在 `enabled === false` 时**必须为空**，且 `note` 说得出为什么 | **❌ 无（要立）**。**怎么证明它会红**：把 Web 侧 `lan_status` 的 `nearby` 改成返回一个空数组**而不给 `note`** ⇒ 断言必须红（空数组与"不可用"长得一样、含义相反，同 `AI-NATIVE-DEV.md` §12.2「空扫给绿」那一族） |
 
@@ -85,7 +85,7 @@ pub struct NearbyPeer {
     /// 设备名 —— **可能是空串**（`LanAnnounce.device_name` 是 `#[serde(default)]`，`lan.rs:71-72`；
     /// 本机名来自 `host_name()`，拿不到就留空，`lan_state.rs:371` 用它、`:454` 是定义）⇒ 界面**如实说没报名字**，
     /// **不许**回落成 `device_id` 前几位（那是 `2026-09-28-user-facing-copy-spec` 的
-    /// `INV-UI-copy-no-internal-ids` 管的事，`SyncPanel.tsx:992` 已有先例、`:1649` 是同一条纪律）。
+    /// `INV-UI-copy-no-internal-ids` 管的事，`SyncPanel.tsx:1003` 已有先例、`:1660` 是同一条纪律）。
     pub device_name: String,
     /// 收到它公告的来源地址（ip，不含端口 —— `lan_state.rs:123`）。
     /// ⚠️ 默认**不显示**，只用于同一个地址去重与排障（见 §4 的交互口径）。
@@ -196,10 +196,10 @@ return {
 **两条文案纪律（照本仓先例）**：
 
 1. **后端给的文案按行内 Markdown 写**（例 `mesh.rs:616` 的 `**能被别人拉到**`）；界面在**渲染边界**过 `inlineMd`
-   ——`SyncPanel.tsx:1928`（后端拼的那句 `status`）已经是这么做的，新块照抄那一处，**不要**在组件里自己 `**` 加粗。
+   ——`SyncPanel.tsx:1939`（后端拼的那句 `status`）已经是这么做的，新块照抄那一处，**不要**在组件里自己 `**` 加粗。
    （⚠️ 原文引的 `:1633` 在 `c0b87d89` 上**指不到任何 `inlineMd` 调用** —— 那个数是从另一条分支
-   `spec/user-facing-copy` 抄来的；代码自己的注释 `:1926` 今天也还写着 `:1633`。）
-2. **相邻 inline 元素要有分隔**（`SyncPanel.tsx:1541`＋`:1545` 那次真事故；`**顺手**` 那句在 `:1548`。⚠️ 原文引的
+   `spec/user-facing-copy` 抄来的；代码自己的注释 `:1937` 今天也还写着 `:1633`。）
+2. **相邻 inline 元素要有分隔**（`SyncPanel.tsx:1552`＋`:1556` 那次真事故；`**顺手**` 那句在 `:1559`。⚠️ 原文引的
    `:1269`＋`:1273` 是 `spec/user-facing-copy` **那条分支**上的行号，主线 HEAD 上指不到）⇒ 新块的"设备名 / 说明 / 按钮"之间
    用既有的 `.sync-hint` 分隔写法，不许两个 inline 元素首尾相接。
 
@@ -553,9 +553,9 @@ owner：「**允许滚动**」。
      拿 web 的 558/558 当基线是**假的**。
 ⇒ ⚠️ 还有一条**不许退化**的：`INV-UI-sync-panel-scroll-reachable`（滚到底够不够得到）——
    "允许滚"不等于"允许够不到"。
-   ⚠️ **实况（`c0b87d89`）**：它今天在 `scripts/verify-mobile-views.mjs:1559` **只有一句注释**
-   （写着"两条要一起跑"），**没有断言函数、没有基线键** ⇒ 属"它在注释里存在"那一族。
-   ⇒ **实现正在补（另一笔在飞的改动）**；补上之前这里**不许**写"已有判据"。
+   ⚠️ **实况（`a5c0f614`）**：它**已经进仓了** —— `scripts/verify-mobile-views.mjs:1543-1549` 是断言函数
+   `assertScrollReachable`，基线键是 `scroll-reachable|<壳>|<视口>`（写进 `scripts/mobile-views-baseline.json`）。
+   （⚠️ 在本轮开始核查时的 `c0b87d89` 上，它确实**只有一句注释**、没有断言函数 —— 这条欠账由 `a5c0f614` 还上。）
 ```
 
 ### 12.3 ⚠️ 记一条**判据的盲区**（本档落地时实测到的，别当它不存在）

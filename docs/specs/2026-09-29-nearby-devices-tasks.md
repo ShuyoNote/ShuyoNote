@@ -1,5 +1,6 @@
 # 任务：丙档「附近设备」—— 可独立认领的执行清单
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
 > 起草：macOS 侧｜**2026-09-29**｜需求 [`2026-09-29-nearby-devices-requirements.md`](2026-09-29-nearby-devices-requirements.md)（为什么）·
 > 规格 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md)（什么不许变）·
 > 方案 [`2026-09-29-nearby-devices-approach.md`](2026-09-29-nearby-devices-approach.md)（怎么落、每片承重判据）
@@ -35,11 +36,11 @@
 | 字段 | 内容 |
 |---|---|
 | **做什么** | 在同步面板里把 `space_id`（远端组织空间 id）从「服务器」折行**内部**的「组织空间」栏里**提出来**，成为一行**独立的「空间身份」**；组织空间栏**保留"写"**（下拉选择/输入），但**不再重复展示**同一串 |
-| **改哪里** | `src/components/SyncPanel.tsx`（新增一行；组织空间那一栏在 `:1228-1253`）＋ `src/App.css`（若需要样式，**加在既有窄屏那 5 节之外**） |
+| **改哪里** | `src/components/SyncPanel.tsx`（新增一行；组织空间那一栏在 `:1362-1399`）＋ `src/App.css`（若需要样式，**加在既有窄屏那 5 节之外**） |
 | **验收读数** | ① `pnpm exec tsc --noEmit` ⇒ exit 0；② 真 Chromium 门禁里断言：**面板上 `space_id` 的展示只有一处**（组织空间栏里数不到第二处）；③ 人工：`space_id` 为空 / 非空两种状态下，那一行分别显示什么字（**空态必须写"还没绑空间"这类人话，不许空白**） |
 | **依赖** | — |
 | **写域** | `src/components/SyncPanel.tsx`（**本任务独占**：因为 T1/T2/T3/T7 也改这个文件 ⇒ 见 §2 的串行说明）|
-| **为什么先做** | 现在它只在折行**内部**（`:1122` 的 `<details>` → `:1228` 的字段）；而网格那一行在 `space_id` 为空时**根本不渲染**（`:1402`）⇒ 用户的自然结论是**"网格要有服务器"**，与 `:1401` 那条注释正好相反（需求 §2 第 2 条） |
+| **为什么先做** | 现在它只在折行**内部**（`:1254` 的 `<details>` → `:1363` 的字段）；而网格那一行在 `space_id` 为空时**根本不渲染**（`:1538`）⇒ 用户的自然结论是**"网格要有服务器"**，与 `:1535` 那条注释正好相反（需求 §2 第 2 条） |
 
 ⚠️ **T0 与 T1–T3、T7 写域相交**（都在 `SyncPanel.tsx`）⇒ 方案 §2 的顺序（A→B→C→E）**必须串行**。
 若要有两个执行者并行，先做**T1/T2**（它们不动 `SyncPanel.tsx`），再做 **T0 → T3 → T7**。
@@ -52,12 +53,12 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | 新增 `sync::NearbyPeer` 与 `LanStatus.nearby`（形状逐字见规格 §3.1）；`lan_status` 里用**已经取到的那一次** `state.peers(now)`（`sync.rs:3219`）映射成列表；`invitable` 的判定与 `mesh::mesh_peers`（`mesh.rs:218`）**同一把尺** |
+| **做什么** | 新增 `sync::NearbyPeer` 与 `LanStatus.nearby`（形状逐字见规格 §3.1）；`lan_status` 里用**已经取到的那一次** `state.peers(now)`（`sync.rs:3417`）映射成列表；`invitable` 的判定与 `mesh::mesh_peers`（`mesh.rs:243`）**同一把尺** |
 | **改哪里** | `src-tauri/src/sync.rs`（`NearbyPeer` ＋ `LanStatus` ＋ `lan_status` 里那段映射）；`src-tauri/src/mesh.rs`（**若**要把 `mesh_peers` 里那段逐条过滤抽成可复用的纯函数，就放在 `mesh_peers` 紧邻处） |
 | **验收读数** | `cd src-tauri && cargo test --lib sync::` ⇒ **0 failed**；`cargo test --lib mesh::` ⇒ **23 passed / 0 failed**（本轮实测基线，不得减少）；**新增**三条：① 同源（`nearby.len() == peers`，喂同一个 `Vec<Peer>`）；② 同尺（`nearby.filter(invitable)` 的 `device_id` 集合 == `mesh_peers(...)`）；③ 反向保护（`nearby` 置空 ⇒ `peers`/`kind`/`line` 逐字节不变） |
 | **依赖** | —（但读规格 §3.1 的字段名与 spec §3.2 的 snake_case 约定） |
 | **写域** | `src-tauri/src/sync.rs`、`src-tauri/src/mesh.rs`、`src-tauri/src/lan.rs`（**Rust 侧全部归本任务**，T5 不动这几个文件） |
-| **变异证据（要入账）** | 把 `peers: peers.len()`（`sync.rs:3257`）改成用 `observed_all().len()` ⇒ 判据① 必须红（`scripts/criteria-mutations.json` 那条通道） |
+| **变异证据（要入账）** | 把 `peers: peers.len()`（`sync.rs:3466`）改成用 `observed_all().len()` ⇒ 判据① 必须红（`scripts/criteria-mutations.json` 那条通道） |
 
 ### T2 契约三处一致（TS ＋ Web）
 
@@ -74,7 +75,7 @@
 
 | 字段 | 内容 |
 |---|---|
-| **做什么** | 渲染四态（不可用 / 发现中 / 有设备 / 不可邀请的静默）；门槛**复用** `isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()`（`SyncPanel.tsx:1402` 同一个表达式）；文案照规格 §4 的表 |
+| **做什么** | 渲染四态（不可用 / 发现中 / 有设备 / 不可邀请的静默）；门槛**复用** `isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()`（`SyncPanel.tsx:1538` 同一个表达式）；文案照规格 §4 的表 |
 | **改哪里** | `src/components/SyncPanel.tsx`、`src/App.css` |
 | **验收读数** | 真 Chromium 门禁（`node scripts/test-report.mjs --group mobile`，需 dev server :5173）里四种态**各有一个断言**；文案断言：块内不出现 `device_id`／裸 IP；`lanStatus.peers` 只出现在文案、不参与算术 |
 | **依赖** | **T1 ＋ T2**（读数与类型） |
@@ -132,7 +133,7 @@
 |---|---|---|---|
 | **M1** | 两台真机 ＋ 热点：互相**看得见** | 要真网络环境与两台机器；先例：③-b-2b-2 的"真机两设备复验没做（要人手）"（`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内） | 两台各自的 `peers` 与列表行数（截图或日志） |
 | **M2** | 三台（小明手机 ＋ 小明笔记本 ＋ 小王笔记本）：A4–A8 全流程 | 同上；且安卓那台要 `MulticastLock` 生效（`src-tauri/src/lan_android.rs` 模块头） | 两两之间各跑一次交换，投影一致；**全程零字符串输入**（可用录屏佐证） |
-| **M3** | 掐表：热点主机首轮到底等多久 | 常量是 30s（`lan_state.rs:138`）而真机读数记的是 ≈45 秒（同 §18）⇒ 只能实测 | 秒表读数（这一条会回填需求 §7 待查 D2） |
+| **M3** | 掐表：热点主机首轮到底等多久 | 常量是 30s（`lan_state.rs:245`）而真机读数记的是 ≈45 秒（同 §18）⇒ 只能实测 | 秒表读数（这一条会回填需求 §7 待查 D2） |
 
 ⚠️ **M1–M3 不许写成"通过"**：`AI-NATIVE-DEV.md` §5.4 的红旗之一是「上次是全绿的」/「队友说成功了」；
 这里的正确写法是**「没做」**。

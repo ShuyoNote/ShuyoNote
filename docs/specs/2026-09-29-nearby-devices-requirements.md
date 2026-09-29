@@ -1,5 +1,6 @@
 # 需求：丙档「附近设备」—— 同网段发现 ＋ 零字符串搬运的邀请
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
 > 起草：macOS 侧｜**2026-09-29**｜依据：`_workspace/AI-NATIVE-DEV.md` §5.1（规格层）＋ 本仓 [`docs/specs/README.md`](README.md)
 > 关联：[规格 `2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md)（什么不许变）·
 > [方案 `2026-09-29-nearby-devices-approach.md`](2026-09-29-nearby-devices-approach.md)（怎么落）·
@@ -38,11 +39,11 @@
 
 | # | 用户现在必须做的事 | 出处 | 哪一步是机器该干而人在干 |
 |---|---|---|---|
-| 1 | 从一台设备上抄下 `space_id`（形如 `8be69ab5a1c2…`，**32 位十六进制**，服务端 `hex(16 随机字节)` 生成） | 界面里它就在「服务器 → 组织空间」那个**输入框**里（`src/components/SyncPanel.tsx:1246-1253`）；服务端生成口径见 §3.4 | **整步**。这是**身份**，机器之间直接报就行 |
-| 2 | 在另一台设备的「服务器」卡片 →「组织空间」栏里**贴进去** | `SyncPanel.tsx:1228-1253`（`组织空间` 那个 `label` ＋ `<select>`／`<input>`） | **整步**。人只该选"哪个空间"，不该搬它的 id |
-| 3 | 每台设备各自去查「我的局域网 IP」，填成 `IP:8788` 才有网格 | 网格设置那一行（`SyncPanel.tsx:1402` 起的 `网格（设备之间直接同步）`）要求手填 `bind`；写入口径见 `src-tauri/src/mesh.rs:721` `checked_bind`（只收字面 `IP:端口`） | **整步**。本机地址是本机事实，机器知道、人要去查 |
-| 4 | 三台各自想一个口令，再**互相口头/微信对齐** | 网格口令 `mesh_token:<空间>`（`mesh.rs:392` `set_mesh_token`）；界面那一行原话是「口令：已设 / 未设」（`SyncPanel.tsx:1416`） | **整步**。口令是**邀请这件事的载荷**，本该随邀请一起过去 |
-| 5 | 等约 45 秒（热点主机首轮广播的代价，见 §4.3） | `src-tauri/src/lan.rs:445-460`（单向发现的机制与代价）＋ `src-tauri/src/lan_state.rs:138`（`ANNOUNCE_INTERVAL_MS`） | ⚠️ **这一步不是"人在干"** —— 它是**物理代价**，只能如实告诉用户"正在找"，不能假装它不存在 |
+| 1 | 从一台设备上抄下 `space_id`（形如 `8be69ab5a1c2…`，**32 位十六进制**，服务端 `hex(16 随机字节)` 生成） | 界面里它就在「服务器 → 组织空间」那个**输入框**里（`src/components/SyncPanel.tsx:1366-1386`）；服务端生成口径见 §3.4 | **整步**。这是**身份**，机器之间直接报就行 |
+| 2 | 在另一台设备的「服务器」卡片 →「组织空间」栏里**贴进去** | `SyncPanel.tsx:1362-1399`（`组织空间` 那个 `label` ＋ `<select>`／`<input>`） | **整步**。人只该选"哪个空间"，不该搬它的 id |
+| 3 | 每台设备各自去查「我的局域网 IP」，填成 `IP:8788` 才有网格 | 网格设置那一行（`SyncPanel.tsx:1538` 起的 `网格（设备之间直接同步）`）要求手填 `bind`；写入口径见 `src-tauri/src/mesh.rs:735` `checked_bind`（只收字面 `IP:端口`） | **整步**。本机地址是本机事实，机器知道、人要去查 |
+| 4 | 三台各自想一个口令，再**互相口头/微信对齐** | 网格口令 `mesh_token:<空间>`（`mesh.rs:406` `set_mesh_token`）；界面那一行原话是「口令：已设 / 未设」（`SyncPanel.tsx:1553`） | **整步**。口令是**邀请这件事的载荷**，本该随邀请一起过去 |
+| 5 | 等约 45 秒（热点主机首轮广播的代价，见 §4.3） | `src-tauri/src/lan.rs:460-475`（单向发现的机制与代价）＋ `src-tauri/src/lan_state.rs:245`（`ANNOUNCE_INTERVAL_MS`） | ⚠️ **这一步不是"人在干"** —— 它是**物理代价**，只能如实告诉用户"正在找"，不能假装它不存在 |
 | 6 | 点「同步」 | `SyncPanel.tsx` 各行的 `同步` 按钮 | 保留（手动同步是**口径**：丙不引入自动轮询，见 `../plans/2026-09-24-lan-p2p-topology-decision.md` §13 末尾"今天与甲档一样是手动，**不是缺陷**，是口径"） |
 
 **⇒ 痛点的形状不是"功能少了"，而是"三样机器事实被要求由人肉眼搬运"。**
@@ -74,18 +75,18 @@ pub struct LanAnnounce {
 ```
 
 发现到的对端连**来源地址**都有：`lan.rs:133-139` `pub struct Peer { announce, addr, seen_at_ms }`
-（`addr` 是报文来源 `ip`，不含端口 —— `lan_state.rs:67`）。
+（`addr` 是报文来源 `ip`，不含端口 —— `lan_state.rs:123`）。
 
 **⇒ 「谁在线、叫什么、服务哪些空间、从哪个地址来的」这四样，发现层【已经有了】。**
 
 ### 3.2 界面现在拿到的 —— 这是丙档的**主要缺口**
 
-`src-tauri/src/sync.rs:3274` `pub struct LanStatus`（`lan_status` 命令的返回，`sync.rs:3187`）：
+`src-tauri/src/sync.rs:3483` `pub struct LanStatus`（`lan_status` 命令的返回，`sync.rs:3385`）：
 
 ```rust
 pub struct LanStatus {
     pub enabled: bool,
-    pub peers: usize,     // ⚠️ 只有【数量】。注释（sync.rs:3279）逐字写着：
+    pub peers: usize,     // ⚠️ 只有【数量】。注释（sync.rs:3488）逐字写着：
                           //    「与状态行里那个"N 台"是同一个数：界面不该自己再数一遍」
     pub kind: String,     // "lan" / "configured" / ""
     pub line: String,     // 状态行原文（lan::status_line），界面直接显示
@@ -110,10 +111,10 @@ pub struct LanStatus {
 
 | # | 口径 | 出处（逐字） |
 |---|---|---|
-| ① | 网格的门槛：`isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()` | `SyncPanel.tsx:1402`，紧邻注释 `:1401`「门槛一个字没改：网格不需要服务端地址，只要这个空间有 space_id」 |
+| ① | 网格的门槛：`isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim()` | `SyncPanel.tsx:1538`，紧邻注释 `:1535`「门槛一个字没改：网格不需要服务端地址，只要这个空间有 space_id」 |
 | ② | 其中 `isDesktopPlatform() ≡ isTauri() ≡ ("__TAURI_INTERNALS__" in window)` ⇒ **安卓 App 也有网格，Web 版没有**（产品决定） | `src/lib/platform/index.ts:27-41`（源码注释逐字：「语义是「有没有 Rust 内核」，不是「是不是桌面操作系统」——Tauri 的 Android/iOS 壳同样为真」） |
-| ③ | 开启网格的判据 `enabled = cfg.bind.is_some()` ⇒ **"配了监听地址"就等于"开启"，没有独立的开关** | `mesh.rs:597` ＋ 分片表口径「**"开"只有一个定义＝配了监听地址**」（`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内 ③-b-2a 行） |
-| ④ | ⚠️ **两个空间 id 不许合成一个** | `sync.rs:3124` 那条 ★★ 注释：`sync_profiles.space_id` 是**远端组织空间 id**（对暗号用），`sync_profiles.ws_id` 是**本地空间 id**（＝ `spaces/<id>.db` 的文件名）。真机上两者**不同名**（本地 `default` / 远端 `8be69ab5…`）。合成一个 ⇒ 窗口会开一个**空库**、安静地服务 0 条（`sync.rs:3124-3127`） |
+| ③ | 开启网格的判据 `enabled = cfg.bind.is_some()` ⇒ **"配了监听地址"就等于"开启"，没有独立的开关** | `mesh.rs:611` ＋ 分片表口径「**"开"只有一个定义＝配了监听地址**」（`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内 ③-b-2a 行） |
+| ④ | ⚠️ **两个空间 id 不许合成一个** | `sync.rs:3322` 那条 ★★ 注释：`sync_profiles.space_id` 是**远端组织空间 id**（对暗号用），`sync_profiles.ws_id` 是**本地空间 id**（＝ `spaces/<id>.db` 的文件名）。真机上两者**不同名**（本地 `default` / 远端 `8be69ab5…`）。合成一个 ⇒ 窗口会开一个**空库**、安静地服务 0 条（`sync.rs:3322-3325`） |
 | ⑤ | `space_id` **不是 UUID 格式**；本地空间 id 才是 | 见 §3.4 |
 | ⑥ | 加密闸门：**个人空间要先加密才能绑同步；团队空间免检（服务端存明文）；未分类放行（但闸门没管到）** | `src-tauri/src/space_crypto.rs:301-325` `sync_gate` ＋ 界面原话 `SpacePrivacySection.tsx:226` |
 | ⑦ | 网格服务侧**只服务它自己产生的记录**（没有账本） | `../plans/2026-09-24-lan-p2p-topology-decision.md` §13 表内 ③-b-1 行 |
@@ -124,7 +125,7 @@ pub struct LanStatus {
 - 远端 `space_id`：服务端 `gen_id()` ＝ `hex::encode(random_bytes(16))` ⇒ **32 位十六进制**（owner 已实测确认；本仓内**没有**服务端生成代码，见 §7 待查 D1）。
 - 本地空间 id：`uuid::Uuid::new_v4()` 格式。
 - **网格不检查 `space_id` 是哪来的** —— `resolve_base`（`lan.rs:177-199`）只做**字面**比较
-  （`p.announce.hub_spaces.iter().any(|s| s.trim() == want)`，`lan.rs:181`），不看格式。
+  （`p.announce.hub_spaces.iter().any(|s| s.trim() == want)`，`lan.rs:213`），不看格式。
 - 已实测（本机只读复跑，见 §6）：两个不同本地库 ＋ 同一个字面量 `"space-x"` ＋ 无服务端 ＋ 真环回 ⇒ 收敛
   （`mesh::tests::two_clients_converge_over_real_loopback_with_no_hub_and_no_server`，
   `cargo test --lib mesh::` ＝ **23 passed / 0 failed**）。
@@ -134,9 +135,9 @@ pub struct LanStatus {
 | 事实 | 出处 |
 |---|---|
 | 现有唯一一种码是 `SpacePrivacySection.tsx` 的「换设备（不经服务器：配对码）」 | `SpacePrivacySection.tsx:380-385` |
-| 载荷是 `PairingPayload { v, material, fp }` | `pairing.rs:42-53` |
-| ⚠️ 它是**"钥匙袋级"**：`material` ＝ `Keyring::to_json()` 的**全部空间**公开材料 | `pairing.rs:46`（`material` 字段注释「**公开材料原文**（`Keyring::to_json()` 的输出）」）＋ `SpacePrivacySection.tsx:382-383` 注释「它是**钥匙袋级**的动作（载荷带全部空间）」 |
-| 界面原话：「这段码不是秘密，但请只交给你自己那台设备。」 | `SpacePrivacySection.tsx:390` |
+| 载荷是 `PairingPayload { v, material, fp }` | `pairing.rs:42-50` |
+| ⚠️ 它是**"钥匙袋级"**：`material` ＝ `Keyring::to_json()` 的**全部空间**公开材料 | `pairing.rs:46`（`material` 字段注释「**公开材料原文**（`Keyring::to_json()` 的输出）」）＋ `SpacePrivacySection.tsx:381` 注释「它是**钥匙袋级**的动作（载荷带全部空间）」 |
+| 界面原话：「这段码不是秘密，但请只交给你自己那台设备。」 | `SpacePrivacySection.tsx:389` |
 | 二维码容量预算：`QR_SINGLE_BYTE_LIMIT = 2953`（QR v40 / 纠错级 L / **字节模式**） | `pairing.rs:37`（＋ `:34-36` 解释为什么不用字母数字模式的 4296） |
 | 配对的做法是**比对码**（两端各显示同一串数字，人核对一致再采纳），**不做 6 位短码** | `pairing.rs:113-118` 注释 ＋ `SpacePrivacySection.tsx:383-384` |
 
@@ -175,26 +176,26 @@ pub struct LanStatus {
 
 | 不承诺 | 为什么（出处） |
 |---|---|
-| ❌ **跨网段 / NAT 穿透 / 中继** | 发现层的目标地址是 `255.255.255.255` ＋ 回环 ＋ 已认识对端的单播（`lan.rs:434-443` `default_targets` ＋ `lan.rs:461-476` `announce_targets`）⇒ **只在同一广播域内**成立。跨网段那条路**没有**任何代码 |
+| ❌ **跨网段 / NAT 穿透 / 中继** | 发现层的目标地址是 `255.255.255.255` ＋ 回环 ＋ 已认识对端的单播（`lan.rs:445-458` `default_targets` ＋ `lan.rs:460-491` `announce_targets`）⇒ **只在同一广播域内**成立。跨网段那条路**没有**任何代码 |
 | ❌ **中继（穿不过去时替两边转）** | 丙档的定义就是**不要账本、不要中转**（`../plans/2026-09-24-lan-p2p-topology-decision.md` §4「丙其实在**删**东西」） |
 | ❌ **Web 版提供多设备同步** | 产品决定，且已被门槛钉住：Web 上没有发现层、开不了本机端口（`src/lib/platform/web.ts:1544-1564` 如实回"不可用"） |
-| ❌ **给同事钥匙袋** | `pairing.rs:46` 的 `material` 是**全部空间**的材料；界面自己写着"只交给你自己那台设备"（`SpacePrivacySection.tsx:390`） |
+| ❌ **给同事钥匙袋** | `pairing.rs:46` 的 `material` 是**全部空间**的材料；界面自己写着"只交给你自己那台设备"（`SpacePrivacySection.tsx:389`） |
 | ❌ **给同事一个能解开你加密个人空间的东西** | 加密闸门（`space_crypto.rs:301-325`）与"服务端拿不到你的钥匙"是同一条产品边界的两个面；丙档**不引入**任何绕过它的通路 |
-| ❌ **改网格门槛**（`isDesktopPlatform() && lanStatus && space_id`） | `SyncPanel.tsx:1401` 原话「门槛一个字没改」 |
+| ❌ **改网格门槛**（`isDesktopPlatform() && lanStatus && space_id`） | `SyncPanel.tsx:1535` 原话「门槛一个字没改」 |
 | ❌ **自动轮询 / 后台常连** | 分片表口径：「今天与甲档一样是手动，**不是缺陷**，是口径」（`../plans/2026-09-24-lan-p2p-topology-decision.md` §13 末尾） |
-| ❌ **承诺"看不见 = 不存在"** | 发现层是**广播 ＋ 单播**，会丢包；且热点主机冷启动那一次最多要等**一个广播间隔**（`lan.rs:457-458`）。⇒ 界面只能说"还没发现 / 正在找"，**不许说"网段里没有设备"** |
+| ❌ **承诺"看不见 = 不存在"** | 发现层是**广播 ＋ 单播**，会丢包；且热点主机冷启动那一次最多要等**一个广播间隔**（`lan.rs:472-473`）。⇒ 界面只能说"还没发现 / 正在找"，**不许说"网段里没有设备"** |
 
 ### 4.4 已知的两个物理代价（**必须如实告诉用户，不许藏**）
 
 1. **热点主机首轮 ≈ 一个广播间隔**：`255.255.255.255` 是**受限广播**，按**默认路由**挑出口；
    热点主机的默认路由是**蜂窝** ⇒ 那条广播发到蜂窝上去了，热点底下的客户端收不到；
    而客户端的默认路由就是 `wlan0` ⇒ **只有单向**。修法是"公告目标每一轮现算 ＝ 默认那两条 ＋ 已经认识的对端的单播地址"
-   （`lan.rs:445-476`、`lan_state.rs:311-313`）。⚠️ **代价**：冷启动那次表是空的，只能靠广播 ⇒ 单向那一半最多等一个广播间隔
-   （`../plans/2026-09-24-lan-p2p-topology-decision.md` §18 原话；常量 `ANNOUNCE_INTERVAL_MS = 30_000`，`lan_state.rs:138`）。
+   （`lan.rs:460-491`、`lan_state.rs:433`）。⚠️ **代价**：冷启动那次表是空的，只能靠广播 ⇒ 单向那一半最多等一个广播间隔
+   （`../plans/2026-09-24-lan-p2p-topology-decision.md` §18 原话；常量 `ANNOUNCE_INTERVAL_MS = 30_000`，`lan_state.rs:245`）。
    ⚠️ **同一份文档 §18 的真机读数表写的是「过一轮广播（≈45 秒）」** —— **数字不一致**，见 §7 待查 D2 与 §8 差异条第 1 条。
 2. **`device_name` 可能是空的**：`lan.rs:70-72` 是 `#[serde(default)]`；本机名来自
-   `host_name()` ＝ `COMPUTERNAME` → `HOSTNAME` → **空串**（`lan_state.rs:343-347`，注释逐字「拿不到就留空，**不编**一个假的」）。
-   ⇒ 列表里可能出现**没有名字的设备**；状态行对这种情况的既有做法是如实说「中枢：只报了地址」（`lan.rs:345`）。
+   `host_name()` ＝ `COMPUTERNAME` → `HOSTNAME` → **空串**（`lan_state.rs:454-458`，注释逐字「拿不到就留空，**不编**一个假的」）。
+   ⇒ 列表里可能出现**没有名字的设备**；状态行对这种情况的既有做法是如实说「中枢：只报了地址」（`lan.rs:360`）。
 
 ---
 
@@ -252,9 +253,9 @@ pub struct LanStatus {
 
 | # | 待查的事 | 怎么查（具体命令／步骤） | 影响 |
 |---|---|---|---|
-| **D1** | 服务端 `gen_id() = hex::encode(random_bytes(16))` 的**逐行出处** | 服务端**不在本仓**（`shuyonote-sync-server` 是另一个仓）。⇒ `grep -rn "fn gen_id" ~/zhai/repos/` 或到那个仓里 `grep -rn "gen_id\|random_bytes(16)"`。⚠️ 我**没有**读过那个仓，所以 §3.4 的这条只能标"owner 已实测确认 ＋ 未在本仓复核" | 只影响"32 位十六进制"这句话的出处强度，**不影响**任何设计（网格不检查格式，`lan.rs:181`） |
+| **D1** | 服务端 `gen_id() = hex::encode(random_bytes(16))` 的**逐行出处** | 服务端**不在本仓**（`shuyonote-sync-server` 是另一个仓）。⇒ `grep -rn "fn gen_id" ~/zhai/repos/` 或到那个仓里 `grep -rn "gen_id\|random_bytes(16)"`。⚠️ 我**没有**读过那个仓，所以 §3.4 的这条只能标"owner 已实测确认 ＋ 未在本仓复核" | 只影响"32 位十六进制"这句话的出处强度，**不影响**任何设计（网格不检查格式，`lan.rs:213`） |
 | **D2** | 「≈45 秒」到底是 45 还是 30 | ① 读常量：`sed -n '138p' src-tauri/src/lan_state.rs` ⇒ **30_000**；② 读真机读数：`sed -n '470,479p' docs/plans/2026-09-24-lan-p2p-topology-decision.md` ⇒ 表里写「≈45 秒」；③ 要判定哪个对，只能在真机（热点 ＋ 两台安卓）上掐表，**本机复现不了** | 影响给用户的文案（"最多等 30 秒"还是"最多等 45 秒"）⇒ 建议文案**不写数字**，只写"可能要等一轮" |
-| **D3** | 草图的第二列（「我的设备 / 小王的设备」）**数据从哪来** | `grep -rn "COMPUTERNAME\|HOSTNAME" src-tauri/src/` ⇒ 只有 `lan_state.rs:343-347` 一处，且那是**自己的**名字；台账里**没有**"某台设备属于谁"这个字段。⇒ **待查：产品上"我的设备"是本地的一张白名单（要新造）还是按 `device_id` 与自己比对（只能认出"不是我的"）？** | 决定列表第二列是**真数据**还是**回落文案**（规格 §3 按"只能认出不是我的"设计） |
+| **D3** | 草图的第二列（「我的设备 / 小王的设备」）**数据从哪来** | `grep -rn "COMPUTERNAME\|HOSTNAME" src-tauri/src/` ⇒ 只有 `lan_state.rs:454-458` 一处，且那是**自己的**名字；台账里**没有**"某台设备属于谁"这个字段。⇒ **待查：产品上"我的设备"是本地的一张白名单（要新造）还是按 `device_id` 与自己比对（只能认出"不是我的"）？** | 决定列表第二列是**真数据**还是**回落文案**（规格 §3 按"只能认出不是我的"设计） |
 | **D4** | 「对方接受了吗」**发起侧能不能观测** | 候选：`mesh_cursor:<空间>:<对端设备>`（`mesh.rs:116-119`）只在**收侧**写；发起侧要观测只能看**自己的**窗口有没有被拉过。⚠️ 而我**没核**：`mesh_cursor` 是写在**哪个库**（本地空间库还是 meta 库）、以及 `lan_status` 有没有打开的连接能读它 | 决定 A6 那一行显示"已发出"还是"已建立"。本轮**按"读不到就说已发出"**设计（不许编一个我们没观测到的状态） |
 | **D5** | 安卓 App 上发现层**实际**能不能互看（MulticastLock 之外还有什么坑） | `src-tauri/src/lan_android.rs` 整个模块就是为这件事存在的（拿 `WifiManager.MulticastLock`，否则 Wi-Fi 栈丢广播）；它的效果**只在真机可验**。⇒ 待查：真机两台安卓 ＋ 热点下，`peers` 是否 > 0 | 决定场景 A 的 A2 在安卓上的成立条件；**不影响**桌面 ↔ 桌面那条路 |
 
@@ -265,18 +266,18 @@ pub struct LanStatus {
 > 这一节是**给我的描述的核对结果**，不是给我的描述的复述。
 
 1. **「等约 45 秒（热点主机首轮广播的代价）」与我读到的常量不一致。**
-   常量是 `ANNOUNCE_INTERVAL_MS: i64 = 30_000`（`lan_state.rs:138`，注释里也写"30s 不是随手取的"），
+   常量是 `ANNOUNCE_INTERVAL_MS: i64 = 30_000`（`lan_state.rs:245`，注释里也写"30s 不是随手取的"），
    而 `docs/plans/2026-09-24-lan-p2p-topology-decision.md` §18 的真机读数表写「过一轮广播（≈45 秒）」。
    **两处都是仓内原文** ⇒ 我没法判定哪个是"现在的现状"。见 §7 待查 D2。**文档里我两个都写出来了，且不替它们下结论。**
 
-2. **`LanStatus` 的行号比 owner 给的更精确：`sync.rs:3274`（owner 说 `:3274` ⇒ 一致 ✓）。**
-   我核到的是 `pub struct LanStatus {` 正好在 `:3274`，`pub peers: usize,` 在 `:3280`，
-   那条"界面不该自己再数一遍"的注释在 `:3279`。**这一条是一致的，列在这里只是给出可核读数。**
+2. **`LanStatus` 的行号**（本条已按 `a5c0f614` 复钉）：`pub struct LanStatus {` 在 `sync.rs:3483`，
+   `pub peers: usize,` 在 `:3489`，那条"界面不该自己再数一遍"的注释在 `:3488`。
+   （owner 说的 `:3274`／`:3280`／`:3279` 是 `daac8e1e` 之前的行号 —— 三个都对得上，只是**整块下移了**。）
 
-3. **网格门槛那一句，owner 说在 `SyncPanel.tsx`「注释写着"门槛一个字没改"」—— 精确行号是 `:1401`（注释）／`:1402`（门槛）。**
-   而 `SyncPanel.tsx` 里**不止一处**在讲网格门槛：`:198-199` 也有一段注释说
-   「它的门槛**不是** `lanRowBound`」。两处说的**是同一件事的两面**（`lanRowBound` 更严，网格不用它），
-   但**引用时别把 `:198` 当成那段"门槛一个字没改"**。
+3. **网格门槛那一句，owner 说在 `SyncPanel.tsx`「注释写着"门槛一个字没改"」—— 精确行号是 `:1535`（注释）／`:1538`（门槛，`a5c0f614`）。**
+   而 `SyncPanel.tsx` 里**不止一处**在讲网格门槛：`:245` 也有一段注释说
+   「它的门槛**不是** `lanRowBound`」（`:1907` 还有一处同义注释）。两处说的**是同一件事的两面**（`lanRowBound` 更严，网格不用它），
+   但**引用时别把 `:245` 当成那段"门槛一个字没改"**。
 
 4. **"安卓 App 也有网格"这一条我核到了同义但更细的口径。**
    owner 的表述是「`isDesktopPlatform() ≡ isTauri()` ⇒ 安卓 App 也有网格」；
@@ -286,19 +287,19 @@ pub struct LanStatus {
    ⇒ 丙档如果要加"只在某些壳显示"的入口，**照这条别继续加 `isDesktopPlatform()` 判断**。这一条列出来是因为它会改变实现方式。
 
 5. **"三台各自想一个口令"这一条，代码里的口令是**每空间一条**，不是每设备一条。**
-   `mesh_token:<空间>`（`mesh.rs:392`）⇒ **同一台设备上不同空间各有各的口令**。
+   `mesh_token:<空间>`（`mesh.rs:406`）⇒ **同一台设备上不同空间各有各的口令**。
    所以"三台各自想一个口令"在实现上是"**每个空间想要一个口令**"；三台设备服务同一个空间时，
-   那个口令**必须一致**（`authorized` 是逐字节比较，`mesh.rs:969-980`）。
+   那个口令**必须一致**（`authorized` 是逐字节比较，`mesh.rs:985-992`）。
    ⇒ 这不影响需求，但**影响文案**："这个空间的口令"比"你的口令"准确。
 
 6. **"网格（对等交换）"与"局域网直连"是两条不同的路，owner 的描述里只提了网格。**
-   `lan::status_line` 那条路（`lan.rs:312-356`）走的是**中枢**（某台设备替一个服务端代言），
+   `lan::status_line` 那条路（`lan.rs:312-371`）走的是**中枢**（某台设备替一个服务端代言），
    而网格走的是**对端自己的窗口**（`mesh.rs`）。两者共用同一张对端表与同一份公告。
    ⇒ 丙档要的"就近设备列表"是**这一张表**，两条路都能用；但**邀请**这条新路**只对网格成立**
-   （因为没有服务端就没有中枢可代言，`lan.rs:268-295` `announce_for_own_hub` 要求 `is_lan_base(base)`）。
+   （因为没有服务端就没有中枢可代言，`lan.rs:283` `announce_for_own_hub` 要求 `is_lan_base(base)`）。
 
 7. **草图的第二列（「我的设备」）没有任何数据来源 —— 我确认了三处都不是它。**
-   `device_name` ＝ 主机名（`lan_state.rs:343-347`）不是"属于谁"；`fp` ＝ `device_id`（`lan.rs:79-83`）不是；
+   `device_name` ＝ 主机名（`lan_state.rs:454-458`）不是"属于谁"；`fp` ＝ `device_id`（`lan.rs:79-83`）不是；
    `sync_profiles` 里也没有"设备归属"。见 §7 待查 D3。**这一条最容易把草图误读成"只差渲染"。**
 
 ---

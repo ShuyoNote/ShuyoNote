@@ -1,5 +1,9 @@
 # 需求：正文「真实时」—— 同一空间多台设备之间的正文即时可见
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
+> ⚠️ 本份写于 `d021948c` 之前 ⇒ 其"局域网档 5 分钟"前提已作废；
+>   ⚠️ 补记：那条缺的线**已经补上了**（`dfa79e1a`：编辑信号 ⇒ 防抖 400ms ⇒ 立刻上传）⇒ 下面那句「缺」也已作废。
+>   **真正的缺口见本份 §9 补记**（缺的是【上传侧触发】那一条线，不是缺通道；下载侧已经实时）。
 > 起草：macOS 侧｜**2026-09-29**｜依据：`_workspace/AI-NATIVE-DEV.md` §5.1（规格层）＋ 本仓 [`docs/specs/README.md`](README.md)
 > 关联：[规格 `2026-09-29-realtime-body-spec.md`](2026-09-29-realtime-body-spec.md)（什么不许变）·
 > [方案 `2026-09-29-realtime-body-approach.md`](2026-09-29-realtime-body-approach.md)（怎么落）·
@@ -43,14 +47,14 @@
 
 | # | 触发 | 多久 | 出处（逐字可核） |
 |---|---|---|---|
-| 1 | **服务端 SSE 变更流**推一帧 ⇒ 立刻拉一次 | 理论**秒级**（实际＝"服务端什么时候发这一帧"） | `src-tauri/src/sync_stream.rs:112` `stream_url` ＝ `{server}/spaces/{space_id}/changes-stream`；桌面 `sync_stream_start` 要求**有绑定**（`sync_stream.rs:331-339`：解析不到 `claim_config` 就回 `reason:"no-binding"` 不跑）；Web 侧见 `src/hooks/useSyncStream.ts:115-125` |
-| 2 | **自动同步定时器**（"按间隔"档） | **30 秒** | `src/lib/syncMode.ts:25` `SYNC_INTERVAL_MS = 30_000`；定时器挂载在 `src/App.tsx:436-437`（`setInterval(tick, autoSyncMs)`；`tick` 定义在 `:398`，防重入 `busy` 在 `:399`），启动后 3 秒先跑一次（`App.tsx:439-441`，`setTimeout(tick, 3000)` 在 `:440`） |
-| 3 | **"近实时"档的兜底轮询** | **5 分钟** | `src/lib/syncMode.ts:28` `SYNC_REALTIME_FALLBACK_MS = 5 * 60_000`；`syncMode.ts:100-104` `effectiveAutoSyncMs()`：**近实时开着而间隔键没写过 ⇒ 返回 5 分钟**（默认就是这一态） |
+| 1 | **服务端 SSE 变更流**推一帧 ⇒ 立刻拉一次 | 理论**秒级**（实际＝"服务端什么时候发这一帧"） | `src-tauri/src/sync_stream.rs:122` `stream_url` ＝ `{server}/spaces/{space_id}/changes-stream`；桌面 `sync_stream_start` 要求**有绑定**（`sync_stream.rs:341-348`：解析不到 `claim_config` 就回 `reason:"no-binding"` 不跑）；Web 侧见 `src/hooks/useSyncStream.ts:115-125` |
+| 2 | **自动同步定时器**（"按间隔"档） | **30 秒** | `src/lib/syncMode.ts:25` `SYNC_INTERVAL_MS = 30_000`；定时器挂载在 `src/App.tsx:524-525`（`setInterval(tick, autoSyncMs)`；`tick` 在 `:523` 转调模块级的 `runAutoSyncRound`，防重入是 `:144` 的 `syncRoundBusy`），启动后 3 秒先跑一次（`App.tsx:527-528`，`setTimeout(tick, 3000)` 在 `:528`） |
+| 3 | **"近实时"档的兜底轮询** | **5 分钟** | `src/lib/syncMode.ts:28` `SYNC_REALTIME_FALLBACK_MS = 5 * 60_000`；`syncMode.ts:198-213` `effectiveAutoSyncMs()`：**近实时开着而间隔键没写过 ⇒ 返回 5 分钟**（默认就是这一态） |
 
 ⚠️ **关键区分（决定了本需求的工作量下限）**：上面三档**全部驱动的是"服务端那条路"**（`api.syncWorkspace`）。
 
 - 桌面 SSE 那一帧触发的是 `api.syncWorkspace(wsId)`（`src/hooks/useSyncStream.ts:54-78`，`pullOnce`），**它不跑网格**；
-- 网格（丙档、对等直连）**只在两处被跑**：① 用户点面板「同步」时的 `finally`（`src/components/SyncPanel.tsx:548-560`，含"必须放在 finally 里"的真机教训注释 `:541-547`）；② `App.tsx` 自动同步定时器的每一轮（`App.tsx:426`）。**没有任何"推送"会触发网格。**
+- 网格（丙档、对等直连）**只在两处被跑**：① 用户点面板「同步」时的 `finally`（`src/components/SyncPanel.tsx:584-612`，含"必须放在 finally 里"的真机教训注释 `:588-591`）；② `App.tsx` 自动同步定时器的每一轮（`App.tsx:167`）。**没有任何"推送"会触发网格。**
 - ⇒ **纯局域网这一档下，正文的可见延迟就是那个定时器的间隔**：默认 **5 分钟**，选「按间隔」档是 **30 秒**。这就是"现在要么点同步、要么等轮次"的**确切机制**。
 
 **⇒ 需求侧的结论**：**"实时"必须写出一个数**，且必须说清它**挂在哪一条路上**。见 §5。
@@ -63,8 +67,8 @@
 
 | 内容 | 合并模型 | 出处 |
 |---|---|---|
-| **正文内容本体**（顶层块的文本、块身份） | **CRDT**（Yjs／`page_crdt` 状态 BLOB，客户端合并） | `page_crdt(page_id, state BLOB, updated_at)`：TS `src/lib/platform/sqliteStore.ts` ＋ Rust `src-tauri/src/db.rs`（冲刺 §2 的 S2b 行）；合并入口 `src/lib/crdt/pageBinding.ts:190-...` `mergeRemotePageState`（定义只许有一处，由 `scripts/check-crdt-plane.mjs` 判据④钉住） |
-| **标题 / 父节点 / 排序 / 图标 等页面级字段** | **HLC 戳 ＋ 页级 LWW**（`hlc::verdict`），**不合并** | `src-tauri/src/sync.rs:209-238` `record_page_upsert`：**只挂页 upsert** 这一条路（原注释逐字：「只挂**页 upsert** 这一条路（丙的页级 LWW 就是改它）；附件与页删除的路今天不动」）；`sync.rs:305-...` `apply_upsert` 与 `UpsertApply::{Applied, KeptLocal}`（`sync.rs:245-262`） |
+| **正文内容本体**（顶层块的文本、块身份） | **CRDT**（Yjs／`page_crdt` 状态 BLOB，客户端合并） | `page_crdt(page_id, state BLOB, updated_at)`：TS `src/lib/platform/sqliteStore.ts` ＋ Rust `src-tauri/src/db.rs`（冲刺 §2 的 S2b 行）；合并入口 `src/lib/crdt/pageBinding.ts:183` `mergeRemotePageState`（定义只许有一处，由 `scripts/check-crdt-plane.mjs` 判据④钉住） |
+| **标题 / 父节点 / 排序 / 图标 等页面级字段** | **HLC 戳 ＋ 页级 LWW**（`hlc::verdict`），**不合并** | `src-tauri/src/sync.rs:209-238` `record_page_upsert`：**只挂页 upsert** 这一条路（原注释逐字：「只挂**页 upsert** 这一条路（丙的页级 LWW 就是改它）；附件与页删除的路今天不动」）；`sync.rs:305-...` `apply_upsert` 与 `UpsertApply::{Applied, KeptLocal}`（`sync.rs:251-262`） |
 | **块级 LWW / 补算器** | 过渡量，**今天拆不了**（桌面没有 Yjs，收下的状态要靠界面侧合并） | 冲刺 §11.5（三条理由）＋ §13.1（桌面"收下状态"那一半） |
 
 **⇒ 需求边界（写死在这里）**：
@@ -85,7 +89,7 @@
 
 ### 4.1 洞是什么（事实链，每条可当场复核）
 
-**今天"要不要建一条血统"的决策树**（`src/lib/crdt/bootstrap.ts:36-48` `decideBootstrap`）：
+**今天"要不要建一条血统"的决策树**（`src/lib/crdt/bootstrap.ts:37-48` `decideBootstrap`）：
 
 ```text
 本地已有状态                ⇒ load-existing（载入，不 claim）
@@ -97,7 +101,7 @@
 而 `claim` 端口**只有在能跟服务端说话时才存在**：
 
 - HTTP 端口 `createHttpClaimPort` 打的是 `{server}/lineage-claim`（`src/lib/crdt/claimClient.ts:27` `LINEAGE_CLAIM_PATH = "/lineage-claim"`）；
-- 平台侧选服务端与**远端** `space_id` 的唯一一处是 `src/lib/crdt/claimScope.ts:61-70` `resolveWorkspaceSyncScope`：**档案里缺 `server_url` 或缺 `space_id` ⇒ 返回 `null`** ⇒ 上层 `web.ts:1529-1531`／`sync.rs` **连请求都不发**，直接回"用不了"；
+- 平台侧选服务端与**远端** `space_id` 的唯一一处是 `src/lib/crdt/claimScope.ts:61-70` `resolveWorkspaceSyncScope`：**档案里缺 `server_url` 或缺 `space_id` ⇒ 返回 `null`** ⇒ 上层 `web.ts:1524`／`sync.rs` **连请求都不发**，直接回"用不了"；
 - 用不了 ⇒ `claimVerdict` 归一成 `unavailable`（`src/lib/crdt/bootstrap.ts:56-66`）⇒ 走 `mint-provisional-offline`。
 
 **⇒ 所以纯局域网（小明开热点、两台笔记本、没有服务端、只配了网格）里：**
@@ -107,7 +111,7 @@
   ⇒ 两台都拿不到 claim（根本没有服务端可问）
   ⇒ 两台都走 mint-provisional-offline（各自建一条血统）
   ⇒ 对端那一版到达时撞上 S8 血统护栏
-  ⇒ mergeRemotePageState 拒绝合并（pageBinding.ts:190-225，两条独立血统 ⇒ 记 page_lineage_conflicts ＋ 返回 lineageConflict）
+  ⇒ mergeRemotePageState 拒绝合并（pageBinding.ts:183-227，两条独立血统 ⇒ 记 page_lineage_conflicts ＋ 返回 lineageConflict）
   ⇒ **实时推送做得再好，推过去也合不了**
 ```
 
@@ -125,11 +129,11 @@
 | # | 方案 | 机制（落在哪） | 代价（如实） | 能承诺什么 |
 |---|---|---|---|---|
 | **A** | **本轮不解决这一格**：只做"有服务端时的真实时"＋"局域网里已有血统的页的真实时" | 不改血统决策；只加传输层触发（方案 §2） | ⚠️ **owner 的场景会被"第一分钟"卡住**：两台同时首开新页 ⇒ 就是今天那个护栏挡住。⇒ **必须在需求里显式写出这条留白**，并**在界面上说清**（不是只在文档里） | 有服务端 ⇒ 秒级；局域网已有血统 ⇒ 秒级；局域网同时首开新页 ⇒ **不承诺** |
-| **B** | **一份"对端名册"当裁定输入**：claim 端口在没有服务端时，由**发现层那张对端表**提供一份候选名单，用**确定性的字典序**挑最小值 | 名册＝`lan_state` 的对端表（`src-tauri/src/lan.rs:65-84` `LanAnnounce`：每台都报了 `device_id`）；规则＝"候选里 `device_id` 最小的那台建血统，其余 `wait-for-remote`" | ① **双方的选择必须一致** —— 两端看到的名册不同（A 看得见 B、B 看不见 A，热点主机那一轮最多要等一个广播间隔，`lan_state.rs:138` `ANNOUNCE_INTERVAL_MS = 30_000`）⇒ **规则会算出两个不同的赢家**，护栏照样命中；② 名册里**必须包含自己**才判得出"我是不是最小"，而"我是不是最小"在只有一台时恒真 ⇒ 幂等但不能防"同时"；③ 需要一条**新的平台读数**（名册是"附近设备"那份文档要上抛的东西，见 §6） | 名册稳定（双方互相看见）⇒ 只有一台建血统；名册不稳 ⇒ **两条都建、护栏兜底**（不比 A 差） |
+| **B** | **一份"对端名册"当裁定输入**：claim 端口在没有服务端时，由**发现层那张对端表**提供一份候选名单，用**确定性的字典序**挑最小值 | 名册＝`lan_state` 的对端表（`src-tauri/src/lan.rs:65-84` `LanAnnounce`：每台都报了 `device_id`）；规则＝"候选里 `device_id` 最小的那台建血统，其余 `wait-for-remote`" | ① **双方的选择必须一致** —— 两端看到的名册不同（A 看得见 B、B 看不见 A，热点主机那一轮最多要等一个广播间隔，`lan_state.rs:245` `ANNOUNCE_INTERVAL_MS = 30_000`）⇒ **规则会算出两个不同的赢家**，护栏照样命中；② 名册里**必须包含自己**才判得出"我是不是最小"，而"我是不是最小"在只有一台时恒真 ⇒ 幂等但不能防"同时"；③ 需要一条**新的平台读数**（名册是"附近设备"那份文档要上抛的东西，见 §6） | 名册稳定（双方互相看见）⇒ 只有一台建血统；名册不稳 ⇒ **两条都建、护栏兜底**（不比 A 差） |
 | **C** | **由已持有血统的一方广播**（谁先建成功谁说） | 复用发现层那条 UDP 通道发一条"我建了第 N 页的血统"的报文（形状仿 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) §5.2 的 `NearbyInvite`） | ① **要动协议**（新报文类型 ＋ 版本号）；② **广播会丢** ⇒ 收不到的那台照样建 ⇒ 仍需护栏兜底；③ **有延迟**：先建的那台广播出去要一个往返，而对面可能已经在同一毫秒里建了 | 广播能到 ⇒ 大幅降低同时建的概率；广播丢失 ⇒ 退化成 A |
 | **D** | **不可判定的当合**：给"血统指纹不同但内容同源"开一条受控通道（例如要求两份状态的**投影逐字节相同**才许合） | 改护栏的判据（`src/lib/crdt/pageBinding.ts:132-139` `lineagesRelated`） | ⚠️ **这就是 S1 红线**：两份各自从同一份 JSON 新建的状态，投影**本来就相同**，硬合的结果是实测过的 `["paragraph#blk-1","paragraph#blk-1"]`（冲刺 §1 判据①）—— **一块变两块、`blockId` 重复** ⇒ 块引用／反链当场失效。⇒ **这一条要写死在"不做"里**，除非有新的判据证明不翻倍 | 不承诺（这一条是反模式，列出来是为了**堵住**它） |
 | **E** | **"首开只建一次"改成"首开只建一次 ＋ 只由**页面的创建者**建"** | 页面行里已经有 `created_at`／设备信息（`meta.workspaces` 与 `pages` 那一族）；规则＝"这一页不是本机创建的 ⇒ 不建，等对端" | ① **要判得出"这页是不是本机创建的"** —— 本机**没有**这个字段（`pages` 里没有 `created_by_device`，**待查** §7-1）；② 这一页如果是**在 Web 上**或**导入**进来的，创建者信息可能不存在 ⇒ 退化成 A；③ 反方向：**只有本机创建过的页才许首开**，会让"别人发给我一张新页、我离线打开"这条**直接变空页**（那比现在更坏） | 同一台机器创建 ⇒ 只有它建；其余 ⇒ 退化成 A |
-| **F** | **承认"这一格这一轮不解决"，但把出口做完整**：护栏命中时**给用户三个真实选项**（留本机／用对端／另存为新页） | 已经在仓里：`page_lineage_conflicts` 表 ＋ `LineageConflictBanner`（`src/components/LineageConflictBanner.tsx`，三个按钮分别 `"local"` `:94` / `"remote"` `:84` / `"saved-as-new"` `:58`） | ⚠️ 代价不在实现，在**语义**：用户必须**自己裁**（这是"不默认选边"的纪律，`src-tauri/src/lineage_conflict.rs:14`）；且**"用对端"是不可逆的**（清掉本机血统，`LineageConflictBanner.tsx:64-72` 一带的注释逐字「本机那份可合并的编辑历史就此没了」） | **不承诺自动**；承诺"两版都不丢、用户能选"（这正是今天已有的能力，F 是**把它说清楚**，不是新做） |
+| **F** | **承认"这一格这一轮不解决"，但把出口做完整**：护栏命中时**给用户三个真实选项**（留本机／用对端／另存为新页） | 已经在仓里：`page_lineage_conflicts` 表 ＋ `LineageConflictBanner`（`src/components/LineageConflictBanner.tsx`，三个按钮分别 `"local"` `:94` / `"remote"` `:84` / `"saved-as-new"` `:58`） | ⚠️ 代价不在实现，在**语义**：用户必须**自己裁**（这是"不默认选边"的纪律，`src-tauri/src/lineage_conflict.rs:14`）；且**"用对端"是不可逆的**（清掉本机血统，`LineageConflictBanner.tsx:66-75` 一带的注释逐字「本机那份可合并的编辑历史就此没了」） | **不承诺自动**；承诺"两版都不丢、用户能选"（这正是今天已有的能力，F 是**把它说清楚**，不是新做） |
 | **G** | **局域网里长出一个"准服务端"**：某台设备（开热点的那台）充当裁定者 | 要新造一个"局域网内的 claim 端点"＋ 谁当裁定者的选举 | ⚠️ **这是甲-2「内嵌接待窗口：客户端自己发号牌 ＋ 留账本」**，owner **2026-09-25 已冻结**（[`2026-09-29-nearby-devices-requirements.md`](2026-09-29-nearby-devices-requirements.md) §9 最后几行逐字：「甲-2（内嵌接待窗口：客户端自己发号牌 ＋ 留账本）｜**owner 2026-09-25 已冻结**」）。⇒ **本轮不许重启它**；列在这里是为了**说明它为什么不在候选里** | 不承诺（被 owner 冻结） |
 
 ### 4.4 本需求**推荐的组合**（要 owner 点头，见 §7 待查）
@@ -138,8 +142,8 @@
 
 理由三条，都是既有事实：
 
-1. **F 已经在仓里且是真的**（不是"待做"）：护栏命中会落 `page_lineage_conflicts`（`src-tauri/src/crdt/pageBinding.ts:213-221` `recordLineageConflict`）＋ 三选项横幅真的会动数据（`saveAsNew` 真的 `createPage`、`adoptRemote` 真的 `writePageProjection` ＋ 清状态）。⇒ **"两个都不丢"这条底线今天成立**；
-2. **B 的前置不在本轮**：它要"对端名册"，而对端名册的**唯一来源**是同一张发现层表 —— 那份工作归 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) §3.1 的 `LanStatus.nearby`（今天只有 `peers: usize`，`src-tauri/src/sync.rs:3280`）。**先有列表，才谈得上"按名册裁定"**；
+1. **F 已经在仓里且是真的**（不是"待做"）：护栏命中会落 `page_lineage_conflicts`（`src/lib/crdt/pageBinding.ts:213-221` `recordLineageConflict`）＋ 三选项横幅真的会动数据（`saveAsNew` 真的 `createPage`、`adoptRemote` 真的 `writePageProjection` ＋ 清状态）。⇒ **"两个都不丢"这条底线今天成立**；
+2. **B 的前置不在本轮**：它要"对端名册"，而对端名册的**唯一来源**是同一张发现层表 —— 那份工作归 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) §3.1 的 `LanStatus.nearby`（今天只有 `peers: usize`，`src-tauri/src/sync.rs:3489`）。**先有列表，才谈得上"按名册裁定"**；
 3. **G 被 owner 冻结、D 是反模式** ⇒ 候选面收窄到 A/B/C/E/F，而**C 要动协议**（本轮零协议的代价最低）。
 
 ⚠️ **但推荐 ≠ 决定**。这一格**必须 owner 拍**，因为它的代价是**用户可见的**（"小明和小王同时打开一张新页时会发生什么"，答案可能是"各看到一版，界面上让你选"）。拍之前不许把 A 写成"就这样"。
@@ -152,10 +156,19 @@
 
 | id | 目标（**可断言**） | 今天能不能成立（读数） | 成立的前提 |
 |---|---|---|---|
-| **R-1** | 在**默认档位**（`syncModeOf` ＝ `"realtime"`，`src/lib/syncMode.ts:31-34`）下，一端改正文，另一端**不点任何按钮**，**≤ 30 秒**内看到 | ✅ **成立**（"按间隔"档就是 30 秒，`src/lib/syncMode.ts:30`；定时器在 `src/App.tsx:436-437`，且每一轮**顺手跑网格**，`App.tsx:426`） | 发现层能看到对端 ＋ 网格已配（`isDesktopPlatform() && lanStatus && activeRow.space_id`，`src/components/SyncPanel.tsx:1401-1402` 的门槛，**门槛一个字没改**） |
+| **R-1** | 在**`按间隔`档（用户选了 30 秒）**（`syncModeOf` ＝ `"interval"`，`src/lib/syncMode.ts:106-109`）下，一端改正文，另一端**不点任何按钮**，**≤ 30 秒**内看到 | ✅ **成立（只在这个档位成立，不是默认档）**（"按间隔"档就是 30 秒，`src/lib/syncMode.ts:25`；定时器在 `src/App.tsx:524-525`，且每一轮**顺手跑网格**，`App.tsx:167`） | 发现层能看到对端 ＋ 网格已配（`isDesktopPlatform() && lanStatus && activeRow.space_id`，`src/components/SyncPanel.tsx:1535-1538` 的门槛，**门槛一个字没改**） |
 | **R-2** | 同上场景，**≤ 5 秒** | ❌ **不成立**（默认档位的兜底是 5 分钟；SSE 那条路**只在有服务端时**有，且**不跑网格**） | 需要新的触发（方案 §2），或把档位改成"按间隔"（那是**用户自己**把间隔调小，不是"实时"） |
 
-> ⚠️ **不许把 R-1 说成 R-2。** 今天 30 秒那个数是**"按间隔"档的一个用户可选项**，而**"近实时"档的默认值是 5 分钟**（`src/lib/syncMode.ts:100-104`）。owner 的"几秒内"= **R-2**，它需要新工作。
+> ⚠️ **2026-09-29 13:47 起已作废**（`d021948c`，比本份晚 12 分钟）：局域网这一档的间隔
+> 已被 owner 改成 **5 秒**，实现是 `src/lib/syncMode.ts:71` 的 `PULL_INTERVAL_DEFAULT_MS = 5_000`
+> （`a5c0f614` 上它还多了一个用户可见的三档设置 `PULL_INTERVALS`／`PULL_INTERVAL_KEY`）。
+> ⇒ **R-2 的结论作废**（"❌ 不成立"这个判定不再成立）；上面那句"默认值 5 分钟"也不再成立。
+> 原文保留，是留痕。
+> ⚠️ 而**真正缺的那半不在这里** —— 见本份 **§9 补记**：缺的是【**上传侧触发**】那一条线
+> （下载侧已经实时 16ms），不是缺通道、不是缺 CRDT。
+> ⚠️ 又记：`dfa79e1a` 已把那条线**补上**了（编辑信号 ⇒ 防抖 400ms ⇒ 立刻上传）⇒ §9 那句「缺」今天也已作废。
+
+> ⚠️ **不许把 R-1 说成 R-2。** 今天 30 秒那个数是**"按间隔"档的一个用户可选项**，而**"近实时"档的默认值是 5 分钟**（`src/lib/syncMode.ts:198-213`）。owner 的"几秒内"= **R-2**，它需要新工作。（同上：这一句里"默认值 5 分钟"已作废，见上。）
 
 ### 5.2 「正文」的边界（**可断言的形状**）
 
@@ -171,14 +184,14 @@
 
 #### 场景 A（硬目标）：纯局域网、两台设备、同一空间、**已有血统**的页
 
-**器材**：小明笔记本（macOS 桌面版）＋ 小王笔记本（桌面版）。小明开热点，两台都连上。同一个版本。**同一个空间**（`space_id` 一致），**网格已配**（各自填了本机 `IP:端口` 与同一个口令 —— 门槛见 `SyncPanel.tsx:1401-1402`）。
+**器材**：小明笔记本（macOS 桌面版）＋ 小王笔记本（桌面版）。小明开热点，两台都连上。同一个版本。**同一个空间**（`space_id` 一致），**网格已配**（各自填了本机 `IP:端口` 与同一个口令 —— 门槛见 `SyncPanel.tsx:1535-1538`）。
 
 | 步 | 在哪台 | 动作 | 预期读数 |
 |---|---|---|---|
 | A1 | 两台 | 各自打开**同一张页**（这张页此前已经过一次同步 ⇒ 两台都有血统） | 面板不出现血统冲突横幅（`LineageConflictBanner` 不渲染） |
-| A2 | 小明 | 在正文里打一段字 | 小明这边：`page_crdt` 当场更新（`Editor.tsx:573-578`）；≤ 600ms 后 `save_page` 落一条带 `crdt_state` 的 `changes` 行（`src/App.tsx:308` 的去抖 ＋ `sync.rs:209-238`） |
+| A2 | 小明 | 在正文里打一段字 | 小明这边：`page_crdt` 当场更新（`Editor.tsx:573-578`）；≤ 600ms 后 `save_page` 落一条带 `crdt_state` 的 `changes` 行（`src/App.tsx:431` 的去抖 ＋ `sync.rs:209-238`） |
 | A3 | 小王 | **什么都不做** | ≤ 30 秒（R-1）看到那段字。⚠️ **若要求 ≤ 5 秒（R-2），必须先落方案 §2 的那一片**，否则这一格**必定失败**，而失败原因**不是 bug，是没做那一片** |
-| A4 | 小王 | 也改一处（**不同的块**） | 小明那边同样收敛；两侧内容**都在**（不是覆盖）—— 这是 CRDT 的定义行为（`pageBinding.ts:190-...` `mergeRemotePageState`；S4a 判据⑯⑰，冲刺 §2） |
+| A4 | 小王 | 也改一处（**不同的块**） | 小明那边同样收敛；两侧内容**都在**（不是覆盖）—— 这是 CRDT 的定义行为（`pageBinding.ts:183` `mergeRemotePageState`；S4a 判据⑯⑰，冲刺 §2） |
 
 **A 的"做成"读数**：A2 → A3 的**墙上时间**（秒表／日志时间戳），且**接收侧全程零操作**。
 
@@ -189,8 +202,8 @@
 
 #### 场景 C：有服务端（对照，说明 R-2 在另一条路上已经接近成立）
 
-- 两台都绑了同一个同步服务 ⇒ SSE 流起来（桌面 `sync_stream.rs:314-339`；Web `useSyncStream.ts:118-125`）⇒ 服务端推一帧 ⇒ 立刻拉一次。
-- ⚠️ **但仍然不跑网格**（`useSyncStream.ts:71` 的 `pullOnce` 只调 `api.syncWorkspace`）⇒ 有服务端时"正文实时"靠的是**服务端那条路的 CRDT 状态搬运**，与网格无关。
+- 两台都绑了同一个同步服务 ⇒ SSE 流起来（桌面 `sync_stream.rs:324-348`；Web `useSyncStream.ts:118-125`）⇒ 服务端推一帧 ⇒ 立刻拉一次。
+- ⚠️ **但仍然不跑网格**（`useSyncStream.ts:54-63` 的 `pullOnce` 只调 `api.syncWorkspace`）⇒ 有服务端时"正文实时"靠的是**服务端那条路的 CRDT 状态搬运**，与网格无关。
 
 #### 场景 D（**本机可演**，用于 R-1 的机械验收）：两个库 ＋ 真环回
 
@@ -208,33 +221,33 @@
 
 | # | 事实 | 出处 |
 |---|---|---|
-| 1 | 网格是**拉取式**：`GET /mesh/pull?space_id=…&since=<发送方自己的 device_seq>&limit=…`，**没有推送侧** | `src-tauri/src/mesh.rs:251-262` `pull_from_peer` 拼的 URL；`mesh.rs:668` 路由表只认 `"GET" if path == "/mesh/pull"`；服务侧 `mesh.rs:84-107` `serve_own_records` 是 `SELECT … WHERE device_id = 我 AND device_seq > ?` |
+| 1 | 网格是**拉取式**：`GET /mesh/pull?space_id=…&since=<发送方自己的 device_seq>&limit=…`，**没有推送侧** | `src-tauri/src/mesh.rs:265-273` `pull_from_peer` 拼的 URL；`mesh.rs:682` 路由表只认 `"GET" if path == "/mesh/pull"`；服务侧 `mesh.rs:84-107` `serve_own_records` 是 `SELECT … WHERE device_id = 我 AND device_seq > ?` |
 | 2 | **游标是对端水位**（KV `mesh_cursor:<空间>:<对端>`），**只许前进** | `mesh.rs:116-141`（`cursor_key` / `peer_cursor` / `set_peer_cursor`，倒退当场报错） |
 | 3 | 网格**只服务自己产生的记录**（没有账本） | `mesh.rs:78-86` 注释逐字「这就是"没有账本"」 |
 | 4 | 网格**不发任何事件给界面** | `grep -n "emit\|AppHandle" src-tauri/src/mesh.rs` ⇒ **0 处**（本轮实测） |
-| 5 | 服务端 SSE 端点**是服务端的**：`{server}/spaces/{space_id}/changes-stream` | `src-tauri/src/sync_stream.rs:112-114`；桌面起流要 `claim_config` 解析出绑定，否则 `reason:"no-binding"`（`sync_stream.rs:331-339`） |
+| 5 | 服务端 SSE 端点**是服务端的**：`{server}/spaces/{space_id}/changes-stream` | `src-tauri/src/sync_stream.rs:122-124`；桌面起流要 `claim_config` 解析出绑定，否则 `reason:"no-binding"`（`sync_stream.rs:341-348`） |
 | 6 | ⇒ **纯局域网这一档用不上 SSE**（它连的是 `server`；没有服务端就没有中枢可代言） | 同上 ＋ [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) §5.5 末（网格不经服务端） |
 
 ### 6.2 触发频率（**这就是"实时差的那第二半"**）
 
 | # | 事实 | 出处 |
 |---|---|---|
-| 7 | 网格只在**两处**被跑：面板「同步」的 `finally`、自动同步定时器每一轮 | `src/components/SyncPanel.tsx:548-560`（＋ 注释 `:541-547`："**必须放在 finally 里**"的真机原因）；`src/App.tsx:426` |
-| 8 | 面板里那个 **5000ms** 定时器**只读读数、不拉数据** | `src/components/SyncPanel.tsx:175-188`：`tick` 只调 `api.lanStatus(activeId)` 并 `setLanStatus`；`setInterval(..., 5000)` 在 `:185`（`tick` 在 `:177`） |
-| 9 | 自动同步的间隔：`"off"` ⇒ 不挂；`"interval"` ⇒ **30 秒**；`"realtime"` ⇒ **5 分钟兜底** | `src/App.tsx:387-447`（读 `effectiveAutoSyncMs()`）＋ `src/lib/syncMode.ts:37-47` / `:100-104` |
-| 10 | 桌面那条 SSE 流**只驱动服务端那条路**，**不驱动网格** | `src/hooks/useSyncStream.ts:71`（`pullOnce` 里只有 `withSyncStatus(… api.syncWorkspace(wsId))`）＋ `:80-95`（桌面分支只调 `syncStreamStart(wsId)`） |
-| 11 | 两条路都必须过 **C2 网络闸门**（一处实现） | `src/lib/syncGate.ts:22-30`（`shouldAutoSyncNow` 在 `:26`）；调用点 `App.tsx:406-408`、`useSyncStream.ts:63-64` |
+| 7 | 网格只在**两处**被跑：面板「同步」的 `finally`、自动同步定时器每一轮 | `src/components/SyncPanel.tsx:584-612`（＋ 注释 `:588-591`："**必须放在 finally 里**"的真机原因）；`src/App.tsx:167` |
+| 8 | 面板里那个 **5000ms** 定时器**只读读数、不拉数据** | `src/components/SyncPanel.tsx:179-205`：`tick` 只调 `api.lanStatus(activeId)` 并 `setLanStatus`；`setInterval(..., 5000)` 在 `:201`（`tick` 在 `:183`） |
+| 9 | 自动同步的间隔：`"off"` ⇒ 不挂；`"interval"` ⇒ **30 秒**；`"realtime"` ⇒ **5 分钟兜底** | `src/App.tsx:508-534`（读 `effectiveAutoSyncMs()`）＋ `src/lib/syncMode.ts:106-122` / `:198-213` |
+| 10 | 桌面那条 SSE 流**只驱动服务端那条路**，**不驱动网格** | `src/hooks/useSyncStream.ts:54-63`（`pullOnce` 里只有 `withSyncStatus(… api.syncWorkspace(wsId))`）＋ `:80-95`（桌面分支只调 `syncStreamStart(wsId)`） |
+| 11 | 两条路都必须过 **C2 网络闸门**（一处实现） | `src/lib/syncGate.ts:22-30`（`shouldAutoSyncNow` 在 `:26`）；调用点 `App.tsx:149`、`useSyncStream.ts:58` |
 
 ### 6.3 血统与 claim
 
 | # | 事实 | 出处 |
 |---|---|---|
-| 12 | 四条决策分支 | `src/lib/crdt/bootstrap.ts:36-48` `decideBootstrap` |
+| 12 | 四条决策分支 | `src/lib/crdt/bootstrap.ts:37-48` `decideBootstrap` |
 | 13 | claim 端点是**服务端的**，路径**没有 `/sync` 前缀** | `src/lib/crdt/claimClient.ts:27` `LINEAGE_CLAIM_PATH = "/lineage-claim"`（＋ `:19-26` 记着"部署后探针实测 404／401"那次现场） |
 | 14 | 没有服务端／没选空间 ⇒ **连请求都不发**，回"用不了" | `src/lib/crdt/claimScope.ts:61-70` `resolveWorkspaceSyncScope`（缺任一件 ⇒ `null`） |
-| 15 | `unavailable` ⇒ **离线临时建**（离线可用性不让路） | `src/lib/crdt/bootstrap.ts:56-66` `claimVerdict` ＋ `:53-58` 的第 4 支；`pageBinding.ts:290-296` 的 `mint-provisional-offline` 与上面的注释「仍是**未裁定**的」 |
-| 16 | **S8 护栏**：两条**独立血统**拒绝合并，本机那版原样保留 ＋ 留痕 | `src/lib/crdt/pageBinding.ts:186-227`（`lineagesRelated` 判定 ＋ `recordLineageConflict` ＋ `console.warn`）；同一对纯函数也被端口版复用（`pageBinding.ts:350-372` 一带） |
-| 17 | 留痕是**页级**的，且**含对端那一版的投影快照**（否则事后无从救援，因为待并状态随后被 `clearPending` 清掉） | 表 `page_lineage_conflicts`（`src-tauri/src/lineage_conflict.rs:16-30` `PageLineageConflict` 的 `remote_doc` 注释） |
+| 15 | `unavailable` ⇒ **离线临时建**（离线可用性不让路） | `src/lib/crdt/bootstrap.ts:56-66` `claimVerdict` ＋ `:43-47` 的第 4 支；`pageBinding.ts:429-430` 的 `mint-provisional-offline` 与上面的注释「仍是**未裁定**的」 |
+| 16 | **S8 护栏**：两条**独立血统**拒绝合并，本机那版原样保留 ＋ 留痕 | `src/lib/crdt/pageBinding.ts:183-227`（`lineagesRelated` 判定 ＋ `recordLineageConflict` ＋ `console.warn`）；同一对纯函数也被端口版复用（`pageBinding.ts:350-372` 一带） |
+| 17 | 留痕是**页级**的，且**含对端那一版的投影快照**（否则事后无从救援，因为待并状态随后被 `clearPending` 清掉） | 表 `page_lineage_conflicts`（`src-tauri/src/lineage_conflict.rs:25-33` `PageLineageConflict` 的 `remote_doc` 注释） |
 | 18 | 三个裁决选项**真的会动数据**（不是"只记一笔"）：`saved-as-new` 真的建新页、`remote` 真的写回投影 ＋ 清本机状态 | `src/components/LineageConflictBanner.tsx:47-98`（`saveAsNew` `:47-62` / `adoptRemote` `:63-88` / `keepLocal` `:89-98`） |
 | 19 | Rust 侧 `resolve_lineage_conflict` **只改状态列**（真正的动作在界面那三个函数里） | `src-tauri/src/lineage_conflict.rs:159-181`（`UPDATE … SET resolved_at, resolved_choice`） |
 
@@ -244,9 +257,9 @@
 |---|---|---|
 | 20 | 本地编辑 ⇒ **当场**写 `page_crdt`（不经 outbox） | `src/editor/Editor.tsx:573-578`（`onLocalEdit ⇒ b.persist()`）＋ `pageBinding.ts:396-398`（`persist()` ＝ `port.save(pageId, session.exportState())`）＋ `src-tauri/src/commands.rs:397-400` `save_page_state` |
 | 21 | `save_page_state` **不写 `changes`**（不产 outbox 记录） | `commands.rs:396-400`：函数体只有一行 `crate::page_crdt::write_page_crdt_state(...)`（本轮逐行读过） |
-| 22 | 页面**完整保存**才产 outbox 记录，且**那一刻**才去读 `page_crdt` 挂状态 | `commands.rs:545-566`（`save_page` → `record_page_upsert`）；`sync.rs:209-238` |
-| 23 | 编辑 ⇒ `save_page` 之间有个 **600ms 去抖** | `src/App.tsx:275-308`（`debounceRef.current = window.setTimeout(` 在 `:276`）（`debounceRef` ＋ `window.setTimeout(..., 600)`）；卸载/切页会 flush（`App.tsx:333-343`） |
-| 24 | ⇒ **今天的链路**：改字 →（瞬时）`page_crdt` →（≤600ms）`changes` 里那条带 `crdt_state` →（**取决于谁跑网格**）对端拉到 | 20/21/22/23 ＋ `mesh.rs:251-262` |
+| 22 | 页面**完整保存**才产 outbox 记录，且**那一刻**才去读 `page_crdt` 挂状态 | `commands.rs:535-566`（`save_page` → `record_page_upsert`）；`sync.rs:209-238` |
+| 23 | 编辑 ⇒ `save_page` 之间有个 **600ms 去抖** | `src/App.tsx:420-431`（`debounceRef.current = window.setTimeout(` 在 `:428`）（`debounceRef` ＋ `window.setTimeout(..., 600)`）；卸载/切页会 flush（`App.tsx:457-466`） |
+| 24 | ⇒ **今天的链路**：改字 →（瞬时）`page_crdt` →（≤600ms）`changes` 里那条带 `crdt_state` →（**取决于谁跑网格**）对端拉到 | 20/21/22/23 ＋ `mesh.rs:265-273` |
 | 25 | 桌面收下对端状态进**旁路表**（按 `seq` 逐条留，上限 24），**打开页面时**才合并 | `src-tauri/src/sync.rs:274-303` `absorb_incoming_crdt_state`；`page_crdt.rs:82` `MAX_PENDING_PER_PAGE = 24`；`pageBinding.ts:336-...`（`readPending` ⇒ 先并后谈建血统） |
 | 26 | 合并／承接之后**投影也要跟上**（否则反链／FTS 要等下次保存） | `pageBinding.ts:388-400` 一带（`writeProjection`）；Rust `src-tauri/src/doc_content.rs:145-173` `write_page_projection`。⚠️ **这个函数只写 `pages` 两列 ＋ 重建块图 ＋ 打 `text_stale`，也不产 outbox 记录**（本轮逐行读过） |
 
@@ -265,7 +278,7 @@
 |---|---|---|---|
 | **D1** | 页面行里**有没有**"这一页是哪台设备创建的"这个事实 | `grep -n "created_by\|creator_device\|origin_device" src-tauri/src/db.rs src-tauri/src/commands.rs`（我这轮**没找到**任何一处；`pages` 的建表语句在 `db.rs`） | 决定 §4.3-E 可不可行 |
 | **D2** | §5.1 的 **R-2（≤5 秒）** owner 要的到底是哪一个数（"几秒"能不能接受 5–10 秒？还是要"像 Notion 那样"） | **只能问 owner**（编码里没有这个数） | 决定方案 §2 要不要做"长连接／推送"那一档（成本差一个数量级） |
-| **D3** | 纯局域网这一档**用户实际**会不会去改「同步方式」那个下拉（默认是"近实时"＝5 分钟兜底） | 无代码可查：这是产品/可用性问题。可查的部分：`syncModeHint("realtime")` 的文案（`src/lib/syncMode.ts:50-64`）现在说的是**"连着同步服务时…"** —— 它**默认没在说局域网** | 决定"什么都不做、只改文案"能不能算 A 方案的一部分 |
+| **D3** | 纯局域网这一档**用户实际**会不会去改「同步方式」那个下拉（默认是"近实时"＝5 分钟兜底） | 无代码可查：这是产品/可用性问题。可查的部分：`syncModeHint("realtime")` 的文案（`src/lib/syncMode.ts:131-135`）现在说的是**"连着同步服务时…"** —— 它**默认没在说局域网** | 决定"什么都不做、只改文案"能不能算 A 方案的一部分 |
 | **D4** | 网格窗口**收到一次 pull** 时，能不能顺手把"有人来拉过我"这件事变成界面可见的读数（"对方来过"） | 现有材料：`peer_cursor` 只写在**收侧**（`mesh.rs:120-141`）；而"被拉过"发生在**服务侧**（`serve_own_records`，`mesh.rs:84`）—— 我看不出服务侧有没有地方记它。⇒ `grep -n "window_addr\|serve\|accept" src-tauri/src/mesh.rs` 通读那一圈 | 决定"要不要把'对端已看到'做成读数"（不是本需求的必要条件，但它是"实时"的**反馈面**） |
 | **D5** | `vitest` 在本机**能不能**跑起来（本轮**没跑成**，见 §6.6 的环境读数） | `node_modules/.pnpm` 里有 `@rolldown/binding-darwin-arm64@1.2.5`，但 `dlopen` 失败（报错被截断）；bundled node 是 **v24.21.0**，`process.versions.modules = 137`。⇒ 试另一份 node（`nvm`／系统 node）或 `pnpm install --force` | 决定"本机可验"的边界：**CRDT 那一层全部判据今天在这台机上跑不了**，方案里所有 `vitest` 读数都要标"未跑" |
 | **D6** | `_workspace/criteria-mutations.json` 在**本机哪里** | `find ~/zhai -name criteria-mutations.json -not -path "*/node_modules/*"` ⇒ 本轮只找到 `/Users/shuyo/zhai/repos/shuyo-community/scripts/criteria-mutations.json`（**另一个仓**） | 决定"跑 cargo 的判据"那本账怎么写（[`docs/specs/README.md`](README.md) §每条不变式的四个字段 把它列为承重证明通道之一） |
@@ -278,8 +291,8 @@
 
 | # | 给我的描述里是这么说的 | 我核到的是 | 出处／读数 |
 |---|---|---|---|
-| 1 | 「`src-tauri/src/sync.rs:3274` 的 `pub struct LanStatus` 里只有 `peers: usize`」 | ✅ **一致**：`pub struct LanStatus {` 正好在 `:3274`，`pub peers: usize,` 在 `:3280`。**但**"只有"要补一句：还有 `enabled` / `kind` / `line` / `mesh`（`sync.rs:3275-3294`） | `sync.rs:3274-3294` |
-| 2 | 「`isDesktopPlatform()` 的源码注释在 `src/lib/platform/index.ts:31-41`」 | ❌ **行号不准**：`isDesktopPlatform` 在 **`:27-37`**（注释 `:26-35`，函数体 `:36-37`）。而 `:31-35` 那句才是"用下面那些**具体能力**函数，别拿这个当近似" | `src/lib/platform/index.ts:26-37` |
+| 1 | 「`src-tauri/src/sync.rs:3274` 的 `pub struct LanStatus` 里只有 `peers: usize`」 | ❌ **已漂**：`pub struct LanStatus {` 在 `a5c0f614` 上是 `:3483`（`daac8e1e` 之前才是 `:3274`），`pub peers: usize,` 在 `:3489`。**但**"只有"也要补一句：还有 `enabled` / `kind` / `line` / `mesh`（`sync.rs:3484-3502`） | `sync.rs:3483-3502` |
+| 2 | 「`isDesktopPlatform()` 的源码注释在 `src/lib/platform/index.ts:31-41`」 | ❌ **行号不准**（且原引的 `:31-41` 也过期）：`isDesktopPlatform` 在 `a5c0f614` 上是 **`:39-41`**（注释 `:31-38`；`isTauri()` 在 `:27-29`）。而 `:37-38` 那句才是"用下面那些**具体能力**函数，别拿这个当近似" | `src/lib/platform/index.ts:31-41` |
 | 3 | 「`S9`（实现完成、**待发版**）」 | ❌ **已过期**：**已发版**，且**发版后探针实测过**；另外路径也比 `S9` 写的短一截（`/lineage-claim`，**没有** `/sync`） | 冲刺 §11.6 的四行读数（`POST https://shuyo.cn/sync/lineage-claim -> 401`）；`claimClient.ts:19-27` |
 | 4 | 「§10.3 的 7 条缺口是**你的前置清单**」 | ❌ **§10.3 整张表已过期**（冲刺开头的**现状指针** `:9-14` 就是这么写的）。逐条实况见本文 §9 | 冲刺 §11–§16 |
 | 5 | 「桌面侧 claim（Rust `reqwest` 发同一端点）＋ 撤掉 `WEB_ONLY` 登记」 | ❌ **两件都已做完**：`claim_page_lineage` 在 `src-tauri/src/sync.rs:1903` 一带（reqwest）＋ 登记**已撤** | `scripts/check-web-commands.mjs:111-119`（`WEB_ONLY_COMMANDS` 现在只剩 **2** 条：`request_persistent_storage` / `export_wiki`，注释里逐字写着"第 41 轮撤登记"）；冲刺 §11.1 |
@@ -287,14 +300,14 @@
 | 7 | 「`S7-3` 两侧都接 ＋ 真机验收（要人手）」 | ✅ 一致（**仍未做**） | 冲刺 §11.9 第 1 条 |
 | 8 | 「Rust 成对判据执行（`STATUS_ENTRYPOINT_NOT_FOUND`）是 §10.3-⑤ 的已知环境问题」 | ❌ **在 macOS 上不成立**：本轮 `cargo test --lib` **跑起来了**（719 passed / 1 failed / 20 ignored，166s）。那个 `0xC0000139` 是**Windows** 的事，且冲刺 §11.2 已给出根因（测试 exe 没有应用清单） | 本轮实测（§6.6）＋ 冲刺 §11.2（"别再重复把 pdfium.dll 放到 target/debug 旁边那类实验"） |
 | 9 | 「yrs 对拍尖刺」列为缺口⑥ | ❌ **已做**，结论"格式层可行" | 冲刺 §11.3 ＋ [`2026-09-23-yrs-interop-spike-conclusions.md`](../plans/2026-09-23-yrs-interop-spike-conclusions.md) |
-| 10 | 「网格那一轮现在是**点「同步」时在 `finally` 里跑一次** `meshSyncNow`」 | ⚠️ **不完整**：还有**第二条**触发 —— `App.tsx` 自动同步定时器的**每一轮**（`:426`）。而**真正的**问题是这一条：**桌面 SSE 那条流不驱动网格**（`useSyncStream.ts:71`）⇒ 于是纯局域网这一档的可见延迟**等于定时器间隔**（默认 **5 分钟**，不是 30 秒） | `App.tsx:426` ＋ `useSyncStream.ts:71` ＋ `syncMode.ts:108-113` |
-| 11 | 「面板里那个 5 秒定时器只读读数」 | ✅ 一致：`:185` 的 `setInterval(…, 5000)` 只调 `api.lanStatus` | `SyncPanel.tsx:177-188` |
+| 10 | 「网格那一轮现在是**点「同步」时在 `finally` 里跑一次** `meshSyncNow`」 | ⚠️ **不完整**：还有**第二条**触发 —— `App.tsx` 自动同步定时器的**每一轮**（`:167`）。而**真正的**问题是这一条：**桌面 SSE 那条流不驱动网格**（`useSyncStream.ts:54-63`）⇒ 于是纯局域网这一档的可见延迟**等于定时器间隔**（默认 **5 分钟**，不是 30 秒） | `App.tsx:167` ＋ `useSyncStream.ts:54-63` ＋ `syncMode.ts:198-213` |
+| 11 | 「面板里那个 5 秒定时器只读读数」 | ✅ 一致（已重钉）：`:201` 的 `setInterval(…, 5000)` 只调 `api.lanStatus` | `SyncPanel.tsx:179-205` |
 | 12 | 「`sync_stream.rs`（872 行）」 | ✅ 一致：**872** 行 | `wc -l` |
 | 13 | 「`src-tauri/src/lan.rs` 的 `LanAnnounce`：`device_id`/`device_name`/`hub_base`/服务哪些空间」 | ✅ 基本一致，**字段名是 `hub_spaces`**，且**还有一个 `fp`**（`＝ device_id`，owner 2026-09-25 拍板） | `lan.rs:65-84` |
 | 14 | （冲刺 §9.1/§10.4 记的）「`test:sync-verify` 84/0」 | ⚠️ **数字过期**：本轮实测 **91 通过 / 0 失败** | 本轮实跑 `node scripts/verify-two-device-sync.mjs` |
 | 15 | （冲刺 §13.2 记的）「`check-web-commands` ⇒ Rust 244 / web 245 / CommandMap 246」 | ⚠️ **数字过期**：本轮实测 **Rust 260 / web 250 / CommandMap 262（web 专属 2）** | 本轮实跑 `node scripts/check-web-commands.mjs` |
 | 16 | （冲刺 §9.1.1 记的）「`vitest` 全量 202 文件 / 2117 条」 | ⚠️ **偏少**：`git log` 最近一笔 `2d5eebd5` 又加了四份文档；而**仓库根 `docs/specs/` 下现在是 12 个 `.md`**（含本轮新增前是 9 个）。数字别抄，跑命令 | `ls docs/specs/*.md` |
-| 17 | 未在转述里、但**必须知道**的一条 | ⚠️ **`cargo test --lib` 在本机 HEAD（`2d5eebd5`）上【不是全绿】**：`lineage_conflict::tests::resolve_accepts_the_three_literals_refuses_a_fourth_and_refuses_a_second_time` **失败**（`src-tauri/src/lineage_conflict.rs:250` panic：`"remote" 不该被接受`）。成因很清楚：`575a58c6` 把 `CHOICE_REMOTE` 放开成**合法**值，而这条判据的 `bad` 列表里还留着 `"remote"`（同一条判据后半段还有互相矛盾的断言：先 `CHOICE_LOCAL` 再断言 `CHOICE_REMOTE`）。⇒ **是既存红，不是本轮造成的**（本轮只读、`git status --short` 为空） | 本轮实跑 ＋ `git log -S "CHOICE_REMOTE" -- src-tauri/src/lineage_conflict.rs` ⇒ `575a58c6` |
+| 17 | 未在转述里、但**必须知道**的一条 | ⚠️ **`cargo test --lib` 在本机 HEAD（`2d5eebd5`）上【不是全绿】**：`lineage_conflict::tests::resolve_accepts_the_three_literals_refuses_a_fourth_and_refuses_a_second_time` **失败**（`src-tauri/src/lineage_conflict.rs:250` panic：`"remote" 不该被接受`。⚠️ **该处代码已不存在**：`d021948c` 已把 `"remote"` 从坏值表里摘掉、并去掉那句互斥断言 ⇒ 这条判据今天全绿；`:248-251` 现在留的是这次订正的注释）。成因很清楚：`575a58c6` 把 `CHOICE_REMOTE` 放开成**合法**值，而这条判据的 `bad` 列表里还留着 `"remote"`（同一条判据后半段还有互相矛盾的断言：先 `CHOICE_LOCAL` 再断言 `CHOICE_REMOTE`）。⇒ **是既存红，不是本轮造成的**（本轮只读、`git status --short` 为空） | 本轮实跑 ＋ `git log -S "CHOICE_REMOTE" -- src-tauri/src/lineage_conflict.rs` ⇒ `575a58c6` |
 
 ---
 
@@ -309,7 +322,7 @@
 | ❌ **服务端合并（S5 阶段 2）** | 冲刺 §14.2 建议**暂缓**（"能"做已证，**值不值得**是产品/隐私决策） |
 | ❌ **把 CRDT 状态塞进 `content_json`／让 Rust 认识 CRDT** | 混版本共存的底线，已由 `check-crdt-plane` 判成机器判据（`gates.mjs:105-117`） |
 | ❌ **Web 档提供多设备实时正文** | Web 没有发现层、开不了本机端口、也开不了网格窗口（[nearby-devices 需求](2026-09-29-nearby-devices-requirements.md) §4.3 第 3 条 ＋ `web.ts` 的 `lan_status` 那一支如实回不可用） |
-| ❌ **改网格门槛**（`isDesktopPlatform() && lanStatus && activeRow.space_id`） | `SyncPanel.tsx:1401` 逐字「门槛一个字没改」 |
+| ❌ **改网格门槛**（`isDesktopPlatform() && lanStatus && activeRow.space_id`） | `SyncPanel.tsx:1535` 逐字「门槛一个字没改」 |
 | ❌ **在桌面上再写一份 Yjs 合并实现** | 唯一实现是 `crdt/pageBinding.ts`（`check-crdt-plane` 判据④把它钉成"定义只许一处"）。⇒ 真要 Rust 合并，那是 **yrs**（S5 阶段 2），不是"再写一份" |
 | ❌ **多光标／在线状态／"谁在编辑哪一块"** | 那是另一条线（[`docs/realtime-collab-analysis.md`](../realtime-collab-analysis.md) §2 的"档次 A"），本文只做"改动多久可见" |
 | ❌ **换 `page_crdt_pending` 的"按 seq 逐条留"语义** | 冲刺 §13.1：服务端 pull 不回 `device_id`，不同设备的状态互相不包含 ⇒ "每页一行"是**真丢** |
@@ -355,11 +368,11 @@
 
 【上传侧：我改了，别人多久看到】  ❌ **不是实时 —— 这才是缺的那半**
    `syncWorkspace` 全仓只有 **5 个调用点**（已逐条核过）：
-     · `App.tsx:419`        自动同步定时器（按间隔）
+     · `App.tsx:159`       自动同步定时器（按间隔）
      · `SettingsDialog.tsx:784` 手动
-     · `SyncPanel.tsx:499`      手动点「同步」
+     · `SyncPanel.tsx:538`      手动点「同步」
      · `useSyncStream.ts:63`     收到 SSE 通知时 ←★ 唯一实时触发，但它是"收到通知才拉"
-     · `useSyncStream.ts:143`    同上
+     · `useSyncStream.ts:146`    同上
    ⇒ ⇒ **没有一处是「编辑器改完就调用它」**
 ```
 

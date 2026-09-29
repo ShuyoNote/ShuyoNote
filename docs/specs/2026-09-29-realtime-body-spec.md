@@ -1,5 +1,9 @@
 # 规格：正文「真实时」—— 不变式、数据形状、延迟目标与它怎么量
 
+> 行号钉在：`a5c0f614`（2026-09-29）｜核查方式：`git show a5c0f614:<path> | sed -n '<起>,<止>p'`
+> ⚠️ 本份写于 `d021948c` 之前 ⇒ 其"局域网档 5 分钟"前提已作废；
+>   **真正的缺口见 [`2026-09-29-realtime-body-requirements.md`](2026-09-29-realtime-body-requirements.md) 的 §9 补记**（上传侧缺一条线，不是缺通道）。
+>   ⚠️ 补记：那条缺的线**已经补上了**（`dfa79e1a`：编辑信号 ⇒ 防抖 400ms ⇒ 立刻上传）⇒ 下面那句「缺」也已作废。
 > 起草：macOS 侧｜**2026-09-29**｜需求见 [`2026-09-29-realtime-body-requirements.md`](2026-09-29-realtime-body-requirements.md)
 > 依据：`_workspace/AI-NATIVE-DEV.md` §5.1（规格层）＋ 本仓 [`docs/specs/README.md`](README.md)（这一层的三条"不是什么"）＋ §12（判据的判据）
 > 关联：方案 [`2026-09-29-realtime-body-approach.md`](2026-09-29-realtime-body-approach.md) · 任务 [`2026-09-29-realtime-body-tasks.md`](2026-09-29-realtime-body-tasks.md)
@@ -43,12 +47,18 @@ id          INV-RT-<短名>             稳定标识；改口径不许改 id（�
 ```text
 今天"多久能看到对端"这个数 = f(同步档位, 近实时开关, 有没有服务端, 有没有配网格, 用户点没点按钮)
 而界面上只有一个下拉（"关闭 / 按间隔 / 近实时"）＋ 一句话（syncModeHint），
-那句话只解释"连着同步服务时…"（src/lib/syncMode.ts:70-76）。
+那句话只解释"连着同步服务时…"（src/lib/syncMode.ts:131-135）。
 ```
 
-**纯局域网（owner 的场景）里**：SSE 那条路**不存在**（`sync_stream.rs:331-339`：没有绑定就不跑），
-于是"多久"**只由那个定时器的间隔决定** ⇒ 默认 **5 分钟**（`src/lib/syncMode.ts:108-113`），
+**纯局域网（owner 的场景）里**：SSE 那条路**不存在**（`sync_stream.rs:341-348`：没有绑定就不跑），
+于是"多久"**只由那个定时器的间隔决定** ⇒ 默认 **5 分钟**（`src/lib/syncMode.ts:198-213`），
 而面板上那个下拉**写着"近实时"**。
+
+> ⚠️ **2026-09-29 13:47 起已作废**（`d021948c`，比本份晚）：局域网这一档的间隔已由 owner 拍成
+> **5 秒**，实现是 `src/lib/syncMode.ts:71` 的 `PULL_INTERVAL_DEFAULT_MS = 5_000`
+> （`a5c0f614` 上还多了用户可见的三档 `PULL_INTERVALS`／`PULL_INTERVAL_KEY`）。
+> ⇒ 上面"默认 5 分钟"与"最长延迟 = 定时器间隔"这一条**不再成立**。原文保留，是留痕。
+> ⚠️ 更要紧的是：**真正的缺口不在这儿** —— 见需求 §9 补记（**上传侧缺一条线**，不是缺通道；下载侧已经实时）。
 
 > **⇒ 所以本规格的第一条不变式不是"把延迟降到 5 秒"，是"接口读数与文案不许把拉取式说成推送、
 > 不许把 5 分钟说成近实时"。** 先把这句话钉住，再谈加速 —— 否则加速之后，
@@ -61,11 +71,11 @@ id          INV-RT-<短名>             稳定标识；改口径不许改 id（�
 | id | 口径（一句话） | 判据（要立的那条） | 会红证据 ／ 褪化了会怎样 |
 |---|---|---|---|
 | **INV-RT-single-source** | **"实时"不许再造第二套状态**：正文的权威那一份仍然只有 `page_crdt` 状态（BLOB），落盘 JSON 是它的投影；**新加的触发／读数都不许各存一份"我到哪儿了"**。水位只有一处：`mesh_cursor:<空间>:<对端>` | ① **既有半边**（`check-crdt-plane`，已注册 `gates.mjs:105-117`）：`content_json` 必须是 TEXT、`page_crdt*` 的 `state` 必须是 BLOB、Rust 不许引 yjs／yrs、`mergeRemotePageState` 定义只许一处；② **要立的**：新读数里的"当前档位／上次拉到什么时候"**不许**落成第二个 KV —— 断言"新加的读数结构里没有可写字段"（只有 `#[derive(Serialize)]`，没有 `Deserialize`）＋ 文本级断言"没有新的 `set_meta_state(…)` 键" | **既有半边 ✅**（`check-crdt-plane` 在注册表里，`gates.mjs:110`）；**新半边 ❌ 无（要立）**。<br>**褪化了会怎样**：出现"两个地方各记一次我到哪儿了" ⇒ 它们会漂，而漂的时候**不炸、测试全绿**，只是用户那边"有时同步了有时没有" |
-| **INV-RT-body-not-all** | **正文与非正文不许混为一谈**：任何**用户可见的**说法都不许把"正文实时"说成"全部实时"；标题／父节点／排序／图标走 HLC ＋ 页级 LWW（`sync.rs:209-238` 只挂页 upsert；`apply_upsert` 的 `UpsertApply::{Applied, KeptLocal}`，`sync.rs:245-262`） | 文本级判据：`src/lib/syncMode.ts:50-64` 的 `syncModeHint("realtime")`（`src/lib/syncMode.ts:50-64`）与面板上那一行文案里，**要么**只谈正文，**要么**显式写出"标题等仍按页级收敛"；＋ 反例断言：把那句话改成"所有内容立刻同步"⇒ 必须红 | **❌ 无（要立）**。<br>**褪化了会怎样**：用户改标题以为对面秒到，实际对面看到旧标题（**页级 LWW 下还可能被自己的旧版赢回去**），于是"这个同步不可靠" |
+| **INV-RT-body-not-all** | **正文与非正文不许混为一谈**：任何**用户可见的**说法都不许把"正文实时"说成"全部实时"；标题／父节点／排序／图标走 HLC ＋ 页级 LWW（`sync.rs:209-238` 只挂页 upsert；`apply_upsert` 的 `UpsertApply::{Applied, KeptLocal}`，`sync.rs:251-262`） | 文本级判据：`src/lib/syncMode.ts:125-137` 的 `syncModeHint("realtime")`（`src/lib/syncMode.ts:125-137`）与面板上那一行文案里，**要么**只谈正文，**要么**显式写出"标题等仍按页级收敛"；＋ 反例断言：把那句话改成"所有内容立刻同步"⇒ 必须红 | **❌ 无（要立）**。<br>**褪化了会怎样**：用户改标题以为对面秒到，实际对面看到旧标题（**页级 LWW 下还可能被自己的旧版赢回去**），于是"这个同步不可靠" |
 | **INV-RT-guard-not-bypassed** | **血统护栏不许绕过**：两条**独立血统**在任何新路径上都不许被合；`mergeRemotePageState` 的那条判定是唯一入口，新触发不许"顺手合一下" | ① 既有判据：`src/lib/crdt/lineageGuard.test.ts`（S8 三条，冲刺 §2）；② **要立的**：新增的触发面**不许**出现第二个"合并"调用点 —— 文本级断言 `mergeRemotePageState` / `lineagesRelated` 的**定义**仍只在一处（`check-crdt-plane` 判据④已覆盖 `mergeRemotePageState`；**新增**覆盖 `lineagesRelated`） | **既有 ✅**（`check-crdt-plane` ④ ＋ `lineageGuard.test.ts`）；**要立的**那一条 ❌ 无。<br>**褪化了会怎样**：实测过的 S1 现场 —— 顶层块 `["paragraph#blk-1","paragraph#blk-1"]`（一块变两块、`blockId` 重复）⇒ **块引用／反链当场失效**（冲刺 §1 判据①） |
-| **INV-RT-pull-not-push** | **拉取式不许被说成推送**：网格是 `GET /mesh/pull`（`mesh.rs:251-262`、`:668`），读数与文案都不许暗示"对端推给我的" | 文本级判据（**要立**）：面板／文案里描述这条通道的那一句，**不许**出现"推送"这个词（除非句子同时说明了"文件里它是拉取式、我们说它是推送＝指触发频率"）；＋ 读数里"上次事件来自哪"这类字段**不许**新增（网格窗口**不发事件**：`grep emit src-tauri/src/mesh.rs` ＝ 0 处） | **❌ 无（要立）**。<br>**褪化了会怎样**：用户按"推送"的语义去理解网络行为（以为常连、以为断了会立刻知道）⇒ 排障时查错方向（先例：`docs/SYNC.md` §五 那句"这不是 WebSocket 推送，而是增量轮询"就是被这件事逼出来的订正） |
-| **INV-RT-no-server-no-lie** | **没有服务端时不许假装有**：能力探测必须按**具体能力函数**，**不许**拿 `isDesktopPlatform()` 当近似 —— 它的源码注释明确禁止（`src/lib/platform/index.ts:26-35`，逐字"要判断'某个只在桌面存在的功能'，用下面的 `emailSupported()` 这类**具体能力**函数，别拿这个当近似"） | 文本级判据（**要立**）：新增的"真实时"相关分支里，**不许**用 `isDesktopPlatform()` 判"有没有服务端／能不能推"；判定服务端的唯一入口仍是 `resolveWorkspaceSyncScope`（`src/lib/crdt/claimScope.ts:61-70`，缺任一件 ⇒ `null`）；＋ 断言 `web.ts` 的 `lan_status` 那一支继续如实回"不可用"而不是空数组（同族判据已写在 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) `INV-NEARBY-no-web-invite`） | **半条已有载体**（`isDesktopPlatform` 的"不许当近似"这条**纪律**写死在源码注释里，但**没有门禁**）；**❌ 无（要立）**。<br>**褪化了会怎样**：安卓 App 上 `isDesktopPlatform()` 也为真（`index.ts:36-37` ＝ `isTauri()`）⇒ 在手机上走进"桌面才有"的分支，行为与桌面不同但**没有任何信号** |
-| **INV-RT-cadence-honest** | **"多久"必须有一个可读出来的数**：任何"实时"的档位都必须能从**接口读数**看出"当前这一档的间隔是多少、上一次真的拉成功是什么时候" —— 不许只靠用户猜，也不许只写在文案里 | **要立的**：`lan_status` / 新读数里带上 `body_pull_interval_ms`（**有效值**，＝ `effectiveAutoSyncMs()` 同一个函数的产物）＋ `last_body_pull_at`；断言：① 读数的间隔与 `effectiveAutoSyncMs()` **同源**（不许各算一遍）；② `syncModeHint` 里承诺的那个数与读数**一致**（变异：把 `SYNC_INTERVAL_MS` 改成 10 秒而不改文案 ⇒ 必须红） | **❌ 无（要立）**。<br>**褪化了会怎样**：这正是 `src/lib/syncMode.ts:100-104` 那段注释记下的**真机实测事故**："面板显示「近实时」、承诺'退回每 5 分钟兜底一次'，而**定时器压根没挂**" ⇒ 用户以为在自动同步，其实一次都不会发生 |
+| **INV-RT-pull-not-push** | **拉取式不许被说成推送**：网格是 `GET /mesh/pull`（`mesh.rs:265-273`、`:682`），读数与文案都不许暗示"对端推给我的" | 文本级判据（**要立**）：面板／文案里描述这条通道的那一句，**不许**出现"推送"这个词（除非句子同时说明了"文件里它是拉取式、我们说它是推送＝指触发频率"）；＋ 读数里"上次事件来自哪"这类字段**不许**新增（网格窗口**不发事件**：`grep emit src-tauri/src/mesh.rs` ＝ 0 处） | **❌ 无（要立）**。<br>**褪化了会怎样**：用户按"推送"的语义去理解网络行为（以为常连、以为断了会立刻知道）⇒ 排障时查错方向（先例：`docs/SYNC.md` §五 那句"这不是 WebSocket 推送，而是增量轮询"就是被这件事逼出来的订正） |
+| **INV-RT-no-server-no-lie** | **没有服务端时不许假装有**：能力探测必须按**具体能力函数**，**不许**拿 `isDesktopPlatform()` 当近似 —— 它的源码注释明确禁止（`src/lib/platform/index.ts:37-38`，逐字"要判断'某个只在桌面存在的功能'，用下面的 `emailSupported()` 这类**具体能力**函数，别拿这个当近似"） | 文本级判据（**要立**）：新增的"真实时"相关分支里，**不许**用 `isDesktopPlatform()` 判"有没有服务端／能不能推"；判定服务端的唯一入口仍是 `resolveWorkspaceSyncScope`（`src/lib/crdt/claimScope.ts:61-70`，缺任一件 ⇒ `null`）；＋ 断言 `web.ts` 的 `lan_status` 那一支继续如实回"不可用"而不是空数组（同族判据已写在 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) `INV-NEARBY-no-web-invite`） | **半条已有载体**（`isDesktopPlatform` 的"不许当近似"这条**纪律**写死在源码注释里，但**没有门禁**）；**❌ 无（要立）**。<br>**褪化了会怎样**：安卓 App 上 `isDesktopPlatform()` 也为真（`index.ts:39-41` ＝ `isDesktopPlatform()`，体就是 `isTauri()`；`isTauri()` 在 `:27-29`）⇒ 在手机上走进"桌面才有"的分支，行为与桌面不同但**没有任何信号** |
+| **INV-RT-cadence-honest** | **"多久"必须有一个可读出来的数**：任何"实时"的档位都必须能从**接口读数**看出"当前这一档的间隔是多少、上一次真的拉成功是什么时候" —— 不许只靠用户猜，也不许只写在文案里 | **要立的**：`lan_status` / 新读数里带上 `body_pull_interval_ms`（**有效值**，＝ `effectiveAutoSyncMs()` 同一个函数的产物）＋ `last_body_pull_at`；断言：① 读数的间隔与 `effectiveAutoSyncMs()` **同源**（不许各算一遍）；② `syncModeHint` 里承诺的那个数与读数**一致**（变异：把 `SYNC_INTERVAL_MS` 改成 10 秒而不改文案 ⇒ 必须红） | **❌ 无（要立）**。<br>**褪化了会怎样**：这正是 `src/lib/syncMode.ts:163-167` 那段注释记下的**真机实测事故**："面板显示「近实时」、承诺'退回每 5 分钟兜底一次'，而**定时器压根没挂**" ⇒ 用户以为在自动同步，其实一次都不会发生 |
 
 ⚠️ **六条里有三条的形态是"不许说错话"**（文案／读数与事实一致）——
 按 `AI-NATIVE-DEV.md` §12.2，**每条"扫到 0 个时它说什么"都必须先回答**：本表每一格的"褪化了会怎样"就是那个回答（**"没有发现问题"与"没检查"不许写成同一格**）。
@@ -81,9 +91,9 @@ id          INV-RT-<短名>             稳定标识；改口径不许改 id（�
 
 [`2026-09-29-nearby-devices-spec.md`](2026-09-29-nearby-devices-spec.md) §3.2 明确说：
 
-> 「Rust 侧 `LanStatus` **没有** `#[serde(rename_all = "camelCase")]`（`sync.rs:3273` 只有 `#[derive(Serialize)]`）⇒ 现在发出去的就是 `snake_case`。… **本轮选 snake_case**（与 `LanStatus` 其余字段一致）」
+> 「Rust 侧 `LanStatus` **没有** `#[serde(rename_all = "camelCase")]`（`sync.rs:3482` 只有 `#[derive(Serialize)]`）⇒ 现在发出去的就是 `snake_case`。… **本轮选 snake_case**（与 `LanStatus` 其余字段一致）」
 
-**我核到的实况**：`LanStatus` 的 TS interface（`src/lib/platform/commands.ts:175-194`）**其余字段确实是 snake_case**（`enabled` / `peers` / `kind` / `line` / `mesh` —— 后两个正好没有大小写歧义），而**别的**结构体带 `rename_all = "camelCase"`（`MeshRoundReport` `:215`、`MeshConfigState` `:227` 对应的 Rust 侧，`mesh.rs:282` / `:299` / `:580`）。
+**我核到的实况**：`LanStatus` 的 TS interface（`src/lib/platform/commands.ts:175-194`）**其余字段确实是 snake_case**（`enabled` / `peers` / `kind` / `line` / `mesh` —— 后两个正好没有大小写歧义），而**别的**结构体带 `rename_all = "camelCase"`（`MeshRoundReport` `:270`、`MeshConfigState` `:282` 对应的 Rust 侧，`mesh.rs:296` / `:313` / `:594`）。
 
 **⇒ 本规格的口径**（**与那份一致，不另立**）：
 
@@ -103,7 +113,7 @@ id          INV-RT-<短名>             稳定标识；改口径不许改 id（�
 // 为什么不在 `LanStatus` 上加字段：
 //   `LanStatus` 是**发现层**的读数（谁在线、走哪档），而"正文多久能到"是**同步触发面**的读数。
 //   两者的消费点不同（前者给"附近设备"那块，后者给"同步方式"那一行的说明），
-//   塞进同一个结构体会让 `lan_status` 的每一次 5 秒轮询（SyncPanel.tsx:185）
+//   塞进同一个结构体会让 `lan_status` 的每一次 5 秒轮询（SyncPanel.tsx:201）
 //   都多算一遍与发现层无关的东西。⚠️ 这是**建议**，不是纪律 —— 若实现者选"加在 LanStatus 上"，
 //   必须同时满足 §3.1 的 snake_case 口径，并且**不许**因此让 `peers` / `kind` / `line` 的读数改变
 //   （反向保护先例：分片 ③-b-2a 的"没配 ⇒ 一个字节都不动"）。
@@ -129,7 +139,7 @@ pub struct BodyRealtimeStatus {
     /// 有没有服务端那条路（决定 SSE 能不能起来）。**这不是能力判定的近似** ——
     /// 它就是 `resolveWorkspaceSyncScope` 那份解析的结果。
     pub server_bound: bool,
-    /// 网格这一档开着吗（`mesh::settings().bind.is_some()`，`mesh.rs:597` 的口径）。
+    /// 网格这一档开着吗（`mesh::settings().bind.is_some()`，`mesh.rs:611` 的口径）。
     pub mesh_enabled: bool,
     /// ★ **人话那一句**（由 Rust 拼好，界面直接显示 —— 同 `mesh::config_state` 的 `note` 口径）。
     /// 必须**同时**说清"多久一次"与"哪一档"，且**不许**把拉取式说成推送（INV-RT-pull-not-push）。
@@ -142,12 +152,12 @@ pub struct BodyRealtimeStatus {
 ```rust
 /// 「只跑网格那一轮」—— 当传输路线的选择是"轮询"时，需要一个**不碰服务端**的触发器。
 ///
-/// ⚠️ 它**不新建合并路径**：内部只调既有的 `mesh::round`（`mesh.rs:403`，或它的后半
-/// `round_candidates`，`mesh.rs:441`）。⇒ 与 `mesh_sync_now`（`sync.rs:3056`）的差别**只有一件**：
+/// ⚠️ 它**不新建合并路径**：内部只调既有的 `mesh::round`（`mesh.rs:417`，或它的后半
+/// `round_candidates`，`mesh.rs:455`）。⇒ 与 `mesh_sync_now`（`sync.rs:3056`）的差别**只有一件**：
 /// 「服务端那条不跑」。这正是纯局域网那一档要的。
 ///
 /// 为什么必须放在 Rust：`mesh_sync_now` 自己带"没配网格 ⇒ 一个字节都不动"的早退
-/// （`App.tsx:375-376` 的注释逐字："这条 gate **只在 Rust 侧**…前端**不重复判一遍**"）
+/// （`App.tsx:496-497` 的注释逐字："这条 gate **只在 Rust 侧**…前端**不重复判一遍**"）
 /// ⇒ 前端再写一遍这个判断就是第二份真相源。
 #[tauri::command]
 pub async fn mesh_sync_only(
@@ -155,7 +165,7 @@ pub async fn mesh_sync_only(
     workspace_id: Option<String>,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
     // 与 `mesh_sync_now` 同一套三步（认空间 / 取设置与对端 / 开窗 ＋ 拉一轮），
-    // **不调用**服务端那条路。实现时**必须复用** `mesh_scope`（`sync.rs:3121-3136`）
+    // **不调用**服务端那条路。实现时**必须复用** `mesh_scope`（`sync.rs:3336`）
     // 与 `mesh::round`，不许抄一份。
     todo!("实现见方案 §2 的片 T3")
 }
@@ -166,8 +176,8 @@ pub async fn mesh_sync_only(
 | 路线 | 要不要新命令 | 要不要动协议 | 形状代价 |
 |---|---|---|---|
 | **轮询**（把网格那一轮按更短的间隔跑） | **要**（§3.3 的 `mesh_sync_only`，或者接受"把服务端那条也一起跑"＝更贵） | ❌ **零协议** | 一个命令 ＋ 一处定时器；**代价**是"间隔 × 对端数"的请求量（如实写进方案 §4） |
-| **长连接／推送** | 要（新通道的起停 ＋ 状态，形状同 `sync_stream_*` 三条，`commands.ts:629-631`） | ✅ **要**（局域网里没有现成端点可订；见方案 §3） | 一个 SSE／WS 客户端 ＋ 退避重连 ＋ 状态读数 —— **与 `sync_stream.rs` 872 行同量级** |
-| **复用既有 SSE** | **不要**（命令已有，`sync_stream_start` 在 `sync_stream.rs:314`） | ❌ 零协议 | ⚠️ **纯局域网用不上**：它订的是 `{server}/spaces/{id}/changes-stream`（`sync_stream.rs:112-114`），而局域网里**没有服务端**（需求 §6.1 第 5/6 条）⇒ **这一条只服务"有服务端"那一档，不能解决 owner 的场景** |
+| **长连接／推送** | 要（新通道的起停 ＋ 状态，形状同 `sync_stream_*` 三条，`commands.ts:684-686`） | ✅ **要**（局域网里没有现成端点可订；见方案 §3） | 一个 SSE／WS 客户端 ＋ 退避重连 ＋ 状态读数 —— **与 `sync_stream.rs` 872 行同量级** |
+| **复用既有 SSE** | **不要**（命令已有，`sync_stream_start` 在 `sync_stream.rs:324`） | ❌ 零协议 | ⚠️ **纯局域网用不上**：它订的是 `{server}/spaces/{id}/changes-stream`（`sync_stream.rs:122-124`），而局域网里**没有服务端**（需求 §6.1 第 5/6 条）⇒ **这一条只服务"有服务端"那一档，不能解决 owner 的场景** |
 
 ### 3.5 TypeScript（`src/lib/platform/commands.ts`；三处必须一致）
 
@@ -197,7 +207,7 @@ export interface BodyRealtimeStatus {
 
 ### 3.6 「事件」这一维：**本轮不新增事件**（写下来免得被"顺手加"）
 
-- 桌面已有的流事件是 `sync-stream-change`（`useSyncStream.ts:25` `STREAM_EVENT`），**服务端那条路的**；
+- 桌面已有的流事件是 `sync-stream-change`（`useSyncStream.ts:30` `STREAM_EVENT`），**服务端那条路的**；
 - 网格窗口**不发事件**（`grep -n "emit\|AppHandle" src-tauri/src/mesh.rs` ⇒ **0 处**，本轮实测）；
 - ⇒ 任何"网格推来一个事件 ⇒ 界面立刻刷新"的写法**今天不存在**；要加就是**新增一条通道**（方案 §3 的长连接那一档），
   不是"复用一下"。
@@ -205,7 +215,7 @@ export interface BodyRealtimeStatus {
 ### 3.7 数据形状的**边界**（写下来免得后人"顺手"扩张）
 
 - ❌ **不加 `peer_device` / 对端名进了读数**：那会把"附近设备"那张表变成第二份（[`nearby-devices-spec`](2026-09-29-nearby-devices-spec.md) §1 那条"列表只能有一处来源"）。
-- ❌ **不加 `last_error`**：退避与错误属 `sync_stream.rs` 的 `StreamStatus`（`commands.ts:153-165`）；正文这一档的失败是**普通的同步失败**，走既有的 `withSyncStatus` ＋ 状态行（`App.tsx:413-416`、`useSyncStream.ts:70-78`）。
+- ❌ **不加 `last_error`**：退避与错误属 `sync_stream.rs` 的 `StreamStatus`（`commands.ts:153-165`）；正文这一档的失败是**普通的同步失败**，走既有的 `withSyncStatus` ＋ 状态行（`App.tsx:154-161`、`useSyncStream.ts:54-63`）。
 - ❌ **不加"延迟毫秒数"这种自报字段**：那是**读数**，该由判据量出来（§4），不该由程序自报（自报的数没有第三方）。
 
 ---
@@ -223,14 +233,14 @@ export interface BodyRealtimeStatus {
 
 ```text
 ① 本地编辑 → 状态落盘 page_crdt                （今天：立即；Editor.tsx:573-578）
-② 状态落盘 → outbox changes 里有一条带 crdt_state（今天：≤ 600ms 的去抖 ＋ 一次 save_page；App.tsx:308）
-③ outbox → 对端真的合并进来                     （今天：取决于谁跑网格；mesh.rs:251-262 的单次拉取耗时）
+② 状态落盘 → outbox changes 里有一条带 crdt_state（今天：≤ 600ms 的去抖 ＋ 一次 save_page；App.tsx:431）
+③ outbox → 对端真的合并进来                     （今天：取决于谁跑网格；mesh.rs:265-273 的单次拉取耗时）
 ```
 
 **段①的判据形状**（`vitest`，`src/lib/crdt/` 下）：夹具编辑器改一次 ⇒ 断言**在同一个 tick 之后**（不 await 定时器）`readPageState` 已经非 `null` 且能 `decodeCrdtWire` 解出 `ok`。
 **★ 变异**：把 `Editor.tsx:573` 的 `b.session.onLocalEdit(...)` 整段注掉 ⇒ 段① 必须红（这是 S3b-2e 那条"打字⇒刷新⇒字还在"的**上游**，先例：去掉 `onLocalEdit` 订阅 ⇒ 浏览器门禁恰好一条红，冲刺 §2 的 S3b-2e 行）。
 
-**段②的判据形状**（`cargo test --lib`，`src-tauri/src/sync.rs` 的 `tests`）：起一个内存库 ⇒ `record_page_upsert` 一页 ⇒ 断言 `changes` 里那一行的 payload **含 `crdt_state`**（既有判据 `record_page_upsert_attaches_crdt_state_only_when_present`，`sync.rs:4948-4985` 已在做这件事）。
+**段②的判据形状**（`cargo test --lib`，`src-tauri/src/sync.rs` 的 `tests`）：起一个内存库 ⇒ `record_page_upsert` 一页 ⇒ 断言 `changes` 里那一行的 payload **含 `crdt_state`**（既有判据 `record_page_upsert_attaches_crdt_state_only_when_present`，`sync.rs:5291-5333` 已在做这件事）。
 **★ 要补的是"时机"那半**：断言"`save_page_state` **之后**、`record_page_upsert` **之前**，`changes` 里那一页的 payload 仍是**旧状态**" ⇒ 把这条时序**本身**钉成事实（它今天是**真**的，见需求 §6.4 第 21 条）。**变异**：在 `save_page_state` 里顺手加一句 `record_page_upsert` ⇒ 这条判据红（**红了是对的**：那说明"改字 → outbox"之间不再需要 600ms，而那时这条时序判据就该**按新口径重写**，不是删掉 —— [`README.md`](README.md) 的铁律）。
 
 **段③的判据形状**（`cargo test --lib mesh::`，**已成先例**）：
@@ -298,7 +308,7 @@ export interface BodyRealtimeStatus {
 - ❌ **分片顺序、每片改哪些文件、每条判据的变异证据** —— 在方案 [`2026-09-29-realtime-body-approach.md`](2026-09-29-realtime-body-approach.md) §2。
 - ❌ **每条任务的写域** —— 在任务 [`2026-09-29-realtime-body-tasks.md`](2026-09-29-realtime-body-tasks.md)。
 - ❌ **为什么 owner 要这件事、他的场景原文** —— 在需求 §1（本文件只引用它的结论）。
-- ❌ **`LanStatus` 既有五字段的口径** —— 逐字写在 `sync.rs:3274-3294` 与 `commands.ts:166-194`，**本文件不重写**（重写就是第二份真相源）。
+- ❌ **`LanStatus` 既有五字段的口径** —— 逐字写在 `sync.rs:3483-3502` 与 `commands.ts:166-194`，**本文件不重写**（重写就是第二份真相源）。
 - ❌ **`page_crdt` / `page_crdt_pending` 的表结构** —— 在 `db.rs` 与 `src-tauri/src/page_crdt.rs`（＋ 混版本共存那份规格）。
 - ❌ **"没有服务端时首写者怎么办"那七个方案的取舍** —— 在需求 §4.3／§4.4（本文件只管"不变式不许被它绕过"）。
 
