@@ -49,7 +49,7 @@ import { Editor } from "./editor/Editor";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
-import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "./lib/syncMode";
+import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
@@ -718,6 +718,37 @@ function AppShell() {
   useSyncStream();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
   useSyncProgress();
+  // ★ 2026-09-29：**开机就把「局域网这一档开着吗」读一次**。
+  //
+  // ⚠️ 位置很要紧：它**必须在 `AppShell` 里**，不能放在 `NoteEditor` 里 ——
+  //    第一次我插进了 `NoteEditor`（那个组件只有【打开某一页】才挂载），于是
+  //    "改了没生效"、而且**它的表现与"没插"完全一样**（这一点值得记：
+  //    组件摆错位置时，代码在、但你永远看不到它跑）。
+  // 为什么必须有这一步（否则是鸡生蛋）：自动定时器的间隔由 `effectiveAutoSyncMs()` 定，
+  // 而它要看"局域网档开着吗"；那个状态原本只由**同步面板**轮询时喂进来
+  // ⇒ 用户上次开了网格、这次【没打开面板】⇒ 间隔停在 5 分钟，
+  //    而要靠定时器把它读出来得先等 5 分钟 ⇒ **永远轮不到**。
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const wsId = await api.getActiveWorkspaceId();
+        const st = await api.lanStatus(wsId ?? undefined);
+        // 用 `mesh.enabled`（＝ Rust 的 `cfg.bind.is_some()`）的**结论**，
+        // 不按地址形状自己再判一次档（判据 ⑭ 钉的是后者）。
+        if (alive) setLanMeshActive(!!st?.mesh?.enabled);
+      } catch (e) {
+        // 读不到（命令没注册 / 老构建 / 还没绑空间）⇒ **维持默认（5 分钟）**。
+        // ⚠️ 不装成"没开网格"，也不静默改成 5 秒 —— 读不到就是读不到。
+        // ⚠️⚠️ 但要**留痕**：第一版这里是空 `catch {}`，于是"根本没调到 lanStatus"
+        //     被静默吞掉，表现成"改了没生效"（正是本仓那条"不许静默"的又一次踩）。
+        console.warn("[sync] 开机读 lan_status 失败 ⇒ 局域网档仍按 5 分钟兜底", e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   const isMobile = useMobile();
   // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
