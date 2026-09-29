@@ -71,7 +71,8 @@
 | `{att_base}/attachments` | `sync.rs:2600` | 附件才有 |
 | `{}/lineage-claim` | `sync.rs:1627` | CRDT 血统 claim 才有 |
 | `{}/spaces/{}/keyring` | `sync.rs:1725` | 钥匙袋（与 B 片有交集，见那张单） |
-| `{url}/spaces` ／ `{url}/spaces/{space_id}/members` | `sync.rs:1039` / `1093` | 绑定与成员 |
+> ⚠️ **2026-09-29 追改**：**这一行已作废** —— `{}/spaces/{}/keyring` 那条（客户端侧）**已整条删除**（`851c1a7b`）。
+> ⇒ 今天客户端**不再有**任何经服务器搬钥匙袋的调用。| `{url}/spaces` ／ `{url}/spaces/{space_id}/members` | `sync.rs:1039` / `1093` | 绑定与成员 |
 | `{}/spaces/{}/presence` ／ `{}/spaces/{}/online` | `sync.rs:3263` / `3275` | 否（在线态） |
 | `{}/spaces/{}/pages/{}/comments` | `sync.rs:3284` | 否（评论） |
 | `{server}/auth/register` ／ `{server}/push` ／ `{server}/spaces` | `sync_stream.rs:775` / `832` / `787` | 注册/绑定那一步 |
