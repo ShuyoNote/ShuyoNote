@@ -50,7 +50,8 @@
       "check-sys-deps",
       "check-versions",
       "check-web-commands",
-      "check-workflow-yaml"
+      "check-workflow-yaml",
+      "check-crdt-snapshot-contract"
     ],
     "smoke": [
       "smoke-web",

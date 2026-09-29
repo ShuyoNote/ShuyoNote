@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 60 条（contract 36 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 260 / web 250 / CommandMap 262
+门禁 61 条（contract 37 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 260 / web 250 / CommandMap 262
 基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -72,6 +72,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-changelog-numbers` | 发版说明里的断言数被手抄漂移：**最新一段**里"套件名 + 数字"一对一绑定时必须等于基线（历史段落不碰；多套件/多数字/带 `历史`·`豁免` 的行跳过——宁可不判，也不误报） |
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
+| contract | `check-crdt-snapshot-contract` | **CRDT 加密快照的服务端接口契约退化**：E2EE 加密快照的协议可行性已验（尖刺 13/0 ✓），但实现落在**另一个仓** ⇒ 契约若只存在散文里，最易退化的恰是三条**不可逆**规则——① 服务端开始解析密文快照（个人空间"服务端在数学上无法解密"名存实亡）② **先退役旧 blob、后落快照**（不可逆丢数据）③ `snapshotSeq` 由必填变可选（退役范围不明 ⇒ 静默丢数据）。本门禁把三条路由与三条承重规则钉在 `scripts/lib/crdt-snapshot-contract.mjs`，夹具退化即红 |
 | contract | `check-ontology-generated` | **本体表与能力注册表不一致**（生成物被手改／注册表改了没重新生成）—— 来由：2026-09-28 MCP 规格把 `isWrite: true` 当判据，而该字段在原始 JSON 里**出现 0 次** ✗（真实字段是 `kind`）⇒ 本体只能生成、并逐字节卡漂移 |
 | contract | `check-agent-surface` | **工具面（生成物）与注册表不一致** ／ **只读面里出现写能力** ／ **描述里写进内部标识**（工具面＝对外暴露面） ／ **能力面超出笔记域**（`ai:true` 的能力不许是库外／host／全局 —— R43：库权限 ≠ 仓库权限）。来由：注册表 `ai:true` 实测 10 条（read 8 / write 2），而规格曾把写判定写成查不存在的 `isWrite` ✗ |
 | contract | `check-audit-shape` | **审计形状坏了**：写审计的文件不止一个（漏记 ✗）／条目里出现内容类字段（审计变成第二份内容副本 ✗）／出现 `UPDATE`／`DELETE`（不再只增 ✗）。纯读 Rust 源码 ⇒ **不需要 cargo** ✓ |

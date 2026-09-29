@@ -79,6 +79,18 @@ export const GATES = [
   },
   { id: "check-web-commands", group: "contract", label: "命令契约（web/桌面两侧）", cmd: "node scripts/check-web-commands.mjs" },
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
+  {
+    id: "check-crdt-snapshot-contract",
+    group: "contract",
+    label: "CRDT 加密快照的服务端接口契约（三条路由 ＋ 承重规则不许退化）",
+    cmd: "node scripts/check-crdt-snapshot-contract.mjs",
+    incident:
+      "2026-09-29 CRDT 盘点：E2EE 加密快照的协议可行性已验（尖刺 13/0），但服务端接口那一半只有散文施工单 ✗，"
+      + "而实现落在另一个仓 ⇒ 契约一旦只存在口头/散文里，最易退化的恰是三条**不可逆**规则："
+      + "① 服务端开始解析密文快照 ⇒ 个人空间\"服务端在数学上无法解密\"名存实亡；"
+      + "② 先退役旧 blob、后落快照 ⇒ 不可逆丢数据；③ snapshotSeq 由必填变可选 ⇒ 退役范围不明（静默丢数据）。"
+      + "本门禁把这三条钉在代码里：服务端实现时**契约先红再绿** ✓",
+  },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
   {
     id: "check-ontology-generated",
