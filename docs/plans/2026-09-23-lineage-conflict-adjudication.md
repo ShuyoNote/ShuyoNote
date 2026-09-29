@@ -18,7 +18,7 @@
 > 相关：[S1 实测红线](2026-09-23-crdt-full-launch-sprint.md) §1（"一块变两块"）、
 > [阶段 1 裁决与留痕](2026-09-22-block-rev-write-layer.md)。
 
-> 状态：**已实现**（留痕 ＋ 另存为新页，第 49 轮；**血统裁决**那一半未做 ✗）。 证据：`../../src/components/LineageConflictBanner.tsx`
+> 状态：**已实现**（三条选项齐，2026-09-29：留痕 ＋ 另存为新页 ＋ **采用对端那一版**；后者按 owner 裁定＝写回对端正文 ＋ **清本机 CRDT 状态** ＋ 裁决记 `remote` ✓）。 证据：`../../src/components/LineageConflictBanner.test.ts`
 
 ## 1. 为什么要"裁决"，而不是"再合一次"
 
