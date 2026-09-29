@@ -22837,4 +22837,80 @@ body.is-plugin-panel-open .main {
   font-size: 12px;
   color: var(--text-dim);
 }
+/* ── 第三块：分区上的「生成这一页」按钮 ＋ 草稿区（**未落库**的东西要一眼看出来 ✓） ── */
+.ai-libmap-sec-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-libmap-gen {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ai-libmap-gen:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ai-libmap-draft {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px dashed var(--border, #3a3a3a);
+  border-radius: 8px;
+}
+.ai-libmap-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ai-libmap-draft-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--warning, #b7791f);
+  color: var(--warning, #b7791f);
+}
+.ai-libmap-draft-drop {
+  margin-left: auto;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.ai-libmap-draft-body {
+  white-space: pre-wrap;
+  font-family: inherit;
+  margin: 0 0 6px;
+}
+.ai-libmap-draft-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ai-libmap-draft-warn {
+  color: var(--warning, #b7791f);
+}
+.ai-libmap-draft-footer {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.ai-libmap-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ai-libmap-note.ai-warn {
+  color: var(--danger, #c0392b);
+}
 

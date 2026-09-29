@@ -13,6 +13,7 @@ import { flushSync } from "react-dom";
 
 import { LibraryMapView } from "./LibraryMapView";
 import { buildLibraryMap } from "../lib/ai/libraryMap";
+import type { TopicDraft } from "../lib/ai/topicDraft";
 import type { CoverageGap, CoverageReport } from "../lib/extract/coverageReport";
 
 function report(over: { gaps?: CoverageGap[]; stale?: number | null } = {}): CoverageReport {
@@ -108,5 +109,88 @@ describe("库地图视图", () => {
     expect(tones.has("missing")).toBe(true);
     expect(tones.has("unknown")).toBe(true);
     expect(host!.textContent).toContain("不生成正文");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 第三块（按需单页）在**界面**这一半的判据。
+// 这一层要钉的是"读者不会误以为库被改了"：草稿区必须自称「草稿，未落库」＋ 带页脚「派生，非出处」；
+// 且覆盖度**没有读数时不许显示成 0**（与上面那条同源的成对口径 ✓）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+function draftOf(over: Partial<TopicDraft> = {}): TopicDraft {
+  return {
+    title: "专题",
+    body: "[[同步总览]] 同步靠变更日志。",
+    refs: ["[[同步总览]]"],
+    droppedInventedRefs: 0,
+    droppedUnreferenced: 0,
+    coverage: "覆盖度：3/9",
+    footer: "派生，非出处 ｜ 模型：Qwen3:8B ｜ 生成于：2026-09-29T02:00:00.000Z",
+    model: "Qwen3:8B",
+    generatedAt: "2026-09-29T02:00:00.000Z",
+    materialCount: 2,
+    calledModel: true,
+    ...over,
+  };
+}
+
+function mountWith(props: Partial<Parameters<typeof LibraryMapView>[0]> = {}, r: CoverageReport = report()) {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  flushSync(() => root!.render(<LibraryMapView map={buildLibraryMap(r)} {...props} />));
+  return host;
+}
+
+describe("库地图视图 · 第三块（生成这一页）", () => {
+  it("给了 onGenerate ⇒ 每个分区都有「生成这一页」，点击回调带上**那个分区**", () => {
+    const seen: string[] = [];
+    mountWith({ onGenerate: (s) => seen.push(s.key) });
+    // ⚠️ 不要写死分区 key（它是 `buildLibraryMap` 定的，不是我这个测试定的）—— 取第一个按钮即可 ✓
+    const btn = host!.querySelector("[data-gen]") as HTMLButtonElement | null;
+    expect(btn).toBeTruthy();
+    expect(btn!.getAttribute("data-gen")).toBeTruthy();
+    expect(btn!.textContent).toContain("生成这一页");
+    flushSync(() => btn!.click());
+    expect(seen).toEqual([btn!.getAttribute("data-gen")]);
+  });
+
+  it("没给 onGenerate ⇒ **没有**按钮（不接线就不出现，免得点了没反应 ✓）", () => {
+    mountWith({});
+    expect(host!.querySelector("[data-gen]")).toBeNull();
+  });
+
+  it("★ 草稿区必须自称「草稿，未落库」＋ 带页脚「派生，非出处」＋ 回链", () => {
+    mountWith({ draft: draftOf() });
+    const d = host!.querySelector('[data-testid="topic-draft"]')!;
+    expect(d).toBeTruthy();
+    expect(host!.querySelector('[data-testid="draft-badge"]')!.textContent).toContain("草稿，未落库");
+    expect(host!.querySelector('[data-testid="draft-footer"]')!.textContent).toContain("派生，非出处");
+    expect(host!.querySelector('[data-testid="draft-refs"]')!.textContent).toContain("[[同步总览]]");
+    expect(host!.textContent).toContain("同步靠变更日志");
+  });
+
+  it("★ 覆盖度：没有读数 ⇒ 画「未知」且**不出现 0/**；有读数 ⇒ 画 3/9 且不出现「未知」（成对）", () => {
+    mountWith({ draft: draftOf({ coverage: "覆盖度：未知" }) });
+    const unknown = host!.querySelector('[data-testid="draft-coverage"]')!;
+    expect(unknown.textContent).toContain("未知");
+    expect(unknown.textContent).not.toContain("0/");
+    flushSync(() => root!.unmount());
+    host!.remove();
+    mountWith({ draft: draftOf({ coverage: "覆盖度：3/9" }) });
+    const known = host!.querySelector('[data-testid="draft-coverage"]')!;
+    expect(known.textContent).toBe("覆盖度：3/9");
+    expect(known.textContent).not.toContain("未知");
+  });
+
+  it("丢了编造的回链 ⇒ 界面上要说出来（不是只有数据层知道 ✓）", () => {
+    mountWith({ draft: draftOf({ droppedInventedRefs: 2 }) });
+    expect(host!.querySelector('[data-testid="draft-dropped"]')!.textContent).toContain("2");
+  });
+
+  it("没给 draft ⇒ 不出现草稿区（默认什么都不显示 ✓）", () => {
+    mountWith({});
+    expect(host!.querySelector('[data-testid="topic-draft"]')).toBeNull();
   });
 });
