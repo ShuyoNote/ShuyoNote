@@ -6,9 +6,10 @@
 //     （S1 红线：硬合 ⇒ 顶层块变成两份、`blockId` 重复）⇒ 真实选项只有三条：
 //     **① 留本机 ② 用对端 ③ 两个都要（一页变两页）**，而**只有 ③ 不丢数据**。
 //
-// 所以这条横幅只给两个按钮：**「另存为新页」**（＝③ 的第一步，把对端那一版落成一个真页面）
-// 与**「保留本机」**（＝① 的显式确认：我知道了，别管它）。②"用对端"（本机这版让位）还没做 ——
-// 它要动本机血统的取舍，见 [方案稿](../../docs/plans/2026-09-23-lineage-conflict-adjudication.md) §4。
+// 所以这条横幅给**三个**按钮（2026-09-29 owner 裁定补齐第三个 ✓）：**「保留本机」**（＝① 的显式确认）、
+// **「采用对端那一版」**（＝② 本机让位：写回对端正文 ＋ **清本机 CRDT 状态** ＋ 裁决记 `remote` ✓）、
+// 与**「另存为新页」**（＝③ 的第一步，把对端那一版落成一个真页面）。
+// 语义细节见 [方案稿](../../docs/plans/2026-09-23-lineage-conflict-adjudication.md) §4。
 //
 // 刷新时机与 `ConflictBanner` **同两处**：① 挂载/换页（`refresh` 跟着 `pageId` 变）；
 // ② 一次同步结束（`syncing` 变回 false）——**不做轮询**（页级冲突只在打开页面/拉取时才可能出现）。
@@ -62,6 +63,31 @@ export function LineageConflictBanner({ pageId }: { pageId: string }) {
     }
   };
 
+  /**
+   * ★ ②「采用对端那一版」：**本机这版让位**（裁决记 `remote`）—— owner 2026-09-29 裁定要做 ✓。
+   *
+   * 三步（顺序要紧 ✓）：
+   *   ① 把**对端那版正文**写回本页（走既有的 `writePageProjection` ✓ —— 界面不碰列名 ✓）
+   *   ② **清掉本机该页的 CRDT 状态**（写成空状态 ⇒ 本机没有独立血统可主张 ✓）
+   *      —— owner 裁定「**清**」✓：不清的话下一次合并会**把用户的选择静默撤销** ✗
+   *      ⚠️ **不可逆**：本机那份可合并的编辑历史就此没了 ✓（横幅按钮本身就是显式选择 ✓）
+   *   ③ 记裁决 `remote`（Rust 侧已收这个值 ✓）
+   */
+  const adoptRemote = async () => {
+    try {
+      const json = row.remote_doc;
+      // ⭐ 走**既有**通道（`api.ts` 的 `writePageProjection` ＝ `invoke("write_page_projection")` ✓）：
+      //    它就是 `projectionWriteBack` 那套"把投影写回落盘那一列"的入口 ✓ ⇒
+      //    界面文件**不碰列名**（列名只许出现在文档内容层 ✓），所以也不需要新助手 ✓
+      await api.writePageProjection(pageId, json);
+      await api.savePageState(pageId, new Uint8Array());
+      await api.resolveLineageConflict(row.id, "remote");
+      toast(t("lineage.adopted"), "success");
+      refresh();
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  };
   /** ①「保留本机」：本页不动，只是**别再打扰我**（裁决记 `local`）。 */
   const keepLocal = async () => {
     try {
@@ -81,6 +107,9 @@ export function LineageConflictBanner({ pageId }: { pageId: string }) {
       <div className="conflict-item-actions">
         <button className="conflict-btn" onClick={() => void keepLocal()}>
           {t("lineage.keepLocal")}
+        </button>
+        <button className="conflict-btn" onClick={() => void adoptRemote()}>
+          {t("lineage.adoptRemote")}
         </button>
         <button className="conflict-btn conflict-btn-primary" onClick={() => void saveAsNew()}>
           {t("lineage.savedAsNew")}
