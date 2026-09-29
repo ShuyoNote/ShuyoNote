@@ -1749,6 +1749,14 @@ select.sync-input {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* ⚠️ 2026-09-29（D3）：`INV-UI-copy-inline-separators` —— `.sync-att-name` 与 `.sync-hint`
+   都是 `<span>`、都**没写 display** ⇒ 两个 inline 挨着跑，渲染成
+   「只在 Wi-Fi 下自动同步关掉后蜂窝网络也会自动同步…」（名字与提示黏在一起，owner 截图里能看到）。
+   ⇒ 让 `name` 在 `.sync-att-text` 里成为**块**：提示自然落到下一行，就有了分隔。
+   ⚠️ 只加这一条，不动 `.sync-att-name` 本身的字号/颜色（那是别的块共用的）。 */
+.sync-att-text > .sync-att-name {
+  display: block;
+}
 .sync-att-name {
   font-size: 11px;
   font-weight: 600;
