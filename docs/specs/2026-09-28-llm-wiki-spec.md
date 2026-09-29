@@ -3,7 +3,9 @@
 > ⚠️ **AMD 侧草稿（未落在任何仓）** ｜ 2026-09-28 ｜ 需求见 [`2026-09-28-llm-wiki-requirements.md`](2026-09-28-llm-wiki-requirements.md)
 > 依据：`_workspace/AI-NATIVE-DEV.md` §5.1（规格层）＋ 本仓 `docs/specs/README.md`（三条"不是什么" ＋ 收录条件三条）
 > ⚠️ **本层的第一优先级不是"多一份文档"，是"每条不变式都得有一条会红的判据"。**
-> 本文件 §1 三条不变式的**第四列全部是 `❌ 无`** ⇒ 按 `docs/specs/README.md` 的铁律，**它们现在不进 `INVARIANTS.md`**。
+> 本文件 §1 三条不变式的**「看过它红」已成立**（2026-09-29，读数逐条在表里）—— 但**仍未进 `INVARIANTS.md`**：
+> 本仓那一层收的是**门禁**（注册在 `gates.mjs`），而这三条的载体是 **vitest 测试**（`check-gate-manifest` 判据 D3 的"测试形态渠道"）
+> ⇒ **形态待裁**（见 §1 末那句），不是"缺证据" ✗。
 > 本文件的作用是把"要立哪条判据、怎么证明它会红"写成**可执行的前置条件**，而不是让读者以为它们已被守住。
 
 ## 0. 字段口径（与 `INVARIANTS.md` 同形；**口径逐字引真源**，不在此重写）
@@ -17,23 +19,27 @@ id          INV-WIKI-<短名>    稳定标识；改口径不许改 id（改 id =
 
 **载体原则**：优先挂在**已有**载体上（`docs/specs/README.md` 的"不是第二个真相源" ＋ 与 `CHECKLISTS.md` A24 同类的口径），**不新建第二份载体**。
 
-## 1. 三条不变式（第四列如实写 `❌ 无`）
+## 1. 三条不变式（第四列：**2026-09-29 起三条都有「看过它红」的证据**）
 
 | id | 口径 | 判据（载体 ＋ 注入方式） | 会红证据 |
 |---|---|---|---|
-| `INV-WIKI-provenance` | wiki 页的每条结论都能指回库内来源（**回链全部来自输入**） | `src/lib/ai/libraryMap.test.ts`（`sources` 必须是输入里出现过的 id ＋ **截断必须说出来**）＋ 真模型现场：`scripts/measure-wiki-cost.mjs` 的 `[n]` 越界检查 ⇒ **均在分支 `feat/llm-wiki-map` 上** | ❌ 无 |
-| `INV-WIKI-coverage-visible` | wiki 页必须显式表达覆盖度；**没有读数 → 写"未知"，不许留空** | 纯函数层 `src/lib/ai/libraryMap.test.ts`（`null` ⇒ `tone=unknown`、`coverageComplete=false`；不是数字也按未知）＋ **渲染级** `src/components/LibraryMapView.test.tsx`（成对断言：`null` ⇒ 画「未知」且不出现 0 ／ `0` ⇒ 画 0 且不出现「未知」） | ❌ 无 |
-| `INV-WIKI-readonly-default` | 生成动作**不改任何 `pages` 行** | `src/lib/ai/libraryMap.test.ts`（深冻结输入仍能跑完 ＋ 两次调用结果深相等 ＋ 静态断言"不 import `api`/`platform`/`store`"）。⚠️ **目前只覆盖"地图与视图不改数据"**；"生成层不改 `pages`"要等第三块才有载体 | ❌ 无 |
+| `INV-WIKI-provenance` | wiki 页的每条结论都能指回库内来源（**回链全部来自输入**） | `src/lib/ai/libraryMap.test.ts`（`sources` 必须是输入里出现过的 id ＋ **截断必须说出来**）＋ 真模型现场：`scripts/measure-wiki-cost.mjs` 的 `[n]` 越界检查 ⇒ **均在分支 `feat/llm-wiki-map` 上** | ✅ **有**（2026-09-29）：`node scripts/mutate-wiki-invariants.mjs` ⇒ 控制组 exit 0 ／ 变异组（回链里混进 `ghost-source`）exit 1，红的用例逐字＝`每个 sources 都必须在输入里出现过（不许拼、不许猜）`；跑完逐字节还原 ✓ |
+| `INV-WIKI-coverage-visible` | wiki 页必须显式表达覆盖度；**没有读数 → 写"未知"，不许留空** | 纯函数层 `src/lib/ai/libraryMap.test.ts`（`null` ⇒ `tone=unknown`、`coverageComplete=false`；不是数字也按未知）＋ **渲染级** `src/components/LibraryMapView.test.tsx`（成对断言：`null` ⇒ 画「未知」且不出现 0 ／ `0` ⇒ 画 0 且不出现「未知」） | ✅ **有**（2026-09-29）：同一脚本 ⇒ 变异组（把「未知」画成 `0`）exit 1，红的用例逐字＝`★ 没读数（null）⇒ 画成「未知」，且这一项里不出现 0` ✓ |
+| `INV-WIKI-readonly-default` | 生成动作**不改任何 `pages` 行** | `src/lib/ai/libraryMap.test.ts`（深冻结输入仍能跑完 ＋ 两次调用结果深相等 ＋ 静态断言"不 import `api`/`platform`/`store`"）。⚠️ **目前只覆盖"地图与视图不改数据"**；"生成层不改 `pages`"要等第三块才有载体 | ✅ **有**（2026-09-29）：同一脚本 ⇒ 变异组（生成时偷偷 `report.pages.indexed = 0`）exit 1，红的用例逐字＝`输入被深冻结也能跑完…` ＋ `调用前后输入逐字段未变（快照比对）` ✓ |
 
 **三条都满足准入条件③（证据能原地重做）**：都是**纯函数 ＋ 夹具**（vitest 直接喂输入），
-不需要真机、不需要平台、不需要网络 ✓ —— **只差①②**（判据本身 ＋ "看过它红"）。落地顺序见 §3。
+不需要真机、不需要平台、不需要网络 ✓；**② 也已成立**（2026-09-29，见上表：变异的注入点、红的用例名、还原都逐字可核）。
 
-> ⭐ **2026-09-28 补两条**（都只改这一节，不动第四列）：
-> ① **判据已经存在**：上面三条的载体已按第 2 步实现并跑绿（**在分支 `feat/llm-wiki-map` 上**，未合 dev）；
-> ② `INV-WIKI-provenance` 拿到了第一次**真模型**现场观察 —— 98.8 GB 本机模型的量测里它引用的 `[n]`
->    最大号 **2 / 8 / 10**，**都没超过输入段数**（读数见需求 §8.1）。
-> ⚠️ 但**绿读数 ≠ 会红证据**：第四列仍是 `❌ 无` —— 要进 `INVARIANTS.md`，
-> 还需要"把输入改坏 ⇒ 它必须红"的那一次（配方在 §2）＋"证据能原地重做"的注入方式。
+> ⭐ **2026-09-29 更新（这一节的状态变了，逐条如实说）**：
+> ① **判据已存在**（`src/lib/ai/libraryMap.test.ts` 13 条 ＋ `src/components/LibraryMapView.test.tsx` 5 条 ＋
+>    面板那条集成判据），跑绿 ✓ —— 都在分支 `feat/llm-wiki-map` 上（未合 dev）；
+> ② **「看过它红」已成立**：三条各一次，读数见上表；**注入方式也进了仓**
+>    （`scripts/mutate-wiki-invariants.mjs`，零依赖、可在任何机器原地重做 ✓）；
+> ③ `INV-WIKI-provenance` 另有第一次**真模型现场**观察（`[n]` 最大 2/8/10 均未越界，读数见需求 §8.1）；
+> ④ ⚠️ **但仍未进 `INVARIANTS.md`** —— 理由变了：不再是"缺证据"，而是**载体形态**问题：
+>    本仓那一层收的是**门禁**（`scripts/check-*.mjs`，注册在 `gates.mjs`），
+>    而这三条的判据是 **vitest 测试**（属 `check-gate-manifest` 判据 D3 的"测试形态渠道"）。
+>    ⇒ 请裁一句：**测试形态的判据能不能进 `INVARIANTS.md`**（能 ⇒ 我按四字段补三行；不能 ⇒ 它们留在本表，证据仍记在仓内脚本里 ✓）。
 
 ## 2. 怎么弄红（每条的具体负例；这是准入条件②的配方）
 
