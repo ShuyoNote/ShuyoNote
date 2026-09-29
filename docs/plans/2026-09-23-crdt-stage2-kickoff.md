@@ -5,6 +5,8 @@
 > 阶段 1 的落地记录：[块版本写层](2026-09-22-block-rev-write-layer.md)。
 > 触发：owner 2026-09-23「冲刺 crdt」。
 
+> 状态：**在飞**（Slice A 已落地；前置②③⑤、服务端语义、E2EE 加密快照未完成 ✗）。 证据：`../../src/lib/crdt/yDocBridge.test.ts`
+
 ## 1. 状态校正：阶段 1 **已经落地**（不是"待收口"）
 
 `docs/roadmap.md` §3.5 与 `SHUYONOTE_STATE.md` 里那句「阶段 1 的写回与冲突提示收口」是**旧的**；

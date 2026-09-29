@@ -11,6 +11,8 @@
 > 尖刺边界：[CRDT 尖刺结论](2026-09-19-crdt-spike-conclusions.md)。
 > ⚠️ 本片**仍不碰服务端、不碰 wire 协议、不碰插件契约**（那三样是 §4 面 2/5/6，属后面的片）。
 
+> 状态：**已收口**（本片产物 `VITE_CRDT_PLANE` 已于第 47 轮撤出）。 证据：`./2026-09-23-crdt-plane-boundary-decision.md`
+
 ## 0. 一句话
 
 Slice A 只证明了"JSON ⇄ ydoc 转换是保真的"；Slice B 要回答的是**这条路怎么接到产品上而不同时改变两件事**：
