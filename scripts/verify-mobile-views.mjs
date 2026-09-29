@@ -1463,8 +1463,10 @@ function vsBaseline(key, value) {
   return { allowed, tail, base };
 }
 
-// ── 同步面板：常驻 chrome ＋ 桌面不滚 ─────────────────────────────────────────
+// ── 同步面板：常驻 chrome ＋ 桌面「允许滚动，但只许不增」──────────────────────
 // 对应 `docs/specs/2026-09-28-sync-panel-density-spec.md` §2 的第 2、3 条不变式。
+// ⚠️ 第 3 条（`desktop-no-scroll`）的**语义在 2026-09-29 深夜被 owner 改了**
+//    —— 见 `assertDesktopNoScroll` 上面那段与规格 §12.2（旧口径"要滚 0px"已作废）。
 //
 // ⚠️ 两条都**必须先声明壳**（§2 第 1 条 `INV-UI-sync-panel-shell-matrix`）：
 //    同一个 390×844，Web 与 Tauri 手机是**两块不同的面板** ⇒ 判语里都带 `壳=${APP_SHELL}`。
@@ -1544,27 +1546,49 @@ function assertPersistentChrome(m, vp) {
 
 /**
  * `INV-UI-sync-panel-desktop-no-scroll`（规格 §2 第 3 条）
- * 口径：**Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`）。
+ *
+ * ⚠️ **2026-09-29 深夜 owner 裁定改了这条的语义**（规格 §12.2）：
+ *   · **旧口径**（作废）："桌面版内容一屏装下、**要滚 0px**"（`scrollHeight ≤ clientHeight`）。
+ *     它**不再成立、也不该再要求成立** —— 面板里已经有 8 行可折叠内容 ＋「附近设备」，
+ *     1280×800 下装不下是**正常的**（裁定当天实测：Tauri 壳开态要滚 **141px**）。
+ *   · **新口径**：**「要滚多少」记成基线，只许不增**（沿用本仓"只减不增"那套机制）。
+ *   ⚠️ 基线必须在**注入 Tauri 的壳**里量 —— web 壳里那三行**根本不渲染**（§12.3：
+ *      `isDesktopPlatform()` 为假 ⇒ `lan_status` effect 早退 ⇒ `lanStatus` 恒 `null`），
+ *      拿 web 的 558/558 当基线是**假的**。
+ *   ⚠️ 「允许滚」**不等于**「允许够不到」 ⇒ 这条必须与
+ *      `INV-UI-sync-panel-scroll-reachable`（滚到底够不够得到）**两条一起跑**。
  */
 function assertDesktopNoScroll(m, vp) {
   if (!m) {
-    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 桌面不滚这条【没验过】，按 fail 记`);
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 「要滚多少」这条【没验过】，按 fail 记`);
     return;
   }
+  const need = Math.max(0, m.need);
   const key = `desktop-no-scroll|${APP_SHELL}|${vp.name}`;
-  recordForBaseline(key, Math.max(0, m.need));
-  const { allowed, tail } = vsBaseline(key, Math.max(0, m.need));
+  recordForBaseline(key, need);
+  const { allowed } = vsBaseline(key, need);
+  const base = baselineFor(key);
+  // ⚠️ 报语**必须跟着判据一起改**（规格 §12.2）—— 旧那句"不该滚（scrollHeight ≤ clientHeight）"
+  //    在新语义下是**自相矛盾**的（一边说"不该滚"、一边打印"允许滚 56px"）。
+  //    这里也不用 `vsBaseline` 那条共用尾巴：它写的是"已知**红**基线"，而这条的基线
+  //    是**裁定后允许的**量，不是"还没修的红"。
+  const tail =
+    base === 0
+      ? "（基线 0 ＝ 这一壳 × 视口一屏装得下；要滚 > 0 即超标）"
+      : `（基线 ${base}px ＝ 2026-09-29 裁定「允许滚动」时在**注入 Tauri 的壳**里实测的值；只许不增` +
+        `，改小了请 --update-views-baseline 收紧）`;
   ok(
     allowed,
-    `[壳=${APP_SHELL}] ${vp.name} 同步面板不该滚（scrollHeight ${m.scrollH} ≤ clientHeight ${m.clientH}；` +
-      `要滚 ${m.need}px；常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
+    `[壳=${APP_SHELL}] ${vp.name} 桌面版**允许滚动**（owner 2026-09-29 裁定），` +
+      `但"要滚多少"只许不增：要滚 ${need}px（scrollHeight ${m.scrollH} / clientHeight ${m.clientH}；` +
+      `常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
   );
-  if (Math.max(0, m.need) < baselineFor(key)) {
-    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${Math.max(0, m.need)}`);
+  if (need < base) {
+    console.log(`  · 可收紧基线：${key} ${base} → ${need}`);
   }
 }
 
-/** 把同步面板那两条的**当前**读数写成基线（`--update-views-baseline`）。
+/** 把同步面板那几条的**当前**读数写成基线（`--update-views-baseline`）。
  *  与 `check-store-subscriptions --update-baseline` / `check-copy-discipline --update-baseline` 同形。
  *  ⚠️ 只在**读数走的是预期方向**时才该收紧（修好了才收）；脚本不做判断，由人负责。 */
 const VIEWS_BASELINE_SEEN = {};
@@ -2221,9 +2245,9 @@ async function main() {  const executablePath = findChrome();
     await shot(desk, `${DESKTOP.name}-pdf-reader`);
     await deskCtx.close();
 
-    // ---------- 同步面板：桌面不滚（规格 §2 第 3 条）----------
+    // ---------- 同步面板：桌面「允许滚动，但只许不增」（规格 §2 第 3 条 ⇒ §12.2 改语义）----------
     {
-      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：桌面不滚（壳=${APP_SHELL}）】`);
+      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：允许滚动但只许不增（壳=${APP_SHELL}）】`);
       const sctx = await browser.createBrowserContext();
       const spage = await sctx.newPage();
       await pinAppLanguage(spage);

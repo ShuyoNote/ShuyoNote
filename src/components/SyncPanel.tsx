@@ -965,6 +965,23 @@ export function SyncPanel() {
   const receivedInvites = inviteRows.filter((i) => i.direction === "received");
   const sentTo = (deviceId: string) =>
     inviteRows.some((i) => i.direction === "sent" && i.device_id === deviceId);
+  /**
+   * ★ 2026-09-29（规格 §12.1）：「附近设备」那一行的**摘要**（默认折叠 ＝ 只显示这一格）。
+   *
+   * 四态一处判定（**不要再在别处各判一半**）：
+   *   · 这一层读不到（老 Rust 构建）／局域网那条没开 ⇒ 如实说「看不到这一层」——
+   *     **不是**"网段里没人"（空数组与"不可用"长得一样、含义相反）；
+   *   · 开着但一台都没发现 ⇒ 「**正在找…**」——⚠️ **永不**说"0 台"：
+   *     那会被读成"没有设备"，而真相是"还没找到"（看不见 ≠ 不存在，需求 §4.4）；
+   *   · 发现了 N 台 ⇒ 「**N 台**」。
+   *     ⚠️ **有设备但一台都不可邀请，这里照样报台数** —— "能不能邀请"是点开之后
+   *     每台各说各的（那几句如实文案在行体里），不是摘要这一格的事。
+   */
+  const nearbySummary = !nearbyReadable || !lanStatus?.enabled
+    ? "看不到这一层"
+    : nearby.length === 0
+      ? "正在找…"
+      : `${nearby.length} 台`;
   // 我这边的空间名（邀请那一颗按钮上要写出来：**不许只写「邀请」**——用户不知道邀请什么）。
   const mySpaceName = activeRow?.name?.trim() || "这个空间";
   /**
@@ -1603,82 +1620,94 @@ export function SyncPanel() {
                   {/* ⑥ 附近设备（丙档需求 §4.1 的那一块）。
                       ★ 门槛：**与父项同一个 `lanDirectOn`** —— 局域网直连关着 ⇒ 不显示（"没开就不会去发现"）。
                       ⚠️ 列表**只有一处来源**（`lanStatus.nearby`，与 `peers` 同一次读数）；
-                         行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。 */}
+                         行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。
+                      ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
+                         （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
+                         摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行与邀请按钮
+                         **点开才显示**。⚠️ 没开局域网直连时整块**不出现**（不是灰掉，§9.3）。 */}
                   {lanDirectOn && (
-                    <div className="sync-nearby">
-                      <div className="sync-nearby-title">附近设备</div>
-                      {/* 三种处境三句话（规格 §4 的表）：
-                          ① 这一层不可用／读不到列表 ⇒ "看不到这一层"（**不是**"网段里没人"）；
-                          ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
-                          ③ 有设备 ⇒ 每台一行。 */}
-                      {!nearbyReadable || !lanStatus.enabled ? (
-                        <div className="sync-hint">同网段的设备：这台机器上看不到这一层</div>
-                      ) : nearby.length === 0 ? (
-                        <div className="sync-hint">还没发现别的设备… 正在找</div>
-                      ) : (
-                        nearby.map((p) => (
-                          <div className="sync-nearby-row" key={p.device_id}>
-                            {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
-                                （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
-                            <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
-                            <span className="sync-hint">{nearbySecondColumn(p)}</span>
-                            {p.invitable ? (
-                              sentTo(p.device_id) ? (
-                                // 观测不到"对方接受了"（规格 §5.3 不做回执）⇒ 只说已发出。
-                                <span className="sync-hint">已发出邀请 · 等对方接受</span>
-                              ) : (
-                                <button
-                                  className="sync-btn ghost"
-                                  disabled={inviteBusy !== ""}
-                                  onClick={() => void sendInvite(p.device_id)}
-                                  title="邀请这一台把当前这个空间同步过去（不用抄任何字符串）"
-                                >
-                                  邀请加入「{mySpaceName}」
-                                </button>
-                              )
-                            ) : p.serves_current ? (
-                              // 看得见但拉不到：**如实说为什么**，而且**不给**一个点了会失败的按钮。
-                              <span className="sync-hint">它没报可以直连的地址</span>
-                            ) : null}
-                          </div>
-                        ))
-                      )}
-                      {/* 收到的邀请：**单独一段**（它要用户动一下手，与"附近有谁"不是一件事）。
-                          文案写出**两个名字**（本地那个 ＋ 对方那句话里的空间名）——
-                          ⚠️ 对方的组织空间 **id 不显示**（`INV-UI-copy-no-internal-ids`；规格 §6 待查 R4
-                          本轮不替它下结论 ⇒ 用发起方自己写的那句 `note`）。 */}
-                      {receivedInvites.map((inv) => (
-                        <div className="sync-nearby-row is-invite" key={`inv-${inv.device_id}`}>
-                          <span className="sync-nearby-name">{inv.device_name || "这台设备没报名字"}</span>
-                          <span className="sync-hint">{inv.note || "它邀请你加入一个空间"}</span>
-                          <button
-                            className="sync-btn primary"
-                            disabled={inviteBusy !== ""}
-                            onClick={() => void acceptInvite(inv.device_id)}
-                            title={`接受后：把本地的「${mySpaceName}」接到对方那个空间上`}
-                          >
-                            接受
-                          </button>
+                    <details className="sync-row">
+                      <summary>
+                        <span className="sync-row-label">附近设备</span>
+                        <span className="sync-row-value">{nearbySummary}</span>
+                        <span className="sync-row-caret" aria-hidden>›</span>
+                      </summary>
+                      <div className="sync-row-body">
+                        <div className="sync-nearby">
+                          {/* 三种处境三句话（规格 §4 的表）：
+                              ① 这一层不可用／读不到列表 ⇒ "看不到这一层"（**不是**"网段里没人"）；
+                              ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
+                              ③ 有设备 ⇒ 每台一行。 */}
+                          {!nearbyReadable || !lanStatus.enabled ? (
+                            <div className="sync-hint">同网段的设备：这台机器上看不到这一层</div>
+                          ) : nearby.length === 0 ? (
+                            <div className="sync-hint">还没发现别的设备… 正在找</div>
+                          ) : (
+                            nearby.map((p) => (
+                              <div className="sync-nearby-row" key={p.device_id}>
+                                {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
+                                    （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
+                                <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
+                                <span className="sync-hint">{nearbySecondColumn(p)}</span>
+                                {p.invitable ? (
+                                  sentTo(p.device_id) ? (
+                                    // 观测不到"对方接受了"（规格 §5.3 不做回执）⇒ 只说已发出。
+                                    <span className="sync-hint">已发出邀请 · 等对方接受</span>
+                                  ) : (
+                                    <button
+                                      className="sync-btn ghost"
+                                      disabled={inviteBusy !== ""}
+                                      onClick={() => void sendInvite(p.device_id)}
+                                      title="邀请这一台把当前这个空间同步过去（不用抄任何字符串）"
+                                    >
+                                      邀请加入「{mySpaceName}」
+                                    </button>
+                                  )
+                                ) : p.serves_current ? (
+                                  // 看得见但拉不到：**如实说为什么**，而且**不给**一个点了会失败的按钮。
+                                  <span className="sync-hint">它没报可以直连的地址</span>
+                                ) : null}
+                              </div>
+                            ))
+                          )}
+                          {/* 收到的邀请：**单独一段**（它要用户动一下手，与"附近有谁"不是一件事）。
+                              文案写出**两个名字**（本地那个 ＋ 对方那句话里的空间名）——
+                              ⚠️ 对方的组织空间 **id 不显示**（`INV-UI-copy-no-internal-ids`；规格 §6 待查 R4
+                              本轮不替它下结论 ⇒ 用发起方自己写的那句 `note`）。 */}
+                          {receivedInvites.map((inv) => (
+                            <div className="sync-nearby-row is-invite" key={`inv-${inv.device_id}`}>
+                              <span className="sync-nearby-name">{inv.device_name || "这台设备没报名字"}</span>
+                              <span className="sync-hint">{inv.note || "它邀请你加入一个空间"}</span>
+                              <button
+                                className="sync-btn primary"
+                                disabled={inviteBusy !== ""}
+                                onClick={() => void acceptInvite(inv.device_id)}
+                                title={`接受后：把本地的「${mySpaceName}」接到对方那个空间上`}
+                              >
+                                接受
+                              </button>
+                            </div>
+                          ))}
+                          {receivedInvites.length > 0 && (
+                            <div className="sync-hint">
+                              接受后会把本地的「{mySpaceName}」接到对方那个空间上（对方的组织空间 id 不显示）。
+                              {/* 邀请**没有时效**（规格 §5.3 本轮不做时效）：这一句是安全属性，必须说出来。 */}
+                              邀请没有有效期，什么时候接受都行。
+                            </div>
+                          )}
+                          {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：
+                              ⚠️ **不写数字** —— 常量是 30s（`lan_state.rs:138`），而真机读数记的是 ≈45 秒
+                                 （`2026-09-24-lan-p2p-topology-decision.md` §18）⇒ 两处不一致，
+                                 文案**不替它下结论**（需求 §7 待查 D2），只说"要等一轮"。 */}
+                          {lanStatus.enabled && nearby.length === 0 && (
+                            <div className="sync-web-note is-inline" role="note">
+                              <span>【注意】第一轮广播要约等一轮才认全</span>
+                              <span>（这期间这里写「正在找…」）</span>
+                            </div>
+                          )}
                         </div>
-                      ))}
-                      {receivedInvites.length > 0 && (
-                        <div className="sync-hint">
-                          接受后会把本地的「{mySpaceName}」接到对方那个空间上（对方的组织空间 id 不显示）。
-                          {/* 邀请**没有时效**（规格 §5.3 本轮不做时效）：这一句是安全属性，必须说出来。 */}
-                          邀请没有有效期，什么时候接受都行。
-                        </div>
-                      )}
-                      {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：
-                          ⚠️ **不写数字** —— 常量是 30s（`lan_state.rs:138`），而真机读数记的是 ≈45 秒
-                             （`2026-09-24-lan-p2p-topology-decision.md` §18）⇒ 两处不一致，
-                             文案**不替它下结论**（需求 §7 待查 D2），只说"要等一轮"。 */}
-                      {lanStatus.enabled && nearby.length === 0 && (
-                        <div className="sync-web-note is-inline" role="note">
-                          <span>【注意】第一轮广播要约等一轮才认全</span>
-                          <span>（这期间这里写「正在找…」）</span>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    </details>
                   )}
                 </>
               )}
