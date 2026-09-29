@@ -93,6 +93,18 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-locked-loud",
+    group: "contract",
+    label: "锁定 ⇒ 大声失败（稳定错误码 space_locked；不许映射成空）",
+    cmd: "node scripts/check-locked-loud.mjs",
+    incident:
+      "加密空间未解锁时，若把错误吞掉、返回空结果，用户看到的是「没内容」而真相是「你还没解锁」✗" +
+      "—— 他会以为数据丢了、去翻备份、去重装。实现其实早就有（plugins.rs:1386 映射成 space_locked，注释原话：" +
+      "「插件调用不能成为绕过启动锁的通路」，并有单测 locked_space_maps_to_a_stable_error_code ✓）⇒" +
+      "本判据不发明新规矩，只把「映射点 ＋ 稳定码 ＋ 不映射成空 ＋ 有单测」钉成机器可核（纯读源码 ⇒ 不需要 cargo ✓）",
+    registered: "2026-09-29",
+  },
+  {
     id: "check-derived-provenance",
     group: "contract",
     label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",
