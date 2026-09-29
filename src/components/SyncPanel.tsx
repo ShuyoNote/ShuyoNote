@@ -924,7 +924,12 @@ export function SyncPanel() {
     .join(" · ");
   const heroRoute =
     lanStatus?.kind === "lan"
-      ? `这一轮走的是：局域网 · 本网段 ${lanStatus.peers} 台可用`
+      ? lanStatus.peers === 0
+        ? // ★ 2026-09-29（owner 裁定「修」）：与摘要**同一口径** ——
+          //   一个对端都没发现时**不说"本网段 0 台可用"**（那会被读成"没有"），
+          //   而真相是"还没找到"（看不见 ≠ 不存在，规格 §12.1 ／ 需求 §4.4）。
+          "这一轮走的是：局域网 · 正在找同网段的设备…"
+        : `这一轮走的是：局域网 · 本网段 ${lanStatus.peers} 台可用`
       : lanStatus?.kind === "configured"
         ? "这一轮走的是：服务器"
         : "这一轮走的是：还没绑同步";
@@ -977,11 +982,17 @@ export function SyncPanel() {
    *     ⚠️ **有设备但一台都不可邀请，这里照样报台数** —— "能不能邀请"是点开之后
    *     每台各说各的（那几句如实文案在行体里），不是摘要这一格的事。
    */
-  const nearbySummary = !nearbyReadable || !lanStatus?.enabled
-    ? "看不到这一层"
-    : nearby.length === 0
-      ? "正在找…"
-      : `${nearby.length} 台`;
+  const nearbySummary =
+    (!nearbyReadable || !lanStatus?.enabled
+      ? "看不到这一层"
+      : nearby.length === 0
+        ? "正在找…"
+        : `${nearby.length} 台`) +
+    // ★ 2026-09-29（owner 裁定「修」）：**收到的邀请要顶到摘要上** ——
+    //   它在行体里 ⇒ 不点开就看不见；而邀请是**一次性的**，被折叠挡住就等于错过。
+    //   ⚠️ 没有邀请时**不写这一节**（"`· 0 条邀请`"是噪声，与上面"永不说 0 台"同一条精神）；
+    //   ⚠️ 只写**条数**，不写设备名／`device_id`（`INV-UI-copy-no-internal-ids`）。
+    (receivedInvites.length > 0 ? ` · ${receivedInvites.length} 条邀请` : "");
   // 我这边的空间名（邀请那一颗按钮上要写出来：**不许只写「邀请」**——用户不知道邀请什么）。
   const mySpaceName = activeRow?.name?.trim() || "这个空间";
   /**

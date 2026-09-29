@@ -1388,13 +1388,6 @@ html[data-platform="win"] .app-body {
 
 /* 「附近设备」那一块：一块**区域标题** ＋ 每台一行（＋ 收到的邀请 ＋ 那句代价说明）。 */
 .sync-nearby { display: flex; flex-direction: column; gap: 8px; }
-.sync-nearby-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-  margin-left: 2px;
-}
 /* 一台设备那一行：名字（可缩）＋ 第二列说明（可缩）＋ 右侧动作（不可缩）。
    ⚠️ `flex-wrap` 是必须的：`邀请加入「<空间名>」` 在 320px 宽的面板里放不下 ——
       不换行就会把那一行**撑出面板**（而"越界"正是 mobile-views 那条门禁在量的东西）。 */
