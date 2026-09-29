@@ -46,6 +46,36 @@
   · ⚠️ **Tailscale**：它**也能改**地址段，但**我没核实具体做法** ⇒ **本节不写它的步骤**（不编）
 ```
 
+**⇒ ⭐⭐ 而 Tailscale 那条我核到了，结论**比预想的更硬**（2026-09-29 补）**
+```text
+来源：Tailscale 官方 [Choose your own IP](https://tailscale.com/blog/choose-your-ip)（2023-12）
+  · 它确实能自定义，走的是 **tailnet policy file** 里的 `nodeAttrs[].ipPool`：
+    ```json
+    { "nodeAttrs": [
+        { "target": ["autogroup:admin"], "ipPool": ["100.81.0.0/16"] },
+        { "target": ["group:dev"],      "ipPool": ["100.85.0.0/16"] } ] }
+    ```
+  ⇒ ⚠️⚠️ **而关键是它的范围**：官方原文 ——
+    「let you define the IP pool that your nodes are assigned from **the CGNAT range**」
+    ⇒ ⇒ **也就是：Tailscale 只能在 `100.64.0.0/10`【里面】挑子段，不能改成 `10.x`！**
+⇒ ⇒ ⇒ 🎯 **所以 Tailscale【无法】绕到 `10.x`** —— 而我们的 `is_lan_only` 只认
+   loopback／private／link-local ⇒ **它无论怎么配，地址都在 `100.64/10` 里 ⇒ 都过不了我们的尺**。
+```
+
+**⇒ ⇒ 于是两者的差别是【能不能绕开】，而答案相反：**
+| | 能否绕开我们的 `is_lan_only` | 依据 |
+|---|---|---|
+| **NetBird** | ✅ **能** —— `Network Range` 可改成 `10.100.0.0/16`（允许 `10.x`） | 官方 Network Settings 文档 |
+| **Tailscale** | ❌ **不能** —— `ipPool` **只能从 `100.64/10` 里选** | 官方 Choose your own IP |
+⇒ ⇒ ⇒ ⭐ **所以"放行 CGNAT"（`VL-1`）对 Tailscale 用户是【必须的】，而对 NetBird 用户有替代路。**
+
+⚠️ **两点保留（不夸大）**：
+```text
+· 那篇博客是 **2023-12** 的，且当时把 `ipPool` 标为 **beta** ⇒ **今天的形态可能已变**（我没查 changelog）
+· 所以 `VL-3` 的文案里对 Tailscale 要写「**据其官方文档（2023-12），只能在 CGNAT 段内选**
+  ⇒ 你若知道别的办法，以实测为准」—— **不许写成"Tailscale 一定不行"**
+```
+
 **⇒ ⇒ 所以 `VL-3` 的文案要写清三句：**
 ```text
 ① **可用网段**：`10.x` ／ `172.16–31.x` ／ `192.168.x` ／ `169.254.x`（＋ 放行 CGNAT 后的 `100.64/10`）
