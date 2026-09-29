@@ -93,6 +93,17 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-invariants-pointers",
+    group: "contract",
+    label: "规格说能跑的不变式，必须点到存在且已注册的判据",
+    cmd: "node scripts/check-invariants-pointers.mjs",
+    incident:
+      "规格表里写「今天能跑吗 = **能**（`check-xxx`）」是对人下的承诺 ✓。但文档与代码会各自漂移：" +
+      "判据被改名／被删／被摘出注册表之后，规格还在说「能跑」✗，读规格的人就以为有承重渠道 ✓ ——" +
+      "与「文档说能、其实没人跑」同族。本判据只管两件：**判据文件存在** ＋ **它已注册进 gates.mjs**（否则不进 verify/CI）✓",
+    registered: "2026-09-29",
+  },
+  {
     id: "check-locked-loud",
     group: "contract",
     label: "锁定 ⇒ 大声失败（稳定错误码 space_locked；不许映射成空）",

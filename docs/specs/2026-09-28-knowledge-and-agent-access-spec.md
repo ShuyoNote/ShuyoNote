@@ -37,7 +37,7 @@
 | **INV-KB-audit-subject** | **审计能区分「人／插件／外部 Agent」三类主体** | ⚠️ **与 `INV-MCP-single-authz` 相关**，但"主体标识"是**新增**的（不在其内 ✓） | 把主体字段写死成一类 ⇒ 红 ✓ | **待立**（前置未定） | Rust/CI |
 | **INV-KB-single-semantics** | **外部经桥与 App 内走同一校验点、同一过滤语义**（软删／工作空间／`content_json` 收口） | ⚠️ **归属 `INV-MCP-single-authz`**（不在本表重复 ✗） | 让桥自己写一遍过滤（少一个软删条件）⇒ 红 ✓ | 待立 | 本机 Node ＋ Rust |
 | **INV-KB-derived-rebuildable** | **索引／wiki／地图都是派生物，可重建** | 删索引 ⇒ 功能不降级（只是慢）；重建后**同一查询同结果集** | 让索引成为唯一真相（删了就查不到）⇒ 红 ✓ | **部分**（"可重建"半边能跑：`check-generated-artifacts`；"删索引不降级"顺延 Phase 1 ✗） | 本机 Node |
-| **INV-KB-citation-stale** | **生成物每条断言带回链；源一改即标脏；页脚写「派生，非出处」** | 三条各一机检：回链可达 ／ 源 sha 变 ⇒ 页面标脏 ／ 页脚串存在 | 改一个源文件不标脏 ⇒ 红 ✓ | 待立 | 本机 Node |
+| **INV-KB-citation-stale** | **生成物每条断言带回链；源一改即标脏；页脚写「派生，非出处」** | 三条各一机检：回链可达 ／ 源 sha 变 ⇒ 页面标脏 ／ 页脚串存在 | 改一个源文件不标脏 ⇒ 红 ✓ | **部分能**（"回链可达" ⇒ `check-wiki-freshness` ✓；"源一改即标脏" ⇒ `check-wiki-freshness` ＋ `check-generated-artifacts` ✓；**"生成物每条断言都带回链"的逐条那半仍待立** ✗） | 本机 Node（两项都可跑 ✓） |
 | **INV-KB-locked-loud** | **锁定/未解锁 ⇒ 明确报错，不许返回空结果** | ⚠️ **归属 `INV-MCP-locked-fails-loud`**（不在本表重复 ✗） | 让锁定路径返回 `[]` ⇒ 红 ✓ | **能**（判据 `check-locked-loud` ✓ —— **归属仍是 MCP 那份正文** ✓ 本表不重复立 ✗） | 本机 Node（纯读 Rust 源码 ⇒ 不需要 cargo ✓） |
 
 | **INV-KB-agent-priv-separation** | **能力面必须限于「笔记域」**：`ai:true` 的能力不许是库外／`host` 类／全局 scope（库权限 ≠ 仓库权限） | 扫注册表里 `ai:true` 的能力：id 前缀 ⊆ 笔记域 ／ `kind ∈ {read,write}` ／ `scope === current-space` ⇒ 否则红 | 加一个 `ai:true` 的 `fs.read`(host/global) ⇒ 红 ✓ | **能**（`check-agent-surface` 第 ④ 条） | 本机 Node |
