@@ -1397,6 +1397,57 @@ html[data-platform="win"] .app-body {
 }
 .space-privacy-note { font-size: 11px; color: var(--text-dim); }
 .space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
+/* ── ⚠️ 2026-09-29（D5）：**状态置顶**（`.sync-hero`）────────────────────────────
+   口径见 `SyncPanel.tsx` 里它上面那段注释。三条要点：
+     · 它是给人【看状态】的 ⇒ **里面不许有 input/select/textarea**（同 `.sync-foot` 那条口径）
+     · 颜色只用既有变量（`--accent` / `--border` / `--card-bg` / `--text-faint`），不新增色值
+     · 绿点那个色（`#22a06b`）与 `.sync-account-dot` 已有的成功色一致 */
+.sync-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 18px 14px 14px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-hero-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sync-hero-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.sync-hero-dot.is-ok { background: #22a06b; box-shadow: 0 0 0 4px rgba(34, 160, 107, 0.15); }
+.sync-hero-dot.is-busy { background: var(--accent); }
+.sync-hero-sub { font-size: 13px; color: var(--text-faint); }
+.sync-hero-btn {
+  margin-top: 8px;
+  width: 100%;
+  padding: 13px 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sync-hero-btn:disabled { opacity: 0.55; cursor: default; }
+.sync-hero-route { font-size: 12.5px; color: var(--text-dim); }
+
 .sync-card {
   display: flex;
   flex-direction: column;

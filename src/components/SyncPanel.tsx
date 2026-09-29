@@ -828,6 +828,44 @@ export function SyncPanel() {
    */
   useEffect(() => subscribePendingRemoteTotal(setPendingTotal), []);
 
+  // ── D5：**状态置顶**要的三个读数（2026-09-29）────────────────────────────────
+  // 全部是【现成的】，本笔零 Rust 改动：
+  //   · 状态与时间 ← `history`（`api.listSyncHistory` 的 `at`/`pushed`/`pulled`/`ok`）
+  //   · 走哪条路   ← `lanStatus.kind` + `.peers`
+  // ⚠️ `kind` **只许拿来换标题**，不许按 `server_url` 的形状自己再判一次档
+  //    （`src/lib/platform/commands.ts:186` 注释 ＋ 那条判据钉着）。
+  // ⚠️ Web 档 `kind === ""` ⇒ 显示「还没绑同步」，**不是**「同步失败」。
+  const myHistory = history.filter((h) => !activeId || h.ws_id === activeId);
+  const lastSync = myHistory[0];
+  const todayStr = new Date().toDateString();
+  const todayItems = myHistory
+    .filter((h) => new Date(h.at).toDateString() === todayStr)
+    .reduce((a, h) => a + (h.pushed || 0) + (h.pulled || 0), 0);
+  const heroBound = !!activeRow && !!activeRow.server_url.trim() && !!activeRow.space_id.trim();
+  const heroState = syncing
+    ? "正在同步"
+    : lastSync
+      ? lastSync.ok === 1
+        ? "已同步"
+        : "上次同步没成功"
+      : heroBound
+        ? "还没同步过"
+        : "还没绑同步";
+  const heroDot = syncing ? " is-busy" : lastSync && lastSync.ok === 1 ? " is-ok" : "";
+  const heroSub = [
+    activeRow?.name ?? "",
+    lastSync ? relTime(lastSync.at) : "",
+    todayItems > 0 ? `今天同步了 ${todayItems} 项` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const heroRoute =
+    lanStatus?.kind === "lan"
+      ? `这一轮走的是：局域网 · 本网段 ${lanStatus.peers} 台可用`
+      : lanStatus?.kind === "configured"
+        ? "这一轮走的是：服务器"
+        : "这一轮走的是：还没绑同步";
+
   return (
     <div className="sync-panel">
       <button
@@ -942,6 +980,25 @@ export function SyncPanel() {
               ⚠️ 放在这一屏是因为闸门拦的正是「绑同步」这个动作（`sync::sync_bind_gate`）——
               读数与动作同屏，用户不用去别处找「为什么绑不上」。
               平台判定在组件内部（Web 上只渲染解释句、一次 api 都不调）。 */}
+          {/* ⚠️ 2026-09-29（D5）：**状态置顶** —— 把「现在同步了没有／这一轮走的是哪条路」
+              放到用户第一眼看的地方，而不是埋在底部的日志行里（owner 反复指出的那一条）。
+              ⚠️ 它里面**不许有 input/select/textarea** —— hero 是给人【看状态】的，不是给人填的
+                 （与 `.sync-foot` 那条「设置控件不行」同一口径）。本笔只有【按钮】。 */}
+          <section className="sync-hero">
+            <div className="sync-hero-state">
+              <span className={`sync-hero-dot${heroDot}`} aria-hidden />
+              <span>{heroState}</span>
+            </div>
+            {heroSub && <div className="sync-hero-sub">{heroSub}</div>}
+            <button
+              className="sync-hero-btn"
+              disabled={syncing || !activeRow}
+              onClick={() => activeRow && void syncOne(activeRow)}
+            >
+              {syncing ? "同步中…" : "立即同步"}
+            </button>
+            <div className="sync-hero-route">{heroRoute}</div>
+          </section>
           <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
             {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
