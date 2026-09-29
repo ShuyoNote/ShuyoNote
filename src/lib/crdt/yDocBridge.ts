@@ -19,8 +19,10 @@
 // headless Lexical ＋ 真 `@lexical/yjs` 的 **V2** 三件套
 // （`createBindingV2__EXPERIMENTAL` / `syncLexicalUpdateToYjsV2__EXPERIMENTAL` /
 // `syncYjsStateToLexicalV2__EXPERIMENTAL`），**不碰浏览器** ⇒ Windows 也能自验。
-// 依赖 `yjs@13.6.32` / `@lexical/yjs@0.50.0`（与 `lexical@0.50` 同源）钉死在 **devDependencies**，
-// 不进打包产物。
+// 依赖 `yjs@13.6.32` / `@lexical/yjs@0.50.0`（与 `lexical@0.50` 同源），**版本钉死** ✓；
+// ⚠️ 2026-09-29 订正（owner 口径统一）：它们**在 `dependencies`**，不是 devDependencies ✗ ——
+//    这条注释原先写着"devDep／不进打包产物"，那句话**没有读数支撑** ⇒ 已按实况改写 ✓。
+//    合并留在 WebView 这一侧；**`yrs`（Rust 版）现在不引，到 S5 阶段 2 再定** ✓（见 `crdt_wire.rs` 文件头 ✓）。
 import * as Y from "yjs";
 import { createEditor, type LexicalEditor } from "lexical";
 import {

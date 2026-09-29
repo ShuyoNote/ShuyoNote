@@ -61,7 +61,7 @@ export function judge({ contentJsonDecls, crdtStateDecls, pendingPk, cargoDeps, 
     if (!/\bBLOB\b/i.test(d)) out.push("✗ CRDT 状态列必须是 **BLOB**（不许混进 `content_json` ✗）：" + d.trim().slice(0, 90));
   }
   for (const dep of cargoDeps) {
-    if (/(^|[^a-z])(yjs|yrs|y-crdt|y_rs)([^a-z]|$)/i.test(dep)) out.push("✗ Rust 侧不许引入 Yjs 实现（Rust 不认识 CRDT ✓）：" + dep.trim().slice(0, 80));
+    if (/(^|[^a-z])(yjs|yrs|y-crdt|y_rs)([^a-z]|$)/i.test(dep)) out.push("✗ `src-tauri` 里出现了 Yjs 系依赖：" + dep.trim().slice(0, 70) + " ⇒ **先问一句：决策改了吗？** 本条口径是「**`yrs` 现在不引，到 S5 阶段 2 再定**（owner 2026-09-29 ✓）」。若确实要引，请**同时**改三处：规格 `INV-CRDT-rust-agnostic` 行／`src-tauri/src/crdt_wire.rs` 文件头（那里写着「要不要引进是 S5 阶段 2 的决策」）／本条判据 ✓");
   }
   const conv = converterDefiners.filter((p) => p !== CONVERTER);
   if (converterDefiners.length && conv.length) out.push("✗ `content_json` ⇄ `ydoc` 的转换实现**不止一份**（唯一实现应是 `" + CONVERTER + "` ✓）：" + conv.join("、"));
