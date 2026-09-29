@@ -93,6 +93,17 @@ export const GATES = [
     registered: "2026-09-28",
   },
   {
+    id: "check-audit-shape",
+    group: "contract",
+    label: "审计的形状（入口唯一 ＋ 条目不含正文 ＋ 只增）",
+    cmd: "node scripts/check-audit-shape.mjs",
+    incident:
+      "2026-09-29 读数：`push_audit(plugin_id, capability, scope, ok, error_code)` 是内存环形队列（容量 500），" +
+      "写它的只有 plugins.rs 一个文件 ✓ —— 但当外部助手也能调能力时（M2），审计要答「是谁／哪次会话」，而 plugin_id 答不了 ✗。" +
+      "在补字段之前，先把今天已经成立的三条形状钉死：入口唯一（否则漏记 ✗）／条目不含正文（审计不该变成第二份内容副本 ✗）／只增 ✓",
+    registered: "2026-09-29",
+  },
+  {
     id: "check-generated-artifacts",
     group: "contract",
     label: "生成物自证来源（sha）且可重建（生成命令的脚本存在）",
