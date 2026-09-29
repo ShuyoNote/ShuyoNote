@@ -97,3 +97,7 @@ console.log(
     : `\n[结果] ${failed} 项不符——Web 版需要部署（见 docs/RELEASING.md ⑦）❌`,
 );
 process.exit(failed === 0 ? 0 : 1);
+
+// 行为验证（不提交，随后还原）
+
+// 行为验证（不提交，随后还原）
