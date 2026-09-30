@@ -434,6 +434,9 @@ pub struct PluginDraft {
 #[derive(Serialize, Clone)]
 pub struct PluginAuditEntry {
     pub plugin_id: String,
+    /// 这条审计的**来源**：`plugin` ／ `external:<会话号>`（R104=A：要答得出「谁读过我的库」✓）
+    #[serde(default)]
+    pub source: String,
     pub capability: String,
     pub scope: String,
     pub at_ms: i64,
@@ -450,6 +453,30 @@ pub struct PluginAuditEntry {
 
 /// 审计环形缓冲容量。内存里留最近这些，足够复盘一次会话里的行为。
 const PLUGIN_AUDIT_CAPACITY: usize = 500;
+
+/// 审计**落盘**文件名（放在 `app_data_dir` 里 ✓ ⇒ 重启不丢 ✓ R104=A）。
+const PLUGIN_AUDIT_LOG: &str = "plugin-audit.jsonl";
+
+/// 环形缓冲**丢掉了多少条**（"满了丢最老的"那件事要能看出来 ✓ R104=A）。
+static PLUGIN_AUDIT_DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 追加写一行审计（JSON 行 ✓）。拿不到数据目录／打不开文件时**静默跳过** ✓：
+/// 审计不该因为目录没就绪就把调用方弄崩 ✗（那会把「记不上账」变成「功能坏了」✓）。
+fn persist_audit_line(entry: &PluginAuditEntry) {
+    let Some(dir) = crate::db::app_data_dir_ref() else { return; };
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(PLUGIN_AUDIT_LOG))
+    else { return; };
+    use std::io::Write;
+    let _ = writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_else(|_| "{}".to_string()));
+}
+
+/// 丢弃了多少条（给界面／诊断用 ✓ R104=A：丢了多少要看得出来 ✓）。
+pub fn plugin_audit_dropped() -> u64 {
+    PLUGIN_AUDIT_DROPPED.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 static PLUGIN_AUDIT: std::sync::Mutex<std::collections::VecDeque<PluginAuditEntry>> =
     std::sync::Mutex::new(std::collections::VecDeque::new());
@@ -476,25 +503,30 @@ fn push_run_audit(
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
         q.pop_front();
+        PLUGIN_AUDIT_DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     q.push_back(PluginAuditEntry {
         plugin_id: plugin_id.to_string(),
         capability: "host.run".to_string(),
+        source: "plugin".to_string(),   // ⚠️ 运行记录暂时固定；外部会话落地时改传 `external:<会话号>` ✓
         scope: kind.to_string(),
         at_ms: now_ms(),
         ok,
         error_code,
         peak_rss_bytes,
     });
+    if let Some(last) = q.back() { persist_audit_line(last); }
 }
 
-fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
+fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
         q.pop_front();
+        PLUGIN_AUDIT_DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     q.push_back(PluginAuditEntry {
         plugin_id: plugin_id.to_string(),
+        source: source.to_string(),
         capability: capability.to_string(),
         scope: scope.to_string(),
         at_ms: now_ms(),
@@ -502,6 +534,7 @@ fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_co
         error_code,
         peak_rss_bytes: None,
     });
+    if let Some(last) = q.back() { persist_audit_line(last); }
 }
 
 /// 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都会进环形缓冲）。
@@ -2048,7 +2081,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
     let cap = match capabilities_gen::lookup(method) {
         Some(c) => c,
         None => {
-            push_audit(&plugin_id, method, "?", false, Some("unknown_capability".into()));
+            push_audit("plugin", &plugin_id, method, "?", false, Some("unknown_capability".into()));
             return Err(format!("unknown_capability: 宿主没有名为 {method} 的能力"));
         }
     };
@@ -2057,7 +2090,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
     if let Some(perm) = cap.permission {
         let granted = RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == perm));
         if !granted {
-            push_audit(&plugin_id, method, cap.scope, false, Some("permission_denied".into()));
+            push_audit("plugin", &plugin_id, method, cap.scope, false, Some("permission_denied".into()));
             return Err(format!(
                 "permission_denied: 能力 {method} 需要权限 {perm}，但 manifest.permissions 未声明它"
             ));
@@ -2070,7 +2103,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         match serde_json::from_str(args_json) {
             Ok(v) => v,
             Err(e) => {
-                push_audit(&plugin_id, method, cap.scope, false, Some("bad_args".into()));
+                push_audit("plugin", &plugin_id, method, cap.scope, false, Some("bad_args".into()));
                 return Err(format!("bad_args: 参数不是合法 JSON（{e}）"));
             }
         }
@@ -2154,18 +2187,18 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
             cap_log_write(&arg_str("message")?, level)
         }
         other => {
-            push_audit(&plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
+            push_audit("plugin", &plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
             return Err(format!("unknown_capability: {other}"));
         }
     };
     match out {
         Ok(v) => {
-            push_audit(&plugin_id, method, cap.scope, true, None);
+            push_audit("plugin", &plugin_id, method, cap.scope, true, None);
             serde_json::to_string(&v).map_err(|e| e.to_string())
         }
         Err(e) => {
             let code = error_code_of(&e);
-            push_audit(&plugin_id, method, cap.scope, false, code);
+            push_audit("plugin", &plugin_id, method, cap.scope, false, code);
             Err(e)
         }
     }
@@ -7125,7 +7158,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _g = capability_test_guard();
         clear_plugin_audit();
         for i in 0..(PLUGIN_AUDIT_CAPACITY + 5) {
-            push_audit("cap", "pages.count", "current-space", true, None);
+            push_audit("plugin", "cap", "pages.count", "current-space", true, None);
             let _ = i;
         }
         let all = plugin_audit(Some("cap".to_string()), None);

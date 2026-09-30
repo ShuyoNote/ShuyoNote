@@ -59,7 +59,9 @@ export function judge({ plugins, host }) {
   // ② 每处审计推送（按**值**认 ✓）都进这本账
   const pushes = [];
   for (let i = plugins.indexOf("push_back(PluginAuditEntry"); i >= 0; i = plugins.indexOf("push_back(PluginAuditEntry", i + 1)) pushes.push(i);
-  const stray = pushes.filter((i) => !/PLUGIN_AUDIT\s*\.\s*lock\s*\(\)/.test(plugins.slice(Math.max(0, i - 200), i)));
+  // ⚠️ 窗口 400 字（原 200）：R104=A 之后，锁与推送之间**合法地**多了一行"丢弃计数自增" ✓
+  //   （规则本意是"这次推送在同一把锁的范围内" ✓，字数只是代理阈值 ⇒ 别让它误伤正常实现 ✗）
+  const stray = pushes.filter((i) => !/PLUGIN_AUDIT\s*\.\s*lock\s*\(\)/.test(plugins.slice(Math.max(0, i - 400), i)));
   if (pushes.length === 0) fail("找不到任何 `push_back(PluginAuditEntry` ⇒ 判决失效（**不算通过** ✗ —— 若落点写法变了，得改本判据 ✓）");
   else if (stray.length) fail("有 " + stray.length + " 处审计推送**没进 `PLUGIN_AUDIT`** ✗ ⇒ 第二本账（" + REL.plugins + "）");
   else passed++;
