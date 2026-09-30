@@ -705,12 +705,38 @@ fn chunk_match_expr(query: &str) -> Option<String> {
 /// 或者历史上某次写入发生在触发器建立之前。判据用计数比较（两张表都很小，代价可忽略），
 /// 重建 = 清空 + 从 `chunks` 整体灌一遍 —— 与"派生索引不入同步/备份"的口径一致。
 ///
+/// **索引不可用**时的稳定码（R105=A 的 S1 第②条 ✓）：**搜不到 ≠ 搜不了** ✓。
+/// 与 `plugins::map_open_error` 的 `space_locked` 同族：用户看到的必须是"这件事做不了"，不是"没有结果" ✓。
+pub const ERR_INDEX_UNAVAILABLE: &str = "index_unavailable";
+
+/// 因为**索引不可用**而回退过几次（回退本身是**对的** ✓ —— Web 的 `sql.js` 没有 FTS5 ✓、老库也可能没建索引 ✓；
+/// 要的是"**回退过**"这件事能看出来 ✓）。有它 ⇒ "搜不到"和"没索引"才分得开 ✓。
+static INDEX_FALLBACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 回退次数（诊断用；与审计的丢弃计数同形 ✓）。
+#[allow(dead_code)] // 2026-10-01 收据：R105=A 的 S1 第②条要"搜不了看得出来" —— 读函数先落地，**界面／命令接线随宿主面那批**；删除条件 = 有命令或界面在读它
+pub fn index_fallbacks() -> u64 {
+    INDEX_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// **当前索引状态**：正常 = `"ok"`；这台机器／这个平台曾经回退过 = `${ERR_INDEX_UNAVAILABLE}`（S1 第②条 ✓）。
+/// 有了它，"搜不到"和"根本搜不了"才分得开 ✓（与 `plugins::map_open_error` 的 `space_locked` 同族 ✓）。
+#[allow(dead_code)] // 2026-10-01 收据：同上（读函数先落地，接线随宿主面那批）；删除条件 = 有命令或界面在读它
+pub fn index_state() -> &'static str {
+    if INDEX_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        ERR_INDEX_UNAVAILABLE
+    } else {
+        "ok"
+    }
+}
+
 /// ⚠️ 缺 `chunks` 表（老库没迁到派生层）⇒ **直接返回，不报错**（向前兼容，与 `read_chunks` 同口径）。
 fn ensure_chunk_fts(c: &Connection) -> Result<(), String> {
     if !table_exists(c, "chunks") {
         return Ok(());
     }
     if !table_exists(c, "chunk_fts") {
+        INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return Ok(()); // 触发器/表由 `db::migrate` 建；这里不越权改 schema
     }
     let count = |t: &str| -> Result<i64, String> {
@@ -741,9 +767,11 @@ fn read_chunk_bm25(c: &Connection, query: &str, wanted: &HashSet<&str>) -> HashM
     let mut out = HashMap::new();
     let Some(expr) = chunk_match_expr(query) else { return out };
     if !table_exists(c, "chunk_fts") {
+        INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return out;
     }
     let Ok(mut stmt) = c.prepare("SELECT chunk_id, bm25(chunk_fts) FROM chunk_fts WHERE chunk_fts MATCH ?1") else {
+        INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return out;
     };
     let Ok(iter) = stmt.query_map(params![expr], |r| {
