@@ -224,6 +224,19 @@ export const GATES = [
     baseline: true,
   },
   {
+    id: "check-mcp-bridge-dumb",
+    group: "contract",
+    label: "MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态",
+    cmd: "node scripts/check-mcp-bridge-dumb.mjs",
+    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    incident:
+      "2026-10-01：INV-MCP-bridge-dumb 要求「桥只转发，不做权限/落库/审计决策」。它必须**独立**存在 —— " +
+      "check-mcp-bridge-stdout 只管 stdout 纯净、check-mcp-host-authz 只管宿主面，**都不管桥里有没有偷偷长出一个权限/落库分支** ✗。" +
+      "桥是最容易被加料的地方：离协议最近，顺手 if (locked) return err 或顺手查一次库，代码看着更聪明、测试全绿，" +
+      "但唯一鉴权点与同一本审计账同时被绕开。本条是\"不许出现\"型（四条：库／权限／审计／权威形态）⇒ 假阳风险低。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-search-platform-parity",
     group: "contract",
     label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
