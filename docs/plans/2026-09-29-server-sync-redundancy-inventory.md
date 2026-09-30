@@ -115,7 +115,7 @@ A 那批总代价「小」（~400-600 行、2 个命令、1 个 UI 块、3 条�
 
 ⚠️ 「重建会不会顺手弄坏团队那条路」——**会，三个具体入口**：
    ① 重建 `sync_profiles` ⇒ 同时断 `mesh_scope`；② 重建 `space_crypto` ⇒ 断 `security::wire_keys_for_conn`
-   （团队空间虽明文也要走它才拿到 `Ok(None)`）；③ 重建 `sync_gate` ⇒ 断 `invite_caveat`（在设备直连路径上）。
+   （~~团队空间虽明文~~ **明文档虽明文**也要走它才拿到 `Ok(None)`）；③ 重建 `sync_gate` ⇒ 断 `invite_caveat`（在设备直连路径上）。
 ```
 
 ## 5. ⚠️ 最容易被误删的三处（点名）
