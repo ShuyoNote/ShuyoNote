@@ -1399,6 +1399,107 @@ outlineInDom false · sidebarInDom false · 页面图 x=12 w=328（right 340 ≤
 **结论**：做 iOS 之前先解决这台 Mac 的工具链（Homebrew / 正常 Ruby），
 否则会重新踩一遍上面这些。Android 不受此影响。
 
+### ⭐ 2026-09-30 更新（macOS 侧）：**这条路走通了，装到了真机上** —— 完整配方在下面
+
+> ⚠️ **上面那段"不可行"保留、不删** ✓ —— 它解释了**为什么需要那些前置**（无 Homebrew / 系统 Ruby 2.6），
+> 而下面这份配方正是**照着它的结论去解决前置**之后的结果 ✓。两段都对，差别只是**机器状态变了**。
+
+```text
+成果：`ShuyoNote` 1.91.26 装进 **iPhone 17 / iOS 26.7** 并能启动 ✓
+  （`xcrun devicectl device install app` ⇒ `App installed: cn.shuyo.shuyonote` ✓；
+    `devicectl device process launch` ⇒ Launched ✓；手机上应用列表可见 ✓）
+已验证：**能建、能签、能装、能起** ✓
+⛔ **未验证：真机上的功能行为**（同步/网格/后台）—— 那要配好空间与档案再跑 ✗
+```
+
+#### 5.1 工具链（**全程不需要 sudo** ✓ —— 因为这台机器没有 sudo 密码）
+
+```bash
+# ① Homebrew 装进**用户目录**（默认路径要 sudo ✗），走清华镜像：
+git clone --depth 1 --branch main https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git ~/homebrew
+export HOMEBREW_PREFIX="$HOME/homebrew" HOMEBREW_CELLAR="$HOME/homebrew/Cellar" HOMEBREW_REPOSITORY="$HOME/homebrew"
+export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"   # 有它就不必克隆 homebrew-core ✓
+export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ANALYTICS=1
+
+brew install xcodegen libimobiledevice          # ✅ 这两个走预编译包，很快（秒级～分钟级）
+
+# ⛔ **不要** `brew install cocoapods` ✗ —— 实测它会去**从源码编译 LLVM**
+#    （非标准前缀下 brew 用不了预编译包 ⇒ 退化源码构建 ⇒ 几小时）。实测见下。
+# ✅ 改用 **brew 自带的那个 Ruby** 装 CocoaPods：
+RB="$HOME/homebrew/Library/Homebrew/vendor/portable-ruby/current/bin/ruby"   # 实测 4.0.7 ✓
+export GEM_HOME="$HOME/gems" GEM_PATH="$HOME/gems"
+"$RB" -S gem install cocoapods --no-document      # ⇒ 1.17.0 ✓
+ln -sfn "$RB" "$HOME/gems/bin/ruby"               # ⚠️ 必须：binstub 的 shebang 会落到系统 ruby ✗
+export PATH="$HOME/gems/bin:$HOME/homebrew/bin:$PATH"
+pod --version                                      # ⇒ 1.17.0 ✓（要带 GEM_HOME，否则找不到 gem ✗）
+```
+
+⚠️ **`sudo gem install cocoapods` 是死路** ✗：这台机器没 sudo 密码；而且**系统 Ruby 2.6 的头文件
+在新的 macOS SDK 里已经不存在** ⇒ 原生扩展直接编不过（实测 `nkf` 就卡在找不到 `config.h`）✓。
+⇒ **必须要一个"新的 Ruby"**，而 brew 自带的 portable-ruby 现成就有 ✓（这是本次最省事的一步 ✓）。
+
+#### 5.2 生成 iOS 工程
+
+```bash
+npx tauri ios init --ci        # ✅ 成功（前置：xcodegen / cocoapods / libimobiledevice 都在 PATH 上）
+# ⇒ 生成 src-tauri/gen/apple/（**已 gitignore** ✓，是生成物、可放心改 ✓）
+```
+
+⚠️ 两个**模板层面的坑**（都只在 Xcode 27 上出现）：
+
+1. **部署目标太老** ✗：模板写 `project.yml` 的 `deploymentTarget.iOS: 14.0`，
+   而 **Xcode 27 支持范围是 15.0–27.0.x** ⇒ 直接报错。
+   **改法**：`project.yml` 里改成 `15.0`，再 `cd src-tauri/gen/apple && xcodegen generate` ✓
+   （⚠️ 用 `tauri ios build -c '{...minimumSystemVersion...}'` **不生效** ✗，实测过 ✓）
+2. **"iOS platform not installed"** ⚠️：Tauri 的检查是 **`xcrun simctl list runtimes --json`**，
+   要求有**模拟器运行时**。而**设备构建根本不需要它** ✓ —— 直接 `xcodebuild` 已证明能建到 Rust 阶段 ✓。
+   真实运行时是**几个 GB** 的苹果下载，实测 `xcodebuild -downloadPlatform iOS` 在这台机器上
+   **卡死**（7 分 45 秒只用了 0.89 秒 CPU、零流量）✗。
+   **绕法**（⚠️ 是绕过，不是修好 ✗）：放一个只对**那一条查询**作答的 `xcrun` 包装在 PATH 前面，
+   其余原样 `exec /usr/bin/xcrun "$@"` ✓。**这只该在"要真机包、不要模拟器"时用** ✓。
+
+#### 5.3 签名（**最容易卡住的一步**）
+
+```text
+· 必须用 **Xcode 里登录的那个 team** ✓ —— 实测这台机器上 Xcode 认的是 `M3UZLB6XK6`，
+  而钥匙串里的 `Apple Development` 证书属于**另一个 team** ✗ ⇒ 用证书的 team 会报
+  「No Account for Team …」✗
+· 还要允许**自动注册设备**（否则报「Device … isn't registered in your developer account」✗）
+```
+
+#### 5.4 建 + 装（实测命令，逐条都过 ✓）
+
+```bash
+source ~/ios-env.sh                 # 上面那组环境变量（GEM_HOME / HOMEBREW_* / PATH）
+export PATH="$HOME/ios-wrap:$PATH"  # 那个 xcrun 包装（见 5.2 的坑 2）
+
+npx tauri ios build --debug -t aarch64 \
+  -c '{"build":{"beforeBuildCommand":""},"bundle":{"iOS":{"developmentTeam":"M3UZLB6XK6"}}}'
+# ⚠️ `beforeBuildCommand` 置空：默认是 `pnpm build`（发布级、20+ 门禁）⇒
+#    本地只想出真机包时，先确保 dist/ 在，再把它置空 ✓
+# ⇒ 产物：src-tauri/gen/apple/build/arm64/ShuyoNote.ipa ✓
+
+UDID=$(xcrun devicectl list devices | awk '/iPhone/{print $3}')   # 或手填
+xcrun devicectl device install app --device $UDID \
+  ~/Library/Developer/Xcode/DerivedData/shuyonote-*/Build/Products/debug-iphoneos/ShuyoNote.app
+xcrun devicectl device process launch --device $UDID cn.shuyo.shuyonote
+```
+
+⚠️ **`xcodebuild` 直接调不通** ✗：Tauri 的「Build Rust Code」脚本阶段会连 **CLI 自己的 WebSocket
+选项服务**（报 `failed to read missing addr file …-server-addr` ⇒ 人工造那个文件后仍报
+`failed to build WebSocket client`）⇒ **构建必须由 `tauri ios build` 驱动** ✓，绕不过去 ✓。
+
+#### 5.5 真机前置（不在上面这几条里，但没它装不进去）
+
+```text
+· iPhone 上要开 **开发者模式**（设置 → 隐私与安全性 → **最底下** → 开发者模式 → 重启后再确认）
+  ⚠️ 那一项**要先用数据线连过一次装了 Xcode 的 Mac 才会出现** ✗（顺序不能反）
+· 连接状态自查：`xcrun devicectl list devices --verbose` ⇒
+  看 `developerModeStatus: enabled` / `pairingState: paired` / `transportType: wired` ✓
+· ⚠️ 锁屏会挡住操作（会报 `the device was still locked` ⇒ 解锁后重试 ✓）
+```
+
 ## 6. 测试与验收
 
 ### 6.1 单测
