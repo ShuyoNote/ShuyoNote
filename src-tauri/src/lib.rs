@@ -1,4 +1,7 @@
 mod ai;
+// S3 第三片：**块级活动明细**（只读 ✓）—— 由相邻两条同步载荷算「哪几段被新增/改过/删掉」✓；
+// 时间分桶仍归前端那**一处**口径（`src/lib/kbTimeline.ts` 的 `TIMELINE_DAY_BUCKET`）✓。
+mod activity;
 mod community;
 mod community_publish;
 mod attachments;
