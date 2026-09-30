@@ -19,6 +19,15 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// ⭐ 2026-09-29 修误报：抽出资源引用**之前**，先剥掉 HTML 注释 ✓
+//   反例（线上实测，逐字）：`index.html` 的注释里写着 `<script src="prism/prism-*.js">`（历史说明 ✓）
+//   ⇒ 旧版把它当"被引用的资源"⇒ 去取 `prism-*.js` ⇒ **必然 404** ✗ ⇒ 报"Web 版需要部署"（假警报 ✓）
+//   （这与 AMD 报过的 `check-guide-paths` 同一形状：**判缺失那次读取没走过滤后的文本** ✗）
+function stripHtmlComments(s) {
+  return String(s).replace(/<!--[\s\S]*?-->/g, "");
+}
+
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 const only = process.argv.includes("--only") ? process.argv[process.argv.indexOf("--only") + 1] : null;
@@ -62,7 +71,7 @@ for (const t of TARGETS) {
   try {
     const html = await getText(t.base);
     ok(html.status === 200, `index.html 取得到（HTTP ${html.status}）`);
-    const refs = [...html.text.matchAll(/(?:src|href)="([^"]+)"/g)]
+    const refs = [...stripHtmlComments(html.text).matchAll(/(?:src|href)="([^"]+)"/g)]
       .map((m) => m[1])
       .filter((u) => !/^(https?:|data:|#|mailto:)/.test(u));
     const uniq = [...new Set(refs)];
@@ -88,3 +97,7 @@ console.log(
     : `\n[结果] ${failed} 项不符——Web 版需要部署（见 docs/RELEASING.md ⑦）❌`,
 );
 process.exit(failed === 0 ? 0 : 1);
+
+// 行为验证（不提交，随后还原）
+
+// 行为验证（不提交，随后还原）
