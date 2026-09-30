@@ -896,6 +896,10 @@ export interface CommandMap {
   search: { args: { args: { query: string; limit: number; all_spaces: boolean; embedding: unknown } }; result: SearchResult[] };
   search_blocks: { args: { query: string }; result: SearchBlock[] };
   /** 块级检索（**只读**）—— 桌面 `search.rs::search_chunks`、web 里的同名分支；
+   *  ⚠️ **两个平台不是同一件事**：**BM25 / FTS 那半只在桌面**（`chunk_fts` 是 FTS5，而 Web 的 `sql.js`
+   *  **没有编 FTS5** ⇒ 见 `src-tauri/src/db.rs` 的 `CHUNK_FTS_DDL` 注释，实测原文 `Error: no such module: fts5`）——
+   *  Web 侧走 **LIKE 分支**（能搜到，但**没有 BM25 排序**）⇒ ⇒ 同一个查询在两个平台**结果排序可以不同**，
+   *  对外说"支持块级检索"时**必须带上这个限定** ✗（别让人以为两边一样 ✓）。
    *  接口与判据见信箱 `2026-09-17-retrieval-query-normalization.reply-1`。
    *  只读 `chunks` / `chunk_embeddings`（不写、不改 DDL）。 */
   search_chunks: {

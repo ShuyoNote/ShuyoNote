@@ -1089,7 +1089,8 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     //
     // ⚠️ **为什么它不进 `DERIVED_SCHEMA_DDL`（TS 那份"单一事实源"）**：Web 平台的 SQLite 是
     //    `sql.js`，而它**没有编 FTS5** —— 实测原文 `Error: no such module: fts5`
-    //    （探针 `.tools/probe-sqljs-trigger.mjs`）。把它放进共享 DDL ⇒ **Web 平台建表即失败**。
+    //    （探针 `.tools/probe-sqljs-trigger.mjs` —— ⚠️ **本机资产、不入库** ✗：别人按这个路径找不到它 ✓；
+    //     读数原文已抄在上面 ✓，要重跑就得自己写一个「用 sql.js 建 FTS5 表」的小探针 ✓）。把它放进共享 DDL ⇒ **Web 平台建表即失败**。
     //    所以这一层与 `page_fts` 一样只建在桌面库里；Web 侧继续走 LIKE 路径。
     //    ⇒ **块级 BM25 是桌面能力**，这一点必须写进能力文档，不能让人以为两个平台一样。
     //
