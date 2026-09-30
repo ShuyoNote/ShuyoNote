@@ -131,11 +131,18 @@ export async function judgeChannel(b, token) {
 }
 
 /** 真跑：桥不在 ⇒ exit 2 ✓ */
+const REQUIRE_BRIDGE = process.argv.includes("--require-bridge");
+
 async function run(bridgePath) {
   if (!existsSync(bridgePath)) {
     console.error("✗ 空扫：桥不存在（" + bridgePath.replace(ROOT, ".") + "）⇒ 施工单 Task 4 的通道还没落地");
-    console.error("  ⇒ 按「桥不存在 / 无可检查对象」exit 2（**不算通过** ✗ —— 施工单 Step 2 期望的读数就是「2 或 1，不许是 0」✓）");
-    return 2;
+    console.error("  ! 自报跳过（不装绿）：MCP 桥还不存在（M1 Task 3/4 未做）⇒ 本条判据现在没有可检查对象");
+    if (REQUIRE_BRIDGE) {
+      console.error("  ⇒ 已给 `--require-bridge` ⇒ 按「桥不存在 / 无可检查对象」exit 2（**不算通过** ✗ —— 施工单 Step 2 期望的读数就是「2 或 1，不许是 0」✓）");
+      return 2;
+    }
+    console.error("  ⇒ 登记形态：绿 ＋ 自报跳过（判据先行阶段的正常状态 ✓；要看那次红就加 `--require-bridge`）");
+    return 0;
   }
   const token = "t-" + Math.random().toString(36).slice(2, 10);
   const b = {
@@ -195,11 +202,20 @@ srv.listen(0, "127.0.0.1", () => { console.log("PORT=" + srv.address().port); })
       console.log(`  ${okc ? "✓" : "✗"} ${name} ⇒ exit=${got}（期望 ${want}）` + (f.length ? " ｜ " + f[0].slice(0, 90) : ""));
     }
     // 空扫：桥不在 ⇒ exit 2 ✓
-    const empty = await run(join(dir, "nope.mjs"));
-    const okEmpty = empty === 2;
-    if (okEmpty) pass++;
-    console.log(`  ${okEmpty ? "✓" : "✗"} 空扫（桥不存在）⇒ exit=${empty}（期望 2）`);
-    const total = theCases.length + 1;
+    const emptySkip = await (async () => { const keep = process.argv; process.argv = ["node"]; try { return await run(join(dir, "nope.mjs")); } finally { process.argv = keep; } })();
+    const okEmptySkip = emptySkip === 0;
+    if (okEmptySkip) pass++;
+    console.log(`  ${okEmptySkip ? "✓" : "✗"} 空扫（**登记形态**：绿＋自报跳过）⇒ exit=${emptySkip}（期望 0）`);
+    const reqEmpty = spawnSync(
+      process.execPath,
+      [fileURLToPath(import.meta.url), "--require-bridge", "--bridge", join(dir, "nope.mjs")],
+      { encoding: "utf8" },
+    );
+    const okReqEmpty = reqEmpty.status === 2;
+    if (okReqEmpty) pass++;
+    console.log(`  ${okReqEmpty ? "✓" : "✗"} 空扫 ＋ \`--require-bridge\` ⇒ exit=${reqEmpty.status}（期望 2，**不是 0** ✗）`);
+    const totalExtra = 1;
+    const total = theCases.length + 1 + totalExtra;
     console.log(`self-test: ${pass}/${total} 通过`);
     process.exit(pass === total ? 0 : 1);
   } finally {

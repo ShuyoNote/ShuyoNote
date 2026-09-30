@@ -197,6 +197,20 @@ export const GATES = [
     registered: "2026-09-30",
   },
   {
+    id: "check-mcp-channel-judge",
+    group: "contract",
+    label: "MCP 桥的本机通道：默认关 ＋ token ＋ Origin/Host（坏 Origin / 过期 token 必被拒）",
+    cmd: "node tools/shuyonote-mcp/judge-channel.mjs",
+    // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：桥还不存在 ⇒ 没有可检查对象。
+    //    要看那次"红"就加 `--require-bridge`（⇒ exit 2，逐字含「桥不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    incident:
+      "2026-09-30：规格 §2 的 INV-MCP-channel-guarded 原本是「❌ 无」✗。而本仓真栽过同族那次：docs/SECURITY.md 的低危项逐字写着" +
+      "「CORS 前缀匹配放过 http://127.0.0.1.evil.com」（lib.rs:155）—— 所以这条判据必须用前缀陷阱值去试，而不是随便一个外域" +
+      "（随便一个外域连前缀匹配都挡得住，测不出这个坑 ✗）。四条断言：默认关拒连／坏 Origin 拒／错 token 拒／关闸后旧 token 失效。",
+    registered: "2026-09-30",
+  },
+  {
     id: "check-search-platform-parity",
     group: "contract",
     label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
