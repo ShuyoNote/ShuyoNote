@@ -1,5 +1,5 @@
 # `mesh::` 那条"偶发失败"的**定位**（欠账 #5）—— **它不是偶发，是 40%**
-> 状态：✅ **已收口到根因**（2026-09-30 补）—— 根因**已找到并修**（见下），**不再是「待 instrument」**。
+> 状态：✅ **已收口到根因**（2026-09-30 补）。**证据**：连跑 15 次失败 6 次（40%）⇒ 而根因已定位并修（提交 `26a27ed1`）；原证据行保留在下方。—— 根因**已找到并修**（见下），**不再是「待 instrument」**。
 > ★ **根因**：`mesh.rs` 的 listener 是 `set_nonblocking(true)`，而 **macOS/BSD 的 `accept()` 会让新 socket 继承 `O_NONBLOCK`**（**Linux 不继承**）
 >   ⇒ `respond` 的 `write_all` 在**较大的响应**上**写半截**就返回 `WouldBlock` ⇒ 连接被丢 ⇒ 客户端看到**截断的响应**（就是那句 `unexpected message from connection`）。
 >   ⚠️ 而 `read_request` 本来就设了读写超时 —— **那只对阻塞 socket 有效**。
