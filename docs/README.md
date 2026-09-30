@@ -293,6 +293,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-29-virtual-lan-option.md](plans/2026-09-29-virtual-lan-option.md) | **虚拟局域网分析** —— 三个好消息 ＋ 两处代价 ＋ owner 两条裁定 |
 | [plans/2026-09-29-today-index.md](plans/2026-09-29-today-index.md) | ⭐ **当天全部产出的索引入口** —— 按主题／按「我想知道什么」／按提交 ＋ 未决与欠账 |
 | [plans/2026-09-29-nightly-handoff.md](plans/2026-09-29-nightly-handoff.md) | ⭐ **今晚自主工作的交接单** —— 七节：待拍一处／做完了的／今晚我自己的错／等回信的／门禁现状／最值钱的四个发现／明早的建议顺序 |
+| [plans/2026-09-30-feasibility-of-requirement-metrics.md](plans/2026-09-30-feasibility-of-requirement-metrics.md) | ⭐ **最终需求各项指标的技术可行性评估** —— 四档（A/B/C/D）逐条；汇总 **A 8 ／ B 19 ／ C 8 ／ D 1**；★ 并点出**最该先补的一件（测单写者吞吐）** |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
