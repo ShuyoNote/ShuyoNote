@@ -22,6 +22,9 @@ import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../lib/crdt/claim
 import { isNearRealtimeEnabled } from "../lib/nearRealtime";
 import { shouldAutoSyncNow } from "../lib/syncGate";
 import { withSyncStatus } from "../store/syncStatus";
+// ★ L4a/L4b：帧 `seq` 的解析与跳号判定 —— **两半共用一处实现**（Web 与桌面同一种服务端帧；
+//   桌面那一半在 Rust `sync_stream.rs`，口径逐字对应，见 `lib/streamSeq.ts` 的文件头）。
+import { trackFrame } from "../lib/streamSeq";
 
 /** 桌面侧"收到帧 ⇒ 去抖 ⇒ 拉一次"的窗口（一次 push 可能连发多帧，不去抖就是突发）。 */
 const PULL_DEBOUNCE_MS = 300;
@@ -138,6 +141,8 @@ export function useSyncStream() {
         const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        // ★ L4b 水位（Web 这条路的）：**跨帧保留** —— 与桌面 Rust 那个 `last_seq` 同口径。
+        let lastFrameSeq = 0;
         // Read SSE frames (data: <json>\n\n); on each, trigger a pull.
         for (;;) {
           const { done, value } = await reader.read();
@@ -147,7 +152,18 @@ export function useSyncStream() {
           buf = frames.pop() ?? "";
           for (const frame of frames) {
             if (!frame.includes("data:")) continue;
-            // ★ 同步的是**当前工作空间**（解析出来那一个），不是"档案里第一个"；
+            // ★ L4a/L4b（owner 2026-09-30 拍 D2）：**与桌面同一种帧、同一个判定**
+            //   （判定只有一处实现：`lib/streamSeq.ts`）。跳号 ＝ 中间可能漏了帧。
+            const verdict = trackFrame(lastFrameSeq, frame);
+            lastFrameSeq = verdict.last;
+            if (verdict.gap !== null) {
+              // ⚠️ Web 这一档**本来就每帧立刻拉**（没有去抖）⇒ 跳号在这里**不改等待行为**，
+              //    但必须如实留痕：它是唯一能看出"服务端漏发过帧"的地方（桌面那条在 Rust 侧记账）。
+              console.warn(`[sync] 变更流跳号（seq ${verdict.gap}）⇒ 立刻拉一次补漏`);
+            }
+            // ★ **唯一的拉取出口**：普通帧与跳号帧走**同一条**（`pullOnce` 内部过 C2 闸门 /
+            //   防重入 / 状态行配对）；⚠️ 不许为跳号另起第二条拉取路。
+            //   同步的是**当前工作空间**（解析出来那一个），不是"档案里第一个"；
             //   与桌面同一套：闸门 ＋ 状态行配对 ＋ 刷新（`pullOnce` 一处实现）。
             //   （分支那版写的是 `api.syncWorkspace(bound.ws_id)` ＋ 就地 `loadPages()` ——
             //    本行之上这条 `pullOnce` 是更新形态：它过 C2 闸门、`withSyncStatus` 配对
