@@ -52,7 +52,15 @@ import { useSyncProgress } from "./hooks/useSyncProgress";
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 // 空闲退避（2026-09-30）：自动同步那一轮的节拍判据（纯函数；三条口径与"兜底"都在那里 ✓）
-import { decideSyncTick, roundWasEmpty, type MeshLike, type SyncLike } from "./lib/syncBackoff";
+import {
+  decideHiddenTick,
+  decideSyncTick,
+  roundWasEmpty,
+  type MeshLike,
+  type SyncLike,
+} from "./lib/syncBackoff";
+// 切后台判据（2026-09-30）：**只停移动端** —— 平台口径复用仓里既有那个"是不是移动端"的判断 ✓
+import { isMobileUserAgent } from "./lib/platform/capabilities";
 // 「真·本地编辑」信号的**模块级广播**（S3b-1 那个实例级 `onLocalEdit` 的转发，见那个文件的注释）：
 // 本笔的"改完就上传"要的正是这个信号，而会话实例由 `editor/Editor.tsx` 持有 ⇒ 只能从这一层拿。
 import { onAnyLocalEdit } from "./lib/crdt/yDocBridge";
@@ -548,7 +556,14 @@ function NoteEditor({ pageId }: { pageId: string }) {
       if (cancelled || autoSyncMs <= 0) return;
       timer = setTimeout(() => void tick(), delayMs);
     };
+    // ★ 切后台（2026-09-30）：**只停移动端** —— 判据在 `lib/syncBackoff.ts` 的 `decideHiddenTick`。
+    //   ⚠️ 桌面端"窗口被挡住/最小化"**照跑**（那 ≠ 用户走了 ✓）；拿 hidden 一刀切会砍错人 ✗。
+    const isMobile = isMobileUserAgent(navigator.userAgent);
+    let hidden = document.visibilityState === "hidden";
     async function tick() {
+      // 移动端在后台 ⇒ 不跑，而且**不再排下一跳**（循环就地停住）；
+      // 回到前台由下面那个监听**立刻补一轮**唤醒 ✓（比"被系统冻在半路、回来还要等一个节拍"好 ✓）。
+      if (!decideHiddenTick({ hidden, isMobile }).run) return;
       await runAutoSyncRound();
       const d = decideSyncTick({
         nowMs: Date.now(),
@@ -560,6 +575,16 @@ function NoteEditor({ pageId }: { pageId: string }) {
       //    ⇒ 按基础节拍再来一次，**别原地空转** ✗（真跑过的那一轮 lastRunAt 刚更新，不会 ≤0 ✓）。
       schedule(d.waitMs > 0 ? d.waitMs : autoSyncMs);
     }
+    // 回到前台 ⇒ **立刻补一轮**（用户一回来就看到最新的 ✓）＋ 退避清零。
+    const onVisibility = () => {
+      const wasHidden = hidden;
+      hidden = document.visibilityState === "hidden";
+      if (wasHidden && !hidden) {
+        syncEmptyStreak = 0;
+        void tick();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     // 启动后先来一次（与原来那条路一致：不管间隔设没设都跑）。
     // ⚠️ 这一行**故意保持原样**（函数名仍叫 `tick`、形状仍是 `setTimeout(tick, 3000)`）：
     //    `useSyncStream.wiring.test.ts:144` 那条接线判据钉的就是它，原意是
@@ -569,6 +594,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, loadPages, autoSyncMs]);

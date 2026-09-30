@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BACKOFF_CAP_MS,
+  decideHiddenTick,
   decideSyncTick,
   roundWasEmpty,
   type BackoffInput,
@@ -109,5 +110,26 @@ describe("roundWasEmpty：只有「明确收到东西」才算非空", () => {
     expect(roundWasEmpty([{ pulled: 0 } as never], [{ peers: [{ fetched: 0, applied: 0 }] }])).toBe(true);
     // 形状缺字段（真出错时 Rust 侧可能不带这些数）⇒ 同样算空 ✓
     expect(roundWasEmpty([{} as never], [{ peers: [{}] } as never])).toBe(true);
+  });
+});
+
+describe("decideHiddenTick：切后台只停移动端", () => {
+  it("在前台 ⇒ 照跑（不看平台）", () => {
+    expect(decideHiddenTick({ hidden: false, isMobile: true }).run).toBe(true);
+    expect(decideHiddenTick({ hidden: false, isMobile: false }).run).toBe(true);
+  });
+
+  it("⭐ 桌面端隐藏 ⇒ **照跑** —— 窗口被挡住 ≠ 用户走了", () => {
+    // 这条就是本次的坑：拿 hidden 一刀切会把桌面一起停掉 ⇒ 笔记本在别的窗口工作时不再同步 ✗
+    // 变异（只看 hidden、不看 isMobile）必须让这一条红 ✓
+    const d = decideHiddenTick({ hidden: true, isMobile: false });
+    expect(d.run).toBe(true);
+    expect(d.reason).toContain("桌面端");
+  });
+
+  it("移动端切后台 ⇒ 停", () => {
+    const d = decideHiddenTick({ hidden: true, isMobile: true });
+    expect(d.run).toBe(false);
+    expect(d.reason).toContain("移动端");
   });
 });

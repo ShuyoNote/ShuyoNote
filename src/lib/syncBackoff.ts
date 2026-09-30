@@ -79,6 +79,35 @@ export function decideSyncTick(input: BackoffInput): BackoffDecision {
   return { due, waitMs: thresholdMs - elapsed, thresholdMs, capMs, reason };
 }
 
+// ─────────────────────── 「切到后台还跑不跑」 ───────────────────────
+
+/**
+ * 纯函数：**切到后台时该不该接着按节拍跑**（2026-09-30）。
+ *
+ * ★ 只停**移动端**，**不停桌面端** —— 这条分寸是本次唯一的坑 ✗：
+ *   · **移动端**：系统本来就会冻结进程（iOS 挂起 / Android Doze）⇒
+ *     与其"被冻在半路、回来还要再等一个节拍"，不如**显式停**，
+ *     并在**回到前台时立刻补一轮**（用户一回来就看到最新的 ✓）。
+ *   · **桌面端**：⚠️ **「窗口被挡住 / 最小化」≠「用户走了」** ——
+ *     笔记本在别的窗口工作时，**本来就该继续同步** ✓；
+ *     拿 `hidden` 一刀切会把桌面一起停掉 ✗（先例：`lib/platform/capabilities.ts` 头注那条
+ *     "不许拿近似当能力判断"）。
+ *   · 所以判据必须**同时**看 `hidden` **和** `isMobile` —— 只看其中一个都是错的 ✗。
+ *
+ * @param hidden 当前是不是不可见（`document.visibilityState === "hidden"`）
+ * @param isMobile 是不是移动端（同一口径：`isMobileUserAgent`，见 `lib/platform/capabilities.ts`）
+ */
+export function decideHiddenTick(input: { hidden: boolean; isMobile: boolean }): {
+  run: boolean;
+  reason: string;
+} {
+  if (!input.hidden) return { run: true, reason: "在前台 ⇒ 照节拍跑" };
+  if (!input.isMobile) {
+    return { run: true, reason: "桌面端隐藏 ⇒ 照跑（窗口被挡住 ≠ 用户走了）" };
+  }
+  return { run: false, reason: "移动端切后台 ⇒ 停（回前台时立刻补一轮）" };
+}
+
 // ─────────────────────────── 「这一轮空不空」 ───────────────────────────
 
 /** 服务端同步一侧的**最小形状**（只要 `pulled`；不 import 具体类型，免得判据跟着类型漂 ✓） */
