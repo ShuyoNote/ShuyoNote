@@ -77,9 +77,22 @@ async function applyShell(page) {
     const WS = { id: "ws1", name: "我的工作空间" };
     const PROF = { ws_id: "ws1", space_id: "sp1", server_url: "http://192.168.43.206:8787",
       token: "t", device_id: "d1", last_pushed_seq: 0, last_pulled_seq: 0 };
+    // ★ 2026-09-29（丙档「附近设备」）：`nearby` 是本档**新增的契约字段**
+    //   （`NearbyPeer`，见 `commands.ts:175` 那一族）⇒ **桩必须跟着长**。
+    //   ⚠️ 不跟着长的下场是"门禁量到一个不可能出现的处境"：`enabled:true` 而读数里没有列表
+    //      ⇒ 面板只能渲染「这台机器上看不到这一层」，而真机上永远不是那一态
+    //      （桩是"布局真、数据假"，但**字段的形状必须与契约同形**）。
+    // ⚠️ 2026-09-29 owner 裁定（规格 §14：设备直连只做配对、不做邀请）⇒ `invites` 字段
+    //   **已从契约里撤掉**，桩里那一项也要跟着撤（否则量的是一个不再存在的形状）。
     const LAN = { enabled: true, peers: 2, kind: "lan",
       line: "同步地址：直连（局域网）http://192.168.43.206:8787 ｜ 本网段发现 2 台",
-      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" } };
+      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" },
+      nearby: [
+        { device_id: "dev-b", device_name: "小王的笔记本", addr: "192.168.43.7",
+          spaces: ["sp1"], serves_current: true, invitable: true },
+        { device_id: "dev-c", device_name: "我的手机", addr: "192.168.43.9",
+          spaces: ["sp1"], serves_current: true, invitable: true },
+      ] };
     const M = {
       list_workspaces: [WS], get_active_workspace_id: "ws1", get_workspace_name: "我的工作空间",
       list_sync_profiles: [PROF], list_pages: [], list_deleted: [], list_plugins: [],
@@ -1451,13 +1464,103 @@ function vsBaseline(key, value) {
   return { allowed, tail, base };
 }
 
-// ── 同步面板：常驻 chrome ＋ 桌面不滚 ─────────────────────────────────────────
+// ── 同步面板：常驻 chrome ＋ 桌面「允许滚动，但只许不增」──────────────────────
 // 对应 `docs/specs/2026-09-28-sync-panel-density-spec.md` §2 的第 2、3 条不变式。
+// ⚠️ 第 3 条（`desktop-no-scroll`）的**语义在 2026-09-29 深夜被 owner 改了**
+//    —— 见 `assertDesktopNoScroll` 上面那段与规格 §12.2（旧口径"要滚 0px"已作废）。
 //
 // ⚠️ 两条都**必须先声明壳**（§2 第 1 条 `INV-UI-sync-panel-shell-matrix`）：
 //    同一个 390×844，Web 与 Tauri 手机是**两块不同的面板** ⇒ 判语里都带 `壳=${APP_SHELL}`。
 // 用法：`APP_SHELL=web node scripts/verify-mobile-views.mjs`（默认）
 //       `APP_SHELL=tauri node scripts/verify-mobile-views.mjs`
+
+/**
+ * `INV-UI-sync-panel-scroll-reachable`（2026-09-29 加）
+ * 口径：**面板里任何控件，滚到底都必须够得到。**
+ *
+ * ⚠️ 为什么加它（本仓那条「**判据没红只在它能看见的范围内成立**」的又一例）：
+ *   `desktop-no-scroll` 量的是【外层面板】的 `scrollHeight ≤ clientHeight`，
+ *   而桌面档外层是 `overflow: hidden`（只让 `.sync-profiles` 自己滚）
+ *   ⇒ **滚动容器被挤扁时外层照样相等 ⇒ 判绿**。
+ *   2026-09-29 就是这么漏过去的：D5 的 hero 插错层（落在固定区）把 `.sync-profiles`
+ *   从 **180px 挤到 24px** —— 三条断言全绿，而 owner 在真机上「**滚不动**」。
+ * ⇒ 所以这一条**直接量用户视角的那件事**：滚到底，够不够得到。
+ *   （不量"滚动容器有没有被挤扁"这种代理指标 —— 代理指标会以别的方式坏。）
+ * ⚠️ 它**不依赖"哪个元素是滚动容器"这个先验**：现场找
+ *   （`overflow-y: auto|scroll` 且 `scrollHeight > clientHeight`）。
+ */
+async function measureSyncPanelScroll(page) {
+  return safeEval(page, () => {
+    const p = document.querySelector(".sync-popover.is-sync");
+    if (!p) return null;
+    // ⚠️ 2026-09-29 加固：**默认折叠的 `<details>` 的后代**在 Chrome 里
+    //    `getBoundingClientRect().height` 可能仍 > 0、`display` 也不是 `none`
+    //    ⇒ 只判这两个会把"折叠里的控件"误报成"够不到"（实测多报 3 个：预算那三个 select）。
+    //    再判 `getClientRects().length`（`display:none` 的后代为 0）与 `offsetParent`。
+    const vis = (e) => {
+      const cs = getComputedStyle(e);
+      if (cs.display === "none" || cs.visibility === "hidden") return false;
+      if (e.getClientRects().length === 0) return false;
+      if (e.getBoundingClientRect().height <= 0) return false;
+      if (e.offsetParent === null && cs.position !== "fixed") return false;
+      // ⚠️ 最关键的一条：**折叠 `<details>` 的后代不算"可见"**。
+      //    实测（滚到底截图核对）：`▸ 同步预算` 是折叠的，而它里面那 3 个 select
+      //    前面几个判据全过（rect 高度、display、offsetParent 都不是 0/null）
+      //    ⇒ 被误报成"够不到"。**这正是"判据的切片会坏"**：漏一条，就多三个假红。
+      for (let n = e.parentElement; n; n = n.parentElement) {
+        if (n.tagName === "DETAILS" && !n.open) return false;
+      }
+      return true;
+    };
+    // ⚠️ 2026-09-29 修正：**必须把 `p` 自己也算进来** ——
+    //    D5 修正② 之后（桌面档也改成"整个面板滚"），**滚动容器就是面板本身**；
+    //    而 `p.querySelectorAll("*")` **不包含 `p`** ⇒ 漏掉它 ⇒ 量出 11 个假的"够不到"。
+    //    （这条 bug 与它要抓的那个同族：**探针的切片选错了，就看不见真正在滚的那个**。）
+    const scrollers = [p, ...p.querySelectorAll("*")].filter((e) => {
+      const cs = getComputedStyle(e);
+      return (cs.overflowY === "auto" || cs.overflowY === "scroll") && e.scrollHeight > e.clientHeight + 1;
+    });
+    for (const sc of scrollers) sc.scrollTop = 1e9;
+    const pr = p.getBoundingClientRect();
+    const ctrl = [...p.querySelectorAll("input, textarea, select, button, summary")].filter(vis);
+    // ⚠️ 只看【面板底边之下】的：滚到底后落在面板【上方】的那些，滚回顶部就够得到，不算。
+    const below = ctrl
+      .filter((e) => e.getBoundingClientRect().bottom > pr.bottom + 1)
+      .map((e) => (e.textContent || e.placeholder || e.tagName).trim().replace(/\s+/g, " ").slice(0, 16));
+    return {
+      scrollerCount: scrollers.length,
+      scrollerDetail: scrollers
+        .map((sc) => `${String(sc.className || sc.tagName).split(" ")[0]}:${sc.clientHeight}/${sc.scrollHeight}`)
+        .slice(0, 4),
+      total: ctrl.length,
+      belowCount: below.length,
+      below: below.slice(0, 6),
+      panelClient: p.clientHeight,
+      panelScroll: p.scrollHeight,
+    };
+  });
+}
+
+/** `INV-UI-sync-panel-scroll-reachable` 的断言。 */
+function assertScrollReachable(m, vp) {
+  if (!m) {
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 「滚到底够不够得到」这条【没验过】，按 fail 记`);
+    return;
+  }
+  const key = `scroll-reachable|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, m.belowCount);
+  const { allowed, tail } = vsBaseline(key, m.belowCount);
+  ok(
+    allowed,
+    `[壳=${APP_SHELL}] ${vp.name} 滚到底后【够不到】的控件 = ${m.belowCount} 个（应 0）` +
+      (m.belowCount ? `：${m.below.join(" / ")}` : "") +
+      `；滚动容器 ${m.scrollerCount} 个（${m.scrollerDetail.join("，") || "无"}）` +
+      `；面板 ${m.panelScroll}/${m.panelClient}${tail}`,
+  );
+  if (m.belowCount < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${m.belowCount}`);
+  }
+}
 
 /** 打开同步面板（它挂在侧栏里；窄屏侧栏是抽屉、默认 hidden ⇒ 先把抽屉打开）。 */
 async function openSyncPanel(page) {
@@ -1532,27 +1635,49 @@ function assertPersistentChrome(m, vp) {
 
 /**
  * `INV-UI-sync-panel-desktop-no-scroll`（规格 §2 第 3 条）
- * 口径：**Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`）。
+ *
+ * ⚠️ **2026-09-29 深夜 owner 裁定改了这条的语义**（规格 §12.2）：
+ *   · **旧口径**（作废）："桌面版内容一屏装下、**要滚 0px**"（`scrollHeight ≤ clientHeight`）。
+ *     它**不再成立、也不该再要求成立** —— 面板里已经有 8 行可折叠内容 ＋「附近设备」，
+ *     1280×800 下装不下是**正常的**（裁定当天实测：Tauri 壳开态要滚 **141px**）。
+ *   · **新口径**：**「要滚多少」记成基线，只许不增**（沿用本仓"只减不增"那套机制）。
+ *   ⚠️ 基线必须在**注入 Tauri 的壳**里量 —— web 壳里那三行**根本不渲染**（§12.3：
+ *      `isDesktopPlatform()` 为假 ⇒ `lan_status` effect 早退 ⇒ `lanStatus` 恒 `null`），
+ *      拿 web 的 558/558 当基线是**假的**。
+ *   ⚠️ 「允许滚」**不等于**「允许够不到」 ⇒ 这条必须与
+ *      `INV-UI-sync-panel-scroll-reachable`（滚到底够不够得到）**两条一起跑**。
  */
 function assertDesktopNoScroll(m, vp) {
   if (!m) {
-    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 桌面不滚这条【没验过】，按 fail 记`);
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 「要滚多少」这条【没验过】，按 fail 记`);
     return;
   }
+  const need = Math.max(0, m.need);
   const key = `desktop-no-scroll|${APP_SHELL}|${vp.name}`;
-  recordForBaseline(key, Math.max(0, m.need));
-  const { allowed, tail } = vsBaseline(key, Math.max(0, m.need));
+  recordForBaseline(key, need);
+  const { allowed } = vsBaseline(key, need);
+  const base = baselineFor(key);
+  // ⚠️ 报语**必须跟着判据一起改**（规格 §12.2）—— 旧那句"不该滚（scrollHeight ≤ clientHeight）"
+  //    在新语义下是**自相矛盾**的（一边说"不该滚"、一边打印"允许滚 56px"）。
+  //    这里也不用 `vsBaseline` 那条共用尾巴：它写的是"已知**红**基线"，而这条的基线
+  //    是**裁定后允许的**量，不是"还没修的红"。
+  const tail =
+    base === 0
+      ? "（基线 0 ＝ 这一壳 × 视口一屏装得下；要滚 > 0 即超标）"
+      : `（基线 ${base}px ＝ 2026-09-29 裁定「允许滚动」时在**注入 Tauri 的壳**里实测的值；只许不增` +
+        `，改小了请 --update-views-baseline 收紧）`;
   ok(
     allowed,
-    `[壳=${APP_SHELL}] ${vp.name} 同步面板不该滚（scrollHeight ${m.scrollH} ≤ clientHeight ${m.clientH}；` +
-      `要滚 ${m.need}px；常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
+    `[壳=${APP_SHELL}] ${vp.name} 桌面版**允许滚动**（owner 2026-09-29 裁定），` +
+      `但"要滚多少"只许不增：要滚 ${need}px（scrollHeight ${m.scrollH} / clientHeight ${m.clientH}；` +
+      `常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
   );
-  if (Math.max(0, m.need) < baselineFor(key)) {
-    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${Math.max(0, m.need)}`);
+  if (need < base) {
+    console.log(`  · 可收紧基线：${key} ${base} → ${need}`);
   }
 }
 
-/** 把同步面板那两条的**当前**读数写成基线（`--update-views-baseline`）。
+/** 把同步面板那几条的**当前**读数写成基线（`--update-views-baseline`）。
  *  与 `check-store-subscriptions --update-baseline` / `check-copy-discipline --update-baseline` 同形。
  *  ⚠️ 只在**读数走的是预期方向**时才该收紧（修好了才收）；脚本不做判断，由人负责。 */
 const VIEWS_BASELINE_SEEN = {};
@@ -1637,6 +1762,7 @@ async function main() {  const executablePath = findChrome();
         await sleep(600);
         await openSyncPanel(spage);
         assertPersistentChrome(await measureSyncPanel(spage), vp);
+        assertScrollReachable(await measureSyncPanelScroll(spage), vp);
         await shot(spage, `${vp.name}-sync-panel`);
         ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
         await sctx.close();
@@ -2209,9 +2335,9 @@ async function main() {  const executablePath = findChrome();
     await shot(desk, `${DESKTOP.name}-pdf-reader`);
     await deskCtx.close();
 
-    // ---------- 同步面板：桌面不滚（规格 §2 第 3 条）----------
+    // ---------- 同步面板：桌面「允许滚动，但只许不增」（规格 §2 第 3 条 ⇒ §12.2 改语义）----------
     {
-      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：桌面不滚（壳=${APP_SHELL}）】`);
+      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：允许滚动但只许不增（壳=${APP_SHELL}）】`);
       const sctx = await browser.createBrowserContext();
       const spage = await sctx.newPage();
       await pinAppLanguage(spage);
@@ -2226,6 +2352,7 @@ async function main() {  const executablePath = findChrome();
       const sm = await measureSyncPanel(spage);
       assertDesktopNoScroll(sm, DESKTOP);
       assertPersistentChrome(sm, DESKTOP);
+      assertScrollReachable(await measureSyncPanelScroll(spage), DESKTOP);
       await shot(spage, `${DESKTOP.name}-sync-panel`);
       ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
       await sctx.close();

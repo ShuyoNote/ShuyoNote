@@ -1144,7 +1144,18 @@ html[data-platform="win"] .app-body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* ⚠️ 2026-09-29（D5 修正②）：**桌面档也改成「整个面板滚」**（原为 `overflow: hidden`）。
+     为什么必须改：三段式里"只有 `.sync-profiles` 滚"，而**落在它外面**的块
+     （`SpacePrivacySection` ＋ D5 的 hero）**既不滚、又被 `hidden` 裁掉** ⇒
+     实测固定区 = head 67 ＋ hero 169 ＋ space-privacy 261 ＋ foot 86 = **583px**，
+     而面板只有 608px ⇒ 滚动区只剩 **24px** ⇒ owner 在真机上「**面板不能滚动**」。
+     ⚠️ 不能简单把 `space-privacy` 挪进 `.sync-profiles`：它在 Web 档带 `is-disabled`
+     （`opacity:.45 ＋ pointer-events:none`）⇒ 会把空间隐私**变灰且点不动**。
+     ⇒ 改成与**窄屏同一套**：外层滚 ＋ 底栏吸底。
+     ⚠️ 副作用（如实记）：`desktop-no-scroll` 测的是"外层不滚"，内容真装不下时它会**变红**
+        —— 那是对的，它本来就说"桌面本该一屏装下"。 */
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 .sync-head {
   display: flex;
@@ -1246,15 +1257,163 @@ html[data-platform="win"] .app-body {
   font-size: 11px;
 }
 .sync-pending-actions button:hover { border-color: var(--accent); color: var(--accent); }
+/* ⚠️ 2026-09-29（D5 修正②）：桌面档**不再由它自己滚**（改由外层滚，见 `.sync-popover.is-sync`）。
+   `flex: none` 是必须的 —— 原来 `flex: 1` 会把它压扁（本次那个「只剩 24px」就是这么来的）。 */
 .sync-profiles {
-  flex: 1;
+  flex: none;
   min-height: 0;
-  overflow-y: auto;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+/* ── ⚠️ 2026-09-29（IA）：**两组 ＋ 每行一个可展开项**（原生 `<details>`）────────────
+   为什么：默认展开的一长条 —— 桌面实测内容 **1190px vs 面板 606px**（`desktop-no-scroll`
+   的读数）—— 用户要找某一项得先把整屏滚一遍。收成"两组 ＋ 每行一折"之后一屏就看得全。
+   口径：
+     · 行里装的是**原来的块本身**（一块没删、一个字没改，只是折起来）；
+     · 用原生 `<details>/<summary>`（本文件早有先例：`.sync-advanced`）⇒ 不引入新的 JS 状态；
+     · 只用既有变量（`--border` / `--card-bg` / `--text-dim` / `--text-faint` / `--radius-md` /
+       `--accent`），不新增色值。 */
+.sync-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sync-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+/* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
+   不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
+   对齐那 16px（`.sync-profiles` 的横向内边距）。 */
+.sync-group.is-advanced {
+  margin: 0 16px 12px;
+}
+.sync-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-row > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.sync-row > summary::-webkit-details-marker {
+  display: none;
+}
+.sync-row > summary:hover {
+  color: var(--accent);
+}
+.sync-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 右侧那颗摘要值：**由真实读数算出来**（见 `SyncPanel.tsx` 里那一段派生）。
+   长值（服务器地址）不许撑破这一行 ⇒ 省略号；全文在 `title` 上。 */
+.sync-row-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.sync-row-caret {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.sync-row[open] > summary .sync-row-caret {
+  transform: rotate(90deg);
+}
+.sync-row-body {
+  padding: 10px 12px 12px;
+  border-top: 1px dashed var(--border);
+}
+/* 行体里装的是**原来的块本身** —— 它们原来靠 `.sync-profiles` 的 `gap:12px` / `padding:16px`
+   定位，现在那一层由 `.sync-row` 提供 ⇒ 这里只抹掉重复的外边距（字号 / 配色一概不动）。 */
+.sync-row-body > .sync-auto { margin: 0; }
+.sync-row-body > .sync-net { margin: 0; }
+.sync-row-body > .space-privacy { margin: 0; }
+.sync-row-body > .sync-history { border-top: 0; padding-top: 0; }
+/* ⚠️ 卡片之间的间距本来来自 `.sync-profiles` 的 `gap:12px`；折进普通块容器后要补回来，
+   否则两张卡会贴在一起。 */
+.sync-row-body > .sync-card + .sync-card,
+.sync-row-body > .sync-empty-state + .sync-card { margin-top: 12px; }
+
+/* ── ★ 2026-09-29（丙档「设备直连」）：三样新东西的样式 ─────────────────────────────
+   口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /
+   `--text-faint` / `--radius-md` / `--accent` / `--text`），**不引入任何新色值**。
+   而那个"提示框"直接复用既有的 `.sync-web-note`（它的底色本来就是既有变量），
+   这里只把它的外边距归零（它原来是给 `.sync-popover` 直接当孩子用的，margin 会重复一圈）。 */
+.sync-web-note.is-inline { margin: 0; }
+
+/* 子项那一行（「拉取间隔」）：**缩进 ＋ 一条竖线**，表示它属于上一行（照效果图）。
+   ⚠️ 竖线用伪元素而不是 `border-left`：`border-left` 会把圆角那一圈也画上，看起来像两个盒子。 */
+.sync-row.is-child { margin-left: 14px; position: relative; }
+.sync-row.is-child::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+
+/* ★ 规格 §9.2：总闸＝关闭 ⇒ 设备直连那一行**灰掉**。
+   ⚠️ 与 `.sync-profiles.is-disabled` 同一套手法（`opacity` ＋ `pointer-events`）——
+      它是"不能点"，不是"藏起来"（用户要看得到"它停着"这件事，上面的黄框在说为什么）。 */
+.sync-row.is-off {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 「附近设备」那一块：一块**区域标题** ＋ 每台一行（＋ 收到的邀请 ＋ 那句代价说明）。 */
+.sync-nearby { display: flex; flex-direction: column; gap: 8px; }
+/* 一台设备那一行：名字（可缩）＋ 第二列说明（可缩）＋ 右侧动作（不可缩）。
+   ⚠️ `flex-wrap` 是必须的：`邀请加入「<空间名>」` 在 320px 宽的面板里放不下 ——
+      不换行就会把那一行**撑出面板**（而"越界"正是 mobile-views 那条门禁在量的东西）。 */
+.sync-nearby-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-nearby-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text);
+}
+/* 第二列说明与右侧动作都靠 `margin-left:auto` 推到右边；换行时动作自己落到下一行。
+   ⚠️ 说明这一格要能换行（窄屏下"没报可以直连的地址"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
+.sync-nearby-row > .sync-hint { margin-left: auto; text-align: right; flex: 0 1 auto; }
+.sync-nearby-row > .sync-btn { margin-left: auto; flex: none; }
 /* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
  *
  * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。
@@ -1397,6 +1556,62 @@ html[data-platform="win"] .app-body {
 }
 .space-privacy-note { font-size: 11px; color: var(--text-dim); }
 .space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
+/* ── ⚠️ 2026-09-29（D5）：**状态置顶**（`.sync-hero`）────────────────────────────
+   口径见 `SyncPanel.tsx` 里它上面那段注释。三条要点：
+     · 它是给人【看状态】的 ⇒ **里面不许有 input/select/textarea**（同 `.sync-foot` 那条口径）
+     · 颜色只用既有变量（`--accent` / `--border` / `--card-bg` / `--text-faint`），不新增色值
+     · 绿点那个色（`#22a06b`）与 `.sync-account-dot` 已有的成功色一致 */
+/* ⚠️ 2026-09-29（尺寸协调）：hero 原来在 `.sync-profiles`【外面】⇒ 满宽贴边（宽 450 / x 61），
+   而下面那些行在容器 16px 内边距里（宽 418 / x 77）⇒ **左右差 16px、宽差 32px**，
+   owner 一眼看出的"和大卡片与下面的尺寸不协调"就是这个。
+   ⇒ 左右 margin 取 16px 与行对齐；同时把垂直节奏收一档（169px → ~132px），
+     按钮 48 → 42、标题 19 → 17、副标题 13 → 12.5。 */
+.sync-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 12px 16px;
+  padding: 14px 14px 12px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-hero-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sync-hero-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.sync-hero-dot.is-ok { background: #22a06b; box-shadow: 0 0 0 4px rgba(34, 160, 107, 0.15); }
+.sync-hero-dot.is-busy { background: var(--accent); }
+.sync-hero-sub { font-size: 12.5px; color: var(--text-faint); }
+.sync-hero-btn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sync-hero-btn:disabled { opacity: 0.55; cursor: default; }
+.sync-hero-route { font-size: 12px; color: var(--text-dim); }
+
 .sync-card {
   display: flex;
   flex-direction: column;
@@ -1488,6 +1703,11 @@ html[data-platform="win"] .app-body {
 .sync-input {
   width: 100%;
   box-sizing: border-box;
+  /* ⚠️ 2026-09-28：**命中区**。原来靠 `padding: 7px 10px` ＋ `font-size: 13px` 算出来约 **32px 高**，
+     而本仓的规则是"可点控件高度一律 ≥44"（`verify-mobile-views.mjs:223`）——
+     那条判据的选择器**含 `input`**，但它跑的时候同步面板没被打开 ⇒ 一直没扫到这里。
+     实测：面板里 10 个输入控件有 **9 个 < 44**（8 个是 32px）而三个门禁全绿。 */
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 10px;
@@ -1698,6 +1918,14 @@ select.sync-input {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* ⚠️ 2026-09-29（D3）：`INV-UI-copy-inline-separators` —— `.sync-att-name` 与 `.sync-hint`
+   都是 `<span>`、都**没写 display** ⇒ 两个 inline 挨着跑，渲染成
+   「只在 Wi-Fi 下自动同步关掉后蜂窝网络也会自动同步…」（名字与提示黏在一起，owner 截图里能看到）。
+   ⇒ 让 `name` 在 `.sync-att-text` 里成为**块**：提示自然落到下一行，就有了分隔。
+   ⚠️ 只加这一条，不动 `.sync-att-name` 本身的字号/颜色（那是别的块共用的）。 */
+.sync-att-text > .sync-att-name {
+  display: block;
+}
 .sync-att-name {
   font-size: 11px;
   font-weight: 600;
@@ -1742,6 +1970,17 @@ select.sync-input {
 .sync-mesh .sync-field > .sync-btn {
   flex: 0 0 auto;
   white-space: nowrap;
+  /* ⚠️ 2026-09-28：**给同一列的按钮一个共同的最小宽度** ——
+     原来只有 `flex: 0 0 auto`，于是按钮按【文案字数】自适应：
+     「保存地址」(4 字) = 78px、「设口令」(3 字) = 66px ⇒ **差 12px**，
+     而它把这一行的输入框也带得不齐（270 vs 282，右边缘差 12px）。
+     用 `min-width` 而不是 `width`：短标签被撑到同一宽度，**将来更长的标签仍然安全**。
+     ⚠️ 用 **`6.5em` 而不是 `78px`** —— 78px ＝「4 个汉字 @12px ＋ 14px 内边距 ×2 ＋ 2px 边框」，
+     **只是碰巧**等于最宽那个标签的固有宽度；字号一变（或标签变长）它就不够了，
+     于是又有一个按钮撑出去、又不齐。改成 em ⇒ 跟着字号缩放：
+       12px → 78px（＝当前实测需要）｜13px → 84.5px（需要 82）｜16px → 104px（需要 94）⇒ **恒等宽**。 */
+  min-width: 6.5em;
+  justify-content: center;
 }
 /* 读数里有长 URL（`http://192.168.43.1:47832`）：长串按任意位置折，别撑破卡片。 */
 .sync-mesh .sync-hint {
@@ -1771,10 +2010,17 @@ select.sync-input {
   padding: 4px 6px;
   font-size: 12px;
 }
-.sync-budget > .sync-hint {
+/* ⚠️ 2026-09-29（IA）：`.sync-budget` 现在是那一行的 `<details>`（`.sync-row.sync-budget`），
+   三个下拉与这段解释被统一折进行体里 ⇒ 选择器跟着下移一层（同样的间距，同一个说法）。 */
+.sync-budget .sync-row-body > .sync-hint {
   margin-top: 10px;
 }
 .sync-foot {
+  /* ⚠️ 2026-09-29（D5 修正②）：外层滚之后，底栏要**吸底**（否则它跟着内容一起滚掉）。 */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--card-bg);
   display: flex;
   flex-direction: column;
   gap: 8px;

@@ -1110,7 +1110,7 @@ pub(crate) fn attachment_fetch_failure(server_err: Option<&str>, proto_space: &s
         parts.push(if proto_space.trim().is_empty() {
             "这个空间没绑组织空间 id ⇒ 网格这一档不知道跟谁对暗号".to_string()
         } else {
-            "本网段里没有能问的对端（没人代言这个空间 / 只有我自己）".to_string()
+            "附近没有能问的对端（没人代言这个空间 / 只有我自己）".to_string()
         });
     } else if tried.is_empty() {
         // 有对端、却一条尝试记录都没有 ⇒ 只可能是循环没跑（防御性：真出现就是代码问题）
@@ -1952,282 +1952,6 @@ pub async fn claim_page_lineage(db: State<'_, Db>, args: LineageClaimArgs) -> Re
     Ok(lineage_claim_verdict(status, body.as_ref()))
 }
 
-// ─────────────────────── ③ 0b（2026-09-24）：公开材料的**推**与**取**
-
-/// ③ 0b 的载荷：**本地**工作空间 id；远端 space id 由同步档案解析（与 `claim_page_lineage` 同口径）。
-#[derive(serde::Deserialize)]
-pub struct SpaceKeyringArgs {
-    pub workspace_id: String,
-    /// 取回时是否允许**覆盖**本机已有的公开材料（默认 false）。
-    ///
-    /// ⚠️ 为什么要这个开关：本机已经有袋子时覆盖它是**危险动作** —— 别的设备轮换过之后，
-    /// 服务端那一份是新的、而本机这一份才可能是能开当前库的那一把；闷头覆盖会让本机
-    /// **打不开自己的空间**。所以默认拒绝并把这件事说出来，要覆盖必须显式传 `true`。
-    #[serde(default)]
-    pub overwrite: bool,
-}
-
-/// ③ 0b 的结果。**"正常的不顺利"不抛异常**（与 `claim_page_lineage` 同一纪律：
-/// 没配同步 / 服务端上没有 / 网络不通都不是 bug，抛出去会被平台 invoke 层记成一条 error）。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct SpaceKeyringResult {
-    /// `ok` / `not_configured` / `no_material` / `not_on_server` / `already_local` / `offline` / `rejected`
-    pub outcome: String,
-    /// `ok` 时是材料的字节数。
-    pub bytes: usize,
-    /// 服务端 HTTP 状态码（没走到服务端 ⇒ 0）。
-    pub status: u16,
-    /// 一句**人话**（说清下一步该做什么）。
-    pub message: String,
-}
-
-impl SpaceKeyringResult {
-    fn plain(outcome: &str, message: &str) -> Self {
-        Self {
-            outcome: outcome.to_string(),
-            bytes: 0,
-            status: 0,
-            message: message.to_string(),
-        }
-    }
-    fn ok(bytes: usize, status: u16, message: String) -> Self {
-        Self {
-            outcome: "ok".to_string(),
-            bytes,
-            status,
-            message,
-        }
-    }
-    fn rejected(status: u16) -> Self {
-        Self {
-            outcome: "rejected".to_string(),
-            bytes: 0,
-            status,
-            message: keyring_status_message(status),
-        }
-    }
-}
-
-/// 状态码 ⇒ **可操作**的人话（只照着服务端实际会回的那几个说，**不猜**"为什么"）。
-fn keyring_status_message(status: u16) -> String {
-    match status {
-        401 => "同步服务说这个身份无效（401）：先重新登录 / 重绑这个空间的同步，再试一次".to_string(),
-        403 => "同步服务说你不该动这个空间的公开材料（403）：改它会影响**别的设备还能不能解开**，所以要管理员 / 所有者".to_string(),
-        404 => "同步服务上没有这个空间（404）".to_string(),
-        413 => "这一份公开材料超过了服务端的上限（413）—— 它现在只有几 KB，先看是不是推错了东西".to_string(),
-        _ => format!("同步服务拒绝了这一次（{status}）"),
-    }
-}
-
-/// PUT 那一半 —— **可被判据直接驱动**（不碰 `State`，也不碰库）。
-pub(crate) async fn http_put_keyring(
-    client: &reqwest::Client,
-    server_url: &str,
-    token: &str,
-    remote_space_id: &str,
-    material: &str,
-) -> SpaceKeyringResult {
-    let url = format!(
-        "{}/spaces/{}/keyring",
-        server_url.trim_end_matches('/'),
-        remote_space_id
-    );
-    let mut req = client.put(&url).json(&serde_json::json!({ "keyring_json": material }));
-    if !token.is_empty() {
-        req = req.bearer_auth(token);
-    }
-    match req.send().await {
-        Err(e) => SpaceKeyringResult::plain(
-            "offline",
-            &format!("没能连上同步服务（{e}）：材料还在本机，网络好了再推一次"),
-        ),
-        Ok(resp) => {
-            let status = resp.status().as_u16();
-            if (200..300).contains(&status) {
-                SpaceKeyringResult::ok(
-                    material.len(),
-                    status,
-                    format!(
-                        "已把这一份公开材料（{} 字节）交给同步服务；第二台设备从此只凭主口令就能解开",
-                        material.len()
-                    ),
-                )
-            } else {
-                SpaceKeyringResult::rejected(status)
-            }
-        }
-    }
-}
-
-/// GET 那一半：返回 `(读数, 拿到的材料原文)`（没拿到时第二个是 `None`）。
-pub(crate) async fn http_get_keyring(
-    client: &reqwest::Client,
-    server_url: &str,
-    token: &str,
-    remote_space_id: &str,
-) -> (SpaceKeyringResult, Option<String>) {
-    let url = format!(
-        "{}/spaces/{}/keyring",
-        server_url.trim_end_matches('/'),
-        remote_space_id
-    );
-    let mut req = client.get(&url);
-    if !token.is_empty() {
-        req = req.bearer_auth(token);
-    }
-    let resp = match req.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                SpaceKeyringResult::plain(
-                    "offline",
-                    &format!("没能连上同步服务（{e}）：这一次没取到，本机什么都没改"),
-                ),
-                None,
-            )
-        }
-    };
-    let status = resp.status().as_u16();
-    if status == 404 {
-        return (
-            // ⚠️ 别用 `plain()` 造这一支：它把 `status` 填 0，而这里**真的**从服务端收到了 404 ——
-            //    "没到服务端"与"服务端说没有"是两件事，读数必须分得开（判据当场抓过这一处）。
-            SpaceKeyringResult {
-                outcome: "not_on_server".to_string(),
-                bytes: 0,
-                status,
-                message: "这台服务器上还没有这个空间的公开材料（404）：先在原来那台设备上推一次"
-                    .to_string(),
-            },
-            None,
-        );
-    }
-    if !(200..300).contains(&status) {
-        return (SpaceKeyringResult::rejected(status), None);
-    }
-    match resp.json::<serde_json::Value>().await {
-        Ok(v) => match v["keyring_json"].as_str() {
-            Some(s) if !s.trim().is_empty() => {
-                let s = s.to_string();
-                let r = SpaceKeyringResult::ok(
-                    s.len(),
-                    status,
-                    format!("从服务端取回了公开材料（{} 字节）", s.len()),
-                );
-                (r, Some(s))
-            }
-            // 2xx 但载荷里没有那一列 ⇒ **不猜**成空材料（空材料写进本机比不写危险得多）
-            _ => (
-                SpaceKeyringResult {
-                    outcome: "rejected".to_string(),
-                    bytes: 0,
-                    status,
-                    message: "服务端的回话里没有 keyring_json（读不懂就不猜，本机什么都没改）"
-                        .to_string(),
-                },
-                None,
-            ),
-        },
-        Err(_) => (
-            SpaceKeyringResult {
-                outcome: "rejected".to_string(),
-                bytes: 0,
-                status,
-                message: "服务端的回话不是 JSON（本机什么都没改）".to_string(),
-            },
-            None,
-        ),
-    }
-}
-
-/// ③ 0b 桌面侧：把本机这一份**公开材料**推到同步服务（`PUT /spaces/{id}/keyring`）。
-///
-/// 什么时候用：在这台设备上开启了（或轮换了）加密之后，把它交给自己那台服务端 ——
-/// 这样**第二台设备**只凭主口令就能解开，不必再手工拷贝那份 JSON。
-/// ⚠️ 推的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子）；
-/// 服务端**解不开**它（没有口令推不出主密钥，没有主密钥开不了盒子）。
-/// ⚠️ 但它仍然是一份**元数据**：服务端因此能看到你有几个盒子、以及它们的**本地空间 id**
-/// （不是内容、不是钥匙）—— 别在文档里写成"服务端什么都看不到"。
-#[tauri::command]
-pub async fn push_space_keyring(
-    db: State<'_, Db>,
-    args: SpaceKeyringArgs,
-) -> Result<SpaceKeyringResult, String> {
-    let (server_url, token, remote_space_id, material) = {
-        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-        let Some((server_url, token, space_id)) = claim_config(&c, &args.workspace_id)? else {
-            return Ok(SpaceKeyringResult::plain(
-                "not_configured",
-                "这个空间还没绑好同步（缺服务地址，或登录了还没选空间）：先在上面绑好，再推公开材料",
-            ));
-        };
-        let Some(material) = crate::space_crypto::stored_material(&c)? else {
-            return Ok(SpaceKeyringResult::plain(
-                "no_material",
-                "本机还没有公开材料：先在这个空间上「开启加密」（那一步会建钥匙袋）",
-            ));
-        };
-        (server_url, token, space_id, material)
-    };
-    Ok(
-        http_put_keyring(
-            &reqwest::Client::new(),
-            &server_url,
-            &token,
-            &remote_space_id,
-            &material,
-        )
-        .await,
-    )
-}
-
-/// ③ 0b 桌面侧：从同步服务**取回**公开材料并**装进本机**（第二台设备的那一步）。
-///
-/// ⚠️ 默认**不覆盖**本机已有的那一份（回 `already_local`）：覆盖是危险动作，理由见 `SpaceKeyringArgs`。
-/// ⚠️ 取回之后**不会自动解锁**：主口令仍然由人来输 —— 这正是"服务端拿不到你的钥匙"的原因。
-#[tauri::command]
-pub async fn pull_space_keyring(
-    db: State<'_, Db>,
-    args: SpaceKeyringArgs,
-) -> Result<SpaceKeyringResult, String> {
-    let (server_url, token, remote_space_id) = {
-        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-        let Some((server_url, token, space_id)) = claim_config(&c, &args.workspace_id)? else {
-            return Ok(SpaceKeyringResult::plain(
-                "not_configured",
-                "这个空间还没绑好同步（缺服务地址，或登录了还没选空间）：先绑好再来取",
-            ));
-        };
-        (server_url, token, space_id)
-    };
-    let (result, body) = http_get_keyring(
-        &reqwest::Client::new(),
-        &server_url,
-        &token,
-        &remote_space_id,
-    )
-    .await;
-    let Some(json) = body else { return Ok(result) };
-    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    let report = crate::space_crypto::adopt_material(&c, &json, args.overwrite)?;
-    if report.already_local {
-        return Ok(SpaceKeyringResult::plain(
-            "already_local",
-            "本机已经有这一份公开材料了，所以**没有动它**；确实要用服务端那一份覆盖，请显式选「覆盖本机」",
-        ));
-    }
-    Ok(SpaceKeyringResult {
-        outcome: "ok".to_string(),
-        bytes: json.len(),
-        status: result.status,
-        message: format!(
-            "已取回并装进本机（{} 个盒子，{} 字节）；现在输入主口令就能解开这个空间",
-            report.spaces,
-            json.len()
-        ),
-    })
-}
-
 // ── B 片 ①-a：换设备的**文本搬运**（复制/粘贴、存/读文件）──────────────────────────────
 //
 // 路线 ①（owner 2026-09-25 拍板）：不做 6 位短码 ⇒ **不引任何密码学实现**；
@@ -2246,7 +1970,11 @@ pub struct PairingImportArgs {
     /// "换码"的机制。两台设备就在一起、用眼睛对屏幕看的那条路可以不传。
     #[serde(default)]
     pub confirmed_check_code: Option<String>,
-    /// 本机已有公开材料时是否允许覆盖（默认 false）。理由与 `SpaceKeyringArgs::overwrite` 同。
+    /// 本机已有公开材料时是否允许覆盖（默认 false）。
+    ///
+    /// ⚠️ 为什么要这个开关：本机已经有袋子时覆盖它是**危险动作** —— 另一台设备轮换过之后，
+    /// 它给来的这一份是新的、而本机这一份才可能是能开当前库的那一把；闷头覆盖会让本机
+    /// **打不开自己的空间**。所以默认拒绝并把这件事说出来，要覆盖必须显式传 `true`。
     #[serde(default)]
     pub overwrite: bool,
 }
@@ -3120,7 +2848,6 @@ pub fn mesh_set_config(
 
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
 /// （两份各自写一遍的下场是"设置面认得、同步面不认得"，而那种不一致没有任何编译期信号）。
-///
 /// ★★ **为什么必须是两个、不许合成一个**（2026-09-26 真机实测的教训）：档案表里
 /// `sync_profiles.space_id` 是**远端组织空间 id**（对暗号用），`sync_profiles.ws_id` 是**本地空间 id**
 /// —— 也就是 `spaces/<id>.db` 的文件名那一半。真机上两者**不同名**（本地 `default` / 远端
@@ -3239,6 +2966,11 @@ pub fn lan_status(
     //   界面据此**只换标题、不重判档位**（重判就会说出与真实路由矛盾的档）。
     let kind = route.as_ref().map(|r| r.kind.as_str()).unwrap_or("").to_string();
     let line = lan::status_line(route.as_ref(), &peers, &space_id, observed);
+    // ★ 丙档「附近设备」（2026-09-29，T1）：**把对端表上抛**（需求 §3.2 —— 不是"没有料"，是"料没上抛"）。
+    //   ⚠️ 用的是**上面那一次** `state.peers(now)`（`:3219`）：`peers`（数量）与 `nearby`（列表）
+    //      必须来自**同一次读数**（`INV-NEARBY-one-source`），所以 `peers.len() == nearby.len()`
+    //      是**恒等式**，而不是"两处各数一遍碰巧相等"。
+    let nearby = nearby_of(&peers, &device_id, &space_id);
 
     // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
     //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
@@ -3254,7 +2986,7 @@ pub fn lan_status(
         crate::mesh::config_state(&cfg, window)
     };
 
-    Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh })
+    Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })
 }
 
 /// 状态行该报**哪个空间**（纯函数，带判据）：显式指定的那条优先，否则第一条绑定。
@@ -3291,6 +3023,91 @@ pub struct LanStatus {
     ///
     /// ⚠️ 它在这里**只读**：`lan_status` 不负责开窗（那是 `mesh_set_config` 与发现层循环的事）。
     pub mesh: crate::mesh::MeshConfigState,
+    /// ★ 丙档「附近设备」（2026-09-29，T1）：**同网段里我听得见的每一台别的设备**。
+    ///
+    /// 口径三条（规格 §3.1）：
+    /// 1. **它与 `peers`（数量）来自同一次 `state.peers(now)` 读数** ⇒ `peers == nearby.len()`
+    ///    **恒成立**（`INV-NEARBY-one-source`）；
+    /// 2. **未启用发现层 ⇒ 空**（`LanState::peers` 在未启用时一律返回空，`lan_state.rs` 口径 3）；
+    ///    这里**不另判一次**（两处各判一次就会漂）；
+    /// 3. **它不按当前空间过滤** —— "附近有哪几台设备"与"哪几台服务我这个空间"是两件事，
+    ///    后者由每一条的 `serves_current` 表达。
+    ///
+    /// ⚠️ 字段名是 **snake_case**（与 `LanStatus` 其余字段一致）：本结构体**没有**
+    /// `rename_all`（`#[derive(Serialize)]` 而已），TS 侧照抄 `device_id` / `serves_current`
+    /// —— **不许**只给新字段加 `rename_all`（一个结构体两种风格，规格 §3.2）。
+    pub nearby: Vec<NearbyPeer>,
+}
+
+/// 同网段里的一台**别的设备**（给人看的列表用；**不含**任何密钥材料）。
+///
+/// ⚠️ 它**不是**新发现的数据：每一个字段都来自既有那块砖
+/// （`lan::Peer { announce: LanAnnounce { .. }, addr, seen_at_ms }`，`lan.rs:133-139`）。
+/// 本结构只做一件事：**把对端表上抛**（需求 §3.2）。
+///
+/// ⚠️ 边界（规格 §3.4，写下来免得后人"顺手"扩张）：
+/// ❌ 不加 `seen_at_ms` / 存活剩余时间（那会让界面能自己算 TTL）· ❌ 不加 `fp`（它就是
+/// `device_id`）· ❌ 不加 `hub_base`（"能不能被拉"已经收进 `invitable` 一个布尔）。
+#[derive(Serialize)]
+pub struct NearbyPeer {
+    /// 设备身份（**排障与去重用**；不许插进用户可见的句子 —— `INV-UI-copy-no-internal-ids`）。
+    pub device_id: String,
+    /// 设备名 —— **可能是空串**（`LanAnnounce.device_name` 是 `#[serde(default)]`；本机名来自
+    /// `host_name()`，拿不到就留空，**不编**）⇒ 界面**如实说没报名字**，
+    /// **不许**回落成 `device_id` 前几位。
+    pub device_name: String,
+    /// 收到它公告的来源地址（ip，不含端口）。⚠️ 默认**不显示**，只用于排障（规格 §3.4）。
+    pub addr: String,
+    /// **它自己声明**在服务哪些空间（`LanAnnounce.hub_spaces`，远端 `space_id`）。
+    /// 这是"这台设备跟我有没有共同空间"的**唯一**依据；**界面不许自己算**这条交集。
+    pub spaces: Vec<String>,
+    /// 这一条与**当前这个空间**相不相关（**由 Rust 判定**，界面直接显示）。
+    /// 口径：与 `lan::serves_space` 同一把尺（＝ `mesh_peers` 用的那把）。
+    pub serves_current: bool,
+    /// ★ **只有这一台能被直接拉**（＝界面上那一行的第二列有没有落到「它没报可以直连的地址」）：
+    /// 与 `mesh::invitable_base` 同一套过滤（不是我自己 · 服务这个空间 · `hub_base` 是局域网地址）。
+    ///
+    /// ⚠️ 字段名是 2026-09-29 丙-乙片取的（那时它管的是「那一行有没有邀请按钮」）；
+    /// 同日晚 owner 裁定 §14 **撤掉了邀请那套**，这个字段**留下来了** ——
+    /// 它现在是"**能不能被直接拉**"的读数，仍然与 `mesh::mesh_peers` 逐字同一把尺。
+    pub invitable: bool,
+}
+
+/// 把对端表映射成**给人看的列表** —— 纯函数（判据不打桩、不开网络、不碰库）。
+///
+/// ⚠️ 它**只做映射**：个数不过滤、顺序不动（`PeerTable::live` 已按 `device_id` 排好）
+/// ⇒ `nearby.len() == peers.len()` 是**结构上**成立的（`INV-NEARBY-one-source`）。
+/// ⚠️ 名字空的、`hub_spaces` 空的那些**照样在列表里**（"看得见"不等于"能被拉"）——
+/// 少一行就会让"网段里发现 N 台"与列表行数漂开，而那正是这一片要消灭的东西。
+pub fn nearby_of(
+    peers: &[lan::Peer],
+    my_device: &str,
+    space_id: &str,
+) -> Vec<NearbyPeer> {
+    peers
+        .iter()
+        .map(|p| NearbyPeer {
+            device_id: p.announce.device_id.trim().to_string(),
+            device_name: p.announce.device_name.trim().to_string(),
+            addr: p.addr.trim().to_string(),
+            spaces: spaces_of(p),
+            serves_current: lan::serves_space(space_id, p),
+            invitable: crate::mesh::invitable_base(space_id, my_device, p).is_some(),
+        })
+        .collect()
+}
+
+/// 一条公告里"它服务哪些空间"：去空白、丢空串、去重（**保序** ⇒ 读数不抖）。
+fn spaces_of(p: &lan::Peer) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for s in &p.announce.hub_spaces {
+        let s = s.trim();
+        if s.is_empty() || out.iter().any(|x| x == s) {
+            continue;
+        }
+        out.push(s.to_string());
+    }
+    out
 }
 
 #[derive(Serialize)]
@@ -4319,84 +4136,6 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
 mod tests {
     use super::*;
 
-    // ───── ③ 0b（2026-09-24）：公开材料的推 / 取 ＋ **第二台设备只凭口令**的端到端判据
-
-    /// 假同步服务端：`PUT /spaces/{id}/keyring` 把材料存下来，`GET` 再原样回给它。
-    /// 返回 `(port, 句柄)`。用裸 TCP 写最小 HTTP 响应，不引额外依赖（同 `sync_stream` 那族）。
-    ///
-    /// ⚠️ 读 body **按字节收齐再转字符串**：分块读时在多字节字符中间切开会让中文变乱码
-    /// （这一条当场踩过 —— 材料里有中文 key 时会把"存进去的"和"取回来的"弄成不一样）。
-    async fn fake_keyring_server() -> (u16, tokio::task::JoinHandle<()>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let port = listener.local_addr().expect("addr").port();
-        let handle = tokio::spawn(async move {
-            let mut stored: Option<String> = None;
-            loop {
-                let Ok((mut sock, _)) = listener.accept().await else {
-                    return;
-                };
-                let mut raw: Vec<u8> = Vec::new();
-                let mut tmp = [0u8; 4096];
-                let head_end = loop {
-                    if let Some(p) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break p + 4;
-                    }
-                    let n = sock.read(&mut tmp).await.unwrap_or(0);
-                    if n == 0 {
-                        break 0;
-                    }
-                    raw.extend_from_slice(&tmp[..n]);
-                };
-                if head_end == 0 {
-                    continue; // 半截请求：丢掉这条连接
-                }
-                let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
-                let want: usize = head
-                    .lines()
-                    .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
-                        if k.eq_ignore_ascii_case("content-length") {
-                            v.trim().parse().ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                while raw.len() < head_end + want {
-                    let n = sock.read(&mut tmp).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    raw.extend_from_slice(&tmp[..n]);
-                }
-                let body = String::from_utf8_lossy(&raw[head_end..]).to_string();
-                let method = head.split_whitespace().next().unwrap_or("").to_string();
-                let (status, payload) = match method.as_str() {
-                    "PUT" => {
-                        let v: serde_json::Value =
-                            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-                        stored = v["keyring_json"].as_str().map(|s| s.to_string());
-                        (200u16, "{\"ok\":true}".to_string())
-                    }
-                    _ => match stored.clone() {
-                        Some(m) => (200u16, serde_json::json!({ "keyring_json": m }).to_string()),
-                        None => (404u16, "{\"error\":\"none\"}".to_string()),
-                    },
-                };
-                let resp = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    payload.len(),
-                    payload
-                );
-                let _ = sock.write_all(resp.as_bytes()).await;
-                let _ = sock.flush().await;
-                drop(sock); // 一条连接一次（reqwest 会自己重连）
-            }
-        });
-        (port, handle)
-    }
-
     /// 造一个全新的"设备目录"（带 meta，丢弃连接）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -4410,127 +4149,6 @@ mod tests {
         std::fs::create_dir_all(crate::db::spaces_dir(&d)).unwrap();
         drop(crate::db::open_meta_conn_at(&d).unwrap());
         d
-    }
-
-    /// ★★ ③ 0b 的**端到端判据**：A 设备把公开材料推上去 ⇒ B 设备（全新目录、什么都没拷）
-    /// 取回来装进本机 ⇒ **只凭主口令**解出**同一把**空间钥匙 —— 这就是"换设备只输一次口令"本身。
-    ///
-    /// ⚠️ 用**单线程 flavor**（`#[tokio::test]`）：本判据要握着 `SEC_LOCK` 走完整个流程
-    /// （`KEYRING`/`SESSION_MASTER` 是进程级全局），而 `std::sync::MutexGuard` 不是 `Send`
-    /// ⇒ 多线程 flavor 编译不过。
-    #[tokio::test]
-    async fn a_second_device_unlocks_the_space_with_the_passphrase_alone() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
-        let (port, server) = fake_keyring_server().await;
-        let base = format!("http://127.0.0.1:{port}");
-        let client = reqwest::Client::new();
-
-        // ── 设备 A：用口令建袋子 ＋ 给本机的 default 空间包一把钥匙 ⇒ 把材料推上去
-        let dir_a = temp_dir("a");
-        let c_a = crate::db::open_space_conn_at("default", &dir_a).unwrap();
-        crate::space_crypto::set_keyring_for_test(None);
-        crate::space_crypto::set_session_master(None).unwrap();
-        let mut kr = crate::keyring::Keyring::new();
-        let master_a = kr.kdf.derive_master("我家猫叫mimi").unwrap();
-        let key_a = crate::keyring::random_space_key();
-        kr.wrap(&master_a, "default", &key_a).unwrap();
-        crate::space_crypto::store_keyring(&c_a, &kr).unwrap();
-        let material = crate::space_crypto::stored_material(&c_a)
-            .unwrap()
-            .expect("A 本机应当有材料");
-
-        let pushed = http_put_keyring(&client, &base, "tok", "remote-sp", &material).await;
-        assert_eq!(pushed.outcome, "ok", "{}", pushed.message);
-        assert_eq!(pushed.bytes, material.len());
-        assert_eq!(pushed.status, 200);
-
-        // ── 设备 B：全新目录，本机什么都没有（＝换了一台机器、什么都没拷）
-        let dir_b = temp_dir("b");
-        let mut c_b = crate::db::open_space_conn_at("default", &dir_b).unwrap();
-        crate::space_crypto::set_keyring_for_test(None);
-        crate::space_crypto::set_session_master(None).unwrap();
-        assert!(
-            crate::space_crypto::stored_material(&c_b).unwrap().is_none(),
-            "B 本机一开始不该有材料"
-        );
-        assert!(!crate::space_crypto::space_status(&dir_b, "default").in_keyring);
-
-        // 取回 ⇒ 装进本机
-        let (got, body) = http_get_keyring(&client, &base, "tok", "remote-sp").await;
-        assert_eq!(got.outcome, "ok", "{}", got.message);
-        let body = body.expect("取回成功就要有材料原文");
-        let report = crate::space_crypto::adopt_material(&c_b, &body, false).unwrap();
-        assert!(report.adopted && report.spaces == 1, "{report:?}");
-
-        // ★★ 只凭主口令
-        let master_b = crate::space_crypto::master_from_passphrase(&c_b, "我家猫叫mimi")
-            .unwrap()
-            .expect("B 有了袋子 ⇒ 口令能推出主密钥");
-        let key_b = crate::space_crypto::keyring()
-            .unwrap()
-            .unwrap_key(&master_b, "default")
-            .unwrap();
-        assert_eq!(key_b, key_a, "★★ 第二台设备只凭口令就把同一把空间钥匙拿回来了");
-        assert!(
-            crate::space_crypto::space_status(&dir_b, "default").in_keyring,
-            "采纳之后：闸门眼里这个空间就是「已加密」"
-        );
-
-        // ★★ 把这一步走完 —— 这才是"换设备"真正的用途：B 在**自己**这个空间上开加密时，
-        //    用的应当是**取回来的那把**空间钥匙（不是又随机一把）⇒ 两台设备的库被同一把钥匙保护。
-        //    （闸门那一步也靠它：B 本机这个空间是"个人 ＋ 还没加密" ⇒ 不加密就**绑不上同步**。）
-        crate::space_crypto::set_session_master(Some(master_b)).unwrap();
-        let key_b2 = crate::space_crypto::enable_space(&mut c_b, &dir_b, "default", None)
-            .expect("取回材料 ＋ 输过口令 ⇒ 开加密应当成功");
-        assert_eq!(key_b2, key_a, "★★ 新设备开加密复用的是**同一把**空间钥匙（不是又随机一把）");
-        assert!(
-            crate::space_crypto::space_status(&dir_b, "default").encrypted_on_disk,
-            "开完之后 B 自己的库应当**真的**是密文"
-        );
-        // ⚠️ 分类要**真的写进库**再让闸门参战：拿 `SpaceKind::Personal` 硬编码去调 `sync_gate`
-        //    会把这条判据弄软（它测的就只剩"我把参数填对了"）。B 本机这个空间走的就是 A=3 那条路
-        //    （本地新建 ⇒ 个人空间）⇒ 直接调那个真 API，再用**库里读出来的**分类去问闸门。
-        crate::workspaces::insert_new_local_space(&c_b, "default", "新设备", "blue", 1.0, 1).unwrap();
-        assert_eq!(
-            crate::space_crypto::space_kind(&c_b, "default"),
-            crate::space_crypto::SpaceKind::Personal,
-            "本地新建 ⇒ 个人空间（A=3）"
-        );
-        assert_eq!(
-            crate::space_crypto::sync_gate(
-                &crate::space_crypto::space_status(&dir_b, "default"),
-                crate::space_crypto::space_kind(&c_b, "default")
-            ),
-            crate::space_crypto::SyncGate::Allowed,
-            "★ 到这一步闸门才放行：B 的空间现在敢绑同步了"
-        );
-
-        server.abort();
-        let _ = std::fs::remove_dir_all(&dir_a);
-        let _ = std::fs::remove_dir_all(&dir_b);
-    }
-
-    /// 服务端上**还没有**那一份 ⇒ `not_on_server`（不是一个"空材料"，更不是错误）；
-    /// 而且**不许给出 body** —— 空材料写进本机比不写危险得多。
-    #[tokio::test]
-    async fn pulling_from_a_server_that_has_nothing_is_a_plain_result_not_an_error() {
-        let (port, server) = fake_keyring_server().await;
-        let base = format!("http://127.0.0.1:{port}");
-        let (r, body) = http_get_keyring(&reqwest::Client::new(), &base, "tok", "remote-sp").await;
-        assert_eq!(r.outcome, "not_on_server");
-        assert_eq!(r.status, 404);
-        assert!(body.is_none(), "没取到就不许给上层一个 body");
-        assert!(r.message.contains("先在原来那台设备上推一次"), "{}", r.message);
-        server.abort();
-    }
-
-    /// 状态码 ⇒ 人话：**可操作**（说清是谁的问题、下一步怎么办），不把码原样丢给用户。
-    #[test]
-    fn keyring_status_messages_are_actionable() {
-        assert!(keyring_status_message(403).contains("管理员"), "403 要说清要管理员");
-        assert!(keyring_status_message(401).contains("重新登录"), "401 要说清下一步");
-        assert!(keyring_status_message(413).contains("上限"), "413 要说清是上限");
-        assert!(keyring_status_message(500).contains("500"), "认不出的码要把它报出来");
     }
 
     /// ★★ **"服务端不可信也不怕"这句话的判据**：服务端交过来的那份材料**不是你那一袋**
@@ -4591,81 +4209,6 @@ mod tests {
         assert!(e.contains("没有空间"), "{e}");
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// ★★ ③ 0b 的**真服务端**判据（默认 `#[ignore]`：它要一台真服务端 ＋ 一把真设备密钥）。
-    ///
-    /// **为什么不能只在桩服务端上验**：桩服务端**不看 `Authorization`**、也**不在乎路径** ——
-    /// 而"客户端到底有没有带 bearer、打的是不是 `/spaces/{id}/keyring`"正是最容易写错、
-    /// 而桩一定发现不了的那一处（写错路径的客户端在桩上全绿，在真服务端上 404）。
-    ///
-    /// 跑法（详见交接文档 `docs/plans/2026-09-24-crdt-privacy-handoff.md` §7.0）：
-    /// ```text
-    /// # ① 拿一把真设备密钥（服务端仓库）
-    /// shuyonote-sync-server --issue-device-key --space sp-e2e --db <tmp>/sync.db
-    /// # ② 起服务
-    /// shuyonote-sync-server --bind 127.0.0.1 --port 8799 --db <tmp>/sync.db
-    /// # ③ 跑这一条
-    /// $env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
-    /// cargo test --lib the_client_talks_to_a_real_server -- --ignored --nocapture
-    /// ```
-    /// ⚠️ 跑完会在那台服务端上**留下一份公开材料**（客户端侧没有"删"这条路：删是"关闭加密"那一步的事）。
-    #[tokio::test]
-    #[ignore = "需要真服务端与真设备密钥（SYNCSRV_BASE / SYNCSRV_DEVICE_KEY），见交接文档 §7.0"]
-    async fn the_client_talks_to_a_real_server_and_needs_its_bearer() {
-        let _g = crate::security::SEC_LOCK.lock().unwrap();
-        let base = std::env::var("SYNCSRV_BASE").expect("要设 SYNCSRV_BASE（例如 http://127.0.0.1:8799）");
-        let token = std::env::var("SYNCSRV_DEVICE_KEY").expect("要设 SYNCSRV_DEVICE_KEY（sk_…）");
-        let client = reqwest::Client::new();
-
-        // ① 先钉一件事：**真服务端要 bearer** —— 空 token 必须被它挡回来（401 或 403，都算挡）
-        let (no_auth, _) = http_get_keyring(&client, &base, "", "sp-e2e").await;
-        assert!(
-            no_auth.status == 401 || no_auth.status == 403,
-            "★ 没带 token 竟然没被挡：outcome={} status={} msg={}",
-            no_auth.outcome,
-            no_auth.status,
-            no_auth.message
-        );
-        assert_ne!(no_auth.outcome, "ok", "没带 token 不许当成功");
-
-        // ② 设备 A：口令建袋 ＋ 包一把钥匙 ⇒ 推给**真服务端**
-        let dir_a = temp_dir("real-a");
-        let c_a = crate::db::open_space_conn_at("default", &dir_a).unwrap();
-        crate::space_crypto::set_keyring_for_test(None);
-        crate::space_crypto::set_session_master(None).unwrap();
-        let mut kr = crate::keyring::Keyring::new();
-        let master_a = kr.kdf.derive_master("真服务端口令八个字").unwrap();
-        let key_a = crate::keyring::random_space_key();
-        kr.wrap(&master_a, "default", &key_a).unwrap();
-        crate::space_crypto::store_keyring(&c_a, &kr).unwrap();
-        let material = crate::space_crypto::stored_material(&c_a).unwrap().unwrap();
-
-        let pushed = http_put_keyring(&client, &base, &token, "sp-e2e", &material).await;
-        assert_eq!(pushed.outcome, "ok", "推失败：{}", pushed.message);
-
-        // ③ 设备 B：全新目录 ⇒ 从真服务端取回 ⇒ 只凭口令解出**同一把**钥匙
-        let dir_b = temp_dir("real-b");
-        let c_b = crate::db::open_space_conn_at("default", &dir_b).unwrap();
-        crate::space_crypto::set_keyring_for_test(None);
-        crate::space_crypto::set_session_master(None).unwrap();
-        let (got, body) = http_get_keyring(&client, &base, &token, "sp-e2e").await;
-        assert_eq!(got.outcome, "ok", "取失败：{}", got.message);
-        let body = body.expect("取回成功就要有材料原文");
-        assert_eq!(body, material, "真服务端上取回来的必须与推上去的**逐字节相同**");
-        let report = crate::space_crypto::adopt_material(&c_b, &body, false).unwrap();
-        assert!(report.adopted, "{report:?}");
-        let master_b = crate::space_crypto::master_from_passphrase(&c_b, "真服务端口令八个字")
-            .unwrap()
-            .unwrap();
-        let key_b = crate::space_crypto::keyring()
-            .unwrap()
-            .unwrap_key(&master_b, "default")
-            .unwrap();
-        assert_eq!(key_b, key_a, "★★ 真服务端这条链路上，第二台设备只凭口令也拿回了同一把钥匙");
-
-        let _ = std::fs::remove_dir_all(&dir_a);
-        let _ = std::fs::remove_dir_all(&dir_b);
     }
 
     /// ★ 外键守卫：**循环里任何一条变更失败（`?` 早退）都不能把外键永久关掉**。
@@ -5625,8 +5168,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn insert_local_page(c: &Connection, id: &str, json: &str, sync_seq: i64, dirty: i64) {
-        c.execute(
+    fn insert_local_page(c: &Connection, id: &str, json: &str, sync_seq: i64, dirty: i64) {        c.execute(
             "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at, deleted_at, sync_seq, dirty)
              VALUES (?1, 'ws', '页', ?2, '', 'page', 0, 0, NULL, ?3, ?4)",
             params![id, json, sync_seq, dirty],
@@ -6326,5 +5868,143 @@ mod tests {
         let device = device_id(&c).unwrap();
         set_meta_state(&c, &clock_key(&device), "不是一枚戳").unwrap();
         assert!(local_stamp(&c, 1).is_err(), "读不出来不许猜着重置");
+    }
+
+    // ══════════ 丙档「附近设备」（2026-09-29，T1）：把对端表上抛的三条承重判据 ══════════
+    //
+    // 这一片**零网络、零库**：`nearby_of` 是纯函数，喂一份 `Vec<Peer>` 就能断言。
+    // ⚠️ 三条判据对应方案 §2 片 A 的 ★ 那三条（同源 / 同一把尺 / 反向保护）。
+
+    fn nearby_fixture(
+        device: &str,
+        name: &str,
+        base: Option<&str>,
+        spaces: &[&str],
+    ) -> crate::lan::Peer {
+        crate::lan::Peer {
+            announce: crate::lan::LanAnnounce {
+                v: crate::lan::WIRE_VERSION,
+                device_id: device.to_string(),
+                device_name: name.to_string(),
+                hub_base: base.map(|b| b.to_string()),
+                hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                fp: device.to_string(),
+            },
+            addr: "192.168.1.9".to_string(),
+            seen_at_ms: 1_000,
+        }
+    }
+
+    /// ★★ 判据 ①（`INV-NEARBY-one-source`）：**`peers`（数量）与 `nearby`（列表）来自同一次读数**。
+    ///
+    /// 咬人的地方：把列表按"能拉的/有名字的"过滤掉几条 —— 于是状态行说「发现 3 台」而列表只有 1 行，
+    /// **不炸、不报错、单测全绿**（这正是规格 §1 说的"同一件事在两个地方各有一份表述"）。
+    #[test]
+    fn the_peer_count_and_the_nearby_list_come_from_the_same_reading() {
+        let peers = vec![
+            nearby_fixture("dev-a", "小明的笔记本", Some("http://192.168.1.5:8788"), &["sp-1"]),
+            // 名字空 ⇒ **照样在列表里**（少一行就会让"发现 N 台"与行数漂开）
+            nearby_fixture("dev-b", "", Some("http://192.168.1.6:8788"), &["sp-1"]),
+            // 没报地址 / 只服务别的空间 / 公网地址 ⇒ 都还在列表里（只是不可邀请）
+            nearby_fixture("dev-c", "小王的笔记本", None, &["sp-1"]),
+            nearby_fixture("dev-d", "我的手机", Some("http://203.0.113.7:8788"), &["sp-1"]),
+            nearby_fixture("dev-e", "只服务别的空间", Some("http://192.168.1.7:8788"), &["other"]),
+        ];
+        let got = nearby_of(&peers, "dev-me", "sp-1");
+        assert_eq!(got.len(), peers.len(), "列表必须与数量同源（`peers.len() == nearby.len()`）");
+        // 名字空的那一条：**如实留空**，不许回落成 id 前几位（那是 `INV-UI-copy-no-internal-ids` 的事）
+        assert_eq!(got[1].device_name, "");
+        assert_eq!(got[1].device_id, "dev-b");
+        // 身份与顺序都不动（PeerTable::live 已按 device_id 排好）
+        assert_eq!(
+            got.iter().map(|p| p.device_id.as_str()).collect::<Vec<_>>(),
+            vec!["dev-a", "dev-b", "dev-c", "dev-d", "dev-e"]
+        );
+    }
+
+    /// ★★ 判据 ②（同一把尺）：`nearby.filter(invitable)` 的集合 **==** `mesh::mesh_peers` 的集合
+    /// （喂**同一份** `peers`）。退化形态：列表里有「邀请」按钮，点了却拉不动（或反过来）。
+    #[test]
+    fn the_invitable_column_is_the_same_ruler_as_mesh_peers() {
+        let peers = vec![
+            // 我自己（两道都必须排掉）
+            nearby_fixture("dev-me", "本机", Some("http://192.168.1.4:8788"), &["sp-1"]),
+            // ✅ 三条都过
+            nearby_fixture("dev-a", "小明的笔记本", Some("http://192.168.1.5:8788"), &["sp-1"]),
+            // ❌ 不服务这个空间
+            nearby_fixture("dev-b", "只服务别的空间", Some("http://192.168.1.6:8788"), &["other"]),
+            // ❌ 基址是公网
+            nearby_fixture("dev-c", "公网那台", Some("http://203.0.113.7:8788"), &["sp-1"]),
+            // ❌ 没报可以直连的地址
+            nearby_fixture("dev-d", "没报地址", None, &["sp-1"]),
+        ];
+        let got = nearby_of(&peers, "dev-me", "sp-1");
+        let mut invitable: Vec<String> = got
+            .iter()
+            .filter(|p| p.invitable)
+            .map(|p| p.device_id.clone())
+            .collect();
+        let mut pulled: Vec<String> =
+            crate::mesh::mesh_peers("sp-1", "dev-me", &peers).iter().map(|p| p.device_id.clone()).collect();
+        invitable.sort();
+        pulled.sort();
+        assert_eq!(invitable, pulled, "「能不能被邀请」与「能不能被直接拉」必须是同一把尺");
+        assert_eq!(invitable, vec!["dev-a".to_string()]);
+        // 没绑空间 ⇒ 一个都不可邀请（"没指定空间"不是"谁都算"）
+        assert!(nearby_of(&peers, "dev-me", "").iter().all(|p| !p.invitable));
+        // ⚠️ 已知差异（**不是漂**，是两个问题的定义不同）：`mesh_peers` 还多一条"同一个地址只留一条"
+        //    （一轮里不重复拉同一个 base）。那是**列表级**的归并，不是"这一台能不能被邀请"的判定
+        //    ⇒ 两台报同一个地址时 `mesh_peers` 给 1、这里给 2。真机上两台设备各绑各的地址，
+        //    所以这一条只写在这里当**已知边界**，不拿它当判据。
+        let same_base = vec![
+            nearby_fixture("dev-a", "A", Some("http://192.168.1.5:8788"), &["sp-1"]),
+            nearby_fixture("dev-b", "B", Some("http://192.168.1.5:8788"), &["sp-1"]),
+        ];
+        assert_eq!(crate::mesh::mesh_peers("sp-1", "dev-me", &same_base).len(), 1);
+        assert_eq!(
+            nearby_of(&same_base, "dev-me", "sp-1").iter().filter(|p| p.invitable).count(),
+            2
+        );
+    }
+
+    /// ★ 判据 ③（**反向保护**）：加了 `nearby` 之后，既有的三条读数**逐字节不变**。
+    ///
+    /// ⚠️ 如实说这一条**是什么**：它是那三条读数的**逐字节快照**（`peers` / `kind` / `line`），
+    /// 不是方案里写的那种"把 `nearby` 强行置空再比"的变异（那种变异在纯函数上没有能挂的钩子
+    /// —— `nearby_of` **只读输入**，本来就没有"置空它"这个动作）。快照能咬住的是同一件事：
+    /// 谁改了状态行/数量，这里就红。
+    #[test]
+    fn the_three_existing_readings_are_byte_identical() {
+        let peers = vec![
+            nearby_fixture("dev-a", "小明的笔记本", Some("http://192.168.1.5:8788"), &["sp-1"]),
+            nearby_fixture("dev-b", "", Some("http://203.0.113.7:8788"), &["sp-1"]),
+        ];
+        let route = crate::lan::resolve_base("sp-1", "", &peers);
+        let kind = route.as_ref().map(|r| r.kind.as_str()).unwrap_or("").to_string();
+        let line = crate::lan::status_line(route.as_ref(), &peers, "sp-1", peers.len());
+        assert_eq!(peers.len(), 2);
+        assert_eq!(kind, "lan");
+        assert_eq!(
+            line,
+            "同步地址：直连（同一网络）http://192.168.1.5:8788 ｜ 附近发现 2 台 ｜ 中枢：小明的笔记本"
+        );
+        // 而**同一份输入**映射出来的列表照样是两行（列表没有反过来影响那三条读数）
+        assert_eq!(nearby_of(&peers, "dev-me", "sp-1").len(), 2);
+    }
+
+    /// ★ `serves_current` 是 **Rust 判的**（界面直接显示，不许自己算交集）；
+    /// 而 `spaces` 是那台设备**自己声明的**（去空白、丢空串、去重、保序）。
+    #[test]
+    fn serves_current_is_judged_here_and_the_spaces_are_cleaned_but_not_filtered() {
+        let peers = vec![
+            nearby_fixture("dev-a", "A", Some("http://192.168.1.5:8788"), &[" sp-1 ", "sp-2", "sp-1", ""]),
+            nearby_fixture("dev-b", "B", Some("http://192.168.1.6:8788"), &[] as &[&str]),
+        ];
+        let got = nearby_of(&peers, "dev-me", "sp-1");
+        assert_eq!(got[0].spaces, vec!["sp-1".to_string(), "sp-2".to_string()]);
+        assert!(got[0].serves_current);
+        assert!(!got[1].serves_current, "谁都不代言的设备不是「服务这个空间」");
+        // 空空间 ⇒ 一律不算"服务它"（与 `lan::serves_space` 同一把尺）
+        assert!(nearby_of(&peers, "dev-me", "  ").iter().all(|p| !p.serves_current));
     }
 }

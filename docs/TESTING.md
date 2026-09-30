@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 62 条（contract 37 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 260 / web 250 / CommandMap 262
+门禁 62 条（contract 37 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
 基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -264,6 +264,16 @@ win-cargo-test: test exe exit code = 0
 
 ## 需要"真服务端"的判据（`#[ignore]`，要显式点名才跑）
 
+> ⚠️ **2026-09-29 追改：本节当前没有任何条目。**
+> 本节唯一那条 `sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`（③ 0b 公开材料）
+> 随「**经服务器搬钥匙袋**」那条路**整条删除**（`851c1a7b`）；它读的 `SYNCSRV_BASE` /
+> `SYNCSRV_DEVICE_KEY` 两个环境变量现在全仓**一处都没有**。
+> ⇒ 下面那段"跑法"**只作格式先例**保留（下次真要立一条 `#[ignore]` 真服务端判据时照它写）；
+> ⚠️ 照抄前**必须把 `-Filter` 换成新判据名**，否则点名点不到东西（`0 passed` 会被误读成绿）。
+> ⇒ **仍在跑的"真服务端"判据是另一条、机制也不同**：
+> `sync_stream::tests::e2e_receives_a_push_from_a_real_server` —— 它**不是 `#[ignore]`**，
+> 靠 `SHUYONOTE_STREAM_E2E_SERVER` **自报跳过**（没设就打印"未跑"并 return）。
+
 有些判据**必须**打真服务（桩服务端不看 `Authorization`、也不在乎路径 ⇒ "客户端有没有带 bearer、
 打的是不是那个端点"这类错误它**一定发现不了**）。它们一律 `#[ignore]`，默认不跑，也不会拖慢全量；
 要跑就显式点名（**跑不了的原因要当场喊出来**，不许静默跳过 —— 所以它们直接 `expect` 环境变量）：
@@ -280,9 +290,12 @@ $env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
     -ExtraArgs "--ignored","--nocapture"
 ```
 
-现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
+~~现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
 （③ 0b 公开材料：空 token 必须被挡 / 取回来逐字节相同 / 第二台设备只凭口令解出同一把钥匙）。
-服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。
+服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。~~
+⚠️ **这一段的两样都已失效**：判据随 `851c1a7b` 删除（见本节开头的追改）；探针 `verify-space-keyring.mjs`
+在**服务端私有仓**，那三条 `/spaces/{id}/keyring` 路由**是否也撤掉，本仓核不到**
+—— 不要从本仓的文档去断定服务端的现状。
 
 ## 局域网发现（甲-1 接线之后怎么验）
 
@@ -294,7 +307,7 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 ```
 
 两条**只能真机看**的（单测覆盖不到，别把它当成"已经验过"）：① 两台设备在同一网段里互看
-（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「局域网直连」
+（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「设备直连」
 那一行显示的地址是否真的被同步请求用上（读数是 `sync::effective_base`，界面只显示 Rust 给的原文）。
 
 ### ★ 2026-09-25 两台真机跑通的做法（含一条**没跑通**的，别照抄那半）

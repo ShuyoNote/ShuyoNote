@@ -579,6 +579,36 @@ function probeLayer(rootSel, boxSel) {
     };
   });
 
+  // ⚠️ 2026-09-28：**输入框也要量命中区**。此前这里只有 `buttons`，
+  //   于是"输入框高 32px（< 44）"这类从来不进读数 —— 实测同步面板 10 个输入控件里 9 个 < 44，
+  //   而三个门禁全绿（`verify-mobile-views` 的命中区选择器**含 input**，但它跑的时候本面板没被打开）。
+  //   排除规则与上面的 `buttons` 逐条一致：可见性 + pointer-events + 可达性（可滚祖先）。
+  const fields = [...root.querySelectorAll('input:not([type="hidden"]), select, textarea')]
+    .filter(isVisible)
+    .filter((f) => getComputedStyle(f).pointerEvents !== "none")
+    .map((f) => {
+      const r = f.getBoundingClientRect();
+      const inView = r.left >= -0.5 && r.right <= innerW + 0.5 && r.top >= -0.5 && r.bottom <= innerH + 0.5;
+      let scrollable = false;
+      for (let n = f.parentElement; n && n !== root.parentElement; n = n.parentElement) {
+        const acs = getComputedStyle(n);
+        if ((acs.overflowY === "auto" || acs.overflowY === "scroll") && n.scrollHeight > n.clientHeight + 4) {
+          scrollable = true;
+          break;
+        }
+      }
+      return {
+        tag: f.tagName.toLowerCase(),
+        type: f.getAttribute("type") || "",
+        ph: (f.getAttribute("placeholder") || "").slice(0, 14),
+        cls: String(f.className || "").slice(0, 30),
+        w: r1(r.width),
+        h: r1(r.height),
+        inView,
+        reachable: inView || scrollable,
+      };
+    });
+
   // 图片预览顶栏：把**同一行里的那几组**都量回去（相交与否的判定留在 Node 侧）。
   // 为什么量"那个容器里的可见子节点"、而不是两个写死的选择器：判据要管的是**布局形状**
   // （它们必须在同一行里）。写死选择器的话，把两组挪回"两个各自绝对定位的角标"也照样能骗过它
@@ -648,6 +678,7 @@ function probeLayer(rootSel, boxSel) {
     docScrollWidth: document.documentElement.scrollWidth,
     clipped: clipped.slice(0, 6),
     buttons,
+    fields,
     hasImgBar: !!imgBar,
     imgBarRects,
     noteScrollOverflowY: noteScroll ? getComputedStyle(noteScroll).overflowY : null,
@@ -1256,6 +1287,29 @@ async function main() {
           );
           const small = m.buttons.filter((b) => b.w < 44 && b.h < 44);
           note(`${vp.name} · ${layer.label}：可见按钮 ${m.buttons.length} 个，其中 ${small.length} 个窄于/矮于 44px（基线）`);
+
+          // (6a) **输入框的命中区**（2026-09-28 加）。来由：
+          //   本仓规则是"可点控件高度一律 ≥44"（见 `verify-mobile-views.mjs:223`，那条的选择器**含 input**），
+          //   但这条判据此前【只量按钮】⇒ 输入框从来不进读数。
+          //   实测（改前）：同步面板里 10 个输入控件有 9 个 < 44（8 个是 32px）而三个门禁全绿。
+          //   ⚠️ 先只对**同步面板**判红（那是 owner 已报出、且已修的那一处）；
+          //      其余层的输入框按下面的 note 记基线 —— "把判据扩到所有层"是一次独立决策，不顺手做。
+          //   ⚠️ "没量到"必须【按 fail 记】且判语说得出原因：别重犯 `x?.h === x?.fixed` 那种
+          //      两个 undefined 相等 ⇒ 判绿 的坑（同日刚在 `verify-mobile-views.mjs` 修掉 3 处）。
+          if (layer.id === "sync") {
+            const fs = m.fields ?? [];
+            const shortF = fs.filter((f) => f.h < 44);
+            ok(
+              fs.length > 0 && shortF.length === 0,
+              fs.length
+                ? `同步面板的输入框命中区 ≥44（${fs.length} 个：${fs.map((f) => f.h).join(" / ")}px）`
+                : "同步面板里**没量到**输入框 ⇒ 这条【没验过】，按 fail 记",
+            );
+          }
+          note(
+            `${vp.name} · ${layer.label}：可见输入框 ${(m.fields || []).length} 个，` +
+              `其中 ${(m.fields || []).filter((f) => f.h < 44).length} 个矮于 44px（基线）`,
+          );
 
           // (6b) 设置面板专有：分类栏在窄屏必须变成**顶部横向条**。
           //      它原来是 224px 的竖排栏，在 360px 视口上会把正文挤到只剩 136px

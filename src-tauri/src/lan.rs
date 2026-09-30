@@ -178,7 +178,7 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
     let want = space_id.trim();
     if !want.is_empty() {
         for p in peers {
-            if !p.announce.hub_spaces.iter().any(|s| s.trim() == want) {
+            if !serves_space(space_id, p) {
                 continue;
             }
             let Some(base) = p.announce.hub_base.as_deref() else {
@@ -196,6 +196,21 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
         return None;
     }
     Some(Route { url: configured.to_string(), kind: LinkKind::Configured })
+}
+
+/// ★ 这条公告**服务不服务**这个空间 —— **唯一的一把尺**，凡是"某台设备认不认这个空间"都走它。
+///
+/// 口径：`hub_spaces` 里含这个空间的**去空白字面量相等**（不看格式 —— 网格不检查 `space_id` 是
+/// 哪来的，`lan.rs:181` 的既有口径）。空 `space_id` ⇒ **一律不认**（"没指定空间"不是"谁都算"）。
+///
+/// ⚠️ 为什么必须抽成一个函数（而不是各处写一遍 `iter().any(|s| s.trim() == want)`）：
+/// 丙档有**三处**要问这句话 —— 地址解析（[`resolve_base`]）、谁可以被直接拉（`mesh::invitable_base`）、
+/// 以及界面上那一条"服务 项目A"（`sync::NearbyPeer::serves_current`）。
+/// 三处各写一遍就会漂，而**漂了不炸、不报错、单测全绿**：现场是"列表说它服务这个空间，
+/// 可它就是拉不动"（或反过来）。
+pub fn serves_space(space_id: &str, p: &Peer) -> bool {
+    let want = space_id.trim();
+    !want.is_empty() && p.announce.hub_spaces.iter().any(|s| s.trim() == want)
 }
 
 /// 这个基址是不是**局域网**地址（`http://<私有 IPv4>[:port]`）。
@@ -329,10 +344,10 @@ pub fn status_line(
     });
 
     let mut line = match route.kind {
-        LinkKind::Lan => format!("同步地址：直连（局域网）{}", route.url),
+        LinkKind::Lan => format!("同步地址：直连（同一网络）{}", route.url),
         LinkKind::Configured => format!("同步地址：公网 {}", route.url),
     };
-    line.push_str(&format!(" ｜ 本网段发现 {seen} 台"));
+    line.push_str(&format!(" ｜ 附近发现 {seen} 台"));
     if observed > seen {
         // ⚠️ 只说事实（"还见过 N 台，现在不发声了"），不替用户下结论（那可能是关机、也可能只是丢包）。
         line.push_str(&format!("（还见过 {} 台，现在不发声了）", observed - seen));
@@ -649,7 +664,7 @@ mod tests {
         }
     }
 
-    /// 判据 ⑤：公告里声称的**公网**地址**永远不许**变成局域网直连
+    /// 判据 ⑤：公告里声称的**公网**地址**永远不许**变成设备直连
     /// （否则"发现层"就是被别人指哪打哪的入口）。跳过它，而不是整体失败。
     #[test]
     fn a_public_base_in_an_announce_never_counts_as_a_lan_route() {
@@ -926,7 +941,7 @@ mod tests {
         let hub = peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]);
         let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&hub)).unwrap();
         let line = status_line(Some(&route), std::slice::from_ref(&hub), "sp-1", 1);
-        assert!(line.contains("局域网"), "{line}");
+        assert!(line.contains("同一网络"), "{line}");
         assert!(line.contains("dev-hub 的机器"), "要点出中枢是谁：{line}");
 
         // ② 网段里什么都没有 ⇒ 只是"公网"，**不许**说"有人但不服务本空间"
@@ -978,7 +993,7 @@ mod tests {
         assert_eq!(route.kind, LinkKind::Configured, "没发现到中枢就不是直连档");
         let line = status_line(Some(&route), &[], "sp-1", 0);
         assert!(
-            !line.contains("局域网"),
+            !line.contains("同一网络"),
             "档位只能来自 Route；状态行自己按地址形状再判一次就会说出与路由矛盾的档：{line}"
         );
     }
@@ -1043,7 +1058,7 @@ mod tests {
         assert_eq!(route.kind, LinkKind::Lan);
         // 状态行也要如实说出"直连"与中枢名字（施工单 §2 ④）。
         let line = status_line(Some(&route), &st_a.peers(now), "sp-1", 1);
-        assert!(line.contains("直连（局域网）"), "{line}");
+        assert!(line.contains("直连（同一网络）"), "{line}");
         assert!(line.contains("B 的机器"), "要点出中枢是谁：{line}");
     }
 

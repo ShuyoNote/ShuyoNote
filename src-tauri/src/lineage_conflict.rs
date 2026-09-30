@@ -244,6 +244,9 @@ mod tests {
 
         // ★ 三个字面量**各建一行、各裁一次、各验一次**（2026-09-29：`remote` 从"拒"改成"收" ✓
         //   —— 它对应 UI 的「采用对端那一版」：owner 裁定要这个选项 ✓）
+        // ⚠️ 2026-09-29 订正（合入 dev 时并入的另一侧同一处改动）：原来的坏值表里有 `"remote"`，
+        //    而 `575a58c6` 已把它放开成**合法值**（见本文件 `CHOICE_REMOTE` 与 :165 那个校验）
+        //    ⇒ 这条判据自那天起就是红的。**「合法值不许出现在坏值表里」**——这是同一条纪律的另一面。
         for (i, choice) in [CHOICE_LOCAL, CHOICE_SAVED_AS_NEW, CHOICE_REMOTE].into_iter().enumerate() {
             let pid = format!("p{i}");
             page(&c, &pid);
@@ -253,7 +256,8 @@ mod tests {
             let all = lineage_conflicts_of(&c, &pid).unwrap();
             assert_eq!(all.len(), 1);
             assert_eq!(all[0].resolved_choice.as_deref(), Some(choice), "{choice:?} 应被收下并如实存起来 ✓");
-            assert!(all[0].resolved_at.is_some(), "裁决时间要落上 ✓");
+            // 裁决时间要落上、且要落成**实际传进去的那个值** ✓（另一侧更严的断言：`is_some()` 会漏掉"落成别的值"）
+            assert_eq!(all[0].resolved_at, Some(11), "裁决时间要落上 ✓");
             // 已裁决的**不能再裁决** ✓
             assert!(resolve_lineage_conflict(&c, &id, choice, 12).is_err(), "已裁决的再裁决要报错");
         }

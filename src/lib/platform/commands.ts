@@ -191,6 +191,41 @@ export interface LanStatus {
    * 面板据此开关与显示；`lan_status` 只**读**它，不开窗。
    */
   mesh: MeshConfigState;
+  /**
+   * ★ 丙档「附近设备」（2026-09-29）：**同网段里听得见的每一台别的设备**。
+   *
+   * ⚠️ 三条口径（与 Rust 侧 `sync::LanStatus.nearby` 逐字对齐）：
+   * 1. **它与 `peers` 来自同一次读数** ⇒ `peers === nearby.length` 恒成立
+   *    （`INV-NEARBY-one-source`）—— 界面**不许**自己数对端（数两遍就会漂）；
+   * 2. **未启用发现层 ⇒ 空**（不是"网段里没人"）；
+   * 3. **它不按当前空间过滤** —— "附近有哪几台设备"与"哪几台服务我这个空间"是两件事，
+   *    后者由每一条的 `serves_current` 表达（**界面不许自己算这条交集**）。
+   */
+  nearby: NearbyPeer[];
+}
+
+/**
+ * 同网段里的一台**别的设备**（与 Rust `sync::NearbyPeer` **逐字段相同**）。
+ *
+ * ⚠️ 字段名是 **snake_case**：Rust 侧 `LanStatus` **没有** `rename_all = "camelCase"`
+ * （它只有 `#[derive(Serialize)]`，发出来的就是 snake_case —— 与它其余字段一致）。
+ * **不许**只给新字段加一个 `rename_all`（一个结构体两种风格，规格 §3.2）。
+ */
+export interface NearbyPeer {
+  /** 设备身份：**排障与去重**用，不许进用户可见的句子（`INV-UI-copy-no-internal-ids`）。 */
+  device_id: string;
+  /** 可能是空串（那台设备没报名字）⇒ 界面**如实说**，不许回落成 id 前几位。 */
+  device_name: string;
+  /** 收到它公告的来源地址（ip）。⚠️ 默认**不显示**（规格 §3.4：只用于排障）。 */
+  addr: string;
+  /** 它**自己声明**在服务哪些空间（远端 `space_id`）。界面不许自己算交集。 */
+  spaces: string[];
+  /** 它跟我**当前这个空间**相不相关（**Rust 判的**，界面直接显示）。 */
+  serves_current: boolean;
+  /** ★ 它能不能被直接拉（那一行的第二列据此如实说"它没报可以直连的地址"），与 `mesh::mesh_peers` 同一把尺。
+   *  ⚠️ 名字取自 2026-09-29 丙-乙片（当时它管的是「有没有邀请按钮」）——同日晚 owner 裁定 §14 撤掉了邀请，
+   *  这个字段**留下来了**：它现在的语义是"**能不能被直接拉**"，不是"能不能被邀请"。 */
+  invitable: boolean;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
@@ -374,32 +409,6 @@ export interface CommunityTaxonomy {
 }
 
 /**
- * ③ 0b（2026-09-24）**公开材料**推 / 取的结果（与 Rust `sync::SpaceKeyringResult` 一一对应）。
- *
- * ⚠️ "正常的不顺利"（没配同步 / 服务端上没有 / 网络不通）用 `outcome` 表达，**不抛异常** ——
- * 抛出去会被平台 invoke 层记成一条 error（`claim_page_lineage` 那一轮踩过）。
- * · `ok` 取回/推成功；`not_configured` 这个空间没绑好同步；`no_material` 本机还没有钥匙袋；
- * · `not_on_server` 服务端上没有那一份（404）；`already_local` 本机已有，**没有动它**；
- * · `offline` 连不上；`rejected` 服务端拒绝了（看 `status`）。
- */
-export interface SpaceKeyringOutcome {
-  outcome:
-    | "ok"
-    | "not_configured"
-    | "no_material"
-    | "not_on_server"
-    | "already_local"
-    | "offline"
-    | "rejected";
-  /** `ok` 时是材料的字节数。 */
-  bytes: number;
-  /** 服务端 HTTP 状态码（没走到服务端 ⇒ 0）。 */
-  status: number;
-  /** 一句**人话**（说清下一步该做什么）——界面**原样**显示，别自己改写。 */
-  message: string;
-}
-
-/**
  * B 片 ①-a：换设备的**产出侧**读数（`pairing_export`）。
  *
  * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
@@ -561,18 +570,6 @@ export interface CommandMap {
       key_available: boolean;
       gate: { allow: boolean; unclassified: boolean; reason: string };
     }>;
-  };
-  // ③ 0b（2026-09-24）：**公开材料**的推 / 取 —— 换设备时只凭主口令解开自己的空间。
-  // `workspace_id` 是**本地**工作空间 id（远端 space id 由 Rust 侧按同步档案解析，与 claim 同口径）。
-  // ⚠️ **桌面专属**（登记进 `DESKTOP_ONLY_COMMANDS`）：Web 上没有钥匙袋，也就没有"公开材料"可取。
-  // `overwrite` 只对 `pull` 有意义：默认**不覆盖**本机已有的那一份（覆盖是危险动作，见 Rust 侧注释）。
-  push_space_keyring: {
-    args: { args: { workspace_id: string } };
-    result: SpaceKeyringOutcome;
-  };
-  pull_space_keyring: {
-    args: { args: { workspace_id: string; overwrite?: boolean } };
-    result: SpaceKeyringOutcome;
   };
   // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**
   //（Web 上没有钥匙柜，也就没有"公开材料"可搬；理由写在 `check-web-commands` 的

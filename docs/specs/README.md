@@ -32,7 +32,11 @@ id          INV-<域>-<短名>          稳定标识；改口径不许改 id（�
 ```
 
 本仓的两条承重证明通道（`scripts/lib/gates.mjs` 与本仓 `AGENTS.md` §3 的口径）：
-- **跑 cargo 的判据** ⇒ `scripts/criteria-mutations.json`（改坏源码 ⇒ 用例变红）；
+- **跑 cargo 的判据** ⇒ Rust 判据（cargo）的「看过它红」证据走 `_workspace/mutation-evidence.json` 的 `_repo_mutations`（⚠️ 产品仓**没有** `scripts/criteria-mutations.json` 这个文件 —— 那句话在指一个不存在的通道 ✗，2026-09-29 订正）（改坏源码 ⇒ 用例变红）；
+
+> ⚠️ **2026-09-29 订正（Windows 侧裁决 ①）**：产品仓里引用 `criteria-mutations.json` 的地方都在指一个**不存在的通道** ⇒ 正确措辞是：
+> Rust 判据（cargo）的「看过它红」证据走 `_workspace/mutation-evidence.json` 的 `_repo_mutations`（⚠️ 产品仓**没有** `scripts/criteria-mutations.json` 这个文件 —— 那句话在指一个不存在的通道 ✗，2026-09-29 订正）
+> 取证：`grep -rn criteria-mutations docs/ scripts/` 在产品仓命中 6 处、而该文件不存在；工作区/信箱里那些指的是 **community 仓**那份（**存在**）⇒ **改的范围只有产品仓**（别把对的地方也改错）。
 - **静态扫描 / 纯函数判据** ⇒ 脚本自己的 `--self-test`（正例 + 负例两边都验），
   **或**工作区那本 `_workspace/mutation-evidence.json` 里的 D2 证据（`exit` / `gateSha256` / `finding`，**判据代码一改就自动过期**）。
 

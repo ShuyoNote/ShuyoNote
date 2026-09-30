@@ -34,10 +34,7 @@ pub struct LanState {
 impl LanState {
     /// 造一个（测试与"想自己持有一份"的调用方用）。**生产路径请走 [`LanState::global`]**。
     pub fn new(local_device_id: String) -> Self {
-        Self {
-            table: PeerTable::new(local_device_id),
-            enabled: AtomicBool::new(false),
-        }
+        Self { table: PeerTable::new(local_device_id), enabled: AtomicBool::new(false) }
     }
 
     /// 进程级的唯一一份。`local_device_id` 只在**第一次**调用时用得上（之后忽略）——
@@ -53,17 +50,22 @@ impl LanState {
         self.table.upsert(p)
     }
 
-    /// 收**一条原始报文**：解开 ⇒ 入库 ⇒ 把入库的那一条还回来（`Ok(Some)`）。
+    /// 收**一条原始报文**：按公告解 ⇒ 入库 ⇒ 把入库的那一条还回来（`Ok(Some)`）。
     ///
-    /// 三种结果与 [`crate::lan::recv_into`] 一一对应（它就是这一层的薄壳）：
+    /// 返回值与 [`crate::lan::recv_into`] 一一对应（它就是这一层的薄壳）：
     /// - `Ok(Some(peer))` ＝ 收了、记了；
-    /// - `Ok(None)` ＝ 是我自己的公告（回环回来的）⇒ **忽略**（不是错误，也**不入表**）；
-    /// - `Err(原因)` ＝ 报文不合法 ⇒ **丢弃且不入表**（四种原因见 `lan::AnnounceReject::reason`）。
+    /// - `Ok(None)` ＝ **这一条不是"新的对端"**：是我自己的公告（回环回来的）⇒ 忽略。
+    ///   它不入对端表、也不是错误 —— 调用方（那条循环）把它读成"这一片收到了东西"。
+    /// - `Err(原因)` ＝ 报文不合法 ⇒ **丢弃且不入表**（公告四种原因见 `lan::AnnounceReject::reason`）。
     ///
     /// ⚠️ **解码只在这一处**：`recv_into` 不再自己 `decode_announce` 一遍 —— 两处各解一次
     /// 迟早会漂（那种漂的表现是"某一种坏报文在一处被丢、在另一处被收下"）。
+    /// ⚠️ **`decode_announce` 一个字节都没动**（它的"不认识就不猜"是承重的）。
     pub fn record_datagram(&self, raw: &str, from_ip: &str, now_ms: i64) -> Result<Option<Peer>, String> {
-        let announce = crate::lan::decode_announce(raw).map_err(|r| r.reason().to_string())?;
+        let announce = match crate::lan::decode_announce(raw) {
+            Ok(a) => a,
+            Err(r) => return Err(r.reason().to_string()),
+        };
         let peer = Peer { announce, addr: from_ip.to_string(), seen_at_ms: now_ms };
         if !self.observe(peer.clone()) {
             return Ok(None);
@@ -427,6 +429,36 @@ mod tests {
         st.set_enabled(true);
         assert!(!st.observe(peer_of("dev-me", "http://192.168.1.5:8787", &["sp-1"])));
         assert!(st.peers(1_000).is_empty());
+    }
+
+    /// 判据 ⑤：**收报这一段只有一条路**（公告）—— 合法的入库并**原样还回来**，
+    /// 不合法的**当场丢且不入表**（原因就是公告那一句）。
+    ///
+    /// ⚠️ 这条是 2026-09-29 owner 裁定 §14（撤掉邀请那套）之后**还原**出来的读数：
+    /// `record_datagram` 回到"只走公告"，所以"坏报文报的是公告的原因"重新成为**唯一**行为
+    /// （此前它被"两条线都不认时报更贴切的那句"分过一次流）。
+    #[test]
+    fn a_datagram_is_an_announce_or_nothing() {
+        let st = LanState::new("dev-me".into());
+        st.set_enabled(true);
+        // ① 合法公告 ⇒ 收了、记了，且**还回来的是入库的那一条**
+        let raw = crate::lan::encode_announce(&peer_of("dev-a", "http://192.168.1.5:8787", &["sp-1"]).announce)
+            .unwrap();
+        let got = st.record_datagram(&raw, "192.168.1.9", 1_000).unwrap().expect("合法公告要入库");
+        assert_eq!(got.announce.device_id, "dev-a");
+        assert_eq!(got.addr, "192.168.1.9", "来源地址取自收到的那个 ip");
+        assert_eq!(st.observed_all().len(), 1);
+        // ② 自己的公告（回环）⇒ `Ok(None)`（不是错误，也不入表）
+        let own = crate::lan::encode_announce(&peer_of("dev-me", "http://192.168.1.4:8787", &["sp-1"]).announce)
+            .unwrap();
+        assert_eq!(st.record_datagram(&own, "192.168.1.4", 1_000).unwrap(), None);
+        assert_eq!(st.observed_all().len(), 1, "自己的公告不许进表");
+        // ③ 不合法 ⇒ 报**公告**那一句，且**一个字节都不入表**
+        assert_eq!(
+            st.record_datagram("{ 这不是 json", "192.168.1.9", 1_000).unwrap_err(),
+            crate::lan::AnnounceReject::BadJson.reason(),
+        );
+        assert_eq!(st.observed_all().len(), 1);
     }
 
     /// 判据 ④（口径 2）：按需启用的判别式 —— **绑了同步才启用**；

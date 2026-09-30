@@ -14,14 +14,14 @@
 ```text
 id          INV-MCP-<短名>              稳定标识；改口径不许改 id（改 id = 删除 + 新增）
 口径        一句话；从判据的真源逐字引用，不在此重写
-判据        scripts/check-<名>.mjs [--root/--self-test] ／ Rust 判据走 criteria-mutations.json
+判据        scripts/check-<名>.mjs [--root/--self-test] ／ Rust 判据走 `_workspace/mutation-evidence.json` 的 `_repo_mutations`（⚠️ 产品仓没有 `criteria-mutations.json`，2026-09-29 订正）
 会红证据    ✅ 有（证明命令 + 期望非 0 退出码 + 账本 sha）／❌ 无（⇒ 按 README 铁律，该条还不该进 INVARIANTS.md）
 ```
 
 **承重证明通道**（与 `README.md` §每条不变式的四个字段一致，不另发明）：
 
 - **静态 / 纯 Node 判据** ⇒ 脚本自己的 `--self-test`，或假根配方（`--root`）；
-- **跑 cargo 的判据** ⇒ `scripts/criteria-mutations.json`（改坏源码 ⇒ 用例变红）；
+- **跑 cargo 的判据** ⇒ `_workspace/mutation-evidence.json` 的 `_repo_mutations`（改坏源码 ⇒ 用例变红）（⚠️ 2026-09-29 订正：**产品仓没有** `scripts/criteria-mutations.json`，原文在指一个不存在的通道）；
 - **两条都要**：工作区台账 `_workspace/mutation-evidence.json` 的 `_repo_mutations` 里留一条
   「看过它红」的证据（`exit` / `gateSha256` / `finding`；**判据代码一改就自动过期**）。
 

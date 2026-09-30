@@ -208,34 +208,48 @@ pub struct MeshPeer {
     pub base: String,
 }
 
+/// ★ **一台对端能不能被直接拉**（＝可以被邀请）—— **唯一的一把尺**，返回它的基址。
+///
+/// 三条过滤（顺序即口径）：**不是我自己** · **它代言这个空间** · **它的基址是局域网地址**
+/// （`lan::is_lan_base`；公网地址一律不当网格对端 —— 简报 §7 的边界）。
+///
+/// ⚠️ 为什么抽出来（2026-09-29，丙档「附近设备」）：**两个调用方要问同一句话** ——
+/// [`mesh_peers`]（这一轮拉谁）与 `sync::NearbyPeer::invitable`（界面上那一行有没有「邀请」）。
+/// 各写一遍就会漂，而漂的表现是"列表里有「邀请」按钮，点了却拉不动"（或反过来：
+/// 能拉的没有按钮）—— **不炸、不报错、单测全绿**。
+/// 承重判据：`sync::tests` 里那条"`nearby.filter(invitable)` 的集合 == `mesh_peers` 的集合"。
+pub fn invitable_base(space_id: &str, my_device: &str, p: &crate::lan::Peer) -> Option<String> {
+    let id = p.announce.device_id.trim();
+    if id.is_empty() || id == my_device.trim() {
+        return None;
+    }
+    // ★ 「服务这个空间」这一关与地址解析共用**同一把尺**（`lan::serves_space`）。
+    if !crate::lan::serves_space(space_id, p) {
+        return None;
+    }
+    let base = p.announce.hub_base.as_deref().map(str::trim).filter(|b| !b.is_empty())?;
+    if !crate::lan::is_lan_base(base) {
+        return None;
+    }
+    Some(base.trim_end_matches('/').to_string())
+}
+
 /// 从发现层那张表里挑出**这次要拉的对象** —— 纯函数（判据不打桩、不看真实网络）。
 ///
-/// 三条过滤：**不是我自己** · **它代言这个空间**（`hub_spaces` 含这个空间）·
-/// **它的基址是局域网地址**（`lan::is_lan_base`；公网地址一律不当网格对端 —— 简报 §7 的边界）。
+/// 三条过滤见 [`invitable_base`]（**它就是那三条**，本函数不再自己写一遍）。
 ///
 /// ⚠️ 这里用的是甲-1 那块砖（`LanAnnounce` 的 `hub_base` / `hub_spaces`）：**发现层三档共用**，
 /// 丙 只是把"谁在代言"读成"谁可以被直接拉"。
 pub fn mesh_peers(space_id: &str, my_device: &str, peers: &[crate::lan::Peer]) -> Vec<MeshPeer> {
-    let want = space_id.trim();
-    if want.is_empty() {
+    if space_id.trim().is_empty() {
         return Vec::new();
     }
     let mut out: Vec<MeshPeer> = Vec::new();
     for p in peers {
-        let id = p.announce.device_id.trim();
-        if id.is_empty() || id == my_device.trim() {
-            continue;
-        }
-        if !p.announce.hub_spaces.iter().any(|s| s.trim() == want) {
-            continue;
-        }
-        let Some(base) = p.announce.hub_base.as_deref().map(str::trim).filter(|b| !b.is_empty()) else {
+        let Some(base) = invitable_base(space_id, my_device, p) else {
             continue;
         };
-        if !crate::lan::is_lan_base(base) {
-            continue;
-        }
-        let base = base.trim_end_matches('/').to_string();
+        let id = p.announce.device_id.trim();
         if out.iter().any(|q| q.device_id == id || q.base == base) {
             continue; // 同一台 / 同一个地址只拉一次
         }
@@ -733,7 +747,7 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
     if !is_lan_only(addr.ip()) {
         return Err(format!(
             "拒绝启动：{addr} 不是内网地址（简报 §7 的边界：网格只在自己网段里）。\
-             局域网请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x，本机自测用 127.0.0.1。"
+             同一网络请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x，本机自测用 127.0.0.1。"
         ));
     }
     Ok(addr)
@@ -1260,6 +1274,34 @@ mod tests {
         assert!(mesh_peers("", "me", &peers).is_empty(), "没绑空间 ⇒ 不拉任何对端");
     }
 
+    /// ★★ 丙档「附近设备」（2026-09-29）：**"谁可以被直接拉"只有一把尺** ——
+    /// `invitable_base` 是**逐条**判（没有 `mesh_peers` 那个"同一台/同一地址只留一条"的归并），
+    /// 而 `mesh_peers` 必须**只用它**挑（判据在 `sync::tests` 里比两边的集合）。
+    ///
+    /// 咬人的地方：如果哪天有人把三条过滤在 `mesh_peers` 里再写一遍（或改松一点，
+    /// 比如去掉 `is_lan_base` 那一关），列表上就会出现"有「邀请」按钮、点了拉不动"的行。
+    #[test]
+    fn one_ruler_says_who_can_be_pulled_and_who_can_be_invited() {
+        // ✅ 三条都过 ⇒ 可以被直接拉（＝界面上那一行有「邀请」）
+        assert_eq!(
+            invitable_base("space-x", "me", &announced("B", "http://192.168.1.3:8787", &["space-x"])),
+            Some("http://192.168.1.3:8787".to_string())
+        );
+        // 尾巴上的 `/` 归一（与 `mesh_peers` 的 `base` 逐字节一致）
+        assert_eq!(
+            invitable_base("space-x", "me", &announced("B", "http://192.168.1.3:8787/", &["space-x"])),
+            Some("http://192.168.1.3:8787".to_string())
+        );
+        // ❌ 我自己 / ❌ 不服务这个空间 / ❌ 公网地址 / ❌ 没报地址 / ❌ 空 device_id
+        assert_eq!(invitable_base("space-x", "me", &announced("me", "http://192.168.1.3:8787", &["space-x"])), None);
+        assert_eq!(invitable_base("space-x", "me", &announced("C", "http://192.168.1.3:8787", &["other"])), None);
+        assert_eq!(invitable_base("space-x", "me", &announced("D", "http://203.0.113.7:8787", &["space-x"])), None);
+        assert_eq!(invitable_base("space-x", "me", &announced("E", "", &["space-x"])), None);
+        assert_eq!(invitable_base("space-x", "me", &announced("   ", "http://192.168.1.3:8787", &["space-x"])), None);
+        // ❌ 没空间（"没指定空间"不是"谁都算"）
+        assert_eq!(invitable_base("", "me", &announced("B", "http://192.168.1.3:8787", &["space-x"])), None);
+    }
+
     // ─────────────────────────── 路由：显式不支持 ───────────────────────────
 
     #[test]
@@ -1703,7 +1745,7 @@ mod tests {
         assert!(!s.contains("没有能问的对端"), "没绑 id 时不许说成「网段里没人」：{s}");
         // ② 绑了 id、网段里没人 ⇒ 这不是失败，是"没人"
         let s = crate::sync::attachment_fetch_failure(None, "space-x", 0, &[]);
-        assert!(s.contains("本网段里没有能问的对端"), "{s}");
+        assert!(s.contains("附近没有能问的对端"), "{s}");
         assert!(!s.contains("问了"), "一台都没问过，不许说「问了 N 台」：{s}");
         // ③ 有对端但都拿不到 ⇒ 每一家的原文都要带上（别合成一句"失败"）
         let tried = vec!["A：对端 A 返回 404".to_string(), "B：问对端 B 失败：连接被拒".to_string()];

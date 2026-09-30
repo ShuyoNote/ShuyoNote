@@ -11,7 +11,6 @@ import { api, type SpaceKind, type SpaceSecurityView } from "../lib/api";
 import type {
   PairingExportOutcome,
   PairingImportOutcome,
-  SpaceKeyringOutcome,
 } from "../lib/platform/commands";
 import { isDesktopPlatform, platform } from "../lib/platform";
 import { inlineMd } from "../lib/inlineMd";
@@ -54,13 +53,9 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   // 「关闭加密」是**会把库换回明文**的动作 ⇒ 两步确认（不用 `window.confirm`：
   // 那个在 Tauri 里不保证有实现，静默返回 false 就成了"点了没反应"的静默失败）。
   const [confirming, setConfirming] = useState("");
-  // ③ 0b：是否允许「从服务器取回」**覆盖**本机已有的公开材料（默认不许 —— 覆盖是危险动作）。
-  const [allowOverwrite, setAllowOverwrite] = useState(false);
   // ★ A2（owner 2026-09-25 拍板）：**"我知道口令我记不住就没了"** —— 按空间记（可能同时开着好几个）。
   // 默认 false ⇒ 「开启加密」按钮是灰的，用户必须先把这句话读完、勾上，才点得动。
   const [ackNoRecovery, setAckNoRecovery] = useState<Record<string, boolean>>({});
-  // ③ 0b：每行的推/取结果（**原样**显示后端那句话）。
-  const [rowMsg, setRowMsg] = useState<{ id: string; text: string; kind: string } | null>(null);
   // B 片 ①-a（2026-09-25）：**不经服务器**的换设备（配对码）。
   // ⚠️ 它是**整个钥匙袋**级的动作（载荷里带全部空间）⇒ 放在 map 之外，只渲染一份。
   const [pairBusy, setPairBusy] = useState(false);
@@ -172,34 +167,6 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
     } catch (e) {
       // ⚠️ **原样**显示后端那句话：它本来就是可操作的（说清下一步该做什么）。
       //    自己改写一遍＝把"可操作"抄第二份，两份迟早漂。
-      setErr(`${what}失败：${String(e)}`);
-    } finally {
-      setBusy("");
-    }
-  };
-
-  /// ③ 0b：推 / 取公开材料。与 `run` 分开，是因为这两条**正常的不顺利也不抛**（用 `outcome` 回），
-  /// 所以要把 `outcome` 映射成"提示 / 警告 / 错误"三档，并把那句话**原样**显示出来。
-  const runKeyring = async (
-    spaceId: string,
-    what: string,
-    fn: () => Promise<SpaceKeyringOutcome>,
-  ) => {
-    setBusy(spaceId);
-    setNote("");
-    setErr("");
-    setRowMsg(null);
-    try {
-      const r = await fn();
-      const kind = r.outcome === "ok" ? "ok" : r.outcome === "rejected" ? "err" : "warn";
-      setRowMsg({ id: spaceId, text: `${what}：${r.message}`, kind });
-      // 「取回公开材料」同样会改变**内核读数**（这个空间从此有钥匙了）⇒ 与 `run()` 一样要刷新中枢，
-      // 否则「会话锁定」整节的状态与本节的读数会各说各话（同 2026-09-25 那条真机缺陷）。
-      if (r.outcome === "ok") {
-        await reload();
-        await refreshVault();
-      }
-    } catch (e) {
       setErr(`${what}失败：${String(e)}`);
     } finally {
       setBusy("");
@@ -319,55 +286,10 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                 （「把旧钥匙迁进钥匙袋」/「换成真随机钥匙」）。那两条命令与它们背后的整套
                 应用级加密一起删掉了 ⇒ 不再有"把旧钥匙搬进袋子"这条出路。
                 现在"密文库 ＋ 袋里没有它的盒子"（应用级加密的存量库）唯一的出路是**从别处取回
-                公开材料**（下面那句折叠里的按钮；报错那句说的就是它）。 */}
-            {/* ③ 0b 换设备：一次设备变更才用一次的动作 ⇒ 收进折叠、**且只在"这个空间真的加密了"时出现**
-                （明文空间没有公开材料可推可取，两个按钮只会报错）。
-                ⚠️ 覆盖默认**关着**：闷头覆盖可能让本机打不开自己的空间（见 Rust 侧注释）。 */}
-            {encrypted && (
-              <details className="space-privacy-more">
-                <summary>换设备（推 / 取公开材料）</summary>
-                <div>
-                  <div className="space-privacy-hint">
-                    旧设备「推到服务器」→ 新设备「从服务器取回」＋输主口令；公开材料里没有裸钥匙。
-                  </div>
-                  <div className="space-privacy-actions">
-                    <button
-                      className="sync-btn ghost"
-                      disabled={busy === v.space_id}
-                      onClick={() =>
-                        void runKeyring(v.space_id, "推到服务器", () => api.pushSpaceKeyring(v.space_id))
-                      }
-                    >
-                      推到服务器
-                    </button>
-                    <button
-                      className="sync-btn ghost"
-                      disabled={busy === v.space_id}
-                      onClick={() =>
-                        void runKeyring(v.space_id, "从服务器取回", () =>
-                          api.pullSpaceKeyring(v.space_id, allowOverwrite),
-                        )
-                      }
-                    >
-                      从服务器取回
-                    </button>
-                    <label className="space-privacy-overwrite">
-                      <input
-                        type="checkbox"
-                        checked={allowOverwrite}
-                        onChange={(e) => setAllowOverwrite(e.target.checked)}
-                      />
-                      允许覆盖本机已有的材料
-                    </label>
-                  </div>
-                </div>
-              </details>
-            )}
-            {rowMsg?.id === v.space_id && (
-              <div className={`space-privacy-gate is-${rowMsg.kind === "ok" ? "allow" : "block"}`}>
-                {inlineMd(rowMsg.text)}
-              </div>
-            )}
+                公开材料**（下面「换设备（不经服务器：配对码）」那块；报错那句说的就是它）。
+                ⚠️ 2026-09-29 追改：这里原先还有「推到服务器 / 从服务器取回」两个按钮 ——
+                那条**经服务器搬钥匙袋**的路已按 owner 裁定（**同步服务器不提供个人版**）整条删掉，
+                "换设备"只剩下面那块**不经服务器**的配对码（依据 `docs/plans/2026-09-29-server-sync-redundancy-inventory.md` 的 A-3 / A-4）。 */}
             {confirming === v.space_id && (
               <div className="space-privacy-gate is-block">
                 关掉加密会把<b>这一个</b>空间的库换回明文（别的空间不受影响）。再点一次按钮才真的执行。
