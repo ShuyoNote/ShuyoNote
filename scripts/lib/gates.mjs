@@ -92,6 +92,17 @@ export const GATES = [
       + "本门禁把这三条钉在代码里：服务端实现时**契约先红再绿** ✓",
   },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
+  {
+    id: "check-decision-ids",
+    group: "contract",
+    label: "决策编号（决策引用必须是 DEC-<n>，不许与需求的 D1–D4 撞车）",
+    cmd: "node scripts/check-decision-ids.mjs",
+    incident:
+      "2026-09-30：一次**独立**的可行性核验把【需求的 D1–D4（交付与部署：可自建／零依赖／AGPL／不许内嵌）】" +
+      "当成了待拍清单里的决策项 ⇒ **漏数四个指标**（读到 32，实际 36）。两组同名编号**不会让任何测试变红**，" +
+      "只会让人数错/核错 ⇒ 只能靠命名隔离（决策改 `DEC-<n>`）＋本门禁把「残留的裸 D#」钉死。",
+    note: "判据形态＝白名单：文档级「自有编号族」清单 ＋ 混用文件的行级语境（脚本头有 5 条规则与边界）",
+  },
   // ---- deploy（联网 ⇒ 不进 DEFAULT_GROUPS ✓）----
   {
     id: "check-web-deploy",

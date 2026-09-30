@@ -284,7 +284,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-29-requirements-judgment-matrix.md](plans/2026-09-29-requirements-judgment-matrix.md) | **两份需求的判据矩阵** —— **39 条 MUST 逐条「怎么验」**（补上「判据成本」那个缺口） |
 | [plans/2026-09-29-both-editions-difficulty-and-cost.md](plans/2026-09-29-both-editions-difficulty-and-cost.md) | **两版需求的技术难度与实现成本** —— 逐条人日估算 ＋ 风险排序（⚠️ 含判据要 ×1.3~1.5） |
 | [plans/2026-09-29-both-editions-iteration-plan.md](plans/2026-09-29-both-editions-iteration-plan.md) | **两版需求的可执行迭代计划** —— 把 39 条 MUST 排进 **7 个迭代** ＋ 要 owner 拍的五条 |
-| [plans/2026-09-29-owner-decisions-pending.md](plans/2026-09-29-owner-decisions-pending.md) | ⭐ **待 owner 拍板清单（唯一）** —— **D1–D11**，每条写清「卡住谁」与「为什么非拍不可」 |
+| [plans/2026-09-29-owner-decisions-pending.md](plans/2026-09-29-owner-decisions-pending.md) | ⭐ **待 owner 拍板清单（唯一）** —— **DEC-1–DEC-11**，每条写清「卡住谁」与「为什么非拍不可」 |
 | [plans/2026-09-29-mesh-flake-diagnosis.md](plans/2026-09-29-mesh-flake-diagnosis.md) | ⭐ **`mesh::` 的「偶发失败」＝ 40%**（连跑 15 次失败 6 次）—— **推翻台账描述**；＋「连跑 3 次全绿」为何不值钱 |
 | [plans/2026-09-29-git-operation-discipline.md](plans/2026-09-29-git-operation-discipline.md) | **git 操作纪律** —— 从当天**四次失误**收出**六条规则**（每条配「可查信号」） |
 | [plans/2026-09-29-liveness-vs-working.md](plans/2026-09-29-liveness-vs-working.md) | ⭐ **「在跑」 ≠ 「在做」** —— 从两次同族教训收出四条纪律（含「跑 N 次全绿」的判准） |
@@ -295,7 +295,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-29-nightly-handoff.md](plans/2026-09-29-nightly-handoff.md) | ⭐ **今晚自主工作的交接单** —— 七节：待拍一处／做完了的／今晚我自己的错／等回信的／门禁现状／最值钱的四个发现／明早的建议顺序 |
 | [plans/2026-09-30-feasibility-of-requirement-metrics.md](plans/2026-09-30-feasibility-of-requirement-metrics.md) | ⭐ **最终需求各项指标的技术可行性评估** —— 四档（A/B/C/D）逐条；汇总 **A 8 ／ B 19 ／ C 8 ／ D 1**；★ 并点出**最该先补的一件（测单写者吞吐）** |
 | [plans/2026-09-30-single-writer-throughput.md](plans/2026-09-30-single-writer-throughput.md) | ⭐ **单写者吞吐【实测】** —— 回答了 **P5（3 万变更/秒）能不能到**：**看前提（每次 push 携带多少变更）**；瓶颈＝**每次提交的固定成本** |
-| [plans/2026-09-30-debounce-removal-cost.md](plans/2026-09-30-debounce-removal-cost.md) | ⭐ **撕防抖的代价（`D3` 的「先量」）** —— 今天 **6 次/分** ⇒ 撕后 **254**（一般）/ **901**（猛打）；⚠️ **而最重的是：版本历史会失效** |
+| [plans/2026-09-30-debounce-removal-cost.md](plans/2026-09-30-debounce-removal-cost.md) | ⭐ **撕防抖的代价（`DEC-3` 的「先量」）** —— 今天 **6 次/分** ⇒ 撕后 **254**（一般）/ **901**（猛打）；⚠️ **而最重的是：版本历史会失效** |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**

@@ -151,7 +151,7 @@ docs  ：c0b87d89 复查台账 ｜ 841d2f3d 容量压测 ｜ 368c1d21 补两节 
 ### 6.4 台账与纪律（本轮还债产出）
 | 文件 | 是什么 |
 |---|---|
-| `docs/plans/2026-09-29-owner-decisions-pending.md` | ⭐ **待 owner 拍板清单（唯一）**：D1–D8，每条写清"卡住谁" |
+| `docs/plans/2026-09-29-owner-decisions-pending.md` | ⭐ **待 owner 拍板清单（唯一）**：DEC-1–DEC-8，每条写清"卡住谁" |
 | `docs/plans/2026-09-29-git-operation-discipline.md` | **git 操作纪律**：从今天**四次失误**收出六条规则（含可查信号） |
 | `docs/plans/2026-09-29-mesh-flake-diagnosis.md` | ⭐ **`mesh::` 的"偶发失败"＝ 40%**（推翻台账描述） |
 | `docs/plans/2026-09-29-inv-ns-second-person-landing.md` | `INV-NS-second-person-implies-team` 的落地方案（**落不了技术拦截**） |

@@ -185,7 +185,7 @@ error[E0658]: use of unstable library feature `ip` … issue #27709 …
 | **F3** | `approach` §0bis | 列**四处**落点（`checked_bind`／`announced_base`／`resolve_base`／`announce_for_own_hub`） | 实为**五处**：漏了 **`mesh::invitable_base`（`mesh.rs:231`）**，而它是"谁可以被拉"那一关 ⇒ §4 的链就断在这里 |
 | **F4** | `approach` §0bis-④ ／ `tasks` 全篇 | `approach` 只有一句结论，**没有链**；`tasks` **整份没提"对端清单"** | 把本文 §4 的链并进去（`approach` §0bis-④ 后追加 ②–⑤） |
 | **F5** | `approach` §2（只有片 1/2/3）／`tasks` §2（只有 VL-0..3） | **需求 S2-①（对端清单＝新设置）／S2-②（`LanStatus.discovery` 上抛）／S3-②（面板「对端清单」四态）／S3-③（0 台两种文案）全都没有落点** | ⚠️ 缺的正是需求自己标的「**真缺口**」（S3-②）。且它让 `approach` §3 的结论**偏乐观**：见 F5bis |
-| **F5bis** | `approach` §3（`:76`） | "D1 不拍，也可以先做片 1 ＋ 片 3 ⇒**「VPN 里能用」这件事今天就可交付**" | 片 1 让"**绑得上／报得出／认得了**"，但**"怎么认识对端"没做**。三层隧道里广播通常不通（`virtual-lan-option` §2.1，**该文亦未实测**）⇒ 冷启动那张表是空的 ⇒ 两台设备**互相发现不了** ⇒ 这句话应降级为"**片 1 是必要的一半**" |
+| **F5bis** | `approach` §3（`:76`） | "DEC-1 不拍，也可以先做片 1 ＋ 片 3 ⇒**「VPN 里能用」这件事今天就可交付**" | 片 1 让"**绑得上／报得出／认得了**"，但**"怎么认识对端"没做**。三层隧道里广播通常不通（`virtual-lan-option` §2.1，**该文亦未实测**）⇒ 冷启动那张表是空的 ⇒ 两台设备**互相发现不了** ⇒ 这句话应降级为"**片 1 是必要的一半**" |
 | **F7** | `approach` §2 片 2 判据 / `tasks` VL-2 判据 | 只有"报出的是**可达**的内网/VPN 地址" | 缺 `INV-VLAN-bind-must-be-reachable` 的**后半**："绑了不可达的地址 ⇒ 界面给**可操作提示**"。见 §4 末尾那条静默失败 ⇒ 今天 `config_state`（`mesh.rs:610-621`）只判"回环 / 端口 0" |
 | **F9** | 两份都没写 | **被推翻／被改动的既有判据点名**（brief 要求的那一节） | 至少五条要写清"改还是保"，逐条见下面 §5.C |
 | **F14** | `tasks` VL-3 | 写域含"`SyncPanel.tsx` 的地址那处 placeholder/title" | ⚠️ **S3-① 已经落地了**：`SyncPanel.tsx:1531` 现在是 `placeholder="监听地址（虚拟网络里填虚拟网卡的地址），如 192.168.1.5:8788"`，提交 `f53a4ea3`（`copy(nearby): 监听地址那栏加指引 —— 虚拟网络里要填【虚拟网卡】的地址（零高度成本）`）⇒ 剩下的只有"**列出可用网段 ＋ 明说不提供 VPN**"，别重复劳动 |
@@ -196,7 +196,7 @@ error[E0658]: use of unstable library feature `ip` … issue #27709 …
 |---|---|---|---|
 | **F6** | 两份都没写 | 需求 S1 的 **`INV-VLAN-core-knows-only-a-list`** 判据是"文本级扫描厂商名 ⇒ 红"，但**两边都没有载体**。基线今天**在岗**：`grep -rniE "tailscale\|zerotier\|wireguard" src-tauri/src src packages \| wc -l` ⇒ **0** | 把它列成一条判据（⚠️ 新增门禁**必须注册进 `scripts/lib/gates.mjs`**，`AGENTS.md` §3 踩过两次） |
 | **F8** | 两份都没写迭代表 | `both-editions-iteration-plan` **已订正**（2026-09-29）：**U12 排进迭代 1**（订正后该迭代 ≈ **10~16 人日**） | 任务单补一行"迭代归属＝迭代 1"。⚠️ 而 `personal-edition-approach` §8／`personal-edition-tasks` §3 仍写"U8/U12 **无迭代归属**" ⇒ **那两处已过期**（我不能改） |
-| **F10** | `tasks` §7 | 写"VL-1 1 ＋ VL-3 0.5~1 ＋ VL-2 2~3 ⇒ **应上调到 2~4 人日**" | ⚠️ **算术不一致**：三项之和是 **3.5~5**（§7 上一行自己也写 1.5~2 ＋ 2~3 ＝ 3.5~5）。⇒ 应为 **3.5~5（不含判据）**；含判据（矩阵 §4 的 ×1.3~1.5）⇒ **4.5~7**。另：Lead 消息里写"D15 人日改成 3~4"，与文件里的 2~4 又不同 ⇒ **三处数字要收成一个** |
+| **F10** | `tasks` §7 | 写"VL-1 1 ＋ VL-3 0.5~1 ＋ VL-2 2~3 ⇒ **应上调到 2~4 人日**" | ⚠️ **算术不一致**：三项之和是 **3.5~5**（§7 上一行自己也写 1.5~2 ＋ 2~3 ＝ 3.5~5）。⇒ 应为 **3.5~5（不含判据）**；含判据（矩阵 §4 的 ×1.3~1.5）⇒ **4.5~7**。另：Lead 消息里写"DEC-15 人日改成 3~4"，与文件里的 2~4 又不同 ⇒ **三处数字要收成一个** |
 | **F11** | `approach` §0（`:20-22`）／`tasks` §1（`:14`） | "**实测**（用 Python `ipaddress` **复刻**）" | 术语：复刻＝模拟 ⇒ 改称"复刻验证"，或直接用本文 §1.1 的 `rustc` 读数（结论一致） |
 | **F12** | `approach` §4-①（`:82-83`） | "ZeroTier 常用 `10/8` 或 `172.16/12` ⇒ **今天已经过** ✅；WireGuard 常配 `10/8`／`192.168/16` ⇒ ✅" | 这是**外部未实测**断言（各家默认段我核不了）⇒ 建议标"未实测"，否则又是一句"过度承诺"（需求 `INV-VLAN-no-new-promise`） |
 | **F13** | `approach` §4-②（`:86-89`） | "放行 CGNAT ⇒ 理论上**同运营商 NAT 后的两台设备可能互相可达**" | 这是**推测**。技术上 `100.64/10`（RFC 6598）**不是全球可路由地址** ⇒ **不会**把窗口暴露到公网；"同运营商是否互通"取决于运营商是否允许 hairpin/入向，我**核不了** ⇒ 建议改写成"**不是全球可路由 ⇒ 不暴露公网；具体可达性未实测**"，并保留"要 owner 知道"这一句 |
@@ -210,11 +210,11 @@ error[E0658]: use of unstable library feature `ip` … issue #27709 …
 | **3** | `mesh.rs:1822 only_a_real_lan_window_address_may_be_announced` | 哪些地址**可以**写进公告 | ⚠️ **扩**：加"`100.x:8788` ⇒ `Some(http://100.x:8788)`"；`0.0.0.0`／`8.8.8.8`／端口 0／回环 四条 `None` **保留** |
 | **4** | `lan.rs:880 an_announce_we_produce_is_always_one_we_would_accept`（**往返性质**） | 产出侧与消费侧**同一把尺** | **必须仍全绿** —— ⚠️ 两把尺**要一起放宽**才保得住它；只放宽一边 ⇒ 它就是那条会红的判据（**这是本批最好的"守门人"**） |
 | **5** | ⚠️ `lan_state.rs:619 the_announce_loop_recomputes_targets_from_the_live_peer_table` | **源码字面串**断言：`code.contains("lan::announce_targets(lan::LAN_PORT, &state.peers(now))")` | ⚠️ **一旦把"对端清单"喂进 `announce_targets`（F5 那一片），这条一定红** ⇒ 属"**改既有判据**"，是**显式决定**（按 `AGENTS.md` §5 的 baseline 纪律：**不许顺手改软**，要写清改成什么并把"不许退回循环外算一次"那半留住） |
-| **6** | `mesh.rs:1914 configuring_a_public_bind_address_is_refused_at_configure_time`（`assert!(e.contains("内网"))`） | `0.0.0.0 ⇒ Err` | **本批不动**（＝ **D1**／个人版 T1）；⚠️ 但它与 §2 的甲尺**同一处代码** ⇒ 写域相交、必须串行（见 §5.D） |
+| **6** | `mesh.rs:1914 configuring_a_public_bind_address_is_refused_at_configure_time`（`assert!(e.contains("内网"))`） | `0.0.0.0 ⇒ Err` | **本批不动**（＝ **DEC-1**／个人版 T1）；⚠️ 但它与 §2 的甲尺**同一处代码** ⇒ 写域相交、必须串行（见 §5.D） |
 
 ### D. 写域相交（两份都没写"哪几片必须串行"）
 ```text
-① `mesh.rs`：**片 1（甲尺）↔ 片 2（U5／D1）** 同一段（`is_lan_only`／`checked_bind`／`announced_base`）
+① `mesh.rs`：**片 1（甲尺）↔ 片 2（U5／DEC-1）** 同一段（`is_lan_only`／`checked_bind`／`announced_base`）
    ⇒ 与个人版 **T1** 也撞 ⇒ **同一时刻只能有一个执行者持它**。
 ② `SyncPanel.tsx`：片 3（**文案**）↔ F5 那片（**「对端清单」块** ＋ 0 台两种文案）⇒ 串行。
 ③ `lan.rs`：`is_private_ipv4`（片 1）↔ 若 F5 那片要动消费口径（`resolve_base`／`invitable_base`）⇒ 串行。

@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 62 条（contract 37 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
+门禁 63 条（contract 38 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
 基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -72,6 +72,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-changelog-numbers` | 发版说明里的断言数被手抄漂移：**最新一段**里"套件名 + 数字"一对一绑定时必须等于基线（历史段落不碰；多套件/多数字/带 `历史`·`豁免` 的行跳过——宁可不判，也不误报） |
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
+| contract | `check-decision-ids` | **决策编号不许与需求撞车**：待拍清单的**决策**编号原本也叫 `D1–D18`，而企业版需求 §1.4「交付与部署」那组 MUST 也叫 `D1–D4`（可自建／零依赖起跑／客户端 AGPL／两边不许互嵌）⇒ **两组同名**。2026-09-30 一次**独立**的可行性核验把**需求的** `D1–D4` 当成了决策项 ⇒ **漏数四个指标**（读到 32，实际 36）。⇒ 决策一律 `DEC-<n>`；判据形态＝**白名单**：文档级「自有编号族」（`docs/roadmap.md` 的 `D7`、`plugin-host-isolation-plan` 的 `D1–D7`、realtime-body／nearby 的「§7 待查」…各自放行）＋**混用文件按命中点语境**判（同一份文件里 `D3` 既当需求又当决策，正是最危险的那种）。纯 Node、只读文本、离线、自带 4 例 `--self-test`；**改前 199 处违规、改后 0 处** |
 | deploy | `check-web-deploy` | **Web 版线上自检**（GitHub Pages ＋ 国内主站：版本号 ＋ index.html 引用的**每个资源**可达性）：2026-09-29 实测它**只挂 `package.json`、注册表没登记、CI 与文档都没调用点** ⇒ 本仓铁律所说的"**能抓到问题但没人跑**" ✗；当天顺手跑即红：GitHub Pages 的 `prism/prism-*.js` **404**（v1.84.4 那类"index 新、资源旧"）✓。⚠️ **联网 ⇒ 不进 `DEFAULT_GROUPS`** ✓，该由**每日定时**跑（改工作流待 owner 同意 ✓） |
 | contract | `check-crdt-snapshot-contract` | **CRDT 加密快照的服务端接口契约退化**：E2EE 加密快照的协议可行性已验（尖刺 13/0 ✓），但实现落在**另一个仓** ⇒ 契约若只存在散文里，最易退化的恰是三条**不可逆**规则——① 服务端开始解析密文快照（个人空间"服务端在数学上无法解密"名存实亡）② **先退役旧 blob、后落快照**（不可逆丢数据）③ `snapshotSeq` 由必填变可选（退役范围不明 ⇒ 静默丢数据）。本门禁把三条路由与三条承重规则钉在 `scripts/lib/crdt-snapshot-contract.mjs`，夹具退化即红 |
 | contract | `check-ontology-generated` | **本体表与能力注册表不一致**（生成物被手改／注册表改了没重新生成）—— 来由：2026-09-28 MCP 规格把 `isWrite: true` 当判据，而该字段在原始 JSON 里**出现 0 次** ✗（真实字段是 `kind`）⇒ 本体只能生成、并逐字节卡漂移 |

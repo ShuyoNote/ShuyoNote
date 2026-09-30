@@ -1,7 +1,7 @@
-# 撤两层防抖的**代价**（D3「先量」）—— 落库/上传频率、单次开销、最坏上限
+# 撤两层防抖的**代价**（DEC-3「先量」）—— 落库/上传频率、单次开销、最坏上限
 
 > 状态：**已量**（2026-09-30）｜依据：本文自己的三个脚本读数（§6 全文可粘贴复现）＋ 两条既有实测指针
-> 由来：owner 已拍 `D3`（撤两层防抖），而承诺的口径是「**先量再撤**」；`enterprise-edition-tasks` 的 `T3`
+> 由来：owner 已拍 `DEC-3`（撤两层防抖），而承诺的口径是「**先量再撤**」；`enterprise-edition-tasks` 的 `T3`
 > 自己就写着「⚠️ 撤防抖的代价（落库/上传频率与耗电）依据文档里没有读数 ⇒ 拍之前应先量」。
 > ⚠️ **本文只量与测：产品代码一个字节没改**（防抖仍在 `600ms` / `400ms` 上，见 §1）。
 > ⚠️ 机器：Apple Silicon 16 核 / 48GB / macOS｜仓库 HEAD `003d32a5`｜Node v24.21.0（harness 自带那份）。
@@ -273,7 +273,7 @@ node /tmp/d3/sqlite-write-cost.mjs
 ### 8.1 `/tmp/d3/debounce-model.mjs`
 
 ```js
-// D3「先量」· 频率模型（离散事件模拟）
+// DEC-3「先量」· 频率模型（离散事件模拟）
 //
 // 语义**逐句照代码**（不是凭印象）：
 //   · 保存那一层：`persist(patch)` ⇒ `pendingSave = patch`；600ms **尾沿去抖**（`src/App.tsx:427-431`）
@@ -402,7 +402,7 @@ function simulate(edits, { saveMs, uploadMs, roundMs, windowMs }) {
 }
 
 const fmt = (n) => String(Math.round(n)).padStart(6);
-console.log(`# D3 频率模型（roundMs = ${ROUND_MS}ms）\n`);
+console.log(`# DEC-3 频率模型（roundMs = ${ROUND_MS}ms）\n`);
 console.log(
   "模型".padEnd(58) +
     "窗口s".padStart(6) +
@@ -469,7 +469,7 @@ console.log("\n（每格 = 落库/分 ÷ 上传/分）");
 ### 8.2 `/tmp/d3/round-cost.mjs`
 
 ```js
-// D3「先量」· 一轮上传的真实耗时（对**真服务端**，HTTP over loopback）
+// DEC-3「先量」· 一轮上传的真实耗时（对**真服务端**，HTTP over loopback）
 //
 // 量的是 `sync_workspace` 那一轮的两步：`POST /push`（把 outbox 里的页 upsert 推上去）
 // ＋ `GET /pull?since=<水位>`（增量拉）。⚠️ **不含**客户端进程内的 SQLite / Tauri IPC。
@@ -561,7 +561,7 @@ async function pullOnce() {
   return ms;
 }
 
-console.log(`# D3 一轮上传耗时（真服务端 ${base}，loopback）· N=${N} 每档\n`);
+console.log(`# DEC-3 一轮上传耗时（真服务端 ${base}，loopback）· N=${N} 每档\n`);
 console.log("载荷".padEnd(34) + "字节".padStart(9) + "push p50/p95/max(ms)".padStart(26) + "整轮 p50/p95/max(ms)".padStart(26));
 for (const [name, chars] of [
   ["空档：没有 crdt_state（老载荷形状）", 0],
@@ -631,7 +631,7 @@ console.log(
 ### 8.3 `/tmp/d3/sqlite-write-cost.mjs`
 
 ```js
-// D3「先量」· 落库那几步的 SQLite 成本（**同引擎近似**）
+// DEC-3「先量」· 落库那几步的 SQLite 成本（**同引擎近似**）
 //
 // ⚠️ 这不是产品进程内的实测：产品的 `save_page` 走 **rusqlite（进程内）＋ Tauri IPC**，
 //    这里用 **node:sqlite**（同一个 SQLite 引擎、同一批语句、同样的 WAL + synchronous=NORMAL）
@@ -675,7 +675,7 @@ const pct = (xs, p) => {
 const row = (label, xs, bytes) =>
   label.padEnd(52) + String(bytes ?? "").padStart(8) + ` ${pct(xs, 50).toFixed(3)} / ${pct(xs, 95).toFixed(3)}`.padStart(22);
 
-console.log(`# D3 落库几步的 SQLite 成本（node:sqlite · WAL · synchronous=NORMAL · 文件库）· N=${N}\n`);
+console.log(`# DEC-3 落库几步的 SQLite 成本（node:sqlite · WAL · synchronous=NORMAL · 文件库）· N=${N}\n`);
 console.log("步骤".padEnd(52) + "字节".padStart(8) + "p50 / p95 (ms)".padStart(22));
 
 for (const chars of [2000, 8000]) {
@@ -775,5 +775,5 @@ console.log("   `blocks::rebuild_block_graph`（JSON 解析 ＋ blocks/backlinks
 · **不是 T3 的方案**："撤了之后用什么给上限（节流？只在内容变了才存？）"是 T3 的设计问题 ——
   本文只把"撤了会变成多少"量出来（含 §5.3 那条方法学结论）。
 · 与既有读物的关系：`client-frame-rate-loadtest`（每帧成本、状态体积）、
-  `server-capacity-loadtest`（服务端容量）、`owner-decisions-pending` 的 D3、`enterprise-edition-tasks` 的 T3。
+  `server-capacity-loadtest`（服务端容量）、`owner-decisions-pending` 的 DEC-3、`enterprise-edition-tasks` 的 T3。
 ```
