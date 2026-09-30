@@ -140,6 +140,21 @@ export const GATES = [
     registered: "2026-09-29",
   },
   {
+    id: "check-spec-judge-carriers",
+    group: "contract",
+    label: "规格点名的承重渠道必须真实存在（`check-*.mjs` ／ `mod::tests::name`）＋ §18.1 的 id 卫生",
+    cmd: "node scripts/check-spec-judge-carriers.mjs",
+    incident:
+      "2026-09-30：`nearby-devices-spec` 那族按铁律**不进 `INVARIANTS.md`** ⇒ 既有 `check-invariants-pointers`" +
+      "**够不到它**：它只认「≥7 列表里状态含能的行点名一个 `check-*.mjs`」，而这族的判据是 **Rust 单测**" +
+      "（`mesh::tests::…`）与 vitest wiring，表也是 4/3 列 ⇒ 硬套只会**逼人写假名字**（假绿）或**一行都解析不到**（假红）。" +
+      "⇒ 而「散文里承诺了、机器不盯」今晚已害过三次（编号撞车漏数 4 条／`presence.page_id` 打穿口径／" +
+      "`check-licenses` 被写成「已有」却不存在）⇒ 本判据补这一档：**点名了就得在**（Rust 测试名按 `fn <name>` 整名匹配）" +
+      "＋ **§18.1 里同一个 id 不许两行都 live、划掉的必须点出取代者**（`DEC-10` 那类病的机器版）。",
+    note: "纯 Node、只读文本；边界写在脚本头：**不扫普通路径引用**（那会误伤留痕，如已删的 `nearby_invite.rs`）",
+    registered: "2026-09-30",
+  },
+  {
     id: "check-crdt-plane",
     group: "contract",
     label: "CRDT 平面：content_json 是 TEXT（老客户端只认 JSON）／CRDT 状态只进 BLOB 旁路表／Rust 不认识 CRDT／转换与合并各只有一份实现",

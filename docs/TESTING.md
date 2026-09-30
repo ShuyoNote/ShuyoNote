@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 63 条（contract 38 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
+门禁 64 条（contract 39 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
 基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -81,6 +81,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-derived-provenance` | **派生内容失去「从哪来」**：`ExtractedSegment.kind`／`loc` 被改成可选（引用与定位会**静默**降级 ✗）／`SegmentKind` 退化到少于 3 个成员（等于没在区分 ✓）。纯读 TS 源码 ✓ |
 | contract | `check-locked-loud` | **锁定被说成"没内容"**：未解锁空间的失败被映射成空结果（用户以为数据丢了 ✗）／稳定错误码 `space_locked` 丢了／钉它的单测没了（没有承重渠道 ✗）。纯读 Rust 源码 ✓ |
 | contract | `check-invariants-pointers` | **规格在说一件没有的事**：标「能」的 `INV-KB-*` 指的判据**不存在**／**没进注册表**（＝不进 `pnpm verify`／CI ⇒ 等于没人跑 ✗） |
+| contract | `check-spec-judge-carriers` | **规格点名的承重渠道必须真实存在**：`nearby-devices-spec` 那族（`INV-NS-*`／`INV-NEARBY-*`／`INV-AWARE-*`）按铁律**不进 `INVARIANTS.md`**，而它点名的判据**大多不是 `check-*.mjs`**（是 Rust 单测 `mesh::tests::…` 与 vitest wiring），表也是 4/3 列 ⇒ 上一条**够不到它**（硬套只会逼人写假名字，或一行都解析不到＝假红）。本判据补这一档：① 点名的 `check-*.mjs` **必须存在且已注册**；② 点名的 `mod::tests::name` 必须在 `src-tauri/src/*.rs` 里有 **`fn <name>`（整名匹配 —— 只判前缀会假绿，变异实测抓过）**；③ **§18.1 索引表的 id 卫生**：同一个 id 不许两行都 live、被划掉（`~~`）的**必须点出取代者**（`取代/并入/改名/现名/退休`）—— 那是 `DEC-10` 那类病的机器版。⚠️ **边界**：**不扫普通路径引用**（本规格留痕很重：`src-tauri/src/nearby_invite.rs` 是已按 `0c7ad349` 删掉的、`scripts/criteria-mutations.json` 是从来没存在过的通道 ⇒ 一律"路径必须在"会误伤留痕） |
 | contract | `check-crdt-plane` | **混版本共存的地基被拆**：`content_json` 不再是 JSON（TEXT）／CRDT 状态混进它／Rust 引入 Yjs／转换或合成长出第二份实现 ⇒ **老客户端的页打不开** ✗ |
 | contract | `check-doc-facts` | 文档里的**机器事实**（门禁条数／能力条数／命令数）与代码脱节：这类数字靠人抄，抄错不报错，只会让照文档做的人做到一半发现文档是旧的。它还要求**每条门禁都在本表里有名字**（上线当天抓到 7 条漏写） |
 | contract | `check-api-surface-version` | **改接口不升 `apiVersion`**（id／kind／scope／permission 变化 ⇒ 外部程序无信号坏掉）；指纹刻意**不含 desc**（改文案不算破坏接口），`--update` 是文档化出口 |
