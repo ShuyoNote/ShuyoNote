@@ -4051,8 +4051,63 @@ fn ext_from_mime(mime: &str) -> &'static str {
 // web.ts branches that use syncFetch — same endpoint, same auth.
 // ---------------------------------------------------------------------------
 
+/// ⚠️ **加密空间不报 `page_id`** —— 这是 `E3`/`E5`（"服务端只知元数据／**不知道是哪一页**"）的**前置**。
+///
+/// **为什么判在客户端**（owner 2026-09-30 拍 `D4` ⇒ 先处置 `presence` 这张表）：
+///   · 服务端**今天没有**"空间档位"字段（`space_kind`／`encrypted` 在服务端零命中）；而
+///     `space_keyrings` 有行 ⇏ 加密（它是**公开材料**，且**客户端从不上传**）⇒ **服务端判不了**；
+///   · 真相在客户端（[`crate::space_crypto::space_status`]）；判在这里还**更强**：
+///     服务端**根本收不到** `page_id`，而不是"收到再丢"。
+///
+/// **口径 ＝ 保守或**（owner 2026-09-30 拍）：`encrypted_on_disk || in_keyring` ⇒ 只要有一边像加密就不报。
+/// 方向安全：**少报**最坏是"那台设备的光标/在场信息弱一点"；**多报**是**不可逆**的泄漏（服务端已写进库）。
+fn presence_page_id_gated(
+    app_data_dir: &Path,
+    c: &Connection,
+    server_space_id: &str,
+    page: Option<String>,
+) -> Option<String> {
+    // `sync_profiles.space_id` 是**远端**空间 id、`ws_id` 是**本地**空间 id（真机上不同名，见 `MeshScope`）
+    // ⇒ 必须反查；把两者当同一个会去开一个按远端 id 新建的空库。
+    let ws_id: Option<String> = c
+        .query_row(
+            "SELECT ws_id FROM sync_profiles WHERE space_id = ?1",
+            params![server_space_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .unwrap_or(None);
+    let Some(ws_id) = ws_id else {
+        // 查不到 ⇒ **不确定** ⇒ 往安全那侧偏（宁可少报）。理由见上面那条"口径"。
+        return None;
+    };
+    let st = crate::space_crypto::space_status(app_data_dir, &ws_id);
+    if st.encrypted_on_disk || st.in_keyring {
+        None
+    } else {
+        page
+    }
+}
+
 #[tauri::command]
-pub async fn team_presence_beat(server_url: String, token: String, space_id: String, page_id: Option<String>, device_id: Option<String>) -> Result<serde_json::Value, String> {
+pub async fn team_presence_beat(
+    db: State<'_, Db>,
+    server_url: String,
+    token: String,
+    space_id: String,
+    page_id: Option<String>,
+    device_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    // ⚠️ 加密空间不报 `page_id`（见 `presence_page_id_gated` 的头注）；**明文空间照旧报**。
+    // 闸门放在命令内 ⇒ 前端一个字不用动，且**覆盖所有调用方**（现在只有一个，以后多一个就漏一个）。
+    let page_id = match crate::db::app_data_dir_ref() {
+        Some(dir) => {
+            let c = db.0.lock().expect("db mutex poisoned");
+            presence_page_id_gated(dir, &c, &space_id, page_id)
+        }
+        // app-data 目录没就绪 ⇒ 读不到档位 ⇒ 不确定 ⇒ 往安全那侧偏。
+        None => None,
+    };
     let url = format!("{}/spaces/{}/presence", server_url.trim_end_matches('/'), space_id);
     let client = reqwest::Client::new();
     let resp = client.post(&url).bearer_auth(&token).json(&serde_json::json!({
@@ -4208,6 +4263,56 @@ mod tests {
         let e = empty.unwrap_key(&m_empty, "default").unwrap_err();
         assert!(e.contains("没有空间"), "{e}");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⚠️ 心跳的 `page_id` 闸门（`E3`/`E5` 的**前置**；owner 2026-09-30 拍 `D4` ⇒ 先处置 `presence`）：
+    /// **加密空间不报、明文空间照报**、查不到 ⇒ 保守不报。
+    ///
+    /// 为什么要这条判据：它是**唯一**保证"服务端不知道加密空间里谁在哪一页"的地方 ——
+    /// 而它一旦退化（有人图省事改回"总是报"），**没有任何东西会红**：功能全在，只是库里多了一列内容。
+    #[test]
+    fn the_presence_page_id_gate_omits_it_for_encrypted_spaces_only() {
+        let _g = crate::security::SEC_LOCK.lock().unwrap(); // 与 space_crypto 的测试串行（全局钥匙袋）
+        let c = conn_with_meta();
+        c.execute_batch(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id) VALUES
+                 ('plain', 'sp-plain'),
+                 ('secret', 'sp-secret');",
+        )
+        .unwrap();
+        let dir = temp_dir("presence-gate");
+
+        // 袋子：**只**给 `secret` 一个盒子 ⇒ `in_keyring = true`（"保守或"的那一边）。
+        let mut kr = crate::keyring::Keyring::new();
+        let m = kr.kdf.derive_master("口令够长八个字").unwrap();
+        kr.wrap(&m, "secret", &crate::keyring::random_space_key())
+            .unwrap();
+        crate::space_crypto::set_keyring_for_test(Some(kr));
+
+        let page = || Some("p-1".to_string());
+        assert_eq!(
+            presence_page_id_gated(&dir, &c, "sp-secret", page()),
+            None,
+            "★ 加密空间**不许**报 page_id（否则服务端就知道谁在哪一页）"
+        );
+        assert_eq!(
+            presence_page_id_gated(&dir, &c, "sp-plain", page()),
+            Some("p-1".to_string()),
+            "明文空间**照旧**报（不许把功能一并关掉）"
+        );
+        assert_eq!(
+            presence_page_id_gated(&dir, &c, "sp-unknown", page()),
+            None,
+            "查不到本地空间 ⇒ 不确定 ⇒ 往安全那侧偏"
+        );
+        assert_eq!(
+            presence_page_id_gated(&dir, &c, "sp-plain", None),
+            None,
+            "本来就没带 page_id ⇒ 仍是 None（不是错误）"
+        );
+
+        crate::space_crypto::set_keyring_for_test(None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
