@@ -65,6 +65,11 @@ mod mesh_sim;
 // ⚠️ 收据已撤（2026-09-25，③-b-2b）：设置面（`mesh_set_config`）与同步面（`mesh_sync_now`）
 // 两条命令都在 `generate_handler!` 里 ⇒ 这一层**没有只服务判据的死代码**了。
 mod mesh;
+// 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
+// ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
+//    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。
+#[cfg(test)]
+mod mesh_wire_bytes;
 // 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。
 // ⚠️ 本步**只落格式与判据、不接线**：现有 `encryption_enabled` / `key_space_conn` / `encrypt_payload`
 // 一字不动（按空间是第 1 步、同步闸门是第 2 步）。见 `docs/plans/2026-09-23-keyring-step0-workorder.md`。
