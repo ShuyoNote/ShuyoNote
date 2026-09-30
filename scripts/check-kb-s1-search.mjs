@@ -52,6 +52,19 @@ export function judgeSearch(src) {
   if (!/index_unavailable/.test(src)) {
     out.push("✗ 索引不可用时**没有稳定码** `index_unavailable` ✗ ⇒ 「搜不到」与「搜不了」分不开（S1 第②条 ✓，与 `check-locked-loud` 同族 ✓）");
   }
+  // ③ **接线**：光声明没用 ✗ —— 页面级那条路必须真的把块命中**归并进来** ✓
+  //    （认那段特有的 snippet 标记「【来自附件】」✓ —— 它只在归并里出现 ✓）
+  const iMark = src.indexOf('【来自附件】');
+  if (iMark < 0) {
+    out.push('✗ 声明了来源，但页面级那条路**没有把块命中归并进来** ✗（找不到「【来自附件】」标记）'
+      + ' ⇒ 附件文本依旧搜不到（S1 第①条的**接线**半 ✓）');
+  } else {
+    // ④ **归并必须在 `results.truncate(` 之前** ✓（否则补进来的命中会被截掉 ✗）
+    const iTrunc = src.indexOf('results.truncate(');
+    if (iTrunc >= 0 && iMark > iTrunc) {
+      out.push('✗ 块级归并出现在 `results.truncate(` **之后** ✗ ⇒ 补进来的命中会被截掉（S1 第①条 ✓）');
+    }
+  }
   return { findings: out, declared: true };
 }
 
@@ -78,11 +91,15 @@ if (argv.includes("--self-test")) {
   const dir = mkdtempSync(join(tmpdir(), "kb-s1-"));
   try {
     const write = (text) => { const p = join(dir, SEARCH_REL); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text, "utf8"); };
-    const OK = 'const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];\nfn degraded() -> Result<(), String> { Err("index_unavailable".into()) }\n';
+    // 正例＝**已正确接线**的形状 ✓：两个来源 ✓、稳定码 ✓、并把块命中归并进来（标记在 `truncate` 之前 ✓）
+    const OK = 'const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];\nconst E: &str = "index_unavailable";\nfn merge() { let s = "【来自附件】"; results.truncate(limit); }\n';
     const cases = [
       ["正例（两个来源 ＋ 稳定码）", OK, 0],
       ["变异①（只扫正文 ⇒ 附件搜不到）", 'const SEARCH_SOURCES: [&str; 1] = ["page"];\nconst E: &str = "index_unavailable";\n', 1],
       ["变异②（索引坏了却静默返空）", 'const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];\nfn degraded() -> Vec<u8> { Vec::new() }\n', 1],
+      // ③④ 两条新断言的变异：**声明了却没接线** / **接线接在 truncate 之后** ✓
+      ["变异③（声明了来源，却没归并块命中）", 'const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];\nconst E: &str = "index_unavailable";\n', 1],
+      ["变异④（归并接在 truncate 之后）", 'const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];\nconst E: &str = "index_unavailable";\nfn f() { results.truncate(limit); let s = "【来自附件】"; }\n', 1],
     ];
     let pass = 0;
     for (const [name, text, want] of cases) {
