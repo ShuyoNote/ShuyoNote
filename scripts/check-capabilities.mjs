@@ -137,6 +137,40 @@ if (stale.length) {
   fail(`生成物与 capabilities/capabilities.json 不一致（跑 node scripts/gen-capabilities.mjs）：${stale.join(", ")}`);
 }
 
+// ---- 2c. ⭐ 反向断言：M1 的 MCP 清单里**不许出现写能力**（Task 2 ✓）----
+//
+// 为什么要有这条：清单是**生成物** ⇒ 「生成器只取 read」这件事在生成器里成立 ✓，
+// 但那只是"此刻恰好如此" ✗ —— 谁哪天把过滤条件放宽一行，清单就会多出写能力，
+// 而**外部 agent 会照着清单去调用它** ✓ ⇒ 这条把它钉成"会红的判据"（本仓 §12.2 那一族 ✓）。
+//
+// ⚠️ 三条边界（都从实测里来 ✓）：
+//   ① **清单为空必须拒绝给绿**（"扫到 0 条"不等于"干净" ✗）；
+//   ② 每条 `capabilityId` 必须**在注册表里找得到**（否则下面的 kind 判断是空转 ✗）；
+//   ③ ⭐ 本段必须在**顶层**执行 ✗ —— 第一版把它写进了 `if (stale.length) { … }` 里面，
+//      于是"生成物新鲜"时它根本不跑（＝装了个不跑的门禁 ✓ 实测踩过）。
+{
+  const mcpListPath = join(root, "capabilities", "mcp-tools.json");
+  if (!existsSync(mcpListPath)) {
+    fail("M1 的 MCP 清单不在（capabilities/mcp-tools.json）⇒ 跑 node scripts/gen-capabilities.mjs");
+  } else {
+    let mcpTools = null;
+    try {
+      mcpTools = JSON.parse(readFileSync(mcpListPath, "utf8"));
+    } catch (e) {
+      fail("M1 的 MCP 清单不是合法 JSON：" + e.message);
+    }
+    if (Array.isArray(mcpTools)) {
+      if (mcpTools.length === 0) fail("M1 的 MCP 清单是**空的** ⇒ 「扫到 0 条」不等于干净，拒绝给绿");
+      const byId = new Map(loadRegistry().capabilities.map((c) => [c.id, c]));   // reg 在下方才定义 ⇒ 这里直接读注册表（TDZ 实测踩过 ✓）
+      for (const t of mcpTools) {
+        const cap = byId.get(t.capabilityId);
+        if (!cap) { fail(`M1 清单里的 ${t.name} 指向一个注册表里不存在的能力：${t.capabilityId}`); continue; }
+        if (cap.kind === "write") fail(`M1 清单里出现了写能力 ${cap.id} ⇒ M1 是只读接入，写能力随 M2（规格 §2）`);
+      }
+    } else fail("M1 的 MCP 清单不是数组（生成物形态变了？）");
+  }
+}
+
 // ---- 2b. AI 暴露的能力：元数据在这里生成，实现必须在适配表里 ----
 const frontendAdapters = read("src/lib/capabilities/frontend.ts");
 const aiMeta = read(OUTPUTS.aiTools);
