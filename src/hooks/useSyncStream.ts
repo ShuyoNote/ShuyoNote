@@ -77,10 +77,19 @@ export function useSyncStream() {
           const wsId = await api.getActiveWorkspaceId();
           if (!wsId || cancelled) return;
           // ⚠️ **顺序有讲究**：先挂监听、再起流。反了的话"起流那一刻"到达的帧会被丢掉。
-          unlisten = await platform.event.listen<{ ws_id?: string; kind?: string }>(STREAM_EVENT, (e) => {
+          unlisten = await platform.event.listen<{
+            ws_id?: string;
+            kind?: string;
+            /** L4a：这一帧带的 `seq`（老服务端不带）。 */
+            seq?: number | null;
+            /** L4b：跳号时那个"多出来"的 `seq`（没跳号则不给本字段）。 */
+            gap?: number | null;
+          }>(STREAM_EVENT, (e) => {
             const kind = e?.payload?.kind ?? "other";
-            // `ping` ＝ 服务端说"你落后了、可能漏了事件" ⇒ **立刻拉**，不去抖。
-            if (kind === "ping") {
+            // `ping` ＝ 服务端说"你落后了、可能漏了事件"；`gap` ＝ **客户端自己**判出的跳号
+            // （Rust `sync_stream.rs` 的 L4a/L4b）⇒ 两者**同待遇：立刻拉一次、不去抖**。
+            // ⚠️ 跳号意味着"中间可能漏了帧" ⇒ 不许等下一次事件（那是"知道了却不动"）。
+            if (kind === "ping" || e?.payload?.gap != null) {
               void pullOnce(wsId);
               return;
             }

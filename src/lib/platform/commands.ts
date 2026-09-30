@@ -161,6 +161,12 @@ export interface SyncStreamStatus {
   last_error: string;
   /** 为什么没在跑：`"no-binding"` / `""`。 */
   reason: string;
+  /** L4a 读数：收到过的帧里最大的 `seq`（`0` ＝ 还没收到过带 `seq` 的帧）。 */
+  last_seq: number;
+  /** L4b 读数：判定为跳号的**次数**（`0` ＝ 从没跳号过）。 */
+  gap_count: number;
+  /** L4b 读数：最近一次跳号时那个 `seq`（`0` ＝ 从没跳号过）。 */
+  last_gap_seq: number;
 }
 
 /**

@@ -77,6 +77,21 @@ describe("近实时 · 订阅目标与接线（文本级，防退回旧形状）
     ).toBe(true);
   });
 
+  it("⑥′ ★ 跳号（`gap`）**不许**当普通帧去抖：与 `ping` 同一条「立刻拉」的路（L4b）", () => {
+    // 这是 L4b 的**接线那一半**：Rust 判出跳号 ⇒ 事件里带 `gap` ⇒ 前端必须**立刻**拉一次
+    // （补漏不能等下一次事件 —— 那是"知道了却不动"）。Rust 侧的判定与出口由
+    // `src-tauri/src/sync_stream.rs` 的判据 8 钉住，这里钉的是**它被谁消费**。
+    const at = src.indexOf("gap");
+    expect(at, "事件载荷里认不出 gap ⇒ 跳号信号没人消费（L4b 断在接线上）").toBeGreaterThan(-1);
+    const pullAfterGap = src.indexOf("pullOnce(", at);
+    const timeoutAfterGap = src.indexOf("setTimeout(", at);
+    expect(pullAfterGap, "gap 那条路上没有 pullOnce ⇒ 跳号不会真的拉").toBeGreaterThan(-1);
+    expect(
+      timeoutAfterGap === -1 || pullAfterGap < timeoutAfterGap,
+      "gap 那条路要「立刻」，不许先经过去抖",
+    ).toBe(true);
+  });
+
   it("⑦ 开关（默认开）**两处共用一处实现**：起停走 `applyNearRealtime`", () => {
     expect(nearRealtime).toContain("applyNearRealtime");
     expect(nearRealtime).toContain("api.syncStreamStop()");
