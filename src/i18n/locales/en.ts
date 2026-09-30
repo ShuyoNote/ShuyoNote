@@ -51,6 +51,9 @@ export default {
   timeline: {
     title: "Timeline",
     windowNote: "{{days}} day(s) with activity in this window",
+    summary: "{{created}} new · {{edited}} edited",
+    kindCreated: "new",
+    kindEdited: "edited",
     emptyNoPages: "This space has no pages yet",
     emptyNoPagesHint: "Create your first page and this view will replay your work day by day.",
     emptyNoActivity: "Pages exist, but nothing happened recently",

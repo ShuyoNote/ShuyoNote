@@ -58,13 +58,17 @@ export function TimelineReview() {
           <li key={d.day} className="tl-day">
             <div className="tl-day-head">
               <DayHeading day={d.day} now={now} />
+              <span className="tl-day-summary">{t("timeline.summary", { created: d.created, edited: d.edited })}</span>
               <span className="tl-day-key">{d.day}</span>
             </div>
             <ul className="tl-entries">
               {d.entries.map((e) => (
                 <li key={e.id} className="tl-entry">
                   <button type="button" className="tl-entry-btn" onClick={() => void openPage(e.id)}>
-                    {e.title}
+                    <span className={"tl-kind tl-kind-" + e.kind}>
+                      {e.kind === "created" ? t("timeline.kindCreated") : t("timeline.kindEdited")}
+                    </span>
+                    <span className="tl-entry-title">{e.title}</span>
                   </button>
                   <span className="tl-entry-time">
                     {new Date(e.atMs).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}

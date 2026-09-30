@@ -51,6 +51,9 @@ export default {
   timeline: {
     title: "时间复盘",
     windowNote: "窗口内有 {{days}} 天有活动",
+    summary: "新建 {{created}} · 改过 {{edited}}",
+    kindCreated: "新建",
+    kindEdited: "改过",
     emptyNoPages: "这个空间还没有页面",
     emptyNoPagesHint: "新建第一篇之后，这里会按天回看你写过的东西。",
     emptyNoActivity: "有页面，但最近这些天没有活动",

@@ -31,6 +31,16 @@ export const TIMELINE_DAY_BUCKET = (atMs: number): string => {
 /** 一条活动的时间：优先 `updated_at`（改过就算那天 ✓），没有就退回 `created_at` ✓。 */
 const activityOf = (p: PageMeta): number => Number(p.updated_at || p.created_at || 0);
 
+/** 一条活动的**种类** ✓（S3 第二片）：这一笔就是它被建出来的那一刻 ⇒ 新建；建得更早、当天才被改 ⇒ 改过 ✓。 */
+export type TimelineKind = "created" | "edited";
+const kindOf = (p: PageMeta): TimelineKind => {
+  const born = Number(p.created_at || 0);
+  const at = activityOf(p);
+  // ⚠️ 判据只有这一条：**活动时间晚于诞生时间**才算"改过" ✓ —— 别拿"created_at 在不在窗口内"当种类
+  //   （那会把"三天前建、今天改"的页面在今天标成"新建" ✗ —— 用户会以为今天新建了一篇 ✓）。
+  return born > 0 && at > born ? "edited" : "created";
+};
+
 /** 窗口起点（含）✓ —— 只在这一个地方算 ✓（别处要"多久算最近"就用它 ✓）。 */
 const windowStart = (nowMs: number, windowDays: number) =>
   nowMs - windowDays * 24 * 60 * 60 * 1000;
@@ -39,11 +49,16 @@ export interface TimelineEntry {
   id: string;
   title: string;
   atMs: number;
+  /** 这一笔是「新建」还是「改过」✓（给界面上的小标签用 ✓） */
+  kind: TimelineKind;
 }
 
 export interface TimelineDay {
   day: string;
   entries: TimelineEntry[];
+  /** 当天一览（给人看的**汇总** ✓）：新建几篇、改过几篇 ✓ */
+  created: number;
+  edited: number;
 }
 
 /**
@@ -74,14 +89,22 @@ export function buildTimeline(
     const atMs = activityOf(p);
     if (atMs < from) continue;
     const day = TIMELINE_DAY_BUCKET(atMs);
-    const entry: TimelineEntry = { id: p.id, title: p.title || "未命名", atMs };
+    const entry: TimelineEntry = { id: p.id, title: p.title || "未命名", atMs, kind: kindOf(p) };
     const list = byDay.get(day);
     if (list) list.push(entry);
     else byDay.set(day, [entry]);
   }
   return [...byDay.entries()]
     .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-    .map(([day, entries]) => ({ day, entries: [...entries].sort((a, b) => b.atMs - a.atMs) }));
+    .map(([day, entries]) => {
+      const sorted = [...entries].sort((a, b) => b.atMs - a.atMs);
+      return {
+        day,
+        entries: sorted,
+        created: sorted.filter((e) => e.kind === "created").length,
+        edited: sorted.filter((e) => e.kind === "edited").length,
+      };
+    });
 }
 
 /** 一天给人看的形状 ✓ —— **只比较** `TIMELINE_DAY_BUCKET` 给出的 day 串，不另算日界 ✓。 */

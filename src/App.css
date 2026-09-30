@@ -22994,3 +22994,26 @@ body.is-plugin-panel-open .main {
   box-shadow: inset 3px 0 0 var(--danger);
 }
 
+/* ---- S3 时间复盘页（components/TimelineReview.tsx）----
+   只读视图：按天回看「这些天做过什么」。两种空态**必须长得不一样**：
+   `.tl-empty-nopages`（还没有页面 ⇒ 引导去建）／`.tl-empty-noactivity`（有页面但这些天没活动 ⇒ 引导去翻旧账）——
+   那是 S3 第②条的界面落点 ✓；把它们合并成一句「暂无数据」就分不开了 ✗。 */
+.timeline-review { padding: 24px 28px; max-width: 780px; }
+.tl-title { font-size: 1.05rem; margin: 0 0 4px; }
+.tl-window-note, .tl-day-key { color: var(--text-faint); font-size: 0.8rem; }
+.tl-days { list-style: none; margin: 12px 0 0; padding: 0; }
+.tl-day { margin: 0 0 18px; }
+.tl-day-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.tl-day-summary { color: var(--text-faint); font-size: 0.8rem; }
+.tl-day-key { margin-left: auto; }
+.tl-entries { list-style: none; margin: 6px 0 0; padding: 0; }
+.tl-entry { display: flex; align-items: center; }
+.tl-entry-btn { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 4px 6px; border: 0; border-radius: 6px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.tl-entry-btn:hover { background: var(--hover); }
+.tl-kind { flex: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-faint); font-size: 0.72rem; }
+.tl-kind-created { border-color: var(--accent); color: var(--accent); }
+.tl-entry-time { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
+.tl-empty { padding: 32px 28px; }
+.tl-empty-main { margin: 6px 0 2px; }
+.tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }
+

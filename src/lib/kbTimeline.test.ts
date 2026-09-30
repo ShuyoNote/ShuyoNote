@@ -96,3 +96,63 @@ describe("S3 · 一天的说法（只比 day 串，不另算日界）", () => {
     expect(dayLabelOf(TIMELINE_DAY_BUCKET(at(2026, 9, 20)), NOW)).toEqual({ kind: "date", month: 9, day: 20 });
   });
 });
+
+describe("S3 · 活动明细（种类 ＋ 每日汇总）", () => {
+  it("这一笔就是它被建出来的那一刻 ⇒ 新建；建得更早、当天才改 ⇒ 改过", () => {
+    const born = page({ id: "born", created_at: at(2026, 9, 30, 10), updated_at: at(2026, 9, 30, 10) });
+    const later = page({ id: "later", created_at: at(2026, 8, 1, 10), updated_at: at(2026, 9, 30, 11) });
+    const [day] = buildTimeline([born, later], NOW);
+    const kinds = new Map(day.entries.map((e) => [e.id, e.kind]));
+    expect(kinds.get("born")).toBe("created");
+    expect(kinds.get("later")).toBe("edited");
+  });
+
+  it("⚠️ 「三个月前建、今天改」不算今天新建（拿 created_at 在不在窗口里判就会错）", () => {
+    const p = page({ id: "old-born", created_at: at(2026, 6, 1), updated_at: NOW - 60_000 });
+    const [day] = buildTimeline([p], NOW);
+    expect(day.entries[0].kind).toBe("edited");
+    expect(day.created).toBe(0);
+    expect(day.edited).toBe(1);
+  });
+
+  it("每日汇总：新建几篇 / 改过几篇（同一天内新的在前）", () => {
+    const pages = [
+      page({ id: "n1", created_at: at(2026, 9, 30, 9), updated_at: at(2026, 9, 30, 9) }),
+      page({ id: "n2", created_at: at(2026, 9, 30, 10), updated_at: at(2026, 9, 30, 10) }),
+      page({ id: "e1", created_at: at(2026, 8, 1), updated_at: at(2026, 9, 30, 11) }),
+    ];
+    const [day] = buildTimeline(pages, NOW);
+    expect([day.created, day.edited]).toEqual([2, 1]);
+    expect(day.entries.map((e) => e.id)).toEqual(["e1", "n2", "n1"]);
+  });
+
+  it("没有 updated_at 的老页面按建的那天算，且算「新建」", () => {
+    const legacy = page({ id: "legacy", created_at: at(2026, 9, 29), updated_at: 0 });
+    const [day] = buildTimeline([legacy], NOW);
+    expect(day.entries[0].kind).toBe("created");
+    expect(day.day).toBe(TIMELINE_DAY_BUCKET(at(2026, 9, 29)));
+  });
+
+  it("汇总与明细必须一致（不许两处各算一遍）", () => {
+    const pages = [
+      page({ id: "a", created_at: at(2026, 9, 30, 8), updated_at: at(2026, 9, 30, 8) }),
+      page({ id: "b", created_at: at(2026, 9, 1), updated_at: at(2026, 9, 30, 12) }),
+      page({ id: "c", created_at: at(2026, 9, 30, 13), updated_at: at(2026, 9, 30, 13) }),
+    ];
+    const [day] = buildTimeline(pages, NOW);
+    expect(day.created).toBe(day.entries.filter((e) => e.kind === "created").length);
+    expect(day.edited).toBe(day.entries.filter((e) => e.kind === "edited").length);
+  });
+
+  it("跨天的明细：两天各自汇总，不互相串", () => {
+    const pages = [
+      page({ id: "today-new", created_at: at(2026, 9, 30, 9), updated_at: at(2026, 9, 30, 9) }),
+      page({ id: "yesterday-edit", created_at: at(2026, 9, 1), updated_at: at(2026, 9, 29, 9) }),
+    ];
+    const days = buildTimeline(pages, NOW);
+    expect(days.map((d) => [d.day, d.created, d.edited])).toEqual([
+      [TIMELINE_DAY_BUCKET(at(2026, 9, 30)), 1, 0],
+      [TIMELINE_DAY_BUCKET(at(2026, 9, 29)), 0, 1],
+    ]);
+  });
+});
