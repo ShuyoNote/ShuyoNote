@@ -121,6 +121,13 @@ id          INV-NEARBY-<短名>         稳定标识；改口径不许改 id（�
 | **INV-NEARBY-space-id-not-db-space** | **远端 `space_id` 与本地 `db_space` 不许合成一个**（沿用 `sync.rs:3322` 那条 ★★ 教训）：邀请写入的是**对暗号用的那个** id，开库用本地 id | `mesh::tests::the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id`（`mesh.rs`，已存在，`cargo test --lib mesh::` 里绿）＋ **新增**一条：邀请这条路**也**走 `MeshScope`（`sync.rs:3327`），断言"接受邀请后开的窗口库是本地空间库" | **✅ 已有半边**（既有那条判据，属**既有承重**，不是本轮新立）；**本轮新增的邀请路径那半边 = ❌ 无（要立）**。**怎么证明它会红**：把邀请写入的 `space_id` 改成本地 `ws_id`（真机上就是"开一个空库"）⇒ 新增那条必须红 |
 | **INV-NEARBY-no-web-invite** | **Web 档不许出现邀请入口**（产品决定：Web 不提供多设备同步） | ① `src/lib/platform/web.ts:1544` 那一支继续**如实回**"没有发现层"（不得改成为空数组冒充"网段里没人"）；② 一条断言：`nearby` 在 `enabled === false` 时**必须为空**，且 `note` 说得出为什么 | **❌ 无（要立）**。**怎么证明它会红**：把 Web 侧 `lan_status` 的 `nearby` 改成返回一个空数组**而不给 `note`** ⇒ 断言必须红（空数组与"不可用"长得一样、含义相反，同 `AI-NATIVE-DEV.md` §12.2「空扫给绿」那一族） |
 
+> ⚠️ **2026-09-30（owner 拍 `DEC-10`）：上表最后一行的那个 id 已**改名** ⇒ 以下为准**：
+> · **现名 ＝ `INV-NEARBY-no-render-without-data`**（撤邀请时改的）；
+> · **旧名 `INV-NEARBY-no-web-invite` 作废**（退休留痕，不静默删）；
+> · 依据＝本文件 §18.1 那行逐字「该 id **已被改名为** `INV-NEARBY-no-render-without-data`（撤邀请时）」
+>   ＋ §18.2②。⚠️ **一条 id 不许同时出现在两处**（那正是 `DEC-10` 要治的病）⇒ **今后只引用现名**。
+> 上表那行**原文保留**作留痕（它记的是"当时那个名字下的口径"）。
+
 **⚠️ 五条里有三条是"空"的形态**（列表为空 / 载荷里没有某物 / 不可用）——
 按 `AI-NATIVE-DEV.md` §12.2，**每条"扫到 0 个时它说什么"都必须先回答**。上表每一格都已经回答了。
 
@@ -758,6 +765,14 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
   退化会怎样：**这是"配对一次永远可用"这句话的破绽** —— 换个网就悄悄不通了，
              而用户不知道要改地址（表现与"设备关了"无法区分）。
 
+⚠️ **2026-09-30 合并（owner 拍 `DEC-11`）—— 本条是合并后的【唯一主体】**：
+  它现在覆盖**两半**（原来分在两条上）：
+   ① **绑通配**：`0.0.0.0:<端口>` **不再被拒**（＝ 推翻 `mesh.rs:1916` 那条，`DEC-1`／`d34c1c0f` 已做）；
+   ② **报的地址都可达**：报出地址由系统**按当前网卡枚举**（**绝不许报 `0.0.0.0`**）。
+  ⇒ **判据**：`mesh::tests::configuring_a_bind_accepts_the_wildcard_and_refuses_a_public_address`
+    （`src-tauri/src/mesh.rs:2310`，**已存在**）＋ 上面那两条（文案/提示）。
+  ⇒ 原 `INV-NS-bind-survives-network-change`（§13.9.2）**已并入本条**、id 作废（留痕见该节）。
+
 **INV-NS-shared-secret-cannot-evict-one**
   **共享口令无法逐台撤销** —— 要踢掉一台/一个人只能**整体改口令**。
   ⇒ 因此它**只适用于单人多设备**；多人场景**必须**有成员概念（团队空间）。
@@ -840,6 +855,13 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
   判据：配对路径上**没有** `accept` 这一步；而邀请路径上**必须有**。
   退化会怎样：把配对做成"要对方确认" ⇒ 单人多设备的第一步就卡住
              （用户在自己两台设备之间要"互相接受"，荒谬且易被当成 bug）。
+
+⚠️ **2026-09-30 正式退休（owner 拍 `DEC-9`）**：**本 id 作废**（不是"建议合并"了）。
+   · **为什么废**：它的**名字**说"不需要 accept"，而 §16.1／§17 已把口径改成
+     「**不需要社交同意，但必须验证**」⇒ 留着这个名字会让实现者读到一条**与 §17 相反的口径**。
+   · **谁取代它**：**`INV-NS-pairing-requires-proof`**（§17.4／§17.6：配对不需要社交同意、**但必须验证**）——
+     §16.1 已把"不需要**社交同意**"与"**必须验证**"拆成两件事，而后者由那条说全。
+   · ⚠️ **原口径不删**（它是当时的判断）⇒ 上面正文保留作**留痕**；**今后一律引用后者**。
 
 **INV-NS-unencrypted-needs-strong-secret**
   **未加密**的个人空间走设备直连时，口令就是**唯一**防线 ⇒ 必须有**强度要求**，
@@ -931,6 +953,12 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
         ② 换网后（模拟：换一张网卡的枚举结果）**仍能报出可达地址**。
   退化会怎样：用户填死 IP ⇒ 换个网就"别人找不到我"，而表现与"设备关了"**无法区分**。
 
+⚠️ **2026-09-30 合并（owner 拍 `DEC-11`）**：**本 id 并入 `INV-NS-address-survives-network-change`**
+  （同一件事的两半：**换网不用人改 ＝ 绑通配 ＋ 报地址都可达**）⇒ 本 id **作废**、正文保留作**留痕**。
+  · **判据落到哪**：`mesh::tests::configuring_a_bind_accepts_the_wildcard_and_refuses_a_public_address`
+    （`src-tauri/src/mesh.rs:2310`，**已存在**；它就是 `DEC-1` 的落地，`d34c1c0f` 那笔）。
+  · **合并后的主体**见 §13.3 那条（`INV-NS-address-survives-network-change`）与 §18.1 表。
+
 **INV-NS-one-window-many-spaces**
   一个监听窗口**可以服务多个空间**（端口数不许随空间数线性增长）。
   判据：三个空间 ⇒ **一个**窗口/端口；且每空间的拉取**各自独立**（不串）。
@@ -951,7 +979,8 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
 · 补上了 §13.3-①（"永远"的破绽）与 §13.8.5（未加密空间靠口令）的**具体手段**：
   前者靠"通配绑定 ＋ 自动枚举"，后者靠"口令强度要求"。
 · 前提三（一个窗口多空间）**连带**要定"窗口级口令"⇒ 而它只适用单人多设备 ⇒ 与 §13.4 自洽。
-· `mesh.rs:1916` 那条判据（`0.0.0.0 ⇒ Err`）**要按 INV-NS-bind-survives-network-change 反过来**
+· `mesh.rs:1916` 那条判据（`0.0.0.0 ⇒ Err`）**要按 `INV-NS-address-survives-network-change` 反过来**
+  （⚠️ 2026-09-30：**原写 `INV-NS-bind-survives-network-change`，那条已按 `DEC-11` 并入本条**）
   ⇒ ⚠️ 这是一条**既有判据要被推翻**的地方，属"显式决定"，不是清理的副产品。
 ```
 
@@ -1302,14 +1331,15 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
 > ⚠️ 按目录里记的做法：**只加索引、不改原文** ⇒ 既收拢了，又**不断引用**。
 > 用法：找不变式**先看本表**（一行定位到节号），再回各节读正文。
 
-### 18.1 全部 24 条（按族分组）
+### 18.1 全部 25 行（按族分组；⚠️ 其中 **3 行已退休/改名**——见 §18.2 的处理结果）
 | id | 一句话 | 在哪节 |
 |---|---|---|
 | **`INV-NEARBY-one-source`** | 「附近有哪几台设备」**只有一处来源**（`lan_status`）；界面不许自己数 | §2 |
 | **`INV-NEARBY-invite-has-no-keyring`** | 邀请载荷**不许含**钥匙袋／任何按空间密钥材料 | §2 |
 | **`INV-NEARBY-mesh-gate`** | **网格门槛一个字不改**（`isDesktopPlatform() && …`） | §2 |
 | **`INV-NEARBY-space-id-not-db-space`** | 远端 `space_id` 与本地 `db_space` **不许合成一个** | §2 |
-| ⚠️ **`INV-NEARBY-no-web-invite`** | **Web 档不许出现邀请入口** ⇒ ⚠️ **该 id 已被改名为 `INV-NEARBY-no-render-without-data`**（撤邀请时） | §2 |
+| ⚠️ ~~**`INV-NEARBY-no-web-invite`**~~ **【已改名 2026-09-30 · owner 拍 `DEC-10`】** | ~~**Web 档不许出现邀请入口**~~（产品决定：Web 不提供多设备同步）⇒ **本 id 作废；现名见下一行**（留痕见 §18.2②） | §2（正文已标改名） |
+| **`INV-NEARBY-no-render-without-data`** | **没有数据时不许渲染成"空的"而不说明**：`nearby` 在 `enabled === false` 时必须为空 **且** `note` 说得出为什么（空数组与"不可用"长得一样、含义相反 ⇒ `AI-NATIVE-DEV.md` §12.2「空扫给绿」那一族） | §2（**原 `INV-NEARBY-no-web-invite`**，2026-09-30 按 `DEC-10` 定为**现名**） |
 | `INV-LIC-no-server-in-client` | **不许**把服务端实现搬进客户端（三条禁止） | §10 |
 | **`INV-AWARE-no-wire-version-bump`** | 加光标**不许升** `WIRE_VERSION` | §11 |
 | **`INV-AWARE-idle-zero-traffic`** | **没人动光标时**，网段里没有光标帧 | §11 |
@@ -1317,20 +1347,20 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
 | **`INV-AWARE-no-second-truth`** | 光标**不进任何持久层** | §11 |
 | **`INV-AWARE-identity-required`** | 每条帧**必须可归因** | §11 |
 | **`INV-AWARE-expiry-on-receiver`** | **过期由接收侧自己判** | §11 |
-| ⚠️ **`INV-NS-pairing-needs-no-acceptance`** | 配对**不需要对方"接受"** ⇒ ⚠️ **名字有误导**：§16.1 已纠正为「不需要**社交同意**，**但必须验证**」<br>⇒ **应与 `INV-NS-pairing-requires-proof` 合并或改名**（见 18.2） | §13.8.6 |
+| ⚠️ ~~**`INV-NS-pairing-needs-no-acceptance`**~~ **【已退休 2026-09-30 · owner 拍 `DEC-9`】** | ~~配对**不需要对方"接受"**~~ ⇒ **本 id 作废**：口径由 **`INV-NS-pairing-requires-proof`** 承载（§17.4／§17.6）—— 留痕见 §13.8.6 与 §18.2① | §13.8.6（正文已标退休） |
 | **`INV-NS-own-device-cannot-be-proven`** | **不许**声称系统能识别"是不是你的设备"（只许说"已配对"） | §13.8.6 |
 | **`INV-NS-personal-is-single-person`** | 个人空间**不提供邀请**；要协作请用团队空间 | §13.6 |
 | **`INV-NS-shared-secret-cannot-evict-one`** | 共享口令**无法逐台撤销** ⇒ 只适用单人多设备 | §13.6 |
 | **`INV-NS-unencrypted-needs-strong-secret`** | 未加密 ⇒ **口令是唯一防线** ⇒ 必须强度要求＋说明 | §13.8 |
-| **`INV-NS-address-survives-network-change`** | 报出地址要**经得起换网**（优先"自动选"） | §13.3（正文在 13.9） |
-| **`INV-NS-bind-survives-network-change`** | **允许通配绑定** ＋ 系统枚举（⚠️ 要**推翻** `mesh.rs:1916`） | §13.9 |
+| **`INV-NS-address-survives-network-change`** **【`DEC-11` 合并后的唯一主体】** | **换网不用人改 ＝ 绑通配 ＋ 报地址都可达**（两半）：① `0.0.0.0` **不再被拒**；② 报出地址由系统**按当前网卡枚举**（**绝不报 `0.0.0.0`**）。判据：`mesh::tests::configuring_a_bind_accepts_the_wildcard_and_refuses_a_public_address`（`mesh.rs:2310`） | §13.3（正文在 §13.9） |
+| ⚠️ ~~**`INV-NS-bind-survives-network-change`**~~ **【已合并 2026-09-30 · owner 拍 `DEC-11`】** | ~~**允许通配绑定** ＋ 系统枚举（⚠️ 要**推翻** `mesh.rs:1916`）~~ ⇒ **本 id 并入上一行**（同一件事的两半）⇒ 判据落到 `configuring_a_bind_accepts_the_wildcard_and_refuses_a_public_address` | §13.9（正文已标合并） |
 | **`INV-NS-one-window-many-spaces`** | **一个窗口服务多空间**（端口数不许随空间数增长） | §13.9 |
 | **`INV-NS-second-person-implies-team`** | 出现第二个人 ⇒ **必须用团队空间** ⇒ ⚠️ **落地方案见** `docs/plans/2026-09-29-inv-ns-second-person-landing.md`<br>（**结论：它更像"口径"而非独立判据 ⇒ 建议不单独取得判据**） | §13.10 |
 | **`INV-NS-pairing-requires-proof`** | 配对**不需要社交同意，但必须验证**（两端对上） | §17.4／§17.6 |
 | **`INV-NS-pairing-code-is-human-compared`** | 配对码**必须由人比对** ⇒ 不许"机器自动通过" | §17.6 |
 | **`INV-NS-pairing-code-length-kept`** | 码长按 `CHECK_CODE_MIN_BITS`（60）**不许缩短** | §17.6 |
 
-### 18.2 ⚠️ 本表暴露的**三处该处理的问题**（我不在本文里改，只点名）
+### 18.2 ⚠️ 本表暴露的**三处该处理的问题**（**已于 2026-09-30 按 `DEC-9/10/11` 处理完**；下面原文保留作留痕）
 ```text
 ① ⚠️ **`INV-NS-pairing-needs-no-acceptance` 的名字与现实相反**
    · 它说"不需要 accept" ⇒ 而 §16.1／§17 把口径改成「**不需要社交同意，但必须验证**」
@@ -1341,6 +1371,17 @@ web 壳里 `isDesktopPlatform()` 为假 ⇒ `SyncPanel` 的 `lan_status` effect 
 ③ ⚠️ **`INV-NS-address-survives-network-change` 与 `INV-NS-bind-survives-network-change` 高度重叠**
    （一个讲"报出地址经得起换网"、一个讲"绑定允许通配＋枚举"）
    ⇒ ⇒ **建议合并成一条**（它们是同一件事的两半：**换网不用人改 = 绑通配 ＋ 报地址都可达**）
+
+✅ **处理结果（2026-09-30 · owner 拍 `DEC-9`／`DEC-10`／`DEC-11`）—— 三条都落在这份文件里**：
+ ① `DEC-9` ⇒ **`INV-NS-pairing-needs-no-acceptance` 正式退休**（id 作废；留痕在 §13.8.6 正文 ＋ §18.1 该行）
+     ⇒ **取代它的是 `INV-NS-pairing-requires-proof`**（§17.4／§17.6）。
+ ② `DEC-10` ⇒ **现名 ＝ `INV-NEARBY-no-render-without-data`**（§18.1 **已新增该行**，口径沿用"空数组 vs 不可用"）；
+     **旧名 `INV-NEARBY-no-web-invite` 作废**（§2 正文与 §18.1 都留了痕）。
+ ③ `DEC-11` ⇒ **合并成 `INV-NS-address-survives-network-change` 一条**（两半：**绑通配 ＋ 报地址都可达**）；
+     `INV-NS-bind-survives-network-change` **作废留痕**（§13.9.2）；
+     **判据落到 `mesh::tests::configuring_a_bind_accepts_the_wildcard_and_refuses_a_public_address`**
+     （`src-tauri/src/mesh.rs:2310`，已存在 ⇒ 就是 `DEC-1` 那条的落地）。
+ ⇒ ⚠️ 三条一律**不静默删**：作废的 id **都还在本表里**（划掉 ＋ 一句"谁取代了它"）。
 ```
 
 ### 18.3 ⚠️ 一条**跨文件**的说明
