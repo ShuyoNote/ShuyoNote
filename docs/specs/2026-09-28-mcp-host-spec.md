@@ -51,9 +51,9 @@ MCP 面："同一个能力" 会多出第二个入口 —— 外部 agent 经过�
 | **INV-MCP-tools-generated** | **MCP 工具清单是 `capabilities/capabilities.json` 的生成物，不许手写第二份语义工具清单** | `scripts/check-capabilities.mjs` 现有的「生成物一致」那一段**加上这一件**（不新开门禁：它已在注册表里、`--self-test` 已在） | **❌ 无**（要立。**怎么证明它会红**：手改 `capabilities/mcp-tools.json` 一行（如把某条 desc 改掉）⇒ 必须报红） |
 | **INV-MCP-readonly-first** | **M1 的工具清单里不许出现写能力**（`isWrite: true` 的 `pages.create` / `blocks.append` 一律不出现在清单里） | 同上那一条判据（`check-capabilities.mjs` 扩一条反向断言） | **❌ 无**（要立。**怎么证明它会红**：把 `pages.create` 塞进清单 ⇒ 必须报红） |
 | **INV-MCP-write-requires-confirm** | **外部 agent 的写请求在用户确认之前不许落库**（落库仍只在 `src/lib/ai/apply.ts` 一处；`--allow-write` 若开，必须是显式开关且每次写留审计） | Rust/TS 判据（外部走一次 `pages.create` ⇒ 只拿到草稿；**库逐字节不变**） | **❌ 无**（要立。**怎么证明它会红**：把宿主面里的写能力直接接到 `create_page` 落库、绕过草稿 ⇒ 必须报红） |
-| **INV-MCP-locked-fails-loud** | **未解锁 / 锁定空间 ⇒ 明确报 `space_locked`，不许返回空结果**（"读不到"不等于"库里没有"） | Rust 判据（承重通道＝`scripts/criteria-mutations.json`；⚠️ **本机跑不了 rust 组**，见 §3 末） | **❌ 无**（要立。**怎么证明它会红**：把那条路径从"报错"改成"返回空数组" ⇒ 必须报红） |
+| **INV-MCP-locked-fails-loud** | **未解锁 / 锁定空间 ⇒ 明确报 `space_locked`，不许返回空结果**（"读不到"不等于"库里没有"） | Rust 判据（承重通道＝`scripts/criteria-mutations.json`；⚠️ **本机跑不了 rust 组**，见 §3 末） | ⚠️ **判据其实早就有**（2026-09-30 windows 侧更正 ✓）：`scripts/check-locked-loud.mjs`（`contract` 组 ✓ 已注册 ✓ 在 `tests/baseline.json` ✓ 账本 `_repo_mutations` 有 `exit=1` 证据 ✓ 真跑 exit 0 ✓ 自测 5/5 ✓）—— 它钉的是「`map_open_error` 有稳定码 `space_locked` ＋ 不许映射成空 ＋ 有单测」✓。⚠️ **但覆盖范围要说清**：它读的是 `plugins.rs`（**插件路径**）✗，**宿主面**（MCP）能否"大声失败"取决于 `INV-MCP-single-authz`（"不存在第二条鉴权路径" ✗ 尚未立）⇒ **后者立起来之前，本条对宿主面不成立** ✗；本条要补的注入方式：把那条路径从"报错"改成"返回空数组" ⇒ 必须红（等宿主面存在后由它那条判据承担 ✓）|
 | **INV-MCP-bridge-dumb** | **桥不碰库、不碰密钥；它的 stdout 只许出现合法 MCP 消息**（日志/调试一律走 stderr） | 桥自己的判据（Node，本机可跑）：喂一条请求 ⇒ 逐行可解析为 JSON-RPC；`stderr` 可有内容、`stdout` 不可有非协议行 | **❌ 无**（要立。**怎么证明它会红**：往桥里插一句 `console.log("hi")` ⇒ 客户端侧解析必须失败 ⇒ 判据报红） |
-| **INV-MCP-channel-guarded** | **通道默认关；开启时 per-session token ＋ `Origin`/`Host` 校验；坏 Origin / 过期 token 必须被拒**（关掉开关后旧 token 立刻失效） | 桥与宿主面各一条（Node + Rust）；⚠️ 若最终选的是**命名管道**而不是回环，本条的注入方式要跟着换（拍板项 2） | **❌ 无**（要立。**怎么证明它会红**：① 删掉 `Origin` 校验 ⇒ 坏 Origin 也放行 ⇒ 必须报红；② 关开关后拿旧 token 再连一次 ⇒ 必须被拒） |
+| **INV-MCP-channel-guarded** | **通道默认关；开启时 per-session token ＋ `Origin`/`Host` 校验；坏 Origin / 过期 token 必须被拒**（关掉开关后旧 token 立刻失效） | 桥与宿主面各一条（Node + Rust）；⚠️ 若最终选的是**命名管道**而不是回环，本条的注入方式要跟着换（拍板项 2） | ⚠️ **Node 半边已立（2026-09-30 windows 侧 ✓）**：`tools/shuyonote-mcp/judge-channel.mjs` —— 四条断言（①默认关拒连 ②坏 `Origin` 拒，**用前缀陷阱值** `http://127.0.0.1.evil.com`，对着 `docs/SECURITY.md` 那条低危项 ✓ ③错/过期 token 拒 ④关闸后旧 token 立刻失效）＋ **空扫 ⇒ exit 2** ✓；真跑现在 **exit 2**（桥未落地 ✓，＝施工单 Task 4 Step 2 的期望"2 或 1，不许 0"✓）；`--self-test` **5/5** ✓（正例 ⇒ 0；三条变异各 ⇒ 1，其中"去掉 Origin 校验"正好复现了前缀陷阱被放行 ✗）。**Rust 半边（宿主面）尚未立** ✗ ⇒ 本条现在**只对桥这半边成立** ✓|
 
 ---
 
@@ -63,7 +63,7 @@ MCP 面："同一个能力" 会多出第二个入口 —— 外部 agent 经过�
 > —— 而落地顺序（§3）只排了 **6 条** ⇒ 请写明"**七条：M1 立六条，`INV-MCP-write-requires-confirm` 随 M2**" ✓
 > （免得日后有人拿"六条/七条"当矛盾；本工作区那条规矩同样适用：**能漂的数字别手写在散文里** ✓）
 >
-> **（2）建议补一条 `INV-MCP-audited`**（需求 §3.6 已经要求了，本表却没钉）：
+> **（2）建议补一条 `INV-MCP-audited`**（⚠️ 2026-09-30：**已登记进台账 R104** —— 它卡在"审计**主体标识字段**未定"上 ✓，**定了才写得出来** ✗；不要重复发明字段 ✓）（需求 §3.6 已经要求了，本表却没钉）：
 >
 > | id | 口径（一句话） | 判据（要立的那条） | 会红证据 |
 > |---|---|---|---|

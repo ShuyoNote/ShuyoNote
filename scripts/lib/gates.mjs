@@ -179,6 +179,77 @@ export const GATES = [
     registered: "2026-09-29",
   },
   {
+    id: "check-mcp-host-authz",
+    group: "contract",
+    label: "MCP 宿主面必须经**同一处**权限校验（不许第二条鉴权路径）",
+    cmd: "node scripts/check-mcp-host-authz.mjs",
+    // ⚠️ 自报跳过的登记（配合 `test-report.mjs` 的 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
+    //   M1 的宿主面（`src-tauri/src/mcp_host.rs`）**还没写** ⇒ 本条现在没有可检查对象。
+    //   跳过 ≠ 通过：要看那次"红"就加 `--require-host`（⇒ exit 2，逐字含「宿主面不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 宿主面（src-tauri/src/mcp_host.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；宿主面落地后本条立即有对象",
+    incident:
+      "2026-09-30：规格 §2 的 INV-MCP-single-authz 原本第四列是「❌ 无」✗ —— 而宿主面一旦自己开库或自己判权限，" +
+      "就长出**第二条鉴权路径** ⇒ 「未解锁大声失败」「写要草稿确认」「每次调用留审计」这些**只对插件那条路成立** ✓，" +
+      "外部 agent 从另一条路进来全部绕开，且测试全绿、没有一条门禁会红（本仓最忌的形状）。" +
+      "本门禁把「唯一鉴权点存在 ＋ 宿主面调用它 ＋ 不自开库 ＋ 不自判权限」钉成机器可核（纯读源码 ⇒ 不需要 cargo ✓）。",
+    // ⚠️ **不设 `baseline: true`**（与 `check-locked-loud` 同形 ✓）：本条不打 `[结果] N 通过 / M 失败` 那种读数行 ⇒
+    //   设了它反而会报「通过但没解析出读数 ⇒ 基线校验失效」✗。判据本身的"只看不增"由它自己的自测条数承担 ✓。
+    registered: "2026-09-30",
+  },
+  {
+    id: "check-mcp-channel-judge",
+    group: "contract",
+    label: "MCP 桥的本机通道：默认关 ＋ token ＋ Origin/Host（坏 Origin / 过期 token 必被拒）",
+    cmd: "node tools/shuyonote-mcp/judge-channel.mjs",
+    // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：桥还不存在 ⇒ 没有可检查对象。
+    //    要看那次"红"就加 `--require-bridge`（⇒ exit 2，逐字含「桥不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    incident:
+      "2026-09-30：规格 §2 的 INV-MCP-channel-guarded 原本是「❌ 无」✗。而本仓真栽过同族那次：docs/SECURITY.md 的低危项逐字写着" +
+      "「CORS 前缀匹配放过 http://127.0.0.1.evil.com」（lib.rs:155）—— 所以这条判据必须用前缀陷阱值去试，而不是随便一个外域" +
+      "（随便一个外域连前缀匹配都挡得住，测不出这个坑 ✗）。四条断言：默认关拒连／坏 Origin 拒／错 token 拒／关闸后旧 token 失效。",
+    registered: "2026-09-30",
+  },
+  {
+    id: "check-mcp-audit-single-ledger",
+    group: "contract",
+    label: "审计只有一本账（PLUGIN_AUDIT）且能力调用成功/失败都留痕；宿主面不许自建环",
+    cmd: "node scripts/check-mcp-audit-single-ledger.mjs",
+    incident:
+      "2026-10-01：INV-MCP-audited 要求「外部会话的每次能力调用与插件调用进**同一**审计轨迹」（需求 §9「谁读过我的库」）。" +
+      "它的主体标识字段未定（需求 §132／规格 §2）⇒ 已登记台账 R104 ⇒ 本条只钉能判的那半：账本唯一／审计推送都进它／" +
+      "dispatch_capability 成功失败都留痕／宿主面不许自建环。⚠️ 写它时踩过两次假红（拿 push_back( 当指纹 ✗；" +
+      "函数体用 \n}\n 收尾在 CRLF 检出上永不命中 ✗）⇒ 已改为按值认 ＋ 行尾 \\r?\\n ＋ 自测里放一条 CRLF 正例当回归 ✓。",
+    registered: "2026-10-01",
+    baseline: true,
+  },
+  {
+    id: "check-mcp-bridge-dumb",
+    group: "contract",
+    label: "MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态",
+    cmd: "node scripts/check-mcp-bridge-dumb.mjs",
+    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    incident:
+      "2026-10-01：INV-MCP-bridge-dumb 要求「桥只转发，不做权限/落库/审计决策」。它必须**独立**存在 —— " +
+      "check-mcp-bridge-stdout 只管 stdout 纯净、check-mcp-host-authz 只管宿主面，**都不管桥里有没有偷偷长出一个权限/落库分支** ✗。" +
+      "桥是最容易被加料的地方：离协议最近，顺手 if (locked) return err 或顺手查一次库，代码看着更聪明、测试全绿，" +
+      "但唯一鉴权点与同一本审计账同时被绕开。本条是\"不许出现\"型（四条：库／权限／审计／权威形态）⇒ 假阳风险低。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-search-platform-parity",
+    group: "contract",
+    label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
+    cmd: "node scripts/check-search-platform-parity.mjs",
+    incident:
+      "2026-09-30：块级检索在桌面走 FTS5/BM25、Web 走 LIKE（sql.js 没编 FTS5）—— 两边同一个查询**排序可以不同**，" +
+      "而这件事此前只写在 db.rs 的注释里；app 侧 commands.ts 的 search_chunks 只写「web 里的同名分支」⇒ " +
+      "读代码的人会以为两个平台一样，用户则是「换个平台搜出来顺序变了」且没有线索（本仓最忌的：差异不炸、不报错）。" +
+      "本判据把四件事钉住：桌面 DDL 常量在 ＋ 理由（sql.js 没编 FTS5）在 ＋ app 侧写明限定 ＋ 桌面专属 DDL 不许漏进共享 DDL。",
+    registered: "2026-09-30",
+    baseline: true,
+  },
+  {
     id: "check-derived-provenance",
     group: "contract",
     label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",
