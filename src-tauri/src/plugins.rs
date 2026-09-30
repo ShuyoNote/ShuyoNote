@@ -2068,9 +2068,40 @@ fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
     })
 }
 
+/// 能力调用的**唯一鉴权判定**（纯函数 ✓）：给「能力 id ＋ 该插件声明的 permissions」⇒ 判定 ✓。
+///
+/// 存在的理由（Task 5 ①）：插件路与**外部宿主路**（将来的 `mcp_host.rs`）必须**共用同一个判定** ✓ ——
+/// 否则"唯一鉴权点"就变成两处，而第二处最容易悄悄放宽 ✗（本仓最罚的那类错 ✓）。
+///
+/// ⚠️ 语义**逐字不动** ✓：两种拒绝的**错误码**与下面那条**消息文本**都照原样 ✓
+/// （`plugins.rs` 里有 30+ 条测试锁着它们 ✓ ⇒ 改动语义会在 CI 的 Rust 测试里红 ✓）。
+pub(crate) enum CapDeny {
+    UnknownCapability,
+    PermissionDenied { permission: String },
+}
+
+/// 只判"能不能调" ✓；**不**写审计、不出消息（那是调用方的事 ✓ —— 它才知道 plugin_id 与 scope ✓）。
+pub(crate) fn judge_capability(capability_id: &str, declared: &[String]) -> Result<(), CapDeny> {
+    let Some(cap) = capabilities_gen::lookup(capability_id) else {
+        return Err(CapDeny::UnknownCapability);
+    };
+    if let Some(perm) = cap.permission {
+        if !declared.iter().any(|p| p == perm) {
+            return Err(CapDeny::PermissionDenied { permission: perm.to_string() });
+        }
+    }
+    Ok(())
+}
+
+/// 某个能力的 scope（只在拒绝路上用一次 ✓；查不到就是 `"?“`，与原来 unknown 那条一致 ✓）。
+fn capability_scope_or_unknown(capability_id: &str) -> &'static str {
+    capabilities_gen::lookup(capability_id).map(|c| c.scope).unwrap_or("?")
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
-fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
+/// ⚠️ 改成 `pub(crate)` 是 Task 5 ① 的**硬要求** ✓ —— 外部宿主路在别的模块，私有就**调不到** ✗。
+pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
     // M11.13：装了传输就说明这次运行在**子进程**里——把这一问一答发回父进程，由那边
     // 查库、校验权限、记审计、出草稿。下面这些 arm 只会跑在**父进程**：子进程没有库、
     // 没有密钥、没有路径，它根本走不到这里。
@@ -2079,6 +2110,25 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         return rpc(method, args_json);
     }
     let plugin_id = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    // 判定**只在这一处** ✓（judge_capability ✓）；下面只负责「把判定变成审计 ＋ 错误消息」✓
+    let declared: Vec<String> = RUN_STATE.with(|s| s.borrow().permissions.clone());
+    if let Err(deny) = judge_capability(method, &declared) {
+        let (scope, code, msg) = match deny {
+            CapDeny::UnknownCapability => (
+                "?",
+                "unknown_capability",
+                format!("unknown_capability: 宿主没有名为 {method} 的能力"),
+            ),
+            CapDeny::PermissionDenied { permission } => (
+                capability_scope_or_unknown(method),
+                "permission_denied",
+                format!("permission_denied: 能力 {method} 需要权限 {permission}，但 manifest.permissions 未声明它"),
+            ),
+        };
+        push_audit("plugin", &plugin_id, method, scope, false, Some(code.into()));
+        return Err(msg);
+    }
+    // 走到这里 ⇒ 能力一定存在（刚刚判过 ✓）；仍留防御分支 ⇒ **不 panic** ✓（热路径上 panic 太贵 ✗）
     let cap = match capabilities_gen::lookup(method) {
         Some(c) => c,
         None => {
@@ -2086,17 +2136,6 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
             return Err(format!("unknown_capability: 宿主没有名为 {method} 的能力"));
         }
     };
-
-    // 权限：逐次调用校验，不是只在 UI 上隐藏。
-    if let Some(perm) = cap.permission {
-        let granted = RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == perm));
-        if !granted {
-            push_audit("plugin", &plugin_id, method, cap.scope, false, Some("permission_denied".into()));
-            return Err(format!(
-                "permission_denied: 能力 {method} 需要权限 {perm}，但 manifest.permissions 未声明它"
-            ));
-        }
-    }
 
     let args: serde_json::Value = if args_json.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
