@@ -67,6 +67,11 @@ export const ALLOWED_BARE_D = {
   "docs/specs/2026-09-29-enterprise-edition-requirements.md": { ids: [1, 2, 3, 4] },
   "docs/specs/2026-09-29-enterprise-edition-spec.md": { ids: [1, 2, 3, 4] },
   "docs/specs/2026-09-29-enterprise-edition-tasks.md": { ids: [1, 2, 3, 4] },
+  // 对标表在出处列里会**引用需求的 D1**（交付与部署）⇒ 只在「需求/交付/部署」语境上放行（2026-09-30 加）
+  "docs/specs/2026-09-29-strongest-enterprise-benchmark.md": {
+    ids: [],
+    crossRef: { ids: [1, 2, 3, 4], context: /(需求|交付|部署|可自建|零依赖|AGPL|内嵌)/ },
+  },
   "docs/specs/2026-09-29-enterprise-edition-approach.md": {
     ids: [1, 2, 3, 4],
     // 它还会**跨文件**引用 realtime-body 的「§7 待查」编号（如 `§7-D5`）⇒ 那种引用放行
