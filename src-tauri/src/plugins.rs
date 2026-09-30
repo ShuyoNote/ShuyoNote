@@ -474,6 +474,7 @@ fn persist_audit_line(entry: &PluginAuditEntry) {
 }
 
 /// 丢弃了多少条（给界面／诊断用 ✓ R104=A：丢了多少要看得出来 ✓）。
+#[allow(dead_code)] // 2026-10-01 收据：R104=A 要"丢了多少看得出来" —— 读函数先落地，**接线（命令／界面）是下一步**（要动 CommandMap ＋ web 实现，属宿主面那一批 ✓）；删除条件 = 有命令或界面在读它
 pub fn plugin_audit_dropped() -> u64 {
     PLUGIN_AUDIT_DROPPED.load(std::sync::atomic::Ordering::Relaxed)
 }
