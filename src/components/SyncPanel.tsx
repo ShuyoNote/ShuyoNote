@@ -1497,164 +1497,6 @@ export function SyncPanel() {
                 </div>
               </details>
 
-              {/* ④ 设备直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
-                  （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
-                  ★ 2026-09-29（§9.2）：**总闸＝关闭 ⇒ 这一行灰掉**（它是开关；总闸关了它不可能生效）。
-                     灰是"不能点"，**不是"藏起来"** —— 用户要看得到"它停着"这件事（上面那个黄框在说为什么）。 */}
-              {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
-                <>
-                  <details className={`sync-row${totalOff ? " is-off" : ""}`}>
-                    <summary>
-                      <span className="sync-row-label">设备直连</span>
-                      <span className="sync-row-value">{meshText}</span>
-                      <span className="sync-row-caret" aria-hidden>›</span>
-                    </summary>
-                    <div className="sync-row-body">
-                      <div className="sync-att sync-mesh" title="监听地址填两种都行：① 本机内网地址（如 192.168.1.5:8788，同一个 Wi-Fi 直接可用）；虚拟网络（VPN）里要填【虚拟网卡上的地址】—— 填物理网卡的地址，隧道里的对端会连不上。② 0.0.0.0:8788 —— 听所有网卡、地址由系统自己报出去，换网或多张网卡都不用改。">
-                        <span className="sync-att-text">
-                          {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
-                              已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
-                              （监听地址 / 口令）与开关。 */}
-                          {/* ★ VL-3（2026-09-30）：**"功能通了，而普通用户不知道有这条路"** —— VL-2 让
-                              `0.0.0.0` 能填了，而这一栏原先只说"填虚拟网卡的地址" ⇒ "地址自动"在用户眼里
-                              没发生。⇒ 两条路都写在**看得见**的文案里（不只在 hover 提示与 placeholder 里）。
-                              ⚠️ 与"口令"合并成**同一个 hint**（只加一行文字，不加块）⇒ 面板高度只多一行。 */}
-                          <span className="sync-hint">
-                            {inlineMd("地址两种填法：**本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788** —— 那是「**听所有网卡**」，地址由系统自己报出去：**换网、多张网卡都不用改**。")}
-                            <br />
-                            {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
-                          </span>
-                          {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
-                          <span className="sync-hint">
-                            {/* ⚠️ 2026-09-29（D3）：这句自己就带 `**` ⇒ 必须过 `inlineMd`，
-                                否则渲染出来是「会**顺手**和…」（owner 在真机上看到的就是这个）。 */}
-                            {inlineMd("开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。")}
-                          </span>
-                        </span>
-                        <div className="sync-field">
-                          <input
-                            className="sync-input"
-                            placeholder="监听地址：如 192.168.1.5:8788；或 0.0.0.0:8788（听所有网卡，地址由系统报出）"
-                            value={meshBind}
-                            disabled={meshBusy}
-                            onChange={(e) => setMeshBind(e.target.value)}
-                          />
-                          <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
-                            保存地址
-                          </button>
-                        </div>
-                        <div className="sync-field">
-                          <input
-                            className="sync-input"
-                            placeholder="口令（留空 ＝ 不动已有口令）"
-                            value={meshToken}
-                            disabled={meshBusy}
-                            onChange={(e) => setMeshToken(e.target.value)}
-                          />
-                          <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
-                            设口令
-                          </button>
-                        </div>
-                        <div className="sync-field">
-                          <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
-                            关掉网格
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </details>
-
-                  {/* ⑤ 「拉取间隔」——**上一行的子项**（缩进 ＋ 竖线，见 `.sync-row.is-child`）。
-                      ★ 规格 §9.3：「设备直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
-                        关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
-                      ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
-                  {lanDirectOn && (
-                    <details className="sync-row is-child">
-                      <summary>
-                        <span className="sync-row-label">拉取间隔</span>
-                        <span className="sync-row-value">{pullIntervalLabel(pullMs)}</span>
-                        <span className="sync-row-caret" aria-hidden>›</span>
-                      </summary>
-                      <div className="sync-row-body">
-                        <div className="sync-auto">
-                          <select
-                            className="sync-input"
-                            value={String(pullMs)}
-                            onChange={(e) => applyPull(Number(e.target.value))}
-                          >
-                            {PULL_INTERVALS.map((o) => (
-                              <option key={o.ms} value={String(o.ms)}>{o.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <span className="sync-hint">
-                          {/* ⚠️ 这句话是 owner 2026-09-29 特意要纠正的那个误会（规格 §9.4）：
-                              这个 5 秒**不是"只管非正文"**，它是一条**路的节拍** —— 正文（CRDT 状态）
-                              就是随这条拉取一起搬的。说错会让用户以为"正文是实时的"。
-                              ⚠️ 本仓口径：**行内 Markdown 只在渲染边界的 `inlineMd` 里生效** ——
-                              这里是面板自己写的句子，所以一个星号都不写（写了就会原样显示）。 */}
-                          这条路的节拍：每 {pullIntervalLabel(pullMs)}自动跑一次（服务端那条 ＋ 设备直连那条
-                          都跟着它走）。正文也在这条路上，不是实时推送。
-                        </span>
-                      </div>
-                    </details>
-                  )}
-
-                  {/* ⑥ 附近设备（丙档需求 §4.1 的那一块）。
-                      ★ 门槛：**与父项同一个 `lanDirectOn`** —— 设备直连直连关着 ⇒ 不显示（"没开就不会去发现"）。
-                      ⚠️ 列表**只有一处来源**（`lanStatus.nearby`，与 `peers` 同一次读数）；
-                         行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。
-                      ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
-                         （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
-                         摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行
-                         **点开才显示**。⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
-                  {lanDirectOn && (
-                    <details className="sync-row">
-                      <summary>
-                        <span className="sync-row-label">附近设备</span>
-                        <span className="sync-row-value">{nearbySummary}</span>
-                        <span className="sync-row-caret" aria-hidden>›</span>
-                      </summary>
-                      <div className="sync-row-body">
-                        <div className="sync-nearby">
-                          {/* 三种处境三句话（规格 §4 的表）：
-                              ① 这一层不可用／读不到列表 ⇒ "看不到这一层"（**不是**"网段里没人"）；
-                              ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
-                              ③ 有设备 ⇒ 每台一行。 */}
-                          {!nearbyReadable || !lanStatus.enabled ? (
-                            <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
-                          ) : nearby.length === 0 ? (
-                            <div className="sync-hint">还没发现别的设备… 正在找</div>
-                          ) : (
-                            nearby.map((p) => (
-                              <div className="sync-nearby-row" key={p.device_id}>
-                                {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
-                                    （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
-                                <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
-                                <span className="sync-hint">{nearbySecondColumn(p)}</span>
-                                {!p.invitable && p.serves_current && (
-                                  // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
-                                  <span className="sync-hint">它没报可以直连的地址</span>
-                                )}
-                              </div>
-                            ))
-                          )}
-                          {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：
-                              ⚠️ **不写数字** —— 常量是 30s（`lan_state.rs:138`），而真机读数记的是 ≈45 秒
-                                 （`2026-09-24-lan-p2p-topology-decision.md` §18）⇒ 两处不一致，
-                                 文案**不替它下结论**（需求 §7 待查 D2），只说"要等一轮"。 */}
-                          {lanStatus.enabled && nearby.length === 0 && (
-                            <div className="sync-web-note is-inline" role="note">
-                              <span>【注意】第一轮广播要约等一轮才认全</span>
-                              <span>（这期间这里写「正在找…」）</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </details>
-                  )}
-                </>
-              )}
             </div>
           </div>
 
@@ -1805,6 +1647,165 @@ export function SyncPanel() {
                   </p>
                 </div>
               </details>
+            )}
+
+            {/* ④ 设备直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
+                （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
+                ★ 2026-09-29（§9.2）：**总闸＝关闭 ⇒ 这一行灰掉**（它是开关；总闸关了它不可能生效）。
+                   灰是"不能点"，**不是"藏起来"** —— 用户要看得到"它停着"这件事（上面那个黄框在说为什么）。 */}
+            {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
+              <>
+                <details className={`sync-row${totalOff ? " is-off" : ""}`}>
+                  <summary>
+                    <span className="sync-row-label">设备直连</span>
+                    <span className="sync-row-value">{meshText}</span>
+                    <span className="sync-row-caret" aria-hidden>›</span>
+                  </summary>
+                  <div className="sync-row-body">
+                    <div className="sync-att sync-mesh" title="监听地址填两种都行：① 本机内网地址（如 192.168.1.5:8788，同一个 Wi-Fi 直接可用）；虚拟网络（VPN）里要填【虚拟网卡上的地址】—— 填物理网卡的地址，隧道里的对端会连不上。② 0.0.0.0:8788 —— 听所有网卡、地址由系统自己报出去，换网或多张网卡都不用改。">
+                      <span className="sync-att-text">
+                        {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
+                            已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
+                            （监听地址 / 口令）与开关。 */}
+                        {/* ★ VL-3（2026-09-30）：**"功能通了，而普通用户不知道有这条路"** —— VL-2 让
+                            `0.0.0.0` 能填了，而这一栏原先只说"填虚拟网卡的地址" ⇒ "地址自动"在用户眼里
+                            没发生。⇒ 两条路都写在**看得见**的文案里（不只在 hover 提示与 placeholder 里）。
+                            ⚠️ 与"口令"合并成**同一个 hint**（只加一行文字，不加块）⇒ 面板高度只多一行。 */}
+                        <span className="sync-hint">
+                          {inlineMd("地址两种填法：**本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788** —— 那是「**听所有网卡**」，地址由系统自己报出去：**换网、多张网卡都不用改**。")}
+                          <br />
+                          {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
+                        </span>
+                        {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
+                        <span className="sync-hint">
+                          {/* ⚠️ 2026-09-29（D3）：这句自己就带 `**` ⇒ 必须过 `inlineMd`，
+                              否则渲染出来是「会**顺手**和…」（owner 在真机上看到的就是这个）。 */}
+                          {inlineMd("开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。")}
+                        </span>
+                      </span>
+                      <div className="sync-field">
+                        <input
+                          className="sync-input"
+                          placeholder="监听地址：如 192.168.1.5:8788；或 0.0.0.0:8788（听所有网卡，地址由系统报出）"
+                          value={meshBind}
+                          disabled={meshBusy}
+                          onChange={(e) => setMeshBind(e.target.value)}
+                        />
+                        <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
+                          保存地址
+                        </button>
+                      </div>
+                      <div className="sync-field">
+                        <input
+                          className="sync-input"
+                          placeholder="口令（留空 ＝ 不动已有口令）"
+                          value={meshToken}
+                          disabled={meshBusy}
+                          onChange={(e) => setMeshToken(e.target.value)}
+                        />
+                        <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
+                          设口令
+                        </button>
+                      </div>
+                      <div className="sync-field">
+                        <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
+                          关掉网格
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+
+                {/* ⑤ 「拉取间隔」——**上一行的子项**（缩进 ＋ 竖线，见 `.sync-row.is-child`）。
+                    ★ 规格 §9.3：「设备直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
+                      关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
+                    ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
+                {lanDirectOn && (
+                  <details className="sync-row is-child">
+                    <summary>
+                      <span className="sync-row-label">拉取间隔</span>
+                      <span className="sync-row-value">{pullIntervalLabel(pullMs)}</span>
+                      <span className="sync-row-caret" aria-hidden>›</span>
+                    </summary>
+                    <div className="sync-row-body">
+                      <div className="sync-auto">
+                        <select
+                          className="sync-input"
+                          value={String(pullMs)}
+                          onChange={(e) => applyPull(Number(e.target.value))}
+                        >
+                          {PULL_INTERVALS.map((o) => (
+                            <option key={o.ms} value={String(o.ms)}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <span className="sync-hint">
+                        {/* ⚠️ 这句话是 owner 2026-09-29 特意要纠正的那个误会（规格 §9.4）：
+                            这个 5 秒**不是"只管非正文"**，它是一条**路的节拍** —— 正文（CRDT 状态）
+                            就是随这条拉取一起搬的。说错会让用户以为"正文是实时的"。
+                            ⚠️ 本仓口径：**行内 Markdown 只在渲染边界的 `inlineMd` 里生效** ——
+                            这里是面板自己写的句子，所以一个星号都不写（写了就会原样显示）。 */}
+                        这条路的节拍：每 {pullIntervalLabel(pullMs)}自动跑一次（服务端那条 ＋ 设备直连那条
+                        都跟着它走）。正文也在这条路上，不是实时推送。
+                      </span>
+                    </div>
+                  </details>
+                )}
+
+                {/* ⑥ 附近设备（丙档需求 §4.1 的那一块）。
+                    ★ 门槛：**与父项同一个 `lanDirectOn`** —— 设备直连直连关着 ⇒ 不显示（"没开就不会去发现"）。
+                    ⚠️ 列表**只有一处来源**（`lanStatus.nearby`，与 `peers` 同一次读数）；
+                       行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。
+                    ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
+                       （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
+                       摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行
+                       **点开才显示**。⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
+                {lanDirectOn && (
+                  <details className="sync-row">
+                    <summary>
+                      <span className="sync-row-label">附近设备</span>
+                      <span className="sync-row-value">{nearbySummary}</span>
+                      <span className="sync-row-caret" aria-hidden>›</span>
+                    </summary>
+                    <div className="sync-row-body">
+                      <div className="sync-nearby">
+                        {/* 三种处境三句话（规格 §4 的表）：
+                            ① 这一层不可用／读不到列表 ⇒ "看不到这一层"（**不是**"网段里没人"）；
+                            ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
+                            ③ 有设备 ⇒ 每台一行。 */}
+                        {!nearbyReadable || !lanStatus.enabled ? (
+                          <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
+                        ) : nearby.length === 0 ? (
+                          <div className="sync-hint">还没发现别的设备… 正在找</div>
+                        ) : (
+                          nearby.map((p) => (
+                            <div className="sync-nearby-row" key={p.device_id}>
+                              {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
+                                  （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
+                              <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
+                              <span className="sync-hint">{nearbySecondColumn(p)}</span>
+                              {!p.invitable && p.serves_current && (
+                                // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
+                                <span className="sync-hint">它没报可以直连的地址</span>
+                              )}
+                            </div>
+                          ))
+                        )}
+                        {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：
+                            ⚠️ **不写数字** —— 常量是 30s（`lan_state.rs:138`），而真机读数记的是 ≈45 秒
+                               （`2026-09-24-lan-p2p-topology-decision.md` §18）⇒ 两处不一致，
+                               文案**不替它下结论**（需求 §7 待查 D2），只说"要等一轮"。 */}
+                        {lanStatus.enabled && nearby.length === 0 && (
+                          <div className="sync-web-note is-inline" role="note">
+                            <span>【注意】第一轮广播要约等一轮才认全</span>
+                            <span>（这期间这里写「正在找…」）</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </details>
+                )}
+              </>
             )}
           </div>
 
