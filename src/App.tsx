@@ -51,6 +51,8 @@ import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
+// 空闲退避（2026-09-30）：自动同步那一轮的节拍判据（纯函数；三条口径与"兜底"都在那里 ✓）
+import { decideSyncTick, roundWasEmpty, type MeshLike, type SyncLike } from "./lib/syncBackoff";
 // 「真·本地编辑」信号的**模块级广播**（S3b-1 那个实例级 `onLocalEdit` 的转发，见那个文件的注释）：
 // 本笔的"改完就上传"要的正是这个信号，而会话实例由 `editor/Editor.tsx` 持有 ⇒ 只能从这一层拿。
 import { onAnyLocalEdit } from "./lib/crdt/yDocBridge";
@@ -133,6 +135,11 @@ function hasBlockContent(contentJson: string): boolean {
 let syncRoundBusy = false;
 /** 忙的时候，"还得再跑一轮"这件事记在这里（见 `requestAutoSyncRound`）。 */
 let syncRoundPending = false;
+// ★ 空闲退避（2026-09-30）：**连续"这一轮什么都没换到"的次数** ＋ **上一次真跑的时刻**。
+// ⚠️ 也住在模块级（与 `busy/pending` 同一个理由：必须跨 effect 重挂存活 ✓）。
+// 口径、"硬顶/兜底"、以及"什么算空"都在 `lib/syncBackoff.ts` —— **这里不重复解释一遍 ✓**。
+let syncEmptyStreak = 0;
+let syncLastRunAtMs: number | null = null;
 
 /**
  * 跑一轮自动同步（**唯一实现**）。两个触发面都走它。
@@ -150,11 +157,12 @@ async function runAutoSyncRound(): Promise<void> {
     const profiles = await api.listSyncProfiles();
     const withSpace = (profiles || []).filter((p: any) => p.space_id);
     const bound = withSpace.filter((p: any) => p.server_url);
+    let syncResults: SyncLike[] = [];
     if (bound.length) {
       // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
       // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
       // 面板就永远停在"正在同步…"（真机实测过）。
-      await withSyncStatus("正在自动同步…", () =>
+      syncResults = await withSyncStatus("正在自动同步…", () =>
         Promise.all(
           bound.map((p: any) => api.syncWorkspace(p.ws_id).catch(() => null)),
         ),
@@ -163,10 +171,15 @@ async function runAutoSyncRound(): Promise<void> {
     // ★ 网格（丙）：同一批空间顺手各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
     // ⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**（`mesh_sync_now` 自己早退）
     // ——前端**不重复判一遍**（两处各解释一遍迟早漂）。
+    let meshReports: MeshLike[] = [];
     if (withSpace.length) {
-      await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
+      meshReports = await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
       await useNotes.getState().loadPages();
     }
+    // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。
+    //   口径（什么算"空"、出错怎么算）全在 `lib/syncBackoff.ts` —— 这里只喂两个数 ✓。
+    syncEmptyStreak = roundWasEmpty(syncResults, meshReports) ? syncEmptyStreak + 1 : 0;
+    syncLastRunAtMs = Date.now();
   } catch (e) {
     // ③ 自动同步失败静默（下次再试），**但留痕**（完全静默的话"改了没传上去"查不到因果）。
     console.warn("[sync] 自动同步这一轮失败（下一个节拍再试）", e);
@@ -188,6 +201,9 @@ async function runAutoSyncRound(): Promise<void> {
  * "我改了，对面半天没动"。所以这里**合并**（不许并发，见 `runAutoSyncRound` 的 ②）。
  */
 function requestAutoSyncRound(): void {
+  // ★ 空闲退避（2026-09-30）：**有人改 ⇒ 立刻回到基础节拍** ✓
+  //   这就是"活跃时不牺牲延迟"那一半：输入/编辑一类动作一到，退避清零。
+  syncEmptyStreak = 0;
   if (syncRoundBusy) {
     syncRoundPending = true;
     return;
@@ -515,20 +531,44 @@ function NoteEditor({ pageId }: { pageId: string }) {
     return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
   }, []);
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | undefined;
-    let initial: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    // ★ 用户**换档**（或本 effect 重挂）⇒ 退避清零：他刚表达过"我要这个节拍"，
+    //   不该被上一次的空转历史拖住（否则"我选了 5 秒，它却 60 秒才跑" ⇒ 看着像坏了 ✗）。
+    syncEmptyStreak = 0;
     // ⚠️ 这一轮的全部内容（防重入 / 闸门 / 两条路 / 刷新列表）搬到了模块级的
     //    `runAutoSyncRound` —— 现在**两个触发面共用它**（定时器 ＋ 编辑触发，见下）。
     //    `busy` 也跟着搬走了（它必须跨这个 effect 的重挂存活，否则换档那一刻防重入会失效）。
-    const tick = () => void runAutoSyncRound();
-    if (autoSyncMs > 0) {
-      timer = setInterval(tick, autoSyncMs);
+    //
+    // ★ 空闲退避（2026-09-30）：原来是**固定** `setInterval(tick, autoSyncMs)` ⇒ 闲着也照跑
+    //   （5 秒一次空轮询 ＝ 256 B，实测见 `_workspace/notes/2026-09-30-b1-b2-prechecks-macos.md`）。
+    //   现在改成**自排程**：每跑完一轮按 `decideSyncTick` 算下一跳。
+    //   ⚠️ 判据（含"什么算空"和**硬顶 60 秒那条无条件兜底**）**全在 `lib/syncBackoff.ts`** ✓。
+    const schedule = (delayMs: number) => {
+      if (cancelled || autoSyncMs <= 0) return;
+      timer = setTimeout(() => void tick(), delayMs);
+    };
+    async function tick() {
+      await runAutoSyncRound();
+      const d = decideSyncTick({
+        nowMs: Date.now(),
+        lastRunAtMs: syncLastRunAtMs,
+        baseMs: autoSyncMs,
+        emptyStreak: syncEmptyStreak,
+      });
+      // ⚠️ `waitMs ≤ 0` 只可能是"这一轮**早退了**"（忙 / 被闸门拦掉 ⇒ 没记时）
+      //    ⇒ 按基础节拍再来一次，**别原地空转** ✗（真跑过的那一轮 lastRunAt 刚更新，不会 ≤0 ✓）。
+      schedule(d.waitMs > 0 ? d.waitMs : autoSyncMs);
     }
     // 启动后先来一次（与原来那条路一致：不管间隔设没设都跑）。
-    initial = setTimeout(tick, 3000);
+    // ⚠️ 这一行**故意保持原样**（函数名仍叫 `tick`、形状仍是 `setTimeout(tick, 3000)`）：
+    //    `useSyncStream.wiring.test.ts:144` 那条接线判据钉的就是它，原意是
+    //    「轮询必须**无条件**挂在 App 上（启动后先跑一次，与间隔设没设无关）」——
+    //    本笔只改了**后续节拍怎么排**，这条原意**一字未动** ✓（所以判据也不该改 ✓）。
+    timer = setTimeout(tick, 3000);
     return () => {
-      if (timer) clearInterval(timer);
-      if (initial) clearTimeout(initial);
+      cancelled = true;
+      if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, loadPages, autoSyncMs]);
