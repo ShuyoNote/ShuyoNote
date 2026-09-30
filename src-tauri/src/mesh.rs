@@ -37,7 +37,7 @@
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -280,7 +280,19 @@ pub async fn pull_from_peer(
     if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
         req = req.bearer_auth(t);
     }
-    let resp = req.send().await.map_err(|e| format!("拉对端 {} 失败：{e}", peer.device_id))?;
+    let resp = req.send().await.map_err(|e| {
+        // ⚠️ `reqwest::Error` 的 `Display` **只有** "error sending request for url (…)" ——
+        // 真正的原因（连接被拒 / 半截响应 / …）挂在 `source()` 链上。这里**逐层接出来**：
+        // "拉不动"最要紧的就是"为什么"，把原因丢掉等于让人猜（10 台那一档的排查就卡在这）。
+        let mut why = e.to_string();
+        let mut cur: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
+        while let Some(s) = cur {
+            why.push_str(" ← ");
+            why.push_str(&s.to_string());
+            cur = s.source();
+        }
+        format!("拉对端 {} 失败：{why}", peer.device_id)
+    })?;
     if !resp.status().is_success() {
         return Err(format!("对端 {} 回了 {}", peer.device_id, resp.status()));
     }
@@ -780,6 +792,13 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
 struct State {
     conn: Arc<Mutex<Connection>>,
     cfg: MeshConfig,
+    /// ★ **T-10**（`U14` 的判据承载）：这个窗口**真正服务过**的 `/mesh/pull` 次数（只增）。
+    ///
+    /// 为什么要这一个数：10 台那一档的判据 ③（每台 ≤2 次/秒、合计 ≤18 次/秒）**必须从
+    /// "实际发生的拉取"里数出来**，而客户端手上只有"我发起了几次" —— 哪天多出一条隐式拉取
+    /// （跳号回退、重试、附件），客户端那一侧**看不见**。这个计数器记的是"请求真的到了、
+    /// 且过了鉴权"的次数 ⇒ 两边对不上就是有额外拉取（判据里就是这么交叉验的）。
+    served_pulls: Arc<AtomicUsize>,
 }
 
 /// 一个网格窗口的配置。
@@ -803,11 +822,23 @@ pub struct MeshHandle {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
     join: Option<std::thread::JoinHandle<()>>,
+    served_pulls: Arc<AtomicUsize>,
 }
 
 impl MeshHandle {
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// ★ **T-10**：这个窗口**真正服务过**的 `/mesh/pull` 次数（只增；口径见 `State::served_pulls`）。
+    ///
+    /// ⚠️ **2026-09-30 收据**（`check-dead-code-receipts` 要的）：今天唯一的读者是 `#[ignore]` 的
+    /// T-10 判据（`ten_devices_converge_with_no_device_left_behind`）⇒ 在**产品二进制**里没人读它。
+    /// **删除条件** ＝ 产品侧真有了"拉取计数"的读数口（那时它会**被生产代码读**，这条豁免就该撤），
+    /// 或 T-10 那一档被别的形态取代那天。
+    #[allow(dead_code)]
+    pub fn served_pulls(&self) -> usize {
+        self.served_pulls.load(Ordering::Relaxed)
     }
 }
 
@@ -834,7 +865,8 @@ pub fn start(cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle
     }
     eprintln!("[mesh] 网格窗口已启动：{bound} ｜ 空间 {} ｜ 自称 {}", cfg.space_id, cfg.device_id);
 
-    let state = Arc::new(State { conn, cfg });
+    let served_pulls = Arc::new(AtomicUsize::new(0));
+    let state = Arc::new(State { conn, cfg, served_pulls: served_pulls.clone() });
     let stop = Arc::new(AtomicBool::new(false));
     let stop_in = stop.clone();
     let join = std::thread::Builder::new()
@@ -854,7 +886,7 @@ pub fn start(cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle
             }
         })
         .map_err(|e| format!("网格窗口线程起不来：{e}"))?;
-    Ok(MeshHandle { addr: bound, stop, join: Some(join) })
+    Ok(MeshHandle { addr: bound, stop, join: Some(join), served_pulls })
 }
 
 struct Request {
@@ -969,6 +1001,14 @@ fn json_error(message: &str) -> String {
 }
 
 fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
+    // ⚠️ **accepted socket 必须显式设回阻塞**：listener 是 `set_nonblocking(true)` 的，
+    // 而 **macOS/BSD 的 `accept()` 会让新 socket 继承 `O_NONBLOCK`**（Linux 不继承）。
+    // 后果（T-10 十台那一档实测抓到）：`respond` 的 `write_all` 在**大响应**上写半截就返回
+    // `WouldBlock` ⇒ 连接被丢掉 ⇒ 客户端看到截断的响应
+    // （hyper：`client error (SendRequest) ← received unexpected message from connection`）。
+    // 2 台那几条判据的响应只有一条记录（几百字节）⇒ 恰好没暴露它。
+    // 而 `read_request` 本来就设了读写超时 —— 那些只对**阻塞** socket 有效 ⇒ 这里也本该是阻塞的。
+    let _ = sock.set_nonblocking(false);
     let req = match read_request(&mut sock) {
         Ok(r) => r,
         Err(e) => {
@@ -986,7 +1026,11 @@ fn dispatch(state: &State, req: &Request) -> Reply {
         return Reply::json(401, "Unauthorized", json_error("这个网格窗口要口令（Authorization: Bearer …），对不上"));
     }
     match route(&req.method, &req.target) {
-        Route::Pull => handle_pull(state, &req.target),
+        Route::Pull => {
+            // ★ **T-10**：**在线上真的发生过**的拉取在这里计数（`authorized` 之后 ⇒ 只数被服务的）。
+            state.served_pulls.fetch_add(1, Ordering::Relaxed);
+            handle_pull(state, &req.target)
+        }
         Route::Attachment => handle_attachment(state, &req.target),
         Route::NotYet(what) => Reply::json(
             501,
@@ -1159,7 +1203,17 @@ mod tests {
     // ── 两台"客户端栈"：各自一份空间库（带 meta），各自一个网格窗口
 
     fn space_conn(device: &str) -> Connection {
-        let c = Connection::open_in_memory().unwrap();
+        conn_with(Connection::open_in_memory().unwrap(), device)
+    }
+
+    /// ★ **T-10**：**独立库文件**那一版 —— 10 台那一档要"各自独立 `--db`"，所以不上 `:memory:`。
+    /// （`conn_with` 是两者共用的那份 fixture schema；**只此一处**，免得两份 fixture 各漂。）
+    fn device_conn(dir: &std::path::Path, device: &str) -> Connection {
+        conn_with(Connection::open(dir.join(format!("{device}.db"))).unwrap(), device)
+    }
+
+    /// 两台／十台共用的 fixture schema（迁移 ＋ `meta` 挂库 ＋ 那两张表 ＋ 设备身份）。
+    fn conn_with(c: Connection, device: &str) -> Connection {
         crate::db::migrate(&c, "ws").unwrap();
         c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
         c.execute_batch(
@@ -2108,5 +2162,343 @@ mod tests {
         let up = rep.peers.iter().find(|r| r.peer == "A").expect("活着的那台");
         assert_eq!((up.fetched, up.applied, up.error.is_none()), (1, 1, true), "{up:?}");
         assert!(rep.note.contains("1 台没拉动"), "总读数要把失败数说出来：{}", rep.note);
+    }
+
+    // ═══════════ ⭐ T-10 · **十台设备的多端验证**（`U14` 的判据承载） ═══════════ //
+    //
+    // 判据与目标**照抄**（`docs/specs/2026-09-29-personal-edition-tasks.md` §15.1，**不自创**）：
+    //   ① 收敛：10 台同时编辑 60 秒 ⇒ 全库投影**逐字节相同**
+    //   ② 不落后：任何一台的"最后成功拉取"距今 ≤ **10 秒**（＝2 个节拍）
+    //   ③ 拉取量：**每台 ≤2 次/秒**、合计 ≤**18 次/秒**（＝10×9÷5；扇出是 N²）
+    //   ④ 合并余量：合计编辑速率 ≤ 舒适上界（~500/秒）的 **20%**
+    //
+    // 常量**全部带出处**，一个都不自己发明：
+    //   · 台数 10           ＝ `U14`「单个空间最多 10 台设备」（owner 2026-09-30 定）
+    //   · 节拍 5 秒         ＝ 产品默认 `src/lib/syncMode.ts:71 PULL_INTERVAL_DEFAULT_MS = 5_000`
+    //   · 每台 5 次编辑/秒  ＝ `personal-edition-spec` §14「10 台 × 5 次编辑/秒 ＝ 50 次/秒」
+    //   · 判据② 的 10 秒    ＝ `U14`「≤ 两个节拍」
+    //   · 舒适上界 ~500/秒  ＝ `docs/plans/2026-09-29-client-frame-rate-loadtest.md`（**实测**）
+    /// T-10：台数（`U14`）。
+    const T10_DEVICES: usize = 10;
+    /// T-10：拉取节拍 ＝ 产品默认 5 秒（`syncMode.ts` 的 `PULL_INTERVAL_DEFAULT_MS`）。
+    const T10_CADENCE_MS: i64 = 5_000;
+    /// T-10：编辑窗（`U14` 原文"10 台同时编辑 60 秒"）。
+    const T10_EDIT_MS: i64 = 60_000;
+    /// T-10：每台每秒的编辑次数（`U14`／§14 的 5 次/秒）。
+    const T10_EDITS_PER_SEC: i64 = 5;
+    /// T-10 判据②：任何一台"最后成功拉取"距今的上限 ＝ 两个节拍。
+    const T10_STALENESS_LIMIT_MS: i64 = 10_000;
+    /// T-10 判据③：每台／合计的拉取速率上限（合计 ＝ 10×9÷5 ＝ 18 次/秒）。
+    const T10_PULLS_PER_DEV_PER_SEC_LIMIT: f64 = 2.0;
+    const T10_PULLS_AGG_PER_SEC_LIMIT: f64 = 18.0;
+    /// T-10 判据④：舒适上界（实测 ~500 条 update/秒）与允许占它的比例（`U14`：20%）。
+    const T10_COMFORT_PER_SEC: f64 = 500.0;
+    const T10_COMFORT_SHARE_LIMIT: f64 = 0.20;
+    /// T-10：10 台绑同一个空间；单人多设备那条口径 ⇒ 共用一个口令。
+    const T10_SPACE: &str = "space-t10";
+    const T10_TOKEN: &str = "t10-token";
+
+    /// T-10 判据①的读数：一台设备**整库**的投影（所有页，按 id 排序拼起来）⇒ 与别的设备**逐字节**比。
+    fn db_projection(c: &Connection) -> String {
+        page_ids(c).iter().map(|id| format!("{id} => {}\n", projection_of(c, id))).collect()
+    }
+
+    /// T-10 的**信息项**（**不是判据**）：同一批页的**原始** `content_json`。
+    /// 两侧经手路径不同（本地写 vs 合并落库）⇒ 允许不同；判据是上一条投影比对
+    /// （口径见 `projection_of` 的头注）。
+    fn db_raw(c: &Connection) -> String {
+        page_ids(c).iter().map(|id| format!("{id} => {}\n", content_of(c, id))).collect()
+    }
+
+    fn page_ids(c: &Connection) -> Vec<String> {
+        let mut stmt = c.prepare("SELECT id FROM pages ORDER BY id").unwrap();
+        let ids: Vec<String> =
+            stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        ids
+    }
+
+    /// ⭐ **T-10 · 十台设备的多端验证** —— `U14`（单空间 ≤10 台）的**判据承载**。
+    ///
+    /// ## 这一档**是什么**
+    /// **10 个真网格窗口**（各绑 `127.0.0.1:0` ⇒ 真 TCP 环回、真 HTTP）＋ **10 份独立库文件**
+    /// （＝ §15.2 说的"独立 `--db`"），全部绑**同一** `space_id`，**手工把对端清单填成其余 9 台**
+    /// ⇒ 走 `round_candidates`（**绕过发现层**）。
+    ///
+    /// ## ⚠️ 这一档的结论**只能写成"下界"**（硬纪律，不许悄悄升格）
+    /// **为什么绕过发现层**：`lan::is_lan_base` **明确把 `127/8` 排除**在"网段里的别人"之外
+    /// （甲-1 的口径）⇒ 回环上 `mesh_peers` 挑出来的对端**必然是空集** ⇒ 只能手工给清单。
+    /// ⇒ ⇒ 所以它验的是 **①收敛 ②不落后 ③拉取量 ④合并余量** 这四条；
+    ///    **验不了**：**真实 UDP 发现 10 台能不能互相发现** ——
+    ///    `personal-edition-spec` §14 把那条标成 `[无依据]`，它的载体是 **`M-10`（10 台真机，要人手）**。
+    ///
+    /// ## 为什么 `#[ignore]`
+    /// 它要 **60 秒真实时钟 ＋ 10 个窗口**（≈100 秒）⇒ 不进 `cargo test --lib` 的默认跑
+    /// （本仓既有 19 条 ignored 同此纪律）；**由 `scripts/verify-mesh-ten-devices.mjs` 显式跑**。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "T-10：要 60 秒真实时钟 + 10 个网格窗口（≈100 秒）；由 scripts/verify-mesh-ten-devices.mjs 显式跑（--ignored）"]
+    async fn ten_devices_converge_with_no_device_left_behind() {
+        let dir = temp_dir("t10");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ids: Vec<String> = (1..=T10_DEVICES).map(|i| format!("dev-{i:02}")).collect();
+
+        // ① 10 份**独立库文件** ＋ 10 个**真窗口**（各自一个端口 ⇒ 真环回、真 HTTP）
+        let conns: Vec<Arc<Mutex<Connection>>> =
+            ids.iter().map(|id| Arc::new(Mutex::new(device_conn(&dir, id)))).collect();
+        let wins: Vec<MeshHandle> = (0..T10_DEVICES)
+            .map(|i| {
+                start(
+                    MeshConfig {
+                        bind: "127.0.0.1:0".into(),
+                        space_id: T10_SPACE.into(),
+                        device_id: ids[i].clone(),
+                        token: Some(T10_TOKEN.into()),
+                        data_dir: None,
+                    },
+                    conns[i].clone(),
+                )
+                .unwrap()
+            })
+            .collect();
+
+        // ② **手工对端清单**（每台 ＝ 其余 9 台）—— §15.2 的那条口径，也是"下界"的来源（见头注）。
+        let cfg = MeshSettings { bind: Some("127.0.0.1:0".into()), token: Some(T10_TOKEN.into()) };
+        let cfg_ref = &cfg;
+        // 读数：10 个窗口的实际地址（各自一个端口 ⇒ 10 份独立监听；判据 ③ 的对端清单就是它们）
+        println!(
+            "[T10] 10 个窗口 = {:?}",
+            wins.iter().map(|w| format!("{}", w.addr())).collect::<Vec<_>>()
+        );
+
+        struct Round {
+            at_ms: i64,
+            ok_per_dev: Vec<usize>,
+        }
+
+        let start_ms = crate::db::now_ms();
+        let edit_deadline = start_ms + T10_EDIT_MS;
+        let hard_deadline = start_ms + T10_EDIT_MS + 90_000;
+        let tick_ms = 1_000 / T10_EDITS_PER_SEC;
+        let mut next_edit = start_ms;
+        let mut next_round = start_ms + T10_CADENCE_MS;
+        let mut tick: u64 = 0;
+        let mut edits: u64 = 0;
+        let mut last_ok: Vec<i64> = vec![start_ms; T10_DEVICES];
+        let mut worst_staleness: i64 = 0;
+        let mut rounds: Vec<Round> = Vec::new();
+        let mut empty_after_edit = 0usize;
+
+        while crate::db::now_ms() < hard_deadline {
+            let now = crate::db::now_ms();
+
+            // ── 编辑：编辑窗内**每台 5 次/秒**（5 次里 1 次打**共享页** ⇒ 制造真争用；其余打自己那页）
+            //    ⚠️ 用 `while` **补齐欠拍**（循环是 50 ms 轮询的）：写成 `if` 时实测只有 ~48 次/秒，
+            //    与 `U14` 的"每台 5 次/秒"对不上；补齐之后 60 秒内每台正好 ~300 拍 ⇒ 合计 50 次/秒。
+            while crate::db::now_ms() < edit_deadline && crate::db::now_ms() >= next_edit {
+                for (i, c) in conns.iter().enumerate() {
+                    let g = c.lock().unwrap();
+                    let (pid, text) = if tick % 5 == 0 {
+                        ("p-shared".to_string(), format!("第 {tick} 拍：{} 改共享页", ids[i]))
+                    } else {
+                        (format!("p-{}", ids[i]), format!("第 {tick} 拍：{} 改自己那页", ids[i]))
+                    };
+                    local_edit(&g, &page(&pid, &text, now));
+                    edits += 1;
+                }
+                tick += 1;
+                next_edit += tick_ms;
+            }
+
+            // ── 拉取轮：每 **5 秒**一轮，10 台**并发**（"同时在线"就是这一句）
+            if now >= next_round {
+                // ⚠️ ③ 的分母用**轮次触发时刻**（＝调度驱动的 +5 秒），**不是**轮结束时刻 ——
+                //    用结束时刻会被"每一轮的耗时差"污染（实测：12 轮跨度 58839 ms < 12×5000
+                //    ⇒ 合计速率虚高成 18.36，把一条**合格的**系统判成红）。
+                let at = now;
+                for i in 0..T10_DEVICES {
+                    worst_staleness = worst_staleness.max(at - last_ok[i]);
+                }
+                let futs = (0..T10_DEVICES).map(|i| {
+                    let conn = conns[i].clone();
+                    let peers: Vec<MeshPeer> = (0..T10_DEVICES)
+                        .filter(|&k| k != i)
+                        .map(|k| mesh_peer(&ids[k], &format!("http://{}", wins[k].addr())))
+                        .collect();
+                    async move { round_candidates(&conn, T10_SPACE, cfg_ref, peers).await }
+                });
+                let reports = futures_util::future::join_all(futs).await;
+                let mut ok_per_dev = vec![0usize; T10_DEVICES];
+                let mut fetched = 0usize;
+                let mut errs = 0usize;
+                for (i, r) in reports.iter().enumerate() {
+                    let rep = r.as_ref().unwrap_or_else(|e| panic!("round 本身不该失败：{e}"));
+                    for p in &rep.peers {
+                        if let Some(e) = &p.error {
+                            // 拉不动就**逐条**打出来（不只第一条）—— 这一档"不许有拉不动"，
+                            // 真红了要能一眼看出是"某一台死了"还是"并发下大面积失败"。
+                            eprintln!(
+                                "[T10] 第 {} 轮 {} 拉 {} 失败（fetched={}）：{e}",
+                                rounds.len() + 1,
+                                ids[i],
+                                p.peer,
+                                p.fetched
+                            );
+                            errs += 1;
+                            continue;
+                        }
+                        ok_per_dev[i] += 1;
+                        fetched += p.fetched;
+                    }
+                    if ok_per_dev[i] > 0 {
+                        last_ok[i] = at;
+                    }
+                }
+                if errs > 0 {
+                    panic!("T-10：第 {} 轮有 {errs} 次拉不动（诊断见上面 [T10-DIAG]）", rounds.len() + 1);
+                }
+                rounds.push(Round { at_ms: at, ok_per_dev });
+                next_round += T10_CADENCE_MS;
+                // 收敛出口：编辑已停 ＋ 这一轮**谁都没有新行** ⇒ 再确认一轮就收工
+                if at > edit_deadline && fetched == 0 {
+                    empty_after_edit += 1;
+                    if empty_after_edit >= 2 {
+                        break;
+                    }
+                } else {
+                    empty_after_edit = 0;
+                }
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        let end_ms = crate::db::now_ms();
+        assert!(rounds.len() >= 4, "T-10：只跑了 {} 轮（窗口没起来？）", rounds.len());
+
+        // ── ① 收敛：**全库投影逐字节相同**
+        let projections: Vec<String> = conns.iter().map(|c| db_projection(&c.lock().unwrap())).collect();
+        let converged = projections.iter().all(|p| *p == projections[0]);
+        let raws: Vec<String> = conns.iter().map(|c| db_raw(&c.lock().unwrap())).collect();
+        let raw_equal = raws.iter().all(|r| *r == raws[0]);
+        let pages = page_ids(&conns[0].lock().unwrap()).len();
+
+        // ── ② 不落后：每台的"最后成功拉取"距今 ≤ 10 秒
+        let final_staleness: Vec<i64> = last_ok.iter().map(|t| end_ms - t).collect();
+        let max_final_staleness = *final_staleness.iter().max().unwrap();
+
+        // ── ③ 拉取量：从**实际发生的拉取**里数速率
+        //    分母用**内部窗口**（去掉第一轮与最后一轮）—— 边界轮会把速率算高（真轮次在窗口外）。
+        let first = 1usize;
+        let last = rounds.len() - 1; // exclusive
+        let window_rounds = last - first;
+        // ⚠️ 分母用**调度窗口**（`window_rounds × 节拍`），**不用**轮次的时间戳差：
+        //    轮是按**绝对时刻**触发的，而触发抖动只可能让**真实**跨度更长；拿结束时刻去量，
+        //    实测出现过"12 轮跨度 58839 ms < 12×5000"（各轮耗时不同）⇒ 速率虚高成 18.36，
+        //    把一条**合格的**系统判成红。按调度算出来的是**上界**（偏保守）：它 ≤18 ⇒ 真速率也 ≤18。
+        let window_ms = window_rounds as i64 * T10_CADENCE_MS;
+        // 信息项：时间戳差出来的**真实**跨度（只为透明，不作判据分母）
+        let wallclock_ms = (rounds[last].at_ms - rounds[first].at_ms).max(1);
+        let wallclock_secs = wallclock_ms as f64 / 1000.0;
+        let window_secs = window_ms as f64 / 1000.0;
+        let mut per_dev_pulls = vec![0usize; T10_DEVICES];
+        for row in &rounds[first..last] {
+            for i in 0..T10_DEVICES {
+                per_dev_pulls[i] += row.ok_per_dev[i];
+            }
+        }
+        let agg_pulls: usize = per_dev_pulls.iter().sum();
+        let per_dev_per_sec: Vec<f64> = per_dev_pulls.iter().map(|n| *n as f64 / window_secs).collect();
+        let agg_per_sec = agg_pulls as f64 / window_secs;
+        // 信息项：拿**真实**跨度算的同一条速率（判据不吃它，只为"上界 vs 实测"可比）
+        let agg_per_sec_wallclock = agg_pulls as f64 / wallclock_secs;
+        // 客户端"我发起了几次" vs **服务侧"真的服务过几次"** —— 两者必须相等（否则有额外拉取）
+        let client_total: usize = rounds.iter().flat_map(|r| r.ok_per_dev.iter()).sum();
+        let server_total: usize = wins.iter().map(|w| w.served_pulls()).sum();
+
+        // ── ④ 合并余量：合计编辑速率 vs 舒适上界（~500/秒）的 20%
+        let edit_secs = T10_EDIT_MS as f64 / 1000.0;
+        let edits_per_sec = edits as f64 / edit_secs;
+        let comfort_share = edits_per_sec / T10_COMFORT_PER_SEC;
+
+        let reading = serde_json::json!({
+            "scope": "loopback-lower-bound",
+            "note": "本机档：回环 + 手工对端清单（绕过发现层）⇒ 只当下界；真发现层归 M-10",
+            "devices": T10_DEVICES,
+            "cadence_ms": T10_CADENCE_MS,
+            "pages": pages,
+            "rounds": rounds.len(),
+            "window_rounds": window_rounds,
+            "window_ms": window_ms,
+            "wallclock_ms": wallclock_ms,
+            "pulls_per_sec_aggregate_wallclock": agg_per_sec_wallclock,
+            "edits_total": edits,
+            "edits_per_sec": edits_per_sec,
+            "comfort_per_sec": T10_COMFORT_PER_SEC,
+            "comfort_share": comfort_share,
+            "pulls_per_device_in_window": per_dev_pulls,
+            "pulls_per_device_per_sec": per_dev_per_sec,
+            "pulls_aggregate_in_window": agg_pulls,
+            "pulls_per_sec_aggregate": agg_per_sec,
+            "client_pulls_total": client_total,
+            "server_served_pulls_total": server_total,
+            "worst_staleness_ms": worst_staleness,
+            "final_staleness_ms": final_staleness,
+            "converged": converged,
+            "raw_content_equal": raw_equal,
+            "limits": {
+                "staleness_ms": T10_STALENESS_LIMIT_MS,
+                "pulls_per_device_per_sec": T10_PULLS_PER_DEV_PER_SEC_LIMIT,
+                "pulls_per_sec_aggregate": T10_PULLS_AGG_PER_SEC_LIMIT,
+                "comfort_share": T10_COMFORT_SHARE_LIMIT,
+            },
+        });
+        println!("[T10] ⚠️ 本机档（回环 + 手工对端清单）＝ **下界**；真发现层／真机 10 台归 M-10（要人手）");
+        println!(
+            "[T10] ①收敛 = {converged}（{pages} 页；原始 content_json 相同 = {raw_equal}，**不是判据**）"
+        );
+        println!(
+            "[T10] ②不落后 = 最差 {worst_staleness} ms / 收尾最差 {max_final_staleness} ms（上限 {T10_STALENESS_LIMIT_MS}）"
+        );
+        println!(
+            "[T10] ③拉取 = 每台 {:?} 次/秒（上限 {}）｜合计 {agg_per_sec:.3} 次/秒（上限 {T10_PULLS_AGG_PER_SEC_LIMIT}）｜\
+             调度窗口 {window_ms} ms / {window_rounds} 轮（上界口径；时间戳差 {wallclock_ms} ms ⇒ 实测口径 {agg_per_sec_wallclock:.3}）｜\
+             服务侧真的服务过 {server_total} 次",
+            per_dev_per_sec.iter().map(|r| (r * 100.0).round() / 100.0).collect::<Vec<_>>(),
+            T10_PULLS_PER_DEV_PER_SEC_LIMIT
+        );
+        println!(
+            "[T10] ④合并余量 = {edits_per_sec:.1} 次/秒（{edits} 次编辑 / {} 秒）＝ 舒适上界的 {:.1}%（上限 {}%）",
+            T10_EDIT_MS / 1000,
+            comfort_share * 100.0,
+            T10_COMFORT_SHARE_LIMIT * 100.0
+        );
+        println!("T10-READING {reading}");
+
+        assert!(converged, "① 判据不成立：10 台的最终内容**不是**逐字节相同");
+        assert!(
+            worst_staleness <= T10_STALENESS_LIMIT_MS,
+            "② 判据不成立：有一台落后 {worst_staleness} ms（上限 {T10_STALENESS_LIMIT_MS}）"
+        );
+        assert!(
+            max_final_staleness <= T10_STALENESS_LIMIT_MS,
+            "② 判据不成立（收尾）：{final_staleness:?}（上限 {T10_STALENESS_LIMIT_MS}）"
+        );
+        assert!(
+            per_dev_per_sec.iter().all(|r| *r <= T10_PULLS_PER_DEV_PER_SEC_LIMIT),
+            "③ 判据不成立：每台速率 {per_dev_per_sec:?}（上限 {T10_PULLS_PER_DEV_PER_SEC_LIMIT}）"
+        );
+        assert!(
+            agg_per_sec <= T10_PULLS_AGG_PER_SEC_LIMIT,
+            "③ 判据不成立：合计 {agg_per_sec} 次/秒（上限 {T10_PULLS_AGG_PER_SEC_LIMIT}）"
+        );
+        assert_eq!(
+            server_total, client_total,
+            "③ 的交叉验不成立：服务侧真的服务过 {server_total} 次，客户端只报 {client_total} 次 ⇒ **有额外拉取**（判据 ③ 被污染）"
+        );
+        assert!(
+            comfort_share <= T10_COMFORT_SHARE_LIMIT,
+            "④ 判据不成立：合计编辑 {edits_per_sec:.1} 次/秒 ＝ 舒适上界的 {:.1}%（上限 {}%）",
+            comfort_share * 100.0,
+            T10_COMFORT_SHARE_LIMIT * 100.0
+        );
     }
 }
