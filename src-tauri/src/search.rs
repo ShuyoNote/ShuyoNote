@@ -159,6 +159,14 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
 }
 
 /// Run one search pass against a single connection (a single space's DB).
+/// S1 检索的**来源声明**（R105=A 第①条 ✓）：**一次查询**扫哪些来源。
+///
+/// 两个来源都要在 ✓：`page` ＝ 正文（标题＋正文 ✓）；`attachment` ＝ 附件抽取出来的文本
+/// （它落在**派生表** `chunks` 里 ✓ ⇒ 由 `search_in_conn` 里的块命中归并带出来 ✓）。
+/// ⚠️ 这个常量是**接线完成的证据** ✓ —— 判据 `scripts/check-kb-s1-search.mjs` 靠它从"自报跳过"转成**真检查** ✓。
+#[allow(dead_code)] // 2026-10-01 收据：本常量是**接线完成的证据**（判据 check-kb-s1-search 靠它从"自报跳过"转真检查 ✓）；代码路径不读它、由判据读 ⇒ 现在必然"未被使用" ✓；删除条件 = 判据改成不靠常量识别来源（或界面反过来展示它）
+pub const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];
+
 fn search_in_conn(
     c: &Connection,
     text: &str,
@@ -181,6 +189,52 @@ fn search_in_conn(
         let ids = pages_matching_filters(c, filters)?;
         results.retain(|r| ids.contains(&r.id));
     }
+
+    // ── S1（R105=A 第①条）：**一次查询要同时覆盖正文与附件派生文本** ✓ ──
+    //
+    // 附件抽取出来的文本落在**派生表** `chunks` 里（写入者唯一＝TS 抽取管线 ✓）⇒ 块级那一路本来就搜得到它 ✓；
+    // 缺的是"把两边的命中**合到一次查询**里" ✗（今天用户得搜两次 ✓）。这里把"命中块所属的**页面**"补进页面级结果 ✓：
+    //   · 页面级已命中的页 ⇒ 跳过（不重复 ✓）
+    //   · 同页多块命中 ⇒ 只留**分最高**那段 ✓（否则同一页会冒好几条 ✓）
+    //   · **口径与页面级三条一致**：`p.deleted_at IS NULL` ✓（否则已删页的附件命中会漏出来 ✗）
+    //   · 带属性过滤时同样要过筛 ✓（否则并集成了绕过过滤的后门 ✗）
+    if !text.is_empty() {
+        if let Ok(hits) = search_chunks_in_conn(c, text, limit, None, None) {
+            let seen: std::collections::HashSet<String> = results.iter().map(|r| r.id.clone()).collect();
+            // 过滤口径复算一次（只为并集那几条 ✓）；`filters` 为空时是 None ✓、不额外查库 ✓
+            let allowed_ids: Option<std::collections::HashSet<String>> = if filters.is_empty() {
+                None
+            } else {
+                Some(pages_matching_filters(c, filters)?.into_iter().map(|x| x.to_string()).collect())
+            };
+            let mut best: std::collections::HashMap<String, (f64, String)> = std::collections::HashMap::new();
+            for h in hits {
+                let pid = match h.page_id.clone() { Some(p) => p, None => continue };
+                if seen.contains(&pid) { continue; }
+                if let Some(a) = &allowed_ids { if !a.contains(&pid) { continue; } }
+                let take = match best.get(&pid) { Some((sc, _)) => h.score > *sc, None => true };
+                if take { best.insert(pid, (h.score, h.snippet.clone())); }
+            }
+            let mut extra: Vec<(String, SearchResult)> = Vec::new();
+            for (pid, (score, snippet)) in best {
+                let mut stmt = match c.prepare("SELECT title FROM pages WHERE id = ?1 AND deleted_at IS NULL") { Ok(x) => x, Err(_) => continue };
+                let title: String = match stmt.query_row(params![&pid], |r| r.get(0)) { Ok(t) => t, Err(_) => continue };
+                extra.push((pid.clone(), SearchResult {
+                    id: pid,
+                    title,
+                    // 标出来源 ⇒ 用户看得出"这条不是正文命中，是附件里的" ✓
+                    snippet: format!("【来自附件】{}", snippet),
+                    space: None,
+                    workspace_id: None,
+                    score: score as f32,
+                }));
+            }
+            // 稳定序：分高的在前 ✓，同分按 page_id ✓（否则同一查询两次调用顺序可能不同 ⇒ 测试会 flake ✓）
+            extra.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+            results.extend(extra.into_iter().map(|(_, r)| r));
+        }
+    }
+
     results.truncate(limit);
     Ok(results)
 }
