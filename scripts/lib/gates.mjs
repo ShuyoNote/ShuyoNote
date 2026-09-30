@@ -211,6 +211,19 @@ export const GATES = [
     registered: "2026-09-30",
   },
   {
+    id: "check-mcp-audit-single-ledger",
+    group: "contract",
+    label: "审计只有一本账（PLUGIN_AUDIT）且能力调用成功/失败都留痕；宿主面不许自建环",
+    cmd: "node scripts/check-mcp-audit-single-ledger.mjs",
+    incident:
+      "2026-10-01：INV-MCP-audited 要求「外部会话的每次能力调用与插件调用进**同一**审计轨迹」（需求 §9「谁读过我的库」）。" +
+      "它的主体标识字段未定（需求 §132／规格 §2）⇒ 已登记台账 R104 ⇒ 本条只钉能判的那半：账本唯一／审计推送都进它／" +
+      "dispatch_capability 成功失败都留痕／宿主面不许自建环。⚠️ 写它时踩过两次假红（拿 push_back( 当指纹 ✗；" +
+      "函数体用 \n}\n 收尾在 CRLF 检出上永不命中 ✗）⇒ 已改为按值认 ＋ 行尾 \\r?\\n ＋ 自测里放一条 CRLF 正例当回归 ✓。",
+    registered: "2026-10-01",
+    baseline: true,
+  },
+  {
     id: "check-search-platform-parity",
     group: "contract",
     label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
