@@ -197,6 +197,19 @@ export const GATES = [
     registered: "2026-09-30",
   },
   {
+    id: "check-search-platform-parity",
+    group: "contract",
+    label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
+    cmd: "node scripts/check-search-platform-parity.mjs",
+    incident:
+      "2026-09-30：块级检索在桌面走 FTS5/BM25、Web 走 LIKE（sql.js 没编 FTS5）—— 两边同一个查询**排序可以不同**，" +
+      "而这件事此前只写在 db.rs 的注释里；app 侧 commands.ts 的 search_chunks 只写「web 里的同名分支」⇒ " +
+      "读代码的人会以为两个平台一样，用户则是「换个平台搜出来顺序变了」且没有线索（本仓最忌的：差异不炸、不报错）。" +
+      "本判据把四件事钉住：桌面 DDL 常量在 ＋ 理由（sql.js 没编 FTS5）在 ＋ app 侧写明限定 ＋ 桌面专属 DDL 不许漏进共享 DDL。",
+    registered: "2026-09-30",
+    baseline: true,
+  },
+  {
     id: "check-derived-provenance",
     group: "contract",
     label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",

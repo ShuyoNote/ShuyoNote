@@ -11,7 +11,8 @@
     "mobile-views": 307,
     "rust-test": 386,
     "rust-plugins-alone": 117,
-    "rust-no-sm-crypto": 401
+    "rust-no-sm-crypto": 401,
+    "check-search-platform-parity": 4
   },
   "gates": {
     "contract": [
@@ -54,7 +55,8 @@
       "check-web-commands",
       "check-workflow-yaml",
       "check-crdt-snapshot-contract",
-      "check-mcp-host-authz"
+      "check-mcp-host-authz",
+      "check-search-platform-parity"
     ],
     "smoke": [
       "smoke-web",
