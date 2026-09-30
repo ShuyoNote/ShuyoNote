@@ -20,7 +20,10 @@
 //     · `SHUYONOTE_MCP_SWITCH`      = `on` | `off`      —— 通道开关（默认必须是 off ✓）
 //     · `SHUYONOTE_MCP_TOKEN`       = 本次会话 token
 //     · `SHUYONOTE_MCP_ORIGIN_ALLOW`= `loopback`        —— 只认回环 Origin
-//   桥必须：把**实际监听的端口**以 `PORT=<n>` 打到 **stdout 一行** ✓，然后在该端口上收 HTTP：
+//   桥必须：把**实际监听的端口**以 `PORT=<n>` 打到 **stderr 一行** ✓，然后在该端口上收 HTTP：
+//     ⚠️ **为什么是 stderr 而不是 stdout**（2026-10-01 修 ✓）：MCP 是**行分隔 JSON-RPC over stdio** ✓，
+//        stdout **只许出现协议消息** ✓（AMD 的 `check-mcp-bridge-stdout` 逐字：「stdio 桥的 stdout 只许出现协议消息」✓，
+//        且它明说「**stderr 可以有内容**（日志归 stderr）」✓）⇒ 我原来写 stdout **与那条判据对撞** ✗ ⇒ 改成 stderr ✓。
 //     · 开关 off            ⇒ **拒绝**（判据接受：连接被拒 / 非 2xx 都算"拒" ✓）
 //     · `Origin` 不是"恰好回环"（含前缀陷阱值）⇒ **403**
 //     · token 缺失 / 不匹配 / 已过期            ⇒ **401**
@@ -44,7 +47,7 @@ export const BRIDGE_DEFAULT = join(ROOT, "tools", "shuyonote-mcp", "index.mjs");
 const BAD_ORIGIN = "http://127.0.0.1.evil.com"; // ⚠️ SECURITY.md 里的前缀陷阱值 ✓
 const GOOD_ORIGIN = "http://127.0.0.1";         // 恰好回环（端口由桥自己报 ✓）
 
-/** 起一个桥，等它上报 PORT=，返回 {port, stop} */
+/** 起一个桥，等它在 **stderr** 上报 PORT=，返回 {port, stop} */
 export async function startBridge(bridgePath, env0, timeoutMs = 8000) {
   const child = spawn(process.execPath, [bridgePath], {
     cwd: ROOT,
@@ -54,7 +57,7 @@ export async function startBridge(bridgePath, env0, timeoutMs = 8000) {
   let buf = "";
   const port = await new Promise((resolve) => {
     const t = setTimeout(() => resolve(null), timeoutMs);
-    child.stdout.on("data", (d) => {
+    child.stderr.on("data", (d) => {
       buf += String(d);
       const m = buf.match(/PORT=(\d+)/);
       if (m) { clearTimeout(t); resolve(Number(m[1])); }
@@ -178,7 +181,7 @@ const srv = http.createServer((req, res) => {
   if (FAULT !== "accept-any-token" && auth !== TOKEN) { res.writeHead(401); res.end("bad token"); return; }
   res.writeHead(200); res.end("ok");
 });
-srv.listen(0, "127.0.0.1", () => { console.log("PORT=" + srv.address().port); });
+srv.listen(0, "127.0.0.1", () => { console.error("PORT=" + srv.address().port); }); // ⚠️ stderr ✓（stdout 只许协议 ✓）
 `;
     const p = (n) => { const f = join(dir, n); writeFileSync(f, fixture, "utf8"); return f; };
     const good = p("bridge-ok.mjs");
