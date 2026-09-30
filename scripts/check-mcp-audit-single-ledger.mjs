@@ -81,6 +81,30 @@ export function judge({ plugins, host }) {
   else if (/static\s+PLUGIN_AUDIT\s*:|push_back\(PluginAuditEntry/.test(host)) fail("宿主面（" + REL.host + "）**自建审计环** ✗ ⇒ 必须共用同一本账（" + REL.plugins + " 的那一本）✓");
   else passed++;
 
+  // ⑤ 「来源」字段（R104=A 的第一半：**答得出"谁"** ✓）—— 只认"审计推送**那句**里带 source" ✓（与本判据"按值认"同一套思路 ✓）
+  const noSource = pushes.filter((i) => {
+    const semi = plugins.indexOf(";", i);
+    const stmt = plugins.slice(i, semi < 0 ? Math.min(plugins.length, i + 400) : semi + 1);
+    return !/source/.test(stmt);
+  });
+  if (pushes.length && noSource.length) fail("有 " + noSource.length + " 处审计推送**没带「来源」** ✗ ⇒ 答不出「谁读过我的库」（R104=A：加 `source` ✓）");
+  else passed++;
+
+  // ⑥ 落盘（R104=A 的第二半：**重启不丢** ✓）—— 认"常量名 ＋ 追加写"两件都在 ✓
+  const hasLogName = /PLUGIN_AUDIT_LOG/.test(plugins);
+  const hasAppend = /OpenOptions/.test(plugins) && /append\(true\)/.test(plugins);
+  if (!hasLogName || !hasAppend) fail("审计**没落盘** ✗：缺 " + (hasLogName ? "" : "`PLUGIN_AUDIT_LOG` 常量 ")
+    + (hasAppend ? "" : "`OpenOptions` ＋ `append(true)` 追加写 ") + "⇒ 重启后「谁读过」就答不出（R104=A：落盘 ✓）");
+  else passed++;
+
+  // ⑦ 丢弃可见（R104=A 的第三半：满了丢最老的**那件事要能看出来** ✓）
+  const droppedRefs = (plugins.match(/PLUGIN_AUDIT_DROPPED/g) || []).length;
+  const hasFetchAdd = /PLUGIN_AUDIT_DROPPED[\s\S]{0,200}?fetch_add/.test(plugins);
+  const hasReader = /pub fn plugin_audit_dropped\s*\(/.test(plugins);
+  if (droppedRefs < 2 || !hasFetchAdd || !hasReader) fail("丢弃**不可见** ✗：`PLUGIN_AUDIT_DROPPED` 出现 " + droppedRefs
+    + " 次（期望 ≥2：声明／自增）、自增=" + hasFetchAdd + "、公开读函数=" + hasReader + " ⇒ 记录被悄悄丢掉而外面看不出（R104=A ✓）");
+  else passed++;
+
   return { findings: out, passed };
 }
 
@@ -92,7 +116,7 @@ function run(root) {
     console.error("[结果] " + passed + " 通过 / " + findings.length + " 失败");
     return 1;
   }
-  console.log("✓ 审计只有一本账：`PLUGIN_AUDIT` 唯一 ✓ ｜ 每处审计推送都进它 ✓ ｜ `dispatch_capability` 成功/失败都留痕 ✓ ｜ 宿主面不自建环 ✓");
+  console.log("✓ 审计只有一本账：`PLUGIN_AUDIT` 唯一 ✓ ｜ 每处审计推送都进它 ✓ ｜ `dispatch_capability` 成功/失败都留痕 ✓ ｜ 宿主面不自建环 ✓ ｜ 带「来源」✓ ｜ 落盘 ✓ ｜ 丢弃可见 ✓");
   console.log("[结果] " + passed + " 通过 / 0 失败");
   return 0;
 }
@@ -106,33 +130,48 @@ if (argv.includes("--self-test")) {
     const write = (rel, text) => { const p = join(dir, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text, "utf8"); };
     const OK = [
       "static PLUGIN_AUDIT: Mutex<VecDeque<PluginAuditEntry>> = Mutex::new(VecDeque::new());",
+      "static PLUGIN_AUDIT_DROPPED: AtomicU64 = AtomicU64::new(0);",
+      'const PLUGIN_AUDIT_LOG: &str = "plugin-audit.jsonl";',
       "",
-      "fn push_audit(plugin_id: &str, ok: bool) {",
-      "    let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());",
-      "    q.push_back(PluginAuditEntry { plugin_id: plugin_id.to_string(), ok });",
+      "fn persist(line: &str) {",
+      "    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(PLUGIN_AUDIT_LOG) {",
+      '        let _ = writeln!(f, "{}", line);',
+      "    }",
       "}",
       "",
-      "fn push_run_audit(plugin_id: &str, ok: bool) {",
+      "fn push_audit(plugin_id: &str, source: &str, ok: bool) {",
       "    let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());",
-      "    q.push_back(PluginAuditEntry { plugin_id: plugin_id.to_string(), ok });",
+      "    if q.len() >= PLUGIN_AUDIT_CAPACITY { q.pop_front(); PLUGIN_AUDIT_DROPPED.fetch_add(1, Ordering::Relaxed); }",
+      "    q.push_back(PluginAuditEntry { plugin_id: plugin_id.to_string(), source: source.to_string(), ok });",
+      "    persist(plugin_id);",
       "}",
+      "",
+      "fn push_run_audit(plugin_id: &str, source: &str, ok: bool) {",
+      "    let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());",
+      "    q.push_back(PluginAuditEntry { plugin_id: plugin_id.to_string(), source: source.to_string(), ok });",
+      "}",
+      "",
+      "pub fn plugin_audit_dropped() -> u64 { PLUGIN_AUDIT_DROPPED.load(Ordering::Relaxed) }",
       "",
       "pub fn dispatch_capability(plugin_id: &str, method: &str) -> Result<(), String> {",
-      "    push_audit(plugin_id, false);",
-      "    push_audit(plugin_id, true);",
+      '    push_audit(plugin_id, "plugin", false);',
+      '    push_audit(plugin_id, "plugin", true);',
       "    Ok(())",
       "}",
       "",
     ].join("\n");
     const put = (plugins, host) => { write(REL.plugins, plugins); const p = join(dir, REL.host); if (host === null) { if (existsSync(p)) rmSync(p); } else write(REL.host, host); };
-    const strayPush = "fn sneaky(plugin_id: &str, ok: bool) {\n    let mut other = OTHER.lock().unwrap();\n    other.push_back(PluginAuditEntry { plugin_id: plugin_id.to_string(), ok });\n}\n";
+    const strayPush = 'fn sneaky(plugin_id: &str, source: &str, ok: bool) {\n    let mut other = OTHER.lock().unwrap();\n    other.push_back(PluginAuditEntry { plugin_id: plugin_id.to_string(), source: source.to_string(), ok });\n}\n';
     const cases = [
       ["正例（LF）", () => put(OK, null), 0],
       ["正例（**CRLF** —— 上轮那个坑的回归 ✓）", () => put(OK.split("\n").join("\r\n"), null), 0],
-      ["变异①（成功路不留痕）", () => put(OK.replace("    push_audit(plugin_id, true);\n", ""), null), 1],
-      ["变异②（失败路不留痕）", () => put(OK.replace("    push_audit(plugin_id, false);\n", ""), null), 1],
+      ["变异①（成功路不留痕）", () => put(OK.replace('    push_audit(plugin_id, "plugin", true);\n', ""), null), 1],
+      ["变异②（失败路不留痕）", () => put(OK.replace('    push_audit(plugin_id, "plugin", false);\n', ""), null), 1],
       ["变异③（审计推送进**别的**队列 ⇒ 第二本账）", () => put(OK + strayPush, null), 1],
       ["变异④（宿主面自建环）", () => put(OK, "static PLUGIN_AUDIT: Mutex<VecDeque<PluginAuditEntry>> = Mutex::new(VecDeque::new());\n"), 1],
+      ["变异⑤（推送不带来源 ⇒ 答不出「谁」）", () => put(OK.replace("source: source.to_string(), ", ""), null), 1],
+      ["变异⑥（不落盘：去掉追加写）", () => put(OK.replace(/.*OpenOptions.*\n/, ""), null), 1],
+      ["变异⑦（丢弃不可见：去掉自增）", () => put(OK.replace("PLUGIN_AUDIT_DROPPED.fetch_add(1, Ordering::Relaxed); ", ""), null), 1],
     ];
     let pass = 0;
     for (const [name, setup, want] of cases) {
