@@ -238,6 +238,19 @@ export const GATES = [
     registered: "2026-10-01",
   },
   {
+    id: "check-kb-s1-search",
+    group: "contract",
+    label: "S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码",
+    cmd: "node scripts/check-kb-s1-search.mjs",
+    selfSkipOk: "S1 的来源声明（SEARCH_SOURCES）尚未落地 ⇒ 判据先行阶段没有可检查对象；落地后本条立即有对象",
+    incident:
+      "2026-10-01：R105=A 采用了知识层 Phase 1 的九条出口判据。S1 检索此前**只有阶段名、没有定义** ✗ ⇒ " +
+      "本条把它变成两条可机核的出口判据：① 正文与附件派生文本要能被**同一次查询**命中（今天 search_chunks 只查块、" +
+      "read_attachment_text 是另一条命令 ⇒ 用户得搜两次）；② 索引不可用必须给**稳定码**，不许静默返空" +
+      "（「搜不到」与「搜不了」对用户是两件事，与 check-locked-loud 同族）。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-search-platform-parity",
     group: "contract",
     label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",

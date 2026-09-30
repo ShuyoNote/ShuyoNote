@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 69 条（contract 44 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
+门禁 70 条（contract 45 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 258 / web 250 / CommandMap 260
 基线下限（与 tests/baseline.json 逐字一致，共 13 条）check-mcp-audit-single-ledger 4 · check-search-platform-parity 4 · vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -125,6 +125,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | `check-mcp-bridge-dumb` | contract | MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态 |
 | `check-mcp-audit-single-ledger` | contract | 审计只有一本账（`PLUGIN_AUDIT`）且能力调用成功/失败都留痕；宿主面不许自建环 |
 | `check-search-platform-parity` | contract | 桌面专属检索能力（FTS/BM25 只在桌面、Web 走 LIKE）必须写进 app 侧文档 |
+| `check-kb-s1-search` | contract | S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码 |
 | artifact | `external-index` / `external-package` | 我们打出的包与索引，应用**真**解析器 / 真校验器认不认 |
 | artifact | `plugin-fragment-no-zip` | 打包依赖命令行 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条） |
 
