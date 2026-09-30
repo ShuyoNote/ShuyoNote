@@ -179,6 +179,24 @@ export const GATES = [
     registered: "2026-09-29",
   },
   {
+    id: "check-mcp-host-authz",
+    group: "contract",
+    label: "MCP 宿主面必须经**同一处**权限校验（不许第二条鉴权路径）",
+    cmd: "node scripts/check-mcp-host-authz.mjs",
+    // ⚠️ 自报跳过的登记（配合 `test-report.mjs` 的 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
+    //   M1 的宿主面（`src-tauri/src/mcp_host.rs`）**还没写** ⇒ 本条现在没有可检查对象。
+    //   跳过 ≠ 通过：要看那次"红"就加 `--require-host`（⇒ exit 2，逐字含「宿主面不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 宿主面（src-tauri/src/mcp_host.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；宿主面落地后本条立即有对象",
+    incident:
+      "2026-09-30：规格 §2 的 INV-MCP-single-authz 原本第四列是「❌ 无」✗ —— 而宿主面一旦自己开库或自己判权限，" +
+      "就长出**第二条鉴权路径** ⇒ 「未解锁大声失败」「写要草稿确认」「每次调用留审计」这些**只对插件那条路成立** ✓，" +
+      "外部 agent 从另一条路进来全部绕开，且测试全绿、没有一条门禁会红（本仓最忌的形状）。" +
+      "本门禁把「唯一鉴权点存在 ＋ 宿主面调用它 ＋ 不自开库 ＋ 不自判权限」钉成机器可核（纯读源码 ⇒ 不需要 cargo ✓）。",
+    // ⚠️ **不设 `baseline: true`**（与 `check-locked-loud` 同形 ✓）：本条不打 `[结果] N 通过 / M 失败` 那种读数行 ⇒
+    //   设了它反而会报「通过但没解析出读数 ⇒ 基线校验失效」✗。判据本身的"只看不增"由它自己的自测条数承担 ✓。
+    registered: "2026-09-30",
+  },
+  {
     id: "check-derived-provenance",
     group: "contract",
     label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",

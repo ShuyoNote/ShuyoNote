@@ -53,7 +53,8 @@
       "check-versions",
       "check-web-commands",
       "check-workflow-yaml",
-      "check-crdt-snapshot-contract"
+      "check-crdt-snapshot-contract",
+      "check-mcp-host-authz"
     ],
     "smoke": [
       "smoke-web",
