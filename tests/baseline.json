@@ -61,7 +61,10 @@
       "check-mcp-audit-single-ledger",
       "check-mcp-channel-judge",
       "check-mcp-bridge-dumb",
-      "check-kb-s1-search"
+      "check-kb-s1-search",
+      "check-kb-s1-search-parity",
+      "check-kb-s3-timeline",
+      "check-kb-s4-map"
     ],
     "smoke": [
       "smoke-web",

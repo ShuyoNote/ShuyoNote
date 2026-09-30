@@ -251,6 +251,47 @@ export const GATES = [
     registered: "2026-10-01",
   },
   {
+    id: "check-kb-s1-search-parity",
+    group: "contract",
+    label: "S1③ 两平台检索一致性：同一份夹具必须被 Rust 与 TS 两侧真消费（不许两份／空壳）",
+    cmd: "node scripts/check-kb-s1-search-parity.mjs",
+    selfSkipOk: "S1③ 的跨语言夹具（tests/search-parity.json）尚未落地 ⇒ 判据先行阶段没有可检查对象；夹具落地后本条立即有对象",
+    incident:
+      "2026-10-01：R105=A 采用了知识层 Phase 1 的九条出口判据，其中 S1 第③条「两平台**命中集合相等**（排序可比）」" +
+      "此前**没有任何判据碰过** ✗：check-search-platform-parity 只管「差异写进了文档」，check-kb-s1-search 只管桌面那份来源声明。" +
+      "⇒「同一份笔记换个平台搜出来**少了一条**」正是本仓最罚的形状（不炸、不报错、只是结果不同）。" +
+      "本条钉住**前提**：夹具只有一份（tests/search-parity.json）＋ Rust 侧 include_str! 真读它 ＋ TS 侧测试真读它 ＋ 用例不是空壳；" +
+      "真正的相等断言由两侧各自的测试在 CI 上承担（这条缺口明写在脚本头部，不藏）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-kb-s3-timeline",
+    group: "contract",
+    label: "S3 时间复盘页：只读派生／两种空态分得开／时间口径只有一处",
+    cmd: "node scripts/check-kb-s3-timeline.mjs",
+    selfSkipOk: "S3 尚未实现（没有文件带 KB-S3-TIMELINE 标记）⇒ 判据先行阶段没有可检查对象；落地后本条立即有对象",
+    incident:
+      "2026-10-01：R105=A 采用的知识层 Phase 1 出口判据里，S3 三条此前只是散文 ✗。三类坏法都不炸不报错：" +
+      "① 读路径上补一次写（回填／打点）⇒ 派生数据成了第二份真相源；" +
+      "② 把「有页面但没活动」与「没有页面」折成一句「暂无数据」⇒ 用户分不清（与 check-locked-loud 同族）；" +
+      "③ 今天本地时区分桶、明天另一处用 UTC ⇒ 同一条活动会换一天。" +
+      "契约写在脚本头部：带 KB-S3-TIMELINE 标记的文件为检查面，须满足只读 ＋ TIMELINE_STATES 两个互异状态 ＋ TIMELINE_DAY_BUCKET 一处（export/pub）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-kb-s4-map",
+    group: "contract",
+    label: "S4 知识地图：关系可重建／上限＋截断明示／不与既有关系口径打架",
+    cmd: "node scripts/check-kb-s4-map.mjs",
+    selfSkipOk: "S4 尚未实现（没有文件带 KB-S4-MAP 标记）⇒ 判据先行阶段没有可检查对象；落地后本条立即有对象",
+    incident:
+      "2026-10-01：同上（R105=A）。本仓已有 GraphView／BacklinksPanel／get_backlinks／list_block_backlinks，" +
+      "S4 再画一张地图最容易出三类不炸不报错的坏法：① 把关系存下来 ⇒ 不再能从内容重建（INV-KB-derived-rebuildable）；" +
+      "② 大库上默默只画前 N 条 ⇒ 「悄悄截断」（本仓逐字罚过）；③ 第三套 [[ 匹配算法 ⇒ 同一份内容在两个视图里连出不同的边。" +
+      "契约写在脚本头部：带 KB-S4-MAP 标记的文件为检查面，须满足不持久化关系 ＋ GRAPH_NODE_CAP 带数字 ＋ GRAPH_TRUNCATED 成对 ＋ 复用既有关系出处。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-search-platform-parity",
     group: "contract",
     label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
