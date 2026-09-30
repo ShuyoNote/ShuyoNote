@@ -239,7 +239,16 @@ pub fn is_lan_base(url: &str) -> bool {
     is_private_ipv4(host)
 }
 
-/// RFC 1918 三段 ＋ 链路本地（`169.254/16`）。`127/8` **不算**：回环不是"网段里的别人"。
+/// RFC 1918 三段 ＋ 链路本地（`169.254/16`）＋ **CGNAT 共享段（`100.64/10`）**。
+/// `127/8` **不算**：回环不是"网段里的别人"。
+///
+/// ⚠️ 最后那一段是 **owner 2026-09-30 拍 D14（放行 CGNAT）**：`100.64.0.0/10`（RFC 6598）
+/// **Tailscale 默认就用它**，而它**不是** RFC 1918、也**不是**链路本地 ⇒ 不放行 ⇒
+/// 对端的 `hub_base` 会被 [`resolve_base`] 静默跳过。
+/// ⚠️ **这是与 `mesh::is_lan_only` 成对的第二把尺**：两张表**必须同时放宽**
+/// （作者注释见 [`announce_for_own_hub`]），判据 `mesh::tests::the_two_lan_range_tables_agree`
+/// 逐地址比对两者，防"只改一把"。⚠️ std 的 `Ipv4Addr::is_shared()` 在 MSRV 1.94 与 stable 1.98
+/// 上都还是 unstable（`E0658` / issue #27709）⇒ 手写这一段。
 fn is_private_ipv4(host: &str) -> bool {
     let parts: Vec<&str> = host.split('.').collect();
     if parts.len() != 4 {
@@ -258,6 +267,7 @@ fn is_private_ipv4(host: &str) -> bool {
         [172, b, ..] if (16..=31).contains(&b) => true,
         [192, 168, ..] => true,
         [169, 254, ..] => true,
+        [100, 64..=127, ..] => true, // ⚠️ D14：`100.64.0.0/10`（含两端）
         _ => false,
     }
 }
@@ -691,7 +701,11 @@ mod tests {
         assert!(is_lan_base("http://172.16.3.4:8787"));
         assert!(is_lan_base("http://169.254.1.1:8787"));
         assert!(is_lan_base("http://192.168.1.5")); // 无端口也算（默认端口由拼 URL 那一侧决定）
+        // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10`（Tailscale 默认段）也算。
+        assert!(is_lan_base("http://100.100.1.2:8787"));
         assert!(!is_lan_base("http://172.32.0.1:8787")); // 出了 172.16/12
+        assert!(!is_lan_base("http://100.63.255.255:8787")); // 出了 100.64/10（下界外一格）
+        assert!(!is_lan_base("http://100.128.0.1:8787")); // 出了 100.64/10（上界外一格）
         assert!(!is_lan_base("http://192.168.1.256")); // 非法八位组
         assert!(!is_lan_base("http://192.168.1.5:8787:9")); // 两个冒号
         assert!(!is_lan_base("http://192.168.1 .5:8787")); // 空白
@@ -882,9 +896,13 @@ mod tests {
             ("http://192.168.1.5:8787", true),  // 该代言
             ("http://10.0.0.7", true),          // 该代言（不带端口也认）
             ("http://169.254.1.1:8787", true),  // 该代言（链路本地）
+            // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：Tailscale 默认段也要能代言 ——
+            //    **两把尺一起放宽**才保得住本判据（只改 `mesh::is_lan_only` ⇒ 这里立刻红）。
+            ("http://100.100.1.2:8787", true),  // 该代言（CGNAT 共享段）
             ("https://shuyo.cn/sync", false),   // 公网 ⇒ 不许代言
             ("http://127.0.0.1:8787", false),   // 回环不是"网段里的别人" ⇒ 不许代言
             ("http://172.32.0.1:8787", false),  // 出了 172.16/12 ⇒ 不许代言
+            ("http://100.128.0.1:8787", false), // 出了 100.64/10 ⇒ 不许代言（D14 不许写宽）
             ("", false),                        // 没配置 ⇒ 不许代言
         ];
         for (url, should_produce) in cases {

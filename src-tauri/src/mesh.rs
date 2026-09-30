@@ -720,9 +720,31 @@ fn not_yet(path: &str) -> Option<&'static str> {
 // ─── 只绑内网（与甲-2 同一口径；丙里更紧张：**每台都开窗**） ───
 
 /// 这个地址是不是"只在本网段可达"。
+///
+/// ⚠️ **`100.64.0.0/10` 必须算"本网段"** —— **owner 2026-09-30 拍 D14（放行 CGNAT）**。
+/// 理由三条：
+/// 1. **Tailscale 默认就用这一段**（RFC 6598 共享地址空间）⇒ 不放行 ⇒ 用户**开不了窗**，
+///    因为 [`checked_bind`] 是**拒绝启动**（不是"连不上"）；
+/// 2. std 的 `Ipv4Addr::is_private()` **只含 RFC 1918 三段**、`is_link_local()` **只含 `169.254/16`**
+///    ⇒ 这一段**三个谓词全不满足**（本机实测：`100.64.0.1`／`100.100.1.2`／`100.127.255.254` 全 `false`）；
+/// 3. ⚠️ std 里**正好**有个 `Ipv4Addr::is_shared()`（就是这一段），但它在 **MSRV 1.94.0 与
+///    stable 1.98.1 上都还是 unstable**（`error[E0658] use of unstable library feature 'ip'`，
+///    issue #27709，本机实测）⇒ **只能手写这一段**。
+///
+/// ⚠️ **与 `lan::is_private_ipv4` 是同一件事的另一把尺，必须同时放宽**：那边管消费侧
+/// （认不认对端公告里的 `hub_base`）。只改这一处 ⇒ 甲尺放行、乙尺仍跳过对端 ⇒ **静默不通**
+/// （`lan.rs:270` 的作者注释原话：「这里必须和消费侧用同一把尺」）。
+/// 判据 `the_two_lan_range_tables_agree` 与每条 CGNAT 用例把这条钉住。
 pub fn is_lan_only(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        // ⚠️ 第三支 `[100, 64..=127, ..]` ＝ **D14**（`100.64.0.0/10`，含两端）；
+        //    公网地址仍然落在这三支之外 ⇒ 照旧被拒（不许把 D14 读成"放宽了内网的定义"）。
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || matches!(v4.octets(), [100, 64..=127, ..])
+        }
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00
@@ -747,7 +769,9 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
     if !is_lan_only(addr.ip()) {
         return Err(format!(
             "拒绝启动：{addr} 不是内网地址（简报 §7 的边界：网格只在自己网段里）。\
-             同一网络请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x，本机自测用 127.0.0.1。"
+             同一网络请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x；\
+             虚拟局域网（Tailscale 等）请用 100.64-127.x.x（VPN 网卡上的那个地址）；\
+             本机自测用 127.0.0.1。"
         ));
     }
     Ok(addr)
@@ -1324,6 +1348,76 @@ mod tests {
         for bad in ["0.0.0.0:8788", "8.8.8.8:8788", "example.com:8788", "", "127.0.0.1"] {
             assert!(checked_bind(bad).is_err(), "{bad} 不该被放行");
         }
+        // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10` 现在**绑得上** ——
+        //    这是 Tailscale 默认段，不放行 ⇒ 用户**开不了窗**。
+        assert!(checked_bind("100.100.1.1:8788").is_ok(), "D14：CGNAT 必须绑得上");
+        // ⚠️ 而**出段的两条仍拒**：D14 只放 `100.64/10`，不许顺手放宽成"100/8 全收"。
+        for bad in ["100.63.255.255:8788", "100.128.0.1:8788"] {
+            assert!(checked_bind(bad).is_err(), "{bad} 出了 100.64/10，不许被放行");
+        }
+    }
+
+    /// ⚠️ **D14（owner 2026-09-30：放行 CGNAT）** —— `100.64.0.0/10` 是**含两端**的十位段
+    /// （`100.64.0.0` ~ `100.127.255.255`）⇒ 边界**逐条**钉住，防"写宽/写窄"。
+    /// 同时**两把尺一起钉**（甲尺 `is_lan_only` ＋ 乙尺 `lan::is_lan_base`）：
+    /// 只放宽一把 ⇒ 绑得上而认不得（或反过来），**没有编译期信号**。
+    #[test]
+    fn the_cgnat_shared_range_is_exactly_100_64_over_10() {
+        for ok in ["100.64.0.1", "100.100.1.1", "100.127.255.254"] {
+            assert!(is_lan_only(ok.parse().unwrap()), "D14：{ok} 在 100.64/10 里，必须算内网");
+            assert!(
+                crate::lan::is_lan_base(&format!("http://{ok}:8787")),
+                "D14：{ok} 在乙尺（消费侧）上也必须放行"
+            );
+        }
+        for bad in ["100.63.255.255", "100.128.0.1"] {
+            assert!(!is_lan_only(bad.parse().unwrap()), "{bad} 出了 100.64/10，不许当内网");
+            assert!(
+                !crate::lan::is_lan_base(&format!("http://{bad}:8787")),
+                "{bad} 出段 ⇒ 乙尺也不许放行"
+            );
+        }
+        // ⚠️ **不许放宽**：D14 只加这一段 —— 公网照旧落到三支之外。
+        assert!(!is_lan_only("8.8.8.8".parse().unwrap()));
+        assert!(checked_bind("8.8.8.8:8788").is_err(), "D14 不许把公网放进来");
+    }
+
+    /// ⚠️ **横切判据（D14 之后新增）**：仓里**有两张网段表**，它们必须对同一批地址给同一个结论 ——
+    /// 甲尺 [`is_lan_only`]（管"绑不绑得上"＋"报不报得出去"）与
+    /// 乙尺 `lan::is_private_ipv4`（经 `lan::is_lan_base`；管"认不认对端的 `hub_base`"＋"代不代言"）。
+    /// 只改一把 ⇒ **没有编译期信号、单测也照绿**，现象是「两台都开着、都在喊、谁都拉不动谁」
+    /// （`lan.rs` 的作者注释原话：「这里必须和消费侧用同一把尺」）。
+    ///
+    /// ⚠️⚠️ **`127/8` 必须显式排除**：它**今天就不一致、而且是设计如此** ——
+    /// `is_lan_only(127.0.0.1) == true`，而 `is_lan_base` 明确把回环排除在"网段里的别人"之外
+    /// （`lan.rs` 的口径；`announced_base` 另有一道 `is_loopback()` 挡着）。
+    /// 不给这一格例外 ⇒ **本判据上线第一天就假红**（`checked_bind` 的正例里就有 `127.0.0.1:0`）。
+    /// ⚠️ 只覆盖 IPv4：乙尺**刻意只认 http ＋ 私有 IPv4**（它自己的文档那句）⇒ IPv6 不适用。
+    #[test]
+    fn the_two_lan_range_tables_agree() {
+        let addrs = [
+            // 段内（含 D14 新放的 CGNAT）
+            "100.64.0.1", "100.100.1.1", "100.127.255.254",
+            "10.0.0.1", "172.16.3.4", "172.31.255.254", "192.168.1.5", "169.254.1.1",
+            // 段外边界：一个都不许算内网
+            "100.63.255.255", "100.128.0.1", "100.0.0.1",
+            "172.15.0.1", "172.32.0.1", "192.167.1.1", "192.169.1.1",
+            "169.253.1.1", "169.255.1.1", "11.0.0.1",
+            // 公网
+            "8.8.8.8", "1.1.1.1",
+        ];
+        for a in addrs {
+            let ip: IpAddr = a.parse().unwrap();
+            let by_mesh = is_lan_only(ip);
+            let by_lan = crate::lan::is_lan_base(&format!("http://{a}:8787"));
+            assert_eq!(
+                by_mesh, by_lan,
+                "两张网段表对 {a} 的结论不一致（甲尺 {by_mesh} ／ 乙尺 {by_lan}）—— D14 要求同时放宽"
+            );
+        }
+        // ⚠️ 回环是**唯一**允许不一致的那一格（设计如此，见本判据头注）。
+        assert!(is_lan_only("127.0.0.1".parse().unwrap()));
+        assert!(!crate::lan::is_lan_base("http://127.0.0.1:8787"));
     }
 
     // ─────────────────────────── ★★ 判据：去掉中枢仍然收敛 ───────────────────────────
@@ -1822,6 +1916,11 @@ mod tests {
     fn only_a_real_lan_window_address_may_be_announced() {
         let ok: SocketAddr = "192.168.1.5:8788".parse().unwrap();
         assert_eq!(announced_base(ok).as_deref(), Some("http://192.168.1.5:8788"));
+        // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：绑在 `100.64/10`（Tailscale 默认段）上的窗口
+        //    必须**报得出去** —— 否则对端 `invitable_base` 拿到 `None` ⇒ 永远拉不到我们
+        //    （"绑得上但不报"＝ D14 只做了一半）。
+        let cgnat: SocketAddr = "100.100.1.1:8788".parse().unwrap();
+        assert_eq!(announced_base(cgnat).as_deref(), Some("http://100.100.1.1:8788"));
         for bad in ["127.0.0.1:8788", "0.0.0.0:8788", "8.8.8.8:8788", "192.168.1.5:0"] {
             let a: SocketAddr = bad.parse().unwrap();
             assert_eq!(announced_base(a), None, "{bad} 不该被宣告");
