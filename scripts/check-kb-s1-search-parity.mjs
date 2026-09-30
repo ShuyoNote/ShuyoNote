@@ -19,7 +19,8 @@
 //       TS `src/lib/extract/normalize-parity.test.ts:20`
 //   于是 S1 ③ 的判据是这四条（都能机核 ✓）：
 //     ① **夹具只有一份**：`tests/search-parity.json` —— JSON 可解析、`note` 在（口径要自证 ✓）、
-//        `cases` ≥ 2、每条有非空 `query` 与非空 `expect`（命中集合，**顺序无关** ✓）。
+//        `cases` ≥ 2、每条有非空 `query` 与 `expect`（命中集合，**顺序无关** ✓；**负例就写 `[]`** ✓），
+//        且**至少一条非空** —— 全是空集的夹具是空壳 ✗（证明不了「两侧在同一处命中」✓）。
 //     ② **Rust 侧真消费**：`src-tauri/src/**/*.rs` 里出现 `include_str!("../../tests/search-parity.json")`。
 //     ③ **TS 侧真消费**：`src/**/*.test.ts*` 里读同一份（出现 `search-parity.json` ＋ `tests` 两处特征）。
 //     ④ **不许两份**：全仓只允许一处叫 `search-parity.json` 的文件（两份夹具 ＝ 各说各话 ✗）。
@@ -86,13 +87,22 @@ export function judge(root) {
       out.push("✗ " + FIXTURE_REL + " 只有 " + cases.length + " 条用例 ⇒ **空壳夹具** ✗"
         + "（一条用例证明不了两个平台在**不同形状**下也一致 ✓；S1 ③ 要的是「同一查询 ⇒ 命中集合相等」✓）");
     } else {
+      let nonEmpty = 0;
       cases.forEach((c, i) => {
         const nm = "#" + (i + 1) + (c && c.name ? "（" + c.name + "）" : "");
         if (!c || typeof c.query !== "string" || !c.query.trim()) out.push("✗ 用例 " + nm + " 缺非空 `query` ✗");
-        if (!c || !Array.isArray(c.expect) || c.expect.length === 0) {
-          out.push("✗ 用例 " + nm + " 缺非空 `expect`（**期望的命中集合**）✗ ⇒ 没有期望值就没有「相等」可断 ✓");
-        }
+        // ⚠️ 自测当场抓到的**我自己的假红**（2026-10-01）：第一版要求每条用例的 `expect` **非空** ✗ ——
+        //   而**负例**（「这条查询两侧都该给空集」✓）的正确期望就是 `[]` ⇒ 它被误判成"空壳" ✗。
+        //   ⇒ 改成：`expect` **必须在**（负例也要显式写 `[]` ✓），但**整份夹具至少要有一条非空** ✓
+        //     （全是空集才是空壳 —— 它证明不了「两侧在同一处命中」✗）。
+        if (!c || !Array.isArray(c.expect)) {
+          out.push("✗ 用例 " + nm + " 缺 `expect`（**期望的命中集合**，负例也要显式写 `[]` ✓）✗ ⇒ 没有期望值就没有「相等」可断 ✓");
+        } else if (c.expect.length > 0) nonEmpty++;
       });
+      if (nonEmpty === 0) {
+        out.push("✗ " + FIXTURE_REL + " 的用例**全是空集** ⇒ 空壳夹具 ✗"
+          + "（至少要有一条真命中的用例 ✓：全空的夹具证明不了「两侧在同一处命中」✗）");
+      }
     }
   }
 
@@ -162,6 +172,8 @@ if (argv.includes("--self-test")) {
     ["变异③（夹具不是合法 JSON）", () => { write(FIXTURE_REL, "{ 坏 JSON"); }, 1],
     ["变异④（空壳夹具：只 1 条用例）", () => { write(FIXTURE_REL, JSON.stringify({ note: "x", cases: [{ query: "a", expect: ["p1"] }] })); }, 1],
     ["变异⑤（用例缺 expect ⇒ 没有「相等」可断）", () => { write(FIXTURE_REL, JSON.stringify({ note: "x", cases: [{ query: "a", expect: ["p1"] }, { query: "b" }] })); }, 1],
+    ["变异⑦（全部用例都是空集 ⇒ 空壳）", () => { write(FIXTURE_REL, JSON.stringify({ note: "x", cases: [{ query: "a", expect: [] }, { query: "b", expect: [] }] })); }, 1],
+    ["正例②（**负例写 `[]` 必须合法** ⇒ 不许判红 —— 这是我第一版的假红 ✓）", () => { write(FIXTURE_REL, JSON.stringify({ note: "x", cases: [{ query: "a", expect: ["p1"] }, { query: "b", expect: [] }] })); }, 0],
     ["变异⑥（出现第二份夹具 ⇒ 各说各话）", () => { write("src-tauri/tests/search-parity.json", goodFixture); }, 1],
   ];
   let pass = 0;
