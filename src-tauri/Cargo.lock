@@ -2634,6 +2634,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "if-addrs"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0a05c691e1fae256cf7013d99dad472dc52d5543322761f83ec8d47eab40d2b"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "imap-proto"
 version = "0.16.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4947,6 +4957,7 @@ dependencies = [
  "hex",
  "hmac",
  "icu_normalizer",
+ "if-addrs",
  "jni 0.21.1",
  "jni 0.22.4",
  "libc",

@@ -77,6 +77,22 @@ minisign-verify = "0.2"
 # RSS 看门狗读子进程常驻内存：Linux 要页大小（sysconf），macOS 走 proc_pidinfo。
 # 它本来就在依赖树里（随 rusqlite/tokio 进来），这里只是显式声明。
 libc = "0.2"
+# ⭐ **D1（owner 2026-09-30）「地址自动」**：绑了通配（`0.0.0.0`）之后要**枚举本机地址**，
+# 才知道该往公告里写哪个（＝别人拉得到的那一个）。枚举要两个**平台 API ＋ 链表遍历**：
+# POSIX 的 `getifaddrs(3)` ／ Windows 的 `GetAdaptersAddresses`。
+#
+# ⚠️ **为什么这次破例引一个新包**（上面 `disk.rs` 那段写的是"只为**一次系统调用**引新包不划算"）：
+#   ① 那条规矩的形状是"**一次**系统调用"（`statvfs` / `GetDiskFreeSpaceExW`），而这里是
+#      **两套平台 API ＋ 指针链表遍历**（自己写 ≈120 行 `unsafe`，其中 **Windows 那一半
+#      在 macOS 上根本编不了** ⇒ 等于往 CI 里塞一段本机无法验证的 unsafe）；
+#   ② `if-addrs` 的依赖**只有 `libc` ＋ `windows-sys`** —— **两个都已经在本仓 lockfile 里**
+#      （就是 `disk.rs` 用的那两个）⇒ **不新增任何传递依赖**，只是把它们包成一个薄封装；
+#   ③ 维护活跃（0.15.0 ＝ 2026-02-08；0.14.0 ＝ 2025-07），许可宽松（MIT OR BSD-3-Clause），
+#      上游 CI 覆盖 posix（含 apple/android）＋ windows；
+#   ④ `rust-version` 未声明（crate 无 MSRV 声明）⇒ 由**本仓**的构建证明（MSRV 1.94 声明在 `Cargo.toml` 顶部）。
+# ⚠️ 默认**不**返回链路本地地址（它的 `link-local` feature 默认关）—— 与本仓"报一个对端能用的地址"
+#    一致（169.254 只在一条链上有效）。取舍与判据见 `src/mesh.rs::announced_bases_with`。
+if-addrs = "0.15"
 # 插件 JS 运行时。⚠️ **移动端必须额外开 `jsvalue-enum`**——理由见下面
 # [target.'cfg(any(target_os = "android", target_os = "ios"))'] 那段（真机实测的 panic）。
 boa_engine = "0.21.1"

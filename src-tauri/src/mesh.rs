@@ -619,14 +619,27 @@ pub struct MeshConfigState {
 /// ★ 它要回答的最要紧的一件事：**这个窗口别人拉得到吗**。绑在回环上时网格自己照常工作
 /// （它能拉别人），但**没人能拉它** —— 那正是"不装服务端也能同步"只做了一半的形态，
 /// 必须说出来，不能只回一句"已保存"。
+///
+/// ★ **D1（owner 2026-09-30）之后多两格**：绑**通配**时窗口地址本身是 `0.0.0.0` ——
+/// 那既不是回环、也不是"能连接的地址"，所以上面那条"回环 / 端口 0"的话**对它不成立**。
+/// 通配要分两种如实说：① 枚举到了候选 ⇒ 报出**哪一个**（用户才知道对端看到的是什么）；
+/// ② 一个候选都没有（这台只有回环/公网地址）⇒ **可操作**地说"别人拉不到 ＋ 去查网卡"
+/// （`INV-VLAN-bind-must-be-reachable`：这一档最常见的失败就是**静默不工作**）。
 pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>) -> MeshConfigState {
     let enabled = cfg.bind.is_some();
     let note = match (enabled, window) {
         (false, _) => "网格这一档关着（没配监听地址 ⇒ 不听也不喊）".to_string(),
         (true, None) => "配了监听地址，但窗口还没起来（见日志）".to_string(),
-        (true, Some(addr)) => match announced_base(addr) {
-            Some(base) => format!("网格开着：窗口在 {base}，**能被别人拉到**"),
-            None => format!(
+        (true, Some(addr)) => match (announced_base(addr), addr.ip().is_unspecified()) {
+            (Some(base), true) => format!(
+                "网格开着：窗口**听所有网卡**（绑的是 {addr}），报出去的是枚举到的 {base} —— **能被别人拉到**"
+            ),
+            (Some(base), false) => format!("网格开着：窗口在 {base}，**能被别人拉到**"),
+            (None, true) => format!(
+                "网格开着：窗口**听所有网卡**（绑的是 {addr}），但**枚举不出任何可以宣告的内网/VPN 地址** —— \
+                 ⚠️ 别人拉不到（这一台只有回环/公网地址？插上网线或虚拟网卡再看）"
+            ),
+            (None, false) => format!(
                 "网格开着：窗口在 {addr} —— ⚠️ 回环 / 端口 0，**别人拉不到**（这一台只能拉别人）"
             ),
         },
@@ -655,18 +668,87 @@ pub fn stop_window(space_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// ★ 丙-③-b-2b：这个**实际绑上的**窗口地址该不该写进公告（＝别人能不能来拉我）。
+/// ★ **D1（owner 2026-09-30 拍"把 `0.0.0.0 ⇒ Err` 反过来"）**：绑**通配**时该报哪些地址。
+///
+/// 这就是"地址自动"的另一半。为什么它必须存在：`announced_base` 的输入是"**实际绑上的那个**地址"，
+/// 而绑通配时那个地址是 `0.0.0.0` —— 它**不是一个可连接的地址**（对端拿它去连就是连自己）
+/// ⇒ 只把 `checked_bind` 放宽成"允许通配"的话，用户能开窗、**却没人拉得到他**。
+///
+/// 口径四条（**全在这一个纯函数里** ⇒ 判据喂一组假网卡就能钉住，不必有真网卡）：
+/// 1. **端口 0 ⇒ 空**（还没绑上，报一个没人算得出的端口没有意义）；
+/// 2. 绑的是**具体地址** ⇒ 只报它自己（与 D1 之前的行为**逐字相同**）；
+/// 3. 绑的是**通配**（`0.0.0.0` / `[::]`）⇒ 报**枚举到的每一个**可达候选；
+/// 4. 候选的过滤**与开窗那一关同一把尺**（`is_lan_only`）：去掉回环 / 通配 / 公网；
+///    链路本地**排最后**（它是"这条链上"的地址，最不像对端能用的），其余按地址字节排 ⇒ **确定性**
+///    （同一组网卡每次跑出来的顺序一样，判据才能逐字节比）。
+///    ⚠️ **绝不许报 `0.0.0.0`**：见上。
+///    ⚠️ **IPv6 一律不报**（理由见下面那段 `retain`）：消费侧只认 IPv4 基址。
+pub fn announced_bases_with(addr: SocketAddr, locals: &[IpAddr]) -> Vec<String> {
+    if addr.port() == 0 {
+        return Vec::new();
+    }
+    let mut ips: Vec<IpAddr> = if addr.ip().is_unspecified() {
+        // 绑通配 ⇒ 候选就是**这台机器的网卡**（由调用方给：探针/判据喂假结果，见 `local_addrs`）。
+        locals.to_vec()
+    } else {
+        vec![addr.ip()]
+    };
+    // ⚠️ **只要 IPv4**：消费侧 `lan::is_lan_base` **只认 `http://<私有 IPv4>[:端口]`**
+    //    —— 它自己的口径原话是「刻意不支持 IPv6 与主机名」。⇒ 报一个 IPv6 基址，就是报一个
+    //    **对方必然会跳过**的地址（正是"往返性质"退化时的形状，见
+    //    `lan::tests::an_announce_we_produce_is_always_one_we_would_accept`）。
+    //    宁可这一轮不宣告（`config_state` 会如实说"别人拉不到"），也不报一个没人会采纳的地址。
+    ips.retain(|ip| matches!(ip, IpAddr::V4(_)));
+    ips.retain(|ip| !ip.is_loopback() && !ip.is_unspecified() && is_lan_only(*ip));
+    ips.sort_by_key(|ip| (is_link_local_addr(*ip), ip_bits(*ip)));
+    ips.dedup();
+    ips.into_iter().map(|ip| format!("http://{}", SocketAddr::new(ip, addr.port()))).collect()
+}
+
+fn is_link_local_addr(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+    }
+}
+
+/// 排序键：**数值**而不是字符串 —— `"10.0.0.1" < "9.0.0.1"`（字符串序）会给出反直觉的顺序，
+/// 而这条排序要能被判据逐字节钉住。IPv4 排在 IPv6 前。
+fn ip_bits(ip: IpAddr) -> (u8, u128) {
+    match ip {
+        IpAddr::V4(v4) => (0, u32::from(v4) as u128),
+        IpAddr::V6(v6) => (1, u128::from(v6)),
+    }
+}
+
+/// 枚举本机地址 —— **唯一碰系统的那一处**（其余全是纯函数）。
+///
+/// 失败 ⇒ **空**（不 panic、不静默编一个）：枚举不到只意味着"这一轮不宣告"，
+/// 而"别人拉不到"由 `config_state` 的人话如实说出来（`INV-VLAN-bind-must-be-reachable`）。
+/// ⚠️ 它**不做任何过滤** —— 策略全在 [`announced_bases_with`] 里（一处口径）。
+/// 依赖选型（为什么是 `if-addrs` 而不是自己写 `getifaddrs`／`GetAdaptersAddresses`）见 `Cargo.toml`。
+pub fn local_addrs() -> Vec<IpAddr> {
+    match if_addrs::get_if_addrs() {
+        Ok(ifs) => ifs.into_iter().map(|i| i.addr.ip()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// ★ 丙-③-b-2b：这个**实际绑上的**窗口地址该报哪个（＝别人能不能来拉我）。
 ///
 /// 三条**都要**满足，一条不满足就**不宣告**（宁可这一轮不露面，也不要报一个拉不到的地址）：
 /// 1. **端口不是 0** —— 端口 0 的意思是"还没绑上"，宣告它等于报一个没人算得出的端口；
 /// 2. **不是回环** —— `lan::is_lan_base` 明确把 `127/8` 排除（"回环不是网段里的别人"），
 ///    宣告一个本机地址只会往网段里灌噪音；
 /// 3. **是本网段地址**（`is_lan_only`，与开窗那一关同一把尺）。
+///
+/// ★ **D1 之后多一条**：绑**通配**时 ⇒ 从 [`local_addrs`] 枚举到的候选里取**第一个**
+/// （见 [`announced_bases_with`] 的四条口径）⇒ 于是"**换网不失效**"是**每一轮重新算**出来的：
+/// `lan_state` 的公告循环每轮都调它一次，**不需要**任何缓存、订阅或"网卡变化"通知。
+/// ⚠️ **只报第一个**是今天**唯一**能做的形态：一次报**多个** `hub_base` 要动 `LanAnnounce`
+/// （`lan.rs` 的线上字段）—— 那条路不在本任务写域里，属显式决定（见报告 §拿不准）。
 pub fn announced_base(addr: SocketAddr) -> Option<String> {
-    if addr.port() == 0 || addr.ip().is_loopback() || !is_lan_only(addr.ip()) {
-        return None;
-    }
-    Some(format!("http://{addr}"))
+    announced_bases_with(addr, &local_addrs()).into_iter().next()
 }
 
 // ─────────────────────────── 供的那一侧（最小 HTTP/1.1，不引依赖） ───────────────────────────
@@ -778,11 +860,17 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
         bind.parse()
             .map_err(|_| format!("监听地址只能写字面 `IP:端口`（或 `localhost:端口`）：{bind}"))?
     };
-    if !is_lan_only(addr.ip()) {
+    // ⚠️ **D1（owner 2026-09-30：把"`0.0.0.0 ⇒ Err`"反过来）** ⇒ **通配绑定放行**。
+    //    它就是"用户不用填 IP"的前提：听**所有**网卡（含以后才插上的那张、含虚拟网卡），
+    //    至于往公告里写哪个地址，由 `announced_bases_with` 从枚举结果里算（不是 0.0.0.0）。
+    //    ⚠️ 而**具体公网地址仍然拒**：D1 放的是"听我自己的所有网卡"，**不是**"公网也能听"
+    //    （既有判据钉着 `8.8.8.8 ⇒ Err`，那是本任务的**不许放宽**证据）。
+    if !addr.ip().is_unspecified() && !is_lan_only(addr.ip()) {
         return Err(format!(
             "拒绝启动：{addr} 不是内网地址（简报 §7 的边界：网格只在自己网段里）。\
              同一网络请用 192.168.x.x / 10.x.x.x / 172.16-31.x.x；\
              虚拟局域网（Tailscale 等）请用 100.64-127.x.x（VPN 网卡上的那个地址）；\
+             不想手填就写 `0.0.0.0:<端口>`（＝听所有网卡，地址由系统报出）；\
              本机自测用 127.0.0.1。"
         ));
     }
@@ -1399,9 +1487,19 @@ mod tests {
         for ok in ["127.0.0.1:0", "localhost:8788", "192.168.1.5:8788", "10.1.2.3:1", "[::1]:8788"] {
             assert!(checked_bind(ok).is_ok(), "{ok}");
         }
-        for bad in ["0.0.0.0:8788", "8.8.8.8:8788", "example.com:8788", "", "127.0.0.1"] {
+        for bad in ["8.8.8.8:8788", "example.com:8788", "", "127.0.0.1"] {
             assert!(checked_bind(bad).is_err(), "{bad} 不该被放行");
         }
+        // ⭐ **D1（owner 2026-09-30：把"`0.0.0.0 ⇒ Err`"反过来）** ⇒ **通配放行**：
+        //    "用户不用手填 IP、换网也不失效"的第一半就是它。⚠️ 第二半是"报得出"
+        //    （`announced_bases_with`），只放宽这一关 ⇒ 能开窗但没人拉得到（见那条判据）。
+        for ok in ["0.0.0.0:8788", "0.0.0.0:0", "[::]:8788"] {
+            assert!(checked_bind(ok).is_ok(), "D1：通配必须绑得上：{ok}");
+        }
+        // ⚠️ **不许放宽**：D1 放的是"听我自己的所有网卡"，**不是**"公网也能听"
+        //    ⇒ 具体公网字面地址**仍旧 Err**（这条是本任务"没有顺手放宽"的证据）。
+        assert!(checked_bind("8.8.8.8:8788").is_err(), "D1 不许把公网放进来");
+        assert!(checked_bind("1.1.1.1:8788").is_err(), "D1 不许把公网放进来");
         // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10` 现在**绑得上** ——
         //    这是 Tailscale 默认段，不放行 ⇒ 用户**开不了窗**。
         assert!(checked_bind("100.100.1.1:8788").is_ok(), "D14：CGNAT 必须绑得上");
@@ -1975,10 +2073,132 @@ mod tests {
         //    （"绑得上但不报"＝ D14 只做了一半）。
         let cgnat: SocketAddr = "100.100.1.1:8788".parse().unwrap();
         assert_eq!(announced_base(cgnat).as_deref(), Some("http://100.100.1.1:8788"));
-        for bad in ["127.0.0.1:8788", "0.0.0.0:8788", "8.8.8.8:8788", "192.168.1.5:0"] {
+        // ⚠️ 这里**故意不再断言** `announced_base("0.0.0.0:8788") == None`：D1 之后它的结果
+        //    **取决于这台机器真有哪些网卡** ⇒ 放进"固定期望"的判据里就是**看机器脸色**。
+        //    通配那一支改由下面那条**喂假网卡**的判据钉（确定性），并在那里断言"绝不许报 0.0.0.0"。
+        for bad in ["127.0.0.1:8788", "8.8.8.8:8788", "192.168.1.5:0"] {
             let a: SocketAddr = bad.parse().unwrap();
             assert_eq!(announced_base(a), None, "{bad} 不该被宣告");
         }
+    }
+
+    /// ⭐ **判据②（D1 的另一半）：绑通配 ⇒ 报的是"枚举到的那个可达地址"，绝不报 `0.0.0.0`。**
+    ///
+    /// ⚠️ 为什么必须**喂假网卡**（`announced_bases_with` 的第二个参数）：真网卡是**机器相关**的
+    /// —— 本机可能只有回环，也可能有 Wi-Fi ＋ VPN 三张卡 ⇒ 拿真网卡写"固定期望"就是看机器脸色。
+    /// 本仓既有纪律同此：**"枚举网卡"这件事本机只能验函数，验不了系统**（真换网/真网卡属 M 档）。
+    #[test]
+    fn a_wildcard_bind_announces_enumerated_addresses_and_never_the_wildcard() {
+        let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        // 一台"典型"的机器：一张 Wi-Fi（私有）＋ 一张 VPN（D14 放行的 CGNAT 段）
+        // ＋ 回环 ＋ 链路本地 ＋ 一个公网地址（后三个都**不许**被报出去）。
+        let locals: Vec<IpAddr> = [
+            "192.168.1.5", "100.100.1.2", "127.0.0.1", "169.254.10.20", "8.8.8.8", "0.0.0.0",
+        ]
+        .iter()
+        .map(|s| s.parse().unwrap())
+        .collect();
+        let got = announced_bases_with(wild, &locals);
+        // 三个候选都在，**顺序**是：非链路本地按地址字节在前，链路本地**排最后**。
+        // ⚠️ 链路本地**仍然报**（不排除）—— 与 `is_lan_only` / `lan::is_lan_base` 一致：
+        //    169.254 在本仓的定义里**是合法内网地址**（VL-1 的往返判据钉着它）。
+        //    而**默认**的枚举（`if-addrs` 的 `link-local` feature 默认关，见 `Cargo.toml`）
+        //    本来就不会给出链路本地 ⇒ "排最后"是给"真给了它"那一档兜底。
+        assert_eq!(
+            got,
+            vec![
+                "http://100.100.1.2:8788".to_string(),
+                "http://192.168.1.5:8788".to_string(),
+                "http://169.254.10.20:8788".to_string(),
+            ],
+            "通配要报出枚举到的候选（回环/公网/通配去掉；链路本地排最后）：{got:?}"
+        );
+        // ⚠️ **绝不许报 0.0.0.0** —— 对端拿它去连就是连自己（这正是"只放宽 checked_bind"的坑）
+        assert!(!got.iter().any(|b| b.contains("0.0.0.0")), "{got:?}");
+        assert!(!got.iter().any(|b| b.contains("127.0.0.1")), "回环不是'网段里的别人'：{got:?}");
+        assert!(!got.iter().any(|b| b.contains("8.8.8.8")), "公网不许宣告：{got:?}");
+        // 一个候选都没有（这台只有回环/公网）⇒ **空**，而不是硬编一个
+        assert!(announced_bases_with(wild, &["127.0.0.1".parse().unwrap()]).is_empty());
+        assert!(announced_bases_with(wild, &[]).is_empty());
+        // 端口 0 ＝ 还没绑上 ⇒ 说得出"没有地址"，不报一个没人算得出的端口
+        assert!(announced_bases_with("0.0.0.0:0".parse().unwrap(), &locals).is_empty());
+        // 顺序是**确定性**的：同一组网卡跑两遍逐字节相同（否则判据没法比）
+        assert_eq!(got, announced_bases_with(wild, &locals));
+        // 去重：同一张网卡报两遍 ⇒ 只出现一次
+        let dup: Vec<IpAddr> =
+            ["192.168.1.5", "192.168.1.5"].iter().map(|s| s.parse().unwrap()).collect();
+        assert_eq!(announced_bases_with(wild, &dup).len(), 1);
+        // 链路本地**排在私有之后**（它是"这条链上"的地址，最不像对端能用的）
+        let ll = announced_bases_with(wild, &["169.254.1.1".parse().unwrap(), "10.0.0.9".parse().unwrap()]);
+        assert_eq!(ll, vec!["http://10.0.0.9:8788".to_string(), "http://169.254.1.1:8788".to_string()], "{ll:?}");
+        // ★ **绑具体地址 ⇒ 只报它自己**（与 D1 之前逐字相同：这一支不走枚举）
+        let concrete: SocketAddr = "10.0.0.7:9000".parse().unwrap();
+        assert_eq!(announced_bases_with(concrete, &locals), vec!["http://10.0.0.7:9000".to_string()]);
+        // ⚠️ **IPv6 候选一律丢掉**：消费侧 `lan::is_lan_base` 只认 `http://<私有 IPv4>[:端口]`
+        //    ⇒ 报 IPv6 就是报一个**对方必然跳过**的地址（往返性质退化的形状）。宁可这一轮不宣告。
+        let v6: Vec<IpAddr> = ["fc00::1", "192.168.1.5"].iter().map(|s| s.parse().unwrap()).collect();
+        assert_eq!(
+            announced_bases_with(wild, &v6),
+            vec!["http://192.168.1.5:8788".to_string()],
+            "IPv6 候选不许进公告"
+        );
+        assert!(announced_bases_with(wild, &["fc00::1".parse().unwrap()]).is_empty());
+        // 具体绑在 IPv6 上 ⇒ 也不再宣告（**行为变更**：今天它会报一个对方必然跳过的地址）
+        assert!(announced_bases_with("[fc00::1]:8788".parse().unwrap(), &locals).is_empty());
+    }
+
+    /// ⭐ **判据⑤：绑了通配也真的"拉得通"** —— 这就是"用户不填 IP"那一档的端到端形状。
+    ///
+    /// ⚠️ **回环 ⇒ 只当下界**（本仓纪律）：本判据证明的是"**通配真的在听**、而且**拉得通**"；
+    /// 而"**换了网卡之后仍报得出对端能用的那个地址**"**本机验不了**（要真网卡 ⇒ 属 M 档，
+    /// 与"真机换网"同一格）。
+    #[tokio::test]
+    async fn a_wildcard_bound_window_actually_listens_and_can_be_pulled() {
+        let a = Arc::new(Mutex::new(space_conn("A")));
+        let b = Arc::new(Mutex::new(space_conn("B")));
+        // D1：B **不填任何具体 IP**（用户视角："我不知道该填哪个，让它自己听"）
+        let win_b = start(
+            MeshConfig {
+                bind: "0.0.0.0:0".into(),
+                space_id: "space-x".into(),
+                device_id: "B".into(),
+                token: Some("lan-token".into()),
+                data_dir: None,
+            },
+            b.clone(),
+        )
+        .unwrap();
+        // ① 通配真的落在一个**具体端口**上（而 `local_addr()` 的 IP 仍是 `0.0.0.0`
+        //    ⇒ **它自己不是一个能报给对端的地址**，这就是必须有 `announced_bases_with` 的原因）
+        let bound = win_b.addr();
+        assert!(bound.ip().is_unspecified(), "绑通配时 local_addr 的 IP 是 0.0.0.0：{bound}");
+        assert_ne!(bound.port(), 0, "端口是内核给的具体端口：{bound}");
+        // ② B 在自己窗口上写一页
+        {
+            let c = b.lock().unwrap();
+            local_edit(&c, &page("p1", "乙在通配窗口上写的", 1_000));
+        }
+        // ③ A 去拉 —— 通配窗口**在回环上也听** ⇒ "拉得通"（回环是本档的下界，见头注）
+        let client = reqwest::Client::new();
+        let report = pull_and_absorb(
+            &a,
+            &client,
+            &mesh_peer("B", &format!("http://127.0.0.1:{}", bound.port())),
+            "space-x",
+            Some("lan-token"),
+        )
+        .await
+        .unwrap();
+        assert_eq!((report.fetched, report.applied), (1, 1), "{report:?}");
+        assert_eq!(
+            projection_of(&a.lock().unwrap(), "p1"),
+            projection_of(&b.lock().unwrap(), "p1"),
+            "拉过来的内容必须与 B 逐字节一致"
+        );
+        // ④ ★ 而**报出去的**绝不是 `0.0.0.0`：同一个端口，喂一组假网卡 ⇒ 报成对端能连的地址
+        let announced = announced_bases_with(bound, &["192.168.1.5".parse().unwrap()]);
+        assert_eq!(announced, vec![format!("http://192.168.1.5:{}", bound.port())]);
+        assert!(!announced.iter().any(|x| x.contains("0.0.0.0")), "{announced:?}");
     }
 
     /// ★ 设置面的读数必须说清**"别人拉不拉得到"** —— 绑回环时网格自己照常工作，
@@ -1997,6 +2217,26 @@ mod tests {
 
         let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()));
         assert!(loopback.note.contains("别人拉不到"), "{}", loopback.note);
+
+        // ★ **D1（owner 2026-09-30）**：绑**通配**时那两句人话 —— ⚠️ **不写死"这台机器有没有网卡"**
+        //   （那是机器脸色）：只钉"它说的是通配"＋"与 `announced_base` 的结论一致"。
+        let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        let w = config_state(&on, Some(wild));
+        assert!(w.note.contains("听所有网卡"), "{}", w.note);
+        assert!(w.note.contains("0.0.0.0:8788"), "通配要把**绑的**地址说出来：{}", w.note);
+        match announced_base(wild) {
+            Some(base) => {
+                assert!(w.note.contains(&base), "枚举到的地址要出现在读数里：{}", w.note);
+                assert!(w.note.contains("能被别人拉到"), "{}", w.note);
+            }
+            None => {
+                assert!(w.note.contains("别人拉不到"), "{}", w.note);
+                // ⚠️ 通配 + 无候选，**不许**说成"回环 / 端口 0"——那是另一格，用户的下一步不同
+                //    （`INV-VLAN-bind-must-be-reachable`：这里要说**可操作**的话，不许静默）
+                assert!(!w.note.contains("回环"), "通配不是回环，别混两格：{}", w.note);
+                assert!(w.note.contains("网卡"), "要给出可操作的下一步：{}", w.note);
+            }
+        }
 
         // ⚠️ **不回口令本身**
         let json = serde_json::to_string(&good).unwrap();
@@ -2062,13 +2302,29 @@ mod tests {
         assert_eq!(settings(&c, "space-y").bind, None);
     }
 
-    /// 公网地址在**配的时候**就拒绝（而不是等开窗那一步才报错）。
+    /// ⭐ **D1（owner 2026-09-30）：配的时候**收**通配**、仍拒**公网** —— 而且**当场**判（不等到开窗）。
+    ///
+    /// ⚠️ 这条是**把既有判据反过来**（原先它是 `0.0.0.0 ⇒ Err` ＋ `e.contains("内网")`），
+    /// 按纪律**不是删断言**，是**拆成两条**：通配 ⇒ `Ok` 且**落库**；公网 ⇒ `Err` 且**不落库**。
     #[test]
-    fn configuring_a_public_bind_address_is_refused_at_configure_time() {
+    fn configuring_a_bind_accepts_the_wildcard_and_refuses_a_public_address() {
+        // ① D1：通配**收**，而且**落库**（用户不用手填 IP）——
+        //    ⚠️ 报什么地址由 `announced_bases_with` 算，这里只管"绑得上"。
         let c = space_conn("A");
-        let e = set_mesh_bind(&c, "space-x", Some("0.0.0.0:8788")).unwrap_err();
+        set_mesh_bind(&c, "space-x", Some("0.0.0.0:8788")).unwrap();
+        assert_eq!(
+            settings(&c, "space-x").bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "D1：通配要真的落库（不然开窗那一步还是空）"
+        );
+
+        // ② 不许放宽：公网字面地址**当场拒**，而且**不落库**（原判据的这一半原样保住）。
+        let c2 = space_conn("B");
+        let e = set_mesh_bind(&c2, "space-x", Some("8.8.8.8:8788")).unwrap_err();
         assert!(e.contains("内网"), "{e}");
-        assert_eq!(settings(&c, "space-x").bind, None, "拒绝了就不许落库");
+        assert_eq!(settings(&c2, "space-x").bind, None, "拒绝了就不许落库");
+        // 顺带：**可操作**的提示里要说得出"想听所有网卡就写 0.0.0.0"（D1 之后这是正路之一）
+        assert!(e.contains("0.0.0.0"), "报错要说清出路（含通配这一条）：{e}");
     }
 
     /// ★★ **产品入口那一层**：`round` 真的把发现到的对端拉回来了（真环回、没有服务端）。
