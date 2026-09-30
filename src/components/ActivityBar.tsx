@@ -13,6 +13,7 @@ import {
   FolderIcon,
   BoardIcon,
   GraphIcon,
+  TimelineIcon,
   TemplateIcon,
   SettingsIcon,
   InfoIcon,
@@ -34,6 +35,7 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
   { id: "board", labelKey: "nav.board", icon: <BoardIcon width={18} height={18} /> },
   { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
+  { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {

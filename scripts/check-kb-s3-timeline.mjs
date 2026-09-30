@@ -60,19 +60,91 @@ function quoted(text) {
   return (text.match(/"[^"]*"/g) || []).map((s) => s.slice(1, -1)).filter((s) => s.length > 0);
 }
 
+/**
+ * 只留**代码**：`//` 行注释、`/* … *​/` 块注释、字符串/模板字面量一律换成空白（换行保留 ⇒ 行号对得上 ✓）。
+ *
+ * ⚠️ 两档：`opts.strings === false` ⇒ **只掩注释**（找 SQL 写动词用它 ✓ —— SQL 就在字符串里）；
+ *   默认 ⇒ 注释与字符串都掩（找"另算一天"那种**代码**用它 ✓）。
+ *
+ * ⚠️ 为什么要它（2026-10-01，同一天里这是**第三次**同一族 ✓）：
+ *   · `check-mcp-host-authz` 把我在模块文档里**讲解**规矩的一句 `Connection::…` 当成了违规 ⇒ 假红 ✗；
+ *   · 本条判据自己在实现 S3 时，把 `indexOf` 落在**头部注释**提到的 `TIMELINE_DAY_BUCKET` 上 ⇒
+ *     于是"后面 60 字里没有 export"⇒ 又假红 ✗；
+ *   · 反方向同样存在：把 `toISOString().slice(0` 或写动词**写进注释/字符串**就能骗过禁令 ⇒ 假绿 ✗。
+ * ⇒ 判据一律在**掩码后的代码**上找 ✓（方向性约定照 `lib/rust-scan.mjs`：宁可多算 ⇒ 假红看得见 ✓）。
+ */
+function codeOnly(text, opts = {}) {
+  const maskStrings = opts.strings !== false;
+  let out = "";
+  let i = 0;
+  const n = text.length;
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  while (i < n) {
+    const c = text[i];
+    const d = text[i + 1];
+    if (c === "/" && d === "/") {
+      const j = text.indexOf("\n", i);
+      const e = j < 0 ? n : j;
+      out += blank(text.slice(i, e));
+      i = e;
+      continue;
+    }
+    if (c === "/" && d === "*") {
+      const j = text.indexOf("*/", i + 2);
+      const e = j < 0 ? n : j + 2;
+      out += blank(text.slice(i, e));
+      i = e;
+      continue;
+    }
+    if (maskStrings && (c === '"' || c === "'" || c === "`")) {
+      let k = i + 1;
+      while (k < n) {
+        if (text[k] === "\\") { k += 2; continue; }
+        if (text[k] === c) { k++; break; }
+        k++;
+      }
+      out += blank(text.slice(i, k));
+      i = k;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
+ * 这个文件**声明**（而不是"提到"）了某个常量吗 ✓ —— 命中就返回 match（带着它的**位置** ✓）。
+ *
+ * ⚠️ 为什么必须区分（2026-10-01，实现 S3 时被自己的判据绊了一下 ✓）：判据原来数的是
+ * 「**哪些文件提到这个名字**」✗ ⇒ 另一个带标记的文件里 `import { TIMELINE_STATES } from "…"` 就被
+ * 当成了"第二份声明" ⇒ **假红** ✗ —— 而"实现共享一处声明"恰恰是这条判据**想要**的形状 ✓。
+ * ⇒ 改成认**声明形态**（TS `export const X` / Rust `pub const X`、`fn X`）✓；
+ *   而且取值一律从这个 match 的**位置**出发 ✓（别再 `indexOf` —— 它会落在注释里那个名字上 ✗）。
+ */
+const declMatch = (text, name) =>
+  new RegExp("(?:^|\\n)\\s*(?:export\\s+|pub(?:\\([^)]*\\))?\\s+)?(?:const|fn|static)\\s+" + name + "\\b").exec(text);
+
 /** 纯判据：{ files: [{rel, text}] } ⇒ { findings }（空 ＝ 干净 ✓） */
 export function judgeMarked(files) {
   const out = [];
   if (files.length === 0) return { findings: out, marked: 0 };
-  const all = files.map((f) => f.text).join("\n");
+  // ⚠️ 一切检查都在**掩码后**的代码上做 ✓（标记本身在注释里 ⇒ 那是 `run()` 的事，不是这里的事 ✓）
+  const codes = files.map((f) => ({ rel: f.rel, text: codeOnly(f.text) }));
 
   // ① 只读：写动词 / 直接给内容列赋值
-  for (const f of files) {
+  //   ⚠️ 写动词那一条**必须保留字符串里的内容** ✓ —— SQL 本来就写在字符串里（`db.exec("UPDATE …")`）；
+  //     连字符串一起掩掉 ⇒ **真写法反而被漏掉** ⇒ 假绿 ✗（自测的 `变异①` 当场抓到过一次 ✓）。
+  //     ⇒ 两档掩码：**只掩注释**（写动词用 ✓）／**注释＋字符串都掩**（另算一天那种代码用 ✓）。
+  const noComments = files.map((f) => ({ rel: f.rel, text: codeOnly(f.text, { strings: false }) }));
+  for (const f of noComments) {
     const sql = f.text.match(/\b(INSERT|UPDATE|DELETE|CREATE)\b/);
     if (sql) {
       out.push("✗ " + f.rel + " 出现了 SQL 写动词 `" + sql[1] + "` ✗ ⇒ 时间轴是**只读派生**视图（S3 ① ✓）："
         + "读路径上补一次写 ⇒ 派生数据成了第二份真相源 ✗");
     }
+  }
+  for (const f of codes) {
     const assign = f.text.match(/content_(json|text)\s*[:=]/);
     if (assign) {
       out.push("✗ " + f.rel + " 直接给 `" + assign[0].trim() + "` 赋值 ✗ ⇒ 时间轴不许改内容列（S3 ① ✓，"
@@ -81,7 +153,9 @@ export function judgeMarked(files) {
   }
 
   // ② 空态分得开：恰好一处 TIMELINE_STATES，里面恰好两个互不相同的名字
-  const decls = files.filter((f) => f.text.includes("TIMELINE_STATES"));
+  // ⚠️ 声明检测与**取值**都在**原文**上做 ✓ —— 因为状态名就是字符串字面量，掩码会把它们盖掉 ✗
+  //   （掩码只用于"禁令"那两条：写动词/内容列赋值/另算一天 ✓）
+  const decls = files.filter((f) => declMatch(f.text, "TIMELINE_STATES"));
   if (decls.length === 0) {
     out.push("✗ 带 `" + MARKER + "` 标记的文件里**没有** `TIMELINE_STATES` 声明 ✗ ⇒ 「有页面但没活动」与「没有页面」"
       + "分不开（S3 ② ✓）—— 两者对用户是两件事（与 `check-locked-loud` 同族 ✓）");
@@ -92,7 +166,9 @@ export function judgeMarked(files) {
     // ⚠️ 取法要**有边界**：从 `TIMELINE_STATES` 后的第一个 `[` 到它的 `]` ✓
     //   （别用"其后 300 字"—— 那会把后面无关行的字符串也数进来 ⇒ **正例被误判** ✗；
     //    也别拿分号当边界 —— 类型标注里就有分号 ✓，这是 `check-kb-s1-search` 踩过的同一个坑 ✓）
-    const at = decls[0].text.indexOf("TIMELINE_STATES");
+    // ⚠️ 起点必须是**声明那一处**（`declMatch` 的位置 ✓）—— 用 `indexOf` 会落在上面注释里提到的名字上 ✗
+    const m = declMatch(decls[0].text, "TIMELINE_STATES");
+    const at = m ? m.index : 0;
     const open = decls[0].text.indexOf("[", at);
     const close = open >= 0 ? decls[0].text.indexOf("]", open) : -1;
     const body = close > open ? decls[0].text.slice(open, close + 1) : decls[0].text.slice(at, at + 200);
@@ -104,21 +180,21 @@ export function judgeMarked(files) {
   }
 
   // ③ 时间口径只有一处
-  const dayDecls = files.filter((f) => f.text.includes("TIMELINE_DAY_BUCKET"));
+  const dayDecls = files.filter((f) => declMatch(f.text, "TIMELINE_DAY_BUCKET"));
   if (dayDecls.length === 0) {
     out.push("✗ 带 `" + MARKER + "` 标记的文件里**没有** `TIMELINE_DAY_BUCKET` ✗ ⇒ 时间口径没有单一出处（S3 ③ ✓）");
   } else if (dayDecls.length > 1) {
     out.push("✗ `TIMELINE_DAY_BUCKET` 在 **" + dayDecls.length + " 个文件**里各有一份 ✗（"
       + dayDecls.map((f) => f.rel).join(" ／ ") + "）⇒ 两处各算一遍 = 同一条活动会换天（S3 ③ ✓）");
   } else {
-    const i = dayDecls[0].text.indexOf("TIMELINE_DAY_BUCKET");
-    const before = dayDecls[0].text.slice(Math.max(0, i - 60), i);
-    if (!/\b(export|pub)\b/.test(before)) {
+    // 声明本身带不带 `export`/`pub` ✓（从 match 文本看，不看它前面的 60 字 —— 那会被注释带偏 ✗）
+    const m = declMatch(dayDecls[0].text, "TIMELINE_DAY_BUCKET");
+    if (m && !/\b(export|pub)\b/.test(m[0])) {
       out.push("✗ `TIMELINE_DAY_BUCKET` 不是 `export`/`pub` 的 ✗（" + dayDecls[0].rel + "）⇒ **别人共用不到** ⇒ "
         + "别处一定会再算一遍（S3 ③ 要的是**一处**口径 ✓）");
     }
   }
-  for (const f of files) {
+  for (const f of codes) {
     if (f.text.includes("toISOString().slice(0")) {
       out.push("✗ " + f.rel + " 里出现了 `toISOString().slice(0` ✗ ⇒ 在 `TIMELINE_DAY_BUCKET` 之外**另算了一天**"
         + "（S3 ③：本地时区/UTC 不许两处各算一遍 ✗ —— 全走那一处 ✓）");
@@ -153,7 +229,9 @@ if (argv.includes("--self-test")) {
   const dir = mkdtempSync(join(tmpdir(), "kb-s3-"));
   const put = (rel, text) => { const p = join(dir, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text, "utf8"); };
   const OK = '// ' + MARKER + '\nexport const TIMELINE_STATES = ["no_pages", "no_activity"];\nexport const TIMELINE_DAY_BUCKET = (t: string) => t.slice(0, 10);\n';
-  const reset = () => put("src/lib/timeline.ts", OK);
+  // ⚠️ 夹具目录**跨用例保留** ⇒ 额外写进去的文件必须在下一例之前清掉 ✗（否则会串味）
+  const EXTRA = ["src/components/TimelineReview.tsx", "src/lib/timeline2.ts"];
+  const reset = () => { for (const p of EXTRA) rmSync(join(dir, p), { force: true }); put("src/lib/timeline.ts", OK); };
   const cases = [
     ["正例（只读 ＋ 两态 ＋ 一处口径）", () => {}, 0],
     ["变异①（读路径上补写 ⇒ 派生变第二份真相源）", () => { put("src/lib/timeline.ts", OK + 'db.exec("UPDATE pages SET content_json = ?");\n'); }, 1],
@@ -161,6 +239,11 @@ if (argv.includes("--self-test")) {
     ["变异③（时间口径没有单一出处）", () => { put("src/lib/timeline.ts", '// ' + MARKER + '\nexport const TIMELINE_STATES = ["no_pages", "no_activity"];\nconst d = new Date().toISOString().slice(0, 10);\n'); }, 1],
     ["变异④（口径不 export ⇒ 别人共用不到）", () => { put("src/lib/timeline.ts", '// ' + MARKER + '\nexport const TIMELINE_STATES = ["no_pages", "no_activity"];\nconst TIMELINE_DAY_BUCKET = (t: string) => t;\n'); }, 1],
     ["变异⑤（另算一天：toISOString().slice(0 ⇒ 与口径两处各算）", () => { put("src/lib/timeline.ts", OK + 'const k = new Date().toISOString().slice(0, 10);\n'); }, 1],
+    // ⚠️ 掩码方向（2026-10-01 第三次同一族 ✓）：注释里"讲到"这些东西必须**不算**违规 ✓
+    ["正例③（写动词与「另算一天」只出现在**注释**里 ⇒ 必须绿 ✓）", () => { put("src/lib/timeline.ts", OK + '// 本文件不写库（没有 INSERT / CREATE），也不另算 toISOString().slice(0\n'); }, 0],
+    // ⚠️ 下面两条是"数**声明**而不是数**提到**"这个修法的两个方向（2026-10-01 ✓）
+    ["正例②（另一个带标记的文件 **import** 这两个常量 ⇒ 必须绿 —— 这是我判据原来的假红 ✗）", () => { put("src/components/TimelineReview.tsx", '// ' + MARKER + '\nimport { TIMELINE_STATES, TIMELINE_DAY_BUCKET } from "../lib/timeline";\nexport const n = () => TIMELINE_STATES.length + TIMELINE_DAY_BUCKET(0).length;\n'); }, 0],
+    ["变异⑥（两个带标记的文件**各声明一次**口径 ⇒ 必须红）", () => { put("src/lib/timeline2.ts", '// ' + MARKER + '\nexport const TIMELINE_DAY_BUCKET = (t: string) => t;\n'); }, 1],
   ];
   let pass = 0;
   try {
@@ -172,6 +255,9 @@ if (argv.includes("--self-test")) {
       if (okc) pass++;
       console.log(`  ${okc ? "✓" : "✗"} ${name} ⇒ exit=${got}（期望 ${want}）`);
     }
+    // ⚠️ 登记形态这两条**也必须先清 EXTRA** ✗ —— 上面"变异⑥"留下的带标记文件会让
+    //    「无标记」这一档**仍有标记** ⇒ 判成"有对象且有发现"（exit 1）✗（自测当场抓到 ✓）。
+    for (const p of EXTRA) rmSync(join(dir, p), { force: true });
     put("src/lib/timeline.ts", "export const x = 1;\n");
     const a = run(dir, false), b = run(dir, true);
     if (a === 0) pass++;
