@@ -35,6 +35,7 @@ export const OUTPUTS = {
   docs: "docs/plugin-api.md",
   aiTools: "src/lib/capabilities/aiTools.meta.ts",
   menusMeta: "src/lib/capabilities/menus.meta.ts",
+  mcpTools: "capabilities/mcp-tools.json",   // 第 10 件：MCP 工具清单（只读面 ✓）
 };
 
 const HEADER = "本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。";
@@ -1130,6 +1131,40 @@ export function genPackageJson(reg) {
   );
 }
 
+/**
+ * MCP 工具清单（第 10 件生成物）。
+ *
+ * 为什么必须是生成物：MCP 工具名与描述如果手写第二份，就会与注册表漂移 ——
+ * 而「漂移」在这条线上等于「外部 agent 看到一个不存在的工具」✗。
+ * 只取 `ai: true` **且 `kind === "read"`**：M1 是只读接入（写能力随 M2 ✓，见规格 §2）。
+ *
+ * 字段：`capabilityId` 是桥回传时用的注册表 id；`name` 是 MCP 工具名（**不许带点** ⇒ `.` 换 `_`）。
+ * ⚠️ 别在任何提示词里写死工具名：不同客户端可能改写不合规字符（**本条未复核** ✗，不当作已核实 ✓）。
+ */
+export function genMcpTools(reg) {
+  const tools = reg.capabilities.filter((c) => c.ai && c.kind === "read");
+  const jsonType = (t) => ({ string: "string", number: "number", boolean: "boolean" })[t] ?? "string";
+  const list = tools.map((c) => {
+    const properties = {};
+    for (const a of c.args ?? []) {
+      properties[a.name] = { type: jsonType(a.type) };
+      if (a.enum) properties[a.name].enum = a.enum;
+      if (a.desc) properties[a.name].description = a.desc;
+    }
+    return {
+      name: c.id.replace(/\./g, "_"),
+      capabilityId: c.id,
+      description: c.desc ?? c.title,
+      inputSchema: {
+        type: "object",
+        properties,
+        required: (c.args ?? []).filter((a) => a.required !== false).map((a) => a.name),
+      },
+      permission: c.permission ?? null,
+    };
+  });
+  return JSON.stringify(list, null, 2) + "\n";
+}
 export function buildAll(reg = loadRegistry()) {
   return {
     [OUTPUTS.shim]: genShim(reg),
@@ -1141,6 +1176,7 @@ export function buildAll(reg = loadRegistry()) {
     [OUTPUTS.docs]: genDocs(reg),
     [OUTPUTS.aiTools]: genAiTools(reg),
     [OUTPUTS.menusMeta]: genMenusMeta(reg),
+    [OUTPUTS.mcpTools]: genMcpTools(reg),
   };
 }
 
