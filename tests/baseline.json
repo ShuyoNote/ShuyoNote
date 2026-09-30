@@ -58,7 +58,9 @@
       "check-crdt-snapshot-contract",
       "check-mcp-host-authz",
       "check-search-platform-parity",
-      "check-mcp-audit-single-ledger"
+      "check-mcp-audit-single-ledger",
+      "check-mcp-channel-judge",
+      "check-mcp-bridge-dumb"
     ],
     "smoke": [
       "smoke-web",

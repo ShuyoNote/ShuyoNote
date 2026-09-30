@@ -221,6 +221,7 @@ export const GATES = [
       "dispatch_capability 成功失败都留痕／宿主面不许自建环。⚠️ 写它时踩过两次假红（拿 push_back( 当指纹 ✗；" +
       "函数体用 \n}\n 收尾在 CRLF 检出上永不命中 ✗）⇒ 已改为按值认 ＋ 行尾 \\r?\\n ＋ 自测里放一条 CRLF 正例当回归 ✓。",
     registered: "2026-10-01",
+    counters: "auto",   // ⚠️ 有 baseline:true 就必须声明 counters ✓（不变量自测要求的 ✓；"auto"＝文本兜底，读数行为不变 ✓）
     baseline: true,
   },
   {
@@ -247,6 +248,7 @@ export const GATES = [
       "读代码的人会以为两个平台一样，用户则是「换个平台搜出来顺序变了」且没有线索（本仓最忌的：差异不炸、不报错）。" +
       "本判据把四件事钉住：桌面 DDL 常量在 ＋ 理由（sql.js 没编 FTS5）在 ＋ app 侧写明限定 ＋ 桌面专属 DDL 不许漏进共享 DDL。",
     registered: "2026-09-30",
+    counters: "auto",   // ⚠️ 有 baseline:true 就必须声明 counters ✓（不变量自测要求的 ✓；"auto"＝文本兜底，读数行为不变 ✓）
     baseline: true,
   },
   {
