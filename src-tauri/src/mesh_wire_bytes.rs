@@ -179,6 +179,49 @@ async fn mesh_pull_wire_bytes() {
         );
     }
 
+    // ★ 2026-09-30 追加：**把"空轮询"再跑 N 轮**（默认只跑上面那 4 例）——
+    //   好让外部能对**真实那一次交换**做 OS 层对照测量（`nettop` 按进程读 bytes_in/bytes_out
+    //   ⇒ 不必减背景噪声 ✓）。
+    //   ⭐ 为什么要这一档：我先前的 OS 层测量用的是**手写的裸 TCP 字节串** ✗ ——
+    //   它的请求侧是 **186 B**，而**真实 reqwest 发的是 137 B**（差 49 B）✗
+    //   ⇒ 那个 186 是**我模板的长度、不是产品的** ⇒ 量 OS 层必须跑**这一条真路径** ✓。
+    //   跑法：`MESH_WIRE_ROUNDS=200 cargo test --lib mesh_wire_bytes -- --ignored --nocapture`
+    let rounds: usize = std::env::var("MESH_WIRE_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 1)
+        .unwrap_or(1);
+    if rounds > 1 {
+        let mut tu = 0usize;
+        let mut td = 0usize;
+        // `since` 取最大那条 ⇒ **空轮询**（库里 10 条、游标在最前 ⇒ 一条也不返回 ✓）
+        let url = format!(
+            "http://127.0.0.1:{proxy_port}/mesh/pull?space_id={space}&since=10&limit=1000"
+        );
+        for i in 1..=rounds {
+            up.store(0, Ordering::Relaxed);
+            down.store(0, Ordering::Relaxed);
+            let resp = client
+                .get(&url)
+                .bearer_auth(token)
+                .send()
+                .await
+                .expect("请求失败");
+            let _ = resp.text().await.unwrap();
+            let (u, d) = (up.load(Ordering::Relaxed), down.load(Ordering::Relaxed));
+            tu += u;
+            td += d;
+            if i % 50 == 0 {
+                println!("  [空轮询] 已跑 {i}/{rounds} 轮");
+            }
+        }
+        println!(
+            "★ 空轮询 ×{rounds} ⇒ 请求共 {tu} B ＋ 响应共 {td} B ＝ **{} B**（每轮 **{:.1} B**）",
+            tu + td,
+            (tu + td) as f64 / rounds as f64
+        );
+    }
+
     // 把"原始 payload"与"转义后"的差也打出来（验证 1.257× 那个系数）
     let raw = payload_of(10_000);
     let escaped = serde_json::to_string(&raw).unwrap();
