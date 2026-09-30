@@ -1510,12 +1510,18 @@ export function SyncPanel() {
                       <span className="sync-row-caret" aria-hidden>›</span>
                     </summary>
                     <div className="sync-row-body">
-                      <div className="sync-att sync-mesh" title="在虚拟网络（VPN）里，要填【虚拟网卡上的地址】—— 填物理网卡的地址，隧道里的对端会连不上。同一个 Wi-Fi 里填本机内网地址即可。">
+                      <div className="sync-att sync-mesh" title="监听地址填两种都行：① 本机内网地址（如 192.168.1.5:8788，同一个 Wi-Fi 直接可用）；虚拟网络（VPN）里要填【虚拟网卡上的地址】—— 填物理网卡的地址，隧道里的对端会连不上。② 0.0.0.0:8788 —— 听所有网卡、地址由系统自己报出去，换网或多张网卡都不用改。">
                         <span className="sync-att-text">
                           {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
                               已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
                               （监听地址 / 口令）与开关。 */}
+                          {/* ★ VL-3（2026-09-30）：**"功能通了，而普通用户不知道有这条路"** —— VL-2 让
+                              `0.0.0.0` 能填了，而这一栏原先只说"填虚拟网卡的地址" ⇒ "地址自动"在用户眼里
+                              没发生。⇒ 两条路都写在**看得见**的文案里（不只在 hover 提示与 placeholder 里）。
+                              ⚠️ 与"口令"合并成**同一个 hint**（只加一行文字，不加块）⇒ 面板高度只多一行。 */}
                           <span className="sync-hint">
+                            {inlineMd("地址两种填法：**本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788** —— 那是「**听所有网卡**」，地址由系统自己报出去：**换网、多张网卡都不用改**。")}
+                            <br />
                             {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
                           </span>
                           {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
@@ -1528,7 +1534,7 @@ export function SyncPanel() {
                         <div className="sync-field">
                           <input
                             className="sync-input"
-                            placeholder="监听地址（虚拟网络里填虚拟网卡的地址），如 192.168.1.5:8788"
+                            placeholder="监听地址：如 192.168.1.5:8788；或 0.0.0.0:8788（听所有网卡，地址由系统报出）"
                             value={meshBind}
                             disabled={meshBusy}
                             onChange={(e) => setMeshBind(e.target.value)}
