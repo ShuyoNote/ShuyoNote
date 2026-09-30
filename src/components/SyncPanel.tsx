@@ -1821,7 +1821,7 @@ export function SyncPanel() {
                 那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
                 只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
             {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
-              <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走局域网地址">
+              <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
                 <span className="sync-att-text">
                   {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
                   <span className="sync-att-name">
