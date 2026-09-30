@@ -138,6 +138,9 @@ pub mod plugin_host;
 mod plugin_index;
 mod plugin_validate;
 mod plugins;
+// MCP **宿主面**（M1 · Task 5；R106=A：**进程内模块** ✓）：外部会话那一路**只**把调用转交给
+// 唯一鉴权点 `plugins::dispatch_capability` ✓（自开库/自判权限由 `check-mcp-host-authz` 挡 ✓）。
+mod mcp_host;
 mod properties;
 mod search;
 // 派生文本层的**唯一运输通道**（桌面）：TS 的索引代码靠它把 `attachment_text`/`chunks` 写进

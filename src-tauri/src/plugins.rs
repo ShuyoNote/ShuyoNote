@@ -2098,6 +2098,30 @@ fn capability_scope_or_unknown(capability_id: &str) -> &'static str {
     capabilities_gen::lookup(capability_id).map(|c| c.scope).unwrap_or("?")
 }
 
+thread_local! {
+    /// **外部宿主**（MCP `mcp_host.rs`）那一次调用的上下文 ✓：`Some((source, granted))` ⇒
+    /// 这次 `dispatch_capability` 用**外部的身份与权限**，不是插件那条路 ✓。
+    ///
+    /// 为什么另开一个 thread-local 而不是往 `RunState` 里加字段：`RunState` 有 30+ 处测试**字面量构造**
+    /// （加字段会动到它们 ✗），而这条上下文只对"外部的那一次调用"有效 ⇒ 进来就设、出去就还原 ✓。
+    static EXTERNAL_CALLER: std::cell::RefCell<Option<(String, Vec<String>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 把一次调用标记成「**外部宿主**发起的」✓（会话号进审计 `source` ＝ `external:<会话号>` ⇒ 答得出"是谁" ✓）。
+///
+/// ⚠️ **只由 `mcp_host.rs` 用** ✓ —— 插件那条路不许借它换身份 ✗（换了身份就等于绕过 manifest 声明 ✓）。
+/// ⚠️ 判定本身**不在这里** ✓：权限仍然只在 `dispatch_capability` 里判一次（唯一鉴权点 ✓）。
+pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: impl FnOnce() -> T) -> T {
+    let prev = EXTERNAL_CALLER.with(|c| {
+        c.borrow_mut()
+            .replace((format!("external:{session_id}"), granted.to_vec()))
+    });
+    let out = f();
+    EXTERNAL_CALLER.with(|c| *c.borrow_mut() = prev);
+    out
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 /// ⚠️ 改成 `pub(crate)` 是 Task 5 ① 的**硬要求** ✓ —— 外部宿主路在别的模块，私有就**调不到** ✗。
@@ -2109,9 +2133,17 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
     if let Some(rpc) = rpc {
         return rpc(method, args_json);
     }
-    let plugin_id = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    // 谁在调：外部宿主（MCP）那条路把身份放进 `EXTERNAL_CALLER` ✓；否则是插件那条路 ✓。
+    // ⚠️ 权限与审计 `source` 都从**这一处**取 ⇒ 下面那道判定对两条路是同一个（唯一鉴权点 ✓）。
+    let (plugin_id, declared, source) = match EXTERNAL_CALLER.with(|c| c.borrow().clone()) {
+        Some((src, granted)) => ("external".to_string(), granted, src),
+        None => (
+            RUN_STATE.with(|s| s.borrow().plugin_id.clone()),
+            RUN_STATE.with(|s| s.borrow().permissions.clone()),
+            "plugin".to_string(),
+        ),
+    };
     // 判定**只在这一处** ✓（judge_capability ✓）；下面只负责「把判定变成审计 ＋ 错误消息」✓
-    let declared: Vec<String> = RUN_STATE.with(|s| s.borrow().permissions.clone());
     if let Err(deny) = judge_capability(method, &declared) {
         let (scope, code, msg) = match deny {
             CapDeny::UnknownCapability => (
@@ -2125,14 +2157,14 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
                 format!("permission_denied: 能力 {method} 需要权限 {permission}，但 manifest.permissions 未声明它"),
             ),
         };
-        push_audit("plugin", &plugin_id, method, scope, false, Some(code.into()));
+        push_audit(&source, &plugin_id, method, scope, false, Some(code.into()));
         return Err(msg);
     }
     // 走到这里 ⇒ 能力一定存在（刚刚判过 ✓）；仍留防御分支 ⇒ **不 panic** ✓（热路径上 panic 太贵 ✗）
     let cap = match capabilities_gen::lookup(method) {
         Some(c) => c,
         None => {
-            push_audit("plugin", &plugin_id, method, "?", false, Some("unknown_capability".into()));
+            push_audit(&source, &plugin_id, method, "?", false, Some("unknown_capability".into()));
             return Err(format!("unknown_capability: 宿主没有名为 {method} 的能力"));
         }
     };
@@ -2143,7 +2175,7 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
         match serde_json::from_str(args_json) {
             Ok(v) => v,
             Err(e) => {
-                push_audit("plugin", &plugin_id, method, cap.scope, false, Some("bad_args".into()));
+                push_audit(&source, &plugin_id, method, cap.scope, false, Some("bad_args".into()));
                 return Err(format!("bad_args: 参数不是合法 JSON（{e}）"));
             }
         }
@@ -2227,18 +2259,18 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             cap_log_write(&arg_str("message")?, level)
         }
         other => {
-            push_audit("plugin", &plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
+            push_audit(&source, &plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
             return Err(format!("unknown_capability: {other}"));
         }
     };
     match out {
         Ok(v) => {
-            push_audit("plugin", &plugin_id, method, cap.scope, true, None);
+            push_audit(&source, &plugin_id, method, cap.scope, true, None);
             serde_json::to_string(&v).map_err(|e| e.to_string())
         }
         Err(e) => {
             let code = error_code_of(&e);
-            push_audit("plugin", &plugin_id, method, cap.scope, false, code);
+            push_audit(&source, &plugin_id, method, cap.scope, false, code);
             Err(e)
         }
     }

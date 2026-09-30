@@ -17,6 +17,15 @@
 //      跳过 ≠ 通过；注册表 `selfSkipOk` 声明理由，`--strict-self-skip` 下按失败计 ✓；
 //      判据先行阶段要看那次"红"就加 `--require-host` ⇒ exit 2（逐字含「宿主面不存在 / 无可检查对象」✓）
 //
+// ⚠️ **命中必须落在代码里**（2026-10-01 修 ✓）：上面那些名字都用 `rustRegions` **掩掉注释/字符串/字符字面量**
+//   之后再找 ✓ —— 两个方向都得修，而且两个方向都真踩过：
+//     · 假红 ✗：我刚写下 `mcp_host.rs`，它的模块文档里**在讲这条规矩**（"不许出现 `Connection::…`"）
+//       ⇒ 判据把**讲解**当成了**违规** ⇒ 红 ✓（本仓同一个坑 `check-dead-code-receipts` 早有先例：
+//       "仓库里有十几处注释在讲这件事，拿 grep 数会把它们全算成违规"）。
+//     · 假绿 ✗：反过来，把 `dispatch_capability(` 写进**字符串**或注释里也能满足正面断言 ⇒
+//       "调用"变成了"提了一嘴"（判据比事实宽 ✗）。掩码把这一半也堵上了 ✓。
+//     ⇒ 两条都进了自测（注释讲规矩 ⇒ 必须绿／把调用藏进字符串 ⇒ 必须红 ✓）。
+//
 // 退出码（与兄弟判据同形 ✓）：0 干净（含登记形态的自报跳过）／1 有发现／2 环境不具备或读不到源码（**不算通过**）
 // 用法：
 //   node scripts/check-mcp-host-authz.mjs
@@ -29,11 +38,29 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { rustRegions } from "./lib/rust-scan.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const ROOT = dirname(HERE);
 export const PLUGINS_DEFAULT = join(ROOT, "src-tauri", "src", "plugins.rs");
 export const HOST_DEFAULT = join(ROOT, "src-tauri", "src", "mcp_host.rs");
 const AUTHZ_POINT = "dispatch_capability";
+
+/**
+ * 只留**代码**：注释 / 字符串 / 字符字面量一律换成空白（换行保留 ⇒ 行号对得上 ✓）。
+ * 为什么要它：判据找的是**名字**，而"讲解这条规矩的注释"与"真的这么写的代码"在原文里长得一样 ✗
+ * （今天就是这么假红的 ✓）；反过来，把调用藏进字符串也会假绿 ✗。掩码把两个方向一起堵上 ✓。
+ * 方向性约定照 `lib/rust-scan.mjs`：**宁可不切（多算 ⇒ 假红，看得见），绝不漏切（少算 ⇒ 假绿，看不见）** ✓。
+ */
+export function codeOnly(text) {
+  const M = rustRegions(text);
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    out += M[i] === 0 ? text[i] : text[i] === "\n" ? "\n" : " ";
+  }
+  return out;
+}
+
 /** 判据：(plugins.rs 文本, 宿主面文本|null) ⇒ findings（空＝干净 ✓） */
 export function judge(pluginsText, hostText) {
   const out = [];
@@ -41,18 +68,20 @@ export function judge(pluginsText, hostText) {
     out.push("✗ 读不到 `src-tauri/src/plugins.rs` ⇒ **判据没检查到东西**（不算通过 ✗）");
     return out;
   }
-  if (!new RegExp("fn\\s+" + AUTHZ_POINT + "\\b").test(pluginsText)) {
+  const pluginsCode = codeOnly(pluginsText);
+  if (!new RegExp("fn\\s+" + AUTHZ_POINT + "\\b").test(pluginsCode)) {
     out.push("✗ 找不到唯一鉴权点 `" + AUTHZ_POINT + "` ⇒ 每次能力调用不再经同一处校验 ✗（这条不变式的地基没了）");
   }
   if (hostText === null) return out; // 缺席 ⇒ 由 run() 决定"登记形态跳过 / exit 2"
-  if (!hostText.includes(AUTHZ_POINT + "(")) {
+  const hostCode = codeOnly(hostText);
+  if (!hostCode.includes(AUTHZ_POINT + "(")) {
     out.push("✗ 宿主面没有调用 `" + AUTHZ_POINT + "(…)` ⇒ **它自己就是第二条鉴权路径** ✗（权限/解锁/审计全绕开）");
   }
-  if (/Connection::open|rusqlite::Connection|Connection::/.test(hostText)) {
+  if (/Connection::open|rusqlite::Connection|Connection::/.test(hostCode)) {
     out.push("✗ 宿主面**自己开库** ✗（不变式原话：宿主面不许自己开库）⇒ 它看到的库状态可以绕过统一校验");
   }
   for (const bad of ["has_permission", "require_permission", "check_permission"]) {
-    if (new RegExp("fn\\s+" + bad + "\\b|" + bad + "\\(").test(hostText)) {
+    if (new RegExp("fn\\s+" + bad + "\\b|" + bad + "\\(").test(hostCode)) {
       out.push("✗ 宿主面**自己判权限**（出现 `" + bad + "` ✗）⇒ 权限判定长出了第二处实现");
     }
   }
@@ -104,6 +133,10 @@ if (argv.includes("--self-test")) {
     const noCall = 'pub fn handle(method: &str, args: &str) -> Result<String, String> {\n    Ok("{}".to_string())\n}\n';
     const ownDb = 'pub fn handle() { let c = Connection::open("x.db").unwrap(); }\nfn dispatch_capability() {}\n';
     const ownPerm = 'pub fn handle() { if has_permission("read:pages") { } }\n fn dispatch_capability() {}\n';
+    // ⚠️ 2026-10-01 加的三条：掩码的两个方向（**假红**：注释里讲规矩 ⇒ 必须绿／**假绿**：把调用藏进字符串 ⇒ 必须红 ✓）
+    const commentedOk = '// 不许 Connection::open，也不许 has_permission\npub fn handle(m: &str, a: &str) -> Result<String, String> { dispatch_capability(m, a) }\n';
+    const callInString = 'pub fn handle() { let _ = "dispatch_capability(x)"; }\n';
+    const forbiddenInString = 'pub fn handle() { let s = "Connection::open(\'x\')"; dispatch_capability(1, 2); }\n';
     const write = (n, t) => { const p = join(dir, n); writeFileSync(p, t, "utf8"); return p; };
     const pPlugins = write("plugins.rs", plugins);
     const pGood = write("mcp_host_good.rs", good);
@@ -117,6 +150,10 @@ if (argv.includes("--self-test")) {
       ["变异③（宿主面自己判权限）", run(pOwnPerm, pPlugins, false), 1],
       ["宿主面缺席（**登记形态**：绿 ＋ 自报跳过）", run(join(dir, "nope.rs"), pPlugins, false), 0],
       ["唯一鉴权点消失（plugins.rs 里没有 `dispatch_capability`）", run(join(dir, "nope.rs"), write("plugins_noauthz.rs", "fn other() {}\n"), false), 1],
+      // ⚠️ 掩码的两个方向（都真踩过 ✓）
+      ["注释里讲这条规矩（`Connection::open`/`has_permission` 只出现在注释里）⇒ **必须绿**", run(write("host_commented.rs", commentedOk), pPlugins, false), 0],
+      ["把调用藏进**字符串**（`\"dispatch_capability(x)\"`）⇒ **必须红**（假绿方向 ✓）", run(write("host_instr.rs", callInString), pPlugins, false), 1],
+      ["禁用名字只出现在**字符串**里（代码里真调了鉴权点）⇒ **必须绿**", run(write("host_strforbid.rs", forbiddenInString), pPlugins, false), 0],
     ];
     let pass = 0;
     for (const [name, got, want] of cases) {
