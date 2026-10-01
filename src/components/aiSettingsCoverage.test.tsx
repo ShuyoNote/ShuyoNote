@@ -128,4 +128,22 @@ describe("AI 设置里的「检查索引覆盖」", () => {
     expect(text).toContain("检查失败");
     expect(text).toContain("database is locked");
   });
+
+  it("★ 同一份取材：**只扫一次**，且库地图跟着出现（没读数的格子画成「未知」，不是 0）", async () => {
+    mocks.derivedStores.mockResolvedValue({ ok: true });
+    mocks.scan.mockResolvedValue(report()); // 夹具没写 `pages.stale` ⇒ 按"没读数"处理
+    mount();
+    clickByText("检查索引覆盖");
+    await settle();
+    // 取材是 O(页面数) 次命令调用 ⇒ 摘要与地图必须共用同一次扫描，不许扫两遍
+    expect(mocks.scan).toHaveBeenCalledTimes(1);
+    const text = host!.textContent ?? "";
+    expect(text).toContain("库地图");
+    expect(host!.querySelector("[data-testid='library-map']")).toBeTruthy();
+    const stale = host!.querySelector("[data-item='pages.stale']");
+    expect(stale, "「派生落后」这一格不许从地图里消失").toBeTruthy();
+    const staleCount = host!.querySelector("[data-item='pages.stale'] .ai-libmap-item-count");
+    expect(staleCount!.getAttribute("data-count")).toBe("unknown");
+    expect(stale!.textContent).toContain("未知");
+  });
 });

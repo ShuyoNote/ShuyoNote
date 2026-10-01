@@ -7,6 +7,8 @@ import { localVision } from "../lib/ai/localVision";
 import { platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
 import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
+import { buildLibraryMap, type LibraryMap } from "../lib/ai/libraryMap";
+import { LibraryMapView } from "./LibraryMapView";
 import {
   AI_PRESETS,
   MODEL_OPTIONS,
@@ -17,6 +19,17 @@ import {
   type AiProvider,
   type ProviderConfig,
 } from "../lib/ai/llm";
+
+/**
+ * 把「检查索引覆盖」的读数折成草稿要的覆盖度（`{indexed, total}`）✓。
+ * ⚠️ 拿不到读数（还没查过 / `total` 为 0）⇒ 返回 `null` ⇒ 草稿如实写「覆盖度：未知」
+ *    —— **不许猜 0**（本仓"未知 ≠ 0"那条口径；`topicDraft.ts::coverageNoteOf` 与它同源 ✓）。
+ */
+function coverageTotals(c: ReturnType<typeof coverageReportTool> | null): { indexed: number; total: number } | null {
+  const pages = c?.report?.pages;
+  if (!pages) return null;
+  return { indexed: Number(pages.indexed ?? 0), total: Number(pages.total ?? 0) };
+}
 
 // AI 配置表单（provider / 地址 / 密钥 / 模型 / 连接测试）。
 //
@@ -36,6 +49,12 @@ export function AiSettingsForm({
   // 逐字段订阅（`update` 是动作，引用恒定）。
   const config = useAiStore((s) => s.config);
   const update = useAiStore((s) => s.update);
+  // 第三块「按需单页」：**字段级**订阅（仓规：组件不许整店订阅 ✓）
+  const topicDraft = useAiStore((s) => s.topicDraft);
+  const topicRunning = useAiStore((s) => s.topicRunning);
+  const topicError = useAiStore((s) => s.topicError);
+  const generateTopic = useAiStore((s) => s.generateTopic);
+  const clearTopicDraft = useAiStore((s) => s.clearTopicDraft);
   const [enabled, setEnabled] = useState(config.enabled);
   const [provider, setProvider] = useState<AiProvider>(config.provider);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
@@ -69,6 +88,11 @@ export function AiSettingsForm({
   const [coverage, setCoverage] = useState<ReturnType<typeof coverageReportTool> | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [checkingCoverage, setCheckingCoverage] = useState(false);
+  // 「库地图」（LLM wiki 第二块着陆点）：**与上面那份摘要共用同一次扫描**（不扫两遍，取材是 O(页面数) 次调用），
+  // 只做"把已有的读数重排成地图"——不生成正文、不调模型、不写库。
+  const [libraryMap, setLibraryMap] = useState<LibraryMap | null>(null);
+  /** 正在生成的分区 key（只为把按钮显示成「生成中…」✓） */
+  const [topicKey, setTopicKey] = useState<string | null>(null);
 
   const isOpenAI = provider === "openai";
 
@@ -130,12 +154,16 @@ export function AiSettingsForm({
       const stores = await platform.derivedStores?.();
       if (!stores) {
         setCoverage(null);
+        setLibraryMap(null);
         setCoverageError("这个平台不提供派生层（索引只存在于桌面端/Web 端各自那份库）");
         return;
       }
-      setCoverage(coverageReportTool(await scanLibraryCoverage(stores)));
+      const scanned = await scanLibraryCoverage(stores);
+      setCoverage(coverageReportTool(scanned));
+      setLibraryMap(buildLibraryMap(scanned));
     } catch (e) {
       setCoverage(null);
+      setLibraryMap(null);
       setCoverageError(e instanceof Error ? e.message : String(e));
     } finally {
       setCheckingCoverage(false);
@@ -433,6 +461,30 @@ export function AiSettingsForm({
                 )}
               </div>
             )}
+            {/* 库地图：同一份读数的另一种读法（分节 + 覆盖三态 + 来源回链）。只读派生视图。 */}
+            {/* 第三块起：每个分区可点「生成这一页」⇒ 只出**草稿**（未落库）；取消＝不采用结果 ✓ */}
+            {libraryMap && (
+              <LibraryMapView
+                map={libraryMap}
+                generatingSection={topicKey}
+                onGenerate={(s) => {
+                  setTopicKey(s.key);
+                  void generateTopic(s, coverageTotals(coverage)).finally(() => setTopicKey(null));
+                }}
+                draft={topicDraft}
+                onDismissDraft={clearTopicDraft}
+              />
+            )}
+            {topicRunning && !topicDraft ? (
+              <p className="ai-libmap-note" data-testid="topic-running">
+                正在生成草稿（本机模型可能要几十秒）……**不会写库** ✓
+              </p>
+            ) : null}
+            {topicError ? (
+              <p className="ai-libmap-note ai-warn" data-testid="topic-error">
+                {`生成草稿失败：${topicError}`}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

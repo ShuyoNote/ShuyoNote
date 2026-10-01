@@ -10,8 +10,10 @@ import {
   type ProviderConfig,
 } from "../lib/ai/llm";
 import { createBackendStreamingTransport } from "../lib/ai/transport";
-import { runLibrarySummary, summaryDraftEntry } from "../lib/ai/librarySummaryRun";
+import { collectSummarySources, runLibrarySummary, summaryDraftEntry } from "../lib/ai/librarySummaryRun";
 import { summarizerFromTransport } from "../lib/ai/librarySummary";
+import { generateTopicDraft, type TopicDraft } from "../lib/ai/topicDraft";
+import type { MapSection } from "../lib/ai/libraryMap";
 import { platform } from "../lib/platform";
 import type { AiRunResult } from "../lib/ai/types";
 import { useNotes } from "./notes";
@@ -64,12 +66,28 @@ interface AiState {
   currentPrompt: string;
   /** Last run's model thinking / reasoning (collapsible "思考" block). */
   thinking: string;
+  /**
+   * 第三块「按需单页」：**只出草稿，不落库** ✓
+   * （采纳/落库是下一块；`confirm` 那条路仍然是**唯一**落库口 ✓）
+   * ⚠️ 取消＝**不采用这次结果**（`stop()` 让 seq 作废），不是"中断网络请求"——
+   *    因为 `LlmOptions` 里没有 `signal`（如实说 ✗）。
+   */
+  topicDraft: TopicDraft | null;
+  topicRunning: boolean;
+  topicError: string | null;
 
   setOpen: (open: boolean) => void;
   update: (patch: Partial<AiConfig>) => void;
   run: (prompt: string) => Promise<void>;
   /** 「跨库总结」：取材 → 分批总结（强制回链）→ 结果进对话 + 一条「插成块」草稿。 */
   summarizeLibrary: (question?: string) => Promise<void>;
+  /**
+   * 「按需单页」（第三块）：**一个分区 → 一页草稿**。复用既有取材与既有回链校验 ✓；
+   * 覆盖面**只取该分区声明的来源**（不把整库塞给它）✓；**不落库** ✓。
+   */
+  generateTopic: (section: MapSection, coverage?: { indexed: number; total: number } | null) => Promise<void>;
+  /** 清掉草稿（「不采用」）：**什么都不写** ✓ */
+  clearTopicDraft: () => void;
   stop: () => void;
   confirm: (key: string) => Promise<void>;
   dismiss: (key: string) => void;
@@ -143,6 +161,9 @@ export const useAiStore = create<AiState>((set, get) => ({
   activity: [],
   currentPrompt: "",
   thinking: "",
+  topicDraft: null,
+  topicRunning: false,
+  topicError: null,
 
   setOpen: (open) => set({ open }),
 
@@ -335,9 +356,63 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
 
+  /**
+   * 「按需单页」（第三块）：一个分区 ⇒ 一页**草稿**。三步全部复用既有面 ✓
+   *   ① 取材＝`collectSummarySources`（与「跨库总结」**同一个**收集器）
+   *   ② 只留该分区**自己声明的来源**（不把整库喂给它）
+   *   ③ provider⇒SummarizeFn＝`summarizerFromTransport`（与 `summarizeLibrary` 同一行写法）
+   * ⇒ **不落库**：结果只进 `topicDraft` 状态（落库仍只有 `confirm` 那一条路 ✓）
+   */
+  generateTopic: async (section, coverage) => {
+    const { config } = get();
+    if (!config.enabled) {
+      set({ topicError: "AI 功能未启用，请先在设置中开启并配置模型。" });
+      return;
+    }
+    const seq = ++runSeq;
+    set({ topicRunning: true, topicError: null, topicDraft: null });
+    try {
+      const collected = await collectSummarySources({ platform });
+      if (seq !== runSeq) return;
+      if (collected.blocked) {
+        set({ topicRunning: false, topicError: collected.blocked });
+        return;
+      }
+      const wanted = new Set(section.items.flatMap((it) => it.sources));
+      const materials = collected.sources.filter((s) => wanted.has(s.ref));
+      const transport = IS_WEB
+        ? createProviderTransport(config as ProviderConfig)
+        : createBackendStreamingTransport(config as ProviderConfig);
+      const draft = await generateTopicDraft(section, materials, {
+        summarize: summarizerFromTransport(transport, 1024),
+        model: config.model,
+        coverage: coverage ?? null,
+      });
+      if (seq !== runSeq) return; // stop()/更新的 run ⇒ 这次结果**不采用** ✓
+      set({
+        topicRunning: false,
+        topicDraft: draft,
+        activity: [
+          {
+            tool: "wiki.topic",
+            note:
+              `「${section.label}」：材料 ${draft.materialCount} 条 ⇒ 草稿 ${draft.refs.length} 条回链` +
+              `${draft.droppedInventedRefs > 0 ? `（丢掉模型编造的回链 ${draft.droppedInventedRefs} 条）` : ""}` +
+              `${draft.calledModel ? "" : "（材料为空 ⇒ 没调模型）"}｜**未落库**`,
+          },
+        ],
+      });
+    } catch (e) {
+      if (seq !== runSeq) return;
+      set({ topicRunning: false, topicError: String((e as Error)?.message ?? e) });
+    }
+  },
+
+  clearTopicDraft: () => set({ topicDraft: null, topicError: null }),
+
   stop: () => {
     runSeq++;
-    set({ running: false });
+    set({ running: false, topicRunning: false }); // 取消＝**不采用结果**（在飞的那次由 seq 作废 ✓）
   },
 
   confirm: async (key: string) => {
