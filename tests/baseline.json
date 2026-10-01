@@ -67,7 +67,8 @@
       "check-kb-s3-timeline",
       "check-kb-s4-map",
       "check-im-boundary",
-      "check-pairing-requires-proof"
+      "check-pairing-requires-proof",
+      "check-design-doc-refs"
     ],
     "smoke": [
       "smoke-web",

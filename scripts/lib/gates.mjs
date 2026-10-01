@@ -282,6 +282,22 @@ export const GATES = [
     registered: "2026-10-01",
   },
   {
+    id: "check-design-doc-refs",
+    group: "contract",
+    label: "效果图点名的需求/不变式必须真实存在；每条 MUST 至少被一张图引用",
+    cmd: "node scripts/check-design-doc-refs.mjs",
+    incident:
+      "2026-10-01：`design/enterprise-im/README.md` 里那张「覆盖哪几条需求」的表**是人工写的** —— " +
+      "写一个不存在的 `M9`、或需求加了新条目却没人画图，**两者都不会有任何报错**：" +
+      "图照样出、评审照样看，而**图与文档的关联是假的**。图事实上在扮演“规格”（大家照着图做），" +
+      "**而它没有判据兜** —— 正是本仓反复要消灭的「两份真相源」。实测当时的断链：三份 IM 文档里 " +
+      "`grep 效果图` = 0 命中，且没有任何门禁扫 `design/`。" +
+      "两条真断言：① 图 README 点名的 `M#`／`W#` 必须在需求里存在、`INV-IM-*` 与规格 §7 的 `N#` 必须在规格里存在；" +
+      "② 每条 MUST（`M#`）至少被一张图引用（`W#` 不要求逐条引）。" +
+      "⚠️ 边界：它**不判“图长得对不对”**，只判**引用是不是真的**。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-pairing-requires-proof",
     group: "contract",
     label: "配对必须有人核对过（码长下限未被缩短／比对码真的比／采纳前先核对／拒绝路不继续／路径上无“等对端同意”）",
