@@ -16067,44 +16067,6 @@ p:has(> .editor-drawing-container) {
 }
 
 /* Right-edge vertical launcher rail (Wolai-style) */
-.right-rail {
-  position: fixed;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 30;
-  /* 显式写出宽度（原来是内容撑出来的 30 + 2×5 padding + 2×1 border = 41）：
-     阅读器边缘手柄要按这个数避让，见 `--rail-w`。 */
-  width: var(--rail-w);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 5px;
-  border-radius: var(--radius-md) 0 0 var(--radius-md);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-right: none;
-  box-shadow: var(--shadow-md);
-}
-.rail-btn {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.rail-btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-.rail-btn.active {
-  color: #fff;
-  background: var(--accent);
-}
 .ai-header {
   display: flex;
   align-items: center;
@@ -22028,46 +21990,8 @@ body.is-plugin-panel-open .main {
      （`RightRail` 里 `isMobile` 判断），CSS 说"矮屏也收起"而 JS 说"不算窄屏"就会两边打架
      ——横屏手机（792×360）会出现"工具条被 CSS 藏了、唤出按钮没有渲染"的死角。
      仓库那条"JS/CSS 断点必须是同一个数"说的正是这种地方。 */
-  .mobile-right-toggle {
-    position: fixed;
-    right: 12px;
-    /* 与左下角那枚（`.mobile-rail-toggle`）同一套让位规则：状态栏 / 手势条 / 键盘。 */
-    bottom: max(18px, calc(var(--sab) + 12px));
-    z-index: 45;
-    width: 44px;
-    height: 44px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    background: var(--surface);
-    color: var(--text-dim);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-  }
-  .mobile-right-toggle:active { background: var(--hover); color: var(--text); }
-  .mobile-right-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 56;
-    background: rgba(0, 0, 0, 0.35);
-  }
   /* 展开态：贴在右下角那枚按钮**上方**（不再是"垂直居中贴在右缘"——那样它在
      窄屏上会压住正文，而且离拇指最远）。 */
-  .right-rail.is-open {
-    top: auto;
-    right: 8px;
-    bottom: calc(max(18px, calc(var(--sab) + 12px)) + 52px);
-    transform: none;
-    z-index: 57;
-    padding: 4px;
-    gap: 2px;
-    border-right: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-  }
-  .rail-btn { width: 44px; height: 44px; }
 }
 
 /* ===========================================================================

@@ -38,7 +38,6 @@ import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
-import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, MenuIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
@@ -1042,7 +1041,6 @@ function AppShell() {
           <InputDialog />
           <AiAssistantPanel />
           <CommentsDrawer />
-          <RightRail />
         </PanelBoundary>
       </div>
     );
@@ -1149,7 +1147,6 @@ function AppShell() {
         <CommentsDrawer />
         {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
         <TextRepairRunner />
-        <RightRail />
         <ShortcutsPanel />
         <AboutDialog />
         <SettingsDialog />

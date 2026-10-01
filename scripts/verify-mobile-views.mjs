@@ -2300,9 +2300,16 @@ async function main() {  const executablePath = findChrome();
     const dTools = await safeEval(desk, () => ({
       n: document.querySelectorAll(".top-tools .top-tool").length,
       mobileRow: !!document.querySelector(".top-tools.is-mobile"),
+      oldRail: !!document.querySelector(".right-rail"),
+      oldToggle: !!document.querySelector(".mobile-right-toggle"),
+      oldBackdrop: !!document.querySelector(".mobile-right-backdrop"),
     }));
     ok(dTools.n >= 4, `桌面四颗入口都在（实际 ${dTools.n} 颗）`);
-    ok(!dTools.mobileRow, "桌面走标题栏那一处（手机那行不许出现 ✓）");
+    // ⚠️ 2026-10-01：RightRail 已撤 ⇒ 这三条反向断言**现在才成立** ✓（撤之前加必红 ✗，实测撞过 ✓）。
+    ok(
+      !dTools.mobileRow && !dTools.oldRail && !dTools.oldToggle && !dTools.oldBackdrop,
+      "桌面走标题栏那一处（手机那行与旧 rail/唤出钮/遮罩都不许出现 ✓）",
+    );
     // ⚠️ 2026-10-01：**"旧 rail 不许出现"那两条反向断言留到撤组件那一步再加** ✓ ——
     //   现在 RightRail 还在 ⇒ 加了必然红 ✗（我这一步就在实测里撞到过 ✓）。撤完再加，才是它成立的时刻 ✓。
     await shot(desk, `${DESKTOP.name}-notes`);
