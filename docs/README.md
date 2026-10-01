@@ -156,6 +156,8 @@ CHANGELOG.md                     # 版本变更日志
 | [specs/2026-10-01-enterprise-im-spec.md](specs/2026-10-01-enterprise-im-spec.md) | **规格：讨论的 `INV-IM-*` 十二条**（空间是唯一边界／只在团队空间／不许好友关系／顺序由服务端分配／在线含空间维度／线程恰好两层／未读按线／权限回收彻底／删除留痕／讨论可变成知识／推送不带正文／离线不说谎）；⚠️ **今天"能跑"的是 0 条**，如实标 `待立`，并写明起手三手 ✓ |
 | [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓的门禁只有一部分入层**（其余：缺可跑性 / 平台绑定造不出夹具）。⚠️ **计数别写死，见本表后的命令** |
 | [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 都带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**）；当前条数见下表后的命令 |
+| [specs/2026-09-28-llm-wiki-requirements.md](specs/2026-09-28-llm-wiki-requirements.md) | **需求：LLM wiki（库地图 / 专题页）（待 owner 拍板）**：一句话＝"库能「被回答」，但还不能「被浏览」"；六段（诉求原话 / 现状读数 / 要什么 / 不要什么 / 边界 / ＋成功判据、砍掉条件）；⚠️ **痛点的量级没有读数**（前置测量在 §8，其中"模型成本"是 **go/no-go**） |
+| [specs/2026-09-28-llm-wiki-spec.md](specs/2026-09-28-llm-wiki-spec.md) | **规格：LLM wiki 的入口与边界（三条不变式，第四列全 `❌ 无`）**：`INV-WIKI-provenance` / `-coverage-visible` / `-readonly-default`；含每条"怎么弄红"的负例与对照、落地三步（先纯函数断言 → 弄红记账本 → 够条件才进 `INVARIANTS.md`）；**按本层铁律现在还不在 `INVARIANTS.md` 里** |
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
@@ -266,6 +268,7 @@ node scripts/test-report.mjs --list                                             
 | 文档 | 内容 |
 |---|---|
 | [plans/2026-09-27-sync-panel-mobile-density.md](plans/2026-09-27-sync-panel-mobile-density.md) | **同步面板在窄屏的密度问题（方案，待拍板）**：390×844 实测「可见 819 / 内容 996」⇒ 必滚 177px；高度构成（空间卡 594 + 脚 134 + 头 66 + Web 提示 54）；四个选项 A 折叠卡 / B 收窄提示 / C 动作吸底 / D 走全屏；附「零滚动」等三条建议断言，以及明确不碰加密那块 |
+| [plans/2026-09-28-llm-wiki-plan.md](plans/2026-09-28-llm-wiki-plan.md) | **LLM wiki（库地图 / 专题页）（方案，待 owner 拍板）**：结论是"缺的不是生成能力，而是库这一层的可追溯入口"——生成器（P4 强制引用）/ 取材（`files.search`+`files.read`）/ 诚实层（覆盖度）/ 回滚（版本历史）/ 增量（补算队列）都已存在；四个选项 A 只读库地图 / B 专题页增量维护 / C AI 记忆层 / D 受控编辑，含"住正文还是住派生层"的抉择表；三条建议断言（引用准确率 / 覆盖度齐全率 100% / 只读默认），以及明确不做（不自动改用户页、不走远端、不全库重跑、不复制判据正文） |
 | [plans/2026-09-28-knowledge-and-agent-access-plan.md](plans/2026-09-28-knowledge-and-agent-access-plan.md) | **知识层与外部接入方案**（导航＋取舍）：三层（本体骨架／RAG 访问／Wiki 产出）＋**两种空间**＋一物三用（生成器同时喂 MCP 工具清单／本体表／知识地图）＋度量与分期 ✓ |
 | [plans/2026-09-28-knowledge-m1-workorder.md](plans/2026-09-28-knowledge-m1-workorder.md) | **M1 施工单（判据先行，不写产品代码）**：7 个任务，每个都有 `Files:` ＋「先让判据红」＋ `Expected:` 逐字 ＋ 再注入证明 ✓ |
 | [plans/2026-09-28-agent-mcp-integration-plan.md](plans/2026-09-28-agent-mcp-integration-plan.md) | **外部 Agent 接入（MCP / CLI）总方案（规划，未实装，待拍板）**：让 Claude Code / CodeBuddy / WorkBuddy / DSH 用上本机笔记库。**结论：四个产品都原生支持 MCP，缺的是客户端这一侧的面**（全仓 MCP 零命中）。含现状取证 10 条（注册表 25 条能力 / 其中 `ai:true` 10 条 · 权限与审计只有一个校验点 `dispatch_capability` · **钥匙只在应用进程内存且没有 OS keyring** · 没有面向外部进程的通道 · mesh 窗口默认关闭）＋ **MCP/CLI/API 不是三选一**（API 是底座，两个薄适配器共用它，硬约束不变）＋ 推荐架构（应用内宿主面 ＋ 哑桥 ＋ 草稿写回）＋ 工具面与**实测上下文成本 1631 字符/会话**＋ 四家官方配置（含 DSH 的 `insert:` 语法订正）＋ M1–M3 里程碑与验收 ＋ 6 项待拍板 ＋ 诚实边界 |
