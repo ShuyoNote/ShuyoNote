@@ -34,6 +34,10 @@ python3 design/enterprise-im/draw-im-mockups.py
 
 ## 1.1 ⭐ 顶端工具栏（owner 2026-10-01 的方向，**这五张都按它画** ✓）
 
+> ✅ **同一天 owner 还确认了两件**：① 顶栏形态就用**文字胶囊**（⛔ 不改图标式 ✗）✓
+> ② 「什么算读过」＝ **点开该线即推进 ＋ 另留一颗「标为已读」兜底**（两条都要 ✓）——
+> 口径已写进规格 [`INV-IM-unread-is-per-channel`](../../docs/specs/2026-10-01-enterprise-im-spec.md) ✓
+
 ```text
 ⛔ **去掉「页面侧边工具条」** —— 就是 `src/components/RightRail.tsx` 那条「展开右侧工具」✗
 ✅ **它的功能全部收入顶端工具栏**（`TitleBar.tsx` 那一行）：
