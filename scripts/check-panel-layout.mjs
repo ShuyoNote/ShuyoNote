@@ -53,7 +53,7 @@ const FIXTURE = `
         </div>
       </div>
     </div>
-    <div class="right-rail"></div>
+    <div class="top-tools"><button class="top-tool"></button></div>
   </div>
 </div>
 
@@ -600,7 +600,7 @@ try {
       sidebar: box(".sidebar"),
       main: box(".main"),
       reader: box(".main .pdf-reader"),
-      rightRail: box(".right-rail"),
+      topTools: box(".top-tools"),
       readerPosition: getComputedStyle(document.querySelector(".main > .pdf-reader-overlay")).position,
       sidebarInFlow: ["flex", "block"].includes(getComputedStyle(document.querySelector(".sidebar")).display),
       mobileMQ: matchMedia("(max-width: 768px)").matches,
