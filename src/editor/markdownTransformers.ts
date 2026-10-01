@@ -32,9 +32,13 @@ import {
 import {
   $createParagraphNode,
   $createTextNode,
+  IS_BOLD,
+  IS_CODE,
+  IS_ITALIC,
   type ElementNode,
   type LexicalNode,
 } from "lexical";
+import { parseInline, type MdInline } from "../lib/markdown";
 import { BlockEmbedNode, $createBlockEmbedNode, $isBlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { BlockRefNode, $createBlockRefNode, $isBlockRefNode } from "./nodes/BlockRefNode";
 import { CalloutNode, $createCalloutNode, $isCalloutNode } from "./nodes/CalloutNode";
@@ -142,6 +146,50 @@ export const CALLOUT: MultilineElementTransformer = {
   type: "multiline-element",
 };
 
+/**
+ * 表格单元格里的**行内格式**（owner 2026-10-01：「表格内的加粗问题没有解决」）。
+ *
+ * 原先两处单元格都是 `$createTextNode(原文)` —— 于是 `**粗**` 只是**字面文本** ✗。
+ * 根因不是"解析器不认识粗体"，而是**表格整行被 `TABLE` 这个 element transformer 吃掉了**：
+ * 行级的文本格式 transformer（`TEXT_FORMAT_TRANSFORMERS`）**根本看不到单元格里的字** ✓。
+ *
+ * 所以这里自己把单元格文本过一次行内解析 —— ⛔ **不另写解析器**：复用
+ * `src/lib/markdown.ts` 的 `parseInline`（唯一出处 ✓）。
+ * 效果：`**粗**` / `*斜*` / `` `码` `` ⇒ 带 format 的 TextNode ⇒ 渲染即为粗体/斜体/等宽 ✓，
+ * 且导出侧 `exportChildren(cell)` 会照 format 还原 `**…**` ⇒ **往返不丢** ✓。
+ *
+ * ⚠️ **链接**暂按原文保留（`[label](url)`）—— 与改动前的行为一致 ✓，**不静默吞掉 URL** ✗。
+ *    表格单元格里的链接少见，留作已知缺口（要补时用 `@lexical/link` 的 `$createLinkNode` ✓）。
+ */
+function appendInlineMarkdown(parent: ElementNode, pieces: MdInline[], format = 0): void {
+  for (const piece of pieces) {
+    switch (piece.kind) {
+      case "text":
+        parent.append($createTextNode(piece.text).setFormat(format));
+        break;
+      case "bold":
+        appendInlineMarkdown(parent, piece.children, format | IS_BOLD);
+        break;
+      case "italic":
+        appendInlineMarkdown(parent, piece.children, format | IS_ITALIC);
+        break;
+      case "code":
+        parent.append($createTextNode(piece.text).setFormat(format | IS_CODE));
+        break;
+      case "link":
+        parent.append($createTextNode(`[${piece.label}](${piece.href})`).setFormat(format));
+        break;
+    }
+  }
+}
+
+/** 建一个单元格：段落 +（走行内解析的）若干文本节点。 */
+function createMarkdownCell(text: string): TableCellNode {
+  const paragraph = $createParagraphNode();
+  appendInlineMarkdown(paragraph, parseInline(text));
+  return $createTableCellNode().append(paragraph);
+}
+
 // Markdown table
 export const TABLE: MultilineElementTransformer = {
   dependencies: [TableNode, TableRowNode, TableCellNode],
@@ -207,18 +255,14 @@ export const TABLE: MultilineElementTransformer = {
 
     const headerRowNode = $createTableRowNode();
     for (let c = 0; c < colCount; c++) {
-      const cell = $createTableCellNode();
-      cell.append($createParagraphNode().append($createTextNode(headerRow[c] ?? "")));
-      headerRowNode.append(cell);
+      headerRowNode.append(createMarkdownCell(headerRow[c] ?? ""));
     }
     table.append(headerRowNode);
 
     for (const row of bodyRows) {
       const rowNode = $createTableRowNode();
       for (let c = 0; c < colCount; c++) {
-        const cell = $createTableCellNode();
-        cell.append($createParagraphNode().append($createTextNode(row[c] ?? "")));
-        rowNode.append(cell);
+        rowNode.append(createMarkdownCell(row[c] ?? ""));
       }
       table.append(rowNode);
     }
