@@ -501,14 +501,17 @@ def sheet6():
     s.small(sx + 34, sy + sh - 44, "跨空间那种列表才是否掉的那个。", MUT)
     # 右侧：选中那条线
     mx, mw = ax + sw, aw - sw
-    s.t(mx + 32, sy + 26, "本周进展", F_H)
-    s.chip(mx + 190, sy + 24, "空间级 · 所有人可见", GREEN, GREEN_BG, h=30)
-    s.small(mx + mw - 32, sy + 34, "切走时：按你拍的「点开即推进」把这条读掉", MUT, "ra")
-    s.rule(mx + 32, sy + 70, mx + mw - 32)
+    # ⭐ 两级标签页「本页 ｜ 空间」（owner 2026-10-01 选 A）：页级线程与空间级线在这里切
+    s.switch2(mx + 32, sy + 14, 300, "本页", "空间", "空间")
+    s.small(mx + 356, sy + 30, "「本页」＝图 01 的页级线程；「空间」＝本空间的讨论线（就是左边列的这些）", MUT)
+    s.t(mx + 32, sy + 82, "本周进展", F_H)
+    s.chip(mx + 190, sy + 80, "空间级 · 所有人可见", GREEN, GREEN_BG, h=30)
+    s.small(mx + mw - 32, sy + 90, "切走时：按你拍的「点开即推进」把这条读掉", MUT, "ra")
+    s.rule(mx + 32, sy + 126, mx + mw - 32)
     msgs = [("王", "10:02", "这周接口那半做完了。", BLUE_BG, BLUE),
             ("李", "10:05", "前端还差一层校验，明天补。", GREEN_BG, GREEN),
             ("赵", "10:07", "那我把发布检查那条线开起来。", AMBER_BG, AMBER)]
-    yy = sy + 96
+    yy = sy + 152
     for who, tm, text, bg, fg in msgs:
         s.avatar(mx + 32, yy, who, fill=bg, fg=fg)
         s.t(mx + 78, yy + 2, who + "工", F_S)
