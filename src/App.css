@@ -456,16 +456,9 @@ html[data-platform="win"] .app-body {
   border-radius: 0 2px 2px 0;
   background: var(--accent);
 }
-.activity-dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-  box-shadow: 0 0 0 2px var(--bg-sidebar);
-}
+/* ⚠️ 2026-10-01：`.activity-dot`（竖条上那颗「有新版本可用」的小红点）随**「关于」按钮**一起去掉了 ✓ ——
+   它唯一的用处就是挂在那颗按钮的角上 ✗；更新提示仍在**更新横幅**与**设置 → 关于与更新**里 ✓。
+   将来若又要一个角标：样式与语义都在这一行的历史里 ✓（`git log -p -- src/App.css`）。 */
 /* 回收站沿用自己的 .btn-trash 触发器，在竖条里按 activity-btn 的尺寸对齐。 */
 .activity-bar .trash-panel {
   display: flex;
