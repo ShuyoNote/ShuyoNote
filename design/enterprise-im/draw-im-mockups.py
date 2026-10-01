@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# 企业版 IM（「长在空间与笔记上的讨论」）· 高保真效果图（成套 5 张）
+# 企业版 IM（「长在空间与笔记上的讨论」）· 高保真效果图（成套 6 张）
 #
 # ⛔ 这是**目标形态**，不是产品截图 ✗ —— 规格与方案见：
 #   `docs/specs/2026-10-01-enterprise-im-requirements.md`（要什么／不要什么）
 #   `docs/specs/2026-10-01-enterprise-im-spec.md`（12 条不许破的规矩）
 #   `docs/plans/2026-10-01-enterprise-im-approach.md`（技术路线与架构）
-# ⚠️ **产品代码一行都没落地** —— 这五张图画的是 Phase 1–3 的**目标**（见方案 §5）。
+# ⚠️ **产品代码一行都没落地** —— 这六张图画的是 Phase 1–3 的**目标**（见方案 §5）。
 #
 # ⚠️ 字体与字形（沿用 `design/sync-panel/draw-sync-panel.py` 的同一套闸门，别重犯）：
 #   · PingFang.ttc 在 Pillow 下**打不开** ⇒ 用 Hiragino Sans GB.ttc **index=0**
@@ -183,6 +183,19 @@ class Sheet:
         if badge:
             self.badge(x + w - 22, y + 6, badge, d0=20)
         return w
+
+    def switch2(self, x, y, w, a, b, active):
+        """侧边栏顶部的**两级切换器**（「页面 ｜ 讨论」）——
+        ⭐ owner 2026-10-01 的方向：讨论线**放进左侧边栏**，切换就在这一格 ✓"""
+        self.d.rounded_rectangle([x, y, x + w, y + 40], radius=10, fill=(235, 238, 244))
+        half = w // 2
+        for i, lbl in enumerate((a, b)):
+            on = (lbl == active)
+            px = x + (i * half) + 3
+            self.d.rounded_rectangle([px, y + 3, px + half - 6, y + 37], radius=8,
+                                     fill=CARD if on else (235, 238, 244),
+                                     outline=LINE if on else (235, 238, 244), width=1)
+            _emit(self.d, (px + (half - 6) // 2, y + 20), lbl, F_XS, BLUE if on else MUT, "mm")
 
     def sidebar(self, x, y, w, h, tree):
         self.d.rectangle([x, y, x + w, y + h], fill=(247, 248, 251))
@@ -455,11 +468,100 @@ def sheet5():
     return s.save("效果图-05-个人空间与团队空间-顶栏对照.png")
 
 
+def sheet6():
+    """⑥ 讨论线放进**左侧边栏**：常驻可见未读，切换就在侧边栏里（方案 A）。"""
+    s = Sheet("企业版 IM · 效果图 06",
+              "讨论线放进左侧边栏：不用先开面板就知道哪条线有新的；切换就在侧边栏顶部那一格。")
+    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)]
+    ax, ay, aw, ah = 56, 190, 1888, 880
+    s.app(ax, ay, aw, ah, tools=TEAM)
+    sy, sh = ay + 64, ah - 64
+    sx, sw = ax, 320
+    s.d.rectangle([sx, sy, sx + sw, sy + sh], fill=(247, 248, 251))
+    s.d.line([sx + sw, sy, sx + sw, sy + sh], fill=LINE, width=1)
+    s.switch2(sx + 16, sy + 16, sw - 32, "页面", "讨论", "讨论")
+    s.small(sx + 20, sy + 72, "本空间 3 条讨论线")
+    rows = [("本周进展", "3", True, "最后一条 10:07 · 王工"),
+            ("问题清单", "0", False, "最后一条 09:41 · 李工"),
+            ("发布检查", "1", False, "最后一条 10:07 · 赵工")]
+    yy = sy + 100
+    for name, n, cur, sub in rows:
+        if cur:
+            s.d.rounded_rectangle([sx + 10, yy - 6, sx + sw - 14, yy + 66], radius=10, fill=BLUE_BG)
+        s.t(sx + 26, yy + 10, name, F_S, BLUE if cur else INK)
+        s.small(sx + 26, yy + 40, sub, MUT)
+        if n != "0":
+            s.badge(sx + sw - 52, yy + 14, n)
+        else:
+            s.chip(sx + sw - 96, yy + 16, "已读完", MUT, GREY, h=28)
+        yy += 88
+    s.card(sx + 16, sy + sh - 120, sw - 32, 100, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(sx + 34, sy + sh - 100, "【注意】这里不是「会话列表」", F_XS, AMBER)
+    s.small(sx + 34, sy + sh - 68, "它是**本空间内**的导航；", MUT)
+    s.small(sx + 34, sy + sh - 44, "跨空间那种列表才是否掉的那个。", MUT)
+    # 右侧：选中那条线
+    mx, mw = ax + sw, aw - sw
+    # ⭐ 两级标签页「本页 ｜ 空间」（owner 2026-10-01 选 A）：页级线程与空间级线在这里切
+    s.switch2(mx + 32, sy + 14, 300, "本页", "空间", "空间")
+    s.small(mx + 356, sy + 30, "「本页」＝图 01 的页级线程；「空间」＝本空间的讨论线（就是左边列的这些）", MUT)
+    s.t(mx + 32, sy + 82, "本周进展", F_H)
+    s.chip(mx + 190, sy + 80, "空间级 · 所有人可见", GREEN, GREEN_BG, h=30)
+    s.small(mx + mw - 32, sy + 90, "切走时：按你拍的「点开即推进」把这条读掉", MUT, "ra")
+    s.rule(mx + 32, sy + 126, mx + mw - 32)
+    msgs = [("王", "10:02", "这周接口那半做完了。", BLUE_BG, BLUE),
+            ("李", "10:05", "前端还差一层校验，明天补。", GREEN_BG, GREEN),
+            ("赵", "10:07", "那我把发布检查那条线开起来。", AMBER_BG, AMBER)]
+    yy = sy + 152
+    for who, tm, text, bg, fg in msgs:
+        s.avatar(mx + 32, yy, who, fill=bg, fg=fg)
+        s.t(mx + 78, yy + 2, who + "工", F_S)
+        s.small(mx + 142, yy + 6, tm, MUT)
+        s.t(mx + 78, yy + 36, text, F_S)
+        yy += 100
+    by = sy + sh - 96
+    s.d.rounded_rectangle([mx + 32, by, mx + 304, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (mx + 168, by + 28), "把结论落成笔记", F_S, (255, 255, 255), "mm")
+    s.d.rounded_rectangle([mx + 324, by, mx + 564, by + 56], radius=10, fill=CARD, outline=LINE, width=2)
+    _emit(s.d, (mx + 444, by + 28), "标为已读", F_S, INK, "mm")
+    s.small(mx + 584, by + 28, "（兜底那颗：只是扫一眼时用它）", MUT, "lm")
+    # 底部：三种侧边栏装法对照
+    s.card(56, 1108, 1888, 218)
+    s.t(84, 1128, "【要点】侧边栏里怎么装这两样东西 —— 我画的是 A", F_B, BLUE)
+    bx = 96
+    for tag, desc, kind in [
+        ("A 顶部两级切换器（画的就是它）", "界线清楚；一眼看出现在是哪一级", "switch"),
+        ("B 同一列分两段", "两样都看得见；互相挤、都要滚", "split"),
+        ("C 混在页面树里", "【禁】得靠猜这条是页面还是讨论线", "mixed"),
+    ]:
+        s.card(bx, 1172, 592, 136, edge=BLUE if kind == "switch" else LINE,
+               fill=BLUE_BG if kind == "switch" else CARD, lw=2)
+        s.t(bx + 18, 1188, tag, F_XS, BLUE if kind == "switch" else INK)
+        s.small(bx + 18, 1216, desc, MUT)
+        # 缩略
+        tx, ty = bx + 18, 1244
+        s.d.rounded_rectangle([tx, ty, tx + 260, ty + 52], radius=8, fill=(247, 248, 251), outline=LINE, width=1)
+        if kind == "switch":
+            s.d.rounded_rectangle([tx + 8, ty + 8, tx + 252, ty + 28], radius=6, fill=(235, 238, 244))
+            s.d.rounded_rectangle([tx + 8, ty + 8, tx + 130, ty + 28], radius=6, fill=CARD, outline=LINE, width=1)
+            _emit(s.d, (tx + 60, ty + 18), "页面", F_XS, MUT, "mm")
+            _emit(s.d, (tx + 190, ty + 18), "讨论", F_XS, BLUE, "mm")
+            s.d.rounded_rectangle([tx + 8, ty + 34, tx + 252, ty + 46], radius=4, fill=BLUE_BG)
+        elif kind == "split":
+            s.d.rounded_rectangle([tx + 8, ty + 8, tx + 252, ty + 24], radius=4, fill=(235, 238, 244))
+            s.d.rounded_rectangle([tx + 8, ty + 30, tx + 252, ty + 46], radius=4, fill=BLUE_BG)
+        else:
+            for k in range(3):
+                s.d.rounded_rectangle([tx + 8, ty + 8 + k * 15, tx + 252, ty + 19 + k * 15], radius=4,
+                                      fill=BLUE_BG if k == 1 else (235, 238, 244))
+        bx += 616
+    return s.save("效果图-06-讨论线放进左侧边栏.png")
+
+
 if __name__ == "__main__":
-    sheet1(); sheet2(); sheet3(); sheet4(); sheet5()
+    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6()
     if ALL_BAD:
         print("\n⛔ 有图缺字形 ⇒ 非零退出（⛔ 不许静默）")
         for name, bad in ALL_BAD:
             print("   · %s：%s" % (name, " ".join(bad)))
         raise SystemExit(1)
-    print("\n五张全部干净 ✓")
+    print("\n六张全部干净 ✓")
