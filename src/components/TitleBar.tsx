@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PresenceBar } from "./PresenceBar";
 import { useNotes } from "../store/notes";
@@ -8,13 +8,10 @@ import { useAuth } from "../store/auth";
 import { isDesktopPlatform } from "../lib/platform";
 import { api, type SyncProfile } from "../lib/api";
 import { syncTagLabel, syncTagColor } from "../lib/syncTag";
-// ⚠️ 2026-10-01（owner 三条界面方向之①）：**右侧工具条撤掉**，那四个入口 + 插件常驻入口
-//    全部搬到这条标题栏上 ✓（⛔ 不是文字胶囊 ✗ —— owner 明确要**保持现有的图标样式** ✓）。
-import { useRightPanel } from "../store/rightPanel";
-import { usePlugins } from "../store/plugins";
-import { usePluginViewStore } from "../store/pluginViews";
-import { viewPlacement, viewPlacementKey } from "../lib/pluginViews";
-import { SparkleIcon, CommentIcon, BellIcon, ListIcon, PanelIcon } from "./icons";
+// ⚠️ 2026-10-01（owner 界面方向之①）：**右侧工具条撤掉** ⇒ 它的入口搬到这条标题栏上 ✓；
+//    入口本身抽在 `TopTools` 里 ✓ —— 因为**手机上标题栏不渲染** ✓，而 owner 要求两端都有 ✓
+//    （同一个组件在 `App.tsx` 的 `.app` 顶部再渲染一处 ✓，⛔ 不各写一份 ✗）。
+import { TopTools } from "./TopTools";
 
 // 自绘标题栏（B 方案）。仅桌面端渲染，Web 端没有窗口概念。
 //
@@ -34,39 +31,6 @@ export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
   const [syncProfile, setSyncProfile] = useState<SyncProfile | null>(null);
-  // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条**撤了** ✓ ⇒ 它的入口搬到标题栏，
-  //    所以这里读的就是原来 `RightRail` 读的那几个 store ✓（互斥关系仍在 rightPanel 里 ✓）。
-  const aiOpen = useRightPanel((s) => s.ai);
-  const tocOpen = useRightPanel((s) => s.toc);
-  const commentsOpen = useRightPanel((s) => s.comments);
-  const commentsTab = useRightPanel((s) => s.commentsTab);
-  const openAi = useRightPanel((s) => s.openAi);
-  const openToc = useRightPanel((s) => s.openToc);
-  const openComments = useRightPanel((s) => s.openComments);
-  const pluginKey = useRightPanel((s) => s.plugin);
-  const allPlugins = usePlugins((s) => s.plugins);
-  /**
-   * 「通知」那颗的未读数 ✓。
-   *
-   * ⚠️ **现在恒为 0** ✗ —— 通知中心（`NotificationCenter` ✓）的数据是"按频道未读"，
-   * 而那条规格（`INV-IM-unread-is-per-channel` ✓）**还没落地** ⇒ **登记为已知缺口** ✓：
-   * 等它落地时，把这里换成那个 store 的读数即可 ✓（⛔ 现在**不假造一个数** ✗，
-   * 也不把"角标没数"糊成"通知功能好了" ✗）。
-   */
-  const unreadCount = 0;
-  // 插件声明的**常驻面板**入口（`placement: "rail"` ✓）：order 上排在 owner 那四颗**之后** ✓
-  //（owner 2026-10-01 拍板 ✓）。只有**启用中**的插件算数 ✓ —— 停用的插件入口不该还在 ✓。
-  const railViews = useMemo(
-    () =>
-      allPlugins
-        .filter((p) => p.enabled)
-        .flatMap((p) =>
-          (p.views ?? [])
-            .filter((v) => viewPlacement(v) === "rail")
-            .map((v) => ({ pluginId: p.id, pluginName: p.name, view: v, key: viewPlacementKey(p.id, v) })),
-        ),
-    [allPlugins],
-  );
   // 登录/登出（auth store 的 authed 变化）也会影响同步目标，订阅它以便登录后
   // 标题栏同步胶囊即时出现，无需刷新页面。
   const authed = useAuth((s) => s.authed);
@@ -197,70 +161,11 @@ export function TitleBar() {
           <span className="titlebar-sync-text">{syncTagLabel(syncProfile.server_url)}</span>
         </div>
       )}
-      {/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口**搬到这一行** ✓；
-          形态照 owner 纠正后的口径＝**保持现有的图标样式** ✓（⛔ 不做文字胶囊 ✗）。
-          顺序＝owner 定的四颗（AI 助手／讨论／通知／目录 ✓）＋ 插件常驻入口（`placement: "rail"`）
-          **排在其后** ✓（owner 2026-10-01 拍板 ✓，⛔ 不是丢掉那个能力 ✗）。
-          ⚠️ 「通知」角标现在恒为 0（见上面 `unreadCount` 的说明 ✓）。 */}
-      <div className="titlebar-tools">
-        <button
-          className={`titlebar-tool${aiOpen ? " is-on" : ""}`}
-          title="AI 助手"
-          aria-label="AI 助手"
-          aria-pressed={aiOpen}
-          onClick={() => openAi(!aiOpen)}
-        >
-          <SparkleIcon width={16} height={16} />
-        </button>
-        <button
-          className={`titlebar-tool${commentsOpen && commentsTab === "comments" ? " is-on" : ""}`}
-          title="讨论"
-          aria-label="讨论"
-          aria-pressed={commentsOpen && commentsTab === "comments"}
-          onClick={() => openComments(!(commentsOpen && commentsTab === "comments"), "comments")}
-        >
-          <CommentIcon width={16} height={16} />
-        </button>
-        <button
-          className={`titlebar-tool${commentsOpen && commentsTab === "notifications" ? " is-on" : ""}`}
-          title="通知"
-          aria-label="通知"
-          aria-pressed={commentsOpen && commentsTab === "notifications"}
-          onClick={() => openComments(!(commentsOpen && commentsTab === "notifications"), "notifications")}
-        >
-          <BellIcon width={16} height={16} />
-          {unreadCount > 0 && <span className="titlebar-tool-badge">{unreadCount}</span>}
-        </button>
-        <button
-          className={`titlebar-tool${tocOpen ? " is-on" : ""}`}
-          title="目录"
-          aria-label="目录"
-          aria-pressed={tocOpen}
-          onClick={() => openToc(!tocOpen)}
-        >
-          <ListIcon width={16} height={16} />
-        </button>
-        {railViews.map((rv) => {
-          const active = pluginKey === rv.key;
-          return (
-            <button
-              key={rv.key}
-              className={`titlebar-tool${active ? " is-on" : ""}`}
-              title={`${rv.view.title || rv.view.id}（插件「${rv.pluginName}」）`}
-              aria-label={`插件面板：${rv.view.title || rv.view.id}`}
-              aria-pressed={active}
-              onClick={() => {
-                // 再点一下收起（与上面四颗同一个手感 ✓）；收起也走 store 的关闭路径 ✓，
-                // 否则"当前占用"会留着一个已经看不见的键 ✗。
-                if (active) usePluginViewStore.getState().close();
-                else usePluginViewStore.getState().open(rv.pluginId, rv.pluginName, rv.view);
-              }}
-            >
-              <PanelIcon width={16} height={16} />
-            </button>
-          );
-        })}
-      </div>
+      {/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 入口搬进**这一行** ✓
+          （组件在 `TopTools.tsx` ✓ —— 手机上标题栏不渲染，所以 `App.tsx` 顶部另渲染一处 ✓，
+          两处共用同一个组件 ✓，⛔ 不各写一份 ✗）。
+          形态＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）；顺序＝四颗 ＋ 插件常驻入口排其后 ✓。 */}
+      <TopTools />
       {/* 按钮区不带 drag-region：否则点击会被当作拖动窗口 */}
       <div className="titlebar-actions">
         <button className="titlebar-btn" title={t("common.minimize")} aria-label={t("common.minimize")} onClick={() => void run("minimize")}>

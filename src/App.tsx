@@ -3,6 +3,9 @@ import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
 import { TitleBar } from "./components/TitleBar";
+// ⚠️ 2026-10-01（owner 界面方向之①）：右侧工具条撤掉，入口搬到**顶端工具栏** ✓；
+//    而手机上 `TitleBar` 不渲染 ⇒ 这里要**自己渲染一行**（与桌面同一个组件 ✓：`TopTools` ✓）。
+import { TopTools } from "./components/TopTools";
 import { useWindowChrome, applyDecorations } from "./store/windowChrome";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
@@ -1048,6 +1051,10 @@ function AppShell() {
     <div className="app">
       <TitleBar />
       <UpdateBanner />
+      {/* ⚠️ 2026-10-01（owner 界面方向之①）：**手机上标题栏不渲染**（`TitleBar` 非桌面 return null ✓），
+          而 owner 要求两端都有这条顶端工具栏 ✓ ⇒ 这里给手机渲染一行，用的是**同一个组件** ✓。
+          桌面那一份在 `TitleBar` 里 ✓（⛔ 两处各写一份 = 两份真相源 ✗）。 */}
+      {isMobile && <TopTools className="is-mobile" />}
       <div className="app-body">
         <ActivityBar />
         <PageTree view={view} onViewChange={setView} />

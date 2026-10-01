@@ -383,18 +383,27 @@ html[data-platform="win"] .app-body {
   background: var(--hover-strong);
   color: var(--text);
 }
-/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口搬进标题栏，
+/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口搬进**顶端工具栏** ✓，
    形态按 owner 纠正后的口径＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）。
-   视觉刻意**贴着下面那组窗口按钮**（同高、同 hover 底色 ✓）—— 它们是同一行里的两组按钮，
-   长得不一样会显得像两个系统 ✓。 */
-.titlebar-tools {
+   视觉刻意**贴着标题栏那组窗口按钮**（同高、同 hover 底色 ✓）—— 它们是同一行里的两组按钮，
+   长得不一样会显得像两个系统 ✓。
+   ⚠️ 类名不叫 `titlebar-*` ✗：手机上 `TitleBar` 不渲染，这条工具栏要在 `App.tsx` 顶部**自己渲染** ✓
+   ⇒ 同一个组件、同一套类名，两处共用 ✓（`.is-mobile` 是手机那一行的底座样式 ✓）。 */
+.top-tools {
   flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
   margin-right: 6px;
 }
-.titlebar-tool {
+.top-tools.is-mobile {
+  margin: 0;
+  padding: 4px 6px;
+  gap: 4px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+}
+.top-tool {
   position: relative;
   width: 32px;
   height: 32px;
@@ -408,16 +417,21 @@ html[data-platform="win"] .app-body {
   padding: 0;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
-.titlebar-tool:hover {
+/* 手机那条工具栏上，命中区按 44px 走 ✓（`.is-mobile` 时图标仍是 16px，靠内边距撑命中区 ✓）。 */
+.top-tools.is-mobile .top-tool {
+  width: 40px;
+  height: 40px;
+}
+.top-tool:hover {
   background: var(--hover-strong);
   color: var(--text);
 }
-.titlebar-tool.is-on {
+.top-tool.is-on {
   background: var(--hover-strong);
   color: var(--accent);
 }
-/* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TitleBar.tsx` 里那条登记 ✓）。 */
-.titlebar-tool-badge {
+/* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TopTools.tsx` 里那条登记 ✓）。 */
+.top-tool-badge {
   position: absolute;
   top: 2px;
   right: 2px;

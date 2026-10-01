@@ -5,7 +5,7 @@ import { create } from "zustand";
 // others. Keeps the right side clean instead of stacking panels.
 //
 // ⚠️ 2026-10-01（owner 界面方向之①）：**右侧那条竖向工具条撤掉了** ✓ —— 入口全部搬到标题栏
-// （`TitleBar.tsx` 的 `.titlebar-tools` ✓），⛔ 但**这几个抽屉本身一个没少** ✗：互斥关系、
+// （`TopTools.tsx` ✓，桌面在 `TitleBar` 里、手机在 `App.tsx` 顶部 ✓），⛔ 但**这几个抽屉本身一个没少** ✗：互斥关系、
 // `releasePlugin`、返回键那套都照旧 ✓。所以本文件只管"哪个抽屉开着"，与"入口画在哪"无关 ✓。
 interface RightPanelState {
   ai: boolean;
