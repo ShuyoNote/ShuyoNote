@@ -1,11 +1,19 @@
 // K4：给 LLM wiki 三条不变式各做一次「看过它红」（控制组绿 ＋ 变异组红）
-// 用法：node .tools/mutate-wiki-invariants.mjs
+// 用法：node scripts/mutate-wiki-invariants.mjs
 // 判据：每条变异必须让**指定的那个测试文件**退出码非 0；跑完逐字节还原（git 工作区恢复干净）。
+//
+// ⚠️ 2026-10-01（windows 侧合入时修 ✗）：本文件第 7 行原来**写死了 AMD 那台机器的绝对路径**
+//   （`C:/Users/zhai-amd/zhai/repos/ShuyoNote` ✓）⇒ 在**任何别的机器**上第一句就 ENOENT 崩 ✗，
+//   于是这份"会红证据"**别处根本重做不了** ✗ —— 而"证据要能原地重做"正是它的全部意义 ✓。
+//   改法＝按**脚本自身位置**推仓根 ✓（与仓内 `check-*.mjs` / `_workspace/bin/*.mjs` 同一条写法 ✓）；
+//   ⛔ 别再退回写死路径 ✗（那类脚本会**静默失效**：本机绿、换台机器就死 ✓）。
 import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const REPO = "C:/Users/zhai-amd/zhai/repos/ShuyoNote";
-const VITEST = `${REPO}/node_modules/vitest/vitest.mjs`;
+const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
+const VITEST = join(REPO, "node_modules", "vitest", "vitest.mjs");
 
 /** 三条变异：文件 / 原样 / 注入后 / 期望哪个测试文件红 */
 const CASES = [
