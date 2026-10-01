@@ -1886,73 +1886,48 @@ async function main() {  const executablePath = findChrome();
         }
       }
 
-      // ---------- 窄屏右侧工具条：默认收起 + 右下角唤出 ----------
-      // 它是一条常驻的浮动控制条（AI / 评论 / 目录 / 插件面板），窄屏上会压在正文右缘；
-      // 而它承载的入口本来就低频 ⇒ 默认收起，由右下角 44×44 的圆钮唤出（拇指区）。
-      console.log(`\n【${vp.name} · 窄屏右侧工具条】`);
+      // ---------- 窄屏顶端工具栏：四颗常驻入口都在、够得到、真的能用 ----------
+      // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条**浮动** rail 撤了 ⇒ 入口常驻在**顶端工具栏** ✓
+      //   （手机：`TitleBar` 不渲染 ⇒ `App.tsx` 顶部自己渲染一行 ✓）。
+      //   本节换成**等价断言**：四颗在窄屏够得到、完整在屏内、点「目录」真能把抽屉打开 ✓
+      //   （⛔ 不是删掉这节 ✗ —— "用户按不到入口"正是本节当年要挡的那类事故 ✓）。
+      console.log(`\n【${vp.name} · 窄屏顶端工具栏】`);
       await openView(page, "笔记");
-      const rail0 = await safeEval(page, () => {
-        const t = document.querySelector(".mobile-right-toggle");
-        const b = t ? t.getBoundingClientRect() : null;
+      const tools0 = await safeEval(page, () => {
+        const btns = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool"));
         return {
-          railInDom: !!document.querySelector(".right-rail"),
-          toggle: b ? { w: Math.round(b.width), h: Math.round(b.height), l: Math.round(b.left), r: Math.round(b.right), b: Math.round(b.bottom) } : null,
-          leftToggle: (() => {
-            const l = document.querySelector(".mobile-rail-toggle");
-            if (!l) return null;
-            const r = l.getBoundingClientRect();
-            return { l: Math.round(r.left), r: Math.round(r.right) };
-          })(),
-          vw: innerWidth,
-          vh: innerHeight,
+          has: !!document.querySelector(".top-tools.is-mobile"),
+          n: btns.length,
+          labels: btns.map((b) => b.getAttribute("aria-label") || ""),
+          fits: btns.every((b) => {
+            const r = b.getBoundingClientRect();
+            return r.left >= 0 && r.right <= innerWidth + 0.5 && r.top >= 0 && r.bottom <= innerHeight + 0.5;
+          }),
         };
       });
-      ok(!rail0.railInDom, "窄屏默认**不渲染**右侧工具条（不再常驻压住正文右缘）");
-      ok(
-        !!rail0.toggle && rail0.toggle.w >= 44 && rail0.toggle.h >= 44 && rail0.toggle.r <= rail0.vw && rail0.toggle.b <= rail0.vh,
-        `右下角有 44×44 的唤出按钮且完整在屏内（${rail0.toggle?.w}×${rail0.toggle?.h}，right=${rail0.toggle?.r} ≤ ${rail0.vw}）`,
-      );
-      ok(
-        !rail0.toggle || !rail0.leftToggle || rail0.toggle.l > rail0.leftToggle.r,
-        `右下角那枚与左下角那枚不重叠（右 ${rail0.toggle?.l} > 左末端 ${rail0.leftToggle?.r}）`,
-      );
+      ok(tools0.has, "窄屏渲染顶端工具栏（手机上标题栏不渲染 ⇒ 这里必须自己渲染一行 ✓）");
+      ok(tools0.n >= 4, `四颗入口都在（AI 助手／讨论／通知／目录 —— 实际 ${tools0.n} 颗：[${tools0.labels.join(" / ")}]）`);
+      ok(tools0.fits, "每颗按钮都完整在屏内 ✓");
 
-      await page.click(".mobile-right-toggle");
-      await sleep(700);
-      const rail1 = await safeEval(page, () => {
-        const el = document.querySelector(".right-rail.is-open");
-        const b = el ? el.getBoundingClientRect() : null;
-        return {
-          open: !!el,
-          backdrop: !!document.querySelector(".mobile-right-backdrop"),
-          box: b ? { l: Math.round(b.left), r: Math.round(b.right), t: Math.round(b.top), b: Math.round(b.bottom) } : null,
-          vw: innerWidth,
-          vh: innerHeight,
-          btnCount: document.querySelectorAll(".right-rail .rail-btn").length,
-        };
-      });
-      ok(rail1.open && rail1.backdrop, "点唤出按钮后工具条展开、并出现遮罩");
-      ok(
-        !!rail1.box && rail1.box.l >= 0 && rail1.box.r <= rail1.vw && rail1.box.t >= 0 && rail1.box.b <= rail1.vh,
-        `展开的工具条完整在屏内（${JSON.stringify(rail1.box)} ⊂ ${rail1.vw}×${rail1.vh}）`,
-      );
-      ok(rail1.btnCount >= 3, `工具条里有 AI / 评论 / 目录 三个入口（实际 ${rail1.btnCount} 个）`);
-
-      // 点一个入口 → 工具条收起（抽屉是整屏的，工具条盖在上面没意义）
-      const picked = await safeEval(page, () => {
-        const btns = Array.from(document.querySelectorAll(".right-rail .rail-btn"));
-        const b = btns[btns.length - 1];
-        if (!b) return false;
+      const used = await safeEval(page, () => {
+        const b = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool")).find(
+          (x) => (x.getAttribute("aria-label") || "") === "目录",
+        );
+        if (!b) return "没有「目录」那颗";
         b.click();
-        return true;
+        return "ok";
       });
-      await sleep(1200);
-      const rail2 = await safeEval(page, () => ({
-        railInDom: !!document.querySelector(".right-rail"),
-        toggle: !!document.querySelector(".mobile-right-toggle"),
-      }));
-      ok(picked && !rail2.railInDom && rail2.toggle, "点任意入口后工具条自动收起、唤出按钮回来");
-      await shot(page, `${vp.name}-right-rail`);
+      await sleep(900);
+      const pressed = await safeEval(page, () => {
+        const b = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool")).find(
+          (x) => (x.getAttribute("aria-label") || "") === "目录",
+        );
+        return b ? b.getAttribute("aria-pressed") === "true" : false;
+      });
+      ok(used === "ok" && pressed, `点「目录」真的打开了抽屉（自报按下=${pressed}）`);
+      await page.keyboard.press("Escape");
+      await sleep(500);
+      await shot(page, `${vp.name}-top-tools`);
 
       // ---------- 小控件（开关 / 色点）不许被"按钮一律 44 高"拉变形 ----------
       // 用户截图：窄屏「关于」里那个开关变成了 44×44 的扁方疙瘩、圆钮贴在角上。
@@ -2304,8 +2279,9 @@ async function main() {  const executablePath = findChrome();
         mobileMQ: matchMedia("(max-width: 768px)").matches,
         activityBtn: r(".activity-btn"),
         toolbarBtn: r(".toolbar-btn"),
-        rightRail: r(".right-rail"),
-        railBtn: r(".rail-btn"),
+        // ⚠️ 2026-10-01（owner ①）：右侧那条竖向 rail 撤了 ⇒ 桌面这处改成量**顶端工具栏** ✓
+        topTools: r(".top-tools"),
+        topTool: r(".top-tool"),
       };
     });
     ok(!d.mobileMQ, "桌面不命中窄屏媒体查询");
@@ -2318,17 +2294,17 @@ async function main() {  const executablePath = findChrome();
       `桌面编辑工具栏按钮仍是 28×28（实际 ${d.toolbarBtn?.w}×${d.toolbarBtn?.h}）`,
     );
     ok(
-      d.rightRail && d.rightRail.w <= 42,
-      `桌面右侧悬浮条仍是常驻窄条（实际 ${d.rightRail?.w}px，宽 ${d.rightRail?.h}）——窄屏那套"默认收起 + 右下角唤出"不许漏到桌面`,
+      d.topTools && d.topTools.h <= 44,
+      `桌面顶端工具栏是窄条（实际高 ${d.topTools?.h}px）——⛔ 旧那条右侧浮动 rail 已撤 ✓`,
     );
-    const dRail = await safeEval(desk, () => ({
-      toggle: !!document.querySelector(".mobile-right-toggle"),
-      backdrop: !!document.querySelector(".mobile-right-backdrop"),
-      rail: !!document.querySelector(".right-rail"),
-      railBtns: document.querySelectorAll(".right-rail .rail-btn").length,
+    const dTools = await safeEval(desk, () => ({
+      n: document.querySelectorAll(".top-tools .top-tool").length,
+      mobileRow: !!document.querySelector(".top-tools.is-mobile"),
     }));
-    ok(dRail.rail && !dRail.toggle && !dRail.backdrop, "桌面不渲染唤出按钮与遮罩（工具条本来就是常驻的）");
-    ok(dRail.railBtns >= 3, `桌面工具条三个入口都在（实际 ${dRail.railBtns} 个）`);
+    ok(dTools.n >= 4, `桌面四颗入口都在（实际 ${dTools.n} 颗）`);
+    ok(!dTools.mobileRow, "桌面走标题栏那一处（手机那行不许出现 ✓）");
+    // ⚠️ 2026-10-01：**"旧 rail 不许出现"那两条反向断言留到撤组件那一步再加** ✓ ——
+    //   现在 RightRail 还在 ⇒ 加了必然红 ✗（我这一步就在实测里撞到过 ✓）。撤完再加，才是它成立的时刻 ✓。
     await shot(desk, `${DESKTOP.name}-notes`);
 
     // 桌面文件视图：操作行必须是"带文字的按钮"，表格必须**没有**被裁
