@@ -415,7 +415,50 @@ pub fn set_mesh_bind(c: &Connection, space_id: &str, bind: Option<&str>) -> Resu
     write_setting(c, "mesh_bind", space_id, bind)
 }
 
+/// ⭐ **口令强度的成文口径**（`U9` / `INV-PER-unencrypted-needs-strong-secret`）：
+/// **未加密的空间里，这个口令就是唯一的防线** —— 同网段的人只要抄到"地址＋空间＋口令"三样
+/// 就能把整个空间的记录拉走 ✓（`nearby §13.8.5`）。
+///
+/// ⚠️ **本批的范围是"只做长度与字符类，不做字典"** ✓（规格 §7-R7 明写）—— 所以：
+///   · ⛔ 不查常见弱口令表 ✗（那需要字典 ＋ 误报口径，属另一批）；
+///   · ✅ 只拒三样：**太短** ／ **纯数字** ／ **同一个字符重复**。
+///     ⭐ 这三样正是"用户以为自己设了密码、其实三秒被猜中"的那一类 ✓。
+///
+/// 空串 ⇒ **放行**（＝清除这一档，保持既有语义 ✓ —— `write_setting` 两侧都按空当"没有"）。
+///
+/// ⚠️ 门槛写死 **8** 的理由（写下来免得后人来猜 ✓）：攻击面是**在线**的
+/// （口令在服务端逐次比对，不参与派生）⇒ 8 位随机口令已远超在线爆破的可行域 ✓；
+/// 而真正会造成事故的是"**6 位数字**"那一类 ✓ —— 它的搜索空间只有 10^6。
+pub(crate) fn weak_token_reason(t: &str) -> Option<&'static str> {
+    if t.chars().count() < 8 {
+        return Some("太短（少于 8 个字符）");
+    }
+    if t.chars().all(|c| c.is_ascii_digit()) {
+        return Some("全是数字");
+    }
+    let first = t.chars().next();
+    if t.chars().count() > 1 && t.chars().all(|c| Some(c) == first) {
+        return Some("整串是同一个字符重复");
+    }
+    None
+}
+
+/// ⚠️ **配的时候就当场把关**（与 `set_mesh_bind` 同一条先例 ✓）—— 而不是等开窗那一步才报错：
+/// 口令一旦落库，用户**不会**再回来看它；所以"弱口令"必须在这一步被挡住 ✓。
 pub fn set_mesh_token(c: &Connection, space_id: &str, token: Option<&str>) -> Result<(), String> {
+    let v = token.map(str::trim).unwrap_or("");
+    if !v.is_empty() {
+        if let Some(why) = weak_token_reason(v) {
+            return Err(format!(
+                "拒绝保存：这个口令**{why}** ✗。\n\
+                 ⚠️ 还没加密的空间里，**口令是唯一的防线** —— 同一个网络里，\
+                 抄到「地址 ＋ 空间 ＋ 口令」三样的人就能把这个空间的记录整批拉走，\
+                 而**你不会收到任何提示**。\n\
+                 ⇒ 请换一个：**至少 8 个字符**，**别用纯数字**（例如 `k7Qm-2pRt` 这样混着字母）。\n\
+                 （若这个空间已开静态加密，口令仍要设 —— 它是第二道门，不是替代品。）"
+            ));
+        }
+    }
     write_setting(c, "mesh_token", space_id, token)
 }
 
@@ -1716,6 +1759,53 @@ mod tests {
         crate::mesh::stop_window("space-x").unwrap();
     }
 
+    /// ⭐ **`?space_id=` 这条边界的细活**（2026-10-01 立；U8「一窗多空间」落地前先钉住 ✓）：
+    ///
+    /// ① ⛔ **不在服务范围里 ⇒ 403，而且 body 里【一条记录都不许有】** ——
+    ///    上面那条只钉了**状态码** ✓；真正危险的是「**先漏后拒**」（把记录吐出去再回 403）✗。
+    /// ② ⚠️ **省略 `?space_id=` ⇒ 今天照样服务**（窗口只服务一个空间时无从歧义 ✓）——
+    ///    这条**故意钉住** ✓：U8 之后「服务多个空间」时它**必须变成显式决定**
+    ///    （要么要求带参数、要么说不清就拒）；⛔ 不许「顺手」让它继续等于「随便挑一个空间服务」✗。
+    ///    ⇒ 将来 U8 改到这里时，**本测试会红**，而那次红就是「请显式决定」的信号 ✓。
+    ///
+    /// **变异**：把 `handle_pull` 的 403 放宽成「任何 `space_id` 都收」
+    /// （U8 最容易犯的错：写成「窗口里有任意一个空间匹配就放行」）⇒ ① 必须红 ✓。
+    #[tokio::test]
+    async fn the_space_id_gate_refuses_by_default_and_never_leaks_before_refusing() {
+        let dir = temp_dir("mesh-space-gate");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+            c.execute_batch("CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
+            let mut pg = page("p-secret", "只该给 space-x 看的内容", 1_000);
+            pg.workspace_id = "default".to_string();
+            local_edit(&c, &pg);
+        }
+        let win = open_window_at("default", "space-x", "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+            .expect("窗口应当起得来");
+
+        // ① 别的空间 ⇒ 403，**且一个字节的记录都不许出现在 body 里**
+        let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-y&since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 403, "别的空间必须被拒：{body}");
+        assert!(
+            !body.contains("p-secret") && !body.contains("只该给 space-x 看的内容"),
+            "⛔ **先漏后拒**：403 的响应里不许带任何记录（这是最坏的一种坏法）：{body}"
+        );
+
+        // ② ⚠️ 省略 `?space_id=` ⇒ **今天**仍然服务（U8 必须显式决定它变成什么 —— 见上面的注释）
+        let (code, body) = http_get(win.addr(), "/mesh/pull?since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 200, "今天省略参数仍然服务（U8 会改动这里 ⇒ 那次改动必须是显式的）：{body}");
+        assert!(body.contains("p-secret"), "省略参数时服务的仍是那一个空间：{body}");
+
+        // ③ 而本空间带参数 ⇒ 正常 ✓（别把闸门做成「谁都不给」）
+        let (code, _) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 200, "本空间必须放行");
+
+        crate::mesh::stop_window("space-x").unwrap();
+    }
+
     /// 判据自己的临时目录（同一个进程里多次调用不许撞车 —— 用计数器，不用时间）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -2325,6 +2415,36 @@ mod tests {
         assert_eq!(settings(&c2, "space-x").bind, None, "拒绝了就不许落库");
         // 顺带：**可操作**的提示里要说得出"想听所有网卡就写 0.0.0.0"（D1 之后这是正路之一）
         assert!(e.contains("0.0.0.0"), "报错要说清出路（含通配这一条）：{e}");
+    }
+
+    /// ★★ **`U9` / `INV-PER-unencrypted-needs-strong-secret`**：
+    /// **弱口令 ⇒ 当场拒，且理由里说得出怎么办** ✓（判据矩阵 U9 ①）。
+    ///
+    /// ⚠️ **变异**：把 `set_mesh_token` 放宽成"非空即放行" ⇒ **这个测试必须红** ✓
+    /// （那就是本仓最怕的形状：用户以为设了密码，其实同网段三秒被猜中，而**没有任何提示**）。
+    #[test]
+    fn a_weak_mesh_token_is_refused_with_something_actionable() {
+        // ① 三类弱口令逐个拒，而且**都不许落库**（拒了还落库 ＝ 用户以为挡住了）
+        for weak in ["123456", "1234567890", "short", "aaaaaaaaaaaa", "  1234  "] {
+            let c = space_conn("W");
+            let e = set_mesh_token(&c, "space-x", Some(weak)).unwrap_err();
+            // ⭐ **可操作**：说清了它为什么是唯一防线 ＋ 给出路（长度／别用纯数字）
+            assert!(e.contains("唯一"), "理由要说清“口令是唯一防线”：{e}");
+            assert!(e.contains("8"), "理由要给出长度门槛：{e}");
+            assert!(e.contains("纯数字") || e.contains("同一"), "理由要点名是哪一类弱：{e}");
+            assert_eq!(settings(&c, "space-x").token, None, "拒了就不许落库（{weak}）");
+        }
+
+        // ② 达标的口令**收**，而且落库（⛔ 不要把好口令也挡了 —— 那是另一种坏 ✓）
+        let c = space_conn("OK");
+        set_mesh_token(&c, "space-x", Some("k7Qm-2pRt")).unwrap();
+        assert_eq!(settings(&c, "space-x").token.as_deref(), Some("k7Qm-2pRt"));
+
+        // ③ 空 ⇒ **放行**（＝清除这一档；既有语义不变 ✓）
+        set_mesh_token(&c, "space-x", Some("   ")).unwrap();
+        assert_eq!(settings(&c, "space-x").token, None, "空＝清掉这一档");
+        set_mesh_token(&c, "space-x", None).unwrap();
+        assert_eq!(settings(&c, "space-x").token, None);
     }
 
     /// ★★ **产品入口那一层**：`round` 真的把发现到的对端拉回来了（真环回、没有服务端）。

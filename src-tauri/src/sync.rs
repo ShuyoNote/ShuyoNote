@@ -2161,6 +2161,224 @@ pub fn pairing_import(db: State<'_, Db>, args: PairingImportArgs) -> Result<Pair
     })
 }
 
+#[derive(serde::Serialize)]
+pub struct DevicePairExportResult {
+    /// `ok` ／ `not_configured`（这一档没开或没设口令 ⇒ **没有东西可以配对过去**）
+    pub outcome: String,
+    pub text: String,
+    pub check_code: String,
+    pub bind: String,
+    pub bytes: usize,
+    pub qr_fits: bool,
+    pub qr_svg: Option<String>,
+    pub message: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct DevicePairImportArgs {
+    /// **要写到哪个空间**的接线（KV 是按空间存的 ✓）。
+    pub space_id: String,
+    pub text: String,
+    /// ⚠️ **人核对过的那一串**。`None`/空 ⇒ **只回读数、一个字节都不写** ✓（见下面第三态）。
+    pub confirmed_check_code: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct DevicePairImportResult {
+    /// `ok` ／ `need_confirm`（还没拿到人核对过的码 ⇒ **没写任何东西**）／ `rejected`（对不上）
+    pub outcome: String,
+    pub check_code: String,
+    pub bind: String,
+    pub message: String,
+}
+
+/// ⭐ **T3：设备直连「把这台设备接进来」的产出侧**（`U1`／`U2`）。
+///
+/// ⚠️ **与 `pairing_export` 最要紧的差别（写在函数上，别只写在注释里 ✓）**：
+///   · `pairing_export` 的载荷是**公开材料** ⇒ 文案逐字说「它**不是秘密**」✓
+///   · 这一条的载荷**含窗口口令** ⇒ ⛔ **它是秘密** ✗ —— 拿到它的人**能进这个窗口** ✓
+///     ⇒ 文案必须**反过来**说清（"只交给你自己那台设备"不是客套，是**安全要求** ✓）。
+#[tauri::command]
+pub fn device_pair_export(
+    db: State<'_, Db>,
+    space_id: String,
+) -> Result<DevicePairExportResult, String> {
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    let s = crate::mesh::settings(&c, &space_id);
+    let bind = s.bind.unwrap_or_default();
+    let token = s.token.unwrap_or_default();
+    if bind.trim().is_empty() || token.trim().is_empty() {
+        return Ok(DevicePairExportResult {
+            outcome: "not_configured".to_string(),
+            text: String::new(),
+            check_code: String::new(),
+            bind,
+            bytes: 0,
+            qr_fits: false,
+            qr_svg: None,
+            message: "这台设备**还没配好设备直连** ⇒ 没有东西可以配对过去。\n\
+                      先在「同步」面板填**监听地址**（或直接写 `0.0.0.0:8788`）＋ 设一个**窗口口令**，再来。"
+                .to_string(),
+        });
+    }
+    // 设备指纹与 `pairing_export` 同源（应用级 `device_id`，**非秘密** ✓）。
+    let device_id = crate::sync::get_meta_state(&c, "device_id").unwrap_or_default();
+    let payload = crate::pairing::device_pair_from(&bind, &token, &device_id)
+        .map_err(|e| format!("没有生成载荷：{e}"))?;
+    let text = crate::pairing::encode_device_pair(&payload)?;
+    let check_code = crate::pairing::check_code(&text);
+    let qr_fits = crate::pairing::fits_single_qr(&text);
+    let qr_svg = if qr_fits { crate::pairing::qr_svg(&text).ok() } else { None };
+    let mut message = format!(
+        "把下面这段交给**你自己那台设备**（{} 字节）。\
+         ⚠️ 它**含窗口口令** —— ⛔ 不是可以随便转发的公开材料 ✗：\
+         拿到它的人**能连上这个窗口**。\
+         ⭐ 对方收下之后，请**当面核对两边的比对码**（各 {} 位）：**一样才继续** ✓。",
+        text.len(),
+        check_code.chars().filter(|c| !c.is_whitespace()).count()
+    );
+    if !qr_fits {
+        if let Some(warn) = crate::pairing::qr_capacity_error(&text) {
+            message.push('\n');
+            message.push_str(&warn);
+        }
+    }
+    // ⚠️ 长度要**在移动进返回值之前**取好（与 `pairing_export` 同一个坑 ✓ —— 它那儿也写着这句）。
+    let bytes = text.len();
+    Ok(DevicePairExportResult {
+        outcome: "ok".to_string(),
+        text,
+        check_code,
+        bind,
+        bytes,
+        qr_fits,
+        qr_svg,
+        message,
+    })
+}
+
+/// ⭐ **T3 的纯函数内核**：设备直连采纳的**三态判定**。
+///
+/// ⚠️ **为什么要单独抽出来**（而不是写在命令里 ✓）：命令那层拿的是 `State<'_, Db>`
+/// ⇒ **单测跑不起来** ✗，而 U2「不许自动通过」正是**最不能只靠静态判据兜**的那一条 ✓。
+/// ⇒ 抽成纯函数之后，"不传码 ⇒ 拿不到可写的东西"**是类型事实**（`NeedConfirm` 里没有凭据 ✓），
+/// ⛔ 而不是"我记得在命令里写了个 if" ✗。
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DevicePairDecision {
+    /// 还没拿到人核对过的码 ⇒ **只回算出来的码**，⛔ **没有任何可写的东西** ✗。
+    NeedConfirm { computed: String, bind: String },
+    /// 传了但对不上 ⇒ 停（`U3`）✓，同样**没有任何可写的东西** ✗。
+    Rejected { computed: String, bind: String, why: String },
+    /// 逐位相同 ⇒ **这时才**给出要写的两样 ✓。
+    Accept { computed: String, bind: String, token: String },
+}
+
+pub(crate) fn decide_device_pair_import(
+    text: &str,
+    confirmed: Option<&str>,
+) -> Result<DevicePairDecision, String> {
+    let payload = crate::pairing::decode_device_pair(text)?;
+    let computed = crate::pairing::check_code(text);
+    let confirmed = confirmed.map(str::trim).filter(|s| !s.is_empty());
+    let Some(_) = confirmed else {
+        return Ok(DevicePairDecision::NeedConfirm { computed, bind: payload.bind });
+    };
+    match crate::pairing::verify_confirm_code(text, confirmed) {
+        Ok(code) => Ok(DevicePairDecision::Accept {
+            computed: code,
+            bind: payload.bind,
+            token: payload.token,
+        }),
+        Err(why) => Ok(DevicePairDecision::Rejected {
+            computed,
+            bind: payload.bind,
+            why,
+        }),
+    }
+}
+
+/// ⭐ **T3：设备直连「把这台设备接进来」的采纳侧**（`U1`／`U2`／`U3`／`U6`）。
+///
+/// **三态（⭐ 这条命令的核心，写清楚免得后人"顺手"合并 ✓）**：
+/// ```text
+/// ① `confirmed_check_code` 空 ⇒ `need_confirm`：**只回算出来的比对码给界面显示**，
+///    ⛔ **本机一个字节都不写** ✗ —— 人还没核对，凭什么改接线 ✓（矩阵 U2 的反向：不许自动通过 ✓）
+/// ② 传了但**对不上** ⇒ `rejected`：⛔ 零写入 ✗，并把两边都摆出来（矩阵 U3：不一致 ⇒ **停** ✓）
+/// ③ 传了且**逐位相同** ⇒ `ok`：这时**才**写接线（`mesh_bind` ＋ `mesh_token`）
+/// ```
+/// ⚠️ **没有"接受/等对方同意"这一步**（`INV-PER-pairing-needs-no-acceptance` ✓）。
+#[tauri::command]
+pub fn device_pair_import(
+    db: State<'_, Db>,
+    args: DevicePairImportArgs,
+) -> Result<DevicePairImportResult, String> {
+    // ① 判定（**纯函数** ✓ —— 三态与"不传码就没有可写的东西"由它保证，见上面的注释 ✓）
+    let decision = match decide_device_pair_import(&args.text, args.confirmed_check_code.as_deref()) {
+        Ok(d) => d,
+        Err(e) => {
+            return Ok(DevicePairImportResult {
+                outcome: "rejected".to_string(),
+                check_code: String::new(),
+                bind: String::new(),
+                message: format!("这段配对码没用上（**本机一个字节都没改**）：{e}"),
+            })
+        }
+    };
+    // ② 前两态 ⇒ **立刻返回，一个字节都不写** ✓（⛔ 别在这里"顺手"先把地址存了 ✗）
+    match decision {
+        DevicePairDecision::NeedConfirm { computed, bind } => {
+            // ⚠️ 文案**先取好**再移动（与 `pairing_export` 那句"长度要在移动之前取好"同一条纪律 ✓）。
+            let message = format!(
+                "对方那台会按 **{bind}** 开它自己的窗口（主机部分是通配 ⇒ 听它自己的所有网卡 ✓）。\n\
+                 ⚠️ **先当面核对比对码**：这里算出来是 `{computed}` —— 和给出这段码的那台设备上\
+                 显示的一串**逐位相同**才继续 ✓。\n\
+                 ⇒ 相同就把这一串填回来（界面上的「我核对过了」那一步）；**不一样千万别继续** ✗。"
+            );
+            return Ok(DevicePairImportResult {
+                outcome: "need_confirm".to_string(),
+                check_code: computed,
+                bind,
+                message,
+            });
+        }
+        DevicePairDecision::Rejected { computed, bind, why } => {
+            return Ok(DevicePairImportResult {
+                outcome: "rejected".to_string(),
+                check_code: computed,
+                bind,
+                message: why,
+            });
+        }
+        DevicePairDecision::Accept { .. } => {}
+    }
+    // ③ 逐位相同 ⇒ **这时才写**（把 Accept 里的两样取出来 —— 前两态**取不到**，这是类型事实 ✓）
+    let DevicePairDecision::Accept { computed, bind, token } = decision else {
+        unreachable!("上面两态已经 return 了")
+    };
+    if bind.trim().is_empty() || token.trim().is_empty() {
+        return Ok(DevicePairImportResult {
+            outcome: "rejected".to_string(),
+            check_code: computed,
+            bind,
+            message: "载荷里的地址或口令是空的 ⇒ **没有采纳，本机一个字节都没改**".to_string(),
+        });
+    }
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    crate::mesh::set_mesh_bind(&c, &args.space_id, Some(&bind))?;
+    crate::mesh::set_mesh_token(&c, &args.space_id, Some(&token))?;
+    Ok(DevicePairImportResult {
+        outcome: "ok".to_string(),
+        check_code: computed,
+        bind: bind.clone(),
+        message: format!(
+            "**已配对** ✓ —— 这台设备现在会按 `{}` 开自己的窗口；对端的地址由「附近的设备」自动发现 ✓。\n\
+             ⚠️ 两台要在**同一个网络**里才连得上；连不上先看 `docs/troubleshooting-nearby-devices.md` ✓。",
+            bind
+        ),
+    })
+}
+
+
 /// List recent sync-history entries (newest first).
 #[tauri::command]
 pub fn list_sync_history(db: State<'_, Db>, limit: Option<usize>) -> Result<Vec<SyncHistoryEntry>, String> {
@@ -6111,5 +6329,56 @@ mod tests {
         assert!(!got[1].serves_current, "谁都不代言的设备不是「服务这个空间」");
         // 空空间 ⇒ 一律不算"服务它"（与 `lan::serves_space` 同一把尺）
         assert!(nearby_of(&peers, "dev-me", "  ").iter().all(|p| !p.serves_current));
+    }
+
+    /// ⭐⭐ **T3 的核心安全性质**（`U2`「配对必须有人验证、不许自动通过」＋ `U3`「两端不一致 ⇒ 停」）：
+    ///
+    /// ⚠️ 这条测试挡的**不是**"某个 if 写错了" ✗，而是**类型事实** ✓：
+    /// `NeedConfirm` 与 `Rejected` 这两种结果里**根本没有 `token`** ⇒ 命令那层**拿不到可写的东西** ✓
+    /// （它只在 `Accept` 那一支里取凭据 —— 那一支要求逐位相同 ✓）。
+    ///
+    /// **变异**：把 `confirmed` 的 `None` 也当成 `Accept`（＝"不传也放行"）⇒ 本测试**必须红** ✓
+    /// —— 那正是"机器自动通过"，是这条路唯一要挡的坏法 ✓。
+    #[test]
+    fn device_pair_import_cannot_write_anything_without_a_human_checked_code() {
+        let text = crate::pairing::encode_device_pair(
+            &crate::pairing::device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a").unwrap(),
+        )
+        .unwrap();
+
+        // ① 不传码（以及只给空白）⇒ **NeedConfirm**，而且**没有 token 可写** ✓
+        for none in [None, Some(""), Some("   ")] {
+            match decide_device_pair_import(&text, none).unwrap() {
+                DevicePairDecision::NeedConfirm { computed, .. } => {
+                    assert!(!computed.trim().is_empty(), "要把算出来的码回给界面显示（不然人没法核对）");
+                }
+                other => panic!("不传码必须停在 need_confirm（不许自动通过）：{other:?}"),
+            }
+        }
+
+        // ② 传了但对不上 ⇒ **Rejected**（`U3`：两端不一致 ⇒ 停 ✓），同样没有 token ✓
+        let other_text = crate::pairing::encode_device_pair(
+            &crate::pairing::device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a").unwrap(),
+        )
+        .unwrap();
+        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&other_text))).unwrap() {
+            DevicePairDecision::Rejected { why, .. } => {
+                assert!(!why.trim().is_empty(), "要说得清为什么停下");
+            }
+            other => panic!("两端不一致必须 rejected：{other:?}"),
+        }
+
+        // ③ **只有**逐位相同那一态才拿得到 token ✓
+        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text))).unwrap() {
+            DevicePairDecision::Accept { computed, bind, token } => {
+                assert_eq!(bind, "0.0.0.0:8788");
+                assert_eq!(token, "k7Qm-2pRt");
+                assert_eq!(computed, crate::pairing::check_code(&text));
+            }
+            other => panic!("核对过就必须 Accept：{other:?}"),
+        }
+
+        // ④ 载荷读不懂 ⇒ `Err`（⛔ 不是"当作没传、静默放行" ✗）
+        assert!(decide_device_pair_import("{这不是载荷}", Some("123456")).is_err());
     }
 }

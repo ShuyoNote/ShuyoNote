@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type DevicePairExportOutcome } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -251,6 +251,82 @@ export function SyncPanel() {
       setStatus(`网格口令没保存：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setMeshBusy(false);
+    }
+  };
+
+  // ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：**两个入口、两个名字** ✓
+  //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
+  //   · 这一块搬**接线**（地址 ＋ 窗口口令）⇒ 名字叫「**把这台设备接进来**」✓
+  // ⚠️ **三步两态，且有一步是"停"**（`U2`／`U3`）：
+  //   ① 生成：显示比对码（**一次性**，含窗口口令 ⇒ ⛔ 别外传 ✗）
+  //   ② **人读码核对**：采纳侧先把**算出来的码**显示出来，**等用户把对方那串填回来** ✓
+  //   ③ 采纳：逐位相同才写；**对不上 ⇒ 停在"停"态，且那一态里没有继续入口** ✗（判据钉着）
+  const [dpExport, setDpExport] = useState<DevicePairExportOutcome | null>(null);
+  const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
+  const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
+  const [dpPreview, setDpPreview] = useState<string>(""); // 我们这边算出来的码（给人核对）
+  const [dpOutcome, setDpOutcome] = useState<"idle" | "ok" | "stopped">("idle");
+  const [dpNote, setDpNote] = useState("");
+  const [dpBusy, setDpBusy] = useState(false);
+  const dpGenerate = async () => {
+    if (!activeId) { setDpNote("先选一个空间"); return; }
+    setDpBusy(true);
+    try {
+      const r = await api.devicePairExport(activeId);
+      setDpExport(r);
+      setDpOutcome("idle");
+      setDpNote(r.message);
+    } catch (e) {
+      setDpNote(`没有生成：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDpBusy(false);
+    }
+  };
+  /** ② 先只**看**：不传码 ⇒ 后端**一个字节都不写**，只把算出来的码回给我们 ✓ */
+  const dpPreviewImport = async () => {
+    if (!activeId || !dpText.trim()) return;
+    setDpBusy(true);
+    try {
+      const r = await api.devicePairImport({ space_id: activeId, text: dpText.trim() });
+      if (r.outcome === "need_confirm") {
+        setDpPreview(r.check_code);
+        setDpOutcome("idle");
+        setDpNote(r.message);
+      } else if (r.outcome === "rejected") {
+        setDpPreview("");
+        setDpOutcome("stopped");   // ⛔ 停态：**没有继续入口**（见下面的渲染 ✓）
+        setDpNote(r.message);
+      } else {
+        setDpOutcome("ok");        // 理论上到不了（不传码不会 ok）—— 到了就是后端坏了，如实显示
+        setDpNote(r.message);
+      }
+    } catch (e) {
+      setDpOutcome("stopped");
+      setDpNote(`这段配对码没用上：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDpBusy(false);
+    }
+  };
+  /** ③ 采纳：**必须**带上人核对过的那一串 ⇒ 对不上 ⇒ 后端 `rejected`（零写入）✓ */
+  const dpAccept = async () => {
+    if (!activeId || !dpCode.trim()) return;
+    setDpBusy(true);
+    try {
+      const r = await api.devicePairImport({ space_id: activeId, text: dpText.trim(), confirmed_check_code: dpCode.trim() });
+      if (r.outcome === "ok") {
+        setDpOutcome("ok");       // 文案红线：成功**只许说「已配对」** ✓
+        setDpPreview("");
+        setDpNote(r.message);
+        setStatus("已配对");
+      } else {
+        setDpOutcome("stopped");  // ⛔ 对不上 ⇒ 停，而且**不显示继续按钮** ✓
+        setDpNote(r.message);
+      }
+    } catch (e) {
+      setDpOutcome("stopped");
+      setDpNote(`没有采纳：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDpBusy(false);
     }
   };
   const disableMesh = async () => {
@@ -1675,7 +1751,13 @@ export function SyncPanel() {
                         <span className="sync-hint">
                           {inlineMd("地址两种填法：**本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788** —— 那是「**听所有网卡**」，地址由系统自己报出去：**换网、多张网卡都不用改**。")}
                           <br />
-                          {lanStatus.mesh.tokenSet ? "口令：已设" : "口令：未设（同一网段里谁都能拉，内容仍是密文）"}
+                          {/* ★ `U9` / `INV-PER-unencrypted-needs-strong-secret`（2026-10-01）：
+                              原先这句只写「同一网段里谁都能拉，**内容仍是密文**」—— 那说的是**已加密**那一半 ✓，
+                              而**未加密**的空间里讲这句话会把危险说小 ✗：那种情况下**口令就是唯一的防线**，
+                              且拉走的是**明文** ✓ ⇒ 两句都要说，并点名"没设＝不设防" ✓。 */}
+                          {lanStatus.mesh.tokenSet
+                            ? inlineMd("口令：**已设** —— ⚠️ **它是这个空间的唯一防线**：同一网络里，拿到「地址 ＋ 空间 ＋ 口令」这三样的人就能把记录**整批拉走**，而且**你不会收到任何提示**。")
+                            : inlineMd("口令：**未设** ⚠️ —— 未加密的空间里，**没设口令就等于不设防**（同一网络谁都能把记录拉走、且是**明文**）；已加密的空间里内容仍是密文，但也**强烈建议**设一个 —— 口令是第二道门，不是替代品。")}
                         </span>
                         {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
                         <span className="sync-hint">
@@ -1802,6 +1884,71 @@ export function SyncPanel() {
                             <span>（这期间这里写「正在找…」）</span>
                           </div>
                         )}
+                        {/* ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：两个入口两个名字 ✓
+                            这一块搬的**不是钥匙袋**（那是设置里「换设备」的活 ✓），而是**接线**：
+                            绑哪个地址 ＋ 带什么口令 ⇒ 所以名字必须**说清是接线** ✓。
+                            ⚠️ 三步两态：生成 → 人读码核对 → 采纳；**对不上就停在"停"态**，
+                               而那一态里**没有继续入口** ✗（判据钉着 —— 见下面 `dpOutcome !== "stopped"` ✓）。
+                            ⚠️ 文案红线：块内**不出现裸 id／裸 IP**（地址来自读数原样显示 ✓）；
+                               ⛔ 不出现「已确认／已验证」这类**判定语** ✗（判据 `syncPanelMesh.wiring.test.ts` ⑩ 扫得到这一屏 ⇒ ⚠️ **反例本身也不许原样写进来**，实测踩到 ✓）；成功**只许说「已配对」** ✓。 */}
+                        <div className="sync-nearby" data-testid="device-pair">
+                          <div className="sync-hint">
+                            【要点】**把这台设备接进来**：把**这台**的接线（地址 ＋ 窗口口令）交给对方那台。
+                            ⚠️ 它**含窗口口令** ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
+                          </div>
+                          <button className="sync-btn" disabled={dpBusy} onClick={() => void dpGenerate()}>
+                            生成投放码
+                          </button>
+                          {dpExport && dpExport.outcome === "ok" && (
+                            <div className="sync-hint">
+                              <div>比对码（**一次性**）：<b data-testid="dp-own-code">{dpExport.check_code}</b></div>
+                              <div style={{ wordBreak: "break-all" }} data-testid="dp-text">{dpExport.text}</div>
+                              <div>对端收下后，请**当面核对两边的比对码**：一样才继续 ✓。</div>
+                            </div>
+                          )}
+                          {dpExport && dpExport.outcome === "not_configured" && (
+                            <div className="sync-hint">{dpExport.message}</div>
+                          )}
+                          <div className="sync-hint">—— 或者，**采纳对方给来的码** ——</div>
+                          <input
+                            className="sync-input"
+                            placeholder="把对方那段码粘到这里"
+                            value={dpText}
+                            disabled={dpBusy || dpOutcome === "stopped"}
+                            onChange={(e) => { setDpText(e.target.value); setDpPreview(""); setDpOutcome("idle"); }}
+                          />
+                          {/* ⛔ **停态里没有"继续"** ✗ —— 这是 `U3` 的界面半边（矩阵 U3 的注入点就在这）✓ */}
+                          {dpOutcome === "stopped" ? (
+                            <div className="sync-hint" data-testid="dp-stopped">
+                              【禁】**停下了**：两边的码对不上 ⇒ 不采纳、本机一个字节都没改。
+                              请回到给出这段码的那台设备上重新核对，然后**重新粘一次**（对不上时这里不给继续的入口）。
+                            </div>
+                          ) : (
+                            <>
+                              <button className="sync-btn" disabled={dpBusy || !dpText.trim()} onClick={() => void dpPreviewImport()}>
+                                先看比对码
+                              </button>
+                              {dpPreview && (
+                                <div className="sync-hint">
+                                  <div>这边算出来是：<b data-testid="dp-computed-code">{dpPreview}</b></div>
+                                  <div>与对方那台上显示的**逐位相同**才继续；不一样**千万别继续** ✗。</div>
+                                  <input
+                                    className="sync-input"
+                                    placeholder="把核对过的比对码填回来"
+                                    value={dpCode}
+                                    disabled={dpBusy}
+                                    onChange={(e) => setDpCode(e.target.value)}
+                                  />
+                                  <button className="sync-btn" disabled={dpBusy || !dpCode.trim()} onClick={() => void dpAccept()}>
+                                    我核对过了，采纳
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {dpOutcome === "ok" && <div className="sync-hint" data-testid="dp-ok">**已配对** ✓</div>}
+                          {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
+                        </div>
                       </div>
                     </div>
                   </details>
@@ -1835,6 +1982,14 @@ export function SyncPanel() {
                         而后端是按行内 Markdown 写的（`mesh.rs:602` 那句就是 `**能被别人拉到**`）
                         ⇒ 在【渲染边界】过 `inlineMd`。这正是契约推荐的方向：Rust 侧一个字不改。 */}
                     {inlineMd([lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ "))}
+                  </span>
+                  {/* ★ 2026-10-01（免费版上线实测）：**"附近发现 0 台"是第一现场** ✓ ——
+                      原先这一块只给读数、不给"然后呢" ✗ ⇒ 用户会以为产品坏了 ✓。
+                      ⚠️ 这里**故意不解析 `lanStatus.line` 里的台数**（界面不自己按读数再判一次档 ✓，
+                      那是上面注释钉着的口径）⇒ 提示**常显**，只在真的 0 台时才有用，代价是多一行字 ✓。
+                      ⛔ 不写"一定能修好"那种话 ✗ —— 只列**最可能的两个**原因 ＋ 指向完整指引 ✓。 */}
+                  <span className="sync-hint">
+                    {inlineMd("**找不到对方？** 先查两件：① 两台设备在**同一个网络**（IP 前三段一样）；② 这个网络**没开「AP 隔离／客户端隔离」**（访客 Wi-Fi、酒店、企业 Wi-Fi 常开）—— 最快的验证是**用手机热点**再试一次。完整指引见 `docs/troubleshooting-nearby-devices.md`。")}
                   </span>
                 </span>
               </div>

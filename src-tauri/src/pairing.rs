@@ -31,6 +31,104 @@ use serde::{Deserialize, Serialize};
 /// 载荷的**线版本**。不认识 ⇒ **不猜**（照 `Keyring::from_json` 的口径）。
 pub const PAIRING_VERSION: u32 = 1;
 
+/// ⭐ **「把这台设备接进来」载荷的独立线版本**（T2）。
+/// ⛔ **与 [`PAIRING_VERSION`] 分开** ✗ —— 两种载荷搬的是两件事（一个搬钥匙袋、一个搬接线），
+/// 共用一个版本号会让"哪个版本对应哪种载荷"变成猜 ✓。
+pub const DEVICE_PAIR_VERSION: u32 = 1;
+
+/// ⭐ **设备直连载荷**（`U1`／T2）：搬的是**接线**，⛔ 不是钥匙袋 ✗。
+///
+/// 它回答的是"**第二台设备怎么连上第一台**"：绑哪个地址、带什么口令。
+/// ⚠️ **与 [`PairingPayload`] 的区别（这条最容易混，写在类型上 ✓）**：
+///   · `PairingPayload.material` ＝ 钥匙袋**公开材料** ⇒ 让第二台能**解开自己的空间** ✓
+///   · `DevicePairPayload` ＝ **窗口地址 ＋ 窗口口令** ⇒ 让第二台能**连上并认证** ✓
+///   两者**都要**时，是**两步**（先接入、再搬材料）—— ⛔ 不合并成一个字段 ✗。
+///
+/// ⚠️ **本批【不】包含"每空间一行 `secret`"** ✗ —— 那个字段属 **U11（片 C）**：
+/// 它要新建 `mesh_paired_devices` 并把 `mesh.rs` 的授权口径从"一个共享口令"改成
+/// "某一份设备对秘密" ✓。⛔ **半做更坏** ✗：一个"看起来是安全特征、而没有任何东西校验它"的字段，
+/// 正是本仓最忌的「看起来有其实没有」✓ ⇒ **宁可不放**，等片 C 一起放 ✓。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DevicePairPayload {
+    /// 线版本（[`DEVICE_PAIR_VERSION`]）。
+    pub v: u32,
+    /// ⚠️ **可抄的那一份绑定写法** —— ⛔ **不是导出方自己的地址** ✗（理由见下面 `copyable_bind` ✓）。
+    ///
+    /// 语义＝「**你按这个开你自己的窗口**」；主机部分**恒为通配** ⇒ **与谁抄无关** ✓。
+    /// ⚠️ **对端的地址不在这段里** —— 那是**发现层**给的（公告里的 `hub_base` ✓）。
+    pub bind: String,
+    /// 第一台设备的**窗口口令**（对端要带的那一串）✓ —— ⚠️ 它是"进这个窗口"的凭据，
+    /// ⛔ **不是空间钥匙** ✗（拿到它也解不开加密空间 ✓）。
+    pub token: String,
+    /// 源设备的**身份指纹**。空是合法的（同 [`PairingPayload::fp`]）。
+    #[serde(default)]
+    pub fp: String,
+}
+
+/// ⭐ **把「我这台的绑定写法」折成「对方可以照抄」的那一份**（2026-10-01 修：owner 追问抓到的**真错** ✓）。
+///
+/// ⛔ **原样搬是错的** ✗：导出方填的可能是**具体地址**（如 `192.168.1.5:8788`）——
+/// 那是**那台机器**的地址；抄到对方那台 ⇒ 对方要绑**别人的 IP** ⇒ **绑不上或绑错** ✓。
+/// ✅ **主机部分一律换成通配**（`0.0.0.0:` ／ `[::]:` ＋**同一个端口**）：
+/// 通配的语义是「听**我自己**的所有网卡」⇒ **与谁抄无关** ✓（VL-2／D1 已放行通配 ✓）。
+///
+/// ⚠️ **端口要留着** ✓：两台听同一个端口是常态（也省得用户各自再填一遍）；
+/// ⛔ 而**对端的地址不靠这一段** ✗ —— 那是**发现层**给的（UDP 公告里的 `hub_base` ✓），
+/// 所以"用户只需核对一串码"是真的：**地址根本不用他填对** ✓。
+fn copyable_bind(bind: &str) -> Result<String, String> {
+    let addr = crate::mesh::checked_bind(bind)?;
+    let host = if addr.is_ipv6() { "[::]" } else { "0.0.0.0" };
+    Ok(format!("{host}:{}", addr.port()))
+}
+
+/// 产出侧：从"接线三样"造设备直连载荷。
+///
+/// ⚠️ **先验，再发**（同 `payload_from_material` 的纪律 ✓）：地址或口令**当场不合格**的，
+/// 根本不该被发出去 —— 发出去只会让对方在"采纳"那一步才炸，而现场看起来像"码坏了" ✓。
+pub fn device_pair_from(bind: &str, token: &str, fp: &str) -> Result<DevicePairPayload, String> {
+    let bind = bind.trim();
+    let token = token.trim();
+    if bind.is_empty() {
+        return Err("这台设备**还没填监听地址** ⇒ 没有东西可以配对过去（先在「同步」面板填地址或写 `0.0.0.0:8788`）".to_string());
+    }
+    if token.is_empty() {
+        return Err("这台设备**还没设窗口口令** ⇒ 先设一个（至少 8 个字符、别用纯数字）：\n\
+                    ⚠️ 未加密的空间里，口令是唯一的防线 —— 不带口令的窗口，同一网络里谁都能拉 ✓".to_string());
+    }
+    if let Some(why) = crate::mesh::weak_token_reason(token) {
+        return Err(format!(
+            "这台的窗口口令**{why}** ⇒ 不能配对过去：\n\
+             ⚠️ 配对会把这一串交给对方，弱口令等于把整个空间交给同一网络里的任何人 ✓。\n\
+             ⇒ 请在「同步」面板换一个**至少 8 个字符**、**不是纯数字**的口令，再重来 ✓。"
+        ));
+    }
+    // ⚠️ **必须是 `copyable_bind`**（⛔ 不是 `bind.to_string()` ✗）—— 见它的理由 ✓。
+    let bind = copyable_bind(bind)?;
+    Ok(DevicePairPayload { v: DEVICE_PAIR_VERSION, bind, token: token.to_string(), fp: fp.to_string() })
+}
+
+/// 编码成一段文本（紧凑 JSON）。同 `encode_payload`：⛔ 不许静默变空 ✗。
+pub fn encode_device_pair(p: &DevicePairPayload) -> Result<String, String> {
+    serde_json::to_string(p).map_err(|e| format!("设备直连载荷编码失败：{e}"))
+}
+
+/// 解码。三条都**当场报错、不猜**：版本不认识、字段多出来、必填为空。
+pub fn decode_device_pair(raw: &str) -> Result<DevicePairPayload, String> {
+    let p: DevicePairPayload = serde_json::from_str(raw)
+        .map_err(|e| format!("这不是一个设备直连载荷（或字段对不上）：{e}"))?;
+    if p.v != DEVICE_PAIR_VERSION {
+        return Err(format!(
+            "设备直连载荷版本 {} 本版不认识（本版认到 {DEVICE_PAIR_VERSION}）—— 请升级应用后再扫",
+            p.v
+        ));
+    }
+    if p.bind.trim().is_empty() || p.token.trim().is_empty() {
+        return Err("载荷里的地址或口令是空的 ⇒ 收下也没用（**没有采纳**）".to_string());
+    }
+    Ok(p)
+}
+
 /// **一张二维码能装多少字节**：QR version 40、纠错级 **L**、**字节模式** = **2953** 字节。
 /// 取字节模式（不是字母数字模式）是因为 JSON 的键值是小写字母，落不到那个更大的字符表里
 /// —— 拿字母数字模式的上限（4296）当判据会让"能生成"的码**扫不出来**。
@@ -547,5 +645,97 @@ mod tests {
         assert!(a.trim_end().ends_with("</svg>"), "SVG 要收尾");
         let other = encode_payload(&payload_from_material(&material_with(&["sp-b"]), "fp-1").unwrap()).unwrap();
         assert_ne!(qr_svg(&other).unwrap(), a, "不同载荷必须画出不同的码");
+    }
+
+    // ═══════════════ ⭐ T2：设备直连载荷（`U1`／`U2`／`U3`）═══════════════
+
+    #[test]
+    fn a_device_pair_payload_round_trips_byte_for_byte() {
+        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a").unwrap();
+        let raw = encode_device_pair(&p).unwrap();
+        assert_eq!(decode_device_pair(&raw).unwrap(), p, "编解码必须逐字节往返");
+        assert_eq!(p.v, DEVICE_PAIR_VERSION);
+    }
+
+    /// ⚠️ **白名单**（`deny_unknown_fields`）：多一个字段 ⇒ **当场拒** ✓。
+    /// **变异**：往载荷里塞 `material` 或主口令字段 ⇒ 这个断言必须红 ✓
+    /// —— 那是 T2 最要紧的一条：**两种载荷不许互相渗透** ✓。
+    #[test]
+    fn a_device_pair_payload_rejects_any_extra_field() {
+        for extra in ["\"material\":\"{}\"", "\"master\":\"hunter2\"", "\"spaces\":[]"] {
+            let raw = format!("{{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",{extra}}}");
+            assert!(decode_device_pair(&raw).is_err(), "多一个字段就要拒：{raw}");
+        }
+        // 反向：把**钥匙袋载荷**喂给设备直连解码 ⇒ 也必须拒（它多 `material`、少 `bind`/`token`）
+        let km = encode_payload(&payload_from_material(&material_with(&["sp-a"]), "fp-1").unwrap()).unwrap();
+        assert!(decode_device_pair(&km).is_err(), "钥匙袋载荷不许被当设备直连载荷收下");
+    }
+
+    /// ⚠️ **版本不猜**（照 `decode_payload` 的既有形状）：不认识的 `v` ⇒ `Err` ✓。
+    #[test]
+    fn an_unknown_device_pair_version_is_refused_not_guessed() {
+        let raw = format!("{{\"v\":{},\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\"}}", DEVICE_PAIR_VERSION + 1);
+        let e = decode_device_pair(&raw).unwrap_err();
+        assert!(e.contains("版本"), "{e}");
+    }
+
+    /// ⚠️ **产出侧先验**：地址空／口令空／口令弱 ⇒ **不许生成载荷** ✓
+    /// （发出去只会让对方在采纳那一步才炸，而现场看起来像"码坏了" ✓）。
+    #[test]
+    fn a_device_pair_payload_is_never_produced_from_a_weak_or_empty_setting() {
+        assert!(device_pair_from("", "k7Qm-2pRt", "fp").is_err(), "没填地址 ⇒ 不生成");
+        assert!(device_pair_from("0.0.0.0:8788", "", "fp").is_err(), "没口令 ⇒ 不生成");
+        for weak in ["123456", "1234567890", "aaaaaaaaaaaa", "short"] {
+            let e = device_pair_from("0.0.0.0:8788", weak, "fp").unwrap_err();
+            assert!(e.contains("口令"), "理由要点名是口令的问题：{e}");
+        }
+        // 空口令那条要**说清为什么**（未加密时口令是唯一防线 ✓）
+        let e = device_pair_from("0.0.0.0:8788", "  ", "fp").unwrap_err();
+        assert!(e.contains("唯一"), "要说清“口令是唯一防线”：{e}");
+    }
+
+    /// ⚠️ 解码时**必填为空** ⇒ 拒（收下也没用 ⇒ 不许静默收下）✓
+    #[test]
+    fn a_device_pair_payload_with_an_empty_required_field_is_refused() {
+        for raw in [
+            "{\"v\":1,\"bind\":\"\",\"token\":\"k7Qm-2pRt\"}",
+            "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"  \"}",
+        ] {
+            assert!(decode_device_pair(raw).is_err(), "空的必填要拒：{raw}");
+        }
+    }
+
+    /// ⭐ **矩阵 U3 的纯函数半边**：两端载荷**差一个字节** ⇒ `check_code` 必须不同 ✓
+    /// （`check_code` 是**整段参与**的 —— 照 `pairing.rs` 既有那条"整段参与"判据同源 ✓；
+    ///  这里再钉一次，是因为**设备直连载荷**是新的输入形状 ✓）。
+    #[test]
+    fn the_check_code_separates_two_device_pair_payloads() {
+        let a = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a").unwrap()).unwrap();
+        let b = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-b").unwrap()).unwrap();
+        let c = encode_device_pair(&device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a").unwrap()).unwrap();
+        assert_ne!(check_code(&a), check_code(&b), "指纹不同 ⇒ 码必须不同");
+        assert_ne!(check_code(&a), check_code(&c), "端口不同 ⇒ 码必须不同");
+        // ⚠️ 而**核对码**对设备直连载荷同样有效（复用同一条 `check_code` ⇒ 码长不缩 ✓）
+        assert!(verify_confirm_code(&a, Some(&check_code(&a))).is_ok(), "核对了就要过");
+        assert!(verify_confirm_code(&a, Some(&check_code(&b))).is_err(), "对不上就要拒");
+    }
+
+    /// ⭐ **2026-10-01 修的真错**（owner 追问「监听地址不是自动配的吗、还会错？」抓到的 ✓）：
+    /// 载荷里搬的**必须是"对方可以照抄"的那一份** ——
+    /// ⛔ **不许把导出方自己的地址原样搬** ✗（那是**那台机器**的地址；对方要绑的是**别人的 IP**）。
+    ///
+    /// **变异**：把 `copyable_bind(bind)?` 改回 `bind.to_string()` ⇒ 本测试**必须红** ✓。
+    #[test]
+    fn a_device_pair_payload_carries_a_copyable_bind_not_the_exporters_address() {
+        // ① 具体地址 ⇒ 载荷里是**通配 ＋ 同一个端口**（⛔ 不是原样搬 ✗）
+        let p = device_pair_from("192.168.1.5:8788", "k7Qm-2pRt", "fp-a").unwrap();
+        assert_eq!(p.bind, "0.0.0.0:8788", "具体地址不许原样搬（对方绑不了别人的 IP）");
+        // ② 端口要**留着**（不是一律换成 8788）
+        assert_eq!(device_pair_from("10.0.0.7:12345", "k7Qm-2pRt", "f").unwrap().bind, "0.0.0.0:12345");
+        // ③ 本来就是通配 ⇒ 原样（端口不变）
+        assert_eq!(device_pair_from("0.0.0.0:9999", "k7Qm-2pRt", "f").unwrap().bind, "0.0.0.0:9999");
+        // ④ ⚠️ 而「公网地址仍然拒」这一半**照样在**（`checked_bind` 把关 ⇒ 折通配**没放宽**边界 ✓）
+        assert!(device_pair_from("8.8.8.8:8788", "k7Qm-2pRt", "f").is_err(), "公网仍然拒");
+        assert!(device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f").is_ok(), "回环（本机自测）仍可用");
     }
 }

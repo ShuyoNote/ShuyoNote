@@ -258,4 +258,7 @@
 | 空间类型／多服务器／同步手段 | 同上一份 §23–§26 |
 | 空间是权限边界（代码出处） | `shuyonote-sync-server/src/space.rs:18/39-59` ＋ `src/collab.rs:3` |
 
+| **界面形态（效果图）** | [`../../design/enterprise-im/README.md`](../../design/enterprise-im/README.md)（成套 6 张 ✓；⚠️ 目标形态、尚未落地 ✓） |
+| **导航与切换四条口径** | [`../specs/2026-10-01-enterprise-im-spec.md`](../specs/2026-10-01-enterprise-im-spec.md) §7（`N1`–`N4` ✓） |
+
 macOS 侧。
