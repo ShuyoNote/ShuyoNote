@@ -163,10 +163,10 @@ describe("S3 第三片 · 块级明细挂到「页 ＋ 天」", () => {
   it("汇总就是三个数（新增／改过／删掉）", () => {
     expect(
       blockSummaryOf([
-        { blockId: "a", kind: "added" },
-        { blockId: "b", kind: "edited" },
-        { blockId: "c", kind: "added" },
-        { blockId: "d", kind: "removed" },
+        { blockId: "a", kind: "added", label: "" },
+        { blockId: "b", kind: "edited", label: "" },
+        { blockId: "c", kind: "added", label: "" },
+        { blockId: "d", kind: "removed", label: "" },
       ]),
     ).toEqual({ added: 2, edited: 1, removed: 1 });
     expect(blockSummaryOf([])).toEqual({ added: 0, edited: 0, removed: 0 });
@@ -179,7 +179,7 @@ describe("S3 第三片 · 块级明细挂到「页 ＋ 天」", () => {
       title: "",
       atMs: n,
       op: "upsert",
-      changes: [{ blockId: `b${n}`, kind }],
+      changes: [{ blockId: `b${n}`, kind, label: "" }],
     });
     const m = blocksByPageDay([ev("p1", "added", 1), ev("p1", "edited", 2)], day);
     expect(m.get("p1@2026-10-01")?.map((c) => c.kind)).toEqual(["added", "edited"]);
@@ -192,7 +192,7 @@ describe("S3 第三片 · 块级明细挂到「页 ＋ 天」", () => {
       title: "",
       atMs,
       op: "upsert",
-      changes: [{ blockId: "b", kind: "edited" as const }],
+      changes: [{ blockId: "b", kind: "edited" as const, label: "" }],
     });
     const m = blocksByPageDay([ev("p1", 10), ev("p2", 10), ev("p1", 2000), { ...ev("p3", 10), changes: [] }], day);
     expect([...m.keys()].sort()).toEqual(["p1@d1", "p1@d2", "p2@d1"]);

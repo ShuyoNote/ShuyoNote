@@ -13,8 +13,8 @@
         }
       },
       "expect": [
-        { "blockId": "b1", "kind": "added" },
-        { "blockId": "b2", "kind": "added" }
+        { "blockId": "b1", "kind": "added", "label": "甲" },
+        { "blockId": "b2", "kind": "added", "label": "乙" }
       ]
     },
     {
@@ -35,7 +35,7 @@
           ]
         }
       },
-      "expect": [{ "blockId": "b1", "kind": "edited" }]
+      "expect": [{ "blockId": "b1", "kind": "edited", "label": "甲改了" }]
     },
     {
       "name": "⚠️ 只有 blockRev 变、内容逐字相同 ⇒ 不算一次改动",
@@ -70,8 +70,8 @@
         }
       },
       "expect": [
-        { "blockId": "b3", "kind": "added" },
-        { "blockId": "b2", "kind": "removed" }
+        { "blockId": "b3", "kind": "added", "label": "丙" },
+        { "blockId": "b2", "kind": "removed", "label": "乙" }
       ]
     },
     {
@@ -92,6 +92,41 @@
         }
       },
       "expect": []
+    },
+    {
+      "name": "标签只取**首行**（多行文本的第二行不进 label）",
+      "prev": null,
+      "next": {
+        "root": {
+          "children": [
+            {
+              "type": "paragraph",
+              "blockId": "b1",
+              "blockRev": 1,
+              "children": [{ "type": "text", "text": "第一行\n第二行" }]
+            }
+          ]
+        }
+      },
+      "expect": [{ "blockId": "b1", "kind": "added", "label": "第一行" }]
+    },
+    {
+      "name": "⚠️ 标签走法是先取本节点 text、**再递归 children**（两种写法在这一条上分岔）",
+      "prev": null,
+      "next": {
+        "root": {
+          "children": [
+            {
+              "type": "paragraph",
+              "blockId": "b1",
+              "blockRev": 1,
+              "text": "前缀",
+              "children": [{ "type": "text", "text": "子" }, { "type": "text", "text": "后" }]
+            }
+          ]
+        }
+      },
+      "expect": [{ "blockId": "b1", "kind": "added", "label": "前缀子后" }]
     }
   ]
 }

@@ -21,6 +21,42 @@ export function titleOfPayload(payload: string): string {
   }
 }
 
+/** 块标签的字数上限 ✓（与桌面 `activity.rs` 的 `BLOCK_LABEL_CHARS` 同一个数 ✓）。 */
+export const BLOCK_LABEL_CHARS = 40;
+
+/** 纯文本 ⇒ **首行**、截断 ✓（空文本 ⇒ 空串 ✓）。 */
+export function labelOfText(text: string): string {
+  const first = text.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  const chars = [...first];
+  if (chars.length <= BLOCK_LABEL_CHARS) return first;
+  return chars.slice(0, BLOCK_LABEL_CHARS).join("") + "…";
+}
+
+/**
+ * 一块（**规范化**后的 JSON 片段）⇒ 标签 ✓。
+ *
+ * ⚠️ 走法必须与桌面**逐字相同**：先取本节点的 `text`、**再递归 `children`** ✓ ——
+ * 这条正是两种写法会分岔的地方（`web.ts` 里那个私有的 `nodeText` 是"有 text 就不再递归" ✗，
+ * 所以这里用**新写的**这一份，并由夹具里"既有 text 又有 children"的用例钉住 ✓）。
+ */
+export function blockLabelOf(canonicalJson: string): string {
+  let v: unknown;
+  try {
+    v = JSON.parse(canonicalJson);
+  } catch {
+    return "";
+  }
+  const parts: string[] = [];
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    const rec = node as Record<string, unknown>;
+    if (typeof rec.text === "string") parts.push(rec.text);
+    if (Array.isArray(rec.children)) for (const c of rec.children) walk(c);
+  };
+  walk(v);
+  return labelOfText(parts.join(""));
+}
+
 /**
  * 相邻两版文档 JSON ⇒ 块级差异 ✓。
  *
@@ -36,11 +72,14 @@ export function changedBlocks(prevJson: string | undefined, nextJson: string): A
   const out: ActivityBlockChange[] = [];
   for (const b of next) {
     const old = prevById.get(b.blockId);
-    if (!old) out.push({ blockId: b.blockId, kind: "added" });
-    else if (old.json !== b.json) out.push({ blockId: b.blockId, kind: "edited" });
+    if (!old) out.push({ blockId: b.blockId, kind: "added", label: blockLabelOf(b.json) });
+    else if (old.json !== b.json) out.push({ blockId: b.blockId, kind: "edited", label: blockLabelOf(b.json) });
   }
   for (const b of prev) {
-    if (!nextIds.has(b.blockId)) out.push({ blockId: b.blockId, kind: "removed" });
+    if (!nextIds.has(b.blockId)) {
+      // 删掉那段：标签只能取**旧版**那一份（新版里已经没有它了 ✓）
+      out.push({ blockId: b.blockId, kind: "removed", label: blockLabelOf(b.json) });
+    }
   }
   return out;
 }

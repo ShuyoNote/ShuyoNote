@@ -564,6 +564,8 @@ export interface BlockBacklink {
 export interface ActivityBlockChange {
   blockId: string;
   kind: "added" | "edited" | "removed";
+  /** 该块纯文本的**首行**（截断 ✓）—— 界面上说「这一段改了」靠它 ✓（块 id 只在 tooltip 里 ✓）。 */
+  label: string;
 }
 
 /**

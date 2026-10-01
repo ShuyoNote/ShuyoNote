@@ -32,11 +32,41 @@ pub enum BlockChangeKind {
     Removed,
 }
 
-/// 一处块级变化 ✓（`block_id` 是顶层块的身份 ✓）。
+/// 一处块级变化 ✓（`block_id` 是顶层块的身份 ✓，`label` 是**给人看的那一眼** ✓）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockChange {
     pub block_id: String,
     pub kind: BlockChangeKind,
+    /// 该块纯文本的**首行**、截断到 `BLOCK_LABEL_CHARS` 字（取不到就是空串 ✓）。
+    ///
+    /// ⚠️ 为什么要它：块 id 对用户**没有意义** ✓ —— 界面上要能说「**这一段**改了」，而不是「b3f1 改了」✗。
+    /// ⚠️ 与 Web 侧**逐字相同**（`activityBlocks.ts` 的 `labelOfText` ✓）：两侧都按"先取本节点的 `text`、
+    /// 再**递归 children**"这一条走 ✓ —— 用 `tests/activity-parity.json` 钉住（含一条"既有 text 又有
+    /// children"的用例，那正是两种写法会分岔的地方 ✓）。
+    pub label: String,
+}
+
+/// 块标签的字数上限 ✓（两侧共用同一个数 ✓）。
+pub const BLOCK_LABEL_CHARS: usize = 40;
+
+/// 纯文本 ⇒ **首行**、截断 ✓（空文本 ⇒ 空串 ✓）。
+fn label_of_text(text: &str) -> String {
+    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let n = first.chars().count();
+    if n <= BLOCK_LABEL_CHARS {
+        return first.to_string();
+    }
+    let mut out: String = first.chars().take(BLOCK_LABEL_CHARS).collect();
+    out.push('…');
+    out
+}
+
+/// 一块（**规范化**后的 JSON 片段）⇒ 标签 ✓。
+fn block_label(canonical_json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(canonical_json) {
+        Ok(v) => label_of_text(&crate::blocks::node_text(&v)),
+        Err(_) => String::new(),
+    }
 }
 
 /// 相邻两版页面 JSON ⇒ 块级差异 ✓。
@@ -64,11 +94,14 @@ pub fn changed_blocks(prev_json: Option<&str>, next_json: &str) -> Vec<BlockChan
             None => out.push(BlockChange {
                 block_id: b.block_id.clone(),
                 kind: BlockChangeKind::Added,
+                label: block_label(&b.json),
             }),
             // `json` 在 `block_snapshots` 里已经是**规范化**的（去 rev ＋ 键排序 ✓）⇒ 直接比 ✓
             Some(old) if old.json != b.json => out.push(BlockChange {
                 block_id: b.block_id.clone(),
                 kind: BlockChangeKind::Edited,
+                // 标签取**新版**那一份 ✓（用户看到的是现在这段长什么样 ✓）
+                label: block_label(&b.json),
             }),
             Some(_) => {} // 内容逐字相同（只有 rev 不同也算相同 ✓）⇒ 不算一次改动 ✓
         }
@@ -78,6 +111,8 @@ pub fn changed_blocks(prev_json: Option<&str>, next_json: &str) -> Vec<BlockChan
             out.push(BlockChange {
                 block_id: b.block_id.clone(),
                 kind: BlockChangeKind::Removed,
+                // 删掉那段：标签只能取**旧版**那一份（新版里已经没有它了 ✓）
+                label: block_label(&b.json),
             });
         }
     }
@@ -101,15 +136,6 @@ pub fn changed_blocks_between_payloads(prev_payload: Option<&str>, next_payload:
 // 命令面（**只读** ✓）：`activity_feed`
 // ---------------------------------------------------------------------------
 
-/// 一处块级变化（**线上形状** ✓ —— `kind` 是这三个字符串，与 Web 侧逐字相同 ✓）。
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ActivityBlockChange {
-    pub block_id: String,
-    /// `"added"` ／ `"edited"` ／ `"removed"` ✓
-    pub kind: &'static str,
-}
-
 /// 一条活动：同一页**相邻两条载荷**之间发生的事 ✓（页面级一行 ＋ 块级明细 ✓）。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,6 +149,17 @@ pub struct ActivityEvent {
     pub op: String,
     /// 块级明细 ✓（`delete` 那条为空 ✓）
     pub changes: Vec<ActivityBlockChange>,
+}
+
+/// 一处块级变化（**线上形状** ✓ —— 三个 `kind` 字符串与 Web 侧逐字相同 ✓）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityBlockChange {
+    pub block_id: String,
+    /// `"added"` ／ `"edited"` ／ `"removed"` ✓
+    pub kind: &'static str,
+    /// 该块纯文本的**首行**（截断 ✓）—— 界面上说「**这一段**改了」靠它 ✓
+    pub label: String,
 }
 
 fn kind_str(k: BlockChangeKind) -> &'static str {
@@ -200,6 +237,7 @@ pub fn activity_feed(
                 .map(|ch| ActivityBlockChange {
                     block_id: ch.block_id,
                     kind: kind_str(ch.kind),
+                    label: ch.label,
                 })
                 .collect(),
         });
@@ -301,16 +339,52 @@ mod tests {
         assert!(changed_blocks_between_payloads(Some(&prev), r#"{"id":"p1"}"#).is_empty());
     }
 
+    #[test]
+    fn block_labels_take_the_first_line_and_truncate() {
+        let long = "字".repeat(BLOCK_LABEL_CHARS + 5);
+        assert_eq!(label_of_text("  第一行\n第二行  "), "第一行");
+        assert_eq!(
+            label_of_text(&long),
+            format!("{}…", "字".repeat(BLOCK_LABEL_CHARS))
+        );
+        assert_eq!(label_of_text("   \n  "), "", "全空白 ⇒ 空串（界面自己兜底 ✓）");
+    }
+
+    /// ⚠️ 走法必须与 Web 侧**逐字一致**：先取本节点的 `text`、**再递归 `children`** ✓ ——
+    /// 这正是两种写法会分岔的地方（web.ts 里那个私有的 `nodeText` 是"有 text 就不再递归" ✗，
+    /// 所以两侧都用**新写的** `labelOfText` 那一份，并由夹具里"既有 text 又有 children"的用例钉住 ✓）。
+    #[test]
+    fn label_walk_collects_own_text_then_children() {
+        let block = r#"{"type":"paragraph","blockId":"b1","text":"前缀","children":[{"type":"text","text":"子"},{"type":"text","text":"后"}]}"#;
+        assert_eq!(block_label(block), "前缀子后");
+    }
+
+    #[test]
+    fn removed_blocks_keep_the_old_version_label() {
+        let prev = doc(&[para(Some("b1"), Some(1), "要被删掉的一段")]);
+        let next = doc(&[para(Some("b2"), Some(1), "新的一段")]);
+        let got = changed_blocks(Some(&prev), &next);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].label, "新的一段", "新增那条取**新版** ✓");
+        assert_eq!(got[1].label, "要被删掉的一段", "删掉那条只能取**旧版** ✓");
+    }
+
     // ---- 跨语言夹具（S3 第三片）----
     //
     // 与 Web 侧 `src/lib/activityBlocks.test.ts` 读**同一份** `tests/activity-parity.json`、
     // 断**同一组**期望值 ✓ ⇒ 两侧语义相等是**传递**出来的 ✓（不是两边各记一份现状 ✗）。
     const ACTIVITY_PARITY_JSON: &str = include_str!("../../tests/activity-parity.json");
 
-    fn wire(changes: &[BlockChange]) -> Vec<(String, String)> {
+    fn wire(changes: &[BlockChange]) -> Vec<(String, String, String)> {
         changes
             .iter()
-            .map(|c| (c.block_id.clone(), kind_str(c.kind).to_string()))
+            .map(|c| {
+                (
+                    c.block_id.clone(),
+                    kind_str(c.kind).to_string(),
+                    c.label.clone(),
+                )
+            })
             .collect()
     }
 
@@ -329,7 +403,7 @@ mod tests {
                 Some(serde_json::to_string(&c["prev"]).expect("prev 可序列化"))
             };
             let got = wire(&changed_blocks(prev.as_deref(), &next));
-            let want: Vec<(String, String)> = c["expect"]
+            let want: Vec<(String, String, String)> = c["expect"]
                 .as_array()
                 .expect("expect 数组")
                 .iter()
@@ -337,6 +411,7 @@ mod tests {
                     (
                         e["blockId"].as_str().expect("blockId").to_string(),
                         e["kind"].as_str().expect("kind").to_string(),
+                        e["label"].as_str().expect("label").to_string(),
                     )
                 })
                 .collect();

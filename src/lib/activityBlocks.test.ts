@@ -9,9 +9,12 @@ import { describe, expect, it } from "vitest";
 
 import { docJsonOfPayload } from "./docContent";
 import {
+  BLOCK_LABEL_CHARS,
   activityFeedOf,
+  blockLabelOf,
   changedBlocks,
   changedBlocksBetweenPayloads,
+  labelOfText,
   titleOfPayload,
 } from "./activityBlocks";
 
@@ -19,7 +22,7 @@ interface FixtureCase {
   name: string;
   prev: unknown;
   next: unknown;
-  expect: { blockId: string; kind: string }[];
+  expect: { blockId: string; kind: string; label: string }[];
 }
 const FIXTURE = JSON.parse(
   readFileSync(join(process.cwd(), "tests", "activity-parity.json"), "utf8"),
@@ -48,7 +51,7 @@ describe("S3 第三片 · 与共享夹具一致（桌面侧读同一份）", () 
         c.prev === null ? undefined : JSON.stringify(c.prev),
         JSON.stringify(c.next),
       );
-      const want = c.expect.map((e) => ({ blockId: e.blockId, kind: e.kind }));
+      const want = c.expect.map((e) => ({ blockId: e.blockId, kind: e.kind, label: e.label }));
       if (JSON.stringify(got) !== JSON.stringify(want)) {
         bad.push(`「${c.name}」：Web=${JSON.stringify(got)} 期望=${JSON.stringify(want)}`);
       }
@@ -82,8 +85,8 @@ describe("S3 第三片 · 载荷与活动行", () => {
     ];
     const feed = activityFeedOf(rows);
     expect(feed.map((e) => e.op)).toEqual(["upsert", "upsert", "delete"]);
-    expect(feed[0].changes).toEqual([{ blockId: "b1", kind: "added" }]);
-    expect(feed[1].changes).toEqual([{ blockId: "b1", kind: "edited" }]);
+    expect(feed[0].changes).toEqual([{ blockId: "b1", kind: "added", label: "甲" }]);
+    expect(feed[1].changes).toEqual([{ blockId: "b1", kind: "edited", label: "甲改了" }]);
     expect(feed[2].changes).toEqual([]);
     expect(feed[1]).toMatchObject({ pageId: "p1", title: "页", atMs: 2000 });
   });
@@ -94,6 +97,32 @@ describe("S3 第三片 · 载荷与活动行", () => {
       { entity_id: "p2", op: "upsert", payload: payloadOf(doc(blk("b1", 1, "乙")), "页二", "p2"), updated_at: 2 },
     ];
     const feed = activityFeedOf(rows);
-    expect(feed[1].changes).toEqual([{ blockId: "b1", kind: "added" }]);
+    expect(feed[1].changes).toEqual([{ blockId: "b1", kind: "added", label: "乙" }]);
+  });
+});
+
+describe("S3 收尾 · 块标签（首行 ＋ 走法）", () => {
+  it("取**首行**、去掉两端空白；全空白 ⇒ 空串", () => {
+    expect(labelOfText("  第一行\n第二行  ")).toBe("第一行");
+    expect(labelOfText("   \n  ")).toBe("");
+  });
+
+  it("超长截断到 BLOCK_LABEL_CHARS 并加省略号（按**码点**数，不按 UTF-16 单元）", () => {
+    const long = "字".repeat(BLOCK_LABEL_CHARS + 5);
+    expect(labelOfText(long)).toBe("字".repeat(BLOCK_LABEL_CHARS) + "…");
+  });
+
+  it("⚠️ 走法：先取本节点 `text`、**再递归 children**（web.ts 那个私有 nodeText 是「有 text 就不再递归」✗）", () => {
+    const block = JSON.stringify({
+      type: "paragraph",
+      blockId: "b1",
+      text: "前缀",
+      children: [{ type: "text", text: "子" }, { type: "text", text: "后" }],
+    });
+    expect(blockLabelOf(block)).toBe("前缀子后");
+  });
+
+  it("坏 JSON ⇒ 空串（不抛）", () => {
+    expect(blockLabelOf("不是 JSON")).toBe("");
   });
 });

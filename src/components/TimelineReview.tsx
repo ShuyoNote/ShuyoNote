@@ -15,7 +15,6 @@ import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import {
   TIMELINE_DAY_BUCKET,
-  blockSummaryOf,
   blocksByPageDay,
   buildTimeline,
   dayLabelOf,
@@ -23,7 +22,17 @@ import {
   type TimelineDay,
 } from "../lib/kbTimeline";
 import { useNotes } from "../store/notes";
-import type { ActivityEvent } from "../types";
+import type { ActivityBlockChange, ActivityEvent } from "../types";
+
+/** 一行里最多摆几个块标签 ✓（再多就折成一句「另有 N 段」✓）。 */
+const BLOCK_CHIPS = 3;
+/** 三种变化各自的**词**与**记号** ✓（记号只做视觉提示，词走 i18n ✓）。 */
+const KIND_KEY = {
+  added: "timeline.blockKindAdded",
+  edited: "timeline.blockKindEdited",
+  removed: "timeline.blockKindRemoved",
+} as const satisfies Record<ActivityBlockChange["kind"], string>;
+const KIND_MARK: Record<ActivityBlockChange["kind"], string> = { added: "+", edited: "~", removed: "−" };
 
 function DayHeading({ day, now }: { day: string; now: number }) {
   const { t } = useTranslation();
@@ -101,11 +110,6 @@ export function TimelineReview() {
             <ul className="tl-entries">
               {d.entries.map((e) => {
                 const chs = byPageDay.get(e.id + "@" + d.day) ?? [];
-                const summary = blockSummaryOf(chs);
-                const parts: string[] = [];
-                if (summary.added) parts.push(t("timeline.blockAdded", { count: summary.added }));
-                if (summary.edited) parts.push(t("timeline.blockEdited", { count: summary.edited }));
-                if (summary.removed) parts.push(t("timeline.blockRemoved", { count: summary.removed }));
                 return (
                   <li key={e.id} className="tl-entry">
                     <button type="button" className="tl-entry-btn" onClick={() => void openPage(e.id)}>
@@ -113,10 +117,24 @@ export function TimelineReview() {
                         {e.kind === "created" ? t("timeline.kindCreated") : t("timeline.kindEdited")}
                       </span>
                       <span className="tl-entry-title">{e.title}</span>
-                      {parts.length > 0 && (
-                        // 块的 id 对用户没意义 ⇒ 只在 hover 里给（"改了哪几段"的**首行文本**是下一片 ✓）
-                        <span className="tl-blocks" title={chs.map((c) => c.blockId).join(" ")}>
-                          {parts.join(" · ")}
+                      {chs.length > 0 && (
+                        <span className="tl-blocks">
+                          {chs.slice(0, BLOCK_CHIPS).map((c, i) => (
+                            // 给人看的是**这一段的首行** ✓；块 id 退到 tooltip（id 对用户没意义 ✓）
+                            <span
+                              key={c.blockId + "#" + i}
+                              className={"tl-block tl-block-" + c.kind}
+                              title={t(KIND_KEY[c.kind]) + " · " + c.blockId}
+                            >
+                              <span className="tl-block-mark" aria-hidden="true">
+                                {KIND_MARK[c.kind]}
+                              </span>
+                              {c.label || t("timeline.blockUntitled")}
+                            </span>
+                          ))}
+                          {chs.length > BLOCK_CHIPS && (
+                            <span className="tl-block-more">{t("timeline.blockMore", { count: chs.length - BLOCK_CHIPS })}</span>
+                          )}
                         </span>
                       )}
                     </button>
