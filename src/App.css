@@ -7095,6 +7095,18 @@ select.prop-value {
   margin-bottom: 0.18em;
 }
 
+/* 表格**表头默认加粗**（owner 2026-10-01：「表格的标题列不加粗吗？」）——
+   md 惯例（GitHub / 知乎）里表头本来就是粗的，源文件里不必写 `**` ✓。
+   两路都要，缺一不可：
+     ① 导入时把表头行标成 `TableCellHeaderStates.ROW` ⇒ 是真的 `<th>`（数据对、导出对 ✓）
+        —— 见 `src/editor/markdownTransformers.ts` 的 `createMarkdownCell` ✓；
+     ② 下面这条 CSS 同时覆盖 `th` 与**第一行** ⇒ ⭐ **已经导进来的旧表也当场变粗**（不用重新导入 ✓）。
+   ⚠️ 用 600 而不是 700：与 `.editor-h3` 的 600 同档，避免表头抢过标题的层级 ✓。 */
+.editor-content table th,
+.editor-content table tr:first-child > td {
+  font-weight: 600;
+}
+
 .editor-quote {
   border-left: 3px solid var(--border-strong);
   padding-left: 14px;

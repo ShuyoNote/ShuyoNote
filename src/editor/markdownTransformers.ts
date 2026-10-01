@@ -10,6 +10,7 @@ import {
   $isTableCellNode,
   $isTableNode,
   $isTableRowNode,
+  TableCellHeaderStates,
   TableCellNode,
   TableNode,
   TableRowNode,
@@ -183,11 +184,16 @@ function appendInlineMarkdown(parent: ElementNode, pieces: MdInline[], format = 
   }
 }
 
-/** 建一个单元格：段落 +（走行内解析的）若干文本节点。 */
-function createMarkdownCell(text: string): TableCellNode {
+/** 建一个单元格：段落 +（走行内解析的）若干文本节点。
+ *  `headerState` 给表头行用（`TableCellHeaderStates.ROW` ⇒ 渲染成 `<th>`，
+ *  owner 2026-10-01：「表格的标题列不加粗吗？」——md 惯例里表头本来就该是粗的 ✓）。 */
+function createMarkdownCell(
+  text: string,
+  headerState: number = TableCellHeaderStates.NO_STATUS,
+): TableCellNode {
   const paragraph = $createParagraphNode();
   appendInlineMarkdown(paragraph, parseInline(text));
-  return $createTableCellNode().append(paragraph);
+  return $createTableCellNode(headerState).append(paragraph);
 }
 
 // Markdown table
@@ -255,7 +261,10 @@ export const TABLE: MultilineElementTransformer = {
 
     const headerRowNode = $createTableRowNode();
     for (let c = 0; c < colCount; c++) {
-      headerRowNode.append(createMarkdownCell(headerRow[c] ?? ""));
+      // 表头行标成 ROW ⇒ 渲染成真 `<th>`（md 惯例里表头就是粗的 ✓；见 createMarkdownCell 注释）
+      headerRowNode.append(
+        createMarkdownCell(headerRow[c] ?? "", TableCellHeaderStates.ROW),
+      );
     }
     table.append(headerRowNode);
 

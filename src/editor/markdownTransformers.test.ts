@@ -13,7 +13,13 @@
 //   ③ `` `码` `` 与 `*斜*` 同样各自成立 ✓
 // ⚠️ **反例（必须能红）**：把 `createMarkdownCell` 换回 `$createTextNode(text)` ⇒ 本判据立刻红 ✓。
 import { $convertFromMarkdownString } from "@lexical/markdown";
-import { TableCellNode, TableNode, TableRowNode } from "@lexical/table";
+import {
+  $isTableCellNode,
+  TableCellHeaderStates,
+  TableCellNode,
+  TableNode,
+  TableRowNode,
+} from "@lexical/table";
 import {
   $getRoot,
   $isElementNode,
@@ -92,5 +98,32 @@ describe("表格单元格的行内格式", () => {
     expect(leaves.some((l) => l.italic && l.text.includes("斜体"))).toBe(true);
     // 反例守卫：反引号与星号都不该以字面形态留下
     expect(leaves.every((l) => !l.text.includes("`") && !l.text.includes("*"))).toBe(true);
+  });
+
+  it("表头行标成 ROW（真 <th>）—— 与 CSS 的表头加粗配套", () => {
+    const editor = createEditor({
+      namespace: "amd-md-table-header",
+      nodes: [TableNode, TableRowNode, TableCellNode],
+      onError: (e) => {
+        throw e;
+      },
+    });
+    let states: number[] = [];
+    editor.update(
+      () => {
+        $convertFromMarkdownString(MD, SHUYONOTE_TRANSFORMERS, $getRoot());
+        const table = $getRoot().getFirstChild();
+        const rows = $isElementNode(table) ? table.getChildren() : [];
+        const first = rows[0];
+        states = $isElementNode(first)
+          ? first
+              .getChildren()
+              .map((c) => ($isTableCellNode(c) ? c.getHeaderStyles() : -1))
+          : [];
+      },
+      { discrete: true },
+    );
+    expect(states.length).toBe(2);
+    expect(states.every((s) => s === TableCellHeaderStates.ROW)).toBe(true);
   });
 });
