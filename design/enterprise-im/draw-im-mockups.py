@@ -151,16 +151,17 @@ class Sheet:
         self.d.line([x0, y, x1, y], fill=fill, width=w)
 
     # ── 模拟真界面：一扇 App 窗
-    def app(self, x, y, w, h, space="产品研发 · 团队空间", online="3 人在线", tools=None):
+    def app(self, x, y, w, h, space="产品研发 · 团队空间", online="3 人在线", tools=None, other=0):
         """⭐ 顶端工具栏（owner 2026-10-01 的方向）：
-        ⛔ **去掉页面侧边工具条**（`RightRail.tsx` 那条「展开右侧工具」）✗ ⇒ 它的功能
-        （AI 助手／讨论·通知／目录／插件视图）**全部收入这一行** ✓
-        ⚠️ **个人空间没有「讨论」「通知」这两颗** ✓（`tools` 由调用方给，见 sheet5 的对照）"""
+        ⛔ **去掉页面侧边工具条**（`RightRail.tsx` 那条「展开右侧工具」）✗ ⇒ 它的功能收入这一行 ✓
+        ⛔ **顶栏只留「讨论」一颗**（「通知」已并进讨论 ✓）：@ 就地显示在讨论线旁 ✓
+        ⭐ 跨空间汇总 ⇒ **挪到空间切换器**（`other` = 还有几个空间在叫你 ✓）
+        ⚠️ **个人空间没有「讨论」** ✓（`tools` 由调用方给，见 sheet5 的对照）"""
         self.card(x, y, w, h)
         # 标题栏（＝顶端工具栏）
         self.d.rounded_rectangle([x, y, x + w, y + 64], radius=14, fill=GREY)
         self.d.rectangle([x, y + 40, x + w, y + 64], fill=GREY)
-        self.t(x + 24, y + 32, space, F_B, anchor="lm")
+        self._space_switcher(x + 20, y + 10, space, other)
         # 右侧：先排按钮，再排在线数
         if tools:
             tw = sum(self._tool_w(lbl, b) for lbl, a, b in tools) + 12 * (len(tools) - 1)
@@ -170,6 +171,19 @@ class Sheet:
         self.t(x + w - 24, y + 32, online, F_S, MUT, anchor="rm")
         self.rule(x, y + 64, x + w)
         return (x, y + 64)
+
+    def _space_switcher(self, x, y, label, other=0):
+        """⭐ 空间切换器（`other` = 还有几个**别的**空间在叫你）。
+        ⛔ 它取代了顶栏那颗「通知」：合并之后**跨空间汇总**只有这一个落点 ✓"""
+        tw = self.d.textlength(label, font=F_B)
+        w = tw + 52
+        self.d.rounded_rectangle([x, y, x + w, y + 44], radius=10, fill=CARD, outline=LINE, width=2)
+        _emit(self.d, (x + 14, y + 22), label, F_B, INK, "lm")
+        cx = x + w - 22
+        self.d.polygon([(cx - 7, y + 17), (cx + 7, y + 17), (cx, y + 28)], fill=MUT)
+        if other:
+            self.badge(x + w + 8, y + 8, other, d0=24)
+        return w
 
     def _tool_w(self, label, badge=0):
         return self.d.textlength(label, font=F_XS) + 28 + (22 if badge else 0)
@@ -224,7 +238,7 @@ def sheet1():
     """① 页级讨论：能回复某一条，恰好两层。"""
     s = Sheet("企业版 IM · 效果图 01", "页级讨论：讨论就长在这一页笔记旁边。回复只两层（回复的回复归到根）。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)])
+    s.app(ax, ay, aw, ah, other=2, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
         (0, "项目立项", False), (1, "会议纪要", True), (1, "需求草稿", False),
         (0, "技术方案", False), (1, "接口约定", False), (0, "发布检查", False)])
@@ -273,7 +287,7 @@ def sheet2():
     """② 空间级讨论线：多条线，各自未读独立。"""
     s = Sheet("企业版 IM · 效果图 02", "空间级讨论线：一个空间里多条线，每条线各自的未读数是准的。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah, space="产品研发 · 团队空间", online="3 人在线", tools=[("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)])
+    s.app(ax, ay, aw, ah, space="产品研发 · 团队空间", online="3 人在线", other=2, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
     # 左列：讨论线清单
     lx, ly, lw = ax + 24, ay + 64 + 24, 560
     lh = ah - 64 - 48
@@ -322,61 +336,85 @@ def sheet2():
 
 
 def sheet3():
-    """③ 通知与在线（@提醒），且在线按「人×空间」。"""
-    s = Sheet("企业版 IM · 效果图 03", "通知与在线：@ 提醒、未读；在线按「谁 · 在哪个空间」算，不是笼统一个「在线」。")
+    """③ 空间切换器展开：**跨空间汇总 ＋ 系统通知**（owner 2026-10-01 选「A 全并」）。
+    ⛔ 这里**不再装 @ 与回复通知** ✗ —— 那些属于某条讨论线，已就地显示（见图 06 ✓）。"""
+    s = Sheet("企业版 IM · 效果图 03",
+              "顶栏去掉「通知」之后：跨空间汇总与系统通知落在**空间切换器**里；@ 与回复留在讨论线旁。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah, online="本空间 3 人 · 其他空间 2 人", tools=[("AI 助手", False, 0), ("讨论", False, 0), ("通知", True, 2), ("目录", False, 0)])
+    s.app(ax, ay, aw, ah, online="本空间 3 人在线", other=2,
+          tools=[("AI 助手", False, 0), ("讨论", False, 0), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
         (0, "项目立项", False), (1, "会议纪要", True), (0, "技术方案", False), (0, "发布检查", False)])
-    s.note(ax + 260, ay + 64, 1000, ah - 64, "会议纪要 · 10-01",
+    s.note(ax + 260, ay + 64, 900, ah - 64, "会议纪要 · 10-01",
            ["（笔记正文……）", "三、讨论必须能一键落成笔记。", "四、@ 到的人要收到提醒。"])
-    dx, dy, dw = ax + 1260, ay + 64, 628
-    s.d.rectangle([dx, dy, dx + dw, ay + ah - 64], fill=(252, 252, 254))
-    s.d.line([dx, dy, dx, ay + ah - 64], fill=LINE, width=1)
-    s.t(dx + 24, dy + 22, "通知", F_B)
-    s.badge(dx + 96, dy + 18, 2)
-    # @ 通知
-    yy = dy + 78
-    s.card(dx + 24, yy, dw - 48, 150, edge=BLUE, fill=BLUE_BG, lw=2)
-    s.avatar(dx + 44, yy + 24, "王", fill=CARD, fg=BLUE)
-    s.t(dx + 92, yy + 26, "王工 在讨论里提到了你", F_S)
-    s.small(dx + 44, yy + 74, "会议纪要 · 本周进展", MUT)
-    s.small(dx + 44, yy + 104, "10:02", MUT)
-    s.chip(dx + dw - 168, yy + 100, "去看看", BLUE, CARD, h=30)
-    yy += 174
-    s.card(dx + 24, yy, dw - 48, 150, edge=LINE, lw=2)
-    s.avatar(dx + 44, yy + 24, "李", fill=GREEN_BG, fg=GREEN)
-    s.t(dx + 92, yy + 26, "李工 回复了你的评论", F_S)
-    s.small(dx + 44, yy + 74, "会议纪要 · 本页", MUT)
-    s.small(dx + 44, yy + 104, "10:05", MUT)
-    # 在线区
-    oy = dy + 520
-    s.rule(dx + 24, oy, dx + dw - 24)
-    s.t(dx + 24, oy + 22, "在线", F_B)
-    s.small(dx + 96, oy + 30, "只显示与本空间有关的人", MUT)
-    yy = oy + 70
-    for who, where, bg, fg in [("王", "本空间 · 正在看这一页", BLUE_BG, BLUE),
-                               ("李", "本空间 · 在别的页", GREEN_BG, GREEN),
-                               ("赵", "本空间 · 在线", AMBER_BG, AMBER)]:
-        s.avatar(dx + 28, yy, who, fill=bg, fg=fg)
-        s.t(dx + 76, yy + 2, who + "工", F_S)
-        s.small(dx + 76, yy + 32, where, MUT)
-        s.d.ellipse([dx + 44 - 12, yy + 24, dx + 44 - 4, yy + 32], fill=GREEN, outline=CARD)
-        yy += 76
-    s.card(dx + 24, yy + 8, dw - 48, 96, edge=AMBER, fill=AMBER_BG, lw=2)
-    s.t(dx + 44, yy + 26, "【注意】不显示其他空间的人", F_S, AMBER)
-    s.small(dx + 44, yy + 60, "（在 B 空间的在线状态，不会顶掉 A 空间的）", MUT)
-    s.chip(56, 1360 - 34, "@ 提醒走既有通知与已读", BLUE, BLUE_BG)
-    s.chip(400, 1360 - 34, "在线 = 人 × 空间（⛔ 不是按人）", GREEN, GREEN_BG)
-    s.chip(820, 1360 - 34, "⛔ 服务端不解析评论正文（@ 名单由客户端传）", RED, RED_BG)
-    return s.save("效果图-03-通知与在线-按空间.png")
+    # 展开的空间切换器（从标题栏那颗下拉）
+    dx, dy, dw, dh = ax + 20, ay + 68, 700, 700
+    s.card(dx, dy, dw, dh, edge=BLUE, lw=2)
+    s.t(dx + 24, dy + 20, "切换到", F_B)
+    s.small(dx + 108, dy + 28, "哪个空间在叫你，就在这一列", MUT)
+    yy = dy + 62
+    spaces = [("我的空间 · 个人空间", "无未读", 0, False),
+              ("产品研发 · 团队空间", "3 条未读 · 其中 @ 你 1 条", 3, True),
+              ("设计组 · 团队空间", "@ 你 2 条", 2, False)]
+    for name, sub, n, cur in spaces:
+        if cur:
+            s.d.rounded_rectangle([dx + 12, yy - 4, dx + dw - 12, yy + 74], radius=10, fill=BLUE_BG)
+        s.t(dx + 28, yy + 8, name, F_S, BLUE if cur else INK)
+        s.small(dx + 28, yy + 40, sub, MUT)
+        if n:
+            s.badge(dx + dw - 52, yy + 20, n)
+        if cur:
+            s.chip(dx + dw - 168, yy + 42, "当前", BLUE, CARD, h=28)
+        yy += 92
+    s.rule(dx + 24, yy + 4, dx + dw - 24)
+    s.t(dx + 24, yy + 24, "系统通知", F_B)
+    s.small(dx + 130, yy + 32, "与讨论无关的那些 —— 个人空间也会有", MUT)
+    yy += 68
+    for who, text, when, tint in [
+        ("!", "同步失败：服务器没有响应", "10:31", RED_BG),
+        ("+", "你被加入「设计组 · 团队空间」", "09:12", GREEN_BG),
+        ("v", "有新版本可用（1.92.0）", "08:00", GREY),
+    ]:
+        s.card(dx + 12, yy, dw - 24, 76, edge=LINE, fill=tint, lw=1)
+        s.avatar(dx + 28, yy + 20, who, d0=34, fill=CARD, fg=INK)
+        s.t(dx + 76, yy + 16, text, F_S)
+        s.small(dx + 76, yy + 46, when, MUT)
+        yy += 88
+    # 右侧：当前空间的讨论（@ 就地显示的落点）
+    rx, rw = dx + dw + 40, aw - (dw + 40) - 40
+    s.card(rx, dy, rw, 420)
+    s.t(rx + 28, dy + 20, "回到这个空间的「讨论」", F_B)
+    s.small(rx + 28, dy + 58, "【要点】@ 与回复**不在这里**，它们就地长在讨论线上 ✓", MUT)
+    s.rule(rx + 28, dy + 92, rx + rw - 28)
+    yy = dy + 116
+    for name, sub, n, ment in [("本周进展", "最后一条 10:07 · 王工", 3, 1),
+                               ("问题清单", "最后一条 09:41 · 李工", 0, 0),
+                               ("发布检查", "最后一条 10:07 · 赵工", 1, 0)]:
+        s.t(rx + 28, yy + 6, name, F_S)
+        s.small(rx + 28, yy + 38, sub, MUT)
+        if n:
+            s.badge(rx + rw - 120, yy + 16, n)
+        if ment:
+            s.chip(rx + rw - 68, yy + 18, "@你", AMBER, AMBER_BG, h=28)
+        yy += 92
+    s.card(rx + 28, dy + 420, rw - 56, 250, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 52, dy + 442, "【注意】为什么「通知」这颗按钮没了", F_S, AMBER)
+    s.small(rx + 52, dy + 480, "① 今天的通知**只有 @ 一种**（kind 写死 mention），", MUT)
+    s.small(rx + 52, dy + 508, "   而且带 comment_id ⇒ 它就是讨论线上的一条 ✓", MUT)
+    s.small(rx + 52, dy + 544, "② 但**跨空间**那半不能并进讨论 —— 面板永远在", MUT)
+    s.small(rx + 52, dy + 572, "   当前空间里 ⇒ 别的空间叫你时没地方显示 ✗", MUT)
+    s.small(rx + 52, dy + 608, "⇒ 所以它挪到**空间切换器**（上面那一列）✓", MUT)
+    s.chip(56, 1360 - 34, "【要点】@ 就地显示在讨论线旁（不再是单独一颗按钮）", BLUE, BLUE_BG)
+    s.chip(700, 1360 - 34, "跨空间汇总 ⇒ 空间切换器（本空间那颗红点已挪到这儿）", GREEN, GREEN_BG)
+    s.chip(1330, 1360 - 34, "【禁】系统通知不许混进讨论面板", RED, RED_BG)
+    return s.save("效果图-03-空间切换器-跨空间与系统通知.png")
 
 
 def sheet4():
     """④ 讨论变成知识 + 说真话（不显示“已送达”）。"""
     s = Sheet("企业版 IM · 效果图 04", "讨论变成知识：一键把这段结论落成笔记；且界面不承诺我们做不到的事。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)])
+    s.app(ax, ay, aw, ah, other=2, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
         (0, "项目立项", False), (1, "会议纪要", True), (0, "本期结论", True), (0, "发布检查", False)])
     # 左：一段讨论
@@ -430,28 +468,28 @@ def sheet4():
 
 
 def sheet5():
-    """⑤ 个人空间 vs 团队空间：顶栏按钮的差别（⭐ 个人空间没有「讨论」「通知」）。"""
+    """⑤ 个人空间 vs 团队空间：顶栏按钮的差别（⭐ 个人空间没有「讨论」）。"""
     s = Sheet("企业版 IM · 效果图 05",
-              "同一条顶栏，两种空间：个人空间没有「讨论」「通知」两颗按钮（团队空间才有）。")
-    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)]
+              "同一条顶栏，两种空间：个人空间没有「讨论」那颗（团队空间才有）—— 「通知」已并进讨论。")
+    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)]
     SOLO = [("AI 助手", False, 0), ("目录", False, 0)]
     w, h = 900, 660
     lx, ly = 56, 230
-    s.app(lx, ly, w, h, space="产品研发 · 团队空间", online="3 人在线", tools=TEAM)
+    s.app(lx, ly, w, h, space="产品研发 · 团队空间", online="3 人在线", other=2, tools=TEAM)
     s.sidebar(lx, ly + 64, 240, h - 64, [(0, "项目立项", False), (1, "会议纪要", True), (0, "技术方案", False)])
     s.t(lx + 264, ly + 90, "会议纪要 · 10-01", F_H)
     s.t(lx + 264, ly + 148, "（笔记正文……）", F_S, MUT)
     s.t(lx + 264, ly + 194, "在团队空间里，", F_S)
-    s.t(lx + 264, ly + 232, "顶栏有「讨论」和「通知」。", F_S)
-    s.chip(lx, ly + h + 22, "团队空间：有「讨论」「通知」", BLUE, BLUE_BG)
-    s.small(lx, ly + h + 66, "讨论挂在空间与页面上；通知是空间内的 @ 与回复。", MUT)
+    s.t(lx + 264, ly + 232, "顶栏只有「讨论」这一颗（通知已并进去）。", F_S)
+    s.chip(lx, ly + h + 22, "团队空间：有「讨论」", BLUE, BLUE_BG)
+    s.small(lx, ly + h + 66, "讨论挂在空间与页面上；@ 就在讨论线旁（空间切换器管跨空间）。", MUT)
     rx, ry = 1044, 230
     s.app(rx, ry, w, h, space="我的空间 · 个人空间", online="仅本机", tools=SOLO)
     s.sidebar(rx, ry + 64, 240, h - 64, [(0, "读书笔记", True), (1, "摘录", False), (0, "随笔", False)])
     s.t(rx + 264, ry + 90, "读书笔记", F_H)
     s.t(rx + 264, ry + 148, "（笔记正文……）", F_S, MUT)
     s.t(rx + 264, ry + 194, "个人空间里：", F_S)
-    s.t(rx + 264, ry + 232, "顶栏没有「讨论」，也没有「通知」。", F_S)
+    s.t(rx + 264, ry + 232, "顶栏没有「讨论」。", F_S)
     s.card(rx + 264, ry + 292, w - 288, 190, edge=AMBER, fill=AMBER_BG, lw=2)
     s.t(rx + 288, ry + 314, "【注意】为什么个人空间没有它", F_S, AMBER)
     s.small(rx + 288, ry + 352, "一个人没有第二个人可以讨论；", MUT)
@@ -461,9 +499,9 @@ def sheet5():
     s.small(rx, ry + h + 66, "AI 助手仍可用（接本机或内网端点）；目录仍可用。", MUT)
     s.card(56, 1180, 1888, 130, edge=BLUE, fill=BLUE_BG, lw=2)
     s.t(84, 1206, "【要点】侧边工具条撤掉之后，功能全在顶端这一行 ——", F_B, BLUE)
-    s.t(84, 1256, "「AI 助手」「讨论」「通知」「目录」四种；而个人空间只留「AI 助手」「目录」（讨论与通知本来就不该出现在那里）。", F_S)
+    s.t(84, 1256, "「AI 助手」「讨论」「目录」三颗；而个人空间只留「AI 助手」「目录」（讨论本来就不该出现在那里）。", F_S)
     s.chip(56, 1360 - 34, "【禁】侧边工具条不再存在（功能全在顶栏）", RED, RED_BG)
-    s.chip(560, 1360 - 34, "个人空间没有「讨论」「通知」", GREEN, GREEN_BG)
+    s.chip(560, 1360 - 34, "个人空间没有「讨论」", GREEN, GREEN_BG)
     s.chip(960, 1360 - 34, "【禁】仍然没有会话列表／聊天窗", RED, RED_BG)
     return s.save("效果图-05-个人空间与团队空间-顶栏对照.png")
 
@@ -472,29 +510,40 @@ def sheet6():
     """⑥ 讨论线放进**左侧边栏**：常驻可见未读，切换就在侧边栏里（方案 A）。"""
     s = Sheet("企业版 IM · 效果图 06",
               "讨论线放进左侧边栏：不用先开面板就知道哪条线有新的；切换就在侧边栏顶部那一格。")
-    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)]
+    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)]
     ax, ay, aw, ah = 56, 190, 1888, 880
-    s.app(ax, ay, aw, ah, tools=TEAM)
+    s.app(ax, ay, aw, ah, other=2, tools=TEAM)
     sy, sh = ay + 64, ah - 64
     sx, sw = ax, 320
     s.d.rectangle([sx, sy, sx + sw, sy + sh], fill=(247, 248, 251))
     s.d.line([sx + sw, sy, sx + sw, sy + sh], fill=LINE, width=1)
     s.switch2(sx + 16, sy + 16, sw - 32, "页面", "讨论", "讨论")
     s.small(sx + 20, sy + 72, "本空间 3 条讨论线")
-    rows = [("本周进展", "3", True, "最后一条 10:07 · 王工"),
-            ("问题清单", "0", False, "最后一条 09:41 · 李工"),
-            ("发布检查", "1", False, "最后一条 10:07 · 赵工")]
+    rows = [("本周进展", "3", True, "最后一条 10:07 · 王工", 1),
+            ("问题清单", "0", False, "最后一条 09:41 · 李工", 0),
+            ("发布检查", "1", False, "最后一条 10:07 · 赵工", 0)]
     yy = sy + 100
-    for name, n, cur, sub in rows:
+    for name, n, cur, sub, ment in rows:
         if cur:
             s.d.rounded_rectangle([sx + 10, yy - 6, sx + sw - 14, yy + 66], radius=10, fill=BLUE_BG)
         s.t(sx + 26, yy + 10, name, F_S, BLUE if cur else INK)
         s.small(sx + 26, yy + 40, sub, MUT)
+        if ment:
+            # ⭐ @ 就地显示（owner 选「全并」后，@ 不再是一颗单独按钮 ✓）
+            s.chip(sx + sw - 132, yy + 6, "@你 1", AMBER, AMBER_BG, h=26)
         if n != "0":
             s.badge(sx + sw - 52, yy + 14, n)
         else:
             s.chip(sx + sw - 96, yy + 16, "已读完", MUT, GREY, h=28)
         yy += 88
+    # ⭐ 在线（按空间 —— 只显示本空间的人；owner 2026-10-01 把「通知」并掉后它需要一个新的家）
+    py = yy + 16
+    s.small(sx + 20, py, "在线 · 只显示本空间")
+    for i, (ch, bg, fg) in enumerate([("王", BLUE_BG, BLUE), ("李", GREEN_BG, GREEN), ("赵", AMBER_BG, AMBER)]):
+        ax2 = sx + 24 + i * 46
+        s.avatar(ax2, py + 28, ch, d0=36, fill=bg, fg=fg)
+        s.d.ellipse([ax2 + 26, py + 52, ax2 + 36, py + 62], fill=GREEN, outline=(247, 248, 251))
+    s.small(sx + 24 + 3 * 46 + 4, py + 34, "均在本空间", MUT)
     s.card(sx + 16, sy + sh - 120, sw - 32, 100, edge=AMBER, fill=AMBER_BG, lw=2)
     s.t(sx + 34, sy + sh - 100, "【注意】这里不是「会话列表」", F_XS, AMBER)
     s.small(sx + 34, sy + sh - 68, "它是**本空间内**的导航；", MUT)
