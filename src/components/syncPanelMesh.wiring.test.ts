@@ -69,6 +69,15 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(commandsTs, "缺 `mesh_sync_now` 的契约条目").toContain("mesh_sync_now:");
     // Web 的 `lan_status` 必须回同一形状：**如实说"这一档不可用"**，而不是少一个字段。
     expect(webTs).toContain("Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用");
+    // ⭐ **U8（2026-10-01）扩的一条**（⛔ 上面几条**没删** ✗ —— 形状改了要**加**判据，不是换掉 ✓）：
+    //   一扇门能服务**多个**空间 ⇒ 读数里必须有 `served`（否则界面说不出「这一扇门管几个」，
+    //   而「关掉一个空间不许关掉整窗」这条口径就看不出来 ✓）。
+    expect(commandsTs, "U8：`MeshConfigState` 少了 `served`（一扇门服务哪些空间）").toContain("served: string[];");
+    // ⚠️ 而且 Rust 侧的窗口**不许**退回「一个空间一个窗口」（那正是 U8 要消灭的形状 ✓）——
+    //   这两条是**结构断言**：注册表的键是**绑定**、鉴权走 `select_space` 那条白名单 ✓。
+    const rustMeshU8 = read("src-tauri/src/mesh.rs");
+    expect(rustMeshU8, "U8：窗口注册表的键应当是**绑定**").toContain("guard.insert(bind.to_string(), handle)");
+    expect(rustMeshU8, "U8：鉴权应当走 `select_space` 那条白名单").toContain("fn select_space(");
   });
 
   // ★ 2026-09-26：网格那一块的**形状**（owner 截图 ＋ 真机实测：输入框 50px、按钮 44~50px 宽 ×

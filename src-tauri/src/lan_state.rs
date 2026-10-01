@@ -305,16 +305,57 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             };
             let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
             let mut mesh_bases: Vec<(String, String)> = Vec::new();
+            // ⭐ **U8（2026-10-01）：一次开窗，而不是"逐空间开"** ——
+            //   把配了地址的那些空间**按绑定分组** ⇒ **一个绑定只调一次** ✓
+            //   （同一绑定的空间**共用一扇门** ✓；矩阵 U8-① 的判据就是"三次 ⇒ 同一个地址"）。
+            //
+            //   ⚠️ **口令取哪一份**（规格 §7-R3 的裁定 ✓）：窗口级只有一份 ⇒ 取**这一组里第一个非空的**
+            //      （＝"最早那个空间"那一份 ✓）。⛔ 不静默丢：不一致由设置面读数如实提示 ✓。
+            //   ⚠️ 用 **BTreeMap**（键有序）⇒ 同一组网卡/同一组配置**每次跑出来的顺序一样** ✓
+            //      （HashMap 的遍历顺序不定 ⇒ 判据会 flaky ✗）。
+            let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String)>> =
+                std::collections::BTreeMap::new();
+            let mut token_by_bind: std::collections::BTreeMap<String, Option<String>> =
+                std::collections::BTreeMap::new();
             for (space, ws, cfg) in &mesh_cfgs {
-                match crate::mesh::ensure_window(ws, space, &device_id, cfg) {
+                let Some(bind) = cfg.bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) else {
+                    continue;
+                };
+                by_bind
+                    .entry(bind.to_string())
+                    .or_default()
+                    .push((ws.clone(), space.clone()));
+                let slot = token_by_bind.entry(bind.to_string()).or_insert(None);
+                if slot.is_none() && cfg.token.as_deref().map(str::trim).map(|t| !t.is_empty()).unwrap_or(false) {
+                    *slot = cfg.token.clone();
+                }
+            }
+            for (bind, pairs) in &by_bind {
+                // ⚠️ 取不到 app data 目录 ⇒ **如实说、这一轮不开窗**（⛔ 不静默跳过 ✗）
+                let Some(mesh_dir) = crate::db::app_data_dir_ref() else {
+                    eprintln!("[mesh] 取不到 app data 目录 ⇒ 绑定 {bind} 这一轮不开窗（不是「没有空间」，是读不到目录）");
+                    continue;
+                };
+                match crate::mesh::ensure_window(
+                    pairs,
+                    &device_id,
+                    bind,
+                    token_by_bind.get(bind).cloned().flatten(),
+                    mesh_dir,
+                ) {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
-                        Some(base) => mesh_bases.push((space.clone(), base)),
+                        Some(base) => {
+                            // ⭐ 一扇门服务多个空间 ⇒ **每个空间都记一条基址**（公告是按空间发的 ✓）
+                            for (_, space) in pairs {
+                                mesh_bases.push((space.clone(), base.clone()));
+                            }
+                        }
                         None => eprintln!(
-                            "[mesh] 空间 {space} 的窗口绑在 {addr}（回环 / 端口 0）⇒ **不宣告**：别人拉不到，报出去只会往网段里灌噪音"
+                            "[mesh] 绑定 {bind} 的窗口在 {addr}（回环 / 端口 0）⇒ **不宣告**：别人拉不到，报出去只会往网段里灌噪音"
                         ),
                     },
                     Ok(None) => {}
-                    Err(e) => eprintln!("[mesh] 空间 {space} 的窗口起不来（这一轮不宣告它）：{e}"),
+                    Err(e) => eprintln!("[mesh] 绑定 {bind} 的窗口起不来（它名下这些空间这一轮都不宣告）：{e}"),
                 }
             }
             state.set_enabled(should_run_discovery(&profiles, &meshed));

@@ -3016,7 +3016,12 @@ pub async fn mesh_sync_now(
 
     // ③ 开窗（配了地址才开）＋ 拉一轮
     //    窗口的库 = **本地空间那一份**（`scope.db_space`）；它服务/匹配的空间 = `scope.space`。
-    let window = crate::mesh::ensure_window(&scope.db_space, &scope.space, &scope.device, &cfg)?
+    let window = crate::mesh::ensure_window_for(
+        &[(scope.db_space.clone(), scope.space.clone())],
+        &scope.device,
+        cfg.bind.as_deref().unwrap_or(""),
+        cfg.token.clone(),
+    )?
         .map(|a| format!("http://{a}"));
     let mut report = crate::mesh::round(&db.0, &scope.space, &scope.device, &peers).await?;
     report.window = window;
@@ -3057,11 +3062,18 @@ pub fn mesh_set_config(
     if cfg.bind.is_none() {
         // 关掉 ⇒ **立刻松口**（不留一个还在听的窗口）。
         crate::mesh::stop_window(&scope.space)?;
-        return Ok(crate::mesh::config_state(&cfg, None));
+        return Ok(crate::mesh::config_state(&cfg, None, &[]));
     }
     // 窗口的库 = **本地空间那一份**（`scope.db_space`）；服务/匹配的空间 = `scope.space`。
-    let window = crate::mesh::ensure_window(&scope.db_space, &scope.space, &scope.device, &cfg)?;
-    Ok(crate::mesh::config_state(&cfg, window))
+    let window = crate::mesh::ensure_window_for(
+        &[(scope.db_space.clone(), scope.space.clone())],
+        &scope.device,
+        cfg.bind.as_deref().unwrap_or(""),
+        cfg.token.clone(),
+    )?;
+    // ⭐ U8：把"这扇门服务哪些空间"一起报出去（从注册表读 ✓ —— 只读，不开窗 ✓）
+    let served = crate::mesh::served_spaces(&scope.space);
+    Ok(crate::mesh::config_state(&cfg, window, &served))
 }
 
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
@@ -3201,7 +3213,7 @@ pub fn lan_status(
             crate::mesh::settings(&c, &space_id)
         };
         let window = crate::mesh::window_addr(&space_id);
-        crate::mesh::config_state(&cfg, window)
+        crate::mesh::config_state(&cfg, window, &crate::mesh::served_spaces(&space_id))
     };
 
     Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })

@@ -131,15 +131,19 @@ async fn mesh_pull_wire_bytes() {
         }
     }
 
+    // \u2b50 U8\uff1a\u4e00\u6247\u95e8\u53ea\u670d\u52a1\u8fd9\u4e00\u4e2a\u7a7a\u95f4 \u21d2 `start` \u6536\u7684\u662f**\u8fde\u63a5\u8868**\uff08\u952e\uff1d`proto_space`\uff09\u2713
     let win = start(
         MeshConfig {
             bind: "127.0.0.1:0".into(),
-            space_id: space.into(),
             device_id: device.into(),
             token: Some(token.into()),
             data_dir: None,
         },
-        conn.clone(),
+        {
+            let mut m = std::collections::HashMap::new();
+            m.insert(space.to_string(), conn.clone());
+            Arc::new(Mutex::new(m))
+        },
     )
     .unwrap();
     let upstream = win.addr();

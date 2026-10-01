@@ -571,6 +571,12 @@ pub fn round_note(peers: &[PeerPullReport]) -> String {
 
 // ─────────────────────────── 窗口的进程级注册表（一个空间一个窗口） ───────────────────────────
 
+// ─────────────────── 窗口的进程级注册表（⭐ **U8：一个绑定一扇门**，门里服务多个空间） ───────────────────
+
+/// ⭐ **U8（2026-10-01）**：**一个绑定一扇门** —— ⛔ 不再是「一个空间一个窗口」✗。
+///
+/// 键＝**绑定地址**（`0.0.0.0:8788` 这种写法本身）：⭐ 同一个绑定的那些空间**共用一扇门** ✓，
+/// 而"门里服务哪些空间"由 `MeshHandle::conns` 的键表达 ✓（单一真相，见 `State` 的头注 ✓）。
 static WINDOWS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, MeshHandle>>> =
     std::sync::OnceLock::new();
 
@@ -592,33 +598,89 @@ fn windows() -> &'static Mutex<std::collections::HashMap<String, MeshHandle>> {
 /// ⚠️ 窗口用**自己那条**空间库连接（`db::open_space_conn_at`）：不与界面那条抢锁，
 /// 也不会因为界面切空间而被换掉。**代价如实写**：加密空间**必须已解锁**，
 /// 否则这条连接打不开 ⇒ 这里如实报错（"开不起来"比"开着一个读不了库的窗口"好）。
+/// ⭐ **U8（2026-10-01）**：确保**这一个绑定**的窗口开着，并把它要服务的这些空间**都**加进去（幂等 ✓）。
+///
+/// 三条都在这里钉着：
+///   ① **一个绑定一扇门**：注册表按 `bind` 记 ⇒ 三个空间同一个绑定 ⇒ **同一个 `SocketAddr`** ✓
+///      （矩阵 U8-① 的变异：退回"每空间一份 handle" ⇒ 必须红 ✓）；
+///   ② **已在开 ⇒ 往里加空间**（⛔ **不重启** ✗）—— 重启会换端口、把正在连的对端掐断 ✓；
+///   ③ **`token` 只在开新门时用**：门已经开着时换口令**不生效**（要生效得先 `stop_window` 再 ensure ✓，
+///      与改绑定的处置一致 —— 设置面那条路就是这么走的 ✓）。
+///
+/// ⚠️ **两个空间 id 不是一回事**（2026-09-26 真机实测踩到，改前它把两者混用了）：
+///   · `db_space` ＝ **本地空间 id**，就是 `spaces/<id>.db` 的文件名那一半 ⇒ 决定**开哪一份库**；
+///   · `proto_space` ＝ **远端组织空间 id**（档案里 `sync_profiles.space_id`）⇒ 决定窗口**服务哪个空间**
+///     （`?space_id=` 那条 403 的判据；对端挑人时也是按它匹配）。
+///   真机上这两个 id **不同名**（本地 `default` / 远端 `8be69ab5…`）。早期实现拿后者当库名 ⇒
+///   窗口对着一个**按远端 id 新建的空库**在服务：HTTP 照常 200、`records: []`、**一个错都不报**，
+///   而两台手机"互相拉得动"却**一条也换不过去**。
+///   判据：`the_window_serves_the_local_spaces_db_not_a_file_named_after_the_remote_id`。
+///
+/// ⚠️ 窗口用**自己那条**空间库连接（`db::open_space_conn_at`）：不与界面那条抢锁，
+/// 也不会因为界面切空间而被换掉。**代价如实写**：加密空间**必须已解锁**，
+/// 否则这条连接打不开 ⇒ 这里如实报错（"开不起来"比"开着一个读不了库的窗口"好）。
 pub fn ensure_window(
-    db_space: &str,
-    proto_space: &str,
+    spaces: &[(String, String)],
     device_id: &str,
-    cfg: &MeshSettings,
+    bind: &str,
+    token: Option<String>,
+    dir: &Path,
 ) -> Result<Option<SocketAddr>, String> {
-    let Some(bind) = cfg.bind.clone() else {
+    let bind = bind.trim();
+    if bind.is_empty() {
         return Ok(None);
-    };
+    }
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
-    // 注册表按 `proto_space` 记：一个**远端空间**一份窗口（`stop_window` / `window_addr` 用同一个键）。
-    if let Some(h) = guard.get(proto_space) {
+    // ① 这一扇门**已经在开** ⇒ 只把缺的空间加进去（⛔ 不重启 ✗）
+    if let Some(h) = guard.get(bind) {
+        for (db_space, proto_space) in spaces {
+            h.add_space(db_space, proto_space, dir)?;
+        }
         return Ok(Some(h.addr()));
     }
-    let dir = crate::db::app_data_dir_ref().ok_or_else(|| "app data dir not initialised".to_string())?;
-    let handle = open_window_at(db_space, proto_space, device_id, &bind, cfg.token.clone(), dir)?;
+    // ② 新开一扇门：先把这些空间的库连接都开好（⭐ 服务范围＝这张表的键 ✓）
+    let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
+    for (db_space, proto_space) in spaces {
+        let conn = crate::db::open_space_conn_at(db_space, dir)?;
+        conns.insert(proto_space.clone(), Arc::new(Mutex::new(conn)));
+    }
+    let handle = start(
+        MeshConfig {
+            bind: bind.to_string(),
+            device_id: device_id.to_string(),
+            token,
+            // ★ 丙-④：附件字节在这棵树下的 `<本地空间>/…` ⇒ 窗口要能发它
+            //   （`dir` 就是 app data 目录；判据里是临时目录）。
+            data_dir: Some(dir.to_path_buf()),
+        },
+        Arc::new(Mutex::new(conns)),
+    )?;
     let addr = handle.addr();
-    guard.insert(proto_space.to_string(), handle);
+    guard.insert(bind.to_string(), handle);
     Ok(Some(addr))
 }
 
-/// `ensure_window` 的**可测那一半**：显式给库目录（判据用它造"两个 id 不同名"的现场，
-/// 不碰 `APP_DATA_DIR` 全局 —— 那个全局会让"单跑红、全量绿"，本仓吃过这个亏）。
+/// ⭐ **U8 的便利包装**（设置面那两条命令用 ✓）：从 `MeshSettings` 取绑定/口令、目录取 app data ✓。
 ///
-/// ★ 开库用的是 **`db_space`（本地空间 id）**；`proto_space` 只进 `MeshConfig`（对暗号用）。
-/// 这两者**混用**过一次（把远端 id 当库名）：窗口会安静地服务一个**新建的空库**
-/// —— `handle_pull` 照常 200、`records: []`、一个错都不报，而两台手机**一条也换不过去**。
+/// ⚠️ 窗口级的口令按 **R3 的裁定**取（调用方给的那一份＝「最早那个空间」✓）。
+pub fn ensure_window_for(
+    spaces: &[(String, String)],
+    device_id: &str,
+    bind: &str,
+    token: Option<String>,
+) -> Result<Option<SocketAddr>, String> {
+    let dir = crate::db::app_data_dir_ref().ok_or_else(|| "app data dir not initialised".to_string())?;
+    ensure_window(spaces, device_id, bind, token, dir)
+}
+
+/// `ensure_window` 的**可测那一半**：显式给库目录，**开一扇独立的门**（⛔ 不进注册表 ✗）。
+///
+/// ⭐ **U8 之后它就是"只有一个空间"的那种情况** ✓ —— 判据（与旧调用点）都用它 ✓。
+/// ⚠️ 独立门＝不共享端口 ⇒ 判据之间不会互相污染（`stop_window` 对它也只是幂等空操作 ✓）。
+/// ⚠️ **2026-10-01 收据**（`check-dead-code-receipts` 要的）：它在**产品二进制**里没有调用点 ——
+/// 产品走的是 `ensure_window`（按绑定开**注册表里那扇门** ✓）；这一个只给**判据**开「独立门」 ✓。
+/// **删除条件** ＝ 判据改用 `ensure_window` ＋ 一个测试专用的清场助手那天。
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn open_window_at(
     db_space: &str,
     proto_space: &str,
@@ -628,17 +690,16 @@ pub(crate) fn open_window_at(
     dir: &Path,
 ) -> Result<MeshHandle, String> {
     let conn = crate::db::open_space_conn_at(db_space, dir)?;
+    let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
+    conns.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
     start(
         MeshConfig {
             bind: bind.to_string(),
-            space_id: proto_space.to_string(),
             device_id: device_id.to_string(),
             token,
-            // ★ 丙-④：附件字节在这棵树下的 `<本地空间>/…` ⇒ 窗口要能发它
-            //   （`dir` 就是 app data 目录；判据里是临时目录）。
             data_dir: Some(dir.to_path_buf()),
         },
-        Arc::new(Mutex::new(conn)),
+        Arc::new(Mutex::new(conns)),
     )
 }
 
@@ -653,6 +714,11 @@ pub struct MeshConfigState {
     pub token_set: bool,
     /// 窗口**实际**绑在哪儿（`http://…`；没开 ⇒ `None`）。
     pub window: Option<String>,
+    /// ⭐ **U8（2026-10-01）**：这扇门**服务哪些空间**（**排过序** ⇒ 读数确定 ✓）。
+    ///
+    /// 界面上要能说出"**这一扇门管几个空间**" ✓ —— 否则用户看到"一个窗口"却不知道
+    /// 它替谁在听；而"关掉一个空间不许关掉整窗"这条口径也要靠它才看得出来 ✓。
+    pub served: Vec<String>,
     /// 一句人话：开没开、开在哪、**别人拉不拉得到**。
     pub note: String,
 }
@@ -668,7 +734,7 @@ pub struct MeshConfigState {
 /// 通配要分两种如实说：① 枚举到了候选 ⇒ 报出**哪一个**（用户才知道对端看到的是什么）；
 /// ② 一个候选都没有（这台只有回环/公网地址）⇒ **可操作**地说"别人拉不到 ＋ 去查网卡"
 /// （`INV-VLAN-bind-must-be-reachable`：这一档最常见的失败就是**静默不工作**）。
-pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>) -> MeshConfigState {
+pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>, served: &[String]) -> MeshConfigState {
     let enabled = cfg.bind.is_some();
     let note = match (enabled, window) {
         (false, _) => "网格这一档关着（没配监听地址 ⇒ 不听也不喊）".to_string(),
@@ -687,11 +753,18 @@ pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>) -> MeshConfi
             ),
         },
     };
+    // ⭐ U8：服务多个空间时，**在读数里说清是几个** ✓（不然"一个窗口"看不出它替谁听 ✓）
+    let note = if served.len() > 1 {
+        format!("{note} ｜ 这一扇门服务 {} 个空间：{}", served.len(), served.join("、"))
+    } else {
+        note
+    };
     MeshConfigState {
         enabled,
         bind: cfg.bind.clone(),
         token_set: cfg.token.is_some(),
         window: window.map(|a| format!("http://{a}")),
+        served: served.to_vec(),
         note,
     }
 }
@@ -699,15 +772,44 @@ pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>) -> MeshConfi
 /// ★ 这个空间现在**开着窗口吗**、开在哪儿（**只读**，不开窗）。
 ///
 /// 给设置面板的读数用：面板打开一次不该顺手开一个端口（开窗归 `ensure_window` 的调用方）。
+///
+/// ⭐ **U8**：按**空间**查 ⇒ 扫注册表找"服务范围里有它"的那扇门 ✓
+/// （⛔ 注册表的键是**绑定**，不是空间 ✗ —— 见 `WINDOWS` ✓）。
 pub fn window_addr(space_id: &str) -> Option<SocketAddr> {
     let guard = windows().lock().ok()?;
-    guard.get(space_id).map(|h| h.addr())
+    guard.values().find(|h| h.serves(space_id)).map(|h| h.addr())
 }
 
-/// 关掉这个空间的窗口（没开 ⇒ 幂等的成功）。设置改了 / 空间停了就该调它。
+/// ⭐ **U8**：这个空间所在的那扇门**服务哪些空间**（**只读** ✓；没开 ⇒ 空 ✓）。
+///
+/// ⚠️ 读数用 —— ⛔ 它**不开窗** ✗（与 `window_addr` 同一条纪律：面板打开一次不该顺手开端口 ✓）。
+pub fn served_spaces(space_id: &str) -> Vec<String> {
+    match windows().lock() {
+        Ok(g) => g.values().find(|h| h.serves(space_id)).map(|h| h.served()).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// ⭐ **U8**：把**这一个空间**从门里摘掉 —— ⚠️ **门里还有别的空间就不关整扇门** ✓。
+///
+/// T6 的判据就是这条：「**关掉一个空间不许关掉整窗**」✓ ——
+/// 最后一个空间也走了，整扇门才真关 ✓（不然"关掉 A 顺手把 B 也断了"，而界面上看不出来 ✗）。
 pub fn stop_window(space_id: &str) -> Result<(), String> {
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
-    guard.remove(space_id);
+    let hit: Option<String> = guard
+        .iter()
+        .find(|(_, h)| h.serves(space_id))
+        .map(|(k, _)| k.clone());
+    if let Some(key) = hit {
+        let none_left = match guard.get(&key) {
+            Some(h) => !h.remove_space(space_id)?,
+            None => false,
+        };
+        if none_left {
+            // 门里没人要了 ⇒ 这才真关（`Drop` 会停下 accept 线程 ✓）
+            guard.remove(&key);
+        }
+    }
     Ok(())
 }
 
@@ -921,7 +1023,13 @@ pub fn checked_bind(bind: &str) -> Result<SocketAddr, String> {
 }
 
 struct State {
-    conn: Arc<Mutex<Connection>>,
+    /// ⭐ **U8（2026-10-01）**：**每个空间一条自己的库连接**（一个空间一份库 ⇒ 服务多空间就要多连接 ✓）。
+    ///
+    /// ⚠️ **它同时就是"服务范围"**（键＝被服务的 `proto_space` ✓）——
+    /// ⛔ 不许另存一份"范围"清单 ✗：两份清单迟早会漂，而这份就是**数据面那一份真相** ✓。
+    /// ⚠️ **可增长**（用户新加一个空间 ⇒ `ensure_window` 往表里加一条 ✓，⛔ **不重启窗口** ✗）——
+    /// 重启会换端口、把正在连的对端掐断，而那正是「**关掉一个空间不许关掉整窗**」同一族的坑 ✓。
+    conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
     cfg: MeshConfig,
     /// ★ **T-10**（`U14` 的判据承载）：这个窗口**真正服务过**的 `/mesh/pull` 次数（只增）。
     ///
@@ -932,11 +1040,63 @@ struct State {
     served_pulls: Arc<AtomicUsize>,
 }
 
+impl State {
+    /// ⭐ **U8：这一条请求要哪个空间 ⇒ 给出它**自己那条**连接**；不在范围内 ⇒ **403**。
+    ///
+    /// ⚠️ 三条写在这里，因为它们是**这一片的安全面** ✓：
+    ///   ① **白名单**：`?space_id=` 不在 `conns` 里 ⇒ 403（**绝不**退回"随便挑一个"✗）；
+    ///   ② **连接按空间取**：`handle_attachment` 的空间 id 是**从这条连接的 meta 里读的**
+    ///      ⇒ 取错连接 ＝ **把别人的附件字节发出去** ✗；
+    ///   ③ **省略 `?space_id=` 的语义**（⚠️ **显式决定**，2026-10-01）：**只服务一个空间**时用它
+    ///      （向后兼容旧客户端 ✓）；**服务多个**时 ⇒ **400**（说不清要哪个 ⇒ ⛔ **不猜** ✗）。
+    ///      既有判据 `the_space_id_gate_refuses_by_default_and_never_leaks_before_refusing` 钉着它 ✓。
+    fn select_space(&self, target: &str) -> Result<Arc<Mutex<Connection>>, Reply> {
+        let want = match query_get(target, "space_id") {
+            Ok(v) => v,
+            Err(e) => return Err(Reply::json(400, "Bad Request", json_error(&e))),
+        };
+        // ⚠️ **克隆出 `Arc` 再放锁**（别把 `&` 借出去 —— 那要么撑大借用期、要么逼出 unsafe ✗）
+        let guard = match self.conns.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                return Err(Reply::json(500, "Internal Server Error", json_error("空间连接表的锁被毒掉了")))
+            }
+        };
+        let space = match want {
+            Some(s) => s,
+            None => match guard.len() {
+                1 => guard.keys().next().cloned().unwrap_or_default(),
+                _ => {
+                    return Err(Reply::json(
+                        400,
+                        "Bad Request",
+                        json_error("这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）"),
+                    ))
+                }
+            },
+        };
+        match guard.get(&space) {
+            Some(c) => Ok(c.clone()),
+            None => {
+                let mut names: Vec<String> = guard.keys().cloned().collect();
+                names.sort_unstable();
+                Err(Reply::json(
+                    403,
+                    "Forbidden",
+                    json_error(&format!("这个窗口只服务这些空间：{}（收到 {space}）", names.join("、"))),
+                ))
+            }
+        }
+    }
+}
+
 /// 一个网格窗口的配置。
+///
+/// ⭐ **U8（2026-10-01）**：⛔ 去掉了 `space_id` ✗ —— **"服务哪些空间"改由 `State::conns` 的键表达** ✓
+/// （见 `State` 的注释）。窗口级只剩**绑哪儿 ＋ 用什么口令 ＋ 自称是谁** ✓。
 #[derive(Debug, Clone)]
 pub struct MeshConfig {
     pub bind: String,
-    pub space_id: String,
     /// 本机对外自称的 `device_id` —— 窗口**只服务它自己的记录**。
     pub device_id: String,
     /// 对端要带的口令。`None` ⇒ 任何请求都收（启动时**大声**说一次）。
@@ -954,11 +1114,56 @@ pub struct MeshHandle {
     stop: Arc<AtomicBool>,
     join: Option<std::thread::JoinHandle<()>>,
     served_pulls: Arc<AtomicUsize>,
+    /// ⭐ **U8**：与 `State::conns` **同一份**（同一个 `Arc` ✓）——
+    /// `ensure_window` 靠它往里**加空间**（⛔ 不重启窗口 ✗）；`stop_window` 靠它**摘掉**一个空间 ✓。
+    conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
 }
 
 impl MeshHandle {
     pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// ⭐ **U8**：这一扇门现在**服务哪些空间**（**排过序** ⇒ 读数确定 ✓）。
+    pub fn served(&self) -> Vec<String> {
+        match self.conns.lock() {
+            Ok(g) => {
+                let mut v: Vec<String> = g.keys().cloned().collect();
+                v.sort_unstable();
+                v
+            }
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// ⭐ **U8**：把这个空间**加进**这扇门（已经在里面 ⇒ 什么都不做 ✓，回 `false` ✓）。
+    ///
+    /// ⚠️ 开的是**这个空间自己那份库**（`db_space` ≠ `proto_space` —— 那条真机教训见 `ensure_window` ✓）。
+    pub fn add_space(&self, db_space: &str, proto_space: &str, dir: &Path) -> Result<bool, String> {
+        let mut guard = self.conns.lock().map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
+        if guard.contains_key(proto_space) {
+            return Ok(false);
+        }
+        let conn = crate::db::open_space_conn_at(db_space, dir)?;
+        guard.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
+        Ok(true)
+    }
+
+    /// ⭐ **U8**：这一扇门现在**服务不服务**这个空间 ✓。
+    pub fn serves(&self, proto_space: &str) -> bool {
+        match self.conns.lock() {
+            Ok(g) => g.contains_key(proto_space),
+            Err(_) => false,
+        }
+    }
+
+    /// ⭐ **U8**：把**这一个空间**从门里摘掉；回「摘完之后门里**还有没有别人**」✓。
+    ///
+    /// ⚠️ 这就是 T6 的「**关掉一个空间不许关掉整窗**」✓ —— 调用方据此决定要不要真停 ✓。
+    pub fn remove_space(&self, proto_space: &str) -> Result<bool, String> {
+        let mut guard = self.conns.lock().map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
+        guard.remove(proto_space);
+        Ok(!guard.is_empty())
     }
 
     /// ★ **T-10**：这个窗口**真正服务过**的 `/mesh/pull` 次数（只增；口径见 `State::served_pulls`）。
@@ -983,21 +1188,37 @@ impl Drop for MeshHandle {
 }
 
 /// 起一个网格窗口（阻塞式 accept 线程 ＋ 每连接一个线程；**不引任何依赖**）。
-pub fn start(cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
+pub fn start(
+    cfg: MeshConfig,
+    conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
+) -> Result<MeshHandle, String> {
     let addr = checked_bind(&cfg.bind)?;
     let listener = TcpListener::bind(addr).map_err(|e| format!("网格窗口绑不上 {addr}：{e}"))?;
     let bound = listener.local_addr().map_err(|e| e.to_string())?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    // ⭐ U8：一条请求要哪个空间由 `?space_id=` 决定 ⇒ 日志把**服务范围**印全（排过序 ⇒ 确定 ✓）
+    let served: Vec<String> = {
+        let g = conns.lock().map_err(|_| "空间连接表的锁被毒掉了".to_string())?;
+        let mut v: Vec<String> = g.keys().cloned().collect();
+        v.sort_unstable();
+        v
+    };
     if cfg.token.as_deref().map(str::trim).unwrap_or("").is_empty() {
         eprintln!(
-            "[mesh] ⚠️ 网格窗口**没有设口令**（{bound}，空间 {}）：能连上这个地址的人都能拉走该空间的密文记录。",
-            cfg.space_id
+            "[mesh] ⚠️ 网格窗口**没有设口令**（{bound}，服务 {} 个空间：{}）：能连上这个地址的人都能拉走这些空间的密文记录。",
+            served.len(),
+            served.join("、")
         );
     }
-    eprintln!("[mesh] 网格窗口已启动：{bound} ｜ 空间 {} ｜ 自称 {}", cfg.space_id, cfg.device_id);
+    eprintln!(
+        "[mesh] 网格窗口已启动：{bound} ｜ 服务 {} 个空间：{} ｜ 自称 {}",
+        served.len(),
+        served.join("、"),
+        cfg.device_id
+    );
 
     let served_pulls = Arc::new(AtomicUsize::new(0));
-    let state = Arc::new(State { conn, cfg, served_pulls: served_pulls.clone() });
+    let state = Arc::new(State { conns: conns.clone(), cfg, served_pulls: served_pulls.clone() });
     let stop = Arc::new(AtomicBool::new(false));
     let stop_in = stop.clone();
     let join = std::thread::Builder::new()
@@ -1017,7 +1238,7 @@ pub fn start(cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle
             }
         })
         .map_err(|e| format!("网格窗口线程起不来：{e}"))?;
-    Ok(MeshHandle { addr: bound, stop, join: Some(join), served_pulls })
+    Ok(MeshHandle { addr: bound, stop, join: Some(join), served_pulls, conns })
 }
 
 struct Request {
@@ -1209,19 +1430,12 @@ fn query_get(target: &str, key: &str) -> Result<Option<String>, String> {
 }
 
 fn handle_pull(state: &State, target: &str) -> Reply {
-    let space = match query_get(target, "space_id") {
-        Ok(v) => v,
-        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    // ⭐ **U8**：**鉴权 ＋ 取哪条连接**一次做完（`select_space` 里就是那条白名单判据 ✓）。
+    // ⛔ 别在这里再写一遍 `space != …` ✗ —— 两处判据迟早会漂，而漂的方向是"漏"✗。
+    let conn = match state.select_space(target) {
+        Ok(c) => c,
+        Err(r) => return r,
     };
-    if let Some(space) = space {
-        if space != state.cfg.space_id {
-            return Reply::json(
-                403,
-                "Forbidden",
-                json_error(&format!("这个窗口只服务空间 {}（收到 {space}）", state.cfg.space_id)),
-            );
-        }
-    }
     let since = match query_get(target, "since") {
         Ok(Some(v)) => v.parse::<i64>().unwrap_or(0),
         Ok(None) => 0,
@@ -1232,7 +1446,7 @@ fn handle_pull(state: &State, target: &str) -> Reply {
         Ok(None) => MAX_LIMIT,
         Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
     };
-    let g = match state.conn.lock() {
+    let g = match conn.lock() {
         Ok(g) => g,
         Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
     };
@@ -1252,19 +1466,13 @@ fn handle_pull(state: &State, target: &str) -> Reply {
 /// 4. **发的是明文**（与甲那条 `GET /attachments/<hash>` 一致）：盘上可能是加密存的（E1），
 ///    解密在**这一侧**做；收侧自己按它那把钥匙重新加密落盘。
 fn handle_attachment(state: &State, target: &str) -> Reply {
-    let space = match query_get(target, "space_id") {
-        Ok(v) => v,
-        Err(e) => return Reply::json(400, "Bad Request", json_error(&e)),
+    // ⭐ **U8**：同 `handle_pull` —— 鉴权与"取哪条连接"一次做完 ✓。
+    // ⚠️ 这一处**尤其要紧**：下面的空间 id 是**从这条连接的 meta 里读的**
+    //    ⇒ 取错连接 ＝ **把别的空间的附件字节发出去** ✗（跨空间泄漏，最坏的一种坏法）。
+    let conn = match state.select_space(target) {
+        Ok(c) => c,
+        Err(r) => return r,
     };
-    if let Some(space) = space {
-        if space != state.cfg.space_id {
-            return Reply::json(
-                403,
-                "Forbidden",
-                json_error(&format!("这个窗口只服务空间 {}（收到 {space}）", state.cfg.space_id)),
-            );
-        }
-    }
     let hash = match query_get(target, "hash") {
         Ok(Some(v)) => v,
         Ok(None) => return Reply::json(400, "Bad Request", json_error("缺 hash：这一档按**内容**要字节（内容寻址）")),
@@ -1281,7 +1489,8 @@ fn handle_attachment(state: &State, target: &str) -> Reply {
         );
     };
     // 附件按**空间**分目录，而"本地空间 id"只能从这条连接的 meta 里读（真机上它 ≠ 对暗号的 id）。
-    let (space_id, key) = match state.conn.lock() {
+    // ⚠️ **U8**：这里的 `conn` 必须是 `select_space` 挑出来的**那个空间自己那条** ✓（见上面的头注）。
+    let (space_id, key) = match conn.lock() {
         Ok(g) => (crate::attachments::active_space_id(&g), crate::security::key_if_enabled(&g)),
         Err(_) => return Reply::json(500, "Internal Server Error", json_error("空间库的锁被毒掉了")),
     };
@@ -1629,10 +1838,9 @@ mod tests {
         let b = Arc::new(Mutex::new(space_conn("B")));
 
         // 各起一个窗口（**每台都开窗** —— 这就是丙与甲在拓扑上的差别）
-        let win_a = start(
+        let win_a = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("lan-token".into()),
                 // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
@@ -1642,10 +1850,9 @@ mod tests {
             a.clone(),
         )
         .unwrap();
-        let win_b = start(
+        let win_b = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "B".into(),
                 token: Some("lan-token".into()),
                 // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
@@ -2004,10 +2211,9 @@ mod tests {
         std::fs::write(&file, &bytes).unwrap();
         assert!(!space_of_b.is_empty() || bucket.exists(), "夹具：B 的附件目录应当建好了");
 
-        let win_a = start(
+        let win_a = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("lan-token".into()),
                 data_dir: Some(dir_a.clone()),
@@ -2015,10 +2221,9 @@ mod tests {
             a.clone(),
         )
         .unwrap();
-        let win_b = start(
+        let win_b = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "B".into(),
                 token: Some("lan-token".into()),
                 data_dir: Some(dir_b.clone()),
@@ -2027,10 +2232,9 @@ mod tests {
         )
         .unwrap();
         // 第三个窗口：**没配数据目录**（配置问题，不是"没有这份文件"）
-        let win_c = start(
+        let win_c = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "C".into(),
                 token: Some("lan-token".into()),
                 data_dir: None,
@@ -2107,10 +2311,9 @@ mod tests {
     #[test]
     fn an_unimplemented_endpoint_answers_explicitly_over_real_http() {
         let c = Arc::new(Mutex::new(space_conn("A")));
-        let win = start(
+        let win = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("right".into()),
                 data_dir: None,
@@ -2135,6 +2338,18 @@ mod tests {
     }
 
     /// 一个**手写的**最小 GET（判据不依赖被测的那一侧自己写的客户端）。
+    /// ⭐ **U8（2026-10-01）**：判据里造「**一扇门只服务 `space-x`**」的窗口 ——
+    /// 所有测试夹具用的都是它 ✓（U8 之后 `start` 收的是**连接表**，判据只要一对 ✓）。
+    fn start1s(proto: &str, cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
+        let mut m = std::collections::HashMap::new();
+        m.insert(proto.to_string(), conn);
+        start(cfg, Arc::new(Mutex::new(m)))
+    }
+
+    fn start1(cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
+        start1s("space-x", cfg, conn)
+    }
+
     fn http_get(addr: SocketAddr, target: &str, token: Option<&str>) -> (u16, String) {
         let mut sock = TcpStream::connect(addr).expect("connect");
         let auth = match token {
@@ -2247,10 +2462,9 @@ mod tests {
         let a = Arc::new(Mutex::new(space_conn("A")));
         let b = Arc::new(Mutex::new(space_conn("B")));
         // D1：B **不填任何具体 IP**（用户视角："我不知道该填哪个，让它自己听"）
-        let win_b = start(
+        let win_b = start1(
             MeshConfig {
                 bind: "0.0.0.0:0".into(),
-                space_id: "space-x".into(),
                 device_id: "B".into(),
                 token: Some("lan-token".into()),
                 data_dir: None,
@@ -2296,22 +2510,22 @@ mod tests {
     #[test]
     fn the_config_readout_says_whether_others_can_actually_reach_you() {
         let off = MeshSettings::default();
-        assert!(!config_state(&off, None).enabled);
-        assert!(config_state(&off, None).note.contains("关着"));
+        assert!(!config_state(&off, None, &[]).enabled);
+        assert!(config_state(&off, None, &[]).note.contains("关着"));
 
         let on = MeshSettings { bind: Some("192.168.1.5:8788".into()), token: Some("t".into()) };
-        let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()));
+        let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()), &[]);
         assert!(good.enabled && good.token_set);
         assert!(good.note.contains("能被别人拉到"), "{}", good.note);
         assert_eq!(good.window.as_deref(), Some("http://192.168.1.5:8788"));
 
-        let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()));
+        let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()), &[]);
         assert!(loopback.note.contains("别人拉不到"), "{}", loopback.note);
 
         // ★ **D1（owner 2026-09-30）**：绑**通配**时那两句人话 —— ⚠️ **不写死"这台机器有没有网卡"**
         //   （那是机器脸色）：只钉"它说的是通配"＋"与 `announced_base` 的结论一致"。
         let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
-        let w = config_state(&on, Some(wild));
+        let w = config_state(&on, Some(wild), &[]);
         assert!(w.note.contains("听所有网卡"), "{}", w.note);
         assert!(w.note.contains("0.0.0.0:8788"), "通配要把**绑的**地址说出来：{}", w.note);
         match announced_base(wild) {
@@ -2451,10 +2665,9 @@ mod tests {
     #[tokio::test]
     async fn the_product_entry_pulls_from_a_discovered_peer_over_loopback() {
         let a = Arc::new(Mutex::new(space_conn("A")));
-        let win = start(
+        let win = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: Some("lan-token".into()),
                 // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
@@ -2505,10 +2718,9 @@ mod tests {
     #[tokio::test]
     async fn a_peer_that_is_down_is_reported_in_its_own_row_and_does_not_block_the_others() {
         let a = Arc::new(Mutex::new(space_conn("A")));
-        let win = start(
+        let win = start1(
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
-                space_id: "space-x".into(),
                 device_id: "A".into(),
                 token: None,
                 data_dir: None,
@@ -2622,10 +2834,10 @@ mod tests {
             ids.iter().map(|id| Arc::new(Mutex::new(device_conn(&dir, id)))).collect();
         let wins: Vec<MeshHandle> = (0..T10_DEVICES)
             .map(|i| {
-                start(
+                start1s(
+                    T10_SPACE,
                     MeshConfig {
                         bind: "127.0.0.1:0".into(),
-                        space_id: T10_SPACE.into(),
                         device_id: ids[i].clone(),
                         token: Some(T10_TOKEN.into()),
                         data_dir: None,
@@ -2876,5 +3088,86 @@ mod tests {
             comfort_share * 100.0,
             T10_COMFORT_SHARE_LIMIT * 100.0
         );
+    }
+
+    // ══════════════════ ⭐⭐ U8：一个窗口服务多空间（T6） ══════════════════
+
+    /// ⭐⭐ **矩阵 U8-①：三个空间 ⇒ 一个端口** ＋ **U8-②：每空间独立、不串** ＋
+    /// **T6「关掉一个空间不许关掉整窗」** —— 三条挤在一条判据里，因为它们是**同一个形状**的三面 ✓。
+    ///
+    /// ⚠️ **这条判据独占注册表里 `127.0.0.1:0` 这个键**（`WINDOWS` 是进程级、键＝绑定字符串 ✓）——
+    /// 同进程里别的判据都用 `open_window_at`（⛔ 不进注册表 ✗）⇒ 不打架 ✓；跑完它自己清干净 ✓。
+    ///
+    /// **变异**：把 `WINDOWS` 退回「每个空间一扇门」（键改回空间 ✓）⇒ ① 立刻红 ✓。
+    #[tokio::test]
+    async fn three_spaces_share_one_window_and_stopping_one_leaves_the_others_reachable() {
+        let dir = temp_dir("mesh-u8-one-port");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // 三个空间各一份库 ＋ 各写一条**只有自己**的记录
+        //   ⚠️ 本地库名（`s1`…）与对暗号的空间 id（`proto-1`…）**故意不同名** ✓（真机形状 ✓）
+        for i in 1..=3 {
+            let db_name = format!("s{i}");
+            let c = crate::db::open_space_conn_at(&db_name, &dir).unwrap();
+            c.execute_batch("CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
+            let slug = format!("only-in-s{i}");
+            let mut pg = page(&slug, &format!("只属于空间 {db_name} 的内容"), 1_000);
+            pg.workspace_id = db_name.clone();
+            local_edit(&c, &pg);
+        }
+        let pairs: Vec<(String, String)> = (1..=3).map(|i| (format!("s{i}"), format!("proto-{i}"))).collect();
+
+        // ① ⭐⭐ **每个空间各调一次 `ensure_window` ⇒ 三次都落在同一个 `SocketAddr`**
+        //    ⚠️ **必须「每次一个空间」**（就像旧的 `lan_state` 逐空间调那样 ✓）——
+        //    一开始我写成「一次把三个传进去」，于是「按空间键」和「按绑定键」**结果一样** ⇒
+        //    变异（退回每空间一扇门）**照样绿** ✗ ⇒ 判据自己把缺口糊住了 ✓（实测踩到，改掉 ✓）。
+        let mut addrs = Vec::new();
+        for (db, proto) in &pairs {
+            let one = [(db.clone(), proto.clone())];
+            addrs.push(
+                ensure_window(&one, "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+                    .unwrap()
+                    .expect("配了地址就该开起来"),
+            );
+        }
+        assert!(
+            addrs.iter().all(|a| *a == addrs[0]),
+            "三个空间**分三次**调也必须落在一个端口上（矩阵 U8-① 的正题）：{addrs:?}"
+        );
+        let a1 = addrs[0];
+
+        // ② **每空间各自拉得到自己的那份**（互不影响 ✓），且**拉不到别人的**（不许串 ✓）
+        for i in 1..=3 {
+            let (code, body) = http_get(a1, &format!("/mesh/pull?space_id=proto-{i}&since=0&limit=100"), Some("lan-token"));
+            assert_eq!(code, 200, "空间 {i} 应当拉得到：{body}");
+            assert!(body.contains(&format!("only-in-s{i}")), "空间 {i} 的记录没回来：{body}");
+            for j in 1..=3 {
+                if i != j {
+                    assert!(
+                        !body.contains(&format!("only-in-s{j}")),
+                        "⛔ 串空间：问 proto-{i} 却拿到了空间 {j} 的记录：{body}"
+                    );
+                }
+            }
+        }
+
+        // ③ ⭐ **关掉一个空间 ⇒ 门还在，另外两个照样能拉**（T6：不许关掉整扇门 ✓）
+        stop_window("proto-2").unwrap();
+        assert_eq!(window_addr("proto-1"), Some(a1), "关掉 proto-2 不许把整扇门也关了");
+        assert_eq!(window_addr("proto-2"), None, "proto-2 应当已经摘掉了");
+        for i in [1, 3] {
+            let (code, _) = http_get(a1, &format!("/mesh/pull?space_id=proto-{i}&since=0&limit=100"), Some("lan-token"));
+            assert_eq!(code, 200, "剩下那两个必须照常收敛 ✓");
+        }
+        // ⭐ 而**被摘掉的那个**再问就是 403（白名单是**当前**范围，不是历史 ✓）
+        let (code, body) = http_get(a1, "/mesh/pull?space_id=proto-2&since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 403, "摘掉之后就不在服务范围里了：{body}");
+
+        // ④ 三个都摘掉 ⇒ **整扇门才真关** ✓（不然端口一直听着）
+        stop_window("proto-1").unwrap();
+        stop_window("proto-3").unwrap();
+        assert_eq!(window_addr("proto-1"), None, "最后一个空间也走了 ⇒ 门应当关掉");
+        assert_eq!(window_addr("proto-3"), None);
     }
 }
