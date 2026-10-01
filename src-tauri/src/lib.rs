@@ -2,6 +2,9 @@ mod ai;
 // S3 第三片：**块级活动明细**（只读 ✓）—— 由相邻两条同步载荷算「哪几段被新增/改过/删掉」✓；
 // 时间分桶仍归前端那**一处**口径（`src/lib/kbTimeline.ts` 的 `TIMELINE_DAY_BUCKET`）✓。
 mod activity;
+// MCP 宿主面那半「本机通道」（方向②：桥 → App，App 当服务端 ✓）—— **默认关** ✓，
+// 详见 `mcp_channel.rs` 头部与判据 `scripts/check-mcp-host-channel.mjs` ✓。
+mod mcp_channel;
 mod community;
 mod community_publish;
 mod attachments;
@@ -453,6 +456,18 @@ pub fn run() {
             // 绑不上 UDP（端口被占 / 系统限制）⇒ 只记一行日志，**不挡同步**（发现层是加分项）。
             if let Err(e) = lan_state::start(app.handle().clone()) {
                 eprintln!("[lan] 发现层没起来（同步不受影响，照旧走配置地址）：{e}");
+            }
+            // 方向②（桥 → App，App 当服务端）的**宿主面那半通道**（2026-10-01 ✓，Task 5 笔记 §8）：
+            // ⚠️ **默认关**（`mcp_channel::MCP_CHANNEL_ENABLED = false` ✓）⇒ 只有显式
+            // `SHUYONOTE_MCP_SWITCH=on`**且** `SHUYONOTE_MCP_TOKEN_FILE` 可读时才真起监听 ✓；
+            // 起来了也只绑 `127.0.0.1`（临时端口 ✓）＋ 每次会话一次性令牌 ✓ ⇒ 出不了本机 ✓。
+            // 与上面那条同一条纪律：**起不来不挡应用**（只是这条通道不通 ✓）—— 但要**说清**（否则
+            // "开关开了却没作用"会一点线索都没有 ✓）。
+            if mcp_channel::resolve_config().is_some() {
+                match mcp_channel::start_if_enabled() {
+                    Some(addr) => println!("[mcp] 宿主面通道已起：{addr}（只绑回环 ✓，端口已写到公布文件 ✓）"),
+                    None => eprintln!("[mcp] 通道开关是开的，但监听没起来（端口被占？）—— 这条通道不通 ✓"),
+                }
             }
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
             // 会节流 JS timer，所以放在 Rust 侧做）。**桌面专属**，见 mod email 的说明。

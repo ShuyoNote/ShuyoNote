@@ -28,7 +28,6 @@ use crate::plugins;
 /// * `session_id` —— 这次调用的会话号 ✓（进审计 `source` ＝ `external:<会话号>` ⇒ 答得出"是谁" ✓，R104=A ✓）
 /// * `granted`    —— 这次会话**被授予**的权限清单 ✓（**判定不在这里** ✗ —— 这里只转交，判定仍只有一处 ✓）
 /// * `method` / `args_json` —— 能力 id 与参数 JSON 文本 ✓（与插件那条路**逐字同形** ✓）
-#[allow(dead_code)] // 2026-10-01 收据：**接线还没到** —— R106=A 已拍（进程内模块 ✓），但"通道那一侧谁来调它"是下一步 ✓；删除条件 = 通道侧接上 `handle_external_call`（或它被 Tauri 命令暴露出真实调用点）之后删掉本行
 pub(crate) fn handle_external_call(
     session_id: &str,
     granted: &[String],
