@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 75 条（contract 50 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 259 / web 251 / CommandMap 261
+门禁 76 条（contract 51 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 259 / web 251 / CommandMap 261
 基线下限（与 tests/baseline.json 逐字一致，共 13 条）check-mcp-audit-single-ledger 4 · check-search-platform-parity 4 · vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -131,6 +131,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | `check-kb-s3-timeline` | contract | S3 时间复盘页：只读派生／两种空态分得开／时间口径只有一处（带 `KB-S3-TIMELINE` 标记的文件为检查面；S3 未落地 ⇒ 绿＋自报跳过） |
 | `check-kb-s4-map` | contract | S4 知识地图：关系可重建／上限＋截断明示／不与既有关系口径打架（带 `KB-S4-MAP` 标记的文件为检查面；S4 未落地 ⇒ 绿＋自报跳过） |
 | `check-im-boundary` | contract | 企业版 IM 的三条边界（空间是唯一边界／无关系类表／推送不带正文；＋客户端只认 push|ping）；服务端仓不在（客户端 CI）⇒ ① ② ③ 自报跳过、④ 照常真查 |
+| `check-pairing-requires-proof` | contract | 配对必须有人核对过：码长下限未被缩短／比对码真的比（不等 ⇒ Err）／采纳前先核对／拒绝路不继续／路径上无「等对端同意」；设备直连那半未落地 ⇒ 那一条自报跳过 |
 | artifact | `external-index` / `external-package` | 我们打出的包与索引，应用**真**解析器 / 真校验器认不认 |
 | artifact | `plugin-fragment-no-zip` | 打包依赖命令行 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条） |
 
