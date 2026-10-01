@@ -383,6 +383,54 @@ html[data-platform="win"] .app-body {
   background: var(--hover-strong);
   color: var(--text);
 }
+/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口搬进标题栏，
+   形态按 owner 纠正后的口径＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）。
+   视觉刻意**贴着下面那组窗口按钮**（同高、同 hover 底色 ✓）—— 它们是同一行里的两组按钮，
+   长得不一样会显得像两个系统 ✓。 */
+.titlebar-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+}
+.titlebar-tool {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.titlebar-tool:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.titlebar-tool.is-on {
+  background: var(--hover-strong);
+  color: var(--accent);
+}
+/* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TitleBar.tsx` 里那条登记 ✓）。 */
+.titlebar-tool-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
 .titlebar-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -3px;
