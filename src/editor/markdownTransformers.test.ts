@@ -100,7 +100,11 @@ describe("表格单元格的行内格式", () => {
     expect(leaves.every((l) => !l.text.includes("`") && !l.text.includes("*"))).toBe(true);
   });
 
-  it("表头行标成 ROW（真 <th>）—— 与 CSS 的表头加粗配套", () => {
+  it("表头**不靠** headerState —— 观感由 CSS 负责（2026-10-01 撤回了 ROW）", () => {
+    // 来由：曾把表头行标成 TableCellHeaderStates.ROW（渲染真 <th>），随后 owner 侧报
+    // 「tableObserver not found for tableKey」✗；那笔不是观感的来源（加粗/背景由 App.css 的
+    // `.editor-content table th` / `tr:first-child > td` 给）⇒ 撤回。
+    // 本判据钉住"别再偷偷把它加回来"：所有单元格都应是 NO_STATUS ✓。
     const editor = createEditor({
       namespace: "amd-md-table-header",
       nodes: [TableNode, TableRowNode, TableCellNode],
@@ -124,6 +128,6 @@ describe("表格单元格的行内格式", () => {
       { discrete: true },
     );
     expect(states.length).toBe(2);
-    expect(states.every((s) => s === TableCellHeaderStates.ROW)).toBe(true);
+    expect(states.every((s) => s === TableCellHeaderStates.NO_STATUS)).toBe(true);
   });
 });

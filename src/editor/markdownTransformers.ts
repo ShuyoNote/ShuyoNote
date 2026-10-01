@@ -261,10 +261,12 @@ export const TABLE: MultilineElementTransformer = {
 
     const headerRowNode = $createTableRowNode();
     for (let c = 0; c < colCount; c++) {
-      // 表头行标成 ROW ⇒ 渲染成真 `<th>`（md 惯例里表头就是粗的 ✓；见 createMarkdownCell 注释）
-      headerRowNode.append(
-        createMarkdownCell(headerRow[c] ?? "", TableCellHeaderStates.ROW),
-      );
+      // ⚠️ 2026-10-01 撤回：这里一度把表头行标成 `TableCellHeaderStates.ROW`（渲染真 <th>），
+      //    随后 owner 侧实测报「编辑器错误：tableObserver not found for tableKey: 2259」✗，
+      //    而且**时间点正是重新导入之后** ⇒ 先撤回，把编辑器恢复稳定。
+      //    表头观感（加粗 ＋ 背景）由 CSS 给（见 App.css 的 `.editor-content table th` /
+      //    `table tr:first-child > td`）⇒ **不依赖这个状态** ✓，撤回后观感不变 ✓。
+      headerRowNode.append(createMarkdownCell(headerRow[c] ?? ""));
     }
     table.append(headerRowNode);
 
