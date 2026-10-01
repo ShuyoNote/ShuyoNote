@@ -1,10 +1,10 @@
-# 任务：**个人版** —— 可独立认领的执行清单（T0–T8）
+# 任务：**个人版** —— 可独立认领的执行清单（T0–T8 ＋ T-10；⚠️ 本单**没有 T9** ✓）
 
 > 行号钉在：`97d1eb24`（2026-09-29）｜核查方式：`git show 97d1eb24:<path> | sed -n '<起>,<止>p'`
 > 起草：个人版规格层｜**2026-09-29**｜需求 [`2026-09-29-personal-edition-requirements.md`](2026-09-29-personal-edition-requirements.md)（为什么）·
 > 规格 [`2026-09-29-personal-edition-spec.md`](2026-09-29-personal-edition-spec.md)（什么不许变）·
 > 方案 [`2026-09-29-personal-edition-approach.md`](2026-09-29-personal-edition-approach.md)（怎么落、每片承重判据）
-> 判据 [`../plans/2026-09-29-requirements-judgment-matrix.md`](../plans/2026-09-29-requirements-judgment-matrix.md)（个人版 13 条）·
+> 判据 [`../plans/2026-09-29-requirements-judgment-matrix.md`](../plans/2026-09-29-requirements-judgment-matrix.md)（个人版 **14** 条；矩阵覆盖 13 条 ✓）·
 > 人日 [`../plans/2026-09-29-both-editions-difficulty-and-cost.md`](../plans/2026-09-29-both-editions-difficulty-and-cost.md) §1（**9~15 人日**；含判据 **12~22**）·
 > 迭代 [`../plans/2026-09-29-both-editions-iteration-plan.md`](../plans/2026-09-29-both-editions-iteration-plan.md)
 > 依据：`AI-NATIVE-DEV.md` §5.4（**没有本次的读数，不许声称完成**）＋ 本仓 `AGENTS.md` §3（**新增门禁必须注册进 `scripts/lib/gates.mjs`**）
@@ -262,7 +262,7 @@ M1/M2/M3（人手验收）← 依赖 T1/T4/T7
 ## 一句话
 
 ```text
-**个人版 13 条 MUST = T0（止损 0.5 人日）＋ T1（地址自动 1~2）＋ T2/T3/T4（配对 3~5，含 U6）
+**个人版 14 条 MUST（U1–U14）＝** T0（止损 0.5 人日）＋ T1（地址自动 1~2）＋ T2/T3/T4（配对 3~5，含 U6）
   ＋ T5（逐台解除，含在 U1）＋ T6（一窗多空间 3~5）＋ T7（虚拟局域网 1）＋ T8（在岗核查 0）；
   唯一能真并行的是 T1 ‖ T2（迭代计划 §三-①），而 mesh.rs / SyncPanel.tsx / sync.rs 三处是热点、必须串行。**
 ⇒ 三处**必须 owner 拍**的：① 把 `mesh.rs:1916` 那条反过来（T1）② 设备对秘密的**粒度与方向性**（T5）
@@ -284,7 +284,7 @@ M1/M2/M3（人手验收）← 依赖 T1/T4/T7
   ① **收敛**：10 台同时编辑 60 秒 ⇒ **10 台的最终内容逐字节相同** ✓
   ② **不落后**：任何一台的"最后拉取时间" ≤ **10 秒**（＝2 个节拍，留一倍余量）✓
   ③ **拉取量**：**每台 ≤ 2 次/秒**、合计 ≤ **18 次/秒**（＝10×9÷5）✓
-  ④ **合并余量**：10 台各 5 次编辑/秒 ⇒ 合计 50 次/秒 ⇒ **不超舒适上界（500）的 20%** ✓
+  ④ **合并余量**：10 台各 5 次编辑/秒 ⇒ 合计 50 次/秒 ⇒ 占舒适上界（500）的 **10%** ✓（⚠️ 2026-10-01 订正：原写 20% ✗，与自己的算式不符；需求那句「≤ 舒适上界的 20%（≈100 次/秒）」是**上限**，这里是**读数** ✓）
 ```
 
 ### 15.2 本机可做的那一档（**多进程回环**）

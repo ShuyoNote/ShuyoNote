@@ -5,7 +5,7 @@
 > 规格见 [`2026-09-29-personal-edition-spec.md`](2026-09-29-personal-edition-spec.md)（什么不许变）·
 > 任务见 [`2026-09-29-personal-edition-tasks.md`](2026-09-29-personal-edition-tasks.md)（谁做什么）
 > 依据：`_workspace/AI-NATIVE-DEV.md` §5.4（**没有本次的读数，不许声称完成**）＋ §12（判据的判据）
-> 判据出处：[`../plans/2026-09-29-requirements-judgment-matrix.md`](../plans/2026-09-29-requirements-judgment-matrix.md)（13 条）
+> 判据出处：[`../plans/2026-09-29-requirements-judgment-matrix.md`](../plans/2026-09-29-requirements-judgment-matrix.md)（**14** 条；矩阵目前覆盖 13 条，`U14` 未进 ✓）
 > 人日出处：[`../plans/2026-09-29-both-editions-difficulty-and-cost.md`](../plans/2026-09-29-both-editions-difficulty-and-cost.md) §1（个人版 **9~15 人日**；含判据 **12~22**，矩阵 §4）
 > 迭代出处：[`../plans/2026-09-29-both-editions-iteration-plan.md`](../plans/2026-09-29-both-editions-iteration-plan.md)
 > ⚠️ 本文只写**怎么落**：分片顺序、每片动什么、**哪条判据退化了会变红**、被推翻的既有判据、风险与代价。
@@ -227,11 +227,11 @@
 |---|---|---|---|
 | 1 | **U5 落地之前，用户其实是"公开的"**（未加密 ＋ 弱口令 ⇒ 同网段谁都能拉） | `nearby §13.8.5`（抄三样配置即可）＋ 今天 `set_mesh_token` 零校验（`mesh.rs:406-408`） | ⇒ **片 0 必须先做**（0.5 人日的止损）；文案同时说清"未加密时口令是唯一防线" |
 | 2 | **枚举本机网卡的零件不存在** | `Cargo.toml` 无相关依赖（规格 §7-R1）⇒ 与 `nearby §13.9` 的"零件已有"不一致 | 开工前定：**加一个小依赖** vs **三平台各写一套**（后者违背"可自建/可移植"的取向）⇒ 属显式决定 |
-| 3 | **`100.64.0.0/10` 这类 VPN 网段过不了 `is_lan_only`**（**推算**） | `mesh.rs:723-732` 用 std 的 `is_loopback/is_private/is_link_local`；CGNAT 段不属于这三类 | U12 的文档要么如实说"用 10.x/192.168.x"，要么扩网段表（**显式决定**，规格 §7-R2） |
+| 3 | ~~**`100.64.0.0/10` 这类 VPN 网段过不了 `is_lan_only`**（**推算**）~~ ⭐ **已解决（2026-10-01）**：实测先为「不通」⇒ 已按 owner 2026-09-30 拍的那条（**放行 CGNAT**）落地（`798fa157` ✓） | `mesh.rs:723-732` 用 std 的 `is_loopback/is_private/is_link_local`；CGNAT 段不属于这三类 | U12 的文档要么如实说"用 10.x/192.168.x"，要么扩网段表（**显式决定**，规格 §7-R2） |
 | 4 | **首次发现要等一轮广播**（冷启动表是空的） | 常量 `ANNOUNCE_INTERVAL_MS = 30_000`（`lan_state.rs:140`），真机读数记 ≈45 秒（`2026-09-24-lan-p2p-topology-decision.md` §18） | 文案**不写数字**、只说"正在找"（与 `SyncPanel.tsx:1637-1642` 的既有处置一致） |
 | 5 | **多设备重名**（`device_name` ＝ 主机名） | `lan.rs:71-72`（可空）＋ `device_id` 来自 `uuid`（`db.rs:233-241`） | 列表按 `device_id` 去重（`mesh.rs:253-255` 同口径）；⚠️ **不许**回落成 id 前缀区分 |
 | 6 | **`LanStatus` 形状一改，Web 侧会读到 `undefined`** | `syncPanelMesh.wiring.test.ts:66-72` 钉的正是这件事 | 片 D 必须**三处同改**（Rust／`commands.ts`／`web.ts`）；Web 侧继续"如实说这一档不可用" |
-| 7 | **迭代计划没给 U8／U12 位置** | 迭代 0（U9/U13）＋ 迭代 1（U1/U2/U3/U11/U5）；迭代 2–6 全是企业版 | ⇒ 任务单 §3 如实标注"T7/T8 **无迭代归属**"，**不假装它们在计划里** |
+| 7 | **迭代计划没给 U8／U12 位置** | 迭代 0（U9/U13）＋ 迭代 1（U1/U2/U3/U11/U5）；迭代 2–6 全是企业版 | ⇒ 任务单 §3 如实标注"**T6/T7** **无迭代归属**"（⚠️ 2026-10-01 订正：原写 T7/T8 ✗），**不假装它们在计划里** |
 | 8 | 人日误差 ±50% | 成本表 §4 自述 | 本方案只用成本表/矩阵/迭代计划里的数；**我自己推的标"推算"** |
 
 ---
