@@ -15,7 +15,7 @@ vi.mock("../lib/api", () => ({
   api: new Proxy({}, { get: () => async () => [] }),
 }));
 
-import { RightRail } from "./RightRail";
+import { TopTools } from "./TopTools";
 import { PluginViewPanel } from "./PluginViewPanel";
 import { PluginViewOverlay } from "./PluginViewOverlay";
 import { usePlugins } from "../store/plugins";
@@ -114,19 +114,19 @@ describe("声明式视图的两种落点", () => {
 
   it("rail 视图在右栏占一个按钮；overlay 视图不占", () => {
     root = mount(
-      React.createElement(React.Fragment, null, React.createElement(RightRail), React.createElement(PluginViewPanel)),
+      React.createElement(React.Fragment, null, React.createElement(TopTools), React.createElement(PluginViewPanel)),
     );
-    const railBtns = Array.from(document.querySelectorAll(".right-rail .rail-btn"));
+    const railBtns = Array.from(document.querySelectorAll(".top-tools .top-tool"));
     const labels = railBtns.map((b) => b.getAttribute("aria-label"));
     expect(labels).toContain("插件面板：待整理");
     expect(labels.some((l) => l?.includes("最近更新")), "overlay 落点的视图不该出现在右栏").toBe(false);
     // 三个内置抽屉还在（不要因为加了插件按钮就把它们顶掉）
-    expect(labels).toEqual(expect.arrayContaining(["AI 助手", "评论 / 通知", "目录"]));
+    expect(labels).toEqual(expect.arrayContaining(["AI 助手", "讨论", "通知", "目录"]));
   });
 
   it("点右栏按钮 → 面板打开、画出表、主区让位；再点一次收起", () => {
     root = mount(
-      React.createElement(React.Fragment, null, React.createElement(RightRail), React.createElement(PluginViewPanel)),
+      React.createElement(React.Fragment, null, React.createElement(TopTools), React.createElement(PluginViewPanel)),
     );
     const btn = document.querySelector('[aria-label="插件面板：待整理"]') as HTMLElement;
     flushSync(() => btn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -146,7 +146,7 @@ describe("声明式视图的两种落点", () => {
 
   it("常驻面板点行**不关面板**（这正是它和浮层的区别）", () => {
     root = mount(
-      React.createElement(React.Fragment, null, React.createElement(RightRail), React.createElement(PluginViewPanel)),
+      React.createElement(React.Fragment, null, React.createElement(TopTools), React.createElement(PluginViewPanel)),
     );
     const btn = document.querySelector('[aria-label="插件面板：待整理"]') as HTMLElement;
     flushSync(() => btn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -159,7 +159,7 @@ describe("声明式视图的两种落点", () => {
 
   it("右栏互斥：开插件面板会收起 AI；开 AI 会收起插件面板", () => {
     root = mount(
-      React.createElement(React.Fragment, null, React.createElement(RightRail), React.createElement(PluginViewPanel)),
+      React.createElement(React.Fragment, null, React.createElement(TopTools), React.createElement(PluginViewPanel)),
     );
     // 先开 AI
     flushSync(() => useRightPanel.getState().openAi(true));
@@ -198,8 +198,8 @@ describe("声明式视图的两种落点", () => {
 
   it("停用的插件不再占右栏位置", () => {
     usePlugins.setState({ plugins: [plugin([RAIL_VIEW], false)] });
-    root = mount(React.createElement(RightRail));
-    const labels = Array.from(document.querySelectorAll(".right-rail .rail-btn")).map((b) => b.getAttribute("aria-label"));
+    root = mount(React.createElement(TopTools));
+    const labels = Array.from(document.querySelectorAll(".top-tools .top-tool")).map((b) => b.getAttribute("aria-label"));
     expect(labels.some((l) => l?.includes("待整理")), "停用的插件不该留入口").toBe(false);
   });
 });
