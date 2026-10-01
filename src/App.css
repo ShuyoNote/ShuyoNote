@@ -7027,9 +7027,16 @@ select.prop-value {
   background: transparent;
 }
 
+/* ⚠️ 2026-10-01（owner：「橡皮筋还在」＋截图）：这条样式**就是**那个蓝框 ——
+   config.ts:127 把 Lexical 的 	ableCellSelected 主题键指到这个类 ⇒ **表格单元格选区**里的格子
+   被着上「浅蓝填充 ＋ 1px 蓝框」；而拖列宽时 Lexical 会**顺带拉出一个单元格选区** ✗ ⇒
+   那个矩形就跟着鼠标绷出来（owner 称之为橡皮筋 ✓）。
+   处置：**只把视觉去掉**（类名与主题键都不动 ⇒ 零 JS 改动、一句可回滚 ✓）。
+   判据：拖列宽不再出现该矩形 ✓；反例：把这两行恢复 ⇒ 矩形立刻回来 ✓。
+   ⚠️ 代价（照实）：用户**主动**选中多个单元格时也不再有高亮 ✗。 */
 .editor-table-cell-selected {
-  background: var(--accent-soft) !important;
-  box-shadow: inset 0 0 0 1px var(--accent);
+  /* background: var(--accent-soft) !important; */
+  /* box-shadow: inset 0 0 0 1px var(--accent); */
 }
 
 .table-resize-handle {
