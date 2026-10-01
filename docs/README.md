@@ -319,6 +319,8 @@ node scripts/test-report.mjs --list                                             
 | [../design/design-system.md](../design/design-system.md) | **设计系统 v2**：色彩/字体/间距/圆角/阴影/动效 tokens + 组件规范 + 无障碍 |
 | [../design/ux-flows.md](../design/ux-flows.md) | **UX 流程**：12 条用户旅程 + 空/加载/错误/边界态 |
 | [../design/implementation-plan.md](../design/implementation-plan.md) | **落地实现计划**：文件级改造清单 + 验收标准 |
+| [../design/sync-panel/README.md](../design/sync-panel/README.md) | **同步面板 · 高保真效果图（成套 10 张）**：按最新个人版／团队版／企业／信创口径画的**目标形态**（⚠️ 非产品截图）；含生成脚本（自带**字体探测**与**字形闸门**）＋ 画图约定（含「每张图必须先回答的三问」）|
+| [../design/sync-panel/ui-spec.md](../design/sync-panel/ui-spec.md) | **同步面板界面规格**：⛔ **个人空间不绑服务器**（三条同步路：设备直连／中继（付费）／手工拷贝）／✅ 团队空间可绑服务器（一空间一台、多空间可指同一台、一设备可多台、⭐ **同一时间只有一台【当前组织】**）／⭐ **账号设备级 vs 同步空间级**的分工／⛔ **四种状态不许互相伪装**／配对＝**比对码 20 位**；逐张写对象类 · 状态类 · 出处 · **可核判据** |
 | [../design/README.md](../design/README.md) | UI/UX 设计交付总索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [../design/logo/README.md](../design/logo/README.md) | **应用 Logo**：应用图标 / 单色图形 / 字标 / 主图 |
 

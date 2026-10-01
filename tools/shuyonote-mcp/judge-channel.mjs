@@ -40,7 +40,7 @@
 //   node tools/shuyonote-mcp/judge-channel.mjs --self-test          # 6 条夹具（每条都能红 ✓）
 import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync, chmodSync, statSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, devNull } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -72,7 +72,15 @@ export async function startBridge(bridgePath, env0, timeoutMs = 8000) {
 
 /** 对回环端口发一条 HTTP 请求；连接被拒/超时/非 2xx 都如实返回 0 */
 export function probe(port, { origin, token }) {
-  const args = ["-s", "-o", "NUL", "-w", "%{http_code}", "--max-time", "4",
+  // ⚠️ 丢弃响应体要用**平台各自的空设备** ✓：这里原来写死 `"NUL"`，
+  //    在 macOS/Linux 上 curl 会把它当成**普通文件名** ⇒ 在仓库根**凭空造出一个叫 `NUL` 的文件** ✗
+  //    ⭐ **不是潜在事故 —— 2026-10-01 在 macOS 上真发过一次** [实测]：
+  //    本仓跑一次 `node scripts/test-report.mjs`，就会经 `gates.mjs:203` 的 `check-mcp-channel-judge`
+  //    执行本文件 ⇒ 仓库根当场多出一个**未跟踪的** `NUL`（134 B，mtime 12:35）✗；
+  //    修完之后同一命令复跑 ⇒ **不再生成** ✓（本判据的 6/6 自测与真跑都照常绿 ✓）。
+  //    `os.devNull` 是跨平台正解（Windows ⇒ `\\.\nul`，POSIX ⇒ `/dev/null` ✓）；
+  //    ⛔ **不要**改成写死的 `"/dev/null"` —— 那只是把同一个错**换到 Windows 上** ✗。
+  const args = ["-s", "-o", devNull, "-w", "%{http_code}", "--max-time", "4",
     "-H", "Origin: " + origin, "-H", "Host: 127.0.0.1:" + port];
   if (token) args.push("-H", "Authorization: Bearer " + token);
   args.push("http://127.0.0.1:" + port + "/");
