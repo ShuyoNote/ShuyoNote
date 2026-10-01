@@ -108,6 +108,8 @@ export const ALLOWED_BARE_D = {
   "docs/specs/2026-09-28-knowledge-and-agent-access-spec.md": { ids: [2] },
   "docs/specs/2026-09-28-knowledge-and-agent-access-requirements.md": { ids: [1] },
   "docs/specs/2026-09-29-spec-layer-review-findings.md": { ids: [2, 3] },
+  // 2026-10-01：同一族（引的是**工作区账本**的判据 D2/D3/D4）—— 补登，别机那笔漏了 ✓
+  "docs/specs/2026-09-28-llm-wiki-spec.md": { ids: [2, 3, 4] },
   "docs/plans/2026-09-28-mcp-host-m1-workorder.md": { ids: [2] },
 };
 
