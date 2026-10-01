@@ -14,6 +14,7 @@ import {
   BoardIcon,
   GraphIcon,
   TimelineIcon,
+  TagIcon,
   TemplateIcon,
   SettingsIcon,
   InfoIcon,
@@ -36,6 +37,8 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "board", labelKey: "nav.board", icon: <BoardIcon width={18} height={18} /> },
   { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
   { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
+  // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）
+  { id: "map", labelKey: "nav.map", icon: <TagIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {

@@ -43,7 +43,16 @@ export const MARKER = "KB-S4-MAP";
 const SCAN_ROOTS = ["src", "src-tauri/src"];
 const EXTS = [".ts", ".tsx", ".rs"];
 const SKIP_DIRS = new Set(["node_modules", "target", "dist", ".git", "release", "gen"]);
-const SHARED_RELATION = ["backlinkRefMatches", "get_backlinks", "list_block_backlinks"];
+const SHARED_RELATION = [
+  "backlinkRefMatches",
+  "get_backlinks",
+  "list_block_backlinks",
+  // ⚠️ 2026-10-01（实现 S4 时补）：**命令面** `get_graph` 也是既有关系出处 ✓ ——
+  //   `GraphView` 用的就是它 ✓，`api.getGraph()` 在 TS 侧的写法也要认 ✓
+  //   （第一版只列了三个 helper，漏了这条命令 ⇒ 照它写会**假红** ✗）。
+  "get_graph",
+  "getGraph",
+];
 
 function walk(root, rel) {
   const out = [];
@@ -57,14 +66,57 @@ function walk(root, rel) {
   return out;
 }
 
+/**
+ * 这个文件**声明**（而不是"提到"）了某个常量吗 ✓ —— 命中就返回 match（带着它的**位置** ✓）。
+ *
+ * ⚠️ 2026-10-01（实现 S4 时被自己的判据绊了一下 ✓，与 `check-kb-s3-timeline` 同一个坑）：
+ *   判据原来用 `indexOf` 找 `GRAPH_NODE_CAP` 再检查"后面 60 字里有没有数字" ✗ ⇒
+ *   · 组件文件里只是 `import { GRAPH_NODE_CAP } …` ⇒ "后面没数字" ⇒ **假红** ✗；
+ *   · 注释里提到这个名字 ⇒ 同样把位置带偏 ✗。
+ *   ⇒ 改成认**声明形态**、并从声明的**位置**取值 ✓（`= 500` 这种 ✓）。
+ */
+const declMatch = (text, name) =>
+  new RegExp("(?:^|\\n)\\s*(?:export\\s+|pub(?:\\([^)]*\\))?\\s+)?(?:const|fn|static)\\s+" + name + "\\b").exec(text);
+
+/**
+ * 只留**代码**：行/块注释换成空白（换行保留 ✓）—— 用于"写动词"那一条禁令。
+ *
+ * ⚠️ 为什么：注释里**讲解**这条规矩（"不许落库：没有 INSERT …"）不该被判违规 ✗
+ * （同一天里 `check-mcp-host-authz` 与 `check-kb-s3-timeline` 都栽在这上面 ✓）。
+ * ⚠️ 但**字符串不掩** ✓ —— SQL 本来就写在字符串里，掩掉就会把真写法漏掉（假绿更坏 ✗）。
+ */
+function maskComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+}
+
 /** 纯判据：带标记的文件 ⇒ { findings }（空 ＝ 干净 ✓） */
 export function judgeMarked(files) {
   const out = [];
   if (files.length === 0) return { findings: out };
 
+  // ② 的"上限必须带数字"要认**声明**、且允许别的带标记文件只是 import ✓（见 `declMatch` 的注释 ✓）
+  const capDecls = files.filter((f) => declMatch(f.text, "GRAPH_NODE_CAP"));
+  if (capDecls.length === 0) {
+    out.push("✗ 带 `" + MARKER + "` 标记的文件里**没有任何一处声明** `GRAPH_NODE_CAP` ✗ ⇒ 「上限」在代码里不存在"
+      + "（只是提了一下名字不算 ✓）⇒ 大库上会把界面拖死（S4 ② ✓）");
+  } else if (capDecls.length > 1) {
+    out.push("✗ `GRAPH_NODE_CAP` 在 **" + capDecls.length + " 个文件**里各声明了一次 ✗（"
+      + capDecls.map((f) => f.rel).join(" ／ ") + "）⇒ 两处上限迟早不一致（S4 ② 要**一处** ✓）");
+  } else {
+    const m = declMatch(capDecls[0].text, "GRAPH_NODE_CAP");
+    const near = capDecls[0].text.slice(m.index, m.index + 80);
+    if (!/[:=]\s*\d+/.test(near)) {
+      out.push("✗ 声明 `GRAPH_NODE_CAP` 时没写一个**数字** ✗（读到：" + near.split("\n")[0].trim()
+        + "）⇒ 「上限」没写数 ⇒ 等于没有上限（S4 ② ✓）");
+    }
+  }
+
   for (const f of files) {
-    // ① 关系可重建：不许持久化
-    const sql = f.text.match(/\b(INSERT|UPDATE|DELETE|CREATE)\b/);
+    // ① 关系可重建：不许持久化（写动词那一条**只掩注释** ✓ —— SQL 就在字符串里 ✓）
+    const code = maskComments(f.text);
+    const sql = code.match(/\b(INSERT|UPDATE|DELETE|CREATE)\b/);
     if (sql) {
       out.push("✗ " + f.rel + " 出现了 SQL 写动词 `" + sql[1] + "` ✗ ⇒ 关系要**可从内容重建**（S4 ① ✓，"
         + "`INV-KB-derived-rebuildable` ✓）：存下来就多了一份会漂的真相 ✗");
@@ -74,7 +126,7 @@ export function judgeMarked(files) {
         + "派生数据不许另存一份（重建不了 ＝ 与内容脱钩 ✗）");
     }
 
-    // ② 上限 ＋ 截断必须成对、且都在这一个文件里
+    // ② 上限与截断在每个带标记文件里都要**看得见**（声明在一处、别的文件 import 也算看得见 ✓）
     const hasCap = f.text.includes("GRAPH_NODE_CAP");
     const hasTrunc = f.text.includes("GRAPH_TRUNCATED");
     if (!hasCap && !hasTrunc) {
@@ -82,14 +134,6 @@ export function judgeMarked(files) {
         + "要么**悄悄截断**（S4 ② ✓）—— 本仓逐字罚过「悄悄截断」✗");
     } else {
       if (!hasCap) out.push("✗ " + f.rel + " 有 `GRAPH_TRUNCATED` 却**没有** `GRAPH_NODE_CAP` ✗ ⇒ 截断没有上限可依（S4 ② ✓）");
-      else {
-        const i = f.text.indexOf("GRAPH_NODE_CAP");
-        const near = f.text.slice(i, i + 60);
-        if (!/[:=]\s*\d+/.test(near)) {
-          out.push("✗ `GRAPH_NODE_CAP` 后面没跟着一个**数字** ✗（读到：" + near.split("\n")[0].trim()
-            + "）⇒ 「上限」没写数 ⇒ 等于没有上限（S4 ② ✓）");
-        }
-      }
       if (!hasTrunc) {
         out.push("✗ " + f.rel + " 有上限却**没有** `GRAPH_TRUNCATED` ✗ ⇒ **悄悄截断**（S4 ② ✓）："
           + "用户会以为「我的图就这么大」，而实际只画了一部分 ✗");
@@ -137,7 +181,11 @@ if (argv.includes("--self-test")) {
   const dir = mkdtempSync(join(tmpdir(), "kb-s4-"));
   const put = (rel, text) => { const p = join(dir, rel); mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, text, "utf8"); };
   const OK = '// ' + MARKER + '\nimport { backlinkRefMatches } from "./platform/web";\nexport const GRAPH_NODE_CAP = 500;\nexport const GRAPH_TRUNCATED = false;\nexport function build(links: string[]) { return links.filter((l) => backlinkRefMatches(l, "x")); }\n';
-  const reset = () => put("src/components/KnowledgeMap.tsx", OK);
+  const reset = () => {
+    // ⚠️ 夹具目录**跨用例保留** ⇒ 额外写进去的文件必须在下一例之前清掉 ✗（S3 那边就被咬过一次 ✓）
+    for (const p of ["src/components/KnowledgeMapPanel.tsx"]) rmSync(join(dir, p), { force: true });
+    put("src/components/KnowledgeMap.tsx", OK);
+  };
   const cases = [
     ["正例（不落盘 ＋ 上限带数 ＋ 截断明示 ＋ 复用既有口径）", () => {}, 0],
     ["变异①（把关系存下来 ⇒ 不可重建）", () => { put("src/components/KnowledgeMap.tsx", OK + 'db.exec("INSERT INTO graph_edges VALUES (1)");\n'); }, 1],
@@ -146,7 +194,12 @@ if (argv.includes("--self-test")) {
     ["变异④（上限没带数字 ⇒ 等于没有上限）", () => { put("src/components/KnowledgeMap.tsx", '// ' + MARKER + '\nimport { get_backlinks } from "../lib/api";\nexport const GRAPH_NODE_CAP = "大库就别画了";\nexport const GRAPH_TRUNCATED = false;\n'); }, 1],
     ["变异⑤a（正则字面量自己写 [[ 匹配 ⇒ 口径打架）", () => { put("src/components/KnowledgeMap.tsx", OK + "const re = /\\[\\[([^\\]]+)\\]\\]/g;\n"); }, 1],
     ["变异⑤b（RegExp 字符串形式自己写 [[ 匹配 ⇒ 同上）", () => { put("src/components/KnowledgeMap.tsx", OK + 'const re = new RegExp("\\\\[\\\\[([^\\\\]]+)\\\\]\\\\]");\n'); }, 1],
+    // ⚠️ 2026-10-01：命令面 `get_graph` 也是既有出处 ✓（照它写不许假红 ✓）
+    ["正例②（引用**命令面** `api.getGraph()` 作关系出处 ⇒ 必须绿 ✓）", () => { put("src/components/KnowledgeMap.tsx", '// ' + MARKER + '\nimport { api } from "../lib/api";\nexport const GRAPH_NODE_CAP = 200;\nexport const GRAPH_TRUNCATED = "truncated";\nexport async function load() { return api.getGraph(); }\n'); }, 0],
     ["变异⑥（一处都不引用既有关系出处 ⇒ 各写一套）", () => { put("src/components/KnowledgeMap.tsx", '// ' + MARKER + '\nexport const GRAPH_NODE_CAP = 500;\nexport const GRAPH_TRUNCATED = false;\nexport function build(rows: string[]) { return rows; }\n'); }, 1],
+    // ⚠️ 2026-10-01 加的两条"必须绿"（都是我判据自己的假红方向 ✓）
+    ["正例③（另一个带标记文件只 **import** 上限常量 ⇒ 必须绿 ✓）", () => { put("src/components/KnowledgeMapPanel.tsx", '// ' + MARKER + '\nimport { GRAPH_NODE_CAP, GRAPH_TRUNCATED } from "../lib/kbMap";\nexport const cap = GRAPH_NODE_CAP;\nexport const flag = GRAPH_TRUNCATED;\n'); }, 0],
+    ["正例④（写动词只出现在**注释**里 ⇒ 必须绿 ✓）", () => { put("src/components/KnowledgeMap.tsx", OK + '// 本文件不落库（没有 INSERT / CREATE 那种写法）\n'); }, 0],
   ];
   let pass = 0;
   try {

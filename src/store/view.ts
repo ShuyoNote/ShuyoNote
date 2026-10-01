@@ -3,7 +3,7 @@ import { useTemplateCenterStore } from "./templateCenter";
 import { useFilePreview } from "./filePreview";
 import { usePdfReader } from "./pdfReader";
 
-export type AppView = "notes" | "board" | "graph" | "files" | "timeline";
+export type AppView = "notes" | "board" | "graph" | "files" | "timeline" | "map";
 export type ContentWidth = "centered" | "full";
 
 interface ViewState {

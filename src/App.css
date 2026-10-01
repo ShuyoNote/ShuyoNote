@@ -23019,6 +23019,22 @@ body.is-plugin-panel-open .main {
 .tl-block-added { border-color: var(--accent); color: var(--accent); }
 .tl-block-removed { text-decoration: line-through; }
 .tl-block-more { color: var(--text-faint); font-size: 0.74rem; }
+
+/* ---- S4 知识地图（components/KnowledgeMap.tsx）----
+   只读视图：按标签聚类的关系全景。⚠️ 大库上 `GRAPH_NODE_CAP` 会挡掉一部分 ⇒ 界面**必须**把
+   `.kb-map-warn` 那条说出来（不许让用户以为"我的图就这么大" ✗）。 */
+.kb-map { padding: 24px 28px; }
+.kb-map-title { font-size: 1.05rem; margin: 0 0 4px; }
+.kb-map-note { margin: 0 0 10px; color: var(--text-faint); font-size: 0.82rem; }
+.kb-map-warn { margin: 0 0 10px; color: var(--danger); font-size: 0.84rem; }
+.kb-map-clusters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.kb-map-cluster { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.kb-map-cluster-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
+.kb-map-cluster-name { font-weight: 600; }
+.kb-map-cluster-count { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
+.kb-map-pages { margin: 0; padding: 0; list-style: none; }
+.kb-map-page { width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.kb-map-page:hover { background: var(--hover); }
 .tl-empty { padding: 32px 28px; }
 .tl-empty-main { margin: 6px 0 2px; }
 .tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }

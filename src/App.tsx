@@ -97,6 +97,7 @@ import "./App.css";
 // editor page stays synchronous). Heavy libs (cytoscape, mermaid…) are also lazy.
 const GraphView = lazy(() => import("./components/GraphView").then((m) => ({ default: m.GraphView })));
 const TimelineReview = lazy(() => import("./components/TimelineReview").then((m) => ({ default: m.TimelineReview })));
+const KnowledgeMap = lazy(() => import("./components/KnowledgeMap").then((m) => ({ default: m.KnowledgeMap })));
 const BoardView = lazy(() => import("./components/BoardView").then((m) => ({ default: m.BoardView })));
 const FileManagerView = lazy(() => import("./components/FileManagerView").then((m) => ({ default: m.FileManagerView })));
 const TemplateCenterView = lazy(() => import("./components/TemplateCenterView").then((m) => ({ default: m.TemplateCenterView })));
@@ -1093,6 +1094,8 @@ function AppShell() {
         <div className="main"><Suspense fallback={<ViewLoader />}><GraphView /></Suspense></div>
       ) : view === "timeline" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TimelineReview /></Suspense></div>
+      ) : view === "map" ? (
+        <div className="main"><Suspense fallback={<ViewLoader />}><KnowledgeMap /></Suspense></div>
       ) : view === "board" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
       ) : view === "files" ? (

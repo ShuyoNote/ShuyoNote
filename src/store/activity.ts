@@ -3,7 +3,7 @@ import { create } from "zustand";
 /** 左侧竖条（activity bar）当前选中的活动——每一项都对应一个主区视图。
  *  搜索**不是**活动：它是弹层式的一次性动作（用完即走、不占侧栏、不把页面树
  *  顶掉，在看板/关系图视图下同样可用），触发器只是借住在竖条里。 */
-export type Activity = "notes" | "files" | "board" | "graph" | "timeline";
+export type Activity = "notes" | "files" | "board" | "graph" | "timeline" | "map";
 
 interface ActivityState {
   activity: Activity;
@@ -35,7 +35,7 @@ const KEY_SIDEBAR = "shuyonote:sidebarOpen";
 
 function initialActivity(): Activity {
   const v = localStorage.getItem(KEY_ACTIVITY);
-  return v === "notes" || v === "files" || v === "board" || v === "graph" || v === "timeline" ? v : "notes";
+  return v === "notes" || v === "files" || v === "board" || v === "graph" || v === "timeline" || v === "map" ? v : "notes";
 }
 
 // 竖条状态独立于 `useViewStore`：view 描述**主区**显示什么，activity 描述
