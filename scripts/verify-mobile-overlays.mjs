@@ -550,7 +550,21 @@ function probeLayer(rootSel, boxSel) {
     }
   });
 
-  const buttons = [...root.querySelectorAll("button")].filter(isVisible).map((b) => {
+  const buttons = [...root.querySelectorAll("button")]
+    .filter(isVisible)
+    // ⚠️ 2026-10-01：**关着的 `<details>` 里的按钮不算** ✓ —— 用户按定义看不到它。
+    //   来由（本机探针查实 ✓）：CI 上长期红「保存@✗够不到」，那个「保存」长在
+    //   `details.sync-row[open=false]` 的行体里；Chromium 对关着的 `<details>` 内容用的是
+    //   `content-visibility` 语义 ⇒ 内容盒**仍被布局**（实测 666px、在 y≈466..1133 ✗），
+    //   于是它既不在视口里、也没有"真能滚"的祖先 ⇒ 判据把它判成够不到 ✗（假红）。
+    //   这条判据要的是「**当前能按到**的主操作按钮」⇒ 关着的行体不算 ✓。
+    .filter((b) => {
+      for (let n = b.parentElement; n && n !== root.parentElement; n = n.parentElement) {
+        if (n.tagName === "DETAILS" && !n.open) return false;
+      }
+      return true;
+    })
+    .map((b) => {
     const cs = getComputedStyle(b);
     const r = b.getBoundingClientRect();
     const cls = String(b.className || "");
@@ -559,12 +573,19 @@ function probeLayer(rootSel, boxSel) {
     // 反过来，"被 overflow:hidden 裁掉又没有可滚祖先"（`.sync-popover` 的「保存」
     // 当初就是这样跑到屏外 121px 的）在这里仍然是不可达 ⇒ 断言照样红。
     let scrollable = false;
+    let hit = "";
     for (let n = b.parentElement; n && n !== root.parentElement; n = n.parentElement) {
       const acs = getComputedStyle(n);
-      if ((acs.overflowY === "auto" || acs.overflowY === "scroll") && n.scrollHeight > n.clientHeight + 4) {
-        scrollable = true;
-        break;
-      }
+      const scrolls = (acs.overflowY === "auto" || acs.overflowY === "scroll") && n.scrollHeight > n.clientHeight + 4;
+      // ⚠️ 2026-10-01：失败话里要能**自证**为什么够不到 ⇒ 记下每个祖先的 overflow-y 与溢出量 ✓
+      //   （来由：CI 上长期红「保存@✗够不到」，而那条话里没有"哪一层、差多少"⇒ 只能靠猜 ✗）
+      hit += `${n.className ? "." + String(n.className).split(" ")[0] : n.tagName.toLowerCase()}`
+        + `(y=${r1(n.getBoundingClientRect().top)}..${r1(n.getBoundingClientRect().bottom)}`
+        + `,oy=${acs.overflowY},${n.scrollHeight}>${n.clientHeight}`
+        + `,pos=${acs.position}${acs.transform && acs.transform !== "none" ? ",tf=" + acs.transform.slice(0, 28) : ""}`
+        + `${scrolls ? " ✓可滚" : ""})`;
+      if (scrolls) { scrollable = true; hit += " "; break; }
+      hit += " ";
     }
     return {
       text: (b.textContent || "").trim().slice(0, 12),
@@ -576,6 +597,8 @@ function probeLayer(rootSel, boxSel) {
       h: r1(r.height),
       inView,
       reachable: inView || scrollable,
+      /** 失败时给排查用的几何读数 ✓（视口 ${innerW}x${innerH}；`4` 是视口底/右） */
+      where: `box=${r1(r.left)},${r1(r.top)}..${r1(r.right)},${r1(r.bottom)} vp=${innerW}x${innerH}；祖先链：${hit.trim()}`,
     };
   });
 
@@ -1208,12 +1231,20 @@ async function main() {
           // (4) 主要操作按钮必须够得到：四边在视口内，**或者**它落在浮层内部一个
           //     真的能滚的容器里（长表单本来就要滚）。"被裁掉又滚不动"仍然算失败。
           const actions = m.buttons.filter((b) => ACTION_TEXT.includes(b.text));
+          const stuck = actions.filter((b) => !b.reachable);
           ok(
             actions.every((b) => b.reachable),
             actions.length
               ? `主要操作按钮都够得到（${actions
                   .map((b) => `${b.text}@${b.inView ? "视口内" : b.reachable ? "屏外但可滚到" : "✗够不到"}`)
                   .join(" ")}）`
+                + (stuck.length
+                  // ⚠️ 2026-10-01：够不到时**把几何摆出来** —— 否则这条话只说"够不到"，
+                  //   排查得靠猜（CI 上它就红了很久 ✓）。读数：按钮盒、视口、以及**每个祖先**的
+                  //   overflow-y 与 溢出量（`✓可滚` 表示这一层真能滚 ⇒ 那就不算够不到 ✓）。
+                  ? "｜够不到的："
+                    + stuck.map((b) => `「${b.text}」（class=${b.cls}）${b.where}`).join(" ／ ")
+                  : "")
               : "本层没有主要操作按钮（跳过）",
           );
 
