@@ -5,6 +5,7 @@ import {
 } from "@lexical/react/LexicalHorizontalRuleNode";
 import {
   $createTableCellNode,
+  $createTableNode,
   $createTableRowNode,
   $isTableCellNode,
   $isTableNode,
@@ -40,8 +41,6 @@ import {
 } from "lexical";
 import { parseInline, type MdInline } from "../lib/markdown";
 import { BlockEmbedNode, $createBlockEmbedNode, $isBlockEmbedNode } from "./nodes/BlockEmbedNode";
-import { $createBlockTableNode, BlockTableNode } from "./nodes/BlockTableNode";
-import { newBlockId } from "../lib/blockIdentity";
 import { BlockRefNode, $createBlockRefNode, $isBlockRefNode } from "./nodes/BlockRefNode";
 import { CalloutNode, $createCalloutNode, $isCalloutNode } from "./nodes/CalloutNode";
 import { ImageNode, $createImageNode, $isImageNode } from "./nodes/ImageNode";
@@ -199,7 +198,7 @@ function createMarkdownCell(
 
 // Markdown table
 export const TABLE: MultilineElementTransformer = {
-  dependencies: [BlockTableNode, TableNode, TableRowNode, TableCellNode],
+  dependencies: [TableNode, TableRowNode, TableCellNode],
   export: (node: LexicalNode, exportChildren: (n: ElementNode) => string) => {
     if (!$isTableNode(node)) return null;
     const output: string[] = [];
@@ -258,17 +257,16 @@ export const TABLE: MultilineElementTransformer = {
     }
 
     const colCount = Math.max(headerRow.length, ...bodyRows.map((r) => r.length), 1);
-    // ⭐ 直接建**模型表格**（`shuyo-table` / BlockTableNode），不走"先建内建 TableNode、
-    //    再由 Editor.tsx:354 的 registerNodeTransform(TableNode, upgradeTableToBlockNode) 替换"那条路。
-    //    为什么（2026-10-01，owner 侧实测）：
-    //      那条 transform 会把表**换成另一个节点** ⇒ **旧 key 的 TableObserver 从注册表里消失** ✗
-    //      ⇒ 之后**任何一次选区变化**都会触发 `$handleTableSelectionChangeCommand` →
-    //        `$fixRangeSelectionForSelectedTable` 拿着旧 key 查 ⇒ 报
-    //        「tableObserver not found for tableKey: 1861」（owner 的逐帧堆栈 ✓）。
-    //      ⚠️ 这是**既存代码的交互**（transform 自 2026-09-18 d01e5390、导入器一直用 $createTableNode，
-    //      都不是本次改出来的 ✓）；这里只是**从源头上不触发**它 ✓。
-    //      顶层的表按 blockIdTransform 的同一写法给新块 id（照抄，不自己造 id ✗）。
-    const table = $createBlockTableNode(newBlockId());
+    // ⚠️ 2026-10-01 二次撤回：这里一度改成 `$createBlockTableNode(newBlockId())`（想让导入直接出模型表，
+    //    从源头避开 `upgradeTableToBlockNode` 的"替换 ⇒ observer 悬空"）。
+    //    **但它炸了另一条路** ✗：`src/lib/mdPreview.ts` 的**文件预览**用的是**同一组
+    //    `SHUYONOTE_TRANSFORMERS`**，而它的编辑器**没注册 `BlockTableNode`** ⇒ 逐字报
+    //    「Attempted to create node BlockTableNode that was not configured to be used on the editor」
+    //    （堆栈：mdPreview.ts:84 → filePreview.ts:68 → FilePreviewDialog.tsx ✓）。
+    //    ⇒ 撤回，回到内建 `TableNode`：先让预览恢复 ✓；
+    //      真要根治 observer 那条，应在**加载路径**上把普通表升级（见与 owner 的讨论 ✓），
+    //      而不是改这个被多处共用的 transformer ✗。
+    const table = $createTableNode();
 
     const headerRowNode = $createTableRowNode();
     for (let c = 0; c < colCount; c++) {
