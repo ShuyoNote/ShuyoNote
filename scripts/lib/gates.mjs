@@ -282,6 +282,21 @@ export const GATES = [
     registered: "2026-10-01",
   },
   {
+    id: "check-pairing-requires-proof",
+    group: "contract",
+    label: "配对必须有人核对过（码长下限未被缩短／比对码真的比／采纳前先核对／拒绝路不继续／路径上无“等对端同意”）",
+    cmd: "node scripts/check-pairing-requires-proof.mjs",
+    selfSkipOk: "设备直连那半（device_pair_export／device_pair_import）尚未落地 ⇒ 「必须有人的那一步、且没有自动通过」这一条现在没有可检查对象；其余五条照常真查，落地后本条立即有对象",
+    incident:
+      "2026-10-01：`INV-PER-pairing-requires-proof` 当时是「半有」、`INV-PER-pairing-needs-no-acceptance` 是「无（要立）」。" +
+      "配对码是**唯一**的防“换码”手段（攻击者把载荷换成自己那份 ⇒ 用户空间同步进攻击者知道钥匙的地方），" +
+      "而这类坏法**全是减法**：把“必须核对”改成可选、把码长缩短、给“停”态加一个“继续”按钮 —— " +
+      "功能全对、测试全绿（没人会为“少了一次核对”写测试）⇒ 只能静态盯。五条真断言：① `CHECK_CODE_MIN_BITS` ≥ 60（矩阵 U4）" +
+      "② `verify_confirm_code` 里必须有“算出来的 ≠ 用户记下的 ⇒ Err” ③ `pairing_import` 里 `verify_confirm_code(` 必须在 `adopt_material(` 之前" +
+      "④ 两者之间必须出现 \"rejected\" ⑤ 配对路径上不许出现 pending_accept／awaiting_peer 一类标识。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-im-boundary",
     group: "contract",
     label: "企业版 IM 的三条边界（空间是唯一边界／无关系类表／推送不带正文；＋客户端只认 push|ping）",
