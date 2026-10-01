@@ -282,6 +282,21 @@ export const GATES = [
     registered: "2026-10-01",
   },
   {
+    id: "check-im-boundary",
+    group: "contract",
+    label: "企业版 IM 的三条边界（空间是唯一边界／无关系类表／推送不带正文；＋客户端只认 push|ping）",
+    cmd: "node scripts/check-im-boundary.mjs",
+    selfSkipOk: "服务端仓（shuyonote-sync-server）在客户端 CI 上不检出 ⇒ ① ② ③ 三项没有可检查对象；客户端那半边（④）照常真查，本条落地后立即有对象",
+    incident:
+      "2026-10-01：`docs/specs/2026-10-01-enterprise-im-spec.md` 的 INV-IM-* 十二条当时一条判据都没有 ✗。" +
+      "这三条的坏法**都是加出来的、不是改出来的** ⇒ 功能全对、测试全绿，只是边界上多了个洞：" +
+      "① 新写一个 handler 忘了调 require_space ⇒ 多一条不经空间门的路（例外只有 3 条用户级通知，且它们的路由必须不在 `/spaces/` 下）；" +
+      "② 推送帧里顺手加了标题 ⇒ 服务端开始「懂内容」（撞 INV-ENT）；" +
+      "③ schema 里加了 friends 表 ⇒ 出现不属于任何空间的人。" +
+      "另查客户端 frame_kind 只认 push|ping 的闭集（认第三种帧＝开始解析讨论事件）。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-kb-s3-timeline",
     group: "contract",
     label: "S3 时间复盘页：只读派生／两种空态分得开／时间口径只有一处",

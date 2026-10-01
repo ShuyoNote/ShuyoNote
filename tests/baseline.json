@@ -65,7 +65,8 @@
       "check-kb-s1-search",
       "check-kb-s1-search-parity",
       "check-kb-s3-timeline",
-      "check-kb-s4-map"
+      "check-kb-s4-map",
+      "check-im-boundary"
     ],
     "smoke": [
       "smoke-web",
