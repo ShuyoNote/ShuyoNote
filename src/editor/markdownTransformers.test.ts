@@ -49,7 +49,7 @@ interface Leaf {
 function convertLeaves(md: string): Leaf[] {
   const editor = createEditor({
     namespace: "amd-md-table-inline",
-    nodes: [TableNode, TableRowNode, TableCellNode],
+    nodes: [BlockTableNode, TableNode, TableRowNode, TableCellNode],
     onError: (e) => {
       throw e;
     },
