@@ -29,6 +29,7 @@ import {
 } from "lexical";
 import { describe, expect, it } from "vitest";
 
+import { BlockTableNode } from "./nodes/BlockTableNode";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 
 const MD = [
@@ -107,7 +108,7 @@ describe("表格单元格的行内格式", () => {
     // 本判据钉住"别再偷偷把它加回来"：所有单元格都应是 NO_STATUS ✓。
     const editor = createEditor({
       namespace: "amd-md-table-header",
-      nodes: [TableNode, TableRowNode, TableCellNode],
+      nodes: [BlockTableNode, TableNode, TableRowNode, TableCellNode],
       onError: (e) => {
         throw e;
       },
