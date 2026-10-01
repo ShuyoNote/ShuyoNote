@@ -7105,6 +7105,14 @@ select.prop-value {
 .editor-content table th,
 .editor-content table tr:first-child > td {
   font-weight: 600;
+  /* 表头背景（owner 2026-10-01：「标题列没有背景色吗？」）：
+     ⚠️ 产品**本来就有**这条样式 —— 见下面的 `.editor-table-cell-header { background: var(--bg-sidebar) }`，
+     但那个 class **只在单元格的表头状态被标上时才加**，而导入的表格以前是 `NO_STATUS` ⇒
+     既没有粗体也没有背景（同一个根因，owner 连问两次 ✓）。
+     做法：① 导入时标 `TableCellHeaderStates.ROW`（见 markdownTransformers.ts）⇒ 新表吃到那个 class ✓；
+           ② 这里给 `th` 与**第一行**补上**同一个 token** ⇒ ⭐ 已经导进来的旧表也当场有背景 ✓，
+              而且与新表**同色**（不引入第二种"表头灰" ✗）。 */
+  background: var(--bg-sidebar);
 }
 
 .editor-quote {
