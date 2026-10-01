@@ -7075,6 +7075,16 @@ select.prop-value {
   background: transparent;
 }
 
+/* ⚠️ 上面 `padding-left: 14px` 一直**没生效**：本文件靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { padding: 2px 4px }`）是**简写**，
+   且特异性更高（0,1,1 > 0,1,0）⇒ 把 `padding-left` 一起定成 4px，竖线紧贴文字。
+   owner 2026-10-01 反馈「注释块的文字前面留点空，现在太挤了」。
+   做法：给**同一元素**加一条更高特异性的规则把它赢回来。
+   ⛔ 不改通用的那条 ⇒ 段落 / 标题的留白不受影响。 */
+.editor-content blockquote.editor-quote {
+  padding-left: 14px;
+}
+
 .editor-callout {
   background: var(--callout-bg);
   border: 1px solid var(--callout-border);
@@ -7099,6 +7109,17 @@ select.prop-value {
 
 .editor-callout > * {
   grid-column: 2;
+}
+
+/* owner 2026-10-01：**注释块与高亮块都不要圆角**（要 md 那种方角）。
+   两条纪律：
+     ① ⛔ 不改上面通用的 `.editor-content > * { border-radius: … }` —— 那是**所有顶层块**的
+        Notion 式 hover 圆角（段落 / 标题 / 图片都吃它），改 0 会把它们一起方掉；
+     ② ⛔ 不动分栏卡片那条（`.editor-columns`：它自己的注释写明 "each column is a rounded card"）。
+   做法：只给这两个块加**更高特异性**的专门规则 ⇒ 通用语义与分栏都不受影响。 */
+.editor-content blockquote.editor-quote,
+.editor-content .editor-callout {
+  border-radius: 0;
 }
 
 /* Feishu-style 分栏: a flex row of N columns side by side with a small gap between
