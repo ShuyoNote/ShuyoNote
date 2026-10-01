@@ -192,10 +192,12 @@ async function main() {
     console.log(`\n【手机 · 竖条里点非活动按钮（设置）】`);
     await phone.click(".mobile-rail-toggle");
     await sleep(700);
-    // ⚠️ 按**标题**选，不按序号：`.activity-group-end .activity-btn` 实际只有三个
-    //（模板中心 / 设置 / 关于）——回收站的触发器是 `.btn-trash`，不带 `.activity-btn`。
+    // ⚠️ 按**标题**选，不按序号：`.activity-group-end .activity-btn` 现在只有两个
+    //（模板中心 / 设置）——回收站的触发器是 `.btn-trash`，不带 `.activity-btn`。
     // 这条注释原先写的是"回收站 / 模板中心 / 设置 / 关于"并按 `[2]` 取"设置"，
     // 实际点中的是**关于**：断言照样绿（两者都会收起竖条），但验的不是想验的那个。
+    // ⚠️ 2026-10-01：owner 要求**去掉竖条上那个「关于」按钮** ⇒ 这一组现在两个 ✓；
+    //   「关于」仍可从**设置里那一行**与**更新横幅**打开 ✓（两个入口都在 ✓，判据不掉覆盖 ✓）。
     await phone.click('.activity-group-end .activity-btn[title="设置"]');
     await sleep(900);
     s = await phone.evaluate(probe);
