@@ -40,7 +40,9 @@ import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
 import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
-import { BlockDragPlugin } from "./plugins/BlockDragPlugin";import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
+import { BlockDragPlugin } from "./plugins/BlockDragPlugin";// ⭐ owner 2026-10-01：**取消块选功能**（多选模式 ／「已选 N 块」工具条）⇒ 不再挂载它。
+//    代码与 store 都保留（便于日后恢复）✓；含 Mod+Shift+M 快捷键一并失效 ✓。
+// import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
 import { api } from "../lib/api";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
 import { BlockRefPlugin } from "./plugins/BlockRefPlugin";
@@ -688,7 +690,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <BookmarkPastePlugin />
         <BlockDragPlugin />
         <BlockInsertPlugin pageId={pageId} />
-        <BlockSelectionPlugin />
+        {/* 块选功能已取消（owner 2026-10-01）：不再挂载 ⇒ 多选模式与工具条不再出现 */}
         <InsertShortcutPlugin />
         <ClickToEditPlugin />
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
