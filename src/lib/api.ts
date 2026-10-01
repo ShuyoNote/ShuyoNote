@@ -25,6 +25,7 @@ const invoke = <K extends keyof CommandMap>(
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
 export type { NearbyPeer } from "./platform/commands";
+export type { DevicePairExportOutcome, DevicePairImportOutcome } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";

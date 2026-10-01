@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
-import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer } from "../lib/api";
+import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type DevicePairExportOutcome } from "../lib/api";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -251,6 +251,82 @@ export function SyncPanel() {
       setStatus(`网格口令没保存：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setMeshBusy(false);
+    }
+  };
+
+  // ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：**两个入口、两个名字** ✓
+  //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
+  //   · 这一块搬**接线**（地址 ＋ 窗口口令）⇒ 名字叫「**把这台设备接进来**」✓
+  // ⚠️ **三步两态，且有一步是"停"**（`U2`／`U3`）：
+  //   ① 生成：显示比对码（**一次性**，含窗口口令 ⇒ ⛔ 别外传 ✗）
+  //   ② **人读码核对**：采纳侧先把**算出来的码**显示出来，**等用户把对方那串填回来** ✓
+  //   ③ 采纳：逐位相同才写；**对不上 ⇒ 停在"停"态，且那一态里没有继续入口** ✗（判据钉着）
+  const [dpExport, setDpExport] = useState<DevicePairExportOutcome | null>(null);
+  const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
+  const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
+  const [dpPreview, setDpPreview] = useState<string>(""); // 我们这边算出来的码（给人核对）
+  const [dpOutcome, setDpOutcome] = useState<"idle" | "ok" | "stopped">("idle");
+  const [dpNote, setDpNote] = useState("");
+  const [dpBusy, setDpBusy] = useState(false);
+  const dpGenerate = async () => {
+    if (!activeId) { setDpNote("先选一个空间"); return; }
+    setDpBusy(true);
+    try {
+      const r = await api.devicePairExport(activeId);
+      setDpExport(r);
+      setDpOutcome("idle");
+      setDpNote(r.message);
+    } catch (e) {
+      setDpNote(`没有生成：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDpBusy(false);
+    }
+  };
+  /** ② 先只**看**：不传码 ⇒ 后端**一个字节都不写**，只把算出来的码回给我们 ✓ */
+  const dpPreviewImport = async () => {
+    if (!activeId || !dpText.trim()) return;
+    setDpBusy(true);
+    try {
+      const r = await api.devicePairImport({ space_id: activeId, text: dpText.trim() });
+      if (r.outcome === "need_confirm") {
+        setDpPreview(r.check_code);
+        setDpOutcome("idle");
+        setDpNote(r.message);
+      } else if (r.outcome === "rejected") {
+        setDpPreview("");
+        setDpOutcome("stopped");   // ⛔ 停态：**没有继续入口**（见下面的渲染 ✓）
+        setDpNote(r.message);
+      } else {
+        setDpOutcome("ok");        // 理论上到不了（不传码不会 ok）—— 到了就是后端坏了，如实显示
+        setDpNote(r.message);
+      }
+    } catch (e) {
+      setDpOutcome("stopped");
+      setDpNote(`这段配对码没用上：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDpBusy(false);
+    }
+  };
+  /** ③ 采纳：**必须**带上人核对过的那一串 ⇒ 对不上 ⇒ 后端 `rejected`（零写入）✓ */
+  const dpAccept = async () => {
+    if (!activeId || !dpCode.trim()) return;
+    setDpBusy(true);
+    try {
+      const r = await api.devicePairImport({ space_id: activeId, text: dpText.trim(), confirmed_check_code: dpCode.trim() });
+      if (r.outcome === "ok") {
+        setDpOutcome("ok");       // 文案红线：成功**只许说「已配对」** ✓
+        setDpPreview("");
+        setDpNote(r.message);
+        setStatus("已配对");
+      } else {
+        setDpOutcome("stopped");  // ⛔ 对不上 ⇒ 停，而且**不显示继续按钮** ✓
+        setDpNote(r.message);
+      }
+    } catch (e) {
+      setDpOutcome("stopped");
+      setDpNote(`没有采纳：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDpBusy(false);
     }
   };
   const disableMesh = async () => {
@@ -1808,6 +1884,71 @@ export function SyncPanel() {
                             <span>（这期间这里写「正在找…」）</span>
                           </div>
                         )}
+                        {/* ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：两个入口两个名字 ✓
+                            这一块搬的**不是钥匙袋**（那是设置里「换设备」的活 ✓），而是**接线**：
+                            绑哪个地址 ＋ 带什么口令 ⇒ 所以名字必须**说清是接线** ✓。
+                            ⚠️ 三步两态：生成 → 人读码核对 → 采纳；**对不上就停在"停"态**，
+                               而那一态里**没有继续入口** ✗（判据钉着 —— 见下面 `dpOutcome !== "stopped"` ✓）。
+                            ⚠️ 文案红线：块内**不出现裸 id／裸 IP**（地址来自读数原样显示 ✓）；
+                               ⛔ 不出现「已确认／已验证」这类**判定语** ✗（判据 `syncPanelMesh.wiring.test.ts` ⑩ 扫得到这一屏 ⇒ ⚠️ **反例本身也不许原样写进来**，实测踩到 ✓）；成功**只许说「已配对」** ✓。 */}
+                        <div className="sync-nearby" data-testid="device-pair">
+                          <div className="sync-hint">
+                            【要点】**把这台设备接进来**：把**这台**的接线（地址 ＋ 窗口口令）交给对方那台。
+                            ⚠️ 它**含窗口口令** ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
+                          </div>
+                          <button className="sync-btn" disabled={dpBusy} onClick={() => void dpGenerate()}>
+                            生成投放码
+                          </button>
+                          {dpExport && dpExport.outcome === "ok" && (
+                            <div className="sync-hint">
+                              <div>比对码（**一次性**）：<b data-testid="dp-own-code">{dpExport.check_code}</b></div>
+                              <div style={{ wordBreak: "break-all" }} data-testid="dp-text">{dpExport.text}</div>
+                              <div>对端收下后，请**当面核对两边的比对码**：一样才继续 ✓。</div>
+                            </div>
+                          )}
+                          {dpExport && dpExport.outcome === "not_configured" && (
+                            <div className="sync-hint">{dpExport.message}</div>
+                          )}
+                          <div className="sync-hint">—— 或者，**采纳对方给来的码** ——</div>
+                          <input
+                            className="sync-input"
+                            placeholder="把对方那段码粘到这里"
+                            value={dpText}
+                            disabled={dpBusy || dpOutcome === "stopped"}
+                            onChange={(e) => { setDpText(e.target.value); setDpPreview(""); setDpOutcome("idle"); }}
+                          />
+                          {/* ⛔ **停态里没有"继续"** ✗ —— 这是 `U3` 的界面半边（矩阵 U3 的注入点就在这）✓ */}
+                          {dpOutcome === "stopped" ? (
+                            <div className="sync-hint" data-testid="dp-stopped">
+                              【禁】**停下了**：两边的码对不上 ⇒ 不采纳、本机一个字节都没改。
+                              请回到给出这段码的那台设备上重新核对，然后**重新粘一次**（对不上时这里不给继续的入口）。
+                            </div>
+                          ) : (
+                            <>
+                              <button className="sync-btn" disabled={dpBusy || !dpText.trim()} onClick={() => void dpPreviewImport()}>
+                                先看比对码
+                              </button>
+                              {dpPreview && (
+                                <div className="sync-hint">
+                                  <div>这边算出来是：<b data-testid="dp-computed-code">{dpPreview}</b></div>
+                                  <div>与对方那台上显示的**逐位相同**才继续；不一样**千万别继续** ✗。</div>
+                                  <input
+                                    className="sync-input"
+                                    placeholder="把核对过的比对码填回来"
+                                    value={dpCode}
+                                    disabled={dpBusy}
+                                    onChange={(e) => setDpCode(e.target.value)}
+                                  />
+                                  <button className="sync-btn" disabled={dpBusy || !dpCode.trim()} onClick={() => void dpAccept()}>
+                                    我核对过了，采纳
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {dpOutcome === "ok" && <div className="sync-hint" data-testid="dp-ok">**已配对** ✓</div>}
+                          {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
+                        </div>
                       </div>
                     </div>
                   </details>
