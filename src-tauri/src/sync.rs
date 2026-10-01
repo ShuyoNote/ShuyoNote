@@ -2329,7 +2329,7 @@ pub fn device_pair_import(
         DevicePairDecision::NeedConfirm { computed, bind } => {
             // ⚠️ 文案**先取好**再移动（与 `pairing_export` 那句"长度要在移动之前取好"同一条纪律 ✓）。
             let message = format!(
-                "对方这台要接到：**{bind}**。\n\
+                "对方那台会按 **{bind}** 开它自己的窗口（主机部分是通配 ⇒ 听它自己的所有网卡 ✓）。\n\
                  ⚠️ **先当面核对比对码**：这里算出来是 `{computed}` —— 和给出这段码的那台设备上\
                  显示的一串**逐位相同**才继续 ✓。\n\
                  ⇒ 相同就把这一串填回来（界面上的「我核对过了」那一步）；**不一样千万别继续** ✗。"
@@ -2371,7 +2371,7 @@ pub fn device_pair_import(
         check_code: computed,
         bind: bind.clone(),
         message: format!(
-            "**已配对** ✓ —— 这台设备现在按 `{}` 连它。\n\
+            "**已配对** ✓ —— 这台设备现在会按 `{}` 开自己的窗口；对端的地址由「附近的设备」自动发现 ✓。\n\
              ⚠️ 两台要在**同一个网络**里才连得上；连不上先看 `docs/troubleshooting-nearby-devices.md` ✓。",
             bind
         ),

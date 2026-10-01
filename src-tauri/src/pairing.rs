@@ -53,7 +53,10 @@ pub const DEVICE_PAIR_VERSION: u32 = 1;
 pub struct DevicePairPayload {
     /// 线版本（[`DEVICE_PAIR_VERSION`]）。
     pub v: u32,
-    /// 第一台设备的**绑定写法**（如 `0.0.0.0:8788` ／ `192.168.1.5:8788`）—— 照抄即可 ✓。
+    /// ⚠️ **可抄的那一份绑定写法** —— ⛔ **不是导出方自己的地址** ✗（理由见下面 `copyable_bind` ✓）。
+    ///
+    /// 语义＝「**你按这个开你自己的窗口**」；主机部分**恒为通配** ⇒ **与谁抄无关** ✓。
+    /// ⚠️ **对端的地址不在这段里** —— 那是**发现层**给的（公告里的 `hub_base` ✓）。
     pub bind: String,
     /// 第一台设备的**窗口口令**（对端要带的那一串）✓ —— ⚠️ 它是"进这个窗口"的凭据，
     /// ⛔ **不是空间钥匙** ✗（拿到它也解不开加密空间 ✓）。
@@ -61,6 +64,22 @@ pub struct DevicePairPayload {
     /// 源设备的**身份指纹**。空是合法的（同 [`PairingPayload::fp`]）。
     #[serde(default)]
     pub fp: String,
+}
+
+/// ⭐ **把「我这台的绑定写法」折成「对方可以照抄」的那一份**（2026-10-01 修：owner 追问抓到的**真错** ✓）。
+///
+/// ⛔ **原样搬是错的** ✗：导出方填的可能是**具体地址**（如 `192.168.1.5:8788`）——
+/// 那是**那台机器**的地址；抄到对方那台 ⇒ 对方要绑**别人的 IP** ⇒ **绑不上或绑错** ✓。
+/// ✅ **主机部分一律换成通配**（`0.0.0.0:` ／ `[::]:` ＋**同一个端口**）：
+/// 通配的语义是「听**我自己**的所有网卡」⇒ **与谁抄无关** ✓（VL-2／D1 已放行通配 ✓）。
+///
+/// ⚠️ **端口要留着** ✓：两台听同一个端口是常态（也省得用户各自再填一遍）；
+/// ⛔ 而**对端的地址不靠这一段** ✗ —— 那是**发现层**给的（UDP 公告里的 `hub_base` ✓），
+/// 所以"用户只需核对一串码"是真的：**地址根本不用他填对** ✓。
+fn copyable_bind(bind: &str) -> Result<String, String> {
+    let addr = crate::mesh::checked_bind(bind)?;
+    let host = if addr.is_ipv6() { "[::]" } else { "0.0.0.0" };
+    Ok(format!("{host}:{}", addr.port()))
 }
 
 /// 产出侧：从"接线三样"造设备直连载荷。
@@ -84,7 +103,9 @@ pub fn device_pair_from(bind: &str, token: &str, fp: &str) -> Result<DevicePairP
              ⇒ 请在「同步」面板换一个**至少 8 个字符**、**不是纯数字**的口令，再重来 ✓。"
         ));
     }
-    Ok(DevicePairPayload { v: DEVICE_PAIR_VERSION, bind: bind.to_string(), token: token.to_string(), fp: fp.to_string() })
+    // ⚠️ **必须是 `copyable_bind`**（⛔ 不是 `bind.to_string()` ✗）—— 见它的理由 ✓。
+    let bind = copyable_bind(bind)?;
+    Ok(DevicePairPayload { v: DEVICE_PAIR_VERSION, bind, token: token.to_string(), fp: fp.to_string() })
 }
 
 /// 编码成一段文本（紧凑 JSON）。同 `encode_payload`：⛔ 不许静默变空 ✗。
@@ -697,5 +718,24 @@ mod tests {
         // ⚠️ 而**核对码**对设备直连载荷同样有效（复用同一条 `check_code` ⇒ 码长不缩 ✓）
         assert!(verify_confirm_code(&a, Some(&check_code(&a))).is_ok(), "核对了就要过");
         assert!(verify_confirm_code(&a, Some(&check_code(&b))).is_err(), "对不上就要拒");
+    }
+
+    /// ⭐ **2026-10-01 修的真错**（owner 追问「监听地址不是自动配的吗、还会错？」抓到的 ✓）：
+    /// 载荷里搬的**必须是"对方可以照抄"的那一份** ——
+    /// ⛔ **不许把导出方自己的地址原样搬** ✗（那是**那台机器**的地址；对方要绑的是**别人的 IP**）。
+    ///
+    /// **变异**：把 `copyable_bind(bind)?` 改回 `bind.to_string()` ⇒ 本测试**必须红** ✓。
+    #[test]
+    fn a_device_pair_payload_carries_a_copyable_bind_not_the_exporters_address() {
+        // ① 具体地址 ⇒ 载荷里是**通配 ＋ 同一个端口**（⛔ 不是原样搬 ✗）
+        let p = device_pair_from("192.168.1.5:8788", "k7Qm-2pRt", "fp-a").unwrap();
+        assert_eq!(p.bind, "0.0.0.0:8788", "具体地址不许原样搬（对方绑不了别人的 IP）");
+        // ② 端口要**留着**（不是一律换成 8788）
+        assert_eq!(device_pair_from("10.0.0.7:12345", "k7Qm-2pRt", "f").unwrap().bind, "0.0.0.0:12345");
+        // ③ 本来就是通配 ⇒ 原样（端口不变）
+        assert_eq!(device_pair_from("0.0.0.0:9999", "k7Qm-2pRt", "f").unwrap().bind, "0.0.0.0:9999");
+        // ④ ⚠️ 而「公网地址仍然拒」这一半**照样在**（`checked_bind` 把关 ⇒ 折通配**没放宽**边界 ✓）
+        assert!(device_pair_from("8.8.8.8:8788", "k7Qm-2pRt", "f").is_err(), "公网仍然拒");
+        assert!(device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f").is_ok(), "回环（本机自测）仍可用");
     }
 }
