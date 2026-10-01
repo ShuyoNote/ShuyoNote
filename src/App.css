@@ -7067,6 +7067,34 @@ select.prop-value {
   margin: 0.4em 0 0.15em;
 }
 
+/* owner 2026-10-01：**标题的上留空要比下留空大一点**。
+   ⚠️ 老坑第三处（与 `.editor-quote` 同源）：上面 `.editor-h1/h2/h3` 自己写的**本来就是上大下小**
+   （0.5／0.45／0.4em 上，0.2／0.2／0.15em 下），但被靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { margin: 0.6em 0 }`，特异性 **0,1,1**）压成了
+   **上下相等** ✗ ⇒ 视觉上"标题上面挤、贴着上一段"。
+   这里用更高特异性把上大下小要回来，并把上留空**再放大一档** ✓。
+   ⛔ 仍然**不改**通用那条 ⇒ 段落与注释块不受影响（注释块有自己的 `.editor-quote` 那条 ✓）。
+   ⚠️ h4–h6 不在通用那条的名单里（所以它们本来就没被压），这里一并给同一比例，
+      免得四级标题与三级标题的间距看起来是两个体系 ✓。 */
+.editor-content h1.editor-h1 {
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+}
+.editor-content h2.editor-h2 {
+  margin-top: 0.9em;
+  margin-bottom: 0.25em;
+}
+.editor-content h3.editor-h3 {
+  margin-top: 0.8em;
+  margin-bottom: 0.2em;
+}
+.editor-content h4,
+.editor-content h5,
+.editor-content h6 {
+  margin-top: 0.7em;
+  margin-bottom: 0.18em;
+}
+
 .editor-quote {
   border-left: 3px solid var(--border-strong);
   padding-left: 14px;
