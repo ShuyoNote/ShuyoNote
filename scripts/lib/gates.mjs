@@ -211,6 +211,23 @@ export const GATES = [
     registered: "2026-09-30",
   },
   {
+    id: "check-mcp-host-channel",
+    group: "contract",
+    label: "MCP 宿主面那半通道：默认关 ＋ 只绑回环 ＋ token 从文件读 ＋ Origin/Host 恰好回环 ＋ 必须走唯一入口",
+    cmd: "node scripts/check-mcp-host-channel.mjs",
+    // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
+    //   通道文件（`src-tauri/src/mcp_channel.rs`）还没写 ⇒ 本条现在没有可检查对象。
+    //   跳过 ≠ 通过：要看那次"红"就加 `--require-channel`（⇒ exit 2，逐字含「通道文件不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 宿主面通道（src-tauri/src/mcp_channel.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；通道落地后本条立即有对象",
+    incident:
+      "2026-10-01：owner 裁定通道方向＝**② 桥 → App（App 当服务端）**（Task 5 笔记 §8）⇒ 监听这一侧从桥搬到了 App。" +
+      "而 `INV-MCP-channel-guarded` 的三件套（默认关／per-session token／Origin·Host 恰好回环）原来**只有桥那半**有判据 ✗ ⇒" +
+      "「外面那台机器校验过了」会变成唯一的一道门 ✗ —— 门要在**被调用方**这里才作数。" +
+      "`Origin`/`Host` 那条尤其有先例：docs/SECURITY.md 低危项逐字「CORS 前缀匹配放过 http://127.0.0.1.evil.com」⇒ 前缀写法直接判红 ✓。" +
+      "另加第⑤条：通道**必须**调 `handle_external_call` 且**不许**直接调 `dispatch_capability`（否则绕过「外部会话」来源 ⇒ 审计里看不出是谁读的 ✓）。",
+    registered: "2026-10-01",
+  },
+  {
     id: "check-mcp-audit-single-ledger",
     group: "contract",
     label: "审计只有一本账（PLUGIN_AUDIT）且能力调用成功/失败都留痕；宿主面不许自建环",

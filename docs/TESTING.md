@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 73 条（contract 48 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 259 / web 251 / CommandMap 261
+门禁 74 条（contract 49 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 259 / web 251 / CommandMap 261
 基线下限（与 tests/baseline.json 逐字一致，共 13 条）check-mcp-audit-single-ledger 4 · check-search-platform-parity 4 · vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -122,6 +122,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | rust | `gm-registry-clean` | ★ **补丁残留在全机共享 registry 上**（AMD 2026-09-22 落地；方案 §五 里唯一归属他的那一行）。`sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的**新**静默态）⇒ "跑过一次国密构建、忘了 `--revert`"会把这台机器留在**看不见的状态**里：**macOS 上后续默认构建红 12＋7 条，而现场长得像加密库坏了**；Linux/Windows 上不红，但后续默认构建被**静默**改成写 SM4 页。三档判定：原版 / 本次就是 `sm-library` 构建 ⇒ `ok`；带补丁 ∧ 非 darwin ⇒ **`notice`（不判红，但说清会被静默改页加密）**；带补丁 ∧ darwin 默认构建 ⇒ **`block`（exit 1 ＋ 给出 `--revert` 那一行）**；**读不出来**（没跑过 cargo / 拿不到 `Cargo.lock`）⇒ `notice`（与 `check-crypto-backend` 的「旧产物 ⇒ 未实查」同口径）。⚠️ **macOS 上刚跑完国密构建还没 `--revert` 时它会红 —— 这是刻意的**（判据替你记住那件事）。它**只读**（连调 3 次 CLI，源码 SM3 命中恒为 50）；13 条判据 ＋ 变异 2 条。<br>★ **2026-09-25 加第二处残渣**：`src-tauri/Cargo.lock` 里 `libsqlite3-sys` 那条**丢了 `source` ＋ `checksum`**（`--prepare` 时 cargo 拿私有 `[patch.crates-io]` 重解析会删掉这两行，而 `--revert` **不还原锁**）⇒ 默认构建下 **`block`**（`exit 1` ＋ 给出 `git checkout -- src-tauri/Cargo.lock`），`--feature-sm-library` 语境下只 `notice`（那份锁本来该长这样，但**别提交**）。⚠️ 后果不是"看着脏"：这种锁一旦提交，**别人机器上**任何 `--locked` 构建会立刻红，现场像"依赖解析坏了"。**机制是实测的**（不是推的）：跑 `--prepare` 后 `git diff src-tauri/Cargo.lock` 逐字就是删掉那两行；两处残渣**取更重的一档**；判据 **23 条** |
 | `check-mcp-host-authz` | contract | MCP 宿主面必须经**同一处**权限校验（不许第二条鉴权路径）；宿主面未建 ⇒ 绿＋自报跳过 |
 | `check-mcp-channel-judge` | contract | MCP 桥的本机通道：默认关 ＋ token ＋ `Origin`/`Host`（坏 Origin 含**前缀陷阱值**／错 token 必被拒） |
+| `check-mcp-host-channel` | contract | **宿主面那半**通道（方向②：桥→App）：默认关／只绑回环／token 从文件读／`Origin`·`Host` **恰好回环**（前缀写法判红）／必须走唯一入口 `handle_external_call`；通道未建 ⇒ 绿＋自报跳过 |
 | `check-mcp-bridge-dumb` | contract | MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态 |
 | `check-mcp-audit-single-ledger` | contract | 审计只有一本账（`PLUGIN_AUDIT`）且能力调用成功/失败都留痕；宿主面不许自建环 |
 | `check-search-platform-parity` | contract | 桌面专属检索能力（FTS/BM25 只在桌面、Web 走 LIKE）必须写进 app 侧文档 |

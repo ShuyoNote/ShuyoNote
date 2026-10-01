@@ -60,6 +60,7 @@
       "check-search-platform-parity",
       "check-mcp-audit-single-ledger",
       "check-mcp-channel-judge",
+      "check-mcp-host-channel",
       "check-mcp-bridge-dumb",
       "check-kb-s1-search",
       "check-kb-s1-search-parity",
