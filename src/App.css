@@ -419,8 +419,8 @@ html[data-platform="win"] .app-body {
 }
 /* 手机那条工具栏上，命中区按 44px 走 ✓（`.is-mobile` 时图标仍是 16px，靠内边距撑命中区 ✓）。 */
 .top-tools.is-mobile .top-tool {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
 }
 .top-tool:hover {
   background: var(--hover-strong);

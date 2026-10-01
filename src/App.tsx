@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
@@ -1051,6 +1052,10 @@ function AppShell() {
     <div className="app">
       <TitleBar />
       <UpdateBanner />
+      {/* ⚠️ 2026-10-01（owner 界面方向之①）：入口搬到**顶端工具栏** ✓ —— 但 `TitleBar`
+          **只在桌面平台渲染**（Web 里 return null ✗）⇒ Web 与手机必须**自己渲染一处** ✓，
+          否则 Web 用户会丢掉全部四个入口 ✓（这是判据实测到的：桌面四颗＝0 颗 ✗）。 */}
+      {(!isDesktopPlatform() || isMobile) && <TopTools className={isMobile ? "is-mobile" : "is-web"} />}
       {/* ⚠️ 2026-10-01（owner 界面方向之①）：**手机上标题栏不渲染**（`TitleBar` 非桌面 return null ✓），
           而 owner 要求两端都有这条顶端工具栏 ✓ ⇒ 这里给手机渲染一行，用的是**同一个组件** ✓。
           桌面那一份在 `TitleBar` 里 ✓（⛔ 两处各写一份 = 两份真相源 ✗）。 */}
