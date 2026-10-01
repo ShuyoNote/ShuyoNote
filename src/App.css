@@ -7075,14 +7075,22 @@ select.prop-value {
   background: transparent;
 }
 
-/* ⚠️ 上面 `padding-left: 14px` 一直**没生效**：本文件靠前那组「Inline-formatting blocks」
-   （`.editor-content p, h1, h2, h3, blockquote { padding: 2px 4px }`）是**简写**，
-   且特异性更高（0,1,1 > 0,1,0）⇒ 把 `padding-left` 一起定成 4px，竖线紧贴文字。
-   owner 2026-10-01 反馈「注释块的文字前面留点空，现在太挤了」。
-   做法：给**同一元素**加一条更高特异性的规则把它赢回来。
-   ⛔ 不改通用的那条 ⇒ 段落 / 标题的留白不受影响。 */
+/* owner 2026-10-01：「注释块的文字前面留点空」＋「上下留空大一点」。
+   ⚠️ 同一个坑（两条都在这里一次说清）：靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { padding: 2px 4px; margin: 0.6em 0 }`）
+   是**简写**且特异性更高（0,1,1 > 0,1,0）⇒ 它会把 `.editor-quote` 自己的
+   `padding-left: 14px` 与 `margin: 0.4em 0` **一起**压掉（实际左内边距只有 4px、上下只有 2px/0.6em）。
+   所以这里用**同一元素、更高特异性**把四个方向的留白一次给足：
+     · 左 14px ⇒ 竖线不再贴字 ✓
+     · 上下 padding 6px ⇒ **竖线在文字上下各多出一截**（这就是"注释块"该有的呼吸感 ✓）
+     · 上下 margin 1em ⇒ 与前后块之间也拉开 ✓
+   ⛔ 仍然**不改**通用那条 ⇒ 段落 / 标题的留白不受影响 ✓。 */
 .editor-content blockquote.editor-quote {
   padding-left: 14px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-top: 1em;
+  margin-bottom: 1em;
 }
 
 .editor-callout {
