@@ -152,6 +152,8 @@ CHANGELOG.md                     # 版本变更日志
 | [specs/2026-09-28-knowledge-and-agent-access-requirements.md](specs/2026-09-28-knowledge-and-agent-access-requirements.md) | **需求（四者合一）**：RAG · LLM Wiki · Ontology · MCP —— 原话 8 条逐字 ＋ 读数 13 条 ＋ 要什么 10 条 ＋ 不要什么 8 条 ＋ 边界 6 条；**个人空间一分内容不出本机，团队空间按已声明口径** ✓ |
 | [specs/2026-09-29-crdt-mixed-version-degradation.md](specs/2026-09-29-crdt-mixed-version-degradation.md) | **CRDT 混版本共存与降级策略**（阶段 2 前置③）：权威落盘形态／降级矩阵／两侧分工／`INV-CRDT-*`（含未决两条照实写 ✗） |
 | [specs/2026-09-28-knowledge-and-agent-access-spec.md](specs/2026-09-28-knowledge-and-agent-access-spec.md) | **规格**：`INV-KB-*` 十条（本体是生成物／改了就升版本／只读面 0 条写能力／工具描述不泄内部／按空间分档／审计分主体／同一套语义／皆派生物／回链与标脏／锁定大声失败）；⚠️ **今天"能跑"的是 0 条**，如实标 `待立` ✓ |
+| [specs/2026-10-01-enterprise-im-requirements.md](specs/2026-10-01-enterprise-im-requirements.md) | **需求：企业版 IM（「长在空间与笔记上的讨论」）** —— 原话 3 条 ＋ 现状读数（服务端 9 条协作路由／客户端讨论面 298 行）＋ 要什么 7 条（M1–M7）＋ **不要什么 8 条**（W1–W8）＋ 边界与 `[无依据]` ＋ **明写"合规/定价不进本仓"** ✓ |
+| [specs/2026-10-01-enterprise-im-spec.md](specs/2026-10-01-enterprise-im-spec.md) | **规格：讨论的 `INV-IM-*` 十二条**（空间是唯一边界／只在团队空间／不许好友关系／顺序由服务端分配／在线含空间维度／线程恰好两层／未读按线／权限回收彻底／删除留痕／讨论可变成知识／推送不带正文／离线不说谎）；⚠️ **今天"能跑"的是 0 条**，如实标 `待立`，并写明起手三手 ✓ |
 | [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓的门禁只有一部分入层**（其余：缺可跑性 / 平台绑定造不出夹具）。⚠️ **计数别写死，见本表后的命令** |
 | [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 都带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**）；当前条数见下表后的命令 |
 
@@ -296,6 +298,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-30-feasibility-of-requirement-metrics.md](plans/2026-09-30-feasibility-of-requirement-metrics.md) | ⭐ **最终需求各项指标的技术可行性评估** —— 四档（A/B/C/D）逐条；汇总 **A 8 ／ B 19 ／ C 8 ／ D 1**；★ 并点出**最该先补的一件（测单写者吞吐）** |
 | [plans/2026-09-30-single-writer-throughput.md](plans/2026-09-30-single-writer-throughput.md) | ⭐ **单写者吞吐【实测】** —— 回答了 **P5（3 万变更/秒）能不能到**：**看前提（每次 push 携带多少变更）**；瓶颈＝**每次提交的固定成本** |
 | [plans/2026-09-30-debounce-removal-cost.md](plans/2026-09-30-debounce-removal-cost.md) | ⭐ **撕防抖的代价（`DEC-3` 的「先量」）** —— 今天 **6 次/分** ⇒ 撕后 **254**（一般）/ **901**（猛打）；⚠️ **而最重的是：版本历史会失效** |
+| [plans/2026-10-01-enterprise-im-approach.md](plans/2026-10-01-enterprise-im-approach.md) | **企业版 IM（「长在空间与笔记上的讨论」）技术路线与架构**：复用／改造／全新三档逐条指 `file:line`；七条关键决策各写「为什么不选另一条」；四期路线（判据先行 → 线程 → 频道与未读游标 → 实时与沉淀）＋ ⛔ 移动端离线推送单独立项。⚠️ 本方案**没有一行产品代码落地**，规格里 12 条不变式**全部待立** |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
