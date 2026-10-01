@@ -1759,6 +1759,53 @@ mod tests {
         crate::mesh::stop_window("space-x").unwrap();
     }
 
+    /// ⭐ **`?space_id=` 这条边界的细活**（2026-10-01 立；U8「一窗多空间」落地前先钉住 ✓）：
+    ///
+    /// ① ⛔ **不在服务范围里 ⇒ 403，而且 body 里【一条记录都不许有】** ——
+    ///    上面那条只钉了**状态码** ✓；真正危险的是「**先漏后拒**」（把记录吐出去再回 403）✗。
+    /// ② ⚠️ **省略 `?space_id=` ⇒ 今天照样服务**（窗口只服务一个空间时无从歧义 ✓）——
+    ///    这条**故意钉住** ✓：U8 之后「服务多个空间」时它**必须变成显式决定**
+    ///    （要么要求带参数、要么说不清就拒）；⛔ 不许「顺手」让它继续等于「随便挑一个空间服务」✗。
+    ///    ⇒ 将来 U8 改到这里时，**本测试会红**，而那次红就是「请显式决定」的信号 ✓。
+    ///
+    /// **变异**：把 `handle_pull` 的 403 放宽成「任何 `space_id` 都收」
+    /// （U8 最容易犯的错：写成「窗口里有任意一个空间匹配就放行」）⇒ ① 必须红 ✓。
+    #[tokio::test]
+    async fn the_space_id_gate_refuses_by_default_and_never_leaks_before_refusing() {
+        let dir = temp_dir("mesh-space-gate");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+            c.execute_batch("CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
+            let mut pg = page("p-secret", "只该给 space-x 看的内容", 1_000);
+            pg.workspace_id = "default".to_string();
+            local_edit(&c, &pg);
+        }
+        let win = open_window_at("default", "space-x", "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+            .expect("窗口应当起得来");
+
+        // ① 别的空间 ⇒ 403，**且一个字节的记录都不许出现在 body 里**
+        let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-y&since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 403, "别的空间必须被拒：{body}");
+        assert!(
+            !body.contains("p-secret") && !body.contains("只该给 space-x 看的内容"),
+            "⛔ **先漏后拒**：403 的响应里不许带任何记录（这是最坏的一种坏法）：{body}"
+        );
+
+        // ② ⚠️ 省略 `?space_id=` ⇒ **今天**仍然服务（U8 必须显式决定它变成什么 —— 见上面的注释）
+        let (code, body) = http_get(win.addr(), "/mesh/pull?since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 200, "今天省略参数仍然服务（U8 会改动这里 ⇒ 那次改动必须是显式的）：{body}");
+        assert!(body.contains("p-secret"), "省略参数时服务的仍是那一个空间：{body}");
+
+        // ③ 而本空间带参数 ⇒ 正常 ✓（别把闸门做成「谁都不给」）
+        let (code, _) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0&limit=100", Some("lan-token"));
+        assert_eq!(code, 200, "本空间必须放行");
+
+        crate::mesh::stop_window("space-x").unwrap();
+    }
+
     /// 判据自己的临时目录（同一个进程里多次调用不许撞车 —— 用计数器，不用时间）。
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
