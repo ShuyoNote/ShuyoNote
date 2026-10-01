@@ -741,6 +741,11 @@ pub fn run() {
             // （理由写在 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS` 里）。
             sync::pairing_export,
             sync::pairing_import,
+            // ⭐ T3（2026-10-01）：**设备直连配对**两条 —— 与上面那两条**不是同一件事** ✓
+            // （上面搬钥匙袋公开材料；这两条搬"接到哪台设备"：地址 ＋ 窗口口令 ✓）。
+            // ⚠️ 载荷**含窗口口令** ⇒ 也是桌面专属（Web 侧没有发现层与窗口 ✓）。
+            sync::device_pair_export,
+            sync::device_pair_import,
             sync::list_sync_history,
             sync::clear_sync_history,
             sync::team_list_orgs,

@@ -422,6 +422,34 @@ export interface CommunityTaxonomy {
  * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
  * 不引任何密码学实现**；防"换码"靠**比对码** —— 所以 `check_code` 必须显示给人看。
  */
+/** ⭐ T3（2026-10-01）：**设备直连**产出侧读数（`device_pair_export`）。 */
+export interface DevicePairExportOutcome {
+  /** `not_configured` ＝ 这一档没开（没填地址或没设口令）⇒ 没有东西可以配对过去。 */
+  outcome: "ok" | "not_configured";
+  /** 载荷原文（紧凑 JSON）。⚠️ **含窗口口令** —— ⛔ 不是可以随便转发的公开材料 ✗。 */
+  text: string;
+  /** **比对码**：另一端算出来的必须与这个逐位相同才继续。 */
+  check_code: string;
+  /** 这台设备的绑定写法（对端会照它连）。 */
+  bind: string;
+  bytes: number;
+  qr_fits: boolean;
+  qr_svg: string | null;
+  message: string;
+}
+
+/** ⭐ T3：**设备直连**采纳侧读数（`device_pair_import`）。 */
+export interface DevicePairImportOutcome {
+  /**
+   * ⚠️ **三态**（这条命令的核心）：`need_confirm` ＝ 还没拿到人核对过的码 ⇒ **一个字节都没写**；
+   * `rejected` ＝ 传了但对不上 ⇒ 同样零写入；`ok` ＝ 逐位相同 ⇒ 这时才写接线。
+   */
+  outcome: "ok" | "need_confirm" | "rejected";
+  check_code: string;
+  bind: string;
+  message: string;
+}
+
 export interface PairingExportOutcome {
   outcome: "ok" | "no_material";
   /** 配对载荷原文（紧凑 JSON）。`no_material` 时是空串。**不是秘密**，但要只交给自己那台设备。 */
@@ -588,6 +616,25 @@ export interface CommandMap {
   pairing_export: {
     args: undefined;
     result: PairingExportOutcome;
+  };
+  // ⭐ T3（2026-10-01）：**设备直连配对** —— 与上面那两条不是同一件事（那两条搬钥匙袋）。
+  device_pair_export: {
+    args: {
+      /** ⚠️ **顶层参数** ⇒ 必须 camelCase（Tauri 按这个名转）✓；`args` 结构体里的字段才用 snake_case ✓。 */
+      spaceId: string;
+    };
+    result: DevicePairExportOutcome;
+  };
+  device_pair_import: {
+    args: {
+      args: {
+        space_id: string;
+        text: string;
+        /** ⚠️ **必填才有写入**：不传 ⇒ 只回 `check_code` 让人核对（零写入）；传了就必须逐位相同。 */
+        confirmed_check_code?: string;
+      };
+    };
+    result: DevicePairImportOutcome;
   };
   pairing_import: {
     args: {

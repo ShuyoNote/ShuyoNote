@@ -367,6 +367,21 @@ export const api = {
    */
   pairingImport: (args: { text: string; confirmed_check_code?: string; overwrite?: boolean }) =>
     invoke("pairing_import", { args }),
+  /**
+   * ⭐ T3（2026-10-01）：**设备直连**产出侧 —— 把「接到我这台」的接线（地址 ＋ 窗口口令）包成一段。
+   *
+   * ⚠️ **与 `pairingExport` 最要紧的差别**：那个载荷是**公开材料**（"不是秘密"），
+   * 而这个**含窗口口令** ⇒ ⛔ 不是可以随便转发的 ✗（拿到它能连上这个窗口）。
+   * ⚠️ 这一档没开（没填地址或没设口令）⇒ 回 `not_configured`，**不生成载荷**。
+   */
+  devicePairExport: (spaceId: string) => invoke("device_pair_export", { spaceId }),
+  /**
+   * ⭐ T3：**设备直连**采纳侧 —— 三态：不传码 ⇒ `need_confirm`（**零写入**，只回算出来的码给人核对）；
+   * 传了对不上 ⇒ `rejected`（零写入）；逐位相同 ⇒ `ok`，这时**才**写接线。
+   * ⚠️ **没有"等对方同意"这一步**（`INV-PER-pairing-needs-no-acceptance`）。
+   */
+  devicePairImport: (args: { space_id: string; text: string; confirmed_check_code?: string }) =>
+    invoke("device_pair_import", { args }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
