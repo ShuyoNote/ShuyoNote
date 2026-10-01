@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# 企业版 IM（「长在空间与笔记上的讨论」）· 高保真效果图（成套 4 张）
+# 企业版 IM（「长在空间与笔记上的讨论」）· 高保真效果图（成套 5 张）
 #
 # ⛔ 这是**目标形态**，不是产品截图 ✗ —— 规格与方案见：
 #   `docs/specs/2026-10-01-enterprise-im-requirements.md`（要什么／不要什么）
 #   `docs/specs/2026-10-01-enterprise-im-spec.md`（12 条不许破的规矩）
 #   `docs/plans/2026-10-01-enterprise-im-approach.md`（技术路线与架构）
-# ⚠️ **产品代码一行都没落地** —— 这四张图画的是 Phase 1–3 的**目标**（见方案 §5）。
+# ⚠️ **产品代码一行都没落地** —— 这五张图画的是 Phase 1–3 的**目标**（见方案 §5）。
 #
 # ⚠️ 字体与字形（沿用 `design/sync-panel/draw-sync-panel.py` 的同一套闸门，别重犯）：
 #   · PingFang.ttc 在 Pillow 下**打不开** ⇒ 用 Hiragino Sans GB.ttc **index=0**
@@ -151,15 +151,38 @@ class Sheet:
         self.d.line([x0, y, x1, y], fill=fill, width=w)
 
     # ── 模拟真界面：一扇 App 窗
-    def app(self, x, y, w, h, space="产品研发 · 团队空间", online="3 人在线"):
+    def app(self, x, y, w, h, space="产品研发 · 团队空间", online="3 人在线", tools=None):
+        """⭐ 顶端工具栏（owner 2026-10-01 的方向）：
+        ⛔ **去掉页面侧边工具条**（`RightRail.tsx` 那条「展开右侧工具」）✗ ⇒ 它的功能
+        （AI 助手／讨论·通知／目录／插件视图）**全部收入这一行** ✓
+        ⚠️ **个人空间没有「讨论」「通知」这两颗** ✓（`tools` 由调用方给，见 sheet5 的对照）"""
         self.card(x, y, w, h)
-        # 标题栏
+        # 标题栏（＝顶端工具栏）
         self.d.rounded_rectangle([x, y, x + w, y + 64], radius=14, fill=GREY)
         self.d.rectangle([x, y + 40, x + w, y + 64], fill=GREY)
         self.t(x + 24, y + 32, space, F_B, anchor="lm")
+        # 右侧：先排按钮，再排在线数
+        if tools:
+            tw = sum(self._tool_w(lbl, b) for lbl, a, b in tools) + 12 * (len(tools) - 1)
+            tx = x + w - 24 - self.d.textlength(online, font=F_S) - 28 - tw
+            for lbl, act, bad in tools:
+                tx += self._tool_btn(tx, y + 14, lbl, act, bad) + 12
         self.t(x + w - 24, y + 32, online, F_S, MUT, anchor="rm")
         self.rule(x, y + 64, x + w)
         return (x, y + 64)
+
+    def _tool_w(self, label, badge=0):
+        return self.d.textlength(label, font=F_XS) + 28 + (22 if badge else 0)
+
+    def _tool_btn(self, x, y, label, active=False, badge=0):
+        w = self._tool_w(label, badge)
+        self.d.rounded_rectangle([x, y, x + w, y + 36], radius=9,
+                                 fill=BLUE_BG if active else CARD,
+                                 outline=BLUE if active else LINE, width=2)
+        _emit(self.d, (x + 14, y + 18), label, F_XS, BLUE if active else INK, "lm")
+        if badge:
+            self.badge(x + w - 22, y + 6, badge, d0=20)
+        return w
 
     def sidebar(self, x, y, w, h, tree):
         self.d.rectangle([x, y, x + w, y + h], fill=(247, 248, 251))
@@ -188,7 +211,7 @@ def sheet1():
     """① 页级讨论：能回复某一条，恰好两层。"""
     s = Sheet("企业版 IM · 效果图 01", "页级讨论：讨论就长在这一页笔记旁边。回复只两层（回复的回复归到根）。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah)
+    s.app(ax, ay, aw, ah, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
         (0, "项目立项", False), (1, "会议纪要", True), (1, "需求草稿", False),
         (0, "技术方案", False), (1, "接口约定", False), (0, "发布检查", False)])
@@ -237,7 +260,7 @@ def sheet2():
     """② 空间级讨论线：多条线，各自未读独立。"""
     s = Sheet("企业版 IM · 效果图 02", "空间级讨论线：一个空间里多条线，每条线各自的未读数是准的。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah, space="产品研发 · 团队空间", online="3 人在线")
+    s.app(ax, ay, aw, ah, space="产品研发 · 团队空间", online="3 人在线", tools=[("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)])
     # 左列：讨论线清单
     lx, ly, lw = ax + 24, ay + 64 + 24, 560
     lh = ah - 64 - 48
@@ -289,7 +312,7 @@ def sheet3():
     """③ 通知与在线（@提醒），且在线按「人×空间」。"""
     s = Sheet("企业版 IM · 效果图 03", "通知与在线：@ 提醒、未读；在线按「谁 · 在哪个空间」算，不是笼统一个「在线」。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah, online="本空间 3 人 · 其他空间 2 人")
+    s.app(ax, ay, aw, ah, online="本空间 3 人 · 其他空间 2 人", tools=[("AI 助手", False, 0), ("讨论", False, 0), ("通知", True, 2), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
         (0, "项目立项", False), (1, "会议纪要", True), (0, "技术方案", False), (0, "发布检查", False)])
     s.note(ax + 260, ay + 64, 1000, ah - 64, "会议纪要 · 10-01",
@@ -340,7 +363,7 @@ def sheet4():
     """④ 讨论变成知识 + 说真话（不显示“已送达”）。"""
     s = Sheet("企业版 IM · 效果图 04", "讨论变成知识：一键把这段结论落成笔记；且界面不承诺我们做不到的事。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
-    s.app(ax, ay, aw, ah)
+    s.app(ax, ay, aw, ah, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
         (0, "项目立项", False), (1, "会议纪要", True), (0, "本期结论", True), (0, "发布检查", False)])
     # 左：一段讨论
@@ -393,11 +416,50 @@ def sheet4():
     return s.save("效果图-04-讨论落成笔记与说真话.png")
 
 
+def sheet5():
+    """⑤ 个人空间 vs 团队空间：顶栏按钮的差别（⭐ 个人空间没有「讨论」「通知」）。"""
+    s = Sheet("企业版 IM · 效果图 05",
+              "同一条顶栏，两种空间：个人空间没有「讨论」「通知」两颗按钮（团队空间才有）。")
+    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("通知", False, 2), ("目录", False, 0)]
+    SOLO = [("AI 助手", False, 0), ("目录", False, 0)]
+    w, h = 900, 660
+    lx, ly = 56, 230
+    s.app(lx, ly, w, h, space="产品研发 · 团队空间", online="3 人在线", tools=TEAM)
+    s.sidebar(lx, ly + 64, 240, h - 64, [(0, "项目立项", False), (1, "会议纪要", True), (0, "技术方案", False)])
+    s.t(lx + 264, ly + 90, "会议纪要 · 10-01", F_H)
+    s.t(lx + 264, ly + 148, "（笔记正文……）", F_S, MUT)
+    s.t(lx + 264, ly + 194, "在团队空间里，", F_S)
+    s.t(lx + 264, ly + 232, "顶栏有「讨论」和「通知」。", F_S)
+    s.chip(lx, ly + h + 22, "团队空间：有「讨论」「通知」", BLUE, BLUE_BG)
+    s.small(lx, ly + h + 66, "讨论挂在空间与页面上；通知是空间内的 @ 与回复。", MUT)
+    rx, ry = 1044, 230
+    s.app(rx, ry, w, h, space="我的空间 · 个人空间", online="仅本机", tools=SOLO)
+    s.sidebar(rx, ry + 64, 240, h - 64, [(0, "读书笔记", True), (1, "摘录", False), (0, "随笔", False)])
+    s.t(rx + 264, ry + 90, "读书笔记", F_H)
+    s.t(rx + 264, ry + 148, "（笔记正文……）", F_S, MUT)
+    s.t(rx + 264, ry + 194, "个人空间里：", F_S)
+    s.t(rx + 264, ry + 232, "顶栏没有「讨论」，也没有「通知」。", F_S)
+    s.card(rx + 264, ry + 292, w - 288, 190, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 288, ry + 314, "【注意】为什么个人空间没有它", F_S, AMBER)
+    s.small(rx + 288, ry + 352, "一个人没有第二个人可以讨论；", MUT)
+    s.small(rx + 288, ry + 384, "而且个人空间是端到端加密的 ——", MUT)
+    s.small(rx + 288, ry + 416, "服务端读不到正文，讨论也放不上去。", MUT)
+    s.chip(rx, ry + h + 22, "个人空间：只有「AI 助手」「目录」", GREEN, GREEN_BG)
+    s.small(rx, ry + h + 66, "AI 助手仍可用（接本机或内网端点）；目录仍可用。", MUT)
+    s.card(56, 1180, 1888, 130, edge=BLUE, fill=BLUE_BG, lw=2)
+    s.t(84, 1206, "【要点】侧边工具条撤掉之后，功能全在顶端这一行 ——", F_B, BLUE)
+    s.t(84, 1256, "「AI 助手」「讨论」「通知」「目录」四种；而个人空间只留「AI 助手」「目录」（讨论与通知本来就不该出现在那里）。", F_S)
+    s.chip(56, 1360 - 34, "【禁】侧边工具条不再存在（功能全在顶栏）", RED, RED_BG)
+    s.chip(560, 1360 - 34, "个人空间没有「讨论」「通知」", GREEN, GREEN_BG)
+    s.chip(960, 1360 - 34, "【禁】仍然没有会话列表／聊天窗", RED, RED_BG)
+    return s.save("效果图-05-个人空间与团队空间-顶栏对照.png")
+
+
 if __name__ == "__main__":
-    sheet1(); sheet2(); sheet3(); sheet4()
+    sheet1(); sheet2(); sheet3(); sheet4(); sheet5()
     if ALL_BAD:
         print("\n⛔ 有图缺字形 ⇒ 非零退出（⛔ 不许静默）")
         for name, bad in ALL_BAD:
             print("   · %s：%s" % (name, " ".join(bad)))
         raise SystemExit(1)
-    print("\n四张全部干净 ✓")
+    print("\n五张全部干净 ✓")
