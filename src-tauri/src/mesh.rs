@@ -429,7 +429,7 @@ pub fn set_mesh_bind(c: &Connection, space_id: &str, bind: Option<&str>) -> Resu
 /// ⚠️ 门槛写死 **8** 的理由（写下来免得后人来猜 ✓）：攻击面是**在线**的
 /// （口令在服务端逐次比对，不参与派生）⇒ 8 位随机口令已远超在线爆破的可行域 ✓；
 /// 而真正会造成事故的是"**6 位数字**"那一类 ✓ —— 它的搜索空间只有 10^6。
-fn weak_token_reason(t: &str) -> Option<&'static str> {
+pub(crate) fn weak_token_reason(t: &str) -> Option<&'static str> {
     if t.chars().count() < 8 {
         return Some("太短（少于 8 个字符）");
     }
