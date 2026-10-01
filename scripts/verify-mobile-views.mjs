@@ -1994,15 +1994,68 @@ async function main() {  const executablePath = findChrome();
           return { toggle: box(".about .ui-toggle"), swatch: box(".set-swatch") };
         });
       };
+      // ⚠️ 2026-10-01：竖条上那个「关于」按钮**已经拆掉**（owner 要求 ✓）⇒ 这里改走**真用户路径**：
+      //   设置 →「关于与更新」那一页 → 页内那个按钮（它内部是 `closeSettings(); openAbout();` ✓）。
+      //   ⛔ 刻意**不用** `useEditorStore.getState().openAbout()` 抄近路 ✗ —— 那等于绕过"界面上还进得去"这条
+      //   断言本身 ✓（而它正是这条断言的全部意义：**用户按得到** ✓）。
+      //   ⚠️ 文案会随状态变（有新版时那颗按钮叫「检查更新」✗、平时叫「关于与更新」✓）⇒ 匹配用**两种都收** ✓。
       const openAboutOrSettings = async (title) => {
         await openRail(page);
-        await page.evaluate((t) => {
+        const clicked = await page.evaluate((t) => {
           const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find(
             (x) => (x.getAttribute("title") || "") === t,
           );
-          if (b) b.click();
+          if (!b) return false;
+          b.click();
+          return true;
         }, title);
         await sleep(1500);
+        if (clicked || title !== "关于") {
+          // ⚠️ 设置会**记住上次那一页**（`tab` 存在 store 里 ✓）⇒ 走"竖条→设置"这条路时必须**显式点目标那一页** ✓，
+          //   否则会停在我上一轮点过的「关于」页 ⇒ 后面量色板那条会验不到 ✗
+          //   （2026-10-01 实测：拆按钮后这一条由绿转红，就是被这个"记忆"绊的 ✓）。
+          if (clicked && title === "设置") {
+            const tab = await safeEval(page, () => {
+              const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) =>
+                ((x.querySelector(".set-rail-label")?.textContent) || "").includes("外观"),
+              );
+              if (!item) return "没找到设置里的「外观」那一项";
+              item.click();
+              return "ok";
+            });
+            ok(tab === "ok", `设置里进得到「外观」那一页（${tab}）`);
+            await sleep(900);
+          }
+          return;
+        }
+        // 竖条上已经没有「关于」了 ⇒ 从**设置**进去（那个入口在 ✓）
+        await page.evaluate(() => {
+          const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find(
+            (x) => (x.getAttribute("title") || "") === "设置",
+          );
+          if (b) b.click();
+        });
+        await sleep(1200);
+        const tab = await safeEval(page, () => {
+          const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) =>
+            ((x.querySelector(".set-rail-label")?.textContent) || "").includes("关于"),
+          );
+          if (!item) return "没找到设置里的「关于」那一项";
+          item.click();
+          return "ok";
+        });        await sleep(1000);
+        const btn = await safeEval(page, () => {
+          const b = Array.from(document.querySelectorAll(".set-section .set-btn")).find((x) => {
+            const t = (x.textContent || "").trim();
+            return t.includes("关于") || t.includes("更新");
+          });
+          if (!b) return "没找到「关于」那一页里的按钮";
+          b.click();
+          return "ok";
+        });
+        await sleep(1200);
+        // 这一步失败要**自己说话** ✓（否则只会看到后面"外链清单为空"，看不出是哪一环断的 ✗）
+        ok(tab === "ok" && btn === "ok", `竖条上没有「关于」了 ⇒ 从**设置**也进得去（设置项=${tab}／页内按钮=${btn}）`);
       };
       await openAboutOrSettings("关于");
       // 「关于」里的外链清单（2026-09-22：加产品官网、去掉文档）——数据源在 `src/lib/links.ts`，
