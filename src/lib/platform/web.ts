@@ -9,6 +9,7 @@ import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScop
 import { applyRemoteCrdtState } from "../crdt/plane";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
+import { activityFeedOf, type ChangeRow } from "../activityBlocks";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
@@ -2218,6 +2219,22 @@ export function makeInvoke(store: SqliteStore) {
         }
       }
       return out as T;
+    }
+
+    // ---- S3 第三片：块级活动明细（**只读** ✓）----
+    //   与桌面 `activity::activity_feed` 同口径：读**本平台自己的** `changes` 表 ✓ ——
+    //   ⚠️ 序列列在这边叫 `id`（桌面叫 `seq` ✗，同一个表不同列名 ⇒ 这条 SELECT 里显式处理 ✓）；
+    //   块级差异全部交给 `activityBlocks.activityFeedOf`（与 `activity.rs` 逐条对应 ✓）。
+    if (cmd === "activity_feed") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      const days = Math.min(Math.max(Number(req.days ?? 30) || 30, 1), 365);
+      const lim = Math.min(Math.max(Number(req.limit ?? 300) || 300, 1), 2000);
+      const since = Date.now() - days * 86_400_000;
+      const rows = store.query<ChangeRow>(
+        "SELECT entity_id, op, payload, updated_at FROM changes WHERE entity = 'page' AND updated_at >= ? ORDER BY id ASC LIMIT ?",
+        [since, lim],
+      );
+      return activityFeedOf(rows) as T;
     }
 
     // ---- Graph (nodes from non-deleted pages) ----

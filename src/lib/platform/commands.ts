@@ -21,6 +21,7 @@
 // an import cycle with api.ts.
 
 import type {
+  ActivityEvent,
   AttachmentMeta,
   AttrDef,
   BlockBacklink,
@@ -935,6 +936,8 @@ export interface CommandMap {
   resolve_block: { args: { blockId: string }; result: BlockInfo };
   list_block_backlinks: { args: { pageId: string }; result: BlockBacklink[] };
   get_graph: { args: undefined; result: GraphData };
+  // S3 第三片：**块级活动明细**（只读 ✓）—— 桌面 `activity::activity_feed` ／ Web 侧 `activityBlocks.ts` 同口径 ✓
+  activity_feed: { args: { days?: number; limit?: number }; result: ActivityEvent[] };
 
   // ---- Attachments ----
   save_image: { args: { args: { page_id: string | null; name: string | null; mime: string; data: number[] } }; result: AttachmentMeta };

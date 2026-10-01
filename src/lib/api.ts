@@ -609,6 +609,8 @@ export const api = {
   listBlockBacklinks: (pageId: string) =>
     invoke("list_block_backlinks", { pageId }),
   getGraph: () => invoke("get_graph"),
+  // S3 第三片：只读活动明细（页面级 ＋ 块级 ✓）—— 桌面与 Web 同口径 ✓
+  activityFeed: (days?: number, limit?: number) => invoke("activity_feed", { days, limit }),
   listAttrDefs: () => invoke("list_attr_defs"),
   createAttr: (args: { name: string; attr_type: string; options?: string[] }) =>
     invoke("create_attr", { args }),

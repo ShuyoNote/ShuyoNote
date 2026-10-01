@@ -6,7 +6,7 @@
 //   ② **两种空态分得开**：「这个空间还没有页面」与「有页面、但这些天没有活动」对用户是两件事 ✓
 //      （与 `check-locked-loud` 同族：把两种"空"折成一句，用户就分不清是该建页面还是该翻旧账 ✓）；
 //   ③ **时间口径只有一处**：`TIMELINE_DAY_BUCKET` 是**唯一**的"哪一天"口径（`export` ⇒ 组件共用它 ✓）。
-import type { PageMeta } from "../types";
+import type { ActivityBlockChange, ActivityEvent, PageMeta } from "../types";
 
 /** 空态标识（**恰好两个互异** ✓ —— 判据靠"恰好两个不同的字符串"钉住"折成一个"这种坏法 ✓）。 */
 export const TIMELINE_STATES = ["no_pages", "no_recent_activity"] as const;
@@ -120,4 +120,44 @@ export function dayLabelOf(day: string, nowMs: number): DayLabel {
   if (day === TIMELINE_DAY_BUCKET(prev.getTime())) return { kind: "yesterday" };
   const parts = day.split("-");
   return { kind: "date", month: Number(parts[1] || 0), day: Number(parts[2] || 0) };
+}
+
+// ---------------------------------------------------------------------------
+// S3 第三片：块级明细挂到「页 ＋ 天」上 ✓（**纯函数** ⇒ 组件保持薄、这部分能被单测直接跑 ✓）
+// ---------------------------------------------------------------------------
+
+/** 一处块级变化的**汇总**（给界面看的那三个数 ✓）。 */
+export interface BlockSummary {
+  added: number;
+  edited: number;
+  removed: number;
+}
+
+export function blockSummaryOf(changes: readonly ActivityBlockChange[]): BlockSummary {
+  return {
+    added: changes.filter((c) => c.kind === "added").length,
+    edited: changes.filter((c) => c.kind === "edited").length,
+    removed: changes.filter((c) => c.kind === "removed").length,
+  };
+}
+
+/**
+ * 把活动明细按「**页 ＋ 天**」挂起来 ✓ —— 键是 `pageId@day`，`day` 由**唯一**那处口径算 ✓
+ * （`TIMELINE_DAY_BUCKET` ✓；参数化只是为了测试能固定"今天" ✓）。
+ *
+ * ⚠️ 同一页同一天改了几次 ⇒ 明细**并起来** ✓（不是后者覆盖前者 ✗ —— 那会少报改动 ✓）。
+ */
+export function blocksByPageDay(
+  events: readonly ActivityEvent[],
+  dayOf: (atMs: number) => string = TIMELINE_DAY_BUCKET,
+): Map<string, ActivityBlockChange[]> {
+  const out = new Map<string, ActivityBlockChange[]>();
+  for (const ev of events) {
+    if (!ev.changes || ev.changes.length === 0) continue;
+    const key = ev.pageId + "@" + dayOf(ev.atMs);
+    const list = out.get(key);
+    if (list) list.push(...ev.changes);
+    else out.set(key, [...ev.changes]);
+  }
+  return out;
 }

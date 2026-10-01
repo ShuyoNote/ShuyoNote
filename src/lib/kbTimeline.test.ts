@@ -9,6 +9,8 @@ import {
   TIMELINE_DAY_BUCKET,
   TIMELINE_STATES,
   TIMELINE_WINDOW_DAYS,
+  blocksByPageDay,
+  blockSummaryOf,
   buildTimeline,
   dayLabelOf,
   timelineStateOf,
@@ -154,5 +156,45 @@ describe("S3 · 活动明细（种类 ＋ 每日汇总）", () => {
       [TIMELINE_DAY_BUCKET(at(2026, 9, 30)), 1, 0],
       [TIMELINE_DAY_BUCKET(at(2026, 9, 29)), 0, 1],
     ]);
+  });
+});
+
+describe("S3 第三片 · 块级明细挂到「页 ＋ 天」", () => {
+  it("汇总就是三个数（新增／改过／删掉）", () => {
+    expect(
+      blockSummaryOf([
+        { blockId: "a", kind: "added" },
+        { blockId: "b", kind: "edited" },
+        { blockId: "c", kind: "added" },
+        { blockId: "d", kind: "removed" },
+      ]),
+    ).toEqual({ added: 2, edited: 1, removed: 1 });
+    expect(blockSummaryOf([])).toEqual({ added: 0, edited: 0, removed: 0 });
+  });
+
+  it("同一页同一天改了几次 ⇒ 明细**并起来**（后者覆盖前者就会少报 ✗）", () => {
+    const day = () => "2026-10-01";
+    const ev = (pageId: string, kind: "added" | "edited" | "removed", n: number) => ({
+      pageId,
+      title: "",
+      atMs: n,
+      op: "upsert",
+      changes: [{ blockId: `b${n}`, kind }],
+    });
+    const m = blocksByPageDay([ev("p1", "added", 1), ev("p1", "edited", 2)], day);
+    expect(m.get("p1@2026-10-01")?.map((c) => c.kind)).toEqual(["added", "edited"]);
+  });
+
+  it("没有明细的事件不产生键；不同页／不同天各自一把键（键由**唯一**那处口径算）", () => {
+    const day = (atMs: number) => (atMs < 1000 ? "d1" : "d2");
+    const ev = (pageId: string, atMs: number) => ({
+      pageId,
+      title: "",
+      atMs,
+      op: "upsert",
+      changes: [{ blockId: "b", kind: "edited" as const }],
+    });
+    const m = blocksByPageDay([ev("p1", 10), ev("p2", 10), ev("p1", 2000), { ...ev("p3", 10), changes: [] }], day);
+    expect([...m.keys()].sort()).toEqual(["p1@d1", "p1@d2", "p2@d1"]);
   });
 });

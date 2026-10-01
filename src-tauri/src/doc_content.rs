@@ -731,6 +731,21 @@ pub fn block_snapshots(doc_json: &str) -> Option<Vec<BlockSnapshot>> {
     Some(out)
 }
 
+/// 从一条**同步载荷**里取出那段正文 JSON ✓（载荷是页面详情的序列化：这个键是**字符串** ✓）。
+///
+/// 为什么放在这一层（而不是让 `activity.rs` 自己去解）：全仓直接提这个字段名的地方**只许减**
+/// （判据 `check-doc-content-access.mjs` 的三条规则 ✓）—— 解析载荷正是"唯一那一层"的活 ✓；
+/// 上层只调本函数 ✓，不许在别处再拼一遍键名 ✗。
+pub fn doc_json_of_payload(payload: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(payload).ok()?;
+    match v.get("content_json") {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        // 宽容：有的写入方把它直接写成对象 ⇒ 原样序列化 ✓（与 `arg_str` 那种宽容同一条口径 ✓）
+        Some(other) if other.is_object() => Some(other.to_string()),
+        _ => None,
+    }
+}
+
 /// 把块表（合并结果）装回一份落盘 JSON：`children` 换掉，根上其它字段照旧。
 ///
 /// ⚠️ 每一块都把 `rev` **写回** `blockRev` 字段 —— 漏了它，下一次合并会把这页误判成"老客户端产物"。

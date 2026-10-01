@@ -545,6 +545,8 @@ pub fn run() {
             workspaces::rename_workspace,
             workspaces::set_workspace_settings,
             commands::get_page,
+            // S3 第三片：**只读**活动明细（页面级 ＋ 块级 ✓）—— 与 Web 侧同口径实现 ＋ CommandMap 三方对齐 ✓
+            activity::activity_feed,
             commands::create_page,
             commands::create_folder,
             // 聚合邮箱命令：**桌面专属**（与 mod email 同一条边界）。移动端这些命令**不存在**，

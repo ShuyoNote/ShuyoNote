@@ -23013,6 +23013,7 @@ body.is-plugin-panel-open .main {
 .tl-kind { flex: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-faint); font-size: 0.72rem; }
 .tl-kind-created { border-color: var(--accent); color: var(--accent); }
 .tl-entry-time { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
+.tl-blocks { margin-left: 6px; color: var(--text-faint); font-size: 0.78rem; }
 .tl-empty { padding: 32px 28px; }
 .tl-empty-main { margin: 6px 0 2px; }
 .tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }
