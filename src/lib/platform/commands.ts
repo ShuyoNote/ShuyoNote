@@ -539,8 +539,11 @@ export interface CommandMap {
   // ---- P0 格式引擎（Kreuzberg v4.10.x，MIT；桌面专属） ----
   // ⚠️ 只**取文本**：不写派生表（`attachment_text` / `chunks` 的唯一写入者仍是 `src/lib/extract/` ✓）。
   // 补的是本仓既有 TS 链吃不下的一类：eml／msg／zip／7z／gz／rtf／odt／epub／学术格式 ✓。
+  // ⚠️ 收 **base64 ＋ mime ＋ filename**（抽取层手上只有字节、没有路径 ✓）。
+  // ⚠️⚠️ **注释不能插在键与 `args` 之间** ✗ —— `check-web-commands.mjs` 的解析正则是
+  //    `/^\s{2}([a-z_0-9]+):\s*\{\s*args/gm`，要求 `args` **紧跟 `{`**；
+  //    中间夹一行注释 ⇒ 它判"契约层缺这个命令"（2026-10-02 实测踩过 ✓ 判据是对的 ✓）。
   extract_with_kreuzberg: {
-    // ⚠️ 收 **base64 ＋ mime ＋ filename**（抽取层手上只有字节、没有路径 ✓）
     args: { base64: string; mime: string; filename: string };
     result: { text: string; chars: number; ms: number; engine: string };
   };
