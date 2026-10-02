@@ -132,6 +132,28 @@ export function judgeA1({ readme, spec }) {
   //    那一行的说明里本来就会出现「外部」⇒ 变异（把它改回"对照 · 未选"）**照样绿** ✗（实测踩到 ✓）。
   if (!/选定/.test(行("08")) || !/内置/.test(行("08"))) out.push("✗ 图 README 第 08 行要同时标出【选定】与【内置 agent】✗");
   if (!/选定/.test(行("09")) || !/外部/.test(行("09"))) out.push("✗ 图 README 第 09 行要同时标出【选定】与【外部 agent】✗（§1.8 选的甲 ✓）");
+
+  // ⭐⭐ **§1.8「多个 agent 并存」**（owner 2026-10-02 拍 **甲 ＋ 能发言** ✓）——
+  //    这一节最要紧的是：**能发言就必须同时加防自激** ✓；而那两条既有不变式**必须被点出来** ✓
+  //    （⛔ 悄悄扩不变式 = 谁都不知道边界被挪过 ✓）。
+  if (!spec.includes("agents-never-trigger-agents")) {
+    out.push("✗ 规格里**没有** `INV-IM-agents-never-trigger-agents` ✗（§1.8 既然允许 agent 发言，就必须同时禁止 agent 互相触发 ✓）");
+  }
+  // 三个标记：缺任何一个 ⇒ "三个 agent ＋ 一个人"混在一条线上就**分不出来** ✓
+  for (const 记 of ["署名", "生成者", "模型来源"]) {
+    if (!spec.includes(记)) out.push("✗ 规格里没写外部 agent 的标记「" + 记 + "」✗（§1.8 要**三个**：署名＋生成者＋模型来源 ✓）");
+  }
+  // 两条既有不变式**必须点名**（它们要显式改 ✓）
+  for (const id of ["INV-KB-agent-priv-separation", "INV-MCP-readonly-first"]) {
+    if (!spec.includes(id)) {
+      out.push("✗ 规格 §1.8 没点名 `" + id + "` ✗（它是**必须显式改**的既有不变式 —— 不点名就等于悄悄扩 ✓）");
+    }
+  }
+  // 图 10 必须是**选定形态**里的一员（不是"以后再说" ✓）
+  if (!/选定/.test(行("10"))) out.push("✗ 图 README 第 10 行没标【选定】✗（三个并存是 owner 拍了的方向 ✓）");
+  if (!/agents-never-trigger-agents/.test(行("10"))) {
+    out.push("✗ 图 README 第 10 行没引用 `INV-IM-agents-never-trigger-agents` ✗（那张图最要紧的一格就是它 ✓）");
+  }
   return out;
 }
 
@@ -180,8 +202,13 @@ if (argv.includes("--self-test")) {
     ["点名不存在规格口径 N9 ⇒ 红", judge({ readme: "M1 M2 N9", needs, spec: spec + "| **N1** | 甲 |", t: T }).some((s) => s.includes("N9"))],
     ["点名存在的规格口径 N1 ⇒ 绿", judge({ readme: "M1 M2 N1", needs, spec: spec + "| **N1** | 甲 |", t: T }).length === 0],
   ];
-  const specA1 = "## 1.7\n选 A1 ✓\n① ⛔ **防自激**\n④ ⛔ **只被 @ 才答**\n③ ⚠️ **在线依赖如实说**\n";
-  const readmeA1 = "| 08 | 甲 | 选定 · 内置 |\n| 09 | 乙 | 选定 · 外部 |\n";
+  const specA1 =
+    "## 1.7\n选 A1 ✓\n① ⛔ **防自激**\n④ ⛔ **只被 @ 才答**\n③ ⚠️ **在线依赖如实说**\n" +
+    "## 1.8\n`INV-IM-agents-never-trigger-agents` ✓\n署名 ＋ 生成者 ＋ 模型来源 ✓\n" +
+    "`INV-KB-agent-priv-separation` ＋ `INV-MCP-readonly-first` ✓\n";
+  const readmeA1 =
+    "| 08 | 甲 | 选定 · 内置 |\n| 09 | 乙 | 选定 · 外部 |\n" +
+    "| 10 | 丙 | 选定 · `INV-IM-agents-never-trigger-agents` |\n";
   const casesA1 = [
     ["A1 合规 ⇒ 空", judgeA1({ readme: readmeA1, spec: specA1 }).length === 0],
     ["删掉「防自激」⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("防自激", "防") }).some((s) => s.includes("防自激"))],
@@ -191,6 +218,10 @@ if (argv.includes("--self-test")) {
     ["又写「A1 ＋ A2 并存」⇒ 红（两份真相）", judgeA1({ readme: readmeA1, spec: specA1 + "A1 ＋ A2 两种主体模型并存\n" }).some((s) => s.includes("两份真相"))],
     ["08 行不标【内置】⇒ 红", judgeA1({ readme: "| 08 | 甲 |\n| 09 | 乙 | 选定 · 外部 |\n", spec: specA1 }).some((s) => s.includes("08"))],
     ["09 行不标【外部】⇒ 红", judgeA1({ readme: "| 08 | 甲 | 选定 · 内置 |\n| 09 | 乙 | 对照 · 未选 |\n", spec: specA1 }).some((s) => s.includes("09"))],
+    ["§1.8 缺防自激那条不变式 ⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("agents-never-trigger-agents", "x") }).some((s) => s.includes("agents-never-trigger-agents"))],
+    ["§1.8 缺「生成者」这个标记 ⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("生成者", "谁") }).some((s) => s.includes("生成者"))],
+    ["§1.8 不点名要显式改的既有不变式 ⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("INV-MCP-readonly-first", "x") }).some((s) => s.includes("INV-MCP-readonly-first"))],
+    ["图 10 没标【选定】⇒ 红", judgeA1({ readme: "| 08 | 甲 | 选定 · 内置 |\n| 09 | 乙 | 选定 · 外部 |\n| 10 | 丙 | `INV-IM-agents-never-trigger-agents` |\n", spec: specA1 }).some((s) => s.includes("第 10 行"))],
   ];
 
   let pass = 0;
