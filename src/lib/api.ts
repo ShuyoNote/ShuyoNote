@@ -122,6 +122,13 @@ export const api = {
   copyPageToWorkspace: (pageId: string, targetWorkspaceId: string, newParentId?: string | null) =>
     invoke("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
   listPlugins: () => invoke("list_plugins"),
+  /**
+   * ⭐ 「能力」按需下载的**落盘**（2026-10-02）。
+   * ⚠️ 页面里那次 sha256 校验是**给用户看的**；真正决定能不能落盘的是 **Rust 侧自己再算一遍**
+   * （白名单 ＋ 体积上限 ＋ sha256 三条，任一不过 ⇒ 拒收 ✓）。Web 版会抛"仅桌面版支持" ✓。
+   */
+  saveAbilityPack: (packId: string, base64: string) =>
+    invoke("save_ability_pack", { packId, base64 }),
   setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
   /** `runId` 让前端能在等待期间**真的终止**这次运行（见 store/plugins 的 cancelRun）。 */
   runPluginCommand: (

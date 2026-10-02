@@ -45,6 +45,8 @@ export default {
     securityHint: "空间隐私与锁定",
     ai: "AI",
     aiHint: "服务商与模型",
+    abilities: "能力",
+    abilitiesHint: "官方引擎 · 按需下载",
     about: "关于与更新",
     aboutHint: "版本与许可",
   },

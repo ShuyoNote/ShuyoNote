@@ -38,7 +38,9 @@ import {
   SparkleIcon,
   InfoIcon,
   InboxIcon,
+  DownloadIcon,
 } from "./icons";
+import { AbilitiesPane } from "./AbilitiesPane";
 
 const THEMES: { id: Theme; label: string }[] = [
   { id: "system", label: "跟随系统" },
@@ -53,6 +55,8 @@ const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Elem
   { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <InboxIcon width={16} height={16} /> },
   { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} /> },
   { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} /> },
+  // ⭐ 2026-10-02：官方引擎与按需下载 —— 排在「插件」之后（插件＝第三方扩展 ／ 能力＝官方引擎 ✓）。
+  { id: "abilities", labelKey: "settings.abilities", hintKey: "settings.abilitiesHint", icon: <DownloadIcon width={16} height={16} /> },
   { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} /> },
   { id: "ai", labelKey: "settings.ai", hintKey: "settings.aiHint", icon: <SparkleIcon width={16} height={16} /> },
   { id: "about", labelKey: "settings.about", hintKey: "settings.aboutHint", icon: <InfoIcon width={16} height={16} /> },
@@ -1493,6 +1497,7 @@ export function SettingsDialog() {
             {tab === "email" && <EmailPane />}
             {tab === "data" && <DataPane />}
             {tab === "plugins" && <PluginsPane />}
+            {tab === "abilities" && <AbilitiesPane />}
             {tab === "security" && <SecurityPane />}
             {tab === "ai" && (
               <section className="set-section set-ai">

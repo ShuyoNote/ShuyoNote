@@ -8,6 +8,9 @@ mod mcp_channel;
 mod community;
 mod community_publish;
 mod attachments;
+// 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
+// sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
+mod abilities;
 mod backlinks;
 mod backup;
 mod block_rev;
@@ -548,6 +551,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            abilities::save_ability_pack,
             commands::list_pages,
             commands::list_workspace_pages,
             workspaces::list_workspaces,

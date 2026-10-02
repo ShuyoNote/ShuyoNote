@@ -1350,6 +1350,14 @@ export function makeInvoke(store: SqliteStore) {
     const a = (args ?? {}) as Record<string, any>;
     seedWorkspaceMeta();
 
+    // ---- 能力（按需下载的落盘）----
+    // ⚠️ Web 版**故意不实现**：浏览器里没有"应用数据目录"这种受管位置 ✓，
+    //    假装写进 localStorage 等于给用户一个**不受校验、也不知情**的副本 ✗
+    //    （与本仓"宁可明说做不到"的既有口径一致 ✓，同 `email_fetch_*` 那几条 ✓）。
+    if (cmd === "save_ability_pack") {
+      throw new Error("按需下载仅桌面版支持（Web 版请使用桌面版）");
+    }
+
     // ---- Core note CRUD (real SQL) ----
     if (cmd === "list_pages") {
       const rows = store.query(

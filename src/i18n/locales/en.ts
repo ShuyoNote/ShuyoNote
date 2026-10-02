@@ -45,6 +45,8 @@ export default {
     securityHint: "Per-space privacy & lock",
     ai: "AI",
     aiHint: "Provider & models",
+    abilities: "Abilities",
+    abilitiesHint: "Official engines · on-demand download",
     about: "About & updates",
     aboutHint: "Version & license",
   },

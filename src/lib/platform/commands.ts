@@ -529,6 +529,13 @@ export interface CommandMap {
    * 参数合不合法，全部交给 `src/lib/deepLink.ts` 判——OS 层不重复一遍白名单。
    */
   deep_link_take: { args: undefined; result: string[] };
+  // ---- 能力（官方引擎 · 按需下载，桌面专属） ----
+  // ⚠️ 落盘判据在 **Rust 侧**（白名单 ＋ 体积上限 ＋ sha256 自己再算一遍 ✓）——
+  //    这里只是契约声明；`base64` 是下载好的包（页面已校验过一次，Rust 会再校验 ✓）。
+  save_ability_pack: {
+    args: { packId: string; base64: string };
+    result: { path: string; bytes: number; sha256: string; audit: string };
+  };
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
