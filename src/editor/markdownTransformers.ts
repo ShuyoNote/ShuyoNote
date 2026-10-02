@@ -10,6 +10,7 @@ import {
   $isTableCellNode,
   $isTableNode,
   $isTableRowNode,
+  TableCellHeaderStates,
   TableCellNode,
   TableNode,
   TableRowNode,
@@ -32,9 +33,13 @@ import {
 import {
   $createParagraphNode,
   $createTextNode,
+  IS_BOLD,
+  IS_CODE,
+  IS_ITALIC,
   type ElementNode,
   type LexicalNode,
 } from "lexical";
+import { parseInline, type MdInline } from "../lib/markdown";
 import { BlockEmbedNode, $createBlockEmbedNode, $isBlockEmbedNode } from "./nodes/BlockEmbedNode";
 import { BlockRefNode, $createBlockRefNode, $isBlockRefNode } from "./nodes/BlockRefNode";
 import { CalloutNode, $createCalloutNode, $isCalloutNode } from "./nodes/CalloutNode";
@@ -142,6 +147,55 @@ export const CALLOUT: MultilineElementTransformer = {
   type: "multiline-element",
 };
 
+/**
+ * 表格单元格里的**行内格式**（owner 2026-10-01：「表格内的加粗问题没有解决」）。
+ *
+ * 原先两处单元格都是 `$createTextNode(原文)` —— 于是 `**粗**` 只是**字面文本** ✗。
+ * 根因不是"解析器不认识粗体"，而是**表格整行被 `TABLE` 这个 element transformer 吃掉了**：
+ * 行级的文本格式 transformer（`TEXT_FORMAT_TRANSFORMERS`）**根本看不到单元格里的字** ✓。
+ *
+ * 所以这里自己把单元格文本过一次行内解析 —— ⛔ **不另写解析器**：复用
+ * `src/lib/markdown.ts` 的 `parseInline`（唯一出处 ✓）。
+ * 效果：`**粗**` / `*斜*` / `` `码` `` ⇒ 带 format 的 TextNode ⇒ 渲染即为粗体/斜体/等宽 ✓，
+ * 且导出侧 `exportChildren(cell)` 会照 format 还原 `**…**` ⇒ **往返不丢** ✓。
+ *
+ * ⚠️ **链接**暂按原文保留（`[label](url)`）—— 与改动前的行为一致 ✓，**不静默吞掉 URL** ✗。
+ *    表格单元格里的链接少见，留作已知缺口（要补时用 `@lexical/link` 的 `$createLinkNode` ✓）。
+ */
+function appendInlineMarkdown(parent: ElementNode, pieces: MdInline[], format = 0): void {
+  for (const piece of pieces) {
+    switch (piece.kind) {
+      case "text":
+        parent.append($createTextNode(piece.text).setFormat(format));
+        break;
+      case "bold":
+        appendInlineMarkdown(parent, piece.children, format | IS_BOLD);
+        break;
+      case "italic":
+        appendInlineMarkdown(parent, piece.children, format | IS_ITALIC);
+        break;
+      case "code":
+        parent.append($createTextNode(piece.text).setFormat(format | IS_CODE));
+        break;
+      case "link":
+        parent.append($createTextNode(`[${piece.label}](${piece.href})`).setFormat(format));
+        break;
+    }
+  }
+}
+
+/** 建一个单元格：段落 +（走行内解析的）若干文本节点。
+ *  `headerState` 给表头行用（`TableCellHeaderStates.ROW` ⇒ 渲染成 `<th>`，
+ *  owner 2026-10-01：「表格的标题列不加粗吗？」——md 惯例里表头本来就该是粗的 ✓）。 */
+function createMarkdownCell(
+  text: string,
+  headerState: number = TableCellHeaderStates.NO_STATUS,
+): TableCellNode {
+  const paragraph = $createParagraphNode();
+  appendInlineMarkdown(paragraph, parseInline(text));
+  return $createTableCellNode(headerState).append(paragraph);
+}
+
 // Markdown table
 export const TABLE: MultilineElementTransformer = {
   dependencies: [TableNode, TableRowNode, TableCellNode],
@@ -203,22 +257,32 @@ export const TABLE: MultilineElementTransformer = {
     }
 
     const colCount = Math.max(headerRow.length, ...bodyRows.map((r) => r.length), 1);
+    // ⚠️ 2026-10-01 二次撤回：这里一度改成 `$createBlockTableNode(newBlockId())`（想让导入直接出模型表，
+    //    从源头避开 `upgradeTableToBlockNode` 的"替换 ⇒ observer 悬空"）。
+    //    **但它炸了另一条路** ✗：`src/lib/mdPreview.ts` 的**文件预览**用的是**同一组
+    //    `SHUYONOTE_TRANSFORMERS`**，而它的编辑器**没注册 `BlockTableNode`** ⇒ 逐字报
+    //    「Attempted to create node BlockTableNode that was not configured to be used on the editor」
+    //    （堆栈：mdPreview.ts:84 → filePreview.ts:68 → FilePreviewDialog.tsx ✓）。
+    //    ⇒ 撤回，回到内建 `TableNode`：先让预览恢复 ✓；
+    //      真要根治 observer 那条，应在**加载路径**上把普通表升级（见与 owner 的讨论 ✓），
+    //      而不是改这个被多处共用的 transformer ✗。
     const table = $createTableNode();
 
     const headerRowNode = $createTableRowNode();
     for (let c = 0; c < colCount; c++) {
-      const cell = $createTableCellNode();
-      cell.append($createParagraphNode().append($createTextNode(headerRow[c] ?? "")));
-      headerRowNode.append(cell);
+      // ⚠️ 2026-10-01 撤回：这里一度把表头行标成 `TableCellHeaderStates.ROW`（渲染真 <th>），
+      //    随后 owner 侧实测报「编辑器错误：tableObserver not found for tableKey: 2259」✗，
+      //    而且**时间点正是重新导入之后** ⇒ 先撤回，把编辑器恢复稳定。
+      //    表头观感（加粗 ＋ 背景）由 CSS 给（见 App.css 的 `.editor-content table th` /
+      //    `table tr:first-child > td`）⇒ **不依赖这个状态** ✓，撤回后观感不变 ✓。
+      headerRowNode.append(createMarkdownCell(headerRow[c] ?? ""));
     }
     table.append(headerRowNode);
 
     for (const row of bodyRows) {
       const rowNode = $createTableRowNode();
       for (let c = 0; c < colCount; c++) {
-        const cell = $createTableCellNode();
-        cell.append($createParagraphNode().append($createTextNode(row[c] ?? "")));
-        rowNode.append(cell);
+        rowNode.append(createMarkdownCell(row[c] ?? ""));
       }
       table.append(rowNode);
     }

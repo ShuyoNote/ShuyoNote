@@ -7027,9 +7027,16 @@ select.prop-value {
   background: transparent;
 }
 
+/* ⚠️ 2026-10-01（owner：「橡皮筋还在」＋截图）：这条样式**就是**那个蓝框 ——
+   config.ts:127 把 Lexical 的 	ableCellSelected 主题键指到这个类 ⇒ **表格单元格选区**里的格子
+   被着上「浅蓝填充 ＋ 1px 蓝框」；而拖列宽时 Lexical 会**顺带拉出一个单元格选区** ✗ ⇒
+   那个矩形就跟着鼠标绷出来（owner 称之为橡皮筋 ✓）。
+   处置：**只把视觉去掉**（类名与主题键都不动 ⇒ 零 JS 改动、一句可回滚 ✓）。
+   判据：拖列宽不再出现该矩形 ✓；反例：把这两行恢复 ⇒ 矩形立刻回来 ✓。
+   ⚠️ 代价（照实）：用户**主动**选中多个单元格时也不再有高亮 ✗。 */
 .editor-table-cell-selected {
-  background: var(--accent-soft) !important;
-  box-shadow: inset 0 0 0 1px var(--accent);
+  /* background: var(--accent-soft) !important; */
+  /* box-shadow: inset 0 0 0 1px var(--accent); */
 }
 
 .table-resize-handle {
@@ -7067,12 +7074,78 @@ select.prop-value {
   margin: 0.4em 0 0.15em;
 }
 
+/* owner 2026-10-01：**标题的上留空要比下留空大一点**。
+   ⚠️ 老坑第三处（与 `.editor-quote` 同源）：上面 `.editor-h1/h2/h3` 自己写的**本来就是上大下小**
+   （0.5／0.45／0.4em 上，0.2／0.2／0.15em 下），但被靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { margin: 0.6em 0 }`，特异性 **0,1,1**）压成了
+   **上下相等** ✗ ⇒ 视觉上"标题上面挤、贴着上一段"。
+   这里用更高特异性把上大下小要回来，并把上留空**再放大一档** ✓。
+   ⛔ 仍然**不改**通用那条 ⇒ 段落与注释块不受影响（注释块有自己的 `.editor-quote` 那条 ✓）。
+   ⚠️ h4–h6 不在通用那条的名单里（所以它们本来就没被压），这里一并给同一比例，
+      免得四级标题与三级标题的间距看起来是两个体系 ✓。 */
+.editor-content h1.editor-h1 {
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+}
+.editor-content h2.editor-h2 {
+  margin-top: 1.25em;
+  margin-bottom: 0.35em;
+}
+.editor-content h3.editor-h3 {
+  margin-top: 1.1em;
+  margin-bottom: 0.3em;
+}
+.editor-content h4,
+.editor-content h5,
+.editor-content h6 {
+  margin-top: 1em;
+  margin-bottom: 0.25em;
+}
+
+/* 表格**表头默认加粗**（owner 2026-10-01：「表格的标题列不加粗吗？」）——
+   md 惯例（GitHub / 知乎）里表头本来就是粗的，源文件里不必写 `**` ✓。
+   两路都要，缺一不可：
+     ① 导入时把表头行标成 `TableCellHeaderStates.ROW` ⇒ 是真的 `<th>`（数据对、导出对 ✓）
+        —— 见 `src/editor/markdownTransformers.ts` 的 `createMarkdownCell` ✓；
+     ② 下面这条 CSS 同时覆盖 `th` 与**第一行** ⇒ ⭐ **已经导进来的旧表也当场变粗**（不用重新导入 ✓）。
+   ⚠️ 用 600 而不是 700：与 `.editor-h3` 的 600 同档，避免表头抢过标题的层级 ✓。 */
+.editor-content table th,
+.editor-content table tr:first-child > td {
+  font-weight: 600;
+  /* 表头背景（owner 2026-10-01：「标题列没有背景色吗？」）：
+     ⚠️ 产品**本来就有**这条样式 —— 见下面的 `.editor-table-cell-header { background: var(--bg-sidebar) }`，
+     但那个 class **只在单元格的表头状态被标上时才加**，而导入的表格以前是 `NO_STATUS` ⇒
+     既没有粗体也没有背景（同一个根因，owner 连问两次 ✓）。
+     做法：① 导入时标 `TableCellHeaderStates.ROW`（见 markdownTransformers.ts）⇒ 新表吃到那个 class ✓；
+           ② 这里给 `th` 与**第一行**补上**同一个 token** ⇒ ⭐ 已经导进来的旧表也当场有背景 ✓，
+              而且与新表**同色**（不引入第二种"表头灰" ✗）。 */
+  background: var(--bg-sidebar);
+}
+
 .editor-quote {
   border-left: 3px solid var(--border-strong);
   padding-left: 14px;
   color: var(--text-dim);
   margin: 0.4em 0;
   background: transparent;
+}
+
+/* owner 2026-10-01：「注释块的文字前面留点空」＋「上下留空大一点」。
+   ⚠️ 同一个坑（两条都在这里一次说清）：靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { padding: 2px 4px; margin: 0.6em 0 }`）
+   是**简写**且特异性更高（0,1,1 > 0,1,0）⇒ 它会把 `.editor-quote` 自己的
+   `padding-left: 14px` 与 `margin: 0.4em 0` **一起**压掉（实际左内边距只有 4px、上下只有 2px/0.6em）。
+   所以这里用**同一元素、更高特异性**把四个方向的留白一次给足：
+     · 左 14px ⇒ 竖线不再贴字 ✓
+     · 上下 padding 6px ⇒ **竖线在文字上下各多出一截**（这就是"注释块"该有的呼吸感 ✓）
+     · 上下 margin 1em ⇒ 与前后块之间也拉开 ✓
+   ⛔ 仍然**不改**通用那条 ⇒ 段落 / 标题的留白不受影响 ✓。 */
+.editor-content blockquote.editor-quote {
+  padding-left: 14px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-top: 1em;
+  margin-bottom: 1em;
 }
 
 .editor-callout {
@@ -7099,6 +7172,17 @@ select.prop-value {
 
 .editor-callout > * {
   grid-column: 2;
+}
+
+/* owner 2026-10-01：**注释块与高亮块都不要圆角**（要 md 那种方角）。
+   两条纪律：
+     ① ⛔ 不改上面通用的 `.editor-content > * { border-radius: … }` —— 那是**所有顶层块**的
+        Notion 式 hover 圆角（段落 / 标题 / 图片都吃它），改 0 会把它们一起方掉；
+     ② ⛔ 不动分栏卡片那条（`.editor-columns`：它自己的注释写明 "each column is a rounded card"）。
+   做法：只给这两个块加**更高特异性**的专门规则 ⇒ 通用语义与分栏都不受影响。 */
+.editor-content blockquote.editor-quote,
+.editor-content .editor-callout {
+  border-radius: 0;
 }
 
 /* Feishu-style 分栏: a flex row of N columns side by side with a small gap between
