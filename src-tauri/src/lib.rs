@@ -745,6 +745,8 @@ pub fn run() {
             // （上面搬钥匙袋公开材料；这两条搬"接到哪台设备"：地址 ＋ 窗口口令 ✓）。
             // ⚠️ 载荷**含窗口口令** ⇒ 也是桌面专属（Web 侧没有发现层与窗口 ✓）。
             sync::device_pair_export,
+            // ⭐ U11/T5：**逐台解除**（只踢那一台 ✓）
+            sync::device_unpair,
             sync::device_pair_import,
             sync::list_sync_history,
             sync::clear_sync_history,

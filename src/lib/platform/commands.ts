@@ -429,6 +429,21 @@ export interface CommunityTaxonomy {
  * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
  * 不引任何密码学实现**；防"换码"靠**比对码** —— 所以 `check_code` 必须显示给人看。
  */
+/** ⭐ **U11/T5（2026-10-02）**：**逐台解除**的读数（与 Rust `mesh::MeshPairedState` 逐字段相同）。
+ *
+ * ⚠️ 只回**事实**（这一台解除了没、还认几台 ✓），⛔ **不回任何秘密** ✗。
+ */
+export interface DeviceUnpairOutcome {
+  /** 刚被解除的那一台。 */
+  peer: string;
+  /** **解除之前**它是不是真在名单里（`false` ⇒ 它本来就没配过 ⇒ 界面要说清 ✓）。 */
+  wasPaired: boolean;
+  /** 解除**之后**这个空间还认几台 ✓。 */
+  pairedCount: number;
+  /** 一句人话 ✓。 */
+  note: string;
+}
+
 /** ⭐ T3（2026-10-01）：**设备直连**产出侧读数（`device_pair_export`）。 */
 export interface DevicePairExportOutcome {
   /** `not_configured` ＝ 这一档没开（没填地址或没设口令）⇒ 没有东西可以配对过去。 */
@@ -631,6 +646,15 @@ export interface CommandMap {
       spaceId: string;
     };
     result: DevicePairExportOutcome;
+  };
+  // ⭐ U11/T5（2026-10-02）：**逐台解除**（只踢那一台 ⇒ 别的设备不受影响 ✓）
+  device_unpair: {
+    args: {
+      /** ⚠️ **顶层参数** ⇒ camelCase ✓（`args` 结构体里的字段才 snake_case ✓）。 */
+      workspaceId?: string | null;
+      peerDeviceId: string;
+    };
+    result: DeviceUnpairOutcome;
   };
   device_pair_import: {
     args: {

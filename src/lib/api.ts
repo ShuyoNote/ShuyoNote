@@ -25,7 +25,7 @@ const invoke = <K extends keyof CommandMap>(
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
 export type { NearbyPeer } from "./platform/commands";
-export type { DevicePairExportOutcome, DevicePairImportOutcome } from "./platform/commands";
+export type { DevicePairExportOutcome, DevicePairImportOutcome, DeviceUnpairOutcome } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";
@@ -376,6 +376,12 @@ export const api = {
    * ⚠️ 这一档没开（没填地址或没设口令）⇒ 回 `not_configured`，**不生成载荷**。
    */
   devicePairExport: (spaceId: string) => invoke("device_pair_export", { spaceId }),
+  /**
+   * ⭐ **U11/T5**：**逐台解除** —— 只把那**一台**踢出去（它拉不动你 ✓），
+   * 别的设备不受影响 ✓，⛔ 也**不用**给所有设备换口令（那正是 U11 要消灭的旧办法 ✓）。
+   */
+  deviceUnpair: (workspaceId: string | null, peerDeviceId: string) =>
+    invoke("device_unpair", { workspaceId, peerDeviceId }),
   /**
    * ⭐ T3：**设备直连**采纳侧 —— 三态：不传码 ⇒ `need_confirm`（**零写入**，只回算出来的码给人核对）；
    * 传了对不上 ⇒ `rejected`（零写入）；逐位相同 ⇒ `ok`，这时**才**写接线。

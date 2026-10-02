@@ -400,6 +400,26 @@ fn write_setting(c: &Connection, prefix: &str, space_id: &str, value: Option<&st
     crate::sync::set_meta_state(c, &setting_key(prefix, space_id), v)
 }
 
+/// ⭐ **U11/T5**：本机**要出示给那一台**的那份秘密（明文 ✓，只在本机 ✓）。
+///
+/// 键＝`mesh_pair_secret:<space>:<peer_device_id>`（规格 §3.2 定的形状 ✓）。
+/// ⚠️ 它与"我认谁"（`mesh_paired_devices.secret_sha256` ✓）是**两半**：
+///   这一半是**我要出示的**，那一半是**别人要出示给我、我存的哈希** ✓。
+pub fn pair_secret_for(c: &Connection, space_id: &str, peer_device_id: &str) -> Option<String> {
+    read_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id)
+}
+
+/// 写/清那一份（空 ⇒ 清掉 ✓）。⚠️ **不校验强度**：它由配对流程生成（≥60 bit 的码 ✓），
+/// ⛔ 不是用户手打的口令 ✗（用户手打的那条 `mesh_token` 已经退役 ✓）。
+pub fn set_pair_secret(
+    c: &Connection,
+    space_id: &str,
+    peer_device_id: &str,
+    secret: Option<&str>,
+) -> Result<(), String> {
+    write_setting(c, &format!("mesh_pair_secret:{space_id}"), peer_device_id, secret)
+}
+
 pub fn settings(c: &Connection, space_id: &str) -> MeshSettings {
     MeshSettings {
         bind: read_setting(c, "mesh_bind", space_id),
@@ -498,7 +518,7 @@ pub async fn round(
             window: None,
         });
     }
-    round_candidates(conn, space_id, &cfg, candidates).await
+    round_candidates(conn, space_id, candidates).await
 }
 
 /// `round` 的**后半**：对端由调用方给，只做"逐个拉 ＋ 不连坐 ＋ 把读数整理成人话"。
@@ -510,13 +530,19 @@ pub async fn round(
 pub async fn round_candidates(
     conn: &Mutex<Connection>,
     space_id: &str,
-    cfg: &MeshSettings,
     candidates: Vec<MeshPeer>,
 ) -> Result<MeshRoundReport, String> {
     let client = reqwest::Client::new();
     let mut out: Vec<PeerPullReport> = Vec::with_capacity(candidates.len());
     for p in &candidates {
-        match pull_and_absorb(conn, &client, p, space_id, cfg.token.as_deref()).await {
+        // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓
+        //    ⛔ 不再用共享口令 ✗（它已退役 ✓）；本地没有这一台的那份 ⇒ 出示 `None`
+        //    ⇒ 对端回 401（如实报出来 ✓，⛔ 不是静默跳过 ✗）
+        let secret = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            pair_secret_for(&g, space_id, &p.device_id)
+        };
+        match pull_and_absorb(conn, &client, p, space_id, secret.as_deref()).await {
             Ok(rep) => out.push(rep),
             // ⚠️ **不连坐**：这一台拉不动，别的照拉；错原样带回给界面。
             Err(e) => out.push(PeerPullReport {
@@ -623,7 +649,6 @@ pub fn ensure_window(
     spaces: &[(String, String)],
     device_id: &str,
     bind: &str,
-    token: Option<String>,
     dir: &Path,
 ) -> Result<Option<SocketAddr>, String> {
     let bind = bind.trim();
@@ -635,6 +660,8 @@ pub fn ensure_window(
     if let Some(h) = guard.get(bind) {
         for (db_space, proto_space) in spaces {
             h.add_space(db_space, proto_space, dir)?;
+            // ⭐ **U11**：连接加了，**卡也要一起载** ✗→✓（否则那个空间"服务着但谁都进不来" ✓）
+            h.load_cards_for(proto_space, dir)?;
         }
         return Ok(Some(h.addr()));
     }
@@ -644,16 +671,22 @@ pub fn ensure_window(
         let conn = crate::db::open_space_conn_at(db_space, dir)?;
         conns.insert(proto_space.clone(), Arc::new(Mutex::new(conn)));
     }
+    // ⭐ U11：把**每个空间各自的**卡表载进来（一个空间一组 ✓）
+    let mut paired: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    for (_, proto_space) in spaces {
+        load_cards(dir, proto_space, &mut paired);
+    }
     let handle = start(
         MeshConfig {
             bind: bind.to_string(),
             device_id: device_id.to_string(),
-            token,
             // ★ 丙-④：附件字节在这棵树下的 `<本地空间>/…` ⇒ 窗口要能发它
             //   （`dir` 就是 app data 目录；判据里是临时目录）。
             data_dir: Some(dir.to_path_buf()),
         },
         Arc::new(Mutex::new(conns)),
+        Arc::new(Mutex::new(paired)),
     )?;
     let addr = handle.addr();
     guard.insert(bind.to_string(), handle);
@@ -667,10 +700,9 @@ pub fn ensure_window_for(
     spaces: &[(String, String)],
     device_id: &str,
     bind: &str,
-    token: Option<String>,
 ) -> Result<Option<SocketAddr>, String> {
     let dir = crate::db::app_data_dir_ref().ok_or_else(|| "app data dir not initialised".to_string())?;
-    ensure_window(spaces, device_id, bind, token, dir)
+    ensure_window(spaces, device_id, bind, dir)
 }
 
 /// `ensure_window` 的**可测那一半**：显式给库目录，**开一扇独立的门**（⛔ 不进注册表 ✗）。
@@ -692,15 +724,41 @@ pub(crate) fn open_window_at(
     let conn = crate::db::open_space_conn_at(db_space, dir)?;
     let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
     conns.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
+    // ⭐ **U11**：判据传进来的那个 `token` 现在当**一张已登记的卡** ✓
+    //   （A 之后门只认卡 ✓）—— 于是既有那批判据**不用改形状**，而它们**真的在走卡那条路** ✓。
+    let mut paired: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        paired.entry(proto_space.to_string()).or_default().insert(crate::db::sha256_hex(t));
+    }
+    // ⚠️ 而**真实**的卡从库里来（判据通常没有 ✓ ⇒ 上面那张就是它唯一的卡 ✓）
+    load_cards(dir, proto_space, &mut paired);
     start(
         MeshConfig {
             bind: bind.to_string(),
             device_id: device_id.to_string(),
-            token,
             data_dir: Some(dir.to_path_buf()),
         },
         Arc::new(Mutex::new(conns)),
+        Arc::new(Mutex::new(paired)),
     )
+}
+
+/// ⭐ **U11/T5**：**逐台解除**的读数（界面要能如实说"这台还认我吗" ✓）。
+///
+/// ⚠️ 只回**事实**（这一台解除了没、还认几台 ✓），⛔ **不回任何秘密** ✗
+///（秘密只在本机"我要出示"的那一侧 ✓，见规格 §3.2 ✓）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshPairedState {
+    /// 刚被解除的那一台。
+    pub peer: String,
+    /// **解除之前**它是不是真在名单里（`false` ⇒ 本来就没配过 ⇒ 界面要说清"它本来就不在" ✓）。
+    pub was_paired: bool,
+    /// 解除**之后**这个空间还认几台 ✓。
+    pub paired_count: i64,
+    /// 一句人话 ✓。
+    pub note: String,
 }
 
 /// 网格设置的**读数**（设置面回给界面的东西）。
@@ -778,6 +836,20 @@ pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>, served: &[St
 pub fn window_addr(space_id: &str) -> Option<SocketAddr> {
     let guard = windows().lock().ok()?;
     guard.values().find(|h| h.serves(space_id)).map(|h| h.addr())
+}
+
+/// ⭐ **U11/T5**：把**这一张卡**从**正在跑的那扇门**里摘掉（回"摘到了吗"✓）。
+///
+/// ⚠️ **只删库不算** ✗ —— 运行中的窗口**还认着那张卡**（它是开门时载进内存的 ✓）
+/// ⇒ 用户看到的是「**删了等于没删**」✓ ⇒ 必须两处一起摘 ✓。
+pub fn forget_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
+    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    for h in guard.values() {
+        if h.serves(proto_space) {
+            return h.forget_paired_hash(proto_space, secret_sha256);
+        }
+    }
+    Ok(false) // 门没开着 ⇒ 库里删掉就够了（下次开门时它就不在卡表里 ✓）
 }
 
 /// ⭐ **U8**：这个空间所在的那扇门**服务哪些空间**（**只读** ✓；没开 ⇒ 空 ✓）。
@@ -1030,6 +1102,13 @@ struct State {
     /// ⚠️ **可增长**（用户新加一个空间 ⇒ `ensure_window` 往表里加一条 ✓，⛔ **不重启窗口** ✗）——
     /// 重启会换端口、把正在连的对端掐断，而那正是「**关掉一个空间不许关掉整窗**」同一族的坑 ✓。
     conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
+    /// ⭐ **U11/T5（2026-10-02）**：这个窗口**认哪些卡**（每个空间一组 `secret_sha256` ✓）。
+    ///
+    /// ⚠️ **它就是授权口径** —— owner 2026-10-02 选 **A：门只认卡** ✓
+    /// ⇒ ⛔ 旧的共享口令**不再能进** ✗（否则「删掉那一行」对拿到过共享口令的设备不成立 ✗，
+    /// U11 就成了「看起来有其实没有」✓）。
+    /// ⚠️ 键＝`proto_space`；值＝那一组卡的哈希（**只存哈希** ✓，明文只在本机"我要出示"那一侧 ✓）。
+    paired: Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
     cfg: MeshConfig,
     /// ★ **T-10**（`U14` 的判据承载）：这个窗口**真正服务过**的 `/mesh/pull` 次数（只增）。
     ///
@@ -1099,8 +1178,10 @@ pub struct MeshConfig {
     pub bind: String,
     /// 本机对外自称的 `device_id` —— 窗口**只服务它自己的记录**。
     pub device_id: String,
-    /// 对端要带的口令。`None` ⇒ 任何请求都收（启动时**大声**说一次）。
-    pub token: Option<String>,
+    // ⛔ **`token` 已删**（owner 2026-10-02 选 **A：门只认卡** ✓）——
+    //    理由写进 `personal-edition-spec` §3.3-⑥：留着共享口令 ⇒「删掉那一行」对
+    //    **拿到过共享口令的设备不成立** ✗ ⇒ U11 变「看起来有其实没有」✓。
+    //    ⚠️ 旧的 `mesh_token:<space>` KV **保留可读**（不静默删 ✓）但**不再作任何凭证** ✗。
     /// ★ 丙-④：**数据目录**（附件字节在这棵树下的 `<本地空间>/…`）——
     /// `None` ⇒ 这一档**不服务附件**，`/mesh/attachment` 如实回 501（不是 404：
     /// "没配"和"这一台没有这份文件"是两件不同的事）。
@@ -1117,6 +1198,9 @@ pub struct MeshHandle {
     /// ⭐ **U8**：与 `State::conns` **同一份**（同一个 `Arc` ✓）——
     /// `ensure_window` 靠它往里**加空间**（⛔ 不重启窗口 ✗）；`stop_window` 靠它**摘掉**一个空间 ✓。
     conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
+    /// ⭐ **U11**：与 `State::paired` 同一份 ⇒ **逐台解除**时要把那张卡从**正在跑的门**里也摘掉 ✓
+    /// （⛔ 只删库不算 ✗ —— 那个窗口还认着它，直到下次重启 ⇒ 那就是"删了等于没删"✓）。
+    paired: Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
 }
 
 impl MeshHandle {
@@ -1147,6 +1231,42 @@ impl MeshHandle {
         let conn = crate::db::open_space_conn_at(db_space, dir)?;
         guard.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
         Ok(true)
+    }
+
+    /// ⭐ **U11**：把**这个空间**的卡表也载进来 ✓。
+    ///
+    /// ⚠️ **U8 的"门已开着、往里加空间"那条路上必须一起做** ✗ ——
+    /// 只加连接不载卡 ⇒ 那个空间**服务着、但谁都进不来**（401 ✓）
+    /// ⇒ ⭐ **这是 U8 判据当场抓到的真 bug** ✓（2026-10-02 实测：`three_spaces_share_one_window_…`
+    /// 里 proto-2 回 401 而期望 200 ✓）。
+    pub fn load_cards_for(&self, proto_space: &str, dir: &Path) -> Result<(), String> {
+        let mut fresh: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+        load_cards(dir, proto_space, &mut fresh);
+        let add = fresh.remove(proto_space).unwrap_or_default();
+        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        let set = guard.entry(proto_space.to_string()).or_default();
+        for h in add {
+            set.insert(h);
+        }
+        Ok(())
+    }
+
+    /// ⭐ **U11**：把**这一张卡**从正在跑的门里摘掉（回"摘掉了吗"✓）。
+    ///
+    /// ⚠️ **必须做** ✗：只删库里那一行 ⇒ 运行中的窗口**还认着那张卡** ⇒ 直到重启/换绑
+    /// ⇒ 用户看到的是"**删了等于没删**" ✗（正是 T5 判据① 要挡的 ✓）。
+    pub fn forget_paired_hash(&self, proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
+        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        Ok(guard.get_mut(proto_space).map(|set| set.remove(secret_sha256)).unwrap_or(false))
+    }
+
+    /// ⭐ **U11**：这一扇门现在**认几张卡**（这个空间 ✓；读数用 ✓）。
+    pub fn paired_card_count(&self, proto_space: &str) -> usize {
+        match self.paired.lock() {
+            Ok(g) => g.get(proto_space).map(|s| s.len()).unwrap_or(0),
+            Err(_) => 0,
+        }
     }
 
     /// ⭐ **U8**：这一扇门现在**服务不服务**这个空间 ✓。
@@ -1191,6 +1311,7 @@ impl Drop for MeshHandle {
 pub fn start(
     cfg: MeshConfig,
     conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
+    paired: Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
 ) -> Result<MeshHandle, String> {
     let addr = checked_bind(&cfg.bind)?;
     let listener = TcpListener::bind(addr).map_err(|e| format!("网格窗口绑不上 {addr}：{e}"))?;
@@ -1203,12 +1324,21 @@ pub fn start(
         v.sort_unstable();
         v
     };
-    if cfg.token.as_deref().map(str::trim).unwrap_or("").is_empty() {
-        eprintln!(
-            "[mesh] ⚠️ 网格窗口**没有设口令**（{bound}，服务 {} 个空间：{}）：能连上这个地址的人都能拉走这些空间的密文记录。",
-            served.len(),
-            served.join("、")
-        );
+    // ⭐ U11：**"不设防"的判据从"没设口令"改成"一张卡都没有"** ✓
+    //    —— 因为 A 之后口令已经不作凭证了 ✓；而"零张卡"确实等于"谁都能…"？不 ✓：
+    //    零张卡 ⇒ **谁都进不来**（门只认卡 ✓）⇒ 所以这里要说的不是"危险"，而是"**进不来**" ✓。
+    {
+        let cards: usize = match paired.lock() {
+            Ok(g) => g.values().map(|v| v.len()).sum(),
+            Err(_) => 0,
+        };
+        if cards == 0 {
+            eprintln!(
+                "[mesh] ⚠️ 网格窗口（{bound}，服务 {} 个空间：{}）**一张配对的卡都没有** ⇒ **谁都拉不动**（门只认卡 ✓）：先在设置面配对 ✓。",
+                served.len(),
+                served.join("、")
+            );
+        }
     }
     eprintln!(
         "[mesh] 网格窗口已启动：{bound} ｜ 服务 {} 个空间：{} ｜ 自称 {}",
@@ -1218,7 +1348,7 @@ pub fn start(
     );
 
     let served_pulls = Arc::new(AtomicUsize::new(0));
-    let state = Arc::new(State { conns: conns.clone(), cfg, served_pulls: served_pulls.clone() });
+    let state = Arc::new(State { conns: conns.clone(), paired: paired.clone(), cfg, served_pulls: served_pulls.clone() });
     let stop = Arc::new(AtomicBool::new(false));
     let stop_in = stop.clone();
     let join = std::thread::Builder::new()
@@ -1238,7 +1368,7 @@ pub fn start(
             }
         })
         .map_err(|e| format!("网格窗口线程起不来：{e}"))?;
-    Ok(MeshHandle { addr: bound, stop, join: Some(join), served_pulls, conns })
+    Ok(MeshHandle { addr: bound, stop, join: Some(join), served_pulls, conns, paired })
 }
 
 struct Request {
@@ -1374,8 +1504,9 @@ fn handle_conn(mut sock: TcpStream, state: Arc<State>) -> Result<(), String> {
 }
 
 fn dispatch(state: &State, req: &Request) -> Reply {
-    if !authorized(state, req) {
-        return Reply::json(401, "Unauthorized", json_error("这个网格窗口要口令（Authorization: Bearer …），对不上"));
+    // ⭐ U11：门只认卡，且**分清 401／403**（见 `authorized` 头注 ✓）
+    if let Err(r) = authorized(state, req) {
+        return r;
     }
     match route(&req.method, &req.target) {
         Route::Pull => {
@@ -1402,14 +1533,90 @@ fn dispatch(state: &State, req: &Request) -> Reply {
     }
 }
 
-fn authorized(state: &State, req: &Request) -> bool {
-    let Some(want) = state.cfg.token.as_deref().map(str::trim).filter(|t| !t.is_empty()) else {
-        return true;
+/// ⭐ **U11/T5（2026-10-02）：门只认卡** —— owner 选 **A**（退役共享口令）✓。
+///
+/// 三步，缺一不可 ✓：
+///   ① **必须出示**（没给 `Authorization` ⇒ 拒 ✓）—— ⛔ 不再有"没设口令就全放行"那条路 ✗
+///      （那正是 A 要消灭的：留着它 ⇒「删掉那一行」对拿到过共享口令的设备**不成立** ✗）；
+///   ② 从 `?space_id=` **定位空间**（缺参数时与 `select_space` 同一口径：只服务一个 ⇒ 用它 ✓；
+///      多个 ⇒ 拒 ✓ —— ⛔ **不猜** ✗）；
+///   ③ 出示的那串算 `sha256`，在**那个空间**的卡表里找 ✓（表里的就是**已登记**、**未解除**的卡 ✓）。
+///
+/// ⚠️ 哈希只有**一处**实现（`crate::db::sha256_hex` ✓）：写入侧与这里共用 ⇒ 不会漂 ✓。
+fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
+    // ① 先**定位空间**（缺参数时与 `select_space` 同一口径：只服务一个 ⇒ 用它 ✓；多个 ⇒ 拒 ✓ 不猜 ✗）
+    let space = match query_get(&req.target, "space_id") {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            let Ok(guard) = state.conns.lock() else {
+                return Err(Reply::json(500, "Internal Server Error", json_error("空间连接表的锁被毒掉了")));
+            };
+            match guard.len() {
+                1 => guard.keys().next().cloned().unwrap_or_default(),
+                _ => {
+                    return Err(Reply::json(
+                        400,
+                        "Bad Request",
+                        json_error("这个窗口服务**多个**空间 ⇒ 请求必须带 `?space_id=`（说不清要哪个，不猜）"),
+                    ))
+                }
+            }
+        }
+        Err(e) => return Err(Reply::json(400, "Bad Request", json_error(&e))),
     };
-    req.header("authorization")
+    // ② ⭐ **空间不在服务范围 ⇒ 403**（认得出你，但这不是我的空间 ✓）
+    //    ⚠️ **别把它混进 401** ✗ —— 既有两条判据（`the_space_id_gate_…` 与 `the_window_serves_…`）
+    //    都要求这里回 **403** ✓（2026-10-02 实测踩到过：混成 401 ⇒ 两条判据当场红 ✓）。
+    let served = match state.conns.lock() {
+        Ok(g) => g.contains_key(&space),
+        Err(_) => false,
+    };
+    if !served {
+        return Err(Reply::json(
+            403,
+            "Forbidden",
+            json_error(&format!("这个窗口不服务空间 {space}（不是「没带证件」，是「这不是我的空间」）")),
+        ));
+    }
+    // ③ 凭证不对 ⇒ **401**（认不出你是谁 ⇒ 先亮卡 ✓）
+    let Some(got) = req
+        .header("authorization")
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|got| got.trim() == want)
-        .unwrap_or(false)
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        return Err(Reply::json(401, "Unauthorized", json_error("这个网格窗口要**配对的卡**（Authorization: Bearer …），没出示")));
+    };
+    let h = crate::db::sha256_hex(got);
+    let ok = match state.paired.lock() {
+        Ok(g) => g.get(&space).map(|cards| cards.contains(&h)).unwrap_or(false),
+        Err(_) => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error("这张卡不在这个空间的名单里（**没配过对**，或**已经被逐台解除** ✓）"),
+        ))
+    }
+}
+
+/// ⭐ **U11**：把库里那个空间的卡**载进内存表**（开门时载一次 ✓；解除时摘一张 ✓）。
+///
+/// ⚠️ 载不进来（库打不开 / 表不在）⇒ **空表** ⇒ 门**谁都进不来** ✓（⛔ 不是"放行" ✗）。
+fn load_cards(
+    dir: &Path,
+    proto_space: &str,
+    into: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
+) {
+    let Ok(meta) = crate::db::open_meta_conn_at(dir) else { return };
+    let Ok(hashes) = crate::db::paired_secret_hashes(&meta, proto_space) else { return };
+    let set = into.entry(proto_space.to_string()).or_default();
+    for h in hashes {
+        set.insert(h);
+    }
 }
 
 /// 查询串 → `(键, 值)`；出现需要 URL 解码的字符就**当场拒绝**（不猜着解码）。
@@ -1842,7 +2049,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "A".into(),
-                token: Some("lan-token".into()),
                 // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
                 // 要验附件那条路的判据自己塞临时目录。
                 data_dir: None,
@@ -1854,7 +2060,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "B".into(),
-                token: Some("lan-token".into()),
                 // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
                 // 要验附件那条路的判据自己塞临时目录。
                 data_dir: None,
@@ -2215,7 +2420,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "A".into(),
-                token: Some("lan-token".into()),
                 data_dir: Some(dir_a.clone()),
             },
             a.clone(),
@@ -2225,7 +2429,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "B".into(),
-                token: Some("lan-token".into()),
                 data_dir: Some(dir_b.clone()),
             },
             b.clone(),
@@ -2236,7 +2439,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "C".into(),
-                token: Some("lan-token".into()),
                 data_dir: None,
             },
             Arc::new(Mutex::new(space_conn("C"))),
@@ -2311,11 +2513,12 @@ mod tests {
     #[test]
     fn an_unimplemented_endpoint_answers_explicitly_over_real_http() {
         let c = Arc::new(Mutex::new(space_conn("A")));
-        let win = start1(
+        let win = start1s_card(
+            "space-x",
+            "right",
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "A".into(),
-                token: Some("right".into()),
                 data_dir: None,
             },
             c,
@@ -2340,10 +2543,28 @@ mod tests {
     /// 一个**手写的**最小 GET（判据不依赖被测的那一侧自己写的客户端）。
     /// ⭐ **U8（2026-10-01）**：判据里造「**一扇门只服务 `space-x`**」的窗口 ——
     /// 所有测试夹具用的都是它 ✓（U8 之后 `start` 收的是**连接表**，判据只要一对 ✓）。
-    fn start1s(proto: &str, cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
+    /// ⭐ **U11（2026-10-02）**：判据里的窗口现在**门只认卡** ✓ ⇒ 助手要**登记一张卡** ✓。
+    /// `card` ＝ 判据会拿去当 `Authorization: Bearer` 的那一串 ✓（于是既有那批判据
+    /// **形状不变**，而它们**真的在走「卡」那条路** ✓）。
+    fn start1s_card(
+        proto: &str,
+        card: &str,
+        cfg: MeshConfig,
+        conn: Arc<Mutex<Connection>>,
+    ) -> Result<MeshHandle, String> {
         let mut m = std::collections::HashMap::new();
         m.insert(proto.to_string(), conn);
-        start(cfg, Arc::new(Mutex::new(m)))
+        let mut cards: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            std::collections::HashMap::new();
+        cards
+            .entry(proto.to_string())
+            .or_default()
+            .insert(crate::db::sha256_hex(card));
+        start(cfg, Arc::new(Mutex::new(m)), Arc::new(Mutex::new(cards)))
+    }
+
+    fn start1s(proto: &str, cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
+        start1s_card(proto, "lan-token", cfg, conn)
     }
 
     fn start1(cfg: MeshConfig, conn: Arc<Mutex<Connection>>) -> Result<MeshHandle, String> {
@@ -2466,7 +2687,6 @@ mod tests {
             MeshConfig {
                 bind: "0.0.0.0:0".into(),
                 device_id: "B".into(),
-                token: Some("lan-token".into()),
                 data_dir: None,
             },
             b.clone(),
@@ -2669,7 +2889,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "A".into(),
-                token: Some("lan-token".into()),
                 // 判据里的窗口默认**不服务附件**（`/mesh/attachment` 会如实回 501）；
                 // 要验附件那条路的判据自己塞临时目录。
                 data_dir: None,
@@ -2686,7 +2905,9 @@ mod tests {
         {
             let c = b.lock().unwrap();
             set_mesh_bind(&c, "space-x", Some("127.0.0.1:0")).unwrap();
-            set_mesh_token(&c, "space-x", Some("lan-token")).unwrap();
+            // ⭐ **U11（A：门只认卡）**：窗口登记的是**卡**（`start1` 把 "lan-token" 当一张卡 ✓）
+            //   ⇒ 本机出示的必须是**这一台**的那份配对秘密 ✓（⛔ 共享口令已退役 ✗）
+            set_pair_secret(&c, "space-x", "A", Some("lan-token")).unwrap();
         }
         let peers = vec![announced("A", &format!("http://{}", win.addr()), &["space-x"])];
 
@@ -2698,7 +2919,7 @@ mod tests {
         let cands = vec![mesh_peer("A", &format!("http://{}", win.addr()))];
         let cfg = settings(&b.lock().unwrap(), "space-x");
 
-        let rep = round_candidates(&b, "space-x", &cfg, cands.clone()).await.unwrap();
+        let rep = round_candidates(&b, "space-x", cands.clone()).await.unwrap();
         assert!(rep.enabled && rep.candidates == 1, "{rep:?}");
         assert_eq!(rep.peers.len(), 1);
         assert_eq!((rep.peers[0].fetched, rep.peers[0].applied), (1, 1), "{rep:?}");
@@ -2710,7 +2931,7 @@ mod tests {
         );
 
         // 再跑一轮：水位到批尾 ⇒ 什么都不再拉（幂等，不重复搬运）
-        let again = round_candidates(&b, "space-x", &cfg, cands).await.unwrap();
+        let again = round_candidates(&b, "space-x", cands).await.unwrap();
         assert_eq!(again.peers[0].fetched, 0, "{again:?}");
     }
 
@@ -2722,7 +2943,6 @@ mod tests {
             MeshConfig {
                 bind: "127.0.0.1:0".into(),
                 device_id: "A".into(),
-                token: None,
                 data_dir: None,
             },
             a.clone(),
@@ -2736,6 +2956,8 @@ mod tests {
         {
             let c = b.lock().unwrap();
             set_mesh_bind(&c, "space-x", Some("127.0.0.1:0")).unwrap();
+            // ⭐ **U11**：门只认卡 ⇒ 本机要出示"给 A 的那一份" ✓（对端窗口登记的就是它 ✓）
+            set_pair_secret(&c, "space-x", "A", Some("lan-token")).unwrap();
         }
         // 两台够格的对端：一台活着、一台连不上（端口 9）
         let cands = vec![
@@ -2743,7 +2965,7 @@ mod tests {
             mesh_peer("Z", "http://127.0.0.1:9"),
         ];
         let cfg = settings(&b.lock().unwrap(), "space-x");
-        let rep = round_candidates(&b, "space-x", &cfg, cands).await.unwrap();
+        let rep = round_candidates(&b, "space-x", cands).await.unwrap();
         assert_eq!(rep.candidates, 2);
         let down = rep.peers.iter().find(|r| r.peer == "Z").expect("连不上的那台也要有一行");
         assert!(down.error.is_some(), "拉不动要如实写在自己那一行：{down:?}");
@@ -2834,12 +3056,12 @@ mod tests {
             ids.iter().map(|id| Arc::new(Mutex::new(device_conn(&dir, id)))).collect();
         let wins: Vec<MeshHandle> = (0..T10_DEVICES)
             .map(|i| {
-                start1s(
+                start1s_card(
                     T10_SPACE,
+                    T10_TOKEN,
                     MeshConfig {
                         bind: "127.0.0.1:0".into(),
                         device_id: ids[i].clone(),
-                        token: Some(T10_TOKEN.into()),
                         data_dir: None,
                     },
                     conns[i].clone(),
@@ -2911,7 +3133,7 @@ mod tests {
                         .filter(|&k| k != i)
                         .map(|k| mesh_peer(&ids[k], &format!("http://{}", wins[k].addr())))
                         .collect();
-                    async move { round_candidates(&conn, T10_SPACE, cfg_ref, peers).await }
+                    async move { round_candidates(&conn, T10_SPACE, peers).await }
                 });
                 let reports = futures_util::future::join_all(futs).await;
                 let mut ok_per_dev = vec![0usize; T10_DEVICES];
@@ -3122,11 +3344,19 @@ mod tests {
         //    ⚠️ **必须「每次一个空间」**（就像旧的 `lan_state` 逐空间调那样 ✓）——
         //    一开始我写成「一次把三个传进去」，于是「按空间键」和「按绑定键」**结果一样** ⇒
         //    变异（退回每空间一扇门）**照样绿** ✗ ⇒ 判据自己把缺口糊住了 ✓（实测踩到，改掉 ✓）。
+        // ⭐ **U11（2026-10-02，门只认卡）**：先按**生产路径**（`db::pair_device` ✓）登记一张卡
+        //   ⇒ 判据因此**顺带覆盖**了「登记过的卡真的进得去」✓（而不只是手塞内存表 ✓）。
+        {
+            let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+            for i in 1..=3 {
+                crate::db::pair_device(&meta, &format!("proto-{i}"), "me", "lan-token").unwrap();
+            }
+        }
         let mut addrs = Vec::new();
         for (db, proto) in &pairs {
             let one = [(db.clone(), proto.clone())];
             addrs.push(
-                ensure_window(&one, "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+                ensure_window(&one, "A", "127.0.0.1:0", &dir)
                     .unwrap()
                     .expect("配了地址就该开起来"),
             );
@@ -3169,5 +3399,85 @@ mod tests {
         stop_window("proto-3").unwrap();
         assert_eq!(window_addr("proto-1"), None, "最后一个空间也走了 ⇒ 门应当关掉");
         assert_eq!(window_addr("proto-3"), None);
+    }
+
+    /// ⭐⭐ **U11/T5：逐台解除** —— 三条挤在一条判据里（T5 的 ①②③ ✓），
+    /// 因为它们量的是**同一件事的三面**：只踢那一台 ✓、别人照常 ✓、**库里只有哈希** ✓。
+    ///
+    /// ⚠️ **这条判据只能这么测**（不能只测 `unpair_device` 那个纯函数 ✗）：
+    ///   真正会出错的形状是「**库里删了、但正在跑的窗口还认着那张卡**」✗
+    ///   ⇒ 用户看到的是「**删了等于没删**」✓ —— 那正是 T5 判据② 要挡的旧办法（"换窗口口令"）的同类 ✓。
+    ///
+    /// **变异**：① 把 `forget_paired(...)` 那一步去掉（只删库）⇒ **本判据必须红** ✓
+    ///          ② 把 `db::pair_device` 改成**存明文** ⇒ ③ 那段必须红 ✓
+    #[tokio::test]
+    async fn unpairing_one_device_only_stops_that_device() {
+        let dir = temp_dir("mesh-u11-unpair");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        {
+            let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+            c.execute_batch("CREATE TABLE IF NOT EXISTS meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+            crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
+            let mut pg = page("p1", "本机写的一版", 1_000);
+            pg.workspace_id = "default".to_string();
+            local_edit(&c, &pg);
+        }
+        // ① 两台设备各配一张卡（走**生产路径** ✓ —— 判据因此也覆盖"配对真的登记进库"✓）
+        let secret_b = "sec-B-2f9a1c";
+        let secret_c = "sec-C-7d3e50";
+        {
+            let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+            crate::db::pair_device(&meta, "proto-x", "dev-B", secret_b).unwrap();
+            crate::db::pair_device(&meta, "proto-x", "dev-C", secret_c).unwrap();
+            // ③ **只存哈希**：库里那一格**不是明文** ✓
+            let stored: String = meta
+                .query_row(
+                    "SELECT secret_sha256 FROM mesh_paired_devices WHERE space_id='proto-x' AND device_id='dev-B'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_ne!(stored, secret_b, "⛔ 库里存了**明文**（U11-③ 要挡的正是这个 ✗）");
+            assert_eq!(stored, crate::db::sha256_hex(secret_b), "存的应当是 sha256 ✓");
+            assert_eq!(stored.len(), 64, "形状就是 64 位十六进制 ✓");
+        }
+        // 窗口：⭐ **必须走 `ensure_window`**（会进**进程级注册表** ✓）——
+        //   ⚠️ `open_window_at` 开的是**不进注册表**的独立门 ✗ ⇒ `forget_paired` 扫不到它
+        //   ⇒ 卡摘不掉 ⇒ "删了等于没删" ✓ **实测踩到过**（本判据第一版就是这么红的 ✓）。
+        //   ⚠️ 绑定写法要与 U8 判据**不同键**（注册表键＝绑定字符串 ✓）：它用 `127.0.0.1:0`，
+        //   这里用 `localhost:0` ⇒ 两条判据不会互相串 ✓。
+        let pairs = [("default".to_string(), "proto-x".to_string())];
+        let addr = ensure_window(&pairs, "A", "localhost:0", &dir)
+            .unwrap()
+            .expect("窗口应当起得来");
+        let pull = |r: &'static str| format!("/mesh/pull?space_id=proto-x&since=0&limit=100&who={r}");
+
+        // ② 两台都进得来（基线 ✓ —— 别把"谁都进不来"当成"撤销成功" ✗）
+        for sec in [secret_b, secret_c] {
+            let (code, body) = http_get(addr, &pull("x"), Some(sec));
+            assert_eq!(code, 200, "配过对的卡应当进得来：{body}");
+            assert!(body.contains("p1"), "而且要真拉到东西：{body}");
+        }
+
+        // ① **只踢 dev-B**：库里删那一行 ＋ ⭐ 把它的卡**从正在跑的窗口里也摘掉** ✓
+        let hash = {
+            let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+            let h = crate::db::unpair_device(&meta, "proto-x", "dev-B").unwrap();
+            assert!(h.is_some(), "解除前它应当在名单里 ✓");
+            h.unwrap()
+        };
+        crate::mesh::forget_paired("proto-x", &hash).unwrap();
+
+        let (code, body) = http_get(addr, &pull("x"), Some(secret_b));
+        assert_eq!(code, 401, "被解除的那台**必须被拒**（不是 200 ✗）：{body}");
+        // ② ⭐ **别的那台照常** —— 这一条才是"逐台"的意思 ✓
+        //    ⚠️ 变异（把撤销做成"换窗口口令"／或只删库不摘卡）⇒ 上面那条仍会绿 ✗，而**这条会红** ✓
+        let (code, body) = http_get(addr, &pull("y"), Some(secret_c));
+        assert_eq!(code, 200, "**别的设备不受影响**（这才是逐台解除 ✓）：{body}");
+        assert!(body.contains("p1"), "它还要真拉得到：{body}");
+        // ⭐ 而且**不必给所有设备换口令** ✓ —— dev-C 用的还是它原来那一份 ✓
+
+        crate::mesh::stop_window("proto-x").unwrap();
     }
 }

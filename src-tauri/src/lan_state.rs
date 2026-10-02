@@ -309,13 +309,13 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   把配了地址的那些空间**按绑定分组** ⇒ **一个绑定只调一次** ✓
             //   （同一绑定的空间**共用一扇门** ✓；矩阵 U8-① 的判据就是"三次 ⇒ 同一个地址"）。
             //
-            //   ⚠️ **口令取哪一份**（规格 §7-R3 的裁定 ✓）：窗口级只有一份 ⇒ 取**这一组里第一个非空的**
-            //      （＝"最早那个空间"那一份 ✓）。⛔ 不静默丢：不一致由设置面读数如实提示 ✓。
+            //   ⭐ **U11（2026-10-02，owner 选 A「门只认卡」）之后，口令**不再是窗口级的授权因素** ✓
+            //      ⇒ 原来那段"口令取哪一份"（§7-R3）**随之退役** ✗ —— 门的授权只有**卡表** ✓
+            //      （`mesh_paired_devices` 的 `secret_sha256` ✓）。⚠️ 旧 `mesh_token:<space>` KV
+            //      **保留可读**（不静默删 ✓）但**不再作任何凭证** ✗。
             //   ⚠️ 用 **BTreeMap**（键有序）⇒ 同一组网卡/同一组配置**每次跑出来的顺序一样** ✓
             //      （HashMap 的遍历顺序不定 ⇒ 判据会 flaky ✗）。
             let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String)>> =
-                std::collections::BTreeMap::new();
-            let mut token_by_bind: std::collections::BTreeMap<String, Option<String>> =
                 std::collections::BTreeMap::new();
             for (space, ws, cfg) in &mesh_cfgs {
                 let Some(bind) = cfg.bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) else {
@@ -325,10 +325,6 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     .entry(bind.to_string())
                     .or_default()
                     .push((ws.clone(), space.clone()));
-                let slot = token_by_bind.entry(bind.to_string()).or_insert(None);
-                if slot.is_none() && cfg.token.as_deref().map(str::trim).map(|t| !t.is_empty()).unwrap_or(false) {
-                    *slot = cfg.token.clone();
-                }
             }
             for (bind, pairs) in &by_bind {
                 // ⚠️ 取不到 app data 目录 ⇒ **如实说、这一轮不开窗**（⛔ 不静默跳过 ✗）
@@ -336,13 +332,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     eprintln!("[mesh] 取不到 app data 目录 ⇒ 绑定 {bind} 这一轮不开窗（不是「没有空间」，是读不到目录）");
                     continue;
                 };
-                match crate::mesh::ensure_window(
-                    pairs,
-                    &device_id,
-                    bind,
-                    token_by_bind.get(bind).cloned().flatten(),
-                    mesh_dir,
-                ) {
+                match crate::mesh::ensure_window(pairs, &device_id, bind, mesh_dir) {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
                         Some(base) => {
                             // ⭐ 一扇门服务多个空间 ⇒ **每个空间都记一条基址**（公告是按空间发的 ✓）

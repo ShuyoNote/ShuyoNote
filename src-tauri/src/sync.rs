@@ -1058,21 +1058,28 @@ pub async fn download_attachment(
     }
 
     // ── ② 对端那条（丙）：按 `mesh_peers` 定的顺序**依次**试
-    let (candidates, mesh_token, proto_space) = {
+    // ⚠️ **U11 之后这里不再取"共享口令"** ✗ —— 门只认卡 ✓，出示的是**每台各一份**的配对秘密
+    //   ⇒ 那一份在下面的循环里**按对端**取 ✓（见 `peer_secret` ✓）。
+    let (candidates, proto_space) = {
         let c = db.0.lock().expect("db mutex poisoned");
         let device = device_id(&c).unwrap_or_default();
         let proto = profile.space_id.trim().to_string();
         if proto.is_empty() {
-            (Vec::new(), None, proto)
+            (Vec::new(), proto)
         } else {
             let peers = crate::lan_state::LanState::global(&device).peers(crate::db::now_ms());
             let candidates = crate::mesh::mesh_peers(&proto, &device, &peers);
-            (candidates, crate::mesh::settings(&c, &proto).token, proto)
+            (candidates, proto)
         }
     };
     let mut tried: Vec<String> = Vec::new();
     for p in &candidates {
-        match crate::mesh::request_attachment_from_peer(&client, p, &proto_space, &hash, mesh_token.as_deref()).await {
+        // ⭐ **U11（A：门只认卡）**：出示的是**这一台**的那一份配对秘密 ✓（⛔ 共享口令已退役 ✗）
+        let peer_secret = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            crate::mesh::pair_secret_for(&c, &proto_space, &p.device_id)
+        };
+        match crate::mesh::request_attachment_from_peer(&client, p, &proto_space, &hash, peer_secret.as_deref()).await {
             Ok(resp) => match download_one_attachment(resp, &format!("对端 {}", p.device_id), &item, &attachments_dir, session_key.as_ref(), &db).await {
                 Ok(size) => {
                     return Ok(AttachmentFetch {
@@ -3020,7 +3027,6 @@ pub async fn mesh_sync_now(
         &[(scope.db_space.clone(), scope.space.clone())],
         &scope.device,
         cfg.bind.as_deref().unwrap_or(""),
-        cfg.token.clone(),
     )?
         .map(|a| format!("http://{a}"));
     let mut report = crate::mesh::round(&db.0, &scope.space, &scope.device, &peers).await?;
@@ -3041,6 +3047,49 @@ pub async fn mesh_sync_now(
 ///    关掉时**立刻松口**（`stop_window`），不留一个还在听着的窗口。
 ///
 /// ⚠️ 回的是**读数**（`MeshConfigState`）—— 含"**别人拉不拉得到**"那句人话，**不含口令本身**。
+/// ⭐ **U11/T5（2026-10-02）**：**逐台解除** —— 只把那**一台**踢出去 ✓。
+///
+/// 做四件（缺任何一件都不算 ✓）：
+///   ① 删库里的那一行（`mesh_paired_devices` ✓，⛔ **只存哈希**，删的就是哈希 ✓）
+///   ② ⭐ 把那张卡**从正在跑的门里也摘掉** —— 否则"删了等于没删" ✗（见 `mesh::forget_paired` ✓）
+///   ③ 把**本机要出示给那一台**的那份秘密也清掉 ✓（否则还会拿着它去敲别人的门 ✓）
+///   ④ 回一个**读数**（还认几台 ✓）—— 界面要能如实说"这台还认我吗" ✓
+///
+/// ⚠️ **只影响那一台** ✗：别的设备照常 ✓，⛔ **不必给所有设备换口令**（那正是 U11 要消灭的旧办法 ✓）。
+#[tauri::command]
+pub fn device_unpair(
+    db: State<'_, Db>,
+    workspace_id: Option<String>,
+    peer_device_id: String,
+) -> Result<crate::mesh::MeshPairedState, String> {
+    let scope = mesh_scope(&db, workspace_id.as_deref())?;
+    let peer = peer_device_id.trim().to_string();
+    if peer.is_empty() {
+        return Err("要解除哪一台？给一个 device_id".to_string());
+    }
+    let hash = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let h = crate::db::unpair_device(&c, &scope.space, &peer)?;
+        // ③ 本机给他的那一份也清掉（没有 ⇒ 空操作 ✓）
+        crate::mesh::set_pair_secret(&c, &scope.space, &peer, None)?;
+        h
+    };
+    // ② 跑到正在跑的门里把卡摘掉（`hash` 还要用来报"本来就配过吗" ⇒ **借用**它 ✓）
+    if let Some(h) = hash.as_deref() {
+        crate::mesh::forget_paired(&scope.space, h)?;
+    }
+    let paired = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        crate::db::paired_device_count(&c, &scope.space)?
+    };
+    Ok(crate::mesh::MeshPairedState {
+        peer: peer,
+        was_paired: hash.is_some(),
+        paired_count: paired,
+        note: "已解除这一台：它现在**拉不动你**了（别人不受影响 ✓，也**不用**给所有设备换口令 ✓）。".to_string(),
+    })
+}
+
 #[tauri::command]
 pub fn mesh_set_config(
     db: State<'_, Db>,
@@ -3069,7 +3118,6 @@ pub fn mesh_set_config(
         &[(scope.db_space.clone(), scope.space.clone())],
         &scope.device,
         cfg.bind.as_deref().unwrap_or(""),
-        cfg.token.clone(),
     )?;
     // ⭐ U8：把"这扇门服务哪些空间"一起报出去（从注册表读 ✓ —— 只读，不开窗 ✓）
     let served = crate::mesh::served_spaces(&scope.space);
