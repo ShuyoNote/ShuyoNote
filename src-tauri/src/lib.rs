@@ -11,6 +11,10 @@ mod attachments;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
+// P0 格式引擎（Kreuzberg v4.10.x，MIT ✓）—— 补 eml/msg/zip/rtf/odt/epub/学术格式那一类；
+// ⛔ 只返回文本、**不写派生表**（派生表唯一写入者仍是 `src/lib/extract/` ✓）。
+// ⚠️ 特性集不含 `chunking`（与 boa_engine 的 icu 依赖互斥 ✗ 实测；见 `Cargo.toml` 注释 ✓）。
+mod extract_kz;
 mod backlinks;
 mod backup;
 mod block_rev;
@@ -552,6 +556,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             abilities::save_ability_pack,
+            extract_kz::extract_with_kreuzberg,
             commands::list_pages,
             commands::list_workspace_pages,
             workspaces::list_workspaces,

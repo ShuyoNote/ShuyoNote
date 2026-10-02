@@ -129,6 +129,16 @@ export const api = {
    */
   saveAbilityPack: (packId: string, base64: string) =>
     invoke("save_ability_pack", { packId, base64 }),
+  /**
+   * ⭐ **P0 格式引擎**（Kreuzberg v4.10.x，MIT ✓）：补 `eml／msg／zip／7z／gz／rtf／odt／epub／
+   * 学术格式` 那一类（本仓既有 TS 链对它们**无读数** ✗）。
+   * ⚠️ 只**取文本** —— 派生表（`attachment_text` / `chunks`）的唯一写入者仍然是
+   * `src/lib/extract/` 那条链 ✓（门禁 `check-derived-writers` 守的就是这一条 ✓）。
+   * ⚠️ 特性集**不含** `chunking` ✓（与 `boa_engine` 的 icu 依赖互斥 ✗ 实测）⇒ 分块仍在
+   * `src/lib/extract/chunk.ts` 做 ✓。
+   */
+  extractWithKreuzberg: (path: string) =>
+    invoke("extract_with_kreuzberg", { path }),
   setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
   /** `runId` 让前端能在等待期间**真的终止**这次运行（见 store/plugins 的 cancelRun）。 */
   runPluginCommand: (

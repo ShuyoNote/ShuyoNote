@@ -72,6 +72,20 @@ sha2 = "0.11"
 regex = "1"
 zip = "8"
 hex = "0.4"
+# ── P0 格式引擎（2026-10-02）────────────────────────────────────────────────────────
+# 许可：**只允许 v4.10.x**（crates.io 逐字 `"license":"MIT"` ✓ ⇒ 可进 AGPL-3.0 客户端 ✓）。
+#       ⛔ v5／Xberg 是 **Elastic-2.0** ✗ ⇒ 与 AGPL 不兼容 ⇒ **永不引入** ✗。版本**钉死** =4.10.4。
+# 特性：**故意不含** `chunking` —— 它拉 text-splitter → icu_segmenter 2.3.0，
+#       而本仓 boa_engine → icu_normalizer 2.0.1 → icu_collections ~2.0.0 ⇒ **cargo 无解** ✗（实测）。
+#       ⭐ 而且分块本来就归本仓 `src/lib/extract/chunk.ts` ✓，不在这一层做 ✓。
+#       ⛔ 也不含 pdf（构建期会去 github.com 下 pdfium ✗ 本机该域被 DNS 劫持 ✓）
+#       ⛔ 也不含 ocr/paddle-ocr/layout-detection/embeddings（要 ort/ONNX ✗，且本仓已有 tesseract ✓）。
+# ⚠️ **不写 `default-features = false`**：与我实测编过的那份探针配置**逐字一致** ✓
+#    （当时 393 依赖 / 132k 行编过 ✓），免得为一个没核过的特性名再赌一次 ✗。
+kreuzberg = { version = "=4.10.4", features = [
+  "office", "excel", "email", "archives", "html", "xml",
+  "quality", "language-detection",
+] }
 # 索引签名（minisign）：与 updater 同一套习惯，只做校验（不内置任何"官方公钥"）。
 minisign-verify = "0.2"
 # RSS 看门狗读子进程常驻内存：Linux 要页大小（sysconf），macOS 走 proc_pidinfo。

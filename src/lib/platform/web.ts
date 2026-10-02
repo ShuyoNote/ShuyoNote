@@ -1357,6 +1357,11 @@ export function makeInvoke(store: SqliteStore) {
     if (cmd === "save_ability_pack") {
       throw new Error("按需下载仅桌面版支持（Web 版请使用桌面版）");
     }
+    // ⚠️ 同理：P0 格式引擎是本机原生库 ✓，浏览器里没有它 ⇒ **明说做不到** ✓
+    //    （同 `email_fetch_*` 那几条的既有口径 ✓；⛔ 不假装能抽 ✗）。
+    if (cmd === "extract_with_kreuzberg") {
+      throw new Error("P0 格式引擎仅桌面版支持（Web 版请使用桌面版）");
+    }
 
     // ---- Core note CRUD (real SQL) ----
     if (cmd === "list_pages") {

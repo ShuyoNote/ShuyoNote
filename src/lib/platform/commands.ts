@@ -536,6 +536,13 @@ export interface CommandMap {
     args: { packId: string; base64: string };
     result: { path: string; bytes: number; sha256: string; audit: string };
   };
+  // ---- P0 格式引擎（Kreuzberg v4.10.x，MIT；桌面专属） ----
+  // ⚠️ 只**取文本**：不写派生表（`attachment_text` / `chunks` 的唯一写入者仍是 `src/lib/extract/` ✓）。
+  // 补的是本仓既有 TS 链吃不下的一类：eml／msg／zip／7z／gz／rtf／odt／epub／学术格式 ✓。
+  extract_with_kreuzberg: {
+    args: { path: string };
+    result: { text: string; chars: number; ms: number; engine: string };
+  };
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
