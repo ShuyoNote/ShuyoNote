@@ -64,4 +64,26 @@ describe("T4 · 把这台设备接进来", () => {
     expect(block).toContain("含窗口口令");
     expect(block).toContain("别外传");
   });
+
+  // ⭐ R110（owner 2026-10-02 拍 A · macOS 侧落地）：**生成前先选「这段码给哪一台」**。
+  //   三条口径在这一块里，都是"这条判据能抓住的顺手改"：
+  //     ① **默认仍是「不指定」** ⇒ 老路（码可离线传、要配两次）**必须留着** ✓（A 是加法，⛔ 不是替换 ✗）；
+  //     ② 候选**只列服务本空间的**（`serves_current`，Rust 说了算 ✓）且**只给短码** ✓
+  //        （⛔ 可见文案不出现裸设备号 ✗ —— 与 `syncPanelMesh.wiring.test.ts` ③ 同一族口径 ✓）；
+  //     ③ ⭐ 选中那一台的设备号**真的传给了后端** —— 少了这一步，"生成时就登记"根本不会发生 ✓。
+  //   **变异**：把 `dpPeer` 从 `devicePairExport` 的实参里去掉 ⇒ ③ 必须红 ✓。
+  it("⑤ R110：能选「这段码给哪一台」，且选了就真的传给后端", () => {
+    const block = between(SRC, 'data-testid="device-pair"', "</details>");
+    expect(block).toContain('data-testid="dp-peer"');
+    // ① 默认那项就是「不指定」⇒ 两趟那条路没被 A 吃掉 ✓
+    expect(block).toContain("不指定（码可以离线传，要配两次）");
+    // ② 候选来自**唯一那处读数**（`nearby` ✓），且**只列服务本空间的** ✓（界面不自己算这条交集 ✓）
+    expect(block).toContain("nearby");
+    expect(block).toContain("p.serves_current");
+    // ③ 可见文案走**短码**（`duCode`）✓ —— ⛔ 不是裸设备号 ✗
+    expect(block).toContain("duCode(p.device_id)");
+    // ④ ⭐ 选中那一台**真的传给了后端**（`peerDeviceId` ⇒ 生成时登记 ⇒ 一趟就双向 ✓）
+    const gen = between(SRC, "const dpGenerate = async () => {", "\n  };");
+    expect(gen).toContain("api.devicePairExport(activeId, dpPeer || undefined)");
+  });
 });

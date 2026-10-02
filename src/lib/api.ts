@@ -374,8 +374,13 @@ export const api = {
    * ⚠️ **与 `pairingExport` 最要紧的差别**：那个载荷是**公开材料**（"不是秘密"），
    * 而这个**含窗口口令** ⇒ ⛔ 不是可以随便转发的 ✗（拿到它能连上这个窗口）。
    * ⚠️ 这一档没开（没填地址或没设口令）⇒ 回 `not_configured`，**不生成载荷**。
+   * ⭐ **R110（owner 2026-10-02 拍 A）**：`peerDeviceId`（可空）＝ **这段码是给哪一台的** ——
+   *   界面从「附近的设备」里**点选**那一台（传它们的 `device_id` ✓）。
+   *   · 传了 ⇒ 本机在**生成这一刻就把它登记好** ⇒ 对面采纳**一次**，**两个方向都通** ✓；
+   *   · 不传 ⇒ 走原来那条路（码可以**离线**传，代价是**要配两次** ✓）—— A 是加法，⛔ 不是替换 ✗。
    */
-  devicePairExport: (spaceId: string) => invoke("device_pair_export", { spaceId }),
+  devicePairExport: (spaceId: string, peerDeviceId?: string) =>
+    invoke("device_pair_export", { spaceId, peerDeviceId }),
   /**
    * ⭐ **U11/T5**：**逐台解除** —— 只把那**一台**踢出去（它拉不动你 ✓），
    * 别的设备不受影响 ✓，⛔ 也**不用**给所有设备换口令（那正是 U11 要消灭的旧办法 ✓）。

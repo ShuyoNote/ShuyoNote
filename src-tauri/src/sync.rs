@@ -2210,10 +2210,18 @@ pub struct DevicePairImportResult {
 /// （界面传 `activeId` ✓），而设置 KV **是按远端空间 id 记的**（`sync.rs` 那条判据逐字写着 ✓）
 /// ⇒ 照旧拿它去读 ⇒ **面板里配好的地址在这儿读不到**（`not_configured` 假读数 ✗）。
 /// 现在先 `mesh_scope` 解析出远端空间 id，**与面板/窗口读同一把键** ✓。
+///
+/// ⭐⭐ **R110（owner 2026-10-02 拍 A）**：多了第二个参数 `peer_device_id`（**可空** ✓）——
+/// 「**这段码是给哪一台的**」＝界面从「**附近的设备**」里点选的那一台 ✓。
+///   · **给了** ⇒ 在**生成的这一刻**就把它登记好（`remember_peer_card` ✓）⇒ 对面采纳**一次**，
+///     **两个方向都通** ✓（＝ A 的全部意义 ✓）；
+///   · **没给** ⇒ 走**原来那条路**：码可以**离线**传，代价是**要配两次** ✓（A 是加法，⛔ 不是替换 ✗）。
+/// ⚠️ 登记**落在远端空间 id 上** ✓（与门认的那个空间同一把键 ✓ —— 否则又是"写下的卡没人认" ✗）。
 #[tauri::command]
 pub fn device_pair_export(
     db: State<'_, Db>,
     space_id: String,
+    peer_device_id: Option<String>,
 ) -> Result<DevicePairExportResult, String> {
     let scope = match mesh_scope(&db, Some(space_id.as_str())) {
         Ok(s) => s,
@@ -2231,6 +2239,8 @@ pub fn device_pair_export(
             });
         }
     };
+    // ⭐ 「选了自己」在**读设置之前**就拒（与 `device_pair_from` 里那条同口径 ✓，这里先给一句人话 ✓）
+    let peer = peer_device_id.unwrap_or_default().trim().to_string();
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     let s = crate::mesh::settings(&c, &scope.space);
     let bind = s.bind.unwrap_or_default();
@@ -2251,22 +2261,40 @@ pub fn device_pair_export(
     }
     // 设备指纹与 `pairing_export` 同源（应用级 `device_id`，**非秘密** ✓）。
     let device_id = crate::sync::get_meta_state(&c, "device_id").unwrap_or_default();
-    let payload = crate::pairing::device_pair_from(&bind, &token, &device_id)
+    let payload = crate::pairing::device_pair_from(&bind, &token, &device_id, &peer)
         .map_err(|e| format!("没有生成载荷：{e}"))?;
+    // ⭐⭐ A 的那一半：**在生成这一刻就把对面登记好** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
+    //    ⚠️ 只有"点了对面那一台"才做（没点 ⇒ 本机根本不知道对面是谁 ⇒ 只能走两次配对 ✓）。
+    let registered = apply_device_pair_export(&c, &scope.space, &peer, &token)?;
     let text = crate::pairing::encode_device_pair(&payload)?;
     let check_code = crate::pairing::check_code(&text);
     let qr_fits = crate::pairing::fits_single_qr(&text);
     let qr_svg = if qr_fits { crate::pairing::qr_svg(&text).ok() } else { None };
-    let mut message = format!(
-        "把下面这段交给**你自己那台设备**（{} 字节）。\
-         ⚠️ 它**含窗口口令** —— ⛔ 不是可以随便转发的公开材料 ✗：\
-         拿到它的人**能连上这个窗口**。\
-         ⭐ 对方收下之后，请**当面核对两边的比对码**（各 {} 位）：**一样才继续** ✓。\
-         ⚠️ 这一趟装的是「**对面认你**」—— 想让**你也能拉对面**，等对面也生成一次码、你在这台采纳一遍 ✓\
-         （两台各配一次 ⇒ 两个方向都通 ✓）。",
-        text.len(),
-        check_code.chars().filter(|c| !c.is_whitespace()).count()
-    );
+    // ⚠️ 文案**分两条路**（这是 A 的用户可见那一面 ✓）：点了对面 ⇒ 一次就双向；
+    //    没点 ⇒ 如实说"还要反过来再配一次" ✓（⛔ 不假装一次就够 ✗）
+    let mut message = if peer.is_empty() {
+        format!(
+            "把下面这段交给**你自己那台设备**（{} 字节）。\
+             ⚠️ 它**含窗口口令** —— ⛔ 不是可以随便转发的公开材料 ✗：\
+             拿到它的人**能连上这个窗口**。\
+             ⭐ 对方收下之后，请**当面核对两边的比对码**（各 {} 位）：**一样才继续** ✓。\
+             ⚠️ 这一段**没指定对面是哪台**（「附近的设备」里看不到它？）⇒ 这一趟只装「**对面认你**」：\
+             想让**你也能拉对面**，等对面也生成一次码、你在这台采纳一遍 ✓（两台各配一次 ⇒ 两个方向都通 ✓）。",
+            text.len(),
+            check_code.chars().filter(|c| !c.is_whitespace()).count()
+        )
+    } else {
+        format!(
+            "这段码是**给「附近的设备」里你选的那一台**的（{} 字节）—— 已经在本机把它**登记**好了 ✓。\
+             ⚠️ 它**含窗口口令** —— ⛔ 不是可以随便转发的公开材料 ✗：\
+             拿到它的人**能连上这个窗口**。\
+             ⭐ 对方采纳之后，请**当面核对两边的比对码**（各 {} 位）：**一样才继续** ✓。\
+             ⭐ 它采纳**一次**就够了 —— 两个方向都通 ✓{}。",
+            text.len(),
+            check_code.chars().filter(|c| !c.is_whitespace()).count(),
+            if registered { "（本机这扇门已经开着 ⇒ 新卡**当场**就加进去了 ✓）" } else { "" }
+        )
+    };
     if !qr_fits {
         if let Some(warn) = crate::pairing::qr_capacity_error(&text) {
             message.push('\n');
@@ -2293,6 +2321,10 @@ pub fn device_pair_export(
 /// ⇒ **单测跑不起来** ✗，而 U2「不许自动通过」正是**最不能只靠静态判据兜**的那一条 ✓。
 /// ⇒ 抽成纯函数之后，"不传码 ⇒ 拿不到可写的东西"**是类型事实**（`NeedConfirm` 里没有凭据 ✓），
 /// ⛔ 而不是"我记得在命令里写了个 if" ✗。
+///
+/// ⭐ **R110（owner 2026-10-02 拍 A）**：多了第三个参数 `my_device_id`（**本机的设备号** ✓）——
+/// 用来判「**这段码是不是给这台的**」✓（载荷里 `to_device_id` 非空时才有这一问 ✓）。
+/// 为什么要在**纯函数**里判：那样这条规则**单测直接钉得住** ✓，⛔ 不用起 `State<Db>` ✗。
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DevicePairDecision {
     /// 还没拿到人核对过的码 ⇒ **只回算出来的码**，⛔ **没有任何可写的东西** ✗。
@@ -2306,6 +2338,7 @@ pub(crate) enum DevicePairDecision {
 pub(crate) fn decide_device_pair_import(
     text: &str,
     confirmed: Option<&str>,
+    my_device_id: &str,
 ) -> Result<DevicePairDecision, String> {
     let payload = crate::pairing::decode_device_pair(text)?;
     let computed = crate::pairing::check_code(text);
@@ -2324,6 +2357,26 @@ pub(crate) fn decide_device_pair_import(
                   ⚠️ 采纳要按它登记「我认哪一台」并把本机要出示的那份秘密存到它名下 ——\
                   少了这一格就**点不出名字**，收下也只会在对端换来一个 401 ✗。\n\
                   ⇒ 请在**给出这段码的那台设备**上升级到本版、重新生成一次（老码的格式没有这一格）✓"
+                .to_string(),
+        });
+    }
+    // ⭐⭐ **R110（A）：这段码是给**哪一台**的** —— 非空且**不是本机** ⇒ **大声拒** ✗→✓
+    //
+    // 为什么必须有这一条：A 之后，**发起侧在生成那一刻就已经认了「你选的那一台」** ✓
+    // ⇒ 这段码若落到**第三台**手上被采纳，那台会拿到卡与秘密，而发起侧认的却是**别人**
+    // ⇒ 造出「一边认了、一边没认」的错配（现场的读数就是 401，且**看不出来是配错了** ✗）。
+    // ⚠️ 判据**只说"不是给这台的"**、⛔ **不打印那个设备号** ✗ —— 屏幕上的机器身份一律用短码
+    //（`INV-UI-copy-no-internal-ids` ✓；人知道自己刚在哪台上生成的 ✓）。
+    let to_device_id = payload.to_device_id.trim().to_string();
+    if !to_device_id.is_empty() && to_device_id != my_device_id.trim() {
+        return Ok(DevicePairDecision::Rejected {
+            computed,
+            bind: payload.bind,
+            why: "这段码**是给另一台设备的** ⇒ **没有采纳，本机一个字节都没改**。\n\
+                  ⚠️ 给出这段码的那台，生成时**已经认了它选中的那一台** ——\
+                  拿到别台上来采纳，只会一边认了、一边没认（现场看起来就是「配了还是不通」✗）。\n\
+                  ⇒ 请把这段码交给**它指定的那一台**；要在这台上配对，就回到给出码的那台\
+                  **重新生成一次**（「附近的设备」里选**这一台**），或者干脆选「**不指定**」走两次配对那条路 ✓"
                 .to_string(),
         });
     }
@@ -2362,9 +2415,8 @@ pub(crate) fn decide_device_pair_import(
 ///
 /// 做四件（缺一件都不算 ✓，与 `device_unpair` 的四件**一一对应**）：
 ///   ① 写接线（`mesh_bind` / `mesh_token`：本机要按它开自己的窗口 ✓）
-///   ② ⭐ **登记一张卡**（`mesh_paired_devices`：我认对面那一台 ✓，⛔ 只存哈希 ✓）
-///   ③ ⭐ **存本机要出示的那一份**（`mesh_pair_secret:<空间>:<对面>` ✓）
-///   ④ ⭐ **把新卡加进正在跑的那扇门**（`mesh::add_paired` ✓ —— `forget_paired` 的反面 ✓）
+///   ②–④ ⭐ **把对面那一台登记好**（登记卡 ＋ 存本机要出示的那份 ＋ **加进正在跑的门** ✓）
+///      —— 三件都在 [`remember_peer_card`] 里（**一处实现** ✓，与发起侧共用 ✓）
 ///
 /// ⚠️ **秘密是哪一份＝载荷里既有的 `token`**（本版口径 ✓）：规格 §3.3 把那一格叫
 /// `DevicePairSpace.secret`，但那是**另一种载荷形状**（`window` ＋ `spaces[]`，属更大的改造 ✗）
@@ -2376,6 +2428,9 @@ pub(crate) fn decide_device_pair_import(
 /// ⚠️ **一轮只通一个方向**（owner 2026-10-02 拍「单向」✓）：采纳方登记的是**对面那一台**
 /// ⇒ 这一侧认它（它出示 S 进得来 ✓）、本机也存好了要出示给它的那一份 ✓；
 /// 反方向要**两台各配一次**（各自产码、对方采纳 ✓）—— ⛔ 不假装一轮就双向 ✗。
+/// ⭐⭐ **R110（owner 同日拍 A）改了这条的一半** ✓：发起侧只要在「附近的设备」里**点选了对面**，
+/// 它**生成时就替自己做掉这三件**（见 `device_pair_export` → [`remember_peer_card`] ✓）
+/// ⇒ 对面采纳**一次**，**两个方向都通** ✓。⚠️ 而**没点选**那条路（码离线传）**照旧要配两次** ✓。
 pub(crate) fn apply_device_pair_import(
     c: &Connection,
     proto_space: &str,
@@ -2385,12 +2440,57 @@ pub(crate) fn apply_device_pair_import(
 ) -> Result<bool, String> {
     crate::mesh::set_mesh_bind(c, proto_space, Some(bind))?;
     crate::mesh::set_mesh_token(c, proto_space, Some(token))?;
-    // ② 卡：**只存哈希**（明文只用来算哈希，见 `db::pair_device` ✓）
-    crate::db::pair_device(c, proto_space, peer_device_id, token)?;
-    // ③ 本机要出示给那一台的那份（明文只在本机这一侧 ✓）
-    crate::mesh::set_pair_secret(c, proto_space, peer_device_id, Some(token))?;
-    // ④ 正在跑的门也要认它 —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
-    crate::mesh::add_paired(proto_space, &crate::db::sha256_hex(token))
+    remember_peer_card(c, proto_space, peer_device_id, token)
+}
+
+/// ⭐⭐ **R110（owner 2026-10-02 拍 A）：把"对面那一台"登记好** —— 卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓。
+///
+/// ⚠️ **一处实现、两处调用**（这是 A 之后最要紧的一条纪律 ✓）：
+///   · **采纳侧**：`apply_device_pair_import` ⇒ 登记的是**给出码的那台**（`from_device_id` ✓）；
+///   · **发起侧**：`device_pair_export`（点选了对面时）⇒ 登记的是**你选的那台**（`to_device_id` ✓）。
+/// ⛔ **两处各写一遍迟早会漂** ✗ —— 而漂的方向是"一边认了、一边没认"⇒ 又是 401 ✓
+/// （与 `db::sha256_hex` 只有一处实现同一条纪律 ✓）。
+///
+/// 做三件（缺一件都不算 ✓）：
+///   ① **登记一张卡**（`mesh_paired_devices`：我认那一台 ✓，⛔ 只存哈希 ✗）
+///   ② **存本机要出示给它的那一份**（`mesh_pair_secret:<空间>:<它>` ✓）
+///   ③ **把新卡加进正在跑的那扇门**（`mesh::add_paired` ✓ —— `forget_paired` 的反面 ✓）
+///
+/// ⚠️ **`c` 必须是"空间连接"**（`db.0` ✓）：`set_meta_state` 写的是限定名 `meta.sync_state`
+/// ⇒ 裸 meta 连接（`db::open_meta_conn_at`）上必然 `no such table` ✗（见 `mesh::add_paired` 的判据 ✓）。
+pub(crate) fn remember_peer_card(
+    c: &Connection,
+    proto_space: &str,
+    peer_device_id: &str,
+    secret: &str,
+) -> Result<bool, String> {
+    // ① 卡：**只存哈希**（明文只用来算哈希，见 `db::pair_device` ✓）
+    crate::db::pair_device(c, proto_space, peer_device_id, secret)?;
+    // ② 本机要出示给那一台的那份（明文只在本机这一侧 ✓）
+    crate::mesh::set_pair_secret(c, proto_space, peer_device_id, Some(secret))?;
+    // ③ 正在跑的门也要认它 —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
+    crate::mesh::add_paired(proto_space, &crate::db::sha256_hex(secret))
+}
+
+/// ⭐⭐ **R110（owner 2026-10-02 拍 A）：发起侧真正落库的那一步** —— 「生成时就把对面登记好」✓。
+///
+/// ⚠️ **为什么单独抽出来**（与 [`apply_device_pair_import`] 同一条理由 ✓）：命令那层拿的是
+/// `State<'_, Db>` ⇒ **单测跑不起来** ✗。抽出来之后，
+/// `mesh::tests::one_pairing_round_connects_both_directions` 能用**两个 app data 目录 ＋ 两扇真门**
+/// 走一趟"只配对一次" ✓ —— 而 A 的意义**全在这一步**（少了它 ⇒ 对面拉这台时 401 ✗）。
+///
+/// ⚠️ **空 `peer_device_id` ⇒ 什么都不做**（`Ok(false)` ✓）：那是"没指定对面"，本机**不知道对面是谁**
+/// ⇒ 只能走原来那条"两台各配一次"的路 ✓（⛔ 不是错 ✗）。
+pub(crate) fn apply_device_pair_export(
+    c: &Connection,
+    proto_space: &str,
+    peer_device_id: &str,
+    secret: &str,
+) -> Result<bool, String> {
+    if peer_device_id.trim().is_empty() {
+        return Ok(false);
+    }
+    remember_peer_card(c, proto_space, peer_device_id, secret)
 }
 
 /// ⭐ **T3：设备直连「把这台设备接进来」的采纳侧**（`U1`／`U2`／`U3`／`U6`）。
@@ -2409,7 +2509,16 @@ pub fn device_pair_import(
     args: DevicePairImportArgs,
 ) -> Result<DevicePairImportResult, String> {
     // ① 判定（**纯函数** ✓ —— 三态与"不传码就没有可写的东西"由它保证，见上面的注释 ✓）
-    let decision = match decide_device_pair_import(&args.text, args.confirmed_check_code.as_deref()) {
+    // ⭐ R110：本机设备号要在判定**之前**取好 —— 「这段码是不是给这台的」由纯函数判 ✓
+    let my_device_id = {
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::sync::get_meta_state(&c, "device_id").unwrap_or_default()
+    };
+    let decision = match decide_device_pair_import(
+        &args.text,
+        args.confirmed_check_code.as_deref(),
+        &my_device_id,
+    ) {
         Ok(d) => d,
         Err(e) => {
             return Ok(DevicePairImportResult {
@@ -6515,13 +6624,13 @@ mod tests {
     #[test]
     fn device_pair_import_cannot_write_anything_without_a_human_checked_code() {
         let text = crate::pairing::encode_device_pair(
-            &crate::pairing::device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a").unwrap(),
+            &crate::pairing::device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "").unwrap(),
         )
         .unwrap();
 
         // ① 不传码（以及只给空白）⇒ **NeedConfirm**，而且**没有 token 可写** ✓
         for none in [None, Some(""), Some("   ")] {
-            match decide_device_pair_import(&text, none).unwrap() {
+            match decide_device_pair_import(&text, none, "me").unwrap() {
                 DevicePairDecision::NeedConfirm { computed, .. } => {
                     assert!(!computed.trim().is_empty(), "要把算出来的码回给界面显示（不然人没法核对）");
                 }
@@ -6531,10 +6640,10 @@ mod tests {
 
         // ② 传了但对不上 ⇒ **Rejected**（`U3`：两端不一致 ⇒ 停 ✓），同样没有 token ✓
         let other_text = crate::pairing::encode_device_pair(
-            &crate::pairing::device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a").unwrap(),
+            &crate::pairing::device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a", "").unwrap(),
         )
         .unwrap();
-        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&other_text))).unwrap() {
+        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&other_text)), "me").unwrap() {
             DevicePairDecision::Rejected { why, .. } => {
                 assert!(!why.trim().is_empty(), "要说得清为什么停下");
             }
@@ -6542,7 +6651,7 @@ mod tests {
         }
 
         // ③ **只有**逐位相同那一态才拿得到 token ＋ **对面设备号** ✓
-        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text))).unwrap() {
+        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text)), "me").unwrap() {
             DevicePairDecision::Accept { computed, bind, token, peer_device_id } => {
                 assert_eq!(bind, "0.0.0.0:8788");
                 assert_eq!(token, "k7Qm-2pRt");
@@ -6553,7 +6662,7 @@ mod tests {
         }
 
         // ④ 载荷读不懂 ⇒ `Err`（⛔ 不是"当作没传、静默放行" ✗）
-        assert!(decide_device_pair_import("{这不是载荷}", Some("123456")).is_err());
+        assert!(decide_device_pair_import("{这不是载荷}", Some("123456"), "me").is_err());
     }
 
     /// ⭐ **U11/T5（2026-10-02）：老码（没有"对面设备号"那一格）解析得动，但采纳侧必须大声拒** ✓。
@@ -6573,7 +6682,7 @@ mod tests {
         assert!(crate::pairing::decode_device_pair(old).is_ok(), "老码必须解析得动");
         // ② 但**采纳那一步必须拒** —— 而且**连"核对过了"都不给过** ✓
         for confirmed in [None, Some(crate::pairing::check_code(old).as_str())] {
-            match decide_device_pair_import(old, confirmed).unwrap() {
+            match decide_device_pair_import(old, confirmed, "me").unwrap() {
                 DevicePairDecision::Rejected { why, .. } => {
                     assert!(why.contains("设备号"), "要点名缺的是哪一格：{why}");
                     assert!(why.contains("一个字节都没改"), "要说清本机没被改动：{why}");
@@ -6583,7 +6692,7 @@ mod tests {
         }
         // ③ 反例（证明这条判据不是"谁都拒"）：把那一格补上 ⇒ **同一段码就过得去** ✓
         let new = "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",\"fp\":\"dev-A\",\"from_device_id\":\"dev-A\"}";
-        match decide_device_pair_import(new, Some(&crate::pairing::check_code(new))).unwrap() {
+        match decide_device_pair_import(new, Some(&crate::pairing::check_code(new)), "me").unwrap() {
             DevicePairDecision::Accept { peer_device_id, .. } => assert_eq!(peer_device_id, "dev-A"),
             other => panic!("补上那一格就该能采纳：{other:?}"),
         }
@@ -6625,6 +6734,86 @@ mod tests {
             !body.contains("open_meta_conn_at"),
             "⛔ 裸 meta 连接不许进采纳侧（它在 `meta.` 限定名上必然失败 ⇒ 那就是 R109 的根因）"
         );
+    }
+
+    /// ⭐⭐ **R110（A）的接线判据**（与上一条**同形**：`device_pair_export` 也是 `#[tauri::command]` ✓）。
+    ///
+    /// A 的意义**全在这三行**，而每一行都能被一次"顺手改"打回去 ✓：
+    ///   ① 载荷那一格要拿到**点选的那台**（`to_device_id` ⇒ 对面采纳时才知道"这是给我的" ✓）；
+    ///   ② **生成那一刻就要登记**（`apply_device_pair_export(… &scope.space …)` ✓）——
+    ///      ⛔ 少了它 ⇒ 一趟配对只装一侧，就是 A 之前的形状 ✗；
+    ///   ③ 登记要落在**远端空间 id** 上 ✓（与门认的那个空间同一把键 ✓）。
+    ///
+    /// **变异**：把第 ② 行换成 `Ok(false)`（或删掉）⇒ **本判据红** ✓，且
+    /// `mesh::tests::one_pairing_round_connects_both_directions` 也会红 ✓（两条一起钉 ✓）。
+    #[test]
+    fn device_pair_export_is_wired_to_the_peer_registration_and_the_remote_space_id() {
+        let src = include_str!("sync.rs");
+        let start = src.find("pub fn device_pair_export(").expect("这条命令必须在（名字改了就要同步改这里）");
+        let end = src[start..]
+            .find("\n#[tauri::command]")
+            .map(|i| start + i)
+            .unwrap_or(src.len());
+        let body = src[start..end].split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            body.contains("crate::pairing::device_pair_from(&bind, &token, &device_id, &peer)"),
+            "载荷那一格必须拿到**点选的那台**（否则对面不知道这段码是给自己的）"
+        );
+        assert!(
+            body.contains("apply_device_pair_export(&c, &scope.space, &peer, &token)?;"),
+            "生成那一刻就要登记（**空间连接** ✓、**远端空间 id** ✓、**选中的那台** ✓）—— A 的意义全在这行"
+        );
+        assert!(
+            body.contains("let s = crate::mesh::settings(&c, &scope.space);"),
+            "设置也要按**远端空间 id** 读（与面板/窗口同一把键 ✓；⛔ 不是界面给的本地工作区 id ✗）"
+        );
+    }
+
+    /// ⭐⭐ **R110（A）：「这段码是不是给这台的」** —— 不是 ⇒ 大声拒 ✓；是／没指定 ⇒ 照旧 ✓。
+    ///
+    /// 为什么必须有这一条：A 之后**发起侧在生成时就认了它选中的那一台** ✓
+    /// ⇒ 码落到第三台上被采纳 ⇒ **一边认了、一边没认**（现场就是 401，且看不出是配错了 ✗）。
+    ///
+    /// **变异**：删掉 `decide_device_pair_import` 里那段 `to_device_id != 我的` 的提前返回
+    /// ⇒ 第 ① 组必须**红**（它会走到 `Accept`，把不属于它的那台登记进来 ✗）。
+    #[test]
+    fn a_code_addressed_to_another_device_is_refused_by_adoption() {
+        let mk = |to: &str| {
+            crate::pairing::encode_device_pair(
+                &crate::pairing::device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", to).unwrap(),
+            )
+            .unwrap()
+        };
+        let mine = "dev-yi";
+        let for_me = mk(mine);
+        let for_other = mk("dev-bing");
+        let unaddressed = mk("");
+        // ① 给**别的**机器的 ⇒ 连"核对过了"都不给过 ✓
+        for confirmed in [None, Some(crate::pairing::check_code(&for_other).as_str())] {
+            match decide_device_pair_import(&for_other, confirmed, mine).unwrap() {
+                DevicePairDecision::Rejected { why, .. } => {
+                    assert!(why.contains("另一台"), "要点名「不是给这台的」：{why}");
+                    assert!(why.contains("一个字节都没改"), "要说清本机没被改动：{why}");
+                }
+                other => panic!("不是给这台的码不许走到可写的那一态：{other:?}"),
+            }
+        }
+        // ② 给**本机**的 ⇒ 照常 Accept ✓（别把这条路做成"谁都拒"）
+        match decide_device_pair_import(&for_me, Some(&crate::pairing::check_code(&for_me)), mine).unwrap() {
+            DevicePairDecision::Accept { peer_device_id, .. } => assert_eq!(peer_device_id, "dev-jia"),
+            other => panic!("给本机的码应当能采纳：{other:?}"),
+        }
+        // ③ **没指定**（老路 / 界面没点选）⇒ 也照常 Accept ✓（A 是加法，⛔ 不是替换 ✗）
+        match decide_device_pair_import(
+            &unaddressed,
+            Some(&crate::pairing::check_code(&unaddressed)),
+            mine,
+        )
+        .unwrap()
+        {
+            DevicePairDecision::Accept { .. } => {}
+            other => panic!("没指定对面的码应当照旧能采纳：{other:?}"),
+        }
     }
 
     /// ⭐ **U11/T5 的根因判据**（2026-10-02 的洞就栽在这一格 ✓）：**两种连接不是一回事** ✗。

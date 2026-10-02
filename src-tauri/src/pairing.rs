@@ -80,6 +80,20 @@ pub struct DevicePairPayload {
     /// 这一格是**采纳侧要拿去做登记**的（⛔ 空 ⇒ 拒 ✗）。分两格是因为**判据要能分开钉** ✓。
     #[serde(default)]
     pub from_device_id: String,
+    /// ⭐ **R110（owner 2026-10-02 拍 A）：这段码是给哪一台的** —— 发起侧从「**附近的设备**」里
+    /// **点选**的那一台 ✓（＝**采纳侧自己**的设备号 ✓）。
+    ///
+    /// ⚠️ **空串 ＝ 不指定**（默认）⇒ 走**原来那条路**：码可以**离线**传（抄下来／发给自己／扫二维码），
+    ///   代价是**要配两次**（一次只装一侧 ✓）。两条路**都留着** ✓ —— A 是**加法**，⛔ 不是替换 ✗。
+    ///
+    /// 有值 ⇒ 发起侧在**生成的那一刻**就把对面登记好（见 `sync::device_pair_export` ✓）
+    /// ⇒ 对面采纳**一次**，**两个方向都通** ✓。
+    /// ⚠️ 采纳侧还要拿它对一下**是不是给自己的**（⛔ 不是 ⇒ 大声拒 ✗，见 `sync::decide_device_pair_import` ✓）：
+    ///   A 之后发起侧**已经先认了那一台** ⇒ 码传到第三台手上会造出"一边认了、一边没认"的错配 ✓。
+    ///
+    /// ⚠️ `#[serde(default)]` ⇒ 老码没有这一格**照样解析得动** ✓（那就是"不指定"✓）。
+    #[serde(default)]
+    pub to_device_id: String,
 }
 
 /// ⭐ **把「我这台的绑定写法」折成「对方可以照抄」的那一份**（2026-10-01 修：owner 追问抓到的**真错** ✓）。
@@ -107,10 +121,16 @@ fn copyable_bind(bind: &str) -> Result<String, String> {
 /// 并**当场验它非空** ✗→✓ —— 理由同上面那条纪律：没有这一格的码**根本不可能被采纳**
 /// （采纳侧要按它登记卡与秘密 ✓）⇒ 发出去只会让用户白跑一趟 ✓。
 /// ⚠️ 那一格同时填进 `fp`（v1 既有那格，今天同源 ✓）—— 老码仍能被老版本解析 ✓。
-pub fn device_pair_from(bind: &str, token: &str, from_device_id: &str) -> Result<DevicePairPayload, String> {
+pub fn device_pair_from(
+    bind: &str,
+    token: &str,
+    from_device_id: &str,
+    to_device_id: &str,
+) -> Result<DevicePairPayload, String> {
     let bind = bind.trim();
     let token = token.trim();
     let from_device_id = from_device_id.trim();
+    let to_device_id = to_device_id.trim();
     if bind.is_empty() {
         return Err("这台设备**还没填监听地址** ⇒ 没有东西可以配对过去（先在「同步」面板填地址或写 `0.0.0.0:8788`）".to_string());
     }
@@ -123,6 +143,12 @@ pub fn device_pair_from(bind: &str, token: &str, from_device_id: &str) -> Result
                     ⚠️ 对面采纳时要按这一格**登记一张卡**（「我认哪一台」要能点名 ✓）——\
                     少了它，那段码到对面**只会被当面拒掉**（本机一个字节都不写 ✓）。\n\
                     ⇒ 请先让应用正常启动一次（设备号在初始化时写入），再来配对 ✓".to_string());
+    }
+    if !to_device_id.is_empty() && to_device_id == from_device_id {
+        return Err("选到的**就是这台自己** ⇒ 不能生成「给自己」的配对码：\n\
+                    ⚠️ 那样本机既当发起侧又当采纳侧，只会在采纳那一步撞车（且它把这张卡登记成「自己认自己」✗）。\n\
+                    ⇒ 请在「附近的设备」里选**对面那一台**（看不到它 ⇒ 就选「不指定」走两次配对那条路 ✓）。"
+            .to_string());
     }
     if let Some(why) = crate::mesh::weak_token_reason(token) {
         return Err(format!(
@@ -139,6 +165,7 @@ pub fn device_pair_from(bind: &str, token: &str, from_device_id: &str) -> Result
         token: token.to_string(),
         fp: from_device_id.to_string(),
         from_device_id: from_device_id.to_string(),
+        to_device_id: to_device_id.to_string(),
     })
 }
 
@@ -685,7 +712,7 @@ mod tests {
 
     #[test]
     fn a_device_pair_payload_round_trips_byte_for_byte() {
-        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a").unwrap();
+        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "").unwrap();
         let raw = encode_device_pair(&p).unwrap();
         assert_eq!(decode_device_pair(&raw).unwrap(), p, "编解码必须逐字节往返");
         assert_eq!(p.v, DEVICE_PAIR_VERSION);
@@ -717,14 +744,14 @@ mod tests {
     /// （发出去只会让对方在采纳那一步才炸，而现场看起来像"码坏了" ✓）。
     #[test]
     fn a_device_pair_payload_is_never_produced_from_a_weak_or_empty_setting() {
-        assert!(device_pair_from("", "k7Qm-2pRt", "fp").is_err(), "没填地址 ⇒ 不生成");
-        assert!(device_pair_from("0.0.0.0:8788", "", "fp").is_err(), "没口令 ⇒ 不生成");
+        assert!(device_pair_from("", "k7Qm-2pRt", "fp", "").is_err(), "没填地址 ⇒ 不生成");
+        assert!(device_pair_from("0.0.0.0:8788", "", "fp", "").is_err(), "没口令 ⇒ 不生成");
         for weak in ["123456", "1234567890", "aaaaaaaaaaaa", "short"] {
-            let e = device_pair_from("0.0.0.0:8788", weak, "fp").unwrap_err();
+            let e = device_pair_from("0.0.0.0:8788", weak, "fp", "").unwrap_err();
             assert!(e.contains("口令"), "理由要点名是口令的问题：{e}");
         }
         // 空口令那条要**说清为什么**（未加密时口令是唯一防线 ✓）
-        let e = device_pair_from("0.0.0.0:8788", "  ", "fp").unwrap_err();
+        let e = device_pair_from("0.0.0.0:8788", "  ", "fp", "").unwrap_err();
         assert!(e.contains("唯一"), "要说清“口令是唯一防线”：{e}");
     }
 
@@ -747,7 +774,7 @@ mod tests {
     /// （只有 `fp`、没有新格）与新的"要能点名"这条路会**各自缺一半** ✓。
     #[test]
     fn a_device_pair_payload_carries_the_peers_device_id() {
-        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-A-7f31").unwrap();
+        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-A-7f31", "").unwrap();
         assert_eq!(p.from_device_id, "dev-A-7f31", "对面设备号必须进载荷");
         assert_eq!(p.fp, "dev-A-7f31", "v1 那格（指纹）今天与它同源");
         let back = decode_device_pair(&encode_device_pair(&p).unwrap()).unwrap();
@@ -772,9 +799,43 @@ mod tests {
     /// 缺了它对面**只会当面拒掉**（白跑一趟）⇒ 在产出这一侧就拦住 ✓（同"先验，再发"的纪律 ✓）。
     #[test]
     fn a_device_pair_payload_is_never_produced_without_a_device_id() {
-        let e = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "  ").unwrap_err();
+        let e = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "  ", "").unwrap_err();
         assert!(e.contains("设备号"), "理由要点名是设备号的问题：{e}");
         assert!(e.contains("登记"), "要说清对面拿它做什么（登记一张卡）：{e}");
+    }
+
+    // ═══════════ ⭐⭐ R110（owner 2026-10-02 拍 A）：载荷带上**"这段码给哪一台"** ═══════════
+
+    /// ⭐ **R110**：`to_device_id`（＝界面从「附近的设备」里**点选**的那台 ✓）随载荷往返 ✓。
+    ///
+    /// **变异**：把那一格从 `device_pair_from` 里去掉（或恒填空）⇒ 本判据红 ✓。
+    #[test]
+    fn a_device_pair_payload_carries_the_target_device_id() {
+        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "dev-yi").unwrap();
+        assert_eq!(p.to_device_id, "dev-yi", "点选的那台必须进载荷（发起侧要按它先登记 ✓）");
+        assert_eq!(p.from_device_id, "dev-jia", "发起侧自己那格照旧 ✓");
+        let back = decode_device_pair(&encode_device_pair(&p).unwrap()).unwrap();
+        assert_eq!(back.to_device_id, "dev-yi", "必须原样解回来");
+        // ① **不指定**（空）也合法 ⇒ 走"码可以离线传、要配两次"那条路 ✓（A 是加法、不是替换 ✓）
+        assert_eq!(
+            device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "").unwrap().to_device_id,
+            "",
+            "不指定 ⇒ 空串（⛔ 不是错 ✗）"
+        );
+        // ② **老码**（连这一格都没有）照样解析得动 ⇒ 那就是"不指定" ✓（走两次配对 ✓）
+        let old = "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",\"fp\":\"dev-jia\",\"from_device_id\":\"dev-jia\"}";
+        assert_eq!(decode_device_pair(old).unwrap().to_device_id, "", "老码缺这一格 ⇒ 空（不是猜 ✗）");
+    }
+
+    /// ⚠️ **不许生成"给自己"的配对码** ✓ —— 选到自己 ⇒ 本机既当发起侧又当采纳侧，
+    /// 只会在采纳那一步撞车，而且它会把这张卡登记成"自己认自己" ✗。
+    ///
+    /// **变异**：删掉 `device_pair_from` 里那段 `to_device_id == from_device_id` 的检查 ⇒ 本判据红 ✓。
+    #[test]
+    fn a_device_pair_payload_is_never_produced_for_yourself() {
+        let e = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "dev-jia").unwrap_err();
+        assert!(e.contains("自己"), "理由要点名「选到了自己」：{e}");
+        assert!(e.contains("不指定"), "要给出路：看不到对面就选「不指定」：{e}");
     }
 
     /// ⭐ **矩阵 U3 的纯函数半边**：两端载荷**差一个字节** ⇒ `check_code` 必须不同 ✓
@@ -782,9 +843,9 @@ mod tests {
     ///  这里再钉一次，是因为**设备直连载荷**是新的输入形状 ✓）。
     #[test]
     fn the_check_code_separates_two_device_pair_payloads() {
-        let a = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a").unwrap()).unwrap();
-        let b = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-b").unwrap()).unwrap();
-        let c = encode_device_pair(&device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a").unwrap()).unwrap();
+        let a = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "").unwrap()).unwrap();
+        let b = encode_device_pair(&device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-b", "").unwrap()).unwrap();
+        let c = encode_device_pair(&device_pair_from("0.0.0.0:8789", "k7Qm-2pRt", "fp-a", "").unwrap()).unwrap();
         assert_ne!(check_code(&a), check_code(&b), "指纹不同 ⇒ 码必须不同");
         assert_ne!(check_code(&a), check_code(&c), "端口不同 ⇒ 码必须不同");
         // ⚠️ 而**核对码**对设备直连载荷同样有效（复用同一条 `check_code` ⇒ 码长不缩 ✓）
@@ -800,14 +861,14 @@ mod tests {
     #[test]
     fn a_device_pair_payload_carries_a_copyable_bind_not_the_exporters_address() {
         // ① 具体地址 ⇒ 载荷里是**通配 ＋ 同一个端口**（⛔ 不是原样搬 ✗）
-        let p = device_pair_from("192.168.1.5:8788", "k7Qm-2pRt", "fp-a").unwrap();
+        let p = device_pair_from("192.168.1.5:8788", "k7Qm-2pRt", "fp-a", "").unwrap();
         assert_eq!(p.bind, "0.0.0.0:8788", "具体地址不许原样搬（对方绑不了别人的 IP）");
         // ② 端口要**留着**（不是一律换成 8788）
-        assert_eq!(device_pair_from("10.0.0.7:12345", "k7Qm-2pRt", "f").unwrap().bind, "0.0.0.0:12345");
+        assert_eq!(device_pair_from("10.0.0.7:12345", "k7Qm-2pRt", "f", "").unwrap().bind, "0.0.0.0:12345");
         // ③ 本来就是通配 ⇒ 原样（端口不变）
-        assert_eq!(device_pair_from("0.0.0.0:9999", "k7Qm-2pRt", "f").unwrap().bind, "0.0.0.0:9999");
+        assert_eq!(device_pair_from("0.0.0.0:9999", "k7Qm-2pRt", "f", "").unwrap().bind, "0.0.0.0:9999");
         // ④ ⚠️ 而「公网地址仍然拒」这一半**照样在**（`checked_bind` 把关 ⇒ 折通配**没放宽**边界 ✓）
-        assert!(device_pair_from("8.8.8.8:8788", "k7Qm-2pRt", "f").is_err(), "公网仍然拒");
-        assert!(device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f").is_ok(), "回环（本机自测）仍可用");
+        assert!(device_pair_from("8.8.8.8:8788", "k7Qm-2pRt", "f", "").is_err(), "公网仍然拒");
+        assert!(device_pair_from("127.0.0.1:8788", "k7Qm-2pRt", "f", "").is_ok(), "回环（本机自测）仍可用");
     }
 }

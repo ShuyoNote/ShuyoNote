@@ -3602,10 +3602,10 @@ mod tests {
         assert_eq!(code, 401, "基线：门里零张卡 ⇒ 谁来都得 401（不然这条判据分不出东西）：{body}");
 
         // ② ⭐ **走真采纳**：真载荷 → 真判定 → **生产同一个落库内核** ✓（门**先开着**、**不重启** ✓）
-        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B").unwrap();
+        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
         let decision =
-            crate::sync::decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text))).unwrap();
+            crate::sync::decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text)), "A").unwrap();
         let crate::sync::DevicePairDecision::Accept { peer_device_id, bind, token, .. } = decision else {
             panic!("核对过就该 Accept：{decision:?}")
         };
@@ -3636,5 +3636,120 @@ mod tests {
         assert_eq!(code, 401, "被解除之后必须**立刻** 401（同样不许重启门）：{body}");
 
         crate::mesh::stop_window("proto-e2e").unwrap();
+    }
+
+    /// ⭐⭐ **R110（owner 2026-10-02 拍 A）的端到端判据：一趟配对 ⇒ 两个方向都通** ✓。
+    ///
+    /// 与上一条的分工：
+    ///   · 上一条量**采纳侧**（零卡开门 → 采纳 → 门不重启也 200 → 解除 → 401 ✓）；
+    ///   · 这一条量 **A 新加的那一半** —— **发起侧在生成时就登记**（`sync::apply_device_pair_export` ✓）
+    ///     ⇒ 只配对**一次**，**两个方向**都进得来 ✓（A 之前必须先"反过来再配一次" ✗）。
+    ///
+    /// ⚠️ 这条判据是**两台机器**（两个 app data 目录 ＋ 两扇门 ✓），不是"一台机器的两个空间"：
+    ///   A 的整个意义就是"**对面那台也认我**"，只用一台机器量不出来 ✓。
+    ///
+    /// **变异**：把 `sync::apply_device_pair_export` 改成 `Ok(false)`（＝回到 A 之前）
+    /// ⇒ 第一个方向（**对面拉发起侧**）必须**红**（401 而不是 200 ✓）—— 那正是 A 要消灭的那一格 ✓。
+    #[tokio::test]
+    async fn one_pairing_round_connects_both_directions() {
+        let dir_a = temp_dir("mesh-r110-a");
+        let dir_b = temp_dir("mesh-r110-b");
+        for d in [&dir_a, &dir_b] {
+            std::fs::create_dir_all(crate::db::spaces_dir(d)).unwrap();
+            drop(crate::db::open_meta_conn_at(d).unwrap()); // meta 的表先建起来 ✓
+        }
+        let secret = "k7Qm-2pRt-r110";
+        // ── 甲（发起侧）：设备号 ＋ 接线（生成前必须已经配好地址与口令 ✓）＋ 一条自己的记录
+        let ca = crate::db::open_space_conn_at("default", &dir_a).unwrap();
+        crate::sync::set_meta_state(&ca, "device_id", "dev-jia").unwrap();
+        set_mesh_bind(&ca, "proto-r110", Some("0.0.0.0:8788")).unwrap();
+        set_mesh_token(&ca, "proto-r110", Some(secret)).unwrap();
+        let mut pa = page("only-in-jia", "只属于甲的内容", 1_000);
+        pa.workspace_id = "default".to_string();
+        local_edit(&ca, &pa);
+        // ── 乙（采纳侧）：只要设备号（它自己的接线由采纳时写 ✓）＋ 一条自己的记录
+        let cb = crate::db::open_space_conn_at("default", &dir_b).unwrap();
+        crate::sync::set_meta_state(&cb, "device_id", "dev-yi").unwrap();
+        let mut pb = page("only-in-yi", "只属于乙的内容", 1_000);
+        pb.workspace_id = "default".to_string();
+        local_edit(&cb, &pb);
+
+        // ⚠️ **绑定键与另三条判据都不同**（注册表键＝绑定字符串 ✓）：`127.0.0.1:0` / `localhost:0` /
+        //    `0.0.0.0:0` 已各有其主 ⇒ 这里用 `…:00`（**另一个键、同一个临时端口** ✓）：键不同才不会
+        //    与别人共用一扇门，而端口 0 仍是系统的临时端口 ✓。
+        let mk = |bind: &str, dir: &std::path::PathBuf, dev: &str| {
+            ensure_window(&[("default".to_string(), "proto-r110".to_string())], dev, bind, dir)
+                .unwrap()
+                .expect("窗口应当起得来")
+        };
+
+        // ① ⭐ **甲先开一扇门**（空卡）—— 生成时登记的那张卡必须**当场**进这扇门 ✓
+        let addr_a0 = mk("127.0.0.1:00", &dir_a, "dev-jia");
+        assert!(addr_a0.port() > 0, "甲的门要真的绑上端口（不然下面那次「当场加进去」无从谈起）");
+
+        // ② ⭐ **走真产出内核**（＝ `device_pair_export` 那一步 ✓）：真载荷 ＋ 生成时登记
+        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-jia", "dev-yi").unwrap();
+        let text = crate::pairing::encode_device_pair(&payload).unwrap();
+        let added = crate::sync::apply_device_pair_export(&ca, "proto-r110", "dev-yi", secret).unwrap();
+        assert!(added, "甲的门正开着 ⇒ 生成时登记的新卡必须**当场**加进去 ✓");
+
+        // ⚠️⚠️ **这里必须先把甲的门关掉**（判据自己差点把缺口糊住 —— 第一版就栽在这 ✓）：
+        //   `mesh::add_paired` 是按「**服务哪个空间**」找门的，而它取的是**第一个**命中的 ✓。
+        //   生产里一个进程只有一份 app data ⇒ **同一个空间只会有一扇门** ✓；而这条判据是
+        //   **两台机器**（两个目录）⇒ 两扇门同时开着时，乙那次登记可能被加到**甲的门**上 ✗
+        //   —— 而两侧用的是**同一个 S** ⇒ 甲的门照样放行 ⇒ 判据**看起来全绿**，其实什么都没证明 ✗
+        //   （＝"判据自己把缺口糊住"，本仓栽过好几次 ✓）。
+        //   ⇒ 所以：**只在对应那扇门开着的时候做登记**；之后再两扇门各自从**自己的库**里载卡 ✓。
+        crate::mesh::stop_window("proto-r110").unwrap();
+
+        // ③ ⭐ **乙走真采纳**（真判定 ＋ 同一个落库内核 ✓）—— 此刻注册表里没有服务这个空间的门 ✓
+        let decision = crate::sync::decide_device_pair_import(
+            &text,
+            Some(&crate::pairing::check_code(&text)),
+            "dev-yi",
+        )
+        .unwrap();
+        let crate::sync::DevicePairDecision::Accept { peer_device_id, bind, token, .. } = decision else {
+            panic!("给本机的码应当能采纳：{decision:?}")
+        };
+        assert_eq!(peer_device_id, "dev-jia");
+        crate::sync::apply_device_pair_import(&cb, "proto-r110", &peer_device_id, &bind, &token).unwrap();
+        crate::mesh::stop_window("proto-r110").unwrap(); // 幂等：此刻没有门在服务它 ✓
+
+        // ④ **两扇门各自重开**（卡由 `load_cards` 从**各自的库**里载 ✓ ⇒ 不再靠内存里的临时状态 ✓）
+        let addr_a = mk("127.0.0.1:00", &dir_a, "dev-jia");
+        let addr_b = mk("localhost:00", &dir_b, "dev-yi");
+
+        // ⑤ ⭐⭐ **两个方向都通**（只配对过**一次** ✓）
+        let pull = "/mesh/pull?space_id=proto-r110&since=0&limit=100";
+        //   方向一：**乙拉甲** ⇒ 甲要放行 S —— 靠的正是**生成时登记的那张卡** ★（变异就打在这里 ✓）
+        let (code, body) = http_get(addr_a, pull, Some(secret));
+        assert_eq!(code, 200, "生成时登记过 ⇒ 甲必须当场放行（A 的意义全在这一格）：{body}");
+        assert!(body.contains("only-in-jia"), "而且要真拉到甲的东西：{body}");
+        //   方向二：**甲拉乙** ⇒ 乙要放行 S —— 靠的是**采纳时登记** ✓（与 A 之前一样 ✓）
+        let (code, body) = http_get(addr_b, pull, Some(secret));
+        assert_eq!(code, 200, "采纳时登记过 ⇒ 乙必须放行：{body}");
+        assert!(body.contains("only-in-yi"), "而且要真拉到乙的东西：{body}");
+        // ⑤ 两侧**各自要出示的那一份**也都在（`round_candidates` 读的就是它 ✓）
+        assert_eq!(
+            crate::mesh::pair_secret_for(&ca, "proto-r110", "dev-yi").as_deref(),
+            Some(secret),
+            "甲要出示给乙的那份（生成时就存好 ✓）"
+        );
+        assert_eq!(
+            crate::mesh::pair_secret_for(&cb, "proto-r110", "dev-jia").as_deref(),
+            Some(secret),
+            "乙要出示给甲的那份（采纳时存好 ✓）"
+        );
+        // ⑥ 而两边都**只存哈希**（⛔ 明文只在"我要出示"的那一侧 ✓）
+        for c in [&ca, &cb] {
+            let hashes = crate::db::paired_secret_hashes(c, "proto-r110").unwrap();
+            assert!(hashes.contains(&crate::db::sha256_hex(secret)), "库里要有 sha256：{hashes:?}");
+            assert!(!hashes.iter().any(|h| h == secret), "⛔ 库里不许存明文 ✗");
+        }
+
+        // 清理：两扇门各摘一次（`stop_window` 按空间找，摘完一个再摘下一个 ✓）
+        crate::mesh::stop_window("proto-r110").unwrap();
+        crate::mesh::stop_window("proto-r110").unwrap();
     }
 }

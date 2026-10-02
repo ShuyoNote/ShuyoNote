@@ -651,6 +651,11 @@ export interface CommandMap {
     args: {
       /** ⚠️ **顶层参数** ⇒ 必须 camelCase（Tauri 按这个名转）✓；`args` 结构体里的字段才用 snake_case ✓。 */
       spaceId: string;
+      /**
+       * ⭐ **R110（owner 2026-10-02 拍 A）**：**这段码是给哪一台的**（「附近的设备」里点选的那台 ✓）。
+       * ⚠️ **可空**：不传 ⇒ 码可以**离线**传，代价是**要配两次**（A 是加法，⛔ 不是替换 ✗）。
+       */
+      peerDeviceId?: string | null;
     };
     result: DevicePairExportOutcome;
   };

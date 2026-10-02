@@ -331,11 +331,19 @@ export function SyncPanel() {
   const [dpOutcome, setDpOutcome] = useState<"idle" | "ok" | "stopped">("idle");
   const [dpNote, setDpNote] = useState("");
   const [dpBusy, setDpBusy] = useState(false);
+  /**
+   * ⭐ **R110（owner 2026-10-02 拍 A）**：**这段码给哪一台**（空 ＝ 不指定 ✓）。
+   * ⚠️ 存的是**对方的 `device_id`**（进载荷、也用于本机先登记 ✓）—— 但**屏幕上只显示短码** ✓：
+   *    ⛔ 可见文案不出现裸设备号 ✗（`INV-UI-copy-no-internal-ids`，同解除块那套 `duCode` ✓）。
+   */
+  const [dpPeer, setDpPeer] = useState("");
   const dpGenerate = async () => {
     if (!activeId) { setDpNote("先选一个空间"); return; }
     setDpBusy(true);
     try {
-      const r = await api.devicePairExport(activeId);
+      // ⭐ 选了对面 ⇒ 传它的设备号（本机**生成时就登记** ⇒ 对面采纳一次、两个方向都通 ✓）；
+      //    没选 ⇒ 不传（那条路照旧：码可离线传、要配两次 ✓）
+      const r = await api.devicePairExport(activeId, dpPeer || undefined);
       setDpExport(r);
       setDpOutcome("idle");
       setDpNote(r.message);
@@ -1984,6 +1992,38 @@ export function SyncPanel() {
                             【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
                             ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
                           </div>
+                          {/* ⭐ R110（owner 2026-10-02 拍 A）：**先说清这段码给哪一台** ——
+                              · 从「附近的设备」里**点选**那一台 ⇒ 本机**生成时就把它登记好** ⇒
+                                对方采纳**一次**、**两个方向都通** ✓；
+                              · 不选（它不在附近／想把码抄下来离线传）⇒ 照旧**要配两次** ✓
+                                —— 两条路都留着 ✓（A 是加法，⛔ 不是替换 ✗）。
+                              ⚠️ 屏幕上只给**短码**（复用解除块那把 `duCode` ✓）：
+                                 ⛔ 可见文案不出现裸设备号 ✗（`INV-UI-copy-no-internal-ids` ✓）。 */}
+                          <label className="sync-field">
+                            <span>这段码给哪一台：</span>
+                            <select
+                              className="sync-input"
+                              value={dpPeer}
+                              onChange={(e) => setDpPeer(e.target.value)}
+                              data-testid="dp-peer"
+                            >
+                              <option value="">不指定（码可以离线传，要配两次）</option>
+                              {nearby
+                                .filter((p) => p.serves_current)
+                                .map((p) => (
+                                  <option key={p.device_id} value={p.device_id}>
+                                    设备 {duCode(p.device_id)}
+                                    {p.device_name ? ` · ${p.device_name}` : ""}
+                                  </option>
+                                ))}
+                            </select>
+                          </label>
+                          {nearby.filter((p) => p.serves_current).length === 0 && (
+                            // ⚠️ 看不到候选 ⇒ **如实说**（⛔ 不说"网段里没有设备" ✗：看不见 ≠ 不存在 ✓）
+                            <div className="sync-hint">
+                              「附近的设备」里暂时没有服务这个空间的设备 ⇒ 不指定也能配，只是要**配两次** ✓。
+                            </div>
+                          )}
                           <button className="sync-btn" disabled={dpBusy} onClick={() => void dpGenerate()}>
                             生成投放码
                           </button>
