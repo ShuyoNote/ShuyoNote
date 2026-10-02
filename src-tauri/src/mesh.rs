@@ -889,6 +889,25 @@ pub fn forget_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, Str
     Ok(false) // 门没开着 ⇒ 库里删掉就够了（下次开门时它就不在卡表里 ✓）
 }
 
+/// ⭐ **U11/T5：`forget_paired` 的反面** —— 把**刚登记的这一张卡**加进**正在跑的那扇门** ✓。
+///
+/// ⚠️ **它同样必须做** ✗（今天缺的正是这一半 ✓）：门的卡表是**开门时载一次**的
+/// （`load_cards` / `ensure_window` ✓）⇒ 用户**先开着门、再配对**时，库里那张新卡
+/// **进不了内存里的卡表** ⇒ 现象是「**配对显示成功，对端照样 401**」✗
+/// —— 与「删了等于没删」**同族**（都是"库里对了、跑着的门不认"✓）。
+///
+/// ⚠️ 门没开着 ⇒ `Ok(false)`：库里写上就够了（下次开门 `load_cards` 会把它载进来 ✓）。
+/// ⛔ **不是错** ✗ —— 与 `forget_paired` 对称 ✓（判据因此不必先开窗，但**开着窗那一趟必须 200** ✓）。
+pub fn add_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
+    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    for h in guard.values() {
+        if h.serves(proto_space) {
+            return h.add_paired_hash(proto_space, secret_sha256);
+        }
+    }
+    Ok(false)
+}
+
 /// ⭐ **U8**：这个空间所在的那扇门**服务哪些空间**（**只读** ✓；没开 ⇒ 空 ✓）。
 ///
 /// ⚠️ 读数用 —— ⛔ 它**不开窗** ✗（与 `window_addr` 同一条纪律：面板打开一次不该顺手开端口 ✓）。
@@ -1296,6 +1315,21 @@ impl MeshHandle {
     pub fn forget_paired_hash(&self, proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
         let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
         Ok(guard.get_mut(proto_space).map(|set| set.remove(secret_sha256)).unwrap_or(false))
+    }
+
+    /// ⭐ **U11/T5**：把**刚登记的这一张卡**加进正在跑的门（回"新加的吗"✓）——
+    /// **`forget_paired_hash` 的反面**，同样必须做 ✗（理由见 `mesh::add_paired` ✓）。
+    ///
+    /// ⚠️ 这个空间**不在服务范围**里 ⇒ 门**别替它开格子** ✗（那样只会让读数里多一个
+    /// "服务着但没连接"的空壳 ✓）⇒ 返回 `false`，库里那张卡等下次开门时载 ✓。
+    pub fn add_paired_hash(&self, proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
+        // ⚠️ 先问"服务不服务"、**再**锁卡表 —— 两把锁**不许嵌套** ✗
+        //    （`conns` 与 `paired` 各有各的调用方，嵌套迟早会撞上反向顺序 ✓）。
+        if !self.serves(proto_space) {
+            return Ok(false);
+        }
+        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        Ok(guard.entry(proto_space.to_string()).or_default().insert(secret_sha256.to_string()))
     }
 
     /// ⭐ **U11**：这一扇门现在**认几张卡**（这个空间 ✓；读数用 ✓）。
@@ -3516,5 +3550,91 @@ mod tests {
         // ⭐ 而且**不必给所有设备换口令** ✓ —— dev-C 用的还是它原来那一份 ✓
 
         crate::mesh::stop_window("proto-x").unwrap();
+    }
+
+    /// ⭐⭐ **R109 缺的那一环：U11 的端到端判据** ——
+    /// **先开一扇门（一台都没认）⇒ 走一次「采纳配对」⇒ 门**没有重启**也必须立刻认这一台（200 ✓）
+    /// ⇒ 再 `unpair_device` ＋ `forget_paired` ⇒ 立刻 401** ✓。
+    ///
+    /// ⚠️ **为什么非要这一条**（R109 的洞就是这么活下来的 ✓）：既有那批判据里
+    /// **Rust 的几条是直接调 `db::pair_device` 登记的** ✓、**前端几条是文本级**的 ✓
+    /// ⇒ **没有一条走「真配对」** ✗ ⇒ 生产路径上"登记卡"这一步**根本没人做**
+    ///（`db::pair_device` 只出现在测试里 ✗）也照样全绿 ✓ —— ⛔ **判据绿 ≠ 功能通** ✓。
+    ///
+    /// ⚠️ 门**必须走 `ensure_window`**（进**进程级注册表** ✓ —— `add_paired`／`forget_paired`
+    /// 扫的就是注册表 ✓）；用 `open_window_at` 那种"独立门"会让本判据变成**自欺** ✗
+    /// （摘不到、加不上，却看不出 ✓ —— 上一条判据的第一版就是这么红的 ✓）。
+    ///
+    /// **变异**（两条，都实测过 ⇒ 见提交信息）：
+    ///   ① 把 `sync::apply_device_pair_import` 里那句 `mesh::add_paired(...)` 去掉（＝只写库）
+    ///      ⇒ ③ 那一格**必须红**（会看到 401 而不是 200 ✓）；
+    ///   ② 把它的连接换成 `db::open_meta_conn_at`（**裸 meta**）⇒ `set_pair_secret` 那一步
+    ///      以 `no such table: meta.sync_state` **当场崩** ⇒ 也红 ✓（＝ R109 的根因那一格 ✓）。
+    #[tokio::test]
+    async fn adopting_a_pairing_makes_the_running_door_recognise_it_at_once() {
+        let dir = temp_dir("mesh-u11-e2e-adopt");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        // meta 的表先建起来（`meta_migrate` 只在 `open_meta_conn_at` / `init` 里跑 ✓）
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        // ⭐ **生产形状的连接**（`db.0` 就是它：空间库当 `main` ＋ `ATTACH meta.db AS meta` ✓）——
+        //   ⛔ 这条判据**故意**用它而不是 `open_meta_conn_at` ✗（后者是裸 meta ⇒ `meta.`
+        //   限定名解析不动 ⇒ 采纳那一步会当场崩 ✓；那条边界由
+        //   `sync::tests::the_two_connection_shapes_are_not_interchangeable` 单独钉 ✓）。
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "A").unwrap();
+        let mut pg = page("p1", "本机写的一版", 1_000);
+        pg.workspace_id = "default".to_string();
+        local_edit(&c, &pg);
+
+        // ① **先开一扇门**，门里**一张卡都没有** ✓
+        //    ⚠️ 空间 id 用 `proto-e2e`（与另两条判据的 `proto-1…`／`proto-x` **不同** ✓）——
+        //    `add_paired`／`forget_paired`／`stop_window` 都按"服务哪个空间"扫注册表 ⇒
+        //    两条判据若共用同一个空间 id，会**互相摘对方的卡** ✗（HashMap 遍历顺序不定 ⇒ flaky ✓）。
+        //    ⚠️ 绑定键同理要与它们不同（注册表键＝绑定字符串 ✓）：U8 用 `127.0.0.1:0`、
+        //    U11 用 `localhost:0` ⇒ 这条用 `0.0.0.0:0` ✓；**连的时候换成回环**（0.0.0.0 不是
+        //    可连接的地址 —— 与 `config_state` 那条口径同源 ✓）。
+        let pairs = [("default".to_string(), "proto-e2e".to_string())];
+        let bound = ensure_window(&pairs, "A", "0.0.0.0:0", &dir).unwrap().expect("窗口应当起得来");
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
+        let secret = "k7Qm-2pRt-e2e";
+        let pull = "/mesh/pull?space_id=proto-e2e&since=0&limit=100";
+        let (code, body) = http_get(addr, pull, Some(secret));
+        assert_eq!(code, 401, "基线：门里零张卡 ⇒ 谁来都得 401（不然这条判据分不出东西）：{body}");
+
+        // ② ⭐ **走真采纳**：真载荷 → 真判定 → **生产同一个落库内核** ✓（门**先开着**、**不重启** ✓）
+        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B").unwrap();
+        let text = crate::pairing::encode_device_pair(&payload).unwrap();
+        let decision =
+            crate::sync::decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text))).unwrap();
+        let crate::sync::DevicePairDecision::Accept { peer_device_id, bind, token, .. } = decision else {
+            panic!("核对过就该 Accept：{decision:?}")
+        };
+        assert_eq!(peer_device_id, "dev-B", "对面设备号来自载荷 ✓");
+        let added = crate::sync::apply_device_pair_import(&c, "proto-e2e", &peer_device_id, &bind, &token).unwrap();
+        assert!(added, "门正开着 ⇒ 新卡必须**当场**加进那扇门（否则就是「配对成功却 401」✓）");
+
+        // ③ ⭐⭐ **门没有重启也必须立刻认这一台** ⇒ 200 ✓（R109 的洞就在这一格）
+        let (code, body) = http_get(addr, pull, Some(secret));
+        assert_eq!(code, 200, "配好对之后**不许重启门**就该进得来：{body}");
+        assert!(body.contains("p1"), "而且要真拉到东西：{body}");
+        // ⭐「本机要出示给那一台」的那一份也存好了（`round_candidates` 读的就是它 ✓）
+        assert_eq!(
+            crate::mesh::pair_secret_for(&c, "proto-e2e", "dev-B").as_deref(),
+            Some(secret),
+            "本机要出示的那份秘密必须落在**对面设备号**名下（否则出示不出来 ⇒ 对端 401 ✓）"
+        );
+        // ⭐ 而库里那张卡**只存哈希**（明文只在本机"我要出示"的那一侧 ✓）
+        let hashes = crate::db::paired_secret_hashes(&c, "proto-e2e").unwrap();
+        assert!(hashes.contains(&crate::db::sha256_hex(secret)), "库里要有 sha256：{hashes:?}");
+        assert!(!hashes.iter().any(|h| h == secret), "⛔ 库里不许存明文 ✗");
+
+        // ④ **逐台解除**：`unpair_device`（删库）＋ `forget_paired`（**门里也摘** ✓）⇒ **立刻 401** ✓
+        let h = crate::db::unpair_device(&c, "proto-e2e", "dev-B").unwrap();
+        assert!(h.is_some(), "解除前它应当在名单里 ✓");
+        crate::mesh::forget_paired("proto-e2e", h.as_deref().unwrap()).unwrap();
+        let (code, body) = http_get(addr, pull, Some(secret));
+        assert_eq!(code, 401, "被解除之后必须**立刻** 401（同样不许重启门）：{body}");
+
+        crate::mesh::stop_window("proto-e2e").unwrap();
     }
 }

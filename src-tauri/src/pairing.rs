@@ -64,6 +64,22 @@ pub struct DevicePairPayload {
     /// 源设备的**身份指纹**。空是合法的（同 [`PairingPayload::fp`]）。
     #[serde(default)]
     pub fp: String,
+    /// ⭐ **U11/T5（2026-10-02）：对面那台的设备号**（＝**给出这段码的那台**自己的 `device_id` ✓）。
+    ///
+    /// ⚠️ **采纳侧必须拿到它** ✗→✓：它要按这一格 ① 登记一张卡（`mesh_paired_devices` 的
+    /// `device_id` 那一列 —— "我认谁"要能**点名**，否则「逐台解除」无从下手 ✗）
+    /// ② 把「本机要出示给那一台」的那份秘密存到 `mesh_pair_secret:<空间>:<这一格>` ✓
+    /// ⇒ 没有它，采纳侧**点不出名字** ⇒ 只能**大声拒**（⛔ 不是静默收下 ✗，见 `sync::decide_device_pair_import` ✓）。
+    ///
+    /// ⚠️ **`#[serde(default)]` 是给老码留的门**：老版本产出的载荷没有这一格 ⇒ **解析得动** ✓
+    /// （`deny_unknown_fields` 只挡"多出来的字段"，不挡"少了的默认字段" ✓）
+    /// 但**采纳那一步会拒**（⛔ 一个字节都不写 ✗）—— 那正是"解析得动、却不肯拿它去登记"的意思 ✓。
+    ///
+    /// ⚠️ **与 `fp` 的关系**：今天两者同源（都是应用级 `device_id`，`device_pair_export` 传的就是它 ✓），
+    /// 但**语义不同** —— `fp` 是 v1 那一格"身份指纹"（**空是合法的**、老码可能没有 ✓），
+    /// 这一格是**采纳侧要拿去做登记**的（⛔ 空 ⇒ 拒 ✗）。分两格是因为**判据要能分开钉** ✓。
+    #[serde(default)]
+    pub from_device_id: String,
 }
 
 /// ⭐ **把「我这台的绑定写法」折成「对方可以照抄」的那一份**（2026-10-01 修：owner 追问抓到的**真错** ✓）。
@@ -86,15 +102,27 @@ fn copyable_bind(bind: &str) -> Result<String, String> {
 ///
 /// ⚠️ **先验，再发**（同 `payload_from_material` 的纪律 ✓）：地址或口令**当场不合格**的，
 /// 根本不该被发出去 —— 发出去只会让对方在"采纳"那一步才炸，而现场看起来像"码坏了" ✓。
-pub fn device_pair_from(bind: &str, token: &str, fp: &str) -> Result<DevicePairPayload, String> {
+///
+/// ⭐ **U11/T5（2026-10-02）**：第三个参数从"指纹"改成**对面设备号**（＝本机 `device_id` ✓）
+/// 并**当场验它非空** ✗→✓ —— 理由同上面那条纪律：没有这一格的码**根本不可能被采纳**
+/// （采纳侧要按它登记卡与秘密 ✓）⇒ 发出去只会让用户白跑一趟 ✓。
+/// ⚠️ 那一格同时填进 `fp`（v1 既有那格，今天同源 ✓）—— 老码仍能被老版本解析 ✓。
+pub fn device_pair_from(bind: &str, token: &str, from_device_id: &str) -> Result<DevicePairPayload, String> {
     let bind = bind.trim();
     let token = token.trim();
+    let from_device_id = from_device_id.trim();
     if bind.is_empty() {
         return Err("这台设备**还没填监听地址** ⇒ 没有东西可以配对过去（先在「同步」面板填地址或写 `0.0.0.0:8788`）".to_string());
     }
     if token.is_empty() {
         return Err("这台设备**还没设窗口口令** ⇒ 先设一个（至少 8 个字符、别用纯数字）：\n\
                     ⚠️ 未加密的空间里，口令是唯一的防线 —— 不带口令的窗口，同一网络里谁都能拉 ✓".to_string());
+    }
+    if from_device_id.is_empty() {
+        return Err("这台设备**还没有自己的设备号**（`device_id`）⇒ 不能生成配对码：\n\
+                    ⚠️ 对面采纳时要按这一格**登记一张卡**（「我认哪一台」要能点名 ✓）——\
+                    少了它，那段码到对面**只会被当面拒掉**（本机一个字节都不写 ✓）。\n\
+                    ⇒ 请先让应用正常启动一次（设备号在初始化时写入），再来配对 ✓".to_string());
     }
     if let Some(why) = crate::mesh::weak_token_reason(token) {
         return Err(format!(
@@ -105,7 +133,13 @@ pub fn device_pair_from(bind: &str, token: &str, fp: &str) -> Result<DevicePairP
     }
     // ⚠️ **必须是 `copyable_bind`**（⛔ 不是 `bind.to_string()` ✗）—— 见它的理由 ✓。
     let bind = copyable_bind(bind)?;
-    Ok(DevicePairPayload { v: DEVICE_PAIR_VERSION, bind, token: token.to_string(), fp: fp.to_string() })
+    Ok(DevicePairPayload {
+        v: DEVICE_PAIR_VERSION,
+        bind,
+        token: token.to_string(),
+        fp: from_device_id.to_string(),
+        from_device_id: from_device_id.to_string(),
+    })
 }
 
 /// 编码成一段文本（紧凑 JSON）。同 `encode_payload`：⛔ 不许静默变空 ✗。
@@ -703,6 +737,44 @@ mod tests {
         ] {
             assert!(decode_device_pair(raw).is_err(), "空的必填要拒：{raw}");
         }
+    }
+
+    // ═══════════ ⭐ U11/T5（2026-10-02）：载荷带上**对面设备号** ═══════════
+
+    /// ⭐ **对面设备号**随载荷往返 ✓ —— 采纳侧要按它登记卡与秘密（`sync::device_pair_import` ✓）。
+    ///
+    /// ⚠️ 它同时填进 `fp`（v1 那格，今天同源 ✓）：**两者都要在**，否则老码那条路
+    /// （只有 `fp`、没有新格）与新的"要能点名"这条路会**各自缺一半** ✓。
+    #[test]
+    fn a_device_pair_payload_carries_the_peers_device_id() {
+        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-A-7f31").unwrap();
+        assert_eq!(p.from_device_id, "dev-A-7f31", "对面设备号必须进载荷");
+        assert_eq!(p.fp, "dev-A-7f31", "v1 那格（指纹）今天与它同源");
+        let back = decode_device_pair(&encode_device_pair(&p).unwrap()).unwrap();
+        assert_eq!(back.from_device_id, "dev-A-7f31", "必须原样解回来");
+    }
+
+    /// ⭐ **老码（没有这一格）解析得动** ✓ —— `#[serde(default)]` 就是为它留的门 ✗→✓。
+    ///
+    /// ⚠️ **但采纳侧会拒它**（本机一个字节都不写 ✓）：判据在 `sync::tests` 里
+    /// （`an_old_device_pair_code_without_a_peer_id_is_refused_by_adoption` ✓）——
+    /// 分两处钉是**故意的**：这里只量"**解析得动**"（新版本不许把老码当垃圾 ✗），
+    /// 那里量"**不许拿它去登记**"（少一格就点不出名字 ⇒ 只能拒 ✓）。
+    #[test]
+    fn an_old_device_pair_code_without_the_new_field_still_parses() {
+        let raw = "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",\"fp\":\"dev-A\"}";
+        let p = decode_device_pair(raw).expect("老码必须解析得动（否则升级后当场变砖）");
+        assert_eq!(p.from_device_id, "", "老码没有这一格 ⇒ 空（不是猜一个 ✗）");
+        assert_eq!(p.fp, "dev-A", "老码既有那格照旧");
+    }
+
+    /// ⚠️ **产出侧先验**：**没有设备号就不许生成载荷** ✓ —— 那一格是采纳侧唯一的"点名"依据，
+    /// 缺了它对面**只会当面拒掉**（白跑一趟）⇒ 在产出这一侧就拦住 ✓（同"先验，再发"的纪律 ✓）。
+    #[test]
+    fn a_device_pair_payload_is_never_produced_without_a_device_id() {
+        let e = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "  ").unwrap_err();
+        assert!(e.contains("设备号"), "理由要点名是设备号的问题：{e}");
+        assert!(e.contains("登记"), "要说清对面拿它做什么（登记一张卡）：{e}");
     }
 
     /// ⭐ **矩阵 U3 的纯函数半边**：两端载荷**差一个字节** ⇒ `check_code` 必须不同 ✓
