@@ -941,7 +941,7 @@ export function pickExtractor(
 1. 先改**本节**（契约）→ 2. 再改**实现** → 3. 若改的是 `id` 的版本号，同时更新 §6.1 的重跑口径与 §13 待拍板里相关项。
 **禁止**先改实现再回头补契约。
 
-### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe` / `convertLegacy`**（2026-09-17 增补；`transcribe` 2026-09-22、`convertLegacy` 2026-09-23 预置）
+### 15.8 平台能力注入（`deps`）：**`vision` / `rasterize` / `transcribe` / `convertLegacy` / `kreuzbergExtract`**（2026-09-17 增补；`transcribe` 2026-09-22、`convertLegacy` 2026-09-23 预置；`kreuzbergExtract` 2026-10-02 增补）
 
 起因：Mac 侧要做 `pdf.ocr`，先做了五分钟可行性核对就发现**路是堵的** —— 扫描件要"页 → 像素"，
 而契约不给它要像素的路（抽取器只有 `bytes`；平台原有的渲染入口要的是 **attachmentId**）。

@@ -136,6 +136,27 @@ export interface ExtractDeps {
     mime: string,
     opts: { to: string },
   ) => Promise<Uint8Array>;
+  /**
+   * **P0 格式引擎**（Kreuzberg v4.10.x，MIT ✓）—— 补本仓 TS 链吃不下的一类：
+   * `eml` / `msg` / `zip` / `7z` / `gz` / `tar` / `rtf` / `odt|ods|odp` / `epub` / 学术格式（`tex` / `bib` / `ris`）。
+   *
+   * 与 `convertLegacy` **同一条口径**（§15.3-7）：
+   *  **未注入 ⇒ `provider_error`**（如实说"这条通道现在不通"），既不抛穿、也不自建客户端。
+   *
+   * ⚠️ **收 `bytes` 而不是路径**：本层手上只有字节（`ExtractInput` 没有路径）✓。
+   * ⚠️ **只回文本**：⛔ 本 dep **不写派生表** ✗（`attachment_text` / `chunks` 的唯一写入者仍是
+   *  `src/lib/extract/` 那条链 ✓，门禁 `check-derived-writers` 守的就是这条 ✓）。
+   * ⚠️ 实现里传 base64 走 IPC（字节数组会被序列化成上千万字符的 JSON）＋ **Rust 侧自己解** ✓。
+   *
+   * ⚠️ **实装在平台层**（唯一构造点 `attachmentDeps(...)`）；本层只出契约与抽取器 ✓。
+   * 在平台把原生命令接上之前，上面的格式**一律 `provider_error`** —— **这是已知状态不是 bug** ✓
+   * （与 `convertLegacy` 在其平台实装落地前的情形**逐字相同** ✓）。
+   */
+  kreuzbergExtract?: (
+    bytes: Uint8Array,
+    mime: string,
+    filename: string,
+  ) => Promise<{ text: string; engine: string }>;
 }
 
 export interface ExtractInput {

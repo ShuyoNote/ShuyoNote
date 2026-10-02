@@ -56,6 +56,16 @@ export const DEP_CAPABILITIES = [
     usedBy: ["av.transcript@1"],
   },
   {
+    name: "kreuzbergExtract",
+    purpose:
+      "P0 格式引擎（Kreuzberg v4.10.x，MIT）：补本仓 TS 链吃不下的一类（eml/msg/zip/7z/gz/tar/rtf/odt/ods/odp/epub/tex/bib/ris）→ 纯文本",
+    whenAbsent: "provider_error",
+    injectedBy: "platform",
+    signature:
+      "(bytes: Uint8Array, mime: string, filename: string) => Promise<{ text: string; engine: string }>（只回文本；⛔ 不写派生表 ✗）",
+    usedBy: ["kreuzberg.p0@1"],
+  },
+  {
     name: "convertLegacy",
     purpose:
       "旧二进制 Office（.doc/.xls/.ppt，OLE 复合文档）→ 现代 OOXML：抽取层解不了旧格式，" +
