@@ -125,8 +125,11 @@ export function judgeA1({ readme, spec }) {
     out.push("✗ 规格里同时写着「A1 ＋ A2 并存」✗ —— 两套口径就是**两份真相** ✓（本仓最忌）");
   }
   const 行 = (n) => readme.split("\n").find((l) => l.startsWith("| " + n + " |")) || "";
-  if (!/选定/.test(行("08"))) out.push("✗ 图 README 第 08 行没标【选定】✗（读者不知道哪张是计划 ✓）");
-  if (!/对照|未选/.test(行("09"))) out.push("✗ 图 README 第 09 行没标【对照／未选】✗（会被读成计划 ✓）");
+  // ③ ⭐ 2026-10-02（§1.8 之后）：**两张都选定，只是各管一类 agent** ✓
+  //    08 ＝ **内置 agent** 的形状；09 ＝ **外部 agent**（甲：借成员身份）的形状 ✓
+  //    ⛔ 而"09 是对照／未选"是 §1.8 **之前**的写法 ✗ ⇒ 现在那样写就是**口径过期** ✓
+  if (!/内置/.test(行("08"))) out.push("✗ 图 README 第 08 行没标明它是【内置 agent】的形状 ✗");
+  if (!/外部/.test(行("09"))) out.push("✗ 图 README 第 09 行没标明它是【外部 agent】的形状 ✗（§1.8 选的甲 ✓）");
   return out;
 }
 
@@ -153,7 +156,7 @@ function run(root) {
   if (findings.length) { for (const x of findings) console.error(x); return 1; }
   console.log("✓ 效果图与文档的关联成立：" + checked + " 份图 README ｜ 点名的需求号与不变式**全部真实存在** ✓ ｜ 每条 MUST **至少被一张图引用** ✓");
   if (TARGETS.some((t) => t.agentModel)) {
-    console.log("✓ agent 走进讨论线的**口径**也在岗：A1 三条守卫写着 ✓ ｜ 主体模型只有「选定 A1」一个口径 ✓ ｜ 图 08 标【选定】、09 标【对照／未选】✓");
+    console.log("✓ agent 走进讨论线的**口径**也在岗：A1 三条守卫写着 ✓ ｜ 主体模型只有「选定 A1」一个口径 ✓ ｜ 图 08 标【内置 agent】、09 标【外部 agent】✓");
   }
   return 0;
 }
@@ -176,7 +179,7 @@ if (argv.includes("--self-test")) {
     ["点名存在的规格口径 N1 ⇒ 绿", judge({ readme: "M1 M2 N1", needs, spec: spec + "| **N1** | 甲 |", t: T }).length === 0],
   ];
   const specA1 = "## 1.7\n选 A1 ✓\n① ⛔ **防自激**\n④ ⛔ **只被 @ 才答**\n③ ⚠️ **在线依赖如实说**\n";
-  const readmeA1 = "| 08 | 甲 | 选定 |\n| 09 | 乙 | 对照 · 未选 |\n";
+  const readmeA1 = "| 08 | 甲 | 选定 · 内置 |\n| 09 | 乙 | 选定 · 外部 |\n";
   const casesA1 = [
     ["A1 合规 ⇒ 空", judgeA1({ readme: readmeA1, spec: specA1 }).length === 0],
     ["删掉「防自激」⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("防自激", "防") }).some((s) => s.includes("防自激"))],
@@ -184,8 +187,8 @@ if (argv.includes("--self-test")) {
     ["删掉「在线依赖如实说」⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("在线依赖如实说", "在线") }).some((s) => s.includes("在线依赖如实说"))],
     ["读不出「选定 A1」⇒ 红", judgeA1({ readme: readmeA1, spec: "没有那个词" }).some((s) => s.includes("选定 A1"))],
     ["又写「A1 ＋ A2 并存」⇒ 红（两份真相）", judgeA1({ readme: readmeA1, spec: specA1 + "A1 ＋ A2 两种主体模型并存\n" }).some((s) => s.includes("两份真相"))],
-    ["08 行不标【选定】⇒ 红", judgeA1({ readme: "| 08 | 甲 |\n| 09 | 乙 | 对照 · 未选 |\n", spec: specA1 }).some((s) => s.includes("08"))],
-    ["09 行不标【对照/未选】⇒ 红", judgeA1({ readme: "| 08 | 甲 | 选定 |\n| 09 | 乙 | 计划 |\n", spec: specA1 }).some((s) => s.includes("09"))],
+    ["08 行不标【内置】⇒ 红", judgeA1({ readme: "| 08 | 甲 |\n| 09 | 乙 | 选定 · 外部 |\n", spec: specA1 }).some((s) => s.includes("08"))],
+    ["09 行不标【外部】⇒ 红", judgeA1({ readme: "| 08 | 甲 | 选定 · 内置 |\n| 09 | 乙 | 对照 · 未选 |\n", spec: specA1 }).some((s) => s.includes("09"))],
   ];
 
   let pass = 0;

@@ -697,13 +697,13 @@ def sheet7():
 
 
 def sheet8():
-    """⑧ **A1：agent 是一个空间成员**（owner 2026-10-02 拍 A1 ✓）。
+    """⑧ **内置 agent 的形状（A1：一个空间成员）**（owner 2026-10-02 拍 ✓）。
 
     ⭐ 它**有自己的身份**：成员列表里看得见、审计里能区分、**移除即失效**（那条不变式自动适用 ✓）。
     ⛔ 特意画出两件：**在线依赖要如实说**（agent 不是 24 小时服务 ✓）＋ **防自激** ✓。
     """
     s = Sheet("企业版 IM · 效果图 08",
-              "A1：agent 是一个【空间成员】—— 有自己的身份与角色；移除即失效；在线依赖必须如实说。")
+              "内置 agent（A1）：是一个【空间成员】—— 有自己的身份与角色；移除即失效；在线依赖必须如实说。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
     s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
@@ -763,13 +763,14 @@ def sheet8():
 
 
 def sheet9():
-    """⑨ **A2：agent 是「某个成员的客户端工具」**（owner 2026-10-02 拍 A2 ✓）。
+    """⑨ **外部 agent 的接法「甲」：借某个成员的身份**（owner 2026-10-02 在 §1.8 拍的 ✓）。
+    ⚠️ 它**不再**是「对照／未选」✗ —— §1.8 之后它管的是**外部 agent**（WorkBuddy／DSH ✓）。
 
     ⚠️ 它**借那个人的通道**发言 ⇒ 署名是那个人，**但必须标「由 AI 生成」** ✗ 否则留痕坏 ✓。
     ⭐ 画的是"**人机可区分**"这件事：同一条消息，署名 ＋ 生成者**两个字段都在** ✓。
     """
     s = Sheet("企业版 IM · 效果图 09",
-              "A2：agent 是【某个成员的客户端工具】—— 署名是该成员，但必须标「由 AI 生成」；权限＝那个人的权限。")
+              "外部 agent（甲）：借某个成员的【身份】—— 署名是该成员 ＋ 标「由 AI 生成」＋ 标是哪个外部 agent。")
     ax, ay, aw, ah = 56, 190, 1888, 1150
     s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
     s.sidebar(ax, ay + 64, 260, ah - 64, [
@@ -796,7 +797,7 @@ def sheet9():
     s.small(lx + 28, yy + 56, "⇒ 界面**必须答得出来** ✓：点开这条 ⇒ 署名=李工，生成者=AI 助手（agent）✓", GREEN)
     by = yy + 118
     s.card(lx + 28, by, lw - 56, 150, edge=AMBER, fill=AMBER_BG, r=10, lw=2)
-    s.t(lx + 52, by + 18, "【注意】A2 的硬要求", F_B, AMBER)
+    s.t(lx + 52, by + 18, "【注意】甲 的硬要求", F_B, AMBER)
     s.small(lx + 52, by + 54, "⛔ **必须标「由 AI 生成」** ✗ —— 不标就分不清：", MUT)
     s.small(lx + 52, by + 84, "「人说的」还是「人的 AI 说的」 ⇒ 留痕坏 ✗", MUT)
     s.small(lx + 52, by + 116, "⇒ 两个字段都要进审计：**署名（谁）＋ 生成者（谁造的）** ✓", MUT)
@@ -814,19 +815,19 @@ def sheet9():
         s.t(rx + 28, ly + 66 + i * 38, line, F_S, MUT if line.startswith("   ") else INK)
 
     s.card(rx, ly + 332, rw, 250, edge=AMBER, fill=AMBER_BG, lw=2)
-    s.t(rx + 28, ly + 352, "【注意】A2 特有的两个风险", F_B, AMBER)
+    s.t(rx + 28, ly + 352, "【注意】这条接法特有的两个风险", F_B, AMBER)
     s.small(rx + 28, ly + 398, "① ⛔ **自激**：它写的东西可能又被它读到 ⇒ 越滚越多 ✗", MUT)
     s.small(rx + 28, ly + 430, "   ⇒ 必须有一条「不许触发自己」的规则 ✓", MUT)
     s.small(rx + 28, ly + 466, "② ⚠️ **注入**：它写出来的内容会被别人当指令 ⇒", MUT)
     s.small(rx + 28, ly + 498, "   它的输出也要带来源标记（谁生成 ＋ 模型来源）✓", MUT)
 
-    s.chip(56, 1326, "A2：署名是该成员 ＋ ⛔ 必须标「由 AI 生成」", PURPLE, PURPLE_BG)
+    s.chip(56, 1326, "甲：署名是该成员 ＋ ⛔ 必须标「由 AI 生成」", PURPLE, PURPLE_BG)
     s.chip(760, 1326, "权限＝那个人的权限 ⇒ 密级／小组自动适用", GREEN, GREEN_BG)
     s.chip(1520, 1326, "撤人即撤它（不用单独撤 agent）", GREEN, GREEN_BG)
     s.chip(56, 1366, "⛔ 自激要防：不许触发自己", RED, RED_BG)
     s.chip(620, 1366, "输出也要带来源标记（防注入）", AMBER, AMBER_BG)
     s.chip(1320, 1366, "审计留两个字段：署名 ＋ 生成者", BLUE, BLUE_BG)
-    return s.save("效果图-09-agent作为成员工具-A2.png")
+    return s.save("效果图-09-外部agent借成员身份-甲.png")
 
 
 if __name__ == "__main__":
