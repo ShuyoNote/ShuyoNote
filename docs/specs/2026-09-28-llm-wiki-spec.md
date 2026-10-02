@@ -32,7 +32,9 @@ id          INV-WIKI-<短名>    稳定标识；改口径不许改 id（改 id =
 
 > ⭐ **2026-09-29 更新（这一节的状态变了，逐条如实说）**：
 > ① **判据已存在**（`src/lib/ai/libraryMap.test.ts` 13 条 ＋ `src/components/LibraryMapView.test.tsx` 5 条 ＋
->    面板那条集成判据），跑绿 ✓ —— 都在分支 `feat/llm-wiki-map` 上（未合 dev）；
+>    面板那条集成判据），跑绿 ✓ —— ⚠️ **2026-10-02 复核订正**：那句"都在分支 `feat/llm-wiki-map` 上（**未合 dev**）"
+>    **已经过期** ✗ —— 现在 `src/lib/ai/libraryMap.test.ts`／`src/components/LibraryMapView.test.tsx`／
+>    `src/lib/ai/libraryMap.ts`／`scripts/mutate-wiki-invariants.mjs` **四个都在 `dev` 上** ✓（逐条 `[ -e ]` 核过 ✓）。
 > ② **「看过它红」已成立**：三条各一次，读数见上表；**注入方式也进了仓**
 >    （`scripts/mutate-wiki-invariants.mjs`，零依赖、可在任何机器原地重做 ✓）；
 > ③ `INV-WIKI-provenance` 另有第一次**真模型现场**观察（`[n]` 最大 2/8/10 均未越界，读数见需求 §8.1）；
@@ -40,6 +42,11 @@ id          INV-WIKI-<短名>    稳定标识；改口径不许改 id（改 id =
 >    本仓那一层收的是**门禁**（`scripts/check-*.mjs`，注册在 `gates.mjs`），
 >    而这三条的判据是 **vitest 测试**（属 `check-gate-manifest` 判据 D3 的"测试形态渠道"）。
 >    ⇒ 请裁一句：**测试形态的判据能不能进 `INVARIANTS.md`**（能 ⇒ 我按四字段补三行；不能 ⇒ 它们留在本表，证据仍记在仓内脚本里 ✓）。
+>    ⚠️ **2026-10-02 补记（macOS 侧）**：这一问**直到今天才进台账** ✗ —— 它在 `docs/specs/` 里躺了三天，
+>    而主人卡是从台账生成的 ⇒ **你从没在卡上看见过它** ✓（＝本仓最忌的那种"问了、但没人看得见"）。
+>    现已记为 **R117**（`_workspace/REQUESTS.md`）✓，卡上也出现了 ✓。两条路的**门禁后果已核**：
+>    选「能」不会撞红 —— `_workspace/bin/check-invariants-rows.mjs` 的判据②认「**显式写渠道**（含 **测试形态**）」、
+>    判据④「测试形态只要求**存在**」✓；选「不能」＝维持现状 ✓。
 
 ## 2. 怎么弄红（每条的具体负例；这是准入条件②的配方）
 
