@@ -696,11 +696,144 @@ def sheet7():
     return s.save("效果图-07-agent走进讨论线-只读落成笔记.png")
 
 
+def sheet8():
+    """⑧ **A1：agent 是一个空间成员**（owner 2026-10-02 拍 A1 ✓）。
+
+    ⭐ 它**有自己的身份**：成员列表里看得见、审计里能区分、**移除即失效**（那条不变式自动适用 ✓）。
+    ⛔ 特意画出两件：**在线依赖要如实说**（agent 不是 24 小时服务 ✓）＋ **防自激** ✓。
+    """
+    s = Sheet("企业版 IM · 效果图 08",
+              "A1：agent 是一个【空间成员】—— 有自己的身份与角色；移除即失效；在线依赖必须如实说。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "成员（4）", False), (1, "王工 · 人", False), (1, "李工 · 人", False),
+        (1, "AI 助手 · agent", True)])
+    lx, ly, lw = ax + 284, ay + 88, 800
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "成员：王工 / 李工 / AI 助手（agent）", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 108
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这周接口那半做完了，只剩校验那一层。", F_S)
+    yy += 66
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "@AI 助手 帮我把这两条挂到今天的清单上。", F_S)
+    yy += 66
+    # ⭐ agent 以**自己的身份**发言
+    s.avatar(lx + 28, yy, "AI", fill=PURPLE_BG, fg=PURPLE)
+    s.t(lx + 76, yy + 6, "AI 助手（agent）", F_S, PURPLE)
+    s.chip(lx + 320, yy + 2, "agent 身份", PURPLE, PURPLE_BG, h=28)
+    s.t(lx + 76, yy + 38, "收到：接口那半 → 已完成；校验那层 → 明天。已挂到今天的清单。", F_S)
+    yy += 108
+    s.rule(lx + 28, yy, lx + lw - 28)
+    s.small(lx + 28, yy + 16, "⛔ 它**只被 @ 才答**，不主动插话 ✗；且它的回复**不会再触发它自己**（防自激 ✓）", MUT)
+    s.small(lx + 28, yy + 48, "⛔ 界面上**不显示**「已送达」这类我们保证不了的状态 ✗", MUT)
+    by = yy + 92
+    s.d.rounded_rectangle([lx + 28, by, lx + 396, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (lx + 212, by + 28), "@AI 助手 落成笔记", F_XS, (255, 255, 255), "mm")
+    s.small(lx + 28, by + 70, "（动作仍在客户端发起 ✓ —— 服务端不需要懂这次讨论 ✓）", MUT)
+
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 250)
+    s.t(rx + 28, ly + 20, "它是什么身份（A1 的口径）", F_B)
+    for i, line in enumerate([
+            "· 它是**成员**：有自己的 role，⛔ 不继承某人的权限 ✗",
+            "· 审计能区分「人／插件／外部 Agent」→ 三条都要能查到 ✓",
+            "· ⭐ **移除即失效**：把它移出空间 ⇒ 实时流与写入立刻不可用 ✓",
+            "   （那条不变式**不用重写**，直接适用 ✓）"]):
+        s.t(rx + 28, ly + 66 + i * 40, line, F_S, MUT if line.startswith("   ") else INK)
+
+    s.card(rx, ly + 282, rw, 300, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 302, "【注意】这条要说真话", F_B, AMBER)
+    s.t(rx + 28, ly + 346, "AI 要等某人设备在线才答得上。", F_S, AMBER)
+    s.rule(rx + 28, ly + 388, rx + rw - 28, fill=(232, 210, 160))
+    s.small(rx + 28, ly + 406, "⛔ agent **不是 24 小时服务** ✗（我们没有服务端推理 ✓）", MUT)
+    s.small(rx + 28, ly + 438, "⇒ 没人在线时**没人应** ⇒ 界面**不许装作「AI 马上会回」** ✗", MUT)
+    s.small(rx + 28, ly + 470, "（＝ `INV-IM-offline-never-lies`：不承诺存储转发 ✓）", MUT)
+
+    s.chip(56, 1326, "A1：agent 是成员 ⇒ 移除即失效自动成立", GREEN, GREEN_BG)
+    s.chip(700, 1326, "⛔ 防自激：agent 的回复不得再触发它自己／别的 agent", RED, RED_BG)
+    s.chip(1500, 1326, "审计要能区分三类主体", BLUE, BLUE_BG)
+    s.chip(56, 1366, "在线依赖如实说：没人在线就没人应", AMBER, AMBER_BG)
+    s.chip(760, 1366, "⛔ 不显示「已送达」", RED, RED_BG)
+    s.chip(1240, 1366, "@ 触发，⛔ 不主动插话 ✗", BLUE, BLUE_BG)
+    return s.save("效果图-08-agent作为空间成员-A1.png")
+
+
+def sheet9():
+    """⑨ **A2：agent 是「某个成员的客户端工具」**（owner 2026-10-02 拍 A2 ✓）。
+
+    ⚠️ 它**借那个人的通道**发言 ⇒ 署名是那个人，**但必须标「由 AI 生成」** ✗ 否则留痕坏 ✓。
+    ⭐ 画的是"**人机可区分**"这件事：同一条消息，署名 ＋ 生成者**两个字段都在** ✓。
+    """
+    s = Sheet("企业版 IM · 效果图 09",
+              "A2：agent 是【某个成员的客户端工具】—— 署名是该成员，但必须标「由 AI 生成」；权限＝那个人的权限。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "成员（3）", False), (1, "王工 · 人", False),
+        (1, "李工 · 人（带 AI 助手）", True), (0, "AI 助手 · 李工的", False)])
+    lx, ly, lw = ax + 284, ay + 88, 800
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "成员：王工 / 李工（AI 助手挂在李工名下 ✓）", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 108
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这两条结论谁记一下？", F_S)
+    yy += 70
+    # ⭐ 署名是**李工**，但带「由 AI 生成」标
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 6, "李工", F_S)
+    s.chip(lx + 150, yy + 2, "由 AI 生成", PURPLE, PURPLE_BG, h=28)
+    s.chip(lx + 320, yy + 2, "李工已确认", GREEN, GREEN_BG, h=28)
+    s.t(lx + 76, yy + 38, "我记好了：接口那半已完成；校验明天补。", F_S)
+    yy += 108
+    s.rule(lx + 28, yy, lx + lw - 28)
+    s.t(lx + 28, yy + 16, "王工：这条是你说的，还是你 AI 说的？", F_S)
+    s.small(lx + 28, yy + 56, "⇒ 界面**必须答得出来** ✓：点开这条 ⇒ 署名=李工，生成者=AI 助手（agent）✓", GREEN)
+    by = yy + 118
+    s.card(lx + 28, by, lw - 56, 150, edge=AMBER, fill=AMBER_BG, r=10, lw=2)
+    s.t(lx + 52, by + 18, "【注意】A2 的硬要求", F_B, AMBER)
+    s.small(lx + 52, by + 54, "⛔ **必须标「由 AI 生成」** ✗ —— 不标就分不清：", MUT)
+    s.small(lx + 52, by + 84, "「人说的」还是「人的 AI 说的」 ⇒ 留痕坏 ✗", MUT)
+    s.small(lx + 52, by + 116, "⇒ 两个字段都要进审计：**署名（谁）＋ 生成者（谁造的）** ✓", MUT)
+
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 300)
+    s.t(rx + 28, ly + 20, "它用的是谁的权限（A2 的口径）", F_B)
+    for i, line in enumerate([
+            "· **＝ 那个人的权限** ✓（他能看的，它才能看 ✓）",
+            "   ⇒ 密级／小组**自动适用**，⛔ 不用另做一套 ✗",
+            "· 人一走／被移出 ⇒ **它那条通道也没了** ✓",
+            "   （不需要单独撤 agent ✓ 撤人即撤它 ✓）",
+            "· ⛔ 但**责任归属要清楚** ✗：发言者是李工，",
+            "   生成者是 AI ⇒ 两个字段都要留痕 ✓"]):
+        s.t(rx + 28, ly + 66 + i * 38, line, F_S, MUT if line.startswith("   ") else INK)
+
+    s.card(rx, ly + 332, rw, 250, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 352, "【注意】A2 特有的两个风险", F_B, AMBER)
+    s.small(rx + 28, ly + 398, "① ⛔ **自激**：它写的东西可能又被它读到 ⇒ 越滚越多 ✗", MUT)
+    s.small(rx + 28, ly + 430, "   ⇒ 必须有一条「不许触发自己」的规则 ✓", MUT)
+    s.small(rx + 28, ly + 466, "② ⚠️ **注入**：它写出来的内容会被别人当指令 ⇒", MUT)
+    s.small(rx + 28, ly + 498, "   它的输出也要带来源标记（谁生成 ＋ 模型来源）✓", MUT)
+
+    s.chip(56, 1326, "A2：署名是该成员 ＋ ⛔ 必须标「由 AI 生成」", PURPLE, PURPLE_BG)
+    s.chip(760, 1326, "权限＝那个人的权限 ⇒ 密级／小组自动适用", GREEN, GREEN_BG)
+    s.chip(1520, 1326, "撤人即撤它（不用单独撤 agent）", GREEN, GREEN_BG)
+    s.chip(56, 1366, "⛔ 自激要防：不许触发自己", RED, RED_BG)
+    s.chip(620, 1366, "输出也要带来源标记（防注入）", AMBER, AMBER_BG)
+    s.chip(1320, 1366, "审计留两个字段：署名 ＋ 生成者", BLUE, BLUE_BG)
+    return s.save("效果图-09-agent作为成员工具-A2.png")
+
+
 if __name__ == "__main__":
-    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6(); sheet7()
+    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6(); sheet7(); sheet8(); sheet9()
     if ALL_BAD:
         print("\n⛔ 有图缺字形 ⇒ 非零退出（⛔ 不许静默）")
         for name, bad in ALL_BAD:
             print("   · %s：%s" % (name, " ".join(bad)))
         raise SystemExit(1)
-    print("\n**七张**全部干净 ✓")
+    print("\n**九张**全部干净 ✓")
