@@ -85,8 +85,9 @@ id          INV-IM-<短名>             稳定标识；改口径不许改 id（�
 其中三条设计**对** ✓：gossip 只广播「**有新消息**」这个**事件**、⛔ **不带正文** ✗；系统通知**只提醒、不作入口** ✓；
 TopicId **绑空间** ⇒ 个人空间不订阅 ✓。
 
-⚠️ **但三处前提要改准**（2026-10-02 macOS 侧实核 ✓；原方案表述见
-[`windows 的转达信`](../../../ShuyoNote-collab/2026-10-02-enterprise-im-realtime-notify-owner-windows.md) ✓）：
+⚠️ **但三处前提要改准**（2026-10-02 macOS 侧实核 ✓；原方案表述见 windows 侧的转达信 ——
+那封信在**私有信箱仓** `ShuyoNote-collab` 里（`2026-10-02-enterprise-im-realtime-notify-owner-windows.md`）✓
+⛔ **该仓不入产品仓、也不该从产品仓链过去** ✗ —— 链过去会在仓外，而 CI 只检出客户端仓 ⇒ 死链 ✓）：
 
 ```text
 ① 「ShuyoNote **已经集成了 iroh**」⇒ ⛔ **不成立** ✗ `[代码]`

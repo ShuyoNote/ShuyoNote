@@ -6,8 +6,11 @@
 // `](../design-philosophy.md)`——渲染出来是死链，评审时才发现。
 //
 // 用法：node scripts/check-doc-links.mjs   （有死链即非零退出）
+//
+// ⭐ 2026-10-02：多一条口径 —— **越出仓根的相对链接也算死链**（详见下面那段注释里的真事故：
+//    链到私有信箱仓 `ShuyoNote-collab` ⇒ 本机那个文件在 ⇒ 本机绿，而 CI 只检出客户端仓 ⇒ 红 ✗）。
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { resolve, dirname, join, relative } from "node:path";
+import { resolve, dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { plansIndexProblems } from "./lib/docs-index.mjs";
@@ -56,6 +59,25 @@ for (const file of files) {
   for (const m of scan.matchAll(LINK)) {
     links++;
     const target = resolve(dirname(file), m[1]);
+    // ⭐⭐ 2026-10-02（macOS 侧）：**越出仓根的相对链接一律算死链** —— 这条是"本机绿、CI 红"那一族。
+    //
+    // 来由（真事故，就在同一天）：`docs/specs/2026-10-01-enterprise-im-spec.md:89` 链到
+    //   `../../../ShuyoNote-collab/2026-10-02-….md` —— 那是**私有信箱仓**（不入产品仓 ✓）。
+    //   ⚠️ 本机工作区里那个文件**在** ⇒ `existsSync` 判它"可达" ⇒ **本机 exit 0** ✓，
+    //   而 CI **只检出客户端仓** ⇒ 同一个判据在 CI 上 exit 1 ✗（判语逐字见那份变异的 finding）。
+    //   ⇒ 这是**判据自己的面**错了：对"链到仓外"这种事，`existsSync` 的答案**取决于跑它的那台机器** ✗。
+    // 判据：解析结果落在**仓根之外** ⇒ 死链。理由一句话：**本仓的 CI 只检出本仓 ⇒ 仓外的目标永远不可达** ✓。
+    // ⚠️ **量过再立**（K11）：全仓 1339 条相对链接里越根的只有 **1** 条（就是上面那条）⇒ 这条规则**零误报** ✓。
+    //   反例（不该被它误伤）：仓内任意深度的 `../` 都仍然放行（只判"出不出仓根"，不判"跳几层" ✓）。
+    const out = relative(root, target);
+    if (out.startsWith("..") || isAbsolute(out)) {
+      const line = scan.slice(0, m.index).split("\n").length;
+      broken.push(
+        `${relative(root, file)}:${line} → ${m[1]}` +
+          `（**越出仓根**：本仓 CI 只检出本仓 ⇒ 仓外的目标永远不可达；请在仓内另放一份或改成纯文字 ✓）`
+      );
+      continue;
+    }
     if (!existsSync(target)) {
       // 行号便于直接定位
       const line = scan.slice(0, m.index).split("\n").length;
