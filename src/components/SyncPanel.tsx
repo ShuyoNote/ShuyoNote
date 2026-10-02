@@ -240,6 +240,69 @@ export function SyncPanel() {
       setMeshBusy(false);
     }
   };
+  // ⭐ **U11/T5（2026-10-02）**：**逐台解除** —— 这个空间认了哪些设备、把哪一台踢出去。
+  //
+  // ⚠️ **三件不许**（都有既有口径盯着）：
+  //   ① ⛔ **可见处不出现裸 `device_id`** ✗（`INV-UI-copy-no-internal-ids`；
+  //      判据 `syncPanelMesh.wiring.test.ts` ③ 扫这一屏 ✓）⇒ 屏幕上只给**短码**（人读用 ✓）
+  //   ② ⛔ 不出现「已确认／已验证」这类判定语 ✗（同一族口径 ✓）
+  //   ③ ⛔ 短码**从设备号派生，不从哈希派生** ✗ —— 读数里**根本没有**哈希（见 Rust `MeshPairedDevice` ✓），
+  //      而"从哈希取几位显示"会把"绝不出哈希"那条自己破掉 ✓
+  const [duList, setDuList] = useState<{ deviceId: string; addedAtMs: number }[]>([]);
+  const [duBusy, setDuBusy] = useState("");
+  const [duNote, setDuNote] = useState("");
+  /** 人读的**短码**：只用于"认得出是哪一台" ✓（⛔ 不是安全校验、也不许当密码用 ✗）。 */
+  const duCode = (id: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < id.length; i++) {
+      h ^= id.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(16).toUpperCase().padStart(8, "0").slice(0, 6);
+  };
+  const duWhen = (ms: number) => {
+    try {
+      return new Date(ms).toLocaleString();
+    } catch {
+      return "时间读不出";
+    }
+  };
+  useEffect(() => {
+    if (!activeId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        // ⚠️ 两个参数都给 `null` ⇒ **不写任何东西** ✓（只取读数 ✓ —— 与那两条保存路径同一支命令 ✓）
+        const st = await api.meshSetConfig(activeId, null, null);
+        if (alive) setDuList(st.paired ?? []);
+      } catch {
+        // 读不到就**空着** ✓ —— ⛔ 不假装有设备 ✗
+        if (alive) setDuList([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [activeId]);
+  const duUnpair = async (deviceId: string) => {
+    if (!activeId) return;
+    setDuBusy(deviceId);
+    setDuNote("");
+    try {
+      const r = await api.deviceUnpair(activeId, deviceId);
+      setDuNote(
+        (r.wasPaired ? "已解除这一台。" : "这一台本来就不在名单里。") +
+          `还认 ${r.pairedCount} 台。` +
+          r.note,
+      );
+      setDuList((prev) => prev.filter((d) => d.deviceId !== deviceId));
+    } catch (e) {
+      setDuNote(`没解除成：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDuBusy("");
+    }
+  };
+
   const saveMeshToken = async () => {
     if (!meshToken.trim()) return;
     setMeshBusy(true);
@@ -1891,6 +1954,31 @@ export function SyncPanel() {
                                而那一态里**没有继续入口** ✗（判据钉着 —— 见下面 `dpOutcome !== "stopped"` ✓）。
                             ⚠️ 文案红线：块内**不出现裸 id／裸 IP**（地址来自读数原样显示 ✓）；
                                ⛔ 不出现「已确认／已验证」这类**判定语** ✗（判据 `syncPanelMesh.wiring.test.ts` ⑩ 扫得到这一屏 ⇒ ⚠️ **反例本身也不许原样写进来**，实测踩到 ✓）；成功**只许说「已配对」** ✓。 */}
+                        {/* ⭐ U11/T5：**逐台解除** —— 只踢那一台 ✓；⛔ 不必给所有设备换口令 ✗。
+                            ⚠️ 屏幕上只给**短码 ＋ 时间**（人读认台 ✓），⛔ **不出现裸设备号** ✗。 */}
+                        {duList.length > 0 && (
+                          <div className="sync-nearby" data-testid="device-unpair">
+                            <div className="sync-hint">
+                              【要点】这台机器认了 **{duList.length}** 台设备。想踢掉某一台 ⇒
+                              点它那行的「解除」—— ⚠️ 只影响那一台 ✓，别的照常 ✓，⛔ 也不用给所有设备换口令 ✗。
+                            </div>
+                            {duList.map((d) => (
+                              <div className="sync-actions" key={d.deviceId}>
+                                <span className="sync-hint">
+                                  设备 {duCode(d.deviceId)} · 配于 {duWhen(d.addedAtMs)}
+                                </span>
+                                <button
+                                  className="sync-btn"
+                                  disabled={duBusy !== ""}
+                                  onClick={() => void duUnpair(d.deviceId)}
+                                >
+                                  解除
+                                </button>
+                              </div>
+                            ))}
+                            {duNote && <div className="sync-hint">{duNote}</div>}
+                          </div>
+                        )}
                         <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
                             【要点】**把这台设备接进来**：把**这台**的接线（地址 ＋ 窗口口令）交给对方那台。
