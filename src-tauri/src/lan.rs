@@ -758,6 +758,95 @@ mod tests {
         assert_eq!(route.kind, LinkKind::Lan);
     }
 
+    /// ★★ **U7 缺的那半个：同网段两台「自动」互见**（个人版任务单 **T8** 新增 ✓，判据矩阵 U7 的 E2E 那一格 ✓）。
+    ///
+    /// 与判据 ⑦ 的区别**只在最关键的那一点**：⑦ 把对端地址**手填**（`&[b_addr]` ✗），
+    /// 而本判据**一个对端地址都不填** —— 只调 [`default_targets`]（生产路径上那一轮真正会发的目标 ✓），
+    /// 验的是「**不用人手配置就能被听见**」这条承诺（U7 原文：**局域网自动发现** ✓）。
+    ///
+    /// ⚠️ **本机验得到什么／验不到什么（如实 ✓）**：
+    ///   · 验得到：① 自动目标里有**能落回本机**的那一条（回环 —— [`default_targets`] 的注释把它写成
+    ///     「能自验的关键」✓）；② 真按自动目标发 ⇒ 对端**无需任何手工配置**就收到并**进表** ✓；
+    ///     ③ 收到之后**下一轮的自动目标**里多出「该对端 ＋ 本端发现端口」✓（＝ 2026-09-26 真机那次
+    ///     「**单向发现**」事故的反面 ✓）；④ 两侧的表各自 `resolve_base` ⇒ **都**走局域网路由（互见 ✓）。
+    ///   · **验不到**：真实 UDP 广播在**真网段**上到不到（CI／受限网络里广播未必可用 ⇒ 回环那一条是替代品 ⚠️）
+    ///     与「两台真机换网后仍互见」—— 那是任务单 §5 的 **M1／M2（要人手）** ✓，⛔ 不许写成通过 ✗。
+    ///
+    /// **变异（必须红）**：把 `announce_targets` 里「补上已认识对端的单播」那一段删掉（只留 `default_targets`）
+    /// ⇒ 第 ③ 条立刻红 —— 那正是 2026-09-26 在真机上抓到的**单向发现**（热点主机收得到、底下的客户端收不到）✓。
+    #[tokio::test]
+    async fn two_instances_on_one_net_find_each_other_without_a_hand_filled_address() {
+        // 「中枢」真的起一个发现监听（`0.0.0.0:P` —— 生产里两台用的是**同一个发现端口** ✓）
+        let hub = bind_listener(0).await.expect("中枢要能监听");
+        let port = hub.local_addr().unwrap().port();
+        let joiner = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+        let st_hub = crate::lan_state::LanState::new("dev-hub".to_string());
+        let st_join = crate::lan_state::LanState::new("dev-join".to_string());
+        st_hub.set_enabled(true);
+        st_join.set_enabled(true);
+
+        // ① 自动目标里必须有一条**能落回本机**的入口 —— 这就是「不用手填」的前提 ✓
+        let auto = default_targets(port);
+        assert!(
+            auto.iter().any(|t| t.ip().is_loopback()),
+            "自动目标里没有回环那一条（本机就自验不了；它的注释把回环写成「能自验的关键」✓）：{auto:?}"
+        );
+
+        // ② 加入方**只按自动目标**发 —— 全程没有出现任何对端地址 ✓
+        let sent = announce_once(
+            &joiner,
+            &auto,
+            &announce_of("dev-join", Some("http://192.168.1.6:8787"), &["sp-1"]),
+        )
+        .await
+        .expect("按自动目标应当至少发出去一条");
+        assert!(sent >= 1);
+
+        // ③ 中枢**无需任何手工配置**就收到它（回环那一条把它送过来的 ✓）⇒ 而且**进表** ✓
+        let got = recv_into_within(&hub, &st_hub, 1_000)
+            .await
+            .unwrap()
+            .expect("中枢应当收到加入方");
+        assert_eq!(got.announce.device_id, "dev-join");
+        assert_eq!(st_hub.peers(1_000).len(), 1, "收进来必须进表 ✓");
+
+        // ④ 把「同一网段上的另一台」喂进中枢的表（`192.168.1.6` 是**同网段**地址 ✓），
+        //    然后看**下一轮的自动目标**：必须多出「该对端 ＋ 本端发现端口」那一条 ✓
+        //    ⚠️ 这一条判的是**决策**（真把它送出去要真网段 ⇒ 属 M1／M2 ✓）
+        st_hub
+            .record_datagram(
+                &encode_announce(&announce_of("dev-peer", Some("http://192.168.1.6:8787"), &["sp-1"])).unwrap(),
+                "192.168.1.6",
+                1_000,
+            )
+            .expect("同网段那台的公告应当合法");
+        let peers = st_hub.peers(1_000);
+        assert_eq!(peers.len(), 2, "表里应当有两台：{peers:?}");
+        let next = announce_targets(port, &peers);
+        let want: SocketAddr = format!("192.168.1.6:{port}").parse().unwrap();
+        assert!(
+            next.contains(&want),
+            "下一轮的自动目标里没有对端 {want} ⇒ 「单向发现」会复现（2026-09-26 真机事故 ✓）：{next:?}"
+        );
+
+        // ⑤ 两侧的表各自解析 ⇒ **都**走局域网路由（＝互见 ✓）
+        let hub_route =
+            resolve_base("sp-1", "https://shuyo.cn/sync", &peers).expect("中枢这一侧应当有局域网路由");
+        assert_eq!(hub_route.kind, LinkKind::Lan);
+        st_join
+            .record_datagram(
+                &encode_announce(&announce_of("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"])).unwrap(),
+                "192.168.1.5",
+                1_000,
+            )
+            .expect("中枢的公告应当合法");
+        let join_route = resolve_base("sp-1", "https://shuyo.cn/sync", &st_join.peers(1_000))
+            .expect("加入方这一侧也应当有局域网路由");
+        assert_eq!(join_route.url, "http://192.168.1.5:8787");
+        assert_eq!(join_route.kind, LinkKind::Lan);
+    }
+
     /// 判据 ⑧：坏报文**永远不许**进对端表，而且**原因说得出来**。
     #[tokio::test]
     async fn a_garbled_datagram_never_enters_the_peer_table() {

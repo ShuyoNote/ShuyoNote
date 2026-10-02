@@ -3125,6 +3125,26 @@ mod tests {
         // ① 10 份**独立库文件** ＋ 10 个**真窗口**（各自一个端口 ⇒ 真环回、真 HTTP）
         let conns: Vec<Arc<Mutex<Connection>>> =
             ids.iter().map(|id| Arc::new(Mutex::new(device_conn(&dir, id)))).collect();
+
+        // ⚠️⚠️ **2026-10-02（个人版任务单 T8 的「在岗核查」当场抓到的一处坏）**：
+        //    owner 2026-10-02 选 A（**门只认卡** ✓）之后，`authorized` 是拿 `sha256(Bearer)`
+        //    去 `paired[space]` 里找 ✓，而客户端**出示的**是 `mesh_pair_secret:<space>:<peer>`
+        //    （**每对一份** ✓，见 `pair_secret_for`）⇒ 夹具**必须先把每一对的秘密写好**，
+        //    否则 10 台全都出示不出凭证 ⇒ **90 次拉开全 401** ✗。
+        //    这一段坏掉之所以没人发现：这条判据挂着 `#[ignore]`（不在 `cargo test` 的默认集合里 ✓）、
+        //    而它的脚本 `scripts/verify-mesh-ten-devices.mjs` **没有任何调用者** ✗
+        //    ⇒ 正是本仓 §3 那两条铁律说的同一件事（「看起来加了门禁、其实没人跑」✓）。
+        //    ⇒ 本轮的处置：夹具补上每对的秘密 ＋ **把那条脚本登记进 `gates.mjs` 的 rust 组** ✓。
+        //    ⚠️ 10 台**共用同一个**秘密，是**夹具**的取舍（回环 ＋ 本机 10 个窗口）：它验的是
+        //    ①收敛 ②不落后 ③拉取量 ④合并余量 ✓；**不**验「每对一份不同秘密」——那是 T5／R110 的判据 ✓。
+        for i in 0..T10_DEVICES {
+            let g = conns[i].lock().unwrap();
+            for k in 0..T10_DEVICES {
+                if i != k {
+                    set_pair_secret(&g, T10_SPACE, &ids[k], Some(T10_TOKEN)).unwrap();
+                }
+            }
+        }
         let wins: Vec<MeshHandle> = (0..T10_DEVICES)
             .map(|i| {
                 start1s_card(
