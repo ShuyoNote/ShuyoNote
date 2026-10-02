@@ -1570,6 +1570,10 @@ export function makeInvoke(store: SqliteStore) {
           bind: null,
           tokenSet: false,
           window: null,
+          // ⭐ U8：Web 版没有本机窗口 ⇒ 服务范围为空 ✓
+          served: [],
+          // ⭐ U11/T5：Web 版不配对 ⇒ 一台都不认 ✓（⛔ 也不含任何哈希 ✗）
+          paired: [],
           note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用",
         },
         // ★ 丙档「附近设备」（2026-09-29）：**空且说得出为什么** —— 浏览器里没有发现层

@@ -3111,7 +3111,11 @@ pub fn mesh_set_config(
     if cfg.bind.is_none() {
         // 关掉 ⇒ **立刻松口**（不留一个还在听的窗口）。
         crate::mesh::stop_window(&scope.space)?;
-        return Ok(crate::mesh::config_state(&cfg, None, &[]));
+        let paired = {
+            let c = db.0.lock().expect("db mutex poisoned");
+            crate::mesh::paired_devices(&c, &scope.space)?
+        };
+        return Ok(crate::mesh::config_state(&cfg, None, &[], &paired));
     }
     // 窗口的库 = **本地空间那一份**（`scope.db_space`）；服务/匹配的空间 = `scope.space`。
     let window = crate::mesh::ensure_window_for(
@@ -3121,7 +3125,12 @@ pub fn mesh_set_config(
     )?;
     // ⭐ U8：把"这扇门服务哪些空间"一起报出去（从注册表读 ✓ —— 只读，不开窗 ✓）
     let served = crate::mesh::served_spaces(&scope.space);
-    Ok(crate::mesh::config_state(&cfg, window, &served))
+    // ⭐ U11/T5：把"认了哪些设备"一起报出去（界面要能点名再逐台解除 ✓；⛔ 只有 id ＋ 时间 ✗）
+    let paired = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        crate::mesh::paired_devices(&c, &scope.space)?
+    };
+    Ok(crate::mesh::config_state(&cfg, window, &served, &paired))
 }
 
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
@@ -3261,7 +3270,12 @@ pub fn lan_status(
             crate::mesh::settings(&c, &space_id)
         };
         let window = crate::mesh::window_addr(&space_id);
-        crate::mesh::config_state(&cfg, window, &crate::mesh::served_spaces(&space_id))
+        crate::mesh::config_state(
+            &cfg,
+            window,
+            &crate::mesh::served_spaces(&space_id),
+            &crate::mesh::paired_devices(&c, &space_id)?,
+        )
     };
 
     Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })

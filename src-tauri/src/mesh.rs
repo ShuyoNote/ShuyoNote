@@ -761,6 +761,33 @@ pub struct MeshPairedState {
     pub note: String,
 }
 
+/// ⭐ **U11/T5（2026-10-02）**：这个空间**认了哪些设备**（给界面"逐台解除"用 ✓）。
+///
+/// ⛔ **只有 `device_id` 与时间，绝不出 `secret_sha256`** ✗ ——
+/// 界面只需要"能点名到那一台" ✓，哈希对它毫无用处、漏出去只有坏处 ✓。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshPairedDevice {
+    pub device_id: String,
+    pub added_at_ms: i64,
+}
+
+/// 读"认了哪些设备"（**只 select 两列** ✓ —— ⛔ 不把哈希带出库 ✗）。
+pub fn paired_devices(c: &Connection, space_id: &str) -> Result<Vec<MeshPairedDevice>, String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT device_id, added_at_ms FROM mesh_paired_devices \
+             WHERE space_id = ?1 ORDER BY added_at_ms ASC, device_id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![space_id], |r| {
+            Ok(MeshPairedDevice { device_id: r.get(0)?, added_at_ms: r.get(1)? })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 /// 网格设置的**读数**（设置面回给界面的东西）。
 ///
 /// ⚠️ **不回口令本身**，只说"设没设"：那东西没有任何理由被界面再拿回去一遍。
@@ -777,6 +804,10 @@ pub struct MeshConfigState {
     /// 界面上要能说出"**这一扇门管几个空间**" ✓ —— 否则用户看到"一个窗口"却不知道
     /// 它替谁在听；而"关掉一个空间不许关掉整窗"这条口径也要靠它才看得出来 ✓。
     pub served: Vec<String>,
+    /// ⭐ **U11/T5**：这个空间**认了哪些设备**（⛔ **不含哈希** ✗ —— 见 `MeshPairedDevice` ✓）。
+    ///
+    /// 界面靠它**点得出名字**再逐台解除 ✓ —— 否则用户只知道"有几台"，却不知道"解除哪一台" ✗。
+    pub paired: Vec<MeshPairedDevice>,
     /// 一句人话：开没开、开在哪、**别人拉不拉得到**。
     pub note: String,
 }
@@ -792,7 +823,12 @@ pub struct MeshConfigState {
 /// 通配要分两种如实说：① 枚举到了候选 ⇒ 报出**哪一个**（用户才知道对端看到的是什么）；
 /// ② 一个候选都没有（这台只有回环/公网地址）⇒ **可操作**地说"别人拉不到 ＋ 去查网卡"
 /// （`INV-VLAN-bind-must-be-reachable`：这一档最常见的失败就是**静默不工作**）。
-pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>, served: &[String]) -> MeshConfigState {
+pub fn config_state(
+    cfg: &MeshSettings,
+    window: Option<SocketAddr>,
+    served: &[String],
+    paired: &[MeshPairedDevice],
+) -> MeshConfigState {
     let enabled = cfg.bind.is_some();
     let note = match (enabled, window) {
         (false, _) => "网格这一档关着（没配监听地址 ⇒ 不听也不喊）".to_string(),
@@ -823,6 +859,7 @@ pub fn config_state(cfg: &MeshSettings, window: Option<SocketAddr>, served: &[St
         token_set: cfg.token.is_some(),
         window: window.map(|a| format!("http://{a}")),
         served: served.to_vec(),
+        paired: paired.to_vec(),
         note,
     }
 }
@@ -2730,22 +2767,22 @@ mod tests {
     #[test]
     fn the_config_readout_says_whether_others_can_actually_reach_you() {
         let off = MeshSettings::default();
-        assert!(!config_state(&off, None, &[]).enabled);
-        assert!(config_state(&off, None, &[]).note.contains("关着"));
+        assert!(!config_state(&off, None, &[], &[]).enabled);
+        assert!(config_state(&off, None, &[], &[]).note.contains("关着"));
 
         let on = MeshSettings { bind: Some("192.168.1.5:8788".into()), token: Some("t".into()) };
-        let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()), &[]);
+        let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()), &[], &[]);
         assert!(good.enabled && good.token_set);
         assert!(good.note.contains("能被别人拉到"), "{}", good.note);
         assert_eq!(good.window.as_deref(), Some("http://192.168.1.5:8788"));
 
-        let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()), &[]);
+        let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()), &[], &[]);
         assert!(loopback.note.contains("别人拉不到"), "{}", loopback.note);
 
         // ★ **D1（owner 2026-09-30）**：绑**通配**时那两句人话 —— ⚠️ **不写死"这台机器有没有网卡"**
         //   （那是机器脸色）：只钉"它说的是通配"＋"与 `announced_base` 的结论一致"。
         let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
-        let w = config_state(&on, Some(wild), &[]);
+        let w = config_state(&on, Some(wild), &[], &[]);
         assert!(w.note.contains("听所有网卡"), "{}", w.note);
         assert!(w.note.contains("0.0.0.0:8788"), "通配要把**绑的**地址说出来：{}", w.note);
         match announced_base(wild) {

@@ -280,6 +280,13 @@ export interface MeshConfigState {
    * 而「关掉一个空间不许关掉整窗」这条口径也靠它才看得出来 ✓。
    */
   served: string[];
+  /**
+   * ⭐ **U11/T5（2026-10-02）**：这个空间**认了哪些设备**（界面靠它"点得出名字再逐台解除" ✓）。
+   *
+   * ⛔ **只有 `deviceId` 与时间，绝不含 `secret_sha256`** ✗ ——
+   * 界面只需要能点名到那一台 ✓；哈希对它毫无用处、漏出去只有坏处 ✓（Rust 侧只 select 两列 ✓）。
+   */
+  paired: { deviceId: string; addedAtMs: number }[];
   /** 一句人话：开没开、开在哪、**别人拉不拉得到**（服务多个空间时还会说清是几个）。 */
   note: string;
 }
