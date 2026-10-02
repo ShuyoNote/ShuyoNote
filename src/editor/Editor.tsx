@@ -40,9 +40,11 @@ import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
 import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
-// ⭐ owner 2026-10-01：**取消拖拽橡皮筋功能**（拖块时的幽灵 ＋ block-drop-line 指示线）⇒ 不再挂载 BlockDragPlugin。
-//    代码保留（便于日后恢复）；代价：左侧沟槽的 ⋮⋮ 手柄与整块拖拽重排一并消失 ✓。
-// import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
+// ⭐ owner 2026-10-01：**取消拖拽橡皮筋功能**（拖块时的幽灵 ＋ block-drop-line 指示线）。
+// ⭐ owner 2026-10-02（本行下方那次改动的更正）：**手柄要回来** ——「只恢复 ⋮⋮ 手柄与块菜单，
+//    不恢复拖拽」✓ ⇒ 组件**重新挂载**（见下方渲染处 ✓），但 `dragEnabled` **保持默认 false** ✗
+//    ⇒ 左侧沟槽的 ⋮⋮ 与"点一下出块菜单"回来了 ✓，10-01 取消的橡皮筋**没有**回来 ✓。
+import { BlockDragPlugin } from "./plugins/BlockDragPlugin";
 import { BlockSelectionPlugin } from "./plugins/BlockSelectionPlugin";
 import { api } from "../lib/api";
 import { BlockInsertPlugin } from "./plugins/BlockInsertPlugin";
@@ -689,7 +691,10 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
-        {/* 拖拽（橡皮筋/幽灵/指示线）已取消（owner 2026-10-01）：不再挂载 BlockDragPlugin */}
+        {/* ⭐ 2026-10-02（owner）：「只恢复 ⋮⋮ 手柄与块菜单，不恢复拖拽」✓
+            ⇒ 挂回来但**不开** `dragEnabled`（默认 false ✓）：
+               有左侧沟槽的 ⋮⋮ 手柄 ✓、点一下出块菜单 ✓；⛔ 无拖拽幽灵/指示线 ✗（10-01 的取消继续生效 ✓）。 */}
+        <BlockDragPlugin />
         <BlockInsertPlugin pageId={pageId} />
         <BlockSelectionPlugin />
         <InsertShortcutPlugin />

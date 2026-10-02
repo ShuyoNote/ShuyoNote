@@ -4497,10 +4497,18 @@ select.sync-input {
   background: var(--bg);
   transition: padding-right var(--transition-fast);
 }
-/* When the TOC rail is open, reserve its width on the right so the page content
-   re-centers in the space beside it (not overlapped). */
+/* ⭐ 2026-10-02（owner 给了参考图）：「目录做成并排停靠 ＋ 鼠标拖拽调宽」。
+   ⇒ 这里**把让位规则请回来**了，但宽度改成**变量**（`--toc-w`，拖拽时实时写 ✓）：
+      正文在左、目录在右、**互不覆盖** ✓。
+   ⚠️ 更正我上一轮的读法：owner 先前那句「不能影响阅览」我读成了"别重排正文" ✗，
+      其实指的是"**别盖住正文**" ✓ —— 这张参考图里正是**并排** ✓。
+   ⚠️ 滚动**不锁**那条保持不变 ✓（`TableOfContents.tsx` 里的 `useOverlayScrollLock` 已删 ✓）。 */
 body.is-toc-open .main {
-  padding-right: 280px;
+  padding-right: var(--toc-w, 300px);
+}
+/* 拖拽进行中：⛔ 关掉那条 120ms 过渡 ✗，否则正文会"追着"指针慢半拍 ✓。 */
+body.is-toc-resizing .main {
+  transition: none;
 }
 body.is-ai-open .main {
   padding-right: var(--ai-w, 380px);
@@ -7140,12 +7148,24 @@ select.prop-value {
      · 上下 padding 6px ⇒ **竖线在文字上下各多出一截**（这就是"注释块"该有的呼吸感 ✓）
      · 上下 margin 1em ⇒ 与前后块之间也拉开 ✓
    ⛔ 仍然**不改**通用那条 ⇒ 段落 / 标题的留白不受影响 ✓。 */
+/* ⭐ 2026-10-02（owner 给了参考图）：「把注释块调成图中的样式」。
+   参考样式 = **浅灰底 ＋ 左侧一根粗灰条 ＋ 四周留白**（掘金那种引用块 ✓）。
+   原来：透明底 ✗ ＋ 3px 竖线 ⇒ 只有一根线，没有"块"的感觉 ✓。
+   ⚠️ 颜色**一律用变量**（浅 `--card-bg: #f8f9fa` ／ 深 `#1c1d20` ✓；条 `--border-strong` 浅 `#d4d8df` ／ 深 `#3a3c41` ✓）
+      ⇒ 深色主题自动跟着走 ✓，⛔ 不硬写 `#f7f8fa` 这类值 ✗。
+   ⚠️ `--bg-2` 是**社区站**的变量，本仓**没有定义** ✗ —— 用它会让底色静默失效 ✓（我查过才没写它 ✓）。
+   ⚠️ 右边也要留白：否则底色会**贴着文字边缘**（参考图里四周都是留白 ✓）。
+   ⚠️ **圆角维持 0**（就是下面那条 `border-radius: 0` ✓）—— 那是 **owner 2026-10-01 明确拍的**
+      「注释块与高亮块都**不要**圆角，要 md 那种方角」✓ ⇒ 参考图看着像有圆角 ✓，但**改它要先问** ✓。 */
 .editor-content blockquote.editor-quote {
   padding-left: 14px;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-right: 14px;
+  padding-top: 8px;
+  padding-bottom: 8px;
   margin-top: 1em;
   margin-bottom: 1em;
+  background: var(--card-bg);
+  border-left: 4px solid var(--border-strong);
 }
 
 .editor-callout {
@@ -12342,7 +12362,8 @@ p:has(> .editor-drawing-container) {
   top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
-  width: 300px;
+  /* ⭐ 宽度由拖拽决定（`--toc-w` 由 `TableOfContents.tsx` 写 ✓）；默认 300 与旧版一致 ✓。 */
+  width: var(--toc-w, 300px);
   z-index: 40;
   display: flex;
   flex-direction: column;
@@ -12351,9 +12372,33 @@ p:has(> .editor-drawing-container) {
   transform: translateX(100%);
   transition: transform var(--transition-fast);
 }
+/* ⭐ 拖拽把手（2026-10-02）：贴在目录**左缘**的一条 6px 窄条 —— 指针变 `col-resize` ✓，
+   悬停/拖拽时亮一下（`--accent` ✓）。⚠️ 视觉上只占 6px，但 `left: -3px` 让它一半压在正文侧，
+   手感更"抓得住" ✓（GitHub / VS Code 那种分栏都是这个做法 ✓）。 */
+.toc-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--transition-fast);
+  /* 触摸/笔输入也别让浏览器抢走手势（否则一拖就在面板里滚起来了 ✗）。 */
+  touch-action: none;
+}
+.toc-resizer:hover,
+.toc-resizer.is-dragging {
+  background: var(--accent);
+  opacity: 0.55;
+}
 .toc-panel.open {
   transform: translateX(0);
-  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.10);
+  /* ⛔ 2026-10-02（owner）：「去掉目录栏的阴影」。
+     原来这里是 `box-shadow: -12px 0 32px rgba(0,0,0,.10)` —— 那是**浮层**才需要的投影
+     （`position: fixed` 盖在正文上时，靠它把两层分开 ✓）；现在目录是**并排停靠** ✓
+     ⇒ 投影只会糊在正文右侧，显得脏 ✗ ⇒ 去掉 ✓。
+     分界改用本来就有的 `border-left: 1px solid var(--border)` ✓（参考图里也就是一条细线 ✓）。 */
 }
 
 .toc-head {
@@ -20393,6 +20438,8 @@ p:has(> .editor-drawing-container) {
   /* 窄屏下 TOC / AI 是叠加层，主区不需要为它们让位。桌面端那两条让位规则
      （padding-right: 280px / 380px）在窄屏会把主区内容盒挤成 0 宽，并把
      .main 撑出 .app-body —— flex 项缩不到 padding 以下，宽度被顶成 380px。 */
+  /* ⚠️ 窄屏下目录是**叠加层**（不是并排 ✓）⇒ 让位要归零，否则正文会被挤成 0 宽 ✗
+     （原话：「窄屏下 TOC / AI 是叠加层，主区不需要为它们让位」✓）。 */
   body.is-toc-open .main,
   body.is-ai-open .main,
   body.is-plugin-panel-open .main {

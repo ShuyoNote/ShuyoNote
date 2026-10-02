@@ -9,7 +9,8 @@ import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon } from "./icons";
+import { useRightPanel } from "../store/rightPanel";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
 import { CommunityPublishDialog } from "./CommunityPublishDialog";
@@ -48,6 +49,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const [importing, setImporting] = useState(false);
   const contentWidth = useViewStore((s) => s.contentWidth);
   const setContentWidth = useViewStore((s) => s.setContentWidth);
+  // ⭐ 2026-10-02（owner）：「在页面顶端工具栏添加目录开关按钮」。
+  // ⚠️ 目录那颗**已经在窗口标题栏**里了（`TopTools.tsx` ✓，2026-10-01 owner 拍板把右侧竖条搬过去 ✓）——
+  //    这里再加一颗，是因为**笔记页这一排**才是手会自然落下的地方 ✓（标题栏那颗是 16px 图标，容易没注意 ✓）。
+  // ⚠️ 两颗**共用同一个 store**（`useRightPanel` ✓）⇒ ⛔ 不会出现两份状态 ✗；store 内部本来就互斥
+  //    （开目录会自动关掉 AI／讨论／插件面板 ✓）。⚠️ 订阅一律**取字段**，⛔ 不整店订阅 ✗（`check-store-subscriptions` 守这条 ✓）。
+  const tocOpen = useRightPanel((s) => s.toc);
+  const openToc = useRightPanel((s) => s.openToc);
   const [exportOpen, setExportOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<PublishTarget | null>(null);
 
@@ -214,6 +222,17 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         title={contentWidth === "full" ? "内容宽度：自适应（点击恢复居中）" : "内容宽度：居中（点击自适应全宽）"}
       >
         <ContentWidthIcon />
+      </button>
+      {/* ⭐ 目录开关（2026-10-02 owner 要求）—— 写法照隔壁「内容宽度」那颗：`active` 类 ＋ 说明性 title ✓；
+          额外补 `aria-pressed` ✓（读屏能念出这是开/关，而不是"一个按钮"✓）。 */}
+      <button
+        className={`toolbar-btn ${tocOpen ? "active" : ""}`}
+        onClick={() => openToc(!tocOpen)}
+        title={tocOpen ? "目录：已显示（点击隐藏）" : "目录：已隐藏（点击显示）"}
+        aria-label="目录"
+        aria-pressed={tocOpen}
+      >
+        <ListIcon />
       </button>
       <HistoryPanel pageId={pageId} />
       <div className="editor-toolbar-more">
