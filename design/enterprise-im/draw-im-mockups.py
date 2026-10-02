@@ -606,11 +606,101 @@ def sheet6():
     return s.save("效果图-06-讨论线放进左侧边栏.png")
 
 
+def sheet7():
+    """⑦ ⭐ **agent 走进讨论线**（按**建议 A** 画：只读讨论 → 落成笔记；⛔ 不在讨论线里发言 ✗）。
+
+    ⚠️ owner 2026-10-02 原话是「**考虑**」⇒ 这张画的是**建议 A**（规格 §1.7 ✓），
+    ⛔ **不是**已拍 ✗；B（agent 发言／被 @）**特意没画** —— 它的前置（agent 是什么主体）**今天没定** ✗
+    （见本目录 README §3「特意没有画的东西」✓）。
+    """
+    s = Sheet("企业版 IM · 效果图 07",
+              "agent 走进讨论线（按【建议 A】画）：agent 只读讨论 → 落成笔记；⛔ 它不在讨论线里发言 ✗。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "接口那半", True), (0, "发布检查", False), (1, "前端校验", False), (0, "本周进展", False)])
+
+    # 左：一段讨论（⚠️ 里面**有一条是外部粘进来的** —— 那就是「注入面」✓）
+    lx, ly, lw = ax + 284, ay + 88, 800
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "4 条 · 王工 / 李工 / 赵工", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 108
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这周接口那半做完了，只剩校验那一层。", F_S)
+    yy += 62
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "前端那层我明天补；今天先把字段名对齐。", F_S)
+    yy += 62
+    # ⭐ 外部粘进来的那一条：**带来源标记** ＋ agent 侧**降权**
+    s.avatar(lx + 28, yy, "赵", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "我贴一段外面的说明过来：", F_S)
+    s.chip(lx + lw - 250, yy + 4, "外部抓来的内容", AMBER, AMBER_BG, h=30)
+    yy += 44
+    s.card(lx + 76, yy, lw - 132, 96, edge=AMBER, fill=AMBER_BG, r=10, lw=2)
+    s.t(lx + 96, yy + 18, "（从网页粘进来的一段说明 —— 来源已标，agent 侧降权）", F_S, AMBER)
+    s.small(lx + 96, yy + 54, "⛔ 它不当指令用 ✗", RED)
+    yy += 130
+    s.rule(lx + 28, yy, lx + lw - 28)
+    s.t(lx + 28, yy + 18, "agent 的动作（在客户端发起）", F_B)
+    s.small(lx + 28, yy + 54, "⛔ agent 不在这条讨论线里发言 ✗ —— 它只把结论落成笔记 ✓", MUT)
+    # ⭐ 按钮紧贴动作区（⛔ 不钉在卡片底 —— 那会在中间留一大片空 ✗）
+    by = yy + 96
+    s.d.rounded_rectangle([lx + 28, by, lx + 396, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (lx + 212, by + 28), "让 AI 读这条讨论 → 落成笔记", F_XS, (255, 255, 255), "mm")
+    s.small(lx + 28, by + 68, "动作在**客户端**：⛔ 服务端不需要懂这次讨论（那条不变式的注入就是「服务端生成摘要 ⇒ 红」）。", MUT)
+    # 再把这条边界**画在讨论线里**：agent 没有发言（⛔ 不是漏画 ✗）
+    s.rule(lx + 28, by + 118, lx + lw - 28)
+    s.small(lx + 28, by + 138, "（这条讨论线里**没有** AI 的消息 —— 按建议 A，agent 只读、不发言 ✗）", MUT)
+    s.small(lx + 28, by + 170, "（要让它发言＝B 方：先拍「agent 是什么主体」，见规格 §1.7 ✓）", MUT)
+
+    # 右：模型来源（说真话）＋ AI 落成的笔记
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 216, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 20, "【注意】这条要说真话", F_B, AMBER)
+    s.t(rx + 28, ly + 62, "模型来源：未声明 → 记作 unknown", F_S, AMBER)
+    s.rule(rx + 28, ly + 100, rx + rw - 28, fill=(232, 210, 160))
+    s.small(rx + 28, ly + 118, "⛔ 不许默认显示「本机模型 / 安全」✗（未声明就是 unknown ✓）", MUT)
+    s.small(rx + 28, ly + 150, "⚠️ 「模型在本机」≠「内容不出本机」：agent 仍可能联网", MUT)
+    s.small(rx + 28, ly + 180, "⇒ 本机/云端的标记必须与联网提醒**同屏** ✓", MUT)
+
+    s.card(rx, ly + 248, rw, 440)
+    s.t(rx + 28, ly + 268, "AI 落成的笔记（草稿）", F_B)
+    s.chip(rx + 28 + s.d.textlength("AI 落成的笔记（草稿）", font=F_B) + 20, ly + 266,
+           "派生，非出处", PURPLE, PURPLE_BG, h=30)
+    yy = ly + 322
+    s.avatar(rx + 28, yy - 6, "AI", d0=34, fill=PURPLE_BG, fg=PURPLE)
+    s.t(rx + 74, yy, "署名：AI 助手（agent）· ⛔ 不冒充人 ✗", F_S, PURPLE)
+    yy += 52
+    for line in ["一、接口那半已完成，只剩校验一层。",
+                 "二、字段名今天对齐；校验明天补。",
+                 "三、外面的那段说明只作参考，不当依据。"]:
+        s.t(rx + 28, yy, line, F_S)
+        s.small(rx + rw - 28, yy + 4, "回链 →", BLUE, "ra")
+        yy += 44
+    s.rule(rx + 28, ly + 560, rx + rw - 28)
+    s.small(rx + 28, ly + 578, "页脚：派生自「接口那半」讨论（4 条），非出处；源一改即标脏。", MUT)
+    s.d.rounded_rectangle([rx + 28, ly + 618, rx + 220, ly + 674], radius=10, fill=BLUE)
+    _emit(s.d, (rx + 124, ly + 646), "采用", F_S, (255, 255, 255), "mm")
+    s.d.rounded_rectangle([rx + 240, ly + 618, rx + 420, ly + 674], radius=10, fill=CARD, outline=LINE, width=2)
+    _emit(s.d, (rx + 330, ly + 646), "不采用", F_S, INK, "mm")
+
+    # 尾部四颗：把这张图**守着的边界**写出来 ✓
+    s.chip(56, 1360 - 34, "动作在客户端：服务端不需要懂这次讨论", GREEN, GREEN_BG)
+    s.chip(720, 1360 - 34, "⛔ agent 不在讨论线里发言（建议 A；B 待拍）", RED, RED_BG)
+    s.chip(1400, 1360 - 34, "模型来源：未声明 ⇒ unknown", AMBER, AMBER_BG)
+    s.chip(56, 1400 - 34, "外部抓来的内容：带来源标记 ＋ 降权（⛔ 不当指令用）", AMBER, AMBER_BG)
+    s.chip(820, 1400 - 34, "能力面限「笔记域」；⛔ 不许 host／global ✗", BLUE, BLUE_BG)
+    s.chip(1460, 1400 - 34, "⛔ 不为用 agent 而关掉加密 ✗", RED, RED_BG)
+    return s.save("效果图-07-agent走进讨论线-只读落成笔记.png")
+
+
 if __name__ == "__main__":
-    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6()
+    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6(); sheet7()
     if ALL_BAD:
         print("\n⛔ 有图缺字形 ⇒ 非零退出（⛔ 不许静默）")
         for name, bad in ALL_BAD:
             print("   · %s：%s" % (name, " ".join(bad)))
         raise SystemExit(1)
-    print("\n六张全部干净 ✓")
+    print("\n**七张**全部干净 ✓")
