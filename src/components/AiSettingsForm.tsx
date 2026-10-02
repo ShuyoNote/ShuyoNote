@@ -477,7 +477,7 @@ export function AiSettingsForm({
             )}
             {topicRunning && !topicDraft ? (
               <p className="ai-libmap-note" data-testid="topic-running">
-                正在生成草稿（本机模型可能要几十秒）……**不会写库** ✓
+                正在生成草稿（本机模型可能要几十秒）……不会写库 ✓
               </p>
             ) : null}
             {topicError ? (

@@ -84,7 +84,7 @@ function DataPane() {
           <div className="set-row-text">
             <div className="set-row-name">备份 / 恢复（全库）</div>
             <div className="set-row-sub">
-              导出所有空间与附件为一个包；导入为**合并**，不会覆盖现有空间。
+              导出所有空间与附件为一个包；导入为合并，不会覆盖现有空间。
             </div>
           </div>
           <BackupButton label="备份 / 恢复…" />

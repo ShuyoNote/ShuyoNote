@@ -77,7 +77,7 @@ export function LibraryMapView({
         </section>
       ))}
       {!map.coverageComplete ? (
-        <div className="ai-libmap-warn">有格子这次没查（显示为「未知」）—— **未知不等于没有**，别把它读成 0。</div>
+        <div className="ai-libmap-warn">有格子这次没查（显示为「未知」）—— 未知不等于没有，别把它读成 0。</div>
       ) : null}
 
       {draft ? (
