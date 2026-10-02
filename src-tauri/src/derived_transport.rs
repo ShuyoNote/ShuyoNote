@@ -146,6 +146,34 @@ fn non_empty(what: &str, v: &str) -> Result<(), String> {
     }
 }
 
+/// ⭐ **附件被删时，把它的派生行也清掉**（2026-10-02 加；真机端到端发现的缺口）。
+///
+/// 来由：`attachment_text` / `chunks` 的 DDL **没有外键** ✓（`db.rs` 里两张表都是裸 `att_id TEXT` ✓），
+/// 而 `attachments::remove_attachment_inner_with` 只做 `DELETE FROM attachments` ✗
+/// ⇒ ⭐ **删附件会留下孤儿派生文本** ✓（占空间 ✓ 且可能**进检索** ✓ —— 用户搜到已删附件的内容 ✓）。
+///
+/// ⚠️ **为什么放在本模块、而不是直接在 `attachments.rs` 里写 DELETE**：
+/// 那两张表的 SQL **只允许出现在这里** ✓（本文件头部的纪律 ＋ `scripts/check-derived-writers.mjs` 的意图 ✓）
+/// ⇒ 由 `attachments.rs` **调这个函数** ✓，它的源码里不会出现那两张表的字面量 ✓。
+///
+/// ⚠️ 调用方**不该**因为这里的失败而回滚"删附件"本身（附件已经删了 ✓）；记一条读数即可 ✓
+/// —— 本函数只报错、不 panic ✓，也不吞（返回 `Err` 让调用方决定 ✓）。
+pub(crate) fn clear_derived_for_attachment(
+    conn: &Connection,
+    att_id: &str,
+) -> Result<usize, String> {
+    let a = conn
+        .execute(
+            "DELETE FROM attachment_text WHERE att_id = ?1",
+            params![att_id],
+        )
+        .map_err(|e| e.to_string())?;
+    let c = conn
+        .execute("DELETE FROM chunks WHERE att_id = ?1", params![att_id])
+        .map_err(|e| e.to_string())?;
+    Ok(a + c)
+}
+
 /// 执行**一批**写操作（一个事务）。
 ///
 /// 为什么收一批而不是"一次一条"：TS 侧 `replace` 是"先删后插 N 条"，
@@ -190,8 +218,7 @@ fn apply_one(tx: &Transaction<'_>, op: &DerivedOp) -> Result<usize, String> {
             non_empty("att_id", att_id)?;
             tx.execute("DELETE FROM attachment_text WHERE att_id = ?1", params![att_id])
                 .map_err(|e| e.to_string())
-        }
-        DerivedOp::ReplaceChunks { owner, chunks } => {
+        }        DerivedOp::ReplaceChunks { owner, chunks } => {
             non_empty("owner id", owner.id())?;
             let (w, id) = owner.where_clause();
             let deleted = tx
