@@ -830,11 +830,91 @@ def sheet9():
     return s.save("效果图-09-外部agent借成员身份-甲.png")
 
 
+def sheet10():
+    """⑩ ⭐ **三个 agent 在一条讨论线里并存**（内置 ＋ WorkBuddy ＋ DSH，都在李工本机）。
+    按规格 §1.8（owner 2026-10-02 拍：**甲 ＋ 能发言** ✓）。
+    ⛔ **最要紧的一格**：一个 agent 想回另一个 agent 的话 ⇒ **被挡下** ✗（防自激 ✓）。
+    """
+    s = Sheet("企业版 IM · 效果图 10",
+              "三个 agent 并存（内置 ＋ WorkBuddy ＋ DSH，都在李工本机）：三个标记 ＋ ⛔ agent 不许触发 agent ✗。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "成员（3）", False), (1, "王工 · 人", False), (1, "李工 · 人", False),
+        (1, "AI 助手 · agent", True)])
+
+    lx, ly, lw = ax + 284, ay + 88, 860
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "成员：王工（人）／李工（人 ＋ 两个外部 agent）／AI 助手（内置 agent）", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 104
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这两条结论谁记一下？", F_S)
+    yy += 62
+    # ⭐ 内置 agent：自己的身份
+    s.avatar(lx + 28, yy, "AI", fill=PURPLE_BG, fg=PURPLE)
+    s.t(lx + 76, yy + 4, "AI 助手（agent）", F_S, PURPLE)
+    s.chip(lx + 300, yy, "内置 · 自己的身份", PURPLE, PURPLE_BG, h=28)
+    s.t(lx + 76, yy + 36, "我记了：接口那半已完成；校验明天补。", F_S)
+    yy += 96
+    # ⭐ 外部 agent（甲）：署李工的名 ＋ 三个标记
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 4, "李工", F_S)
+    s.chip(lx + 130, yy, "由 WorkBuddy 生成", PURPLE, PURPLE_BG, h=28)
+    s.chip(lx + 330, yy, "模型：云端", AMBER, AMBER_BG, h=28)
+    s.t(lx + 76, yy + 36, "我也整理了一份要点，已挂到今天的清单。", F_S)
+    yy += 96
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 4, "李工", F_S)
+    s.chip(lx + 130, yy, "由 DSH 生成", PURPLE, PURPLE_BG, h=28)
+    s.chip(lx + 300, yy, "模型：本机", GREEN, GREEN_BG, h=28)
+    s.t(lx + 76, yy + 36, "发布检查那条我开起来了。", F_S)
+    yy += 100
+    # ⛔ 最要紧的一格：agent 想回 agent ⇒ 被挡
+    s.card(lx + 28, yy, lw - 56, 118, edge=RED, fill=RED_BG, r=10, lw=2)
+    s.t(lx + 52, yy + 16, "【禁】这一条被挡下了", F_B, RED)
+    s.small(lx + 52, yy + 54, "AI 助手 想回 WorkBuddy 那一条 ⇒ **不生成新回复** ✗", MUT)
+    s.small(lx + 52, yy + 86, "（＝ agent 不许触发 agent：三个并存时最容易撞的那条 ✓）", MUT)
+
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 262)
+    s.t(rx + 28, ly + 20, "⭐ 三个标记（外部 agent 必须有）", F_B)
+    for i, line in enumerate([
+            "① **署名**：谁说的（李工 ✓）",
+            "② **生成者**：谁造的（WorkBuddy ／ DSH ✓）",
+            "③ **模型来源**：本机／云端／unknown ✓",
+            "   ⇒ 否则「三个 agent ＋ 一个人」混在一条线上",
+            "     **分不出来** ✗（＝ INV-KB-audit-subject ✓）"]):
+        s.t(rx + 28, ly + 66 + i * 36, line, F_S, MUT if line.startswith("   ") else INK)
+
+    s.card(rx, ly + 294, rw, 210, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 314, "【注意】两条要说真话", F_B, AMBER)
+    s.small(rx + 28, ly + 356, "① **同一条命**：三个都在**李工本机** ⇒ 那台一关，", MUT)
+    s.small(rx + 28, ly + 386, "   三个**全都没了** ⇒ 界面说「要等李工设备在线」✓", MUT)
+    s.small(rx + 28, ly + 422, "② **明文出了 App 的边界**：外部 agent 走桥 ✓", MUT)
+    s.small(rx + 28, ly + 452, "   ⇒ 若它再上云就是**内容出本机** ⇒ 必须**同屏**提醒 ✓", MUT)
+
+    s.card(rx, ly + 526, rw, 176)
+    s.t(rx + 28, ly + 546, "权限宽窄不一样（别混）", F_B)
+    s.small(rx + 28, ly + 588, "· 内置 agent ＝**自己的 role** ✓（可以更窄 ✓）", MUT)
+    s.small(rx + 28, ly + 620, "· 外部 agent ＝**李工的全部权限** ✓（更宽 ✗）", MUT)
+    s.small(rx + 28, ly + 656, "  ⇒ 密级／小组**自动适用** ✓（不用另做一套 ✓）", MUT)
+
+    s.chip(56, 1326, "⛔ agent 不许触发 agent（三个并存最容易撞）", RED, RED_BG)
+    s.chip(760, 1326, "外部 agent 三个标记：署名＋生成者＋模型来源", PURPLE, PURPLE_BG)
+    s.chip(1600, 1326, "内置＝自己的 role；外部＝李工的全部", BLUE, BLUE_BG)
+    s.chip(56, 1366, "同一条命：李工的设备一关，三个全没", AMBER, AMBER_BG)
+    s.chip(700, 1366, "明文出 App 边界 ⇒ 同屏提醒", AMBER, AMBER_BG)
+    s.chip(1300, 1366, "加密空间只有「甲」走得通（桥借已解锁会话）", GREEN, GREEN_BG)
+    return s.save("效果图-10-三个agent并存-防自激.png")
+
+
 if __name__ == "__main__":
-    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6(); sheet7(); sheet8(); sheet9()
+    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6(); sheet7(); sheet8(); sheet9(); sheet10()
     if ALL_BAD:
         print("\n⛔ 有图缺字形 ⇒ 非零退出（⛔ 不许静默）")
         for name, bad in ALL_BAD:
             print("   · %s：%s" % (name, " ".join(bad)))
         raise SystemExit(1)
-    print("\n**九张**全部干净 ✓")
+    print("\n**十张**全部干净 ✓")
