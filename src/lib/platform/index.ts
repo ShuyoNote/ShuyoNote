@@ -97,4 +97,15 @@ export const platform: Platform = {
   get pdfRender() {
     return current.pdfRender;
   },
+  // ⚠️⚠️ **2026-10-02 补**：这个 getter 原先**漏了** ⇒ 不管底层是 `tauriPlatform`（有 ✓）
+  // 还是 `createWebPlatform()`（有 ✓），`platform.derivedStores` **永远是 `undefined`** ✗。
+  // 后果不是报错，而是**整条派生层静默不可用**：`AiSettingsForm` 读到 `undefined` ⇒
+  // 报「这个平台不提供派生层」⇒「开始索引」按钮不提供、覆盖检查失败 ⇒ 抽取/索引/切块全走不通 ✓
+  // ⚠️ 而它**测不出来**：`aiSettingsCoverage.test.tsx` 把 `platform.derivedStores` **mock 掉了** ✗
+  // ⇒ 那是**假绿** ✓（本仓最防的"不炸不报错"那类 ✓）；`platformDerivedWiring.test.ts` 测的是
+  //   **实现** `tauriPlatform.derivedStores` ✓ —— **门面这一跳没人管** ✗ ⇒ 已在那里补一条断言 ✓。
+  // ⭐ 来由：2026-10-02 一次**真机端到端**发现的（设置→AI 报「不提供派生层」）✓ —— 纯单测全绿时它不可见 ✓
+  get derivedStores() {
+    return current.derivedStores;
+  },
 };
