@@ -27,7 +27,7 @@ describe("T4 · 把这台设备接进来", () => {
     expect(SRC.indexOf("附近设备")).toBeLessThan(SRC.indexOf('data-testid="device-pair"'));
   });
 
-  it("② ⭐「停」态里**没有**继续的入口（U3：两端不一致 ⇒ 停，且不许给「继续」）", () => {
+  it("② ⭐「停」态里没有继续的入口（U3：两端不一致 ⇒ 停，且不许给「继续」）", () => {
     // 停态那一支 = `dpOutcome === "stopped" ? (` 到 `) : (`
     // ⚠️ 锚点要**从停态那一支开始切**（否则 `) : (` 会先命中文件里前面的三元表达式 —— 实测踩到 ✓）
     const from = SRC.slice(SRC.indexOf('dpOutcome === "stopped" ? ('));
@@ -43,7 +43,7 @@ describe("T4 · 把这台设备接进来", () => {
     expect(normal).toContain("我核对过了，采纳");
   });
 
-  it("③ 采纳**必须**带上人核对过的那一串（U2：不许自动通过）", () => {
+  it("③ 采纳必须带上人核对过的那一串（U2：不许自动通过）", () => {
     const accept = between(SRC, "const dpAccept = async () => {", "\n  };");
     expect(accept).toContain("confirmed_check_code");
     // ⭐ 而"先看比对码"那一步**故意不带**码 —— 后端因此只回读数、**零写入** ✓（这条也是结构事实 ✓）

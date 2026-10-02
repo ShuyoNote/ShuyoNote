@@ -28,12 +28,12 @@ describe("网格（丙-③-b）· 面板接线", () => {
     const catchAt = syncOne.indexOf("} catch (e) {");
     const meshAt = syncOne.indexOf("api.meshSyncNow(");
     expect(catchAt, "`syncOne` 里没找到 catch（结构变了？）").toBeGreaterThan(-1);
-    expect(meshAt, "网格那一步必须放在 **catch 之后**（＝ finally 里）").toBeGreaterThan(catchAt);
+    expect(meshAt, "网格那一步必须放在 catch 之后（＝ finally 里）").toBeGreaterThan(catchAt);
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
   });
 
-  it("①b **自动同步也对网格生效**（不是只有手点「同步」才换）", () => {
+  it("①b 自动同步也对网格生效（不是只有手点「同步」才换）", () => {
     const app = read("src/App.tsx");
     expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncNow(");
     // ⚠️ gate 只许有一处：Rust 侧 `mesh_sync_now` 自己早退；前端**不重判一遍**。
@@ -41,7 +41,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(app, "自动同步那条路里不该自己判网格开没开（gate 在 Rust 侧一处实现）").not.toContain("mesh.enabled");
   });
 
-  it("② 门槛是 `space_id`，**不是** `lanRowBound`（网格不需要服务端地址）", () => {
+  it("② 门槛是 `space_id`，不是 `lanRowBound`（网格不需要服务端地址）", () => {
     // 网格那一块：只要求这个空间有 space_id —— "只开网格、不绑服务端"正是这一档要支持的配置。
     expect(panel).toContain("isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (");
     // 2026-09-26（地址一处）：`lanRowBound` 那一行现在**同时**认"只开了网格"的空间 ——
@@ -51,11 +51,11 @@ describe("网格（丙-③-b）· 面板接线", () => {
     );
   });
 
-  it("③ 「关掉网格」走**清除**（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
+  it("③ 「关掉网格」走清除（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
     expect(panel).toContain('api.meshSetConfig(activeId, "", null)');
   });
 
-  it("④ 「别人拉不拉得到」那句人话**来自 Rust**（界面不自己按地址形状判档）", () => {
+  it("④ 「别人拉不拉得到」那句人话来自 Rust（界面不自己按地址形状判档）", () => {
     // 2026-09-26（地址一处）：这句现在与 `lanStatus.line` 拼在**同一行**里 —— 仍然是 Rust 出的原文
     // （`lanStatus.mesh.note`），界面只是把它摆到那一行去。
     expect(panel).toContain("lanStatus.mesh.note");
@@ -76,7 +76,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
     // ⚠️ 而且 Rust 侧的窗口**不许**退回「一个空间一个窗口」（那正是 U8 要消灭的形状 ✓）——
     //   这两条是**结构断言**：注册表的键是**绑定**、鉴权走 `select_space` 那条白名单 ✓。
     const rustMeshU8 = read("src-tauri/src/mesh.rs");
-    expect(rustMeshU8, "U8：窗口注册表的键应当是**绑定**").toContain("guard.insert(bind.to_string(), handle)");
+    expect(rustMeshU8, "U8：窗口注册表的键应当是绑定").toContain("guard.insert(bind.to_string(), handle)");
     expect(rustMeshU8, "U8：鉴权应当走 `select_space` 那条白名单").toContain("fn select_space(");
   });
 
@@ -86,7 +86,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //   而 `verify-mobile-overlays.mjs` 跑的是 **Web** 平台 ⇒ 那里根本渲染不出来（写断言就是死断言）；
   //   桌面/手机的真机几何只能靠人。所以这里钉"形状不许回退"：
   //   谁把 `.sync-mesh` 改回横排、或去掉那句 `white-space:nowrap`，这几条立刻红。
-  it("⑥ 网格那一块是**竖排**，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
+  it("⑥ 网格那一块是竖排，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
     const css = read("src/App.css");
     // ⚠️ 选择器写**裸**的（`.` 不用转义）：`rule()` 自己会把正则元字符转义 ——
     //    再写一层 `\\.` 会被它转义成"要匹配一个字面反斜杠"，于是永远匹配不上（第一版就踩了）。
@@ -127,7 +127,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(commandsTs, "`MeshPeerPullReport` 少了 `awaiting`").toContain("awaiting: number;");
   });
 
-  it("⑧ 网格那轮**之后**两份清单跟着刷新（不然通知与现场对不上）", () => {
+  it("⑧ 网格那轮之后两份清单跟着刷新（不然通知与现场对不上）", () => {
     const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
     const meshAt = syncOne.indexOf("api.meshSyncNow(");
     expect(meshAt, "`syncOne` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
@@ -155,7 +155,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //    全文件禁会把那些**正当文案**判红（我核过：`邀请` 在 `SyncPanel.tsx` 里的出现**全在**
   //    「设备直连」那一屏**之前**，且都是团队版成员邀请与它的注释）⇒ 判据按**区域**收敛，
   //    而不是一刀切 —— 这条边界写在这里，免得后人"顺手"把它扩成全文。
-  it("⑨ ⭐ VL-3：`0.0.0.0`（听所有网卡）那条路要在**用户看得见的文案**里，且说清它是什么", () => {
+  it("⑨ ⭐ VL-3：`0.0.0.0`（听所有网卡）那条路要在用户看得见的文案里，且说清它是什么", () => {
     // 去掉行注释：注释里讲"`0.0.0.0 ⇒ Err`"的历史**不算**用户可见文案。
     const copy = panel.replace(/\/\/[^\n]*/g, "");
     expect(copy, "地址那一栏没提 `0.0.0.0` ⇒ `VL-2` 开的这条在用户眼里不存在").toContain("0.0.0.0");

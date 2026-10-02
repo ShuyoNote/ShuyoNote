@@ -1981,23 +1981,23 @@ export function SyncPanel() {
                         )}
                         <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
-                            【要点】**把这台设备接进来**：把**这台**的接线（地址 ＋ 窗口口令）交给对方那台。
-                            ⚠️ 它**含窗口口令** ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
+                            【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
+                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
                           </div>
                           <button className="sync-btn" disabled={dpBusy} onClick={() => void dpGenerate()}>
                             生成投放码
                           </button>
                           {dpExport && dpExport.outcome === "ok" && (
                             <div className="sync-hint">
-                              <div>比对码（**一次性**）：<b data-testid="dp-own-code">{dpExport.check_code}</b></div>
+                              <div>比对码（一次性）：<b data-testid="dp-own-code">{dpExport.check_code}</b></div>
                               <div style={{ wordBreak: "break-all" }} data-testid="dp-text">{dpExport.text}</div>
-                              <div>对端收下后，请**当面核对两边的比对码**：一样才继续 ✓。</div>
+                              <div>对端收下后，请当面核对两边的比对码：一样才继续 ✓。</div>
                             </div>
                           )}
                           {dpExport && dpExport.outcome === "not_configured" && (
                             <div className="sync-hint">{dpExport.message}</div>
                           )}
-                          <div className="sync-hint">—— 或者，**采纳对方给来的码** ——</div>
+                          <div className="sync-hint">—— 或者，采纳对方给来的码 ——</div>
                           <input
                             className="sync-input"
                             placeholder="把对方那段码粘到这里"
@@ -2008,8 +2008,8 @@ export function SyncPanel() {
                           {/* ⛔ **停态里没有"继续"** ✗ —— 这是 `U3` 的界面半边（矩阵 U3 的注入点就在这）✓ */}
                           {dpOutcome === "stopped" ? (
                             <div className="sync-hint" data-testid="dp-stopped">
-                              【禁】**停下了**：两边的码对不上 ⇒ 不采纳、本机一个字节都没改。
-                              请回到给出这段码的那台设备上重新核对，然后**重新粘一次**（对不上时这里不给继续的入口）。
+                              【禁】停下了：两边的码对不上 ⇒ 不采纳、本机一个字节都没改。
+                              请回到给出这段码的那台设备上重新核对，然后重新粘一次（对不上时这里不给继续的入口）。
                             </div>
                           ) : (
                             <>
@@ -2019,7 +2019,7 @@ export function SyncPanel() {
                               {dpPreview && (
                                 <div className="sync-hint">
                                   <div>这边算出来是：<b data-testid="dp-computed-code">{dpPreview}</b></div>
-                                  <div>与对方那台上显示的**逐位相同**才继续；不一样**千万别继续** ✗。</div>
+                                  <div>与对方那台上显示的逐位相同才继续；不一样千万别继续 ✗。</div>
                                   <input
                                     className="sync-input"
                                     placeholder="把核对过的比对码填回来"
@@ -2034,7 +2034,7 @@ export function SyncPanel() {
                               )}
                             </>
                           )}
-                          {dpOutcome === "ok" && <div className="sync-hint" data-testid="dp-ok">**已配对** ✓</div>}
+                          {dpOutcome === "ok" && <div className="sync-hint" data-testid="dp-ok">已配对 ✓</div>}
                           {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
                         </div>
                       </div>
