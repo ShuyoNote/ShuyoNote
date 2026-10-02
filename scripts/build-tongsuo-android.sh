@@ -80,7 +80,28 @@ if [ -z "$SRC" ]; then
   rm -rf "$WORK/Tongsuo"
   mkdir -p "$WORK"
   echo "build-tongsuo-android: 取源码（Gitee 镜像）…"
-  git clone --quiet "$MIRROR" "$WORK/Tongsuo" || die "克隆失败（Gitee 不可达？）"
+  # ⭐ **R116（owner 2026-10-02 拍「A：加重试/退避」）**：Gitee 那条链实测**会传到一半被截断** ——
+  #    逐字读数（2026-10-02 CI 两趟都一样）：`error: RPC failed; curl 56 GnuTLS recv error (-110)` ＋
+  #    `error: 3857 bytes of body are still expected` ＋ `fatal: early EOF` ＋ `✗ 克隆失败（Gitee 不可达？）`
+  #    ⇒ 它**不是"抽风一次"**，是那条链不可靠 ✓ ⇒ 这里**原地重试**（默认 3 次，退避 5s/15s）✓。
+  #    ⚠️ 与"降级成自报跳过"那条路**不是**一回事 ✗：这一格**仍然是硬门禁**（试完还不成就红 ✓）。
+  #    ⚠️ 次数可用 `TONGSUO_CLONE_TRIES` 覆盖（手工排障用 ✓）。
+  TRIES="${TONGSUO_CLONE_TRIES:-3}"
+  n=0
+  while :; do
+    n=$((n + 1))
+    if git clone --quiet "$MIRROR" "$WORK/Tongsuo"; then
+      break
+    fi
+    # ⚠️ **半截的检出必须删干净**：留下一个非空目录 ⇒ 下一次 clone 会直接失败（"already exists"），
+    #    于是重试**必然**失败、还看不出是为什么 ✓。
+    rm -rf "$WORK/Tongsuo"
+    if [ "$n" -ge "$TRIES" ]; then
+      die "克隆失败（Gitee 不可达 / 传输被截断？）—— 已试 $n 次"
+    fi
+    echo "build-tongsuo-android: 第 $n 次克隆失败 ⇒ 退避后重试（共 $TRIES 次）…" >&2
+    if [ "$n" -eq 1 ]; then sleep 5; else sleep 15; fi
+  done
   SRC="$WORK/Tongsuo"
   ( cd "$SRC" && git checkout --quiet "$TONGSUO_COMMIT" ) || die "checkout $TONGSUO_COMMIT 失败"
 fi
