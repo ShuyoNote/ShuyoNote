@@ -260,12 +260,13 @@ export function SyncPanel() {
     }
     return (h >>> 0).toString(16).toUpperCase().padStart(8, "0").slice(0, 6);
   };
+  // ⚠️ 固定成 `YYYY-MM-DD HH:mm` ✓ —— ⛔ 不用 `toLocaleString()` ✗：
+  //    它在中文界面里会渲染成美式的 `9/28/2026, 2:03:00 PM`（实测 ✓），与整屏中文不一致 ✓
   const duWhen = (ms: number) => {
-    try {
-      return new Date(ms).toLocaleString();
-    } catch {
-      return "时间读不出";
-    }
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "时间读不出";
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
   };
   useEffect(() => {
     if (!activeId) return;
@@ -290,10 +291,9 @@ export function SyncPanel() {
     setDuNote("");
     try {
       const r = await api.deviceUnpair(activeId, deviceId);
+      // ⚠️ 别和后端那句重复：`r.note` 自己已经以「已解除这一台：…」开头（实测 ✓）⇒ 这里只说结果与台数 ✓
       setDuNote(
-        (r.wasPaired ? "已解除这一台。" : "这一台本来就不在名单里。") +
-          `还认 ${r.pairedCount} 台。` +
-          r.note,
+        (r.wasPaired ? "" : "这一台本来就不在名单里。") + `还认 ${r.pairedCount} 台。` + r.note,
       );
       setDuList((prev) => prev.filter((d) => d.deviceId !== deviceId));
     } catch (e) {
@@ -1959,8 +1959,8 @@ export function SyncPanel() {
                         {duList.length > 0 && (
                           <div className="sync-nearby" data-testid="device-unpair">
                             <div className="sync-hint">
-                              【要点】这台机器认了 **{duList.length}** 台设备。想踢掉某一台 ⇒
-                              点它那行的「解除」—— ⚠️ 只影响那一台 ✓，别的照常 ✓，⛔ 也不用给所有设备换口令 ✗。
+                              【要点】这台机器认了 {duList.length} 台设备。想踢掉某一台，点它那行的「解除」。
+                              只影响那一台，别的照常；也不用给所有设备换口令。
                             </div>
                             {duList.map((d) => (
                               <div className="sync-actions" key={d.deviceId}>
