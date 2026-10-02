@@ -40,6 +40,8 @@ export const TARGETS = [
     // ⭐ 规格里那些**还只是口径、没进 §1 不变式表**的编号（规格 §7 的 `**N1**`–`**N4**`）
     //   ⇒ 图 README 引用它们时也要真实存在 ✓（否则"图引了一个规格里没有的口径" ✗）
     specPrefix: "N",
+    // ⭐ 2026-10-02：这一份还多一条**口径尺子**（见 `judgeA1`）—— agent 走进讨论线的**主体模型**
+    agentModel: true,
   },
 ];
 
@@ -95,6 +97,39 @@ export function judge({ readme, needs, spec, t }) {
   return out;
 }
 
+/** ⭐ **2026-10-02**：agent 走进讨论线的**主体模型口径尺子**（owner 拍「A1」✓）。
+ *
+ * ⚠️ **它量的是「文档口径不许漂」，⛔ 不是产品行为** ✗ —— 这一点必须写清楚：
+ *   产品代码**一行都没有** ⇒ 若去量"agent 会不会主动插话／会不会自激"，
+ *   那把尺子**今天必然是绿的**，而且**永远绿到功能做出来为止** ✗
+ *   ⇒ 那正是本仓最忌的「**看起来有其实没有**」✓。
+ *   ⇒ **产品那三把尺子，等代码出现时再立** ✓（判据先行 ≠ 提前立一把永远绿的假尺子 ✗）。
+ *
+ * 今天能立、而且**真的会响**的三条：
+ *   ① 规格里**必须写明** A1 的三条守卫（防自激／只被 @ 才答／在线依赖如实说）—— 谁删掉一条 ⇒ 红 ✓
+ *   ② 主体模型**只能有一个口径**（选定 A1）—— ⛔ 同时写「A1 ＋ A2 并存」⇒ 红 ✗（两套口径＝两份真相 ✓）
+ *   ③ 图 README 里 **08 必须标【选定】、09 必须标【对照／未选】** —— ⛔ 不许让人把 09 读成计划 ✗
+ */
+export function judgeA1({ readme, spec }) {
+  const out = [];
+  for (const g of ["防自激", "只被 @ 才答", "在线依赖如实说"]) {
+    if (!spec.includes(g)) {
+      out.push("✗ 规格里**没有** A1 的守卫「" + g + "」✗（删掉它 ⇒ 将来做的人只能凭记忆，而记忆会漂 ✓）");
+    }
+  }
+  if (!/选\s*定?\s*[:：]?\s*\**\s*A1|A1[^\n]{0,30}——\s*选定/.test(spec)) {
+    out.push("✗ 规格里读不出「**选定 A1**」✗（主体模型必须有**一个**明确口径 ✓）");
+  }
+  const 并存 = spec.split("\n").filter((l) => /A1/.test(l) && /A2/.test(l) && /并存/.test(l) && !/先|随后|不是/.test(l));
+  if (并存.length) {
+    out.push("✗ 规格里同时写着「A1 ＋ A2 并存」✗ —— 两套口径就是**两份真相** ✓（本仓最忌）");
+  }
+  const 行 = (n) => readme.split("\n").find((l) => l.startsWith("| " + n + " |")) || "";
+  if (!/选定/.test(行("08"))) out.push("✗ 图 README 第 08 行没标【选定】✗（读者不知道哪张是计划 ✓）");
+  if (!/对照|未选/.test(行("09"))) out.push("✗ 图 README 第 09 行没标【对照／未选】✗（会被读成计划 ✓）");
+  return out;
+}
+
 function run(root) {
   let checked = 0;
   const findings = [];
@@ -108,11 +143,18 @@ function run(root) {
       spec: readFileSync(sp, "utf8"),
       t,
     }).map((x) => "[" + t.readme + "] " + x));
+    if (t.agentModel) {
+      findings.push(...judgeA1({ readme: readFileSync(rp, "utf8"), spec: readFileSync(sp, "utf8") })
+        .map((x) => "[" + t.readme + "] " + x));
+    }
     checked++;
   }
   if (!checked) { for (const x of findings) console.error(x); return 2; }
   if (findings.length) { for (const x of findings) console.error(x); return 1; }
   console.log("✓ 效果图与文档的关联成立：" + checked + " 份图 README ｜ 点名的需求号与不变式**全部真实存在** ✓ ｜ 每条 MUST **至少被一张图引用** ✓");
+  if (TARGETS.some((t) => t.agentModel)) {
+    console.log("✓ agent 走进讨论线的**口径**也在岗：A1 三条守卫写着 ✓ ｜ 主体模型只有「选定 A1」一个口径 ✓ ｜ 图 08 标【选定】、09 标【对照／未选】✓");
+  }
   return 0;
 }
 
@@ -133,10 +175,25 @@ if (argv.includes("--self-test")) {
     ["点名不存在规格口径 N9 ⇒ 红", judge({ readme: "M1 M2 N9", needs, spec: spec + "| **N1** | 甲 |", t: T }).some((s) => s.includes("N9"))],
     ["点名存在的规格口径 N1 ⇒ 绿", judge({ readme: "M1 M2 N1", needs, spec: spec + "| **N1** | 甲 |", t: T }).length === 0],
   ];
+  const specA1 = "## 1.7\n选 A1 ✓\n① ⛔ **防自激**\n④ ⛔ **只被 @ 才答**\n③ ⚠️ **在线依赖如实说**\n";
+  const readmeA1 = "| 08 | 甲 | 选定 |\n| 09 | 乙 | 对照 · 未选 |\n";
+  const casesA1 = [
+    ["A1 合规 ⇒ 空", judgeA1({ readme: readmeA1, spec: specA1 }).length === 0],
+    ["删掉「防自激」⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("防自激", "防") }).some((s) => s.includes("防自激"))],
+    ["删掉「只被 @ 才答」⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("只被 @ 才答", "只被") }).some((s) => s.includes("只被 @ 才答"))],
+    ["删掉「在线依赖如实说」⇒ 红", judgeA1({ readme: readmeA1, spec: specA1.replace("在线依赖如实说", "在线") }).some((s) => s.includes("在线依赖如实说"))],
+    ["读不出「选定 A1」⇒ 红", judgeA1({ readme: readmeA1, spec: "没有那个词" }).some((s) => s.includes("选定 A1"))],
+    ["又写「A1 ＋ A2 并存」⇒ 红（两份真相）", judgeA1({ readme: readmeA1, spec: specA1 + "A1 ＋ A2 两种主体模型并存\n" }).some((s) => s.includes("两份真相"))],
+    ["08 行不标【选定】⇒ 红", judgeA1({ readme: "| 08 | 甲 |\n| 09 | 乙 | 对照 · 未选 |\n", spec: specA1 }).some((s) => s.includes("08"))],
+    ["09 行不标【对照/未选】⇒ 红", judgeA1({ readme: "| 08 | 甲 | 选定 |\n| 09 | 乙 | 计划 |\n", spec: specA1 }).some((s) => s.includes("09"))],
+  ];
+
   let pass = 0;
   for (const [n, ok] of cases) { console.log((ok ? "  ✓ " : "  ✗ ") + n); if (ok) pass++; }
-  console.log("self-test: " + pass + "/" + cases.length + " 通过");
-  process.exit(pass === cases.length ? 0 : 1);
+  for (const [n, ok] of casesA1) { console.log((ok ? "  ✓ " : "  ✗ ") + n); if (ok) pass++; }
+  const all = [...cases, ...casesA1];
+  console.log("self-test: " + pass + "/" + all.length + " 通过");
+  process.exit(pass === all.length ? 0 : 1);
 }
 
 const ri = argv.indexOf("--root");
