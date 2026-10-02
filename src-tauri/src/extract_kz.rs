@@ -26,24 +26,40 @@ pub struct KzText {
 
 const ENGINE: &str = "kreuzberg-4.10.4";
 
-/// 用 Kreuzberg 抽一个文件的文本。
-/// ⚠️ **不做任何写盘** ✓：读文件、抽文本、返回 ✓。落盘/入库由 TS 侧那一条链负责 ✓。
+/// 用 Kreuzberg 抽**一段字节**的文本（抽取层唯一的入口 ✓）。
+///
+/// ⚠️ **为什么收 bytes 而不是路径**：本仓抽取层的 `ExtractInput` 是
+/// `{ bytes, filename, mime, hash, deps }` —— **手上只有字节，没有路径** ✓
+/// （见 `src/lib/extract/types.ts`）⇒ 契约对齐字节这一侧 ✓。
+/// ⚠️ IPC 传 **base64**（字节数组会被序列化成上千万字符的 JSON ✗），
+/// 解码器与落盘命令**共用同一份**（`abilities::base64_decode` ✓，⛔ 不写第二份 ✗）。
+/// ⚠️ **不做任何写盘** ✓：读字节、抽文本、返回 ✓。派生表仍由 TS 那条链写 ✓。
 #[tauri::command]
-pub fn extract_with_kreuzberg(path: String) -> Result<KzText, String> {
-    let p = std::path::Path::new(&path);
-    if !p.is_file() {
-        return Err(format!("不是文件（或读不到）：{path}"));
+pub fn extract_with_kreuzberg(
+    base64: String,
+    mime: String,
+    filename: String,
+) -> Result<KzText, String> {
+    let bytes = crate::abilities::base64_decode(&base64)?;
+    if bytes.is_empty() {
+        return Err("内容是空的 ⇒ 不抽".into());
     }
     let started = std::time::Instant::now();
     let cfg = kreuzberg::ExtractionConfig::default();
-    match kreuzberg::extract_file_sync(p, None, &cfg) {
+    // 文件名带扩展名时给它（Kreuzberg 的格式判定吃 mime，也吃扩展名 ✓）；
+    // ⚠️ 只当**提示**用，⛔ 不落盘、不写任何以它命名的文件 ✗。
+    let hint = if filename.is_empty() { None } else { Some(filename.as_str()) };
+    match kreuzberg::extract_bytes_sync(&bytes, &mime, &cfg) {
         Ok(r) => Ok(KzText {
             chars: r.content.chars().count(),
             text: r.content,
             ms: started.elapsed().as_millis() as u64,
             engine: ENGINE,
         }),
-        // ⚠️ 失败**照实回**：不吞成空字符串 ✗（前端才有机会说"这个格式读不了" ✓）。
-        Err(e) => Err(format!("{e}").replace(['\n', '\r'], " ")),
+        // ⚠️ 失败**照实回**：不吞成空字符串 ✗（前端/抽取层才有机会说"这个格式读不了" ✓）。
+        Err(e) => {
+            let _ = hint; // ⚠️ 当前 API 不吃文件名提示；留这行是为了**明确**这一点 ✗ 不假装用了它 ✓
+            Err(format!("{e}").replace(['\n', '\r'], " "))
+        }
     }
 }

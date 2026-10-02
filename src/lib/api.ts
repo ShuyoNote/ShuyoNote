@@ -137,8 +137,8 @@ export const api = {
    * ⚠️ 特性集**不含** `chunking` ✓（与 `boa_engine` 的 icu 依赖互斥 ✗ 实测）⇒ 分块仍在
    * `src/lib/extract/chunk.ts` 做 ✓。
    */
-  extractWithKreuzberg: (path: string) =>
-    invoke("extract_with_kreuzberg", { path }),
+  extractWithKreuzberg: (base64: string, mime: string, filename: string) =>
+    invoke("extract_with_kreuzberg", { base64, mime, filename }),
   setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
   /** `runId` 让前端能在等待期间**真的终止**这次运行（见 store/plugins 的 cancelRun）。 */
   runPluginCommand: (

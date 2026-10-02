@@ -36,7 +36,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// 自己解 base64（标准字母表 ＋ `=` 填充 ✓）。⛔ 非法字符直接报错 ✗（不猜、不丢字节 ✓）。
-fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+/// ⚠️ `pub(crate)`：`extract_kz.rs` 那条命令也收 base64（抽取层手上只有 bytes ✓，没有路径 ✓）
+/// ⇒ **同一份解码器**，⛔ 不写第二份 ✗。
+pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut acc: u32 = 0;
     let mut bits = 0u32;

@@ -540,7 +540,8 @@ export interface CommandMap {
   // ⚠️ 只**取文本**：不写派生表（`attachment_text` / `chunks` 的唯一写入者仍是 `src/lib/extract/` ✓）。
   // 补的是本仓既有 TS 链吃不下的一类：eml／msg／zip／7z／gz／rtf／odt／epub／学术格式 ✓。
   extract_with_kreuzberg: {
-    args: { path: string };
+    // ⚠️ 收 **base64 ＋ mime ＋ filename**（抽取层手上只有字节、没有路径 ✓）
+    args: { base64: string; mime: string; filename: string };
     result: { text: string; chars: number; ms: number; engine: string };
   };
   // ---- Email（聚合邮箱，桌面专属） ----
