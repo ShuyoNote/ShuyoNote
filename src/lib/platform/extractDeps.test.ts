@@ -125,6 +125,18 @@ describe("attachmentDeps —— deps 的唯一构造点", () => {
     expect(typeof deps.rasterize).toBe("function");
   });
 
+  it("⭐ P0 格式引擎**由平台命令面装上**（不经 `opts`）—— 删掉它没人拦，所以钉住", async () => {
+    setPlatform(fakePlatform());
+    const deps = attachmentDeps("att-1");
+    // ⚠️ 与 `vision` / `transcribe` 的**关键区别**：P0 格式引擎**不需要端点/密钥/模型** ✓
+    //    ⇒ 它属"**平台命令面**"（同 `convertLegacy` ✓）⇒ 必须**默认就装上**，
+    //    ⛔ 不能退化成"由调用方经 `opts` 给" ✗（那会让"谁该给什么"变糊 ✓ 见 `extractDeps.ts` 注释）。
+    // ⚠️ 为什么值得单钉一条：注入被删掉时**不会有任何编译错误、也不会有别的判据变红** ✗ ——
+    //    症状只是"eml/zip/rtf 一族运行时回 provider_error"，正是本仓最防的"不炸不报错"那类 ✓
+    expect("kreuzbergExtract" in deps).toBe(true);
+    expect(typeof deps.kreuzbergExtract).toBe("function");
+  });
+
   it("给了 `vision` 就透传（平台还没有模型驱动层，见 §13 第 7 项）", async () => {
     setPlatform(fakePlatform());
     const vision = async () => "识别结果";
