@@ -130,7 +130,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
       const path = Array.isArray(picked) ? picked[0] : picked;
       const text = await api.readTextFile(path);
       setPairText(text);
-      setNote("已读入配对码——请核对**上面**旧设备显示的比对码，一致再点「核对并采纳」。");
+      setNote("已读入配对码——请核对上面旧设备显示的比对码，一致再点「核对并采纳」。");
     } catch (e) {
       setErr(`读文件失败：${String(e)}`);
     }
