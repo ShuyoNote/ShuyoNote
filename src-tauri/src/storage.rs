@@ -298,6 +298,20 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
     Ok(freed)
 }
 
+/// ⭐ **清掉孤儿派生行**（`att_id` 已不在 `attachments` 里的 `attachment_text` / `chunks`）。
+///
+/// 来由（2026-10-02）：那两张表**没有外键** ⇒ 老数据里删掉附件会留下孤儿派生文本 ✓
+/// ⇒ 占空间 ✓ 且**可能进检索**（用户搜到已删附件的内容 ✓）。
+/// ⚠️ 只清**派生缓存**（`db.rs` 的 DDL 注释写明它"只读、可重建、不进同步/备份/导出" ✓）
+///    ⇒ 用户内容**一个字节都不动** ✓。
+/// ⚠️ SQL 在 `derived_transport`（那两张表的唯一运输通道 ✓）⇒ 这里只**调**它 ✓。
+#[tauri::command]
+pub fn cleanup_orphan_derived(db: State<'_, Db>) -> Result<u64, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    let (text_rows, chunk_rows) = crate::derived_transport::clear_orphan_derived(&c)?;
+    Ok((text_rows + chunk_rows) as u64)
+}
+
 /// M14.3 — Delete attachment bytes whose hash is referenced by no attachment row.
 #[tauri::command]
 pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64, String> {

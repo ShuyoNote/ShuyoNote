@@ -1191,6 +1191,7 @@ export interface CommandMap {
   storage_stats: { args: undefined; result: StorageStats };
   clear_trash: { args: undefined; result: number };
   cleanup_orphan_attachments: { args: undefined; result: number };
+  cleanup_orphan_derived: { args: undefined; result: number };
   cleanup_old_versions: { args: { maxKeep?: number }; result: number };
   cleanup_temp_files: { args: undefined; result: number };
   purge_deleted_workspaces: { args: undefined; result: { freed: number; workspaces: number } };

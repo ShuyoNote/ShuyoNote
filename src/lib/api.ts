@@ -622,6 +622,8 @@ export const api = {
   storageStats: () => invoke("storage_stats"),
   clearTrash: () => invoke("clear_trash"),
   cleanupOrphanAttachments: () => invoke("cleanup_orphan_attachments"),
+  /** ⭐ 清孤儿派生行（`att_id` 已不在 `attachments` 里）—— 只清可重建的派生缓存 ✓。 */
+  cleanupOrphanDerived: () => invoke("cleanup_orphan_derived"),
   cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),
   cleanupTempFiles: () => invoke("cleanup_temp_files"),
   purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),

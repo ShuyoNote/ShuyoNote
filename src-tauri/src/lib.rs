@@ -556,6 +556,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             abilities::save_ability_pack,
+            storage::cleanup_orphan_derived,
             extract_kz::extract_with_kreuzberg,
             commands::list_pages,
             commands::list_workspace_pages,

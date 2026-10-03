@@ -176,6 +176,31 @@ pub(crate) fn clear_derived_for_attachment(
 
 /// 执行**一批**写操作（一个事务）。
 ///
+/// ⭐ **清掉"孤儿派生行"**：`att_id` 已不在 `attachments` 表里的那些（2026-10-02 加）。
+///
+/// 来由：那两张表**没有外键** ✓ ⇒ 历史数据里删掉的附件会留下孤儿派生文本 ✓
+///（占空间 ✓ 且**可能进检索** ✓ —— 用户搜到已删附件的内容 ✓）。
+/// ⚠️ 与 `clear_derived_for_attachment`（删单个附件时调 ✓）配套：那个管**以后**，这个扫**已有的** ✓。
+/// ⚠️ **只清 `att_id` 非空**的行：`chunks` 里还有**页面块**（`att_id` 为 NULL ✓），
+///    那些不属于附件派生 ⇒ ⛔ 一个都不许碰 ✗（所以条件里必须写 `att_id IS NOT NULL` ✓）。
+/// ⚠️ SQL 只出现在本模块 ✓（`check-derived-writers` 的意图 ✓）。
+pub(crate) fn clear_orphan_derived(conn: &Connection) -> Result<(usize, usize), String> {
+    // 「可重建的本地派生缓存」（`db.rs` 的 DDL 注释 ✓）⇒ 清掉是安全的；用户内容不动 ✓。
+    let a = conn
+        .execute(
+            "DELETE FROM attachment_text WHERE att_id NOT IN (SELECT id FROM attachments)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    let c = conn
+        .execute(
+            "DELETE FROM chunks WHERE att_id IS NOT NULL AND att_id NOT IN (SELECT id FROM attachments)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok((a, c))
+}
+
 /// 为什么收一批而不是"一次一条"：TS 侧 `replace` 是"先删后插 N 条"，
 /// 每条一次往返在桌面（SQLCipher）上是可感知的慢，更要紧的是**中途失败会留下半批**。
 /// 一批一次调用 = 一次事务 = 要么全落要么一行不留。

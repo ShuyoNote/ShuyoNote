@@ -1350,6 +1350,12 @@ export function makeInvoke(store: SqliteStore) {
     const a = (args ?? {}) as Record<string, any>;
     seedWorkspaceMeta();
 
+    // ⚠️ 清孤儿派生行：Web 侧**我没验过**（它的派生层走 sql.js，另一条路 ✓）
+    //    ⇒ 按"未核实的别假装能做到"的口径，这里**明说做不到** ✓（与 P0 引擎那条同规格 ✓）。
+    if (cmd === "cleanup_orphan_derived") {
+      throw new Error("清理孤儿派生行目前仅桌面版支持（Web 版请使用桌面版）");
+    }
+
     // ---- 能力（按需下载的落盘）----
     // ⚠️ Web 版**故意不实现**：浏览器里没有"应用数据目录"这种受管位置 ✓，
     //    假装写进 localStorage 等于给用户一个**不受校验、也不知情**的副本 ✗
