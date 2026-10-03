@@ -6621,6 +6621,48 @@ mod tests {
     ///
     /// **变异**：把 `confirmed` 的 `None` 也当成 `Accept`（＝"不传也放行"）⇒ 本测试**必须红** ✓
     /// —— 那正是"机器自动通过"，是这条路唯一要挡的坏法 ✓。
+    /// ★★ **`INV-PER-pairing-needs-no-acceptance` 的承载**（2026-10-02 立 ✓）。
+    ///
+    /// 那条不变式在个人版规格 §2 里一直是「**待立**」✗，而它要说的两件事只差一层纸：
+    /// 「配对**不需要对方"社交同意"**」✓ 与「配对**必须有"两端都对上"这一步**」✓ —— **不是一回事** ✓
+    /// （前者＝**没有"等对方点接受"这个状态**；后者＝**人核对码**，已由上面那条判据守着 ✓）。
+    ///
+    /// 判据两半都在这一条里 ✓：
+    ///   ① **行为**：在**对端根本不在场**的情况下（本进程内没有任何监听者、没有对端表、没有网络调用 ✓），
+    ///      一段合法载荷 ＋ 逐位相同的人类核对码 ⇒ **Accept** ✓ ⇒ 「**这一步是各做各的**」成立 ✓
+    ///      （发起侧生成即认 ✓、采纳侧核对即认 ✓；两台设备之间**没有一次"你同意吗"的往返** ✓）。
+    ///   ② **接线**：采纳判定的**输入面只有三个**（载荷文本／人核对的码／本机设备号 ✓）——
+    ///      多一个「对方已同意」之类的参数，就是这条不变式的反面 ✗ ⇒ 这里必须红 ✓。
+    ///
+    /// **变异**：① 在 `decide_device_pair_import` 里加一道"要对方先同意"的闸
+    /// （例如 `if !payload.peer_accepted { return Ok(Rejected …) }` —— 那是一处**合法**改动 ✓）
+    /// ⇒ 前半必须红 ✓；② 给这个函数加第四个参数 ⇒ 后半必须红 ✓。
+    #[test]
+    fn adopting_a_pairing_needs_no_consent_from_the_other_device() {
+        let text = crate::pairing::encode_device_pair(
+            &crate::pairing::device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-peer", "").unwrap(),
+        )
+        .unwrap();
+
+        // ① 对端不在场 ⇒ 照样采纳（只有"人核对的码"这一道闸 ✓，没有"对方同意"那一道 ✓）
+        match decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text)), "me").unwrap() {
+            DevicePairDecision::Accept { token, peer_device_id, .. } => {
+                assert_eq!(token, "k7Qm-2pRt");
+                assert_eq!(peer_device_id, "fp-peer");
+            }
+            other => panic!("对端不在场也应当能采纳（配对不要求对方同意）：{other:?}"),
+        }
+
+        // ② 输入面：三个参数，一个不多（多出来的那个多半就是"要对方表态" ✗）
+        let src = include_str!("sync.rs");
+        assert!(
+            src.contains(
+                "fn decide_device_pair_import(\n    text: &str,\n    confirmed: Option<&str>,\n    my_device_id: &str,\n)"
+            ),
+            "采纳判定的**输入面**变了（多/少一个参数 ⇒ 「配对不需要对方接受」这条要重新审 ✓）"
+        );
+    }
+
     #[test]
     fn device_pair_import_cannot_write_anything_without_a_human_checked_code() {
         let text = crate::pairing::encode_device_pair(

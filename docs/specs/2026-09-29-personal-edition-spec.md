@@ -109,13 +109,13 @@ id          INV-PER-<短名>            稳定标识；改口径不许改 id（�
 > | `INV-PER-own-device-cannot-be-proven` | **❌ 无（要立）** ✗ | ✅ **有**：`syncPanelDevicePair.wiring.test.ts:56` ④ ＋ `syncPanelDeviceUnpair.wiring.test.ts:50` ③（「不出现判定语」✓）⇒ vitest／smoke 组在 CI 跑 ✓ |
 > | `INV-PER-pairing-requires-proof` | ⚠️ 半有（界面那一半没有）✗ | ✅ **有**：`pairing.rs` 的 `verify_confirm_code`（`:339` ✓）＋ `sync::tests::device_pair_import_cannot_write_anything_without_a_human_checked_code`（`sync.rs:6625` ✓）＋ 界面两条 wiring ✓ |
 > | `INV-PER-address-survives-network-change` | ⚠️ 有、**但方向是反的** ✗ | ✅ **已反过来**（owner 拍 R97／**DEC-14** ✓）：`checked_bind` 放行 `0.0.0.0`、仍拒具体公网地址 ✓；`announced_bases_with`（`mesh.rs:959` ✓）每轮重算 ⇒ 换网不失效 ✓＋ CGNAT 两把尺（`mesh.rs:1107`／`lan.rs:270` ✓） |
-> | `INV-PER-no-server` | **❌ 无（要立）** ✗ | ⚠️ **有功能性那半**：`mesh::tests::two_clients_converge_over_real_loopback_with_no_hub_and_no_server`（`mesh.rs:2114` ✓）＋ `a_space_with_no_server_profile_can_still_turn_the_mesh_on`（`:2883` ✓）⇒ 「**不用服务器也能通**」可机验 ✓；⛔ **「抓包无外连」那半仍没有判据** ✗（要立 ✓） |
-> | `INV-PER-pairing-needs-no-acceptance` | **❌ 无（要立）** ✗ | ✗ **仍然没有**（全仓搜 `no_accept` 零命中 ✓）⇒ 这条**待立** ✓ |
+> | `INV-PER-no-server` | **❌ 无（要立）** ✗ | ✅ **两半都立了**（2026-10-02）：功能性那半＝`mesh::tests::two_clients_converge_over_real_loopback_with_no_hub_and_no_server`（`mesh.rs:2114` ✓）＋ `a_space_with_no_server_profile_can_still_turn_the_mesh_on`（`:2883` ✓）；⭐ **「不连服务器」那半**＝`mesh::tests::the_mesh_never_dials_a_public_base`（公网／回环／通配／别的空间**一律不进候选** ✓，同网段**恰好一条** ✓）。**变异**：删掉 `invitable_base` 里那道 `is_lan_base(base)` 筛 ⇒ 判据**红**，逐字「`https://shuyo.cn/sync` 不许进候选 ⇒ 个人版**不联系任何服务器**」✓ |
+> | `INV-PER-pairing-needs-no-acceptance` | **❌ 无（要立）** ✗ | ✅ **已立**（2026-10-02）：`sync::tests::adopting_a_pairing_needs_no_consent_from_the_other_device` —— ① **对端不在场**（没有监听者／没有对端表／没有网络调用 ✓）也能 **Accept** ✓；② **输入面只有三个参数**（载荷文本／人核对的码／本机设备号 ✓）。**变异**：① 在采纳处加一道「要对方先同意」的闸 ⇒ 判据**红**，逐字 `Rejected { … why: "对方还没同意" }` ✓；② 加第四个参数 ⇒ 后半红 ✓ |
 > | `INV-PER-cloud-agent-needs-consent` | 归 `INV-KB-space-split`（那份自标**待立** ✗） | ✗ **仍待立**（它在知识层那条线上，不在本版 ✓） |
 >
 > ⚠️ **同一次复核抓到两处过期否定句**（本仓最贵的一课：否定句没有机械判据 ⇒ **读到就要当场核** ✓）：
 > · §6 表里「**U11 逐台解除**」那行写着 `[无依据]` ＋ 「**那一层代码里不存在**」✗ ⇒ **已过期** ✓：`meta.db` 里已有 `mesh_paired_devices`（**每对一份** ✓）、命令面 `device_unpair`（`sync.rs:3268` ✓）、端到端判据两条（`adopting_a_pairing_makes_the_running_door_recognise_it_at_once`／`one_pairing_round_connects_both_directions` ✓）⇒ 台数上限那一问（10 台 ＝ 45 对）**也已有承载** ✓（`scripts/verify-mesh-ten-devices.mjs` ＋ `mesh.rs` 那条 `#[ignore]` 用例 ⇒ ⚠️ **只当下界** ✓）。
-> · 本节开头那段「**它们今天绝大多数是 `❌ 无（要立）`**」✗ ⇒ **已过期**：七条里**五条已有判据**（上表 ✓），剩两条（不需要接受／云端 Agent 同意）仍是「待立」✗。
+> · 本节开头那段「**它们今天绝大多数是 `❌ 无（要立）`**」✗ ⇒ **已过期**：七条里**五条已有判据**（上表 ✓），剩**一条**仍是「待立」✗：**云端 Agent 同意**那条（它压的是知识层那条线 ⇒ 见下）✓。
 
 ### 2.8 ⚠️ **六条** MUST **没有对应不变式**（如实写，不替需求补）<br>⚠️ 2026-10-01 订正：原标题写「三条」，表体一直是 **6 行** ⇒ 标题错，已改 ✓
 
@@ -529,8 +529,10 @@ export interface NearbyPeer {
 · `nearby §16.2`   "设备对秘密"＝**粒度选择**（本文件 §3.3 的出处）。
 · `nearby §16.3`   多人不能用这条路的**最终理由**（缺名单/权限/审计三样需要权威的东西）。
 · `nearby §17.1-17.6` 配对第 2 步＝**读码核对**、以及它那四条不变式（本文件 §2 只引用）。
-· `INVARIANTS.md`  本文件**一条都没有往里加**（准入是"能指到一条会红的判据 ＋ 看过它红"，
-                   本表绝大多数还是 `❌ 无（要立）` ⇒ 按铁律**现在不该进**）。
+· `INVARIANTS.md`  本文件**一条都没有往里加**（准入是"能指到一条会红的判据 ＋ 看过它红"）。
+                   ⚠️ 2026-10-02 订正：那句「本表**绝大多数**还是 `❌ 无（要立）`」**已过期** ✗ ——
+                   七条里**六条已有判据**（§2 上面那张复核表逐条点名 ✓），只剩「云端 Agent 同意」一条
+                   （它归知识层 `INV-KB-space-split` ✓）⇒ 那一条一立，本节就要按铁律**重新审一遍准入** ✓。
 ```
 
 ---

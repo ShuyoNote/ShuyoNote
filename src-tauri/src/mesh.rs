@@ -1902,6 +1902,59 @@ mod tests {
         MeshPeer { device_id: device.to_string(), base: base.to_string() }
     }
 
+    fn lan_peer_of(device: &str, base: Option<&str>, spaces: &[&str]) -> crate::lan::Peer {
+        crate::lan::Peer {
+            announce: crate::lan::LanAnnounce {
+                v: 1,
+                device_id: device.to_string(),
+                device_name: format!("{device} 的机器"),
+                hub_base: base.map(str::to_string),
+                hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                fp: "fp".into(),
+            },
+            addr: "192.168.1.9".into(),
+            seen_at_ms: 0,
+        }
+    }
+
+    /// ★★ **`INV-PER-no-server` 的「**不连服务器**」那一半**（2026-10-02 立 ✓）。
+    ///
+    /// 那条不变式在个人版规格 §2 里，功能性那半已有判据（"无 hub 无服务器也能通" ✓），
+    /// 但**「网络抓包无外连」那半一直是「待立」**✗ ⇒ 本判据立它 ✓：
+    /// **网格那一轮的候选里，一个公网基址都不许出现** ✓（候选为空 ⇒ 那一轮**一个字节都不发** ✓）。
+    ///
+    /// 判据（一张表看完 5 种基址 ✓）：
+    ///   · **公网**（`https://shuyo.cn/sync`／`http://8.8.8.8:8788`）⇒ **不进候选** ✓
+    ///     —— 这一条就是"个人版不联系任何服务器"在**代码层**的落点 ✓；
+    ///   · **回环**（`127.0.0.1` ✓）与**通配**（`0.0.0.0` ✓）⇒ 同样不进（`lan::is_lan_base` 明确排除 ✓
+    ///     —— 回环不是"网段里的别人"，通配不是可拨的地址 ✓）；
+    ///   · **同网段**（`192.168.1.6:8788` ✓）⇒ **恰好一条** ✓（正例：不然"全都不给连"也能骗过本判据 ✗）；
+    ///   · **别的空间**（`hub_spaces` 不含本空间 ✓）⇒ 不进 ✓。
+    ///
+    /// **变异**：把 `invitable_base` 里那道 `if !crate::lan::is_lan_base(base)` 删掉 ⇒ 本判据**必须红** ✓
+    /// （那时公网基址会进候选 ⇒ "个人版可能去连一个服务器" ✗）。
+    #[test]
+    fn the_mesh_never_dials_a_public_base() {
+        for bad in [
+            "https://shuyo.cn/sync",
+            "http://8.8.8.8:8788",
+            "http://127.0.0.1:8788",
+            "http://0.0.0.0:8788",
+        ] {
+            let peers = vec![lan_peer_of("dev-peer", Some(bad), &["sp-1"])];
+            assert!(
+                mesh_peers("sp-1", "me", &peers).is_empty(),
+                "{bad} 不许进候选 ⇒ 个人版**不联系任何服务器** ✗（`INV-PER-no-server` ✓）"
+            );
+        }
+        // 别的空间代言 ⇒ 不进（地址解析与"服务不服务"共用同一把尺 ✓）
+        let others = vec![lan_peer_of("dev-peer", Some("http://192.168.1.6:8788"), &["sp-other"])];
+        assert!(mesh_peers("sp-1", "me", &others).is_empty(), "别的空间的公告不许被拨 ✗");
+        // 正例：同网段 ⇒ 恰好一条（否则"全都不给连"也能骗过这条判据 ✗）
+        let good = vec![lan_peer_of("dev-peer", Some("http://192.168.1.6:8788"), &["sp-1"])];
+        assert_eq!(mesh_peers("sp-1", "me", &good).len(), 1, "同网段的对端要进候选 ✓");
+    }
+
     fn announced(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
