@@ -101,6 +101,22 @@ id          INV-PER-<短名>            稳定标识；改口径不许改 id（�
 | **INV-PER-address-survives-network-change** | 绑定写法经得起换网（通配＋枚举），换网时**如实提示** | **矩阵 U5**：① 绑 `0.0.0.0:<port>` **不再被拒**（⚠️ 现判据要**反过来**）② 换网后**仍能报出可达地址**（Rust 单测·改既有）｜出处：`nearby §13.9.2 INV-NS-bind-survives-network-change` ＋ `§13.9.3` 验收场景 | ⚠️ **有，但方向是反的**：`mesh.rs:1914-1919`（公网/通配当场拒）今天会**把正确行为判红** ⇒ 本条落地时必须**先翻这条既有判据**（见方案 §3） | 用户填死 IP ⇒ 换个网就"别人找不到我"，而表现与"设备关了"**无法区分** | U5（＋ U12 的一半） |
 | **INV-PER-own-device-cannot-be-proven** | **不许**声称系统能识别"是不是你的设备" | **矩阵 U13**：**文案里不出现**"已确认是您的设备"这类判定语（只许"已配对"）｜载体：文案断言（扫描）｜出处：`nearby §13.8`（判不出来）＋ `§13.8.6 INV-NS-own-device-cannot-be-proven` | **❌ 无（要立）**。**先例**：`scripts/check-agent-surface.mjs:67-72` 已经会"**只扫表格里的 desc 格**"抓内部标识（⚠️ 关键是**只扫该扫的格**，见 §7-R7）；**怎么证明它会红**：在某条用户可见文案里加一句"已确认是您的设备"⇒ 扫描必须红 | 给了做不到的安全承诺 ⇒ 用户按"它认得出"来决策 ⇒ 出事时责任在承诺上 | U13 |
 
+> ⭐ **2026-10-02 复核（macOS 侧）：上表第 3 列「会红证据」有几处**已经过期** —— 逐条按「**现在到底有没有判据**」重量了一遍** ✓
+>
+> | 不变式 | 上表原文（09-29／09-30） | 2026-10-02 实测（点名判据 ✓） |
+> |---|---|---|
+> | `INV-PER-unencrypted-needs-strong-secret` | **❌ 无（要立）** ✗ | ✅ **有**：`mesh::tests::a_weak_mesh_token_is_refused_with_something_actionable`（`mesh.rs:2931` ✓）＋ 界面那两句「唯一防线」文案在（`SyncPanel.tsx` ✓）⇒ 判据由 `cargo test` 在 CI 的 rust 组跑 ⇒ **在岗** ✓ |
+> | `INV-PER-own-device-cannot-be-proven` | **❌ 无（要立）** ✗ | ✅ **有**：`syncPanelDevicePair.wiring.test.ts:56` ④ ＋ `syncPanelDeviceUnpair.wiring.test.ts:50` ③（「不出现判定语」✓）⇒ vitest／smoke 组在 CI 跑 ✓ |
+> | `INV-PER-pairing-requires-proof` | ⚠️ 半有（界面那一半没有）✗ | ✅ **有**：`pairing.rs` 的 `verify_confirm_code`（`:339` ✓）＋ `sync::tests::device_pair_import_cannot_write_anything_without_a_human_checked_code`（`sync.rs:6625` ✓）＋ 界面两条 wiring ✓ |
+> | `INV-PER-address-survives-network-change` | ⚠️ 有、**但方向是反的** ✗ | ✅ **已反过来**（owner 拍 R97／**DEC-14** ✓）：`checked_bind` 放行 `0.0.0.0`、仍拒具体公网地址 ✓；`announced_bases_with`（`mesh.rs:959` ✓）每轮重算 ⇒ 换网不失效 ✓＋ CGNAT 两把尺（`mesh.rs:1107`／`lan.rs:270` ✓） |
+> | `INV-PER-no-server` | **❌ 无（要立）** ✗ | ⚠️ **有功能性那半**：`mesh::tests::two_clients_converge_over_real_loopback_with_no_hub_and_no_server`（`mesh.rs:2114` ✓）＋ `a_space_with_no_server_profile_can_still_turn_the_mesh_on`（`:2883` ✓）⇒ 「**不用服务器也能通**」可机验 ✓；⛔ **「抓包无外连」那半仍没有判据** ✗（要立 ✓） |
+> | `INV-PER-pairing-needs-no-acceptance` | **❌ 无（要立）** ✗ | ✗ **仍然没有**（全仓搜 `no_accept` 零命中 ✓）⇒ 这条**待立** ✓ |
+> | `INV-PER-cloud-agent-needs-consent` | 归 `INV-KB-space-split`（那份自标**待立** ✗） | ✗ **仍待立**（它在知识层那条线上，不在本版 ✓） |
+>
+> ⚠️ **同一次复核抓到两处过期否定句**（本仓最贵的一课：否定句没有机械判据 ⇒ **读到就要当场核** ✓）：
+> · §6 表里「**U11 逐台解除**」那行写着 `[无依据]` ＋ 「**那一层代码里不存在**」✗ ⇒ **已过期** ✓：`meta.db` 里已有 `mesh_paired_devices`（**每对一份** ✓）、命令面 `device_unpair`（`sync.rs:3268` ✓）、端到端判据两条（`adopting_a_pairing_makes_the_running_door_recognise_it_at_once`／`one_pairing_round_connects_both_directions` ✓）⇒ 台数上限那一问（10 台 ＝ 45 对）**也已有承载** ✓（`scripts/verify-mesh-ten-devices.mjs` ＋ `mesh.rs` 那条 `#[ignore]` 用例 ⇒ ⚠️ **只当下界** ✓）。
+> · 本节开头那段「**它们今天绝大多数是 `❌ 无（要立）`**」✗ ⇒ **已过期**：七条里**五条已有判据**（上表 ✓），剩两条（不需要接受／云端 Agent 同意）仍是「待立」✗。
+
 ### 2.8 ⚠️ **六条** MUST **没有对应不变式**（如实写，不替需求补）<br>⚠️ 2026-10-01 订正：原标题写「三条」，表体一直是 **6 行** ⇒ 标题错，已改 ✓
 
 | MUST | 判据（矩阵） | 谁在管它 | 判断 |
