@@ -15630,8 +15630,13 @@ p:has(> .editor-drawing-container) {
   margin: 0;
   vertical-align: middle;
 }
+/* ⚠️ **2026-10-04 改**（owner：「文件夹管理视图列表右边的留空太大了」）：
+   原来只有 `min-width: 240px` ✗ ⇒ 表格 auto 布局把剩余空间**平摊**给「三列没有宽度的列」
+   （name ＋ 两个 date-col）✓ ⇒ 日期列各拿一大块、而日期文字左对齐 ⇒ 右边一片空 ✓。
+   ⭐ 现在 `width: 100%` ⇒ auto 布局下它**吃掉剩余** ✓（文件名本来也最需要空间 ✓）。 */
 .fm-name-col {
   min-width: 240px;
+  width: 100%;
 }
 .fm-kind-col {
   width: 88px;
@@ -15656,6 +15661,12 @@ p:has(> .editor-drawing-container) {
 .fm-ops-col {
   width: 64px;
   text-align: right;
+}
+/* ⚠️ **2026-10-04 加**（同上）：⭐ 两个日期列**必须给固定宽** ✗ ——
+   否则 auto 布局会把剩余空间平摊给它们，日期文字左对齐 ⇒ 右边看着全是空的 ✓。
+   ⭐ 内容形如 `2026-10-04 09:52`（nowrap）＋ 左右 padding 28 ⇒ **160px** 够 ✓。 */
+.fm-date-col {
+  width: 160px;
 }
 .fm-date {
   color: var(--text-dim);
