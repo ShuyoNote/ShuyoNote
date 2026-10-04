@@ -75,9 +75,10 @@ const personal: SpaceSecurityView = {
   in_keyring: false,
   key_available: false,
   gate: {
-    allow: false,
+    // ⚠️ **2026-10-04**：闸门这一层已删 ⇒ 恒放行、理由恒空串（"先加密才能绑"那条口径废了 ✓）。
+    allow: true,
     unclassified: false,
-    reason: "空间「default」是个人空间但还没有加密：先给它设一句口令（按空间加密），再绑定同步",
+    reason: "",
   },
 };
 
@@ -92,11 +93,14 @@ const team: SpaceSecurityView = {
 
 const unclassified: SpaceSecurityView = {
   space_id: "old-b",
-  kind: "",
+  // ⚠️ **2026-10-04**：⭐ 没有「未分类」这一档了 ✗ —— 存量库里 kind 是空串的空间，
+  //    Rust 侧**读出来就是个人空间** ✓ ⇒ 前端测试也按个人空间写 ✓（名字保留 old-b ✓，代表"老库那条"✓）。
+  //    ⚠️ 变量名先不动 ✗ —— 改它会牵连一串引用 ✓（不值得在这笔里做 ✓）。
+  kind: "personal",
   encrypted_on_disk: false,
   in_keyring: false,
   key_available: false,
-  gate: { allow: true, unclassified: true, reason: "这个空间还没分类（个人/团队）：同步闸门这次没有管到它" },
+  gate: { allow: true, unclassified: false, reason: "" },
 };
 
 const encrypted: SpaceSecurityView = {
@@ -163,47 +167,31 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     });
   };
 
-  it("① ★ 未分类的空间**照样显示**，并把「闸门没管到它」说出来（不沉默、不显示成个人空间）", async () => {
+  it("① ★ 存量老空间（kind 是空串）**照样显示**，而且读数就是**个人空间**", async () => {
     spaceSecurityOverview.mockResolvedValue([unclassified]);
     await render();
     expect(rows()).toHaveLength(1);
     // ⚠️ 只断言**那一枚徽标**：`row.textContent` 里还含着下拉框的选项文案（「个人空间（…）」），
     //    拿整行去 `not.toContain("个人空间")` 会误伤。
-    expect(rows()[0].querySelector(".space-privacy-kind")!.textContent).toBe("未分类");
-    expect(rows()[0].textContent).toContain("没管到");
+    // ⚠️ **2026-10-04 改**：⭐ 空串不再显示成「未分类」✗ —— Rust 侧读出来就是个人空间 ✓（保守侧 ✓）。
+    expect(rows()[0].querySelector(".space-privacy-kind")!.textContent).toBe("个人空间");
   });
 
-  it("② 个人空间没加密 ⇒ 显示后端那句可操作的原因（原样，不重写）", async () => {
+  it("② 个人空间没加密 ⇒ 行里不再有「不能绑」的裁决（真拦改在绑服务器那一刻）", async () => {
     spaceSecurityOverview.mockResolvedValue([personal]);
     await render();
     expect(container.textContent).toContain("个人空间");
-    expect(container.textContent).toContain(personal.gate.reason);
     expect(container.textContent).toContain("明文");
+    // ⚠️ **2026-10-04**：⭐ 原来这里断言"要显示后端那句可操作的原因"✗ —— 裁决与那句都没了 ✓；
+    //    现在只断言**那一行不再出现旧的裁决措辞**（⭐ 免得将来有人把它加回来而不自知 ✓）。
+    expect(container.querySelector(".space-privacy-verdict")).toBeNull();
   });
 
-  it("②b ★ 后端文案里的 `**强调**` 渲染成 <b>，界面上**不许**出现两个星号", async () => {
-    // 后端（Rust）那几句是按 Markdown 行内写法写的；这条钉"显示的最后一跳"把它渲染掉
-    //（owner 2026-09-24 拿截图当场指出过：面板上直接露着 `**`）。
-    const withMd: SpaceSecurityView = {
-      ...personal,
-      gate: {
-        allow: false,
-        unclassified: false,
-        reason: "空间「default」是个人空间但还没有加密：先给它**开启加密**",
-      },
-    };
-    spaceSecurityOverview.mockResolvedValue([withMd]);
-    await render();
-    expect(container.textContent).not.toContain("**");
-    expect(container.textContent).toContain("开启加密");
-    expect(container.querySelector(".space-privacy-gate b")?.textContent).toBe("开启加密");
-  });
-
-  it("③ 团队空间 ⇒ 说明可以绑同步（免检）", async () => {
+  it("③ 团队空间 ⇒ 显示为团队空间", async () => {
     spaceSecurityOverview.mockResolvedValue([team]);
     await render();
     expect(container.textContent).toContain("团队空间");
-    expect(container.textContent).toContain("可以绑同步");
+    // ⚠️ **2026-10-04**：⭐ 原来还断言 `toContain("可以绑同步")`✗ —— 那是裁决文案，已随那一块去掉 ✓。
   });
 
   it("④ ★ 改分类 ⇒ 真的调 `setSpaceKind(id, kind)`，并**重读**一次", async () => {

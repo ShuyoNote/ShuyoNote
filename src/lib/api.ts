@@ -27,13 +27,15 @@ export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./pla
 export type { NearbyPeer } from "./platform/commands";
 export type { DevicePairExportOutcome, DevicePairImportOutcome, DeviceUnpairOutcome } from "./platform/commands";
 
-/** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
-export type SpaceKind = "personal" | "team" | "";
+/** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）。
+ *  ⚠️ **2026-10-04**：⭐ 没有「未分类」这一档了 ✗（owner：未分类按个人空间处理）——
+ *  存量库里 `kind` 是空串的空间，Rust 侧**读出来就是个人空间** ✓ ⇒ 前端也**不再有 `""`** ✓。 */
+export type SpaceKind = "personal" | "team";
 
 /** ★ 一个空间的**完整隐私读数**（与 Rust `space_crypto::SpaceSecurityView` 一一对应）。 */
 export interface SpaceSecurityView {
   space_id: string;
-  /** `""` ＝ 未分类 ⇒ 闸门对它**没生效**（界面要如实显示，不许默认成个人空间）。 */
+  /** ⚠️ **2026-10-04**：⭐ 不再是"未分类 ⇒ 闸门没生效"✗ —— 存量空串按**个人空间**处理 ✓。 */
   kind: SpaceKind;
   /** 库文件本身是不是密的（嗅文件头）。 */
   encrypted_on_disk: boolean;
