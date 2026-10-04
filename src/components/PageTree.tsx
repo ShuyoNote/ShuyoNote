@@ -13,7 +13,7 @@ import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
-import { useTemplateCenterStore } from "../store/templateCenter";
+
 import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
@@ -76,6 +76,9 @@ function lightenColor(hex: string, amount = 0.82): string {
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 const ICON = {
+  // ⭐ 2026-10-04 加：给侧栏文件行的「打开」用 ✓ —— `MenuIcon` 只吃**一条 `d`** ✗，
+  //    所以多个子路径写在同一条里 ✓（与下面 `trash` 同一个写法 ✓）。
+  open: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   edit: "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
   window: "M5 3h9a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 9h4v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-1",
   swap: "M4 7h13m0 0l-3-3m3 3l-3 3M20 17H7m0 0l3-3m-3 3l3 3",
@@ -152,6 +155,29 @@ function treeFileIcon(mime: string): string {
 // folder in the sidebar (loaded lazily when the folder is expanded).
 function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
+  // ⚠️ **2026-10-04 加**：⭐ 文件行也要有**右键菜单** ✓（owner 提的 ✓）——
+  //    ⭐ 这之前只有页面行有（`TreeItem` 那份 `onContextMenu` ✓），
+  //    文件行（`.tree-file-row` ✓）只有 `onClick` ⇒ ⭐ 右键**什么都不发生** ✗。
+  //    ⚠️ state 只能挂在这个组件里 ✗ —— `TreeFiles` 是独立函数组件 ✓（每个文件夹一个实例 ✓）。
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  // ⭐ 菜单作用于**哪一行** —— 菜单只渲染一份（放在 map 外面 ✓），所以位置与目标是两份 state ✓。
+  const [menuFile, setMenuFile] = useState<AttachmentMeta | null>(null);
+  const menuRef = useRef<HTMLSpanElement>(null);
+  const [menuTop, setMenuTop] = useState(0);
+  // ⚠️ **2026-10-04 补**（owner 实测：⭐ 右键菜单**被遮挡** ✗）：
+  //    `TreeItem`（页面行）那份**早就有这段** ✓，⭐ 我加文件行菜单时**漏了** ✗ ——
+  //    ⭐ 菜单是 `position: fixed` ＋ 用鼠标的 `clientY` ✗ ⇒ ⭐ 靠窗口底部时**直接伸出视口** ✓
+  //    （⭐ 截图里只露出「打开」一项、下面的行"盖"上来，就是这个现象 ✓ —— ⭐ 不是 z-index ✓）。
+  //    ⭐ 照抄页面行那份：量出菜单高度 h ⇒ y+h 超底部就 ⭐ **往上翻**（`y - h` ✓）。
+  useEffect(() => {
+    if (!menuOpen || !menuAnchor?.y) return;
+    const el = menuRef.current;
+    if (!el) return;
+    const h = el.offsetHeight || 220;
+    const y = menuAnchor.y;
+    setMenuTop(y + h > window.innerHeight - 8 ? Math.max(8, y - h) : y);
+  }, [menuOpen, menuAnchor]);
   const revision = useFileManagerStore((s) => s.revision);
   useEffect(() => {
     let alive = true;
@@ -166,6 +192,107 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     };
   }, [folderId, revision]);
 
+  /** ⭐ 打开一份附件（⭐ 三个分支照搬原先 `onClick` 里的那份 ✓，一个字没改 ✓）。 */
+  const openFile = (f: AttachmentMeta) => {
+    // PDF 文件节点：直接进内置阅读器做批注/阅读，而不是用默认程序打开。
+    if (f.mime === "application/pdf") {
+      void usePdfReader.getState().openPdf(f.id, f.name);
+      return;
+    }
+    // MD / 图片 / 视频 / 音频文件节点：直接在应用内打开预览（铺满），不跳系统外部应用。
+    if (
+      f.mime === "text/markdown" ||
+      f.mime.startsWith("image/") ||
+      f.mime.startsWith("video/") ||
+      f.mime.startsWith("audio/")
+    ) {
+      // 打开文件预览时关掉可能仍开着的 PDF 阅读器，避免两个查看器叠一起。
+      usePdfReader.getState().close();
+      useFilePreview.getState().open(f);
+      return;
+    }
+    // 其它类型（office/zip/csv 等）无内置预览，用系统默认应用打开——明确提示。
+    toast("正在用系统默认应用打开…", "info");
+    platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
+  };
+
+  /** ⭐ 「在文件夹中显示」—— 与文件管理器那边同一条平台调用 ✓（`revealItemInDir` ✓）。 */
+  const revealFile = async (f: AttachmentMeta) => {
+    if (!f.path) return;
+    try {
+      await platform.opener.revealItemInDir(f.path);
+    } catch (e) {
+      toast(`打开失败：${e}`, "error");
+    }
+  };
+
+  /** ⭐ 「重命名」—— 复用 `inputDialog` ＋ `api.renameAttachment` ✓（与文件管理器双击改名同一个后端调用 ✓）。 */
+  const renameFile = (f: AttachmentMeta) => {
+    const current = f.name || "未命名";
+    inputDialog({
+      title: "重命名",
+      placeholder: "名称",
+      defaultValue: current,
+      onSubmit: async (name) => {
+        const n = name.trim();
+        if (!n || n === current) return;
+        try {
+          await api.renameAttachment(f.id, n);
+          // ⭐ 让这个列表重取：`revision` 一变，上面那个 effect 就会重跑 ✓（与文件管理器同一招 ✓）。
+          useFileManagerStore.getState().bumpRevision();
+          toast("已重命名", "success");
+        } catch (e) {
+          toast(`重命名失败：${e}`, "error");
+        }
+      },
+    });
+  };
+
+  /** ⭐ 「删除」—— 复用 `confirmDialog` ＋ `api.removeAttachment` ✓（题面与文件管理器一致 ✓）。 */
+  const deleteFile = async (f: AttachmentMeta) => {
+    const label = f.name || "未命名";
+    const ok = await confirmDialog({
+      title: "删除",
+      message: `删除文件「${label}」？若不被引用，其磁盘存储也会被清除。`,
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.removeAttachment(f.id);
+      useFileManagerStore.getState().bumpRevision();
+      toast("已删除", "success");
+    } catch (e) {
+      toast(`删除失败：${e}`, "error");
+    }
+  };
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    setMenuAnchor(null);
+    setMenuFile(null);
+  };
+
+  // ⭐ 点别处 / 按 Esc ⇒ 关掉（⭐ 与页面行那份同一个行为 ✓）。
+  // ⚠️ 用 `mousedown` 而不是 `click` ✗：后者会被行的 `onClick` 抢先（改名的行还会顺带打开文件 ✓）。
+  // ⚠️ 菜单本身要 `stopPropagation` 挡掉这个 `mousedown` ✗ —— 否则点菜单项时菜单先被关掉、
+  //    `menuFile` 变成 null ⇒ ⭐ 那一项的动作就丢了 ✓（见下面菜单容器上的 onMouseDown ✓）。
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = () => closeMenu();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+    // ⚠️ 依赖里**不放** `closeMenu` ✗（它每次渲染都是新函数 ⇒ 会反复重装监听 ✓）；
+    //    只盯 `menuOpen` 就够 ✓（本组件其余 state 变化不影响这两个监听的行为 ✓）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuOpen]);
+
   if (files.length === 0) return null;
 
   return (
@@ -176,27 +303,14 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           className="tree-row tree-file-row"
           style={{ paddingLeft: depth * 16 + 8 }}
           title={f.name}
-          onClick={() => {
-            // PDF 文件节点：直接进内置阅读器做批注/阅读，而不是用默认程序打开。
-            if (f.mime === "application/pdf") {
-              void usePdfReader.getState().openPdf(f.id, f.name);
-              return;
-            }
-            // MD / 图片 / 视频 / 音频文件节点：直接在应用内打开预览（铺满），不跳系统外部应用。
-            if (
-              f.mime === "text/markdown" ||
-              f.mime.startsWith("image/") ||
-              f.mime.startsWith("video/") ||
-              f.mime.startsWith("audio/")
-            ) {
-              // 打开文件预览时关掉可能仍开着的 PDF 阅读器，避免两个查看器叠一起。
-              usePdfReader.getState().close();
-              useFilePreview.getState().open(f);
-              return;
-            }
-            // 其它类型（office/zip/csv 等）无内置预览，用系统默认应用打开——明确提示。
-            toast("正在用系统默认应用打开…", "info");
-            platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
+          onClick={() => openFile(f)}
+          // ⭐ 右键：与页面行同一套菜单（同一个 `.tree-node-menu` 样式 ✓），`preventDefault` 挡掉系统菜单 ✓。
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenuAnchor({ x: e.clientX, y: e.clientY });
+            setMenuFile(f);
+            setMenuOpen(true);
           }}
         >
           <span className="tree-toggle" style={{ visibility: "hidden" }} />
@@ -204,6 +318,65 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           <span className="tree-title">{f.name}</span>
         </div>
       ))}
+      {/* ⚠️ 菜单**渲染在 map 外面** ✗：`menuAnchor` 只记位置 ✓，⭐ 哪一行被点由 `menuFile` 决定 ✓。
+          这样一份菜单就够（不必每行各带一个 ✓），也不会因为行被重渲染而闪 ✗。 */}
+      {menuOpen && menuFile && (
+        <span
+          className="tree-node-menu"
+          ref={menuRef}
+          // ⚠️ 用 `menuTop` 而不是 `menuAnchor.y` ✗ —— 前者已经过"靠底部就上翻"的校正 ✓（见上面那个 effect ✓）。
+          style={{ top: menuTop, left: Math.max(8, (menuAnchor?.x ?? 0) - 150) }}
+          onClick={(e) => e.stopPropagation()}
+          // ⚠️ 必须挡 `mousedown` ✗ —— 上面那个"点别处就关"的监听挂在 `document` 上 ✓，
+          //    不挡的话点菜单项会先触发它 ⇒ `menuFile` 被清空 ⇒ ⭐ 动作丢失 ✓。
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              closeMenu();
+              openFile(menuFile);
+            }}
+          >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.open} />
+            </span>
+            <span className="menu-text">打开</span>
+          </button>
+          <button
+            onClick={() => {
+              closeMenu();
+              void revealFile(menuFile);
+            }}
+          >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.folder} />
+            </span>
+            <span className="menu-text">在文件夹中显示</span>
+          </button>
+          <button
+            onClick={() => {
+              closeMenu();
+              renameFile(menuFile);
+            }}
+          >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.edit} />
+            </span>
+            <span className="menu-text">重命名</span>
+          </button>
+          <button
+            onClick={() => {
+              closeMenu();
+              void deleteFile(menuFile);
+            }}
+          >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.trash} />
+            </span>
+            <span className="menu-text">删除</span>
+          </button>
+        </span>
+      )}
     </>
   );
 }
@@ -232,8 +405,6 @@ function TreeItem({
   const overId = useTreeDrag((s) => s.overId);
   const zone = useTreeDrag((s) => s.zone);
   const [expanded, setExpanded] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(node.title);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLSpanElement>(null);
@@ -294,14 +465,24 @@ function TreeItem({
   const isDragSource = draggingId === node.id;
   const isDragTarget = draggingId !== null && node.id !== draggingId && overId === node.id;
 
-  const commitRename = async () => {
-    const v = editValue.trim();
-    setEditing(false);
-    if (v && v !== node.title) {
-      await useNotes.getState().renamePage(node.id, v);
-    } else {
-      setEditValue(node.title);
-    }
+  /**
+   * ⭐ **2026-10-04 改成弹窗**（owner：「侧边栏里的文件改名都改成弹窗模式」）——
+   * 原来这里是**行内输入**（`editing` ＋ `.tree-rename-input`），与「文件」那条（`inputDialog`）不一致。
+   * ⚠️ 页面与**文件夹**在侧栏里是**同一个树节点组件** ⇒ ⭐ 这一处改完两种都跟着变 ✓。
+   * ⚠️ 空名与没改：静默不提交（与原 commitRename 同一口径 ✓，不弹「名字不能为空」的废话）。
+   */
+  const startRename = () => {
+    const fallback = isFolder ? "新建文件夹" : "未命名";
+    inputDialog({
+      title: isFolder ? "重命名文件夹" : "重命名页面",
+      placeholder: "名称",
+      defaultValue: node.title || fallback,
+      onSubmit: async (name) => {
+        const v = name.trim();
+        if (!v || v === node.title) return;
+        await useNotes.getState().renamePage(node.id, v);
+      },
+    });
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -326,7 +507,10 @@ function TreeItem({
       // still expands/collapses the tree. Close any overlay (template center).
       useFileManagerStore.getState().setFolderId(node.id);
       useViewStore.getState().setView("files");
-      useTemplateCenterStore.getState().setOpen(false);
+      // ⚠️ **2026-10-04 删掉一行**：这里原来是 `leaveTemplates()` ✗ —— 它的意图是"关掉模板中心"✓，
+      //   但模板中心**并进 view 之后自己就是** `view === "templates"` ✓ ⇒ `setView("files")` 已经离开它了 ✓。
+      //   ⚠️ 而 `leaveTemplates()` 会**无条件**把 view 设回 `prevView`（⭐ 默认 "notes" ✓）
+      //   ⇒ ⭐ 它把上面刚设好的 "files" **立刻改回 "notes"** ✗ ⇒ ⭐ 症状＝点文件夹打不开文件管理视图 ✓。
     } else {
       useNotes.getState().openPage(node.id);
     }
@@ -345,7 +529,7 @@ function TreeItem({
         onMouseDown={(e) => {
           // Left-button on a row starts a potential pointer-drag (works in Tauri's
           // WebView where HTML5 drag-and-drop is suppressed by dragDropEnabled).
-          if (e.button !== 0 || editing) return;
+          if (e.button !== 0) return;
           onRowPointerDown(node.id, e);
         }}
         onClick={handleClick}
@@ -387,37 +571,18 @@ function TreeItem({
             <PageIcon width={16} height={16} />
           )}
         </span>
-        {editing ? (
-          <input
-            className="tree-rename-input"
-            autoFocus
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitRename();
-              } else if (e.key === "Escape") {
-                setEditing(false);
-                setEditValue(node.title);
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span
-            className="tree-title"
-            title="双击重命名"
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              setEditValue(node.title || "");
-              setEditing(true);
-            }}
-          >
-            {node.title || (isFolder ? "新建文件夹" : "未命名")}
-          </span>
-        )}
+        {/* ⚠️ **2026-10-04**：原来这里是个三元 —— `editing` 时渲染行内 `<input>`，否则渲染标题 ✗。
+            改成弹窗之后**恒渲染标题** ✓（双击 / 右键菜单那两处都改成调 `startRename()` ✓）。 */}
+        <span
+          className="tree-title"
+          title="双击重命名"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            startRename();
+          }}
+        >
+          {node.title || (isFolder ? "新建文件夹" : "未命名")}
+        </span>
         <span className={`tree-actions${menuOpen || copyOpen ? " is-open" : ""}`}>
           {/* 折叠成「…」菜单：hover 显示一个 …，点开弹出动作菜单。 */}
           <button
@@ -438,8 +603,7 @@ function TreeItem({
               <button
                 onClick={() => {
                   setMenuOpen(false);
-                  setEditValue(node.title || "");
-                  setEditing(true);
+startRename();
                 }}
               >
                 <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
@@ -679,8 +843,30 @@ export function PageTree(_props: {
   const sidebarWidthRef = useRef(sidebarWidth);
   useEffect(() => {
     sidebarWidthRef.current = sidebarWidth;
+    // ⚠️⚠️ **2026-10-04 修**（owner 实测：**收起侧栏后文件预览没有跟着变宽** ✗）：
+    //    收起侧栏用的是 `hidden={!sidebarOpen}`（上面的 JSX ✓）⇒ ⭐ 侧栏整个 `display:none` ✓
+    //    ⇒ ⭐ `.main` **确实变宽了** ✓（所以 PDF 阅读器会跟着变 ✓）。
+    //    ⚠️ 但 ⭐ **`--sidebar-w` 此前只在这里被写、依赖只有 `[sidebarWidth]`** ✗
+    //      ⇒ ⭐ 只有"拖分隔条"才会更新它 ✓ ⇒ ⭐ 收起/展开时它**仍是 240px** ✗。
+    //    ⭐ 而 `.fm-preview-overlay` 的 `left` 用的是**避让变量** ✓
+    //      （⭐ 原先写的是 `var(--sidebar-w, 240px)` ✗ —— ⭐ 2026-10-04 已改成 `--sidebar-offset` ✓）。
+    //      ⇒ ⭐ 收起后浮层左边**凭空白留 240px** ✗ ⇒ ⭐ 看起来"内容区没适配" ✓✓
+    //      （⭐ 连带所有用这条 `left` 的浮层都中招 ✓ —— 不只文件预览 ✓）
+    //    ⭐ 修法：**收起时把变量写成 0** ✓ ⇒ 浮层自然铺满；展开时写回存档宽度 ✓
+    //      （⭐ `sidebarWidthRef` / `sidebarWidth` 都**保留原值** ✓ ⇒ 再展开还是原来那么宽 ✓）
+    //    ⚠️ CSS 里 `App.css:22525` 早就记过同一个病（窄屏抽屉＋变量仍是 240px ⇒ `left` 算成 288px ✓），
+    //      那次只在窄屏那条 media 查询里绕过 ✓ —— 这一处修的是**桌面收起**这一档 ✓。
+    //    ⭐ 修法（⭐ 2026-10-04 **二次**改）：⭐ 别把 0 写进 `--sidebar-w` ✗ ——
+    //      ⭐ 那个变量**同时**是 `.sidebar` 的 `width`/`min-width` ✓（`App.css:554-555` ✓）
+    //      ⇒ 写 0 会让侧栏自己的宽度语义也被改掉 ✓（⭐ 收起时它 `hidden` 看不出 ✗，但不该混用 ✓）。
+    //      ⇒ ⭐ 现在分开：`--sidebar-w` **只表示侧栏列宽** ✓（永远写存档宽度 ✓）；
+    //        ⭐ **新增 `--sidebar-offset`**（`App.css` 变量块 ✓）专供**浮层避让**：
+    //        收起 ⇒ 0 ✓（浮层铺满 ✓）／ 展开 ⇒ 存档宽度 ✓。
+    //      ⚠️ 用 `--sidebar-w` 定位的**只有** `.fm-preview-overlay` 一处 ✓
+    //        （⭐ 全仓 `var(--sidebar-w` 共 3 处：`.sidebar` 的 width/min-width ＋ 它 ✓）。
     document.documentElement.style.setProperty("--sidebar-w", `${sidebarWidth}px`);
-  }, [sidebarWidth]);
+    document.documentElement.style.setProperty("--sidebar-offset", sidebarOpen ? `${sidebarWidth}px` : "0px");
+  }, [sidebarWidth, sidebarOpen]);
   /**
    * 拖分隔条调宽；**继续往左拖过阈值就把它收起来**（VS Code 同款手感）。
    *
@@ -724,8 +910,6 @@ export function PageTree(_props: {
     document.body.classList.add("is-sidebar-resizing");
   };
   const [workspaceName, setWorkspaceName] = useState("默认空间");
-  const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
-  const [renameSpaceValue, setRenameSpaceValue] = useState("");
   // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
@@ -860,7 +1044,7 @@ export function PageTree(_props: {
   const onRowPointerDown = (id: string, e: React.MouseEvent) => {
     // Ignore drag start from interactive children (toggle / actions / rename).
     const target = e.target as HTMLElement;
-    if (target.closest(".tree-toggle, .tree-actions, .tree-rename-input, button, input")) return;
+    if (target.closest(".tree-toggle, .tree-actions, button, input")) return;
     dragRef.current = { id, startX: e.clientX, startY: e.clientY, armed: false };
   };
   useEffect(() => {
@@ -955,27 +1139,33 @@ export function PageTree(_props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages]);
 
+  /**
+   * ⭐ **2026-10-04 改成弹窗**（owner：「侧边栏里的文件改名都改成弹窗模式」）——
+   * 原来这里是**行内输入**（`renamingSpace` ＋ `.space-item-name`）。
+   * ⚠️ 与页面/文件夹那笔同一口径：⭐ 侧栏里的改名一律走 `inputDialog` ✓。
+   * ⚠️ 语义照旧：空名不提交（原 `commitRenameSpace` 的 `if (!v) return` ✓）；
+   *    成功且改的是当前空间 ⇒ 同步顶栏那份 `workspaceName` ✓（原逻辑一字不改 ✓）。
+   */
   const startRenameSpace = (s: { id: string; name: string }) => {
-    setRenamingSpace(s.id);
-    setRenameSpaceValue(s.name);
-  };
-
-  const commitRenameSpace = async () => {
-    if (!renamingSpace) return;
-    const v = renameSpaceValue.trim();
-    const targetId = renamingSpace;
-    setRenamingSpace(null);
-    if (!v) return;
-    const ok = await useSpaceStore.getState().rename(targetId, v);
-    if (ok) {
-      if (targetId === activeSpaceId) setWorkspaceName(v);
-      else {
-        const nm = useSpaceStore.getState().spaces.find((s) => s.id === targetId)?.name;
-        if (nm) setWorkspaceName(nm);
-      }
-    } else {
-      toast("重命名失败", "error");
-    }
+    inputDialog({
+      title: "重命名工作空间",
+      placeholder: "名称",
+      defaultValue: s.name,
+      onSubmit: async (name) => {
+        const v = name.trim();
+        if (!v || v === s.name) return;
+        const ok = await useSpaceStore.getState().rename(s.id, v);
+        if (ok) {
+          if (s.id === activeSpaceId) setWorkspaceName(v);
+          else {
+            const nm = useSpaceStore.getState().spaces.find((x) => x.id === s.id)?.name;
+            if (nm) setWorkspaceName(nm);
+          }
+        } else {
+          toast("重命名失败", "error");
+        }
+      },
+    });
   };
 
   const tree = useMemo(() => buildTree(pages), [pages]);
@@ -1066,27 +1256,9 @@ export function PageTree(_props: {
                           {s.name.charAt(0)}
                         </span>
                         <div className="space-item-body">
-                          {renamingSpace === s.id ? (
-                            <input
-                              className="space-item-rename-input"
-                              autoFocus
-                              value={renameSpaceValue}
-                              onChange={(e) => setRenameSpaceValue(e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.stopPropagation();
-                                  commitRenameSpace();
-                                } else if (e.key === "Escape") {
-                                  e.stopPropagation();
-                                  setRenamingSpace(null);
-                                }
-                              }}
-                              onBlur={commitRenameSpace}
-                            />
-                          ) : (
-                            <span className="space-item-name" title={s.name}>{s.name}</span>
-                          )}
+                          {/* ⚠️ **2026-10-04**：原来这里是个三元 —— 改名时渲染行内 `<input>` ✗。
+                              改成弹窗之后**恒渲染名字** ✓（那颗 ✎ 现在直接开弹窗 ✓）。 */}
+                          <span className="space-item-name" title={s.name}>{s.name}</span>
                           {/* 第二行放「当前 / 同步目标」，让每个空间的状态一眼可见， */}
                           {/* 而不是把同步标签硬塞进名字后面挤成一行。 */}
                           <div className="space-item-meta">
@@ -1105,7 +1277,7 @@ export function PageTree(_props: {
                           </div>
                         </div>
                         <div className="space-item-ops" onClick={(e) => e.stopPropagation()}>
-                          {renamingSpace !== s.id && (
+                          {(
                             <button
                               className="space-item-op"
                               title="重命名工作空间"

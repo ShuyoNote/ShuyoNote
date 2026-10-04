@@ -1134,10 +1134,12 @@ pub fn list_sync_profiles(db: State<'_, Db>) -> Result<Vec<SyncProfile>, String>
     list_profiles(&c)
 }
 
-/// ★ 隐私边界**第 2 步**（2026-09-23）：**绑定同步关系**那一刻的闸门。
+/// ★ 隐私边界**第 2 步**（2026-09-23）：**绑定同步关系**那一刻的"分类"检查。
 ///
-/// 返回 `Ok(Some(提示))` ＝ 放行但**这个空间还没分类**（上层该如实说出来，不静默）；
-/// `Ok(None)` ＝ 正常放行；`Err` ＝ **拦住**（可操作文本：先按空间加密，或把它标成团队空间）。
+/// ⚠️ **2026-10-04 改**（owner 裁定「⭐ **个人空间不绑服务器**」）：⭐ 这个函数**不再拦任何人** ✗ ——
+/// 原先它返回 `Err` 来挡"未加密的个人空间"✗，那条口径**已被否掉** ✓（个人空间本来就**不该**走服务器 ✓，
+/// 不存在"先加密就能绑" ✓）。⭐ 现在只剩一件事：⭐ **这个空间还没分类** ⇒ 如实报出来（`Ok(Some(提示))` ✓）。
+/// ⚠️ 真正拦住"个人空间绑服务器"的那一刀**不在这里** ✗ —— 在 [`set_sync_profile`]（⭐ 唯一入口 ✓）。
 ///
 /// ⚠️ 抽成独立函数就是为了**能被判据直接驱动**（命令那层要 `State<Db>`，测不了）。
 pub(crate) fn sync_bind_gate(
@@ -1146,17 +1148,11 @@ pub(crate) fn sync_bind_gate(
     ws_id: &str,
 ) -> Result<Option<String>, String> {
     let mut st = crate::space_crypto::space_status(dir, ws_id);
-    // ★ 名字（不是 uuid）：拦人的那句话与"没分类"那句提示都要说名字（owner 2026-09-24 指出）。
+    // ★ 名字（不是 uuid）：提示那句要说名字（owner 2026-09-24 指出）。
     crate::space_crypto::fill_space_name(c, &mut st);
     let kind = crate::space_crypto::space_kind(c, ws_id);
     match crate::space_crypto::sync_gate(&st, kind) {
         crate::space_crypto::SyncGate::Allowed => Ok(None),
-        crate::space_crypto::SyncGate::Blocked(msg) => Err(msg),
-        crate::space_crypto::SyncGate::AllowedUnclassified => Ok(Some(format!(
-            "{}还没分类（个人/团队）：同步闸门这次**没有管到它** —— \
-             若它是个人空间，请先按空间加密再绑定同步。",
-            st.label()
-        ))),
     }
 }
 
@@ -1170,7 +1166,35 @@ pub fn set_sync_profile(
     email: Option<String>,
 ) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    // ★ 第 2 步：**绑定之前**过闸门（个人空间没加密 ⇒ 拦；团队空间免检；未分类 ⇒ 放行但留痕）。
+    // ⭐⭐ **2026-10-04 加：真拦**（owner 裁定「个人空间不绑服务器」＋ 今天又定「未分类按个人空间处理」）——
+    //    ⚠️ 这道拦**只有这里能做** ✗：`sync_gate` 那层只是"分类检查"（已拆，见 `a7c4d391` ✓），
+    //    而"绑服务器"这个**动作**的入口就是这个命令 ✓ ⇒ ⭐ 拦在这里才算真拦 ✓。
+    //    ⚠️ 语义：⭐ **只有团队空间**能绑服务器 ✓ —— 个人空间与"未分类"一律拒 ✓
+    //    （⭐ 未分类按个人处理 ✓，⭐ 与裁定同口径 ✓）。
+    //    ⚠️ 设备直连**不受影响** ✗ —— 那是另一个命令 `mesh_set_config`（`lib.rs:673` ✓），
+    //    已实测本命令的调用方全是前端同步面板/设置 ✓。
+    {
+        let kind = crate::space_crypto::space_kind(&c, &ws_id);
+        if !matches!(kind, crate::space_crypto::SpaceKind::Team) {
+            // 报错里要带**空间名字**（⭐ 内部 id 对用户没意义 ✓ —— 与 `sync_bind_gate` 同一口径 ✓）。
+            // ⚠️ 拿不到数据目录时退回用 id ✗（那种情况本项目里基本不会发生 ✓，但别让这里 panic ✓）。
+            let label = match crate::db::app_data_dir_ref() {
+                Some(dir) => {
+                    let mut st = crate::space_crypto::space_status(dir, &ws_id);
+                    crate::space_crypto::fill_space_name(&c, &mut st);
+                    st.label()
+                }
+                None => ws_id.clone(),
+            };
+            return Err(format!(
+                "「{label}」不是团队空间，不能绑定同步服务器 —— \
+                 个人版只走「附近设备直连」，不经过服务器。\
+                 （要上服务器，请在空间设置里把它标成团队空间。）"
+            ));
+        }
+    }
+    // ★ 第 2 步：**绑定之前**过闸门（团队空间免检；未分类 ⇒ 放行但留痕）。
+    // ⚠️ **2026-10-04**：它**不再拦人** ✗ —— 真拦在上面那段（只放团队 ✓）。保留它只为那句"未分类"提示 ✓。
     if let Some(dir) = crate::db::app_data_dir_ref() {
         if let Some(note) = sync_bind_gate(&c, dir, &ws_id)? {
             eprintln!("[sync] {note}");
@@ -3304,7 +3328,22 @@ pub fn mesh_set_config(
     workspace_id: Option<String>,
     bind: Option<String>,
     token: Option<String>,
+    // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
+    //   ⭐ `None` ＝ 不动（团队空间照旧 ✓）／ `""` ＝ 清除 ／ 有值 ＝ 覆盖 ✓。
+    room: Option<String>,
 ) -> Result<crate::mesh::MeshConfigState, String> {
+    // ⚠️ 顺序要紧 ✗：⭐ 必须**先**写暗号、**再**取 scope ✓ —— `mesh_scope` 就是用它来定
+    //   「对暗号的 id」✓；反过来（先取 scope）刚填的暗号这一轮还用不上 ✓。
+    //   ⚠️ 写它只需要认出「哪一行」（`ws_id`）✓ ⇒ 走 `mesh_target_ws`（它不要求 space_id ✓）。
+    if let Some(r) = room.as_deref() {
+    let target = mesh_target_ws(&db, workspace_id.as_deref())?;
+    let c = db.0.lock().expect("db mutex poisoned");
+    c.execute(
+    "UPDATE sync_profiles SET mesh_room = ?1 WHERE ws_id = ?2",
+    rusqlite::params![r, target],
+    )
+    .map_err(|e| e.to_string())?;
+    }
     let scope = mesh_scope(&db, workspace_id.as_deref())?;
     let cfg = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -3357,13 +3396,47 @@ struct MeshScope {
     device: String,
 }
 
+/// ⚠️ **2026-10-04 加**：⭐ 只挑「哪一行」✗ —— 给 `mesh_set_config` 写**配对暗号**用 ✓。
+/// 与 `mesh_scope` 的区别：它也**不要求** `space_id` ✓（个人空间正是没有它 ✓）。
+fn mesh_target_ws(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<String, String> {
+let c = db.0.lock().expect("db mutex poisoned");
+let mut stmt = c
+.prepare(
+"SELECT p.ws_id FROM sync_profiles p
+ WHERE EXISTS (
+     SELECT 1 FROM meta.workspaces w
+     WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+ )",
+)
+.map_err(|e| e.to_string())?;
+let rows = stmt
+.query_map([], |r| r.get::<_, String>(0))
+.map_err(|e| e.to_string())?
+.collect::<Result<Vec<_>, _>>()
+.map_err(|e| e.to_string())?;
+match workspace_id.filter(|w| !w.is_empty()) {
+Some(want) => rows
+.into_iter()
+.find(|ws| ws == want)
+.ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}")),
+None => match rows.len() {
+1 => Ok(rows[0].clone()),
+0 => Err("本机还没有任何绑过同步的空间 —— 网格交换要先有一个空间".to_string()),
+n => Err(format!("本机有 {n} 个空间，这条命令要指名其中一个")),
+},
+}
+}
+
 fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
         let c = db.0.lock().expect("db mutex poisoned");
         let mut stmt = c
             .prepare(
-                "SELECT p.space_id, p.ws_id FROM sync_profiles p
+                // ⚠️ **2026-10-04 改**（owner：个人空间也要能用设备直连）：把 `mesh_room` 一起读出来 ✓。
+                //   ⭐ 对暗号的值 ＝ `space_id` 非空就用它（团队空间行为不变 ✓），否则用用户填的
+                //   「配对暗号」`mesh_room` ✓（个人空间没有 space_id —— 那是服务器上的组织空间 id）。
+                "SELECT p.space_id, p.ws_id, p.mesh_room FROM sync_profiles p
                  WHERE EXISTS (
                      SELECT 1 FROM meta.workspaces w
                      WHERE w.id = p.ws_id AND w.deleted_at IS NULL
@@ -3371,7 +3444,13 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .query_map([], |r| {
+            Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            ))
+            })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -3380,7 +3459,7 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
     let pick = match workspace_id.filter(|w| !w.is_empty()) {
         Some(want) => rows
             .iter()
-            .find(|(_, ws)| ws == want)
+            .find(|(_, ws, _)| ws == want)
             .cloned()
             .ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}"))?,
         None => match rows.len() {
@@ -3390,9 +3469,16 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
         },
     };
     if pick.0.trim().is_empty() {
-        return Err("这个空间的同步档案还没有 space_id（网格交换要它来对暗号）".to_string());
+        return Err(
+        "还没填「配对暗号」。个人空间不走服务器：两台设备填同一个暗号，就能在同一个网络里直连"
+        .to_string(),
+        );
     }
-    Ok(MeshScope { space: pick.0, db_space: pick.1, device: device_id })
+    // ⚠️ **2026-10-04 改**：⭐ 对暗号的值可以是 `space_id`（团队 ✓）**或**用户填的「配对暗号」
+    //   `mesh_room`（个人 ✓）。⚠️ 它**不必**是服务器上的组织空间 id ✗ —— `MeshScope` 的注释
+    //   写着真机上「本地库名」与「对暗号的空间 id」本来就不同名 ✓，只要求**两台填一样** ✓。
+    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
+    Ok(MeshScope { space, db_space: pick.1, device: device_id })
 }
 
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
@@ -5731,10 +5817,12 @@ mod tests {
         (c, dir)
     }
 
-    /// ★★ 隐私边界**第 2 步**：**绑定同步关系那一刻的闸门**（真库、真路径）。
+    /// ★★ 隐私边界**第 2 步**：**绑定同步关系那一刻**的"分类"检查（真库、真路径）。
     ///
-    /// 四支都要有读数：个人空间没加密 ⇒ **拦**；加密过（袋里有它）⇒ 放行；
-    /// 团队空间 ⇒ **免检**（明文也放行）；未分类 ⇒ 放行但**带一条提示**（不静默）。
+    /// ⚠️ **2026-10-04 改**（owner：未分类按个人处理 ＋ 去掉未分类这一条）：
+    /// ⭐ 这个函数现在**不拦任何人** ✗ —— 只剩"这个空间还没分类 ⇒ 报一句"这件事；
+    /// 而"未分类"这一档已删 ⇒ ⭐ 空串读出的是**个人空间** ✓ ⇒ ⭐ 连那句提示都不会有 ✓（返回 `None` ✓）。
+    /// ⭐ 真正拦住"个人空间绑服务器"的是 `set_sync_profile` ✓（见那里装的真拦 ✓）。
     #[test]
     fn the_sync_bind_gate_blocks_only_personal_spaces_without_encryption() {
         let _g = crate::security::SEC_LOCK.lock().unwrap();
@@ -5745,15 +5833,22 @@ mod tests {
         )
         .unwrap();
 
-        // ① 未分类 ⇒ 放行 ＋ 提示（这是**今天所有空间**的状态：闸门不掐断任何人的同步）
+        // ① ⚠️ **2026-10-04 改**：⭐ 空串（老库的"未分类"）现在读作**个人空间** ✗
+        //    ⇒ ⭐ 这一层既不拦、也没有"没分类"那句提示 ⇒ 断言 `is_none()` ✓。
         let note = sync_bind_gate(&c, &dir, "ws").unwrap();
-        assert!(note.is_some(), "未分类要如实报出来");
-        assert!(note.unwrap().contains("没分类"));
+        assert!(
+            note.is_none(),
+            "空串按个人空间处理 ⇒ 这一层没有任何提示（提示那档已随「未分类」一起去掉）"
+        );
 
-        // ② 标成个人空间 ⇒ **拦**（库是明文）
+        // ② 标成个人空间 —— ⚠️ **2026-10-04 改**：⭐ 这一层**不再拦** ✗
+        //    （owner 裁定「个人空间不绑服务器」⇒ 拦的是"绑服务器"那个动作本身，
+        //      ⭐ 而它与"加没加密"无关 ⇒ 见 `set_sync_profile` ✓）。
         crate::space_crypto::set_space_kind(&c, "ws", crate::space_crypto::SpaceKind::Personal).unwrap();
-        let err = sync_bind_gate(&c, &dir, "ws").unwrap_err();
-        assert!(err.contains("明文"), "{err}");
+        assert!(
+            sync_bind_gate(&c, &dir, "ws").unwrap().is_none(),
+            "★ 分类这层不再拦人（个人空间照样放行；拦在绑服务器那一刀）"
+        );
 
         // ③ 给它按空间加密 ⇒ 放行
         let mut c2 = c;

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { $createParagraphNode, $getRoot, type ElementNode } from "lexical";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
-import { useTemplateCenterStore } from "../store/templateCenter";
+import { useViewStore } from "../store/view";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
@@ -153,7 +153,7 @@ export function NewPageGuide() {
                 <SparkleIcon className="npg-act-icon" /> 用 AI 开始创作
               </button>
             )}
-            <button className="npg-act" onClick={() => useTemplateCenterStore.getState().setOpen(true)}>
+            <button className="npg-act" onClick={() => useViewStore.getState().setView("templates")}>
               <TemplateIcon className="npg-act-icon" /> 从模板中心创建...
             </button>
             <button className="npg-act" onClick={importMarkdown}>

@@ -3,7 +3,7 @@ import { emitHostEvent } from "../lib/pluginEvents";
 import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
-import { useTemplateCenterStore } from "./templateCenter";
+
 import { useFileManagerStore } from "./fileManager";
 import { useFilePreview } from "./filePreview";
 
@@ -82,7 +82,10 @@ export const useNotes = create<NoteState>((set, get) => ({
       // Opening a page/database switches back to the editor view and closes any
       // overlay (template center).
       useViewStore.getState().setView("notes");
-      useTemplateCenterStore.getState().setOpen(false);
+      // ⚠️ **2026-10-04 删掉一行**：这里原来跟着一句 `leaveTemplates()` ✗ —— 它的意图是「关掉模板中心」✓，
+      //   但模板中心**并进 view 之后自己就是** `view === "templates"` ✓ ⇒ 上面那句已经离开它了 ✓。
+      //   ⚠️ 而 `leaveTemplates()` 会把 view 设回 `prevView` ✗ ⇒ ⭐ 从看板进模板中心、再打开页面时，
+      //   view 会被改成 **board** ✗（⭐ 症状＝点了页面却停在看板 ✓ —— 平时 prevView 常等于 notes ⇒ 不易发现 ✓）。
       // 播报事实即可，谁听由插件层决定（见 lib/pluginEvents）。
       emitHostEvent("page.opened", { pageId: id });
     } catch (e) {

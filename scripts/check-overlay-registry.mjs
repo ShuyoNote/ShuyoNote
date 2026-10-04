@@ -115,7 +115,19 @@ function inComment(text, index) {
     if (quotes % 2 === 0) return true;
   }
   // 块注释：往前看最近的 `/*` 与 `*/` 谁更靠后。
-  const open = text.lastIndexOf("/*", index);
+  // ⚠️ **2026-10-04 修**：这里原来直接取 `lastIndexOf("/*")` ✗ —— 而那个两字符组合**也会出现在行注释里**
+  //   （⭐ 例如在 `//` 注释里写"`text` 后面跟通配星号"✓）⇒ ⭐ 那个位置被当成块注释起点 ✓
+  //   ⇒ ⭐ 于是**文件剩下全部**都被当成注释 ✓ ⇒ ⭐ 登记表报「某类名没有任何组件渲染（类名改了？）」✓
+  //   ⚠️ 实测撞过：`check:overlays` 从 **26 通过/0 失败** 变成 **23/2** ✗，而 ⭐ `tsc` 是**绿的** ✓
+  //      （⭐ JS 的行注释延伸到行尾 ⇒ ⭐ 解析器不受影响 ✓ ⇒ ⭐ 这是**判据**的问题，不是代码的问题 ✓）。
+  //   ⇒ ⭐ 往前逐个找 `/*`，**跳过落在行注释里的**那些 ✓（用同一条 `//` 检查 ✓）。
+  let open = text.lastIndexOf("/*", index);
+  while (open >= 0) {
+    const ls = text.lastIndexOf("\n", open - 1) + 1;
+    const lsSlashes = text.slice(ls, open).indexOf("//");
+    if (lsSlashes < 0) break; // ⭐ 这一行在 `/*` 之前没有 `//` ⇒ 它才是真的块注释起点 ✓
+    open = text.lastIndexOf("/*", open - 1);
+  }
   return open >= 0 && open > text.lastIndexOf("*/", index);
 }
 

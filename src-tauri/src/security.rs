@@ -2296,7 +2296,7 @@ mod tests {
         //     `old_meta` 是 meta-only 连接，那里 `meta` 这个 schema 并不存在。
         assert_eq!(
             crate::space_crypto::space_kind(&old_space, "legacy-a"),
-            crate::space_crypto::SpaceKind::Unknown,
+            crate::space_crypto::SpaceKind::Personal,
             "老库补的列取默认值＝未分类（行为一字不变）"
         );
         crate::space_crypto::set_space_kind(&old_space, "legacy-a", crate::space_crypto::SpaceKind::Personal)

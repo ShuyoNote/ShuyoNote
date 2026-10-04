@@ -1,11 +1,10 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useActivity, type Activity } from "../store/activity";
+import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
-import { useTemplateCenterStore } from "../store/templateCenter";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
 import {
@@ -29,7 +28,10 @@ import {
 //   - 右侧 RightRail = 与**当前文档**相关的辅助（AI、目录）
 //
 // 「搜索」只换侧栏面板、不动主区；notes/files/board/graph 会切主区视图。
-// 点击已选中的活动 = 收起/展开侧栏（VS Code 行为）。
+// ⚠️ **2026-10-04 更新**：⭐ 活动图标**只切视图 ＋ 把侧栏展开** ✓ ——
+//    ⭐ **不再**「点已选中的活动 ⇒ 收起侧栏」（~~VS Code 行为~~ ✗，owner 决定去掉 ✓）。
+//    ⇒ 收起/展开侧栏**只由上面那颗 `.sidebar-toggle-btn` 负责** ✓（一个动作一个入口 ✓）。
+//    ⚠️ 那句旧行为的注释与提示文案（title）当时**都留下了** ✗ ⇒ 已一并改掉 ✓。
 const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
@@ -38,6 +40,12 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
   // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）
   { id: "map", labelKey: "nav.map", icon: <TagIcon width={18} height={18} /> },
+  // ⚠️ **2026-10-04 并进来**（owner 批的 c-2）：模板中心原来在竖条**底部**是**另一颗独立按钮** ✗ ——
+  //   ⭐ 那颗只 `setOpen(true)`、不参与高亮 ✓，与统一体系是两套 ✓。现在它是 `Activity` 的第 7 个值 ✓
+  //   ⇒ ⭐ 与上面 6 项**完全同形** ✓（⭐ 同一套 `pick()` ✓ ／ ⭐ 同一套高亮 ✓）。
+  //   ⚠️ `labelKey` 用的是**已存在**的 `templateCenter`（`i18n/locales/*.ts` 都有 ✓）而不是新加 `nav.templates` ✓
+  //     —— ⭐ 同一个词一个键 ✓，不值得为"看起来整齐"再多两个 locale 条目 ✓。
+  { id: "templates", labelKey: "templateCenter", icon: <TemplateIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {
@@ -56,17 +64,28 @@ export function ActivityBar() {
 
   // 视图也能被命令面板/快捷键改（view.graph 等），竖条要跟着高亮，
   // 否则会出现「主区在看板、竖条还亮着笔记」的错位。
+  // ⚠️ **2026-10-04 修**：⭐ 必须先用 `isActivity(view)` **收窄**再写 ✗ ——
+  //    原先写的是 `setActivity(view as Activity)` ✓，⭐ 而 `AppView` **比 `Activity` 宽** ✗
+  //    （还有 settings / trash / templates / search 这类**非活动**视图 ✓）
+  //    ⇒ ⭐ `as` 把类型检查绕过去了 ⇒ ⭐ 打开设置/回收站时会把**非法值**写进 `activity` ✓
+  //      ⇒ ⭐ 那 6 个活动图标**一个都不会高亮** ✓（⭐ 因为没人等于 "settings" 这种值 ✓）。
   useEffect(() => {
-    if (view !== activity) setActivity(view as Activity);
+    if (view !== activity && isActivity(view)) setActivity(view);
   }, [view, activity, setActivity]);
 
   const pick = (id: Activity) => {
-    if (id === activity) {
-      toggleSidebar();
-      return;
-    }
+    // ⚠️⚠️ **2026-10-04 改**（owner 决定）：⭐ **点活动图标不再收起侧栏** ✗。
+    //    原先这里是 VS Code 那套 —— `if (id === activity) { toggleSidebar(); return; }` ✓：
+    //    ⭐ 点亮的那个再点一下 ⇒ 收起 ✓。⚠️ 但副作用是 ⭐ **每一个图标都"能收起侧栏"** ✗
+    //    （⭐ 因为点完它就变亮的那个 ✓ ⇒ 再点一下就收起 ✓）⇒ 用户体验上分不清
+    //    "切换视图" 与 "收起侧栏" 两件事 ✗；owner 实测后要求改成：
+    //    ⭐ **活动图标只负责切视图 ＋ 把侧栏展开** ✓；⭐ **收起侧栏只由上面那颗专职的
+    //    `.sidebar-toggle-btn` 负责** ✓（⭐ 一个动作一个入口 ✓）。
+    //    ⚠️ 窄屏的行为**不变**：⭐ 下面那句 `if (!isMobileViewport()) setSidebarOpen(true)` 照旧 ✓
+    //    （⭐ 窄屏侧栏是盖住内容的整高抽屉 ⇒ 点图标时**不能**顺手拉开 ✓ 见它的注释 ✓）。
     // 切换视图（看板/关系图等）时关闭文件预览，避免残留遮住新视图。
-    useFilePreview.getState().close();
+    // ⚠️ 只在**真的换活动**时关：⭐ 点当前那个（只是想展开侧栏）不该把预览关掉 ✗。
+    if (id !== activity) useFilePreview.getState().close();
     setActivity(id);
     // ⚠️ 窄屏**不要**顺手把侧栏拉开：桌面上侧栏是并排的一列（拉开正好一起看），
     // 但窄屏它是**盖住内容的整高抽屉**——点「看板」之后看到的是侧栏抽屉，
@@ -88,9 +107,11 @@ export function ActivityBar() {
       }}
     >
       <div className="activity-group">
-        {/* 窄屏专有的侧栏开合按钮。桌面端点活动图标就能开合、还有 hover 提示，
-            触屏没有 hover，「图标可以点」这件事完全不可见——所以小屏给一个
-            明确的按钮（面板 + 左栏的图形，即 VS Code 的侧栏图标）。 */}
+        {/* ⚠️ **2026-10-04 更新**：⭐ 这是**侧栏开合的唯一入口** ✓ ——
+            桌面与窄屏都是它（⭐ 活动图标只切视图、不再收起侧栏 ✓ 见上面 `pick` 与 `ITEMS` 的注释 ✓）。
+            ⚠️ 原先这段写的是「桌面端点活动图标就能开合…触屏没有 hover ⇒ 所以小屏给一个」✗ ——
+            ⭐ 那个理由已经**不成立**了 ✓；保留这颗按钮仍有理由：⭐ 触屏**没有 hover** ✓
+            （「图标可以点」这件事在小屏依旧完全不可见 ✓），而且它是唯一入口 ✓。 */}
         <button
           className="activity-btn sidebar-toggle-btn"
           title={sidebarOpen ? t("common.collapseSidebar") : t("common.expandSidebar")}
@@ -109,7 +130,7 @@ export function ActivityBar() {
             <button
               key={it.id}
               className={`activity-btn${on ? " is-on" : ""}`}
-              title={on ? `${t(it.labelKey)}（点击${sidebarOpen ? t("common.collapse") : t("common.expand")}侧栏）` : t(it.labelKey)}
+              title={t(it.labelKey)}
               aria-label={t(it.labelKey)}
               aria-current={on}
               onClick={() => pick(it.id)}
@@ -124,14 +145,8 @@ export function ActivityBar() {
         {/* 回收站是「看已删除的内容」——本质是导航，不是设置，所以归竖条；
             备份与存储清理是低频且不可逆的全局操作，已归设置中心「数据」页。 */}
         <TrashPanel />
-        <button
-          className="activity-btn"
-          title="模板中心"
-          aria-label="模板中心"
-          onClick={() => useTemplateCenterStore.getState().setOpen(true)}
-        >
-          <TemplateIcon width={18} height={18} />
-        </button>
+        {/* ⚠️ **2026-10-04 去掉**：模板中心那颗**独立按钮**已并进上面的 `ITEMS` ✓（它是 `Activity` 的第 7 个值 ✓）
+            —— ⭐ 现在它跟着 `ITEMS` 一起高亮 ✓、一起走 `pick()` ✓，不再是一套单独的开关 ✓。 */}
         <button
           className="activity-btn"
           title="设置"

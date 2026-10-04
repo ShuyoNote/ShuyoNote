@@ -145,7 +145,14 @@ export function check(root) {
   const carrier = readFileSync(join(root, DECISION_CARRIER), "utf8");
 
   for (const abs of walkMd(join(root, "docs"))) {
-    const rel = abs.slice(root.length + 1);
+    // ⚠️⚠️ **2026-10-04 修（Windows 假红）**：原先这里是 `abs.slice(root.length + 1)` ——
+    //    在 Windows 上 `abs` 由 `join` 拼成 ⇒ **带反斜杠** ✗ ⇒ `rel` 形如 `docs\TESTING.md`，
+    //    而 `ALLOWED_BARE_D` 的键是 `docs/TESTING.md` ✓ ⇒ 查不到 ⇒ 每个带裸 `D#` 的文件都被判
+    //    **R1「未登记」** ✗ —— ⭐ 登记明明在（见本文件 L91 起）却报"未登记" ✓。
+    //    ⇒ 症状**只在 Windows 上**出现：Linux/macOS 的 `join` 用 `/` ⇒ 一直是绿的 ✓
+    //    ⇒ ⭐ 所以 CI 从没报过它，只有本机 `pnpm verify` 报 ✓（本机实测：`docs/TESTING.md:75` 等 ✗）。
+    //    ⚠️ 与本仓反复栽的那一族同形：**判据在某个平台上静默换了个形状** ✓。
+    const rel = abs.slice(root.length + 1).replace(/\\/g, "/");
     const allow = ALLOWED_BARE_D[rel];
     const text = readFileSync(abs, "utf8");
     const lines = text.split("\n");

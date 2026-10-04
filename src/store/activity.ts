@@ -3,11 +3,35 @@ import { create } from "zustand";
 /** 左侧竖条（activity bar）当前选中的活动——每一项都对应一个主区视图。
  *  搜索**不是**活动：它是弹层式的一次性动作（用完即走、不占侧栏、不把页面树
  *  顶掉，在看板/关系图视图下同样可用），触发器只是借住在竖条里。 */
-export type Activity = "notes" | "files" | "board" | "graph" | "timeline" | "map";
+export type Activity = "notes" | "files" | "board" | "graph" | "timeline" | "map" | "templates";
+
+/** ⭐ 活动的**唯一白名单** ✓ —— `Activity` 类型 ＋ 运行时可核的名单放在一起，
+ *  免得两处各写一份（⭐ 原先 `initialActivity()` 里手写了一遍这 6 个字面量 ✗）。 */
+export const ACTIVITIES = ["notes", "files", "board", "graph", "timeline", "map", "templates"] as const;
+
+/**
+ * ⚠️ **2026-10-04 加**：运行时收窄 `Activity` ✓。
+ * 来由：⭐ `AppView`（`store/view` 的 `view` ✓）**比 `Activity` 宽** ✗ ——
+ * ⚠️ **2026-10-04 订正**：原写「它还有 settings / trash / **templates** / search 这类非活动视图」✗ ——
+ *    ⭐ 那句**是错的** ✓：`store/view.ts` 的 `AppView` 逐字只有
+ *    `"notes" | "board" | "graph" | "files" | "timeline" | "map"` ✓ ⇒ ⭐ **没有 templates** ✓
+ *    （⭐ 模板中心**已于 2026-10-04 并进 view** ✓ ⇒ ⭐ 它现在是 `AppView` 的第 7 个值 ✓，
+ *      ⭐ 那个光杆布尔 `store/templateCenter` 已删 ✓）。
+ *    ⭐ settings / trash / search 也不是 `view` 的值 ✗ —— 它们各有各的开关 ✓
+ *    ⇒ ⭐ 所以"宽"这句话**结论对、举例全错** ✓ ⇒ ⭐ 按代码订正 ✓。
+ * 而 `ActivityBar` 里有一处 `setActivity(view as Activity)` ✗（⭐ `as` 把类型检查绕过去了 ✓），
+ * 于是打开设置/回收站时会把**非法值**写进 `activity` ✓。
+ * ⇒ ⭐ 正确写法是**先收窄再写**：`if (isActivity(view)) setActivity(view)` ✓。
+ */
+export function isActivity(v: unknown): v is Activity {
+  return typeof v === "string" && (ACTIVITIES as readonly string[]).includes(v);
+}
 
 interface ActivityState {
   activity: Activity;
-  /** 侧栏是否展开（竖条常驻；点当前活动图标可收起侧栏，VS Code 行为）。 */
+  /** 侧栏是否展开。⭐ 收起/展开只由竖条那颗 `.sidebar-toggle-btn` 负责 ✓
+   *  （⚠️ 2026-10-04 改：原先点**当前活动图标**也能收起侧栏 —— VS Code 行为 ✗；
+   *   但那让每个活动图标都"能收起侧栏"，与"切换视图"混在一起 ✗ ⇒ 已去掉 ✓）。 */
   sidebarOpen: boolean;
   /** 窄屏的浮层竖条是否展开。**不持久化**：它是瞬时的布局状态，由屏幕尺寸
    *  决定，跨会话记住没有意义（和 sidebarOpen 的区别就在这）。 */
@@ -22,8 +46,9 @@ const KEY_ACTIVITY = "shuyonote:activity";
 const KEY_SIDEBAR = "shuyonote:sidebarOpen";
 
 function initialActivity(): Activity {
+  // ⭐ 复用白名单（原先这里手写了一遍 6 个字面量 ✗ —— 加活动时容易只改一处 ✓）。
   const v = localStorage.getItem(KEY_ACTIVITY);
-  return v === "notes" || v === "files" || v === "board" || v === "graph" || v === "timeline" || v === "map" ? v : "notes";
+  return isActivity(v) ? v : "notes";
 }
 
 // 竖条状态独立于 `useViewStore`：view 描述**主区**显示什么，activity 描述

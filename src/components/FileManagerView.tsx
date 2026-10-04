@@ -540,7 +540,19 @@ export function FileManagerView() {
       .map((r) => r.file!);
     if (!todo.length) return;
     let cancelled = false;
-    Promise.all(todo.map((f) => api.readTextFile(f.path).catch(() => ""))).then((res) => {
+    // ⚠️ **2026-10-04 改**：原来这里按**路径**读（`api.readTextFile(f.path)`）✗ ——
+    //   而 ⭐ 加密空间下按路径读到的是**密文** ✓（`store/filePreview.ts` 里 md 那条路的注释逐字写着
+    //   「`read_text_file` on the raw disk path would return ciphertext garbling the preview」✓）
+    //   ⇒ ⭐ 改按 **hash** 读字节再解 UTF-8 ✓（`readAttachmentBytes` 会让后端解密 ✓）。
+    //   ⚠️ `fatal: false`：二进制被当文本时不该炸 ✓（与 `FilePreviewDialog` 那条同一口径 ✓）。
+    Promise.all(todo.map(async (f) => {
+      try {
+        const bytes = await api.readAttachmentBytes(f.hash);
+        return new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+      } catch {
+        return "";
+      }
+    })).then((res) => {
       if (cancelled) return;
       const map: Record<string, string> = {};
       todo.forEach((f, i) => { map[f.id] = res[i] ?? ""; });
@@ -1019,7 +1031,18 @@ export function FileManagerView() {
                     className="fm-name-btn"
                     onClick={(e) => {
                       e.stopPropagation();
+                      // ⚠️ **2026-10-04 加**：⭐ 用 `detail` **吃掉双击的第一击** ✓ ——
+                      //    `openRow` 是"打开文件"✓，而双击要改名 ✗；不挡的话双击会**先打开一次** ✓。
+                      //    ⭐ 比"单击延迟 250ms"好：⭐ 单击**不变慢** ✓、也不引入定时器 ✓。
+                      if (e.detail > 1) return;
                       openRow(row);
+                    }}
+                    onDoubleClick={(e) => {
+                      // ⭐ owner 要的：⭐ **双击文件名 ⇒ 改名** ✓。
+                      //    ⚠️ 只挂在**文件名**上（不是整行）✗ —— 行上单击是"选中"✓、双击另有含义 ✓，
+                      //    而且这样"单击打开"的手感一点不变 ✓。改名逻辑复用既有的 `renameRow` ✓。
+                      e.stopPropagation();
+                      renameRow(row);
                     }}
                   >
                     <span className="fm-kind-icon">

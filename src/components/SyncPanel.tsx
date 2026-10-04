@@ -95,6 +95,11 @@ interface ServerMember {
 interface EditRow {
   ws_id: string;
   name: string;
+  /** ⚠️ **2026-10-04 加**：⭐ 空间分类 ✓ —— 服务器那一段只列**团队空间**要用它。
+   *  ⭐ 来源＝`api.spaceSecurityOverview()`（那边现成有 `kind` ✓，不用改 Rust ✓）。
+   *  ⚠️ 取不到时**兜底当团队** ✓ —— 宁可多给一个入口（后端真拦在 `set_sync_profile` ✓），
+   *  也不要让团队空间看不到「创建组织空间」而卡住 ✓。 */
+  kind: "personal" | "team";
   server_url: string;
   token: string;
   space_id: string;
@@ -223,6 +228,10 @@ export function SyncPanel() {
   //   （"只开网格、不绑服务端"正是这一档要支持的配置）。
   const [meshBind, setMeshBind] = useState("");
   const [meshToken, setMeshToken] = useState("");
+  // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
+  // ⭐ 网格要一个「两边填一样」的字符串来对暗号 ✓，而个人空间**没有** `space_id`（那在服务器上）
+  // ⇒ 这一项就是它的替身 ✓；⭐ 团队空间里 `space_id` 优先 ⇒ 填不填都不影响 ✓。
+  const [meshRoom, setMeshRoom] = useState("");
   const [meshBusy, setMeshBusy] = useState(false);
   const meshSavedBind = lanStatus?.mesh.bind ?? "";
   // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
@@ -301,6 +310,22 @@ export function SyncPanel() {
     } finally {
       setDuBusy("");
     }
+  };
+
+  /** ⭐ 存「配对暗号」：个人空间两台设备填同一个就能互连（团队空间不受影响 ✓）。 */
+  const saveMeshRoom = async () => {
+  if (!meshRoom.trim()) return;
+  setMeshBusy(true);
+  try {
+  // ⚠️ 只写 room 这一项 ⇒ 另两项传 `null`（＝不动 ✓，与 Rust 侧同口径 ✓）。
+  const st = await api.meshSetConfig(activeId, null, null, meshRoom.trim());
+  setLanStatus((s) => (s ? { ...s, mesh: st } : s));
+  setStatus("配对暗号已保存。到另一台设备上填「同一个」暗号，两台在同一个网络里就能直接连上，不经过服务器");
+  } catch (e) {
+  setStatus(String(e));
+  } finally {
+  setMeshBusy(false);
+  }
   };
 
   const saveMeshToken = async () => {
@@ -515,6 +540,22 @@ export function SyncPanel() {
   const refresh = async () => {
     try {
       const profiles = await api.listSyncProfiles();
+      // ⚠️ **2026-10-04 加**（owner：「个人空间不显示服务器同步内容」）：
+      //   ⭐ 服务器那一段只列**团队空间** ✓ ⇒ 需要每个空间的分类 ✓。
+      //   ⭐ `SyncProfile` / `WorkspaceMeta` **都没有 `kind`** ✗（前者是服务器绑定关系、后者只有名字），
+      //   而 ⭐ `api.spaceSecurityOverview()` 那边**现成有** ✓ ⇒ ⭐ 用它，不改 Rust ✓。
+      //   ⚠️ 那是**桌面专属**命令（Web 没有钥匙柜）⇒ 失败就空 map ⇒ 下面兜底当团队 ✓。
+      const kindByWs = new Map<string, "personal" | "team">();
+      if (isDesktopPlatform()) {
+        try {
+          for (const v of await api.spaceSecurityOverview()) {
+            // ⚠️ 那个字段名叫 `space_id` ✗，但 `set_space_kind` 收的就是它 ⇒ ⭐ 实为 **workspace id** ✓。
+            kindByWs.set(v.space_id, v.kind);
+          }
+        } catch {
+          /* 读不到就不塞 —— 下面的兜底会当团队 ✓ */
+        }
+      }
       const name = new Map(spaces.map((s) => [s.id, s.name]));
       // 已删除的工作空间不该在这里露出（否则只剩一行裸 UUID）。后端已按
       // meta.workspaces 过滤，这里再挡一层：空间列表已加载时，只认识得出名字的
@@ -553,6 +594,7 @@ export function SyncPanel() {
           return {
             ws_id: id,
             name: name.get(id) ?? id,
+            kind: kindByWs.get(id) ?? "team",
             server_url: p?.server_url ?? "",
             token: p?.token ?? "",
             space_id: p?.space_id ?? "",
@@ -1028,16 +1070,30 @@ export function SyncPanel() {
   const todayItems = myHistory
     .filter((h) => new Date(h.at).toDateString() === todayStr)
     .reduce((a, h) => a + (h.pushed || 0) + (h.pulled || 0), 0);
+  // ⚠️ **2026-10-04 加**（owner：「个人空间不显示服务器同步内容」）：
+  //   ③ 服务器那一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
+  //   ⭐ 个人空间不经过服务器（owner 裁定「个人空间不绑服务器」✓），它的远程路径是**设备直连** ✓。
+  //   ⚠️ 必须定义在这里 —— 下面 `isPersonalActive` 要用它（放后面会「used before declaration」）。
+  const serverRows = rows.filter((r) => r.kind === "team");
   const heroBound = !!activeRow && !!activeRow.server_url.trim() && !!activeRow.space_id.trim();
+  // ⭐ 当前空间是个人空间吗？⚠️ `rows` 只有**当前活动空间**那一行（见 refresh 里的 ids）
+  //   ⇒ ⭐「服务器那一段一行都没有」就等于「当前不是团队空间」✓（取不到 kind 时兜底当团队 ✓）。
+  //   ⚠️ 必须定义在这里 —— 下面的 `heroState` / `heroRoute` 都要用它（放后面会「used before declaration」）。
+  const isPersonalActive = serverRows.length === 0;
+  // ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
+  //   ⭐ 个人空间**不经过服务器** ⇒ ⭐ 不该说「还没绑同步」✗（那是服务器口径的提醒 ✓）；
+  //   ⭐ 它该说的是自己那条路：**附近设备直连** ✓。
   const heroState = syncing
     ? "正在同步"
     : lastSync
       ? lastSync.ok
         ? "已同步"
         : "上次同步没成功"
-      : heroBound
-        ? "还没同步过"
-        : "还没绑同步";
+      : isPersonalActive
+        ? "附近设备直连"
+        : heroBound
+          ? "还没同步过"
+          : "还没绑同步";
   const heroDot = syncing ? " is-busy" : lastSync && lastSync.ok ? " is-ok" : "";
   const heroSub = [
     activeRow?.name ?? "",
@@ -1057,7 +1113,11 @@ export function SyncPanel() {
         : `这一轮走的是：设备直连 · ${lanStatus.peers} 台可用`
       : lanStatus?.kind === "configured"
         ? "这一轮走的是：服务器"
-        : "这一轮走的是：还没绑同步";
+        // ⚠️ **2026-10-04 改**：⭐ 个人空间不说「还没绑同步」✗（那是叫他去绑服务器 ✓），
+        //   而是如实说它自己这条路：**附近设备直连** ✓。
+        : isPersonalActive
+          ? "这一轮走的是：附近设备直连（个人空间不经过服务器）"
+          : "这一轮走的是：还没绑同步";
   // ── ★ 2026-09-29（IA）：分组 ＋ 每行一个可展开项 —— 每行右边那个【摘要值】────────
   // 口径：**每一行的值都由真实读数算出来**（写死就是在骗人），且尽量复用既有 <option> /
   //       既有小标题的词 —— 本笔不动任何一句既有文案。
@@ -1175,13 +1235,18 @@ export function SyncPanel() {
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>
-              <div className="sync-subtitle">每个空间各自绑定服务器与组织空间</div>
+              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：填一个配对暗号就能和附近的设备直连" : "每个空间各自绑定服务器与组织空间"}</div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
-            <span className={`sync-chip${rows.some((r) => r.ws_id === activeId && r.token) ? " is-on" : ""}`}>
-              {rows.some((r) => r.ws_id === activeId && r.token) ? "已登录" : "未登录"}
-            </span>
+            {/* ⚠️ **2026-10-04 改**（owner：「去掉个人空间的登录状态」）：⭐ 个人空间下**整枚藏掉** ✗ ——
+                它不经过服务器 ⇒ 没有"登录"这回事 ✓（原来会显示一枚「未登录」，看着像出了故障 ✓）。
+                ⚠️ 团队空间照旧 ✓（那一枚反映的是**当前激活空间**的绑定状态 ✓）。 */}
+            {!isPersonalActive && (
+                          <span className={`sync-chip${rows.some((r) => r.ws_id === activeId && r.token) ? " is-on" : ""}`}>
+                            {rows.some((r) => r.ws_id === activeId && r.token) ? "已登录" : "未登录"}
+                          </span>
+            )}
           </header>
 
           {!isDesktopPlatform() && (
@@ -1365,17 +1430,27 @@ export function SyncPanel() {
                   ★ 2026-09-29（规格 §9.2）：**总闸关闭时这一行【不灰】** —— owner 原话「服务器不灰」，
                      因为那一行装的是**配置入口**（地址/账号/组织空间/成员），不是开关；灰掉它 ⇒
                      用户没法先准备配置。**但要在值旁边标明「当前不自动同步」**（不许让用户以为它在跑）。 */}
+              {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
+                  ⭐ 个人空间**整行不显示** ✗ —— 这一行的摘要写的是「未绑定」（服务器口径 ✓），
+                  而个人空间根本不经过服务器 ✓（owner 裁定），它的远程路径是下面的**设备直连** ✓。 */}
+              {!isPersonalActive && (
               <details className="sync-row">
                 <summary>
                   <span className="sync-row-label">服务器</span>
+                  {/* ⚠️ **2026-10-04**：摘要也按 `serverRows` 算 ✓ —— 否则个人空间会把值算进去、
+                      而下面一张卡都没有（看起来像坏了）✓。 */}
                   <span className="sync-row-value" title={serverText}>
                     {totalOff ? `${serverText} · 当前不自动同步` : serverText}
                   </span>
                   <span className="sync-row-caret" aria-hidden>›</span>
                 </summary>
                 <div className="sync-row-body">
-                  {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
-                  {rows.map((r) => {
+                  {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示服务器同步内容」）：
+                      ⭐ 这一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
+                      ⭐ 个人空间不该出现在这里（它不经过服务器 —— owner 裁定「个人空间不绑服务器」✓），
+                      而它的远程路径是下面那块**设备直连** ✓。 */}
+                  {serverRows.length === 0 && <div className="sync-empty-state">还没有可配置的团队空间</div>}
+                  {serverRows.map((r) => {
                     const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
                     const state = r.server_url && r.space_id ? "bound" : r.server_url ? "partial" : "none";
                     return (
@@ -1644,6 +1719,8 @@ export function SyncPanel() {
                   })}
                 </div>
               </details>
+              )}
+
 
             </div>
           </div>
@@ -1801,7 +1878,13 @@ export function SyncPanel() {
                 （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
                 ★ 2026-09-29（§9.2）：**总闸＝关闭 ⇒ 这一行灰掉**（它是开关；总闸关了它不可能生效）。
                    灰是"不能点"，**不是"藏起来"** —— 用户要看得到"它停着"这件事（上面那个黄框在说为什么）。 */}
-            {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
+            {/* ⚠️ **2026-10-04 改**（owner：「要显示设备直连的条目」）：⭐ 门槛去掉 `space_id` ✗ ——
+                原来要求 `!!activeRow?.space_id.trim()` ✓，而 ⭐ 个人空间**永远拿不到** `space_id`
+                （今天 `set_sync_profile` 装了真拦：只有团队空间能绑服务器 ✓）
+                ⇒ ⭐ 个人空间的「设备直连」**永远不显示** ✗ —— 而那正是它唯一的远程路径 ✓。
+                ⚠️ 原顾虑「会显示**别的空间**的地址」已不成立：`api.lanStatus(activeId)` 是**按空间查**的
+                （Rust `lan_status(db, workspace_id)` ✓）。 */}
+            {isDesktopPlatform() && lanStatus && !!activeRow && (
               <>
                 <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                   <summary>
@@ -1810,7 +1893,7 @@ export function SyncPanel() {
                     <span className="sync-row-caret" aria-hidden>›</span>
                   </summary>
                   <div className="sync-row-body">
-                    <div className="sync-att sync-mesh" title="监听地址填两种都行：① 本机内网地址（如 192.168.1.5:8788，同一个 Wi-Fi 直接可用）；虚拟网络（VPN）里要填【虚拟网卡上的地址】—— 填物理网卡的地址，隧道里的对端会连不上。② 0.0.0.0:8788 —— 听所有网卡、地址由系统自己报出去，换网或多张网卡都不用改。">
+                    <div className="sync-att sync-mesh">
                       <span className="sync-att-text">
                         {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
                             已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
@@ -1820,7 +1903,7 @@ export function SyncPanel() {
                             没发生。⇒ 两条路都写在**看得见**的文案里（不只在 hover 提示与 placeholder 里）。
                             ⚠️ 与"口令"合并成**同一个 hint**（只加一行文字，不加块）⇒ 面板高度只多一行。 */}
                         <span className="sync-hint">
-                          {inlineMd("地址两种填法：**本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788** —— 那是「**听所有网卡**」，地址由系统自己报出去：**换网、多张网卡都不用改**。")}
+                          {inlineMd("填 **本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788**（**听所有网卡**，地址由**系统报出**）。")}
                           <br />
                           {/* ★ `U9` / `INV-PER-unencrypted-needs-strong-secret`（2026-10-01）：
                               原先这句只写「同一网段里谁都能拉，**内容仍是密文**」—— 那说的是**已加密**那一半 ✓，
@@ -1828,14 +1911,9 @@ export function SyncPanel() {
                               且拉走的是**明文** ✓ ⇒ 两句都要说，并点名"没设＝不设防" ✓。 */}
                           {lanStatus.mesh.tokenSet
                             ? inlineMd("口令：**已设** —— ⚠️ **它是这个空间的唯一防线**：同一网络里，拿到「地址 ＋ 空间 ＋ 口令」这三样的人就能把记录**整批拉走**，而且**你不会收到任何提示**。")
-                            : inlineMd("口令：**未设** ⚠️ —— 未加密的空间里，**没设口令就等于不设防**（同一网络谁都能把记录拉走、且是**明文**）；已加密的空间里内容仍是密文，但也**强烈建议**设一个 —— 口令是第二道门，不是替代品。")}
+                            : inlineMd("口令：**未设** ⚠️ —— **没设 = 不设防**（同一网络里谁都能拉走记录；未加密时是**明文**）。")}
                         </span>
                         {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
-                        <span className="sync-hint">
-                          {/* ⚠️ 2026-09-29（D3）：这句自己就带 `**` ⇒ 必须过 `inlineMd`，
-                              否则渲染出来是「会**顺手**和…」（owner 在真机上看到的就是这个）。 */}
-                          {inlineMd("开着的空间点「同步」时会**顺手**和同一网段的对端交换一轮。")}
-                        </span>
                       </span>
                       <div className="sync-field">
                         <input
@@ -1848,6 +1926,21 @@ export function SyncPanel() {
                         <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
                           保存地址
                         </button>
+                      </div>
+                      {/* ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
+                          ⭐ 两台设备填**同一个**暗号就能在同一个网络里互连 ✓，不需要服务器 ✓。
+                          ⚠️ 团队空间用服务器上的组织空间 id 对暗号 ⇒ 这一项对它们没有影响 ✓。 */}
+                      <div className="sync-field">
+                      <input
+                      className="sync-input"
+                      placeholder="配对暗号：两台设备填得一模一样（例如：我的两台电脑）"
+                      value={meshRoom}
+                      disabled={meshBusy}
+                      onChange={(e) => setMeshRoom(e.target.value)}
+                      />
+                      <button className="sync-btn" disabled={meshBusy || !meshRoom.trim()} onClick={() => void saveMeshRoom()}>
+                      保存暗号
+                      </button>
                       </div>
                       <div className="sync-field">
                         <input
@@ -2098,7 +2191,10 @@ export function SyncPanel() {
                 ⚠️ 门槛同时收 `mesh.enabled`：**"只开网格、不绑服务端"** 是丙要支持的配置，
                 那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
                 只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
-            {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
+            {/* ⚠️ **2026-10-04 改**：同上 —— 这一行（附近发现/地址）也不该因为没绑服务器就不显示 ✓。
+                ⚠️ 里面那句 `lanRowBound ? lanStatus.line : ""` **照旧** ✓ ⇒ ⭐ 个人空间看不到
+                "去绑服务器"那句读数 ✓（那个三元本来就是为这一刻写的 ✓）。 */}
+            {isDesktopPlatform() && lanStatus && !!activeRow && (
               <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
                 <span className="sync-att-text">
                   {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
@@ -2117,7 +2213,7 @@ export function SyncPanel() {
                       那是上面注释钉着的口径）⇒ 提示**常显**，只在真的 0 台时才有用，代价是多一行字 ✓。
                       ⛔ 不写"一定能修好"那种话 ✗ —— 只列**最可能的两个**原因 ＋ 指向完整指引 ✓。 */}
                   <span className="sync-hint">
-                    {inlineMd("**找不到对方？** 先查两件：① 两台设备在**同一个网络**（IP 前三段一样）；② 这个网络**没开「AP 隔离／客户端隔离」**（访客 Wi-Fi、酒店、企业 Wi-Fi 常开）—— 最快的验证是**用手机热点**再试一次。完整指引见 `docs/troubleshooting-nearby-devices.md`。")}
+                    {inlineMd("**找不到对方？** 两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
                   </span>
                 </span>
               </div>

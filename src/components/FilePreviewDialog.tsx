@@ -13,6 +13,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
+import { ConvertToPageIcon, FitWidthIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { useResolvedTheme } from "../store/theme";
 
@@ -136,7 +137,12 @@ function collectOutline(root: Element): MdOutlineItem[] {
   return out;
 }
 
-export function FilePreviewDialog() {
+export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {}) {
+  // ⚠️ **2026-10-04 加 `inline`**（owner：「pdf 和文件预览面板可否跟页面一个级别」）——
+  //    ⭐ 与 `PdfReader` **同一个形状** ✓（那边是 `inline ? tree : createPortal(tree, body)` ✓）：
+  //    · `inline === true` ⇒ ⭐ 它就是**主区里的一种视图** ✓（铺满 `.main` ✓，⭐ 不 portal ✓
+  //      ／ ⭐ 不锁外壳滚动 ✓ ／ ⭐ 不登记返回栈 ✓）；
+  //    · `false`（⭐ 默认 ✓）⇒ ⭐ 照旧是全屏浮层 ✓ ⇒ ⭐ **这一步不改变任何现有行为** ✓（接线在下一步 ✓）。
   // 逐字段订阅（`close`/`importAsPage` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
   const target = useFilePreview((s) => s.target);
   const mdHtml = useFilePreview((s) => s.mdHtml);
@@ -154,7 +160,13 @@ export function FilePreviewDialog() {
   const outlineWRef = useRef(outlineW);
   outlineWRef.current = outlineW;
   // 内容是否适配窗口宽度（相对 --doc-width 文档宽）。
-  const [contentFull, setContentFull] = useState(false);
+  // ⚠️ **2026-10-04 改**：默认从 `false`（文档宽 780px）改成 **`true`（适配窗口宽度）** ✓ ——
+  //    owner 的诉求是"⭐ **像 PDF 阅读器那样自动跟着内容区变宽**" ✓。
+  //    ⚠️ 原先两边默认档不同：⭐ PDF 默认 `fit-width`（跟容器 ✓）／ ⭐ md 默认"文档宽"（固定 780px ✗）
+  //      ⇒ 收侧栏时"PDF 跟着变、md 不动" ✓（这正是 owner 报的现象 ✓）。
+  //    ⭐ 现在两边一致：**默认都跟容器** ✓；⭐ 想看文档宽点顶部那个按钮即可切回 ✓
+  //      （它加 `.fm-md-preview.is-full` ⇒ `max-width: none` ✓，接线见下面的 className ✓）。
+  const [contentFull, setContentFull] = useState(true);
   const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
@@ -258,12 +270,63 @@ export function FilePreviewDialog() {
 
   // Android 返回键：应用级文件预览浮层（`useFilePreview` 驱动，点空白/× 关闭）。
   // 只有 `target` 在（= 浮层真的渲染出来）时才登记——见 lib/overlayStack.ts 与 §4.1.4。
-  useOverlayLayer("filePreview", !!target, close);
+  // Android 返回键：**只在它确实以浮层身份出现时才登记**（`inline` 时它是主区里的视图，
+  // 没有"最上层浮层"可言 —— 与 `PdfReader` 里那句 `open && !inline` 同一口径）。
+  useOverlayLayer("filePreview", !!target && !inline, close);
   // §4.1.2 第 4 条：打开时锁住"当前视图真实的那个滚动容器"。
   // 这一条此前**漏了**（是这一族里唯一没接锁的浮层）：实测只开着它时
   // `overlayScrollLockCount()` = 0，也就是浮层开着还能把背景正文拖走。
   // 验收脚本里它一度"通过"锁断言，靠的是**上一层泄漏的锁**（见 §4.1.4 的说明）。
-  useOverlayScrollLock(!!target);
+  // ⚠️ **2026-10-04**：⭐ `inline` 时**不锁外壳** ✗ —— 它本身就是主区里的一块 ✓，
+  // 锁外壳只会让"侧栏/别处滚不动"，那正是 owner 报的那个体感（同一处 PDF 也这么改过 ✓）。
+  useOverlayScrollLock(!!target && !inline);
+
+  // ⚠️ **2026-10-04 加**（owner：「把 htm/html/txt 加入文件预览支持」）：
+  //   ⭐ 判据**照抄** `FileManagerView` 那处既有的 `isText`（`text/` 那一族 ／ `application/json` ／
+  //   `application/xml` ✓）—— ⭐ 同一口径不写第二份 ✓（那边的网格文本预览也用这一套 ✓）。
+  const isTextLike = !!target && (
+    target.mime.startsWith("text/") || target.mime === "application/json" || target.mime === "application/xml"
+  );
+  // ⭐ **按 hash 读字节** ✓ —— ⚠️ **不能**用 `api.readTextFile(path)` ✗：
+  //   `store/filePreview.ts` 里 md 那条路的注释逐字写着「`read_text_file` on the raw disk path would
+  //   return **ciphertext** garbling the preview when E1 encryption is on」✓
+  //   ⇒ ⭐ 加密空间下按路径读会拿到密文 ✓（⭐ `readAttachmentBytes(hash)` 才会让后端解密 ✓）。
+  //   ⚠️ 顺带记下：`FileManagerView` 的网格文本预览用的正是 `readTextFile(f.path)` ✗ ——
+  //   ⭐ 那处是既有的隐患（加密空间里会乱码 ✓），⭐ 不在这一笔的范围 ✓。
+  const [textBody, setTextBody] = useState<string | null>(null);
+  const [textError, setTextError] = useState("");
+  // ⚠️ **2026-10-04**：⭐ html 的两种看法（owner 选了「两个都要」）——
+  //   ⭐ 默认 **源码** ✓（最安全 ✓）；⭐ 点一下才在 ⭐ **沙箱 iframe** 里渲染 ✓。
+  //   ⚠️ 沙箱用 ⭐ sandbox 空串（⭐ 最严那一档：⭐ 禁脚本 ＋ ⭐ 禁同源 ＋ ⭐ 禁表单 ＋ ⭐ 禁弹窗 ✓）——
+  //   ⇒ ⭐⭐ 页面照常显示 ✓，⭐ 而它里面的脚本**一行都跑不了** ✓ ⇒ ⭐ 外来 html 碰不到应用 ✓。
+  //   ⚠️ 内容走 `srcDoc`（⭐ 不落盘、不发请求 ✓）；⭐ CSP 是 default-src self ⇒ ⭐ 外部图片/样式被拦 ✓（⭐ 更安全 ✓）。
+  const [htmlRendered, setHtmlRendered] = useState(false);
+  const isHtml = !!target && (target.mime === "text/html" || /\.html?$/i.test(target.name || ""));
+  useEffect(() => {
+    if (!target || !isTextLike || isMd) { setTextBody(null); setTextError(""); return; }
+    let alive = true;
+    setTextBody(null);
+    setTextError("");
+    (async () => {
+      try {
+        const readBytes = () => api.readAttachmentBytes(target.hash);
+        let bytes: ArrayBuffer;
+        try {
+          bytes = await readBytes();
+        } catch (first) {
+          // 与上面图片/video 那条同款：字节可能还没同步到本机 ⇒ 先按需取回来再读一次。
+          if (!(await ensureAttachmentBytes(target.hash))) throw first;
+          bytes = await readBytes();
+        }
+        if (!alive) return;
+        // ⚠️ `fatal: false`：⭐ 二进制文件被当文本打开时**不该炸** ✓ —— 坏字节用替换符显示 ✓。
+        setTextBody(new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes)));
+      } catch (e) {
+        if (alive) setTextError(String(e));
+      }
+    })();
+    return () => { alive = false; };
+  }, [target?.id, target?.hash, isTextLike, isMd]);
 
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;
@@ -294,61 +357,54 @@ export function FilePreviewDialog() {
     </div>
   );
 
-  return createPortal(
-    <div className="fm-preview-overlay" onClick={close}>
-      <div className="fm-preview" onClick={(e) => e.stopPropagation()}>
+  // ⚠️ **2026-10-04**：`inline` 形态 ⭐ **不 portal** ✓（它就是主区里的一块 ✓）；
+  //    而且 ⭐ 根上**不能**挂"点空白关闭" ✗ —— ⭐ 页面里没有"空白" ✓ ⇒ 关闭改走顶栏那颗 × ✓（见下）。
+  // ⚠️⭐ 根类名**必须是字面量** ✗ —— `check-overlay-registry.mjs` 的判据是
+  //    「JSX 里字面量写出来的、以 `-overlay`/`-popover` 结尾的 class token」✓
+  //    ⇒ ⭐ 写成 `className={inline ? "a" : "b"}` 会让它报「幽灵条目：没有任何组件渲染」✓（实测撞过 ✓）。
+  //    ⇒ ⭐ 所以恒为 `fm-preview-overlay` ✓ ＋ ⭐ 内联时**加**一个 `is-inline` ✓ ⇒ ⭐ 位置交给 CSS 覆盖 ✓。
+  const tree = (
+    <div className={`fm-preview-overlay ${inline ? "is-inline" : ""}`} onClick={inline ? undefined : close}>
+      <div className="fm-preview" onClick={inline ? undefined : (e) => e.stopPropagation()}>
         <div className="fm-preview-head">
           <span className="fm-preview-name">{target.name}</span>
+          {/* ⚠️ **2026-10-04 去掉**（owner：「去掉 md 文档的关闭按钮」）—— 这颗 × 是我上一批为
+              `inline` 形态补的出口 ✗。
+              ⭐ 去掉之后**还能怎么关**（都在，随时可用）：
+                · 点左侧竖条切到别的活动（`ActivityBar` 里 `if (id !== activity) close()`）；
+                · 点页面树里的一个页面（`openPage` 里会 `close()`）；
+                · 切任何视图（`setView` 里会 `close()`，命令面板也算）；
+                · ⚠️ 浮层形态（窄屏）另外还有"点空白"与 Android 返回键。 */}
           {target.mime === "application/pdf" && (
-            <button className="fm-preview-read" onClick={openPdf}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                <path d="M14 3v6h6" />
-                <path d="M9 14l3-3 2.5 2.5-3 3z" />
-                <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
-              </svg>
-              <span>阅读并批注</span>
+            <button className="fm-preview-read" onClick={openPdf} title="阅读并批注" aria-label="阅读并批注">
+              <ReadAnnotateIcon aria-hidden />
             </button>
           )}
           {isMd && (
             <button
               className={`fm-preview-read fm-width-toggle${contentFull ? " is-on" : ""}`}
+                aria-label="切换文档宽度 / 适配窗口宽度"
               onClick={() => setContentFull((s) => !s)}
               title={contentFull ? "恢复文档宽度" : "适配窗口宽度"}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M4 5h16M4 12h16M4 19h16" />
-                <rect x="7" y="9" width="10" height="6" rx="1" />
-              </svg>
-              <span>{contentFull ? "文档宽" : "适配宽"}</span>
+              <FitWidthIcon aria-hidden />
             </button>
           )}
           {isMd && (
             <button
               className={`fm-preview-read fm-outline-toggle${outlineOpen ? " is-on" : ""}`}
+                aria-label="切换目录"
               onClick={() => setOutlineOpen((s) => !s)}
               title="切换目录"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-              </svg>
-              <span>目录</span>
+              <OutlineIcon aria-hidden />
             </button>
           )}
           {target.mime === "text/markdown" && (
-            <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} disabled={mdImporting}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                <path d="M14 3v6h6" />
-                <path d="M12 15v-6" />
-                <path d="M9 12l3-3 3 3" />
-              </svg>
-              <span>{mdImporting ? "转为笔记…" : "转为笔记"}</span>
+            <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} title="转为笔记" aria-label="转为笔记" disabled={mdImporting}>
+              <ConvertToPageIcon aria-hidden />
             </button>
           )}
-          <button className="fm-preview-close" title="关闭" onClick={close}>
-            ×
-          </button>
         </div>
         <div className="fm-preview-body">
           {target.mime.startsWith("image/") ? (
@@ -424,14 +480,53 @@ export function FilePreviewDialog() {
             ) : (
               <div className="fm-preview-unsupported">无法渲染该 Markdown 文件。</div>
             )
-          ) : target.mime.startsWith("text/") ? (
-            <div className="fm-preview-unsupported">文本文件：请在文件夹中打开查看。</div>
+          ) : isTextLike ? (
+            /* ⚠️ **2026-10-04 改**（owner 要求）：⭐ txt / htm / html / json / xml 现在**能预览**了 ✓
+                （原来这里只有一句「文本文件：请在文件夹中查看。」✗）。
+                ⚠️⭐ **按源码显示，不渲染 HTML** ✗ —— 这类文件是从外面拿进来的 ⇔ 里面可能有脚本 ✓，
+                而这里是 App 里的一块 ⇒ ⭐ **绝不能** `dangerouslySetInnerHTML`（⭐ 那是 XSS 入口 ✓）。
+                ⭐ 想看渲染效果：用系统浏览器打开（⭐ 天然沙箱 ✓）／ ⭐ 或另开一条**沙箱 iframe** 的路 ✓。 */
+            textError ? (
+              <div className="fm-preview-unsupported">读不到这个文本文件：{textError}</div>
+            ) : textBody === null ? (
+              <div className="fm-preview-unsupported">正在读…</div>
+            ) : (
+              <div className="fm-text-wrap">
+                {isHtml && (
+                  <div className="fm-text-bar">
+                    {/* ⭐ owner 选的「两个都要」：⭐ 源码 ⇄ ⭐ 沙箱渲染 ✓（⭐ 默认源码 ✓）。 */}
+                    <button
+                      className="fm-text-toggle"
+                      onClick={() => setHtmlRendered(true)}
+                      disabled={htmlRendered}
+                    >
+                      渲染网页
+                    </button>
+                    <span className="fm-text-note">沙箱渲染：脚本不会运行</span>
+                  </div>
+                )}
+                {isHtml && htmlRendered ? (
+                  /* ⭐ **沙箱渲染** ✓ —— sandbox 空串是最严那一档（⭐ 脚本一行都跑不了 ✓）。
+                     ⚠️ title 是给读屏软件的可访问名 ✓（⭐ iframe 必须有 ✓）。 */
+                  <iframe
+                    className="fm-html-preview"
+                    sandbox=""
+                    srcDoc={textBody}
+                    title={target.name}
+                  />
+                ) : (
+                  <pre className="fm-text-preview">{textBody}</pre>
+                )}
+              </div>
+            )
           ) : (
             <div className="fm-preview-unsupported">该文件类型暂不支持内嵌预览，可在文件夹中打开或用系统打开。</div>
           )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
+  // ⭐ `inline` ⇒ 直接交回主区（`App.tsx` 那条 `.main` 分支 ✓）；
+  // ⭐ 否则照旧 portal 到 body（全屏浮层 ✓）。
+  return inline ? tree : createPortal(tree, document.body);
 }

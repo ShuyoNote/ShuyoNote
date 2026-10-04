@@ -33,8 +33,15 @@
   --text-faint: #8f959e;
   --hover: #f2f3f5;
   --hover-strong: #e8eaed;
-  /* Left sidebar width (shared by body-portaled overlays that must not cover it). */
+  /* Left sidebar width —— ⭐ **只表示"侧栏那一列有多宽"** ✓（`.sidebar` 的 width/min-width 用它 ✓）。 */
   --sidebar-w: 240px;
+  /* ⚠️ **2026-10-04 加**：⭐ **浮层避让用的偏移量，与 `--sidebar-w` 分开** ✗。
+     来由：`--sidebar-w` 一度被两件事共用 —— ① 侧栏自己的宽度 ✓ ② 浮层 `left` 的避让量 ✓；
+     而「收起侧栏」时 JS 把它写成 0 ✗ ⇒ ⭐ 连 `.sidebar` 的 `width`/`min-width` **也变成 0** ✓
+     （⭐ 收起时它 `hidden`（`display:none`）所以看不出后果 ✗，但⭐ **语义上不该共用** ✓）。
+     ⭐ 现在：收起时**只把这一条写成 0** ✓ ⇒ 浮层铺满 ✓ 而 `.sidebar` 的宽度语义**不受影响** ✓。
+     ⚠️ 用它的只有 `.fm-preview-overlay` 的 `left` 一处 ✓（全仓 `var(--sidebar-w` 共 3 处 ✓）。 */
+  --sidebar-offset: 240px;
 
   /* 左竖条宽 + 标题栏高：供 fixed 弹层（预览/TOC/PdfReader 等）避开这些 chrome。
      --titlebar-h 由前端在自绘标题栏开启时设为 32px，系统标题栏时 0。 */
@@ -1802,7 +1809,12 @@ select.sync-input {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 7px 14px;
-  font-size: 12px;
+  /* ⚠️ **2026-10-04 改**（owner：「按钮和输入框不协调」）：⭐ 补上**高度** ✗ ——
+     输入框有 `min-height: 44px`（那条「可点控件 ≥44」的规矩，见 `.sync-input` 的注释），
+     而按钮**没有** ⇒ 实际只有 ~29px ⇒ 并排时高矮不齐，而且按钮自己也没守那条规矩 ✓。
+     ⭐ 字号也跟输入框对齐（12 → 13）✓；圆角本来就是同一个 `--radius-sm` ✓。 */
+  min-height: 44px;
+  font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
@@ -3401,6 +3413,17 @@ select.sync-input {
   background: var(--border-strong);
   background-clip: content-box;
 }
+/* ⚠️ **2026-10-04 加**（owner 反馈：「⭐ 侧边栏的滚动条没有了」✓）：
+   ⭐ 让**侧栏**的滚动条**常显** ✓ —— 上面那条缩略图是 `background: transparent` ＋ 只在 `:hover` 时才给颜色 ✓，
+   ⇒ ⭐ 不悬停就**完全看不见** ✗（⭐ 那是"侧栏是常驻区域、默认滚动条太抢眼"的原设计 ✓，owner 明确说要去掉它 ✓）。
+   ⚠️ 只加**这一条**、只点 `.sidebar-tree` ✓ —— 上面那组的另两个（⭐ 设置正文 `.set-body-scroll` ／
+   设置导轨 `.set-rail` ✓）**维持原样** ✓；⭐ hover 那条特异性更高（`.sidebar-tree:hover` ✓）
+   ⇒ ⭐ 悬停时仍然会加深成 `--border-strong` ✓（⭐ 原设计的那一半保住了 ✓）。
+   ⚠️ 用 `background-color` 而不是 `background` 简写 ✗ —— 简写会把 `background-clip` 打回 `border-box` ✓
+   （⭐ 那会让这条竖条从 8px 涨成满宽 ✗）。 */
+.sidebar-tree::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+}
 .sidebar-tree::-webkit-scrollbar-track,
 .set-body-scroll::-webkit-scrollbar-track,
 .set-rail::-webkit-scrollbar-track {
@@ -3900,12 +3923,16 @@ select.sync-input {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 7px 8px;
+  /* ⚠️ **2026-10-04 改**（owner：⭐ 侧栏树形控件条目的**上下间距略小一点** ✓）：
+     ⭐ 上下各收：padding 7→5、margin 2→1 ⇒ ⭐ 单行高 **40px → 34px** ✓（⭐ 约小 15%，是"略"✓）。
+     ⚠️ **左右**不动 ✗（8px / 6px 保持 ✓ —— 只收纵向 ✓）；⭐ 也**没动** `.tree-icon` 的 22px ✗
+     （⭐ 那是图标尺寸，不是间距 ✓）。 */
+  padding: 5px 8px;
   cursor: pointer;
   font-size: 14px;
   user-select: none;
   border-radius: var(--radius-sm);
-  margin: 2px 6px;
+  margin: 1px 6px;
   color: var(--text);
   position: relative;
   transition: background var(--transition-fast), color var(--transition-fast);
@@ -14517,12 +14544,38 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   background: var(--hover);
 }
-/* 只属于窄屏的两种形态（见文件末尾"文件视图窄屏适配"那段）：
-   · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）；
-   · `.fm-more-btn`  —— 表格行尾的 `⋯`（桌面已经有六个小按钮，用不着它）。
-   基础规则里都 `display:none` ⇒ **桌面一个像素都不变**，形态切换全在窄屏那段里做。 */
+/* 只属于窄屏的形态（见文件末尾"文件视图窄屏适配"那段）：
+   · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）。
+   ⚠️ **2026-10-04 改**（owner 决定）：⭐ 下面那个 `⋯` **不再"只属于窄屏"** ✗ ——
+     ⭐ **桌面也收成一个 hover 才现的 `⋯`** ✓（与窄屏同一个按钮 ✓）。
+     ⚠️ 原注释那句「⭐ 桌面已经有六个小按钮，用不着它」当时是对的 ✓，现在 owner 要把六个收进来 ✓。 */
 .fm-btn-icon { display: none; }
-.fm-more-btn { display: none; }
+/* ⚠️ **2026-10-04 二次改**（owner 决定）：⭐ **去掉文件视图里的「更多操作」按钮** ✗ ——
+   ⭐ 桌面**不再** hover 显示那个 `⋯`（基础规则 `display:none` 直接生效 ✓）。
+   ⭐ 桌面的文件行操作**只走两条**：⭐ 行上**右键**（完整菜单 ✓）＋ ⭐ **双击文件名改名** ✓。
+   ⚠️ **窄屏那条 media 规则保留**（见文件末尾 `.fm-more-btn { display:flex; 44×44 }` ✓）——
+   ⭐ 因为窄屏**没有 hover** ✗、右键只能靠**长按** ✓（⭐ 那条注释逐字写着「⭐ **列表模式此前根本没有右键入口**」✓）
+   ⇒ ⭐ 删掉它手机上就真的没入口了 ✓。⭐ 要连窄屏一起去掉，说一声即可 ✓。 */
+.fm-more-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.fm-more-btn:hover { background: var(--hover); color: var(--text); }
+/* ⭐ 桌面把行尾那六个小按钮**收进 `⋯`**（它们的动作一个不少地都在右键菜单里 ✓，见 `ctxMenu`）。
+   ⚠️ 用 `display: none` 而不是 `opacity: 0` ✗ —— 后者在桌面仍占位、而且能被 Tab 聚焦到 ✓。
+   ⚠️ 安全边界：⭐ `.fm-file-actions` 只在 `row.kind === "file"` 时渲染 ✓（`FileManagerView.tsx` 里那个条件 ✓）
+     ⇒ ⭐ 藏它**只影响文件行** ✓，页面行/文件夹行不受影响 ✓。 */
+.fm-ops-col .fm-file-actions { display: none; }
 .fm-preview-overlay {
   position: fixed;
   /* 避开自绘标题栏与左竖条：标题栏 32px、竖条 48px、侧栏 --sidebar-w。
@@ -14530,7 +14583,7 @@ p:has(> .editor-drawing-container) {
   top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
-  left: calc(var(--activity-w, 0px) + var(--sidebar-w, 240px));
+  left: calc(var(--activity-w, 0px) + var(--sidebar-offset, 240px));
   /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
      命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
   z-index: var(--z-content-overlay);
@@ -14579,33 +14632,37 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
   line-height: 1;
 }
+/* ⚠️ **2026-10-04 改**（owner：去掉文字只留图标）：⭐ 这一族现在是**方形图标按钮** ✗ ——
+   原先是「图标 ＋ 文字」的胶囊（`padding: 5px 12px`），去掉文字后若还留着那个内距，
+   按钮会变成一条**又宽又空**的长条 ✓。⭐ 现在四边等距 ⇒ 16px 图标 ⇒ 约 30×28 ✓。
+   ⚠️ 名字没丢：`title` ＋ `aria-label`（见组件里每个按钮 ✓）。 */
+/* ⚠️ **2026-10-04 改**（owner 给了参考图：「要这种风格」）：⭐ 无边框纯图标工具栏 ✗ ——
+   原来是**蓝色描边胶囊**（`border + accent-soft` 底）＋ 文字 ✓；去掉文字之后那个胶囊样式就
+   只剩一个空壳 ⇒ 照参考图改成：透明底、灰图标、悬停才出浅底、四边等距 ✓。
+   ⭐ 名字没丢：每个按钮都有 `title` ＋ `aria-label`（见组件 ✓）。 */
 .fm-preview-read {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: 8px;
-  padding: 5px 12px;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  margin-left: 4px;
-  transition: background 0.12s, box-shadow 0.12s;
-}
-.fm-preview-read:hover {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(51, 112, 255, 0.3);
-}
-/* 「目录」「适配宽」切换：独立于主按钮的幽灵样式，on 时加底色，可反复开关。 */
-.fm-outline-toggle,
-.fm-width-toggle {
-  border-color: var(--border);
+  justify-content: center;
+  border: none;
   background: transparent;
   color: var(--text-dim);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
+/* ⭐ 图标尺寸统一到 20px（参考图里那一档）—— 一处改全部 ✓。 */
+.fm-preview-read svg {
+  width: 20px;
+  height: 20px;
+}
+.fm-preview-read:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* ⚠️ **2026-10-04**：这两个 toggle 原来要单独"去胶囊"✗ —— 现在主块本身已是无边框 ✓，
+   这一块删掉即可（后面原有的 .is-on 规则照旧表达"开着"✓）。 */
 .fm-outline-toggle:hover,
 .fm-width-toggle:hover {
   background: var(--hover);
@@ -14639,9 +14696,6 @@ p:has(> .editor-drawing-container) {
 }
 .fm-file-annotate:hover {
   background: var(--accent-soft);
-}
-.fm-preview-close:hover {
-  color: var(--text);
 }
 .fm-preview-body {
   flex: 1;
@@ -15524,7 +15578,7 @@ p:has(> .editor-drawing-container) {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-dim);
-  padding: 10px 14px;
+  padding: 4px 14px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   position: sticky;
@@ -15533,7 +15587,7 @@ p:has(> .editor-drawing-container) {
   z-index: 1;
 }
 .file-manager-table td {
-  padding: 10px 14px;
+  padding: 4px 14px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -15559,7 +15613,7 @@ p:has(> .editor-drawing-container) {
   /* 单元格左右各收 4px：7 列共省 ≈56px，宽度 830 上下时**不用横滚就能放下** */
   .file-manager-table th,
   .file-manager-table td {
-    padding: 8px 10px;
+    padding: 4px 10px;
   }
 }
 .file-manager-table tbody tr {
@@ -15582,8 +15636,13 @@ p:has(> .editor-drawing-container) {
   margin: 0;
   vertical-align: middle;
 }
+/* ⚠️ **2026-10-04 改**（owner：「文件夹管理视图列表右边的留空太大了」）：
+   原来只有 `min-width: 240px` ✗ ⇒ 表格 auto 布局把剩余空间**平摊**给「三列没有宽度的列」
+   （name ＋ 两个 date-col）✓ ⇒ 日期列各拿一大块、而日期文字左对齐 ⇒ 右边一片空 ✓。
+   ⭐ 现在 `width: 100%` ⇒ auto 布局下它**吃掉剩余** ✓（文件名本来也最需要空间 ✓）。 */
 .fm-name-col {
   min-width: 240px;
+  width: 100%;
 }
 .fm-kind-col {
   width: 88px;
@@ -15608,6 +15667,12 @@ p:has(> .editor-drawing-container) {
 .fm-ops-col {
   width: 64px;
   text-align: right;
+}
+/* ⚠️ **2026-10-04 加**（同上）：⭐ 两个日期列**必须给固定宽** ✗ ——
+   否则 auto 布局会把剩余空间平摊给它们，日期文字左对齐 ⇒ 右边看着全是空的 ✓。
+   ⭐ 内容形如 `2026-10-04 09:52`（nowrap）＋ 左右 padding 28 ⇒ **160px** 够 ✓。 */
+.fm-date-col {
+  width: 160px;
 }
 .fm-date {
   color: var(--text-dim);
@@ -21912,7 +21977,7 @@ body.is-plugin-panel-open .main {
   /* `width: max-content` 是横滑的前提：`width:100%` 会把七列硬压进 292px。 */
   .file-manager-table { width: max-content; min-width: 100%; }
   .file-manager-table th,
-  .file-manager-table td { padding: 8px 10px; }
+  .file-manager-table td { padding: 4px 10px; }
   /* 行尾六个 20px 小按钮 → 一个 `⋯`；其余动作在动作面板里。 */
   .file-manager-table .fm-file-actions { display: none; }
   .fm-more-btn {
@@ -23314,3 +23379,80 @@ body.is-plugin-panel-open .main {
   color: var(--danger, #c0392b);
 }
 
+
+/* ⚠️ **2026-10-04 加**：文件预览的**内联形态**（owner：「pdf 和文件预览面板可否跟页面一个级别」）。
+   原来那一套是 position:fixed 的全屏浮层（避开标题栏 / 左竖条 / 侧栏）；
+   内联时它就在 .main 里 ⇒ ⭐ 位置交还文档流，那一套外边距全部作废。
+   ⚠️ 类名用**附加类**（.fm-preview-overlay.is-inline）而不是换一个类 —— 因为
+   scripts/check-overlay-registry.mjs 的判据是「JSX 里字面量写出来的、以 -overlay 结尾的 class token」，
+   写成三元表达式会让它报「幽灵条目：没有任何组件渲染」（实测撞过一次）。
+   特异性更高 ⇒ 放在文件末尾也能覆盖。 */
+.fm-preview-overlay.is-inline {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  z-index: auto;
+}
+
+/* ⚠️ **2026-10-04 加**：预览顶栏的关闭按钮。
+   来由：组件的关闭方式原来只有「点空白」＋ Android 返回键 —— 而内联形态里没有“空白” ⇒
+   没有这颗按钮就退不出去（浮层形态也一并给：触屏上点空白不好点）。 */
+.fm-preview-x:hover {
+  color: var(--text-faint);
+}
+
+/* ⚠️ **2026-10-04 加**：文本类文件的预览（txt / htm / html / json / xml）。
+   形状借 `.fm-md-preview`：同一块内容区，只是**按源码显示**、不渲染 HTML。
+   ⚠️ 不渲染 HTML 是**有意的**：文件从外面来，里面可能有脚本，而这里是 App 里的一块。 */
+.fm-text-preview {
+  margin: 0;
+  padding: 16px 20px;
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface);
+  tab-size: 4;
+}
+
+/* ⚠️ **2026-10-04 加**：html 预览的「源码 ⇄ 沙箱渲染」两态。
+   ⭐ 默认源码（最安全）；⭐ 点「渲染网页」才在 sandbox="" 的 iframe 里渲染。
+   ⚠️ iframe 的 `sandbox=""` 是最严那一档：脚本一行都跑不了 ⇒ 外来 html 碰不到应用。 */
+.fm-text-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.fm-text-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.fm-text-toggle {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.fm-text-note {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.fm-html-preview {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}

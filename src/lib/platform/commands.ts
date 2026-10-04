@@ -765,7 +765,15 @@ export interface CommandMap {
    *    关掉时**立刻松口**（窗口随之停掉，不留一个还在听的端口）。
    */
   mesh_set_config: {
-    args: { workspaceId?: string | null; bind?: string | null; token?: string | null };
+    args: {
+    workspaceId?: string | null;
+    bind?: string | null;
+    token?: string | null;
+    // ⚠️ **2026-10-04 加**（owner：「加一个配对暗号输入框」）：⭐ 个人空间的**对暗号**值 ✗。
+    //   ⭐ `null` ＝ 不动 ／ `""` ＝ 清除 ／ 有值 ＝ 覆盖 ✓（与 bind/token 同一口径 ✓）。
+    //   ⚠️ 团队空间里 `space_id` 优先 ✓ ⇒ 这一项对它们没有影响 ✓。
+    room?: string | null;
+    };
     result: MeshConfigState;
   };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };

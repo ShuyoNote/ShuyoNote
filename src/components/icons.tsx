@@ -900,3 +900,51 @@ export function AlertTriangleIcon(props: IconProps) {
     </Icon>
   );
 }
+
+// ⚠️ **2026-10-04 加**（owner：「md 预览的顶部工具栏按钮换成风格统一的 svg 图标」）——
+//   这 4 个原来是在 FilePreviewDialog 里**内联手写**的 svg（15×15 / strokeWidth 1.7）✗，
+//   ⭐ 现在收进共享图标库 ✓（与这里其余图标同形：16px / viewBox 24 / 1.7 / currentColor / round ✓）。
+//   ⭐ 图形本身**照搬**原来那几条 path ✓ ⇒ 外观不变，只是从「手写」变成「一处图标源」。
+
+/** 适配窗口宽度 / 文档宽度 的切换（原来内联在 md 预览顶栏）。 */
+export function FitWidthIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M4 5h16M4 12h16M4 19h16" />
+      <rect x="7" y="9" width="10" height="6" rx="1" />
+    </Icon>
+  );
+}
+
+/** 目录（原来内联在 md 预览顶栏）。 */
+export function OutlineIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </Icon>
+  );
+}
+
+/** 转为笔记（原来内联在 md 预览顶栏）。 */
+export function ConvertToPageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+      <path d="M12 15v-6" />
+      <path d="M9 12l3-3 3 3" />
+    </Icon>
+  );
+}
+
+/** 阅读并批注（原来内联在 md 预览顶栏的 PDF 那一条）。 */
+export function ReadAnnotateIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+      <path d="M9 14l3-3 2.5 2.5-3 3z" />
+      <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
+    </Icon>
+  );
+}

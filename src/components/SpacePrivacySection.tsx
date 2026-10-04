@@ -19,7 +19,7 @@ import { refreshVault } from "../lib/vault";
 const KIND_LABEL: Record<SpaceKind, string> = {
   personal: "个人空间",
   team: "团队空间",
-  "": "未分类",
+  // ⚠️ **2026-10-04 去掉**「未分类」这一档（owner：未分类按个人空间处理）—— ⭐ 存量老空间读出来就是个人 ✓
 };
 
 /**
@@ -187,10 +187,13 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
   return (
     <section className="space-privacy" data-testid="space-privacy">
       <div className="space-privacy-head">🔐 空间隐私 —— 每个空间能不能绑同步</div>
-      {/* 首屏只留一句结论。**"闸门没管到未分类"这句话只在这里说一次** —— 每行再说一遍就是纯噪声
-          （行里的分类徽标已经写着「未分类」，下拉里那句也说清了它为什么被放行）。 */}
+      {/* ⚠️ **2026-10-04 改**（owner：未分类按个人处理、去掉未分类这一条）：
+          ⭐ 原来这句是「个人空间要先加密才能绑同步；未分类的放行但闸门没管到」✗ —— 那两条口径都废了 ✓
+          ⇒ 现在只有一条结论：⭐ 只有团队空间能绑服务器 ✓。
+          ⚠️ **这句里不许出现连续两个星号** ✗ —— 它是**纯文本**（不过 `inlineMd` ✓），
+          而测试里有一条全局断言在钉"界面上不许露 markdown 星号" ✓ ⇒ 一写就红 ✓。 */}
       <div className="space-privacy-hint">
-        个人空间要先加密才能绑同步；团队空间免检（服务端存明文）；未分类的放行，但闸门没管到它。
+        只有团队空间能绑同步服务器。个人空间不经过服务器，走「附近设备直连」：填一个配对暗号就行。
       </div>
 
       {views === null && <div className="sync-empty-state">正在读…</div>}
@@ -206,24 +209,14 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
               </span>
               <span className={`space-privacy-kind is-${v.kind || "unknown"}`}>{KIND_LABEL[v.kind]}</span>
               <span className="space-privacy-enc">{encrypted ? "已加密" : "明文"}</span>
-              {/* ★ 判决做成**同一行的短徽标**（不是单独一句）：它才是这一列的主信息，不该被省掉；
-                  但"解释"不在这行 —— 未分类为什么放行、个人空间为什么被拦，分别由标题下那一句
-                  与被拦时的下一行（**可操作**的那句）负责。 */}
-              <span
-                className={`space-privacy-verdict ${
-                  v.gate.allow ? (v.gate.unclassified ? "is-note" : "is-ok") : "is-block"
-                }`}
-              >
-                {v.gate.allow ? (v.gate.unclassified ? "⚠️ 闸门没管到" : "✅ 可以绑同步") : "⛔ 不能绑同步"}
-              </span>
+              {/* ⚠️ **2026-10-04 去掉**（owner 选的方向：那一块整个拿掉）：
+                  ⭐ 原来这里有个「裁决」徽标（✅ 可以绑同步 / ⛔ 不能绑同步 / ⚠️ 闸门没管到）✗ ——
+                  ⭐ 现在没有"闸门"这一层了 ✓：只有团队空间能绑服务器 ✓，而那件事由**绑服务器那个动作**
+                  （`set_sync_profile`）当场报错 ✓ ⇒ ⭐ 报错落在用户按下"绑定"的那一刻、就在同一屏 ✓。
+                  ⭐ 分类本身仍然要能改 ⇒ 下面那个下拉保留 ✓（它是"把这个空间标成团队"的唯一入口 ✓）。 */}
             </div>
-            {/* ⚠️ 只有**被拦住**时才占一行 —— 那一行是**可操作**的（为什么拦、怎么解）；
-                后端（Rust）文案是 Markdown 行内写法 ⇒ 过 `inlineMd`（否则界面露出 `**`）。 */}
-            {!v.gate.allow && (
-              <div className="space-privacy-gate is-block">
-                <>⛔ {inlineMd(v.gate.reason)}</>
-              </div>
-            )}
+            {/* ⚠️ **2026-10-04 去掉**：原来被拦时会在这里占一行（后端给的可操作原因 ✗）。
+                ⭐ 现在没人拦了 ⇒ 这一行没有存在意义 ✓（真拦在绑服务器那一刻当场报错 ✓）。 */}
             <div className="space-privacy-actions">
               <select
                 className="sync-input"
@@ -234,9 +227,8 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                   void run(v.space_id, "改分类", () => api.setSpaceKind(v.space_id, e.target.value as SpaceKind))
                 }
               >
-                <option value="">未分类（放行，但没管到）</option>
-                <option value="personal">个人空间（要先加密）</option>
-                <option value="team">团队空间（免检）</option>
+                <option value="personal">个人空间（不经过服务器，只走附近设备直连）</option>
+                <option value="team">团队空间（可以绑同步服务器）</option>
               </select>
               {encrypted ? (
                 <button
