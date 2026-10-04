@@ -422,7 +422,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const headMoreRef = useRef<HTMLDivElement | null>(null);
   const [headHidden, setHeadHidden] = useState<HeadHideKey[]>([]);
   const headHiddenSet = useMemo(() => new Set(headHidden), [headHidden]);
-  // 容器宽度变了（面板开合 / 窗口缩放 / 横竖屏）→ 触发一次重渲染，让下面那个量宽 effect 重算。
+  // 容器宽度变了（面板开合 / 窗口缩放 / 横竖屏）→ 触发一次重渲染（头部收项要跟着重算 ✓）。
   const [, headBump] = useState(0);
   useEffect(() => {
     const el = headRef.current;
@@ -629,6 +629,23 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const engRef = useRef<ReturnType<typeof createPdfjsEngine> | null>(null);
   const closeRef = useRef<(() => void) | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
+  // ⚠️⚠️ **2026-10-04 修**（owner 实测：**关掉侧栏后 PDF 没有跟着变宽** ✗）：
+  //    `applyStageSize()`（L552）全文件**只被两处**调用 ✓ —— 都在"目录栏拖拽结束时" ✗
+  //    ⇒ ⭐ **侧栏一开合 / 窗口一缩放 / 横竖屏**，`stageWidth` **根本不会更新** ⇒ `availW` 不变
+  //      ⇒ `fit-width` 的 scale 不变 ⇒ ⭐ **右边留白** ✓（与 owner 描述逐字对上 ✓）。
+  //    ⚠️ 上面那个 observe `headRef` 的 effect 里**原本的注释**写着"让下面那个量宽 effect 重算"✗
+  //      —— ⭐ 而那个 effect **不存在**（大概是重构时丢了 ✓）⇒ 所以这里**补一个真正的量宽 effect** ✓。
+  //    ⚠️ 放**这里**（`stageRef` 声明之后 ✓）：⭐ 免得在它的暂时性死区里引用它 ✗（我第一版就那样写了 ✓）。
+  //    ⚠️ 拖拽期间跳过 ✓ —— 那时每帧量宽会让整屏重渲染/缩放重算 ✗，而拖拽有自己的 `onDragEnd` 收口 ✓。
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (!isResizingRef.current) applyStageSize();
+    });
+    ro.observe(stage);
+    return () => ro.disconnect();
+  }, []);
   const pageCacheRef = useRef<Map<string, string>>(new Map());
   const mountedPagesRef = useRef<Set<number>>(new Set());
   const inflightRef = useRef<Set<string>>(new Set());
