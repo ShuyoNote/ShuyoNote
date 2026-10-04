@@ -86,6 +86,7 @@ import { $createParagraphNode, $getRoot } from "lexical";
 import { useBlockCache } from "./store/blockCache";
 import { useViewStore } from "./store/view";
 import { usePdfReader } from "./store/pdfReader";
+import { useFilePreview } from "./store/filePreview";
 import { pdfPlacement } from "./lib/pdfPlacement";
 import { useFileManagerStore } from "./store/fileManager";
 import { usePropertyUiStore } from "./store/propertyUi";
@@ -960,6 +961,13 @@ function AppShell() {
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
   const pdfOpen = usePdfReader((s) => s.open);
   const pdfWhere = pdfPlacement(pdfOpen, isMobile);
+  // ⚠️ **2026-10-04 加**（owner：「pdf 和文件预览面板可否跟页面一个级别」）：
+  //   ⭐ 文件预览走**同一条放置规则** ✓ —— `pdfPlacement` 名字虽带 pdf，规则是通用的
+  //   「⭐ 桌面 ⇒ 内容区里的一种视图（inline）／ ⭐ 窄屏 ⇒ 全屏浮层（overlay）／ ⭐ 关着 ⇒ none」✓。
+  //   ⚠️ 刻意**不新写一个同义函数** ✗ —— 那正是本仓最忌讳的"两份真相源" ✓（一份规则一个出处 ✓）。
+  //   优先级：⭐ PDF 在**它前面**判 ✓ ⇒ ⭐ 两个都开着时 PDF 占主区 ✓（与改动前一致 ✓）。
+  const previewTarget = useFilePreview((s) => s.target);
+  const previewWhere = pdfPlacement(!!previewTarget, isMobile);
   const sidebarOpen = useActivity((s) => s.sidebarOpen);
   const railOpen = useActivity((s) => s.railOpen);
   useUpdateChecker();
@@ -1032,7 +1040,9 @@ function AppShell() {
           <AboutDialog />
           <SettingsDialog />
           <SpaceTransferProgress />
-          <FilePreviewDialog />
+          {/* ⚠️ **2026-10-04 改**：⭐ 顶层这份**只在浮层形态**渲染 ✗ —— 桌面端它在上面那条 `.main` 分支里 ✓
+              （⭐ 与紧邻的 `{pdfWhere === "overlay" && <PdfReader />}` 同一写法 ✓）。 */}
+          {previewWhere === "overlay" && <FilePreviewDialog />}
           <CommunitySaveDialog />
           <PdfReader />
           <FormulaEditorDialog />
@@ -1098,6 +1108,11 @@ function AppShell() {
         )}
       {pdfWhere === "inline" ? (
         <div className="main pdf-main"><PdfReader inline /></div>
+      ) : previewWhere === "inline" ? (
+        /* ⚠️ **2026-10-04 加**：⭐ 文件预览在桌面端也进主区 ✓（与上面 PDF 那条**逐字同形** ✓）——
+           ⭐ 它顶替的是"文件"视图（预览从文件列表里点开 ✓）⇒ ⭐ 关掉之后回到原来的视图 ✓
+           （⭐ `view` 没有被改过 ✓，⭐ patch 只是临时占了主区 ✓）。 */
+        <div className="main"><FilePreviewDialog inline /></div>
       ) : templateOpen ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
       ) : view === "graph" ? (
@@ -1151,7 +1166,11 @@ function AppShell() {
         <AboutDialog />
         <SettingsDialog />
         <SpaceTransferProgress />
-        <FilePreviewDialog />
+        {/* ⚠️ **2026-10-04 改**：⭐ 顶层这份**只在浮层形态**渲染 ✗ —— 桌面端它在上面那条 `.main` 分支里 ✓
+            （⭐ 与紧邻的 `{pdfWhere === "overlay" && <PdfReader />}` 同一写法 ✓）。
+            ⚠️ 这一处与上面那处（10 空格缩进）是**平行的两个外壳块** ⇒ ⭐ 两处都要改 ✗，漏一处就会
+            ⭐ 桌面端渲染两次（一次内联 ＋ 一次全屏浮层）✓ —— 我第一遍就漏了它 ✓。 */}
+        {previewWhere === "overlay" && <FilePreviewDialog />}
         <CommunitySaveDialog />
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
