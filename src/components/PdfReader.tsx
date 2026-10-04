@@ -61,6 +61,41 @@ const SIDEBAR_WIDTH_KEY = "shuyonote.pdf.sidebarWidth";
  *  开合**也**要记住 —— 宽度早就存了（上面两个 KEY），只有开合没存，所以每次打开都回视口默认。
  *  ⭐ 与宽度**同一套存法**（`shuyonote.pdf.*` 命名空间 ＋ try/catch）—— ⛔ 不发明第二种持久化。 */
 const OUTLINE_OPEN_KEY = "shuyonote.pdf.outlineOpen";
+/** ⚠️ **2026-10-04 加**（owner：「要按百分比存」）：⭐ 宽度按**窗口比例**存 ✓，px 是派生量。
+ *  ⭐ 旧的那两个 `*Width` 键**只读一次**做迁移 ✓（⭐ 之后不再写 ⇒ 自然废弃，不会有两份真相源 ✓）。 */
+const OUTLINE_RATIO_KEY = "shuyonote.pdf.outlineRatio";
+const SIDEBAR_RATIO_KEY = "shuyonote.pdf.sidebarRatio";
+/** ⭐ px ↔ 比例的换算：⭐ 比例 = px ÷ 窗口宽 ✓（窗口宽取不到就用一个合理值兜底，别除以 0）。 */
+function pxToRatio(px: number): number {
+  const w = typeof window === "undefined" ? 0 : window.innerWidth;
+  return w > 0 ? px / w : 0;
+}
+/** 读一个面板的**宽**（px）：⭐ 先看比例键 ✓，⭐ 没有就拿旧 px 键**迁移**一次 ✓，⭐ 都没有用默认。 */
+function readPanelWidth(ratioKey: string, legacyPxKey: string, def: number, min: number, max: number): number {
+  try {
+    const r = Number(localStorage.getItem(ratioKey));
+    const w = typeof window === "undefined" ? 0 : window.innerWidth;
+    if (Number.isFinite(r) && r > 0 && w > 0) return Math.max(min, Math.min(max, Math.round(r * w)));
+    // ⭐ 迁移：老版本存的是 px ⇒ 换算成比例之后再按当前窗口宽算回来 ✓（⭐ 只走这一次）。
+    const legacy = Number(localStorage.getItem(legacyPxKey));
+    if (Number.isFinite(legacy) && legacy > 0) {
+      if (w > 0) localStorage.setItem(ratioKey, String(legacy / w));
+      return Math.max(min, Math.min(max, Math.round(legacy)));
+    }
+    return def;
+  } catch {
+    return def;
+  }
+}
+/** 写**比例**（⭐ 唯一被写的键 ✓）：⭐ 只在用户动作里调 ✗（与开合那条同一口径）。 */
+function writePanelRatio(ratioKey: string, px: number): void {
+  try {
+    const r = pxToRatio(px);
+    if (r > 0) localStorage.setItem(ratioKey, String(r));
+  } catch {
+    /* 忽略 */
+  }
+}
 const SIDEBAR_OPEN_KEY = "shuyonote.pdf.sidebarOpen";
 /** 读一个布尔偏好：⭐ 没存过 / 坏值 ⇒ 用调用方给的默认（与宽度那两处的口径一致）。 */
 function readBoolPref(key: string, fallback: boolean): boolean {
@@ -98,6 +133,9 @@ function startPanelResize(
     /** 拖到多窄就**收起**（2026-09-22：拖拽与开合同一个手势）。不给就只按 min/max 夹。 */
     collapseAt?: number;
     onCollapse?: () => void;
+    /** ⚠️ **2026-10-04 加**：⭐ 自己写盘的口子 ✗ —— 宽度改成按**窗口比例**存之后，
+     *  要写的值不再是 px ⇒ 传它就不再写 `cfg.key` ✓（⭐ 不传 = 老行为 ✓）。 */
+    persist?: (px: number) => void;
   },
 ) {
   cfg.onDragStart?.();
@@ -105,7 +143,8 @@ function startPanelResize(
     cfg.commit(cfg.def);
     const el = cfg.el();
     if (el) el.style.width = `${cfg.def}px`;
-    try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
+    if (cfg.persist) cfg.persist(cfg.def);
+    else try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
     cfg.onDragEnd?.();
     return;
   }
@@ -125,7 +164,8 @@ function startPanelResize(
   const stop = () => {
     detach();
     cfg.commit(cur);
-    try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
+    if (cfg.persist) cfg.persist(cur);
+    else try { localStorage.setItem(cfg.key, String(cur)); } catch { /* 忽略 */ }
     cfg.onDragEnd?.();
   };
   /** 拖过头了：**不提交宽度**，直接收起（并结束这一次拖拽）。 */
@@ -164,6 +204,7 @@ function startPanelExpand(
   e: ReactPointerEvent<HTMLDivElement>,
   cfg: {
     min: number; max: number; def: number; key: string; side: "left" | "right";
+    persist?: (px: number) => void;
     commit: (n: number) => void;
     open: () => void;
     close: () => void;
@@ -177,7 +218,8 @@ function startPanelExpand(
   if (!host) return;
   if (e.detail === 2) {
     cfg.commit(cfg.def);
-    try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
+    if (cfg.persist) cfg.persist(cfg.def);
+    else try { localStorage.setItem(cfg.key, String(cfg.def)); } catch { /* 忽略 */ }
     cfg.open();
     return;
   }
@@ -213,7 +255,8 @@ function startPanelExpand(
     if (opened) {
       const w = widthAt(lastX);
       cfg.commit(w);
-      try { localStorage.setItem(cfg.key, String(w)); } catch { /* 忽略 */ }
+      if (cfg.persist) cfg.persist(w);
+      else try { localStorage.setItem(cfg.key, String(w)); } catch { /* 忽略 */ }
     }
     cfg.onDragEnd?.();
   };
@@ -579,8 +622,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const aiOutlineAbortRef = useRef<AbortController | null>(null);
   // 目录栏宽度（可拖拽调宽，双击归位，持久化）。
   const [outlineWidth, setOutlineWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem(OUTLINE_WIDTH_KEY));
-    return Number.isFinite(v) && v >= 160 && v <= 520 ? v : 240;
+    // ⚠️ **2026-10-04 改**：⭐ 改读**比例** ✓（⭐ 没有比例键就拿旧的 px 键迁移一次 ✓）。
+    return readPanelWidth(OUTLINE_RATIO_KEY, OUTLINE_WIDTH_KEY, 240, 160, 520);
   });
   const outlineColRef = useRef<HTMLDivElement | null>(null);
   // 面板拖拽期间暂停舞台 resize 的 React 更新（避免每帧整屏重渲染/缩放重算）。
@@ -593,7 +636,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   };
   const onOutlineResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelResize(e, {
-      min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY, dir: 1,
+      min: 160, max: 520, def: 240, key: OUTLINE_RATIO_KEY, dir: 1,
+      persist: (px) => writePanelRatio(OUTLINE_RATIO_KEY, px),
       el: () => outlineColRef.current,
       commit: (n) => setOutlineWidth(n),
       onDragStart: () => { isResizingRef.current = true; },
@@ -605,7 +649,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   /** 目录收起时：这条边上的手柄可以把面板"拖出来"（另一半）。 */
   const onOutlineExpandStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelExpand(e, {
-      min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY, side: "left",
+      min: 160, max: 520, def: 240, key: OUTLINE_RATIO_KEY, side: "left",
+      persist: (px) => writePanelRatio(OUTLINE_RATIO_KEY, px),
       commit: (n) => setOutlineWidth(n),
       open: () => { writeBoolPref(OUTLINE_OPEN_KEY, true); setOutlineOpen(true); },
       close: () => { writeBoolPref(OUTLINE_OPEN_KEY, false); setOutlineOpen(false); },
@@ -614,13 +659,14 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
 
   // 右侧批注侧栏宽度（同理：向左加宽 dir=-1，持久化）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
-    const v = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    return Number.isFinite(v) && v >= 220 && v <= 560 ? v : 260;
+    // ⚠️ **2026-10-04 改**：⭐ 同上 —— 按比例读 ✓。
+    return readPanelWidth(SIDEBAR_RATIO_KEY, SIDEBAR_WIDTH_KEY, 260, 220, 560);
   });
   const sidebarColRef = useRef<HTMLDivElement | null>(null);
   const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelResize(e, {
-      min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY, dir: -1,
+      min: 220, max: 560, def: 260, key: SIDEBAR_RATIO_KEY, dir: -1,
+      persist: (px) => writePanelRatio(SIDEBAR_RATIO_KEY, px),
       el: () => sidebarColRef.current,
       commit: (n) => setSidebarWidth(n),
       onDragStart: () => { isResizingRef.current = true; },
@@ -631,12 +677,25 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     });
   const onSidebarExpandStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelExpand(e, {
-      min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY, side: "right",
+      min: 220, max: 560, def: 260, key: SIDEBAR_RATIO_KEY, side: "right",
+      persist: (px) => writePanelRatio(SIDEBAR_RATIO_KEY, px),
       commit: (n) => setSidebarWidth(n),
       open: () => { writeBoolPref(SIDEBAR_OPEN_KEY, true); setSidebarOpen(true); },
       close: () => { writeBoolPref(SIDEBAR_OPEN_KEY, false); setSidebarOpen(false); },
       collapseAt: 160,
     });
+  // ⚠️ **2026-10-04 加**（owner：「要按百分比存」）：⭐ **窗口一变就按比例重算**两栏的 px ✓ ——
+  //   ⭐ 否则「占比不变」只在**重开 PDF**时成立 ✗（拖窗口它不会跟着变 ✓）。
+  //   ⚠️ 拖拽期间**不重算** ✗：那时宽度跟着指针走，重算会把手指下的值顶回去 ✓。
+  useEffect(() => {
+    const onResize = () => {
+      if (isResizingRef.current) return;
+      setOutlineWidth((w) => readPanelWidth(OUTLINE_RATIO_KEY, OUTLINE_WIDTH_KEY, w, 160, 520));
+      setSidebarWidth((w) => readPanelWidth(SIDEBAR_RATIO_KEY, SIDEBAR_WIDTH_KEY, w, 220, 560));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
   // 护眼模式：多档位（暖色纸底 + 页图降蓝/柔光滤镜），本地持久化。无偏好时默认开启（柔光）。
   const [eyeMode, setEyeMode] = useState<EyeMode>(() => {
