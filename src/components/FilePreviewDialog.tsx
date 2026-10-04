@@ -376,35 +376,33 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
                 · 切任何视图（`setView` 里会 `close()`，命令面板也算）；
                 · ⚠️ 浮层形态（窄屏）另外还有"点空白"与 Android 返回键。 */}
           {target.mime === "application/pdf" && (
-            <button className="fm-preview-read" onClick={openPdf}>
-              <ReadAnnotateIcon width={15} height={15} aria-hidden />
-              <span>阅读并批注</span>
+            <button className="fm-preview-read" onClick={openPdf} title="阅读并批注" aria-label="阅读并批注">
+              <ReadAnnotateIcon aria-hidden />
             </button>
           )}
           {isMd && (
             <button
               className={`fm-preview-read fm-width-toggle${contentFull ? " is-on" : ""}`}
+                aria-label="切换文档宽度 / 适配窗口宽度"
               onClick={() => setContentFull((s) => !s)}
               title={contentFull ? "恢复文档宽度" : "适配窗口宽度"}
             >
-              <FitWidthIcon width={15} height={15} aria-hidden />
-              <span>{contentFull ? "文档宽" : "适配宽"}</span>
+              <FitWidthIcon aria-hidden />
             </button>
           )}
           {isMd && (
             <button
               className={`fm-preview-read fm-outline-toggle${outlineOpen ? " is-on" : ""}`}
+                aria-label="切换目录"
               onClick={() => setOutlineOpen((s) => !s)}
               title="切换目录"
             >
-              <OutlineIcon width={15} height={15} aria-hidden />
-              <span>目录</span>
+              <OutlineIcon aria-hidden />
             </button>
           )}
           {target.mime === "text/markdown" && (
-            <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} disabled={mdImporting}>
-              <ConvertToPageIcon width={15} height={15} aria-hidden />
-              <span>{mdImporting ? "转为笔记…" : "转为笔记"}</span>
+            <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} title="转为笔记" aria-label="转为笔记" disabled={mdImporting}>
+              <ConvertToPageIcon aria-hidden />
             </button>
           )}
         </div>

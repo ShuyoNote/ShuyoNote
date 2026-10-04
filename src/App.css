@@ -14627,33 +14627,37 @@ p:has(> .editor-drawing-container) {
   cursor: pointer;
   line-height: 1;
 }
+/* ⚠️ **2026-10-04 改**（owner：去掉文字只留图标）：⭐ 这一族现在是**方形图标按钮** ✗ ——
+   原先是「图标 ＋ 文字」的胶囊（`padding: 5px 12px`），去掉文字后若还留着那个内距，
+   按钮会变成一条**又宽又空**的长条 ✓。⭐ 现在四边等距 ⇒ 16px 图标 ⇒ 约 30×28 ✓。
+   ⚠️ 名字没丢：`title` ＋ `aria-label`（见组件里每个按钮 ✓）。 */
+/* ⚠️ **2026-10-04 改**（owner 给了参考图：「要这种风格」）：⭐ 无边框纯图标工具栏 ✗ ——
+   原来是**蓝色描边胶囊**（`border + accent-soft` 底）＋ 文字 ✓；去掉文字之后那个胶囊样式就
+   只剩一个空壳 ⇒ 照参考图改成：透明底、灰图标、悬停才出浅底、四边等距 ✓。
+   ⭐ 名字没丢：每个按钮都有 `title` ＋ `aria-label`（见组件 ✓）。 */
 .fm-preview-read {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-radius: 8px;
-  padding: 5px 12px;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-  margin-left: 4px;
-  transition: background 0.12s, box-shadow 0.12s;
-}
-.fm-preview-read:hover {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(51, 112, 255, 0.3);
-}
-/* 「目录」「适配宽」切换：独立于主按钮的幽灵样式，on 时加底色，可反复开关。 */
-.fm-outline-toggle,
-.fm-width-toggle {
-  border-color: var(--border);
+  justify-content: center;
+  border: none;
   background: transparent;
   color: var(--text-dim);
+  border-radius: 8px;
+  padding: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
+/* ⭐ 图标尺寸统一到 20px（参考图里那一档）—— 一处改全部 ✓。 */
+.fm-preview-read svg {
+  width: 20px;
+  height: 20px;
+}
+.fm-preview-read:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* ⚠️ **2026-10-04**：这两个 toggle 原来要单独"去胶囊"✗ —— 现在主块本身已是无边框 ✓，
+   这一块删掉即可（后面原有的 .is-on 规则照旧表达"开着"✓）。 */
 .fm-outline-toggle:hover,
 .fm-width-toggle:hover {
   background: var(--hover);
@@ -14687,9 +14691,6 @@ p:has(> .editor-drawing-container) {
 }
 .fm-file-annotate:hover {
   background: var(--accent-soft);
-}
-.fm-preview-close:hover {
-  color: var(--text);
 }
 .fm-preview-body {
   flex: 1;
@@ -23392,18 +23393,6 @@ body.is-plugin-panel-open .main {
 /* ⚠️ **2026-10-04 加**：预览顶栏的关闭按钮。
    来由：组件的关闭方式原来只有「点空白」＋ Android 返回键 —— 而内联形态里没有“空白” ⇒
    没有这颗按钮就退不出去（浮层形态也一并给：触屏上点空白不好点）。 */
-.fm-preview-x {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-}
 .fm-preview-x:hover {
   color: var(--text-faint);
 }
