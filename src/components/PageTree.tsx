@@ -163,6 +163,21 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   // ⭐ 菜单作用于**哪一行** —— 菜单只渲染一份（放在 map 外面 ✓），所以位置与目标是两份 state ✓。
   const [menuFile, setMenuFile] = useState<AttachmentMeta | null>(null);
+  const menuRef = useRef<HTMLSpanElement>(null);
+  const [menuTop, setMenuTop] = useState(0);
+  // ⚠️ **2026-10-04 补**（owner 实测：⭐ 右键菜单**被遮挡** ✗）：
+  //    `TreeItem`（页面行）那份**早就有这段** ✓，⭐ 我加文件行菜单时**漏了** ✗ ——
+  //    ⭐ 菜单是 `position: fixed` ＋ 用鼠标的 `clientY` ✗ ⇒ ⭐ 靠窗口底部时**直接伸出视口** ✓
+  //    （⭐ 截图里只露出「打开」一项、下面的行"盖"上来，就是这个现象 ✓ —— ⭐ 不是 z-index ✓）。
+  //    ⭐ 照抄页面行那份：量出菜单高度 h ⇒ y+h 超底部就 ⭐ **往上翻**（`y - h` ✓）。
+  useEffect(() => {
+    if (!menuOpen || !menuAnchor?.y) return;
+    const el = menuRef.current;
+    if (!el) return;
+    const h = el.offsetHeight || 220;
+    const y = menuAnchor.y;
+    setMenuTop(y + h > window.innerHeight - 8 ? Math.max(8, y - h) : y);
+  }, [menuOpen, menuAnchor]);
   const revision = useFileManagerStore((s) => s.revision);
   useEffect(() => {
     let alive = true;
@@ -308,7 +323,9 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
       {menuOpen && menuFile && (
         <span
           className="tree-node-menu"
-          style={{ top: menuAnchor?.y ?? 0, left: Math.max(8, (menuAnchor?.x ?? 0) - 150) }}
+          ref={menuRef}
+          // ⚠️ 用 `menuTop` 而不是 `menuAnchor.y` ✗ —— 前者已经过"靠底部就上翻"的校正 ✓（见上面那个 effect ✓）。
+          style={{ top: menuTop, left: Math.max(8, (menuAnchor?.x ?? 0) - 150) }}
           onClick={(e) => e.stopPropagation()}
           // ⚠️ 必须挡 `mousedown` ✗ —— 上面那个"点别处就关"的监听挂在 `document` 上 ✓，
           //    不挡的话点菜单项会先触发它 ⇒ `menuFile` 被清空 ⇒ ⭐ 动作丢失 ✓。
