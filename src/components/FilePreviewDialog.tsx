@@ -280,6 +280,46 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
   // 锁外壳只会让"侧栏/别处滚不动"，那正是 owner 报的那个体感（同一处 PDF 也这么改过 ✓）。
   useOverlayScrollLock(!!target && !inline);
 
+  // ⚠️ **2026-10-04 加**（owner：「把 htm/html/txt 加入文件预览支持」）：
+  //   ⭐ 判据**照抄** `FileManagerView` 那处既有的 `isText`（`text/` 那一族 ／ `application/json` ／
+  //   `application/xml` ✓）—— ⭐ 同一口径不写第二份 ✓（那边的网格文本预览也用这一套 ✓）。
+  const isTextLike = !!target && (
+    target.mime.startsWith("text/") || target.mime === "application/json" || target.mime === "application/xml"
+  );
+  // ⭐ **按 hash 读字节** ✓ —— ⚠️ **不能**用 `api.readTextFile(path)` ✗：
+  //   `store/filePreview.ts` 里 md 那条路的注释逐字写着「`read_text_file` on the raw disk path would
+  //   return **ciphertext** garbling the preview when E1 encryption is on」✓
+  //   ⇒ ⭐ 加密空间下按路径读会拿到密文 ✓（⭐ `readAttachmentBytes(hash)` 才会让后端解密 ✓）。
+  //   ⚠️ 顺带记下：`FileManagerView` 的网格文本预览用的正是 `readTextFile(f.path)` ✗ ——
+  //   ⭐ 那处是既有的隐患（加密空间里会乱码 ✓），⭐ 不在这一笔的范围 ✓。
+  const [textBody, setTextBody] = useState<string | null>(null);
+  const [textError, setTextError] = useState("");
+  useEffect(() => {
+    if (!target || !isTextLike || isMd) { setTextBody(null); setTextError(""); return; }
+    let alive = true;
+    setTextBody(null);
+    setTextError("");
+    (async () => {
+      try {
+        const readBytes = () => api.readAttachmentBytes(target.hash);
+        let bytes: ArrayBuffer;
+        try {
+          bytes = await readBytes();
+        } catch (first) {
+          // 与上面图片/video 那条同款：字节可能还没同步到本机 ⇒ 先按需取回来再读一次。
+          if (!(await ensureAttachmentBytes(target.hash))) throw first;
+          bytes = await readBytes();
+        }
+        if (!alive) return;
+        // ⚠️ `fatal: false`：⭐ 二进制文件被当文本打开时**不该炸** ✓ —— 坏字节用替换符显示 ✓。
+        setTextBody(new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes)));
+      } catch (e) {
+        if (alive) setTextError(String(e));
+      }
+    })();
+    return () => { alive = false; };
+  }, [target?.id, target?.hash, isTextLike, isMd]);
+
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;
 
@@ -447,8 +487,19 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
             ) : (
               <div className="fm-preview-unsupported">无法渲染该 Markdown 文件。</div>
             )
-          ) : target.mime.startsWith("text/") ? (
-            <div className="fm-preview-unsupported">文本文件：请在文件夹中打开查看。</div>
+          ) : isTextLike ? (
+            /* ⚠️ **2026-10-04 改**（owner 要求）：⭐ txt / htm / html / json / xml 现在**能预览**了 ✓
+                （原来这里只有一句「文本文件：请在文件夹中查看。」✗）。
+                ⚠️⭐ **按源码显示，不渲染 HTML** ✗ —— 这类文件是从外面拿进来的 ⇔ 里面可能有脚本 ✓，
+                而这里是 App 里的一块 ⇒ ⭐ **绝不能** `dangerouslySetInnerHTML`（⭐ 那是 XSS 入口 ✓）。
+                ⭐ 想看渲染效果：用系统浏览器打开（⭐ 天然沙箱 ✓）／ ⭐ 或另开一条**沙箱 iframe** 的路 ✓。 */
+            textError ? (
+              <div className="fm-preview-unsupported">读不到这个文本文件：{textError}</div>
+            ) : textBody === null ? (
+              <div className="fm-preview-unsupported">正在读…</div>
+            ) : (
+              <pre className="fm-text-preview">{textBody}</pre>
+            )
           ) : (
             <div className="fm-preview-unsupported">该文件类型暂不支持内嵌预览，可在文件夹中打开或用系统打开。</div>
           )}

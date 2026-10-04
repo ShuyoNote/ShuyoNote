@@ -23396,3 +23396,21 @@ body.is-plugin-panel-open .main {
 .fm-preview-x:hover {
   color: var(--text-faint);
 }
+
+/* ⚠️ **2026-10-04 加**：文本类文件的预览（txt / htm / html / json / xml）。
+   形状借 `.fm-md-preview`：同一块内容区，只是**按源码显示**、不渲染 HTML。
+   ⚠️ 不渲染 HTML 是**有意的**：文件从外面来，里面可能有脚本，而这里是 App 里的一块。 */
+.fm-text-preview {
+  margin: 0;
+  padding: 16px 20px;
+  flex: 1;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--surface);
+  tab-size: 4;
+}
