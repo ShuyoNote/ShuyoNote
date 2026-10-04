@@ -154,7 +154,13 @@ export function FilePreviewDialog() {
   const outlineWRef = useRef(outlineW);
   outlineWRef.current = outlineW;
   // 内容是否适配窗口宽度（相对 --doc-width 文档宽）。
-  const [contentFull, setContentFull] = useState(false);
+  // ⚠️ **2026-10-04 改**：默认从 `false`（文档宽 780px）改成 **`true`（适配窗口宽度）** ✓ ——
+  //    owner 的诉求是"⭐ **像 PDF 阅读器那样自动跟着内容区变宽**" ✓。
+  //    ⚠️ 原先两边默认档不同：⭐ PDF 默认 `fit-width`（跟容器 ✓）／ ⭐ md 默认"文档宽"（固定 780px ✗）
+  //      ⇒ 收侧栏时"PDF 跟着变、md 不动" ✓（这正是 owner 报的现象 ✓）。
+  //    ⭐ 现在两边一致：**默认都跟容器** ✓；⭐ 想看文档宽点顶部那个按钮即可切回 ✓
+  //      （它加 `.fm-md-preview.is-full` ⇒ `max-width: none` ✓，接线见下面的 className ✓）。
+  const [contentFull, setContentFull] = useState(true);
   const [dragging, setDragging] = useState(false);
 
   const isMd = target?.mime === "text/markdown";
