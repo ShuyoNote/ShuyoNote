@@ -115,14 +115,17 @@ export function judge({ collabRs, mainRs, syncRs, dbRs, frameKindRs }) {
 
   // ── ② 推送不带正文 ────────────────────────────────────────────────
   if (syncRs !== null) {
-    const body = bodyOf(syncRs, /pub\s+fn\s+push_frame\s*\(/);
+    // ⚠️ 2026-10-04 修：服务端那个函数**改过名** —— 现在是 `pub async fn push(` ✗（旧名 `push_frame`）
+    //    ⇒ 锚点只认旧名时，`bodyOf` 永远返回 null ⇒ 报「没检查到东西（不算通过）」✓（判据的诚实设计是对的 ✓，
+    //    但**守卫实际是死的** ✗）。⭐ 改成**两个名字都认** ⇒ 以后再改名不至于让守卫静默失效 ✓。
+    const body = bodyOf(syncRs, /pub\s+(?:async\s+)?fn\s+(?:push_frame|push)\s*\(/);
     if (body === null) {
-      out.push("✗ 找不到 `sync.rs::push_frame` ⇒ 判据**没检查到东西**（不算通过 ✗）");
+      out.push("✗ 找不到 `sync.rs::push`（旧名 `push_frame`）⇒ 判据**没检查到东西**（不算通过 ✗）");
     } else {
       const bad = contentHits(body);
-      if (bad.length) out.push("✗ `push_frame` 的帧里出现了内容类字段「" + bad.join("／") + "」⇒ 推送只许说有新消息（⛔ 不带正文）✗");
+      if (bad.length) out.push("✗ `push` 的帧里出现了内容类字段「" + bad.join("／") + "」⇒ 推送只许说有新消息（⛔ 不带正文）✗");
       for (const need of ["space_id", "seq"]) {
-        if (!body.includes(need)) out.push("✗ `push_frame` 的帧里没有 `" + need + "` ⇒ 帧被改空了也照样\"过\" ✗（判据要正向锚 ✓）");
+        if (!body.includes(need)) out.push("✗ `push` 的帧里没有 `" + need + "` ⇒ 帧被改空了也照样\"过\" ✗（判据要正向锚 ✓）");
       }
     }
   }
