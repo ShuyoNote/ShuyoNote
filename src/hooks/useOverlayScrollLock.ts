@@ -86,6 +86,17 @@ export function findBackgroundScrollers(doc: Document = document): HTMLElement[]
     for (let n: HTMLElement | null = el; n && n !== doc.body; n = n.parentElement) {
       if (getComputedStyle(n).position === "fixed") return;
     }
+    // ④ ⚠️⚠️ **2026-10-04 加**：⭐ **侧栏不算背景** ✓ —— 浮层开着时用户仍然要能翻页 ✓
+    //    （owner 实测：⭐ **打开一个 md 后侧栏滚动条消失、不能滚** ✗ —— 就是被锁上了 ✓）。
+    //    ⚠️ 原先**没有这条特判** ✗：侧栏只是**碰巧**在窄屏被 ③ 排除掉 ✓ ——
+    //      因为是抽屉（`.sidebar { position: fixed }` · `App.css:20338` ✓）；
+    //      而**桌面**档 `.sidebar` 是 `position: relative`（`App.css:559` ✓）✗
+    //      ⇒ ⭐ `.sidebar-tree` 满足①②③ ⇒ **被当成背景锁上** ✓ ⇒ ⭐ 那种视图下"一个文件都看不了" ✓。
+    //    ⚠️ 上面第 28 行那句注释写的是「锁 `.sidebar-tree` 是**故意的**」✗ ——
+    //      ⭐ 它描述的其实是**窄屏抽屉**那一档 ✓（那里它确实是背景 ✓）；桌面这一档是**副作用** ✗。
+    //    ✅ 窄屏行为**不变** ✓（那里它本来就被 ③ 排除 ✓）；⭐ 验收断言只要求锁里**含** `.note-scroll`
+    //      （`scripts/verify-mobile-overlays.mjs:1286` ✓）⇒ ⭐ 加这条不会让它红 ✓。
+    if (el.closest(".sidebar")) return;
     out.push(el);
   });
   return out;
