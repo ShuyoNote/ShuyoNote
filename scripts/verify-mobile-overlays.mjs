@@ -223,7 +223,13 @@ const OVERLAYS = [
   { id: "communitySave", label: "社区保存", root: ".community-save-overlay", box: ".community-save-box", sheet: true },
   { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false, fullscreen: true },
   { id: "emoji", label: "图标选择器", root: ".emoji-picker-overlay", box: ".emoji-picker", sheet: true },
-  { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false, fullscreen: true },
+  // ⚠️ `noScrollLock: true` ＝ **这一层不是模态浮层，故意不锁外壳滚动** ⇒ (5) 段对它的三条断言跳过 ✓。
+  //    2026-10-04 加：TOC（目录）由 owner 定案改成**并排停靠**（`86bcbaa9`），
+  //    它的 `useOverlayScrollLock(open)` 已按设计**删除**（见 `TableOfContents.tsx` 里那条注释 ✓）
+  //    ⇒ 而 (5) 段"打开任一层 ⇒ 外壳被锁"是**无条件**的 ⇒ 于是在 CI 上红成
+  //    「锁住：无」（1025 通过 / 9 失败 ✗）—— **代码是对的，过时的是判据** ✓。
+  //    ⚠️ 全 21 层里**只有 TOC 不锁**（逐个核过 hook 的调用方 ✓），所以只给它标 ✓。
+  { id: "toc", label: "目录", root: ".toc-panel", box: ".toc-panel", sheet: false, fullscreen: true, noScrollLock: true },
   { id: "ai", label: "AI 助手", root: ".ai-panel", box: ".ai-panel", sheet: false, fullscreen: true },
   { id: "comments", label: "评论 / 通知", root: ".comments-drawer", box: ".comments-drawer", sheet: false, fullscreen: true },
   { id: "markdownImport", label: "Markdown 导入", root: ".markdown-import-overlay", box: ".markdown-import", sheet: true, optional: true },
@@ -1248,6 +1254,15 @@ async function main() {
               : "本层没有主要操作按钮（跳过）",
           );
 
+          // ⚠️ 2026-10-04：**只对"模态浮层"要求锁**。标了 `noScrollLock` 的层（目前只有 TOC）
+          //    是**并排停靠**的，按设计不锁外壳滚动 ⇒ 整段跳过它 ✓（`TableOfContents.tsx` 里写明
+          //    "滚动仍然不锁"）。判据不该替设计说话 —— 它此前把 TOC 当模态，于是红成"锁住：无" ✗。
+          if (layer.noScrollLock) {
+            note(
+              `${vp.name} · ${layer.label}：并排停靠层 ⇒ 按设计**不锁**外壳滚动，(5) 段跳过（其余各层照旧要求 ✓）`,
+            );
+          }
+          if (!layer.noScrollLock) {
           // (5) 打开任一层 ⇒ 外壳被锁，且触摸拖动拖不走背景
           //
           // ⚠️ 判据 2026-09-15 修正：**不能只看 `.note-scroll`**。
@@ -1307,6 +1322,8 @@ async function main() {
               `触摸向上拖 300px 后背景没被拖走（scrollTop ${before} → ${after}，变化 ${Math.abs((after ?? 0) - (before ?? 0))}px ≤ 4）`,
             );
           }
+
+          }  // ← 结束 `if (!layer.noScrollLock)`（并排停靠层不参与 (5) 段 ✓）
 
           // (6) 命中区：关闭类按钮严格 ≥44×44；其余可见按钮先记基线
           const closes = m.buttons.filter((b) => b.isClose);
