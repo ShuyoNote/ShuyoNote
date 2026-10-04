@@ -1050,16 +1050,30 @@ export function SyncPanel() {
   const todayItems = myHistory
     .filter((h) => new Date(h.at).toDateString() === todayStr)
     .reduce((a, h) => a + (h.pushed || 0) + (h.pulled || 0), 0);
+  // ⚠️ **2026-10-04 加**（owner：「个人空间不显示服务器同步内容」）：
+  //   ③ 服务器那一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
+  //   ⭐ 个人空间不经过服务器（owner 裁定「个人空间不绑服务器」✓），它的远程路径是**设备直连** ✓。
+  //   ⚠️ 必须定义在这里 —— 下面 `isPersonalActive` 要用它（放后面会「used before declaration」）。
+  const serverRows = rows.filter((r) => r.kind === "team");
   const heroBound = !!activeRow && !!activeRow.server_url.trim() && !!activeRow.space_id.trim();
+  // ⭐ 当前空间是个人空间吗？⚠️ `rows` 只有**当前活动空间**那一行（见 refresh 里的 ids）
+  //   ⇒ ⭐「服务器那一段一行都没有」就等于「当前不是团队空间」✓（取不到 kind 时兜底当团队 ✓）。
+  //   ⚠️ 必须定义在这里 —— 下面的 `heroState` / `heroRoute` 都要用它（放后面会「used before declaration」）。
+  const isPersonalActive = serverRows.length === 0;
+  // ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
+  //   ⭐ 个人空间**不经过服务器** ⇒ ⭐ 不该说「还没绑同步」✗（那是服务器口径的提醒 ✓）；
+  //   ⭐ 它该说的是自己那条路：**附近设备直连** ✓。
   const heroState = syncing
     ? "正在同步"
     : lastSync
       ? lastSync.ok
         ? "已同步"
         : "上次同步没成功"
-      : heroBound
-        ? "还没同步过"
-        : "还没绑同步";
+      : isPersonalActive
+        ? "附近设备直连"
+        : heroBound
+          ? "还没同步过"
+          : "还没绑同步";
   const heroDot = syncing ? " is-busy" : lastSync && lastSync.ok ? " is-ok" : "";
   const heroSub = [
     activeRow?.name ?? "",
@@ -1079,7 +1093,11 @@ export function SyncPanel() {
         : `这一轮走的是：设备直连 · ${lanStatus.peers} 台可用`
       : lanStatus?.kind === "configured"
         ? "这一轮走的是：服务器"
-        : "这一轮走的是：还没绑同步";
+        // ⚠️ **2026-10-04 改**：⭐ 个人空间不说「还没绑同步」✗（那是叫他去绑服务器 ✓），
+        //   而是如实说它自己这条路：**附近设备直连** ✓。
+        : isPersonalActive
+          ? "这一轮走的是：附近设备直连（个人版不经过服务器）"
+          : "这一轮走的是：还没绑同步";
   // ── ★ 2026-09-29（IA）：分组 ＋ 每行一个可展开项 —— 每行右边那个【摘要值】────────
   // 口径：**每一行的值都由真实读数算出来**（写死就是在骗人），且尽量复用既有 <option> /
   //       既有小标题的词 —— 本笔不动任何一句既有文案。
@@ -1087,10 +1105,6 @@ export function SyncPanel() {
   // 只在 Wi-Fi 下同步：默认值与下面那颗复选框**同一处口径**（`?? true`），
   // 否则会出现"行上写关、点开复选框却是开的"。
   const wifiText = (budget?.wifi_only ?? true) ? "开" : "关";
-  // ⚠️ **2026-10-04 加**（owner：「个人空间不显示服务器同步内容」）：
-  //   ③ 服务器那一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
-  //   ⭐ 个人空间不经过服务器（owner 裁定「个人空间不绑服务器」✓），它的远程路径是**设备直连** ✓。
-  const serverRows = rows.filter((r) => r.kind === "team");
   // 服务器：owner 明确「未绑定时显示『未绑定』」（不是空白，也不是占位 URL）。
   const serverText = activeRow?.server_url.trim() || "未绑定";
   // 设备直连：`lanStatus.mesh` 的两个布尔 → 三态（读不到 `lanStatus` 时这一行本来就不渲染）。
@@ -1391,6 +1405,10 @@ export function SyncPanel() {
                   ★ 2026-09-29（规格 §9.2）：**总闸关闭时这一行【不灰】** —— owner 原话「服务器不灰」，
                      因为那一行装的是**配置入口**（地址/账号/组织空间/成员），不是开关；灰掉它 ⇒
                      用户没法先准备配置。**但要在值旁边标明「当前不自动同步」**（不许让用户以为它在跑）。 */}
+              {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示登录状态文案信息」）：
+                  ⭐ 个人空间**整行不显示** ✗ —— 这一行的摘要写的是「未绑定」（服务器口径 ✓），
+                  而个人空间根本不经过服务器 ✓（owner 裁定），它的远程路径是下面的**设备直连** ✓。 */}
+              {!isPersonalActive && (
               <details className="sync-row">
                 <summary>
                   <span className="sync-row-label">服务器</span>
@@ -1676,6 +1694,8 @@ export function SyncPanel() {
                   })}
                 </div>
               </details>
+              )}
+
 
             </div>
           </div>
