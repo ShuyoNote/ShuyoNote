@@ -13,6 +13,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { usePdfReader } from "../store/pdfReader";
 import { useFileManagerStore } from "../store/fileManager";
+import { ConvertToPageIcon, FitWidthIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { useResolvedTheme } from "../store/theme";
 
@@ -376,12 +377,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
                 · ⚠️ 浮层形态（窄屏）另外还有"点空白"与 Android 返回键。 */}
           {target.mime === "application/pdf" && (
             <button className="fm-preview-read" onClick={openPdf}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                <path d="M14 3v6h6" />
-                <path d="M9 14l3-3 2.5 2.5-3 3z" />
-                <path d="M17.5 17.5v-3M16 20l3-3 3 3" />
-              </svg>
+              <ReadAnnotateIcon width={15} height={15} aria-hidden />
               <span>阅读并批注</span>
             </button>
           )}
@@ -391,10 +387,7 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               onClick={() => setContentFull((s) => !s)}
               title={contentFull ? "恢复文档宽度" : "适配窗口宽度"}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M4 5h16M4 12h16M4 19h16" />
-                <rect x="7" y="9" width="10" height="6" rx="1" />
-              </svg>
+              <FitWidthIcon width={15} height={15} aria-hidden />
               <span>{contentFull ? "文档宽" : "适配宽"}</span>
             </button>
           )}
@@ -404,20 +397,13 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
               onClick={() => setOutlineOpen((s) => !s)}
               title="切换目录"
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
-              </svg>
+              <OutlineIcon width={15} height={15} aria-hidden />
               <span>目录</span>
             </button>
           )}
           {target.mime === "text/markdown" && (
             <button className="fm-preview-read" onClick={() => void importAsPage(useFileManagerStore.getState().folderId)} disabled={mdImporting}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                <path d="M14 3v6h6" />
-                <path d="M12 15v-6" />
-                <path d="M9 12l3-3 3 3" />
-              </svg>
+              <ConvertToPageIcon width={15} height={15} aria-hidden />
               <span>{mdImporting ? "转为笔记…" : "转为笔记"}</span>
             </button>
           )}
