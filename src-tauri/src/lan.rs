@@ -178,7 +178,7 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
     let want = space_id.trim();
     if !want.is_empty() {
         for p in peers {
-            if !p.announce.hub_spaces.iter().any(|s| s.trim() == want) {
+            if !serves_space(space_id, p) {
                 continue;
             }
             let Some(base) = p.announce.hub_base.as_deref() else {
@@ -196,6 +196,21 @@ pub fn resolve_base(space_id: &str, configured_url: &str, peers: &[Peer]) -> Opt
         return None;
     }
     Some(Route { url: configured.to_string(), kind: LinkKind::Configured })
+}
+
+/// ★ 这条公告**服务不服务**这个空间 —— **唯一的一把尺**，凡是"某台设备认不认这个空间"都走它。
+///
+/// 口径：`hub_spaces` 里含这个空间的**去空白字面量相等**（不看格式 —— 网格不检查 `space_id` 是
+/// 哪来的，`lan.rs:181` 的既有口径）。空 `space_id` ⇒ **一律不认**（"没指定空间"不是"谁都算"）。
+///
+/// ⚠️ 为什么必须抽成一个函数（而不是各处写一遍 `iter().any(|s| s.trim() == want)`）：
+/// 丙档有**三处**要问这句话 —— 地址解析（[`resolve_base`]）、谁可以被直接拉（`mesh::invitable_base`）、
+/// 以及界面上那一条"服务 项目A"（`sync::NearbyPeer::serves_current`）。
+/// 三处各写一遍就会漂，而**漂了不炸、不报错、单测全绿**：现场是"列表说它服务这个空间，
+/// 可它就是拉不动"（或反过来）。
+pub fn serves_space(space_id: &str, p: &Peer) -> bool {
+    let want = space_id.trim();
+    !want.is_empty() && p.announce.hub_spaces.iter().any(|s| s.trim() == want)
 }
 
 /// 这个基址是不是**局域网**地址（`http://<私有 IPv4>[:port]`）。
@@ -224,7 +239,16 @@ pub fn is_lan_base(url: &str) -> bool {
     is_private_ipv4(host)
 }
 
-/// RFC 1918 三段 ＋ 链路本地（`169.254/16`）。`127/8` **不算**：回环不是"网段里的别人"。
+/// RFC 1918 三段 ＋ 链路本地（`169.254/16`）＋ **CGNAT 共享段（`100.64/10`）**。
+/// `127/8` **不算**：回环不是"网段里的别人"。
+///
+/// ⚠️ 最后那一段是 **owner 2026-09-30 拍 D14（放行 CGNAT）**：`100.64.0.0/10`（RFC 6598）
+/// **Tailscale 默认就用它**，而它**不是** RFC 1918、也**不是**链路本地 ⇒ 不放行 ⇒
+/// 对端的 `hub_base` 会被 [`resolve_base`] 静默跳过。
+/// ⚠️ **这是与 `mesh::is_lan_only` 成对的第二把尺**：两张表**必须同时放宽**
+/// （作者注释见 [`announce_for_own_hub`]），判据 `mesh::tests::the_two_lan_range_tables_agree`
+/// 逐地址比对两者，防"只改一把"。⚠️ std 的 `Ipv4Addr::is_shared()` 在 MSRV 1.94 与 stable 1.98
+/// 上都还是 unstable（`E0658` / issue #27709）⇒ 手写这一段。
 fn is_private_ipv4(host: &str) -> bool {
     let parts: Vec<&str> = host.split('.').collect();
     if parts.len() != 4 {
@@ -243,6 +267,7 @@ fn is_private_ipv4(host: &str) -> bool {
         [172, b, ..] if (16..=31).contains(&b) => true,
         [192, 168, ..] => true,
         [169, 254, ..] => true,
+        [100, 64..=127, ..] => true, // ⚠️ D14：`100.64.0.0/10`（含两端）
         _ => false,
     }
 }
@@ -329,10 +354,10 @@ pub fn status_line(
     });
 
     let mut line = match route.kind {
-        LinkKind::Lan => format!("同步地址：直连（局域网）{}", route.url),
+        LinkKind::Lan => format!("同步地址：直连（同一网络）{}", route.url),
         LinkKind::Configured => format!("同步地址：公网 {}", route.url),
     };
-    line.push_str(&format!(" ｜ 本网段发现 {seen} 台"));
+    line.push_str(&format!(" ｜ 附近发现 {seen} 台"));
     if observed > seen {
         // ⚠️ 只说事实（"还见过 N 台，现在不发声了"），不替用户下结论（那可能是关机、也可能只是丢包）。
         line.push_str(&format!("（还见过 {} 台，现在不发声了）", observed - seen));
@@ -649,7 +674,7 @@ mod tests {
         }
     }
 
-    /// 判据 ⑤：公告里声称的**公网**地址**永远不许**变成局域网直连
+    /// 判据 ⑤：公告里声称的**公网**地址**永远不许**变成设备直连
     /// （否则"发现层"就是被别人指哪打哪的入口）。跳过它，而不是整体失败。
     #[test]
     fn a_public_base_in_an_announce_never_counts_as_a_lan_route() {
@@ -676,7 +701,11 @@ mod tests {
         assert!(is_lan_base("http://172.16.3.4:8787"));
         assert!(is_lan_base("http://169.254.1.1:8787"));
         assert!(is_lan_base("http://192.168.1.5")); // 无端口也算（默认端口由拼 URL 那一侧决定）
+        // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：`100.64.0.0/10`（Tailscale 默认段）也算。
+        assert!(is_lan_base("http://100.100.1.2:8787"));
         assert!(!is_lan_base("http://172.32.0.1:8787")); // 出了 172.16/12
+        assert!(!is_lan_base("http://100.63.255.255:8787")); // 出了 100.64/10（下界外一格）
+        assert!(!is_lan_base("http://100.128.0.1:8787")); // 出了 100.64/10（上界外一格）
         assert!(!is_lan_base("http://192.168.1.256")); // 非法八位组
         assert!(!is_lan_base("http://192.168.1.5:8787:9")); // 两个冒号
         assert!(!is_lan_base("http://192.168.1 .5:8787")); // 空白
@@ -727,6 +756,95 @@ mod tests {
         let route = resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap();
         assert_eq!(route.url, "http://192.168.1.5:8787");
         assert_eq!(route.kind, LinkKind::Lan);
+    }
+
+    /// ★★ **U7 缺的那半个：同网段两台「自动」互见**（个人版任务单 **T8** 新增 ✓，判据矩阵 U7 的 E2E 那一格 ✓）。
+    ///
+    /// 与判据 ⑦ 的区别**只在最关键的那一点**：⑦ 把对端地址**手填**（`&[b_addr]` ✗），
+    /// 而本判据**一个对端地址都不填** —— 只调 [`default_targets`]（生产路径上那一轮真正会发的目标 ✓），
+    /// 验的是「**不用人手配置就能被听见**」这条承诺（U7 原文：**局域网自动发现** ✓）。
+    ///
+    /// ⚠️ **本机验得到什么／验不到什么（如实 ✓）**：
+    ///   · 验得到：① 自动目标里有**能落回本机**的那一条（回环 —— [`default_targets`] 的注释把它写成
+    ///     「能自验的关键」✓）；② 真按自动目标发 ⇒ 对端**无需任何手工配置**就收到并**进表** ✓；
+    ///     ③ 收到之后**下一轮的自动目标**里多出「该对端 ＋ 本端发现端口」✓（＝ 2026-09-26 真机那次
+    ///     「**单向发现**」事故的反面 ✓）；④ 两侧的表各自 `resolve_base` ⇒ **都**走局域网路由（互见 ✓）。
+    ///   · **验不到**：真实 UDP 广播在**真网段**上到不到（CI／受限网络里广播未必可用 ⇒ 回环那一条是替代品 ⚠️）
+    ///     与「两台真机换网后仍互见」—— 那是任务单 §5 的 **M1／M2（要人手）** ✓，⛔ 不许写成通过 ✗。
+    ///
+    /// **变异（必须红）**：把 `announce_targets` 里「补上已认识对端的单播」那一段删掉（只留 `default_targets`）
+    /// ⇒ 第 ③ 条立刻红 —— 那正是 2026-09-26 在真机上抓到的**单向发现**（热点主机收得到、底下的客户端收不到）✓。
+    #[tokio::test]
+    async fn two_instances_on_one_net_find_each_other_without_a_hand_filled_address() {
+        // 「中枢」真的起一个发现监听（`0.0.0.0:P` —— 生产里两台用的是**同一个发现端口** ✓）
+        let hub = bind_listener(0).await.expect("中枢要能监听");
+        let port = hub.local_addr().unwrap().port();
+        let joiner = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+        let st_hub = crate::lan_state::LanState::new("dev-hub".to_string());
+        let st_join = crate::lan_state::LanState::new("dev-join".to_string());
+        st_hub.set_enabled(true);
+        st_join.set_enabled(true);
+
+        // ① 自动目标里必须有一条**能落回本机**的入口 —— 这就是「不用手填」的前提 ✓
+        let auto = default_targets(port);
+        assert!(
+            auto.iter().any(|t| t.ip().is_loopback()),
+            "自动目标里没有回环那一条（本机就自验不了；它的注释把回环写成「能自验的关键」✓）：{auto:?}"
+        );
+
+        // ② 加入方**只按自动目标**发 —— 全程没有出现任何对端地址 ✓
+        let sent = announce_once(
+            &joiner,
+            &auto,
+            &announce_of("dev-join", Some("http://192.168.1.6:8787"), &["sp-1"]),
+        )
+        .await
+        .expect("按自动目标应当至少发出去一条");
+        assert!(sent >= 1);
+
+        // ③ 中枢**无需任何手工配置**就收到它（回环那一条把它送过来的 ✓）⇒ 而且**进表** ✓
+        let got = recv_into_within(&hub, &st_hub, 1_000)
+            .await
+            .unwrap()
+            .expect("中枢应当收到加入方");
+        assert_eq!(got.announce.device_id, "dev-join");
+        assert_eq!(st_hub.peers(1_000).len(), 1, "收进来必须进表 ✓");
+
+        // ④ 把「同一网段上的另一台」喂进中枢的表（`192.168.1.6` 是**同网段**地址 ✓），
+        //    然后看**下一轮的自动目标**：必须多出「该对端 ＋ 本端发现端口」那一条 ✓
+        //    ⚠️ 这一条判的是**决策**（真把它送出去要真网段 ⇒ 属 M1／M2 ✓）
+        st_hub
+            .record_datagram(
+                &encode_announce(&announce_of("dev-peer", Some("http://192.168.1.6:8787"), &["sp-1"])).unwrap(),
+                "192.168.1.6",
+                1_000,
+            )
+            .expect("同网段那台的公告应当合法");
+        let peers = st_hub.peers(1_000);
+        assert_eq!(peers.len(), 2, "表里应当有两台：{peers:?}");
+        let next = announce_targets(port, &peers);
+        let want: SocketAddr = format!("192.168.1.6:{port}").parse().unwrap();
+        assert!(
+            next.contains(&want),
+            "下一轮的自动目标里没有对端 {want} ⇒ 「单向发现」会复现（2026-09-26 真机事故 ✓）：{next:?}"
+        );
+
+        // ⑤ 两侧的表各自解析 ⇒ **都**走局域网路由（＝互见 ✓）
+        let hub_route =
+            resolve_base("sp-1", "https://shuyo.cn/sync", &peers).expect("中枢这一侧应当有局域网路由");
+        assert_eq!(hub_route.kind, LinkKind::Lan);
+        st_join
+            .record_datagram(
+                &encode_announce(&announce_of("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"])).unwrap(),
+                "192.168.1.5",
+                1_000,
+            )
+            .expect("中枢的公告应当合法");
+        let join_route = resolve_base("sp-1", "https://shuyo.cn/sync", &st_join.peers(1_000))
+            .expect("加入方这一侧也应当有局域网路由");
+        assert_eq!(join_route.url, "http://192.168.1.5:8787");
+        assert_eq!(join_route.kind, LinkKind::Lan);
     }
 
     /// 判据 ⑧：坏报文**永远不许**进对端表，而且**原因说得出来**。
@@ -867,9 +985,13 @@ mod tests {
             ("http://192.168.1.5:8787", true),  // 该代言
             ("http://10.0.0.7", true),          // 该代言（不带端口也认）
             ("http://169.254.1.1:8787", true),  // 该代言（链路本地）
+            // ⚠️ **D14（owner 2026-09-30：放行 CGNAT）**：Tailscale 默认段也要能代言 ——
+            //    **两把尺一起放宽**才保得住本判据（只改 `mesh::is_lan_only` ⇒ 这里立刻红）。
+            ("http://100.100.1.2:8787", true),  // 该代言（CGNAT 共享段）
             ("https://shuyo.cn/sync", false),   // 公网 ⇒ 不许代言
             ("http://127.0.0.1:8787", false),   // 回环不是"网段里的别人" ⇒ 不许代言
             ("http://172.32.0.1:8787", false),  // 出了 172.16/12 ⇒ 不许代言
+            ("http://100.128.0.1:8787", false), // 出了 100.64/10 ⇒ 不许代言（D14 不许写宽）
             ("", false),                        // 没配置 ⇒ 不许代言
         ];
         for (url, should_produce) in cases {
@@ -926,7 +1048,7 @@ mod tests {
         let hub = peer("dev-hub", Some("http://192.168.1.5:8787"), &["sp-1"]);
         let route = resolve_base("sp-1", "https://shuyo.cn/sync", std::slice::from_ref(&hub)).unwrap();
         let line = status_line(Some(&route), std::slice::from_ref(&hub), "sp-1", 1);
-        assert!(line.contains("局域网"), "{line}");
+        assert!(line.contains("同一网络"), "{line}");
         assert!(line.contains("dev-hub 的机器"), "要点出中枢是谁：{line}");
 
         // ② 网段里什么都没有 ⇒ 只是"公网"，**不许**说"有人但不服务本空间"
@@ -978,7 +1100,7 @@ mod tests {
         assert_eq!(route.kind, LinkKind::Configured, "没发现到中枢就不是直连档");
         let line = status_line(Some(&route), &[], "sp-1", 0);
         assert!(
-            !line.contains("局域网"),
+            !line.contains("同一网络"),
             "档位只能来自 Route；状态行自己按地址形状再判一次就会说出与路由矛盾的档：{line}"
         );
     }
@@ -1043,7 +1165,7 @@ mod tests {
         assert_eq!(route.kind, LinkKind::Lan);
         // 状态行也要如实说出"直连"与中枢名字（施工单 §2 ④）。
         let line = status_line(Some(&route), &st_a.peers(now), "sp-1", 1);
-        assert!(line.contains("直连（局域网）"), "{line}");
+        assert!(line.contains("直连（同一网络）"), "{line}");
         assert!(line.contains("B 的机器"), "要点出中枢是谁：{line}");
     }
 

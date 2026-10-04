@@ -1,8 +1,12 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
 import { ActivityBar } from "./components/ActivityBar";
 import { TitleBar } from "./components/TitleBar";
+// ⚠️ 2026-10-01（owner 界面方向之①）：右侧工具条撤掉，入口搬到**顶端工具栏** ✓；
+//    而手机上 `TitleBar` 不渲染 ⇒ 这里要**自己渲染一行**（与桌面同一个组件 ✓：`TopTools` ✓）。
+import { TopTools } from "./components/TopTools";
 import { useWindowChrome, applyDecorations } from "./store/windowChrome";
 import { BacklinksPanel } from "./components/BacklinksPanel";
 import { UnlinkedMentionsPanel } from "./components/UnlinkedMentionsPanel";
@@ -34,7 +38,6 @@ import { LineageConflictBanner } from "./components/LineageConflictBanner";
 import { TextRepairRunner } from "./components/TextRepairRunner";
 import { AiAssistantPanel } from "./components/AiAssistantPanel";
 import { CommentsDrawer } from "./components/CommentsDrawer";
-import { RightRail } from "./components/RightRail";
 import { InlineAiDraftBar } from "./components/InlineAiDraftBar";
 import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, MenuIcon } from "./components/icons";
 import { TagAddButton } from "./components/TagBar";
@@ -49,8 +52,21 @@ import { Editor } from "./editor/Editor";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
-import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "./lib/syncMode";
+import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
+// 空闲退避（2026-09-30）：自动同步那一轮的节拍判据（纯函数；三条口径与"兜底"都在那里 ✓）
+import {
+  decideHiddenTick,
+  decideSyncTick,
+  roundWasEmpty,
+  type MeshLike,
+  type SyncLike,
+} from "./lib/syncBackoff";
+// 切后台判据（2026-09-30）：**只停移动端** —— 平台口径复用仓里既有那个"是不是移动端"的判断 ✓
+import { isMobileUserAgent } from "./lib/platform/capabilities";
+// 「真·本地编辑」信号的**模块级广播**（S3b-1 那个实例级 `onLocalEdit` 的转发，见那个文件的注释）：
+// 本笔的"改完就上传"要的正是这个信号，而会话实例由 `editor/Editor.tsx` 持有 ⇒ 只能从这一层拿。
+import { onAnyLocalEdit } from "./lib/crdt/yDocBridge";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
@@ -83,6 +99,8 @@ import "./App.css";
 // when the user switches to graph / board / files / template-center (the default
 // editor page stays synchronous). Heavy libs (cytoscape, mermaid…) are also lazy.
 const GraphView = lazy(() => import("./components/GraphView").then((m) => ({ default: m.GraphView })));
+const TimelineReview = lazy(() => import("./components/TimelineReview").then((m) => ({ default: m.TimelineReview })));
+const KnowledgeMap = lazy(() => import("./components/KnowledgeMap").then((m) => ({ default: m.KnowledgeMap })));
 const BoardView = lazy(() => import("./components/BoardView").then((m) => ({ default: m.BoardView })));
 const FileManagerView = lazy(() => import("./components/FileManagerView").then((m) => ({ default: m.FileManagerView })));
 const TemplateCenterView = lazy(() => import("./components/TemplateCenterView").then((m) => ({ default: m.TemplateCenterView })));
@@ -104,6 +122,116 @@ function hasBlockContent(contentJson: string): boolean {
     return contentJson.length > 0;
   }
 }
+
+// =====================================================================================
+// ★ 2026-09-29（本笔）：**自动同步"唯一的那一轮"** —— 两个触发面共用它，不许各写一份。
+//
+// 两个触发面：
+//   ① 自动同步定时器（`NoteEditor` 里那个 effect，按 `effectiveAutoSyncMs()` 的节拍）；
+//   ② **正文上传触发**（本笔新增）：编辑器里一次**真·本地编辑** ⇒ 防抖 ⇒ 调它这一次。
+//      它补的是"我改了 ⇒ 别人多久看到"那一半：在这之前 `syncWorkspace` 的调用点里
+//      **没有一处**是"编辑器改完就调用它"（其余全是定时器 / 手动 / "收到服务端通知才拉"）。
+//
+// 三条纪律（与定时器那条**逐字同源**，因为现在就是同一段代码）：
+//   · ① **必须过 C2 网络闸门**（`lib/syncGate.ts`，唯一一处实现）。本触发属于**自动**
+//        （用户没点按钮）⇒ 必须过闸；手动点「同步」不走这里。
+//   · ② **防重入**：上一轮还没跑完就**不并发起第二轮**（定时器那条在这里跳过；编辑触发那条
+//        见 `requestAutoSyncRound`，它把那一轮**合并**成"跑完再来一次"）。
+//   · ③ **失败静默**（与定时器一致：一次网络失败不该打断用户），**但留痕** ——
+//       至少 `console.warn` 一次（`.catch(() => null)` 那种完全静默是既有形状，本笔不再加一处）。
+//
+// ⚠️ 为什么是模块级函数而不是组件里的闭包：两个触发面都在 `NoteEditor` 里，而 `busy` 必须是
+//    **同一个**（②）。定时器那个 effect 会随 `autoSyncMs` 重挂 —— 闭包级的 `busy` 会跟着重置，
+//    于是"换档那一刻"防重入就失效了。跨重挂的那个"一个"只能住在模块级
+//    （先例：`syncMode.ts` 的 `lanMeshActive`，同一个理由）。
+// =====================================================================================
+let syncRoundBusy = false;
+/** 忙的时候，"还得再跑一轮"这件事记在这里（见 `requestAutoSyncRound`）。 */
+let syncRoundPending = false;
+// ★ 空闲退避（2026-09-30）：**连续"这一轮什么都没换到"的次数** ＋ **上一次真跑的时刻**。
+// ⚠️ 也住在模块级（与 `busy/pending` 同一个理由：必须跨 effect 重挂存活 ✓）。
+// 口径、"硬顶/兜底"、以及"什么算空"都在 `lib/syncBackoff.ts` —— **这里不重复解释一遍 ✓**。
+let syncEmptyStreak = 0;
+let syncLastRunAtMs: number | null = null;
+
+/**
+ * 跑一轮自动同步（**唯一实现**）。两个触发面都走它。
+ *
+ * 形状与原先的 `tick` 逐句相同：防重入 → 闸门 → 每空间档案 → 有服务端地址的走服务端那条 ＋
+ * 有 `space_id` 的顺手跑网格 → 刷新页面列表。
+ */
+async function runAutoSyncRound(): Promise<void> {
+  if (syncRoundBusy) return;
+  syncRoundBusy = true;
+  try {
+    // ① C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了闸门检查
+    // ——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。判据只有一处实现，见 `lib/syncGate.ts`。
+    if (!(await shouldAutoSyncNow())) return;
+    const profiles = await api.listSyncProfiles();
+    const withSpace = (profiles || []).filter((p: any) => p.space_id);
+    const bound = withSpace.filter((p: any) => p.server_url);
+    let syncResults: SyncLike[] = [];
+    if (bound.length) {
+      // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
+      // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
+      // 面板就永远停在"正在同步…"（真机实测过）。
+      syncResults = await withSyncStatus("正在自动同步…", () =>
+        Promise.all(
+          bound.map((p: any) => api.syncWorkspace(p.ws_id).catch(() => null)),
+        ),
+      );
+    }
+    // ★ 网格（丙）：同一批空间顺手各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
+    // ⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**（`mesh_sync_now` 自己早退）
+    // ——前端**不重复判一遍**（两处各解释一遍迟早漂）。
+    let meshReports: MeshLike[] = [];
+    if (withSpace.length) {
+      meshReports = await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
+      await useNotes.getState().loadPages();
+    }
+    // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。
+    //   口径（什么算"空"、出错怎么算）全在 `lib/syncBackoff.ts` —— 这里只喂两个数 ✓。
+    syncEmptyStreak = roundWasEmpty(syncResults, meshReports) ? syncEmptyStreak + 1 : 0;
+    syncLastRunAtMs = Date.now();
+  } catch (e) {
+    // ③ 自动同步失败静默（下次再试），**但留痕**（完全静默的话"改了没传上去"查不到因果）。
+    console.warn("[sync] 自动同步这一轮失败（下一个节拍再试）", e);
+  } finally {
+    syncRoundBusy = false;
+    if (syncRoundPending) {
+      syncRoundPending = false;
+      // 补上被合并掉的那一轮（**串行**，不是并发）。
+      void runAutoSyncRound();
+    }
+  }
+}
+
+/**
+ * 「编辑触发」那一侧的入口：忙 ⇒ **记下"跑完再来一次"**；闲 ⇒ 直接跑。
+ *
+ * 为什么不能像定时器那样"忙就丢掉"：编辑触发丢掉的不是"这一次节拍"，而是**某一笔改动**
+ * 被推上去的唯一机会（下一轮要等一个节拍 —— 服务端档最长 5 分钟）⇒ 表现成
+ * "我改了，对面半天没动"。所以这里**合并**（不许并发，见 `runAutoSyncRound` 的 ②）。
+ */
+function requestAutoSyncRound(): void {
+  // ★ 空闲退避（2026-09-30）：**有人改 ⇒ 立刻回到基础节拍** ✓
+  //   这就是"活跃时不牺牲延迟"那一半：输入/编辑一类动作一到，退避清零。
+  syncEmptyStreak = 0;
+  if (syncRoundBusy) {
+    syncRoundPending = true;
+    return;
+  }
+  void runAutoSyncRound();
+}
+
+/**
+ * 一次本地编辑之后，隔多久真的去上传（**防抖窗口**）。
+ *
+ * 400ms：落在需求 §9.3 给的 300~500ms 区间里，取偏大的一侧，理由是它要盖住一次连续输入
+ * （打字时 Lexical 每个批次都会报一次 `onLocalEdit`），同时不让"停手之后多久对面能看到"
+ * 明显变慢（延迟拆解见需求 §9.5：防抖 ＋ 上传 ＋ 广播 ≈ 0.4~1 秒）。
+ */
+const LOCAL_EDIT_UPLOAD_DEBOUNCE_MS = 400;
 
 function NoteEditor({ pageId }: { pageId: string }) {
   // 逐字段订阅：这 5 个 state 字段都真的进了渲染（正文 / 错误角标 / 搜索高亮 / 页面树 / 编辑器重挂载 key），
@@ -265,6 +393,59 @@ function NoteEditor({ pageId }: { pageId: string }) {
     patch: { title?: string; content_json?: string; content_text?: string };
   } | null>(null);
 
+  /**
+   * 把 pending 的那一次保存**立刻落库**（不等 600ms 去抖）。
+   *
+   * 三个调用点**共用这一处实现**（各写一份的下场是漂 —— 这一笔把原先写在卸载 effect 里的
+   * 那一遍 `api.savePage(...)` 收进来了）：
+   *   ① `persist` 的去抖到点；
+   *   ② 卸载 / 换视图时的那条 flush（不许把用户刚敲的内容丢在去抖窗口里）；
+   *   ③ ★ 新触发（`onAnyLocalEdit` ⇒ 防抖 ⇒ **先 flush 再上传**）。
+   *
+   * ③ 为什么必须先 flush：带 CRDT 状态的那条 outbox 记录是**页面保存那一刻**才产生的
+   * （`save_page` → `record_page_upsert` 顺手读状态；只写状态的那条命令**不产**记录），
+   * 而"编辑 ⇒ 页面保存"之间还有 600ms 去抖。⇒ 编辑之后直接按 300~500ms 去上传，会**赶在
+   * 那条记录存在之前**跑一轮，那一轮推不动任何东西；而下一轮要等一个节拍（服务端档最长 5 分钟）。
+   */
+  const flushPendingSave = useCallback(async () => {
+    const p = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    // 顺手撤掉那个还没到点的去抖定时器：flush 的语义是"现在写"，不是"再写一次"。
+    if (debounceRef.current) {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    if (!p) return;
+    try {
+      const updated = await api.savePage({ id: p.pageId, ...p.patch });
+      updateCurrent(updated);
+      setSaved(true);
+      // 保存只可能改动 PageMeta 里的少数几个字段（标题 / `updated_at`）⇒ **就地更新列表
+      // 那一条**，不再 `loadPages()` 全量重拉：后者会 `set(loading)` + `set(pages)` 两次
+      // 全量广播，并为一次标题改动重查整张 page 表——而这条路每 600ms 就可能走一次，
+      // `pages` 的订阅者里还有「每个树节点一个」的 TreeItem 与 DatabaseView 这种千行组件。
+      // 三种情况回退到全量重拉，保证不漏：① 后端没回页面；② 本地列表里没有这一条
+      // （例如刚在别处新建）；③ 列表上次加载就失败了 —— 顺便重试并清掉那个 `error` 角标
+      // （旧代码每次都靠 loadPages() 顺手清，走近路时必须显式保留这个语义）。
+      const notes = useNotes.getState();
+      if (!updated || notes.error || !notes.patchPageMeta(updated)) loadPages();
+      // Invalidate block-reference/embed caches so mirrors refresh.
+      useBlockCache.getState().bump();
+      // 保存后派发事件（M11.8）：只有**声明订阅了 page.saved** 的启用插件会收到。
+      // 不 await：保存路径不该等插件；插件产出的写操作仍要用户确认才落库。
+      void usePlugins.getState().emitEvent("page.saved", {
+        pageId: p.pageId,
+        title: updated?.title ?? "",
+      });
+    } catch (e) {
+      console.error("save failed", e);
+      toast(`保存失败：${e}`, "error");
+    } finally {
+      // Never leave the "保存中…" indicator stuck (e.g. a failed save).
+      setSaved(true);
+    }
+  }, [loadPages, updateCurrent]);
+
   const persist = (patch: {
     title?: string;
     content_json?: string;
@@ -273,38 +454,9 @@ function NoteEditor({ pageId }: { pageId: string }) {
     setSaved(false);
     pendingSaveRef.current = { pageId, patch };
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(async () => {
-      const p = pendingSaveRef.current;
-      pendingSaveRef.current = null;
-      if (!p) return;
-      try {
-        const updated = await api.savePage({ id: p.pageId, ...p.patch });
-        updateCurrent(updated);
-        setSaved(true);
-        // 保存只可能改动 PageMeta 里的少数几个字段（标题 / `updated_at`）⇒ **就地更新列表
-        // 那一条**，不再 `loadPages()` 全量重拉：后者会 `set(loading)` + `set(pages)` 两次
-        // 全量广播，并为一次标题改动重查整张 page 表——而这条路每 600ms 就可能走一次，
-        // `pages` 的订阅者里还有「每个树节点一个」的 TreeItem 与 DatabaseView 这种千行组件。
-        // 三种情况回退到全量重拉，保证不漏：① 后端没回页面；② 本地列表里没有这一条
-        // （例如刚在别处新建）；③ 列表上次加载就失败了 —— 顺便重试并清掉那个 `error` 角标
-        // （旧代码每次都靠 loadPages() 顺手清，走近路时必须显式保留这个语义）。
-        const notes = useNotes.getState();
-        if (!updated || notes.error || !notes.patchPageMeta(updated)) loadPages();
-        // Invalidate block-reference/embed caches so mirrors refresh.
-        useBlockCache.getState().bump();
-        // 保存后派发事件（M11.8）：只有**声明订阅了 page.saved** 的启用插件会收到。
-        // 不 await：保存路径不该等插件；插件产出的写操作仍要用户确认才落库。
-        void usePlugins.getState().emitEvent("page.saved", {
-          pageId: p.pageId,
-          title: updated?.title ?? "",
-        });
-      } catch (e) {
-        console.error("save failed", e);
-        toast(`保存失败：${e}`, "error");
-      } finally {
-        // Never leave the "保存中…" indicator stuck (e.g. a failed save).
-        setSaved(true);
-      }
+    debounceRef.current = window.setTimeout(() => {
+      debounceRef.current = null;
+      void flushPendingSave();
     }, 600);
   };
 
@@ -336,15 +488,13 @@ function NoteEditor({ pageId }: { pageId: string }) {
   // or closing the app within the 600ms window).
   useEffect(() => {
     return () => {
-      const p = pendingSaveRef.current;
-      pendingSaveRef.current = null;
-      if (p) {
-        api.savePage({ id: p.pageId, ...p.patch }).catch((e) => {
-          console.error("flush save failed", e);
-          toast(`保存失败：${e}`, "error");
-        });
-      }
+      // ⚠️ 与去抖到点是**同一条路**（`flushPendingSave`）：这里原先自己写了一遍
+      //    `api.savePage(...)`，与去抖那一份是同一段逻辑的两个副本。
+      // ⚠️ 依赖 `[]` + 那个 `useCallback` 的引用恒定（它只用 ref 与稳定的 store 动作）
+      //    ⇒ 卸载时拿到的就是最新那一份，不会漏掉后写入的 pending。
+      void flushPendingSave();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 主题插件：启用中的插件声明的设计变量应用到界面上；停用即移除（见 lib/pluginTheme）。
@@ -394,56 +544,108 @@ function NoteEditor({ pageId }: { pageId: string }) {
     return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
   }, []);
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | undefined;
-    let initial: ReturnType<typeof setTimeout> | undefined;
-    let busy = false;
-    const tick = () => {
-      if (busy) return;
-      busy = true;
-      (async () => {
-        try {
-          // C2 网络闸门：**这条路也必须过闸**（真机验收发现它原先绕过了闸门检查
-          // ——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。
-          // 判据只有一处实现，见 `lib/syncGate.ts`。
-          if (!(await shouldAutoSyncNow())) return;
-          const profiles = await api.listSyncProfiles();
-          const withSpace = (profiles || []).filter((p: any) => p.space_id);
-          const bound = withSpace.filter((p: any) => p.server_url);
-          if (bound.length) {
-            // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
-            // 否则 Rust 侧的附件进度事件会把 store 置成"正在同步"且没人收尾，
-            // 面板就永远停在"正在同步…"（真机实测过）。
-            await withSyncStatus("正在自动同步…", () =>
-              Promise.all(
-                bound.map((p: any) =>
-                  api.syncWorkspace(p.ws_id).catch(() => null),
-                ),
-              ),
-            );
-          }
-          // ★ 网格（丙）：同一批空间顺手各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
-          if (withSpace.length) {
-            await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
-            await loadPages();
-          }
-        } catch {
-          /* 自动同步失败静默，下次再试 */
-        } finally {
-          busy = false;
-        }
-      })();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    // ★ 用户**换档**（或本 effect 重挂）⇒ 退避清零：他刚表达过"我要这个节拍"，
+    //   不该被上一次的空转历史拖住（否则"我选了 5 秒，它却 60 秒才跑" ⇒ 看着像坏了 ✗）。
+    syncEmptyStreak = 0;
+    // ⚠️ 这一轮的全部内容（防重入 / 闸门 / 两条路 / 刷新列表）搬到了模块级的
+    //    `runAutoSyncRound` —— 现在**两个触发面共用它**（定时器 ＋ 编辑触发，见下）。
+    //    `busy` 也跟着搬走了（它必须跨这个 effect 的重挂存活，否则换档那一刻防重入会失效）。
+    //
+    // ★ 空闲退避（2026-09-30）：原来是**固定** `setInterval(tick, autoSyncMs)` ⇒ 闲着也照跑
+    //   （5 秒一次空轮询 ＝ 256 B，实测见 `_workspace/notes/2026-09-30-b1-b2-prechecks-macos.md`）。
+    //   现在改成**自排程**：每跑完一轮按 `decideSyncTick` 算下一跳。
+    //   ⚠️ 判据（含"什么算空"和**硬顶 60 秒那条无条件兜底**）**全在 `lib/syncBackoff.ts`** ✓。
+    const schedule = (delayMs: number) => {
+      if (cancelled || autoSyncMs <= 0) return;
+      timer = setTimeout(() => void tick(), delayMs);
     };
-    if (autoSyncMs > 0) {
-      timer = setInterval(tick, autoSyncMs);
+    // ★ 切后台（2026-09-30）：**只停移动端** —— 判据在 `lib/syncBackoff.ts` 的 `decideHiddenTick`。
+    //   ⚠️ 桌面端"窗口被挡住/最小化"**照跑**（那 ≠ 用户走了 ✓）；拿 hidden 一刀切会砍错人 ✗。
+    const isMobile = isMobileUserAgent(navigator.userAgent);
+    let hidden = document.visibilityState === "hidden";
+    async function tick() {
+      // 移动端在后台 ⇒ 不跑，而且**不再排下一跳**（循环就地停住）；
+      // 回到前台由下面那个监听**立刻补一轮**唤醒 ✓（比"被系统冻在半路、回来还要等一个节拍"好 ✓）。
+      if (!decideHiddenTick({ hidden, isMobile }).run) return;
+      await runAutoSyncRound();
+      const d = decideSyncTick({
+        nowMs: Date.now(),
+        lastRunAtMs: syncLastRunAtMs,
+        baseMs: autoSyncMs,
+        emptyStreak: syncEmptyStreak,
+      });
+      // ⚠️ `waitMs ≤ 0` 只可能是"这一轮**早退了**"（忙 / 被闸门拦掉 ⇒ 没记时）
+      //    ⇒ 按基础节拍再来一次，**别原地空转** ✗（真跑过的那一轮 lastRunAt 刚更新，不会 ≤0 ✓）。
+      schedule(d.waitMs > 0 ? d.waitMs : autoSyncMs);
     }
+    // 回到前台 ⇒ **立刻补一轮**（用户一回来就看到最新的 ✓）＋ 退避清零。
+    const onVisibility = () => {
+      const wasHidden = hidden;
+      hidden = document.visibilityState === "hidden";
+      if (wasHidden && !hidden) {
+        syncEmptyStreak = 0;
+        void tick();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     // 启动后先来一次（与原来那条路一致：不管间隔设没设都跑）。
-    initial = setTimeout(tick, 3000);
+    // ⚠️ 这一行**故意保持原样**（函数名仍叫 `tick`、形状仍是 `setTimeout(tick, 3000)`）：
+    //    `useSyncStream.wiring.test.ts:144` 那条接线判据钉的就是它，原意是
+    //    「轮询必须**无条件**挂在 App 上（启动后先跑一次，与间隔设没设无关）」——
+    //    本笔只改了**后续节拍怎么排**，这条原意**一字未动** ✓（所以判据也不该改 ✓）。
+    timer = setTimeout(tick, 3000);
     return () => {
-      if (timer) clearInterval(timer);
-      if (initial) clearTimeout(initial);
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, loadPages, autoSyncMs]);
+
+  /**
+   * ★ 2026-09-29（本笔）：**正文上传触发** —— 「编辑器改了 ⇒ 防抖 ⇒ 立刻上传」。
+   *
+   * 补的是需求 §9.1 那一半：**下载侧**早就实时（服务端推一帧 ⇒ `useSyncStream` 立刻拉一次），
+   * 而**上传侧**在 `syncWorkspace` 的调用点里**没有一处**是"编辑器改完就调用它" ——
+   * 于是"我改了 ⇒ 别人多久看到"仍然是那个节拍（服务端档默认 5 分钟兜底）。
+   *
+   * 四条口径（与那一笔的要求逐条对应）：
+   *   ① 信号源**不是新造的**：`onAnyLocalEdit` 就是 S3b-1 那个 `onLocalEdit` 的模块级广播，
+   *      它**已经**区分"程序性写入（建血统 / 载入 / 远端合并落回编辑器）"与"用户编辑"，
+   *      前者不报 ⇒ 不会把合并当成本机改动推回去；
+   *   ② 跑的还是**同一个** `runAutoSyncRound`（**不新造第二条同步路**）；
+   *   ③ 闸门、防重入、失败留痕都在 `runAutoSyncRound` 那一处（见它的注释）；
+   *   ④ 卸载 / **换页**（`pageId` 变）⇒ 退订 ＋ 清掉 pending 的防抖定时器（**不许泄漏**）。
+   *
+   * ⚠️ 两个容易漏掉的次序：
+   *   · **先 flush 再跑**：带状态的那条 outbox 记录是页面保存那一刻才产生的（理由写在
+   *     `flushPendingSave` 的注释里）—— 否则这一轮推的还是上一版；
+   *   · **「关闭」档不跑**：`effectiveAutoSyncMs() === 0`（＝同步方式选了「关闭」，且没开近实时）
+   *     时**一个字都不自动跑** —— 这是 `syncMode.ts` 里写死的口径（"总闸优先"），
+   *     本触发属于自动，**没有资格绕过总闸**（用户选的是"只有点「同步」时才同步"）。
+   */
+  useEffect(() => {
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    const off = onAnyLocalEdit(() => {
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => {
+        pending = undefined;
+        void (async () => {
+          if (effectiveAutoSyncMs() <= 0) return;
+          // 先把这一笔保存落到库里 —— 上传要推的那条记录是保存那一刻才产生的。
+          await flushPendingSave();
+          requestAutoSyncRound();
+        })();
+      }, LOCAL_EDIT_UPLOAD_DEBOUNCE_MS);
+    });
+    return () => {
+      off();
+      if (pending) clearTimeout(pending);
+      pending = undefined;
+    };
+  }, [pageId, flushPendingSave]);
 
   // 自动备份提醒（设置 → 数据 可配）：距上次成功备份超过设定天数，启动时提醒一次。
   useEffect(() => {
@@ -718,6 +920,41 @@ function AppShell() {
   useSyncStream();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
   useSyncProgress();
+  // ★ 2026-09-29：**开机就把「局域网这一档开着吗」读一次**。
+  //
+  // ⚠️ 位置很要紧：它**必须在 `AppShell` 里**，不能放在 `NoteEditor` 里 ——
+  //    第一次我插进了 `NoteEditor`（那个组件只有【打开某一页】才挂载），于是
+  //    "改了没生效"、而且**它的表现与"没插"完全一样**（这一点值得记：
+  //    组件摆错位置时，代码在、但你永远看不到它跑）。
+  // 为什么必须有这一步（否则是鸡生蛋）：自动定时器的间隔由 `effectiveAutoSyncMs()` 定，
+  // 而它要看"局域网档开着吗"；那个状态原本只由**同步面板**轮询时喂进来
+  // ⇒ 用户上次开了网格、这次【没打开面板】⇒ 间隔停在 5 分钟，
+  //    而要靠定时器把它读出来得先等 5 分钟 ⇒ **永远轮不到**。
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const wsId = await api.getActiveWorkspaceId();
+        const st = await api.lanStatus(wsId ?? undefined);
+        // 用 **Rust 判好的那个结论**（＝ `cfg.bind.is_some()`）去喂，
+        // 不按地址形状自己再判一次档（判据 ⑭ 钉的是后者）。
+        // ⚠️ 这一行**不许**再写出那个字段名（"网格" ＋ "开着吗"那个 Rust 字段的字面量）：
+        //    `syncPanelMesh.wiring.test.ts` ①b 是**文本级**判据（不剥注释），它扫到就会红。
+        //    2026-09-29 实测：HEAD 上这一行注释里正好写着它 ⇒ 那条判据是**既存红**；
+        //    处置照 `check-doc-content-access` 文件头第 2 条 —— **改措辞**，用中文描述该字段。
+        if (alive) setLanMeshActive(!!st?.mesh?.enabled);
+      } catch (e) {
+        // 读不到（命令没注册 / 老构建 / 还没绑空间）⇒ **维持默认（5 分钟）**。
+        // ⚠️ 不装成"没开网格"，也不静默改成 5 秒 —— 读不到就是读不到。
+        // ⚠️⚠️ 但要**留痕**：第一版这里是空 `catch {}`，于是"根本没调到 lanStatus"
+        //     被静默吞掉，表现成"改了没生效"（正是本仓那条"不许静默"的又一次踩）。
+        console.warn("[sync] 开机读 lan_status 失败 ⇒ 局域网档仍按 5 分钟兜底", e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   const isMobile = useMobile();
   // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
@@ -804,7 +1041,6 @@ function AppShell() {
           <InputDialog />
           <AiAssistantPanel />
           <CommentsDrawer />
-          <RightRail />
         </PanelBoundary>
       </div>
     );
@@ -814,6 +1050,14 @@ function AppShell() {
     <div className="app">
       <TitleBar />
       <UpdateBanner />
+      {/* ⚠️ 2026-10-01（owner 界面方向之①）：入口搬到**顶端工具栏** ✓ —— 但 `TitleBar`
+          **只在桌面平台渲染**（Web 里 return null ✗）⇒ Web 与手机必须**自己渲染一处** ✓，
+          否则 Web 用户会丢掉全部四个入口 ✓（这是判据实测到的：桌面四颗＝0 颗 ✗）。 */}
+      {(!isDesktopPlatform() || isMobile) && <TopTools className={isMobile ? "is-mobile" : "is-web"} />}
+      {/* ⚠️ 2026-10-01（owner 界面方向之①）：**手机上标题栏不渲染**（`TitleBar` 非桌面 return null ✓），
+          而 owner 要求两端都有这条顶端工具栏 ✓ ⇒ 这里给手机渲染一行，用的是**同一个组件** ✓。
+          桌面那一份在 `TitleBar` 里 ✓（⛔ 两处各写一份 = 两份真相源 ✗）。 */}
+      {isMobile && <TopTools className="is-mobile" />}
       <div className="app-body">
         <ActivityBar />
         <PageTree view={view} onViewChange={setView} />
@@ -858,6 +1102,10 @@ function AppShell() {
         <div className="main"><Suspense fallback={<ViewLoader />}><TemplateCenterView /></Suspense></div>
       ) : view === "graph" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><GraphView /></Suspense></div>
+      ) : view === "timeline" ? (
+        <div className="main"><Suspense fallback={<ViewLoader />}><TimelineReview /></Suspense></div>
+      ) : view === "map" ? (
+        <div className="main"><Suspense fallback={<ViewLoader />}><KnowledgeMap /></Suspense></div>
       ) : view === "board" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
       ) : view === "files" ? (
@@ -899,7 +1147,6 @@ function AppShell() {
         <CommentsDrawer />
         {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
         <TextRepairRunner />
-        <RightRail />
         <ShortcutsPanel />
         <AboutDialog />
         <SettingsDialog />

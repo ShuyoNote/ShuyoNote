@@ -591,6 +591,28 @@ export function blockSnapshotsOf(docJson: string): BlockSnapshot[] | undefined {
 }
 
 /**
+ * 从一条**同步载荷**里取出那段正文 JSON ✓（载荷是页面详情的序列化：这个键是**字符串** ✓）。
+ *
+ * 为什么放在这一层（而不是让 `activityBlocks.ts` 自己去解）：全仓直接提这个字段名的地方**只许减**
+ * （判据 `check-doc-content-access.mjs` ✓）—— 解析载荷正是"唯一那一层"的活 ✓；
+ * 上层只调本函数 ✓，不许在别处再拼一遍键名 ✗。
+ */
+export function docJsonOfPayload(payload: string): string | undefined {
+  let v: unknown;
+  try {
+    v = JSON.parse(payload);
+  } catch {
+    return undefined;
+  }
+  if (!v || typeof v !== "object") return undefined;
+  const raw = (v as Record<string, unknown>).content_json;
+  if (typeof raw === "string") return raw;
+  // 宽容：有的写入方把它直接写成对象 ⇒ 原样序列化 ✓（与 Rust 那份同一条口径 ✓）
+  if (raw && typeof raw === "object") return JSON.stringify(raw);
+  return undefined;
+}
+
+/**
  * 把块表（合并结果）装回一份落盘 JSON：children 换掉，根上其它字段照旧。
  *
  * ⚠️ 每一块都把 `rev` **写回去**（`blockRev` 字段）—— 漏了它，下一次合并会把这页误判成"老客户端产物"。

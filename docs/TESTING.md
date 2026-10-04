@@ -56,8 +56,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 51 条（contract 27 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3）· 能力 25 条 · 命令 Rust 260 / web 250 / CommandMap 262
-基线下限（与 tests/baseline.json 逐字一致，共 11 条）vitest 2262 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+门禁 77 条（contract 52 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 265 / web 254 / CommandMap 267
+基线下限（与 tests/baseline.json 逐字一致，共 13 条）check-mcp-audit-single-ledger 4 · check-search-platform-parity 4 · vitest 2484 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -72,7 +72,20 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-changelog-numbers` | 发版说明里的断言数被手抄漂移：**最新一段**里"套件名 + 数字"一对一绑定时必须等于基线（历史段落不碰；多套件/多数字/带 `历史`·`豁免` 的行跳过——宁可不判，也不误报） |
 | contract | `check-web-commands` / `check-capabilities` | web 与桌面两侧命令契约、能力注册表漂移 |
 | contract | `check-doc-links` | 文档相对链接变死链 |
+| contract | `check-decision-ids` | **决策编号不许与需求撞车**：待拍清单的**决策**编号原本也叫 `D1–D18`，而企业版需求 §1.4「交付与部署」那组 MUST 也叫 `D1–D4`（可自建／零依赖起跑／客户端 AGPL／两边不许互嵌）⇒ **两组同名**。2026-09-30 一次**独立**的可行性核验把**需求的** `D1–D4` 当成了决策项 ⇒ **漏数四个指标**（读到 32，实际 36）。⇒ 决策一律 `DEC-<n>`；判据形态＝**白名单**：文档级「自有编号族」（`docs/roadmap.md` 的 `D7`、`plugin-host-isolation-plan` 的 `D1–D7`、realtime-body／nearby 的「§7 待查」…各自放行）＋**混用文件按命中点语境**判（同一份文件里 `D3` 既当需求又当决策，正是最危险的那种）。纯 Node、只读文本、离线、自带 4 例 `--self-test`；**改前 199 处违规、改后 0 处** |
+| deploy | `check-web-deploy` | **Web 版线上自检**（GitHub Pages ＋ 国内主站：版本号 ＋ index.html 引用的**每个资源**可达性）：2026-09-29 实测它**只挂 `package.json`、注册表没登记、CI 与文档都没调用点** ⇒ 本仓铁律所说的"**能抓到问题但没人跑**" ✗；当天顺手跑即红：GitHub Pages 的 `prism/prism-*.js` **404**（v1.84.4 那类"index 新、资源旧"）✓。⚠️ **联网 ⇒ 不进 `DEFAULT_GROUPS`** ✓，该由**每日定时**跑（改工作流待 owner 同意 ✓） |
+| contract | `check-crdt-snapshot-contract` | **CRDT 加密快照的服务端接口契约退化**：E2EE 加密快照的协议可行性已验（尖刺 13/0 ✓），但实现落在**另一个仓** ⇒ 契约若只存在散文里，最易退化的恰是三条**不可逆**规则——① 服务端开始解析密文快照（个人空间"服务端在数学上无法解密"名存实亡）② **先退役旧 blob、后落快照**（不可逆丢数据）③ `snapshotSeq` 由必填变可选（退役范围不明 ⇒ 静默丢数据）。本门禁把三条路由与三条承重规则钉在 `scripts/lib/crdt-snapshot-contract.mjs`，夹具退化即红 |
+| contract | `check-ontology-generated` | **本体表与能力注册表不一致**（生成物被手改／注册表改了没重新生成）—— 来由：2026-09-28 MCP 规格把 `isWrite: true` 当判据，而该字段在原始 JSON 里**出现 0 次** ✗（真实字段是 `kind`）⇒ 本体只能生成、并逐字节卡漂移 |
+| contract | `check-agent-surface` | **工具面（生成物）与注册表不一致** ／ **只读面里出现写能力** ／ **描述里写进内部标识**（工具面＝对外暴露面） ／ **能力面超出笔记域**（`ai:true` 的能力不许是库外／host／全局 —— R43：库权限 ≠ 仓库权限）。来由：注册表 `ai:true` 实测 10 条（read 8 / write 2），而规格曾把写判定写成查不存在的 `isWrite` ✗ |
+| contract | `check-audit-shape` | **审计形状坏了**：写审计的文件不止一个（漏记 ✗）／条目里出现内容类字段（审计变成第二份内容副本 ✗）／出现 `UPDATE`／`DELETE`（不再只增 ✗）。纯读 Rust 源码 ⇒ **不需要 cargo** ✓ |
+| contract | `check-derived-provenance` | **派生内容失去「从哪来」**：`ExtractedSegment.kind`／`loc` 被改成可选（引用与定位会**静默**降级 ✗）／`SegmentKind` 退化到少于 3 个成员（等于没在区分 ✓）。纯读 TS 源码 ✓ |
+| contract | `check-locked-loud` | **锁定被说成"没内容"**：未解锁空间的失败被映射成空结果（用户以为数据丢了 ✗）／稳定错误码 `space_locked` 丢了／钉它的单测没了（没有承重渠道 ✗）。纯读 Rust 源码 ✓ |
+| contract | `check-invariants-pointers` | **规格在说一件没有的事**：标「能」的 `INV-KB-*` 指的判据**不存在**／**没进注册表**（＝不进 `pnpm verify`／CI ⇒ 等于没人跑 ✗） |
+| contract | `check-spec-judge-carriers` | **规格点名的承重渠道必须真实存在**：`nearby-devices-spec` 那族（`INV-NS-*`／`INV-NEARBY-*`／`INV-AWARE-*`）按铁律**不进 `INVARIANTS.md`**，而它点名的判据**大多不是 `check-*.mjs`**（是 Rust 单测 `mesh::tests::…` 与 vitest wiring），表也是 4/3 列 ⇒ 上一条**够不到它**（硬套只会逼人写假名字，或一行都解析不到＝假红）。本判据补这一档：① 点名的 `check-*.mjs` **必须存在且已注册**；② 点名的 `mod::tests::name` 必须在 `src-tauri/src/*.rs` 里有 **`fn <name>`（整名匹配 —— 只判前缀会假绿，变异实测抓过）**；③ **§18.1 索引表的 id 卫生**：同一个 id 不许两行都 live、被划掉（`~~`）的**必须点出取代者**（`取代/并入/改名/现名/退休`）—— 那是 `DEC-10` 那类病的机器版。⚠️ **边界**：**不扫普通路径引用**（本规格留痕很重：`src-tauri/src/nearby_invite.rs` 是已按 `0c7ad349` 删掉的、`scripts/criteria-mutations.json` 是从来没存在过的通道 ⇒ 一律"路径必须在"会误伤留痕） |
+| contract | `check-crdt-plane` | **混版本共存的地基被拆**：`content_json` 不再是 JSON（TEXT）／CRDT 状态混进它／Rust 引入 Yjs／转换或合成长出第二份实现 ⇒ **老客户端的页打不开** ✗ |
 | contract | `check-doc-facts` | 文档里的**机器事实**（门禁条数／能力条数／命令数）与代码脱节：这类数字靠人抄，抄错不报错，只会让照文档做的人做到一半发现文档是旧的。它还要求**每条门禁都在本表里有名字**（上线当天抓到 7 条漏写） |
+| contract | `check-api-surface-version` | **改接口不升 `apiVersion`**（id／kind／scope／permission 变化 ⇒ 外部程序无信号坏掉）；指纹刻意**不含 desc**（改文案不算破坏接口），`--update` 是文档化出口 |
+| contract | `check-generated-artifacts` | **生成物不自证来源 / 已标脏 / 不可重建**：逐个 `_generated/*.md` 要求「来源路径 ＋ 来源 sha256（与当前源一致）＋ 生成命令且脚本存在」；将来新增生成物**自动被管** |
 | contract | `check-workflow-yaml` | workflow 里"裸标量以 `:` 结尾"⇒ 非法 YAML ⇒ 0 个 job 的红 run（2026-09-12：49 次 push 全红无人察觉）＋ 跑了 `--prepare` 的 job 必须**自己**交接私有 `CARGO_HOME`（2026-09-25：隔离后少这一次交接，Android 自检包在 step 23 如实 panic；按 job 切，按文件找会假绿） |
 | contract | `check-gitcode-workflow-rules` | `.gitcode/workflows/*.yml` 的三条**平台**约束（runs-on 白名单 / 每个 step 必须有合法 `name` / action 用 `actions/xxx@vN`）——不合法时整条流水线不会被调度；规则由 GitCode 校验接口实测得出 |
 | contract | `check-overlay-registry` | 浮层没登记进返回栈 ⇒ 真机返回键直接退出应用（2026-09-15 第 6 个真机问题） |
@@ -107,6 +120,19 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |
 | rust | `rust-sm-wired` | ★ **库级国密接线构建**：打补丁 ＋ `--features sm-library` 下跑全量单测。理由＝应用接线（`apply_gm_page_settings`）整段在 `#[cfg(feature = "sm-library")]` 后面，而**其余 rust 门禁全跑默认特性** ⇒ 那条路本来没有任何门禁碰过（2026-09-22：我在本机把发版链原样跑一遍，才发现「只清 dev profile ⇒ release 旧 SQLCipher 被复用 ⇒ 包表面全对而库级不是国密」）。无 SM 版 OpenSSL 前缀时**自报跳过**（Linux 自动用 `/usr`；macOS 需给 `OPENSSL_DIR`）。它跑完会**还原补丁并重建默认特性**，不留混态。<br>⚠️ **win32 上显式 `--skip plugins::`**（2026-09-22 AMD 在 Windows 上第一次真跑逼出来的）：那 34 条要**真宿主进程**，Windows 本机跑不了 ⇒ 实测 **455 passed / 34 failed / 18 ignored，34 条全在 `plugins::`，国密各组失败 0 条**。取舍：**显式 skip（自报排除了什么）而不是"允许失败 34 条"** —— 数字豁免会在插件测试增减时悄悄改变含义；**只在 win32 skip，模式精确到 `plugins::`**（判据对两个平台做整数组相等断言，放宽模式当场红）；**其余集合仍要求 `failed === 0`**。那一组的权威读数归 CI/WSL2 的 `rust-plugins-alone` 与 Windows 的 `win-cargo-test.ps1`。<br>★ **win32 上是"未实查"而不是红**（2026-09-22 AMD 把这条路走到底的结论）：Windows 上 `cargo test` 生成测试 exe **不带应用清单** ⇒ **两层、互相独立、都要补**——① `0xC0000135` 缺 DLL（PATH 层，门禁已用 `testPathFor` 把 `<前缀>\bin` 并到最前）；② `0xC0000139 STATUS_ENTRYPOINT_NOT_FOUND` **缺 v6 清单**（`Microsoft.Windows.Common-Controls`），只有 `win-cargo-test.ps1` 会注入清单。四组读数：裸 `cargo test`（无 PATH 修复）`0xC0000135` → 跑器注入清单但无 PATH **仍** `0xC0000135` → 跑器＋PATH **跑起来**（455/34/18，34 全 `plugins::`）→ 裸 `cargo test`＋PATH 修复 `0xC0000139`。⇒ 门禁认出这类**装载期**失败后**自报未实查并 exit 0**（附独立读数与下一步），与 macOS 缺静态前缀、`check-crypto-backend` 的"旧产物⇒未实查"同一条纪律；★ **win32 自产读数已走通（2026-09-23）**：跑器加了 `-PrintExePath`（构建＋注入 v6 清单＋打印副本路径）与 `-Skip <patterns>`（展开成原生 `--skip`，避免 `-ExtraArgs` 静默错绑），门禁据此**自己跑那个副本**（`--skip plugins::`）并**自己解析 `test result:` 自判**（`winRunnerPrintArgs` / `manifestCopyPath` / `winSelfRunArgs` / `runPowerShellSafe`，各有判据；`manifestCopyPath` 取**最后**一条带前缀的行 —— 跑器作为子进程时它的进度行也会落到 stdout）。win32 实测：全量 **508 passed / 0 failed / 18 ignored**，`-Skip plugins::` **385 passed / 124 filtered out / exit 0**（门禁自己的下限仍是 380 passed ＋ 0 failed）。⇒ 这条门禁在 win32 上**不再只能自报未实查**；只有跑器那条路走不通（脚本缺失 / 执行策略挡下）才退回未实查，且退回时会把原因打出来|
 | rust | `gm-registry-clean` | ★ **补丁残留在全机共享 registry 上**（AMD 2026-09-22 落地；方案 §五 里唯一归属他的那一行）。`sm-library-build.mjs` **刻意不自动还原**（自动还原会造出「源码是 AES、产物是 SM4」的**新**静默态）⇒ "跑过一次国密构建、忘了 `--revert`"会把这台机器留在**看不见的状态**里：**macOS 上后续默认构建红 12＋7 条，而现场长得像加密库坏了**；Linux/Windows 上不红，但后续默认构建被**静默**改成写 SM4 页。三档判定：原版 / 本次就是 `sm-library` 构建 ⇒ `ok`；带补丁 ∧ 非 darwin ⇒ **`notice`（不判红，但说清会被静默改页加密）**；带补丁 ∧ darwin 默认构建 ⇒ **`block`（exit 1 ＋ 给出 `--revert` 那一行）**；**读不出来**（没跑过 cargo / 拿不到 `Cargo.lock`）⇒ `notice`（与 `check-crypto-backend` 的「旧产物 ⇒ 未实查」同口径）。⚠️ **macOS 上刚跑完国密构建还没 `--revert` 时它会红 —— 这是刻意的**（判据替你记住那件事）。它**只读**（连调 3 次 CLI，源码 SM3 命中恒为 50）；13 条判据 ＋ 变异 2 条。<br>★ **2026-09-25 加第二处残渣**：`src-tauri/Cargo.lock` 里 `libsqlite3-sys` 那条**丢了 `source` ＋ `checksum`**（`--prepare` 时 cargo 拿私有 `[patch.crates-io]` 重解析会删掉这两行，而 `--revert` **不还原锁**）⇒ 默认构建下 **`block`**（`exit 1` ＋ 给出 `git checkout -- src-tauri/Cargo.lock`），`--feature-sm-library` 语境下只 `notice`（那份锁本来该长这样，但**别提交**）。⚠️ 后果不是"看着脏"：这种锁一旦提交，**别人机器上**任何 `--locked` 构建会立刻红，现场像"依赖解析坏了"。**机制是实测的**（不是推的）：跑 `--prepare` 后 `git diff src-tauri/Cargo.lock` 逐字就是删掉那两行；两处残渣**取更重的一档**；判据 **23 条** |
+| `check-mcp-host-authz` | contract | MCP 宿主面必须经**同一处**权限校验（不许第二条鉴权路径）；宿主面未建 ⇒ 绿＋自报跳过 |
+| `check-mcp-channel-judge` | contract | MCP 桥的本机通道：默认关 ＋ token ＋ `Origin`/`Host`（坏 Origin 含**前缀陷阱值**／错 token 必被拒） |
+| `check-mcp-host-channel` | contract | **宿主面那半**通道（方向②：桥→App）：默认关／只绑回环／token 从文件读／`Origin`·`Host` **恰好回环**（前缀写法判红）／必须走唯一入口 `handle_external_call`；通道未建 ⇒ 绿＋自报跳过 |
+| `check-mcp-bridge-dumb` | contract | MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态 |
+| `check-mcp-audit-single-ledger` | contract | 审计只有一本账（`PLUGIN_AUDIT`）且能力调用成功/失败都留痕；宿主面不许自建环 |
+| `check-search-platform-parity` | contract | 桌面专属检索能力（FTS/BM25 只在桌面、Web 走 LIKE）必须写进 app 侧文档 |
+| `check-kb-s1-search` | contract | S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码 |
+| `check-kb-s1-search-parity` | contract | S1③ 两平台检索一致性：同一份夹具（`tests/search-parity.json`）必须被 Rust 与 TS 两侧真消费，不许两份／空壳；真正的相等断言由两侧各自的测试在 CI 上断 |
+| `check-kb-s3-timeline` | contract | S3 时间复盘页：只读派生／两种空态分得开／时间口径只有一处（带 `KB-S3-TIMELINE` 标记的文件为检查面；S3 未落地 ⇒ 绿＋自报跳过） |
+| `check-kb-s4-map` | contract | S4 知识地图：关系可重建／上限＋截断明示／不与既有关系口径打架（带 `KB-S4-MAP` 标记的文件为检查面；S4 未落地 ⇒ 绿＋自报跳过） |
+| `check-im-boundary` | contract | 企业版 IM 的三条边界（空间是唯一边界／无关系类表／推送不带正文；＋客户端只认 push|ping）；服务端仓不在（客户端 CI）⇒ ① ② ③ 自报跳过、④ 照常真查 |
+| `check-pairing-requires-proof` | contract | 配对必须有人核对过：码长下限未被缩短／比对码真的比（不等 ⇒ Err）／采纳前先核对／拒绝路不继续／路径上无「等对端同意」；设备直连那半未落地 ⇒ 那一条自报跳过 |
+| `check-design-doc-refs` | contract | 效果图点名的需求号/不变式必须真实存在（含规格 §7 的 N#）；每条 MUST 至少被一张图引用；不判图长得对不对 |
 | artifact | `external-index` / `external-package` | 我们打出的包与索引，应用**真**解析器 / 真校验器认不认 |
 | artifact | `plugin-fragment-no-zip` | 打包依赖命令行 `zip`（Windows 上没有它，那边 `pnpm test` 红过三条） |
 
@@ -253,6 +279,16 @@ win-cargo-test: test exe exit code = 0
 
 ## 需要"真服务端"的判据（`#[ignore]`，要显式点名才跑）
 
+> ⚠️ **2026-09-29 追改：本节当前没有任何条目。**
+> 本节唯一那条 `sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`（③ 0b 公开材料）
+> 随「**经服务器搬钥匙袋**」那条路**整条删除**（`851c1a7b`）；它读的 `SYNCSRV_BASE` /
+> `SYNCSRV_DEVICE_KEY` 两个环境变量现在全仓**一处都没有**。
+> ⇒ 下面那段"跑法"**只作格式先例**保留（下次真要立一条 `#[ignore]` 真服务端判据时照它写）；
+> ⚠️ 照抄前**必须把 `-Filter` 换成新判据名**，否则点名点不到东西（`0 passed` 会被误读成绿）。
+> ⇒ **仍在跑的"真服务端"判据是另一条、机制也不同**：
+> `sync_stream::tests::e2e_receives_a_push_from_a_real_server` —— 它**不是 `#[ignore]`**，
+> 靠 `SHUYONOTE_STREAM_E2E_SERVER` **自报跳过**（没设就打印"未跑"并 return）。
+
 有些判据**必须**打真服务（桩服务端不看 `Authorization`、也不在乎路径 ⇒ "客户端有没有带 bearer、
 打的是不是那个端点"这类错误它**一定发现不了**）。它们一律 `#[ignore]`，默认不跑，也不会拖慢全量；
 要跑就显式点名（**跑不了的原因要当场喊出来**，不许静默跳过 —— 所以它们直接 `expect` 环境变量）：
@@ -269,9 +305,12 @@ $env:SYNCSRV_BASE="http://127.0.0.1:8799"; $env:SYNCSRV_DEVICE_KEY="sk_…"
     -ExtraArgs "--ignored","--nocapture"
 ```
 
-现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
+~~现有这样一条：`sync::tests::the_client_talks_to_a_real_server_and_needs_its_bearer`
 （③ 0b 公开材料：空 token 必须被挡 / 取回来逐字节相同 / 第二台设备只凭口令解出同一把钥匙）。
-服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。
+服务端那一侧的探针在另一个仓：`scripts/verify-space-keyring.mjs`（8 条，真 axum 服务上跑）。~~
+⚠️ **这一段的两样都已失效**：判据随 `851c1a7b` 删除（见本节开头的追改）；探针 `verify-space-keyring.mjs`
+在**服务端私有仓**，那三条 `/spaces/{id}/keyring` 路由**是否也撤掉，本仓核不到**
+—— 不要从本仓的文档去断定服务端的现状。
 
 ## 局域网发现（甲-1 接线之后怎么验）
 
@@ -283,7 +322,7 @@ powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter 'lan
 ```
 
 两条**只能真机看**的（单测覆盖不到，别把它当成"已经验过"）：① 两台设备在同一网段里互看
-（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「局域网直连」
+（`lan_state::start` 的广播那一条 —— 本机自验走的是回环那条目标）；② `SyncPanel` 上「设备直连」
 那一行显示的地址是否真的被同步请求用上（读数是 `sync::effective_base`，界面只显示 Rust 给的原文）。
 
 ### ★ 2026-09-25 两台真机跑通的做法（含一条**没跑通**的，别照抄那半）

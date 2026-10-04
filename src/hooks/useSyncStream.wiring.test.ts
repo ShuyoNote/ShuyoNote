@@ -77,6 +77,42 @@ describe("近实时 · 订阅目标与接线（文本级，防退回旧形状）
     ).toBe(true);
   });
 
+  it("⑥′ ★ 跳号（`gap`）**不许**当普通帧去抖：与 `ping` 同一条「立刻拉」的路（L4b）", () => {
+    // 这是 L4b 的**接线那一半**：Rust 判出跳号 ⇒ 事件里带 `gap` ⇒ 前端必须**立刻**拉一次
+    // （补漏不能等下一次事件 —— 那是"知道了却不动"）。Rust 侧的判定与出口由
+    // `src-tauri/src/sync_stream.rs` 的判据 8 钉住，这里钉的是**它被谁消费**。
+    const at = src.indexOf("gap");
+    expect(at, "事件载荷里认不出 gap ⇒ 跳号信号没人消费（L4b 断在接线上）").toBeGreaterThan(-1);
+    const pullAfterGap = src.indexOf("pullOnce(", at);
+    const timeoutAfterGap = src.indexOf("setTimeout(", at);
+    expect(pullAfterGap, "gap 那条路上没有 pullOnce ⇒ 跳号不会真的拉").toBeGreaterThan(-1);
+    expect(
+      timeoutAfterGap === -1 || pullAfterGap < timeoutAfterGap,
+      "gap 那条路要「立刻」，不许先经过去抖",
+    ).toBe(true);
+  });
+
+  it("⑥″ ★ **Web 分支**接的是**同一个判定**，且不为跳号另起第二条拉取路（L4b）", () => {
+    // 为什么这条重要：桌面与 Web 收到的是**同一种帧**（服务端 `push_frame`）⇒ 判定口径
+    // 必须只有一处实现（`lib/streamSeq.ts`），否则就是"两个客户端各解释一遍"。
+    // ⚠️ 用 `new AbortController()` 当 Web 分支的锚（**不用注释**：本判据先剥注释再断言）。
+    const webAt = src.indexOf("new AbortController()");
+    expect(webAt, "找不到 Web 分支（它才用 AbortController）").toBeGreaterThan(-1);
+    const web = src.slice(webAt);
+    // ① 判定来自**同一处实现**
+    expect(
+      web,
+      "Web 分支没接 streamSeq 的判定 ⇒ 同一份服务端、两个客户端行为不一致",
+    ).toContain("trackFrame(");
+    // ② 跳号**不许**另起一条拉取路：Web 分支里 `pullOnce(` 只许有**一处**
+    //    （普通帧与跳号帧共用它 —— 与桌面那条"立刻拉只有一处"同形）。
+    const calls = web.split("pullOnce(").length - 1;
+    expect(
+      calls,
+      `Web 分支里有 ${calls} 处 pullOnce ⇒ 跳号那个新分支自己又拉了一次（第二份真相）`,
+    ).toBe(1);
+  });
+
   it("⑦ 开关（默认开）**两处共用一处实现**：起停走 `applyNearRealtime`", () => {
     expect(nearRealtime).toContain("applyNearRealtime");
     expect(nearRealtime).toContain("api.syncStreamStop()");

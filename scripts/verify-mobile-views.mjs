@@ -77,9 +77,22 @@ async function applyShell(page) {
     const WS = { id: "ws1", name: "我的工作空间" };
     const PROF = { ws_id: "ws1", space_id: "sp1", server_url: "http://192.168.43.206:8787",
       token: "t", device_id: "d1", last_pushed_seq: 0, last_pulled_seq: 0 };
+    // ★ 2026-09-29（丙档「附近设备」）：`nearby` 是本档**新增的契约字段**
+    //   （`NearbyPeer`，见 `commands.ts:175` 那一族）⇒ **桩必须跟着长**。
+    //   ⚠️ 不跟着长的下场是"门禁量到一个不可能出现的处境"：`enabled:true` 而读数里没有列表
+    //      ⇒ 面板只能渲染「这台机器上看不到这一层」，而真机上永远不是那一态
+    //      （桩是"布局真、数据假"，但**字段的形状必须与契约同形**）。
+    // ⚠️ 2026-09-29 owner 裁定（规格 §14：设备直连只做配对、不做邀请）⇒ `invites` 字段
+    //   **已从契约里撤掉**，桩里那一项也要跟着撤（否则量的是一个不再存在的形状）。
     const LAN = { enabled: true, peers: 2, kind: "lan",
       line: "同步地址：直连（局域网）http://192.168.43.206:8787 ｜ 本网段发现 2 台",
-      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" } };
+      mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" },
+      nearby: [
+        { device_id: "dev-b", device_name: "小王的笔记本", addr: "192.168.43.7",
+          spaces: ["sp1"], serves_current: true, invitable: true },
+        { device_id: "dev-c", device_name: "我的手机", addr: "192.168.43.9",
+          spaces: ["sp1"], serves_current: true, invitable: true },
+      ] };
     const M = {
       list_workspaces: [WS], get_active_workspace_id: "ws1", get_workspace_name: "我的工作空间",
       list_sync_profiles: [PROF], list_pages: [], list_deleted: [], list_plugins: [],
@@ -1451,13 +1464,103 @@ function vsBaseline(key, value) {
   return { allowed, tail, base };
 }
 
-// ── 同步面板：常驻 chrome ＋ 桌面不滚 ─────────────────────────────────────────
+// ── 同步面板：常驻 chrome ＋ 桌面「允许滚动，但只许不增」──────────────────────
 // 对应 `docs/specs/2026-09-28-sync-panel-density-spec.md` §2 的第 2、3 条不变式。
+// ⚠️ 第 3 条（`desktop-no-scroll`）的**语义在 2026-09-29 深夜被 owner 改了**
+//    —— 见 `assertDesktopNoScroll` 上面那段与规格 §12.2（旧口径"要滚 0px"已作废）。
 //
 // ⚠️ 两条都**必须先声明壳**（§2 第 1 条 `INV-UI-sync-panel-shell-matrix`）：
 //    同一个 390×844，Web 与 Tauri 手机是**两块不同的面板** ⇒ 判语里都带 `壳=${APP_SHELL}`。
 // 用法：`APP_SHELL=web node scripts/verify-mobile-views.mjs`（默认）
 //       `APP_SHELL=tauri node scripts/verify-mobile-views.mjs`
+
+/**
+ * `INV-UI-sync-panel-scroll-reachable`（2026-09-29 加）
+ * 口径：**面板里任何控件，滚到底都必须够得到。**
+ *
+ * ⚠️ 为什么加它（本仓那条「**判据没红只在它能看见的范围内成立**」的又一例）：
+ *   `desktop-no-scroll` 量的是【外层面板】的 `scrollHeight ≤ clientHeight`，
+ *   而桌面档外层是 `overflow: hidden`（只让 `.sync-profiles` 自己滚）
+ *   ⇒ **滚动容器被挤扁时外层照样相等 ⇒ 判绿**。
+ *   2026-09-29 就是这么漏过去的：D5 的 hero 插错层（落在固定区）把 `.sync-profiles`
+ *   从 **180px 挤到 24px** —— 三条断言全绿，而 owner 在真机上「**滚不动**」。
+ * ⇒ 所以这一条**直接量用户视角的那件事**：滚到底，够不够得到。
+ *   （不量"滚动容器有没有被挤扁"这种代理指标 —— 代理指标会以别的方式坏。）
+ * ⚠️ 它**不依赖"哪个元素是滚动容器"这个先验**：现场找
+ *   （`overflow-y: auto|scroll` 且 `scrollHeight > clientHeight`）。
+ */
+async function measureSyncPanelScroll(page) {
+  return safeEval(page, () => {
+    const p = document.querySelector(".sync-popover.is-sync");
+    if (!p) return null;
+    // ⚠️ 2026-09-29 加固：**默认折叠的 `<details>` 的后代**在 Chrome 里
+    //    `getBoundingClientRect().height` 可能仍 > 0、`display` 也不是 `none`
+    //    ⇒ 只判这两个会把"折叠里的控件"误报成"够不到"（实测多报 3 个：预算那三个 select）。
+    //    再判 `getClientRects().length`（`display:none` 的后代为 0）与 `offsetParent`。
+    const vis = (e) => {
+      const cs = getComputedStyle(e);
+      if (cs.display === "none" || cs.visibility === "hidden") return false;
+      if (e.getClientRects().length === 0) return false;
+      if (e.getBoundingClientRect().height <= 0) return false;
+      if (e.offsetParent === null && cs.position !== "fixed") return false;
+      // ⚠️ 最关键的一条：**折叠 `<details>` 的后代不算"可见"**。
+      //    实测（滚到底截图核对）：`▸ 同步预算` 是折叠的，而它里面那 3 个 select
+      //    前面几个判据全过（rect 高度、display、offsetParent 都不是 0/null）
+      //    ⇒ 被误报成"够不到"。**这正是"判据的切片会坏"**：漏一条，就多三个假红。
+      for (let n = e.parentElement; n; n = n.parentElement) {
+        if (n.tagName === "DETAILS" && !n.open) return false;
+      }
+      return true;
+    };
+    // ⚠️ 2026-09-29 修正：**必须把 `p` 自己也算进来** ——
+    //    D5 修正② 之后（桌面档也改成"整个面板滚"），**滚动容器就是面板本身**；
+    //    而 `p.querySelectorAll("*")` **不包含 `p`** ⇒ 漏掉它 ⇒ 量出 11 个假的"够不到"。
+    //    （这条 bug 与它要抓的那个同族：**探针的切片选错了，就看不见真正在滚的那个**。）
+    const scrollers = [p, ...p.querySelectorAll("*")].filter((e) => {
+      const cs = getComputedStyle(e);
+      return (cs.overflowY === "auto" || cs.overflowY === "scroll") && e.scrollHeight > e.clientHeight + 1;
+    });
+    for (const sc of scrollers) sc.scrollTop = 1e9;
+    const pr = p.getBoundingClientRect();
+    const ctrl = [...p.querySelectorAll("input, textarea, select, button, summary")].filter(vis);
+    // ⚠️ 只看【面板底边之下】的：滚到底后落在面板【上方】的那些，滚回顶部就够得到，不算。
+    const below = ctrl
+      .filter((e) => e.getBoundingClientRect().bottom > pr.bottom + 1)
+      .map((e) => (e.textContent || e.placeholder || e.tagName).trim().replace(/\s+/g, " ").slice(0, 16));
+    return {
+      scrollerCount: scrollers.length,
+      scrollerDetail: scrollers
+        .map((sc) => `${String(sc.className || sc.tagName).split(" ")[0]}:${sc.clientHeight}/${sc.scrollHeight}`)
+        .slice(0, 4),
+      total: ctrl.length,
+      belowCount: below.length,
+      below: below.slice(0, 6),
+      panelClient: p.clientHeight,
+      panelScroll: p.scrollHeight,
+    };
+  });
+}
+
+/** `INV-UI-sync-panel-scroll-reachable` 的断言。 */
+function assertScrollReachable(m, vp) {
+  if (!m) {
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 「滚到底够不够得到」这条【没验过】，按 fail 记`);
+    return;
+  }
+  const key = `scroll-reachable|${APP_SHELL}|${vp.name}`;
+  recordForBaseline(key, m.belowCount);
+  const { allowed, tail } = vsBaseline(key, m.belowCount);
+  ok(
+    allowed,
+    `[壳=${APP_SHELL}] ${vp.name} 滚到底后【够不到】的控件 = ${m.belowCount} 个（应 0）` +
+      (m.belowCount ? `：${m.below.join(" / ")}` : "") +
+      `；滚动容器 ${m.scrollerCount} 个（${m.scrollerDetail.join("，") || "无"}）` +
+      `；面板 ${m.panelScroll}/${m.panelClient}${tail}`,
+  );
+  if (m.belowCount < baselineFor(key)) {
+    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${m.belowCount}`);
+  }
+}
 
 /** 打开同步面板（它挂在侧栏里；窄屏侧栏是抽屉、默认 hidden ⇒ 先把抽屉打开）。 */
 async function openSyncPanel(page) {
@@ -1532,27 +1635,49 @@ function assertPersistentChrome(m, vp) {
 
 /**
  * `INV-UI-sync-panel-desktop-no-scroll`（规格 §2 第 3 条）
- * 口径：**Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`）。
+ *
+ * ⚠️ **2026-09-29 深夜 owner 裁定改了这条的语义**（规格 §12.2）：
+ *   · **旧口径**（作废）："桌面版内容一屏装下、**要滚 0px**"（`scrollHeight ≤ clientHeight`）。
+ *     它**不再成立、也不该再要求成立** —— 面板里已经有 8 行可折叠内容 ＋「附近设备」，
+ *     1280×800 下装不下是**正常的**（裁定当天实测：Tauri 壳开态要滚 **141px**）。
+ *   · **新口径**：**「要滚多少」记成基线，只许不增**（沿用本仓"只减不增"那套机制）。
+ *   ⚠️ 基线必须在**注入 Tauri 的壳**里量 —— web 壳里那三行**根本不渲染**（§12.3：
+ *      `isDesktopPlatform()` 为假 ⇒ `lan_status` effect 早退 ⇒ `lanStatus` 恒 `null`），
+ *      拿 web 的 558/558 当基线是**假的**。
+ *   ⚠️ 「允许滚」**不等于**「允许够不到」 ⇒ 这条必须与
+ *      `INV-UI-sync-panel-scroll-reachable`（滚到底够不够得到）**两条一起跑**。
  */
 function assertDesktopNoScroll(m, vp) {
   if (!m) {
-    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 桌面不滚这条【没验过】，按 fail 记`);
+    ok(false, `[壳=${APP_SHELL}] ${vp.name} 同步面板**没打开** ⇒ 「要滚多少」这条【没验过】，按 fail 记`);
     return;
   }
+  const need = Math.max(0, m.need);
   const key = `desktop-no-scroll|${APP_SHELL}|${vp.name}`;
-  recordForBaseline(key, Math.max(0, m.need));
-  const { allowed, tail } = vsBaseline(key, Math.max(0, m.need));
+  recordForBaseline(key, need);
+  const { allowed } = vsBaseline(key, need);
+  const base = baselineFor(key);
+  // ⚠️ 报语**必须跟着判据一起改**（规格 §12.2）—— 旧那句"不该滚（scrollHeight ≤ clientHeight）"
+  //    在新语义下是**自相矛盾**的（一边说"不该滚"、一边打印"允许滚 56px"）。
+  //    这里也不用 `vsBaseline` 那条共用尾巴：它写的是"已知**红**基线"，而这条的基线
+  //    是**裁定后允许的**量，不是"还没修的红"。
+  const tail =
+    base === 0
+      ? "（基线 0 ＝ 这一壳 × 视口一屏装得下；要滚 > 0 即超标）"
+      : `（基线 ${base}px ＝ 2026-09-29 裁定「允许滚动」时在**注入 Tauri 的壳**里实测的值；只许不增` +
+        `，改小了请 --update-views-baseline 收紧）`;
   ok(
     allowed,
-    `[壳=${APP_SHELL}] ${vp.name} 同步面板不该滚（scrollHeight ${m.scrollH} ≤ clientHeight ${m.clientH}；` +
-      `要滚 ${m.need}px；常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
+    `[壳=${APP_SHELL}] ${vp.name} 桌面版**允许滚动**（owner 2026-09-29 裁定），` +
+      `但"要滚多少"只许不增：要滚 ${need}px（scrollHeight ${m.scrollH} / clientHeight ${m.clientH}；` +
+      `常驻 chrome 里可见表单 ${m.footForms} 个）${tail}`,
   );
-  if (Math.max(0, m.need) < baselineFor(key)) {
-    console.log(`  · 可收紧基线：${key} ${baselineFor(key)} → ${Math.max(0, m.need)}`);
+  if (need < base) {
+    console.log(`  · 可收紧基线：${key} ${base} → ${need}`);
   }
 }
 
-/** 把同步面板那两条的**当前**读数写成基线（`--update-views-baseline`）。
+/** 把同步面板那几条的**当前**读数写成基线（`--update-views-baseline`）。
  *  与 `check-store-subscriptions --update-baseline` / `check-copy-discipline --update-baseline` 同形。
  *  ⚠️ 只在**读数走的是预期方向**时才该收紧（修好了才收）；脚本不做判断，由人负责。 */
 const VIEWS_BASELINE_SEEN = {};
@@ -1637,6 +1762,7 @@ async function main() {  const executablePath = findChrome();
         await sleep(600);
         await openSyncPanel(spage);
         assertPersistentChrome(await measureSyncPanel(spage), vp);
+        assertScrollReachable(await measureSyncPanelScroll(spage), vp);
         await shot(spage, `${vp.name}-sync-panel`);
         ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
         await sctx.close();
@@ -1760,73 +1886,48 @@ async function main() {  const executablePath = findChrome();
         }
       }
 
-      // ---------- 窄屏右侧工具条：默认收起 + 右下角唤出 ----------
-      // 它是一条常驻的浮动控制条（AI / 评论 / 目录 / 插件面板），窄屏上会压在正文右缘；
-      // 而它承载的入口本来就低频 ⇒ 默认收起，由右下角 44×44 的圆钮唤出（拇指区）。
-      console.log(`\n【${vp.name} · 窄屏右侧工具条】`);
+      // ---------- 窄屏顶端工具栏：四颗常驻入口都在、够得到、真的能用 ----------
+      // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条**浮动** rail 撤了 ⇒ 入口常驻在**顶端工具栏** ✓
+      //   （手机：`TitleBar` 不渲染 ⇒ `App.tsx` 顶部自己渲染一行 ✓）。
+      //   本节换成**等价断言**：四颗在窄屏够得到、完整在屏内、点「目录」真能把抽屉打开 ✓
+      //   （⛔ 不是删掉这节 ✗ —— "用户按不到入口"正是本节当年要挡的那类事故 ✓）。
+      console.log(`\n【${vp.name} · 窄屏顶端工具栏】`);
       await openView(page, "笔记");
-      const rail0 = await safeEval(page, () => {
-        const t = document.querySelector(".mobile-right-toggle");
-        const b = t ? t.getBoundingClientRect() : null;
+      const tools0 = await safeEval(page, () => {
+        const btns = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool"));
         return {
-          railInDom: !!document.querySelector(".right-rail"),
-          toggle: b ? { w: Math.round(b.width), h: Math.round(b.height), l: Math.round(b.left), r: Math.round(b.right), b: Math.round(b.bottom) } : null,
-          leftToggle: (() => {
-            const l = document.querySelector(".mobile-rail-toggle");
-            if (!l) return null;
-            const r = l.getBoundingClientRect();
-            return { l: Math.round(r.left), r: Math.round(r.right) };
-          })(),
-          vw: innerWidth,
-          vh: innerHeight,
+          has: !!document.querySelector(".top-tools.is-mobile"),
+          n: btns.length,
+          labels: btns.map((b) => b.getAttribute("aria-label") || ""),
+          fits: btns.every((b) => {
+            const r = b.getBoundingClientRect();
+            return r.left >= 0 && r.right <= innerWidth + 0.5 && r.top >= 0 && r.bottom <= innerHeight + 0.5;
+          }),
         };
       });
-      ok(!rail0.railInDom, "窄屏默认**不渲染**右侧工具条（不再常驻压住正文右缘）");
-      ok(
-        !!rail0.toggle && rail0.toggle.w >= 44 && rail0.toggle.h >= 44 && rail0.toggle.r <= rail0.vw && rail0.toggle.b <= rail0.vh,
-        `右下角有 44×44 的唤出按钮且完整在屏内（${rail0.toggle?.w}×${rail0.toggle?.h}，right=${rail0.toggle?.r} ≤ ${rail0.vw}）`,
-      );
-      ok(
-        !rail0.toggle || !rail0.leftToggle || rail0.toggle.l > rail0.leftToggle.r,
-        `右下角那枚与左下角那枚不重叠（右 ${rail0.toggle?.l} > 左末端 ${rail0.leftToggle?.r}）`,
-      );
+      ok(tools0.has, "窄屏渲染顶端工具栏（手机上标题栏不渲染 ⇒ 这里必须自己渲染一行 ✓）");
+      ok(tools0.n >= 4, `四颗入口都在（AI 助手／讨论／通知／目录 —— 实际 ${tools0.n} 颗：[${tools0.labels.join(" / ")}]）`);
+      ok(tools0.fits, "每颗按钮都完整在屏内 ✓");
 
-      await page.click(".mobile-right-toggle");
-      await sleep(700);
-      const rail1 = await safeEval(page, () => {
-        const el = document.querySelector(".right-rail.is-open");
-        const b = el ? el.getBoundingClientRect() : null;
-        return {
-          open: !!el,
-          backdrop: !!document.querySelector(".mobile-right-backdrop"),
-          box: b ? { l: Math.round(b.left), r: Math.round(b.right), t: Math.round(b.top), b: Math.round(b.bottom) } : null,
-          vw: innerWidth,
-          vh: innerHeight,
-          btnCount: document.querySelectorAll(".right-rail .rail-btn").length,
-        };
-      });
-      ok(rail1.open && rail1.backdrop, "点唤出按钮后工具条展开、并出现遮罩");
-      ok(
-        !!rail1.box && rail1.box.l >= 0 && rail1.box.r <= rail1.vw && rail1.box.t >= 0 && rail1.box.b <= rail1.vh,
-        `展开的工具条完整在屏内（${JSON.stringify(rail1.box)} ⊂ ${rail1.vw}×${rail1.vh}）`,
-      );
-      ok(rail1.btnCount >= 3, `工具条里有 AI / 评论 / 目录 三个入口（实际 ${rail1.btnCount} 个）`);
-
-      // 点一个入口 → 工具条收起（抽屉是整屏的，工具条盖在上面没意义）
-      const picked = await safeEval(page, () => {
-        const btns = Array.from(document.querySelectorAll(".right-rail .rail-btn"));
-        const b = btns[btns.length - 1];
-        if (!b) return false;
+      const used = await safeEval(page, () => {
+        const b = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool")).find(
+          (x) => (x.getAttribute("aria-label") || "") === "目录",
+        );
+        if (!b) return "没有「目录」那颗";
         b.click();
-        return true;
+        return "ok";
       });
-      await sleep(1200);
-      const rail2 = await safeEval(page, () => ({
-        railInDom: !!document.querySelector(".right-rail"),
-        toggle: !!document.querySelector(".mobile-right-toggle"),
-      }));
-      ok(picked && !rail2.railInDom && rail2.toggle, "点任意入口后工具条自动收起、唤出按钮回来");
-      await shot(page, `${vp.name}-right-rail`);
+      await sleep(900);
+      const pressed = await safeEval(page, () => {
+        const b = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool")).find(
+          (x) => (x.getAttribute("aria-label") || "") === "目录",
+        );
+        return b ? b.getAttribute("aria-pressed") === "true" : false;
+      });
+      ok(used === "ok" && pressed, `点「目录」真的打开了抽屉（自报按下=${pressed}）`);
+      await page.keyboard.press("Escape");
+      await sleep(500);
+      await shot(page, `${vp.name}-top-tools`);
 
       // ---------- 小控件（开关 / 色点）不许被"按钮一律 44 高"拉变形 ----------
       // 用户截图：窄屏「关于」里那个开关变成了 44×44 的扁方疙瘩、圆钮贴在角上。
@@ -1868,15 +1969,68 @@ async function main() {  const executablePath = findChrome();
           return { toggle: box(".about .ui-toggle"), swatch: box(".set-swatch") };
         });
       };
+      // ⚠️ 2026-10-01：竖条上那个「关于」按钮**已经拆掉**（owner 要求 ✓）⇒ 这里改走**真用户路径**：
+      //   设置 →「关于与更新」那一页 → 页内那个按钮（它内部是 `closeSettings(); openAbout();` ✓）。
+      //   ⛔ 刻意**不用** `useEditorStore.getState().openAbout()` 抄近路 ✗ —— 那等于绕过"界面上还进得去"这条
+      //   断言本身 ✓（而它正是这条断言的全部意义：**用户按得到** ✓）。
+      //   ⚠️ 文案会随状态变（有新版时那颗按钮叫「检查更新」✗、平时叫「关于与更新」✓）⇒ 匹配用**两种都收** ✓。
       const openAboutOrSettings = async (title) => {
         await openRail(page);
-        await page.evaluate((t) => {
+        const clicked = await page.evaluate((t) => {
           const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find(
             (x) => (x.getAttribute("title") || "") === t,
           );
-          if (b) b.click();
+          if (!b) return false;
+          b.click();
+          return true;
         }, title);
         await sleep(1500);
+        if (clicked || title !== "关于") {
+          // ⚠️ 设置会**记住上次那一页**（`tab` 存在 store 里 ✓）⇒ 走"竖条→设置"这条路时必须**显式点目标那一页** ✓，
+          //   否则会停在我上一轮点过的「关于」页 ⇒ 后面量色板那条会验不到 ✗
+          //   （2026-10-01 实测：拆按钮后这一条由绿转红，就是被这个"记忆"绊的 ✓）。
+          if (clicked && title === "设置") {
+            const tab = await safeEval(page, () => {
+              const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) =>
+                ((x.querySelector(".set-rail-label")?.textContent) || "").includes("外观"),
+              );
+              if (!item) return "没找到设置里的「外观」那一项";
+              item.click();
+              return "ok";
+            });
+            ok(tab === "ok", `设置里进得到「外观」那一页（${tab}）`);
+            await sleep(900);
+          }
+          return;
+        }
+        // 竖条上已经没有「关于」了 ⇒ 从**设置**进去（那个入口在 ✓）
+        await page.evaluate(() => {
+          const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find(
+            (x) => (x.getAttribute("title") || "") === "设置",
+          );
+          if (b) b.click();
+        });
+        await sleep(1200);
+        const tab = await safeEval(page, () => {
+          const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) =>
+            ((x.querySelector(".set-rail-label")?.textContent) || "").includes("关于"),
+          );
+          if (!item) return "没找到设置里的「关于」那一项";
+          item.click();
+          return "ok";
+        });        await sleep(1000);
+        const btn = await safeEval(page, () => {
+          const b = Array.from(document.querySelectorAll(".set-section .set-btn")).find((x) => {
+            const t = (x.textContent || "").trim();
+            return t.includes("关于") || t.includes("更新");
+          });
+          if (!b) return "没找到「关于」那一页里的按钮";
+          b.click();
+          return "ok";
+        });
+        await sleep(1200);
+        // 这一步失败要**自己说话** ✓（否则只会看到后面"外链清单为空"，看不出是哪一环断的 ✗）
+        ok(tab === "ok" && btn === "ok", `竖条上没有「关于」了 ⇒ 从**设置**也进得去（设置项=${tab}／页内按钮=${btn}）`);
       };
       await openAboutOrSettings("关于");
       // 「关于」里的外链清单（2026-09-22：加产品官网、去掉文档）——数据源在 `src/lib/links.ts`，
@@ -2125,8 +2279,9 @@ async function main() {  const executablePath = findChrome();
         mobileMQ: matchMedia("(max-width: 768px)").matches,
         activityBtn: r(".activity-btn"),
         toolbarBtn: r(".toolbar-btn"),
-        rightRail: r(".right-rail"),
-        railBtn: r(".rail-btn"),
+        // ⚠️ 2026-10-01（owner ①）：右侧那条竖向 rail 撤了 ⇒ 桌面这处改成量**顶端工具栏** ✓
+        topTools: r(".top-tools"),
+        topTool: r(".top-tool"),
       };
     });
     ok(!d.mobileMQ, "桌面不命中窄屏媒体查询");
@@ -2139,17 +2294,24 @@ async function main() {  const executablePath = findChrome();
       `桌面编辑工具栏按钮仍是 28×28（实际 ${d.toolbarBtn?.w}×${d.toolbarBtn?.h}）`,
     );
     ok(
-      d.rightRail && d.rightRail.w <= 42,
-      `桌面右侧悬浮条仍是常驻窄条（实际 ${d.rightRail?.w}px，宽 ${d.rightRail?.h}）——窄屏那套"默认收起 + 右下角唤出"不许漏到桌面`,
+      d.topTools && d.topTools.h <= 44,
+      `桌面顶端工具栏是窄条（实际高 ${d.topTools?.h}px）——⛔ 旧那条右侧浮动 rail 已撤 ✓`,
     );
-    const dRail = await safeEval(desk, () => ({
-      toggle: !!document.querySelector(".mobile-right-toggle"),
-      backdrop: !!document.querySelector(".mobile-right-backdrop"),
-      rail: !!document.querySelector(".right-rail"),
-      railBtns: document.querySelectorAll(".right-rail .rail-btn").length,
+    const dTools = await safeEval(desk, () => ({
+      n: document.querySelectorAll(".top-tools .top-tool").length,
+      mobileRow: !!document.querySelector(".top-tools.is-mobile"),
+      oldRail: !!document.querySelector(".right-rail"),
+      oldToggle: !!document.querySelector(".mobile-right-toggle"),
+      oldBackdrop: !!document.querySelector(".mobile-right-backdrop"),
     }));
-    ok(dRail.rail && !dRail.toggle && !dRail.backdrop, "桌面不渲染唤出按钮与遮罩（工具条本来就是常驻的）");
-    ok(dRail.railBtns >= 3, `桌面工具条三个入口都在（实际 ${dRail.railBtns} 个）`);
+    ok(dTools.n >= 4, `桌面四颗入口都在（实际 ${dTools.n} 颗）`);
+    // ⚠️ 2026-10-01：RightRail 已撤 ⇒ 这三条反向断言**现在才成立** ✓（撤之前加必红 ✗，实测撞过 ✓）。
+    ok(
+      !dTools.mobileRow && !dTools.oldRail && !dTools.oldToggle && !dTools.oldBackdrop,
+      "桌面走标题栏那一处（手机那行与旧 rail/唤出钮/遮罩都不许出现 ✓）",
+    );
+    // ⚠️ 2026-10-01：**"旧 rail 不许出现"那两条反向断言留到撤组件那一步再加** ✓ ——
+    //   现在 RightRail 还在 ⇒ 加了必然红 ✗（我这一步就在实测里撞到过 ✓）。撤完再加，才是它成立的时刻 ✓。
     await shot(desk, `${DESKTOP.name}-notes`);
 
     // 桌面文件视图：操作行必须是"带文字的按钮"，表格必须**没有**被裁
@@ -2209,9 +2371,9 @@ async function main() {  const executablePath = findChrome();
     await shot(desk, `${DESKTOP.name}-pdf-reader`);
     await deskCtx.close();
 
-    // ---------- 同步面板：桌面不滚（规格 §2 第 3 条）----------
+    // ---------- 同步面板：桌面「允许滚动，但只许不增」（规格 §2 第 3 条 ⇒ §12.2 改语义）----------
     {
-      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：桌面不滚（壳=${APP_SHELL}）】`);
+      console.log(`\n【桌面 ${DESKTOP.name} · 同步面板：允许滚动但只许不增（壳=${APP_SHELL}）】`);
       const sctx = await browser.createBrowserContext();
       const spage = await sctx.newPage();
       await pinAppLanguage(spage);
@@ -2226,6 +2388,7 @@ async function main() {  const executablePath = findChrome();
       const sm = await measureSyncPanel(spage);
       assertDesktopNoScroll(sm, DESKTOP);
       assertPersistentChrome(sm, DESKTOP);
+      assertScrollReachable(await measureSyncPanelScroll(spage), DESKTOP);
       await shot(spage, `${DESKTOP.name}-sync-panel`);
       ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
       await sctx.close();

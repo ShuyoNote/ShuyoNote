@@ -41,6 +41,11 @@ pub const CHOICE_LOCAL: &str = "local";
 /// 裁决选"把对端那一版另存为新页"（★ 唯一**不丢数据**的那条路）。
 pub const CHOICE_SAVED_AS_NEW: &str = "saved-as-new";
 
+/// ★ 2026-09-29（owner 裁定 R77）：**采用对端那一版**（本机这版让位）。
+/// 加它的理由写在 `src/components/LineageConflictBanner.tsx` 文件头：页级冲突的真实选项有**三条**
+/// （留本机／用对端／两个都要），而"用对端"此前**没做** ✗ ⇒ 用户只能被告知、不能选 ✓
+pub const CHOICE_REMOTE: &str = "remote";
+
 /// 记一次页级血统冲突。返回**是否真的新建了一行**（`false` ＝ 这一对指纹已经记过/已裁决过）。
 ///
 /// 去重口径（**同一对指纹只提一次**，这是"不许每开一次页面就打扰一次"的落脚点）：
@@ -157,9 +162,9 @@ pub fn resolve_lineage_conflict(
     choice: &str,
     now: i64,
 ) -> Result<(), String> {
-    if choice != CHOICE_LOCAL && choice != CHOICE_SAVED_AS_NEW {
+    if choice != CHOICE_LOCAL && choice != CHOICE_SAVED_AS_NEW && choice != CHOICE_REMOTE {
         return Err(format!(
-            "choice 只能是 {CHOICE_LOCAL} 或 {CHOICE_SAVED_AS_NEW}，收到 {choice}"
+            "choice 只能是 {CHOICE_LOCAL}／{CHOICE_SAVED_AS_NEW}／{CHOICE_REMOTE}，收到 {choice}"
         ));
     }
     let n = c
@@ -234,22 +239,42 @@ mod tests {
     }
 
     #[test]
-    fn resolve_only_accepts_the_two_literals_and_refuses_a_second_time() {
+    fn resolve_accepts_the_three_literals_refuses_a_fourth_and_refuses_a_second_time() {
         let (c, dir) = conn("resolve");
-        page(&c, "p1");
-        record_lineage_conflict(&c, "p1", "1", "2", "{}", 10).unwrap();
-        let id = unresolved_lineage_conflict(&c, "p1").unwrap().unwrap().id;
 
-        // ★ 不默认选边：其余一律报错（含空串、"remote" 这种"看起来像"的值）
-        for bad in ["", "remote", "use-remote", "LOCAL"] {
-            assert!(resolve_lineage_conflict(&c, &id, bad, 11).is_err(), "{bad:?} 不该被接受");
+        // ★ 三个字面量**各建一行、各裁一次、各验一次**（2026-09-29：`remote` 从"拒"改成"收" ✓
+        //   —— 它对应 UI 的「采用对端那一版」：owner 裁定要这个选项 ✓）
+        // ⚠️ 2026-09-29 订正（合入 dev 时并入的另一侧同一处改动）：原来的坏值表里有 `"remote"`，
+        //    而 `575a58c6` 已把它放开成**合法值**（见本文件 `CHOICE_REMOTE` 与 :165 那个校验）
+        //    ⇒ 这条判据自那天起就是红的。**「合法值不许出现在坏值表里」**——这是同一条纪律的另一面。
+        for (i, choice) in [CHOICE_LOCAL, CHOICE_SAVED_AS_NEW, CHOICE_REMOTE].into_iter().enumerate() {
+            let pid = format!("p{i}");
+            page(&c, &pid);
+            record_lineage_conflict(&c, &pid, "7", "42", "{}", 10).unwrap();
+            let id = unresolved_lineage_conflict(&c, &pid).unwrap().expect("应当有未决").id;
+            resolve_lineage_conflict(&c, &id, choice, 11).unwrap();
+            let all = lineage_conflicts_of(&c, &pid).unwrap();
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0].resolved_choice.as_deref(), Some(choice), "{choice:?} 应被收下并如实存起来 ✓");
+            // 裁决时间要落上、且要落成**实际传进去的那个值** ✓（另一侧更严的断言：`is_some()` 会漏掉"落成别的值"）
+            assert_eq!(all[0].resolved_at, Some(11), "裁决时间要落上 ✓");
+            // 已裁决的**不能再裁决** ✓
+            assert!(resolve_lineage_conflict(&c, &id, choice, 12).is_err(), "已裁决的再裁决要报错");
         }
-        resolve_lineage_conflict(&c, &id, CHOICE_LOCAL, 11).unwrap();
-        assert!(resolve_lineage_conflict(&c, &id, CHOICE_LOCAL, 12).is_err(), "已裁决的再裁决要报错");
-        let all = lineage_conflicts_of(&c, "p1").unwrap();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0].resolved_choice.as_deref(), Some(CHOICE_LOCAL));
-        assert_eq!(all[0].resolved_at, Some(11));
+
+        // ★ 不默认选边：**第四个**值与"看起来像"的写法一律报错 ✓
+        page(&c, "pbad");
+        record_lineage_conflict(&c, "pbad", "1", "2", "{}", 10).unwrap();
+        let idbad = unresolved_lineage_conflict(&c, "pbad").unwrap().expect("应当有未决").id;
+        for bad in ["", "whatever", "use-remote", "LOCAL", "saved_as_new", "Remote"] {
+            assert!(resolve_lineage_conflict(&c, &idbad, bad, 13).is_err(), "{bad:?} 不该被接受");
+        }
+        // 而合法值仍能收 ⇒ 证明上面那一串拒的是**值本身**，不是"这一行坏了" ✓
+        resolve_lineage_conflict(&c, &idbad, CHOICE_REMOTE, 14).unwrap();
+        assert_eq!(
+            lineage_conflicts_of(&c, "pbad").unwrap()[0].resolved_choice.as_deref(),
+            Some(CHOICE_REMOTE)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

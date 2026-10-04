@@ -14,6 +14,14 @@
 
 | id | 口径（引自注册表 `label`） | 判据 | 会红证据 |
 |---|---|---|---|
+
+> ⭐ **2026-09-29 补注（windows 裁定，AMD 落地）**：收录条件**没有**"载体必须是 `scripts/check-*.mjs`"这一条 ✗ ——
+> **载体可以是测试**。先例：`INV-RELEASE-sm-pipeline` 走"兄弟测试"通道 ✓；本表 2026-09-29 起另有三条
+> `INV-WIKI-*` 走同一形态。⇒ 对这类条目：
+> **「口径」列引测试里那句断言的逐字原话**（它没有注册表 `label`）、**「判据」列写测试文件名 ＋ 跑它的命令**、
+> **「会红证据」列写 D3 测试形态那本账**（本仓目前用**仓内可复跑**的变异脚本充当"能原地重做"的口子 ✓）。
+> ⚠️ 别再照着"门禁"两个字把测试形态的条目摘出去 ✗。
+
 | **INV-CHANGELOG-structure** | CHANGELOG 结构 | `scripts/check-changelog.mjs`（可传目标文件注入） | ✅ 账本 `exit=1`（sha `d850ec3a8688`）｜2026-09-28 夹具实测：合法 exit 0 ／ 让 `###` 出现在任何 `##` 之前 ⇒ **exit 1** |
 | **INV-CHANGELOG-gate-numbers** | CHANGELOG 门禁数字（与基线一致） | `scripts/check-changelog-gate-numbers.mjs`（`--root`） | ✅ 账本 `exit=1`（sha `48cff11c1047`）｜夹具实测：台账写 999 / 基线 1000 ⇒ **exit 1**（逐字判语「vitest：写的是 999，基线是 1000」） |
 | **INV-RELEASE-tag-tree** | 每个 tag 的树自带本版台账段头 | `scripts/check-changelog-tags.mjs` | ✅ 账本 `exit=1`（sha `0867f9f96165`） |
@@ -43,6 +51,23 @@
 | **INV-PLUGIN-capabilities-parity** | 能力注册表 | `scripts/check-capabilities.mjs` | ✅ 账本 `exit=1`（sha `c2455b3c6d75`）｜配方：对照组 = 真 `capabilities/` + `packages/plugin-types/` + `src/lib/capabilities/frontend.ts` + 真生成物（25 条能力 / 10 个 TS 适配器两侧参数口径都比对）⇒ `exit 0`；变异组**只**把 `blocks.list` 适配器里 `intArg(args, "limit", BLOCKS_LIMIT… |
 | **INV-SM-registry-clean** | 共享 registry 没留国密补丁（默认构建别被它悄悄改掉） | `scripts/check-gm-registry-clean.mjs` | ✅ 账本 `exit=1`（sha `e43e90508225`）｜配方：假根（真 `scripts/` 的副本 ＋ 最小 `src-tauri/Cargo.lock`）里 `libsqlite3-sys` 那一条**只删掉 `source` 与 `checksum` 两行**（＝ `--prepare` 留下的残渣形态）⇒ 必须报红。⚠️ 单变量：对照组只有这两行之别。… |
 
+| **INV-KB-ontology-generated** | 本体表与能力注册表一致（生成物不许手改） | `scripts/check-ontology-generated.mjs`（`--self-test` ／ `--file` 夹具 ／ 出口码 0-1-2） | ✅ 账本 D2 `exit=1`（sha `a1dae878b872`）｜2026-09-28 实测：删掉生成物 ⇒ **exit 1**（逐字「✗ 本体表缺失：…」）／生成后 exit 0 ／**手改生成物一行 ⇒ exit 1**（指出第 17 行＋两边原文）／`--self-test` **4/4** ✓ |
+| **INV-KB-apiversion-bump** | 外部接口指纹与 `apiVersion` 一致（改了接口必须升版本） | `scripts/check-api-surface-version.mjs`（`--update` 是文档化出口 ／ `--self-test`） | ✅ 账本 D2 `exit=1`（sha `707981c8f57d`）｜实测：删记录 ⇒ exit 1 ／ `--update` ⇒ exit 0 ／**篡改指纹 ⇒ exit 1**（逐字「✗ **接口变了但 `apiVersion` 没变**（1.0.0）—— 正在用它的外部程序会**没有信号地坏掉**」）／`--self-test` **5/5** ✓。指纹**刻意不含 `desc`**（改文案不算破坏接口 ✓） |
+| **INV-KB-derived-rebuildable**（**只收录"可重建"半边** ✗） | 生成物自证来源（sha）且可重建（生成命令的脚本存在） | `scripts/check-generated-artifacts.mjs`（`--dir` 夹具 ／ `--self-test` ／ 出口码 0-1-2-3） | ✅ 账本 D2 `exit=1`（sha `f67c38772197`）｜实测：控制组 3 个生成物 exit 0 ／**删掉「注册表 sha256」行 ⇒ exit 1** ／**篡改 sha ⇒ exit 1**（逐字「已标脏」）／`--self-test` **5/5** ✓。⚠️ "删索引 ⇒ 功能不降级"那半**要等索引面成形**（Phase 1）⇒ 本表**没收录** ✗ |
+| **INV-KB-readonly-surface** | 外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 | `scripts/check-agent-surface.mjs`（`--phase` ／ `--file` 夹具 ／ `--self-test`） | ✅ 账本 D2 `exit=1`（sha `3e086e7aa4bc`）｜实测：**注入 `pages.create` ⇒ exit 1**（逐字「只读面里出现写能力」）／`--self-test` **5/5** ✓。⚠️ **与 `INV-MCP-readonly-first` 是同一条**：那份仍是它的正文，**本条以"已实现的判据"入表** ✓ |
+| **INV-KB-tool-desc-clean** | 外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 | `scripts/check-agent-surface.mjs`（同上：`--phase` ／ `--file` ／ `--self-test`） | ✅ 同一条账本证据（sha `3e086e7aa4bc`）｜实测：**描述里注入 `content_json` ⇒ exit 1** ／ 收窄为"只扫 desc 格"后，表头里合法的 `capabilities.json` 不再假红 ✓ ／ `--self-test` **5/5** ✓ |
+| **INV-CRDT-json-authoritative** | 权威落盘形态是 `content_json`（**TEXT**，JSON），CRDT 状态**只**进 `page_crdt`／`page_crdt_pending`（**BLOB**）—— 逐字引自《[CRDT 混版本共存与降级](2026-09-29-crdt-mixed-version-degradation.md)》 | `scripts/check-crdt-plane.mjs` | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） ｜该门禁同时核 4 处 `content_json` 与 2 处 BLOB 声明 ✓ |
+| **INV-CRDT-rust-agnostic** | Rust 侧不引入 Yjs 实现（**不认 CRDT 格式**） | `scripts/check-crdt-plane.mjs`（扫 `src-tauri` 的 Cargo 行 ⇒ 零 Yjs 依赖 ✓） | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） |
+| **INV-CRDT-single-converter** | `content_json` ⇄ `ydoc` 的转换**只有一份实现**（`src/lib/crdt/yDocBridge.ts`）＋ 合并只在 WebView 侧一处 | `scripts/check-crdt-plane.mjs` | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） |
+| **INV-CRDT-pending-per-seq** | 待并的远端状态**按 `seq` 逐条留**（不是每页一行 —— 否则丢编辑）：`page_crdt_pending` 主键必须是 `(page_id, seq)` | `scripts/check-crdt-plane.mjs` | ✅ 账本 `exit=1`（sha `498ba2bf4a75`） |
+| **INV-WIKI-provenance** | `每个 sources 都必须在输入里出现过（不许拼、不许猜）`（**逐字引自测试里那句断言** —— 本条载体是测试，没有注册表 `label`） | `src/lib/ai/libraryMap.test.ts`（`pnpm exec vitest run src/lib/ai/libraryMap.test.ts`）＋ 真模型现场：`scripts/measure-wiki-cost.mjs` 的 `[n]` 越界检查 | ✅ 有（**走 D3 测试形态通道**；「能原地重做」的口子＝仓内脚本 `scripts/mutate-wiki-invariants.mjs`，零依赖 ✓）｜2026-09-29 实测：控制组 **exit 0** ／ 变异组（回链里混进 `ghost-source`）**exit 1**，红的用例逐字＝上面那句 ／ 跑完**逐字节还原** ✓ |
+| **INV-WIKI-coverage-visible** | `★ 没读数（null）⇒ 画成「未知」，且这一项里不出现 0`（**逐字引自渲染级测试那句断言**） | `src/components/LibraryMapView.test.tsx` ＋ 纯函数层 `src/lib/ai/libraryMap.test.ts`（成对断言：`null` ⇒ 画「未知」且不出现 0 ／ `0` ⇒ 画 0 且不出现「未知」） | ✅ 有（同上通道与脚本）｜2026-09-29 实测：变异组（把「未知」画成 `0`）**exit 1**，红的用例逐字＝上面那句 ✓ |
+| **INV-WIKI-readonly-default** | `调用前后输入逐字段未变（快照比对）` ＋ `输入被深冻结也能跑完（说明它不写输入），且两次调用结果深度相等`（**逐字引自测试**） | `src/lib/ai/libraryMap.test.ts`（另含静态断言：不 import `api`／`platform`／`store`）。⚠️ 目前只覆盖"地图与视图不改数据"；"生成层不改 `pages`"待第三块才有载体 | ✅ 有（同上通道与脚本）｜2026-09-29 实测：变异组（生成时偷改 `report.pages.indexed`）**exit 1**，红的用例逐字＝上面两句 ✓ |
+
+> ⚠️ **这三行在分支 `feat/llm-wiki-map` 上**（与它们的判据**同批** —— 那三个测试文件也在那条分支上）。
+> **现在不要把这三行合到 `dev`** ✗：`dev` 上那三个测试文件还不存在 ⇒ 合过去就是**假声明**（本层最恨的那种）。
+> 正确顺序：**先把判据合进来，再随判据一起入表** ✓
+
 ## 怎么核（**别信本表，跑命令**）
 
 ```bash
@@ -61,6 +86,10 @@ pnpm check:apk <某个 .apk>
 
 # 1c) 那条走 D3（测试形态判据）通道的规则 —— 必须单独跑它的兄弟测试
 pnpm exec vitest run scripts/check-workflow-yaml.test.mjs
+
+# 1d) 走同一条 D3 通道的**第二批**：三条 `INV-WIKI-*` 的「看过它红」
+#     （控制组绿 ／ 变异组红 ／ 跑完逐字节还原；红的用例逐条点名 ⇒ 三条各一次）
+node scripts/mutate-wiki-invariants.mjs
 
 # 2) 本表「会红证据」是否还新鲜（判据代码一改，账本里那条就过期 ⇒ 判据 D2 会红）
 node _workspace/bin/check-gate-manifest.mjs

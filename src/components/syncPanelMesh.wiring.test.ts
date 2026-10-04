@@ -28,12 +28,12 @@ describe("网格（丙-③-b）· 面板接线", () => {
     const catchAt = syncOne.indexOf("} catch (e) {");
     const meshAt = syncOne.indexOf("api.meshSyncNow(");
     expect(catchAt, "`syncOne` 里没找到 catch（结构变了？）").toBeGreaterThan(-1);
-    expect(meshAt, "网格那一步必须放在 **catch 之后**（＝ finally 里）").toBeGreaterThan(catchAt);
+    expect(meshAt, "网格那一步必须放在 catch 之后（＝ finally 里）").toBeGreaterThan(catchAt);
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉（同一个意图两个动作）").not.toContain("const meshRoundNow");
     expect(panel, "「立刻交换一轮」那个按钮应当已经删掉").not.toContain("void meshRoundNow()");
   });
 
-  it("①b **自动同步也对网格生效**（不是只有手点「同步」才换）", () => {
+  it("①b 自动同步也对网格生效（不是只有手点「同步」才换）", () => {
     const app = read("src/App.tsx");
     expect(app, "自动同步那条路没跑网格 ⇒ 用户得手点同步才会换").toContain("api.meshSyncNow(");
     // ⚠️ gate 只许有一处：Rust 侧 `mesh_sync_now` 自己早退；前端**不重判一遍**。
@@ -41,7 +41,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(app, "自动同步那条路里不该自己判网格开没开（gate 在 Rust 侧一处实现）").not.toContain("mesh.enabled");
   });
 
-  it("② 门槛是 `space_id`，**不是** `lanRowBound`（网格不需要服务端地址）", () => {
+  it("② 门槛是 `space_id`，不是 `lanRowBound`（网格不需要服务端地址）", () => {
     // 网格那一块：只要求这个空间有 space_id —— "只开网格、不绑服务端"正是这一档要支持的配置。
     expect(panel).toContain("isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (");
     // 2026-09-26（地址一处）：`lanRowBound` 那一行现在**同时**认"只开了网格"的空间 ——
@@ -51,11 +51,11 @@ describe("网格（丙-③-b）· 面板接线", () => {
     );
   });
 
-  it("③ 「关掉网格」走**清除**（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
+  it("③ 「关掉网格」走清除（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
     expect(panel).toContain('api.meshSetConfig(activeId, "", null)');
   });
 
-  it("④ 「别人拉不拉得到」那句人话**来自 Rust**（界面不自己按地址形状判档）", () => {
+  it("④ 「别人拉不拉得到」那句人话来自 Rust（界面不自己按地址形状判档）", () => {
     // 2026-09-26（地址一处）：这句现在与 `lanStatus.line` 拼在**同一行**里 —— 仍然是 Rust 出的原文
     // （`lanStatus.mesh.note`），界面只是把它摆到那一行去。
     expect(panel).toContain("lanStatus.mesh.note");
@@ -69,6 +69,15 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(commandsTs, "缺 `mesh_sync_now` 的契约条目").toContain("mesh_sync_now:");
     // Web 的 `lan_status` 必须回同一形状：**如实说"这一档不可用"**，而不是少一个字段。
     expect(webTs).toContain("Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用");
+    // ⭐ **U8（2026-10-01）扩的一条**（⛔ 上面几条**没删** ✗ —— 形状改了要**加**判据，不是换掉 ✓）：
+    //   一扇门能服务**多个**空间 ⇒ 读数里必须有 `served`（否则界面说不出「这一扇门管几个」，
+    //   而「关掉一个空间不许关掉整窗」这条口径就看不出来 ✓）。
+    expect(commandsTs, "U8：`MeshConfigState` 少了 `served`（一扇门服务哪些空间）").toContain("served: string[];");
+    // ⚠️ 而且 Rust 侧的窗口**不许**退回「一个空间一个窗口」（那正是 U8 要消灭的形状 ✓）——
+    //   这两条是**结构断言**：注册表的键是**绑定**、鉴权走 `select_space` 那条白名单 ✓。
+    const rustMeshU8 = read("src-tauri/src/mesh.rs");
+    expect(rustMeshU8, "U8：窗口注册表的键应当是绑定").toContain("guard.insert(bind.to_string(), handle)");
+    expect(rustMeshU8, "U8：鉴权应当走 `select_space` 那条白名单").toContain("fn select_space(");
   });
 
   // ★ 2026-09-26：网格那一块的**形状**（owner 截图 ＋ 真机实测：输入框 50px、按钮 44~50px 宽 ×
@@ -77,7 +86,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //   而 `verify-mobile-overlays.mjs` 跑的是 **Web** 平台 ⇒ 那里根本渲染不出来（写断言就是死断言）；
   //   桌面/手机的真机几何只能靠人。所以这里钉"形状不许回退"：
   //   谁把 `.sync-mesh` 改回横排、或去掉那句 `white-space:nowrap`，这几条立刻红。
-  it("⑥ 网格那一块是**竖排**，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
+  it("⑥ 网格那一块是竖排，且输入框吃宽、按钮不缩不断行（窄屏不许挤成并排）", () => {
     const css = read("src/App.css");
     // ⚠️ 选择器写**裸**的（`.` 不用转义）：`rule()` 自己会把正则元字符转义 ——
     //    再写一层 `\\.` 会被它转义成"要匹配一个字面反斜杠"，于是永远匹配不上（第一版就踩了）。
@@ -118,7 +127,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(commandsTs, "`MeshPeerPullReport` 少了 `awaiting`").toContain("awaiting: number;");
   });
 
-  it("⑧ 网格那轮**之后**两份清单跟着刷新（不然通知与现场对不上）", () => {
+  it("⑧ 网格那轮之后两份清单跟着刷新（不然通知与现场对不上）", () => {
     const syncOne = panel.slice(panel.indexOf("const syncOne"), panel.indexOf("const update"));
     const meshAt = syncOne.indexOf("api.meshSyncNow(");
     expect(meshAt, "`syncOne` 里没有网格那一轮（结构变了？）").toBeGreaterThan(-1);
@@ -131,5 +140,60 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(after, "网格那轮之后没重读「待取回的远端版本」⇒ 刚说有页等你裁决、那一段还是空的").toContain(
       "await loadPendingRemote()",
     );
+  });
+
+  // ★★ `VL-3`（2026-09-30）：**"功能通了，而普通用户不知道有这条路"**。
+  //
+  // 由来：`VL-2`（`d34c1c0f`）让 `0.0.0.0:<端口>` **能填了**（`checked_bind` 放行通配 ＋
+  // `announced_bases_with` 按网卡枚举报出可达地址）—— 可面板里原来**只写"填虚拟网卡的地址"**
+  // ⇒ 普通用户**不知道可以填 `0.0.0.0`** ⇒ "地址自动"这件事**在用户眼里没发生**（＝ `U5` 没解决）。
+  // ⇒ 所以这两条钉的是：**那条路必须出现在用户看得见的文案里、且说清它是什么**；
+  //    以及**那一屏不许出现已废／越界的措辞**。
+  //
+  // ⚠️ **「邀请」只在"设备直连那一屏"上禁**：面板**前半**有**团队版成员邀请**
+  //    （注册邀请码／被邀请者邮箱／「邀请」按钮 —— 那是走服务端的**另一个功能**，仍在提供）。
+  //    全文件禁会把那些**正当文案**判红（我核过：`邀请` 在 `SyncPanel.tsx` 里的出现**全在**
+  //    「设备直连」那一屏**之前**，且都是团队版成员邀请与它的注释）⇒ 判据按**区域**收敛，
+  //    而不是一刀切 —— 这条边界写在这里，免得后人"顺手"把它扩成全文。
+  it("⑨ ⭐ VL-3：`0.0.0.0`（听所有网卡）那条路要在用户看得见的文案里，且说清它是什么", () => {
+    // 去掉行注释：注释里讲"`0.0.0.0 ⇒ Err`"的历史**不算**用户可见文案。
+    const copy = panel.replace(/\/\/[^\n]*/g, "");
+    expect(copy, "地址那一栏没提 `0.0.0.0` ⇒ `VL-2` 开的这条在用户眼里不存在").toContain("0.0.0.0");
+    expect(
+      copy,
+      "提了 `0.0.0.0` 却没说清它是什么 —— 必须写「听所有网卡」＋「地址由系统报出」",
+    ).toMatch(/0\.0\.0\.0[\s\S]{0,160}?听所有网卡[\s\S]{0,40}?系统(自己)?报/);
+    expect(copy, "另一条路（手填本机内网地址）也不许删 —— 两条都通").toContain("192.168.1.5:8788");
+    expect(copy, "不许把地址说成「必须手填」（两条路都通）").not.toMatch(/必须(手填|填写)[^\n]{0,8}地址/);
+    // ⚠️ 可见性：不许只写在 `title`（悬停才看得见）里 —— `placeholder` 或常规文案里也要有。
+    const slots = [...copy.matchAll(/(?:placeholder|aria-label)="([^"]*)"/g)].map((m) => m[1]).join("\n");
+    expect(slots, "`0.0.0.0` 只出现在悬停提示里 ⇒ 普通用户照样看不见").toContain("0.0.0.0");
+  });
+
+  it("⑩ ⭐ VL-3 红线：设备直连那一屏不许出现已废／越界措辞（含裸内部标识）", () => {
+    const copy = panel.replace(/\/\/[^\n]*/g, "");
+    const at = copy.indexOf('sync-row-label">设备直连');
+    expect(at, "找不到「设备直连」那一屏（结构变了？）").toBeGreaterThan(-1);
+    const device = copy.slice(at);
+    // 口径来源：owner §14「设备直连只做配对，没有邀请」＋「只说"已配对"，不许说"已确认是您的设备"」
+    // ＋「不承诺所有 VPN 都能用」（我们只放行了常见默认网段）。
+    for (const bad of [
+      "邀请",
+      "请先加密",
+      "所有 VPN",
+      "所有VPN",
+      "任何 VPN",
+      "任何VPN",
+      "已确认是您的设备",
+      "已验证是您的设备",
+    ]) {
+      expect(device, `设备直连那一屏不该出现「${bad}」`).not.toContain(bad);
+    }
+    // ③ 裸 id：这一屏的**用户可见槽位**不许出现内部标识（`INV-UI-copy-no-internal-ids`）。
+    const slots = [...device.matchAll(/(?:title|placeholder|aria-label)="([^"]*)"/g)].map((m) => m[1]).join("\n");
+    expect(slots.length, "没抓到任何用户可见槽位（抽取规则变了？）").toBeGreaterThan(0);
+    for (const id of ["space_id", "device_id", "ws_id"]) {
+      expect(slots, `用户可见文案里不该出现内部标识 ${id}`).not.toContain(id);
+    }
   });
 });

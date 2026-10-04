@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { $getNodeByKey, $getRoot, $isElementNode, type LexicalEditor, type LexicalNode } from "lexical";
 import { $isHeadingNode } from "@lexical/rich-text";
 import { useEditorStore } from "../store/editor";
 import { useRightPanel } from "../store/rightPanel";
-import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
+import { useViewStore, clampTocWidth, TOC_W_DEFAULT, TOC_W_MAX, TOC_W_MIN } from "../store/view";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 
 // Page table of contents: lists the page's heading outline (h1–h6, indented by
@@ -40,17 +40,62 @@ export function TableOfContents() {
   const editor = useEditorStore((s) => s.editor);
   const [items, setItems] = useState<TocItem[]>([]);
   const open = useRightPanel((s) => s.toc);
-  useOverlayScrollLock(open);
+  // ⛔ 这里**故意不锁滚动**（2026-10-02，owner：「目录打开不能影响页面内容阅览和滚动」）。
+  //    原来这里有一句 `useOverlayScrollLock(open)` —— 那个 hook 是给**模态**用的
+  //    （它自己的注释：「只要有任意一个浮层开着，外壳就是锁的」），而**目录是侧栏** ✓
+  //    ⇒ 后果是：开着目录时正文**滚不动** ✗（读到一半想往前翻却发现滚轮没反应）。
+  //    ⚠️ 目录面板自己的长列表照旧能滚：`.toc-list { flex: 1; overflow-y: auto }` ✓。 */
   // Android 返回键：优先关掉最上层浮层（见 lib/overlayStack.ts）。
   useOverlayLayer("toc", open, () => useRightPanel.getState().openToc(false));
   const setOpen = useRightPanel((s) => s.openToc);
   const [active, setActive] = useState<string | null>(null);
+  // ⭐ 目录宽度（2026-10-02 owner：「并排停靠 ＋ 鼠标拖拽调宽」）—— 存在 view store 里 ✓（与内容宽度同一套 ✓）。
+  const tocWidth = useViewStore((s) => s.tocWidth);
+  const setTocWidth = useViewStore((s) => s.setTocWidth);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
 
-  // Reserve the rail width on the right so the page content re-centers beside it.
+  // ⭐ 2026-10-02（owner 给了参考图）：目录**并排停靠** —— 正文在左、目录在右、互不覆盖 ✓。
+  //    宽度写进 CSS 变量 `--toc-w`，两侧一起读它（`.toc-panel { width: var(--toc-w) }` ✓
+  //    ＋ `body.is-toc-open .main { padding-right: var(--toc-w) }` ✓）⇒ 拖动时两边**同步** ✓。
+  //    ⚠️ 更正我上一轮的读法：owner 先前那句「不能影响阅览」我读成了"别重排正文" ✗，
+  //       其实指的是"**别盖住正文**" ✓ —— 参考图里正是并排 ✓。
+  //    ⚠️ 滚动**仍然不锁** ✓（上面那条 `useOverlayScrollLock` 保持删除状态 ✓）。
   useEffect(() => {
+    document.documentElement.style.setProperty("--toc-w", `${tocWidth}px`);
     document.body.classList.toggle("is-toc-open", open);
     return () => document.body.classList.remove("is-toc-open");
-  }, [open]);
+  }, [open, tocWidth]);
+
+  /** 拖拽把手：指针按下 ⇒ 记录起点；移动 ⇒ 按"指针左移＝目录变宽"换算（目录在右边 ✓）。 */
+  const onResizeDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    dragRef.current = { startX: e.clientX, startW: tocWidth };
+    document.body.classList.add("is-toc-resizing");
+    setDragging(true);
+  };
+  const onResizeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d) return;
+    setTocWidth(clampTocWidth(d.startW + (d.startX - e.clientX)));
+  };
+  const onResizeUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    document.body.classList.remove("is-toc-resizing");
+    setDragging(false);
+  };
+  /** 键盘也能调（读屏/无鼠标时用 ✓）：←/→ 各 16px；Home 回默认 ✓。 */
+  const onResizeKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === "ArrowLeft") setTocWidth(clampTocWidth(tocWidth + step));
+    else if (e.key === "ArrowRight") setTocWidth(clampTocWidth(tocWidth - step));
+    else if (e.key === "Home") setTocWidth(TOC_W_DEFAULT);
+    else return;
+    e.preventDefault();
+  };
 
   // Collect the heading outline live as the editor changes.
   useEffect(() => {
@@ -100,6 +145,25 @@ export function TableOfContents() {
   return (
     <>
       <div className={`toc-panel ${open ? "open" : ""}`}>
+        {/* ⭐ 拖拽把手（2026-10-02）：贴在左缘 ✓。用 `role="separator"` ＋ aria-value*，
+            读屏能读出"可调的竖直分隔条" ✓；双击/Home 恢复默认宽度 ✓。 */}
+        <div
+          className={`toc-resizer${dragging ? " is-dragging" : ""}`}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整目录宽度"
+          aria-valuenow={tocWidth}
+          aria-valuemin={TOC_W_MIN}
+          aria-valuemax={TOC_W_MAX}
+          tabIndex={0}
+          title="拖动调整目录宽度（双击恢复默认）"
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          onDoubleClick={() => setTocWidth(TOC_W_DEFAULT)}
+          onKeyDown={onResizeKey}
+        />
         <div className="toc-head">
           <span className="toc-title">目录</span>
           <button className="toc-close" onClick={() => setOpen(false)} title="关闭">

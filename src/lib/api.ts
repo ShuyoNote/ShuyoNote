@@ -24,6 +24,8 @@ const invoke = <K extends keyof CommandMap>(
 // 同一个原因造成的静默不一致（比如 `conflicts` 曾经只在一边有）连报错都没有。
 export type { SyncConfig, SyncProfile, SyncBudget, WorkspaceSyncResult, LanStatus } from "./platform/commands";
 export type { MeshRoundReport, MeshPeerPullReport, MeshConfigState } from "./platform/commands";
+export type { NearbyPeer } from "./platform/commands";
+export type { DevicePairExportOutcome, DevicePairImportOutcome, DeviceUnpairOutcome } from "./platform/commands";
 
 /** 空间分类（与 Rust `space_crypto::SpaceKind` 对齐）：`""` ＝ **未分类**（不是"个人"）。 */
 export type SpaceKind = "personal" | "team" | "";
@@ -120,6 +122,23 @@ export const api = {
   copyPageToWorkspace: (pageId: string, targetWorkspaceId: string, newParentId?: string | null) =>
     invoke("copy_page_to_workspace", { pageId, targetWorkspaceId, newParentId }),
   listPlugins: () => invoke("list_plugins"),
+  /**
+   * ⭐ 「能力」按需下载的**落盘**（2026-10-02）。
+   * ⚠️ 页面里那次 sha256 校验是**给用户看的**；真正决定能不能落盘的是 **Rust 侧自己再算一遍**
+   * （白名单 ＋ 体积上限 ＋ sha256 三条，任一不过 ⇒ 拒收 ✓）。Web 版会抛"仅桌面版支持" ✓。
+   */
+  saveAbilityPack: (packId: string, base64: string) =>
+    invoke("save_ability_pack", { packId, base64 }),
+  /**
+   * ⭐ **P0 格式引擎**（Kreuzberg v4.10.x，MIT ✓）：补 `eml／msg／zip／7z／gz／rtf／odt／epub／
+   * 学术格式` 那一类（本仓既有 TS 链对它们**无读数** ✗）。
+   * ⚠️ 只**取文本** —— 派生表（`attachment_text` / `chunks`）的唯一写入者仍然是
+   * `src/lib/extract/` 那条链 ✓（门禁 `check-derived-writers` 守的就是这一条 ✓）。
+   * ⚠️ 特性集**不含** `chunking` ✓（与 `boa_engine` 的 icu 依赖互斥 ✗ 实测）⇒ 分块仍在
+   * `src/lib/extract/chunk.ts` 做 ✓。
+   */
+  extractWithKreuzberg: (base64: string, mime: string, filename: string) =>
+    invoke("extract_with_kreuzberg", { base64, mime, filename }),
   setPluginEnabled: (id: string, enabled: boolean) => invoke("set_plugin_enabled", { id, enabled }),
   /** `runId` 让前端能在等待期间**真的终止**这次运行（见 store/plugins 的 cancelRun）。 */
   runPluginCommand: (
@@ -347,25 +366,6 @@ export const api = {
       })),
     ),
   /**
-   * ★ 隐私边界 ③ 0b（2026-09-24）：把本机这一份**公开材料**推到同步服务。**桌面专属**。
-   *
-   * 推的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子）——
-   * 服务端**解不开**它。这样第二台设备只凭主口令就能解开自己的空间，不必再手工拷文件。
-   * ⚠️ 它仍然是**元数据**：服务端因此能看到你有几个盒子、以及它们的**本地空间 id**（不是内容）。
-   * ⚠️ "正常的不顺利"用 `outcome` 表达（**不抛异常**）：`not_configured` / `no_material` / `offline` …
-   */
-  pushSpaceKeyring: (workspaceId: string) =>
-    invoke("push_space_keyring", { args: { workspace_id: workspaceId } }),
-  /**
-   * ★ 同上（取回那一半）：从同步服务取回公开材料并**装进本机**（第二台设备的那一步）。
-   *
-   * ⚠️ `overwrite` 默认 `false`：本机**已经有**那一份时**拒绝并说清**（`already_local`）——
-   * 闷头覆盖可能让本机**打不开自己的空间**（别的设备轮换过之后，服务端那份与能开当前库的那把未必一致）。
-   * ⚠️ 取回之后**不会自动解锁**：主口令仍然由人来输。
-   */
-  pullSpaceKeyring: (workspaceId: string, overwrite = false) =>
-    invoke("pull_space_keyring", { args: { workspace_id: workspaceId, overwrite } }),
-  /**
    * B 片 ①-a：**不经服务器**的换设备 —— 产出侧。把本机钥匙袋的**公开材料**包成一段文本
    * （可以复制/粘贴，也可以存成文件再传），并算出**比对码**。
    *
@@ -385,6 +385,32 @@ export const api = {
    */
   pairingImport: (args: { text: string; confirmed_check_code?: string; overwrite?: boolean }) =>
     invoke("pairing_import", { args }),
+  /**
+   * ⭐ T3（2026-10-01）：**设备直连**产出侧 —— 把「接到我这台」的接线（地址 ＋ 窗口口令）包成一段。
+   *
+   * ⚠️ **与 `pairingExport` 最要紧的差别**：那个载荷是**公开材料**（"不是秘密"），
+   * 而这个**含窗口口令** ⇒ ⛔ 不是可以随便转发的 ✗（拿到它能连上这个窗口）。
+   * ⚠️ 这一档没开（没填地址或没设口令）⇒ 回 `not_configured`，**不生成载荷**。
+   * ⭐ **R110（owner 2026-10-02 拍 A）**：`peerDeviceId`（可空）＝ **这段码是给哪一台的** ——
+   *   界面从「附近的设备」里**点选**那一台（传它们的 `device_id` ✓）。
+   *   · 传了 ⇒ 本机在**生成这一刻就把它登记好** ⇒ 对面采纳**一次**，**两个方向都通** ✓；
+   *   · 不传 ⇒ 走原来那条路（码可以**离线**传，代价是**要配两次** ✓）—— A 是加法，⛔ 不是替换 ✗。
+   */
+  devicePairExport: (spaceId: string, peerDeviceId?: string) =>
+    invoke("device_pair_export", { spaceId, peerDeviceId }),
+  /**
+   * ⭐ **U11/T5**：**逐台解除** —— 只把那**一台**踢出去（它拉不动你 ✓），
+   * 别的设备不受影响 ✓，⛔ 也**不用**给所有设备换口令（那正是 U11 要消灭的旧办法 ✓）。
+   */
+  deviceUnpair: (workspaceId: string | null, peerDeviceId: string) =>
+    invoke("device_unpair", { workspaceId, peerDeviceId }),
+  /**
+   * ⭐ T3：**设备直连**采纳侧 —— 三态：不传码 ⇒ `need_confirm`（**零写入**，只回算出来的码给人核对）；
+   * 传了对不上 ⇒ `rejected`（零写入）；逐位相同 ⇒ `ok`，这时**才**写接线。
+   * ⚠️ **没有"等对方同意"这一步**（`INV-PER-pairing-needs-no-acceptance`）。
+   */
+  devicePairImport: (args: { space_id: string; text: string; confirmed_check_code?: string }) =>
+    invoke("device_pair_import", { args }),
   setPageCover: (id: string, cover: string) => invoke("set_page_cover", { args: { id, cover } }),
   setPageIcon: (id: string, icon: string) => invoke("set_page_icon", { args: { id, icon } }),
   setPageCoverHeight: (id: string, height: number) => invoke("set_page_cover_height", { args: { id, height } }),
@@ -596,6 +622,8 @@ export const api = {
   storageStats: () => invoke("storage_stats"),
   clearTrash: () => invoke("clear_trash"),
   cleanupOrphanAttachments: () => invoke("cleanup_orphan_attachments"),
+  /** ⭐ 清孤儿派生行（`att_id` 已不在 `attachments` 里）—— 只清可重建的派生缓存 ✓。 */
+  cleanupOrphanDerived: () => invoke("cleanup_orphan_derived"),
   cleanupOldVersions: (maxKeep?: number) => invoke("cleanup_old_versions", { maxKeep }),
   cleanupTempFiles: () => invoke("cleanup_temp_files"),
   purgeDeletedWorkspaces: () => invoke("purge_deleted_workspaces"),
@@ -627,6 +655,8 @@ export const api = {
   listBlockBacklinks: (pageId: string) =>
     invoke("list_block_backlinks", { pageId }),
   getGraph: () => invoke("get_graph"),
+  // S3 第三片：只读活动明细（页面级 ＋ 块级 ✓）—— 桌面与 Web 同口径 ✓
+  activityFeed: (days?: number, limit?: number) => invoke("activity_feed", { days, limit }),
   listAttrDefs: () => invoke("list_attr_defs"),
   createAttr: (args: { name: string; attr_type: string; options?: string[] }) =>
     invoke("create_attr", { args }),
@@ -707,7 +737,7 @@ export const api = {
   /** 这一页**未决**的页级血统冲突（`null` ＝ 没有，是常态不是错误）。 */
   listLineageConflicts: (pageId: string) => invoke("list_lineage_conflicts", { pageId }),
   /** 裁决：`"local"`（保留本机）/ `"saved-as-new"`（已另存为新页）。其余值报错（不默认选边）。 */
-  resolveLineageConflict: (conflictId: string, choice: "local" | "saved-as-new") =>
+  resolveLineageConflict: (conflictId: string, choice: "local" | "saved-as-new" | "remote") =>
     invoke("resolve_lineage_conflict", { conflictId, choice }),
   /** 阶段 1 · 正文文本的本地修复（打开页面时按编辑器语义算一遍，不同才写回）。 */
   refreshPageText: (pageId: string, text: string) => invoke("refresh_page_text", { pageId, text }),

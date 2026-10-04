@@ -21,6 +21,7 @@
 // an import cycle with api.ts.
 
 import type {
+  ActivityEvent,
   AttachmentMeta,
   AttrDef,
   BlockBacklink,
@@ -161,6 +162,12 @@ export interface SyncStreamStatus {
   last_error: string;
   /** 为什么没在跑：`"no-binding"` / `""`。 */
   reason: string;
+  /** L4a 读数：收到过的帧里最大的 `seq`（`0` ＝ 还没收到过带 `seq` 的帧）。 */
+  last_seq: number;
+  /** L4b 读数：判定为跳号的**次数**（`0` ＝ 从没跳号过）。 */
+  gap_count: number;
+  /** L4b 读数：最近一次跳号时那个 `seq`（`0` ＝ 从没跳号过）。 */
+  last_gap_seq: number;
 }
 
 /**
@@ -184,13 +191,49 @@ export interface LanStatus {
    * **不许**按地址形状自己再判一次档（判据 ⑭ 钉这条）。
    */
   kind: "lan" | "configured" | "";
-  /** 状态行原文：「同步地址：直连（局域网）… ｜ 本网段发现 N 台 ｜ 中枢：<名字>」那一串。 */
+  /** 状态行原文：「同步地址：直连（同一网络）… ｜ 附近发现 N 台 ｜ 中枢：<名字>」那一串。
+   *  （⚠️ 2026-10-01 按 `lan.rs` 现口径改；旧词「直连（局域网）／本网段发现」只作历史保留 ✓。） */
   line: string;
   /**
    * ★ 丙-③-b-2b-2：**网格（对等交换）这一档的读数**（与 Rust `mesh::MeshConfigState` 同形）。
    * 面板据此开关与显示；`lan_status` 只**读**它，不开窗。
    */
   mesh: MeshConfigState;
+  /**
+   * ★ 丙档「附近设备」（2026-09-29）：**同网段里听得见的每一台别的设备**。
+   *
+   * ⚠️ 三条口径（与 Rust 侧 `sync::LanStatus.nearby` 逐字对齐）：
+   * 1. **它与 `peers` 来自同一次读数** ⇒ `peers === nearby.length` 恒成立
+   *    （`INV-NEARBY-one-source`）—— 界面**不许**自己数对端（数两遍就会漂）；
+   * 2. **未启用发现层 ⇒ 空**（不是"网段里没人"）；
+   * 3. **它不按当前空间过滤** —— "附近有哪几台设备"与"哪几台服务我这个空间"是两件事，
+   *    后者由每一条的 `serves_current` 表达（**界面不许自己算这条交集**）。
+   */
+  nearby: NearbyPeer[];
+}
+
+/**
+ * 同网段里的一台**别的设备**（与 Rust `sync::NearbyPeer` **逐字段相同**）。
+ *
+ * ⚠️ 字段名是 **snake_case**：Rust 侧 `LanStatus` **没有** `rename_all = "camelCase"`
+ * （它只有 `#[derive(Serialize)]`，发出来的就是 snake_case —— 与它其余字段一致）。
+ * **不许**只给新字段加一个 `rename_all`（一个结构体两种风格，规格 §3.2）。
+ */
+export interface NearbyPeer {
+  /** 设备身份：**排障与去重**用，不许进用户可见的句子（`INV-UI-copy-no-internal-ids`）。 */
+  device_id: string;
+  /** 可能是空串（那台设备没报名字）⇒ 界面**如实说**，不许回落成 id 前几位。 */
+  device_name: string;
+  /** 收到它公告的来源地址（ip）。⚠️ 默认**不显示**（规格 §3.4：只用于排障）。 */
+  addr: string;
+  /** 它**自己声明**在服务哪些空间（远端 `space_id`）。界面不许自己算交集。 */
+  spaces: string[];
+  /** 它跟我**当前这个空间**相不相关（**Rust 判的**，界面直接显示）。 */
+  serves_current: boolean;
+  /** ★ 它能不能被直接拉（那一行的第二列据此如实说"它没报可以直连的地址"），与 `mesh::mesh_peers` 同一把尺。
+   *  ⚠️ 名字取自 2026-09-29 丙-乙片（当时它管的是「有没有邀请按钮」）——同日晚 owner 裁定 §14 撤掉了邀请，
+   *  这个字段**留下来了**：它现在的语义是"**能不能被直接拉**"，不是"能不能被邀请"。 */
+  invitable: boolean;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
@@ -230,7 +273,21 @@ export interface MeshConfigState {
   /** ⚠️ **只说"设没设"**：口令本身不会回给界面（没有任何理由再拿回去一遍）。 */
   tokenSet: boolean;
   window: string | null;
-  /** 一句人话：开没开、开在哪、**别人拉不拉得到**。 */
+  /**
+   * ⭐ **U8（2026-10-01）**：这扇门**服务哪些空间**（Rust 侧**排过序** ⇒ 读数确定 ✓）。
+   *
+   * ⚠️ 一扇门可以服务**多个**空间（同一个绑定下的那些 ✓）；界面据此说清「这一扇门管几个」，
+   * 而「关掉一个空间不许关掉整窗」这条口径也靠它才看得出来 ✓。
+   */
+  served: string[];
+  /**
+   * ⭐ **U11/T5（2026-10-02）**：这个空间**认了哪些设备**（界面靠它"点得出名字再逐台解除" ✓）。
+   *
+   * ⛔ **只有 `deviceId` 与时间，绝不含 `secret_sha256`** ✗ ——
+   * 界面只需要能点名到那一台 ✓；哈希对它毫无用处、漏出去只有坏处 ✓（Rust 侧只 select 两列 ✓）。
+   */
+  paired: { deviceId: string; addedAtMs: number }[];
+  /** 一句人话：开没开、开在哪、**别人拉不拉得到**（服务多个空间时还会说清是几个）。 */
   note: string;
 }
 
@@ -374,37 +431,54 @@ export interface CommunityTaxonomy {
 }
 
 /**
- * ③ 0b（2026-09-24）**公开材料**推 / 取的结果（与 Rust `sync::SpaceKeyringResult` 一一对应）。
- *
- * ⚠️ "正常的不顺利"（没配同步 / 服务端上没有 / 网络不通）用 `outcome` 表达，**不抛异常** ——
- * 抛出去会被平台 invoke 层记成一条 error（`claim_page_lineage` 那一轮踩过）。
- * · `ok` 取回/推成功；`not_configured` 这个空间没绑好同步；`no_material` 本机还没有钥匙袋；
- * · `not_on_server` 服务端上没有那一份（404）；`already_local` 本机已有，**没有动它**；
- * · `offline` 连不上；`rejected` 服务端拒绝了（看 `status`）。
- */
-export interface SpaceKeyringOutcome {
-  outcome:
-    | "ok"
-    | "not_configured"
-    | "no_material"
-    | "not_on_server"
-    | "already_local"
-    | "offline"
-    | "rejected";
-  /** `ok` 时是材料的字节数。 */
-  bytes: number;
-  /** 服务端 HTTP 状态码（没走到服务端 ⇒ 0）。 */
-  status: number;
-  /** 一句**人话**（说清下一步该做什么）——界面**原样**显示，别自己改写。 */
-  message: string;
-}
-
-/**
  * B 片 ①-a：换设备的**产出侧**读数（`pairing_export`）。
  *
  * 口径（`docs/plans/2026-09-25-b-slice-pake-selection.md`）：走路线 ① ⇒ **不做 6 位短码、
  * 不引任何密码学实现**；防"换码"靠**比对码** —— 所以 `check_code` 必须显示给人看。
  */
+/** ⭐ **U11/T5（2026-10-02）**：**逐台解除**的读数（与 Rust `mesh::MeshPairedState` 逐字段相同）。
+ *
+ * ⚠️ 只回**事实**（这一台解除了没、还认几台 ✓），⛔ **不回任何秘密** ✗。
+ */
+export interface DeviceUnpairOutcome {
+  /** 刚被解除的那一台。 */
+  peer: string;
+  /** **解除之前**它是不是真在名单里（`false` ⇒ 它本来就没配过 ⇒ 界面要说清 ✓）。 */
+  wasPaired: boolean;
+  /** 解除**之后**这个空间还认几台 ✓。 */
+  pairedCount: number;
+  /** 一句人话 ✓。 */
+  note: string;
+}
+
+/** ⭐ T3（2026-10-01）：**设备直连**产出侧读数（`device_pair_export`）。 */
+export interface DevicePairExportOutcome {
+  /** `not_configured` ＝ 这一档没开（没填地址或没设口令）⇒ 没有东西可以配对过去。 */
+  outcome: "ok" | "not_configured";
+  /** 载荷原文（紧凑 JSON）。⚠️ **含窗口口令** —— ⛔ 不是可以随便转发的公开材料 ✗。 */
+  text: string;
+  /** **比对码**：另一端算出来的必须与这个逐位相同才继续。 */
+  check_code: string;
+  /** 这台设备的绑定写法（对端会照它连）。 */
+  bind: string;
+  bytes: number;
+  qr_fits: boolean;
+  qr_svg: string | null;
+  message: string;
+}
+
+/** ⭐ T3：**设备直连**采纳侧读数（`device_pair_import`）。 */
+export interface DevicePairImportOutcome {
+  /**
+   * ⚠️ **三态**（这条命令的核心）：`need_confirm` ＝ 还没拿到人核对过的码 ⇒ **一个字节都没写**；
+   * `rejected` ＝ 传了但对不上 ⇒ 同样零写入；`ok` ＝ 逐位相同 ⇒ 这时才写接线。
+   */
+  outcome: "ok" | "need_confirm" | "rejected";
+  check_code: string;
+  bind: string;
+  message: string;
+}
+
 export interface PairingExportOutcome {
   outcome: "ok" | "no_material";
   /** 配对载荷原文（紧凑 JSON）。`no_material` 时是空串。**不是秘密**，但要只交给自己那台设备。 */
@@ -455,6 +529,24 @@ export interface CommandMap {
    * 参数合不合法，全部交给 `src/lib/deepLink.ts` 判——OS 层不重复一遍白名单。
    */
   deep_link_take: { args: undefined; result: string[] };
+  // ---- 能力（官方引擎 · 按需下载，桌面专属） ----
+  // ⚠️ 落盘判据在 **Rust 侧**（白名单 ＋ 体积上限 ＋ sha256 自己再算一遍 ✓）——
+  //    这里只是契约声明；`base64` 是下载好的包（页面已校验过一次，Rust 会再校验 ✓）。
+  save_ability_pack: {
+    args: { packId: string; base64: string };
+    result: { path: string; bytes: number; sha256: string; audit: string };
+  };
+  // ---- P0 格式引擎（Kreuzberg v4.10.x，MIT；桌面专属） ----
+  // ⚠️ 只**取文本**：不写派生表（`attachment_text` / `chunks` 的唯一写入者仍是 `src/lib/extract/` ✓）。
+  // 补的是本仓既有 TS 链吃不下的一类：eml／msg／zip／7z／gz／rtf／odt／epub／学术格式 ✓。
+  // ⚠️ 收 **base64 ＋ mime ＋ filename**（抽取层手上只有字节、没有路径 ✓）。
+  // ⚠️⚠️ **注释不能插在键与 `args` 之间** ✗ —— `check-web-commands.mjs` 的解析正则是
+  //    `/^\s{2}([a-z_0-9]+):\s*\{\s*args/gm`，要求 `args` **紧跟 `{`**；
+  //    中间夹一行注释 ⇒ 它判"契约层缺这个命令"（2026-10-02 实测踩过 ✓ 判据是对的 ✓）。
+  extract_with_kreuzberg: {
+    args: { base64: string; mime: string; filename: string };
+    result: { text: string; chars: number; ms: number; engine: string };
+  };
   // ---- Email（聚合邮箱，桌面专属） ----
   email_save_as_note: { args: { args: { raw: string } }; result: PageDetail };
   email_fetch_inbox: { args: { args: { account: EmailAccount; folders: string[]; limit: number; offset: number; date_from?: string; date_to?: string } }; result: EmailMeta[] };
@@ -562,18 +654,6 @@ export interface CommandMap {
       gate: { allow: boolean; unclassified: boolean; reason: string };
     }>;
   };
-  // ③ 0b（2026-09-24）：**公开材料**的推 / 取 —— 换设备时只凭主口令解开自己的空间。
-  // `workspace_id` 是**本地**工作空间 id（远端 space id 由 Rust 侧按同步档案解析，与 claim 同口径）。
-  // ⚠️ **桌面专属**（登记进 `DESKTOP_ONLY_COMMANDS`）：Web 上没有钥匙袋，也就没有"公开材料"可取。
-  // `overwrite` 只对 `pull` 有意义：默认**不覆盖**本机已有的那一份（覆盖是危险动作，见 Rust 侧注释）。
-  push_space_keyring: {
-    args: { args: { workspace_id: string } };
-    result: SpaceKeyringOutcome;
-  };
-  pull_space_keyring: {
-    args: { args: { workspace_id: string; overwrite?: boolean } };
-    result: SpaceKeyringOutcome;
-  };
   // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）—— **桌面专属**
   //（Web 上没有钥匙柜，也就没有"公开材料"可搬；理由写在 `check-web-commands` 的
   //  `DESKTOP_ONLY_COMMANDS` 里）。
@@ -583,6 +663,39 @@ export interface CommandMap {
   pairing_export: {
     args: undefined;
     result: PairingExportOutcome;
+  };
+  // ⭐ T3（2026-10-01）：**设备直连配对** —— 与上面那两条不是同一件事（那两条搬钥匙袋）。
+  device_pair_export: {
+    args: {
+      /** ⚠️ **顶层参数** ⇒ 必须 camelCase（Tauri 按这个名转）✓；`args` 结构体里的字段才用 snake_case ✓。 */
+      spaceId: string;
+      /**
+       * ⭐ **R110（owner 2026-10-02 拍 A）**：**这段码是给哪一台的**（「附近的设备」里点选的那台 ✓）。
+       * ⚠️ **可空**：不传 ⇒ 码可以**离线**传，代价是**要配两次**（A 是加法，⛔ 不是替换 ✗）。
+       */
+      peerDeviceId?: string | null;
+    };
+    result: DevicePairExportOutcome;
+  };
+  // ⭐ U11/T5（2026-10-02）：**逐台解除**（只踢那一台 ⇒ 别的设备不受影响 ✓）
+  device_unpair: {
+    args: {
+      /** ⚠️ **顶层参数** ⇒ camelCase ✓（`args` 结构体里的字段才 snake_case ✓）。 */
+      workspaceId?: string | null;
+      peerDeviceId: string;
+    };
+    result: DeviceUnpairOutcome;
+  };
+  device_pair_import: {
+    args: {
+      args: {
+        space_id: string;
+        text: string;
+        /** ⚠️ **必填才有写入**：不传 ⇒ 只回 `check_code` 让人核对（零写入）；传了就必须逐位相同。 */
+        confirmed_check_code?: string;
+      };
+    };
+    result: DevicePairImportOutcome;
   };
   pairing_import: {
     args: {
@@ -893,6 +1006,10 @@ export interface CommandMap {
   search: { args: { args: { query: string; limit: number; all_spaces: boolean; embedding: unknown } }; result: SearchResult[] };
   search_blocks: { args: { query: string }; result: SearchBlock[] };
   /** 块级检索（**只读**）—— 桌面 `search.rs::search_chunks`、web 里的同名分支；
+   *  ⚠️ **两个平台不是同一件事**：**BM25 / FTS 那半只在桌面**（`chunk_fts` 是 FTS5，而 Web 的 `sql.js`
+   *  **没有编 FTS5** ⇒ 见 `src-tauri/src/db.rs` 的 `CHUNK_FTS_DDL` 注释，实测原文 `Error: no such module: fts5`）——
+   *  Web 侧走 **LIKE 分支**（能搜到，但**没有 BM25 排序**）⇒ ⇒ 同一个查询在两个平台**结果排序可以不同**，
+   *  对外说"支持块级检索"时**必须带上这个限定** ✗（别让人以为两边一样 ✓）。
    *  接口与判据见信箱 `2026-09-17-retrieval-query-normalization.reply-1`。
    *  只读 `chunks` / `chunk_embeddings`（不写、不改 DDL）。 */
   search_chunks: {
@@ -928,6 +1045,8 @@ export interface CommandMap {
   resolve_block: { args: { blockId: string }; result: BlockInfo };
   list_block_backlinks: { args: { pageId: string }; result: BlockBacklink[] };
   get_graph: { args: undefined; result: GraphData };
+  // S3 第三片：**块级活动明细**（只读 ✓）—— 桌面 `activity::activity_feed` ／ Web 侧 `activityBlocks.ts` 同口径 ✓
+  activity_feed: { args: { days?: number; limit?: number }; result: ActivityEvent[] };
 
   // ---- Attachments ----
   save_image: { args: { args: { page_id: string | null; name: string | null; mime: string; data: number[] } }; result: AttachmentMeta };
@@ -1072,6 +1191,7 @@ export interface CommandMap {
   storage_stats: { args: undefined; result: StorageStats };
   clear_trash: { args: undefined; result: number };
   cleanup_orphan_attachments: { args: undefined; result: number };
+  cleanup_orphan_derived: { args: undefined; result: number };
   cleanup_old_versions: { args: { maxKeep?: number }; result: number };
   cleanup_temp_files: { args: undefined; result: number };
   purge_deleted_workspaces: { args: undefined; result: { freed: number; workspaces: number } };

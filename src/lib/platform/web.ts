@@ -9,6 +9,7 @@ import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScop
 import { applyRemoteCrdtState } from "../crdt/plane";
 import { assignBlockRevs } from "../blockRev";
 import { searchChunksVia, CHUNK_VECTOR_BONUS, type RankFn } from "./chunkSearch";
+import { activityFeedOf, type ChangeRow } from "../activityBlocks";
 import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, embedHash } from "../semanticEmbed";
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
@@ -1349,6 +1350,25 @@ export function makeInvoke(store: SqliteStore) {
     const a = (args ?? {}) as Record<string, any>;
     seedWorkspaceMeta();
 
+    // ⚠️ 清孤儿派生行：Web 侧**我没验过**（它的派生层走 sql.js，另一条路 ✓）
+    //    ⇒ 按"未核实的别假装能做到"的口径，这里**明说做不到** ✓（与 P0 引擎那条同规格 ✓）。
+    if (cmd === "cleanup_orphan_derived") {
+      throw new Error("清理孤儿派生行目前仅桌面版支持（Web 版请使用桌面版）");
+    }
+
+    // ---- 能力（按需下载的落盘）----
+    // ⚠️ Web 版**故意不实现**：浏览器里没有"应用数据目录"这种受管位置 ✓，
+    //    假装写进 localStorage 等于给用户一个**不受校验、也不知情**的副本 ✗
+    //    （与本仓"宁可明说做不到"的既有口径一致 ✓，同 `email_fetch_*` 那几条 ✓）。
+    if (cmd === "save_ability_pack") {
+      throw new Error("按需下载仅桌面版支持（Web 版请使用桌面版）");
+    }
+    // ⚠️ 同理：P0 格式引擎是本机原生库 ✓，浏览器里没有它 ⇒ **明说做不到** ✓
+    //    （同 `email_fetch_*` 那几条的既有口径 ✓；⛔ 不假装能抽 ✗）。
+    if (cmd === "extract_with_kreuzberg") {
+      throw new Error("P0 格式引擎仅桌面版支持（Web 版请使用桌面版）");
+    }
+
     // ---- Core note CRUD (real SQL) ----
     if (cmd === "list_pages") {
       const rows = store.query(
@@ -1546,7 +1566,7 @@ export function makeInvoke(store: SqliteStore) {
       // 见 `src-tauri/src/lan.rs`）—— 所以这里如实回"配置地址那一档 ＋ 局域网不可用"，
       // 而不是假装发现了谁（那会让状态行说出与真实路由矛盾的档，`lan::status_line` 判据 ⑭ 钉这条）。
       //
-      // ⚠️ 口径与桌面侧**同一条**：没绑定 ⇒ 「尚未绑定」；绑了 ⇒ 「公网 <地址> ｜ 本网段发现 0 台」。
+      // ⚠️ 口径与桌面侧**同一条**：没绑定 ⇒ 「尚未绑定」；绑了 ⇒ 「公网 <地址> ｜ 附近发现 0 台」。
       //    这里是 Web 侧的唯一实现（**不**登记成 `DESKTOP_ONLY_COMMANDS`）："这一轮走哪个地址"
       //    在浏览器里也存在，不该让调用点自己判平台。
       const args = a.args ?? a;
@@ -1555,7 +1575,7 @@ export function makeInvoke(store: SqliteStore) {
       // 指定了工作空间就走**那一处**解析（与 claim / SSE 同源）；没指定 ⇒ 第一条绑定（面板兜底）。
       const server = (wanted ? resolveWorkspaceSyncScope(rows, wanted)?.server : undefined)
         ?? String(rows[0]?.server_url ?? "").trim().replace(/\/+$/, "");
-      const line = server ? `同步地址：公网 ${server} ｜ 本网段发现 0 台` : "同步地址：尚未绑定";
+      const line = server ? `同步地址：公网 ${server} ｜ 附近发现 0 台` : "同步地址：尚未绑定";
       return {
         enabled: false,
         peers: 0,
@@ -1569,8 +1589,19 @@ export function makeInvoke(store: SqliteStore) {
           bind: null,
           tokenSet: false,
           window: null,
+          // ⭐ U8：Web 版没有本机窗口 ⇒ 服务范围为空 ✓
+          served: [],
+          // ⭐ U11/T5：Web 版不配对 ⇒ 一台都不认 ✓（⛔ 也不含任何哈希 ✗）
+          paired: [],
           note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用",
         },
+        // ★ 丙档「附近设备」（2026-09-29）：**空且说得出为什么** —— 浏览器里没有发现层
+        //   （UDP 广播/监听在 Rust 侧，见 `src-tauri/src/lan.rs`），所以这里既不是"网段里没人"，
+        //   也不是"还没发现"：**是"这台机器上看不到这一层"**。三件处境的区分靠上面那两个字段
+        //   （`enabled:false` ＋ `line` 里那句"公网 … 附近发现 0 台"），**不靠这个空数组**。
+        //   ⚠️ 不许把这里改成"回一个空数组"就算数（空数组与"不可用"长得一样、含义相反，
+        //      `INV-NEARBY-no-render-without-data` 钉这条）。
+        nearby: [],
       } as T;
     }
     if (cmd === "mesh_sync_now") {
@@ -1582,7 +1613,7 @@ export function makeInvoke(store: SqliteStore) {
       //   "回空壳"会让界面显示"网格：拉了 0 台"，用户分不清"没人"与"这一档压根没有"。
       return {
         enabled: false,
-        note: "Web 版没有局域网发现层，也开不了本机端口 ⇒ 网格这一档只在桌面版可用（这一轮一个字节都没动）",
+        note: "Web 版没有设备发现层，也开不了本机端口 ⇒ 网格这一档只在桌面版可用（这一轮一个字节都没动）",
         candidates: 0,
         peers: [],
         window: null,
@@ -2211,6 +2242,22 @@ export function makeInvoke(store: SqliteStore) {
         }
       }
       return out as T;
+    }
+
+    // ---- S3 第三片：块级活动明细（**只读** ✓）----
+    //   与桌面 `activity::activity_feed` 同口径：读**本平台自己的** `changes` 表 ✓ ——
+    //   ⚠️ 序列列在这边叫 `id`（桌面叫 `seq` ✗，同一个表不同列名 ⇒ 这条 SELECT 里显式处理 ✓）；
+    //   块级差异全部交给 `activityBlocks.activityFeedOf`（与 `activity.rs` 逐条对应 ✓）。
+    if (cmd === "activity_feed") {
+      const req = a.args && typeof a.args === "object" ? (a.args as Record<string, unknown>) : {};
+      const days = Math.min(Math.max(Number(req.days ?? 30) || 30, 1), 365);
+      const lim = Math.min(Math.max(Number(req.limit ?? 300) || 300, 1), 2000);
+      const since = Date.now() - days * 86_400_000;
+      const rows = store.query<ChangeRow>(
+        "SELECT entity_id, op, payload, updated_at FROM changes WHERE entity = 'page' AND updated_at >= ? ORDER BY id ASC LIMIT ?",
+        [since, lim],
+      );
+      return activityFeedOf(rows) as T;
     }
 
     // ---- Graph (nodes from non-deleted pages) ----

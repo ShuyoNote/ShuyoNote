@@ -79,7 +79,347 @@ export const GATES = [
   },
   { id: "check-web-commands", group: "contract", label: "命令契约（web/桌面两侧）", cmd: "node scripts/check-web-commands.mjs" },
   { id: "check-capabilities", group: "contract", label: "能力注册表", cmd: "node scripts/check-capabilities.mjs" },
+  {
+    id: "check-crdt-snapshot-contract",
+    group: "contract",
+    label: "CRDT 加密快照的服务端接口契约（三条路由 ＋ 承重规则不许退化）",
+    cmd: "node scripts/check-crdt-snapshot-contract.mjs",
+    incident:
+      "2026-09-29 CRDT 盘点：E2EE 加密快照的协议可行性已验（尖刺 13/0），但服务端接口那一半只有散文施工单 ✗，"
+      + "而实现落在另一个仓 ⇒ 契约一旦只存在口头/散文里，最易退化的恰是三条**不可逆**规则："
+      + "① 服务端开始解析密文快照 ⇒ 个人空间\"服务端在数学上无法解密\"名存实亡；"
+      + "② 先退役旧 blob、后落快照 ⇒ 不可逆丢数据；③ snapshotSeq 由必填变可选 ⇒ 退役范围不明（静默丢数据）。"
+      + "本门禁把这三条钉在代码里：服务端实现时**契约先红再绿** ✓",
+  },
   { id: "check-doc-links", group: "contract", label: "文档相对链接", cmd: "node scripts/check-doc-links.mjs" },
+  {
+    id: "check-decision-ids",
+    group: "contract",
+    label: "决策编号（决策引用必须是 DEC-<n>，不许与需求的 D1–D4 撞车）",
+    cmd: "node scripts/check-decision-ids.mjs",
+    incident:
+      "2026-09-30：一次**独立**的可行性核验把【需求的 D1–D4（交付与部署：可自建／零依赖／AGPL／不许内嵌）】" +
+      "当成了待拍清单里的决策项 ⇒ **漏数四个指标**（读到 32，实际 36）。两组同名编号**不会让任何测试变红**，" +
+      "只会让人数错/核错 ⇒ 只能靠命名隔离（决策改 `DEC-<n>`）＋本门禁把「残留的裸 D#」钉死。",
+    note: "判据形态＝白名单：文档级「自有编号族」清单 ＋ 混用文件的行级语境（脚本头有 5 条规则与边界）",
+  },
+  // ---- deploy（联网 ⇒ 不进 DEFAULT_GROUPS ✓）----
+  {
+    id: "check-web-deploy",
+    group: "deploy",
+    label: "Web 版线上自检（GitHub Pages ＋ 国内主站：版本号与资源可达性）",
+    cmd: "node scripts/check-web-deploy.mjs",
+    incident:
+      "2026-09-29 实测：它此前**只挂在 package.json 的 check:web-deploy 上**——gates.mjs 没注册、"
+      + "CI 工作流与文档都没有调用点 ⇒ 按本仓 AGENTS §3 的铁律（只挂 build/package.json 链＝在 verify 与 CI 上**隐形**），"
+      + "它属于同源事故的第三次：**能抓到问题，但没人跑**。当天顺手跑它即红 ✗ —— GitHub Pages 的 index.html 引用的 "
+      + "`prism/prism-*.js` **404**（v1.84.4 那类\"index 新、资源旧\"）；国内主站 25/25 全可达 ✓。",
+    note: "联网 ⇒ 不进默认组；该由每日定时跑（改工作流待 owner 同意 ✓）",
+  },
+  {
+    id: "check-ontology-generated",
+    group: "contract",
+    label: "本体表与能力注册表一致（生成物不许手改）",
+    cmd: "node scripts/check-ontology-generated.mjs",
+    incident:
+      "2026-09-28：MCP 规格把 `isWrite: true` 当判据（**该字段在 capabilities.json 里出现 0 次** ✗；" +
+      "真实字段是 `kind`：read 15 / write 8 / host 2），于是写出了一条「看着像判据、其实指向空气」的规则；" +
+      "同一天我还从 6 条样本外推「pages.create 不在注册表里」——也错了 ✗。" +
+      "⇒ 本体**由注册表生成**，本门禁逐字节卡漂移",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-invariants-pointers",
+    group: "contract",
+    label: "规格说能跑的不变式，必须点到存在且已注册的判据",
+    cmd: "node scripts/check-invariants-pointers.mjs",
+    incident:
+      "规格表里写「今天能跑吗 = **能**（`check-xxx`）」是对人下的承诺 ✓。但文档与代码会各自漂移：" +
+      "判据被改名／被删／被摘出注册表之后，规格还在说「能跑」✗，读规格的人就以为有承重渠道 ✓ ——" +
+      "与「文档说能、其实没人跑」同族。本判据只管两件：**判据文件存在** ＋ **它已注册进 gates.mjs**（否则不进 verify/CI）✓",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-spec-judge-carriers",
+    group: "contract",
+    label: "规格点名的承重渠道必须真实存在（`check-*.mjs` ／ `mod::tests::name`）＋ §18.1 的 id 卫生",
+    cmd: "node scripts/check-spec-judge-carriers.mjs",
+    incident:
+      "2026-09-30：`nearby-devices-spec` 那族按铁律**不进 `INVARIANTS.md`** ⇒ 既有 `check-invariants-pointers`" +
+      "**够不到它**：它只认「≥7 列表里状态含能的行点名一个 `check-*.mjs`」，而这族的判据是 **Rust 单测**" +
+      "（`mesh::tests::…`）与 vitest wiring，表也是 4/3 列 ⇒ 硬套只会**逼人写假名字**（假绿）或**一行都解析不到**（假红）。" +
+      "⇒ 而「散文里承诺了、机器不盯」今晚已害过三次（编号撞车漏数 4 条／`presence.page_id` 打穿口径／" +
+      "`check-licenses` 被写成「已有」却不存在）⇒ 本判据补这一档：**点名了就得在**（Rust 测试名按 `fn <name>` 整名匹配）" +
+      "＋ **§18.1 里同一个 id 不许两行都 live、划掉的必须点出取代者**（`DEC-10` 那类病的机器版）。",
+    note: "纯 Node、只读文本；边界写在脚本头：**不扫普通路径引用**（那会误伤留痕，如已删的 `nearby_invite.rs`）",
+    registered: "2026-09-30",
+  },
+  {
+    id: "check-crdt-plane",
+    group: "contract",
+    label: "CRDT 平面：content_json 是 TEXT（老客户端只认 JSON）／CRDT 状态只进 BLOB 旁路表／Rust 不认识 CRDT／转换与合并各只有一份实现",
+    cmd: "node scripts/check-crdt-plane.mjs",
+    incident:
+      "混版本共存的**地基是三句话**（见 docs/specs/2026-09-29-crdt-mixed-version-degradation.md）：" +
+      "① content_json 永远是 TEXT/JSON（老客户端只认它）② CRDT 状态只进 page_crdt* 的 BLOB ③ Rust 不认识 CRDT。" +
+      "这三句**已经写在代码注释里**，但谁把 BLOB 塞进 content_json、给 Rust 加个 yjs crate、或长出第二份转换实现，" +
+      "**都不会炸、不会报错、测试全绿** —— 只是**老客户端的页打不开** ✗（本仓 §8 那族：违规不炸，只炸用户）。",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-locked-loud",
+    group: "contract",
+    label: "锁定 ⇒ 大声失败（稳定错误码 space_locked；不许映射成空）",
+    cmd: "node scripts/check-locked-loud.mjs",
+    incident:
+      "加密空间未解锁时，若把错误吞掉、返回空结果，用户看到的是「没内容」而真相是「你还没解锁」✗" +
+      "—— 他会以为数据丢了、去翻备份、去重装。实现其实早就有（plugins.rs:1386 映射成 space_locked，注释原话：" +
+      "「插件调用不能成为绕过启动锁的通路」，并有单测 locked_space_maps_to_a_stable_error_code ✓）⇒" +
+      "本判据不发明新规矩，只把「映射点 ＋ 稳定码 ＋ 不映射成空 ＋ 有单测」钉成机器可核（纯读源码 ⇒ 不需要 cargo ✓）",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-mcp-host-authz",
+    group: "contract",
+    label: "MCP 宿主面必须经**同一处**权限校验（不许第二条鉴权路径）",
+    cmd: "node scripts/check-mcp-host-authz.mjs",
+    // ⚠️ 自报跳过的登记（配合 `test-report.mjs` 的 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
+    //   M1 的宿主面（`src-tauri/src/mcp_host.rs`）**还没写** ⇒ 本条现在没有可检查对象。
+    //   跳过 ≠ 通过：要看那次"红"就加 `--require-host`（⇒ exit 2，逐字含「宿主面不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 宿主面（src-tauri/src/mcp_host.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；宿主面落地后本条立即有对象",
+    incident:
+      "2026-09-30：规格 §2 的 INV-MCP-single-authz 原本第四列是「❌ 无」✗ —— 而宿主面一旦自己开库或自己判权限，" +
+      "就长出**第二条鉴权路径** ⇒ 「未解锁大声失败」「写要草稿确认」「每次调用留审计」这些**只对插件那条路成立** ✓，" +
+      "外部 agent 从另一条路进来全部绕开，且测试全绿、没有一条门禁会红（本仓最忌的形状）。" +
+      "本门禁把「唯一鉴权点存在 ＋ 宿主面调用它 ＋ 不自开库 ＋ 不自判权限」钉成机器可核（纯读源码 ⇒ 不需要 cargo ✓）。",
+    // ⚠️ **不设 `baseline: true`**（与 `check-locked-loud` 同形 ✓）：本条不打 `[结果] N 通过 / M 失败` 那种读数行 ⇒
+    //   设了它反而会报「通过但没解析出读数 ⇒ 基线校验失效」✗。判据本身的"只看不增"由它自己的自测条数承担 ✓。
+    registered: "2026-09-30",
+  },
+  {
+    id: "check-mcp-channel-judge",
+    group: "contract",
+    label: "MCP 桥的本机通道：默认关 ＋ token ＋ Origin/Host（坏 Origin / 过期 token 必被拒）",
+    cmd: "node tools/shuyonote-mcp/judge-channel.mjs",
+    // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：桥还不存在 ⇒ 没有可检查对象。
+    //    要看那次"红"就加 `--require-bridge`（⇒ exit 2，逐字含「桥不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    incident:
+      "2026-09-30：规格 §2 的 INV-MCP-channel-guarded 原本是「❌ 无」✗。而本仓真栽过同族那次：docs/SECURITY.md 的低危项逐字写着" +
+      "「CORS 前缀匹配放过 http://127.0.0.1.evil.com」（lib.rs:155）—— 所以这条判据必须用前缀陷阱值去试，而不是随便一个外域" +
+      "（随便一个外域连前缀匹配都挡得住，测不出这个坑 ✗）。四条断言：默认关拒连／坏 Origin 拒／错 token 拒／关闸后旧 token 失效。",
+    registered: "2026-09-30",
+  },
+  {
+    id: "check-mcp-host-channel",
+    group: "contract",
+    label: "MCP 宿主面那半通道：默认关 ＋ 只绑回环 ＋ token 从文件读 ＋ Origin/Host 恰好回环 ＋ 必须走唯一入口",
+    cmd: "node scripts/check-mcp-host-channel.mjs",
+    // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
+    //   通道文件（`src-tauri/src/mcp_channel.rs`）还没写 ⇒ 本条现在没有可检查对象。
+    //   跳过 ≠ 通过：要看那次"红"就加 `--require-channel`（⇒ exit 2，逐字含「通道文件不存在 / 无可检查对象」）✓。
+    selfSkipOk: "MCP 宿主面通道（src-tauri/src/mcp_channel.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；通道落地后本条立即有对象",
+    incident:
+      "2026-10-01：owner 裁定通道方向＝**② 桥 → App（App 当服务端）**（Task 5 笔记 §8）⇒ 监听这一侧从桥搬到了 App。" +
+      "而 `INV-MCP-channel-guarded` 的三件套（默认关／per-session token／Origin·Host 恰好回环）原来**只有桥那半**有判据 ✗ ⇒" +
+      "「外面那台机器校验过了」会变成唯一的一道门 ✗ —— 门要在**被调用方**这里才作数。" +
+      "`Origin`/`Host` 那条尤其有先例：docs/SECURITY.md 低危项逐字「CORS 前缀匹配放过 http://127.0.0.1.evil.com」⇒ 前缀写法直接判红 ✓。" +
+      "另加第⑤条：通道**必须**调 `handle_external_call` 且**不许**直接调 `dispatch_capability`（否则绕过「外部会话」来源 ⇒ 审计里看不出是谁读的 ✓）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-mcp-audit-single-ledger",
+    group: "contract",
+    label: "审计只有一本账（PLUGIN_AUDIT）且能力调用成功/失败都留痕；宿主面不许自建环",
+    cmd: "node scripts/check-mcp-audit-single-ledger.mjs",
+    incident:
+      "2026-10-01：INV-MCP-audited 要求「外部会话的每次能力调用与插件调用进**同一**审计轨迹」（需求 §9「谁读过我的库」）。" +
+      "它的主体标识字段未定（需求 §132／规格 §2）⇒ 已登记台账 R104 ⇒ 本条只钉能判的那半：账本唯一／审计推送都进它／" +
+      "dispatch_capability 成功失败都留痕／宿主面不许自建环。⚠️ 写它时踩过两次假红（拿 push_back( 当指纹 ✗；" +
+      "函数体用 \n}\n 收尾在 CRLF 检出上永不命中 ✗）⇒ 已改为按值认 ＋ 行尾 \\r?\\n ＋ 自测里放一条 CRLF 正例当回归 ✓。",
+    registered: "2026-10-01",
+    counters: "auto",   // ⚠️ 有 baseline:true 就必须声明 counters ✓（不变量自测要求的 ✓；"auto"＝文本兜底，读数行为不变 ✓）
+    baseline: true,
+  },
+  {
+    id: "check-mcp-bridge-dumb",
+    group: "contract",
+    label: "MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态",
+    cmd: "node scripts/check-mcp-bridge-dumb.mjs",
+    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    incident:
+      "2026-10-01：INV-MCP-bridge-dumb 要求「桥只转发，不做权限/落库/审计决策」。它必须**独立**存在 —— " +
+      "check-mcp-bridge-stdout 只管 stdout 纯净、check-mcp-host-authz 只管宿主面，**都不管桥里有没有偷偷长出一个权限/落库分支** ✗。" +
+      "桥是最容易被加料的地方：离协议最近，顺手 if (locked) return err 或顺手查一次库，代码看着更聪明、测试全绿，" +
+      "但唯一鉴权点与同一本审计账同时被绕开。本条是\"不许出现\"型（四条：库／权限／审计／权威形态）⇒ 假阳风险低。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-kb-s1-search",
+    group: "contract",
+    label: "S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码",
+    cmd: "node scripts/check-kb-s1-search.mjs",
+    selfSkipOk: "S1 的来源声明（SEARCH_SOURCES）尚未落地 ⇒ 判据先行阶段没有可检查对象；落地后本条立即有对象",
+    incident:
+      "2026-10-01：R105=A 采用了知识层 Phase 1 的九条出口判据。S1 检索此前**只有阶段名、没有定义** ✗ ⇒ " +
+      "本条把它变成两条可机核的出口判据：① 正文与附件派生文本要能被**同一次查询**命中（今天 search_chunks 只查块、" +
+      "read_attachment_text 是另一条命令 ⇒ 用户得搜两次）；② 索引不可用必须给**稳定码**，不许静默返空" +
+      "（「搜不到」与「搜不了」对用户是两件事，与 check-locked-loud 同族）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-kb-s1-search-parity",
+    group: "contract",
+    label: "S1③ 两平台检索一致性：同一份夹具必须被 Rust 与 TS 两侧真消费（不许两份／空壳）",
+    cmd: "node scripts/check-kb-s1-search-parity.mjs",
+    selfSkipOk: "S1③ 的跨语言夹具（tests/search-parity.json）尚未落地 ⇒ 判据先行阶段没有可检查对象；夹具落地后本条立即有对象",
+    incident:
+      "2026-10-01：R105=A 采用了知识层 Phase 1 的九条出口判据，其中 S1 第③条「两平台**命中集合相等**（排序可比）」" +
+      "此前**没有任何判据碰过** ✗：check-search-platform-parity 只管「差异写进了文档」，check-kb-s1-search 只管桌面那份来源声明。" +
+      "⇒「同一份笔记换个平台搜出来**少了一条**」正是本仓最罚的形状（不炸、不报错、只是结果不同）。" +
+      "本条钉住**前提**：夹具只有一份（tests/search-parity.json）＋ Rust 侧 include_str! 真读它 ＋ TS 侧测试真读它 ＋ 用例不是空壳；" +
+      "真正的相等断言由两侧各自的测试在 CI 上承担（这条缺口明写在脚本头部，不藏）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-design-doc-refs",
+    group: "contract",
+    label: "效果图点名的需求/不变式必须真实存在；每条 MUST 至少被一张图引用",
+    cmd: "node scripts/check-design-doc-refs.mjs",
+    incident:
+      "2026-10-01：`design/enterprise-im/README.md` 里那张「覆盖哪几条需求」的表**是人工写的** —— " +
+      "写一个不存在的 `M9`、或需求加了新条目却没人画图，**两者都不会有任何报错**：" +
+      "图照样出、评审照样看，而**图与文档的关联是假的**。图事实上在扮演“规格”（大家照着图做），" +
+      "**而它没有判据兜** —— 正是本仓反复要消灭的「两份真相源」。实测当时的断链：三份 IM 文档里 " +
+      "`grep 效果图` = 0 命中，且没有任何门禁扫 `design/`。" +
+      "两条真断言：① 图 README 点名的 `M#`／`W#` 必须在需求里存在、`INV-IM-*` 与规格 §7 的 `N#` 必须在规格里存在；" +
+      "② 每条 MUST（`M#`）至少被一张图引用（`W#` 不要求逐条引）。" +
+      "⚠️ 边界：它**不判“图长得对不对”**，只判**引用是不是真的**。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-pairing-requires-proof",
+    group: "contract",
+    label: "配对必须有人核对过（码长下限未被缩短／比对码真的比／采纳前先核对／拒绝路不继续／路径上无“等对端同意”）",
+    cmd: "node scripts/check-pairing-requires-proof.mjs",
+    selfSkipOk: "设备直连那半（device_pair_export／device_pair_import）尚未落地 ⇒ 「必须有人的那一步、且没有自动通过」这一条现在没有可检查对象；其余五条照常真查，落地后本条立即有对象",
+    incident:
+      "2026-10-01：`INV-PER-pairing-requires-proof` 当时是「半有」、`INV-PER-pairing-needs-no-acceptance` 是「无（要立）」。" +
+      "配对码是**唯一**的防“换码”手段（攻击者把载荷换成自己那份 ⇒ 用户空间同步进攻击者知道钥匙的地方），" +
+      "而这类坏法**全是减法**：把“必须核对”改成可选、把码长缩短、给“停”态加一个“继续”按钮 —— " +
+      "功能全对、测试全绿（没人会为“少了一次核对”写测试）⇒ 只能静态盯。五条真断言：① `CHECK_CODE_MIN_BITS` ≥ 60（矩阵 U4）" +
+      "② `verify_confirm_code` 里必须有“算出来的 ≠ 用户记下的 ⇒ Err” ③ `pairing_import` 里 `verify_confirm_code(` 必须在 `adopt_material(` 之前" +
+      "④ 两者之间必须出现 \"rejected\" ⑤ 配对路径上不许出现 pending_accept／awaiting_peer 一类标识。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-im-boundary",
+    group: "contract",
+    label: "企业版 IM 的三条边界（空间是唯一边界／无关系类表／推送不带正文；＋客户端只认 push|ping）",
+    cmd: "node scripts/check-im-boundary.mjs",
+    selfSkipOk: "服务端仓（shuyonote-sync-server）在客户端 CI 上不检出 ⇒ ① ② ③ 三项没有可检查对象；客户端那半边（④）照常真查，本条落地后立即有对象",
+    incident:
+      "2026-10-01：`docs/specs/2026-10-01-enterprise-im-spec.md` 的 INV-IM-* 十二条当时一条判据都没有 ✗。" +
+      "这三条的坏法**都是加出来的、不是改出来的** ⇒ 功能全对、测试全绿，只是边界上多了个洞：" +
+      "① 新写一个 handler 忘了调 require_space ⇒ 多一条不经空间门的路（例外只有 3 条用户级通知，且它们的路由必须不在 `/spaces/` 下）；" +
+      "② 推送帧里顺手加了标题 ⇒ 服务端开始「懂内容」（撞 INV-ENT）；" +
+      "③ schema 里加了 friends 表 ⇒ 出现不属于任何空间的人。" +
+      "另查客户端 frame_kind 只认 push|ping 的闭集（认第三种帧＝开始解析讨论事件）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-kb-s3-timeline",
+    group: "contract",
+    label: "S3 时间复盘页：只读派生／两种空态分得开／时间口径只有一处",
+    cmd: "node scripts/check-kb-s3-timeline.mjs",
+    selfSkipOk: "S3 尚未实现（没有文件带 KB-S3-TIMELINE 标记）⇒ 判据先行阶段没有可检查对象；落地后本条立即有对象",
+    incident:
+      "2026-10-01：R105=A 采用的知识层 Phase 1 出口判据里，S3 三条此前只是散文 ✗。三类坏法都不炸不报错：" +
+      "① 读路径上补一次写（回填／打点）⇒ 派生数据成了第二份真相源；" +
+      "② 把「有页面但没活动」与「没有页面」折成一句「暂无数据」⇒ 用户分不清（与 check-locked-loud 同族）；" +
+      "③ 今天本地时区分桶、明天另一处用 UTC ⇒ 同一条活动会换一天。" +
+      "契约写在脚本头部：带 KB-S3-TIMELINE 标记的文件为检查面，须满足只读 ＋ TIMELINE_STATES 两个互异状态 ＋ TIMELINE_DAY_BUCKET 一处（export/pub）。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-kb-s4-map",
+    group: "contract",
+    label: "S4 知识地图：关系可重建／上限＋截断明示／不与既有关系口径打架",
+    cmd: "node scripts/check-kb-s4-map.mjs",
+    selfSkipOk: "S4 尚未实现（没有文件带 KB-S4-MAP 标记）⇒ 判据先行阶段没有可检查对象；落地后本条立即有对象",
+    incident:
+      "2026-10-01：同上（R105=A）。本仓已有 GraphView／BacklinksPanel／get_backlinks／list_block_backlinks，" +
+      "S4 再画一张地图最容易出三类不炸不报错的坏法：① 把关系存下来 ⇒ 不再能从内容重建（INV-KB-derived-rebuildable）；" +
+      "② 大库上默默只画前 N 条 ⇒ 「悄悄截断」（本仓逐字罚过）；③ 第三套 [[ 匹配算法 ⇒ 同一份内容在两个视图里连出不同的边。" +
+      "契约写在脚本头部：带 KB-S4-MAP 标记的文件为检查面，须满足不持久化关系 ＋ GRAPH_NODE_CAP 带数字 ＋ GRAPH_TRUNCATED 成对 ＋ 复用既有关系出处。",
+    registered: "2026-10-01",
+  },
+  {
+    id: "check-search-platform-parity",
+    group: "contract",
+    label: "桌面专属检索能力必须写进 app 侧文档（FTS/BM25 只在桌面，Web 走 LIKE）",
+    cmd: "node scripts/check-search-platform-parity.mjs",
+    incident:
+      "2026-09-30：块级检索在桌面走 FTS5/BM25、Web 走 LIKE（sql.js 没编 FTS5）—— 两边同一个查询**排序可以不同**，" +
+      "而这件事此前只写在 db.rs 的注释里；app 侧 commands.ts 的 search_chunks 只写「web 里的同名分支」⇒ " +
+      "读代码的人会以为两个平台一样，用户则是「换个平台搜出来顺序变了」且没有线索（本仓最忌的：差异不炸、不报错）。" +
+      "本判据把四件事钉住：桌面 DDL 常量在 ＋ 理由（sql.js 没编 FTS5）在 ＋ app 侧写明限定 ＋ 桌面专属 DDL 不许漏进共享 DDL。",
+    registered: "2026-09-30",
+    counters: "auto",   // ⚠️ 有 baseline:true 就必须声明 counters ✓（不变量自测要求的 ✓；"auto"＝文本兜底，读数行为不变 ✓）
+    baseline: true,
+  },
+  {
+    id: "check-derived-provenance",
+    group: "contract",
+    label: "派生内容自证来源（ExtractedSegment.kind／loc 必填 ＋ SegmentKind 有区分度）",
+    cmd: "node scripts/check-derived-provenance.mjs",
+    incident:
+      "2026-09-29 读数：派生内容**早已有**「从哪来」的强制字段 —— `ExtractedSegment.kind` ＋ `loc` 都必填 ✓" +
+      "（类型注释：「决定检索侧如何展示与加权，也决定 loc 的格式」）。检索、引用、加权全靠它 ⇒" +
+      "一旦被改成可选（`loc?`），引用与定位会**静默**降级 ✗ ⇒ 值得一条窄判据。⚠️ 同时更正我先前的错话：" +
+      "`source` 列确实存在，但**只属于插件两表**；**内容**层面没有「外部来源」字段 ✗（那是 R55 的真缺口 ✓）",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-audit-shape",
+    group: "contract",
+    label: "审计的形状（入口唯一 ＋ 条目不含正文 ＋ 只增）",
+    cmd: "node scripts/check-audit-shape.mjs",
+    incident:
+      "2026-09-29 读数：`push_audit(plugin_id, capability, scope, ok, error_code)` 是内存环形队列（容量 500），" +
+      "写它的只有 plugins.rs 一个文件 ✓ —— 但当外部助手也能调能力时（M2），审计要答「是谁／哪次会话」，而 plugin_id 答不了 ✗。" +
+      "在补字段之前，先把今天已经成立的三条形状钉死：入口唯一（否则漏记 ✗）／条目不含正文（审计不该变成第二份内容副本 ✗）／只增 ✓",
+    registered: "2026-09-29",
+  },
+  {
+    id: "check-generated-artifacts",
+    group: "contract",
+    label: "生成物自证来源（sha）且可重建（生成命令的脚本存在）",
+    cmd: "node scripts/check-generated-artifacts.mjs",
+    incident:
+      "工作区栽过不止一次「生成物与实际脱节而没人发现」——最典型那句：「缺口还开着」在写下 13 分钟后就过期，两天没人看过。知识层的本体表 / 工具面 / 接口指纹都是给人看、给外部程序看的 ⇒ 源改了而生成物没跟上，读的人就照旧结构做 ✗",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-api-surface-version",
+    group: "contract",
+    label: "外部接口指纹与 `apiVersion` 一致（改了接口必须升版本）",
+    cmd: "node scripts/check-api-surface-version.mjs",
+    incident:
+      "2026-09-28：注册表顶层本来就有 registryVersion / apiVersion ✓，但没有任何东西强制它 ✗ —— 改 id / 删能力 / 改语义时，正在用它的外部程序会在没有信号的情况下坏掉；同一天还实测出 MCP 规格把写判定写成查 isWrite（该字段出现 0 次 ✗）⇒ 接口形状必须机器可查 ✓",
+    registered: "2026-09-28",
+  },
+  {
+    id: "check-agent-surface",
+    group: "contract",
+    label: "外部工具面（生成物）与注册表一致 ＋ 只读面 0 写能力 ＋ 描述无内部标识 ＋ 能力面限于笔记域",
+    cmd: "node scripts/check-agent-surface.mjs",
+    incident:
+      "2026-09-28：注册表里 `ai: true` 恰好 10 条（read 8 / write 2，实测 ✓），而 MCP 规格把写判定写成查 `isWrite`" +
+      "——该字段在原始 JSON 里出现 0 次 ✗（真实字段是 `kind`）。同一份 `desc` 里 `content_json` 只出现在**非 ai** 的能力上，" +
+      "⇒ 面必须由注册表生成；只读面出现写能力、或描述里写进内部标识 ⇒ 红",
+    registered: "2026-09-28",
+  },
   {
     id: "check-doc-facts",
     group: "contract",
@@ -520,7 +860,7 @@ export const GATES = [
   },
 ];
 
-export const GROUP_ORDER = ["contract", "smoke", "sync", "plugin", "browser", "mobile", "rust", "artifact"];
+export const GROUP_ORDER = ["contract", "smoke", "sync", "plugin", "browser", "mobile", "rust", "artifact", "deploy"];
 
 // 本地默认组：必须**只含纯 Node 门禁**——需要 Chromium / dev server / cargo 的组不进默认，
 // 否则"一键本地验收"在没装浏览器的机器上直接红，很快就没人跑了。
@@ -537,6 +877,7 @@ export const DEFAULT_GROUP_FORBIDDEN = [
   "verify-mobile-layout",
   "verify-mobile-overlays",
   "verify-mobile-views",
+  "deploy", // 联网络判据：不许进一键本地验收 ✓
 ];
 
 export function gateSetOf(list) {

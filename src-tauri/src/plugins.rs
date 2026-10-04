@@ -434,6 +434,9 @@ pub struct PluginDraft {
 #[derive(Serialize, Clone)]
 pub struct PluginAuditEntry {
     pub plugin_id: String,
+    /// 这条审计的**来源**：`plugin` ／ `external:<会话号>`（R104=A：要答得出「谁读过我的库」✓）
+    #[serde(default)]
+    pub source: String,
     pub capability: String,
     pub scope: String,
     pub at_ms: i64,
@@ -450,6 +453,31 @@ pub struct PluginAuditEntry {
 
 /// 审计环形缓冲容量。内存里留最近这些，足够复盘一次会话里的行为。
 const PLUGIN_AUDIT_CAPACITY: usize = 500;
+
+/// 审计**落盘**文件名（放在 `app_data_dir` 里 ✓ ⇒ 重启不丢 ✓ R104=A）。
+const PLUGIN_AUDIT_LOG: &str = "plugin-audit.jsonl";
+
+/// 环形缓冲**丢掉了多少条**（"满了丢最老的"那件事要能看出来 ✓ R104=A）。
+static PLUGIN_AUDIT_DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 追加写一行审计（JSON 行 ✓）。拿不到数据目录／打不开文件时**静默跳过** ✓：
+/// 审计不该因为目录没就绪就把调用方弄崩 ✗（那会把「记不上账」变成「功能坏了」✓）。
+fn persist_audit_line(entry: &PluginAuditEntry) {
+    let Some(dir) = crate::db::app_data_dir_ref() else { return; };
+    let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(PLUGIN_AUDIT_LOG))
+    else { return; };
+    use std::io::Write;
+    let _ = writeln!(f, "{}", serde_json::to_string(entry).unwrap_or_else(|_| "{}".to_string()));
+}
+
+/// 丢弃了多少条（给界面／诊断用 ✓ R104=A：丢了多少要看得出来 ✓）。
+#[allow(dead_code)] // 2026-10-01 收据：R104=A 要"丢了多少看得出来" —— 读函数先落地，**接线（命令／界面）是下一步**（要动 CommandMap ＋ web 实现，属宿主面那一批 ✓）；删除条件 = 有命令或界面在读它
+pub fn plugin_audit_dropped() -> u64 {
+    PLUGIN_AUDIT_DROPPED.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 static PLUGIN_AUDIT: std::sync::Mutex<std::collections::VecDeque<PluginAuditEntry>> =
     std::sync::Mutex::new(std::collections::VecDeque::new());
@@ -476,25 +504,30 @@ fn push_run_audit(
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
         q.pop_front();
+        PLUGIN_AUDIT_DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     q.push_back(PluginAuditEntry {
         plugin_id: plugin_id.to_string(),
         capability: "host.run".to_string(),
+        source: "plugin".to_string(),   // ⚠️ 运行记录暂时固定；外部会话落地时改传 `external:<会话号>` ✓
         scope: kind.to_string(),
         at_ms: now_ms(),
         ok,
         error_code,
         peak_rss_bytes,
     });
+    if let Some(last) = q.back() { persist_audit_line(last); }
 }
 
-fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
+fn push_audit(source: &str, plugin_id: &str, capability: &str, scope: &str, ok: bool, error_code: Option<String>) {
     let mut q = PLUGIN_AUDIT.lock().unwrap_or_else(|e| e.into_inner());
     if q.len() >= PLUGIN_AUDIT_CAPACITY {
         q.pop_front();
+        PLUGIN_AUDIT_DROPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     q.push_back(PluginAuditEntry {
         plugin_id: plugin_id.to_string(),
+        source: source.to_string(),
         capability: capability.to_string(),
         scope: scope.to_string(),
         at_ms: now_ms(),
@@ -502,6 +535,7 @@ fn push_audit(plugin_id: &str, capability: &str, scope: &str, ok: bool, error_co
         error_code,
         peak_rss_bytes: None,
     });
+    if let Some(last) = q.back() { persist_audit_line(last); }
 }
 
 /// 一条插件日志（作者侧 `__log(...)` 与 `__toast(...)` 都会进环形缓冲）。
@@ -2034,9 +2068,64 @@ fn cap_blocks_list(page_id: Option<&str>, limit: i64) -> CapResult {
     })
 }
 
+/// 能力调用的**唯一鉴权判定**（纯函数 ✓）：给「能力 id ＋ 该插件声明的 permissions」⇒ 判定 ✓。
+///
+/// 存在的理由（Task 5 ①）：插件路与**外部宿主路**（将来的 `mcp_host.rs`）必须**共用同一个判定** ✓ ——
+/// 否则"唯一鉴权点"就变成两处，而第二处最容易悄悄放宽 ✗（本仓最罚的那类错 ✓）。
+///
+/// ⚠️ 语义**逐字不动** ✓：两种拒绝的**错误码**与下面那条**消息文本**都照原样 ✓
+/// （`plugins.rs` 里有 30+ 条测试锁着它们 ✓ ⇒ 改动语义会在 CI 的 Rust 测试里红 ✓）。
+pub(crate) enum CapDeny {
+    UnknownCapability,
+    PermissionDenied { permission: String },
+}
+
+/// 只判"能不能调" ✓；**不**写审计、不出消息（那是调用方的事 ✓ —— 它才知道 plugin_id 与 scope ✓）。
+pub(crate) fn judge_capability(capability_id: &str, declared: &[String]) -> Result<(), CapDeny> {
+    let Some(cap) = capabilities_gen::lookup(capability_id) else {
+        return Err(CapDeny::UnknownCapability);
+    };
+    if let Some(perm) = cap.permission {
+        if !declared.iter().any(|p| p == perm) {
+            return Err(CapDeny::PermissionDenied { permission: perm.to_string() });
+        }
+    }
+    Ok(())
+}
+
+/// 某个能力的 scope（只在拒绝路上用一次 ✓；查不到就是 `"?“`，与原来 unknown 那条一致 ✓）。
+fn capability_scope_or_unknown(capability_id: &str) -> &'static str {
+    capabilities_gen::lookup(capability_id).map(|c| c.scope).unwrap_or("?")
+}
+
+thread_local! {
+    /// **外部宿主**（MCP `mcp_host.rs`）那一次调用的上下文 ✓：`Some((source, granted))` ⇒
+    /// 这次 `dispatch_capability` 用**外部的身份与权限**，不是插件那条路 ✓。
+    ///
+    /// 为什么另开一个 thread-local 而不是往 `RunState` 里加字段：`RunState` 有 30+ 处测试**字面量构造**
+    /// （加字段会动到它们 ✗），而这条上下文只对"外部的那一次调用"有效 ⇒ 进来就设、出去就还原 ✓。
+    static EXTERNAL_CALLER: std::cell::RefCell<Option<(String, Vec<String>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 把一次调用标记成「**外部宿主**发起的」✓（会话号进审计 `source` ＝ `external:<会话号>` ⇒ 答得出"是谁" ✓）。
+///
+/// ⚠️ **只由 `mcp_host.rs` 用** ✓ —— 插件那条路不许借它换身份 ✗（换了身份就等于绕过 manifest 声明 ✓）。
+/// ⚠️ 判定本身**不在这里** ✓：权限仍然只在 `dispatch_capability` 里判一次（唯一鉴权点 ✓）。
+pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: impl FnOnce() -> T) -> T {
+    let prev = EXTERNAL_CALLER.with(|c| {
+        c.borrow_mut()
+            .replace((format!("external:{session_id}"), granted.to_vec()))
+    });
+    let out = f();
+    EXTERNAL_CALLER.with(|c| *c.borrow_mut() = prev);
+    out
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
-fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
+/// ⚠️ 改成 `pub(crate)` 是 Task 5 ① 的**硬要求** ✓ —— 外部宿主路在别的模块，私有就**调不到** ✗。
+pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> {
     // M11.13：装了传输就说明这次运行在**子进程**里——把这一问一答发回父进程，由那边
     // 查库、校验权限、记审计、出草稿。下面这些 arm 只会跑在**父进程**：子进程没有库、
     // 没有密钥、没有路径，它根本走不到这里。
@@ -2044,25 +2133,41 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
     if let Some(rpc) = rpc {
         return rpc(method, args_json);
     }
-    let plugin_id = RUN_STATE.with(|s| s.borrow().plugin_id.clone());
+    // 谁在调：外部宿主（MCP）那条路把身份放进 `EXTERNAL_CALLER` ✓；否则是插件那条路 ✓。
+    // ⚠️ 权限与审计 `source` 都从**这一处**取 ⇒ 下面那道判定对两条路是同一个（唯一鉴权点 ✓）。
+    let (plugin_id, declared, source) = match EXTERNAL_CALLER.with(|c| c.borrow().clone()) {
+        Some((src, granted)) => ("external".to_string(), granted, src),
+        None => (
+            RUN_STATE.with(|s| s.borrow().plugin_id.clone()),
+            RUN_STATE.with(|s| s.borrow().permissions.clone()),
+            "plugin".to_string(),
+        ),
+    };
+    // 判定**只在这一处** ✓（judge_capability ✓）；下面只负责「把判定变成审计 ＋ 错误消息」✓
+    if let Err(deny) = judge_capability(method, &declared) {
+        let (scope, code, msg) = match deny {
+            CapDeny::UnknownCapability => (
+                "?",
+                "unknown_capability",
+                format!("unknown_capability: 宿主没有名为 {method} 的能力"),
+            ),
+            CapDeny::PermissionDenied { permission } => (
+                capability_scope_or_unknown(method),
+                "permission_denied",
+                format!("permission_denied: 能力 {method} 需要权限 {permission}，但 manifest.permissions 未声明它"),
+            ),
+        };
+        push_audit(&source, &plugin_id, method, scope, false, Some(code.into()));
+        return Err(msg);
+    }
+    // 走到这里 ⇒ 能力一定存在（刚刚判过 ✓）；仍留防御分支 ⇒ **不 panic** ✓（热路径上 panic 太贵 ✗）
     let cap = match capabilities_gen::lookup(method) {
         Some(c) => c,
         None => {
-            push_audit(&plugin_id, method, "?", false, Some("unknown_capability".into()));
+            push_audit(&source, &plugin_id, method, "?", false, Some("unknown_capability".into()));
             return Err(format!("unknown_capability: 宿主没有名为 {method} 的能力"));
         }
     };
-
-    // 权限：逐次调用校验，不是只在 UI 上隐藏。
-    if let Some(perm) = cap.permission {
-        let granted = RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == perm));
-        if !granted {
-            push_audit(&plugin_id, method, cap.scope, false, Some("permission_denied".into()));
-            return Err(format!(
-                "permission_denied: 能力 {method} 需要权限 {perm}，但 manifest.permissions 未声明它"
-            ));
-        }
-    }
 
     let args: serde_json::Value = if args_json.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
@@ -2070,7 +2175,7 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
         match serde_json::from_str(args_json) {
             Ok(v) => v,
             Err(e) => {
-                push_audit(&plugin_id, method, cap.scope, false, Some("bad_args".into()));
+                push_audit(&source, &plugin_id, method, cap.scope, false, Some("bad_args".into()));
                 return Err(format!("bad_args: 参数不是合法 JSON（{e}）"));
             }
         }
@@ -2154,18 +2259,18 @@ fn dispatch_capability(method: &str, args_json: &str) -> Result<String, String> 
             cap_log_write(&arg_str("message")?, level)
         }
         other => {
-            push_audit(&plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
+            push_audit(&source, &plugin_id, other, cap.scope, false, Some("unknown_capability".into()));
             return Err(format!("unknown_capability: {other}"));
         }
     };
     match out {
         Ok(v) => {
-            push_audit(&plugin_id, method, cap.scope, true, None);
+            push_audit(&source, &plugin_id, method, cap.scope, true, None);
             serde_json::to_string(&v).map_err(|e| e.to_string())
         }
         Err(e) => {
             let code = error_code_of(&e);
-            push_audit(&plugin_id, method, cap.scope, false, code);
+            push_audit(&source, &plugin_id, method, cap.scope, false, code);
             Err(e)
         }
     }
@@ -7125,7 +7230,7 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _g = capability_test_guard();
         clear_plugin_audit();
         for i in 0..(PLUGIN_AUDIT_CAPACITY + 5) {
-            push_audit("cap", "pages.count", "current-space", true, None);
+            push_audit("plugin", "cap", "pages.count", "current-space", true, None);
             let _ = i;
         }
         let all = plugin_audit(Some("cap".to_string()), None);

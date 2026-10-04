@@ -50,7 +50,7 @@ isDesktopPlatform()  ≡  isTauri()  ≡  ("__TAURI_INTERNALS__" in window)     
 |---|---|---|---|
 | **INV-UI-sync-panel-shell-matrix** | **凡"窄屏／移动端"的断言，必须声明它在哪个壳里；Web ／ Tauri 桌面 ／ Tauri 移动是三个对象，不许用其中一个的读数代表另外两个** | `scripts/verify-mobile-views.mjs` ⇒ **给现有断言加"壳"这一维**：对每个视口各跑两遍（无壳 ＝ Web ／ 注入 `__TAURI_INTERNALS__` ＝ 移动壳），**两遍的断言集合必须分别通过** | **❌ 无**（要立。**怎么证明它会红**：把 Tauri 注入那一路删掉 ⇒ 只跑 Web ⇒ 断言必须红，因为"移动壳这一路根本没跑"） |
 | **INV-UI-sync-panel-persistent-chrome** | **常驻 chrome（`.sync-foot` 这类 `position:sticky` 的段）里不许有需要阅读与填写的表单** —— 读数行可以有，设置控件不行 | `scripts/verify-mobile-views.mjs` ⇒ 断言：**Tauri 移动壳**下 `.sync-foot` 内 `input, textarea, select` 的数量为 0（按钮另按"是否主操作"单独列） | **❌ 无**（要立。**怎么证明它会红**：实测 `.sync-foot` 里 `input/textarea/select` ＝ **Web 4 ／ app 手机 3 ／ app 桌面 3** ⇒ **三个对象上现在都红**，它同时是"当前缺陷的证据"与"改完的回归守卫"） |
-| **INV-UI-sync-panel-desktop-no-scroll** | **Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`） | `scripts/verify-mobile-views.mjs` ⇒ 新增桌面视口那一路 ＋ 一条 `scrollHeight ≤ clientHeight` 断言 | **❌ 无**（要立。**怎么证明它会红**：打开"局域网直连 ＋ 网格"两段 ⇒ 实测 **711 > 606**（两次实测分别 111px 与 92px）⇒ **现在就是红的**；关掉 P2P 后 `0`，可作对照） |
+| **INV-UI-sync-panel-desktop-no-scroll** | **Tauri 桌面壳、视口 ≥ 1280×800 时，同步面板不该滚动**（`scrollHeight ≤ clientHeight`） | `scripts/verify-mobile-views.mjs` ⇒ 新增桌面视口那一路 ＋ 一条 `scrollHeight ≤ clientHeight` 断言 | **❌ 无**（要立。**怎么证明它会红**：打开"设备直连 ＋ 网格"两段 ⇒ 实测 **711 > 606**（两次实测分别 111px 与 92px）⇒ **现在就是红的**；关掉 P2P 后 `0`，可作对照） |
 
 ---
 

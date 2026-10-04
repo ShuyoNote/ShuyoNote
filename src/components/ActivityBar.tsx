@@ -13,9 +13,10 @@ import {
   FolderIcon,
   BoardIcon,
   GraphIcon,
+  TimelineIcon,
+  TagIcon,
   TemplateIcon,
   SettingsIcon,
-  InfoIcon,
   SidebarIcon,
 } from "./icons";
 
@@ -34,6 +35,9 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
   { id: "board", labelKey: "nav.board", icon: <BoardIcon width={18} height={18} /> },
   { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
+  { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
+  // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）
+  { id: "map", labelKey: "nav.map", icon: <TagIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {
@@ -46,7 +50,9 @@ export function ActivityBar() {
   const setSidebarOpen = useActivity((s) => s.setSidebarOpen);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-  const updateAvailable = useEditorStore((s) => s.updateAvailable);
+  // ⚠️ 2026-10-01：`updateAvailable` 那个选择器随**竖条上的「关于」按钮**一起去掉了 ✓ ——
+  //   它当时只服务那颗"有新版本可用"的小红点 ✗；更新提示仍在**更新横幅**（`UpdateBanner` ✓）
+  //   与**设置 → 关于与更新**里 ✓（两个入口都在 ✓），所以不是把提示删掉了 ✓。
 
   // 视图也能被命令面板/快捷键改（view.graph 等），竖条要跟着高亮，
   // 否则会出现「主区在看板、竖条还亮着笔记」的错位。
@@ -133,15 +139,6 @@ export function ActivityBar() {
           onClick={() => useEditorStore.getState().openSettings()}
         >
           <SettingsIcon width={18} height={18} />
-        </button>
-        <button
-          className="activity-btn"
-          title="关于"
-          aria-label="关于"
-          onClick={() => useEditorStore.getState().openAbout()}
-        >
-          <InfoIcon width={18} height={18} />
-          {updateAvailable && <span className="activity-dot" title="有新版本可用" />}
         </button>
       </div>
     </nav>

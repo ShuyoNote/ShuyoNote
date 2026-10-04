@@ -146,8 +146,61 @@ fn non_empty(what: &str, v: &str) -> Result<(), String> {
     }
 }
 
+/// ⭐ **附件被删时，把它的派生行也清掉**（2026-10-02 加；真机端到端发现的缺口）。
+///
+/// 来由：`attachment_text` / `chunks` 的 DDL **没有外键** ✓（`db.rs` 里两张表都是裸 `att_id TEXT` ✓），
+/// 而 `attachments::remove_attachment_inner_with` 只做 `DELETE FROM attachments` ✗
+/// ⇒ ⭐ **删附件会留下孤儿派生文本** ✓（占空间 ✓ 且可能**进检索** ✓ —— 用户搜到已删附件的内容 ✓）。
+///
+/// ⚠️ **为什么放在本模块、而不是直接在 `attachments.rs` 里写 DELETE**：
+/// 那两张表的 SQL **只允许出现在这里** ✓（本文件头部的纪律 ＋ `scripts/check-derived-writers.mjs` 的意图 ✓）
+/// ⇒ 由 `attachments.rs` **调这个函数** ✓，它的源码里不会出现那两张表的字面量 ✓。
+///
+/// ⚠️ 调用方**不该**因为这里的失败而回滚"删附件"本身（附件已经删了 ✓）；记一条读数即可 ✓
+/// —— 本函数只报错、不 panic ✓，也不吞（返回 `Err` 让调用方决定 ✓）。
+pub(crate) fn clear_derived_for_attachment(
+    conn: &Connection,
+    att_id: &str,
+) -> Result<usize, String> {
+    let a = conn
+        .execute(
+            "DELETE FROM attachment_text WHERE att_id = ?1",
+            params![att_id],
+        )
+        .map_err(|e| e.to_string())?;
+    let c = conn
+        .execute("DELETE FROM chunks WHERE att_id = ?1", params![att_id])
+        .map_err(|e| e.to_string())?;
+    Ok(a + c)
+}
+
 /// 执行**一批**写操作（一个事务）。
 ///
+/// ⭐ **清掉"孤儿派生行"**：`att_id` 已不在 `attachments` 表里的那些（2026-10-02 加）。
+///
+/// 来由：那两张表**没有外键** ✓ ⇒ 历史数据里删掉的附件会留下孤儿派生文本 ✓
+///（占空间 ✓ 且**可能进检索** ✓ —— 用户搜到已删附件的内容 ✓）。
+/// ⚠️ 与 `clear_derived_for_attachment`（删单个附件时调 ✓）配套：那个管**以后**，这个扫**已有的** ✓。
+/// ⚠️ **只清 `att_id` 非空**的行：`chunks` 里还有**页面块**（`att_id` 为 NULL ✓），
+///    那些不属于附件派生 ⇒ ⛔ 一个都不许碰 ✗（所以条件里必须写 `att_id IS NOT NULL` ✓）。
+/// ⚠️ SQL 只出现在本模块 ✓（`check-derived-writers` 的意图 ✓）。
+pub(crate) fn clear_orphan_derived(conn: &Connection) -> Result<(usize, usize), String> {
+    // 「可重建的本地派生缓存」（`db.rs` 的 DDL 注释 ✓）⇒ 清掉是安全的；用户内容不动 ✓。
+    let a = conn
+        .execute(
+            "DELETE FROM attachment_text WHERE att_id NOT IN (SELECT id FROM attachments)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    let c = conn
+        .execute(
+            "DELETE FROM chunks WHERE att_id IS NOT NULL AND att_id NOT IN (SELECT id FROM attachments)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok((a, c))
+}
+
 /// 为什么收一批而不是"一次一条"：TS 侧 `replace` 是"先删后插 N 条"，
 /// 每条一次往返在桌面（SQLCipher）上是可感知的慢，更要紧的是**中途失败会留下半批**。
 /// 一批一次调用 = 一次事务 = 要么全落要么一行不留。
@@ -190,8 +243,7 @@ fn apply_one(tx: &Transaction<'_>, op: &DerivedOp) -> Result<usize, String> {
             non_empty("att_id", att_id)?;
             tx.execute("DELETE FROM attachment_text WHERE att_id = ?1", params![att_id])
                 .map_err(|e| e.to_string())
-        }
-        DerivedOp::ReplaceChunks { owner, chunks } => {
+        }        DerivedOp::ReplaceChunks { owner, chunks } => {
             non_empty("owner id", owner.id())?;
             let (w, id) = owner.where_clause();
             let deleted = tx

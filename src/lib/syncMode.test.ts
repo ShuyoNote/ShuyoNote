@@ -9,15 +9,23 @@ import { NEAR_REALTIME_KEY, isNearRealtimeEnabled } from "./nearRealtime";
 import {
   AUTO_SYNC_CHANGED_EVENT,
   AUTO_SYNC_KEY,
+  PULL_INTERVALS,
+  PULL_INTERVAL_DEFAULT_MS,
+  PULL_INTERVAL_KEY,
   SYNC_INTERVAL_MS,
   SYNC_REALTIME_FALLBACK_MS,
   broadcastAutoSyncChanged,
   effectiveAutoSyncMs,
+  isLanMeshActive,
+  pullIntervalLabel,
   readAutoSyncMs,
+  readPullIntervalMs,
+  setLanMeshActive,
   settingsForMode,
   syncModeHint,
   syncModeOf,
   writeAutoSyncMs,
+  writePullIntervalMs,
   type SyncMode,
 } from "./syncMode";
 
@@ -161,6 +169,113 @@ describe("落盘与广播（面板改档 ⇒ App 那条定时器要重挂）", (
     } finally {
       window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
       writeAutoSyncMs(0); // 别把状态留给别的用例（同一个 happy-dom 进程）
+    }
+  });
+});
+
+// ══════════ 「拉取间隔」（2026-09-29，丙档「设备直连」）：从"代码里悄悄换"变成"用户选" ══════════
+//
+// 现场的两种误读都要被这两条挡住：
+//   ① 「面板上写着近实时，实际每 5 秒跑一次，而用户不知道」⇒ 现在它有一行**显示出来**；
+//   ② 「设备直连关着，可间隔还是被换成了 5 秒」⇒ 现在那一段**不适用**（见下面第 3 条）。
+describe("「拉取间隔」：用户可见、可持久化、只对局域网那条路生效", () => {
+  afterEach(() => {
+    localStorage.removeItem(PULL_INTERVAL_KEY);
+    setLanMeshActive(false);
+  });
+
+  it("默认 5 秒；读不出来 / 存了不是三档里的值 ⇒ 回落默认（**不是 0**）", () => {
+    expect(PULL_INTERVAL_DEFAULT_MS).toBe(5_000);
+    expect(PULL_INTERVALS.map((o) => o.label)).toEqual(["5 秒", "30 秒", "1 分钟"]);
+    expect(readPullIntervalMs(), "没设过 ⇒ 默认").toBe(5_000);
+    localStorage.setItem(PULL_INTERVAL_KEY, "12345");
+    expect(readPullIntervalMs(), "怪值 ⇒ 回落默认（0 会让定时器不挂）").toBe(5_000);
+    localStorage.setItem(PULL_INTERVAL_KEY, "0");
+    expect(readPullIntervalMs(), "0 不是一档 ⇒ 回落默认").toBe(5_000);
+    // 三档都读得回来，且标签与档位同源
+    for (const o of PULL_INTERVALS) {
+      localStorage.setItem(PULL_INTERVAL_KEY, String(o.ms));
+      expect(readPullIntervalMs()).toBe(o.ms);
+      expect(pullIntervalLabel(o.ms)).toBe(o.label);
+    }
+  });
+
+  it("写下去会**广播**（App 那条定时器要按新节拍重挂）", () => {
+    let heard = 0;
+    const onChanged = () => heard++;
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+    try {
+      writePullIntervalMs(30_000);
+      expect(readPullIntervalMs()).toBe(30_000);
+      expect(heard).toBe(1);
+    } finally {
+      window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+    }
+  });
+
+  it("★ 设备直连【开】⇒ 有效间隔就是**用户选的那一档**（不再是写死的 5 秒）", () => {
+    localStorage.setItem(NEAR_REALTIME_KEY, "1"); // 近实时那一档（局域网这条路没有流）
+    localStorage.setItem(AUTO_SYNC_KEY, String(SYNC_REALTIME_FALLBACK_MS));
+    setLanMeshActive(true);
+    for (const o of PULL_INTERVALS) {
+      writePullIntervalMs(o.ms);
+      expect(effectiveAutoSyncMs(), `选了「${o.label}」，有效间隔却不是它`).toBe(o.ms);
+    }
+  });
+
+  it("★ 设备直连【关】⇒ 拉取间隔**不适用**（近实时档回落到 5 分钟兜底）", () => {
+    localStorage.setItem(NEAR_REALTIME_KEY, "1");
+    localStorage.setItem(AUTO_SYNC_KEY, String(SYNC_REALTIME_FALLBACK_MS));
+    writePullIntervalMs(5_000);
+    setLanMeshActive(false);
+    expect(effectiveAutoSyncMs(), "关着还按 5 秒跑 = 那一档偷偷生效了").toBe(SYNC_REALTIME_FALLBACK_MS);
+    // 对照：同一个设置、把开关打开 ⇒ 立刻按拉取间隔跑（证明差异来自开关，不是别的）
+    setLanMeshActive(true);
+    expect(effectiveAutoSyncMs()).toBe(5_000);
+  });
+
+  it("★ **总闸优先**：同步方式 = 关闭 ⇒ 设备直连开着也一个字都不自动跑", () => {
+    localStorage.setItem(AUTO_SYNC_KEY, "0"); // 「关闭」那一档写下去的就是 0
+    localStorage.setItem(NEAR_REALTIME_KEY, "0");
+    setLanMeshActive(true);
+    writePullIntervalMs(5_000);
+    expect(effectiveAutoSyncMs(), "总闸关了，局域网这一档不许自己跑（规格 §9.2）").toBe(0);
+  });
+
+  it("★★ 不变式「轮询仍然挂着」在**每一种**组合下都成立（读这一侧不许算出 0）", () => {
+    const pollingStillMounted = (s: { autoMs: number; nearRealtime: boolean }) =>
+      s.nearRealtime ? s.autoMs > 0 : true;
+    for (const mode of MODES) {
+      for (const lan of [false, true]) {
+        for (const pull of PULL_INTERVALS) {
+          const s = settingsForMode(mode);
+          localStorage.setItem(AUTO_SYNC_KEY, String(s.autoMs));
+          localStorage.setItem(NEAR_REALTIME_KEY, s.nearRealtime ? "1" : "0");
+          writePullIntervalMs(pull.ms);
+          setLanMeshActive(lan);
+          expect(
+            pollingStillMounted({ autoMs: effectiveAutoSyncMs(), nearRealtime: s.nearRealtime }),
+            `档=${mode} 局域网=${lan} 间隔=${pull.label} 下算出了 0`,
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("`setLanMeshActive` 只在**值变了**的时候广播（否则每次 5 秒轮询都会喊一圈）", () => {
+    let heard = 0;
+    const onChanged = () => heard++;
+    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
+    try {
+      setLanMeshActive(false); // 本来就是 false
+      expect(heard).toBe(0);
+      setLanMeshActive(true);
+      expect(heard).toBe(1);
+      setLanMeshActive(true);
+      expect(heard, "同一个值重复喂不许再广播").toBe(1);
+      expect(isLanMeshActive()).toBe(true);
+    } finally {
+      window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
     }
   });
 });

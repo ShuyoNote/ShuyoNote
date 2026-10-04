@@ -57,6 +57,8 @@ docs/
 ├── identity-privacy-roadmap.md  # 身份/隐私落地子路线图
 ├── SECURITY.md                  # 安全模型与审计结论
 ├── sync-multidevice-test.md     # 跨机器多端同步会合测试（Windows ⇄ Mac）
+├── troubleshooting-nearby-devices.md  # 排障：附近的设备连不上/拉不动（AP 隔离 / 跨网段 / 禁广播 / 防火墙）
+├── free-edition-field-test.md   # 免费版上门实测清单（两台真机：零账号局域网直连 / 拔外网仍同步）
 ├── realtime-collab-analysis.md   # 实时协同利弊分析（近实时 vs 块级 CRDT）
 │
 │   ── 平台 ──
@@ -93,6 +95,8 @@ CHANGELOG.md                     # 版本变更日志
 | [web-sync-boundary.md](web-sync-boundary.md) | **Web 同步能力边界**：Web 版为何不支持多设备同步的四层原因（服务端不挂 CORS / 同步引擎在 Rust / 存储模型不匹配 / 凭证信任边界）、用户可见表现与代码出处、桌面 vs Web 能力对照、若要开启的前置条件与 W1–W4 分阶段路线 |
 | [design-philosophy.md](design-philosophy.md) | **设计哲学**：page 本源 / 属性语义 / 数据库=透镜 / 文件夹=容器；从需求、定位、竞品对比、各功能方案与设计系统提炼的完整信条、取舍与边界 |
 | [realtime-collab-analysis.md](realtime-collab-analysis.md) | **实时协同（多人同页协作编辑）利弊分析**：区分「近实时」vs「块级 CRDT」两档成本；好处（对齐竞品 / 不丢内容 / 实时感知）与代价（富块难合并 / 服务端 WebSocket / 离线×实时并存 / E2E 冲突 / 非购买点核心）；分阶段建议（近期近实时、长期最小 CRDT、个人空间保留 E2E）与决策记录 |
+| [free-edition-field-test.md](free-edition-field-test.md) | **免费版上门实测清单（两台真机）**：逐条步骤 ＋ 每条的"通过的样子"与"失败取什么证据"；⭐⭐ 第 7 步是**硬证据**（**拔掉外网仍能同步** ⇒ 证明不经服务器）；含加密空间再走一遍、四种**已知会失败但不是缺陷**的情形（跨网段/AP 隔离/防火墙/虚拟网段）、回读数的固定格式 ｜ ⚠️ 这是**人手验收**，⛔ 不许当"已通过" |
+| [troubleshooting-nearby-devices.md](troubleshooting-nearby-devices.md) | **排障：附近的设备连不上／拉不动**（面向用户）：先读面板那一行 → `附近发现 0 台` 的三种原因（不在同一网络／**AP 隔离**／企业网禁广播）→ 看得见却拉不动的三种（**防火墙入站**／口令对不上／对端服务的不是这个空间）→ **虚拟网段**（Tailscale 等，`100.64/10` 已放行）→ ⛔ **不做跨网段／NAT 穿透／中继** ＋ 一分钟自查清单 ｜ 底层事实：UDP 广播 `255.255.255.255:47821`、每 30 秒一轮、HTTP 窗口默认 `:8788` |
 | [SYNC.md](SYNC.md) | **同步机制详解**：本地优先 + 增量 changes（push/pull by seq）+ 近实时轮询 + LWW + 空间隔离/认证 + 客户端侧排错（错误码）。服务端自托管部署 / 配置 / 排错见私有仓库 `docs/deploy.md` |
 | [sync-server-data-boundary.md](sync-server-data-boundary.md) | **同步服务端数据可见边界与威胁模型**：把"服务端到底能看到什么"逐项列表。★ **§0.5 是隐私口径的唯一权威**（owner 2026-09-23 口述：**个人空间端到端加密（服务端只落密文）；团队空间放弃零知识，换取协同/检索/AI**）＋一条"设计面 × 个人/团队"的后果表（同步存什么／合并在哪层／检索与 AI 在哪层／插件数据／附件／迁移）＋落地前置三条（开关要从应用级改按空间、钥匙怎么到第二台设备、口令丢了＝数据没了）。其余章节：每张表与附件目录存什么、逐项看得见/看不见对照、凭据（口令/设备密钥/会话 token）如何存、**防什么与明确不防什么**、可现场验证的机制（审计哈希链校验等）、**已知未闭合清单**与部署前提。客户端侧结论以 [SECURITY.md](SECURITY.md) 为准 |
 | [multi-platform-ci.md](multi-platform-ci.md) | **多平台自动构建发布（CI）**：`v*` tag 自动打 Win/mac/Linux 安装包。GitCode 流水线只有 Linux runner；GitHub Actions 有全平台。给出 `.github/workflows/release.yml`（三平台 + secrets）与 `.gitcode/workflows/build-linux.yml`（Linux），及方案 A/B/C 取舍 |
@@ -149,8 +153,15 @@ CHANGELOG.md                     # 版本变更日志
 
 | 文档 | 内容 |
 |---|---|
+| [specs/2026-09-28-knowledge-and-agent-access-requirements.md](specs/2026-09-28-knowledge-and-agent-access-requirements.md) | **需求（四者合一）**：RAG · LLM Wiki · Ontology · MCP —— 原话 8 条逐字 ＋ 读数 13 条 ＋ 要什么 10 条 ＋ 不要什么 8 条 ＋ 边界 6 条；**个人空间一分内容不出本机，团队空间按已声明口径** ✓ |
+| [specs/2026-09-29-crdt-mixed-version-degradation.md](specs/2026-09-29-crdt-mixed-version-degradation.md) | **CRDT 混版本共存与降级策略**（阶段 2 前置③）：权威落盘形态／降级矩阵／两侧分工／`INV-CRDT-*`（含未决两条照实写 ✗） |
+| [specs/2026-09-28-knowledge-and-agent-access-spec.md](specs/2026-09-28-knowledge-and-agent-access-spec.md) | **规格**：`INV-KB-*` 十条（本体是生成物／改了就升版本／只读面 0 条写能力／工具描述不泄内部／按空间分档／审计分主体／同一套语义／皆派生物／回链与标脏／锁定大声失败）；⚠️ **今天"能跑"的是 0 条**，如实标 `待立` ✓ |
+| [specs/2026-10-01-enterprise-im-requirements.md](specs/2026-10-01-enterprise-im-requirements.md) | **需求：企业版 IM（「长在空间与笔记上的讨论」）** —— 原话 3 条 ＋ 现状读数（服务端 9 条协作路由／客户端讨论面 298 行）＋ 要什么 7 条（M1–M7）＋ **不要什么 8 条**（W1–W8）＋ 边界与 `[无依据]` ＋ **明写"合规/定价不进本仓"** ✓ |
+| [specs/2026-10-01-enterprise-im-spec.md](specs/2026-10-01-enterprise-im-spec.md) | **规格：讨论的 `INV-IM-*` 十二条**（空间是唯一边界／只在团队空间／不许好友关系／顺序由服务端分配／在线含空间维度／线程恰好两层／未读按线／权限回收彻底／删除留痕／讨论可变成知识／推送不带正文／离线不说谎）；⚠️ **今天"能跑"的是 0 条**，如实标 `待立`，并写明起手三手 ✓ |
 | [specs/README.md](specs/README.md) | **规格层是什么 / 不是什么**：收录条件（每条不变式都要挂在**一条会红的判据**上）、四个字段、以及**为什么本仓的门禁只有一部分入层**（其余：缺可跑性 / 平台绑定造不出夹具）。⚠️ **计数别写死，见本表后的命令** |
 | [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 都带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**）；当前条数见下表后的命令 |
+| [specs/2026-09-28-llm-wiki-requirements.md](specs/2026-09-28-llm-wiki-requirements.md) | **需求：LLM wiki（库地图 / 专题页）（待 owner 拍板）**：一句话＝"库能「被回答」，但还不能「被浏览」"；六段（诉求原话 / 现状读数 / 要什么 / 不要什么 / 边界 / ＋成功判据、砍掉条件）；⚠️ **痛点的量级没有读数**（前置测量在 §8，其中"模型成本"是 **go/no-go**） |
+| [specs/2026-09-28-llm-wiki-spec.md](specs/2026-09-28-llm-wiki-spec.md) | **规格：LLM wiki 的入口与边界（三条不变式，第四列全 `❌ 无`）**：`INV-WIKI-provenance` / `-coverage-visible` / `-readonly-default`；含每条"怎么弄红"的负例与对照、落地三步（先纯函数断言 → 弄红记账本 → 够条件才进 `INVARIANTS.md`）；**按本层铁律现在还不在 `INVARIANTS.md` 里** |
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
@@ -255,14 +266,50 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-24-lan-p2p-topology-decision.md](plans/2026-09-24-lan-p2p-topology-decision.md) | **决策简报：局域网 P2P 选哪一档（甲/乙/丙）**（只列决策，不写码）。把「同一网段内能不能多台 P2P」拆成**台数**（今天就没有上限）与**网状直连**（新问题），并指出卡点只有一个：**页级 LWW 的权威序 `changes.seq` 只能由一个地方发** —— 正文那半边**已经不需要它**（每页同一血统的 CRDT 状态，`sync.rs:2151`），非正文那半边（**整行 `PageDetail` 14 列** ＋ 删除墓碑 ＋ 附件元数据，`sync.rs:2138`–`:2226`）仍然需要。★ 两条读自代码的事实定死后面所有结论：**客户端不留账本**（apply 只写 `pages`/`attachments`，不写 `changes`）且**推完就没了**（水位一推进那批行只是历史）⇒ **账本只在服务端/旧中枢上**。三档对照（甲 单中枢 **零协议改动**／乙 谁在线谁当／丙 真网状 HLC 无账本）＋ 每档承重判据；**建议：甲做阶段 1、丙做阶段 2 目标、乙跳过** —— 乙要「谁在线谁当」却要一份**客户端手上没有**的账本（交接三条路全都退化成甲或丙），而丙是唯一**删机制**（删号牌、删账本）的一档。另记许可约束（客户端 AGPL-3.0 / 服务端私有商业授权 ⇒ **不许内嵌服务端**）与一条待确认项（Web 侧还发 `page_tag`/`attr`/`prop`，桌面 `_ => {}` 静默忽略） |
 | [plans/2026-09-24-lan-discovery-workorder.md](plans/2026-09-24-lan-discovery-workorder.md) | **甲-1 施工单：局域网发现 ＋ 地址分层**（决策简报 §10 的第 1 片）。交付「**发现层 ＋ 地址分层**」：不再手填地址，而是在同一网段自动找到该空间的**中枢**，把基址从配置的公网 URL 换成局域网地址。勘察三条定计划大小：`tokio` 已开 `net` ⇒ **UDP 发现零新依赖、不触发 cargo fetch**；同步档案本来就**每空间一行**（`sync_profiles`）⇒ 地址层有落点；URL 拼装散在 **6 处**（`attachment_base:741`／push`:2041`／pull`:2291`／附件清单`:2920`／lineage-claim`:1627`／`stream_url`）⇒ 本片**收口到一个纯函数** `resolve_base(profile, peers) -> Route{Lan\|Configured}`（照 `attachment_base` 那条"基址只出一处"的先例与判据）。★ **「本机可验」靠 `trait Discovery` 传输抽象**（判据用假传输，真广播只留一条 `#[ignore]`）。★ **自带「代言」**：常开的桌面版广播"本网段的服务端在哪"——**只转述地址、不服务请求** ⇒ 不撞许可墙，且让本片当天能在局域网端到端演示；否则它只是一块砖。含五条承重判据（三条 ★：局域网优先／没有中枢照走公网／**不服务本空间的对端不许成为路由**）与**不做清单**（不做 NAT／跨网段／中继／Web；不内嵌服务端＝甲-2；不改 wire／schema；不引新依赖）。**§7 进度（2026-09-25）**：判据已到 **14 条（14 passed / 0 failed）**，其中 ⑫⑬⑭ 是新增的**代言产出侧**与**状态行**（⑫ 是"我们自己发出去的公告必须能被自己采纳"的**往返性质**：产出侧与消费侧必须同一把尺，否则「代言开着、网段里却没人被找到」且**无编译期信号**）；**接线那一片一件未做**（实测 `lan.rs` 之外调用点全为 0） |
 | [plans/2026-09-25-b-zero-server-pairing-workorder.md](plans/2026-09-25-b-zero-server-pairing-workorder.md) | **B 片施工单：换设备零服务器（二维码 / 短码 PAKE 搬公开材料）**（决策简报 §5 原话：「与这三档**全部正交**，应当**独立并行**」，且甲和丙都要用它做配对）。搬的东西**已经存在**：`Keyring::to_json()`（含 `v`／`kdf`＝算法名＋盐＋参数／`spaces`＝每空间一个**盒子密文**），采纳侧也已有 `adopt_material(+AdoptReport)`。⚠️ 三句实话：① 搬的是**公开材料**不是密钥（有 ★ 判据钉着"不许出现裸密钥/口令"，且盐**必须**在里面）；② 但「盒子 ＋ 口令 ⇒ 空间密钥」⇒ 录制通道者可**离线爆破** ⇒ **短码必须 PAKE**，二维码是**不过网络**的旁路；③ 价值不在"能传"，在"**换设备时不会把本机已有的东西弄坏**"（`overwrite` 参数的存在本身就说明有人担心过）。**实测尺寸**（本机临时测量判据，跑完已删并核对字节还原）：compact JSON 1/3/5/10/20 个空间 = **360 / 806 / 1252 / 2367 / 4597** B ⇒ 二维码 version 40-L 上限 **2953 B** ⇒ **≤10 个空间单张够，20 个装不下**（所以"超容量怎么办"不是假想）。含五条承重判据（三条 ★：两条通道各自往返一致／**被动窃听者拿不到材料**／**采纳侧不许静默覆盖**）＋ 必须同批回答的**空间级成员凭证形状**（简报 §8 留给它那条：是什么／谁签发／怎么撤销），并写明"**先回答再定格式**，别把格式焊死" |
-| [plans/2026-09-25-b-slice-pake-selection.md](plans/2026-09-25-b-slice-pake-selection.md) | **B 片：短码通道的 PAKE 选型（设计稿 · 待拍板）**。结论与直觉相反：**二维码那条通道根本不需要 PAKE** —— 它不经网络，而公开材料**本来就是可公开的那一份**（今天就在服务端上躺着，`{}/spaces/{}/keyring`）⇒ 拍下二维码**拿不到任何新秘密**；这条通道要解决的是**来源真实性**（有人换码 ⇒ B 把数据同步进一个**攻击者知道钥匙**的空间）。由此推出一条必须进产品口径的话：**配对码保护的是「这次搬运」，不是「你的空间」**（空间强度取决于空间口令，是既有设计）。真正的分岔在短码：**6 位数字只有约 20 bit，只够「一次在线猜测」的强度** —— 当密钥用（离线可试，几秒破）与当"比对码"用（攻击者可**离线改自己的载荷直到比对码撞上**，第二原像 2²⁰ ≈ 100 万次）**都不够**，只有**喂给 PAKE ＋ 一次性 ＋ 短时效 ＋ 失败作废**才站得住。而实测本仓**一个提供群运算的库都没有**（`Cargo.toml` 只有 chacha20poly1305 / argon2 / sha2 / 国密；`Cargo.lock` 里的 `ring 0.17.14` 是 `rustls` 系的**传递依赖**，且**只给裸标量乘、不给点加法或 hash-to-curve**）⇒ **做 PAKE 必须新增依赖**。给三条路线对照（① 二维码＋长比对码〔6 词 ≈ 66 bit〕**零新依赖** ← 建议先做；② 6 位码只作防手滑，**不许当安全机制宣传**；③ 6 位码＋PAKE，候选 `spake2` crate 或照 [RFC 9382](https://www.rfc-editor.org/rfc/rfc9382.xml) 逐条转写＋官方向量当判据）与"若走 ③ 我要求的三条"。**载荷实测**：1/3/5/10 个空间 = **503/999/1495/2735** 字节 ⇒ 约 **11 个空间**触顶（上限 2953） |
+| [plans/2026-09-25-b-slice-pake-selection.md](plans/2026-09-25-b-slice-pake-selection.md) | **B 片：短码通道的 PAKE 选型（设计稿 · 待拍板）**。结论与直觉相反：**二维码那条通道根本不需要 PAKE** —— 它不经网络，而公开材料**本来就是可公开的那一份**（今天就在服务端上躺着，`{}/spaces/{}/keyring`）⇒ 拍下二维码**拿不到任何新秘密**；这条通道要解决的是**来源真实性**（有人换码 ⇒ B 把数据同步进一个**攻击者知道钥匙**的空间）。由此推出一条必须进产品口径的话：**配对码保护的是「这次搬运」，不是「你的空间」**（空间强度取决于空间口令，是既有设计）。真正的分岔在短码：**6 位数字只有约 20 bit，只够「一次在线猜测」的强度** —— 当密钥用（离线可试，几秒破）与当"比对码"用（攻击者可**离线改自己的载荷直到比对码撞上**，第二原像 2²⁰ ≈ 100 万次）**都不够**，只有**喂给 PAKE ＋ 一次性 ＋ 短时效 ＋ 失败作废**才站得住。而实测本仓**一个提供群运算的库都没有**（`Cargo.toml` 只有 chacha20poly1305 / argon2 / sha2 / 国密；`Cargo.lock` 里的 `ring 0.17.14` 是 `rustls` 系的**传递依赖**，且**只给裸标量乘、不给点加法或 hash-to-curve**）⇒ **做 PAKE 必须新增依赖**。给三条路线对照（① 二维码＋长比对码〔6 词 ≈ 66 bit〕**零新依赖** ← 建议先做；② 6 位码只作防手滑，**不许当安全机制宣传**；③ 6 位码＋PAKE，候选 `spake2` crate 或照 [RFC 9382](https://www.rfc-editor.org/rfc/rfc9382.xml) 逐条转写＋官方向量当判据）与"若走 ③ 我要求的三条"。**载荷实测**：1/3/5/10 个空间 = **503/999/1495/2735** 字节 ⇒ 约 **11 个空间**触顶（上限 2953）。⚠️ **2026-09-29 追改**：本行中「公开材料**今天就在服务端上躺着**（`{}/spaces/{}/keyring`）」**已作废** —— 那条客户端路已**整条删除**（`851c1a7b`，owner 裁定「同步服务器不提供个人版」）⇒ 公开材料今天只走**不经服务器**的配对码（`pairing_export`/`pairing_import`）；本行其余论证（二维码通道不需要 PAKE／来源真实性／短码熵不足）**不受影响** |
 | [plans/2026-09-25-a2-embedded-reception-workorder.md](plans/2026-09-25-a2-embedded-reception-workorder.md) | **甲-2 施工单：内嵌接待窗口**（决策简报 §10 第 3 片）。让客户端自己扮演中枢的**接收侧**，拆掉「得先装个服务端」这道门槛。⚠️ 三句实话：① 这是重活，且**一行服务端代码都不能内嵌**（客户端 AGPL-3.0 / 服务端私有商业授权 ⇒ 只能**照协议独立实现**，这也是简报把它单列一片的原因）；② 甲-1 单独上线只在"网段里有一台在代言的设备"时可见，本片存在的意义正是拆掉那个前提；③ **这一层在「丙」里会被替换**（丙要删号牌与账本）⇒ 判据**只许钉协议行为**（能收敛／同一笔只计一次／未实现就显式说），**不许**把"必须有账本/必须有号牌"钉成判据，否则丙要拆两遍。勘察把客户端真实打的端点全列了出来（`{}/push`／`{}/lineage-claim`／`keyring`／`presence`／`online`／`comments`／`changes-stream`(SSE)／`attachments`／`spaces`／`members`／`auth/register`，逐条带行号）⇒ **最小面不是两个端点、而是这一整串**，故分三片。含五条承重判据（四条 ★：零服务端闭合／**号牌只出一处**／**未实现的端点必须显式说"不支持"**／许可墙静态判据）。⚠️ 状态：**只有单、没开工** —— 前置是甲-1 的**接线**那一片 |
 
 | 文档 | 内容 |
 |---|---|
 | [plans/2026-09-27-sync-panel-mobile-density.md](plans/2026-09-27-sync-panel-mobile-density.md) | **同步面板在窄屏的密度问题（方案，待拍板）**：390×844 实测「可见 819 / 内容 996」⇒ 必滚 177px；高度构成（空间卡 594 + 脚 134 + 头 66 + Web 提示 54）；四个选项 A 折叠卡 / B 收窄提示 / C 动作吸底 / D 走全屏；附「零滚动」等三条建议断言，以及明确不碰加密那块 |
+| [plans/2026-09-28-llm-wiki-plan.md](plans/2026-09-28-llm-wiki-plan.md) | **LLM wiki（库地图 / 专题页）（方案，待 owner 拍板）**：结论是"缺的不是生成能力，而是库这一层的可追溯入口"——生成器（P4 强制引用）/ 取材（`files.search`+`files.read`）/ 诚实层（覆盖度）/ 回滚（版本历史）/ 增量（补算队列）都已存在；四个选项 A 只读库地图 / B 专题页增量维护 / C AI 记忆层 / D 受控编辑，含"住正文还是住派生层"的抉择表；三条建议断言（引用准确率 / 覆盖度齐全率 100% / 只读默认），以及明确不做（不自动改用户页、不走远端、不全库重跑、不复制判据正文） |
+| [plans/2026-09-28-knowledge-and-agent-access-plan.md](plans/2026-09-28-knowledge-and-agent-access-plan.md) | **知识层与外部接入方案**（导航＋取舍）：三层（本体骨架／RAG 访问／Wiki 产出）＋**两种空间**＋一物三用（生成器同时喂 MCP 工具清单／本体表／知识地图）＋度量与分期 ✓ |
+| [plans/2026-09-28-knowledge-m1-workorder.md](plans/2026-09-28-knowledge-m1-workorder.md) | **M1 施工单（判据先行，不写产品代码）**：7 个任务，每个都有 `Files:` ＋「先让判据红」＋ `Expected:` 逐字 ＋ 再注入证明 ✓ |
 | [plans/2026-09-28-agent-mcp-integration-plan.md](plans/2026-09-28-agent-mcp-integration-plan.md) | **外部 Agent 接入（MCP / CLI）总方案（规划，未实装，待拍板）**：让 Claude Code / CodeBuddy / WorkBuddy / DSH 用上本机笔记库。**结论：四个产品都原生支持 MCP，缺的是客户端这一侧的面**（全仓 MCP 零命中）。含现状取证 10 条（注册表 25 条能力 / 其中 `ai:true` 10 条 · 权限与审计只有一个校验点 `dispatch_capability` · **钥匙只在应用进程内存且没有 OS keyring** · 没有面向外部进程的通道 · mesh 窗口默认关闭）＋ **MCP/CLI/API 不是三选一**（API 是底座，两个薄适配器共用它，硬约束不变）＋ 推荐架构（应用内宿主面 ＋ 哑桥 ＋ 草稿写回）＋ 工具面与**实测上下文成本 1631 字符/会话**＋ 四家官方配置（含 DSH 的 `insert:` 语法订正）＋ M1–M3 里程碑与验收 ＋ 6 项待拍板 ＋ 诚实边界 |
 | [plans/2026-09-28-mcp-host-m1-workorder.md](plans/2026-09-28-mcp-host-m1-workorder.md) | **MCP 宿主 M1 施工单（只读，未开工）**：注册表第 10 件生成物（`capabilities/mcp-tools.json`）＋ 应用内宿主面（`src-tauri/src/mcp_host.rs`）＋ stdio 哑桥（`tools/shuyonote-mcp/`）。含逐文件改动 8 项、**把权限判定从 `RUN_STATE` 抽成一处**（唯一会碰到现有插件路径的一步）、8 条判据（每条附「怎么让它红」）、**门禁要登记的三处**（`scripts/lib/gates.mjs` ／ `docs/TESTING.md` 表 ／ **工作区台账 `_workspace/mutation-evidence.json` 的 `_repo_mutations`** —— 第三条不在本仓、最易漏）、本机跑不了 rust 组的边界与回滚路径 |
+| [plans/2026-09-29-crdt-e2ee-snapshot-server-workorder.md](plans/2026-09-29-crdt-e2ee-snapshot-server-workorder.md) | **E2EE 加密快照的服务端接口**（施工单，未开工）：尖刺已证可行（13/0 ✓）与体积读数；含三条路由、三层判据、四要件、不做清单 |
+| [plans/2026-09-29-wps-scale-roadmap.md](plans/2026-09-29-wps-scale-roadmap.md) | **追到 WPS 那样的极限【并且还能扩容】的技术路线** —— 目标拆两层、五层、**按页订阅是第一性**、连接与数据分离 |
+| [plans/2026-09-29-ten-thousand-scale.md](plans/2026-09-29-ten-thousand-scale.md) | **到 10000 台的路** —— ⭐ **按页订阅才降阶** ＋ E2E 元数据边界 |
+| [plans/2026-09-29-l4-page-subscription-limits.md](plans/2026-09-29-l4-page-subscription-limits.md) | **L4「按页订阅」的极限与技术路线** —— 四道极限；⚠️ 并指出**它降阶后瓶颈换到「写」** |
+| [plans/2026-09-29-l4-forward-deltas-deep-dive.md](plans/2026-09-29-l4-forward-deltas-deep-dive.md) | **L4 转发增量深度** —— 三条决定性事实 ＋ ⚠️ **「丢帧＝丢数据」**这个新风险 |
+| [plans/2026-09-29-payload-increment-deep-dive.md](plans/2026-09-29-payload-increment-deep-dive.md) | **增量 payload 深度** —— 三条线的**共同前提**（且**不需要算 diff**） |
+| [plans/2026-09-29-single-space-limit-three-routes.md](plans/2026-09-29-single-space-limit-three-routes.md) | **提高单空间上限的三条路线对比** —— ⚠️ **结论与直觉相反**（换存储帮助最小） |
+| [plans/2026-09-29-horizontal-scale-limit-single-space.md](plans/2026-09-29-horizontal-scale-limit-single-space.md) | **横向扩容扩不了【单个空间】** —— 卡在「一个空间一个写者＋一个序号」；加机器只扩空间数/连接数 |
+| [plans/2026-09-29-read-concurrency-limit.md](plans/2026-09-29-read-concurrency-limit.md) | **并发读的上限** —— 不由 SQL 决定，由**带宽与网关**决定，**且能加机器扩** |
+| [plans/2026-09-29-server-capacity-loadtest.md](plans/2026-09-29-server-capacity-loadtest.md) | **服务端容量压测（实测）** —— M1≈10／M2≈**100**／M3≈200 台；M2→M3 实测 **9.92 倍**；扇出 0.25·N² |
+| [plans/2026-09-29-client-frame-rate-loadtest.md](plans/2026-09-29-client-frame-rate-loadtest.md) | **客户端喂帧压测（实测）** —— **~500 条 update/秒**、天花板 ≈900；＋一条**口径更正** |
+| [plans/2026-09-29-10000-with-wps-experience.md](plans/2026-09-29-10000-with-wps-experience.md) | **10000 台 ＋ WPS 手感** —— 四笔账、与 WPS 的根本差别、要 owner 拍的四件 |
+| [plans/2026-09-29-server-sync-redundancy-inventory.md](plans/2026-09-29-server-sync-redundancy-inventory.md) | **冗余代码盘点** —— 「个人版＋服务器同步」那条废路的 A/B/C/D 四张清单 ＋ ⚠️ **防误删的 C 表** |
+| [plans/2026-09-29-requirements-judgment-matrix.md](plans/2026-09-29-requirements-judgment-matrix.md) | **两份需求的判据矩阵** —— **39 条 MUST 逐条「怎么验」**（补上「判据成本」那个缺口） |
+| [plans/2026-09-29-both-editions-difficulty-and-cost.md](plans/2026-09-29-both-editions-difficulty-and-cost.md) | **两版需求的技术难度与实现成本** —— 逐条人日估算 ＋ 风险排序（⚠️ 含判据要 ×1.3~1.5） |
+| [plans/2026-09-29-both-editions-iteration-plan.md](plans/2026-09-29-both-editions-iteration-plan.md) | **两版需求的可执行迭代计划** —— 把 39 条 MUST 排进 **7 个迭代** ＋ 要 owner 拍的五条 |
+| [plans/2026-09-29-owner-decisions-pending.md](plans/2026-09-29-owner-decisions-pending.md) | ⭐ **待 owner 拍板清单（唯一）** —— **DEC-1–DEC-11**，每条写清「卡住谁」与「为什么非拍不可」 |
+| [plans/2026-09-29-mesh-flake-diagnosis.md](plans/2026-09-29-mesh-flake-diagnosis.md) | ⭐ **`mesh::` 的「偶发失败」＝ 40%**（连跑 15 次失败 6 次）—— **推翻台账描述**；＋「连跑 3 次全绿」为何不值钱 |
+| [plans/2026-09-29-git-operation-discipline.md](plans/2026-09-29-git-operation-discipline.md) | **git 操作纪律** —— 从当天**四次失误**收出**六条规则**（每条配「可查信号」） |
+| [plans/2026-09-29-liveness-vs-working.md](plans/2026-09-29-liveness-vs-working.md) | ⭐ **「在跑」 ≠ 「在做」** —— 从两次同族教训收出四条纪律（含「跑 N 次全绿」的判准） |
+| [plans/2026-09-29-inv-ns-second-person-landing.md](plans/2026-09-29-inv-ns-second-person-landing.md) | **`INV-NS-second-person-implies-team` 的落地方案** —— ⚠️ **它落不了技术拦截**（「第二个人」系统判不出来） |
+| [plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md](plans/2026-09-29-knowledge-mcp-vs-edition-requirements.md) | **知识库/Agent/MCP 那一族 vs 两版需求** —— ✅ **不冲突，是同一个轴**（按空间分档） |
+| [plans/2026-09-29-virtual-lan-option.md](plans/2026-09-29-virtual-lan-option.md) | **虚拟局域网分析** —— 三个好消息 ＋ 两处代价 ＋ owner 两条裁定 |
+| [plans/2026-09-29-today-index.md](plans/2026-09-29-today-index.md) | ⭐ **当天全部产出的索引入口** —— 按主题／按「我想知道什么」／按提交 ＋ 未决与欠账 |
+| [plans/2026-09-29-nightly-handoff.md](plans/2026-09-29-nightly-handoff.md) | ⭐ **今晚自主工作的交接单** —— 七节：待拍一处／做完了的／今晚我自己的错／等回信的／门禁现状／最值钱的四个发现／明早的建议顺序 |
+| [plans/2026-09-30-feasibility-of-requirement-metrics.md](plans/2026-09-30-feasibility-of-requirement-metrics.md) | ⭐ **最终需求各项指标的技术可行性评估** —— 四档（A/B/C/D）逐条；汇总 **A 8 ／ B 19 ／ C 8 ／ D 1**；★ 并点出**最该先补的一件（测单写者吞吐）** |
+| [plans/2026-09-30-single-writer-throughput.md](plans/2026-09-30-single-writer-throughput.md) | ⭐ **单写者吞吐【实测】** —— 回答了 **P5（3 万变更/秒）能不能到**：**看前提（每次 push 携带多少变更）**；瓶颈＝**每次提交的固定成本** |
+| [plans/2026-09-30-debounce-removal-cost.md](plans/2026-09-30-debounce-removal-cost.md) | ⭐ **撕防抖的代价（`DEC-3` 的「先量」）** —— 今天 **6 次/分** ⇒ 撕后 **254**（一般）/ **901**（猛打）；⚠️ **而最重的是：版本历史会失效** |
+| [plans/2026-10-01-enterprise-im-approach.md](plans/2026-10-01-enterprise-im-approach.md) | **企业版 IM（「长在空间与笔记上的讨论」）技术路线与架构**：复用／改造／全新三档逐条指 `file:line`；七条关键决策各写「为什么不选另一条」；四期路线（判据先行 → 线程 → 频道与未读游标 → 实时与沉淀）＋ ⛔ 移动端离线推送单独立项。⚠️ 本方案**没有一行产品代码落地**，规格里 12 条不变式**全部待立** |
+
+> ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
+> 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
+> （`851c1a7b`）⇒ 今天换设备**只走配对码**，**不欠 0b**。
 | [sync-multidevice-test.md](sync-multidevice-test.md) | **跨机器多端同步会合测试**（Windows ⇄ Mac，服务器放 Mac）：两侧各一条命令、互相等、各自出 PASS/FAIL；含 Mac 侧起服务端/发设备密钥/真客户端肉眼确认的步骤、常见不通过的四种原因、以及"还剩什么没覆盖"（冲突合并 / 跨机附件 / 断网重连） |
 
 
@@ -282,6 +329,8 @@ node scripts/test-report.mjs --list                                             
 | [../design/design-system.md](../design/design-system.md) | **设计系统 v2**：色彩/字体/间距/圆角/阴影/动效 tokens + 组件规范 + 无障碍 |
 | [../design/ux-flows.md](../design/ux-flows.md) | **UX 流程**：12 条用户旅程 + 空/加载/错误/边界态 |
 | [../design/implementation-plan.md](../design/implementation-plan.md) | **落地实现计划**：文件级改造清单 + 验收标准 |
+| [../design/sync-panel/README.md](../design/sync-panel/README.md) | **同步面板 · 高保真效果图（成套 10 张）**：按最新个人版／团队版／企业／信创口径画的**目标形态**（⚠️ 非产品截图）；含生成脚本（自带**字体探测**与**字形闸门**）＋ 画图约定（含「每张图必须先回答的三问」）|
+| [../design/sync-panel/ui-spec.md](../design/sync-panel/ui-spec.md) | **同步面板界面规格**：⛔ **个人空间不绑服务器**（三条同步路：设备直连／中继（付费）／手工拷贝）／✅ 团队空间可绑服务器（一空间一台、多空间可指同一台、一设备可多台、⭐ **同一时间只有一台【当前组织】**）／⭐ **账号设备级 vs 同步空间级**的分工／⛔ **四种状态不许互相伪装**／配对＝**比对码 20 位**；逐张写对象类 · 状态类 · 出处 · **可核判据** |
 | [../design/README.md](../design/README.md) | UI/UX 设计交付总索引（设计系统 / UX 流程 / 高保真原型 / 实现计划） |
 | [../design/logo/README.md](../design/logo/README.md) | **应用 Logo**：应用图标 / 单色图形 / 字标 / 主图 |
 
@@ -303,7 +352,7 @@ node scripts/test-report.mjs --list                                             
 
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.91.26`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.91.27`）。
 
 ## 约定
 

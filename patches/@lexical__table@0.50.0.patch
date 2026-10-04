@@ -1,0 +1,68 @@
+diff --git a/dist/LexicalTable.dev.js b/dist/LexicalTable.dev.js
+index 783ff60856c9904f71da53dba60a1badbaf37767..4c7bd6e0e6accec00f92b50626fb9d6fb1f62810 100644
+--- a/dist/LexicalTable.dev.js
++++ b/dist/LexicalTable.dev.js
+@@ -5177,6 +5177,20 @@ function registerTableCellUnmergeTransform(editor) {
+     }
+   });
+ }
++// ⭐ ShuyoNote 补丁（2026-10-01，owner 选 A）：变更监听**也挂到模型表类**上。
++// 为什么：本仓把内建 `table` 升级成 `shuyo-table`（`BlockTableNode extends TableNode`），
++// 而 Lexical 按 `node.__type` → `klass` 投递变更（lexical 核心 17833-17842）⇒
++// **只挂 `TableNode` 的那条监听收不到模型表的变更** ⇒ 模型表永远没有观察者 ⇒
++// 在它里面多选单元格会走到 `$fixRangeSelectionForSelectedTable` 的 `isSameTable` 分支
++// 并报「tableObserver not found for tableKey: …」（owner 逐帧堆栈 ✓）。
++// 做法：同一个 listener 挂两份（内建 ＋ 模型表），返回合并后的注销函数 ⇒ 其余逻辑一字不改。
++const registerTableMutationListenersShuyo = (editor, listener, options) => {
++  const modelKlass = editor._nodes && editor._nodes.get ? (editor._nodes.get('shuyo-table') || {}).klass : null;
++  return mergeRegister(
++    editor.registerMutationListener(TableNode, listener, options),
++    ...(modelKlass ? [editor.registerMutationListener(modelKlass, listener, options)] : [])
++  );
++};
+ function registerTableSelectionObserver(editor, hasTabHandler = true) {
+   const tableObservers = new TableObservers();
+   const initializeTableNode = (tableNode, nodeKey, dom) => {
+@@ -5186,7 +5200,7 @@ function registerTableSelectionObserver(editor, hasTabHandler = true) {
+   };
+   return lexical.mergeRegister(registerTableWindowHandlers(editor, tableObservers), editor.registerCommand(lexical.SELECTION_CHANGE_COMMAND, () => {
+     return $handleTableSelectionChangeCommand(tableObservers, editor);
+-  }, lexical.COMMAND_PRIORITY_HIGH), editor.registerMutationListener(TableNode, nodeMutations => {
++  }, lexical.COMMAND_PRIORITY_HIGH), registerTableMutationListenersShuyo(editor, nodeMutations => {
+     editor.read('latest', () => {
+       for (const [nodeKey, mutation] of nodeMutations) {
+         const tableSelection = tableObservers.observers.get(nodeKey);
+diff --git a/dist/LexicalTable.dev.mjs b/dist/LexicalTable.dev.mjs
+index 63dd28bd36e37f069d05b8d6ad5648deff8de2d0..63d098596c0ef51090f31a021dc490d8d3f760ef 100644
+--- a/dist/LexicalTable.dev.mjs
++++ b/dist/LexicalTable.dev.mjs
+@@ -5175,6 +5175,20 @@ function registerTableCellUnmergeTransform(editor) {
+     }
+   });
+ }
++// ⭐ ShuyoNote 补丁（2026-10-01，owner 选 A）：变更监听**也挂到模型表类**上。
++// 为什么：本仓把内建 `table` 升级成 `shuyo-table`（`BlockTableNode extends TableNode`），
++// 而 Lexical 按 `node.__type` → `klass` 投递变更（lexical 核心 17833-17842）⇒
++// **只挂 `TableNode` 的那条监听收不到模型表的变更** ⇒ 模型表永远没有观察者 ⇒
++// 在它里面多选单元格会走到 `$fixRangeSelectionForSelectedTable` 的 `isSameTable` 分支
++// 并报「tableObserver not found for tableKey: …」（owner 逐帧堆栈 ✓）。
++// 做法：同一个 listener 挂两份（内建 ＋ 模型表），返回合并后的注销函数 ⇒ 其余逻辑一字不改。
++const registerTableMutationListenersShuyo = (editor, listener, options) => {
++  const modelKlass = editor._nodes && editor._nodes.get ? (editor._nodes.get('shuyo-table') || {}).klass : null;
++  return mergeRegister(
++    editor.registerMutationListener(TableNode, listener, options),
++    ...(modelKlass ? [editor.registerMutationListener(modelKlass, listener, options)] : [])
++  );
++};
+ function registerTableSelectionObserver(editor, hasTabHandler = true) {
+   const tableObservers = new TableObservers();
+   const initializeTableNode = (tableNode, nodeKey, dom) => {
+@@ -5184,7 +5198,7 @@ function registerTableSelectionObserver(editor, hasTabHandler = true) {
+   };
+   return mergeRegister(registerTableWindowHandlers(editor, tableObservers), editor.registerCommand(SELECTION_CHANGE_COMMAND, () => {
+     return $handleTableSelectionChangeCommand(tableObservers, editor);
+-  }, COMMAND_PRIORITY_HIGH), editor.registerMutationListener(TableNode, nodeMutations => {
++  }, COMMAND_PRIORITY_HIGH), registerTableMutationListenersShuyo(editor, nodeMutations => {
+     editor.read('latest', () => {
+       for (const [nodeKey, mutation] of nodeMutations) {
+         const tableSelection = tableObservers.observers.get(nodeKey);

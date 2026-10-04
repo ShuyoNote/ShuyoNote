@@ -267,6 +267,28 @@ export function StoragePanel({ label }: { label?: string } = {}) {
                       </div>
                       <div className="stg-row">
                         <div className="stg-row-text">
+                          <div className="stg-row-name">清理孤儿派生行</div>
+                          <div className="stg-row-sub">
+                            删除「附件已不在库里」的派生文本与块（搜索/索引会重建它们；笔记与附件字节不受影响）
+                          </div>
+                        </div>
+                        <button
+                          className="stg-btn is-danger"
+                          disabled={busy}
+                          onClick={() =>
+                            run(
+                              "清理孤儿派生行",
+                              "将删除「所属附件已不存在」的派生文本与检索块。这些是可重建的本地缓存，笔记与附件本身不受影响。确定继续？",
+                              () => api.cleanupOrphanDerived(),
+                              "清理孤儿派生行",
+                            )
+                          }
+                        >
+                          清理
+                        </button>
+                      </div>
+                      <div className="stg-row">
+                        <div className="stg-row-text">
                           <div className="stg-row-name">清理旧版本历史</div>
                           <div className="stg-row-sub">
                             {stats.version_count} 份 · {fmt(stats.version_bytes)}，每页仅保留最近 50 份

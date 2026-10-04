@@ -6,6 +6,16 @@
 //!
 //! 设计稿：`docs/plans/2026-09-23-desktop-near-realtime-stream-design.md`（判据 1/2/3/6/7）。
 //!
+//! ## ★★ 许可边界（2026-09-29，`INV-LIC-no-server-in-client`）
+//!
+//! 这里**只是协议客户端**：只发 HTTP、只解帧，**不含任何服务端实现**。
+//! 把服务端（`repos/shuyonote-sync-server`，独立商业组件、私有仓）的代码抄进来 —— 哪怕一段 ——
+//! 等于破 `2026-09-24-lan-p2p-topology-decision.md` 的 **F6**：客户端是 **AGPL-3.0**，传染过去
+//! 会逼服务端开源，或须另取一份例外授权。
+//! ⚠️ **这一条退化时不会有任何判据变红**（代码能跑、功能也对，代价在法律面）⇒ 只能靠这行字
+//! 在现场拦住人：这类越界几乎总是以「先抄一段跑起来」的样子发生。
+//! 出处：`docs/specs/2026-09-29-nearby-devices-spec.md` §10.4（那一节要求本档落这一行）。
+//!
 //! ## 三条口径（与设计稿逐条对应，别在这里"顺手优化"）
 //!
 //! 1. **半帧必须留在缓冲里**：SSE 是流式协议，一次 `read` 回来的可能是"半个事件"
@@ -15,6 +25,21 @@
 //! 3. ⚠️ **`ping` 不是心跳**（设计稿 §6.2）：服务端在订阅者**落后**（broadcast 容量 64）时发的
 //!    `{"type":"ping"}` 意味着**可能漏了事件** ⇒ 调用方必须**立刻拉一次**，与收到 `push` 同待遇。
 //!    `frame_kind` 只负责**分类**（给事件载荷里的 `kind` 用），**不**决定"拉不拉"。
+//!
+//! ## ★ L4a/L4b（2026-09-30，owner 拍 D2）：帧带 `seq` ＋ **跳号 = 可能漏帧**
+//!
+//! 服务端推送帧从这一天起多带一个 `seq`（**它本来就有** —— `changes.seq`；`L4a`）。
+//! 客户端把它**记下来**，并在"这一帧比上一帧多出不止 1"时判定**跳号**（`L4b`）——
+//! 跳号意味着**中间可能漏了帧** ⇒ 载荷里那个 `gap` 非空 ⇒ **调用方要立刻拉一次补漏**
+//! （`useSyncStream` 里与 `ping` 走同一条"立刻拉、不去抖"的路）。
+//!
+//! ⚠️ 三条边界（写下来免得被"顺手优化"）：
+//! 1. **服务端行为不变**：它仍只回答"这个空间有新变更"，**从不发内容**；`seq` 只是夹带的定位符；
+//! 2. **`last_seq` 跨重连保留**（状态在那个闭包里）：重连本身就可能是一次丢帧，
+//!    所以重连后的第一帧照样要和断线前那一帧比 —— 否则"断线期间漏掉的帧"永远检不出来；
+//! 3. ⚠️ **`changes.seq` 今天是【表级】AUTOINCREMENT**（服务端 `db.rs:19`）⇒ 别的空间的写入
+//!    会让本空间的 seq 看起来"跳"了 ⇒ 这里会**保守地多拉一次**。方向是安全的（多拉一次 ≠ 丢数据），
+//!    语义精确要等"seq 改空间级"（迭代 6）。⚠️ 所以本判据**不许**被读成"网络丢了帧"的确证。
 
 use std::sync::{Mutex, OnceLock};
 
@@ -94,6 +119,29 @@ pub fn frame_kind(payload: &str) -> &'static str {
         },
         Err(_) => "other",
     }
+}
+
+/// 帧载荷里的 `seq`（**L4a**：服务端 `sync::push_frame` 发的那个字段）。
+///
+/// - `push` 帧（新服务端）⇒ `Some(seq)`；
+/// - **老服务端 / `ping` / 认不出的帧** ⇒ `None` —— ⚠️ **不猜**，也**不许**拿 0 冒充
+///   （0 与"没有这个字段"长得一样、含义相反；缺口检测绝不能建立在编出来的数上）。
+pub fn frame_seq(payload: &str) -> Option<i64> {
+    serde_json::from_str::<Value>(payload)
+        .ok()?
+        .get("seq")?
+        .as_i64()
+}
+
+/// **跳号判定**（**L4b** 的纯函数核）：这一帧的 `seq` 比上一帧多出**不止 1** ⇒ 中间可能漏了帧。
+///
+/// ⚠️ 三条口径：
+/// 1. **`last_seq == 0`（还没收到过带 seq 的帧）⇒ 不判** —— 第一帧没有可比对象；
+/// 2. **`seq <= last_seq`（重复／乱序）⇒ 不是跳号** —— 水位**只许前进**（同 `mesh_cursor` 那条纪律）；
+/// 3. ⚠️ **已知保守**（见文件头边界 3）：`seq` 今天是**表级**的 ⇒ 跨空间的写入会造成
+///    "看起来跳了" ⇒ 这里**多拉一次**。方向安全，但**不许**把它读成"网络丢了帧"的确证。
+pub fn is_seq_gap(last_seq: i64, seq: i64) -> bool {
+    last_seq > 0 && seq > last_seq.saturating_add(1)
 }
 
 // =====================================================================================
@@ -210,14 +258,36 @@ where
             s.last_error.clear();
         });
     };
+    // ★ L4a/L4b 的水位：**跨重连保留**（重连本身可能就是一次丢帧 —— 见文件头边界 2）。
+    //   `0` ＝ 还没收到过带 `seq` 的帧（第一帧没有可比对象 ⇒ 不判跳号）。
+    let mut last_seq: i64 = 0;
     let mut on_frame = move |payload: &str| {
         let kind = frame_kind(payload).to_string();
+        // ★ L4a/L4b（owner 2026-09-30 拍 D2）：记 `seq` ＋ 判跳号。
+        //   `last_seq` 是**这个闭包里的**水位（⇒ 跨重连保留 —— 见文件头边界 2）。
+        let seq = frame_seq(payload);
+        let gap = seq.filter(|s| is_seq_gap(last_seq, *s));
+        if let Some(s) = seq {
+            last_seq = last_seq.max(s);
+        }
         notify(StreamChange {
             ws_id: ws_id.clone(),
             server: server.clone(),
             kind,
+            seq,
+            gap,
         });
-        with_status(|s| s.last_event_at = now_ms());
+        with_status(|s| {
+            s.last_event_at = now_ms();
+            // 读数与判定**同一份数**（`last_seq` 在闭包里那一是判定用，这里只是摆出来）。
+            if let Some(seq) = seq {
+                s.last_seq = s.last_seq.max(seq);
+            }
+            if let Some(g) = gap {
+                s.gap_count = s.gap_count.saturating_add(1);
+                s.last_gap_seq = g;
+            }
+        });
     };
     let mut on_error = |e: &str| {
         // **不静默**：留痕（界面能读到 `last_error`），随后由循环退避重连。
@@ -247,6 +317,11 @@ pub struct StreamChange {
     pub server: String,
     /// `push` / `ping` / `other`（见 `frame_kind`）。
     pub kind: String,
+    /// **L4a**：这一帧带的 `seq`（老服务端／非 `push` 帧 ⇒ `None`）。只是**记录**，不改取数行为。
+    pub seq: Option<i64>,
+    /// **L4b**：判定为**跳号**时 = 那个"多出来"的 `seq`；没跳号 ⇒ `None`。
+    /// ⚠️ 消费方（`useSyncStream`）看到它不是 `None` ⇒ **立刻拉一次**（与 `ping` 同待遇、不去抖）。
+    pub gap: Option<i64>,
 }
 
 /// 订阅的**读数**（界面/排错要看的就是这几个数，别让它石沉大海）。
@@ -264,6 +339,12 @@ pub struct StreamStatus {
     pub last_error: String,
     /// 为什么没在跑（正常情况也走它）：`"no-binding"` / `""`。
     pub reason: String,
+    /// **L4a 读数**：收到过的帧里**最大**的 `seq`（`0` ＝ 还没收到过带 `seq` 的帧）。
+    pub last_seq: i64,
+    /// **L4b 读数**：判定为跳号的**次数**（`0` ＝ 从没跳号过）。
+    pub gap_count: u32,
+    /// **L4b 读数**：最近一次跳号时那个 `seq`（`0` ＝ 从没跳号过）。
+    pub last_gap_seq: i64,
 }
 
 struct Running {
@@ -460,6 +541,39 @@ mod tests {
         assert_eq!(frame_kind(r#"{"type":"whatever"}"#), "other");
         assert_eq!(frame_kind("不是 JSON"), "other", "认不出来 ⇒ other，**不猜**");
         assert_eq!(frame_kind(""), "other");
+    }
+
+    /// ★ 判据 7（**L4a/L4b 的纯函数那一半**）：帧里 `seq` 的解析 ＋ 跳号判定。
+    #[test]
+    fn frame_seq_and_gap_rule_are_pinned() {
+        // 服务端 L4a 发的那一帧的逐字形状（`shuyonote-sync-server` 的 `sync::push_frame`）
+        assert_eq!(
+            frame_seq(r#"{"type":"push","space_id":"sp","accepted":1,"seq":42}"#),
+            Some(42),
+            "帧里的 seq 必须被读出来（L4a）"
+        );
+        // 老服务端没有这个字段 ⇒ None（**不许**拿 0 冒充）
+        assert_eq!(
+            frame_seq(r#"{"type":"push","space_id":"sp","accepted":1}"#),
+            None
+        );
+        // `ping` / 认不出的帧 / 非 JSON ⇒ None
+        assert_eq!(frame_seq(r#"{"type":"ping"}"#), None);
+        assert_eq!(frame_seq("不是 JSON"), None);
+
+        // 跳号：上一帧 3、这一帧 5 ⇒ 中间漏了 4
+        assert!(is_seq_gap(3, 5), "多出不止 1 ⇒ 可能漏帧");
+        assert!(is_seq_gap(3, 9));
+        // 连续 ⇒ 不跳
+        assert!(!is_seq_gap(3, 4));
+        // 第一帧没有可比对象（哪怕它很大）
+        assert!(!is_seq_gap(0, 1));
+        assert!(!is_seq_gap(0, 99));
+        // 重复／乱序 ⇒ **不是**跳号（水位只许前进）
+        assert!(!is_seq_gap(5, 5));
+        assert!(!is_seq_gap(5, 4));
+        // 极端值不溢出
+        assert!(!is_seq_gap(i64::MAX, i64::MAX));
     }
 
     /// 判据 3（前半）：**订谁的地址** —— 与前端拼的是同一条路径，且结尾斜杠要归一。
@@ -868,5 +982,165 @@ mod tests {
         println!("【判据 5 实测·真服务端】订阅 ⇒ 推送 ⇒ 收到：**{latency}ms**；帧 = {}", frames[0].1);
         assert!(latency >= 0 && latency < 2000, "延迟要在 2s 内（实际 {latency}ms）");
         assert_eq!(frame_kind(&frames[0].1), "push");
+
+        // ⑤ ★ L4a（owner 2026-09-30 拍 D2）：帧里那个 `seq` 必须等于**那次变更的真实 seq**
+        //    （不是 0、不是表级 `MAX(seq)`）。真实 seq 从 `/pull` 读回来比 ——
+        //    不带 `exclude_device`（自己那笔也要拉回来，它才是"那次变更"）。
+        let pulled = client
+            .get(format!("{server}/pull?space_id={space}&since=0"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .expect("pull 请求发出");
+        assert!(
+            pulled.status().is_success(),
+            "pull 失败：HTTP {}",
+            pulled.status()
+        );
+        let pulled_body = pulled.json::<Value>().await.expect("pull 返回 JSON");
+        let real_seq = pulled_body["changes"][0]["seq"]
+            .as_i64()
+            .expect("pull 里应当有那条变更的 seq");
+        let frame: Value = serde_json::from_str(&frames[0].1).expect("帧是 JSON");
+        println!(
+            "【判据 L4a 实测·真服务端】帧 = {}；该变更真实 seq = {real_seq}；帧里 seq = {}",
+            frames[0].1,
+            frame["seq"]
+                .as_i64()
+                .map_or("（无）".to_string(), |v| v.to_string())
+        );
+        assert_eq!(
+            frame["seq"].as_i64(),
+            Some(real_seq),
+            "帧里的 seq 必须等于那次变更的真实 seq（L4a）"
+        );
+        assert_ne!(frame["seq"].as_i64(), Some(0), "不许是 0");
+    }
+
+    // ---------------------------------------------------------------------------------
+    // 判据 8（**L4b 的承重那一半**）：跳号 ⇒ **恰好一次**"回退拉取"信号；连续帧 ⇒ **一次都不多**。
+    //
+    // 为什么这样判：桌面这条路的"拉"由**前端**发起（设计稿 §3 形态 B：拉取必须过 C2 闸门 /
+    // 防重入 / 状态行那三件既有件 ⇒ Rust 不许自己再起一条取数路）。所以 Rust 这一侧的**出口**
+    // 就是那一条 `StreamChange`（生产里 `app.emit("sync-stream-change", ch)`）——
+    // 这里用**只记不做**的闭包替掉 `app.emit`（与判据 6 同一手法），于是
+    // "信号有没有、几次、带着哪个 seq"是**确定性读数**，而不是内部标志位。
+    // 前端把 `gap != null` 变成立刻拉一次：由 `src/hooks/useSyncStream.wiring.test.ts` 的
+    // 文本级判据钉住（同 ⑥ 对 `ping` 的形状）。
+    // ---------------------------------------------------------------------------------
+
+    /// 脚本化假 SSE 服务端：**一条连接**上按顺序发完 `frames`，然后**保持连接活着**
+    /// （⇒"重连"不是这里的变量：判的就是"同一连接内丢了一帧"）。
+    async fn scripted_sse_server(frames: Vec<String>) -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let handle = tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut sock, &mut buf).await;
+            let head =
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
+            if sock.write_all(head.as_bytes()).await.is_err() || sock.flush().await.is_err() {
+                return;
+            }
+            for f in frames {
+                let body = format!("data: {f}\n\n");
+                if sock.write_all(body.as_bytes()).await.is_err() || sock.flush().await.is_err() {
+                    return;
+                }
+                // 帧之间留一点间隔：让每一帧都作为**独立一帧**被收下（更接近生产）。
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            }
+            // 帧发完：**保持连接**（别让"断开 ⇒ 重连"成为这条判据的变量）。
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        });
+        (port, handle)
+    }
+
+    /// 等到收满 `n` 条 `StreamChange`（或 5s 超时）。返回最终条数。
+    async fn wait_for_changes(
+        got: &std::sync::Arc<std::sync::Mutex<Vec<StreamChange>>>,
+        n: usize,
+    ) -> usize {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline && got.lock().unwrap().len() < n {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        got.lock().unwrap().len()
+    }
+
+    /// ★ 判据 8：**跳号 ⇒ 恰好一次回退信号（且带真实的 seq）；连续帧 ⇒ 零次**。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gap_emits_exactly_one_pull_signal_and_consecutive_frames_do_not() {
+        let push =
+            |seq: i64| format!(r#"{{"type":"push","space_id":"sp","accepted":1,"seq":{seq}}}"#);
+
+        // ── ③ 不跳号：1,2,3 ⇒ **一次回退都不许有**（否则每帧都拉＝把 L4 变成轮询）──
+        let (port_ok, server_ok) = scripted_sse_server(vec![push(1), push(2), push(3)]).await;
+        let ok_seen: std::sync::Arc<std::sync::Mutex<Vec<StreamChange>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ok2 = ok_seen.clone();
+        let url_ok = stream_url(&format!("http://127.0.0.1:{port_ok}"), "sp");
+        let task_ok = tokio::spawn(run_stream_task(
+            url_ok,
+            "tk".to_string(),
+            "ws-ok".to_string(),
+            "http://relay".to_string(),
+            move |ch: StreamChange| ok2.lock().unwrap().push(ch),
+        ));
+        let n_ok = wait_for_changes(&ok_seen, 3).await;
+        task_ok.abort();
+        server_ok.abort();
+        let got_ok = ok_seen.lock().unwrap().clone();
+        assert_eq!(n_ok, 3, "三帧都要收到");
+        assert_eq!(
+            got_ok.iter().map(|c| c.seq).collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3)],
+            "每帧都要如实带上它自己的 seq（L4a）"
+        );
+        let ok_gaps: Vec<i64> = got_ok.iter().filter_map(|c| c.gap).collect();
+        assert!(
+            ok_gaps.is_empty(),
+            "连续帧**不许**触发回退拉取（否则每帧都拉＝把 L4 变成轮询）：{ok_gaps:?}"
+        );
+        println!("【判据 L4b ③ 实测】连续帧 seq=[1,2,3] ⇒ 回退信号 **0 次**");
+
+        // ── ② 人为丢帧：1,2,**4**（吞掉 3）⇒ **恰好一次**回退信号，且带真实的 seq=4 ──
+        let (port_gap, server_gap) = scripted_sse_server(vec![push(1), push(2), push(4)]).await;
+        let gap_seen: std::sync::Arc<std::sync::Mutex<Vec<StreamChange>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let g2 = gap_seen.clone();
+        let url_gap = stream_url(&format!("http://127.0.0.1:{port_gap}"), "sp");
+        let task_gap = tokio::spawn(run_stream_task(
+            url_gap,
+            "tk".to_string(),
+            "ws-gap".to_string(),
+            "http://relay".to_string(),
+            move |ch: StreamChange| g2.lock().unwrap().push(ch),
+        ));
+        let n_gap = wait_for_changes(&gap_seen, 3).await;
+        task_gap.abort();
+        server_gap.abort();
+        let got_gap = gap_seen.lock().unwrap().clone();
+        assert_eq!(n_gap, 3, "三帧都要收到");
+        let gap_signals: Vec<i64> = got_gap.iter().filter_map(|c| c.gap).collect();
+        assert_eq!(
+            gap_signals,
+            vec![4],
+            "丢帧（1,2,4）**必须恰好**产生一次回退拉取信号，且带那个真实的 seq=4"
+        );
+        // 前两帧不报，第三帧报 —— 顺序也要对（不能"事后补一个标志位"）
+        assert_eq!(got_gap[0].gap, None);
+        assert_eq!(got_gap[1].gap, None);
+        assert_eq!(got_gap[2].gap, Some(4));
+        assert_eq!(got_gap[2].seq, Some(4));
+        println!(
+            "【判据 L4b ② 实测】丢帧 seq=[1,2,4] ⇒ 回退信号 **1 次**（带 seq=4）；不跳号的两帧 gap=None"
+        );
     }
 }

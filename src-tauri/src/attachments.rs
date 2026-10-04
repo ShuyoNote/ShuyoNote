@@ -991,6 +991,15 @@ fn remove_attachment_inner_with(
         .map_err(|e| e.to_string())?;
     record_change(&c, "attachment", id, "delete", None, now_ms())?;
 
+    // ⭐ 2026-10-02：**把它的派生行也清掉** —— 那两张表**没有外键** ✗，不清就留孤儿
+    //   （占空间 ✓ 且可能进检索 ✓：用户会搜到已删附件的内容）。
+    //   ⚠️ 走 `derived_transport`：那两张表的 SQL **只允许出现在那里** ✓
+    //   （`scripts/check-derived-writers.mjs` 的意图 ✓ —— 别为了顺手在本文件里写它 ✓）。
+    //   ⚠️ 清派生失败**不该**让"删附件"失败（附件已经删了 ✓）⇒ 只记读数 ✓。
+    if let Err(e) = crate::derived_transport::clear_derived_for_attachment(&c, id) {
+        eprintln!("清派生行失败（att_id={id}）：{e}");
+    }
+
     // 本空间里还有别的行引用它吗？（跨空间那份在 `other_refs` 里）
     let count: i64 = c
         .query_row(

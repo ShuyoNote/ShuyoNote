@@ -56,14 +56,43 @@ export interface AttachmentDepsOptions {
  *
  * 缩放比例**原样透传抽取器给的值**：由抽取器决定它需要多清晰，平台不另立一套口径。
  */
-export function attachmentDeps(attId: string, opts: AttachmentDepsOptions = {}): ExtractDeps {
-  const deps: ExtractDeps = {
+/**
+ * 字节 → base64（给走 IPC 的原生命令用 ✓）。
+ *
+ * ⚠️ **不能写 `String.fromCharCode(...bytes)`** ✗ —— 几 MB 的附件会把参数栈撑爆
+ * （「Maximum call stack size exceeded」），而且是**大文件才炸**、小样本全绿的那种坏法 ✓
+ * ⇒ 分块处理 ✓（与 `src/lib/ai/localTranscribe.ts` 的发包方式同族：宁可多几行，不赌尺寸 ✓）。
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+export function attachmentDeps(attId: string, opts: AttachmentDepsOptions = {}): ExtractDeps {  const deps: ExtractDeps = {
     // ★ 旧二进制 Office（`.doc`/`.xls`/`.ppt`）的平台转换（2026-09-23）：桌面走命令面
     //   （`convert_legacy_office` → LibreOffice headless），**Web/移动端的 stub 会 reject**
     //   ⇒ 抽取器映射成 `provider_error`（如实答复"这个平台做不了"，§15.3-7）。
     //   与 `vision`/`transcribe` 的差别是刻意的：那两个是**模型驱动**（平台还没有那一层，由调用方给），
     //   而格式转换不需要端点/密钥/模型，属于**平台命令面**能给的东西。
     convertLegacy: legacyConverterFor(platform.executor),
+    // ★ P0 格式引擎（Kreuzberg v4.10.x，MIT，2026-10-02）：补 eml/msg/zip/7z/gz/tar/rtf/odt/ods/odp/epub/tex/bib/ris。
+    //   ⚠️ 与 `convertLegacy` **同属"平台命令面"**（不需要端点/密钥/模型 ✓）⇒ 放在这里，
+    //      **⛔ 不经 `opts` 由调用方给** ✗ —— 那两个（`vision`/`transcribe`）是模型驱动，形状不同 ✓。
+    //   ⚠️ IPC 传 **base64**（字节数组会被序列化成上千万字符的 JSON ✗）；命令在 Rust 侧**自己解** ✓。
+    //   ⛔ 这里**不落盘、不写派生表** ✗（派生表唯一写入者仍是 `src/lib/extract/` 那条链 ✓）。
+    //   Web 侧：`web.ts` 对该命令**明确 reject** ⇒ 抽取器如实映射成 `provider_error` ✓（§15.3-7）。
+    kreuzbergExtract: async (bytes, mime, filename) => {
+      const r = (await platform.executor.invoke("extract_with_kreuzberg", {
+        base64: bytesToBase64(bytes),
+        mime,
+        filename,
+      })) as { text: string; engine: string };
+      return { text: String(r?.text ?? ""), engine: String(r?.engine ?? "") };
+    },
     rasterize: async (_bytes, pageIndex, scale): Promise<RasterizedPage> => {
       // 平台驱动给的是**裸 RGBA**（阅读器也吃这个，所以驱动接口不改），
       // 而契约要求 `rasterize` 产出**编码图**（`vision` 只接受编码图）⇒ 在这里编码。

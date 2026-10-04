@@ -1,0 +1,56 @@
+{
+  "note": "S1③ 跨平台检索一致性夹具（R105=A ✓）。两个平台各有一套检索实现：桌面走 FTS5/trigram（≥3 字）与 LIKE（<3 字／多词），Web 走 token-TF + `indexOf` 子串（`rankPagesForSearch`）。本夹具钉的是**同一份数据 + 同一查询 ⇒ 两侧命中集合必须相等**（**顺序可比**，所以 `expect` 只写 id 集合、不写顺序）。三处刻意的选择：①`pages` 是一份**共享小库**（两侧插同一批页面，只按各自平台的 workspace 归属落库）；②`expect` 只写**命中集合**（id 的集合），不写 snippet/分数/顺序 —— 那些两边本来就可以不同；③**已知分歧不写进 `cases`**：语义对齐是**规格层要裁定的事**，不许在夹具里悄悄抹平 ⇒ 另列 `knownDivergences`，每条给**两侧各自实测的读数**（那一节是**读数，不是约定**：哪天语义对齐了，请同步更新那一节的数）。消费点两处，缺一这条判据就没有意义：桌面 `src-tauri/src/search.rs`（`include_str!` 读本文件）＋ Web `src/lib/platform/pageSearchParity.test.ts`（`readFileSync` 读本文件）。⚠️ 本夹具**不**覆盖附件的块级并集（那是 S1① 的域）——两侧都按“只有页面、没有 chunks”比。",
+  "pages": [
+    { "id": "p1", "title": "周报", "text": "本周进展：完成了检索并集。" },
+    { "id": "p2", "title": "会议纪要", "text": "讨论了会议安排与差旅标准。" },
+    { "id": "p3", "title": "发票", "text": "扫描件识别出的发票号码 12345。" },
+    { "id": "p4", "title": "Report", "text": "Weekly report draft about search." },
+    { "id": "p5", "title": "笔记", "text": "与查询无关的内容。" },
+    { "id": "p6", "title": "100%达成", "text": "含百分号与下划线的标题。" }
+  ],
+  "cases": [
+    { "name": "2 字中文（桌面走 LIKE、Web 走整串 token）", "query": "周报", "expect": ["p1"] },
+    { "name": "4 字中文（桌面走 trigram 子串；该串的 2 字 bigram 不许在别的页出现）", "query": "会议纪要", "expect": ["p2"] },
+    { "name": "拉丁词大小写不敏感（桌面 trigram 不分大小写、Web 两侧都 lower）", "query": "Report", "expect": ["p4"] },
+    { "name": "2 字中文命中正文而不是标题", "query": "差旅", "expect": ["p2"] },
+    { "name": "纯数字（trigram 与 token 都按子串）", "query": "12345", "expect": ["p3"] },
+    { "name": "含百分号（两侧都必须当字面量，不许当通配符）", "query": "100%", "expect": ["p6"] },
+    { "name": "4 字中文命中正文（标题是「发票」，主体在正文里）", "query": "发票号码", "expect": ["p3"] },
+    { "name": "负例：没有任何页面命中 ⇒ 两侧都必须给空集（不许“没有匹配就返回全库”）", "query": "不存在的词", "expect": [] }
+  ],
+  "knownDivergences": [
+    {
+      "name": "多词查询：桌面按「逐词 AND」，Web 按「任一 token OR」",
+      "why": "桌面 `search_like_multi`（src-tauri/src/search.rs）把每个词各生成一个 `LIKE` 子串条件并 **AND** 起来；Web `rankPagesForSearch` 只要有 **一个** token 命中就算命中（`matched === 0` 才落选）。⇒ 多词查询下 **Web 的命中集合是桌面的超集**。",
+      "query": "周报 会议",
+      "pages": [
+        { "id": "d1a", "title": "周报", "text": "本周进展。" },
+        { "id": "d1b", "title": "会议", "text": "会议安排。" }
+      ],
+      "desktop": [],
+      "web": ["d1a", "d1b"]
+    },
+    {
+      "name": "≥3 字中文：Web 会把查询拆成 2 字 bigram，桌面只按整串子串",
+      "why": "Web `tokenize` 对每个 CJK run 追加**整串 ＋ 全部 2 字 bigram**（web.ts 的 tokenize），任一命中即算；桌面 trigram 只匹配**整串**子串。⇒ 只含某个 bigram 的页面在 Web 上多出来。",
+      "query": "会议纪要",
+      "pages": [
+        { "id": "d2a", "title": "会议纪要", "text": "记录了会议纪要。" },
+        { "id": "d2b", "title": "会议", "text": "只提到会议，没有整串。" }
+      ],
+      "desktop": ["d2a"],
+      "web": ["d2a", "d2b"]
+    },
+    {
+      "name": "下划线：Web 的 tokenizer 把它当分隔符，桌面当普通字符",
+      "why": "Web `tokenize` 的分隔符类里含 `_`（还有 `-`／标点），于是 `a_b` 被拆成 `a` 与 `b` 两个 token ⇒ 含 `a` 的页也命中；桌面把 `a_b` 当**一个** 3 字查询，走 trigram 整串子串。",
+      "query": "a_b",
+      "pages": [
+        { "id": "d3a", "title": "a_b 表名", "text": "含下划线的整串。" },
+        { "id": "d3b", "title": "a", "text": "只有字母 a。" }
+      ],
+      "desktop": ["d3a"],
+      "web": ["d3a", "d3b"]
+    }
+  ]
+}

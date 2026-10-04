@@ -1,0 +1,920 @@
+#!/usr/bin/env python3
+# 企业版 IM（「长在空间与笔记上的讨论」）· 高保真效果图（成套 6 张）
+#
+# ⛔ 这是**目标形态**，不是产品截图 ✗ —— 规格与方案见：
+#   `docs/specs/2026-10-01-enterprise-im-requirements.md`（要什么／不要什么）
+#   `docs/specs/2026-10-01-enterprise-im-spec.md`（12 条不许破的规矩）
+#   `docs/plans/2026-10-01-enterprise-im-approach.md`（技术路线与架构）
+# ⚠️ **产品代码一行都没落地** —— 这六张图画的是 Phase 1–3 的**目标**（见方案 §5）。
+#
+# ⚠️ 字体与字形（沿用 `design/sync-panel/draw-sync-panel.py` 的同一套闸门，别重犯）：
+#   · PingFang.ttc 在 Pillow 下**打不开** ⇒ 用 Hiragino Sans GB.ttc **index=0**
+#   · emoji/dingbat 在该字体里**无字形** ⇒ 只能走下面的 `SUBST` 替换；且**画出去的每个字**都过字形闸门，
+#     缺字形 ⇒ 报出来并**非零退出**（⛔ 不许静默画出满屏方框 ✗）
+from PIL import Image, ImageDraw, ImageFont
+import os
+
+OUT = os.path.dirname(os.path.abspath(__file__))
+
+FONT_CANDIDATES = [
+    ("/System/Library/Fonts/Hiragino Sans GB.ttc", 0),
+    ("/System/Library/Fonts/STHeiti Medium.ttc", 0),
+    ("/Library/Fonts/Arial Unicode.ttf", 0),
+    ("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", 0),
+    ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", 0),
+    ("C:/Windows/Fonts/msyh.ttc", 0),
+    ("C:/Windows/Fonts/simhei.ttf", 0),
+]
+
+
+def _pick_font():
+    tried = []
+    for path, idx in FONT_CANDIDATES:
+        if not os.path.exists(path):
+            tried.append(path + "（不存在）")
+            continue
+        try:
+            ImageFont.truetype(path, 20, index=idx)
+            return path, idx
+        except Exception as e:
+            tried.append(path + "（打不开：%s）" % e)
+    raise SystemExit("\n".join(
+        ["⛔ 找不到可用的中文字体 —— 本脚本**不许**退回默认字体（那会静默画出满屏方框 ✗）。",
+         "   试过："] + ["   · " + t for t in tried] +
+        ["   ⇒ 请装上其中任一款，或把它的路径加进 FONT_CANDIDATES ✓"]))
+
+
+F, F_INDEX = _pick_font()
+
+
+def f(sz):
+    return ImageFont.truetype(F, sz, index=F_INDEX)
+
+
+F_T, F_H, F_B, F_S, F_XS = f(44), f(30), f(25), f(21), f(18)
+
+SUBST = {"⭐️": "【要点】", "⭐": "【要点】", "⛔": "【禁】", "❌": "【禁】",
+         "✗": "【错】", "✓": "【对】", "✅": "【对】",
+         "⚠️": "【注意】", "⚠": "【注意】",
+         "⇒": "→", "\ufe0f": "", "**": "", "*": ""}
+DRAWN = []
+ALL_BAD = []
+
+
+def _emit(d, xy, s, font, fill, anchor="la"):
+    for k, v in SUBST.items():
+        s = s.replace(k, v)
+    DRAWN.append(s)
+    d.text(xy, s, font=font, fill=fill, anchor=anchor)
+
+
+def _sig(font, ch):
+    m = font.getmask(ch)
+    try:
+        b = bytes(m)
+    except Exception:
+        b = bytes(bytearray(m))
+    return b
+
+
+def missing_glyphs(font=F_XS):
+    ref = _sig(font, "\ue000")
+    bad = []
+    for s in DRAWN:
+        for ch in s:
+            if ch == "\n":
+                continue
+            if _sig(font, ch) == ref:
+                bad.append(ch)
+    return sorted(set(bad))
+
+
+BG = (250, 250, 252); INK = (28, 32, 38); MUT = (112, 120, 130); LINE = (214, 218, 226)
+CARD = (255, 255, 255); GREY = (243, 245, 248)
+BLUE = (37, 99, 235); BLUE_BG = (232, 240, 254)
+GREEN = (22, 128, 74); GREEN_BG = (232, 246, 238)
+AMBER = (180, 116, 16); AMBER_BG = (255, 247, 229)
+RED = (190, 48, 42); RED_BG = (254, 236, 235)
+PURPLE = (110, 70, 160); PURPLE_BG = (240, 234, 250)
+
+
+class Sheet:
+    def __init__(self, title, subtitle, w=2000, h=1400):
+        global DRAWN
+        DRAWN = []
+        self.w, self.h = w, h
+        self.img = Image.new("RGB", (w, h), BG)
+        self.d = ImageDraw.Draw(self.img)
+        _emit(self.d, (56, 40), title, F_T, INK, "la")
+        _emit(self.d, (56, 100), subtitle, F_XS, MUT, "la")
+        self.d.line([56, 138, w - 56, 138], fill=LINE, width=2)
+
+    def save(self, name):
+        bad = missing_glyphs(F_XS)
+        p = os.path.join(OUT, name)
+        self.img.save(p)
+        print("saved %s %s ｜ 字形检查: %s" % (
+            os.path.basename(p), self.img.size,
+            ("⛔ 缺字形 " + " ".join(bad)) if bad else "干净（无缺字形）"))
+        if bad:
+            ALL_BAD.append((os.path.basename(p), bad))
+        return bad
+
+    # ── 基础件
+    def card(self, x, y, w, h, edge=LINE, fill=CARD, r=14, lw=2):
+        self.d.rounded_rectangle([x, y, x + w, y + h], radius=r, fill=fill, outline=edge, width=lw)
+
+    def t(self, x, y, s, font=F_B, fill=INK, anchor="la"):
+        _emit(self.d, (x, y), s, font, fill, anchor)
+
+    def head(self, x, y, s, fill=INK, anchor="la"):
+        self.t(x, y, s, F_H, fill, anchor)
+
+    def small(self, x, y, s, fill=MUT, anchor="la"):
+        self.t(x, y, s, F_XS, fill, anchor)
+
+    def chip(self, x, y, s, fg=BLUE, bg=BLUE_BG, pad=10, h=30):
+        w = self.d.textlength(s, font=F_XS) + pad * 2
+        self.d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=bg, outline=bg, width=1)
+        _emit(self.d, (x + pad, y + h // 2), s, F_XS, fg, "lm")
+        return w
+
+    def badge(self, x, y, n, fg=(255, 255, 255), bg=RED, d0=26):
+        self.d.ellipse([x, y, x + d0, y + d0], fill=bg)
+        _emit(self.d, (x + d0 // 2, y + d0 // 2), str(n), F_XS, fg, "mm")
+
+    def avatar(self, x, y, ch, d0=34, fill=BLUE_BG, fg=BLUE):
+        self.d.ellipse([x, y, x + d0, y + d0], fill=fill, outline=fill)
+        _emit(self.d, (x + d0 // 2, y + d0 // 2), ch, F_XS, fg, "mm")
+
+    def rule(self, x0, y, x1, fill=LINE, w=1):
+        self.d.line([x0, y, x1, y], fill=fill, width=w)
+
+    # ── 模拟真界面：一扇 App 窗
+    def app(self, x, y, w, h, space="产品研发 · 团队空间", online="3 人在线", tools=None, other=0):
+        """⭐ 顶端工具栏（owner 2026-10-01 的方向）：
+        ⛔ **去掉页面侧边工具条**（`RightRail.tsx` 那条「展开右侧工具」）✗ ⇒ 它的功能收入这一行 ✓
+        ⛔ **顶栏只留「讨论」一颗**（「通知」已并进讨论 ✓）：@ 就地显示在讨论线旁 ✓
+        ⭐ 跨空间汇总 ⇒ **挪到空间切换器**（`other` = 还有几个空间在叫你 ✓）
+        ⚠️ **个人空间没有「讨论」** ✓（`tools` 由调用方给，见 sheet5 的对照）"""
+        self.card(x, y, w, h)
+        # 标题栏（＝顶端工具栏）
+        self.d.rounded_rectangle([x, y, x + w, y + 64], radius=14, fill=GREY)
+        self.d.rectangle([x, y + 40, x + w, y + 64], fill=GREY)
+        self._space_switcher(x + 20, y + 10, space, other)
+        # 右侧：先排按钮，再排在线数
+        if tools:
+            tw = sum(self._tool_w(lbl, b) for lbl, a, b in tools) + 12 * (len(tools) - 1)
+            tx = x + w - 24 - self.d.textlength(online, font=F_S) - 28 - tw
+            for lbl, act, bad in tools:
+                tx += self._tool_btn(tx, y + 14, lbl, act, bad) + 12
+        self.t(x + w - 24, y + 32, online, F_S, MUT, anchor="rm")
+        self.rule(x, y + 64, x + w)
+        return (x, y + 64)
+
+    def _space_switcher(self, x, y, label, other=0):
+        """⭐ 空间切换器（`other` = 还有几个**别的**空间在叫你）。
+        ⛔ 它取代了顶栏那颗「通知」：合并之后**跨空间汇总**只有这一个落点 ✓"""
+        tw = self.d.textlength(label, font=F_B)
+        w = tw + 52
+        self.d.rounded_rectangle([x, y, x + w, y + 44], radius=10, fill=CARD, outline=LINE, width=2)
+        _emit(self.d, (x + 14, y + 22), label, F_B, INK, "lm")
+        cx = x + w - 22
+        self.d.polygon([(cx - 7, y + 17), (cx + 7, y + 17), (cx, y + 28)], fill=MUT)
+        if other:
+            self.badge(x + w + 8, y + 8, other, d0=24)
+        return w
+
+    def _tool_w(self, label, badge=0):
+        return self.d.textlength(label, font=F_XS) + 28 + (22 if badge else 0)
+
+    def _tool_btn(self, x, y, label, active=False, badge=0):
+        w = self._tool_w(label, badge)
+        self.d.rounded_rectangle([x, y, x + w, y + 36], radius=9,
+                                 fill=BLUE_BG if active else CARD,
+                                 outline=BLUE if active else LINE, width=2)
+        _emit(self.d, (x + 14, y + 18), label, F_XS, BLUE if active else INK, "lm")
+        if badge:
+            self.badge(x + w - 22, y + 6, badge, d0=20)
+        return w
+
+    def switch2(self, x, y, w, a, b, active):
+        """侧边栏顶部的**两级切换器**（「页面 ｜ 讨论」）——
+        ⭐ owner 2026-10-01 的方向：讨论线**放进左侧边栏**，切换就在这一格 ✓"""
+        self.d.rounded_rectangle([x, y, x + w, y + 40], radius=10, fill=(235, 238, 244))
+        half = w // 2
+        for i, lbl in enumerate((a, b)):
+            on = (lbl == active)
+            px = x + (i * half) + 3
+            self.d.rounded_rectangle([px, y + 3, px + half - 6, y + 37], radius=8,
+                                     fill=CARD if on else (235, 238, 244),
+                                     outline=LINE if on else (235, 238, 244), width=1)
+            _emit(self.d, (px + (half - 6) // 2, y + 20), lbl, F_XS, BLUE if on else MUT, "mm")
+
+    def sidebar(self, x, y, w, h, tree):
+        self.d.rectangle([x, y, x + w, y + h], fill=(247, 248, 251))
+        self.rule(x + w, y, x + w, )
+        self.d.line([x + w, y, x + w, y + h], fill=LINE, width=1)
+        self.small(x + 20, y + 18, "页面")
+        yy = y + 54
+        for depth, label, cur in tree:
+            if cur:
+                self.d.rounded_rectangle([x + 10, yy - 6, x + w - 14, yy + 30], radius=8, fill=BLUE_BG)
+            self.t(x + 24 + depth * 18, yy + 12, label, F_S if depth == 0 else F_XS,
+                   BLUE if cur else INK, "lm")
+            yy += 42
+        return yy
+
+    def note(self, x, y, w, h, title, paras):
+        self.t(x + 28, y + 26, title, F_H)
+        yy = y + 84
+        for p in paras:
+            self.t(x + 28, yy, p, F_S, MUT if p.startswith("（") else INK)
+            yy += 38
+        return yy
+
+
+def sheet1():
+    """① 页级讨论：能回复某一条，恰好两层。"""
+    s = Sheet("企业版 IM · 效果图 01", "页级讨论：讨论就长在这一页笔记旁边。回复只两层（回复的回复归到根）。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=2, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "项目立项", False), (1, "会议纪要", True), (1, "需求草稿", False),
+        (0, "技术方案", False), (1, "接口约定", False), (0, "发布检查", False)])
+    s.note(ax + 260, ay + 64, 1000, ah - 64, "会议纪要 · 10-01",
+           ["（笔记正文……）", "一、本期只做「讨论」，不做独立聊天应用。",
+            "二、评论要能回复，但**只做两层**。", "三、讨论必须能一键落成笔记。"])
+    # 右侧讨论抽屉
+    dx, dy, dw = ax + 1260, ay + 64, 628
+    s.d.rectangle([dx, dy, dx + dw, ay + ah - 64], fill=(252, 252, 254))
+    s.d.line([dx, dy, dx, ay + ah - 64], fill=LINE, width=1)
+    s.t(dx + 24, dy + 22, "讨论 · 本页", F_B)
+    s.small(dx + dw - 24, dy + 30, "5 条", MUT, "ra")
+    # 根评论
+    yy = dy + 74
+    s.avatar(dx + 24, yy, "王")
+    s.t(dx + 68, yy + 2, "王工", F_S)
+    s.small(dx + 124, yy + 6, "10:02", MUT)
+    s.t(dx + 68, yy + 34, "评论要能回复，但只做两层吧？", F_S)
+    s.small(dx + 68, yy + 64, "回复   ·   @提及", BLUE)
+    # 两条回复（缩进）
+    yy = dy + 168
+    s.d.line([dx + 44, dy + 150, dx + 44, yy + 60], fill=LINE, width=2)
+    s.avatar(dx + 60, yy, "李", fill=GREEN_BG, fg=GREEN)
+    s.t(dx + 104, yy + 2, "李工", F_S)
+    s.small(dx + 160, yy + 6, "10:05", MUT)
+    s.t(dx + 104, yy + 34, "同意。回复的回复就归到根。", F_S)
+    yy += 104
+    s.avatar(dx + 60, yy, "赵", fill=AMBER_BG, fg=AMBER)
+    s.t(dx + 104, yy + 2, "赵工", F_S)
+    s.small(dx + 160, yy + 6, "10:07", MUT)
+    s.t(dx + 104, yy + 34, "那深了怎么办？缩进会看不见。", F_S)
+    # 输入框
+    iy = ay + ah - 150
+    s.d.rounded_rectangle([dx + 24, iy, dx + dw - 24, iy + 78], radius=10, fill=CARD, outline=LINE, width=2)
+    s.small(dx + 40, iy + 20, "写下评论，用 @ 提及成员……", MUT)
+    s.d.rounded_rectangle([dx + dw - 130, iy + 88, dx + dw - 24, iy + 128], radius=10, fill=BLUE)
+    _emit(s.d, (dx + dw - 77, iy + 108), "发送", F_S, (255, 255, 255), "mm")
+    # 标注
+    s.chip(56, 1360 - 34, "恰好两层：回复的回复归到根", BLUE, BLUE_BG)
+    s.chip(390, 1360 - 34, "讨论只在团队空间出现（个人空间不出现）", GREEN, GREEN_BG)
+    s.chip(830, 1360 - 34, "⛔ 没有会话列表、没有聊天窗", RED, RED_BG)
+    return s.save("效果图-01-页级讨论-两层.png")
+
+
+def sheet2():
+    """② 空间级讨论线：多条线，各自未读独立。"""
+    s = Sheet("企业版 IM · 效果图 02", "空间级讨论线：一个空间里多条线，每条线各自的未读数是准的。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, space="产品研发 · 团队空间", online="3 人在线", other=2, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
+    # 左列：讨论线清单
+    lx, ly, lw = ax + 24, ay + 64 + 24, 560
+    lh = ah - 64 - 48
+    s.card(lx, ly, lw, lh)
+    s.t(lx + 24, ly + 20, "讨论线", F_B)
+    s.small(lx + 470, ly + 28, "本空间 3 条", MUT, "ra")
+    rows = [("本周进展", "3", True), ("问题清单", "0", False), ("发布检查", "1", False)]
+    yy = ly + 66
+    for name, n, cur in rows:
+        if cur:
+            s.d.rounded_rectangle([lx + 12, yy - 4, lx + lw - 12, yy + 66], radius=10, fill=BLUE_BG)
+        s.t(lx + 28, yy + 14, name, F_S, BLUE if cur else INK)
+        s.small(lx + 28, yy + 42, "最后一条 10:07 · 王工", MUT)
+        if n != "0":
+            s.badge(lx + lw - 52, yy + 16, n)
+        else:
+            s.chip(lx + lw - 96, yy + 18, "已读完", MUT, GREY, h=28)
+        yy += 86
+    # 右侧：选中那条线的消息
+    rx, ry, rw = lx + lw + 32, ly, aw - (lw + 32) - 48
+    s.card(rx, ry, rw, lh)
+    s.t(rx + 28, ry + 20, "本周进展", F_B)
+    s.chip(rx + 150, ry + 18, "空间级 · 所有人可见", GREEN, GREEN_BG, h=30)
+    s.small(rx + rw - 28, ry + 28, "成员变更 → 索引/列表跟着变", MUT, "ra")
+    s.rule(rx + 28, ry + 62, rx + rw - 28)
+    msgs = [("王", "10:02", "这周接口那半做完了。", BLUE_BG, BLUE),
+            ("李", "10:05", "前端还差一层校验，明天补。", GREEN_BG, GREEN),
+            ("赵", "10:07", "那我把发布检查那条线开起来。", AMBER_BG, AMBER)]
+    yy = ry + 88
+    for who, tm, text, bg, fg in msgs:
+        s.avatar(rx + 28, yy, who, fill=bg, fg=fg)
+        s.t(rx + 74, yy + 2, who + "工", F_S)
+        s.small(rx + 138, yy + 6, tm, MUT)
+        s.t(rx + 74, yy + 36, text, F_S)
+        yy += 104
+    # 底部：两个动作
+    by = ry + lh - 108
+    s.d.rounded_rectangle([rx + 28, by, rx + 300, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (rx + 164, by + 28), "把结论落成笔记", F_S, (255, 255, 255), "mm")
+    s.d.rounded_rectangle([rx + 320, by, rx + 560, by + 56], radius=10, fill=CARD, outline=LINE, width=2)
+    _emit(s.d, (rx + 440, by + 28), "标为已读", F_S, INK, "mm")
+    s.chip(56, 1360 - 34, "每条线未读独立正确", BLUE, BLUE_BG)
+    s.chip(330, 1360 - 34, "空间是唯一的权限边界（⛔ 不许跨空间私聊）", RED, RED_BG)
+    s.chip(880, 1360 - 34, "被移出空间 → 立刻读不到（含已建立的实时连接）", AMBER, AMBER_BG)
+    return s.save("效果图-02-空间级讨论线-未读独立.png")
+
+
+def sheet3():
+    """③ 空间切换器展开：**跨空间汇总 ＋ 系统通知**（owner 2026-10-01 选「A 全并」）。
+    ⛔ 这里**不再装 @ 与回复通知** ✗ —— 那些属于某条讨论线，已就地显示（见图 06 ✓）。"""
+    s = Sheet("企业版 IM · 效果图 03",
+              "顶栏去掉「通知」之后：跨空间汇总与系统通知落在**空间切换器**里；@ 与回复留在讨论线旁。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, online="本空间 3 人在线", other=2,
+          tools=[("AI 助手", False, 0), ("讨论", False, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "项目立项", False), (1, "会议纪要", True), (0, "技术方案", False), (0, "发布检查", False)])
+    s.note(ax + 260, ay + 64, 900, ah - 64, "会议纪要 · 10-01",
+           ["（笔记正文……）", "三、讨论必须能一键落成笔记。", "四、@ 到的人要收到提醒。"])
+    # 展开的空间切换器（从标题栏那颗下拉）
+    dx, dy, dw, dh = ax + 20, ay + 68, 700, 700
+    s.card(dx, dy, dw, dh, edge=BLUE, lw=2)
+    s.t(dx + 24, dy + 20, "切换到", F_B)
+    s.small(dx + 108, dy + 28, "哪个空间在叫你，就在这一列", MUT)
+    yy = dy + 62
+    spaces = [("我的空间 · 个人空间", "无未读", 0, False),
+              ("产品研发 · 团队空间", "3 条未读 · 其中 @ 你 1 条", 3, True),
+              ("设计组 · 团队空间", "@ 你 2 条", 2, False)]
+    for name, sub, n, cur in spaces:
+        if cur:
+            s.d.rounded_rectangle([dx + 12, yy - 4, dx + dw - 12, yy + 74], radius=10, fill=BLUE_BG)
+        s.t(dx + 28, yy + 8, name, F_S, BLUE if cur else INK)
+        s.small(dx + 28, yy + 40, sub, MUT)
+        if n:
+            s.badge(dx + dw - 52, yy + 20, n)
+        if cur:
+            s.chip(dx + dw - 168, yy + 42, "当前", BLUE, CARD, h=28)
+        yy += 92
+    s.rule(dx + 24, yy + 4, dx + dw - 24)
+    s.t(dx + 24, yy + 24, "系统通知", F_B)
+    s.small(dx + 130, yy + 32, "与讨论无关的那些 —— 个人空间也会有", MUT)
+    yy += 68
+    for who, text, when, tint in [
+        ("!", "同步失败：服务器没有响应", "10:31", RED_BG),
+        ("+", "你被加入「设计组 · 团队空间」", "09:12", GREEN_BG),
+        ("v", "有新版本可用（1.92.0）", "08:00", GREY),
+    ]:
+        s.card(dx + 12, yy, dw - 24, 76, edge=LINE, fill=tint, lw=1)
+        s.avatar(dx + 28, yy + 20, who, d0=34, fill=CARD, fg=INK)
+        s.t(dx + 76, yy + 16, text, F_S)
+        s.small(dx + 76, yy + 46, when, MUT)
+        yy += 88
+    # 右侧：当前空间的讨论（@ 就地显示的落点）
+    rx, rw = dx + dw + 40, aw - (dw + 40) - 40
+    s.card(rx, dy, rw, 420)
+    s.t(rx + 28, dy + 20, "回到这个空间的「讨论」", F_B)
+    s.small(rx + 28, dy + 58, "【要点】@ 与回复**不在这里**，它们就地长在讨论线上 ✓", MUT)
+    s.rule(rx + 28, dy + 92, rx + rw - 28)
+    yy = dy + 116
+    for name, sub, n, ment in [("本周进展", "最后一条 10:07 · 王工", 3, 1),
+                               ("问题清单", "最后一条 09:41 · 李工", 0, 0),
+                               ("发布检查", "最后一条 10:07 · 赵工", 1, 0)]:
+        s.t(rx + 28, yy + 6, name, F_S)
+        s.small(rx + 28, yy + 38, sub, MUT)
+        if n:
+            s.badge(rx + rw - 120, yy + 16, n)
+        if ment:
+            s.chip(rx + rw - 68, yy + 18, "@你", AMBER, AMBER_BG, h=28)
+        yy += 92
+    s.card(rx + 28, dy + 420, rw - 56, 250, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 52, dy + 442, "【注意】为什么「通知」这颗按钮没了", F_S, AMBER)
+    s.small(rx + 52, dy + 480, "① 今天的通知**只有 @ 一种**（kind 写死 mention），", MUT)
+    s.small(rx + 52, dy + 508, "   而且带 comment_id ⇒ 它就是讨论线上的一条 ✓", MUT)
+    s.small(rx + 52, dy + 544, "② 但**跨空间**那半不能并进讨论 —— 面板永远在", MUT)
+    s.small(rx + 52, dy + 572, "   当前空间里 ⇒ 别的空间叫你时没地方显示 ✗", MUT)
+    s.small(rx + 52, dy + 608, "⇒ 所以它挪到**空间切换器**（上面那一列）✓", MUT)
+    s.chip(56, 1360 - 34, "【要点】@ 就地显示在讨论线旁（不再是单独一颗按钮）", BLUE, BLUE_BG)
+    s.chip(700, 1360 - 34, "跨空间汇总 ⇒ 空间切换器（本空间那颗红点已挪到这儿）", GREEN, GREEN_BG)
+    s.chip(1330, 1360 - 34, "【禁】系统通知不许混进讨论面板", RED, RED_BG)
+    return s.save("效果图-03-空间切换器-跨空间与系统通知.png")
+
+
+def sheet4():
+    """④ 讨论变成知识 + 说真话（不显示“已送达”）。"""
+    s = Sheet("企业版 IM · 效果图 04", "讨论变成知识：一键把这段结论落成笔记；且界面不承诺我们做不到的事。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=2, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "项目立项", False), (1, "会议纪要", True), (0, "本期结论", True), (0, "发布检查", False)])
+    # 左：一段讨论
+    lx, ly, lw = ax + 284, ay + 88, 760
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 本周进展", F_B)
+    s.small(lx + 28, ly + 56, "3 条 · 王工 / 李工 / 赵工", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    msgs = [("王", "这周接口那半做完了。"),
+            ("李", "前端还差一层校验，明天补。"),
+            ("赵", "那我把发布检查那条线开起来。")]
+    yy = ly + 112
+    for who, text in msgs:
+        s.avatar(lx + 28, yy, who, fill=BLUE_BG, fg=BLUE)
+        s.t(lx + 76, yy + 8, text, F_S)
+        yy += 68
+    by = ly + (ah - 64 - 120) - 92
+    s.d.rounded_rectangle([lx + 28, by, lx + 340, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (lx + 184, by + 28), "把这段结论落成笔记", F_S, (255, 255, 255), "mm")
+    s.small(lx + 28, by + 68, "落成的是**正常笔记**，走既有的写入路径；原文回链可达。", MUT)
+    # 右：生成的笔记 + 两条“说真话”
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 420)
+    s.t(rx + 28, ly + 20, "生成的笔记（草稿）", F_B)
+    s.chip(rx + 250, ly + 18, "派生，非出处", PURPLE, PURPLE_BG, h=30)
+    yy = ly + 66
+    for line in ["一、本期只做「讨论」，不做独立聊天应用。",
+                 "二、评论要能回复，只做两层。",
+                 "三、讨论必须能一键落成笔记。"]:
+        s.t(rx + 28, yy, line, F_S)
+        s.small(rx + rw - 28, yy + 4, "回链 →", BLUE, "ra")
+        yy += 44
+    s.rule(rx + 28, ly + 250, rx + rw - 28)
+    s.small(rx + 28, ly + 270, "页脚：派生自「本周进展」讨论（3 条），非出处；源一改即标脏。", MUT)
+    s.d.rounded_rectangle([rx + 28, ly + 316, rx + 220, ly + 372], radius=10, fill=BLUE)
+    _emit(s.d, (rx + 124, ly + 344), "采用", F_S, (255, 255, 255), "mm")
+    s.d.rounded_rectangle([rx + 240, ly + 316, rx + 420, ly + 372], radius=10, fill=CARD, outline=LINE, width=2)
+    _emit(s.d, (rx + 330, ly + 344), "不采用", F_S, INK, "mm")
+    # 说真话
+    s.card(rx, ly + 448, rw, 300, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 470, "【注意】这条要说真话", F_B, AMBER)
+    s.t(rx + 28, ly + 516, "对方不在线时，这条消息等他回来才送达。", F_S)
+    s.rule(rx + 28, ly + 562, rx + rw - 28, fill=(232, 210, 160))
+    s.t(rx + 28, ly + 582, "⛔ 界面不显示「已送达」", F_S, RED)
+    s.small(rx + 28, ly + 622, "因为不承诺存储转发 → 服务端不存内容 → 它不该显示一个我们做不到的状态。", MUT)
+    s.small(rx + 28, ly + 660, "（同 §25.1「不许静默停更」：界面上不许说假话。）", MUT)
+    s.chip(56, 1360 - 34, "落成笔记走既有写入路径（⛔ 不新开写入口）", BLUE, BLUE_BG)
+    s.chip(500, 1360 - 34, "动作在客户端：服务端不需要懂这次讨论", GREEN, GREEN_BG)
+    s.chip(940, 1360 - 34, "⛔ 不显示「已送达」", RED, RED_BG)
+    return s.save("效果图-04-讨论落成笔记与说真话.png")
+
+
+def sheet5():
+    """⑤ 个人空间 vs 团队空间：顶栏按钮的差别（⭐ 个人空间没有「讨论」）。"""
+    s = Sheet("企业版 IM · 效果图 05",
+              "同一条顶栏，两种空间：个人空间没有「讨论」那颗（团队空间才有）—— 「通知」已并进讨论。")
+    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)]
+    SOLO = [("AI 助手", False, 0), ("目录", False, 0)]
+    w, h = 900, 660
+    lx, ly = 56, 230
+    s.app(lx, ly, w, h, space="产品研发 · 团队空间", online="3 人在线", other=2, tools=TEAM)
+    s.sidebar(lx, ly + 64, 240, h - 64, [(0, "项目立项", False), (1, "会议纪要", True), (0, "技术方案", False)])
+    s.t(lx + 264, ly + 90, "会议纪要 · 10-01", F_H)
+    s.t(lx + 264, ly + 148, "（笔记正文……）", F_S, MUT)
+    s.t(lx + 264, ly + 194, "在团队空间里，", F_S)
+    s.t(lx + 264, ly + 232, "顶栏只有「讨论」这一颗（通知已并进去）。", F_S)
+    s.chip(lx, ly + h + 22, "团队空间：有「讨论」", BLUE, BLUE_BG)
+    s.small(lx, ly + h + 66, "讨论挂在空间与页面上；@ 就在讨论线旁（空间切换器管跨空间）。", MUT)
+    rx, ry = 1044, 230
+    s.app(rx, ry, w, h, space="我的空间 · 个人空间", online="仅本机", tools=SOLO)
+    s.sidebar(rx, ry + 64, 240, h - 64, [(0, "读书笔记", True), (1, "摘录", False), (0, "随笔", False)])
+    s.t(rx + 264, ry + 90, "读书笔记", F_H)
+    s.t(rx + 264, ry + 148, "（笔记正文……）", F_S, MUT)
+    s.t(rx + 264, ry + 194, "个人空间里：", F_S)
+    s.t(rx + 264, ry + 232, "顶栏没有「讨论」。", F_S)
+    s.card(rx + 264, ry + 292, w - 288, 190, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 288, ry + 314, "【注意】为什么个人空间没有它", F_S, AMBER)
+    s.small(rx + 288, ry + 352, "一个人没有第二个人可以讨论；", MUT)
+    s.small(rx + 288, ry + 384, "而且个人空间是端到端加密的 ——", MUT)
+    s.small(rx + 288, ry + 416, "服务端读不到正文，讨论也放不上去。", MUT)
+    s.chip(rx, ry + h + 22, "个人空间：只有「AI 助手」「目录」", GREEN, GREEN_BG)
+    s.small(rx, ry + h + 66, "AI 助手仍可用（接本机或内网端点）；目录仍可用。", MUT)
+    s.card(56, 1180, 1888, 130, edge=BLUE, fill=BLUE_BG, lw=2)
+    s.t(84, 1206, "【要点】侧边工具条撤掉之后，功能全在顶端这一行 ——", F_B, BLUE)
+    s.t(84, 1256, "「AI 助手」「讨论」「目录」三颗；而个人空间只留「AI 助手」「目录」（讨论本来就不该出现在那里）。", F_S)
+    s.chip(56, 1360 - 34, "【禁】侧边工具条不再存在（功能全在顶栏）", RED, RED_BG)
+    s.chip(560, 1360 - 34, "个人空间没有「讨论」", GREEN, GREEN_BG)
+    s.chip(960, 1360 - 34, "【禁】仍然没有会话列表／聊天窗", RED, RED_BG)
+    return s.save("效果图-05-个人空间与团队空间-顶栏对照.png")
+
+
+def sheet6():
+    """⑥ 讨论线放进**左侧边栏**：常驻可见未读，切换就在侧边栏里（方案 A）。"""
+    s = Sheet("企业版 IM · 效果图 06",
+              "讨论线放进左侧边栏：不用先开面板就知道哪条线有新的；切换就在侧边栏顶部那一格。")
+    TEAM = [("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)]
+    ax, ay, aw, ah = 56, 190, 1888, 880
+    s.app(ax, ay, aw, ah, other=2, tools=TEAM)
+    sy, sh = ay + 64, ah - 64
+    sx, sw = ax, 320
+    s.d.rectangle([sx, sy, sx + sw, sy + sh], fill=(247, 248, 251))
+    s.d.line([sx + sw, sy, sx + sw, sy + sh], fill=LINE, width=1)
+    s.switch2(sx + 16, sy + 16, sw - 32, "页面", "讨论", "讨论")
+    s.small(sx + 20, sy + 72, "本空间 3 条讨论线")
+    rows = [("本周进展", "3", True, "最后一条 10:07 · 王工", 1),
+            ("问题清单", "0", False, "最后一条 09:41 · 李工", 0),
+            ("发布检查", "1", False, "最后一条 10:07 · 赵工", 0)]
+    yy = sy + 100
+    for name, n, cur, sub, ment in rows:
+        if cur:
+            s.d.rounded_rectangle([sx + 10, yy - 6, sx + sw - 14, yy + 66], radius=10, fill=BLUE_BG)
+        s.t(sx + 26, yy + 10, name, F_S, BLUE if cur else INK)
+        s.small(sx + 26, yy + 40, sub, MUT)
+        if ment:
+            # ⭐ @ 就地显示（owner 选「全并」后，@ 不再是一颗单独按钮 ✓）
+            s.chip(sx + sw - 132, yy + 6, "@你 1", AMBER, AMBER_BG, h=26)
+        if n != "0":
+            s.badge(sx + sw - 52, yy + 14, n)
+        else:
+            s.chip(sx + sw - 96, yy + 16, "已读完", MUT, GREY, h=28)
+        yy += 88
+    # ⭐ 在线（按空间 —— 只显示本空间的人；owner 2026-10-01 把「通知」并掉后它需要一个新的家）
+    py = yy + 16
+    s.small(sx + 20, py, "在线 · 只显示本空间")
+    for i, (ch, bg, fg) in enumerate([("王", BLUE_BG, BLUE), ("李", GREEN_BG, GREEN), ("赵", AMBER_BG, AMBER)]):
+        ax2 = sx + 24 + i * 46
+        s.avatar(ax2, py + 28, ch, d0=36, fill=bg, fg=fg)
+        s.d.ellipse([ax2 + 26, py + 52, ax2 + 36, py + 62], fill=GREEN, outline=(247, 248, 251))
+    s.small(sx + 24 + 3 * 46 + 4, py + 34, "均在本空间", MUT)
+    s.card(sx + 16, sy + sh - 120, sw - 32, 100, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(sx + 34, sy + sh - 100, "【注意】这里不是「会话列表」", F_XS, AMBER)
+    s.small(sx + 34, sy + sh - 68, "它是**本空间内**的导航；", MUT)
+    s.small(sx + 34, sy + sh - 44, "跨空间那种列表才是否掉的那个。", MUT)
+    # 右侧：选中那条线
+    mx, mw = ax + sw, aw - sw
+    # ⭐ 两级标签页「本页 ｜ 空间」（owner 2026-10-01 选 A）：页级线程与空间级线在这里切
+    s.switch2(mx + 32, sy + 14, 300, "本页", "空间", "空间")
+    s.small(mx + 356, sy + 30, "「本页」＝图 01 的页级线程；「空间」＝本空间的讨论线（就是左边列的这些）", MUT)
+    s.t(mx + 32, sy + 82, "本周进展", F_H)
+    s.chip(mx + 190, sy + 80, "空间级 · 所有人可见", GREEN, GREEN_BG, h=30)
+    s.small(mx + mw - 32, sy + 90, "切走时：按你拍的「点开即推进」把这条读掉", MUT, "ra")
+    s.rule(mx + 32, sy + 126, mx + mw - 32)
+    msgs = [("王", "10:02", "这周接口那半做完了。", BLUE_BG, BLUE),
+            ("李", "10:05", "前端还差一层校验，明天补。", GREEN_BG, GREEN),
+            ("赵", "10:07", "那我把发布检查那条线开起来。", AMBER_BG, AMBER)]
+    yy = sy + 152
+    for who, tm, text, bg, fg in msgs:
+        s.avatar(mx + 32, yy, who, fill=bg, fg=fg)
+        s.t(mx + 78, yy + 2, who + "工", F_S)
+        s.small(mx + 142, yy + 6, tm, MUT)
+        s.t(mx + 78, yy + 36, text, F_S)
+        yy += 100
+    by = sy + sh - 96
+    s.d.rounded_rectangle([mx + 32, by, mx + 304, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (mx + 168, by + 28), "把结论落成笔记", F_S, (255, 255, 255), "mm")
+    s.d.rounded_rectangle([mx + 324, by, mx + 564, by + 56], radius=10, fill=CARD, outline=LINE, width=2)
+    _emit(s.d, (mx + 444, by + 28), "标为已读", F_S, INK, "mm")
+    s.small(mx + 584, by + 28, "（兜底那颗：只是扫一眼时用它）", MUT, "lm")
+    # 底部：三种侧边栏装法对照
+    s.card(56, 1108, 1888, 218)
+    s.t(84, 1128, "【要点】侧边栏里怎么装这两样东西 —— 我画的是 A", F_B, BLUE)
+    bx = 96
+    for tag, desc, kind in [
+        ("A 顶部两级切换器（画的就是它）", "界线清楚；一眼看出现在是哪一级", "switch"),
+        ("B 同一列分两段", "两样都看得见；互相挤、都要滚", "split"),
+        ("C 混在页面树里", "【禁】得靠猜这条是页面还是讨论线", "mixed"),
+    ]:
+        s.card(bx, 1172, 592, 136, edge=BLUE if kind == "switch" else LINE,
+               fill=BLUE_BG if kind == "switch" else CARD, lw=2)
+        s.t(bx + 18, 1188, tag, F_XS, BLUE if kind == "switch" else INK)
+        s.small(bx + 18, 1216, desc, MUT)
+        # 缩略
+        tx, ty = bx + 18, 1244
+        s.d.rounded_rectangle([tx, ty, tx + 260, ty + 52], radius=8, fill=(247, 248, 251), outline=LINE, width=1)
+        if kind == "switch":
+            s.d.rounded_rectangle([tx + 8, ty + 8, tx + 252, ty + 28], radius=6, fill=(235, 238, 244))
+            s.d.rounded_rectangle([tx + 8, ty + 8, tx + 130, ty + 28], radius=6, fill=CARD, outline=LINE, width=1)
+            _emit(s.d, (tx + 60, ty + 18), "页面", F_XS, MUT, "mm")
+            _emit(s.d, (tx + 190, ty + 18), "讨论", F_XS, BLUE, "mm")
+            s.d.rounded_rectangle([tx + 8, ty + 34, tx + 252, ty + 46], radius=4, fill=BLUE_BG)
+        elif kind == "split":
+            s.d.rounded_rectangle([tx + 8, ty + 8, tx + 252, ty + 24], radius=4, fill=(235, 238, 244))
+            s.d.rounded_rectangle([tx + 8, ty + 30, tx + 252, ty + 46], radius=4, fill=BLUE_BG)
+        else:
+            for k in range(3):
+                s.d.rounded_rectangle([tx + 8, ty + 8 + k * 15, tx + 252, ty + 19 + k * 15], radius=4,
+                                      fill=BLUE_BG if k == 1 else (235, 238, 244))
+        bx += 616
+    return s.save("效果图-06-讨论线放进左侧边栏.png")
+
+
+def sheet7():
+    """⑦ ⭐ **agent 走进讨论线**（按**建议 A** 画：只读讨论 → 落成笔记；⛔ 不在讨论线里发言 ✗）。
+
+    ⚠️ owner 2026-10-02 原话是「**考虑**」⇒ 这张画的是**建议 A**（规格 §1.7 ✓），
+    ⛔ **不是**已拍 ✗；B（agent 发言／被 @）**特意没画** —— 它的前置（agent 是什么主体）**今天没定** ✗
+    （见本目录 README §3「特意没有画的东西」✓）。
+    """
+    s = Sheet("企业版 IM · 效果图 07",
+              "agent 走进讨论线（按【建议 A】画）：agent 只读讨论 → 落成笔记；⛔ 它不在讨论线里发言 ✗。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", False, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "接口那半", True), (0, "发布检查", False), (1, "前端校验", False), (0, "本周进展", False)])
+
+    # 左：一段讨论（⚠️ 里面**有一条是外部粘进来的** —— 那就是「注入面」✓）
+    lx, ly, lw = ax + 284, ay + 88, 800
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "4 条 · 王工 / 李工 / 赵工", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 108
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这周接口那半做完了，只剩校验那一层。", F_S)
+    yy += 62
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "前端那层我明天补；今天先把字段名对齐。", F_S)
+    yy += 62
+    # ⭐ 外部粘进来的那一条：**带来源标记** ＋ agent 侧**降权**
+    s.avatar(lx + 28, yy, "赵", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "我贴一段外面的说明过来：", F_S)
+    s.chip(lx + lw - 250, yy + 4, "外部抓来的内容", AMBER, AMBER_BG, h=30)
+    yy += 44
+    s.card(lx + 76, yy, lw - 132, 96, edge=AMBER, fill=AMBER_BG, r=10, lw=2)
+    s.t(lx + 96, yy + 18, "（从网页粘进来的一段说明 —— 来源已标，agent 侧降权）", F_S, AMBER)
+    s.small(lx + 96, yy + 54, "⛔ 它不当指令用 ✗", RED)
+    yy += 130
+    s.rule(lx + 28, yy, lx + lw - 28)
+    s.t(lx + 28, yy + 18, "agent 的动作（在客户端发起）", F_B)
+    s.small(lx + 28, yy + 54, "⛔ agent 不在这条讨论线里发言 ✗ —— 它只把结论落成笔记 ✓", MUT)
+    # ⭐ 按钮紧贴动作区（⛔ 不钉在卡片底 —— 那会在中间留一大片空 ✗）
+    by = yy + 96
+    s.d.rounded_rectangle([lx + 28, by, lx + 396, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (lx + 212, by + 28), "让 AI 读这条讨论 → 落成笔记", F_XS, (255, 255, 255), "mm")
+    s.small(lx + 28, by + 68, "动作在**客户端**：⛔ 服务端不需要懂这次讨论（那条不变式的注入就是「服务端生成摘要 ⇒ 红」）。", MUT)
+    # 再把这条边界**画在讨论线里**：agent 没有发言（⛔ 不是漏画 ✗）
+    s.rule(lx + 28, by + 118, lx + lw - 28)
+    s.small(lx + 28, by + 138, "（这条讨论线里**没有** AI 的消息 —— 按建议 A，agent 只读、不发言 ✗）", MUT)
+    s.small(lx + 28, by + 170, "（要让它发言＝B 方：先拍「agent 是什么主体」，见规格 §1.7 ✓）", MUT)
+
+    # 右：模型来源（说真话）＋ AI 落成的笔记
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 216, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 20, "【注意】这条要说真话", F_B, AMBER)
+    s.t(rx + 28, ly + 62, "模型来源：未声明 → 记作 unknown", F_S, AMBER)
+    s.rule(rx + 28, ly + 100, rx + rw - 28, fill=(232, 210, 160))
+    s.small(rx + 28, ly + 118, "⛔ 不许默认显示「本机模型 / 安全」✗（未声明就是 unknown ✓）", MUT)
+    s.small(rx + 28, ly + 150, "⚠️ 「模型在本机」≠「内容不出本机」：agent 仍可能联网", MUT)
+    s.small(rx + 28, ly + 180, "⇒ 本机/云端的标记必须与联网提醒**同屏** ✓", MUT)
+
+    s.card(rx, ly + 248, rw, 440)
+    s.t(rx + 28, ly + 268, "AI 落成的笔记（草稿）", F_B)
+    s.chip(rx + 28 + s.d.textlength("AI 落成的笔记（草稿）", font=F_B) + 20, ly + 266,
+           "派生，非出处", PURPLE, PURPLE_BG, h=30)
+    yy = ly + 322
+    s.avatar(rx + 28, yy - 6, "AI", d0=34, fill=PURPLE_BG, fg=PURPLE)
+    s.t(rx + 74, yy, "署名：AI 助手（agent）· ⛔ 不冒充人 ✗", F_S, PURPLE)
+    yy += 52
+    for line in ["一、接口那半已完成，只剩校验一层。",
+                 "二、字段名今天对齐；校验明天补。",
+                 "三、外面的那段说明只作参考，不当依据。"]:
+        s.t(rx + 28, yy, line, F_S)
+        s.small(rx + rw - 28, yy + 4, "回链 →", BLUE, "ra")
+        yy += 44
+    s.rule(rx + 28, ly + 560, rx + rw - 28)
+    s.small(rx + 28, ly + 578, "页脚：派生自「接口那半」讨论（4 条），非出处；源一改即标脏。", MUT)
+    s.d.rounded_rectangle([rx + 28, ly + 618, rx + 220, ly + 674], radius=10, fill=BLUE)
+    _emit(s.d, (rx + 124, ly + 646), "采用", F_S, (255, 255, 255), "mm")
+    s.d.rounded_rectangle([rx + 240, ly + 618, rx + 420, ly + 674], radius=10, fill=CARD, outline=LINE, width=2)
+    _emit(s.d, (rx + 330, ly + 646), "不采用", F_S, INK, "mm")
+
+    # 尾部四颗：把这张图**守着的边界**写出来 ✓
+    s.chip(56, 1360 - 34, "动作在客户端：服务端不需要懂这次讨论", GREEN, GREEN_BG)
+    s.chip(720, 1360 - 34, "⛔ agent 不在讨论线里发言（建议 A；B 待拍）", RED, RED_BG)
+    s.chip(1400, 1360 - 34, "模型来源：未声明 ⇒ unknown", AMBER, AMBER_BG)
+    s.chip(56, 1400 - 34, "外部抓来的内容：带来源标记 ＋ 降权（⛔ 不当指令用）", AMBER, AMBER_BG)
+    s.chip(820, 1400 - 34, "能力面限「笔记域」；⛔ 不许 host／global ✗", BLUE, BLUE_BG)
+    s.chip(1460, 1400 - 34, "⛔ 不为用 agent 而关掉加密 ✗", RED, RED_BG)
+    return s.save("效果图-07-agent走进讨论线-只读落成笔记.png")
+
+
+def sheet8():
+    """⑧ **内置 agent 的形状（A1：一个空间成员）**（owner 2026-10-02 拍 ✓）。
+
+    ⭐ 它**有自己的身份**：成员列表里看得见、审计里能区分、**移除即失效**（那条不变式自动适用 ✓）。
+    ⛔ 特意画出两件：**在线依赖要如实说**（agent 不是 24 小时服务 ✓）＋ **防自激** ✓。
+    """
+    s = Sheet("企业版 IM · 效果图 08",
+              "内置 agent（A1）：是一个【空间成员】—— 有自己的身份与角色；移除即失效；在线依赖必须如实说。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "成员（4）", False), (1, "王工 · 人", False), (1, "李工 · 人", False),
+        (1, "AI 助手 · agent", True)])
+    lx, ly, lw = ax + 284, ay + 88, 800
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "成员：王工 / 李工 / AI 助手（agent）", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 108
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这周接口那半做完了，只剩校验那一层。", F_S)
+    yy += 66
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "@AI 助手 帮我把这两条挂到今天的清单上。", F_S)
+    yy += 66
+    # ⭐ agent 以**自己的身份**发言
+    s.avatar(lx + 28, yy, "AI", fill=PURPLE_BG, fg=PURPLE)
+    s.t(lx + 76, yy + 6, "AI 助手（agent）", F_S, PURPLE)
+    s.chip(lx + 320, yy + 2, "agent 身份", PURPLE, PURPLE_BG, h=28)
+    s.t(lx + 76, yy + 38, "收到：接口那半 → 已完成；校验那层 → 明天。已挂到今天的清单。", F_S)
+    yy += 108
+    s.rule(lx + 28, yy, lx + lw - 28)
+    s.small(lx + 28, yy + 16, "⛔ 它**只被 @ 才答**，不主动插话 ✗；且它的回复**不会再触发它自己**（防自激 ✓）", MUT)
+    s.small(lx + 28, yy + 48, "⛔ 界面上**不显示**「已送达」这类我们保证不了的状态 ✗", MUT)
+    by = yy + 92
+    s.d.rounded_rectangle([lx + 28, by, lx + 396, by + 56], radius=10, fill=BLUE)
+    _emit(s.d, (lx + 212, by + 28), "@AI 助手 落成笔记", F_XS, (255, 255, 255), "mm")
+    s.small(lx + 28, by + 70, "（动作仍在客户端发起 ✓ —— 服务端不需要懂这次讨论 ✓）", MUT)
+
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 250)
+    s.t(rx + 28, ly + 20, "它是什么身份（A1 的口径）", F_B)
+    for i, line in enumerate([
+            "· 它是**成员**：有自己的 role，⛔ 不继承某人的权限 ✗",
+            "· 审计能区分「人／插件／外部 Agent」→ 三条都要能查到 ✓",
+            "· ⭐ **移除即失效**：把它移出空间 ⇒ 实时流与写入立刻不可用 ✓",
+            "   （那条不变式**不用重写**，直接适用 ✓）"]):
+        s.t(rx + 28, ly + 66 + i * 40, line, F_S, MUT if line.startswith("   ") else INK)
+
+    s.card(rx, ly + 282, rw, 300, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 302, "【注意】这条要说真话", F_B, AMBER)
+    s.t(rx + 28, ly + 346, "AI 要等某人设备在线才答得上。", F_S, AMBER)
+    s.rule(rx + 28, ly + 388, rx + rw - 28, fill=(232, 210, 160))
+    s.small(rx + 28, ly + 406, "⛔ agent **不是 24 小时服务** ✗（我们没有服务端推理 ✓）", MUT)
+    s.small(rx + 28, ly + 438, "⇒ 没人在线时**没人应** ⇒ 界面**不许装作「AI 马上会回」** ✗", MUT)
+    s.small(rx + 28, ly + 470, "（＝ `INV-IM-offline-never-lies`：不承诺存储转发 ✓）", MUT)
+
+    s.chip(56, 1326, "A1：agent 是成员 ⇒ 移除即失效自动成立", GREEN, GREEN_BG)
+    s.chip(700, 1326, "⛔ 防自激：agent 的回复不得再触发它自己／别的 agent", RED, RED_BG)
+    s.chip(1500, 1326, "审计要能区分三类主体", BLUE, BLUE_BG)
+    s.chip(56, 1366, "在线依赖如实说：没人在线就没人应", AMBER, AMBER_BG)
+    s.chip(760, 1366, "⛔ 不显示「已送达」", RED, RED_BG)
+    s.chip(1240, 1366, "@ 触发，⛔ 不主动插话 ✗", BLUE, BLUE_BG)
+    return s.save("效果图-08-agent作为空间成员-A1.png")
+
+
+def sheet9():
+    """⑨ **外部 agent 的接法「甲」：借某个成员的身份**（owner 2026-10-02 在 §1.8 拍的 ✓）。
+    ⚠️ 它**不再**是「对照／未选」✗ —— §1.8 之后它管的是**外部 agent**（WorkBuddy／DSH ✓）。
+
+    ⚠️ 它**借那个人的通道**发言 ⇒ 署名是那个人，**但必须标「由 AI 生成」** ✗ 否则留痕坏 ✓。
+    ⭐ 画的是"**人机可区分**"这件事：同一条消息，署名 ＋ 生成者**两个字段都在** ✓。
+    """
+    s = Sheet("企业版 IM · 效果图 09",
+              "外部 agent（甲）：借某个成员的【身份】—— 署名是该成员 ＋ 标「由 AI 生成」＋ 标是哪个外部 agent。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "成员（3）", False), (1, "王工 · 人", False),
+        (1, "李工 · 人（带 AI 助手）", True), (0, "AI 助手 · 李工的", False)])
+    lx, ly, lw = ax + 284, ay + 88, 800
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "成员：王工 / 李工（AI 助手挂在李工名下 ✓）", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 108
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这两条结论谁记一下？", F_S)
+    yy += 70
+    # ⭐ 署名是**李工**，但带「由 AI 生成」标
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 6, "李工", F_S)
+    s.chip(lx + 150, yy + 2, "由 AI 生成", PURPLE, PURPLE_BG, h=28)
+    s.chip(lx + 320, yy + 2, "李工已确认", GREEN, GREEN_BG, h=28)
+    s.t(lx + 76, yy + 38, "我记好了：接口那半已完成；校验明天补。", F_S)
+    yy += 108
+    s.rule(lx + 28, yy, lx + lw - 28)
+    s.t(lx + 28, yy + 16, "王工：这条是你说的，还是你 AI 说的？", F_S)
+    s.small(lx + 28, yy + 56, "⇒ 界面**必须答得出来** ✓：点开这条 ⇒ 署名=李工，生成者=AI 助手（agent）✓", GREEN)
+    by = yy + 118
+    s.card(lx + 28, by, lw - 56, 150, edge=AMBER, fill=AMBER_BG, r=10, lw=2)
+    s.t(lx + 52, by + 18, "【注意】甲 的硬要求", F_B, AMBER)
+    s.small(lx + 52, by + 54, "⛔ **必须标「由 AI 生成」** ✗ —— 不标就分不清：", MUT)
+    s.small(lx + 52, by + 84, "「人说的」还是「人的 AI 说的」 ⇒ 留痕坏 ✗", MUT)
+    s.small(lx + 52, by + 116, "⇒ 两个字段都要进审计：**署名（谁）＋ 生成者（谁造的）** ✓", MUT)
+
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 300)
+    s.t(rx + 28, ly + 20, "它用的是谁的权限（A2 的口径）", F_B)
+    for i, line in enumerate([
+            "· **＝ 那个人的权限** ✓（他能看的，它才能看 ✓）",
+            "   ⇒ 密级／小组**自动适用**，⛔ 不用另做一套 ✗",
+            "· 人一走／被移出 ⇒ **它那条通道也没了** ✓",
+            "   （不需要单独撤 agent ✓ 撤人即撤它 ✓）",
+            "· ⛔ 但**责任归属要清楚** ✗：发言者是李工，",
+            "   生成者是 AI ⇒ 两个字段都要留痕 ✓"]):
+        s.t(rx + 28, ly + 66 + i * 38, line, F_S, MUT if line.startswith("   ") else INK)
+
+    s.card(rx, ly + 332, rw, 250, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 352, "【注意】这条接法特有的两个风险", F_B, AMBER)
+    s.small(rx + 28, ly + 398, "① ⛔ **自激**：它写的东西可能又被它读到 ⇒ 越滚越多 ✗", MUT)
+    s.small(rx + 28, ly + 430, "   ⇒ 必须有一条「不许触发自己」的规则 ✓", MUT)
+    s.small(rx + 28, ly + 466, "② ⚠️ **注入**：它写出来的内容会被别人当指令 ⇒", MUT)
+    s.small(rx + 28, ly + 498, "   它的输出也要带来源标记（谁生成 ＋ 模型来源）✓", MUT)
+
+    s.chip(56, 1326, "甲：署名是该成员 ＋ ⛔ 必须标「由 AI 生成」", PURPLE, PURPLE_BG)
+    s.chip(760, 1326, "权限＝那个人的权限 ⇒ 密级／小组自动适用", GREEN, GREEN_BG)
+    s.chip(1520, 1326, "撤人即撤它（不用单独撤 agent）", GREEN, GREEN_BG)
+    s.chip(56, 1366, "⛔ 自激要防：不许触发自己", RED, RED_BG)
+    s.chip(620, 1366, "输出也要带来源标记（防注入）", AMBER, AMBER_BG)
+    s.chip(1320, 1366, "审计留两个字段：署名 ＋ 生成者", BLUE, BLUE_BG)
+    return s.save("效果图-09-外部agent借成员身份-甲.png")
+
+
+def sheet10():
+    """⑩ ⭐ **三个 agent 在一条讨论线里并存**（内置 ＋ WorkBuddy ＋ DSH，都在李工本机）。
+    按规格 §1.8（owner 2026-10-02 拍：**甲 ＋ 能发言** ✓）。
+    ⛔ **最要紧的一格**：一个 agent 想回另一个 agent 的话 ⇒ **被挡下** ✗（防自激 ✓）。
+    """
+    s = Sheet("企业版 IM · 效果图 10",
+              "三个 agent 并存（内置 ＋ WorkBuddy ＋ DSH，都在李工本机）：三个标记 ＋ ⛔ agent 不许触发 agent ✗。")
+    ax, ay, aw, ah = 56, 190, 1888, 1150
+    s.app(ax, ay, aw, ah, other=0, tools=[("AI 助手", True, 0), ("讨论", True, 0), ("目录", False, 0)])
+    s.sidebar(ax, ay + 64, 260, ah - 64, [
+        (0, "成员（3）", False), (1, "王工 · 人", False), (1, "李工 · 人", False),
+        (1, "AI 助手 · agent", True)])
+
+    lx, ly, lw = ax + 284, ay + 88, 860
+    s.card(lx, ly, lw, ah - 64 - 120)
+    s.t(lx + 28, ly + 20, "讨论 · 接口那半", F_B)
+    s.small(lx + 28, ly + 56, "成员：王工（人）／李工（人 ＋ 两个外部 agent）／AI 助手（内置 agent）", MUT)
+    s.rule(lx + 28, ly + 88, lx + lw - 28)
+    yy = ly + 104
+    s.avatar(lx + 28, yy, "王", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 8, "这两条结论谁记一下？", F_S)
+    yy += 62
+    # ⭐ 内置 agent：自己的身份
+    s.avatar(lx + 28, yy, "AI", fill=PURPLE_BG, fg=PURPLE)
+    s.t(lx + 76, yy + 4, "AI 助手（agent）", F_S, PURPLE)
+    s.chip(lx + 300, yy, "内置 · 自己的身份", PURPLE, PURPLE_BG, h=28)
+    s.t(lx + 76, yy + 36, "我记了：接口那半已完成；校验明天补。", F_S)
+    yy += 96
+    # ⭐ 外部 agent（甲）：署李工的名 ＋ 三个标记
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 4, "李工", F_S)
+    s.chip(lx + 130, yy, "由 WorkBuddy 生成", PURPLE, PURPLE_BG, h=28)
+    s.chip(lx + 330, yy, "模型：云端", AMBER, AMBER_BG, h=28)
+    s.t(lx + 76, yy + 36, "我也整理了一份要点，已挂到今天的清单。", F_S)
+    yy += 96
+    s.avatar(lx + 28, yy, "李", fill=BLUE_BG, fg=BLUE)
+    s.t(lx + 76, yy + 4, "李工", F_S)
+    s.chip(lx + 130, yy, "由 DSH 生成", PURPLE, PURPLE_BG, h=28)
+    s.chip(lx + 300, yy, "模型：本机", GREEN, GREEN_BG, h=28)
+    s.t(lx + 76, yy + 36, "发布检查那条我开起来了。", F_S)
+    yy += 100
+    # ⛔ 最要紧的一格：agent 想回 agent ⇒ 被挡
+    s.card(lx + 28, yy, lw - 56, 118, edge=RED, fill=RED_BG, r=10, lw=2)
+    s.t(lx + 52, yy + 16, "【禁】这一条被挡下了", F_B, RED)
+    s.small(lx + 52, yy + 54, "AI 助手 想回 WorkBuddy 那一条 ⇒ **不生成新回复** ✗", MUT)
+    s.small(lx + 52, yy + 86, "（＝ agent 不许触发 agent：三个并存时最容易撞的那条 ✓）", MUT)
+
+    rx, rw = lx + lw + 48, aw - lw - 48 - 284 - 24
+    s.card(rx, ly, rw, 262)
+    s.t(rx + 28, ly + 20, "⭐ 三个标记（外部 agent 必须有）", F_B)
+    for i, line in enumerate([
+            "① **署名**：谁说的（李工 ✓）",
+            "② **生成者**：谁造的（WorkBuddy ／ DSH ✓）",
+            "③ **模型来源**：本机／云端／unknown ✓",
+            "   ⇒ 否则「三个 agent ＋ 一个人」混在一条线上",
+            "     **分不出来** ✗（＝ INV-KB-audit-subject ✓）"]):
+        s.t(rx + 28, ly + 66 + i * 36, line, F_S, MUT if line.startswith("   ") else INK)
+
+    s.card(rx, ly + 294, rw, 210, edge=AMBER, fill=AMBER_BG, lw=2)
+    s.t(rx + 28, ly + 314, "【注意】两条要说真话", F_B, AMBER)
+    s.small(rx + 28, ly + 356, "① **同一条命**：三个都在**李工本机** ⇒ 那台一关，", MUT)
+    s.small(rx + 28, ly + 386, "   三个**全都没了** ⇒ 界面说「要等李工设备在线」✓", MUT)
+    s.small(rx + 28, ly + 422, "② **明文出了 App 的边界**：外部 agent 走桥 ✓", MUT)
+    s.small(rx + 28, ly + 452, "   ⇒ 若它再上云就是**内容出本机** ⇒ 必须**同屏**提醒 ✓", MUT)
+
+    s.card(rx, ly + 526, rw, 176)
+    s.t(rx + 28, ly + 546, "权限宽窄不一样（别混）", F_B)
+    s.small(rx + 28, ly + 588, "· 内置 agent ＝**自己的 role** ✓（可以更窄 ✓）", MUT)
+    s.small(rx + 28, ly + 620, "· 外部 agent ＝**李工的全部权限** ✓（更宽 ✗）", MUT)
+    s.small(rx + 28, ly + 656, "  ⇒ 密级／小组**自动适用** ✓（不用另做一套 ✓）", MUT)
+
+    s.chip(56, 1326, "⛔ agent 不许触发 agent（三个并存最容易撞）", RED, RED_BG)
+    s.chip(760, 1326, "外部 agent 三个标记：署名＋生成者＋模型来源", PURPLE, PURPLE_BG)
+    s.chip(1600, 1326, "内置＝自己的 role；外部＝李工的全部", BLUE, BLUE_BG)
+    s.chip(56, 1366, "同一条命：李工的设备一关，三个全没", AMBER, AMBER_BG)
+    s.chip(700, 1366, "明文出 App 边界 ⇒ 同屏提醒", AMBER, AMBER_BG)
+    s.chip(1300, 1366, "加密空间只有「甲」走得通（桥借已解锁会话）", GREEN, GREEN_BG)
+    return s.save("效果图-10-三个agent并存-防自激.png")
+
+
+if __name__ == "__main__":
+    sheet1(); sheet2(); sheet3(); sheet4(); sheet5(); sheet6(); sheet7(); sheet8(); sheet9(); sheet10()
+    if ALL_BAD:
+        print("\n⛔ 有图缺字形 ⇒ 非零退出（⛔ 不许静默）")
+        for name, bad in ALL_BAD:
+            print("   · %s：%s" % (name, " ".join(bad)))
+        raise SystemExit(1)
+    print("\n**十张**全部干净 ✓")

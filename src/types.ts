@@ -557,6 +557,32 @@ export interface BlockBacklink {
   kind: string;
 }
 
+/**
+ * S3 第三片：一处**块级**变化 ✓。
+ * `kind` 是这三个字符串，与桌面 `src-tauri/src/activity.rs` **逐字相同** ✓。
+ */
+export interface ActivityBlockChange {
+  blockId: string;
+  kind: "added" | "edited" | "removed";
+  /** 该块纯文本的**首行**（截断 ✓）—— 界面上说「这一段改了」靠它 ✓（块 id 只在 tooltip 里 ✓）。 */
+  label: string;
+}
+
+/**
+ * S3 第三片：一条**页面活动**（页面级一行 ＋ 块级明细 ✓）。
+ * ⚠️ `atMs` 是**时间戳** —— 分天**不在这里**做：时间口径只有一处（前端 `TIMELINE_DAY_BUCKET` ✓）。
+ * ⚠️ 字段名是 camelCase ✓ —— 与桌面那两个结构体的 `#[serde(rename_all = "camelCase")]` 对齐 ✓
+ * （本仓是混的：`PageBlock`／`BlockBacklink` 那几条走 snake_case，`SearchResult` 这条走 camelCase；
+ *  新命令挑 camelCase，并把这条**写进类型注释**，免得下一个人照着别的命令抄错 ✗）。
+ */
+export interface ActivityEvent {
+  pageId: string;
+  title: string;
+  atMs: number;
+  op: string;
+  changes: ActivityBlockChange[];
+}
+
 export interface GraphProp {
   name: string;
   value: string;

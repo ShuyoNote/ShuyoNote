@@ -343,6 +343,26 @@ export const FIXTURES: readonly ExtractFixture[] = [
     expect: { ok: false, code: "encrypted" },
   },
   {
+    id: "kreuzberg/未注入-如实说抽不了",
+    pins: "**未注入 `deps.kreuzbergExtract` ⇒ `provider_error`**：不许抛穿、不许自建客户端 —— 与 `convertLegacy` 同一条口径（§15.3-7）。默认不给 `deps`，这条就自动钉住 ✓",
+    extractor: "kreuzberg.p0@1",
+    filename: "会议邀请.eml",
+    mime: "message/rfc822",
+    make: () => strToU8("From: a@example.com\r\nSubject: 会议邀请\r\n\r\n正文在这"),
+    expect: { ok: false, code: "provider_error" },
+  },
+  {
+    id: "kreuzberg/注入后-纯文本段",
+    pins: "注入后**只回文本**：`kind=text`、`loc` 空串（本族**没有**页/行级定位 —— ⛔ 不编造定位 ✓）",
+    extractor: "kreuzberg.p0@1",
+    filename: "会议资料.zip",
+    mime: "application/zip",
+    // ⚠️ 夹具的字节只为"输入自足"存在：注入的实现**按契约不看它**（同 rasterize 对 bytes 的约定 ✓）
+    make: () => strToU8("PK\u0003\u0004 夹具占位（实现不看它）"),
+    deps: { kreuzbergExtract: async () => ({ text: "会议纪要：预算与排期都定了", engine: "夹具" }) },
+    expect: { ok: true, kinds: ["text"], contains: ["预算与排期"], locs: [""] },
+  },
+  {
     id: "ooxml/不是-zip",
     pins: "**unsupported ≠ corrupt**：不是 zip 就该让调度器去换一个抽取器",
     extractor: "ooxml.docx@1",

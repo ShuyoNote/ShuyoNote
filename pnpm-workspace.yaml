@@ -29,3 +29,5 @@ minimumReleaseAgeExclude:
   - '@lexical/utils@0.50.0'
   - '@lexical/yjs@0.50.0'
   - lexical@0.50.0
+patchedDependencies:
+  '@lexical/table@0.50.0': patches/@lexical__table@0.50.0.patch

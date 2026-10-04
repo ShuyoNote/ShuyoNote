@@ -1,7 +1,20 @@
 mod ai;
+// S3 第三片：**块级活动明细**（只读 ✓）—— 由相邻两条同步载荷算「哪几段被新增/改过/删掉」✓；
+// 时间分桶仍归前端那**一处**口径（`src/lib/kbTimeline.ts` 的 `TIMELINE_DAY_BUCKET`）✓。
+mod activity;
+// MCP 宿主面那半「本机通道」（方向②：桥 → App，App 当服务端 ✓）—— **默认关** ✓，
+// 详见 `mcp_channel.rs` 头部与判据 `scripts/check-mcp-host-channel.mjs` ✓。
+mod mcp_channel;
 mod community;
 mod community_publish;
 mod attachments;
+// 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
+// sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
+mod abilities;
+// P0 格式引擎（Kreuzberg v4.10.x，MIT ✓）—— 补 eml/msg/zip/rtf/odt/epub/学术格式那一类；
+// ⛔ 只返回文本、**不写派生表**（派生表唯一写入者仍是 `src/lib/extract/` ✓）。
+// ⚠️ 特性集不含 `chunking`（与 boa_engine 的 icu 依赖互斥 ✗ 实测；见 `Cargo.toml` 注释 ✓）。
+mod extract_kz;
 mod backlinks;
 mod backup;
 mod block_rev;
@@ -65,6 +78,11 @@ mod mesh_sim;
 // ⚠️ 收据已撤（2026-09-25，③-b-2b）：设置面（`mesh_set_config`）与同步面（`mesh_sync_now`）
 // 两条命令都在 `generate_handler!` 里 ⇒ 这一层**没有只服务判据的死代码**了。
 mod mesh;
+// 评估用探针（2026-09-30）：量一次**真实网格窗口**的 `/mesh/pull` 在线上多少字节。
+// ⚠️ 它必须待在 crate 内（`mod mesh` 是私有的 ⇒ 外部 crate 拿不到 `start`/`MeshConfig`）；
+//    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。
+#[cfg(test)]
+mod mesh_wire_bytes;
 // 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。
 // ⚠️ 本步**只落格式与判据、不接线**：现有 `encryption_enabled` / `key_space_conn` / `encrypt_payload`
 // 一字不动（按空间是第 1 步、同步闸门是第 2 步）。见 `docs/plans/2026-09-23-keyring-step0-workorder.md`。
@@ -133,6 +151,9 @@ pub mod plugin_host;
 mod plugin_index;
 mod plugin_validate;
 mod plugins;
+// MCP **宿主面**（M1 · Task 5；R106=A：**进程内模块** ✓）：外部会话那一路**只**把调用转交给
+// 唯一鉴权点 `plugins::dispatch_capability` ✓（自开库/自判权限由 `check-mcp-host-authz` 挡 ✓）。
+mod mcp_host;
 mod properties;
 mod search;
 // 派生文本层的**唯一运输通道**（桌面）：TS 的索引代码靠它把 `attachment_text`/`chunks` 写进
@@ -443,6 +464,18 @@ pub fn run() {
             if let Err(e) = lan_state::start(app.handle().clone()) {
                 eprintln!("[lan] 发现层没起来（同步不受影响，照旧走配置地址）：{e}");
             }
+            // 方向②（桥 → App，App 当服务端）的**宿主面那半通道**（2026-10-01 ✓，Task 5 笔记 §8）：
+            // ⚠️ **默认关**（`mcp_channel::MCP_CHANNEL_ENABLED = false` ✓）⇒ 只有显式
+            // `SHUYONOTE_MCP_SWITCH=on`**且** `SHUYONOTE_MCP_TOKEN_FILE` 可读时才真起监听 ✓；
+            // 起来了也只绑 `127.0.0.1`（临时端口 ✓）＋ 每次会话一次性令牌 ✓ ⇒ 出不了本机 ✓。
+            // 与上面那条同一条纪律：**起不来不挡应用**（只是这条通道不通 ✓）—— 但要**说清**（否则
+            // "开关开了却没作用"会一点线索都没有 ✓）。
+            if mcp_channel::resolve_config().is_some() {
+                match mcp_channel::start_if_enabled() {
+                    Some(addr) => println!("[mcp] 宿主面通道已起：{addr}（只绑回环 ✓，端口已写到公布文件 ✓）"),
+                    None => eprintln!("[mcp] 通道开关是开的，但监听没起来（端口被占？）—— 这条通道不通 ✓"),
+                }
+            }
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
             // 会节流 JS timer，所以放在 Rust 侧做）。**桌面专属**，见 mod email 的说明。
             #[cfg(desktop)]
@@ -522,6 +555,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            abilities::save_ability_pack,
+            storage::cleanup_orphan_derived,
+            extract_kz::extract_with_kreuzberg,
             commands::list_pages,
             commands::list_workspace_pages,
             workspaces::list_workspaces,
@@ -534,6 +570,8 @@ pub fn run() {
             workspaces::rename_workspace,
             workspaces::set_workspace_settings,
             commands::get_page,
+            // S3 第三片：**只读**活动明细（页面级 ＋ 块级 ✓）—— 与 Web 侧同口径实现 ＋ CommandMap 三方对齐 ✓
+            activity::activity_feed,
             commands::create_page,
             commands::create_folder,
             // 聚合邮箱命令：**桌面专属**（与 mod email 同一条边界）。移动端这些命令**不存在**，
@@ -708,19 +746,18 @@ pub fn run() {
             // （`POST /sync/lineage-claim`）、同口径。接上它之后这条命令才不是"web 专属"
             // （`scripts/check-web-commands.mjs` 的 `WEB_ONLY_COMMANDS` 已相应撤回）。
             sync::claim_page_lineage,
-            // 隐私边界 ③ 0b（2026-09-24）：**公开材料的推 / 取** —— 换设备时只凭主口令解开自己的空间。
-            // ⚠️ 推上去的是"钥匙袋"里**可以公开的那一半**（盐 / KDF 参数 / 被口令包裹的盒子），
-            //    服务端解不开它；它仍然是**元数据**（服务端能看到你有几个盒子、它们的本地空间 id）。
-            // ⚠️ 桌面专属？**不是** —— 但 Web 侧今天没有实现（钥匙柜在 Web 上不存在），
-            //    所以这两条与按空间加解密一起登记为**桌面专属**（`check-web-commands` 的
-            //    `DESKTOP_ONLY_COMMANDS`，理由写在那里）。
-            sync::push_space_keyring,
-            sync::pull_space_keyring,
             // B 片 ①-a（2026-09-25）：换设备的**文本搬运**（复制/粘贴、存/读文件）。
             // 同样是**桌面专属**：Web 上没有钥匙柜，也就没有"公开材料"可搬
             // （理由写在 `check-web-commands` 的 `DESKTOP_ONLY_COMMANDS` 里）。
             sync::pairing_export,
             sync::pairing_import,
+            // ⭐ T3（2026-10-01）：**设备直连配对**两条 —— 与上面那两条**不是同一件事** ✓
+            // （上面搬钥匙袋公开材料；这两条搬"接到哪台设备"：地址 ＋ 窗口口令 ✓）。
+            // ⚠️ 载荷**含窗口口令** ⇒ 也是桌面专属（Web 侧没有发现层与窗口 ✓）。
+            sync::device_pair_export,
+            // ⭐ U11/T5：**逐台解除**（只踢那一台 ✓）
+            sync::device_unpair,
+            sync::device_pair_import,
             sync::list_sync_history,
             sync::clear_sync_history,
             sync::team_list_orgs,

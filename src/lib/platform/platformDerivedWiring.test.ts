@@ -27,6 +27,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 }));
 
 import { tauriPlatform } from "./tauri";
+import { platform } from "./index";
 
 describe("platform.derivedStores（桌面装配）", () => {
   beforeEach(() => {
@@ -47,5 +48,26 @@ describe("platform.derivedStores（桌面装配）", () => {
     await stores.chunks.stats();
     expect(invoked[1].cmd).toBe("derived_query");
     expect((invoked[1].args?.query as { op: string }).op).toBe("chunkStats");
+  });
+});
+
+// ⚠️⚠️ **2026-10-02 补：只测"实现"不够，还得测"门面转发"** ✗
+// 来由（真机端到端才发现）：`index.ts` 的聚合门面 `platform` **漏了 `derivedStores` 这个 getter** ⇒
+// 不管底层是 `tauriPlatform` 还是 `createWebPlatform()`（两者**都有** ✓），
+// `platform.derivedStores?.()` **永远是 `undefined`** ⇒ 症状是「设置 → AI」报
+// 「这个平台不提供派生层」＋「开始索引」按钮不提供 ⇒ **抽取/索引/切块整条静默不可用** ✓
+// ⚠️ 而**上面两条判据全绿、`tsc` 也不报错**（`?.` 把 undefined 吞了 ✓）——
+//    这正是本仓最防的"不炸不报错"那类 ✓ ⇒ 所以再补一条**结构性**的：
+//    门面必须转发 `Platform` 的**每一个**字段（漏一个 = 又一条静默不可用的链 ✓）。
+describe("platform 门面 · **转发完整性**（漏一个字段 = 静默不可用）", () => {
+  it("门面的字段集合必须与实现**逐个相同**（含 getter —— 对象字面量的 getter 可枚举 ✓）", () => {
+    const implKeys = Object.keys(tauriPlatform).sort();
+    const facadeKeys = Object.keys(platform).sort();
+    expect(facadeKeys).toEqual(implKeys);
+  });
+
+  it("⭐ `derivedStores` 具体这条：门面拿到的是一个函数（不只是实现里有）", () => {
+    expect("derivedStores" in platform).toBe(true);
+    expect(typeof platform.derivedStores).toBe("function");
   });
 });

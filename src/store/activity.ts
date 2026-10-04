@@ -3,7 +3,7 @@ import { create } from "zustand";
 /** 左侧竖条（activity bar）当前选中的活动——每一项都对应一个主区视图。
  *  搜索**不是**活动：它是弹层式的一次性动作（用完即走、不占侧栏、不把页面树
  *  顶掉，在看板/关系图视图下同样可用），触发器只是借住在竖条里。 */
-export type Activity = "notes" | "files" | "board" | "graph";
+export type Activity = "notes" | "files" | "board" | "graph" | "timeline" | "map";
 
 interface ActivityState {
   activity: Activity;
@@ -12,22 +12,10 @@ interface ActivityState {
   /** 窄屏的浮层竖条是否展开。**不持久化**：它是瞬时的布局状态，由屏幕尺寸
    *  决定，跨会话记住没有意义（和 sidebarOpen 的区别就在这）。 */
   railOpen: boolean;
-  /**
-   * 窄屏的**右侧工具条**（AI / 评论 / 目录 / 插件面板）是否展开。
-   *
-   * 窄屏**默认收起**：它是一条常驻的浮动控制条，390px 上会压在正文右缘
-   * （量过 46px 宽），而它承载的四个入口本来就是"偶尔用一次"。唤出按钮在右下角
-   * （拇指区），与左下角的「展开工具栏 / 同步」对称。
-   *
-   * 与 `railOpen` 同一条口径：**不持久化**——这是屏幕尺寸决定的布局状态，
-   * 写进 localStorage 会污染桌面端（桌面上这条工具条是常驻的）。
-   */
-  rightRailOpen: boolean;
   setActivity: (a: Activity) => void;
   toggleSidebar: () => void;
   setSidebarOpen: (v: boolean, opts?: { persist?: boolean }) => void;
   setRailOpen: (v: boolean) => void;
-  setRightRailOpen: (v: boolean) => void;
 }
 
 const KEY_ACTIVITY = "shuyonote:activity";
@@ -35,7 +23,7 @@ const KEY_SIDEBAR = "shuyonote:sidebarOpen";
 
 function initialActivity(): Activity {
   const v = localStorage.getItem(KEY_ACTIVITY);
-  return v === "notes" || v === "files" || v === "board" || v === "graph" ? v : "notes";
+  return v === "notes" || v === "files" || v === "board" || v === "graph" || v === "timeline" || v === "map" ? v : "notes";
 }
 
 // 竖条状态独立于 `useViewStore`：view 描述**主区**显示什么，activity 描述
@@ -46,8 +34,6 @@ export const useActivity = create<ActivityState>((set, get) => ({
   sidebarOpen: localStorage.getItem(KEY_SIDEBAR) !== "0",
   railOpen: false,
   setRailOpen: (v) => set({ railOpen: v }),
-  rightRailOpen: false,
-  setRightRailOpen: (v) => set({ rightRailOpen: v }),
   setActivity: (a) => {
     try {
       localStorage.setItem(KEY_ACTIVITY, a);

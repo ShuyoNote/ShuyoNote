@@ -86,7 +86,17 @@ function findTargetBlock(
   return { ...best, after };
 }
 
-export function BlockDragPlugin() {
+/**
+ * 块手柄（左侧沟槽的 `⋮⋮`）＋（可选中/可菜单的）块操作。
+ *
+ * ⚠️ **`dragEnabled` 默认 `false`** —— 2026-10-02 owner 的裁定：
+ *    「**只恢复 ⋮⋮ 手柄与块菜单，不恢复拖拽**」✓ ⇒ 组件挂回来 ✓，但 10-01 取消过的那套
+ *    **拖拽橡皮筋**（幽灵 ＋ `block-drop-line` 指示线）**仍然不启用** ✗。
+ *    做法是掐住**唯一的拖拽入口** `beginDrag()`（只在指针位移 >5px 时才走到 ✓），
+ *    ⛔ 不是把整块组件关掉 ✗ —— 因为「点一下」走的是另一条路（选中块 ＋ 打开块菜单 ✓），
+ *    那条正是这次要恢复的东西 ✓。
+ */
+export function BlockDragPlugin({ dragEnabled = false }: { dragEnabled?: boolean }) {
   const [editor] = useLexicalComposerContext();
   const selectMode = useBlockSelection((s) => s.selectMode);
   const [handle, setHandle] = useState<HandleState | null>(null);
@@ -275,6 +285,9 @@ export function BlockDragPlugin() {
 
     const onMove = (ev: MouseEvent) => {
       if (movedRef.current) return;
+      // ⛔ 拖拽未启用（默认）：⛔ 这里直接返回 ✗ —— `beginDrag()` 是**唯一**的拖拽入口，
+      //    挡住它就等于"有手柄、无橡皮筋" ✓；点一下那条路（下面是 `onUp` ✓）不受影响 ✓。
+      if (!dragEnabled) return;
       const dx = ev.clientX - downRef.current!.x;
       const dy = ev.clientY - downRef.current!.y;
       if (dx * dx + dy * dy > 25) {

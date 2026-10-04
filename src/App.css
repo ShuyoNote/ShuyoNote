@@ -383,6 +383,68 @@ html[data-platform="win"] .app-body {
   background: var(--hover-strong);
   color: var(--text);
 }
+/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 它的入口搬进**顶端工具栏** ✓，
+   形态按 owner 纠正后的口径＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）。
+   视觉刻意**贴着标题栏那组窗口按钮**（同高、同 hover 底色 ✓）—— 它们是同一行里的两组按钮，
+   长得不一样会显得像两个系统 ✓。
+   ⚠️ 类名不叫 `titlebar-*` ✗：手机上 `TitleBar` 不渲染，这条工具栏要在 `App.tsx` 顶部**自己渲染** ✓
+   ⇒ 同一个组件、同一套类名，两处共用 ✓（`.is-mobile` 是手机那一行的底座样式 ✓）。 */
+.top-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 6px;
+}
+.top-tools.is-mobile {
+  margin: 0;
+  padding: 4px 6px;
+  gap: 4px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+}
+.top-tool {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  padding: 0;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+/* 手机那条工具栏上，命中区按 44px 走 ✓（`.is-mobile` 时图标仍是 16px，靠内边距撑命中区 ✓）。 */
+.top-tools.is-mobile .top-tool {
+  width: 44px;
+  height: 44px;
+}
+.top-tool:hover {
+  background: var(--hover-strong);
+  color: var(--text);
+}
+.top-tool.is-on {
+  background: var(--hover-strong);
+  color: var(--accent);
+}
+/* 「通知」未读角标：**现在恒为 0 ⇒ 不渲染** ✓（见 `TopTools.tsx` 里那条登记 ✓）。 */
+.top-tool-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
 .titlebar-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -3px;
@@ -456,16 +518,9 @@ html[data-platform="win"] .app-body {
   border-radius: 0 2px 2px 0;
   background: var(--accent);
 }
-.activity-dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--danger);
-  box-shadow: 0 0 0 2px var(--bg-sidebar);
-}
+/* ⚠️ 2026-10-01：`.activity-dot`（竖条上那颗「有新版本可用」的小红点）随**「关于」按钮**一起去掉了 ✓ ——
+   它唯一的用处就是挂在那颗按钮的角上 ✗；更新提示仍在**更新横幅**与**设置 → 关于与更新**里 ✓。
+   将来若又要一个角标：样式与语义都在这一行的历史里 ✓（`git log -p -- src/App.css`）。 */
 /* 回收站沿用自己的 .btn-trash 触发器，在竖条里按 activity-btn 的尺寸对齐。 */
 .activity-bar .trash-panel {
   display: flex;
@@ -1144,7 +1199,18 @@ html[data-platform="win"] .app-body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* ⚠️ 2026-09-29（D5 修正②）：**桌面档也改成「整个面板滚」**（原为 `overflow: hidden`）。
+     为什么必须改：三段式里"只有 `.sync-profiles` 滚"，而**落在它外面**的块
+     （`SpacePrivacySection` ＋ D5 的 hero）**既不滚、又被 `hidden` 裁掉** ⇒
+     实测固定区 = head 67 ＋ hero 169 ＋ space-privacy 261 ＋ foot 86 = **583px**，
+     而面板只有 608px ⇒ 滚动区只剩 **24px** ⇒ owner 在真机上「**面板不能滚动**」。
+     ⚠️ 不能简单把 `space-privacy` 挪进 `.sync-profiles`：它在 Web 档带 `is-disabled`
+     （`opacity:.45 ＋ pointer-events:none`）⇒ 会把空间隐私**变灰且点不动**。
+     ⇒ 改成与**窄屏同一套**：外层滚 ＋ 底栏吸底。
+     ⚠️ 副作用（如实记）：`desktop-no-scroll` 测的是"外层不滚"，内容真装不下时它会**变红**
+        —— 那是对的，它本来就说"桌面本该一屏装下"。 */
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 .sync-head {
   display: flex;
@@ -1246,15 +1312,163 @@ html[data-platform="win"] .app-body {
   font-size: 11px;
 }
 .sync-pending-actions button:hover { border-color: var(--accent); color: var(--accent); }
+/* ⚠️ 2026-09-29（D5 修正②）：桌面档**不再由它自己滚**（改由外层滚，见 `.sync-popover.is-sync`）。
+   `flex: none` 是必须的 —— 原来 `flex: 1` 会把它压扁（本次那个「只剩 24px」就是这么来的）。 */
 .sync-profiles {
-  flex: 1;
+  flex: none;
   min-height: 0;
-  overflow-y: auto;
   padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+/* ── ⚠️ 2026-09-29（IA）：**两组 ＋ 每行一个可展开项**（原生 `<details>`）────────────
+   为什么：默认展开的一长条 —— 桌面实测内容 **1190px vs 面板 606px**（`desktop-no-scroll`
+   的读数）—— 用户要找某一项得先把整屏滚一遍。收成"两组 ＋ 每行一折"之后一屏就看得全。
+   口径：
+     · 行里装的是**原来的块本身**（一块没删、一个字没改，只是折起来）；
+     · 用原生 `<details>/<summary>`（本文件早有先例：`.sync-advanced`）⇒ 不引入新的 JS 状态；
+     · 只用既有变量（`--border` / `--card-bg` / `--text-dim` / `--text-faint` / `--radius-md` /
+       `--accent`），不新增色值。 */
+.sync-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sync-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+/* ⚠️ 【进阶】那一组是 `.sync-profiles` 的**兄弟**（不是孩子）—— `SpacePrivacySection`
+   不能进 `.sync-profiles`（Web 档 `is-disabled` ⇒ 变灰且点不动）⇒ 它在外面，就得自己
+   对齐那 16px（`.sync-profiles` 的横向内边距）。 */
+.sync-group.is-advanced {
+  margin: 0 16px 12px;
+}
+.sync-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-row > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.sync-row > summary::-webkit-details-marker {
+  display: none;
+}
+.sync-row > summary:hover {
+  color: var(--accent);
+}
+.sync-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 右侧那颗摘要值：**由真实读数算出来**（见 `SyncPanel.tsx` 里那一段派生）。
+   长值（服务器地址）不许撑破这一行 ⇒ 省略号；全文在 `title` 上。 */
+.sync-row-value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.sync-row-caret {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.sync-row[open] > summary .sync-row-caret {
+  transform: rotate(90deg);
+}
+.sync-row-body {
+  padding: 10px 12px 12px;
+  border-top: 1px dashed var(--border);
+}
+/* 行体里装的是**原来的块本身** —— 它们原来靠 `.sync-profiles` 的 `gap:12px` / `padding:16px`
+   定位，现在那一层由 `.sync-row` 提供 ⇒ 这里只抹掉重复的外边距（字号 / 配色一概不动）。 */
+.sync-row-body > .sync-auto { margin: 0; }
+.sync-row-body > .sync-net { margin: 0; }
+.sync-row-body > .space-privacy { margin: 0; }
+.sync-row-body > .sync-history { border-top: 0; padding-top: 0; }
+/* ⚠️ 卡片之间的间距本来来自 `.sync-profiles` 的 `gap:12px`；折进普通块容器后要补回来，
+   否则两张卡会贴在一起。 */
+.sync-row-body > .sync-card + .sync-card,
+.sync-row-body > .sync-empty-state + .sync-card { margin-top: 12px; }
+
+/* ── ★ 2026-09-29（丙档「设备直连」）：三样新东西的样式 ─────────────────────────────
+   口径（本档的落地要求）：**只用既有变量**（`--border` / `--card-bg` / `--text-dim` /
+   `--text-faint` / `--radius-md` / `--accent` / `--text`），**不引入任何新色值**。
+   而那个"提示框"直接复用既有的 `.sync-web-note`（它的底色本来就是既有变量），
+   这里只把它的外边距归零（它原来是给 `.sync-popover` 直接当孩子用的，margin 会重复一圈）。 */
+.sync-web-note.is-inline { margin: 0; }
+
+/* 子项那一行（「拉取间隔」）：**缩进 ＋ 一条竖线**，表示它属于上一行（照效果图）。
+   ⚠️ 竖线用伪元素而不是 `border-left`：`border-left` 会把圆角那一圈也画上，看起来像两个盒子。 */
+.sync-row.is-child { margin-left: 14px; position: relative; }
+.sync-row.is-child::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+
+/* ★ 规格 §9.2：总闸＝关闭 ⇒ 设备直连那一行**灰掉**。
+   ⚠️ 与 `.sync-profiles.is-disabled` 同一套手法（`opacity` ＋ `pointer-events`）——
+      它是"不能点"，不是"藏起来"（用户要看得到"它停着"这件事，上面的黄框在说为什么）。 */
+.sync-row.is-off {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 「附近设备」那一块：一块**区域标题** ＋ 每台一行（＋ 收到的邀请 ＋ 那句代价说明）。 */
+.sync-nearby { display: flex; flex-direction: column; gap: 8px; }
+/* 一台设备那一行：名字（可缩）＋ 第二列说明（可缩）＋ 右侧动作（不可缩）。
+   ⚠️ `flex-wrap` 是必须的：`邀请加入「<空间名>」` 在 320px 宽的面板里放不下 ——
+      不换行就会把那一行**撑出面板**（而"越界"正是 mobile-views 那条门禁在量的东西）。 */
+.sync-nearby-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-nearby-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text);
+}
+/* 第二列说明与右侧动作都靠 `margin-left:auto` 推到右边；换行时动作自己落到下一行。
+   ⚠️ 说明这一格要能换行（窄屏下"没报可以直连的地址"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
+.sync-nearby-row > .sync-hint { margin-left: auto; text-align: right; flex: 0 1 auto; }
+.sync-nearby-row > .sync-btn { margin-left: auto; flex: none; }
 /* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
  *
  * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。
@@ -1397,6 +1611,62 @@ html[data-platform="win"] .app-body {
 }
 .space-privacy-note { font-size: 11px; color: var(--text-dim); }
 .space-privacy-err { font-size: 11px; line-height: 1.6; color: var(--danger); white-space: pre-wrap; }
+/* ── ⚠️ 2026-09-29（D5）：**状态置顶**（`.sync-hero`）────────────────────────────
+   口径见 `SyncPanel.tsx` 里它上面那段注释。三条要点：
+     · 它是给人【看状态】的 ⇒ **里面不许有 input/select/textarea**（同 `.sync-foot` 那条口径）
+     · 颜色只用既有变量（`--accent` / `--border` / `--card-bg` / `--text-faint`），不新增色值
+     · 绿点那个色（`#22a06b`）与 `.sync-account-dot` 已有的成功色一致 */
+/* ⚠️ 2026-09-29（尺寸协调）：hero 原来在 `.sync-profiles`【外面】⇒ 满宽贴边（宽 450 / x 61），
+   而下面那些行在容器 16px 内边距里（宽 418 / x 77）⇒ **左右差 16px、宽差 32px**，
+   owner 一眼看出的"和大卡片与下面的尺寸不协调"就是这个。
+   ⇒ 左右 margin 取 16px 与行对齐；同时把垂直节奏收一档（169px → ~132px），
+     按钮 48 → 42、标题 19 → 17、副标题 13 → 12.5。 */
+.sync-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 12px 16px;
+  padding: 14px 14px 12px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.sync-hero-state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.sync-hero-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.sync-hero-dot.is-ok { background: #22a06b; box-shadow: 0 0 0 4px rgba(34, 160, 107, 0.15); }
+.sync-hero-dot.is-busy { background: var(--accent); }
+.sync-hero-sub { font-size: 12.5px; color: var(--text-faint); }
+.sync-hero-btn {
+  margin-top: 6px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.sync-hero-btn:disabled { opacity: 0.55; cursor: default; }
+.sync-hero-route { font-size: 12px; color: var(--text-dim); }
+
 .sync-card {
   display: flex;
   flex-direction: column;
@@ -1488,6 +1758,11 @@ html[data-platform="win"] .app-body {
 .sync-input {
   width: 100%;
   box-sizing: border-box;
+  /* ⚠️ 2026-09-28：**命中区**。原来靠 `padding: 7px 10px` ＋ `font-size: 13px` 算出来约 **32px 高**，
+     而本仓的规则是"可点控件高度一律 ≥44"（`verify-mobile-views.mjs:223`）——
+     那条判据的选择器**含 `input`**，但它跑的时候同步面板没被打开 ⇒ 一直没扫到这里。
+     实测：面板里 10 个输入控件有 **9 个 < 44**（8 个是 32px）而三个门禁全绿。 */
+  min-height: 44px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 7px 10px;
@@ -1698,6 +1973,14 @@ select.sync-input {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* ⚠️ 2026-09-29（D3）：`INV-UI-copy-inline-separators` —— `.sync-att-name` 与 `.sync-hint`
+   都是 `<span>`、都**没写 display** ⇒ 两个 inline 挨着跑，渲染成
+   「只在 Wi-Fi 下自动同步关掉后蜂窝网络也会自动同步…」（名字与提示黏在一起，owner 截图里能看到）。
+   ⇒ 让 `name` 在 `.sync-att-text` 里成为**块**：提示自然落到下一行，就有了分隔。
+   ⚠️ 只加这一条，不动 `.sync-att-name` 本身的字号/颜色（那是别的块共用的）。 */
+.sync-att-text > .sync-att-name {
+  display: block;
+}
 .sync-att-name {
   font-size: 11px;
   font-weight: 600;
@@ -1742,6 +2025,17 @@ select.sync-input {
 .sync-mesh .sync-field > .sync-btn {
   flex: 0 0 auto;
   white-space: nowrap;
+  /* ⚠️ 2026-09-28：**给同一列的按钮一个共同的最小宽度** ——
+     原来只有 `flex: 0 0 auto`，于是按钮按【文案字数】自适应：
+     「保存地址」(4 字) = 78px、「设口令」(3 字) = 66px ⇒ **差 12px**，
+     而它把这一行的输入框也带得不齐（270 vs 282，右边缘差 12px）。
+     用 `min-width` 而不是 `width`：短标签被撑到同一宽度，**将来更长的标签仍然安全**。
+     ⚠️ 用 **`6.5em` 而不是 `78px`** —— 78px ＝「4 个汉字 @12px ＋ 14px 内边距 ×2 ＋ 2px 边框」，
+     **只是碰巧**等于最宽那个标签的固有宽度；字号一变（或标签变长）它就不够了，
+     于是又有一个按钮撑出去、又不齐。改成 em ⇒ 跟着字号缩放：
+       12px → 78px（＝当前实测需要）｜13px → 84.5px（需要 82）｜16px → 104px（需要 94）⇒ **恒等宽**。 */
+  min-width: 6.5em;
+  justify-content: center;
 }
 /* 读数里有长 URL（`http://192.168.43.1:47832`）：长串按任意位置折，别撑破卡片。 */
 .sync-mesh .sync-hint {
@@ -1771,10 +2065,17 @@ select.sync-input {
   padding: 4px 6px;
   font-size: 12px;
 }
-.sync-budget > .sync-hint {
+/* ⚠️ 2026-09-29（IA）：`.sync-budget` 现在是那一行的 `<details>`（`.sync-row.sync-budget`），
+   三个下拉与这段解释被统一折进行体里 ⇒ 选择器跟着下移一层（同样的间距，同一个说法）。 */
+.sync-budget .sync-row-body > .sync-hint {
   margin-top: 10px;
 }
 .sync-foot {
+  /* ⚠️ 2026-09-29（D5 修正②）：外层滚之后，底栏要**吸底**（否则它跟着内容一起滚掉）。 */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--card-bg);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -4196,10 +4497,18 @@ select.sync-input {
   background: var(--bg);
   transition: padding-right var(--transition-fast);
 }
-/* When the TOC rail is open, reserve its width on the right so the page content
-   re-centers in the space beside it (not overlapped). */
+/* ⭐ 2026-10-02（owner 给了参考图）：「目录做成并排停靠 ＋ 鼠标拖拽调宽」。
+   ⇒ 这里**把让位规则请回来**了，但宽度改成**变量**（`--toc-w`，拖拽时实时写 ✓）：
+      正文在左、目录在右、**互不覆盖** ✓。
+   ⚠️ 更正我上一轮的读法：owner 先前那句「不能影响阅览」我读成了"别重排正文" ✗，
+      其实指的是"**别盖住正文**" ✓ —— 这张参考图里正是**并排** ✓。
+   ⚠️ 滚动**不锁**那条保持不变 ✓（`TableOfContents.tsx` 里的 `useOverlayScrollLock` 已删 ✓）。 */
 body.is-toc-open .main {
-  padding-right: 280px;
+  padding-right: var(--toc-w, 300px);
+}
+/* 拖拽进行中：⛔ 关掉那条 120ms 过渡 ✗，否则正文会"追着"指针慢半拍 ✓。 */
+body.is-toc-resizing .main {
+  transition: none;
 }
 body.is-ai-open .main {
   padding-right: var(--ai-w, 380px);
@@ -6726,9 +7035,16 @@ select.prop-value {
   background: transparent;
 }
 
+/* ⚠️ 2026-10-01（owner：「橡皮筋还在」＋截图）：这条样式**就是**那个蓝框 ——
+   config.ts:127 把 Lexical 的 	ableCellSelected 主题键指到这个类 ⇒ **表格单元格选区**里的格子
+   被着上「浅蓝填充 ＋ 1px 蓝框」；而拖列宽时 Lexical 会**顺带拉出一个单元格选区** ✗ ⇒
+   那个矩形就跟着鼠标绷出来（owner 称之为橡皮筋 ✓）。
+   处置：**只把视觉去掉**（类名与主题键都不动 ⇒ 零 JS 改动、一句可回滚 ✓）。
+   判据：拖列宽不再出现该矩形 ✓；反例：把这两行恢复 ⇒ 矩形立刻回来 ✓。
+   ⚠️ 代价（照实）：用户**主动**选中多个单元格时也不再有高亮 ✗。 */
 .editor-table-cell-selected {
-  background: var(--accent-soft) !important;
-  box-shadow: inset 0 0 0 1px var(--accent);
+  /* background: var(--accent-soft) !important; */
+  /* box-shadow: inset 0 0 0 1px var(--accent); */
 }
 
 .table-resize-handle {
@@ -6766,12 +7082,90 @@ select.prop-value {
   margin: 0.4em 0 0.15em;
 }
 
+/* owner 2026-10-01：**标题的上留空要比下留空大一点**。
+   ⚠️ 老坑第三处（与 `.editor-quote` 同源）：上面 `.editor-h1/h2/h3` 自己写的**本来就是上大下小**
+   （0.5／0.45／0.4em 上，0.2／0.2／0.15em 下），但被靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { margin: 0.6em 0 }`，特异性 **0,1,1**）压成了
+   **上下相等** ✗ ⇒ 视觉上"标题上面挤、贴着上一段"。
+   这里用更高特异性把上大下小要回来，并把上留空**再放大一档** ✓。
+   ⛔ 仍然**不改**通用那条 ⇒ 段落与注释块不受影响（注释块有自己的 `.editor-quote` 那条 ✓）。
+   ⚠️ h4–h6 不在通用那条的名单里（所以它们本来就没被压），这里一并给同一比例，
+      免得四级标题与三级标题的间距看起来是两个体系 ✓。 */
+.editor-content h1.editor-h1 {
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+}
+.editor-content h2.editor-h2 {
+  margin-top: 1.25em;
+  margin-bottom: 0.35em;
+}
+.editor-content h3.editor-h3 {
+  margin-top: 1.1em;
+  margin-bottom: 0.3em;
+}
+.editor-content h4,
+.editor-content h5,
+.editor-content h6 {
+  margin-top: 1em;
+  margin-bottom: 0.25em;
+}
+
+/* 表格**表头默认加粗**（owner 2026-10-01：「表格的标题列不加粗吗？」）——
+   md 惯例（GitHub / 知乎）里表头本来就是粗的，源文件里不必写 `**` ✓。
+   两路都要，缺一不可：
+     ① 导入时把表头行标成 `TableCellHeaderStates.ROW` ⇒ 是真的 `<th>`（数据对、导出对 ✓）
+        —— 见 `src/editor/markdownTransformers.ts` 的 `createMarkdownCell` ✓；
+     ② 下面这条 CSS 同时覆盖 `th` 与**第一行** ⇒ ⭐ **已经导进来的旧表也当场变粗**（不用重新导入 ✓）。
+   ⚠️ 用 600 而不是 700：与 `.editor-h3` 的 600 同档，避免表头抢过标题的层级 ✓。 */
+.editor-content table th,
+.editor-content table tr:first-child > td {
+  font-weight: 600;
+  /* 表头背景（owner 2026-10-01：「标题列没有背景色吗？」）：
+     ⚠️ 产品**本来就有**这条样式 —— 见下面的 `.editor-table-cell-header { background: var(--bg-sidebar) }`，
+     但那个 class **只在单元格的表头状态被标上时才加**，而导入的表格以前是 `NO_STATUS` ⇒
+     既没有粗体也没有背景（同一个根因，owner 连问两次 ✓）。
+     做法：① 导入时标 `TableCellHeaderStates.ROW`（见 markdownTransformers.ts）⇒ 新表吃到那个 class ✓；
+           ② 这里给 `th` 与**第一行**补上**同一个 token** ⇒ ⭐ 已经导进来的旧表也当场有背景 ✓，
+              而且与新表**同色**（不引入第二种"表头灰" ✗）。 */
+  background: var(--bg-sidebar);
+}
+
 .editor-quote {
   border-left: 3px solid var(--border-strong);
   padding-left: 14px;
   color: var(--text-dim);
   margin: 0.4em 0;
   background: transparent;
+}
+
+/* owner 2026-10-01：「注释块的文字前面留点空」＋「上下留空大一点」。
+   ⚠️ 同一个坑（两条都在这里一次说清）：靠前那组「Inline-formatting blocks」
+   （`.editor-content p, h1, h2, h3, blockquote { padding: 2px 4px; margin: 0.6em 0 }`）
+   是**简写**且特异性更高（0,1,1 > 0,1,0）⇒ 它会把 `.editor-quote` 自己的
+   `padding-left: 14px` 与 `margin: 0.4em 0` **一起**压掉（实际左内边距只有 4px、上下只有 2px/0.6em）。
+   所以这里用**同一元素、更高特异性**把四个方向的留白一次给足：
+     · 左 14px ⇒ 竖线不再贴字 ✓
+     · 上下 padding 6px ⇒ **竖线在文字上下各多出一截**（这就是"注释块"该有的呼吸感 ✓）
+     · 上下 margin 1em ⇒ 与前后块之间也拉开 ✓
+   ⛔ 仍然**不改**通用那条 ⇒ 段落 / 标题的留白不受影响 ✓。 */
+/* ⭐ 2026-10-02（owner 给了参考图）：「把注释块调成图中的样式」。
+   参考样式 = **浅灰底 ＋ 左侧一根粗灰条 ＋ 四周留白**（掘金那种引用块 ✓）。
+   原来：透明底 ✗ ＋ 3px 竖线 ⇒ 只有一根线，没有"块"的感觉 ✓。
+   ⚠️ 颜色**一律用变量**（浅 `--card-bg: #f8f9fa` ／ 深 `#1c1d20` ✓；条 `--border-strong` 浅 `#d4d8df` ／ 深 `#3a3c41` ✓）
+      ⇒ 深色主题自动跟着走 ✓，⛔ 不硬写 `#f7f8fa` 这类值 ✗。
+   ⚠️ `--bg-2` 是**社区站**的变量，本仓**没有定义** ✗ —— 用它会让底色静默失效 ✓（我查过才没写它 ✓）。
+   ⚠️ 右边也要留白：否则底色会**贴着文字边缘**（参考图里四周都是留白 ✓）。
+   ⚠️ **圆角维持 0**（就是下面那条 `border-radius: 0` ✓）—— 那是 **owner 2026-10-01 明确拍的**
+      「注释块与高亮块都**不要**圆角，要 md 那种方角」✓ ⇒ 参考图看着像有圆角 ✓，但**改它要先问** ✓。 */
+.editor-content blockquote.editor-quote {
+  padding-left: 14px;
+  padding-right: 14px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  background: var(--card-bg);
+  border-left: 4px solid var(--border-strong);
 }
 
 .editor-callout {
@@ -6798,6 +7192,17 @@ select.prop-value {
 
 .editor-callout > * {
   grid-column: 2;
+}
+
+/* owner 2026-10-01：**注释块与高亮块都不要圆角**（要 md 那种方角）。
+   两条纪律：
+     ① ⛔ 不改上面通用的 `.editor-content > * { border-radius: … }` —— 那是**所有顶层块**的
+        Notion 式 hover 圆角（段落 / 标题 / 图片都吃它），改 0 会把它们一起方掉；
+     ② ⛔ 不动分栏卡片那条（`.editor-columns`：它自己的注释写明 "each column is a rounded card"）。
+   做法：只给这两个块加**更高特异性**的专门规则 ⇒ 通用语义与分栏都不受影响。 */
+.editor-content blockquote.editor-quote,
+.editor-content .editor-callout {
+  border-radius: 0;
 }
 
 /* Feishu-style 分栏: a flex row of N columns side by side with a small gap between
@@ -11957,7 +12362,8 @@ p:has(> .editor-drawing-container) {
   top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
-  width: 300px;
+  /* ⭐ 宽度由拖拽决定（`--toc-w` 由 `TableOfContents.tsx` 写 ✓）；默认 300 与旧版一致 ✓。 */
+  width: var(--toc-w, 300px);
   z-index: 40;
   display: flex;
   flex-direction: column;
@@ -11966,9 +12372,33 @@ p:has(> .editor-drawing-container) {
   transform: translateX(100%);
   transition: transform var(--transition-fast);
 }
+/* ⭐ 拖拽把手（2026-10-02）：贴在目录**左缘**的一条 6px 窄条 —— 指针变 `col-resize` ✓，
+   悬停/拖拽时亮一下（`--accent` ✓）。⚠️ 视觉上只占 6px，但 `left: -3px` 让它一半压在正文侧，
+   手感更"抓得住" ✓（GitHub / VS Code 那种分栏都是这个做法 ✓）。 */
+.toc-resizer {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--transition-fast);
+  /* 触摸/笔输入也别让浏览器抢走手势（否则一拖就在面板里滚起来了 ✗）。 */
+  touch-action: none;
+}
+.toc-resizer:hover,
+.toc-resizer.is-dragging {
+  background: var(--accent);
+  opacity: 0.55;
+}
 .toc-panel.open {
   transform: translateX(0);
-  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.10);
+  /* ⛔ 2026-10-02（owner）：「去掉目录栏的阴影」。
+     原来这里是 `box-shadow: -12px 0 32px rgba(0,0,0,.10)` —— 那是**浮层**才需要的投影
+     （`position: fixed` 盖在正文上时，靠它把两层分开 ✓）；现在目录是**并排停靠** ✓
+     ⇒ 投影只会糊在正文右侧，显得脏 ✗ ⇒ 去掉 ✓。
+     分界改用本来就有的 `border-left: 1px solid var(--border)` ✓（参考图里也就是一条细线 ✓）。 */
 }
 
 .toc-head {
@@ -15766,44 +16196,6 @@ p:has(> .editor-drawing-container) {
 }
 
 /* Right-edge vertical launcher rail (Wolai-style) */
-.right-rail {
-  position: fixed;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 30;
-  /* 显式写出宽度（原来是内容撑出来的 30 + 2×5 padding + 2×1 border = 41）：
-     阅读器边缘手柄要按这个数避让，见 `--rail-w`。 */
-  width: var(--rail-w);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 5px;
-  border-radius: var(--radius-md) 0 0 var(--radius-md);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-right: none;
-  box-shadow: var(--shadow-md);
-}
-.rail-btn {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.rail-btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-.rail-btn.active {
-  color: #fff;
-  background: var(--accent);
-}
 .ai-header {
   display: flex;
   align-items: center;
@@ -20046,6 +20438,8 @@ p:has(> .editor-drawing-container) {
   /* 窄屏下 TOC / AI 是叠加层，主区不需要为它们让位。桌面端那两条让位规则
      （padding-right: 280px / 380px）在窄屏会把主区内容盒挤成 0 宽，并把
      .main 撑出 .app-body —— flex 项缩不到 padding 以下，宽度被顶成 380px。 */
+  /* ⚠️ 窄屏下目录是**叠加层**（不是并排 ✓）⇒ 让位要归零，否则正文会被挤成 0 宽 ✗
+     （原话：「窄屏下 TOC / AI 是叠加层，主区不需要为它们让位」✓）。 */
   body.is-toc-open .main,
   body.is-ai-open .main,
   body.is-plugin-panel-open .main {
@@ -21727,46 +22121,8 @@ body.is-plugin-panel-open .main {
      （`RightRail` 里 `isMobile` 判断），CSS 说"矮屏也收起"而 JS 说"不算窄屏"就会两边打架
      ——横屏手机（792×360）会出现"工具条被 CSS 藏了、唤出按钮没有渲染"的死角。
      仓库那条"JS/CSS 断点必须是同一个数"说的正是这种地方。 */
-  .mobile-right-toggle {
-    position: fixed;
-    right: 12px;
-    /* 与左下角那枚（`.mobile-rail-toggle`）同一套让位规则：状态栏 / 手势条 / 键盘。 */
-    bottom: max(18px, calc(var(--sab) + 12px));
-    z-index: 45;
-    width: 44px;
-    height: 44px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-full);
-    background: var(--surface);
-    color: var(--text-dim);
-    box-shadow: var(--shadow-md);
-    cursor: pointer;
-  }
-  .mobile-right-toggle:active { background: var(--hover); color: var(--text); }
-  .mobile-right-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 56;
-    background: rgba(0, 0, 0, 0.35);
-  }
   /* 展开态：贴在右下角那枚按钮**上方**（不再是"垂直居中贴在右缘"——那样它在
      窄屏上会压住正文，而且离拇指最远）。 */
-  .right-rail.is-open {
-    top: auto;
-    right: 8px;
-    bottom: calc(max(18px, calc(var(--sab) + 12px)) + 52px);
-    transform: none;
-    z-index: 57;
-    padding: 4px;
-    gap: 2px;
-    border-right: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-  }
-  .rail-btn { width: 44px; height: 44px; }
 }
 
 /* ===========================================================================
@@ -22746,5 +23102,215 @@ body.is-plugin-panel-open .main {
    只用一条内阴影，不动块的背景 —— 正文里的背景属于主题/引用/代码块，改它会把格式吃掉。 */
 .block-conflict {
   box-shadow: inset 3px 0 0 var(--danger);
+}
+
+/* ---- S3 时间复盘页（components/TimelineReview.tsx）----
+   只读视图：按天回看「这些天做过什么」。两种空态**必须长得不一样**：
+   `.tl-empty-nopages`（还没有页面 ⇒ 引导去建）／`.tl-empty-noactivity`（有页面但这些天没活动 ⇒ 引导去翻旧账）——
+   那是 S3 第②条的界面落点 ✓；把它们合并成一句「暂无数据」就分不开了 ✗。 */
+.timeline-review { padding: 24px 28px; max-width: 780px; }
+.tl-title { font-size: 1.05rem; margin: 0 0 4px; }
+.tl-window-note, .tl-day-key { color: var(--text-faint); font-size: 0.8rem; }
+.tl-days { list-style: none; margin: 12px 0 0; padding: 0; }
+.tl-day { margin: 0 0 18px; }
+.tl-day-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.tl-day-summary { color: var(--text-faint); font-size: 0.8rem; }
+.tl-day-key { margin-left: auto; }
+.tl-entries { list-style: none; margin: 6px 0 0; padding: 0; }
+.tl-entry { display: flex; align-items: center; }
+.tl-entry-btn { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 4px 6px; border: 0; border-radius: 6px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.tl-entry-btn:hover { background: var(--hover); }
+.tl-kind { flex: none; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-faint); font-size: 0.72rem; }
+.tl-kind-created { border-color: var(--accent); color: var(--accent); }
+.tl-entry-time { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
+.tl-blocks { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; }
+.tl-block { display: inline-flex; align-items: baseline; gap: 3px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-faint); font-size: 0.74rem; }
+.tl-block-mark { font-weight: 600; }
+.tl-block-added { border-color: var(--accent); color: var(--accent); }
+.tl-block-removed { text-decoration: line-through; }
+.tl-block-more { color: var(--text-faint); font-size: 0.74rem; }
+
+/* ---- S4 知识地图（components/KnowledgeMap.tsx）----
+   只读视图：按标签聚类的关系全景。⚠️ 大库上 `GRAPH_NODE_CAP` 会挡掉一部分 ⇒ 界面**必须**把
+   `.kb-map-warn` 那条说出来（不许让用户以为"我的图就这么大" ✗）。 */
+.kb-map { padding: 24px 28px; }
+.kb-map-title { font-size: 1.05rem; margin: 0 0 4px; }
+.kb-map-note { margin: 0 0 10px; color: var(--text-faint); font-size: 0.82rem; }
+.kb-map-warn { margin: 0 0 10px; color: var(--danger); font-size: 0.84rem; }
+.kb-map-clusters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.kb-map-cluster { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.kb-map-cluster-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
+.kb-map-cluster-name { font-weight: 600; }
+.kb-map-cluster-count { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
+.kb-map-pages { margin: 0; padding: 0; list-style: none; }
+.kb-map-page { width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.kb-map-page:hover { background: var(--hover); }
+.tl-empty { padding: 32px 28px; }
+.tl-empty-main { margin: 6px 0 2px; }
+.tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }
+/* ===== LLM wiki 第二块着陆点：库地图（只读派生视图，`components/LibraryMapView.tsx`） =====
+   为什么单独一块样式：它画的是"读数"而不是"设置项"，所以**每种读数状态都要看得出来**
+   （ok / partial / missing / unknown）—— 尤其是 `unknown`：它必须长得**跟 0 不一样**，
+   否则界面上"没查"与"查过了、没有"就分不出来了（`LibraryMapView.test.tsx` 成对断言这两件事）。 */
+.ai-libmap {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+}
+.ai-libmap-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ai-libmap-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-libmap-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.ai-libmap-sec {
+  margin-top: 10px;
+}
+.ai-libmap-sec-label {
+  font-weight: 600;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.ai-libmap-sec-summary {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.ai-libmap-items {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.ai-libmap-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--border);
+}
+.ai-libmap-item:last-child {
+  border-bottom: none;
+}
+.ai-libmap-item-label {
+  color: var(--text);
+}
+.ai-libmap-item-count {
+  min-width: 2.5em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-libmap-item-note,
+.ai-libmap-item-src {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* 四种读数状态：**未知必须是灰的、且不加粗** —— 它不是一个数字 */
+.ai-libmap-item.is-ok .ai-libmap-item-count {
+  color: var(--success, #0f7b3f);
+}
+.ai-libmap-item.is-partial .ai-libmap-item-count {
+  color: var(--warning, #9a6a00);
+}
+.ai-libmap-item.is-missing .ai-libmap-item-count {
+  color: var(--danger, #c0392b);
+}
+.ai-libmap-item.is-unknown .ai-libmap-item-count {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.ai-libmap-warn {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+/* ── 第三块：分区上的「生成这一页」按钮 ＋ 草稿区（**未落库**的东西要一眼看出来 ✓） ── */
+.ai-libmap-sec-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-libmap-gen {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ai-libmap-gen:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ai-libmap-draft {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px dashed var(--border, #3a3a3a);
+  border-radius: 8px;
+}
+.ai-libmap-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.ai-libmap-draft-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--warning, #b7791f);
+  color: var(--warning, #b7791f);
+}
+.ai-libmap-draft-drop {
+  margin-left: auto;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.ai-libmap-draft-body {
+  white-space: pre-wrap;
+  font-family: inherit;
+  margin: 0 0 6px;
+}
+.ai-libmap-draft-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ai-libmap-draft-warn {
+  color: var(--warning, #b7791f);
+}
+.ai-libmap-draft-footer {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.ai-libmap-note {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ai-libmap-note.ai-warn {
+  color: var(--danger, #c0392b);
 }
 

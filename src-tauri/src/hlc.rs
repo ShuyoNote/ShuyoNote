@@ -352,7 +352,18 @@ pub fn without_stamp(payload_json: &str) -> String {
         return payload_json.to_string();
     };
     obj.remove(HLC_PAYLOAD_FIELD);
-    serde_json::to_string(&value).unwrap_or_else(|_| payload_json.to_string())
+    // ⚠️ **键序由我们自己定**（升序 ✓）—— ⛔ 不许依赖 `serde_json` 的「默认按什么序」✗：
+    //    Cargo 的**特性统一**会让 `preserve_order` 被**别人一个依赖**打开（2026-10-02 实测：
+    //    `Cargo.lock` 里 `serde_json` 已依赖 `indexmap 2.14.2` ✓），那时 `Map` 变成 `IndexMap`
+    //    ⇒ 这里就悄悄退化成「按输入序」⇒ **同一内容两种键序算出两份字节** ⇒
+    //    「内容没变」被判成「变了」（每次重发都算一次真改动 ✓ 而这不是任何人有意设计的行为 ✗）。
+    //    本判据（`the_stamp_is_excluded_from_content_comparison`）当场把这件事抓住了 ✓。
+    let mut items: Vec<(String, serde_json::Value)> =
+        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    let canon: serde_json::Map<String, serde_json::Value> = items.into_iter().collect();
+    serde_json::to_string(&serde_json::Value::Object(canon))
+        .unwrap_or_else(|_| payload_json.to_string())
 }
 
 /// **该谁赢** —— 丙的判序；两条混用时的那条规则就写死在这里（简报 §13 ②）。

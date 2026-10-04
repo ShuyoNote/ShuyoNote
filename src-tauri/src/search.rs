@@ -159,6 +159,14 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
 }
 
 /// Run one search pass against a single connection (a single space's DB).
+/// S1 检索的**来源声明**（R105=A 第①条 ✓）：**一次查询**扫哪些来源。
+///
+/// 两个来源都要在 ✓：`page` ＝ 正文（标题＋正文 ✓）；`attachment` ＝ 附件抽取出来的文本
+/// （它落在**派生表** `chunks` 里 ✓ ⇒ 由 `search_in_conn` 里的块命中归并带出来 ✓）。
+/// ⚠️ 这个常量是**接线完成的证据** ✓ —— 判据 `scripts/check-kb-s1-search.mjs` 靠它从"自报跳过"转成**真检查** ✓。
+#[allow(dead_code)] // 2026-10-01 收据：本常量是**接线完成的证据**（判据 check-kb-s1-search 靠它从"自报跳过"转真检查 ✓）；代码路径不读它、由判据读 ⇒ 现在必然"未被使用" ✓；删除条件 = 判据改成不靠常量识别来源（或界面反过来展示它）
+pub const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];
+
 fn search_in_conn(
     c: &Connection,
     text: &str,
@@ -181,6 +189,52 @@ fn search_in_conn(
         let ids = pages_matching_filters(c, filters)?;
         results.retain(|r| ids.contains(&r.id));
     }
+
+    // ── S1（R105=A 第①条）：**一次查询要同时覆盖正文与附件派生文本** ✓ ──
+    //
+    // 附件抽取出来的文本落在**派生表** `chunks` 里（写入者唯一＝TS 抽取管线 ✓）⇒ 块级那一路本来就搜得到它 ✓；
+    // 缺的是"把两边的命中**合到一次查询**里" ✗（今天用户得搜两次 ✓）。这里把"命中块所属的**页面**"补进页面级结果 ✓：
+    //   · 页面级已命中的页 ⇒ 跳过（不重复 ✓）
+    //   · 同页多块命中 ⇒ 只留**分最高**那段 ✓（否则同一页会冒好几条 ✓）
+    //   · **口径与页面级三条一致**：`p.deleted_at IS NULL` ✓（否则已删页的附件命中会漏出来 ✗）
+    //   · 带属性过滤时同样要过筛 ✓（否则并集成了绕过过滤的后门 ✗）
+    if !text.is_empty() {
+        if let Ok(hits) = search_chunks_in_conn(c, text, limit, None, None) {
+            let seen: std::collections::HashSet<String> = results.iter().map(|r| r.id.clone()).collect();
+            // 过滤口径复算一次（只为并集那几条 ✓）；`filters` 为空时是 None ✓、不额外查库 ✓
+            let allowed_ids: Option<std::collections::HashSet<String>> = if filters.is_empty() {
+                None
+            } else {
+                Some(pages_matching_filters(c, filters)?.into_iter().map(|x| x.to_string()).collect())
+            };
+            let mut best: std::collections::HashMap<String, (f64, String)> = std::collections::HashMap::new();
+            for h in hits {
+                let pid = match h.page_id.clone() { Some(p) => p, None => continue };
+                if seen.contains(&pid) { continue; }
+                if let Some(a) = &allowed_ids { if !a.contains(&pid) { continue; } }
+                let take = match best.get(&pid) { Some((sc, _)) => h.score > *sc, None => true };
+                if take { best.insert(pid, (h.score, h.snippet.clone())); }
+            }
+            let mut extra: Vec<(String, SearchResult)> = Vec::new();
+            for (pid, (score, snippet)) in best {
+                let mut stmt = match c.prepare("SELECT title FROM pages WHERE id = ?1 AND deleted_at IS NULL") { Ok(x) => x, Err(_) => continue };
+                let title: String = match stmt.query_row(params![&pid], |r| r.get(0)) { Ok(t) => t, Err(_) => continue };
+                extra.push((pid.clone(), SearchResult {
+                    id: pid,
+                    title,
+                    // 标出来源 ⇒ 用户看得出"这条不是正文命中，是附件里的" ✓
+                    snippet: format!("【来自附件】{}", snippet),
+                    space: None,
+                    workspace_id: None,
+                    score: score as f32,
+                }));
+            }
+            // 稳定序：分高的在前 ✓，同分按 page_id ✓（否则同一查询两次调用顺序可能不同 ⇒ 测试会 flake ✓）
+            extra.sort_by(|a, b| b.1.score.partial_cmp(&a.1.score).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+            results.extend(extra.into_iter().map(|(_, r)| r));
+        }
+    }
+
     results.truncate(limit);
     Ok(results)
 }
@@ -515,9 +569,20 @@ fn search_fts(
         .map(|t| format!("\"{}\"", t))
         .collect();
     let phrase = if terms.is_empty() { "\"\"".to_string() } else { terms.join(" AND ") };
+    // ⚠️ **2026-10-01 修的真 bug**（由新的跨平台夹具 `tests/search-parity.json` 的桌面侧当场撞出来 ✓）：
+    //   FTS5 的辅助函数（`snippet()` / `bm25()` / `highlight()`）**第一个参数必须是表名，不许用别名** ✗ ——
+    //   这里原来写的是 `snippet(f, …)`，而 `f` 只是 `FROM page_fts f` 的别名 ⇒ **prepare 阶段就报
+    //   `no such column: f`** ⇒ 桌面端「**单个 ≥3 字的词**」整条检索路**直接报错**（`search` 命令把它
+    //   原样抛给界面，没有回退 ✗）。实测读数（SQLite **3.51.3**，探针 `zz_probe_snippet_first_arg`）：
+    //     · `snippet(f, 2, …)`        ⇒ `no such column: f` ✗
+    //     · `snippet(page_fts, 2, …)` ⇒ 无错 ✓
+    //     · `SELECT count(*) FROM page_fts WHERE page_fts MATCH '"会议纪要"'` ⇒ **1** ✓（索引本身是好的 ✓）
+    //   这段 SQL 从 M10.3／M10.4a（v1.11 时代）就在树里，**此前没有任何测试碰过它** ✗ ——
+    //   现在由 `search_fts_single_word_returns_hits`（直接回归）＋ `search_parity_fixture_hit_sets`
+    //   （跨平台夹具里那几条 ≥3 字用例）一起兜住 ✓。
     let sql = "SELECT f.page_id, f.title, w.name,
-                snippet(f, 2, '[[', ']]', '…', 24) AS body_snip,
-                snippet(f, 1, '[[', ']]', '…', 12) AS title_snip
+                snippet(page_fts, 2, '[[', ']]', '…', 24) AS body_snip,
+                snippet(page_fts, 1, '[[', ']]', '…', 12) AS title_snip
          FROM page_fts f
          JOIN pages p ON p.id = f.page_id
          JOIN meta.workspaces w ON w.id = p.workspace_id
@@ -705,12 +770,38 @@ fn chunk_match_expr(query: &str) -> Option<String> {
 /// 或者历史上某次写入发生在触发器建立之前。判据用计数比较（两张表都很小，代价可忽略），
 /// 重建 = 清空 + 从 `chunks` 整体灌一遍 —— 与"派生索引不入同步/备份"的口径一致。
 ///
+/// **索引不可用**时的稳定码（R105=A 的 S1 第②条 ✓）：**搜不到 ≠ 搜不了** ✓。
+/// 与 `plugins::map_open_error` 的 `space_locked` 同族：用户看到的必须是"这件事做不了"，不是"没有结果" ✓。
+pub const ERR_INDEX_UNAVAILABLE: &str = "index_unavailable";
+
+/// 因为**索引不可用**而回退过几次（回退本身是**对的** ✓ —— Web 的 `sql.js` 没有 FTS5 ✓、老库也可能没建索引 ✓；
+/// 要的是"**回退过**"这件事能看出来 ✓）。有它 ⇒ "搜不到"和"没索引"才分得开 ✓。
+static INDEX_FALLBACKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 回退次数（诊断用；与审计的丢弃计数同形 ✓）。
+#[allow(dead_code)] // 2026-10-01 收据：R105=A 的 S1 第②条要"搜不了看得出来" —— 读函数先落地，**界面／命令接线随宿主面那批**；删除条件 = 有命令或界面在读它
+pub fn index_fallbacks() -> u64 {
+    INDEX_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// **当前索引状态**：正常 = `"ok"`；这台机器／这个平台曾经回退过 = `${ERR_INDEX_UNAVAILABLE}`（S1 第②条 ✓）。
+/// 有了它，"搜不到"和"根本搜不了"才分得开 ✓（与 `plugins::map_open_error` 的 `space_locked` 同族 ✓）。
+#[allow(dead_code)] // 2026-10-01 收据：同上（读函数先落地，接线随宿主面那批）；删除条件 = 有命令或界面在读它
+pub fn index_state() -> &'static str {
+    if INDEX_FALLBACKS.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        ERR_INDEX_UNAVAILABLE
+    } else {
+        "ok"
+    }
+}
+
 /// ⚠️ 缺 `chunks` 表（老库没迁到派生层）⇒ **直接返回，不报错**（向前兼容，与 `read_chunks` 同口径）。
 fn ensure_chunk_fts(c: &Connection) -> Result<(), String> {
     if !table_exists(c, "chunks") {
         return Ok(());
     }
     if !table_exists(c, "chunk_fts") {
+        INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return Ok(()); // 触发器/表由 `db::migrate` 建；这里不越权改 schema
     }
     let count = |t: &str| -> Result<i64, String> {
@@ -741,9 +832,11 @@ fn read_chunk_bm25(c: &Connection, query: &str, wanted: &HashSet<&str>) -> HashM
     let mut out = HashMap::new();
     let Some(expr) = chunk_match_expr(query) else { return out };
     if !table_exists(c, "chunk_fts") {
+        INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return out;
     }
     let Ok(mut stmt) = c.prepare("SELECT chunk_id, bm25(chunk_fts) FROM chunk_fts WHERE chunk_fts MATCH ?1") else {
+        INDEX_FALLBACKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return out;
     };
     let Ok(iter) = stmt.query_map(params![expr], |r| {
@@ -1279,6 +1372,154 @@ mod tests {
         assert_eq!(hits[0].id, "p1");
         // snippet 也必须能找到（否则高亮在已折叠的正文里落空）
         assert!(hits[0].snippet.contains("第一段"), "snippet={}", hits[0].snippet);
+    }
+
+    // ---- S1③：跨平台检索一致性夹具（与 Web 侧共读同一份 `tests/search-parity.json`）----
+    //
+    // 判据：`scripts/check-kb-s1-search-parity.mjs` 要求这份夹具被**两侧真消费** ✓；
+    // 契约与已知分歧见夹具自己的 `note` / `knownDivergences`；Web 那一半在
+    // `src/lib/platform/pageSearchParity.test.ts`（vitest，本机可跑 ✓）。
+    // ⚠️ 本条只跑**桌面**那一半 —— 两条测试断的是**同一组**期望值 ⇒ "两侧命中集合相等"是**传递**出来的 ✓。
+    const SEARCH_PARITY_JSON: &str = include_str!("../../tests/search-parity.json");
+
+    /// 夹具用的连接：**走仓库自己的建库路径**（`db::migrate` ⇒ 真 `pages` / 真 `page_fts`（trigram）✓），
+    /// 再 ATTACH 一份最小 `meta.workspaces`（`search_like` / `search_fts` 都要 JOIN 它 ✓）。
+    fn parity_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws1', '空间一');",
+        )
+        .unwrap();
+        crate::db::migrate(&c, "ws1").unwrap();
+        c
+    }
+
+    fn add_parity_page(c: &Connection, id: &str, title: &str, text: &str) {
+        c.execute(
+            "INSERT INTO pages (id, workspace_id, title, content_text, created_at, updated_at)
+             VALUES (?1, 'ws1', ?2, ?3, 1, 1)",
+            params![id, title, text],
+        )
+        .unwrap();
+        sync_fts(c, id, title, text).unwrap(); // 与生产同一条写入路 ✓（不手插 page_fts ✗）
+    }
+
+    /// 把夹具里的一批页面塞进内存库，跑一次页面级检索，回**排序去重后**的 id 集合。
+    fn parity_hits(pages: &[serde_json::Value], query: &str) -> Vec<String> {
+        let c = parity_conn();
+        for p in pages {
+            add_parity_page(
+                &c,
+                p["id"].as_str().unwrap(),
+                p["title"].as_str().unwrap(),
+                p["text"].as_str().unwrap(),
+            );
+        }
+        let no_filters: Vec<(String, String)> = Vec::new();
+        let mut got: Vec<String> = search_in_conn(&c, query, &no_filters, 50)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        got.sort();
+        got.dedup();
+        got
+    }
+
+    fn parity_ids(v: &serde_json::Value, key: &str) -> Vec<String> {
+        let mut out: Vec<String> = v[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("夹具缺 `{key}` 数组"))
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// ★ S1③ 判据（桌面那一半）：夹具每条用例的命中集合必须与 `expect` 逐条相等。
+    /// 与 Web 侧断同一组值 ⇒ 两侧相等是**传递**出来的（不是两边各记一份现状 ✗）。
+    #[test]
+    fn search_parity_fixture_hit_sets() {
+        let fx: serde_json::Value =
+            serde_json::from_str(SEARCH_PARITY_JSON).expect("夹具必须是合法 JSON");
+        let pages = fx["pages"].as_array().expect("pages 数组");
+        let cases = fx["cases"].as_array().expect("cases 数组");
+        assert!(cases.len() >= 2, "夹具至少要两条用例（一条证明不了跨平台一致 ✓）");
+        let mut bad = Vec::new();
+        for case in cases {
+            let q = case["query"].as_str().expect("query");
+            let got = parity_hits(pages, q);
+            let want = parity_ids(case, "expect");
+            if got != want {
+                bad.push(format!(
+                    "「{}」（query={}）：桌面={:?} 期望={:?}",
+                    case["name"].as_str().unwrap_or(""),
+                    q,
+                    got,
+                    want
+                ));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "跨平台检索夹具的**桌面**侧命中集合与期望不一致：\n{}",
+            bad.join("\n")
+        );
+    }
+
+    /// ⚠️ `knownDivergences` 是**读数，不是约定**：这里只断言"桌面侧今天确实是这个集合" ✓ ——
+    /// 语义对齐那天它会**当场红**，于是那一节必须被同步（而不是让分歧静默漂着 ✗）。
+    #[test]
+    fn search_parity_known_divergences_are_recorded_readings() {
+        let fx: serde_json::Value =
+            serde_json::from_str(SEARCH_PARITY_JSON).expect("夹具必须是合法 JSON");
+        let divs = fx["knownDivergences"].as_array().expect("knownDivergences 数组");
+        let mut bad = Vec::new();
+        for d in divs {
+            let got = parity_hits(d["pages"].as_array().expect("pages"), d["query"].as_str().expect("query"));
+            let want = parity_ids(d, "desktop");
+            if got != want {
+                bad.push(format!(
+                    "「{}」（query={}）：桌面={:?} 记录={:?}",
+                    d["name"].as_str().unwrap_or(""),
+                    d["query"].as_str().unwrap_or(""),
+                    got,
+                    want
+                ));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "knownDivergences 的**桌面侧读数**与实测不一致（记录过期，或语义已对齐 ⇒ 请同步夹具那一节 ✓）：\n{}",
+            bad.join("\n")
+        );
+    }
+
+    /// ★ 回归：**FTS5 辅助函数的第一个参数必须是表名**（写成别名 ⇒ `no such column: f` ✗）。
+    ///
+    /// 失败面不是"少几条"：单个 ≥3 字的词会走这条 FTS 路 ⇒ 写错别名 ⇒ **整条检索命令报错** ✗
+    /// （`search` 命令把这个 Err 直接抛给界面，没有回退 ✓）。这条是 2026-10-01 由跨平台夹具撞出来的真 bug
+    /// 的回归网（修前：`search_fts` 直接 Err ✓；修后：真返回命中 ✓）。
+    #[test]
+    fn search_fts_single_word_returns_hits() {
+        let c = parity_conn();
+        add_parity_page(&c, "f1", "会议纪要", "本周会议纪要待办");
+        add_parity_page(&c, "f2", "无关", "今天天气");
+        let hits = search_fts(&c, "会议纪要", 10).expect("≥3 字的单词检索必须不报错（辅助函数要用表名 ✓）");
+        assert_eq!(
+            hits.iter().map(|h| h.id.clone()).collect::<Vec<_>>(),
+            vec!["f1"]
+        );
+        assert!(
+            hits[0].snippet.contains("会议纪要"),
+            "snippet 必须真有值（FTS5 辅助函数跑通了才有）：{}",
+            hits[0].snippet
+        );
+        assert!(search_fts(&c, "绝不存在的串", 10).unwrap().is_empty());
     }
 
     #[test]

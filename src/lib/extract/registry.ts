@@ -13,6 +13,7 @@ import { pdfOcrExtractor } from "./pdfOcr";
 import { OOXML_EXTRACTORS } from "./ooxml";
 import { textExtractor } from "./text";
 import { avTranscriptExtractor } from "./avTranscript";
+import { kreuzbergExtractor } from "./kreuzberg";
 import { legacyExtractor } from "./legacy";
 import type { Extractor } from "./types";
 
@@ -136,6 +137,13 @@ export const REGISTRY: readonly Extractor[] = [
   // ⚠️ html 必须排在 text.plain **前面**：后者的 `text/*` 也匹配 `text/html`，
   //    而按注册表顺序先到先得 ⇒ 放反了，HTML 会被当成纯文本**原样读出标签**。
   htmlExtractor,
+  // ⚠️ P0 格式引擎（Kreuzberg v4.10.x，MIT）：补 eml/msg/zip/7z/gz/tar/rtf/odt/ods/odp/epub/tex/bib/ris。
+  //    ⚠️ **必须排在 `textExtractor` 前面** ✗ —— 后者的 `text/*` 会认领 `text/rtf`；
+  //    它的 mimes 与其它各族（pdf / html / ooxml / legacy / image / av）**刻意零重叠** ✓
+  //    （刻意窄的理由写在 `kreuzberg.ts` 文件头 ✓）。
+  //    没注入 `deps.kreuzbergExtract` ⇒ `provider_error`（不抛、不自建客户端，§15.3-7）——
+  //    在平台侧把原生命令接上之前，**这是预期状态不是 bug** ✓（与 `convertLegacy` 的情形逐字相同 ✓）。
+  kreuzbergExtractor,
   // 纯文本放最后：它的扩展名不与上面几族重叠，放最后是为将来"更具体的纯文本子类"留位
   textExtractor,
   // ⚠️ 音视频转写：`audio/*` / `video/*` 与上面几族**零重叠**，所以位置不影响分派；

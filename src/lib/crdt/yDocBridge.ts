@@ -19,8 +19,10 @@
 // headless Lexical ＋ 真 `@lexical/yjs` 的 **V2** 三件套
 // （`createBindingV2__EXPERIMENTAL` / `syncLexicalUpdateToYjsV2__EXPERIMENTAL` /
 // `syncYjsStateToLexicalV2__EXPERIMENTAL`），**不碰浏览器** ⇒ Windows 也能自验。
-// 依赖 `yjs@13.6.32` / `@lexical/yjs@0.50.0`（与 `lexical@0.50` 同源）钉死在 **devDependencies**，
-// 不进打包产物。
+// 依赖 `yjs@13.6.32` / `@lexical/yjs@0.50.0`（与 `lexical@0.50` 同源），**版本钉死** ✓；
+// ⚠️ 2026-09-29 订正（owner 口径统一）：它们**在 `dependencies`**，不是 devDependencies ✗ ——
+//    这条注释原先写着"devDep／不进打包产物"，那句话**没有读数支撑** ⇒ 已按实况改写 ✓。
+//    合并留在 WebView 这一侧；**`yrs`（Rust 版）现在不引，到 S5 阶段 2 再定** ✓（见 `crdt_wire.rs` 文件头 ✓）。
 import * as Y from "yjs";
 import { createEditor, type LexicalEditor } from "lexical";
 import {
@@ -237,6 +239,46 @@ export interface PageSession {
   dispose(): void;
 }
 
+// =====================================================================================
+// ★ 2026-09-29（正文上传触发那一笔）：把 `onLocalEdit` 从**一页的会话实例**抬到**模块级广播**
+//
+// ## 为什么必须动这一层（而不是让订阅方直接拿 session）
+// 订阅方是 `App.tsx` 的自动同步触发面（「编辑器改了 ⇒ 防抖 ⇒ 立刻上传」），而**会话实例**
+// 由 `editor/Editor.tsx` 的 `PageCrdtBinding` 创建并随页面挂载/销毁持有 —— 两者之间**没有**
+// 现成的传递路径（App 拿不到 session，而 Editor.tsx 不在这一笔的写域里）。
+// 为什么不是另外那三种做法（每条都更贵，逐条给理由）：
+//   · **状态抬进 store**（把 session 或"当前页的会话"放进 zustand）⇒ 多一份"当前会话是哪一页"
+//     的**可变状态**，而这件事已经由 `PageCrdtBinding` 的生命周期表达了 ⇒ 本仓最忌的第二份真相源；
+//   · **在 React 树外另开一个全局单例文件**（`lib/crdt/localEditBus.ts`）⇔ 与本文件下面这段**等价**，
+//     只是多一个文件、多一处"信号源在哪"的入口 ⇒ 信号源已经在这里，不必再搬一次；
+//   · **让 `Editor.tsx` 多一个 prop / 回调把 session 交出去** ⇒ 碰编辑器组件，
+//     而它不在这一笔的写域里（同一时刻 `SyncPanel.tsx` 那一笔正在改，两边不许撞）。
+// ⇒ 这里**只做一层转发**：仍是 `:233` 那个 `onLocalEdit` 的**同一集合语义**
+//   （hydration（载入/远端合并落回编辑器）期间**不报**，`:264-283`），**不新造信号源**、
+//   **不新造触发路**（跑哪一轮由订阅方决定，今天只有 `App.tsx` 那一处）。
+//
+// ## 口径（与实例级那个的关系）
+// · **实例级**（`session.onLocalEdit`）：随会话生灭，调用方自己 `dispose()`；
+// · **模块级**（本函数）：跨页存活，订阅方自己在卸载时退订（`App.tsx` 那一个 effect 的清理）。
+// 两者在同一个 update 监听里被通知，**顺序是实例级先、模块级后** —— 有意为之：
+// `Editor.tsx:573` 那个实例级回调里 `void b.persist()` 会**当场发出** `save_page_state`（IPC），
+// 而模块级的订阅方要等到"那笔状态真的落库"之后才谈上传（见 `App.tsx` 的 flush 注释）。
+// =====================================================================================
+const anyLocalEditListeners = new Set<() => void>();
+
+/**
+ * 订阅**任意一页**的「**真·本地编辑**」（S3b-1 那个信号的模块级广播）。返回取消订阅的函数。
+ *
+ * ⚠️ 语义与 `session.onLocalEdit` **完全一致**：程序的写入（建血统 / 载入 / 远端合并落回编辑器）
+ * **不报**。所以它可以直接用来做"用户改完就上传"的触发源，不会把合并当成本机改动推回去。
+ */
+export function onAnyLocalEdit(cb: () => void): () => void {
+  anyLocalEditListeners.add(cb);
+  return () => {
+    anyLocalEditListeners.delete(cb);
+  };
+}
+
 /**
  * 打开一页的会话。
  *
@@ -277,7 +319,10 @@ export function openPageSession(opts: { json?: string; state?: Uint8Array; edito
       p.tags,
     );
     if (!hydrating) {
+      // ① 实例级（本会话自己的订阅者，`Editor.tsx` 的"存回状态"在这里）；
+      // ② 模块级（跨页的订阅者，`App.tsx` 的"改完就上传"在这里）—— **顺序有意**：见上面那段注。
       for (const cb of [...localEditListeners]) cb();
+      for (const cb of [...anyLocalEditListeners]) cb();
     }
   });
 

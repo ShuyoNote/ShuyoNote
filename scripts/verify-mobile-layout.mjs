@@ -79,13 +79,13 @@ const probe = () => {
 //   · 唤出按钮**在** ⇒ 它同样必须被抽屉遮罩挡住（z-index 45 < 遮罩 55），
 //     否则抽屉开着还能从右下角戳出另一套面板。
 const railBlockedByBackdrop = () => {
-  const rail = document.querySelector(".right-rail");
-  const target = rail ?? document.querySelector(".mobile-right-toggle");
+  const rail = document.querySelector(".top-tools .top-tool");
+  const target = rail ?? document.querySelector(".mobile-rail-toggle");
   if (!target) return null;
   const r = target.getBoundingClientRect();
   const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   const blocked = at?.classList?.contains("mobile-sidebar-backdrop") ?? false;
-  return { blocked, which: rail ? ".right-rail" : ".mobile-right-toggle" };
+  return { blocked, which: rail ? ".top-tools .top-tool" : ".mobile-rail-toggle" };
 };
 
 async function main() {
@@ -160,11 +160,15 @@ async function main() {
     ok(s.railVisible === false, "竖条自动收起（选完就把整屏交还内容）");
     ok(s.toggleAria === "true", `开合按钮 aria-expanded=true（实际 ${s.toggleAria}）`);
     const blockedByBackdrop = await phone.evaluate(railBlockedByBackdrop);
+    // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条**浮动** rail 撤了 ⇒ 这里的"右侧控制"换成
+    //   顶端工具栏的**第一颗按钮** ✓ —— 而它是**应用 chrome**（与贴着屏幕边缘的浮动控制不同 ✓）：
+    //   抽屉打开时它**允许**仍然可点（点「目录」正是把抽屉关掉的办法 ✓）。
+    //   ⇒ 断言按新语义**重述**（⛔ 不是删掉 ✗）：旧那条"必须被遮罩盖住"只对浮动控制成立 ✓。
     ok(
-      blockedByBackdrop === null || blockedByBackdrop.blocked === true,
+      blockedByBackdrop === null || blockedByBackdrop.blocked === false,
       blockedByBackdrop === null
-        ? "抽屉打开时右侧没有可误触的控制（工具条默认不渲染，唤出按钮也不在）"
-        : `遮罩挡住右侧控制（${blockedByBackdrop.which}）——抽屉打开时不该点得到它们`,
+        ? "抽屉打开时没有可误触的**浮动**控制（旧 rail 已撤 ✓）"
+        : `顶端工具栏是应用 chrome（${blockedByBackdrop.which}）——抽屉打开时仍可用 ✓（点它能把抽屉关掉 ✓）`,
     );
     await shot(phone, "03-phone-sidebar-open");
 
@@ -192,10 +196,12 @@ async function main() {
     console.log(`\n【手机 · 竖条里点非活动按钮（设置）】`);
     await phone.click(".mobile-rail-toggle");
     await sleep(700);
-    // ⚠️ 按**标题**选，不按序号：`.activity-group-end .activity-btn` 实际只有三个
-    //（模板中心 / 设置 / 关于）——回收站的触发器是 `.btn-trash`，不带 `.activity-btn`。
+    // ⚠️ 按**标题**选，不按序号：`.activity-group-end .activity-btn` 现在只有两个
+    //（模板中心 / 设置）——回收站的触发器是 `.btn-trash`，不带 `.activity-btn`。
     // 这条注释原先写的是"回收站 / 模板中心 / 设置 / 关于"并按 `[2]` 取"设置"，
     // 实际点中的是**关于**：断言照样绿（两者都会收起竖条），但验的不是想验的那个。
+    // ⚠️ 2026-10-01：owner 要求**去掉竖条上那个「关于」按钮** ⇒ 这一组现在两个 ✓；
+    //   「关于」仍可从**设置里那一行**与**更新横幅**打开 ✓（两个入口都在 ✓，判据不掉覆盖 ✓）。
     await phone.click('.activity-group-end .activity-btn[title="设置"]');
     await sleep(900);
     s = await phone.evaluate(probe);
@@ -408,13 +414,13 @@ async function main() {
       // 每次重新加载，避免上一个面板的开关状态串进来
       await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
       await sleep(2000);
-      // ⚠️ 窄屏这条工具条**默认收起**（2026-09-22）：先点右下角的唤出按钮，
-      //    否则 `.right-rail button` 一个都不存在（改之前它常驻在右缘）。
-      await phone.click(".mobile-right-toggle");
-      await sleep(600);
-      const btns = await phone.$$(".right-rail button");
+      // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条 rail 撤了 ⇒ 四颗入口常驻在**顶端工具栏**，
+      //    不用再"点唤出按钮"✓（⛔ 也不再是"收起态"✗）。
+      //    ⚠️ 选择器是 `.top-tools .top-tool` **本身** ✓ —— `.top-tool` 就是那颗 button，
+      //       写成 `… .top-tool button` 会一个都选不到 ✗（2026-10-01 实测：正是那 3 条红 ✓）。
+      const btns = await phone.$$(".top-tools .top-tool");
       if (!btns[p.index]) {
-        ok(false, `${p.name}：唤出右侧工具条后仍没有第 ${p.index} 个按钮`);
+        ok(false, `${p.name}：顶端工具栏上仍没有第 ${p.index} 个按钮`);
         continue;
       }
       await btns[p.index].click();

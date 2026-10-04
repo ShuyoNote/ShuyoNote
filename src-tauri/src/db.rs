@@ -1,5 +1,7 @@
 use crate::security;
 use rusqlite::{params, Connection};
+// ⭐ U11/T5：`unpair_device` 用 `.optional()`（"没有那一行"是**正常**，⛔ 不是错 ✗）✓
+use rusqlite::OptionalExtension;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -153,6 +155,81 @@ pub(crate) fn open_space_conn(space_id: &str) -> Result<Connection, String> {
 ///
 /// 给插件线程用：它拿不到主连接，但 app scope 的插件私有数据在 meta.db 里。
 /// 走这个入口而不是自己 `Connection::open`，是为了**不让 meta 的 schema 出现第二份定义**。
+/// ⭐ **U11/T5**：`sha256` 的十六进制（**小写 64 位**）—— 配对秘密**只以这个形状落库** ✓。
+///
+/// ⚠️ 只有**一处**实现（写入侧 `pair_device` 与校验侧 `mesh::authorized` 共用 ✓）——
+/// 两处各写一份哈希迟早会漂，而漂的方向是"**校验对不上** ⇒ 谁都进不来"或更坏的"漏" ✗。
+pub(crate) fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 记一行「**我认这台设备**」（已有 ⇒ **覆盖**＝重新配对 ✓）。
+///
+/// ⛔ **落库的是哈希** ✗ —— 传进来的明文**只用来算哈希**，⛔ 不写进任何一列 ✓。
+pub(crate) fn pair_device(conn: &Connection, space_id: &str, device_id: &str, secret: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(space_id, device_id) DO UPDATE SET secret_sha256 = excluded.secret_sha256",
+        rusqlite::params![space_id, device_id, sha256_hex(secret), crate::db::now_ms()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// ⭐ **摘掉一行** ⇒ 回**被摘掉那行的 `secret_sha256`** ✓
+/// （运行的窗口据此也把**那张卡**摘掉 ✓；本来就没有 ⇒ `None` ✓，⛔ 不是错 ✗）。
+pub(crate) fn unpair_device(
+    conn: &Connection,
+    space_id: &str,
+    device_id: &str,
+) -> Result<Option<String>, String> {
+    let hash: Option<String> = conn
+        .query_row(
+            "SELECT secret_sha256 FROM mesh_paired_devices WHERE space_id = ?1 AND device_id = ?2",
+            rusqlite::params![space_id, device_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if hash.is_some() {
+        conn.execute(
+            "DELETE FROM mesh_paired_devices WHERE space_id = ?1 AND device_id = ?2",
+            rusqlite::params![space_id, device_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(hash)
+}
+
+/// 这个空间**认哪些卡**（窗口开的时候**载一次** ✓；⛔ 不开窗 ✗）。
+pub(crate) fn paired_secret_hashes(conn: &Connection, space_id: &str) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT secret_sha256 FROM mesh_paired_devices WHERE space_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![space_id], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// 这个空间**认几台**（设置面读数用 ✓ —— "这台还认我吗"那半边 ✓）。
+pub(crate) fn paired_device_count(conn: &Connection, space_id: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM mesh_paired_devices WHERE space_id = ?1",
+        rusqlite::params![space_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
 pub(crate) fn open_meta_conn_at(dir: &Path) -> Result<Connection, String> {
     let conn = Connection::open(meta_path(dir)).map_err(|e| e.to_string())?;
     let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
@@ -333,6 +410,19 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             -- 它**只是本地标记**：`''` = 未分类（**默认**，闸门对未分类一律放行 —— 绝不因为"没分类"就掐断同步）；
             -- `'personal'` = 个人空间（**必须**按空间加密后才允许绑定同步）；`'team'` = 团队空间（**免检**）。
             kind        TEXT NOT NULL DEFAULT ''
+        );
+        -- ⭐ **U11/T5（2026-10-02）**：**逐台解除**能成立的地方 —— 每个空间记「我认哪些设备」✓。
+        -- ⛔ **只存哈希**（`secret_sha256`）✗：明文只在本机"我要出示"的那一侧
+        --    （口令 `mesh_pair_secret:<space>:<peer>` ✓，见 personal-edition-spec §3.2 ✓）。
+        -- ⚠️ **不进 `LanAnnounce`** ✗：公告是**广播**的 ⇒ 进去等于把"我认谁"播出去 ✓。
+        -- ⚠️ 放 **meta.db**（设备身份 `device_id` 也在这儿 ✓），⛔ 不放空间库 ✗。
+        -- ⚠️ 列就这四格：**不加** `last_seen` 那类 —— 它会让"它还认不认我"出现第二处判定 ✓。
+        CREATE TABLE IF NOT EXISTS mesh_paired_devices (
+            space_id      TEXT NOT NULL,
+            device_id     TEXT NOT NULL,
+            secret_sha256 TEXT NOT NULL,
+            added_at_ms   INTEGER NOT NULL,
+            PRIMARY KEY (space_id, device_id)
         );
         CREATE TABLE IF NOT EXISTS sync_state (
             key   TEXT PRIMARY KEY,
@@ -1089,7 +1179,8 @@ pub(crate) fn migrate(conn: &Connection, space_id: &str) -> Result<(), rusqlite:
     //
     // ⚠️ **为什么它不进 `DERIVED_SCHEMA_DDL`（TS 那份"单一事实源"）**：Web 平台的 SQLite 是
     //    `sql.js`，而它**没有编 FTS5** —— 实测原文 `Error: no such module: fts5`
-    //    （探针 `.tools/probe-sqljs-trigger.mjs`）。把它放进共享 DDL ⇒ **Web 平台建表即失败**。
+    //    （探针 `.tools/probe-sqljs-trigger.mjs` —— ⚠️ **本机资产、不入库** ✗：别人按这个路径找不到它 ✓；
+    //     读数原文已抄在上面 ✓，要重跑就得自己写一个「用 sql.js 建 FTS5 表」的小探针 ✓）。把它放进共享 DDL ⇒ **Web 平台建表即失败**。
     //    所以这一层与 `page_fts` 一样只建在桌面库里；Web 侧继续走 LIKE 路径。
     //    ⇒ **块级 BM25 是桌面能力**，这一点必须写进能力文档，不能让人以为两个平台一样。
     //

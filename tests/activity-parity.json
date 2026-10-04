@@ -1,0 +1,132 @@
+{
+  "note": "S3 第三片「块级活动明细」的**跨语言夹具**：桌面 `src-tauri/src/activity.rs` 与 Web `src/lib/activityBlocks.ts` 读**同一份**、断**同一组**期望值 ⇒ 两侧语义相等是**传递**出来的 ✓，而不是两边各记一份现状 ✗。三处刻意的选择：① 只给**文档 JSON**（不给打包好的载荷）—— 载荷那一层（`content_json` 是字符串字段）由两侧各自的单测覆盖 ✓，夹具只钉「块级差异」这件事 ✓；② `expect` 里的 `kind` 是**线上字符串**（`added`／`edited`／`removed`）✓，与两侧代码里的常量逐字相同 ✓；③ **顺序也是约定**：先按**新版**文档顺序给 added/edited，再按**旧版**顺序补 removed ✓（两侧必须一致，否则同一次改动在桌面与 Web 上顺序不同 ✓）。⚠️ 一条**刻意**的语义写在用例里：只有 `blockRev` 变了而内容逐字相同 ⇒ **不算一次改动** ✓（rev 是管道值，不是内容 —— 与同步/合并那边'不提示'同一条理由 ✓）。",
+  "cases": [
+    {
+      "name": "这一页的第一版 ⇒ 全部算新增",
+      "prev": null,
+      "next": {
+        "root": {
+          "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 1, "children": [{ "type": "text", "text": "甲" }] },
+            { "type": "paragraph", "blockId": "b2", "blockRev": 1, "children": [{ "type": "text", "text": "乙" }] }
+          ]
+        }
+      },
+      "expect": [
+        { "blockId": "b1", "kind": "added", "label": "甲" },
+        { "blockId": "b2", "kind": "added", "label": "乙" }
+      ]
+    },
+    {
+      "name": "改了一段文字 ⇒ edited（那一版 rev 也涨了，但判定看的是内容）",
+      "prev": {
+        "root": {
+          "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 1, "children": [{ "type": "text", "text": "甲" }] },
+            { "type": "paragraph", "blockId": "b2", "blockRev": 1, "children": [{ "type": "text", "text": "乙" }] }
+          ]
+        }
+      },
+      "next": {
+        "root": {
+          "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 2, "children": [{ "type": "text", "text": "甲改了" }] },
+            { "type": "paragraph", "blockId": "b2", "blockRev": 1, "children": [{ "type": "text", "text": "乙" }] }
+          ]
+        }
+      },
+      "expect": [{ "blockId": "b1", "kind": "edited", "label": "甲改了" }]
+    },
+    {
+      "name": "⚠️ 只有 blockRev 变、内容逐字相同 ⇒ 不算一次改动",
+      "prev": {
+        "root": {
+          "children": [{ "type": "paragraph", "blockId": "b1", "blockRev": 1, "children": [{ "type": "text", "text": "甲" }] }]
+        }
+      },
+      "next": {
+        "root": {
+          "children": [{ "type": "paragraph", "blockId": "b1", "blockRev": 7, "children": [{ "type": "text", "text": "甲" }] }]
+        }
+      },
+      "expect": []
+    },
+    {
+      "name": "新增一段 ＋ 删掉一段（顺序：先新版顺序给 added，再补 removed）",
+      "prev": {
+        "root": {
+          "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 1, "children": [{ "type": "text", "text": "甲" }] },
+            { "type": "paragraph", "blockId": "b2", "blockRev": 1, "children": [{ "type": "text", "text": "乙" }] }
+          ]
+        }
+      },
+      "next": {
+        "root": {
+          "children": [
+            { "type": "paragraph", "blockId": "b1", "blockRev": 1, "children": [{ "type": "text", "text": "甲" }] },
+            { "type": "paragraph", "blockId": "b3", "blockRev": 1, "children": [{ "type": "text", "text": "丙" }] }
+          ]
+        }
+      },
+      "expect": [
+        { "blockId": "b3", "kind": "added", "label": "丙" },
+        { "blockId": "b2", "kind": "removed", "label": "乙" }
+      ]
+    },
+    {
+      "name": "不是块树（判不了）⇒ 什么都不报（宁可少报，不假报）",
+      "prev": null,
+      "next": "不是块树",
+      "expect": []
+    },
+    {
+      "name": "块没有身份 ⇒ 整份判不了 ⇒ 什么都不报",
+      "prev": null,
+      "next": {
+        "root": {
+          "children": [
+            { "type": "paragraph", "blockRev": 1, "children": [{ "type": "text", "text": "无身份" }] },
+            { "type": "paragraph", "blockId": "b1", "blockRev": 1, "children": [{ "type": "text", "text": "甲" }] }
+          ]
+        }
+      },
+      "expect": []
+    },
+    {
+      "name": "标签只取**首行**（多行文本的第二行不进 label）",
+      "prev": null,
+      "next": {
+        "root": {
+          "children": [
+            {
+              "type": "paragraph",
+              "blockId": "b1",
+              "blockRev": 1,
+              "children": [{ "type": "text", "text": "第一行\n第二行" }]
+            }
+          ]
+        }
+      },
+      "expect": [{ "blockId": "b1", "kind": "added", "label": "第一行" }]
+    },
+    {
+      "name": "⚠️ 标签走法是先取本节点 text、**再递归 children**（两种写法在这一条上分岔）",
+      "prev": null,
+      "next": {
+        "root": {
+          "children": [
+            {
+              "type": "paragraph",
+              "blockId": "b1",
+              "blockRev": 1,
+              "text": "前缀",
+              "children": [{ "type": "text", "text": "子" }, { "type": "text", "text": "后" }]
+            }
+          ]
+        }
+      },
+      "expect": [{ "blockId": "b1", "kind": "added", "label": "前缀子后" }]
+    }
+  ]
+}

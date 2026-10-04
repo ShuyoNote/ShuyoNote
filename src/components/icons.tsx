@@ -718,6 +718,19 @@ export function CommentIcon(props: IconProps) {
   );
 }
 
+/**
+ * 铃铛（**通知**入口用 ✓）。2026-10-01 加：owner 把「通知」从原来那颗「评论 / 通知」里拆出来 ✗⇒✓
+ * ⇒ 顶栏要有一颗只代表"通知"的图标 ✓（⛔ 不复用 `InboxIcon` ✗ —— 那是**邮件收件箱** ✓，两件事 ✓）。
+ */
+export function BellIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M18 15V10a6 6 0 1 0-12 0v5l-1.6 2.4A1 1 0 0 0 5.2 19h13.6a1 1 0 0 0 .8-1.6L18 15z" />
+      <path d="M10 19.5a2.2 2.2 0 0 0 4 0" />
+    </Icon>
+  );
+}
+
 export function CalendarIcon(props: IconProps) {
   return (
     <Icon {...props}>

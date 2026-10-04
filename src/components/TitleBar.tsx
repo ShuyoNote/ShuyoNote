@@ -8,6 +8,10 @@ import { useAuth } from "../store/auth";
 import { isDesktopPlatform } from "../lib/platform";
 import { api, type SyncProfile } from "../lib/api";
 import { syncTagLabel, syncTagColor } from "../lib/syncTag";
+// ⚠️ 2026-10-01（owner 界面方向之①）：**右侧工具条撤掉** ⇒ 它的入口搬到这条标题栏上 ✓；
+//    入口本身抽在 `TopTools` 里 ✓ —— 因为**手机上标题栏不渲染** ✓，而 owner 要求两端都有 ✓
+//    （同一个组件在 `App.tsx` 的 `.app` 顶部再渲染一处 ✓，⛔ 不各写一份 ✗）。
+import { TopTools } from "./TopTools";
 
 // 自绘标题栏（B 方案）。仅桌面端渲染，Web 端没有窗口概念。
 //
@@ -157,6 +161,11 @@ export function TitleBar() {
           <span className="titlebar-sync-text">{syncTagLabel(syncProfile.server_url)}</span>
         </div>
       )}
+      {/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 入口搬进**这一行** ✓
+          （组件在 `TopTools.tsx` ✓ —— 手机上标题栏不渲染，所以 `App.tsx` 顶部另渲染一处 ✓，
+          两处共用同一个组件 ✓，⛔ 不各写一份 ✗）。
+          形态＝**保持图标样式** ✓（⛔ 不做文字胶囊 ✗）；顺序＝四颗 ＋ 插件常驻入口排其后 ✓。 */}
+      <TopTools />
       {/* 按钮区不带 drag-region：否则点击会被当作拖动窗口 */}
       <div className="titlebar-actions">
         <button className="titlebar-btn" title={t("common.minimize")} aria-label={t("common.minimize")} onClick={() => void run("minimize")}>

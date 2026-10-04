@@ -13,6 +13,8 @@
 > [yrs 对拍结论](2026-09-23-yrs-interop-spike-conclusions.md) 与 §15 的桌面流通道设计，
 > 以及 [状态文件](../SHUYONOTE_STATE.md) 里"块级 CRDT"那一行）。
 
+> 状态：**在飞**（阶段 2 冲刺中；S7-3 真机双设备验收未做 ✗）。 证据：`docs/plans/2026-09-23-crdt-stage2-kickoff.md`
+
 ## 0. 这条口径**作废/放宽**了哪些旧约束（写清楚，免得后面又按旧约束缩手）
 
 | 旧约束 | 处置 |
