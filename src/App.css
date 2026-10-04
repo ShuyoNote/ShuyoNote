@@ -23362,3 +23362,37 @@ body.is-plugin-panel-open .main {
   color: var(--danger, #c0392b);
 }
 
+
+/* ⚠️ **2026-10-04 加**：文件预览的**内联形态**（owner：「pdf 和文件预览面板可否跟页面一个级别」）。
+   原来那一套是 position:fixed 的全屏浮层（避开标题栏 / 左竖条 / 侧栏）；
+   内联时它就在 .main 里 ⇒ ⭐ 位置交还文档流，那一套外边距全部作废。
+   ⚠️ 类名用**附加类**（.fm-preview-overlay.is-inline）而不是换一个类 —— 因为
+   scripts/check-overlay-registry.mjs 的判据是「JSX 里字面量写出来的、以 -overlay 结尾的 class token」，
+   写成三元表达式会让它报「幽灵条目：没有任何组件渲染」（实测撞过一次）。
+   特异性更高 ⇒ 放在文件末尾也能覆盖。 */
+.fm-preview-overlay.is-inline {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  z-index: auto;
+}
+
+/* ⚠️ **2026-10-04 加**：预览顶栏的关闭按钮。
+   来由：组件的关闭方式原来只有「点空白」＋ Android 返回键 —— 而内联形态里没有“空白” ⇒
+   没有这颗按钮就退不出去（浮层形态也一并给：触屏上点空白不好点）。 */
+.fm-preview-x {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fm-preview-x:hover {
+  color: var(--text-faint);
+}

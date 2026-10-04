@@ -136,7 +136,12 @@ function collectOutline(root: Element): MdOutlineItem[] {
   return out;
 }
 
-export function FilePreviewDialog() {
+export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {}) {
+  // ⚠️ **2026-10-04 加 `inline`**（owner：「pdf 和文件预览面板可否跟页面一个级别」）——
+  //    ⭐ 与 `PdfReader` **同一个形状** ✓（那边是 `inline ? tree : createPortal(tree, body)` ✓）：
+  //    · `inline === true` ⇒ ⭐ 它就是**主区里的一种视图** ✓（铺满 `.main` ✓，⭐ 不 portal ✓
+  //      ／ ⭐ 不锁外壳滚动 ✓ ／ ⭐ 不登记返回栈 ✓）；
+  //    · `false`（⭐ 默认 ✓）⇒ ⭐ 照旧是全屏浮层 ✓ ⇒ ⭐ **这一步不改变任何现有行为** ✓（接线在下一步 ✓）。
   // 逐字段订阅（`close`/`importAsPage` 是动作，引用恒定 ⇒ 选择器不产生额外重渲染）。
   const target = useFilePreview((s) => s.target);
   const mdHtml = useFilePreview((s) => s.mdHtml);
@@ -264,12 +269,16 @@ export function FilePreviewDialog() {
 
   // Android 返回键：应用级文件预览浮层（`useFilePreview` 驱动，点空白/× 关闭）。
   // 只有 `target` 在（= 浮层真的渲染出来）时才登记——见 lib/overlayStack.ts 与 §4.1.4。
-  useOverlayLayer("filePreview", !!target, close);
+  // Android 返回键：**只在它确实以浮层身份出现时才登记**（`inline` 时它是主区里的视图，
+  // 没有"最上层浮层"可言 —— 与 `PdfReader` 里那句 `open && !inline` 同一口径）。
+  useOverlayLayer("filePreview", !!target && !inline, close);
   // §4.1.2 第 4 条：打开时锁住"当前视图真实的那个滚动容器"。
   // 这一条此前**漏了**（是这一族里唯一没接锁的浮层）：实测只开着它时
   // `overlayScrollLockCount()` = 0，也就是浮层开着还能把背景正文拖走。
   // 验收脚本里它一度"通过"锁断言，靠的是**上一层泄漏的锁**（见 §4.1.4 的说明）。
-  useOverlayScrollLock(!!target);
+  // ⚠️ **2026-10-04**：⭐ `inline` 时**不锁外壳** ✗ —— 它本身就是主区里的一块 ✓，
+  // 锁外壳只会让"侧栏/别处滚不动"，那正是 owner 报的那个体感（同一处 PDF 也这么改过 ✓）。
+  useOverlayScrollLock(!!target && !inline);
 
   // Hooks 之上已全部执行；target 为空则不渲染弹层。
   if (!target) return null;
@@ -300,11 +309,22 @@ export function FilePreviewDialog() {
     </div>
   );
 
-  return createPortal(
-    <div className="fm-preview-overlay" onClick={close}>
-      <div className="fm-preview" onClick={(e) => e.stopPropagation()}>
+  // ⚠️ **2026-10-04**：`inline` 形态 ⭐ **不 portal** ✓（它就是主区里的一块 ✓）；
+  //    而且 ⭐ 根上**不能**挂"点空白关闭" ✗ —— ⭐ 页面里没有"空白" ✓ ⇒ 关闭改走顶栏那颗 × ✓（见下）。
+  // ⚠️⭐ 根类名**必须是字面量** ✗ —— `check-overlay-registry.mjs` 的判据是
+  //    「JSX 里字面量写出来的、以 `-overlay`/`-popover` 结尾的 class token」✓
+  //    ⇒ ⭐ 写成 `className={inline ? "a" : "b"}` 会让它报「幽灵条目：没有任何组件渲染」✓（实测撞过 ✓）。
+  //    ⇒ ⭐ 所以恒为 `fm-preview-overlay` ✓ ＋ ⭐ 内联时**加**一个 `is-inline` ✓ ⇒ ⭐ 位置交给 CSS 覆盖 ✓。
+  const tree = (
+    <div className={`fm-preview-overlay ${inline ? "is-inline" : ""}`} onClick={inline ? undefined : close}>
+      <div className="fm-preview" onClick={inline ? undefined : (e) => e.stopPropagation()}>
         <div className="fm-preview-head">
           <span className="fm-preview-name">{target.name}</span>
+          {/* ⚠️ **2026-10-04 加 ×**：`inline` 形态**没有**"点空白关闭"那条路 ✗ ⇒ 必须有个显式的出口 ✓；
+              浮层形态也一并给（原来只有点空白 ＋ Android 返回键，触屏上不好点 ✓）。 */}
+          <button className="fm-preview-x" onClick={close} title="关闭预览" aria-label="关闭预览">
+            ✕
+          </button>
           {target.mime === "application/pdf" && (
             <button className="fm-preview-read" onClick={openPdf}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -434,7 +454,9 @@ export function FilePreviewDialog() {
           )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
+  // ⭐ `inline` ⇒ 直接交回主区（`App.tsx` 那条 `.main` 分支 ✓）；
+  // ⭐ 否则照旧 portal 到 body（全屏浮层 ✓）。
+  return inline ? tree : createPortal(tree, document.body);
 }
