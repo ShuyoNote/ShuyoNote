@@ -228,6 +228,10 @@ export function SyncPanel() {
   //   （"只开网格、不绑服务端"正是这一档要支持的配置）。
   const [meshBind, setMeshBind] = useState("");
   const [meshToken, setMeshToken] = useState("");
+  // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
+  // ⭐ 网格要一个「两边填一样」的字符串来对暗号 ✓，而个人空间**没有** `space_id`（那在服务器上）
+  // ⇒ 这一项就是它的替身 ✓；⭐ 团队空间里 `space_id` 优先 ⇒ 填不填都不影响 ✓。
+  const [meshRoom, setMeshRoom] = useState("");
   const [meshBusy, setMeshBusy] = useState(false);
   const meshSavedBind = lanStatus?.mesh.bind ?? "";
   // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
@@ -306,6 +310,22 @@ export function SyncPanel() {
     } finally {
       setDuBusy("");
     }
+  };
+
+  /** ⭐ 存「配对暗号」：个人空间两台设备填同一个就能互连（团队空间不受影响 ✓）。 */
+  const saveMeshRoom = async () => {
+  if (!meshRoom.trim()) return;
+  setMeshBusy(true);
+  try {
+  // ⚠️ 只写 room 这一项 ⇒ 另两项传 `null`（＝不动 ✓，与 Rust 侧同口径 ✓）。
+  const st = await api.meshSetConfig(activeId, null, null, meshRoom.trim());
+  setLanStatus((s) => (s ? { ...s, mesh: st } : s));
+  setStatus("配对暗号已保存 —— 另一台设备填同一个暗号，就能在同一个网络里互相找到");
+  } catch (e) {
+  setStatus(String(e));
+  } finally {
+  setMeshBusy(false);
+  }
   };
 
   const saveMeshToken = async () => {
@@ -1906,6 +1926,21 @@ export function SyncPanel() {
                         <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
                           保存地址
                         </button>
+                      </div>
+                      {/* ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
+                          ⭐ 两台设备填**同一个**暗号就能在同一个网络里互连 ✓，不需要服务器 ✓。
+                          ⚠️ 团队空间用服务器上的组织空间 id 对暗号 ⇒ 这一项对它们没有影响 ✓。 */}
+                      <div className="sync-field">
+                      <input
+                      className="sync-input"
+                      placeholder="配对暗号（个人空间：两台设备填一样的字）"
+                      value={meshRoom}
+                      disabled={meshBusy}
+                      onChange={(e) => setMeshRoom(e.target.value)}
+                      />
+                      <button className="sync-btn" disabled={meshBusy || !meshRoom.trim()} onClick={() => void saveMeshRoom()}>
+                      保存暗号
+                      </button>
                       </div>
                       <div className="sync-field">
                         <input

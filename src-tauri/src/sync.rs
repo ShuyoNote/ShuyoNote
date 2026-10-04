@@ -3328,7 +3328,22 @@ pub fn mesh_set_config(
     workspace_id: Option<String>,
     bind: Option<String>,
     token: Option<String>,
+    // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
+    //   ⭐ `None` ＝ 不动（团队空间照旧 ✓）／ `""` ＝ 清除 ／ 有值 ＝ 覆盖 ✓。
+    room: Option<String>,
 ) -> Result<crate::mesh::MeshConfigState, String> {
+    // ⚠️ 顺序要紧 ✗：⭐ 必须**先**写暗号、**再**取 scope ✓ —— `mesh_scope` 就是用它来定
+    //   「对暗号的 id」✓；反过来（先取 scope）刚填的暗号这一轮还用不上 ✓。
+    //   ⚠️ 写它只需要认出「哪一行」（`ws_id`）✓ ⇒ 走 `mesh_target_ws`（它不要求 space_id ✓）。
+    if let Some(r) = room.as_deref() {
+    let target = mesh_target_ws(&db, workspace_id.as_deref())?;
+    let c = db.0.lock().expect("db mutex poisoned");
+    c.execute(
+    "UPDATE sync_profiles SET mesh_room = ?1 WHERE ws_id = ?2",
+    rusqlite::params![r, target],
+    )
+    .map_err(|e| e.to_string())?;
+    }
     let scope = mesh_scope(&db, workspace_id.as_deref())?;
     let cfg = {
         let c = db.0.lock().expect("db mutex poisoned");
@@ -3381,13 +3396,47 @@ struct MeshScope {
     device: String,
 }
 
+/// ⚠️ **2026-10-04 加**：⭐ 只挑「哪一行」✗ —— 给 `mesh_set_config` 写**配对暗号**用 ✓。
+/// 与 `mesh_scope` 的区别：它也**不要求** `space_id` ✓（个人空间正是没有它 ✓）。
+fn mesh_target_ws(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<String, String> {
+let c = db.0.lock().expect("db mutex poisoned");
+let mut stmt = c
+.prepare(
+"SELECT p.ws_id FROM sync_profiles p
+ WHERE EXISTS (
+     SELECT 1 FROM meta.workspaces w
+     WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+ )",
+)
+.map_err(|e| e.to_string())?;
+let rows = stmt
+.query_map([], |r| r.get::<_, String>(0))
+.map_err(|e| e.to_string())?
+.collect::<Result<Vec<_>, _>>()
+.map_err(|e| e.to_string())?;
+match workspace_id.filter(|w| !w.is_empty()) {
+Some(want) => rows
+.into_iter()
+.find(|ws| ws == want)
+.ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}")),
+None => match rows.len() {
+1 => Ok(rows[0].clone()),
+0 => Err("本机还没有任何绑过同步的空间 —— 网格交换要先有一个空间".to_string()),
+n => Err(format!("本机有 {n} 个空间，这条命令要指名其中一个")),
+},
+}
+}
+
 fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
         let c = db.0.lock().expect("db mutex poisoned");
         let mut stmt = c
             .prepare(
-                "SELECT p.space_id, p.ws_id FROM sync_profiles p
+                // ⚠️ **2026-10-04 改**（owner：个人空间也要能用设备直连）：把 `mesh_room` 一起读出来 ✓。
+                //   ⭐ 对暗号的值 ＝ `space_id` 非空就用它（团队空间行为不变 ✓），否则用用户填的
+                //   「配对暗号」`mesh_room` ✓（个人空间没有 space_id —— 那是服务器上的组织空间 id）。
+                "SELECT p.space_id, p.ws_id, p.mesh_room FROM sync_profiles p
                  WHERE EXISTS (
                      SELECT 1 FROM meta.workspaces w
                      WHERE w.id = p.ws_id AND w.deleted_at IS NULL
@@ -3395,7 +3444,13 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .query_map([], |r| {
+            Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            ))
+            })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -3404,7 +3459,7 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
     let pick = match workspace_id.filter(|w| !w.is_empty()) {
         Some(want) => rows
             .iter()
-            .find(|(_, ws)| ws == want)
+            .find(|(_, ws, _)| ws == want)
             .cloned()
             .ok_or_else(|| format!("这个空间没有同步档案（或它不是当前工作区）：{want}"))?,
         None => match rows.len() {
@@ -3414,9 +3469,16 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
         },
     };
     if pick.0.trim().is_empty() {
-        return Err("这个空间的同步档案还没有 space_id（网格交换要它来对暗号）".to_string());
+        return Err(
+        "这台设备还没填「配对暗号」——个人空间不需要服务器，两台设备填同一个暗号就能互连"
+        .to_string(),
+        );
     }
-    Ok(MeshScope { space: pick.0, db_space: pick.1, device: device_id })
+    // ⚠️ **2026-10-04 改**：⭐ 对暗号的值可以是 `space_id`（团队 ✓）**或**用户填的「配对暗号」
+    //   `mesh_room`（个人 ✓）。⚠️ 它**不必**是服务器上的组织空间 id ✗ —— `MeshScope` 的注释
+    //   写着真机上「本地库名」与「对暗号的空间 id」本来就不同名 ✓，只要求**两台填一样** ✓。
+    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
+    Ok(MeshScope { space, db_space: pick.1, device: device_id })
 }
 
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。

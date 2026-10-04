@@ -441,7 +441,12 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             last_pulled_seq INTEGER NOT NULL DEFAULT 0,
             -- P6.1「每空间开关」（2026-09-15）：1 = 同步附件字节（默认，保持既有行为），
             -- 0 = 只同步元数据、字节按需。见 docs/plans/2026-09-15-attachment-on-demand-plan.md
-            sync_attachments INTEGER NOT NULL DEFAULT 1
+            sync_attachments INTEGER NOT NULL DEFAULT 1,
+            -- ⚠️ **2026-10-04 加**（owner：「加一个配对暗号输入框」）：⭐ 个人空间的**对暗号**值 ✗。
+            --   网格（设备直连）要一个「两边填一样」的字符串来对暗号 ✓，而个人空间**没有** `space_id`
+            --   （那是服务器上的组织空间 id）⇒ 单独存一个用户自己填的「配对暗号」✓。
+            --   ⭐ `space_id` 非空时仍以它为准（团队空间的行为一点不变 ✓）。
+            mesh_room TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS auth_sessions (
             server_url    TEXT PRIMARY KEY,
@@ -700,6 +705,19 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             "ALTER TABLE sync_profiles ADD COLUMN sync_attachments INTEGER NOT NULL DEFAULT 1",
             [],
         )?;
+            // ⚠️ **2026-10-04 加**（同上）：⭐ 个人空间的「配对暗号」列 ✗ —— 判据同上面那条：
+            //   先问 `pragma_table_info` 有没有这一列，没有才加 ✓（幂等 ✓）。
+            let has_mesh_room: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'mesh_room'",
+            [],
+            |row| row.get(0),
+            )?;
+            if has_mesh_room == 0 {
+            conn.execute(
+            "ALTER TABLE sync_profiles ADD COLUMN mesh_room TEXT NOT NULL DEFAULT ''",
+            [],
+            )?;
+            }
     }
     Ok(())
 }

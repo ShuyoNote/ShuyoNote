@@ -495,11 +495,18 @@ export const api = {
    * ⚠️ **`null` ＝ 不动这一项；`""` ＝ 清除它** —— 关掉网格就是 `meshSetConfig(ws, "")`。
    * 回的是**读数**（含"别人拉不拉得到"那句人话），**不含口令本身**。
    */
-  meshSetConfig: (workspaceId?: string | null, bind?: string | null, token?: string | null) =>
+  meshSetConfig: (
+  workspaceId?: string | null,
+  bind?: string | null,
+  token?: string | null,
+  // ⚠️ **2026-10-04 加**：⭐ 配对暗号（个人空间用 ✓，团队空间 `space_id` 优先 ⇒ 无影响 ✓）。
+  room?: string | null,
+  ) =>
     invoke("mesh_set_config", {
       workspaceId: workspaceId ?? null,
       bind: bind ?? null,
       token: token ?? null,
+      room: room ?? null,
     }) as Promise<MeshConfigState>,
   // ---- M27 team edition auth (proxy to sync-server /auth/*) ----
   // 注意：Tauri 2 的参数键必须是 camelCase（运行时再映射到 Rust 的 snake_case 形参）。
