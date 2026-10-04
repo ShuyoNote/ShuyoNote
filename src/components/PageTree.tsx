@@ -405,8 +405,6 @@ function TreeItem({
   const overId = useTreeDrag((s) => s.overId);
   const zone = useTreeDrag((s) => s.zone);
   const [expanded, setExpanded] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(node.title);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLSpanElement>(null);
@@ -467,14 +465,24 @@ function TreeItem({
   const isDragSource = draggingId === node.id;
   const isDragTarget = draggingId !== null && node.id !== draggingId && overId === node.id;
 
-  const commitRename = async () => {
-    const v = editValue.trim();
-    setEditing(false);
-    if (v && v !== node.title) {
-      await useNotes.getState().renamePage(node.id, v);
-    } else {
-      setEditValue(node.title);
-    }
+  /**
+   * ⭐ **2026-10-04 改成弹窗**（owner：「侧边栏里的文件改名都改成弹窗模式」）——
+   * 原来这里是**行内输入**（`editing` ＋ `.tree-rename-input`），与「文件」那条（`inputDialog`）不一致。
+   * ⚠️ 页面与**文件夹**在侧栏里是**同一个树节点组件** ⇒ ⭐ 这一处改完两种都跟着变 ✓。
+   * ⚠️ 空名与没改：静默不提交（与原 commitRename 同一口径 ✓，不弹「名字不能为空」的废话）。
+   */
+  const startRename = () => {
+    const fallback = isFolder ? "新建文件夹" : "未命名";
+    inputDialog({
+      title: isFolder ? "重命名文件夹" : "重命名页面",
+      placeholder: "名称",
+      defaultValue: node.title || fallback,
+      onSubmit: async (name) => {
+        const v = name.trim();
+        if (!v || v === node.title) return;
+        await useNotes.getState().renamePage(node.id, v);
+      },
+    });
   };
 
   const handleClick = (e: React.MouseEvent) => {
@@ -518,7 +526,7 @@ function TreeItem({
         onMouseDown={(e) => {
           // Left-button on a row starts a potential pointer-drag (works in Tauri's
           // WebView where HTML5 drag-and-drop is suppressed by dragDropEnabled).
-          if (e.button !== 0 || editing) return;
+          if (e.button !== 0) return;
           onRowPointerDown(node.id, e);
         }}
         onClick={handleClick}
@@ -560,37 +568,18 @@ function TreeItem({
             <PageIcon width={16} height={16} />
           )}
         </span>
-        {editing ? (
-          <input
-            className="tree-rename-input"
-            autoFocus
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitRename();
-              } else if (e.key === "Escape") {
-                setEditing(false);
-                setEditValue(node.title);
-              }
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ) : (
-          <span
-            className="tree-title"
-            title="双击重命名"
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              setEditValue(node.title || "");
-              setEditing(true);
-            }}
-          >
-            {node.title || (isFolder ? "新建文件夹" : "未命名")}
-          </span>
-        )}
+        {/* ⚠️ **2026-10-04**：原来这里是个三元 —— `editing` 时渲染行内 `<input>`，否则渲染标题 ✗。
+            改成弹窗之后**恒渲染标题** ✓（双击 / 右键菜单那两处都改成调 `startRename()` ✓）。 */}
+        <span
+          className="tree-title"
+          title="双击重命名"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            startRename();
+          }}
+        >
+          {node.title || (isFolder ? "新建文件夹" : "未命名")}
+        </span>
         <span className={`tree-actions${menuOpen || copyOpen ? " is-open" : ""}`}>
           {/* 折叠成「…」菜单：hover 显示一个 …，点开弹出动作菜单。 */}
           <button
@@ -611,8 +600,7 @@ function TreeItem({
               <button
                 onClick={() => {
                   setMenuOpen(false);
-                  setEditValue(node.title || "");
-                  setEditing(true);
+startRename();
                 }}
               >
                 <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
@@ -1055,7 +1043,7 @@ export function PageTree(_props: {
   const onRowPointerDown = (id: string, e: React.MouseEvent) => {
     // Ignore drag start from interactive children (toggle / actions / rename).
     const target = e.target as HTMLElement;
-    if (target.closest(".tree-toggle, .tree-actions, .tree-rename-input, button, input")) return;
+    if (target.closest(".tree-toggle, .tree-actions, button, input")) return;
     dragRef.current = { id, startX: e.clientX, startY: e.clientY, armed: false };
   };
   useEffect(() => {
