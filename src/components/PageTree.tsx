@@ -507,7 +507,10 @@ function TreeItem({
       // still expands/collapses the tree. Close any overlay (template center).
       useFileManagerStore.getState().setFolderId(node.id);
       useViewStore.getState().setView("files");
-      useViewStore.getState().leaveTemplates();
+      // ⚠️ **2026-10-04 删掉一行**：这里原来是 `leaveTemplates()` ✗ —— 它的意图是"关掉模板中心"✓，
+      //   但模板中心**并进 view 之后自己就是** `view === "templates"` ✓ ⇒ `setView("files")` 已经离开它了 ✓。
+      //   ⚠️ 而 `leaveTemplates()` 会**无条件**把 view 设回 `prevView`（⭐ 默认 "notes" ✓）
+      //   ⇒ ⭐ 它把上面刚设好的 "files" **立刻改回 "notes"** ✗ ⇒ ⭐ 症状＝点文件夹打不开文件管理视图 ✓。
     } else {
       useNotes.getState().openPage(node.id);
     }
