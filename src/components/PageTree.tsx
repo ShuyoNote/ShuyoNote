@@ -907,8 +907,6 @@ export function PageTree(_props: {
     document.body.classList.add("is-sidebar-resizing");
   };
   const [workspaceName, setWorkspaceName] = useState("默认空间");
-  const [renamingSpace, setRenamingSpace] = useState<string | null>(null);
-  const [renameSpaceValue, setRenameSpaceValue] = useState("");
   // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
@@ -1138,27 +1136,33 @@ export function PageTree(_props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages]);
 
+  /**
+   * ⭐ **2026-10-04 改成弹窗**（owner：「侧边栏里的文件改名都改成弹窗模式」）——
+   * 原来这里是**行内输入**（`renamingSpace` ＋ `.space-item-name`）。
+   * ⚠️ 与页面/文件夹那笔同一口径：⭐ 侧栏里的改名一律走 `inputDialog` ✓。
+   * ⚠️ 语义照旧：空名不提交（原 `commitRenameSpace` 的 `if (!v) return` ✓）；
+   *    成功且改的是当前空间 ⇒ 同步顶栏那份 `workspaceName` ✓（原逻辑一字不改 ✓）。
+   */
   const startRenameSpace = (s: { id: string; name: string }) => {
-    setRenamingSpace(s.id);
-    setRenameSpaceValue(s.name);
-  };
-
-  const commitRenameSpace = async () => {
-    if (!renamingSpace) return;
-    const v = renameSpaceValue.trim();
-    const targetId = renamingSpace;
-    setRenamingSpace(null);
-    if (!v) return;
-    const ok = await useSpaceStore.getState().rename(targetId, v);
-    if (ok) {
-      if (targetId === activeSpaceId) setWorkspaceName(v);
-      else {
-        const nm = useSpaceStore.getState().spaces.find((s) => s.id === targetId)?.name;
-        if (nm) setWorkspaceName(nm);
-      }
-    } else {
-      toast("重命名失败", "error");
-    }
+    inputDialog({
+      title: "重命名工作空间",
+      placeholder: "名称",
+      defaultValue: s.name,
+      onSubmit: async (name) => {
+        const v = name.trim();
+        if (!v || v === s.name) return;
+        const ok = await useSpaceStore.getState().rename(s.id, v);
+        if (ok) {
+          if (s.id === activeSpaceId) setWorkspaceName(v);
+          else {
+            const nm = useSpaceStore.getState().spaces.find((x) => x.id === s.id)?.name;
+            if (nm) setWorkspaceName(nm);
+          }
+        } else {
+          toast("重命名失败", "error");
+        }
+      },
+    });
   };
 
   const tree = useMemo(() => buildTree(pages), [pages]);
@@ -1249,27 +1253,9 @@ export function PageTree(_props: {
                           {s.name.charAt(0)}
                         </span>
                         <div className="space-item-body">
-                          {renamingSpace === s.id ? (
-                            <input
-                              className="space-item-rename-input"
-                              autoFocus
-                              value={renameSpaceValue}
-                              onChange={(e) => setRenameSpaceValue(e.target.value)}
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.stopPropagation();
-                                  commitRenameSpace();
-                                } else if (e.key === "Escape") {
-                                  e.stopPropagation();
-                                  setRenamingSpace(null);
-                                }
-                              }}
-                              onBlur={commitRenameSpace}
-                            />
-                          ) : (
-                            <span className="space-item-name" title={s.name}>{s.name}</span>
-                          )}
+                          {/* ⚠️ **2026-10-04**：原来这里是个三元 —— 改名时渲染行内 `<input>` ✗。
+                              改成弹窗之后**恒渲染名字** ✓（那颗 ✎ 现在直接开弹窗 ✓）。 */}
+                          <span className="space-item-name" title={s.name}>{s.name}</span>
                           {/* 第二行放「当前 / 同步目标」，让每个空间的状态一眼可见， */}
                           {/* 而不是把同步标签硬塞进名字后面挤成一行。 */}
                           <div className="space-item-meta">
@@ -1288,7 +1274,7 @@ export function PageTree(_props: {
                           </div>
                         </div>
                         <div className="space-item-ops" onClick={(e) => e.stopPropagation()}>
-                          {renamingSpace !== s.id && (
+                          {(
                             <button
                               className="space-item-op"
                               title="重命名工作空间"
