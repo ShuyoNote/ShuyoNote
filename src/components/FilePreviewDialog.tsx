@@ -294,6 +294,13 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
   //   ⭐ 那处是既有的隐患（加密空间里会乱码 ✓），⭐ 不在这一笔的范围 ✓。
   const [textBody, setTextBody] = useState<string | null>(null);
   const [textError, setTextError] = useState("");
+  // ⚠️ **2026-10-04**：⭐ html 的两种看法（owner 选了「两个都要」）——
+  //   ⭐ 默认 **源码** ✓（最安全 ✓）；⭐ 点一下才在 ⭐ **沙箱 iframe** 里渲染 ✓。
+  //   ⚠️ 沙箱用 ⭐ sandbox 空串（⭐ 最严那一档：⭐ 禁脚本 ＋ ⭐ 禁同源 ＋ ⭐ 禁表单 ＋ ⭐ 禁弹窗 ✓）——
+  //   ⇒ ⭐⭐ 页面照常显示 ✓，⭐ 而它里面的脚本**一行都跑不了** ✓ ⇒ ⭐ 外来 html 碰不到应用 ✓。
+  //   ⚠️ 内容走 `srcDoc`（⭐ 不落盘、不发请求 ✓）；⭐ CSP 是 default-src self ⇒ ⭐ 外部图片/样式被拦 ✓（⭐ 更安全 ✓）。
+  const [htmlRendered, setHtmlRendered] = useState(false);
+  const isHtml = !!target && (target.mime === "text/html" || /\.html?$/i.test(target.name || ""));
   useEffect(() => {
     if (!target || !isTextLike || isMd) { setTextBody(null); setTextError(""); return; }
     let alive = true;
@@ -498,7 +505,33 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
             ) : textBody === null ? (
               <div className="fm-preview-unsupported">正在读…</div>
             ) : (
-              <pre className="fm-text-preview">{textBody}</pre>
+              <div className="fm-text-wrap">
+                {isHtml && (
+                  <div className="fm-text-bar">
+                    {/* ⭐ owner 选的「两个都要」：⭐ 源码 ⇄ ⭐ 沙箱渲染 ✓（⭐ 默认源码 ✓）。 */}
+                    <button
+                      className="fm-text-toggle"
+                      onClick={() => setHtmlRendered(true)}
+                      disabled={htmlRendered}
+                    >
+                      渲染网页
+                    </button>
+                    <span className="fm-text-note">沙箱渲染：脚本不会运行</span>
+                  </div>
+                )}
+                {isHtml && htmlRendered ? (
+                  /* ⭐ **沙箱渲染** ✓ —— sandbox 空串是最严那一档（⭐ 脚本一行都跑不了 ✓）。
+                     ⚠️ title 是给读屏软件的可访问名 ✓（⭐ iframe 必须有 ✓）。 */
+                  <iframe
+                    className="fm-html-preview"
+                    sandbox=""
+                    srcDoc={textBody}
+                    title={target.name}
+                  />
+                ) : (
+                  <pre className="fm-text-preview">{textBody}</pre>
+                )}
+              </div>
             )
           ) : (
             <div className="fm-preview-unsupported">该文件类型暂不支持内嵌预览，可在文件夹中打开或用系统打开。</div>

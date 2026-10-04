@@ -23414,3 +23414,40 @@ body.is-plugin-panel-open .main {
   background: var(--surface);
   tab-size: 4;
 }
+
+/* ⚠️ **2026-10-04 加**：html 预览的「源码 ⇄ 沙箱渲染」两态。
+   ⭐ 默认源码（最安全）；⭐ 点「渲染网页」才在 sandbox="" 的 iframe 里渲染。
+   ⚠️ iframe 的 `sandbox=""` 是最严那一档：脚本一行都跑不了 ⇒ 外来 html 碰不到应用。 */
+.fm-text-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.fm-text-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.fm-text-toggle {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.fm-text-note {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.fm-html-preview {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+}
