@@ -367,11 +367,13 @@ export function FilePreviewDialog({ inline = false }: { inline?: boolean } = {})
       <div className="fm-preview" onClick={inline ? undefined : (e) => e.stopPropagation()}>
         <div className="fm-preview-head">
           <span className="fm-preview-name">{target.name}</span>
-          {/* ⚠️ **2026-10-04 加 ×**：`inline` 形态**没有**"点空白关闭"那条路 ✗ ⇒ 必须有个显式的出口 ✓；
-              浮层形态也一并给（原来只有点空白 ＋ Android 返回键，触屏上不好点 ✓）。 */}
-          <button className="fm-preview-x" onClick={close} title="关闭预览" aria-label="关闭预览">
-            ✕
-          </button>
+          {/* ⚠️ **2026-10-04 去掉**（owner：「去掉 md 文档的关闭按钮」）—— 这颗 × 是我上一批为
+              `inline` 形态补的出口 ✗。
+              ⭐ 去掉之后**还能怎么关**（都在，随时可用）：
+                · 点左侧竖条切到别的活动（`ActivityBar` 里 `if (id !== activity) close()`）；
+                · 点页面树里的一个页面（`openPage` 里会 `close()`）；
+                · 切任何视图（`setView` 里会 `close()`，命令面板也算）；
+                · ⚠️ 浮层形态（窄屏）另外还有"点空白"与 Android 返回键。 */}
           {target.mime === "application/pdf" && (
             <button className="fm-preview-read" onClick={openPdf}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
