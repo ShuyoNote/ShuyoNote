@@ -296,39 +296,32 @@ impl SpaceKind {
     }
 }
 
-/// 同步闸门的裁决。**三种出口必须能区分**：拦 / 放行 / 放行但"这个空间还没分类"。
+/// 同步闸门的裁决。**两种出口**：放行 / 放行但"这个空间还没分类"。
+///
+/// ⚠️ **2026-10-04 改**（owner 裁定「⭐ **个人空间不绑服务器**」＋ 他选的方向 b）：
+/// ⭐ **删掉 `Blocked` 那一档** ✗ —— 原先"个人空间没按空间加密 ⇒ 拦住绑同步"这条**已经没有意义** ✓：
+/// 个人空间本来就**不该走服务器**（⭐ 拦它等于"允许一条本不该存在的路"✓），
+/// 真正的拦截改在**绑服务器那个命令里**（见 `sync::set_sync_profile` ✓）。
+/// ⭐ `AllowedUnclassified` **保留** ✓ —— 老库里确实有"没标过个人/团队"的空间 ✓，
+/// 那件事**仍然要如实说出来**（⭐ 不静默 ✓），只是它不再拦人 ✓。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncGate {
     Allowed,
     /// 放行 —— 但这个空间**没分类**（上层该如实告诉用户"闸门没管到它"，不静默）。
     AllowedUnclassified,
-    /// 拦住（带一句**可操作**的话）。
-    Blocked(String),
 }
 
-/// ★★ **同步闸门（第 2 步）**：只有"**明确是个人空间**且**没有按空间加密**"才拦。
+/// ★★ **同步闸门（第 2 步）**：只回答"这个空间**分类标了吗**"。
 ///
-/// 三条口径（与 [数据可见边界](../docs/sync-server-data-boundary.md) §0.5 一一对应）：
-/// · **团队空间免检** —— 服务端明文正是它换来的东西，拦它等于把那份取舍白扔；
-/// · **个人空间**：库文件是密的 **或** 袋里有它的盒子 ⇒ 放行；否则拦（否则就是明文上云，
-///   而且**不可回溯**：服务端历史/备份/WAL 都会留底）；
-/// · **未分类**：放行（老库、还没标记的空间），但把"没管到"这个事实**报出去**。
-pub fn sync_gate(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
+/// ⚠️ **2026-10-04**：原先这里还有一条"个人空间没加密 ⇒ 拦"的分支 ✗ ——
+/// 随 owner 的裁定「个人空间不绑服务器」**删掉了** ✓（══ 删掉它才自洽 ✓：
+/// 那条分支默认"个人空间**可以**绑服务器，只要先加密"✗，而这正是被否掉的口径 ✓）。
+/// ⭐ 现在：团队 ⇒ 放行；未分类 ⇒ 放行但报"没管到"；个人 ⇒ 放行
+/// （⭐ 拦个人空间**不在这里** ✗ —— 在 `sync::set_sync_profile` ✓，那是唯一能真拦的地方 ✓）。
+pub fn sync_gate(_st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
     match kind {
-        SpaceKind::Team => SyncGate::Allowed,
+        SpaceKind::Team | SpaceKind::Personal => SyncGate::Allowed,
         SpaceKind::Unknown => SyncGate::AllowedUnclassified,
-        SpaceKind::Personal => {
-            if st.encrypted_on_disk || st.in_keyring {
-                SyncGate::Allowed
-            } else {
-                SyncGate::Blocked(format!(
-                    "{}是个人空间但还没有加密：先给它设一句口令（按空间加密），再绑定同步 —— \
-                     否则它的内容会**明文**发到服务端，而且事后加密也撤不回已经落库的那份。\
-                     （如果你要的是团队空间，请在空间设置里把它标成团队空间。）",
-                    st.label()
-                ))
-            }
-        }
     }
 }
 
@@ -343,7 +336,8 @@ pub struct SyncGateView {
     pub reason: String,
 }
 
-/// 把裁决投影成视图。**三种出口一个都不许丢**（拦 / 放行 / 放行但未分类）。
+/// 把裁决投影成视图。⚠️ **2026-10-04**：`Blocked` 那档已删 ⇒ 这里**再也不会出现** "allow=false" ✗
+/// （⭐ `allow` 字段**保留** ✓ —— 它是给界面用的形状 ✓，删字段会连带前端 ✗；⭐ 语义上它现在恒真 ✓）。
 pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
     match sync_gate(st, kind) {
         SyncGate::Allowed => SyncGateView {
@@ -355,11 +349,6 @@ pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
             allow: true,
             unclassified: true,
             reason: "这个空间还没分类（个人/团队）：同步闸门这次没有管到它".to_string(),
-        },
-        SyncGate::Blocked(reason) => SyncGateView {
-            allow: false,
-            unclassified: false,
-            reason,
         },
     }
 }
@@ -793,22 +782,16 @@ mod tests {
             ..plain.clone()
         };
 
-        // ① 个人空间没加密 ⇒ **拦**，且那句话要可操作（说清后果与两条出路）
-        let blocked = match sync_gate(&plain, SpaceKind::Personal) {
-            SyncGate::Blocked(m) => m,
-            other => panic!("个人空间没加密必须拦，实际 {other:?}"),
-        };
-        assert!(blocked.contains("明文"), "{blocked}");
-        assert!(blocked.contains("团队空间"), "要给出另一条出路：{blocked}");
-        // ★ 说的是**名字**而不是 uuid（owner 2026-09-24："空间名称不对"）
-        assert!(blocked.contains("我的空间"), "拦人的话要说空间名：{blocked}");
-        assert!(!blocked.contains("\"s\""), "不该把内部 id 当名字：{blocked}");
-        // ② 个人空间已加密（文件是密的 **或** 袋里有它）⇒ 放行
+        // ⚠️ **2026-10-04 改**（owner 裁定「个人空间不绑服务器」）：⭐ 这里原先断言"个人空间没加密必须拦" ✗
+        //    —— 那条分支已随裁决删掉 ✓（⭐ 拦个人空间改在 `sync::set_sync_profile` ✓：
+        //    个人空间**无论加不加密都不该绑服务器** ✓，不是"先加密就能绑"✗）。只留"分类"这一层 ✓。
+        // ① 个人空间 ⇒ 放行（⭐ "能不能绑服务器"不归它管 ✓）
+        assert_eq!(sync_gate(&plain, SpaceKind::Personal), SyncGate::Allowed);
         assert_eq!(sync_gate(&enc, SpaceKind::Personal), SyncGate::Allowed);
         assert_eq!(sync_gate(&boxed, SpaceKind::Personal), SyncGate::Allowed);
-        // ③ 团队空间**免检**（明文也不拦 —— 那正是它换来的东西）
+        // ② 团队空间 ⇒ 放行
         assert_eq!(sync_gate(&plain, SpaceKind::Team), SyncGate::Allowed);
-        // ④ 未分类 ⇒ 放行，但把"没管到"这个事实报出来
+        // ③ 未分类 ⇒ 放行，但把"没管到"这个事实报出来（⭐ 这档保留 ✓）
         assert_eq!(sync_gate(&plain, SpaceKind::Unknown), SyncGate::AllowedUnclassified);
     }
 
@@ -1100,12 +1083,15 @@ mod tests {
         crate::workspaces::insert_imported_space(&c, "imp-a", "导入的甲", "blue", "", 1.0, 1, false)
             .unwrap();
         assert_eq!(space_kind(&c, "imp-a"), SpaceKind::Personal, "★ 导入 ⇒ 个人空间");
+        // ⚠️ **2026-10-04 改**：这里原先断言"导入的未加密空间**必须被拦**" ✗ —— 那条分支已随
+        //    owner 裁定「个人空间不绑服务器」删掉 ✓（⭐ 拦个人空间改在 `sync::set_sync_profile` ✓）。
         let st = space_status(&dir, "imp-a");
         assert!(!st.encrypted_on_disk && !st.in_keyring);
-        match sync_gate(&st, space_kind(&c, "imp-a")) {
-            SyncGate::Blocked(msg) => assert!(msg.contains("没有加密"), "{msg}"),
-            other => panic!("导入的未加密空间必须被拦，实际 {other:?}"),
-        }
+        assert_eq!(
+            sync_gate(&st, space_kind(&c, "imp-a")),
+            SyncGate::Allowed,
+            "分类这一层不再拦人（拦个人空间改在绑服务器那个命令里）"
+        );
 
         // ② 导入时**顺手加密了**（本机已解锁且有袋子）⇒ 同样是 personal，标记也落了
         crate::workspaces::insert_imported_space(&c, "imp-b", "导入的乙", "blue", "", 2.0, 2, true)
@@ -1142,13 +1128,10 @@ mod tests {
 
         // ① 分类落成 **personal**
         assert_eq!(space_kind(&c, "entry-new"), SpaceKind::Personal, "本地新建 ⇒ 个人空间");
-        // ② 它还没加密 ⇒ **闸门拦**（且理由是"没加密"，不是"没分类"）
+        // ② 它还没加密 —— ⚠️ **2026-10-04**：这一层**不再拦** ✓（见上面那条注释）
         let st = space_status(&dir, "entry-new");
         assert!(!st.encrypted_on_disk && !st.in_keyring);
-        match sync_gate(&st, space_kind(&c, "entry-new")) {
-            SyncGate::Blocked(msg) => assert!(msg.contains("没有加密"), "{msg}"),
-            other => panic!("新建的未加密空间必须被拦，实际 {other:?}"),
-        }
+        assert_eq!(sync_gate(&st, space_kind(&c, "entry-new")), SyncGate::Allowed);
         // ③ 按空间加密之后 ⇒ 放行
         let mut c2 = c;
         let _ = crate::space_crypto::enable_space(&mut c2, &dir, "entry-new", Some("我家猫叫mimi"));

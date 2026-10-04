@@ -1134,10 +1134,12 @@ pub fn list_sync_profiles(db: State<'_, Db>) -> Result<Vec<SyncProfile>, String>
     list_profiles(&c)
 }
 
-/// ★ 隐私边界**第 2 步**（2026-09-23）：**绑定同步关系**那一刻的闸门。
+/// ★ 隐私边界**第 2 步**（2026-09-23）：**绑定同步关系**那一刻的"分类"检查。
 ///
-/// 返回 `Ok(Some(提示))` ＝ 放行但**这个空间还没分类**（上层该如实说出来，不静默）；
-/// `Ok(None)` ＝ 正常放行；`Err` ＝ **拦住**（可操作文本：先按空间加密，或把它标成团队空间）。
+/// ⚠️ **2026-10-04 改**（owner 裁定「⭐ **个人空间不绑服务器**」）：⭐ 这个函数**不再拦任何人** ✗ ——
+/// 原先它返回 `Err` 来挡"未加密的个人空间"✗，那条口径**已被否掉** ✓（个人空间本来就**不该**走服务器 ✓，
+/// 不存在"先加密就能绑" ✓）。⭐ 现在只剩一件事：⭐ **这个空间还没分类** ⇒ 如实报出来（`Ok(Some(提示))` ✓）。
+/// ⚠️ 真正拦住"个人空间绑服务器"的那一刀**不在这里** ✗ —— 在 [`set_sync_profile`]（⭐ 唯一入口 ✓）。
 ///
 /// ⚠️ 抽成独立函数就是为了**能被判据直接驱动**（命令那层要 `State<Db>`，测不了）。
 pub(crate) fn sync_bind_gate(
@@ -1146,15 +1148,13 @@ pub(crate) fn sync_bind_gate(
     ws_id: &str,
 ) -> Result<Option<String>, String> {
     let mut st = crate::space_crypto::space_status(dir, ws_id);
-    // ★ 名字（不是 uuid）：拦人的那句话与"没分类"那句提示都要说名字（owner 2026-09-24 指出）。
+    // ★ 名字（不是 uuid）：提示那句要说名字（owner 2026-09-24 指出）。
     crate::space_crypto::fill_space_name(c, &mut st);
     let kind = crate::space_crypto::space_kind(c, ws_id);
     match crate::space_crypto::sync_gate(&st, kind) {
         crate::space_crypto::SyncGate::Allowed => Ok(None),
-        crate::space_crypto::SyncGate::Blocked(msg) => Err(msg),
         crate::space_crypto::SyncGate::AllowedUnclassified => Ok(Some(format!(
-            "{}还没分类（个人/团队）：同步闸门这次**没有管到它** —— \
-             若它是个人空间，请先按空间加密再绑定同步。",
+            "{}还没分类（个人/团队）：同步闸门这次**没有管到它**。",
             st.label()
         ))),
     }
@@ -5750,10 +5750,14 @@ mod tests {
         assert!(note.is_some(), "未分类要如实报出来");
         assert!(note.unwrap().contains("没分类"));
 
-        // ② 标成个人空间 ⇒ **拦**（库是明文）
+        // ② 标成个人空间 —— ⚠️ **2026-10-04 改**：⭐ 这一层**不再拦** ✗
+        //    （owner 裁定「个人空间不绑服务器」⇒ 拦的是"绑服务器"那个动作本身，
+        //      ⭐ 而它与"加没加密"无关 ⇒ 见 `set_sync_profile` ✓）。
         crate::space_crypto::set_space_kind(&c, "ws", crate::space_crypto::SpaceKind::Personal).unwrap();
-        let err = sync_bind_gate(&c, &dir, "ws").unwrap_err();
-        assert!(err.contains("明文"), "{err}");
+        assert!(
+            sync_bind_gate(&c, &dir, "ws").unwrap().is_none(),
+            "★ 分类这层不再拦人（个人空间照样放行；拦在绑服务器那一刀）"
+        );
 
         // ③ 给它按空间加密 ⇒ 放行
         let mut c2 = c;
