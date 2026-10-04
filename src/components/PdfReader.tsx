@@ -57,6 +57,30 @@ const HEAD_HIDE_SEL: Record<HeadHideKey, string> = {
 const OUTLINE_WIDTH_KEY = "shuyonote.pdf.outlineWidth";
 /** 批注侧栏宽度持久化键。 */
 const SIDEBAR_WIDTH_KEY = "shuyonote.pdf.sidebarWidth";
+/** ⚠️ **2026-10-04 加**（owner：「可否保持 pdf 阅读器目录和批注按钮的状态」）：
+ *  开合**也**要记住 —— 宽度早就存了（上面两个 KEY），只有开合没存，所以每次打开都回视口默认。
+ *  ⭐ 与宽度**同一套存法**（`shuyonote.pdf.*` 命名空间 ＋ try/catch）—— ⛔ 不发明第二种持久化。 */
+const OUTLINE_OPEN_KEY = "shuyonote.pdf.outlineOpen";
+const SIDEBAR_OPEN_KEY = "shuyonote.pdf.sidebarOpen";
+/** 读一个布尔偏好：⭐ 没存过 / 坏值 ⇒ 用调用方给的默认（与宽度那两处的口径一致）。 */
+function readBoolPref(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    if (v === "1") return true;
+    if (v === "0") return false;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+/** 写一个布尔偏好：⭐ 只在**用户动作**里调 ✗ —— 自动收起（转抽屉形态）不写，否则会覆盖用户偏好。 */
+function writeBoolPref(key: string, v: boolean): void {
+  try {
+    localStorage.setItem(key, v ? "1" : "0");
+  } catch {
+    /* 忽略 */
+  }
+}
 
 /** 面板（目录/侧栏）拖拽调宽 + 双击归位。用**指针捕获**把 move/up 绑定到拖拽手柄自身，
  *  结束（up/cancel）必定清理，绝不往 window 累积监听器（否则相继拖动会越来越卡顿）。
@@ -417,8 +441,24 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const [maximized, setMaximized] = useState(true);
   // 宽屏默认两栏都开（桌面阅读习惯）；抽屉形态下**默认收起**——真机上 360 宽开着目录栏
   // 等于正文看不见（页面图 x=99/宽 306，右边直接溢出屏幕）。
-  const [sidebarOpen, setSidebarOpen] = useState(() => !overlayViewport);
-  const [outlineOpen, setOutlineOpen] = useState(() => !overlayViewport);
+  // ⚠️ **2026-10-04 改**：初值也**先读偏好** ✓（⭐ 没存过才用视口默认 ✓）——
+  //   否则首帧会按视口闪一下、再被下面的复位块改写。
+  const [sidebarOpen, setSidebarOpen] = useState(() => readBoolPref(SIDEBAR_OPEN_KEY, !overlayViewport));
+  const [outlineOpen, setOutlineOpen] = useState(() => readBoolPref(OUTLINE_OPEN_KEY, !overlayViewport));
+  // ⭐ **只有用户动作**才写盘 ✗ —— 三个按钮 ＋ 拖拽回调（open/close/onCollapse）都走这两个；
+  //   ⚠️ 而"转抽屉形态时自动收起"那个 effect **不写** ✓（⭐ 否则回宽屏就恢复不了用户偏好 ✓）。
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((s) => {
+      writeBoolPref(SIDEBAR_OPEN_KEY, !s);
+      return !s;
+    });
+  }, []);
+  const toggleOutline = useCallback(() => {
+    setOutlineOpen((s) => {
+      writeBoolPref(OUTLINE_OPEN_KEY, !s);
+      return !s;
+    });
+  }, []);
   /**
    * 头部工具条的「⋯」菜单是否展开（2026-09-22 起它由**量宽**决定要不要出现，不再只属于窄屏）。
    *
@@ -560,15 +600,15 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       onDragEnd: () => { isResizingRef.current = false; applyStageSize(); },
       // 拖到 120 以内 ⇒ 直接收起（"拖拽收起"这一半）
       collapseAt: 120,
-      onCollapse: () => setOutlineOpen(false),
+      onCollapse: toggleOutline,
     });
   /** 目录收起时：这条边上的手柄可以把面板"拖出来"（另一半）。 */
   const onOutlineExpandStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelExpand(e, {
       min: 160, max: 520, def: 240, key: OUTLINE_WIDTH_KEY, side: "left",
       commit: (n) => setOutlineWidth(n),
-      open: () => setOutlineOpen(true),
-      close: () => setOutlineOpen(false),
+      open: () => { writeBoolPref(OUTLINE_OPEN_KEY, true); setOutlineOpen(true); },
+      close: () => { writeBoolPref(OUTLINE_OPEN_KEY, false); setOutlineOpen(false); },
       collapseAt: 120,
     });
 
@@ -587,14 +627,14 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       onDragEnd: () => { isResizingRef.current = false; applyStageSize(); },
       // 拖到 160 以内 ⇒ 直接收起
       collapseAt: 160,
-      onCollapse: () => setSidebarOpen(false),
+      onCollapse: toggleSidebar,
     });
   const onSidebarExpandStart = (e: ReactPointerEvent<HTMLDivElement>) =>
     startPanelExpand(e, {
       min: 220, max: 560, def: 260, key: SIDEBAR_WIDTH_KEY, side: "right",
       commit: (n) => setSidebarWidth(n),
-      open: () => setSidebarOpen(true),
-      close: () => setSidebarOpen(false),
+      open: () => { writeBoolPref(SIDEBAR_OPEN_KEY, true); setSidebarOpen(true); },
+      close: () => { writeBoolPref(SIDEBAR_OPEN_KEY, false); setSidebarOpen(false); },
       collapseAt: 160,
     });
   const outlineOcrCacheRef = useRef<Map<number, string>>(new Map());
@@ -956,8 +996,11 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       // 打开 PDF 之后两栏又都在 DOM 里）。判据跟着**视口**走，别写死。
       // 故意**不**把 `overlayViewport` 放进依赖数组：那会让旋转/拖窗口触发整个文档重新加载，
       // 代价远大于"这次复位用的是上一个视口值"（而 effect 的闭包在 open/bytes 变化时是新的）。
-      setSidebarOpen(!overlayViewport);
-      setOutlineOpen(!overlayViewport);
+      // ⚠️ **2026-10-04 改**：这两行原来把两栏写回**视口默认** ✗ —— 而它**每次打开文档都跑** ✓
+      //   ⇒ ⭐ 这就是"每次打开都回默认"的真凶 ✓（初值本来是对的，被这里覆盖了）。
+      //   ⭐ 现在读**持久化偏好** ✓（⭐ 没存过才用视口默认 ✓）⇒ ⭐ 关掉目录、换个文档，它还是关着的 ✓。
+      setSidebarOpen(readBoolPref(SIDEBAR_OPEN_KEY, !overlayViewport));
+      setOutlineOpen(readBoolPref(OUTLINE_OPEN_KEY, !overlayViewport));
       setOutline([]);
       aiOutlineAbortRef.current?.abort();
       aiOutlineAbortRef.current = null;
@@ -1589,7 +1632,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
           )}
         </button>
       )}
-      <button className="pdf-reader-btn pdf-reader-sidebar-toggle" onClick={() => setSidebarOpen((s) => !s)} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
+      <button className="pdf-reader-btn pdf-reader-sidebar-toggle" onClick={toggleSidebar} title={sidebarOpen ? "隐藏批注侧栏" : "显示批注侧栏"} aria-pressed={sidebarOpen}>
         {sidebarOpen ? (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
         ) : (
@@ -1691,7 +1734,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
           ref={headRef}
           data-tauri-drag-region
         >
-          <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen}>
+          <button className="pdf-reader-btn pdf-reader-outline-toggle" onClick={toggleOutline} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen}>
             {outlineOpen ? (
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
             ) : (
@@ -1728,7 +1771,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
               <div className="pdf-head-more-pop" role="group" aria-label="更多工具">
                 {headHiddenSet.has("outline") && (
                   <div className="pdf-head-more-row">
-                    <button className="pdf-reader-btn" onClick={() => setOutlineOpen((s) => !s)} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen}>
+                    <button className="pdf-reader-btn" onClick={toggleOutline} title={outlineOpen ? "隐藏目录" : "显示目录"} aria-pressed={outlineOpen}>
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
                       <span className="pdf-head-more-label">{outlineOpen ? "隐藏目录" : "显示目录"}</span>
                     </button>
