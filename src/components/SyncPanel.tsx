@@ -1235,13 +1235,18 @@ export function SyncPanel() {
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>
-              <div className="sync-subtitle">每个空间各自绑定服务器与组织空间</div>
+              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：填一个配对暗号就能和附近的设备直连" : "每个空间各自绑定服务器与组织空间"}</div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
-            <span className={`sync-chip${rows.some((r) => r.ws_id === activeId && r.token) ? " is-on" : ""}`}>
-              {rows.some((r) => r.ws_id === activeId && r.token) ? "已登录" : "未登录"}
-            </span>
+            {/* ⚠️ **2026-10-04 改**（owner：「去掉个人空间的登录状态」）：⭐ 个人空间下**整枚藏掉** ✗ ——
+                它不经过服务器 ⇒ 没有"登录"这回事 ✓（原来会显示一枚「未登录」，看着像出了故障 ✓）。
+                ⚠️ 团队空间照旧 ✓（那一枚反映的是**当前激活空间**的绑定状态 ✓）。 */}
+            {!isPersonalActive && (
+                          <span className={`sync-chip${rows.some((r) => r.ws_id === activeId && r.token) ? " is-on" : ""}`}>
+                            {rows.some((r) => r.ws_id === activeId && r.token) ? "已登录" : "未登录"}
+                          </span>
+            )}
           </header>
 
           {!isDesktopPlatform() && (
