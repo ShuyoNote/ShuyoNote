@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useActivity, type Activity } from "../store/activity";
+import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
@@ -56,8 +56,13 @@ export function ActivityBar() {
 
   // 视图也能被命令面板/快捷键改（view.graph 等），竖条要跟着高亮，
   // 否则会出现「主区在看板、竖条还亮着笔记」的错位。
+  // ⚠️ **2026-10-04 修**：⭐ 必须先用 `isActivity(view)` **收窄**再写 ✗ ——
+  //    原先写的是 `setActivity(view as Activity)` ✓，⭐ 而 `AppView` **比 `Activity` 宽** ✗
+  //    （还有 settings / trash / templates / search 这类**非活动**视图 ✓）
+  //    ⇒ ⭐ `as` 把类型检查绕过去了 ⇒ ⭐ 打开设置/回收站时会把**非法值**写进 `activity` ✓
+  //      ⇒ ⭐ 那 6 个活动图标**一个都不会高亮** ✓（⭐ 因为没人等于 "settings" 这种值 ✓）。
   useEffect(() => {
-    if (view !== activity) setActivity(view as Activity);
+    if (view !== activity && isActivity(view)) setActivity(view);
   }, [view, activity, setActivity]);
 
   const pick = (id: Activity) => {
