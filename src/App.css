@@ -3401,6 +3401,17 @@ select.sync-input {
   background: var(--border-strong);
   background-clip: content-box;
 }
+/* ⚠️ **2026-10-04 加**（owner 反馈：「⭐ 侧边栏的滚动条没有了」✓）：
+   ⭐ 让**侧栏**的滚动条**常显** ✓ —— 上面那条缩略图是 `background: transparent` ＋ 只在 `:hover` 时才给颜色 ✓，
+   ⇒ ⭐ 不悬停就**完全看不见** ✗（⭐ 那是"侧栏是常驻区域、默认滚动条太抢眼"的原设计 ✓，owner 明确说要去掉它 ✓）。
+   ⚠️ 只加**这一条**、只点 `.sidebar-tree` ✓ —— 上面那组的另两个（⭐ 设置正文 `.set-body-scroll` ／
+   设置导轨 `.set-rail` ✓）**维持原样** ✓；⭐ hover 那条特异性更高（`.sidebar-tree:hover` ✓）
+   ⇒ ⭐ 悬停时仍然会加深成 `--border-strong` ✓（⭐ 原设计的那一半保住了 ✓）。
+   ⚠️ 用 `background-color` 而不是 `background` 简写 ✗ —— 简写会把 `background-clip` 打回 `border-box` ✓
+   （⭐ 那会让这条竖条从 8px 涨成满宽 ✗）。 */
+.sidebar-tree::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+}
 .sidebar-tree::-webkit-scrollbar-track,
 .set-body-scroll::-webkit-scrollbar-track,
 .set-rail::-webkit-scrollbar-track {
