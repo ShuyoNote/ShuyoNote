@@ -3470,7 +3470,7 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
     };
     if pick.0.trim().is_empty() {
         return Err(
-        "这台设备还没填「配对暗号」——个人空间不需要服务器，两台设备填同一个暗号就能互连"
+        "还没填「配对暗号」。个人空间不走服务器：两台设备填同一个暗号，就能在同一个网络里直连"
         .to_string(),
         );
     }

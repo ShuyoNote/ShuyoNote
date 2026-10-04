@@ -193,7 +193,7 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
           ⚠️ **这句里不许出现连续两个星号** ✗ —— 它是**纯文本**（不过 `inlineMd` ✓），
           而测试里有一条全局断言在钉"界面上不许露 markdown 星号" ✓ ⇒ 一写就红 ✓。 */}
       <div className="space-privacy-hint">
-        只有团队空间能绑同步服务器；个人空间（含存量里没标过的老空间）一律按个人处理，只走「附近设备直连」，不经过服务器。
+        只有团队空间能绑同步服务器。个人空间不经过服务器，走「附近设备直连」：填一个配对暗号就行。
       </div>
 
       {views === null && <div className="sync-empty-state">正在读…</div>}

@@ -320,7 +320,7 @@ export function SyncPanel() {
   // ⚠️ 只写 room 这一项 ⇒ 另两项传 `null`（＝不动 ✓，与 Rust 侧同口径 ✓）。
   const st = await api.meshSetConfig(activeId, null, null, meshRoom.trim());
   setLanStatus((s) => (s ? { ...s, mesh: st } : s));
-  setStatus("配对暗号已保存 —— 另一台设备填同一个暗号，就能在同一个网络里互相找到");
+  setStatus("配对暗号已保存。到另一台设备上填「同一个」暗号，两台在同一个网络里就能直接连上，不经过服务器");
   } catch (e) {
   setStatus(String(e));
   } finally {
@@ -1116,7 +1116,7 @@ export function SyncPanel() {
         // ⚠️ **2026-10-04 改**：⭐ 个人空间不说「还没绑同步」✗（那是叫他去绑服务器 ✓），
         //   而是如实说它自己这条路：**附近设备直连** ✓。
         : isPersonalActive
-          ? "这一轮走的是：附近设备直连（个人版不经过服务器）"
+          ? "这一轮走的是：附近设备直连（个人空间不经过服务器）"
           : "这一轮走的是：还没绑同步";
   // ── ★ 2026-09-29（IA）：分组 ＋ 每行一个可展开项 —— 每行右边那个【摘要值】────────
   // 口径：**每一行的值都由真实读数算出来**（写死就是在骗人），且尽量复用既有 <option> /
@@ -1933,7 +1933,7 @@ export function SyncPanel() {
                       <div className="sync-field">
                       <input
                       className="sync-input"
-                      placeholder="配对暗号（个人空间：两台设备填一样的字）"
+                      placeholder="配对暗号：两台设备填得一模一样（例如：我的两台电脑）"
                       value={meshRoom}
                       disabled={meshBusy}
                       onChange={(e) => setMeshRoom(e.target.value)}
