@@ -590,6 +590,19 @@ try {
 }
 for (const a of picked) {
   await uploadFile(TAG, a.name, a.file);
+  // ⭐ 2026-10-04：**`.sha256` 也传** —— 与 GitHub 的 `release.yml`（`sha256sum "$f" | tee "$f.sha256"`）对齐 ✓。
+  //    来由（实测）：`check-release-state` 那条「通道里的 APK 指纹 = Release 上那份 .sha256」是去取
+  //    `<url>.sha256` 这个**文件** ✗ —— 而本脚本此前**不传它** ✗ ⇒ 取到 **404** ✗ ⇒ 判据被降级成
+  //    「跳过（**网络原因**）」✗。⚠️ **归因错了**（不是网络 ✓ 是文件不存在 ✓），而"跳过 ≠ 通过"⇒
+  //    那条判据看起来像"没查过" ✓ —— 与 1.91.27 发版时实测到的一模一样 ✓。
+  //    ⚠️ 必须放在下面 `if (isApk(a.name)) continue;` **之前** ✗（否则 apk 还是没有 sidecar ✓）。
+  //    格式照 GitHub 那份：`<64 位 hex>` ＋ **两个空格** ＋ 文件名 ✓（`sha256sum` 的默认输出 ✓）。
+  //    ⚠️ `a.sha256` 在上面的"产物指纹"那一步已经算过 ✓（不重复算 ✓）。
+  {
+    const shaFile = `${a.file}.sha256`;
+    writeFileSync(shaFile, `${a.sha256}  ${a.name}\n`, "utf8");
+    await uploadFile(TAG, `${a.name}.sha256`, shaFile);
+  }
   // apk 没有独立的 `.sig` 文件（签名在包内），上传它只会 404/空文件。
   if (isApk(a.name)) continue;
   await uploadFile(TAG, a.name + ".sig", a.sigPath);
