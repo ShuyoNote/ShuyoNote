@@ -15572,7 +15572,7 @@ p:has(> .editor-drawing-container) {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-dim);
-  padding: 10px 14px;
+  padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   position: sticky;
@@ -15581,7 +15581,7 @@ p:has(> .editor-drawing-container) {
   z-index: 1;
 }
 .file-manager-table td {
-  padding: 10px 14px;
+  padding: 6px 14px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -15607,7 +15607,7 @@ p:has(> .editor-drawing-container) {
   /* 单元格左右各收 4px：7 列共省 ≈56px，宽度 830 上下时**不用横滚就能放下** */
   .file-manager-table th,
   .file-manager-table td {
-    padding: 8px 10px;
+    padding: 5px 10px;
   }
 }
 .file-manager-table tbody tr {
@@ -21960,7 +21960,7 @@ body.is-plugin-panel-open .main {
   /* `width: max-content` 是横滑的前提：`width:100%` 会把七列硬压进 292px。 */
   .file-manager-table { width: max-content; min-width: 100%; }
   .file-manager-table th,
-  .file-manager-table td { padding: 8px 10px; }
+  .file-manager-table td { padding: 5px 10px; }
   /* 行尾六个 20px 小按钮 → 一个 `⋯`；其余动作在动作面板里。 */
   .file-manager-table .fm-file-actions { display: none; }
   .fm-more-btn {
