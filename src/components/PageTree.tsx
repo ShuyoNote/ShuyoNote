@@ -152,6 +152,14 @@ function treeFileIcon(mime: string): string {
 // folder in the sidebar (loaded lazily when the folder is expanded).
 function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
   const [files, setFiles] = useState<AttachmentMeta[]>([]);
+  // ⚠️ **2026-10-04 加**：⭐ 文件行也要有**右键菜单** ✓（owner 提的 ✓）——
+  //    ⭐ 这之前只有页面行有（`TreeItem` 那份 `onContextMenu` ✓），
+  //    文件行（`.tree-file-row` ✓）只有 `onClick` ⇒ ⭐ 右键**什么都不发生** ✗。
+  //    ⚠️ state 只能挂在这个组件里 ✗ —— `TreeFiles` 是独立函数组件 ✓（每个文件夹一个实例 ✓）。
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+  // ⭐ 菜单作用于**哪一行** —— 菜单只渲染一份（放在 map 外面 ✓），所以位置与目标是两份 state ✓。
+  const [menuFile, setMenuFile] = useState<AttachmentMeta | null>(null);
   const revision = useFileManagerStore((s) => s.revision);
   useEffect(() => {
     let alive = true;
@@ -166,6 +174,107 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     };
   }, [folderId, revision]);
 
+  /** ⭐ 打开一份附件（⭐ 三个分支照搬原先 `onClick` 里的那份 ✓，一个字没改 ✓）。 */
+  const openFile = (f: AttachmentMeta) => {
+    // PDF 文件节点：直接进内置阅读器做批注/阅读，而不是用默认程序打开。
+    if (f.mime === "application/pdf") {
+      void usePdfReader.getState().openPdf(f.id, f.name);
+      return;
+    }
+    // MD / 图片 / 视频 / 音频文件节点：直接在应用内打开预览（铺满），不跳系统外部应用。
+    if (
+      f.mime === "text/markdown" ||
+      f.mime.startsWith("image/") ||
+      f.mime.startsWith("video/") ||
+      f.mime.startsWith("audio/")
+    ) {
+      // 打开文件预览时关掉可能仍开着的 PDF 阅读器，避免两个查看器叠一起。
+      usePdfReader.getState().close();
+      useFilePreview.getState().open(f);
+      return;
+    }
+    // 其它类型（office/zip/csv 等）无内置预览，用系统默认应用打开——明确提示。
+    toast("正在用系统默认应用打开…", "info");
+    platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
+  };
+
+  /** ⭐ 「在文件夹中显示」—— 与文件管理器那边同一条平台调用 ✓（`revealItemInDir` ✓）。 */
+  const revealFile = async (f: AttachmentMeta) => {
+    if (!f.path) return;
+    try {
+      await platform.opener.revealItemInDir(f.path);
+    } catch (e) {
+      toast(`打开失败：${e}`, "error");
+    }
+  };
+
+  /** ⭐ 「重命名」—— 复用 `inputDialog` ＋ `api.renameAttachment` ✓（与文件管理器双击改名同一个后端调用 ✓）。 */
+  const renameFile = (f: AttachmentMeta) => {
+    const current = f.name || "未命名";
+    inputDialog({
+      title: "重命名",
+      placeholder: "名称",
+      defaultValue: current,
+      onSubmit: async (name) => {
+        const n = name.trim();
+        if (!n || n === current) return;
+        try {
+          await api.renameAttachment(f.id, n);
+          // ⭐ 让这个列表重取：`revision` 一变，上面那个 effect 就会重跑 ✓（与文件管理器同一招 ✓）。
+          useFileManagerStore.getState().bumpRevision();
+          toast("已重命名", "success");
+        } catch (e) {
+          toast(`重命名失败：${e}`, "error");
+        }
+      },
+    });
+  };
+
+  /** ⭐ 「删除」—— 复用 `confirmDialog` ＋ `api.removeAttachment` ✓（题面与文件管理器一致 ✓）。 */
+  const deleteFile = async (f: AttachmentMeta) => {
+    const label = f.name || "未命名";
+    const ok = await confirmDialog({
+      title: "删除",
+      message: `删除文件「${label}」？若不被引用，其磁盘存储也会被清除。`,
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.removeAttachment(f.id);
+      useFileManagerStore.getState().bumpRevision();
+      toast("已删除", "success");
+    } catch (e) {
+      toast(`删除失败：${e}`, "error");
+    }
+  };
+
+  const closeMenu = () => {
+    setMenuOpen(false);
+    setMenuAnchor(null);
+    setMenuFile(null);
+  };
+
+  // ⭐ 点别处 / 按 Esc ⇒ 关掉（⭐ 与页面行那份同一个行为 ✓）。
+  // ⚠️ 用 `mousedown` 而不是 `click` ✗：后者会被行的 `onClick` 抢先（改名的行还会顺带打开文件 ✓）。
+  // ⚠️ 菜单本身要 `stopPropagation` 挡掉这个 `mousedown` ✗ —— 否则点菜单项时菜单先被关掉、
+  //    `menuFile` 变成 null ⇒ ⭐ 那一项的动作就丢了 ✓（见下面菜单容器上的 onMouseDown ✓）。
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = () => closeMenu();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+    // ⚠️ 依赖里**不放** `closeMenu` ✗（它每次渲染都是新函数 ⇒ 会反复重装监听 ✓）；
+    //    只盯 `menuOpen` 就够 ✓（本组件其余 state 变化不影响这两个监听的行为 ✓）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuOpen]);
+
   if (files.length === 0) return null;
 
   return (
@@ -176,27 +285,14 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           className="tree-row tree-file-row"
           style={{ paddingLeft: depth * 16 + 8 }}
           title={f.name}
-          onClick={() => {
-            // PDF 文件节点：直接进内置阅读器做批注/阅读，而不是用默认程序打开。
-            if (f.mime === "application/pdf") {
-              void usePdfReader.getState().openPdf(f.id, f.name);
-              return;
-            }
-            // MD / 图片 / 视频 / 音频文件节点：直接在应用内打开预览（铺满），不跳系统外部应用。
-            if (
-              f.mime === "text/markdown" ||
-              f.mime.startsWith("image/") ||
-              f.mime.startsWith("video/") ||
-              f.mime.startsWith("audio/")
-            ) {
-              // 打开文件预览时关掉可能仍开着的 PDF 阅读器，避免两个查看器叠一起。
-              usePdfReader.getState().close();
-              useFilePreview.getState().open(f);
-              return;
-            }
-            // 其它类型（office/zip/csv 等）无内置预览，用系统默认应用打开——明确提示。
-            toast("正在用系统默认应用打开…", "info");
-            platform.opener.openPath(f.path).catch((e) => toast(`打开失败：${e}`, "error"));
+          onClick={() => openFile(f)}
+          // ⭐ 右键：与页面行同一套菜单（同一个 `.tree-node-menu` 样式 ✓），`preventDefault` 挡掉系统菜单 ✓。
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenuAnchor({ x: e.clientX, y: e.clientY });
+            setMenuFile(f);
+            setMenuOpen(true);
           }}
         >
           <span className="tree-toggle" style={{ visibility: "hidden" }} />
@@ -204,6 +300,51 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           <span className="tree-title">{f.name}</span>
         </div>
       ))}
+      {/* ⚠️ 菜单**渲染在 map 外面** ✗：`menuAnchor` 只记位置 ✓，⭐ 哪一行被点由 `menuFile` 决定 ✓。
+          这样一份菜单就够（不必每行各带一个 ✓），也不会因为行被重渲染而闪 ✗。 */}
+      {menuOpen && menuFile && (
+        <span
+          className="tree-node-menu"
+          style={{ top: menuAnchor?.y ?? 0, left: Math.max(8, (menuAnchor?.x ?? 0) - 150) }}
+          onClick={(e) => e.stopPropagation()}
+          // ⚠️ 必须挡 `mousedown` ✗ —— 上面那个"点别处就关"的监听挂在 `document` 上 ✓，
+          //    不挡的话点菜单项会先触发它 ⇒ `menuFile` 被清空 ⇒ ⭐ 动作丢失 ✓。
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              closeMenu();
+              openFile(menuFile);
+            }}
+          >
+            <span className="menu-text">打开</span>
+          </button>
+          <button
+            onClick={() => {
+              closeMenu();
+              void revealFile(menuFile);
+            }}
+          >
+            <span className="menu-text">在文件夹中显示</span>
+          </button>
+          <button
+            onClick={() => {
+              closeMenu();
+              renameFile(menuFile);
+            }}
+          >
+            <span className="menu-text">重命名</span>
+          </button>
+          <button
+            onClick={() => {
+              closeMenu();
+              void deleteFile(menuFile);
+            }}
+          >
+            <span className="menu-text">删除</span>
+          </button>
+        </span>
+      )}
     </>
   );
 }
