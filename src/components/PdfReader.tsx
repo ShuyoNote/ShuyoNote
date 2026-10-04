@@ -395,7 +395,15 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const bytes = usePdfReader((s) => s.bytes);
   const targetPage = usePdfReader((s) => s.targetPage);
   const close = usePdfReader((s) => s.close);
-  useOverlayScrollLock(open);
+  // ⚠️ **2026-10-04 改**（owner：丢掉"像浮层"的体感，复用页面滚动区）：
+  //   ⭐ 原来是**无条件** `useOverlayScrollLock(open)` ✗ ⇒ ⚠️ 而那个 hook 的语义逐字是
+  //   「⭐ **只要有任意一个浮层开着，外壳就是锁的**（全局计数）」✓ ⇒ ⭐ 于是桌面端一开 PDF，
+  //   ⭐ **外壳（`.note-scroll` 那类）就被锁** ✓ —— ⭐ 而桌面端 `inline === true` ✓
+  //   （`lib/pdfPlacement.ts`：`pdfPlacement(true, false) === "inline"` ✓，⭐ 判据在 `pdfPlacement.test.ts` ✓），
+  //   ⭐ 它本来就是"内容区里的一种视图"、铺满 `.main` ✓ ⇒ ⭐ **不该再把外壳锁上** ✓。
+  //   ⇒ ⭐ 加 `&& !inline` ✓，与紧邻的那句 `useOverlayLayer("pdfReader", open && !inline, close)` **同一条件** ✓。
+  //   ⚠️ 浮层形态（窄屏 / 单页独立窗口，`inline === false`）⭐ 照旧锁 ✓ —— 那时它确实是浮层 ✓。
+  useOverlayScrollLock(open && !inline);
   // Android 返回键：**只在它确实以覆盖层身份出现时才登记**。
   // `inline` 模式下它就是内容区里的一种视图（和 Markdown 阅读器一样铺满 `.main`），
   // 那时没有"最上层浮层"可言，登记进去只会让返回键先吃掉一次按键。
