@@ -346,9 +346,6 @@ export function FilePreviewDialog() {
               <span>{mdImporting ? "转为笔记…" : "转为笔记"}</span>
             </button>
           )}
-          <button className="fm-preview-close" title="关闭" onClick={close}>
-            ×
-          </button>
         </div>
         <div className="fm-preview-body">
           {target.mime.startsWith("image/") ? (

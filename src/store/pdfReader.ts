@@ -28,7 +28,17 @@ export const usePdfReader = create<PdfReaderState>((set, get) => ({
     // Opening a PDF replaces any MD/image/video preview that is still open, so the
     // two "viewers" never stack on top of each other.
     useFilePreview.getState().close();
-    if (get().open) return;
+    // ⚠️⚠️ **2026-10-04 修**：原先这里是 `if (get().open) return;` ✗ —— ⭐ **只要已经开着任意一个 PDF**
+    //    就直接返回 ⇒ 第二个 PDF 的 `attachmentId` / `name` / `bytes` **一个都不更新** ⇒
+    //    界面上看到的还是**第一份** ✓（用户实测报的正是这个：「打开第二个 pdf 时显示还是第一个的内容」✓）。
+    //    ⚠️ 它**不是**为「防两个 viewer 叠」服务的（那是上面那行 `close()` 的活 ✓）—— 更像是早期
+    //    「PDF 是单例窗口」那套思路的残留 ✗。
+    //    ⭐ 现在：**同一个附件 ＋ 同一页 ⇒ 才跳过**（重复点同一个不重载 ✓）；
+    //    **换一个附件 ⇒ 必须继续**（新 `bytes` 进 store ⇒ `PdfReader` 那个加载 effect 会整份重载 ✓，
+    //    它的依赖含 `bytes` ✓、注释逐字「Load the document once per (open, bytes)」✓）。
+    if (get().open && get().attachmentId === attachmentId && get().targetPage === Math.max(0, pageIndex)) {
+      return;
+    }
     try {
       const meta = await api.getAttachment(attachmentId);
       const hash = (meta as { hash?: string }).hash ?? "";
