@@ -267,14 +267,13 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     let _ = STARTED.set(());
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
-        // 绑这里（**循环外面**）：绑不上就没得听也没得喊，如实打一行日志就收工。
-        let sock = match lan::bind_listener(lan::LAN_PORT).await {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("[lan] 绑不上 UDP {}（发现层没起来，同步照旧）：{e}", lan::LAN_PORT);
-                return;
-            }
-        };
+        // ⚠️ **2026-10-04 改**：原先这里是"绑一次，绑不上就 `return`" ✗ ——
+        //    ⭐ 而 `start()` 自身有 `OnceLock` 幂等 ⇒ ⭐ **首次失败之后这次会话永久没有发现层** ✓
+        //    （⭐ 即使占用者（多半是"上一个实例还没退干净"）两秒后就退出了 ✓）。
+        //    真机读数：本机 12 天里 10048 出现过 **9 次**，全是偶发（⭐ 端口随时能绑上 ✓）。
+        //    ⇒ ⭐ 现在走 `bind_listener_with_retry`：**退避重试到绑上为止** ✓（1s→2s→…→30s 封顶 ✓）。
+        //    ⚠️ 它**不会返回错误** ✓ ⇒ 下面那句"没得听也没得喊"的旧注释不再成立 ✓。
+        let sock = lan::bind_listener_with_retry(lan::LAN_PORT).await;
         // ⚠️ 这里**不再**预先把目标算死（原来是这样）——目标要每一轮带上"已经认识的对端"，
         //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);

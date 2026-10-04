@@ -452,6 +452,101 @@ pub async fn bind_listener(port: u16) -> Result<UdpSocket, String> {
     Ok(sock)
 }
 
+/// 绑监听口，**绑不上就退避重试，直到绑上**（★ 2026-10-04 加）。
+///
+/// ## 为什么要有它（真机实测）
+///
+/// Windows 上「上一个实例的 UDP socket 还没释放、新实例已经启动」会给出
+/// **`os error 10048`（地址已被占用）**。本机那份 dev 日志（`%LOCALAPPDATA%\Temp\shuyonote-dev.log`）
+/// 从 09-22 到 10-04 的 **12 天里记了 9 次**这种失败 —— 全是**偶发**，不是端口被谁长期占着
+/// （⭐ 实测：探针随时都绑得上 ✓）。
+///
+/// ⚠️ 而 [`bind_listener`] 的调用方原先**失败就 `return`** ✗，加上
+/// [`crate::lan_state::LanState`] 的启动有 `OnceLock` 幂等 ⇒ ⭐ **首次一失败，这次会话就永久没有发现层**
+/// ✗（占用者两秒后退出也不会再试 ✓）—— 症状是"面板上那行设备直连一直不出现"，
+/// 而**界面完全不报**（只有日志一行 ✓）。
+///
+/// ## 退避与日志
+///
+/// 1s → 2s → 4s → … → 上限 **30s**，**无限重试**（发现层是加分项，晚点起来也值得 ✓）。
+/// ⚠️ 日志**只在退避值变化时**打一行 ⇒ 天然限流（封顶后 30s 一行，不会刷屏 ✓）；
+/// 绑上时若曾重试过，补一行"起来了"（⭐ 免得日志里只剩失败、看不出它最终成功了 ✓）。
+pub async fn bind_listener_with_retry(port: u16) -> UdpSocket {
+    const MAX_DELAY_MS: u64 = 30_000;
+    let mut delay_ms: u64 = 1_000;
+    let mut retries: u32 = 0;
+    let mut last_logged: u64 = 0;
+    loop {
+        match bind_listener(port).await {
+            Ok(sock) => {
+                if retries > 0 {
+                    eprintln!("[lan] 发现层起来了（UDP {port} 已绑定，重试 {retries} 次之后）");
+                }
+                return sock;
+            }
+            Err(e) => {
+                retries += 1;
+                if last_logged != delay_ms {
+                    eprintln!("[lan] 绑不上 UDP {port}（{delay_ms}ms 后重试，同步照旧）：{e}");
+                    last_logged = delay_ms;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                delay_ms = (delay_ms * 2).min(MAX_DELAY_MS);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod bind_retry_tests {
+    use super::*;
+
+    /// 取一个**空闲的**临时端口号（⭐ 不用 47821 ✗ —— 那会打扰本机真跑着的那份发现层 ✓）。
+    async fn free_port() -> u16 {
+        let probe = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+        port
+    }
+
+    /// ★ 判据（2026-10-04 加）：**首次绑不上时不许放弃** ✗ —— 要等到占用者释放后自己绑上 ✓。
+    ///
+    /// 做法：先占住那个端口，200ms 后释放；`bind_listener_with_retry` 必须**最终**成功 ✓。
+    /// ⚠️ 这条正是"那次 10048 之后永久没发现层"的反向判据：⭐ 旧写法在这里会**直接返回** ✗。
+    #[tokio::test]
+    async fn retries_until_the_port_frees_up() {
+        let port = free_port().await;
+        let squatter = UdpSocket::bind(("0.0.0.0", port))
+            .await
+            .expect("占用者要能绑上这个端口");
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            drop(squatter);
+        });
+        let sock = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            bind_listener_with_retry(port),
+        )
+        .await
+        .expect("10 秒内必须绑上 —— 超时说明它没有重试（旧写法的症状）");
+        assert_eq!(sock.local_addr().unwrap().port(), port);
+        release.await.unwrap();
+    }
+
+    /// ★ 反向判据：**端口空着时不许无谓重试** ✓（第一次就成功 ⇒ 立刻返回 ✓）。
+    #[tokio::test]
+    async fn binds_immediately_when_the_port_is_free() {
+        let port = free_port().await;
+        let sock = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            bind_listener_with_retry(port),
+        )
+        .await
+        .expect("空闲端口应当立刻绑上（2 秒内）");
+        assert_eq!(sock.local_addr().unwrap().port(), port);
+    }
+}
+
 /// 默认要发的目标：**广播**（网段里的别人）＋ **回环**（同一台机器上的另一个进程/窗口）。
 ///
 /// ⚠️ 回环那一条是**能自验**的关键：判据与"两个实例同机互看"都靠它，
