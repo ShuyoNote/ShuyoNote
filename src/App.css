@@ -14535,12 +14535,35 @@ p:has(> .editor-drawing-container) {
   color: var(--text);
   background: var(--hover);
 }
-/* 只属于窄屏的两种形态（见文件末尾"文件视图窄屏适配"那段）：
-   · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）；
-   · `.fm-more-btn`  —— 表格行尾的 `⋯`（桌面已经有六个小按钮，用不着它）。
-   基础规则里都 `display:none` ⇒ **桌面一个像素都不变**，形态切换全在窄屏那段里做。 */
+/* 只属于窄屏的形态（见文件末尾"文件视图窄屏适配"那段）：
+   · `.fm-btn-icon` —— 操作行按钮里的图标（桌面隐藏，桌面照旧只有文字标签）。
+   ⚠️ **2026-10-04 改**（owner 决定）：⭐ 下面那个 `⋯` **不再"只属于窄屏"** ✗ ——
+     ⭐ **桌面也收成一个 hover 才现的 `⋯`** ✓（与窄屏同一个按钮 ✓）。
+     ⚠️ 原注释那句「⭐ 桌面已经有六个小按钮，用不着它」当时是对的 ✓，现在 owner 要把六个收进来 ✓。 */
 .fm-btn-icon { display: none; }
-.fm-more-btn { display: none; }
+/* ⚠️ 桌面**默认不显示**、⭐ **行 hover 时显示** —— 与那六个小按钮原来出现的时机一致 ✓（手感不变 ✓）。
+   窄屏那条 `.fm-more-btn { display:flex; 44×44 }` 在 media 里、文件更靠后 ✓ ⇒ ⭐ 窄屏照旧常显 ✓。 */
+.fm-more-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.file-manager-table tbody tr:hover .fm-more-btn { display: flex; }
+.fm-more-btn:hover { background: var(--hover); color: var(--text); }
+/* ⭐ 桌面把行尾那六个小按钮**收进 `⋯`**（它们的动作一个不少地都在右键菜单里 ✓，见 `ctxMenu`）。
+   ⚠️ 用 `display: none` 而不是 `opacity: 0` ✗ —— 后者在桌面仍占位、而且能被 Tab 聚焦到 ✓。
+   ⚠️ 安全边界：⭐ `.fm-file-actions` 只在 `row.kind === "file"` 时渲染 ✓（`FileManagerView.tsx` 里那个条件 ✓）
+     ⇒ ⭐ 藏它**只影响文件行** ✓，页面行/文件夹行不受影响 ✓。 */
+.fm-ops-col .fm-file-actions { display: none; }
 .fm-preview-overlay {
   position: fixed;
   /* 避开自绘标题栏与左竖条：标题栏 32px、竖条 48px、侧栏 --sidebar-w。
