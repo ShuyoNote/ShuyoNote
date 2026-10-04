@@ -40,6 +40,12 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
   // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）
   { id: "map", labelKey: "nav.map", icon: <TagIcon width={18} height={18} /> },
+  // ⚠️ **2026-10-04 并进来**（owner 批的 c-2）：模板中心原来在竖条**底部**是**另一颗独立按钮** ✗ ——
+  //   ⭐ 那颗只 `setOpen(true)`、不参与高亮 ✓，与统一体系是两套 ✓。现在它是 `Activity` 的第 7 个值 ✓
+  //   ⇒ ⭐ 与上面 6 项**完全同形** ✓（⭐ 同一套 `pick()` ✓ ／ ⭐ 同一套高亮 ✓）。
+  //   ⚠️ `labelKey` 用的是**已存在**的 `templateCenter`（`i18n/locales/*.ts` 都有 ✓）而不是新加 `nav.templates` ✓
+  //     —— ⭐ 同一个词一个键 ✓，不值得为"看起来整齐"再多两个 locale 条目 ✓。
+  { id: "templates", labelKey: "templateCenter", icon: <TemplateIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {
@@ -139,14 +145,8 @@ export function ActivityBar() {
         {/* 回收站是「看已删除的内容」——本质是导航，不是设置，所以归竖条；
             备份与存储清理是低频且不可逆的全局操作，已归设置中心「数据」页。 */}
         <TrashPanel />
-        <button
-          className="activity-btn"
-          title="模板中心"
-          aria-label="模板中心"
-          onClick={() => useViewStore.getState().setView("templates")}
-        >
-          <TemplateIcon width={18} height={18} />
-        </button>
+        {/* ⚠️ **2026-10-04 去掉**：模板中心那颗**独立按钮**已并进上面的 `ITEMS` ✓（它是 `Activity` 的第 7 个值 ✓）
+            —— ⭐ 现在它跟着 `ITEMS` 一起高亮 ✓、一起走 `pick()` ✓，不再是一套单独的开关 ✓。 */}
         <button
           className="activity-btn"
           title="设置"

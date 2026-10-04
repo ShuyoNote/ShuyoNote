@@ -3,11 +3,11 @@ import { create } from "zustand";
 /** 左侧竖条（activity bar）当前选中的活动——每一项都对应一个主区视图。
  *  搜索**不是**活动：它是弹层式的一次性动作（用完即走、不占侧栏、不把页面树
  *  顶掉，在看板/关系图视图下同样可用），触发器只是借住在竖条里。 */
-export type Activity = "notes" | "files" | "board" | "graph" | "timeline" | "map";
+export type Activity = "notes" | "files" | "board" | "graph" | "timeline" | "map" | "templates";
 
 /** ⭐ 活动的**唯一白名单** ✓ —— `Activity` 类型 ＋ 运行时可核的名单放在一起，
  *  免得两处各写一份（⭐ 原先 `initialActivity()` 里手写了一遍这 6 个字面量 ✗）。 */
-export const ACTIVITIES = ["notes", "files", "board", "graph", "timeline", "map"] as const;
+export const ACTIVITIES = ["notes", "files", "board", "graph", "timeline", "map", "templates"] as const;
 
 /**
  * ⚠️ **2026-10-04 加**：运行时收窄 `Activity` ✓。
