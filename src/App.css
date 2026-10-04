@@ -3918,12 +3918,16 @@ select.sync-input {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 7px 8px;
+  /* ⚠️ **2026-10-04 改**（owner：⭐ 侧栏树形控件条目的**上下间距略小一点** ✓）：
+     ⭐ 上下各收：padding 7→5、margin 2→1 ⇒ ⭐ 单行高 **40px → 34px** ✓（⭐ 约小 15%，是"略"✓）。
+     ⚠️ **左右**不动 ✗（8px / 6px 保持 ✓ —— 只收纵向 ✓）；⭐ 也**没动** `.tree-icon` 的 22px ✗
+     （⭐ 那是图标尺寸，不是间距 ✓）。 */
+  padding: 5px 8px;
   cursor: pointer;
   font-size: 14px;
   user-select: none;
   border-radius: var(--radius-sm);
-  margin: 2px 6px;
+  margin: 1px 6px;
   color: var(--text);
   position: relative;
   transition: background var(--transition-fast), color var(--transition-fast);
