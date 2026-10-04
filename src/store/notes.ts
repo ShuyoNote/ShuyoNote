@@ -3,7 +3,7 @@ import { emitHostEvent } from "../lib/pluginEvents";
 import { api } from "../lib/api";
 import type { PageDetail, PageMeta } from "../types";
 import { useViewStore } from "./view";
-import { useTemplateCenterStore } from "./templateCenter";
+
 import { useFileManagerStore } from "./fileManager";
 import { useFilePreview } from "./filePreview";
 
@@ -82,7 +82,7 @@ export const useNotes = create<NoteState>((set, get) => ({
       // Opening a page/database switches back to the editor view and closes any
       // overlay (template center).
       useViewStore.getState().setView("notes");
-      useTemplateCenterStore.getState().setOpen(false);
+      useViewStore.getState().leaveTemplates();
       // 播报事实即可，谁听由插件层决定（见 lib/pluginEvents）。
       emitHostEvent("page.opened", { pageId: id });
     } catch (e) {

@@ -43,7 +43,6 @@ import { SmileIcon, ImageIcon, PropertyIcon, TagIcon, MenuIcon } from "./compone
 import { TagAddButton } from "./components/TagBar";
 import { LockScreen } from "./components/LockScreen";
 import { useVault } from "./hooks/useVault";
-import { useTemplateCenterStore } from "./store/templateCenter";
 import { EmojiPicker } from "./components/EmojiPicker";
 import { useIconPicker } from "./store/iconPicker";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -916,7 +915,7 @@ function AppShell() {
   const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
-  const templateOpen = useTemplateCenterStore((s) => s.open);
+  const templateOpen = useViewStore((s) => s.view === "templates");
   usePresence();
   useSyncStream();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。

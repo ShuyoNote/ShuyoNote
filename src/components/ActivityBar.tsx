@@ -5,7 +5,6 @@ import { isMobileViewport } from "../hooks/useMobile";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
-import { useTemplateCenterStore } from "../store/templateCenter";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
 import {
@@ -144,7 +143,7 @@ export function ActivityBar() {
           className="activity-btn"
           title="模板中心"
           aria-label="模板中心"
-          onClick={() => useTemplateCenterStore.getState().setOpen(true)}
+          onClick={() => useViewStore.getState().setView("templates")}
         >
           <TemplateIcon width={18} height={18} />
         </button>

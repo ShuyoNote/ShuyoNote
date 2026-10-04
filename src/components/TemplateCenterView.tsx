@@ -4,7 +4,7 @@ import { platform } from "../lib/platform";
 import { api } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { useEditorStore } from "../store/editor";
-import { useTemplateCenterStore } from "../store/templateCenter";
+import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { TEMPLATES, TEMPLATE_CATEGORIES, substituteTemplateVars } from "../templates";
@@ -79,7 +79,7 @@ function MockPreview({ cover, content }: { cover: string; content?: string }) {
 // Template-center gallery: built-in templates (bundled) merged with the user's
 // "我的模板" (persisted in DB). Clicking a card creates a page with content.
 export function TemplateCenterView() {
-  const setOpen = useTemplateCenterStore((s) => s.setOpen);
+  const leaveTemplates = useViewStore((s) => s.leaveTemplates);
   const userTemplates = useTemplates((s) => s.userTemplates);
   const loadTemplates = useTemplates((s) => s.load);
   const removeTemplate = useTemplates((s) => s.remove);
@@ -156,7 +156,7 @@ export function TemplateCenterView() {
       }
       // 加列后刷新 DatabaseView，避免其已在加列完成前加载(读到空列)。
       useNotes.getState().bumpReload();
-      setOpen(false);
+      leaveTemplates();
       return;
     }
     // Page template → expand template vars (`{{date}}`/`{{title}}`/`{{selected}}`)
@@ -170,7 +170,7 @@ export function TemplateCenterView() {
     // 把模板封面(题头图) + 页面图标应用到创建后的页面。
     if (pid && t.cover) await api.setPageCover(pid, t.cover);
     if (pid && t.icon) await api.setPageIcon(pid, t.icon);
-    setOpen(false);
+    leaveTemplates();
   };
 
   const exportTemplate = async (t: GalleryItem) => {
@@ -231,7 +231,7 @@ export function TemplateCenterView() {
         <button className="tc-import" title="导入模板文件" onClick={importTemplate}>
           ⬆ 导入
         </button>
-        <button className="tc-close" title="关闭" onClick={() => setOpen(false)}>
+        <button className="tc-close" title="关闭" onClick={() => leaveTemplates()}>
           ×
         </button>
       </div>

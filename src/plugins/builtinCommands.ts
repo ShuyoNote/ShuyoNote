@@ -2,7 +2,7 @@ import { api } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
-import { useTemplateCenterStore } from "../store/templateCenter";
+
 import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
@@ -442,16 +442,14 @@ registerCommandGroup({
       },
     },
     {
-      // ⚠️ 模板中心现在走的是它自己的那个开关（`store/templateCenter` 的 `open`）——
-      //   ⭐ 它**还没有**并进 `view` ✗（`AppView` 里没有 "templates" ✓）⇒ ⭐ 这里先照它现在的形态写 ✓。
-      //   ⭐ 等 `view.templates` 那一步做完（owner 批的 c），这条要改成 `setView("templates")` ✓
-      //     —— ⭐ 那时活动栏的高亮与"重启后记得"才跟着一起来 ✓。
+      // ⚠️ **2026-10-04**：模板中心已并进 `view` ✓（`AppView` 加了 `"templates"` ✓，
+      //   ⭐ 那个光杆布尔 `store/templateCenter` 已删 ✓）⇒ ⭐ 这条现在与上面 6 条**完全同形** ✓。
       id: "view.templates",
       title: "打开模板中心",
       description: "打开模板画廊（新建页面时可套用）",
       closeOnRun: true,
       run: () => {
-        useTemplateCenterStore.getState().setOpen(true);
+        useViewStore.getState().setView("templates");
         return "已打开模板中心";
       },
     },

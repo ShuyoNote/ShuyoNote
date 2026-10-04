@@ -13,7 +13,7 @@ import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
 import { useViewStore } from "../store/view";
 import { useSpaceStore } from "../store/space";
-import { useTemplateCenterStore } from "../store/templateCenter";
+
 import { useEditorStore } from "../store/editor";
 import { usePdfReader } from "../store/pdfReader";
 import { useFilePreview } from "../store/filePreview";
@@ -499,7 +499,7 @@ function TreeItem({
       // still expands/collapses the tree. Close any overlay (template center).
       useFileManagerStore.getState().setFolderId(node.id);
       useViewStore.getState().setView("files");
-      useTemplateCenterStore.getState().setOpen(false);
+      useViewStore.getState().leaveTemplates();
     } else {
       useNotes.getState().openPage(node.id);
     }

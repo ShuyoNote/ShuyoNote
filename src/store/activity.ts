@@ -15,7 +15,8 @@ export const ACTIVITIES = ["notes", "files", "board", "graph", "timeline", "map"
  * ⚠️ **2026-10-04 订正**：原写「它还有 settings / trash / **templates** / search 这类非活动视图」✗ ——
  *    ⭐ 那句**是错的** ✓：`store/view.ts` 的 `AppView` 逐字只有
  *    `"notes" | "board" | "graph" | "files" | "timeline" | "map"` ✓ ⇒ ⭐ **没有 templates** ✓
- *    （⭐ 模板中心今天走的是它自己那个光杆布尔 `store/templateCenter` ✓ ⇒ ⭐ 它**不是** view ✓）。
+ *    （⭐ 模板中心**已于 2026-10-04 并进 view** ✓ ⇒ ⭐ 它现在是 `AppView` 的第 7 个值 ✓，
+ *      ⭐ 那个光杆布尔 `store/templateCenter` 已删 ✓）。
  *    ⭐ settings / trash / search 也不是 `view` 的值 ✗ —— 它们各有各的开关 ✓
  *    ⇒ ⭐ 所以"宽"这句话**结论对、举例全错** ✓ ⇒ ⭐ 按代码订正 ✓。
  * 而 `ActivityBar` 里有一处 `setActivity(view as Activity)` ✗（⭐ `as` 把类型检查绕过去了 ✓），
