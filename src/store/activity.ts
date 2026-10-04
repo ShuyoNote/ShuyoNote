@@ -12,7 +12,12 @@ export const ACTIVITIES = ["notes", "files", "board", "graph", "timeline", "map"
 /**
  * ⚠️ **2026-10-04 加**：运行时收窄 `Activity` ✓。
  * 来由：⭐ `AppView`（`store/view` 的 `view` ✓）**比 `Activity` 宽** ✗ ——
- * 它还有 settings / trash / templates / search 这类非活动视图 ✓；
+ * ⚠️ **2026-10-04 订正**：原写「它还有 settings / trash / **templates** / search 这类非活动视图」✗ ——
+ *    ⭐ 那句**是错的** ✓：`store/view.ts` 的 `AppView` 逐字只有
+ *    `"notes" | "board" | "graph" | "files" | "timeline" | "map"` ✓ ⇒ ⭐ **没有 templates** ✓
+ *    （⭐ 模板中心今天走的是它自己那个光杆布尔 `store/templateCenter` ✓ ⇒ ⭐ 它**不是** view ✓）。
+ *    ⭐ settings / trash / search 也不是 `view` 的值 ✗ —— 它们各有各的开关 ✓
+ *    ⇒ ⭐ 所以"宽"这句话**结论对、举例全错** ✓ ⇒ ⭐ 按代码订正 ✓。
  * 而 `ActivityBar` 里有一处 `setActivity(view as Activity)` ✗（⭐ `as` 把类型检查绕过去了 ✓），
  * 于是打开设置/回收站时会把**非法值**写进 `activity` ✓。
  * ⇒ ⭐ 正确写法是**先收窄再写**：`if (isActivity(view)) setActivity(view)` ✓。

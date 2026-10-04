@@ -2,6 +2,7 @@ import { api } from "../lib/api";
 import { isDesktopPlatform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
+import { useTemplateCenterStore } from "../store/templateCenter";
 import { usePlugins } from "../store/plugins";
 import { useTemplates } from "../store/templates";
 import { useAiStore } from "../store/ai";
@@ -391,6 +392,67 @@ registerCommandGroup({
       run: () => {
         useViewStore.getState().setView("board");
         return "已切换到看板";
+      },
+    },
+    // ⚠️ **2026-10-04 补**（owner：「如何让模板中心、知识地图、时间线、关系图、看板、文件夹、页面随时能切换？」）
+    //   ⭐ 真因不是"入口不够" ✗ —— 活动栏里 7 个入口都有 ✓；⭐ 缺的是**"随时"** ✗：
+    //   窄屏时活动栏是**抽屉**（⭐ 要先开抽屉才看得见 ✓）／ ⭐ 全屏视图里竖条还可能被盖住 ✓。
+    //   ⇒ ⭐ 命令面板是**最"随时"**的那条路 ✓（⭐ `Ctrl+K` 一按就能切 ✓）——
+    //   而它此前**只有 关系图／看板 两条** ✗ ⇒ ⭐ 另外 5 个切不到 ✓ ⇒ ⭐ 这一批把 7 个补齐 ✓。
+    //   ⚠️ 顺序刻意与活动栏的 `ITEMS` 一致（⭐ notes → files → board → graph → timeline → map ✓）
+    //      ＋ ⭐ 模板中心跟在最后 ✓ ⇒ ⭐ 面板里读起来就是竖条从上到下那一路 ✓。
+    {
+      id: "view.notes",
+      title: "打开页面",
+      description: "切换到页面视图（笔记正文）",
+      closeOnRun: true,
+      run: () => {
+        useViewStore.getState().setView("notes");
+        return "已切换到页面";
+      },
+    },
+    {
+      id: "view.files",
+      title: "打开文件夹",
+      description: "切换到文件视图",
+      closeOnRun: true,
+      run: () => {
+        useViewStore.getState().setView("files");
+        return "已切换到文件夹";
+      },
+    },
+    {
+      id: "view.timeline",
+      title: "打开时间线",
+      description: "切换到时间线视图",
+      closeOnRun: true,
+      run: () => {
+        useViewStore.getState().setView("timeline");
+        return "已切换到时间线";
+      },
+    },
+    {
+      id: "view.map",
+      title: "打开知识地图",
+      description: "切换到知识地图视图（按标签聚类）",
+      closeOnRun: true,
+      run: () => {
+        useViewStore.getState().setView("map");
+        return "已切换到知识地图";
+      },
+    },
+    {
+      // ⚠️ 模板中心现在走的是它自己的那个开关（`store/templateCenter` 的 `open`）——
+      //   ⭐ 它**还没有**并进 `view` ✗（`AppView` 里没有 "templates" ✓）⇒ ⭐ 这里先照它现在的形态写 ✓。
+      //   ⭐ 等 `view.templates` 那一步做完（owner 批的 c），这条要改成 `setView("templates")` ✓
+      //     —— ⭐ 那时活动栏的高亮与"重启后记得"才跟着一起来 ✓。
+      id: "view.templates",
+      title: "打开模板中心",
+      description: "打开模板画廊（新建页面时可套用）",
+      closeOnRun: true,
+      run: () => {
+        useTemplateCenterStore.getState().setOpen(true);
+        return "已打开模板中心";
       },
     },
   ],
