@@ -76,6 +76,9 @@ function lightenColor(hex: string, amount = 0.82): string {
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 const ICON = {
+  // ⭐ 2026-10-04 加：给侧栏文件行的「打开」用 ✓ —— `MenuIcon` 只吃**一条 `d`** ✗，
+  //    所以多个子路径写在同一条里 ✓（与下面 `trash` 同一个写法 ✓）。
+  open: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   edit: "M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
   window: "M5 3h9a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM17 9h4v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-1",
   swap: "M4 7h13m0 0l-3-3m3 3l-3 3M20 17H7m0 0l3-3m-3 3l3 3",
@@ -317,6 +320,9 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               openFile(menuFile);
             }}
           >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.open} />
+            </span>
             <span className="menu-text">打开</span>
           </button>
           <button
@@ -325,6 +331,9 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               void revealFile(menuFile);
             }}
           >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.folder} />
+            </span>
             <span className="menu-text">在文件夹中显示</span>
           </button>
           <button
@@ -333,6 +342,9 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               renameFile(menuFile);
             }}
           >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.edit} />
+            </span>
             <span className="menu-text">重命名</span>
           </button>
           <button
@@ -341,6 +353,9 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
               void deleteFile(menuFile);
             }}
           >
+            <span className="menu-icon">
+              <MenuIcon d={ICON.trash} />
+            </span>
             <span className="menu-text">删除</span>
           </button>
         </span>
