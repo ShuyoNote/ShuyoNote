@@ -1809,7 +1809,12 @@ select.sync-input {
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 7px 14px;
-  font-size: 12px;
+  /* ⚠️ **2026-10-04 改**（owner：「按钮和输入框不协调」）：⭐ 补上**高度** ✗ ——
+     输入框有 `min-height: 44px`（那条「可点控件 ≥44」的规矩，见 `.sync-input` 的注释），
+     而按钮**没有** ⇒ 实际只有 ~29px ⇒ 并排时高矮不齐，而且按钮自己也没守那条规矩 ✓。
+     ⭐ 字号也跟输入框对齐（12 → 13）✓；圆角本来就是同一个 `--radius-sm` ✓。 */
+  min-height: 44px;
+  font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
