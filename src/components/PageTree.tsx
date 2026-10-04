@@ -684,14 +684,24 @@ export function PageTree(_props: {
     //    ⇒ ⭐ `.main` **确实变宽了** ✓（所以 PDF 阅读器会跟着变 ✓）。
     //    ⚠️ 但 ⭐ **`--sidebar-w` 此前只在这里被写、依赖只有 `[sidebarWidth]`** ✗
     //      ⇒ ⭐ 只有"拖分隔条"才会更新它 ✓ ⇒ ⭐ 收起/展开时它**仍是 240px** ✗。
-    //    ⭐ 而 `.fm-preview-overlay` 的 `left: calc(var(--activity-w) + var(--sidebar-w, 240px))` ✓
+    //    ⭐ 而 `.fm-preview-overlay` 的 `left` 用的是**避让变量** ✓
+    //      （⭐ 原先写的是 `var(--sidebar-w, 240px)` ✗ —— ⭐ 2026-10-04 已改成 `--sidebar-offset` ✓）。
     //      ⇒ ⭐ 收起后浮层左边**凭空白留 240px** ✗ ⇒ ⭐ 看起来"内容区没适配" ✓✓
     //      （⭐ 连带所有用这条 `left` 的浮层都中招 ✓ —— 不只文件预览 ✓）
     //    ⭐ 修法：**收起时把变量写成 0** ✓ ⇒ 浮层自然铺满；展开时写回存档宽度 ✓
     //      （⭐ `sidebarWidthRef` / `sidebarWidth` 都**保留原值** ✓ ⇒ 再展开还是原来那么宽 ✓）
     //    ⚠️ CSS 里 `App.css:22525` 早就记过同一个病（窄屏抽屉＋变量仍是 240px ⇒ `left` 算成 288px ✓），
     //      那次只在窄屏那条 media 查询里绕过 ✓ —— 这一处修的是**桌面收起**这一档 ✓。
-    document.documentElement.style.setProperty("--sidebar-w", sidebarOpen ? `${sidebarWidth}px` : "0px");
+    //    ⭐ 修法（⭐ 2026-10-04 **二次**改）：⭐ 别把 0 写进 `--sidebar-w` ✗ ——
+    //      ⭐ 那个变量**同时**是 `.sidebar` 的 `width`/`min-width` ✓（`App.css:554-555` ✓）
+    //      ⇒ 写 0 会让侧栏自己的宽度语义也被改掉 ✓（⭐ 收起时它 `hidden` 看不出 ✗，但不该混用 ✓）。
+    //      ⇒ ⭐ 现在分开：`--sidebar-w` **只表示侧栏列宽** ✓（永远写存档宽度 ✓）；
+    //        ⭐ **新增 `--sidebar-offset`**（`App.css` 变量块 ✓）专供**浮层避让**：
+    //        收起 ⇒ 0 ✓（浮层铺满 ✓）／ 展开 ⇒ 存档宽度 ✓。
+    //      ⚠️ 用 `--sidebar-w` 定位的**只有** `.fm-preview-overlay` 一处 ✓
+    //        （⭐ 全仓 `var(--sidebar-w` 共 3 处：`.sidebar` 的 width/min-width ＋ 它 ✓）。
+    document.documentElement.style.setProperty("--sidebar-w", `${sidebarWidth}px`);
+    document.documentElement.style.setProperty("--sidebar-offset", sidebarOpen ? `${sidebarWidth}px` : "0px");
   }, [sidebarWidth, sidebarOpen]);
   /**
    * 拖分隔条调宽；**继续往左拖过阈值就把它收起来**（VS Code 同款手感）。

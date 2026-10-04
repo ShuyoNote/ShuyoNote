@@ -33,8 +33,15 @@
   --text-faint: #8f959e;
   --hover: #f2f3f5;
   --hover-strong: #e8eaed;
-  /* Left sidebar width (shared by body-portaled overlays that must not cover it). */
+  /* Left sidebar width —— ⭐ **只表示"侧栏那一列有多宽"** ✓（`.sidebar` 的 width/min-width 用它 ✓）。 */
   --sidebar-w: 240px;
+  /* ⚠️ **2026-10-04 加**：⭐ **浮层避让用的偏移量，与 `--sidebar-w` 分开** ✗。
+     来由：`--sidebar-w` 一度被两件事共用 —— ① 侧栏自己的宽度 ✓ ② 浮层 `left` 的避让量 ✓；
+     而「收起侧栏」时 JS 把它写成 0 ✗ ⇒ ⭐ 连 `.sidebar` 的 `width`/`min-width` **也变成 0** ✓
+     （⭐ 收起时它 `hidden`（`display:none`）所以看不出后果 ✗，但⭐ **语义上不该共用** ✓）。
+     ⭐ 现在：收起时**只把这一条写成 0** ✓ ⇒ 浮层铺满 ✓ 而 `.sidebar` 的宽度语义**不受影响** ✓。
+     ⚠️ 用它的只有 `.fm-preview-overlay` 的 `left` 一处 ✓（全仓 `var(--sidebar-w` 共 3 处 ✓）。 */
+  --sidebar-offset: 240px;
 
   /* 左竖条宽 + 标题栏高：供 fixed 弹层（预览/TOC/PdfReader 等）避开这些 chrome。
      --titlebar-h 由前端在自绘标题栏开启时设为 32px，系统标题栏时 0。 */
@@ -14541,7 +14548,7 @@ p:has(> .editor-drawing-container) {
   top: var(--titlebar-h, 0px);
   right: 0;
   bottom: 0;
-  left: calc(var(--activity-w, 0px) + var(--sidebar-w, 240px));
+  left: calc(var(--activity-w, 0px) + var(--sidebar-offset, 240px));
   /* 文件预览：内容 modal 层——高于普通 popover(40-95)，低于搜索面板(1500)/
      命令面板，避免被 tag picker/树菜单等小浮层盖住。 */
   z-index: var(--z-content-overlay);
