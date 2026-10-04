@@ -275,8 +275,6 @@ pub enum SpaceKind {
     Personal,
     /// 团队空间：**免检**（服务端明文是它刻意换来的：协同 / 检索 / AI）。
     Team,
-    /// 未分类：**放行**（老库/未标记的空间都走这条 —— 绝不因为"没分类"就掐断同步）。
-    Unknown,
 }
 
 impl SpaceKind {
@@ -284,19 +282,23 @@ impl SpaceKind {
         match self {
             SpaceKind::Personal => "personal",
             SpaceKind::Team => "team",
-            SpaceKind::Unknown => "",
         }
     }
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
             "personal" => SpaceKind::Personal,
             "team" => SpaceKind::Team,
-            _ => SpaceKind::Unknown, // 认不出来 ⇒ 未分类（**不猜**）
+            // ⚠️ 2026-10-04：认不出来（含空串＝老库的未分类）⇒ **按个人空间处理**（owner 口径）。
+            //    按个人是**保守**的那一侧：个人空间绑不了服务器（见 sync::set_sync_profile）。
+            _ => SpaceKind::Personal,
         }
     }
 }
 
-/// 同步闸门的裁决。**两种出口**：放行 / 放行但"这个空间还没分类"。
+/// 同步闸门的裁决。⚠️ **2026-10-04：只剩一档** —— 按盘点文档那句「只剩一档 ⇒ 这层抽象不该存在」
+/// 本应整体删掉；⚠️ 但 `SyncGateView` 是**前端读的形状**（`security::space_security_view`）⇒
+/// 这一轮只删「裁决」这一层，视图形状留着（`allow` 恒真 / `unclassified` 恒假），
+/// 免得同时动前端。删视图形状是下一段（c）的事。
 ///
 /// ⚠️ **2026-10-04 改**（owner 裁定「⭐ **个人空间不绑服务器**」＋ 他选的方向 b）：
 /// ⭐ **删掉 `Blocked` 那一档** ✗ —— 原先"个人空间没按空间加密 ⇒ 拦住绑同步"这条**已经没有意义** ✓：
@@ -307,8 +309,6 @@ impl SpaceKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncGate {
     Allowed,
-    /// 放行 —— 但这个空间**没分类**（上层该如实告诉用户"闸门没管到它"，不静默）。
-    AllowedUnclassified,
 }
 
 /// ★★ **同步闸门（第 2 步）**：只回答"这个空间**分类标了吗**"。
@@ -318,11 +318,9 @@ pub enum SyncGate {
 /// 那条分支默认"个人空间**可以**绑服务器，只要先加密"✗，而这正是被否掉的口径 ✓）。
 /// ⭐ 现在：团队 ⇒ 放行；未分类 ⇒ 放行但报"没管到"；个人 ⇒ 放行
 /// （⭐ 拦个人空间**不在这里** ✗ —— 在 `sync::set_sync_profile` ✓，那是唯一能真拦的地方 ✓）。
-pub fn sync_gate(_st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
-    match kind {
-        SpaceKind::Team | SpaceKind::Personal => SyncGate::Allowed,
-        SpaceKind::Unknown => SyncGate::AllowedUnclassified,
-    }
+pub fn sync_gate(_st: &SpaceCryptoStatus, _kind: SpaceKind) -> SyncGate {
+    // ⚠️ 2026-10-04：**永远放行** —— 拦个人空间的那一刀在 `sync::set_sync_profile`（唯一入口）。
+    SyncGate::Allowed
 }
 
 /// 闸门裁决的**可序列化视图**（给状态命令/界面读；`SyncGate` 本身不带 `Serialize`，
@@ -330,7 +328,8 @@ pub fn sync_gate(_st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGate {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SyncGateView {
     pub allow: bool,
-    /// 放行的同时"这个空间还没分类"（＝闸门**没管到它**，界面该如实说）。
+    /// ⚠️ **2026-10-04**：⭐ 字段留着只为**形状不变**（前端在读它）✗ —— 语义上**恒为 false** ✓
+    ///（"未分类"这一档已按 owner 口径去掉 ⇒ 不存在"没管到"的情况 ✓）。
     pub unclassified: bool,
     /// 拦住的原因 / 放行时的空串。
     pub reason: String,
@@ -345,11 +344,6 @@ pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
             unclassified: false,
             reason: String::new(),
         },
-        SyncGate::AllowedUnclassified => SyncGateView {
-            allow: true,
-            unclassified: true,
-            reason: "这个空间还没分类（个人/团队）：同步闸门这次没有管到它".to_string(),
-        },
     }
 }
 
@@ -361,7 +355,7 @@ pub fn space_kind(c: &Connection, space_id: &str) -> SpaceKind {
         |r| r.get::<_, String>(0),
     )
     .map(|s| SpaceKind::parse(&s))
-    .unwrap_or(SpaceKind::Unknown)
+    .unwrap_or(SpaceKind::Personal)
 }
 
 /// 写这个空间的本地分类标记（`Unknown` ⇒ 写回空串＝取消分类）。
@@ -791,8 +785,9 @@ mod tests {
         assert_eq!(sync_gate(&boxed, SpaceKind::Personal), SyncGate::Allowed);
         // ② 团队空间 ⇒ 放行
         assert_eq!(sync_gate(&plain, SpaceKind::Team), SyncGate::Allowed);
-        // ③ 未分类 ⇒ 放行，但把"没管到"这个事实报出来（⭐ 这档保留 ✓）
-        assert_eq!(sync_gate(&plain, SpaceKind::Unknown), SyncGate::AllowedUnclassified);
+        // ③ ⚠️ **2026-10-04**：⭐ 「未分类 ⇒ 放行但报出来」这一档**已删** ✗（owner：未分类按个人处理、
+        //    去掉未分类这一条 ✓）⇒ ⭐ `sync_gate` 现在**永远放行** ✓，这条断言跟着去掉 ✓。
+        //    ⭐ 真正的拦截在 `sync::set_sync_profile`（只有团队能绑服务器 ✓）。
     }
 
     /// ★★ **老 meta.db 必须补上 `kind` 列**（owner 2026-09-24 现场抓到的真 bug）。
@@ -854,7 +849,7 @@ mod tests {
             [],
         )
         .unwrap();
-        assert_eq!(space_kind(&c, "old-b"), SpaceKind::Unknown);
+        assert_eq!(space_kind(&c, "old-b"), SpaceKind::Personal);
 
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
@@ -875,18 +870,18 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Unknown, "默认就是未分类");
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "默认就是未分类");
         set_space_kind(&c, "sk-a", SpaceKind::Personal).unwrap();
         assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal);
         c.execute("UPDATE meta.workspaces SET kind = 'PERSONAL' WHERE id = 'sk-a'", []).unwrap();
         assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "大小写不敏感");
         c.execute("UPDATE meta.workspaces SET kind = '别的' WHERE id = 'sk-a'", []).unwrap();
-        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Unknown, "★ 认不出来 ⇒ 未分类，**不猜**");
-        assert_eq!(space_kind(&c, "不存在"), SpaceKind::Unknown, "没那条 ⇒ 未分类");
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal, "★ 认不出来 ⇒ 未分类，**不猜**");
+        assert_eq!(space_kind(&c, "不存在"), SpaceKind::Personal, "没那条 ⇒ 未分类");
         assert!(set_space_kind(&c, "不存在", SpaceKind::Team).is_err(), "写不存在的空间要报错");
         // 取消分类 ⇒ 写回空串
-        set_space_kind(&c, "sk-a", SpaceKind::Unknown).unwrap();
-        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Unknown);
+        set_space_kind(&c, "sk-a", SpaceKind::Personal).unwrap();
+        assert_eq!(space_kind(&c, "sk-a"), SpaceKind::Personal);
 
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
@@ -894,7 +889,7 @@ mod tests {
 
     /// 闸门视图：三种出口都投影出来（拦 / 放行 / 放行但未分类），**一个都不许丢**。
     #[test]
-    fn the_gate_view_keeps_all_three_outcomes() {
+    fn the_gate_view_now_has_a_single_outcome() {
         let plain = SpaceCryptoStatus {
             space_id: "s".into(),
             name: String::new(), // 视图判据不关心称谓：留空 ⇒ 退回 id（见 `label()`）
@@ -908,13 +903,14 @@ mod tests {
         };
 
         let v = sync_gate_view(&plain, SpaceKind::Personal);
-        assert!(!v.allow && !v.unclassified && !v.reason.is_empty(), "拦：要有原因");
+        assert!(v.allow && !v.unclassified && v.reason.is_empty(), "恒放行：没有原因");
         let v = sync_gate_view(&enc, SpaceKind::Personal);
         assert!(v.allow && !v.unclassified && v.reason.is_empty(), "放行：没有原因");
         let v = sync_gate_view(&plain, SpaceKind::Team);
         assert!(v.allow && !v.unclassified, "团队：放行且**不算未分类**");
-        let v = sync_gate_view(&plain, SpaceKind::Unknown);
-        assert!(v.allow && v.unclassified && !v.reason.is_empty(), "未分类：放行但**要说出来**");
+        let v = sync_gate_view(&plain, SpaceKind::Personal);
+        // ⚠️ 2026-10-04：「未分类」这一档已删 ⇒ 这条断言随之去掉（个人空间也是恒放行）
+            assert!(v.allow && !v.unclassified, "个人空间：恒放行且不算未分类");
     }
 
     /// ★★ ③ 0b：**采纳从服务端取回的公开材料** —— 本地已经有袋子时**默认拒绝**
@@ -1047,18 +1043,19 @@ mod tests {
         let p = &views[0];
         assert_eq!(p.kind, "personal");
         assert_eq!(p.kind.as_str(), SpaceKind::Personal.as_str(), "视图里的串与内部口径是同一个");
-        assert!(!p.gate.allow && !p.gate.reason.is_empty(), "个人＋没加密 ⇒ 拦且有理由");
+        assert!(p.gate.allow && p.gate.reason.is_empty(), "个人＋没加密 ⇒ 视图层也放行（真拦在绑服务器那一刀）");
         // ★★ 拦人的那句话要说**空间名**，不是内部 id（owner 2026-09-24 截图当场指出：
         //    行头写着"新建工作区"，可理由里却是 `空间「119738aa-…」…`）。
-        assert!(p.gate.reason.contains("个人甲"), "闸门理由要用空间名：{}", p.gate.reason);
-        assert!(!p.gate.reason.contains("ov-p"), "闸门理由里不许出现内部 id：{}", p.gate.reason);
+        // ⚠️ 2026-10-04：闸门恒放行 ⇒ 理由恒空串。那两条「理由要带空间名 / 不许出现内部 id」的断言随之去掉；
+            //    ⭐ 现在唯一会拦人的地方是 sync::set_sync_profile ✓，那里的报错仍然带空间名 ✓（改到那边守）。
+        // （同上一行：理由恒空 ⇒ 这条也去掉）
         let t = &views[1];
         assert_eq!(t.kind, "team");
         assert!(t.gate.allow && !t.gate.unclassified, "团队 ⇒ 免检放行");
         let u = &views[2];
-        assert_eq!(u.kind, "", "★ 未分类**照样列出来**，而不是被默认成个人");
-        assert!(u.gate.allow && u.gate.unclassified, "★ 放行，但要把「没管到」说出来");
-        assert!(u.gate.reason.contains("没分类"), "{}", u.gate.reason);
+        assert_eq!(u.kind.as_str(), SpaceKind::Personal.as_str(), "★ 存量空串 ⇒ 按个人空间处理（保守侧）");
+        assert!(u.gate.allow && !u.gate.unclassified, "★ 放行，且不再算「没管到」（这一档已删）");
+        // （理由恒空 ⇒ 这条去掉）
 
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1142,7 +1139,7 @@ mod tests {
             SyncGate::Allowed
         );
         // ④ 认不出/没标记的（存量库）⇒ 仍然是"未分类放行"（不掐断老用户）
-        assert_eq!(space_kind(&c2, "entry-a"), SpaceKind::Unknown);
+        assert_eq!(space_kind(&c2, "entry-a"), SpaceKind::Personal);
 
         set_keyring_for_test(None);
         set_session_master(None).unwrap();

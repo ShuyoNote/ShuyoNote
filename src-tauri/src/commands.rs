@@ -485,7 +485,8 @@ pub struct SpaceKindArgs {
 #[tauri::command]
 pub fn set_space_kind(db: State<Db>, args: SpaceKindArgs) -> Result<(), String> {
     let kind = match args.kind.trim().to_ascii_lowercase().as_str() {
-        "" => crate::space_crypto::SpaceKind::Unknown,
+        // ⚠️ **2026-10-04**：⭐ 空串**不再等于「取消分类」** ✗ —— owner 要去掉「未分类」这一档 ✓
+        //    ⇒ ⭐ 它落到下面 `other =>` 的报错分支 ✓（⭐ 口径：必须显式给个人/团队 ✓）。
         "personal" => crate::space_crypto::SpaceKind::Personal,
         "team" => crate::space_crypto::SpaceKind::Team,
         other => {

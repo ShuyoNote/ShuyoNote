@@ -1153,10 +1153,6 @@ pub(crate) fn sync_bind_gate(
     let kind = crate::space_crypto::space_kind(c, ws_id);
     match crate::space_crypto::sync_gate(&st, kind) {
         crate::space_crypto::SyncGate::Allowed => Ok(None),
-        crate::space_crypto::SyncGate::AllowedUnclassified => Ok(Some(format!(
-            "{}还没分类（个人/团队）：同步闸门这次**没有管到它**。",
-            st.label()
-        ))),
     }
 }
 
@@ -5759,10 +5755,12 @@ mod tests {
         (c, dir)
     }
 
-    /// ★★ 隐私边界**第 2 步**：**绑定同步关系那一刻的闸门**（真库、真路径）。
+    /// ★★ 隐私边界**第 2 步**：**绑定同步关系那一刻**的"分类"检查（真库、真路径）。
     ///
-    /// 四支都要有读数：个人空间没加密 ⇒ **拦**；加密过（袋里有它）⇒ 放行；
-    /// 团队空间 ⇒ **免检**（明文也放行）；未分类 ⇒ 放行但**带一条提示**（不静默）。
+    /// ⚠️ **2026-10-04 改**（owner：未分类按个人处理 ＋ 去掉未分类这一条）：
+    /// ⭐ 这个函数现在**不拦任何人** ✗ —— 只剩"这个空间还没分类 ⇒ 报一句"这件事；
+    /// 而"未分类"这一档已删 ⇒ ⭐ 空串读出的是**个人空间** ✓ ⇒ ⭐ 连那句提示都不会有 ✓（返回 `None` ✓）。
+    /// ⭐ 真正拦住"个人空间绑服务器"的是 `set_sync_profile` ✓（见那里装的真拦 ✓）。
     #[test]
     fn the_sync_bind_gate_blocks_only_personal_spaces_without_encryption() {
         let _g = crate::security::SEC_LOCK.lock().unwrap();
@@ -5773,10 +5771,13 @@ mod tests {
         )
         .unwrap();
 
-        // ① 未分类 ⇒ 放行 ＋ 提示（这是**今天所有空间**的状态：闸门不掐断任何人的同步）
+        // ① ⚠️ **2026-10-04 改**：⭐ 空串（老库的"未分类"）现在读作**个人空间** ✗
+        //    ⇒ ⭐ 这一层既不拦、也没有"没分类"那句提示 ⇒ 断言 `is_none()` ✓。
         let note = sync_bind_gate(&c, &dir, "ws").unwrap();
-        assert!(note.is_some(), "未分类要如实报出来");
-        assert!(note.unwrap().contains("没分类"));
+        assert!(
+            note.is_none(),
+            "空串按个人空间处理 ⇒ 这一层没有任何提示（提示那档已随「未分类」一起去掉）"
+        );
 
         // ② 标成个人空间 —— ⚠️ **2026-10-04 改**：⭐ 这一层**不再拦** ✗
         //    （owner 裁定「个人空间不绑服务器」⇒ 拦的是"绑服务器"那个动作本身，
