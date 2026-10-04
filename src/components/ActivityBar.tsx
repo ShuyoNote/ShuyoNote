@@ -29,7 +29,10 @@ import {
 //   - 右侧 RightRail = 与**当前文档**相关的辅助（AI、目录）
 //
 // 「搜索」只换侧栏面板、不动主区；notes/files/board/graph 会切主区视图。
-// 点击已选中的活动 = 收起/展开侧栏（VS Code 行为）。
+// ⚠️ **2026-10-04 更新**：⭐ 活动图标**只切视图 ＋ 把侧栏展开** ✓ ——
+//    ⭐ **不再**「点已选中的活动 ⇒ 收起侧栏」（~~VS Code 行为~~ ✗，owner 决定去掉 ✓）。
+//    ⇒ 收起/展开侧栏**只由上面那颗 `.sidebar-toggle-btn` 负责** ✓（一个动作一个入口 ✓）。
+//    ⚠️ 那句旧行为的注释与提示文案（title）当时**都留下了** ✗ ⇒ 已一并改掉 ✓。
 const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
@@ -99,9 +102,11 @@ export function ActivityBar() {
       }}
     >
       <div className="activity-group">
-        {/* 窄屏专有的侧栏开合按钮。桌面端点活动图标就能开合、还有 hover 提示，
-            触屏没有 hover，「图标可以点」这件事完全不可见——所以小屏给一个
-            明确的按钮（面板 + 左栏的图形，即 VS Code 的侧栏图标）。 */}
+        {/* ⚠️ **2026-10-04 更新**：⭐ 这是**侧栏开合的唯一入口** ✓ ——
+            桌面与窄屏都是它（⭐ 活动图标只切视图、不再收起侧栏 ✓ 见上面 `pick` 与 `ITEMS` 的注释 ✓）。
+            ⚠️ 原先这段写的是「桌面端点活动图标就能开合…触屏没有 hover ⇒ 所以小屏给一个」✗ ——
+            ⭐ 那个理由已经**不成立**了 ✓；保留这颗按钮仍有理由：⭐ 触屏**没有 hover** ✓
+            （「图标可以点」这件事在小屏依旧完全不可见 ✓），而且它是唯一入口 ✓。 */}
         <button
           className="activity-btn sidebar-toggle-btn"
           title={sidebarOpen ? t("common.collapseSidebar") : t("common.expandSidebar")}
@@ -120,7 +125,7 @@ export function ActivityBar() {
             <button
               key={it.id}
               className={`activity-btn${on ? " is-on" : ""}`}
-              title={on ? `${t(it.labelKey)}（点击${sidebarOpen ? t("common.collapse") : t("common.expand")}侧栏）` : t(it.labelKey)}
+              title={t(it.labelKey)}
               aria-label={t(it.labelKey)}
               aria-current={on}
               onClick={() => pick(it.id)}
