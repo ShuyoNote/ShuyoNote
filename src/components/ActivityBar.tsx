@@ -61,12 +61,18 @@ export function ActivityBar() {
   }, [view, activity, setActivity]);
 
   const pick = (id: Activity) => {
-    if (id === activity) {
-      toggleSidebar();
-      return;
-    }
+    // ⚠️⚠️ **2026-10-04 改**（owner 决定）：⭐ **点活动图标不再收起侧栏** ✗。
+    //    原先这里是 VS Code 那套 —— `if (id === activity) { toggleSidebar(); return; }` ✓：
+    //    ⭐ 点亮的那个再点一下 ⇒ 收起 ✓。⚠️ 但副作用是 ⭐ **每一个图标都"能收起侧栏"** ✗
+    //    （⭐ 因为点完它就变亮的那个 ✓ ⇒ 再点一下就收起 ✓）⇒ 用户体验上分不清
+    //    "切换视图" 与 "收起侧栏" 两件事 ✗；owner 实测后要求改成：
+    //    ⭐ **活动图标只负责切视图 ＋ 把侧栏展开** ✓；⭐ **收起侧栏只由上面那颗专职的
+    //    `.sidebar-toggle-btn` 负责** ✓（⭐ 一个动作一个入口 ✓）。
+    //    ⚠️ 窄屏的行为**不变**：⭐ 下面那句 `if (!isMobileViewport()) setSidebarOpen(true)` 照旧 ✓
+    //    （⭐ 窄屏侧栏是盖住内容的整高抽屉 ⇒ 点图标时**不能**顺手拉开 ✓ 见它的注释 ✓）。
     // 切换视图（看板/关系图等）时关闭文件预览，避免残留遮住新视图。
-    useFilePreview.getState().close();
+    // ⚠️ 只在**真的换活动**时关：⭐ 点当前那个（只是想展开侧栏）不该把预览关掉 ✗。
+    if (id !== activity) useFilePreview.getState().close();
     setActivity(id);
     // ⚠️ 窄屏**不要**顺手把侧栏拉开：桌面上侧栏是并排的一列（拉开正好一起看），
     // 但窄屏它是**盖住内容的整高抽屉**——点「看板」之后看到的是侧栏抽屉，
