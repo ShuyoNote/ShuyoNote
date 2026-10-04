@@ -95,6 +95,11 @@ interface ServerMember {
 interface EditRow {
   ws_id: string;
   name: string;
+  /** ⚠️ **2026-10-04 加**：⭐ 空间分类 ✓ —— 服务器那一段只列**团队空间**要用它。
+   *  ⭐ 来源＝`api.spaceSecurityOverview()`（那边现成有 `kind` ✓，不用改 Rust ✓）。
+   *  ⚠️ 取不到时**兜底当团队** ✓ —— 宁可多给一个入口（后端真拦在 `set_sync_profile` ✓），
+   *  也不要让团队空间看不到「创建组织空间」而卡住 ✓。 */
+  kind: "personal" | "team";
   server_url: string;
   token: string;
   space_id: string;
@@ -515,6 +520,22 @@ export function SyncPanel() {
   const refresh = async () => {
     try {
       const profiles = await api.listSyncProfiles();
+      // ⚠️ **2026-10-04 加**（owner：「个人空间不显示服务器同步内容」）：
+      //   ⭐ 服务器那一段只列**团队空间** ✓ ⇒ 需要每个空间的分类 ✓。
+      //   ⭐ `SyncProfile` / `WorkspaceMeta` **都没有 `kind`** ✗（前者是服务器绑定关系、后者只有名字），
+      //   而 ⭐ `api.spaceSecurityOverview()` 那边**现成有** ✓ ⇒ ⭐ 用它，不改 Rust ✓。
+      //   ⚠️ 那是**桌面专属**命令（Web 没有钥匙柜）⇒ 失败就空 map ⇒ 下面兜底当团队 ✓。
+      const kindByWs = new Map<string, "personal" | "team">();
+      if (isDesktopPlatform()) {
+        try {
+          for (const v of await api.spaceSecurityOverview()) {
+            // ⚠️ 那个字段名叫 `space_id` ✗，但 `set_space_kind` 收的就是它 ⇒ ⭐ 实为 **workspace id** ✓。
+            kindByWs.set(v.space_id, v.kind);
+          }
+        } catch {
+          /* 读不到就不塞 —— 下面的兜底会当团队 ✓ */
+        }
+      }
       const name = new Map(spaces.map((s) => [s.id, s.name]));
       // 已删除的工作空间不该在这里露出（否则只剩一行裸 UUID）。后端已按
       // meta.workspaces 过滤，这里再挡一层：空间列表已加载时，只认识得出名字的
@@ -553,6 +574,7 @@ export function SyncPanel() {
           return {
             ws_id: id,
             name: name.get(id) ?? id,
+            kind: kindByWs.get(id) ?? "team",
             server_url: p?.server_url ?? "",
             token: p?.token ?? "",
             space_id: p?.space_id ?? "",
@@ -1065,6 +1087,10 @@ export function SyncPanel() {
   // 只在 Wi-Fi 下同步：默认值与下面那颗复选框**同一处口径**（`?? true`），
   // 否则会出现"行上写关、点开复选框却是开的"。
   const wifiText = (budget?.wifi_only ?? true) ? "开" : "关";
+  // ⚠️ **2026-10-04 加**（owner：「个人空间不显示服务器同步内容」）：
+  //   ③ 服务器那一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
+  //   ⭐ 个人空间不经过服务器（owner 裁定「个人空间不绑服务器」✓），它的远程路径是**设备直连** ✓。
+  const serverRows = rows.filter((r) => r.kind === "team");
   // 服务器：owner 明确「未绑定时显示『未绑定』」（不是空白，也不是占位 URL）。
   const serverText = activeRow?.server_url.trim() || "未绑定";
   // 设备直连：`lanStatus.mesh` 的两个布尔 → 三态（读不到 `lanStatus` 时这一行本来就不渲染）。
@@ -1368,14 +1394,20 @@ export function SyncPanel() {
               <details className="sync-row">
                 <summary>
                   <span className="sync-row-label">服务器</span>
+                  {/* ⚠️ **2026-10-04**：摘要也按 `serverRows` 算 ✓ —— 否则个人空间会把值算进去、
+                      而下面一张卡都没有（看起来像坏了）✓。 */}
                   <span className="sync-row-value" title={serverText}>
                     {totalOff ? `${serverText} · 当前不自动同步` : serverText}
                   </span>
                   <span className="sync-row-caret" aria-hidden>›</span>
                 </summary>
                 <div className="sync-row-body">
-                  {rows.length === 0 && <div className="sync-empty-state">还没有可配置的空间</div>}
-                  {rows.map((r) => {
+                  {/* ⚠️ **2026-10-04 改**（owner：「个人空间不显示服务器同步内容」）：
+                      ⭐ 这一段装的是**服务器 / 账号 / 组织空间 / 成员管理** ✓ ⇒ ⭐ 只列**团队空间** ✓。
+                      ⭐ 个人空间不该出现在这里（它不经过服务器 —— owner 裁定「个人空间不绑服务器」✓），
+                      而它的远程路径是下面那块**设备直连** ✓。 */}
+                  {serverRows.length === 0 && <div className="sync-empty-state">还没有可配置的团队空间</div>}
+                  {serverRows.map((r) => {
                     const myRole = r.remoteSpaces.find((x) => x.id === r.space_id)?.role ?? "";
                     const state = r.server_url && r.space_id ? "bound" : r.server_url ? "partial" : "none";
                     return (
@@ -1801,7 +1833,13 @@ export function SyncPanel() {
                 （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
                 ★ 2026-09-29（§9.2）：**总闸＝关闭 ⇒ 这一行灰掉**（它是开关；总闸关了它不可能生效）。
                    灰是"不能点"，**不是"藏起来"** —— 用户要看得到"它停着"这件事（上面那个黄框在说为什么）。 */}
-            {isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (
+            {/* ⚠️ **2026-10-04 改**（owner：「要显示设备直连的条目」）：⭐ 门槛去掉 `space_id` ✗ ——
+                原来要求 `!!activeRow?.space_id.trim()` ✓，而 ⭐ 个人空间**永远拿不到** `space_id`
+                （今天 `set_sync_profile` 装了真拦：只有团队空间能绑服务器 ✓）
+                ⇒ ⭐ 个人空间的「设备直连」**永远不显示** ✗ —— 而那正是它唯一的远程路径 ✓。
+                ⚠️ 原顾虑「会显示**别的空间**的地址」已不成立：`api.lanStatus(activeId)` 是**按空间查**的
+                （Rust `lan_status(db, workspace_id)` ✓）。 */}
+            {isDesktopPlatform() && lanStatus && !!activeRow && (
               <>
                 <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                   <summary>
@@ -2098,7 +2136,10 @@ export function SyncPanel() {
                 ⚠️ 门槛同时收 `mesh.enabled`：**"只开网格、不绑服务端"** 是丙要支持的配置，
                 那种空间没有服务端（`lanRowBound` 假）但这一行照样得有内容。
                 只在桌面显示：发现层是 Rust 的 UDP（Web 上没有这一层，`lan_status` 那边如实回"公网"）。 */}
-            {isDesktopPlatform() && lanStatus && (lanRowBound || lanStatus.mesh.enabled) && (
+            {/* ⚠️ **2026-10-04 改**：同上 —— 这一行（附近发现/地址）也不该因为没绑服务器就不显示 ✓。
+                ⚠️ 里面那句 `lanRowBound ? lanStatus.line : ""` **照旧** ✓ ⇒ ⭐ 个人空间看不到
+                "去绑服务器"那句读数 ✓（那个三元本来就是为这一刻写的 ✓）。 */}
+            {isDesktopPlatform() && lanStatus && !!activeRow && (
               <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
                 <span className="sync-att-text">
                   {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}

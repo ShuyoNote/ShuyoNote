@@ -81,10 +81,12 @@ describe("地址只说一处", () => {
     ).toContain("broadcastAutoSyncChanged()");
   });
 
-  it("⑥ 合一那一行的门槛要**同时**认「绑了服务端」与「只开了网格」", () => {
+  it("⑥ 合一那一行的门槛不再依赖服务端绑定（个人空间也显示）", () => {
     expect(
       panel,
-      "只开网格、不绑服务端的空间看不到那一行 ⇒ 地址反而没了（丙 的目标配置）",
-    ).toContain("(lanRowBound || lanStatus.mesh.enabled)");
+      "⚠️ 2026-10-04 改：门槛不再依赖服务端绑定 —— 个人空间（没绑、也没有 space_id）也要看到这一行",
+    ).toContain("isDesktopPlatform() && lanStatus && !!activeRow && (");
+      // ⭐ 保留这一条：那一行仍要按 `lanRowBound` 挑文案（个人空间不该看到「去绑服务器」那句）。
+    expect(panel, "那一行仍要按 lanRowBound 挑文案").toContain('lanRowBound ? lanStatus.line : ""');
   });
 });

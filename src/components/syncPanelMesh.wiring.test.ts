@@ -41,14 +41,27 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(app, "自动同步那条路里不该自己判网格开没开（gate 在 Rust 侧一处实现）").not.toContain("mesh.enabled");
   });
 
-  it("② 门槛是 `space_id`，不是 `lanRowBound`（网格不需要服务端地址）", () => {
-    // 网格那一块：只要求这个空间有 space_id —— "只开网格、不绑服务端"正是这一档要支持的配置。
-    expect(panel).toContain("isDesktopPlatform() && lanStatus && !!activeRow?.space_id.trim() && (");
-    // 2026-09-26（地址一处）：`lanRowBound` 那一行现在**同时**认"只开了网格"的空间 ——
-    // 否则只开网格、不绑服务端的空间连地址读数都没有（那一档恰恰是丙要支持的）。
-    expect(panel, "地址那一行的门槛必须同时认「绑了服务端」与「只开了网格」").toContain(
-      "(lanRowBound || lanStatus.mesh.enabled)",
+  it("② 门槛**不看服务端绑定**（个人空间也要能看到设备直连）", () => {
+    // ⚠️ **2026-10-04 改**（owner：「个人空间不显示服务器同步内容，要显示设备直连的条目」）：
+    //   原来这里要求 `!!activeRow?.space_id.trim()` ✗，而 ⭐ 今天 `set_sync_profile` 装了真拦
+    //   （只有团队空间能绑服务器）⇒ 个人空间**永远拿不到 `space_id`** ⇒ 它的「设备直连」永远不显示 ✗
+    //   —— 而那正是它唯一的远程路径 ✓。
+    //   ⚠️ 原顾虑「会显示**别的空间**的地址」已不成立：`api.lanStatus(activeId)` 是**按空间查**的
+    //   （Rust `lan_status(db, workspace_id)` ✓）。
+    //   ⭐ 两处（网格设置那条 ＋ 地址读数那条）现在都只看「有活动空间那一行」。
+    expect(panel, "设备直连的门槛不该再依赖服务端绑定").toContain(
+      "isDesktopPlatform() && lanStatus && !!activeRow && (",
     );
+    expect(panel, "旧门槛（要求 space_id）不该还在").not.toContain("!!activeRow?.space_id.trim() && (");
+  });
+
+  it("②b ⭐ 服务器那一段只列团队空间（个人空间不显示服务器同步内容）", () => {
+    // owner 2026-10-04：「个人空间不显示服务器同步内容」。
+    // 判据取"那里用的是 serverRows（按 kind 过滤）"这个形状；不给个人空间列服务器卡。
+    expect(panel, "服务器那一段没用 serverRows ⇒ 个人空间也会被列进去").toContain("{serverRows.map((r) => {");
+    const at = panel.indexOf("const serverRows =");
+    expect(at, "没有 serverRows 的定义").toBeGreaterThan(-1);
+    expect(panel.slice(at, at + 120), "serverRows 不是按团队过滤的").toContain('r.kind === "team"');
   });
 
   it("③ 「关掉网格」走清除（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
