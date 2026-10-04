@@ -705,20 +705,23 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             "ALTER TABLE sync_profiles ADD COLUMN sync_attachments INTEGER NOT NULL DEFAULT 1",
             [],
         )?;
-            // ⚠️ **2026-10-04 加**（同上）：⭐ 个人空间的「配对暗号」列 ✗ —— 判据同上面那条：
-            //   先问 `pragma_table_info` 有没有这一列，没有才加 ✓（幂等 ✓）。
-            let has_mesh_room: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'mesh_room'",
-            [],
-            |row| row.get(0),
-            )?;
-            if has_mesh_room == 0 {
-            conn.execute(
-            "ALTER TABLE sync_profiles ADD COLUMN mesh_room TEXT NOT NULL DEFAULT ''",
-            [],
-            )?;
-            }
     }
+          // ⚠️ **2026-10-04 加**（owner：「加一个配对暗号输入框」）：⭐ 个人空间的「配对暗号」列 ✗。
+          //   判据与上面那几条迁移同一套：先问 `pragma_table_info` 有没有这一列，没有才加 ✓（幂等 ✓）。
+          //   ⚠️ **位置要紧**：必须在上面那个 `if has_att_switch == 0 { … }` **外面** —— 放里面的话只有
+          //   `sync_attachments` 列缺失时才跑（这台机器早就有）⇒ 列永远加不上，而 `mesh_scope` 已在读它
+          //   ⇒ 一打开同步面板就 SQL 报错。
+      let has_mesh_room: i64 = conn.query_row(
+          "SELECT COUNT(*) FROM pragma_table_info('sync_profiles') WHERE name = 'mesh_room'",
+          [],
+          |row| row.get(0),
+          )?;
+      if has_mesh_room == 0 {
+          conn.execute(
+              "ALTER TABLE sync_profiles ADD COLUMN mesh_room TEXT NOT NULL DEFAULT ''",
+              [],
+          )?;
+          }
     Ok(())
 }
 
