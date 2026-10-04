@@ -1170,7 +1170,35 @@ pub fn set_sync_profile(
     email: Option<String>,
 ) -> Result<(), String> {
     let c = db.0.lock().expect("db mutex poisoned");
-    // ★ 第 2 步：**绑定之前**过闸门（个人空间没加密 ⇒ 拦；团队空间免检；未分类 ⇒ 放行但留痕）。
+    // ⭐⭐ **2026-10-04 加：真拦**（owner 裁定「个人空间不绑服务器」＋ 今天又定「未分类按个人空间处理」）——
+    //    ⚠️ 这道拦**只有这里能做** ✗：`sync_gate` 那层只是"分类检查"（已拆，见 `a7c4d391` ✓），
+    //    而"绑服务器"这个**动作**的入口就是这个命令 ✓ ⇒ ⭐ 拦在这里才算真拦 ✓。
+    //    ⚠️ 语义：⭐ **只有团队空间**能绑服务器 ✓ —— 个人空间与"未分类"一律拒 ✓
+    //    （⭐ 未分类按个人处理 ✓，⭐ 与裁定同口径 ✓）。
+    //    ⚠️ 设备直连**不受影响** ✗ —— 那是另一个命令 `mesh_set_config`（`lib.rs:673` ✓），
+    //    已实测本命令的调用方全是前端同步面板/设置 ✓。
+    {
+        let kind = crate::space_crypto::space_kind(&c, &ws_id);
+        if !matches!(kind, crate::space_crypto::SpaceKind::Team) {
+            // 报错里要带**空间名字**（⭐ 内部 id 对用户没意义 ✓ —— 与 `sync_bind_gate` 同一口径 ✓）。
+            // ⚠️ 拿不到数据目录时退回用 id ✗（那种情况本项目里基本不会发生 ✓，但别让这里 panic ✓）。
+            let label = match crate::db::app_data_dir_ref() {
+                Some(dir) => {
+                    let mut st = crate::space_crypto::space_status(dir, &ws_id);
+                    crate::space_crypto::fill_space_name(&c, &mut st);
+                    st.label()
+                }
+                None => ws_id.clone(),
+            };
+            return Err(format!(
+                "「{label}」不是团队空间，不能绑定同步服务器 —— \
+                 个人版只走「附近设备直连」，不经过服务器。\
+                 （要上服务器，请在空间设置里把它标成团队空间。）"
+            ));
+        }
+    }
+    // ★ 第 2 步：**绑定之前**过闸门（团队空间免检；未分类 ⇒ 放行但留痕）。
+    // ⚠️ **2026-10-04**：它**不再拦人** ✗ —— 真拦在上面那段（只放团队 ✓）。保留它只为那句"未分类"提示 ✓。
     if let Some(dir) = crate::db::app_data_dir_ref() {
         if let Some(note) = sync_bind_gate(&c, dir, &ws_id)? {
             eprintln!("[sync] {note}");
