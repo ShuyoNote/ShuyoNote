@@ -14541,8 +14541,12 @@ p:has(> .editor-drawing-container) {
      ⭐ **桌面也收成一个 hover 才现的 `⋯`** ✓（与窄屏同一个按钮 ✓）。
      ⚠️ 原注释那句「⭐ 桌面已经有六个小按钮，用不着它」当时是对的 ✓，现在 owner 要把六个收进来 ✓。 */
 .fm-btn-icon { display: none; }
-/* ⚠️ 桌面**默认不显示**、⭐ **行 hover 时显示** —— 与那六个小按钮原来出现的时机一致 ✓（手感不变 ✓）。
-   窄屏那条 `.fm-more-btn { display:flex; 44×44 }` 在 media 里、文件更靠后 ✓ ⇒ ⭐ 窄屏照旧常显 ✓。 */
+/* ⚠️ **2026-10-04 二次改**（owner 决定）：⭐ **去掉文件视图里的「更多操作」按钮** ✗ ——
+   ⭐ 桌面**不再** hover 显示那个 `⋯`（基础规则 `display:none` 直接生效 ✓）。
+   ⭐ 桌面的文件行操作**只走两条**：⭐ 行上**右键**（完整菜单 ✓）＋ ⭐ **双击文件名改名** ✓。
+   ⚠️ **窄屏那条 media 规则保留**（见文件末尾 `.fm-more-btn { display:flex; 44×44 }` ✓）——
+   ⭐ 因为窄屏**没有 hover** ✗、右键只能靠**长按** ✓（⭐ 那条注释逐字写着「⭐ **列表模式此前根本没有右键入口**」✓）
+   ⇒ ⭐ 删掉它手机上就真的没入口了 ✓。⭐ 要连窄屏一起去掉，说一声即可 ✓。 */
 .fm-more-btn {
   display: none;
   align-items: center;
@@ -14557,7 +14561,6 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.file-manager-table tbody tr:hover .fm-more-btn { display: flex; }
 .fm-more-btn:hover { background: var(--hover); color: var(--text); }
 /* ⭐ 桌面把行尾那六个小按钮**收进 `⋯`**（它们的动作一个不少地都在右键菜单里 ✓，见 `ctxMenu`）。
    ⚠️ 用 `display: none` 而不是 `opacity: 0` ✗ —— 后者在桌面仍占位、而且能被 Tab 聚焦到 ✓。
