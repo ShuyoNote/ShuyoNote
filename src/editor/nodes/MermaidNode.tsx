@@ -13,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
-import { detectMermaidSyntax, mermaidSyntaxOptions } from "../../lib/mermaid";
+import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions } from "../../lib/mermaid";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
 import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
@@ -246,12 +246,9 @@ function MermaidView({
         const mod = await import("mermaid");
         const mermaid = mod.default;
         if (!mermaidReady || mermaidThemeRef.current !== mermaidTheme) {
-          mermaid.initialize({
-            startOnLoad: false,
-            theme: mermaidTheme,
-            securityLevel: "loose",
-            flowchart: { htmlLabels: false, curve: "basis" },
-          });
+          // ⚠️ 配置**唯一出处**在 `lib/mermaid.ts`（`htmlLabels` 必须顶层 —— 写进 `flowchart`
+          //    里 mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ canvas 变脏、PNG 导不出去）。
+          mermaid.initialize(mermaidInitOptions(mermaidTheme) as never);
           mermaidReady = true;
           mermaidThemeRef.current = mermaidTheme;
         }
