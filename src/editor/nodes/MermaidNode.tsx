@@ -214,8 +214,9 @@ function MermaidView({
 }) {
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
   // ⭐ 2026-10-05：看图器那套状态 —— 图表/代码两个页签、缩放、是否全屏。
+  // ⚠️ 这里**没有**独立的"在编辑"状态：owner 当天把那条「编辑」按钮去掉了 ⇒ 「停在代码页」**就是**
+  //    编辑态（编辑面＝代码页本身）。所以别再引入第二个布尔 —— 两个状态迟早会不一致。
   const [tab, setTab] = useState<"chart" | "code">("chart");
   const [zoom, setZoom] = useState(1);
   const [isFull, setIsFull] = useState(false);
@@ -230,11 +231,12 @@ function MermaidView({
   // Render mermaid lazily (code-split) whenever src/syntax theme change.
   useEffect(() => {
     const seq = ++renderSeq.current;
-    // ⚠️ 2026-10-05 修：这里原先写的是 `!editing` ⇒ **只读视图永远不渲染**（`editing` 是"正在编辑"
+    // ⚠️ 2026-10-05 修：这里原先写的是 `!editing` ⇒ **只读视图永远不渲染**（那时 `editing` 是"正在编辑"
     //   这个本地状态，初始 false）⇒ 打开页面看到的是「（空白图形）」，`svg` 永远为空 ✗。
     //   owner 实测三次报"看不到图"，这是第三层（前两层：节点没入口 / CRDT 文档没迁移）。
-    //   正确口径：**有源文且不在编辑态**才渲染；进入编辑态时清掉（此时渲染的是 textarea）。
-    if (!src.trim() || editing) {
+    //   现在的口径：**有源文就渲染**（不再看页签）—— 停在「代码」页时也留着上一次的图，
+    //   切回「图表」页是瞬时的、不闪（`editSrc` 在保存前不会写回 `src`，所以打字不会触发重渲染）。
+    if (!src.trim()) {
       setSvg("");
       setError(null);
       return;
@@ -265,12 +267,13 @@ function MermaidView({
       }
     }
     render();
-  }, [src, editing, mermaidTheme]);
+  }, [src, mermaidTheme]);
 
+  /** 进「代码」页（编辑面）：把草稿重置成当前源文。 */
   const startEdit = useCallback(() => {
     setEditSrc(src);
     setEditSyntax(syntax || detectMermaidSyntax(src));
-    setEditing(true);
+    setTab("code");
   }, [src, syntax]);
 
   // ── 缩放 ─────────────────────────────────────────────────────────────────────
@@ -350,56 +353,28 @@ function MermaidView({
     }
   }, [size]);
 
+  /** 保存：写回节点（走真编辑器 update）⇒ 顺手回「图表」页看结果。 */
   const commit = useCallback(() => {
     const editor = useEditorStore.getState().editor;
     if (editor) {
       editor.update(() => node.setMermaid(editSrc.trim(), editSyntax));
     }
-    setEditing(false);
+    setTab("chart");
   }, [editSrc, editSyntax, node]);
 
+  /** 取消：丢草稿、回「图表」页（节点源文没动过 ⇒ 不需要"还原"什么）。 */
   const cancel = useCallback(() => {
-    setEditing(false);
-  }, []);
-
-  if (editing) {
-    return (
-      <div className="editor-mermaid" onClick={(e) => e.stopPropagation()}>
-        <textarea
-          className="editor-mermaid-input"
-          value={editSrc}
-          onChange={(e) => setEditSrc(e.target.value)}
-          rows={6}
-          placeholder={"graph TD\n  A-->B"}
-        />
-        <div className="editor-mermaid-toolbar">
-          <select
-            className="editor-mermaid-syntax"
-            value={editSyntax}
-            onChange={(e) => setEditSyntax(e.target.value)}
-          >
-            {mermaidSyntaxOptions().map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          <button className="editor-mermaid-btn" onClick={commit}>
-            保存
-          </button>
-          <button className="editor-mermaid-btn" onClick={cancel}>
-            取消
-          </button>
-        </div>
-      </div>
-    );
-  }
+    setEditSrc(src);
+    setTab("chart");
+  }, [src]);
 
   return (
     <div className="editor-mermaid" ref={rootRef} onClick={(e) => e.stopPropagation()}>
-      {/* ⭐ 2026-10-05：顶栏 = 左边「图表/代码」页签 ＋ 语法标签，右边 缩放/下载/全屏/编辑。
+      {/* ⭐ 2026-10-05：顶栏 = 左边「图表/代码」页签 ＋ 语法标签，右边 缩放/下载/全屏。
           整条**悬停才出现**（owner 前两条要求的延续）；全屏时强制显示（那时鼠标不一定在块上）。
-          ⛔ 别把它做成 `*-overlay` / `*-popover` 类名 —— 这不是应用自建浮层（见下面全屏那段注释）。 */}
+          ⛔ 别把它做成 `*-overlay` / `*-popover` 类名 —— 这不是应用自建浮层（见上面全屏那段注释）。
+          ⚠️ 这里**没有「编辑」按钮**了（owner 2026-10-05：有「代码」页就不再要第二条路）——
+             编辑面就是代码页本身，见下面那一段。 */}
       <div className="editor-mermaid-bar">
         <div className="editor-mermaid-tabs" role="tablist" aria-label="mermaid 视图">
           <button
@@ -416,7 +391,7 @@ function MermaidView({
             role="tab"
             aria-selected={tab === "code"}
             className={`editor-mermaid-tab${tab === "code" ? " is-on" : ""}`}
-            onClick={() => setTab("code")}
+            onClick={() => void startEdit()}
           >
             代码
           </button>
@@ -429,7 +404,8 @@ function MermaidView({
             title="缩小"
             aria-label="缩小"
             onClick={zoomOut}
-            disabled={zoom <= ZOOM_MIN}
+            // 「代码」页里图看不见 ⇒ 缩放也禁用（同「下载」那条口径："点了没反应"不如禁用）
+            disabled={tab !== "chart" || zoom <= ZOOM_MIN}
           >
             −
           </button>
@@ -439,7 +415,7 @@ function MermaidView({
             title="放大"
             aria-label="放大"
             onClick={zoomIn}
-            disabled={zoom >= ZOOM_MAX}
+            disabled={tab !== "chart" || zoom >= ZOOM_MAX}
           >
             ＋
           </button>
@@ -448,6 +424,7 @@ function MermaidView({
             className={`editor-mermaid-tool is-zoom${zoom === 1 ? "" : " is-set"}`}
             title="恢复 100%"
             onClick={resetZoom}
+            disabled={tab !== "chart" || zoom === 1}
           >
             {Math.round(zoom * 100)}%
           </button>
@@ -470,15 +447,40 @@ function MermaidView({
           >
             {isFull ? "退出全屏" : "全屏"}
           </button>
-          <button type="button" className="editor-mermaid-tool" title="编辑源文本" onClick={startEdit}>
-            编辑
-          </button>
         </div>
       </div>
 
       {tab === "code" ? (
-        // 代码页只**看**：改源文走「编辑」（那条路带语法选择与保存/取消，不在这里重复一套）。
-        <pre className="editor-mermaid-code">{src}</pre>
+        // ⭐ 「代码」页**就是编辑面**（owner 2026-10-05 去掉独立「编辑」按钮之后）：
+        //    草稿 ＋ 语法选择 ＋ 保存/取消。**保存前不写回节点** ⇒ 打字不会触发重新渲染/重新保存 ✓。
+        <div className="editor-mermaid-code-pane">
+          <textarea
+            className="editor-mermaid-input"
+            value={editSrc}
+            onChange={(e) => setEditSrc(e.target.value)}
+            rows={10}
+            placeholder={"graph TD\n  A-->B"}
+          />
+          <div className="editor-mermaid-toolbar">
+            <select
+              className="editor-mermaid-syntax"
+              value={editSyntax}
+              onChange={(e) => setEditSyntax(e.target.value)}
+            >
+              {mermaidSyntaxOptions().map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <button className="editor-mermaid-btn" onClick={commit}>
+              保存
+            </button>
+            <button className="editor-mermaid-btn" onClick={cancel}>
+              取消
+            </button>
+          </div>
+        </div>
       ) : (
         <div className="editor-mermaid-render">
           {svg ? (
@@ -496,8 +498,10 @@ function MermaidView({
           ) : error ? (
             <div className="editor-mermaid-err">
               <span>渲染失败：{error}</span>
-              <button className="editor-mermaid-btn" onClick={startEdit}>
-                编辑源文本
+              {/* 渲染失败时的唯一出路：去「代码」页改源文（改完保存回图表页）。
+                  按钮**一直可见**（错误态属于"必须让人看见"的那一类，不跟着悬停淡出）。 */}
+              <button className="editor-mermaid-btn" onClick={() => void startEdit()}>
+                切到「代码」页改
               </button>
             </div>
           ) : (

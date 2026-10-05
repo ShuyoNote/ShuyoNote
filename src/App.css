@@ -10903,17 +10903,18 @@ p:has(> .editor-drawing-container) {
   background: var(--border);
 }
 
-/* 「代码」页：**只读**展示源文（改源文走「编辑」—— 那条路带语法选择与保存/取消，不重复一套） */
-.editor-mermaid-code {
-  margin: 0;
-  padding: 12px;
-  overflow-x: auto;
-  background: var(--bg-sidebar);
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  white-space: pre;
+/* 「代码」页 = **编辑面**（owner 2026-10-05 去掉独立「编辑」按钮之后）：
+   上面是草稿 textarea（`.editor-mermaid-input` 自带底边框、无外框 ⇒ 和块边框不打架），
+   下面是语法选择 ＋ 保存/取消那条 `.editor-mermaid-toolbar`。 */
+.editor-mermaid-code-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 代码页里那条工具栏**不要**再画上边框：上面的 textarea 已经有 `border-bottom` ⇒
+   两条叠在一起会看着像 2px 的粗线。 */
+.editor-mermaid-code-pane .editor-mermaid-toolbar {
+  border-top: none;
 }
 
 /* 全屏：铺满（用浏览器 Fullscreen API，Esc/返回键由 WebView 管 ⇒ 不进浮层栈） */
