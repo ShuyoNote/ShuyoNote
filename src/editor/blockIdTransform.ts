@@ -36,7 +36,7 @@ import { $createBlockTableNode } from "./nodes/BlockTableNode";
 import { TableNode } from "@lexical/table";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { FormulaNode } from "./nodes/FormulaNode";
-import { MermaidNode } from "./nodes/MermaidNode";
+import { $createMermaidNode, MermaidNode } from "./nodes/MermaidNode";
 import { ImageRowNode } from "./nodes/ImageRowNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -120,6 +120,23 @@ export function upgradeQuoteToBlockNode(node: QuoteNode): void {
 export function upgradeCodeToBlockNode(node: SafeCodeNode): void {
   if (node.getType() !== "code") return; // 模型代码块（`shuyo-code`）不碰
   const language = (node as unknown as { __language?: string }).__language ?? "javascript";
+  // ⭐ 2026-10-05：**语言是 mermaid 的代码块 ⇒ 升级成 mermaid 块**（不是代码块）。
+  //   为什么在这里做：```mermaid 的**所有**来源都汇到这一条变换（markdown 导入 / 粘贴 /
+  //   HTML 导入 / **载入老内容**）—— 逐个改调用点必漏，与文件头那段理由同源。
+  //   ⇒ 已经存进页面里的那些"语言=mermaid 的代码块"**打开就自动变成图**，不需要迁移脚本。
+  //   （owner 实测：`shuyonote-creator-proposal-v1.6` 那页 16 个代码块、语言字段是 mermaid，
+  //     编辑器只当代码块渲染 ⇒ "页面识别不了图形"。）
+  if (String(language).toLowerCase() === "mermaid") {
+    const replacement = $createMermaidNode(
+      node.getTextContent(),
+      "",
+      isTopLevelBlock(node) ? newBlockId() : "",
+    );
+    // ⚠️ `MermaidNode` 是 DecoratorNode：既没有 format/indent/direction 可抄，
+    //    也不能传 `includeChildren = true` —— 与上面水平线那条同一处坑（那边有逐字报错记录）。
+    node.replace(replacement);
+    return;
+  }
   const replacement = $createBlockCodeNode(language, isTopLevelBlock(node) ? newBlockId() : "");
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());

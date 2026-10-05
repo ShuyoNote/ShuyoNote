@@ -276,6 +276,51 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(JSON.stringify(kid.children)).toContain("print(1)");
   });
 
+  it("★ 语言=mermaid 的代码块 ⇒ 直接升级成 `mermaid` 块（**不再是代码块**）", () => {
+    // 2026-10-05：owner 实测"页面识别不了图形"—— 导入的 .md 里 ` ```mermaid ` 全变成
+    // **语言=mermaid 的代码块**，编辑器只渲染源码。修法有两处，这是**兜底那处**：
+    // 载入老内容 / 粘贴 / HTML 导入都会经过这条 SafeCodeNode 变换 ⇒ 打开页面即生效。
+    const editor = editorWithTransform();
+    editor.update(() => {
+      // 真实页面形状：根里不止一个块（装饰节点**单独**挂空根会被根规范化裹成段落 —— 见下面那条测试的注释）。
+      const p = $createParagraphNode();
+      p.append($createTextNode("开头一段"));
+      $getRoot().append(p);
+      const code = $createSafeCodeNode("mermaid");
+      code.append($createTextNode("flowchart LR\n  A-->B"));
+      $getRoot().append(code);
+    }, { discrete: true });
+
+    const kids = rootChildren(editor) as Array<Record<string, unknown>>;
+    const flat: Array<Record<string, unknown>> = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      const rec = n as Record<string, unknown>;
+      if (typeof rec.type === "string") flat.push(rec);
+      for (const v of Object.values(rec)) if (Array.isArray(v)) v.forEach(walk);
+    };
+    kids.forEach(walk);
+    const mermaid = flat.filter((n) => n.type === "mermaid");
+    expect(mermaid).toHaveLength(1);
+    expect(String(mermaid[0].src)).toContain("flowchart LR");
+    expect(typeof mermaid[0].blockId).toBe("string");
+    expect((mermaid[0].blockId as string).length).toBeGreaterThan(0);
+    expect(flat.some((n) => n.type === "shuyo-code")).toBe(false);
+  });
+
+  it("★ 对照：普通语言的代码块**不受影响**（这条守住上面那条别抢）", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const code = $createSafeCodeNode("mermaidx"); // 只差一个字母：不许被当成 mermaid
+      code.append($createTextNode("flowchart LR"));
+      $getRoot().append(code);
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-code");
+    expect(kid.language).toBe("mermaidx");
+  });
+
   it("★ 水平线也被升级：type 变 `shuyo-horizontalrule`、带块 ID", () => {
     const editor = editorWithTransform();
     editor.update(() => {

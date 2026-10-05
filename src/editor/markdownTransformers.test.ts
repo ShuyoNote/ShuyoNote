@@ -12,7 +12,7 @@
 //   ② 该节点文本**不含 `**`**（标记被吃掉、不是留着字面 ✓）
 //   ③ `` `码` `` 与 `*斜*` 同样各自成立 ✓
 // ⚠️ **反例（必须能红）**：把 `createMarkdownCell` 换回 `$createTextNode(text)` ⇒ 本判据立刻红 ✓。
-import { $convertFromMarkdownString } from "@lexical/markdown";
+import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
 import {
   $isTableCellNode,
   TableCellHeaderStates,
@@ -20,6 +20,7 @@ import {
   TableNode,
   TableRowNode,
 } from "@lexical/table";
+import { CodeHighlightNode } from "@lexical/code";
 import {
   $getRoot,
   $isElementNode,
@@ -30,6 +31,8 @@ import {
 import { describe, expect, it } from "vitest";
 
 import { BlockTableNode } from "./nodes/BlockTableNode";
+import { MermaidNode } from "./nodes/MermaidNode";
+import { SafeCodeNode } from "./nodes/SafeCodeNode";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 
 const MD = [
@@ -130,5 +133,114 @@ describe("表格单元格的行内格式", () => {
     );
     expect(states.length).toBe(2);
     expect(states.every((s) => s === TableCellHeaderStates.NO_STATUS)).toBe(true);
+  });
+});
+
+// ```mermaid 围栏 —— 2026-10-05 补。
+// 来由（owner 实测）：导入的 .md 里 10 张流程图**全变成代码块**，编辑器只显示源码 ⇒
+// 「页面识别不了图形」。根因是 `SHUYONOTE_TRANSFORMERS` 里只有 Lexical 的 `CODE`（它把语言
+// 抄成 `mermaid` 但产出代码块），**没有任何 transformer 造 `MermaidNode`** ⇒ 那个节点事实上是死的。
+describe("```mermaid 围栏 ⇒ mermaid 块（2026-10-05）", () => {
+  // ⚠️ 节点集**照应用的 `EDITOR_NODES`**（代码块是 `SafeCodeNode`，没有内建 `CodeNode`）——
+  //    少一个都会在别的分支上炸，测出来的就不是应用的行为。
+  const nodes = [
+    MermaidNode,
+    SafeCodeNode,
+    CodeHighlightNode,
+    BlockTableNode,
+    TableNode,
+    TableRowNode,
+    TableCellNode,
+  ];
+
+  function convert(md: string): Array<Record<string, unknown>> {
+    const editor = createEditor({
+      namespace: "mermaid-import",
+      nodes,
+      onError: (e) => {
+        throw e;
+      },
+    });
+    editor.update(
+      () => {
+        $convertFromMarkdownString(md, SHUYONOTE_TRANSFORMERS, $getRoot());
+      },
+      { discrete: true },
+    );
+    // ⚠️ `$getRoot().toJSON()` 在 Lexical 0.50 不存在 —— 要读编辑器状态（RootNode 不序列化）。
+    return (editor.getEditorState().toJSON() as { root: { children: Array<Record<string, unknown>> } })
+      .root.children;
+  }
+
+  /**
+   * 把导入结果的 JSON 摊平成 `{type, 该节点自己的字段}` 清单。
+   * ⚠️ **不能只看 `kids[0].type`**：应用装饰节点（mermaid / formula / drawing）直接挂到**根**上时，
+   *    Lexical 的根规范化会把它裹进一个段落（`blockIdTransform.test.ts` 里那条注释记过同一个现象）
+   *    ⇒ 断言要"在整棵树里找"，否则测的是包裹形状、不是判据 ✓。
+   */
+  function flatten(node: unknown, out: Array<Record<string, unknown>> = []): Array<Record<string, unknown>> {
+    if (!node || typeof node !== "object") return out;
+    const rec = node as Record<string, unknown>;
+    if (typeof rec.type === "string") out.push(rec);
+    for (const v of Object.values(rec)) {
+      if (Array.isArray(v)) v.forEach((c) => flatten(c, out));
+      else if (v && typeof v === "object") flatten(v, out);
+    }
+    return out;
+  }
+  const typesOf = (md: string) => flatten(convert(md)).map((n) => String(n.type));
+  void typesOf; // 保留给以后按类型清单写断言时用；目前每条都直接看节点字段
+
+
+  it("★ 产出的是一个 `mermaid` 节点（不是代码块），源码原样保住", () => {
+    const all = flatten(convert(["```mermaid", "flowchart LR", "  A-->B", "```"].join("\n")));
+    const mermaid = all.filter((n) => n.type === "mermaid");
+    expect(mermaid).toHaveLength(1);
+    expect(String(mermaid[0].src)).toContain("flowchart LR");
+    expect(String(mermaid[0].src)).toContain("A-->B");
+    // 反例守卫：这条路径上**不许**再出现代码块（旧行为就是把 ```mermaid 吃成 code）
+    expect(all.some((n) => n.type === "code" || n.type === "shuyo-code")).toBe(false);
+  });
+
+  it("★ 围栏之后的内容**没有被吞掉**（regExpEnd 必须收紧）", () => {
+    const all = flatten(convert(["```mermaid", "flowchart LR", "```", "", "后面的段落"].join("\n")));
+    expect(all.filter((n) => n.type === "mermaid")).toHaveLength(1);
+    expect(JSON.stringify(all)).toContain("后面的段落");
+  });
+
+  it("★ 对照：```js 仍然是代码块（没被这条抢走）", () => {
+    const all = flatten(convert(["```js", "const a = 1;", "```"].join("\n")));
+    expect(all.filter((n) => n.type === "mermaid")).toHaveLength(0);
+    expect(all.some((n) => (n.type === "code" || n.type === "shuyo-code") && n.language === "js")).toBe(true);
+  });
+
+  it("★ 没有闭合的 ```mermaid 退回代码块（不许吞掉后文）", () => {
+    const all = flatten(convert(["```mermaid", "flowchart LR", "", "没闭合就到这里"].join("\n")));
+    expect(all.filter((n) => n.type === "mermaid")).toHaveLength(0);
+    expect(JSON.stringify(all)).toContain("没闭合就到这里");
+  });
+
+  it("★ 反向：mermaid 节点导出回 ```mermaid 围栏（往返不丢）", () => {
+    const editor = createEditor({
+      namespace: "mermaid-export",
+      nodes,
+      onError: (e) => {
+        throw e;
+      },
+    });
+    let md = "";
+    editor.update(
+      () => {
+        $convertFromMarkdownString(
+          ["```mermaid", "flowchart LR", "  A-->B", "```"].join("\n"),
+          SHUYONOTE_TRANSFORMERS,
+          $getRoot(),
+        );
+        md = $convertToMarkdownString(SHUYONOTE_TRANSFORMERS);
+      },
+      { discrete: true },
+    );
+    expect(md).toContain("```mermaid");
+    expect(md).toContain("flowchart LR");
   });
 });
