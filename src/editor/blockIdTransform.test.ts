@@ -16,6 +16,7 @@ import {
   ensureBlockIdOnTopLevelNode,
   SELF_OWNED_BLOCK_ID_NODE_TYPES,
   upgradeCodeToBlockNode,
+  upgradeMermaidCodeNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
   upgradeListToBlockNode,
@@ -37,6 +38,7 @@ import { $createColumnsBlockNode, ColumnsBlockNode } from "./nodes/ColumnsBlockN
 import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
+import { $createBlockCodeNode } from "./nodes/BlockCodeNode";
 import { $createHorizontalRuleNode, HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { toLegacyDoc } from "../lib/blockIdentity";
 
@@ -319,6 +321,37 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     const kid = rootChildren(editor)[0];
     expect(kid.type).toBe("shuyo-code");
     expect(kid.language).toBe("mermaidx");
+  });
+
+  it("★ **CRDT 平面**：模型代码块（`shuyo-code`）语言=mermaid ⇒ 换成 `mermaid`，**块身份不换**", () => {
+    // 这条是 owner 第二次报"图形还是看不到"的根因：页面绑了 CRDT ⇒ 编辑器内容来自**已持久化的
+    // Yjs 文档**，那份文档里是 **`shuyo-code`**（不是内建 `code`）＋ flowchart 源文 ⇒
+    // 只认 `code` 的判定永远转不过来。`Editor.tsx` 绑定之后那一趟走的就是这个函数。
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const p = $createParagraphNode();
+      p.append($createTextNode("开头一段"));
+      $getRoot().append(p);
+      const code = $createBlockCodeNode("mermaid", "keep-this-block-id");
+      code.append($createTextNode("flowchart LR\n  A-->B"));
+      $getRoot().append(code);
+      upgradeMermaidCodeNode(code); // ← CRDT 绑定之后那一趟用的就是它
+    }, { discrete: true });
+
+    const kids = rootChildren(editor) as Array<Record<string, unknown>>;
+    const flat: Array<Record<string, unknown>> = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      const rec = n as Record<string, unknown>;
+      if (typeof rec.type === "string") flat.push(rec);
+      for (const v of Object.values(rec)) if (Array.isArray(v)) v.forEach(walk);
+    };
+    kids.forEach(walk);
+    const mermaid = flat.filter((n) => n.type === "mermaid");
+    expect(mermaid).toHaveLength(1);
+    expect(String(mermaid[0].src)).toContain("flowchart LR");
+    expect(mermaid[0].blockId).toBe("keep-this-block-id"); // ⚠️ 身份必须留住（块引用指着它）
+    expect(flat.some((n) => n.type === "shuyo-code")).toBe(false);
   });
 
   it("★ 载入**老内容**：JSON 里是「语言=mermaid 的代码块」⇒ 打开就变 `mermaid` 块", () => {
