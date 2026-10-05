@@ -45,7 +45,14 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   //   ⇒ ⭐ 与上面 6 项**完全同形** ✓（⭐ 同一套 `pick()` ✓ ／ ⭐ 同一套高亮 ✓）。
   //   ⚠️ `labelKey` 用的是**已存在**的 `templateCenter`（`i18n/locales/*.ts` 都有 ✓）而不是新加 `nav.templates` ✓
   //     —— ⭐ 同一个词一个键 ✓，不值得为"看起来整齐"再多两个 locale 条目 ✓。
-  { id: "templates", labelKey: "templateCenter", icon: <TemplateIcon width={18} height={18} /> },
+  // ⚠️ **2026-10-05 修**：`labelKey` 原来写的是 `"templateCenter"` —— **少了 `nav.` 前缀** ✗
+  //   （键真实的路径是 `nav.templateCenter`，见 `i18n/locales/{zh,en}.ts` 的 `nav` 对象 ✓）。
+  //   后果：`t("templateCenter")` 解析不到 ⇒ react-i18next **回落成键名本身** ⇒
+  //   这颗按钮的 title / aria-label 在界面上显示 `templateCenter`（**用户可见的坏文案** ✗）——
+  //   而 CI 的移动端验收正好按 `[title="模板中心"]` 找它 ⇒ 直接「找不到元素」、整条门禁 5 秒异常退出 ✗
+  //   （2026-10-05 `mobile-layout` 在 dev/main 上红的就是它）。
+  //   判据：本机真 Chromium 探针读出来的 title 列表里那一项是 `templateCenter`（不是「模板中心」）。
+  { id: "templates", labelKey: "nav.templateCenter", icon: <TemplateIcon width={18} height={18} /> },
 ];
 
 export function ActivityBar() {

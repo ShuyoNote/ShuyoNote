@@ -196,12 +196,11 @@ async function main() {
     console.log(`\n【手机 · 竖条里点非活动按钮（设置）】`);
     await phone.click(".mobile-rail-toggle");
     await sleep(700);
-    // ⚠️ 按**标题**选，不按序号：`.activity-group-end .activity-btn` 现在只有两个
-    //（模板中心 / 设置）——回收站的触发器是 `.btn-trash`，不带 `.activity-btn`。
-    // 这条注释原先写的是"回收站 / 模板中心 / 设置 / 关于"并按 `[2]` 取"设置"，
-    // 实际点中的是**关于**：断言照样绿（两者都会收起竖条），但验的不是想验的那个。
-    // ⚠️ 2026-10-01：owner 要求**去掉竖条上那个「关于」按钮** ⇒ 这一组现在两个 ✓；
-    //   「关于」仍可从**设置里那一行**与**更新横幅**打开 ✓（两个入口都在 ✓，判据不掉覆盖 ✓）。
+    // ⚠️ 按**标题**选，不按序号。⚠️ **2026-10-04 又一次**：模板中心那颗**独立按钮**
+    // 已并进 `.activity-group` 的 `ITEMS`（第 7 个 view）⇒ 底部 `.activity-group-end`
+    // 现在只剩「设置」；本脚本原来按 `.activity-group-end` 找模板中心 ⇒ **找不到元素、
+    // 整个验收在 5 秒内异常退出** ✗（2026-10-05 CI 的 `mobile-layout` 就是这么红的）。
+    // ⇒ 找模板中心一律用 **`.activity-group`**（分组无关时直接按 title 找也行）。
     await phone.click('.activity-group-end .activity-btn[title="设置"]');
     await sleep(900);
     s = await phone.evaluate(probe);
@@ -223,7 +222,7 @@ async function main() {
     console.log(`\n【手机 · 打开模板中心】`);
     await phone.click(".mobile-rail-toggle");
     await sleep(700);
-    await phone.click('.activity-group-end .activity-btn[title="模板中心"]');
+    await phone.click('.activity-group .activity-btn[title="模板中心"]');
     await sleep(1600);
 
     const tc = await phone.evaluate(() => {
@@ -448,7 +447,7 @@ async function main() {
       await sleep(2500);
       await small.click(".mobile-rail-toggle");
       await sleep(700);
-      await small.click('.activity-group-end .activity-btn[title="模板中心"]');
+      await small.click('.activity-group .activity-btn[title="模板中心"]');
       await sleep(1600);
       const s320 = await small.evaluate(() => {
         const grid = document.querySelector(".tc-grid");

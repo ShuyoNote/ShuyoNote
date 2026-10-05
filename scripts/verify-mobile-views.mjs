@@ -371,13 +371,44 @@ async function openView(page, title) {
 async function openDatabaseView(page) {
   await openRail(page);
   await sleep(600);
-  await page.evaluate(() => document.querySelector('.activity-group-end .activity-btn[title="模板中心"]')?.click());
-  await sleep(1800);
-  const hit = await page.evaluate(() => {
-    const el = Array.from(document.querySelectorAll(".tc-card")).find((c) => (c.textContent || "").includes("内容管理库"));
-    if (el) el.click();
-    return !!el;
-  });
+  // ⚠️ 2026-10-05：模板中心那颗按钮现在在 **`.activity-group`**（第 7 个 activity ✓），
+  //   不在 `.activity-group-end`（那里只剩「设置」）—— 旧选择器会 **找不到元素** ✗。
+  //   ⚠️ 若要按 title 找，注意它的 title 来自 `t("nav.templateCenter")`：修好 i18n 之前
+  //   渲染出来的是**键名** `templateCenter`（用户可见的坏文案 ＋ 选择器失配，同一个根因）。
+  await page.evaluate(() => document.querySelector('.activity-group .activity-btn[title="模板中心"]')?.click());
+  // ⚠️ 2026-10-05：这里原先只 `sleep(1800)` 就去找卡片 —— 而模板中心的卡片是**异步**加载的，
+  //   本机实测 1.8s 偶发还没渲染出 `.tc-card` ⇒ `hit=false` 直接返回 false ⇒ 断言假红 ✗
+  //   （2026-10-05 CI 的 `mobile-views` 两次都红在这一条）。改成**轮询等卡片**（同一条纪律：
+  //   见下面"轮询而不是死等一个猜出来的毫秒数" ✓）。
+  let hit = false;
+  for (let i = 0; i < 25 && !hit; i++) {
+    hit = await page.evaluate(() => {
+      const el = Array.from(document.querySelectorAll(".tc-card")).find((c) => (c.textContent || "").includes("内容管理库"));
+      if (el) el.click();
+      return !!el;
+    });
+    if (!hit) await sleep(400);
+  }
+  if (!hit) {
+    // 临时诊断（定位 2026-10-05 的假红用；定位完会删）
+    const diag = await page.evaluate(() => ({
+      tc: !!document.querySelector(".template-center"),
+      cards: document.querySelectorAll(".tc-card").length,
+      activeTab: document.querySelector(".tc-tab-active")?.textContent ?? null,
+      railOpen: !!document.querySelector(".activity-bar.is-open"),
+      railVisible: (() => {
+        const r = document.querySelector(".activity-bar");
+        return r ? getComputedStyle(r).display + "/" + (r.getAttribute("class") || "") : "(no rail)";
+      })(),
+      anyOverlay: Array.from(document.querySelectorAll('[class*="-overlay"]')).map((x) => x.className).slice(0, 6),
+      dlg: Array.from(document.querySelectorAll(".set-dialog, .confirm-dialog, .fm-preview-overlay, dialog")).map((x) => x.className).slice(0, 4),
+      mainFirst: (() => {
+        const m = document.querySelector(".main, main, .app-main");
+        return m ? Array.from(m.children).slice(0, 4).map((x) => x.className || x.tagName) : null;
+      })(),
+    }));
+    console.error("[diag openDatabaseView] " + JSON.stringify(diag));
+  }
   if (!hit) return false;
   // 建库要连着一串 async（建库 → 逐个属性 → 加列）：轮询而不是死等一个猜出来的毫秒数。
   for (let i = 0; i < 20; i++) {

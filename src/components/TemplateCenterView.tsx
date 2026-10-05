@@ -156,7 +156,14 @@ export function TemplateCenterView() {
       }
       // 加列后刷新 DatabaseView，避免其已在加列完成前加载(读到空列)。
       useNotes.getState().bumpReload();
-      leaveTemplates();
+      // ⚠️ **2026-10-05 删掉一行** `leaveTemplates()`：它与 `notes.ts::openPage` 里那句是**同一个坑** ✗
+      //   —— 模板中心并进 view 之后，"离开它"= **把 view 设成别的** ✓；上面
+      //   `createDatabase` 已经 `setView("notes")` 了 ✓，而 `leaveTemplates()` 会**无条件**把 view
+      //   设回 `prevView` ✗（从「文件管理」进来的 ⇒ 建完库落在**文件管理**上）。
+      //   症状（2026-10-05 实测）：从模板中心建出数据库页 ⇒ 主区是 `.file-manager`、
+      //   `.database-view` 一直不出现 ⇒ CI 的 `mobile-views` 在 390 / 320 两个视口各红一次 ✗。
+      //   同一处坑 2026-10-04 已在 `notes.ts::openPage` 与 `PageTree.tsx` 修过（当时是 board），
+      //   这里漏了 ✓。
       return;
     }
     // Page template → expand template vars (`{{date}}`/`{{title}}`/`{{selected}}`)
@@ -170,7 +177,10 @@ export function TemplateCenterView() {
     // 把模板封面(题头图) + 页面图标应用到创建后的页面。
     if (pid && t.cover) await api.setPageCover(pid, t.cover);
     if (pid && t.icon) await api.setPageIcon(pid, t.icon);
-    leaveTemplates();
+    // ⚠️ **2026-10-05 删掉一行** `leaveTemplates()`：`createPage`（默认 select）已经
+    //   `set({ currentId })` ＋ `setView("notes")` ✓ —— 那就是"离开模板中心" ✓；
+    //   而 `leaveTemplates()` 会**无条件**把 view 设回 `prevView` ✗ ⇒ 从别的视图（文件/看板…）
+    //   进来用模板时，新建的页面**不会显示**，用户看到的是自己原来那个视图 ✗（见上面那段注释）。
   };
 
   const exportTemplate = async (t: GalleryItem) => {
