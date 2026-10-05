@@ -47,6 +47,13 @@
 - ❌ 不要全库定时重跑（成本无上限；增量已有形状）
 - ❌ 不要为 wiki 新开一套存储（派生层写入者已被 `scripts/check-derived-writers.mjs` 收口）
 - ❌ 不要把 wiki 当"事实出处"（冲突时以它**引用的真出处**为准）
+- ⚠️ **2026-10-05 订正**（owner 原话：「个人版**未加密空间**可以使用云端大模型」）——
+  本节原先那句「不要走远端 provider（本机端点红线）」**已被这条订正取代**：
+  - ⭐ **对话与 wiki 生成**：**未加密空间可以用云端**（面板支持 DeepSeek / 智谱 / 通义 / Kimi / 硅基流动 / OpenAI）；
+  - ⛔ **加密空间不行**：内容加密就是为了不出本机 ⇒ 平台在加密空间下**拒绝**非本机 provider
+    （判据 `src/lib/ai/loopback.test.ts`，落地在 `src/store/ai.ts` 的 `assertProviderAllowed`）；
+  - ⚠️ **抽取那条线仍然只允许本机**（`localTranscribe` / `localVision`）—— 那是**另一件事**，
+    没有被本次订正触及（见 `2026-09-17-knowledge-base-ai-coverage-plan.md` §10 红线）。
 
 ## 5. 边界（**如实说，不把推断写成结论**）
 

@@ -215,6 +215,23 @@ registerCommandGroup({
         return "已打开 AI 助手";
       },
     },
+    {
+      // ⚠️ **2026-10-05 加**（owner：「我要能用的 LLM Wiki」）：
+      // 库地图此前**只**藏在 AI 设置面板里，而且要先手动点「检查索引覆盖」才算 ——
+      // 命令面板里搜不到它（那条 `export.workspace-wiki` 是**静态导出**，不是这个）。
+      // ⭐ 这一条把入口挪到显眼处：Ctrl+K 搜「库地图 / wiki / 知识地图」都能找到。
+      // ⚠️ 只**打开面板**、不自动跑扫描 —— 全库扫描是 O(页面数) 的调用，
+      // 需求 §4 明确不要「全库定时重跑」，所以这一步留给用户点。
+      id: "ai.libraryMap",
+      title: "库地图（LLM Wiki）",
+      description: "AI 面板里的库地图：主题分区 + 来源回链 + 覆盖率（只读派生，可重算）",
+      closeOnRun: true,
+      when: () => useAiStore.getState().config.enabled,
+      run: () => {
+        useEditorStore.getState().openSettings("ai");
+        return "已打开 AI 设置 —— 点「检查索引覆盖」就会算出库地图";
+      },
+    },
   ],
 });
 
