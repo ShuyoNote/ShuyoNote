@@ -183,7 +183,11 @@ function MermaidView({
   // Render mermaid lazily (code-split) whenever src/syntax theme change.
   useEffect(() => {
     const seq = ++renderSeq.current;
-    if (!src.trim() || !editing) {
+    // ⚠️ 2026-10-05 修：这里原先写的是 `!editing` ⇒ **只读视图永远不渲染**（`editing` 是"正在编辑"
+    //   这个本地状态，初始 false）⇒ 打开页面看到的是「（空白图形）」，`svg` 永远为空 ✗。
+    //   owner 实测三次报"看不到图"，这是第三层（前两层：节点没入口 / CRDT 文档没迁移）。
+    //   正确口径：**有源文且不在编辑态**才渲染；进入编辑态时清掉（此时渲染的是 textarea）。
+    if (!src.trim() || editing) {
       setSvg("");
       setError(null);
       return;
