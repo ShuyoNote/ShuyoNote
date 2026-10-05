@@ -10821,6 +10821,119 @@ p:has(> .editor-drawing-container) {
   font-size: 13px;
 }
 
+/* ── 看图器顶栏：页签（图表/代码）＋ 缩放/下载/全屏/编辑 —— 2026-10-05 ─────────────
+   owner 给了一张参考图（"参考这个实现，包括功能"）。整条悬停才出现，见文件下方那个
+   `@media (hover: hover)` 块；全屏时强制常显。 */
+.editor-mermaid-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.editor-mermaid-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+}
+
+.editor-mermaid-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.editor-mermaid-tab.is-on {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.editor-mermaid-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.editor-mermaid-tool {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.editor-mermaid-tool:hover:not(:disabled) {
+  background: var(--block-hover);
+  color: var(--text);
+}
+
+.editor-mermaid-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 缩放百分比：100% 时它就是个不起眼的"恢复"按钮，改过才加重 ✓ */
+.editor-mermaid-tool.is-zoom {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-mermaid-tool.is-set {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.editor-mermaid-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+/* 「代码」页：**只读**展示源文（改源文走「编辑」—— 那条路带语法选择与保存/取消，不重复一套） */
+.editor-mermaid-code {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+/* 全屏：铺满（用浏览器 Fullscreen API，Esc/返回键由 WebView 管 ⇒ 不进浮层栈） */
+.editor-mermaid:fullscreen {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 0;
+}
+
+.editor-mermaid:fullscreen .editor-mermaid-render {
+  flex: 1;
+  min-height: 0;
+  align-items: center; /* render 是 flex row ⇒ 交叉轴是纵向 ⇒ 图在屏内也居中 ✓ */
+}
+
+.editor-mermaid:fullscreen .editor-mermaid-bar {
+  opacity: 1; /* 全屏时鼠标不一定停在块上 ⇒ 顶栏常显 */
+}
+
 .editor-mermaid-toolbar {
   display: flex;
   align-items: center;
@@ -10852,21 +10965,21 @@ p:has(> .editor-drawing-container) {
 }
 
 /*
-  只读视图的**整条底栏**（左边 `flowchart` 标签 ＋ 上面那条分隔线 ＋ 右边「编辑」）：
-  **悬停才出现**（owner 2026-10-05：先只要按钮，随后把标签与分隔线一起算进来）。
-  做法是 opacity（**不是 `display`**）⇒ 出现/消失时**不会顶动上面的图**（无跳动）✓。
+  看图器顶栏（页签 ＋ 缩放/下载/全屏/编辑）：**悬停才出现**
+  （owner 2026-10-05：先把「编辑」收进悬停，再把整条算进来）。
+  做法是 opacity（**不是 `display`**）⇒ 出现/消失**不会顶动下面的图**（无跳动）✓。
   ⚠️ 只在**真的支持悬停**的设备上藏（`@media (hover: hover)`）—— 触屏没有 hover，
-     藏起来就**点不到也看不到** ✗；键盘用户走 `:focus-within`（Tab 到那颗按钮）也显出来 ✓。
-  ⛔ 只收 `.editor-mermaid-toolbar-read` 这一个类：编辑态那条工具栏（语法选择 ＋「保存／取消」）
-     与错误态的「编辑源文本」都必须**一直可见**（后者是渲染失败时唯一的出路）。
+     藏起来就**点不到也看不到** ✗；键盘用户走 `:focus-within`（Tab 进这条）也显出来 ✓。
+  ⛔ 只收 `.editor-mermaid-bar`：编辑态那条工具栏（语法选择 ＋「保存／取消」）与错误态的
+     「编辑源文本」都必须**一直可见**（后者是渲染失败时唯一的出路）。
 */
 @media (hover: hover) {
-  .editor-mermaid-toolbar-read {
+  .editor-mermaid-bar {
     opacity: 0;
     transition: opacity 0.12s ease;
   }
-  .editor-mermaid:hover .editor-mermaid-toolbar-read,
-  .editor-mermaid-toolbar-read:focus-within {
+  .editor-mermaid:hover .editor-mermaid-bar,
+  .editor-mermaid-bar:focus-within {
     opacity: 1;
   }
 }
