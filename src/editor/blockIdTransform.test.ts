@@ -321,6 +321,41 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(kid.language).toBe("mermaidx");
   });
 
+  it("★ 载入**老内容**：JSON 里是「语言=mermaid 的代码块」⇒ 打开就变 `mermaid` 块", () => {
+    // 这条钉的是 owner 那页的**实际情况**（`shuyonote-creator-proposal-v1.6`：16 个代码块、
+    // 语言字段全是 mermaid，早就存进页面了）⇒ 修好之后**打开页面即生效**，不需要迁移脚本。
+    // ⚠️ 与上面那条的分工：上面测"新建/粘贴路径"，这条测"**从已存 JSON 载入**"路径。
+    const editor = editorWithTransform();
+    const stored = {
+      root: {
+        children: [
+          {
+            children: [
+              { detail: 0, format: 0, mode: "normal", style: "", text: "flowchart LR", type: "text", version: 1 },
+            ],
+            direction: null,
+            format: "",
+            indent: 0,
+            type: "code",
+            version: 1,
+            language: "mermaid",
+          },
+        ],
+        direction: null,
+        format: "",
+        indent: 0,
+        type: "root",
+        version: 1,
+      },
+    };
+    editor.setEditorState(editor.parseEditorState(JSON.stringify(stored)));
+    editor.update(() => undefined, { discrete: true }); // 变换在 update 收尾时跑
+
+    const flat = JSON.stringify(rootChildren(editor));
+    expect(flat).toContain('"type":"mermaid"');
+    expect(flat).not.toContain('"language":"mermaid"');
+  });
+
   it("★ 水平线也被升级：type 变 `shuyo-horizontalrule`、带块 ID", () => {
     const editor = editorWithTransform();
     editor.update(() => {
