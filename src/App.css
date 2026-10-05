@@ -10841,19 +10841,21 @@ p:has(> .editor-drawing-container) {
 }
 
 /*
-  只读视图里的「编辑」按钮：**悬停才出现**（owner 2026-10-05）。
+  只读视图的**整条底栏**（左边 `flowchart` 标签 ＋ 上面那条分隔线 ＋ 右边「编辑」）：
+  **悬停才出现**（owner 2026-10-05：先只要按钮，随后把标签与分隔线一起算进来）。
+  做法是 opacity（**不是 `display`**）⇒ 出现/消失时**不会顶动上面的图**（无跳动）✓。
   ⚠️ 只在**真的支持悬停**的设备上藏（`@media (hover: hover)`）—— 触屏没有 hover，
-     藏起来就点不到了 ✗；键盘用户走 `:focus-visible` 也显出来 ✓。
-  ⚠️ 只收 `.editor-mermaid-edit` 这一个类：编辑态的「保存／取消」与错误态的
-     「编辑源文本」都必须**一直可见**（后者是渲染失败时唯一的出路）。
+     藏起来就**点不到也看不到** ✗；键盘用户走 `:focus-within`（Tab 到那颗按钮）也显出来 ✓。
+  ⛔ 只收 `.editor-mermaid-toolbar-read` 这一个类：编辑态那条工具栏（语法选择 ＋「保存／取消」）
+     与错误态的「编辑源文本」都必须**一直可见**（后者是渲染失败时唯一的出路）。
 */
 @media (hover: hover) {
-  .editor-mermaid-edit {
+  .editor-mermaid-toolbar-read {
     opacity: 0;
     transition: opacity 0.12s ease;
   }
-  .editor-mermaid:hover .editor-mermaid-edit,
-  .editor-mermaid-edit:focus-visible {
+  .editor-mermaid:hover .editor-mermaid-toolbar-read,
+  .editor-mermaid-toolbar-read:focus-within {
     opacity: 1;
   }
 }

@@ -287,11 +287,13 @@ function MermaidView({
           <span className="editor-mermaid-placeholder">（空白图形）</span>
         )}
       </div>
-      <div className="editor-mermaid-toolbar">
+      {/* ⚠️ 多带一个 `editor-mermaid-toolbar-read`：CSS 按它把**只读视图这整条**
+          （左边 `flowchart` 标签 ＋ 上面那条分隔线 ＋ 右边「编辑」）做成"悬停才出现"
+          —— owner 2026-10-05 先要按钮，再把标签与分隔线一起算进来。
+          ⛔ 别把这类加到编辑态那条工具栏上：它的「保存／取消」必须一直可见。 */}
+      <div className="editor-mermaid-toolbar editor-mermaid-toolbar-read">
         <span className="editor-mermaid-syntax-label">{syntax || detectMermaidSyntax(src)}</span>
-        {/* ⚠️ 多带一个 `editor-mermaid-edit`：CSS 按它把这个按钮做成"悬停才出现"
-            （owner 2026-10-05）。别把类加到编辑态的「保存／取消」上 —— 它们必须一直可见。 */}
-        <button className="editor-mermaid-btn editor-mermaid-edit" onClick={startEdit}>
+        <button className="editor-mermaid-btn" onClick={startEdit}>
           编辑
         </button>
       </div>
