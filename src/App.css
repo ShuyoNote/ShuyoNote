@@ -7757,7 +7757,7 @@ select.prop-value {
 
 .editor-table-cell {
   border: 1px solid var(--border);
-  padding: 3px 8px;
+  padding: 6px 10px;
   min-width: 60px;
   vertical-align: top;
   outline: none;
@@ -7767,15 +7767,20 @@ select.prop-value {
   单元格里的段落**不许再带正文的块间留白**。
   为什么：`.editor-content p { padding: 2px 4px; margin: 0.6em 0 }` 那条是给**正文块之间**
   留气口的；表格单元格里也套着段落 ⇒ 0.6em×2（16px 正文 ≈ 19px）＋ 上下内边距 ＋ 单元格
-  padding 6px×2 全叠在一起，一行 ≈ 62px（正文行高的约 4 倍）。
-  2026-10-05 owner 实测报"表格的行高缩小一些" ⇒ 这里归零 ＋ 上面 padding 收到 3px 8px
-  ⇒ 一行 ≈ 33px（只剩行高本身 ＋ 一点内边距）。
+  padding 也跟着叠 ⇒ 一行 ≈ 62px（正文行高 27.2px 的 ~2.3 倍）。
+  2026-10-05 owner 先报"行高缩小一些"、再报"稍微大一点点" ⇒ 最终取值：
+  **单元格 padding 保持原值 6px 10px**（不改它）＋ 段落留白归零 ⇒ 一行 ≈ 39px。
+  （中间试过 padding 3px 8px ⇒ 一行 ≈33px，owner 觉得偏小。）
   ⚠️ 只作用于**单元格的直接子段落**，正文段落照旧吃那 0.6em ✓。
   为什么选 `> p` 就够：`editorTheme` 里**没有** `paragraph` 这一项 ⇒ Lexical 的段落就是裸
   `<p>`（`markdownTransformers.createMarkdownCell` 也是往单元格里 append 一个 `$createParagraphNode()`）。
   ⚠️ 与 `.editor-content p` 那条**特异性相同**（都是 0,1,1）⇒ 本条第靠**源码顺序**取胜：
   ⛔ 别把 Tables 这一节挪到 `5716` 那组 `.editor-content p` **之前**，否则这条会静默失效。
 */
+.editor-table-cell > p {
+  margin: 0;
+  padding: 0;
+}
 .editor-table-cell > p {
   margin: 0;
   padding: 0;
