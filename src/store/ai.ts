@@ -10,6 +10,8 @@ import {
   type ProviderConfig,
 } from "../lib/ai/llm";
 import { createBackendStreamingTransport } from "../lib/ai/transport";
+import { isLoopbackBase } from "../lib/ai/llm";
+import { api } from "../lib/api";
 import { collectSummarySources, runLibrarySummary, summaryDraftEntry } from "../lib/ai/librarySummaryRun";
 import { summarizerFromTransport } from "../lib/ai/librarySummary";
 import { generateTopicDraft, type TopicDraft } from "../lib/ai/topicDraft";
@@ -26,6 +28,52 @@ const HISTORY_KEY = "shuyonote.ai.history";
 // Web (browser) can stream cloud/local LLMs directly via fetch; desktop goes
 // through the backend proxy (non-streaming) to bypass CORS.
 const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
+
+/**
+ * ⚠️ **2026-10-05 加**（owner 更正：「个人版**未加密**空间可以使用云端大模型」）——
+ * 反过来 ⇒ ⭐ **加密空间不许把内容发给云端**。
+ *
+ * ⚠️ **为什么是同步读缓存、而不是 `await` 现取** ✗：这三处 transport 创建处在**时序敏感**的路径上
+ * （分批进度、`stop()` 之后的结果作废都有断言）—— 多一个 IPC 往返就会让进度晚一拍
+ * （实测：`ai.summarize.test.ts` 当场两条红）。所以读数**异步填缓存、同步判**。
+ *
+ * ⚠️ **缓存还没填时放行** ✗，并**顺手起一次后台刷新**：加密只在桌面档存在，而"第一次判之前"
+ * 这个窗口只有一次 IPC 的时间。⭐ 这一点是**有意的取舍**，写在这里免得后人以为是漏了。
+ */
+let encryptedSpaceIds: Set<string> | null = null;
+let cachedActiveSpaceId: string | null = null;
+let securityRefreshInFlight: Promise<void> | null = null;
+
+async function refreshSpaceSecurity(): Promise<void> {
+  if (securityRefreshInFlight) return securityRefreshInFlight;
+  securityRefreshInFlight = (async () => {
+    try {
+      const activeId = await api.getActiveWorkspaceId();
+      const rows = await api.spaceSecurityOverview();
+      cachedActiveSpaceId = activeId;
+      encryptedSpaceIds = new Set(rows.filter((r) => r.encrypted_on_disk === true).map((r) => r.space_id));
+    } catch {
+      /* 读不到就保持 null ⇒ 门放行（下面注释说了为什么） */
+    } finally {
+      securityRefreshInFlight = null;
+    }
+  })();
+  return securityRefreshInFlight;
+}
+
+/** ⭐ 同步判：本机 ⇒ 放行；当前活动空间**已知**是加密的 ⇒ 拒绝。 */
+function assertProviderAllowed(config: ProviderConfig): void {
+  if (isLoopbackBase(config.baseUrl)) return;
+  if (!encryptedSpaceIds || !cachedActiveSpaceId) {
+    void refreshSpaceSecurity(); // 还没读过 ⇒ 补一次，这一次先放行
+    return;
+  }
+  if (!encryptedSpaceIds.has(cachedActiveSpaceId)) return;
+  throw new Error(
+    "这个空间是加密的，内容不能发给云端大模型（那等于把明文送出本机）。" +
+      "请改用本机模型（如 Ollama），或在「空间隐私」里改用未加密空间再配云端。",
+  );
+}
 
 export interface AiConfig {
   enabled: boolean;
@@ -228,6 +276,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     };
 
     try {
+      // ⚠️ 加密空间 + 云端 ⇒ 这里会抛（见 assertProviderAllowed）。
+      assertProviderAllowed(config as ProviderConfig);
       const transport = IS_WEB
         ? createProviderTransport(config as ProviderConfig)
         : createBackendStreamingTransport(config as ProviderConfig);
@@ -314,6 +364,8 @@ export const useAiStore = create<AiState>((set, get) => ({
     const notes = useNotes.getState();
     set({ running: true, error: null, reply: "", currentPrompt: q || "跨库总结", thinking: "", activity: [] });
     try {
+      // ⚠️ 加密空间 + 云端 ⇒ 这里会抛（见 assertProviderAllowed）。
+      assertProviderAllowed(config as ProviderConfig);
       const transport = IS_WEB
         ? createProviderTransport(config as ProviderConfig)
         : createBackendStreamingTransport(config as ProviderConfig);
@@ -380,6 +432,8 @@ export const useAiStore = create<AiState>((set, get) => ({
       }
       const wanted = new Set(section.items.flatMap((it) => it.sources));
       const materials = collected.sources.filter((s) => wanted.has(s.ref));
+      // ⚠️ 加密空间 + 云端 ⇒ 这里会抛（见 assertProviderAllowed）。
+      assertProviderAllowed(config as ProviderConfig);
       const transport = IS_WEB
         ? createProviderTransport(config as ProviderConfig)
         : createBackendStreamingTransport(config as ProviderConfig);

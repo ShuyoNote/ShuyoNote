@@ -46,6 +46,31 @@ export interface ProviderConfig {
   apiKey?: string;
 }
 
+/**
+ * 判一个 base URL 是不是**本机回环**。
+ *
+ * ⚠️ **2026-10-05 加**（owner 更正的口径：「个人版**未加密**空间可以使用云端大模型」⇒ 反过来：
+ * **加密空间不该把内容发给云端**）。此前代码里**没有**这道门 —— 全仓搜 `loopback`，`src/` 里一个都没有。
+ *
+ * ⭐ 纯函数（不碰网络、不读存储）⇒ 判据直接喂字符串就能测。
+ * ⚠️ 认 `localhost` ／ 整段 `127.0.0.0/8` ／ `::1`（含 `[::1]` 写法）。
+ * ⚠️ **解析不出主机就当成「不是本机」**（默认取危险方向：认不出来 ⇒ 不放行）。
+ */
+export function isLoopbackBase(base: string): boolean {
+  const s = String(base ?? "").trim();
+  if (!s) return false;
+  let host = "";
+  try {
+    host = new URL(s.includes("://") ? s : "http://" + s).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (host === "localhost" || host === "::1") return true;
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  return false;
+}
+
 // ---- Defaults ----
 export const OLLAMA_DEFAULT_URL = "http://localhost:11434";
 export const OLLAMA_DEFAULT_MODEL = "qwen2.5:7b";
