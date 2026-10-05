@@ -20,6 +20,8 @@
 // (structurally identical to the ones in api.ts) so this module does not create
 // an import cycle with api.ts.
 
+import type { WikiPageInput } from "../wikiExport";
+
 import type {
   ActivityEvent,
   AttachmentMeta,
@@ -1274,7 +1276,8 @@ export interface CommandMap {
   };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
   export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };
-  export_wiki: { args: { destPath: string }; result: { path: string; size: number; pages: number; files: number } };
+  export_wiki: { args: { destPath: string; files: { name: string; content: string }[] }; result: { path: string; size: number; pages: number; files: number } };
+  wiki_export_pages: { args: undefined; result: WikiPageInput[] };
   import_workspace: { args: { srcPath: string; name?: string | null }; result: WorkspaceMeta };
   write_text_file: { args: { path: string; content: string }; result: void };
   write_binary_file: { args: { path: string; data: number[] }; result: void };

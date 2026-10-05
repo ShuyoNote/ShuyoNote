@@ -1,5 +1,6 @@
 import { platform } from "./platform";
 import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
+import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
 import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
@@ -769,8 +770,9 @@ export const api = {
     invoke("import_backup", { srcPath }),
   exportWorkspace: (destPath: string) =>
     invoke("export_workspace", { destPath }),
-  exportWiki: (destPath: string) =>
-    invoke("export_wiki", { destPath }),
+  exportWiki: (destPath: string, files: { name: string; content: string }[]) =>
+    invoke("export_wiki", { destPath, files }),
+    wikiExportPages: () => invoke("wiki_export_pages") as Promise<WikiPageInput[]>,
   importWorkspace: (srcPath: string, name?: string | null) =>
     invoke("import_workspace", { srcPath, name }),
   writeTextFile: (path: string, content: string) =>

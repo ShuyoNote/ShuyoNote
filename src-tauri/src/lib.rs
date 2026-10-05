@@ -182,6 +182,7 @@ mod updates;
 mod versions;
 mod windows;
 mod workspace_io;
+mod wiki_export;
 mod workspaces;
 
 use db::Db;
@@ -851,6 +852,8 @@ pub fn run() {
             backup::write_binary_file,
             backup::read_text_file,
             workspace_io::export_workspace,
+        wiki_export::export_wiki,
+        wiki_export::wiki_export_pages,
             workspace_io::import_workspace,
             storage::storage_stats,
             storage::clear_trash,
