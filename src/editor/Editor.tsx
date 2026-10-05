@@ -12,7 +12,7 @@ import "./prismSetup";
 import { CodeExtension, CodeIndentExtension, registerCodeHighlighting } from "@lexical/code";
 import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $getRoot, $createParagraphNode, createEditor, ParagraphNode, type EditorState, type LexicalEditor } from "lexical";
+import { $getRoot, $createParagraphNode, $isElementNode, createEditor, ParagraphNode, type EditorState, type LexicalEditor, type LexicalNode } from "lexical";
 // 块身份那一层：内存模型 ⇄ 落盘/同步形态（见 docs/plans/2026-09-18-crdt-block-id-ownership.md）
 import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } from "../lib/blockIdentity";
 import { applyConflictBadges, installConflictBadges } from "./blockConflictBadge";
@@ -56,6 +56,7 @@ import {
   ensureBlockIdOnTopLevelNode,
   SELF_OWNED_BLOCK_ID_NODE_TYPES,
   upgradeCodeToBlockNode,
+  upgradeMermaidCodeNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
   upgradeListToBlockNode,
@@ -565,6 +566,27 @@ function PageCrdtBinding({
           return;
         }
         binding = b;
+        // ⭐ 2026-10-05：**CRDT 平面上的老内容也要迁移**（` ```mermaid ` 的代码块 ⇒ 图）。
+        //
+        // 为什么"改了 `toModelDoc` 还是看不到图"（owner 实测两次）：
+        //   · `toModelDoc` 那条只走 **JSON 落盘形态**的加载路（本文件上面那个 `parseEditorState(…)`，
+        //     ⚠️ 这里刻意不写出那个列名 —— `check-doc-content-access` 把**注释里**的列名也算一处直接引用）；
+        //   · 页面一旦绑了 CRDT，编辑器内容来自**已经持久化的 Yjs 文档** —— 那份文档是**改之前**
+        //     建的。实测判据：那页 `page_crdt` 里有一行、`state` 204,946 B，解出来含
+        //     `shuyo-code` ＋ `flowchart LR…` 源文 ⇒ **内容源就是它**，JSON 侧迁移被绕过 ✗；
+        //   · 注册在别处的节点变换也指望不上：它在自己的 `useEffect` 里注册，而内容在**绑定这一刻**
+        //     才灌进编辑器 —— 顺序上可能先灌内容、后注册 ⇒ 变换看不到那些"早就在"的 code 节点。
+        //   ⇒ 绑定完成后**显式走一遍整棵树**（`upgradeMermaidCodeNode` 只认 mermaid、其余不动 ⇒ 幂等）。
+        editor.update(
+          () => {
+            const visit = (node: LexicalNode): void => {
+              if (upgradeMermaidCodeNode(node)) return; // 换掉了就别再往下走
+              if ($isElementNode(node)) for (const child of node.getChildren()) visit(child);
+            };
+            for (const child of $getRoot().getChildren()) visit(child);
+          },
+          { discrete: true },
+        );
         // ★ 冲刺 §13.3 第 2 条（第 49 轮）：**`pendingSkipped > 0` 不许再只留在 `console.warn` 里**。
         //   那是"这一页有对端改动因为血统无关被拒、本机那版原样保留"—— 用户必须看得见
         //   （与 `main.tsx` 的 `lineageConflict` **同一个措辞来源**：`lineageRefusalNotice`）。

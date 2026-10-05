@@ -36,7 +36,7 @@ import { $createBlockTableNode } from "./nodes/BlockTableNode";
 import { TableNode } from "@lexical/table";
 import { CalloutNode } from "./nodes/CalloutNode";
 import { FormulaNode } from "./nodes/FormulaNode";
-import { MermaidNode } from "./nodes/MermaidNode";
+import { $createMermaidNode, MermaidNode } from "./nodes/MermaidNode";
 import { ImageRowNode } from "./nodes/ImageRowNode";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -111,6 +111,41 @@ export function upgradeQuoteToBlockNode(node: QuoteNode): void {
 }
 
 /**
+ * 「**语言=mermaid 的代码块**」⇒ mermaid 块（**已经转过的返回 false、什么都没动**）。
+ *
+ * ⚠️ **老 type（`code`）与模型 type（`shuyo-code`）都要认** —— 后者是 **CRDT 平面**上的形态：
+ *    实测（2026-10-05）那页的 Yjs 文档里就是 `shuyo-code` ＋ `flowchart …` 源文，
+ *    只认 `code` 会让"CRDT 上打开老页面"这一路永远转不过来（owner 两次报"图形还是看不到"）。
+ *    两种 type 的语言都存在 `__language` 里（`BlockCodeNode extends SafeCodeNode`）✓。
+ *
+ * 为什么单独抽成函数：现在有**三处**要用同一条判定 —— 节点变换（新建/粘贴/导入）、
+ * `Editor.tsx` 绑定 CRDT 之后那一趟（持久化的 Yjs 文档不经过 JSON 侧迁移）、以及测试。
+ * 各自抄一份必然漂移 ✓。
+ */
+export function upgradeMermaidCodeNode(node: LexicalNode): boolean {
+  const type = node.getType();
+  if (type !== "code" && type !== "shuyo-code") return false;
+  const language = String((node as unknown as { __language?: string }).__language ?? "");
+  if (language.toLowerCase() !== "mermaid") return false;
+  // ⚠️ **块身份要留住**：模型代码块（`shuyo-code`）自己带 `blockId`，CRDT 平面上的块引用
+  //    （`((blockId))` / 嵌入）指着它 —— 迁移时铸一个新 id 会把那些引用打断 ✗。
+  //    老 type（`code`）的那条路本来就没有 id（顶层由变换补种）。
+  const existingId =
+    typeof (node as unknown as { getBlockId?: () => string }).getBlockId === "function"
+      ? (node as unknown as { getBlockId: () => string }).getBlockId()
+      : "";
+  const replacement = $createMermaidNode(
+    node.getTextContent(),
+    "",
+    existingId || (isTopLevelBlock(node as SafeCodeNode) ? newBlockId() : ""),
+  );
+  // ⚠️ `MermaidNode` 是 DecoratorNode：既没有 format/indent/direction 可抄，
+  //    也不能传 `includeChildren = true` —— 与上面水平线那条同一处坑（那边有逐字报错记录）。
+  node.replace(replacement);
+  return true;
+}
+
+/**
  * 内建**代码块** → 模型代码块（第 4 步第四个类型）。
  *
  * ⚠️ 变换注册在 `SafeCodeNode` 上（它的 type 是 `"code"`）；**语言**必须原样带过去
@@ -119,6 +154,10 @@ export function upgradeQuoteToBlockNode(node: QuoteNode): void {
  */
 export function upgradeCodeToBlockNode(node: SafeCodeNode): void {
   if (node.getType() !== "code") return; // 模型代码块（`shuyo-code`）不碰
+  // ⭐ 2026-10-05：语言是 mermaid 的代码块 ⇒ **mermaid 块**（不是代码块）。判定与 CRDT 那一趟共用。
+  //   ```mermaid 的**所有**来源都汇到这里（markdown 导入 / 粘贴 / HTML 导入 / **载入老内容**）——
+  //   逐个改调用点必漏，与文件头那段理由同源。
+  if (upgradeMermaidCodeNode(node)) return;
   const language = (node as unknown as { __language?: string }).__language ?? "javascript";
   const replacement = $createBlockCodeNode(language, isTopLevelBlock(node) ? newBlockId() : "");
   replacement.setFormat(node.getFormatType());

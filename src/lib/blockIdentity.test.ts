@@ -126,6 +126,64 @@ describe("toModelDoc：落盘形态 → 内存模型", () => {
   });
 });
 
+// ⭐ 2026-10-05：` ```mermaid ` 的**内容迁移**（owner 报"图形还是看不到"之后补的一层）。
+// 为什么必须在这一层：页面**加载**走 `setEditorState(parseEditorState(toModelDoc(...)))`，
+// 而节点变换只在"节点被创建/更新"时跑 —— 页面打开时那些 `code` 节点早已建好 ⇒ 变换看不到它们。
+// 实测：那页在库里一直是 `code:16 / mermaid:0`，装了带变换的版本、重开 App 之后**还是没变**。
+describe("mermaid：语言=mermaid 的代码块 → 图（加载时迁移）", () => {
+  /** 按**库里真实的形状**造代码块：`code` → `code-highlight` → `text`（实测那页 code-highlight 有 139 个）。 */
+  const codeBlock = (language: string, text: string, blockId?: string) => ({
+    ...(blockId === undefined ? {} : { blockId }),
+    children: [
+      {
+        children: [{ detail: 0, format: 0, mode: "normal", style: "", text, type: "text", version: 1 }],
+        direction: "ltr",
+        format: 0,
+        indent: 0,
+        type: "code-highlight",
+        version: 1,
+      },
+    ],
+    direction: "ltr",
+    format: "",
+    indent: 0,
+    language,
+    type: "code",
+    version: 1,
+  });
+
+  it("★ 语言=mermaid 的代码块 ⇒ `mermaid` 节点：正文拼全、没有 children、顶层块仍拿到 blockId", () => {
+    const legacy = doc([codeBlock("mermaid", "flowchart LR\n  A-->B")]);
+    const node = JSON.parse(toModelDoc(legacy, makeIdFactory())).root.children[0];
+    expect(node.type).toBe("mermaid");
+    expect(node.src).toBe("flowchart LR\n  A-->B"); // code-highlight 那一层要递归拼出来
+    expect(node.syntax).toBe("flowchart");
+    expect(node.children).toBeUndefined(); // 装饰节点没有子节点
+    expect(node.language).toBeUndefined();
+    expect(node.blockId).toBe("blk-1"); // 迁移后仍是顶层块 ⇒ 照旧补种
+  });
+
+  it("★ 对照：语言=python 的代码块**照样**走模型代码块（不许被这条抢走）", () => {
+    const legacy = doc([codeBlock("python", "print(1)")]);
+    const node = JSON.parse(toModelDoc(legacy, makeIdFactory())).root.children[0];
+    expect(node.type).toBe("shuyo-code");
+    expect(node.language).toBe("python");
+  });
+
+  it("★ 幂等：已经是 `mermaid` 的节点再转一次**一个字节都不变**", () => {
+    const makeId = makeIdFactory();
+    const once = toModelDoc(doc([codeBlock("mermaid", "graph TD\n A-->B")]), makeId);
+    const twice = toModelDoc(once, makeId);
+    expect(twice).toBe(once);
+  });
+
+  it("★ 大小写不敏感（`Mermaid` 也认）—— 语言字段来自各种导出工具，不能只认小写", () => {
+    const node = JSON.parse(toModelDoc(doc([codeBlock("Mermaid", "graph TD\n A-->B")]), makeIdFactory()))
+      .root.children[0];
+    expect(node.type).toBe("mermaid");
+  });
+});
+
 describe("toLegacyDoc：内存模型 → 落盘/同步形态", () => {
   it("模型 type 换回老 type；块 ID 保留（今天的落盘形态本来就带它）", () => {
     const model = doc([

@@ -11,6 +11,7 @@ import { toast } from "../store/toast";
 import { inputDialog } from "../store/input";
 import { useNotes } from "../store/notes";
 import { excalidrawSearchText } from "../lib/drawingText";
+import { mermaidInitOptions } from "../lib/mermaid";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
@@ -300,7 +301,10 @@ export default function DrawingEditorModal() {
         try {
           const mod = await import("mermaid");
           const mermaid = mod.default;
-          mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose", flowchart: { htmlLabels: false, curve: "basis" } });
+          // ⚠️ 配置**唯一出处**（`lib/mermaid.ts`）：本行原来把 `htmlLabels` 写进 `flowchart: {}`
+          //    ⇒ mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ 下面那个 canvas **变脏**、
+          //    `toDataURL/toBlob` 抛 `Tainted canvases may not be exported.`（与图块 PNG 下载同一个根因）。
+          mermaid.initialize(mermaidInitOptions("default") as never);
           const id = `sn-${Math.random().toString(36).slice(2, 10)}`;
           const { svg } = await mermaid.render(id, src);
           const blob = new Blob([svg], { type: "image/svg+xml" });

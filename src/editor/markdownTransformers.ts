@@ -46,6 +46,11 @@ import { CalloutNode, $createCalloutNode, $isCalloutNode } from "./nodes/Callout
 import { ImageNode, $createImageNode, $isImageNode } from "./nodes/ImageNode";
 import { VideoNode, $createVideoNode, $isVideoNode } from "./nodes/VideoNode";
 import { FormulaNode, $createFormulaNode, $isFormulaNode } from "./nodes/FormulaNode";
+import {
+  MermaidNode,
+  $createMermaidNode,
+  $isMermaidNode,
+} from "./nodes/MermaidNode";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
@@ -305,6 +310,48 @@ export const FORMULA: ElementTransformer = {
   type: "element",
 };
 
+// ```` ```mermaid ```` 围栏 → **mermaid 块**（不是代码块）。2026-10-05 补（owner 实测：
+// 导入的 .md 里 10 张流程图全变成代码块 ⇒ 编辑器只显示源码，"页面识别不了图形"）。
+//
+// ⚠️ **必须排在 `...MULTILINE_ELEMENT_TRANSFORMERS` 之前** —— 那个数组里有 Lexical 的 `CODE`，
+//    它会先把 ```mermaid 吃成普通代码块（语言字段倒是抄对了 ⇒ 只是没渲染）。
+// ⚠️ 闭合围栏必须**收紧**（`^[ \t]*```[ \t]*$`）：没闭合时返回 `null` 交回 `CODE`，
+//    不能把后面整篇文档都吞进图里。
+// ⚠️ 导入这一支只覆盖"经过 markdown 解析"的路径；**已经存成代码块的老内容**由
+//    `blockIdTransform.upgradeCodeToBlockNode` 的 mermaid 分支兜（打开页面即生效）。
+const MERMAID_END_RE = /^[ \t]*```[ \t]*$/;
+export const MERMAID: MultilineElementTransformer = {
+  dependencies: [MermaidNode],
+  export: (node: LexicalNode) =>
+    $isMermaidNode(node) ? "```mermaid\n" + node.getTextContent() + "\n```" : null,
+  regExpStart: /^[ \t]*```mermaid[ \t]*$/,
+  regExpEnd: /^[ \t]*```[ \t]*$/,
+  // ⚠️ **必须自己处理导入**（不能用默认扫描那条路）：默认路会把结果塞进一个**新建的段落**里
+  //    ⇒ `paragraph > mermaid`（实测 2026-10-05）。那样图是能渲染，但 mermaid 变成**嵌套块** ⇒
+  //    按本仓"只有顶层块才有块身份"的规矩它**拿不到 blockId**（CRDT 平面里没有稳定身份 ✗）。
+  //    自己 append 到 `rootNode` 才与 Lexical 的 `CODE` 同形（顶层块 ＋ 块 ID ✓）。
+  handleImportAfterStartMatch: ({ lines, rootNode, startLineIndex }) => {
+    for (let i = startLineIndex + 1; i < lines.length; i++) {
+      if (MERMAID_END_RE.test(lines[i])) {
+        rootNode.append($createMermaidNode(lines.slice(startLineIndex + 1, i).join("\n")));
+        return [true, i];
+      }
+    }
+    // 没闭合 ⇒ `null` = 让下一个 multiline transformer（Lexical 的 `CODE`）接手 ⇒ 退化成代码块 ✓
+    return null;
+  },
+  replace: (
+    rootNode: ElementNode,
+    _children: LexicalNode[] | null,
+    _startMatch: string[],
+    _endMatch: string[] | null,
+    linesInBetween: string[] | null,
+  ) => {
+    rootNode.append($createMermaidNode((linesInBetween ?? []).join("\n")));
+  },
+  type: "multiline-element",
+};
+
 // Full transformer list (defaults + ShuyoNote custom nodes).
 export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   HEADING,
@@ -316,6 +363,7 @@ export const SHUYONOTE_TRANSFORMERS: Transformer[] = [
   IMAGE,
   VIDEO,
   BLOCK_EMBED,
+  MERMAID, // ⚠️ 必须在 MULTILINE_ELEMENT_TRANSFORMERS（含 Lexical 的 CODE）之前
   ...MULTILINE_ELEMENT_TRANSFORMERS,
   CALLOUT,
   TABLE,

@@ -15,6 +15,8 @@
 // 不碰 DOM、不碰编辑器实例、不碰数据库：给 JSON 字符串、还 JSON 字符串。
 // ⇒ 属性测试可以直接钉住"两形态互转是可逆的""补种是幂等的""老文档一个字节都不变"。
 
+import { detectMermaidSyntax } from "./mermaid";
+
 /** 老 type → 模型 type（只收**块级**类型；嵌套的行内节点不动）。 */
 export const MODEL_TYPE_BY_LEGACY: Readonly<Record<string, string>> = {
   paragraph: "shuyo-paragraph",
@@ -33,6 +35,27 @@ export const LEGACY_TYPE_BY_MODEL: Readonly<Record<string, string>> = Object.fro
 
 /** 只需要"造一个块 ID"这一个能力（注入进来，便于测试确定化）。 */
 export type MakeBlockId = () => string;
+
+/**
+ * 收集一个节点（含后代）里的 `text`。
+ *
+ * 为什么不是只读 `children[0].text`：代码块的正文在 Lexical 里可能包在 `code-highlight`
+ * 那一层下面（实测那页的**正文 JSON** 里 `code-highlight` 有 139 个）⇒ 递归拼才拼得全。
+ * ⚠️ 这里刻意不写出"那个列名"：`check-doc-content-access` 会把**注释里**的列名也算一处直接引用
+ *   （它的原话：注释会教人 ⇒ 写着列名的注释等于告诉下一个读者"直接读那一列是正常的"）。
+ */
+function collectText(node: Record<string, unknown>): string {
+  const kids = node.children;
+  if (!Array.isArray(kids)) return "";
+  let out = "";
+  for (const k of kids) {
+    if (!k || typeof k !== "object") continue;
+    const child = k as Record<string, unknown>;
+    if (typeof child.text === "string") out += child.text;
+    out += collectText(child);
+  }
+  return out;
+}
 
 /**
  * 造一个块 ID（UUID v4）。**全应用只留这一份实现** —— 原先在 `Editor.tsx` 里，
@@ -96,6 +119,30 @@ export function toModelDoc(docJson: string, makeId: MakeBlockId): string {
   if (!doc) return docJson;
 
   walkNodes(doc.root, (node) => {
+    // ⭐ 2026-10-05：**语言是 mermaid 的代码块 ⇒ mermaid 块**（一次性内容迁移，**不可逆**）。
+    //
+    // 为什么必须在这一层（而不是只靠 `blockIdTransform` 的节点变换）：
+    //   页面**加载**走的是 `Editor.tsx` 的 `setEditorState(parseEditorState(toModelDoc(...)))`，
+    //   而节点变换只在"节点被创建/更新"时跑 —— 打开页面时那些 `code` 节点早已建好 ⇒ 变换**看不到**它们。
+    //   实测（owner 报"图形还是看不到"）：`ShuyoNote 个人版增值功能方案 v1.6` 那页在库里一直是
+    //   `code: 16 / mermaid: 0`，装上带变换的版本、重开 App 之后**还是没变** ✗。
+    //   ⇒ 判定放这里 ⇒ 加载时**确定性**生效（不依赖 useEffect 顺序、不依赖节点是否"新"）；
+    //     节点变换那条继续管**粘贴 / markdown 导入 / 新建**（它们本来就是新节点）✓。
+    //
+    // ⚠️ 与 `MODEL_TYPE_BY_LEGACY` 的关系：这一支必须**先**判，否则 `code` 会先被映成
+    //   `shuyo-code`（那就变成模型代码块了，永远回不到图）。所以 `return` 掉、不落进下面那张表。
+    if (node.type === "code" && String(node.language ?? "").toLowerCase() === "mermaid") {
+      node.type = "mermaid";
+      node.src = collectText(node);
+      node.syntax = detectMermaidSyntax(node.src as string);
+      // 装饰节点没有子节点、也没有 format/indent/direction —— 清掉，别把代码块的字段带过去
+      delete node.children;
+      delete node.language;
+      delete node.format;
+      delete node.indent;
+      delete node.direction;
+      return;
+    }
     const model = MODEL_TYPE_BY_LEGACY[node.type as string];
     if (model) node.type = model;
   });

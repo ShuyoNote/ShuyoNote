@@ -7,6 +7,30 @@ import { useViewStore } from "./view";
 import { useFileManagerStore } from "./fileManager";
 import { useFilePreview } from "./filePreview";
 
+// ── 「刷新之后还记得当前文档」──────────────────────────────────────────────────
+// 2026-10-05 owner 实测报的：「页面刷新后，忘记了当前文档」。
+//
+// 存 **localStorage**（不是用户数据表）：它是**这台设备的界面状态**，与本仓其它界面记忆同一套做法
+// （`AiAssistantPanel` 的面板宽、`EmojiPicker` 的最近用、`FileManagerView` 的视图/网格尺寸都在这儿）。
+// 读写一律 `try/catch`：隐私模式/配额异常时**记不住也不该影响用**（退化成"不还原"）。
+const LAST_PAGE_KEY = "shuyonote:lastPageId";
+
+function readRememberedPageId(): string {
+  try {
+    return localStorage.getItem(LAST_PAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberPageId(id: string): void {
+  try {
+    if (id) localStorage.setItem(LAST_PAGE_KEY, id);
+  } catch {
+    /* 记不住不影响用 */
+  }
+}
+
 export interface NoteState {
   pages: PageMeta[];
   currentId: string | null;
@@ -17,6 +41,12 @@ export interface NoteState {
   searchQuery: string;
   /** Bumped on EXTERNAL (e.g. AI-confirmed) content changes so the editor reloads. */
   reloadTick: number;
+  /**
+   * 启动后是否**已经尝试过**还原"上次打开的文档"（只做一次）。
+   *
+   * 为什么放在 state 而不是模块变量：测试能显式重置它，行为也**看得见**（不必去猜模块级副作用）。
+   */
+  lastPageRestored: boolean;
 
   loadPages: () => Promise<void>;
   openPage: (id: string) => Promise<void>;
@@ -56,6 +86,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   error: null,
   searchQuery: "",
   reloadTick: 0,
+  lastPageRestored: false,
 
   loadPages: async () => {
     set({ loading: true, error: null });
@@ -68,6 +99,18 @@ export const useNotes = create<NoteState>((set, get) => ({
         set({ currentId: null, current: null });
       }
       set({ pages, loading: false });
+      // ⭐ 2026-10-05（owner：「页面刷新后，忘记了当前文档」）：**本次启动的第一次**列表加载之后，
+      //    如果什么都没选中、而"记住的那一页"还在列表里 ⇒ 打开它。
+      //    · 只做一次（`lastPageRestored`）—— 之后清空选择（删掉当前页、换空间）不该被"拉回去"；
+      //    · 列表 membership 检查同时挡掉两种失效：那一页被删了 / 记住的是**另一个空间**的页；
+      //    · 不 await 到外面会早退：这里就 await（`openPage` 内部自己 try/catch，不会把 loadPages 打红）。
+      if (!get().lastPageRestored) {
+        set({ lastPageRestored: true });
+        const remembered = readRememberedPageId();
+        if (!get().currentId && remembered && pages.some((p) => p.id === remembered)) {
+          await get().openPage(remembered);
+        }
+      }
     } catch (e) {
       set({ error: String(e), loading: false });
     }
@@ -79,6 +122,9 @@ export const useNotes = create<NoteState>((set, get) => ({
       useFilePreview.getState().close();
       const current = await api.getPage(id);
       set({ currentId: id, current, error: null });
+      // ⭐ 2026-10-05：**当前文档**在这里被记住（`openPage` 是"换文档"的唯一收口）⇒
+      //    刷新/重开之后由 `loadPages` 那条一次性还原把它接回来。
+      rememberPageId(id);
       // Opening a page/database switches back to the editor view and closes any
       // overlay (template center).
       useViewStore.getState().setView("notes");

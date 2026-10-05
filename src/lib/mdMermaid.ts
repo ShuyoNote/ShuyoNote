@@ -7,6 +7,7 @@
 // chunk — Tauri/Web 正式版下动态 chunk 的相对路径可能解析失败，布局依赖(dagre)未
 // 加载 → subgraph 全叠成一整块(开发版好、正式版坏)。静态引入根治该问题。
 import mermaid from "mermaid";
+import { mermaidInitOptions } from "./mermaid";
 let mermaidReady = false;
 let mermaidTheme = "";
 
@@ -30,15 +31,10 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
     if (doneTheme === theme && el.getAttribute("data-ok")) continue;
     try {
       if (!mermaidReady || mermaidTheme !== theme) {
-        mermaid.initialize({
-          startOnLoad: false,
-          theme,
-          // subgraph + <br/> 标签 + 跨 subgraph 引用易布局错乱；htmlLabels + loose
-          // 让 <br/> 正确换行且不因 strict 转义破坏，改善嵌套图渲染。
-          securityLevel: "loose",
-          // htmlLabels:false → SVG text label，布局不依赖宿主 CSS/字体（发布版/开发版一致）。
-          flowchart: { htmlLabels: false, curve: "basis" },
-        });
+        // ⚠️ 配置**唯一出处**是 `mermaidInitOptions`（本文件原来那份把 `htmlLabels` 写进了
+        //    `flowchart: {}` —— mermaid 11 **不认**那个位置 ⇒ 实际产出 `<foreignObject>` 的
+        //    HTML 标签，即"说好要 SVG text label、实际没做到"，还让 canvas 变脏、PNG 导不出去）。
+        mermaid.initialize(mermaidInitOptions(theme) as never);
         mermaidReady = true;
         mermaidTheme = theme;
       }

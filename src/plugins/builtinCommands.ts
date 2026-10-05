@@ -1,5 +1,4 @@
 import { api } from "../lib/api";
-import { isDesktopPlatform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
 
@@ -11,6 +10,7 @@ import { useActivity } from "../store/activity";
 import { useEditorStore } from "../store/editor";
 import { openGuide, guideText } from "../lib/guide";
 import { buildHelpSite } from "../lib/helpSite";
+import { buildWikiExport, type WikiPageInput } from "../lib/wikiExport";
 import { usePdfReader } from "../store/pdfReader";
 import { useCommunitySave } from "../store/communitySave";
 import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
@@ -116,13 +116,19 @@ registerCommandGroup({
       id: "export.workspace-wiki",
       title: "导出当前空间为 wiki",
       description: "把当前空间导出为可独立浏览的静态 HTML wiki（双链/反链/索引页）",
-      // **只在 web 平台出现**：静态 HTML wiki 导出目前只有 web 平台实现（Rust 侧没有
-      // 这条命令），桌面端点下去只会得到 "command export_wiki not found"。宁可不显示，
-      // 也不给一条必然失败的入口。桌面端要这个功能的话，是在 Rust 侧补一条 `export_wiki`。
-      when: () => !isDesktopPlatform(),
+      // ⚠️ **2026-10-05 更新**：这条命令原来**只在 web 平台出现**（Rust 侧没有 `export_wiki`，
+      // 桌面端点下去只会得到 "command export_wiki not found"）。现在 Rust 侧已经补上
+      // （`src-tauri/src/wiki_export.rs` 的 `wiki_export_pages` + `export_wiki`）⇒ 两侧都能用。
+      // ⚠️ 渲染仍然**只有 TS 一份**（`buildWikiExport`）：Rust 只查库与打包，免得两套实现漂移。
       closeOnRun: true,
       run: async () => {
-        const result = await api.exportWiki("wiki-export.zip");
+        const rows = await api.wikiExportPages();
+        const pages: WikiPageInput[] = rows;
+        const wiki = buildWikiExport(pages, { space: "" });
+        const result = await api.exportWiki(
+          "wiki-export.zip",
+          wiki.files.map((f) => ({ name: f.name, content: f.content })),
+        );
         return `已导出 ${result.pages} 个页面（${result.files} 个文件）为 wiki：${result.path}`;
       },
     },
@@ -213,6 +219,23 @@ registerCommandGroup({
       run: () => {
         useRightPanel.getState().openAi(true);
         return "已打开 AI 助手";
+      },
+    },
+    {
+      // ⚠️ **2026-10-05 加**（owner：「我要能用的 LLM Wiki」）：
+      // 库地图此前**只**藏在 AI 设置面板里，而且要先手动点「检查索引覆盖」才算 ——
+      // 命令面板里搜不到它（那条 `export.workspace-wiki` 是**静态导出**，不是这个）。
+      // ⭐ 这一条把入口挪到显眼处：Ctrl+K 搜「库地图 / wiki / 知识地图」都能找到。
+      // ⚠️ 只**打开面板**、不自动跑扫描 —— 全库扫描是 O(页面数) 的调用，
+      // 需求 §4 明确不要「全库定时重跑」，所以这一步留给用户点。
+      id: "ai.libraryMap",
+      title: "库地图（LLM Wiki）",
+      description: "AI 面板里的库地图：主题分区 + 来源回链 + 覆盖率（只读派生，可重算）",
+      closeOnRun: true,
+      when: () => useAiStore.getState().config.enabled,
+      run: () => {
+        useEditorStore.getState().openSettings("ai");
+        return "已打开 AI 设置 —— 点「检查索引覆盖」就会算出库地图";
       },
     },
   ],

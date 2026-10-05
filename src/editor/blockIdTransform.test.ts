@@ -16,6 +16,7 @@ import {
   ensureBlockIdOnTopLevelNode,
   SELF_OWNED_BLOCK_ID_NODE_TYPES,
   upgradeCodeToBlockNode,
+  upgradeMermaidCodeNode,
   upgradeHeadingToBlockNode,
   upgradeHorizontalRuleToBlockNode,
   upgradeListToBlockNode,
@@ -37,6 +38,7 @@ import { $createColumnsBlockNode, ColumnsBlockNode } from "./nodes/ColumnsBlockN
 import type { LexicalNode } from "lexical";
 import { $createBlockParagraphNode } from "./nodes/BlockParagraphNode";
 import { $createSafeCodeNode, SafeCodeNode } from "./nodes/SafeCodeNode";
+import { $createBlockCodeNode } from "./nodes/BlockCodeNode";
 import { $createHorizontalRuleNode, HorizontalRuleNode } from "@lexical/react/LexicalHorizontalRuleNode";
 import { toLegacyDoc } from "../lib/blockIdentity";
 
@@ -274,6 +276,117 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(typeof kid.blockId).toBe("string");
     expect((kid.blockId as string).length).toBeGreaterThan(0);
     expect(JSON.stringify(kid.children)).toContain("print(1)");
+  });
+
+  it("★ 语言=mermaid 的代码块 ⇒ 直接升级成 `mermaid` 块（**不再是代码块**）", () => {
+    // 2026-10-05：owner 实测"页面识别不了图形"—— 导入的 .md 里 ` ```mermaid ` 全变成
+    // **语言=mermaid 的代码块**，编辑器只渲染源码。修法有两处，这是**兜底那处**：
+    // 载入老内容 / 粘贴 / HTML 导入都会经过这条 SafeCodeNode 变换 ⇒ 打开页面即生效。
+    const editor = editorWithTransform();
+    editor.update(() => {
+      // 真实页面形状：根里不止一个块（装饰节点**单独**挂空根会被根规范化裹成段落 —— 见下面那条测试的注释）。
+      const p = $createParagraphNode();
+      p.append($createTextNode("开头一段"));
+      $getRoot().append(p);
+      const code = $createSafeCodeNode("mermaid");
+      code.append($createTextNode("flowchart LR\n  A-->B"));
+      $getRoot().append(code);
+    }, { discrete: true });
+
+    const kids = rootChildren(editor) as Array<Record<string, unknown>>;
+    const flat: Array<Record<string, unknown>> = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      const rec = n as Record<string, unknown>;
+      if (typeof rec.type === "string") flat.push(rec);
+      for (const v of Object.values(rec)) if (Array.isArray(v)) v.forEach(walk);
+    };
+    kids.forEach(walk);
+    const mermaid = flat.filter((n) => n.type === "mermaid");
+    expect(mermaid).toHaveLength(1);
+    expect(String(mermaid[0].src)).toContain("flowchart LR");
+    expect(typeof mermaid[0].blockId).toBe("string");
+    expect((mermaid[0].blockId as string).length).toBeGreaterThan(0);
+    expect(flat.some((n) => n.type === "shuyo-code")).toBe(false);
+  });
+
+  it("★ 对照：普通语言的代码块**不受影响**（这条守住上面那条别抢）", () => {
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const code = $createSafeCodeNode("mermaidx"); // 只差一个字母：不许被当成 mermaid
+      code.append($createTextNode("flowchart LR"));
+      $getRoot().append(code);
+    }, { discrete: true });
+
+    const kid = rootChildren(editor)[0];
+    expect(kid.type).toBe("shuyo-code");
+    expect(kid.language).toBe("mermaidx");
+  });
+
+  it("★ **CRDT 平面**：模型代码块（`shuyo-code`）语言=mermaid ⇒ 换成 `mermaid`，**块身份不换**", () => {
+    // 这条是 owner 第二次报"图形还是看不到"的根因：页面绑了 CRDT ⇒ 编辑器内容来自**已持久化的
+    // Yjs 文档**，那份文档里是 **`shuyo-code`**（不是内建 `code`）＋ flowchart 源文 ⇒
+    // 只认 `code` 的判定永远转不过来。`Editor.tsx` 绑定之后那一趟走的就是这个函数。
+    const editor = editorWithTransform();
+    editor.update(() => {
+      const p = $createParagraphNode();
+      p.append($createTextNode("开头一段"));
+      $getRoot().append(p);
+      const code = $createBlockCodeNode("mermaid", "keep-this-block-id");
+      code.append($createTextNode("flowchart LR\n  A-->B"));
+      $getRoot().append(code);
+      upgradeMermaidCodeNode(code); // ← CRDT 绑定之后那一趟用的就是它
+    }, { discrete: true });
+
+    const kids = rootChildren(editor) as Array<Record<string, unknown>>;
+    const flat: Array<Record<string, unknown>> = [];
+    const walk = (n: unknown): void => {
+      if (!n || typeof n !== "object") return;
+      const rec = n as Record<string, unknown>;
+      if (typeof rec.type === "string") flat.push(rec);
+      for (const v of Object.values(rec)) if (Array.isArray(v)) v.forEach(walk);
+    };
+    kids.forEach(walk);
+    const mermaid = flat.filter((n) => n.type === "mermaid");
+    expect(mermaid).toHaveLength(1);
+    expect(String(mermaid[0].src)).toContain("flowchart LR");
+    expect(mermaid[0].blockId).toBe("keep-this-block-id"); // ⚠️ 身份必须留住（块引用指着它）
+    expect(flat.some((n) => n.type === "shuyo-code")).toBe(false);
+  });
+
+  it("★ 载入**老内容**：JSON 里是「语言=mermaid 的代码块」⇒ 打开就变 `mermaid` 块", () => {
+    // 这条钉的是 owner 那页的**实际情况**（`shuyonote-creator-proposal-v1.6`：16 个代码块、
+    // 语言字段全是 mermaid，早就存进页面了）⇒ 修好之后**打开页面即生效**，不需要迁移脚本。
+    // ⚠️ 与上面那条的分工：上面测"新建/粘贴路径"，这条测"**从已存 JSON 载入**"路径。
+    const editor = editorWithTransform();
+    const stored = {
+      root: {
+        children: [
+          {
+            children: [
+              { detail: 0, format: 0, mode: "normal", style: "", text: "flowchart LR", type: "text", version: 1 },
+            ],
+            direction: null,
+            format: "",
+            indent: 0,
+            type: "code",
+            version: 1,
+            language: "mermaid",
+          },
+        ],
+        direction: null,
+        format: "",
+        indent: 0,
+        type: "root",
+        version: 1,
+      },
+    };
+    editor.setEditorState(editor.parseEditorState(JSON.stringify(stored)));
+    editor.update(() => undefined, { discrete: true }); // 变换在 update 收尾时跑
+
+    const flat = JSON.stringify(rootChildren(editor));
+    expect(flat).toContain('"type":"mermaid"');
+    expect(flat).not.toContain('"language":"mermaid"');
   });
 
   it("★ 水平线也被升级：type 变 `shuyo-horizontalrule`、带块 ID", () => {

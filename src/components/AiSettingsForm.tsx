@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAiStore } from "../store/ai";
 import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
@@ -9,6 +9,8 @@ import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/l
 import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
 import { buildLibraryMap, type LibraryMap } from "../lib/ai/libraryMap";
 import { LibraryMapView } from "./LibraryMapView";
+import { api } from "../lib/api";
+import { isActiveSpaceKnownEncrypted, setSpaceSecurityState } from "../lib/ai/cloudGuard";
 import {
   AI_PRESETS,
   MODEL_OPTIONS,
@@ -16,6 +18,7 @@ import {
   OLLAMA_DEFAULT_URL,
   OPENAI_COMPAT_DEFAULT_BASE,
   OPENAI_COMPAT_DEFAULT_MODEL,
+  isLoopbackBase,
   type AiProvider,
   type ProviderConfig,
 } from "../lib/ai/llm";
@@ -56,8 +59,32 @@ export function AiSettingsForm({
   const generateTopic = useAiStore((s) => s.generateTopic);
   const clearTopicDraft = useAiStore((s) => s.clearTopicDraft);
   const [enabled, setEnabled] = useState(config.enabled);
+  // ⚠️ **2026-10-05 加**（owner 更正：「个人版**未加密**空间可以使用云端大模型」）：
+  // ① 把「这个空间是不是加密的」读进**共用判定**（`lib/ai/cloudGuard.ts`）—— AI store 与嵌入通道都用它，
+  //    这也是嵌入通道那道门能拿到读数的来源（它自己不碰 IPC）；
+  // ② 并用它把**云端配置在"输入"这一层就挡住**：只在调用时才拒是"事后"，
+  //    用户会以为已经配好了 —— 而真实情况是"我们不会发出去"。
+  const [spaceEncrypted, setSpaceEncrypted] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const activeId = await api.getActiveWorkspaceId();
+        const rows = await api.spaceSecurityOverview();
+        setSpaceSecurityState(activeId, rows);
+        if (alive) setSpaceEncrypted(isActiveSpaceKnownEncrypted());
+      } catch {
+        /* 读不到 ⇒ 保持 false：既不说"安全"，也不据此禁用（调用时仍有一道门） */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [provider, setProvider] = useState<AiProvider>(config.provider);
   const [baseUrl, setBaseUrl] = useState(config.baseUrl);
+  /** ⭐ 加密空间 ＋ 非本机端点 ⇒ 这一档在这里就不让配（与那道门同源：`cloudGuard` 的判定）。 */
+  const cloudBlockedHere = spaceEncrypted && !isLoopbackBase(baseUrl);
   const [model, setModel] = useState(config.model);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [enableEmbedding, setEnableEmbedding] = useState(config.enableEmbedding);
@@ -250,12 +277,20 @@ export function AiSettingsForm({
 
           <p className="ai-settings-brief">聊天问答、写文案、做摘要。需配置对话模型。</p>
 
+          {cloudBlockedHere && (
+            <p className="ai-settings-brief" role="status">
+              ⚠️ 这个空间是加密的：**云端**服务商在这里不能用（内容加密就是为了不出本机）。
+              改用本机的 Ollama，或到「空间隐私」改用未加密空间再配云端。
+            </p>
+          )}
+
           <label className="ai-settings-row">
             <span className="ai-settings-label">服务商</span>
             <select
               className="ai-settings-select"
               value={currentPresetId}
               onChange={(e) => applyPreset(e.target.value)}
+              disabled={cloudBlockedHere}
             >
               {AI_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -274,6 +309,7 @@ export function AiSettingsForm({
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL}
               spellCheck={false}
+              disabled={cloudBlockedHere}
             />
           </label>
 

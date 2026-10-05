@@ -9,6 +9,10 @@
 // `scripts/check-web-commands.mjs` 现在会拦"CommandMap 有、Rust 没注册"（web 专属的必须
 // 显式登记并说明理由），这个测试则钉住**调用点真的按平台收口了**——门禁只能证明"我们知道
 // 它是 web 专属"，证明不了"界面上不会露出来"。
+//
+// ⚠️ **2026-10-05 订正**：上面那段背景里的「桌面 Rust 侧根本没有这条命令」**已不成立** ——
+// `src-tauri/src/wiki_export.rs` 补了 `wiki_export_pages` + `export_wiki`，桌面端现在也能导出；
+// 相应那条「桌面不出现」的用例已改成「桌面也在」。留下这段背景是因为它解释**为什么**有这条测试。
 import { describe, expect, it, afterEach } from "vitest";
 import { getBuiltinCommands } from "./builtinCommands";
 
@@ -29,9 +33,14 @@ describe("内置命令的平台收口", () => {
     expect(getBuiltinCommands().some((c) => c.id === WIKI)).toBe(true);
   });
 
-  it("桌面平台：wiki 导出不出现（Rust 侧没有这条命令，露出来就是一条必然失败的入口）", () => {
+  it("桌面平台：wiki 导出**也在**（2026-10-05 起 Rust 侧补上了这条命令）", () => {
+    // ⚠️ 这条用例原来断言「桌面不出现」，理由是「Rust 侧根本没有这条命令」。
+    // 那条理由在 2026-10-05 失效：`src-tauri/src/wiki_export.rs` 补上了
+    // `wiki_export_pages` + `export_wiki`（`check-web-commands` 也确认两边都在）。
+    // ⇒ 判据跟事实走：现在两端都该有它。而「不该露一条必然失败的入口」这条**意图**
+    //    仍由 `scripts/check-web-commands.mjs`（Rust ⊆ CommandMap）守着 —— 没有丢。
     pretend("desktop");
-    expect(getBuiltinCommands().some((c) => c.id === WIKI)).toBe(false);
+    expect(getBuiltinCommands().some((c) => c.id === WIKI)).toBe(true);
   });
 
   it("两端都有的命令不受影响", () => {

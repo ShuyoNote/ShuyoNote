@@ -3730,17 +3730,20 @@ export function makeInvoke(store: SqliteStore) {
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
       return { path: name, size: zip.length, pages, attachments: candidates.length } as T;
     }
-    if (cmd === "export_wiki") {
+    if (cmd === "wiki_export_pages" || cmd === "export_wiki") {
+      // ⚠️ 两条命令**共用这一次查询**：`wiki_export_pages` 给桌面端取数（Rust 侧同名命令），
+      // `export_wiki` 在 web 档自己渲染。共用 ⇒ 收口门禁认的「直接访问」面**不增**。
+      const wsW = getWs();
+      if (!wsW) throw new Error("工作空间不存在");
+      const wikiPages = store.query<WikiPageInput>(
+        "SELECT id, title, content_text, kind, parent_id, sort_order, updated_at FROM pages WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY parent_id, sort_order, title",
+        [wsW.id],
+      ) as WikiPageInput[];
+      if (cmd === "wiki_export_pages") return wikiPages as T;
       // Export the current workspace as a self-contained static HTML wiki: one
       // `<slug>.html` per page (with `[[…]]` double-links + backlinks) plus an
       // `index.html` page tree, zipped for download / static hosting.
-      const ws = getWs();
-      if (!ws) throw new Error("工作空间不存在");
-      const pages = store.query<WikiPageInput>(
-        "SELECT id, title, content_text, kind, parent_id, sort_order, updated_at FROM pages WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY parent_id, sort_order, title",
-        [ws.id],
-      ) as any[];
-      const wiki = buildWikiExport(pages, { space: ws.name ?? "" });
+      const wiki = buildWikiExport(wikiPages, { space: wsW.name ?? "" });
       const fileList = wiki.files.map((f) => ({
         name: f.name,
         bytes: new TextEncoder().encode(f.content),

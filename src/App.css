@@ -7763,6 +7763,29 @@ select.prop-value {
   outline: none;
 }
 
+/*
+  单元格里的段落**不许再带正文的块间留白**。
+  为什么：`.editor-content p { padding: 2px 4px; margin: 0.6em 0 }` 那条是给**正文块之间**
+  留气口的；表格单元格里也套着段落 ⇒ 0.6em×2（16px 正文 ≈ 19px）＋ 上下内边距 ＋ 单元格
+  padding 也跟着叠 ⇒ 一行 ≈ 62px（正文行高 27.2px 的 ~2.3 倍）。
+  2026-10-05 owner 先报"行高缩小一些"、再报"稍微大一点点" ⇒ 最终取值：
+  **单元格 padding 保持原值 6px 10px**（不改它）＋ 段落留白归零 ⇒ 一行 ≈ 39px。
+  （中间试过 padding 3px 8px ⇒ 一行 ≈33px，owner 觉得偏小。）
+  ⚠️ 只作用于**单元格的直接子段落**，正文段落照旧吃那 0.6em ✓。
+  为什么选 `> p` 就够：`editorTheme` 里**没有** `paragraph` 这一项 ⇒ Lexical 的段落就是裸
+  `<p>`（`markdownTransformers.createMarkdownCell` 也是往单元格里 append 一个 `$createParagraphNode()`）。
+  ⚠️ 与 `.editor-content p` 那条**特异性相同**（都是 0,1,1）⇒ 本条第靠**源码顺序**取胜：
+  ⛔ 别把 Tables 这一节挪到 `5716` 那组 `.editor-content p` **之前**，否则这条会静默失效。
+*/
+.editor-table-cell > p {
+  margin: 0;
+  padding: 0;
+}
+.editor-table-cell > p {
+  margin: 0;
+  padding: 0;
+}
+
 .editor-table-cell-header {
   background: var(--bg-sidebar);
   font-weight: 600;
@@ -10766,11 +10789,22 @@ p:has(> .editor-drawing-container) {
   padding: 12px;
   overflow-x: auto;
   background: #fff;
+  /* ⭐ 2026-10-05（owner）：图在块里**居中**。
+     用 flex 容器 ＋ 子项 `margin: 0 auto` 居中，**刻意不用 `justify-content: center`**：
+     图比容器宽时后者会把**左边**裁掉（滚动条也够不到那半截）✗；
+     auto margin 在空间不足时解析成 0 ⇒ 自动退回左对齐、左边仍可达 ✓。 */
+  display: flex;
+}
+
+/* 图宽度按内容（flex 子项天然如此），居中交给 auto margin —— 见上一条的取舍说明 */
+.editor-mermaid-svg {
+  margin: 0 auto;
 }
 
 .editor-mermaid-svg svg {
   max-width: 100%;
   height: auto;
+  display: block;
 }
 
 .editor-mermaid-err {
@@ -10785,6 +10819,120 @@ p:has(> .editor-drawing-container) {
 .editor-mermaid-placeholder {
   color: var(--text-faint);
   font-size: 13px;
+}
+
+/* ── 看图器顶栏：页签（图表/代码）＋ 缩放/下载/全屏/编辑 —— 2026-10-05 ─────────────
+   owner 给了一张参考图（"参考这个实现，包括功能"）。整条悬停才出现，见文件下方那个
+   `@media (hover: hover)` 块；全屏时强制常显。 */
+.editor-mermaid-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.editor-mermaid-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+}
+
+.editor-mermaid-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.editor-mermaid-tab.is-on {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.editor-mermaid-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.editor-mermaid-tool {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.editor-mermaid-tool:hover:not(:disabled) {
+  background: var(--block-hover);
+  color: var(--text);
+}
+
+.editor-mermaid-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* 缩放百分比：100% 时它就是个不起眼的"恢复"按钮，改过才加重 ✓ */
+.editor-mermaid-tool.is-zoom {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-mermaid-tool.is-set {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.editor-mermaid-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+/* 「代码」页 = **编辑面**（owner 2026-10-05 去掉独立「编辑」按钮之后）：
+   上面是草稿 textarea（`.editor-mermaid-input` 自带底边框、无外框 ⇒ 和块边框不打架），
+   下面是语法选择 ＋ 保存/取消那条 `.editor-mermaid-toolbar`。 */
+.editor-mermaid-code-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 代码页里那条工具栏**不要**再画上边框：上面的 textarea 已经有 `border-bottom` ⇒
+   两条叠在一起会看着像 2px 的粗线。 */
+.editor-mermaid-code-pane .editor-mermaid-toolbar {
+  border-top: none;
+}
+
+/* 全屏：铺满（用浏览器 Fullscreen API，Esc/返回键由 WebView 管 ⇒ 不进浮层栈） */
+.editor-mermaid:fullscreen {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 0;
+}
+
+.editor-mermaid:fullscreen .editor-mermaid-render {
+  flex: 1;
+  min-height: 0;
+  align-items: center; /* render 是 flex row ⇒ 交叉轴是纵向 ⇒ 图在屏内也居中 ✓ */
+}
+
+.editor-mermaid:fullscreen .editor-mermaid-bar {
+  opacity: 1; /* 全屏时鼠标不一定停在块上 ⇒ 顶栏常显 */
 }
 
 .editor-mermaid-toolbar {
@@ -10815,6 +10963,26 @@ p:has(> .editor-drawing-container) {
 .editor-mermaid-btn:hover {
   background: var(--accent);
   color: var(--bg);
+}
+
+/*
+  看图器顶栏（页签 ＋ 缩放/下载/全屏/编辑）：**悬停才出现**
+  （owner 2026-10-05：先把「编辑」收进悬停，再把整条算进来）。
+  做法是 opacity（**不是 `display`**）⇒ 出现/消失**不会顶动下面的图**（无跳动）✓。
+  ⚠️ 只在**真的支持悬停**的设备上藏（`@media (hover: hover)`）—— 触屏没有 hover，
+     藏起来就**点不到也看不到** ✗；键盘用户走 `:focus-within`（Tab 进这条）也显出来 ✓。
+  ⛔ 只收 `.editor-mermaid-bar`：编辑态那条工具栏（语法选择 ＋「保存／取消」）与错误态的
+     「编辑源文本」都必须**一直可见**（后者是渲染失败时唯一的出路）。
+*/
+@media (hover: hover) {
+  .editor-mermaid-bar {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .editor-mermaid:hover .editor-mermaid-bar,
+  .editor-mermaid-bar:focus-within {
+    opacity: 1;
+  }
 }
 
 .editor-mermaid-input {
