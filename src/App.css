@@ -10789,11 +10789,22 @@ p:has(> .editor-drawing-container) {
   padding: 12px;
   overflow-x: auto;
   background: #fff;
+  /* ⭐ 2026-10-05（owner）：图在块里**居中**。
+     用 flex 容器 ＋ 子项 `margin: 0 auto` 居中，**刻意不用 `justify-content: center`**：
+     图比容器宽时后者会把**左边**裁掉（滚动条也够不到那半截）✗；
+     auto margin 在空间不足时解析成 0 ⇒ 自动退回左对齐、左边仍可达 ✓。 */
+  display: flex;
+}
+
+/* 图宽度按内容（flex 子项天然如此），居中交给 auto margin —— 见上一条的取舍说明 */
+.editor-mermaid-svg {
+  margin: 0 auto;
 }
 
 .editor-mermaid-svg svg {
   max-width: 100%;
   height: auto;
+  display: block;
 }
 
 .editor-mermaid-err {
