@@ -10840,6 +10840,24 @@ p:has(> .editor-drawing-container) {
   color: var(--bg);
 }
 
+/*
+  只读视图里的「编辑」按钮：**悬停才出现**（owner 2026-10-05）。
+  ⚠️ 只在**真的支持悬停**的设备上藏（`@media (hover: hover)`）—— 触屏没有 hover，
+     藏起来就点不到了 ✗；键盘用户走 `:focus-visible` 也显出来 ✓。
+  ⚠️ 只收 `.editor-mermaid-edit` 这一个类：编辑态的「保存／取消」与错误态的
+     「编辑源文本」都必须**一直可见**（后者是渲染失败时唯一的出路）。
+*/
+@media (hover: hover) {
+  .editor-mermaid-edit {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .editor-mermaid:hover .editor-mermaid-edit,
+  .editor-mermaid-edit:focus-visible {
+    opacity: 1;
+  }
+}
+
 .editor-mermaid-input {
   width: 100%;
   box-sizing: border-box;

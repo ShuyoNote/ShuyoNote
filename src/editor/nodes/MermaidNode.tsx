@@ -289,7 +289,9 @@ function MermaidView({
       </div>
       <div className="editor-mermaid-toolbar">
         <span className="editor-mermaid-syntax-label">{syntax || detectMermaidSyntax(src)}</span>
-        <button className="editor-mermaid-btn" onClick={startEdit}>
+        {/* ⚠️ 多带一个 `editor-mermaid-edit`：CSS 按它把这个按钮做成"悬停才出现"
+            （owner 2026-10-05）。别把类加到编辑态的「保存／取消」上 —— 它们必须一直可见。 */}
+        <button className="editor-mermaid-btn editor-mermaid-edit" onClick={startEdit}>
           编辑
         </button>
       </div>
