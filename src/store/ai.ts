@@ -10,7 +10,12 @@ import {
   type ProviderConfig,
 } from "../lib/ai/llm";
 import { createBackendStreamingTransport } from "../lib/ai/transport";
-import { isLoopbackBase } from "../lib/ai/llm";
+import {
+  CLOUD_BLOCKED_MESSAGE,
+  cloudAllowedSync,
+  hasSpaceSecurityState,
+  setSpaceSecurityState,
+} from "../lib/ai/cloudGuard";
 import { api } from "../lib/api";
 import { collectSummarySources, runLibrarySummary, summaryDraftEntry } from "../lib/ai/librarySummaryRun";
 import { summarizerFromTransport } from "../lib/ai/librarySummary";
@@ -33,15 +38,14 @@ const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in windo
  * ⚠️ **2026-10-05 加**（owner 更正：「个人版**未加密**空间可以使用云端大模型」）——
  * 反过来 ⇒ ⭐ **加密空间不许把内容发给云端**。
  *
- * ⚠️ **为什么是同步读缓存、而不是 `await` 现取** ✗：这三处 transport 创建处在**时序敏感**的路径上
- * （分批进度、`stop()` 之后的结果作废都有断言）—— 多一个 IPC 往返就会让进度晚一拍
- * （实测：`ai.summarize.test.ts` 当场两条红）。所以读数**异步填缓存、同步判**。
+ * ⚠️ **判定本身不在这里** ✗：它收在 `src/lib/ai/cloudGuard.ts`（**一处**实现）——
+ * 因为嵌入通道（`lib/semanticEmbed.ts` 的 `embedText`，语义检索用它发标题+正文片段）也要过同一道门，
+ * 而"再抄一份"就是两份真相源。本文件只负责**把读数取回来填进去**（它有 `api`）。
  *
- * ⚠️ **缓存还没填时放行** ✗，并**顺手起一次后台刷新**：加密只在桌面档存在，而"第一次判之前"
- * 这个窗口只有一次 IPC 的时间。⭐ 这一点是**有意的取舍**，写在这里免得后人以为是漏了。
+ * ⚠️ **为什么取数是异步、判定是同步** ✗：这三处 transport 创建处在**时序敏感**的路径上
+ * （分批进度、`stop()` 之后的结果作废都有断言）—— 多一个 IPC 往返就会让进度晚一拍
+ * （实测：`ai.summarize.test.ts` 当场两条红）。
  */
-let encryptedSpaceIds: Set<string> | null = null;
-let cachedActiveSpaceId: string | null = null;
 let securityRefreshInFlight: Promise<void> | null = null;
 
 async function refreshSpaceSecurity(): Promise<void> {
@@ -50,10 +54,9 @@ async function refreshSpaceSecurity(): Promise<void> {
     try {
       const activeId = await api.getActiveWorkspaceId();
       const rows = await api.spaceSecurityOverview();
-      cachedActiveSpaceId = activeId;
-      encryptedSpaceIds = new Set(rows.filter((r) => r.encrypted_on_disk === true).map((r) => r.space_id));
+      setSpaceSecurityState(activeId, rows);
     } catch {
-      /* 读不到就保持 null ⇒ 门放行（下面注释说了为什么） */
+      /* 读不到就不填 ⇒ 门放行（cloudGuard 里写了为什么） */
     } finally {
       securityRefreshInFlight = null;
     }
@@ -61,18 +64,14 @@ async function refreshSpaceSecurity(): Promise<void> {
   return securityRefreshInFlight;
 }
 
-/** ⭐ 同步判：本机 ⇒ 放行；当前活动空间**已知**是加密的 ⇒ 拒绝。 */
+/** ⭐ 同步判（判定在 cloudGuard 里）：不允许 ⇒ 抛。 */
 function assertProviderAllowed(config: ProviderConfig): void {
-  if (isLoopbackBase(config.baseUrl)) return;
-  if (!encryptedSpaceIds || !cachedActiveSpaceId) {
-    void refreshSpaceSecurity(); // 还没读过 ⇒ 补一次，这一次先放行
+  if (cloudAllowedSync(config.baseUrl)) {
+    // 读数还没取到 ⇒ 顺手补一次（这一次先放行，理由见 cloudGuard）。
+    if (!hasSpaceSecurityState()) void refreshSpaceSecurity();
     return;
   }
-  if (!encryptedSpaceIds.has(cachedActiveSpaceId)) return;
-  throw new Error(
-    "这个空间是加密的，内容不能发给云端大模型（那等于把明文送出本机）。" +
-      "请改用本机模型（如 Ollama），或在「空间隐私」里改用未加密空间再配云端。",
-  );
+  throw new Error(CLOUD_BLOCKED_MESSAGE);
 }
 
 export interface AiConfig {

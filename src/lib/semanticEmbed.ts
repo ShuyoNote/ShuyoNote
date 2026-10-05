@@ -10,6 +10,7 @@
 
 import { coreFetch } from "./coreHttp";
 import { fnv1a32 } from "./hash";
+import { cloudAllowedSync } from "./ai/cloudGuard";
 
 export interface EmbedConfig {
   provider: "ollama" | "openai";
@@ -132,6 +133,12 @@ export async function embedText(text: string, cfg: EmbedConfig): Promise<number[
   try {
     const url = embedUrl(cfg.baseUrl, cfg.provider);
     if (!url) return null;
+    // ⚠️ **2026-10-05 加**：与 AI 面板**同一道门**（`lib/ai/cloudGuard.ts`）——
+    // 加密空间不许把内容发给云端。⭐ 这里**返回 null 而不是抛错**：调用方本来就为 null 准备了
+    // char-bigram 兜底 ⇒ 被拦住表现为"检索质量退一档"，而不是报错或空结果。
+    // ⚠️ 这条曾经是漏的：本文件是全仓**唯一**的嵌入网络调用点，而它原先不看加密状态
+    // （语义检索会把标题＋正文片段，每次上限 500 字，发到配置的嵌入端点上）。
+    if (!cloudAllowedSync(cfg.baseUrl)) return null;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
     const resp = await coreFetch(url, {

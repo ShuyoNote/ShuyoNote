@@ -54,6 +54,8 @@ describe("isLoopbackBase —— 本机回环判定（加密空间那道门的底
 
 describe("接线：三处 transport 创建之前都要过那道门", () => {
   const src = readFileSync("src/store/ai.ts", "utf8");
+  const guard = readFileSync("src/lib/ai/cloudGuard.ts", "utf8");
+  const embed = readFileSync("src/lib/semanticEmbed.ts", "utf8");
   const CALL = "assertProviderAllowed(config as ProviderConfig)";
 
   it("每个 `const transport = IS_WEB` 前面都紧跟着 assertProviderAllowed", () => {
@@ -65,18 +67,32 @@ describe("接线：三处 transport 创建之前都要过那道门", () => {
     let from = 0;
     for (let i = 0; i < hits; i++) {
       const created = src.indexOf("const transport = IS_WEB", from);
-      const guard = src.lastIndexOf(CALL, created);
-      expect(guard, "第 " + (i + 1) + " 处：门必须在创建之前").toBeGreaterThan(-1);
-      expect(created - guard, "第 " + (i + 1) + " 处：门与创建之间不该隔太远").toBeLessThan(400);
+      const g = src.lastIndexOf(CALL, created);
+      expect(g, "第 " + (i + 1) + " 处：门必须在创建之前").toBeGreaterThan(-1);
+      expect(created - g, "第 " + (i + 1) + " 处：门与创建之间不该隔太远").toBeLessThan(400);
       from = created + 1;
     }
   });
 
-  it("门本身：本机就放行；加密读数按 `encrypted_on_disk === true` 收；**同步**判（不 await）", () => {
-    expect(src).toContain("if (isLoopbackBase(config.baseUrl)) return;");
-    expect(src).toContain("encrypted_on_disk === true");
-    // ⚠️ 这三处创建在**时序敏感**路径上 —— 门必须是同步的，
-    // 否则分批进度 / `stop()` 之后作废那两条断言会红（实测过：ai.summarize.test.ts 当场两条红）。
+  it("判定**只有一处**：口径在 cloudGuard，store 与嵌入通道都调它（不许各写一份）", () => {
+    expect(guard).toContain("if (isLoopbackBase(baseUrl)) return true;");
+    expect(guard).toContain("encrypted_on_disk === true");
+    expect(src).toContain("cloudAllowedSync(config.baseUrl)");
+    // ⚠️ store 里**不该**再有第二份口径（这一步就是把两份收成一份）
+    expect(src).not.toContain("isLoopbackBase(");
+    expect(src).not.toContain("encrypted_on_disk");
+  });
+
+  it("嵌入通道也过门（它是全仓唯一的嵌入网络调用点 —— 曾经漏了）", () => {
+    expect(embed).toContain("cloudAllowedSync(cfg.baseUrl)");
+    // 在真正的 fetch 之前
+    const gate = embed.indexOf("cloudAllowedSync(cfg.baseUrl)");
+    const fetchAt = embed.indexOf("coreFetch(url");
+    expect(gate, "门必须在 fetch 之前").toBeGreaterThan(-1);
+    expect(fetchAt).toBeGreaterThan(gate);
+  });
+
+  it("门本身：加密读数按 `encrypted_on_disk === true` 收；**同步**判（不 await）", () => {
     expect(src).not.toContain("await assertProviderAllowed(");
   });
 });
