@@ -1,6 +1,6 @@
 # MCP 宿主 M2 施工单（把「写」接上，但**用户确认之前一个字都不许落库**）
 
-> 状态：**W1 ＋ W2 已落地；W3（草稿路）／W4（免确认留痕）／W5（登记入账）未开工**（2026-10-06 windows 侧 ✓）。
+> 状态：**W1 ＋ W2 ＋ W3 已落地；W4（免确认留痕）／W5（登记入账）未开工**（2026-10-06 windows 侧 ✓）。
 > 证据：`../../capabilities/mcp-tools-write.json`（第 11 件生成物：写面 2 条 ✓）· `../../scripts/gen-capabilities.mjs`（`genMcpTools(reg, kind)` ✓）· `../../scripts/check-capabilities.mjs`（写面必须**正好等于**注册表 ✓）· `../../src-tauri/src/mcp_host.rs`（内嵌写面清单 ＋ `tools_list_json(include_write)` ＋ 判据 ✓）· `../../src-tauri/src/mcp_channel.rs`（`allow_write` 默认 false ✓）· `../../src/components/McpAccessPane.tsx`（开关 ✓）✓。
 > 前置：**M1 已收口** ✓（读那条路通了：注册表生成物 ＋ 应用内宿主面 ＋ 哑桥 ＋ GUI 开关 ✓，
 > 见 [M1 施工单](2026-09-28-mcp-host-m1-workorder.md)）；
@@ -41,7 +41,7 @@
 |---|---|---|---|---|---|
 | [x] | W1 | 生成物第 11 件：**写面**清单 `capabilities/mcp-tools-write.json` | contract | M1 | 手删一条写能力 ⇒ 红 |
 | [x] | W2 | 免确认开关（显式、默认关）＋ `__tools_list` 只在允许时列写面 | contract / plugin | W1 | 开关关着却列出写工具 ⇒ 红 |
-| [ ] | W3 | ⭐ **草稿路**：外部写请求 ⇒ 进待确认队列（**库逐字节不变** ✓） | rust / plugin | W1 | 宿主面直连 `cap_page_create` ⇒ 红 |
+| [x] | W3 | ⭐ **草稿路**：外部写请求 ⇒ 进待确认队列（**库逐字节不变** ✓） | rust / plugin | W1 | 宿主面直连 `cap_page_create` ⇒ 红 |
 | [ ] | W4 | ⭐ **免确认路**：开了才直落，且**每次写必须留审计行** | rust / plugin | W3 | 免确认写**不写审计** ⇒ 红 |
 
 **W1／W2 的读数**（2026-10-06 实测 ✓）：
@@ -50,6 +50,7 @@
 |---|---|---|
 | W1 | `scripts/check-capabilities.mjs` ✓（`生成物 11 个文件` ✓） | ① 从写面清单删一条 ⇒ `✗ M2 写面缺 1 条（…应为 2 条）：blocks.append` ✓；② 把读能力塞进写面 ⇒ `✗ M2 写面多了 1 条：pages.get` ✓；两次都 `gen-capabilities` 还原 ⇒ exit 0 ✓。**读面清单字节不变** ✓（`git diff` 空 ✓ —— M1 的硬判据没被搅动 ✓） |
 | W2 | `src-tauri/src/mcp_host.rs` 的 `tools_list_tests`（真跑 ✓ 3/3 ✓）＋ `check-web-commands` ✓（`Rust 271 个命令 … CommandMap 272` ✓） | 把 `tools_list_json` 里的过滤改成 `if false`（＝永远带写面）⇒ **判据红** ✓，逐字 `开关关着时清单里出现了写工具 pages_create ✗ —— 「面 = 此刻真能调的能力」（M1 在 coverage.report 上踩过 ✓）` ✓；还原 ⇒ 0 ✓ |
+| W3 | `src-tauri/src/mcp_host.rs` 的 `w3_draft_tests::external_write_is_drafted_not_landed`（真跑 ✓ 1/1 ✓） | ① 让 `with_fresh_drafts` **把草稿丢掉**（不回交）⇒ 判据红，逐字 `草稿必须交出去一次（拿到 0 条）✗` ✓；② 在外部调用里**偷偷写一个库文件**（`spaces/mut.db`）⇒ 判据红，逐字 `外部写请求在用户确认之前**不许落库** ✗：数据目录变了` ✓；两次还原 ⇒ 0 ✓ |
 
 | [ ] | W5 | 登记（`gates.mjs` ＋ `docs/TESTING.md`）＋ 工作区账本证据 ＋ 设置面板文案 | — | W1–W4 | 缺证据 ⇒ 工作区 `check-all` 红 |
 
@@ -113,6 +114,13 @@ Test `scripts/check-capabilities.mjs`（加两条断言 ✓）。
 ⇒ **库 sha256 变了** ⇒ 红 ✓ —— 这就是施工单 Task W 要求的"绕草稿落库 ⇒ 红" ✓（逐字口径在规格 §2 ✓）。
 
 ---
+
+
+> **2026-10-06 实测补充**：`cap_pages_create` / `cap_blocks_append` **本来就只产出草稿、不落库** ✓
+> （`cap_pages_create` 头注逐字：「`pages.create`：**不建页**，只产出草稿」✓）；真正缺的是——草稿塞进**线程局**的
+> `RUN_STATE` 而**外部那条路没人取** ⇒ 被**静默丢掉** ✗。修法是 `plugins::with_fresh_drafts`（这一次调用开一份干净状态、
+> 跑完把草稿交出来 ✓）＋ `mcp_host` 的**草稿出口**（App 启动时装成 Tauri `emit("mcp:external-drafts")` ✓；判据里换成自己的出口 ✓）。
+> ⛔ 宿主面**依然不建页** ✗：落库只有 `src/lib/ai/apply.ts` 一处 ✓（免确认那条路也一样，只是前端不再弹确认框 ✓ —— Task W4 ✓）。
 
 ### Task W4: ⭐ 免确认路 —— 开了才直落，且**每次写必须留痕**
 

@@ -59,13 +59,83 @@ pub fn tools_list_json(include_write: bool) -> String {
 /// * `session_id` —— 这次调用的会话号 ✓（进审计 `source` ＝ `external:<会话号>` ⇒ 答得出"是谁" ✓，R104=A ✓）
 /// * `granted`    —— 这次会话**被授予**的权限清单 ✓（**判定不在这里** ✗ —— 这里只转交，判定仍只有一处 ✓）
 /// * `method` / `args_json` —— 能力 id 与参数 JSON 文本 ✓（与插件那条路**逐字同形** ✓）
+/// ⭐ M2（施工单 Task W3）：**外部草稿的出口** —— Rust 这侧只负责「把草稿交出去」✓，
+/// 谁来落库仍然只有 `src/lib/ai/apply.ts` 一处 ✓（⛔ 宿主面绝不自己建页 ✗）。
+///
+/// 为什么要一个**可替换的出口**（而不是直接调 Tauri 的 `emit`）：判据要能在**没有 App** 的情况下
+/// 真跑一次外部调用、并**看见**草稿交出来了 ✓（`set_external_draft_sink` 在测试里换成自己的 ✓ ——
+/// 这比「读源码猜有没有 emit」硬 ✗）。
+type DraftSink = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
+static DRAFT_SINK: std::sync::OnceLock<std::sync::Mutex<Option<DraftSink>>> = std::sync::OnceLock::new();
+
+fn draft_sink_slot() -> &'static std::sync::Mutex<Option<DraftSink>> {
+    DRAFT_SINK.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 装/换出口（App 启动时装 Tauri 的 `emit` ✓；判据里装自己的 ✓）。
+pub(crate) fn set_external_draft_sink(f: impl Fn(&str, &str) + Send + Sync + 'static) {
+    if let Ok(mut g) = draft_sink_slot().lock() {
+        *g = Some(std::sync::Arc::new(f));
+    }
+}
+
+/// 把这一批草稿交给出口 ✓（没装出口 ⇒ **出声**：宁可日志里留一句，也不静默吞掉 ✗）。
+fn deliver_drafts(source: &str, auto_apply: bool, drafts: &[plugins::PluginDraft]) -> bool {
+    let payload = serde_json::json!({
+        "source": source,
+        // ⭐ 免确认开关**开着** ⇒ 前端直接落库（不再弹确认框）；关着 ⇒ 前端摊给用户确认 ✓
+        //   两条路的**落库点同一个** ✓（`applyDraftAndRefresh` ⇒ `ai/apply.ts` ✓）。
+        "auto_apply": auto_apply,
+        "drafts": drafts,
+    });
+    let text = payload.to_string();
+    let sink = draft_sink_slot().lock().ok().and_then(|g| g.clone());
+    match sink {
+        Some(f) => {
+            f(source, &text);
+            true
+        }
+        None => {
+            eprintln!("[mcp] 有一批外部草稿没人接（{} 条，来自 {source}）—— 草稿会被丢掉 ✗", drafts.len());
+            false
+        }
+    }
+}
+
 pub(crate) fn handle_external_call(
     session_id: &str,
     granted: &[String],
     method: &str,
     args_json: &str,
 ) -> Result<String, String> {
-    plugins::with_external_caller(session_id, granted, || plugins::dispatch_capability(method, args_json))
+    // ① 跑这次调用，并把**它产出的草稿**收上来 ✓（外部路以前没人取 ⇒ 静默丢掉 ✗）
+    let (out, drafts) = plugins::with_fresh_drafts(|| {
+        plugins::with_external_caller(session_id, granted, || plugins::dispatch_capability(method, args_json))
+    });
+    if drafts.is_empty() {
+        return out;
+    }
+    // ② 交出去 ✓；③ 回给 agent 的话**如实**（是「待确认」就不许说成「已写入」✗）
+    let source = format!("external:{session_id}");
+    let auto = crate::mcp_channel::allow_write();
+    let delivered = deliver_drafts(&source, auto, &drafts);
+    let summaries: Vec<String> = drafts.iter().map(|d| d.summary.clone()).collect();
+    let out_json = out.unwrap_or_else(|e| format!("{{\"error\":{}}}", serde_json::Value::String(e)));
+    let mut v: serde_json::Value = serde_json::from_str(&out_json).unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("drafted".into(), serde_json::Value::Bool(true));
+        obj.insert("summaries".into(), serde_json::json!(summaries));
+        // ⚠️ 关着免确认 ⇒ `awaiting_confirm: true`；开着 ⇒ 前端会直接落库（也不弹框 ✓）
+        obj.insert("awaiting_confirm".into(), serde_json::Value::Bool(!auto));
+        obj.insert("auto_apply".into(), serde_json::Value::Bool(auto));
+        if !delivered {
+            obj.insert("delivered".into(), serde_json::Value::Bool(false));
+            obj.insert("note".into(), serde_json::Value::String(
+                "草稿已生成但没人接（App 那侧没装出口）⇒ 这次改动**没有落库** ✓".to_string(),
+            ));
+        }
+    }
+    Ok(v.to_string())
 }
 
 #[cfg(test)]
@@ -146,5 +216,101 @@ mod tools_list_tests {
             assert!(on.iter().any(|x| x == n), "开着时清单里必须有写工具 {n} ✓: {on:?}");
         }
         assert_eq!(on.len(), off.len() + 2, "开着 ＝ 关着 ＋ 写面 2 条 ✓（实际 {off:?} / {on:?}）");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// M2 · Task W3 的判据：**外部写请求在用户确认之前不许落库**（规格 §2 逐字口径 ✓）
+//   ⇒ 真读数：隔离数据目录**逐字节不变** ✓ ＋ 草稿**真交出去了**（不是静默丢掉 ✓）
+//     ＋ 回给 agent 的话如实（`awaiting_confirm` ✓）＋ 审计里有这一笔 ✓
+//   变异 ①（会红）：让 `with_fresh_drafts` 把草稿丢掉（不回交）⇒ 第二条断言红 ✓
+//   变异 ②（会红）：在外部调用期间往数据目录里写一个文件（模拟「偷偷落库」）⇒ 第一条断言红 ✓
+//   本机跑法：`powershell -File scripts\win-cargo-test.ps1 -Filter w3_draft`（rust 组以 Linux/CI 为准 ✓）
+// ═══════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod w3_draft_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    /// **库文件**的逐字节指纹（路径 → 内容 sha256 ✓）：只收
+    /// ① 应用数据目录**顶层**、② `spaces/` **一层** 里的 `*.db` / `*.db-wal` / `*.db-shm` ✓。
+    ///
+    /// ⚠️ 为什么**不**扫整棵测试目录：那是**所有测试共用**的（本仓的测试并行跑 ✓），别的测试
+    /// 新建的子目录会被误读成「这次调用落库了」⇒ **假红** ✓（本判据第一版就这么红的 ✓）。
+    /// ⚠️ 为什么用 sha256 而不是 mtime：mtime 会因为「读一下」就变 ✗，判据要抓的是**内容变化** ✓。
+    fn fingerprint(dir: &Path) -> BTreeMap<String, String> {
+        use sha2::{Digest, Sha256};
+        let mut out = BTreeMap::new();
+        let mut dirs = vec![dir.to_path_buf()];
+        dirs.push(dir.join("spaces"));
+        for d in dirs {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                let is_db = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.ends_with(".db") || n.ends_with(".db-wal") || n.ends_with(".db-shm"))
+                    .unwrap_or(false);
+                if !is_db {
+                    continue;
+                }
+                if let Ok(bytes) = std::fs::read(&p) {
+                    let mut h = Sha256::new();
+                    h.update(&bytes);
+                    let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+                    out.insert(p.display().to_string(), hex);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn external_write_is_drafted_not_landed() {
+        let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
+        // 装一个**测试出口**：真看见草稿才算数 ✓（比读源码猜有没有 emit 硬 ✗）
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        set_external_draft_sink(move |source, payload| {
+            if let Ok(mut g) = seen2.lock() {
+                g.push(format!("{source}|{payload}"));
+            }
+        });
+
+        let before = fingerprint(&dir);
+        let session = "sdk-w3-draft-1";
+        // 权限取**注册表里写的那一条** ✓（⛔ 不在测试里手抄权限名 ✗）
+        let cap = crate::capabilities_gen::lookup("pages.create").expect("pages.create 必须存在 ✓");
+        let perm = cap.permission.expect("写能力必须有 permission（注册表里写着 ✓）");
+        assert!(!perm.is_empty());
+        let out = handle_external_call(
+            session,
+            &[perm.to_string()],
+            "pages.create",
+            r#"{"title":"周报","content":"第一段"}"#,
+        )
+        .expect("外部写请求本身应当成功（它产出的是草稿 ✓）");
+        let after = fingerprint(&dir);
+
+        // ① 数据目录**逐字节不变** ✓ —— 这是规格那条不变量的机械形态 ✓
+        assert_eq!(before, after, "外部写请求在用户确认之前**不许落库** ✗：数据目录变了");
+        // ② 草稿**交出去了** ✓（以前是塞进线程局、没人取 ⇒ 静默丢掉 ✗）
+        let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
+        assert_eq!(got.len(), 1, "草稿必须交出去一次（拿到 {} 条）✗", got.len());
+        assert!(got[0].contains("新建页面"), "出口里要带**后端生成的** summary ✓：{got:?}");
+        assert!(got[0].contains("create_page"), "payload 的 kind 也要在 ✓：{got:?}");
+        // ③ 回给 agent 的话**如实** ✓（是「待确认」就不许说成「已写入」✗）
+        assert!(out.contains("\"drafted\":true"), "回话要带 drafted ✓：{out}");
+        assert!(out.contains("\"awaiting_confirm\":true"), "默认（免确认关着）必须 awaiting_confirm ✓：{out}");
+        // ④ 留痕 ✓
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .collect();
+        assert_eq!(rows.len(), 1, "写请求也要留痕 ✓（拿到 {} 条）", rows.len());
+        assert!(rows[0].ok, "这次调用本身是成功的（草稿生成了 ✓）");
+        assert_eq!(rows[0].capability, "pages.create");
     }
 }

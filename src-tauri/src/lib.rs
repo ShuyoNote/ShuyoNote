@@ -476,6 +476,19 @@ pub fn run() {
             //    它只认**环境变量**，于是"设置面板打开开关"这条路上，这段代码**根本不会跑** ✓
             //    （实测：面板写完 `config.json(enabled:true)` 重启 ⇒ 端口文件一直不出现 ✓）。
             //    现在由 `start_if_enabled()` 自己判"开不开"（env **或** 配置文件 ✓）。
+            // ⭐ M2（施工单 Task W3）：**外部草稿的出口** —— 宿主面只把草稿**转交**给前端 ✓，
+            //    落库仍然只有 `src/lib/ai/apply.ts` 一处 ✓（⛔ 宿主面绝不自己建页 ✗）。
+            //    免确认开关开着时，事件里带 `auto_apply: true` ⇒ 前端不再弹确认框、直接走同一条落库路 ✓。
+            {
+                let h = app.handle().clone();
+                mcp_host::set_external_draft_sink(move |source, payload| {
+                    use tauri::Emitter;
+                    let _ = h.emit(
+                        "mcp:external-drafts",
+                        serde_json::json!({ "source": source, "payload": payload }),
+                    );
+                });
+            }
             match mcp_channel::start_if_enabled() {
                 Some(addr) => println!("[mcp] 宿主面通道已起：{addr}（只绑回环 ✓，端口已写到公布文件 ✓）"),
                 None => {
