@@ -9,7 +9,7 @@ import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon } from "./icons";
 import { useRightPanel } from "../store/rightPanel";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
@@ -56,6 +56,12 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   //    （开目录会自动关掉 AI／讨论／插件面板 ✓）。⚠️ 订阅一律**取字段**，⛔ 不整店订阅 ✗（`check-store-subscriptions` 守这条 ✓）。
   const tocOpen = useRightPanel((s) => s.toc);
   const openToc = useRightPanel((s) => s.openToc);
+  // ⭐ 2026-10-06（owner）：「关闭这个顶部工具栏」⇒ 顶端那四颗（AI／讨论／通知／目录）撤掉，
+  //    出口补到**两处**：这一排的「⋯ 更多」菜单（可见 ✓）＋ 命令面板（键盘可及 ✓）。
+  //    ⚠️ 只有「讨论 / 通知」是**必须**补的 —— 它们此前**只有**那条工具栏进得去
+  //    （命令面板里当时没有对应命令，编辑器的 TOC 则另有入口 ✓）。
+  //    ⚠️ 与「目录」那颗同一个 store（`useRightPanel` ✓）：store 内部互斥，⛔ 不会有两份状态 ✗。
+  const openComments = useRightPanel((s) => s.openComments);
   const [exportOpen, setExportOpen] = useState(false);
   const [publishTarget, setPublishTarget] = useState<PublishTarget | null>(null);
 
@@ -245,6 +251,23 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         </button>
         {exportOpen && (
           <div className="editor-more-menu">
+            {/* ⭐ 2026-10-06：顶端工具栏撤掉后，「讨论 / 通知」的**可见**入口在这里
+                （命令面板另有 `panels.comments` / `panels.notifications` 两条 ✓）。
+                ⚠️ 这两颗与「目录」共用同一个右栏槽位 ⇒ 打开会顶掉目录/AI ✓（store 内部互斥 ✓）。 */}
+            <button
+              className="toolbar-menu-item"
+              onClick={() => { setExportOpen(false); openComments(true, "comments"); }}
+              title={t("editor.discuss")}
+            >
+              <CommentIcon /> {t("editor.discuss")}
+            </button>
+            <button
+              className="toolbar-menu-item"
+              onClick={() => { setExportOpen(false); openComments(true, "notifications"); }}
+              title={t("editor.notifications")}
+            >
+              <BellIcon /> {t("editor.notifications")}
+            </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportMarkdown(); }} title={t("editor.exportMarkdown")}>
               <UploadIcon /> {t("editor.exportMarkdown")}
             </button>

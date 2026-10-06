@@ -120,8 +120,20 @@ describe("声明式视图的两种落点", () => {
     const labels = railBtns.map((b) => b.getAttribute("aria-label"));
     expect(labels).toContain("插件面板：待整理");
     expect(labels.some((l) => l?.includes("最近更新")), "overlay 落点的视图不该出现在右栏").toBe(false);
-    // 三个内置抽屉还在（不要因为加了插件按钮就把它们顶掉）
-    expect(labels).toEqual(expect.arrayContaining(["AI 助手", "讨论", "通知", "目录"]));
+    // ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：内置那四颗（AI 助手／讨论／通知／目录）
+    //   **撤掉**了 ⇒ 这条从"四颗还在、别被插件顶掉"改成"**只有插件入口、且不被顶掉**" ✓。
+    //   （它们的新家在编辑器工具条的「⋯ 更多」菜单 ＋ 命令面板 —— 见 `EditorToolbar.tsx` /
+    //    `plugins/builtinCommands.ts` 的 `panels.*` ✓。）
+    expect(labels).toEqual(["插件面板：待整理"]);
+  });
+
+  it("★ 没有 rail 视图时，**整条顶端工具栏不渲染**（2026-10-06 撤掉内置四颗之后的行为）", () => {
+    usePlugins.setState({ plugins: [plugin([OVERLAY_VIEW])] });
+    root = mount(
+      React.createElement(React.Fragment, null, React.createElement(TopTools), React.createElement(PluginViewPanel)),
+    );
+    // ⛔ 不许留一条空工具栏占位：桌面它占标题栏一截、手机占一整行（那正是这次要省掉的位置 ✓）
+    expect(document.querySelector(".top-tools"), "没有插件 rail 入口时应整条不渲染").toBeNull();
   });
 
   it("点右栏按钮 → 面板打开、画出表、主区让位；再点一次收起", () => {

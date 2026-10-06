@@ -1917,48 +1917,66 @@ async function main() {  const executablePath = findChrome();
         }
       }
 
-      // ---------- 窄屏顶端工具栏：四颗常驻入口都在、够得到、真的能用 ----------
-      // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条**浮动** rail 撤了 ⇒ 入口常驻在**顶端工具栏** ✓
-      //   （手机：`TitleBar` 不渲染 ⇒ `App.tsx` 顶部自己渲染一行 ✓）。
-      //   本节换成**等价断言**：四颗在窄屏够得到、完整在屏内、点「目录」真能把抽屉打开 ✓
-      //   （⛔ 不是删掉这节 ✗ —— "用户按不到入口"正是本节当年要挡的那类事故 ✓）。
-      console.log(`\n【${vp.name} · 窄屏顶端工具栏】`);
+      // ---------- 窄屏：顶端工具栏**已撤**，入口改在编辑器工具条 ＋ 命令面板 ----------
+      // ⚠️ 2026-10-01 那版：右侧那条**浮动** rail 撤了 ⇒ 四颗入口常驻**顶端工具栏**（手机自己一行）。
+      // ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：那四颗**撤掉** —— 它占一整行窄屏垂直空间，
+      //   而两端的位置都很贵。出口补到两处：**编辑器工具条的「⋯ 更多」菜单**（可见 ✓）＋
+      //   **命令面板**（`panels.comments` / `panels.notifications` ✓）。
+      //   ⛔ 所以本节从"四颗都在"改成"**工具栏确实没了** ＋ **新入口真的能把面板打开**" ——
+      //   仍然钉住当年那条事故（"用户按不到入口" ✓），只是入口换了地方 ✓。
+      console.log(`\n【${vp.name} · 顶端工具栏撤掉后的入口】`);
       await openView(page, "笔记");
+      // ⚠️ 编辑器工具条只在**普通页面**打开时才有（数据库页渲染的是 `.database-view` ✗）⇒
+      //    先经侧栏树打开**第一页**（`data-node-kind="page"` ✓ 那个属性就是为这种选择存在的 ✓）。
+      await openRail(page);
+      await page.evaluate(() => {
+        const row = document.querySelector('.tree-row[data-node-kind="page"]');
+        if (row) row.click();
+      });
+      await sleep(1200);
+      await closeRail(page);
+      await sleep(600);
       const tools0 = await safeEval(page, () => {
-        const btns = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool"));
+        const dirBtn = Array.from(document.querySelectorAll(".toolbar-btn")).find((b) =>
+          (b.getAttribute("title") || "").startsWith("目录"),
+        );
+        const r = dirBtn?.getBoundingClientRect();
         return {
-          has: !!document.querySelector(".top-tools.is-mobile"),
-          n: btns.length,
-          labels: btns.map((b) => b.getAttribute("aria-label") || ""),
-          fits: btns.every((b) => {
-            const r = b.getBoundingClientRect();
-            return r.left >= 0 && r.right <= innerWidth + 0.5 && r.top >= 0 && r.bottom <= innerHeight + 0.5;
-          }),
+          topTools: !!document.querySelector(".top-tools"),
+          hasDir: !!dirBtn,
+          dirInView: r
+            ? r.left >= 0 && r.right <= innerWidth + 0.5 && r.top >= 0 && r.bottom <= innerHeight + 0.5
+            : false,
+          hasMore: !!document.querySelector(".editor-toolbar-more .toolbar-btn"),
         };
       });
-      ok(tools0.has, "窄屏渲染顶端工具栏（手机上标题栏不渲染 ⇒ 这里必须自己渲染一行 ✓）");
-      ok(tools0.n >= 4, `四颗入口都在（AI 助手／讨论／通知／目录 —— 实际 ${tools0.n} 颗：[${tools0.labels.join(" / ")}]）`);
-      ok(tools0.fits, "每颗按钮都完整在屏内 ✓");
+      ok(!tools0.topTools, "顶端工具栏已撤（无插件入口时不渲染 `.top-tools`）—— owner 2026-10-06 的决定");
+      ok(tools0.hasDir && tools0.dirInView, "编辑器工具条上的「目录」在屏内、够得到");
+      ok(tools0.hasMore, "编辑器工具条上有「⋯ 更多」菜单（讨论 / 通知 的新家）");
 
-      const used = await safeEval(page, () => {
-        const b = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool")).find(
-          (x) => (x.getAttribute("aria-label") || "") === "目录",
+      // 点「⋯」→「讨论」⇒ 右栏面板真的打开（⛔ 不是"菜单里有个点不动的项"）
+      const menuOpen = await safeEval(page, () => {
+        const b = document.querySelector(".editor-toolbar-more .toolbar-btn");
+        if (b) b.click();
+        return !!b;
+      });
+      await sleep(400);
+      const discussClicked = await safeEval(page, () => {
+        const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
+          (x.textContent || "").includes("讨论"),
         );
-        if (!b) return "没有「目录」那颗";
-        b.click();
-        return "ok";
+        if (item) item.click();
+        return !!item;
       });
       await sleep(900);
-      const pressed = await safeEval(page, () => {
-        const b = Array.from(document.querySelectorAll(".top-tools.is-mobile .top-tool")).find(
-          (x) => (x.getAttribute("aria-label") || "") === "目录",
-        );
-        return b ? b.getAttribute("aria-pressed") === "true" : false;
-      });
-      ok(used === "ok" && pressed, `点「目录」真的打开了抽屉（自报按下=${pressed}）`);
+      const drawerOpen = await safeEval(page, () => !!document.querySelector(".comments-drawer"));
+      ok(
+        menuOpen && discussClicked && drawerOpen,
+        `「⋯ → 讨论」真的把右栏面板打开了（menu=${menuOpen} item=${discussClicked} drawer=${drawerOpen}）`,
+      );
       await page.keyboard.press("Escape");
-      await sleep(500);
-      await shot(page, `${vp.name}-top-tools`);
+      await sleep(400);
+      await shot(page, `${vp.name}-panel-entrances`);
 
       // ---------- 小控件（开关 / 色点）不许被"按钮一律 44 高"拉变形 ----------
       // 用户截图：窄屏「关于」里那个开关变成了 44×44 的扁方疙瘩、圆钮贴在角上。
@@ -2324,22 +2342,26 @@ async function main() {  const executablePath = findChrome();
       d.toolbarBtn && d.toolbarBtn.w === 28 && d.toolbarBtn.h === 28,
       `桌面编辑工具栏按钮仍是 28×28（实际 ${d.toolbarBtn?.w}×${d.toolbarBtn?.h}）`,
     );
-    ok(
-      d.topTools && d.topTools.h <= 44,
-      `桌面顶端工具栏是窄条（实际高 ${d.topTools?.h}px）——⛔ 旧那条右侧浮动 rail 已撤 ✓`,
-    );
+    // ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：这三条从"量顶端工具栏"改成
+    //   "**它确实不在** ＋ 新入口在编辑器工具条上" —— 决定本身也要有判据，否则哪天被顺手加回来没人拦 ✓。
     const dTools = await safeEval(desk, () => ({
-      n: document.querySelectorAll(".top-tools .top-tool").length,
+      topTools: !!document.querySelector(".top-tools"),
+      topTool: document.querySelectorAll(".top-tool").length,
       mobileRow: !!document.querySelector(".top-tools.is-mobile"),
       oldRail: !!document.querySelector(".right-rail"),
       oldToggle: !!document.querySelector(".mobile-right-toggle"),
       oldBackdrop: !!document.querySelector(".mobile-right-backdrop"),
+      hasDirOnToolbar: Array.from(document.querySelectorAll(".toolbar-btn")).some((b) =>
+        (b.getAttribute("title") || "").startsWith("目录"),
+      ),
+      hasMore: !!document.querySelector(".editor-toolbar-more .toolbar-btn"),
     }));
-    ok(dTools.n >= 4, `桌面四颗入口都在（实际 ${dTools.n} 颗）`);
-    // ⚠️ 2026-10-01：RightRail 已撤 ⇒ 这三条反向断言**现在才成立** ✓（撤之前加必红 ✗，实测撞过 ✓）。
+    ok(!dTools.topTools && dTools.topTool === 0, "桌面也不再有顶端工具栏（`.top-tools` / `.top-tool` 都为 0）");
+    ok(dTools.hasDirOnToolbar && dTools.hasMore, "桌面入口改在编辑器工具条：「目录」那颗 ＋ 「⋯ 更多」菜单");
+    // ⚠️ 2026-10-01：RightRail 已撤 ⇒ 这几条反向断言**现在才成立** ✓（撤之前加必红 ✗，实测撞过 ✓）。
     ok(
       !dTools.mobileRow && !dTools.oldRail && !dTools.oldToggle && !dTools.oldBackdrop,
-      "桌面走标题栏那一处（手机那行与旧 rail/唤出钮/遮罩都不许出现 ✓）",
+      "手机那行与旧 rail/唤出钮/遮罩都不许出现（撤掉的形状不许复辟 ✓）",
     );
     // ⚠️ 2026-10-01：**"旧 rail 不许出现"那两条反向断言留到撤组件那一步再加** ✓ ——
     //   现在 RightRail 还在 ⇒ 加了必然红 ✗（我这一步就在实测里撞到过 ✓）。撤完再加，才是它成立的时刻 ✓。
