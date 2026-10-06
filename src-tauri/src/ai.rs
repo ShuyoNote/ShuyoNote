@@ -79,6 +79,75 @@ fn describe_net(e: &reqwest::Error, url: &str) -> String {
     }
 }
 
+/// 上游的**错误响应体** ⇒ 一句能给人看的话。
+///
+/// 来由（2026-10-06，owner 截图）：AI 面板只显示 `【请求失败 400 Bad Request】` ——
+/// **看不出为什么** ✗。上游的错误体里通常写着真原因（模型名不对 / 欠费 / 参数不支持 / 密钥无效 ✓），
+/// 而**流式**那条路（编辑器的「用 AI 写作」走的就是它）原先把 body **整个丢掉** ✗。
+///
+/// 认三种形状（按优先级 ✓）：
+///   ① OpenAI 兼容：`{"error":{"message":"…"}}` / `{"message":"…"}` / `{"error":"…"}` / `{"detail":"…"}` ✓
+///   ② 纯文本错误 ✓  ③ HTML 报错页（去掉标签、压平空白 ✓）
+/// 一律**截断**到 200 字（⛔ 不把整页 HTML 塞进界面 ✗），空体返回空串 ✓。
+fn upstream_error_detail(body: &str) -> String {
+    let raw = body.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    let mut msg = String::new();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        for path in [["error", "message"], ["message", ""], ["error", ""], ["detail", ""]] {
+            let mut cur = &v;
+            let mut ok = true;
+            for seg in path.iter().filter(|s| !s.is_empty()) {
+                match cur.get(seg) {
+                    Some(next) => cur = next,
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                if let Some(s) = cur.as_str() {
+                    msg = s.to_string();
+                    break;
+                }
+            }
+        }
+        if msg.is_empty() {
+            msg = "（上游返回了 JSON，但里面没有可读的 message）".to_string();
+        }
+    } else {
+        // 非 JSON：可能是纯文本，也可能是网关的 HTML 报错页 ⇒ 去标签 + 压平空白 ✓
+        let mut out = String::with_capacity(raw.len().min(512));
+        let mut in_tag = false;
+        for ch in raw.chars() {
+            match ch {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ if !in_tag => out.push(ch),
+                _ => {}
+            }
+        }
+        msg = out
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    let trimmed = msg.trim();
+    if trimmed.chars().count() > 200 {
+        let head: String = trimmed.chars().take(200).collect();
+        format!("{head}…")
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// A reqwest client with a generous timeout so a hung LLM endpoint can't leave a
 /// request (and the UI) waiting forever. LLM inference can be slow, hence 120s.
 fn http_client() -> Result<reqwest::Client, String> {
@@ -148,11 +217,15 @@ async fn ai_openai_complete(args: AiCompleteArgs) -> Result<AiCompleteResult, St
     let resp = req.send().await.map_err(|e| describe_net(&e, &url))?;
     let status = resp.status();
     if !status.is_success() {
-        let mut detail = String::new();
-        if let Ok(v) = resp.json::<serde_json::Value>().await {
-            detail = v["error"]["message"].as_str().unwrap_or("").to_string();
-        }
-        return Err(format!("OpenAI 兼容接口请求失败 ({status}){detail}"));
+        // 与流式那条路**共用一个**帮手 ✓ —— 原先只认 JSON 的 `error.message`，
+        // 网关返回 HTML/纯文本时报错里就**什么原因都没有** ✗（2026-10-06 owner 截图同源 ✓）。
+        let body = resp.text().await.unwrap_or_default();
+        let detail = upstream_error_detail(&body);
+        return Err(if detail.is_empty() {
+            format!("OpenAI 兼容接口请求失败 ({status})（响应体为空）")
+        } else {
+            format!("OpenAI 兼容接口请求失败 ({status})：{detail}")
+        });
     }
     let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     let content = v["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
@@ -299,7 +372,16 @@ async fn stream_model<E: Fn(String) + Send>(args: AiCompleteArgs, emit: E) -> Re
         }
     };
     if !resp.status().is_success() {
-        return Err(format!("【请求失败 {}】", resp.status()));
+        // ⭐ 2026-10-06（owner 截图：面板只有「400 Bad Request」看不出为什么 ✗）：
+        //   读**有上限**的一段错误体，把上游的原话带出去 ✓（`upstream_error_detail` 是纯函数、有单测 ✓）。
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let detail = upstream_error_detail(&body);
+        return Err(if detail.is_empty() {
+            format!("【请求失败 {status}】（响应体为空）")
+        } else {
+            format!("【请求失败 {status}】{detail}")
+        });
     }
 
     let mut stream = resp.bytes_stream();
@@ -437,4 +519,56 @@ pub async fn ai_complete_stream(
         }
     });
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 判据：上游错误体 ⇒ 人话（2026-10-06 owner 截图：「【请求失败 400 Bad Request】」看不出为什么 ✗）
+//   本机跑法：`powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter upstream_error`
+//   ⚠️ 本机跑它要先**关掉**正在运行的 dev 实例（它占着 target 目录 ⇒ cargo 拒访问 ✗）。
+// ═══════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod upstream_error_tests {
+    use super::upstream_error_detail;
+
+    #[test]
+    fn openai_shape_keeps_the_message() {
+        assert_eq!(
+            upstream_error_detail(r#"{"error":{"message":"Model Not Exist"}}"#),
+            "Model Not Exist"
+        );
+        assert_eq!(upstream_error_detail(r#"{"message":"余额不足"}"#), "余额不足");
+        assert_eq!(upstream_error_detail(r#"{"error":"invalid api key"}"#), "invalid api key");
+        assert_eq!(upstream_error_detail(r#"{"detail":"bad request"}"#), "bad request");
+    }
+
+    #[test]
+    fn plain_text_passes_through() {
+        assert_eq!(upstream_error_detail("  请求失败 400 Bad Request  "), "请求失败 400 Bad Request");
+    }
+
+    #[test]
+    fn html_gateway_page_is_flattened() {
+        let got = upstream_error_detail("<html><head><title>400</title></head>\n<body><h1>Bad\nRequest</h1></body></html>");
+        assert_eq!(got, "400 Bad Request");
+    }
+
+    #[test]
+    fn empty_body_is_empty() {
+        assert_eq!(upstream_error_detail(""), "");
+        assert_eq!(upstream_error_detail("   \n  "), "");
+    }
+
+    #[test]
+    fn json_without_message_says_so() {
+        // ⛔ 不许"什么都不说"（那正是这次截图里最难查的形态 ✗）
+        assert!(upstream_error_detail(r#"{"code":400,"data":null}"#).contains("没有可读"));
+    }
+
+    #[test]
+    fn long_body_is_capped() {
+        let long = "x".repeat(1000);
+        let got = upstream_error_detail(&long);
+        assert_eq!(got.chars().count(), 201, "200 字 + 一个省略号 ✓");
+        assert!(got.ends_with('…'));
+    }
 }

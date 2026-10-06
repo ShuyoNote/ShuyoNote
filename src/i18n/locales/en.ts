@@ -30,7 +30,7 @@ export default {
   },
   settings: {
     mcp: "External AI access (MCP)",
-    mcpHint: "Let external AI assistants read this vault: off by default, loopback-only, token-gated",
+    mcpHint: "External AI read/write · off by default",
     appearance: "Appearance",
     appearanceHint: "Theme & accent",
     spaces: "Spaces",

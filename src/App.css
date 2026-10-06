@@ -23702,3 +23702,66 @@ body.is-plugin-panel-open .main {
   border: none;
   background: #fff;
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   「外部 AI 接入（MCP）」设置面板（2026-10-06 owner 截图 ＋「优化一下」✓）
+   只补面板**自己**那几个类；布局/字号/按钮一律走设置页既有类 ✓（⛔ 不新造一套 ✗）。
+   ───────────────────────────────────────────────────────────────────────────── */
+.mcp-access .set-section + .set-section { margin-top: 18px; }
+/* 长文那一行的开关：贴到**标题**那一行 ✓（默认 center 会让它悬在整段文字的垂直中点 ✗） */
+.mcp-access .set-row { align-items: flex-start; }
+.mcp-access .set-row > .ui-toggle { margin-top: 4px; flex: none; }
+.mcp-access-state { display: flex; align-items: center; gap: 6px; }
+.mcp-access-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex: none;
+}
+.mcp-access-dot.is-on { background: var(--accent); }
+.mcp-access-err { color: var(--danger); }
+.mcp-access code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--hover);
+  font-size: 11.5px;
+  word-break: break-all;
+}
+.mcp-access-token {
+  margin: 8px 0 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow-x: auto;
+}
+.mcp-access-token-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  word-break: break-all;
+  color: var(--text);
+}
+/* ⚠️ 令牌块里的 `<code>` **也会**命中上面那条 `.mcp-access code`（`0,1,1` 比 `.mcp-access-token-text`
+   的 `0,1,0` 更专）⇒ 不加这一条，令牌会被那圈"行内代码"的小字号和底衬盖掉 ✗
+   （实测截图里量到 11.5px，而不是这里写的 12.5px ✓）。 */
+.mcp-access .mcp-access-token code {
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+}
+.mcp-access-snippet {
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-x: auto;
+  max-height: 240px;
+}
