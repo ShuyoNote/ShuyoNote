@@ -5736,6 +5736,21 @@ select.prop-value {
   font-size: 16px;
 }
 
+/*
+  ⚠️ 2026-10-06（owner 截图）：「输入 '/' 选择，按 '空」只剩半句 —— 空页面上**两个占位同时在**。
+  为什么：`.new-page-guide`（新页面引导，`App.tsx:860` 渲染）是 `position:absolute; inset:0` ＋
+  `max-width: var(--doc-width)` 居中的**不透明**面板，它只盖住中间；
+  而这条占位**也是**居中同宽 ⇒ 就从引导**两侧露出半截**，看着像被切了一刀 ✗。
+  修法：**引导在的时候把编辑器占位藏掉**（两者说的是同一件事，留一个就够）。
+  ⚠️ 用 `:has()` 而不是在 `Editor.tsx` 里另算一遍"这页是不是空的"：判据只有一处
+  （`App.tsx` 渲染引导用的条件）⇒ ⛔ 不会出现两份"空页"定义各自漂移 ✗。
+  ⚠️ 只在空页上生效：正文有内容时占位由 Lexical 自己管，这条不参与 ✓。
+  ⚠️ 祖先取 `.editor-stage`（`Editor` 与 `NewPageGuide` 的共同父节点，`position: relative` ✓）。
+*/
+.editor-stage:has(.new-page-guide) .editor-placeholder {
+  display: none;
+}
+
 .editor-error {
   color: var(--danger);
   /* The RichTextPlugin ErrorBoundary wraps every decorator in this div even when
