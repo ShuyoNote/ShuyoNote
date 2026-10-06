@@ -10942,6 +10942,24 @@ p:has(> .editor-drawing-container) {
   flex-direction: column;
 }
 
+/* ⚠️ **2026-10-06（owner 截图：「全屏 > 代码」里代码框只有 ~300px、底下整片空白 ✗）**：
+   上面那条只有 `display: flex`，**没有** `flex: 1` ⇒ 在全屏那个 flex 列里，它按**内容高**
+   （textarea 的 `rows`）撑 ⇒ 草稿区只占一小条、工具栏飘在中间、下面全空 ✗。
+   ⇒ 全屏时：**面板吃掉剩余高度** ＋ **textarea 吃掉面板里除工具栏外的全部高度** ✓；
+     并把 `resize: vertical` 关掉 —— 撑满之后再手动拖高会与 flex 打架（拖了不生效/抖动 ✗）。
+   判据在 `scripts/check-panel-layout.mjs`（夹具里放一个按钮，`page.click` ＝真用户激活 ⇒
+   真的进全屏 ✓，再量 textarea 是否撑满、工具栏是否落底 ✓）。 */
+.editor-mermaid:fullscreen .editor-mermaid-code-pane {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-mermaid:fullscreen .editor-mermaid-input {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+}
+
 /* 代码页里那条工具栏**不要**再画上边框：上面的 textarea 已经有 `border-bottom` ⇒
    两条叠在一起会看着像 2px 的粗线。 */
 .editor-mermaid-code-pane .editor-mermaid-toolbar {

@@ -236,6 +236,34 @@ const FIXTURE = `
      当场假绿 ✗）。而 Lexical 是**用 DOM API 直接搭**的（tr 是 table 的直接子元素 ✓，
      本机实测 tr.parentElement.tagName === "TABLE" ✓）⇒ 夹具必须用同一条路造，才量得到真形状 ✓。 -->
 <div class="editor-content" id="head-table-host"></div>
+
+<!-- Mermaid 块的**全屏 + 代码页**：草稿区必须撑满（owner 2026-10-06 截图：全屏 > 代码 里
+     代码框只有 ~300px，底下整片空白 ✗）。
+     ⚠️ :fullscreen 只在**真进全屏**时匹配 ⇒ 这里放个按钮，由门禁 page.click 触发
+     requestFullscreen（Puppeteer 的 click 是**真用户激活** ⇒ 浏览器才允许进全屏 ✓）；
+     用 page.evaluate 直接调它会被拒 ⇒ 那两条判据就永远是假绿 ✓。 -->
+<div class="editor-mermaid" id="mermaid-fs">
+  <div class="editor-mermaid-bar">
+    <span class="editor-mermaid-tabs"><button class="editor-mermaid-tab is-on">代码</button></span>
+  </div>
+  <div class="editor-mermaid-code-pane">
+    <textarea class="editor-mermaid-input" rows="10">flowchart TB
+A1["块编辑器"]
+A2["RAG 检索"]</textarea>
+    <div class="editor-mermaid-toolbar">
+      <select class="editor-mermaid-syntax"><option>flowchart</option></select>
+      <button class="editor-mermaid-btn">保存</button>
+    </div>
+  </div>
+</div>
+<button id="mermaid-fs-trigger" style="position: fixed; top: 4px; left: 4px; z-index: 9999">进全屏</button>
+<script>
+  document.getElementById("mermaid-fs-trigger").addEventListener("click", function () {
+    var pr = document.getElementById("mermaid-fs").requestFullscreen();
+    window.__fsErr = "pending";
+    if (pr && pr.then) pr.then(function () { window.__fsErr = "ok"; }, function (e) { window.__fsErr = String((e && e.name) + ":" + (e && e.message)); });
+  });
+</script>
 `;
 
 const css = readFileSync(join(root, "src", "App.css"), "utf8");
@@ -640,6 +668,39 @@ try {
     headTable.second?.weight !== "600",
     `第二行**不是**表头（实际 ${headTable.second?.weight}）—— 修法不许把整张表都加粗`,
   );
+
+  // ---------- Mermaid 块：**全屏 + 代码页**草稿区要撑满 ----------
+  // 2026-10-06 owner 截图：「全屏 > 代码」里代码框只有 ~300px、底下整片空白 ✗。
+  // 真因：`.editor-mermaid-code-pane` 只是 `display:flex`，**没有** `flex:1` ⇒
+  // 全屏那个 flex 列里它按内容高（textarea 的 rows）撑 ✗。
+  // ⚠️ 必须**真进全屏**（`:fullscreen` 才会匹配）⇒ 用 page.click 拿用户激活 ✓。
+  await page.click("#mermaid-fs-trigger");
+  await new Promise((r) => setTimeout(r, 400));
+  const fsCode = await page.evaluate(() => {
+    const root = document.getElementById("mermaid-fs");
+    const pane = document.querySelector("#mermaid-fs .editor-mermaid-code-pane");
+    const ta = document.querySelector("#mermaid-fs .editor-mermaid-input");
+    const tb = document.querySelector("#mermaid-fs .editor-mermaid-toolbar");
+    return {
+      isFull: document.fullscreenElement === root,
+      fsErr: window.__fsErr || "(没触发)",
+      vh: innerHeight,
+      paneH: Math.round(pane?.getBoundingClientRect().height ?? -1),
+      taH: Math.round(ta?.getBoundingClientRect().height ?? -1),
+      tbTop: Math.round(tb?.getBoundingClientRect().top ?? -1),
+    };
+  });
+  ok(fsCode.isFull, `夹具真的进了全屏（requestFullscreen 成功）—— 否则下面两条是假绿（${fsCode.fsErr}）`);
+  ok(
+    fsCode.taH > fsCode.vh * 0.6,
+    `全屏 + 代码页：草稿区撑满（textarea ${fsCode.taH}px ／ 视口 ${fsCode.vh}px，面板 ${fsCode.paneH}px）`,
+  );
+  ok(
+    fsCode.tbTop > fsCode.vh * 0.8,
+    `语法/保存那条工具栏落在**底部**（top ${fsCode.tbTop} ／ 视口 ${fsCode.vh}）`,
+  );
+  await page.evaluate(() => document.exitFullscreen?.());
+  await new Promise((r) => setTimeout(r, 200));
   if (SHOTS) {
     await page.screenshot({ path: join(SHOTS, "file-manager-narrow.png"), fullPage: true });
   }
