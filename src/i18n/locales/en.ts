@@ -29,6 +29,8 @@ export default {
     paletteNoResults: "No results",
   },
   settings: {
+    mcp: "External AI access (MCP)",
+    mcpHint: "Let external AI assistants read this vault: off by default, loopback-only, token-gated",
     appearance: "Appearance",
     appearanceHint: "Theme & accent",
     spaces: "Spaces",

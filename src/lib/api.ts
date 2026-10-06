@@ -120,6 +120,11 @@ export const api = {
   createWorkspace: (name?: string | null, kind?: "personal" | "team" | null) =>
     invoke("create_workspace", { name, kind: kind ?? null }),
   getActiveWorkspaceId: () => invoke("get_active_workspace_id"),
+  // ---- MCP 接入（M1 收口，2026-10-06 ✓）：设置面板那三条 ----
+  mcpStatus: () => invoke("mcp_status"),
+  mcpSetEnabled: (enabled: boolean) => invoke("mcp_set_enabled", { enabled }),
+  mcpRotateToken: () => invoke("mcp_rotate_token"),
+
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),
   copyPageToWorkspace: (pageId: string, targetWorkspaceId: string, newParentId?: string | null) =>

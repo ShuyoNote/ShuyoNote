@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
+import { McpAccessPane } from "./McpAccessPane";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
@@ -35,6 +36,7 @@ import {
   DatabaseIcon,
   TemplateIcon,
   LockIcon,
+  SendIcon,
   SparkleIcon,
   InfoIcon,
   InboxIcon,
@@ -58,6 +60,8 @@ const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Elem
   // ⭐ 2026-10-02：官方引擎与按需下载 —— 排在「插件」之后（插件＝第三方扩展 ／ 能力＝官方引擎 ✓）。
   { id: "abilities", labelKey: "settings.abilities", hintKey: "settings.abilitiesHint", icon: <DownloadIcon width={16} height={16} /> },
   { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} /> },
+  // ⭐ 2026-10-06（owner 拍板 R89）：外部 AI 接入的开关面 —— 与「安全」同一族（都是"谁能碰我的库"✓）。
+  { id: "mcp", labelKey: "settings.mcp", hintKey: "settings.mcpHint", icon: <SendIcon width={16} height={16} /> },
   { id: "ai", labelKey: "settings.ai", hintKey: "settings.aiHint", icon: <SparkleIcon width={16} height={16} /> },
   { id: "about", labelKey: "settings.about", hintKey: "settings.aboutHint", icon: <InfoIcon width={16} height={16} /> },
 ];
@@ -1466,7 +1470,9 @@ export function SettingsDialog() {
       <div className="set-dialog" role="dialog" aria-label="设置" aria-modal="true">
         <nav className="set-rail" aria-label="设置分类">
           <div className="set-rail-title">设置</div>
-          {TABS.map((it) => (
+  {/* ⚠️ Web 版没有本机通道 ⇒ 「外部 AI 接入」那一项**整个不出现** ✓（与命令面登记成桌面专属同一口径 ✓；
+            不留一个点进去是空白的 tab ✗）。 */}
+        {TABS.filter((it) => it.id !== "mcp" || isDesktopPlatform()).map((it) => (
             <button
               key={it.id}
               className={`set-rail-item${tab === it.id ? " is-on" : ""}`}
@@ -1505,7 +1511,8 @@ export function SettingsDialog() {
                 <AiSettingsForm onDone={() => {}} showCancel={false} />
               </section>
             )}
-            {tab === "about" && <AboutPane />}
+            {tab === "mcp" && isDesktopPlatform() && <McpAccessPane />}
+        {tab === "about" && <AboutPane />}
             </div>
           </div>
         </div>
