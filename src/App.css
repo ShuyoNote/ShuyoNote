@@ -248,11 +248,19 @@ body,
 #root {
   height: 100%;
   margin: 0;
-  /* ⭐ 2026-10-06（owner：「在侧边栏滚动，整个页面上移，底下大片空白」✗）：
-     整页**不参与**滚动接力 / 橡皮筋 ✓ —— 滚轮只该喂给当前那一栏（侧栏 ✓ 正文 ✓），
-     到边界就停住 ✓。⛔ 这里**不加 `overflow: hidden`** ✗ —— `App.tsx` 有几条早期返回
-     （`view-loading` 之类 ✓）渲染在 `.app` **之外** ✓，加了会把那几屏裁掉 ✗；
-     真要彻底钉死文档高度，得先把那几屏搬进 `.app` ✓（那一笔单独做 ✓）。 */
+  /* ⭐ 2026-10-06（owner：「在侧边栏滚动鼠标，结果整个页面上移，底下大片空白」✗ —— **桌面窗口** ✓）：
+     在**真实桌面 WebView2** 里量到：视口 890 ✓，而 `html.scrollHeight = 4149` ✗
+     （`body/#root/.app` 都规规矩矩 890 ✓、`.app` 还是 `overflow: hidden` ✓）——
+     撑高文档的是**绝对定位 + 不在任何滚动容器里**的那几个后代 ✓（实测：一个 `div` 在
+     top 4092~4136 ✓、一个 `button.editor-code-copy` 在 4084 ✓）。
+     ⇒ 后果就是**整页能滚** ✓：滚轮一旦"接力"出去，内容整片上移、露出底下空白 ✗ —— 正是 owner 那句 ✓。
+     ⇒ 这里直接把文档这一层**钉住** ✓：`overflow: hidden` ⇒ 页永远不滚 ✓，
+     该滚的仍然是内层的 `.note-scroll` / `.sidebar-tree` ✓（它们各自 `overflow-y: auto` ✓）。
+     ⚠️ 为什么现在敢加（先前不加 ✓ 的理由）：`App.tsx` 那几条渲染在 `.app` 之外的早期返回
+     是 `.view-loading`（一行字 ✓）与 `.space-switcher`（`position: fixed` ✓ 自带 max-height ✓）
+     ⇒ **都不靠文档滚动** ✓，加了不会裁掉任何东西 ✓。
+     ⛔ 别用 `.app` 上的 `overflow: hidden` 代替这一条 ✗ —— 它管不住绝对定位的后代 ✓（实测就是它漏的 ✓）。 */
+  overflow: hidden;
   overscroll-behavior: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
