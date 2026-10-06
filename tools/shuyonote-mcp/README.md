@@ -81,7 +81,7 @@ $env:SHUYONOTE_MCP_PORT_FILE  = "C:\path\to\port"
 | 凭什么连 | `Authorization: Bearer <令牌>` ✓；令牌校验**在 App 那侧**（桥只转发 ✓） |
 | 默认 | **关** ✓ |
 | 关掉 | 请求立刻被拒 ✓；重新打开换新令牌 ✓ |
-| 留痕 | **每一次调用（包括被拒绝的）都会写一行审计** ✓：`{"plugin_id":"external","source":"external:mcp-<会话号>","capability":"pages.search",…,"ok":false,"error_code":"space_unknown"}` ✓（会话号由令牌派生，**不含令牌原文** ✓） |
+| 留痕 | **到达能力层的每一次调用都会写一行审计（含被拒绝的 ✓）**：`{"plugin_id":"external","source":"external:mcp-<会话号>","capability":"pages.search",…,"ok":false,"error_code":"space_unknown"}` ✓（会话号由令牌派生，**不含令牌原文** ✓）。⚠️ 但在**门口**就被挡下的那几种 —— 开关关着（`disabled`）／令牌不对（`401`）／`Origin`·`Host` 不是回环（`403`）／路径不是 `POST /call`（`404`）—— **不写审计** ✗：那时连「哪个外部会话」都还没认出来 ✓；⚖️ 而且通道那一层**刻意不碰审计账**（审计只有一本、只在能力层写 ✓，见 `check-mcp-audit-single-ledger` ✓）。 |
 | 能绕开权限吗 | ⛔ 不能 —— 与插件走的是**同一处**鉴权（`dispatch_capability`）✓、同一本审计账 ✓ |
 
 ## 排错（报错都是**如实**的，不假装成功 ✓）

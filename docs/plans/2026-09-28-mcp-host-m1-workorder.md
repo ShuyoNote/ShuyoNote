@@ -1,14 +1,22 @@
 # MCP 宿主 M1 施工单（先把「读」打通）—— 注册表第 10 件生成物 ＋ 应用内宿主面 ＋ stdio 桥
 
-> 状态：⭐ **M1 已开工**（2026-09-30 windows 侧更正 —— 见下）
-> · **Task 1 ＋ Task 2 已完成** ✓：生成物第 10 件 `capabilities/mcp-tools.json`（只读 8 条 ✓）＋
->   反向断言「M1 清单里不许出现写能力」（含"塞 `pages.create` ⇒ 红"与"空清单 ⇒ 拒绝给绿"两条自证 ✓）；
->   ⚠️ 两笔都在**分支** `feat/mcp-tools-generated` 上 ✓（`47b1c493`／`c1d371f7`），**尚未推** ✗（产品仓 push 要 owner 点头 ✓）。
-> · **Task 3** 在 AMD 的分支 `feat/mcp-bridge-stdout-gate` 上有半件 ✓（本行不替它记账 ✗）；Task 4–7 未开工 ✗。
-> · ⚠️ **原文那句「前置 = 总方案 §10 第 1、2 项拍板」已过期** ✗：那几项**早已拍板并收口** ✓
->   （台账 `R85` 补录立项 ✓／`R86` 通道形态 ⇒ **A 回环 TCP＋token** ✓／`R87` 免确认写 ⇒ A 开且必须留痕 ✓／
->   `R89` GUI 开关 ⇒ 必须有 ✓；另 §10⑥ 桥语言 ⇒ **A Node** ✓）⇒ ⇒ **"等拍板"这个前置已经满足** ✓，
->   别再从这一行读成"卡在 owner 那里" ✗（本行为 2026-09-30 更正 ✓）。
+> 状态：✅ **M1 已收口**（2026-10-06 windows 侧 ✓）—— Task 1–7 **全部完成**，每一格都有实测读数，
+> 证据：`../../capabilities/mcp-tools.json`（只读面 7 条 ✓）· `../../scripts/check-mcp-bridge-stdout.mjs` ＋ `../../scripts/check-mcp-host-channel.mjs` ＋ `../../scripts/check-mcp-host-authz.mjs` ＋ `../../scripts/check-mcp-audit-single-ledger.mjs` ＋ `../../scripts/check-agent-surface.mjs` ＋ `../../scripts/check-capabilities.mjs`（判据 ✓，登记在 `../../scripts/lib/gates.mjs` ✓）· `../../src-tauri/src/mcp_channel.rs`（开关／令牌／生命周期 ＋ 那条 Rust 生命周期测试 ✓）· `../../src-tauri/src/mcp_host.rs`（宿主面唯一入口 ✓）· `../../tools/shuyonote-mcp/index.mjs` ＋ `../../tools/shuyonote-mcp/README.md`（桥与怎么接 ✓）· `../../docs/TESTING.md`（门禁总表 ✓）✓。
+> 且判据的「看过它红」证据已入工作区账本（_workspace/mutation-evidence.json 的 _repo_mutations 一节 ✓）。
+> · 全部在 `dev` 上并已推远端 ✓（不再有「只在分支上、尚未推」那种状态 ✗）；
+> · 生效的开关面（R89 ✓）＝ **桌面版设置里的「外部 AI 接入」**（默认关 ＋ 只绑回环 ＋ 会话令牌 ✓）
+>   ＋ 环境变量那条路（判据/开发用 ✓）；两者任一为真即为开 ✓。
+> · 只读面今天 **7 条**（生成物 `capabilities/mcp-tools.json` ✓）：`coverage_report` **刻意不在面上** ✗
+>   —— 它是 `host:"frontend"`（Rust 宿主按设计不实现 ✓），列上去就是「面里有个调不通的工具」✓
+>   （由 `check-capabilities.mjs` 的一条反向断言钉住 ✓）。
+> · 真端到端读数（本机实战，非夹具）：App（面板那条路起的通道）⇒ 桥 ⇒ `tools/list` 7 条 ✓ ＋
+>   调用留下审计行 `{"plugin_id":"external","source":"external:mcp-…"}` ✓；
+>   数据面还差一格**环境**：实例里没打开任何空间 ⇒ `space_unknown` ✓（不是接线问题 ✓）。
+> · ⚠️ 原文那句「前置 = 总方案 §10 第 1、2 项拍板」已过期 ✗：那几项早已拍板 ✓；
+>   **R86/R89 曾在台账里被记成「不做」** ✗（把「同意你的建议」读成了 §10 的**沉默默认值**）——
+>   2026-10-06 owner 当场用白话三问确认：**允许外部 agent 读（默认关）／设置里必须有开关／写按原决定（免确认必留痕）** ✓，
+>   台账 R86/R89/R87 三行已按此更正 ✓。
+> · 写能力（Task W）**属 M2 且必做**，不是被排除 ✓（本档只做只读 ✓）。
 > 范围：**本档只做只读** —— 它是「**能读写**」的**前半**；⚠️ **写属 M2 且必做**，不是被排除（目标口径见[总方案](2026-09-28-agent-mcp-integration-plan.md) §1）。不做多空间切换（M3）、**不碰**服务端、不改 wire / schema / 插件契约。
 >
 > **Goal：** 让四个外部 agent 产品（Claude Code / CodeBuddy / WorkBuddy / DSH）经 **stdio MCP** 读到本机已解锁空间的笔记，且**不新开第二条鉴权、不新造第二份工具清单**。
@@ -35,14 +43,27 @@
 
 | 完成 | # | 任务 | 组 | 依赖 | 会红证据 |
 |---|---|---|---|---|---|
-| [ ] | 1 | 生成物第 10 件 `capabilities/mcp-tools.json` | contract | — | 手改生成物一行 ⇒ 红 |
-| [ ] | 2 | 反向断言：M1 清单里不许有写能力 | contract | 1 | 塞 `pages.create` ⇒ 红 |
-| [ ] | 3 | 桥的 stdout **协议纯净**判据（Node，判据先行） | plugin | — | 插一句 `console.log` ⇒ 红 |
-| [ ] | 4 | 通道鉴权（token + `Origin`/`Host` + 默认关） | plugin / rust | **拍板项 2** | 删 `Origin` 校验 ⇒ 红 |
-| [ ] | 5 | 宿主面 `mcp_host.rs` ＋ 权限判定抽成一处 | rust | 1 | 自建权限判定 ⇒ 红 |
-| [ ] | 6 | 注册与生命周期（`lib.rs`） | rust | 5 | 关开关后旧 token 仍可连 ⇒ 红 |
-| [ ] | 7 | 门禁三处登记 ＋ 账本证据（D2，**不在本仓**） | — | 1–6 | 缺证据 ⇒ 工作区 `check-all` 红 |
+| [x] | 1 | 生成物第 10 件 `capabilities/mcp-tools.json` | contract | — | 手改生成物一行 ⇒ 红 |
+| [x] | 2 | 反向断言：M1 清单里不许有写能力 | contract | 1 | 塞 `pages.create` ⇒ 红 |
+| [x] | 3 | 桥的 stdout **协议纯净**判据（Node，判据先行） | plugin | — | 插一句 `console.log` ⇒ 红 |
+| [x] | 4 | 通道鉴权（token + `Origin`/`Host` + 默认关） | plugin / rust | **拍板项 2** | 删 `Origin` 校验 ⇒ 红 |
+| [x] | 5 | 宿主面 `mcp_host.rs` ＋ 权限判定抽成一处 | rust | 1 | 自建权限判定 ⇒ 红 |
+| [x] | 6 | 注册与生命周期（`lib.rs`） | rust | 5 | 关开关后旧 token 仍可连 ⇒ 红 |
+| [x] | 7 | 门禁三处登记 ＋ 账本证据（D2，**不在本仓**） | — | 1–6 | 缺证据 ⇒ 工作区 `check-all` 红 |
 | [ ] | W | （**M2 预留**）写能力 ＋ `INV-MCP-write-requires-confirm` | — | M1 | 绕草稿落库 ⇒ 红 |
+
+**每格的证据**（勾选口径：判据绿 **且** 「看过它红」入了账本 ✓；账本键名一律 `repos/ShuyoNote/scripts/*.mjs` 或本仓 `tools/` 判据 ✓）：
+
+| # | 判据（现在绿 ✓） | 「看过它红」怎么红的 |
+|---|---|---|
+| 1 | `scripts/check-capabilities.mjs` ✓ | 手改生成物一行（把 `coverage.report` 塞回清单）⇒ **exit 1**，逐字命中 `M1 清单里的 coverage.report 是 host="frontend"…` ✓；重新生成 ⇒ exit 0 ✓ |
+| 2 | 同上（清单里**不许出现写能力**那条断言 ✓） | 塞 `pages.create` ⇒ **exit 1**（逐字见下 ✓） |
+| 3 | `scripts/check-mcp-bridge-stdout.mjs` ✓（**本轮新建** ✓） | 往桥里插一句 `console.log` ⇒ **exit 1**，静态＋动态两格同时红 ✓；删掉 ⇒ 0 ✓ |
+| 4 | `scripts/check-mcp-host-channel.mjs` ✓ ＋ `tools/shuyonote-mcp/judge-channel.mjs`（17/0 ✓） | 删 `Origin`/`Host` 校验那条 ⇒ 红（账本 _repo_mutations 已记 ✓） |
+| 5 | `scripts/check-mcp-host-authz.mjs` ✓ | 宿主面自建第二条权限判定 ⇒ 红（账本 _repo_mutations 已记 ✓） |
+| 6 | `src-tauri/src/mcp_channel.rs` 的 `switch_tests`（**新增的 Rust 生命周期测试** ✓ 6/6 ✓） | ⭐ 写测试时**当场抓到真 bug** ✗：`set_enabled(false)` 原来只停监听、**不写配置** ⇒ `is_enabled()` 仍为真 ⇒ 「每请求再核一次开关」那道闸门**等于不存在** ✓；修好之后：关过再开**必须换新令牌**（不换 ⇒ 断言红 ✓）、配置本来就开着时**不许换**（换了 ⇒ 断言红 ✓） |
+| 7 | `_workspace/bin/check-all.mjs` ⇒ 全部干净 ✓ ＋ `check-gate-manifest` ⇒ 三处一致 ✓ | 缺证据 ⇒ 工作区门禁红（本会话真撞过 ✗：改了判据代码之后 D2 立刻报「证据过期」✓） |
+
 
 ---
 

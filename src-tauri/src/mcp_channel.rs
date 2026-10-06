@@ -567,18 +567,32 @@ fn stop_listener() {
 
 /// 起／停（幂等 ✓）。返回最新状态 ✓。
 ///
-/// * 开：确保有令牌（没有就现生成 ✓）⇒ 起监听；**已经在跑就先停**（换令牌要重启 ✓）；
+/// * 开：确保有令牌 ⇒ 起监听；**已经在跑就先停**（换令牌要重启 ✓）；
+///   ⭐ **关过再开 ⇒ 换一枚新令牌** ✓（工单 Task 6 那一格：关了之后"旧令牌仍可连"⇒ 红 ✓）；
 /// * 关：停监听 ＋ 删端口文件 ⇒ **每个请求随后都会被 `disabled` 拒** ✓（旧令牌立刻失效 ✓）。
 pub fn set_enabled(enabled: bool) -> Result<McpStatus, String> {
     if !enabled {
+        // ⚠️ **必须把开关写进配置**，不能只停监听 ✗ —— `serve_one` 每个请求都会读 `is_enabled()` ✓：
+        //    2026-10-06 实测（本模块新加的那条 Rust 生命周期测试当场抓到 ✓）：只 `stop_listener()`
+        //    而不写文件时，`is_enabled()` 仍为真 ⇒ 那道"每请求再核一次开关"的闸门**等于不存在** ✗，
+        //    面板上"关掉之后旧令牌立刻失效"这句就只靠"监听线程真停了"这一条撑着 ✓（能挡，但不是
+        //    设计里那两道 ✓）⇒ 写文件是第一道、停监听是第二道 ✓。
+        let mut cfg = read_file_config();
+        cfg.enabled = false;
+        write_file_config(&cfg)?;
         stop_listener();
         return Ok(status());
     }
-    // 开关写了之后 `is_enabled()` 才能为真 ✓（`serve_one` 每个请求都会读它 ✓）
+    // ⚠️ `was_enabled` 必须在**写配置之前**取 ✓ —— 写完之后 `is_enabled()` 就恒为真了 ✓。
+    //    为什么非换不可：关闭那一刻我们能做的只是"此后拒请求" ✗，而**已经发出去的那枚令牌
+    //    还在别人手里** ✗ ⇒ 重新打开时换一枚，旧的那枚立刻作废 ✓（设置面板上也写着这句 ✓）。
+    //    ⛔ **App 启动时不能换**（那时 `was_enabled` 已是真 ✓）：一换，用户粘给 agent 的配置
+    //    就每次重启都失效 ✓ —— 所以只在"关 → 开"这个**跃迁**上换 ✓。
+    let was_enabled = read_file_config().enabled;
     let mut cfg = read_file_config();
     cfg.enabled = true;
     write_file_config(&cfg)?;
-    if token_path().map(|p| p.exists()).unwrap_or(false) == false {
+    if !was_enabled || token_path().map(|p| p.exists()).unwrap_or(false) == false {
         write_new_token(&cfg.granted)?;
     }
     stop_listener(); // 幂等：换令牌/换端口时先停旧的 ✓
@@ -650,4 +664,83 @@ pub fn mcp_set_enabled(enabled: bool) -> Result<McpStatus, String> {
 #[tauri::command]
 pub fn mcp_rotate_token() -> Result<McpStatus, String> {
     rotate_token()
+}
+
+// =====================================================================================
+// 「开关生命周期」那几条 —— 工单 Task 6 的「会红证据」本来要的是：
+//   把"关开关后旧 token 仍可连"做成**会红**的读数 ✓。这一格**必须真记账**（不靠读源码猜 ✗）：
+//   起真监听、真换令牌、真看端口文件有没有被删 ✓。
+//
+// ⚠️ 本机跑法（Windows 上 `cargo test` 直接跑会 0xC0000139，见仓内 AGENTS.md §7）：
+//   `powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter mcp_channel`
+//   整组读数仍以 Linux(CI/WSL) 为准 ✓。
+// =====================================================================================
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+
+    /// `<数据目录>/mcp` 里那两个文件的存档 ✓（只碰这两个 ✓；`port` 是运行期产物、不存档 ✓）。
+    fn snapshot() -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+        let rd = |p: Option<PathBuf>| p.and_then(|p| std::fs::read(p).ok());
+        (rd(config_path()), rd(token_path()))
+    }
+
+    /// 原样还回去 ✓（**无论测试目录还是别的目录** —— `ensure_test_app_data_dir()` 是幂等的，
+    /// 若被别的测试先占成了真实目录，这一步保证不动用户的配置 ✓）。
+    fn restore(snap: (Option<Vec<u8>>, Option<Vec<u8>>)) {
+        let wr = |p: Option<PathBuf>, b: Option<Vec<u8>>| {
+            if let (Some(p), Some(b)) = (p, b) {
+                let _ = std::fs::write(p, b);
+            }
+        };
+        wr(config_path(), snap.0);
+        wr(token_path(), snap.1);
+    }
+
+    /// ⭐ 工单 Task 6：**关过再开 ⇒ 换新令牌**（旧的那枚立刻作废 ✓）；而"配置本来就开着"时
+    /// （＝ App 重启那条路 ✓）**不许换**（否则用户粘给 agent 的配置每次重启都失效 ✗）。
+    #[test]
+    fn switch_lifecycle_rotates_token_on_reopen_but_not_on_restart() {
+        let _dir = crate::db::ensure_test_app_data_dir();
+        if let Some(d) = mcp_dir() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let snap = snapshot();
+        // 先归零：别的测试或上一次跑可能留了"开着"的状态 ✓
+        let _ = set_enabled(false);
+
+        // ① 开 ⇒ 监听**真起来** ＋ 有一枚令牌
+        let s1 = set_enabled(true).expect("开开关");
+        assert!(s1.running, "开着时必须真在听 ✓（工单 Task 6）");
+        assert!(s1.port.is_some(), "开着时要有端口 ✓");
+        let t1 = s1.token.clone().expect("开着必须有令牌 ✓");
+
+        // ② 关 ⇒ `is_enabled()` 假（⇒ 每个请求会被 `disabled` 拒 ✓）＋ 端口文件被删 ✓
+        set_enabled(false).expect("关开关");
+        assert!(!is_enabled(), "关掉之后 `is_enabled()` 必须为假 ⇒ 请求会被 `disabled` 拒 ✓");
+        assert!(
+            port_path().map(|p| !p.exists()).unwrap_or(true),
+            "关掉要删端口文件 ✓（桥照着它连 ⇒ 文件在就说明还在听 ✗）"
+        );
+
+        // ③ **关过再开** ⇒ 换一枚新令牌 ✓（← 这一条就是"旧 token 仍可连 ⇒ 红" ✓）
+        let s2 = set_enabled(true).expect("再开");
+        let t2 = s2.token.clone().expect("再开必须有令牌 ✓");
+        assert_ne!(
+            t1, t2,
+            "关过再开必须换新令牌 ✗ —— 不换的话，关掉前发出去的那枚还能用 ⇒ 这条判据要红 ✓"
+        );
+
+        // ④ 但"配置本来就开着时再调一次"（＝ App 重启那条路 ✓）**不许**换 ✓
+        let s3 = set_enabled(true).expect("再调一次");
+        assert_eq!(
+            s3.token.as_deref(),
+            Some(t2.as_str()),
+            "配置本来就开着时不换令牌 ✓（一换，用户粘给 agent 的配置每次重启就失效 ✗）"
+        );
+
+        // 收尾：关掉 ＋ 把存档还回去 ✓
+        let _ = set_enabled(false);
+        restore(snap);
+    }
 }
