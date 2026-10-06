@@ -308,9 +308,19 @@ function MermaidView({
   // ── 下载 ─────────────────────────────────────────────────────────────────────
   // PNG（2×）为主：贴进文档/幻灯片不糊；**导出不了就退回落盘 SVG**（矢量、保真），并说清原因。
   // 底色铺白：mermaid 的 SVG 是透明底，贴进深色文档会看不清。
+  //
+  // ⚠️ **每次点下载都要有回话**（owner 2026-10-06：「流程图下载要给个 toast 提示」✓）——
+  //    这一块以前只有**失败**那条会说（PNG 不行 ⇒ 退 SVG ✓），**成功时屏幕上一声不响** ✗，
+  //    于是"点了没反应"和"其实已经存了"分不出来 ✓。三条出口都要有 toast（与画图那两处同形：
+  //    `DrawingEditorModal` / `InlineDrawing` 的「已导出 PNG／SVG」✓）：
+  //      ① 存成 PNG ⇒ `已导出 PNG` ✓；② 退成 SVG ⇒ 现有那条**说清原因**的 info ✓；
+  //      ③ 压根还没渲染出 `<svg>`（点了太早 / 渲染失败）⇒ 也**如实说**，⛔ 不许静默 return ✗。
   const download = useCallback(async () => {
     const svgEl = rootRef.current?.querySelector("svg");
-    if (!svgEl) return;
+    if (!svgEl) {
+      toast("流程图还没渲染出来，暂时没法导出（稍等一下再点）", "info");
+      return;
+    }
     const w = size.w > 0 ? size.w : 1200;
     const h = size.h > 0 ? size.h : 800;
     const clone = svgEl.cloneNode(true) as SVGSVGElement;
@@ -341,12 +351,14 @@ function MermaidView({
         const png = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/png"));
         if (!png) throw new Error("canvas.toBlob 给了 null");
         saveBlob(png, `${name}.png`);
+        // ⭐ 成功也要说一声（owner 2026-10-06 ✓）—— 文件名带着时间戳，报出来才好找 ✓
+        toast(`已导出 PNG（2×）：${name}.png`, "success");
       } finally {
         URL.revokeObjectURL(url);
       }
     } catch (e) {
       saveBlob(svgBlob, `${name}.svg`);
-      toast(`PNG 导出失败（${e instanceof Error ? e.message : String(e)}）⇒ 已改存 SVG（矢量、保真）`, "info");
+      toast(`PNG 导出失败（${e instanceof Error ? e.message : String(e)}）⇒ 已改存 SVG（矢量、保真）：${name}.svg`, "info");
     }
   }, [size]);
 
