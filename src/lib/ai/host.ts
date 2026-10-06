@@ -7,6 +7,10 @@ import { buildSystemPrompt, aiTools, getAiTool } from "./tools";
 import { extractToolCalls, toolResultsPrompt, toLlmMessages } from "./llm";
 import type { LlmTransport } from "./llm";
 import type { AiMessage, AiRunResult, AiTool, AiToolCall, AiToolContext } from "./types";
+import { buildToolNameMap, toInternalToolId, toWireToolName } from "./toolNames";
+
+/** 内部 id ⇄ 出网名（建一次 ✓）。来由见 `toolNames.ts` 文件头：点号会让上游 400 ✗。 */
+const TOOL_NAMES = buildToolNameMap(aiTools.map((t) => t.id));
 
 export interface HostOptions {
   transport: LlmTransport;
@@ -29,7 +33,9 @@ const DEFAULT_MAX_DRAFTS = 20;
 
 /** Normalize a native tool call + validate against the whitelist. */
 function whitelistCall(raw: { name: string; arguments: unknown }): AiToolCall | null {
-  const name = String(raw?.name ?? "").trim();
+  // 模型回来的是**出网名**（`pages_get` ✓）；文本形态里它也可能直接写内部 id（`pages.get` ✓）
+  // ⇒ 先查表换回内部 id，再进白名单 ✓（反向只查表、不猜字符串 —— 见 `toolNames.ts` ✓）。
+  const name = toInternalToolId(String(raw?.name ?? "").trim(), TOOL_NAMES);
   const tool = getAiTool(name);
   if (!tool) return null;
   const args = (raw?.arguments ?? {}) as Record<string, unknown>;
@@ -47,7 +53,12 @@ function filterArgs(args: Record<string, unknown>, tool: AiTool): Record<string,
 }
 
 function toolSchema(tool: AiTool): Record<string, unknown> {
-  return { type: "function", function: { name: tool.id, description: tool.description, parameters: tool.argsSchema } };
+  // ⚠️ 出网名必须是 `^[a-zA-Z0-9_-]+$` ✓ —— 内部 id 是 `pages.get` 这种带点号的形态 ✗，
+  //    直接发出去上游会 400（2026-10-06 owner 截图那次就是它 ✓，逐字见 `toolNames.ts` 文件头 ✓）。
+  return {
+    type: "function",
+    function: { name: toWireToolName(tool.id), description: tool.description, parameters: tool.argsSchema },
+  };
 }
 
 /** Short human label for a tool call, for the UI's transparency log. */
