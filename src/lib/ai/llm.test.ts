@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { extractToolCalls, parseToolArgs } from "./llm";
+import { extractToolCalls, parseToolArgs, pickModel } from "./llm";
+
+// ⭐ 2026-10-06（owner 截图：「改了缺不持久化？」＋ 界面填的模型不在可用列表里 ✗）：
+//    探测到的可用列表**才说了算** ✓ —— 当前值在列表里就一个字都不动 ✓（⛔ 不擅自改用户填的 ✗），
+//    不在就换成第一项 ✓，探测不到（空列表）⇒ 原样保留 ✓（"不知道"不等于"你填错了" ✗）。
+describe("pickModel（从探测到的可用列表里挑一个能用的）", () => {
+  const live = ["deepseek-flash", "deepseek-v4-pro"];
+
+  it("当前值在列表里 ⇒ 原样保留（只把首尾空白抹掉 ✓，大小写不敏感 ✓）", () => {
+    expect(pickModel("deepseek-flash", live)).toBe("deepseek-flash");
+    // 保留的是**用户填的大小写** ✓，只是把首尾空白去掉（不然存进配置的就是带空格的名字 ✗）
+    expect(pickModel("  DeepSeek-Flash ", live)).toBe("DeepSeek-Flash");
+  });
+
+  it("★ 当前值**不在**列表里 ⇒ 换成第一项（owner 那次就是这样：名字填着、一发就失败）", () => {
+    expect(pickModel("deepseek-v4-flash-vision-exp", live)).toBe("deepseek-flash");
+  });
+
+  it("空值 ⇒ 用第一项；列表为空 ⇒ 原样保留（探测不到 ≠ 你填错了）", () => {
+    expect(pickModel("", live)).toBe("deepseek-flash");
+    expect(pickModel("whatever", [])).toBe("whatever");
+    expect(pickModel("whatever", undefined)).toBe("whatever");
+  });
+});
 
 describe("parseToolArgs", () => {
   it("parses a JSON string", () => {
