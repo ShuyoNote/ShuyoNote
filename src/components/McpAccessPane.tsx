@@ -1,14 +1,16 @@
-// MCP 接入（R89 的**开关面** ✓）：开关 ＋ 可见状态 ＋ 令牌 ＋ 一段可以粘给 agent 的配置 ✓。
+// MCP 接入（R89 的**开关面** ＋ M2 的**写**那半 ✓）：开关 ／ 状态 ／ 令牌 ／ 给 AI 的配置 ✓。
 //
-// owner 2026-10-06 拍板（白话三问）：**允许外部 AI 读**（默认关、只绑本机、要令牌、关掉立即失效 ✓）
-// ＋ **设置里必须有开关与可见状态** ✓。这一节就是那个开关面 —— 所有事实都来自后端
-// （`mcp_status` / `mcp_set_enabled` / `mcp_rotate_token` ✓，见 `src-tauri/src/mcp_channel.rs`），
-// 界面**不自己推断**任何一条状态 ✓（"在不在听"这类事实只能有一个来源 ✓）。
+// owner 2026-10-06 拍板：**允许外部 AI 读**（默认关、只绑本机、要令牌、关掉立刻失效 ✓）
+// ＋ **设置里必须有开关与可见状态** ✓；M2 又加了「提改动」（默认进待确认；免确认开着时每次写留痕 ✓）。
 //
-// ⚠️ 三条口径写在界面上（用户要看得见 ✓）：
-//   ① **默认关**：没打开时后端根本不起监听 ✓（不是"开着只是没显示" ✗）；
-//   ② **只绑本机**：`127.0.0.1` ⇒ 同一个 Wi-Fi 下的设备也连不上 ✓；
-//   ③ **关掉立即失效**：关的时候每个请求都会被拒 ＋ 重新打开会**换一枚新令牌** ✓（旧令牌作废 ✓）。
+// ⚠️ **2026-10-06 第二版（owner：截图 ＋「优化一下」✓）** —— 第一版我**自己发明了一套 `set-row-*` 子类名**
+//    （`set-row-main` / `set-row-title` / `set-row-hint`）✗，而 `App.css` 里**根本没有这几条规则** ✗
+//    （全仓只有这个文件在用它们 ✓）⇒ 面板是"裸"的：标题和正文同字号、换行挤在一起、开关悬在长文的
+//    垂直中点、`**加粗**` 这种 Markdown 写法在 JSX 里是**字面星号** ✗。
+//    ⇒ 这一版改用**设置页既有的那套类**（`AbilitiesPane` 是现成范例 ✓）：
+//      `set-section` / `set-section-title` / `set-row` / `set-row-text` / `set-row-name` / `set-row-sub`
+//      / `set-hint` / `set-status` / `set-btn` ＋ 既有的 `ui-toggle` ✓ —— 一行都不新造 ✗。
+//    ⚠️ 界面上要强调的词一律用 `<b>` ✓，⛔ 不写 `**…**` ✗（那是 Markdown，不是 JSX）。
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "../store/toast";
@@ -17,8 +19,8 @@ import type { McpStatus } from "../types";
 /** 一句人话的中间态（"开着但没在听"必须说出来 —— 那通常是端口被占 ✓）。 */
 function stateLine(st: McpStatus): string {
   if (!st.enabled) return "已关闭（默认）";
-  if (st.running) return `已打开 —— 只绑本机 127.0.0.1:${st.port ?? "?"}`;
-  return "开关是开着的，但监听没起来（端口可能被占）—— 这一刻连不上 ✓";
+  if (st.running) return `已打开 · 正在听 127.0.0.1:${st.port ?? "?"}`;
+  return "开关开着，但监听没起来（端口可能被占）—— 这一刻连不上";
 }
 
 export function McpAccessPane() {
@@ -45,8 +47,24 @@ export function McpAccessPane() {
       setSt(await api.mcpSetEnabled(next));
       setErr("");
       toast(
-        next ? "外部接入已打开（只绑本机 ✓；令牌见下面那一段）" : "外部接入已关闭 —— 旧令牌立刻作废 ✓",
+        next ? "外部接入已打开（只绑本机；令牌见下面那一段）" : "外部接入已关闭 —— 旧令牌立刻作废",
         "success",
+      );
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleWrite = async (next: boolean) => {
+    setBusy(true);
+    try {
+      setSt(await api.mcpSetAllowWrite(next));
+      setErr("");
+      toast(
+        next ? "已允许外部 AI 直接写入 —— 每一次写都会留审计" : "已关回「要你确认」—— 外部写只进待确认队列",
+        next ? "info" : "success",
       );
     } catch (e) {
       setErr(String(e));
@@ -60,24 +78,7 @@ export function McpAccessPane() {
     try {
       setSt(await api.mcpRotateToken());
       setErr("");
-      toast("已换一枚新令牌 —— 旧的那枚立刻作废 ✓", "success");
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** ⭐ M2：免确认写开关（默认关 ✓；开着时**每一次写都留审计** ✓ —— 面板上把话说全 ✓）。 */
-  const toggleWrite = async (next: boolean) => {
-    setBusy(true);
-    try {
-      setSt(await api.mcpSetAllowWrite(next));
-      setErr("");
-      toast(
-        next ? "已允许外部 AI 直接写入 —— 每一次写都会留审计 ✓" : "已关回「要你确认」—— 外部写只进待确认队列 ✓",
-        next ? "info" : "success",
-      );
+      toast("已换一枚新令牌 —— 旧的那枚立刻作废", "success");
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -88,7 +89,7 @@ export function McpAccessPane() {
   const copy = async (text: string, what: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      toast(`${what}已复制 ✓`, "success");
+      toast(`${what}已复制`, "success");
     } catch {
       toast("复制失败 —— 请手动选中复制", "error");
     }
@@ -114,115 +115,117 @@ export function McpAccessPane() {
 
   return (
     <div className="mcp-access">
-      <div className="set-row">
-        <div className="set-row-main">
-          <div className="set-row-title">允许外部 AI 接入（MCP）</div>
-          <div className="set-row-hint">
-            打开后，外部的 AI 助手（Claude Code、DSH/WorkBuddy 这类）能<b>读</b>这个库里的笔记；
-            也能<b>提改动</b>（新建页面／追加内容）—— 但默认<b>不会</b>直接写进去：它会变成一条
-            <b>待你确认</b>的改动，你点确定才落库 ✓（要"不再问你"，得再打开下面那颗开关 ✓）。
-            <b>只绑本机</b>（同一个 Wi-Fi 下的其它设备也连不上 ✓），并且要下面那枚令牌 ✓。
-            默认<b>关</b>；关掉时每个请求立刻被拒、旧令牌作废 ✓。
-          </div>
-        </div>
-        <button
-          className={`ui-toggle${st?.enabled ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={st?.enabled === true}
-          aria-label="允许外部 AI 接入（MCP）"
-          disabled={busy || !st}
-          onClick={() => void toggle(!(st?.enabled === true))}
-        />
-      </div>
+      <section className="set-section">
+        <div className="set-section-title">接入开关</div>
 
-      {err && <div className="set-row-hint mcp-access-err">读/改状态失败：{err}</div>}
-
-      <div className="set-row">
-        <div className="set-row-main">
-          <div className="set-row-title">现在是什么状态</div>
-          <div className="set-row-hint">{st ? stateLine(st) : "读取中…"}</div>
-          {st?.env_override && (
-            <div className="set-row-hint">
-              ⚠️ 这次是被**环境变量**打开的（`SHUYONOTE_MCP_SWITCH=on`）—— 面板关不掉它，要在启动环境里去掉 ✓。
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">允许外部 AI 接入（MCP）</div>
+            <div className="set-row-sub">
+              打开后，外部的 AI 助手（Claude Code、DSH/WorkBuddy 这类）能<b>读</b>这个库里的笔记，
+              也能<b>提改动</b>（新建页面／追加内容）；<b>只绑本机</b>（同一个 Wi-Fi 下的其它设备也连不上），
+              并且要下面那枚令牌。默认<b>关</b>；关掉时每个请求立刻被拒、旧令牌作废。
             </div>
-          )}
+          </div>
+          <button
+            className={`ui-toggle${st?.enabled ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={st?.enabled === true}
+            aria-label="允许外部 AI 接入（MCP）"
+            disabled={busy || !st}
+            onClick={() => void toggle(!(st?.enabled === true))}
+          />
         </div>
-      </div>
 
-      {/* ⭐ M2（Task W2）：免确认写 —— **默认关** ✓；开着时写不再问，但每一次写都必须留审计 ✓。
-          关着时外部 agent **连写工具都看不到** ✓（⛔ 不是「看得到但一调就拒」✗）。 */}
-      <div className="set-row">
-        <div className="set-row-main">
-          <div className="set-row-title">允许外部 AI 直接写入（免确认）</div>
-          <div className="set-row-hint">
-            ⚠️ <b>默认关闭</b>。关着时：外部 AI 的新建页面／追加内容**不会直接落库** —— 它会变成一条
-            「待你确认」的改动，你点确定才写 ✓；而且它**连写工具都看不到** ✓。开着时：不再问你、直接写；
-            作为交换，**每一次写都会留一行审计**（哪个外部会话、什么时候、调了什么能力、成功还是失败 ✓）。
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">允许外部 AI 直接写入（免确认）</div>
+            <div className="set-row-sub">
+              <b>默认关闭</b>。关着时：外部 AI 的新建页面／追加内容<b>不会直接落库</b> —— 它会变成一条
+              「待你确认」的改动，你点确定才写；而且它<b>连写工具都看不到</b>。开着时：不再问你、直接写；
+              作为交换，<b>每一次写都会留一行审计</b>（哪个外部会话、什么时候、调了什么能力、成功还是失败）。
+            </div>
           </div>
+          <button
+            className={`ui-toggle${st?.allow_write ? " is-on" : ""}`}
+            role="switch"
+            aria-checked={st?.allow_write === true}
+            aria-label="允许外部 AI 直接写入（免确认）"
+            disabled={busy || !st}
+            onClick={() => void toggleWrite(!(st?.allow_write === true))}
+          />
         </div>
-        <button
-          className={`ui-toggle${st?.allow_write ? " is-on" : ""}`}
-          role="switch"
-          aria-checked={st?.allow_write === true}
-          aria-label="允许外部 AI 直接写入（免确认）"
-          disabled={busy || !st}
-          onClick={() => void toggleWrite(!(st?.allow_write === true))}
-        />
-      </div>
+      </section>
 
-      <div className="set-row">
-        <div className="set-row-main">
-          <div className="set-row-title">会话令牌</div>
-          <div className="set-row-hint">
-            这枚令牌只在本机读写 ✓；它写在一个只有你自己能读的文件里（
-            <code>{st?.token_path ?? "（未知）"}</code>）✓。换一枚 ⇒ 旧的立刻作废 ✓。
+      <section className="set-section">
+        <div className="set-section-title">现在是什么状态</div>
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name mcp-access-state">
+              <span className={`mcp-access-dot${st?.enabled ? " is-on" : ""}`} aria-hidden="true" />
+              {st ? stateLine(st) : "读取中…"}
+            </div>
+            {st?.env_override && (
+              <div className="set-row-sub">
+                ⚠️ 这次是被<b>环境变量</b>打开的（<code>SHUYONOTE_MCP_SWITCH=on</code>）—— 面板关不掉它，
+                要在启动环境里去掉。
+              </div>
+            )}
+            {err && <div className="set-row-sub mcp-access-err">读/改状态失败：{err}</div>}
           </div>
-          <div className="mcp-access-token">
-            <code className="mcp-access-token-text">{st?.token ?? "（还没有 —— 打开开关时会自动生成）"}</code>
-          </div>
-          <div className="mcp-access-actions">
-            <button
-              className="settings-btn"
-              disabled={!st?.token}
-              onClick={() => void copy(String(st?.token ?? ""), "令牌")}
-            >
-              复制令牌
-            </button>
-            <button className="settings-btn" disabled={busy || !st} onClick={() => void rotate()}>
-              换一枚新令牌
-            </button>
-          </div>
+          <button className="set-btn" disabled={busy || !st} onClick={() => void refresh()}>
+            刷新
+          </button>
         </div>
-      </div>
+      </section>
 
-      <div className="set-row">
-        <div className="set-row-main">
-          <div className="set-row-title">给 AI 的配置（直接粘进它的 MCP 配置）</div>
-          <div className="set-row-hint">
-            桥在仓库里（<code>tools/shuyonote-mcp/index.mjs</code> ✓）—— 把 <code>args</code> 换成你机器上那个路径；
-            两个环境变量指的就是上面那两个文件 ✓。
-          </div>
-          <pre className="mcp-access-snippet">{snippet}</pre>
-          <div className="mcp-access-actions">
-            <button className="settings-btn" disabled={!snippet} onClick={() => void copy(snippet, "配置片段")}>
-              复制配置
-            </button>
-            <button className="settings-btn" disabled={busy || !st} onClick={() => void refresh()}>
-              刷新状态
-            </button>
-          </div>
+      <section className="set-section">
+        <div className="set-section-title">会话令牌</div>
+        <p className="set-hint">
+          这枚令牌只在本机读写；它写在一个只有你自己能读的文件里（
+          <code>{st?.token_path ?? "（未知）"}</code>）。换一枚 ⇒ 旧的立刻作废。
+        </p>
+        <div className="mcp-access-token">
+          <code className="mcp-access-token-text">{st?.token ?? "（还没有 —— 打开开关时会自动生成）"}</code>
         </div>
-      </div>
+        <div className="set-actions">
+          <button
+            className="set-btn is-primary"
+            disabled={!st?.token}
+            onClick={() => void copy(String(st?.token ?? ""), "令牌")}
+          >
+            复制令牌
+          </button>
+          <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
+            换一枚新令牌
+          </button>
+        </div>
+      </section>
 
-      <div className="set-row">
-        <div className="set-row-hint">
-          它<b>能做什么</b>：① <b>读</b> —— 列页面、搜页面、看块与反链、读附件 ✓；
-          ② <b>提改动</b> —— 新建页面／追加内容（默认要你点确认 ✓；开了上面那颗免确认开关才直接写，
-          而那时**每一次写都会留一行审计** ✓）。你能在「审计」里看到每一次调用
-          （谁、什么时候、调了什么、成功还是失败 ✓）；
-          ⛔ 它<b>不能</b>绕开权限：和插件走的是**同一处**鉴权与同一本审计账 ✓。
+      <section className="set-section">
+        <div className="set-section-title">给 AI 的配置</div>
+        <p className="set-hint">
+          把下面这段粘进 AI 客户端的 MCP 配置即可。桥在仓库里
+          （<code>tools/shuyonote-mcp/index.mjs</code>）—— 把 <code>args</code> 换成你机器上那个路径；
+          两个环境变量指的就是上面那两个文件。
+        </p>
+        <pre className="mcp-access-snippet">{snippet}</pre>
+        <div className="set-actions">
+          <button className="set-btn is-primary" disabled={!snippet} onClick={() => void copy(snippet, "配置片段")}>
+            复制配置
+          </button>
         </div>
-      </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">它能做什么</div>
+        <p className="set-hint">
+          <b>读</b>：列页面、搜页面、看块与反链、读附件。<b>提改动</b>：新建页面／追加内容
+          （默认要你点确认；开了免确认才直接写，而那时每一次写都会留一行审计）。
+          你能在「审计」里看到每一次调用（谁、什么时候、调了什么、成功还是失败）。
+          ⛔ 它<b>不能</b>绕开权限：和插件走的是同一处鉴权与同一本审计账。
+        </p>
+      </section>
     </div>
   );
 }

@@ -30,7 +30,7 @@ export default {
   },
   settings: {
     mcp: "外部 AI 接入（MCP）",
-    mcpHint: "让外部的 AI 助手只读地访问这个库：默认关、只绑本机、要令牌",
+    mcpHint: "让外部的 AI 助手读这个库、并提改动（默认要你确认）：默认关、只绑本机、要令牌",
     appearance: "外观",
     appearanceHint: "主题与强调色",
     spaces: "空间",
