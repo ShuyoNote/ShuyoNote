@@ -19,46 +19,26 @@ import {
   DirectoryIcon,
 } from "./icons";
 
-// M25 P1 — a one-click first-experience checklist on the empty-page onboarding.
-// Each step runs its action (create page/db, start typing, open shortcuts/AI) and
-// marks itself done; completion persists in localStorage.
-const FIRST_STEPS_KEY = "shuyonote-firststeps";
-type Step = { id: string; label: string; hint: string };
-const FIRST_STEPS: Step[] = [
-  { id: "new-page", label: "新建页面（Ctrl+N）", hint: "创建并打开一个新页面" },
-  { id: "slash", label: "开始输入 / 插入块", hint: "用 / 插入分栏、表格、绘图等" },
-  { id: "db", label: "创建一个数据表格", hint: "新建一个数据库页面" },
-  { id: "shortcuts", label: "看快捷键", hint: "Ctrl+/ 或 ? 打开快捷键面板" },
-  { id: "ai", label: "试试 AI 助手", hint: "先在设置里启用 AI" },
-];
-
-function loadSteps(): Record<string, boolean> {
-  try {
-    return JSON.parse(localStorage.getItem(FIRST_STEPS_KEY) || "{}");
-  } catch {
-    return {};
-  }
-}
-function saveSteps(d: Record<string, boolean>) {
-  try {
-    localStorage.setItem(FIRST_STEPS_KEY, JSON.stringify(d));
-  } catch {
-    // ignore
-  }
-}
+// ⚠️ **2026-10-06（owner）：「去掉新手清单」** —— 原先这下面还有一块
+//   `.first-steps`「新手清单 · 点一下即上手」（五步：新建页面 / 开始输入 / 建数据表格 /
+//   看快捷键 / 试 AI，勾选状态存 `localStorage["shuyonote-firststeps"]`）**整块撤掉** ✓。
+//   理由：这是一张空白页面上的**起手式**面板，而"清单"把它变成了一个**待办列表** ——
+//   与"开始写"这件事抢注意力（同一页上已经有那句「点这里开始编辑」＋ 三个起手式了）。
+//   ⚠️ 用户浏览器里那条 `shuyonote-firststeps` 键**留着不动**：读它的人没了、它也不再增长，
+//   删它属于"动用户的 localStorage"，收益为零（几十字节）⇒ 不删 ✓。
+//   ⛔ 别把清单从别处再拉回来：要"教新用户"就走使用指南页（`lib/guide.ts`）与快捷键面板 ✓。
 
 // Empty-state guide for a fresh page (Notion-style): a subtitle, an action list,
 // and a "create as database" view row.
 export function NewPageGuide() {
   const [dismissed, setDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [stepsDone, setStepsDone] = useState<Record<string, boolean>>(loadSteps);
   const editor = useEditorStore((s) => s.editor);
   // Show the "用 AI 开始创作" action only when the AI feature is enabled.
   const aiEnabled = useAiStore((s) => s.config.enabled);
 
   // Start editing: dismiss the guide, ensure a paragraph block exists, and place
-  // the caret in it. Used by the Enter handler AND the "start typing" checklist step.
+  // the caret in it.
   const startEditing = () => {
     setDismissed(true);
     if (!editor) return;
@@ -87,31 +67,6 @@ export function NewPageGuide() {
     return () => document.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dismissed]);
-
-  // One-click onboarding: run the step's action, then mark it done (persisted).
-  const runStep = async (s: Step) => {
-    if (stepsDone[s.id]) return;
-    switch (s.id) {
-      case "new-page":
-        await useNotes.getState().createPage(null);
-        break;
-      case "slash":
-        startEditing();
-        break;
-      case "db":
-        await useNotes.getState().createDatabase(null);
-        break;
-      case "shortcuts":
-        useEditorStore.getState().openShortcuts();
-        break;
-      case "ai":
-        useRightPanel.getState().openAi(true);
-        break;
-    }
-    const next = { ...stepsDone, [s.id]: true };
-    setStepsDone(next);
-    saveSteps(next);
-  };
 
   const importMarkdown = () => setImporting(true);
 
@@ -175,17 +130,6 @@ export function NewPageGuide() {
                 </button>
               ))}
             </div>
-          </div>
-          <div className="first-steps">
-            <div className="first-steps-title">新手清单 · 点一下即上手</div>
-            {FIRST_STEPS.map((s) => (
-              <button key={s.id} className="first-step" onClick={() => runStep(s)} title={s.hint}>
-                <span className={`first-step-check ${stepsDone[s.id] ? "done" : ""}`}>
-                  {stepsDone[s.id] ? "✓" : "→"}
-                </span>
-                <span className={`first-step-label ${stepsDone[s.id] ? "done" : ""}`}>{s.label}</span>
-              </button>
-            ))}
           </div>
         </div>
       )}
