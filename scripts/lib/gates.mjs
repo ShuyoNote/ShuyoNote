@@ -186,7 +186,7 @@ export const GATES = [
     // ⚠️ 自报跳过的登记（配合 `test-report.mjs` 的 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
     //   M1 的宿主面（`src-tauri/src/mcp_host.rs`）**还没写** ⇒ 本条现在没有可检查对象。
     //   跳过 ≠ 通过：要看那次"红"就加 `--require-host`（⇒ exit 2，逐字含「宿主面不存在 / 无可检查对象」）✓。
-    selfSkipOk: "MCP 宿主面（src-tauri/src/mcp_host.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；宿主面落地后本条立即有对象",
+    selfSkipOk: "**若** `src-tauri/src/mcp_host.rs` 不存在 ⇒ 没有可检查对象（判据不许假绿 ✗）；⚠️ 它**现在在** ✓ —— 这句只在文件确实缺失时才会被用到（2026-10-06 复核 ✓）",
     incident:
       "2026-09-30：规格 §2 的 INV-MCP-single-authz 原本第四列是「❌ 无」✗ —— 而宿主面一旦自己开库或自己判权限，" +
       "就长出**第二条鉴权路径** ⇒ 「未解锁大声失败」「写要草稿确认」「每次调用留审计」这些**只对插件那条路成立** ✓，" +
@@ -199,11 +199,11 @@ export const GATES = [
   {
     id: "check-mcp-channel-judge",
     group: "contract",
-    label: "MCP 桥的本机通道：默认关 ＋ token ＋ Origin/Host（坏 Origin / 过期 token 必被拒）",
+    label: "MCP 桥**只转发**：连不上/没开时如实报原因；`tools/list` 把宿主面给的清单原样翻成 MCP 工具；`tools/call` 转发到宿主面 `POST /call`（token/Origin/Host 的校验在 **App 那半** ✓）",
     cmd: "node tools/shuyonote-mcp/judge-channel.mjs",
     // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：桥还不存在 ⇒ 没有可检查对象。
     //    要看那次"红"就加 `--require-bridge`（⇒ exit 2，逐字含「桥不存在 / 无可检查对象」）✓。
-    selfSkipOk: "MCP 桥（tools/shuyonote-mcp/index.mjs）尚未创建 ⇒ 判据先行阶段没有可检查对象；桥落地后本条立即有对象",
+    selfSkipOk: "**若** `tools/shuyonote-mcp/index.mjs` 不存在 ⇒ 没有可检查对象（不许假绿 ✗）；⚠️ 它**现在在** ✓（2026-10-06 复核 ✓）",
     incident:
       "2026-09-30：规格 §2 的 INV-MCP-channel-guarded 原本是「❌ 无」✗。而本仓真栽过同族那次：docs/SECURITY.md 的低危项逐字写着" +
       "「CORS 前缀匹配放过 http://127.0.0.1.evil.com」（lib.rs:155）—— 所以这条判据必须用前缀陷阱值去试，而不是随便一个外域" +
@@ -218,7 +218,7 @@ export const GATES = [
     // ⚠️ 自报跳过的登记（配合 `--strict-self-skip`；先例 `rust-sm-wired` ✓）：
     //   通道文件（`src-tauri/src/mcp_channel.rs`）还没写 ⇒ 本条现在没有可检查对象。
     //   跳过 ≠ 通过：要看那次"红"就加 `--require-channel`（⇒ exit 2，逐字含「通道文件不存在 / 无可检查对象」）✓。
-    selfSkipOk: "MCP 宿主面通道（src-tauri/src/mcp_channel.rs）尚未创建 ⇒ 判据先行阶段没有可检查对象；通道落地后本条立即有对象",
+    selfSkipOk: "**若** `src-tauri/src/mcp_channel.rs` 不存在 ⇒ 没有可检查对象（不许假绿 ✗）；⚠️ 它**现在在** ✓（2026-10-06 复核 ✓）",
     incident:
       "2026-10-01：owner 裁定通道方向＝**② 桥 → App（App 当服务端）**（Task 5 笔记 §8）⇒ 监听这一侧从桥搬到了 App。" +
       "而 `INV-MCP-channel-guarded` 的三件套（默认关／per-session token／Origin·Host 恰好回环）原来**只有桥那半**有判据 ✗ ⇒" +
