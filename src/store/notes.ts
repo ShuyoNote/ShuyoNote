@@ -47,6 +47,15 @@ export interface NoteState {
    * 为什么放在 state 而不是模块变量：测试能显式重置它，行为也**看得见**（不必去猜模块级副作用）。
    */
   lastPageRestored: boolean;
+  /**
+   * 启动那一次"打开哪一页"的**决定**是否已经落定（见 `loadPages` 里那段注释）。
+   *
+   * 为什么要有它：`App.tsx` 里那个"没选中就打开第一页"的兜底 effect 会在 `set({pages})`
+   * 之后立刻跑，而"还原记住的那一页"还挂在 `await` 上 ⇒ 两个 `openPage` 赛跑，
+   * 且兜底那次会把 `lastPageId` 改写成第一页 ✗（用户报「当前页面还是不能持久」的真因）。
+   * ⇒ 启动那次由 `loadPages` **一口决定**，兜底 effect 读到 `startupSettled === false` 时不插手 ✓。
+   */
+  startupSettled: boolean;
 
   loadPages: () => Promise<void>;
   openPage: (id: string) => Promise<void>;
@@ -87,6 +96,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   searchQuery: "",
   reloadTick: 0,
   lastPageRestored: false,
+  startupSettled: false,
 
   loadPages: async () => {
     set({ loading: true, error: null });
@@ -99,17 +109,31 @@ export const useNotes = create<NoteState>((set, get) => ({
         set({ currentId: null, current: null });
       }
       set({ pages, loading: false });
-      // ⭐ 2026-10-05（owner：「页面刷新后，忘记了当前文档」）：**本次启动的第一次**列表加载之后，
-      //    如果什么都没选中、而"记住的那一页"还在列表里 ⇒ 打开它。
+      // ⭐ 2026-10-05（owner：「页面刷新后，忘记了当前文档」）＋ 2026-10-06 修正
+      //    （owner 再报：「当前页面**还是**不能持久」）：**本次启动的第一次**列表加载之后，
+      //    由**这里一口决定**"打开哪一页"：
+      //      ① 记住的那一页**还在列表里** ⇒ 打开它；
+      //      ② 否则（被删了 / 记住的是**另一个空间**的页 / 从没记过）⇒ 兜底打开第一页
+      //         （只在"笔记"视图下兜底，与旧行为一致：去文件/看板/关系图不该被拽回页面）。
+      //    ⚠️ 为什么必须收口在**这里**，而不是让 `App.tsx` 里那个"没选中就打开第一页"的 effect 兜：
+      //      `set({ pages })` 之后 React 会先跑那个 effect，而本函数的还原还挂在 `await` 上
+      //      ⇒ 两个 `openPage` **赛跑**，且那个 effect 会把 `lastPageId` **改写成第一页** ✗
+      //      ⇒ **记忆每一轮都被自己抹掉**，刷新永远回不到原来的页 ✓（2026-10-06 复现的形状）。
+      //      现在组件里那个 effect 用 `startupSettled` 让位（启动那一次它不插手 ✓）。
       //    · 只做一次（`lastPageRestored`）—— 之后清空选择（删掉当前页、换空间）不该被"拉回去"；
-      //    · 列表 membership 检查同时挡掉两种失效：那一页被删了 / 记住的是**另一个空间**的页；
-      //    · 不 await 到外面会早退：这里就 await（`openPage` 内部自己 try/catch，不会把 loadPages 打红）。
+      //    · 列表 membership 检查同时挡掉两种失效：那一页被删了 / 记住的是**另一个空间**的页。
       if (!get().lastPageRestored) {
         set({ lastPageRestored: true });
         const remembered = readRememberedPageId();
-        if (!get().currentId && remembered && pages.some((p) => p.id === remembered)) {
-          await get().openPage(remembered);
-        }
+        const target =
+          remembered && pages.some((p) => p.id === remembered)
+            ? remembered
+            : useViewStore.getState().view === "notes"
+              ? (pages.find((p) => p.kind === "page" || p.kind === "database")?.id ?? "")
+              : "";
+        if (!get().currentId && target) await get().openPage(target);
+        // 落定之后才允许组件里那个兜底 effect 插手 ✓（它自己会读这个字段 ✓）
+        set({ startupSettled: true });
       }
     } catch (e) {
       set({ error: String(e), loading: false });

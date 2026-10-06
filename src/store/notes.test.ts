@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({ listPages: vi.fn(), getPage: vi.fn() }));
 vi.mock("../lib/api", () => ({ api: { listPages: mocks.listPages, getPage: mocks.getPage } }));
 
 import { useNotes } from "./notes";
+import { useViewStore } from "./view";
 import type { PageMeta } from "../types";
 
 const meta = (id: string, over: Partial<PageMeta> = {}): PageMeta => ({
@@ -117,7 +118,8 @@ describe("notes store · 记住并还原当前文档", () => {
     mocks.getPage.mockReset();
     mocks.listPages.mockResolvedValue(LIST);
     mocks.getPage.mockImplementation(async (id: string) => ({ ...meta(id), content_json: "{}", content_text: "" }));
-    useNotes.setState({ pages: [], currentId: null, current: null, lastPageRestored: false, error: null });
+    useNotes.setState({ pages: [], currentId: null, current: null, lastPageRestored: false, startupSettled: false, error: null });
+    useViewStore.setState({ view: "notes" });
   });
 
   it("★ 启动第一次加载：记住的那一页**还在列表里** ⇒ 直接打开它", async () => {
@@ -129,14 +131,46 @@ describe("notes store · 记住并还原当前文档", () => {
     expect(mocks.getPage).toHaveBeenCalledWith("b");
   });
 
-  it("★ 那一页已经不在列表里（删了 / 记住的是别的空间）⇒ 什么都不打开，也不报错", async () => {
+  it("★ 那一页已经不在列表里（删了 / 记住的是别的空间）⇒ **兜底打开第一页**（不留空白，也不报错）", async () => {
+    // ⚠️ 2026-10-06 改口径：兜底从 `App.tsx` 那个 effect **搬进了这里**（见 `loadPages` 注释）——
+    //    留在那边会让两个 `openPage` 赛跑、并把记忆改写成第一页 ✗。
+    //    所以「记住的不在了」的**用户可见行为**仍然是「打开第一页」 ✓，只是决定权收口了 ✓。
     localStorage.setItem("shuyonote:lastPageId", "zzz");
 
     await useNotes.getState().loadPages();
 
-    expect(useNotes.getState().currentId).toBeNull();
+    expect(useNotes.getState().currentId).toBe("a");
     expect(useNotes.getState().error).toBeNull();
+    expect(mocks.getPage).toHaveBeenCalledWith("a");
+  });
+
+  it("★ 记住的那一页**优先于**兜底（不许被第一页顶掉）", async () => {
+    localStorage.setItem("shuyonote:lastPageId", "c");
+
+    await useNotes.getState().loadPages();
+
+    expect(useNotes.getState().currentId).toBe("c");
+    expect(mocks.getPage).not.toHaveBeenCalledWith("a");
+    // 记住的仍是 c —— 兜底那次没把记忆改写掉 ✓（这就是用户报的"不能持久"的那条）
+    expect(localStorage.getItem("shuyonote:lastPageId")).toBe("c");
+  });
+
+  it("★ 不在「笔记」视图时不兜底（去文件/看板/关系图不该被拽回页面）", async () => {
+    useViewStore.setState({ view: "files" });
+
+    await useNotes.getState().loadPages();
+
+    expect(useNotes.getState().currentId).toBeNull();
     expect(mocks.getPage).not.toHaveBeenCalled();
+  });
+
+  it("★ `startupSettled`：首次加载前 false、落定后 true（组件那个兜底 effect 靠它让位）", async () => {
+    localStorage.setItem("shuyonote:lastPageId", "b");
+    expect(useNotes.getState().startupSettled).toBe(false);
+
+    await useNotes.getState().loadPages();
+
+    expect(useNotes.getState().startupSettled).toBe(true);
   });
 
   it("★ **只还原一次**：之后再 loadPages（选择被清空）不许把人拉回去", async () => {
