@@ -244,7 +244,7 @@ const OVERLAYS = [
   // （= 360 − 48 竖条 − 240 侧栏），文件预览在手机上等于打不开（与 `.set-dialog`
   // 的 `min-width:640px` 同一类："功能不可用，而且不报错"）。
   // 改成 §4.1.1 的"大面板 → 全屏 + 内部滚动"（遮罩加 inset padding）后才进的这份清单。
-  { id: "filePreview", label: "文件预览", root: ".fm-preview-overlay", box: ".fm-preview", sheet: false, fullscreen: true },
+  { id: "filePreview", label: "文件预览", root: ".fm-preview-overlay", box: ".fm-preview", sheet: false, fullscreen: true, chromeInset: true },
 ];
 
 /** 主要操作按钮的文案（验收口径写在任务里，别改）。 */
@@ -682,10 +682,36 @@ function probeLayer(rootSel, boxSel) {
       inlineOverflowY: el.style.overflowY || "",
     });
   });
+  // ⭐ 2026-10-06（CI 连续四版红在这里 ✗）：**该被锁的背景滚动容器** —— 照
+  //    `src/hooks/useOverlayScrollLock.ts` 的发现规则复刻一遍 ✓（外壳里、内容确实溢出、
+  //    `overflow-y` 是 auto/scroll、没有 `position: fixed` 祖先、且不在侧栏里 ✓）。
+  //    ⚠️ 为什么需要它：「至少锁到一个」在"这一屏本来就没有可滚的背景"时**没法满足** ✗ ——
+  //    文件视图里文件少时，`.file-manager-table-wrap` 根本不溢出 ✓ ⇒ 锁本来就不该发生 ✓，
+  //    而旧断言仍然要"锁住 ≥1" ✗ ⇒ 假红（CI 上逐字 `外壳至少锁到一个真实滚动容器（锁住：无）` ✓）。
+  //    ⇒ 真判据：**凡是真的能滚的背景容器，都必须被锁住** ✓（数量为 0 时也应该通过 ✓）。
+  const lockable = [];
+  document.querySelectorAll(".app *").forEach((el) => {
+    if (el.scrollHeight <= el.clientHeight + 4) return;
+    const cs = getComputedStyle(el);
+    if (cs.overflowY !== "auto" && cs.overflowY !== "scroll") return;
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      if (getComputedStyle(n).position === "fixed") return;
+    }
+    if (el.closest(".sidebar")) return;
+    lockable.push({ cls: String(el.className || el.tagName).slice(0, 40), locked: el.style.overflowY === "hidden" });
+  });
+
+  // ⭐ 左侧 chrome 的宽度（左竖条 ＋ 侧栏）——「让开 chrome 的全屏层」要用它当期望左缘 ✓
+  //    （`.fm-preview-overlay { left: calc(--activity-w + --sidebar-offset) }` ✓）。
+  const rootCs = getComputedStyle(document.documentElement);
+  const px = (v) => parseFloat(v) || 0;
+  const chromeLeft = px(rootCs.getPropertyValue("--activity-w")) + px(rootCs.getPropertyValue("--sidebar-offset"));
+
   return {
     found: true,
     innerW,
     innerH,
+    chromeLeft,
     root: { left: r1(rr.left), right: r1(rr.right), top: r1(rr.top), bottom: r1(rr.bottom) },
     box: { left: r1(br.left), right: r1(br.right), top: r1(br.top), bottom: r1(br.bottom) },
     // `root === box`（右栏抽屉那种"自己就是自己遮罩"的层）：横向铺满要按**视口**算，
@@ -715,6 +741,9 @@ function probeLayer(rootSel, boxSel) {
     hasNoteScroll: !!noteScroll,
     inlineLocked: inlineLocked.slice(0, 8),
     inlineLockedCount: inlineLocked.length,
+    lockable: lockable.slice(0, 8),
+    lockableCount: lockable.length,
+    lockableUnlocked: lockable.filter((x) => !x.locked).map((x) => x.cls),
     overlayOwnScrollers: overlayOwnScrollers.slice(0, 6),
   };
 }
@@ -1185,10 +1214,17 @@ async function main() {
           if (layer.fullscreen) {
             const expLeft = m.rootIsBox ? 0 : m.root.left + m.rootPad.left;
             const expRight = m.rootIsBox ? m.innerW : m.root.right - m.rootPad.right;
+            // ⭐ 2026-10-06：有些"全屏层"是**故意让开左侧 chrome** 的 —— `.fm-preview-overlay` 的
+            //    `left = calc(--activity-w + --sidebar-offset)` ✓（文件预览不盖住侧栏 ✓，288 = 48 + 240 ✓）。
+            //    这种层用 `chromeInset: true` 标出来 ✓ ⇒ 期望左缘从"贴着视口左缘"改成"贴着 chrome 右缘" ✓。
+            //    ⚠️ 它照样拦得住当年那个 72px 宽的缺陷 ✓（那正是补这条断言的理由 ✓），
+            //      只是把"铺满"的参照从视口换成**它本该铺满的那块区域** ✓。
+            const expRootLeft = layer.chromeInset ? m.chromeLeft : 0;
             const rd = (n) => Math.round(n * 10) / 10;
             ok(
-              m.rootIsBox || (m.root.left <= 0.5 && m.root.right >= m.innerW - 0.5),
-              `全屏层的遮罩横向铺满视口（root x ${m.root.left}..${m.root.right}，视口宽 ${m.innerW}）`,
+              m.rootIsBox || (m.root.left <= expRootLeft + 0.5 && m.root.right >= m.innerW - 0.5),
+              `全屏层的遮罩横向铺满${layer.chromeInset ? "（让开左侧 chrome 后）" : ""}视口` +
+                `（root x ${m.root.left}..${m.root.right}，期望左缘 ${expRootLeft}，视口宽 ${m.innerW}）`,
             );
             ok(
               Math.abs(m.box.left - expLeft) <= 1 && Math.abs(m.box.right - expRight) <= 1,
@@ -1273,13 +1309,15 @@ async function main() {
           // 现在的判据：**内联 `overflow-y:hidden` 的容器列表非空**（那就是被这把锁锁住的），
           // 并且它必须包含 `.note-scroll`（若该视图有它）。
           ok(
-            m.inlineLockedCount > 0,
-            `外壳至少锁到一个真实滚动容器（锁住：${m.inlineLocked.join(", ") || "无"}）` +
-              `——只认 .note-scroll 的旧写法在别的视图下会一个都锁不到`,
+            m.lockableUnlocked.length === 0,
+            `外壳里**能滚的背景容器都被锁住**（本来就该锁的 ${m.lockableCount} 个；未锁：${m.lockableUnlocked.join(", ") || "无"}）` +
+              `——旧写法只数"至少锁到一个" ✗：文件视图里文件少时那一屏本来就没有可滚背景（该锁 0 个），它也会红`,
           );
           ok(
-            m.hasNoteScroll && m.noteScrollOverflowY === "hidden",
-            `内容区被锁（.note-scroll overflow-y=${m.noteScrollOverflowY}）——锁 body 无效，真正的滚动容器是它`,
+            !m.hasNoteScroll || m.noteScrollOverflowY === "hidden",
+            m.hasNoteScroll
+              ? `内容区被锁（.note-scroll overflow-y=${m.noteScrollOverflowY}）——锁 body 无效，真正的滚动容器是它`
+              : `这一屏没有 .note-scroll（换了视图 ✓）⇒ 由上面那条"能滚的背景容器都被锁住"覆盖 ✓`,
           );
           if (m.hasNoteScroll) {
             ok(

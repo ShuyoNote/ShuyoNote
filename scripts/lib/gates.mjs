@@ -652,6 +652,15 @@ export const GATES = [
     cmd: "pnpm exec vitest run --reporter=json --outputFile={tmp}/vitest.json",
     counters: "vitest",
     baseline: true,
+    // ⭐ 2026-10-06（owner 拍板：「标成允许重试一次」✓）：**满载时偶发的"收集失败"** ——
+    //    894 个测试文件一起转译时，偶尔有 1~2 个**读不进来** ✗（不是用例失败 ✗：JSON 报告里
+    //    那个文件 `status: failed` 而 `message` **是空的** ✓）。实测：同一条命令单独跑 ⇒ exit 0
+    //    （2659 全过 ✓）；整跑里复现过七八次 ✓；干净机器（CI）上一直是绿的 ✓
+    //    ⇒ 判定为**机器资源抖动**，不是代码坏 ✓。
+    //    ⚠️ `flaky: true` **不等于**"允许它随便红" ✗ —— 只有显式 `--retry N` 才重试 ✓，
+    //    且重试会写进报告（`attempts` ✓）。⇒ 本机 `pnpm verify` 带 `--retry 1` ✓，
+    //    **CI 那条命令不带** ✓（保持"flake 要吵出来" ✓）。
+    flaky: true,
   },
   {
     id: "smoke-web",
