@@ -920,7 +920,12 @@ pub fn run() {
             // 页面 load 完才 show，冷启动那条事件在前端注册监听之前就过去了。
             // 队空 ⇒ 返回空数组 ⇒ 前端什么都不做（普通启动零副作用）。
             deeplink::deep_link_take,
-        ])
+          // MCP 接入的 GUI 开关（M1 收口，2026-10-06 ✓）：状态／开关／轮换令牌 —— 只服务设置面板；
+  // 通道那半仍归 `mcp_channel`（本层只做登记 ✓）。
+  mcp_channel::mcp_status,
+  mcp_channel::mcp_set_enabled,
+  mcp_channel::mcp_rotate_token,
+])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

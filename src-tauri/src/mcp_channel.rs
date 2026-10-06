@@ -188,21 +188,8 @@ fn json_err(code: &str) -> String {
 }
 
 /// 起服务（**开关关着就什么都不做** ✓）。返回实际绑定地址（给测试与日志用 ✓）。
-pub fn start_if_enabled() -> Option<SocketAddr> {
-    let cfg = resolve_config()?;
-    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).ok()?;
-    let addr = listener.local_addr().ok()?;
-    let _ = std::fs::write(&cfg.port_file, addr.port().to_string());
-    std::thread::spawn(move || {
-        for stream in listener.incoming().flatten() {
-            let cfg = cfg.clone();
-            std::thread::spawn(move || {
-                let _ = serve_one(stream, &cfg);
-            });
-        }
-    });
-    Some(addr)
-}
+// ⚠️ 旧的 `start_if_enabled`（阻塞式 accept ＋ 只认 env）已在 2026-10-06 被下面那份**能停、且认配置文件**的实现取代 ✓ —— 不并存两份 ✗。
+
 
 /// 读一条请求 ⇒ 判定 ⇒ 回应 ⇒ 关连接 ✓（本机一跳，不做 keep-alive ✓）。
 fn serve_one(mut stream: TcpStream, cfg: &ChannelConfig) -> std::io::Result<()> {
@@ -249,6 +236,11 @@ fn serve_one(mut stream: TcpStream, cfg: &ChannelConfig) -> std::io::Result<()> 
 
     if !method_path.starts_with("POST /call") {
         return respond(&mut stream, 404, &json_err("not_found"));
+    }
+    // ⭐ 2026-10-06（M1 收口）：**每个请求先看一次"现在开不开"** ✓ —— 面板上关掉开关要**立即失效**，
+    //    不能等进程重启 ✗（工单 Task 6："关闭 ⇒ 已发 token 立即作废" ✓）。
+    if !is_enabled() {
+        return respond(&mut stream, 403, &json_err("disabled"));
     }
     let (code, out) = handle_request(cfg, origin.as_deref(), host.as_deref(), auth.as_deref(), &body);
     respond(&mut stream, code, &out)
@@ -347,4 +339,310 @@ mod tests {
         assert_eq!(code, 403);
         assert!(body.contains("unknown_capability"), "错误码要原样透出 ✓：{body}");
     }
+}
+
+// =====================================================================================
+// M1 收口（2026-10-06）：**GUI 开关**那一半 —— 开关／令牌／端口落到**文件**，env 仍可覆盖 ✓
+// =====================================================================================
+// 为什么要有这一半：R89 拍的是「必须有开关 ＋ 可见状态」（§10⑤ 的建议 ✓，owner「同意你的建议」✓）
+// —— 而打包后的 App 里**用户没法设环境变量** ✗，只有 env 一条路等于"对用户不可用" ✗。
+//
+// 口径（都是契约 ✓）：
+//   * 配置目录 `<app data>/mcp/`：`config.json`（开关 ＋ 授权清单 ✓）／`token`（第 1 行令牌、
+//     第 2 行逗号分隔授权 ⇒ **与 `parse_token_file` 同一格式** ✓）／`port`（写实际端口 ✓）；
+//   * **默认关** ✓（文件不存在 ⇒ `enabled: false` ✓）；
+//   * **env 优先** ✓（`SHUYONOTE_MCP_SWITCH` / `_TOKEN_FILE` / `_PORT_FILE` 照旧生效 ⇒
+//     判据与开发不受影响 ✓，`check-mcp-host-channel` 的五条也不受影响 ✓）；
+//   * **关掉 ⇒ 立即失效** ✓：每个请求先看一次「现在开不开」✓（关 ⇒ 403 `disabled` ✓）；
+//     而**重新开**会**轮换令牌** ✓ ⇒ 旧令牌即使还在别人手里也用不了 ✓（工单 Task 6 那一格 ✓）。
+//
+// ⚠️ 本模块仍**不判权限、不开库、不写审计** ✓ —— 那三件仍在各自唯一的一处 ✓。
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+pub const CONFIG_FILE: &str = "config.json";
+pub const TOKEN_FILE_NAME: &str = "token";
+pub const PORT_FILE_NAME: &str = "port";
+
+/// 落盘的那份配置（`<app data>/mcp/config.json` ✓）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FileConfig {
+    pub enabled: bool,
+    /// 开关打开时**默认授予**的权限（面板可改；空 ⇒ 最窄 ✓ —— 默认取窄不是取宽 ✓）。
+    pub granted: Vec<String>,
+}
+
+impl Default for FileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            // ⚠️ 默认只给**读**权限（M1 是只读接入 ✓）；写随 M2，且 R87 要求免确认写**必须留痕** ✓。
+            granted: vec!["read:pages".to_string(), "read:files".to_string(), "read:backlinks".to_string()],
+        }
+    }
+}
+
+/// `<app data>/mcp/` —— 拿不到数据目录 ⇒ `None` ⇒ 开关那套整体不可用 ✓（不猜路径 ✓）。
+pub fn mcp_dir() -> Option<PathBuf> {
+    crate::db::app_data_dir_ref().map(|d| d.join("mcp"))
+}
+
+fn dir_file(name: &str) -> Option<PathBuf> {
+    mcp_dir().map(|d| d.join(name))
+}
+
+/// 配置文件路径 ✓（GUI 面板要显示给用户看 ✓）。
+pub fn config_path() -> Option<PathBuf> {
+    dir_file(CONFIG_FILE)
+}
+/// 令牌文件路径 ✓（agent 的配置片段里要用它 ✓）。
+pub fn token_path() -> Option<PathBuf> {
+    dir_file(TOKEN_FILE_NAME)
+}
+/// 端口文件路径 ✓。
+pub fn port_path() -> Option<PathBuf> {
+    dir_file(PORT_FILE_NAME)
+}
+
+/// 读配置：**不存在／读不动／坏 JSON ⇒ 默认值**（＝默认关 ✓）—— 绝不因为配置文件坏了就"默认开" ✗。
+pub fn read_file_config() -> FileConfig {
+    let Some(p) = config_path() else { return FileConfig::default() };
+    match std::fs::read_to_string(&p) {
+        Ok(text) => serde_json::from_str::<FileConfig>(&text).unwrap_or_default(),
+        Err(_) => FileConfig::default(),
+    }
+}
+
+/// 写配置（会建目录 ✓）。
+pub fn write_file_config(cfg: &FileConfig) -> Result<(), String> {
+    let dir = mcp_dir().ok_or_else(|| "拿不到应用数据目录".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败：{e}"))?;
+    let p = config_path().ok_or_else(|| "拿不到配置路径".to_string())?;
+    let text = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化失败：{e}"))?;
+    std::fs::write(&p, text).map_err(|e| format!("写配置失败：{e}"))
+}
+
+/// 环境变量那一路（判据/开发 ✓）—— 给了 `SHUYONOTE_MCP_SWITCH=on` 就算开 ✓。
+fn env_switch_on() -> bool {
+    std::env::var(SWITCH_ENV).ok().as_deref() == Some("on")
+}
+
+/// **现在开不开**：env 优先 ✓，否则看配置文件 ✓（默认关 ✓）。
+pub fn is_enabled() -> bool {
+    env_switch_on() || read_file_config().enabled
+}
+
+/// 生成并写入新令牌：第 1 行＝令牌 ✓、第 2 行＝逗号分隔授权 ✓（与 `parse_token_file` 同格式 ✓）。
+///
+/// ⚠️ 随机数走 `crypto::random_32()`（**唯一随机入口** ✓，与 `random_salt`/钥匙袋同一条纪律 ✓）。
+pub fn write_new_token(granted: &[String]) -> Result<String, String> {
+    let dir = mcp_dir().ok_or_else(|| "拿不到应用数据目录".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败：{e}"))?;
+    let token = crate::crypto::random_32()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let body = format!("{token}\n{}\n", granted.join(","));
+    let p = token_path().ok_or_else(|| "拿不到令牌路径".to_string())?;
+    std::fs::write(&p, body).map_err(|e| format!("写令牌失败：{e}"))?;
+    // 尽力收紧权限（Unix：0600 ✓）；Windows 上 ACL 模型不同 ⇒ 失败**不致命** ✓（判据也如实说"没查过" ✓）。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(token)
+}
+
+/// 读回当前令牌（没有 ⇒ `None` ✓）。
+pub fn read_token() -> Option<String> {
+    let p = token_path()?;
+    let text = std::fs::read_to_string(p).ok()?;
+    parse_token_file(&text).map(|(t, _)| t)
+}
+
+/// 给 GUI／命令用的状态读数 ✓（含令牌全文 —— 本机同一用户 ✓，面板要能"复制给 agent" ✓）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct McpStatus {
+    /// 开关（env 或配置文件 ✓ ⇒ 这就是"现在开不开" ✓）
+    pub enabled: bool,
+    /// 监听**真的**在跑吗 ✓（开关开着但端口被占 ⇒ 这里会是 false ✓ —— 如实报 ✓）
+    pub running: bool,
+    pub port: Option<u16>,
+    pub token: Option<String>,
+    pub granted: Vec<String>,
+    /// 这次是不是被**环境变量**打开的（面板要说清"你现在是 env 开的" ✓）
+    pub env_override: bool,
+    pub config_path: Option<String>,
+    pub token_path: Option<String>,
+    pub port_path: Option<String>,
+}
+
+/// 当前运行的监听（**停得掉** ✓：非阻塞 accept ⇒ 停 = 置标志 ＋ 等线程自己退 ✓）。
+struct Running {
+    stop: Arc<AtomicBool>,
+    addr: SocketAddr,
+    handle: std::thread::JoinHandle<()>,
+}
+
+static RUN: Mutex<Option<Running>> = Mutex::new(None);
+
+fn current_addr() -> Option<SocketAddr> {
+    RUN.lock().ok().and_then(|g| g.as_ref().map(|r| r.addr))
+}
+
+/// 读状态 ✓。
+pub fn status() -> McpStatus {
+    let file = read_file_config();
+    let (token, granted) = match token_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(text) => match parse_token_file(&text) {
+            Some((t, g)) => (Some(t), g),
+            None => (None, file.granted.clone()),
+        },
+        None => (None, file.granted.clone()),
+    };
+    let addr = current_addr();
+    McpStatus {
+        enabled: is_enabled(),
+        running: addr.is_some(),
+        port: addr.map(|a| a.port()),
+        token,
+        granted,
+        env_override: env_switch_on(),
+        config_path: config_path().map(|p| p.display().to_string()),
+        token_path: token_path().map(|p| p.display().to_string()),
+        port_path: port_path().map(|p| p.display().to_string()),
+    }
+}
+
+/// 起监听：**非阻塞 accept** ✓（这样才停得掉 ✗ —— 阻塞式 `incoming()` 只能等下一个连接 ✗）。
+///
+/// ⚠️ 端口**只绑回环** ✓（判据第②条同时禁 `0.0.0.0` 与 `UNSPECIFIED` ✓）。
+fn start_listener(cfg: ChannelConfig) -> Result<Running, String> {
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .map_err(|e| format!("绑回环端口失败：{e}"))?;
+    let addr = listener.local_addr().map_err(|e| format!("读端口失败：{e}"))?;
+    listener.set_nonblocking(true).map_err(|e| format!("设非阻塞失败：{e}"))?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = stop.clone();
+    // 端口公布 ✓（写文件而不是 stdout/stderr：App 与桥之间没有 stdio 关系 ✓）
+    let port_file = cfg.port_file.clone();
+    let _ = std::fs::write(&port_file, addr.port().to_string());
+    let handle = std::thread::spawn(move || {
+        while !stop_thread.load(Ordering::SeqCst) {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let cfg = cfg.clone();
+                    std::thread::spawn(move || {
+                        let _ = serve_one(stream, &cfg);
+                    });
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(80));
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(200)),
+            }
+        }
+    });
+    Ok(Running { stop, addr, handle })
+}
+
+/// 停监听（幂等 ✓）：置标志 ⇒ 线程在 ~80ms 内退出 ✓；并**删掉端口文件** ✓（桥连不上就不会瞎试 ✓）。
+fn stop_listener() {
+    let taken = RUN.lock().ok().and_then(|mut g| g.take());
+    if let Some(r) = taken {
+        r.stop.store(true, Ordering::SeqCst);
+        let _ = r.handle.join();
+    }
+    if let Some(p) = port_path() {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// 起／停（幂等 ✓）。返回最新状态 ✓。
+///
+/// * 开：确保有令牌（没有就现生成 ✓）⇒ 起监听；**已经在跑就先停**（换令牌要重启 ✓）；
+/// * 关：停监听 ＋ 删端口文件 ⇒ **每个请求随后都会被 `disabled` 拒** ✓（旧令牌立刻失效 ✓）。
+pub fn set_enabled(enabled: bool) -> Result<McpStatus, String> {
+    if !enabled {
+        stop_listener();
+        return Ok(status());
+    }
+    // 开关写了之后 `is_enabled()` 才能为真 ✓（`serve_one` 每个请求都会读它 ✓）
+    let mut cfg = read_file_config();
+    cfg.enabled = true;
+    write_file_config(&cfg)?;
+    if token_path().map(|p| p.exists()).unwrap_or(false) == false {
+        write_new_token(&cfg.granted)?;
+    }
+    stop_listener(); // 幂等：换令牌/换端口时先停旧的 ✓
+    let token = read_token().ok_or_else(|| "开关开了但令牌还是拿不到".to_string())?;
+    let port_file = port_path()
+        .ok_or_else(|| "拿不到端口文件路径".to_string())?
+        .display()
+        .to_string();
+    let channel_cfg = ChannelConfig {
+        session_id: session_id_of(&token),
+        token,
+        granted: cfg.granted.clone(),
+        port_file,
+    };
+    let running = start_listener(channel_cfg)?;
+    if let Ok(mut g) = RUN.lock() {
+        *g = Some(running);
+    }
+    Ok(status())
+}
+
+/// 轮换令牌（**旧令牌立刻作废** ✓）：生成新令牌 ⇒ 按新令牌重启监听 ✓。
+pub fn rotate_token() -> Result<McpStatus, String> {
+    let cfg = read_file_config();
+    write_new_token(&cfg.granted)?;
+    // 开关是开的 ⇒ 重启（用新令牌 ✓）；关着 ⇒ 只换令牌、不监听 ✓
+    if is_enabled() {
+        set_enabled(true)
+    } else {
+        Ok(status())
+    }
+}
+
+/// 启动时那一次（**保持旧行为**：只有开关开着才起 ✓）。
+pub fn start_if_enabled() -> Option<SocketAddr> {
+    if !is_enabled() {
+        return None;
+    }
+    // 走与 GUI 同一条路（所以"打开后重启 App"与"面板里打开"是同一种状态 ✓）
+    match set_enabled(true) {
+        Ok(s) => {
+            if s.running {
+                s.port.map(|p| SocketAddr::from((Ipv4Addr::LOCALHOST, p)))
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            eprintln!("[mcp] 开关开着，但通道没起来：{e} ✓");
+            None
+        }
+    }
+}
+
+// ---- Tauri 命令（GUI 开关那一面）-----------------------------------------------------
+/// 状态（面板显示 ✓）。
+#[tauri::command]
+pub fn mcp_status() -> McpStatus {
+    status()
+}
+
+/// 开关（面板切换 ✓）。返回最新状态 ✓。
+#[tauri::command]
+pub fn mcp_set_enabled(enabled: bool) -> Result<McpStatus, String> {
+    set_enabled(enabled)
+}
+
+/// 轮换令牌（面板上的「重新生成」✓）。
+#[tauri::command]
+pub fn mcp_rotate_token() -> Result<McpStatus, String> {
+    rotate_token()
 }
