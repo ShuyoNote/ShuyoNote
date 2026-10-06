@@ -19,6 +19,7 @@ import {
   OPENAI_COMPAT_DEFAULT_BASE,
   OPENAI_COMPAT_DEFAULT_MODEL,
   isLoopbackBase,
+  pickModel,
   type AiProvider,
   type ProviderConfig,
 } from "../lib/ai/llm";
@@ -143,9 +144,23 @@ export function AiSettingsForm({
     apiKey: apiKey.trim(),
   });
 
-  const save = () => {
+  /**
+   * 只**落盘**、不关面板 ✓。
+   *
+   * ⭐ 2026-10-06（owner 截图问「这个模型名称改了缺不持久化？」✓）：设置中心里是
+   * `<AiSettingsForm onDone={() => {}} showCancel={false} />`（`SettingsDialog.tsx:1511` ✓）
+   * ⇒ ⭐ 面板里**只有「保存」一个出口** ✗ ⇒ 改完模型直接切走/关掉设置 ⇒ 改动静默丢掉 ✗✓
+   * （代码路径本身是好的：`update()` 会 `saveConfig()` 落 localStorage ✓，见 `store/ai.ts:217` ✓ ——
+   * 丢是因为**那一下没点保存** ✗）。⇒ 现在**失焦即落盘** ✓（`onBlur` 挂在最外层 ✓，事件会冒泡 ✓），
+   * 「保存」仍然保留（它多一步"关面板"✓）。
+   */
+  const persist = () => {
     const c = resolved();
     update({ enabled, provider, baseUrl: c.baseUrl, model: c.model, apiKey: c.apiKey, enableEmbedding, embeddingModel: embeddingModel.trim(), embedBaseUrl: embedBaseUrl.trim(), embedProvider });
+  };
+
+  const save = () => {
+    persist();
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1600);
     onDone();
@@ -159,10 +174,15 @@ export function AiSettingsForm({
       const r = await probeApi(resolved());
       setTestOk(r.ok);
       setTestMsg(r.message);
-      // 探测结果作为模型下拉内容，并自动选中第一项。
+      // 探测结果作为模型下拉内容 ✓；⭐ 并且**当前填的那个不在列表里就换掉** ✓，
+      // 换过要在提示里**说出来** ✓（⛔ 不悄悄换 ✗ —— owner 2026-10-06 的截图就是"填着一个不可用的名字" ✓）。
       if (r.models?.length) {
         setDiscoveredModels(r.models);
-        if (!model.trim()) setModel(r.models[0]);
+        const picked = pickModel(model, r.models);
+        if (picked !== model.trim()) {
+          setModel(picked);
+          setTestMsg(picked ? `${r.message}（已自动把「模型」换成可用的「${picked}」）` : r.message);
+        }
       }
     } catch (e) {
       setTestOk(false);
@@ -259,7 +279,9 @@ export function AiSettingsForm({
 
   return (
     <>
-      <div className="ai-settings-cols">
+      {/* ⭐ 失焦即落盘 ✓（事件从任一输入框冒泡到这一层 ✓）—— 见 `persist()` 上面那段注释：
+          设置中心里只有「保存」一个出口，改完直接切走会把改动丢进垃圾桶 ✗。 */}
+      <div className="ai-settings-cols" onBlur={persist}>
         {/* ===== AI 助手（对话） ===== */}
         <div className={`ai-settings-group${enabled ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">

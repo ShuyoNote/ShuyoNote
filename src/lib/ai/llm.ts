@@ -77,7 +77,31 @@ export const OLLAMA_DEFAULT_MODEL = "qwen2.5:7b";
 export const OLLAMA_DEFAULT_NUM_CTX = 8192;
 
 export const OPENAI_COMPAT_DEFAULT_BASE = "https://api.deepseek.com";
-export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-v4-flash-vision-exp";
+// ⚠️ 2026-10-06：owner 截图实测 —— 这个账号的 DeepSeek 只提供 `deepseek-flash` / `deepseek-v4-pro` ✗，
+//    我们原先默认的 `deepseek-v4-flash-vision-exp` **不在其中** ✓（它上线时是实验模型 ✓，账号不同可能
+//    确实没有 ✓）。⇒ 默认改成实测在列的那个 ✓；其它候选留在 `MODEL_OPTIONS.deepseek` ✓。
+//    ⭐ 更硬的一条在 `pickModel()`：**探测到的可用列表才说了算** ✓ —— 当前模型不在列表里就自动换成
+//    第一项 ✓，⛔ 不再让用户对着一个调不通的名字发呆 ✗。
+export const OPENAI_COMPAT_DEFAULT_MODEL = "deepseek-flash";
+
+/**
+ * 从**探测到的可用列表**里挑一个能用的模型（纯函数 ⇒ 可判据 ✓）。
+ *
+ * 为什么需要它（2026-10-06 owner 截图）：界面里填的 `deepseek-v4-flash-vision-exp` 在这台账号上
+ * **根本不在可用列表里** ✗（探测信息原话：「连接成功（共 2 个模型），但「…」不在其中。可用：deepseek-flash,
+ * deepseek-v4-pro」✓）—— 用户看到的是"名字填着、但一发就失败" ✗，而他**没法知道**该填哪个 ✓。
+ *
+ * 规则：① 列表为空 ⇒ 原样保留 ✓（探测不到不等于当前值错 ✗）；
+ *      ② 当前值**在列表里**（忽略大小写/首尾空白 ✓）⇒ 保留用户填的那个 ✓（⛔ 不擅自改 ✗）；
+ *      ③ 不在 ⇒ 换成列表第一项 ✓（并把这件事说出来，由调用方负责 ✓）。
+ */
+export function pickModel(current: string, available: readonly string[] | undefined | null): string {
+  const cur = String(current ?? "").trim();
+  const list = (available ?? []).map((m) => String(m ?? "").trim()).filter(Boolean);
+  if (list.length === 0) return cur;
+  if (cur && list.some((m) => m.toLowerCase() === cur.toLowerCase())) return cur;
+  return list[0];
+}
 
 // Herdsman：本机的模型服务（OpenAI 兼容），**不需要 Key**。
 // 实测（2026-09-19，本机 localhost:8080）：`/v1/models`、`/v1/chat/completions`（含流式）可用；
@@ -112,7 +136,10 @@ export const AI_PRESETS: AiPreset[] = [
 
 /** 每个预设服务商的常用模型（模型下拉框的候选项）。完整列出，不被占位名过滤。 */
 export const MODEL_OPTIONS: Record<string, string[]> = {
-  deepseek: ["deepseek-v4-flash-vision-exp", "deepseek-chat", "deepseek-reasoner"],
+  // ⭐ 2026-10-06：owner 实测（截图）—— DeepSeek 这个账号的 `/models` 只给两个：
+  //    `deepseek-flash` 与 `deepseek-v4-pro` ✗（我们原先默认的 `deepseek-v4-flash-vision-exp`
+  //    **不在其中** ✓）。⇒ 列表按实测补上 ✓；默认值见 `OPENAI_COMPAT_DEFAULT_MODEL` 上面那行注释 ✓。
+  deepseek: ["deepseek-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash-vision-exp"],
   ollama: ["qwen2.5:7b", "qwen2.5:3b", "llama3.1:8b", "nomic-embed-text", "dmeta-embedding-zh"],
   herdsman: ["Qwen3.8-Flash-Next", "DeepSeek-V4-Flash-0731", "bge-m3", "bge-reranker-v2-m3"],
   zhipu: ["glm-4-flash", "glm-4-plus", "embedding-3"],
