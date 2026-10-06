@@ -178,6 +178,51 @@ if (stale.length) {
   }
 }
 
+// ---- 2a-2. M2 的**写面**清单：必须**正好等于**注册表里 `ai && kind==='write'` 的那几条 ✓ ----
+//
+// 为什么单独一个文件、单独一条判据（M2 施工单 Task W1 ✓）：
+//   M1 的硬判据是「**只读面**清单里 0 条写能力」✗ —— 写面混进同一个文件会直接把它顶翻 ✓；
+//   而"写面"自己也需要一个反向的完整判据：**注册表里有几条写能力，清单里就得有几条** ✓
+//   （少了 ⇒ 外部 agent 用不上；多了 ⇒ 面里出现注册表没有的东西 ✓，两头都是"面与实现不一致" ✗）。
+//   ⚠️ 这两条都必须在**顶层**执行 ✗（本仓真栽过：把它写进 `if (stale.length) {…}` 里 ⇒ 生成物新鲜时
+//   整段不跑 ✓ —— 装了个不跑的门禁 ✓）。
+{
+  const writeListPath = join(root, "capabilities", "mcp-tools-write.json");
+  if (!existsSync(writeListPath)) {
+    fail("M2 的写面清单不在（capabilities/mcp-tools-write.json）⇒ 跑 node scripts/gen-capabilities.mjs");
+  } else {
+    let writeTools = null;
+    try {
+      writeTools = JSON.parse(readFileSync(writeListPath, "utf8"));
+    } catch (e) {
+      fail("M2 的写面清单不是合法 JSON：" + e.message);
+    }
+    if (Array.isArray(writeTools)) {
+      if (writeTools.length === 0) fail("M2 的写面清单是**空的** ⇒ 「扫到 0 条」不等于干净，拒绝给绿");
+      const reg0 = loadRegistry();
+      const capsById = new Map(reg0.capabilities.map((c) => [c.id, c]));
+      // 期望集合：`ai && kind === "write"` 且**宿主能服务**（`host !== "frontend"` ✓ —— 与读面同一个口径 ✓）
+      const want = reg0.capabilities.filter((c) => c.ai && c.kind === "write" && c.host !== "frontend").map((c) => c.id).sort();
+      const got = writeTools.map((t) => String(t.capabilityId)).sort();
+      const missing = want.filter((id) => !got.includes(id));
+      const extra = got.filter((id) => !want.includes(id));
+      if (missing.length) fail(`M2 写面缺 ${missing.length} 条（注册表里 ai && kind==='write' 应为 ${want.length} 条）：${missing.join(", ")}`);
+      if (extra.length) fail(`M2 写面多了 ${extra.length} 条（注册表里没有 / 不该出现）：${extra.join(", ")}`);
+      for (const t of writeTools) {
+        const cap = capsById.get(t.capabilityId);
+        if (!cap) { fail(`M2 写面里的 ${t.name} 指向注册表里不存在的能力：${t.capabilityId}`); continue; }
+        if (cap.kind !== "write") fail(`M2 写面里混进了非写能力 ${cap.id}（kind=${cap.kind}）⇒ 读面与写面各管一半，别串 ✗`);
+        if (cap.host === "frontend") fail(`M2 写面里的 ${cap.id} 是 host="frontend" ⇒ 桥经宿主面调不到它 ✗`);
+        if (t.kind !== "write") fail(`M2 写面里的 ${t.name} 没有自报 kind:"write"（写面的自描述字段 ✓）`);
+        if (cap.mediate !== "draft") {
+          // ⚠️ 写能力**必须**是"先要确认"的那一类 ✓ —— 免确认通道是**另一个显式开关**的事情 ✓（R87 ✓）
+          fail(`M2 写面里的 ${cap.id} 的 mediate 是 ${JSON.stringify(cap.mediate)} ⇒ 写能力必须是 mediate:"draft"（用户确认前不许落库 ✓）`);
+        }
+      }
+    } else fail("M2 的写面清单不是数组（生成物形态变了？）");
+  }
+}
+
 // ---- 2b. AI 暴露的能力：元数据在这里生成，实现必须在适配表里 ----
 const frontendAdapters = read("src/lib/capabilities/frontend.ts");
 const aiMeta = read(OUTPUTS.aiTools);

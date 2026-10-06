@@ -785,6 +785,7 @@ export interface CommandMap {
   mcp_status: { args: undefined; result: McpStatus };
   mcp_set_enabled: { args: { enabled: boolean }; result: McpStatus };
   mcp_rotate_token: { args: undefined; result: McpStatus };
+  mcp_set_allow_write: { args: { on: boolean }; result: McpStatus };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

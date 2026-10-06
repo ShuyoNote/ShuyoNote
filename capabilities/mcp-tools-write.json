@@ -1,0 +1,51 @@
+[
+  {
+    "kind": "write",
+    "name": "pages_create",
+    "capabilityId": "pages.create",
+    "description": "新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string",
+          "description": "正文纯文本（按空行分段）"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "父页面 id；省略=顶层"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "blocks_append",
+    "capabilityId": "blocks.append",
+    "description": "向现存页面追加一个或多个段落(按换行分段)。参数: text (必填正文), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "要追加的纯文本（按空行分段）"
+        },
+        "pageId": {
+          "type": "string",
+          "description": "目标页面 id；省略=当前页"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    },
+    "permission": "write:pages"
+  }
+]

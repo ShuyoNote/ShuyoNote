@@ -177,10 +177,12 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     // ⭐ 2026-10-06（M1 收口：把桥接上）：`__tools_list` 是**清单**，不是一次能力调用 ✓ ——
     //    它没有副作用、不碰任何空间/权限 ⇒ **不进** `dispatch_capability` ✓
     //    （那位的语义是"调一次能力" ✗，不是"给我工具表"）。清单**原样**吐生成物
-    //    （`mcp_host::tools_list_json()` ⇒ `include_str!` 编译期内嵌 ✓）⇒ 与 JS 侧/注册表
+    //    （`mcp_host::tools_list_json(allow_write())` ⇒ `include_str!` 编译期内嵌 ✓）⇒ 与 JS 侧/注册表
     //    **同一份** ✓，⛔ 不在此另抄 ✗。桥把它翻成 MCP 的 `tools/list` 结果 ✓。
     if method == "__tools_list" {
-        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json()));
+        // ⭐ M2（Task W2）：写面**只在免确认开关开着时**才拼上去 ✓ —— 关着时外部 agent 连"看都看不到"写工具 ✓
+        //    （⛔ 不是"看得到但一调就拒" ✗：面里出现用不了的东西，M1 已经在 `coverage.report` 上踩过一次 ✓）。
+        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json(allow_write())));
     }
     match crate::mcp_host::handle_external_call(&cfg.session_id, &cfg.granted, method, &args_json) {
         Ok(result) => (200, format!("{{\"ok\":true,\"result\":{}}}", result)),
@@ -376,6 +378,10 @@ pub struct FileConfig {
     pub enabled: bool,
     /// 开关打开时**默认授予**的权限（面板可改；空 ⇒ 最窄 ✓ —— 默认取窄不是取宽 ✓）。
     pub granted: Vec<String>,
+    /// ⭐ M2（Task W2）：**免确认写**的显式开关 ✓ —— 默认 **false** ✓（R87 的原话是「可以开」，不是「默认开」✗）。
+    /// ⚠️ `#[serde(default)]`：旧配置文件里没有这个键也要读得动 ✓（否则用户一升级就「开关整个读不出来」✗）。
+    #[serde(default)]
+    pub allow_write: bool,
 }
 
 impl Default for FileConfig {
@@ -384,6 +390,8 @@ impl Default for FileConfig {
             enabled: false,
             // ⚠️ 默认只给**读**权限（M1 是只读接入 ✓）；写随 M2，且 R87 要求免确认写**必须留痕** ✓。
             granted: vec!["read:pages".to_string(), "read:files".to_string(), "read:backlinks".to_string()],
+            // ⛔ 免确认写**默认关** ✓（R87：可以开，不是默认开 ✓）
+            allow_write: false,
         }
     }
 }
@@ -438,6 +446,24 @@ pub fn is_enabled() -> bool {
     env_switch_on() || read_file_config().enabled
 }
 
+/// **免确认写允不允许**（M2 · Task W2 ✓）：env `SHUYONOTE_MCP_ALLOW_WRITE=on` 优先 ✓（判据/开发要能测 ✓），
+/// 否则看配置文件 ✓；**默认 false** ✓。
+pub fn allow_write() -> bool {
+    std::env::var("SHUYONOTE_MCP_ALLOW_WRITE").ok().as_deref() == Some("on") || read_file_config().allow_write
+}
+
+/// 改「免确认写」开关（写配置 ✓ ＋ 若正在监听 ⇒ **按新清单重启**，否则刚开的写面要等下次启动才出现 ✗）。
+pub fn set_allow_write(on: bool) -> Result<McpStatus, String> {
+    let mut cfg = read_file_config();
+    cfg.allow_write = on;
+    write_file_config(&cfg)?;
+    if is_enabled() {
+        // 重启监听 ⇒ 端口/令牌都会刷一遍 ✓（与开开关同一条路 ✓）
+        return set_enabled(true);
+    }
+    Ok(status())
+}
+
 /// 生成并写入新令牌：第 1 行＝令牌 ✓、第 2 行＝逗号分隔授权 ✓（与 `parse_token_file` 同格式 ✓）。
 ///
 /// ⚠️ 随机数走 `crypto::random_32()`（**唯一随机入口** ✓，与 `random_salt`/钥匙袋同一条纪律 ✓）。
@@ -477,6 +503,8 @@ pub struct McpStatus {
     pub port: Option<u16>,
     pub token: Option<String>,
     pub granted: Vec<String>,
+    /// ⭐ M2：免确认写开关的当前读数 ✓（面板要显示 ✓）
+    pub allow_write: bool,
     /// 这次是不是被**环境变量**打开的（面板要说清"你现在是 env 开的" ✓）
     pub env_override: bool,
     pub config_path: Option<String>,
@@ -514,6 +542,7 @@ pub fn status() -> McpStatus {
         port: addr.map(|a| a.port()),
         token,
         granted,
+        allow_write: allow_write(),
         env_override: env_switch_on(),
         config_path: config_path().map(|p| p.display().to_string()),
         token_path: token_path().map(|p| p.display().to_string()),
@@ -664,6 +693,12 @@ pub fn mcp_set_enabled(enabled: bool) -> Result<McpStatus, String> {
 #[tauri::command]
 pub fn mcp_rotate_token() -> Result<McpStatus, String> {
     rotate_token()
+}
+
+/// ⭐ M2：改「免确认写」开关（面板 ✓）—— 默认关 ✓；开着时**每一次写都必须留审计** ✓（Task W4 ✓）。
+#[tauri::command]
+pub fn mcp_set_allow_write(on: bool) -> Result<McpStatus, String> {
+    set_allow_write(on)
 }
 
 // =====================================================================================

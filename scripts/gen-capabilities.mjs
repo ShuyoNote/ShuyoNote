@@ -36,6 +36,9 @@ export const OUTPUTS = {
   aiTools: "src/lib/capabilities/aiTools.meta.ts",
   menusMeta: "src/lib/capabilities/menus.meta.ts",
   mcpTools: "capabilities/mcp-tools.json",   // 第 10 件：MCP 工具清单（只读面 ✓）
+  // 第 11 件（M2 · 施工单 Task W1 ✓）：**写面**清单 —— 与第 10 件同源同口径（同一个注册表生成 ✓），
+  // ⛔ 但**分成两个文件**：M1 的硬判据是「只读面清单里 0 条写能力」✓，写面混进同一个文件会直接把它顶翻 ✗。
+  mcpToolsWrite: "capabilities/mcp-tools-write.json",
 };
 
 const HEADER = "本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。";
@@ -1141,12 +1144,14 @@ export function genPackageJson(reg) {
  * 字段：`capabilityId` 是桥回传时用的注册表 id；`name` 是 MCP 工具名（**不许带点** ⇒ `.` 换 `_`）。
  * ⚠️ 别在任何提示词里写死工具名：不同客户端可能改写不合规字符（**本条未复核** ✗，不当作已核实 ✓）。
  */
-export function genMcpTools(reg) {
+export function genMcpTools(reg, kind = "read") {
   // ⚠️ **2026-10-06 加 `host` 过滤**（M1 收口，真端到端逼出来的）：`coverage.report` 的 `host` 是
     //    `"frontend"`（只有 AI 宿主能实现，Rust 侧按设计**没有**实现 ✓）⇒ 清单里带着它，
     //    外部 agent 调它只会拿到 `unknown_capability` ✗ = "面与实现不一致"。
     //    ⇒ MCP 面只列**宿主真能服务**的能力 ✓：`host !== "frontend"` ✓。
-    const tools = reg.capabilities.filter((c) => c.ai && c.kind === "read" && c.host !== "frontend");
+    // ⭐ 2026-10-06（M2 · Task W1）：同一个函数也用来生成**写面**清单 ✓（`kind` 参数 ✓）。
+  //    读面清单的字节**不许变**（M1 的硬判据盯着它 ✓）⇒ 写面才带 `kind` 字段 ✓。
+  const tools = reg.capabilities.filter((c) => c.ai && c.kind === kind && c.host !== "frontend");
   const jsonType = (t) => ({ string: "string", number: "number", boolean: "boolean" })[t] ?? "string";
   const list = tools.map((c) => {
     const properties = {};
@@ -1156,6 +1161,8 @@ export function genMcpTools(reg) {
       if (a.desc) properties[a.name].description = a.desc;
     }
     return {
+      // ⚠️ 只有**写面**带 `kind` —— 读面加任何字段都会让第 10 件变字节 ✗
+      ...(kind === "write" ? { kind: "write" } : {}),
       name: c.id.replace(/\./g, "_"),
       capabilityId: c.id,
       description: c.desc ?? c.title,
@@ -1181,6 +1188,7 @@ export function buildAll(reg = loadRegistry()) {
     [OUTPUTS.aiTools]: genAiTools(reg),
     [OUTPUTS.menusMeta]: genMenusMeta(reg),
     [OUTPUTS.mcpTools]: genMcpTools(reg),
+    [OUTPUTS.mcpToolsWrite]: genMcpTools(reg, "write"),
   };
 }
 

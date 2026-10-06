@@ -31,11 +31,28 @@ use crate::plugins;
 /// ⛔ 一旦在这里另抄一份，就会出现"注册表改了、宿主面还回老清单"这种**两份真相源** ✗
 /// （判据：`scripts/check-agent-surface.mjs` 负责"面与注册表一致" ✓；这里只负责**原样**吐出来 ✓）。
 pub(crate) const MCP_TOOLS_JSON: &str = include_str!("../../capabilities/mcp-tools.json");
+/// M2 的**写面**清单（第 11 件生成物 ✓）—— 与读面同一纪律：**编译期内嵌** ✓，
+/// ⛔ 不在 Rust 里手抄一份工具名（那正是 `INV-MCP-tools-generated` 要挡的 ✗）。
+pub(crate) const MCP_TOOLS_WRITE_JSON: &str = include_str!("../../capabilities/mcp-tools-write.json");
 
-/// 给通道那条 `tools.list` 用的原样 JSON ✓（**形态**由生成物决定，这里不加工 ✓）。
-pub(crate) fn tools_list_json() -> &'static str {
-    MCP_TOOLS_JSON
+/// 拼给外部 agent 看的工具清单：**读面永远在** ✓；写面**只在免确认开关开着时**才拼上去 ✓（M2 · Task W2）。
+///
+/// 为什么关着时**不列**（而不是「列了但一调就拒」）✗：M1 真端到端踩过一次
+/// （`coverage.report` 列在面上却调不通 ✓）—— 面里出现用不了的东西，agent 会照它去调、然后撞墙 ✓。
+/// ⇒ 这里的口径是**面 = 此刻真能调的能力** ✓。
+pub fn tools_list_json(include_write: bool) -> String {
+    let read: serde_json::Value = serde_json::from_str(MCP_TOOLS_JSON).unwrap_or(serde_json::Value::Array(Vec::new()));
+    if !include_write {
+        return serde_json::to_string(&read).unwrap_or_else(|_| "[]".to_string());
+    }
+    let write: serde_json::Value = serde_json::from_str(MCP_TOOLS_WRITE_JSON).unwrap_or(serde_json::Value::Array(Vec::new()));
+    let mut all = read.as_array().cloned().unwrap_or_default();
+    all.extend(write.as_array().cloned().unwrap_or_default());
+    serde_json::to_string(&serde_json::Value::Array(all)).unwrap_or_else(|_| "[]".to_string())
 }
+
+/// ⚠️ 这个「原样吐读面清单」的旧函数已在 2026-10-06（M2 · Task W2）被上面那个
+/// `tools_list_json(include_write)` **取代** ✓ —— 不并存两份（否则"写面到底列不列"会有两个答案 ✗）。
 
 /// 一次**外部**能力调用（宿主面的唯一入口 ✓）。
 ///
@@ -88,5 +105,46 @@ mod tests {
         let rows = audit_of(&format!("external:{session}"));
         assert_eq!(rows.len(), 1, "被拒的调用也必须留痕；读到 {} 条", rows.len());
         assert_eq!(rows[0].error_code.as_deref(), Some("permission_denied"));
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════━━
+// M2 · Task W2 的判据：**写面只在免确认开关开着时才出现在工具清单里** ✓
+//   变异（会红证据）：把 `tools_list_json` 里的 `if !include_write` 那一段去掉（＝永远带写面）
+//   ⇒ 本测试第一条断言必须红 ✓。
+//   本机跑法：`powershell -File scripts\win-cargo-test.ps1 -Filter mcp_host`（本机 rust 组以 Linux/CI 为准 ✓）
+// ═════════════════════════════════════════════════════════════════════════════━━
+#[cfg(test)]
+mod tools_list_tests {
+    use super::*;
+
+    fn names(json: &str) -> Vec<String> {
+        let v: serde_json::Value = serde_json::from_str(json).expect("工具清单必须是合法 JSON ✓");
+        v.as_array()
+            .expect("工具清单是**裸数组**（生成物的形态 ✓）")
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn write_tools_only_listed_when_allowed() {
+        let off = names(&tools_list_json(false));
+        let on = names(&tools_list_json(true));
+        // ① 开关**关着**时：⛔ 一个写工具都不许出现（不是「列了但一调就拒」✗）
+        for n in ["pages_create", "blocks_append"] {
+            assert!(
+                !off.iter().any(|x| x == n),
+                "开关关着时清单里出现了写工具 {n} ✗ —— 「面 = 此刻真能调的能力」（M1 在 coverage.report 上踩过 ✓）: {off:?}"
+            );
+        }
+        // ② 读面永远是那 7 条 ✓（写面开关不影响读面 ✓）
+        assert!(off.len() >= 7, "读面至少 7 条 ✓（实际 {}）", off.len());
+        assert!(!off.iter().any(|x| x == "coverage_report"), "host=frontend 的那条**不在**面上 ✓（M1 修过 ✓）");
+        // ③ 开关**开着**时：两个写工具都在 ✓，且正好多出写面那 2 条 ✓
+        for n in ["pages_create", "blocks_append"] {
+            assert!(on.iter().any(|x| x == n), "开着时清单里必须有写工具 {n} ✓: {on:?}");
+        }
+        assert_eq!(on.len(), off.len() + 2, "开着 ＝ 关着 ＋ 写面 2 条 ✓（实际 {off:?} / {on:?}）");
     }
 }

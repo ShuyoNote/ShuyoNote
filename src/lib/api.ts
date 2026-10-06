@@ -124,6 +124,7 @@ export const api = {
   mcpStatus: () => invoke("mcp_status"),
   mcpSetEnabled: (enabled: boolean) => invoke("mcp_set_enabled", { enabled }),
   mcpRotateToken: () => invoke("mcp_rotate_token"),
+  mcpSetAllowWrite: (on: boolean) => invoke("mcp_set_allow_write", { on }),
 
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),

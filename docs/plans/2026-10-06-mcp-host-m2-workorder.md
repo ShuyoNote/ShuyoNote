@@ -1,6 +1,7 @@
 # MCP 宿主 M2 施工单（把「写」接上，但**用户确认之前一个字都不许落库**）
 
-> 状态：**规划（未开工）** —— 本档只立任务与判据，代码一行未动 ✓。
+> 状态：**W1 ＋ W2 已落地；W3（草稿路）／W4（免确认留痕）／W5（登记入账）未开工**（2026-10-06 windows 侧 ✓）。
+> 证据：`../../capabilities/mcp-tools-write.json`（第 11 件生成物：写面 2 条 ✓）· `../../scripts/gen-capabilities.mjs`（`genMcpTools(reg, kind)` ✓）· `../../scripts/check-capabilities.mjs`（写面必须**正好等于**注册表 ✓）· `../../src-tauri/src/mcp_host.rs`（内嵌写面清单 ＋ `tools_list_json(include_write)` ＋ 判据 ✓）· `../../src-tauri/src/mcp_channel.rs`（`allow_write` 默认 false ✓）· `../../src/components/McpAccessPane.tsx`（开关 ✓）✓。
 > 前置：**M1 已收口** ✓（读那条路通了：注册表生成物 ＋ 应用内宿主面 ＋ 哑桥 ＋ GUI 开关 ✓，
 > 见 [M1 施工单](2026-09-28-mcp-host-m1-workorder.md)）；
 > 前置拍板：**R87 ＝ A（免确认写**可以**开，但必须留痕 ✓）** —— owner 2026-09-29 裁定、2026-10-06 白话复核确认 ✓；
@@ -38,10 +39,18 @@
 
 | 完成 | # | 任务 | 组 | 依赖 | 会红证据 |
 |---|---|---|---|---|---|
-| [ ] | W1 | 生成物第 11 件：**写面**清单 `capabilities/mcp-tools-write.json` | contract | M1 | 手删一条写能力 ⇒ 红 |
-| [ ] | W2 | 免确认开关（显式、默认关）＋ `__tools_list` 只在允许时列写面 | contract / plugin | W1 | 开关关着却列出写工具 ⇒ 红 |
+| [x] | W1 | 生成物第 11 件：**写面**清单 `capabilities/mcp-tools-write.json` | contract | M1 | 手删一条写能力 ⇒ 红 |
+| [x] | W2 | 免确认开关（显式、默认关）＋ `__tools_list` 只在允许时列写面 | contract / plugin | W1 | 开关关着却列出写工具 ⇒ 红 |
 | [ ] | W3 | ⭐ **草稿路**：外部写请求 ⇒ 进待确认队列（**库逐字节不变** ✓） | rust / plugin | W1 | 宿主面直连 `cap_page_create` ⇒ 红 |
 | [ ] | W4 | ⭐ **免确认路**：开了才直落，且**每次写必须留审计行** | rust / plugin | W3 | 免确认写**不写审计** ⇒ 红 |
+
+**W1／W2 的读数**（2026-10-06 实测 ✓）：
+
+| # | 判据（现在绿 ✓） | 怎么红的 ✓ |
+|---|---|---|
+| W1 | `scripts/check-capabilities.mjs` ✓（`生成物 11 个文件` ✓） | ① 从写面清单删一条 ⇒ `✗ M2 写面缺 1 条（…应为 2 条）：blocks.append` ✓；② 把读能力塞进写面 ⇒ `✗ M2 写面多了 1 条：pages.get` ✓；两次都 `gen-capabilities` 还原 ⇒ exit 0 ✓。**读面清单字节不变** ✓（`git diff` 空 ✓ —— M1 的硬判据没被搅动 ✓） |
+| W2 | `src-tauri/src/mcp_host.rs` 的 `tools_list_tests`（真跑 ✓ 3/3 ✓）＋ `check-web-commands` ✓（`Rust 271 个命令 … CommandMap 272` ✓） | 把 `tools_list_json` 里的过滤改成 `if false`（＝永远带写面）⇒ **判据红** ✓，逐字 `开关关着时清单里出现了写工具 pages_create ✗ —— 「面 = 此刻真能调的能力」（M1 在 coverage.report 上踩过 ✓）` ✓；还原 ⇒ 0 ✓ |
+
 | [ ] | W5 | 登记（`gates.mjs` ＋ `docs/TESTING.md`）＋ 工作区账本证据 ＋ 设置面板文案 | — | W1–W4 | 缺证据 ⇒ 工作区 `check-all` 红 |
 
 ---

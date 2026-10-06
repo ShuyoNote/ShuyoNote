@@ -68,6 +68,23 @@ export function McpAccessPane() {
     }
   };
 
+  /** ⭐ M2：免确认写开关（默认关 ✓；开着时**每一次写都留审计** ✓ —— 面板上把话说全 ✓）。 */
+  const toggleWrite = async (next: boolean) => {
+    setBusy(true);
+    try {
+      setSt(await api.mcpSetAllowWrite(next));
+      setErr("");
+      toast(
+        next ? "已允许外部 AI 直接写入 —— 每一次写都会留审计 ✓" : "已关回「要你确认」—— 外部写只进待确认队列 ✓",
+        next ? "info" : "success",
+      );
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const copy = async (text: string, what: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -128,6 +145,27 @@ export function McpAccessPane() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* ⭐ M2（Task W2）：免确认写 —— **默认关** ✓；开着时写不再问，但每一次写都必须留审计 ✓。
+          关着时外部 agent **连写工具都看不到** ✓（⛔ 不是「看得到但一调就拒」✗）。 */}
+      <div className="set-row">
+        <div className="set-row-main">
+          <div className="set-row-title">允许外部 AI 直接写入（免确认）</div>
+          <div className="set-row-hint">
+            ⚠️ <b>默认关闭</b>。关着时：外部 AI 的新建页面／追加内容**不会直接落库** —— 它会变成一条
+            「待你确认」的改动，你点确定才写 ✓；而且它**连写工具都看不到** ✓。开着时：不再问你、直接写；
+            作为交换，**每一次写都会留一行审计**（哪个外部会话、什么时候、调了什么能力、成功还是失败 ✓）。
+          </div>
+        </div>
+        <button
+          className={`ui-toggle${st?.allow_write ? " is-on" : ""}`}
+          role="switch"
+          aria-checked={st?.allow_write === true}
+          aria-label="允许外部 AI 直接写入（免确认）"
+          disabled={busy || !st}
+          onClick={() => void toggleWrite(!(st?.allow_write === true))}
+        />
       </div>
 
       <div className="set-row">

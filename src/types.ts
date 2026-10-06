@@ -677,6 +677,8 @@ export interface McpStatus {
   port: number | null;
   token: string | null;
   granted: string[];
+  /** ⭐ M2：免确认写开关的当前读数（默认 false ✓；开着时**每一次写都留审计** ✓） */
+  allow_write: boolean;
   /** 这次是不是被**环境变量**打开的（面板要说清 ✓） */
   env_override: boolean;
   config_path: string | null;

@@ -932,6 +932,8 @@ pub fn run() {
   mcp_channel::mcp_status,
   mcp_channel::mcp_set_enabled,
   mcp_channel::mcp_rotate_token,
+  // ⭐ M2（Task W2）：免确认写开关 —— 默认关 ✓
+  mcp_channel::mcp_set_allow_write,
 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
