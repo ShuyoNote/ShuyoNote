@@ -526,6 +526,18 @@ export function ContentWidthIcon(props: IconProps) {
   );
 }
 
+// 语音输入的话筒（owner 2026-10-06：「要 Lexical 官网示例（playground）那个话筒按钮」✓）。
+// 形状照那颗：话筒本体 ＋ 底托弧 ＋ 支架竖线 ✓；线宽/描边跟其它图标同一条 ✓。
+export function MicIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </Icon>
+  );
+}
+
 export function PageIcon(props: IconProps) {
   return (
     <Icon {...props}>

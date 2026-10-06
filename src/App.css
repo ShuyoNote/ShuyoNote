@@ -5627,6 +5627,28 @@ select.prop-value {
   color: var(--text);
 }
 
+/* ⭐ 2026-10-06（owner）：语音输入**正在听**的时候要看得出来 ✓ ——
+   `active` 是"开关状态"（与目录/内容宽度同族 ✓），这里再加一个"正在录音"的呼吸感 ✓；
+   ⚠️ 动画放在 `prefers-reduced-motion: no-preference` 里 ✓（眩晕敏感的用户不该被强制看它 ✓）。 */
+.toolbar-btn.is-recording {
+  color: #fff;
+  background: var(--danger);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .toolbar-btn.is-recording {
+    animation: mic-recording-pulse 1.4s ease-in-out infinite;
+  }
+}
+@keyframes mic-recording-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(229, 72, 77, 0);
+  }
+}
+
 /* ---------- Editor ---------- */
 .editor-shell {
   flex: 1;

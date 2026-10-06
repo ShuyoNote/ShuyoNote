@@ -9,7 +9,8 @@ import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon, MicIcon } from "./icons";
+import { useSpeechInput } from "../editor/useSpeechInput";
 import { useRightPanel } from "../store/rightPanel";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
@@ -56,6 +57,10 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   //    （开目录会自动关掉 AI／讨论／插件面板 ✓）。⚠️ 订阅一律**取字段**，⛔ 不整店订阅 ✗（`check-store-subscriptions` 守这条 ✓）。
   const tocOpen = useRightPanel((s) => s.toc);
   const openToc = useRightPanel((s) => s.openToc);
+  // ⭐ 2026-10-06（owner）：「点话筒按钮后说话自动转成文字插到笔记当前位置」✓
+  //    —— 走 Web Speech API（Lexical playground 那颗话筒就是它 ✓，见 `src/lib/speechInput.ts` 头注 ✓）。
+  //    ⚠️ hooks 一律在这一层取（早退不许越过 hooks ⇒ `check-hook-order` 守这条 ✓）。
+  const speech = useSpeechInput();
   // ⭐ 2026-10-06（owner）：「关闭这个顶部工具栏」⇒ 顶端那四颗（AI／讨论／通知／目录）撤掉，
   //    出口补到**两处**：这一排的「⋯ 更多」菜单（可见 ✓）＋ 命令面板（键盘可及 ✓）。
   //    ⚠️ 只有「讨论 / 通知」是**必须**补的 —— 它们此前**只有**那条工具栏进得去
@@ -213,6 +218,24 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
 
   return (
     <div className="editor-toolbar">
+      {/* ⭐ 2026-10-06（owner）：「把这个话筒按钮放在页面顶部的工具栏最左边」✓ —— 所以它在**查找**之前 ✓。
+          点一下开始听写、再点一下停 ✓；识别到的**定稿**文字插到光标处 ✓（`useSpeechInput` / `insertTextAtCaret` ✓）。
+          ⚠️ 这套 API 在有些 WebView 里**整条不存在** ✗ ⇒ 点了会**如实**说一句人话（⛔ 不是静默没反应 ✗）。 */}
+      <button
+        className={`toolbar-btn${speech.listening ? " active is-recording" : ""}`}
+        onClick={speech.toggle}
+        title={
+          speech.listening
+            ? "语音输入：正在听（点击停止）"
+            : speech.supported
+              ? "语音输入：点击开始，说话会转成文字插到光标处"
+              : "语音输入：这个外壳不带语音识别（点击看原因）"
+        }
+        aria-label="语音输入"
+        aria-pressed={speech.listening}
+      >
+        <MicIcon />
+      </button>
       <button className="toolbar-btn" onClick={triggerFind} title={t("editor.find")}>
         <SearchIcon />
       </button>
