@@ -105,6 +105,8 @@ export default {
     more: "更多（导出等）",
     exportMarkdown: "导出为 Markdown",
     exportHtml: "导出为 HTML",
+    discuss: "讨论",
+    notifications: "通知",
     exportPdf: "导出为 PDF",
   },
   about: {

@@ -105,6 +105,8 @@ export default {
     more: "More (export…)",
     exportMarkdown: "Export as Markdown",
     exportHtml: "Export as HTML",
+    discuss: "Discussion",
+    notifications: "Notifications",
     exportPdf: "Export as PDF",
   },
   about: {

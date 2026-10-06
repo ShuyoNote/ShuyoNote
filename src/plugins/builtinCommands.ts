@@ -242,6 +242,38 @@ registerCommandGroup({
 });
 
 registerCommandGroup({
+  id: "panels",
+  name: "右栏面板",
+  commands: [
+    // ⭐ 2026-10-06（owner）：「关闭这个顶部工具栏」⇒ 顶端那四颗（AI／讨论／通知／目录）撤掉。
+    //    AI（`ai.open` ✓）与目录（编辑器工具条那颗 ✓）本来就有别的入口，
+    //    **只有「讨论 / 通知」没有** —— 所以这两条是**补入口**，不是新功能 ✓。
+    //    另一处可见入口在编辑器工具条的「⋯ 更多」菜单里 ✓（`EditorToolbar.tsx`）。
+    //    ⚠️ 它们与目录/AI 共用**同一个右栏槽位**（`rightPanel` 内部互斥 ✓）—— 打开会顶掉别人 ✓。
+    {
+      id: "panels.comments",
+      title: "讨论",
+      description: "打开右栏的「讨论」面板（页面评论）",
+      closeOnRun: true,
+      run: () => {
+        useRightPanel.getState().openComments(true, "comments");
+        return "已打开讨论面板";
+      },
+    },
+    {
+      id: "panels.notifications",
+      title: "通知",
+      description: "打开右栏的「通知」面板",
+      closeOnRun: true,
+      run: () => {
+        useRightPanel.getState().openComments(true, "notifications");
+        return "已打开通知面板";
+      },
+    },
+  ],
+});
+
+registerCommandGroup({
   id: "settings",
   name: "设置",
   commands: [

@@ -78,14 +78,16 @@ const probe = () => {
 //   · 工具条**不在 DOM 里** ⇒ 没什么可挡的，这条判据不适用（返回 null，调用方跳过）；
 //   · 唤出按钮**在** ⇒ 它同样必须被抽屉遮罩挡住（z-index 45 < 遮罩 55），
 //     否则抽屉开着还能从右下角戳出另一套面板。
+// ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：原先这里拿 `.top-tools .top-tool` 当探针 ——
+//    那条工具栏已经撤了（无插件入口时不渲染 ✓）⇒ 换成本机窄屏**一定在**的那颗唤出按钮
+//    （`.mobile-rail-toggle` ✓）。探针换个对象，判据本身（"抽屉开着时那套浮动控制在遮罩之下"）不变 ✓。
 const railBlockedByBackdrop = () => {
-  const rail = document.querySelector(".top-tools .top-tool");
-  const target = rail ?? document.querySelector(".mobile-rail-toggle");
+  const target = document.querySelector(".mobile-rail-toggle");
   if (!target) return null;
   const r = target.getBoundingClientRect();
   const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   const blocked = at?.classList?.contains("mobile-sidebar-backdrop") ?? false;
-  return { blocked, which: rail ? ".top-tools .top-tool" : ".mobile-rail-toggle" };
+  return { blocked, which: ".mobile-rail-toggle" };
 };
 
 async function main() {
@@ -393,10 +395,14 @@ async function main() {
     // 桌面端 TOC/AI 是固定宽侧板，主区靠 padding-right 让位；窄屏它们是全屏叠加，
     // 再让位就会把主区内容盒挤成 0 宽，并把 .main 撑出 .app-body
     // （flex 项缩不到 padding 以下，宽度被顶成 380px > 视口 342px）。
+    //
+    // ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：右侧面板的**可见**入口从"顶端四颗"
+    //    搬到了**编辑器工具条**（「⋯ 更多」里的讨论/通知 ＋ 那一排里的「目录」）。
+    //    本节验的仍是同一件事（窄屏上面板是叠加、不许把主区挤走 ✓），只是**开面板的手**换了 ✓。
     const RIGHT_PANELS = [
-      { index: 0, name: "AI 助手" },
-      { index: 1, name: "评论 / 通知" },
-      { index: 2, name: "目录" },
+      { kind: "discuss", name: "讨论" },
+      { kind: "notify", name: "通知" },
+      { kind: "toc", name: "目录" },
     ];
     const mainGeometry = () => {
       const main = document.querySelector(".main");
@@ -413,23 +419,45 @@ async function main() {
       // 每次重新加载，避免上一个面板的开关状态串进来
       await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
       await sleep(2000);
-      // ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条 rail 撤了 ⇒ 四颗入口常驻在**顶端工具栏**，
-      //    不用再"点唤出按钮"✓（⛔ 也不再是"收起态"✗）。
-      //    ⚠️ 选择器是 `.top-tools .top-tool` **本身** ✓ —— `.top-tool` 就是那颗 button，
-      //       写成 `… .top-tool button` 会一个都选不到 ✗（2026-10-01 实测：正是那 3 条红 ✓）。
-      const btns = await phone.$$(".top-tools .top-tool");
-      if (!btns[p.index]) {
-        ok(false, `${p.name}：顶端工具栏上仍没有第 ${p.index} 个按钮`);
+      const openedVia = await phone.evaluate((kind) => {
+        if (kind === "toc") {
+          const b = Array.from(document.querySelectorAll(".toolbar-btn")).find((x) =>
+            (x.getAttribute("title") || "").startsWith("目录"),
+          );
+          if (!b) return "没有「目录」那颗";
+          b.click();
+          return "工具条·目录";
+        }
+        const more = document.querySelector(".editor-toolbar-more .toolbar-btn");
+        if (!more) return "没有「⋯ 更多」";
+        more.click();
+        return "menu";
+      }, p.kind);
+      if (openedVia === "menu") {
+        await sleep(400);
+        const label = p.kind === "discuss" ? "讨论" : "通知";
+        const hit = await phone.evaluate((text) => {
+          const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
+            (x.textContent || "").includes(text),
+          );
+          if (item) item.click();
+          return !!item;
+        }, label);
+        if (!hit) {
+          ok(false, `${p.name}：编辑器工具条「⋯ 更多」里没有这一项`);
+          continue;
+        }
+      } else if (openedVia !== "工具条·目录") {
+        ok(false, `${p.name}：找不到入口（${openedVia}）`);
         continue;
       }
-      await btns[p.index].click();
       await sleep(1400);
       const g = await phone.evaluate(mainGeometry);
-      console.log(`\n【手机 · 打开「${p.name}」】`);
+      console.log(`\n【手机 · 打开「${p.name}」（经 ${openedVia}）】`);
       ok(g.paddingRight === "0px", `主区不让位（padding-right=${g.paddingRight}）`);
       ok(g.right <= g.winWidth, `主区不超出视口（right=${g.right} ≤ ${g.winWidth}）`);
       ok(g.docWidth <= g.winWidth, `无横向溢出（文档宽=${g.docWidth}）`);
-      await shot(phone, `05-phone-panel-${p.index}`);
+      await shot(phone, `05-phone-panel-${p.kind}`);
     }
     // ---------- 小屏 320×568：模板中心不许退回"一张卡占满整屏" ----------
     // 390px 只是主流尺寸。320px（iPhone SE / 老 Android）可用宽只有 320 − 14×2 = 292px：

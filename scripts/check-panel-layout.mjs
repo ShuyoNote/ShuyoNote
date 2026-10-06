@@ -229,6 +229,13 @@ const FIXTURE = `
     <button class="ai-header-btn ai-close" title="关闭" aria-label="关闭">×</button>
   </div>
 </div>
+
+<!-- 编辑器表格的宿主（**空容器**，表格由下面的 DOM API 现造 ✓）。
+     ⚠️ 为什么不能用 innerHTML 写 table/colgroup/tr：**HTML 解析器会自动补 tbody**
+     ⇒ 行变成 tbody 的孩子 ⇒ 第一行仍是 :first-child ⇒ 判据**永远是绿的**（第一版就这么写，
+     当场假绿 ✗）。而 Lexical 是**用 DOM API 直接搭**的（tr 是 table 的直接子元素 ✓，
+     本机实测 tr.parentElement.tagName === "TABLE" ✓）⇒ 夹具必须用同一条路造，才量得到真形状 ✓。 -->
+<div class="editor-content" id="head-table-host"></div>
 `;
 
 const css = readFileSync(join(root, "src", "App.css"), "utf8");
@@ -570,6 +577,69 @@ try {
     `830px 窗口下表格不用横向滚动（溢出 ${fmWindow.wrapOverflowX}px）`,
   );
   ok((fmWindow.kindLines ?? 2) === 1, `830px 下「类型」列仍是 1 行（${fmWindow.kindLines} 行）`);
+
+  // ---------- 编辑器表格：第一行的表头观感（**拖过列宽之后也要在**）----------
+  // 2026-10-06 owner（带截图）：「表格拖拽列宽后，标题栏背景色和字体加粗丢了」。
+  // 真因：导入/旧表的表头是 `headerState=0` 的 `<td>`（见 `markdownTransformers.ts` ✓）⇒
+  // 观感**只**来自 CSS `.editor-content table tr:first-child > td`；而拖过列宽的表格里
+  // Lexical 会把 `<colgroup>` 放在 `<table>` 的**第一个子元素**位置 ⇒ 第一行不再是 `:first-child`
+  // ⇒ 规则不再命中（本机实测：粗体 600→400、底色 → 透明 ✓）。
+  // ⚠️ 夹具用 **DOM API** 现造、且带 colgroup ✓ —— 用 innerHTML 会被解析器补 `<tbody>`，
+  //    第一行又变成 `:first-child`，判据**永远绿**（第一版就是这么写、当场假绿 ✗）。
+  const headTable = await page.evaluate(() => {
+    const host = document.getElementById("head-table-host");
+    const table = document.createElement("table");
+    const cg = document.createElement("colgroup");
+    for (const w of ["120px", "220px"]) {
+      const col = document.createElement("col");
+      col.style.width = w;
+      cg.appendChild(col);
+    }
+    table.appendChild(cg);
+    for (const pair of [
+      ["表头一", "表头二"],
+      ["正文一", "正文二"],
+    ]) {
+      const tr = document.createElement("tr");
+      for (const text of pair) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      table.appendChild(tr);
+    }
+    host.appendChild(table);
+
+    const style = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const s = getComputedStyle(el);
+      return { weight: s.fontWeight, bg: s.backgroundColor };
+    };
+    return {
+      trParent: table.querySelector("tr")?.parentElement?.tagName,
+      trIsFirstChild: table.querySelector("tr")?.matches(":first-child") ?? null,
+      first: style("#head-table-host table tr:nth-of-type(1) > td"),
+      second: style("#head-table-host table tr:nth-of-type(2) > td"),
+    };
+  });
+  // 先说清"夹具真的复现了那个形状"：tr 直挂 table、且不再是 :first-child（否则后面两条是假绿 ✓）
+  ok(
+    headTable.trParent === "TABLE" && headTable.trIsFirstChild === false,
+    `夹具形状与 Lexical 一致：tr 直挂 table 且不再是 :first-child（parent=${headTable.trParent} isFirstChild=${headTable.trIsFirstChild}）`,
+  );
+  ok(
+    headTable.first?.weight === "600",
+    `表格第一行是表头：粗体 600（实际 ${headTable.first?.weight}）—— 前面有 colgroup 也不许丢`,
+  );
+  ok(
+    (headTable.first?.bg ?? "rgba(0, 0, 0, 0)") !== "rgba(0, 0, 0, 0)",
+    `表格第一行有表头底色（实际 ${headTable.first?.bg}）`,
+  );
+  ok(
+    headTable.second?.weight !== "600",
+    `第二行**不是**表头（实际 ${headTable.second?.weight}）—— 修法不许把整张表都加粗`,
+  );
   if (SHOTS) {
     await page.screenshot({ path: join(SHOTS, "file-manager-narrow.png"), fullPage: true });
   }

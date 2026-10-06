@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { hasBlockContent } from "./lib/blankPage";
 import { isDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
@@ -68,6 +69,7 @@ import { isMobileUserAgent } from "./lib/platform/capabilities";
 import { onAnyLocalEdit } from "./lib/crdt/yDocBridge";
 import { useMobile } from "./hooks/useMobile";
 import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
+import { useScrollMemory } from "./hooks/useScrollMemory";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
@@ -109,19 +111,6 @@ function ViewLoader() {
   return <div className="view-loading" role="status">加载中…</div>;
 }
 
-// A page "has content" if its serialized root has at least one top-level block.
-// Used to show the new-page guide only for genuinely empty pages (a page with
-// only an image/embed/table has empty `content_text` but does contain content).
-function hasBlockContent(contentJson: string): boolean {
-  if (!contentJson) return false;
-  try {
-    const parsed = JSON.parse(contentJson);
-    const children = parsed?.root?.children;
-    return Array.isArray(children) && children.length > 0;
-  } catch {
-    return contentJson.length > 0;
-  }
-}
 
 // =====================================================================================
 // ★ 2026-09-29（本笔）：**自动同步"唯一的那一轮"** —— 两个触发面共用它，不许各写一份。
@@ -257,6 +246,15 @@ function NoteEditor({ pageId }: { pageId: string }) {
   const coverPosDrag = useRef<{ sy: number; sp: number; moved: boolean } | null>(null);
   const debounceRef = useRef<number | null>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
+  // ⚠️ 2026-10-06（owner）：「刷新页面，当前页面位置丢失了」⇒ 记住**每页的滚动位置**并在回到这一页时
+  //    恢复。容器是下面那个 `.note-scroll`（应用自绘的一列，`document` 本身不滚 => 浏览器的
+  //    `history.scrollRestoration` 管不到它 ✗）⇒ 自己记。存取那一半见 `lib/scrollMemory.ts` ✓。
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // ⚠️ 第三个参数是"**这一页的详情到位了没**"——判据必须是 `current.id === pageId` ✓：
+  //    光看 `!!current` 不够 —— 刷新/切页的一瞬间 `current` 还可能是**上一页**（或首屏那个），
+  //    那时 `.note-scroll` 里根本没有这一页的内容，恢复会落在"当时的最大高度"上然后再也不重试 ✗
+  //    （本机实测：600 被夹成 524 且不再动）。
+  useScrollMemory(scrollRef, pageId || null, !!pageId && current?.id === pageId);
 
   // 自适应高度：标题超长时自动换行，而不是被截断。
   useEffect(() => {
@@ -702,7 +700,7 @@ function NoteEditor({ pageId }: { pageId: string }) {
         )}
         <EditorToolbar pageId={pageId} />
       </div>
-      <div className="note-scroll">
+      <div className="note-scroll" ref={scrollRef}>
         {current?.cover ? (
           <div
             className="page-cover"
@@ -911,6 +909,8 @@ function AppShell() {
   // 逐字段订阅（`loadPages` 是动作，引用恒定）。
   const pages = useNotes((s) => s.pages);
   const currentId = useNotes((s) => s.currentId);
+  // 启动那次"打开哪一页"的决定是否已落定（见下面那个兜底 effect 与 `loadPages` 的注释）。
+  const startupSettled = useNotes((s) => s.startupSettled);
   const error = useNotes((s) => s.error);
   const loadPages = useNotes((s) => s.loadPages);
   const view = useViewStore((s) => s.view);
@@ -986,12 +986,19 @@ function AppShell() {
   // Auto-open the first page/database (never a folder) when none is selected —
   // but only while sitting in the notes view, so navigating to a folder (files
   // view) or a board/graph doesn't yank the user back to a page.
+  //
+  // ⚠️ **2026-10-06（owner：「当前页面还是不能持久」）**：启动那一次必须**让位给
+  //    `loadPages` 里的还原** —— 本 effect 会在 `set({pages})` 之后**先跑**，而"还原记住的那一页"
+  //    还挂在 `await` 上 ⇒ 两个 `openPage` **赛跑**，且这里会把 `lastPageId` **改写成第一页** ✗
+  //    ⇒ 记忆被自己抹掉、刷新永远回不到原页 ✓（真因就在这一行）。
+  //    `startupSettled` 是 `loadPages` 落定后置的字段；它变 true 时本 effect 会重跑 ✓（在依赖里 ✓）。
   useEffect(() => {
+    if (!startupSettled) return;
     if (!currentId && pages.length > 0 && useViewStore.getState().view === "notes") {
       const first = pages.find((p) => p.kind === "page" || p.kind === "database");
       if (first) useNotes.getState().openPage(first.id);
     }
-  }, [pages, currentId]);
+  }, [pages, currentId, startupSettled]);
 
   // 默认工作空间预置「使用指南」：首次进入时静默创建整套 Wiki（不自动打开），
   // 侧边栏即可见。用 localStorage 标记每个空间只预置一次；已存在则不重复（幂等）。

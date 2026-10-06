@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $createParagraphNode, $getRoot, $isElementNode, type LexicalNode } from "lexical";
 import { useBlockSelection } from "../../store/blockSelection";
+import { isBlockGestureExcluded } from "../blockGestures";
 
 // Blank-area interactions. The drag marquee (box-select) is only armed when the
 // mousedown lands on a non-text, non-block "safe" zone (page background / shell /
@@ -72,7 +73,12 @@ export function ClickToEditPlugin() {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
-      if (target.closest(".block-handle, .block-grip-menu, .block-selection-bar, .tag-picker, .slash-menu, .selection-toolbar")) return;
+      // ⭐ 2026-10-06（owner：「拖拽调整表格列宽时，同时触发了块选操作」）：
+      //    这里原来是一份**手抄**的排除清单，**漏了 `.table-resize-handle`** ✗ ⇒
+      //    列宽手柄往往落在**空单元格**里 ⇒ 下面 `isSafeMarqueeTarget` 判它"空白安全区" ✓
+      //    ⇒ **拖列宽变成了拉选框**（拖多远选中几块，「已选 1 块」就是这么来的 ✓）。
+      //    ⛔ 清单现在只有一份：`editor/blockGestures.ts` ✓（改一处、所有块手势同时生效 ✓）。
+      if (isBlockGestureExcluded(e.target)) return;
       if (!target.closest(".editor-content, .editor-shell")) return;
       // Only arm the marquee from a non-text target (element/blank — not a glyph).
       if (!isSafeMarqueeTarget(e.target)) return;

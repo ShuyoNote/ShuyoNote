@@ -5736,6 +5736,21 @@ select.prop-value {
   font-size: 16px;
 }
 
+/*
+  ⚠️ 2026-10-06（owner 截图）：「输入 '/' 选择，按 '空」只剩半句 —— 空页面上**两个占位同时在**。
+  为什么：`.new-page-guide`（新页面引导，`App.tsx:860` 渲染）是 `position:absolute; inset:0` ＋
+  `max-width: var(--doc-width)` 居中的**不透明**面板，它只盖住中间；
+  而这条占位**也是**居中同宽 ⇒ 就从引导**两侧露出半截**，看着像被切了一刀 ✗。
+  修法：**引导在的时候把编辑器占位藏掉**（两者说的是同一件事，留一个就够）。
+  ⚠️ 用 `:has()` 而不是在 `Editor.tsx` 里另算一遍"这页是不是空的"：判据只有一处
+  （`App.tsx` 渲染引导用的条件）⇒ ⛔ 不会出现两份"空页"定义各自漂移 ✗。
+  ⚠️ 只在空页上生效：正文有内容时占位由 Lexical 自己管，这条不参与 ✓。
+  ⚠️ 祖先取 `.editor-stage`（`Editor` 与 `NewPageGuide` 的共同父节点，`position: relative` ✓）。
+*/
+.editor-stage:has(.new-page-guide) .editor-placeholder {
+  display: none;
+}
+
 .editor-error {
   color: var(--danger);
   /* The RichTextPlugin ErrorBoundary wraps every decorator in this div even when
@@ -7137,23 +7152,39 @@ select.prop-value {
   margin-bottom: 0.25em;
 }
 
-/* 表格**表头默认加粗**（owner 2026-10-01：「表格的标题列不加粗吗？」）——
+/* 表格**表头默认加粗＋带底色**（owner 2026-10-01：「表格的标题列不加粗吗？」「没有背景色吗？」）。
    md 惯例（GitHub / 知乎）里表头本来就是粗的，源文件里不必写 `**` ✓。
    两路都要，缺一不可：
-     ① 导入时把表头行标成 `TableCellHeaderStates.ROW` ⇒ 是真的 `<th>`（数据对、导出对 ✓）
-        —— 见 `src/editor/markdownTransformers.ts` 的 `createMarkdownCell` ✓；
-     ② 下面这条 CSS 同时覆盖 `th` 与**第一行** ⇒ ⭐ **已经导进来的旧表也当场变粗**（不用重新导入 ✓）。
-   ⚠️ 用 600 而不是 700：与 `.editor-h3` 的 600 同档，避免表头抢过标题的层级 ✓。 */
+     ① 用表格菜单把表头行标成 `TableCellHeaderStates.ROW` ⇒ 是真的 `<th>` ⇒ 上面 `th` 那条命中 ✓；
+     ② 下面这几条覆盖**没标表头的表**（含**导入/旧表**：`markdownTransformers.ts` 的
+        `createMarkdownCell` 现在**不**标 ROW，见该文件 278 行那条"撤回"注释 ✓）
+        ⇒ ⭐ 不用重新导入也当场变粗、有底色 ✓。
+   ⚠️ 用 600 而不是 700：与 `.editor-h3` 的 600 同档，避免表头抢过标题的层级 ✓。
+
+   ⚠️ **2026-10-06 修正**（owner 带截图：「表格拖拽列宽后，标题栏背景色和字体加粗丢了」）：
+   这里原来写的是 `table tr:first-child > td` —— 而**拖过列宽的表格**里，Lexical 会把一个
+   `<colgroup>` 放在 `<table>` 的**第一个子元素**位置（本机实测 `table.firstElementChild === "COLGROUP"` ✓），
+   而 `tr` 是 `<table>` 的**直接**子元素（没有 `<tbody>` ✓ 实测 `tr.parentElement.tagName === "TABLE"`）
+   ⇒ 第一行不再是 `:first-child` ⇒ **这条规则整个不再命中**：粗体 600→400、底色→透明 ✗
+   （那正是截图里"表头没样式"的样子 ✓）。
+   ⇒ 改成**按行类型**取第一行（`:first-of-type` 不受 `<colgroup>` 影响 ✓），并覆盖三种真实形状：
+     · `th` —— 标过表头的表 ✓；
+     · `table > tr` —— Lexical 渲染的形状（行直挂 table ✓）；
+     · `table > tbody > tr` —— **HTML 解析器**补过 tbody 的形状（粘贴 HTML 会遇到 ✓），
+       且**只在没有 `thead` 时**才算表头（有 thead 时表头在 thead 里，tbody 首行是数据 ✓）。
+   ⛔ 别再退回 `tr:first-child` ✗ —— 判据在 `scripts/check-panel-layout.mjs`（夹具用 **DOM API** 造、
+      带 colgroup ✓；用 innerHTML 会被解析器补 tbody ⇒ 判据假绿 ✗）。 */
 .editor-content table th,
-.editor-content table tr:first-child > td {
+.editor-content table > thead > tr:first-of-type > td,
+.editor-content table > tr:first-of-type > td,
+.editor-content table:not(:has(> thead)) > tbody:first-of-type > tr:first-of-type > td {
   font-weight: 600;
-  /* 表头背景（owner 2026-10-01：「标题列没有背景色吗？」）：
+  /* 表头底色（owner 2026-10-01：「标题列没有背景色吗？」）：
      ⚠️ 产品**本来就有**这条样式 —— 见下面的 `.editor-table-cell-header { background: var(--bg-sidebar) }`，
-     但那个 class **只在单元格的表头状态被标上时才加**，而导入的表格以前是 `NO_STATUS` ⇒
+     但那个 class **只在单元格的表头状态被标上时才加**，而没标表头的表是 `NO_STATUS` ⇒
      既没有粗体也没有背景（同一个根因，owner 连问两次 ✓）。
-     做法：① 导入时标 `TableCellHeaderStates.ROW`（见 markdownTransformers.ts）⇒ 新表吃到那个 class ✓；
-           ② 这里给 `th` 与**第一行**补上**同一个 token** ⇒ ⭐ 已经导进来的旧表也当场有背景 ✓，
-              而且与新表**同色**（不引入第二种"表头灰" ✗）。 */
+     做法：这里给 `th` 与**第一行**补上**同一个 token** ⇒ ⭐ 没标表头的表也当场有背景 ✓，
+     而且与标了表头的**同色**（不引入第二种"表头灰" ✗）。 */
   background: var(--bg-sidebar);
 }
 
@@ -17824,62 +17855,6 @@ p:has(> .editor-drawing-container) {
 }
 .about-close:hover {
   filter: brightness(0.95);
-}
-/* M25 P1 — first-experience checklist on the empty-page guide. */
-.first-steps {
-  margin-top: 26px;
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
-  width: 100%;
-}
-.first-steps-title {
-  font-size: 12px;
-  color: var(--text-dim);
-  letter-spacing: 0.06em;
-  margin-bottom: 6px;
-}
-.first-step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 10px;
-  font-size: 13px;
-  color: var(--text);
-  cursor: pointer;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  text-align: left;
-  transition: background .15s;
-}
-.first-step:hover {
-  background: var(--block-hover);
-}
-.first-step-check {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1.5px solid var(--border-strong);
-  font-size: 11px;
-  color: transparent;
-  transition: background .18s, border-color .18s, color .18s;
-}
-.first-step:hover .first-step-check {
-  border-color: var(--accent);
-}
-.first-step-check.done {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.first-step .done {
-  color: var(--text-dim);
-  text-decoration: line-through;
 }
 /* M24 — PDF reader + annotation canvas. */
 .pdf-reader-overlay {
