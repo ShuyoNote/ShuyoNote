@@ -8,6 +8,7 @@ import {
 import { useBlockSelection } from "../../store/blockSelection";
 import { toast } from "../../store/toast";
 import { $deepCloneBlock } from "../blockUtils";
+import { isBlockGestureExcluded } from "../blockGestures";
 
 function syncHighlight(editor: ReturnType<typeof useLexicalComposerContext>[0], keys: string[]) {
   const set = new Set(keys);
@@ -65,16 +66,13 @@ export function BlockSelectionPlugin() {
     const onDown = (e: MouseEvent) => {
       if (e.button === 2) return;
       const t = e.target as HTMLElement;
-      // ⚠️ 排除清单必须包含**表格列宽手柄**（`.table-resize-handle`，见 TableResizerPlugin.tsx:119）——
-      // owner 2026-10-01 实测：拖列宽时弹出「已选 1 块 ｜ 多选模式 ｜ 复制 ｜ 删除 ｜ 清空」工具条 ✗。
-      // 原因：本插件在 document 上挂**捕获阶段** mousedown，而手柄不在排除清单里 ⇒
-      // 按下列宽手柄被当成"开始块选"（多选模式下还会 preventDefault，反过来把调列宽也弄坏 ✗）。
-      if (
-        t.closest(
-          ".block-handle, .block-grip-menu, .block-selection-bar, .block-select-mode-btn, .selection-toolbar, .table-resize-handle",
-        )
-      )
-        return;
+      // ⚠️ 排除清单见 `editor/blockGestures.ts`（**唯一出处** ✓）：
+      //    owner 2026-10-01 实测：拖列宽时弹出「已选 1 块 ｜ 多选模式 ｜ 复制 ｜ 删除 ｜ 清空」工具条 ✗。
+      //    原因：本插件在 document 上挂**捕获阶段** mousedown，而手柄不在排除清单里 ⇒
+      //    按下列宽手柄被当成"开始块选"（多选模式下还会 preventDefault，反过来把调列宽也弄坏 ✗）。
+      //    ⚠️ 2026-10-06 又复现了一次 —— 因为那份清单当时被**抄成了三份**、只补了这里一份 ✓，
+      //    现在三处共用同一份 ✓（同日那次的真凶是 `ClickToEditPlugin` 的框选 ✓）。
+      if (isBlockGestureExcluded(e.target)) return;
       const s = useBlockSelection.getState();
       if (s.selectMode) {
         const key = topLevelKeyFromTarget(editor, e.target);
