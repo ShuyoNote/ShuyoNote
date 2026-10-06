@@ -5146,12 +5146,20 @@ body.is-ai-open .main {
 
 /* Adaptive full-width content: drop the fixed doc column cap so the content
    fills the available width (toggled by the toolbar width button). The title
-   area (and its properties) must follow the same full width & left-align. */
+   area (and its properties) must follow the same full width & left-align.
+   ⭐ 2026-10-06（owner 截图：「未链接提及」要跟随适配宽度自动对齐）：
+   正文**下方**那一族块（反向链接 / 未链接提及 / 附件）原来也钉在 780px ✗，
+   于是切到全宽之后正文铺开了、它们还缩在中缝里 ⇒ 一起进这份名单 ✓。
+   ⚠️ 以后**新加"贴在正文下方、用 `--doc-width` 的块"**时，别忘了加到这里 ——
+   判据是 `scripts/check-panel-layout.mjs` 里那三条（量的是**左边缘与正文同一条线** ✓）。 */
 body.content-full .title-area,
 body.content-full .editor-head,
 body.content-full .properties,
 body.content-full .metadata-card,
-body.content-full .editor-content {
+body.content-full .editor-content,
+body.content-full .backlinks,
+body.content-full .unlinked-mentions,
+body.content-full .attachment-panel {
   max-width: none;
 }
 

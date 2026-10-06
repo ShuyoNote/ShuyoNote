@@ -768,6 +768,74 @@ try {
   // position 断言），因此它自动继承 `.main` 上的 padding-right 规则——与 Markdown
   // 阅读器完全同一条路，不需要在这里重复验证 padding 的算法。
 
+  // ---------- 「未链接提及」这一族（正文**下方**的块）：必须**跟随自适应宽度** ----------
+  //
+  // 为什么需要它（owner 2026-10-06 截图 +「这个东西要跟随适配宽度自动对齐」✓）：
+  //   工具栏那颗「内容宽度：自适应」是往 `body` 上加 `.content-full` ✓（`EditorToolbar.tsx:70` ✓），
+  //   正文 `.editor-content` 因此 `max-width: none` ✓；但正文**下方**这一族块
+  //   （`.backlinks` / `.unlinked-mentions` / `.attachment-panel`）还钉在
+  //   `max-width: var(--doc-width)`（780px ✗）⇒ 正文铺开了、它们缩在中缝里 ✗。
+  //
+  // 判据量的是**几何**（左边缘与正文同一条线 ✓），不是只读 `max-width` ✗ ——
+  // "跟着正文走"的机械形态就是"左边缘对齐" ✓。
+  {
+    await page.evaluate(() => {
+      document.body.classList.remove("content-full");
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        `<div id="doc-below">
+           <div class="editor-content" id="db-content">正文</div>
+           <div class="backlinks" id="db-backlinks"><div class="backlinks-title">反向链接</div></div>
+           <div class="unlinked-mentions" id="db-unlinked"><div class="unlinked-mentions-list"></div></div>
+           <div class="attachment-panel" id="db-attach"><div class="attachment-list"></div></div>
+         </div>`,
+      );
+    });
+    const geom = () =>
+      page.evaluate(() => {
+        const g = (id) => {
+          const el = document.getElementById(id);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { left: Math.round(r.left), width: Math.round(r.width), maxW: getComputedStyle(el).maxWidth };
+        };
+        return {
+          content: g("db-content"),
+          backlinks: g("db-backlinks"),
+          unlinked: g("db-unlinked"),
+          attach: g("db-attach"),
+        };
+      });
+
+    const centered = await geom();
+    ok(
+      centered.unlinked?.maxW === "780px" && centered.backlinks?.maxW === "780px" && centered.attach?.maxW === "780px",
+      `居中模式下三块都还是文档列 780px（拿到 ${centered.unlinked?.maxW} / ${centered.backlinks?.maxW} / ${centered.attach?.maxW}）`,
+    );
+    ok(
+      Math.abs((centered.unlinked?.left ?? 0) - (centered.content?.left ?? -99)) <= 1,
+      `居中模式下「未链接提及」与正文左对齐（${centered.unlinked?.left} vs ${centered.content?.left}）`,
+    );
+
+    await page.evaluate(() => document.body.classList.add("content-full"));
+    const full = await geom();
+    for (const [label, v] of [
+      ["未链接提及", full.unlinked],
+      ["反向链接", full.backlinks],
+      ["附件", full.attach],
+    ]) {
+      ok(v?.maxW === "none", `自适应宽度下「${label}」不再被 780px 钉住（max-width=${v?.maxW}）`);
+      ok(
+        Math.abs((v?.left ?? 0) - (full.content?.left ?? -99)) <= 1,
+        `自适应宽度下「${label}」与正文左对齐（${v?.left} vs ${full.content?.left}）`,
+      );
+    }
+    await page.evaluate(() => {
+      document.getElementById("doc-below")?.remove();
+      document.body.classList.remove("content-full");
+    });
+  }
+
   if (SHOTS) {
     mkdirSync(SHOTS, { recursive: true });
     await page.screenshot({ path: join(SHOTS, "panel-layout.png"), fullPage: true });
