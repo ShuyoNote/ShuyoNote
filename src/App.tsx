@@ -52,6 +52,7 @@ import { Editor } from "./editor/Editor";
 import { usePresence } from "./hooks/usePresence";
 import { useSyncStream } from "./hooks/useSyncStream";
 import { useSyncProgress } from "./hooks/useSyncProgress";
+import { useExternalDrafts } from "./hooks/useExternalDrafts";
 import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs, setLanMeshActive } from "./lib/syncMode";
 import { shouldAutoSyncNow } from "./lib/syncGate";
 // 空闲退避（2026-09-30）：自动同步那一轮的节拍判据（纯函数；三条口径与"兜底"都在那里 ✓）
@@ -918,6 +919,9 @@ function AppShell() {
   const templateOpen = useViewStore((s) => s.view === "templates");
   usePresence();
   useSyncStream();
+  // ⭐ M2（施工单 Task W3/W4）：**外部 AI 的写请求**从这条事件进来 —— 默认弹确认、
+  //    免确认开关开着时直接落库并留一句看得见的痕 ✓（判断逻辑在 `src/lib/externalDrafts.ts` ✓）。
+  useExternalDrafts();
   // P1：把 Rust 侧的附件同步进度接进 useSyncStatus（Web 引擎自己会上报，不需要这条）。
   useSyncProgress();
   // ★ 2026-09-29：**开机就把「局域网这一档开着吗」读一次**。

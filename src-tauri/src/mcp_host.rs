@@ -108,6 +108,20 @@ pub(crate) fn handle_external_call(
     method: &str,
     args_json: &str,
 ) -> Result<String, String> {
+    // ⭐ M2（Task W4）：免确认开关的读数**在这里读一次** ✓（生产路径）。
+    //    拆出 `_with` 是为了**判据能直说**（`auto_write` 显式传 ✓）—— ⛔ 不让判据去改进程级环境变量
+    //    或共享配置（Rust 测试是**并行**跑的 ⇒ 那种写法会时红时绿 ✗）。
+    handle_external_call_with(session_id, granted, method, args_json, crate::mcp_channel::allow_write())
+}
+
+/// 与 [`handle_external_call`] 同一条路，但**免确认开关由调用方给** ✓（判据用 ✓）。
+pub(crate) fn handle_external_call_with(
+    session_id: &str,
+    granted: &[String],
+    method: &str,
+    args_json: &str,
+    auto_write: bool,
+) -> Result<String, String> {
     // ① 跑这次调用，并把**它产出的草稿**收上来 ✓（外部路以前没人取 ⇒ 静默丢掉 ✗）
     let (out, drafts) = plugins::with_fresh_drafts(|| {
         plugins::with_external_caller(session_id, granted, || plugins::dispatch_capability(method, args_json))
@@ -117,7 +131,7 @@ pub(crate) fn handle_external_call(
     }
     // ② 交出去 ✓；③ 回给 agent 的话**如实**（是「待确认」就不许说成「已写入」✗）
     let source = format!("external:{session_id}");
-    let auto = crate::mcp_channel::allow_write();
+    let auto = auto_write;
     let delivered = deliver_drafts(&source, auto, &drafts);
     let summaries: Vec<String> = drafts.iter().map(|d| d.summary.clone()).collect();
     let out_json = out.unwrap_or_else(|e| format!("{{\"error\":{}}}", serde_json::Value::String(e)));
@@ -227,6 +241,12 @@ mod tools_list_tests {
 //   变异 ②（会红）：在外部调用期间往数据目录里写一个文件（模拟「偷偷落库」）⇒ 第一条断言红 ✓
 //   本机跑法：`powershell -File scripts\win-cargo-test.ps1 -Filter w3_draft`（rust 组以 Linux/CI 为准 ✓）
 // ═══════════════════════════════════════════════════════════════════════════════
+/// ⚠️ **测试级串行锁**：外部草稿出口是**进程级唯一**的（`DRAFT_SINK` ✓）⇒
+/// 两条判据并行跑时会互相把对方的出口换掉 ✗（实测：两条一起跑 ⇒ W3 那条红、单跑各自绿 ✓）。
+/// ⇒ 凡是要「装出口 ＋ 断言收到什么」的测试，先拿这把锁 ✓（与 `plugins.rs` 里那把同形 ✓）。
+#[cfg(test)]
+static DRAFT_SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod w3_draft_tests {
     use super::*;
@@ -269,6 +289,8 @@ mod w3_draft_tests {
 
     #[test]
     fn external_write_is_drafted_not_landed() {
+        // 出口是全局的 ⇒ 与 W4 那条串起来跑 ✓（不拿锁就会互相覆盖 ✗）
+        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = crate::db::ensure_test_app_data_dir().to_path_buf();
         // 装一个**测试出口**：真看见草稿才算数 ✓（比读源码猜有没有 emit 硬 ✗）
         let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -312,5 +334,68 @@ mod w3_draft_tests {
         assert_eq!(rows.len(), 1, "写请求也要留痕 ✓（拿到 {} 条）", rows.len());
         assert!(rows[0].ok, "这次调用本身是成功的（草稿生成了 ✓）");
         assert_eq!(rows[0].capability, "pages.create");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// M2 · Task W4 的判据：**免确认写必须留痕**（R87 逐字：「没有留痕的免确认写不算实现」✗ ✓）
+//   变异（会红证据）：把 `plugins.rs` 里 `dispatch_capability` 那笔**成功**的审计推送注释掉
+//   （`src-tauri/src/plugins.rs:2287` 那一行 ✓）⇒ 本测试最后那段断言必须红 ✓。
+//   ⚠️ 这里**刻意不把那个入队函数的名字写全** ✗ —— `check-audit-shape` 是按**整份文件文本**
+//   认「谁在写审计」的（它匹配「静态账本名」或「入队函数名」这两种字样 ✓），注释里出现就会被
+//   算成**第二个写审计的文件** ⇒ 那条判据假红 ✓（2026-10-06 实测踩到两次：先是变异说明里写了，
+//   接着**解释这件事的注释里又写了一遍** ✗）。根治办法是让那条判据**跳过注释与 `#[cfg(test)]` 区**
+//   （`check-mcp-host-channel.mjs` 里已有 `rustRegions` 那个帮手 ✓）；本次先用措辞把它摘掉 ✓。
+//   本机跑法：`powershell -File scripts\win-cargo-test.ps1 -Filter w4_audit`
+// ═══════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod w4_audit_tests {
+    use super::*;
+
+    #[test]
+    fn confirm_free_write_is_marked_and_audited() {
+        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _dir = crate::db::ensure_test_app_data_dir();
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        set_external_draft_sink(move |source, payload| {
+            if let Ok(mut g) = seen2.lock() {
+                g.push(format!("{source}|{payload}"));
+            }
+        });
+
+        let session = "sdk-w4-1";
+        let cap = crate::capabilities_gen::lookup("pages.create").expect("pages.create 必须存在 ✓");
+        let perm = cap.permission.expect("写能力必须有 permission ✓");
+        let out = handle_external_call_with(
+            session,
+            &[perm.to_string()],
+            "pages.create",
+            r#"{"title":"周报","content":"第一段"}"#,
+            true, // ⭐ 免确认开关**开着** ✓
+        )
+        .expect("免确认写本身应当成功（草稿＋落库由前端同一条路做 ✓）");
+
+        // ① 回话如实：免确认 ⇒ 不等确认，且标明 auto_apply ✓
+        assert!(out.contains("\"auto_apply\":true"), "免确认时必须标明 auto_apply ✓：{out}");
+        assert!(out.contains("\"awaiting_confirm\":false"), "免确认时不该说在等确认 ✓：{out}");
+        // ② 出口里也带 auto_apply:true ⇒ 前端**不弹框**、直接走同一条落库路 ✓（落库仍只有 `ai/apply.ts` 一处 ✓）
+        let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
+        assert_eq!(got.len(), 1, "草稿要交出去一次 ✓（拿到 {} 条）", got.len());
+        assert!(got[0].contains("\"auto_apply\":true"), "出口里必须带 auto_apply:true ✓：{}", got[0]);
+        // ③ ⭐ **必须留痕** —— 这一条就是 R87 那句话的机械形态 ✓
+        let rows: Vec<_> = crate::plugins::plugin_audit(Some("external".to_string()), Some(200))
+            .into_iter()
+            .filter(|e| e.source == format!("external:{session}"))
+            .collect();
+        assert_eq!(
+            rows.len(),
+            1,
+            "免确认写**也必须**留一行审计 ✗（R87：没有留痕的免确认写不算实现 ✓）—— 拿到 {} 条",
+            rows.len()
+        );
+        assert!(rows[0].ok, "这一笔本身是成功的 ✓");
+        assert_eq!(rows[0].capability, "pages.create", "审计里要看得出改的是哪一类能力 ✓");
+        assert_eq!(rows[0].plugin_id, "external", "外部会话不是插件 ⇒ 不许冒用插件 id ✓");
     }
 }
