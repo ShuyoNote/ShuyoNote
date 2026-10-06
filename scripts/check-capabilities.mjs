@@ -166,6 +166,13 @@ if (stale.length) {
         const cap = byId.get(t.capabilityId);
         if (!cap) { fail(`M1 清单里的 ${t.name} 指向一个注册表里不存在的能力：${t.capabilityId}`); continue; }
         if (cap.kind === "write") fail(`M1 清单里出现了写能力 ${cap.id} ⇒ M1 是只读接入，写能力随 M2（规格 §2）`);
+        // ⭐ **2026-10-06 加**（M1 收口，真端到端逼出来的）：清单里的每一条都必须是**宿主（Rust）
+        //    真能服务**的能力 ✓ —— `host: "frontend"` 的那类（如 `coverage.report`）Rust 侧**按设计
+        //    没有实现** ⇒ 带着它，外部 agent 调它只会拿到 `unknown_capability` ✗
+        //    （本机实测：tools/list 里 8 条、其中一条调不通 ✓ = "面与实现不一致"）。
+        if (cap.host === "frontend") {
+          fail(`M1 清单里的 ${cap.id} 是 host="frontend"（只有前端宿主能实现）⇒ 桥经宿主面调不到它 ✗：清单只许列宿主能服务的能力`);
+        }
       }
     } else fail("M1 的 MCP 清单不是数组（生成物形态变了？）");
   }

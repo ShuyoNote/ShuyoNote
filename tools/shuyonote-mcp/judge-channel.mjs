@@ -18,7 +18,7 @@
 // 退出码：0 全过 ／ 1 有发现 ／ 2 环境不具备（**不算通过** ✗）
 // 用法：node tools/shuyonote-mcp/judge-channel.mjs
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,8 @@ import { createServer } from "node:http";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE = join(HERE, "index.mjs");
+// ⚠️ 夹具用**真生成物**（唯一真相源 ✓）：`capabilities/mcp-tools.json` 是**裸数组** ✓
+const REAL_TOOLS = JSON.parse(readFileSync(join(HERE, "..", "..", "capabilities", "mcp-tools.json"), "utf8"));
 
 let pass = 0;
 let fail = 0;
@@ -98,18 +100,13 @@ try {
     req.on("data", (d) => { body += d; });
     req.on("end", () => {
       const parsed = JSON.parse(body || "{}");
-      seen.push({ method: parsed.method, args: parsed.args, auth: req.headers.authorization, host: req.headers.host });
+      seen.push({ method: parsed.method, args: parsed.args, auth: req.headers.authorization, host: req.headers.host, url: req.url });
       if (parsed.method === "__tools_list") {
+        // ⚠️ **吐真生成物**（`capabilities/mcp-tools.json`，裸数组 ✓）——
+        //    上一版夹具自己编了个 `{tools:[…]}` ✗ ⇒ 真形状是裸数组时桥读出来是 0 条 ✗，
+        //    而判据照样全绿（夹具与真值不一致）✓。夹具一旦自己编形状，就挡不住这种漂移 ✗。
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({
-          ok: true,
-          result: {
-            tools: [
-              { name: "pages_search", capabilityId: "pages.search", description: "搜页面", inputSchema: { type: "object", properties: { q: { type: "string" } } } },
-              { name: "files_read", capabilityId: "files.read", description: "读文件", inputSchema: { type: "object" } },
-            ],
-          },
-        }));
+        res.end(JSON.stringify({ ok: true, result: REAL_TOOLS }));
         return;
       }
       if (parsed.method === "pages.search") {
@@ -142,8 +139,12 @@ try {
     const byId = new Map(r.parsed.map((p) => [p.value?.id, p.value]));
     ok(byId.get(1)?.result?.serverInfo?.name === "shuyonote-bridge", "initialize 回了 serverInfo ✓");
     const tools = byId.get(2)?.result?.tools || [];
-    ok(tools.length === 2 && tools[0]?.name === "pages_search", `tools/list 把 App 给的清单**原样**翻出来（${tools.length} 条，第一条 ${tools[0]?.name}）`);
-    ok(tools[0]?.["x-shuyonote-capability"] === "pages.search", "工具上带回了能力 id（调用时按它转发 ✓）");
+    ok(tools.length === REAL_TOOLS.length, `tools/list 条数 = 生成物条数（桥 ${tools.length} / 生成物 ${REAL_TOOLS.length} ✓）`);
+    ok(tools[0]?.name === REAL_TOOLS[0]?.name, `第一条也对得上（${tools[0]?.name} === ${REAL_TOOLS[0]?.name} ✓）`);
+    ok(
+      tools[0]?.["x-shuyonote-capability"] === REAL_TOOLS[0]?.capabilityId,
+      `工具上带回了能力 id（${tools[0]?.["x-shuyonote-capability"]} === ${REAL_TOOLS[0]?.capabilityId} ✓，调用时按它转发 ✓）`,
+    );
     const callRes = byId.get(3)?.result?.content;
     ok(Array.isArray(callRes) && String(callRes[0]?.text || "").includes("命中"), "tools/call 把 App 的结果包成 content[] 回给 agent ✓");
     ok(
@@ -153,6 +154,10 @@ try {
     const listCall = seen.find((s) => s.method === "__tools_list");
     const realCall = seen.find((s) => s.method === "pages.search");
     ok(!!listCall && !!realCall, "夹具收到两次真请求：清单一次 ＋ 调用一次 ✓");
+    ok(
+      realCall?.url === "/call",
+      `转发到的是 **/call**（拿到 ${realCall?.url}）—— 宿主面只认这个路径 ✓，写成 \`/\` 会 404 \`not_found\` ✗`,
+    );
     ok(realCall?.args?.q === "命", "转发时**参数原样**带上（没有被桥改写 ✓）");
     ok(
       String(realCall?.auth || "") === "Bearer " + TOKEN,

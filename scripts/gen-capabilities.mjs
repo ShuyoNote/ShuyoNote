@@ -1142,7 +1142,11 @@ export function genPackageJson(reg) {
  * ⚠️ 别在任何提示词里写死工具名：不同客户端可能改写不合规字符（**本条未复核** ✗，不当作已核实 ✓）。
  */
 export function genMcpTools(reg) {
-  const tools = reg.capabilities.filter((c) => c.ai && c.kind === "read");
+  // ⚠️ **2026-10-06 加 `host` 过滤**（M1 收口，真端到端逼出来的）：`coverage.report` 的 `host` 是
+    //    `"frontend"`（只有 AI 宿主能实现，Rust 侧按设计**没有**实现 ✓）⇒ 清单里带着它，
+    //    外部 agent 调它只会拿到 `unknown_capability` ✗ = "面与实现不一致"。
+    //    ⇒ MCP 面只列**宿主真能服务**的能力 ✓：`host !== "frontend"` ✓。
+    const tools = reg.capabilities.filter((c) => c.ai && c.kind === "read" && c.host !== "frontend");
   const jsonType = (t) => ({ string: "string", number: "number", boolean: "boolean" })[t] ?? "string";
   const list = tools.map((c) => {
     const properties = {};

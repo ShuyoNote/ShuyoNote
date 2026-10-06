@@ -71,7 +71,10 @@ function readEndpoint() {
 async function callApp(method, args) {
   const ep = readEndpoint();
   if (!ep.ok) return { ok: false, error: "通道未开：" + ep.why };
-  const url = `http://127.0.0.1:${ep.port}/`;
+  // ⚠️ 路径**必须是 `/call`**：宿主面的 `serve_one` 先核 `POST /call`，不然直接 404 `not_found` ✓
+  //    （2026-10-06 真端到端第一次就撞上：桥 post `/` ⇒ 每条调用都回 `not_found` ✗，
+  //     而判据当时用的假 App 通道**不核路径** ⇒ 15/0 全绿也挡不住 ✗）。
+  const url = `http://127.0.0.1:${ep.port}/call`;
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -97,7 +100,11 @@ async function callApp(method, args) {
 async function listTools() {
   const r = await callApp("__tools_list", {});
   if (!r.ok) return { ok: false, error: r.error };
-  const entries = Array.isArray(r.result?.tools) ? r.result.tools : [];
+  // ⚠️ 清单的**真形状**由生成物决定：`capabilities/mcp-tools.json` 是**裸数组** ✓
+  //    （`[{name, capabilityId, description, inputSchema}, …]` ✓）。宿主面**原样**透出来 ✓ ⇒
+  //    这里同时认"裸数组"与"`{tools:[…]}`"两种（后者是夹具/将来换形状时的兜底 ✓，不猜内容 ✓）。
+  const raw = r.result;
+  const entries = Array.isArray(raw) ? raw : Array.isArray(raw?.tools) ? raw.tools : [];
   return {
     ok: true,
     tools: entries.map((t) => ({
