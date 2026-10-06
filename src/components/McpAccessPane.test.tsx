@@ -127,4 +127,16 @@ describe("McpAccessPane：外部 AI 接入的开关面", () => {
     await tick();
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("SHUYONOTE_MCP_TOKEN_FILE"));
   });
+
+  it("★ 面板必须把「写」这件事说全（默认要确认 ＋ 免确认必留痕），⛔ 不许再说成只读", async () => {
+    mount();
+    await tick();
+    await tick();
+    const text = document.body.textContent || "";
+    // 这一条是防"文案过期"的：M2 之后外部 AI 也能提改动 ⇒ 面板说"只读"就是骗人 ✗
+    expect(text).toContain("待你确认");
+    expect(text).toContain("每一次写都会留一行审计");
+    expect(text).toContain("免确认");
+    expect(text).not.toContain("只读（列页面");
+  });
 });

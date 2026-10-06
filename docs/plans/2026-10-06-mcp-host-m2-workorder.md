@@ -1,6 +1,7 @@
 # MCP 宿主 M2 施工单（把「写」接上，但**用户确认之前一个字都不许落库**）
 
-> 状态：**W1 ＋ W2 ＋ W3 ＋ W4 已落地；W5（登记入账）未开工**（2026-10-06 windows 侧 ✓）。
+> 状态：✅ **M2 已收口**（2026-10-06 windows 侧 ✓）—— W1–W5 全部完成，每一格都有实测读数与「看过它红」证据 ✓。
+> 证据：`../../capabilities/mcp-tools-write.json`（第 11 件生成物 ✓）· `../../scripts/check-capabilities.mjs`（写面完整性 ＋ `mediate:"draft"` ✓）· `../../src-tauri/src/mcp_host.rs`（工具面按开关过滤 ＋ 草稿出口 ＋ W3/W4 两条判据 ✓）· `../../src-tauri/src/mcp_channel.rs`（`allow_write` 默认 false ＋ 关过再开换令牌 ✓）· `../../src/lib/externalDrafts.ts`（默认问用户／免确认留痕那条岔路 ✓）· `../../src/components/McpAccessPane.tsx`（设置面板文案 ✓）✓。
 > 证据：`../../capabilities/mcp-tools-write.json`（第 11 件生成物：写面 2 条 ✓）· `../../scripts/gen-capabilities.mjs`（`genMcpTools(reg, kind)` ✓）· `../../scripts/check-capabilities.mjs`（写面必须**正好等于**注册表 ✓）· `../../src-tauri/src/mcp_host.rs`（内嵌写面清单 ＋ `tools_list_json(include_write)` ＋ 判据 ✓）· `../../src-tauri/src/mcp_channel.rs`（`allow_write` 默认 false ✓）· `../../src/components/McpAccessPane.tsx`（开关 ✓）✓。
 > 前置：**M1 已收口** ✓（读那条路通了：注册表生成物 ＋ 应用内宿主面 ＋ 哑桥 ＋ GUI 开关 ✓，
 > 见 [M1 施工单](2026-09-28-mcp-host-m1-workorder.md)）；
@@ -52,8 +53,9 @@
 | W2 | `src-tauri/src/mcp_host.rs` 的 `tools_list_tests`（真跑 ✓ 3/3 ✓）＋ `check-web-commands` ✓（`Rust 271 个命令 … CommandMap 272` ✓） | 把 `tools_list_json` 里的过滤改成 `if false`（＝永远带写面）⇒ **判据红** ✓，逐字 `开关关着时清单里出现了写工具 pages_create ✗ —— 「面 = 此刻真能调的能力」（M1 在 coverage.report 上踩过 ✓）` ✓；还原 ⇒ 0 ✓ |
 | W3 | `src-tauri/src/mcp_host.rs` 的 `w3_draft_tests::external_write_is_drafted_not_landed`（真跑 ✓ 1/1 ✓） | ① 让 `with_fresh_drafts` **把草稿丢掉**（不回交）⇒ 判据红，逐字 `草稿必须交出去一次（拿到 0 条）✗` ✓；② 在外部调用里**偷偷写一个库文件**（`spaces/mut.db`）⇒ 判据红，逐字 `外部写请求在用户确认之前**不许落库** ✗：数据目录变了` ✓；两次还原 ⇒ 0 ✓ |
 | W4 | `src-tauri/src/mcp_host.rs` 的 `w4_audit_tests::confirm_free_write_is_marked_and_audited`（真跑 ✓ 1/1 ✓） | 把 `plugins.rs` 里**成功**那笔 `push_audit`（`:2287`）注释掉 ⇒ 判据红，逐字 `免确认写**也必须**留一行审计 ✗（R87：没有留痕的免确认写不算实现 ✓）—— 拿到 0 条` ✓；还原 ⇒ 0 ✓ |
+| W5 | `_workspace/bin/check-all.mjs` ＋ `check-gate-manifest`（**工作区**两条 ✓）；`gates.mjs` 无新增门禁（M2 的判据都落在**既有**门禁里 ✓） | 缺证据 ⇒ 工作区门禁红（本会话真撞过：改了判据代码 ⇒ 工作区那条「判据代码一改、证据自动过期」的判据立刻报「证据过期」✗ ✓；⚠️ 这里**刻意不写它的 D 编号** —— 本仓那条判据把裸 `D<数字>` 一律当**决策引用** ✗，写了就假红 ✓）；`check-audit-shape` 的**假红**也真撞过一次（注释里写了入队函数名 ⇒ 被算成第二个写审计的文件 ✗，改措辞摘掉 ✓） |
 
-| [ ] | W5 | 登记（`gates.mjs` ＋ `docs/TESTING.md`）＋ 工作区账本证据 ＋ 设置面板文案 | — | W1–W4 | 缺证据 ⇒ 工作区 `check-all` 红 |
+| [x] | W5 | 登记（`gates.mjs` ＋ `docs/TESTING.md`）＋ 工作区账本证据 ＋ 设置面板文案 | — | W1–W4 | 缺证据 ⇒ 工作区 `check-all` 红 |
 
 ---
 
