@@ -135,6 +135,11 @@ pub fn bearer_ok(auth: Option<&str>, token: &str) -> bool {
 }
 
 /// 从环境变量解析配置 ✓（**默认关** ⇒ 没显式打开就返回 `None` ✓）。
+/// ⚠️ **目前没有调用方**（2026-10-06 M1 收口：启动与设置面板都改走 `is_enabled()` / `set_enabled()` ✓）——
+///    但它仍是**环境变量那条路**的读取器（判据 `check-mcp-host-channel` ③ 要的「token 从文件读」就落在它里面 ✓），
+///    删掉会让"env 优先"这条口径**无处可查** ✗ ⇒ 挂一张**带日期的收据**（`check-dead-code-receipts.mjs` 的口径 ✓）。
+///    **删除条件**：`SHUYONOTE_MCP_*` 三个环境变量整体退役之后（桥改用配置片段里的文件路径 ⇒ 不再需要 env ✓）。
+#[allow(dead_code)]
 pub fn resolve_config() -> Option<ChannelConfig> {
     if !MCP_CHANNEL_ENABLED && std::env::var(SWITCH_ENV).ok().as_deref() != Some("on") {
         return None;

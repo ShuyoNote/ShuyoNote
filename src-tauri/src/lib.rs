@@ -466,15 +466,22 @@ pub fn run() {
                 eprintln!("[lan] 发现层没起来（同步不受影响，照旧走配置地址）：{e}");
             }
             // 方向②（桥 → App，App 当服务端）的**宿主面那半通道**（2026-10-01 ✓，Task 5 笔记 §8）：
-            // ⚠️ **默认关**（`mcp_channel::MCP_CHANNEL_ENABLED = false` ✓）⇒ 只有显式
-            // `SHUYONOTE_MCP_SWITCH=on`**且** `SHUYONOTE_MCP_TOKEN_FILE` 可读时才真起监听 ✓；
+            // ⚠️ **默认关** ✓：开关可以是 ① 环境变量 `SHUYONOTE_MCP_SWITCH=on`（判据/开发 ✓）
+            // 或 ② 设置面板写下的 `<app data>/mcp/config.json`（R89 的开关 ✓）—— 两者任一为真才算开 ✓。
             // 起来了也只绑 `127.0.0.1`（临时端口 ✓）＋ 每次会话一次性令牌 ✓ ⇒ 出不了本机 ✓。
             // 与上面那条同一条纪律：**起不来不挡应用**（只是这条通道不通 ✓）—— 但要**说清**（否则
             // "开关开了却没作用"会一点线索都没有 ✓）。
-            if mcp_channel::resolve_config().is_some() {
-                match mcp_channel::start_if_enabled() {
-                    Some(addr) => println!("[mcp] 宿主面通道已起：{addr}（只绑回环 ✓，端口已写到公布文件 ✓）"),
-                    None => eprintln!("[mcp] 通道开关是开的，但监听没起来（端口被占？）—— 这条通道不通 ✓"),
+            //
+            // ⚠️ 2026-10-06（M1 收口）删掉了这里原来的 `if resolve_config().is_some()` 守卫 ✗ ——
+            //    它只认**环境变量**，于是"设置面板打开开关"这条路上，这段代码**根本不会跑** ✓
+            //    （实测：面板写完 `config.json(enabled:true)` 重启 ⇒ 端口文件一直不出现 ✓）。
+            //    现在由 `start_if_enabled()` 自己判"开不开"（env **或** 配置文件 ✓）。
+            match mcp_channel::start_if_enabled() {
+                Some(addr) => println!("[mcp] 宿主面通道已起：{addr}（只绑回环 ✓，端口已写到公布文件 ✓）"),
+                None => {
+                    if mcp_channel::is_enabled() {
+                        eprintln!("[mcp] 通道开关是开的，但监听没起来（端口被占？）—— 这条通道不通 ✓");
+                    }
                 }
             }
             // 聚合邮箱定时收取：后台轮询未读数并推事件给前端（WebView 最小化时
