@@ -222,7 +222,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
           点一下开始听写、再点一下停 ✓；识别到的**定稿**文字插到光标处 ✓（`useSpeechInput` / `insertTextAtCaret` ✓）。
           ⚠️ 这套 API 在有些 WebView 里**整条不存在** ✗ ⇒ 点了会**如实**说一句人话（⛔ 不是静默没反应 ✗）。 */}
       <button
-        className={`toolbar-btn${speech.listening ? " active is-recording" : ""}`}
+        className={`toolbar-btn${speech.listening ? " active is-recording" : ""}${speech.supported ? "" : " is-unsupported"}`}
         onClick={speech.toggle}
         title={
           speech.listening

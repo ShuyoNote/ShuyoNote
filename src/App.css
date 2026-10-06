@@ -5619,6 +5619,8 @@ select.prop-value {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  /* ⭐ 录音那个小红点要**贴着按钮内角**定位 ⇒ 需要这一层参照 ✓（28px 的按钮加 relative 无副作用 ✓） */
+  position: relative;
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
@@ -5627,25 +5629,63 @@ select.prop-value {
   color: var(--text);
 }
 
-/* ⭐ 2026-10-06（owner）：语音输入**正在听**的时候要看得出来 ✓ ——
-   `active` 是"开关状态"（与目录/内容宽度同族 ✓），这里再加一个"正在录音"的呼吸感 ✓；
-   ⚠️ 动画放在 `prefers-reduced-motion: no-preference` 里 ✓（眩晕敏感的用户不该被强制看它 ✓）。 */
+/* ⭐ 2026-10-06（owner：录音状态「显示的不太美观」✗ ⇒ 重做第二版）：
+   第一版是**整块红底 ＋ 白图标** —— 在浅色工具栏上太抢、像一颗报警按钮 ✗；第二版是灰底＋红图标，
+   实测截图里又显得**跟"按下去"没区别** ✗。这一版：**一层很淡的自家红**（用 `--danger` 本身
+   调透明度铺一层 ✓，⛔ 不新增色值 ✗）＋ 图标染红 ＋ 右上角呼吸小红点 ⇒ 一眼是"正在录音" ✓，
+   又不砸眼睛 ✓。 */
 .toolbar-btn.is-recording {
-  color: #fff;
+  color: var(--danger);
+}
+.toolbar-btn.is-recording::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--danger);
+  opacity: 0.12;
+}
+.toolbar-btn.is-recording:hover::before {
+  opacity: 0.2;
+}
+.toolbar-btn.is-recording::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
   background: var(--danger);
 }
+/* 图标本身要比那层淡红"在上面" ✓（否则叠色会把它压灰 ✗） */
+.toolbar-btn.is-recording > svg {
+  position: relative;
+  z-index: 1;
+}
+/* 这个外壳不带语音识别 ⇒ 视觉上也**如实**表态（变暗 ✓），但**仍然可点** ✓ ——
+   点了会弹一句"为什么不能用"，⛔ 不是灰掉让人猜 ✗。 */
+.toolbar-btn.is-unsupported {
+  color: var(--text-faint);
+  opacity: 0.55;
+}
+.toolbar-btn.is-unsupported:hover {
+  opacity: 0.8;
+}
 @media (prefers-reduced-motion: no-preference) {
-  .toolbar-btn.is-recording {
-    animation: mic-recording-pulse 1.4s ease-in-out infinite;
+  .toolbar-btn.is-recording::after {
+    animation: mic-recording-dot 1.4s ease-in-out infinite;
   }
 }
-@keyframes mic-recording-pulse {
+@keyframes mic-recording-dot {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.5);
+    opacity: 1;
+    transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 0 4px rgba(229, 72, 77, 0);
+    opacity: 0.35;
+    transform: scale(0.75);
   }
 }
 
