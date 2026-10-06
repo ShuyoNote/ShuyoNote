@@ -248,6 +248,12 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* ⭐ 2026-10-06（owner：「在侧边栏滚动，整个页面上移，底下大片空白」✗）：
+     整页**不参与**滚动接力 / 橡皮筋 ✓ —— 滚轮只该喂给当前那一栏（侧栏 ✓ 正文 ✓），
+     到边界就停住 ✓。⛔ 这里**不加 `overflow: hidden`** ✗ —— `App.tsx` 有几条早期返回
+     （`view-loading` 之类 ✓）渲染在 `.app` **之外** ✓，加了会把那几屏裁掉 ✗；
+     真要彻底钉死文档高度，得先把那几屏搬进 `.app` ✓（那一笔单独做 ✓）。 */
+  overscroll-behavior: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
   color: var(--text);
@@ -3389,6 +3395,10 @@ select.sync-input {
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
+  /* ⭐ 2026-10-06（owner：「在侧边栏滚动鼠标，结果整个页面上移，底下大片空白」✗）：
+     这一栏滚到头之后，滚轮**不许把滚动"接力"给外层**（scroll chaining ✓）——
+     那正是"滚侧栏、整页跟着动"的形状 ✗。`contain` = 滚到边界就停在本容器里 ✓。 */
+  overscroll-behavior: contain;
   padding-top: 2px;
   padding-bottom: 16px;
 }
@@ -12674,6 +12684,8 @@ p:has(> .editor-drawing-container) {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* ⭐ 2026-10-06：同 `.sidebar-tree` —— 正文滚到底不许把滚动接力给外层 ✓（owner 那条报告的另一半 ✓）。 */
+  overscroll-behavior: contain;
   /* 内容底部留白：滚动到底时下方留出空间，视觉更透气。 */
   padding-bottom: 120px;
 }
