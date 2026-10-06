@@ -196,6 +196,24 @@ export const GATES = [
     //   设了它反而会报「通过但没解析出读数 ⇒ 基线校验失效」✗。判据本身的"只看不增"由它自己的自测条数承担 ✓。
     registered: "2026-09-30",
   },
+
+  {
+    id: "check-mcp-bridge-stdout",
+    group: "plugin",
+    label: "MCP 桥的 stdout 只许协议消息（行分隔 JSON-RPC：多印一行日志就把协议打断 ✗）",
+    cmd: "node scripts/check-mcp-bridge-stdout.mjs",
+    // 9 条断言（源码无 console.log／stdout 每行合法／通知不回／版本协商／无对象 exit 2 ✓）⇒ 进「只增不减」的基线 ✓
+    baseline: true,
+    // ⚠️ 有 baseline:true 就**必须**声明 counters ✓（`scripts/test-report.test.mjs` 的不变量自测要求 ✓；「auto」＝文本兜底，读数行不变 ✓）
+    counters: "auto",
+    incident:
+      "2026-10-06（M1 收口 · 施工单 Task 3）：本仓此前**只有说明、没有这条判据** ✗ —— " +
+      "`check-mcp-bridge-dumb` 只管「桥不判权限／不落库」、`check-mcp-host-channel` 只管宿主面，" +
+      "**谁都不管 stdout 纯净** ✗；而桥里多一句 `console.log` 会让 MCP 客户端按行解析时崩掉" +
+      "（表现是客户端报错、桥这侧看着一切正常 ✓）。判据**真起进程**：① 源码里不许有 `console.log`；" +
+      "② stdout 每一行都要 `JSON.parse` 得动（带 id 的请求必有回、**通知不许有回**）；" +
+      "③ 版本协商（不支持的版本回自己支持的那个，⛔ 不是原样抄回 ✗）；④ 桥不在 ⇒ exit 2（**不算通过** ✗）。",
+  },
   {
     id: "check-mcp-channel-judge",
     group: "contract",

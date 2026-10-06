@@ -56,8 +56,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 77 条（contract 52 / smoke 3 / sync 1 / plugin 3 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 270 / web 255 / CommandMap 271
-基线下限（与 tests/baseline.json 逐字一致，共 13 条）check-mcp-audit-single-ledger 4 · check-search-platform-parity 4 · vitest 2484 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+门禁 78 条（contract 52 / smoke 3 / sync 1 / plugin 4 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 270 / web 255 / CommandMap 271
+基线下限（与 tests/baseline.json 逐字一致，共 14 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2484 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 40 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -124,6 +124,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | `check-mcp-channel-judge` | contract | MCP 桥**只转发**：没配连接信息／端口没人听 ⇒ 如实报原因（⛔ 不许假装「0 个工具」）；`tools/list` 把宿主面清单原样翻成 MCP 工具；`tools/call` 转发到 `POST /call`；**App 拒绝时如实带回**（桥不判权限 ✗）。token/`Origin`/`Host` 的校验在 **`check-mcp-host-channel`**（App 那半）✓ |
 | `check-mcp-host-channel` | contract | **宿主面那半**通道（方向②：桥→App）：默认关／只绑回环／token 从文件读／`Origin`·`Host` **恰好回环**（前缀写法判红）／必须走唯一入口 `handle_external_call`；通道未建 ⇒ 绿＋自报跳过（**它现在在** ✓ 2026-10-06） |
 | `check-mcp-bridge-dumb` | contract | MCP 桥必须哑：不碰库／不判权限／不写审计／不摸权威形态 |
+| `check-mcp-bridge-stdout` | plugin | MCP 桥的 **stdout 只许协议消息**：源码里不许有 `console.log`；真起进程喂 `initialize`／通知／`tools/list` ⇒ stdout 每行都要 `JSON.parse` 得动、带 id 的请求必有回、**通知不许有回**；版本协商（不支持的版本回自己支持的那个）；桥不在 ⇒ exit 2（不算通过） |
 | `check-mcp-audit-single-ledger` | contract | 审计只有一本账（`PLUGIN_AUDIT`）且能力调用成功/失败都留痕；宿主面不许自建环 |
 | `check-search-platform-parity` | contract | 桌面专属检索能力（FTS/BM25 只在桌面、Web 走 LIKE）必须写进 app 侧文档 |
 | `check-kb-s1-search` | contract | S1 检索：同一次查询覆盖正文＋附件派生文本；索引不可用给稳定码 |
