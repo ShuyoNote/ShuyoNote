@@ -102,6 +102,26 @@ describe("McpAccessPane：外部 AI 接入的开关面", () => {
     expect(document.body.textContent).toContain("127.0.0.1:51234");
   });
 
+  // ⭐ 2026-10-06（owner 截图问「开关按钮不对劲吧？」✓）：这颗开关有**两条视觉契约**，
+  //    我两条都没照做 ✗ —— ① "开"的类名是 **`on`**（`is-on` 这个类名**不存在** ✗）；
+  //    ② 必须带 `.ui-toggle-knob` 子元素（那个圆钮 ✓，没有它就只剩一颗空胶囊 ✗）。
+  //    ⇒ 这条判据专门钉住它（以后谁再改回 `is-on`／丢了 knob ⇒ 当场红 ✓）。
+  it("★ 开关必须用本仓那套契约：开 ⇒ 类名 `on`，并且真的带一个圆钮子元素", async () => {
+    mocks.mcpStatus.mockResolvedValue(STATUS_ON);
+    mount();
+    await tick();
+    await tick();
+    const sw = document.querySelector('[role="switch"]') as HTMLElement;
+    expect(sw, "要有那个开关").not.toBeNull();
+    expect(sw.className, "开着的开关必须有 `on` 类（不是 is-on ✗）").toContain("on");
+    expect(sw.className, "`is-on` 这个类名在本仓不存在 ⇒ 用了它开关就没有「开着」的样子").not.toContain("is-on");
+    expect(sw.querySelector(".ui-toggle-knob"), "开关里必须有圆钮 `.ui-toggle-knob`（少了它就是一颗空胶囊 ✗）").not.toBeNull();
+    // 第二颗（免确认）同一套契约 ✓
+    const all = Array.from(document.querySelectorAll('[role="switch"]')) as HTMLElement[];
+    expect(all.length, "面板里有两颗开关").toBe(2);
+    for (const t of all) expect(t.querySelector(".ui-toggle-knob")).not.toBeNull();
+  });
+
   it("★ 「换一枚新令牌」调 `mcp_rotate_token` ✓", async () => {
     mount();
     await tick();

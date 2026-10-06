@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { $convertToMarkdownString } from "@lexical/markdown";
 import { $generateHtmlFromNodes } from "@lexical/html";
@@ -11,6 +11,7 @@ import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
 import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon, MicIcon } from "./icons";
 import { useSpeechInput } from "../editor/useSpeechInput";
+import { interimBubbleStyle } from "../lib/speechInput";
 import { useRightPanel } from "../store/rightPanel";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
@@ -48,6 +49,12 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const { t } = useTranslation();
   const editor = useEditorStore((s) => s.editor);
   const [importing, setImporting] = useState(false);
+  // ⭐ 半截话气泡的**退路位置**：拿不到光标时浮在话筒那颗按钮上方 ✓（ref 挂在它身上 ✓）。
+  const micBtnRef = useRef<HTMLButtonElement | null>(null);
+  const micBtnRect = () => {
+    const r = micBtnRef.current?.getBoundingClientRect();
+    return r ? { left: r.left, right: r.right, top: r.top } : null;
+  };
   const contentWidth = useViewStore((s) => s.contentWidth);
   const setContentWidth = useViewStore((s) => s.setContentWidth);
   // ⭐ 2026-10-02（owner）：「在页面顶端工具栏添加目录开关按钮」。
@@ -222,6 +229,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
           点一下开始听写、再点一下停 ✓；识别到的**定稿**文字插到光标处 ✓（`useSpeechInput` / `insertTextAtCaret` ✓）。
           ⚠️ 这套 API 在有些 WebView 里**整条不存在** ✗ ⇒ 点了会**如实**说一句人话（⛔ 不是静默没反应 ✗）。 */}
       <button
+        ref={micBtnRef}
         className={`toolbar-btn${speech.listening ? " active is-recording" : ""}${speech.supported ? "" : " is-unsupported"}`}
         onClick={speech.toggle}
         title={
@@ -236,6 +244,22 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       >
         <MicIcon />
       </button>
+      {/* ⭐ 2026-10-06（owner 附图，Lexical playground 那样）：「语音录入时，实时显示文字」✓ ——
+          半截话（还没定稿那句）**浮在光标旁边**给你看 ✓，定稿才落进正文 ✓（口径见 `useSpeechInput` 文件头 ✓）。
+          ⚠️ `aria-hidden`：它是麦克风的**视觉回声**，正文才是内容 ✓ ——
+             `aria-live` 会让读屏软件每改一个字就念一遍 ✗（那才是真的难用 ✗）。 */}
+      {speech.listening && speech.interim && (
+        <div
+          className="speech-interim"
+          style={interimBubbleStyle(speech.interimAnchor, micBtnRect(), {
+            width: window.innerWidth,
+            height: window.innerHeight,
+          })}
+          aria-hidden="true"
+        >
+          {speech.interim}
+        </div>
+      )}
       <button className="toolbar-btn" onClick={triggerFind} title={t("editor.find")}>
         <SearchIcon />
       </button>

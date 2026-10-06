@@ -45,6 +45,47 @@ export function speechInputSupported(win: any = globalThis as any): boolean {
   return typeof win?.SpeechRecognition === "function" || typeof win?.webkitSpeechRecognition === "function";
 }
 
+/**
+ * **中间结果气泡**的位置（纯函数 ⇒ 可判据 ✓）。
+ *
+ * owner 2026-10-06（附 Lexical playground 截图）：「语音录入时，实时显示文字」✓ ——
+ * playground 那颗话筒说话时会在**光标附近**浮一句半截的话 ✓，定稿才落进正文 ✓。
+ * ⇒ 这里只决定"浮在哪"：跟着光标 ✓；没有光标（编辑器还没被点过 ✓）就用按钮的位置 ✓；
+ *   两种都没有就摆屏幕下方中间 ✓；**一律夹在视口里** ✓（⛔ 不许浮到屏幕外 ✗）。
+ *
+ * ⚠️ 宽度是**估**的（气泡宽度由 CSS 定 ✗）—— 只用来做夹取，宁可夹紧一点 ✓。
+ */
+export function interimBubbleStyle(
+  anchor: { left: number; top: number } | null,
+  fallback: { left: number; right: number; top: number } | null,
+  view: { width: number; height: number },
+  approx = { width: 340, height: 48 },
+): { left: number; top: number } {
+  const a = anchor ?? (fallback ? { left: fallback.left + (fallback.right - fallback.left) / 2, top: fallback.top } : null);
+  const x = a ? a.left : view.width / 2 - approx.width / 2;
+  // 光标**上方**（playground 也是浮在上面 ✓）；贴到顶部就翻到下方 ✓
+  const above = a ? a.top - approx.height - 10 : view.height - 140;
+  const y = above < 8 ? (a ? a.top + 28 : above) : above;
+  const left = Math.max(8, Math.min(x, Math.max(8, view.width - approx.width - 8)));
+  const top = Math.max(8, Math.min(y, Math.max(8, view.height - approx.height - 8)));
+  return { left: Math.round(left), top: Math.round(top) };
+}
+
+/** 光标（或选区）在屏幕上的位置 ✓；拿不到 ⇒ `null`（调用方退到按钮位置 ✓）。 */
+export function caretAnchor(doc: any = globalThis.document): { left: number; top: number } | null {
+  try {
+    const sel = doc?.getSelection?.();
+    if (!sel || sel.rangeCount === 0) return null;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    if (!rect) return null;
+    // 折叠选区（只有光标 ✓）宽度可能是 0 ⇒ 仍然可用 ✓；两个都 0 才算拿不到 ✓
+    if (!rect.width && !rect.height) return null;
+    return { left: rect.left, top: rect.top };
+  } catch {
+    return null;
+  }
+}
+
 /** 拿识别器构造函数（优先标准名 ✓，退到 `webkit` 前缀 ✓）。 */
 export function speechRecognitionCtor(win: any = globalThis as any): (new () => SpeechRecognitionLike) | null {
   return win?.SpeechRecognition ?? win?.webkitSpeechRecognition ?? null;

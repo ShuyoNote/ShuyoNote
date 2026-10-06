@@ -9,13 +9,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { $getRoot, $isRangeSelection, $getSelection } from "lexical";
 import { toast } from "../store/toast";
 import { useEditorStore } from "../store/editor";
-import { createSpeechInput, speechInputSupported, speechErrorMessage, type SpeechRecognitionLike } from "../lib/speechInput";
+import { createSpeechInput, speechInputSupported, speechErrorMessage, caretAnchor, type SpeechRecognitionLike } from "../lib/speechInput";
 
 export interface SpeechInputHandle {
   /** 这台机器/这个外壳支不支持 ✓（不支持时按钮仍在，但点了会**如实**说一句 ✓）。 */
   supported: boolean;
   /** 正在听 ✓（按钮用它高亮 ✓）。 */
   listening: boolean;
+  /** ⭐ 半截话（还没定稿那句 ✓）—— 界面上**只显示、不插正文** ✓（见文件头 ① 与 owner 那句「实时显示文字」✓）。 */
+  interim: string;
+  /** 半截话该浮在哪（跟着光标 ✓；拿不到光标就是 `null` ⇒ 调用方退到话筒按钮那儿 ✓）。 */
+  interimAnchor: { left: number; top: number } | null;
   /** 点一下开始 / 再点一下停 ✓。 */
   toggle: () => void;
 }
@@ -45,7 +49,15 @@ export function insertTextAtCaret(text: string): boolean {
 export function useSpeechInput(): SpeechInputHandle {
   const supported = useRef(speechInputSupported()).current;
   const [listening, setListening] = useState(false);
+  // ⭐ 2026-10-06（owner 附图：「语音录入时，实时显示文字」✓）：半截话只**显示**、不插正文 ✓。
+  const [interim, setInterim] = useState("");
+  const [interimAnchor, setInterimAnchor] = useState<{ left: number; top: number } | null>(null);
   const handleRef = useRef<ReturnType<typeof createSpeechInput> | null>(null);
+
+  const clearInterim = useCallback(() => {
+    setInterim("");
+    setInterimAnchor(null);
+  }, []);
 
   // 组件走的时候把麦关掉 ✓（不然会一直听 ✗）
   useEffect(
@@ -64,31 +76,41 @@ export function useSpeechInput(): SpeechInputHandle {
     if (handleRef.current?.listening()) {
       handleRef.current.stop();
       setListening(false);
+      clearInterim();
       toast("已停止语音输入", "info");
       return;
     }
     handleRef.current = createSpeechInput({
       events: {
         onText: (text, isFinal) => {
-          // ① 只把**定稿**写进笔记 ✓（中间结果会变 ⇒ 不插 ✗）
-          if (!isFinal) return;
+          // ① **半截话**（isFinal=false）：只浮在光标旁边让你看见 ✓，⛔ 不插正文 ✗
+          //    —— 它随时会改，插进去会留下"改了又改"的鬼影 ✗（文件头 ① 那条口径 ✓）。
+          if (!isFinal) {
+            setInterim(text.trim());
+            setInterimAnchor(caretAnchor());
+            return;
+          }
+          // ② 定稿 ⇒ 清掉气泡、把这段插到光标处 ✓
+          clearInterim();
           if (!insertTextAtCaret(text)) toast(`收到一段语音，但编辑器没接住：「${text.trim()}」`, "error");
         },
         onError: (_code, message) => {
           toast(message, "error");
           setListening(false);
+          clearInterim();
         },
         onEnd: () => {
           setListening(false);
+          clearInterim();
         },
       },
     });
     handleRef.current.start();
     setListening(true);
-    toast("开始听写 —— 说话就会插到光标处（再点一下话筒停止）", "success");
-  }, [supported]);
+    toast("开始听写 —— 说话时半截话会浮在光标旁，定稿后插进正文（再点一下话筒停止）", "success");
+  }, [supported, clearInterim]);
 
-  return { supported, listening, toggle };
+  return { supported, listening, interim, interimAnchor, toggle };
 }
 
 /** 供判据用：假的识别器构造函数（真机没有这个 API ⇒ 判据必须在假件上跑 ✓）。 */

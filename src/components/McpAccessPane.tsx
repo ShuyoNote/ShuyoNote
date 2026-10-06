@@ -127,14 +127,21 @@ export function McpAccessPane() {
               并且要下面那枚令牌。默认<b>关</b>；关掉时每个请求立刻被拒、旧令牌作废。
             </div>
           </div>
+          {/* ⚠️ 本仓这颗开关的契约（照 `AiSettingsForm.tsx:271` 等现有写法 ✓）：
+              开 ⇒ 加类名 **`on`**（⛔ 不是 `is-on` ✗ —— 那个类名**根本不存在** ✗），
+              并且**必须**带一个 `.ui-toggle-knob` 子元素 ✓（那个圆钮就是它 ✓，CSS 在 `App.css:13598` ✓）。
+              owner 2026-10-06 截图问「开关按钮不对劲吧？」—— 就是因为这两条我都没照做 ✗：
+              类名写错 ⇒ 没有"开着"的底色；没有 knob ⇒ 只剩一颗**空胶囊** ✗。 */}
           <button
-            className={`ui-toggle${st?.enabled ? " is-on" : ""}`}
+            className={`ui-toggle ${st?.enabled ? "on" : ""}`}
             role="switch"
             aria-checked={st?.enabled === true}
             aria-label="允许外部 AI 接入（MCP）"
             disabled={busy || !st}
             onClick={() => void toggle(!(st?.enabled === true))}
-          />
+          >
+            <span className="ui-toggle-knob" />
+          </button>
         </div>
 
         <div className="set-row">
@@ -147,13 +154,15 @@ export function McpAccessPane() {
             </div>
           </div>
           <button
-            className={`ui-toggle${st?.allow_write ? " is-on" : ""}`}
+            className={`ui-toggle ${st?.allow_write ? "on" : ""}`}
             role="switch"
             aria-checked={st?.allow_write === true}
             aria-label="允许外部 AI 直接写入（免确认）"
             disabled={busy || !st}
             onClick={() => void toggleWrite(!(st?.allow_write === true))}
-          />
+          >
+            <span className="ui-toggle-knob" />
+          </button>
         </div>
       </section>
 
