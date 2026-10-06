@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { hasBlockContent } from "./lib/blankPage";
 import { isDesktopPlatform } from "./lib/platform";
 import { PageTree } from "./components/PageTree";
 import { SyncPanel } from "./components/SyncPanel";
@@ -109,19 +110,6 @@ function ViewLoader() {
   return <div className="view-loading" role="status">加载中…</div>;
 }
 
-// A page "has content" if its serialized root has at least one top-level block.
-// Used to show the new-page guide only for genuinely empty pages (a page with
-// only an image/embed/table has empty `content_text` but does contain content).
-function hasBlockContent(contentJson: string): boolean {
-  if (!contentJson) return false;
-  try {
-    const parsed = JSON.parse(contentJson);
-    const children = parsed?.root?.children;
-    return Array.isArray(children) && children.length > 0;
-  } catch {
-    return contentJson.length > 0;
-  }
-}
 
 // =====================================================================================
 // ★ 2026-09-29（本笔）：**自动同步"唯一的那一轮"** —— 两个触发面共用它，不许各写一份。
