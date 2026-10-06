@@ -69,6 +69,13 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   ["sync_stream_start", "桌面专属：Rust 订 SSE 变更流（Web 侧浏览器自带 SSE，`useSyncStream.ts` 自己那条）"],
   ["sync_stream_stop", "同上（桌面专属：断开且不再重连）"],
   ["sync_stream_status", "同上（桌面专属：流通道读数，排错用）"],
+    // MCP 接入的 GUI 开关（M1 收口，2026-10-06）：**桌面专属** —— Web 版没有本机进程可被外部 agent 连，
+    // 也开不了回环监听（通道与令牌都在 Rust 侧 `mcp_channel` ✓）；在 `web.ts` 里"实现"它等于
+    // **假装浏览器有一条本机通道** ✗（与本表里"Web 无钥匙柜"那几条同一条理由 ✓）。
+    ["mcp_status", "桌面专属：MCP 接入的状态读数（Web 无本机通道）"],
+    ["mcp_set_enabled", "同上：开关那条本机通道（默认关；Web 上无处可开）"],
+    ["mcp_rotate_token", "同上：轮换会话令牌（Web 上没有令牌文件）"],
+    ["mcp_set_allow_write", "桌面专属：免确认写开关（Web 上没有本机通道，更没有可写的东西）"],
   // 隐私边界第 1 步（2026-09-23）：**按空间**启用/禁用加密 —— **桌面专属**。
   // 理由：Web 平台没有钥匙柜（E2EE 在浏览器里是空操作，见 `docs/web-sync-boundary.md`），
   // 而加密空间在 Web 上由 `src/lib/ciphertextSniff.ts` **明确拒掉**（提示去桌面端）⇒

@@ -9,7 +9,8 @@ import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon, MicIcon } from "./icons";
+import { useSpeechInput } from "../editor/useSpeechInput";
 import { useRightPanel } from "../store/rightPanel";
 import { SHUYONOTE_TRANSFORMERS } from "../editor/markdownTransformers";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
@@ -56,6 +57,10 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   //    （开目录会自动关掉 AI／讨论／插件面板 ✓）。⚠️ 订阅一律**取字段**，⛔ 不整店订阅 ✗（`check-store-subscriptions` 守这条 ✓）。
   const tocOpen = useRightPanel((s) => s.toc);
   const openToc = useRightPanel((s) => s.openToc);
+  // ⭐ 2026-10-06（owner）：「点话筒按钮后说话自动转成文字插到笔记当前位置」✓
+  //    —— 走 Web Speech API（Lexical playground 那颗话筒就是它 ✓，见 `src/lib/speechInput.ts` 头注 ✓）。
+  //    ⚠️ hooks 一律在这一层取（早退不许越过 hooks ⇒ `check-hook-order` 守这条 ✓）。
+  const speech = useSpeechInput();
   // ⭐ 2026-10-06（owner）：「关闭这个顶部工具栏」⇒ 顶端那四颗（AI／讨论／通知／目录）撤掉，
   //    出口补到**两处**：这一排的「⋯ 更多」菜单（可见 ✓）＋ 命令面板（键盘可及 ✓）。
   //    ⚠️ 只有「讨论 / 通知」是**必须**补的 —— 它们此前**只有**那条工具栏进得去
@@ -213,13 +218,31 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
 
   return (
     <div className="editor-toolbar">
+      {/* ⭐ 2026-10-06（owner）：「把这个话筒按钮放在页面顶部的工具栏最左边」✓ —— 所以它在**查找**之前 ✓。
+          点一下开始听写、再点一下停 ✓；识别到的**定稿**文字插到光标处 ✓（`useSpeechInput` / `insertTextAtCaret` ✓）。
+          ⚠️ 这套 API 在有些 WebView 里**整条不存在** ✗ ⇒ 点了会**如实**说一句人话（⛔ 不是静默没反应 ✗）。 */}
+      <button
+        className={`toolbar-btn${speech.listening ? " active is-recording" : ""}${speech.supported ? "" : " is-unsupported"}`}
+        onClick={speech.toggle}
+        title={
+          speech.listening
+            ? "语音输入：正在听（点击停止）"
+            : speech.supported
+              ? "语音输入：点击开始，说话会转成文字插到光标处"
+              : "语音输入：这个外壳不带语音识别（点击看原因）"
+        }
+        aria-label="语音输入"
+        aria-pressed={speech.listening}
+      >
+        <MicIcon />
+      </button>
       <button className="toolbar-btn" onClick={triggerFind} title={t("editor.find")}>
         <SearchIcon />
       </button>
-      <button className="toolbar-btn" onClick={importMarkdown} title={t("editor.importMarkdown")}>
+      <button className="toolbar-btn toolbar-btn-narrow" onClick={importMarkdown} title={t("editor.importMarkdown")}>
         <DownloadIcon />
       </button>
-      <button className="toolbar-btn" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
+      <button className="toolbar-btn toolbar-btn-narrow" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
         <TemplateIcon />
       </button>
       <button
@@ -276,6 +299,17 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title={t("editor.exportPdf")}>
               <PrintIcon /> {t("editor.exportPdf")}
+            </button>
+            {/* ⭐ 2026-10-06：这两颗**本来只挂在那排图标上**。窄屏（320/360 那档）一排 44px 的命中区
+                放不下 —— `scripts/verify-mobile-views.mjs` 在 320 上量到整排 `right=362 > 320` ✗
+                （逐字：`1 处控件在视口外：div.editor-toolbar(left=10 right=362 "⋯")` ✓）。
+                ⇒ 窄屏（`@media (max-width: 480px)`）把那一排里这两颗**收起**、**在菜单里留可达入口** ✓
+                —— ⛔ 不是"藏起来就没了" ✗（那等于用功能换宽度 ✓）。 */}
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); importMarkdown(); }} title={t("editor.importMarkdown")}>
+              <DownloadIcon /> {t("editor.importMarkdown")}
+            </button>
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); void saveAsTemplate(); }} title={t("editor.saveAsTemplate")}>
+              <TemplateIcon /> {t("editor.saveAsTemplate")}
             </button>
             {/* 一键发布到社区：入口先放这里（方案 §5：「先放详情/编辑器工具条一枚」，P1 再考虑右键菜单）。
                 只在 Tauri 壳（有 Rust 内核 ⇒ 有应用数据目录放令牌、有不被 CORS 拦的出口）里显示；

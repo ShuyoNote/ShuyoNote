@@ -277,6 +277,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-09-28-knowledge-m1-workorder.md](plans/2026-09-28-knowledge-m1-workorder.md) | **M1 施工单（判据先行，不写产品代码）**：7 个任务，每个都有 `Files:` ＋「先让判据红」＋ `Expected:` 逐字 ＋ 再注入证明 ✓ |
 | [plans/2026-09-28-agent-mcp-integration-plan.md](plans/2026-09-28-agent-mcp-integration-plan.md) | **外部 Agent 接入（MCP / CLI）总方案（规划，未实装，待拍板）**：让 Claude Code / CodeBuddy / WorkBuddy / DSH 用上本机笔记库。**结论：四个产品都原生支持 MCP，缺的是客户端这一侧的面**（全仓 MCP 零命中）。含现状取证 10 条（注册表 25 条能力 / 其中 `ai:true` 10 条 · 权限与审计只有一个校验点 `dispatch_capability` · **钥匙只在应用进程内存且没有 OS keyring** · 没有面向外部进程的通道 · mesh 窗口默认关闭）＋ **MCP/CLI/API 不是三选一**（API 是底座，两个薄适配器共用它，硬约束不变）＋ 推荐架构（应用内宿主面 ＋ 哑桥 ＋ 草稿写回）＋ 工具面与**实测上下文成本 1631 字符/会话**＋ 四家官方配置（含 DSH 的 `insert:` 语法订正）＋ M1–M3 里程碑与验收 ＋ 6 项待拍板 ＋ 诚实边界 |
 | [plans/2026-09-28-mcp-host-m1-workorder.md](plans/2026-09-28-mcp-host-m1-workorder.md) | **MCP 宿主 M1 施工单（只读，未开工）**：注册表第 10 件生成物（`capabilities/mcp-tools.json`）＋ 应用内宿主面（`src-tauri/src/mcp_host.rs`）＋ stdio 哑桥（`tools/shuyonote-mcp/`）。含逐文件改动 8 项、**把权限判定从 `RUN_STATE` 抽成一处**（唯一会碰到现有插件路径的一步）、8 条判据（每条附「怎么让它红」）、**门禁要登记的三处**（`scripts/lib/gates.mjs` ／ `docs/TESTING.md` 表 ／ **工作区台账 `_workspace/mutation-evidence.json` 的 `_repo_mutations`** —— 第三条不在本仓、最易漏）、本机跑不了 rust 组的边界与回滚路径 |
+| [plans/2026-10-06-mcp-host-m2-workorder.md](plans/2026-10-06-mcp-host-m2-workorder.md) | **MCP 宿主 M2 施工单（写能力，规划、未开工）**：把「写」接上但**用户确认之前一个字都不许落库** ✓ —— 写面清单**也是生成物**（第 11 件 ✓）／免确认开关**显式且默认关** ✓／草稿路复用现成的 `pluginDrafts` ＋ `ai/apply.ts`（唯一落库处 ✓）／免确认路**每次写必须留审计行**（R87：「没有留痕的免确认写不算实现」✗）。5 个任务，每个都有会红证据 ✓ |
 | [plans/2026-09-29-crdt-e2ee-snapshot-server-workorder.md](plans/2026-09-29-crdt-e2ee-snapshot-server-workorder.md) | **E2EE 加密快照的服务端接口**（施工单，未开工）：尖刺已证可行（13/0 ✓）与体积读数；含三条路由、三层判据、四要件、不做清单 |
 | [plans/2026-09-29-wps-scale-roadmap.md](plans/2026-09-29-wps-scale-roadmap.md) | **追到 WPS 那样的极限【并且还能扩容】的技术路线** —— 目标拆两层、五层、**按页订阅是第一性**、连接与数据分离 |
 | [plans/2026-09-29-ten-thousand-scale.md](plans/2026-09-29-ten-thousand-scale.md) | **到 10000 台的路** —— ⭐ **按页订阅才降阶** ＋ E2E 元数据边界 |
@@ -352,7 +353,7 @@ node scripts/test-report.mjs --list                                             
 
 ## 变更记录（changelog）
 
-- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.91.31`）。
+- [CHANGELOG.md](../CHANGELOG.md) —— **版本变更日志**（Keep a Changelog 格式，`v1.6.0` 起，当前 `v1.92.0`）。
 
 ## 约定
 

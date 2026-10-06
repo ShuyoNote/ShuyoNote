@@ -236,6 +236,34 @@ const FIXTURE = `
      当场假绿 ✗）。而 Lexical 是**用 DOM API 直接搭**的（tr 是 table 的直接子元素 ✓，
      本机实测 tr.parentElement.tagName === "TABLE" ✓）⇒ 夹具必须用同一条路造，才量得到真形状 ✓。 -->
 <div class="editor-content" id="head-table-host"></div>
+
+<!-- Mermaid 块的**全屏 + 代码页**：草稿区必须撑满（owner 2026-10-06 截图：全屏 > 代码 里
+     代码框只有 ~300px，底下整片空白 ✗）。
+     ⚠️ :fullscreen 只在**真进全屏**时匹配 ⇒ 这里放个按钮，由门禁 page.click 触发
+     requestFullscreen（Puppeteer 的 click 是**真用户激活** ⇒ 浏览器才允许进全屏 ✓）；
+     用 page.evaluate 直接调它会被拒 ⇒ 那两条判据就永远是假绿 ✓。 -->
+<div class="editor-mermaid" id="mermaid-fs">
+  <div class="editor-mermaid-bar">
+    <span class="editor-mermaid-tabs"><button class="editor-mermaid-tab is-on">代码</button></span>
+  </div>
+  <div class="editor-mermaid-code-pane">
+    <textarea class="editor-mermaid-input" rows="10">flowchart TB
+A1["块编辑器"]
+A2["RAG 检索"]</textarea>
+    <div class="editor-mermaid-toolbar">
+      <select class="editor-mermaid-syntax"><option>flowchart</option></select>
+      <button class="editor-mermaid-btn">保存</button>
+    </div>
+  </div>
+</div>
+<button id="mermaid-fs-trigger" style="position: fixed; top: 4px; left: 4px; z-index: 9999">进全屏</button>
+<script>
+  document.getElementById("mermaid-fs-trigger").addEventListener("click", function () {
+    var pr = document.getElementById("mermaid-fs").requestFullscreen();
+    window.__fsErr = "pending";
+    if (pr && pr.then) pr.then(function () { window.__fsErr = "ok"; }, function (e) { window.__fsErr = String((e && e.name) + ":" + (e && e.message)); });
+  });
+</script>
 `;
 
 const css = readFileSync(join(root, "src", "App.css"), "utf8");
@@ -640,6 +668,39 @@ try {
     headTable.second?.weight !== "600",
     `第二行**不是**表头（实际 ${headTable.second?.weight}）—— 修法不许把整张表都加粗`,
   );
+
+  // ---------- Mermaid 块：**全屏 + 代码页**草稿区要撑满 ----------
+  // 2026-10-06 owner 截图：「全屏 > 代码」里代码框只有 ~300px、底下整片空白 ✗。
+  // 真因：`.editor-mermaid-code-pane` 只是 `display:flex`，**没有** `flex:1` ⇒
+  // 全屏那个 flex 列里它按内容高（textarea 的 rows）撑 ✗。
+  // ⚠️ 必须**真进全屏**（`:fullscreen` 才会匹配）⇒ 用 page.click 拿用户激活 ✓。
+  await page.click("#mermaid-fs-trigger");
+  await new Promise((r) => setTimeout(r, 400));
+  const fsCode = await page.evaluate(() => {
+    const root = document.getElementById("mermaid-fs");
+    const pane = document.querySelector("#mermaid-fs .editor-mermaid-code-pane");
+    const ta = document.querySelector("#mermaid-fs .editor-mermaid-input");
+    const tb = document.querySelector("#mermaid-fs .editor-mermaid-toolbar");
+    return {
+      isFull: document.fullscreenElement === root,
+      fsErr: window.__fsErr || "(没触发)",
+      vh: innerHeight,
+      paneH: Math.round(pane?.getBoundingClientRect().height ?? -1),
+      taH: Math.round(ta?.getBoundingClientRect().height ?? -1),
+      tbTop: Math.round(tb?.getBoundingClientRect().top ?? -1),
+    };
+  });
+  ok(fsCode.isFull, `夹具真的进了全屏（requestFullscreen 成功）—— 否则下面两条是假绿（${fsCode.fsErr}）`);
+  ok(
+    fsCode.taH > fsCode.vh * 0.6,
+    `全屏 + 代码页：草稿区撑满（textarea ${fsCode.taH}px ／ 视口 ${fsCode.vh}px，面板 ${fsCode.paneH}px）`,
+  );
+  ok(
+    fsCode.tbTop > fsCode.vh * 0.8,
+    `语法/保存那条工具栏落在**底部**（top ${fsCode.tbTop} ／ 视口 ${fsCode.vh}）`,
+  );
+  await page.evaluate(() => document.exitFullscreen?.());
+  await new Promise((r) => setTimeout(r, 200));
   if (SHOTS) {
     await page.screenshot({ path: join(SHOTS, "file-manager-narrow.png"), fullPage: true });
   }
@@ -706,6 +767,74 @@ try {
   // 覆盖它的方式是另一条：阅读器是 `.main` 这一列里的**普通 flex 子项**（上面那条
   // position 断言），因此它自动继承 `.main` 上的 padding-right 规则——与 Markdown
   // 阅读器完全同一条路，不需要在这里重复验证 padding 的算法。
+
+  // ---------- 「未链接提及」这一族（正文**下方**的块）：必须**跟随自适应宽度** ----------
+  //
+  // 为什么需要它（owner 2026-10-06 截图 +「这个东西要跟随适配宽度自动对齐」✓）：
+  //   工具栏那颗「内容宽度：自适应」是往 `body` 上加 `.content-full` ✓（`EditorToolbar.tsx:70` ✓），
+  //   正文 `.editor-content` 因此 `max-width: none` ✓；但正文**下方**这一族块
+  //   （`.backlinks` / `.unlinked-mentions` / `.attachment-panel`）还钉在
+  //   `max-width: var(--doc-width)`（780px ✗）⇒ 正文铺开了、它们缩在中缝里 ✗。
+  //
+  // 判据量的是**几何**（左边缘与正文同一条线 ✓），不是只读 `max-width` ✗ ——
+  // "跟着正文走"的机械形态就是"左边缘对齐" ✓。
+  {
+    await page.evaluate(() => {
+      document.body.classList.remove("content-full");
+      document.body.insertAdjacentHTML(
+        "beforeend",
+        `<div id="doc-below">
+           <div class="editor-content" id="db-content">正文</div>
+           <div class="backlinks" id="db-backlinks"><div class="backlinks-title">反向链接</div></div>
+           <div class="unlinked-mentions" id="db-unlinked"><div class="unlinked-mentions-list"></div></div>
+           <div class="attachment-panel" id="db-attach"><div class="attachment-list"></div></div>
+         </div>`,
+      );
+    });
+    const geom = () =>
+      page.evaluate(() => {
+        const g = (id) => {
+          const el = document.getElementById(id);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { left: Math.round(r.left), width: Math.round(r.width), maxW: getComputedStyle(el).maxWidth };
+        };
+        return {
+          content: g("db-content"),
+          backlinks: g("db-backlinks"),
+          unlinked: g("db-unlinked"),
+          attach: g("db-attach"),
+        };
+      });
+
+    const centered = await geom();
+    ok(
+      centered.unlinked?.maxW === "780px" && centered.backlinks?.maxW === "780px" && centered.attach?.maxW === "780px",
+      `居中模式下三块都还是文档列 780px（拿到 ${centered.unlinked?.maxW} / ${centered.backlinks?.maxW} / ${centered.attach?.maxW}）`,
+    );
+    ok(
+      Math.abs((centered.unlinked?.left ?? 0) - (centered.content?.left ?? -99)) <= 1,
+      `居中模式下「未链接提及」与正文左对齐（${centered.unlinked?.left} vs ${centered.content?.left}）`,
+    );
+
+    await page.evaluate(() => document.body.classList.add("content-full"));
+    const full = await geom();
+    for (const [label, v] of [
+      ["未链接提及", full.unlinked],
+      ["反向链接", full.backlinks],
+      ["附件", full.attach],
+    ]) {
+      ok(v?.maxW === "none", `自适应宽度下「${label}」不再被 780px 钉住（max-width=${v?.maxW}）`);
+      ok(
+        Math.abs((v?.left ?? 0) - (full.content?.left ?? -99)) <= 1,
+        `自适应宽度下「${label}」与正文左对齐（${v?.left} vs ${full.content?.left}）`,
+      );
+    }
+    await page.evaluate(() => {
+      document.getElementById("doc-below")?.remove();
+      document.body.classList.remove("content-full");
+    });
+  }
 
   if (SHOTS) {
     mkdirSync(SHOTS, { recursive: true });

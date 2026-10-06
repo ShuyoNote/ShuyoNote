@@ -1929,6 +1929,25 @@ fn cap_files_read(id: &str, offset: i64, limit: i64) -> CapResult {
     serde_json::to_value(&page).map_err(|e| format!("internal: {e}"))
 }
 
+/// ⭐ M2（施工单 Task W3）：**外部调用**的草稿收集 —— 给这一次调用开一份干净的执行状态 ✓，
+/// 跑完把草稿**交出来**，并把线程状态**还原** ✓。
+///
+/// 为什么必需：`cap_pages_create` / `cap_blocks_append` **本来就只产出草稿、不落库** ✓
+/// （那条纪律在 `cap_pages_create` 的头注里 ✓），但草稿是塞进线程局的 `RUN_STATE` 的 ✓ ——
+/// 插件那条路跑完会去取（`plugin_run_command` 的返回值 ✓），而**外部那条路没人取** ⇒ 草稿被静默丢掉 ✗。
+/// ⇒ 这里把「取草稿」变成外部路也走的一条明路 ✓（⛔ 依然**不建页** ✗：落库只有 `ai/apply.ts` 一处 ✓）。
+pub(crate) fn with_fresh_drafts<T>(f: impl FnOnce() -> T) -> (T, Vec<PluginDraft>) {
+    let prev = RUN_STATE.with(|s| s.borrow().clone());
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        st.drafts = Vec::new();
+    });
+    let out = f();
+    let drafts = RUN_STATE.with(|s| std::mem::take(&mut s.borrow_mut().drafts));
+    RUN_STATE.with(|s| *s.borrow_mut() = prev);
+    (out, drafts)
+}
+
 /// 把一条草稿塞进本次执行（同 key 只留一条，避免插件在循环里刷屏）。
 fn push_draft(key: String, summary: String, payload: serde_json::Value) {
     RUN_STATE.with(|s| {

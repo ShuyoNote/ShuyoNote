@@ -662,3 +662,26 @@ export interface DatabaseQuery {
   columns: AttrDef[];
   rows: DatabaseRow[];
 }
+
+/**
+ * MCP 接入的状态读数（与 Rust `mcp_channel::McpStatus` 的 serde 形状逐字对应 ✓）。
+ *
+ * ⚠️ `token` 会**原样回给前端** —— 设置面板要能「复制给 agent」✓；它只在本机同一用户的进程间流动 ✓
+ *    （通道本身只绑回环 ＋ 要 Bearer 令牌 ✓）。
+ */
+export interface McpStatus {
+  /** 开关（环境变量或配置文件 —— 这就是"现在开不开" ✓） */
+  enabled: boolean;
+  /** 监听**真的**在跑吗（开关开着但端口被占 ⇒ false ✓ 如实报） */
+  running: boolean;
+  port: number | null;
+  token: string | null;
+  granted: string[];
+  /** ⭐ M2：免确认写开关的当前读数（默认 false ✓；开着时**每一次写都留审计** ✓） */
+  allow_write: boolean;
+  /** 这次是不是被**环境变量**打开的（面板要说清 ✓） */
+  env_override: boolean;
+  config_path: string | null;
+  token_path: string | null;
+  port_path: string | null;
+}
