@@ -8,7 +8,14 @@
 //   ③ **自己停**的时候浏览器也会抛 `aborted` ⇒ 不许弹红字吓人 ✗；
 //   ④ 每个错误码都要有**一句人话**（说清下一步怎么办 ✓）。
 import { describe, expect, it } from "vitest";
-import { createSpeechInput, speechErrorMessage, speechInputSupported, type SpeechRecognitionLike } from "./speechInput";
+import {
+  createSpeechInput,
+  interimBubbleStyle,
+  caretAnchor,
+  speechErrorMessage,
+  speechInputSupported,
+  type SpeechRecognitionLike,
+} from "./speechInput";
 
 /** 假识别器：记下 start/stop，并允许手动"吐"结果与错误 ✓。 */
 class FakeRec implements SpeechRecognitionLike {
@@ -135,5 +142,57 @@ describe("语音输入通道", () => {
     made!.fail("not-allowed");
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0].message).toContain("权限");
+  });
+});
+
+// ⭐ 2026-10-06（owner 附图：「语音录入时，实时显示文字」✓）：半截话气泡**浮在哪**。
+//   它是纯函数 ⇒ 不需要真浏览器也能钉住这几件真会出错的事：
+//   ⛔ 不许浮到视口外 ✗ ／ ⛔ 贴顶时不许被切掉 ✗ ／ 拿不到光标要有**退路** ✓。
+describe("半截话气泡的位置（纯函数）", () => {
+  const view = { width: 1000, height: 800 };
+
+  it("有光标 ⇒ 浮在光标**上方**（playground 也是浮在上面）", () => {
+    const s = interimBubbleStyle({ left: 400, top: 500 }, null, view);
+    expect(s.left).toBe(400);
+    expect(s.top).toBeLessThan(500);
+    expect(s.top).toBeGreaterThan(400);
+  });
+
+  it("贴到顶部时翻到光标**下方**（⛔ 不许被上边缘切掉 ✗）", () => {
+    const s = interimBubbleStyle({ left: 100, top: 6 }, null, view);
+    expect(s.top).toBeGreaterThan(6);
+    expect(s.top).toBeGreaterThanOrEqual(8);
+  });
+
+  it("靠近右边缘时往回收（⛔ 不许跑出视口 ✗）", () => {
+    const s = interimBubbleStyle({ left: 990, top: 300 }, null, view);
+    expect(s.left).toBeLessThanOrEqual(view.width - 340 - 8);
+    expect(s.left).toBeGreaterThan(0);
+  });
+
+  it("拿不到光标 ⇒ 退到**话筒按钮**那儿（按按钮中心算 ✓）", () => {
+    const s = interimBubbleStyle(null, { left: 300, right: 340, top: 40 }, view);
+    expect(s.left).toBe(320);
+  });
+
+  it("连按钮都拿不到 ⇒ 摆在屏幕下方中间（仍然在视口里 ✓）", () => {
+    const s = interimBubbleStyle(null, null, view);
+    expect(s.left).toBeGreaterThan(0);
+    expect(s.left).toBeLessThan(view.width);
+    expect(s.top).toBeGreaterThan(0);
+    expect(s.top).toBeLessThan(view.height);
+  });
+
+  it("caretAnchor：没有选区 ⇒ null（不猜 ✓）；有选区 ⇒ 给坐标 ✓", () => {
+    expect(caretAnchor({ getSelection: () => null })).toBeNull();
+    expect(caretAnchor({ getSelection: () => ({ rangeCount: 0 }) })).toBeNull();
+    expect(caretAnchor({ getSelection: () => ({ rangeCount: 1, getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }) }) }) })).toBeNull();
+    const withCaret = caretAnchor({
+      getSelection: () => ({
+        rangeCount: 1,
+        getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 123, top: 456, width: 0, height: 20 }) }),
+      }),
+    });
+    expect(withCaret).toEqual({ left: 123, top: 456 });
   });
 });

@@ -23765,3 +23765,26 @@ body.is-plugin-panel-open .main {
   overflow-x: auto;
   max-height: 240px;
 }
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   语音输入的**半截话气泡**（2026-10-06 owner 附图：「语音录入时，实时显示文字」✓）
+   照 Lexical playground 那枚的观感：浅底、圆角、字比正文大一点、浮在光标旁 ✓。
+   ⚠️ position: fixed ＋ pointer-events: none —— 它只是**回声**，不许挡住点击 ✗。
+   ───────────────────────────────────────────────────────────────────────────── */
+.speech-interim {
+  position: fixed;
+  z-index: 1600;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  color: var(--text);
+  font-size: 19px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+}
