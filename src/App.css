@@ -5569,6 +5569,15 @@ select.prop-value {
 .editor-toolbar {
   display: flex;
   align-items: center;
+  /* ⚠️ 2026-10-06：加了「语音输入」那颗之后，**320px 那档这一排放不下了** ✗ ——
+     `scripts/verify-mobile-views.mjs` 逐字：`1 处控件在视口外：div.editor-toolbar(left=10 right=362 "⋯")`
+     （320 视口、整排 352 宽 ⇒ 溢出 42px ✓）。
+     ⚠️ 两条**试过但没用**的路子（别再走一遍 ✗）：
+       ① 把按钮改小（`width: 26px`）⇒ 同一条判据的另一半当场红
+          （`1 类控件低于 44：button.toolbar-btn 26x26` ✓）—— 拿"手指点不着"换"不溢出" ✗；
+       ② 只收间距（`gap: 2 → 1`）⇒ 省 6px，而溢出是 42px ⇒ 不够 ✗。
+     ⇒ 真正的修法在下面 `@media (max-width: 480px)` 里：**把「导入 / 模板」两颗从这排收起** ✓
+       （它们在「⋯」菜单里留了同样的入口 ✓ ⇒ 不是"藏起来就没了" ✗）。 */
   gap: 2px;
   flex-shrink: 0;
   margin-left: auto;
@@ -22128,6 +22137,12 @@ body.is-plugin-panel-open .main {
   .file-manager-table .fm-kind-col,
   .file-manager-table .fm-date-col,
   .file-manager-table .fm-date { display: none; }
+
+  /* ⭐ 2026-10-06（owner 要的「语音输入」那颗把这一排顶出去了 ✗）：窄屏这排 44px 命中区的图标
+     放不下 —— 320 视口上整排 `right=362` ⇒ 溢出 42px ✓（逐字读数见 `.editor-toolbar` 上面那段 ✓）。
+     ⇒ 把「导入 / 模板」两颗从**这一排**收起：它们在「⋯」菜单里**有同样的入口** ✓
+     （`EditorToolbar` 里那两条 `toolbar-menu-item` ✓）⇒ 这是"换一条路进"，⛔ 不是把功能删掉 ✗。 */
+  .editor-toolbar .toolbar-btn-narrow { display: none; }
 }
 
 @media (max-width: 768px) {

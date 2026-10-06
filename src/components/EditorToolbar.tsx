@@ -239,10 +239,10 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       <button className="toolbar-btn" onClick={triggerFind} title={t("editor.find")}>
         <SearchIcon />
       </button>
-      <button className="toolbar-btn" onClick={importMarkdown} title={t("editor.importMarkdown")}>
+      <button className="toolbar-btn toolbar-btn-narrow" onClick={importMarkdown} title={t("editor.importMarkdown")}>
         <DownloadIcon />
       </button>
-      <button className="toolbar-btn" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
+      <button className="toolbar-btn toolbar-btn-narrow" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
         <TemplateIcon />
       </button>
       <button
@@ -299,6 +299,17 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportPdf(); }} title={t("editor.exportPdf")}>
               <PrintIcon /> {t("editor.exportPdf")}
+            </button>
+            {/* ⭐ 2026-10-06：这两颗**本来只挂在那排图标上**。窄屏（320/360 那档）一排 44px 的命中区
+                放不下 —— `scripts/verify-mobile-views.mjs` 在 320 上量到整排 `right=362 > 320` ✗
+                （逐字：`1 处控件在视口外：div.editor-toolbar(left=10 right=362 "⋯")` ✓）。
+                ⇒ 窄屏（`@media (max-width: 480px)`）把那一排里这两颗**收起**、**在菜单里留可达入口** ✓
+                —— ⛔ 不是"藏起来就没了" ✗（那等于用功能换宽度 ✓）。 */}
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); importMarkdown(); }} title={t("editor.importMarkdown")}>
+              <DownloadIcon /> {t("editor.importMarkdown")}
+            </button>
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); void saveAsTemplate(); }} title={t("editor.saveAsTemplate")}>
+              <TemplateIcon /> {t("editor.saveAsTemplate")}
             </button>
             {/* 一键发布到社区：入口先放这里（方案 §5：「先放详情/编辑器工具条一枚」，P1 再考虑右键菜单）。
                 只在 Tauri 壳（有 Rust 内核 ⇒ 有应用数据目录放令牌、有不被 CORS 拦的出口）里显示；
