@@ -169,6 +169,14 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     };
     let args = v.get("args").cloned().unwrap_or_else(|| serde_json::json!({}));
     let args_json = args.to_string();
+    // ⭐ 2026-10-06（M1 收口：把桥接上）：`__tools_list` 是**清单**，不是一次能力调用 ✓ ——
+    //    它没有副作用、不碰任何空间/权限 ⇒ **不进** `dispatch_capability` ✓
+    //    （那位的语义是"调一次能力" ✗，不是"给我工具表"）。清单**原样**吐生成物
+    //    （`mcp_host::tools_list_json()` ⇒ `include_str!` 编译期内嵌 ✓）⇒ 与 JS 侧/注册表
+    //    **同一份** ✓，⛔ 不在此另抄 ✗。桥把它翻成 MCP 的 `tools/list` 结果 ✓。
+    if method == "__tools_list" {
+        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json()));
+    }
     match crate::mcp_host::handle_external_call(&cfg.session_id, &cfg.granted, method, &args_json) {
         Ok(result) => (200, format!("{{\"ok\":true,\"result\":{}}}", result)),
         Err(e) => (403, format!("{{\"ok\":false,\"error\":{}}}", serde_json::Value::String(e))),

@@ -23,6 +23,20 @@
 
 use crate::plugins;
 
+/// **只读工具清单**（M1 的 8 条 ✓）—— 直接**内嵌生成物** ✓。
+///
+/// ⚠️ 为什么不在这里手写一份（或从注册表现算一份）：`capabilities/mcp-tools.json` 是
+/// `scripts/gen-capabilities.mjs` 的**第 10 件生成物** ✓，JS 侧（桥/判据）与这里**必须**是同一份
+/// ⇒ `include_str!` 是编译期内嵌（打包后的 App 也带着它 ✓，不依赖运行时文件 ✓）。
+/// ⛔ 一旦在这里另抄一份，就会出现"注册表改了、宿主面还回老清单"这种**两份真相源** ✗
+/// （判据：`scripts/check-agent-surface.mjs` 负责"面与注册表一致" ✓；这里只负责**原样**吐出来 ✓）。
+pub(crate) const MCP_TOOLS_JSON: &str = include_str!("../../capabilities/mcp-tools.json");
+
+/// 给通道那条 `tools.list` 用的原样 JSON ✓（**形态**由生成物决定，这里不加工 ✓）。
+pub(crate) fn tools_list_json() -> &'static str {
+    MCP_TOOLS_JSON
+}
+
 /// 一次**外部**能力调用（宿主面的唯一入口 ✓）。
 ///
 /// * `session_id` —— 这次调用的会话号 ✓（进审计 `source` ＝ `external:<会话号>` ⇒ 答得出"是谁" ✓，R104=A ✓）
