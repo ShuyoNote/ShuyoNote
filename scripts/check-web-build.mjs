@@ -306,6 +306,81 @@ try {
     await new Promise((r) => setTimeout(r, 300));
   }
 
+  // ── AI 设置页：单卡要吃满内容区 ＋ 正文不许重复面板名（2026-10-08，owner 真窗口截图）──────
+  //
+  // 两条都是**真应用**的读数（⛔ 不是夹具 —— 本仓栽过多次「合成夹具过、真文件照错」，
+  // 同日还刚在 `check-hook-order` 上栽过一次）：
+  //   ① 第 3 招把 AI 面板的「三块并列」改成**页签**（一次只画一块 ⇒ `aiTab === "ai" && …`），
+  //      而 `.ai-settings-cols` 还是「两块并排」时代的 `repeat(2, minmax(0,1fr))`
+  //      ⇒ 那唯一一块**只占左半列**：真 Chromium 实测 `310px 310px`、卡 310 / 内容区 634 ＝ **49%**，
+  //      右半永远空 ✗（owner：「全库索引内容多，没有充分利用空间」）；
+  //   ② 正文顶部还留着一个**硬编码**的 `<div class="set-section-title">AI 服务</div>`，
+  //      而面板头已经写着「AI」＋「服务商与模型」⇒ 同义重复，且它是这一页**唯一没走 i18n** 的小节标题 ✗。
+  // ⚠️ 判据钉的是"单卡占内容区 ≥90%"与"正文一个小节标题都不该有"：前者是几何、后者是"面板名只说一次"。
+  const aiPane = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const waitFor = async (fn, tries = 40) => {
+      for (let i = 0; i < tries; i++) {
+        const v = fn();
+        if (v) return v;
+        await sleep(100);
+      }
+      return null;
+    };
+    const railItem = (label) =>
+      Array.from(document.querySelectorAll(".set-rail-item")).find(
+        (b) => ((b.querySelector(".set-rail-label") || {}).textContent || "").trim() === label,
+      );
+    const empty = { steps: [], innerW: 0, cardW: 0, colsGrid: "", titles: [], headTitle: "", headHint: "" };
+    const settingsBtn = await waitFor(() =>
+      Array.from(document.querySelectorAll("button")).find((b) =>
+        /^设置$|^Settings$/i.test((b.getAttribute("aria-label") || b.textContent || "").trim()),
+      ),
+    );
+    if (!settingsBtn) return { ...empty, steps: ["设置按钮=找不到"] };
+    settingsBtn.click();
+    await sleep(300);
+    // AI 那一项：i18n 两种语言都是「AI」（`settings.ai`），按 rail 标签文本找最稳
+    const aiBtn = await waitFor(() => railItem("AI"));
+    if (!aiBtn) {
+      return {
+        ...empty,
+        steps: ["设置=已点", "AI 项=找不到"],
+        railLabels: Array.from(document.querySelectorAll(".set-rail-label")).map((e) => (e.textContent || "").trim()),
+      };
+    }
+    aiBtn.click();
+    await sleep(500);
+    const inner = document.querySelector(".set-body-inner");
+    const cols = document.querySelector(".set-ai .ai-settings-cols");
+    const card = document.querySelector(".set-ai .ai-settings-cols > .ai-settings-group");
+    const w = (el) => (el ? el.getBoundingClientRect().width : 0);
+    const out = {
+      steps: ["设置=已点", "AI=已点"],
+      innerW: Math.round(w(inner)),
+      cardW: Math.round(w(card)),
+      colsGrid: cols ? getComputedStyle(cols).gridTemplateColumns : "",
+      titles: Array.from(document.querySelectorAll(".set-ai .set-section-title")).map((e) => (e.textContent || "").trim()),
+      headTitle: (document.querySelector(".set-body-title")?.textContent || "").trim(),
+      headHint: (document.querySelector(".set-body-desc")?.textContent || "").trim(),
+    };
+    // 模态会挡住后面「上传」那一击 ⇒ 量完自己关掉（同上面那段 Esc 的理由）
+    document.querySelector(".set-close")?.click();
+    await sleep(250);
+    return out;
+  });
+  ok(aiPane.cardW > 0, `AI 设置页找得到那块配置卡（${aiPane.steps.join("；")}）`);
+  const aiRatio = aiPane.innerW > 0 ? aiPane.cardW / aiPane.innerW : 0;
+  ok(
+    aiRatio >= 0.9,
+    `AI 设置页的单卡吃满内容区（真 Chromium 实测卡 ${aiPane.cardW}px ／ 内容区 ${aiPane.innerW}px ＝ ${(aiRatio * 100).toFixed(0)}%；` +
+      `grid-template-columns: ${aiPane.colsGrid}）—— 页签一次只画一块，两列模板必然空掉右半`,
+  );
+  ok(
+    aiPane.titles.length === 0,
+    `AI 页正文不重复面板名（实测小节标题 ${JSON.stringify(aiPane.titles)}；面板头＝「${aiPane.headTitle}」＋「${aiPane.headHint}」）`,
+  );
+
   // ── 打包产物里「markdown → Lexical」的节点表不能是模块顶层求值 ──────────────
   //
   // 为什么必须有这一档（2026-09-23，用户实测报的 bug）：`src/lib/mdPreview.ts` 的节点表原来是

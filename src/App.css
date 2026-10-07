@@ -17247,25 +17247,24 @@ p:has(> .editor-drawing-container) {
   line-height: 1.5;
   margin: 0 0 14px;
 }
-/* AI 设置两个配置块并排（对话模型 / 语义检索）。窄屏回退单列。 */
+/* ⚠️ 2026-10-08：**页签化了 ⇒ 这里必须是单列** ✗
+   第 3 招把 AI 面板的「两块并排（对话模型 / 语义检索）」改成 **Tab**（一次只画一块，
+   见 `AiSettingsForm.tsx` 的 `aiTab === "…" && …`）—— 而这条模板还留在两列时代
+   ⇒ 那一块只占**左半列**：真 Chromium 实测 `grid-template-columns: 310px 310px`、
+   卡 310px ／ 内容区 634px ＝ **49%**，右半永远空 ✗（owner 2026-10-08 截图：
+   「全库索引内容多，没有充分利用空间」）。
+   ⚠️ 这个类名**全仓只有 `AiSettingsForm` 用**（AI 助手右侧面板是另一套类名）⇒ 改成单列不会误伤别处 ✓。
+   ⚠️ 原来那条 `@media (max-width: 768px) { … 1fr }` 的回退**已删**：单列本身就是它的结论。
+   判据在 `check-web-build`（真 Chromium 打开 AI 页量几何：单卡必须占内容区 ≥90% ✓）。 */
 .ai-settings-cols {
   display: grid;
-  /* minmax(0,1fr) 强制两列严格等宽（1fr 会按内容 min-content 分配，右侧被挤窄）。 */
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-  /* 高度对齐：两卡片拉伸等高。 */
+  /* 高度对齐：卡片拉伸等高。 */
   align-items: stretch;
   /* 占上部，把动作栏(取消/保存)推到底部对齐。 */
   flex: 1;
   min-height: 0;
-}
-/* 窄窗口/对话框时两列退单列，避免被挤/漏空。 */
-/* 断点从 760 收敛到 768：与 useMobile.ts 的 MOBILE_BREAKPOINT_PX 同一个数，
-   否则 761~768px 之间 JS 按手机算、CSS 按桌面算。 */
-@media (max-width: 768px) {
-  .ai-settings-cols {
-    grid-template-columns: 1fr;
-  }
 }
 /* AI 设置分区卡：对话模型 / 语义检索 分组清晰。 */
 .ai-settings-group {
