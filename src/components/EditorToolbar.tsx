@@ -1,3 +1,5 @@
+import { useLayoutEffect } from "react";
+import { menuAnchor } from "../lib/menuAnchor";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { $convertToMarkdownString } from "@lexical/markdown";
@@ -75,6 +77,20 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   //    ⚠️ 与「目录」那颗同一个 store（`useRightPanel` ✓）：store 内部互斥，⛔ 不会有两份状态 ✗。
   const openComments = useRightPanel((s) => s.openComments);
   const [exportOpen, setExportOpen] = useState(false);
+  // ⭐ 2026-10-07（owner：「**更多弹窗弹出位置不对**」✗）：那条菜单是 `position: fixed` ＋
+  //   **写死的 `top: 34px; right: 8px`** ✗ ⇒ 锚的是**视口右上角**、不是这颗 ⋯ 按钮 ✓
+  //   （截图里它飘在窗口右上、盖在「目录」面板上 ✓）。⇒ 打开时**按按钮的实际矩形**算位置 ✓
+  //   （夹在视口内 ✓）。⛔ 没改成 `absolute`：工具栏自己有 `overflow` 收口，那样会被裁掉 ✗。
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  const [menuStyle, setMenuStyle] = useState<{ top: number; right: number }>({ top: 34, right: 8 });
+  useLayoutEffect(() => {
+    if (!exportOpen) return;
+    const el = moreRef.current?.querySelector("button");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const menu = moreRef.current?.querySelector(".editor-more-menu") as HTMLElement | null;
+    setMenuStyle(menuAnchor({ top: r.top, bottom: r.bottom, right: r.right }, window.innerWidth, window.innerHeight, menu?.offsetWidth ?? 0));
+  }, [exportOpen]);
   const [publishTarget, setPublishTarget] = useState<PublishTarget | null>(null);
 
   // Apply the adaptive-width body class so content fills the available width.
@@ -266,9 +282,6 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       <button className="toolbar-btn toolbar-btn-narrow" onClick={importMarkdown} title={t("editor.importMarkdown")}>
         <DownloadIcon />
       </button>
-      <button className="toolbar-btn toolbar-btn-narrow" onClick={saveAsTemplate} title={t("editor.saveAsTemplate")}>
-        <TemplateIcon />
-      </button>
       <button
         className={`toolbar-btn ${contentWidth === "full" ? "active" : ""}`}
         onClick={toggleWidth}
@@ -288,7 +301,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         <ListIcon />
       </button>
       <HistoryPanel pageId={pageId} />
-      <div className="editor-toolbar-more">
+      <div className="editor-toolbar-more" ref={moreRef}>
         <button
           className="toolbar-btn"
           onClick={() => setExportOpen((v) => !v)}
@@ -297,7 +310,7 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
           ⋯
         </button>
         {exportOpen && (
-          <div className="editor-more-menu">
+          <div className="editor-more-menu" style={menuStyle}>
             {/* ⭐ 2026-10-06：顶端工具栏撤掉后，「讨论 / 通知」的**可见**入口在这里
                 （命令面板另有 `panels.comments` / `panels.notifications` 两条 ✓）。
                 ⚠️ 这两颗与「目录」共用同一个右栏槽位 ⇒ 打开会顶掉目录/AI ✓（store 内部互斥 ✓）。 */}
