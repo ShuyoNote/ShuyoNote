@@ -743,6 +743,13 @@ function BatchToolbar({ pages }: { pages: PageMeta[] }) {
       for (const id of selected) {
         await useNotes.getState().movePage(id, parentId, order++);
       }
+      // ⭐ 2026-10-07（owner：「从文件转移到另一个文件夹，侧边栏**目标文件夹下面没有对应条目**」✗）：
+      //   **顺手把目标文件夹展开** ✓。事实是：目录真的更新了 ✓（直接读库核过：目标下确实有子项、孤儿 0 ✓），
+      //   而每个节点的展开是**它自己的 local state** ✓ —— 用户先前把目标文件夹收起来过的话，
+      //   移进去的条目就藏在它下面 ✗ ⇒ 看起来就像"根本没移过去" ✓。
+      //   ⚠️ 复用拖拽那条路已有的**一次性展开请求** ✓（语义就是"立刻展开这个文件夹" ✓，
+      //      拖拽悬停也是用它 ✓）—— 菜单那条路原来没有这一步 ✗。
+      if (parentId) useTreeDrag.getState().requestExpand(parentId);
       clearSelection();
       toast(`已移动 ${selected.length} 个节点`, "success");
     } catch (e) {
@@ -1126,7 +1133,11 @@ export function PageTree(_props: {
       if (d?.armed) dragJustFinishedRef.current = true;
       if (draggingId && overId) {
         const choice = computeReorder(pages, draggingId, overId, zone ?? "inside");
-        if (choice) await useNotes.getState().movePage(draggingId, choice.parentId, choice.sortOrder);
+        if (choice) {
+          await useNotes.getState().movePage(draggingId, choice.parentId, choice.sortOrder);
+          // 拖拽落下后如果落点是某个祖先（`inside` 以外那两档 ✓），同样把它展开 ✓ —— 与菜单那条同一口径 ✓
+          if (choice.parentId) useTreeDrag.getState().requestExpand(choice.parentId);
+        }
       }
     };
     window.addEventListener("mousemove", onMove);
