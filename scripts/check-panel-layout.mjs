@@ -261,16 +261,20 @@ A2["RAG 检索"]</textarea>
        .kb-map-clusters(grid) > li.kb-map-cluster > .kb-map-cluster-head > .kb-map-cluster-name ＋ .kb-map-cluster-count
                                               ＞ ul.kb-map-pages > li > button.kb-map-page
      ⚠️ 卡片宽由 .kb-map-clusters 的 minmax(220px,1fr) 定 ⇒ 在这个视口里约 220–280px，
-       而下面那个标题**故意写得比卡片长** —— 折行与截断在这里会得出完全不同的几何。 -->
+       而下面那两个名字**故意写得比卡片长得多**（60+ 字）——
+       ⚠️ **2026-10-08 修**：第一版只写了 20 来字，在 Windows 字体下超宽 ✓、到 CI（Linux 字体）却**放得下** ✗
+       ⇒ 「确实被裁」那两条断言在 CI 上**假红**（逐字：「超长名确实被裁在卡片内（scrollWidth > clientWidth）」
+       ＋「超长簇标题同样被裁（裁掉 0px）」）⇒ 现在把字符串**拉长到任何合理字体都必然溢出**，
+       让这条判据**不依赖字体度量** ✓（判据依赖字体 = 换台机器就翻脸 ✗）。 -->
 <div class="kb-map">
   <ul class="kb-map-clusters">
     <li class="kb-map-cluster">
       <div class="kb-map-cluster-head">
-        <span class="kb-map-cluster-name" id="kb-cluster-name">一个很长的标签名：产品与运营协作</span>
+        <span class="kb-map-cluster-name" id="kb-cluster-name">一个很长的标签名：产品与运营协作与素材库与短剧项目与招标与濮阳数友与知识层</span>
         <span class="kb-map-cluster-count">3</span>
       </div>
       <ul class="kb-map-pages">
-        <li><button type="button" class="kb-map-page" id="kb-page-long" title="ShuyoNote 个人版增值功能方案（讨论稿）">ShuyoNote 个人版增值功能方案（讨论稿）</button></li>
+        <li><button type="button" class="kb-map-page" id="kb-page-long" title="ShuyoNote 个人版增值功能方案（讨论稿）—— 这一段特意写得比卡片长得多，用来量它究竟是折行还是截断">ShuyoNote 个人版增值功能方案（讨论稿）—— 这一段特意写得比卡片长得多，用来量它究竟是折行还是截断</button></li>
         <li><button type="button" class="kb-map-page">短标题</button></li>
       </ul>
     </li>

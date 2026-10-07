@@ -238,13 +238,7 @@ jobs:
         # GitHub 对这种错误**不给行号、不给日志**，只产出一条 0 个 job 的红色 run（run 名是文件路径
         # 而不是 `name: CI`）——2026-09-12 起 49 次 push 全红、连纯文档提交也红，就是这一行。
         # 现在它跑在 .mjs 里，绕开了 YAML 标量规则；`check-workflow-yaml` 另有窄规则兜底。
-        # ⭐ 2026-10-08（owner 拍 R118＝「A 进 CI ＋ 显式 `--retry 1`」✓）：**这一组是唯一带重试的** ——
-        #   原因写在 `gates.mjs` 的 `rust-mesh-ten-devices` 上：它跑 10 个真窗口 + 60 秒真实编辑窗，
-        #   在**负载**下会被饿（同机 1/3 趟红，诊断＝测试自身被饿，不是产品慢 ✓）。
-        #   ⛔ 重试只对 `flaky: true` 的门禁生效，且**一定写进报告**（"靠重试才通过"会单列一节 ✓）——
-        #   所以这不是"把红藏起来"，是"给这一条已知的资源抖动留一次机会" ✓。
-        #   其余各组仍然 0 次重试（flake 要吵出来 ✓，见 AGENTS.md §6）。
-        run: node scripts/test-report.mjs --group rust --retry 1 --json test-report-rust.json
+        run: node scripts/test-report.mjs --group rust --json test-report-rust.json
 
       - name: 失败时把「哪条门禁红了」变成注解（rust 组）
         # 与默认组/浏览器组那两步**同一个理由**，而这一步的必要性是它自己证明的（2026-09-19）：

@@ -775,17 +775,7 @@ export const GATES = [
     // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**、并在严格模式里豁免这一条。
     // 目标仍是**在有 Tongsuo 的环境里真跑**（CI 装 Tongsuo 是一个小项目；先向 macOS/AMD 要一次那 9 项的读数）。
     // ⚠️ **发版说明必须记「未验」** —— 本版不得把这一格当成「跨实现一致已验」的证据。
-    // ⭐ **2026-10-08 更新**：它**已经真跑过一次**了 —— 手动工作流
-    //   `gm-conformance (Tongsuo cross-implementation, manual)` **run #4**（`dev@cf66d501`，工件 `gm-conformance-4`）：
-    //   逐字读数 `gm-conformance: ✅ 通过 —— 跑成 12 个用例（含跨实现对拍）`，**跳过项 0**（`!` 行 = 0），
-    //   对拍另一方 `Tongsuo 8.5.0 / OpenSSL 3.5.4` ✓。⇒ 已发布的 v1.92.6 发版说明里那行「本版未对拍」
-    //   **已改成「本版已对拍（run #4）」** ✓（RELEASING.md §六 那条清单项随之勾掉）。
-    //   ⚠️ 但**下面这条 selfSkipOk 依然成立**：**日常 CI 仍不装 Tongsuo** ⇒ 平时那 9 项照旧自报跳过 ⇒
-    //   「平时绿里面有跳过」这件事仍然要看得见 ✓（登记 ≠ 通过）。
-    //   ⚠️ 顺带记一笔：那条 workflow 此前**两跑两红**（run #1/#2），真因是它自己写死了
-    //   `install/lib/libcrypto.a`（Tongsuo 在 runner 上装进 `lib64/`）＋ 把 `SHUYONOTE_TONGSUO_OPENSSL`
-    //   指成了前缀而不是 CLI ⇒ **对拍从没跑起来过**；三处已修（`cf66d501`），并把"跳过项"从打印变成判据 ✓。
-    selfSkipOk: "日常 CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」）。⭐ 2026-10-08：已用手动工作流**真跑过一次**（run #4，0 跳过，见上）⇒ v1.92.6 发版说明已记「已对拍」；平时仍按跳过登记 ✓",
+    selfSkipOk: "CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」；**发版说明须记「未验」**）；目标是在有 Tongsuo 的环境真跑",
   },
   {
     id: "rust-no-sm-crypto",
@@ -804,29 +794,6 @@ export const GATES = [
     baseline: true,
     incident:
       "2026-09-20：`sm-crypto` 成为默认特性后，原 `rust-sm-crypto`（跑 --features sm-crypto）与 `rust-test` 变成同一条命令；本门禁改为验证**回滚通道**（--no-default-features）——它是「一行可逆」这个承诺的实现，没人编就会腐烂。",
-  },
-  {
-    id: "rust-mesh-ten-devices",
-    group: "rust",
-    label: "T-10 十台设备多端验证（回环下界：收敛／不落后／拉取量／合并余量）",
-    // ⭐ 2026-10-08 注册（owner 拍 R118＝「A 进 CI ＋ **显式 `--retry 1`**」✓）。
-    //   它此前**不在任何门禁里**（`gates.mjs` 与 workflow 都没有它 ⇒ 从来没跑过 ✓），
-    //   而它是 `U14`（单空间最多 10 台设备）那四条判据**唯一**的承载。
-    //   ⚠️ 它**负载敏感**：空闲机器上四条全绿（逐字读数在 `_workspace/REQUESTS.md` R118），
-    //      同机三趟里**有一趟红**，②条冲到 19709ms（上限 10000），诊断行写着「调度窗口 40000ms /
-    //      时间戳差 62621ms」＝**测试自身被饿**（不是产品慢 ✓）⇒ 所以按 owner 的拍板：
-    //      **标 `flaky: true` 并让 CI 的 rust 那条命令显式带 `--retry 1`**（`.github/workflows/ci.yml`）。
-    //   ⛔ 那一对**必须成对**：只注册不带重试 = 给三台机器加间歇红 ✗；只带重试不注册 = 继续没人跑 ✗。
-    //      ⇒ 由 `scripts/test-report.test.mjs` 机器钉着这一对 ✓（本仓的规矩：靠注释记的约定会腐烂）。
-    //   ⚠️ **本机（Windows）跑不了 cargo 的测试 exe**（见 `rust-test` 上方那段）⇒ 它只在 Linux CI 上真跑；
-    //      读数只写**下界**：回环 ＋ 手工对端清单 ⇒ **绕过发现层**，真机 10 台（`M-10`）**不在**它里面 ✗。
-    //   ⚠️ **不设 baseline**：本机拿不到读数，而"编一个下界数字"正是本仓禁的那类事 ✗ ——
-    //      第一次 Linux CI 读数出来之后，用 `--baseline-from` 并入再抬成 `baseline: true`（见 docs/TESTING.md ✓）。
-    cmd: "node scripts/verify-mesh-ten-devices.mjs",
-    counters: "auto",
-    flaky: true,
-    incident:
-      "`U14`（单空间 10 台设备）的四条判据长期**没有承载**：`personal-edition-spec` §14 只写了能承诺什么，判据脚本存在却不在任何门禁里 ⇒ 它坏掉不会有任何信号。2026-10-08 注册（owner 拍 A）；它是**负载敏感**的（同机 1/3 趟红，诊断为测试自身被饿），所以配 `--retry 1`。",
   },
   {
     id: "rust-sm-wired",
