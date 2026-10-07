@@ -16,11 +16,10 @@ import { useFileManagerStore } from "../store/fileManager";
 import { ConvertToPageIcon, FitWidthIcon, OutlineIcon, ReadAnnotateIcon } from "./icons";
 import { hydrateMermaidBlocks } from "../lib/mdMermaid";
 import { useResolvedTheme } from "../store/theme";
+import { fitScaleOf, nextZoomFromWheel } from "../lib/imageZoom";
 
 // 图片预览器：缩放（滚轮 + 按钮）、适应窗口、1:1 实际尺寸、放大镜、查看原图。
 // 顶栏显示文件名 + 缩放百分比与适应/原图按钮。独立组件便于复用与调节。
-const clampZoom = (z: number) => Math.min(4, Math.max(0.1, z));
-
 function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string; onOpenOriginal?: () => void }) {
   const [zoom, setZoom] = useState(1); // 1 = 适应窗口基准
   const [tx, setTx] = useState(0); // 平移到屏幕像素
@@ -28,13 +27,31 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
   const [rot, setRot] = useState(0); // 旋转角度（仅 0/90/180/270）
   const [fit, setFit] = useState(true); // 适应窗口模式
   const dragRef = useRef<{ sx: number; sy: number; tx: number; ty: number } | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  // 原图尺寸（load 之后才知道 ✓）——用来算「适应窗口」实际缩了多少 ✓
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
 
   const applyZoom = (z: number) => {
     setFit(false);
     setZoom(z);
   };
+  /**
+   * ⭐ 2026-10-06（owner：「滚轮放大缩小时，**不是从当前大小起步**，感觉不好」✗）：
+   * **当前实际显示的比例** —— 适应窗口时是 CSS 缩出来的那个比例（4000px 的图在 900px 窗口里
+   * 只有 0.22 ✓），其它时候就是 `zoom` ✓。滚轮必须**接着它**乘 ✓。
+   * ⛔ 旧写法从 `zoom`（初始 1 = 原始尺寸）起步 ✗ ⇒ 第一下从 22% 直接跳到 115% ✗ —— 那正是"跳"。
+   */
+  const effectiveScale = () => {
+    if (!fit) return zoom;
+    const el = imgRef.current;
+    if (!el || !natural) return zoom;
+    const r = el.getBoundingClientRect();
+    return fitScaleOf({ naturalW: natural.w, naturalH: natural.h, renderedW: r.width, renderedH: r.height, rot });
+  };
   const rotate = (deg: number) => {
     // 旋转不改文件，仅预览视角。围绕中心累计，保持居中。
+    // ⚠️ 顺带把"当前比例"落到 `zoom` 上 ✓（不然从适应窗口转一下会跳回 100% ✗）
+    setZoom(effectiveScale());
     setRot((r) => (r + deg) % 360);
     setFit(false);
   };
@@ -44,11 +61,13 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
       className="fm-img-view"
       onWheel={(e) => {
         e.preventDefault();
-        const next = clampZoom(zoom * (e.deltaY < 0 ? 1.15 : 0.87));
-        applyZoom(next);
+        // 从**当前显示尺寸**起步 ✓（见 effectiveScale 上面那段注释 ✓）
+        applyZoom(nextZoomFromWheel(effectiveScale(), e.deltaY));
       }}
     >
       <img
+        ref={imgRef}
+        onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
         src={src}
         alt={name}
         className={`fm-img${fit ? "" : " is-zoomed"}`}
@@ -95,7 +114,9 @@ function ImagePreview({ src, name, onOpenOriginal }: { src: string; name: string
           几何判据在 `scripts/verify-mobile-overlays.mjs` 的 (6c)。 */}
       <div className="fm-img-bar">
         <div className="fm-img-hint">
-          {fit ? "滚轮缩放 · 拖动平移" : `${Math.round(zoom * 100)}%`}
+          {fit
+            ? `${Math.round(effectiveScale() * 100)}%（适应窗口）· 滚轮缩放 · 拖动平移`
+            : `${Math.round(zoom * 100)}%`}
         </div>
         <div className="fm-img-actions">
           <button className="fm-img-btn" onClick={() => rotate(-90)} title="逆时针旋转 90°" aria-label="逆时针旋转">
