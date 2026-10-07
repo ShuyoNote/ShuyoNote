@@ -17295,6 +17295,30 @@ p:has(> .editor-drawing-container) {
   line-height: 1.9;
   color: var(--text-dim);
 }
+/* ⭐ 2026-10-08 第 3 招：AI 面板三块 → **Tab**（owner 拍板 ✓，效果图已认可 ✓）。
+   形状照仓库既有的下划线式页签（与 AI 面板上的 `.tabs` 同族 ✓）：平时灰、选中蓝＋2px 下划线 ✓，
+   ⛔ 不再用整块卡片并列（那正是"密度高"的来源 ✗）。 */
+.ai-settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 14px;
+}
+.ai-settings-tab {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.ai-settings-tab.is-on {
+  color: var(--accent);
+  font-weight: 700;
+  border-bottom-color: var(--accent);
+}
 .ai-settings-placeholder > div:first-child {
   font-weight: 600;
   color: var(--text);

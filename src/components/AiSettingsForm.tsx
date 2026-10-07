@@ -89,6 +89,10 @@ export function AiSettingsForm({
   const [model, setModel] = useState(config.model);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [enableEmbedding, setEnableEmbedding] = useState(config.enableEmbedding);
+  // ⭐ 2026-10-08 第 3 招（owner 拍板开工 ✓）：三块并列 → **Tab**（默认停在「AI 助手」= 高频项 ✓）。
+  //   目标：视觉密度降下来（原来三块同时铺开 ⇒ "关了还占一屏" ✓ 与第 1 招同源 ✓）。
+  //   ⚠️ 三个开关的 state 一个都不动 ✓ —— 只是"同一时刻只画一块"✓。
+  const [aiTab, setAiTab] = useState<"ai" | "embed" | "index">("ai");
   const [embeddingModel, setEmbeddingModel] = useState(config.embeddingModel);
   // 独立 embedding 服务（支持 DeepSeek 对话 + Ollama 嵌入）：空 = 复用对话配置。
   const [embedBaseUrl, setEmbedBaseUrl] = useState(config.embedBaseUrl ?? "");
@@ -281,8 +285,30 @@ export function AiSettingsForm({
     <>
       {/* ⭐ 失焦即落盘 ✓（事件从任一输入框冒泡到这一层 ✓）—— 见 `persist()` 上面那段注释：
           设置中心里只有「保存」一个出口，改完直接切走会把改动丢进垃圾桶 ✗。 */}
+      {/* ⭐ 2026-10-08 第 3 招：**Tab 条**（三块同一时刻只画一块 ✓）。
+          ⚠️ 用 `role="tablist"/"tab"` ＋ `aria-selected`：读屏要能念出"这是第几个页签、当前选中哪个" ✓；
+          ⛔ 不在 Tab 上做任何配置 —— 那是下面三块的事 ✓。 */}
+      <div className="ai-settings-tabs" role="tablist" aria-label="AI 设置分类">
+        {([
+          ["ai", "AI 助手"],
+          ["embed", "语义检索"],
+          ["index", "全库索引"],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={aiTab === id}
+            className={`ai-settings-tab${aiTab === id ? " is-on" : ""}`}
+            onClick={() => setAiTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="ai-settings-cols" onBlur={persist}>
         {/* ===== AI 助手（对话） ===== */}
+        {aiTab === "ai" && (
         <div className={`ai-settings-group${enabled ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">
             <span>AI 助手</span>
@@ -398,7 +424,10 @@ export function AiSettingsForm({
           )}
         </div>
 
+        )}
+
         {/* ===== 语义检索 ===== */}
+        {aiTab === "embed" && (
         <div className={`ai-settings-group${enableEmbedding ? "" : " is-off"}`}>
           <div className="ai-settings-group-title">
             <span>语义检索</span>
@@ -475,7 +504,10 @@ export function AiSettingsForm({
           )}
         </div>
 
+        )}
+
         {/* ===== 全库索引 ===== */}
+        {aiTab === "index" && (
         <div className="ai-settings-group ai-index">
           <div className="ai-settings-group-title">
             <span>全库索引</span>
@@ -575,6 +607,7 @@ export function AiSettingsForm({
             ) : null}
           </div>
         </div>
+        )}
       </div>
 
       <div className="ai-settings-actions">

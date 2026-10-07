@@ -55,6 +55,11 @@ function mount() {
   document.body.appendChild(host);
   root = createRoot(host);
   flushSync(() => root!.render(<AiSettingsForm onDone={() => {}} showCancel={false} />));
+  // ⭐ 2026-10-08 第 3 招（三块并列 → Tab）：默认只画「AI 助手」那一块 ✓
+  //   ⇒「检查索引覆盖」所在的第三块**默认不在 DOM 里** ✗ ⇒ 这条判据先切到「全库索引」再断言 ✓。
+  //   ⚠️ 判据本身**一个字没改**（断言还是那三条 ✓）—— 换的只是"进入那块的口子" ✓。
+  const tab = [...host.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "全库索引");
+  if (tab) flushSync(() => tab.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   return host;
 }
 

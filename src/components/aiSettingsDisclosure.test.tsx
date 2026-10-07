@@ -42,8 +42,14 @@ function renderForm(config: Partial<ReturnType<typeof useAiStore.getState>["conf
   return host;
 }
 
-/** 按**标题**找那一组（不改组件结构、也不靠类名巧合 ✓）。 */
+/** 按**标题**找那一组（不改组件结构、也不靠类名巧合 ✓）。
+ *  ⚠️ 2026-10-08 第 3 招之后三块是 **Tab** ⇒ 同一时刻只有一块在 DOM 里 ✗
+ *  ⇒ 先切到同名页签再找 ✓（页签文案与组标题同名 ✓）。 */
 function group(root: HTMLElement, title: string): HTMLElement | null {
+  const tab = [...root.querySelectorAll<HTMLElement>(".ai-settings-tabs button")].find(
+    (b) => (b.textContent ?? "").trim() === title,
+  );
+  if (tab) flushSync(() => tab.click());
   const all = [...root.querySelectorAll<HTMLElement>(".ai-settings-group")];
   return all.find((g) => (g.querySelector(".ai-settings-group-title")?.textContent ?? "").includes(title)) ?? null;
 }
@@ -92,7 +98,11 @@ describe("渐进式披露：开关关着 ⇒ 配置整块收起来，只留开�
 
   it("⛔ 两组的开关**互不牵连**（AI 关着不影响语义检索那一组自己的状态）", () => {
     const root = renderForm({ enabled: false, enableEmbedding: true });
+    // ① 第一块（AI 助手）关着 ⇒ 没有输入控件 ✓
     expect(controls(group(root, "AI 助手")!)).toBe(0);
-    expect(controls(group(root, "语义检索")!)).toBeGreaterThan(0);
+    // ② 切到「语义检索」⇒ 那一块**自己的开关仍是开** ✓ ⇒ 控件在 ✓（＝没被 AI 那一边拖下去 ✓）
+    const emb = group(root, "语义检索")!;
+    expect(emb.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(controls(emb)).toBeGreaterThan(0);
   });
 });
