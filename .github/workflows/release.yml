@@ -741,6 +741,13 @@ jobs:
     needs: [build, android]
     runs-on: ubuntu-latest
     steps:
+      # ⭐ 2026-10-07（v1.92.5 实测踩到 ✗）：这个 job **原先没有 checkout** —— 它只需要下载构建产物 ✓，
+      #    但正文要从 `CHANGELOG.md` 取本版那一段 ✓ ⇒ 文件根本不在盘上 ✗ ⇒ 正文落成兜底那句
+      #    「（CHANGELOG 里没找到 [1.92.5] 段）」✓（真因被 `2>/dev/null` 吞掉了 ✗ —— 别再吞 ✓）。
+      - name: Check out（要读 CHANGELOG.md 生成本版更新声明 ✓）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -765,7 +772,7 @@ jobs:
           VER="${TAG#v}"
           # `next` 跳过 `## [x.y.z]` 那一行本身 ✓（标题由下面那句 H1 提供 ✓，免得正文以二级标题开头 ✗）
           BODY_SEG=$(awk -v h="## [$VER]" 'index($0,h)==1{f=1;next} f&&/^## \[/&&index($0,h)!=1{exit} f' "$GITHUB_WORKSPACE/CHANGELOG.md" 2>/dev/null | sed -e 's/^### /## /')
-          [ -n "$BODY_SEG" ] || BODY_SEG=$(printf '（CHANGELOG 里没找到 [%s] 段）' "$VER")
+          if [ -z "$BODY_SEG" ]; then echo "::warning::CHANGELOG.md 里没找到 [\] 段（正文会用兜底文案）—— 先看这个 job 有没有 checkout ✓"; BODY_SEG=$(printf '（CHANGELOG 里没找到 [%s] 段）' "$VER"); fi
           # 末尾补一段安装说明（与 CHANGELOG 段拼在一起 ✓，保留原有那句"未对拍"提醒 ✓）
           BODY_MD=$(printf '# ShuyoNote %s\n\n%s\n\n## 安装\n- **Windows**：`ShuyoNote_%s_x64-setup.exe`\n- **Linux**：`.deb` 或 `.AppImage`\n- **Android**：`ShuyoNote_%s_android-arm64-release.apk`（arm64、正式密钥签名，可直接覆盖安装）\n- 桌面版安装后可在应用内「检查更新」下载并安装。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 docs/RELEASING.md（仓库内文档）。\n' "$TAG" "$BODY_SEG" "$VER" "$VER")
           BODY_JSON=$(printf '%s' "$BODY_MD" | jq -Rs .)

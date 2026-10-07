@@ -5607,6 +5607,13 @@ select.prop-value {
 .editor-more-menu {
   position: fixed;
   z-index: 1500;
+  /* ⭐ 2026-10-07（owner：「更多弹窗弹出位置不对」✗）：位置**不再写死** ✗ ——
+     原先这里是 `top: 34px; right: 8px`，锚的是**视口右上角**、不是那颗 ⋯ 按钮 ✓
+     （截图里它飘在窗口右上、盖住「目录」面板 ✓）。现在由 `EditorToolbar` 打开时
+     按按钮的实际矩形算出来，以**内联** `top`/`right` 给（并夹在视口内 ✓，
+     纯规则在 `lib/menuAnchor.ts`，判据 `menuAnchor.test.ts` ✓）。
+     ⚠️ 仍然是 `fixed`（**没有**改成 absolute）：工具栏自己有 overflow 收口，
+     absolute 会被裁掉 ✗ —— 当初写 fixed 多半就是撞过这个 ✓。 */
   top: 34px;
   right: 8px;
   min-width: 168px;
@@ -13222,6 +13229,49 @@ p:has(> .editor-drawing-container) {
   padding: 2px 10px 12px;
 }
 
+/* ⭐ 2026-10-08 第 2 招：左侧导航**分组**（11 项平铺 → 4 组 ✓，owner 拍板 ✓）。
+   样式取向照 owner 的原话「不要花哨」✓：标题只用**小号灰字**＋一条**细分隔线**，
+   ⛔ 不用 emoji、不用彩色、不加粗大字号 ✗。分组间距靠上留白拉开 ✓（比加边框更安静 ✓）。 */
+.set-rail-group + .set-rail-group {
+  margin-top: 14px;
+}
+.set-rail-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 10px 10px 4px;
+}
+.set-rail-group-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」—— 放在导航**底部**，不抢戏 ✓。
+   默认**关**（全显 ✓）；打开后只留基础组 ✓。样式取向照 owner 那句"不花哨" ✓：细边框 ＋ 小号灰字 ✓。 */
+.set-rail-pref {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.set-rail-pref.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .set-rail-item {
   display: flex;
   align-items: center;
@@ -17244,11 +17294,55 @@ p:has(> .editor-drawing-container) {
   flex: none;
 }
 /* 启用开关关闭 → 该块其余字段整体禁灰；开关(在标题行)仍可点重新启用。 */
-.ai-settings-group.is-off > :not(.ai-settings-group-title) {
+/* ⚠️ 2026-10-08：配置块**关着时不渲染**了（见下一条 ✓）⇒ 这条现在只是"万一还剩点啥"的兜底；
+   灰框 `.ai-settings-placeholder` **排除在外**（它是"看不到就不知道怎么开"的保险，要看得清 ✓）。 */
+.ai-settings-group.is-off > :not(.ai-settings-group-title):not(.ai-settings-placeholder) {
   opacity: 0.45;
   filter: grayscale(0.55);
   pointer-events: none;
   user-select: none;
+}
+/* ⭐ 2026-10-08 第一招「渐进式披露」（owner 2026-10-08 拍板开工 ✓）：
+   开关**关着 ⇒ 配置整块不渲染** ✗（原来只是变灰、配置照样堆一屏 ✓），
+   只在原位留这个**灰框**，逐条写清"开启后会出现什么" ✓ ——
+   它是"看不到就不知道怎么开"的那道保险 ⇒ ⛔ 不许省 ✗、也不参与上面那条变灰 ✓。 */
+.ai-settings-placeholder {
+  border: 1px dashed var(--border-strong);
+  background: var(--chip-bg);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--text-dim);
+}
+/* ⭐ 2026-10-08 第 3 招：AI 面板三块 → **Tab**（owner 拍板 ✓，效果图已认可 ✓）。
+   形状照仓库既有的下划线式页签（与 AI 面板上的 `.tabs` 同族 ✓）：平时灰、选中蓝＋2px 下划线 ✓，
+   ⛔ 不再用整块卡片并列（那正是"密度高"的来源 ✗）。 */
+.ai-settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 14px;
+}
+.ai-settings-tab {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.ai-settings-tab.is-on {
+  color: var(--accent);
+  font-weight: 700;
+  border-bottom-color: var(--accent);
+}
+.ai-settings-placeholder > div:first-child {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
 }
 .ai-settings-group-icon {
   font-size: 15px;
@@ -23807,4 +23901,115 @@ body.is-plugin-panel-open .main {
   white-space: pre-wrap;
   word-break: break-word;
   pointer-events: none;
+}
+
+/* ⭐ 2026-10-07：mindmap 原文没缩进 ⇒ 渲染副本被补了缩进（源文不动 ✓），这句要说给用户听 ✓ */
+.editor-mermaid-note {
+  margin: 0 2px 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #6b7280);
+  background: var(--surface-2, rgba(0, 0, 0, 0.03));
+  border-top: 1px dashed var(--border);
+}
+/* ⭐ 2026-10-07（owner：「这个面板太丑了」✗）：AI 设置里的「全库索引」面板。
+   取舍：**一个字都不改文案** ✓ —— `aiSettingsCoverage.test.tsx` 断言了逐字那句话 ✓；
+   这里只做「卡片化 ＋ 主次分明 ＋ 进度条有类名 ＋ 消息两种面貌」 ✓。 */
+.ai-index {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ai-index .ai-settings-group-title {
+  margin-bottom: 2px;
+}
+.ai-index-sub {
+  margin: 2px 0 0;
+  color: var(--text);
+  line-height: 1.6;
+}
+/* 主次分明的按钮排 ✓ */
+.ai-index-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.ai-index-actions-second {
+  padding-top: 2px;
+}
+.ai-index-btn-primary,
+.ai-index-btn-second {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.ai-index-btn-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.ai-index-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.ai-index-btn-second {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.ai-index-btn-second:hover:not(:disabled) {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
+.ai-index-btn-primary:disabled,
+.ai-index-btn-second:disabled {
+  opacity: .5;
+  cursor: default;
+}
+/* 进度：类名化（原来是一串内联样式 ✓），并让数字用等宽对齐 ✓ */
+.ai-index-progress {
+  font-variant-numeric: tabular-nums;
+}
+.ai-index-bar {
+  margin-top: 8px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.ai-index-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .15s linear;
+}
+/* 覆盖结果：数字那一长行给它呼吸感 + 等宽数字 ✓（文案一个字不改 ✓） */
+.ai-index-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-index-coverage .ai-settings-brief {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.75;
+}
+/* 缺口明细：等宽 + 可滚（原来是一坨换行文本 ✗） */
+.ai-index-gaps {
+  max-height: 168px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.03));
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }

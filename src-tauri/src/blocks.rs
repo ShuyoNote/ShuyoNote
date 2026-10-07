@@ -248,7 +248,7 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
 }
 
 #[tauri::command]
-pub fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<PageBlock>, String> {
+pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<PageBlock>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
 
     let content_json = crate::doc_content::read(&c, &page_id)?

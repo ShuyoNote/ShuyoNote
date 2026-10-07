@@ -73,3 +73,24 @@ describe("mermaid 串行闸门", () => {
     await expect(gate.run("default", () => {}, async () => 2)).resolves.toBe(2);
   });
 });
+
+describe("渲染前让一帧给浏览器（owner：点复盘条目跳转卡死）", () => {
+  it("★ 队列跑起来之前，**别的任务有机会先跑**（这就是「窗口还能点」的判据 ✓）", async () => {
+    const gate = createMermaidGate();
+    const order: string[] = [];
+    // 先排两个渲染 ✓
+    const a = gate.run("default", () => {}, async () => {
+      order.push("render1");
+      return 1;
+    });
+    const b = gate.run("default", () => {}, async () => {
+      order.push("render2");
+      return 2;
+    });
+    // ⭐ 同步注册一个"浏览器该干的活"（画一帧 / 处理输入 ✓）：它必须**先于第一次渲染**跑到 ✓
+    setTimeout(() => order.push("browser-paint"), 0);
+    await Promise.all([a, b]);
+    expect(order[0]).toBe("browser-paint");
+    expect(order).toEqual(["browser-paint", "render1", "render2"]);
+  });
+});

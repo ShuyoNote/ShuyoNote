@@ -29,6 +29,14 @@ export default {
     paletteNoResults: "无结果",
   },
   settings: {
+    // ⭐ 2026-10-08 第 2 招：左侧导航的**四个分组标题**（owner 看过效果图后拍板 ✓；
+    //   ⛔ 不加 emoji ✗ —— owner 原话「过于花哨，不专业」✓）。
+    groups: {
+      basic: "基础",
+      collab: "协作",
+      ai: "AI",
+      system: "系统",
+    },
     mcp: "外部 AI 接入（MCP）",
     mcpHint: "外部 AI 读写 · 默认关闭",
     appearance: "外观",

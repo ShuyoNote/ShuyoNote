@@ -197,4 +197,12 @@ describe("S3 第三片 · 块级明细挂到「页 ＋ 天」", () => {
     const m = blocksByPageDay([ev("p1", 10), ev("p2", 10), ev("p1", 2000), { ...ev("p3", 10), changes: [] }], day);
     expect([...m.keys()].sort()).toEqual(["p1@d1", "p1@d2", "p2@d1"]);
   });
+
+  it('★ 只收「页」：目录 / 数据库不进复盘（点了也打不开 —— 实测报「该节点不是页面」✗）', () => {
+    const a = page({ id: "p1", title: "一篇笔记", created_at: at(2026, 10, 7, 10, 0), updated_at: at(2026, 10, 7, 10, 0) });
+    const folder = page({ id: "f1", title: "一个目录", kind: "folder", created_at: at(2026, 10, 7, 9, 0), updated_at: at(2026, 10, 7, 9, 0) });
+    const db = page({ id: "d1", title: "一个数据库", kind: "database", created_at: at(2026, 10, 7, 8, 0), updated_at: at(2026, 10, 7, 8, 0) });
+    const ids = buildTimeline([a, folder, db], NOW).flatMap((d) => d.entries.map((e) => e.id));
+    expect(ids).toEqual(["p1"]);
+  });
 });

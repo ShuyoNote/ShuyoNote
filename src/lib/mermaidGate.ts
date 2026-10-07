@@ -35,10 +35,26 @@ export function createMermaidGate(): MermaidGate {
   let tail: Promise<unknown> = Promise.resolve();
   let pending = 0;
 
+  /**
+   * ⭐ 2026-10-07（owner：「在**时间复盘**点击条目跳转，卡死」✗）：
+   * **每次渲染前先把控制权还给浏览器一次** ✓。
+   *
+   * 为什么：mermaid 的布局（dagre）是**同步 CPU 活** ✓，一张图几百毫秒 ✓。
+   * 一页十几张图连着跑 ⇒ 主线程被连续占满 ⇒ 用户看到的就是"窗口卡死" ✗
+   *（点复盘条目跳到那种笔记最容易撞上：编辑器一挂载，十几个图块同时排队 ✓，
+   *  而这道闸门刻意让它们**一个接一个** ✓ ⇒ 卡顿被拉成"一段一段" ✓）。
+   *
+   * `setTimeout(0)` 让浏览器有机会**画一帧、处理输入** ✓ ⇒ 从"整段卡死"变成
+   * "图一张张出现、窗口始终能点" ✓。⛔ 它**不减少**总 CPU（渲染本身仍是同步的 ✗，
+   *    真正的解是"离屏不渲染"，那是另一笔 ✓）。
+   */
+  const yieldToBrowser = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
   return {
     run(theme, init, render) {
       pending += 1;
       const task = tail.then(async () => {
+        await yieldToBrowser(); // ← 见上面那段：先还一帧给浏览器 ✓
         // ① 初始化：没初始化过、或主题变了 ⇒ 来一次 ✓（同一主题绝不重复 initialize ✓）
         if (readyTheme !== theme) {
           init(theme);

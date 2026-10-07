@@ -50,6 +50,45 @@ export function mermaidSyntaxOptions(): string[] {
 }
 
 /**
+ * ⭐ 2026-10-07（owner 两张截图，正式版内联报错逐字）：
+ *   `渲染失败：Error: There can be only one root. No parent could be found for ("长文沉淀")`
+ *
+ *   真因**不是渲染器坏了**：`mindmap` 用**缩进**表示层级 ✓，而这两篇笔记里的 mindmap
+ *   **一行缩进都没有** ✗（实测本机空间库：那页 22 个图，`有缩进的行 = 0` ✓，其中 5 个是 mindmap ✓）
+ *   ⇒ mermaid 把「root((🏠 数友社区))」底下那十几行全当成**根节点** ✗ ⇒ dagre 报
+ *   "There can be only one root" ✓✓ —— 报错原文和成因**字面对得上** ✓。
+ *
+ *   这个函数做的就是**把作者显然的意图补回来**：`mindmap` 且整体没有缩进时 ✓，
+ *   把第一行节点（根 ✓）之后的每一行**缩进两格** ✓ ⇒ 它们成为根的子节点 ✓，图正常渲染 ✓。
+ *   ⚠️ 只动**渲染时**的副本 ✓ —— 用户的源文一个字都不改 ✗（要分层请到「代码」页自己加缩进 ✓）。
+ *   ⚠️ 只对 `mindmap` 生效 ✓；已经带缩进的一律原样返回 ✓（⛔ 不猜、不重排 ✗）。
+ */
+export function normalizeMindmapIndent(src: string): { text: string; autoIndented: boolean } {
+  const raw = String(src ?? "");
+  const lines = raw.split("\n");
+  const firstText = lines.find((l) => l.trim().length > 0)?.trim() ?? "";
+  if (!/^mindmap\b/i.test(firstText)) return { text: raw, autoIndented: false };
+  // 已经有缩进 ⇒ 尊重作者的层级，一个字都不动 ✓
+  if (lines.some((l) => /^[ \t]+\S/.test(l))) return { text: raw, autoIndented: false };
+  let seenDirective = false; // `mindmap` 那一行本身**不是节点** ✓（我第一版把它当成了根 ✗，判据当场拍到）
+  let seenRoot = false;
+  const out = lines.map((l) => {
+    const s = l.trim();
+    if (s.length === 0 || s.startsWith("%%")) return l; // 空行与注释原样 ✓
+    if (!seenDirective) {
+      seenDirective = true;
+      return s;
+    }
+    if (!seenRoot) {
+      seenRoot = true;
+      return s; // 第一个节点 = 根 ✓ 不缩进
+    }
+    return `  ${s}`;
+  });
+  return { text: out.join("\n"), autoIndented: seenRoot };
+}
+
+/**
  * mermaid 的**初始化配置** —— 唯一出处。三处渲染器都用它：
  * 编辑器图块（`editor/nodes/MermaidNode.tsx`）、md 预览（`lib/mdMermaid.ts`）、绘图弹窗
  * （`components/DrawingEditorModal.tsx`）。抄三份必漂 —— 这里就是漂出来的那次。
@@ -78,4 +117,37 @@ export function mermaidInitOptions(theme: "dark" | "default"): Record<string, un
     htmlLabels: false,
     flowchart: { curve: "basis" },
   };
+}
+
+/**
+ * ⭐ 2026-10-07（owner 先报「中心节点文本偏心了」✗，随后又报「**子节点的文本偏了**」✗）：
+ * 给 mindmap 的**根节点**补 `text-anchor="middle"` ✓ —— ⛔ 子节点**一个都不许碰** ✗。
+ *
+ * **先量后改**（真渲染、量「每个文字的中心 vs 它的形状中心」✓）：
+ *
+ *   | 节点 | mermaid 原样 | 我上一版"给所有 `<text>` 都补" |
+ *   | 根（`<circle>` ✓） | 偏心 **16px** ✗ | 0 ✓ |
+ *   | 子节点（`<path>` ✓，如「个人知识管理」） | **全部 0** ✓ | **-22 ~ -48px** ✗✗ |
+ *
+ * ⇒ 真因**只在根** ✓：mermaid 给圆环节点的 `<text>` 把 x 放在**圆心**却不写锚点 ✓
+ *   ⇒ SVG 默认 `start`（左对齐）⇒ 文字从圆心往右铺 ⇒ 偏心量 ≈ **文字宽的一半** ✓；
+ *   矩形子节点它算得好好的 ✓ —— 我上一版"全都补"把本来正确的子节点**推歪了** ✗（owner 当场看到 ✓）。
+ *
+ * 认根的办法（打印真 SVG 得到 ✓）：根那一组 class 里有 **`section-root`** ✓，
+ * 紧跟其后的第一个 `<text>` 就是根的标签 ✓（结构：`<g class="node mindmap-node section-root …"><circle …><g class="label">…<text>` ✓）。
+ * ⛔ 不动 `htmlLabels` —— 那是 2026-10-05 为"下载 PNG"修的 ✗：
+ *    `htmlLabels:true` 会产出 `<foreignObject>` ⇒ canvas 变脏 ⇒ PNG 导出抛
+ *    `Tainted canvases may not be exported.` ✓（同一条事故，别再往回走 ✓）。
+ */
+export function centerMindmapRootLabel(svg: string): string {
+  const s = String(svg ?? "");
+  const rootAt = s.indexOf("section-root");
+  if (rootAt < 0) return s; // 不是 mindmap（或没有根）⇒ 一个字节都不动 ✓
+  const textAt = s.indexOf("<text", rootAt);
+  if (textAt < 0) return s;
+  const tagEnd = s.indexOf(">", textAt);
+  if (tagEnd < 0) return s;
+  const tag = s.slice(textAt, tagEnd + 1);
+  if (/\btext-anchor\s*=/.test(tag)) return s; // 已经指定过锚点 ⇒ 不覆盖 ✓
+  return s.slice(0, textAt) + tag.replace(/^<text/, '<text text-anchor="middle"') + s.slice(tagEnd + 1);
 }

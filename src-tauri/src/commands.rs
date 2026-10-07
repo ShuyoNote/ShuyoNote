@@ -39,7 +39,7 @@ pub fn fetch_page(c: &Connection, id: &str) -> Result<PageDetail, String> {
 }
 
 #[tauri::command]
-pub fn list_pages(db: State<Db>) -> Result<Vec<PageMeta>, String> {
+pub async fn list_pages(db: State<'_, Db>) -> Result<Vec<PageMeta>, String> {
     let c = conn(&db);
     let mut stmt = c
         .prepare(
@@ -99,7 +99,7 @@ pub fn list_workspace_pages(workspace_id: String) -> Result<Vec<PageMeta>, Strin
 }
 
 #[tauri::command]
-pub fn get_page(db: State<Db>, id: String) -> Result<PageDetail, String> {
+pub async fn get_page(db: State<'_, Db>, id: String) -> Result<PageDetail, String> {
     let c = conn(&db);
     let page = fetch_page(&c, &id)?;
     if page.kind != "page" && page.kind != "database" {

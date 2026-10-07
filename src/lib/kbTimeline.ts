@@ -86,6 +86,12 @@ export function buildTimeline(
   const byDay = new Map<string, TimelineEntry[]>();
   for (const p of pages) {
     if (p.deleted_at) continue;
+    // ⭐ 2026-10-07（owner：「从时间复盘里打开笔记，打不开」✗ —— 真因查到这一步 ✓）：
+    //   **只收「页」** ✓。目录（folder）／数据库（database）也会出现在 pages 里 ✓，
+    //   而它们没有可打开的正文 ⇒ 点进去 `getPage` 会**抛错**（实测报「该节点不是页面」✗），
+    //   又被 `openPage` 吞进 store ⇒ 用户看到的就是"点了没反应" ✓。
+    //   ⇒ 复盘页只该复盘**能打开的东西** ✓。
+    if (p.kind !== "page") continue;
     const atMs = activityOf(p);
     if (atMs < from) continue;
     const day = TIMELINE_DAY_BUCKET(atMs);

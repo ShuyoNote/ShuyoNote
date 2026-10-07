@@ -215,6 +215,11 @@ export function TemplateCenterView() {
         category: parsed.category ?? "我的模板",
         content_json: parsed.content_json,
         content_text: parsed.content_text ?? "",
+        // ⭐ 2026-10-08（台账 R124 选项 A ✓）：`exportTemplate` 写出去的是**六个**字段，导入这边原先只回填四个
+        //   ⇒ **封面（题头图）与图标静默丢掉** ✗（导出→导入一次就没了；不报错、不提示 ✓）。
+        //   ⛔ 别指望 `saveAs` 的默认值：它的默认是 `""`（＝丢掉），不是"保留文件里那份" ✗。
+        cover: parsed.cover ?? "",
+        icon: parsed.icon ?? "",
       });
     } catch (e) {
       toast(`导入模板失败：${e}`, "error");

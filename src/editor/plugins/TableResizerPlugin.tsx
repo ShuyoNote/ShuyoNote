@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { fitColWidths, pxWidthsOf } from "../../lib/tableFit";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { $getNodeByKey, $getSelection, $isRangeSelection } from "lexical";
 import {
@@ -34,6 +35,32 @@ export function TableResizerPlugin() {
   const [editor] = useLexicalComposerContext();
   const [handles, setHandles] = useState<Handle[]>([]);
   const resizeRef = useRef<ResizeState | null>(null);
+
+  // ⭐ 2026-10-07（owner：「表格超宽了」✗）：把**绝对像素**列宽换成**百分比** ✓。
+  //   真因（实测库里那张表的节点）：`"colWidths":[127.1, 304.9, 622.0]` ⇒ **合计 1054px** ✓
+  //   —— 那是**在更宽的窗口里量出来的绝对像素** ✓；而 Lexical 会把它写成
+  //   `<col style="width:622px">` ✗ ⇒ 窄一点的内容区必然装不下 ⇒ 表格溢出、底下一条横向滚动条 ✓。
+  //   修法：只在"列宽合计确实超过表格可用宽度"时，把 `<col>` 改成**按比例 %** ✓
+  //   ⇒ 表装得下 ✓、列的**相对比例一点没丢** ✓；⛔ DOM-only、**不写文档** ✓
+  //     （用户拖列宽照旧生效 ✓ —— 拖完下一次 update 再归一化一次 ✓）。
+  //   ⚠️ 只认以 `px` 结尾的值 ✓：转成 % 之后再进来就是 0 ⇒ 自然不再重复处理 ✓（不会来回抖 ✓）。
+  useEffect(() => {
+    const normalize = () => {
+      const root = editor.getRootElement();
+      if (!root) return;
+      for (const tableEl of root.querySelectorAll<HTMLTableElement>("table.editor-table")) {
+        const cols = [...tableEl.querySelectorAll<HTMLTableColElement>("colgroup > col")];
+        if (!cols.length) continue;
+        const next = fitColWidths(pxWidthsOf(cols.map((c) => c.style.width)), tableEl.parentElement?.clientWidth ?? 0);
+        if (!next) continue;
+        next.forEach((w, i) => {
+          cols[i].style.width = w;
+        });
+      }
+    };
+    normalize();
+    return editor.registerUpdateListener(normalize);
+  }, [editor]);
 
   const refresh = useCallback(() => {
     editor.getEditorState().read(() => {

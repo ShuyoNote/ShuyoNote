@@ -51,6 +51,7 @@ import {
   $createMermaidNode,
   $isMermaidNode,
 } from "./nodes/MermaidNode";
+import { suggestColWidths } from "../lib/tableFit";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
@@ -292,6 +293,14 @@ export const TABLE: MultilineElementTransformer = {
       table.append(rowNode);
     }
 
+    // ⭐ 2026-10-07（owner：「导入笔记时，表格列可否**自动适配列宽**，或跳到一个视觉合理的宽度」✗）：
+    //   导入时**顺手按内容长度给一组相对列宽** ✓ —— 不设的话，配合
+    //   `.editor-table { table-layout: fixed; width: 100% }` 就是**各列等宽** ✗
+    //   ⇒ "示例 / 目的"这种文字多的列很挤、要折两行 ✓（owner 截图那张表 ✓）。
+    //   纯规则在 `lib/tableFit.ts`（可单测 ✓）；这里只喂"表头 ＋ 每一行"的文本 ✓。
+    //   ⚠️ 只表达**相对关系** ✓ —— 真落到页面上时由 `fitColWidths` 按可用宽度再归一化一次 ✓。
+    table.setColWidths(suggestColWidths([headerRow, ...bodyRows]));
+
     rootNode.append(table);
     return [true, endIndex];
   },
@@ -449,8 +458,32 @@ function nodeToMarkdown(node: Node): string {
 
 // Normalize any HTML embedded in imported Markdown into markdown syntax. Pure
 // markdown (no HTML tags) is returned unchanged so the lexer sees it verbatim.
+//
+// ⭐ 2026-10-07（owner 连报两次：「原始 md 文档有缩进，你转换时丢掉了」＋「md 里面的 json 代码
+//    转换后，缩进也没有了」✗）：**围栏代码块必须先原样摘出来** ✓。
+//
+//   为什么：这条路径是"**只要文档里有任何 HTML 标签**，就把整篇 md 丢给 `DOMParser`" ✓。
+//   而 ```json / ```mermaid 围栏**不是 `<pre>`** ✗ ⇒ 两处折叠同时发生：
+//     ① HTML 解析器先把非 `<pre>` 里的连续空格折成一个 ✗；
+//     ② `nodeToMarkdown` 的元素分支 `inner.replace(/[ \t]{2,}/g, " ")` 再折一次 ✗。
+//   ⇒ 围栏里**用来表达结构**的缩进全没了 ✓ —— 这正是那两条报障的同一个真因 ✓
+//     （mermaid 没了层级 ⇒ `There can be only one root` ✓；json 没了缩进 ⇒ 不再是可读的 json ✓）。
+//
+//   修法：**先摘出围栏**（``` 与 ~~~ 都算 ✓，允许缩进 ✓），只对围栏**外面**做 HTML→markdown ✓，
+//   最后按原顺序把围栏**一字不动**地拼回去 ✓。占位符用纯字母数字＋`%` ✓——不含空格/换行，
+//   HTML 解析与折叠都动不了它 ✓（⛔ 别用 NUL 之类：HTML 解析器会把它换成 U+FFFD ✗）。
+const FENCE_BLOCK_RE = /^[ \t]*(`{3,}|~{3,})[^\n]*\r?\n[\s\S]*?^[ \t]*\1[ \t]*$/gm;
+
 export function preprocessMarkdownImport(text: string): string {
   if (!HTML_RE.test(text)) return text;
-  const doc = new DOMParser().parseFromString(text, "text/html");
-  return nodeToMarkdown(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+  const fences: string[] = [];
+  const masked = text.replace(FENCE_BLOCK_RE, (whole) => {
+    fences.push(whole);
+    return `%%FENCE${fences.length - 1}%%`;
+  });
+  const converted = nodeToMarkdown(new DOMParser().parseFromString(masked, "text/html").body)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  // 把围栏拼回去（位置由占位符决定 ✓，顺序天然保持 ✓）
+  return converted.replace(/%%FENCE(\d+)%%/g, (_m, i: string) => fences[Number(i)] ?? "").trim();
 }

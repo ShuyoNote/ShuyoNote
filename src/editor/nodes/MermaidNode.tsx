@@ -10,11 +10,13 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
-import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions } from "../../lib/mermaid";
+import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
+import { fixMindmapRootAnchors } from "../../lib/mindmapLabel";
 import { mermaidGate } from "../../lib/mermaidGate";
+import { EXPORT_MERMAID_ATTR } from "../../lib/exportMermaid";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
 import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
@@ -119,6 +121,10 @@ export class MermaidNode extends DecoratorNode<JSX.Element> {
   exportDOM(_editor: LexicalEditor): DOMExportOutput {
     const el = document.createElement("pre");
     el.textContent = this.__src;
+    // ⭐ 2026-10-08（台账 R123）：导出件里的图块**只能**由导出后的异步后处理换成 `<svg>` ——
+    //    `exportDOM` 是同步接口，而 mermaid 渲染是异步的（同 `lib/exportInline.ts` 立下的形状）。
+    //    这里只留线索，换不换得成由 `lib/exportMermaid.ts` 负责（失败会退回这段源码）。
+    el.setAttribute(EXPORT_MERMAID_ATTR, "");
     return { element: el };
   }
 
@@ -215,6 +221,8 @@ function MermaidView({
 }) {
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // mindmap 原文没缩进 ⇒ 我们只对**渲染副本**补了缩进（源文不动 ✓）；这条提示要看得见 ✓
+  const [autoIndentedNote, setAutoIndentedNote] = useState(false);
   // ⭐ 2026-10-05：看图器那套状态 —— 图表/代码两个页签、缩放、是否全屏。
   // ⚠️ 这里**没有**独立的"在编辑"状态：owner 当天把那条「编辑」按钮去掉了 ⇒ 「停在代码页」**就是**
   //    编辑态（编辑面＝代码页本身）。所以别再引入第二个布尔 —— 两个状态迟早会不一致。
@@ -225,6 +233,16 @@ function MermaidView({
   const [editSyntax, setEditSyntax] = useState(syntax || detectMermaidSyntax(src));
   const renderSeq = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  // ⭐ 2026-10-07（owner：「中心节点文本**又**偏心了」✗）：渲染完**在 DOM 上量着修** ✓。
+  //   真窗口实测：圈宽 84 / 文字宽 64 / `text-anchor = null` ⇒ 偏心 **+32px**（= 文字宽的一半 ✓）。
+  //   ⚠️ 用 `useLayoutEffect`（**画之前**修 ✓）：否则会先闪一下偏的、再跳正 ✗。
+  //   ⛔ 只碰"圆心与文字对不上"的那一个 `<text>` ✓（见 `lib/mindmapLabel.ts` 的注释 ✓）。
+  useLayoutEffect(() => {
+    if (!svg) return;
+    const el = rootRef.current;
+    if (!el) return;
+    fixMindmapRootAnchors(el);
+  }, [svg]);
   const resolved = useResolvedTheme(); // re-render mermaid when the theme changes
   const mermaidTheme: "dark" | "default" = resolved === "dark" ? "dark" : "default";
   const size = useMemo(() => intrinsicSize(svg), [svg]);
@@ -252,14 +270,31 @@ function MermaidView({
         //    内联成一个实例 ⇒ 必然打架 ✓（错还从 Lexical 的 decorator 里抛出来 ⇒ 报成 `#335` ✗）。
         //    ⚠️ 初始化也交给闸门 ✓ —— 原先这里那对 `mermaidReady`/`mermaidThemeRef` 只管得住**本模块** ✗，
         //      管不住 `mdMermaid.ts` 那条静态入口 ✓；现在两边共用同一个主题状态 ✓。
+        // ⭐ 2026-10-07（owner 两张正式版截图，报错原文）：
+        //    `渲染失败：Error: There can be only one root. No parent could be found for ("长文沉淀")`
+        //    真因在**源文的形状**：`mindmap` 用缩进表示层级 ✓，而那两篇里的 mindmap 一行缩进都没有 ✗
+        //    （实测本机空间库：那页 22 个图「有缩进的行 = 0」✓，其中 5 个是 mindmap ✓）
+        //    ⇒ mermaid 把根底下十几行全当成了根节点 ⇒ dagre 报"只能有一个根" ✓（报错与成因字面对得上 ✓）。
+        //    ⛔ 不动用户源文 ✗ —— 只给**渲染用的副本**按作者显然的意图补缩进 ✓（`normalizeMindmapIndent`）。
+        const cm = src.match(/^\s*mindmap\b/i);
+        const { text: renderSrc, autoIndented } = cm ? normalizeMindmapIndent(src) : { text: src, autoIndented: false };
         const { svg: out } = await mermaidGate.run(
           mermaidTheme,
           // 配置**唯一出处**在 `lib/mermaid.ts`（`htmlLabels` 必须顶层 —— 写进 `flowchart`
           // 里 mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ canvas 变脏、PNG 导不出去）。
           (t) => mermaid.initialize(mermaidInitOptions(t as "dark" | "default") as never),
-          () => mermaid.render(`sn-${Math.random().toString(36).slice(2, 10)}`, src),
+          () => mermaid.render(`sn-${Math.random().toString(36).slice(2, 10)}`, renderSrc),
         );
+        setAutoIndentedNote(autoIndented); // 每次渲染按当前源文重算 ✓（源文改了就跟着变 ✓）
         if (seq !== renderSeq.current) return;
+        // ⭐ 2026-10-07（owner：「中心节点文本偏心了」）：mindmap 在 `htmlLabels:false` 下
+        // mermaid **不给 `<text>` 写 text-anchor** ⇒ SVG 默认左对齐 ⇒ 根节点文字偏向右侧
+        // （实测偏心 30px ≈ 文本宽的一半 ✓，无 emoji 时 16px ✓ = 同一个成因 ✓）。
+        // 补上 middle 后实测偏心 **0px** ✓。⛔ 不改 `htmlLabels`（那会让 PNG 导出变脏 ✗）。
+        // ⭐ 2026-10-07（owner：「中心节点文本**又**偏心了」✗，真窗口实测：圈宽 84 / 文字宽 64 /
+        //   text-anchor = null ⇒ 偏心 **+32px** = 文字宽的一半 ✓）：
+        //   **字符串规则认根不可靠** ✗（同一窗口里有的图认得到、有的认不到 ✓）⇒ 改成**量着修** ✓：
+        //   先原样插进 DOM ✓，再由下面的 effect 按"文字中心 vs 圆心"修 ✓（`lib/mindmapLabel.ts` ✓）。
         setSvg(out);
         setError(null);
       } catch (e) {
@@ -521,6 +556,13 @@ function MermaidView({
           ) : (
             <span className="editor-mermaid-placeholder">（空白图形）</span>
           )}
+        </div>
+      )}
+      {/* ⭐ 2026-10-07：mindmap 原文没有缩进 ⇒ 我们只对**渲染副本**补了缩进（用户源文一个字没动 ✓）。
+          这句提示要看得见 —— 否则用户永远不知道自己那张图的层级是我们替他补的 ✓。 */}
+      {autoIndentedNote && (
+        <div className="editor-mermaid-note">
+          这个 mindmap 原文没有缩进 —— 已按「全部挂到根节点」渲染。要分层的话，到「代码」页给子主题加两格缩进。
         </div>
       )}
     </div>

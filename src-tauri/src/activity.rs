@@ -184,8 +184,21 @@ fn payload_title(payload: &str) -> String {
 /// * `days` 默认 30、夹到 `[1, 365]` ✓；`limit` 默认 300、夹到 `[1, 2000]` ✓（夹法照本仓既有的宽容口径 ✓）。
 /// * ⚠️ 载荷逐页**按 `seq` 升序**比相邻两条 ✓ —— 这正是"这次改了什么"的意思 ✓；顺序错了就会把
 ///   老版本当新版比（那会得出**反的**明细：新增与删掉互换 ✗）。
+///
+/// ⭐ 2026-10-07（owner：「**打开这个页面卡死了**」✗，指 S3 时间复盘页 ✓）：**改成 `async`** ✓。
+///
+///   真因：它原来是 `pub fn`（**同步命令**）✓ —— Tauri 的同步命令跑在**主线程**上 ✗。
+///   而这个函数体是**重活**：
+///     ① `db.0.lock()` 抢整库互斥锁 ✓（别人正拿着就得**干等** ✗）；
+///     ② 一条 SQL 取最近 `days` 天的页面变更，默认 `limit = 300` ✓；
+///     ③ 然后**逐条**解析那份载荷 JSON 并做块级 diff（`changed_blocks_between_payloads` ✓）
+///        —— owner 的页面实测**单篇 50 万字符**（还带十几个 mermaid 图 ✓）⇒ 300 条 × 那种载荷
+///        = 几百 MB 的 JSON 解析 ＋ diff ✗✗ ⇒ **主线程被占住好几秒** ⇒ 用户看到的就是"卡死" ✓。
+///   改法：`async` 让整个函数体在**异步运行时**跑 ✓（本仓已有 121 条 async 命令的先例 ✓）。
+///   ⚠️ 函数体**故意保持全同步**（一次 `await` 都没有 ✓）—— 这样 `MutexGuard`（`!Send` ✗）
+///      不会被跨 await 持有 ✓，改一行就够 ✓；⛔ 别在这里加 `await` ✗（那才需要换锁或 `spawn_blocking` ✓）。
 #[tauri::command]
-pub fn activity_feed(
+pub async fn activity_feed(
     db: tauri::State<'_, crate::db::Db>,
     days: Option<i64>,
     limit: Option<usize>,
@@ -193,29 +206,37 @@ pub fn activity_feed(
     let days = days.unwrap_or(30).clamp(1, 365);
     let limit = limit.unwrap_or(300).clamp(1, 2000);
     let since = crate::db::now_ms() - days * 24 * 60 * 60 * 1000;
-    let c = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = c
-        .prepare(
-            "SELECT entity_id, op, payload, updated_at FROM changes
-             WHERE entity = 'page' AND updated_at >= ?1 ORDER BY seq ASC LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(rusqlite::params![since, limit as i64], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, i64>(3)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
+    // ⭐ 2026-10-07：**锁只护「把行取出来」这一小段** ✓，取完立刻放掉 ✓。
+    //   后面逐条解析 300 份载荷 JSON ＋ 块级 diff 是**重活** ✗（owner 的页面单篇 17–50 万字符 ✓），
+    //   ⛔ 绝不能按住整库互斥锁做 ✓：按住它 = **所有**命令一起排队 ✗。
+    //   实测（真实窗口走调试口 ✓）：打开时间复盘之后 listPages / getPage / openPage **全部超时** ✗，
+    //   而主线程最长只卡 23ms ✓ ⇒ 不是"主线程被占"，正是"锁被长时间按住" ✓。
+    let raw: Vec<(String, String, Option<String>, i64)> = {
+        let c = db.0.lock().map_err(|e| e.to_string())?;
+        let mut stmt = c
+            .prepare(
+                "SELECT entity_id, op, payload, updated_at FROM changes
+                 WHERE entity = 'page' AND updated_at >= ?1 ORDER BY seq ASC LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![since, limit as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    }; // ← 锁在这里就放掉了 ✓；下面一行都不再碰 db ✓
 
     // 逐页保留**上一条载荷** ⇒ 相邻两条之间才是"这次改了什么" ✓
     let mut prev: HashMap<String, String> = HashMap::new();
     let mut out: Vec<ActivityEvent> = Vec::new();
-    for row in rows {
-        let (page_id, op, payload, at_ms) = row.map_err(|e| e.to_string())?;
+    for row in raw {
+        let (page_id, op, payload, at_ms) = row;
         let payload = payload.unwrap_or_default();
         let is_upsert = op == "upsert" && !payload.is_empty();
         let changes = if is_upsert {

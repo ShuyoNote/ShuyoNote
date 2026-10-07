@@ -29,6 +29,13 @@ export default {
     paletteNoResults: "No results",
   },
   settings: {
+    // ⭐ 2026-10-08 第 2 招：左侧导航的四个分组标题（与 zh.ts 的 groups 一一对应 ✓）。
+    groups: {
+      basic: "Basics",
+      collab: "Collaboration",
+      ai: "AI",
+      system: "System",
+    },
     mcp: "External AI access (MCP)",
     mcpHint: "External AI read/write · off by default",
     appearance: "Appearance",

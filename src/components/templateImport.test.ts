@@ -119,6 +119,11 @@ describe("导入模板：取消与失败都必须零痕迹", () => {
       category: "我的模板",
       content_json: "{}",
       content_text: "",
+      // ⭐ 2026-10-08（R124 选项 A）：这两个字段是**新补上的** —— 文件里没写就回填空串
+      //   （⛔ 不是"省略"：省略＝由 `saveAs` 的默认值决定，而那个默认也是空串 ⇒ 语义相同但**看不见** ✗；
+      //    写成显式空串，这条断言才能证明"导入这一侧确实看过这两个字段" ✓）。
+      cover: "",
+      icon: "",
     });
     expect(mocks.toast).not.toHaveBeenCalled();
   });
@@ -130,5 +135,31 @@ describe("导入模板：取消与失败都必须零痕迹", () => {
     await vi.waitFor(() => expect(mocks.dialogOpen).toHaveBeenCalled());
     expect(mocks.readTextFile).not.toHaveBeenCalled();
     expect(mocks.saveAs).not.toHaveBeenCalled();
+  });
+
+  // ⭐ 2026-10-08（台账 R124 选项 A，owner 选定 ✓）：**导出→导入一次，题头图与图标不许丢**。
+  //   `exportTemplate` 写出去的字段是 `name/category/icon/cover/content_json/content_text`（实测 ✓），
+  //   而 `importTemplate` 原先只回填 name/category/content_json/content_text ⇒ **cover/icon 静默丢掉** ✗：
+  //   一个带题头图的模板在别人那里导入后就是一张没有封面的模板 —— 不报错、不提示，只有用户自己发现 ✓。
+  //   ⛔ 不许靠"反正 saveAs 有默认值"糊过去：默认值是 `""`（＝**丢掉**），不是"保留文件里那份" ✗。
+  it("★ 导入带封面/图标的模板文件 ⇒ 这两项必须一起带上（否则导出再导入一次就没了）", async () => {
+    const withCover = JSON.stringify({
+      name: "带封面的模板",
+      category: "我的模板",
+      icon: "📌",
+      cover: "attachment://localhost/cover.png",
+      content_json: "{}",
+      content_text: "",
+    });
+    mocks.dialogOpen.mockResolvedValue("/tmp/tpl-cover.json");
+    mocks.readTextFile.mockResolvedValue(withCover);
+    mocks.saveAs.mockResolvedValue({});
+    mount();
+    flushSync(() => importBtn().click());
+    await vi.waitFor(() => expect(mocks.saveAs).toHaveBeenCalledTimes(1));
+    expect(mocks.saveAs.mock.calls[0][0]).toMatchObject({
+      icon: "📌",
+      cover: "attachment://localhost/cover.png",
+    });
   });
 });
