@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@lexical/table@0.50.0': 43bd6251b4373d32d20a5d1c14c64c9dcd3a64528d679362c6acddcf4623a0e4
+  '@lexical/table@0.50.0': 2da45fba47a3a3955fb9bf3af74850cc3afbfea2174d0b8e42f146485a406cab
 
 importers:
 
@@ -43,7 +43,7 @@ importers:
         version: 0.50.0(typescript@7.0.2)
       '@lexical/table':
         specifier: 0.50.0
-        version: 0.50.0(patch_hash=43bd6251b4373d32d20a5d1c14c64c9dcd3a64528d679362c6acddcf4623a0e4)(typescript@7.0.2)
+        version: 0.50.0(patch_hash=2da45fba47a3a3955fb9bf3af74850cc3afbfea2174d0b8e42f146485a406cab)(typescript@7.0.2)
       '@lexical/utils':
         specifier: ^0.50.0
         version: 0.50.0(typescript@7.0.2)
@@ -2923,7 +2923,7 @@ snapshots:
       '@lexical/html': 0.50.0(typescript@7.0.2)
       '@lexical/link': 0.50.0(typescript@7.0.2)
       '@lexical/mark': 0.50.0(typescript@7.0.2)
-      '@lexical/table': 0.50.0(patch_hash=43bd6251b4373d32d20a5d1c14c64c9dcd3a64528d679362c6acddcf4623a0e4)(typescript@7.0.2)
+      '@lexical/table': 0.50.0(patch_hash=2da45fba47a3a3955fb9bf3af74850cc3afbfea2174d0b8e42f146485a406cab)(typescript@7.0.2)
       '@lexical/utils': 0.50.0(typescript@7.0.2)
       lexical: 0.50.0(typescript@7.0.2)
       react: 18.3.1
@@ -3053,7 +3053,7 @@ snapshots:
       '@lexical/overflow': 0.50.0(typescript@7.0.2)
       '@lexical/plain-text': 0.50.0(typescript@7.0.2)
       '@lexical/rich-text': 0.50.0(typescript@7.0.2)
-      '@lexical/table': 0.50.0(patch_hash=43bd6251b4373d32d20a5d1c14c64c9dcd3a64528d679362c6acddcf4623a0e4)(typescript@7.0.2)
+      '@lexical/table': 0.50.0(patch_hash=2da45fba47a3a3955fb9bf3af74850cc3afbfea2174d0b8e42f146485a406cab)(typescript@7.0.2)
       '@lexical/text': 0.50.0(typescript@7.0.2)
       '@lexical/utils': 0.50.0(typescript@7.0.2)
       '@lexical/yjs': 0.50.0(typescript@7.0.2)(yjs@13.6.32)
@@ -3084,7 +3084,7 @@ snapshots:
     optionalDependencies:
       typescript: 7.0.2
 
-  '@lexical/table@0.50.0(patch_hash=43bd6251b4373d32d20a5d1c14c64c9dcd3a64528d679362c6acddcf4623a0e4)(typescript@7.0.2)':
+  '@lexical/table@0.50.0(patch_hash=2da45fba47a3a3955fb9bf3af74850cc3afbfea2174d0b8e42f146485a406cab)(typescript@7.0.2)':
     dependencies:
       '@lexical/clipboard': 0.50.0(typescript@7.0.2)
       '@lexical/extension': 0.50.0(typescript@7.0.2)
