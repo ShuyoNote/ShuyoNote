@@ -17,7 +17,7 @@ import {
   TemplateIcon,
   SettingsIcon,
   SidebarIcon,
-  AiSparkIcon,
+  LlmWikiIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -67,8 +67,13 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
  *      （⛔ 不另造一条"打开库地图"的路 ＝ 第二份真相源 ✗；判据钉着 `openSettings("ai")` 恰好一次 ✓）；
  *   ③ 它**只打开面板**、⛔ 不自动跑扫描 —— 全库扫描是 O(页面数) 的调用，需求明确不要自动/定时重跑 ✓。
  *
- * ⚠️ 图标用 `AiSparkIcon`（芯片＋神经网络的紫→青那一枚，仓里此前**没人用过** ✓）：它表达"AI 的知识面"，
- *    而 `SparkleIcon` 已经被「AI 助手／设置里的 AI 页」占用 ⇒ 复用那颗会让"点它去哪"变含糊 ✗。
+ * ⚠️ 图标用 `LlmWikiIcon`（翻开的书）—— **走 `Icon` 外壳那套约定**（24×24 ／ fill:none ／
+ *    stroke:currentColor ／ 线宽 1.7 ✓），与竖条另外那几颗**同一套风格** ✓（owner 2026-10-08：
+ *    「用风格一致的 SVG 图标」）。
+ *    ⛔ 别顺手换成 `SparkleIcon` / `AiSparkIcon`：前者已被「AI 助手／设置里的 AI 页」占用（点它去哪会含糊 ✗），
+ *       后者自带 `linearGradient`（紫→青）＋ `stroke="url(#…)"` ⇒ 在一排单色描边图标里是"另一套皮肤"，
+ *       而且写死颜色（深色主题不跟主题走 ✗）。判据：`activityBarLlmWiki.test.tsx` 量 stroke/fill/viewBox/线宽
+ *       ＋ **不许有渐变** ✓。
  */
 function LlmWikiButton() {
   const { t } = useTranslation();
@@ -79,7 +84,7 @@ function LlmWikiButton() {
       aria-label={t("kbMap.wikiEntry")}
       onClick={() => useEditorStore.getState().openSettings("ai")}
     >
-      <AiSparkIcon width={18} height={18} />
+      <LlmWikiIcon width={18} height={18} />
     </button>
   );
 }

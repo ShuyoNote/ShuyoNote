@@ -106,4 +106,20 @@ describe("侧边工具栏：知识地图下面的 LLM Wiki 图标按钮", () => 
   it("它有图标（不是空按钮 —— 竖条是图标条，空按钮等于看不见）", () => {
     expect(wikiBtn()!.querySelector("svg")).not.toBeNull();
   });
+
+  it("★ 图标与竖条其它图标**同一套风格**：单色描边 ＋ 同一 viewBox/线宽，⛔ 不许自带彩色渐变", () => {
+    const wikiSvg = wikiBtn()!.querySelector("svg")!;
+    const mapSvg = mapBtn()!.querySelector("svg")!; // 「知识地图」那颗：它就是本竖条的样板
+    // ① 单色、跟主题走（竖条里所有图标都这样：`Icon` 外壳写死 fill=none + stroke=currentColor ✓）
+    expect(wikiSvg.getAttribute("stroke")).toBe("currentColor");
+    expect(wikiSvg.getAttribute("fill")).toBe("none");
+    // ② 几何口径与邻居逐字一致（换 viewBox/线宽 ⇒ 与旁边几颗"不是一套"✓）
+    expect(wikiSvg.getAttribute("viewBox")).toBe(mapSvg.getAttribute("viewBox"));
+    expect(wikiSvg.getAttribute("stroke-width")).toBe(mapSvg.getAttribute("stroke-width"));
+    // ③ ⛔ 不许自带渐变：`AiSparkIcon` 就是被这条挡下的（它 `stroke="url(#aiAssistGrad)"` ＋ 内联 `<linearGradient>`）
+    expect(wikiSvg.querySelector("linearGradient")).toBeNull();
+    expect(wikiSvg.innerHTML).not.toContain("url(#");
+    // ④ 也不许写死颜色（写死就变成"深色主题下还是那个色" ✗）
+    expect(/stroke="#|fill="#/.test(wikiSvg.innerHTML)).toBe(false);
+  });
 });
