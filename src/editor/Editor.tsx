@@ -1,4 +1,5 @@
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { shortEditorError } from "../lib/editorErrorText";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -666,8 +667,12 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
       // insertNewAfter (按 Enter) crashes with getIndexWithinParent undefined.
       extensions: [CodeExtension, CodeIndentExtension],
       onError: (error: Error) => {
+        // ⚠️ 完整报错**照旧进控制台**（一个字都不丢 ✓）—— 这里只把**给用户看的那句**缩短 ✓。
+        //    为什么（owner 2026-10-06 连发三次同一张截图 ✗）：生产构建把错误正文换成了编号 ✓，
+        //    原样塞进 toast 的长句**自己就被截断**了 ✗（`Minified Lexical error #335; visit …` ✓），
+        //    用户既看不到原因、也没法照它说的做 ✓。
         console.error(error);
-        toast(`编辑器错误：${error.message || String(error)}`, "error");
+        toast(`编辑器错误：${shortEditorError(error)}`, "error");
       },
       editorState: parseEditorState(contentJson),
     }),
