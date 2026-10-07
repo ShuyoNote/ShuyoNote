@@ -88,9 +88,8 @@ export default {
     truncated: "⚠️ Partial map: {{hidden}} more pages are hidden by the {{cap}}-node cap.",
     untagged: "Untagged",
     untitled: "Untitled",
-    // The LLM Wiki entry **below** the knowledge map (owner 2026-10-08) ✓
+    // The LLM Wiki icon button in the activity bar (owner 2026-10-08) ✓
     wikiEntry: "LLM Wiki (library map)",
-    wikiHint: "Topics, source backlinks and coverage · read-only derived view; run “Check index coverage” first",
   },
   nav: {
     notes: "Notes",

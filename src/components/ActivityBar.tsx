@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
@@ -17,6 +17,7 @@ import {
   TemplateIcon,
   SettingsIcon,
   SidebarIcon,
+  AiSparkIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -54,6 +55,34 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   //   判据：本机真 Chromium 探针读出来的 title 列表里那一项是 `templateCenter`（不是「模板中心」）。
   { id: "templates", labelKey: "nav.templateCenter", icon: <TemplateIcon width={18} height={18} /> },
 ];
+
+/**
+ * ⭐ 2026-10-08（owner 原话：「在侧边工具栏的『知识地图』按钮**入口下面**添加 LLM Wiki 的**图标按钮**」✓）
+ * —— 它渲染在 `ITEMS` 里「知识地图」那颗的**紧下面**（DOM 次序，判据量着 ✓）。
+ *
+ * 三条形态口径（都与竖条既有约定一致，别改错）：
+ *   ① 它是**动作**、不是「活动」 ⇒ ⛔ 不参与 `activity` 高亮、⛔ 不 `setView`／不 `setActivity`
+ *      （形态与竖条底部那颗「设置」一致 ✓ —— 那颗也是"去开一个面板"）；
+ *   ② 动作就是命令面板那条 `ai.libraryMap` 的**同一个**：`openSettings("ai")` ✓
+ *      （⛔ 不另造一条"打开库地图"的路 ＝ 第二份真相源 ✗；判据钉着 `openSettings("ai")` 恰好一次 ✓）；
+ *   ③ 它**只打开面板**、⛔ 不自动跑扫描 —— 全库扫描是 O(页面数) 的调用，需求明确不要自动/定时重跑 ✓。
+ *
+ * ⚠️ 图标用 `AiSparkIcon`（芯片＋神经网络的紫→青那一枚，仓里此前**没人用过** ✓）：它表达"AI 的知识面"，
+ *    而 `SparkleIcon` 已经被「AI 助手／设置里的 AI 页」占用 ⇒ 复用那颗会让"点它去哪"变含糊 ✗。
+ */
+function LlmWikiButton() {
+  const { t } = useTranslation();
+  return (
+    <button
+      className="activity-btn"
+      title={t("kbMap.wikiEntry")}
+      aria-label={t("kbMap.wikiEntry")}
+      onClick={() => useEditorStore.getState().openSettings("ai")}
+    >
+      <AiSparkIcon width={18} height={18} />
+    </button>
+  );
+}
 
 export function ActivityBar() {
   const { t } = useTranslation();
@@ -134,16 +163,19 @@ export function ActivityBar() {
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (
-            <button
-              key={it.id}
-              className={`activity-btn${on ? " is-on" : ""}`}
-              title={t(it.labelKey)}
-              aria-label={t(it.labelKey)}
-              aria-current={on}
-              onClick={() => pick(it.id)}
-            >
-              {it.icon}
-            </button>
+            <Fragment key={it.id}>
+              <button
+                className={`activity-btn${on ? " is-on" : ""}`}
+                title={t(it.labelKey)}
+                aria-label={t(it.labelKey)}
+                aria-current={on}
+                onClick={() => pick(it.id)}
+              >
+                {it.icon}
+              </button>
+              {/* ⭐ 就放在「知识地图」那颗的**下面**（owner 2026-10-08）—— 见 `LlmWikiButton` 的注释 ✓ */}
+              {it.id === "map" && <LlmWikiButton />}
+            </Fragment>
           );
         })}
       </div>
