@@ -12,6 +12,7 @@ import { inputDialog } from "../store/input";
 import { useNotes } from "../store/notes";
 import { excalidrawSearchText } from "../lib/drawingText";
 import { mermaidInitOptions } from "../lib/mermaid";
+import { mermaidGate } from "../lib/mermaidGate";
 import { $isDrawingNode } from "../editor/nodes/DrawingNode";
 
 interface SceneSnapshot {
@@ -304,9 +305,14 @@ export default function DrawingEditorModal() {
           // ⚠️ 配置**唯一出处**（`lib/mermaid.ts`）：本行原来把 `htmlLabels` 写进 `flowchart: {}`
           //    ⇒ mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ 下面那个 canvas **变脏**、
           //    `toDataURL/toBlob` 抛 `Tainted canvases may not be exported.`（与图块 PNG 下载同一个根因）。
-          mermaid.initialize(mermaidInitOptions("default") as never);
-          const id = `sn-${Math.random().toString(36).slice(2, 10)}`;
-          const { svg } = await mermaid.render(id, src);
+          // ⭐ 2026-10-06：初始化＋渲染**走全应用唯一闸门** ✓（`lib/mermaidGate`）——
+          //    mermaid 的 init/render 动的是模块级全局状态 ✗，编辑器里十几个图块同时在跑会互相覆盖 ✓；
+          //    开发版因模块实例化差异侥幸不炸 ✓、正式版必然暴露 ✗（owner：「开发版没有错误，正式版有」✓）。
+          const { svg } = await mermaidGate.run(
+            "default",
+            (t) => mermaid.initialize(mermaidInitOptions(t as "dark" | "default") as never),
+            () => mermaid.render(`sn-${Math.random().toString(36).slice(2, 10)}`, src),
+          );
           const blob = new Blob([svg], { type: "image/svg+xml" });
           const url = URL.createObjectURL(blob);
           const dataUrl = await new Promise<string>((resolve) => {

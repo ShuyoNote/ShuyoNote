@@ -758,12 +758,27 @@ jobs:
           AUTH="Authorization: Bearer ${GH_TOKEN}"
           # 已存在则取 release id，否则创建（jq 兼容 API 返回的漂亮打印/紧凑 JSON）
           RID=$(curl -s -H "$AUTH" "$API/releases/tags/$TAG" | jq -r '.id // empty')
+          # ⭐ 2026-10-06（owner：「为啥最近几次发版没有版本更新声明」✗）：Release 正文改成
+          #    **本版 CHANGELOG 段** ✓ —— 原来这里是**写死的一段通用文字** ✗ ⇒ 每版正文一模一样
+          #    （实测 v1.92.0…v1.92.4 正文都是同一段 310 字 ✓），用户在 Release 页看不出这版改了什么 ✓。
+          #    ⚠️ 用 `jq -Rs` 做 JSON 编码：正文里有引号/换行/★ 等字符，手拼 JSON 一定会出事 ✗。
+          VER="${TAG#v}"
+          # `next` 跳过 `## [x.y.z]` 那一行本身 ✓（标题由下面那句 H1 提供 ✓，免得正文以二级标题开头 ✗）
+          BODY_SEG=$(awk -v h="## [$VER]" 'index($0,h)==1{f=1;next} f&&/^## \[/&&index($0,h)!=1{exit} f' "$GITHUB_WORKSPACE/CHANGELOG.md" 2>/dev/null | sed -e 's/^### /## /')
+          [ -n "$BODY_SEG" ] || BODY_SEG=$(printf '（CHANGELOG 里没找到 [%s] 段）' "$VER")
+          # 末尾补一段安装说明（与 CHANGELOG 段拼在一起 ✓，保留原有那句"未对拍"提醒 ✓）
+          BODY_MD=$(printf '# ShuyoNote %s\n\n%s\n\n## 安装\n- **Windows**：`ShuyoNote_%s_x64-setup.exe`\n- **Linux**：`.deb` 或 `.AppImage`\n- **Android**：`ShuyoNote_%s_android-arm64-release.apk`（arm64、正式密钥签名，可直接覆盖安装）\n- 桌面版安装后可在应用内「检查更新」下载并安装。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 docs/RELEASING.md（仓库内文档）。\n' "$TAG" "$BODY_SEG" "$VER" "$VER")
+          BODY_JSON=$(printf '%s' "$BODY_MD" | jq -Rs .)
           if [ -z "$RID" ]; then
             RESP=$(curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":\"安装包：Windows 安装版 / Linux .deb + .AppImage / Android APK（arm64，正式密钥签名，可直接 adb install 或侧载）。桌面版安装后可在应用内「检查更新」下载并安装；Android 版可在应用内「检查更新」发现自己有新版本，并从这里下载同名 APK 覆盖安装（应用内不装机，交给系统）。\n\n⚠️ **本版未对拍**：国密的「跨实现双向对拍」（RustCrypto ↔ Tongsuo）9 项**未在本版 CI 运行**（CI 未装 Tongsuo）—— 这是**已知的未验项**，不是失败。细节与手动对拍入口见 docs/RELEASING.md（仓库内文档）。\"}" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"ShuyoNote $TAG\",\"body\":$BODY_JSON}" \
               "$API/releases")
             RID=$(echo "$RESP" | jq -r '.id // empty')
             [ -z "$RID" ] && { echo "release create failed: $RESP"; exit 1; }
+          else
+            # 已存在（重跑同一个 tag ✓）⇒ 正文也刷成最新的一份 ✓（⛔ 不留旧声明 ✗）
+            curl -s -X PATCH -H "$AUTH" -H "Content-Type: application/json" \
+              -d "{\"name\":\"ShuyoNote $TAG\",\"body\":$BODY_JSON}" "$API/releases/$RID" > /dev/null || true
           fi
           # 取 upload_url（去掉模板后缀 {name,label}）
           UP=$(curl -s -H "$AUTH" "$API/releases/$RID" | jq -r '.upload_url // empty')

@@ -1,7 +1,7 @@
 {
   "name": "shuyonote",
   "private": true,
-  "version": "1.92.4",
+  "version": "1.92.5",
   "type": "module",
   "scripts": {
     "dev": "node scripts/copy-pdfjs-assets.mjs && node scripts/copy-tesseract-assets.mjs && vite",
@@ -49,7 +49,7 @@
     "verify:all": "node scripts/test-report.mjs --group contract,smoke,sync,plugin,browser --retry 1",
     "verify:rust": "node scripts/test-report.mjs --group rust",
     "verify:list": "node scripts/test-report.mjs --list",
-    "verify:baseline": "node scripts/test-report.mjs --update-baseline",
+    "verify:baseline": "node scripts/test-report.mjs --update-baseline --retry 1",
     "suite:status": "node scripts/external-suite-status.mjs",
     "gitcode:validate": "node scripts/gitcode-validate.mjs",
     "test:sync": "node scripts/sync-regression.mjs",
