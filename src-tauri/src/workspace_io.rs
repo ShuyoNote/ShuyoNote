@@ -1,6 +1,6 @@
 use crate::db::{now_ms, Db};
 use crate::models::WorkspaceMeta;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager, State};
@@ -11,6 +11,10 @@ pub struct WorkspaceExportResult {
     pub size: i64,
     pub pages: usize,
     pub attachments: usize,
+    // ⭐ 2026-10-08（R138，owner 选 A）：导出时**从快照里裁掉「已推送的历史变更」**，
+    // 这里如实把裁掉的量报出去（⛔ 不许静默 —— 用户得知道包里少了什么 ✓）。
+    pub trimmed_changes: usize,
+    pub trimmed_change_bytes: i64,
 }
 
 /// Progress for long-running workspace export/import.
@@ -93,6 +97,109 @@ fn backup_db_to(src: &Connection, dst: &Path, key: Option<&[u8; 32]>) -> Result<
         .run_to_completion(64, std::time::Duration::from_millis(5), None)
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 导出快照**瘦身**的报告（裁掉了多少、为什么）。
+pub(crate) struct TrimReport {
+    pub rows: usize,
+    pub bytes: i64,
+    /// 给人看的一句话（写进进度事件与返回结构，⛔ 不许静默 ✓）。
+    pub why: String,
+}
+
+/// 从**导出快照**里裁掉同步用的 `changes` 历史。
+///
+/// 为什么（R138，owner 2026-10-08「查查为啥导出的空间包这么大？」→ 选 A）：
+/// 实测那份真导出包 **113.7 MB**，其中 `changes.payload` 占 **672 MB / 全库 739 MB ＝ 91%** ✗，
+/// 而**全部页面的正文只有 1.9 MB**；真因是这日志**只写不清**（每次保存存一整份整页快照，
+/// 推送成功后只推进 `meta.sync_profiles.last_pushed_seq` 游标、**不删行** ✗）。
+///
+/// ⛔ **只动导出快照，绝不碰活库** —— 活库里那些行还兼着 mesh 中继的 outbox 与活动视图的数据源 ✓。
+/// ⛔ **不静默**：返回裁掉的行数/字节/缘由，由调用方报进进度事件与返回结构 ✓。
+///
+/// 策略（⚠️ 这个分档是**量出来的**，不是拍的）：
+///   · `meta.sync_profiles` 里**没有这个空间的行**，或 `server_url` 是空 ⇒ 这个空间**不走服务端**
+///     ⇒ 快照里**整张 `changes` 都不要**（留着没有任何消费者 ✗）；
+///     ⚠️ 实测：owner 那个出问题的空间就是这一档（它不在 `sync_profiles` 里 ⇒ 若按"只留未推送的"
+///        字面实现，`last_pushed` 恒为 0 ⇒ **一条都裁不掉** ✗，等于白做）。
+///   · 有行且 `server_url` 非空 ⇒ 只保留**还没推出去的**：`seq > last_pushed_seq`
+///     （口径与 `sync::do_push` 挑变更用的是**同一个值** ✓）。
+/// 裁完 `VACUUM` 一次：只 DELETE 的话空间进 freelist，导出那份文件**体积不会变小** ✗。
+pub(crate) fn trim_changes_for_export(
+    src: &Connection,
+    dst: &Path,
+    ws_id: &str,
+) -> Result<TrimReport, String> {
+    // ⚠️ 必须读 `meta.sync_profiles`（带限定名）：生产形状的连接是「空间库当 main ＋
+    //    `ATTACH meta.db AS meta`」（见 `mesh.rs` 的那条注释），而**快照文件里没有 meta**
+    //    ⇒ 谁要是在快照上查裸名 `sync_profiles`，只会静默拿到"没这表" ⇒ 一条都不裁 ✗（本仓实测踩过）。
+    let prof: Option<(String, i64)> = src
+        .query_row(
+            "SELECT COALESCE(server_url, ''), COALESCE(last_pushed_seq, 0)
+             FROM meta.sync_profiles WHERE ws_id = ?1",
+            [ws_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| format!("读同步档案失败（导出瘦身需要 meta.sync_profiles）: {e}"))?;
+
+    // 边界：`None` ⇒ **整张都不带**（这个空间不走服务端，日志留着没有消费者 ✗）；
+    //       `Some(n)` ⇒ 只丢 `seq <= n`（n 就是"已推送到哪儿"的游标 ✓）。
+    // ⚠️ 别用 `seq <= 0` 来表达"全丢" —— seq 从 1 起 ⇒ 那样**一条都删不掉** ✗（本次实测踩过）。
+    let (boundary, why): (Option<i64>, String) = match prof {
+        None => (
+            None,
+            "这个空间没有同步档案（不走服务端）⇒ 导出不带变更日志".to_string(),
+        ),
+        Some((url, _)) if url.trim().is_empty() => (
+            None,
+            "这个空间没填同步服务器 ⇒ 导出不带变更日志".to_string(),
+        ),
+        Some((_, last)) if last <= 0 => (
+            None,
+            "同步档案里还没推过任何变更（游标 0）⇒ 导出不带变更日志".to_string(),
+        ),
+        Some((_, last)) => (
+            Some(last),
+            format!("只保留还没推出去的变更（游标 {last}）"),
+        ),
+    };
+
+    let conn = Connection::open(dst).map_err(|e| format!("导出快照不可打开: {e}"))?;
+    let count_sql = "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM changes";
+    let (rows, bytes): (i64, i64) = match boundary {
+        None => conn.query_row(count_sql, [], |r| Ok((r.get(0)?, r.get(1)?))),
+        Some(b) => conn.query_row(&format!("{count_sql} WHERE seq <= ?1"), [b], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        }),
+    }
+    .map_err(|e| e.to_string())?;
+    if rows > 0 {
+        match boundary {
+            None => conn.execute("DELETE FROM changes", []),
+            Some(b) => conn.execute("DELETE FROM changes WHERE seq <= ?1", [b]),
+        }
+        .map_err(|e| e.to_string())?;
+        conn.execute_batch("VACUUM").map_err(|e| e.to_string())?;
+    }
+    Ok(TrimReport {
+        rows: rows as usize,
+        bytes,
+        why: format!("{why}（裁掉 {rows} 条 / {} MB）", bytes / 1_048_576),
+    })
+}
+
+/// **导出路径的唯一入口**：明文快照 ＋ 裁掉同步日志的历史。
+/// ⚠️ 抽成一处的理由与 `versions.rs::restore_version_in_conn` 同族：**判据与命令面必须走
+/// 同一条代码路径**，否则判据测的是"另一份实现"，而漂移恰好发生在没被测的那一份里。
+pub(crate) fn export_snapshot(
+    src: &Connection,
+    key: Option<&[u8; 32]>,
+    dst: &Path,
+    ws_id: &str,
+) -> Result<TrimReport, String> {
+    snapshot_plaintext(src, key, dst)?;
+    trim_changes_for_export(src, dst, ws_id)
 }
 
 /// 把 `src` 的**明文**快照写到 `dst`（本模块的契约：zip 里那份 `shuyonote.db` 是明文，
@@ -209,13 +316,16 @@ pub async fn export_workspace(
 
     // Snapshot the space DB to a temp file (brief DB lock; online backup is WAL-safe).
     let tmp_db = crate::tempdir::file("shuyonote-ws", "db");
-    {
+    // ⭐ R138：快照 ＋ **裁掉同步日志的历史**（只动快照，绝不碰活库 ✓）。
+    //   ⚠️ 这一段留在锁里：瘦身要读 `meta.sync_profiles`（只有活库的连接带着 `meta` ✓），
+    //      而导出本来就是用户主动发起的长时间操作（全程有进度事件 ✓）。
+    let trim = {
         let conn = db.0.lock().expect("db mutex poisoned");
         // ⚠️ 加密态必须把**会话密钥**传下去：不带钥去备份加密库会被 SQLCipher 拒绝
         //（见 `snapshot_plaintext` 注释）。
         let key = crate::security::key_if_enabled(&conn).map(|k| k.legacy);
-        snapshot_plaintext(&conn, key.as_ref(), &tmp_db)?;
-    }
+        export_snapshot(&conn, key.as_ref(), &tmp_db, &space.id)?
+    };
 
     let app2 = app.clone();
     let dest2 = dest.clone();
@@ -223,6 +333,7 @@ pub async fn export_workspace(
     let tmp_db2 = tmp_db;
     let space2 = space.clone();
     let hashes2 = referenced_hashes.clone();
+    let trim2 = trim;
 
     let out = tauri::async_runtime::spawn_blocking(move || -> Result<WorkspaceExportResult, String> {
         let file = std::fs::File::create(&dest2).map_err(|e| e.to_string())?;
@@ -232,6 +343,10 @@ pub async fn export_workspace(
 
         emit(&app2, "export", 0, 1, 0, "打包空间数据库…");
         add_file_to_zip(&mut zip, "shuyonote.db", &tmp_db2, &mut bytes)?;
+        // ⭐ R138：把"快照里裁掉了什么"**说出来**（⛔ 不许静默 —— 用户得知道包里少了什么 ✓）。
+        if trim2.rows > 0 {
+            emit(&app2, "export", 0, 1, bytes, &format!("导出快照已瘦身：{}", trim2.why));
+        }
 
         // workspace.json metadata.
         let meta_json = serde_json::to_string(&space2).map_err(|e| e.to_string())?;
@@ -264,6 +379,8 @@ pub async fn export_workspace(
             size,
             pages: 0,
             attachments: matched,
+            trimmed_changes: trim2.rows,
+            trimmed_change_bytes: trim2.bytes,
         })
     })
     .await
@@ -584,6 +701,86 @@ mod tests {
             [id],
         )
         .unwrap();
+        c.close().unwrap();
+    }
+
+    // ⭐ R138（owner 2026-10-08：「查查为啥导出的空间包这么大？」→ 选 A）：
+    //   导出快照**不许**把同步日志的历史带上（实测那份真包里它占 91% ✗），
+    //   而**还没推出去的**必须留着（那是真数据，丢了就是用户丢东西 ✗）。
+    #[test]
+    fn export_snapshot_drops_change_log_history_but_keeps_unsent_changes() {
+        let dir = std::env::temp_dir().join(uniq_tmp("wstrim"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("default.db");
+        make_space_db(&src, "default");
+
+        let c = Connection::open(&src).unwrap();
+        // 生产形状：空间库当 main ＋ `ATTACH … AS meta`（`meta.sync_profiles` 住在那边 ✓）。
+        // 判据只用内存 meta，够覆盖"读限定名"这条（⚠️ 裸名在真形状下读不到 ⇒ 会静默不裁 ✗）。
+        c.execute_batch("ATTACH DATABASE ':memory:' AS meta").unwrap();
+        c.execute_batch(
+            "CREATE TABLE meta.sync_profiles (ws_id TEXT PRIMARY KEY, server_url TEXT, last_pushed_seq INTEGER)",
+        )
+        .unwrap();
+
+        // 5 条变更，每条 payload 100 KB（让"文件真的变小"可判 ✓）。
+        // ⚠️ `device_seq` 有 UNIQUE(device_id, device_seq)（`record_change` 正是把它设成 seq ✓）
+        //    ⇒ 造夹具时必须逐行递增，否则先撞约束、量到的就不是判据 ✗（本次实测踩过）。
+        let big = "x".repeat(100_000);
+        for i in 1..=5 {
+            c.execute(
+                "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) \
+                 VALUES ('dev', ?1, 'page', 'p1', 'upsert', ?2, 1)",
+                params![i, &big],
+            )
+            .unwrap();
+        }
+
+        // ① 有同步档案、游标 = 3 ⇒ 快照里只该剩 seq 4、5。
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, server_url, last_pushed_seq) VALUES ('default', 'http://x/sync', 3)",
+            [],
+        )
+        .unwrap();
+        let dst = dir.join("with-profile.db");
+        let rep = export_snapshot(&c, None, &dst, "default").unwrap();
+        assert_eq!(rep.rows, 3, "已推送的 3 条该被裁掉（逐字：{}）", rep.why);
+        {
+            let snap = Connection::open(&dst).unwrap();
+            let seqs: Vec<i64> = snap
+                .prepare("SELECT seq FROM changes ORDER BY seq")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            assert_eq!(seqs, vec![4, 5], "没推出去的两条必须留着（那是真数据 ✗）");
+        }
+
+        // ② 没有同步档案 ⇒ 这个空间不走服务端 ⇒ 快照里**一条都不带**，且文件明显更小。
+        c.execute("DELETE FROM meta.sync_profiles", []).unwrap();
+        let dst2 = dir.join("no-profile.db");
+        let rep2 = export_snapshot(&c, None, &dst2, "default").unwrap();
+        assert_eq!(rep2.rows, 5, "没档案时整张日志都不带（逐字：{}）", rep2.why);
+        {
+            let snap = Connection::open(&dst2).unwrap();
+            let n: i64 = snap
+                .query_row("SELECT COUNT(*) FROM changes", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 0, "快照里不该还有同步日志");
+            // 页面本身**一条不能少**（这是"只裁日志、不裁内容"的承重判据 ✓）。
+            let pages: i64 = snap
+                .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(pages, 1, "裁剪只许碰 changes，页面必须原样");
+        }
+        let with_log = std::fs::metadata(&dst).unwrap().len();
+        let without_log = std::fs::metadata(&dst2).unwrap().len();
+        assert!(
+            without_log < with_log,
+            "裁完 VACUUM 必须让快照文件真的变小（带日志 {with_log} vs 不带 {without_log}）"
+        );
         c.close().unwrap();
     }
 

@@ -1283,7 +1283,12 @@ export interface CommandMap {
     };
   };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
-  export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };
+  // ⭐ R138（2026-10-08，owner 选 A）：导出快照会**裁掉同步日志的历史**
+  // ⇒ 多两格如实报告裁了多少（⛔ 不许静默：用户得知道包里少了什么 ✓）。
+  export_workspace: {
+    args: { destPath: string };
+    result: { path: string; size: number; pages: number; attachments: number; trimmed_changes: number; trimmed_change_bytes: number };
+  };
   export_wiki: { args: { destPath: string; files: { name: string; content: string }[] }; result: { path: string; size: number; pages: number; files: number } };
   wiki_export_pages: { args: undefined; result: WikiPageInput[] };
   import_workspace: { args: { srcPath: string; name?: string | null }; result: WorkspaceMeta };
