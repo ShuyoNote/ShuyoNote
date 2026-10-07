@@ -775,7 +775,16 @@ export const GATES = [
     // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**、并在严格模式里豁免这一条。
     // 目标仍是**在有 Tongsuo 的环境里真跑**（CI 装 Tongsuo 是一个小项目；先向 macOS/AMD 要一次那 9 项的读数）。
     // ⚠️ **发版说明必须记「未验」** —— 本版不得把这一格当成「跨实现一致已验」的证据。
-    selfSkipOk: "CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」；**发版说明须记「未验」**）；目标是在有 Tongsuo 的环境真跑",
+    // ⭐ **2026-10-08 更新**：它**已经真跑过一次**了 —— 手动工作流
+    //   `gm-conformance (Tongsuo cross-implementation, manual)` **run #4**（`dev@cf66d501`，工件 `gm-conformance-4`）：
+    //   逐字读数 `gm-conformance: ✅ 通过 —— 跑成 12 个用例（含跨实现对拍）`，**跳过项 0**（`!` 行 = 0），
+    //   对拍另一方 `Tongsuo 8.5.0 / OpenSSL 3.5.4` ✓ ⇒ 已发布的 v1.92.6 发版说明那行「本版未对拍」
+    //   **已改成「本版已对拍（run #4）」** ✓（RELEASING.md §六 那条清单项随之勾掉）。
+    //   ⚠️ 但下面这条 selfSkipOk 仍成立：**日常 CI 不装 Tongsuo** ⇒ 平时那 9 项照旧自报跳过（登记 ≠ 通过 ✓）。
+    //   ⚠️ 另记一笔：那条 workflow 此前**两跑两红**（run #1/#2），真因是它自己写死了 `install/lib/libcrypto.a`
+    //   （runner 上 Tongsuo 装进 `lib64/`）＋ 把 `SHUYONOTE_TONGSUO_OPENSSL` 指成前缀而非 CLI
+    //   ⇒ **对拍从没跑起来过**；三处已修（`cf66d501`），并把"跳过项"从打印变成判据 ✓。
+    selfSkipOk: "日常 CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」）。⭐ 2026-10-08 已用手动工作流真跑过一次（run #4，0 跳过）⇒ v1.92.6 发版说明已记「已对拍」；平时仍按跳过登记 ✓",
   },
   {
     id: "rust-no-sm-crypto",
