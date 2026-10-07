@@ -8,8 +8,30 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../lib/api";
 import { GRAPH_NODE_CAP, GRAPH_TRUNCATED, UNTAGGED, buildKbMap } from "../lib/kbMap";
+import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import type { GraphData } from "../types";
+
+/**
+ * 「LLM Wiki（库地图）」入口 —— 放在知识地图**下面**（owner 2026-10-08：
+ * 「在知识地图下面添加 LLM Wiki 入口按钮」✓）。
+ *
+ * ⛔ 它必须与命令面板那条 `ai.libraryMap` 是**同一个动作**（`openSettings("ai")`）——
+ *   各写一条"打开库地图"的路 ＝ 第二份真相源 ✗；判据就钉在这一点上
+ *   （`KnowledgeMap.test.tsx`：点它调的就是 `openSettings("ai")`，且 `openPage` 一次都不调 ✓）。
+ * ⚠️ 只**打开面板**、不自动跑扫描：全库扫描是 O(页面数) 的调用（需求 §4 明确不要定时/自动重跑 ✓）。
+ */
+function LlmWikiEntry() {
+  const { t } = useTranslation();
+  return (
+    <div className="kb-map-foot">
+      <button type="button" className="kb-map-wiki" onClick={() => useEditorStore.getState().openSettings("ai")}>
+        {t("kbMap.wikiEntry")}
+      </button>
+      <span className="kb-map-wiki-hint">{t("kbMap.wikiHint")}</span>
+    </div>
+  );
+}
 
 export function KnowledgeMap() {
   const { t } = useTranslation();
@@ -56,6 +78,9 @@ export function KnowledgeMap() {
       <div className="kb-map kb-map-empty" role="status">
         <h2 className="kb-map-title">{t("kbMap.title")}</h2>
         <p className="kb-map-note">{t("kbMap.empty")}</p>
+        {/* ⚠️ 空库也留着入口：一个**还没索引过**的空间里，"去 LLM Wiki 看看"恰恰是最该做的事 ✓
+            （只在有聚类的分支上放入口 ⇒ 新空间里它反而消失 ✗） */}
+        <LlmWikiEntry />
       </div>
     );
   }
@@ -100,6 +125,8 @@ export function KnowledgeMap() {
           </li>
         ))}
       </ul>
+      {/* ⭐ 入口在**聚类列表之后** ——「在知识地图下面」（判据量的是 DOM 顺序，不是印象 ✓） */}
+      <LlmWikiEntry />
     </div>
   );
 }

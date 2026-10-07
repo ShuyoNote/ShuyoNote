@@ -23575,6 +23575,13 @@ body.is-plugin-panel-open .main {
    判据：`scripts/check-panel-layout.mjs`（真 Chromium ＋ 真 App.css 量"几行 ＋ 裁没裁" ✓）。 */
 .kb-map-page { display: block; width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-map-page:hover { background: var(--hover); }
+/* ⭐ 2026-10-08：知识地图**下面**那条 LLM Wiki 入口（owner：「在知识地图下面添加 LLM Wiki 入口按钮」✓）。
+   用一条细分隔线把它与聚类列表分开 —— 它是「去另一个视图」，不是第 N 个聚类 ✓。
+   判据在 `src/components/KnowledgeMap.test.tsx`：点它 ⇒ `openSettings("ai")`，且它在聚类列表**之后** ✓。 */
+.kb-map-foot { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.kb-map-wiki { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); color: var(--text); font-size: 0.86rem; cursor: pointer; }
+.kb-map-wiki:hover { background: var(--hover); }
+.kb-map-wiki-hint { color: var(--text-faint); font-size: 0.78rem; }
 .tl-empty { padding: 32px 28px; }
 .tl-empty-main { margin: 6px 0 2px; }
 .tl-empty-hint { color: var(--text-faint); font-size: 0.86rem; }

@@ -89,6 +89,9 @@ export default {
     truncated: "⚠️ 只画了一部分：被上限（{{cap}} 个）挡掉的还有 {{hidden}} 个页面。",
     untagged: "未分类",
     untitled: "未命名",
+    // 知识地图**下面**那条 LLM Wiki 入口（owner 2026-10-08）✓
+    wikiEntry: "LLM Wiki（库地图）",
+    wikiHint: "主题分区 ＋ 来源回链 ＋ 覆盖率 · 只读派生，要先点一次「检查索引覆盖」",
   },
   nav: {
     notes: "笔记",
