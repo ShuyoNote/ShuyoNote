@@ -254,28 +254,30 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
 
   // ---------------------------------------------------------------------------
   // ★ A2（owner 2026-09-25 拍板）：**开启加密之前必须先把"忘了就没了"读进去**
+  // ⭐ 2026-10-08（owner：「**去掉这个文案**」✓）⇒ 那句**红字提醒**已删；**下面的勾选前置保留**
+  //    （它的标签「我已保管好主口令，知道它丢了就打不开」本身就是那句话的意思 ✓）。
+  //    ⚠️ 判据随之改向：从"钉住那句话本身"改成**钉住"它真的没了"＋"勾选前置还在"** ——
+  //    两半都钉，这样既不会有人把这句悄悄加回来（owner 明确要去掉 ✗），
+  //    也不会有人顺手把**勾选**一起删掉（那会把"用户被告知过"这件事整个变成无判据 ✗）。
   // ---------------------------------------------------------------------------
-  //
-  // 为什么要有这两条：零知识＝零恢复，口令丢了**数据永久打不开**。这句真话今天只在
-  // **锁定屏**（连错 3 次之后）说 —— 那时候用户已经记不住了，等于事后通知。
-  // `docs/identity-privacy-roadmap.md:34` 早就写着"开启前必须勾选确认"，而代码里一直没有
-  // ⇒ 这两条把"用户真的被告知过"这件事钉成可执行的判据（改文案会连判据一起红）。
-  it("⑪ ★ 没勾「我已保管好主口令」⇒ **点不动**开启加密（且那句真话在屏幕上）", async () => {
+  it("⑪ ★ 没勾「我已保管好主口令」⇒ **点不动**开启加密（那句红字提醒已按 owner 2026-10-08 去掉，且⛔ 不许回来）", async () => {
     spaceSecurityOverview.mockResolvedValue([personal]);
     enableSpaceEncryption.mockResolvedValue([]);
     await render();
 
-    // ① 那句话必须在**开启之前**就看得见（不是点了才弹）
-    expect(container.textContent).toContain("真的打不开了");
-    expect(container.textContent).toContain("没有第二把备份钥匙");
-    // ② 没勾 ⇒ 按钮是灰的，而且**点了也真的不调 api**（disabled 不只是视觉）
+    // ① ⭐ 2026-10-08（owner：「去掉这个文案」）：那句红字**不许再出现** —— 钉住"它真的没了" ✓
+    expect(container.textContent).not.toContain("真的打不开了");
+    expect(container.textContent).not.toContain("没有第二把备份钥匙");
+    // ② **勾选前置仍在**（去掉的只是那句文案，不是这个前置）：勾选框在、且默认未勾
+    expect(ackBox()).toBeTruthy();
+    expect(ackBox().checked).toBe(false);
+    // ③ 没勾 ⇒ 按钮是灰的，而且**点了也真的不调 api**（disabled 不只是视觉）
     const open = buttons().find((b) => b.textContent === "开启加密")!;
     expect(open.disabled).toBe(true);
     await act(async () => {
       open.click();
     });
     expect(enableSpaceEncryption).not.toHaveBeenCalled();
-    expect(ackBox().checked).toBe(false);
   });
 
   it("⑫ ★ 勾上之后才点得动 —— 而且勾选框**按空间记**（一行勾了不算另一行）", async () => {

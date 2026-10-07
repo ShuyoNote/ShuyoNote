@@ -75,8 +75,11 @@
 > 三选一写在开启那一刻：记住口令 / 导出密钥备份 / 交给托管方（＝放弃零知识）。
 > ✅ **2026-09-25 owner 拍板落地**：开启加密前**必须确认一次**那句话（勾选框，
 > 「我已保管好主口令，知道它丢了就打不开」）—— 没勾上时「开启加密」按钮是灰的。
-> 位置与判据：`src/components/SpacePrivacySection.tsx` 的 `PASSPHRASE_NO_RECOVERY` ＋
-> `SpacePrivacySection.test.ts` 的两条（没勾 ⇒ 点不动且真话在屏幕上／勾上才点得动、且按空间记）。
+> 位置与判据：`src/components/SpacePrivacySection.tsx` 的**勾选前置**（`ackNoRecovery`）＋
+> `SpacePrivacySection.test.ts` 的两条（没勾 ⇒ 点不动 ＋ 勾上才点得动、且按空间记）。
+> ⭐ **2026-10-08（owner：「去掉这个文案」✓）**：那行**红字提醒**（原 `PASSPHRASE_NO_RECOVERY` 常量）
+> **已删** —— 那句真话现在只由勾选框的标签（「我已保管好主口令，知道它丢了就打不开」）承担 ✓；
+> 判据改成两半都钉：**那句话不许再出现** ＋ **没勾时按钮仍是灰的、点了也不调 api**。
 >
 > **直接回答"是不是要求用户先设密钥"**：
 >
