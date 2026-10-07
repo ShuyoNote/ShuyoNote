@@ -51,6 +51,7 @@ import {
   $createMermaidNode,
   $isMermaidNode,
 } from "./nodes/MermaidNode";
+import { suggestColWidths } from "../lib/tableFit";
 
 const UUID_RE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
@@ -291,6 +292,14 @@ export const TABLE: MultilineElementTransformer = {
       }
       table.append(rowNode);
     }
+
+    // ⭐ 2026-10-07（owner：「导入笔记时，表格列可否**自动适配列宽**，或跳到一个视觉合理的宽度」✗）：
+    //   导入时**顺手按内容长度给一组相对列宽** ✓ —— 不设的话，配合
+    //   `.editor-table { table-layout: fixed; width: 100% }` 就是**各列等宽** ✗
+    //   ⇒ "示例 / 目的"这种文字多的列很挤、要折两行 ✓（owner 截图那张表 ✓）。
+    //   纯规则在 `lib/tableFit.ts`（可单测 ✓）；这里只喂"表头 ＋ 每一行"的文本 ✓。
+    //   ⚠️ 只表达**相对关系** ✓ —— 真落到页面上时由 `fitColWidths` 按可用宽度再归一化一次 ✓。
+    table.setColWidths(suggestColWidths([headerRow, ...bodyRows]));
 
     rootNode.append(table);
     return [true, endIndex];
