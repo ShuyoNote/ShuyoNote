@@ -23564,10 +23564,16 @@ body.is-plugin-panel-open .main {
 .kb-map-clusters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
 .kb-map-cluster { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .kb-map-cluster-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
-.kb-map-cluster-name { font-weight: 600; }
+.kb-map-cluster-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-map-cluster-count { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
 .kb-map-pages { margin: 0; padding: 0; list-style: none; }
-.kb-map-page { width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; }
+/* ⭐ 2026-10-08（owner：「知识地图看板卡片名称不回绕」✓）：卡片里的名字**只占一行**，超长就截断 ✓。
+   为什么必须有：卡片宽被 `.kb-map-clusters` 的 `minmax(220px,1fr)` 定死（约 220–280px），
+   而页面标题可以很长 ⇒ 折行会把卡片顶高、名字被断成两截（"知识地/图"那种），一屏能看的条数也变少 ✗。
+   ⚠️ `display:block` 是 `text-overflow` 生效的前提（按钮默认 inline-block）；完整名字走 `title` 悬浮提示 ✓
+   （组件那一侧配着写了 —— 截断而不给全名，等于把信息真的删掉 ✗）。
+   判据：`scripts/check-panel-layout.mjs`（真 Chromium ＋ 真 App.css 量"几行 ＋ 裁没裁" ✓）。 */
+.kb-map-page { display: block; width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-map-page:hover { background: var(--hover); }
 .tl-empty { padding: 32px 28px; }
 .tl-empty-main { margin: 6px 0 2px; }

@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 import type { GraphData, GraphEdge, GraphPage } from "../types";
 import { GRAPH_NODE_CAP, GRAPH_TRUNCATED, UNTAGGED, buildKbMap } from "./kbMap";
 
-const page = (id: string, title: string, tags: string[] = []): GraphPage => ({ id, title, tags, props: [] });
+const page = (id: string, title: string, tags: string[] = []): GraphPage => ({ id, title, tags, props: [], kind: "page" });
+/** 目录（`kind='folder'`）—— owner 2026-10-08：「知识地图里面不显示目录名称」✓ */
+const folder = (id: string, title: string): GraphPage => ({ id, title, tags: [], props: [], kind: "folder" });
 const edge = (source: string, target: string, kind = "page"): GraphEdge => ({ source, target, kind });
 const graph = (pages: GraphPage[], edges: GraphEdge[] = []): GraphData => ({ pages, edges, blocks: [], block_edges: [], blocks_supported: true });
 
@@ -59,6 +61,48 @@ describe("S4 · 先画谁（确定性）与边的收口", () => {
     const m = buildKbMap(graph(pages, edges), 2); // 画出**度数最高的 b**（2 度）＋ a（1 度、标题最靠前）✓
     expect(m.pages.map((p) => p.id)).toEqual(["b", "a"]);
     expect(m.edges).toEqual([edge("a", "b")]); // b–c 那条被丢了：c 没画出来 ✓
+  });
+});
+
+describe("S4 · 目录不进地图（owner 2026-10-08：「知识地图里面不显示目录名称」）", () => {
+  it("★ `kind='folder'` 的节点不进地图：页面列表、聚类、边**三处都不许留它**", () => {
+    const pages = [page("a", "甲"), folder("f", "产品"), page("b", "乙")];
+    const edges = [edge("f", "a"), edge("a", "b")];
+    const m = buildKbMap(graph(pages, edges));
+    expect(m.pages.map((p) => p.id)).toEqual(["a", "b"]); // ⛔ 目录不在
+    expect(m.clusters.flatMap((c) => c.pages.map((p) => p.id))).not.toContain("f"); // ⛔ 也不许混进「未分类」堆
+    expect(m.edges).toEqual([edge("a", "b")]); // ⛔ 指向目录的那条边跟着走（不留悬空边）
+  });
+
+  it("过滤发生在**截断之前**：目录不占 `GRAPH_NODE_CAP` 的名额（否则大库里会把真页面挤掉 ✗）", () => {
+    // 5 个页面 ＋ 3 个目录、上限 5 ⇒ 应当画出 5 个**页面**，而不是"3 个目录占了名额"只剩 2 页
+    const pages = [
+      page("a", "A"),
+      page("b", "B"),
+      page("c", "C"),
+      page("d", "D"),
+      page("e", "E"),
+      folder("f1", "F1"),
+      folder("f2", "F2"),
+      folder("f3", "F3"),
+    ];
+    const m = buildKbMap(graph(pages), 5);
+    expect(m.pages.map((p) => p.id).sort()).toEqual(["a", "b", "c", "d", "e"]);
+    expect(m[GRAPH_TRUNCATED]).toBe(false);
+    expect(m.hidden).toBe(0);
+  });
+
+  it("只认 `folder`：`database` 与**缺省 kind**（老载荷）都当内容页留着（⛔ 不许因为认不出就藏东西）", () => {
+    const dbPage: GraphPage = { id: "db", title: "项目计划", tags: [], props: [], kind: "database" };
+    const legacy: GraphPage = { id: "old", title: "老载荷没带 kind", tags: [], props: [] };
+    const m = buildKbMap(graph([dbPage, legacy]));
+    expect(m.pages.map((p) => p.id).sort()).toEqual(["db", "old"]);
+  });
+
+  it("一个空间**只有目录** ⇒ 地图就是空的（界面据此说「还没有可画的页面」，而不是画一堆目录 ✗）", () => {
+    const m = buildKbMap(graph([folder("f1", "产品"), folder("f2", "运营")]));
+    expect(m.pages).toEqual([]);
+    expect(m.clusters).toEqual([]);
   });
 });
 

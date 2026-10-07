@@ -256,6 +256,26 @@ A2["RAG 检索"]</textarea>
     </div>
   </div>
 </div>
+<!-- S4 知识地图的卡片（owner 2026-10-08：「看板卡片名称不回绕」＝长名**不许折行**）。
+     ⚠️ 结构必须与 components/KnowledgeMap.tsx 一致（⛔ 这里不能写反引号：本串就是模板字面量）：
+       .kb-map-clusters(grid) > li.kb-map-cluster > .kb-map-cluster-head > .kb-map-cluster-name ＋ .kb-map-cluster-count
+                                              ＞ ul.kb-map-pages > li > button.kb-map-page
+     ⚠️ 卡片宽由 .kb-map-clusters 的 minmax(220px,1fr) 定 ⇒ 在这个视口里约 220–280px，
+       而下面那个标题**故意写得比卡片长** —— 折行与截断在这里会得出完全不同的几何。 -->
+<div class="kb-map">
+  <ul class="kb-map-clusters">
+    <li class="kb-map-cluster">
+      <div class="kb-map-cluster-head">
+        <span class="kb-map-cluster-name" id="kb-cluster-name">一个很长的标签名：产品与运营协作</span>
+        <span class="kb-map-cluster-count">3</span>
+      </div>
+      <ul class="kb-map-pages">
+        <li><button type="button" class="kb-map-page" id="kb-page-long" title="ShuyoNote 个人版增值功能方案（讨论稿）">ShuyoNote 个人版增值功能方案（讨论稿）</button></li>
+        <li><button type="button" class="kb-map-page">短标题</button></li>
+      </ul>
+    </li>
+  </ul>
+</div>
 <button id="mermaid-fs-trigger" style="position: fixed; top: 4px; left: 4px; z-index: 9999">进全屏</button>
 <script>
   document.getElementById("mermaid-fs-trigger").addEventListener("click", function () {
@@ -265,6 +285,7 @@ A2["RAG 检索"]</textarea>
   });
 </script>
 `;
+
 
 const css = readFileSync(join(root, "src", "App.css"), "utf8");
 const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>panel layout</title>
@@ -365,7 +386,26 @@ try {
       radius: gcs.borderTopLeftRadius,
       bg: gcs.backgroundColor,
     } : null;
+    // S4 知识地图卡片：长页面名**只许一行**（owner 2026-10-08：「看板卡片名称不回绕」）。
+    // 量三样：行盒数（oneline，见它上面那段为什么不能拿"高度÷行高"当代理）／计算样式
+    //（nowrap ＋ ellipsis 是"截断"而不是"折行"的判据）／scrollWidth > clientWidth（证明真的裁了）。
+    const kbBtn = document.querySelector("#kb-page-long");
+    const kbCs = kbBtn ? getComputedStyle(kbBtn) : null;
+    const kb = kbBtn ? {
+      lines: oneline("#kb-page-long"),
+      whiteSpace: kbCs.whiteSpace,
+      textOverflow: kbCs.textOverflow,
+      overflowX: kbCs.overflowX,
+      width: Math.round(kbBtn.getBoundingClientRect().width),
+      clipped: kbBtn.scrollWidth > kbBtn.clientWidth + 1,
+      clusterLines: oneline("#kb-cluster-name"),
+      clusterOverflow: (() => {
+        const el = document.querySelector("#kb-cluster-name");
+        return el ? el.scrollWidth - el.clientWidth : null;
+      })(),
+    } : null;
     return {
+      kb,
       cardWidth: card?.width,
       infoWidth: info?.width,
       nameLines: oneline(".pm-item-name"),
@@ -423,6 +463,24 @@ try {
       m.gear.display === "grid" && m.gear.radius === "6px" && m.gear.border === "0px",
       `齿轮按钮用的是自己那套盒子（display:${m.gear.display} / 圆角 ${m.gear.radius} / 描边 ${m.gear.border}）——不是设置弹窗 .ai-settings 那套`,
     );
+  }
+
+  // ---- S4 知识地图的卡片：长名字**不许折行**（owner 2026-10-08：「看板卡片名称不回绕」）----
+  // 为什么这一条要有：卡片宽被 `.kb-map-clusters` 的 `minmax(220px,1fr)` 定死（约 220–280px），
+  // 而页面标题可以很长 ⇒ 折行会把卡片顶高、名字被断成两截（"知识地/图"那种），
+  // 一屏能看的条数也跟着变少。正确形态是**单行 ＋ 省略号**，完整名字走 `title` 悬浮提示 ✓。
+  // ⚠️ 只判"有没有折行 + 有没有截断"这两件**几何**事；省略号长什么样不判（那是像素级视觉回归 ✗）。
+  ok(m.kb !== null, "夹具里找得到知识地图的长名卡片");
+  if (m.kb) {
+    console.log(`      （知识地图卡片实测：卡宽 ${m.kb.width}px ／ 名字 ${m.kb.lines} 行 ／ white-space:${m.kb.whiteSpace} text-overflow:${m.kb.textOverflow} ／ 裁掉 ${m.kb.clipped ? "是" : "否"}）`);
+    ok(m.kb.lines === 1, `知识地图卡片里的长页面名只占 1 行（实测 ${m.kb.lines} 行；折行会把卡片顶高、名字被断成两截）`);
+    ok(
+      m.kb.whiteSpace === "nowrap" && m.kb.textOverflow === "ellipsis",
+      `长名是**截断**而不是折行（white-space:${m.kb.whiteSpace} ／ text-overflow:${m.kb.textOverflow}）`,
+    );
+    ok(m.kb.clipped === true, `超长名确实被裁在卡片内（scrollWidth > clientWidth ⇒ 省略号那一档）`);
+    ok(m.kb.clusterLines === 1, `簇标题（标签名）也只占 1 行（实测 ${m.kb.clusterLines} 行）`);
+    ok((m.kb.clusterOverflow ?? 0) > 0, `超长簇标题同样被裁（裁掉 ${m.kb.clusterOverflow}px）`);
   }
 
   // 插件卡：信息块要占满一行（被挤成 58px 就是那个 bug）

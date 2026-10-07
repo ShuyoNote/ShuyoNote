@@ -2263,7 +2263,9 @@ export function makeInvoke(store: SqliteStore) {
     // ---- Graph (nodes from non-deleted pages) ----
     if (cmd === "get_graph") {
       const ws = getActiveWsId();
-      const pages = store.query("SELECT id, title, content_text FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws]) as any[];
+      // ⭐ 2026-10-08：带上 `kind`（与桌面侧 `graph.rs::get_graph` 同形 ✓）—— 知识地图要滤掉目录，
+      //   而在此之前 Web 侧也分不出哪个节点是目录 ⇒「新建文件夹」被当页面列出来 ✗。
+      const pages = store.query("SELECT id, title, content_text, kind FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws]) as any[];
       const tagRows = store.query("SELECT pt.page_id, t.name FROM page_tags pt JOIN tags t ON t.id = pt.tag_id") as any[];
       const tagsByPage = new Map<string, string[]>();
       for (const tr of tagRows) {
@@ -2278,7 +2280,14 @@ export function makeInvoke(store: SqliteStore) {
       }
       const nodeById = new Map<string, any>();
       const gPages = pages.map((p: any) => {
-        const meta: any = { id: p.id, title: p.title, tags: tagsByPage.get(p.id) ?? [], props: propsByPage.get(p.id) ?? [] };
+        const meta: any = {
+          id: p.id,
+          title: p.title,
+          tags: tagsByPage.get(p.id) ?? [],
+          props: propsByPage.get(p.id) ?? [],
+          // 缺省当页面（与桌面侧的 `COALESCE(NULLIF(kind,''),'page')` 同一口径 ✓）
+          kind: p.kind || "page",
+        };
         nodeById.set(p.id, meta);
         return meta;
       });

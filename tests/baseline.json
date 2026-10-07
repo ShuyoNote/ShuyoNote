@@ -4,7 +4,7 @@
     "vitest": 2730,
     "smoke-web": 363,
     "check-pdf-reload": 8,
-    "check-panel-layout": 55,
+    "check-panel-layout": 61,
     "check-web-build": 13,
     "mobile-layout": 65,
     "mobile-overlays": 1010,

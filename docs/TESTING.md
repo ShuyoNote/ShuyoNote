@@ -57,7 +57,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 
 <!-- facts:begin -->
 门禁 78 条（contract 52 / smoke 3 / sync 1 / plugin 4 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 271 / web 255 / CommandMap 272
-基线下限（与 tests/baseline.json 逐字一致，共 14 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2730 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 55 · check-web-build 13 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+基线下限（与 tests/baseline.json 逐字一致，共 14 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2730 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -114,7 +114,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | sync | `two-device-sync` | 两设备并发编辑的同步一致性（真实 `applyChange` + 真实 sql.js） |
 | plugin | `examples-tsc` / `plugin-cli-validate` / `plugin-new-smoke` | "只看文档就能写出插件"：类型包、作者 CLI、脚手架生成的起点当场可用 |
 | browser | `check-pdf-reload` | StrictMode 下 PDF 二次加载交回已 detach 的 buffer（8 断言） |
-| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（40 断言） |
+| browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（61 断言；⭐ 2026-10-08 起还量**知识地图卡片的长名是否折行**——长名必须**单行 ＋ 省略号**，折行会把卡片顶高、名字被断成两截 ✓） |
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（13 断言；⭐ 2026-10-08 起还量 **AI 设置页的单卡宽度**与**正文不重复面板名**——真 Chromium 打开那一页取几何与 DOM ✓） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |

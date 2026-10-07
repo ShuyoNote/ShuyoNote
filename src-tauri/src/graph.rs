@@ -16,6 +16,14 @@ pub struct GraphPage {
     pub title: String,
     pub tags: Vec<String>,
     pub props: Vec<GraphProp>,
+    /// 页面种类（`page` / `folder` / `database`）。
+    ///
+    /// ⭐ 2026-10-08 加（owner：「知识地图里面不显示目录名称」✓）：在这之前这一格**不存在**
+    /// ⇒ 前端**分不出**哪个节点是目录，于是「知识地图」把「新建文件夹」也当页面列出来 ✗
+    ///（只读量真库：7 个空间共 11 个目录 ＋ 1 个数据库混在页面里）。
+    /// ⚠️ `COALESCE(NULLIF(kind,''), 'page')`：老库里这一格可能为空 ⇒ **缺省当页面**
+    ///（消费方口径同上：宁可多显示一个，也不许因为认不出就把用户的东西藏起来 ✗）。
+    pub kind: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -72,7 +80,7 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
 
     // --- Page nodes ---
     let mut stmt = c
-        .prepare("SELECT id, title FROM pages WHERE workspace_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC")
+        .prepare("SELECT id, title, COALESCE(NULLIF(kind, ''), 'page') FROM pages WHERE workspace_id = ?1 AND deleted_at IS NULL ORDER BY updated_at DESC")
         .map_err(|e| e.to_string())?;
     let mut pages: Vec<GraphPage> = stmt
         .query_map(params![active], |r| {
@@ -81,6 +89,7 @@ pub fn get_graph(db: State<'_, Db>) -> Result<GraphData, String> {
                 title: r.get(1)?,
                 tags: Vec::new(),
                 props: Vec::new(),
+                kind: r.get(2)?,
             })
         })
         .map_err(|e| e.to_string())?

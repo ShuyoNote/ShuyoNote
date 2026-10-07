@@ -5,7 +5,11 @@
 //      （`INV-KB-derived-rebuildable` ✓）；
 //   ② **大库不许拖死界面**：`GRAPH_NODE_CAP`（**带数字** ✓）＋ 结果里那个"只画了一部分"的标志
 //      `GRAPH_TRUNCATED` ✓ —— 两者**成对** ⇒ 不存在「悄悄截断」✗（本仓逐字罚过那一族 ✓）；
-//   ③ **口径复用**：关系数据一律来自 `get_graph`（`GraphView` 用的**同一条** ✓）⇒ 不自己写 `[[` 匹配 ✗。
+//   ③ **口径复用**：关系数据一律来自 `get_graph`（`GraphView` 用的**同一条** ✓）⇒ 不自己写 `[[` 匹配 ✗；
+//   ④ ⭐ 2026-10-08（owner：「知识地图里面不显示目录名称」✓）：**目录（`kind='folder'`）不进地图** ——
+//      它是容器、不是内容页；只读真库实测：7 个空间里有 **11 个目录 ＋ 1 个数据库**混在页面里，
+//      而目录点开是一个空编辑器（它的正文 JSON 实测只有 2 个字符 `{}`）✗。⚠️ 过滤在**截断之前**，
+//      且**只认 `folder`**（`database` 与缺省 `kind` 都照常当页面 ✓）。
 import type { GraphData, GraphEdge, GraphPage } from "../types";
 
 /** 一次最多画多少个节点 ✓（大库不许拖死界面 ✓）。 */
@@ -62,7 +66,15 @@ function degreeOf(edges: readonly GraphEdge[]): Map<string, number> {
  * `graph` 为 `null`（还没读到）⇒ 空图 ✓。
  */
 export function buildKbMap(graph: GraphData | null | undefined, cap: number = GRAPH_NODE_CAP): KbMap {
-  const all = graph?.pages ?? [];
+  // ⭐ 2026-10-08（owner：「知识地图里面不显示目录名称」✓）：**目录不是内容页** ⇒ 不进地图。
+  //   为什么必须在这儿滤、而不是在界面里：`get_graph` 是**关系图共用**的那一条出处 ✓，
+  //   各视图的取舍不一样 ⇒ 取舍得落在**各自的数据层**（界面只负责画）✓。
+  //   ⚠️ 三条口径：
+  //     ① **先滤、后截断** ⇒ 目录**不占** `GRAPH_NODE_CAP` 的名额（不然大库里目录会把真页面挤掉 ✗）；
+  //     ② **只认 `folder`** —— `database`（数据库页）是内容页，照常进图 ✓；缺省 `kind`（老载荷 /
+  //        更早的桌面端）⇒ **当页面看**（宁可多显示一个，也不许因为认不出就把用户的东西藏起来 ✗）；
+  //     ③ 边不用另滤 —— 下面的 `kept` 只收**画出来的**端点 ⇒ 指向目录的边自然跟着走 ✓（判据钉着这三处）。
+  const all = (graph?.pages ?? []).filter((p) => (p.kind ?? "page") !== "folder");
   const edges = graph?.edges ?? [];
   const deg = degreeOf(edges);
   const ordered = [...all].sort((a, b) => {
