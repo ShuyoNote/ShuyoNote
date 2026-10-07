@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { tagColor } from "../lib/tagColor";
+import { contentPages, edgesWithin } from "../lib/graphPages";
 import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
@@ -78,6 +79,13 @@ export function GraphView() {
   const openPage = useNotes((s) => s.openPage);
   const spaceId = useSpaceStore((s) => s.activeId);
   const [graph, setGraph] = useState<GraphData | null>(null);
+  /**
+   * ⭐ 2026-10-08（owner 拍「关系图**一起**滤掉」）：**目录不是内容页** ⇒ 这张图也不画它。
+   * ⚠️ 规则**不在本文件**：出自 `lib/graphPages.ts` 的 `contentPages()` —— 与「知识地图」**同一处** ✓
+   *   （两边各写一份 `kind !== "folder"` 必然漂移；判据 `lib/graphPages.test.ts` 用**源码形状**钉着 ✓）。
+   * ⛔ 也不许写死成"排除所有非 page"：`database`（数据库页）是内容页 ✓，缺省 `kind`（老载荷）也当页面 ✓。
+   */
+  const pages = useMemo(() => (graph ? contentPages(graph.pages) : []), [graph]);
   const [error, setError] = useState<string | null>(null);
   const [showBlocks, setShowBlocks] = useState(false);
   const [mode, setMode] = useState<"all" | "local">("all");
@@ -163,13 +171,20 @@ export function GraphView() {
   // Build nodes + edges (filtered by mode / block-layer toggle).
   useEffect(() => {
     if (!graph) return;
-    const allPageEdges = graph.edges.filter((e) => e.source !== e.target);
+    // ⭐ 2026-10-08（owner 拍「**一起滤掉**」）：**目录不是内容页** ⇒ 关系图也不画它
+    //   —— 与「知识地图」**同一条规则**（`lib/graphPages.ts` 一处定；⛔ 不许各写一份 ✗，
+    //   判据 `lib/graphPages.test.ts` 用源码形状钉着）。
+    const pageIds = new Set(pages.map((p) => p.id));
+    const allPageEdges = edgesWithin(
+      graph.edges.filter((e) => e.source !== e.target),
+      pageIds,
+    );
 
     // Determine visible page ids (null = all), composing local-graph + tag filter.
     let visiblePageIds: Set<string> | null = null;
 
     const localFocus = mode === "local" ? currentId : null;
-    if (localFocus && graph.pages.some((p) => p.id === localFocus)) {
+    if (localFocus && pages.some((p) => p.id === localFocus)) {
       const s = new Set<string>([localFocus]);
       for (const e of allPageEdges) {
         if (e.source === localFocus) s.add(e.target);
@@ -180,7 +195,7 @@ export function GraphView() {
 
     if (valueFilter) {
       const matching = new Set(
-        graph.pages.filter((p) => pageDimValues(p, dimension).includes(valueFilter)).map((p) => p.id),
+        pages.filter((p) => pageDimValues(p, dimension).includes(valueFilter)).map((p) => p.id),
       );
       visiblePageIds = visiblePageIds
         ? new Set([...visiblePageIds].filter((id) => matching.has(id)))
@@ -188,8 +203,8 @@ export function GraphView() {
     }
 
     const pageNodes = visiblePageIds
-      ? graph.pages.filter((p) => visiblePageIds!.has(p.id))
-      : graph.pages;
+      ? pages.filter((p) => visiblePageIds!.has(p.id))
+      : pages;
     const pageEdges = allPageEdges.filter((e) =>
       visiblePageIds
         ? visiblePageIds.has(e.source) && visiblePageIds.has(e.target)
@@ -262,7 +277,7 @@ export function GraphView() {
 
     simRef.current = allNodes;
     setNodes(allNodes);
-  }, [graph, size, showBlocks, mode, currentId, dimension, valueFilter]);
+  }, [graph, pages, size, showBlocks, mode, currentId, dimension, valueFilter]);
 
   // 布局：**图一变就同步预热到稳**（首帧就是稳的，不用等几秒），只有预算用完（大图）才交给 rAF。
   //
@@ -376,17 +391,18 @@ export function GraphView() {
   };
 
   // Select-attribute names (grouping dimensions) + values of the current dimension.
+  // ⚠️ 用 `pages`（已滤掉目录）：目录不进图 ⇒ 它的属性/取值也不该出现在筛选维度里 ✓。
   const dimensionNames = useMemo(() => {
     if (!graph) return [];
     const s = new Set<string>();
-    for (const p of graph.pages) for (const pr of p.props) s.add(pr.name);
+    for (const p of pages) for (const pr of p.props) s.add(pr.name);
     return [...s].sort();
-  }, [graph]);
+  }, [graph, pages]);
 
   const dimensionValues = useMemo(() => {
     if (!graph) return [];
     const s = new Set<string>();
-    for (const p of graph.pages) for (const v of pageDimValues(p, dimension)) s.add(v);
+    for (const p of pages) for (const v of pageDimValues(p, dimension)) s.add(v);
     return [...s].sort();
   }, [graph, dimension]);
 
@@ -518,7 +534,7 @@ export function GraphView() {
   if (!graph) {
     return <div className="graph-view graph-view-empty">加载关系图…</div>;
   }
-  if (graph.pages.length === 0) {
+  if (pages.length === 0) {
     return <div className="graph-view graph-view-empty">暂无页面，先新建几个页面吧</div>;
   }
 
