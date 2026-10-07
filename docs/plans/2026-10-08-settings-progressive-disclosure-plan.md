@@ -1,9 +1,14 @@
 # 设置面板「分层 + 渐进式披露」方案（v2 · 已按评审修订）
 
-状态：施工中（自主迭代）· 第 1、2 招交付完毕 · 第 3 招判据先行、实现待做 · 第 4、5 招未开工
-证据：第 1 招 `src/components/aiSettingsDisclosure.test.tsx`（提交 38deac0b）｜第 2 招 `src/components/settingsNavGroups.test.ts`（提交 de4a4741）｜本方案 `docs/plans/2026-10-08-settings-progressive-disclosure-plan.md`
+状态：施工中（自主迭代）· 第 1、2、3 招交付完毕 · 第 4、5 招未开工
+证据：第 1 招 `src/components/aiSettingsDisclosure.test.tsx`（提交 38deac0b）｜第 2 招 `src/components/settingsNavGroups.test.ts`（提交 de4a4741）｜第 3 招 `src/components/aiSettingsTabs.test.tsx`（提交 84ccffd4）｜本方案 `docs/plans/2026-10-08-settings-progressive-disclosure-plan.md`
 
 > **进度（2026-10-08，windows 侧自主迭代 ✓）**
+> - ⭐ **第 3 招交付完毕**（提交 `84ccffd4` ✓，判据 `src/components/aiSettingsTabs.test.tsx` 4/4 ✓）——
+>   本块**下面那条写"第 3 招未做"的行已被这条取代** ✓（保留它只为留痕：它记录了"上一轮为什么停在干净点" ✓）。
+>   连带两处"进那一块的口子"改到页签上（`aiSettingsCoverage.test.tsx` 的 `mount()` 先点「全库索引」✓；
+>   `aiSettingsDisclosure.test.tsx` 的找组函数先切同名页签 ✓）—— **两处断言文案逐字没改** ✓。
+>   途中 `)}` 放错一层 ⇒ `tsc` 报 `TS1381` ✓ ⇒ 对着改前备份件逐行比缩进后修正 ✓。
 > - **第 1 招（关闭状态隐藏配置）** ✅ 提交 `38deac0b` —— 判据 `src/components/aiSettingsDisclosure.test.tsx`（5/5 ✓，
 >   改前逐字红：`expected 5 to be +0` ✓）；真窗口读数：关 ⇒ 控件 **0** ＋ 灰框在 ✓，开 ⇒ 控件 **5** ✓。
 > - **第 2 招（左侧 11 项 → 4 组）** ✅ 提交 `de4a4741` —— 判据 `src/components/settingsNavGroups.test.ts`（5/5 ✓，
