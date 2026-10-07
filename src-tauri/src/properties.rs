@@ -308,7 +308,7 @@ pub(crate) fn get_page_props_impl(c: &Connection, page_id: &str) -> Result<Vec<P
 }
 
 #[tauri::command]
-pub fn get_page_props(db: State<'_, Db>, page_id: String) -> Result<Vec<PageProp>, String> {
+pub async fn get_page_props(db: State<'_, Db>, page_id: String) -> Result<Vec<PageProp>, String> {
     let c = conn(&db);
     get_page_props_impl(&c, &page_id)
 }
