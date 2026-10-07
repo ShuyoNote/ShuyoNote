@@ -56,8 +56,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 78 条（contract 52 / smoke 3 / sync 1 / plugin 4 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 271 / web 255 / CommandMap 272
-基线下限（与 tests/baseline.json 逐字一致，共 14 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2730 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+门禁 79 条（contract 52 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 271 / web 255 / CommandMap 272
+基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2730 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -116,6 +116,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | browser | `check-pdf-reload` | StrictMode 下 PDF 二次加载交回已 detach 的 buffer（8 断言） |
 | browser | `check-panel-layout` | "文字被挤成一条竖柱"这类纯几何问题（61 断言；⭐ 2026-10-08 起还量**知识地图卡片的长名是否折行**——长名必须**单行 ＋ 省略号**，折行会把卡片顶高、名字被断成两截 ✓） |
 | browser | `check-web-build` | 构建产物打不开：v1.84.1 删掉 sql.js wasm / pdf worker，页面照开但 DB 初始化失败（13 断言；⭐ 2026-10-08 起还量 **AI 设置页的单卡宽度**与**正文不重复面板名**——真 Chromium 打开那一页取几何与 DOM ✓） |
+| browser | `check-editor-table-gesture` | **在表格单元格上拖选就报 `Lexical error #335`**（＝`tableObserver not found for tableKey`）：owner 2026-10-08 贴来的 1.92.6 生产控制台日志连发 6 次。⭐ 它抓的**第二层**才是真因 —— 2026-10-01 那次修复**只打在 `LexicalTable.dev.*`**，而线上走 `production` 产物 ⇒ **从没生效** ✗；本门禁跑 `pnpm build:web` 的**真产物**，只修 dev 的回归会当场变红（5 断言：① 只拖选必须 0 行；② 拖拽中表被撤掉也必须 0 行——②**先断言前提**"撤销后表真的没了"，否则它是空判据 ✗。⚠️ 判据要靠**真指针**：合成 `MouseEvent` 触不到 pointer 手势 ⇒ 会假绿） |
 | mobile | `mobile-layout` / `mobile-overlays` | 窄屏布局与浮层三类"功能直接不可用且不报错"的坏法（43 / 979 断言） |
 | rust | `rust-test` / `rust-plugins-alone` | Rust 单测 + 宿主子进程集成；插件测试必须能**单独跑**（2026-09-13：单跑必红、全量反而绿） |
 | —（**不在日常 CI**） | ⭐ **T-10 十台设备**（`scripts/verify-mesh-ten-devices.mjs`，owner 拍 R118＝A′ ⇒ **单开手动 workflow**） | `U14`（单空间最多 10 台）四条判据的唯一承载（10 个真窗口 ＋ 60 秒真实编辑窗 ＋ 10 份独立库）。**为什么不在日常 CI**：它**负载敏感** —— 空闲机器上四条全绿（最差落后 6.6–9.6s ≤ 10s／1.8 次/秒 ≤ 2、合计 18.0 ≤ 18／合并余量 10% ≤ 20% ✓），而 **CI #932 实测（GitHub 共享 runner）**`✗ 最差落后 70713 ms ≤ 10000 ms` ＋ `✗ cargo test exit=101`、**`attempts=2`（重试一次仍红）** ⇒ 塞进去就是给每次 push 加一条基本必红的门禁 ✗（阈值来自 `U14` 规格，⛔ 不放宽）。**用法**：GitHub 上手动派 `.github/workflows/mesh-ten-devices.yml`（只 `workflow_dispatch`），逐项读数作为**工件**上传（照 `gm-conformance-tongsuo.yml` 那套 ✓）；也可本机 `node scripts/verify-mesh-ten-devices.mjs`。⚠️ **口径**：回环 ＋ 手工对端清单 ⇒ **绕过发现层**，结论只能当**下界**；**真机 10 台（`M-10`）不在它里面** ✗（⛔ 不许把它的绿写成「真机 10 台通过」）。⚠️ 本机 Windows 跑不了它的 `cargo test`（测试 exe 缺 v6 清单，见「已知边界」）|

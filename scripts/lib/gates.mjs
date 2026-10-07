@@ -721,6 +721,19 @@ export const GATES = [
     flaky: true,
     incident: "v1.84.1：按静态引用过滤删旧文件，把 sql.js wasm / pdf worker 删了 ⇒ 页面照开、DB 初始化失败",
   },
+  {
+    id: "check-editor-table-gesture",
+    group: "browser",
+    label: "表格拖选不报 Lexical #335（真实 Chromium ＋ 真指针）",
+    cmd: ["pnpm build:web", "node scripts/check-editor-table-gesture.mjs"],
+    baseline: true,
+    counters: "auto",
+    flaky: true,
+    // ⚠️ incident 必须写**真事**：owner 2026-10-08 贴来 1.92.6 生产控制台日志，`#335` 连发 6 次。
+    // 而真正抓到的那一层是：2026-10-01 的修复**只打在 `LexicalTable.dev.*`**，线上走 `production` ⇒ 从没生效 ✗。
+    incident:
+      "表格里拖选单元格就报 `Lexical error #335`（`tableObserver not found for tableKey`）—— owner 2026-10-08 的生产日志连发 6 次；真因是那次修复**只打在 dev 产物**、而线上/发布版走 `production` ⇒ 从没生效（本门禁跑真构建，只修 dev 的回归会当场变红）",
+  },
 
   // ---- mobile（需先起 dev server）----
   // browser / mobile 这两组要真实 Chromium（+ dev server），是仓库里唯一有 flake 风险的档。
@@ -909,6 +922,7 @@ export const DEFAULT_GROUP_FORBIDDEN = [
   "check-pdf-reload",
   "check-panel-layout",
   "check-web-build",
+  "check-editor-table-gesture",
   "build:web",
   "verify-mobile-layout",
   "verify-mobile-overlays",

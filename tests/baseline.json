@@ -14,7 +14,8 @@
     "rust-no-sm-crypto": 401,
     "check-search-platform-parity": 4,
     "check-mcp-audit-single-ledger": 7,
-    "check-mcp-bridge-stdout": 9
+    "check-mcp-bridge-stdout": 9,
+    "check-editor-table-gesture": 5
   },
   "gates": {
     "contract": [
@@ -89,6 +90,7 @@
       "two-device-sync"
     ],
     "browser": [
+      "check-editor-table-gesture",
       "check-panel-layout",
       "check-pdf-reload",
       "check-web-build"
