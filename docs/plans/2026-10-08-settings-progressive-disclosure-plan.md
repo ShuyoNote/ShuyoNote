@@ -1,6 +1,7 @@
 # 设置面板「分层 + 渐进式披露」方案（v2 · 已按评审修订）
 
 状态：施工中（自主迭代）· 第 1 招、第 2 招已落地 · 第 3 招判据已先行、实现待做 · 第 4、5 招未开工
+证据：第 1 招 `src/components/aiSettingsDisclosure.test.tsx`（提交 38deac0b）｜第 2 招 `src/components/settingsNavGroups.test.ts`（提交 de4a4741）｜本方案 `docs/plans/2026-10-08-settings-progressive-disclosure-plan.md`
 
 > **进度（2026-10-08，windows 侧自主迭代 ✓）**
 > - **第 1 招（关闭状态隐藏配置）** ✅ 提交 `38deac0b` —— 判据 `src/components/aiSettingsDisclosure.test.tsx`（5/5 ✓，
