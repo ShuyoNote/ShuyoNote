@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { isDesktopPlatform } from "../lib/platform";
 import { useNotes } from "../store/notes";
 import { useViewStore } from "../store/view";
 
@@ -285,6 +286,25 @@ registerCommandGroup({
       run: () => {
         useEditorStore.getState().openSettings();
         return "已打开设置";
+      },
+    },
+    {
+      // ⭐ 2026-10-08 第 4 招（owner 拍板 ✓）：给「外部 AI 接入（MCP）」补一条命令面板入口 ✓。
+      //   事实核对：面板里**已经有**「管理插件」（`plugin.manage` ✓）与「AI 助手」（⇒ `openSettings("ai")` ✓）
+      //   ⇒ 本招真正缺的只有 MCP 这一条 ✗（Ctrl+K 搜不到 ⇒ 用户以为没这功能 ✓）。
+      //   ⚠️ **Web 版必须拦住** ✗：那一格在 Web 版**整个不出现**（`SettingsDialog.tsx` 按
+      //      `isDesktopPlatform()` 过滤 ✓）⇒ 直接 `openSettings("mcp")` 会把用户丢进**空白页** ✗
+      //      （与"浮层不登记 ⇒ 安卓返回键退出应用"同族：⛔ 都不许开出死路 ✓）。
+      id: "settings.mcp",
+      title: "外部 AI 接入（MCP）",
+      description: "谁能连我的库：本机通道默认关闭、只绑回环",
+      closeOnRun: true,
+      run: () => {
+        if (!isDesktopPlatform()) {
+          return "Web 版没有本机通道，这一项只在桌面版可用";
+        }
+        useEditorStore.getState().openSettings("mcp");
+        return "已打开「外部 AI 接入」";
       },
     },
     {

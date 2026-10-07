@@ -1,9 +1,15 @@
 # 设置面板「分层 + 渐进式披露」方案（v2 · 已按评审修订）
 
-状态：施工中（自主迭代）· 第 1、2、3 招交付完毕 · 第 4、5 招未开工
-证据：第 1 招 `src/components/aiSettingsDisclosure.test.tsx`（提交 38deac0b）｜第 2 招 `src/components/settingsNavGroups.test.ts`（提交 de4a4741）｜第 3 招 `src/components/aiSettingsTabs.test.tsx`（提交 84ccffd4）｜本方案 `docs/plans/2026-10-08-settings-progressive-disclosure-plan.md`
+状态：施工中（自主迭代）· 第 1、2、3、4 招交付完毕 · 第 5 招未开工
+证据：第 1 招 `src/components/aiSettingsDisclosure.test.tsx`（提交 38deac0b）｜第 2 招 `src/components/settingsNavGroups.test.ts`（提交 de4a4741）｜第 3 招 `src/components/aiSettingsTabs.test.tsx`（提交 84ccffd4）｜第 4 招 `src/plugins/builtinCommands.mcp.test.ts`｜本方案 `docs/plans/2026-10-08-settings-progressive-disclosure-plan.md`
 
 > **进度（2026-10-08，windows 侧自主迭代 ✓）**
+> - ⭐ **第 4 招交付完毕**（判据 `src/plugins/builtinCommands.mcp.test.ts` 3/3 ✓）——
+>   **先核过事实再动手** ✓：面板里**已经有**「管理插件」（`plugin.manage` ⇒ `setManagerOpen(true)` ✓）
+>   与「AI 助手」（⇒ `openSettings("ai")` ✓）；设置「插件」那一格**也已经有**「打开插件管理」✓（L1313/L1322 ✓）
+>   ⇒ 本招真正缺的**只有 MCP 那一条** ✗ ⇒ 只补了它 ✓（⛔ 没新造浮层 ✓）。
+>   判据守两件：命令**在不在** ✓；**Web 版不许被开进空白页** ✗（那一格按 `isDesktopPlatform()` 过滤 ⇒
+>   Web 版执行只返回一句说明、**不** `openSettings("mcp")` ✓）。
 > - ⭐ **第 3 招交付完毕**（提交 `84ccffd4` ✓，判据 `src/components/aiSettingsTabs.test.tsx` 4/4 ✓）——
 >   本块**下面那条写"第 3 招未做"的行已被这条取代** ✓（保留它只为留痕：它记录了"上一轮为什么停在干净点" ✓）。
 >   连带两处"进那一块的口子"改到页签上（`aiSettingsCoverage.test.tsx` 的 `mount()` 先点「全库索引」✓；
