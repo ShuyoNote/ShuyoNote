@@ -24,10 +24,21 @@ function formatWhen(ms: number): string {
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`;
 }
 
+/**
+ * 每页保留的版本份数上限 —— ⚠️ **权威是 Rust 的 `versions.rs::MAX_VERSIONS_PER_PAGE`**
+ * （它才是真删东西的那个；web 侧同口径 ✓）。这里只是把它**明示**给用户（本仓忌"悄悄丢东西" ✗）。
+ * ⛔ 两个数不许漂：判据 `historyPanelInspect.test.ts` ④ 直接读 `versions.rs` 比一比 ✓。
+ */
+export const VERSION_CAP = 50;
+
 export function HistoryPanel({ pageId }: { pageId: string }) {
   const [versions, setVersions] = useState<PageVersion[]>([]);
   const [loading, setLoading] = useState(false);
   const [clearing, setClearing] = useState(false);
+  // ★ 2026-10-08（owner：「优化一下版本历史功能」）：**先看再恢复** —— 哪一条被展开着。
+  //   为什么必须：列表数据本来就带**整篇正文**（`versions.rs` 的 `PageVersion`），而面板原先只显示 40 字
+  //   ⇒ 用户是**盲着**按「恢复」（破坏性操作 ✗）。现在恢复按钮**只在展开之后**出现 ✓（判据 ①②）。
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   // 窄屏 / 矮视口的形态与其余浮层一致：不再锚定触发按钮，而是带 `is-sheet` 走底部弹层
   // （见 hooks/usePopover.ts 与 App.css 末尾那段）。原来它只是 CSS 里的
@@ -67,7 +78,16 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
   }, [open, close]);
 
   const restore = async (versionId: string) => {
-    if (!(await confirmDialog({ title: "恢复版本", message: "恢复到该版本？当前内容将被覆盖。" }))) return;
+    // ★ 2026-10-08：文案**与事实对齐** —— 恢复前会把当前内容先快照进历史
+    //   （Rust `versions.rs:138` / web `web.ts:3476`，注释逐字 "so a restore is reversible" ✓）
+    //   ⇒ 旧文案「当前内容将被覆盖」读起来像"一去不返"，是**误导** ✗（判据 ③ 钉着它不许回来）。
+    if (
+      !(await confirmDialog({
+        title: "恢复版本",
+        message: "恢复到这一版？当前内容会**先存成一条历史版本**，之后你还能再恢复回来。",
+      }))
+    )
+      return;
     try {
       const page = await api.restoreVersion(versionId);
       // 三个都是 store 动作（引用恒定）⇒ 走 getState() 现取：本面板不读 notes 的任何
@@ -77,6 +97,7 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
       // 编辑器以 `reloadTick` 作为 key 才会重挂载并重新读取 content_json；恢复当前页时
       // pageId 不变，必须 bump reload 才能让编辑器刷新成恢复后的内容。
       notes.bumpReload();
+      setExpanded(null);
       close();
       load();
       notes.openPage(page.id);
@@ -137,23 +158,50 @@ export function HistoryPanel({ pageId }: { pageId: string }) {
               {clearing ? "清空中…" : "清空"}
             </button>
           </div>
+          {/* ★ 2026-10-08：**把上限明示出来** —— 超过上限的更早版本是被**真删掉**的
+              （`versions.rs` 的 `MAX_VERSIONS_PER_PAGE`），界面原先一个字都没说 ✗
+              （本仓最忌"悄悄丢东西"）。数字与 Rust 常量由判据 ④ 钉成一致 ✓。 */}
+          <div className="history-note">{`每页最多保留最近 ${VERSION_CAP} 份，更早的会被自动清理`}</div>
           {versions.length === 0 ? (
             <div className="history-empty">{loading ? "加载中…" : "暂无历史版本"}</div>
           ) : (
-            versions.map((v, i) => (
-              <div key={v.id} className="history-item">
-                <div className="history-meta">
-                  <div className="history-time-row">
-                    <span className="history-time">{formatWhen(v.created_at)}</span>
-                    {i === 0 && <span className="history-newest">最新</span>}
+            versions.map((v, i) => {
+              // ⚠️ 正文**只读这一处**：摘要与整篇预览复用同一个值 ✓
+              // （`check-doc-content-access` 只减不增 —— 这条直面计数由它守 ✓：
+              //   把"摘要一次、整篇又一次"写成两处会当场 +1 ✗，本仓栽过同形的坑）。
+              const full = v.content_text;
+              return (
+                <div key={v.id} className={`history-item${expanded === v.id ? " is-open" : ""}`}>
+                  <div className="history-meta">
+                    <button
+                      className="history-row"
+                      onClick={() => setExpanded((cur) => (cur === v.id ? null : v.id))}
+                      aria-expanded={expanded === v.id}
+                      title={expanded === v.id ? "收起" : "展开看这一版的全文"}
+                    >
+                      <span className="history-time-row">
+                        <span className="history-time">{formatWhen(v.created_at)}</span>
+                        {i === 0 && <span className="history-newest">最新</span>}
+                      </span>
+                      <span className="history-preview">{full.slice(0, 40) || "(空)"}</span>
+                    </button>
+                    {/* ★ **先看再恢复**：全文预览（数据里本来就带整篇 ✓）＋ 恢复按钮
+                        **只在展开之后**出现 —— 折叠态那个 40 字预览下不允许按恢复 ✗（判据 ①②）。 */}
+                    {expanded === v.id && (
+                      <div className="history-full-wrap">
+                        <pre className="history-full">{full || "(空)"}</pre>
+                        <div className="history-full-foot">
+                          <span className="history-full-hint">恢复后，当前内容会先存成一条历史版本</span>
+                          <button className="history-restore" onClick={() => restore(v.id)}>
+                            恢复这一版
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <span className="history-preview">{v.content_text.slice(0, 40) || "(空)"}</span>
                 </div>
-                <button className="history-restore" onClick={() => restore(v.id)}>
-                  恢复
-                </button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       )}

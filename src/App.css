@@ -3399,6 +3399,71 @@ select.sync-input {
   background: var(--hover);
 }
 
+/* ⭐ 2026-10-08（owner：「优化一下版本历史功能」）：**先看再恢复**那一套的样式。
+   `.history-row` 是"点一下展开/收起"的那一行（整行可点 ⇒ 命中区够大 ✓）；
+   `.history-full` 是展开后的**整篇**预览（可滚动、等宽、保留换行 ✓）；
+   `.history-note` 把"每页最多保留最近 N 份"明示出来（本仓忌"悄悄丢东西" ✗）。 */
+.history-note {
+  padding: 0 8px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-full-wrap {
+  margin-top: 6px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.history-full {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.history-full-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.history-full-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.history-item.is-open {
+  align-items: flex-start;
+  background: var(--hover);
+}
+
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
