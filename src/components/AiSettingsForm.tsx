@@ -442,34 +442,30 @@ export function AiSettingsForm({
         </div>
 
         {/* ===== 全库索引 ===== */}
-        <div className="ai-settings-group">
+        <div className="ai-settings-group ai-index">
           <div className="ai-settings-group-title">
             <span>全库索引</span>
           </div>
 
-          <p className="ai-settings-brief">
+          <p className="ai-settings-brief ai-index-sub">
             把已有的页面与附件抽成文本并切块 —— AI 只有索引过内容才搜得到它。
             可以重复点：已索引的部分几乎不花时间（中断后重跑也只补没做完的）。
           </p>
 
-          <div className="ai-settings-test">
-            <button className="ai-settings-test-btn" onClick={runIndex} disabled={indexing || !indexAvail.supported}>
+          <div className="ai-settings-test ai-index-actions">
+            <button className="ai-settings-test-btn ai-index-btn-primary" onClick={runIndex} disabled={indexing || !indexAvail.supported}>
               {indexing ? "索引中…" : "开始索引"}
             </button>
             {indexing && indexProgress && (
-              <div className="ai-settings-test-msg">
+              <div className="ai-settings-test-msg ai-index-progress">
                 {`已处理 ${indexProgress.done} / ${indexProgress.total} · ${indexProgress.label}`}
                 <div
                   aria-hidden="true"
-                  style={{ marginTop: 6, height: 4, borderRadius: 2, background: "var(--border, #ddd)" }}
+                  className="ai-index-bar"
                 >
                   <div
                     style={{
                       width: `${Math.round(indexProgress.ratio * 100)}%`,
-                      height: "100%",
-                      borderRadius: 2,
-                      background: "var(--accent, #4c8bf5)",
-                      transition: "width .15s linear",
                     }}
                   />
                 </div>
@@ -483,8 +479,8 @@ export function AiSettingsForm({
           </div>
 
           {/* 检查索引覆盖：AI 能问「库里覆盖到哪」，人来这里看同一条答案 */}
-          <div className="ai-settings-test">
-            <button className="ai-settings-test-btn" onClick={checkCoverage} disabled={checkingCoverage}>
+          <div className="ai-settings-test ai-index-actions ai-index-actions-second">
+            <button className="ai-settings-test-btn ai-index-btn-second" onClick={checkCoverage} disabled={checkingCoverage}>
               {checkingCoverage ? "检查中…" : "检查索引覆盖"}
             </button>
             <span className="ai-settings-brief" style={{ marginLeft: 8 }}>
@@ -492,7 +488,7 @@ export function AiSettingsForm({
             </span>
             {coverageError && <div className="ai-settings-test-msg bad">{`检查失败：${coverageError}`}</div>}
             {coverage?.ok && (
-              <div className="ai-settings-test-msg ok">
+              <div className="ai-settings-test-msg ok ai-index-coverage">
                 {coverage.summary}
                 <div className="ai-settings-brief" style={{ marginTop: 4 }}>
                   {`附件：已索引 ${coverage.report.attachments.indexed} · 没抽全 ${coverage.report.attachments.partial} · ` +
@@ -505,7 +501,7 @@ export function AiSettingsForm({
                     `派生 ${coverage.report.derived.segments} 段 / ${coverage.report.derived.chars} 字｜块 ${coverage.report.chunks.total}`}
                 </div>
                 {coverage.report.gaps.length > 0 && (
-                  <div className="ai-settings-brief" style={{ marginTop: 4 }}>
+                  <div className="ai-settings-brief ai-index-gaps">
                     {`缺口 ${coverage.report.gapsTotal} 条` +
                       (coverage.report.gapsTruncated ? `（只列前 ${coverage.report.gaps.length} 条，不是全部）` : "")}
                     ：

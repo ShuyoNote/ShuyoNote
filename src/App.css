@@ -23819,3 +23819,103 @@ body.is-plugin-panel-open .main {
   background: var(--surface-2, rgba(0, 0, 0, 0.03));
   border-top: 1px dashed var(--border);
 }
+/* ⭐ 2026-10-07（owner：「这个面板太丑了」✗）：AI 设置里的「全库索引」面板。
+   取舍：**一个字都不改文案** ✓ —— `aiSettingsCoverage.test.tsx` 断言了逐字那句话 ✓；
+   这里只做「卡片化 ＋ 主次分明 ＋ 进度条有类名 ＋ 消息两种面貌」 ✓。 */
+.ai-index {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ai-index .ai-settings-group-title {
+  margin-bottom: 2px;
+}
+.ai-index-sub {
+  margin: 2px 0 0;
+  color: var(--text);
+  line-height: 1.6;
+}
+/* 主次分明的按钮排 ✓ */
+.ai-index-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.ai-index-actions-second {
+  padding-top: 2px;
+}
+.ai-index-btn-primary,
+.ai-index-btn-second {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.ai-index-btn-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.ai-index-btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.ai-index-btn-second {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.ai-index-btn-second:hover:not(:disabled) {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
+.ai-index-btn-primary:disabled,
+.ai-index-btn-second:disabled {
+  opacity: .5;
+  cursor: default;
+}
+/* 进度：类名化（原来是一串内联样式 ✓），并让数字用等宽对齐 ✓ */
+.ai-index-progress {
+  font-variant-numeric: tabular-nums;
+}
+.ai-index-bar {
+  margin-top: 8px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+.ai-index-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .15s linear;
+}
+/* 覆盖结果：数字那一长行给它呼吸感 + 等宽数字 ✓（文案一个字不改 ✓） */
+.ai-index-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-index-coverage .ai-settings-brief {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.75;
+}
+/* 缺口明细：等宽 + 可滚（原来是一坨换行文本 ✗） */
+.ai-index-gaps {
+  max-height: 168px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.03));
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
