@@ -118,3 +118,32 @@ export function mermaidInitOptions(theme: "dark" | "default"): Record<string, un
     flowchart: { curve: "basis" },
   };
 }
+
+/**
+ * ⭐ 2026-10-07（owner 截图：「中心节点文本偏心了」✗）——**先量后改**的真读数
+ *（在 dev 实例里真渲染 mindmap、再量 bbox ✓）：
+ *
+ *   | 配置 | 圈中心x | 根文本中心x | 偏心 |
+ *   | `htmlLabels:false`（我们为 PNG 导出刻意关的 ✓）| -9928 | -9898 | **30px** ✗ |
+ *   | `htmlLabels:true` | -9888 | -9888 | **0px** ✓ |
+ *   | 无 emoji ＋ `false` | -9885 | -9869 | **16px** ✗ |
+ *
+ * 偏心量 ≈ **文本宽的一半**（59/2 = 29.5 ✓、32/2 = 16 ✓）⇒ 真因**不是 emoji** ✗，
+ * 而是 mermaid 的 mindmap 在 `htmlLabels:false` 下给 `<text>` **没写 `text-anchor`**
+ *（探针量到该属性为空 ✓）⇒ SVG 默认 `start`（左对齐）⇒ 文字从圆心往右铺 ⇒ 看着偏心 ✓。
+ *
+ * 修法：**渲染后给 mindmap 的 `<text>` 补 `text-anchor="middle"`** ✓
+ *   · 只补**没有该属性**的那些 ✓（已经有的一个字不动 ✓）；
+ *   · 只在 mindmap 上用 ✓（flowchart / pie 等不吃这一套 ✗）。
+ *   ⛔ 不动 `htmlLabels` —— 那是 2026-10-05 为"下载 PNG"修的 ✗：
+ *      `htmlLabels:true` 会产出 `<foreignObject>` ⇒ canvas 变脏 ⇒ PNG 导出抛
+ *      `Tainted canvases may not be exported.` ✓（同一条事故，别再往回走 ✓）。
+ */
+export function centerMindmapLabels(svg: string): string {
+  const s = String(svg ?? "");
+  if (!s.includes("<text")) return s;
+  return s.replace(/<text\b([^>]*)>/g, (whole: string, attrs: string) => {
+    if (/\btext-anchor\s*=/.test(attrs)) return whole; // 已指定锚点 ⇒ 一个字不动 ✓
+    return `<text${attrs} text-anchor="middle">`;
+  });
+}

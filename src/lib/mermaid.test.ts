@@ -7,7 +7,7 @@
 // ⚠️ 只要有人把 `htmlLabels` 挪回 `flowchart` 里、或删掉，这条就会红 ✓
 //    （这条同时守住 `mdMermaid.ts` 当初写下的意图："要 SVG text label，布局不依赖宿主 CSS/字体"。）
 import { describe, expect, it } from "vitest";
-import { mermaidInitOptions, normalizeMindmapIndent } from "./mermaid";
+import { centerMindmapLabels, mermaidInitOptions, normalizeMindmapIndent } from "./mermaid";
 
 describe("mermaidInitOptions", () => {
   it("顶层就带 `htmlLabels: false`（挪进 `flowchart` 里等于没写）", () => {
@@ -57,5 +57,26 @@ describe("mindmap 没有缩进 ⇒ 按根节点挂（owner 两张截图的真因
   it("空的 / 只有指令 ⇒ 不报错、也不改", () => {
     expect(normalizeMindmapIndent("")).toEqual({ text: "", autoIndented: false });
     expect(normalizeMindmapIndent("mindmap")).toEqual({ text: "mindmap", autoIndented: false });
+  });
+});
+describe("mindmap 的 <text> 补 text-anchor（owner：「中心节点文本偏心了」）", () => {
+  it("★ 没有锚点的 <text> ⇒ 补 middle（实测：偏心 30px → 0px ✓）", () => {
+    const svg = '<svg><text x="10" y="20" class="mindmap-node">知乎</text></svg>';
+    expect(centerMindmapLabels(svg)).toBe('<svg><text x="10" y="20" class="mindmap-node" text-anchor="middle">知乎</text></svg>');
+  });
+
+  it("已经指定过锚点 ⇒ 一个字不动（⛔ 不覆盖作者/主题的选择 ✗）", () => {
+    const svg = '<svg><text text-anchor="start">甲</text><text text-anchor="middle">乙</text></svg>';
+    expect(centerMindmapLabels(svg)).toBe(svg);
+  });
+
+  it("没有 <text> ⇒ 原样返回（pie / flowchart 这些不吃这一套 ✓）", () => {
+    const svg = '<svg><rect width="10" height="10"/></svg>';
+    expect(centerMindmapLabels(svg)).toBe(svg);
+  });
+
+  it("⛔ 不误伤 <textPath> / <textarea> 这类同前缀标签（词边界 ✓）", () => {
+    const svg = '<svg><textPath href="#p">沿路径</textPath><textarea rows="1"></textarea></svg>';
+    expect(centerMindmapLabels(svg)).toBe(svg);
   });
 });

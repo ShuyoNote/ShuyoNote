@@ -13,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
-import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
+import { centerMindmapLabels, detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
 import { mermaidGate } from "../../lib/mermaidGate";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
@@ -271,7 +271,11 @@ function MermaidView({
         );
         setAutoIndentedNote(autoIndented); // 每次渲染按当前源文重算 ✓（源文改了就跟着变 ✓）
         if (seq !== renderSeq.current) return;
-        setSvg(out);
+        // ⭐ 2026-10-07（owner：「中心节点文本偏心了」）：mindmap 在 `htmlLabels:false` 下
+        // mermaid **不给 `<text>` 写 text-anchor** ⇒ SVG 默认左对齐 ⇒ 根节点文字偏向右侧
+        // （实测偏心 30px ≈ 文本宽的一半 ✓，无 emoji 时 16px ✓ = 同一个成因 ✓）。
+        // 补上 middle 后实测偏心 **0px** ✓。⛔ 不改 `htmlLabels`（那会让 PNG 导出变脏 ✗）。
+        setSvg((syntax || detectMermaidSyntax(renderSrc)) === "mindmap" ? centerMindmapLabels(out) : out);
         setError(null);
       } catch (e) {
         if (seq !== renderSeq.current) return;

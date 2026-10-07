@@ -243,4 +243,18 @@ describe("```mermaid 围栏 ⇒ mermaid 块（2026-10-05）", () => {
     expect(md).toContain("```mermaid");
     expect(md).toContain("flowchart LR");
   });
+
+  it("★ 缩进必须原样保住（owner 2026-10-07：「原始 md 文档有缩进，你转换时丢掉了」✗）", () => {
+    // 来由：owner 的 md 原稿里 mindmap 是**分层缩进**的 ✓，而存进应用的内容里缩进**全没了** ✗
+    //   ⇒ 图被 mermaid 当成"所有节点都是根" ⇒ 报 `There can be only one root` ✓。
+    //   ⚠️ 上面那条老判据（"源码原样保住" ✓）用的是 `"  A-->B"`，但只断言 `toContain("A-->B")`
+    //      ⇒ **它一直容忍缩进丢失** ✗ —— 这条补上那个缺口 ✓。
+    const md = ["```mermaid", "mindmap", "  root((R))", "    甲", "      乙", "```"].join("\n");
+    const all = flatten(convert(md));
+    const node = all.find((n) => n.type === "mermaid");
+    expect(node).toBeTruthy();
+    const src = String(node?.src ?? "");
+    // 逐行断言：第二行两格、第三行四格、第四行六格 —— 一格都不许少 ✓
+    expect(src.split("\n").slice(1, 4)).toEqual(["  root((R))", "    甲", "      乙"]);
+  });
 });
