@@ -171,10 +171,14 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     spaceSecurityOverview.mockResolvedValue([unclassified]);
     await render();
     expect(rows()).toHaveLength(1);
-    // ⚠️ 只断言**那一枚徽标**：`row.textContent` 里还含着下拉框的选项文案（「个人空间（…）」），
-    //    拿整行去 `not.toContain("个人空间")` 会误伤。
-    // ⚠️ **2026-10-04 改**：⭐ 空串不再显示成「未分类」✗ —— Rust 侧读出来就是个人空间 ✓（保守侧 ✓）。
-    expect(rows()[0].querySelector(".space-privacy-kind")!.textContent).toBe("个人空间");
+    // ⚠️ **2026-10-08（owner：「圈红的控件是不是可以去掉」✓）**：那枚「团队空间」**徽章已删** ——
+    //    它与下面那个下拉（`aria-label="空间分类"`）是**同一个字段 `v.kind` 的两份显示** ✓，
+    //    而下拉的选项本来就写着「个人空间（不经过服务器…）」/「团队空间（可以绑同步服务器）」⇒ 徽章是**纯重复** ✗。
+    //    ⇒ 判据随之改向（两半都钉）：① **那枚徽章不许回来** ② 读数由**下拉的当前值**承担（单一出处 ✓）。
+    //    ⚠️ 旁边的「明文／已加密」**不是重复**（下拉里没有加密状态）⇒ 它还在 ✓（见下一条断言）。
+    expect(rows()[0].querySelector(".space-privacy-kind")).toBeNull();
+    expect((rows()[0].querySelector("select") as HTMLSelectElement).value).toBe("personal");
+    expect(rows()[0].querySelector(".space-privacy-enc")!.textContent).toBe("明文");
   });
 
   it("② 个人空间没加密 ⇒ 行里不再有「不能绑」的裁决（真拦改在绑服务器那一刻）", async () => {
@@ -187,10 +191,13 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     expect(container.querySelector(".space-privacy-verdict")).toBeNull();
   });
 
-  it("③ 团队空间 ⇒ 显示为团队空间", async () => {
+  it("③ 团队空间 ⇒ 下拉的当前值就是 team（那枚徽章已删 ⇒ 别再指着一个不存在的元素）", async () => {
     spaceSecurityOverview.mockResolvedValue([team]);
     await render();
     expect(container.textContent).toContain("团队空间");
+    // ⚠️ **2026-10-08**：读数从徽章改成**下拉的当前值**（同一个 `v.kind`，但只留一处 ✓）
+    expect((selects()[0] as HTMLSelectElement).value).toBe("team");
+    expect(rows()[0].querySelector(".space-privacy-kind")).toBeNull();
     // ⚠️ **2026-10-04**：⭐ 原来还断言 `toContain("可以绑同步")`✗ —— 那是裁决文案，已随那一块去掉 ✓。
   });
 

@@ -1559,7 +1559,8 @@ html[data-platform="win"] .app-body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.space-privacy-kind,
+/* ⚠️ 2026-10-08：`.space-privacy-kind`（那枚「个人空间／团队空间」徽章）**已删** ——
+   与下面那个下拉是同一个字段的两份显示 ⇒ 它的三条 CSS 一并删掉（别留死规则 ✓）。 */
 .space-privacy-enc {
   flex: none;
   padding: 1px 6px;
@@ -1568,8 +1569,6 @@ html[data-platform="win"] .app-body {
   font-size: 11px;
   color: var(--text-dim);
 }
-.space-privacy-kind.is-personal,
-.space-privacy-kind.is-team { border-color: var(--border-strong); color: var(--text); }
 .space-privacy-gate { font-size: 11px; line-height: 1.6; }
 .space-privacy-gate.is-allow { color: var(--text-dim); }
 .space-privacy-gate.is-block { color: var(--danger); }

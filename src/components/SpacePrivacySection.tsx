@@ -16,11 +16,9 @@ import { isDesktopPlatform, platform } from "../lib/platform";
 import { inlineMd } from "../lib/inlineMd";
 import { refreshVault } from "../lib/vault";
 
-const KIND_LABEL: Record<SpaceKind, string> = {
-  personal: "个人空间",
-  team: "团队空间",
-  // ⚠️ **2026-10-04 去掉**「未分类」这一档（owner：未分类按个人空间处理）—— ⭐ 存量老空间读出来就是个人 ✓
-};
+// ⚠️ **2026-10-08 去掉**：这里原来有个 `KIND_LABEL: Record<SpaceKind, string>`（个人空间／团队空间）——
+//   它只服务名字行上那枚**徽章**，而徽章与下面的下拉是**同一个字段的两份显示** ⇒ 一起删了 ✓
+//   （owner：「圈红的控件是不是可以去掉」✓；⛔ 别加回来，判据钉着那枚徽章必须不存在 ✓）。
 
 /**
  * ★ "开启加密前先勾一下"这个前置：**为什么还在**（`ackNoRecovery`，owner 2026-09-25 拍板 A2）。
@@ -206,7 +204,11 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
               <span className="space-privacy-name" title={v.space_id}>
                 {nameOf ? nameOf(v.space_id) : v.space_id}
               </span>
-              <span className={`space-privacy-kind is-${v.kind || "unknown"}`}>{KIND_LABEL[v.kind]}</span>
+              {/* ⭐ **2026-10-08 去掉**（owner：「圈红的控件是不是可以去掉」✓）：这里原来还有一枚
+                  「个人空间／团队空间」**徽章**（`.space-privacy-kind`）✗ —— 它与下面那个下拉
+                  （`aria-label="空间分类"`，`value={v.kind}`）是**同一个字段的两份显示** ⇒ 纯重复 ✓。
+                  ⚠️ 旁边的 `.space-privacy-enc`（明文／已加密）**留着** —— 下拉里没有加密状态，
+                  它不是重复 ✓。⛔ 别把那枚徽章加回来（判据钉着 `querySelector(".space-privacy-kind") === null`）。 */}
               <span className="space-privacy-enc">{encrypted ? "已加密" : "明文"}</span>
               {/* ⚠️ **2026-10-04 去掉**（owner 选的方向：那一块整个拿掉）：
                   ⭐ 原来这里有个「裁决」徽标（✅ 可以绑同步 / ⛔ 不能绑同步 / ⚠️ 闸门没管到）✗ ——
