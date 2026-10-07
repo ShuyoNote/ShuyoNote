@@ -7,7 +7,8 @@
 // chunk — Tauri/Web 正式版下动态 chunk 的相对路径可能解析失败，布局依赖(dagre)未
 // 加载 → subgraph 全叠成一整块(开发版好、正式版坏)。静态引入根治该问题。
 import mermaid from "mermaid";
-import { centerMindmapRootLabel, detectMermaidSyntax, mermaidInitOptions } from "./mermaid";
+import { mermaidInitOptions } from "./mermaid";
+import { fixMindmapRootAnchors } from "./mindmapLabel";
 import { mermaidGate } from "./mermaidGate";
 // ⚠️ 2026-10-06（owner：「开发版没有错误，正式版有」✗）：这里原先有一对
 //    `mermaidReady` / `mermaidTheme`（"本文件初始化一次" ✓）—— 它只管得住**本文件** ✗，
@@ -44,7 +45,9 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
       );
       // ⭐ 2026-10-07（owner：「中心节点文本偏心了」）：mindmap 的 `<text>` 补 text-anchor
       // —— mermaid 在 `htmlLabels:false` 下不写这个属性 ⇒ SVG 默认左对齐 ⇒ 偏心（实测 30px ≈ 文本宽一半 ✓）。
-      svgHost.innerHTML = detectMermaidSyntax(src) === "mindmap" ? centerMindmapRootLabel(svg) : svg;
+      svgHost.innerHTML = svg;
+      // ⭐ 同步量着修（与 MermaidNode 同一条规则 ✓）
+      fixMindmapRootAnchors(svgHost);
       el.setAttribute("data-done", theme);
       el.setAttribute("data-ok", "1");
     } catch (e) {

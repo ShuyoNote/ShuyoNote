@@ -10,10 +10,11 @@ import {
   type SerializedLexicalNode,
   type Spread,
 } from "lexical";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
-import { centerMindmapRootLabel, detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
+import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
+import { fixMindmapRootAnchors } from "../../lib/mindmapLabel";
 import { mermaidGate } from "../../lib/mermaidGate";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
@@ -227,6 +228,16 @@ function MermaidView({
   const [editSyntax, setEditSyntax] = useState(syntax || detectMermaidSyntax(src));
   const renderSeq = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  // ⭐ 2026-10-07（owner：「中心节点文本**又**偏心了」✗）：渲染完**在 DOM 上量着修** ✓。
+  //   真窗口实测：圈宽 84 / 文字宽 64 / `text-anchor = null` ⇒ 偏心 **+32px**（= 文字宽的一半 ✓）。
+  //   ⚠️ 用 `useLayoutEffect`（**画之前**修 ✓）：否则会先闪一下偏的、再跳正 ✗。
+  //   ⛔ 只碰"圆心与文字对不上"的那一个 `<text>` ✓（见 `lib/mindmapLabel.ts` 的注释 ✓）。
+  useLayoutEffect(() => {
+    if (!svg) return;
+    const el = rootRef.current;
+    if (!el) return;
+    fixMindmapRootAnchors(el);
+  }, [svg]);
   const resolved = useResolvedTheme(); // re-render mermaid when the theme changes
   const mermaidTheme: "dark" | "default" = resolved === "dark" ? "dark" : "default";
   const size = useMemo(() => intrinsicSize(svg), [svg]);
@@ -275,7 +286,11 @@ function MermaidView({
         // mermaid **不给 `<text>` 写 text-anchor** ⇒ SVG 默认左对齐 ⇒ 根节点文字偏向右侧
         // （实测偏心 30px ≈ 文本宽的一半 ✓，无 emoji 时 16px ✓ = 同一个成因 ✓）。
         // 补上 middle 后实测偏心 **0px** ✓。⛔ 不改 `htmlLabels`（那会让 PNG 导出变脏 ✗）。
-        setSvg((syntax || detectMermaidSyntax(renderSrc)) === "mindmap" ? centerMindmapRootLabel(out) : out);
+        // ⭐ 2026-10-07（owner：「中心节点文本**又**偏心了」✗，真窗口实测：圈宽 84 / 文字宽 64 /
+        //   text-anchor = null ⇒ 偏心 **+32px** = 文字宽的一半 ✓）：
+        //   **字符串规则认根不可靠** ✗（同一窗口里有的图认得到、有的认不到 ✓）⇒ 改成**量着修** ✓：
+        //   先原样插进 DOM ✓，再由下面的 effect 按"文字中心 vs 圆心"修 ✓（`lib/mindmapLabel.ts` ✓）。
+        setSvg(out);
         setError(null);
       } catch (e) {
         if (seq !== renderSeq.current) return;

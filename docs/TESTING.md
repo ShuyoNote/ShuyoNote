@@ -57,7 +57,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 
 <!-- facts:begin -->
 门禁 78 条（contract 52 / smoke 3 / sync 1 / plugin 4 / browser 3 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 25 条 · 命令 Rust 271 / web 255 / CommandMap 272
-基线下限（与 tests/baseline.json 逐字一致，共 14 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2703 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 55 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+基线下限（与 tests/baseline.json 逐字一致，共 14 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2708 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 55 · check-web-build 9 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
