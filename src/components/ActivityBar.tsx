@@ -10,7 +10,6 @@ import { SearchPanel } from "./SearchPanel";
 import {
   PageIcon,
   FolderIcon,
-  BoardIcon,
   GraphIcon,
   TimelineIcon,
   TagIcon,
@@ -36,7 +35,17 @@ import {
 const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
-  { id: "board", labelKey: "nav.board", icon: <BoardIcon width={18} height={18} /> },
+  // ⭐ **2026-10-08 去掉**（owner：「去掉侧边工具栏中系统看板的一级入口图标」✓）：
+  //   `{ id: "board", labelKey: "nav.board", icon: <BoardIcon … /> }` 这一条**已删** ✗。
+  //   ⚠️ **视图本身没删** —— 「系统看板」（`BoardView`）仍然可达，走**命令面板**那条真路径：
+  //   `Ctrl+K` →「打开看板」（`view.board`，见 `plugins/builtinCommands.ts` ✓）。
+  //   ⛔ 别把这颗图标加回来：判据钉着「竖条里没有 Board/系统看板」（`activityBarLlmWiki.test.tsx`，
+  //   中英两种 title 都覆盖 ✓）；也⛔ 别因为"竖条里看不见了"就把 `BoardView` / `view.board` 一起删掉 ✗
+  //   （那是把"入口"和"视图"混为一谈 —— 浏览器门禁 `scripts/verify-mobile-views.mjs` 的 board
+  //   用例现在**就是**用命令面板打开它 ✓，那正是用户现在打开它的那条路）。
+  //   ⚠️ 连带影响（**已记**，不是没想到）：`activity` 现在不会再变成 `"board"` 被竖条点亮 ——
+  //   从命令面板进看板时**没有图标是亮的**（`isActivity("board")` 仍成立、`Activity` 类型仍含它 ✓，
+  //   只是竖条上不再有对应那颗 ⇒ 没有"当前活动"可高亮）。这是"去掉一级入口"的必然结果 ✓。
   { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
   { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
   // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）

@@ -122,4 +122,13 @@ describe("侧边工具栏：知识地图下面的 LLM Wiki 图标按钮", () => 
     // ④ 也不许写死颜色（写死就变成"深色主题下还是那个色" ✗）
     expect(/stroke="#|fill="#/.test(wikiSvg.innerHTML)).toBe(false);
   });
+
+  it("★ 竖条里**没有**「系统看板」那颗一级入口（owner 2026-10-08 要求去掉）", () => {
+    // ⚠️ 按 title 的**两种语言**都覆盖（CI 的 Chromium 是 en-US ⇒ 只按中文找会假绿 ✗，本仓栽过 ✓）：
+    //    竖条里只有 `nav.board` 这一条会是「系统看板」/“Board”，其余六项都不含 Board ✓。
+    const titles = btns().map((b) => b.getAttribute("title") ?? "");
+    expect(titles.some((t) => /系统看板|Board/i.test(t)), `竖条里不该再有系统看板的入口（实测 title：${titles.join(" ｜ ")}）`).toBe(false);
+    // ⚠️ 另一半（视图**不许被一起删掉**）不在这里钉：它由**命令面板那条真路径**在浏览器门禁里验
+    //    （`scripts/verify-mobile-views.mjs` 的 board 用例现在走 Ctrl+K →「打开看板」✓）＋ 本轮的真构建探针 ✓。
+  });
 });
