@@ -22,6 +22,7 @@ import {
   type TimelineDay,
 } from "../lib/kbTimeline";
 import { useNotes } from "../store/notes";
+import { toast } from "../store/toast";
 import type { ActivityBlockChange, ActivityEvent } from "../types";
 
 /** 一行里最多摆几个块标签 ✓（再多就折成一句「另有 N 段」✓）。 */
@@ -46,6 +47,13 @@ export function TimelineReview() {
   const { t } = useTranslation();
   const pages = useNotes((s) => s.pages);
   const openPage = useNotes((s) => s.openPage);
+  /** ⭐ 2026-10-07：打开一篇 —— **失败必须说出来** ✓（原来 `openPage` 把错误吞进 store ✗，
+   *  点了没反应，用户只能看到"打不开" ✓；实测那种情况下 store 里就是「该节点不是页面」✓）。 */
+  const openEntry = async (id: string) => {
+    await openPage(id);
+    const err = useNotes.getState().error;
+    if (err) toast(`打不开这一条：${err}`, "error");
+  };
   const [feed, setFeed] = useState<ActivityEvent[]>([]);
   const [feedErr, setFeedErr] = useState<string | null>(null);
 
@@ -112,7 +120,7 @@ export function TimelineReview() {
                 const chs = byPageDay.get(e.id + "@" + d.day) ?? [];
                 return (
                   <li key={e.id} className="tl-entry">
-                    <button type="button" className="tl-entry-btn" onClick={() => void openPage(e.id)}>
+                    <button type="button" className="tl-entry-btn" onClick={() => void openEntry(e.id)}>
                       <span className={"tl-kind tl-kind-" + e.kind}>
                         {e.kind === "created" ? t("timeline.kindCreated") : t("timeline.kindEdited")}
                       </span>

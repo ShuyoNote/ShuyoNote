@@ -206,29 +206,37 @@ pub async fn activity_feed(
     let days = days.unwrap_or(30).clamp(1, 365);
     let limit = limit.unwrap_or(300).clamp(1, 2000);
     let since = crate::db::now_ms() - days * 24 * 60 * 60 * 1000;
-    let c = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = c
-        .prepare(
-            "SELECT entity_id, op, payload, updated_at FROM changes
-             WHERE entity = 'page' AND updated_at >= ?1 ORDER BY seq ASC LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map(rusqlite::params![since, limit as i64], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-                r.get::<_, i64>(3)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
+    // ⭐ 2026-10-07：**锁只护「把行取出来」这一小段** ✓，取完立刻放掉 ✓。
+    //   后面逐条解析 300 份载荷 JSON ＋ 块级 diff 是**重活** ✗（owner 的页面单篇 17–50 万字符 ✓），
+    //   ⛔ 绝不能按住整库互斥锁做 ✓：按住它 = **所有**命令一起排队 ✗。
+    //   实测（真实窗口走调试口 ✓）：打开时间复盘之后 listPages / getPage / openPage **全部超时** ✗，
+    //   而主线程最长只卡 23ms ✓ ⇒ 不是"主线程被占"，正是"锁被长时间按住" ✓。
+    let raw: Vec<(String, String, Option<String>, i64)> = {
+        let c = db.0.lock().map_err(|e| e.to_string())?;
+        let mut stmt = c
+            .prepare(
+                "SELECT entity_id, op, payload, updated_at FROM changes
+                 WHERE entity = 'page' AND updated_at >= ?1 ORDER BY seq ASC LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params![since, limit as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    }; // ← 锁在这里就放掉了 ✓；下面一行都不再碰 db ✓
 
     // 逐页保留**上一条载荷** ⇒ 相邻两条之间才是"这次改了什么" ✓
     let mut prev: HashMap<String, String> = HashMap::new();
     let mut out: Vec<ActivityEvent> = Vec::new();
-    for row in rows {
-        let (page_id, op, payload, at_ms) = row.map_err(|e| e.to_string())?;
+    for row in raw {
+        let (page_id, op, payload, at_ms) = row;
         let payload = payload.unwrap_or_default();
         let is_upsert = op == "upsert" && !payload.is_empty();
         let changes = if is_upsert {
