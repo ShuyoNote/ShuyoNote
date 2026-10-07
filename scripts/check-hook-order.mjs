@@ -6,6 +6,12 @@
 //   2. 2026-09-16：`App` 的加密锁定闸门是一句**排在七八个 hooks 之前**的早退 ⇒
 //      加密安装**重启即抛 `Rendered fewer hooks than expected`** ⇒ 根部 ErrorBoundary 接住 ⇒
 //      用户看到崩溃屏，而 E1 那道锁定屏**一次都没出现过**（真机只验了设置页开关）。
+//   3. ⭐ 2026-10-08：`SettingsDialog` 把 `const [hideAdvanced, …] = useState<boolean>(…)` 放在
+//      `if (!open) return null` **之后** ⇒ 打开设置面板抛 `Minified React error #310`
+//      （CI 的 `check-web-build` 先看到：它同时报「插件入口没走到」）⇒ **设置面板整块打不开**。
+//      ⚠️ 而**本门禁当时报的是"没有"** ✗ —— 真因是 hook 名与 `(` 之间那段**泛型实参**（`<boolean>`）
+//      让正则整个匹配不上；合成用例写的是 `useState("")`（无泛型）⇒ 自测全绿 ✓
+//      ⇒ **又一次"合成夹具过、真文件照错"**（同日已修 ＋ 自测补上这条真形状 ✓）。
 // 两次都不是"写错了"，是"**看漏了**"：早退和 hooks 隔着几十行，人眼很难可靠发现。
 // 渲染级测试能证明"某一个组件当前是对的"，这条管的是"**仓库里别再出现这种写法**"。
 //
@@ -20,6 +26,8 @@
 //     一律不算——它们属于别的函数）。
 //   - 漏报：`return` 与 hooks 写在同一行；hook 调用写在字符串里被抹掉后再拼出来之类的花样；
 //     以及"hooks 全排在最后一个 return 之后、只是数量随分支变化"那种（那类只能靠渲染级测试）。
+//     ⚠️ **曾经**还漏"带泛型实参的 hook 调用"（`useState<boolean>(…)`）—— 2026-10-08 已修 ✓
+//       （第 3 条真事故就是这么漏过去的；泛型**两层以上嵌套**仍可能漏，但那形状本仓还没有 ✓）。
 //   - hooks 在条件里（同一类错的另一种写法）**本门禁不查**：没有语法树时误报率太高，
 //     靠代码评审 + 渲染级测试兜。
 //   `--self-test` 里放的是两次真事故的**真实写法**（必须判红）与几个必须放过的写法。
@@ -30,7 +38,14 @@ import { isMain } from "./lib/is-main.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const HOOK_RE = /\buse[A-Z][A-Za-z0-9_$]*\s*\(/g;
+// ⭐ 2026-10-08 修（第 3 次真事故）：`(` 与 hook 名之间原来**不许有东西** ⇒
+//   **带泛型实参的调用**（`useState<boolean>(…)` / `useRef<HTMLDivElement>(…)`）整个看不见 ✗。
+//   这条漏报让「`if (!open) return null;` 之后才 `useState<boolean>(…)`」上了 dev：
+//   CI `check-web-build` 报 `Minified React error #310` ＋「插件入口没走到」，而本门禁当时报"没有"✗。
+//   ⇒ 允许一段**泛型实参**（含一层嵌套 `<…<…>…>` ✓）。
+const HOOK_RE = /\buse[A-Z][A-Za-z0-9_$]*(?:\s*<(?:[^<>]|<[^<>]*>)*>)?\s*\(/g;
+/** 从 `useState<boolean>(` 这种匹配里取回 hook 名 ✓（两处调用共用，免得只改一处 ✗）。 */
+const hookNameOf = (m) => m.replace(/\s*(?:<(?:[^<>]|<[^<>]*>)*>)?\s*\($/, "");
 const RETURN_RE = /\breturn\b/g;
 const CONTROL_START = /^(if|for|while|switch|catch|else|do|try)\b/;
 
@@ -153,12 +168,12 @@ export function inspectSource(text, hookNames = REACT_HOOKS) {
       }
       HOOK_RE.lastIndex = i;
       const h = HOOK_RE.exec(code);
-      if (h && h.index === i && hookNames.has(h[0].replace(/\s*\($/, ""))) {
+      if (h && h.index === i && hookNames.has(hookNameOf(h[0]))) {
         if (pendingReturn) {
           problems.push({
             line,
             returnLine: pendingReturn.line,
-            hook: h[0].replace(/\s*\($/, ""),
+            hook: hookNameOf(h[0]),
           });
           pendingReturn = null; // 一个早退只报一次
         }
@@ -197,6 +212,18 @@ function selfTest() {
         "  useEffect(() => {",
         "    loadPages();",
         "  }, []);",
+        "  return <div />;",
+        "}",
+      ].join("\n"),
+      expect: 1,
+    },
+    {
+      name: "真事故③（2026-10-08 设置面板打不开 ⇒ CI `check-web-build` 红）：`useState<boolean>(…)` —— **泛型实参**把上一版正则整个漏掉了",
+      code: [
+        "export function SettingsDialog() {",
+        "  const [open] = useState(true);",
+        "  if (!open) return null;",
+        "  const [hideAdvanced, setHideAdvanced] = useState<boolean>(() => readHideAdvanced());",
         "  return <div />;",
         "}",
       ].join("\n"),
@@ -249,7 +276,7 @@ function selfTest() {
     console.log(`${ok ? "  ✓" : "  ✗"} ${c.name}（期望 ${c.expect} 条，实际 ${got.length} 条）`);
     if (!ok) for (const g of got) console.log(`      → 第 ${g.line} 行 ${g.hook}（早退在第 ${g.returnLine} 行）`);
   }
-  console.log(failed === 0 ? "\n自测通过：2 个真事故写法判红、3 个正确写法放过" : `\n自测失败：${failed} 例`);
+  console.log(failed === 0 ? "\n自测通过：3 个真事故写法判红、3 个正确写法放过" : `\n自测失败：${failed} 例`);
   return failed === 0;
 }
 

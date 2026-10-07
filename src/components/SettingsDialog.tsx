@@ -1474,11 +1474,15 @@ export function SettingsDialog() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, close]);
 
-  if (!open) return null;
-
   // ⭐ 2026-10-08 第 5 招（裁定 A ✓）：**默认全显** ✓ —— 读不到偏好 ⇒ `false` ⇒ 一个组都不藏 ✓
   //   （⛔ 绝不"默认藏" ✗：默认藏 ＝ 默认找不到 ✗）。打开后只留基础组 ✓，并**记进 localStorage** ✓。
+  // ⛔⛔ **这个 `useState` 必须在下面那句 `if (!open) return null;` 之前** —— 它原先被放在**之后**，
+  //   于是 `open: false → true` 时 hook 个数变了 ⇒ 打开设置面板就抛 `Minified React error #310`，
+  //   设置面板整块打不开（2026-10-08 由 CI 的 `check-web-build` 抓到：它同时报「插件入口没走到」；
+  //   真因与修法见 `scripts/check-hook-order.mjs` 头部第 3 条真事故 ✓）。
   const [hideAdvanced, setHideAdvanced] = useState<boolean>(() => readHideAdvanced());
+
+  if (!open) return null;
 
   return createPortal(
     <div
