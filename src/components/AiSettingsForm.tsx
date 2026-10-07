@@ -299,84 +299,103 @@ export function AiSettingsForm({
 
           <p className="ai-settings-brief">聊天问答、写文案、做摘要。需配置对话模型。</p>
 
-          {cloudBlockedHere && (
-            <p className="ai-settings-brief" role="status">
-              ⚠️ 这个空间是加密的：**云端**服务商在这里不能用（内容加密就是为了不出本机）。
-              改用本机的 Ollama，或到「空间隐私」改用未加密空间再配云端。
-            </p>
+          {/* ⭐ 2026-10-08 第一招「渐进式披露」（owner 拍板开工 ✓）：
+              开关**关着 ⇒ 配置整块不渲染** ✗（原来只是加 `is-off` 变灰 ✓，配置照样堆在页面上 ⇒
+              "关了还占一屏" ✓）。只留：开关 ＋ 一行说明 ＋ 一个**灰框**写清"开启后会出现什么" ✓
+              —— 那个灰框是**必须**的：否则用户"看不到就不知道怎么开" ✗。 */}
+          {!enabled && (
+            <div className="ai-settings-placeholder">
+              <div>开启后，这里会出现：</div>
+              <div>· 服务商选择（DeepSeek / OpenAI 兼容 / 本机 Ollama）</div>
+              <div>· 服务地址</div>
+              <div>· API Key</div>
+              <div>· 模型</div>
+              <div>· 测试连接</div>
+            </div>
           )}
 
-          <label className="ai-settings-row">
-            <span className="ai-settings-label">服务商</span>
-            <select
-              className="ai-settings-select"
-              value={currentPresetId}
-              onChange={(e) => applyPreset(e.target.value)}
-              disabled={cloudBlockedHere}
-            >
-              {AI_PRESETS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}{p.needsKey ? "" : "（本地）"}
-                </option>
-              ))}
-              <option value="custom">自定义</option>
-            </select>
-          </label>
+          {enabled && (
+            <>
+              {cloudBlockedHere && (
+                <p className="ai-settings-brief" role="status">
+                  ⚠️ 这个空间是加密的：**云端**服务商在这里不能用（内容加密就是为了不出本机）。
+                  改用本机的 Ollama，或到「空间隐私」改用未加密空间再配云端。
+                </p>
+              )}
 
-          <label className="ai-settings-row">
-            <span className="ai-settings-label">服务地址</span>
-            <input
-              className="ai-settings-input"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL}
-              spellCheck={false}
-              disabled={cloudBlockedHere}
-            />
-          </label>
+              <label className="ai-settings-row">
+                <span className="ai-settings-label">服务商</span>
+                <select
+                  className="ai-settings-select"
+                  value={currentPresetId}
+                  onChange={(e) => applyPreset(e.target.value)}
+                  disabled={cloudBlockedHere}
+                >
+                  {AI_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.needsKey ? "" : "（本地）"}
+                    </option>
+                  ))}
+                  <option value="custom">自定义</option>
+                </select>
+              </label>
 
-          {isOpenAI && (
-            <label className="ai-settings-row">
-              <span className="ai-settings-label">API Key</span>
-              <input
-                className="ai-settings-input"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-…"
-                spellCheck={false}
-                autoComplete="off"
-              />
-            </label>
-          )}
+              <label className="ai-settings-row">
+                <span className="ai-settings-label">服务地址</span>
+                <input
+                  className="ai-settings-input"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_BASE : OLLAMA_DEFAULT_URL}
+                  spellCheck={false}
+                  disabled={cloudBlockedHere}
+                />
+              </label>
 
-          <label className="ai-settings-row">
-            <span className="ai-settings-label">模型</span>
-            <input
-              className="ai-settings-input"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL}
-              spellCheck={false}
-              list="ai-model-list"
-            />
-          </label>
-          <datalist id="ai-model-list">
-            {(discoveredModels.length ? discoveredModels : MODEL_OPTIONS[currentPresetId] ?? []).map((m) => (
-              <option key={m} value={m} />
-            ))}
-          </datalist>
+              {isOpenAI && (
+                <label className="ai-settings-row">
+                  <span className="ai-settings-label">API Key</span>
+                  <input
+                    className="ai-settings-input"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-…"
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </label>
+              )}
 
-          <div className="ai-settings-test">
-            <button className="ai-settings-test-btn" onClick={test} disabled={testing}>
-              {testing ? "测试中…" : "测试连接"}
-            </button>
-            {testMsg && (
-              <div className={`ai-settings-test-msg ${testOk ? "ok" : testOk === false ? "bad" : ""}`}>
-                {testMsg}
+              <label className="ai-settings-row">
+                <span className="ai-settings-label">模型</span>
+                <input
+                  className="ai-settings-input"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder={isOpenAI ? OPENAI_COMPAT_DEFAULT_MODEL : OLLAMA_DEFAULT_MODEL}
+                  spellCheck={false}
+                  list="ai-model-list"
+                />
+              </label>
+              <datalist id="ai-model-list">
+                {(discoveredModels.length ? discoveredModels : MODEL_OPTIONS[currentPresetId] ?? []).map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+
+              <div className="ai-settings-test">
+                <button className="ai-settings-test-btn" onClick={test} disabled={testing}>
+                  {testing ? "测试中…" : "测试连接"}
+                </button>
+                {testMsg && (
+                  <div className={`ai-settings-test-msg ${testOk ? "ok" : testOk === false ? "bad" : ""}`}>
+                    {testMsg}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         {/* ===== 语义检索 ===== */}
@@ -396,49 +415,64 @@ export function AiSettingsForm({
 
           <p className="ai-settings-brief">搜索时按「意思」找相关笔记，不只认字。需配置嵌入模型。</p>
 
-          <label className="ai-settings-row">
-            <span className="ai-settings-label">嵌入模型</span>
-            <input
-              className="ai-settings-input"
-              value={embeddingModel}
-              onChange={(e) => setEmbeddingModel(e.target.value)}
-              placeholder={embedProvider === "openai" ? "text-embedding-3-small" : "dmeta-embedding-zh"}
-              spellCheck={false}
-            />
-          </label>
+          {/* ⭐ 同上：语义检索**关着** ⇒ 配置整块不渲染 ✓（见上面那段注释 ✓）。 */}
+          {!enableEmbedding && (
+            <div className="ai-settings-placeholder">
+              <div>开启后，这里会出现：</div>
+              <div>· 嵌入模型</div>
+              <div>· 服务（本机 Ollama / OpenAI 兼容）</div>
+              <div>· 服务地址</div>
+              <div>· 测试连接</div>
+            </div>
+          )}
 
-          <label className="ai-settings-row">
-            <span className="ai-settings-label">服务</span>
-            <select
-              className="ai-settings-select"
-              value={embedProvider}
-              onChange={(e) => setEmbedProvider(e.target.value as "ollama" | "openai")}
-            >
-              <option value="ollama">Ollama（本地）</option>
-              <option value="openai">OpenAI 兼容</option>
-            </select>
-          </label>
-          <label className="ai-settings-row">
-            <span className="ai-settings-label">服务地址</span>
-            <input
-              className="ai-settings-input"
-              value={embedBaseUrl}
-              onChange={(e) => setEmbedBaseUrl(e.target.value)}
-              placeholder={embedProvider === "openai" ? "http://localhost:8000/v1（留空用上方地址）" : "http://localhost:11434（留空用上方地址）"}
-              spellCheck={false}
-            />
-          </label>
+          {enableEmbedding && (
+            <>
+              <label className="ai-settings-row">
+                <span className="ai-settings-label">嵌入模型</span>
+                <input
+                  className="ai-settings-input"
+                  value={embeddingModel}
+                  onChange={(e) => setEmbeddingModel(e.target.value)}
+                  placeholder={embedProvider === "openai" ? "text-embedding-3-small" : "dmeta-embedding-zh"}
+                  spellCheck={false}
+                />
+              </label>
 
-          <div className="ai-settings-test">
-            <button className="ai-settings-test-btn" onClick={testEmbed} disabled={embedTesting}>
-              {embedTesting ? "测试中…" : "测试连接"}
-            </button>
-            {embedTestMsg && (
-              <div className={`ai-settings-test-msg ${embedTestOk ? "ok" : embedTestOk === false ? "bad" : ""}`}>
-                {embedTestMsg}
+              <label className="ai-settings-row">
+                <span className="ai-settings-label">服务</span>
+                <select
+                  className="ai-settings-select"
+                  value={embedProvider}
+                  onChange={(e) => setEmbedProvider(e.target.value as "ollama" | "openai")}
+                >
+                  <option value="ollama">Ollama（本地）</option>
+                  <option value="openai">OpenAI 兼容</option>
+                </select>
+              </label>
+              <label className="ai-settings-row">
+                <span className="ai-settings-label">服务地址</span>
+                <input
+                  className="ai-settings-input"
+                  value={embedBaseUrl}
+                  onChange={(e) => setEmbedBaseUrl(e.target.value)}
+                  placeholder={embedProvider === "openai" ? "http://localhost:8000/v1（留空用上方地址）" : "http://localhost:11434（留空用上方地址）"}
+                  spellCheck={false}
+                />
+              </label>
+
+              <div className="ai-settings-test">
+                <button className="ai-settings-test-btn" onClick={testEmbed} disabled={embedTesting}>
+                  {embedTesting ? "测试中…" : "测试连接"}
+                </button>
+                {embedTestMsg && (
+                  <div className={`ai-settings-test-msg ${embedTestOk ? "ok" : embedTestOk === false ? "bad" : ""}`}>
+                    {embedTestMsg}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
 
         {/* ===== 全库索引 ===== */}

@@ -17251,11 +17251,31 @@ p:has(> .editor-drawing-container) {
   flex: none;
 }
 /* 启用开关关闭 → 该块其余字段整体禁灰；开关(在标题行)仍可点重新启用。 */
-.ai-settings-group.is-off > :not(.ai-settings-group-title) {
+/* ⚠️ 2026-10-08：配置块**关着时不渲染**了（见下一条 ✓）⇒ 这条现在只是"万一还剩点啥"的兜底；
+   灰框 `.ai-settings-placeholder` **排除在外**（它是"看不到就不知道怎么开"的保险，要看得清 ✓）。 */
+.ai-settings-group.is-off > :not(.ai-settings-group-title):not(.ai-settings-placeholder) {
   opacity: 0.45;
   filter: grayscale(0.55);
   pointer-events: none;
   user-select: none;
+}
+/* ⭐ 2026-10-08 第一招「渐进式披露」（owner 2026-10-08 拍板开工 ✓）：
+   开关**关着 ⇒ 配置整块不渲染** ✗（原来只是变灰、配置照样堆一屏 ✓），
+   只在原位留这个**灰框**，逐条写清"开启后会出现什么" ✓ ——
+   它是"看不到就不知道怎么开"的那道保险 ⇒ ⛔ 不许省 ✗、也不参与上面那条变灰 ✓。 */
+.ai-settings-placeholder {
+  border: 1px dashed var(--border-strong);
+  background: var(--chip-bg);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--text-dim);
+}
+.ai-settings-placeholder > div:first-child {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
 }
 .ai-settings-group-icon {
   font-size: 15px;
