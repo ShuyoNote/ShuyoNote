@@ -16,6 +16,8 @@ import { useVault } from "../hooks/useVault";
 import { SpacePrivacySection } from "./SpacePrivacySection";
 import type { SyncProfile, EmailAccount } from "../lib/api";
 import { emailSupported, isDesktopPlatform } from "../lib/platform";
+// ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」——纯规则在 lib 里（可单测 ✓）。
+import { readHideAdvanced, visibleGroups, writeHideAdvanced } from "../lib/settingsNavPref";
 // 账号唯一键统一从 lib/emailAccount 引入：原先本文件与 EmailPanel 各有一份完全相同的实现，
 // 而 store 还需要第三份——三份同逻辑的键函数只会静默分叉。
 import { accountKey } from "../lib/emailAccount";
@@ -53,6 +55,9 @@ const THEMES: { id: Theme; label: string }[] = [
 /** 左侧导航的分组（⭐ 2026-10-08 第 2 招，owner 看过效果图后拍板 ✓）：
  *  「11 项平铺 → 4 组」✓ —— 组标题只用**小号灰字 ＋ 细分隔线**（⛔ 不加 emoji ✗，owner 明确说过"花哨"✗）。 */
 export type SettingsGroup = "basic" | "collab" | "ai" | "system";
+
+/** 第 5 招（裁定 A ✓）：打开「隐藏高级项」时**被收起**的组 —— 只留 `basic` ✓。 */
+const ADVANCED_GROUPS: SettingsGroup[] = ["collab", "ai", "system"];
 
 export const SETTINGS_GROUPS: { id: SettingsGroup; labelKey: string }[] = [
   { id: "basic", labelKey: "settings.groups.basic" },
@@ -1471,6 +1476,10 @@ export function SettingsDialog() {
 
   if (!open) return null;
 
+  // ⭐ 2026-10-08 第 5 招（裁定 A ✓）：**默认全显** ✓ —— 读不到偏好 ⇒ `false` ⇒ 一个组都不藏 ✓
+  //   （⛔ 绝不"默认藏" ✗：默认藏 ＝ 默认找不到 ✗）。打开后只留基础组 ✓，并**记进 localStorage** ✓。
+  const [hideAdvanced, setHideAdvanced] = useState<boolean>(() => readHideAdvanced());
+
   return createPortal(
     <div
       className="set-overlay"
@@ -1483,7 +1492,8 @@ export function SettingsDialog() {
           <div className="set-rail-title">设置</div>
   {/* ⚠️ Web 版没有本机通道 ⇒ 「外部 AI 接入」那一项**整个不出现** ✓（与命令面登记成桌面专属同一口径 ✓；
             不留一个点进去是空白的 tab ✗）。 */}
-        {SETTINGS_GROUPS.map((g) => {
+        {visibleGroups<SettingsGroup>(SETTINGS_GROUPS.map((g) => g.id), hideAdvanced, ADVANCED_GROUPS).map((gid) => {
+          const g = SETTINGS_GROUPS.find((x) => x.id === gid)!;
           const items = TABS.filter((it) => it.group === g.id && (it.id !== "mcp" || isDesktopPlatform()));
           // ⚠️ 组里一项都没有（如 Web 版没有 MCP）⇒ **连标题都不画** ✗（不留空分组 ✓）
           if (!items.length) return null;
@@ -1507,6 +1517,25 @@ export function SettingsDialog() {
             </div>
           );
         })}
+        {/* ⭐ 2026-10-08 第 5 招（裁定 A ✓）：**个人偏好**「隐藏高级项」。
+            默认**关** ⇒ 高级项照常全都看得见 ✓（谁都不会找不到功能 ✓）；想清爽的人自己打开 ✓。
+            ⛔ 它不是"基础/高级模式" ✗（那要用户先自我认定属于哪一档 ⇒ 想用 MCP 的人得先知道"有个高级模式" ✗）。 */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={hideAdvanced}
+          className={`set-rail-pref${hideAdvanced ? " is-on" : ""}`}
+          title={hideAdvanced ? "显示全部设置项" : "只留基础项（外观 / 账户 / 数据）"}
+          onClick={() => {
+            const next = !hideAdvanced;
+            setHideAdvanced(next);
+            writeHideAdvanced(next);
+            // ⚠️ 别把当前页留在**刚被藏起来**的组里 ✗（否则导航里没有它、内容却还开着 ✓ 会让人找不到北 ✓）
+            if (next && ADVANCED_GROUPS.includes(tab as SettingsGroup)) setTab("appearance");
+          }}
+        >
+          {hideAdvanced ? "显示高级项" : "隐藏高级项"}
+        </button>
         </nav>
         <div className="set-body">
           <header className="set-body-head">

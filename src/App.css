@@ -13252,6 +13252,26 @@ p:has(> .editor-drawing-container) {
   background: var(--border);
 }
 
+/* ⭐ 2026-10-08 第 5 招（裁定 A ✓）：个人偏好「隐藏高级项」—— 放在导航**底部**，不抢戏 ✓。
+   默认**关**（全显 ✓）；打开后只留基础组 ✓。样式取向照 owner 那句"不花哨" ✓：细边框 ＋ 小号灰字 ✓。 */
+.set-rail-pref {
+  margin-top: 14px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.set-rail-pref.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .set-rail-item {
   display: flex;
   align-items: center;
