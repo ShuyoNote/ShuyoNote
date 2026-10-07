@@ -1,6 +1,6 @@
 # 设置面板「分层 + 渐进式披露」方案（v2 · 已按评审修订）
 
-状态：施工中（自主迭代）· 第 1 招、第 2 招已落地 · 第 3 招判据已先行、实现待做 · 第 4、5 招未开工
+状态：施工中（自主迭代）· 第 1、2 招交付完毕 · 第 3 招判据先行、实现待做 · 第 4、5 招未开工
 证据：第 1 招 `src/components/aiSettingsDisclosure.test.tsx`（提交 38deac0b）｜第 2 招 `src/components/settingsNavGroups.test.ts`（提交 de4a4741）｜本方案 `docs/plans/2026-10-08-settings-progressive-disclosure-plan.md`
 
 > **进度（2026-10-08，windows 侧自主迭代 ✓）**
@@ -10,7 +10,7 @@
 >   变异红：`expected [ 'abilities' ] to deeply equal []` ✓）。
 > - **第 3 招（AI 面板三块 → Tab）** ⏳ **判据已写好并看过它红** ✓（逐字：`没有 Tab 条 ✗: expected +0 to be 3` ✓），
 >   但**实现未做** ✗ —— 草稿留在 `_tmp/scratch/settings-tabs-draft/`（那是本机临时区、不入库 ✓）；
->   这一步要动 `AiSettingsForm.tsx` 里约 300 行的三块边界，**在上下文吃紧时硬改会伤到用户天天用的 AI 设置页** ✗
+>   这一步要动 `src/components/AiSettingsForm.tsx` 里约 300 行的三块边界，**在上下文吃紧时硬改会伤到用户天天用的 AI 设置页** ✗
 >   ⇒ 故停在干净点 ✓。另外：Tab 化后 `src/components/aiSettingsCoverage.test.tsx` 的 5 条**要先点开「全库索引」再断言** ✓（方案第三节已写明 ✓）。
 > - 第 4、5 招未开工 ✓。
 > ⚠️ **边界（自主迭代期间自我加锁）**：⛔ 不动版本号 / CHANGELOG 已发布标题 / `main` / 发版打 tag / CI / `.gitattributes` /
