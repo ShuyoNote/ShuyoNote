@@ -50,20 +50,31 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "dark", label: "暗色" },
 ];
 
-const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Element }[] = [
-  { id: "appearance", labelKey: "settings.appearance", hintKey: "settings.appearanceHint", icon: <PaletteIcon width={16} height={16} /> },
-  { id: "spaces", labelKey: "settings.spaces", hintKey: "settings.spacesHint", icon: <FolderIcon width={16} height={16} /> },
-  { id: "account", labelKey: "settings.account", hintKey: "settings.accountHint", icon: <PersonIcon width={16} height={16} /> },
-  { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <InboxIcon width={16} height={16} /> },
-  { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} /> },
-  { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} /> },
+/** 左侧导航的分组（⭐ 2026-10-08 第 2 招，owner 看过效果图后拍板 ✓）：
+ *  「11 项平铺 → 4 组」✓ —— 组标题只用**小号灰字 ＋ 细分隔线**（⛔ 不加 emoji ✗，owner 明确说过"花哨"✗）。 */
+export type SettingsGroup = "basic" | "collab" | "ai" | "system";
+
+export const SETTINGS_GROUPS: { id: SettingsGroup; labelKey: string }[] = [
+  { id: "basic", labelKey: "settings.groups.basic" },
+  { id: "collab", labelKey: "settings.groups.collab" },
+  { id: "ai", labelKey: "settings.groups.ai" },
+  { id: "system", labelKey: "settings.groups.system" },
+];
+
+export const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: JSX.Element; group: SettingsGroup }[] = [
+  { id: "appearance", labelKey: "settings.appearance", hintKey: "settings.appearanceHint", icon: <PaletteIcon width={16} height={16} />, group: "basic" },
+  { id: "spaces", labelKey: "settings.spaces", hintKey: "settings.spacesHint", icon: <FolderIcon width={16} height={16} />, group: "collab" },
+  { id: "account", labelKey: "settings.account", hintKey: "settings.accountHint", icon: <PersonIcon width={16} height={16} />, group: "basic" },
+  { id: "email", labelKey: "settings.email", hintKey: "settings.emailHint", icon: <InboxIcon width={16} height={16} />, group: "collab" },
+  { id: "data", labelKey: "settings.data", hintKey: "settings.dataHint", icon: <DatabaseIcon width={16} height={16} />, group: "basic" },
+  { id: "plugins", labelKey: "settings.plugins", hintKey: "settings.pluginsHint", icon: <TemplateIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-02：官方引擎与按需下载 —— 排在「插件」之后（插件＝第三方扩展 ／ 能力＝官方引擎 ✓）。
-  { id: "abilities", labelKey: "settings.abilities", hintKey: "settings.abilitiesHint", icon: <DownloadIcon width={16} height={16} /> },
-  { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} /> },
+  { id: "abilities", labelKey: "settings.abilities", hintKey: "settings.abilitiesHint", icon: <DownloadIcon width={16} height={16} />, group: "ai" },
+  { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-06（owner 拍板 R89）：外部 AI 接入的开关面 —— 与「安全」同一族（都是"谁能碰我的库"✓）。
-  { id: "mcp", labelKey: "settings.mcp", hintKey: "settings.mcpHint", icon: <SendIcon width={16} height={16} /> },
-  { id: "ai", labelKey: "settings.ai", hintKey: "settings.aiHint", icon: <SparkleIcon width={16} height={16} /> },
-  { id: "about", labelKey: "settings.about", hintKey: "settings.aboutHint", icon: <InfoIcon width={16} height={16} /> },
+  { id: "mcp", labelKey: "settings.mcp", hintKey: "settings.mcpHint", icon: <SendIcon width={16} height={16} />, group: "collab" },
+  { id: "ai", labelKey: "settings.ai", hintKey: "settings.aiHint", icon: <SparkleIcon width={16} height={16} />, group: "ai" },
+  { id: "about", labelKey: "settings.about", hintKey: "settings.aboutHint", icon: <InfoIcon width={16} height={16} />, group: "system" },
 ];
 
 // 每页一句话说明，放在内容区页头——比只有一个标题更有分量，也省去用户猜
@@ -1472,20 +1483,30 @@ export function SettingsDialog() {
           <div className="set-rail-title">设置</div>
   {/* ⚠️ Web 版没有本机通道 ⇒ 「外部 AI 接入」那一项**整个不出现** ✓（与命令面登记成桌面专属同一口径 ✓；
             不留一个点进去是空白的 tab ✗）。 */}
-        {TABS.filter((it) => it.id !== "mcp" || isDesktopPlatform()).map((it) => (
-            <button
-              key={it.id}
-              className={`set-rail-item${tab === it.id ? " is-on" : ""}`}
-              aria-current={tab === it.id}
-              onClick={() => setTab(it.id)}
-            >
-              <span className="set-rail-icon">{it.icon}</span>
-              <span className="set-rail-text">
-                <span className="set-rail-label">{t(it.labelKey)}</span>
-                <span className="set-rail-hint">{t(it.hintKey)}</span>
-              </span>
-            </button>
-          ))}
+        {SETTINGS_GROUPS.map((g) => {
+          const items = TABS.filter((it) => it.group === g.id && (it.id !== "mcp" || isDesktopPlatform()));
+          // ⚠️ 组里一项都没有（如 Web 版没有 MCP）⇒ **连标题都不画** ✗（不留空分组 ✓）
+          if (!items.length) return null;
+          return (
+            <div className="set-rail-group" key={g.id}>
+              <div className="set-rail-group-title">{t(g.labelKey)}</div>
+              {items.map((it) => (
+                <button
+                  key={it.id}
+                  className={`set-rail-item${tab === it.id ? " is-on" : ""}`}
+                  aria-current={tab === it.id}
+                  onClick={() => setTab(it.id)}
+                >
+                  <span className="set-rail-icon">{it.icon}</span>
+                  <span className="set-rail-text">
+                    <span className="set-rail-label">{t(it.labelKey)}</span>
+                    <span className="set-rail-hint">{t(it.hintKey)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          );
+        })}
         </nav>
         <div className="set-body">
           <header className="set-body-head">
