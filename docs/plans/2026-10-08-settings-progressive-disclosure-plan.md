@@ -1,6 +1,19 @@
 # 设置面板「分层 + 渐进式披露」方案（v2 · 已按评审修订）
 
-状态：方案 v2 施工中 · 第 1 招未开工
+状态：施工中（自主迭代）· 第 1 招、第 2 招已落地 · 第 3 招判据已先行、实现待做 · 第 4、5 招未开工
+
+> **进度（2026-10-08，windows 侧自主迭代 ✓）**
+> - **第 1 招（关闭状态隐藏配置）** ✅ 提交 `38deac0b` —— 判据 `src/components/aiSettingsDisclosure.test.tsx`（5/5 ✓，
+>   改前逐字红：`expected 5 to be +0` ✓）；真窗口读数：关 ⇒ 控件 **0** ＋ 灰框在 ✓，开 ⇒ 控件 **5** ✓。
+> - **第 2 招（左侧 11 项 → 4 组）** ✅ 提交 `de4a4741` —— 判据 `src/components/settingsNavGroups.test.ts`（5/5 ✓，
+>   变异红：`expected [ 'abilities' ] to deeply equal []` ✓）。
+> - **第 3 招（AI 面板三块 → Tab）** ⏳ **判据已写好并看过它红** ✓（逐字：`没有 Tab 条 ✗: expected +0 to be 3` ✓），
+>   但**实现未做** ✗ —— 草稿留在 `_tmp/scratch/settings-tabs-draft/`（那是本机临时区、不入库 ✓）；
+>   这一步要动 `AiSettingsForm.tsx` 里约 300 行的三块边界，**在上下文吃紧时硬改会伤到用户天天用的 AI 设置页** ✗
+>   ⇒ 故停在干净点 ✓。另外：Tab 化后 `src/components/aiSettingsCoverage.test.tsx` 的 5 条**要先点开「全库索引」再断言** ✓（方案第三节已写明 ✓）。
+> - 第 4、5 招未开工 ✓。
+> ⚠️ **边界（自主迭代期间自我加锁）**：⛔ 不动版本号 / CHANGELOG 已发布标题 / `main` / 发版打 tag / CI / `.gitattributes` /
+> 加密 / 用户数据 / 门禁清单 / `tests/baseline.json` 读数 ✗；每笔都要 `pnpm verify` 全过 ＋ `mirror-lag` 一致 ✓。
 
 > **v2 相对 owner 给的 v1（美化版）改了什么** —— 三处**事实修正** ＋ 两处**顺序/形态修正** ＋ 一条**删除**。
 > 逐条都给了核过的读数与出处 ✓；⛔ 没有一条是"我觉得" ✓。
