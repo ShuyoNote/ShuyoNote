@@ -7,7 +7,7 @@
 // ⚠️ 只要有人把 `htmlLabels` 挪回 `flowchart` 里、或删掉，这条就会红 ✓
 //    （这条同时守住 `mdMermaid.ts` 当初写下的意图："要 SVG text label，布局不依赖宿主 CSS/字体"。）
 import { describe, expect, it } from "vitest";
-import { centerMindmapLabels, mermaidInitOptions, normalizeMindmapIndent } from "./mermaid";
+import { centerMindmapRootLabel, mermaidInitOptions, normalizeMindmapIndent } from "./mermaid";
 
 describe("mermaidInitOptions", () => {
   it("顶层就带 `htmlLabels: false`（挪进 `flowchart` 里等于没写）", () => {
@@ -59,24 +59,33 @@ describe("mindmap 没有缩进 ⇒ 按根节点挂（owner 两张截图的真因
     expect(normalizeMindmapIndent("mindmap")).toEqual({ text: "mindmap", autoIndented: false });
   });
 });
-describe("mindmap 的 <text> 补 text-anchor（owner：「中心节点文本偏心了」）", () => {
-  it("★ 没有锚点的 <text> ⇒ 补 middle（实测：偏心 30px → 0px ✓）", () => {
-    const svg = '<svg><text x="10" y="20" class="mindmap-node">知乎</text></svg>';
-    expect(centerMindmapLabels(svg)).toBe('<svg><text x="10" y="20" class="mindmap-node" text-anchor="middle">知乎</text></svg>');
+describe("mindmap 的锚点：**只动根节点**（owner：先「中心节点文本偏心了」、再「子节点的文本偏了」）", () => {
+  // 真 SVG 的结构（打印真产物得到 ✓）：根那一组 class 里有 `section-root` ✓
+  const ROOT_AND_CHILD =
+    '<svg><g class="node mindmap-node section-root section--1"><circle r="26"></circle>' +
+    '<g class="label"><rect></rect><g><text y="-10">根标签</text></g></g></g>' +
+    '<g class="node mindmap-node section--1"><path d="M0 0"></path>' +
+    '<g class="label"><g><text y="-10">子节点甲</text></g></g></g></svg>';
+
+  it("★ 只给根那一组的第一个 <text> 补 middle，且**一共只加一个**锚点", () => {
+    const out = centerMindmapRootLabel(ROOT_AND_CHILD);
+    expect((out.match(/text-anchor="middle"/g) ?? []).length).toBe(1); // ⭐ 关键不变量 ✓
+    expect(out).toContain('<text text-anchor="middle" y="-10">根标签</text>');
   });
 
-  it("已经指定过锚点 ⇒ 一个字不动（⛔ 不覆盖作者/主题的选择 ✗）", () => {
-    const svg = '<svg><text text-anchor="start">甲</text><text text-anchor="middle">乙</text></svg>';
-    expect(centerMindmapLabels(svg)).toBe(svg);
+  it("★★ 子节点的 <text> **一个都不许被改**（我上一版「全补」把它们推歪了 ✗）", () => {
+    const out = centerMindmapRootLabel(ROOT_AND_CHILD);
+    expect(out).toContain('<text y="-10">子节点甲</text>'); // 原样 ✓（不带锚点 ✓）
   });
 
-  it("没有 <text> ⇒ 原样返回（pie / flowchart 这些不吃这一套 ✓）", () => {
-    const svg = '<svg><rect width="10" height="10"/></svg>';
-    expect(centerMindmapLabels(svg)).toBe(svg);
+  it("没有 section-root（flowchart / pie 等）⇒ 一个字节都不动 ✓", () => {
+    const svg = '<svg><text x="10" y="20">甲</text><text x="30" y="20">乙</text></svg>';
+    expect(centerMindmapRootLabel(svg)).toBe(svg);
   });
 
-  it("⛔ 不误伤 <textPath> / <textarea> 这类同前缀标签（词边界 ✓）", () => {
-    const svg = '<svg><textPath href="#p">沿路径</textPath><textarea rows="1"></textarea></svg>';
-    expect(centerMindmapLabels(svg)).toBe(svg);
+  it("根本来就带锚点 ⇒ 不覆盖 ✓；没有 <text> ⇒ 原样 ✓", () => {
+    const anchored = '<svg><g class="section-root"><text text-anchor="start">根</text></g></svg>';
+    expect(centerMindmapRootLabel(anchored)).toBe(anchored);
+    expect(centerMindmapRootLabel('<svg><g class="section-root"><rect/></g></svg>')).toContain("section-root");
   });
 });

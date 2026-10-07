@@ -120,30 +120,34 @@ export function mermaidInitOptions(theme: "dark" | "default"): Record<string, un
 }
 
 /**
- * ⭐ 2026-10-07（owner 截图：「中心节点文本偏心了」✗）——**先量后改**的真读数
- *（在 dev 实例里真渲染 mindmap、再量 bbox ✓）：
+ * ⭐ 2026-10-07（owner 先报「中心节点文本偏心了」✗，随后又报「**子节点的文本偏了**」✗）：
+ * 给 mindmap 的**根节点**补 `text-anchor="middle"` ✓ —— ⛔ 子节点**一个都不许碰** ✗。
  *
- *   | 配置 | 圈中心x | 根文本中心x | 偏心 |
- *   | `htmlLabels:false`（我们为 PNG 导出刻意关的 ✓）| -9928 | -9898 | **30px** ✗ |
- *   | `htmlLabels:true` | -9888 | -9888 | **0px** ✓ |
- *   | 无 emoji ＋ `false` | -9885 | -9869 | **16px** ✗ |
+ * **先量后改**（真渲染、量「每个文字的中心 vs 它的形状中心」✓）：
  *
- * 偏心量 ≈ **文本宽的一半**（59/2 = 29.5 ✓、32/2 = 16 ✓）⇒ 真因**不是 emoji** ✗，
- * 而是 mermaid 的 mindmap 在 `htmlLabels:false` 下给 `<text>` **没写 `text-anchor`**
- *（探针量到该属性为空 ✓）⇒ SVG 默认 `start`（左对齐）⇒ 文字从圆心往右铺 ⇒ 看着偏心 ✓。
+ *   | 节点 | mermaid 原样 | 我上一版"给所有 `<text>` 都补" |
+ *   | 根（`<circle>` ✓） | 偏心 **16px** ✗ | 0 ✓ |
+ *   | 子节点（`<path>` ✓，如「个人知识管理」） | **全部 0** ✓ | **-22 ~ -48px** ✗✗ |
  *
- * 修法：**渲染后给 mindmap 的 `<text>` 补 `text-anchor="middle"`** ✓
- *   · 只补**没有该属性**的那些 ✓（已经有的一个字不动 ✓）；
- *   · 只在 mindmap 上用 ✓（flowchart / pie 等不吃这一套 ✗）。
- *   ⛔ 不动 `htmlLabels` —— 那是 2026-10-05 为"下载 PNG"修的 ✗：
- *      `htmlLabels:true` 会产出 `<foreignObject>` ⇒ canvas 变脏 ⇒ PNG 导出抛
- *      `Tainted canvases may not be exported.` ✓（同一条事故，别再往回走 ✓）。
+ * ⇒ 真因**只在根** ✓：mermaid 给圆环节点的 `<text>` 把 x 放在**圆心**却不写锚点 ✓
+ *   ⇒ SVG 默认 `start`（左对齐）⇒ 文字从圆心往右铺 ⇒ 偏心量 ≈ **文字宽的一半** ✓；
+ *   矩形子节点它算得好好的 ✓ —— 我上一版"全都补"把本来正确的子节点**推歪了** ✗（owner 当场看到 ✓）。
+ *
+ * 认根的办法（打印真 SVG 得到 ✓）：根那一组 class 里有 **`section-root`** ✓，
+ * 紧跟其后的第一个 `<text>` 就是根的标签 ✓（结构：`<g class="node mindmap-node section-root …"><circle …><g class="label">…<text>` ✓）。
+ * ⛔ 不动 `htmlLabels` —— 那是 2026-10-05 为"下载 PNG"修的 ✗：
+ *    `htmlLabels:true` 会产出 `<foreignObject>` ⇒ canvas 变脏 ⇒ PNG 导出抛
+ *    `Tainted canvases may not be exported.` ✓（同一条事故，别再往回走 ✓）。
  */
-export function centerMindmapLabels(svg: string): string {
+export function centerMindmapRootLabel(svg: string): string {
   const s = String(svg ?? "");
-  if (!s.includes("<text")) return s;
-  return s.replace(/<text\b([^>]*)>/g, (whole: string, attrs: string) => {
-    if (/\btext-anchor\s*=/.test(attrs)) return whole; // 已指定锚点 ⇒ 一个字不动 ✓
-    return `<text${attrs} text-anchor="middle">`;
-  });
+  const rootAt = s.indexOf("section-root");
+  if (rootAt < 0) return s; // 不是 mindmap（或没有根）⇒ 一个字节都不动 ✓
+  const textAt = s.indexOf("<text", rootAt);
+  if (textAt < 0) return s;
+  const tagEnd = s.indexOf(">", textAt);
+  if (tagEnd < 0) return s;
+  const tag = s.slice(textAt, tagEnd + 1);
+  if (/\btext-anchor\s*=/.test(tag)) return s; // 已经指定过锚点 ⇒ 不覆盖 ✓
+  return s.slice(0, textAt) + tag.replace(/^<text/, '<text text-anchor="middle"') + s.slice(tagEnd + 1);
 }
