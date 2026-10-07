@@ -103,6 +103,7 @@
       "check-sys-deps-linux",
       "gm-conformance",
       "gm-registry-clean",
+      "rust-mesh-ten-devices",
       "rust-no-sm-crypto",
       "rust-plugins-alone",
       "rust-sm-wired",

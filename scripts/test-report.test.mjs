@@ -52,6 +52,7 @@ const REQUIRED_GATE_IDS = [
   "mobile-overlays",
   "rust-test",
   "rust-plugins-alone",
+  "rust-mesh-ten-devices",
   "external-index",
   "external-package",
   "plugin-fragment-no-zip",
@@ -125,6 +126,22 @@ describe("门禁注册表（scripts/lib/gates.mjs）", () => {
     const r = spawnSync(process.execPath, ["scripts/test-report.mjs", "--list"], { cwd: root, encoding: "utf8" });
     expect(r.status, r.stderr).toBe(0);
     for (const gate of GATES) expect(r.stdout, `--list 没打印 ${gate.id}`).toContain(gate.id);
+  });
+
+  // ⭐ 2026-10-08（owner 拍 R118＝「A 进 CI ＋ 显式 --retry 1」✓）：
+  //    T-10 那条测试**必须**"注册成门禁"与"CI 那条命令带重试"**成对出现** ——
+  //      只注册不带重试 ⇒ 给三台机器的 CI 加**间歇红**（CI 默认 0 次重试 ✗）；
+  //      只带重试不注册 ⇒ 那条测试继续**没人跑**（它此前就是这种状态 ✗）。
+  //    两件一起改才成立 ⇒ 由机器把这一对钉住（本仓既有教训：靠注释记的约定会腐烂 ✓）。
+  it("★ 十台设备那条（rust-mesh-ten-devices）与 CI 的 --retry 1 必须成对出现", () => {
+    const g = GATES.find((x) => x.id === "rust-mesh-ten-devices");
+    expect(g, "注册表里没有 rust-mesh-ten-devices（那条测试就没人跑）").toBeTruthy();
+    expect(g.group).toBe("rust");
+    expect(g.flaky, "它必须标 flaky，否则 --retry 对它无效（重试只对 flaky:true 生效）").toBe(true);
+    const ci = readFileSync(join(root, ".github", "workflows", "ci.yml"), "utf8");
+    expect(ci, "CI 的 rust 组那条命令必须显式带 --retry 1（否则负载下 1/3 的红会被当成产品坏）").toMatch(
+      /test-report\.mjs --group rust --retry 1/,
+    );
   });
 });
 
