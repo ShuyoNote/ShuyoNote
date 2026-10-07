@@ -13,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
-import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions } from "../../lib/mermaid";
+import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
 import { mermaidGate } from "../../lib/mermaidGate";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
@@ -215,6 +215,8 @@ function MermaidView({
 }) {
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // mindmap 原文没缩进 ⇒ 我们只对**渲染副本**补了缩进（源文不动 ✓）；这条提示要看得见 ✓
+  const [autoIndentedNote, setAutoIndentedNote] = useState(false);
   // ⭐ 2026-10-05：看图器那套状态 —— 图表/代码两个页签、缩放、是否全屏。
   // ⚠️ 这里**没有**独立的"在编辑"状态：owner 当天把那条「编辑」按钮去掉了 ⇒ 「停在代码页」**就是**
   //    编辑态（编辑面＝代码页本身）。所以别再引入第二个布尔 —— 两个状态迟早会不一致。
@@ -252,13 +254,22 @@ function MermaidView({
         //    内联成一个实例 ⇒ 必然打架 ✓（错还从 Lexical 的 decorator 里抛出来 ⇒ 报成 `#335` ✗）。
         //    ⚠️ 初始化也交给闸门 ✓ —— 原先这里那对 `mermaidReady`/`mermaidThemeRef` 只管得住**本模块** ✗，
         //      管不住 `mdMermaid.ts` 那条静态入口 ✓；现在两边共用同一个主题状态 ✓。
+        // ⭐ 2026-10-07（owner 两张正式版截图，报错原文）：
+        //    `渲染失败：Error: There can be only one root. No parent could be found for ("长文沉淀")`
+        //    真因在**源文的形状**：`mindmap` 用缩进表示层级 ✓，而那两篇里的 mindmap 一行缩进都没有 ✗
+        //    （实测本机空间库：那页 22 个图「有缩进的行 = 0」✓，其中 5 个是 mindmap ✓）
+        //    ⇒ mermaid 把根底下十几行全当成了根节点 ⇒ dagre 报"只能有一个根" ✓（报错与成因字面对得上 ✓）。
+        //    ⛔ 不动用户源文 ✗ —— 只给**渲染用的副本**按作者显然的意图补缩进 ✓（`normalizeMindmapIndent`）。
+        const cm = src.match(/^\s*mindmap\b/i);
+        const { text: renderSrc, autoIndented } = cm ? normalizeMindmapIndent(src) : { text: src, autoIndented: false };
         const { svg: out } = await mermaidGate.run(
           mermaidTheme,
           // 配置**唯一出处**在 `lib/mermaid.ts`（`htmlLabels` 必须顶层 —— 写进 `flowchart`
           // 里 mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ canvas 变脏、PNG 导不出去）。
           (t) => mermaid.initialize(mermaidInitOptions(t as "dark" | "default") as never),
-          () => mermaid.render(`sn-${Math.random().toString(36).slice(2, 10)}`, src),
+          () => mermaid.render(`sn-${Math.random().toString(36).slice(2, 10)}`, renderSrc),
         );
+        setAutoIndentedNote(autoIndented); // 每次渲染按当前源文重算 ✓（源文改了就跟着变 ✓）
         if (seq !== renderSeq.current) return;
         setSvg(out);
         setError(null);
@@ -521,6 +532,13 @@ function MermaidView({
           ) : (
             <span className="editor-mermaid-placeholder">（空白图形）</span>
           )}
+        </div>
+      )}
+      {/* ⭐ 2026-10-07：mindmap 原文没有缩进 ⇒ 我们只对**渲染副本**补了缩进（用户源文一个字没动 ✓）。
+          这句提示要看得见 —— 否则用户永远不知道自己那张图的层级是我们替他补的 ✓。 */}
+      {autoIndentedNote && (
+        <div className="editor-mermaid-note">
+          这个 mindmap 原文没有缩进 —— 已按「全部挂到根节点」渲染。要分层的话，到「代码」页给子主题加两格缩进。
         </div>
       )}
     </div>

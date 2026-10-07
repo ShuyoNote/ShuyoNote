@@ -23808,3 +23808,14 @@ body.is-plugin-panel-open .main {
   word-break: break-word;
   pointer-events: none;
 }
+
+/* ⭐ 2026-10-07：mindmap 原文没缩进 ⇒ 渲染副本被补了缩进（源文不动 ✓），这句要说给用户听 ✓ */
+.editor-mermaid-note {
+  margin: 0 2px 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #6b7280);
+  background: var(--surface-2, rgba(0, 0, 0, 0.03));
+  border-top: 1px dashed var(--border);
+}
