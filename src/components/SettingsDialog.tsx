@@ -1561,7 +1561,12 @@ export function SettingsDialog() {
             {tab === "security" && <SecurityPane />}
             {tab === "ai" && (
               <section className="set-section set-ai">
-                <div className="set-section-title">AI 服务</div>
+                {/* ⛔ 2026-10-08 删掉一行 `<div class="set-section-title">AI 服务</div>` ✗ ——
+                    面板头已经写着「AI」＋「服务商与模型」（`set-body-title` / `set-body-desc`），
+                    正文再来一个「AI 服务」是同义重复；而且它是这一页**唯一没走 i18n** 的小节标题
+                    （英文界面里也是中文）✗。owner 2026-10-08 在真窗口里圈出它问「是不是多余」✓。
+                    ⚠️ 判据在 `check-web-build`：真 Chromium 打开 AI 页 ⇒ 正文 `.set-ai .set-section-title`
+                    必须是 **0 个** ✓（那一页的所有小节标题都该在页签里，不该在正文顶部再报一次面板名）。 */}
                 <AiSettingsForm onDone={() => {}} showCancel={false} />
               </section>
             )}

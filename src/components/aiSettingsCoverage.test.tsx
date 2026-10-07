@@ -23,6 +23,10 @@ vi.mock("../lib/platform", () => ({
     derivedStores: () => mocks.derivedStores(),
     executor: { invoke: async () => undefined },
   },
+  // ⚠️ 2026-10-08：`AiSettingsForm` 起先只认 `platform` 这个对象；现在它还问一句
+  //    `isDesktopPlatform()`（桌面专属命令 `space_security_overview` 在 Web 上不许调，见那个 effect 的注释）
+  //    ⇒ 桩必须一起给，否则 vitest 直接报 No "isDesktopPlatform" export is defined ✓。
+  isDesktopPlatform: () => true,
 }));
 
 vi.mock("../lib/libraryCoverage", async () => {

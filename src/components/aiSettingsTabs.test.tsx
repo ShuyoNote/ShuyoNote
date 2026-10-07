@@ -18,6 +18,9 @@ vi.mock("../lib/platform", () => ({
     aiChat: async () => ({ ok: false, text: "" }),
     aiEmbed: async () => ({ ok: false, vectors: [] }),
   },
+  // ⚠️ 2026-10-08：`AiSettingsForm` 现在还问一句 `isDesktopPlatform()`（桌面专属命令不许在 Web 上调，
+  //    见那个 effect 的注释）⇒ 桩必须一起给（否则 vitest 报 No "isDesktopPlatform" export ✓）。
+  isDesktopPlatform: () => true,
 }));
 
 vi.mock("../lib/api", () => ({

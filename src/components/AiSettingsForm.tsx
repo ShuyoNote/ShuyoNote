@@ -4,7 +4,7 @@ import { probeApi } from "../lib/ai/transport";
 import { embedText } from "../lib/semanticEmbed";
 import { localTranscribe } from "../lib/ai/localTranscribe";
 import { localVision } from "../lib/ai/localVision";
-import { platform } from "../lib/platform";
+import { isDesktopPlatform, platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
 import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
 import { buildLibraryMap, type LibraryMap } from "../lib/ai/libraryMap";
@@ -67,6 +67,13 @@ export function AiSettingsForm({
   //    用户会以为已经配好了 —— 而真实情况是"我们不会发出去"。
   const [spaceEncrypted, setSpaceEncrypted] = useState(false);
   useEffect(() => {
+    // ⚠️ 2026-10-08：`space_security_overview` 是**桌面专属**命令（`lib/platform/commands.ts` 里写着理由：
+    //    Web 没有钥匙柜 ⇒ 给了也是误导）⇒ **Web 上先问一句**，别让 invoke 抛出来。
+    //    抛了虽然被下面的 catch 接住、界面照旧（`spaceEncrypted` 保持 false），但 Web 控制台会多一条
+    //    `[web] invoke error … Error: Web 平台未实现命令: space_security_overview` ✗ —— 而本仓把
+    //    console.error 也算失败（`check-web-build` 的「没有未捕获错误」就是靠这条当场抓到的 ✓）。
+    //    口径与 `SpacePrivacySection` 的 `if (!desktop) return;` 同一套 ✓。
+    if (!isDesktopPlatform()) return;
     let alive = true;
     void (async () => {
       try {
