@@ -33,7 +33,7 @@ import { describe, expect, it } from "vitest";
 import { BlockTableNode } from "./nodes/BlockTableNode";
 import { MermaidNode } from "./nodes/MermaidNode";
 import { SafeCodeNode } from "./nodes/SafeCodeNode";
-import { SHUYONOTE_TRANSFORMERS } from "./markdownTransformers";
+import { SHUYONOTE_TRANSFORMERS, preprocessMarkdownImport } from "./markdownTransformers";
 
 const MD = [
   "| 优势 | 说明 |",
@@ -256,5 +256,38 @@ describe("```mermaid 围栏 ⇒ mermaid 块（2026-10-05）", () => {
     const src = String(node?.src ?? "");
     // 逐行断言：第二行两格、第三行四格、第四行六格 —— 一格都不许少 ✓
     expect(src.split("\n").slice(1, 4)).toEqual(["  root((R))", "    甲", "      乙"]);
+  });
+  it('★ HTML 预处理不许吃掉围栏里的缩进（owner：「json 代码转换后缩进也没了」）', () => {
+    // 来由：`preprocessMarkdownImport` 一旦在文档里发现**任何 HTML 标签**（HTML_RE ✓），
+    //   就把**整篇 md** 丢给 `DOMParser` 解析 —— 而 ```json / ```mermaid 围栏**不是 <pre>**
+    //   ⇒ HTML 解析器先把连续空格折成一个，`nodeToMarkdown` 的元素分支再折一次 ✗
+    //   ⇒ 围栏里用来表达结构的缩进**全没了** ✓（这正是 owner 连报两次的那件事 ✓）。
+    const md = [
+      '<div>前面有 HTML ⇒ 整篇会走 HTML 解析</div>',
+      '',
+      '```json',
+      '{',
+      '  "a": 1,',
+      '  "b": {',
+      '    "c": 2',
+      '  }',
+      '}',
+      '```',
+      '',
+      '```mermaid',
+      'mindmap',
+      '  root((R))',
+      '    甲',
+      '```',
+    ].join('\n');
+    const pre = preprocessMarkdownImport(md);
+    // ① 围栏里的缩进必须原样（JSON 的每一层 ✓、mermaid 的层级 ✓）
+    expect(pre).toContain('  "a": 1,');
+    expect(pre).toContain('    "c": 2');
+    expect(pre).toContain('  root((R))');
+    expect(pre).toContain('    甲');
+    // ② 而且 HTML 那一半该转的还是要转（别为了保缩进把 HTML 处理整条关掉 ✗）
+    expect(pre).not.toContain('<div>');
+    expect(pre).toContain('前面有 HTML');
   });
 });
