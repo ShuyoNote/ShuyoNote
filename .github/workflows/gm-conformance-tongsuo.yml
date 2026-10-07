@@ -46,8 +46,15 @@ jobs:
       - name: Build Tongsuo (static, no-shared)
         run: |
           set -euo pipefail
-          if [ -f "$HOME/tongsuo/install/lib/libcrypto.a" ]; then
+          # ⚠️ 装到 `lib/` 还是 `lib64/` **随平台/版本变**（Tongsuo 在本 runner 上实际装进 `lib64/` ✓；
+          #    `scripts/check-gm-conformance.mjs:32` 早就写着"Linux 是 lib64/，别照抄" ✓）。
+          #    2026-10-08 修：原先这里写死 `install/lib/libcrypto.a` ⇒ run #1/#2 **两跑两红在这个 `ls` 上**
+          #    （构建其实**成功了**，逐字：`install libcrypto.a -> /home/runner/tongsuo/install/lib64/libcrypto.a`），
+          #    而对拍那一步因此**根本没跑起来** ✗（红得体面，但没读到任何读数）。
+          #    ⇒ 一律用 `lib*/` 通配去找，别写死目录名。
+          if ls "$HOME"/tongsuo/install/lib*/libcrypto.a >/dev/null 2>&1; then
             echo "缓存命中：$HOME/tongsuo/install 已有 libcrypto.a ⇒ 跳过自编"
+            ls -l "$HOME"/tongsuo/install/lib*/libcrypto.a
             exit 0
           fi
           # Tongsuo 的构建要 perl；ubuntu-latest 自带，这里只显式交代依赖
@@ -59,7 +66,9 @@ jobs:
           ./Configure no-shared --prefix="$HOME/tongsuo/install"
           make -j"$(nproc)"
           make install_sw
-          ls -l "$HOME/tongsuo/install/lib/libcrypto.a"
+          ls -l "$HOME"/tongsuo/install/lib*/libcrypto.a
+          # 连 CLI 也要在（第 6 步读的是 **CLI 路径**，不是 prefix —— 见那一步的注释 ✓）
+          "$HOME/tongsuo/install/bin/openssl" version
 
       - name: Install JS deps (the gate imports from scripts/lib)
         run: |
@@ -72,10 +81,20 @@ jobs:
         run: |
           # ⚠️ set -o pipefail：否则 `| tee` 会把 gate 的真实退出码吞掉（今天刚栽过的形状）
           set -euo pipefail
-          SHUYONOTE_TONGSUO_OPENSSL="$HOME/tongsuo/install" \
+          # ⚠️ 2026-10-08 修：这个环境变量要的是 **Tongsuo 的 CLI 可执行文件**，不是 prefix
+          #    （`scripts/check-gm-conformance.mjs:28/196` 逐字：`=<Tongsuo>/bin/openssl`）。
+          #    原先给的是安装前缀 ⇒ 即便第 4 步过了，这一步也会"读不到 Tongsuo"而**自报跳过** ✗。
+          SHUYONOTE_TONGSUO_OPENSSL="$HOME/tongsuo/install/bin/openssl" \
             node scripts/check-gm-conformance.mjs 2>&1 | tee gm-conformance.txt
           echo "---- 关键读数（9 项是 run 还是 skip，以工件为准）----"
-          grep -c '^!' gm-conformance.txt || true   # `!` 行＝跳过项；0 表示全部真跑
+          # ⚠️ 2026-10-08：把"跳过了几项"从**打印**变成**真判据** —— 本仓铁律「跳过 ≠ 通过」
+          #    （`docs/TESTING.md` / `AGENTS.md` §7）。有跳过项 ⇒ 这一步红，工件里照样留着读数 ✓。
+          skips=$(grep -c '^!' gm-conformance.txt || true)
+          echo "跳过项（! 行）= $skips"
+          if [ "$skips" != "0" ]; then
+            echo "::error::对拍没真跑：$skips 项自报跳过 ⇒ 这份工件**不能**当「已对拍」"
+            exit 1
+          fi
 
       - name: Upload the reading as an artifact (always)
         if: always()
