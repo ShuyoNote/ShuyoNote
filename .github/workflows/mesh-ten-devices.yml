@@ -1,0 +1,64 @@
+name: mesh-ten-devices (T-10 loopback lower bound, manual)
+
+# 为什么单开这一条（2026-10-08 立，owner 拍 R118＝A′ ✓）：
+#   `U14`（单空间最多 10 台设备）的四条判据**只有一个承载**＝`mesh.rs` 那条 `#[ignore]` 用例
+#   ＋ `scripts/verify-mesh-ten-devices.mjs`。它**负载敏感**：
+#     · 空闲机器上四条全绿（收敛 ✓／最差落后 6.6–9.6s ≤ 10s／1.8 次/秒 ≤ 2、合计 18.0 ≤ 18／合并余量 10% ≤ 20% ✓）
+#     · **CI #932 实测（GitHub 共享 runner）**：`✗ 最差落后 70713 ms ≤ 10000 ms（收尾最差 530 ms）`
+#       ＋ `✗ 底下的 cargo test 自己也是绿的（exit=101）`、**`attempts=2`（重试一次仍红）**
+#       ⇒ 塞进日常 CI 就是给每次 push 加一条**基本必红**的门禁 ✗（阈值来自 `U14` 规格，⛔ 不是能放宽的）
+#   ⇒ 设计照抄 `gm-conformance-tongsuo.yml` 那套：**手动触发**，需要读数时点一次，
+#     把逐项结果作为**工件**上传 ⇒ 读数可核，且**日常 CI 完全不受影响** ✓。
+#
+# ⚠️ 口径边界（逐字照 `scripts/verify-mesh-ten-devices.mjs` 头部，⛔ 不许混用）：
+#   它起 **10 个真窗口**（各自 `127.0.0.1:0`）＋ **10 份独立库**，但**对端清单是手工填的**
+#   （`lan::is_lan_base` 明确排除 `127/8` ⇒ **绕过了发现层**）⇒ 它的绿**只能当"下界"**；
+#   **真机 10 台（`M-10`，要人手）不在它里面**，⛔ 不许把它的绿写成「真机 10 台通过」✗。
+#
+# 出口码（脚本自己的契约）：0＝四条判据全绿；1＝有条红或交叉验不成立；2＝**没拿到读数**（⛔ 不算通过）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "为什么现在跑（写进 run 名字，便于日后追溯）"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: read
+
+jobs:
+  ten-devices:
+    name: T-10 十台设备（回环下界，真实 60 秒编辑窗）
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 依赖列表**照抄** `ci.yml` 的 `rust-tests` job（≠ 自创）：这个 crate 在 Linux 上要链
+      # webkit2gtk ＋ bundled-sqlcipher 用的 OpenSSL，少一个包都编译不过。
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev libclang-dev xdg-utils
+
+      - name: 跑 T-10（脚本自己 `cargo test` 那条 `#[ignore]` 用例 ＋ 独立复核四条判据）
+        id: run
+        run: |
+          # ⚠️ `set -o pipefail`：否则 `| tee` 会把脚本的真实退出码吞掉（本仓栽过的形状 ✓）。
+          set -euo pipefail
+          node scripts/verify-mesh-ten-devices.mjs 2>&1 | tee mesh-ten-devices.txt
+
+      - name: Upload the reading as an artifact (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesh-ten-devices-${{ github.run_number }}
+          path: mesh-ten-devices.txt
+          retention-days: 90
