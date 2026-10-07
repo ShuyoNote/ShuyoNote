@@ -8,8 +8,11 @@
 // 加载 → subgraph 全叠成一整块(开发版好、正式版坏)。静态引入根治该问题。
 import mermaid from "mermaid";
 import { mermaidInitOptions } from "./mermaid";
-let mermaidReady = false;
-let mermaidTheme = "";
+import { mermaidGate } from "./mermaidGate";
+// ⚠️ 2026-10-06（owner：「开发版没有错误，正式版有」✗）：这里原先有一对
+//    `mermaidReady` / `mermaidTheme`（"本文件初始化一次" ✓）—— 它只管得住**本文件** ✗，
+//    管不住编辑器里十几个图块的 render 并发 ✗（`MermaidNode.tsx` 各跑各的 ✓）。
+//    现在初始化与渲染**统一走 `mermaidGate`** 这条全应用唯一的闸门 ✓（按主题初始化一次 ＋ 渲染串行 ✓）。
 
 /**
  * Find every `.fm-md-mermaid` element under `root`, render each with Mermaid at
@@ -30,16 +33,15 @@ export async function hydrateMermaidBlocks(root: HTMLElement | null, theme: "dar
     // Skip work when already rendered with the current theme.
     if (doneTheme === theme && el.getAttribute("data-ok")) continue;
     try {
-      if (!mermaidReady || mermaidTheme !== theme) {
-        // ⚠️ 配置**唯一出处**是 `mermaidInitOptions`（本文件原来那份把 `htmlLabels` 写进了
-        //    `flowchart: {}` —— mermaid 11 **不认**那个位置 ⇒ 实际产出 `<foreignObject>` 的
-        //    HTML 标签，即"说好要 SVG text label、实际没做到"，还让 canvas 变脏、PNG 导不出去）。
-        mermaid.initialize(mermaidInitOptions(theme) as never);
-        mermaidReady = true;
-        mermaidTheme = theme;
-      }
-      const id = `mdm-${Math.random().toString(36).slice(2, 10)}`;
-      const { svg } = await mermaid.render(id, src);
+      // ⭐ 走全应用唯一闸门 ✓：初始化（按主题一次 ✓）＋ 渲染（串行 ✓）都在队列里 ——
+      //    配置**唯一出处**仍是 `mermaidInitOptions`（本文件原来那份把 `htmlLabels` 写进了
+      //    `flowchart: {}` —— mermaid 11 **不认**那个位置 ⇒ 实际产出 `<foreignObject>` 的
+      //    HTML 标签，即"说好要 SVG text label、实际没做到"，还让 canvas 变脏、PNG 导不出去）。
+      const { svg } = await mermaidGate.run(
+        theme,
+        (t) => mermaid.initialize(mermaidInitOptions(t as "dark" | "default") as never),
+        () => mermaid.render(`mdm-${Math.random().toString(36).slice(2, 10)}`, src),
+      );
       svgHost.innerHTML = svg;
       el.setAttribute("data-done", theme);
       el.setAttribute("data-ok", "1");

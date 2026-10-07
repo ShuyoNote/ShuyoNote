@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useEditorStore } from "../../store/editor";
 import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions } from "../../lib/mermaid";
+import { mermaidGate } from "../../lib/mermaidGate";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
 import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
@@ -28,9 +29,9 @@ export type SerializedMermaidNode = Spread<
   SerializedLexicalNode
 >;
 
-let mermaidReady = false;
-// Shared across MermaidView instances: the theme mermaid was last initialised with.
-const mermaidThemeRef = { current: "" };
+// ⚠️ 2026-10-06：原先这里有一对 `mermaidReady` / `mermaidThemeRef`（"本模块内初始化一次" ✓）——
+//    它管不住 `mdMermaid.ts` 那条**静态**入口 ✗，也管不住十几个图块的 render 并发 ✗。
+//    现在整套交给 `lib/mermaidGate` 的**全应用唯一闸门** ✓（初始化按主题一次 ＋ 渲染串行 ✓）。
 
 export class MermaidNode extends DecoratorNode<JSX.Element> {
   __src: string;
@@ -245,15 +246,19 @@ function MermaidView({
       try {
         const mod = await import("mermaid");
         const mermaid = mod.default;
-        if (!mermaidReady || mermaidThemeRef.current !== mermaidTheme) {
-          // ⚠️ 配置**唯一出处**在 `lib/mermaid.ts`（`htmlLabels` 必须顶层 —— 写进 `flowchart`
-          //    里 mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ canvas 变脏、PNG 导不出去）。
-          mermaid.initialize(mermaidInitOptions(mermaidTheme) as never);
-          mermaidReady = true;
-          mermaidThemeRef.current = mermaidTheme;
-        }
-        const id = `sn-${Math.random().toString(36).slice(2, 10)}`;
-        const { svg: out } = await mermaid.render(id, src);
+        // ⭐ 2026-10-06（owner：「开发版没有错误，正式版有」✗）：所有渲染**都过全应用唯一那条闸门** ✓。
+        //    为什么：`mermaid.render` 动的是**模块级全局状态** ✗ —— 一屏十几个图块各跑各的会互相覆盖 ✓；
+        //    开发版里动态 import 与静态 import 可能是两份实例、侥幸不炸 ✓，正式版被 `inlineDynamicImports`
+        //    内联成一个实例 ⇒ 必然打架 ✓（错还从 Lexical 的 decorator 里抛出来 ⇒ 报成 `#335` ✗）。
+        //    ⚠️ 初始化也交给闸门 ✓ —— 原先这里那对 `mermaidReady`/`mermaidThemeRef` 只管得住**本模块** ✗，
+        //      管不住 `mdMermaid.ts` 那条静态入口 ✓；现在两边共用同一个主题状态 ✓。
+        const { svg: out } = await mermaidGate.run(
+          mermaidTheme,
+          // 配置**唯一出处**在 `lib/mermaid.ts`（`htmlLabels` 必须顶层 —— 写进 `flowchart`
+          // 里 mermaid 11 不认 ⇒ 产出 `<foreignObject>` ⇒ canvas 变脏、PNG 导不出去）。
+          (t) => mermaid.initialize(mermaidInitOptions(t as "dark" | "default") as never),
+          () => mermaid.render(`sn-${Math.random().toString(36).slice(2, 10)}`, src),
+        );
         if (seq !== renderSeq.current) return;
         setSvg(out);
         setError(null);
