@@ -190,6 +190,40 @@ pub fn record_change(
     updated_at: i64,
 ) -> Result<(), String> {
     let did = device_id(c)?;
+    // ⭐ 2026-10-08（R139「治根」）：**先并掉自己写下、且还没推出去的同实体 upsert**。
+    //
+    // 为什么（实测，不是推理）：payload 是**整篇快照** ⇒ 旧的那份被新的**完全覆盖** ✓；
+    //   而每次保存都**追加**一份 ⇒ 实测一个空间 2 天就涨到 **672 MB（占全库 91%）** ✗，
+    //   其信息 **98.7% 是重复的**（一页 260 次保存各存一份 1.32 MB 的全量快照 ✗）。
+    // ⇒ 留着它们没有任何收益，只有 600+ MB 的代价。
+    //
+    // ⚠️ 三条边界，一条都不许越：
+    //   ① **只删自己设备写的**（`device_id = 本机`）—— 中继进来的行是**别人的账** ✗；
+    //   ② **只删还没推出去的**（`seq > meta.sync_profiles.last_pushed_seq`）—— 已推送的那条
+    //      服务端／对端还要按序消费它 ✗；没配同步（没档案／游标 0）⇒ 全都算未推送
+    //      ⇒ **每个实体只留最新一份** ✓（这正是本条要解决的形状 ✓）；
+    //   ③ **只并 `op='upsert'`** —— delete 是墓碑、体积极小，且语义不同，不许并掉 ✗。
+    //
+    // ⚠️ 手法是「**删旧行 ＋ 插新行**」，不是"就地改 payload"：新行必须拿到**新的 seq**，
+    //    否则**已经消费过那条 seq 的对端**永远看不到这次更新 ✗（游标语义会被就地改坏）。
+    if op == "upsert" {
+        // 读不到档案/表就取 0 ⇒ 按"全都未推送"处理（并得更狠 ⇒ 每个实体只留最新 ✓，与 ② 同口径）。
+        let last_pushed: i64 = c
+            .query_row(
+                "SELECT COALESCE((SELECT last_pushed_seq FROM meta.sync_profiles
+                                   WHERE ws_id = (SELECT id FROM workspaces LIMIT 1)), 0)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        c.execute(
+            "DELETE FROM changes
+              WHERE entity = ?1 AND entity_id = ?2 AND op = 'upsert'
+                AND device_id = ?3 AND seq > ?4",
+            params![entity, entity_id, did, last_pushed],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     c.execute(
         "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
          VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)",
@@ -5053,6 +5087,90 @@ mod tests {
              );",
         )
         .unwrap();
+    }
+
+    /// ⭐ 2026-10-08（R139「治根」）：同一实体**还没推出去**的 upsert 只留最新一份。
+    /// 承重理由：payload 是整篇快照 ⇒ 旧的是新的子集 ✓（实测那 672 MB 里 98.7% 是重复 ✗）。
+    #[test]
+    fn recording_the_same_entity_twice_before_push_coalesces() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "CREATE TABLE changes (
+                 seq INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, device_seq INTEGER NOT NULL,
+                 entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, payload TEXT,
+                 updated_at INTEGER NOT NULL, UNIQUE(device_id, device_seq));
+             CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+             INSERT INTO workspaces (id) VALUES ('ws-1');",
+        )
+        .unwrap();
+        set_meta_state(&c, KEY_DEVICE_ID, "dev-a").unwrap();
+        let count = |c: &Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM changes", [], |r| r.get(0)).unwrap()
+        };
+        let payload_of = |c: &Connection, eid: &str| -> String {
+            c.query_row(
+                "SELECT payload FROM changes WHERE entity_id = ?1 ORDER BY seq DESC LIMIT 1",
+                [eid],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let max_seq = |c: &Connection| -> i64 {
+            c.query_row("SELECT COALESCE(MAX(seq),0) FROM changes", [], |r| r.get(0)).unwrap()
+        };
+
+        // ① 没配同步（无档案）⇒ 连记三次同一页 ⇒ **只剩一行**，正文是最新那份。
+        record_change(&c, "page", "p1", "upsert", Some("v1"), 1).unwrap();
+        let first_seq = max_seq(&c);
+        record_change(&c, "page", "p1", "upsert", Some("v2"), 2).unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v3"), 3).unwrap();
+        assert_eq!(count(&c), 1, "未推送时同一实体只该留一份（否则就是那 672 MB 的形状 ✗）");
+        assert_eq!(payload_of(&c, "p1"), "v3", "留下的必须是**最新**那份");
+        assert!(
+            max_seq(&c) > first_seq,
+            "新行必须拿到**新的 seq**（就地改 payload 会让已消费过旧 seq 的对端永远看不到这次更新 ✗）"
+        );
+
+        // ② 别的实体各留各的。
+        record_change(&c, "page", "p2", "upsert", Some("x"), 4).unwrap();
+        assert_eq!(count(&c), 2);
+
+        // ③ **已推送的那条不许被并掉**：游标推到当前 max ⇒ 再记两条 ⇒ 只有未推送的那条被并。
+        let cur = max_seq(&c);
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, server_url, last_pushed_seq) VALUES ('ws-1','http://x/sync',?1)",
+            [cur],
+        )
+        .unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v4"), 5).unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v5"), 6).unwrap();
+        assert_eq!(
+            count(&c),
+            3,
+            "已推送的 v3 要留着（服务端/对端还要按序消费它 ✗）；v4 未推送 ⇒ 被 v5 并掉；外加 p2"
+        );
+
+        // ④ 墓碑（delete）不许被并掉 —— 它没有 payload，是另一类信息。
+        record_change(&c, "page", "p1", "delete", None, 7).unwrap();
+        assert_eq!(count(&c), 4, "delete 是墓碑，不许并");
+
+        // ⑤ 别人设备写的行**一个字都不许动**（中继进来的账 ✗）。
+        c.execute(
+            "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+             VALUES ('peer-dev', 1, 'page', 'p1', 'upsert', 'peer-v1', 8)",
+            [],
+        )
+        .unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v6"), 9).unwrap();
+        let peer_rows: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE device_id = 'peer-dev'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(peer_rows, 1, "别人的行不许被本机的合并删掉");
+        assert_eq!(payload_of(&c, "p1"), "v6");
     }
 
     /// ★ 与前端 `crdt/claimClient.ts` 的三条口径成对（两侧各一份判据、同一套语义）：
