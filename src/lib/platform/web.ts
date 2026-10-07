@@ -744,6 +744,25 @@ function recordChange(
       : payload;
   const payloadStr = augmented == null ? "" : typeof augmented === "string" ? augmented : JSON.stringify(augmented);
   const did = syncDeviceId();
+  // ⭐ R139（2026-10-08「治根」）：**先并掉自己写下、且还没推出去的同实体 upsert**。
+  //   与桌面 `sync::record_change` **同一条规则、同一套边界**（两边各一份实现，判据
+  //   `webRecordChangeParity.test.ts` 钉着"两侧同形" ✓）：
+  //   ① **只删自己设备的** —— 中继/别人的行不许动 ✗；
+  //   ② **只删 `id > last_pushed_seq`** —— 已推送的服务端还要按序消费它 ✗；没配同步（游标 0）
+  //      ⇒ 全都算未推送 ⇒ **每个实体只留最新一份** ✓（这就是那条 672 MB 的形状 ✓）；
+  //   ③ **只并 upsert** —— delete 是墓碑、语义不同、体积为 0，不许并 ✗。
+  // ⚠️ 手法是「删旧行 ＋ 插新行」（新的 `id`）⇒ **对端游标语义不变**；就地改 payload 会让
+  //   已经消费过那条 id 的对端**永远看不到**这次更新 ✗。
+  if (op === "upsert") {
+    const prof = store.query<{ last_pushed_seq: number }>(
+      "SELECT last_pushed_seq FROM sync_profiles WHERE ws_id = (SELECT id FROM workspaces LIMIT 1)",
+    );
+    const lastPushed = prof[0]?.last_pushed_seq ?? 0;
+    store.run(
+      "DELETE FROM changes WHERE entity = ? AND entity_id = ? AND op = 'upsert' AND device_id = ? AND id > ?",
+      [entity, entityId, did, lastPushed],
+    );
+  }
   store.run(
     "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?)",
     [did, entity, entityId, op, payloadStr, updatedAt],
