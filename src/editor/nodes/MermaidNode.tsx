@@ -16,6 +16,7 @@ import { useEditorStore } from "../../store/editor";
 import { detectMermaidSyntax, mermaidInitOptions, mermaidSyntaxOptions, normalizeMindmapIndent } from "../../lib/mermaid";
 import { fixMindmapRootAnchors } from "../../lib/mindmapLabel";
 import { mermaidGate } from "../../lib/mermaidGate";
+import { EXPORT_MERMAID_ATTR } from "../../lib/exportMermaid";
 import { useResolvedTheme } from "../../store/theme";
 import { toast } from "../../store/toast";
 import { blockIdOf, blockRevOf, withBlockId, withBlockRev } from "./blockIdHelpers";
@@ -120,6 +121,10 @@ export class MermaidNode extends DecoratorNode<JSX.Element> {
   exportDOM(_editor: LexicalEditor): DOMExportOutput {
     const el = document.createElement("pre");
     el.textContent = this.__src;
+    // ⭐ 2026-10-08（台账 R123）：导出件里的图块**只能**由导出后的异步后处理换成 `<svg>` ——
+    //    `exportDOM` 是同步接口，而 mermaid 渲染是异步的（同 `lib/exportInline.ts` 立下的形状）。
+    //    这里只留线索，换不换得成由 `lib/exportMermaid.ts` 负责（失败会退回这段源码）。
+    el.setAttribute(EXPORT_MERMAID_ATTR, "");
     return { element: el };
   }
 

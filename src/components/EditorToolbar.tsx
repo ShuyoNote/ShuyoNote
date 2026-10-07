@@ -21,6 +21,7 @@ import { CommunityPublishDialog } from "./CommunityPublishDialog";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { docHtml, printDoc } from "../lib/print";
 import { inlineExportMedia } from "../lib/exportInline";
+import { renderExportMermaid } from "../lib/exportMermaid";
 
 /**
  * 「发布到社区」要的字段。
@@ -140,16 +141,20 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       });
       // 先把 body 里的图片/缩略图内联成 data: URL，**再**包成完整文档 ——
       // 反过来会把 <head>/<style> 丢掉（`inlineExportMedia` 只处理片段、返回片段）。
-      const { html: inlinedBody, report } = await inlineExportMedia(body);
+      //
+      // ⭐ 2026-10-08（台账 R123）：mermaid 图块在 `exportDOM` 里只能是一段源码（那是同步接口），
+      // 所以**先**把它换成 `<svg>`（`lib/exportMermaid.ts` 的异步后处理），再统一内联媒体。
+      const { html: withDiagrams, report: mermaidReport } = await renderExportMermaid(body);
+      const { html: inlinedBody, report } = await inlineExportMedia(withDiagrams);
       const html = docHtml(inlinedBody, { title });
       await api.writeTextFile(path, html);
-      if (report.missing > 0) {
-        toast(`已导出 HTML（${report.missing} 张图片的字节不在本机，未能内联）`, "info");
-      } else if (report.tooLarge > 0) {
-        toast(`已导出 HTML（${report.tooLarge} 个附件超过 8MB，未内联）`, "info");
-      } else {
-        toast("已导出 HTML", "success");
-      }
+      // 如实回报每一种"没做到的"（不静默；措辞与原先那条一致，只是可以同时出现多条）。
+      const notes: string[] = [];
+      if (mermaidReport.failed > 0) notes.push(`${mermaidReport.failed} 个图形渲染失败，已保留源码`);
+      if (report.missing > 0) notes.push(`${report.missing} 张图片的字节不在本机，未能内联`);
+      if (report.tooLarge > 0) notes.push(`${report.tooLarge} 个附件超过 8MB，未内联`);
+      if (notes.length > 0) toast(`已导出 HTML（${notes.join("；")}）`, "info");
+      else toast("已导出 HTML", "success");
     } catch (e) {
       toast(`导出失败：${e}`, "error");
     }
@@ -163,12 +168,17 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       body = $generateHtmlFromNodes(editor);
       title = (document.querySelector(".title-input") as HTMLInputElement | null)?.value || "未命名";
     });
-    // 两步都是必须的：
+    // 三步都是必须的：
     //   ① 内联媒体 —— 打印是一次性快照，`attachment://` 取不到就是空白；
-    //   ② 等图片就绪再开打印对话框（这一步在 printDoc 里做）。
+    //   ② 把 mermaid 的源码块渲染成 `<svg>`（同上：`exportDOM` 同步 ⇒ 只能事后补，见 `lib/exportMermaid.ts`）；
+    //   ③ 等图片就绪再开打印对话框（这一步在 printDoc 里做）。
     void (async () => {
       try {
-        const { html: inlined } = await inlineExportMedia(body);
+        const { html: withDiagrams, report: mermaidReport } = await renderExportMermaid(body);
+        const { html: inlined } = await inlineExportMedia(withDiagrams);
+        if (mermaidReport.failed > 0) {
+          toast(`有 ${mermaidReport.failed} 个图形渲染失败，PDF 里保留的是源码`, "info");
+        }
         await printDoc(inlined, { title });
       } catch (e) {
         toast(`导出失败：${e}`, "error");
