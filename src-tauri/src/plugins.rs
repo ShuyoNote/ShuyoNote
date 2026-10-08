@@ -2141,6 +2141,90 @@ pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: i
     out
 }
 
+/// ⭐ **2026-10-08**：把「**当前空间**」装进这条线程的 `RUN_STATE` ✓ —— 外部（MCP）那条路缺的就是这一步 ✗。
+///
+/// ## 现场（owner 2026-10-08 让我演示「能不能读 ShuyoNote」✓）
+///
+/// 桥 → App 全通 ✓（`tools/list` 回 7 条 ✓），但**任何需要空间的能力**都回
+/// `space_unknown: 无法确定当前空间，数据能力不可用` ✗ —— **打开空间 ✗／重开「外部 AI 接入」开关 ✗ 都不管用** ✓。
+///
+/// ## 真因（三处拼起来唯一 ✓）
+///
+/// · 空间在**线程局部**里：`RUN_STATE` 默认 `read_space: None` ✓，而 `with_read_conn` 就读它 ✓（空 ⇒ 抛上面那句 ✓）；
+/// · 全仓 `install_run_state(` 只有**一处**调用者 ✓ —— 在**插件宿主**那条线程里 ✗；
+/// · 外部那条路（`mcp_host::handle_external_call` → `with_external_caller` → `dispatch_capability` ✓）
+///   **只装身份、从不装空间** ✗ ⇒ 7 条只读工具**必然全失败** ✗。
+///   ⚠️ 它能悄悄坏到今天，是因为**工具清单那条路不需要空间** ✓（`__tools_list` ⇒ 全绿 ⇒ 看着像「面已经能用」✗）。
+///
+/// ## 口径（三条）
+///
+/// · 只装**空间** ✓；`read_dir` 显式置 `None` ⇒ `with_read_conn` 走**默认应用数据目录** ✓
+///   （与「打开空间」那条路同一支 ✓）；
+/// · **用完恢复** ✓（thread-local，形状照抄 `with_external_caller` ✓）；
+/// · ⛔ **权限那半一个字不动** ✗（仍在 `dispatch_capability` 一处判 ✓、审计仍记在那条路上 ✓）。
+///
+/// ## 为什么拆成「读一次」和「装一次」两支 ✓
+///
+/// 读的那支要能**拿夹具目录**测 ✓，装的这支要能**注一个空间**测 ✓ ——
+/// 合在一起就只能依赖真实应用数据目录 ✗（判据会去读开发机上的真库 ✗，那是本工作区禁过的事 ✓）。
+pub(crate) fn with_active_space<T>(f: impl FnOnce() -> T) -> T {
+    let space = crate::db::app_data_dir_ref().and_then(resolve_active_space_from);
+    with_active_space_from(space, f)
+}
+
+/// 读「当前空间」：`sync_state['active_workspace_id']` ✓；**没有就退到最早那个未删除的工作区** ✓
+/// （与首跑播种那条退法一致 ✓ —— 两条路不能给出不同的"当前空间" ✗）。
+///
+/// ⚠️ 用**裸 meta** 连接 ⇒ 表名**不带** `meta.` 前缀 ✓（`open_meta_conn_at` 的形态 ✓，
+/// 它顺带跑 `meta_migrate` ⇒ 夹具目录直接可用 ✓）。
+/// ⛔ 别在这儿改调 `workspaces::active_workspace_id` ✗ —— 那个要的是"meta 已 ATTACH"的连接 ✓，两者形态不同 ✓。
+fn resolve_active_space_from(dir: &std::path::Path) -> Option<String> {
+    use rusqlite::OptionalExtension;
+    let c = crate::db::open_meta_conn_at(dir).ok()?;
+    let persisted: Option<String> = c
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            rusqlite::params![crate::db::ACTIVE_KEY],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    if let Some(id) = persisted {
+        return Some(id);
+    }
+    c.query_row(
+        "SELECT id FROM workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// 装/恢复那一半（**可注入** ⇒ 判据测得了 ✓）。`None` ⇒ **一个字都不装** ✓
+/// （⇒ 那句 `space_unknown` 仍然如实报 ✓，绝不静默读错空间 ✗）。
+pub(crate) fn with_active_space_from<T>(space: Option<String>, f: impl FnOnce() -> T) -> T {
+    let prev = RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        let prev = (st.read_space.clone(), st.read_dir.clone());
+        if let Some(sp) = space {
+            st.read_space = Some(sp);
+            st.read_dir = None;
+        }
+        prev
+    });
+    // ⚠️ 换了空间 ⇒ **缓存必须清** ✗（`READ_CONN` 是 thread-local：留着就是"上一条连接答下一个空间"✗）。
+    READ_CONN.with(|c| *c.borrow_mut() = None);
+    let out = f();
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        st.read_space = prev.0;
+        st.read_dir = prev.1;
+    });
+    READ_CONN.with(|c| *c.borrow_mut() = None);
+    out
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 /// ⚠️ 改成 `pub(crate)` 是 Task 5 ① 的**硬要求** ✓ —— 外部宿主路在别的模块，私有就**调不到** ✗。
@@ -9382,6 +9466,90 @@ register({ id: "s.run", title: "结构化", run: function () {
     //   ④ 只命中**活动空间**；⑤ `loc` 与 `files.read` 的段同口径；⑥ 空库 ⇒ 空数组。
 
     /// 测试用的**空间库目录**：走仓库自己的建库路径（真 schema —— `chunks`/`attachment_text`/`attachments` 都在）。
+    /// ⭐ **2026-10-08（owner 现场演示撞出来）**：**外部（MCP）那条路必须认得「当前空间」** ✓。
+    ///
+    /// 现场：桥 → App 全通 ✓（`tools/list` 回 7 条 ✓），但任何**需要空间**的能力都回
+    /// `space_unknown: 无法确定当前空间，数据能力不可用` ✗ —— 打开空间 ✗／重开 MCP 开关 ✗ 都不管用 ✓。
+    /// 真因：空间在**线程局部** `RUN_STATE` 里 ✓，而全仓 `install_run_state(` 只有**一处**调用者
+    /// （**插件宿主**那条线程 ✓）⇒ 外部那条路**从来没装过它** ✗ ⇒ 7 条只读工具**必然全失败** ✗。
+    ///
+    /// 判据三半（缺一不可 ✓）：
+    ///   ① **装/恢复**：注一个空间 ⇒ 这条线程上 `read_space` 就是它 ✓，跑完**恢复原值** ✓；
+    ///      注 `None` ⇒ **一个字都不装** ✓（⇒ `space_unknown` 仍然如实报 ✓，不静默读错空间 ✗）；
+    ///   ② **解析**：`sync_state` 有 `active_workspace_id` ⇒ 取它 ✓；**没有** ⇒ 退到**最早那个未删除的工作区** ✓；
+    ///   ③ ⭐ **接线**：`mcp_host::handle_external_call_with` 体内**真的**包了 `with_active_space` ✓。
+    ///      ⚠️ 变异：把那句删掉 ⇒ ①②**照样全绿** ✗，**只有③会红** ✓ —— 这一半是**必须的** ✗
+    ///      （本仓记过这个形状：助手对 ≠ 被调用 ✓）。
+    #[test]
+    fn the_external_mcp_path_can_see_the_active_space() {
+        // ① 装 / 恢复 / 不装
+        RUN_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.read_space = None;
+            st.read_dir = None;
+        });
+        let seen = with_active_space_from(Some("sp-external".to_string()), || {
+            RUN_STATE.with(|s| s.borrow().read_space.clone())
+        });
+        assert_eq!(seen.as_deref(), Some("sp-external"), "外部那条路必须能看见当前空间 ✓");
+        assert_eq!(
+            RUN_STATE.with(|s| s.borrow().read_space.clone()),
+            None,
+            "用完必须恢复原值 ✓"
+        );
+        let seen_none = with_active_space_from(None, || RUN_STATE.with(|s| s.borrow().read_space.clone()));
+        assert_eq!(seen_none, None, "注 None ⇒ 一个字都不许装 ✓（否则会静默读错空间 ✗）");
+
+        // ② 解析：没有键 ⇒ 退到最早；有键 ⇒ 取它
+        let dir = std::env::temp_dir().join(format!("shuyonote-mcp-space-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let c = crate::db::open_meta_conn_at(&dir).unwrap(); // 它顺带跑 meta_migrate ✓
+            c.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES ('ws-old','老','#000','',1,1,1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES ('ws-new','新','#000','',2,2,2)",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            resolve_active_space_from(&dir).as_deref(),
+            Some("ws-old"),
+            "没有 active_workspace_id 这个键 ⇒ 退到**最早**那个空间 ✓"
+        );
+        {
+            let c = crate::db::open_meta_conn_at(&dir).unwrap();
+            c.execute(
+                "INSERT INTO sync_state (key, value) VALUES (?1, 'ws-new')",
+                rusqlite::params![crate::db::ACTIVE_KEY],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            resolve_active_space_from(&dir).as_deref(),
+            Some("ws-new"),
+            "有键 ⇒ 取键上那个 ✓（两条路必须给出同一个「当前空间」 ✓）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // ③ 接线（这一半才挡得住"助手对但没被调用"✗）
+        let src = include_str!("mcp_host.rs");
+        let start = src
+            .find("pub(crate) fn handle_external_call_with(")
+            .expect("入口名改了就要同步改这里 ✓");
+        let body = &src[start..];
+        let end = body.find("\npub(crate) fn ").unwrap_or(body.len());
+        assert!(
+            body[..end].contains("with_active_space("),
+            "接线变了：外部那条路必须**装当前空间** ✓（否则 7 条只读工具全回 space_unknown ✗）"
+        );
+    }
+
     fn cap_search_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("shuyonote-capsearch-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

@@ -124,7 +124,12 @@ pub(crate) fn handle_external_call_with(
 ) -> Result<String, String> {
     // ① 跑这次调用，并把**它产出的草稿**收上来 ✓（外部路以前没人取 ⇒ 静默丢掉 ✗）
     let (out, drafts) = plugins::with_fresh_drafts(|| {
-        plugins::with_external_caller(session_id, granted, || plugins::dispatch_capability(method, args_json))
+        plugins::with_external_caller(session_id, granted, || {
+            // ⭐ 2026-10-08：**装「当前空间」** ✓ —— 缺这一步，`with_read_conn` 必然回
+            //   `space_unknown: 无法确定当前空间，数据能力不可用` ✗，7 条只读工具**全都用不了** ✗。
+            //   现场、真因与口径写在 `plugins::with_active_space` 的注释里 ✓（owner 让我演示时撞出来的 ✓）。
+            plugins::with_active_space(|| plugins::dispatch_capability(method, args_json))
+        })
     });
     if drafts.is_empty() {
         return out;
