@@ -564,7 +564,11 @@ export function FileManagerView() {
   // 点击任意处关闭右键菜单。
   useEffect(() => {
     if (!ctxMenu.row) return;
-    const onMouseDown = () => closeCtx();
+    // ⭐ 只认左键 ✓ —— 右键不该把菜单关掉（否则「闪一下」✗）；右键的开菜单在各行自己的 mousedown 里 ✓。
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      closeCtx();
+    };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [ctxMenu.row]);
@@ -900,6 +904,12 @@ export function FileManagerView() {
                     if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(row.key);
                     else openRow(row);
                   }}
+                  onMouseDown={(e) => {
+                    // ⭐ 同侧栏那条：**右键在 mousedown 就开** ✓（窗口未激活时第一次右键会被系统吃掉 ✗）。
+                    if (e.button !== 2) return;
+                    e.preventDefault();
+                    setCtxMenu({ x: e.clientX, y: e.clientY, row });
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setCtxMenu({ x: e.clientX, y: e.clientY, row });
@@ -1013,6 +1023,12 @@ export function FileManagerView() {
                 // 窄屏没有 hover、右键也只能靠长按：列表模式此前**根本没有**右键入口
                 // （只有网格那一支接了 `onContextMenu`）。手机上行内那六个 20px 小按钮
                 // 换成下面那个 `⋯`，其余动作全在这一份面板里。
+                onMouseDown={(e) => {
+                  // ⭐ 同侧栏那条：**右键在 mousedown 就开** ✓（窗口未激活时第一次右键会被系统吃掉 ✗）。
+                  if (e.button !== 2) return;
+                  e.preventDefault();
+                  setCtxMenu({ x: e.clientX, y: e.clientY, row });
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setCtxMenu({ x: e.clientX, y: e.clientY, row });

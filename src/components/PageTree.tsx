@@ -278,7 +278,11 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
   //    `menuFile` 变成 null ⇒ ⭐ 那一项的动作就丢了 ✓（见下面菜单容器上的 onMouseDown ✓）。
   useEffect(() => {
     if (!menuOpen) return;
-    const onDown = () => closeMenu();
+    // ⭐ 只认左键 ✓（同页面行那条）。
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      closeMenu();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeMenu();
     };
@@ -305,6 +309,15 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           title={f.name}
           onClick={() => openFile(f)}
           // ⭐ 右键：与页面行同一套菜单（同一个 `.tree-node-menu` 样式 ✓），`preventDefault` 挡掉系统菜单 ✓。
+          onMouseDown={(e) => {
+            // ⭐ 同页面行那条：**右键在 mousedown 就开** ✓（窗口未激活时第一次右键会被系统吃掉 ✗）。
+            if (e.button !== 2) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setMenuAnchor({ x: e.clientX, y: e.clientY });
+            setMenuFile(f);
+            setMenuOpen(true);
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -432,6 +445,9 @@ function TreeItem({
   useEffect(() => {
     if (!menuOpen && !copyOpen) return;
     const onDown = (e: MouseEvent) => {
+      // ⭐ 只认**左键** ✓：右键不该触发「点别处就关」✗ —— 否则菜单先被关，
+      //   而 contextmenu 若没来（窗口未激活那一下 ✓）就成了「闪一下」✗。
+      if (e.button !== 0) return;
       const t = e.target as HTMLElement;
       if (t.closest(".tree-node-menu, .tree-copy-panel, .tree-more")) return;
       setMenuOpen(false);
@@ -527,6 +543,16 @@ function TreeItem({
         className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragSource ? "tree-row-dragging" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         onMouseDown={(e) => {
+          // ⭐ 2026-10-08（owner 实测「要点两下才出来」✗）：**右键在 mousedown 就开菜单** ✓ ——
+          //   窗口未激活时，第一次右键常被系统只用来「激活窗口」⇒ contextmenu 那一击不来 ⇒ 要点两下 ✗。
+          //   contextmenu 那半**保留** ✓（有些输入设备只发它 ✓）；两边设同一份 state ⇒ 先到的生效、后到的幂等 ✓。
+          if (e.button === 2) {
+            e.preventDefault();
+            e.stopPropagation();
+            setMenuAnchor({ x: e.clientX, y: e.clientY });
+            setMenuOpen(true);
+            return;
+          }
           // Left-button on a row starts a potential pointer-drag (works in Tauri's
           // WebView where HTML5 drag-and-drop is suppressed by dragDropEnabled).
           if (e.button !== 0) return;
