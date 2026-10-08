@@ -103,7 +103,9 @@ export async function handleExternalDraftsEvent(
     let line: string;
     try {
       const r = await deps.applyOne(d.payload);
-      line = r.ok ? `OK   ${d.summary}` : `FAIL ${d.summary}：${r.message}`;
+      // ⚠️ **把应用层返回的 message 也带上** ✗ —— 只打草稿的 summary 时，
+      //    "交出去多长"这类**落库侧读数**根本不会出现在日志里 ✓（我第一版就打了 summary ✗）。
+      line = r.ok ? `OK   ${d.summary}｜${r.message}` : `FAIL ${d.summary}：${r.message}`;
     } catch (e) {
       line = `FAIL ${d.summary}：${String(e)}`;
     }
