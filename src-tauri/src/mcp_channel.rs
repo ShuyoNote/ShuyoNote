@@ -328,9 +328,12 @@ mod tests {
             body.contains("write_file_config(&cfg)"),
             "授权必须**落盘** `config.json.granted` ✓（否则禁用再启用就被覆盖回只读 ✗）"
         );
+        // ⚠️ 这里**必须**断 `write_new_token`，⛔ 不是 `set_enabled(true)` ✗ ——
+        //   我第一版钉的正是后者，而它在"已经开着"时是**空操作** ⇒ **判据把 bug 也一起钉住了** ✗
+        //   （2026-10-08 现场：owner 点了没反应，而这条判据当时是**绿的** ✓ ⇒ 绿得毫无意义 ✓）。
         assert!(
-            body.contains("set_enabled(true)"),
-            "开着时必须**换一枚新令牌** ✓（旧令牌立刻作废 ✓）"
+            body.contains("write_new_token(&cfg.granted)"),
+            "开着时必须**显式换令牌** ✓（`set_enabled(true)` 只换「关→开」那一次跃迁 ⇒ 已开着时是空操作 ✗）"
         );
         let lib = include_str!("lib.rs");
         assert!(
@@ -574,7 +577,19 @@ pub fn set_write_grant(on: bool) -> Result<McpStatus, String> {
     cfg.granted = granted_after_write_grant(&cfg.granted, on);
     write_file_config(&cfg)?;
     if is_enabled() {
-        // 与 `set_allow_write` 同一条路 ✓：重启监听 ⇒ 新令牌带上新清单 ✓、旧令牌立刻作废 ✓。
+        // ⚠️⚠️ **必须显式换令牌** ✗ —— `set_enabled(true)` 只在「**关 → 开**」那个**跃迁**上换令牌 ✓
+        //   （刻意如此：App 每次启动都换 ⇒ 用户粘给 agent 的配置每次重启就失效 ✗）⇒
+        //   **已经开着的时候它是`空操作`** ✗。
+        //
+        // ## 现场（owner 2026-10-08，逐字）
+        //
+        // 点「授权写」之后：`config.json` 里**有了** `write:pages` ✓（＝上面那步落盘成功 ✓），
+        // 而 `token` 文件**没被换** ✗（mtime 还是几小时前 ✓、第 2 行仍是 `read:pages,read:files,read:backlinks` ✗）
+        // ⇒ 面板读的 `granted` 来自**令牌文件** ✓ ⇒ 开关**看起来"点不开"** ✗（点了没有任何变化 ✓）。
+        // ⚠️ 而且此时监听面那份 `ChannelConfig.granted` 已经跟着 `set_enabled` 重建、**含**写权限 ✗
+        // ⇒ 「面板说不给、实际已经能给」——**状态不一致** ✓，比"完全不给"更坏 ✓。
+        write_new_token(&cfg.granted)?;
+        // 再走一次 `set_enabled`：它会把监听面那份 `ChannelConfig` 用**新清单**重建 ✓（它自己不会再换令牌 ✓）。
         return set_enabled(true);
     }
     Ok(status())

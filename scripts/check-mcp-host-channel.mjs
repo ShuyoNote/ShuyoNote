@@ -8,7 +8,7 @@
 //   ⇒ 安全三件套（默认关 ＋ per-session token ＋ `Origin`/`Host` 恰好回环）必须在 **App 这侧**也成立 ✓，
 //   否则"外面那台机器校验过了"就成了唯一的一道门 ✗（而门在**被调用方**这里才作数 ✓）。
 //
-// 六条断言（每条都配一个变异 ⇒ 都见过它红 ✓）：
+// 七条断言（每条都配一个变异 ⇒ 都见过它红 ✓）：
 //   ① **默认关**：`MCP_CHANNEL_ENABLED` 必须声明且**初值是 `false`** ✓（"默认开着只是别人不知道" ✗）
 //   ② **只绑回环**：代码里必须有 `127.0.0.1` ✓，**不许**出现 `0.0.0.0` / `Ipv4Addr::UNSPECIFIED` ✗
 //   ③ **token 从文件读**：必须出现**令牌文件名**（`SHUYONOTE_MCP_TOKEN_FILE` ✓）—— 只读路径、不读 env 里的值 ✓
@@ -27,7 +27,7 @@
 //   node scripts/check-mcp-host-channel.mjs
 //   node scripts/check-mcp-host-channel.mjs --channel <路径…>
 //   node scripts/check-mcp-host-channel.mjs --require-channel   # 通道文件不在 ⇒ exit 2（判据先行阶段看红用）
-//   node scripts/check-mcp-host-channel.mjs --self-test          # 夹具：正例／七个变异／两条掩码方向／缺席＋require
+//   node scripts/check-mcp-host-channel.mjs --self-test          # 夹具：正例／八个变异／两条掩码方向／缺席＋require
 import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -132,10 +132,26 @@ export function judge(texts) {
   //      `permission_denied: 能力 pages.create 需要权限 write:pages，但 manifest.permissions 未声明它` 拒掉 ✗ ——
   //    因为两条写能力都要 `write:pages` ✓，而**全仓没有任何地方把它加进 granted** ✗ ⇒ 那是个**空开关** ✓。
   //    ⚠️ 只换令牌文件不够 ✗：`set_enabled(true)` 铸令牌读的是 `cfg.granted` ✓ ⇒ 必须**落盘配置** ✓。
+  // ⚠️ 授权那两条**必须限定在 `set_write_grant` 的函数体内** ✗ ——
+  //   2026-10-08 实测：只判「全仓有没有 `write_new_token(`」会被 `set_enabled`／`rotate_token` 那两处**顶替** ✓
+  //   ⇒ 我把 `set_write_grant` 里那句换成空操作，门禁**照样绿** ✗（假绿 ✓，正是本条要防的形状 ✓）。
+  const grantBody = (() => {
+    const i = code.indexOf("fn set_write_grant(");
+    if (i < 0) return null;
+    const rest = code.slice(i);
+    const j = rest.indexOf("\npub fn ");
+    return j < 0 ? rest : rest.slice(0, j);
+  })();
   if (!lit.includes(WRITE_SCOPE)) {
     out.push("✗ 通道里没有 `" + WRITE_SCOPE + "` ✗ ⇒ **授权写那一档不存在** ⇒ 两条写能力（`pages.create`／`blocks.append`）"
       + "永远被 `permission_denied` 拒 ✓（＝面板那个「免确认写」开关是**空开关** ✗ —— R147 的现场 ✓）");
-  } else if (!/write_file_config\s*\(/.test(code)) {
+  } else if (grantBody === null) {
+    out.push("✗ 有 `" + WRITE_SCOPE + "` 但没有 `set_write_grant(` ✗ ⇒ 授权那一档**没有唯一的落点** ✓"
+      + "（散在别处就说不清「谁把写权限授出去」✗）");
+  } else if (!/write_new_token\s*\(/.test(grantBody)) {
+    out.push("✗ 有 `" + WRITE_SCOPE + "` 但**没换令牌**（`write_new_token(` ✗）⇒ 面板读的授权清单来自**令牌文件** ⇒ "
+      + "开关会「看起来点不开」✗（2026-10-08 现场：`config.json` 有了 `write:pages` ✓ 而 token 没被换 ✗）");
+  } else if (!/write_file_config\s*\(/.test(grantBody)) {
     out.push("✗ 有 `" + WRITE_SCOPE + "` 但**没有落盘配置**（`write_file_config(` ✗）⇒ 只改了令牌文件的话，"
       + "**禁用再启用会被 `cfg.granted` 覆盖回只读** ✗（这正是「空开关」的根 ✓）");
   }
@@ -190,7 +206,7 @@ if (isMain && argv.includes("--self-test")) {
     `fn serve() { let _ = crate::mcp_host::handle_external_call(1, &[], "pages.list", "{}"); }`,
     // ⭐ R147：授权写那一档（判据⑥）—— 常量 ＋ 落盘 ✓
     `pub(crate) const WRITE_SCOPE: &str = "write:pages";`,
-    `pub fn set_write_grant(on: bool) -> Result<(), String> { write_file_config(&cfg) }`,
+    `pub fn set_write_grant(on: bool) -> Result<(), String> { write_file_config(&cfg) && write_new_token(&cfg.granted).is_ok() }`,
   ].join("\n");
   const put = (name, text) => {
     const p = join(dir, name);
@@ -206,6 +222,7 @@ if (isMain && argv.includes("--self-test")) {
     ["变异⑤ 直接调鉴权点（绕过唯一入口）⇒ 红", () => [put("mcp_channel.rs", OK + '\nfn bad() { let _ = crate::plugins::dispatch_capability("pages.list", "{}"); }')], 1],
     ["变异⑥ 不调唯一入口 ⇒ 红", () => [put("mcp_channel.rs", OK.replace(ENTRY, "some_other_entry"))], 1],
     ["变异⑦ 授权写那一档没了（write:pages 被改名）⇒ 红", () => [put("mcp_channel.rs", OK.replace("write:pages", "write-renamed"))], 1],
+    ["变异⑧ 授权面存在但不换令牌（write_new_token 拿掉）⇒ 红", () => [put("mcp_channel.rs", OK.replace("write_new_token(&cfg.granted)", "/*拿掉*/"))], 1],
     ["掩码方向① 注释里讲规矩（含 0.0.0.0 与前缀写法）⇒ 必须绿", () => [put("mcp_channel.rs", OK + '\n// 注意：不许出现 0.0.0.0，也不许 o.starts_with("http://127.0.0.1")')], 0],
     ["掩码方向② 把调用藏进字符串 ⇒ 必须红", () => [put("mcp_channel.rs", OK.replace(`${ENTRY}(1`, `"${ENTRY}("; let _ = (1`))], 1],
     ["缺席（判据先行阶段）⇒ 绿＋自报跳过", () => [join(dir, "nope.rs")], 0],
