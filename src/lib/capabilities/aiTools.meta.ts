@@ -125,6 +125,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "title": { type: "string" },
       "content": { type: "string" },
       "parentId": { type: "string" },
+      "fence": { type: "string" },
       },
       required: ["title"],
     },
@@ -138,6 +139,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       properties: {
       "text": { type: "string" },
       "pageId": { type: "string" },
+      "fence": { type: "string" },
       },
       required: ["text"],
     },

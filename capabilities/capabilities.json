@@ -577,6 +577,12 @@
           "type": "string",
           "required": false,
           "desc": "父页面 id；省略=顶层"
+        },
+        {
+          "name": "fence",
+          "type": "string",
+          "required": false,
+          "desc": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
         }
       ],
       "returns": {
@@ -613,6 +619,12 @@
           "type": "string",
           "required": false,
           "desc": "目标页面 id；省略=当前页"
+        },
+        {
+          "name": "fence",
+          "type": "string",
+          "required": false,
+          "desc": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
         }
       ],
       "returns": {

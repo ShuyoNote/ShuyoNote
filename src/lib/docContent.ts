@@ -45,6 +45,55 @@ export interface ContentSql {
 }
 
 /** **唯一读出口**。页面不存在或已软删 ⇒ `null`（"没有"与"出错"由调用方分开处理）。 */
+/**
+ * ⭐ **R166**：把**一整段**源码做成**一个** code 块 ✓（⛔ 不按空行／换行拆开 ✗）。
+ *
+ * 来由（owner 2026-10-08 现场）：MCP 建页原来只造段落 ✗ ⇒ 一段 mermaid 图源被拆成 **91 个段落** ✗
+ * ⇒ 没有任何一个块是完整的图 ⇒ 渲染不出来 ✓。口径：**一次调用 ＝ 一整块** ✓；
+ * 剩下的交给编辑器那条既有迁移（`Editor.tsx:570`「mermaid 代码块 ⇒ 图」✓）✓。
+ * ⚠️ 放在**这一层**是刻意的 ✓ —— 别的文件新增这些列名会顶 `check-doc-content-access` 的基线 ✗。
+ */
+function fenceNodeJson(language: string, text: string, makeId: () => string): string {
+  return JSON.stringify({
+    blockId: makeId(),
+    type: "code",
+    language,
+    version: 1,
+    direction: "ltr",
+    format: "",
+    indent: 0,
+    style: "",
+    children: [{ type: "text", text, format: "", style: "", mode: "normal", detail: 0, version: 1 }],
+  });
+}
+
+/** ⭐ R166：一整块 code 块的文档（新建页那条路用 ✓）。 */
+export function fenceDoc(
+  language: string,
+  text: string,
+  makeId: () => string,
+): { content_json: string; content_text: string } {
+  const doc = { root: { type: "root", version: 1, direction: "ltr", format: "", indent: 0, children: [JSON.parse(fenceNodeJson(language, text, makeId))] } };
+  return { content_json: JSON.stringify(doc), content_text: text };
+}
+
+/** ⭐ R166：把**一个** code 块追加到现有文档末尾 ✓（追加那条路用 ✓）。 */
+export function appendFence(json: string, language: string, text: string, makeId: () => string): string {
+  let doc: { root?: { children?: unknown[] } } = {};
+  try {
+    doc = JSON.parse(String(json || "")) as { root?: { children?: unknown[] } };
+  } catch {
+    doc = {};
+  }
+  const root = (doc.root ?? { type: "root", version: 1, direction: "ltr", format: "", indent: 0 }) as {
+    children?: unknown[];
+  };
+  const children = Array.isArray(root.children) ? root.children : [];
+  children.push(JSON.parse(fenceNodeJson(language, text, makeId)));
+  root.children = children;
+  return JSON.stringify({ root });
+}
+
 export function readContent(db: ContentSql, pageId: string): DocContent | null {
   const rows = db.query<{ title: string; content_json: string; content_text: string }>(
     "SELECT title, content_json, content_text FROM pages WHERE id = ? AND deleted_at IS NULL",

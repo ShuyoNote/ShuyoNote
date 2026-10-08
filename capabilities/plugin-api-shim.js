@@ -17,7 +17,7 @@ var api = {
     list: function(limit) { return __capCall("pages.list", { limit: limit === undefined ? 50 : Number(limit) }); },
     get: function(id, offset, limit) { return __capCall("pages.get", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 6000 : Number(limit) }); },
     search: function(q, limit) { return __capCall("pages.search", { q: q === undefined ? undefined : String(q), limit: limit === undefined ? 8 : Number(limit) }); },
-    create: function(title, content, parentId) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId) }); }
+    create: function(title, content, parentId, fence) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId), fence: fence === undefined ? undefined : String(fence) }); }
   },
   tags: {
     list: function() { return __capCall("tags.list", {}); },
@@ -25,7 +25,7 @@ var api = {
   },
   blocks: {
     list: function(pageId, limit) { return __capCall("blocks.list", { pageId: pageId === undefined ? undefined : String(pageId), limit: limit === undefined ? 100 : Number(limit) }); },
-    append: function(text, pageId) { return __capCall("blocks.append", { text: text === undefined ? undefined : String(text), pageId: pageId === undefined ? undefined : String(pageId) }); }
+    append: function(text, pageId, fence) { return __capCall("blocks.append", { text: text === undefined ? undefined : String(text), pageId: pageId === undefined ? undefined : String(pageId), fence: fence === undefined ? undefined : String(fence) }); }
   },
   backlinks: {
     list: function(pageId) { return __capCall("backlinks.list", { pageId: pageId === undefined ? undefined : String(pageId) }); }

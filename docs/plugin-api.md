@@ -113,8 +113,8 @@ register({
 | `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
 | `files.read` | `api.files.read(id, offset, limit)` | `read:files` | `current-space` | — | object | 1.1.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
-| `pages.create` | `api.pages.create(title, content, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
-| `blocks.append` | `api.blocks.append(text, pageId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `pages.create` | `api.pages.create(title, content, parentId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.append` | `api.blocks.append(text, pageId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `user.notify` | `api.notify(message)` | — | `app` | — | void | 1.0.0 |
 | `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
@@ -237,7 +237,7 @@ register({
 
 ### `pages.create` — 新建页面（草稿确认）
 
-- 调用：`api.pages.create(title, content, parentId)`
+- 调用：`api.pages.create(title, content, parentId, fence)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
@@ -246,10 +246,11 @@ register({
   - `title`: `string` —— 
   - `content`: `string`（可选） —— 正文纯文本（按空行分段）
   - `parentId`: `string`（可选） —— 父页面 id；省略=顶层
+  - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
 
 ### `blocks.append` — 向页面追加内容（草稿确认）
 
-- 调用：`api.blocks.append(text, pageId)`
+- 调用：`api.blocks.append(text, pageId, fence)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会改动既有页面内容 → 必须先给用户看草稿并等他确认；落库时按当时的页面重读后再追加，不覆盖并发编辑
@@ -257,6 +258,7 @@ register({
 - 参数：
   - `text`: `string` —— 要追加的纯文本（按空行分段）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+  - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
 
 ### `user.notify` — 向用户显示一条提示
 

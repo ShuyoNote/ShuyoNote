@@ -17,6 +17,10 @@
         "parentId": {
           "type": "string",
           "description": "父页面 id；省略=顶层"
+        },
+        "fence": {
+          "type": "string",
+          "description": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
         }
       },
       "required": [
@@ -40,6 +44,10 @@
         "pageId": {
           "type": "string",
           "description": "目标页面 id；省略=当前页"
+        },
+        "fence": {
+          "type": "string",
+          "description": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
         }
       },
       "required": [

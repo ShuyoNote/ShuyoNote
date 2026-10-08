@@ -153,7 +153,7 @@ export interface PluginApi {
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
-    create(title: string, content?: string, parentId?: string): { drafted: true; summary: string };
+    create(title: string, content?: string, parentId?: string, fence?: string): { drafted: true; summary: string };
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
@@ -173,7 +173,7 @@ export interface PluginApi {
   /** 向页面追加内容（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已写入**
    */
-    append(text: string, pageId?: string): { drafted: true; summary: string };
+    append(text: string, pageId?: string, fence?: string): { drafted: true; summary: string };
   };
   backlinks: {
   /** 列出反链（权限 `read:backlinks`；1.0.0 起）

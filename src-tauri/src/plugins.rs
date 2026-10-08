@@ -1962,7 +1962,7 @@ fn push_draft(key: String, summary: String, payload: serde_json::Value) {
 ///
 /// Lexical 的 content_json 由前端在落库时按纯文本构造（那头才知道块结构），
 /// 这里只交出 `content_text` —— 保持"Rust 不猜编辑器格式"。
-fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>) -> CapResult {
+fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>, fence: Option<&str>) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 新建页面需要 title".to_string());
     }
@@ -1972,14 +1972,14 @@ fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>) -> CapR
         summary.clone(),
         serde_json::json!({
             "kind": "create_page",
-            "args": { "parent_id": parent_id, "title": title, "content_text": content },
+            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence },
         }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
-fn cap_blocks_append(page_id: Option<&str>, text: &str) -> CapResult {
+fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> CapResult {
     if text.trim().is_empty() {
         return Err("bad_args: 追加内容需要 text".to_string());
     }
@@ -1994,7 +1994,7 @@ fn cap_blocks_append(page_id: Option<&str>, text: &str) -> CapResult {
     push_draft(
         format!("append_block:{target}"),
         summary.clone(),
-        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text }),
+        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
@@ -2353,8 +2353,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             &arg_str("title")?,
             &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             arg_opt_str("parentId").as_deref(),
+            arg_opt_str("fence").as_deref(),
         ),
-        "blocks.append" => cap_blocks_append(arg_opt_str("pageId").as_deref(), &arg_str("text")?),
+        "blocks.append" => cap_blocks_append(
+            arg_opt_str("pageId").as_deref(),
+            &arg_str("text")?,
+            arg_opt_str("fence").as_deref(),
+        ),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {

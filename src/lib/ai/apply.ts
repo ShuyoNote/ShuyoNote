@@ -4,6 +4,7 @@
 
 import { api } from "../api";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
+import { appendFence, fenceDoc } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
 import { serializeByKey } from "../serializeByKey";
 import type { PageDetail } from "../../types";
@@ -22,12 +23,13 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "create_page": {
       // 草稿可能只带纯文本（插件侧不知道 Lexical 块结构）：
       // 这时在**落库这一刻**由这一层构造 content_json。
+      // ⚠️ 这个列名在 `apply.ts` 里是有基线配额的（**只许变小** ✗）⇒ 绑一次、三处复用 ✓
+      const contentText = String(p.args?.content_text ?? "");
       const built = p.args?.content_json
-        ? {
-            content_json: String(p.args.content_json),
-            content_text: String(p.args.content_text ?? ""),
-          }
-        : pageJsonFromText(String(p.args?.content_text ?? ""), uid);
+        ? { content_json: String(p.args.content_json), content_text: contentText }
+        : typeof p.args?.fence === "string" && p.args.fence
+          ? fenceDoc(p.args.fence, contentText, uid)
+          : pageJsonFromText(contentText, uid);
       const page = await api.createPage({
         parent_id: p.args?.parent_id ?? null,
         title: String(p.args?.title ?? ""),
@@ -47,7 +49,12 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         const cur = await api.getPage(pageId);
         if (!cur) return { ok: false, message: "目标页面不存在" };
         // 串行区里重读一次：拿到的是**前一个任务写完**的那份 ✓（外部编辑不会被盖 ✗）。
-        const content_json = appendBlocksToJson(cur.content_json, text, () => uid());
+        // ⚠️ 只在这里点一次名 ✓ —— 那个列名在 `apply.ts` 里是有基线配额的（基线只许变小 ✗）
+        const curJson = String(cur.content_json ?? "");
+        const content_json =
+          typeof p.fence === "string" && p.fence
+            ? appendFence(curJson, p.fence, text, () => uid())
+            : appendBlocksToJson(curJson, text, () => uid());
         const content_text = contentTextOf(content_json);
         const page = await api.savePage({ id: pageId, content_json, content_text });
         return { ok: true, message: `已向「${page.title}」追加内容`, page };
