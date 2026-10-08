@@ -76,6 +76,7 @@ import { api } from "./lib/api";
 import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
+import { shouldDropPendingSave } from "./lib/pendingSave";
 import { usePlugins } from "./store/plugins";
 import { emitHostEvent } from "./lib/pluginEvents";
 import { applyThemeTokens, resolveTheme } from "./lib/pluginTheme";
@@ -407,6 +408,20 @@ function NoteEditor({ pageId }: { pageId: string }) {
    * 那条记录存在之前**跑一轮，那一轮推不动任何东西；而下一轮要等一个节拍（服务端档最长 5 分钟）。
    */
   const flushPendingSave = useCallback(async () => {
+    const p0 = pendingSaveRef.current;
+    // ⭐ R150：外部刚写过这一页 ⇒ 这条待保存的**内容已经旧了** ✗，丢掉 ✓
+    //   （不丢的话，它到点落库就把外部那份盖回去 —— 现场三次读数都在 +0.4 秒 ✓）。
+    if (
+      p0 &&
+      shouldDropPendingSave(p0, useNotes.getState().lastExternalWrite, Date.now())
+    ) {
+      pendingSaveRef.current = null;
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      return;
+    }
     const p = pendingSaveRef.current;
     pendingSaveRef.current = null;
     // 顺手撤掉那个还没到点的去抖定时器：flush 的语义是"现在写"，不是"再写一次"。
