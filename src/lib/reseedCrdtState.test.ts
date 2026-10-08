@@ -48,6 +48,6 @@ describe("R155：落库后按新正文播种 CRDT 状态", () => {
     } catch (e) {
       thrown = e;
     }
-    expect(String(thrown), "必须把失败抛给调用方 ✓（静默吞掉就又是一条「看着成功」路径 ✗）").toContain("磁盘满");
+    expect(String(thrown), "必须把失败抛给调用方 ✓（静默吞掉就又是一条"看着成功"路径 ✗）").toContain("磁盘满");
   });
 });
