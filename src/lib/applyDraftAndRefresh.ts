@@ -5,7 +5,6 @@
 
 import { applyDraft, type ApplyResult } from "./ai/apply";
 import { api } from "./api";
-import { stateForExternalWrite } from "./crdt/yDocBridge";
 import { useNotes } from "../store/notes";
 
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
@@ -17,18 +16,17 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
   // ⭐ **R155**：外部写只进正文 ⇒ 该页的 CRDT 状态里**没有这段文字** ✗ ⇒ 重启按状态重建会把它盖回去 ✓
   //   （已复现三次 ✓）⇒ 落库之后**按新正文重新播种**这一页的状态 ✓（选项 a，owner 拍 ✓；代价＝丢该页原有血统 ✗）。
   //   ⚠️ 播种失败**不改**落库结果 ✗，但要留一行痕 ✓（否则又是一条静的"看着成功"路径 ✗）。
+  // ⭐ **R155（机制①，owner 2026-10-08 拍 A ✓）**：外部写只进正文 ⇒ 若沿用库里那份**旧状态** ✗，
+  //   编辑器绑定会**拿它当基底** ⇒ 写出旧状态 ⇒ 重启按旧状态重建 ⇒ 正文回退 ✓（已复现三次 ✓）。
+  //   ⇒ **清空该页状态**（仓内先例 `LineageConflictBanner.tsx:83` ✓）⇒ 绑定**按落盘正文 bootstrap** ✓
+  //   ⇒ 由**绑定**写出含新正文的状态 ✓（**单一写者** ✓；我先前自己播种那版会在 9ms 后被它盖回去 ✗）。
+  //   ⚠️ **次序是全部关键**：必须排在下面 `loadPages()`／`openPage()`／`bumpReload()` **之前** ✗。
   if (res.ok && res.page) {
     try {
-      // ⭐ R155 诊断（正面留痕 ✓）：它**一定**能落（`OK` 那几行就是同一个 API 写的 ✓）——
-      //   用来分清「这一步没跑到」✗ 与「跑了但静默失败」✗（我上一轮三者并看仍分不清 ✓）。
-      await api.mcpLogApplyResult(`RESEED start ${res.page.id}`.slice(0, 400));
-      const st = stateForExternalWrite(res.page);
-      await api.savePageState(res.page.id, st);
-      await api.mcpLogApplyResult(`RESEED done ${res.page.id} bytes=${st.length}`.slice(0, 400));
+      await api.savePageState(res.page.id, new Uint8Array());
     } catch (e) {
-      void useNotes.getState();
       try {
-        await api.mcpLogApplyResult(`RESEED_FAIL ${res.page.id}：${String(e)}`.slice(0, 400));
+        await api.mcpLogApplyResult(`CRDT_CLEAR_FAIL ${res.page.id}：${String(e)}`.slice(0, 400));
       } catch {
         /* 连留痕都做不了 ⇒ 静默（正文已经落了 ✓，不该把它变成失败 ✗） */
       }
