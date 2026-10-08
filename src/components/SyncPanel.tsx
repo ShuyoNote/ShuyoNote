@@ -39,7 +39,6 @@ import {
   publishPendingRemoteTotal,
   subscribePendingRemoteTotal,
 } from "../lib/pendingRemoteBadge";
-import { autoPickPeer } from "../lib/pairTarget";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
