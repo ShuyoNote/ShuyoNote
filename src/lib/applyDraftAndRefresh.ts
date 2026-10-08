@@ -23,7 +23,11 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
   //   ⚠️ **次序是全部关键**：必须排在下面 `loadPages()`／`openPage()`／`bumpReload()` **之前** ✗。
   if (res.ok && res.page) {
     try {
+      // ⭐ R155 诊断（正面留痕 ✓ —— 上一次我把仪器删了才去猜结论 ✗，这次先装回来 ✓）：
+      //   用来看清空到底**有没有进库** ✓、以及它是不是**又被绑定盖回去** ✓。
+      await api.mcpLogApplyResult(`CRDT_CLEAR start ${res.page.id}`.slice(0, 400));
       await api.savePageState(res.page.id, new Uint8Array());
+      await api.mcpLogApplyResult(`CRDT_CLEAR done ${res.page.id}`.slice(0, 400));
     } catch (e) {
       try {
         await api.mcpLogApplyResult(`CRDT_CLEAR_FAIL ${res.page.id}：${String(e)}`.slice(0, 400));
