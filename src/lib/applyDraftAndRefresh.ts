@@ -19,7 +19,12 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
   //   ⚠️ 播种失败**不改**落库结果 ✗，但要留一行痕 ✓（否则又是一条静的"看着成功"路径 ✗）。
   if (res.ok && res.page) {
     try {
-      await api.savePageState(res.page.id, stateForExternalWrite(res.page));
+      // ⭐ R155 诊断（正面留痕 ✓）：它**一定**能落（`OK` 那几行就是同一个 API 写的 ✓）——
+      //   用来分清「这一步没跑到」✗ 与「跑了但静默失败」✗（我上一轮三者并看仍分不清 ✓）。
+      await api.mcpLogApplyResult(`RESEED start ${res.page.id}`.slice(0, 400));
+      const st = stateForExternalWrite(res.page);
+      await api.savePageState(res.page.id, st);
+      await api.mcpLogApplyResult(`RESEED done ${res.page.id} bytes=${st.length}`.slice(0, 400));
     } catch (e) {
       void useNotes.getState();
       try {
