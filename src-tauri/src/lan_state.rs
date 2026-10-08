@@ -299,7 +299,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     //    —— 2026-09-26 真机修（把远端 id 当库名 ⇒ 窗口服务一个新建的空库）。
                     .iter()
                     .map(|(s, _, ws)| (window_serve_space(&c, s, ws), ws.clone(), settings_for_profile(&c, s, ws)))
-                    .filter(|(_, _, cfg)| cfg.bind.is_some())
+                    // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
+                    //   而 `''` 会去读 **`mesh_bind:` 那个空键**（写入路径**永远写不出来** ✓ ⇒ 只可能是更早版本残留 ✓）
+                    //   ⇒ 它就在 `served` 里留一个**空项** ✓：面板/日志会显示
+                    //   「这一扇门服务 2 个空间：**、**123456789Ok,./」✗（owner 2026-10-08 截图逐字 ✓，本机日志同形 ✓）。
+                    //   ⚠️ 这条红读数＝**截图与日志那两行** ✓；修法＝**按"服务空间非空"过滤** ✓。
+                    .filter(|(space, _, cfg)| !space.trim().is_empty() && cfg.bind.is_some())
                     .collect()
             };
             let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
