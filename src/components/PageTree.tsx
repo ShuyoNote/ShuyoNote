@@ -7,6 +7,20 @@ import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { PluginMenuItems } from "./PluginMenuItems";
+
+/** ⭐ **2026-10-08（owner 截图实测）**：一次只许有**一份**侧栏菜单 ✓ ——
+ *  右键开菜单前先广播一次，让**别行**的菜单自己关掉 ✓。
+ *  ⚠️ 来由：为了治"右键开着时闪一下"✗，我把"点别处就关"的监听改成**只认左键** ✗ ⇒
+ *  于是**右键另一行**时前一行的菜单不再被关 ✓ ⇒ **两个菜单同时留着** ✗（截图那一幕 ✓）。
+ *  ⚠️ 刻意**不用 Escape** 那条路 ✗：Escape 是全局快捷键，会误关别的浮层 ✓。 */
+const TREE_MENUS_CLOSE_EVT = "shuyo:close-tree-menus";
+function closeOtherTreeMenus() {
+  try {
+    window.dispatchEvent(new Event(TREE_MENUS_CLOSE_EVT));
+  } catch {
+    /* ignore */
+  }
+}
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
@@ -286,9 +300,13 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeMenu();
     };
+    // ⭐ 别行开菜单 ⇒ 这一行自己关掉 ✓（一次只许一份 ✓）
+    const onCloseAll = () => closeMenu();
+    document.addEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      document.removeEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
@@ -314,6 +332,7 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
             if (e.button !== 2) return;
             e.preventDefault();
             e.stopPropagation();
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（否则留两份 ✓）
             setMenuAnchor({ x: e.clientX, y: e.clientY });
             setMenuFile(f);
             setMenuOpen(true);
@@ -453,8 +472,14 @@ function TreeItem({
       setMenuOpen(false);
       setCopyOpen(false);
     };
+    // ⭐ 别行开菜单 ⇒ 这一行自己关掉 ✓（一次只许一份 ✓）
+    const onCloseAll = () => setMenuOpen(false);
+    document.addEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
+      document.removeEventListener("mousedown", onDown);
+    };
   }, [menuOpen, copyOpen]);
 
   const isFolder = node.kind === "folder";
@@ -549,6 +574,7 @@ function TreeItem({
           if (e.button === 2) {
             e.preventDefault();
             e.stopPropagation();
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（否则留两份 ✓）
             setMenuAnchor({ x: e.clientX, y: e.clientY });
             setMenuOpen(true);
             return;
