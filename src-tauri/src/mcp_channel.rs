@@ -182,7 +182,7 @@ pub fn handle_request(cfg: &ChannelConfig, origin: Option<&str>, host: Option<&s
     if method == "__tools_list" {
         // ⭐ M2（Task W2）：写面**只在免确认开关开着时**才拼上去 ✓ —— 关着时外部 agent 连"看都看不到"写工具 ✓
         //    （⛔ 不是"看得到但一调就拒" ✗：面里出现用不了的东西，M1 已经在 `coverage.report` 上踩过一次 ✓）。
-        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json(allow_write())));
+        return (200, format!("{{\"ok\":true,\"result\":{}}}", crate::mcp_host::tools_list_json(has_write_grant(&cfg.granted))));
     }
     match crate::mcp_host::handle_external_call(&cfg.session_id, &cfg.granted, method, &args_json) {
         Ok(result) => (200, format!("{{\"ok\":true,\"result\":{}}}", result)),
@@ -325,6 +325,28 @@ mod tests {
     /// ⭐ **R152 接线**：换档必须**换令牌**（R147 的教训 ✓）＋ 命令进 `lib.rs` ✓。
     /// 变异：删掉 `write_new_token(&cfg.granted)` 那句 ⇒ **本半必红** ✓。
     #[test]
+    /// ⭐ **R152 判据（端到端验出来的真缺陷 ✓）**：`tools/list` 那条路必须按**权限**过滤 ✓
+    /// （`has_write_grant()` ✓），**不许**按 `allow_write()` ✗ —— 后者是"要不要人确认" ✓。
+    /// 变异：把那处换回 `allow_write()` ⇒ **本半必红** ✓（「可写（每次确认）」档写工具会被误藏 ✓）。
+    #[test]
+    fn the_tool_list_follows_the_write_grant_not_the_confirm_policy() {
+        let src = include_str!("mcp_channel.rs");
+        // ⚠️ 只找**代码行** ✓ —— 头注里也写着 `tools_list_json(allow_write())` 那句（当反例引文 ✓），
+        //   第一版没跳注释 ⇒ 判据自己对着注释报红 ✗（我实测栽过一次 ✓）。
+        let line = src
+            .lines()
+            .find(|l| l.contains("tools_list_json(") && !l.trim_start().starts_with("//"))
+            .expect("那行改了就要同步改这里 ✓");
+        assert!(
+            line.contains("has_write_grant(&cfg.granted)"),
+            "工具清单必须跟**权限**走 ✓（现在这行是：{line}）—— 按 allow_write 过滤会把\"可写待确认\"档的写工具误藏 ✗"
+        );
+        assert!(!line.contains("allow_write()"), "⛔ 不许按 allow_write() 过滤清单 ✗（那是落库策略 ✓）");
+        // ⚠️ 也不许在这里 `resolve_config()` 重解析 ✗ —— app 进程没有那两个环境变量 ⇒ 它会回 None
+        //    ⇒ `granted=[]` ⇒ 写工具被误藏 ✓（2026-10-08 真机实测抓到的就是这个 ✓）。
+        assert!(!line.contains("resolve_config()"), "⛔ 清单要用这次请求自己的 cfg ✓，不许重解析 ✗");
+    }
+
     fn changing_the_level_reissues_the_token_and_is_wired() {
         let src = include_str!("mcp_channel.rs");
         let start = src.find("pub fn set_level(").expect("函数名改了就要同步改这里 ✓");
@@ -553,6 +575,21 @@ pub fn is_enabled() -> bool {
 
 /// **免确认写允不允许**（M2 · Task W2 ✓）：env `SHUYONOTE_MCP_ALLOW_WRITE=on` 优先 ✓（判据/开发要能测 ✓），
 /// 否则看配置文件 ✓；**默认 false** ✓。
+/// ⭐ **R152**：**这一枚令牌有没有写权限** ✓（`granted` 里含 `write:pages` ✓）。
+///
+/// ⚠️ **收的是"这次请求自己的" `granted`** ✓（`cfg.granted` ✓）—— ⛔ 不许在这里 `resolve_config()` 重解析 ✗：
+/// 那个函数要求**进程环境变量**（`SHUYONOTE_MCP_TOKEN_FILE` 等 ✓），而 app 进程里没有 ⇒ 它回 `None`
+/// ⇒ `granted=[]` ⇒ 写工具被误藏 ✓。**实测抓到的就是这个** ✗（临时探针逐字
+///
+/// ⚠️ 与 [`allow_write`] 是**两件事** ✗：`allow_write` 是**落库策略**（要不要人确认 ✓），
+/// 这一条是**权限**（能不能写 ✓）。现场（2026-10-08 端到端验出的真缺陷）：「可写（每次确认）」档
+/// 令牌里**有** `write:pages` ✓，而工具清单按 `allow_write` 过滤 ✗ ⇒ **两个写工具被误藏** ✓
+/// ⇒ 那一档根本用不了（用户连工具都看不到，谈何"待确认"✗）。
+/// 口径：**面 = 此刻真能调的能力** ✓ ⇒ 有写权限 ⇒ 列出来 ✓；要不要人确认由落库那一刻管 ✓。
+pub fn has_write_grant(granted: &[String]) -> bool {
+    granted.iter().any(|s| s == WRITE_SCOPE)
+}
+
 pub fn allow_write() -> bool {
     std::env::var("SHUYONOTE_MCP_ALLOW_WRITE").ok().as_deref() == Some("on") || read_file_config().allow_write
 }

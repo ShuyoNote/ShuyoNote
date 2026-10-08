@@ -35,7 +35,10 @@ pub(crate) const MCP_TOOLS_JSON: &str = include_str!("../../capabilities/mcp-too
 /// ⛔ 不在 Rust 里手抄一份工具名（那正是 `INV-MCP-tools-generated` 要挡的 ✗）。
 pub(crate) const MCP_TOOLS_WRITE_JSON: &str = include_str!("../../capabilities/mcp-tools-write.json");
 
-/// 拼给外部 agent 看的工具清单：**读面永远在** ✓；写面**只在免确认开关开着时**才拼上去 ✓（M2 · Task W2）。
+/// 拼给外部 agent 看的工具清单：**读面永远在** ✓；写面在**有写权限时**才拼上去 ✓
+/// （M2 · Task W2；⭐ **R152** 起口径修正：跟的是**权限** `write:pages` ✓，**不是**"要不要人确认" ✗ ——
+///  「可写（每次确认）」那一档令牌里有权限 ✓，若按"免确认开关"过滤就会**把写工具误藏** ✗，
+///   那一档就根本用不了 ✓；要不要确认是**落库那一刻**的事 ✓）。
 ///
 /// 为什么关着时**不列**（而不是「列了但一调就拒」）✗：M1 真端到端踩过一次
 /// （`coverage.report` 列在面上却调不通 ✓）—— 面里出现用不了的东西，agent 会照它去调、然后撞墙 ✓。
@@ -217,7 +220,7 @@ mod tools_list_tests {
     }
 
     #[test]
-    fn write_tools_only_listed_when_allowed() {
+    fn write_tools_listed_exactly_when_the_write_grant_is_there() {
         let off = names(&tools_list_json(false));
         let on = names(&tools_list_json(true));
         // ① 开关**关着**时：⛔ 一个写工具都不许出现（不是「列了但一调就拒」✗）
