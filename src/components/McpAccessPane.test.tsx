@@ -173,9 +173,55 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     await tick();
     await tick();
     const text = document.body.textContent || "";
-    expect(text).toContain("直接落库");
-    expect(text).toContain("每一次写仍会留一行审计");
+    expect(text).toContain("直接写入");
+    expect(text).toContain("每一次写都会留一行审计");
     // ⛔ 文案不许再说成"只读"（那是过期的那一版 ✗）
     expect(text).not.toContain("只读（列页面");
+  });
+});
+
+describe("R158：面板文案与呈现的四条", () => {
+  it("① 界面文本里**不许**出现评审记号（`**` ／ ✓ ／ ✗ ／ ⛔）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const text = document.body.textContent || "";
+    for (const mark of ["**", "✓", "✗", "⛔"]) {
+      expect(text.includes(mark), `界面里出现了「${mark}」—— 那是我判「过没过」的记号，不是给用户看的 ✗`).toBe(false);
+    }
+  });
+
+  it("② 令牌**默认打码** ✓，点「显示」才展开 ✓", async () => {
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, token: "deadbeefdeadbeef" });
+    mount();
+    await tick();
+    await tick();
+    const before = document.body.textContent || "";
+    expect(before.includes("deadbeefdeadbeef"), "默认渲染里不许出现令牌原文 ✗（面板会被截图 ✓）").toBe(false);
+    expect(before).toContain("••••");
+    const btn = Array.from(document.querySelectorAll("button")).find((b) => (b.textContent || "").includes("显示")) as HTMLElement;
+    flushSync(() => btn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await tick();
+    expect(document.body.textContent || "").toContain("deadbeefdeadbeef");
+  });
+
+  it("③ 章节顺序：「它能做什么」排在「现在是什么状态」之前 ✓", async () => {
+    mount();
+    await tick();
+    await tick();
+    const text = document.body.textContent || "";
+    expect(text.indexOf("它能做什么"), "要有「它能做什么」这一节 ✓").toBeGreaterThan(-1);
+    expect(text.indexOf("它能做什么"), "它必须排在状态之前 ✓（原来在最后 ✗）").toBeLessThan(
+      text.indexOf("现在是什么状态"),
+    );
+  });
+
+  it("④ 主按钮给「复制配置」✓（令牌复制降为次按钮 ✓）", async () => {
+    mount();
+    await tick();
+    await tick();
+    const primary = Array.from(document.querySelectorAll("button.is-primary")).map((b) => b.textContent || "");
+    expect(primary.some((t) => t.includes("复制配置")), "复制配置应当是主按钮 ✓").toBe(true);
+    expect(primary.some((t) => t.includes("复制令牌")), "复制令牌不该是主按钮 ✗").toBe(false);
   });
 });

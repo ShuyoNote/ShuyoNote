@@ -44,12 +44,15 @@ export function McpAccessPane() {
   // ⭐ R152（owner 2026-10-08 选 A）：**一个四档**取代原先三个开关 ✓ ——
   //   理由：②「免确认」与③「授权写入」不独立（③ 关着 ⇒ ② 毫无作用 ✗）、① 关着时 ②③ 是死 UI ✗
   //   ⇒ 真状态只有 4 个，却用 3 个布尔表达 ⇒ 一半组合是死的/骗人的 ✗。
+  // ⛔ 界面文案里**不许**出现 `**加粗**` 与 `✓／✗／⛔` —— 那些是我在仓库里判"过没过"的记号 ✗，
+  //   不是给用户看的 ✓（R152 我把它们写进来了 ✓，owner 2026-10-08 指出 ⇒ R158 修 ✓）。
   const LEVELS: Array<[McpStatus["level"], string, string]> = [
-    ["off", "不接", "关掉本机通道：请求立刻被拒、旧令牌作废 ✓（既不读也不写）"],
-    ["read", "只读", "能读笔记；调「新建页面／追加内容」会被**明确拒**（`permission_denied`）✓"],
-    ["write_confirm", "可写（每次确认）", "外部写**先变成一条待你确认的改动**，你点确定才落库 ✓"],
-    ["write_auto", "可写（免确认）", "外部写**直接落库**；每一次写仍会留一行审计 ✓"],
+    ["off", "不接", "关掉本机通道：外部请求立刻被拒，之前那枚令牌同时失效。既不读也不写。"],
+    ["read", "只读", "可以读笔记；请求新建页面或追加内容会被明确拒绝。"],
+    ["write_confirm", "可写（每次确认）", "外部改动先变成一条待你确认的改动，你点确定才会写入。"],
+    ["write_auto", "可写（免确认）", "外部改动直接写入；每一次写都会留一行审计。"],
   ];
+  const [showToken, setShowToken] = useState(false);
   const level: McpStatus["level"] = st?.level ?? "off";
 
   const setLevel = async (next: McpStatus["level"]) => {
@@ -141,8 +144,18 @@ export function McpAccessPane() {
         </div>
 
         <div className="set-hint">
-          换档＝**换一枚新令牌** ✓（旧那枚立刻作废）。⛔ 授权面不会超过「读笔记 ＋ 新建页面／追加内容」✗。
+          切换档位会更换令牌，旧的那枚立即失效。授权范围不会超过「读笔记」与「新建页面／追加内容」。
         </div>
+      </section>
+
+      <section className="set-section">
+        <div className="set-section-title">它能做什么</div>
+        <p className="set-hint">
+          <b>读</b>：列页面、搜页面、看块与反链、读附件。<b>提改动</b>：新建页面或追加内容
+          （默认要你点确认；免确认档才直接写入，那时每一次写都会留一行审计）。
+          你能在「审计」里看到每一次调用：谁、什么时候、调了什么、成功还是失败。
+          它绕不开权限 —— 和插件走的是同一处鉴权与同一本审计账。
+        </p>
       </section>
 
       <section className="set-section">
@@ -154,10 +167,10 @@ export function McpAccessPane() {
               {st ? stateLine(st) : "读取中…"}
             </div>
             {st?.env_override && (
-              <div className="set-row-sub">
-                ⚠️ 这次是被<b>环境变量</b>打开的（<code>SHUYONOTE_MCP_SWITCH=on</code>）—— 面板关不掉它，
-                要在启动环境里去掉。
-              </div>
+              <details className="set-row-sub">
+                <summary>技术细节：这次是被启动环境打开的</summary>
+                启动环境里设了 <code>SHUYONOTE_MCP_SWITCH=on</code>。面板关不掉它 —— 要去掉那个环境变量。
+              </details>
             )}
             {err && <div className="set-row-sub mcp-access-err">读/改状态失败：{err}</div>}
           </div>
@@ -173,16 +186,27 @@ export function McpAccessPane() {
           这枚令牌只在本机读写；它写在一个只有你自己能读的文件里（
           <code>{st?.token_path ?? "（未知）"}</code>）。换一枚 ⇒ 旧的立刻作废。
         </p>
+        {/* ⭐ R158：**默认打码** ✓ —— 这枚令牌原来整串铺在这里 ✗，而 owner 两次把这个面板截图发出来 ✓，
+            令牌每次完整进对话 ✗ ⇒ 默认只显示点，点「显示」才展开 ✓。 */}
         <div className="mcp-access-token">
-          <code className="mcp-access-token-text">{st?.token ?? "（还没有 —— 打开开关时会自动生成）"}</code>
+          <code className="mcp-access-token-text">
+            {!st?.token
+              ? "（还没有 —— 打开开关时会自动生成）"
+              : showToken
+                ? st.token
+                : "••••••••••••••••••••••••"}
+          </code>
         </div>
         <div className="set-actions">
           <button
-            className="set-btn is-primary"
+            className="set-btn"
             disabled={!st?.token}
             onClick={() => void copy(String(st?.token ?? ""), "令牌")}
           >
             复制令牌
+          </button>
+          <button className="set-btn" disabled={!st?.token} onClick={() => setShowToken((v) => !v)}>
+            {showToken ? "隐藏" : "显示"}
           </button>
           <button className="set-btn" disabled={busy || !st} onClick={() => void rotate()}>
             换一枚新令牌
@@ -205,15 +229,6 @@ export function McpAccessPane() {
         </div>
       </section>
 
-      <section className="set-section">
-        <div className="set-section-title">它能做什么</div>
-        <p className="set-hint">
-          <b>读</b>：列页面、搜页面、看块与反链、读附件。<b>提改动</b>：新建页面／追加内容
-          （默认要你点确认；开了免确认才直接写，而那时每一次写都会留一行审计）。
-          你能在「审计」里看到每一次调用（谁、什么时候、调了什么、成功还是失败）。
-          ⛔ 它<b>不能</b>绕开权限：和插件走的是同一处鉴权与同一本审计账。
-        </p>
-      </section>
     </div>
   );
 }
