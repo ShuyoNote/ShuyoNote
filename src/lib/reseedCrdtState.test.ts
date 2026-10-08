@@ -42,12 +42,11 @@ describe("R155：落库后按新正文播种 CRDT 状态", () => {
 
   it("★ 播种失败**要抛出来** ✓（调用方负责留痕 —— 不许静默 ✗）", async () => {
     mocks.savePageState.mockRejectedValue(new Error("磁盘满"));
-    let thrown: unknown = null;
-    try {
-      await reseedCrdtStateFromContent("p3", jsonOf("x"));
-    } catch (e) {
-      thrown = e;
-    }
-    expect(String(thrown), "必须把失败抛给调用方 ✓（静默吞掉就又是一条「看着成功」路径 ✗）").toContain("磁盘满");
+    // ⚠️ 用 `then(ok, err)` 收：写成 try/catch 时 vitest 会把它记成「未处理的拒绝」✗（我实测栽过一次 ✓）。
+    const err = await reseedCrdtStateFromContent("p3", jsonOf("x")).then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(String(err?.message), "必须把失败抛给调用方 ✓（静默吞掉就又是一条「看着成功」路径 ✗）").toContain("磁盘满");
   });
 });
