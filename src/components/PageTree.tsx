@@ -601,11 +601,9 @@ function TreeItem({
             改成弹窗之后**恒渲染标题** ✓（双击 / 右键菜单那两处都改成调 `startRename()` ✓）。 */}
         <span
           className="tree-title"
-          title="双击重命名"
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            startRename();
-          }}
+          // ⭐ **2026-10-08（owner）**：**双击改名已取消** ✓ ⇒ 改名只走弹窗（右键菜单 / ⋯ 菜单 ✓，
+          //   两处都调 `startRename()` ✓）。提示语也跟着改 ✗ —— 否则它还在教一个已没有的手势 ✓。
+          title="重命名：右键，或用右侧 ⋯ 菜单"
         >
           {node.title || (isFolder ? "新建文件夹" : "未命名")}
         </span>
