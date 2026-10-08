@@ -41,49 +41,28 @@ export function McpAccessPane() {
     void refresh();
   }, [refresh]);
 
-  const toggle = async (next: boolean) => {
-    setBusy(true);
-    try {
-      setSt(await api.mcpSetEnabled(next));
-      setErr("");
-      toast(
-        next ? "外部接入已打开（只绑本机；令牌见下面那一段）" : "外部接入已关闭 —— 旧令牌立刻作废",
-        "success",
-      );
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
+  // ⭐ R152（owner 2026-10-08 选 A）：**一个四档**取代原先三个开关 ✓ ——
+  //   理由：②「免确认」与③「授权写入」不独立（③ 关着 ⇒ ② 毫无作用 ✗）、① 关着时 ②③ 是死 UI ✗
+  //   ⇒ 真状态只有 4 个，却用 3 个布尔表达 ⇒ 一半组合是死的/骗人的 ✗。
+  const LEVELS: Array<[McpStatus["level"], string, string]> = [
+    ["off", "不接", "关掉本机通道：请求立刻被拒、旧令牌作废 ✓（既不读也不写）"],
+    ["read", "只读", "能读笔记；调「新建页面／追加内容」会被**明确拒**（`permission_denied`）✓"],
+    ["write_confirm", "可写（每次确认）", "外部写**先变成一条待你确认的改动**，你点确定才落库 ✓"],
+    ["write_auto", "可写（免确认）", "外部写**直接落库**；每一次写仍会留一行审计 ✓"],
+  ];
+  const level: McpStatus["level"] = st?.level ?? "off";
 
-  const toggleWrite = async (next: boolean) => {
+  const setLevel = async (next: McpStatus["level"]) => {
     setBusy(true);
     try {
-      setSt(await api.mcpSetAllowWrite(next));
+      setSt(await api.mcpSetLevel(next));
       setErr("");
+      const label = LEVELS.find(([id]) => id === next)?.[1] ?? next;
       toast(
-        next ? "已允许外部 AI 直接写入 —— 每一次写都会留审计" : "已关回「要你确认」—— 外部写只进待确认队列",
-        next ? "info" : "success",
-      );
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时两条写能力会被**明确拒** ✓
-  const toggleGrantWrite = async (next: boolean) => {
-    setBusy(true);
-    try {
-      setSt(await api.mcpSetWriteGrant(next));
-      setErr("");
-      toast(
-        next
-          ? "已授权写入 —— 换了一枚带 write:pages 的新令牌（旧的那枚立刻作废）"
-          : "已收回写入授权 —— 外部 AI 只能读，写能力会被明确拒",
-        next ? "info" : "success",
+        next === "off"
+          ? "已关掉外部接入 —— 旧令牌立刻作废"
+          : `已切到「${label}」—— 换了一枚对应授权的令牌（旧那枚立刻作废）`,
+        next === "write_confirm" ? "info" : "success",
       );
     } catch (e) {
       setErr(String(e));
@@ -135,74 +114,34 @@ export function McpAccessPane() {
   return (
     <div className="mcp-access">
       <section className="set-section">
-        <div className="set-section-title">接入开关</div>
+        <div className="set-section-title">接入档位</div>
 
         <div className="set-row">
           <div className="set-row-text">
-            <div className="set-row-name">允许外部 AI 接入（MCP）</div>
-            <div className="set-row-sub">
-              打开后，外部的 AI 助手（Claude Code、DSH/WorkBuddy 这类）能<b>读</b>这个库里的笔记，
-              也能<b>提改动</b>（新建页面／追加内容）；<b>只绑本机</b>（同一个 Wi-Fi 下的其它设备也连不上），
-              并且要下面那枚令牌。默认<b>关</b>；关掉时每个请求立刻被拒、旧令牌作废。
-            </div>
+            <div className="set-row-name">外部 AI 能做什么</div>
+            <div className="set-row-sub">{LEVELS.find(([id]) => id === level)?.[2] ?? ""}</div>
           </div>
-          {/* ⚠️ 本仓这颗开关的契约（照 `AiSettingsForm.tsx:271` 等现有写法 ✓）：
-              开 ⇒ 加类名 **`on`**（⛔ 不是 `is-on` ✗ —— 那个类名**根本不存在** ✗），
-              并且**必须**带一个 `.ui-toggle-knob` 子元素 ✓（那个圆钮就是它 ✓，CSS 在 `App.css:13598` ✓）。
-              owner 2026-10-06 截图问「开关按钮不对劲吧？」—— 就是因为这两条我都没照做 ✗：
-              类名写错 ⇒ 没有"开着"的底色；没有 knob ⇒ 只剩一颗**空胶囊** ✗。 */}
-          <button
-            className={`ui-toggle ${st?.enabled ? "on" : ""}`}
-            role="switch"
-            aria-checked={st?.enabled === true}
-            aria-label="允许外部 AI 接入（MCP）"
-            disabled={busy || !st}
-            onClick={() => void toggle(!(st?.enabled === true))}
-          >
-            <span className="ui-toggle-knob" />
-          </button>
         </div>
 
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name">允许外部 AI 直接写入（免确认）</div>
-            <div className="set-row-sub">
-              <b>默认关闭</b>。关着时：外部 AI 的新建页面／追加内容<b>不会直接落库</b> —— 它会变成一条
-              「待你确认」的改动，你点确定才写；而且它<b>连写工具都看不到</b>。开着时：不再问你、直接写；
-              作为交换，<b>每一次写都会留一行审计</b>（哪个外部会话、什么时候、调了什么能力、成功还是失败）。
-            </div>
-          </div>
-          <button
-            className={`ui-toggle ${st?.allow_write ? "on" : ""}`}
-            role="switch"
-            aria-checked={st?.allow_write === true}
-            aria-label="允许外部 AI 直接写入（免确认）"
-            disabled={busy || !st}
-            onClick={() => void toggleWrite(!(st?.allow_write === true))}
-          >
-            <span className="ui-toggle-knob" />
-          </button>
+        <div className="ai-settings-tabs" role="tablist" aria-label="外部 AI 接入档位">
+          {LEVELS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={level === id}
+              aria-label={label}
+              className={`ai-settings-tab${level === id ? " is-on" : ""}`}
+              disabled={busy || !st}
+              onClick={() => void setLevel(id)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name">授权写入（write:pages）</div>
-            <div className="set-row-sub">
-              <b>默认不给</b>。上面的「免确认」只管「草稿要不要自动落库」—— <b>能不能写是这一档</b>：
-              不给时外部 AI 调「新建页面／追加内容」会被<b>明确拒</b>（`permission_denied`）；给了才会换个
-              带写权限的新令牌（旧令牌立刻作废），并<b>每一次写都留一行审计</b>。
-            </div>
-          </div>
-          <button
-            className={`ui-toggle ${st?.granted?.includes("write:pages") ? "on" : ""}`}
-            role="switch"
-            aria-checked={st?.granted?.includes("write:pages") === true}
-            aria-label="授权写入（write:pages）"
-            disabled={busy || !st}
-            onClick={() => void toggleGrantWrite(!(st?.granted?.includes("write:pages") === true))}
-          >
-            <span className="ui-toggle-knob" />
-          </button>
+        <div className="set-hint">
+          换档＝**换一枚新令牌** ✓（旧那枚立刻作废）。⛔ 授权面不会超过「读笔记 ＋ 新建页面／追加内容」✗。
         </div>
       </section>
 
