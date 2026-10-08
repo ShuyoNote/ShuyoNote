@@ -3495,9 +3495,16 @@ n => Err(format!("本机有 {n} 个空间，这条命令要指名其中一个"))
 }
 
 fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScope, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    mesh_scope_at(&c, workspace_id)
+}
+
+/// ⚠️ **R146（2026-10-08）**：把 `mesh_scope` 的**读数逻辑**拆出来，只为**能被判据直接跑** ✓
+/// （原来它挂在 `State<Db>` 上 ⇒ 判据没法调 ⇒ 这条 bug 才一直没被判据碰到 ✗）。
+/// ⛔ **本步是纯搬迁**：行为与搬迁前**逐字一致** ✓（含那条 guard ✗ —— 先让判据把它照出来 ✓）。
+pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
-        let c = db.0.lock().expect("db mutex poisoned");
         let mut stmt = c
             .prepare(
                 // ⚠️ **2026-10-04 改**（owner：个人空间也要能用设备直连）：把 `mesh_room` 一起读出来 ✓。
@@ -3521,7 +3528,7 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        (device_id(&c).unwrap_or_default(), rows)
+        (device_id(c).unwrap_or_default(), rows)
     };
     let pick = match workspace_id.filter(|w| !w.is_empty()) {
         Some(want) => rows
@@ -3535,17 +3542,95 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
             n => return Err(format!("本机有 {n} 个空间，这条命令要指名其中一个")),
         },
     };
-    if pick.0.trim().is_empty() {
+    // ⚠️ **2026-10-04 改 / 2026-10-08 修（R146）**：⭐ 对暗号的值可以是 `space_id`（团队 ✓）**或**用户填的
+    //   「配对暗号」`mesh_room`（个人 ✓）。⚠️ 它**不必**是服务器上的组织空间 id ✗ —— `MeshScope` 的注释
+    //   写着真机上「本地库名」与「对暗号的空间 id」本来就不同名 ✓，只要求**两台填一样** ✓。
+    //   ⛔ **原来这里先有一条 `if pick.0.trim().is_empty() { return Err(…) }`** ✗ —— `pick.0` 是 `space_id`，
+    //   而**个人空间恰恰就是空** ⇒ 那条 guard 让"个人空间＋设备直连"这条**主用例必然报错** ✗，并且让紧随
+    //   其后的兜底成了**死代码** ✗（`mesh_room` 除 SELECT 取出外一个字节都没被读 ✓）。
+    //   判据 `r146_mesh_scope_tests` 先把它照了出来 ✓（先红：`FAILED. 2 passed; 1 failed` ✓）。
+    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
+    // ⭐ 判**最终**这个值是否为空 ✓（团队＝`space_id`；个人＝配对暗号 ✓）—— 该拒的仍然拒 ✓，但不再误伤个人空间 ✓。
+    if space.is_empty() {
         return Err(
         "还没填「配对暗号」。个人空间不走服务器：两台设备填同一个暗号，就能在同一个网络里直连"
         .to_string(),
         );
     }
-    // ⚠️ **2026-10-04 改**：⭐ 对暗号的值可以是 `space_id`（团队 ✓）**或**用户填的「配对暗号」
-    //   `mesh_room`（个人 ✓）。⚠️ 它**不必**是服务器上的组织空间 id ✗ —— `MeshScope` 的注释
-    //   写着真机上「本地库名」与「对暗号的空间 id」本来就不同名 ✓，只要求**两台填一样** ✓。
-    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
     Ok(MeshScope { space, db_space: pick.1, device: device_id })
+}
+
+/// ⭐ **R146 的判据（owner 2026-10-08 已签 ✓）** —— 这两条**先看红** ✗：
+/// ① 个人空间（`space_id` 空 ＋ `mesh_room` 有值）⇒ `mesh_scope` 必须 **Ok** 且 `space == mesh_room` ✓；
+/// ② `mesh_room` 也空 ⇒ **仍要 Err** ✓（别把"该拒"的一半也放掉 ✗）。
+#[cfg(test)]
+mod r146_mesh_scope_tests {
+    use super::*;
+
+    /// 自带夹具（不依赖本文件既有的测试模块 ✓）：四张表够 `mesh_scope_at` 读 ✓。
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// 个人空间：`space_id` 空、`mesh_room` 有值 —— **这正是"个人空间＋设备直连"的唯一形态** ✓。
+    #[test]
+    fn a_personal_space_with_a_room_gets_a_scope() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        let got = mesh_scope_at(&c, Some("ws-personal")).unwrap_or_else(|e| {
+            panic!("个人空间填了配对暗号就必须认得出它（实测报错：{e}）")
+        });
+        assert_eq!(got.space, "room-123", "对暗号的值就该是用户填的 mesh_room ✓");
+        assert_eq!(got.db_space, "ws-personal", "本地库名照旧 ✓");
+        assert_eq!(got.device, "dev-a", "设备号照旧 ✓");
+    }
+
+    /// 反向：`mesh_room` 也是空 ⇒ **要拒** ✓（放宽不等于不查 ✓）。
+    #[test]
+    fn a_personal_space_without_a_room_is_still_rejected() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            mesh_scope_at(&c, Some("ws-personal")).is_err(),
+            "暗号是空的时候不许给出 scope ✓"
+        );
+    }
+
+    /// 团队空间行为**不变** ✓：`space_id` 非空 ⇒ 用 `space_id`（不看 mesh_room ✓）。
+    #[test]
+    fn a_team_space_still_uses_its_space_id() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-personal', 'org-space', 'room-123')",
+            [],
+        )
+        .unwrap();
+        let got = mesh_scope_at(&c, Some("ws-personal")).unwrap();
+        assert_eq!(got.space, "org-space", "团队空间照旧用 space_id ✓（不带 mesh_room 的串味 ✗）");
+    }
 }
 
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
