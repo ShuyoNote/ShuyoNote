@@ -310,6 +310,8 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-01-enterprise-im-approach.md](plans/2026-10-01-enterprise-im-approach.md) | **企业版 IM（「长在空间与笔记上的讨论」）技术路线与架构**：复用／改造／全新三档逐条指 `file:line`；七条关键决策各写「为什么不选另一条」；四期路线（判据先行 → 线程 → 频道与未读游标 → 实时与沉淀）＋ ⛔ 移动端离线推送单独立项。⚠️ 本方案**没有一行产品代码落地**，规格里 12 条不变式**全部待立** |
 | [plans/2026-10-08-settings-progressive-disclosure-plan.md](plans/2026-10-08-settings-progressive-disclosure-plan.md) | **设置面板「分层 + 渐进式披露」方案 v2（已按评审修订，待施工）**：先核 v1 的六处前提（左侧确实 11 项平铺 ✓、插件**已**是独立浮层 ✓、效果图里的模型名**过期** ✗）；五招按「③ 关闭隐藏 → ① 左侧分组 → ② AI Tab → ④ 只补入口 → ⑤ 改成默认全显 ＋ 个人偏好隐藏」排序，每招写明改动面／判据／风险，并说明为什么**不**新增浮层、**不**引入「默认只给 20%」的模式开关 |
 | [plans/2026-10-08-mermaid-export-render-plan.md](plans/2026-10-08-mermaid-export-render-plan.md) | ⭐ **mermaid 导出渲染施工单（R123）**：真因钉到行（`exportDOM` 同步 ⇒ 导出件里必然是源码）；修法照 `exportInline.ts` 先例「生成 HTML 之后再异步后处理」；判据 4 条含**时序图**与**失败退回源码**，并附改前逐字红读数 |
+| [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | **移动端需求说明书**：一页纸结论（**立项待 owner 裁决**）／四类场景／P0×6＋P1×5＋P2×4（每条给**可测验收口径**）／七项不做清单／非功能（如实写"设备直连一轮都没成功搬过"）／最小切片＝**手机上记一条 ＋ 同步到电脑** |
+| [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | **移动端详细技术方案**：架构总图／**共享内核的真实工作量**（435 处 `tauri::` 引用散在 **45 个文件**，最密 6 个只占 51%）／切 `crates/core` 五步＋**文件口径判据**／桥接只做一条（uniffi）／两条数据硬教训／同步**不得假设已可用**／阶段 0–3／风险表 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
