@@ -3420,6 +3420,132 @@ pub fn mesh_set_config(
     Ok(crate::mesh::config_state(&cfg, window, &served, &paired))
 }
 
+/// ⭐ **2026-10-08**：面板那四格读数（设置／窗口地址／服务的空间／认过的设备）**抽成一个函数** ✓ ——
+/// 原来它写在 `lan_status` 里 ✓，而它直接吃**原始** `space_id` ✗ ⇒ 个人空间（那一列是空串 ✗）被当成"没配" ✓
+/// ⇒ 面板显示「设备直连 **关**」＋「口令：未设」＋三个框全空 ✗（owner 当天截图 ✓）。
+/// ⚠️ 抽出来的**动机与 R146 同**：挂在命令体里 ⇒ **判据够不着** ✗ ⇒ 这类 bug 就会一直漏 ✓。
+/// ⚠️ `space_id` 与 `ws_id` 都收：口径解析要**两个**才做得对 ✓（见 `lan_state::resolved_space` ✓）。
+pub(crate) fn mesh_config_state_at(
+    c: &Connection,
+    space_id: &str,
+    ws_id: &str,
+) -> Result<crate::mesh::MeshConfigState, String> {
+    // ⭐ **修（2026-10-08）**：**与写路径同一口径**（`lan_state::resolved_space` ✓ —— 解析只写在一处 ✓）。
+    //   个人空间（`space_id` 空）⇒ 用「配对暗号」✓；
+    //   ⚠️ **四格读数一起换** ✗：以前只把"设置"那格当重点，其实 `served_spaces("")` 会回**全局**那扇门的
+    //     服务清单 ⇒ 读数里会冒出一个空串 ✗（owner 截图里那行「服务 2 个空间：、123456789Ok,./」就是它 ✓）。
+    let space = crate::lan_state::resolved_space(c, space_id, ws_id);
+    // ⚠️ 解析出来是空的（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**：当"没配" ✓。
+    //   ⛔ 不许去读 `mesh_bind:` 那个空键 —— 那是**写入路径永远写不出来**的残留 ✗（会让"没配的"空间假显示为开着 ✓）。
+    if space.trim().is_empty() {
+        return Ok(crate::mesh::config_state(
+            &crate::mesh::MeshSettings::default(),
+            None,
+            &[],
+            &[],
+        ));
+    }
+    let cfg = crate::mesh::settings(c, &space);
+    let window = crate::mesh::window_addr(&space);
+    Ok(crate::mesh::config_state(
+        &cfg,
+        window,
+        &crate::mesh::served_spaces(&space),
+        &crate::mesh::paired_devices(c, &space)?,
+    ))
+}
+
+#[cfg(test)]
+mod mesh_config_state_tests {
+    use super::*;
+
+    /// 自带夹具（与 `lan_state.rs` 那条判据同一形状 ✓）。
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ **本笔的判据**：个人空间（`space_id` 空）＋ 暗号有值 ＋ KV 按**暗号**存 ⇒
+    ///   面板那颗开关必须是**开** ✓、地址要有 ✓、口令要算"已设" ✓。
+    /// ⚠️ 未修时这里是 `enabled: false` ＋ `bind: None` ＋ `token_set: false` ✗ ⇒ **必红** ✓ ——
+    ///   而那条红读数正是 owner 截图里逐字的「设备直连 **关** ＋ 口令：未设 ⚠️ ＋ 三个框全空」✓。
+    #[test]
+    fn a_personal_space_reports_the_mesh_as_on() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            [],
+        )
+        .unwrap();
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(
+            st.enabled,
+            "面板那颗开关必须是「开」✗（现在显示「关」＝ 就是 owner 截图那条 bug ✓）"
+        );
+        assert_eq!(st.bind.as_deref(), Some("0.0.0.0:8788"), "地址要回给面板 ✓");
+        assert!(st.token_set, "口令已设 ⇒ 面板**不该**说「未设」✗");
+    }
+
+    /// 反向①：**团队空间口径不变** ✓（`space_id` 非空 ⇒ 照旧按它读 ✓）。
+    #[test]
+    fn a_team_space_reports_its_own_settings() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id) VALUES ('ws-personal', 'team-9')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:team-9', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        let st = mesh_config_state_at(&c, "team-9", "ws-personal").unwrap();
+        assert!(st.enabled, "团队空间照旧 ✓");
+    }
+
+    /// 反向②：个人空间但**没填暗号** ⇒ 报**关** ✓（不许把"没配"说成"开着" ✓）。
+    #[test]
+    fn a_personal_space_without_a_room_reports_off() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(!st.enabled, "没填暗号 ⇒ 报关 ✓（放宽口径 ≠ 乱认 ✓）");
+    }
+}
+
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
 /// （两份各自写一遍的下场是"设置面认得、同步面不认得"，而那种不一致没有任何编译期信号）。
 /// ★★ **为什么必须是两个、不许合成一个**（2026-09-26 真机实测的教训）：档案表里
@@ -3582,6 +3708,10 @@ mod r146_mesh_scope_tests {
                  sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
              );
              CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
              INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
              INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
         )
@@ -3712,18 +3842,18 @@ pub fn lan_status(
     //   面板打开一次不该顺手开一个端口；已经开着的话 `window_addr` 会把**实际地址**读出来。
     let mesh = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let cfg = if space_id.trim().is_empty() {
-            crate::mesh::MeshSettings::default()
-        } else {
-            crate::mesh::settings(&c, &space_id)
-        };
-        let window = crate::mesh::window_addr(&space_id);
-        crate::mesh::config_state(
-            &cfg,
-            window,
-            &crate::mesh::served_spaces(&space_id),
-            &crate::mesh::paired_devices(&c, &space_id)?,
-        )
+        // ⭐ **2026-10-08**：这四行读数（设置／窗口地址／服务的空间／认过的设备）以前直接吃**原始**
+        //   `space_id` ✓，而个人空间那一列就是**空串** ✗ ⇒ `cfg` 被硬写成"空设置" ⇒ 面板显示
+        //   「设备直连 关」＋「口令：未设」＋三个框全空 ✗（owner 当天截图 ✓），而我第一笔只修了发现层那条 ✗。
+        //   ⇒ 现在**口径解析只在一处**（`lan_state::resolved_space` ✓，与写路径 `mesh_scope` 同口径 ✓），
+        //   这里连同"服务哪些空间／认过哪些设备"一起换成**解析后的**空间 ✓。
+        let ws = workspace_id
+            .as_deref()
+            .filter(|w| !w.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| profiles.first().map(|(_, _, ws)| ws.clone()))
+            .unwrap_or_default();
+        mesh_config_state_at(&c, &space_id, &ws)?
     };
 
     Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })

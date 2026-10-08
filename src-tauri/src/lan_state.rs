@@ -415,18 +415,26 @@ fn bound_profiles(app: &tauri::AppHandle) -> Vec<(String, String, String)> {
 /// ⇒ 后果：面板看不见"开着" ⇒ **「附近设备」那一块不渲染** ⇒ **配对入口进不去** ✗（挡住 R1 ✓）。
 ///
 /// ⚠️ **只动"读"** ✗：`s`（原始 `space_id`）仍照旧用于**公告** —— ⛔ 不动线上报文形状 ✗。
+/// ⭐ **2026-10-08**：**口径解析**（只这一处 ✓）—— 个人空间（`space_id` 空）用用户填的「配对暗号」`mesh_room` ✓；
+/// 团队空间用 `space_id` ✓；解析不出来 ⇒ **保持旧口径**回落到 `space_id` ✓。
+///
+/// ⚠️ 抽出来是为了**三个调用点共用**（发现层 `settings_for_profile` ✓、面板读数 `sync::mesh_config_state_at` ✓）
+/// —— 今天这条 bug 的本质就是"读写各弹各的调"✗：写路径走 `sync::mesh_scope` ✓、读路径三处各写一遍 ✗。
+pub(crate) fn resolved_space(c: &rusqlite::Connection, space_id: &str, ws_id: &str) -> String {
+    crate::sync::mesh_scope_at(c, Some(ws_id))
+        .map(|x| x.space)
+        .unwrap_or_else(|_| space_id.to_string())
+}
+
 fn settings_for_profile(
     c: &rusqlite::Connection,
     space_id: &str,
     ws_id: &str,
 ) -> crate::mesh::MeshSettings {
-    // ⭐ **修（2026-10-08）**：与**写路径同一口径** —— 个人空间（`space_id` 空）回落到用户填的「配对暗号」✓
-    //   （走 `sync::mesh_scope_at` ✓ —— 我 R146 把它从 `State<Db>` 里拆出来，动机正是"读写必须同一口径" ✓）。
+    // ⭐ **修（2026-10-08）**：与**写路径同一口径**（`resolved_space` ✓）。
     // ⚠️ 解析不出来（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**回落到 `space_id` ✓
     //   （同模块判据 ② 把这条**钉住** ✓；它顺带暴露的"空键假显示为开着"属另一笔 ✓ 已记台账 ✓）。
-    let space = crate::sync::mesh_scope_at(c, Some(ws_id))
-        .map(|x| x.space)
-        .unwrap_or_else(|_| space_id.to_string());
+    let space = resolved_space(c, space_id, ws_id);
     crate::mesh::settings(c, &space)
 }
 
