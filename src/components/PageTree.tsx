@@ -335,6 +335,7 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
             closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（否则留两份 ✓）
             setMenuAnchor({ x: e.clientX, y: e.clientY });
             setMenuFile(f);
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
             setMenuOpen(true);
           }}
           onContextMenu={(e) => {
@@ -342,6 +343,7 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
             e.stopPropagation();
             setMenuAnchor({ x: e.clientX, y: e.clientY });
             setMenuFile(f);
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
             setMenuOpen(true);
           }}
         >
@@ -576,6 +578,7 @@ function TreeItem({
             e.stopPropagation();
             closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（否则留两份 ✓）
             setMenuAnchor({ x: e.clientX, y: e.clientY });
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
             setMenuOpen(true);
             return;
           }
@@ -591,6 +594,7 @@ function TreeItem({
           e.preventDefault();
           e.stopPropagation();
           setMenuAnchor({ x: e.clientX, y: e.clientY });
+          closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
           setMenuOpen(true);
         }}
       >
