@@ -26,6 +26,11 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
       // ⭐ R155 诊断（正面留痕 ✓ —— 上一次我把仪器删了才去猜结论 ✗，这次先装回来 ✓）：
       //   用来看清空到底**有没有进库** ✓、以及它是不是**又被绑定盖回去** ✓。
       await api.mcpLogApplyResult(`CRDT_CLEAR start ${res.page.id}`.slice(0, 400));
+      // ⚠️ **过渡修法（可回退 ✓）**：读数逐字 —— 我清空**成功**（1 毫秒 ✓），而**活着的绑定**
+      //   在 **11 毫秒后**又把旧状态写回（440 字节 ✗）⇒ 清空必须排到它那次保存**之后** ✓。
+      //   正解是"**硬重挂绑定**"（丢弃内存文档 ⇒ 由绑定按落盘正文 bootstrap ✓），那一步落在
+      //   `pageBinding`／`Editor` 那条线（windows ✓，已发信 ✓）；这里先用**延后清空**过渡 ✓。
+      await new Promise((r) => setTimeout(r, 500));
       await api.savePageState(res.page.id, new Uint8Array());
       await api.mcpLogApplyResult(`CRDT_CLEAR done ${res.page.id}`.slice(0, 400));
     } catch (e) {
