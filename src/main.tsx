@@ -71,6 +71,10 @@ try {
 // module caches otherwise make the console/behaviour lag behind the code).
 console.info(`[ShuyoNote] bootstrap v${version}`);
 
+/** 可编辑 / 可选文字的区域：原生菜单在这些地方**有用** ✓（复制、粘贴、拼写检查、查词）⇒ 一律放行 ✓。 */
+const SELECTABLE_TEXT =
+  'input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
+
 // ⭐ **2026-10-08（owner 截图实测）**：**桌面应用不该露出浏览器/WebView 的原生右键菜单** ✗ ——
 //   现象＝我们自己那份菜单出来了 ✓，而 WebView 的「返回／刷新／另存为／打印／更多工具／检查」**也一起出来** ✓。
 //   来由：为了让"窗口未激活时第一次右键就能开菜单"（owner 另一条：「要点两下才出来」✗），
@@ -80,18 +84,34 @@ console.info(`[ShuyoNote] bootstrap v${version}`);
 //   （不然文本框里复制/粘贴/拼写检查的原生菜单也没了 ✗）。⚠️ 只拦默认行为、不阻止传播 ✗：
 //   我们自己那些行的 `contextmenu` 处理照旧要能跑（它们负责开菜单 ✓）。
 {
-  const isEditable = (el: EventTarget | null): boolean => {
-    const n = el as HTMLElement | null;
-    if (!n || typeof n.closest !== "function") return false;
-    return !!n.closest('input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]');
-  };
+  // ⭐ **2026-10-08（owner 第二次订正）**：「**系统的右键菜单不能完全关掉，其他地方还有用**」✓
+  //   ⇒ 上一版是"**除了输入框全拦**" ✗ —— 太宽了 ✓（它把整个应用的原生菜单都拿掉了 ✓）。
+  //   本版改成**白名单制**：**默认放行** ✓，只在我们**自己画菜单的那些元素**上拦 ✓。
+  //   名单＝我们真正挂了 onContextMenu／自绘菜单的地方 ✓（侧栏行与它自己的菜单、文件视图的行/卡与它的菜单 ✓）。
+  const OUR_MENU_SUBJECTS = [
+    ".tree-row", // 侧栏：页面行 / 文件行（右键菜单 ✓）
+    ".tree-node-menu", // 我们自己那份菜单本体（在它上面右键也不该出原生 ✓）
+    ".fm-ctx", // 文件视图自己的右键菜单 ✓
+    ".fm-ctx-title",
+    ".fm-ctx-list",
+    ".fm-ctx-item",
+    ".fm-name", // 文件名（我们把右键挂在它上面 ✓）
+    ".fm-row", // 文件视图：列表行 ✓
+    ".fm-row-selected",
+    ".fm-card", // 文件视图：网格卡片 ✓
+    ".fm-grid",
+    ".fm-grid-checkwrap",
+  ].join(", ");
   document.addEventListener(
     "contextmenu",
     (e) => {
-      if (isEditable(e.target)) return; // 输入框里保留原生菜单 ✓（复制 / 粘贴 / 拼写检查）
-      e.preventDefault();
+      const n = e.target as HTMLElement | null;
+      if (!n || typeof n.closest !== "function") return; // 认不出来 ⇒ **放行** ✓（不猜 ✓）
+      if (n.closest(SELECTABLE_TEXT)) return; // 可编辑/可选文字 ⇒ **放行** ✓（复制 / 粘贴 / 拼写检查）
+      if (n.closest(OUR_MENU_SUBJECTS)) e.preventDefault(); // 我们自己有菜单的地方 ⇒ **拦** ✓
+      // ⭐ 其余一律**放行** ✓ —— 这正是 owner 说的「其他地方还有用」✓
     },
-    true // ⭐ capture：比任何冒泡处理都早 ✓（React 的合成事件挂在 #root 上，冒泡不到它更要先拦 ✓）
+    true // capture：比任何冒泡处理都早 ✓（React 的合成事件挂在 #root 上 ✓）
   );
 }
 
