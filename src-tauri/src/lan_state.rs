@@ -298,7 +298,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // ⚠️ 两个 id 都要留着：`space` 是对暗号（公告里报的就是它），`ws` 才是**库文件名**
                     //    —— 2026-09-26 真机修（把远端 id 当库名 ⇒ 窗口服务一个新建的空库）。
                     .iter()
-                    .map(|(s, _, ws)| (s.clone(), ws.clone(), settings_for_profile(&c, s, ws)))
+                    .map(|(s, _, ws)| (window_serve_space(&c, s, ws), ws.clone(), settings_for_profile(&c, s, ws)))
                     .filter(|(_, _, cfg)| cfg.bind.is_some())
                     .collect()
             };
@@ -436,6 +436,85 @@ fn settings_for_profile(
     //   （同模块判据 ② 把这条**钉住** ✓；它顺带暴露的"空键假显示为开着"属另一笔 ✓ 已记台账 ✓）。
     let space = resolved_space(c, space_id, ws_id);
     crate::mesh::settings(c, &space)
+}
+
+/// ⭐ **2026-10-08 第二笔**：**窗口该服务/宣告哪个空间** —— 与写路径（`sync::mesh_scope`）同一条口径 ✓：
+/// 个人空间（`space_id` 空）⇒ 用户填的「配对暗号」✓；团队空间 ⇒ `space_id` ✓。
+///
+/// ⚠️ 来由（app 日志逐字）：`网格窗口已启动：0.0.0.0:8788 ｜ 服务 1 个空间：` ✗ —— **空间名是空的** ✓
+/// ⇒ 对端在发现层匹配不上 ⇒ 面板写「附近的设备里暂时没有服务这个空间的设备」✗ ⇒ **一轮都跑不起来** ✓
+/// （连带读数：`last_pushed_seq = last_pulled_seq = 0` ✗、`changes` 64 行一条没发 ✗、`meta` 里没有 `mesh_cursor:*` ✗）。
+/// ⚠️ **同一族的另一半**：配对采纳会 `mesh::add_paired(scope.space＝暗号)`，而门服务 `''` ✗ ⇒ **找不到那扇门**
+/// ⇒ 卡片进不了内存卡表 ⇒ 现象＝「配对显示成功、对端照样 401」✗ ⇒ 本笔把**根**一起修掉 ✓。
+pub(crate) fn window_serve_space(c: &rusqlite::Connection, space_id: &str, ws_id: &str) -> String {
+    // ⭐ **修**：与写路径同口径 —— 个人空间（`space_id` 空）⇒ 配对暗号 ✓（`resolved_space` 是唯一那处解析 ✓）。
+    // ⚠️ 解析不出来（没填暗号 / 没有档案行）⇒ **保持旧口径**回落 ✓（判据 ③ 把这条钉住 ✓）。
+    resolved_space(c, space_id, ws_id)
+}
+
+#[cfg(test)]
+mod mesh_serve_space_tests {
+    use super::*;
+
+    fn fixture() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ 本笔判据：个人空间（`space_id` 空）＋ 暗号有值 ⇒ **窗口报的空间必须是暗号** ✓。
+    /// ⚠️ 未修时得到 `''` ✗ ⇒ **必红** ✓（红读数＝日志里「服务 1 个空间：（空）」✗）。
+    #[test]
+    fn a_personal_space_serves_its_room_not_an_empty_name() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            window_serve_space(&c, "", "ws-personal"),
+            "room-123",
+            "个人空间没有 space_id ⇒ 窗口/公告必须报**配对暗号**（报空串 ⇒ 对端永远匹配不上 ✗）"
+        );
+    }
+
+    /// 反向：团队空间照旧用 `space_id` ✓（不许串味 ✓）。
+    #[test]
+    fn a_team_space_still_serves_its_space_id() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-personal', 'team-9', 'room-123')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(window_serve_space(&c, "team-9", "ws-personal"), "team-9", "团队空间口径不变 ✓");
+    }
+
+    /// 反向：个人空间**没填暗号** ⇒ 保持旧口径（回落 `space_id`）✓（放宽 ≠ 乱认 ✓）。
+    #[test]
+    fn a_personal_space_without_a_room_keeps_the_old_value() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(window_serve_space(&c, "", "ws-personal"), "", "没暗号 ⇒ 保持旧口径 ✓");
+    }
 }
 
 #[cfg(test)]
