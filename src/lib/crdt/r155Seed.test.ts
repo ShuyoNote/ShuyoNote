@@ -60,3 +60,47 @@ describe("R155：把正文播种成 CRDT 状态这条工具链", () => {
     expect(() => yDocToContentJson(update)).not.toThrow();
   });
 });
+
+// ⭐ **R155 判据（接线那一半 ✓）**：落库后要用的那个入口，必须给出**含那段文字**的状态 ✓
+//   （它是 `contentJsonToYDoc` 的**落地形态** ✓，放在豁免层里 ✓ ⇒ 调用方不必点字段名 ✓）。
+import { stateForExternalWrite } from "./yDocBridge";
+
+describe("R155：落库后播种状态用的那个入口", () => {
+  // ⚠️ 这一块**自带**一份正文（上面那块里的 `json` 出了作用域就没了 ✗ —— 我第一版就是那么写的 ✓）。
+  const json2 = JSON.stringify({
+    root: {
+      type: "root", version: 1, direction: "ltr", format: "", indent: 0,
+      children: [
+        {
+          blockId: "b1", type: "paragraph", version: 1, direction: "ltr", format: "", indent: 0, style: "",
+          children: [{ type: "text", text: "R155 状态探针 XYZ", format: "", style: "", mode: "normal", detail: 0, version: 1 }],
+        },
+      ],
+    },
+  });
+
+  it("★ 传整个 page 对象 ⇒ 状态里**含那段文字** ✓（现场那条读数的反面 ✓）", () => {
+    const state = stateForExternalWrite({ id: "p1", content_json: json2 });
+    expect(state.length, "状态字节不能为空 ✗").toBeGreaterThan(0);
+    expect(new TextDecoder().decode(state), "状态里必须能搜到那段文字 ✓").toContain("R155 状态探针 XYZ");
+  });
+
+  // ⚠️ 口径（我先写反过一次 ✓）：缺正文/解析不了时**必须抛** ✓ ——
+  //   若"宽容"地返回一份**空文档**的状态 ✗，那等于**把这一页的状态清成空** ✗✗ ⇒ 比重启丢内容更坏 ✓
+  //   （正确答案是：不碰状态 ✓，让调用方留痕 ✓ —— `applyDraftAndRefresh` 里就是这么接的 ✓）。
+  it("★ 缺正文**必须抛** ✓（⛔ 不许拿一份空文档去覆盖状态 ✗）", () => {
+    let thrown: unknown = null;
+    try {
+      stateForExternalWrite({ id: "p2" });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown), "解析不了就必须抛给调用方 ✓（静默清状态是最坏的选项 ✗）").toContain("contentJsonToYDoc");
+  });
+
+  it("★ 合法但空的文档 ⇒ 给得出状态 ✓（这条才是「空」的正确处置 ✓）", () => {
+    const empty = JSON.stringify({ root: { type: "root", version: 1, direction: "ltr", format: "", indent: 0, children: [] } });
+    const st = stateForExternalWrite({ id: "p3", content_json: empty });
+    expect(st.length).toBeGreaterThan(0);
+  });
+});

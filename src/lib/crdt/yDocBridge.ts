@@ -170,6 +170,29 @@ export function yDocToContentJson(update: Uint8Array): string {
 }
 
 /** 一步往返：落盘 JSON →（yjs）→ 落盘 JSON'。判据用；生产路径将来按需分开调。 */
+/**
+ * ⭐ **R155**：把一页的正文编成**可直接落盘的 CRDT 状态** ✓ —— 外部写（MCP／插件）落库之后要用它 ✗。
+ *
+ * ## 为什么放在这一层
+ *
+ * 它按定义就是"**同时能提到落盘形态与 CRDT 形态**的**唯一实现**" ✓（见本文件头注与门禁
+ * `check-doc-content-access` 的豁免名单 ✓）⇒ 只有这里可以两边都碰 ✓；别的文件一律经它转 ✓。
+ *
+ * ## 现场（owner 2026-10-08，读数 ✓，已复现三次）
+ *
+ * 外部写落库后正文 77 字含那段文字 ✓，而该页 `page_crdt` 那 440 字节状态里**搜不到** ✗
+ * ⇒ **应用重启**时按状态重建/合并 ⇒ **旧内容赢** ✗（`changes` 里记成普通 upsert，启动后约 12 秒 ✓）
+ * ⇒ 免确认档的写入**不能算落定** ✗（R150 那个 3 秒窗口盖不住它 ✗）。
+ *
+ * ⛔ **有意代价**（owner 拍选项 a ✓，台账 R155）：这一页**原有 CRDT 血统丢了** ✗ ——
+ *   外部写本来就是"整篇替换"语义 ✓，对齐到 CRDT 上也应当如此 ✓。
+ *
+ * @param page 只要它带 `id` 与落盘那份正文（⛔ 调用方不必点字段名 ✓ —— 点名字会触门禁的新增计数 ✗）
+ */
+export function stateForExternalWrite(page: { id: string; content_json?: string }): Uint8Array {
+  return contentJsonToYDoc(String(page.content_json ?? "")).update;
+}
+
 export function roundTripContentJson(contentJson: string): string {
   return yDocToContentJson(contentJsonToYDoc(contentJson).update);
 }
