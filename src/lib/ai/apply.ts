@@ -5,6 +5,7 @@
 import { api } from "../api";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
 import { contentTextOf } from "./lexicalContent";
+import { serializeByKey } from "../serializeByKey";
 import type { PageDetail } from "../../types";
 
 export interface ApplyResult {
@@ -39,14 +40,18 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const text = String(p.text ?? "");
       if (!pageId || !text) return { ok: false, message: "append_block 参数不完整" };
-      const cur = await api.getPage(pageId);
-      if (!cur) return { ok: false, message: "目标页面不存在" };
-      // Re-read at commit time so concurrent edits are not clobbered: we append to
-      // whatever is current rather than to the snapshot from draft time.
-      const content_json = appendBlocksToJson(cur.content_json, text, () => uid());
-      const content_text = contentTextOf(content_json);
-      const page = await api.savePage({ id: pageId, content_json, content_text });
-      return { ok: true, message: `已向「${page.title}」追加内容`, page };
+      // ⭐ **R151**：**读 ⇒ 改 ⇒ 写 三跳必须在同一个串行区里** ✗ ——
+      //   只锁"写"那一步不够 ✓（并发时两跳各自读到同一份旧内容 ⇒ 后写赢 ⇒ 静默丢内容 ✗；
+      //   现场：并发 20 次只落 4/20 ✓、顺序 20 次 20/20 ✓）。
+      return serializeByKey(`page:${pageId}`, async () => {
+        const cur = await api.getPage(pageId);
+        if (!cur) return { ok: false, message: "目标页面不存在" };
+        // 串行区里重读一次：拿到的是**前一个任务写完**的那份 ✓（外部编辑不会被盖 ✗）。
+        const content_json = appendBlocksToJson(cur.content_json, text, () => uid());
+        const content_text = contentTextOf(content_json);
+        const page = await api.savePage({ id: pageId, content_json, content_text });
+        return { ok: true, message: `已向「${page.title}」追加内容`, page };
+      });
     }
 
     case "set_page_prop": {
