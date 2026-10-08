@@ -4376,11 +4376,15 @@ select.sync-input {
   border-radius: var(--radius-md);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
   transform-origin: top left;
-  animation: tree-menu-pop 0.13s ease;
+  /* ⭐ **2026-10-08（owner：「侧边栏右键菜单为啥反应迟钝」）**：入场动画原来 **0.13s** ＋ 下拉 5px ＋ 缩 0.98 ✗
+     —— 实测**逻辑只要 2ms** ✓（冷 15ms ✓）⇒ 感知到的"迟钝"**全在这段动画** ✓。
+     菜单的惯例是「瞬时出现」✓ ⇒ 收到 **60ms 纯淡入** ✓（去掉位移与缩放：那两个会让人觉得"慢慢挪到位" ✗）。 */
+  animation: tree-menu-pop 0.06s ease-out;
 }
 @keyframes tree-menu-pop {
-  from { opacity: 0; transform: translateY(-5px) scale(0.98); }
-  to   { opacity: 1; transform: none; }
+  /* ⭐ 纯淡入 ✓：不再有位移/缩放（菜单是"刷一下出现"，不是"挪过来" ✓）。 */
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .tree-node-menu button {
   display: flex;
