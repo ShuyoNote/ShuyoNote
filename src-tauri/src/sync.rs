@@ -3369,6 +3369,12 @@ pub fn mesh_set_config(
     // ⚠️ 顺序要紧 ✗：⭐ 必须**先**写暗号、**再**取 scope ✓ —— `mesh_scope` 就是用它来定
     //   「对暗号的 id」✓；反过来（先取 scope）刚填的暗号这一轮还用不上 ✓。
     //   ⚠️ 写它只需要认出「哪一行」（`ws_id`）✓ ⇒ 走 `mesh_target_ws`（它不要求 space_id ✓）。
+    // ⭐ **2026-10-08：先补那行本地档案** ✓ —— 否则下面三处写入（暗号／监听地址／口令）**全会**以
+    //   「这个空间没有同步档案」失败 ✗（owner 现场截图 ✓：个人空间从没绑过服务器 ⇒ 那一行不存在 ✓）。
+    if let Some(w) = workspace_id.as_deref().filter(|w| !w.trim().is_empty()) {
+        let c = db.0.lock().expect("db mutex poisoned");
+        ensure_local_profile_row(&c, w).map_err(|e| e.to_string())?;
+    }
     if let Some(r) = room.as_deref() {
     let target = mesh_target_ws(&db, workspace_id.as_deref())?;
     let c = db.0.lock().expect("db mutex poisoned");
@@ -3428,6 +3434,33 @@ struct MeshScope {
     db_space: String,
     /// 本机设备号（发现层与"只服务我自己产生的记录"都用它）。
     device: String,
+}
+
+/// ⭐ **2026-10-08**：给「**从没绑过服务器**」的空间补一行**本地**档案 ✓ ——
+/// 这是个人空间「设备直连」唯一缺的那一步 ✗（owner 当天在界面上现场撞到 ✓）。
+///
+/// ## 现场（逐字）
+///
+/// 个人空间里填**监听地址／配对暗号／口令**，三个按钮**全报同一句** ✗：
+/// 「网格设置没保存：**这个空间没有同步档案**（或它不是当前工作区）：`91f96e7f…`」。
+/// ⇒ 它第二半那句是**误导** ✗（工作区就是当前的 ✓）；真因是**那一行不存在** ✓：
+/// 「配对暗号」存在 `sync_profiles.mesh_room` ✓（口径见 `mesh_scope`：`space_id` 空 ⇒ 拿 `mesh_room` 对暗号 ✓），
+/// 而**建行只发生在服务器同步那条路**（`set_sync_profile` ✓）⇒ **一台从没绑过服务器的机器永远存不进去** ✗
+/// ⇒ 而"个人空间 + 设备直连"恰恰就是**不绑服务器**的那条路 ✓（= 新功能的主用例 ✗）。
+///
+/// ## 只补最小一行（三条都是承重的 ✓）
+///
+/// · `server_url` / `token` / `space_id` **全空** ✓ —— 「空」在这里是**语义**（＝不走服务器 ✓），
+///   与 `mesh_scope` 里那条口径严丝合缝 ✓；
+/// · `INSERT OR IGNORE` ✓ ⇒ **已有行一个字都不动** ✗（⛔ 绝不能把别人绑好的 `server_url` 清成空 ✗）；
+/// · `WHERE EXISTS(未删除的 workspace)` ✓ ⇒ 指名一个不存在／已删的工作区 ⇒ **一行都不建** ✓（不制造孤儿 ✓）。
+fn ensure_local_profile_row(c: &Connection, ws_id: &str) -> rusqlite::Result<usize> {
+    c.execute(
+        "INSERT OR IGNORE INTO sync_profiles (ws_id, server_url, token, space_id)
+         SELECT ?1, '', '', ''
+          WHERE EXISTS (SELECT 1 FROM meta.workspaces w WHERE w.id = ?1 AND w.deleted_at IS NULL)",
+        rusqlite::params![ws_id],
+    )
 }
 
 /// ⚠️ **2026-10-04 加**：⭐ 只挑「哪一行」✗ —— 给 `mesh_set_config` 写**配对暗号**用 ✓。
@@ -5066,7 +5099,10 @@ mod tests {
                  space_id TEXT NOT NULL DEFAULT '',
                  last_pushed_seq INTEGER NOT NULL DEFAULT 0,
                  last_pulled_seq INTEGER NOT NULL DEFAULT 0,
-                 sync_attachments INTEGER NOT NULL DEFAULT 1
+                 sync_attachments INTEGER NOT NULL DEFAULT 1,
+                 -- ⭐ 2026-10-08 补：`db.rs::meta_migrate` 已有这一列（配对暗号 ✓），
+                 --   夹具少它 ⇒ 想验「个人空间直连」的用例**一行都写不进去** ✗（本注释上一条就是同族教训 ✓）。
+                 mesh_room TEXT NOT NULL DEFAULT ''
              );",
         )
         .unwrap();
@@ -5087,6 +5123,57 @@ mod tests {
              );",
         )
         .unwrap();
+    }
+
+    /// ⭐ **2026-10-08（owner 现场截图）**：**没有服务器档案的个人空间，也要能存"设备直连"设置** ✓。
+    ///
+    /// 判据三半（都在同一条里 ✓）：
+    ///   ① 全新库（`sync_profiles` 0 行）⇒ 补行 ⇒ **恰好 1 行** ✓，且 `server_url`／`token`／`space_id`
+    ///      **全空** ✓ —— 「空」是**语义**（不走服务器 ✓），不是"没写进去" ✗；
+    ///   ② **幂等 ＋ 不动已有行** ✓：已有行时再补 ⇒ **插 0 行**，且别人绑好的 `server_url` **一字不变** ✓
+    ///      （⛔ 顺手清空别人的服务器配置是这条修复最容易犯的坏法 ✗）；
+    ///   ③ 指名**不存在／已删**的工作区 ⇒ **一行都不建** ✓（不制造孤儿 ✓）。
+    ///
+    /// **变异**：把 `mesh_set_config` 里那句 `ensure_local_profile_row` 删掉 ⇒ 现场那句复现 ✗
+    /// （「这个空间没有同步档案」⇒ 三个保存按钮全红 ✓）。
+    #[test]
+    fn a_personal_space_without_a_server_profile_can_still_save_direct_connect_settings() {
+        let c = conn_with_meta();
+        c.execute("INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws-personal', NULL)", []).unwrap();
+
+        // ① 全新库 ⇒ 补行 ⇒ 恰好一行，三格全空
+        assert_eq!(ensure_local_profile_row(&c, "ws-personal").unwrap(), 1, "该建一行 ✓");
+        let row: (String, String, String, String) = c
+            .query_row(
+                "SELECT server_url, token, space_id, mesh_room FROM meta.sync_profiles WHERE ws_id='ws-personal'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("".into(), "".into(), "".into(), "".into()), "补出来的必须是**空的服务器档案**（＝不走服务器 ✓）");
+
+        // ② 幂等 ＋ 不覆盖：别人绑好的服务器不许被清空
+        c.execute("UPDATE meta.sync_profiles SET server_url='https://sync.shuyo.cn', token='tok' WHERE ws_id='ws-personal'", []).unwrap();
+        assert_eq!(ensure_local_profile_row(&c, "ws-personal").unwrap(), 0, "已有行 ⇒ 一行都不插 ✓");
+        let srv: String = c.query_row("SELECT server_url FROM meta.sync_profiles WHERE ws_id='ws-personal'", [], |r| r.get(0)).unwrap();
+        assert_eq!(srv, "https://sync.shuyo.cn", "⛔ 不许把别人绑好的服务器清空 ✗");
+
+        // ③ 不存在 / 已删 ⇒ 不建孤儿
+        assert_eq!(ensure_local_profile_row(&c, "ws-does-not-exist").unwrap(), 0);
+        c.execute("INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws-deleted', 1)", []).unwrap();
+        assert_eq!(ensure_local_profile_row(&c, "ws-deleted").unwrap(), 0, "已删的工作区不许建档案 ✓");
+
+        // ④ ⭐ **接线**（这一半是必须的 ✗）：助手对不等于它被调用 ✗ —— 断言 `mesh_set_config`
+        //    里**真的**先补了那一行 ✓（先例：本文件那条 `device_pair_import` 的接线断言 ✓）。
+        //    ⚠️ 变异：把 `mesh_set_config` 里那句删掉 ⇒ 上面①②③**照样全绿** ✗，只有这一半会红 ✓。
+        let src = include_str!("sync.rs");
+        let start = src.find("pub fn mesh_set_config(").expect("这条命令必须在（名字改了就要同步改这里 ✓）");
+        let body = &src[start..];
+        let end = body.find("\npub fn ").unwrap_or(body.len());
+        assert!(
+            body[..end].contains("ensure_local_profile_row(&c, w)"),
+            "接线变了：`mesh_set_config` 必须**先补那行本地档案** ✓（否则个人空间三个保存按钮全会报「没有同步档案」✗）"
+        );
     }
 
     /// ⭐ 2026-10-08（R139「治根」）：同一实体**还没推出去**的 upsert 只留最新一份。
@@ -6306,7 +6393,10 @@ mod tests {
                  space_id TEXT NOT NULL DEFAULT '',
                  last_pushed_seq INTEGER NOT NULL DEFAULT 0,
                  last_pulled_seq INTEGER NOT NULL DEFAULT 0,
-                 sync_attachments INTEGER NOT NULL DEFAULT 1
+                 sync_attachments INTEGER NOT NULL DEFAULT 1,
+                 -- ⭐ 2026-10-08 补：`db.rs::meta_migrate` 已有这一列（配对暗号 ✓），
+                 --   夹具少它 ⇒ 想验「个人空间直连」的用例**一行都写不进去** ✗（本注释上一条就是同族教训 ✓）。
+                 mesh_room TEXT NOT NULL DEFAULT ''
              );",
         )
         .unwrap();
