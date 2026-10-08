@@ -4,7 +4,6 @@
 // （`lib/ai/apply.ts` 的 applyDraft），刷新逻辑也只有一处，避免两边各写一套而漂移。
 
 import { applyDraft, type ApplyResult } from "./ai/apply";
-import { api } from "./api";
 import { useNotes } from "../store/notes";
 
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
@@ -13,35 +12,6 @@ export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResul
   // ⭐ R150：**外部写过的页要打标记** ✓ —— 否则那条排在去抖槽里的旧补丁会在约 0.4 秒后
   //   把它盖回去 ✗（现场读数见 `lib/pendingSave.ts` 的头注 ✓）。
   if (res.ok && res.page) notes.noteExternalWrite(res.page.id);
-  // ⭐ **R155**：外部写只进正文 ⇒ 该页的 CRDT 状态里**没有这段文字** ✗ ⇒ 重启按状态重建会把它盖回去 ✓
-  //   （已复现三次 ✓）⇒ 落库之后**按新正文重新播种**这一页的状态 ✓（选项 a，owner 拍 ✓；代价＝丢该页原有血统 ✗）。
-  //   ⚠️ 播种失败**不改**落库结果 ✗，但要留一行痕 ✓（否则又是一条静的"看着成功"路径 ✗）。
-  // ⭐ **R155（机制①，owner 2026-10-08 拍 A ✓）**：外部写只进正文 ⇒ 若沿用库里那份**旧状态** ✗，
-  //   编辑器绑定会**拿它当基底** ⇒ 写出旧状态 ⇒ 重启按旧状态重建 ⇒ 正文回退 ✓（已复现三次 ✓）。
-  //   ⇒ **清空该页状态**（仓内先例 `LineageConflictBanner.tsx:83` ✓）⇒ 绑定**按落盘正文 bootstrap** ✓
-  //   ⇒ 由**绑定**写出含新正文的状态 ✓（**单一写者** ✓；我先前自己播种那版会在 9ms 后被它盖回去 ✗）。
-  //   ⚠️ **次序是全部关键**：必须排在下面 `loadPages()`／`openPage()`／`bumpReload()` **之前** ✗。
-  if (res.ok && res.page) {
-    try {
-      // ⭐ R155 诊断（正面留痕 ✓ —— 上一次我把仪器删了才去猜结论 ✗，这次先装回来 ✓）：
-      //   用来看清空到底**有没有进库** ✓、以及它是不是**又被绑定盖回去** ✓。
-      await api.mcpLogApplyResult(`CRDT_CLEAR start ${res.page.id}`.slice(0, 400));
-      // ⚠️ **2026-10-08 实测结论（两次读数 ✓）**：清空本身**成功** ✓（1 毫秒 ✓）；
-      //   而**那条活着的绑定不是只保存一次** —— 它在清空后 **11ms／12ms** 又把旧状态写回（440 字节 ✗）✓。
-      //   把清空**延后到 503ms** 也一样被盖 ✗（第二次读数 ✓）⇒ ⇒ **任何"换时刻清空"的修法都不成立** ✗。
-      //   ⇒ 正解只有一条：**让绑定丢掉它内存里的那份文档**（硬重挂 ✓ / 按落盘正文重建 ✓）——
-      //     那一步落在 `pageBinding`／`Editor` 那条线（windows ✓，已发信 ＋ 已更正默认机制 ✓）。
-      //   ⛔ 所以这里**不做延后**（没用还有 UX 代价 ✗）；保留清空是为了配合那条正解 ✓。
-      await api.savePageState(res.page.id, new Uint8Array());
-      await api.mcpLogApplyResult(`CRDT_CLEAR done ${res.page.id}`.slice(0, 400));
-    } catch (e) {
-      try {
-        await api.mcpLogApplyResult(`CRDT_CLEAR_FAIL ${res.page.id}：${String(e)}`.slice(0, 400));
-      } catch {
-        /* 连留痕都做不了 ⇒ 静默（正文已经落了 ✓，不该把它变成失败 ✗） */
-      }
-    }
-  }
   await notes.loadPages();
   if (res.page) {
     if (res.page.id === notes.currentId) {
