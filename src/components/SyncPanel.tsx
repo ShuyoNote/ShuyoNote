@@ -39,6 +39,7 @@ import {
   publishPendingRemoteTotal,
   subscribePendingRemoteTotal,
 } from "../lib/pendingRemoteBadge";
+import { autoPickPeer } from "../lib/pairTarget";
 
 const ENTITY_LABELS: Record<string, string> = {
   page: "页面",
@@ -2111,7 +2112,7 @@ export function SyncPanel() {
                               onChange={(e) => setDpPeer(e.target.value)}
                               data-testid="dp-peer"
                             >
-                              <option value="">不指定（两台不在一起时才用这条：码离线传，**要配两次**）</option>
+                              <option value="">不指定（两台不在一起时才用这条：码离线传，要配两次）</option>
                               {nearby
                                 .filter((p) => p.serves_current)
                                 .map((p) => (

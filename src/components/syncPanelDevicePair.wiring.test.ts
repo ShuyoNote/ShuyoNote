@@ -76,7 +76,7 @@ describe("T4 · 把这台设备接进来", () => {
     const block = between(SRC, 'data-testid="device-pair"', "</details>");
     expect(block).toContain('data-testid="dp-peer"');
     // ① 默认那项就是「不指定」⇒ 两趟那条路没被 A 吃掉 ✓
-    expect(block).toContain("不指定（码可以离线传，要配两次）");
+    expect(block).toContain("不指定（两台不在一起时才用这条：码离线传，要配两次）");
     // ② 候选来自**唯一那处读数**（`nearby` ✓），且**只列服务本空间的** ✓（界面不自己算这条交集 ✓）
     expect(block).toContain("nearby");
     expect(block).toContain("p.serves_current");
