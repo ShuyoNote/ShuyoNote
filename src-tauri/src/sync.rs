@@ -3427,13 +3427,15 @@ pub fn mesh_set_config(
 /// —— 也就是 `spaces/<id>.db` 的文件名那一半。真机上两者**不同名**（本地 `default` / 远端
 /// `8be69ab5…`）：把它们当成同一个，窗口就会去开一个**按远端 id 新建的空库**，
 /// 然后安静地服务 0 条记录（HTTP 200、不报错）。
-struct MeshScope {
+pub(crate) struct MeshScope {
     /// 远端组织空间 id：**对暗号**用（窗口的 403 检查、对端匹配、设置的 KV 键）。
-    space: String,
+    /// ⚠️ **2026-10-08**：`pub(crate)` —— `lan_state.rs` 那条**读**路径要拿它 ✓
+    ///   （「读写同一口径」：面板把设备直连读成「关」就是这个口径没统一 ✗，见当日 CLAIM ✓）。
+    pub(crate) space: String,
     /// 本地空间 id：**开库**用（`spaces/<db_space>.db`）。
-    db_space: String,
+    pub(crate) db_space: String,
     /// 本机设备号（发现层与"只服务我自己产生的记录"都用它）。
-    device: String,
+    pub(crate) device: String,
 }
 
 /// ⭐ **2026-10-08**：给「**从没绑过服务器**」的空间补一行**本地**档案 ✓ ——
