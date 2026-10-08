@@ -23,7 +23,7 @@ import { contentJsonToYDoc } from "./crdt/yDocBridge";
  * 播种是**补状态** ✓，正文已经落了 ✓ ⇒ 它失败不该把"写成功了"变成"写失败" ✗；
  * 但**必须留痕** ✓（R150 那套回执日志 ✓），否则又是一条"看着成功、状态里没有"的静默路径 ✗。
  */
-export async function reseedCrdtStateFromContent(pageId: string, docJson: string): Promise<void> {
-  const { update } = contentJsonToYDoc(String(docJson ?? ""));
+export async function reseedCrdtStateFromContent(pageId: string, contentJson: string): Promise<void> {
+  const { update } = contentJsonToYDoc(String(contentJson ?? ""));
   await api.savePageState(pageId, update);
 }
