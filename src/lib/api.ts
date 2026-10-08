@@ -125,6 +125,8 @@ export const api = {
   mcpSetEnabled: (enabled: boolean) => invoke("mcp_set_enabled", { enabled }),
   mcpRotateToken: () => invoke("mcp_rotate_token"),
   mcpSetAllowWrite: (on: boolean) => invoke("mcp_set_allow_write", { on }),
+  // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时写能力会被明确拒 ✓
+  mcpSetWriteGrant: (on: boolean) => invoke("mcp_set_write_grant", { on }),
 
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),

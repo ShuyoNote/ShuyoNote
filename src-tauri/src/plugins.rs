@@ -7905,6 +7905,30 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ⭐ **2026-10-08（R147）**：**写能力的两半** —— 未授权必须**明确拒** ✓；用**授权动作给的那份清单**才写得了 ✓。
+    ///
+    /// 口径为什么这样取：这份清单**直接取自 `mcp_channel::granted_after_write_grant`** ✓ ——
+    /// 所以"授权动作没把 `write:pages` 加进去"这件事一旦发生，**本条会红** ✓（不是两边各测各的 ✗）。
+    /// 变异：把 `granted_after_write_grant` 里那句 `out.push(w)` 去掉 ⇒ 后半**必红** ✓。
+    #[test]
+    fn pages_create_is_refused_until_the_write_grant_hands_out_the_scope() {
+        let (space, dir) = seed_space("r147-write-grant");
+        let mut st = state_for_space(&space, &dir);
+
+        // ① 只读（＝未授权）⇒ 必须**明确拒**，且要点名能力 id ✓
+        st.permissions = vec!["read:pages".to_string()];
+        let err = call(&st, "pages.create", r#"{"title":"x"}"#).unwrap_err();
+        assert!(err.contains("permission_denied"), "未授权必须明确拒 ✓ 实际: {err}");
+        assert!(err.contains("pages.create"), "错误里要点名能力 id ✓ 实际: {err}");
+
+        // ② 用**授权动作给的那份清单** ⇒ 应当产出草稿（写能力在草稿阶段本来就不落库 ✓）
+        st.permissions = crate::mcp_channel::granted_after_write_grant(&["read:pages".to_string()], true);
+        let out = call(&st, "pages.create", r#"{"title":"x"}"#).unwrap();
+        assert_eq!(out["drafted"], true, "授权后应当产出草稿 ✓（而不是被拒 ✗）");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn kv_also_needs_its_permission() {
         let (space, dir) = seed_space("kv-perm");

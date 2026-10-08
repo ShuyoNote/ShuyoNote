@@ -285,6 +285,60 @@ mod tests {
     }
 
     #[test]
+    /// ⭐ **2026-10-08（R147）**：授权写那一档 —— **加上／收回／不拿写换读／幂等** ✓。
+    ///
+    /// 变异：把 `granted_after_write_grant` 里那句 `out.push(w)` 去掉 ⇒ 前半**必红** ✓
+    /// （而它正是"空开关"的真因：清单里永远没有 `write:pages` ⇒ 写能力永远被拒 ✗）。
+    #[test]
+    fn the_write_grant_adds_and_removes_exactly_the_write_scope() {
+        let read_only = vec![
+            "read:pages".to_string(),
+            "read:files".to_string(),
+            "read:backlinks".to_string(),
+        ];
+        let on = granted_after_write_grant(&read_only, true);
+        assert!(
+            on.contains(&WRITE_SCOPE.to_string()),
+            "授权后必须含写 ✓（否则写面还是打不开 ✗）"
+        );
+        assert_eq!(on.len(), 4, "只该多出那一项 ✓");
+        for s in &read_only {
+            assert!(on.contains(s), "读三项不许被写挤掉 ✓：{s}");
+        }
+        let off = granted_after_write_grant(&on, false);
+        assert!(!off.contains(&WRITE_SCOPE.to_string()), "收回后不许还有写 ✓");
+        assert_eq!(off, read_only, "收回后应当**回到原样** ✓");
+        // 旧配置文件可能没有 granted（空清单）⇒ 授权写也要把读三项补齐 ✓
+        assert_eq!(granted_after_write_grant(&[], true).len(), 4, "空清单 ⇒ 读三项 ＋ 写一项 ✓");
+        assert_eq!(granted_after_write_grant(&on, true), on, "重复授权不许重复加 ✓");
+    }
+
+    /// ⭐ **R147 的接线那一半**（函数对 ≠ 被调用 ✗）：命令面必须**落盘 config** ＋ **换令牌**，且**注册进 `lib.rs`** ✓。
+    ///
+    /// 变异：删掉 `set_write_grant` 里那句 `write_file_config(&cfg)` ⇒ 本条**必红** ✓
+    /// （只改令牌文件的话，禁用再启用会被 `cfg.granted` 覆盖回只读 ✗）。
+    #[test]
+    fn the_write_grant_is_wired_to_the_config_and_to_a_token_reissue() {
+        let src = include_str!("mcp_channel.rs");
+        let start = src.find("pub fn set_write_grant(").expect("函数名改了就要同步改这里 ✓");
+        let body = &src[start..];
+        let end = body.find("\npub fn ").unwrap_or(body.len());
+        let body = &body[..end];
+        assert!(
+            body.contains("write_file_config(&cfg)"),
+            "授权必须**落盘** `config.json.granted` ✓（否则禁用再启用就被覆盖回只读 ✗）"
+        );
+        assert!(
+            body.contains("set_enabled(true)"),
+            "开着时必须**换一枚新令牌** ✓（旧令牌立刻作废 ✓）"
+        );
+        let lib = include_str!("lib.rs");
+        assert!(
+            lib.contains("mcp_channel::mcp_set_write_grant"),
+            "命令必须在 `lib.rs` 注册 ✓（否则面板点不到 ✓）"
+        );
+    }
+
     fn default_is_off_and_only_env_on_opens_it() {
         assert!(!MCP_CHANNEL_ENABLED, "默认必须是关的 ✓（判据①）");
     }
@@ -459,6 +513,68 @@ pub fn set_allow_write(on: bool) -> Result<McpStatus, String> {
     write_file_config(&cfg)?;
     if is_enabled() {
         // 重启监听 ⇒ 端口/令牌都会刷一遍 ✓（与开开关同一条路 ✓）
+        return set_enabled(true);
+    }
+    Ok(status())
+}
+
+/// ⭐ **2026-10-08（R147）**：**写权限那一项** ✓ —— 两条写能力（`pages.create`／`blocks.append`）都要它 ✓
+/// （`capabilities_gen.rs` 里两条都是 `permission: "write:pages"` ✓，scope ＝ `current-space` ✓）。
+/// ⚠️ 在此之前**全仓没有任何地方把它加进 `granted`** ✗ ⇒ 面板那个「免确认写」开关是个**空开关** ✓
+/// （打开也只影响"草稿要不要自动落库" ✓，而它前面那道**授权门从来没开过** ✗）。
+pub(crate) const WRITE_SCOPE: &str = "write:pages";
+
+/// 默认的**读**三项 ✓ —— 与 `FileConfig::default()` 同一份口径 ✓（只读是 M1 的边界 ✓）。
+pub(crate) fn default_read_scopes() -> Vec<String> {
+    vec![
+        "read:pages".to_string(),
+        "read:files".to_string(),
+        "read:backlinks".to_string(),
+    ]
+}
+
+/// ⭐ **纯函数**：把「授权写」这一档施加到一份权限清单上 ✓ ——
+/// 拆出来是为了**判据测得了** ✓（`set_write_grant` 要碰真实配置与令牌文件 ⇒ 端到端只能由界面上那一下验 ✓）。
+///
+/// 三条口径（都承重 ✓）：
+/// · **读三项永远保留** ✓（授权写不是"拿写换读"✗）；
+/// · `on=true` ⇒ 确保含 `write:pages` ✓（已有不重复 ✓）；`on=false` ⇒ **移除**它 ✓（收回 ✓）；
+/// · **清单里别的东西一律不动** ✓（将来加了别的 scope 也不会被这一档吃掉 ✓）。
+pub(crate) fn granted_after_write_grant(base: &[String], on: bool) -> Vec<String> {
+    let mut out: Vec<String> = base.to_vec();
+    for s in default_read_scopes() {
+        if !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    let w = WRITE_SCOPE.to_string();
+    if on {
+        if !out.contains(&w) {
+            out.push(w);
+        }
+    } else {
+        out.retain(|s| s != &w);
+    }
+    out
+}
+
+/// ⭐ **2026-10-08（R147；owner 选的形态＝「面板加『授权写』入口」✓）**：把写权限**授给这枚令牌**／收回 ✓。
+///
+/// ## 为什么必须**落盘 `config.json.granted`**（而不只是换一枚令牌 ✓）
+///
+/// `set_enabled(true)` 铸令牌时读的是 `cfg.granted` ✓ ⇒ 只改令牌文件的话，**禁用再启用就被覆盖回只读** ✗ ——
+/// 「空开关」的根正是**这一格没有任何写者** ✓（`write_new_token(&cfg.granted)` 只是沿用 ✓）。
+///
+/// ## 语义与面板一致 ✓
+///
+/// 授权 ⇒ 立刻**换一枚新令牌**（旧那枚随之作废 ✓ —— 与面板「换一枚 ⇒ 旧的立刻作废」同一口径 ✓），
+/// 走的就是 `set_allow_write` 那条**重启监听**的路 ✓（端口/令牌都刷一遍 ✓）。
+pub fn set_write_grant(on: bool) -> Result<McpStatus, String> {
+    let mut cfg = read_file_config();
+    cfg.granted = granted_after_write_grant(&cfg.granted, on);
+    write_file_config(&cfg)?;
+    if is_enabled() {
+        // 与 `set_allow_write` 同一条路 ✓：重启监听 ⇒ 新令牌带上新清单 ✓、旧令牌立刻作废 ✓。
         return set_enabled(true);
     }
     Ok(status())
@@ -699,6 +815,13 @@ pub fn mcp_rotate_token() -> Result<McpStatus, String> {
 #[tauri::command]
 pub fn mcp_set_allow_write(on: bool) -> Result<McpStatus, String> {
     set_allow_write(on)
+}
+
+/// ⭐ **R147**：面板上的「**授权写入**（`write:pages`）」✓ —— 未授权 ⇒ 写能力**明确拒** ✓（逐字 `permission_denied` ✓）；
+/// 授权 ⇒ 换一枚带写权限的新令牌 ✓（旧令牌立刻作废 ✓）。
+#[tauri::command]
+pub fn mcp_set_write_grant(on: bool) -> Result<McpStatus, String> {
+    set_write_grant(on)
 }
 
 // =====================================================================================

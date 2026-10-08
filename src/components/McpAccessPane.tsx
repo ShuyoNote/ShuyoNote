@@ -73,6 +73,25 @@ export function McpAccessPane() {
     }
   };
 
+  // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时两条写能力会被**明确拒** ✓
+  const toggleGrantWrite = async (next: boolean) => {
+    setBusy(true);
+    try {
+      setSt(await api.mcpSetWriteGrant(next));
+      setErr("");
+      toast(
+        next
+          ? "已授权写入 —— 换了一枚带 write:pages 的新令牌（旧的那枚立刻作废）"
+          : "已收回写入授权 —— 外部 AI 只能读，写能力会被明确拒",
+        next ? "info" : "success",
+      );
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const rotate = async () => {
     setBusy(true);
     try {
@@ -160,6 +179,27 @@ export function McpAccessPane() {
             aria-label="允许外部 AI 直接写入（免确认）"
             disabled={busy || !st}
             onClick={() => void toggleWrite(!(st?.allow_write === true))}
+          >
+            <span className="ui-toggle-knob" />
+          </button>
+        </div>
+
+        <div className="set-row">
+          <div className="set-row-text">
+            <div className="set-row-name">授权写入（write:pages）</div>
+            <div className="set-row-sub">
+              <b>默认不给</b>。上面的「免确认」只管「草稿要不要自动落库」—— <b>能不能写是这一档</b>：
+              不给时外部 AI 调「新建页面／追加内容」会被<b>明确拒</b>（`permission_denied`）；给了才会换个
+              带写权限的新令牌（旧令牌立刻作废），并<b>每一次写都留一行审计</b>。
+            </div>
+          </div>
+          <button
+            className={`ui-toggle ${st?.granted?.includes("write:pages") ? "on" : ""}`}
+            role="switch"
+            aria-checked={st?.granted?.includes("write:pages") === true}
+            aria-label="授权写入（write:pages）"
+            disabled={busy || !st}
+            onClick={() => void toggleGrantWrite(!(st?.granted?.includes("write:pages") === true))}
           >
             <span className="ui-toggle-knob" />
           </button>

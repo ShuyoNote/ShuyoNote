@@ -8,7 +8,7 @@
 //   ⇒ 安全三件套（默认关 ＋ per-session token ＋ `Origin`/`Host` 恰好回环）必须在 **App 这侧**也成立 ✓，
 //   否则"外面那台机器校验过了"就成了唯一的一道门 ✗（而门在**被调用方**这里才作数 ✓）。
 //
-// 五条断言（每条都配一个变异 ⇒ 都见过它红 ✓）：
+// 六条断言（每条都配一个变异 ⇒ 都见过它红 ✓）：
 //   ① **默认关**：`MCP_CHANNEL_ENABLED` 必须声明且**初值是 `false`** ✓（"默认开着只是别人不知道" ✗）
 //   ② **只绑回环**：代码里必须有 `127.0.0.1` ✓，**不许**出现 `0.0.0.0` / `Ipv4Addr::UNSPECIFIED` ✗
 //   ③ **token 从文件读**：必须出现**令牌文件名**（`SHUYONOTE_MCP_TOKEN_FILE` ✓）—— 只读路径、不读 env 里的值 ✓
@@ -27,7 +27,7 @@
 //   node scripts/check-mcp-host-channel.mjs
 //   node scripts/check-mcp-host-channel.mjs --channel <路径…>
 //   node scripts/check-mcp-host-channel.mjs --require-channel   # 通道文件不在 ⇒ exit 2（判据先行阶段看红用）
-//   node scripts/check-mcp-host-channel.mjs --self-test          # 夹具：正例／六个变异／两条掩码方向／缺席＋require
+//   node scripts/check-mcp-host-channel.mjs --self-test          # 夹具：正例／七个变异／两条掩码方向／缺席＋require
 import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -46,6 +46,7 @@ const TOKEN_FILE_NAME = "SHUYONOTE_MCP_TOKEN_FILE";
 const SWITCH_NAME = "MCP_CHANNEL_ENABLED";
 const ENTRY = "handle_external_call";
 const AUTHZ_POINT = "dispatch_capability";
+const WRITE_SCOPE = "write:pages";
 
 /** 只留**代码**：注释 / 字符串 / 字符字面量换成空白（换行保留 ⇒ 行号对得上 ✓）。
  *  用途：判**"有没有真的调用"**（把调用藏进字符串不算调用 ✓）。 */
@@ -126,6 +127,18 @@ export function judge(texts) {
     out.push("✗ 通道**直接调**了 `" + AUTHZ_POINT + "(` ✗ ⇒ 绕过「外部会话」这个来源 ⇒ 审计里看不出是谁读的 ✓"
       + "（唯一入口是 `" + ENTRY + "` ✓，它内部才转给鉴权点 ✓）");
   }
+  // ⑥ ⭐ 2026-10-08（R147）：**授权写那一档必须存在，并且要落盘** ✓
+  //    来由（逐字现场）：owner 打开「免确认写」后外部 AI 仍被
+  //      `permission_denied: 能力 pages.create 需要权限 write:pages，但 manifest.permissions 未声明它` 拒掉 ✗ ——
+  //    因为两条写能力都要 `write:pages` ✓，而**全仓没有任何地方把它加进 granted** ✗ ⇒ 那是个**空开关** ✓。
+  //    ⚠️ 只换令牌文件不够 ✗：`set_enabled(true)` 铸令牌读的是 `cfg.granted` ✓ ⇒ 必须**落盘配置** ✓。
+  if (!lit.includes(WRITE_SCOPE)) {
+    out.push("✗ 通道里没有 `" + WRITE_SCOPE + "` ✗ ⇒ **授权写那一档不存在** ⇒ 两条写能力（`pages.create`／`blocks.append`）"
+      + "永远被 `permission_denied` 拒 ✓（＝面板那个「免确认写」开关是**空开关** ✗ —— R147 的现场 ✓）");
+  } else if (!/write_file_config\s*\(/.test(code)) {
+    out.push("✗ 有 `" + WRITE_SCOPE + "` 但**没有落盘配置**（`write_file_config(` ✗）⇒ 只改了令牌文件的话，"
+      + "**禁用再启用会被 `cfg.granted` 覆盖回只读** ✗（这正是「空开关」的根 ✓）");
+  }
   return { findings: out, absent: false };
 }
 
@@ -157,7 +170,7 @@ export function run(paths, requireChannel) {
     for (const f of findings) console.error(f);
     return 1;
   }
-  console.log("✓ MCP 宿主面通道：默认关 ✓ ｜ 只绑回环 ✓ ｜ token 从文件读 ✓ ｜ Origin/Host 恰好回环 ✓ ｜ 唯一入口 ✓");
+  console.log("✓ MCP 宿主面通道：默认关 ✓ ｜ 只绑回环 ✓ ｜ token 从文件读 ✓ ｜ Origin/Host 恰好回环 ✓ ｜ 唯一入口 ✓ ｜ 授权写那一档在且落盘 ✓");
   return 0;
 }
 
@@ -175,6 +188,9 @@ if (isMain && argv.includes("--self-test")) {
     //    判据用**子串**而不是 `\b` 词边界 ✓ —— 否则 `origin_ok` 会被判成"没有 origin" ✗，第一版就这么假红过 ✓）
     `fn headers_ok(origin: Option<&str>, host: Option<&str>) -> bool { origin.is_none() || (origin == Some("http://127.0.0.1") && host == Some("127.0.0.1")) }`,
     `fn serve() { let _ = crate::mcp_host::handle_external_call(1, &[], "pages.list", "{}"); }`,
+    // ⭐ R147：授权写那一档（判据⑥）—— 常量 ＋ 落盘 ✓
+    `pub(crate) const WRITE_SCOPE: &str = "write:pages";`,
+    `pub fn set_write_grant(on: bool) -> Result<(), String> { write_file_config(&cfg) }`,
   ].join("\n");
   const put = (name, text) => {
     const p = join(dir, name);
@@ -189,6 +205,7 @@ if (isMain && argv.includes("--self-test")) {
     ["变异④ 前缀匹配判回环 ⇒ 红", () => [put("mcp_channel.rs", OK + '\nfn bad(o: &str) -> bool { o.starts_with("http://127.0.0.1") }')], 1],
     ["变异⑤ 直接调鉴权点（绕过唯一入口）⇒ 红", () => [put("mcp_channel.rs", OK + '\nfn bad() { let _ = crate::plugins::dispatch_capability("pages.list", "{}"); }')], 1],
     ["变异⑥ 不调唯一入口 ⇒ 红", () => [put("mcp_channel.rs", OK.replace(ENTRY, "some_other_entry"))], 1],
+    ["变异⑦ 授权写那一档没了（write:pages 被改名）⇒ 红", () => [put("mcp_channel.rs", OK.replace("write:pages", "write-renamed"))], 1],
     ["掩码方向① 注释里讲规矩（含 0.0.0.0 与前缀写法）⇒ 必须绿", () => [put("mcp_channel.rs", OK + '\n// 注意：不许出现 0.0.0.0，也不许 o.starts_with("http://127.0.0.1")')], 0],
     ["掩码方向② 把调用藏进字符串 ⇒ 必须红", () => [put("mcp_channel.rs", OK.replace(`${ENTRY}(1`, `"${ENTRY}("; let _ = (1`))], 1],
     ["缺席（判据先行阶段）⇒ 绿＋自报跳过", () => [join(dir, "nope.rs")], 0],
