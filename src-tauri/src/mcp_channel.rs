@@ -290,6 +290,54 @@ mod tests {
     /// 变异：把 `granted_after_write_grant` 里那句 `out.push(w)` 去掉 ⇒ 前半**必红** ✓
     /// （而它正是"空开关"的真因：清单里永远没有 `write:pages` ⇒ 写能力永远被拒 ✗）。
     #[test]
+    /// ⭐ **R152**：档位 ⇒ `(enabled, granted, allow_write)` 的**表驱动**判据 ✓。
+    ///
+    /// 变异：让「可写（每次确认）」把 `allow_write` 置真 ⇒ **本表必红** ✓（那就是"没问就写" ✗）。
+    #[test]
+    fn the_four_levels_map_to_exactly_three_fields() {
+        let reads = default_read_scopes();
+        let with_write = {
+            let mut v = reads.clone();
+            v.push(WRITE_SCOPE.to_string());
+            v
+        };
+        let table = [
+            (McpLevel::Off, false, reads.clone(), false),
+            (McpLevel::Read, true, reads.clone(), false),
+            (McpLevel::WriteConfirm, true, with_write.clone(), false),
+            (McpLevel::WriteAuto, true, with_write.clone(), true),
+        ];
+        for (level, en, gr, aw) in table {
+            let (e, g, a) = level_to_config(level, &[]);
+            assert_eq!(e, en, "enabled 不对：{level:?}");
+            assert_eq!(g, gr, "granted 不对：{level:?}");
+            assert_eq!(a, aw, "allow_write 不对：{level:?} ⛔ 可写待确认档绝不许置真 ✗");
+        }
+        let (_, g, _) = level_to_config(McpLevel::WriteAuto, &["read:pages".into(), "delete:everything".into()]);
+        assert!(!g.iter().any(|s| s == "delete:everything"), "授权面不许被放大 ✗");
+        assert_eq!(g.len(), 4, "只该是读三项 ＋ write:pages ✓");
+        assert_eq!(level_of(false, &with_write, true), McpLevel::Off);
+        assert_eq!(level_of(true, &reads, false), McpLevel::Read);
+        assert_eq!(level_of(true, &with_write, false), McpLevel::WriteConfirm);
+        assert_eq!(level_of(true, &with_write, true), McpLevel::WriteAuto);
+    }
+
+    /// ⭐ **R152 接线**：换档必须**换令牌**（R147 的教训 ✓）＋ 命令进 `lib.rs` ✓。
+    /// 变异：删掉 `write_new_token(&cfg.granted)` 那句 ⇒ **本半必红** ✓。
+    #[test]
+    fn changing_the_level_reissues_the_token_and_is_wired() {
+        let src = include_str!("mcp_channel.rs");
+        let start = src.find("pub fn set_level(").expect("函数名改了就要同步改这里 ✓");
+        let body = &src[start..];
+        let end = body.find("\npub fn ").unwrap_or(body.len());
+        assert!(
+            body[..end].contains("write_new_token(&cfg.granted)"),
+            "换档必须**换令牌** ✓（只写配置 ⇒ 面板读的 granted 来自令牌文件 ⇒ 会「点了没反应」✗）"
+        );
+        let lib = include_str!("lib.rs");
+        assert!(lib.contains("mcp_channel::mcp_set_level"), "命令必须在 lib.rs 注册 ✓");
+    }
+
     fn the_write_grant_adds_and_removes_exactly_the_write_scope() {
         let read_only = vec![
             "read:pages".to_string(),
@@ -633,6 +681,8 @@ pub struct McpStatus {
     pub running: bool,
     pub port: Option<u16>,
     pub token: Option<String>,
+    /// ⭐ R152：当前档位（由三个底层字段**推导** ✓；面板据此显示 ✓）。
+    pub level: McpLevel,
     pub granted: Vec<String>,
     /// ⭐ M2：免确认写开关的当前读数 ✓（面板要显示 ✓）
     pub allow_write: bool,
@@ -672,6 +722,7 @@ pub fn status() -> McpStatus {
         running: addr.is_some(),
         port: addr.map(|a| a.port()),
         token,
+        level: level_of(is_enabled(), &granted, allow_write()),
         granted,
         allow_write: allow_write(),
         env_override: env_switch_on(),
@@ -864,11 +915,105 @@ pub fn mcp_log_apply_result(line: String) -> Result<(), String> {
     std::fs::write(&path, old).map_err(|e| format!("写 apply.log 失败：{e}"))
 }
 
+/// ⭐ **R152（owner 2026-10-08 选 A）**：面板那一档 —— **四档** ✓，它是 `enabled`／`granted`／`allow_write`
+/// 三个底层字段的**唯一推导源** ✓（⛔ 不再让用户分别拨三个开关 ✗）。
+///
+/// ## 为什么合成一档（结构问题，不是审美 ✗）
+///
+/// 原先那三个开关**不是一个正交集合** ✗：②「免确认」与③「授权写入」**不独立** ✓ ——
+/// ③ 关着 ⇒ 根本没有写工具 ⇒ ② 打开也**毫无作用** ✗（就是 2026-10-08 修掉的那个"空开关" ✓）；
+/// ① 关着时 ②③ 都是**死 UI** ✗。⇒ **真状态只有 4 个** ✓，却用 3 个布尔（8 种）表达 ⇒
+/// 一半组合是死的或骗人的 ✗，而面板得用**一整段话**去解释两个开关的关系 ✗。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpLevel {
+    /// 不接：通道关掉（令牌作废 ✓、监听停 ✓）。
+    Off,
+    /// 只读：能读、**写能力会被明确拒** ✓（`permission_denied`）。
+    Read,
+    /// 可写、但**每次要人确认** ✓（草稿进"待确认"队列）。
+    WriteConfirm,
+    /// 可写、**免确认** ✓（直接落库；⚠️ 每一次写仍留一行审计 ✓）。
+    WriteAuto,
+}
+
+/// ⭐ **纯函数**：档位 ⇒ `(enabled, granted, allow_write)` ✓（**表驱动**判据就钉它 ✓）。
+///
+/// 三条口径（都承重 ✓）：
+/// · **只读三项永远在** ✓（任何档都不拿读换写 ✗）；
+/// · **`granted` 只会是「读三项 ＋ 可选 `write:pages`」** ✓ —— 授权面**不许更大** ✗（MCP 面就两条增量能力 ✓）；
+/// · `base` 里**认识**的项保留 ✓（向前兼容 ✓），⛔ 但不认识的 scope 一律**不放行** ✗。
+pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<String>, bool) {
+    let reads = default_read_scopes();
+    let mut granted: Vec<String> = base
+        .iter()
+        .filter(|s| reads.contains(s) || s.as_str() == WRITE_SCOPE)
+        .cloned()
+        .collect();
+    for r in &reads {
+        if !granted.contains(r) {
+            granted.push(r.clone());
+        }
+    }
+    let wants_write = matches!(level, McpLevel::WriteConfirm | McpLevel::WriteAuto);
+    let w = WRITE_SCOPE.to_string();
+    if wants_write {
+        if !granted.contains(&w) {
+            granted.push(w);
+        }
+    } else {
+        granted.retain(|s| s != &w);
+    }
+    match level {
+        McpLevel::Off => (false, granted, false),
+        McpLevel::Read => (true, granted, false),
+        McpLevel::WriteConfirm => (true, granted, false),
+        McpLevel::WriteAuto => (true, granted, true),
+    }
+}
+
+/// 从现状**反推**档位（面板显示用 ✓；⛔ 只读三个字段 ✓，不猜 ✗）。
+pub fn level_of(enabled: bool, granted: &[String], allow_write: bool) -> McpLevel {
+    if !enabled {
+        return McpLevel::Off;
+    }
+    match (granted.iter().any(|s| s == WRITE_SCOPE), allow_write) {
+        (false, _) => McpLevel::Read,
+        (true, false) => McpLevel::WriteConfirm,
+        (true, true) => McpLevel::WriteAuto,
+    }
+}
+
+/// ⭐ **R152**：把面板那**一档**落到三个底层字段上 ✓ —— 并**换一枚令牌** ✓。
+///
+/// ⚠️ **换档必须换令牌** ✗（不是只写配置 ✓）：R147 的教训 —— `set_enabled(true)` 在"已经开着"时是
+/// **空操作** ✓，只写配置的话，面板读到的 `granted`（来自**令牌文件** ✓）永远不变 ✗ ⇒ 用户看到"点了没反应" ✓。
+pub fn set_level(level: McpLevel) -> Result<McpStatus, String> {
+    let mut cfg = read_file_config();
+    let (enabled, granted, allow_write) = level_to_config(level, &cfg.granted);
+    cfg.enabled = enabled;
+    cfg.granted = granted;
+    cfg.allow_write = allow_write;
+    write_file_config(&cfg)?;
+    if !enabled {
+        stop_listener();
+        return Ok(status());
+    }
+    write_new_token(&cfg.granted)?;
+    set_enabled(true)
+}
+
 /// ⭐ **R147**：面板上的「**授权写入**（`write:pages`）」✓ —— 未授权 ⇒ 写能力**明确拒** ✓（逐字 `permission_denied` ✓）；
 /// 授权 ⇒ 换一枚带写权限的新令牌 ✓（旧令牌立刻作废 ✓）。
 #[tauri::command]
 pub fn mcp_set_write_grant(on: bool) -> Result<McpStatus, String> {
     set_write_grant(on)
+}
+
+/// ⭐ **R152**：面板那**一档**（四档 ✓）—— 取代原先那三个开关 ✓。
+#[tauri::command]
+pub fn mcp_set_level(level: McpLevel) -> Result<McpStatus, String> {
+    set_level(level)
 }
 
 // =====================================================================================

@@ -790,6 +790,8 @@ export interface CommandMap {
   mcp_set_write_grant: { args: { on: boolean }; result: McpStatus };
   // ⭐ R150：外部草稿的落库结果回执（写 mcp/apply.log ✓）
   mcp_log_apply_result: { args: { line: string }; result: void };
+  // ⭐ R152：面板的四档选择（不接／只读／可写待确认／可写免确认）
+  mcp_set_level: { args: { level: string }; result: McpStatus };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };

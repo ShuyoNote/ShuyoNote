@@ -127,6 +127,8 @@ export const api = {
   mcpSetAllowWrite: (on: boolean) => invoke("mcp_set_allow_write", { on }),
   // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时写能力会被明确拒 ✓
   mcpSetWriteGrant: (on: boolean) => invoke("mcp_set_write_grant", { on }),
+  // ⭐ 2026-10-08（R152）：面板那**一档**（off/read/write_confirm/write_auto）—— 取代原先三个开关 ✓
+  mcpSetLevel: (level: string) => invoke("mcp_set_level", { level }),
   // ⭐ 2026-10-08（R150）：把前端那条路的落库结果写进 mcp/apply.log（可诊断 ✓）
   mcpLogApplyResult: (line: string) => invoke("mcp_log_apply_result", { line }),
 
