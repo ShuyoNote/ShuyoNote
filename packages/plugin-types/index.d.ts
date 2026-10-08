@@ -154,6 +154,10 @@ export interface PluginApi {
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
     create(title: string, content?: string, parentId?: string, fence?: string): { drafted: true; summary: string };
+  /** 导入 Markdown 为一页（草稿确认）（权限 `write:pages`；1.0.0 起）
+   * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+   */
+    importMarkdown(title: string, markdown: string, parentId?: string): { drafted: true; summary: string };
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）
@@ -243,4 +247,4 @@ export interface PluginApi {
   log(message: string, level?: "info" | "warn" | "error"): void;
 }
 
-export declare const SDK_API_VERSION: "1.0.0";
+export declare const SDK_API_VERSION: "1.1.0";

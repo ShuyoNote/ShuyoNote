@@ -1,6 +1,6 @@
 {
   "name": "@shuyonote/plugin-types",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ShuyoNote 插件 API 类型定义（由 capabilities/capabilities.json 生成）",
   "types": "index.d.ts",
   "files": [

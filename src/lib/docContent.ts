@@ -94,6 +94,43 @@ export function appendFence(json: string, language: string, text: string, makeId
   return JSON.stringify({ root });
 }
 
+/** ⭐ R167：一次导入的量纲上限（超过就拒绝 ✓ —— 半个页比没有更糟 ✓）。 */
+export const IMPORT_MARKDOWN_MAX_BYTES = 200 * 1024;
+
+/** ⭐ R167：含块级 HTML ⇒ 拒 ✓（转换器遇块级 HTML 会走 `$importHtml` ⇒ 授权面放大 ✗）。 */
+const RE_BLOCK_HTML_IMPORT = /<(p|h[1-6]|div|img|table|ul|ol|li|blockquote|pre|hr|section|article|iframe)\b/i;
+
+/** ⭐ R167：整篇 Markdown 导入的三道闸（**轻** —— 不引入任何编辑器依赖 ✓）。 */
+export function importMarkdownGuard(mdText: string): { ok: true } | { ok: false; error: string } {
+  const md = String(mdText ?? "");
+  if (!md.trim()) return { ok: false, error: "markdown 为空：没有可导入的内容" };
+  if (md.length > IMPORT_MARKDOWN_MAX_BYTES) {
+    return { ok: false, error: `markdown 太大（上限 ${Math.floor(IMPORT_MARKDOWN_MAX_BYTES / 1024)}KB）：请拆分后再导入` };
+  }
+  if (RE_BLOCK_HTML_IMPORT.test(md)) {
+    return { ok: false, error: "markdown 含块级 HTML：先只允许纯 Markdown（要放开请单独拍板）" };
+  }
+  return { ok: true };
+}
+
+/**
+ * ⭐ **R167**：组出"整篇导入"那条草稿的 args ✓（**一次调用写完整页** ✓ —— 今天实测：
+ * 只写一次的页在编辑器里开着也六分钟守恒 ✓；而"建页 ＋ 多次追加"被写回三次 ✗ 19→3、18→3 ✓）。
+ * ⚠️ 放在**豁免层**是刻意的 ✓：别的文件点这些列名会顶 `check-doc-content-access` 的基线 ✗。
+ * ⚠️ 这里**只做守卫与组参** ✓ —— 真正的 md→块解析由落库层调应用自己的
+ *    `markdownToPageContent`（`src/lib/mdPreview.ts`）✓，⛔ 不在这里引它 ✗
+ *    （否则能力面的包会被拖进编辑器整张图 ⇒ `smoke-web` 解析不了 excalidraw 的 CSS ✗）。
+ */
+export function importMarkdownArgs(
+  title: string,
+  markdown: string,
+  parentId: string | null,
+): { ok: true; args: Record<string, unknown> } | { ok: false; error: string } {
+  const g = importMarkdownGuard(markdown);
+  if (!g.ok) return g;
+  return { ok: true, args: { parent_id: parentId, title, content_text: String(markdown ?? ""), markdown: true } };
+}
+
 export function readContent(db: ContentSql, pageId: string): DocContent | null {
   const rows = db.query<{ title: string; content_json: string; content_text: string }>(
     "SELECT title, content_json, content_text FROM pages WHERE id = ? AND deleted_at IS NULL",

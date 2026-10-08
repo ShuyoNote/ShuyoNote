@@ -1,6 +1,6 @@
 {
   "registryVersion": 1,
-  "apiVersion": "1.0.0",
+  "apiVersion": "1.1.0",
   "notes": "插件能力注册表——单一事实源。scripts/gen-capabilities.mjs 由本文件生成：JS shim（api.*）、Rust 绑定表、作者类型包、作者文档；scripts/check-capabilities.mjs 校验一致性与完整性。改能力请改这里，不要手改生成物。",
   "permissions": [
     {
@@ -970,6 +970,48 @@
       "mediate": "draft",
       "mediateWhy": "会把内容写到笔记之外的文件里：这条能力不直接写盘——先收集，等命令跑完由用户在系统保存对话框里逐个选位置（取消＝不写），与写能力的草稿确认同一个中介思路",
       "desc": "把文本内容保存成文件：用户点「保存」才写。参数: fileName (必填, 建议的文件名), content (必填, 要写入的文本)。"
+    },
+    {
+      "id": "pages.importMarkdown",
+      "title": "导入 Markdown 为一页（草稿确认）",
+      "kind": "write",
+      "scope": "current-space",
+      "permission": "write:pages",
+      "since": "1.0.0",
+      "jsPath": [
+        "pages",
+        "importMarkdown"
+      ],
+      "mediate": "draft",
+      "mediateWhy": "会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库",
+      "args": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true,
+          "desc": "新页标题。"
+        },
+        {
+          "name": "markdown",
+          "type": "string",
+          "required": true,
+          "desc": "Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。"
+        },
+        {
+          "name": "parentId",
+          "type": "string",
+          "required": false,
+          "desc": "父页面 id；不传就放在顶层。"
+        }
+      ],
+      "returns": {
+        "type": "object",
+        "ts": "{ drafted: true; summary: string }",
+        "desc": "{drafted: true, summary}——**不代表已创建**，用户确认后才落库"
+      },
+      "rust": "cap_pages_import_markdown",
+      "desc": "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+      "ai": true
     }
   ],
   "legacyGlobals": [

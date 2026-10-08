@@ -1962,7 +1962,13 @@ fn push_draft(key: String, summary: String, payload: serde_json::Value) {
 ///
 /// Lexical 的 content_json 由前端在落库时按纯文本构造（那头才知道块结构），
 /// 这里只交出 `content_text` —— 保持"Rust 不猜编辑器格式"。
-fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>, fence: Option<&str>) -> CapResult {
+fn cap_pages_create(
+    title: &str,
+    content: &str,
+    parent_id: Option<&str>,
+    fence: Option<&str>,
+    markdown: Option<bool>,
+) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 新建页面需要 title".to_string());
     }
@@ -1972,10 +1978,30 @@ fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>, fence: 
         summary.clone(),
         serde_json::json!({
             "kind": "create_page",
-            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence },
+            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence, "markdown": markdown },
         }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
+
+/// ⭐ **R167**：把一份 **Markdown 原文**整篇灌成一页 ✓（一次调用写完整页 ⇒ 不会被自动保存写回 ✓）。
+/// ⚠️ 解析**不在这里** ✗ —— Rust 侧没有 markdown 解析器 ✓；这里只把原文放进草稿 ✓，
+/// 由**应用自己**那条导入路径（`markdownToPageContent` ✓，`src/lib/mdPreview.ts:79` ✓）
+/// 在落库那一刻转成块 ✓ ⇒ 不另写第二份解析器 ✓（两份必然漂移 ✗）。
+fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str>) -> CapResult {
+    if title.trim().is_empty() {
+        return Err("bad_args: 导入 Markdown 需要 title".to_string());
+    }
+    let text = markdown.trim();
+    if text.is_empty() {
+        return Err("bad_args: markdown 为空，没有可导入的内容".to_string());
+    }
+    if text.len() > 200 * 1024 {
+        return Err("bad_args: markdown 超过 200KB 上限，请拆分后再导入".to_string());
+    }
+    // 守卫做完就**委托**给既有的建页那条路 ✓（少写一份 payload ⇒ 也不多写任何列名 ✓）
+    cap_pages_create(title, text, parent_id, None, Some(true))
 }
 
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
@@ -2349,11 +2375,17 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("pageId").as_deref(),
         ),
         "tags.add" => cap_tags_add(&arg_str("name")?, arg_opt_str("pageId").as_deref()),
+        "pages.importMarkdown" => cap_pages_import_markdown(
+            &arg_str("title")?,
+            &arg_str("markdown")?,
+            arg_opt_str("parentId").as_deref(),
+        ),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
             &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             arg_opt_str("parentId").as_deref(),
             arg_opt_str("fence").as_deref(),
+            None,
         ),
         "blocks.append" => cap_blocks_append(
             arg_opt_str("pageId").as_deref(),

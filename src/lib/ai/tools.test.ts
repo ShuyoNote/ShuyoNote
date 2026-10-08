@@ -29,6 +29,7 @@ const EXPECTED = [
   "files.search",
   "pages.create",
   "pages.get",
+  "pages.importMarkdown",
   "pages.search",
 ];
 

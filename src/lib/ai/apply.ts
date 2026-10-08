@@ -5,6 +5,8 @@
 import { api } from "../api";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
 import { appendFence, fenceDoc } from "../docContent";
+import { markdownToPageContent } from "../mdPreview";
+import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
 import { serializeByKey } from "../serializeByKey";
 import type { PageDetail } from "../../types";
@@ -25,11 +27,20 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       // 这时在**落库这一刻**由这一层构造 content_json。
       // ⚠️ 这个列名在 `apply.ts` 里是有基线配额的（**只许变小** ✗）⇒ 绑一次、三处复用 ✓
       const contentText = String(p.args?.content_text ?? "");
+      // ⭐ R167：整篇 Markdown 导入 —— **一次调用写完整页** ✓（⛔ 不追加 ✗：多次写会被自动保存写回 ✓）
+      const importing = Boolean(p.args?.markdown);
+      if (importing) {
+        const g = importMarkdownGuard(contentText);
+        if (!g.ok) throw new Error(g.error);
+      }
+      const mdDoc = importing ? markdownToPageContent(contentText) : null;
       const built = p.args?.content_json
         ? { content_json: String(p.args.content_json), content_text: contentText }
-        : typeof p.args?.fence === "string" && p.args.fence
-          ? fenceDoc(p.args.fence, contentText, uid)
-          : pageJsonFromText(contentText, uid);
+        : mdDoc
+          ? mdDoc
+          : typeof p.args?.fence === "string" && p.args.fence
+            ? fenceDoc(p.args.fence, contentText, uid)
+            : pageJsonFromText(contentText, uid);
       const page = await api.createPage({
         parent_id: p.args?.parent_id ?? null,
         title: String(p.args?.title ?? ""),

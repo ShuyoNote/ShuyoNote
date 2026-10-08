@@ -11,7 +11,7 @@
 import { codePointLength, sliceByCodePoints } from "../textSnippet";
 import { api } from "../api";
 import { coverageReportTool, scanLibraryCoverage } from "../libraryCoverage";
-import { fenceDoc } from "../docContent";
+import { fenceDoc, importMarkdownArgs } from "../docContent";
 import { pageJsonFromText } from "../ai/lexical";
 import type { DraftResult } from "../ai/types";
 import type { CoverageStores } from "../extract/coverageReport";
@@ -303,6 +303,19 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return draft(`create_page:${title}`, `新建页面「${title}」`, {
       kind: "create_page",
       args: { parent_id: parentId, title, content_json, content_text },
+    });
+  },
+
+  // ⭐ R167：整篇 Markdown 导入（一次写完 ✓）—— 能力面只做**轻守卫**与组参 ✓，
+  // 真正的 md→块解析在落库层（应用自己的导入路径 ✓）—— 避免把编辑器整张图拖进这个包 ✗
+  "pages.importMarkdown": async (args) => {
+    const title = String(args.title ?? "").trim();
+    if (!title) return { ok: false, error: "pages.importMarkdown 需要 title" };
+    const built = importMarkdownArgs(title, String(args.markdown ?? ""), typeof args.parentId === "string" && args.parentId ? args.parentId : null);
+    if (!built.ok) return { ok: false, error: built.error };
+    return draft(`import_markdown:${title}`, `导入 Markdown 新建页面「${title}」`, {
+      kind: "create_page",
+      args: built.args,
     });
   },
 

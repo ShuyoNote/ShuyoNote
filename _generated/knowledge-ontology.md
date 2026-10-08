@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `72563bca18ffdd40181e76e20de45a4feffc2012d69b61251b3f41d6417467b8` |
+| 注册表 sha256 | `7e0c07f9e5d91f91740804a01f403ff4c9243add33bc96f46a3c2acaa31d4375` |
 | `registryVersion` | 1 |
-| `apiVersion` | 1.0.0 |
-| 能力条数 | **25**（按 `kind`：host 2 / read 15 / write 8） |
+| `apiVersion` | 1.1.0 |
+| 能力条数 | **26**（按 `kind`：host 2 / read 15 / write 9） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -31,6 +31,7 @@
 | pages.count | read | current-space | read:pages |  |  | 本空间未删除页面的数量。 |
 | pages.create | write | current-space | write:pages | ✓ | ✓ | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.get | read | current-space | read:pages | ✓ |  | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。 |
+| pages.importMarkdown | write | current-space | write:pages | ✓ | ✓ | 导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.list | read | current-space | read:pages |  |  | 列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序。参数: limit (可选, 默认 50, 上限 200)。不含正文。 |
 | pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面（关键词匹配；应用内 AI 检索会叠加本地嵌入的语义加分，配了嵌入模型时意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。 |
 | properties.list | read | current-space | read:properties |  |  | 列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。 |
