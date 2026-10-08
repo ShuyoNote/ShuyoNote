@@ -1157,8 +1157,9 @@ export function SyncPanel() {
   //   ⚠️ 只在**恰好一台**时自动选 ✓：多台时**不替用户挑** ✗（挑错＝连错设备 ✓）。
   //   ⚠️ 用户自己改过之后不再覆盖 ✓ —— 只在他还没选过时补 ✓。
   useEffect(() => {
-    const candidates = nearby.filter((p) => p.serves_current);
-    if (!dpPeer && candidates.length === 1) setDpPeer(candidates[0].device_id);
+    // ⚠️ 口径**只留一处**：`src/lib/pairTarget.ts::autoPickPeer` ✓（并有常驻单测 ✓）。
+    const next = autoPickPeer(nearby.filter((p) => p.serves_current), dpPeer);
+    if (next !== dpPeer) setDpPeer(next);
   }, [nearby, dpPeer]);
   /**
    * ★ 2026-09-29（规格 §12.1）：「附近设备」那一行的**摘要**（默认折叠 ＝ 只显示这一格）。
