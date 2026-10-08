@@ -71,6 +71,30 @@ try {
 // module caches otherwise make the console/behaviour lag behind the code).
 console.info(`[ShuyoNote] bootstrap v${version}`);
 
+// ⭐ **2026-10-08（owner 截图实测）**：**桌面应用不该露出浏览器/WebView 的原生右键菜单** ✗ ——
+//   现象＝我们自己那份菜单出来了 ✓，而 WebView 的「返回／刷新／另存为／打印／更多工具／检查」**也一起出来** ✓。
+//   来由：为了让"窗口未激活时第一次右键就能开菜单"（owner 另一条：「要点两下才出来」✗），
+//   各行的右键改成在 `mousedown`（button 2）就开菜单 ✓ ⇒ 那一击里 `contextmenu` 的 `preventDefault`
+//   不再可靠地跑在原生菜单之前 ✗ ⇒ 原生菜单漏了出来 ✓。
+//   ⇒ 修法＝**一处全局守卫** ✓（capture 阶段拦 `contextmenu` ✓），**输入框里放行** ✓
+//   （不然文本框里复制/粘贴/拼写检查的原生菜单也没了 ✗）。⚠️ 只拦默认行为、不阻止传播 ✗：
+//   我们自己那些行的 `contextmenu` 处理照旧要能跑（它们负责开菜单 ✓）。
+{
+  const isEditable = (el: EventTarget | null): boolean => {
+    const n = el as HTMLElement | null;
+    if (!n || typeof n.closest !== "function") return false;
+    return !!n.closest('input, textarea, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]');
+  };
+  document.addEventListener(
+    "contextmenu",
+    (e) => {
+      if (isEditable(e.target)) return; // 输入框里保留原生菜单 ✓（复制 / 粘贴 / 拼写检查）
+      e.preventDefault();
+    },
+    true // ⭐ capture：比任何冒泡处理都早 ✓（React 的合成事件挂在 #root 上，冒泡不到它更要先拦 ✓）
+  );
+}
+
 // Surface uncaught runtime errors for diagnosis (production-safe: console only).
 window.addEventListener("error", (e) => {
   console.error("[ShuyoNote]", e.error || e.message);
