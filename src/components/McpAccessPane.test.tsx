@@ -116,10 +116,17 @@ describe("McpAccessPane：外部 AI 接入的开关面", () => {
     expect(sw.className, "开着的开关必须有 `on` 类（不是 is-on ✗）").toContain("on");
     expect(sw.className, "`is-on` 这个类名在本仓不存在 ⇒ 用了它开关就没有「开着」的样子").not.toContain("is-on");
     expect(sw.querySelector(".ui-toggle-knob"), "开关里必须有圆钮 `.ui-toggle-knob`（少了它就是一颗空胶囊 ✗）").not.toBeNull();
-    // 第二颗（免确认）同一套契约 ✓
+    // 另外两颗（免确认 ✓、⭐ R147 授权写 ✓）同一套契约 ✓ —— 三颗都点一遍 knob ✓
     const all = Array.from(document.querySelectorAll('[role="switch"]')) as HTMLElement[];
-    expect(all.length, "面板里有两颗开关").toBe(2);
+    expect(all.length, "面板里现在有三颗开关（接入／免确认／⭐授权写）").toBe(3);
     for (const t of all) expect(t.querySelector(".ui-toggle-knob")).not.toBeNull();
+    // ⭐ R147：第三颗必须是「授权写」，且**默认关**（`granted` 里没有 `write:pages` ⇒ 不许显示成开 ✗）
+    expect(
+      all.some((t) => (t.getAttribute("aria-label") || "").includes("授权写入")),
+      "要有一颗「授权写入（write:pages）」的开关 ✓",
+    ).toBe(true);
+    const grant = all.find((t) => (t.getAttribute("aria-label") || "").includes("授权写入")) as HTMLElement;
+    expect(grant.getAttribute("aria-checked"), "未授权时它必须是关的 ✓").toBe("false");
   });
 
   it("★ 「换一枚新令牌」调 `mcp_rotate_token` ✓", async () => {
