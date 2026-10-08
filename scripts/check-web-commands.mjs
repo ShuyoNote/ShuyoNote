@@ -78,6 +78,7 @@ const DESKTOP_ONLY_COMMANDS = new Map([
     ["mcp_set_allow_write", "桌面专属：免确认写开关（Web 上没有本机通道，更没有可写的东西）"],
   // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 同理：Web 上没有本机通道、也没有可授权的令牌面 ✓
   ["mcp_set_write_grant", "桌面专属：授权写入（write:pages）（Web 上没有本机通道，也没有可授权的令牌面）"],
+  ["mcp_log_apply_result", "桌面专属：外部草稿落库结果回执（Web 上没有本机 mcp 目录可写）"],
   // 隐私边界第 1 步（2026-09-23）：**按空间**启用/禁用加密 —— **桌面专属**。
   // 理由：Web 平台没有钥匙柜（E2EE 在浏览器里是空操作，见 `docs/web-sync-boundary.md`），
   // 而加密空间在 Web 上由 `src/lib/ciphertextSniff.ts` **明确拒掉**（提示去桌面端）⇒

@@ -832,6 +832,38 @@ pub fn mcp_set_allow_write(on: bool) -> Result<McpStatus, String> {
     set_allow_write(on)
 }
 
+/// ⭐ **R150**：把**前端那条路的落库结果**写到 `<应用数据>/mcp/apply.log` ✓。
+///
+/// ## 为什么必须有这一条
+///
+/// 外部那条路的响应里 `drafted:true` **与有没有真的落库无关** ✗ ——
+/// 现场（owner 2026-10-08）：MCP 连发 20 次 `blocks_append`，每次都回 `auto_apply:true` ✓，
+/// 而页里**一个字没多** ✗（正文长度不变、派生索引 `blocks` 的行数也不变 ✓），
+/// 审计里那 20 笔却都是 `ok=True` ✓（审计只管能力层 ✓、看不见前端那一步 ✗）。
+/// ⇒ 于是"看着成功、库里没动"这种形状**对调用方完全不可见** ✗ —— 我今天的假 R3 就是这么来的 ✓。
+///
+/// 这一条是**最小可诊断**的那半 ✓：前端把每条草稿的 `ok/message` 报回来 ✓，落到一个能读的文件 ✓；
+/// 完整修法（把结果**回传进 MCP 响应** ✓）在它之上做 ✓。
+///
+/// ⚠️ 只写元数据与结果文案 ✓（**不写正文** ✗）；一行一条 ✓，超过 200 行就截掉老的一半 ✓（防无限长 ✓）。
+#[tauri::command]
+pub fn mcp_log_apply_result(line: String) -> Result<(), String> {
+    let dir = mcp_dir().ok_or_else(|| "拿不到 mcp 目录".to_string())?;
+    let path = dir.join("apply.log");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut old = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<&str> = old.lines().collect();
+    if lines.len() > 200 {
+        let keep = lines.split_off(lines.len() - 100);
+        old = keep.join("\n") + "\n";
+    }
+    old.push_str(&format!("{stamp} {line}\n"));
+    std::fs::write(&path, old).map_err(|e| format!("写 apply.log 失败：{e}"))
+}
+
 /// ⭐ **R147**：面板上的「**授权写入**（`write:pages`）」✓ —— 未授权 ⇒ 写能力**明确拒** ✓（逐字 `permission_denied` ✓）；
 /// 授权 ⇒ 换一枚带写权限的新令牌 ✓（旧令牌立刻作废 ✓）。
 #[tauri::command]

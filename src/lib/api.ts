@@ -127,6 +127,8 @@ export const api = {
   mcpSetAllowWrite: (on: boolean) => invoke("mcp_set_allow_write", { on }),
   // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时写能力会被明确拒 ✓
   mcpSetWriteGrant: (on: boolean) => invoke("mcp_set_write_grant", { on }),
+  // ⭐ 2026-10-08（R150）：把前端那条路的落库结果写进 mcp/apply.log（可诊断 ✓）
+  mcpLogApplyResult: (line: string) => invoke("mcp_log_apply_result", { line }),
 
   setActiveWorkspaceId: (id: string) => invoke("set_active_workspace_id", { id }),
   deleteWorkspace: (id: string) => invoke("delete_workspace", { id }),
