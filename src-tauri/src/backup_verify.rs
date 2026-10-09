@@ -271,4 +271,45 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// ⭐ 只翻**条目内容**（**不碰中央目录**）⇒ 必须走到"读不完／对不上 CRC"那条路 ✓
+    ///
+    /// 来由（照实）：我先前的 `corrupted_package_is_reported` 翻的那个字节落在**中央目录**上 ✗
+    /// ⇒ 被 `ZipArchive::new` 直接挡掉 ⇒ ⭐ 一个"把 CRC 错误咽掉"的变异**不会让它红** ✓
+    /// ⇒ 证明那条用例**没有覆盖"内容损坏"这一面** ✗。本条专门对准那一面 ✓。
+    #[test]
+    fn corrupted_entry_content_is_reported() {
+        let dir = tmpdir("content");
+        let p = dir.join("c.zip");
+        // ⭐ 用 Stored（不压缩）⇒ 数据就是字面字节 ⇒ 我能**精确地只翻数据区** ✓
+        let file = std::fs::File::create(&p).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("meta.db", opts).unwrap();
+        zip.write_all(b"meta-content-0123456789").unwrap();
+        zip.finish().unwrap();
+
+        assert!(
+            verify_self_consistent(&p).unwrap().is_empty(),
+            "翻之前必须是好包 ✓"
+        );
+
+        // ⭐ local header ＝ 30 字节 ＋ 名字长度 ⇒ 名字之后就是数据区 ✓（⭐ 不碰中央目录 ✓）
+        let at = 30 + "meta.db".len() + 2;
+        let mut bytes = std::fs::read(&p).unwrap();
+        assert!(
+            at + 32 < bytes.len(),
+            "这个位置必须落在数据区里、且离中央目录还有距离 ✓"
+        );
+        bytes[at] ^= 0xFF;
+        std::fs::write(&p, &bytes).unwrap();
+
+        let problems = verify_self_consistent(&p).unwrap();
+        assert!(
+            !problems.is_empty(),
+            "⭐ 内容被改过 ⇒ **必须报红**（这正是那条判据要对准的一面 ✓）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
