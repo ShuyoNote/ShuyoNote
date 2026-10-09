@@ -741,7 +741,19 @@ startRename();
             </span>
           )}
           {copyOpen && (
-            <div className="tree-copy-panel" style={{ top: menuAnchor?.y ?? 0, left: (menuAnchor?.x ?? 0) - 160 }}>
+            <div
+              className="tree-copy-panel"
+              style={{
+                // ⭐ **2026-10-08（owner：「复制到其它空间弹窗被裁剪了」✓）**：原本 `left = x - 160`
+                //   **完全没夹** ✗ ⇒ 靠左的行（x=84）算出 **-76** ⇒ 面板左边被切 ✓（与右键菜单同一族 ✓）。
+                //   ⇒ 四边都夹 ✓；高度交给 CSS 的 max-height ＋ 滚动 ✓（空间多也不溢出 ✓）。
+                top: Math.min(Math.max(8, menuAnchor?.y ?? 0), Math.max(8, window.innerHeight - 96)),
+                left: Math.min(
+                  Math.max(8, (menuAnchor?.x ?? 0) - 160),
+                  Math.max(8, window.innerWidth - 220 - 8)
+                ),
+              }}
+            >
               <div className="tree-copy-title">复制「{node.title || "未命名"}」到…</div>
               {copySpaces.filter((s) => s.id !== copyActive).map((s) => (
                 <button
