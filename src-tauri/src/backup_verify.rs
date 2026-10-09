@@ -184,6 +184,26 @@ pub fn count_files(root: &Path) -> usize {
     n
 }
 
+/// 包内某条记录算不算「附件」？
+///
+/// ⚠️ 口径是**拿真包量出来的**（2026-10-09 实测 ✓）：`backup.rs` 打包时把 attachments 目录当**基准**，
+///    所以附件在包里是 ⭐ **直接放在根上**（`cfee6a6d….png` ✓、`d0/….bin` ✓）✗ ——
+///    ⭐ **没有** `attachments/` 前缀 ✗。
+///    ⇒ ⭐ 判据只能是"**除去 `meta.db` 与 `spaces/**`，其余都算附件**" ✓
+///    （⭐ 我第一版要求 `attachments/` 前缀 ✗ ⇒ 对真包会数出 0 ✓ —— 是这一轮真包抓出来的 ✓）
+pub fn is_attachment_entry(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if name == "meta.db" {
+        return false;
+    }
+    if name.starts_with("spaces/") || name.starts_with("spaces\\") {
+        return false;
+    }
+    true
+}
+
 /// 包里 `attachments/` 下的条目数（⭐ 只看名字，**不解内容** ⇒ 快 ✓）
 pub fn count_zip_attachments(path: &Path) -> Result<usize, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("打不开包：{e}"))?;
@@ -194,7 +214,7 @@ pub fn count_zip_attachments(path: &Path) -> Result<usize, String> {
         if e.is_dir() {
             continue;
         }
-        if e.name().starts_with("attachments/") {
+        if is_attachment_entry(e.name()) {
             n += 1;
         }
     }
@@ -417,6 +437,34 @@ mod tests {
     }
 
     // ── 恢复演练（P2 第二半） ─────────────────────────────────────────────
+    // ── 附件口径（⭐ 照真包 ✓） ─────────────────────────────────────────
+    #[test]
+    fn attachment_entry_uses_real_package_layout() {
+        // ⭐ 真包里看得到的名字（⭐ 直接放根上、没有 attachments/ 前缀 ✓）
+        assert!(is_attachment_entry("cfee6a6df605f017f08e42c186b39ab0083d6bd4b3cf42d8d33165d2492fcbb8.png"));
+        assert!(is_attachment_entry("d0/d0d6e327b93d8e15556cb6f781645b49fb307f780b80858d0d0720f0c09249d8.bin"));
+        assert!(is_attachment_entry("d4/d4cd31b5226d2dd80e371e0893ae919eabf40bcfc9006f03540e590d17d89aab.md"));
+        // ⭐ 这两类不是附件 ✓
+        assert!(!is_attachment_entry("meta.db"), "⭐ meta.db 不是附件 ✓");
+        assert!(!is_attachment_entry("spaces/8ae910a1-75e6-42b7-943e-0e4ba55747d7.db"));
+        assert!(!is_attachment_entry(""));
+    }
+
+    /// ⭐ 对**真包**的判据（⭐ 只在给了路径时才跑 ✓ —— 免得常驻跑依赖用户数据 ✓）
+    #[test]
+    fn real_package_has_attachments_and_meta() {
+        let Ok(path) = std::env::var("SHUYONOTE_REAL_BACKUP") else {
+            return;
+        };
+        let p = std::path::Path::new(&path);
+        let d = digest_of(p).expect("真包要读得出来");
+        assert!(d.iter().any(|e| e.name == "meta.db"), "⭐ 真包必须有 meta.db ✓");
+        assert!(d.iter().any(|e| e.name.starts_with("spaces/")), "⭐ 真包必须有 spaces/ ✓");
+        let n = count_zip_attachments(p).expect("数得出来");
+        assert!(n > 0, "⭐ 真包里的附件数**必须 > 0** ✓ —— 这正是我第一版数出 0 的那个 bug ✓");
+        eprintln!("[p2] 真包 {} ｜ 记录 {} 条 ｜ 附件 {} 条 ✓", path, d.len(), n);
+    }
+
     #[test]
     fn compare_counts_reports_both_mismatches() {
         assert!(compare_counts(10, 3, 10, 3).is_empty(), "一致 ⇒ 没问题 ✓");
