@@ -312,6 +312,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-08-mermaid-export-render-plan.md](plans/2026-10-08-mermaid-export-render-plan.md) | ⭐ **mermaid 导出渲染施工单（R123）**：真因钉到行（`exportDOM` 同步 ⇒ 导出件里必然是源码）；修法照 `exportInline.ts` 先例「生成 HTML 之后再异步后处理」；判据 4 条含**时序图**与**失败退回源码**，并附改前逐字红读数 |
 | [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | **移动端需求说明书**：一页纸结论（**立项待 owner 裁决**）／四类场景／P0×6＋P1×5＋P2×4（每条给**可测验收口径**）／七项不做清单／非功能（如实写"设备直连一轮都没成功搬过"）／最小切片＝**手机上记一条 ＋ 同步到电脑** |
 | [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | **移动端详细技术方案**：架构总图／**共享内核的真实工作量**（435 处 `tauri::` 引用散在 **45 个文件**，最密 6 个只占 51%）／切 `crates/core` 五步＋**文件口径判据**／桥接只做一条（uniffi）／两条数据硬教训／同步**不得假设已可用**／阶段 0–3／风险表 |
+| [plans/mobile/2026-10-08-mobile-spec.md](plans/mobile/2026-10-08-mobile-spec.md) | **移动端说明书（自足总篇）**：一句话结论＋**立项待裁决**／四类场景／P0×6＋P1×5＋P2×4（可测验收口径）／**8 屏效果图逐屏嵌入**／七项不做清单／非功能（同步如实写"一轮都没搬过"）／技术方案（435 处 `tauri::` 散在 **45 个文件**，最密 6 个占 51%）／阶段 0–3／风险表／待裁决两条（各带零风险默认） |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**
