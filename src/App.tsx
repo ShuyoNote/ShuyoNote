@@ -19,6 +19,9 @@ import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
 // ⭐ 2026-10-10：移动端首页（效果图 01-home.svg，规格 §4.1）—— 只在 `isMobile` 且"什么都没打开"时渲染 ✓。
 import { MobileHome } from "./components/MobileHome";
+// ⭐ 2026-10-10：移动端「快速记录」（效果图 02-capture.svg，规格 §4.2）—— 同一支里的第二屏 ✓。
+import { MobileCapture } from "./components/MobileCapture";
+import { useMobileNav } from "./store/mobileNav";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
@@ -975,6 +978,9 @@ function AppShell() {
     };
   }, []);
   const isMobile = useMobile();
+  // ⭐ 2026-10-10：移动端的**整屏**屏栈（首页／快速记录…）—— 只在 `isMobile` 那一支里用 ✓，
+  // 桌面的 `view`（`useViewStore`）**一个字不动** ✓（两者不是一回事，见 `store/mobileNav.ts` ✓）。
+  const mobileScreen = useMobileNav((s) => s.screen);
   // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
   const pdfOpen = usePdfReader((s) => s.open);
@@ -1144,8 +1150,9 @@ function AppShell() {
       ) : isMobile ? (
         /* ⭐ 2026-10-10：手机档的"什么都没打开"⇒ 走**移动端首页**（三个入口 ✓ 无侧边栏 ✓），
            而不是桌面空态（那句"或按 Ctrl+N"在手机上本来就是错的 ✗）。
+           第二屏「快速记录」也在这支里（`mobileNav.screen === "capture"` ✓）。
            ⛔ 桌面分支一个字没动 ✓（下一个 else 就是原来那套 ✓）。 */
-        <MobileHome />
+        mobileScreen === "capture" ? <MobileCapture /> : <MobileHome />
       ) : (
         <div className="main empty">
           <div className="empty-state">

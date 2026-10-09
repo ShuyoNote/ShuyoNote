@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useNotes } from "../store/notes";
 import { usePalette } from "../store/palette";
+import { useMobileNav } from "../store/mobileNav";
 
 /**
  * **移动端首页**（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）。
@@ -22,8 +23,8 @@ export function MobileHome() {
   // ⚠️ 一律**字段级选择器**（`check-store-subscriptions` 挡整店订阅 ✓）
   const pages = useNotes((s) => s.pages);
   const openPage = useNotes((s) => s.openPage);
-  const createPage = useNotes((s) => s.createPage);
   const setPaletteOpen = usePalette((s) => s.setOpen);
+  const setScreen = useMobileNav((s) => s.setScreen);
 
   const recent = useMemo(() => {
     return pages
@@ -40,8 +41,8 @@ export function MobileHome() {
         <p className="mhome-sub">本地优先 · 离线可用 · 只记你确定要留的</p>
       </header>
 
-      {/* ① 主行动：主色卡（效果图里唯一用 --accent 的那一张 ✓） */}
-      <button className="mhome-card is-accent" onClick={() => void createPage(null)}>
+      {/* ① 主行动：主色卡（效果图里唯一用 --accent 的那一张 ✓）—— 进「快速记录」屏（02 ✓） */}
+      <button className="mhome-card is-accent" onClick={() => setScreen("capture")}>
         <span className="mhome-card-icon" aria-hidden>✏️</span>
         <span className="mhome-card-body">
           <span className="mhome-card-title">快速记录</span>
