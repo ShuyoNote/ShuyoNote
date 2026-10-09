@@ -593,6 +593,16 @@ export interface GraphPage {
   title: string;
   tags: string[];
   props: GraphProp[];
+  /**
+   * 页面种类（`page` / `folder` / `database`）。
+   *
+   * ⭐ 2026-10-08 加：**目录不是内容页** —— 而在此之前 `get_graph` 不返回这一格 ⇒
+   * 前端**分不出**哪个节点是目录，于是「知识地图」把「新建文件夹」也当页面列出来 ✗
+   * （owner 真窗口截图 + 只读量真库：7 个空间共 **11 个目录 ＋ 1 个数据库**混在页面里）。
+   * ⚠️ **可选**：老载荷 / 更早的桌面端不带这一格 ⇒ 消费方一律按「不认识 ⇒ 当页面」处理
+   * （宁可多显示一个，也不许因为认不出就把用户的东西**藏起来** ✗）。
+   */
+  kind?: string;
 }
 
 export interface GraphEdge {
@@ -677,6 +687,8 @@ export interface McpStatus {
   port: number | null;
   token: string | null;
   granted: string[];
+  /** ⭐ R152：当前档位（由 enabled/granted/allow_write **推导** ✓；面板据此显示 ✓）。 */
+  level: "off" | "read" | "write_confirm" | "write_auto";
   /** ⭐ M2：免确认写开关的当前读数（默认 false ✓；开着时**每一次写都留审计** ✓） */
   allow_write: boolean;
   /** 这次是不是被**环境变量**打开的（面板要说清 ✓） */

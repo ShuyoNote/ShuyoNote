@@ -1,4 +1,4 @@
-# 插件 API（v1.0.0）
+# 插件 API（v1.1.0）
 
 > 本文件由 scripts/gen-capabilities.mjs 生成（源：capabilities/capabilities.json）——请勿手改。
 > 本文面向**插件作者**：只要读这一份就能写出可安装、可运行的插件，不需要读源码。
@@ -26,7 +26,7 @@ plugins/my-plugin/
   "name": "我的插件",
   "version": "0.1.0",
   "description": "一句话说明",
-  "apiVersion": "1.0.0",
+  "apiVersion": "1.1.0",
   "main": "main.js",
   "permissions": [
     { "id": "read:pages", "reason": "为了在提示里显示本空间页面数" }
@@ -67,7 +67,7 @@ register({
 | `name` | ✅ | 显示名 |
 | `version` | 建议 | 插件自身版本 |
 | `description` | 建议 | 一句话说明 |
-| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.0.0`）；主版本不被支持时会被拒载 |
+| `apiVersion` | ✅ | 本插件针对的 API 版本（当前 `1.1.0`）；主版本不被支持时会被拒载 |
 | `main` | | 入口文件，默认 `main.js` |
 | `permissions` | ✅ | 见下节；**不写 = 默认零能力**（v1 之前的老插件会得到基线授权并收到警告） |
 
@@ -113,8 +113,8 @@ register({
 | `files.search` | `api.files.search(query, limit)` | `read:files` | `current-space` | — | array | 1.1.0 |
 | `files.read` | `api.files.read(id, offset, limit)` | `read:files` | `current-space` | — | object | 1.1.0 |
 | `editor.insertText` | `api.editor.insertText(text)` | `write:page.current` | `current-space` | 即时 | void | 1.0.0 |
-| `pages.create` | `api.pages.create(title, content, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
-| `blocks.append` | `api.blocks.append(text, pageId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `pages.create` | `api.pages.create(title, content, parentId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
+| `blocks.append` | `api.blocks.append(text, pageId, fence)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `user.notify` | `api.notify(message)` | — | `app` | — | void | 1.0.0 |
 | `kv.get` | `api.kv.get(key, scope)` | `kv:own` | `app` | — | string | 1.0.0 |
 | `kv.set` | `api.kv.set(key, value, scope)` | `kv:own` | `app` | 即时 | void | 1.0.0 |
@@ -125,6 +125,7 @@ register({
 | `tags.add` | `api.tags.add(name, pageId)` | `write:tags` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `log.write` | `api.log(message, level)` | — | `app` | — | void | 1.0.0 |
 | `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
+| `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 
 ### `page.current` — 读取当前页
 
@@ -237,7 +238,7 @@ register({
 
 ### `pages.create` — 新建页面（草稿确认）
 
-- 调用：`api.pages.create(title, content, parentId)`
+- 调用：`api.pages.create(title, content, parentId, fence)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会新建笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
@@ -246,10 +247,11 @@ register({
   - `title`: `string` —— 
   - `content`: `string`（可选） —— 正文纯文本（按空行分段）
   - `parentId`: `string`（可选） —— 父页面 id；省略=顶层
+  - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
 
 ### `blocks.append` — 向页面追加内容（草稿确认）
 
-- 调用：`api.blocks.append(text, pageId)`
+- 调用：`api.blocks.append(text, pageId, fence)`
 - 权限：`write:pages`
 - scope：`current-space`
 - 写入中介：**草稿确认（落库前需用户点确认）** —— 会改动既有页面内容 → 必须先给用户看草稿并等他确认；落库时按当时的页面重读后再追加，不覆盖并发编辑
@@ -257,6 +259,7 @@ register({
 - 参数：
   - `text`: `string` —— 要追加的纯文本（按空行分段）
   - `pageId`: `string`（可选） —— 目标页面 id；省略=当前页
+  - `fence`: `string`（可选） —— 块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。
 
 ### `user.notify` — 向用户显示一条提示
 
@@ -358,6 +361,18 @@ register({
 - 参数：
   - `fileName`: `string` —— 建议的文件名（只给名字——路径里的目录会被去掉，文件存哪里由用户在保存对话框里定）
   - `content`: `string` —— 要写入的内容（单文件上限 4 MiB，一次运行最多 4 个文件）
+
+### `pages.importMarkdown` — 导入 Markdown 为一页（草稿确认）
+
+- 调用：`api.pages.importMarkdown(title, markdown, parentId)`
+- 权限：`write:pages`
+- scope：`current-space`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 会用 Markdown 原文新建一页笔记内容，属于对用户数据的实质写入 → 必须先给用户看草稿并等他确认，不直接落库
+- 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
+- 参数：
+  - `title`: `string` —— 新页标题。
+  - `markdown`: `string` —— Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。
+  - `parentId`: `string`（可选） —— 父页面 id；不传就放在顶层。
 
 ## 4b. 只有 AI 宿主可用的工具（**插件调不到**）
 
@@ -520,7 +535,7 @@ var pages = api.pages.list(n);
 ```json
 {
   "id": "reading-board", "name": "阅读统计", "version": "1.0.0",
-  "runtime": "declarative", "apiVersion": "1.0.0",
+  "runtime": "declarative", "apiVersion": "1.1.0",
   "views": [ {
     "id": "recent", "title": "最近更新", "summary": true,
     "query": { "kind": "any", "updatedWithinDays": 30, "sort": "updated_desc", "limit": 20 },

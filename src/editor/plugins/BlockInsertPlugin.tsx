@@ -160,6 +160,13 @@ function runAtBlock(
       }
     });
   } else {
+    // ⭐ **R162（owner 2026-10-08 现场 ✓）**：`focus()` 必须**排在 `option.run` 之前** ✗ ——
+    //   点菜单按钮会把编辑器的选区弄丢 ✓，而多数项的 `run` 一进去就 `editor.update(...)` ✓
+    //   ⇒ 落在**旧选区**上 ⇒ Lexical 抛
+    //   「updateEditor: selection has been lost because the previously selected nodes have been removed」✗
+    //   （现场逐字 trace：`runAtBlock — BlockInsertPlugin.tsx:163` ← `select — :360` ✓）。
+    //   ⚠️ 原来是**事后**才 `focus()` ✗ ⇒ 凡是不自己 focus 的项（代码块／分隔线／Mermaid 图块 ✓）必报这句 ✓。
+    editor.focus();
     option.run(editor);
   }
   editor.focus();

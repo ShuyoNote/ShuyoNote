@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
@@ -10,13 +10,13 @@ import { SearchPanel } from "./SearchPanel";
 import {
   PageIcon,
   FolderIcon,
-  BoardIcon,
   GraphIcon,
   TimelineIcon,
   TagIcon,
   TemplateIcon,
   SettingsIcon,
   SidebarIcon,
+  LlmWikiIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -35,7 +35,17 @@ import {
 const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
-  { id: "board", labelKey: "nav.board", icon: <BoardIcon width={18} height={18} /> },
+  // ⭐ **2026-10-08 去掉**（owner：「去掉侧边工具栏中系统看板的一级入口图标」✓）：
+  //   `{ id: "board", labelKey: "nav.board", icon: <BoardIcon … /> }` 这一条**已删** ✗。
+  //   ⚠️ **视图本身没删** —— 「系统看板」（`BoardView`）仍然可达，走**命令面板**那条真路径：
+  //   `Ctrl+K` →「打开看板」（`view.board`，见 `plugins/builtinCommands.ts` ✓）。
+  //   ⛔ 别把这颗图标加回来：判据钉着「竖条里没有 Board/系统看板」（`activityBarLlmWiki.test.tsx`，
+  //   中英两种 title 都覆盖 ✓）；也⛔ 别因为"竖条里看不见了"就把 `BoardView` / `view.board` 一起删掉 ✗
+  //   （那是把"入口"和"视图"混为一谈 —— 浏览器门禁 `scripts/verify-mobile-views.mjs` 的 board
+  //   用例现在**就是**用命令面板打开它 ✓，那正是用户现在打开它的那条路）。
+  //   ⚠️ 连带影响（**已记**，不是没想到）：`activity` 现在不会再变成 `"board"` 被竖条点亮 ——
+  //   从命令面板进看板时**没有图标是亮的**（`isActivity("board")` 仍成立、`Activity` 类型仍含它 ✓，
+  //   只是竖条上不再有对应那颗 ⇒ 没有"当前活动"可高亮）。这是"去掉一级入口"的必然结果 ✓。
   { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
   { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
   // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）
@@ -54,6 +64,39 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   //   判据：本机真 Chromium 探针读出来的 title 列表里那一项是 `templateCenter`（不是「模板中心」）。
   { id: "templates", labelKey: "nav.templateCenter", icon: <TemplateIcon width={18} height={18} /> },
 ];
+
+/**
+ * ⭐ 2026-10-08（owner 原话：「在侧边工具栏的『知识地图』按钮**入口下面**添加 LLM Wiki 的**图标按钮**」✓）
+ * —— 它渲染在 `ITEMS` 里「知识地图」那颗的**紧下面**（DOM 次序，判据量着 ✓）。
+ *
+ * 三条形态口径（都与竖条既有约定一致，别改错）：
+ *   ① 它是**动作**、不是「活动」 ⇒ ⛔ 不参与 `activity` 高亮、⛔ 不 `setView`／不 `setActivity`
+ *      （形态与竖条底部那颗「设置」一致 ✓ —— 那颗也是"去开一个面板"）；
+ *   ② 动作就是命令面板那条 `ai.libraryMap` 的**同一个**：`openSettings("ai")` ✓
+ *      （⛔ 不另造一条"打开库地图"的路 ＝ 第二份真相源 ✗；判据钉着 `openSettings("ai")` 恰好一次 ✓）；
+ *   ③ 它**只打开面板**、⛔ 不自动跑扫描 —— 全库扫描是 O(页面数) 的调用，需求明确不要自动/定时重跑 ✓。
+ *
+ * ⚠️ 图标用 `LlmWikiIcon`（翻开的书）—— **走 `Icon` 外壳那套约定**（24×24 ／ fill:none ／
+ *    stroke:currentColor ／ 线宽 1.7 ✓），与竖条另外那几颗**同一套风格** ✓（owner 2026-10-08：
+ *    「用风格一致的 SVG 图标」）。
+ *    ⛔ 别顺手换成 `SparkleIcon` / `AiSparkIcon`：前者已被「AI 助手／设置里的 AI 页」占用（点它去哪会含糊 ✗），
+ *       后者自带 `linearGradient`（紫→青）＋ `stroke="url(#…)"` ⇒ 在一排单色描边图标里是"另一套皮肤"，
+ *       而且写死颜色（深色主题不跟主题走 ✗）。判据：`activityBarLlmWiki.test.tsx` 量 stroke/fill/viewBox/线宽
+ *       ＋ **不许有渐变** ✓。
+ */
+function LlmWikiButton() {
+  const { t } = useTranslation();
+  return (
+    <button
+      className="activity-btn"
+      title={t("kbMap.wikiEntry")}
+      aria-label={t("kbMap.wikiEntry")}
+      onClick={() => useEditorStore.getState().openSettings("ai")}
+    >
+      <LlmWikiIcon width={18} height={18} />
+    </button>
+  );
+}
 
 export function ActivityBar() {
   const { t } = useTranslation();
@@ -134,16 +177,19 @@ export function ActivityBar() {
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (
-            <button
-              key={it.id}
-              className={`activity-btn${on ? " is-on" : ""}`}
-              title={t(it.labelKey)}
-              aria-label={t(it.labelKey)}
-              aria-current={on}
-              onClick={() => pick(it.id)}
-            >
-              {it.icon}
-            </button>
+            <Fragment key={it.id}>
+              <button
+                className={`activity-btn${on ? " is-on" : ""}`}
+                title={t(it.labelKey)}
+                aria-label={t(it.labelKey)}
+                aria-current={on}
+                onClick={() => pick(it.id)}
+              >
+                {it.icon}
+              </button>
+              {/* ⭐ 就放在「知识地图」那颗的**下面**（owner 2026-10-08）—— 见 `LlmWikiButton` 的注释 ✓ */}
+              {it.id === "map" && <LlmWikiButton />}
+            </Fragment>
           );
         })}
       </div>

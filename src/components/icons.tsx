@@ -622,6 +622,25 @@ export function PropertyIcon(props: IconProps) {
   );
 }
 
+/**
+ * LLM Wiki（库地图）—— 一本**翻开的书**（两侧书页）。
+ *
+ * ⚠️ 2026-10-08（owner：「用风格一致的 SVG 图标」✓）：它必须走 `Icon` 外壳那套约定
+ * （`viewBox 0 0 24 24` ／ `fill=none` ／ `stroke=currentColor` ／ 线宽 1.7 ／ 圆头圆角 ✓），
+ * 与左侧竖条里另外那几颗（页面/文件夹/看板/关系图/时间复盘/标签/模板/设置）**同一套** ✓。
+ * ⛔ 上一版用的是 `AiSparkIcon` —— 它自带 `linearGradient`（紫→青）＋ `stroke="url(#…)"`，
+ *    在一排单色描边图标里"另一套皮肤" ✗，而且写死了颜色（深色主题下不跟主题走 ✗）。
+ * 判据：`src/components/activityBarLlmWiki.test.tsx`（量 stroke/fill/viewBox/线宽 ＋ 不许有渐变 ✓）。
+ */
+export function LlmWikiIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+    </Icon>
+  );
+}
+
 // New-page guide icons (action list + database view row).
 export function SparkleIcon(props: IconProps) {
   return (

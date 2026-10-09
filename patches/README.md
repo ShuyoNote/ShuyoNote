@@ -4,6 +4,7 @@
 
 | 文件 | 内容 | 状态 |
 |---|---|---|
+| `@lexical__table@0.50.0.patch` | ① **模型表（`shuyo-table`）也挂变更监听**（否则它永远没有观察者 ⇒ 在表里拖选单元格就报 `tableObserver not found`）；② **表已经不在文档里就安静跳过**（那个"待焦点"过期了），**表还在却没有观察者照旧报错** | **已写**（①2026-10-01，owner 选 A；②2026-10-08，owner 选 A —— 见 §`@lexical/table` 那一节） |
 | `0001-sqlcipher-sm3-provider.patch` | 给 **SQLCipher** 加国密两格：`cipher_hmac_algorithm = HMAC_SM3`、`cipher_kdf_algorithm = PBKDF2_HMAC_SM3`（方案 §3.1 那张表：枚举 ＋ 回显分支 ＋ OpenSSL provider 的 `hmac`/`kdf`/`get_hmac_sz` 回调 ＋ **一道能力门**） | **已写**（2026-09-20，20 段改动 / 213 行 diff；生成器 `patches/tools/make-sm3-provider-patch.mjs`） |
 
 ## 怎么用（应用与读法都固定下来）
@@ -141,3 +142,45 @@ crate 里跑判据；含"陈旧副本 mtime 更新也要挑锁定版本"的回�
 | ① 后端是谁 | `scripts/check-crypto-backend.mjs` | 编进去的是 OpenSSL/Tongsuo 还是 CommonCrypto（**拿产物说话**） |
 | ② 补丁在不在 | `src-tauri/build.rs::require_gm_provider_patch` | 将要编译的那份源码里有没有 SM3 标签 ＋ 打产物标记 |
 | ③ 真的生效没有 | `src-tauri/src/gm_provider.rs`（运行期判据） | 回显必须是 `HMAC_SM3`/`PBKDF2_HMAC_SM3`；并守「静默降级」那条（实测：不校验标签、回显不变、盘上仍是 SHA512） |
+
+---
+
+# `@lexical/table` —— 「表格里拖选就报 #335」
+
+**症状**（owner 2026-10-08 贴来的生产控制台日志，1.92.6 的 Web 包）：`bootstrap` 之后连发 **6 次**
+`Error: Minified Lexical error #335` ✗。**没有数据损失**，代价是控制台一串红字 ＋ 那一次拖选的焦点处理被中止。
+
+**#335 是什么**（`lexical` **v0.50.0** 自己的 `scripts/error-codes/codes.json` 逐字）：
+`"tableObserver not found for tableKey: %s"` —— 抛在 `@lexical/table` 的 `$handleTableSelectionChangeCommand`。
+
+**为什么本仓会撞上**（两条**独立**触发路，报的是同一句话）：
+
+1. **模型表拿不到观察者**（⛔ 这条最要命，**就是 owner 那 6 次**）：本仓把内建 `table` 升级成模型表
+   `shuyo-table`（`BlockTableNode extends TableNode`），而 Lexical 按 `node.__type` → `klass` 投递变更
+   ⇒ **只挂 `TableNode` 的那条监听收不到模型表的变更** ⇒ 模型表**永远没有观察者**。
+   实测（真构建 ＋ 真 Chromium）：**光在表里拖选单元格、表一直在** ⇒ `#335` × 6 ✗。
+2. **拖拽进行中那张表被换掉/移除**（撤销、切页重挂、**远端内容刚应用下来**）⇒ 排队的"待焦点"过期，
+   而 `getAndClearNextFocus()` 之后每次都再报一次（实测也是 6 次）。
+
+**⚠️ 2026-10-08 抓到的真因（这条比补丁本身更值得记）**：① 那条修复**原先只打在 `dev` 产物上**
+（补丁只含 `dist/LexicalTable.dev.js` / `.dev.mjs`），**而线上与发布版走的是 `production` 条件**
+（`@lexical/table/package.json` 的 `exports`：`"production": "./dist/LexicalTable.prod.mjs"`；
+`dist-web/assets/*.js` 里**没有任何 dev 文案** ⇒ 用的是 prod 包 ✓）
+⇒ **那次修复从上线那天起就没生效过** ✗。**教训：「修好了」必须问"哪个产物"，不是"补丁在不在"。**
+② 同一个 `#335` 还有第二条路（表被换掉），守卫缺失同样会连发。
+
+**改法**（`pnpm patch @lexical/table@0.50.0` → 在临时目录里改 → `pnpm patch-commit <目录>`）：
+四个产物（dev/prod × js/mjs）都要覆盖 —— ① 变更监听**双挂**（内建 ＋ 模型表类）；
+② 守卫：observer 不在时，**表已不在文档里**（`$getNodeByKey(tableKey) === null`）⇒ **安静跳过并返回** ✓；
+**表还在却没有 observer** ⇒ **照旧报错并返回**（真缺陷，⛔ 不许一起静默掉 —— 本仓忌"静默失败"）。
+⚠️ 上游这里**只报错不返回**，接着会解构 `undefined` 再抛一次 ⇒ 两种情况都要**立刻 return**。
+
+**判据（在本机怎么复现，30 秒）**：真构建（`pnpm build:web`）＋ 真 Chromium：
+① 粘一个 `<table>` 进正文 → ② **真指针**从第 1 格拖到第 2 格（`page.mouse.down/move`；⚠️ 合成
+`MouseEvent` 触不到 pointer 手势 ⇒ 会假绿）→ ③ 数 `Minified Lexical error #335` 的行数。
+**改前 6 行 ✗ ⇒ 改后 0 行 ✓**；另一条路：拖拽中 `Ctrl+Z` 把表撤掉，**改前 6 行 ⇒ 改后 0 行** ✓。
+
+⚠️ **这份补丁会很大（301 KB）** —— prod 产物是**压成一行的**，统一 diff 只能整行替换 ⇒ 体积没法小。
+升级 `lexical`/`@lexical/table` 时**必须重打**（且要重新跑上面那两条复现）；`.dev.*` 那两条小改动也还在里面 ✓。
+⚠️ 改完补丁要 `pnpm install`（`patch-commit` 会自动做）—— 它会**改写 `pnpm-lock.yaml` 里的 patch hash**，
+那一行变化是**预期**的，不是手改 lockfile ✗。

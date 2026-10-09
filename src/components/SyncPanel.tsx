@@ -3,6 +3,7 @@ import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type DevicePairExportOutcome } from "../lib/api";
+import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -1151,6 +1152,16 @@ export function SyncPanel() {
   //    **不许**把"读不到列表"渲染成"网段里没人"（空数组与"不可用"长得一样、含义相反）。
   const nearbyReadable = Array.isArray(lanStatus?.nearby);
   const nearby = lanStatus?.nearby ?? [];
+  // ⭐ **2026-10-08（owner：「附近设备同步流程太繁琐了，能简化吗？」）**：
+  //   **附近恰好一台时自动选中它** ✓ —— 选中它走的是正路（本机生成时就登记 ⇒
+  //   **对面采纳一次、两个方向都通** ✓）；而默认的"不指定"走的是兜底（码离线传 ⇒ **要配两次** ✗）。
+  //   ⚠️ 只在**恰好一台**时自动选 ✓：多台时**不替用户挑** ✗（挑错＝连错设备 ✓）。
+  //   ⚠️ 用户自己改过之后不再覆盖 ✓ —— 只在他还没选过时补 ✓。
+  useEffect(() => {
+    // ⚠️ 口径**只留一处**：`src/lib/pairTarget.ts::autoPickPeer` ✓（并有常驻单测 ✓）。
+    const next = autoPickPeer(nearby.filter((p) => p.serves_current), dpPeer);
+    if (next !== dpPeer) setDpPeer(next);
+  }, [nearby, dpPeer]);
   /**
    * ★ 2026-09-29（规格 §12.1）：「附近设备」那一行的**摘要**（默认折叠 ＝ 只显示这一格）。
    *
@@ -2100,7 +2111,7 @@ export function SyncPanel() {
                               onChange={(e) => setDpPeer(e.target.value)}
                               data-testid="dp-peer"
                             >
-                              <option value="">不指定（码可以离线传，要配两次）</option>
+                              <option value="">不指定（两台不在一起时才用这条：码离线传，要配两次）</option>
                               {nearby
                                 .filter((p) => p.serves_current)
                                 .map((p) => (
@@ -2124,7 +2135,17 @@ export function SyncPanel() {
                             <div className="sync-hint">
                               <div>比对码（一次性）：<b data-testid="dp-own-code">{dpExport.check_code}</b></div>
                               <div style={{ wordBreak: "break-all" }} data-testid="dp-text">{dpExport.text}</div>
-                              <div>对端收下后，请当面核对两边的比对码：一样才继续 ✓。</div>
+                              {dpPeer ? (
+                                <div data-testid="dp-one-shot">
+                                  ⭐ 已指定对端 ⇒ 把这段码交给它，**它采纳一次就够** ✓：
+                                  本机生成时已经把它登记好了 ⇒ 采纳完**两个方向都通**（不用再配第二次 ✓）。
+                                </div>
+                              ) : (
+                                <div>
+                                  对端收下后，请当面核对两边的比对码：一样才继续 ✓。
+                                  ⚠️ 没指定对端 ⇒ 这条兜底要**配两次**（见上面的下拉 ✓）。
+                                </div>
+                              )}
                             </div>
                           )}
                           {dpExport && dpExport.outcome === "not_configured" && (

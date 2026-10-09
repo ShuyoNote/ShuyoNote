@@ -76,13 +76,22 @@ export function KnowledgeMap() {
         {map.clusters.map((c) => (
           <li key={c.key} className="kb-map-cluster">
             <div className="kb-map-cluster-head">
-              <span className="kb-map-cluster-name">{c.key === UNTAGGED ? t("kbMap.untagged") : c.label}</span>
+              {/* ⚠️ 名字**单行截断**（`App.css` 的 `.kb-map-cluster-name`）⇒ 必须给 `title`：
+                  截断而不给全名＝把信息真的删掉 ✗（owner 2026-10-08：「卡片名称不回绕」） */}
+              <span className="kb-map-cluster-name" title={c.key === UNTAGGED ? t("kbMap.untagged") : c.label}>
+                {c.key === UNTAGGED ? t("kbMap.untagged") : c.label}
+              </span>
               <span className="kb-map-cluster-count">{c.pages.length}</span>
             </div>
             <ul className="kb-map-pages">
               {c.pages.map((p) => (
                 <li key={p.id}>
-                  <button type="button" className="kb-map-page" onClick={() => void openPage(p.id)}>
+                  <button
+                    type="button"
+                    className="kb-map-page"
+                    title={p.title || t("kbMap.untitled")}
+                    onClick={() => void openPage(p.id)}
+                  >
                     {p.title || t("kbMap.untitled")}
                   </button>
                 </li>

@@ -171,10 +171,14 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     spaceSecurityOverview.mockResolvedValue([unclassified]);
     await render();
     expect(rows()).toHaveLength(1);
-    // ⚠️ 只断言**那一枚徽标**：`row.textContent` 里还含着下拉框的选项文案（「个人空间（…）」），
-    //    拿整行去 `not.toContain("个人空间")` 会误伤。
-    // ⚠️ **2026-10-04 改**：⭐ 空串不再显示成「未分类」✗ —— Rust 侧读出来就是个人空间 ✓（保守侧 ✓）。
-    expect(rows()[0].querySelector(".space-privacy-kind")!.textContent).toBe("个人空间");
+    // ⚠️ **2026-10-08（owner：「圈红的控件是不是可以去掉」✓）**：那枚「团队空间」**徽章已删** ——
+    //    它与下面那个下拉（`aria-label="空间分类"`）是**同一个字段 `v.kind` 的两份显示** ✓，
+    //    而下拉的选项本来就写着「个人空间（不经过服务器…）」/「团队空间（可以绑同步服务器）」⇒ 徽章是**纯重复** ✗。
+    //    ⇒ 判据随之改向（两半都钉）：① **那枚徽章不许回来** ② 读数由**下拉的当前值**承担（单一出处 ✓）。
+    //    ⚠️ 旁边的「明文／已加密」**不是重复**（下拉里没有加密状态）⇒ 它还在 ✓（见下一条断言）。
+    expect(rows()[0].querySelector(".space-privacy-kind")).toBeNull();
+    expect((rows()[0].querySelector("select") as HTMLSelectElement).value).toBe("personal");
+    expect(rows()[0].querySelector(".space-privacy-enc")!.textContent).toBe("明文");
   });
 
   it("② 个人空间没加密 ⇒ 行里不再有「不能绑」的裁决（真拦改在绑服务器那一刻）", async () => {
@@ -187,10 +191,13 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     expect(container.querySelector(".space-privacy-verdict")).toBeNull();
   });
 
-  it("③ 团队空间 ⇒ 显示为团队空间", async () => {
+  it("③ 团队空间 ⇒ 下拉的当前值就是 team（那枚徽章已删 ⇒ 别再指着一个不存在的元素）", async () => {
     spaceSecurityOverview.mockResolvedValue([team]);
     await render();
     expect(container.textContent).toContain("团队空间");
+    // ⚠️ **2026-10-08**：读数从徽章改成**下拉的当前值**（同一个 `v.kind`，但只留一处 ✓）
+    expect((selects()[0] as HTMLSelectElement).value).toBe("team");
+    expect(rows()[0].querySelector(".space-privacy-kind")).toBeNull();
     // ⚠️ **2026-10-04**：⭐ 原来还断言 `toContain("可以绑同步")`✗ —— 那是裁决文案，已随那一块去掉 ✓。
   });
 
@@ -254,28 +261,30 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
 
   // ---------------------------------------------------------------------------
   // ★ A2（owner 2026-09-25 拍板）：**开启加密之前必须先把"忘了就没了"读进去**
+  // ⭐ 2026-10-08（owner：「**去掉这个文案**」✓）⇒ 那句**红字提醒**已删；**下面的勾选前置保留**
+  //    （它的标签「我已保管好主口令，知道它丢了就打不开」本身就是那句话的意思 ✓）。
+  //    ⚠️ 判据随之改向：从"钉住那句话本身"改成**钉住"它真的没了"＋"勾选前置还在"** ——
+  //    两半都钉，这样既不会有人把这句悄悄加回来（owner 明确要去掉 ✗），
+  //    也不会有人顺手把**勾选**一起删掉（那会把"用户被告知过"这件事整个变成无判据 ✗）。
   // ---------------------------------------------------------------------------
-  //
-  // 为什么要有这两条：零知识＝零恢复，口令丢了**数据永久打不开**。这句真话今天只在
-  // **锁定屏**（连错 3 次之后）说 —— 那时候用户已经记不住了，等于事后通知。
-  // `docs/identity-privacy-roadmap.md:34` 早就写着"开启前必须勾选确认"，而代码里一直没有
-  // ⇒ 这两条把"用户真的被告知过"这件事钉成可执行的判据（改文案会连判据一起红）。
-  it("⑪ ★ 没勾「我已保管好主口令」⇒ **点不动**开启加密（且那句真话在屏幕上）", async () => {
+  it("⑪ ★ 没勾「我已保管好主口令」⇒ **点不动**开启加密（那句红字提醒已按 owner 2026-10-08 去掉，且⛔ 不许回来）", async () => {
     spaceSecurityOverview.mockResolvedValue([personal]);
     enableSpaceEncryption.mockResolvedValue([]);
     await render();
 
-    // ① 那句话必须在**开启之前**就看得见（不是点了才弹）
-    expect(container.textContent).toContain("真的打不开了");
-    expect(container.textContent).toContain("没有第二把备份钥匙");
-    // ② 没勾 ⇒ 按钮是灰的，而且**点了也真的不调 api**（disabled 不只是视觉）
+    // ① ⭐ 2026-10-08（owner：「去掉这个文案」）：那句红字**不许再出现** —— 钉住"它真的没了" ✓
+    expect(container.textContent).not.toContain("真的打不开了");
+    expect(container.textContent).not.toContain("没有第二把备份钥匙");
+    // ② **勾选前置仍在**（去掉的只是那句文案，不是这个前置）：勾选框在、且默认未勾
+    expect(ackBox()).toBeTruthy();
+    expect(ackBox().checked).toBe(false);
+    // ③ 没勾 ⇒ 按钮是灰的，而且**点了也真的不调 api**（disabled 不只是视觉）
     const open = buttons().find((b) => b.textContent === "开启加密")!;
     expect(open.disabled).toBe(true);
     await act(async () => {
       open.click();
     });
     expect(enableSpaceEncryption).not.toHaveBeenCalled();
-    expect(ackBox().checked).toBe(false);
   });
 
   it("⑫ ★ 勾上之后才点得动 —— 而且勾选框**按空间记**（一行勾了不算另一行）", async () => {

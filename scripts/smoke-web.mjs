@@ -765,6 +765,21 @@ assert("import_backup restores a workspace list", Array.isArray(wsListAfterBacku
   assert("export_workspace zip contains shuyonote.db", wsZip && wsZip["shuyonote.db"] && wsZip["shuyonote.db"].length > 0, Object.keys(wsZip).join(","));
   assert("export_workspace zip contains workspace.json", wsZip && wsZip["workspace.json"] && wsZip["workspace.json"].length > 0);
   assert("export_workspace zip contains attachments dir", Object.keys(wsZip).some((k) => k.startsWith("attachments/")));
+  // ⭐ R138/R139（owner 2026-10-08：先「导出时不带历史变更」、后「治根」）：
+  //   导出**只带"还没推出去的"变更**（与桌面 `export_snapshot` 同口径）⇒ 必须**如实报出裁了多少** ✓。
+  //   实测动机：那份真包里 `changes` 占 91%（672 MB / 739 MB），而正文只有 1.9 MB ✗。
+  //   ⚠️ 这条量的是**返回值**（不是 zip 字节大小）：本 smoke 库做过很多次 save_page，
+  //   且**没有同步档案** ⇒ 按口径"整张日志都不带" ⇒ 裁掉的条数必须 > 0 ✓。
+  assert(
+    "export_workspace 报出裁掉多少条同步日志（R138/R139：不静默）",
+    res && typeof res.trimmed_changes === "number" && res.trimmed_changes > 0,
+    `trimmed_changes=${res?.trimmed_changes} ｜ trimmed_change_bytes=${res?.trimmed_change_bytes}`,
+  );
+  assert(
+    "export_workspace 报出裁掉多少字节（同两格口径）",
+    res && typeof res.trimmed_change_bytes === "number" && res.trimmed_change_bytes >= 0,
+    `${res?.trimmed_change_bytes}`,
+  );
 
   // 10i-3. export emits workspace-progress events (via the browser CustomEvent bus)
   // so the UI can show a progress bar.

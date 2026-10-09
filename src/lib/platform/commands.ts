@@ -786,6 +786,12 @@ export interface CommandMap {
   mcp_set_enabled: { args: { enabled: boolean }; result: McpStatus };
   mcp_rotate_token: { args: undefined; result: McpStatus };
   mcp_set_allow_write: { args: { on: boolean }; result: McpStatus };
+  // ⭐ 2026-10-08（R147）：授权写入（write:pages）—— 未授权时写能力会被明确拒 ✓
+  mcp_set_write_grant: { args: { on: boolean }; result: McpStatus };
+  // ⭐ R150：外部草稿的落库结果回执（写 mcp/apply.log ✓）
+  mcp_log_apply_result: { args: { line: string }; result: void };
+  // ⭐ R152：面板的四档选择（不接／只读／可写待确认／可写免确认）
+  mcp_set_level: { args: { level: string }; result: McpStatus };
   move_page: { args: { args: { id: string; new_parent_id: string | null; sort_order: number } }; result: void };
   set_page_icon: { args: { args: { id: string; icon: string } }; result: PageDetail };
   set_page_cover: { args: { args: { id: string; cover: string } }; result: PageDetail };
@@ -1283,7 +1289,12 @@ export interface CommandMap {
     };
   };
   import_backup: { args: { srcPath: string }; result: { imported: number; renamed: number } };
-  export_workspace: { args: { destPath: string }; result: { path: string; size: number; pages: number; attachments: number } };
+  // ⭐ R138（2026-10-08，owner 选 A）：导出快照会**裁掉同步日志的历史**
+  // ⇒ 多两格如实报告裁了多少（⛔ 不许静默：用户得知道包里少了什么 ✓）。
+  export_workspace: {
+    args: { destPath: string };
+    result: { path: string; size: number; pages: number; attachments: number; trimmed_changes: number; trimmed_change_bytes: number };
+  };
   export_wiki: { args: { destPath: string; files: { name: string; content: string }[] }; result: { path: string; size: number; pages: number; files: number } };
   wiki_export_pages: { args: undefined; result: WikiPageInput[] };
   import_workspace: { args: { srcPath: string; name?: string | null }; result: WorkspaceMeta };

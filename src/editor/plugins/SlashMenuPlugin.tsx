@@ -245,6 +245,25 @@ export function makeOptions(pageId: string): SlashOption[] {
         topLevel.replace(codeNode);
         codeNode.selectStart();
       }) },
+    // ⭐ R161（owner 2026-10-08：「插入块添加 Mermaid图块 类型」✓）：
+    //   与上面「代码块」**同一形状**，只把语言写成 mermaid ✓ ⇒ 编辑器那条既有变换
+    //   （`blockIdTransform.ts:157`「语言=mermaid 的代码块 ⇒ mermaid 块」✓，幂等 ✓）
+    //   会把它升级成**真图块** ✓ ⇒ 直接出图 ✓。
+    //   ⚠️ 它同时出现在两个菜单里 ✓（`/` 触发的 SlashMenu ＋ 悬停出来的 `+` 插入块菜单
+    //      —— 后者读的是同一个 `makeOptions` ✓；而它那张分组表里**早就写着** `mermaid: "常用"`
+    //      却一直没有对应项 ✗ ⇒ 本笔把那条死条目接活 ✓）。
+    { key: "mermaid", title: "Mermaid 图块", badge: "◈", group: "嵌入", pinyin: "mermaid", run: (editor) =>
+      editor.update(() => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection)) return;
+        const anchor = selection.anchor.getNode();
+        const topLevel = $getInsertTargetBlock(anchor);
+        if (!topLevel) return;
+        const codeNode = $createSafeCodeNode("mermaid");
+        codeNode.append($createCodeHighlightNode(topLevel.getTextContent()));
+        topLevel.replace(codeNode);
+        codeNode.selectStart();
+      }) },
     { key: "hr", title: "分隔线", badge: "—", group: "嵌入", shortcut: "Ctrl+Alt+M", pinyin: "fgx", run: (editor) => {
       // Replace the current block in place with the divider, then drop a fresh
       // paragraph below it (same behavior as the Ctrl+Alt+M shortcut) — no leftover/extra block.

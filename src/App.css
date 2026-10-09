@@ -1559,7 +1559,8 @@ html[data-platform="win"] .app-body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.space-privacy-kind,
+/* ⚠️ 2026-10-08：`.space-privacy-kind`（那枚「个人空间／团队空间」徽章）**已删** ——
+   与下面那个下拉是同一个字段的两份显示 ⇒ 它的三条 CSS 一并删掉（别留死规则 ✓）。 */
 .space-privacy-enc {
   flex: none;
   padding: 1px 6px;
@@ -1568,8 +1569,6 @@ html[data-platform="win"] .app-body {
   font-size: 11px;
   color: var(--text-dim);
 }
-.space-privacy-kind.is-personal,
-.space-privacy-kind.is-team { border-color: var(--border-strong); color: var(--text); }
 .space-privacy-gate { font-size: 11px; line-height: 1.6; }
 .space-privacy-gate.is-allow { color: var(--text-dim); }
 .space-privacy-gate.is-block { color: var(--danger); }
@@ -3400,6 +3399,71 @@ select.sync-input {
   background: var(--hover);
 }
 
+/* ⭐ 2026-10-08（owner：「优化一下版本历史功能」）：**先看再恢复**那一套的样式。
+   `.history-row` 是"点一下展开/收起"的那一行（整行可点 ⇒ 命中区够大 ✓）；
+   `.history-full` 是展开后的**整篇**预览（可滚动、等宽、保留换行 ✓）；
+   `.history-note` 把"每页最多保留最近 N 份"明示出来（本仓忌"悄悄丢东西" ✗）。 */
+.history-note {
+  padding: 0 8px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-full-wrap {
+  margin-top: 6px;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+}
+
+.history-full {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.history-full-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.history-full-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.history-item.is-open {
+  align-items: flex-start;
+  background: var(--hover);
+}
+
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
@@ -4312,11 +4376,15 @@ select.sync-input {
   border-radius: var(--radius-md);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
   transform-origin: top left;
-  animation: tree-menu-pop 0.13s ease;
+  /* ⭐ **2026-10-08（owner：「侧边栏右键菜单为啥反应迟钝」）**：入场动画原来 **0.13s** ＋ 下拉 5px ＋ 缩 0.98 ✗
+     —— 实测**逻辑只要 2ms** ✓（冷 15ms ✓）⇒ 感知到的"迟钝"**全在这段动画** ✓。
+     菜单的惯例是「瞬时出现」✓ ⇒ 收到 **60ms 纯淡入** ✓（去掉位移与缩放：那两个会让人觉得"慢慢挪到位" ✗）。 */
+  animation: tree-menu-pop 0.06s ease-out;
 }
 @keyframes tree-menu-pop {
-  from { opacity: 0; transform: translateY(-5px) scale(0.98); }
-  to   { opacity: 1; transform: none; }
+  /* ⭐ 纯淡入 ✓：不再有位移/缩放（菜单是"刷一下出现"，不是"挪过来" ✓）。 */
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .tree-node-menu button {
   display: flex;
@@ -4421,32 +4489,48 @@ select.sync-input {
 /* 复制到其他空间：fixed 选择面板（不被树裁剪/遮挡）。 */
 .tree-copy-panel {
   position: fixed;
-  z-index: 95;
-  min-width: 160px;
-  padding: 4px;
+  /* ⭐ 2026-10-08（owner：弹窗被裁剪 ✓）：与右键菜单**同层** ✓ —— 原来是 95 ✗，会被别的浮层压住。 */
+  z-index: 1100;
+  min-width: 200px;
+  max-width: 280px;
+  /* ⭐ 空间多时**可滚**（而不是撑出视口 ⇒ 又被裁 ✗） */
+  max-height: min(60vh, 340px);
+  overflow-y: auto;
+  padding: 6px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  /* 与右键菜单同一档动画（0.06s ✓，不拖手感 ✗） */
+  animation: tree-menu-pop 0.06s ease-out;
 }
 .tree-copy-title {
   font-size: 11px;
   color: var(--text-dim);
-  padding: 4px 8px 6px;
+  padding: 6px 9px 8px;
+  /* ⭐ 标题与列表**分层** ＋ 长标题不撑破（截断省略号 ✓） */
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tree-copy-item {
   display: flex;
   align-items: center;
+  gap: 8px; /* ⭐ 图标与文字分开一点 ✓ */
   text-align: left;
   background: transparent;
   border: none;
   color: var(--text);
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  font-size: 12.5px;
+  padding: 7px 9px;
+  border-radius: 7px;
   cursor: pointer;
+  transition: background 0.08s ease-out; /* ⭐ 跟手一点 ✓ */
 }
 .tree-copy-item:hover {
   background: var(--hover);
@@ -23564,10 +23648,16 @@ body.is-plugin-panel-open .main {
 .kb-map-clusters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
 .kb-map-cluster { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .kb-map-cluster-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 6px; }
-.kb-map-cluster-name { font-weight: 600; }
+.kb-map-cluster-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kb-map-cluster-count { margin-left: auto; color: var(--text-faint); font-size: 0.78rem; }
 .kb-map-pages { margin: 0; padding: 0; list-style: none; }
-.kb-map-page { width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; }
+/* ⭐ 2026-10-08（owner：「知识地图看板卡片名称不回绕」✓）：卡片里的名字**只占一行**，超长就截断 ✓。
+   为什么必须有：卡片宽被 `.kb-map-clusters` 的 `minmax(220px,1fr)` 定死（约 220–280px），
+   而页面标题可以很长 ⇒ 折行会把卡片顶高、名字被断成两截（"知识地/图"那种），一屏能看的条数也变少 ✗。
+   ⚠️ `display:block` 是 `text-overflow` 生效的前提（按钮默认 inline-block）；完整名字走 `title` 悬浮提示 ✓
+   （组件那一侧配着写了 —— 截断而不给全名，等于把信息真的删掉 ✗）。
+   判据：`scripts/check-panel-layout.mjs`（真 Chromium ＋ 真 App.css 量"几行 ＋ 裁没裁" ✓）。 */
+.kb-map-page { display: block; width: 100%; padding: 2px 4px; border: 0; border-radius: 4px; background: none; color: inherit; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .kb-map-page:hover { background: var(--hover); }
 .tl-empty { padding: 32px 28px; }
 .tl-empty-main { margin: 6px 0 2px; }

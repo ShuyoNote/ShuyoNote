@@ -17,6 +17,10 @@
         "parentId": {
           "type": "string",
           "description": "父页面 id；省略=顶层"
+        },
+        "fence": {
+          "type": "string",
+          "description": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
         }
       },
       "required": [
@@ -40,10 +44,42 @@
         "pageId": {
           "type": "string",
           "description": "目标页面 id；省略=当前页"
+        },
+        "fence": {
+          "type": "string",
+          "description": "块类型：填 mermaid 时把这次内容作为**一整块** mermaid 图源码写入（编辑器会把它升级成图块）；省略＝按普通段落。"
         }
       },
       "required": [
         "text"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "pages_importMarkdown",
+    "capabilityId": "pages.importMarkdown",
+    "description": "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "新页标题。"
+        },
+        "markdown": {
+          "type": "string",
+          "description": "Markdown 原文。围栏 ```mermaid 会变成真图块；标题/列表/引用/表格按各自类型落块。⛔ 含块级 HTML 或超过 200KB 会被拒绝。"
+        },
+        "parentId": {
+          "type": "string",
+          "description": "父页面 id；不传就放在顶层。"
+        }
+      },
+      "required": [
+        "title",
+        "markdown"
       ]
     },
     "permission": "write:pages"

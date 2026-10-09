@@ -10,7 +10,7 @@ declare global {
   /** 注册事件处理器（需要 manifest `events` 里声明对应事件，否则收不到）。 */
   function on(event: PluginEventName, handler: (payload: Record<string, any>) => void): void;
   /** 本应用支持的 API 版本（与 manifest.apiVersion 的主版本必须一致）。 */
-  const SDK_API_VERSION: "1.0.0";
+  const SDK_API_VERSION: "1.1.0";
 }
 
 export {};

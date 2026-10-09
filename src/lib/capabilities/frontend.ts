@@ -11,6 +11,7 @@
 import { codePointLength, sliceByCodePoints } from "../textSnippet";
 import { api } from "../api";
 import { coverageReportTool, scanLibraryCoverage } from "../libraryCoverage";
+import { fenceDoc, importMarkdownArgs } from "../docContent";
 import { pageJsonFromText } from "../ai/lexical";
 import type { DraftResult } from "../ai/types";
 import type { CoverageStores } from "../extract/coverageReport";
@@ -293,11 +294,28 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   "pages.create": async (args) => {
     const title = String(args.title ?? "").trim();
     if (!title) return { ok: false, error: "pages.create 需要 title" };
-    const { content_json, content_text } = pageJsonFromText(String(args.content ?? ""), makeId);
+    // ⭐ R166：带 `fence` ⇒ **一整块** code 块 ✓（⛔ 不拆块 ✗）
+    const fence = typeof args.fence === "string" && args.fence ? args.fence : null;
+    const { content_json, content_text } = fence
+      ? fenceDoc(fence, String(args.content ?? ""), makeId)
+      : pageJsonFromText(String(args.content ?? ""), makeId);
     const parentId = typeof args.parentId === "string" && args.parentId ? args.parentId : null;
     return draft(`create_page:${title}`, `新建页面「${title}」`, {
       kind: "create_page",
       args: { parent_id: parentId, title, content_json, content_text },
+    });
+  },
+
+  // ⭐ R167：整篇 Markdown 导入（一次写完 ✓）—— 能力面只做**轻守卫**与组参 ✓，
+  // 真正的 md→块解析在落库层（应用自己的导入路径 ✓）—— 避免把编辑器整张图拖进这个包 ✗
+  "pages.importMarkdown": async (args) => {
+    const title = String(args.title ?? "").trim();
+    if (!title) return { ok: false, error: "pages.importMarkdown 需要 title" };
+    const built = importMarkdownArgs(title, String(args.markdown ?? ""), typeof args.parentId === "string" && args.parentId ? args.parentId : null);
+    if (!built.ok) return { ok: false, error: built.error };
+    return draft(`import_markdown:${title}`, `导入 Markdown 新建页面「${title}」`, {
+      kind: "create_page",
+      args: built.args,
     });
   },
 
@@ -309,7 +327,7 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     return draft(
       `append_block:${pageId}:${text.slice(0, 24)}`,
       `向页面追加 ${text.split("\n").filter((s) => s.trim()).length} 个段落`,
-      { kind: "append_block", pageId, text },
+      { kind: "append_block", pageId, text, fence: args.fence ?? null },
     );
   },
 };

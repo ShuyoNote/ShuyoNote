@@ -19,7 +19,16 @@
 // 是 `shuyo-paragraph` ⇒ **不在同一个 type 下**，不会被本变换再次命中。函数里再加一道
 // `getType()` 守卫，读代码的人不用去猜 Lexical 的匹配规则。
 
-import { ParagraphNode, type LexicalNode, type Klass } from "lexical";
+import {
+  ParagraphNode,
+  $createNodeSelection,
+  $getSelection,
+  $isElementNode,
+  $isRangeSelection,
+  $setSelection,
+  type LexicalNode,
+  type Klass,
+} from "lexical";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode } from "@lexical/list";
 
@@ -79,7 +88,7 @@ export function upgradeParagraphToBlockNode(node: ParagraphNode): void {
   replacement.setTextFormat(node.getTextFormat());
   replacement.setTextStyle(node.getTextStyle());
   // `true` = 连子节点一起搬过去（否则段落会变成空的，文字全丢）。
-  node.replace(replacement, true);
+  $replaceKeepingSelection(node, replacement, true);
 }
 
 /**
@@ -97,7 +106,7 @@ export function upgradeHeadingToBlockNode(node: HeadingNode): void {
   replacement.setDirection(node.getDirection());
   replacement.setTextFormat(node.getTextFormat());
   replacement.setTextStyle(node.getTextStyle());
-  node.replace(replacement, true);
+  $replaceKeepingSelection(node, replacement, true);
 }
 
 /** 内建**引用** → 模型引用（第 4 步的第二个类型；`QuoteNode` 没有额外状态，所以最薄）。 */
@@ -107,7 +116,7 @@ export function upgradeQuoteToBlockNode(node: QuoteNode): void {
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());
-  node.replace(replacement, true);
+  $replaceKeepingSelection(node, replacement, true);
 }
 
 /**
@@ -122,6 +131,38 @@ export function upgradeQuoteToBlockNode(node: QuoteNode): void {
  * `Editor.tsx` 绑定 CRDT 之后那一趟（持久化的 Yjs 文档不经过 JSON 侧迁移）、以及测试。
  * 各自抄一份必然漂移 ✓。
  */
+/**
+ * ⭐ **R162**：`node.replace(...)` 时**把选区一起搬到新节点上** ✗ —— 不搬就会抛
+ * 「updateEditor: selection has been lost because the previously selected nodes have been removed」✓。
+ *
+ * ## 现场（owner 2026-10-08，逐字 trace ✓）
+ *
+ * ```
+ * Error: updateEditor: selection has been lost …      at runAtBlock — BlockInsertPlugin.tsx:171
+ *                                                     at select     — :368
+ * ```
+ * 用户在「插入块」菜单里选「Mermaid 图块」（或「代码块」✓）⇒ 插进来一个 `language=mermaid` 的代码块 ✓
+ * 而**选区就在这个块里** ✓ ⇒ 变换把它整块换成 mermaid 块（**替换前没搬选区** ✗）⇒ 抛上面那句 ✓。
+ * ⚠️ 本文件上方那条 mermaid 变换的注释里其实**已经写着**"与水平线那条同一处坑（那边有逐字报错记录）"✓
+ * —— 说明这个坑踩过一次 ✗，只是当时没把"搬选区"这一步统一起来 ✓ ⇒ 本笔把它收成**一处** ✓。
+ */
+function $replaceKeepingSelection(node: LexicalNode, replacement: LexicalNode, includeChildren = false): void {
+  const selection = $getSelection();
+  const inside =
+    $isRangeSelection(selection) &&
+    (selection.anchor.getNode() === node || node.isParentOf(selection.anchor.getNode()));
+  node.replace(replacement, includeChildren);
+  if (!inside) return;
+  // 元素型：直接落在新块开头 ✓；装饰型（mermaid／分隔线／图片…）：用**节点选区**选它本身 ✓
+  if ($isElementNode(replacement)) {
+    replacement.selectStart();
+    return;
+  }
+  const sel = $createNodeSelection();
+  sel.add(replacement.getKey());
+  $setSelection(sel);
+}
+
 export function upgradeMermaidCodeNode(node: LexicalNode): boolean {
   const type = node.getType();
   if (type !== "code" && type !== "shuyo-code") return false;
@@ -141,7 +182,7 @@ export function upgradeMermaidCodeNode(node: LexicalNode): boolean {
   );
   // ⚠️ `MermaidNode` 是 DecoratorNode：既没有 format/indent/direction 可抄，
   //    也不能传 `includeChildren = true` —— 与上面水平线那条同一处坑（那边有逐字报错记录）。
-  node.replace(replacement);
+  $replaceKeepingSelection(node, replacement);
   return true;
 }
 
@@ -163,7 +204,7 @@ export function upgradeCodeToBlockNode(node: SafeCodeNode): void {
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());
-  node.replace(replacement, true);
+  $replaceKeepingSelection(node, replacement, true);
 }
 
 /**
@@ -182,7 +223,7 @@ export function upgradeListToBlockNode(node: ListNode): void {
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());
-  node.replace(replacement, true);
+  $replaceKeepingSelection(node, replacement, true);
 }
 
 /** 内建**水平线** → 模型水平线（第 4 步第五个类型）。 */
@@ -192,7 +233,7 @@ export function upgradeHorizontalRuleToBlockNode(node: HorizontalRuleNode): void
   // **也不能传 `includeChildren = true`** —— 那会抛
   // `includeChildren should only be true for ElementNodes`（诊断实测），整个 update 失败、root 变空。
   const replacement = $createBlockHorizontalRuleNode(isTopLevelBlock(node) ? newBlockId() : "");
-  node.replace(replacement);
+  $replaceKeepingSelection(node, replacement);
 }
 
 /**
@@ -211,7 +252,7 @@ export function upgradeTableToBlockNode(node: TableNode): void {
   replacement.setFormat(node.getFormatType());
   replacement.setIndent(node.getIndent());
   replacement.setDirection(node.getDirection());
-  node.replace(replacement, true);
+  $replaceKeepingSelection(node, replacement, true);
 }
 
 /**

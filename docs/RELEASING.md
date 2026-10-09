@@ -250,9 +250,21 @@ cp -r unpacked/* src-tauri/target/release/bundle/   # 直接并入，随后 ⑥ 
 - ⚠️ **在 `dev` 上它点不动**（实测派发 ⇒ **HTTP 404**）：GitHub 规定 `workflow_dispatch` 的 workflow **必须先存在于默认分支**，
   而本仓默认分支是 `main`（推它会**自动部署 Web 版**）。⇒ **owner 2026-09-28 拍「C」：等下一次发版顺手带上** ——
   `dev → main` 合并会**自动带上**这个文件 ⇒ **零额外部署、零额外动作**。
-- [ ] **首次合并到 `main` 之后做这一次**：手动派发一次，核对工件的 `gm-conformance.txt` 里 **`!` 行（跳过项）= 0**，
+- [x] **首次合并到 `main` 之后做这一次**：手动派发一次，核对工件的 `gm-conformance.txt` 里 **`!` 行（跳过项）= 0**，
       再把上面那行「未验」改成「已对拍（附 run 号）」、并按计划改 `scripts/lib/gates.mjs` 里 `gm-conformance` 的 `selfSkipOk` 措辞。
       （在此之前**保持"未验"** —— 别把"跳过"读成"通过"。）
+      <br>⭐ **2026-10-08 已做**（owner 拍「现在派」✓）：run **#4**（`dev@cf66d501`，工件 `gm-conformance-4`）——
+      逐字读数 `gm-conformance: ✅ 通过 —— 跑成 12 个用例（含跨实现对拍）`，**跳过项 0**，
+      对拍另一方 `Tongsuo 8.5.0 / OpenSSL 3.5.4` ✓；已发布 **v1.92.6** 的发版说明那行已改成「本版已对拍（run #4）」✓，
+      `gates.mjs` 的 `selfSkipOk` 措辞同步 ✓。
+      ⚠️ **两处如实记**：① 这一次的读数取自 **`dev`**（不是 `main` —— 在 `main` 上派发仍会跑到**旧 workflow** ✗）；
+      口径是「加密实现与 `main` **逐字节相同**」（`git diff --stat 4870553e dev -- src-tauri/src/crypto.rs src-tauri/src/security.rs` 为空 ✓）；
+      下一次 `dev → main` 合并后，可在 `main` 上再派一次把这条钉死在 main ✓。
+      ② ⚠️ **那条 workflow 此前两跑两红、对拍其实从没跑起来过**：它把产物路径写死成 `install/lib/libcrypto.a`
+      （runner 上 Tongsuo 装进 `lib64/`）＋ 把 `SHUYONOTE_TONGSUO_OPENSSL` 指成了**前缀**而不是 **CLI** ⇒
+      三处已修（`cf66d501`：`lib*/` 通配 / CLI 路径 / **把"跳过项"从打印变成判据**）✓。
+      ③ ⚠️ 派遣时必须先 `mirror-github.ps1` —— `workflow_dispatch` 用的是**被派 ref 上**的文件，
+      而 GitHub 是镜像：镜像落后 ⇒ 派出去的是旧 workflow（**本次实测踩到一次**：run #3 就是拿旧文件跑的，已取消重派 ✓）。
 
 **macOS 发版档（等 Apple secrets 到位再启用）的配方**：
 

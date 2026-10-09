@@ -125,6 +125,7 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       "title": { type: "string" },
       "content": { type: "string" },
       "parentId": { type: "string" },
+      "fence": { type: "string" },
       },
       required: ["title"],
     },
@@ -138,8 +139,23 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
       properties: {
       "text": { type: "string" },
       "pageId": { type: "string" },
+      "fence": { type: "string" },
       },
       required: ["text"],
+    },
+    isWrite: true,
+  },
+  {
+    id: "pages.importMarkdown",
+    description: "导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "title": { type: "string" },
+      "markdown": { type: "string" },
+      "parentId": { type: "string" },
+      },
+      required: ["title", "markdown"],
     },
     isWrite: true,
   },

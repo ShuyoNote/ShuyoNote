@@ -89,6 +89,8 @@ export default {
     truncated: "⚠️ 只画了一部分：被上限（{{cap}} 个）挡掉的还有 {{hidden}} 个页面。",
     untagged: "未分类",
     untitled: "未命名",
+    // 侧边工具栏里那颗 LLM Wiki 图标按钮（owner 2026-10-08；动作 = 命令面板 `ai.libraryMap` 那条）✓
+    wikiEntry: "LLM Wiki（库地图）",
   },
   nav: {
     notes: "笔记",

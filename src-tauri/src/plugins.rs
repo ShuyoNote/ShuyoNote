@@ -1962,7 +1962,13 @@ fn push_draft(key: String, summary: String, payload: serde_json::Value) {
 ///
 /// Lexical 的 content_json 由前端在落库时按纯文本构造（那头才知道块结构），
 /// 这里只交出 `content_text` —— 保持"Rust 不猜编辑器格式"。
-fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>) -> CapResult {
+fn cap_pages_create(
+    title: &str,
+    content: &str,
+    parent_id: Option<&str>,
+    fence: Option<&str>,
+    markdown: Option<bool>,
+) -> CapResult {
     if title.trim().is_empty() {
         return Err("bad_args: 新建页面需要 title".to_string());
     }
@@ -1972,14 +1978,34 @@ fn cap_pages_create(title: &str, content: &str, parent_id: Option<&str>) -> CapR
         summary.clone(),
         serde_json::json!({
             "kind": "create_page",
-            "args": { "parent_id": parent_id, "title": title, "content_text": content },
+            "args": { "parent_id": parent_id, "title": title, "content_text": content, "fence": fence, "markdown": markdown },
         }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
+
+/// ⭐ **R167**：把一份 **Markdown 原文**整篇灌成一页 ✓（一次调用写完整页 ⇒ 不会被自动保存写回 ✓）。
+/// ⚠️ 解析**不在这里** ✗ —— Rust 侧没有 markdown 解析器 ✓；这里只把原文放进草稿 ✓，
+/// 由**应用自己**那条导入路径（`markdownToPageContent` ✓，`src/lib/mdPreview.ts:79` ✓）
+/// 在落库那一刻转成块 ✓ ⇒ 不另写第二份解析器 ✓（两份必然漂移 ✗）。
+fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str>) -> CapResult {
+    if title.trim().is_empty() {
+        return Err("bad_args: 导入 Markdown 需要 title".to_string());
+    }
+    let text = markdown.trim();
+    if text.is_empty() {
+        return Err("bad_args: markdown 为空，没有可导入的内容".to_string());
+    }
+    if text.len() > 200 * 1024 {
+        return Err("bad_args: markdown 超过 200KB 上限，请拆分后再导入".to_string());
+    }
+    // 守卫做完就**委托**给既有的建页那条路 ✓（少写一份 payload ⇒ 也不多写任何列名 ✓）
+    cap_pages_create(title, text, parent_id, None, Some(true))
+}
+
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
-fn cap_blocks_append(page_id: Option<&str>, text: &str) -> CapResult {
+fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> CapResult {
     if text.trim().is_empty() {
         return Err("bad_args: 追加内容需要 text".to_string());
     }
@@ -1994,7 +2020,7 @@ fn cap_blocks_append(page_id: Option<&str>, text: &str) -> CapResult {
     push_draft(
         format!("append_block:{target}"),
         summary.clone(),
-        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text }),
+        serde_json::json!({ "kind": "append_block", "pageId": target, "text": text, "fence": fence }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
@@ -2141,6 +2167,90 @@ pub(crate) fn with_external_caller<T>(session_id: &str, granted: &[String], f: i
     out
 }
 
+/// ⭐ **2026-10-08**：把「**当前空间**」装进这条线程的 `RUN_STATE` ✓ —— 外部（MCP）那条路缺的就是这一步 ✗。
+///
+/// ## 现场（owner 2026-10-08 让我演示「能不能读 ShuyoNote」✓）
+///
+/// 桥 → App 全通 ✓（`tools/list` 回 7 条 ✓），但**任何需要空间的能力**都回
+/// `space_unknown: 无法确定当前空间，数据能力不可用` ✗ —— **打开空间 ✗／重开「外部 AI 接入」开关 ✗ 都不管用** ✓。
+///
+/// ## 真因（三处拼起来唯一 ✓）
+///
+/// · 空间在**线程局部**里：`RUN_STATE` 默认 `read_space: None` ✓，而 `with_read_conn` 就读它 ✓（空 ⇒ 抛上面那句 ✓）；
+/// · 全仓 `install_run_state(` 只有**一处**调用者 ✓ —— 在**插件宿主**那条线程里 ✗；
+/// · 外部那条路（`mcp_host::handle_external_call` → `with_external_caller` → `dispatch_capability` ✓）
+///   **只装身份、从不装空间** ✗ ⇒ 7 条只读工具**必然全失败** ✗。
+///   ⚠️ 它能悄悄坏到今天，是因为**工具清单那条路不需要空间** ✓（`__tools_list` ⇒ 全绿 ⇒ 看着像「面已经能用」✗）。
+///
+/// ## 口径（三条）
+///
+/// · 只装**空间** ✓；`read_dir` 显式置 `None` ⇒ `with_read_conn` 走**默认应用数据目录** ✓
+///   （与「打开空间」那条路同一支 ✓）；
+/// · **用完恢复** ✓（thread-local，形状照抄 `with_external_caller` ✓）；
+/// · ⛔ **权限那半一个字不动** ✗（仍在 `dispatch_capability` 一处判 ✓、审计仍记在那条路上 ✓）。
+///
+/// ## 为什么拆成「读一次」和「装一次」两支 ✓
+///
+/// 读的那支要能**拿夹具目录**测 ✓，装的这支要能**注一个空间**测 ✓ ——
+/// 合在一起就只能依赖真实应用数据目录 ✗（判据会去读开发机上的真库 ✗，那是本工作区禁过的事 ✓）。
+pub(crate) fn with_active_space<T>(f: impl FnOnce() -> T) -> T {
+    let space = crate::db::app_data_dir_ref().and_then(resolve_active_space_from);
+    with_active_space_from(space, f)
+}
+
+/// 读「当前空间」：`sync_state['active_workspace_id']` ✓；**没有就退到最早那个未删除的工作区** ✓
+/// （与首跑播种那条退法一致 ✓ —— 两条路不能给出不同的"当前空间" ✗）。
+///
+/// ⚠️ 用**裸 meta** 连接 ⇒ 表名**不带** `meta.` 前缀 ✓（`open_meta_conn_at` 的形态 ✓，
+/// 它顺带跑 `meta_migrate` ⇒ 夹具目录直接可用 ✓）。
+/// ⛔ 别在这儿改调 `workspaces::active_workspace_id` ✗ —— 那个要的是"meta 已 ATTACH"的连接 ✓，两者形态不同 ✓。
+fn resolve_active_space_from(dir: &std::path::Path) -> Option<String> {
+    use rusqlite::OptionalExtension;
+    let c = crate::db::open_meta_conn_at(dir).ok()?;
+    let persisted: Option<String> = c
+        .query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            rusqlite::params![crate::db::ACTIVE_KEY],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    if let Some(id) = persisted {
+        return Some(id);
+    }
+    c.query_row(
+        "SELECT id FROM workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC LIMIT 1",
+        [],
+        |r| r.get(0),
+    )
+    .ok()
+}
+
+/// 装/恢复那一半（**可注入** ⇒ 判据测得了 ✓）。`None` ⇒ **一个字都不装** ✓
+/// （⇒ 那句 `space_unknown` 仍然如实报 ✓，绝不静默读错空间 ✗）。
+pub(crate) fn with_active_space_from<T>(space: Option<String>, f: impl FnOnce() -> T) -> T {
+    let prev = RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        let prev = (st.read_space.clone(), st.read_dir.clone());
+        if let Some(sp) = space {
+            st.read_space = Some(sp);
+            st.read_dir = None;
+        }
+        prev
+    });
+    // ⚠️ 换了空间 ⇒ **缓存必须清** ✗（`READ_CONN` 是 thread-local：留着就是"上一条连接答下一个空间"✗）。
+    READ_CONN.with(|c| *c.borrow_mut() = None);
+    let out = f();
+    RUN_STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        st.read_space = prev.0;
+        st.read_dir = prev.1;
+    });
+    READ_CONN.with(|c| *c.borrow_mut() = None);
+    out
+}
+
 /// `__cap(method, argsJson)` 的实现。**所有**能力调用（含老全局别名）都走这里，
 /// 所以权限校验只有一个点，不存在绕过路径。
 /// ⚠️ 改成 `pub(crate)` 是 Task 5 ① 的**硬要求** ✓ —— 外部宿主路在别的模块，私有就**调不到** ✗。
@@ -2265,12 +2375,23 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("pageId").as_deref(),
         ),
         "tags.add" => cap_tags_add(&arg_str("name")?, arg_opt_str("pageId").as_deref()),
+        "pages.importMarkdown" => cap_pages_import_markdown(
+            &arg_str("title")?,
+            &arg_str("markdown")?,
+            arg_opt_str("parentId").as_deref(),
+        ),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
             &args.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             arg_opt_str("parentId").as_deref(),
+            arg_opt_str("fence").as_deref(),
+            None,
         ),
-        "blocks.append" => cap_blocks_append(arg_opt_str("pageId").as_deref(), &arg_str("text")?),
+        "blocks.append" => cap_blocks_append(
+            arg_opt_str("pageId").as_deref(),
+            &arg_str("text")?,
+            arg_opt_str("fence").as_deref(),
+        ),
         "editor.insertText" => cap_editor_insert_text(&arg_str("text")?),
         "user.notify" => cap_user_notify(&arg_str("message")?),
         "log.write" => {
@@ -7821,6 +7942,30 @@ register({ id: "s.run", title: "结构化", run: function () {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// ⭐ **2026-10-08（R147）**：**写能力的两半** —— 未授权必须**明确拒** ✓；用**授权动作给的那份清单**才写得了 ✓。
+    ///
+    /// 口径为什么这样取：这份清单**直接取自 `mcp_channel::granted_after_write_grant`** ✓ ——
+    /// 所以"授权动作没把 `write:pages` 加进去"这件事一旦发生，**本条会红** ✓（不是两边各测各的 ✗）。
+    /// 变异：把 `granted_after_write_grant` 里那句 `out.push(w)` 去掉 ⇒ 后半**必红** ✓。
+    #[test]
+    fn pages_create_is_refused_until_the_write_grant_hands_out_the_scope() {
+        let (space, dir) = seed_space("r147-write-grant");
+        let mut st = state_for_space(&space, &dir);
+
+        // ① 只读（＝未授权）⇒ 必须**明确拒**，且要点名能力 id ✓
+        st.permissions = vec!["read:pages".to_string()];
+        let err = call(&st, "pages.create", r#"{"title":"x"}"#).unwrap_err();
+        assert!(err.contains("permission_denied"), "未授权必须明确拒 ✓ 实际: {err}");
+        assert!(err.contains("pages.create"), "错误里要点名能力 id ✓ 实际: {err}");
+
+        // ② 用**授权动作给的那份清单** ⇒ 应当产出草稿（写能力在草稿阶段本来就不落库 ✓）
+        st.permissions = crate::mcp_channel::granted_after_write_grant(&["read:pages".to_string()], true);
+        let out = call(&st, "pages.create", r#"{"title":"x"}"#).unwrap();
+        assert_eq!(out["drafted"], true, "授权后应当产出草稿 ✓（而不是被拒 ✗）");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn kv_also_needs_its_permission() {
         let (space, dir) = seed_space("kv-perm");
@@ -9382,6 +9527,90 @@ register({ id: "s.run", title: "结构化", run: function () {
     //   ④ 只命中**活动空间**；⑤ `loc` 与 `files.read` 的段同口径；⑥ 空库 ⇒ 空数组。
 
     /// 测试用的**空间库目录**：走仓库自己的建库路径（真 schema —— `chunks`/`attachment_text`/`attachments` 都在）。
+    /// ⭐ **2026-10-08（owner 现场演示撞出来）**：**外部（MCP）那条路必须认得「当前空间」** ✓。
+    ///
+    /// 现场：桥 → App 全通 ✓（`tools/list` 回 7 条 ✓），但任何**需要空间**的能力都回
+    /// `space_unknown: 无法确定当前空间，数据能力不可用` ✗ —— 打开空间 ✗／重开 MCP 开关 ✗ 都不管用 ✓。
+    /// 真因：空间在**线程局部** `RUN_STATE` 里 ✓，而全仓 `install_run_state(` 只有**一处**调用者
+    /// （**插件宿主**那条线程 ✓）⇒ 外部那条路**从来没装过它** ✗ ⇒ 7 条只读工具**必然全失败** ✗。
+    ///
+    /// 判据三半（缺一不可 ✓）：
+    ///   ① **装/恢复**：注一个空间 ⇒ 这条线程上 `read_space` 就是它 ✓，跑完**恢复原值** ✓；
+    ///      注 `None` ⇒ **一个字都不装** ✓（⇒ `space_unknown` 仍然如实报 ✓，不静默读错空间 ✗）；
+    ///   ② **解析**：`sync_state` 有 `active_workspace_id` ⇒ 取它 ✓；**没有** ⇒ 退到**最早那个未删除的工作区** ✓；
+    ///   ③ ⭐ **接线**：`mcp_host::handle_external_call_with` 体内**真的**包了 `with_active_space` ✓。
+    ///      ⚠️ 变异：把那句删掉 ⇒ ①②**照样全绿** ✗，**只有③会红** ✓ —— 这一半是**必须的** ✗
+    ///      （本仓记过这个形状：助手对 ≠ 被调用 ✓）。
+    #[test]
+    fn the_external_mcp_path_can_see_the_active_space() {
+        // ① 装 / 恢复 / 不装
+        RUN_STATE.with(|s| {
+            let mut st = s.borrow_mut();
+            st.read_space = None;
+            st.read_dir = None;
+        });
+        let seen = with_active_space_from(Some("sp-external".to_string()), || {
+            RUN_STATE.with(|s| s.borrow().read_space.clone())
+        });
+        assert_eq!(seen.as_deref(), Some("sp-external"), "外部那条路必须能看见当前空间 ✓");
+        assert_eq!(
+            RUN_STATE.with(|s| s.borrow().read_space.clone()),
+            None,
+            "用完必须恢复原值 ✓"
+        );
+        let seen_none = with_active_space_from(None, || RUN_STATE.with(|s| s.borrow().read_space.clone()));
+        assert_eq!(seen_none, None, "注 None ⇒ 一个字都不许装 ✓（否则会静默读错空间 ✗）");
+
+        // ② 解析：没有键 ⇒ 退到最早；有键 ⇒ 取它
+        let dir = std::env::temp_dir().join(format!("shuyonote-mcp-space-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let c = crate::db::open_meta_conn_at(&dir).unwrap(); // 它顺带跑 meta_migrate ✓
+            c.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES ('ws-old','老','#000','',1,1,1)",
+                [],
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO workspaces (id, name, theme, icon, sort_order, created_at, updated_at) VALUES ('ws-new','新','#000','',2,2,2)",
+                [],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            resolve_active_space_from(&dir).as_deref(),
+            Some("ws-old"),
+            "没有 active_workspace_id 这个键 ⇒ 退到**最早**那个空间 ✓"
+        );
+        {
+            let c = crate::db::open_meta_conn_at(&dir).unwrap();
+            c.execute(
+                "INSERT INTO sync_state (key, value) VALUES (?1, 'ws-new')",
+                rusqlite::params![crate::db::ACTIVE_KEY],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            resolve_active_space_from(&dir).as_deref(),
+            Some("ws-new"),
+            "有键 ⇒ 取键上那个 ✓（两条路必须给出同一个「当前空间」 ✓）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // ③ 接线（这一半才挡得住"助手对但没被调用"✗）
+        let src = include_str!("mcp_host.rs");
+        let start = src
+            .find("pub(crate) fn handle_external_call_with(")
+            .expect("入口名改了就要同步改这里 ✓");
+        let body = &src[start..];
+        let end = body.find("\npub(crate) fn ").unwrap_or(body.len());
+        assert!(
+            body[..end].contains("with_active_space("),
+            "接线变了：外部那条路必须**装当前空间** ✓（否则 7 条只读工具全回 space_unknown ✗）"
+        );
+    }
+
     fn cap_search_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("shuyonote-capsearch-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

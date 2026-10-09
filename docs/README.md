@@ -162,6 +162,7 @@ CHANGELOG.md                     # 版本变更日志
 | [specs/INVARIANTS.md](specs/INVARIANTS.md) | **不变式清单**：每条 `INV-*` 都带判据指针与「看过它红」的证据（证据绑脚本 sha，**判据一改就过期、过期即撤下**）；当前条数见下表后的命令 |
 | [specs/2026-09-28-llm-wiki-requirements.md](specs/2026-09-28-llm-wiki-requirements.md) | **需求：LLM wiki（库地图 / 专题页）（待 owner 拍板）**：一句话＝"库能「被回答」，但还不能「被浏览」"；六段（诉求原话 / 现状读数 / 要什么 / 不要什么 / 边界 / ＋成功判据、砍掉条件）；⚠️ **痛点的量级没有读数**（前置测量在 §8，其中"模型成本"是 **go/no-go**） |
 | [specs/2026-09-28-llm-wiki-spec.md](specs/2026-09-28-llm-wiki-spec.md) | **规格：LLM wiki 的入口与边界（三条不变式，第四列全 `❌ 无`）**：`INV-WIKI-provenance` / `-coverage-visible` / `-readonly-default`；含每条"怎么弄红"的负例与对照、落地三步（先纯函数断言 → 弄红记账本 → 够条件才进 `INVARIANTS.md`）；**按本层铁律现在还不在 `INVARIANTS.md` 里** |
+| [specs/2026-10-08-network-targets-declaration-surface.md](specs/2026-10-08-network-targets-declaration-surface.md) | **设计：网络目标声明面（方案 B，不锁实现）** —— `INV-KB-space-split` 的「个人侧网络目标清单必须为空」这句**今天没有着力点**（那份"清单"在代码里**不存在** ✗）⇒ 先定「谁声明／声明在哪（仓内 `network-targets.json` 一处、两侧同一个字节）／怎么核（`check-network-targets.mjs` 的三条形状）」，并把与 **2026-10-05「未加密空间可用云端」冲突**的**方案 A（锁死 AI 端点）** 单列待拍 ✓ |
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
@@ -309,6 +310,10 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-10-01-enterprise-im-approach.md](plans/2026-10-01-enterprise-im-approach.md) | **企业版 IM（「长在空间与笔记上的讨论」）技术路线与架构**：复用／改造／全新三档逐条指 `file:line`；七条关键决策各写「为什么不选另一条」；四期路线（判据先行 → 线程 → 频道与未读游标 → 实时与沉淀）＋ ⛔ 移动端离线推送单独立项。⚠️ 本方案**没有一行产品代码落地**，规格里 12 条不变式**全部待立** |
 | [plans/2026-10-08-settings-progressive-disclosure-plan.md](plans/2026-10-08-settings-progressive-disclosure-plan.md) | **设置面板「分层 + 渐进式披露」方案 v2（已按评审修订，待施工）**：先核 v1 的六处前提（左侧确实 11 项平铺 ✓、插件**已**是独立浮层 ✓、效果图里的模型名**过期** ✗）；五招按「③ 关闭隐藏 → ① 左侧分组 → ② AI Tab → ④ 只补入口 → ⑤ 改成默认全显 ＋ 个人偏好隐藏」排序，每招写明改动面／判据／风险，并说明为什么**不**新增浮层、**不**引入「默认只给 20%」的模式开关 |
 | [plans/2026-10-08-mermaid-export-render-plan.md](plans/2026-10-08-mermaid-export-render-plan.md) | ⭐ **mermaid 导出渲染施工单（R123）**：真因钉到行（`exportDOM` 同步 ⇒ 导出件里必然是源码）；修法照 `exportInline.ts` 先例「生成 HTML 之后再异步后处理」；判据 4 条含**时序图**与**失败退回源码**，并附改前逐字红读数 |
+| [plans/2026-10-09-自动备份可行性评估.md](plans/2026-10-09-自动备份可行性评估.md) | **自动备份方案可行性评估（外部方案 v1.1 对表）**：逐节拿真实代码核过 —— `rusqlite` 早已开 `backup` 特性、`zip` 已在、`backup.rs` 的导出/导入**已上线** ⇒ 已有约三成；⚠️ 四处必须改：加密改**国密**（owner 拍）、**在线备份 API 对加密库不支持**（方案漏了）、`--backup-once` 无头模式是一块独立工作、恢复语义**保持合并导入**（owner 拍）；分期 P1–P5 |
+| [plans/mobile/2026-10-08-mobile-requirements.md](plans/mobile/2026-10-08-mobile-requirements.md) | **移动端需求说明书**：一页纸结论（**立项待 owner 裁决**）／四类场景／P0×6＋P1×5＋P2×4（每条给**可测验收口径**）／七项不做清单／非功能（如实写"设备直连一轮都没成功搬过"）／最小切片＝**手机上记一条 ＋ 同步到电脑** |
+| [plans/mobile/2026-10-08-mobile-tech-plan.md](plans/mobile/2026-10-08-mobile-tech-plan.md) | **移动端详细技术方案**：架构总图／**共享内核的真实工作量**（435 处 `tauri::` 引用散在 **45 个文件**，最密 6 个只占 51%）／切 `crates/core` 五步＋**文件口径判据**／桥接只做一条（uniffi）／两条数据硬教训／同步**不得假设已可用**／阶段 0–3／风险表 |
+| [plans/mobile/2026-10-08-mobile-spec.md](plans/mobile/2026-10-08-mobile-spec.md) | **移动端说明书（自足总篇）**：一句话结论＋**立项待裁决**／四类场景／P0×6＋P1×5＋P2×4（可测验收口径）／**8 屏效果图逐屏嵌入**／七项不做清单／非功能（同步如实写"一轮都没搬过"）／技术方案（435 处 `tauri::` 散在 **45 个文件**，最密 6 个占 51%）／阶段 0–3／风险表／待裁决两条（各带零风险默认） |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
 > 「还差 **0b** 公开材料可同步」**已作废** —— 0b 那条（经服务器搬钥匙袋）**已整条删除**

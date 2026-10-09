@@ -462,6 +462,77 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<(), Strin
     Ok(())
 }
 
+/// 把「卫星行」从 `src` 复制到 `tgt`：**属性／标签／附件行** ✓（附件字节在全局内容寻址库里 ⇒ 不重复占空间 ✓）。
+///
+/// ⭐⭐ **2026-10-08 抽出来的理由（真事故）**：原来的写法是
+/// `tgt.execute("INSERT INTO attachments (…) SELECT … FROM attachments WHERE page_id = ?")` ✗ ——
+/// `INSERT … SELECT` 里的 SELECT **在 `tgt` 这条连接上执行** ✓ ⇒ **跨空间**复制时目标库里没有源 `page_id` 的行
+/// ⇒ **插入 0 行、且不报错** ✗ ⇒ **静默丢数据**（现场：源文件夹 10 个附件 ⇒ 目标 0 个 ✓）。
+/// 同空间复制不受影响（那时 `tgt == src` ✓）—— 这就是它一直没被发现的原因 ✓。
+/// ⇒ 一律**显式两步**：从 `src` 读出来 ⇒ 逐行写进 `tgt` ✓（跨库就一定对 ✓）。
+fn copy_satellite_rows(
+    src: &Connection,
+    tgt: &Connection,
+    old_id: &str,
+    new_id: &str,
+) -> Result<(), String> {
+    {
+        let mut st = src
+            .prepare("SELECT attr_id, value FROM page_props WHERE page_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String)> = st
+            .query_map(params![old_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for (attr_id, value) in rows {
+            tgt.execute(
+                "INSERT INTO page_props (page_id, attr_id, value) VALUES (?1, ?2, ?3)",
+                params![new_id, attr_id, value],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    {
+        let mut st = src
+            .prepare("SELECT tag_id FROM page_tags WHERE page_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<String> = st
+            .query_map(params![old_id], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for tag_id in rows {
+            tgt.execute(
+                "INSERT INTO page_tags (page_id, tag_id) VALUES (?1, ?2)",
+                params![new_id, tag_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    {
+        let mut st = src
+            .prepare("SELECT name, hash, mime, size, created_at FROM attachments WHERE page_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, String, i64, i64)> = st
+            .query_map(params![old_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        for (name, hash, mime, size, created_at) in rows {
+            tgt.execute(
+                "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![uuid::Uuid::new_v4().to_string(), new_id, name, hash, mime, size, created_at],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 /// Copy a page (and its descendant tree) into another workspace, **across DBs**.
 /// The source rows are read from the current (active) space's DB; the rows are
 /// inserted into the TARGET space's DB (opened independently via open_space_conn).
@@ -552,6 +623,8 @@ pub fn copy_page_to_workspace(
     }
 
     let now = now_ms();
+    // ⭐ **2026-10-08**：整段包**事务** ✓ —— 以前中途失败会留下"半个副本"（现场：文件夹落库了、孩子全丢 ✓）。
+    tgt.execute_batch("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
     for old_id in &order {
         // Fetch source row from the SOURCE connection.
         let (parent, title, content_json, content_text, kind, sort_order, created_at, icon, cover, cover_height, cover_pos): (
@@ -604,25 +677,7 @@ pub fn copy_page_to_workspace(
         )
         .map_err(|e| e.to_string())?;
 
-        // Copy page props, tags, and attachment rows (bytes are content-addressed/global).
-        tgt.execute(
-            "INSERT INTO page_props (page_id, attr_id, value)
-             SELECT ?1, attr_id, value FROM page_props WHERE page_id = ?2",
-            params![new_id, old_id],
-        )
-        .map_err(|e| e.to_string())?;
-        tgt.execute(
-            "INSERT INTO page_tags (page_id, tag_id)
-             SELECT ?1, tag_id FROM page_tags WHERE page_id = ?2",
-            params![new_id, old_id],
-        )
-        .map_err(|e| e.to_string())?;
-        tgt.execute(
-            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
-             SELECT ?1, ?2, name, hash, mime, size, created_at FROM attachments WHERE page_id = ?3",
-            params![uuid::Uuid::new_v4().to_string(), new_id, old_id],
-        )
-        .map_err(|e| e.to_string())?;
+        copy_satellite_rows(&src, tgt, old_id, &new_id)?;
 
         // Rebuild indexes in the TARGET space so search/blocks/backlinks/graph work.
         crate::search::sync_fts(tgt, &new_id, &title, &content_text)?;
@@ -648,6 +703,8 @@ pub fn copy_page_to_workspace(
         crate::sync::record_page_upsert(tgt, &detail)?;
     }
 
+    tgt.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+
     // The temporary target connection (if any) drops at end of scope; the ref
     // binding `tgt` borrows either it or the main conn.
     Ok(id_map.get(&page_id).cloned().unwrap_or_default())
@@ -656,6 +713,45 @@ pub fn copy_page_to_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐⭐ **2026-10-08 事故的单测（跨库复制卫星行）**：
+    /// `src` 与 `tgt` 是**两条独立连接**（＝两个空间库 ✓）—— 这正是原来那三处
+    /// `tgt.execute("INSERT … SELECT … FROM 表 WHERE page_id = ?")` 会**静默插 0 行**的场景 ✗。
+    /// 判据：属性 1 条／标签 1 条／附件 1 条，复制后**目标侧都得在** ✓。
+    #[test]
+    fn copy_satellite_rows_crosses_connections() {
+        let src = rusqlite::Connection::open_in_memory().unwrap();
+        let tgt = rusqlite::Connection::open_in_memory().unwrap();
+        for c in [&src, &tgt] {
+            c.execute_batch(
+                "CREATE TABLE page_props (page_id TEXT, attr_id TEXT, value TEXT);
+                 CREATE TABLE page_tags (page_id TEXT, tag_id TEXT);
+                 CREATE TABLE attachments (id TEXT PRIMARY KEY, page_id TEXT, name TEXT NOT NULL,
+                   hash TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL);",
+            )
+            .unwrap();
+        }
+        src.execute("INSERT INTO page_props (page_id, attr_id, value) VALUES ('old', 'a1', 'v1')", []).unwrap();
+        src.execute("INSERT INTO page_tags (page_id, tag_id) VALUES ('old', 't1')", []).unwrap();
+        src.execute(
+            "INSERT INTO attachments (id, page_id, name, hash, mime, size, created_at)
+             VALUES ('att1', 'old', 'a.pdf', 'h1', 'application/pdf', 5, 1)",
+            [],
+        )
+        .unwrap();
+
+        copy_satellite_rows(&src, &tgt, "old", "new").unwrap();
+
+        let props: i64 = tgt.query_row("SELECT COUNT(*) FROM page_props WHERE page_id='new'", [], |r| r.get(0)).unwrap();
+        let tags: i64 = tgt.query_row("SELECT COUNT(*) FROM page_tags WHERE page_id='new'", [], |r| r.get(0)).unwrap();
+        let atts: i64 = tgt.query_row("SELECT COUNT(*) FROM attachments WHERE page_id='new'", [], |r| r.get(0)).unwrap();
+        assert_eq!(props, 1, "属性没复制过去 ✗（跨库时 INSERT…SELECT 会静默插 0 行 ✓）");
+        assert_eq!(tags, 1, "标签没复制过去 ✗");
+        assert_eq!(atts, 1, "附件行没复制过去 ✗（owner 2026-10-08 现场：源 10 个 ⇒ 目标 0 个 ✓）");
+        // 反向：旧写法若被改回来，这几条会红 ✓
+        let wrong: i64 = tgt.query_row("SELECT COUNT(*) FROM attachments WHERE page_id='old'", [], |r| r.get(0)).unwrap();
+        assert_eq!(wrong, 0, "目标侧不该出现源 page_id 的行 ✓");
+    }
 
     /// 只够 `insert_space_row` 用的最小 `meta.workspaces`（列与 `db::meta_migrate` 同形）。
     fn conn_with_workspaces() -> rusqlite::Connection {

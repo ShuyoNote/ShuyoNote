@@ -298,8 +298,13 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // ⚠️ 两个 id 都要留着：`space` 是对暗号（公告里报的就是它），`ws` 才是**库文件名**
                     //    —— 2026-09-26 真机修（把远端 id 当库名 ⇒ 窗口服务一个新建的空库）。
                     .iter()
-                    .map(|(s, _, ws)| (s.clone(), ws.clone(), crate::mesh::settings(&c, s)))
-                    .filter(|(_, _, cfg)| cfg.bind.is_some())
+                    .map(|(s, _, ws)| (window_serve_space(&c, s, ws), ws.clone(), settings_for_profile(&c, s, ws)))
+                    // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
+                    //   而 `''` 会去读 **`mesh_bind:` 那个空键**（写入路径**永远写不出来** ✓ ⇒ 只可能是更早版本残留 ✓）
+                    //   ⇒ 它就在 `served` 里留一个**空项** ✓：面板/日志会显示
+                    //   「这一扇门服务 2 个空间：**、**123456789Ok,./」✗（owner 2026-10-08 截图逐字 ✓，本机日志同形 ✓）。
+                    //   ⚠️ 这条红读数＝**截图与日志那两行** ✓；修法＝**按"服务空间非空"过滤** ✓。
+                    .filter(|(space, _, cfg)| !space.trim().is_empty() && cfg.bind.is_some())
                     .collect()
             };
             let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
@@ -401,6 +406,219 @@ fn bound_profiles(app: &tauri::AppHandle) -> Vec<(String, String, String)> {
     match rows {
         Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
         Err(_) => Vec::new(),
+    }
+}
+
+/// ⭐ **2026-10-08**：面板/发现层**读**网格设置时走的口径。
+///
+/// ⚠️ **来由（owner 实测截图逐字）**：面板显示「设备直连 **关**」＋「口令：未设 ⚠️」＋三个输入框**全空** ✗，
+///   而同一时刻 `8788` **正在听** ✓、`UDP 47821` 在 ✓、KV 里 `mesh_bind:<配对暗号>='0.0.0.0:8788'` ✓
+///   ⇒ **面板是"读错了"，不是"没配上"** ✗。
+///   真因：这里原来直接 `settings(&c, s)`，而 `s` 是 `sync_profiles.space_id` ✓ ——
+///   **个人空间那一列就是空串** ✗ ⇒ 读的是 `mesh_bind:`（空键）⇒ **一个字节都读不到** ✗；
+///   而值存在 `mesh_bind:<配对暗号>` ✓（写路径走 `sync::mesh_scope` 会回落到 `mesh_room` ✓，我 R146 修的就是那条 ✓）。
+/// ⇒ 后果：面板看不见"开着" ⇒ **「附近设备」那一块不渲染** ⇒ **配对入口进不去** ✗（挡住 R1 ✓）。
+///
+/// ⚠️ **只动"读"** ✗：`s`（原始 `space_id`）仍照旧用于**公告** —— ⛔ 不动线上报文形状 ✗。
+/// ⭐ **2026-10-08**：**口径解析**（只这一处 ✓）—— 个人空间（`space_id` 空）用用户填的「配对暗号」`mesh_room` ✓；
+/// 团队空间用 `space_id` ✓；解析不出来 ⇒ **保持旧口径**回落到 `space_id` ✓。
+///
+/// ⚠️ 抽出来是为了**三个调用点共用**（发现层 `settings_for_profile` ✓、面板读数 `sync::mesh_config_state_at` ✓）
+/// —— 今天这条 bug 的本质就是"读写各弹各的调"✗：写路径走 `sync::mesh_scope` ✓、读路径三处各写一遍 ✗。
+pub(crate) fn resolved_space(c: &rusqlite::Connection, space_id: &str, ws_id: &str) -> String {
+    crate::sync::mesh_scope_at(c, Some(ws_id))
+        .map(|x| x.space)
+        .unwrap_or_else(|_| space_id.to_string())
+}
+
+fn settings_for_profile(
+    c: &rusqlite::Connection,
+    space_id: &str,
+    ws_id: &str,
+) -> crate::mesh::MeshSettings {
+    // ⭐ **修（2026-10-08）**：与**写路径同一口径**（`resolved_space` ✓）。
+    // ⚠️ 解析不出来（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**回落到 `space_id` ✓
+    //   （同模块判据 ② 把这条**钉住** ✓；它顺带暴露的"空键假显示为开着"属另一笔 ✓ 已记台账 ✓）。
+    let space = resolved_space(c, space_id, ws_id);
+    crate::mesh::settings(c, &space)
+}
+
+/// ⭐ **2026-10-08 第二笔**：**窗口该服务/宣告哪个空间** —— 与写路径（`sync::mesh_scope`）同一条口径 ✓：
+/// 个人空间（`space_id` 空）⇒ 用户填的「配对暗号」✓；团队空间 ⇒ `space_id` ✓。
+///
+/// ⚠️ 来由（app 日志逐字）：`网格窗口已启动：0.0.0.0:8788 ｜ 服务 1 个空间：` ✗ —— **空间名是空的** ✓
+/// ⇒ 对端在发现层匹配不上 ⇒ 面板写「附近的设备里暂时没有服务这个空间的设备」✗ ⇒ **一轮都跑不起来** ✓
+/// （连带读数：`last_pushed_seq = last_pulled_seq = 0` ✗、`changes` 64 行一条没发 ✗、`meta` 里没有 `mesh_cursor:*` ✗）。
+/// ⚠️ **同一族的另一半**：配对采纳会 `mesh::add_paired(scope.space＝暗号)`，而门服务 `''` ✗ ⇒ **找不到那扇门**
+/// ⇒ 卡片进不了内存卡表 ⇒ 现象＝「配对显示成功、对端照样 401」✗ ⇒ 本笔把**根**一起修掉 ✓。
+pub(crate) fn window_serve_space(c: &rusqlite::Connection, space_id: &str, ws_id: &str) -> String {
+    // ⭐ **修**：与写路径同口径 —— 个人空间（`space_id` 空）⇒ 配对暗号 ✓（`resolved_space` 是唯一那处解析 ✓）。
+    // ⚠️ 解析不出来（没填暗号 / 没有档案行）⇒ **保持旧口径**回落 ✓（判据 ③ 把这条钉住 ✓）。
+    resolved_space(c, space_id, ws_id)
+}
+
+#[cfg(test)]
+mod mesh_serve_space_tests {
+    use super::*;
+
+    fn fixture() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ 本笔判据：个人空间（`space_id` 空）＋ 暗号有值 ⇒ **窗口报的空间必须是暗号** ✓。
+    /// ⚠️ 未修时得到 `''` ✗ ⇒ **必红** ✓（红读数＝日志里「服务 1 个空间：（空）」✗）。
+    #[test]
+    fn a_personal_space_serves_its_room_not_an_empty_name() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            window_serve_space(&c, "", "ws-personal"),
+            "room-123",
+            "个人空间没有 space_id ⇒ 窗口/公告必须报**配对暗号**（报空串 ⇒ 对端永远匹配不上 ✗）"
+        );
+    }
+
+    /// 反向：团队空间照旧用 `space_id` ✓（不许串味 ✓）。
+    #[test]
+    fn a_team_space_still_serves_its_space_id() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-personal', 'team-9', 'room-123')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(window_serve_space(&c, "team-9", "ws-personal"), "team-9", "团队空间口径不变 ✓");
+    }
+
+    /// 反向：个人空间**没填暗号** ⇒ 保持旧口径（回落 `space_id`）✓（放宽 ≠ 乱认 ✓）。
+    #[test]
+    fn a_personal_space_without_a_room_keeps_the_old_value() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(window_serve_space(&c, "", "ws-personal"), "", "没暗号 ⇒ 保持旧口径 ✓");
+    }
+}
+
+#[cfg(test)]
+mod mesh_read_scope_tests {
+    use super::*;
+
+    /// 自带夹具（与 `sync.rs` 的 R146 判据同一形状 ✓）：四张表够 `mesh_scope_at` 读 ✓。
+    fn fixture() -> rusqlite::Connection {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ **本笔的判据**：个人空间（`space_id` 空）＋ 暗号有值 ＋ KV 按**暗号**存 ⇒
+    ///   面板/发现层必须**读得到**那份设置 ✓。
+    /// ⚠️ 未修时这里读到 `None` ✗ ⇒ **必红** ✓ —— 而那条红读数就是 owner 截图里的
+    ///   「设备直连 **关** ＋ 口令：未设」✓（= 面板看不见已经在听的窗口 ✓）。
+    #[test]
+    fn a_personal_space_reads_the_settings_keyed_by_its_room() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            [],
+        )
+        .unwrap();
+        let st = settings_for_profile(&c, "", "ws-personal");
+        assert_eq!(
+            st.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "个人空间的地址是按**配对暗号**存的 ⇒ 面板必须读得到（读不到就会显示『关』✗）"
+        );
+        assert_eq!(st.token.as_deref(), Some("k7Qm-2pRt"), "口令同理 ✓");
+    }
+
+    /// 反向①：**团队空间照旧按 `space_id` 读** ✓ —— 不许把暗号串到团队那条路上 ✓。
+    #[test]
+    fn a_team_space_still_reads_by_its_space_id() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-personal', 'team-9', '')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:team-9', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        let st = settings_for_profile(&c, "team-9", "ws-personal");
+        assert_eq!(st.bind.as_deref(), Some("0.0.0.0:8788"), "团队空间口径不变 ✓");
+    }
+
+    /// 反向②：个人空间但**暗号也是空** ⇒ **保持旧口径**（回落到 `space_id` ＝ 空串）✓ ——
+    ///   本笔**不顺手改**它 ✗，只把它**钉住**（免得哪天被无意改掉 ✓）。
+    /// ⚠️ **已知遗留（记台账、不在本笔改 ✗）**：那个 `mesh_bind:`（空键）**写入路径永远写不出来**
+    ///   （没暗号时 `mesh_set_config` 直接 `Err` ✓）⇒ 只可能是**更早版本的残留** ✓；
+    ///   而它会让人一个"没配过的"个人空间**假显示为开着** ✗ —— 与"假显示为关"是同一族的另一半 ✓。
+    #[test]
+    fn a_personal_space_without_a_room_keeps_the_old_reading() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        let st = settings_for_profile(&c, "", "ws-personal");
+        assert_eq!(
+            st.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "本笔只保证「个人空间＋有暗号」读得到；「没暗号」这条**保持旧口径**（遗留另记 ✓）"
+        );
     }
 }
 

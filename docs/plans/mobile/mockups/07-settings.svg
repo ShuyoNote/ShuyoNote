@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="设置：极简四项与高级入口提示">
+<title>设置：极简四项与高级入口提示</title>
+<style>
+text{font-family:-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;}
+.mono{font-family:'SF Mono', 'JetBrains Mono', Consolas, 'Liberation Mono', monospace;}
+.t{fill:#E6E8EB;}.dim{fill:#9CA3AF;}.faint{fill:#6B7280;}
+.acc{fill:#4D8DFF;}.onacc{fill:#0B1220;}.ok{fill:#2BD49B;}.warn{fill:#FFB04D;}.dang{fill:#FF6B6B;}
+.quote{font-style:italic;fill:#9CA3AF;}
+.cred{fill:#F54A45;}.corange{fill:#FF8A1E;}.cgreen{fill:#00B578;}.cblue{fill:#3370FF;}
+</style>
+<rect x="2" y="2" width="386" height="840" rx="44" fill="#17181A" stroke="#3A3C41" stroke-width="2"/>
+<rect x="140" y="14" width="110" height="28" rx="14" fill="#0C0D0F" stroke="#2E3034"/>
+<text x="30" y="42" class="t" font-size="13" text-anchor="start" font-weight="600">15:21</text>
+<rect x="290" y="36" width="3.5" height="5" rx="1" fill="#E6E8EB"/>
+<rect x="295.5" y="33" width="3.5" height="8" rx="1" fill="#E6E8EB"/>
+<rect x="301" y="30" width="3.5" height="11" rx="1" fill="#E6E8EB"/>
+<rect x="306.5" y="27" width="3.5" height="14" rx="1" fill="#E6E8EB"/>
+<path d="M316 36 a9 9 0 0 1 13 0" fill="none" stroke="#E6E8EB" stroke-width="2" stroke-linecap="round"/>
+<path d="M319 39.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#E6E8EB" stroke-width="2" stroke-linecap="round"/>
+<circle cx="322.5" cy="43" r="1.5" fill="#E6E8EB"/>
+<rect x="336" y="28" width="24" height="12" rx="3.5" fill="none" stroke="#9CA3AF"/>
+<rect x="337.5" y="29.5" width="17" height="9" rx="1.8" fill="#E6E8EB"/>
+<rect x="361" y="31.5" width="2.5" height="5" rx="1.2" fill="#9CA3AF"/>
+<text x="24" y="104" class="t" font-size="20" text-anchor="start" font-weight="600">设置</text>
+<path d="M14 122 H376" stroke="#2E3034"/>
+<rect x="16" y="138" width="358" height="84" rx="12" fill="#242529" stroke="#2E3034"/>
+<text x="32" y="162" class="faint" font-size="12" text-anchor="start">账户</text>
+<circle cx="48" cy="192" r="14" fill="#34353A"/>
+<path d="M42 197 a6.5 6.5 0 0 1 12 0" fill="none" stroke="#9CA3AF" stroke-width="1.7"/>
+<circle cx="48" cy="186" r="4.6" fill="none" stroke="#9CA3AF" stroke-width="1.7"/>
+<text x="72" y="190" class="t" font-size="15" text-anchor="start" font-weight="600">本地账户</text>
+<text x="72" y="210" class="faint" font-size="12" text-anchor="start">未绑定云端 · 数据只在本机</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M346 180 L353 187 L346 194"/></g>
+<rect x="16" y="234" width="358" height="120" rx="12" fill="#242529" stroke="#2E3034"/>
+<text x="32" y="258" class="faint" font-size="12" text-anchor="start">同步</text>
+<text x="32" y="286" class="t" font-size="15" text-anchor="start" font-weight="600">设备配对</text>
+<text x="32" y="306" class="faint" font-size="12" text-anchor="start">管理附近设备与配对暗号</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M346 276 L353 283 L346 290"/></g>
+<path d="M32 322 H358" stroke="#2E3034"/>
+<circle cx="38" cy="339" r="4" fill="#FFB04D"/>
+<text x="52" y="344" class="warn" font-size="13" text-anchor="start" font-weight="600">同步状态：尚未成功搬运</text>
+<text x="210" y="344" class="faint" font-size="11" text-anchor="start">mesh_cursor:* 0 条</text>
+<rect x="16" y="366" width="358" height="112" rx="12" fill="#242529" stroke="#2E3034"/>
+<text x="32" y="390" class="faint" font-size="12" text-anchor="start">外观</text>
+<rect x="32" y="404" width="326" height="40" rx="8" fill="#1F2023"/>
+<text x="88" y="429" class="dim" font-size="13" text-anchor="middle">跟随系统</text>
+<rect x="142" y="408" width="104" height="32" rx="6" fill="#22304A" stroke="#4D8DFF"/>
+<text x="194" y="429" class="acc" font-size="13" text-anchor="middle" font-weight="600">深色</text>
+<text x="300" y="429" class="dim" font-size="13" text-anchor="middle">浅色</text>
+<text x="32" y="466" class="faint" font-size="11" text-anchor="start">两种主题都取自设计系统，不新增配色。</text>
+<rect x="16" y="490" width="358" height="76" rx="12" fill="#242529" stroke="#2E3034"/>
+<text x="32" y="522" class="t" font-size="15" text-anchor="start" font-weight="600">关于</text>
+<text x="32" y="544" class="faint" font-size="12" text-anchor="start">ShuyoNote · 开源许可 AGPL-3.0</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M346 516 L353 523 L346 530"/></g>
+<rect x="16" y="578" width="358" height="118" rx="12" fill="#242529" stroke="#2E3034"/>
+<text x="32" y="610" class="t" font-size="15" text-anchor="start" font-weight="600">高级</text>
+<text x="32" y="632" class="faint" font-size="12" text-anchor="start">能力开关 / MCP / 插件管理</text>
+<rect x="32" y="646" width="326" height="36" rx="8" fill="#4A3F1F" stroke="#FFB04D"/>
+<circle cx="50" cy="664" r="4" fill="#FFB04D"/>
+<text x="64" y="669" class="warn" font-size="14" text-anchor="start" font-weight="700">请在桌面端操作</text>
+<text x="200" y="669" class="faint" font-size="11" text-anchor="start">移动端只保留日常必需项</text>
+<text x="24" y="726" class="faint" font-size="11" text-anchor="start">设置项与桌面端同源，改动不会只落在一端。</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#4B4F55"/>
+</svg>

@@ -83,6 +83,10 @@ export interface NoteState {
    */
   patchPageMeta: (page: Partial<PageMeta> & { id: string }) => boolean;
   bumpReload: () => void;
+  /** ⭐ R150：**外部（MCP／插件）刚写过这一页** —— 用来丢掉那条陈旧的待保存 ✗（见 `pendingSave.ts`）。 */
+  noteExternalWrite: (pageId: string, atMs?: number) => void;
+  /** 最近一次外部写入（`pageId` ＋ 时刻 ✓）；没有就是 null ✓。 */
+  lastExternalWrite: { pageId: string; atMs: number } | null;
   setSearchQuery: (q: string) => void;
   clearSearchQuery: () => void;
 }
@@ -95,6 +99,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   error: null,
   searchQuery: "",
   reloadTick: 0,
+  lastExternalWrite: null,
   lastPageRestored: false,
   startupSettled: false,
 
@@ -294,6 +299,8 @@ export const useNotes = create<NoteState>((set, get) => ({
   },
 
   bumpReload: () => set((s) => ({ reloadTick: s.reloadTick + 1 })),
+  noteExternalWrite: (pageId, atMs) =>
+    set(() => ({ lastExternalWrite: { pageId, atMs: atMs ?? Date.now() } })),
 
   setSearchQuery: (q) => set({ searchQuery: q }),
   clearSearchQuery: () => set({ searchQuery: "" }),

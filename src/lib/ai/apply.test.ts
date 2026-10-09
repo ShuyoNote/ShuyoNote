@@ -47,6 +47,30 @@ describe("applyDraft（落库层）", () => {
     expect(json.root.children).toEqual([]);
   });
 
+  it("⭐ R150：append_block 必须把文本**真的**追加进去（不是写回原样 ✗）", async () => {
+    // 现场（owner 2026-10-08 实测）：MCP 连发 20 次 blocks_append ⇒ 每次回 auto_apply:true ✓
+    // 而页里**一个字都没多** ✗（content_text 长度不变 ✓）⇒ 这条判据就是钉它的 ✓。
+    const onePara = JSON.stringify({
+      root: {
+        type: "root", version: 1, direction: "ltr", format: "", indent: 0,
+        children: [{
+          blockId: "b1", type: "paragraph", version: 1, direction: "ltr", format: "", indent: 0, style: "",
+          children: [{ type: "text", text: "原有的一段", format: "", style: "", mode: "normal", detail: 0, version: 1 }],
+        }],
+      },
+    });
+    vi.mocked(api.getPage).mockResolvedValue({ id: "p1", title: "演示", content_json: onePara, content_text: "原有的一段" } as never);
+    vi.mocked(api.savePage).mockResolvedValue({ id: "p1", title: "演示" } as never);
+
+    const r = await applyDraft({ kind: "append_block", pageId: "p1", text: "R150 追加的一行" });
+
+    expect(r.ok, r.message).toBe(true);
+    const arg = vi.mocked(api.savePage).mock.calls[0][0];
+    expect(String(arg.content_text), "追加的文本必须出现在落库内容里 ✗").toContain("R150 追加的一行");
+    const json = JSON.parse(String(arg.content_json));
+    expect(json.root.children.length, "块数必须变多（原 1 块 ⇒ 追加后 ≥2 ✓）").toBeGreaterThan(1);
+  });
+
   it("显式给了 content_json 就用它，不再重建", async () => {
     vi.mocked(api.createPage).mockResolvedValue({ id: "p3", title: "自定义" } as never);
     const given = '{"root":{"children":[{"type":"paragraph"}],"type":"root","version":1}}';

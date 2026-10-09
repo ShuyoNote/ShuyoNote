@@ -73,14 +73,13 @@ import { useGlobalShortcuts } from "./hooks/useGlobalShortcuts";
 import { useScrollMemory } from "./hooks/useScrollMemory";
 import { useUpdateChecker } from "./lib/useUpdateChecker";
 import { api } from "./lib/api";
-import { openGuide, GUIDE_TITLE } from "./lib/guide";
 import { createDeepLinkHandler } from "./lib/deepLinkDispatch";
 import { useNotes } from "./store/notes";
+import { shouldDropPendingSave } from "./lib/pendingSave";
 import { usePlugins } from "./store/plugins";
 import { emitHostEvent } from "./lib/pluginEvents";
 import { applyThemeTokens, resolveTheme } from "./lib/pluginTheme";
 import { useActivity } from "./store/activity";
-import { useSpaceStore } from "./store/space";
 import { useCommunitySave } from "./store/communitySave";
 import { mountDeepLinks } from "./lib/deepLinkBridge";
 import { useEditorStore } from "./store/editor";
@@ -407,6 +406,20 @@ function NoteEditor({ pageId }: { pageId: string }) {
    * 那条记录存在之前**跑一轮，那一轮推不动任何东西；而下一轮要等一个节拍（服务端档最长 5 分钟）。
    */
   const flushPendingSave = useCallback(async () => {
+    const p0 = pendingSaveRef.current;
+    // ⭐ R150：外部刚写过这一页 ⇒ 这条待保存的**内容已经旧了** ✗，丢掉 ✓
+    //   （不丢的话，它到点落库就把外部那份盖回去 —— 现场三次读数都在 +0.4 秒 ✓）。
+    if (
+      p0 &&
+      shouldDropPendingSave(p0, useNotes.getState().lastExternalWrite, Date.now())
+    ) {
+      pendingSaveRef.current = null;
+      if (debounceRef.current) {
+        window.clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      return;
+    }
     const p = pendingSaveRef.current;
     pendingSaveRef.current = null;
     // 顺手撤掉那个还没到点的去抖定时器：flush 的语义是"现在写"，不是"再写一次"。
@@ -1004,22 +1017,11 @@ function AppShell() {
     }
   }, [pages, currentId, startupSettled]);
 
-  // 默认工作空间预置「使用指南」：首次进入时静默创建整套 Wiki（不自动打开），
-  // 侧边栏即可见。用 localStorage 标记每个空间只预置一次；已存在则不重复（幂等）。
-  useEffect(() => {
-    if (!pages.length) return;
-    const spaceId = useSpaceStore.getState().activeId;
-    if (!spaceId) return;
-    const key = "shuyo:guideSeeded:" + spaceId;
-    try { if (localStorage.getItem(key) === "1") return; } catch { /* ignore */ }
-    if (pages.some((p) => p.title === GUIDE_TITLE)) {
-      try { localStorage.setItem(key, "1"); } catch {}
-      return;
-    }
-    // 乐观标记，避免 pages 更新后重复触发；openGuide 幂等。
-    try { localStorage.setItem(key, "1"); } catch {}
-    openGuide({ open: false }).catch(() => {});
-  }, [pages]);
+  // ⛔ **2026-10-08（owner：「不要自动插入帮助文档了」✓）：这里原来是"首次进空间静默创建整套
+  //    「使用指南」Wiki"** ✗ —— 已**停掉自动那条** ✓。⚠️ 刻意**不留开关**：半开的默认值最容易
+  //    变成"看着关了其实还在建"✗。需要时为时**按需创建** ✓，入口都在：编辑器里打 `/帮助` ✓、
+  //    命令面板里的「帮助 / 使用指南」✓（`openGuide` 本身**幂等**：已存在就不重复建 ✓）。
+  //    ⚠️ 历史数据不受影响：**已经建过的空间里那些页面照旧在** ✓（要不要清掉是**数据**问题，另问 owner ✓）。
 
   if (standaloneId) {
     return (

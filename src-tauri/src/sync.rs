@@ -190,6 +190,40 @@ pub fn record_change(
     updated_at: i64,
 ) -> Result<(), String> {
     let did = device_id(c)?;
+    // ⭐ 2026-10-08（R139「治根」）：**先并掉自己写下、且还没推出去的同实体 upsert**。
+    //
+    // 为什么（实测，不是推理）：payload 是**整篇快照** ⇒ 旧的那份被新的**完全覆盖** ✓；
+    //   而每次保存都**追加**一份 ⇒ 实测一个空间 2 天就涨到 **672 MB（占全库 91%）** ✗，
+    //   其信息 **98.7% 是重复的**（一页 260 次保存各存一份 1.32 MB 的全量快照 ✗）。
+    // ⇒ 留着它们没有任何收益，只有 600+ MB 的代价。
+    //
+    // ⚠️ 三条边界，一条都不许越：
+    //   ① **只删自己设备写的**（`device_id = 本机`）—— 中继进来的行是**别人的账** ✗；
+    //   ② **只删还没推出去的**（`seq > meta.sync_profiles.last_pushed_seq`）—— 已推送的那条
+    //      服务端／对端还要按序消费它 ✗；没配同步（没档案／游标 0）⇒ 全都算未推送
+    //      ⇒ **每个实体只留最新一份** ✓（这正是本条要解决的形状 ✓）；
+    //   ③ **只并 `op='upsert'`** —— delete 是墓碑、体积极小，且语义不同，不许并掉 ✗。
+    //
+    // ⚠️ 手法是「**删旧行 ＋ 插新行**」，不是"就地改 payload"：新行必须拿到**新的 seq**，
+    //    否则**已经消费过那条 seq 的对端**永远看不到这次更新 ✗（游标语义会被就地改坏）。
+    if op == "upsert" {
+        // 读不到档案/表就取 0 ⇒ 按"全都未推送"处理（并得更狠 ⇒ 每个实体只留最新 ✓，与 ② 同口径）。
+        let last_pushed: i64 = c
+            .query_row(
+                "SELECT COALESCE((SELECT last_pushed_seq FROM meta.sync_profiles
+                                   WHERE ws_id = (SELECT id FROM workspaces LIMIT 1)), 0)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        c.execute(
+            "DELETE FROM changes
+              WHERE entity = ?1 AND entity_id = ?2 AND op = 'upsert'
+                AND device_id = ?3 AND seq > ?4",
+            params![entity, entity_id, did, last_pushed],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     c.execute(
         "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
          VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)",
@@ -3335,6 +3369,12 @@ pub fn mesh_set_config(
     // ⚠️ 顺序要紧 ✗：⭐ 必须**先**写暗号、**再**取 scope ✓ —— `mesh_scope` 就是用它来定
     //   「对暗号的 id」✓；反过来（先取 scope）刚填的暗号这一轮还用不上 ✓。
     //   ⚠️ 写它只需要认出「哪一行」（`ws_id`）✓ ⇒ 走 `mesh_target_ws`（它不要求 space_id ✓）。
+    // ⭐ **2026-10-08：先补那行本地档案** ✓ —— 否则下面三处写入（暗号／监听地址／口令）**全会**以
+    //   「这个空间没有同步档案」失败 ✗（owner 现场截图 ✓：个人空间从没绑过服务器 ⇒ 那一行不存在 ✓）。
+    if let Some(w) = workspace_id.as_deref().filter(|w| !w.trim().is_empty()) {
+        let c = db.0.lock().expect("db mutex poisoned");
+        ensure_local_profile_row(&c, w).map_err(|e| e.to_string())?;
+    }
     if let Some(r) = room.as_deref() {
     let target = mesh_target_ws(&db, workspace_id.as_deref())?;
     let c = db.0.lock().expect("db mutex poisoned");
@@ -3380,6 +3420,132 @@ pub fn mesh_set_config(
     Ok(crate::mesh::config_state(&cfg, window, &served, &paired))
 }
 
+/// ⭐ **2026-10-08**：面板那四格读数（设置／窗口地址／服务的空间／认过的设备）**抽成一个函数** ✓ ——
+/// 原来它写在 `lan_status` 里 ✓，而它直接吃**原始** `space_id` ✗ ⇒ 个人空间（那一列是空串 ✗）被当成"没配" ✓
+/// ⇒ 面板显示「设备直连 **关**」＋「口令：未设」＋三个框全空 ✗（owner 当天截图 ✓）。
+/// ⚠️ 抽出来的**动机与 R146 同**：挂在命令体里 ⇒ **判据够不着** ✗ ⇒ 这类 bug 就会一直漏 ✓。
+/// ⚠️ `space_id` 与 `ws_id` 都收：口径解析要**两个**才做得对 ✓（见 `lan_state::resolved_space` ✓）。
+pub(crate) fn mesh_config_state_at(
+    c: &Connection,
+    space_id: &str,
+    ws_id: &str,
+) -> Result<crate::mesh::MeshConfigState, String> {
+    // ⭐ **修（2026-10-08）**：**与写路径同一口径**（`lan_state::resolved_space` ✓ —— 解析只写在一处 ✓）。
+    //   个人空间（`space_id` 空）⇒ 用「配对暗号」✓；
+    //   ⚠️ **四格读数一起换** ✗：以前只把"设置"那格当重点，其实 `served_spaces("")` 会回**全局**那扇门的
+    //     服务清单 ⇒ 读数里会冒出一个空串 ✗（owner 截图里那行「服务 2 个空间：、123456789Ok,./」就是它 ✓）。
+    let space = crate::lan_state::resolved_space(c, space_id, ws_id);
+    // ⚠️ 解析出来是空的（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**：当"没配" ✓。
+    //   ⛔ 不许去读 `mesh_bind:` 那个空键 —— 那是**写入路径永远写不出来**的残留 ✗（会让"没配的"空间假显示为开着 ✓）。
+    if space.trim().is_empty() {
+        return Ok(crate::mesh::config_state(
+            &crate::mesh::MeshSettings::default(),
+            None,
+            &[],
+            &[],
+        ));
+    }
+    let cfg = crate::mesh::settings(c, &space);
+    let window = crate::mesh::window_addr(&space);
+    Ok(crate::mesh::config_state(
+        &cfg,
+        window,
+        &crate::mesh::served_spaces(&space),
+        &crate::mesh::paired_devices(c, &space)?,
+    ))
+}
+
+#[cfg(test)]
+mod mesh_config_state_tests {
+    use super::*;
+
+    /// 自带夹具（与 `lan_state.rs` 那条判据同一形状 ✓）。
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ **本笔的判据**：个人空间（`space_id` 空）＋ 暗号有值 ＋ KV 按**暗号**存 ⇒
+    ///   面板那颗开关必须是**开** ✓、地址要有 ✓、口令要算"已设" ✓。
+    /// ⚠️ 未修时这里是 `enabled: false` ＋ `bind: None` ＋ `token_set: false` ✗ ⇒ **必红** ✓ ——
+    ///   而那条红读数正是 owner 截图里逐字的「设备直连 **关** ＋ 口令：未设 ⚠️ ＋ 三个框全空」✓。
+    #[test]
+    fn a_personal_space_reports_the_mesh_as_on() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-123', 'k7Qm-2pRt')",
+            [],
+        )
+        .unwrap();
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(
+            st.enabled,
+            "面板那颗开关必须是「开」✗（现在显示「关」＝ 就是 owner 截图那条 bug ✓）"
+        );
+        assert_eq!(st.bind.as_deref(), Some("0.0.0.0:8788"), "地址要回给面板 ✓");
+        assert!(st.token_set, "口令已设 ⇒ 面板**不该**说「未设」✗");
+    }
+
+    /// 反向①：**团队空间口径不变** ✓（`space_id` 非空 ⇒ 照旧按它读 ✓）。
+    #[test]
+    fn a_team_space_reports_its_own_settings() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id) VALUES ('ws-personal', 'team-9')",
+            [],
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:team-9', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+        let st = mesh_config_state_at(&c, "team-9", "ws-personal").unwrap();
+        assert!(st.enabled, "团队空间照旧 ✓");
+    }
+
+    /// 反向②：个人空间但**没填暗号** ⇒ 报**关** ✓（不许把"没配"说成"开着" ✓）。
+    #[test]
+    fn a_personal_space_without_a_room_reports_off() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(!st.enabled, "没填暗号 ⇒ 报关 ✓（放宽口径 ≠ 乱认 ✓）");
+    }
+}
+
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
 /// （两份各自写一遍的下场是"设置面认得、同步面不认得"，而那种不一致没有任何编译期信号）。
 /// ★★ **为什么必须是两个、不许合成一个**（2026-09-26 真机实测的教训）：档案表里
@@ -3387,13 +3553,42 @@ pub fn mesh_set_config(
 /// —— 也就是 `spaces/<id>.db` 的文件名那一半。真机上两者**不同名**（本地 `default` / 远端
 /// `8be69ab5…`）：把它们当成同一个，窗口就会去开一个**按远端 id 新建的空库**，
 /// 然后安静地服务 0 条记录（HTTP 200、不报错）。
-struct MeshScope {
+pub(crate) struct MeshScope {
     /// 远端组织空间 id：**对暗号**用（窗口的 403 检查、对端匹配、设置的 KV 键）。
-    space: String,
+    /// ⚠️ **2026-10-08**：`pub(crate)` —— `lan_state.rs` 那条**读**路径要拿它 ✓
+    ///   （「读写同一口径」：面板把设备直连读成「关」就是这个口径没统一 ✗，见当日 CLAIM ✓）。
+    pub(crate) space: String,
     /// 本地空间 id：**开库**用（`spaces/<db_space>.db`）。
-    db_space: String,
+    pub(crate) db_space: String,
     /// 本机设备号（发现层与"只服务我自己产生的记录"都用它）。
-    device: String,
+    pub(crate) device: String,
+}
+
+/// ⭐ **2026-10-08**：给「**从没绑过服务器**」的空间补一行**本地**档案 ✓ ——
+/// 这是个人空间「设备直连」唯一缺的那一步 ✗（owner 当天在界面上现场撞到 ✓）。
+///
+/// ## 现场（逐字）
+///
+/// 个人空间里填**监听地址／配对暗号／口令**，三个按钮**全报同一句** ✗：
+/// 「网格设置没保存：**这个空间没有同步档案**（或它不是当前工作区）：`91f96e7f…`」。
+/// ⇒ 它第二半那句是**误导** ✗（工作区就是当前的 ✓）；真因是**那一行不存在** ✓：
+/// 「配对暗号」存在 `sync_profiles.mesh_room` ✓（口径见 `mesh_scope`：`space_id` 空 ⇒ 拿 `mesh_room` 对暗号 ✓），
+/// 而**建行只发生在服务器同步那条路**（`set_sync_profile` ✓）⇒ **一台从没绑过服务器的机器永远存不进去** ✗
+/// ⇒ 而"个人空间 + 设备直连"恰恰就是**不绑服务器**的那条路 ✓（= 新功能的主用例 ✗）。
+///
+/// ## 只补最小一行（三条都是承重的 ✓）
+///
+/// · `server_url` / `token` / `space_id` **全空** ✓ —— 「空」在这里是**语义**（＝不走服务器 ✓），
+///   与 `mesh_scope` 里那条口径严丝合缝 ✓；
+/// · `INSERT OR IGNORE` ✓ ⇒ **已有行一个字都不动** ✗（⛔ 绝不能把别人绑好的 `server_url` 清成空 ✗）；
+/// · `WHERE EXISTS(未删除的 workspace)` ✓ ⇒ 指名一个不存在／已删的工作区 ⇒ **一行都不建** ✓（不制造孤儿 ✓）。
+fn ensure_local_profile_row(c: &Connection, ws_id: &str) -> rusqlite::Result<usize> {
+    c.execute(
+        "INSERT OR IGNORE INTO sync_profiles (ws_id, server_url, token, space_id)
+         SELECT ?1, '', '', ''
+          WHERE EXISTS (SELECT 1 FROM meta.workspaces w WHERE w.id = ?1 AND w.deleted_at IS NULL)",
+        rusqlite::params![ws_id],
+    )
 }
 
 /// ⚠️ **2026-10-04 加**：⭐ 只挑「哪一行」✗ —— 给 `mesh_set_config` 写**配对暗号**用 ✓。
@@ -3428,9 +3623,16 @@ n => Err(format!("本机有 {n} 个空间，这条命令要指名其中一个"))
 }
 
 fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScope, String> {
+    let c = db.0.lock().expect("db mutex poisoned");
+    mesh_scope_at(&c, workspace_id)
+}
+
+/// ⚠️ **R146（2026-10-08）**：把 `mesh_scope` 的**读数逻辑**拆出来，只为**能被判据直接跑** ✓
+/// （原来它挂在 `State<Db>` 上 ⇒ 判据没法调 ⇒ 这条 bug 才一直没被判据碰到 ✗）。
+/// ⛔ **本步是纯搬迁**：行为与搬迁前**逐字一致** ✓（含那条 guard ✗ —— 先让判据把它照出来 ✓）。
+pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Result<MeshScope, String> {
     // 读法与 `lan_status` 同一套：profiles × 未删除的 workspaces
     let (device_id, rows) = {
-        let c = db.0.lock().expect("db mutex poisoned");
         let mut stmt = c
             .prepare(
                 // ⚠️ **2026-10-04 改**（owner：个人空间也要能用设备直连）：把 `mesh_room` 一起读出来 ✓。
@@ -3454,7 +3656,7 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        (device_id(&c).unwrap_or_default(), rows)
+        (device_id(c).unwrap_or_default(), rows)
     };
     let pick = match workspace_id.filter(|w| !w.is_empty()) {
         Some(want) => rows
@@ -3468,17 +3670,99 @@ fn mesh_scope(db: &State<'_, Db>, workspace_id: Option<&str>) -> Result<MeshScop
             n => return Err(format!("本机有 {n} 个空间，这条命令要指名其中一个")),
         },
     };
-    if pick.0.trim().is_empty() {
+    // ⚠️ **2026-10-04 改 / 2026-10-08 修（R146）**：⭐ 对暗号的值可以是 `space_id`（团队 ✓）**或**用户填的
+    //   「配对暗号」`mesh_room`（个人 ✓）。⚠️ 它**不必**是服务器上的组织空间 id ✗ —— `MeshScope` 的注释
+    //   写着真机上「本地库名」与「对暗号的空间 id」本来就不同名 ✓，只要求**两台填一样** ✓。
+    //   ⛔ **原来这里先有一条 `if pick.0.trim().is_empty() { return Err(…) }`** ✗ —— `pick.0` 是 `space_id`，
+    //   而**个人空间恰恰就是空** ⇒ 那条 guard 让"个人空间＋设备直连"这条**主用例必然报错** ✗，并且让紧随
+    //   其后的兜底成了**死代码** ✗（`mesh_room` 除 SELECT 取出外一个字节都没被读 ✓）。
+    //   判据 `r146_mesh_scope_tests` 先把它照了出来 ✓（先红：`FAILED. 2 passed; 1 failed` ✓）。
+    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
+    // ⭐ 判**最终**这个值是否为空 ✓（团队＝`space_id`；个人＝配对暗号 ✓）—— 该拒的仍然拒 ✓，但不再误伤个人空间 ✓。
+    if space.is_empty() {
         return Err(
         "还没填「配对暗号」。个人空间不走服务器：两台设备填同一个暗号，就能在同一个网络里直连"
         .to_string(),
         );
     }
-    // ⚠️ **2026-10-04 改**：⭐ 对暗号的值可以是 `space_id`（团队 ✓）**或**用户填的「配对暗号」
-    //   `mesh_room`（个人 ✓）。⚠️ 它**不必**是服务器上的组织空间 id ✗ —— `MeshScope` 的注释
-    //   写着真机上「本地库名」与「对暗号的空间 id」本来就不同名 ✓，只要求**两台填一样** ✓。
-    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
     Ok(MeshScope { space, db_space: pick.1, device: device_id })
+}
+
+/// ⭐ **R146 的判据（owner 2026-10-08 已签 ✓）** —— 这两条**先看红** ✗：
+/// ① 个人空间（`space_id` 空 ＋ `mesh_room` 有值）⇒ `mesh_scope` 必须 **Ok** 且 `space == mesh_room` ✓；
+/// ② `mesh_room` 也空 ⇒ **仍要 Err** ✓（别把"该拒"的一半也放掉 ✗）。
+#[cfg(test)]
+mod r146_mesh_scope_tests {
+    use super::*;
+
+    /// 自带夹具（不依赖本文件既有的测试模块 ✓）：四张表够 `mesh_scope_at` 读 ✓。
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-a');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// 个人空间：`space_id` 空、`mesh_room` 有值 —— **这正是"个人空间＋设备直连"的唯一形态** ✓。
+    #[test]
+    fn a_personal_space_with_a_room_gets_a_scope() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        let got = mesh_scope_at(&c, Some("ws-personal")).unwrap_or_else(|e| {
+            panic!("个人空间填了配对暗号就必须认得出它（实测报错：{e}）")
+        });
+        assert_eq!(got.space, "room-123", "对暗号的值就该是用户填的 mesh_room ✓");
+        assert_eq!(got.db_space, "ws-personal", "本地库名照旧 ✓");
+        assert_eq!(got.device, "dev-a", "设备号照旧 ✓");
+    }
+
+    /// 反向：`mesh_room` 也是空 ⇒ **要拒** ✓（放宽不等于不查 ✓）。
+    #[test]
+    fn a_personal_space_without_a_room_is_still_rejected() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            mesh_scope_at(&c, Some("ws-personal")).is_err(),
+            "暗号是空的时候不许给出 scope ✓"
+        );
+    }
+
+    /// 团队空间行为**不变** ✓：`space_id` 非空 ⇒ 用 `space_id`（不看 mesh_room ✓）。
+    #[test]
+    fn a_team_space_still_uses_its_space_id() {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-personal', 'org-space', 'room-123')",
+            [],
+        )
+        .unwrap();
+        let got = mesh_scope_at(&c, Some("ws-personal")).unwrap();
+        assert_eq!(got.space, "org-space", "团队空间照旧用 space_id ✓（不带 mesh_room 的串味 ✗）");
+    }
 }
 
 /// ★ 甲-1 接线第 3 件：**局域网的读数 ＋ 状态行**（施工单 §2 ④）。
@@ -3558,18 +3842,18 @@ pub fn lan_status(
     //   面板打开一次不该顺手开一个端口；已经开着的话 `window_addr` 会把**实际地址**读出来。
     let mesh = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let cfg = if space_id.trim().is_empty() {
-            crate::mesh::MeshSettings::default()
-        } else {
-            crate::mesh::settings(&c, &space_id)
-        };
-        let window = crate::mesh::window_addr(&space_id);
-        crate::mesh::config_state(
-            &cfg,
-            window,
-            &crate::mesh::served_spaces(&space_id),
-            &crate::mesh::paired_devices(&c, &space_id)?,
-        )
+        // ⭐ **2026-10-08**：这四行读数（设置／窗口地址／服务的空间／认过的设备）以前直接吃**原始**
+        //   `space_id` ✓，而个人空间那一列就是**空串** ✗ ⇒ `cfg` 被硬写成"空设置" ⇒ 面板显示
+        //   「设备直连 关」＋「口令：未设」＋三个框全空 ✗（owner 当天截图 ✓），而我第一笔只修了发现层那条 ✗。
+        //   ⇒ 现在**口径解析只在一处**（`lan_state::resolved_space` ✓，与写路径 `mesh_scope` 同口径 ✓），
+        //   这里连同"服务哪些空间／认过哪些设备"一起换成**解析后的**空间 ✓。
+        let ws = workspace_id
+            .as_deref()
+            .filter(|w| !w.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| profiles.first().map(|(_, _, ws)| ws.clone()))
+            .unwrap_or_default();
+        mesh_config_state_at(&c, &space_id, &ws)?
     };
 
     Ok(LanStatus { enabled, peers: peers.len(), kind, line, mesh, nearby })
@@ -5032,7 +5316,10 @@ mod tests {
                  space_id TEXT NOT NULL DEFAULT '',
                  last_pushed_seq INTEGER NOT NULL DEFAULT 0,
                  last_pulled_seq INTEGER NOT NULL DEFAULT 0,
-                 sync_attachments INTEGER NOT NULL DEFAULT 1
+                 sync_attachments INTEGER NOT NULL DEFAULT 1,
+                 -- ⭐ 2026-10-08 补：`db.rs::meta_migrate` 已有这一列（配对暗号 ✓），
+                 --   夹具少它 ⇒ 想验「个人空间直连」的用例**一行都写不进去** ✗（本注释上一条就是同族教训 ✓）。
+                 mesh_room TEXT NOT NULL DEFAULT ''
              );",
         )
         .unwrap();
@@ -5053,6 +5340,141 @@ mod tests {
              );",
         )
         .unwrap();
+    }
+
+    /// ⭐ **2026-10-08（owner 现场截图）**：**没有服务器档案的个人空间，也要能存"设备直连"设置** ✓。
+    ///
+    /// 判据三半（都在同一条里 ✓）：
+    ///   ① 全新库（`sync_profiles` 0 行）⇒ 补行 ⇒ **恰好 1 行** ✓，且 `server_url`／`token`／`space_id`
+    ///      **全空** ✓ —— 「空」是**语义**（不走服务器 ✓），不是"没写进去" ✗；
+    ///   ② **幂等 ＋ 不动已有行** ✓：已有行时再补 ⇒ **插 0 行**，且别人绑好的 `server_url` **一字不变** ✓
+    ///      （⛔ 顺手清空别人的服务器配置是这条修复最容易犯的坏法 ✗）；
+    ///   ③ 指名**不存在／已删**的工作区 ⇒ **一行都不建** ✓（不制造孤儿 ✓）。
+    ///
+    /// **变异**：把 `mesh_set_config` 里那句 `ensure_local_profile_row` 删掉 ⇒ 现场那句复现 ✗
+    /// （「这个空间没有同步档案」⇒ 三个保存按钮全红 ✓）。
+    #[test]
+    fn a_personal_space_without_a_server_profile_can_still_save_direct_connect_settings() {
+        let c = conn_with_meta();
+        c.execute("INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws-personal', NULL)", []).unwrap();
+
+        // ① 全新库 ⇒ 补行 ⇒ 恰好一行，三格全空
+        assert_eq!(ensure_local_profile_row(&c, "ws-personal").unwrap(), 1, "该建一行 ✓");
+        let row: (String, String, String, String) = c
+            .query_row(
+                "SELECT server_url, token, space_id, mesh_room FROM meta.sync_profiles WHERE ws_id='ws-personal'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("".into(), "".into(), "".into(), "".into()), "补出来的必须是**空的服务器档案**（＝不走服务器 ✓）");
+
+        // ② 幂等 ＋ 不覆盖：别人绑好的服务器不许被清空
+        c.execute("UPDATE meta.sync_profiles SET server_url='https://sync.shuyo.cn', token='tok' WHERE ws_id='ws-personal'", []).unwrap();
+        assert_eq!(ensure_local_profile_row(&c, "ws-personal").unwrap(), 0, "已有行 ⇒ 一行都不插 ✓");
+        let srv: String = c.query_row("SELECT server_url FROM meta.sync_profiles WHERE ws_id='ws-personal'", [], |r| r.get(0)).unwrap();
+        assert_eq!(srv, "https://sync.shuyo.cn", "⛔ 不许把别人绑好的服务器清空 ✗");
+
+        // ③ 不存在 / 已删 ⇒ 不建孤儿
+        assert_eq!(ensure_local_profile_row(&c, "ws-does-not-exist").unwrap(), 0);
+        c.execute("INSERT INTO meta.workspaces (id, deleted_at) VALUES ('ws-deleted', 1)", []).unwrap();
+        assert_eq!(ensure_local_profile_row(&c, "ws-deleted").unwrap(), 0, "已删的工作区不许建档案 ✓");
+
+        // ④ ⭐ **接线**（这一半是必须的 ✗）：助手对不等于它被调用 ✗ —— 断言 `mesh_set_config`
+        //    里**真的**先补了那一行 ✓（先例：本文件那条 `device_pair_import` 的接线断言 ✓）。
+        //    ⚠️ 变异：把 `mesh_set_config` 里那句删掉 ⇒ 上面①②③**照样全绿** ✗，只有这一半会红 ✓。
+        let src = include_str!("sync.rs");
+        let start = src.find("pub fn mesh_set_config(").expect("这条命令必须在（名字改了就要同步改这里 ✓）");
+        let body = &src[start..];
+        let end = body.find("\npub fn ").unwrap_or(body.len());
+        assert!(
+            body[..end].contains("ensure_local_profile_row(&c, w)"),
+            "接线变了：`mesh_set_config` 必须**先补那行本地档案** ✓（否则个人空间三个保存按钮全会报「没有同步档案」✗）"
+        );
+    }
+
+    /// ⭐ 2026-10-08（R139「治根」）：同一实体**还没推出去**的 upsert 只留最新一份。
+    /// 承重理由：payload 是整篇快照 ⇒ 旧的是新的子集 ✓（实测那 672 MB 里 98.7% 是重复 ✗）。
+    #[test]
+    fn recording_the_same_entity_twice_before_push_coalesces() {
+        let c = conn_with_meta();
+        c.execute_batch(
+            "CREATE TABLE changes (
+                 seq INTEGER PRIMARY KEY AUTOINCREMENT, device_id TEXT NOT NULL, device_seq INTEGER NOT NULL,
+                 entity TEXT NOT NULL, entity_id TEXT NOT NULL, op TEXT NOT NULL, payload TEXT,
+                 updated_at INTEGER NOT NULL, UNIQUE(device_id, device_seq));
+             CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+             INSERT INTO workspaces (id) VALUES ('ws-1');",
+        )
+        .unwrap();
+        set_meta_state(&c, KEY_DEVICE_ID, "dev-a").unwrap();
+        let count = |c: &Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM changes", [], |r| r.get(0)).unwrap()
+        };
+        let payload_of = |c: &Connection, eid: &str| -> String {
+            c.query_row(
+                "SELECT payload FROM changes WHERE entity_id = ?1 ORDER BY seq DESC LIMIT 1",
+                [eid],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let max_seq = |c: &Connection| -> i64 {
+            c.query_row("SELECT COALESCE(MAX(seq),0) FROM changes", [], |r| r.get(0)).unwrap()
+        };
+
+        // ① 没配同步（无档案）⇒ 连记三次同一页 ⇒ **只剩一行**，正文是最新那份。
+        record_change(&c, "page", "p1", "upsert", Some("v1"), 1).unwrap();
+        let first_seq = max_seq(&c);
+        record_change(&c, "page", "p1", "upsert", Some("v2"), 2).unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v3"), 3).unwrap();
+        assert_eq!(count(&c), 1, "未推送时同一实体只该留一份（否则就是那 672 MB 的形状 ✗）");
+        assert_eq!(payload_of(&c, "p1"), "v3", "留下的必须是**最新**那份");
+        assert!(
+            max_seq(&c) > first_seq,
+            "新行必须拿到**新的 seq**（就地改 payload 会让已消费过旧 seq 的对端永远看不到这次更新 ✗）"
+        );
+
+        // ② 别的实体各留各的。
+        record_change(&c, "page", "p2", "upsert", Some("x"), 4).unwrap();
+        assert_eq!(count(&c), 2);
+
+        // ③ **已推送的那条不许被并掉**：游标推到当前 max ⇒ 再记两条 ⇒ 只有未推送的那条被并。
+        let cur = max_seq(&c);
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, server_url, last_pushed_seq) VALUES ('ws-1','http://x/sync',?1)",
+            [cur],
+        )
+        .unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v4"), 5).unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v5"), 6).unwrap();
+        assert_eq!(
+            count(&c),
+            3,
+            "已推送的 v3 要留着（服务端/对端还要按序消费它 ✗）；v4 未推送 ⇒ 被 v5 并掉；外加 p2"
+        );
+
+        // ④ 墓碑（delete）不许被并掉 —— 它没有 payload，是另一类信息。
+        record_change(&c, "page", "p1", "delete", None, 7).unwrap();
+        assert_eq!(count(&c), 4, "delete 是墓碑，不许并");
+
+        // ⑤ 别人设备写的行**一个字都不许动**（中继进来的账 ✗）。
+        c.execute(
+            "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at)
+             VALUES ('peer-dev', 1, 'page', 'p1', 'upsert', 'peer-v1', 8)",
+            [],
+        )
+        .unwrap();
+        record_change(&c, "page", "p1", "upsert", Some("v6"), 9).unwrap();
+        let peer_rows: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM changes WHERE device_id = 'peer-dev'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(peer_rows, 1, "别人的行不许被本机的合并删掉");
+        assert_eq!(payload_of(&c, "p1"), "v6");
     }
 
     /// ★ 与前端 `crdt/claimClient.ts` 的三条口径成对（两侧各一份判据、同一套语义）：
@@ -6188,7 +6610,10 @@ mod tests {
                  space_id TEXT NOT NULL DEFAULT '',
                  last_pushed_seq INTEGER NOT NULL DEFAULT 0,
                  last_pulled_seq INTEGER NOT NULL DEFAULT 0,
-                 sync_attachments INTEGER NOT NULL DEFAULT 1
+                 sync_attachments INTEGER NOT NULL DEFAULT 1,
+                 -- ⭐ 2026-10-08 补：`db.rs::meta_migrate` 已有这一列（配对暗号 ✓），
+                 --   夹具少它 ⇒ 想验「个人空间直连」的用例**一行都写不进去** ✗（本注释上一条就是同族教训 ✓）。
+                 mesh_room TEXT NOT NULL DEFAULT ''
              );",
         )
         .unwrap();

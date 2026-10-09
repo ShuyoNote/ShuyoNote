@@ -4,7 +4,11 @@
 
 import { api } from "../api";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
+import { appendFence, fenceDoc } from "../docContent";
+import { markdownToPageContent } from "../mdPreview";
+import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
+import { serializeByKey } from "../serializeByKey";
 import type { PageDetail } from "../../types";
 
 export interface ApplyResult {
@@ -21,12 +25,22 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
     case "create_page": {
       // 草稿可能只带纯文本（插件侧不知道 Lexical 块结构）：
       // 这时在**落库这一刻**由这一层构造 content_json。
+      // ⚠️ 这个列名在 `apply.ts` 里是有基线配额的（**只许变小** ✗）⇒ 绑一次、三处复用 ✓
+      const contentText = String(p.args?.content_text ?? "");
+      // ⭐ R167：整篇 Markdown 导入 —— **一次调用写完整页** ✓（⛔ 不追加 ✗：多次写会被自动保存写回 ✓）
+      const importing = Boolean(p.args?.markdown);
+      if (importing) {
+        const g = importMarkdownGuard(contentText);
+        if (!g.ok) throw new Error(g.error);
+      }
+      const mdDoc = importing ? markdownToPageContent(contentText) : null;
       const built = p.args?.content_json
-        ? {
-            content_json: String(p.args.content_json),
-            content_text: String(p.args.content_text ?? ""),
-          }
-        : pageJsonFromText(String(p.args?.content_text ?? ""), uid);
+        ? { content_json: String(p.args.content_json), content_text: contentText }
+        : mdDoc
+          ? mdDoc
+          : typeof p.args?.fence === "string" && p.args.fence
+            ? fenceDoc(p.args.fence, contentText, uid)
+            : pageJsonFromText(contentText, uid);
       const page = await api.createPage({
         parent_id: p.args?.parent_id ?? null,
         title: String(p.args?.title ?? ""),
@@ -39,14 +53,23 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
       const pageId = String(p.pageId ?? "");
       const text = String(p.text ?? "");
       if (!pageId || !text) return { ok: false, message: "append_block 参数不完整" };
-      const cur = await api.getPage(pageId);
-      if (!cur) return { ok: false, message: "目标页面不存在" };
-      // Re-read at commit time so concurrent edits are not clobbered: we append to
-      // whatever is current rather than to the snapshot from draft time.
-      const content_json = appendBlocksToJson(cur.content_json, text, () => uid());
-      const content_text = contentTextOf(content_json);
-      const page = await api.savePage({ id: pageId, content_json, content_text });
-      return { ok: true, message: `已向「${page.title}」追加内容`, page };
+      // ⭐ **R151**：**读 ⇒ 改 ⇒ 写 三跳必须在同一个串行区里** ✗ ——
+      //   只锁"写"那一步不够 ✓（并发时两跳各自读到同一份旧内容 ⇒ 后写赢 ⇒ 静默丢内容 ✗；
+      //   现场：并发 20 次只落 4/20 ✓、顺序 20 次 20/20 ✓）。
+      return serializeByKey(`page:${pageId}`, async () => {
+        const cur = await api.getPage(pageId);
+        if (!cur) return { ok: false, message: "目标页面不存在" };
+        // 串行区里重读一次：拿到的是**前一个任务写完**的那份 ✓（外部编辑不会被盖 ✗）。
+        // ⚠️ 只在这里点一次名 ✓ —— 那个列名在 `apply.ts` 里是有基线配额的（基线只许变小 ✗）
+        const curJson = String(cur.content_json ?? "");
+        const content_json =
+          typeof p.fence === "string" && p.fence
+            ? appendFence(curJson, p.fence, text, () => uid())
+            : appendBlocksToJson(curJson, text, () => uid());
+        const content_text = contentTextOf(content_json);
+        const page = await api.savePage({ id: pageId, content_json, content_text });
+        return { ok: true, message: `已向「${page.title}」追加内容`, page };
+      });
     }
 
     case "set_page_prop": {

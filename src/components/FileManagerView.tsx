@@ -564,7 +564,11 @@ export function FileManagerView() {
   // 点击任意处关闭右键菜单。
   useEffect(() => {
     if (!ctxMenu.row) return;
-    const onMouseDown = () => closeCtx();
+    // ⭐ 只认左键 ✓ —— 右键不该把菜单关掉（否则「闪一下」✗）；右键的开菜单在各行自己的 mousedown 里 ✓。
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      closeCtx();
+    };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [ctxMenu.row]);
@@ -900,6 +904,12 @@ export function FileManagerView() {
                     if (e.ctrlKey || e.metaKey || e.shiftKey) toggleSelect(row.key);
                     else openRow(row);
                   }}
+                  onMouseDown={(e) => {
+                    // ⭐ 同侧栏那条：**右键在 mousedown 就开** ✓（窗口未激活时第一次右键会被系统吃掉 ✗）。
+                    if (e.button !== 2) return;
+                    e.preventDefault();
+                    setCtxMenu({ x: e.clientX, y: e.clientY, row });
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setCtxMenu({ x: e.clientX, y: e.clientY, row });
@@ -1013,6 +1023,12 @@ export function FileManagerView() {
                 // 窄屏没有 hover、右键也只能靠长按：列表模式此前**根本没有**右键入口
                 // （只有网格那一支接了 `onContextMenu`）。手机上行内那六个 20px 小按钮
                 // 换成下面那个 `⋯`，其余动作全在这一份面板里。
+                onMouseDown={(e) => {
+                  // ⭐ 同侧栏那条：**右键在 mousedown 就开** ✓（窗口未激活时第一次右键会被系统吃掉 ✗）。
+                  if (e.button !== 2) return;
+                  e.preventDefault();
+                  setCtxMenu({ x: e.clientX, y: e.clientY, row });
+                }}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setCtxMenu({ x: e.clientX, y: e.clientY, row });
@@ -1031,18 +1047,10 @@ export function FileManagerView() {
                     className="fm-name-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      // ⚠️ **2026-10-04 加**：⭐ 用 `detail` **吃掉双击的第一击** ✓ ——
-                      //    `openRow` 是"打开文件"✓，而双击要改名 ✗；不挡的话双击会**先打开一次** ✓。
-                      //    ⭐ 比"单击延迟 250ms"好：⭐ 单击**不变慢** ✓、也不引入定时器 ✓。
+                      // ⚠️ **2026-10-08 改**：双击改名**已取消** ✓ ⇒ 这条守卫现在只为「双击也只打开一次」✓
+                      //    （第一击打开 ✓、第二击被 `detail` 吃掉 ✓）。⭐ 比"单击延迟 250ms"好：单击**不变慢** ✓。
                       if (e.detail > 1) return;
                       openRow(row);
-                    }}
-                    onDoubleClick={(e) => {
-                      // ⭐ owner 要的：⭐ **双击文件名 ⇒ 改名** ✓。
-                      //    ⚠️ 只挂在**文件名**上（不是整行）✗ —— 行上单击是"选中"✓、双击另有含义 ✓，
-                      //    而且这样"单击打开"的手感一点不变 ✓。改名逻辑复用既有的 `renameRow` ✓。
-                      e.stopPropagation();
-                      renameRow(row);
                     }}
                   >
                     <span className="fm-kind-icon">
@@ -1202,7 +1210,18 @@ export function FileManagerView() {
         return (
           <div
             className={`fm-ctx${isSheet ? " is-sheet" : ""}`}
-            style={isSheet ? undefined : { left: ctxMenu.x, top: ctxMenu.y }}
+            style={
+                    isSheet
+                      ? undefined
+                      : {
+                          // ⭐ **2026-10-08（owner：「右键菜单不用被裁剪」✓）**：原本是**裸的**
+                          //   left/top ✗ ⇒ 靠边右键时菜单会**跑出视口**、被裁 ✓ ⇒ 四边都夹 ✓。
+                          //   ⚠️ 用保守常量（菜单 min-width 196 ✓／条目数不定 ⇒ 高度按 320 估 ✓）：
+                          //   宁可"靠上一点"也不许溢出 ✓（要精确就得拿 ref 量 ✓ 属下一步 ✓）。
+                          left: Math.min(Math.max(8, ctxMenu.x), Math.max(8, window.innerWidth - 196 - 8)),
+                          top: Math.min(Math.max(8, ctxMenu.y), Math.max(8, window.innerHeight - 320 - 8)),
+                        }
+                  }
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >

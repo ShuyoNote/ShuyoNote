@@ -16,27 +16,24 @@ import { isDesktopPlatform, platform } from "../lib/platform";
 import { inlineMd } from "../lib/inlineMd";
 import { refreshVault } from "../lib/vault";
 
-const KIND_LABEL: Record<SpaceKind, string> = {
-  personal: "个人空间",
-  team: "团队空间",
-  // ⚠️ **2026-10-04 去掉**「未分类」这一档（owner：未分类按个人空间处理）—— ⭐ 存量老空间读出来就是个人 ✓
-};
+// ⚠️ **2026-10-08 去掉**：这里原来有个 `KIND_LABEL: Record<SpaceKind, string>`（个人空间／团队空间）——
+//   它只服务名字行上那枚**徽章**，而徽章与下面的下拉是**同一个字段的两份显示** ⇒ 一起删了 ✓
+//   （owner：「圈红的控件是不是可以去掉」✓；⛔ 别加回来，判据钉着那枚徽章必须不存在 ✓）。
 
 /**
- * ★ **开启加密前必须让用户读到的那句真话**（owner 2026-09-25 拍板 A2）。
+ * ★ "开启加密前先勾一下"这个前置：**为什么还在**（`ackNoRecovery`，owner 2026-09-25 拍板 A2）。
  *
- * 口径来自零知识：主口令**只在本机**派生出钥匙，我们没有它、也没有第二把备份钥匙 ⇒
+ * 零知识：主口令**只在本机**派生出钥匙，我们没有它、也没有第二把备份钥匙 ⇒
  * 「忘记口令」不是"重置一下"，是**这个空间的数据永久打不开**。
  *
- * ⚠️ 这句话**必须说在"开启"那一刻**。锁定屏（`LockScreen`）也会说，但那时候用户已经记不住了
- * —— 只在锁定屏说，等于**事后通知**。`docs/identity-privacy-roadmap.md` 早就写着"开启前必须勾选确认"，
- * 而代码里一直没有这个勾选（随旧的应用级加密那节一起丢了）⇒ 这一条把它补回来。
- *
- * 抽成常量是为了让判据（`SpacePrivacySection.test.ts`）**钉住这句话本身** —— 改文案要连着判据一起改
- * （否则它悄悄变回一句轻飘飘的提示，"用户真的被告知了"这件事就没有判据了）。
+ * ⚠️ ⭐ **2026-10-08（owner：「去掉这个文案」✓）**：原先这里还有一条导出常量
+ * `PASSPHRASE_NO_RECOVERY`（红字一整句「主口令忘了就**真的打不开了**：……没有找回、没有重置、
+ * 没有客服。」），**已删** —— 那句文案按 owner 的要求去掉，⛔ 不许有人顺手加回来。
+ * ⚠️ **但勾选前置（`ackNoRecovery`）保留**：它的标签「我已保管好主口令，知道它丢了就打不开」
+ * 本身就是那句话的意思 ⇒ 去掉的只是那句**红字文案**，不是"先确认再开启"这件事。
+ * 判据（`SpacePrivacySection.test.ts` ⑪⑫）两半都钉着：那句红字**不许再出现** ✓ ＋
+ * **没勾时「开启加密」仍是灰的、点了也不调 api** ✓。
  */
-export const PASSPHRASE_NO_RECOVERY =
-  "主口令忘了就**真的打不开了**：钥匙只在本机派生，我们没有它，也没有第二把备份钥匙——没有找回、没有重置、没有客服。";
 
 /**
  * 同步面板里的「空间隐私」一节。
@@ -207,7 +204,11 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
               <span className="space-privacy-name" title={v.space_id}>
                 {nameOf ? nameOf(v.space_id) : v.space_id}
               </span>
-              <span className={`space-privacy-kind is-${v.kind || "unknown"}`}>{KIND_LABEL[v.kind]}</span>
+              {/* ⭐ **2026-10-08 去掉**（owner：「圈红的控件是不是可以去掉」✓）：这里原来还有一枚
+                  「个人空间／团队空间」**徽章**（`.space-privacy-kind`）✗ —— 它与下面那个下拉
+                  （`aria-label="空间分类"`，`value={v.kind}`）是**同一个字段的两份显示** ⇒ 纯重复 ✓。
+                  ⚠️ 旁边的 `.space-privacy-enc`（明文／已加密）**留着** —— 下拉里没有加密状态，
+                  它不是重复 ✓。⛔ 别把那枚徽章加回来（判据钉着 `querySelector(".space-privacy-kind") === null`）。 */}
               <span className="space-privacy-enc">{encrypted ? "已加密" : "明文"}</span>
               {/* ⚠️ **2026-10-04 去掉**（owner 选的方向：那一块整个拿掉）：
                   ⭐ 原来这里有个「裁决」徽标（✅ 可以绑同步 / ⛔ 不能绑同步 / ⚠️ 闸门没管到）✗ ——
@@ -246,9 +247,10 @@ export function SpacePrivacySection({ nameOf }: { nameOf?: (id: string) => strin
                 </button>
               ) : (
                 <>
-                  {/* ★ A2：**先读到、再点**。这一行与那个勾选框是"开启加密"的前置 ——
-                      没勾上时按钮是灰的（`disabled`），而不是点了之后弹一个提示（弹窗会被一路点掉）。 */}
-                  <div className="space-privacy-gate is-block">{inlineMd(PASSPHRASE_NO_RECOVERY)}</div>
+                  {/* ★ A2：**先勾、再点** —— 那个勾选框是"开启加密"的前置（`ackNoRecovery`）。
+                      ⚠️ 2026-10-08（owner：「去掉这个文案」✓）：原先这里上面还有一行**红字提醒**
+                      （`PASSPHRASE_NO_RECOVERY`），已删 —— 那句真话现在只由勾选框的标签承担 ✓
+                      （⛔ 别把那行红字加回来：判据明确钉着"它不许再出现"）。 */}
                   <label className="space-privacy-overwrite">
                     <input
                       type="checkbox"

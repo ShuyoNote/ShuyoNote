@@ -350,6 +350,43 @@ async function waitFor(page, selector, timeoutMs = 20000) {
   }
 }
 
+/**
+ * ⭐ **2026-10-08 加**：用**命令面板**打开一个主视图（`Ctrl+K` → 输入关键字 → 点那一条）。
+ *
+ * 为什么要它：owner 2026-10-08 把竖条上**「系统看板」那颗一级入口去掉了**（原话：「去掉侧边工具栏中
+ * 系统看板的一级入口图标」✓）⇒ 竖条**不再是**看板的入口 ✗，改按 title 找它必然找不到元素、整条用例假红。
+ * ⚠️ 而看板现在**只能从命令面板打开**（`view.board`，「打开看板」✓）⇒ 这里走的就是**用户现在真走的那条路** ✓
+ * （⛔ 不是 `import("/src/store/view.ts")` 塞状态：本文件 §`checkProperties` 记着那条坑 ——
+ *  开发服务器给模块加 `?t=` 缓存键时，脚本拿到的是**另一个 store 实例** ⇒ 假红 ✓）。
+ */
+async function openViewViaPalette(page, keyword) {
+  await waitForApp(page);
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyK");
+  await page.keyboard.up("Control");
+  await sleep(500);
+  const typed = await safeEval(page, (kw) => {
+    const input = document.querySelector(".palette-input");
+    if (!input) return false;
+    // React 受控输入：必须走**原生 value setter** ＋ 派发 input 事件，直接赋 `.value` 不会触发 onChange ✗
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(input, kw);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }, keyword);
+  if (!typed) return false;
+  await sleep(500);
+  const clicked = await safeEval(page, (kw) => {
+    const items = Array.from(document.querySelectorAll(".palette-item"));
+    const hit = items.find((el) => (el.textContent || "").includes(kw));
+    if (!hit) return false;
+    hit.click();
+    return true;
+  }, keyword);
+  await sleep(1600);
+  return clicked;
+}
+
 /** 打开某个主视图：竖条 → 活动图标（**按 title 选，不按序号**）。 */
 async function openView(page, title) {
   await waitForApp(page);
@@ -1749,7 +1786,9 @@ async function main() {  const executablePath = findChrome();
   // 视图清单：name → 打开方式 + 该视图**必须成立**的额外判据。
   const VIEWS = [
     { name: "notes", label: "笔记（编辑器）", open: (p) => openView(p, "笔记") },
-    { name: "board", label: "看板", open: (p) => openView(p, "系统看板") },
+    // ⭐ 2026-10-08：竖条上那颗「系统看板」入口已按 owner 要求去掉 ⇒ 改走**命令面板**
+    //   （`Ctrl+K` →「打开看板」）—— 那是去掉竖条入口之后**唯一**的入口 ✓（见 `openViewViaPalette`）
+    { name: "board", label: "看板", open: (p) => openViewViaPalette(p, "打开看板") },
     { name: "graph", label: "关系图", open: (p) => openView(p, "关系图") },
     { name: "files", label: "文件（列表）", open: (p) => openView(p, "文件管理") },
     {

@@ -744,6 +744,25 @@ function recordChange(
       : payload;
   const payloadStr = augmented == null ? "" : typeof augmented === "string" ? augmented : JSON.stringify(augmented);
   const did = syncDeviceId();
+  // ⭐ R139（2026-10-08「治根」）：**先并掉自己写下、且还没推出去的同实体 upsert**。
+  //   与桌面 `sync::record_change` **同一条规则、同一套边界**（两边各一份实现，判据
+  //   `webRecordChangeParity.test.ts` 钉着"两侧同形" ✓）：
+  //   ① **只删自己设备的** —— 中继/别人的行不许动 ✗；
+  //   ② **只删 `id > last_pushed_seq`** —— 已推送的服务端还要按序消费它 ✗；没配同步（游标 0）
+  //      ⇒ 全都算未推送 ⇒ **每个实体只留最新一份** ✓（这就是那条 672 MB 的形状 ✓）；
+  //   ③ **只并 upsert** —— delete 是墓碑、语义不同、体积为 0，不许并 ✗。
+  // ⚠️ 手法是「删旧行 ＋ 插新行」（新的 `id`）⇒ **对端游标语义不变**；就地改 payload 会让
+  //   已经消费过那条 id 的对端**永远看不到**这次更新 ✗。
+  if (op === "upsert") {
+    const prof = store.query<{ last_pushed_seq: number }>(
+      "SELECT last_pushed_seq FROM sync_profiles WHERE ws_id = (SELECT id FROM workspaces LIMIT 1)",
+    );
+    const lastPushed = prof[0]?.last_pushed_seq ?? 0;
+    store.run(
+      "DELETE FROM changes WHERE entity = ? AND entity_id = ? AND op = 'upsert' AND device_id = ? AND id > ?",
+      [entity, entityId, did, lastPushed],
+    );
+  }
   store.run(
     "INSERT INTO changes (device_id, device_seq, entity, entity_id, op, payload, updated_at) VALUES (?, 0, ?, ?, ?, ?, ?)",
     [did, entity, entityId, op, payloadStr, updatedAt],
@@ -753,6 +772,39 @@ function recordChange(
     // device_seq mirrors local auto-increment seq (unique per device).
     store.run("UPDATE changes SET device_seq = ?1 WHERE id = ?1", [row.id]);
   }
+}
+
+/**
+ * **导出快照瘦身**：只留"还没推出去的"变更 —— 与桌面 `workspace_io.rs::trim_changes_for_export`
+ * **同一条规则、同一套边界**（判据 `webRecordChangeParity.test.ts` 钉两侧同形 ✓）：
+ *   · `sync_profiles` 没这行 / `server_url` 空 / 游标 0 ⇒ 这个空间**不走服务端**
+ *     ⇒ 快照里**整张 `changes` 都不带** ✓（实测 owner 那个空间就是这一档）；
+ *   · 有档案 ⇒ 只丢 `id <= last_pushed_seq`（与 `readOutbox` 同一个值 ✓）。
+ * ⛔ **只动导出用的副本**（tempStore）—— 活库一行不动 ✓。
+ * ⛔ **不静默**：返回裁掉的行数与字节数，由调用方报进返回值与进度事件 ✓。
+ * 裁完 `VACUUM`（只 DELETE 的话文件体积不会变小 ✗）。
+ */
+async function trimChangeLogForExport(
+  src: SqliteStore,
+  raw: Uint8Array,
+): Promise<{ bytes: Uint8Array; rows: number; bytesDropped: number }> {
+  const prof = src.query<{ last_pushed_seq: number; server_url: string }>(
+    "SELECT last_pushed_seq, server_url FROM sync_profiles WHERE ws_id = (SELECT id FROM workspaces LIMIT 1)",
+  )[0];
+  const hasServer = !!prof && String(prof.server_url ?? "").trim() !== "" && Number(prof.last_pushed_seq ?? 0) > 0;
+  const lastPushed = Number(prof?.last_pushed_seq ?? 0);
+
+  const tmp = new SqliteStore();
+  await tmp.init();
+  await tmp.restore(raw);
+  const sum = () =>
+    tmp.query<{ n: number; b: number }>("SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(payload)), 0) AS b FROM changes")[0] ?? { n: 0, b: 0 };
+  const before = sum();
+  if (hasServer) tmp.run("DELETE FROM changes WHERE id <= ?", [lastPushed]);
+  else tmp.run("DELETE FROM changes");
+  tmp.run("VACUUM");
+  const after = sum();
+  return { bytes: tmp.snapshot(), rows: before.n - after.n, bytesDropped: before.b - after.b };
 }
 
 // Read outbox changes after `lastSeq`.
@@ -2263,7 +2315,9 @@ export function makeInvoke(store: SqliteStore) {
     // ---- Graph (nodes from non-deleted pages) ----
     if (cmd === "get_graph") {
       const ws = getActiveWsId();
-      const pages = store.query("SELECT id, title, content_text FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws]) as any[];
+      // ⭐ 2026-10-08：带上 `kind`（与桌面侧 `graph.rs::get_graph` 同形 ✓）—— 知识地图要滤掉目录，
+      //   而在此之前 Web 侧也分不出哪个节点是目录 ⇒「新建文件夹」被当页面列出来 ✗。
+      const pages = store.query("SELECT id, title, content_text, kind FROM pages WHERE workspace_id = ? AND deleted_at IS NULL", [ws]) as any[];
       const tagRows = store.query("SELECT pt.page_id, t.name FROM page_tags pt JOIN tags t ON t.id = pt.tag_id") as any[];
       const tagsByPage = new Map<string, string[]>();
       for (const tr of tagRows) {
@@ -2278,7 +2332,14 @@ export function makeInvoke(store: SqliteStore) {
       }
       const nodeById = new Map<string, any>();
       const gPages = pages.map((p: any) => {
-        const meta: any = { id: p.id, title: p.title, tags: tagsByPage.get(p.id) ?? [], props: propsByPage.get(p.id) ?? [] };
+        const meta: any = {
+          id: p.id,
+          title: p.title,
+          tags: tagsByPage.get(p.id) ?? [],
+          props: propsByPage.get(p.id) ?? [],
+          // 缺省当页面（与桌面侧的 `COALESCE(NULLIF(kind,''),'page')` 同一口径 ✓）
+          kind: p.kind || "page",
+        };
         nodeById.set(p.id, meta);
         return meta;
       });
@@ -3698,7 +3759,18 @@ export function makeInvoke(store: SqliteStore) {
         emitPageEvent("workspace-progress", { phase: "export", done, total: totalPhase, bytes, message });
 
       emit(0, "准备导出…");
-      const dbBytes = store.snapshot();
+      // ⭐ R138/R139（owner 2026-10-08：先拍板「A 导出时不带历史变更」，后追加「治根」）：
+      //   **导出只带"还没推出去的"变更** —— 与桌面 `workspace_io.rs::export_snapshot` **同一条规则**
+      //   （判据 `webRecordChangeParity.test.ts` 钉两侧同形 ✓）。
+      //   动机（实测那份真包）：`changes.payload` 占 **91%**（672 MB / 全库 739 MB），而正文只有 1.9 MB ✗。
+      //   ⛔ 只动**导出用的副本**（tempStore）—— **绝不碰活库** ✗（那些行还兼着 mesh 中继的 outbox ✓）。
+      //   ⛔ 不静默：裁掉多少条/多少字节要如实报进返回值与进度事件 ✓。
+      const rawDb = store.snapshot();
+      const trim = await trimChangeLogForExport(store, rawDb);
+      const dbBytes = trim.bytes;
+      if (trim.rows > 0) {
+        emit(0, `导出快照已瘦身：裁掉 ${trim.rows} 条同步日志 / ${Math.round(trim.bytesDropped / 1048576)} MB`, dbBytes.length);
+      }
       // workspace.json metadata (same shape the desktop importer expects).
       const metaBytes = new TextEncoder().encode(JSON.stringify({ id: ws.id, name: ws.name ?? "", theme: ws.theme ?? "", icon: ws.icon ?? "" }));
       emit(1, "打包空间数据库…", dbBytes.length);
@@ -3728,7 +3800,15 @@ export function makeInvoke(store: SqliteStore) {
       if (typeof document !== "undefined") downloadBytes(name, zip, "application/zip");
       // Register so a same-session re-import (and the Node smoke test) can read it.
       fileRegistry.set(name, { bytes: zip, mime: "application/zip", name });
-      return { path: name, size: zip.length, pages, attachments: candidates.length } as T;
+      return {
+        path: name,
+        size: zip.length,
+        pages,
+        attachments: candidates.length,
+        // ⭐ R138/R139：如实报出"导出时裁掉了多少"（与桌面 `WorkspaceExportResult` 同两格 ✓）。
+        trimmed_changes: trim.rows,
+        trimmed_change_bytes: trim.bytesDropped,
+      } as T;
     }
     if (cmd === "wiki_export_pages" || cmd === "export_wiki") {
       // ⚠️ 两条命令**共用这一次查询**：`wiki_export_pages` 给桌面端取数（Rust 侧同名命令），

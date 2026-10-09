@@ -721,6 +721,19 @@ export const GATES = [
     flaky: true,
     incident: "v1.84.1：按静态引用过滤删旧文件，把 sql.js wasm / pdf worker 删了 ⇒ 页面照开、DB 初始化失败",
   },
+  {
+    id: "check-editor-table-gesture",
+    group: "browser",
+    label: "表格拖选不报 Lexical #335（真实 Chromium ＋ 真指针）",
+    cmd: ["pnpm build:web", "node scripts/check-editor-table-gesture.mjs"],
+    baseline: true,
+    counters: "auto",
+    flaky: true,
+    // ⚠️ incident 必须写**真事**：owner 2026-10-08 贴来 1.92.6 生产控制台日志，`#335` 连发 6 次。
+    // 而真正抓到的那一层是：2026-10-01 的修复**只打在 `LexicalTable.dev.*`**，线上走 `production` ⇒ 从没生效 ✗。
+    incident:
+      "表格里拖选单元格就报 `Lexical error #335`（`tableObserver not found for tableKey`）—— owner 2026-10-08 的生产日志连发 6 次；真因是那次修复**只打在 dev 产物**、而线上/发布版走 `production` ⇒ 从没生效（本门禁跑真构建，只修 dev 的回归会当场变红）",
+  },
 
   // ---- mobile（需先起 dev server）----
   // browser / mobile 这两组要真实 Chromium（+ dev server），是仓库里唯一有 flake 风险的档。
@@ -775,7 +788,16 @@ export const GATES = [
     // 登记 ≠ 通过：它只让「绿里面有跳过」这件事**有名字**、并在严格模式里豁免这一条。
     // 目标仍是**在有 Tongsuo 的环境里真跑**（CI 装 Tongsuo 是一个小项目；先向 macOS/AMD 要一次那 9 项的读数）。
     // ⚠️ **发版说明必须记「未验」** —— 本版不得把这一格当成「跨实现一致已验」的证据。
-    selfSkipOk: "CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」；**发版说明须记「未验」**）；目标是在有 Tongsuo 的环境真跑",
+    // ⭐ **2026-10-08 更新**：它**已经真跑过一次**了 —— 手动工作流
+    //   `gm-conformance (Tongsuo cross-implementation, manual)` **run #4**（`dev@cf66d501`，工件 `gm-conformance-4`）：
+    //   逐字读数 `gm-conformance: ✅ 通过 —— 跑成 12 个用例（含跨实现对拍）`，**跳过项 0**（`!` 行 = 0），
+    //   对拍另一方 `Tongsuo 8.5.0 / OpenSSL 3.5.4` ✓ ⇒ 已发布的 v1.92.6 发版说明那行「本版未对拍」
+    //   **已改成「本版已对拍（run #4）」** ✓（RELEASING.md §六 那条清单项随之勾掉）。
+    //   ⚠️ 但下面这条 selfSkipOk 仍成立：**日常 CI 不装 Tongsuo** ⇒ 平时那 9 项照旧自报跳过（登记 ≠ 通过 ✓）。
+    //   ⚠️ 另记一笔：那条 workflow 此前**两跑两红**（run #1/#2），真因是它自己写死了 `install/lib/libcrypto.a`
+    //   （runner 上 Tongsuo 装进 `lib64/`）＋ 把 `SHUYONOTE_TONGSUO_OPENSSL` 指成前缀而非 CLI
+    //   ⇒ **对拍从没跑起来过**；三处已修（`cf66d501`），并把"跳过项"从打印变成判据 ✓。
+    selfSkipOk: "日常 CI 未装 Tongsuo ⇒ 跨实现对拍 9 项跳过（R1–R4 已覆盖「实现没被改坏」）。⭐ 2026-10-08 已用手动工作流真跑过一次（run #4，0 跳过）⇒ v1.92.6 发版说明已记「已对拍」；平时仍按跳过登记 ✓",
   },
   {
     id: "rust-no-sm-crypto",
@@ -900,6 +922,7 @@ export const DEFAULT_GROUP_FORBIDDEN = [
   "check-pdf-reload",
   "check-panel-layout",
   "check-web-build",
+  "check-editor-table-gesture",
   "build:web",
   "verify-mobile-layout",
   "verify-mobile-overlays",

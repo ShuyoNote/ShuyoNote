@@ -17,7 +17,7 @@ pub struct Capability {
     pub rust: &'static str,
 }
 
-pub const API_VERSION: &str = "1.0.0";
+pub const API_VERSION: &str = "1.1.0";
 pub const API_MAJOR: u32 = 1;
 
 pub const CAPABILITIES: &[Capability] = &[
@@ -45,6 +45,7 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "tags.add", kind: "write", scope: "current-space", permission: Some("write:tags"), since: "1.0.0", mediate: "draft", rust: "cap_tags_add" },
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
     Capability { id: "files.export", kind: "write", scope: "app", permission: Some("export:files"), since: "1.0.0", mediate: "draft", rust: "cap_files_export" },
+    Capability { id: "pages.importMarkdown", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_import_markdown" },
 ];
 
 /// 权限清单（manifest 校验 + 旧 manifest 无 permissions 时的基线授权 + 安装界面展示用）。

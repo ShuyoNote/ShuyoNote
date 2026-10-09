@@ -7,6 +7,20 @@ import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
 import { useNotes } from "../store/notes";
 import { PluginMenuItems } from "./PluginMenuItems";
+
+/** ⭐ **2026-10-08（owner 截图实测）**：一次只许有**一份**侧栏菜单 ✓ ——
+ *  右键开菜单前先广播一次，让**别行**的菜单自己关掉 ✓。
+ *  ⚠️ 来由：为了治"右键开着时闪一下"✗，我把"点别处就关"的监听改成**只认左键** ✗ ⇒
+ *  于是**右键另一行**时前一行的菜单不再被关 ✓ ⇒ **两个菜单同时留着** ✗（截图那一幕 ✓）。
+ *  ⚠️ 刻意**不用 Escape** 那条路 ✗：Escape 是全局快捷键，会误关别的浮层 ✓。 */
+const TREE_MENUS_CLOSE_EVT = "shuyo:close-tree-menus";
+function closeOtherTreeMenus() {
+  try {
+    window.dispatchEvent(new Event(TREE_MENUS_CLOSE_EVT));
+  } catch {
+    /* ignore */
+  }
+}
 import { toast } from "../store/toast";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
@@ -278,13 +292,21 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
   //    `menuFile` 变成 null ⇒ ⭐ 那一项的动作就丢了 ✓（见下面菜单容器上的 onMouseDown ✓）。
   useEffect(() => {
     if (!menuOpen) return;
-    const onDown = () => closeMenu();
+    // ⭐ 只认左键 ✓（同页面行那条）。
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      closeMenu();
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeMenu();
     };
+    // ⭐ 别行开菜单 ⇒ 这一行自己关掉 ✓（一次只许一份 ✓）
+    const onCloseAll = () => closeMenu();
+    document.addEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      document.removeEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
@@ -305,11 +327,23 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           title={f.name}
           onClick={() => openFile(f)}
           // ⭐ 右键：与页面行同一套菜单（同一个 `.tree-node-menu` 样式 ✓），`preventDefault` 挡掉系统菜单 ✓。
+          onMouseDown={(e) => {
+            // ⭐ 同页面行那条：**右键在 mousedown 就开** ✓（窗口未激活时第一次右键会被系统吃掉 ✗）。
+            if (e.button !== 2) return;
+            e.preventDefault();
+            e.stopPropagation();
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（否则留两份 ✓）
+            setMenuAnchor({ x: e.clientX, y: e.clientY });
+            setMenuFile(f);
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
+            setMenuOpen(true);
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
             setMenuAnchor({ x: e.clientX, y: e.clientY });
             setMenuFile(f);
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
             setMenuOpen(true);
           }}
         >
@@ -325,7 +359,15 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           className="tree-node-menu"
           ref={menuRef}
           // ⚠️ 用 `menuTop` 而不是 `menuAnchor.y` ✗ —— 前者已经过"靠底部就上翻"的校正 ✓（见上面那个 effect ✓）。
-          style={{ top: menuTop, left: Math.max(8, (menuAnchor?.x ?? 0) - 150) }}
+          style={{
+              top: menuTop,
+              // ⭐ **2026-10-08（owner：「右键菜单不用被裁剪」✓）**：**左右都夹** —— 原来是 `Math.max(8, x-150)`
+              //   只夹左边 ✗ ⇒ 靠右的行会把菜单**挤出视口右边** ⇒ 被裁 ✓。菜单 min-width＝196 ✓（+边距 8 ✓）。
+              left: Math.min(
+                Math.max(8, (menuAnchor?.x ?? 0) - 150),
+                Math.max(8, window.innerWidth - 196 - 8)
+              ),
+            }}
           onClick={(e) => e.stopPropagation()}
           // ⚠️ 必须挡 `mousedown` ✗ —— 上面那个"点别处就关"的监听挂在 `document` 上 ✓，
           //    不挡的话点菜单项会先触发它 ⇒ `menuFile` 被清空 ⇒ ⭐ 动作丢失 ✓。
@@ -432,13 +474,22 @@ function TreeItem({
   useEffect(() => {
     if (!menuOpen && !copyOpen) return;
     const onDown = (e: MouseEvent) => {
+      // ⭐ 只认**左键** ✓：右键不该触发「点别处就关」✗ —— 否则菜单先被关，
+      //   而 contextmenu 若没来（窗口未激活那一下 ✓）就成了「闪一下」✗。
+      if (e.button !== 0) return;
       const t = e.target as HTMLElement;
       if (t.closest(".tree-node-menu, .tree-copy-panel, .tree-more")) return;
       setMenuOpen(false);
       setCopyOpen(false);
     };
+    // ⭐ 别行开菜单 ⇒ 这一行自己关掉 ✓（一次只许一份 ✓）
+    const onCloseAll = () => setMenuOpen(false);
+    document.addEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    return () => {
+      document.removeEventListener(TREE_MENUS_CLOSE_EVT, onCloseAll);
+      document.removeEventListener("mousedown", onDown);
+    };
   }, [menuOpen, copyOpen]);
 
   const isFolder = node.kind === "folder";
@@ -527,6 +578,18 @@ function TreeItem({
         className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragSource ? "tree-row-dragging" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         onMouseDown={(e) => {
+          // ⭐ 2026-10-08（owner 实测「要点两下才出来」✗）：**右键在 mousedown 就开菜单** ✓ ——
+          //   窗口未激活时，第一次右键常被系统只用来「激活窗口」⇒ contextmenu 那一击不来 ⇒ 要点两下 ✗。
+          //   contextmenu 那半**保留** ✓（有些输入设备只发它 ✓）；两边设同一份 state ⇒ 先到的生效、后到的幂等 ✓。
+          if (e.button === 2) {
+            e.preventDefault();
+            e.stopPropagation();
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（否则留两份 ✓）
+            setMenuAnchor({ x: e.clientX, y: e.clientY });
+            closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
+            setMenuOpen(true);
+            return;
+          }
           // Left-button on a row starts a potential pointer-drag (works in Tauri's
           // WebView where HTML5 drag-and-drop is suppressed by dragDropEnabled).
           if (e.button !== 0) return;
@@ -539,6 +602,7 @@ function TreeItem({
           e.preventDefault();
           e.stopPropagation();
           setMenuAnchor({ x: e.clientX, y: e.clientY });
+          closeOtherTreeMenus(); // ⭐ 先让**别行**的菜单关掉 ✓（一次只许一份 ✓）
           setMenuOpen(true);
         }}
       >
@@ -575,11 +639,9 @@ function TreeItem({
             改成弹窗之后**恒渲染标题** ✓（双击 / 右键菜单那两处都改成调 `startRename()` ✓）。 */}
         <span
           className="tree-title"
-          title="双击重命名"
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            startRename();
-          }}
+          // ⭐ **2026-10-08（owner）**：**双击改名已取消** ✓ ⇒ 改名只走弹窗（右键菜单 / ⋯ 菜单 ✓，
+          //   两处都调 `startRename()` ✓）。提示语也跟着改 ✗ —— 否则它还在教一个已没有的手势 ✓。
+          title="重命名：右键，或用右侧 ⋯ 菜单"
         >
           {node.title || (isFolder ? "新建文件夹" : "未命名")}
         </span>
@@ -599,7 +661,15 @@ function TreeItem({
             ⋯
           </button>
           {menuOpen && (
-            <span className="tree-node-menu" ref={menuRef} style={{ top: menuTop, left: (menuAnchor?.x ?? 0) - 150 }} onClick={(e) => e.stopPropagation()}>
+            <span className="tree-node-menu" ref={menuRef} style={{
+              top: menuTop,
+              // ⭐ **2026-10-08（owner：「右键菜单不用被裁剪」✓）**：这里原本 **完全没有夹** ✗
+              //   ⇒ `x < 150` 的行会算出**负的 left** ✓（探针实测 `x = -66` ✗）⇒ 菜单跑出屏幕、被裁 ✓。
+              left: Math.min(
+                Math.max(8, (menuAnchor?.x ?? 0) - 150),
+                Math.max(8, window.innerWidth - 196 - 8)
+              ),
+            }} onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
                   setMenuOpen(false);
@@ -622,7 +692,12 @@ startRename();
                   const aid = useSpaceStore.getState().activeId;
                   if (!aid) return;
                   try {
-                    await api.copyPageToWorkspace(node.id, aid, node.parent_id ?? null);
+                    // ⭐ **2026-10-08（owner：「文件夹复制到其它空间时，下面的所有东西都要递归复制过去」✓）**：
+          //   这里原来传的是 **node.parent_id** ✗ ＝ **源空间**的父 id —— 而目标空间里没有这一页 ✓
+          //   ⇒ 后端的「目标父页面不存在于目标工作空间」硬校验会**直接拒绝** ✓ ⇒ **套在别的页下面的
+          //   文件夹一个都复制不过去** ✗（后端其实**本来就递归整棵子树** ✓：见 `workspaces.rs:465` 的注释）。
+          //   ⇒ 跨空间复制时**目标父页一律传 null** ✓（落到目标空间**根目录** ✓；子树由后端带过去 ✓）。
+          await api.copyPageToWorkspace(node.id, aid, null);
                     toast(`已复制「${node.title || "未命名"}」为副本`, "success");
                     useNotes.getState().loadPages();
                   } catch (e) {
@@ -671,7 +746,21 @@ startRename();
             </span>
           )}
           {copyOpen && (
-            <div className="tree-copy-panel" style={{ top: menuAnchor?.y ?? 0, left: (menuAnchor?.x ?? 0) - 160 }}>
+            <div
+              className="tree-copy-panel"
+              style={{
+                // ⭐ **2026-10-08（owner：「复制到其它空间弹窗被裁剪了」✓）**：原本 `left = x - 160`
+                //   **完全没夹** ✗ ⇒ 靠左的行（x=84）算出 **-76** ⇒ 面板左边被切 ✓（与右键菜单同一族 ✓）。
+                //   ⇒ 四边都夹 ✓；高度交给 CSS 的 max-height ＋ 滚动 ✓（空间多也不溢出 ✓）。
+                //   ⚠️ 竖向余量按**最坏高度**留 ✓：CSS 的 `max-height: min(60vh, 340px)` ＋ 8 边距 = **348** ✓
+                //      （早先我留 96 ⇒ 判据实测底边溢出 24px ✗：bottom=1234 > 视口 1210 ✓）。
+                top: Math.min(Math.max(8, menuAnchor?.y ?? 0), Math.max(8, window.innerHeight - 348)),
+                left: Math.min(
+                  Math.max(8, (menuAnchor?.x ?? 0) - 160),
+                  Math.max(8, window.innerWidth - 220 - 8)
+                ),
+              }}
+            >
               <div className="tree-copy-title">复制「{node.title || "未命名"}」到…</div>
               {copySpaces.filter((s) => s.id !== copyActive).map((s) => (
                 <button

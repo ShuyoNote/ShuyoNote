@@ -9,6 +9,9 @@ import { useNotes } from "../store/notes";
 export async function applyDraftAndRefresh(payload: unknown): Promise<ApplyResult> {
   const res = await applyDraft(payload);
   const notes = useNotes.getState();
+  // ⭐ R150：**外部写过的页要打标记** ✓ —— 否则那条排在去抖槽里的旧补丁会在约 0.4 秒后
+  //   把它盖回去 ✗（现场读数见 `lib/pendingSave.ts` 的头注 ✓）。
+  if (res.ok && res.page) notes.noteExternalWrite(res.page.id);
   await notes.loadPages();
   if (res.page) {
     if (res.page.id === notes.currentId) {

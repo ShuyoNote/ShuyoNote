@@ -278,6 +278,41 @@ describe("第 3 步：新建段落自动升级成模型段落", () => {
     expect(JSON.stringify(kid.children)).toContain("print(1)");
   });
 
+  it("★ R162：**选区在被替换的那个块里**时，升级成 mermaid 块不许抛（现场就是这一条 ✗）", () => {
+    // 现场（owner 2026-10-08 贴的 Console trace 逐字）：
+    //   Error: updateEditor: selection has been lost because the previously selected nodes have been removed…
+    //     at runAtBlock — BlockInsertPlugin.tsx:171 ← at select — :368
+    // 情形：插入块菜单点「Mermaid 图块」/「代码块」⇒ 代码块刚插进来、**选区就在它里面** ✓
+    // ⇒ 变换把它整块换成 mermaid 块 ⇒ 替换前没搬选区 ⇒ 抛这句 ✓（本文件上方那条注释其实早写着"同一处坑"✗）。
+    const editor = editorWithTransform();
+    let thrown: unknown = null;
+    try {
+      editor.update(() => {
+        const p = $createParagraphNode();
+        p.append($createTextNode("开头一段"));
+        $getRoot().append(p);
+        const code = $createSafeCodeNode("mermaid");
+        code.append($createTextNode("flowchart LR\n  A-->B"));
+        $getRoot().append(code);
+        code.selectStart(); // ⭐ 选区落在**将被替换**的那个块里 ✓（现场形状 ✓）
+      }, { discrete: true });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(String(thrown), "换块时必须把选区一起搬走 ✗ —— 否则抛 selection has been lost ✓").not.toContain(
+      "selection has been lost",
+    );
+    // 而且新图块要真的在 ✓（换块本身没被这次修复弄坏 ✓）
+    const flat: Array<Record<string, unknown>> = [];
+    (rootChildren(editor) as Array<Record<string, unknown>>).forEach(function walk(n: unknown): void {
+      if (!n || typeof n !== "object") return;
+      const rec = n as Record<string, unknown>;
+      if (typeof rec.type === "string") flat.push(rec);
+      for (const v of Object.values(rec)) if (Array.isArray(v)) v.forEach(walk);
+    });
+    expect(flat.filter((n) => n.type === "mermaid")).toHaveLength(1);
+  });
+
   it("★ 语言=mermaid 的代码块 ⇒ 直接升级成 `mermaid` 块（**不再是代码块**）", () => {
     // 2026-10-05：owner 实测"页面识别不了图形"—— 导入的 .md 里 ` ```mermaid ` 全变成
     // **语言=mermaid 的代码块**，编辑器只渲染源码。修法有两处，这是**兜底那处**：

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="首页：三个入口">
+<title>首页：三个入口</title>
+<style>
+text{font-family:-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;}
+.mono{font-family:'SF Mono', 'JetBrains Mono', Consolas, 'Liberation Mono', monospace;}
+.t{fill:#E6E8EB;}.dim{fill:#9CA3AF;}.faint{fill:#6B7280;}
+.acc{fill:#4D8DFF;}.onacc{fill:#0B1220;}.ok{fill:#2BD49B;}.warn{fill:#FFB04D;}.dang{fill:#FF6B6B;}
+.quote{font-style:italic;fill:#9CA3AF;}
+.cred{fill:#F54A45;}.corange{fill:#FF8A1E;}.cgreen{fill:#00B578;}.cblue{fill:#3370FF;}
+</style>
+<rect x="2" y="2" width="386" height="840" rx="44" fill="#17181A" stroke="#3A3C41" stroke-width="2"/>
+<rect x="140" y="14" width="110" height="28" rx="14" fill="#0C0D0F" stroke="#2E3034"/>
+<text x="30" y="42" class="t" font-size="13" text-anchor="start" font-weight="600">15:21</text>
+<rect x="290" y="36" width="3.5" height="5" rx="1" fill="#E6E8EB"/>
+<rect x="295.5" y="33" width="3.5" height="8" rx="1" fill="#E6E8EB"/>
+<rect x="301" y="30" width="3.5" height="11" rx="1" fill="#E6E8EB"/>
+<rect x="306.5" y="27" width="3.5" height="14" rx="1" fill="#E6E8EB"/>
+<path d="M316 36 a9 9 0 0 1 13 0" fill="none" stroke="#E6E8EB" stroke-width="2" stroke-linecap="round"/>
+<path d="M319 39.5 a4.5 4.5 0 0 1 7 0" fill="none" stroke="#E6E8EB" stroke-width="2" stroke-linecap="round"/>
+<circle cx="322.5" cy="43" r="1.5" fill="#E6E8EB"/>
+<rect x="336" y="28" width="24" height="12" rx="3.5" fill="none" stroke="#9CA3AF"/>
+<rect x="337.5" y="29.5" width="17" height="9" rx="1.8" fill="#E6E8EB"/>
+<rect x="361" y="31.5" width="2.5" height="5" rx="1.2" fill="#9CA3AF"/>
+<text x="24" y="104" class="t" font-size="24" text-anchor="start" font-weight="700">ShuyoNote</text>
+<text x="24" y="128" class="dim" font-size="13" text-anchor="start">本地优先 · 离线可用 · 只记你确定要留的</text>
+<rect x="24" y="150" width="342" height="112" rx="12" fill="#4D8DFF"/>
+<g transform="translate(46,176)" fill="none" stroke="#0B1220" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20 L4.9 15.6 L15.4 5.1 L18.9 8.6 L8.4 19.1 Z"/><path d="M13.4 7.1 L16.9 10.6"/></g>
+<text x="46" y="226" class="onacc" font-size="20" text-anchor="start" font-weight="700">快速记录</text>
+<text x="150" y="226" class="onacc" font-size="13" text-anchor="start" opacity="0.72">想一句就记一句</text>
+<g fill="none" stroke="#0B1220" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M334 190 L342 198 L334 206"/></g>
+<rect x="24" y="274" width="342" height="88" rx="12" fill="#242529" stroke="#2E3034"/>
+<rect x="44" y="298" width="40" height="40" rx="10" fill="#2A2B2E"/>
+<g transform="translate(54,308)" fill="none" stroke="#E6E8EB" stroke-width="1.9" stroke-linecap="round"><circle cx="10" cy="10" r="6.2"/><path d="M14.6 14.6 L20 20"/></g>
+<text x="100" y="314" class="t" font-size="17" text-anchor="start" font-weight="600">搜索</text>
+<text x="100" y="336" class="faint" font-size="12" text-anchor="start">全文搜索 · 结果来自本机索引</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M342 311 L349 318 L342 325"/></g>
+<rect x="24" y="374" width="342" height="300" rx="12" fill="#242529" stroke="#2E3034"/>
+<text x="44" y="406" class="t" font-size="15" text-anchor="start" font-weight="600">最近笔记</text>
+<text x="346" y="406" class="faint" font-size="12" text-anchor="end">3 条</text>
+<rect x="44" y="440" width="28" height="28" rx="8" fill="#2A2B2E"/>
+<path d="M52 450 H64" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M52 458 H64" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M52 466 H60" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<text x="84" y="455" class="t" font-size="15" text-anchor="start">拍摄现场：夜景机位备忘</text>
+<text x="84" y="475" class="faint" font-size="12" text-anchor="start">12 分钟前</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M342 449 L349 456 L342 463"/></g>
+<path d="M44 500 H346" stroke="#2E3034"/>
+<rect x="44" y="512" width="28" height="28" rx="8" fill="#2A2B2E"/>
+<path d="M52 522 H64" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M52 530 H64" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M52 538 H60" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<text x="84" y="527" class="t" font-size="15" text-anchor="start">分镜 v3 修改点</text>
+<text x="84" y="547" class="faint" font-size="12" text-anchor="start">昨天 21:40</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M342 521 L349 528 L342 535"/></g>
+<path d="M44 572 H346" stroke="#2E3034"/>
+<rect x="44" y="584" width="28" height="28" rx="8" fill="#2A2B2E"/>
+<path d="M52 594 H64" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M52 602 H64" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M52 610 H60" stroke="#6B7280" stroke-width="1.6" stroke-linecap="round"/>
+<text x="84" y="599" class="t" font-size="15" text-anchor="start">录音转写：访谈 07</text>
+<text x="84" y="619" class="faint" font-size="12" text-anchor="start">10 月 6 日</text>
+<g fill="none" stroke="#6B7280" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M342 593 L349 600 L342 607"/></g>
+<text x="24" y="716" class="faint" font-size="11" text-anchor="start">示意文案：笔记标题为效果图占位内容。</text>
+<rect x="145" y="820" width="100" height="5" rx="2.5" fill="#4B4F55"/>
+</svg>
