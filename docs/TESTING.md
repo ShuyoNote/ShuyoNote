@@ -78,6 +78,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ontology-generated` | **本体表与能力注册表不一致**（生成物被手改／注册表改了没重新生成）—— 来由：2026-09-28 MCP 规格把 `isWrite: true` 当判据，而该字段在原始 JSON 里**出现 0 次** ✗（真实字段是 `kind`）⇒ 本体只能生成、并逐字节卡漂移 |
 | contract | `check-agent-surface` | **工具面（生成物）与注册表不一致** ／ **只读面里出现写能力** ／ **描述里写进内部标识**（工具面＝对外暴露面） ／ **能力面超出笔记域**（`ai:true` 的能力不许是库外／host／全局 —— R43：库权限 ≠ 仓库权限）。来由：注册表 `ai:true` 实测 10 条（read 8 / write 2），而规格曾把写判定写成查不存在的 `isWrite` ✗ |
 | contract | `check-audit-shape` | **审计形状坏了**：写审计的文件不止一个（漏记 ✗）／条目里出现内容类字段（审计变成第二份内容副本 ✗）／出现 `UPDATE`／`DELETE`（不再只增 ✗）。纯读 Rust 源码 ⇒ **不需要 cargo** ✓ |
+| contract | `check-headless-backup` | **无头备份（`--backup-once`）的接线还在不在**：2026-10-09 真事故 —— 接线"接上了却**出不了包**"✗（`main.rs` 分流 ✓、`lib.rs` 入口 ✓、编译过 ✓、进程自退 ✓、窗口 0 ✓，**但包数 ＝ 0** ✗；真因：无头路径用的是**裸 Builder** ⇒ 不带 `run()` 那条链 ⇒ `Db` 没人托管 ✓）；症状**静默**（无报错、无 panic）⇒ 只能靠静态判据挡 ✓。纯读源码 ⇒ **不需要 cargo** ✓ |
 | contract | `check-derived-provenance` | **派生内容失去「从哪来」**：`ExtractedSegment.kind`／`loc` 被改成可选（引用与定位会**静默**降级 ✗）／`SegmentKind` 退化到少于 3 个成员（等于没在区分 ✓）。纯读 TS 源码 ✓ |
 | contract | `check-locked-loud` | **锁定被说成"没内容"**：未解锁空间的失败被映射成空结果（用户以为数据丢了 ✗）／稳定错误码 `space_locked` 丢了／钉它的单测没了（没有承重渠道 ✗）。纯读 Rust 源码 ✓ |
 | contract | `check-invariants-pointers` | **规格在说一件没有的事**：标「能」的 `INV-KB-*` 指的判据**不存在**／**没进注册表**（＝不进 `pnpm verify`／CI ⇒ 等于没人跑 ✗） |
