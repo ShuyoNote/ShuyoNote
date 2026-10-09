@@ -154,6 +154,109 @@ pub fn verify_self_consistent(path: &Path) -> Result<Vec<String>, String> {
     Ok(problems)
 }
 
+// ---------------------------------------------------------------------------
+// 恢复演练（P2 第二半）：⭐ 解出来比「**同样的页数与附件数**」（评估文档 §6 逐字 ✓）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 实测口径（本机查过 ✓）：
+//   · 页在**每空间库**里（`spaces/<id>.db` 的 `pages` 表 ✓）—— `meta.db` **没有** `pages` ✓
+//   · 页只数**没被删的**（`deleted_at IS NULL` ✓，全仓查询都是这个口径 ✓）
+//   · 附件是**内容寻址的两层扇出**文件（`attachments/<2位>/<hash>` ✓）⇒ 数文件 ✓
+
+/// 递归数文件（⭐ 目录不算 ✓）
+pub fn count_files(root: &Path) -> usize {
+    let mut n = 0usize;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for ent in rd.flatten() {
+            let p = ent.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// 包里 `attachments/` 下的条目数（⭐ 只看名字，**不解内容** ⇒ 快 ✓）
+pub fn count_zip_attachments(path: &Path) -> Result<usize, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("打不开包：{e}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("不是可读的 zip：{e}"))?;
+    let mut n = 0usize;
+    for i in 0..zip.len() {
+        let e = zip.by_index(i).map_err(|x| format!("读第 {i} 条失败：{x}"))?;
+        if e.is_dir() {
+            continue;
+        }
+        if e.name().starts_with("attachments/") {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// 一个空间库里的页数（⭐ 只数没被删的 ✓；⭐ 打不开 ⇒ 如实返回错误 ✓，⛔ 不返回 0 假装成功 ✗）
+pub fn count_pages(conn: &rusqlite::Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(|e| format!("数页失败：{e}"))
+}
+
+/// 一次演练的结论（⭐ 纯数据 ⇒ 可断言 ✓）
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DrillReport {
+    pub pages_live: i64,
+    pub pages_package: i64,
+    pub attachments_live: usize,
+    pub attachments_package: usize,
+    pub problems: Vec<String>,
+}
+
+impl DrillReport {
+    /// ⭐ 判据：「对好包必须复原出**同样的**页数与附件数」✓
+    pub fn is_clean(&self) -> bool {
+        self.problems.is_empty()
+    }
+    pub fn summary(&self) -> String {
+        format!(
+            "pages {}/{} ｜ attachments {}/{} ｜ {} 条问题",
+            self.pages_package,
+            self.pages_live,
+            self.attachments_package,
+            self.attachments_live,
+            self.problems.len()
+        )
+    }
+}
+
+/// 比对（⭐ **纯函数** ⇒ 可单测 ✓）：库里有多少 vs 包里有多少 ✓
+pub fn compare_counts(
+    live_pages: i64,
+    live_attachments: usize,
+    pkg_pages: i64,
+    pkg_attachments: usize,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    if live_pages != pkg_pages {
+        problems.push(format!("页数不一致：库里 {live_pages}、包里 {pkg_pages}"));
+    }
+    if live_attachments != pkg_attachments {
+        problems.push(format!(
+            "附件数不一致：库里 {live_attachments}、包里 {pkg_attachments}"
+        ));
+    }
+    problems
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +413,76 @@ mod tests {
             !problems.is_empty(),
             "⭐ 内容被改过 ⇒ **必须报红**（这正是那条判据要对准的一面 ✓）"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── 恢复演练（P2 第二半） ─────────────────────────────────────────────
+    #[test]
+    fn compare_counts_reports_both_mismatches() {
+        assert!(compare_counts(10, 3, 10, 3).is_empty(), "一致 ⇒ 没问题 ✓");
+        let p = compare_counts(10, 3, 9, 4);
+        assert_eq!(p.len(), 2, "两条都该点出来：{p:?}");
+        assert!(p[0].contains("页数不一致"), "第 1 条说页数：{p:?}");
+        assert!(p[1].contains("附件数不一致"), "第 2 条说附件：{p:?}");
+    }
+
+    #[test]
+    fn count_files_is_recursive() {
+        let dir = tmpdir("countfiles");
+        std::fs::create_dir_all(dir.join("ab")).unwrap();
+        std::fs::write(dir.join("one.bin"), b"x").unwrap();
+        std::fs::write(dir.join("ab").join("two.bin"), b"y").unwrap();
+        assert_eq!(count_files(&dir), 2, "⭐ 要递归数（两层扇出 ✓）");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn count_zip_attachments_counts_only_attachment_entries() {
+        let dir = tmpdir("zipatt");
+        let p = dir.join("a.zip");
+        let file = std::fs::File::create(&p).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, body) in [
+            ("meta.db", &b"m"[..]),
+            ("spaces/s1.db", &b"s"[..]),
+            ("attachments/ab/h1", &b"a"[..]),
+            ("attachments/cd/h2", &b"b"[..]),
+        ] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(body).unwrap();
+        }
+        zip.finish().unwrap();
+        assert_eq!(
+            count_zip_attachments(&p).unwrap(),
+            2,
+            "⭐ 只数 attachments/ 下的（meta.db 与 spaces/ 不算 ✓）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn count_pages_ignores_deleted() {
+        let dir = tmpdir("pages");
+        let db = dir.join("s.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute("CREATE TABLE pages (id TEXT, deleted_at TEXT)", [])
+            .unwrap();
+        conn.execute("INSERT INTO pages (id, deleted_at) VALUES (?1, NULL)", ["p1"])
+            .unwrap();
+        conn.execute("INSERT INTO pages (id, deleted_at) VALUES (?1, NULL)", ["p2"])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO pages (id, deleted_at) VALUES (?1, ?2)",
+            ["p3", "2026-01-01"],
+        )
+        .unwrap();
+        assert_eq!(
+            count_pages(&conn).unwrap(),
+            2,
+            "⭐ 删掉的不算（全仓查询都是这个口径 ✓）"
+        );
+        drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
