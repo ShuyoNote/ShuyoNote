@@ -656,3 +656,89 @@ mod p3_tests {
         eprintln!("[p3] 单元已写到 {dir}（{sf} ／ {tf} ✓）");
     }
 }
+
+// ---------------------------------------------------------------------------
+// P3：`systemd-analyze verify` 的输出怎么判（⭐ **不能看退出码** ✗）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 来由（2026-10-09 实测，逐字）：我把 `Type=oneshot` 改成 `Type=definitely-not-a-type` ✗，
+//   `systemd-analyze verify` **确实报了**：
+//     `shuyonote-backup.service:6: Failed to parse service type, ignoring: definitely-not-a-type`
+//   ⭐ 但它的**退出码仍然是 0** ✓（`EXIT=0`）
+//   ⇒ ⭐ 判据**不能看退出码** ✗，只能看**输出里的行** ✓。
+//
+// ⚠️ 而输出里混着两类**环境噪音**（用 Windows 盘跑 WSL 必现 ⇒ 与单元内容无关 ✓）：
+//   · `/mnt/c` 上文件被标成 executable / world-writable ✓
+//   · `Command <path> is not executable: No such file or directory` ✓
+//     （⭐ 那是我们传给它的占位路径 ✓）
+// ⇒ ⭐ 这个函数就是"把噪音滤掉、只留真问题"的那一步 ✓（**纯函数** ⇒ 可单测 ✓）
+
+/// 从 `systemd-analyze verify` 的输出里挑出**真问题**（⭐ 空 = 没问题 ✓）
+pub fn systemd_verify_problems(output: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in output.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // ⭐ 噪音一：Windows 盘上的权限标注（⭐ 与单元内容无关 ✓）
+        if line.contains("is marked executable")
+            || line.contains("is marked world-writable")
+            || line.contains("Proceeding anyway")
+        {
+            continue;
+        }
+        // ⭐ 噪音二：占位可执行路径不存在（⭐ 验的是"单元文本"，不是"那台机器上有没有装"✓）
+        if line.contains("is not executable: No such file or directory") {
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    out.sort();
+    out
+}
+
+#[cfg(test)]
+mod p3_verify_tests {
+    use super::*;
+
+    #[test]
+    fn clean_output_has_no_problems() {
+        assert!(systemd_verify_problems("").is_empty());
+        assert!(systemd_verify_problems("   \n\n").is_empty());
+    }
+
+    #[test]
+    fn environment_noise_is_filtered_out() {
+        let noise = "\
+Configuration file /mnt/c/x/shuyonote-backup.service is marked executable. Please remove executable permission bits. Proceeding anyway.
+Configuration file /mnt/c/x/shuyonote-backup.timer is marked world-writable. Please remove world writability permission bits. Proceeding anyway.
+shuyonote-backup.service: Command /opt/shuyonote/shuyonote is not executable: No such file or directory
+";
+        assert!(
+            systemd_verify_problems(noise).is_empty(),
+            "⭐ 这三行都是环境噪音 ⇒ 不能算问题 ✓（实测它们在我们这套环境里必现 ✓）"
+        );
+    }
+
+    /// ⭐ 这条对着**真实读数**：把 `Type=oneshot` 改坏后 systemd 报的那一行 ✓
+    #[test]
+    fn real_error_is_kept() {
+        let real = "shuyonote-backup.service:6: Failed to parse service type, ignoring: definitely-not-a-type";
+        let p = systemd_verify_problems(real);
+        assert_eq!(p.len(), 1, "⭐ 真问题必须留下 ✓：{p:?}");
+        assert!(p[0].contains("Failed to parse service type"), "{p:?}");
+    }
+
+    #[test]
+    fn mix_keeps_only_the_real_ones() {
+        let mixed = "\
+Configuration file /mnt/c/x/a.service is marked executable. Please remove executable permission bits. Proceeding anyway.
+shuyonote-backup.service: Unknown key name Zoo in section Service, ignoring.
+a.timer: Command /opt/x is not executable: No such file or directory
+";
+        let p = systemd_verify_problems(mixed);
+        assert_eq!(p.len(), 1, "⭐ 只留 `Unknown key name` 那条 ✓：{p:?}");
+        assert!(p[0].contains("Unknown key name"), "{p:?}");
+    }
+}
