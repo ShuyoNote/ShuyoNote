@@ -51,16 +51,13 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 
 ## 门禁总表
 
-> ▸ **`check-headless-backup`**（`contract` 组）—— **无头备份（`--backup-once`）的接线还在不在** ✓
-> （2026-10-09 由 windows 侧加入 ✓；本行是「新门禁不许只进代码不进文档」那条要求的登记 ✓）
-
 准确清单以 `pnpm verify:list` 为准（下表就是它的摘要）。**每条门禁都对应一次真实事故**，
 理由写在注册表的 `incident` 字段里——门禁存在的代价是每次 push 的几分钟，理由必须留下来，
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 80 条（contract 53 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 26 条 · 命令 Rust 274 / web 255 / CommandMap 275
-基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2795 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+门禁 80 条（contract 53 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 26 条 · 命令 Rust 276 / web 257 / CommandMap 277
+基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2730 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
