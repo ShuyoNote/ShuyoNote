@@ -239,6 +239,8 @@ pub struct DrillReport {
     pub attachments_live: usize,
     pub attachments_package: usize,
     pub problems: Vec<String>,
+    /// ⭐ 包里一共解出多少条记录（⭐ 给"空白包"留个判据 ✓）
+    pub extra: usize,
 }
 
 impl DrillReport {
@@ -532,5 +534,155 @@ mod tests {
         );
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P2 第二半的"最后一公里"：⭐ 拿**真包**对**真库**跑一次演练
+// ---------------------------------------------------------------------------
+//
+// 评估文档 §6 给 P2 的判据逐字：「…对好包必须复原出**同样的页数与附件数** ✓」。
+// ⭐ 本条就是那条判据的落点：真读数来自**真的那份包**与**真的那个目录** ✓（不是合成夹具 ✓）。
+
+/// 从一个 `spaces/` 目录里数页（⭐ 只数没被删的 ✓）
+///
+/// ⭐ 打不开的库**如实记进 notes** ✓（⭐ 例如加密空间 ⇒ 不是"0 页" ✗，而是"这一份没数成" ✓）
+pub fn count_pages_in_spaces(spaces_dir: &Path) -> (i64, Vec<String>) {
+    let mut total = 0i64;
+    let mut notes: Vec<String> = Vec::new();
+    let rd = match std::fs::read_dir(spaces_dir) {
+        Ok(r) => r,
+        Err(e) => return (0, vec![format!("读不了 {}：{e}", spaces_dir.display())]),
+    };
+    for ent in rd.flatten() {
+        let p = ent.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("db") {
+            continue;
+        }
+        let name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .to_string();
+        match rusqlite::Connection::open_with_flags(&p, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(c) => match count_pages(&c) {
+                Ok(n) => total += n,
+                Err(e) => notes.push(format!("{name}：{e}")),
+            },
+            Err(e) => notes.push(format!("{name} 打不开（⭐ 可能是加密空间）：{e}")),
+        }
+    }
+    (total, notes)
+}
+
+/// ⭐ 把包解到一个临时目录（⭐ 只解，不动任何用户数据 ✓）
+///
+/// ⚠️ 带 **zip-slip 防护** ✓：⭐ 名字里含 `..` 或绝对路径的条目**一律跳过** ✗
+///    （⭐ 否则一个恶意包能把文件写到解压目录之外 ✓）。
+pub fn extract_to_temp(package: &Path, into: &Path) -> Result<usize, String> {
+    let file = std::fs::File::open(package).map_err(|e| format!("打不开包：{e}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("不是可读的 zip：{e}"))?;
+    let mut n = 0usize;
+    for i in 0..zip.len() {
+        let mut e = zip.by_index(i).map_err(|x| format!("读第 {i} 条失败：{x}"))?;
+        if e.is_dir() {
+            continue;
+        }
+        let raw = e.name().to_string();
+        if raw.contains("..") || raw.starts_with("/") || raw.contains(":") {
+            continue;
+        }
+        let dest = into.join(&raw);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|x| format!("建目录失败：{x}"))?;
+        }
+        let mut out = std::fs::File::create(&dest).map_err(|x| format!("建文件失败：{x}"))?;
+        std::io::copy(&mut e, &mut out).map_err(|x| format!("写文件失败：{x}"))?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// ⭐ P2 判据的最后一公里：⭐ 「对好包必须复原出**同样的页数与附件数**」
+///
+/// ① 数**真库**：`<app_data>/spaces/*.db` 的页数 ✓ ＋ `<app_data>/attachments` 的文件数 ✓
+/// ② 把包解到临时目录 ⇒ 数包里 `spaces/*.db` 的页数 ✓ ＋ 包里的附件条数 ✓
+/// ③ `compare_counts` 比 ⇒ ⭐ 不一致就如实写进 `problems` ✓ 
+pub fn run_drill(app_data: &Path, package: &Path) -> Result<DrillReport, String> {
+    // ① 真库
+    let (live_pages, live_notes) = count_pages_in_spaces(&app_data.join("spaces"));
+    let live_attachments = count_files(&app_data.join("attachments"));
+    // ② 包（⭐ 解到临时目录，⭐ 用完就删 ✓）
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("shuyonote-drill-{stamp}"));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("建临时目录失败：{e}"))?;
+    let extracted = extract_to_temp(package, &tmp);
+    let (pkg_pages, pkg_notes) = count_pages_in_spaces(&tmp.join("spaces"));
+    let pkg_attachments = count_zip_attachments(package).unwrap_or(0);
+    let _ = std::fs::remove_dir_all(&tmp);
+    let extracted = extracted.map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp);
+        e
+    })?;
+    // ③ 比
+    let mut problems = compare_counts(live_pages, live_attachments, pkg_pages, pkg_attachments);
+    for n in live_notes.iter().chain(pkg_notes.iter()) {
+        problems.push(format!("有库没数成：{n}"));
+    }
+    Ok(DrillReport {
+        pages_live: live_pages,
+        pages_package: pkg_pages,
+        attachments_live: live_attachments,
+        attachments_package: pkg_attachments,
+        problems,
+        extra: extracted,
+    })
+}
+
+#[cfg(test)]
+mod p2_drill_tests {
+    use super::*;
+
+    /// ⭐ 对**真数据**跑一次演练（⭐ 只在设了 `SHUYONOTE_DRILL_APP_DATA` 时才跑 ✓）
+    ///
+    /// ⚠️ 顺序很重要：⭐ 必须**先**用 `--backup-once` 造一份**新**包 ⇒ 再立刻演练 ✓
+    ///    （⭐ 拿旧包对现在的库比，页数本来就可能不同 ✗ —— 那不是 bug，是我比错了对象 ✓）
+    #[test]
+    fn real_drill_against_live_data() {
+        let Ok(app_data) = std::env::var("SHUYONOTE_DRILL_APP_DATA") else {
+            return;
+        };
+        let dir = std::path::Path::new(&app_data);
+        let backups = dir.join("backups");
+        let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+        for ent in std::fs::read_dir(&backups).expect("要有 backups 目录").flatten() {
+            let p = ent.path();
+            if p.extension().and_then(|s| s.to_str()) != Some("zip") {
+                continue;
+            }
+            let md = match std::fs::metadata(&p) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let mt = md.modified().unwrap_or(std::time::UNIX_EPOCH);
+            if newest.as_ref().map(|(t, _)| mt > *t).unwrap_or(true) {
+                newest = Some((mt, p));
+            }
+        }
+        let (_, pkg) = newest.expect("⭐ 得先有一份包（先用 --backup-once 造 ✓）");
+        let rep = run_drill(dir, &pkg).expect("演练不该在环境上失败");
+        let line = format!("{} ｜ 包={}", rep.summary(), pkg.display());
+        eprintln!("[p2] {line}");
+        if let Ok(out) = std::env::var("SHUYONOTE_DRILL_REPORT") {
+            let _ = std::fs::write(&out, format!("{line}`n{:?}`n", rep.problems));
+        }
+        assert!(
+            rep.is_clean(),
+            "⭐ 好包必须复原出**同样的页数与附件数** ✓（实测：{:?}）",
+            rep.problems
+        );
     }
 }
