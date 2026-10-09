@@ -338,6 +338,9 @@ pub fn local_state(c: &Connection, page_id: &str) -> Result<Option<LocalState>, 
 /// 收的是 `&PageDetail`：远端那条路径手上的字段本来就在它里面，
 /// 为调一次函数去拆散/克隆一份可能很大的 `content_json` 不值当。
 pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq: i64) -> Result<(), String> {
+    // ⭐⭐ **2026-10-09（task-8）**：远端那一行**不许**带"本地不存在的引用" ✗ —— 见下面两个锚定函数。
+    let workspace_id = anchor_workspace_id(c, &page.workspace_id);
+    let parent_id = anchor_parent_id(c, page.parent_id.as_deref());
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0)
@@ -355,8 +358,8 @@ pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq:
            dirty = 0",
         params![
             page.id,
-            page.workspace_id,
-            page.parent_id,
+            workspace_id,
+            parent_id,
             page.title,
             page.content_json,
             page.content_text,
@@ -369,6 +372,85 @@ pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq:
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// ⭐⭐ **2026-10-09（task-8）**：远端页带的 `workspace_id` **锚到本机这个空间** ✓。
+///
+/// ## 真机现场（amd 报的，逐字）
+/// owner 点《公式列》的「合并这一页」⇒ 底部红条 **「裁决失败：FOREIGN KEY constraint failed」** ✗。
+/// 只读快照：`PRAGMA foreign_key_list('pages')` ⇒ `workspace_id → workspaces(id)` ✓；
+/// 而 amd 本地 `workspaces` **只有 1 行**（＝**它自己**那个空间 ✓），待裁决的 **40/40** 条
+/// 却都引用 `workspace_id = eb9a07f1…`（**对端那台的空间 id** ✗）⇒ 原样写进去必撞外键 ✓。
+///
+/// ## 口径
+/// · 本地**有**这个 id ⇒ **一个字都不动** ✓（正常路径上两端同 id 也不会被改写 ✓）；
+/// · 本地**没有** ⇒ 锚到**本机这个空间自己**的 id ✓ ——
+///   它就是 `main.workspaces` 里那一行（真库实测：每个空间库里**恰好一行**，＝那个空间自己的 id ✓，
+///   而该库 `pages.workspace_id` **全部**等于它 ✓）；
+/// · **判不了**（表不在 / 读不出来）⇒ **保持原样** ✓ —— ⛔ 别把老判据的手抄 schema 弄红 ✗。
+///
+/// ⚠️ **"按名融合"这里做不到**（owner 口径「用空间名称融合，而不是空间id」✓）：
+///   远端页的载荷里**只有 id、没有空间名**（`PageDetail` 没有 `name` 字段 ✓）⇒ 没有可比的"名" ✗。
+///   要真做，得让**载荷带上空间名**（或把 `workspaces` 当实体同步 ✓）—— 那比这一笔大，
+///   已作为**下一条**单独报（⛔ 本笔只保证"当场不炸 ＋ 落到本机那个空间"✓）。
+fn anchor_workspace_id(c: &Connection, want: &str) -> String {
+    let want = want.trim();
+    if want.is_empty() {
+        return local_space_id(c).unwrap_or_default();
+    }
+    match row_exists(c, "SELECT 1 FROM workspaces WHERE id = ?1", want) {
+        Some(true) => want.to_string(),
+        Some(false) => local_space_id(c).unwrap_or_else(|| want.to_string()),
+        None => want.to_string(),
+    }
+}
+
+/// 本机这个空间**自己**的 id（`main.workspaces` 里那一行 ✓；真库实测恰好一行 ✓）。
+fn local_space_id(c: &Connection) -> Option<String> {
+    c.query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get::<_, String>(0))
+        .ok()
+}
+
+/// ⭐⭐ **2026-10-09（task-8）**：远端页带的 `parent_id` 锚到**本地真有的那一页** ✓。
+///
+/// ## 真机现场（逐字）
+/// amd 的待裁决 40 条里 **38 条**的 `parent_id` 本地不存在 ✗，而**那些父本身**也躺在同一批里 ✗
+/// ⇒ 两件事：①同批顺序（由 `apply_pulled_changes` 的 `ForeignKeysOff` 守卫兜住 ✓）；
+/// ②**父页可能永远不来**（对端删了它 / 它不在这条同步路上）⇒ 那种引用写进去必撞外键 ✓。
+///
+/// ## 口径（⭐ **分两种情形，这是本函数最要紧的一句**）
+/// · 父页**在本地** ⇒ 保留 ✓（父子关系不许白丢 ✓）；
+/// · 父页**不在** ＋ **外键开着** ⇒ 写 `NULL` ✓ —— 这是"裁决"那条路（`resolve_pending_remote` ✓），
+///   它**单页**落库、父页不会在这一笔里到 ⇒ ⛔ 写一个悬空引用 = **整行进不去** ✗（真机就是这句 ✓）；
+/// · 父页**不在** ＋ **外键关着** ⇒ **保留引用** ✓ —— 这是**批量应用**那条路（`apply_pulled_changes` ✓），
+///   父页**可能就在同一批里稍后到** ✓；一律 NULL 掉会白丢同批的父子关系 ✗。
+/// · **判不了**（表不在 / 读不出来）⇒ 保留 ✓。
+fn anchor_parent_id(c: &Connection, want: Option<&str>) -> Option<String> {
+    let p = want.map(str::trim).filter(|p| !p.is_empty())?;
+    match row_exists(c, "SELECT 1 FROM pages WHERE id = ?1", p) {
+        Some(true) => Some(p.to_string()),
+        Some(false) => {
+            if foreign_keys_on(c) {
+                None
+            } else {
+                Some(p.to_string())
+            }
+        }
+        None => Some(p.to_string()),
+    }
+}
+
+/// 本连接上外键**现在开不开**（读不出来 ⇒ 按"开着"处理：宁可写 NULL 也别丢整行 ✓）。
+fn foreign_keys_on(c: &Connection) -> bool {
+    c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(true)
+}
+
+/// 本地有没有这一行？**表都不在 / 读不出来 ⇒ `None`**（＝判不了 ⇒ 调用方保持原样 ✓）。
+fn row_exists(c: &Connection, sql: &str, id: &str) -> Option<bool> {
+    c.query_row(sql, params![id], |_| Ok(()))
+        .optional()
+        .map(|o| o.is_some())
+        .ok()
 }
 
 /// 合并判定：**本地留还是远端覆盖**。
@@ -2498,6 +2580,84 @@ mod tests {
             unresolved_page_conflicts(&c, "p1").unwrap().is_empty(),
             "整页换成远端之后，旧的那些痕没有可裁决的对象了"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ task-8（2026-10-09）：**远端那一行不许带"本地不存在的引用"** ✗
+    //
+    // 真机现场（amd 报的，逐字）：owner 点《公式列》的「合并这一页」⇒ 底部红条
+    //   **「裁决失败：FOREIGN KEY constraint failed」** ✗
+    // 只读快照：`PRAGMA foreign_key_list('pages')` ⇒ `parent_id → pages(id)` ／
+    //   `workspace_id → workspaces(id)`；而 amd 本地 `workspaces` **只有 1 行**（＝**它自己**那个空间 ✓），
+    //   待裁决的 **40/40** 条却都引用 `workspace_id = eb9a07f1…`（**对端那台的空间 id** ✗）；
+    //   另有 **38/40** 条的 `parent_id` 本地也不存在 ✗（缺的父**本身也躺在同一批待裁决里** ✗）。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ **判据 a**：远端页带着**对端那台**的 `workspace_id` ⇒ ⭐ 必须**锚到本机这个空间** ✓。
+    /// ⚠️ 未修时 `upsert_remote` 原样写进去 ⇒ 外键当场炸 ⇒ **必红** ✓（红读数＝真机那句话 ✓）。
+    #[test]
+    fn a_remote_page_with_a_foreign_workspace_lands_in_this_space() {
+        let (c, dir) = conflict_conn("fk-workspace");
+        // 本机这个空间自己的 id（`main.workspaces` 在真机上**只有那一行** ✓，我核过真库 ✓）
+        let local: String = c
+            .query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        let mut page = remote_page("p-remote", &jdoc(vec![jblk(Some("b1"), Some(1), "远端")]), "远端页");
+        page.workspace_id = "对端那台的空间-本地没有".to_string();
+        upsert_remote(&c, &page, 7).expect(
+            "⛔ 远端带对端 workspace_id ⇒ 真机当场炸：FOREIGN KEY constraint failed（裁决/合并全废）",
+        );
+
+        let got: String = c
+            .query_row("SELECT workspace_id FROM pages WHERE id = 'p-remote'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got, local, "必须锚到**本机这个空间**的 id（⛔ 不许原样写对端那个 ✗）");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **判据 c**：远端页的父页**还没到** ⇒ ⭐ **外键开着时写 NULL**（⛔ 不许整行落不了库 ✗）；
+    /// ⭐ 而**外键关着时保留引用** ✓（批量应用期间 ⇒ 父页可能就在同一批稍后到达 ✓）。
+    /// ⚠️ 未修时前两条都会炸（`FOREIGN KEY constraint failed`）⇒ **必红** ✓。
+    #[test]
+    fn a_remote_page_whose_parent_has_not_arrived_survives() {
+        let (c, dir) = conflict_conn("fk-parent");
+        let mut page = remote_page("p-child", &jdoc(vec![jblk(Some("b1"), Some(1), "子")]), "子页");
+        page.parent_id = Some("父页-还没到".to_string());
+
+        // ① 外键**开着**（＝裁决那条路 ✓）：写 NULL，但**必须落库** ✓
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        upsert_remote(&c, &page, 8).expect("父页没到 ⇒ ⛔ 不许因此整行落不了库（真机 38/40 就是这种 ✗）");
+        let got: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got, None, "外键开着 ⇒ 写 NULL（父页到了自己会落，链接以后再说 ✓）");
+
+        // ② 外键**关着**（＝批量应用期间 ✓）：**保留引用** ✓（父页就在同一批里稍后到达 ✓）
+        c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        let mut p2 = remote_page("p-child2", &jdoc(vec![jblk(Some("b1"), Some(1), "子2")]), "子页2");
+        p2.parent_id = Some("父页-稍后到".to_string());
+        upsert_remote(&c, &p2, 9).expect("外键关着 ⇒ 引用直接写进去 ✓");
+        let got2: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            got2.as_deref(),
+            Some("父页-稍后到"),
+            "⚠️ 外键关着 ⇒ **保留**父子引用 ✗ 不许一律 NULL 掉（那会白丢同一批里的父子关系 ✓）"
+        );
+
+        // ③ **正向对照**：父页真在本地 ⇒ 链接必须保住 ✓（别把"存在"也 NULL 掉 ✓）
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        insert_conflict_page(&c, "p-ok-parent", &jdoc(vec![jblk(Some("b1"), Some(1), "父")]));
+        let mut p3 = remote_page("p-child3", &jdoc(vec![jblk(Some("b1"), Some(1), "子3")]), "子页3");
+        p3.parent_id = Some("p-ok-parent".to_string());
+        upsert_remote(&c, &p3, 10).unwrap();
+        let got3: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child3'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got3.as_deref(), Some("p-ok-parent"), "父页在 ⇒ 链接一个字都不许改 ✓");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -2852,6 +2852,13 @@ pub(crate) fn apply_pulled_changes(
     last_pulled: i64,
     now: i64,
 ) -> Result<PulledApply, String> {
+// ⭐⭐ **2026-10-09（task-8）**：**守卫搬进函数里** —— 原来它只挂在 `do_pull`（服务器那条路 ✓）✗。
+//   ⚠️ **网格那条路没有它** ✗（`mesh.rs::absorb_peer_batch` 直接调本函数 ✓）⇒ 外键是开的 ⇒
+//   同批里"子页先到、父页后到"就当场 `FOREIGN KEY constraint failed` ✗，而那一笔会被
+//   **存进「待取回的远端版本」** ✗ ⇒ 用户看到一堆"等你裁决"的页，其实**根本没有冲突**（真机 40 条 ✓）。
+//   判据：`a_batch_whose_child_arrives_before_its_parent_still_lands_both`（先红后绿 ✓）。
+//   ⚠️ 嵌套无副作用：`do_pull` 那层外面还有一个同样的守卫 ✓ —— 内层记的原值是 OFF、退场写回 OFF ✓。
+let _fk_guard = ForeignKeysOff::new(c);
 let mut max_pulled = last_pulled;
 let mut count: usize = 0;
 let mut items: Vec<SyncItem> = Vec::new();
@@ -6914,6 +6921,58 @@ mod tests {
             payload: Some("{}".to_string()),
             updated_at: seq,
         }
+    }
+
+    /// ⭐⭐ **task-8（2026-10-09）**：同批里**子页先到、父页后到** ⇒ ⭐ **两条都必须落地** ✓。
+    ///
+    /// 真机来由（amd 只读快照，逐字）：待裁决的 **40** 条里 **38 条**的 `parent_id` 本地不存在 ✗，
+    /// 而**那些父本身也躺在同一批里** ✗ ⇒ 这就是"同批顺序"那一格。
+    /// ⚠️ 服务器那条路有 `ForeignKeysOff` 守卫（`do_pull` ✓），⭐ **而网格那条路没有** ✗ ——
+    ///    它直接调本函数（`mesh.rs::absorb_peer_batch` ✓）⇒ 外键是开的 ⇒ 子页当场
+    ///    `FOREIGN KEY constraint failed` ✗（与裁决那条路同一句话 ✓）。
+    #[test]
+    fn a_batch_whose_child_arrives_before_its_parent_still_lands_both() {
+        let (c, dir) = pending_conn("fk-order");
+        // 真机那两条路都是开着的（`open_space_conn_at` 里就是 ON ✓）—— 显式钉一下，免得判据变哑巴
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+
+        let mut child = remote_page("c1", &page_json("b1", 1, "子"));
+        child.parent_id = Some("p1".to_string());
+        let parent = remote_page("p1", &page_json("b1", 1, "父"));
+        let changes = vec![
+            IncomingChange {
+                seq: 1,
+                entity: "page".to_string(),
+                entity_id: "c1".to_string(),
+                op: "upsert".to_string(),
+                payload: Some(serde_json::to_string(&child).unwrap()),
+                updated_at: 1,
+            },
+            IncomingChange {
+                seq: 2,
+                entity: "page".to_string(),
+                entity_id: "p1".to_string(),
+                op: "upsert".to_string(),
+                payload: Some(serde_json::to_string(&parent).unwrap()),
+                updated_at: 2,
+            },
+        ];
+        let _ = apply_pulled_changes(&c, changes, 0, 1000).unwrap();
+
+        for id in ["c1", "p1"] {
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = ?1", params![id], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                n, 1,
+                "⭐ 同批里**子先父后**也必须两条都落地（{id} 没落地 ⇒ 真机上就是那 38/40 ✗）"
+            );
+        }
+        let got: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'c1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got.as_deref(), Some("p1"), "父子关系不许因为顺序而白丢 ✓");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ★ F7b 判据（2026-09-25）：本端**不认识**的变更类型 —— **照旧忽略，但不许无声**。
