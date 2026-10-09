@@ -55,6 +55,8 @@ export const DECISION_CARRIER = "docs/plans/2026-09-29-owner-decisions-pending.m
  * 给了正则 ⇒ 只在该正则命中的行上才允许（R3）。
  */
 export const ALLOWED_BARE_D = {
+  // ⚠️ 2026-10-10（macOS 侧）：本文件 §6 的代价表用 D1–D4 当**自己的**编号 ✓（不是决策引用 ✓）
+  "docs/specs/2026-10-09-multidevice-merge-semantics.md": { ids: [1, 2, 3, 4] },
   // ---- 决策主载体：它**必须**提到"需求那个同名的 D1–D4"才能讲清歧义 ⇒ 只在需求语境行上放行 ----
   "docs/plans/2026-09-29-owner-decisions-pending.md": {
     ids: [1, 2, 3, 4],
