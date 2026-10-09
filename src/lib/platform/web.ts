@@ -2593,6 +2593,29 @@ export function makeInvoke(store: SqliteStore) {
       // 抽取器会把它映射成 provider_error：与"这台机器没装 LibreOffice"同一条答复（§15.3-7）。
       throw new Error("Web 版不支持旧格式转换（.doc/.xls/.ppt 需要本机的 LibreOffice；请用桌面版）。");
     }
+    // ---- 本地英汉词典（ECDICT）· 应用内划词查词第一期（2026-10-09） ----
+    // ⚠️ Web 版**没有本地词库**：词库是**能力包**（65.9MB），而落盘那条命令
+    //    （`save_ability_pack`）在 Rust 侧 ⇒ 浏览器里没有安放它的地方。
+    // ⚠️ 照上面 `convert_legacy_office` 那条先例：**如实**说不支持，⛔ **不许**回空数据当成功
+    //    （那会让界面出现一个"查过了但什么都没有"的浮层 —— 与"编造释义"同族：
+    //     用户分不清"没查到"与"卡住了"）。
+    if (cmd === "dictionary_status") {
+      return {
+        available: false,
+        path: null,
+        bytes: null,
+        entries: null,
+        source: "web",
+        verified: null,
+        message: "Web 版没有本地词库（词库走能力包，需要本机落盘）⇒ 划词只会如实说未收录／可走 AI，不会编造释义。",
+      } as T;
+    }
+    if (cmd === "dictionary_lookup") {
+      return {
+        status: "unavailable",
+        message: "Web 版没有本地词库（词库走能力包，需要本机落盘）⇒ 这次没查到，不编造释义。",
+      } as T;
+    }
     if (cmd === "write_attachment_bytes") {
       const hash = String(a.hash ?? "");
       const data = (a.data as number[]) ?? [];

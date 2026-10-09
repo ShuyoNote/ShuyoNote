@@ -45,6 +45,10 @@ mod gm_provider;
 mod gm_patch_probe;
 mod database;
 mod db;
+// 本地英汉词典（ECDICT）：应用内划词查词第一期，**只读**两条命令。
+// ⚠️ 本模块**不碰**系统钩子/全局划词（owner 2026-10-09 拍"只做应用内划词"），
+//    数据文件不入库（65.9MB，见 `scripts/fetch-ecdict.mjs`）。
+mod dictionary;
 mod disk;
 // 「文档内容」那一层（read/write/merge/derive）：阶段 0「接口收口」的壳，**行为等价**。
 // 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
@@ -1030,6 +1034,14 @@ pub fn run() {
   mcp_channel::mcp_set_write_grant,
   mcp_channel::mcp_set_level,
   mcp_channel::mcp_log_apply_result,
+  // 本地英汉词典（ECDICT）第一期：**只读**两条 —— 查词 ＋ 状态读数。
+  // ⚠️ 与 `check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS` 登记**不同**：
+  //    这里**两条平台都要**（Web 侧同一条命令面走 sql.js 直查 —— 词典数据是普通 SQLite，
+  //    浏览器里的 sql.js 完全够用，写第二份实现没有意义），所以**不登记**为桌面专属。
+  // ⚠️ 查不到时返回的是"如实未收录"的三种状态之一（见 `dictionary::LookupOutcome`），
+  //    ⛔ **不是**空串、⛔ **不是**编造的释义。
+  dictionary::dictionary_lookup,
+  dictionary::dictionary_status,
 ])
         .run(app_context())
         .expect("error while running tauri application");

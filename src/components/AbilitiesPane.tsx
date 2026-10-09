@@ -40,6 +40,19 @@ const ABILITIES: Ability[] = [
     sha256: "808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac",
     state: "downloadable",
   },
+  {
+    id: "ecdict-en-zh",
+    name: "英汉词库（ECDICT）",
+    summary: "应用内划词查词的英汉词典（770,611 条词条 / 85.6 MiB）—— ⚠️ 中文词条不在其中，界面会如实说未收录、走 AI",
+    bytes: 89735168,
+    path: "mirror/ecdict/ecdict-en-zh.bin",
+    sha256: "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31",
+    state: "not-available",
+    note:
+      "包已产出（`node scripts/fetch-ecdict.mjs` 报出 sha256 与字节数，与 Rust 侧白名单同源），但**还没托管**到镜像仓 ⇒ 现在还不能下载。" +
+      "⚠️ 另：85.6 MiB 走「base64 过 IPC」那条链**太大**（那条链的设计目标是 3.8 MB 级的 PDFium，见 abilities.rs 文件头）" +
+      "⇒ 要不要改成 Rust 侧下载（同一份白名单＋sha256＋fail-closed，先写 .part 再改名）待拍板。",
+  },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
   { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },
   { id: "embeddings", name: "本地向量", summary: "离线语义检索", state: "not-available", note: "还没上架" },
