@@ -1542,3 +1542,25 @@ z-index + localStorage）：侧栏默认收起、竖条浮层化且主区拿到�
 | 已排除 | ① 「缺 iOS 平台」✗：装上模拟器运行时（`xcodebuild -downloadPlatform iOS` ⇒ exit 0，`simctl list runtimes` 出现 iOS 27.0）后**仍然一样** ✗；② CocoaPods/Xcode 版本 ✗：`gen/apple/Podfile` 是**空模板**（无 `Pods/`／`Podfile.lock`／`.xcworkspace`），而 Xcode 27.0 九月十五就在、九月三十同类构建**成功过** |
 | ⚠️ 环境 | 本机**没有 Homebrew** ✗ ⇒ `brew install …` 这条路不通 |
 | 待办 | 查 Tauri 2.11 的 iOS Swift 静态库是否需随 Xcode 27 重新生成工程（`gen/apple/project.yml` ＋ xcodegen），或升 Tauri 到 2.12 —— 两条都要单独开一轮；⛔ 不许用"旧包能装"当作"新构建没问题" ✗ |
+
+### iOS 新构建：2026-10-09 逐层排查记录（未成功，已到最后一层）
+
+> 触发：owner 把 iPhone 插上后要求"自主修新包"。**结论：仍未出包** ✗，但**签名层与 Rust 库链接层已修好** ✓，
+> 卡点收窄到**最后一处 App 级链接**。下表每一行都有逐字读数，可直接交接。
+
+| # | 层 | 症状（逐字） | 处置 | 状态 |
+|---|---|---|---|---|
+| 1 | 平台 | `iOS platform not installed` | `xcodebuild -downloadPlatform iOS` ⇒ exit 0；`simctl list runtimes` 出现 `iOS 27.0` | ✅ 解决 |
+| 2 | 工具 | `Info package xcodegen not found` ⇒ `Installing xcodegen with brew...` ⇒ `No such file or directory` | Homebrew 无 sudo 装到 `~/homebrew` ✓；`xcodegen 2.46.0` | ✅ 解决 |
+| 3 | 工具（其实不需要） | `failed to run command pod install` | `gen/apple/Podfile` 是**空模板**（无 pods）⇒ 工程不需要 CocoaPods；系统 ruby 2.6 撞 macOS 27 SDK 编不出 gem ⇒ 放弃该路 | ✅ 判定不需要 |
+| 4 | 签名 | `Signing for "shuyonote_iOS" requires a development team` | 把 `DEVELOPMENT_TEAM` 写进 **iOS target** 的 `settings.base`（不是 targetTemplate） | ✅ 解决 |
+| 5 | 签名 | `No Account for Team "6GL2GRPTUW"` | 团队搞错：描述文件的团队是 **M3UZLB6XK6**（`security cms -D` 读出；本机装了 `df1d5bae-…mobileprovision`） | ✅ 解决 |
+| 6 | 签名 | `Provisioning profile … is Xcode managed, but signing settings require a manually managed profile` | 改回 `CODE_SIGN_STYLE: Automatic` ＋ `DEVELOPMENT_TEAM: M3UZLB6XK6` ⇒ **签名通过** | ✅ 解决 |
+| 7 | Rust 链接 | `Undefined symbols … _init_plugin_dialog／_log_stdout／_retain_object／_string_from_bytes …`（9 个 Swift 符号） | 缺 `-Wl,-undefined,dynamic_lookup`（iOS 上必须让 Rust 库把 Swift 符号留给 App 运行时）；写进 Xcode 构建设置 `RUSTFLAGS` ⇒ `dynamic_lookup` 进入链接行 1 次、`Undefined symbols` **0 次** | ✅ 解决 |
+| 8 | 构建脚本取源 | `Failed to clone repository https://github.com/Brendonovich/swift-rs`（本机 github.com 不可达；**且缓存被我 `cargo clean -p swift-rs` 清掉** ✗） | 从残留构建目录取出真 git checkout ⇒ `/tmp/swift-rs-mirror/swift-rs` ⇒ `git config --global url."file:///tmp/swift-rs-mirror/".insteadOf "https://github.com/Brendonovich/"` ⇒ `clone 失败 0 次` | ✅ 解决 |
+| 9 | **App 级链接** | `Ld …/ShuyoNote.app/ShuyoNote` ⇒ 仍 `Undefined symbols`（同一批 Swift 符号） | 未解决 | ⛔ **卡在这** |
+
+已知**排除**的假设（各有读数 ✓，别再走一遍）：依赖漂移 ✗（`tauri 2.11.5`／`wry 0.55.1`／`swift-rs 1.0.8` 与 09-30 **逐字相同**）· Xcode 版本 ✗（09-30 成功时就是 27.0）· 产物陈旧 ✗（清 636 MB 后一样）· 工程被 xcodegen 抹设置 ✗（还原原 `project.pbxproj` 后一样；且逐项比对构建设置差异为**空**）。
+
+下一步两条（都未做，需拍板）：① 查 App target 为何没链上 `libTauri.a`/`libswift-rs.a`（工程 `dependencies` 与 `LIBRARY_SEARCH_PATHS` 是否覆盖 build 脚本产出路径）；② 升 Tauri 2.11.5 → 2.12.1（会动 Cargo/JS 依赖）。
+⚠️ 本机改动（可回滚）：`~/homebrew`（926 MB）· 一条只针对 `Brendonovich/` 的 git URL 改写 · `/tmp/swift-rs-mirror`。
