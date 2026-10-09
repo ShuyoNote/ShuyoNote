@@ -1,4 +1,4 @@
-# 移动端高保真效果图（10 屏 · 390×844 · SVG）
+# 移动端高保真效果图（10 屏 / 12 个 SVG · 390×844 · SVG）
 
 > **状态：设计稿（未接线，界面尚未实现）。** 本目录只有**效果图**，⛔ 不代表功能已做；
 > 需求编号沿用同目录 [`2026-10-08-mobile-requirements.md`](../2026-10-08-mobile-requirements.md)（M-P0-x / M-P1-x / M-P2-x）。
@@ -6,7 +6,7 @@
 > **配色/字号/圆角**一律取本产品自己的 [`design/design-system.md`](../../../../design/design-system.md) 深色列 token，⛔ 未自创品牌色、未新增主题。
 > 屏内笔记标题/正文均为**示意文案**（效果图占位），不是任何真实数据。
 
-## 1. 索引（10 屏）
+## 1. 索引（10 屏 / 12 个 SVG —— 09 启动页为**三候选 A／B／C**）
 
 | 文件 | 屏名 | 它对应的需求 | 关键点（验收时看什么） |
 |---|---|---|---|
@@ -18,7 +18,7 @@
 | [`06-dict.svg`](./06-dict.svg) | 划词查词 | M-P2-1（阅读时查词） | 选中一段文字（--accent-soft 高亮＋选择手柄）后浮出释义卡片；卡片注明「释义来源：本机词典」 |
 | [`07-settings.svg`](./07-settings.svg) | 设置 | M-P0-6（写入走应用授权通道；此处只做入口） | 极简四项：账户/同步/外观/关于；**高级入口明确写「请在桌面端操作」**（能力开关/MCP/插件） |
 | [`08-pair.svg`](./08-pair.svg) | 设备配对 · 同步 | **M-P0-2**、M-P0-5（真机验收只能人看） | 附近设备 ＋ 配对暗号**只显示指纹前 8 位**（示例值）＋ 同步状态**如实写「尚未成功搬运」** |
-| [`09-splash.svg`](./09-splash.svg) | 启动页（首启） | 非功能／首启体验；亦对应 **M-P1-3**（应用身份件：启动图 `android:splash-theme` ⇄ `check:android-splash-theme`，读数：底稿 B） | 深色底＋居中产品名与副标题＋**矢量加载条**（静止示意）＋底部版本与「你的笔记在本机 · 本地 SQLite 即可用」 |
+| **09 启动页**（三候选，**推荐 A**） | 启动页（首启） | 非功能／首启体验；亦对应 **M-P1-3**（应用身份件：启动图 `android:splash-theme` ⇄ `check:android-splash-theme`，读数：底稿 B） | **A · 发光字标**（推荐）＝径向光晕＋光晕字标＋细进度条含流动高光 ⇒ [`09-splash.svg`](./09-splash.svg) ／ **B · 知识图谱**＝节点网络＋中央标记为最亮节点＋连线上流动光点＋三点加载 ⇒ [`09-splash-B.svg`](./09-splash-B.svg) ／ **C · 卡片堆叠**＝叠起的笔记卡带透视投影＋标记浮出＋底部细光带 ⇒ [`09-splash-C.svg`](./09-splash-C.svg)。三者**同一套 token**（仅用其透明度/渐变变体），信息项一致 |
 | [`10-about.svg`](./10-about.svg) | 关于 | **M-P0-6**（审计与透明：许可/组件来源可核）＋ 非功能合规（隐私／备案占位） | 版本 1.92.5（开发）→ 本机优先/开源 → **许可 AGPL-3.0** → **开源组件致谢 12 项** → 链接（官网/源码/**隐私政策占位**）→ 检查更新＋导出诊断信息 → **备案号：待填（占位）** |
 
 ## 2. 逐屏
@@ -55,9 +55,22 @@
 
 ![设备配对：指纹前 8 位与如实同步状态](./08-pair.svg)
 
-### 09 启动页（首启）
+### 09 启动页（首启）· 三候选 A／B／C —— **推荐 A**
 
-![启动页：产品名、矢量加载条与版本说明](./09-splash.svg)
+**A · 发光字标（推荐）** —— 径向光晕 ＋ 光晕字标 ＋ 细进度条（含流动高光，静止示意）
+
+![启动页 A：发光字标](./09-splash.svg)
+
+**B · 知识图谱** —— 节点网络，中央标记为最亮的那个节点，连线上有流动光点（静止示意）
+
+![启动页 B：知识图谱](./09-splash-B.svg)
+
+**C · 卡片堆叠** —— 叠起的笔记卡带轻微透视与投影，标记从中浮出，底部一条细光带
+
+![启动页 C：卡片堆叠](./09-splash-C.svg)
+
+> 三候选的**信息项完全一致**（产品名 / 副标题「本机优先的笔记应用」/ 加载指示 / 「正在准备本机数据…」/ 底部「版本 1.92.5（开发）」「你的笔记在本机 · 本地 SQLite 即可用」）；
+> 差别只在**视觉手法**。⛔ 三者都**没有**引入 design-system 之外的主色 —— 光晕/渐变/高光全部是既有 token 的**透明度变体**（`--accent`/`--accent-strong`/`--text`/`--on-accent`/`--border`/`--hover`/`--surface`）。
 
 ### 10 关于（版本／许可／组件／链接）
 
@@ -93,6 +106,8 @@
 
 ## 5. 09／10 两屏的事实来源（逐字可核，⛔ 不许凭印象）
 
+> 09 的**三个候选（A／B／C）共用同一批事实**（下表），差别只在视觉手法；因此三份屏上的文字与数字完全相同。
+
 | 屏内写的 | 值 | 来源（文件:行 / 命令） |
 |---|---|---|
 | 版本 1.92.5（开发） | `1.92.5` | `package.json` 的 `"version"`（`python3 -c "import json;print(json.load(open('package.json'))['version'])"` ⇒ `1.92.5`） |
@@ -115,18 +130,29 @@
 ```bash
 cd docs/plans/mobile/mockups
 
-# ① 每份 SVG 必须能被 XML 解析（10/10 输出 ok）
+# ① 每份 SVG 必须能被 XML 解析（12/12 输出 ok）
 for f in *.svg; do printf '%s ' "$f"; python3 -c "import xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1]); print('ok')" "$f"; done
 
-# ② 画布必须是 390×844（期望 10 行 viewBox="0 0 390 844"）
+# ② 画布必须是 390×844（期望 12 行 viewBox="0 0 390 844"）
 grep -h -o 'viewBox="[^"]*"' *.svg | sort | uniq -c
 
-# ③ 不许有的东西（期望两条都无输出、exit 1）
-grep -n -E "foreignObject|<!ENTITY|<image|@import|url\(" *.svg
+# ③ 不许有的东西（期望三组都无输出）
+grep -n -E "foreignObject|<!ENTITY|<image|@import|font-face" *.svg
+grep -n -E "url\(" *.svg | grep -v 'url(#'          # 只许 url(#内部渐变)，别的一条都不许
 grep -n -E "https?://" *.svg | grep -v "www.w3.org/2000/svg"
 
-# ④ 元素只许是基础图元（期望 ["circle","g","path","rect","style","svg","text","title"]）
+# ④ 元素只许是基础图元 + 渐变（期望 ["circle","defs","ellipse","g","linearGradient","path",
+#    "radialGradient","rect","stop","style","svg","text","title"]）
 python3 -c "import glob,xml.dom.minidom;t=set();[t.add(n.tagName) for f in glob.glob('*.svg') for n in xml.dom.minidom.parse(f).getElementsByTagName('*')];print(sorted(t))"
+
+# ⑤ 渐变引用必须条条有定义（期望 BROKEN REFS: []）
+python3 -c "
+import glob,re
+for f in sorted(glob.glob('*.svg')):
+    s=open(f,encoding='utf-8').read()
+    d=set(re.findall(r'<(?:radial|linear)Gradient[^>]*id=\"([^\"]+)\"',s)); u=set(re.findall(r'url\(#([^)]+)\)',s))
+    print(f, 'BROKEN' if u-d else 'ok')
+"
 ```
 
 ## 7. 本目录**没有**做的事（别读成已做到）
