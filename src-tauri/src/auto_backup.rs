@@ -193,6 +193,32 @@ impl Clock for SystemClock {
     }
 }
 
+impl RunResult {
+    /// 一行说明（写日志用 ✓）——`RunOutcome.note` 是**结果行**，本方法是**原因** ✓
+    pub fn note(&self) -> &str {
+        match self {
+            RunResult::Ok { note, .. } => note,
+            RunResult::Skipped { note } => note,
+            RunResult::Failed { note } => note,
+        }
+    }
+}
+/// 进程内的"上次跑在什么时候" ✓
+///
+/// ⚠️ 刻意**不落盘**：P1 的语义是「**启动触发** ＋ 每 24h」✓ ⇒ 每次启动跑一轮**正是规格** ✓
+/// （落盘会让"重启后 24 小时内不跑"变成默认行为 ⇒ 与 P1 逐字相反 ✗）。
+#[derive(Debug, Default)]
+pub struct MemoryStore {
+    last: Option<u64>,
+}
+impl LastRunStore for MemoryStore {
+    fn get(&self) -> Option<u64> {
+        self.last
+    }
+    fn set(&mut self, unix: u64) {
+        self.last = Some(unix);
+    }
+}
 /// 一轮调度：**到点就跑一次**，把结果记成一行日志 ✓
 ///
 /// ⚠️ 三条行为写死在这里（都能被单测钉住 ✓）：
@@ -234,15 +260,16 @@ where
 /// 起一个后台线程：**启动时先跑一轮**，然后每 `tick_secs` 走一次 `tick` ✓
 ///
 /// ⚠️ 只做"睡 → tick"这件事；`store` 的读写与真备份都在调用方给的闭包里 ✓
-pub fn spawn_loop<S, F>(mut store: S, tick_secs: u64, mut run: F) -> std::thread::JoinHandle<()>
+pub fn spawn_loop<S, F>(mut store: S, interval_secs: u64, tick_secs: u64, mut run: F) -> std::thread::JoinHandle<()>
 where
     S: LastRunStore + Send + 'static,
     F: FnMut() -> RunResult + Send + 'static,
 {
     std::thread::spawn(move || {
-        let step = tick_secs.max(30);
+        // ⚠️ 下限只防忙等（1s ⇒ 本机能用环境变量把端到端判据跑出来 ✓；生产默认 3600s ✓）
+        let step = tick_secs.max(1);
         loop {
-            let _ = tick(&mut store, &SystemClock, DEFAULT_INTERVAL_SECS, &mut run);
+            let _ = tick(&mut store, &SystemClock, interval_secs, &mut run);
             std::thread::sleep(std::time::Duration::from_secs(step));
         }
     })

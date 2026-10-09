@@ -433,6 +433,25 @@ pub fn run() {
             // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
 
+	// P1 自动备份：⭐ 启动时先跑一轮，然后按间隔再看
+	//（P1 逐字＝「调度器（启动触发 ＋ 每 24h）」✓）
+	// ⚠️ 间隔与轮询都可用环境变量缩短 ⇒ 本机能把 P1 的端到端判据真的跑一遍 ✓
+	//    （不设时：每 24h 才真跑一次、每 3600s 醒一次 ✓）
+	{
+	    let handle = app.handle().clone();
+	    let secs = |k: &str, d: u64| -> u64 {
+	        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+	    };
+	    let interval = secs("SHUYONOTE_AUTO_BACKUP_INTERVAL_SECS", auto_backup::DEFAULT_INTERVAL_SECS);
+	    let tick = secs("SHUYONOTE_AUTO_BACKUP_TICK_SECS", 3600);
+	    auto_backup::spawn_loop(auto_backup::MemoryStore::default(), interval, tick, move || {
+	        let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(&handle));
+	        // ⭐ 目标要求「可读读数/日志」⇒ 每轮都打一行固定形状的日志（`[auto-backup] …` ✓）
+	        eprintln!("[auto-backup] {}", r.note());
+	        r
+	    });
+	}
+
             // PDFium 动态库在**打包形态**下的所在目录。必须在这里登记：
             // Tauri 在 Linux 上 `resource_dir` ≠ 可执行文件目录（deb = `/usr/lib/<id>`、
             // AppImage = `$APPDIR/usr/lib/<id>`），而库正是被 `tauri.linux.conf.json`
