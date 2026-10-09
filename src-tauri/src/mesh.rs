@@ -1006,6 +1006,64 @@ pub fn local_addrs() -> Vec<IpAddr> {
         Err(_) => Vec::new(),
     }
 }
+/// ⭐ **2026-10-09 修**：枚举本机地址**并带上网卡名** —— 只多一层，判定仍是纯函数 ✓。
+///
+/// **为什么必须有它**（amd 报的真发现，逐字）：绑通配时原来是"从枚举到的候选里取**第一个**"✓，
+/// 而排序按**地址字节** ⇒ 在多网卡机器上（Windows 装 WSL / Hyper-V / Docker 就**必然多张** ✓）
+/// 会撞到**虚拟网卡** ✗ —— 现场：vEthernet (WSL) 的 172.18.224.1 排在一张真 WLAN 的
+/// 192.168.43.190 **前面**（字节序 ✓），于是报出去的是对面**永远到不了**的地址 ✓，
+/// 而症状是**静默的**（没有任何提示 ✓）。
+///
+/// ⚠️ 口径：**只看名字，不猜地址** —— 172.18.x 也可能是真内网 ✓，所以判"虚拟"只按网卡**名字** ✓。
+pub fn local_addrs_named() -> Vec<(String, IpAddr)> {
+    match if_addrs::get_if_addrs() {
+        Ok(ifs) => ifs.into_iter().map(|i| (i.name, i.addr.ip())).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 这张网卡**名字**看起来是不是"本机内部"的虚拟网卡（WSL / Hyper-V / Docker / 环回 / 仅主机 ✓）。
+///
+/// ⚠️ **刻意只列"明显不是对端能到的"那几家** ✓：⛔ 不列 Tailscale / ZeroTier 这类 ✗
+/// （它们是**真的网络** ✓，用户可能正要用它们当对端 ✓）。
+fn is_virtual_if_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    const NEEDLES: [&str; 8] = [
+        "vethernet",      // Hyper-V / WSL 的 vEthernet
+        "hyper-v",
+        "wsl",
+        "docker",
+        "loopback",       // 环回伪网卡
+        "default switch", // Hyper-V 默认交换机
+        "virtualbox",
+        "vmware",
+    ];
+    NEEDLES.iter().any(|k| n.contains(k))
+}
+
+/// ⭐ 排序键（**一条口径** ✓）：第一档是"像不像一张对端能到的网卡" ✓，
+/// 第二档才是链路本地，第三档回到原来的**地址字节序**（确定性 ✓，判据可逐字节钉 ✓）。
+fn lan_rank_key(name: Option<&str>, ip: IpAddr) -> (u8, u8, (u8, u128)) {
+    let virt = name.map(is_virtual_if_name).unwrap_or(false);
+    (u8::from(virt), u8::from(is_link_local_addr(ip)), ip_bits(ip))
+}
+
+/// 与 announced_bases_with 同一个内核，但**带网卡名** ⇒ 能按 lan_rank_key 把虚拟网卡排到最后 ✓。
+pub fn announced_bases_with_named(addr: SocketAddr, locals: &[(String, IpAddr)]) -> Vec<String> {
+    if addr.port() == 0 {
+        return Vec::new();
+    }
+    let mut cands: Vec<(Option<&str>, IpAddr)> = if addr.ip().is_unspecified() {
+        locals.iter().map(|(n, ip)| (Some(n.as_str()), *ip)).collect()
+    } else {
+        vec![(None, addr.ip())]
+    };
+    cands.retain(|(_, ip)| matches!(ip, IpAddr::V4(_)));
+    cands.retain(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified() && is_lan_only(*ip));
+    cands.sort_by_key(|(n, ip)| lan_rank_key(*n, *ip));
+    cands.dedup_by_key(|(_, ip)| *ip);
+    cands.into_iter().map(|(_, ip)| format!("http://{}", SocketAddr::new(ip, addr.port()))).collect()
+}
 
 /// ★ 丙-③-b-2b：这个**实际绑上的**窗口地址该报哪个（＝别人能不能来拉我）。
 ///
@@ -1021,7 +1079,8 @@ pub fn local_addrs() -> Vec<IpAddr> {
 /// ⚠️ **只报第一个**是今天**唯一**能做的形态：一次报**多个** `hub_base` 要动 `LanAnnounce`
 /// （`lan.rs` 的线上字段）—— 那条路不在本任务写域里，属显式决定（见报告 §拿不准）。
 pub fn announced_base(addr: SocketAddr) -> Option<String> {
-    announced_bases_with(addr, &local_addrs()).into_iter().next()
+    // ⭐ 2026-10-09：走**带网卡名**的那条 ⇒ 虚拟网卡不再抢到第一个 ✓（原来按字节序，172.18.* 会赢 ✓）。
+    announced_bases_with_named(addr, &local_addrs_named()).into_iter().next()
 }
 
 // ─────────────────────────── 供的那一侧（最小 HTTP/1.1，不引依赖） ───────────────────────────
@@ -2795,6 +2854,53 @@ mod tests {
         assert!(announced_bases_with(wild, &["fc00::1".parse().unwrap()]).is_empty());
         // 具体绑在 IPv6 上 ⇒ 也不再宣告（**行为变更**：今天它会报一个对方必然跳过的地址）
         assert!(announced_bases_with("[fc00::1]:8788".parse().unwrap(), &locals).is_empty());
+    }
+
+    /// ⭐ **2026-10-09 修（amd 报的真发现）**：多网卡机器上，绑通配报出去的必须是**真网卡**，
+    /// ⛔ 不是 WSL/Hyper-V 的虚拟网卡 ✗ —— 现场是"报出去的是 172.18.224.1（vEthernet (WSL)），
+    /// 而真地址是 192.168.43.190（WLAN）"✓ ⇒ 对面拿虚拟地址来连**永远连不上**，且**没有任何提示** ✓。
+    ///
+    /// **变异**：把 lan_rank_key 里第一档 u8::from(virt) 去掉（或恒为 0）⇒ ⭐ 本判据**必须红** ✓
+    /// （那时 172.18.224.1 会因字节序小于 192.168.43.190 而重新夺回第一位 ✓）。
+    #[test]
+    fn a_wildcard_bind_prefers_a_real_adapter_over_virtual_ones() {
+        let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        // amd 那台的真实读数（逐字）：6 个 IPv4，两张虚拟 ＋ 一张真 WLAN ＋ 三张没连上的链路本地
+        let named: Vec<(String, IpAddr)> = [
+            ("vEthernet (Default Switch)", "172.31.32.1"),
+            ("vEthernet (WSL (Hyper-V firewall))", "172.18.224.1"),
+            ("WLAN 6", "192.168.43.190"),
+            ("以太网 2", "169.254.10.5"),
+            ("以太网 3", "169.254.20.6"),
+            ("以太网 4", "169.254.30.7"),
+        ]
+        .iter()
+        .map(|(n, ip)| (n.to_string(), ip.parse().unwrap()))
+        .collect();
+        let got = announced_bases_with_named(wild, &named);
+        // ⭐ 第一位必须是真 WLAN ✓（这就是产品路径 announced_base 取的那个 ✓）
+        assert_eq!(
+            got.first().map(String::as_str),
+            Some("http://192.168.43.190:8788"),
+            "绑通配时第一位必须是真网卡，⛔ 不是虚拟网卡：{got:?}"
+        );
+        // ⭐ 顺序（**实测出来的**，我第一次写反了 ✗）：真网卡 → **链路本地** → 虚拟。
+        //    原因：排序键**第一档**是"像不像虚拟网卡" ✓（链路本地那张网卡名是真网卡 ⇒ 第一档 0 ✓），
+        //    **第二档**才是链路本地 ⇒ 于是"非虚拟的链路本地"排在"虚拟的真地址"之前 ✓。
+        //    ⚠️ 产品目标只看**第一位**（`announced_base` 取 `.next()` ✓）⇒ 这个先后不影响结论 ✓，
+        //    但判据要钉**本函数真实的序** ✓，不能钉我以为的序 ✗。
+        let pos = |s: &str| got.iter().position(|g| g == s).unwrap_or(usize::MAX);
+        assert!(pos("http://192.168.43.190:8788") < pos("http://169.254.10.5:8788"), "{got:?}");
+        assert!(pos("http://169.254.10.5:8788") < pos("http://172.18.224.1:8788"), "{got:?}");
+        // ⚠️ 虚拟网卡**仍然报**（不排除 ✓）—— 只是**不许抢第一** ✓
+        assert_eq!(got.len(), 6, "六张都要在（顺序变、集合不变）：{got:?}");
+        assert_eq!(got, announced_bases_with_named(wild, &named));
+        // 具体绑虚拟网卡 ⇒ **仍然只报它自己**（用户显式选的，不许替他改 ✓）
+        let concrete: SocketAddr = "172.18.224.1:8788".parse().unwrap();
+        assert_eq!(
+            announced_bases_with_named(concrete, &named),
+            vec!["http://172.18.224.1:8788".to_string()]
+        );
     }
 
     /// ⭐ **判据⑤：绑了通配也真的"拉得通"** —— 这就是"用户不填 IP"那一档的端到端形状。
