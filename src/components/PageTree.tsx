@@ -692,7 +692,12 @@ startRename();
                   const aid = useSpaceStore.getState().activeId;
                   if (!aid) return;
                   try {
-                    await api.copyPageToWorkspace(node.id, aid, node.parent_id ?? null);
+                    // ⭐ **2026-10-08（owner：「文件夹复制到其它空间时，下面的所有东西都要递归复制过去」✓）**：
+          //   这里原来传的是 **node.parent_id** ✗ ＝ **源空间**的父 id —— 而目标空间里没有这一页 ✓
+          //   ⇒ 后端的「目标父页面不存在于目标工作空间」硬校验会**直接拒绝** ✓ ⇒ **套在别的页下面的
+          //   文件夹一个都复制不过去** ✗（后端其实**本来就递归整棵子树** ✓：见 `workspaces.rs:465` 的注释）。
+          //   ⇒ 跨空间复制时**目标父页一律传 null** ✓（落到目标空间**根目录** ✓；子树由后端带过去 ✓）。
+          await api.copyPageToWorkspace(node.id, aid, null);
                     toast(`已复制「${node.title || "未命名"}」为副本`, "success");
                     useNotes.getState().loadPages();
                   } catch (e) {
