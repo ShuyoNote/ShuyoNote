@@ -171,6 +171,50 @@ pub fn announces_for(
     announces_for_with_mesh(local_device_id, device_name, profiles, &[])
 }
 
+/// ⭐★ **2026-10-09（task-8「设备直连」）**：**这一轮该发哪些公告** —— 产品路径的**唯一入口** ✓。
+///
+/// ## 为什么必须抽成函数（＝为什么这条 bug 活了这么久）
+///
+/// 它原先**内联在 `start()` 那条无限循环里** ✗ ⇒ 判据够不着 ⇒ 判据只能各自去测两半
+/// （`window_serve_space` 测"窗口服务哪个空间" ✓、`announces_for_with_mesh` 测"公告怎么发" ✓），
+/// 而**接起来对不上**这件事**没有任何判据** ✗ —— 与 R146 同一条理由（"挂在命令体里 ⇒ 判据够不着"✓）。
+///
+/// ## 它多做的**那一件事**（就是今天这条真机的断点）
+///
+/// `profiles` 来自 `bound_profiles()`，`space_id` 是**原始列** ✓；而窗口/网格匹配用的是
+/// `window_serve_space()` 解析出来的空间 ✓ ⇒ **两把尺不同名**：
+/// · 个人空间（`sync_profiles.space_id` 就是**空串** ✓）⇒ `mesh_bases` 的 `find` 永远 miss ✗；
+/// · `is_fully_bound("", url)` 也永远 false ✗ ⇒ 那条 `continue` 把**每一行档案**都跳过
+/// ⇒ ⭐ **0 条公告** ✗ ⇒ 同一热点里的两台设备**互相看不见**（对端表恒空 ⇒ `mesh_peers` 恒空
+/// ⇒ `round` 永远走「网段里没有能直接拉的对端」那一支）⇒ **网格那条路从未发起** ✓。
+/// 真机读数：面板「附近的设备」**为空** ✗、`sync_history` **零条设备直连**（`pushed/pulled/items` 全 0 ✗），
+/// 而 `8788` 在听 ✓、`UDP 47821` 在听 ✓、双向包都通 ✓、两边配对表各一行且 `secret_sha256` 同源 ✓。
+/// ⚠️ 上一笔 `dde69cbe`（2026-10-08）修的是**窗口服务/匹配**那一半 ✗ —— 公告产出这一半没跟着改
+/// ⇒ **只修好了一半**，而每一片单测照绿 ✓（承重判据见 `mesh::direct_sync_tests` ✓）。
+///
+/// ## 三条语义（改这一处时逐条守住 ✓）
+/// ① 个人空间 ⇒ 公告报 `hub_spaces=[配对暗号]` ✓（与窗口/网格**同一把尺** ✓）；
+/// ② 团队空间 ⇒ **逐字不变**（`window_serve_space` 对非空 `space_id` 原样返回 ✓）；
+/// ③ 解析不出来（没填暗号 / 没档案行）⇒ `window_serve_space` 保持旧口径回落成 `''` ✓
+///   ⇒ 与改前**逐字相同**地不发言 ✓（放宽 ≠ 乱认 ✓，`mesh_read_scope_tests` ②③ 钉着 ✓）。
+pub(crate) fn announces_for_this_round(
+    c: &rusqlite::Connection,
+    local_device_id: &str,
+    device_name: &str,
+    profiles: &[(String, String, String)],
+    mesh_bases: &[(String, String)],
+) -> Vec<lan::LanAnnounce> {
+    // ⭐ 本笔的修：把档案里的 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）——
+    //   与窗口服务（`window_serve_space` ✓）和 `mesh_bases` 的键**同一把尺** ✓。
+    //   ⚠️ 红读数（改前逐字的行为 ＝ 下面这行换成 `profiles.to_vec()`）：
+    //      `announces_for_this_round ⇒ 0 条`（`mesh::direct_sync_tests` 两条全红 ✓）。
+    let resolved: Vec<(String, String, String)> = profiles
+        .iter()
+        .map(|(s, url, ws)| (window_serve_space(c, s, ws), url.clone(), ws.clone()))
+        .collect();
+    announces_for_with_mesh(local_device_id, device_name, &resolved, mesh_bases)
+}
+
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
 ///
 /// `mesh_bases` ＝ `(space_id, "http://<窗口实际绑上的地址>")`（由 `mesh::announced_base` 把关）。
@@ -361,7 +405,17 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //    单播那一条把反方向补回来（客户端先被主机听见 ⇒ 主机直接发回给它）。
                 // ⚠️ 以前这里是循环外算一次的 `default_targets` ⇒ 表里就算有对端也发不到它们。
                 let targets = lan::announce_targets(lan::LAN_PORT, &state.peers(now));
-                for a in announces_for_with_mesh(&device_id, &device_name, &profiles, &mesh_bases) {
+                // ⭐ **2026-10-09（task-8）**：走**唯一入口** `announces_for_this_round` ✓ ——
+                //    它在发之前把 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）。
+                //    ⛔ 不要再退回"把 `profiles` 直接喂给 `announces_for_with_mesh`" ✗
+                //    （那就是今天这条断点：`''` 与暗号**两把尺不同名** ⇒ 一条公告都发不出去 ✓）。
+                //    ⚠️ 锁只在这一个小块里拿（不在 `.await` 上跨着 ✓）：算完就把清单移出去发。
+                let announced = {
+                    let db = app2.state::<Db>();
+                    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+                    announces_for_this_round(&c, &device_id, &device_name, &profiles, &mesh_bases)
+                };
+                for a in announced {
                     let _ = lan::announce_once(&sock, &targets, &a).await;
                 }
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"

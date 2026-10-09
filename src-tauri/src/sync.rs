@@ -652,7 +652,11 @@ pub struct SyncConflict {
 }
 
 /// One entity touched by a sync run — shown in the "同步明细" list.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+///
+/// ⚠️ `Debug`（2026-10-09 task-8 加）：`mesh::PeerPullReport` 上有 `#[derive(Debug)]`，
+/// 它多了一个 `Vec<SyncItem>` 字段 ⇒ 没有 `Debug` 就**编不过**（实测 `E0277` ✓）。
+/// 它同时让判据能直接打印明细（`{items:#?}` ✓），零行为变化 ✓。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SyncItem {
     pub entity: String,   // "page" | "attachment" | ...
     pub entity_id: String,
@@ -697,7 +701,7 @@ fn prescan_payload_formats(changes: &[IncomingChange]) -> Result<(), String> {
 }
 
 /// Best-effort human-readable name for a change payload (page title, etc.).
-fn item_title(entity: &str, payload: Option<&String>) -> String {
+pub(crate) fn item_title(entity: &str, payload: Option<&String>) -> String {
     if entity == "page" && payload.is_some() {
         if let Some(v) = serde_json::from_str::<serde_json::Value>(payload.unwrap()).ok() {
             if let Some(t) = v.get("title").and_then(|t| t.as_str()) {
@@ -3301,7 +3305,170 @@ pub async fn mesh_sync_now(
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
         report.note.push_str("（⚠️ 设置里配了监听地址，但窗口没起来）");
     }
+
+    // ④ ⭐⭐ **2026-10-09（task-8）**：**网格这一轮也记一条 `sync_history`** ✓。
+    //    判别式与内容全在 `mesh_history_write`（纯函数 ⇒ **判据够得着** ✓）。
+    if let Some(h) = mesh_history_write(&report, &scope.db_space) {
+        let c = db.0.lock().expect("db mutex poisoned");
+        write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+    }
     Ok(report)
+}
+
+/// ⭐ **2026-10-09（task-8）**：网格那一轮**要不要**进 `sync_history`、进什么 —— **纯函数** ✓。
+///
+/// ## 为什么要有它（真机读数 → 判据）
+/// 两台真机上 `sync_history` 里**一条"经设备直连"的记录都没有**（`pushed/pulled/items` 全 0 ✗），
+/// 真因是**这一侧从来没有写入口**：`write_sync_history` 只挂在服务器那条路（`sync_workspace` ✓）
+/// ⇒ 「设备直连到底跑没跑、换了什么」在历史里**一个字都没有** ✗。
+/// ⇒ 验收判据「`sync_history` 出现经设备直连的记录」**今天不可能成立** ✓ ——
+///   那不是判据写错，是这里缺一条写入 ✓（内核见 `write_sync_history_with` 的头注 ✓）。
+/// ⚠️ 而"判据够得着"这条要求（本仓反复栽过：挂在命令体里 ⇒ 判据碰不到 ⇒ 这类 bug 一直漏 ✗）
+///   ⇒ 判别式**抽成纯函数**，`mesh_sync_now` 只做"调它 ＋ 落库" ✓。
+///
+/// ## 记什么（⛔ 不许为了让判据好看而造假 ✗）
+/// · `pulled` ＝ **这一轮真的收下的条数**（各对端 `applied` 之和 ✓）；
+/// · `pushed` ＝ **恒 `0`** ✓ —— 这不是"没做事"，而是 ⭐ **网格这一轮只拉** ✓：
+///   我新建的东西是**对端来拉我**时送出去的 ✓（那句话写进 `message`，用户在历史里看得见 ✓）；
+/// · `items` ＝ 逐条的 `entity/entity_id/op`（与服务器那条路**同一个** `item_title` ✓）；
+/// · `ok` ＝ 有没有对端拉不动（有 ⇒ `false` ＋ 那句话就在 `message` 里 ✓）。
+///
+/// ## 什么时候**不**写（这条也是承重的 ✓）
+/// ⚠️ **空转轮不写** ✗：自动同步的节拍是 **5 秒起、空闲退避到 60 秒**
+/// （`src/lib/syncBackoff.ts`，退避硬顶 `BACKOFF_CAP_MS = 60_000` ✓）⇒ 一台闲着的机器
+/// **每天约 1440 轮**（60s 一轮 ✓）。若每轮都写，`sync_history` 那张**只有 100 行**的表
+/// （`write_sync_history_with` 里那句 DELETE ✓）会被"什么也没发生"灌满
+/// ⇒ **把服务器同步的历史一起挤掉** ✗ —— 那是拿一个 bug 换另一个 bug ✓。
+/// ⇒ 口径：**只有这一轮确实做了什么才写**：① 有东西被拉回来（`fetched > 0`／`applied > 0` ✓，
+///   含"拉到了但都是重放"✓）；② 或者**有对端拉不动**（`error` ✓ —— 失败必须可见 ✓）。
+///   ⚠️ 「网格没开」那一格不写（`enabled == false` ⇒ 一个字节都没动 ✓）；
+///   ⚠️ 「开着但网段里没对端」那一格**也不写** —— 它在**面板上每一轮都如实显示**
+///   （`report.note` ✓，用户点一次同步就看得见 ✓），不需要靠灌历史来说话 ✓。
+pub(crate) struct MeshHistoryWrite {
+    pub ws_id: String,
+    pub pushed: usize,
+    pub pulled: usize,
+    pub ok: bool,
+    pub message: String,
+    pub items: Vec<SyncItem>,
+}
+
+pub(crate) fn mesh_history_write(
+    report: &crate::mesh::MeshRoundReport,
+    db_space: &str,
+) -> Option<MeshHistoryWrite> {
+    if !report.enabled {
+        return None;
+    }
+    let items: Vec<SyncItem> = report.peers.iter().flat_map(|p| p.items.clone()).collect();
+    let fetched: usize = report.peers.iter().map(|p| p.fetched).sum();
+    let pulled: usize = report.peers.iter().map(|p| p.applied).sum();
+    let failed: usize = report.peers.iter().filter(|p| p.error.is_some()).count();
+    if fetched == 0 && pulled == 0 && failed == 0 {
+        return None;
+    }
+    Some(MeshHistoryWrite {
+        ws_id: db_space.to_string(),
+        // ⭐ pushed 恒 0 是**语义**（这一轮只拉 ✓），不是"没数"——见上面那段注释 ✓。
+        pushed: 0,
+        pulled,
+        ok: failed == 0,
+        message: format!(
+            "设备直连（网格）：{} 【网格这一轮**只拉** —— 我这边新建的东西在**对端来拉**时送出】",
+            report.note
+        ),
+        items,
+    })
+}
+
+/// ⭐ **2026-10-09（task-8）**：网格那一轮进不进历史、进去的是不是**真读数** —— 判据。
+///
+/// ⚠️ 红读数（改前逐字的行为 ＝ `mesh_history_write` 恒回 `None`）：
+///    `mesh_history_write_* ... FAILED`（见任务报告 ✓）—— 那正是"`sync_history` 里
+///    一条设备直连都没有"✓（真机 17 条全是旧服务器失败 ✓）。
+#[cfg(test)]
+mod mesh_history_tests {
+    use super::*;
+    use crate::mesh::{MeshRoundReport, PeerPullReport};
+
+    fn peer(device: &str, fetched: usize, applied: usize, err: Option<&str>) -> PeerPullReport {
+        PeerPullReport {
+            peer: device.to_string(),
+            fetched,
+            applied,
+            cursor: 0,
+            superseded: 0,
+            awaiting: 0,
+            items: (0..fetched)
+                .map(|i| SyncItem {
+                    entity: "page".to_string(),
+                    entity_id: format!("p{i}"),
+                    op: "upsert".to_string(),
+                    dir: "pull".to_string(),
+                    title: format!("页 {i}"),
+                })
+                .collect(),
+            error: err.map(str::to_string),
+        }
+    }
+
+    fn report(enabled: bool, peers: Vec<PeerPullReport>) -> MeshRoundReport {
+        MeshRoundReport {
+            enabled,
+            note: format!("网格：拉了 {} 台对端", peers.len()),
+            candidates: peers.len(),
+            peers,
+            window: None,
+        }
+    }
+
+    /// ① **网格没开 ⇒ 不写**（一个字节都没动，历史里也不该多一行 ✓）。
+    #[test]
+    fn a_disabled_round_writes_nothing() {
+        assert!(mesh_history_write(&report(false, vec![]), "ws-1").is_none());
+    }
+
+    /// ② **开着但没对端 ⇒ 不写**（自动同步 60s 一轮 ⇒ 每轮都写会把 100 行的历史灌满 ✓）。
+    #[test]
+    fn an_idle_round_with_no_peers_writes_nothing() {
+        assert!(mesh_history_write(&report(true, vec![]), "ws-1").is_none());
+    }
+
+    /// ③ **有对端但什么也没换到 ⇒ 不写**（`fetched/applied` 全 0 且没报错 ✓）。
+    #[test]
+    fn a_round_that_changed_nothing_writes_nothing() {
+        assert!(mesh_history_write(&report(true, vec![peer("dev-b", 0, 0, None)]), "ws-1").is_none());
+    }
+
+    /// ④ ⭐ **真的收下了 ⇒ 写**，而且记的是**真读数**：`pulled == applied 之和`、
+    ///    `pushed == 0`（网格这一轮只拉 ✓）、`items` 逐条 ✓、`ws_id` 是**本地空间 id** ✓。
+    #[test]
+    fn a_round_that_pulled_writes_the_real_numbers() {
+        let w = mesh_history_write(
+            &report(true, vec![peer("dev-b", 2, 2, None), peer("dev-c", 3, 3, None)]),
+            "ws-1",
+        )
+        .expect("拉到了东西 ⇒ 必须进历史（否则「设备直连跑过没」永远查不到 ✗）");
+        assert_eq!(w.ws_id, "ws-1", "记的必须是**本地空间 id**（面板按它过滤 ✓）");
+        assert_eq!(w.pulled, 5, "pulled ＝ 各对端 applied 之和（真读数 ✓）");
+        assert_eq!(w.pushed, 0, "网格这一轮**只拉** ⇒ pushed 恒 0（⛔ 不许写假的非零 ✗）");
+        assert!(w.ok, "两台都拉得动 ⇒ ok ✓");
+        assert_eq!(w.items.len(), 5, "明细逐条 ✓");
+        assert!(w.message.contains("设备直连"), "历史那一行要说清是**哪条路**：{}", w.message);
+    }
+
+    /// ⑤ ⭐ **有对端拉不动 ⇒ 也写**（失败必须可见 ✓），而且 `ok == false` ✓。
+    #[test]
+    fn a_round_where_a_peer_failed_writes_a_visible_failure() {
+        let w = mesh_history_write(
+            &report(true, vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))]),
+            "ws-1",
+        )
+        .expect("拉不动 ⇒ 必须进历史（静默失败正是今天这条断点最难查的地方 ✗）");
+        assert!(!w.ok, "有对端拉不动 ⇒ ok 必须是 false ✓");
+        assert_eq!(w.pulled, 0, "没拉回来就是 0（如实 ✓）");
+        assert!(w.message.contains("401") || w.message.contains("拉了"), "message 要带得上那句原因：{}", w.message);
+    }
 }
 
 /// 丙-③-b-2b 的**设置面**：写网格设置（监听地址 / 口令），并把窗口的开关跟着改。
@@ -4161,13 +4328,34 @@ fn write_sync_history(
     message: &str,
     items: &[SyncItem],
 ) {
+    let c = db.0.lock().expect("db mutex poisoned");
+    write_sync_history_with(&c, ws_id, pushed, pulled, ok, message, items);
+}
+
+/// ⭐ **2026-10-09（task-8）**：`write_sync_history` 的**内核** —— 收 `&Connection` 而不是 `State<Db>` ✓。
+///
+/// ⚠️ 为什么必须分成两层：**网格那一档**（`mesh::mesh_sync_now`）手上只有 `scope`（本地空间 id ＋
+/// 对暗号的空间 id ✓），**没有 `SyncProfile`** ✗ ⇒ 它调不了上面那个签名 ⇒ 于是网格这一档
+/// **一个字都不进 `sync_history`** ✗（这正是验收判据「`sync_history` 出现经设备直连的记录」
+/// 在今天**不可能成立**的真因 —— 判据本身没写错，是这一侧缺了一条写入 ✓）。
+///
+/// 口径与改前**逐字相同**（同一条 INSERT、同一个"只留最近 100 条" ✓）；新增的只是**调用方**。
+fn write_sync_history_with(
+    c: &Connection,
+    ws_id: &str,
+    pushed: usize,
+    pulled: usize,
+    ok: bool,
+    message: &str,
+    items: &[SyncItem],
+) {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let items_json = serde_json::json!(items).to_string();
+    // best-effort：历史写不进去**不许**把同步本身搞失败（与改前一致 ✓）。
     let r = || -> rusqlite::Result<()> {
-        let c = db.0.lock().expect("db mutex poisoned");
         c.execute(
             "INSERT INTO sync_history (ws_id, ws_name, at, pushed, pulled, ok, message, items)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
