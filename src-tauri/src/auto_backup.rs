@@ -203,6 +203,12 @@ impl RunResult {
         }
     }
 }
+/// 这个文件算不算「一份有效快照」？⭐ P1 的保留判据用它 ⇒ **半个包不算** ✓
+///（0 字节 ＝ 没写完 ✗ ／ `.part` ＝ 正在写 ✗ ／ 别的名字不受我们管 ✓）
+pub fn is_valid_snapshot(name: &str, size: u64) -> bool {
+    name.starts_with("shuyonote-backup-") && name.ends_with(".zip") && size > 0
+}
+
 /// 进程内的"上次跑在什么时候" ✓
 ///
 /// ⚠️ 刻意**不落盘**：P1 的语义是「**启动触发** ＋ 每 24h」✓ ⇒ 每次启动跑一轮**正是规格** ✓
@@ -460,5 +466,16 @@ mod tests {
         assert!(out.ran);
         assert!(out.note.contains("skipped:"), "⭐ 跳过要**如实报**，不许静默算成功 ✓");
         assert!(out.note.contains("加密空间"), "跳过原因要写清 ✓");
+
     }
+
+    // ── 有效快照判据（⭐ 半个包不算一份 ✓） ──────────────────────────────
+    #[test]
+    fn valid_snapshot_requires_zip_name_and_nonzero_size() {
+        assert!(is_valid_snapshot("shuyonote-backup-1.zip", 10));
+        assert!(!is_valid_snapshot("shuyonote-backup-1.zip", 0), "⭐ 0 字节 = 半个包 ⇒ 不算 ✓");
+        assert!(!is_valid_snapshot("shuyonote-backup-1.zip.part", 10), "⭐ 正在写 ⇒ 不算 ✓");
+        assert!(!is_valid_snapshot("别人的备份.zip", 10), "⭐ 别人的名字不受我们管 ⇒ 不算 ✓");
+    }
+
 }

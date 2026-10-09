@@ -310,7 +310,14 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return RunResult::Failed { note: format!("建备份目录失败：{e}") };
     }
-    let dest = dir.join(format!("shuyonote-backup-{}.zip", now_unix()));
+    // ⚠️ 名字带**毫秒**（同秒两次调度不互相覆盖 ✗）＋ 先写 `.part` ⇒ **成功后才 rename** ✓
+    //    （实测：我杀进程时留下过一个 0 MB 的 .zip ✗ —— 那会被保留策略当成"一份有效备份" ✓）
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(now_unix() as u128 * 1000);
+    let final_dest = dir.join(format!("shuyonote-backup-{}.zip", stamp));
+    let dest = dir.join(format!("shuyonote-backup-{}.zip.part", stamp));
     // ⚠️ 实测坑（本机一次真跑抓到的 ✓）：`setup()` 跑在 `Db` 被 `manage()` **之前** ⇒
     //    直接 `app.state::<Db>()` 会 **panic**：「state() called before manage()」✗
     //    （症状是"线程当场死了、什么都没备份"，而 `backups/` 目录已经被建出来 ✓）
@@ -329,12 +336,34 @@ pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup:
     let db = app.state::<Db>();
     match export_backup(app.clone(), db, dest.to_string_lossy().to_string()).await {
         Ok(r) => {
+            // ⭐ 成功才改名（rename ✓）：中断/崩溃只会留下 `.part`（⭐ 不算一份 ✓）
+            if let Err(e) = std::fs::rename(&dest, &final_dest) {
+                return RunResult::Failed { note: format!("改名失败：{e}") };
+            }
             // ★ 保留分层：只认我们自己的命名，且只在这个目录里删 ✓
             let mut entries: Vec<Snapshot> = Vec::new();
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for ent in rd.flatten() {
                     let name = ent.file_name().to_string_lossy().into_owned();
-                    if !name.starts_with("shuyonote-backup-") || !name.ends_with(".zip") {
+                    // ⭐ 只认"有效快照"（⭐ 0 字节与 `.part` 都不算 ✓）——判据在 auto_backup 里，可单测 ✓
+                    if !name.starts_with("shuyonote-backup-") {
+                        continue;
+                    }
+                    let sz = std::fs::metadata(ent.path()).map(|m| m.len()).unwrap_or(0);
+                    if !crate::auto_backup::is_valid_snapshot(&name, sz) {
+                        // ⚠️ 0 字节的 .zip ＝ 老版本留下的半个包 ⇒ 删掉 ✓；`.part` 若是旧的就一起清 ✓
+                        let old = std::fs::metadata(ent.path())
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.elapsed().ok())
+                            .map(|d| d.as_secs() > 3600)
+                            .unwrap_or(false);
+                        if sz == 0 || (name.ends_with(".part") && old) {
+                            let _ = std::fs::remove_file(ent.path());
+                        }
+                        continue;
+                    }
+                    if false {
                         continue;
                     }
                     let unix = std::fs::metadata(ent.path())
