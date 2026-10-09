@@ -3376,12 +3376,31 @@ pub(crate) fn mesh_history_write(
         pushed: 0,
         pulled,
         ok: failed == 0,
-        message: format!(
-            "设备直连（网格）：{} 【网格这一轮**只拉** —— 我这边新建的东西在**对端来拉**时送出】",
-            report.note
-        ),
+        message: mesh_history_message(report),
         items,
     })
+}
+
+/// ⭐ **2026-10-09（task-8 真机排查踩到）**：历史那一行的**人话** —— 纯函数 ✓。
+///
+/// ⚠️ 来由（真机，逐字）：那一行原来只写「…其中 1 台没拉动（**见每一行的 error**）」✗ ——
+/// 而 ⭐ **那个 error 根本没进库** ✗（失败支路的 `items` 是空的 ✓、`PeerPullReport.error`
+/// 又不进序列化 ✓）⇒ 我那天是**手工 `curl` 对端**才拿到那句 `401` ✓。
+/// ⇒ 现在把**每一台失败的**点名 ＋ 带上它自己的错误原文 ✓（⛔ 不动 `round_note` ✗ ——
+/// 面板那一行的人话是既有判据逐字钉着的，改它就等于改界面文案 ✓）。
+fn mesh_history_message(report: &crate::mesh::MeshRoundReport) -> String {
+    let mut msg = format!(
+        "设备直连（网格）：{} 【网格这一轮**只拉** —— 我这边新建的东西在**对端来拉**时送出】",
+        report.note
+    );
+    for p in report.peers.iter().filter(|p| p.error.is_some()) {
+        msg.push_str(&format!(
+            " ｜ 对端 {}：{}",
+            p.peer,
+            p.error.as_deref().unwrap_or("（没给原因）")
+        ));
+    }
+    msg
 }
 
 /// ⭐ **2026-10-09（task-8）**：网格那一轮进不进历史、进去的是不是**真读数** —— 判据。
@@ -3471,6 +3490,27 @@ mod mesh_history_tests {
         assert!(!w.ok, "有对端拉不动 ⇒ ok 必须是 false ✓");
         assert_eq!(w.pulled, 0, "没拉回来就是 0（如实 ✓）");
         assert!(w.message.contains("401") || w.message.contains("拉了"), "message 要带得上那句原因：{}", w.message);
+    }
+
+    /// ⑥ ⭐ **2026-10-09（task-8 真机排查踩到）**：拉不动时历史行必须说清 **是哪一台 ＋ 为什么** ✓。
+    ///
+    /// ⚠️ 来由（真机，逐字）：历史行当时只写「其中 1 台没拉动（**见每一行的 error**）」✗ ——
+    /// 而 ⭐ **那个 error 根本没进库** ✗（`items` 在失败支路是空的 ✓、`PeerPullReport.error`
+    /// 不进序列化 ✓）⇒ 我那天是**手工 `curl` 对端**才拿到那句 `401` ✓。
+    /// ⇒ 本判据要求：**失败的每一台**都在 `message` 里点名 ＋ 带上它自己的错误原文 ✓。
+    /// 未修时 `message` 里既没有 `dev-b` 也没有 `401` ⇒ **必红** ✓。
+    #[test]
+    fn a_failed_peer_names_itself_and_its_reason_in_the_history_row() {
+        let w = mesh_history_write(
+            &report(
+                true,
+                vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))],
+            ),
+            "ws-1",
+        )
+        .expect("拉不动 ⇒ 必须进历史");
+        assert!(w.message.contains("dev-b"), "历史行必须说清是**哪一台**拉不动：{}", w.message);
+        assert!(w.message.contains("401"), "而且要带上**它自己的错误原文**（不让人去别处猜 ✓）：{}", w.message);
     }
 }
 
