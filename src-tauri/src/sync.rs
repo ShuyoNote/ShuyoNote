@@ -3840,7 +3840,25 @@ pub(crate) fn mesh_config_state_at(
     //   个人空间（`space_id` 空）⇒ 用「配对暗号」✓；
     //   ⚠️ **四格读数一起换** ✗：以前只把"设置"那格当重点，其实 `served_spaces("")` 会回**全局**那扇门的
     //     服务清单 ⇒ 读数里会冒出一个空串 ✗（owner 截图里那行「服务 2 个空间：、123456789Ok,./」就是它 ✓）。
-    let space = crate::lan_state::resolved_space(c, space_id, ws_id);
+    // ⭐ **修（2026-10-08）**：**与写路径同一口径**（`lan_state::resolved_space` ✓ —— 解析只写在一处 ✓）。
+    //   个人空间（`space_id` 空）⇒ 用「配对暗号」✓；
+    //   ⚠️ **四格读数一起换** ✗：以前只把"设置"那格当重点，其实 `served_spaces("")` 会回**全局**那扇门的
+    //     服务清单 ⇒ 读数里会冒出一个空串 ✗（owner 截图里那行「服务 2 个空间：、123456789Ok,./」就是它 ✓）。
+    let asked = crate::lan_state::resolved_space(c, space_id, ws_id);
+    // ⭐⭐ **2026-10-09（task-8，同族第三次）**：**这一行问的是"这台机器的设备直连开没开"** ✓，
+    //   ⛔ 不是"当前这个空间自己那一行配没配" ✗ —— 窗口是**进程级**的、且**按绑定共用**
+    //   （`U8`：同一绑定一扇门、一扇门服务多个空间 ✓）⇒ 只看当前空间会**漏报** ✓。
+    //   真机（amd 逐字）：面板说「网格这一档**关着**（没配监听地址 ⇒ **不听也不喊**）」✗，
+    //   而 `8788` 在听 ✓、KV 里 `mesh_bind:123456789Ok,./` 在 ✓、当天真跑出过 `ok=1/pulled=31` ✓
+    //   —— 因为暗号/地址配在**另一个**空间的档案行上，而面板问的是**当前**那个空间 ✗。
+    //   ⇒ 口径三条：① 当前空间自己解析得出来**且配了地址** ⇒ 报它自己的 ✓（每个空间看自己的设置 ✓）；
+    //              ② 否则 ⇒ 报**实际在用**的那一个 ✓（与发现层的 `mesh_cfgs` **同一把尺** ✓）；
+    //              ③ **谁都没配** ⇒ 仍然报「关着」✓（放宽 ≠ 乱认 ✓，判据钉着 ✓）。
+    let space = if !asked.trim().is_empty() && crate::mesh::settings(c, &asked).bind.is_some() {
+        asked
+    } else {
+        mesh_space_in_use(c).unwrap_or(asked)
+    };
     // ⚠️ 解析出来是空的（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**：当"没配" ✓。
     //   ⛔ 不许去读 `mesh_bind:` 那个空键 —— 那是**写入路径永远写不出来**的残留 ✗（会让"没配的"空间假显示为开着 ✓）。
     if space.trim().is_empty() {
@@ -3950,6 +3968,91 @@ mod mesh_config_state_tests {
         let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
         assert!(!st.enabled, "没填暗号 ⇒ 报关 ✓（放宽口径 ≠ 乱认 ✓）");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ task-8（2026-10-09，同族**第三次**）：面板那一行问的是「**这台机器**的设备直连
+    //     开没开」✗，而不是"当前这个空间自己那一行配没配" ✗
+    //
+    //     真机现场（amd 报的，逐字）：面板底部说「网格这一档**关着**（没配监听地址 ⇒ **不听也不喊**）」✗
+    //     而三条硬读数互相印证它明明开着 ✓：① `8788` **在听**（属主就是那个 app pid ✓）；
+    //     ② KV 里 `mesh_bind:123456789Ok,./` 在 ✓（而"空键" `mesh_bind:` ✗ 压根不存在 ✓）；
+    //     ③ 那天真跑出过网格行 `ok=1 / pulled=31` ✓。
+    //     真因：**暗号/监听地址配在另一个空间的档案行上**，而面板问的是**当前**那个空间 ✗ ——
+    //     窗口是**进程级**的、还**按绑定共用**（`U8`：同一绑定一扇门、一扇门服务多个空间 ✓）
+    //     ⇒ 只看当前空间必然**漏报** ✓。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ **本笔判据**：⭐ 当前空间自己**没配**，但**另一个**空间的档案配了监听地址 ⇒
+    ///   面板必须显示「**开着**」✓（⛔ 不许说"不听也不喊" —— 而 `8788` 正在听 ✗）。
+    /// ⚠️ 未修时 `enabled == false` ⇒ **必红** ✓（红读数＝amd 那句话逐字 ✓）。
+    #[test]
+    fn the_panel_reports_the_mesh_as_on_when_another_space_holds_the_bind() {
+        let c = fixture();
+        // 另一个活空间：暗号 ＋ 监听地址都配在**它**那一行上
+        c.execute("INSERT INTO meta.workspaces (id, name) VALUES ('ws-other', '另一个空间')", []).unwrap();
+        c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-other', 'room-123')", []).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+
+        // 面板问的是 **ws-personal**（它自己那一行没有暗号）
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(
+            st.enabled,
+            "⛔ 面板说「网格这一档关着（没配监听地址 ⇒ 不听也不喊）」—— 而 8788 正在听、别的空间配了 ✗"
+        );
+        assert_eq!(
+            st.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "而且要报出**实际在用的**那个地址（不是空 ✗）"
+        );
+    }
+
+    /// ⭐ **反向（放宽 ≠ 乱认）**：⭐ **谁都没配监听地址** ⇒ 仍然报「**关着**」✓。
+    #[test]
+    fn the_panel_still_reports_off_when_nobody_configured_the_mesh() {
+        let c = fixture();
+        c.execute("INSERT INTO meta.workspaces (id, name) VALUES ('ws-other', '另一个空间')", []).unwrap();
+        c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-other', 'room-123')", []).unwrap();
+        // ⚠️ 只配了暗号、**没有监听地址** ⇒ 这一档确实没开 ✓
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(!st.enabled, "谁都没配监听地址 ⇒ 必须仍然显示「关着」✓（放宽 ≠ 乱认 ✓）");
+    }
+}
+
+/// ⭐ **2026-10-09（task-8，同族第三次）**：网格这一档**实际**在服务哪个空间 —— 扫**每一条活档案**，
+/// 取第一条"解析出来的空间**确实配了监听地址**"的 ✓。
+///
+/// ⚠️ **与发现层同一把尺** ✗（不许各写一遍）：解析用 `lan_state::resolved_space`（＝
+/// `window_serve_space` **同一处实现** ✓），设置用 `mesh::settings` —— 正是 `lan_state::start`
+/// 里 `mesh_cfgs` 那条链用的那两个 ✓。两处各写一遍的下场是"门开着而面板说关着"（今天这条 ✓）。
+///
+/// ⚠️ 三条边界：① **只看活空间**（与 `bound_profiles` 同一条 `EXISTS(未删除)` ✓）；
+/// ② 解析不出来的行**跳过** ✓；③ 谁都没配 ⇒ `None` ⇒ 调用方回落"关着" ✓（放宽 ≠ 乱认 ✓）。
+fn mesh_space_in_use(c: &Connection) -> Option<String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT p.space_id, p.server_url, p.ws_id FROM sync_profiles p
+             WHERE EXISTS (
+                 SELECT 1 FROM meta.workspaces w
+                 WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+             )",
+        )
+        .ok()?;
+    let rows: Vec<(String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .ok()?
+        .filter_map(|r| r.ok())
+        .collect();
+    rows.iter().find_map(|(s, _url, ws)| {
+        let served = crate::lan_state::resolved_space(c, s, ws);
+        if served.trim().is_empty() {
+            return None;
+        }
+        crate::mesh::settings(c, &served).bind.is_some().then_some(served)
+    })
 }
 
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
