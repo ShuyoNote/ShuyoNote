@@ -479,3 +479,162 @@ mod tests {
     }
 
 }
+
+// ---------------------------------------------------------------------------
+// P3：无头 `--backup-once`（⭐ 让"应用关着"也能备份）
+// ---------------------------------------------------------------------------
+//
+// 评估文档 §3-③ 逐字点名这一块是**独立工作**：「`main.rs` 无参数解析 ✗ ⇒ 要做：参数解析 ✓
+// ＋ **不建窗口的启动路径** ✓ ＋ 三平台计划任务/launchd/systemd 的**注册与撤销** ✓ ＋ 用户可见开关 ✓」。
+// §6 给 P3 的判据逐字：「无头进程在**没有窗口**的情况下产出一份可校验的包 ✓；
+//                       注册/撤销计划任务各一次都干净 ✓」。
+//
+// ⚠️ 本条只落**纯逻辑**（⭐ 可单测的那一半 ✓）：
+//   · 参数判定（`cli_mode` ✓）—— 错了就是"关着的时候不备份"或"开窗口时把备份跑两遍" ✗
+//   · systemd 单元文件文本（`systemd_units` ✓）—— ⭐ **Linux 那半按分工归 AMD** ✓
+// ⛔ `main.rs` 的接线与"注册/撤销"动作**不在本笔** ✗（⭐ 动 `main.rs` 要先发信 ✓）。
+
+/// 启动模式（⭐ 纯数据 ⇒ 可断言 ✓）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliMode {
+    /// 正常启动（建窗口 ✓）
+    Normal,
+    /// ⭐ 无头：跑一次备份就退出（⛔ 不建窗口 ✓）
+    BackupOnce,
+}
+
+/// 那条命令行开关（⭐ 只此一条 ⇒ 判据也只有一条 ✓）
+pub const BACKUP_ONCE_FLAG: &str = "--backup-once";
+
+/// systemd 单元基名（⭐ `.service` 与 `.timer` 共用 ✓）
+pub const SYSTEMD_UNIT: &str = "shuyonote-backup";
+
+/// 从 argv 判模式（⭐ **纯函数** ⇒ 可单测 ✓）
+///
+/// ⚠️ 口径（照实）：⭐ 只认 `--backup-once` ✓；⭐ 其余参数**不报错、也不吞** ✓
+///    —— 本仓 `main.rs` 现在完全不解析参数 ✓，所以"多一个不认识的参数"必须**照旧正常启动** ✓
+///    （⛔ 不能因为看见 `--help` 就不建窗口 ✗：那会让用户以为应用坏了 ✓）。
+pub fn cli_mode<I, S>(args: I) -> CliMode
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for a in args {
+        if a.as_ref() == BACKUP_ONCE_FLAG {
+            return CliMode::BackupOnce;
+        }
+    }
+    CliMode::Normal
+}
+
+/// 生成 systemd 两个单元文件（⭐ **纯函数**、返回 (service, timer) ⇒ 可逐行断言 ✓）
+///
+/// ⭐ 我这一半（Linux）的判据：⭐ 单元文件里必须
+///   · `ExecStart=<exe> --backup-once` ✓（⭐ 无头入口 ✓）
+///   · `Type=oneshot` ✓（⭐ 跑完就退 ✓）
+///   · `OnUnitActiveSec=24h` ＋ `Persistent=true` ✓（⭐ 每天一次；⭐ 关机错过也补 ✓）
+pub fn systemd_units(exe_path: &str, interval_secs: u64) -> (String, String) {
+    let interval = format!("{}s", interval_secs.max(60));
+    let service = format!(
+        "[Unit]\n\
+         Description=ShuyoNote automatic backup (headless, no window)\n\
+         After=default.target\n\n\
+         [Service]\n\
+         Type=oneshot\n\
+         ExecStart={exe} {flag}\n\
+         # no window: the app exits as soon as the package is written\n",
+        exe = exe_path,
+        flag = BACKUP_ONCE_FLAG
+    );
+    let timer = format!(
+        "[Unit]\n\
+         Description=ShuyoNote automatic backup (daily)\n\n\
+         [Timer]\n\
+         OnBootSec=5min\n\
+         OnUnitActiveSec={interval}\n\
+         Persistent=true\n\
+         Unit={unit}.service\n\n\
+         [Install]\n\
+         WantedBy=timers.target\n",
+        interval = interval,
+        unit = SYSTEMD_UNIT
+    );
+    (service, timer)
+}
+
+/// 两个单元的**文件名**（⭐ 与 systemd 约定一致 ✓）
+pub fn systemd_unit_files() -> (String, String) {
+    (
+        format!("{SYSTEMD_UNIT}.service"),
+        format!("{SYSTEMD_UNIT}.timer"),
+    )
+}
+
+#[cfg(test)]
+mod p3_tests {
+    use super::*;
+
+    #[test]
+    fn cli_mode_recognises_backup_once_at_any_position() {
+        assert_eq!(cli_mode([BACKUP_ONCE_FLAG]), CliMode::BackupOnce);
+        assert_eq!(
+            cli_mode(["shuyonote.exe", BACKUP_ONCE_FLAG]),
+            CliMode::BackupOnce
+        );
+        assert_eq!(
+            cli_mode(["shuyonote.exe", "--other", BACKUP_ONCE_FLAG, "x"]),
+            CliMode::BackupOnce,
+            "⭐ 位置任意都要认（⭐ 平台传参方式不同 ✓）"
+        );
+    }
+
+    #[test]
+    fn cli_mode_defaults_to_normal_and_never_swallows_unknown() {
+        assert_eq!(cli_mode(Vec::<String>::new()), CliMode::Normal);
+        assert_eq!(cli_mode(["shuyonote.exe"]), CliMode::Normal);
+        assert_eq!(
+            cli_mode(["--help"]),
+            CliMode::Normal,
+            "⭐ 不认识的参数必须照旧正常启动（⛔ 不能因此不建窗口 ✗）"
+        );
+    }
+
+    #[test]
+    fn systemd_service_runs_headless_once() {
+        let (svc, _) = systemd_units("/opt/shuyonote/shuyonote", DEFAULT_INTERVAL_SECS);
+        assert!(svc.contains("Type=oneshot"), "⭐ 跑完就退 ✓：{svc}");
+        assert!(
+            svc.contains(&format!("ExecStart=/opt/shuyonote/shuyonote {BACKUP_ONCE_FLAG}")),
+            "⭐ 无头入口必须是 `--backup-once` ✓：{svc}"
+        );
+        assert!(
+            !svc.contains("[Install]"),
+            "⭐ service 不该带 [Install]（⭐ 由 timer 拉起 ✓）"
+        );
+    }
+
+    #[test]
+    fn systemd_timer_is_daily_and_catches_up() {
+        let (_, timer) = systemd_units("/opt/shuyonote/shuyonote", DEFAULT_INTERVAL_SECS);
+        assert!(timer.contains("OnUnitActiveSec=86400s"), "⭐ 每天一次 ✓：{timer}");
+        assert!(timer.contains("Persistent=true"), "⭐ 关机错过要补 ✓：{timer}");
+        assert!(timer.contains("Unit=shuyonote-backup.service"), "⭐ 拉起哪个 unit ✓");
+        assert!(timer.contains("WantedBy=timers.target"), "⭐ 装到哪一档 ✓");
+    }
+
+    #[test]
+    fn systemd_unit_files_have_conventional_names() {
+        let (svc, tmr) = systemd_unit_files();
+        assert_eq!(svc, "shuyonote-backup.service");
+        assert_eq!(tmr, "shuyonote-backup.timer");
+    }
+
+    #[test]
+    fn systemd_interval_has_a_floor() {
+        let (_, t) = systemd_units("/x", 1);
+        assert!(
+            t.contains("OnUnitActiveSec=60s"),
+            "⭐ 给个下限（⭐ 免得有人填 1 秒把盘写满 ✗）：{t}"
+        );
+    }
+}
