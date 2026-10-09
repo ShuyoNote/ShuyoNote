@@ -20,6 +20,18 @@
 
 export const GATES = [
   // ---- contract ----
+  {
+    id: "check-headless-backup",
+    group: "contract",
+    label: "无头备份（--backup-once）的接线还在不在",
+    cmd: "node scripts/check-headless-backup.mjs",
+    incident:
+      "2026-10-09：自动备份 P3 的「无头」接线**接上了却出不了包** —— `main.rs` 分流 ✓、`lib.rs` 入口 ✓、" +
+      "编译过 ✓、进程自己退 ✓、窗口数也是 0 ✓，⭐ 但**包数 ＝ 0** ✗。真因：无头路径用的是**裸 Builder**，" +
+      "它不带 `run()` 那条链（插件 ＋ `.setup()`）⇒ ⭐ `Db` 没人 `manage()` ⇒ 跑一次等于跳过 ✓，" +
+      "而症状**完全静默**（只有一行「数据库 5 秒内没就绪」）。本门禁把这段接线（＋ systemd 单元四要素、" +
+      "保留分层常量）变成静态判据：⭐ 少了任何一处都当场红 ✓，不必等到「真跑一次发现没包」✓",
+  },
   { id: "check-versions", group: "contract", label: "版本号一致性", cmd: "node scripts/check-versions.mjs" },
   {
     id: "check-changelog-version-parity",
