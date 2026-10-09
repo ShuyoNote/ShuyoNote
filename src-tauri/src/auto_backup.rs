@@ -637,4 +637,22 @@ mod p3_tests {
             "⭐ 给个下限（⭐ 免得有人填 1 秒把盘写满 ✗）：{t}"
         );
     }
+
+    /// ⭐ 按需把**真实生成**的两个单元写到磁盘（⭐ 给 `systemd-analyze verify` 用 ✓）
+    ///
+    /// 为什么放在判据里：⭐ "验的必须是**真的会写出去的那份文本**" ✗ ——
+    /// 我在 PowerShell 里另抄一份去验，等于验了**另一份东西** ✓（与本仓"两份真相源"同族 ✗）。
+    /// ⚠️ 不设 `SHUYONOTE_WRITE_UNITS` 时**什么都不做** ✓（⭐ 常驻跑不会多出文件 ✓）。
+    #[test]
+    fn write_units_when_asked() {
+        let Ok(dir) = std::env::var("SHUYONOTE_WRITE_UNITS") else {
+            return;
+        };
+        let (svc, tmr) = systemd_units("/opt/shuyonote/shuyonote", DEFAULT_INTERVAL_SECS);
+        let (sf, tf) = systemd_unit_files();
+        std::fs::create_dir_all(&dir).expect("建目录");
+        std::fs::write(std::path::Path::new(&dir).join(&sf), svc).expect("写 service");
+        std::fs::write(std::path::Path::new(&dir).join(&tf), tmr).expect("写 timer");
+        eprintln!("[p3] 单元已写到 {dir}（{sf} ／ {tf} ✓）");
+    }
 }
