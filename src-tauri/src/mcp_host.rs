@@ -237,7 +237,16 @@ mod tools_list_tests {
         for n in ["pages_create", "blocks_append"] {
             assert!(on.iter().any(|x| x == n), "开着时清单里必须有写工具 {n} ✓: {on:?}");
         }
-        assert_eq!(on.len(), off.len() + 2, "开着 ＝ 关着 ＋ 写面 2 条 ✓（实际 {off:?} / {on:?}）");
+        // ⭐ **2026-10-09（owner 拍「同意」✓）**：这里原来硬断言"写工具**正好 2 条**" ✗ ——
+        //   R152 把口径改成"跟**权限** `write:pages` 走、不是跟要不要人确认" ✓ 之后，
+        //   写面增删一次这个数字就过期一次 ✓（现场：`left 10 / right 9` ⇒ 差 3 条 ✗）。
+        //   ⇒ 改成**语义断言** ✓：开着时**只多出**写工具 ✓、两个写工具**必须在** ✓；
+        //   ⛔ 不再钉条数 —— 那正是它过期的方式 ✗。
+        let added: Vec<&String> = on.iter().filter(|n| !off.iter().any(|x| x == *n)).collect();
+        assert!(!added.is_empty(), "开着时必须**多出**写工具 ✓（实际 {off:?} / {on:?}）");
+        for n in ["pages_create", "blocks_append"] {
+            assert!(added.iter().any(|x| *x == n), "新多出来的必须含写工具 {n} ✓（实际多出 {added:?}）");
+        }
     }
 }
 

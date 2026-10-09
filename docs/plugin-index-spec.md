@@ -19,7 +19,7 @@
       "id": "weekly-review",
       "name": "周回顾",
       "version": "1.0.0",
-      "apiVersion": "1.0.0",
+      "apiVersion": "1.1.0",
       "minAppVersion": "1.87.0",
       "runtime": "logic",
       "description": "把最近几天动过的页面汇成一篇草稿。",
