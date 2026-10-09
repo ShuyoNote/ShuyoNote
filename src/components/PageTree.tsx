@@ -747,7 +747,9 @@ startRename();
                 // ⭐ **2026-10-08（owner：「复制到其它空间弹窗被裁剪了」✓）**：原本 `left = x - 160`
                 //   **完全没夹** ✗ ⇒ 靠左的行（x=84）算出 **-76** ⇒ 面板左边被切 ✓（与右键菜单同一族 ✓）。
                 //   ⇒ 四边都夹 ✓；高度交给 CSS 的 max-height ＋ 滚动 ✓（空间多也不溢出 ✓）。
-                top: Math.min(Math.max(8, menuAnchor?.y ?? 0), Math.max(8, window.innerHeight - 96)),
+                //   ⚠️ 竖向余量按**最坏高度**留 ✓：CSS 的 `max-height: min(60vh, 340px)` ＋ 8 边距 = **348** ✓
+                //      （早先我留 96 ⇒ 判据实测底边溢出 24px ✗：bottom=1234 > 视口 1210 ✓）。
+                top: Math.min(Math.max(8, menuAnchor?.y ?? 0), Math.max(8, window.innerHeight - 348)),
                 left: Math.min(
                   Math.max(8, (menuAnchor?.x ?? 0) - 160),
                   Math.max(8, window.innerWidth - 220 - 8)
