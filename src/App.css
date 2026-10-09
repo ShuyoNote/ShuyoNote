@@ -22957,6 +22957,16 @@ body.is-plugin-panel-open .main {
   .set-body-scroll {
     min-height: 0;
   }
+  /* ⭐ 2026-10-10 补：`.set-body{min-height:0}` 之后**仍剩 26px 裁切**（`mobile-overlays`
+     逐字：`✗ 有内容被裁却滚不动：set-dialog(+26px, overflow-y:hidden)`）——
+     因为外层 `.set-dialog` 的 `overflow:hidden`（桌面那条 13290 行）在矮视口下
+     会把"内部各段加起来比面板高"的那 26px **直接裁掉且滚不动**。
+     ⇒ 矮视口里让**面板自己**成为可滚容器（`overflow-y:auto`）：桌面布局不受影响
+     （这条只在 `max-width:768px` / `max-height:520px` 里生效 ✓）；
+     内层 `.set-body-scroll` 仍是主滚动容器 ✓，面板这层只兜住"谁都没接住"的那几像素 ✓。 */
+  .set-dialog {
+    overflow-y: auto;
+  }
   .set-rail {
     flex: none;
     width: 100%;
