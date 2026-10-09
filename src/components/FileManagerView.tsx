@@ -1210,7 +1210,18 @@ export function FileManagerView() {
         return (
           <div
             className={`fm-ctx${isSheet ? " is-sheet" : ""}`}
-            style={isSheet ? undefined : { left: ctxMenu.x, top: ctxMenu.y }}
+            style={
+                    isSheet
+                      ? undefined
+                      : {
+                          // ⭐ **2026-10-08（owner：「右键菜单不用被裁剪」✓）**：原本是**裸的**
+                          //   left/top ✗ ⇒ 靠边右键时菜单会**跑出视口**、被裁 ✓ ⇒ 四边都夹 ✓。
+                          //   ⚠️ 用保守常量（菜单 min-width 196 ✓／条目数不定 ⇒ 高度按 320 估 ✓）：
+                          //   宁可"靠上一点"也不许溢出 ✓（要精确就得拿 ref 量 ✓ 属下一步 ✓）。
+                          left: Math.min(Math.max(8, ctxMenu.x), Math.max(8, window.innerWidth - 196 - 8)),
+                          top: Math.min(Math.max(8, ctxMenu.y), Math.max(8, window.innerHeight - 320 - 8)),
+                        }
+                  }
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >

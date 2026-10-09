@@ -359,7 +359,15 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
           className="tree-node-menu"
           ref={menuRef}
           // ⚠️ 用 `menuTop` 而不是 `menuAnchor.y` ✗ —— 前者已经过"靠底部就上翻"的校正 ✓（见上面那个 effect ✓）。
-          style={{ top: menuTop, left: Math.max(8, (menuAnchor?.x ?? 0) - 150) }}
+          style={{
+              top: menuTop,
+              // ⭐ **2026-10-08（owner：「右键菜单不用被裁剪」✓）**：**左右都夹** —— 原来是 `Math.max(8, x-150)`
+              //   只夹左边 ✗ ⇒ 靠右的行会把菜单**挤出视口右边** ⇒ 被裁 ✓。菜单 min-width＝196 ✓（+边距 8 ✓）。
+              left: Math.min(
+                Math.max(8, (menuAnchor?.x ?? 0) - 150),
+                Math.max(8, window.innerWidth - 196 - 8)
+              ),
+            }}
           onClick={(e) => e.stopPropagation()}
           // ⚠️ 必须挡 `mousedown` ✗ —— 上面那个"点别处就关"的监听挂在 `document` 上 ✓，
           //    不挡的话点菜单项会先触发它 ⇒ `menuFile` 被清空 ⇒ ⭐ 动作丢失 ✓。
@@ -653,7 +661,15 @@ function TreeItem({
             ⋯
           </button>
           {menuOpen && (
-            <span className="tree-node-menu" ref={menuRef} style={{ top: menuTop, left: (menuAnchor?.x ?? 0) - 150 }} onClick={(e) => e.stopPropagation()}>
+            <span className="tree-node-menu" ref={menuRef} style={{
+              top: menuTop,
+              // ⭐ **2026-10-08（owner：「右键菜单不用被裁剪」✓）**：这里原本 **完全没有夹** ✗
+              //   ⇒ `x < 150` 的行会算出**负的 left** ✓（探针实测 `x = -66` ✗）⇒ 菜单跑出屏幕、被裁 ✓。
+              left: Math.min(
+                Math.max(8, (menuAnchor?.x ?? 0) - 150),
+                Math.max(8, window.innerWidth - 196 - 8)
+              ),
+            }} onClick={(e) => e.stopPropagation()}>
               <button
                 onClick={() => {
                   setMenuOpen(false);
