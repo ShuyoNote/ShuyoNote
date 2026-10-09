@@ -17,6 +17,7 @@ mod abilities;
 mod extract_kz;
 mod backlinks;
 mod backup;
+mod backup_verify;
 mod auto_backup;
 mod block_rev;
 mod blocks;
