@@ -76,10 +76,10 @@
 
 | # | 代价 | 现状根据 | 处置口径（今天能定的） |
 |---|---|---|---|
-| D1 | **页面 id 可能撞车** | 页面 id 是 `uuid v4`（`commands.rs:150`）⇒ 概率低但**不是零**（导入两次同一份包就会撞） | 撞车 ⇒ 并入侧**重新分配 id**，并同步改所有引用它的行（`parent_id`／`page_props`／`backlinks`／`page_tags`／`db_views.db_page_id`） |
-| D2 | **`changes` 序列号重排** | `seq INTEGER PRIMARY KEY AUTOINCREMENT`（F11），是**每库各自**的 | 并入的变更**不沿用原 seq**；目标库按自己的 `seq` 追加（F1：push/pull 都带 `space_id`，跨空间不串） |
-| D3 | **附件按 hash「相对安全」** | hash 按**明文**算 ⇒ 跨空间可去重；但**按空间分目录**（F12） | **不等于可直接引用**：要把字节落到目标空间目录（或建立该空间可见的那一份），并补 `attachments` 行 |
-| D4 | **回收站／历史** | 回收站＝`pages.deleted_at`；另有 `page_versions`／`page_fts`(fts5)／`page_crdt` | 回收站条目**照原样并入**（不许悄悄复活）；`page_fts` 等派生物**重建**，⛔ 不搬原索引 |
+| 1 | **页面 id 可能撞车** | 页面 id 是 `uuid v4`（`commands.rs:150`）⇒ 概率低但**不是零**（导入两次同一份包就会撞） | 撞车 ⇒ 并入侧**重新分配 id**，并同步改所有引用它的行（`parent_id`／`page_props`／`backlinks`／`page_tags`／`db_views.db_page_id`） |
+| 2 | **`changes` 序列号重排** | `seq INTEGER PRIMARY KEY AUTOINCREMENT`（F11），是**每库各自**的 | 并入的变更**不沿用原 seq**；目标库按自己的 `seq` 追加（F1：push/pull 都带 `space_id`，跨空间不串） |
+| 3 | **附件按 hash「相对安全」** | hash 按**明文**算 ⇒ 跨空间可去重；但**按空间分目录**（F12） | **不等于可直接引用**：要把字节落到目标空间目录（或建立该空间可见的那一份），并补 `attachments` 行 |
+| 4 | **回收站／历史** | 回收站＝`pages.deleted_at`；另有 `page_versions`／`page_fts`(fts5)／`page_crdt` | 回收站条目**照原样并入**（不许悄悄复活）；`page_fts` 等派生物**重建**，⛔ 不搬原索引 |
 
 ## 7. 送达两条（**同一语义**；中继只是其中一条）
 
