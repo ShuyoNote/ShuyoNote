@@ -155,6 +155,98 @@ pub fn log_line(ran: bool, kept: usize, removed: usize, note: &str) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// 调度器（P1 的另一半：**启动触发 ＋ 每 24h**）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 为什么这里**不碰 Tauri／不碰数据库**：真跑一次备份要 AppHandle 与钥匙（见 `backup.rs`）
+// ⇒ 那是**不可单测**的一侧 ✗。这里只留"**什么时候跑**"这一层，真跑的动作由调用方
+// 以闭包传进来（`run`）⇒ 于是"到点没有／失败怎么记"这两件最容易出错的事都能被单测钉住 ✓。
+
+/// 一次真实备份的结果（由调用方填；本模块只消费它 ✓）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunResult {
+    /// 跑成功了：kept/removed 由保留策略给出 ✓
+    Ok { kept: usize, removed: usize, note: String },
+    /// 没跑（例如加密空间不支持在线备份 ⇒ 如实跳过，**不假装成功** ✓）
+    Skipped { note: String },
+    /// 跑了但失败（错误必须进日志 ✓）
+    Failed { note: String },
+}
+
+/// "上一次跑在什么时候"——调用方负责持久化（这里只给窄接口 ⇒ 好测 ✓）
+pub trait LastRunStore {
+    fn get(&self) -> Option<u64>;
+    fn set(&mut self, unix: u64);
+}
+
+/// 现在几点（注入 ⇒ 测试不必等 24 小时 ✓）
+pub trait Clock {
+    fn now(&self) -> u64;
+}
+
+/// 真时间的实现（生产用 ✓）
+pub struct SystemClock;
+impl Clock for SystemClock {
+    fn now(&self) -> u64 {
+        now_unix()
+    }
+}
+
+/// 一轮调度：**到点就跑一次**，把结果记成一行日志 ✓
+///
+/// ⚠️ 三条行为写死在这里（都能被单测钉住 ✓）：
+///   ① 不到点 ⇒ `ran=false`，**绝不调用 `run`** ✓（否则每次 tick 都刷一份备份 ✗）
+///   ② 到点且跑过 ⇒ 无论成败都**写入"刚刚跑过"** ✓（否则失败会变成每 tick 重试风暴 ✗）
+///   ③ 失败 ⇒ 日志行里带 `Failed` 与原因 ✓（跳过要如实报 ✓）
+pub fn tick<S, C, F>(
+    store: &mut S,
+    clock: &C,
+    interval_secs: u64,
+    run: &mut F,
+) -> RunOutcome
+where
+    S: LastRunStore,
+    C: Clock,
+    F: FnMut() -> RunResult,
+{
+    let now = clock.now();
+    if !should_run(store.get(), now, interval_secs) {
+        return RunOutcome {
+            ran: false,
+            note: log_line(false, 0, 0, "not-due"),
+        };
+    }
+    let outcome = run();
+    store.set(now);
+    let note = match outcome {
+        RunResult::Ok {
+            kept,
+            removed,
+            note,
+        } => log_line(true, kept, removed, &note),
+        RunResult::Skipped { note } => log_line(true, 0, 0, &format!("skipped: {note}")),
+        RunResult::Failed { note } => log_line(true, 0, 0, &format!("failed: {note}")),
+    };
+    RunOutcome { ran: true, note }
+}
+
+/// 起一个后台线程：**启动时先跑一轮**，然后每 `tick_secs` 走一次 `tick` ✓
+///
+/// ⚠️ 只做"睡 → tick"这件事；`store` 的读写与真备份都在调用方给的闭包里 ✓
+pub fn spawn_loop<S, F>(mut store: S, tick_secs: u64, mut run: F) -> std::thread::JoinHandle<()>
+where
+    S: LastRunStore + Send + 'static,
+    F: FnMut() -> RunResult + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let step = tick_secs.max(30);
+        loop {
+            let _ = tick(&mut store, &SystemClock, DEFAULT_INTERVAL_SECS, &mut run);
+            std::thread::sleep(std::time::Duration::from_secs(step));
+        }
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +364,74 @@ mod tests {
     fn log_line_shape_is_stable() {
         let s = log_line(true, 3, 2, "ok");
         assert_eq!(s, "[auto-backup] ran=true kept=3 removed=2 note=ok");
+    }
+
+    // ── 调度器：tick 的三条行为 ────────────────────────────────────────────
+    struct FakeStore(Option<u64>);
+    impl LastRunStore for FakeStore {
+        fn get(&self) -> Option<u64> {
+            self.0
+        }
+        fn set(&mut self, unix: u64) {
+            self.0 = Some(unix);
+        }
+    }
+    struct FixedClock(u64);
+    impl Clock for FixedClock {
+        fn now(&self) -> u64 {
+            self.0
+        }
+    }
+
+    #[test]
+    fn tick_not_due_does_not_call_run() {
+        let mut store = FakeStore(Some(100 * DAY));
+        let clock = FixedClock(100 * DAY + 60);
+        let mut calls = 0;
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || {
+            calls += 1;
+            RunResult::Ok { kept: 0, removed: 0, note: "x".into() }
+        });
+        assert!(!out.ran, "不到点不该跑 ✓");
+        assert_eq!(calls, 0, "⭐ 不到点**绝不能**调用 run（否则每次 tick 都刷备份 ✗）");
+        assert!(out.note.contains("not-due"), "日志要明说没到点 ✓");
+    }
+
+    #[test]
+    fn tick_due_runs_and_records_success() {
+        let mut store = FakeStore(Some(100 * DAY));
+        let clock = FixedClock(101 * DAY);
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || RunResult::Ok {
+            kept: 3,
+            removed: 2,
+            note: "ok".into(),
+        });
+        assert!(out.ran, "到点该跑 ✓");
+        assert!(out.note.contains("ran=true kept=3 removed=2"), "成功读数要进日志 ✓");
+        assert_eq!(store.get(), Some(101 * DAY), "跑过之后要记下『刚刚跑过』✓");
+    }
+
+    #[test]
+    fn tick_records_last_run_even_on_failure() {
+        let mut store = FakeStore(Some(100 * DAY));
+        let clock = FixedClock(101 * DAY);
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || RunResult::Failed {
+            note: "磁盘满".into(),
+        });
+        assert!(out.ran);
+        assert!(out.note.contains("failed: 磁盘满"), "失败原因必须进日志 ✓");
+        assert_eq!(store.get(), Some(101 * DAY), "⭐ 失败也要记账（否则会变成每 tick 重试风暴 ✗）");
+    }
+
+    #[test]
+    fn tick_skipped_is_reported_not_silently_ok() {
+        let mut store = FakeStore(None);
+        let clock = FixedClock(50 * DAY);
+        let out = tick(&mut store, &clock, DEFAULT_INTERVAL_SECS, &mut || RunResult::Skipped {
+            note: "加密空间不支持在线备份".into(),
+        });
+        assert!(out.ran);
+        assert!(out.note.contains("skipped:"), "⭐ 跳过要**如实报**，不许静默算成功 ✓");
+        assert!(out.note.contains("加密空间"), "跳过原因要写清 ✓");
     }
 }
