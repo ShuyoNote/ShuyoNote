@@ -216,6 +216,14 @@ fn with_cache_headers(
     }
 }
 
+/// ⭐ 2026-10-09 修复（macOS 侧）：`generate_context!` 在整个 crate 里**只能展开一次** ✗
+/// —— 每次展开都会发一份 `_EMBED_INFO_PLIST` ⇒ 两处（`run()` 与 `run_backup_once()`）
+/// 会**链接期重复定义** ✗（`cargo build` 报 `symbol _EMBED_INFO_PLIST is already defined` ✓）。
+/// ⇒ 收敛到这一个函数 ✓：调用点可以有多个，**宏展开只此一处** ✓（上下文语义不变 ✓）。
+fn app_context() -> tauri::Context {
+    tauri::generate_context!()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
 ///
@@ -225,7 +233,7 @@ pub fn run_backup_once() -> i32 {
     if cli_mode_of_args() != CliMode::BackupOnce {
         return 4; // ⭐ 不是无头调用 ⇒ 不该走到这里 ✓
     }
-    let app = match tauri::Builder::default().build(tauri::generate_context!()) {
+    let app = match tauri::Builder::default().build(app_context()) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("[auto-backup] 无头启动失败：{e}");
@@ -1023,7 +1031,7 @@ pub fn run() {
   mcp_channel::mcp_set_level,
   mcp_channel::mcp_log_apply_result,
 ])
-        .run(tauri::generate_context!())
+        .run(app_context())
         .expect("error while running tauri application");
 }
 
