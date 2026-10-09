@@ -1421,6 +1421,36 @@ async function main() {
                   `分类栏 ${body.railW}x${body.railH}、弹层 ${body.flexDir}）`
                 : "量不到设置正文区",
             );
+            // ⭐ 2026-10-10 加：**分类栏横排后，分组容器与组内标签的几何要有判据**。
+            //   来由（**真机肉眼看到的** ✗）：安卓真机上「设置」分类栏被挤成**单字竖排**
+            //   （逐字所见：「外 观」「账 户」「外部 AI 接入 (MCP)」竖成四行 ✗），
+            //   而当时本文件 **1017 条断言全过** —— 它只量了正文宽度（(6b)）与"被裁却滚不动"，
+            //   **没有一条量分类栏自己的几何** ✗。
+            //   ⚠️ **诚实记一笔**：我按"分组容器缺 `flex: 0 0 auto`"的猜测改过 CSS，
+            //   但把 `flex: 0 0 auto` 变异成 `flex: 1 1 0` 之后这条断言**依然全绿**
+            //   （分组宽仍是 82/82/82/121px ✗）⇒ **那个猜测没被证实** ⇒ CSS 改动已撤回 ✓。
+            //   所以本条现在的身份是**守卫**（挡住"分类栏被挤扁"这一类回归 ✓），
+            //   **不是**某个真机缺陷的修复 ✓ —— 真机那个挤压**成因未定** ✗（疑 Android WebView 字体放大，
+            //   未验），已记进 `_workspace/REQUESTS.md` ✓。
+            //   判据：每个分组宽 ≥ 48px（挤扁时掉到 20~30px），且组内标签高 ≤ 30px
+            //   （一行 ≈ 18~20px；竖排两字即 ≥ 40px）。本机实测：82/82/82/121px、标签 18px ✓。
+            const railGroups = await safeEval(page, () => {
+              const gs = [...document.querySelectorAll(".set-rail-group")];
+              if (!gs.length) return null;
+              return gs.map((g) => {
+                const b = g.getBoundingClientRect();
+                const ls = [...g.querySelectorAll(".set-rail-label")];
+                const hs = ls.map((l) => Math.round(l.getBoundingClientRect().height));
+                return { w: Math.round(b.width), maxLabelH: hs.length ? Math.max(...hs) : 0 };
+              });
+            });
+            ok(
+              railGroups !== null && railGroups.every((g) => g.w >= 48 && g.maxLabelH <= 30),
+              railGroups
+                ? `分类栏分组没被挤成竖排（分组宽 ${railGroups.map((g) => g.w).join("/")}px；` +
+                  `组内标签最高 ${Math.max(...railGroups.map((g) => g.maxLabelH))}px ≤ 30 —— 竖排时会到 40px+）`
+                : "量不到分类栏分组",
+            );
           }
 
           // (6c) 图片预览顶栏：**同一行里的各组互不重叠**（GitCode issue #12）。
