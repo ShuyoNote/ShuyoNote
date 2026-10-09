@@ -3307,10 +3307,16 @@ pub async fn mesh_sync_now(
     }
 
     // ④ ⭐⭐ **2026-10-09（task-8）**：**网格这一轮也记一条 `sync_history`** ✓。
-    //    判别式与内容全在 `mesh_history_write`（纯函数 ⇒ **判据够得着** ✓）。
+    //    判别式与内容全在 `mesh_history_write`（纯函数 ⇒ **判据够得着** ✓）；
+    //    ⭐ 再加一道 **B 方案的限流**（owner 2026-10-09 拍 ✓）：同因同台的连续失败**只写第一条** ✓
+    //    —— 否则一个一直拉不动的对端会每 60 秒写 4 行、把只有 100 行的历史挤光 ✗
+    //    （真机实测：~12 分钟 25 → 77 条 ✓）。"上一条"**从库里读** ✓（零新状态 ✓）。
     if let Some(h) = mesh_history_write(&report, &scope.db_space) {
         let c = db.0.lock().expect("db mutex poisoned");
-        write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        let last = read_last_mesh_history(&c, &h.ws_id);
+        if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
+            write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        }
     }
     Ok(report)
 }
@@ -3354,6 +3360,88 @@ pub(crate) struct MeshHistoryWrite {
     pub ok: bool,
     pub message: String,
     pub items: Vec<SyncItem>,
+    /// ⭐ **2026-10-09（B 方案）**：这一轮**失败的对端 ＋ 它自己的原因**（`(device_id, error)` ✓）。
+    /// 它**不进库**（`message` 里那份是给人看的 ✓）—— 只用来和**上一条历史行**比"是不是同因同台" ✓。
+    pub failures: Vec<(String, String)>,
+}
+
+/// ⭐ **2026-10-09（owner 拍 B）**：该空间**最后一条「设备直连」历史行** —— 从**库里读** ✓。
+///
+/// ⚠️ 为什么从库里读、不新开一份内存状态：判"是不是同因同台"要的正是**上一次写了什么** ✓，
+/// 而它**已经在 `sync_history` 里** ✓ ⇒ 直接读最后一条 ⇒ **零新状态** ✓（owner 2026-10-09 指出 ✓）。
+pub(crate) struct LastMeshHistory {
+    pub at: i64,
+    pub ok: bool,
+    pub message: String,
+}
+
+/// 读该空间最后一条「设备直连」行（没有 ⇒ `None` ✓）。
+pub(crate) fn read_last_mesh_history(c: &Connection, ws_id: &str) -> Option<LastMeshHistory> {
+    c.query_row(
+        "SELECT at, ok, message FROM sync_history \
+         WHERE ws_id = ?1 AND message LIKE '设备直连（网格）：%' \
+         ORDER BY at DESC, id DESC LIMIT 1",
+        params![ws_id],
+        |r| {
+            Ok(LastMeshHistory {
+                at: r.get(0)?,
+                ok: r.get::<_, i64>(1)? != 0,
+                message: r.get(2)?,
+            })
+        },
+    )
+    .ok()
+}
+
+/// ⭐ **2026-10-09（owner 拍 B）**：这一轮**要不要真的写那一行** —— 纯函数 ✓（判据不打桩 ✓）。
+///
+/// ## 为什么（真机读数）
+/// 一个**持续拉不动**的对端会被每 60 秒写一次，**4 个空间 ⇒ 每分钟 8 行** ✗
+/// （2026-10-09 实测：历史在 ~12 分钟里从 25 条涨到 77 条 ✓）——
+/// 而 `sync_history` 只有 **100 行** ⇒ ⭐ 会把**别的**历史（含服务器同步那条路的 ✓）**挤光** ✗。
+///
+/// ## 口径（owner 逐条拍，照此实现 ✓）
+/// ⛔ **只限「失败且同因同台」** ✓；⭐ **成功的轮次（`pulled > 0`）⛔ 一律不许被吞** ✗。
+/// 写，当满足任一：① 没有上一条 ✓；② `ok` 变了（含 `0→1` **恢复** ✓ 与 `1→0` ✓）；
+/// ③ 对端**不是同一台**；④ **原因不同**（401 → 超时 ✓）；
+/// ⑤ 距上一条**超过** [`MESH_HISTORY_REPEAT_MS`]（⭐ 用户长时间不在也有**心跳** ✓）。
+/// 跳过，当且仅当：**失败 ＋ `ok` 没变 ＋ 每一台失败的对端与原因都已经在**上一条 `message` 里** ✓。
+///
+/// ⚠️ "同一台/同一原因"靠**上一条 `message` 里是否已经含** `对端 <peer>：<error>` 这段**字面**判定 ✓
+/// （那段就是 [`mesh_history_message`] 写进去的 ✓）—— 不引新字段、不改 schema ✓。
+pub(crate) const MESH_HISTORY_REPEAT_MS: i64 = 10 * 60 * 1000;
+
+pub(crate) fn mesh_history_should_write(
+    w: &MeshHistoryWrite,
+    last: Option<&LastMeshHistory>,
+    now_ms: i64,
+) -> bool {
+    // ⭐ ① **成功的轮次**（这一轮没有任何失败对端 ⇒ `failures` 空）⇒ **永远写** ✓
+    //    ⛔ 绝不许被限流吞掉 ✗：`pulled > 0` 是"真的换到了东西"✓，而它正是 `ok 0→1`「它好了」的凭据 ✓。
+    if w.failures.is_empty() {
+        return true;
+    }
+    // ② 没有上一条 ⇒ 写 ✓（第一次失败必须留痕 ✓）。
+    let Some(prev) = last else { return true };
+    // ③ `ok` 变了 ⇒ 写 ✓（含 `1→0`：本来好了、现在又坏了 ✓）。
+    if prev.ok != w.ok {
+        return true;
+    }
+    // ④ 距上一条**超过** 10 分钟 ⇒ 写 ✓（心跳：用户长时间不在也要有痕迹 ✓）。
+    if now_ms.saturating_sub(prev.at) >= MESH_HISTORY_REPEAT_MS {
+        return true;
+    }
+    // ⑤ "同因同台"才跳过 —— ⚠️ **两头都要比**（比"子集"更严 ⇒ 只会**多写**、绝不**少写** ✓：
+    //    `2 台坏 → 1 台坏` 这种"有一台好了"也是一件**该留痕**的事 ✓）。
+    //    ① 条的台数必须一样；② 每一台的 `对端 <peer>：<error>` 都得在上一条里出现过 ✓。
+    let prev_named = prev.message.matches(" ｜ 对端 ").count();
+    if prev_named != w.failures.len() {
+        return true;
+    }
+    !w
+        .failures
+        .iter()
+        .all(|(peer, err)| prev.message.contains(&format!("对端 {peer}：{err}")))
 }
 
 pub(crate) fn mesh_history_write(
@@ -3370,6 +3458,11 @@ pub(crate) fn mesh_history_write(
     if fetched == 0 && pulled == 0 && failed == 0 {
         return None;
     }
+    let failures: Vec<(String, String)> = report
+        .peers
+        .iter()
+        .filter_map(|p| p.error.as_ref().map(|e| (p.peer.clone(), e.clone())))
+        .collect();
     Some(MeshHistoryWrite {
         ws_id: db_space.to_string(),
         // ⭐ pushed 恒 0 是**语义**（这一轮只拉 ✓），不是"没数"——见上面那段注释 ✓。
@@ -3378,6 +3471,7 @@ pub(crate) fn mesh_history_write(
         ok: failed == 0,
         message: mesh_history_message(report),
         items,
+        failures,
     })
 }
 
@@ -3511,6 +3605,101 @@ mod mesh_history_tests {
         .expect("拉不动 ⇒ 必须进历史");
         assert!(w.message.contains("dev-b"), "历史行必须说清是**哪一台**拉不动：{}", w.message);
         assert!(w.message.contains("401"), "而且要带上**它自己的错误原文**（不让人去别处猜 ✓）：{}", w.message);
+    }
+
+    // ───────── B 方案（owner 2026-10-09 拍）：同因同台的连续失败**只写第一条** ─────────
+
+    /// 带 `sync_history` 的库夹具（`write_sync_history_with` 用的是**非限定**表名 ⇒ 落 main ✓）。
+    fn history_fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE sync_history (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 ws_id TEXT NOT NULL, ws_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
+                 pushed INTEGER NOT NULL DEFAULT 0, pulled INTEGER NOT NULL DEFAULT 0,
+                 ok INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '',
+                 items TEXT NOT NULL DEFAULT ''
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn history_len(c: &Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM sync_history", [], |r| r.get(0)).unwrap()
+    }
+
+    /// ⭐⭐ **本笔的判据**：⭐ **同因同台的连续失败 ⇒ 只写第一条** ✓（红：改前"总是写" ⇒ 写 2 条 ✗）。
+    ///
+    /// 真机来由：一个一直拉不动的对端每 60 秒写一次 × 4 个空间 ⇒ 历史 ~12 分钟 25 → 77 条 ✗ ⇒
+    /// 只有 100 行的表会把别的历史挤光 ✓。
+    #[test]
+    fn a_repeated_identical_failure_is_written_only_once() {
+        let c = history_fixture();
+        let rep = report(true, vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))]);
+
+        let w1 = mesh_history_write(&rep, "ws-1").unwrap();
+        let last = read_last_mesh_history(&c, "ws-1");
+        assert!(mesh_history_should_write(&w1, last.as_ref(), 1_000), "第一条必须写（没有上一条 ✓）");
+        write_sync_history_with(&c, "ws-1", w1.pushed, w1.pulled, w1.ok, &w1.message, &w1.items);
+        assert_eq!(history_len(&c), 1);
+
+        // 第 2、3 轮：**同一台 ＋ 同一个原因 ＋ 6 秒后** ⇒ ⛔ 不许再写 ✗
+        for bump in [6_000i64, 12_000] {
+            let w = mesh_history_write(&rep, "ws-1").unwrap();
+            let last = read_last_mesh_history(&c, "ws-1");
+            let at = last.as_ref().map(|l| l.at).unwrap_or(0) + bump;
+            assert!(
+                !mesh_history_should_write(&w, last.as_ref(), at),
+                "同因同台的连续失败**不许刷屏** ✗（否则 100 行的历史会被同一句话喂光）"
+            );
+            assert_eq!(history_len(&c), 1, "库里必须仍然只有第一条");
+        }
+    }
+
+    /// ⭐ **反向（⛔ 不许把该写的吞掉 ✗）** —— 四条各自的出口 ✓：
+    /// ① **换了一台对端** ⇒ 写；② **原因不同** ⇒ 写；③ **超过 10 分钟**（心跳）⇒ 写；
+    /// ④（最要紧）⭐ **成功了（`pulled > 0`）⇒ 一定写** ✓ —— 那是"它好了"的凭据 ✓。
+    #[test]
+    fn a_changed_peer_reason_or_a_recovery_is_never_swallowed() {
+        let c = history_fixture();
+        // 先写一条失败
+        let fail_b = report(true, vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))]);
+        let w1 = mesh_history_write(&fail_b, "ws-1").unwrap();
+        write_sync_history_with(&c, "ws-1", w1.pushed, w1.pulled, w1.ok, &w1.message, &w1.items);
+        let last = read_last_mesh_history(&c, "ws-1").unwrap();
+        let at = last.at + 6_000;
+
+        // ① 换了一台
+        let other = mesh_history_write(
+            &report(true, vec![peer("dev-c", 0, 0, Some("对端 dev-c 回了 401 Unauthorized"))]),
+            "ws-1",
+        )
+        .unwrap();
+        assert!(mesh_history_should_write(&other, Some(&last), at), "换了**另一台** ⇒ 必须写 ✓");
+
+        // ② 同一台、**原因不同**（401 → 超时）
+        let other_why = mesh_history_write(
+            &report(true, vec![peer("dev-b", 0, 0, Some("拉对端 dev-b 失败：connection refused"))]),
+            "ws-1",
+        )
+        .unwrap();
+        assert!(mesh_history_should_write(&other_why, Some(&last), at), "**原因变了** ⇒ 必须写 ✓");
+
+        // 同因同台但**过了 10 分钟** ⇒ 心跳，必须写
+        let same = mesh_history_write(&fail_b, "ws-1").unwrap();
+        assert!(
+            mesh_history_should_write(&same, Some(&last), last.at + MESH_HISTORY_REPEAT_MS + 1),
+            "超过 10 分钟 ⇒ 心跳必须写 ✓（用户长时间不在也要有痕迹 ✓）"
+        );
+
+        // ④ ⭐ **恢复**：这一轮真收到了东西 ⇒ 一定写（⛔ 不许被限流吞掉 ✗）
+        let recovered = mesh_history_write(&report(true, vec![peer("dev-b", 2, 2, None)]), "ws-1").unwrap();
+        assert!(
+            mesh_history_should_write(&recovered, Some(&last), at),
+            "⭐ **成功/有收获的那一轮永远要写** ✗（`ok 0→1` 就是「它好了」的凭据 ✓）"
+        );
+        assert!(recovered.ok, "前提：这一轮 ok=true ✓");
     }
 }
 
