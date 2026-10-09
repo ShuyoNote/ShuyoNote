@@ -291,6 +291,106 @@ pub async fn export_backup(
     Ok(out)
 }
 
+/// P1（自动备份）：⭐ **按我们定的位置跑一次**，并把保留分层也跑一遍 ✓
+///
+/// ⚠️ 这里**不重写**备份逻辑 —— 直接调已有的 `export_backup`（`#[tauri::command]` 也是普通 async fn ✓），
+///    只把「去哪、叫什么名」换成我们自己的：`<app_data_dir>/backups/shuyonote-backup-<unix>.zip` ✓
+/// ⚠️ 加密空间那条硬约束（`backup is not supported with encrypted databases`）由 `snapshot_spaces`
+///    自己分叉并**如实报 skipped** ✓ —— 本函数把它带进日志，⛔ 不静默少数据 ✓
+/// ⚠️ 删除只发生在 `backups/` 目录内、且**只删我们自己命名**的文件 ✓（保留分层的 remove 清单 ✓）
+pub async fn run_auto_backup_once(app: &tauri::AppHandle) -> crate::auto_backup::RunResult {
+    use crate::auto_backup::{now_unix, retention_keep, RunResult, Snapshot};
+    use tauri::Manager;
+
+    let app_data = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => return RunResult::Failed { note: format!("拿不到应用数据目录：{e}") },
+    };
+    let dir = app_data.join("backups");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return RunResult::Failed { note: format!("建备份目录失败：{e}") };
+    }
+    // ⚠️ 名字带**毫秒**（同秒两次调度不互相覆盖 ✗）＋ 先写 `.part` ⇒ **成功后才 rename** ✓
+    //    （实测：我杀进程时留下过一个 0 MB 的 .zip ✗ —— 那会被保留策略当成"一份有效备份" ✓）
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(now_unix() as u128 * 1000);
+    let final_dest = dir.join(format!("shuyonote-backup-{}.zip", stamp));
+    let dest = dir.join(format!("shuyonote-backup-{}.zip.part", stamp));
+    // ⚠️ 实测坑（本机一次真跑抓到的 ✓）：`setup()` 跑在 `Db` 被 `manage()` **之前** ⇒
+    //    直接 `app.state::<Db>()` 会 **panic**：「state() called before manage()」✗
+    //    （症状是"线程当场死了、什么都没备份"，而 `backups/` 目录已经被建出来 ✓）
+    // ⇒ 这里**等它就绪**（最多 ~5s ✓）；拿不到就**如实跳过** ✓（⛔ 不假装成功 ✗）
+    let mut ready = false;
+    for _ in 0..50 {
+        if app.try_state::<Db>().is_some() {
+            ready = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if !ready {
+        return RunResult::Skipped { note: "数据库 5 秒内没就绪".into() };
+    }
+    let db = app.state::<Db>();
+    match export_backup(app.clone(), db, dest.to_string_lossy().to_string()).await {
+        Ok(r) => {
+            // ⭐ 成功才改名（rename ✓）：中断/崩溃只会留下 `.part`（⭐ 不算一份 ✓）
+            if let Err(e) = std::fs::rename(&dest, &final_dest) {
+                return RunResult::Failed { note: format!("改名失败：{e}") };
+            }
+            // ★ 保留分层：只认我们自己的命名，且只在这个目录里删 ✓
+            let mut entries: Vec<Snapshot> = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for ent in rd.flatten() {
+                    let name = ent.file_name().to_string_lossy().into_owned();
+                    // ⭐ 只认"有效快照"（⭐ 0 字节与 `.part` 都不算 ✓）——判据在 auto_backup 里，可单测 ✓
+                    if !name.starts_with("shuyonote-backup-") {
+                        continue;
+                    }
+                    let sz = std::fs::metadata(ent.path()).map(|m| m.len()).unwrap_or(0);
+                    if !crate::auto_backup::is_valid_snapshot(&name, sz) {
+                        // ⚠️ 0 字节的 .zip ＝ 老版本留下的半个包 ⇒ 删掉 ✓；`.part` 若是旧的就一起清 ✓
+                        let old = std::fs::metadata(ent.path())
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.elapsed().ok())
+                            .map(|d| d.as_secs() > 3600)
+                            .unwrap_or(false);
+                        if sz == 0 || (name.ends_with(".part") && old) {
+                            let _ = std::fs::remove_file(ent.path());
+                        }
+                        continue;
+                    }
+                    if false {
+                        continue;
+                    }
+                    let unix = std::fs::metadata(ent.path())
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    entries.push(Snapshot { name, unix });
+                }
+            }
+            let plan = retention_keep(&entries, now_unix());
+            let mut removed = 0usize;
+            for name in &plan.remove {
+                if std::fs::remove_file(dir.join(name)).is_ok() {
+                    removed += 1;
+                }
+            }
+            RunResult::Ok {
+                kept: plan.keep.len(),
+                removed,
+                note: format!("size={} skipped={}", r.size, r.skipped.len()),
+            }
+        }
+        Err(e) => RunResult::Failed { note: format!("导出失败：{e}") },
+    }
+}
 // Restore the database from a backup snapshot into the live connection.
 /// Join a zip entry name onto a base dir, refusing entries that could escape via
 /// `..`, absolute paths, roots, or Windows drive prefixes (zip-slip protection).

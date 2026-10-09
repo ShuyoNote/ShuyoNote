@@ -17,6 +17,8 @@ mod abilities;
 mod extract_kz;
 mod backlinks;
 mod backup;
+mod backup_verify;
+pub mod auto_backup;
 mod block_rev;
 mod blocks;
 mod bookmark;
@@ -215,6 +217,57 @@ fn with_cache_headers(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
+///
+/// ⚠️ 退出码口径（⭐ 与仓库的五档契约同向 ✓）：0 成功／1 失败／2 起不来／3 跳过（⭐ "跳过了"不是"通过" ✓）
+pub fn run_backup_once() -> i32 {
+    use auto_backup::{CliMode, RunResult};
+    if cli_mode_of_args() != CliMode::BackupOnce {
+        return 4; // ⭐ 不是无头调用 ⇒ 不该走到这里 ✓
+    }
+    let app = match tauri::Builder::default().build(tauri::generate_context!()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[auto-backup] 无头启动失败：{e}");
+            return 2;
+        }
+    };
+    // ⭐ 无头路径用的是**裸 Builder** ✗ ⇒ 它不带 `run()` 那条链（插件 ＋ `.setup()` ✓）
+    //    ⇒ ⭐ `Db` 不会有人托管 ✓ —— 这就是上一轮量到「数据库 5 秒内没就绪 ⇒ 包数 0」的根因 ✓
+    //    ⇒ ⭐ 这里**照 `setup()` 里那三步**自己来 ✓（⛔ 不多复制别的：不建窗口、不起插件 ✓）
+    {
+        use tauri::Manager;
+        let app_data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[auto-backup] 拿不到应用数据目录：{e}");
+                return 2;
+            }
+        };
+        let conn = match db::init(app_data_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[auto-backup] 初始化数据库失败：{e}");
+                return 2;
+            }
+        };
+        security::startup_lock(&conn);
+        app.manage(Db(Mutex::new(conn)));
+    }
+    let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(app.handle()));
+    eprintln!("[auto-backup] headless {}", r.note());
+    match r {
+        RunResult::Ok { .. } => 0,
+        RunResult::Failed { .. } => 1,
+        RunResult::Skipped { .. } => 3,
+    }
+}
+
+/// 本进程的启动模式（⭐ 收在一处 ⇒ `setup()` 与 `main.rs` 用同一口径 ✓）
+pub fn cli_mode_of_args() -> auto_backup::CliMode {
+    auto_backup::cli_mode(std::env::args().skip(1))
+}
+
 pub fn run() {
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
     // 放在后面会出两个真实后果（见方案 §7）：macOS 上多一个 Dock 图标；single-instance
@@ -431,6 +484,25 @@ pub fn run() {
             // "先入队再 emit"（来源与对照表见 deeplink.rs 的 attach 文档）。
             // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
+
+	// P1 自动备份：⭐ 启动时先跑一轮，然后按间隔再看
+	//（P1 逐字＝「调度器（启动触发 ＋ 每 24h）」✓）
+	// ⚠️ 间隔与轮询都可用环境变量缩短 ⇒ 本机能把 P1 的端到端判据真的跑一遍 ✓
+	//    （不设时：每 24h 才真跑一次、每 3600s 醒一次 ✓）
+	{
+	    let handle = app.handle().clone();
+	    let secs = |k: &str, d: u64| -> u64 {
+	        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+	    };
+	    let interval = secs("SHUYONOTE_AUTO_BACKUP_INTERVAL_SECS", auto_backup::DEFAULT_INTERVAL_SECS);
+	    let tick = secs("SHUYONOTE_AUTO_BACKUP_TICK_SECS", 3600);
+	    auto_backup::spawn_loop(auto_backup::MemoryStore::default(), interval, tick, move || {
+	        let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(&handle));
+	        // ⭐ 目标要求「可读读数/日志」⇒ 每轮都打一行固定形状的日志（`[auto-backup] …` ✓）
+	        eprintln!("[auto-backup] {}", r.note());
+	        r
+	    });
+	}
 
             // PDFium 动态库在**打包形态**下的所在目录。必须在这里登记：
             // Tauri 在 Linux 上 `resource_dir` ≠ 可执行文件目录（deb = `/usr/lib/<id>`、
