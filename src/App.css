@@ -22990,6 +22990,22 @@ body.is-plugin-panel-open .main {
     padding: 8px 10px;
     min-height: 44px;
   }
+  /* ⭐ 2026-10-10：手机横排时，`.set-rail` 的子项是**分组容器** `.set-rail-group`，
+     而它没有 `flex: 0 0 auto` ⇒ 作为横排 flex 子项被**挤压** ⇒ 组内每一项窄到只能
+     **单字竖排**（门禁逐字：`分组宽 69/69/69/69px；组内标签最高 90px` ✗；真机同形 ✓）。
+     ⚠️ 这两条一度被我**误撤**（我拿"改完只等 2 秒就量"的假绿变异当证据 ✗，
+     那次 dev server 已在跑、CSS 热更新还没生效 ✗）——是**门禁自己**把真相顶回来的 ✓
+     （撤掉后 `mobile-overlays` 立刻 `1017 通过 / 3 失败` ✗）。 */
+  .set-rail-group {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .set-rail-group-title,
+  .set-rail-label {
+    white-space: nowrap;
+  }
   .set-body-scroll {
     padding: 16px 14px;
     padding-bottom: 28px;
@@ -24111,4 +24127,124 @@ body.is-plugin-panel-open .main {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端首页（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）
+   ⚠️ 只有手机档才渲染它（`App.tsx` 的 `isMobile` 分支 ✓）⇒ 这里**不套 @media** ✓；
+   ⛔ 也**不动**桌面那套 `.empty-state`（桌面空态照旧 ✓）。
+   ⚠️ 这一段写在文件**最外层**（前一个块在 24114 行以 `}` 结束、净深度 0 ✓，我核过 ✓）。
+   ========================================================================== */
+.mhome {
+  padding: 18px 16px calc(24px + var(--sab, 0px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mhome-head {
+  margin: 6px 2px 10px;
+}
+.mhome-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+.mhome-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+/* 卡片：整块可点，最小高度 88px（远高于移动端 44px 的触控下限 ✓） */
+.mhome-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 88px;
+  padding: 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+.mhome-card.is-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.mhome-card-icon {
+  flex: none;
+  width: 40px;
+  text-align: center;
+  font-size: 22px;
+}
+.mhome-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mhome-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 600;
+}
+.mhome-card-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.mhome-card.is-accent .mhome-card-hint {
+  color: rgba(255, 255, 255, 0.85);
+}
+.mhome-card-go {
+  flex: none;
+  font-size: 22px;
+  color: var(--text-faint);
+}
+.mhome-card.is-accent .mhome-card-go {
+  color: rgba(255, 255, 255, 0.9);
+}
+.mhome-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.mhome-recent {
+  display: block;
+}
+.mhome-recent-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.mhome-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+}
+.mhome-recent-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mhome-recent-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
 }

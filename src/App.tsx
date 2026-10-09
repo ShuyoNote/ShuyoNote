@@ -17,6 +17,8 @@ import { DatabaseView } from "./components/DatabaseView";
 import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
+// ⭐ 2026-10-10：移动端首页（效果图 01-home.svg，规格 §4.1）—— 只在 `isMobile` 且"什么都没打开"时渲染 ✓。
+import { MobileHome } from "./components/MobileHome";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
@@ -1139,6 +1141,11 @@ function AppShell() {
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
       ) : currentId ? (
         <NoteEditor pageId={currentId} />
+      ) : isMobile ? (
+        /* ⭐ 2026-10-10：手机档的"什么都没打开"⇒ 走**移动端首页**（三个入口 ✓ 无侧边栏 ✓），
+           而不是桌面空态（那句"或按 Ctrl+N"在手机上本来就是错的 ✗）。
+           ⛔ 桌面分支一个字没动 ✓（下一个 else 就是原来那套 ✓）。 */
+        <MobileHome />
       ) : (
         <div className="main empty">
           <div className="empty-state">
