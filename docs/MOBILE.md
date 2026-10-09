@@ -1531,3 +1531,14 @@ z-index + localStorage）：侧栏默认收起、竖条浮层化且主区拿到�
   `std::fs::read(path)`，而 `open()` 可能返回 `content://`）。
 - **WebView 壳（鸿蒙）**：每个壳在真实设备上验「打开外链走系统、附件可读、
   编辑/数据库/检索正常」，并跑 `scripts/smoke-web.mjs` 回归。
+
+## iOS 现状（2026-10-09 实测，macOS 侧）
+
+| 项 | 读数（逐字） |
+|---|---|
+| 设备通道 | ✅ 通：`xcrun devicectl list devices` 读到 iPhone（iPhone 17 / iPhone18,3）；`device install app` ⇒ `App installed`；`process launch cn.shuyo.shuyonote` ⇒ `Launched application` |
+| 现有产物 | `src-tauri/gen/apple/build/arm64/ShuyoNote.ipa`（59,591,930 字节，09-30 17:17）＋ `build/shuyonote_iOS.xcarchive`；签名 `Apple Development: xuechen zhai`，identifier `cn.shuyo.shuyonote` |
+| ⛔ 新构建 | `pnpm tauri ios build` 会红在链接：`Undefined symbols for architecture arm64`（`_init_plugin_dialog`／`_init_plugin_opener`／`_log_stdout`／`_on_webview_created`／`_register_plugin`／`_run_plugin_command`／`_retain_object`／`_release_object`／`_string_from_bytes`）⇒ `cargo` **101** ⇒ `xcodebuild` **65** |
+| 已排除 | ① 「缺 iOS 平台」✗：装上模拟器运行时（`xcodebuild -downloadPlatform iOS` ⇒ exit 0，`simctl list runtimes` 出现 iOS 27.0）后**仍然一样** ✗；② CocoaPods/Xcode 版本 ✗：`gen/apple/Podfile` 是**空模板**（无 `Pods/`／`Podfile.lock`／`.xcworkspace`），而 Xcode 27.0 九月十五就在、九月三十同类构建**成功过** |
+| ⚠️ 环境 | 本机**没有 Homebrew** ✗ ⇒ `brew install …` 这条路不通 |
+| 待办 | 查 Tauri 2.11 的 iOS Swift 静态库是否需随 Xcode 27 重新生成工程（`gen/apple/project.yml` ＋ xcodegen），或升 Tauri 到 2.12 —— 两条都要单独开一轮；⛔ 不许用"旧包能装"当作"新构建没问题" ✗ |
