@@ -187,6 +187,11 @@ mod tls_android;
 // ping 通、广播收不到；改成单播立刻生效 ⇒ 挡的就是这一层）。见模块头。
 #[cfg(target_os = "android")]
 mod lan_android;
+// 跨网中继（relay）**客户端**那一侧（2026-10-09 第 1 期）—— 读配置 / 连接＋握手 / 许可窗口判定。
+// ⚠️ 只有库级接入：⛔ 今天**没有**注册 Tauri 命令 ✗（那要同步 `commands.ts` ＋ `web.ts`，
+//    门禁 `check-web-commands` 三个方向都查，而那两个文件不在本期写域内）—— 见模块头。
+// `pub`（不是 `mod`）：这一层就是给下一期接线用的**库级接口** ⇒ 不这样做整模块全是 dead_code 警告 ✓
+pub mod relay_client;
 mod security;
 mod storage;
 mod sync;
