@@ -38,9 +38,9 @@
 
 - 给谁用：想知道「这是什么、什么许可、用了谁的东西、有没有更新」的人（含合规视角）。
 - 相关需求：**M-P0-6**（审计与透明：许可与组件来源可核）＋ 非功能合规（隐私/备案占位）。
-- 关键交互：「检查更新」发起更新检查；「导出诊断信息」导出本地诊断；三项链接里**隐私政策与备案号为占位**（⛔ 没有编造 URL ✓）。
+- 关键交互：「检查更新」发起更新检查；「导出诊断信息」导出本地诊断；链接区按 owner 要求**只显示「官网 `shuyo.cn`」与「社区 `community.shuyo.cn`」两行**（⛔ **不显示源码网址** ✗），**隐私政策与备案号为占位**（⛔ 没有编造 URL ✓）。
 - 与桌面端的差别：与桌面端同一份信息，但**只读展示**、不提供高级配置入口。
-- 依据（逐条可核）：许可 **AGPL-3.0**（`LICENSE:1-2`「GNU AFFERO GENERAL PUBLIC LICENSE / Version 3」；`README.md:465` 同述；⚠️ 同步服务端为独立商业组件、不适用本许可 —— `README.md:471`）；开源组件 **12 项**，名字与版本取自 `package.json` 的 `dependencies`（共 34 项），⚠️ **未逐个核过它们的许可证**，故只写名字与版本；版本 **1.92.5**（`package.json.version`）、最新发布 **1.92.6**（`docs/RELEASING.md:258`）；链接 官网 `shuyo.cn/app`（`README.md:32`）、源码 `gitcode.com/shuyo-cn/ShuyoNote`（`README.md:70`）。
+- 依据（逐条可核）：许可 **AGPL-3.0**（`LICENSE:1-2`「GNU AFFERO GENERAL PUBLIC LICENSE / Version 3」；`README.md:465` 同述；⚠️ 同步服务端为独立商业组件、不适用本许可 —— `README.md:471`）；开源组件 **12 项**，名字与版本取自 `package.json` 的 `dependencies`（共 34 项），⚠️ **未逐个核过它们的许可证**，故只写名字与版本；版本 **1.92.5**（`package.json.version`）、最新发布 **1.92.6**（`docs/RELEASING.md:258`）；链接 官网 `shuyo.cn/app`（`README.md:32`）、社区 `community.shuyo.cn`（`README.md:36`）。
 
 ## 1. 一句话结论
 

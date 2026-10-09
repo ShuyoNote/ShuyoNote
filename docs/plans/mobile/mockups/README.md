@@ -1,4 +1,4 @@
-# 移动端高保真效果图（10 屏 / 12 个 SVG · 390×844 · SVG）
+# 移动端高保真效果图（10 屏 / 10 个 SVG · 390×844 · SVG）
 
 > **状态：设计稿（未接线，界面尚未实现）。** 本目录只有**效果图**，⛔ 不代表功能已做；
 > 需求编号沿用同目录 [`2026-10-08-mobile-requirements.md`](../2026-10-08-mobile-requirements.md)（M-P0-x / M-P1-x / M-P2-x）。
@@ -6,7 +6,7 @@
 > **配色/字号/圆角**一律取本产品自己的 [`design/design-system.md`](../../../../design/design-system.md) 深色列 token，⛔ 未自创品牌色、未新增主题。
 > 屏内笔记标题/正文均为**示意文案**（效果图占位），不是任何真实数据。
 
-## 1. 索引（10 屏 / 12 个 SVG —— 09 启动页为**最终方案 A／B／C**）
+## 1. 索引（10 屏 / 10 个 SVG —— 09 启动页为**最终方案 **）
 
 | 文件 | 屏名 | 它对应的需求 | 关键点（验收时看什么） |
 |---|---|---|---|
@@ -18,7 +18,7 @@
 | [`06-dict.svg`](./06-dict.svg) | 划词查词 | M-P2-1（阅读时查词） | 选中一段文字（--accent-soft 高亮＋选择手柄）后浮出释义卡片；卡片注明「释义来源：本机词典」 |
 | [`07-settings.svg`](./07-settings.svg) | 设置 | M-P0-6（写入走应用授权通道；此处只做入口） | 极简四项：账户/同步/外观/关于；**高级入口明确写「请在桌面端操作」**（能力开关/MCP/插件） |
 | [`08-pair.svg`](./08-pair.svg) | 设备配对 · 同步 | **M-P0-2**、M-P0-5（真机验收只能人看） | 附近设备 ＋ 配对暗号**只显示指纹前 8 位**（示例值）＋ 同步状态**如实写「尚未成功搬运」** |
-| [`10-about.svg`](./10-about.svg) | 关于 | **M-P0-6**（审计与透明：许可/组件来源可核）＋ 非功能合规（隐私／备案占位） | 版本 1.92.5（开发）→ 本机优先/开源 → **许可 AGPL-3.0** → **开源组件致谢 12 项** → 链接（官网/源码/**隐私政策占位**）→ 检查更新＋导出诊断信息 → **备案号：待填（占位）** |
+| [`10-about.svg`](./10-about.svg) | 关于 | **M-P0-6**（审计与透明：许可/组件来源可核）＋ 非功能合规（隐私／备案占位） | 版本 1.92.5（开发）→ 本机优先/开源 → **许可 AGPL-3.0** → **开源组件致谢 12 项** → 链接**两行：官网 `shuyo.cn` ＋ 社区 `community.shuyo.cn`**（⛔ 不含源码网址）／隐私政策占位 → 检查更新＋导出诊断信息 → **备案号：待填（占位）** |
 
 ## 2. 逐屏
 
@@ -96,7 +96,8 @@
 
 ## 5. 09／10 两屏的事实来源（逐字可核，⛔ 不许凭印象）
 
-> 09 的**三个候选（A／B／C）共用同一批事实**（下表），差别只在视觉手法；因此三份屏上的文字与数字完全相同。
+> 09 启动页：**owner 已选定 A（`09-splash.svg`，即 §2 里嵌的那张）**；过程稿 `09-splash-B.svg`／`09-splash-C.svg` **仍留在本目录**（未嵌入、未上索引）。
+> A 与两份过程稿**共用同一批事实**（下表），差别只在视觉手法 ⇒ 三份屏上的文字与数字完全相同。
 
 | 屏内写的 | 值 | 来源（文件:行 / 命令） |
 |---|---|---|
@@ -108,8 +109,9 @@
 | 本机优先 / 本地 SQLite | — | `README.md:21` 徽章 `数据-本地 SQLite 即可用`；`README.md:47`「本地优先…客户端 AGPL-3.0 开源」 |
 | 开源组件 12 项（Tauri 2.11 / Lexical 0.50 / React 18.3 / Mermaid 11.17 / Excalidraw 0.18 / Yjs 13.6 / KaTeX 0.18 / PDF.js 4.8 / Zustand 5.0 / Tesseract.js 7.0 / DOMPurify 3.4 / i18next 26.4） | 版本号逐项取自 `package.json` 的 `dependencies` | `@tauri-apps/api ^2.11.1` · `lexical ^0.50.0` · `react ^18.3.1` · `mermaid ^11.17.0` · `@excalidraw/excalidraw 0.18.1` · `yjs 13.6.32` · `katex 0.18.4` · `pdfjs-dist ^4.8.69` · `zustand ^5.0.15` · `tesseract.js ^7.0.0` · `dompurify 3.4.14` · `i18next ^26.4.1`（**只写名字与版本，未声称其许可证**） |
 | 共 34 项 dependencies | 34 | `python3 -c "import json;d=json.load(open('package.json'));print(len(d['dependencies']), len(d['devDependencies']))"` ⇒ `34 12` |
-| 官网 shuyo.cn/app | `https://shuyo.cn/app/` | `README.md:32`（国内 / 自托管主站） |
-| 源码 gitcode.com/shuyo-cn/ShuyoNote | `https://gitcode.com/shuyo-cn/ShuyoNote.git` | `README.md:70`（`git clone` 那行） |
+| 官网 `shuyo.cn`（屏上按 owner 要求只写域名，不写 `/app` 路径） | `shuyo.cn` | `README.md:32`「**国内 / 自托管主站**：[https://shuyo.cn/app/](https://shuyo.cn/app/)」 |
+| 社区 `community.shuyo.cn` | `community.shuyo.cn` | `README.md:36`「**社区**：[community.shuyo.cn](https://community.shuyo.cn)」＋ `README.md:94` 表格行；跨仓旁证：`shuyo-community/docs/api.md:3`（Base `https://community.shuyo.cn`）、`shuyo-community/docs/architecture.md:107`（nginx `server_name community.shuyo.cn`） |
+| ⛔ **源码网址不上屏**（owner 本轮要求去掉） | — | 出处本来存在（`README.md:70` 的 `git clone https://gitcode.com/shuyo-cn/ShuyoNote.git`），**是「按要求不显示」，不是「仓内无出处」**；已连图标/文案一并删除，不留空行 |
 | 隐私政策 待填（占位） | — | 全仓未找到面向用户的隐私政策 URL（只有内部文档 `docs/identity-privacy-model.md`）⇒ **按占位写**，不编 URL |
 | 备案号：待填（占位） | — | 无依据 ⇒ 占位（同 `README.md` 未见备案号） |
 
@@ -120,7 +122,7 @@
 ```bash
 cd docs/plans/mobile/mockups
 
-# ① 每份 SVG 必须能被 XML 解析（12/12 输出 ok）
+# ① 每份 SVG 必须能被 XML 解析（10/10 输出 ok）
 for f in *.svg; do printf '%s ' "$f"; python3 -c "import xml.dom.minidom,sys; xml.dom.minidom.parse(sys.argv[1]); print('ok')" "$f"; done
 
 # ② 画布必须是 390×844（期望 12 行 viewBox="0 0 390 844"）

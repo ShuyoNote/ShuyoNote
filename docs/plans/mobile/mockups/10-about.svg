@@ -79,10 +79,10 @@ text{font-family:-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'H
 <rect x="16" y="602" width="358" height="112" rx="12" fill="#242529" stroke="#2E3034"/>
 <text x="36" y="624" class="faint" font-size="11" text-anchor="start">链接</text>
 <text x="36" y="648" class="t" font-size="12.5" text-anchor="start">官网</text>
-<text x="71" y="648" class="acc" font-size="12" text-anchor="start">shuyo.cn/app</text>
+<text x="71" y="648" class="acc" font-size="12" text-anchor="start">shuyo.cn</text>
 <path d="M36 660 H354" stroke="#2E3034"/>
-<text x="36" y="674" class="t" font-size="12.5" text-anchor="start">源码</text>
-<text x="71" y="674" class="acc" font-size="12" text-anchor="start">gitcode.com/shuyo-cn/ShuyoNote</text>
+<text x="36" y="674" class="t" font-size="12.5" text-anchor="start">社区</text>
+<text x="71" y="674" class="acc" font-size="12" text-anchor="start">community.shuyo.cn</text>
 <path d="M36 686 H354" stroke="#2E3034"/>
 <text x="36" y="700" class="t" font-size="12.5" text-anchor="start">隐私政策</text>
 <text x="96" y="700" class="faint" font-size="12" text-anchor="start">待填（占位）</text>
