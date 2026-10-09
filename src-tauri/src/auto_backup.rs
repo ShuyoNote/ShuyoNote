@@ -272,6 +272,11 @@ where
     F: FnMut() -> RunResult + Send + 'static,
 {
     std::thread::spawn(move || {
+        // ⭐ 无头模式（`--backup-once`）**不起周期线程** ✓ ——
+        //    否则无头路径自己跑一次 ＋ 线程再跑一次 ＝ **两份包** ✗（⭐ 无头入口自己会跑那一次 ✓）
+        if cli_mode(std::env::args().skip(1)) == CliMode::BackupOnce {
+            return;
+        }
         // ⚠️ 下限只防忙等（1s ⇒ 本机能用环境变量把端到端判据跑出来 ✓；生产默认 3600s ✓）
         let step = tick_secs.max(1);
         loop {

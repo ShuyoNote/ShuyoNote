@@ -18,7 +18,7 @@ mod extract_kz;
 mod backlinks;
 mod backup;
 mod backup_verify;
-mod auto_backup;
+pub mod auto_backup;
 mod block_rev;
 mod blocks;
 mod bookmark;
@@ -217,6 +217,35 @@ fn with_cache_headers(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
+///
+/// ⚠️ 退出码口径（⭐ 与仓库的五档契约同向 ✓）：0 成功／1 失败／2 起不来／3 跳过（⭐ "跳过了"不是"通过" ✓）
+pub fn run_backup_once() -> i32 {
+    use auto_backup::{CliMode, RunResult};
+    if cli_mode_of_args() != CliMode::BackupOnce {
+        return 4; // ⭐ 不是无头调用 ⇒ 不该走到这里 ✓
+    }
+    let app = match tauri::Builder::default().build(tauri::generate_context!()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[auto-backup] 无头启动失败：{e}");
+            return 2;
+        }
+    };
+    let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(app.handle()));
+    eprintln!("[auto-backup] headless {}", r.note());
+    match r {
+        RunResult::Ok { .. } => 0,
+        RunResult::Failed { .. } => 1,
+        RunResult::Skipped { .. } => 3,
+    }
+}
+
+/// 本进程的启动模式（⭐ 收在一处 ⇒ `setup()` 与 `main.rs` 用同一口径 ✓）
+pub fn cli_mode_of_args() -> auto_backup::CliMode {
+    auto_backup::cli_mode(std::env::args().skip(1))
+}
+
 pub fn run() {
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
     // 放在后面会出两个真实后果（见方案 §7）：macOS 上多一个 Dock 图标；single-instance
