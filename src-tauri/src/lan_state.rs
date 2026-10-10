@@ -263,7 +263,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
         crate::sync::device_id(&c).unwrap_or_default()
     };
-    let device_name = host_name();
+    let device_name = {
+        let db = app.state::<Db>();
+        let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        local_device_name(&c)
+    };
     let _ = STARTED.set(());
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -377,7 +381,47 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 本机名（公告里的 `device_name`，只给人看）：拿不到就留空，**不编**一个假的。
+/// `sync_state` 里**用户自己设的**本机名（规格 `merge-semantics.md:150` 逐字
+/// 「**名字是用户自己起的**」✓）—— 键与 `device_id` 同一个表 ✓（`crate::sync::get_meta_state` ✓）。
+///
+/// ⚠️ 空串/纯空白**不算设过** ✓（否则用户清空一次就再也回不到主机名 ✗）。
+fn stored_device_name(c: &rusqlite::Connection) -> Option<String> {
+    crate::sync::get_meta_state(c, KEY_DEVICE_NAME)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// ⭐ **本机名的回退链**（2026-10-10；纯函数 ⇒ 可单测 ✓）：
+/// ① **用户设的名** ⇒ ② 没有就**主机名** ⇒ ③ 仍然空 ⇒ **一个非空的如实默认** ✓。
+///
+/// ⛔ 三档都**不许**回落成 `device_id`（或它的前几位／哈希）✗ —— 规格逐字禁 ✓
+/// （同一条也写在 `sync.rs` 的 `NearbyPeer::device_name` 注释里 ✓）；
+/// ⛔ 也**不许**返回空串 ✗ —— 修前 `host_name()` 拿不到环境变量就返回空 ✗，
+/// 于是对端只能显示一个空白名字 ✗（`lan.rs` 那侧 `trim()` 之后确实会判成"没报名字" ✓）。
+fn resolve_local_name(stored: Option<&str>, host: &str) -> String {
+    if let Some(n) = stored.map(str::trim).filter(|n| !n.is_empty()) {
+        return n.to_string();
+    }
+    let h = host.trim();
+    if !h.is_empty() {
+        return h.to_string();
+    }
+    DEFAULT_DEVICE_NAME.to_string()
+}
+
+/// 本机名（公告里的 `device_name`，只给人看 ✓）＝ 回退链的**取数入口** ✓。
+fn local_device_name(c: &rusqlite::Connection) -> String {
+    resolve_local_name(stored_device_name(c).as_deref(), &host_name())
+}
+
+/// `sync_state` 里那个键 ✓（与 `KEY_DEVICE_ID` 同在 `crate::sync` 的口径下 ✓）。
+const KEY_DEVICE_NAME: &str = "device_name";
+
+/// 主机名与用户设置都拿不到时的**如实默认** ✓（⛔ 不是编造的身份 ✗；也不含任何码 ✓）。
+const DEFAULT_DEVICE_NAME: &str = "未命名设备";
+
+/// 主机名（公告里的第三个回退档，只给人看）：拿不到就留空，**不编**一个假的
+/// （⇒ 交给 [`resolve_local_name`] 的第三档 ✓）。
 fn host_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -902,5 +946,47 @@ mod tests {
         // 于是"再等一个间隔"；宁可晚一轮，也不要在时钟乱跳时往网段里刷公告）。
         assert!(!announce_due(10_000, 5, ANNOUNCE_INTERVAL_MS));
         assert_eq!(announce_due(10_000, i64::MIN, ANNOUNCE_INTERVAL_MS), false, "极端回绕也不许 panic");
+    }
+}
+
+/// 「本机名回退链」的判据（2026-10-10，08-a①）—— **行为**读数 ✓。
+///
+/// ⭐ 这次要修的两条，各有一条判据钉住 ✓：
+///   ① **空串不许再出现** ✗（修前 `host_name()` 拿不到环境变量就返回空 ⇒ 对端显示空白 ✗）；
+///   ② ⛔ **不许回落成 `device_id` 前几位/哈希** ✗（规格逐字禁 ✓）。
+#[cfg(test)]
+mod device_name_tests {
+    use super::*;
+
+    #[test]
+    fn user_set_name_wins() {
+        assert_eq!(resolve_local_name(Some("书房的那台"), "MacBook-Pro"), "书房的那台");
+    }
+
+    #[test]
+    fn blank_stored_name_falls_back_to_host() {
+        // 用户清空一次（或数据里是空白）⇒ 回到主机名 ✓，**不是**空串 ✗
+        assert_eq!(resolve_local_name(Some("   "), "MacBook-Pro"), "MacBook-Pro");
+        assert_eq!(resolve_local_name(None, "MacBook-Pro"), "MacBook-Pro");
+    }
+
+    #[test]
+    fn never_blank_when_host_is_missing_too() {
+        // ⭐ 这就是修前的那条错：两档都拿不到 ⇒ 旧 `host_name()` 返回 **空串** ✗
+        let n = resolve_local_name(None, "");
+        assert!(!n.trim().is_empty(), "本机名**永远不许是空白** ✗（对端会显示成没名字）");
+        assert_eq!(n, DEFAULT_DEVICE_NAME);
+        assert_eq!(resolve_local_name(Some("  "), "   "), DEFAULT_DEVICE_NAME);
+    }
+
+    #[test]
+    fn never_looks_like_a_device_id_prefix() {
+        // ⛔ 规格逐字不许用 `device_id`（或其前几位/哈希）当兜底 ✓ ⇒ 兜底值里不许像 uuid/hex ✗
+        let fallback = resolve_local_name(None, "");
+        assert!(!fallback.contains('-'), "兜底名里不许出现 uuid 形状的连字符 ✗");
+        assert!(
+            fallback.chars().all(|c| !c.is_ascii_hexdigit() || !c.is_ascii()),
+            "兜底名不许是纯 ascii 十六进制（那就是 id 前几位的形状 ✗）"
+        );
     }
 }
