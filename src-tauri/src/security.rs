@@ -703,25 +703,75 @@ fn active_space_needs_passphrase(st: &crate::space_crypto::SpaceCryptoStatus) ->
     st.encrypted_on_disk && !st.key_available
 }
 
-#[tauri::command]
-pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
-    let c = conn(&db);
-    let format = match key_if_enabled(&c) {
+/// ⭐ **D1 的保守态**（2026-10-10）——**读"当前是哪个空间"失败**时该怎么报 ✓。
+///
+/// 为什么必须保守：旧写法把 `active_workspace_id(&c)` 的 `Err` 用 `.ok()` **吞成 `None`** ✗
+/// ⇒ 落到下面那个"全 false 兜底" ⇒ `locked: false` ＋ `gate.allow: true`
+/// ⇒ ⭐ **不弹锁屏、还继续往那个打不开的库里写** ✗（owner 报的"卡死"那条 ✓）。
+///
+/// ⚠️ **代价明说**：**本来是明文空间、只是这次读数失败**也会被拦一次 ✗ ——
+///    最坏多解锁一次 ✓，比"不锁 ＋ 继续往打不开的库写"轻得多 ✓（⛔ 不发明第三态 ✗）。
+/// ⚠️ ⛔ **锁屏上那条出路（"换到一个明文空间"）不受它影响** ✓：那个入口由
+///    `listPlaintextSpaces()`（另一条命令 ✓）驱动 ⇒ 闸门拦住时它照样在 ✓（否则用户被困死 ✗）。
+fn conservative_status_on_read_failure(format: u8) -> EncryptionStatus {
+    EncryptionStatus {
+        // ⭐ `enabled` 也要 true：前端闸门是 `activeSpaceEncrypted && locked`（`src/lib/vault.ts` ✓）
+        //   ⇒ 只给 `locked` 而 `enabled` 是 false ⇒ 闸门**不成立** ⇒ 照样不弹锁屏 ✗。
+        enabled: true,
+        locked: true,
+        format,
+        algorithm: crypto::format_name(format).to_string(),
+        space_format: 0,
+        space_algorithm: String::new(),
+        active_space: crate::space_crypto::SpaceCryptoStatus {
+            space_id: String::new(),
+            name: String::new(),
+            // 保守：当作"可能是密的、且本会话拿不到它的钥匙"
+            //（⇒ `active_space_needs_passphrase` 也必然 true ✓，两处口径不许分家 ✓）。
+            encrypted_on_disk: true,
+            in_keyring: false,
+            key_available: false,
+        },
+        active_space_gate: crate::space_crypto::SyncGateView {
+            // ⭐ 这是 `allow` **第一次**真的为 false（那条"恒真"的注释已在 `space_crypto.rs` 追加订正 ✓）
+            allow: false,
+            unclassified: false,
+            reason: "读不到「当前是哪个空间」⇒ 保守拦住（不许往读不出来的库里写）".to_string(),
+        },
+    }
+}
+
+/// `encryption_status` 的**可测内核**（`State<Db>` 那层单测**调不了** ✗ ⇒ 与
+/// [`active_space_needs_passphrase`] 同一条理由：**抽出来才钉得住** ✓）。
+fn encryption_status_of(c: &Connection) -> Result<EncryptionStatus, String> {
+    let format = match key_if_enabled(c) {
         Some(k) => crypto::active_format(&k),
         None => crypto::CURRENT_FORMAT,
     };
-    let space_format = crate::workspaces::active_workspace_id(&c)
-        .ok()
+    // ⭐ D1（2026-10-10）：**读"当前是哪个空间"失败 ≠ 没有活动空间** ✗ ——
+    //   `active_workspace_id` 的签名是 `Result<String, _>`（**不会**返回 `Ok(None)` ✓）
+    //   ⇒ 这里的 `Err` **只**意味着读失败 ⇒ 取**保守态** ✓（旧写法 `.ok()` 把两件事压成一档 ✗）。
+    //   ⚠️ 代价与出路的说明见 [`conservative_status_on_read_failure`] ✓。
+    let active_id = match crate::workspaces::active_workspace_id(c) {
+        Ok(id) => Some(id),
+        Err(e) => {
+            eprintln!("[encryption_status] 读活动空间失败 ⇒ 取保守态（拦住）：{e}");
+            return Ok(conservative_status_on_read_failure(format));
+        }
+    };
+    // ⚠️ 顺带：这一格原来**又调了一次** `active_workspace_id(&c).ok()` ✗
+    //   （同一个吞错形态 ＋ 多一次查询 ✗）⇒ 改成从上面的 `active_id` 派生 ✓。
+    //   它只是**显示**用的读数（`space_format` / `space_algorithm`）⇒ 读不到就给 0 ✓。
+    let space_format = active_id
         .as_deref()
-        .and_then(|sid| space_format(&c, sid))
+        .and_then(|sid| space_format(c, sid))
         .unwrap_or(0);
     // ★ 第 1 步（1b-2）：活动空间的**按空间**读数（纯读：嗅文件 ＋ 看本进程的钥匙袋/会话）。
-    let active_id = crate::workspaces::active_workspace_id(&c).ok();
     let active_space = match (crate::db::app_data_dir_ref(), active_id.as_deref()) {
         (Some(dir), Some(sid)) => {
             let mut st = crate::space_crypto::space_status(dir, sid);
             // ★ 名字（不是 uuid）：闸门那句拦人的话要说名字（owner 2026-09-24 指出）。
-            crate::space_crypto::fill_space_name(&c, &mut st);
+            crate::space_crypto::fill_space_name(c, &mut st);
             st
         }
         _ => crate::space_crypto::SpaceCryptoStatus {
@@ -737,7 +787,7 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     //   —— 它的 `c.path()` 是空的 ⇒ 只看连接会把"已加密但锁着"读成"没开加密" ⇒ 解锁屏不出现、
     //   用户直接对着一个读不出来的外壳。旧版靠应用级标志（meta 里那个 `ENC_ENABLED`）躲过这一条，
     //   而那个标志已随应用级加密一起删 ⇒ 这里按活动空间的文件头 ＋ 盒子补上。
-    let enabled = encryption_enabled(&c) || active_space.encrypted_on_disk || active_space.in_keyring;
+    let enabled = encryption_enabled(c) || active_space.encrypted_on_disk || active_space.in_keyring;
     // ⭐ 2026-10-10（owner 拍 A：「用户从明文空间，切换到加密空间怎么办？」）：
     //   `locked` 这一格**从"进程级的会话锁"改成"**这个活动空间**现在读不出来（需要口令）"** ✓。
     //   算法 ＝ **活动空间是密的 且 本会话拿不到它的钥匙** ✓ ——
@@ -750,13 +800,14 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     //   ⚠️ 边界：**加密但袋里没盒子**（异常形态）⇒ 也是 true ⇒ 该拦 ✓
     //      （那库本来就读不出来；解锁时内核会**响亮报错**，⛔ 不是静默 ✓）；
     //      **没有活动空间**（上面那个全 false 的兜底）⇒ false ⇒ 不弹 ✓（与今天一致 ✓）。
+    //      ⚠️ 而"**读不到**"那种情况**在这一步之前就返回了** ✓（见上面那个 `match` ✓）——
+    //      它**不再**和"没有活动空间"共享同一个兜底 ✗（D1 修的就是这个合并 ✓）。
     let needs_passphrase = active_space_needs_passphrase(&active_space);
     // ★ 第 2 步：闸门裁决（同一份读数 ＋ 本地分类标记 ⇒ 视图）。
     let active_space_gate = match active_id.as_deref() {
-        Some(sid) => crate::space_crypto::sync_gate_view(
-            &active_space,
-            crate::space_crypto::space_kind(&c, sid),
-        ),
+        Some(sid) => {
+            crate::space_crypto::sync_gate_view(&active_space, crate::space_crypto::space_kind(c, sid))
+        }
         None => crate::space_crypto::SyncGateView {
             allow: true,
             unclassified: true,
@@ -777,6 +828,12 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
         active_space,
         active_space_gate,
     })
+}
+
+#[tauri::command]
+pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
+    let c = conn(&db);
+    encryption_status_of(&c)
 }
 
 /// Lock the session: drop the **space master key**, mark locked, and CLOSE the active space
@@ -2652,5 +2709,58 @@ mod tests {
             "★ 进程级 LOCKED 开着时，加密空间照样要口令 ✓"
         );
         LOCKED.store(before, Ordering::SeqCst);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ⭐ D1（2026-10-10）：**读「当前是哪个空间」失败** ≠ 「没有活动空间」✗ ——
+    //    旧写法 `.ok()` 把 `Err` 吞成 `None` ⇒ 落到"全 false 兜底" ⇒ `locked: false`
+    //    ＋ `gate.allow: true` ⇒ **不弹锁屏、还继续往那个打不开的库里写** ✗（owner 报的"卡死" ✓）。
+    //    ⇒ 修法：读不到 ⇒ **保守态** ✓（⛔ 不发明第三态 ✗）。
+    //    ⚠️ 两条各自能红（⛔ 不把两件事包进一条断言 ✗）。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// ⭐ D1-a) **读活动空间失败 ⇒ 保守态**：`locked: true` ＋ `gate.allow: false`。
+    ///
+    /// ⚠️ ⭐ **夹具是真让它失败** ✗（⛔ 不是 mock ✗）：`active_workspace_id` 查的是 `meta.sync_state`
+    ///    （`workspaces.rs:48` ✓）⇒ 一个**没 ATTACH meta 的裸连接**去读它**必然 `Err`** ✓。
+    /// ⚠️ 内核算在 `encryption_status_of` 里（`encryption_status` 是 Tauri 命令、`State<Db>` 单测调不了 ✓）
+    ///    ⇒ ⭐ 抽内核的**唯一理由**就是这个 ✓（与 `active_space_needs_passphrase` 同一条 ✓）。
+    #[test]
+    fn d1_读活动空间失败_取保守态() {
+        let bare = Connection::open_in_memory().unwrap(); // ⛔ 不 ATTACH meta ⇒ 读活动空间必 Err ✓
+        let st = encryption_status_of(&bare).expect("保守态不该报错（界面要留在能输口令那一屏 ✓）");
+        assert!(st.locked, "⭐ 读不到当前是哪个空间 ⇒ 必须保守拦（locked: true）");
+        assert!(
+            st.enabled,
+            "⭐ enabled 也得 true —— 前端闸门是「activeSpaceEncrypted && locked」⇒ 只给 locked 不够 ✓"
+        );
+        assert!(!st.active_space_gate.allow, "⭐ 这一格要如实说「拦」（allow: false）");
+        assert!(
+            !st.active_space.key_available,
+            "保守态要当作「拿不到钥匙」✓（否则与那个纯函数的口径分家 ✗）"
+        );
+        assert!(
+            active_space_needs_passphrase(&st.active_space),
+            "⭐ 两处口径不许分家：保守态必须同时满足那个纯函数 ✓"
+        );
+    }
+
+    /// ⭐ D1-b) ⭐ **反向**：**读到「这是明文空间」⇒ 绝不拦** ✗ ——
+    /// ⛔ 不许把"读数失败"的保守态**顺手扩大到明文空间** ✗：那样 owner 上次报的
+    /// 「一个空间加密，其它空间怎么还需要密码？」会**复发** ✗。
+    /// ⚠️ 夹具走**纯函数那条口径**（既有 a–e 已钉 ✓），这里把"明文 ＋ 各种组合"一次列全 ✓。
+    #[test]
+    fn d1_明文空间绝不因保守而连坐被拦() {
+        for st in [
+            status(false, false, false),
+            status(false, true, false),
+            status(false, false, true),
+            status(false, true, true),
+        ] {
+            assert!(
+                !active_space_needs_passphrase(&st),
+                "⭐ 明文空间（四个组合）都不许被拦 —— 保守只针对「读不到」，⛔ 不针对「读到了且是明文」 ✗"
+            );
+        }
     }
 }

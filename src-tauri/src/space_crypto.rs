@@ -337,6 +337,14 @@ pub struct SyncGateView {
 
 /// 把裁决投影成视图。⚠️ **2026-10-04**：`Blocked` 那档已删 ⇒ 这里**再也不会出现** "allow=false" ✗
 /// （⭐ `allow` 字段**保留** ✓ —— 它是给界面用的形状 ✓，删字段会连带前端 ✗；⭐ 语义上它现在恒真 ✓）。
+///
+/// ⚠️ ⭐ **2026-10-10 追加（D1）：上面那句「再也不会」不再成立** ✗ ——
+/// `security.rs` 的 `conservative_status_on_read_failure` 会给出 `allow: false` ✓：
+/// **读「当前是哪个空间」失败** ⇒ 取保守态 ⇒ 拦住，不许往读不出来的库里写 ✓
+/// （owner 报的"卡死"那条 ✓ —— 旧写法把那个读失败吞成"没有活动空间" ⇒ `allow: true` ✗）。
+/// ⚠️ 这是**唯一**一档 `allow=false` ✓，而且它**不经过本函数**（本函数仍只有一个 `Allowed` 分支 ✓）。
+/// ⚠️ 前端**从不读 `allow`**（全仓 grep 零命中 ✓）⇒ 真正让闸门成立的是
+/// `encryption_status.locked` ＋ `enabled` ✓，这里置 false 只是把"拦"**如实表达**出来 ✓。
 pub fn sync_gate_view(st: &SpaceCryptoStatus, kind: SpaceKind) -> SyncGateView {
     match sync_gate(st, kind) {
         SyncGate::Allowed => SyncGateView {
