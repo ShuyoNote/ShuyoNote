@@ -525,4 +525,52 @@ describe("⭐ 从明文空间切到未解锁的加密空间：解锁屏必须真
     expect(host.querySelector(".lock-screen")).not.toBeNull();
     expect(host.querySelector(".app"), "锁屏期间那个空间的内容一个都不渲染").toBeNull();
   });
+
+  // ⚠️⭐ **这条用例钉的是"锁屏随闸门挂／卸"，⛔ 不是"④（挂载时清 err）在起作用"** ✗ ——
+  //   Lead 2026-10-10 拍 (a)：④ 留着当**双保险** ✓（无害 ✓），但**账上不许把它写成"验过了"** ✗。
+  //   ⭐ 实测（就为这条做的体检）：把 ④ 那两行**摘掉**再跑本文件 ⇒ **照样 21 passed** ✗
+  //     —— 真因：切走时锁屏**整块卸载** ✓、切回来是**重新挂载** ⇒ React 状态本来就归零 ✓
+  //     ⇒ ④ 在"切走再切回来"这个流程上**是空操作** ✓（⚠️ "看起来有、其实没牙"那种形状 ✓）。
+  //   ⭐ 那它为什么还值得留：若**哪天**锁屏不再随闸门卸载（改动 App 的闸门形状就可能）⇒ 本用例**会红** ✓
+  //     ⇒ 所以它**有用** ✓，只是**不是** ④ 的判据 ✓。
+  //   ⚠️ ④ 本身**没有**判据（"锁屏不卸载而目标空间变了"那种流程当前界面上不存在 ✓——
+  //     锁屏的出路只列**明文**空间 ⇒ 选了就走 ✓）。
+  it("锁屏随闸门挂／卸：切走时整块卸载 ＋ 切回来不带上一轮报错（⛔ 不覆盖 ④ 的效果）", async () => {
+    fixture();
+    await render();
+
+    // 先看见一次报错（输一次错口令）
+    mocks.unlockEncryption.mockRejectedValueOnce(new Error("打不开：口令不对，或者这把锁被改过"));
+    const input = host.querySelector(".lock-input") as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "wrong-pass");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    const btn = host.querySelector(".lock-button") as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await settle();
+    expect(host.querySelector(".lock-error"), "夹具前提：先得看见一次报错").not.toBeNull();
+
+    // 切走（明文空间）⇒ 锁屏消失；再切回那个加密空间 ⇒ 锁屏再来
+    mocks.status.mockResolvedValue({ enabled: false, locked: false });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("plain");
+    });
+    await settle();
+    expect(host.querySelector(".lock-screen"), "切到明文 ⇒ 锁屏该消失").toBeNull();
+
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("enc");
+    });
+    await settle();
+    expect(host.querySelector(".lock-screen"), "切回来 ⇒ 锁屏再来").not.toBeNull();
+    // ⭐ 关键：⛔ 不许还挂着**上一次**那句报错
+    expect(host.querySelector(".lock-error"), "⭐ 人还没输就先看到上一轮的报错 ✗").toBeNull();
+  });
 });

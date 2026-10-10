@@ -38,6 +38,14 @@ export function LockScreen() {
     inputRef.current?.focus();
   }, []);
 
+  // ⭐ 2026-10-10（owner 截图）：**块屏再来的时候不许还挂着上一轮那句报错** ✗ ——
+  //   `err` 是组件状态 ✓ ⇒ 不主动清就会把**上一次**的失败留在屏幕上（人还没输就先看到一句报错 ✓）。
+  // ⚠️ ⭐ **只挂"挂载"这一次** ✗ —— ⛔ 别挂 `pass` ／ `tries` ✗：那会在**输入过程中**清成闪烁 ✓
+  //   （`tries` 一加就清 ⇒ 用户刚看到"口令不对"就没了 ✗）。
+  useEffect(() => {
+    setErr(null);
+  }, []);
+
   useEffect(() => {
     if (tries >= 3) setForgotOpen(true);
   }, [tries]);

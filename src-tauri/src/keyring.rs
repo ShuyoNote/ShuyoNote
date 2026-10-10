@@ -228,7 +228,9 @@ impl Keyring {
             return Err(format!("钥匙袋里没有空间「{space_id}」的盒子"));
         };
         let raw = hex::decode(&b.box_hex).map_err(|e| format!("盒子不是合法 hex：{e}"))?;
-        let plain = crypto::decrypt(&raw, master).map_err(|e| format!("盒子打不开（口令不对或盒子被改过）：{e}"))?;
+        // ⚠️ 这一层**不再拼前缀** ✓（2026-10-10）：它只表示"**某一把钥匙解不开**"⇒ 用**中性措辞** ✓
+        //   —— 前缀由 `space_crypto::verify_master_against_keyring` 那一处给（用户面只在那里出人话 ✓）。
+        let plain = crypto::decrypt(&raw, master).map_err(|e| format!("这个盒子解不开：{e}"))?;
         open_plaintext(&plain, space_id)
     }
 
