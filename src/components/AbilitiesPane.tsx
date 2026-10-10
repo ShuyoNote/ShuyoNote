@@ -48,10 +48,19 @@ const ABILITIES: Ability[] = [
     path: "mirror/ecdict/ecdict-en-zh.bin",
     sha256: "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31",
     state: "not-available",
+    // ⚠️ ⭐ **2026-10-10（owner 拍「那句文案改掉」）**：用户面这一句里**不许出现内部词** ✗ ——
+    //    原句末尾印着「**待拍板。**」（内部流程词）＋ 一串内部路径（`node scripts/fetch-ecdict.mjs`、
+    //    `abilities.rs` 文件头、`.part`／`fail-closed`）⇒ 全换成用户看得懂的话 ✓
+    //    ⇒ ⭐ **用户面只描述用户看得见的状态**（能不能下、多大）✓；⭐ **真状态留在规格／台账／那条分支的代码里** ✓。
+    //    ⭐ **被 lead 纠过一次，两条必须分清（记在这里免得再犯）**：
+    //      ① **"下载方式"**：「改由 Rust 侧下载」**已在另一条分支做完**（`feat/inline-lookup-2`：`e68c3289`／`3b977a36`）
+    //         ⇒ ⛔ 不许再写"待做／待拍板" ✗；
+    //      ② **"包有没有托管到镜像仓"**：那是**另一件事**，⭐ 我**没有可核读数** ⇒ ⛔ **不断言** ✗
+    //         （⚠️ 别把①的"完成了"外推成②的"已托管" —— 那正是"拿相邻的东西当证据"）。
+    //    ⚠️ 改文案 ⇒ `AbilitiesPane.test.tsx` 里那条"长度 > 200"的阈值跟着调（⭐ 阈值随文案走，
+    //        ⛔ 不是为了让红变绿 —— "DOM ＝ 源码那句"那条判据**一个字都没动** ✓）。
     note:
-      "包已产出（`node scripts/fetch-ecdict.mjs` 报出 sha256 与字节数，与 Rust 侧白名单同源），但**还没托管**到镜像仓 ⇒ 现在还不能下载。" +
-      "⚠️ 另：85.6 MiB 走「base64 过 IPC」那条链**太大**（那条链的设计目标是 3.8 MB 级的 PDFium，见 abilities.rs 文件头）" +
-      "⇒ 要不要改成 Rust 侧下载（同一份白名单＋sha256＋fail-closed，先写 .part 再改名）待拍板。",
+      "这本词典较大（85.6 MiB／770,611 条词条）—— 下载渠道还在准备，开放后在这里点一下就能用。",
   },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
   { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },

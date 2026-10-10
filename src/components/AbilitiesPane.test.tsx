@@ -81,9 +81,13 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     const cell = noteCellOf(soonRows()[0]);
     const text = cell.textContent ?? "";
     // ecdict 那条是所有 note 里唯一长的 —— 它必须**整段**都在 ✓
-    expect(text.length, "那条说明是长文本（≈60+ 字）⇒ 不许被截成一句").toBeGreaterThan(40);
-    expect(text, "它如实说清了为什么现在还不能下载").toContain("包已产出");
-    expect(text, "…以及卡在哪一步").toContain("还没托管");
+    // ⚠️ **2026-10-10（owner 拍「那句文案改掉」）**：这三条断言跟着**新文案**走 ✓ ——
+    //    旧断言要的是「包已产出／还没托管」两个**内部词**，而它们**不该出现在用户面** ✓
+    //    （⚠️ 而且「还没托管」那半**没有可核读数** ⇒ 已按 lead 的口径**不再断言、也不写** ✓）。
+    //    ⭐ "不许换成四个字了事"这条**含义没变**：下限 30 远大于「还没上架」的 4 ✓。
+    expect(text.length, "那条说明是长文本 ⇒ 不许被截成一句").toBeGreaterThan(30);
+    expect(text, "它如实说了**现在还不能下**（用户看得见的状态）").toContain("下载渠道还在准备");
+    expect(text, "以及它有多大（用户据此决定要不要下）").toContain("85.6 MiB");
   });
 
   it("⭐ c) 回归：别的条（短 note）文字不变", () => {
@@ -130,15 +134,22 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // ⭐⭐ **2026-10-10（owner 拍 C）**：那条 236 字的说明**压到 2 行 ＋ 悬停看全**。
+  // ⭐⭐ **2026-10-10（owner 拍 C）**：那条说明**压到 2 行 ＋ 悬停看全**。
   //
   // ⚠️ owner 自己承认过的顾虑：**"压缩 ＝ 把字藏起来"** ✗ ⇒ 所以判据**不能只判"有 2 行"** ✗，
   //    必须同时钉住：⭐ **全文仍在 DOM 里**（只是视觉截断）＋ ⭐ **悬停看得到全文**。
   //    ⛔ 也不许"把文案改短"（那是 owner **没选**的那个）⇒ 源码那句的长度也要钉 ✓。
   //
-  // ⚠️ 真验收**不是** f)：它是回归闸 ✓ —— 真验收是**实量高度**（626px 面板、真 App.css、真那句 236 字，
-  //    同一夹具 A/B：修前 `note.h = 130`（≈8.1 行）／长行 `57 → 152` ⇒ 修后 `note.h = 32`（＝2 行）／长行 `57`，
+  // ⚠️ 真验收**不是** f)：它是回归闸 ✓ —— 真验收是**实量高度**（626px 面板、真 App.css、真那句文本，
+  //    同一夹具 A/B：修前 `note.h = 130`（≈8.1 行）／长行 `152` ⇒ 修后 `note.h = 32`（＝2 行）／长行 `57`，
   //    四条短 note 两次都是 `16` ✓）。
+  //
+  // ⭐ **2026-10-10 第二次改**（owner 又拍「那句文案改掉」：⛔ 内部词「待拍板」不给用户看）⇒
+  //    文案从 **236 字**改成 **≈49 字**（只描述用户看得见的状态：还不能下 ＋ 多大；内部状态留在
+  //    `AbilitiesPane.tsx` 的注释与规格／台账里 ✓）
+  //    ⇒ ⭐ 下面那条"长度下限"从 `> 200` 调成 `> 30` ✓ —— ⭐ **含义没变**：仍然挡"换成四个字了事"
+  //    （30 远大于 4 ✓）；⚠️ **如实记：这个阈值是跟着文案长度走的**，⛔ 不是为了让红变绿 ✗
+  //    （"DOM ＝ 源码那句"那条判据**一个字都没动** ✓）。
   // ─────────────────────────────────────────────────────────────────────────────
 
   /** ⭐ 从**真源码**取 ecdict 那条 note（⛔ 不手抄 ⇒ 判据与被判对象同源）。 */
@@ -157,7 +168,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     const rule = m![1];
     expect(
       /-webkit-line-clamp\s*:\s*2\b/.test(rule),
-      "少了 `-webkit-line-clamp: 2` ⇒ 那条 236 字还是 7–8 行（owner 拍的是 2 行）",
+      "少了 `-webkit-line-clamp: 2` ⇒ 那条长说明又会变成 7–8 行（owner 拍的是 2 行）",
     ).toBe(true);
     expect(/display\s*:\s*-webkit-box/.test(rule), "`line-clamp` 只对 `-webkit-box` 生效").toBe(true);
     expect(/overflow\s*:\s*hidden/.test(rule), "没有 `overflow: hidden` ⇒ 截断不生效").toBe(true);
@@ -166,12 +177,13 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
   it("⭐ g) 反向：**全文仍在 DOM 里**（⛔ 不许把话改短 —— 截断只发生在视觉层）", () => {
     const cell = noteCellOf(soonRows()[0]);
     const full = ecdictNoteFromSource();
-    expect(full.length, "那条说明是 236 字（owner 的原话就是这个量级）").toBeGreaterThan(200);
+    // ⭐ 下限 30：挡"换成四个字了事"（⚠️ 2026-10-10 文案改短后从 200 调到 30 —— 含义未变，见上面那段注释）
+    expect(full.length, "那条说明仍旧是一整段（⛔ 不是四个字）").toBeGreaterThan(30);
     expect(
       cell.textContent ?? "",
       "⭐ DOM 里必须是**完整那句** ⇒ ⛔ 不许把文案本身改短 ✗（那是 owner 没选的那个）",
     ).toBe(full);
-    expect((cell.textContent ?? "").length).toBeGreaterThan(200);
+    expect((cell.textContent ?? "").length).toBeGreaterThan(30);
   });
 
   it("⭐ h) 悬停能看到全文（`title` ＝ 完整那句）", () => {
@@ -181,7 +193,7 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
       title,
       "⭐ 既然列表里截断了，就必须能看全：`title` 是**完整那句**（⛔ 不是缩写、⛔ 不是空）",
     ).toBe(ecdictNoteFromSource());
-    expect(title.length).toBeGreaterThan(200);
+    expect(title.length).toBeGreaterThan(30);
     // ⛔ 不许自己写浮层（owner 拍的形状就是现成的 `title` ✓）
   });
 });
