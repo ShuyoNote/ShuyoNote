@@ -41,15 +41,10 @@ interface Ability {
 // ⚠️ 清单先**写死在本文件**（随包内置那一份的雏形 ✓）；将来搬进 `src/lib/abilities/manifest.json` ✓。
 //    sha256 是 2026-10-02 实测值 ✓（取回后与推送前一致 = True ✓）。
 const ABILITIES: Ability[] = [
-  {
-    id: "pdf-engine-win-x64",
-    name: "PDF 引擎（Windows x64）",
-    summary: "本应用已在用的 PDFium；这一条用来验证「按需下载 ＋ 校验」整条链",
-    bytes: 3826721,
-    path: "mirror/pdfium/8076/pdfium-win-x64.tgz",
-    sha256: "808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac",
-    state: "downloadable",
-  },
+  // ⭐ 2026-10-10（owner 截图「去掉这个部分」）：原先这里有一条 `pdf-engine-win-x64`，自称
+  //    「用来验证『按需下载 ＋ 校验』整条链」—— ⭐ **它不是给用户看的，是给自己试那条链的** ✓
+  //    ⇒ ⭐ 已按 owner 的口径**删掉**（用户面不该摆一条"验证用"的条目 ✓）。
+  //    ⚠️ **如实记：那个"试下载链"的入口因此没有了** ✗（以后要再试那条链，得另找地方 ✓）。
   {
     id: "ecdict-en-zh",
     name: "英汉词库（ECDICT）",
