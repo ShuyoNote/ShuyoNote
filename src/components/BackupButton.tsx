@@ -9,6 +9,7 @@ import { useSpaceStore } from "../store/space";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { DownloadIcon, UploadIcon } from "./icons";
+import { BackupSettingsPanel } from "./BackupSettingsPanel";
 
 type BackupProgress = {
   phase: string;
@@ -170,6 +171,10 @@ export function BackupButton({ label }: { label?: string } = {}) {
           </div>
         </div>
       )}
+
+      {/* ⭐ task-19 **追加**：只有带 `label` 的那一支（＝设置中心「数据」页 ✓）才挂"自动备份"那一格。
+          ⛔ 侧栏那支（无 label）不挂 ⇒ 侧栏不会被塞进一块面板 ✓；⛔ 上面导出/导入那些行一个字没动 ✓ */}
+      {label && <BackupSettingsPanel />}
     </div>
   );
 }
