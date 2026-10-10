@@ -53,15 +53,18 @@ const ABILITIES: Ability[] = [
   {
     id: "ecdict-en-zh",
     name: "英汉词库（ECDICT）",
-    summary: "应用内划词查词的英汉词典（770,611 条词条 / 85.6 MiB）—— ⚠️ 中文词条不在其中，界面会如实说未收录、走 AI",
-    bytes: 89735168,
-    path: "mirror/ecdict/ecdict-en-zh.bin",
-    sha256: "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31",
-    state: "not-available",
+    // ⚠️ 这里的 bytes/sha256 是**镜像仓上那份 gzip 压缩包**的读数（⛔ 不是解压后的库）——
+    //    与 `shuyo-mirror/manifest.json` 那条**逐字一致**（别抄第二份）。解压后的库另有钉子：
+    //    89,735,168 字节 / 5dc10a51…，钉在 `src-tauri/src/dictionary.rs`（下载链路会核两遍）。
+    summary: "应用内划词查词的英汉词典（770,611 条词条；下载 39.1 MiB，解压后 85.6 MiB）—— ⚠️ 中文词条不在其中，界面会如实说未收录、走 AI",
+    bytes: 39126809,
+    path: "mirror/ecdict/ecdict-en-zh-v1.db.gz",
+    sha256: "ce0a2cf36c690038ff3d0e4d385ec18c04110db7a34e9bd8ba4ad30d76ee537b",
+    state: "downloadable",
     note:
-      "⭐ 下载**代码与判据已就绪**（`src/lib/dictionary/download.ts`：流式进度 ＋ 强制 sha256，不匹配即拒绝且不落盘；" +
-      "Rust 侧 `abilities.rs` 白名单已钉同一份 sha256 ＝ 5dc10a51…）；❌ **真地址＝未做**（还没托管到任何稳定地址）⇒ " +
-      "托管后把 `path` 那一行的地址填上、状态改成 `downloadable` 即可（判据不变）。",
+      "下载走 **Rust 侧**（`dictionary.rs`：先核压缩包的 sha256，再解压并核解压后那份的 sha256，" +
+      "两段都过才 rename 落盘；⛔ 不过则一个字节都不留）。⚠️ 取法是 `contents` 拿 blob sha ⇒ `git/blobs` 取内容" +
+      "（实测：`contents` 对大文件不回内容、`raw` 回的是 HTML）。",
   },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
   { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },

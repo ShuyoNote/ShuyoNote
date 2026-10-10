@@ -520,20 +520,16 @@ fn current_db_path() -> Option<(PathBuf, bool)> {
 
 /// ⭐ **每进程一次**的 pack 完整性结果缓存。
 ///
-/// 为什么要有它：pack 是 60MB 级，算 sha256 要几百毫秒 ⇒ ⛔ 不能每次划词都算。
+/// 为什么要有它：pack 是 90MB 级，算 sha256 要几百毫秒 ⇒ ⛔ 不能每次划词都算。
 /// 为什么只缓一次而不是"永远信"：那份文件是**一次下载的产物**，进程活着的期间它不会变
 /// （变了也是外部改的，那种情况下一进程一次足够挡住绝大多数）。
+///
+/// ⚠️ 这里核的是**解压后那份库**（`ECDICT_DB_*`），⛔ 不是压缩包的 pin —— 磁盘上放的就是解压后的库。
 fn cached_pack_check(path: &Path) -> Result<(), String> {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Result<(), String>> = OnceLock::new();
     CACHE
-        .get_or_init(|| {
-            pack_check(
-                path,
-                crate::abilities::ECDICT_PACK_BYTES,
-                crate::abilities::expected_sha256(crate::abilities::ECDICT_PACK_ID).unwrap_or(""),
-            )
-        })
+        .get_or_init(|| pack_check(path, ECDICT_DB_BYTES, ECDICT_DB_SHA256))
         .clone()
 }
 
@@ -585,9 +581,131 @@ pub async fn dictionary_status(app: tauri::AppHandle) -> DictionaryStatus {
 // ---------------------------------------------------------------------------
 
 /// 词库 pack 在镜像仓里的相对路径（⭐ 与 `AbilitiesPane` 清单里那条 `path` **逐字一致**）。
-pub const ECDICT_PACK_MIRROR_PATH: &str = "mirror/ecdict/ecdict-en-zh.bin";
+///
+/// ⚠️ 2026-10-10 起是**gzip 压缩包**（镜像仓 `manifest.json` 那条 note 同时钉了解压后的字节数/指纹）。
+pub const ECDICT_PACK_MIRROR_PATH: &str = "mirror/ecdict/ecdict-en-zh-v1.db.gz";
 /// 镜像仓的 contents API 前缀（⭐ 与 `AbilitiesPane` 的 `API` 常量**逐字一致**）。
 pub const MIRROR_CONTENTS_API: &str = "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/contents/";
+/// 镜像仓的 **git blobs** API 前缀 —— ⭐ 实测三种端点（2026-10-10，Lead 量的）：
+///
+/// ```text
+/// · contents（…/contents/<path>?ref=main）⇒ **大文件不回内容**：元数据对（size=39126809 ✓）
+///                                          但 `content` 长度 = **0** ✗ ⇒ 照它写下到的会是空
+/// · raw（gitcode.com/…/raw/main/…）       ⇒ 回的是**一张 HTML 页**（5793 字节，sha256 完全不同）✗
+/// · git/blobs/<blob-sha>                  ⇒ `encoding: base64` ＋ `content` 52,169,080 字符
+///                                           （= 39,126,809 × 4/3 ✓，字节数对得上）✓✓
+/// ```
+///
+/// ⇒ 所以默认取法是两步：先用 `contents` 拿 **GitCode 自己的 blob sha**（⛔ 那不是我们的 sha256），
+/// 再来这里取内容。
+pub const MIRROR_BLOBS_API: &str = "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/git/blobs/";
+
+/// ⭐ **解压后**那份 pack（SQLite 库）的钉死值。
+///
+/// 为什么两套 pin：能力包链钉的是"**下载到的**那份"（gzip，见 `abilities.rs`），这里钉的是
+/// "**能查的**那份"（库）—— 中间隔了一次**解压**，而解压是可能出错的（半截、错库）。
+/// ⛔ 两套都要核；只核一套就等于"信解压"。
+pub const ECDICT_DB_BYTES: u64 = 89_735_168;
+pub const ECDICT_DB_SHA256: &str = "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31";
+
+/// 内存里算 sha256（小写十六进制）—— 与 `sha256_file` 同一把尺子。
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 从 `git/blobs` 那条 JSON 里取出内容，并核 **`size` 与解出来的长度一致**。
+///
+/// ⭐ 这是 owner 要求的第 ④(d) 条判据：`content` 是 base64 ⇒ 解出来必须**正好** `size` 字节。
+/// ⛔ 对不上就拒收，**不许**拿"差不多"的字节往下走；⛔ 没有 `size` 也拒收（没核过长度的不算校验过）。
+pub fn decode_blob_json(j: &serde_json::Value) -> Result<Vec<u8>, String> {
+    let enc = j.get("encoding").and_then(|v| v.as_str()).unwrap_or("");
+    if enc != "base64" {
+        return Err(format!("blobs 返回的形状不是 base64（encoding={enc}）⇒ 不猜"));
+    }
+    let content = j.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    if content.is_empty() {
+        return Err(
+            "blobs 返回的 content 是空的 ⇒ 拒收（大文件在 `contents` 上就是这个症状：改走 git/blobs）"
+                .to_string(),
+        );
+    }
+    let bytes = crate::abilities::base64_decode(&content.replace(['\n', '\r', ' '], ""))?;
+    let Some(size) = j.get("size").and_then(|v| v.as_u64()) else {
+        return Err("blobs 的 JSON 里没有 size ⇒ 拒收（没有可核的长度就不算校验过）".to_string());
+    };
+    if size != bytes.len() as u64 {
+        return Err(format!(
+            "blobs 的 size 与解出来的长度不符：JSON 说 {size} 字节，实际解出 {} 字节 ⇒ 拒收",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
+}
+
+/// 两套钉子（压缩包那份从 `abilities.rs` 取 ⇒ ⛔ 不抄第二份；库那份是本文件的常量）。
+///
+/// ⚠️ 用 `String` 而不是 `&'static str`：判据要能用**夹具算出来的**指纹构造一份（否则那两条
+/// "危险方向"的判据就只能拿真 39MB 产物才跑得起来 ⇒ 等于跑不了）。
+#[derive(Debug, Clone)]
+pub struct PackPins {
+    pub archive_bytes: u64,
+    pub archive_sha: String,
+    pub db_bytes: u64,
+    pub db_sha: String,
+}
+
+/// 词库的钉子（生产路径用）。
+pub fn ecdict_pins() -> Result<PackPins, String> {
+    let archive_sha = crate::abilities::expected_sha256(crate::abilities::ECDICT_PACK_ID)
+        .ok_or_else(|| "词库不在能力包白名单里 ⇒ 拒绝下载".to_string())?;
+    Ok(PackPins {
+        archive_bytes: crate::abilities::ECDICT_PACK_BYTES,
+        archive_sha: archive_sha.to_string(),
+        db_bytes: ECDICT_DB_BYTES,
+        db_sha: ECDICT_DB_SHA256.to_string(),
+    })
+}
+
+/// **两段校验**：先核"下载到的压缩包"，再核"解压出来的库"，最后才落盘。
+///
+/// ① 压缩包：长度 ＋ sha256（不过 ⇒ 拒绝，⛔ 一个字节都不落盘）
+/// ② 解压：直接把 `GzDecoder` 接到 `install_pack_from_reader` —— 那个函数**本来就是**
+///    "边写边核长度与 sha256，不过就删 `.part`" ⇒ 解压段**复用**它，不另写一份校验逻辑。
+pub fn install_pack_from_archive_with(
+    pins: &PackPins,
+    archive: &[u8],
+    part: &Path,
+    dest: &Path,
+    on_progress: PackProgress<'_>,
+) -> Result<PackInstallReport, String> {
+    if archive.len() as u64 != pins.archive_bytes {
+        return Err(format!(
+            "下载不完整：收到 {} 字节 ≠ 清单里钉的 {} 字节 ⇒ 拒绝落盘（没有写进你的目录）",
+            archive.len(),
+            pins.archive_bytes
+        ));
+    }
+    let got = sha256_hex(archive);
+    if got != pins.archive_sha {
+        return Err(format!(
+            "压缩包 sha256 不匹配 ⇒ 拒绝使用（算出 {}… ≠ 清单里钉的 {}…）—— 这次没有写进你的目录",
+            &got[..12],
+            &pins.archive_sha[..12.min(pins.archive_sha.len())]
+        ));
+    }    let mut gz = flate2::read::GzDecoder::new(std::io::Cursor::new(archive));
+    install_pack_from_reader(
+        &mut gz,
+        pins.db_bytes,
+        &pins.db_sha,
+        part,
+        dest,
+        Some(pins.db_bytes),
+        on_progress,
+    )
+}
 
 /// 默认下载地址：contents API ＋ 相对路径 ＋ `?ref=main`（与前端那条**同一个形状**）。
 ///
@@ -719,45 +837,19 @@ pub async fn dictionary_install_pack(
     app: tauri::AppHandle,
     url: Option<String>,
 ) -> Result<PackInstallReport, String> {
-    let source = url.clone().unwrap_or_else(default_pack_url);
-    // pin **只从 `abilities.rs` 取**（⭐ 单一来源：白名单在那儿）⇒ 这里不抄第二份哈希。
-    let expected_sha = crate::abilities::expected_sha256(crate::abilities::ECDICT_PACK_ID)
-        .ok_or_else(|| "词库不在能力包白名单里 ⇒ 拒绝下载".to_string())?;
-    let expected_bytes = crate::abilities::ECDICT_PACK_BYTES;
+    let pins = ecdict_pins()?;
     let app_data = crate::db::app_data_dir_ref()
         .ok_or_else(|| "app data dir 未初始化".to_string())?
         .to_path_buf();
     let dest = pack_path(&app_data);
     let part = dest.with_extension("bin.part");
 
-    let res = reqwest::get(&source)
-        .await
-        .map_err(|e| format!("连不上下载地址（{source}）：{e}"))?;
-    if !res.status().is_success() {
-        return Err(format!("下载失败：HTTP {}（{source}）", res.status().as_u16()));
-    }
-    let total = res.content_length();
-    let ctype = res
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
-    // 两条形状都认（⭐ 不发明新地址形状）：① 镜像仓的 contents API（base64 JSON）
-    // ② 普通二进制（raw / 文件服务器）——判据用 `file://` 或夹具注入走的也是这一条。
-    let bytes: Vec<u8> = if ctype.contains("json") {
-        let j: serde_json::Value = res.json().await.map_err(|e| format!("返回结构不是 JSON：{e}"))?;
-        let enc = j.get("encoding").and_then(|v| v.as_str()).unwrap_or("");
-        let content = j.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        if enc != "base64" || content.is_empty() {
-            return Err(format!("contents API 的形状不是 base64（encoding={enc}）⇒ 不猜"));
-        }
-        crate::abilities::base64_decode(&content.replace(['\n', '\r', ' '], ""))?
-    } else {
-        res.bytes().await.map_err(|e| format!("读响应失败：{e}"))?.to_vec()
+    // 取**压缩包**：给了 `url` 就按它取（判据/联调可注入普通二进制或 blobs 那条 JSON）；
+    // ⛔ 不给就按镜像仓的**两步默认取法**（`contents` 取 blob sha → `git/blobs` 取内容）。
+    let (archive, source) = match url {
+        Some(u) => (fetch_archive_from(&u).await?, u),
+        None => (fetch_default_archive().await?, default_pack_url()),
     };
-
     let mut app_for_emit = app.clone();
     let mut progress = |received: u64, total: Option<u64>| {
         use tauri::Emitter as _;
@@ -766,18 +858,72 @@ pub async fn dictionary_install_pack(
             serde_json::json!({ "received": received, "total": total }),
         );
     };
-    let mut cursor = std::io::Cursor::new(&bytes);
-    let mut report = install_pack_from_reader(
-        &mut cursor,
-        expected_bytes,
-        expected_sha,
-        &part,
-        &dest,
-        total,
-        &mut progress,
-    )?;
+    // ⚠️ 这里报的是**压缩包**取回读数（一次请求 ⇒ 两个读数：起点与终点，如实如此）；
+    //    解压那一段会按 MiB 逐段报**库里**的字节数（见 `install_pack_from_reader` 的回调）。
+    progress(archive.len() as u64, Some(archive.len() as u64));
+
+    let mut report = install_pack_from_archive_with(&pins, &archive, &part, &dest, &mut progress)?;
     report.source = source;
     Ok(report)
+}
+
+/// 一个地址 ⇒ 压缩包字节：**两种形状都认**（普通二进制 / `git/blobs` 那条 base64 JSON）。
+///
+/// ⚠️ 判据不联网 ⇒ 判据不调它；它只是"真下载"那一层（`install_pack_from_archive_with` 才是纯逻辑）。
+async fn fetch_archive_from(url: &str) -> Result<Vec<u8>, String> {
+    let res = reqwest::get(url)
+        .await
+        .map_err(|e| format!("连不上下载地址（{url}）：{e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("下载失败：HTTP {}（{url}）", res.status().as_u16()));
+    }
+    let ctype = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if ctype.contains("json") {
+        let j: serde_json::Value = res.json().await.map_err(|e| format!("返回结构不是 JSON：{e}"))?;
+        decode_blob_json(&j)
+    } else {
+        Ok(res.bytes().await.map_err(|e| format!("读响应失败：{e}"))?.to_vec())
+    }
+}
+
+/// 镜像仓的**两步默认取法** —— ⭐ 端点实测（见 `MIRROR_BLOBS_API` 的注释）：只有 `git/blobs` 成立。
+///
+/// ① `contents`：只取它的 `sha`（**GitCode 的 blob sha**，⛔ 不是我们的 sha256）＋ 用 `size` 做便宜的第一道；
+/// ② `git/blobs/<blob sha>`：取 base64 内容 ⇒ `decode_blob_json` 核"`size` == 解出来的长度"。
+async fn fetch_default_archive() -> Result<Vec<u8>, String> {
+    let meta_url = default_pack_url();
+    let meta: serde_json::Value = reqwest::get(&meta_url)
+        .await
+        .map_err(|e| format!("连不上镜像仓（{meta_url}）：{e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("contents 返回的不是 JSON：{e}"))?;
+    let blob_sha = meta
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "contents 里没有 sha ⇒ 取不到 blob（文件提上去了吗？）".to_string())?;
+    if let Some(size) = meta.get("size").and_then(|v| v.as_u64()) {
+        // ⚠️ 大文件在这一步 `content` 是空的（实测），但 `size` 仍是可信元数据 ⇒ 先拿它当便宜的第一道。
+        if size != crate::abilities::ECDICT_PACK_BYTES {
+            return Err(format!(
+                "镜像仓那份的 size = {size} 字节 ≠ 清单里钉的 {} 字节 ⇒ 拒收",
+                crate::abilities::ECDICT_PACK_BYTES
+            ));
+        }
+    }
+    let blobs_url = format!("{MIRROR_BLOBS_API}{blob_sha}");
+    let j: serde_json::Value = reqwest::get(&blobs_url)
+        .await
+        .map_err(|e| format!("连不上 blobs（{blobs_url}）：{e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("blobs 返回的不是 JSON：{e}"))?;
+    decode_blob_json(&j)
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,5 +1431,140 @@ mod tests {
         assert!(u.starts_with(MIRROR_CONTENTS_API), "{u}");
         assert!(u.contains(ECDICT_PACK_MIRROR_PATH), "{u}");
         assert!(u.ends_with("?ref=main"), "{u}");
+        // ⚠️ 2026-10-10 起是 **gzip**（镜像仓里就是这个文件名）
+        assert!(u.ends_with(".db.gz?ref=main"), "路径应当是 gzip 那份：{u}");
+    }
+
+    // -----------------------------------------------------------------------
+    // gzip 那条链（两段校验）：压缩包 → 解压后的库
+    // -----------------------------------------------------------------------
+
+    /// 把夹具压成 gzip（用 flate2 —— 与生产**同一条**解压路）。
+    fn gzip_of(bytes: &[u8]) -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write as _;
+        let mut e = GzEncoder::new(Vec::new(), Compression::best());
+        e.write_all(bytes).unwrap();
+        e.finish().unwrap()
+    }
+
+    /// 测试用的 base64 编码器（生产路径只**解码** —— 不为测试给生产加用不上的函数）。
+    fn b64(bytes: &[u8]) -> String {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for c in bytes.chunks(3) {
+            let n = ((c[0] as u32) << 16)
+                | ((*c.get(1).unwrap_or(&0) as u32) << 8)
+                | (*c.get(2).unwrap_or(&0) as u32);
+            out.push(A[(n >> 18 & 63) as usize] as char);
+            out.push(A[(n >> 12 & 63) as usize] as char);
+            out.push(if c.len() > 1 { A[(n >> 6 & 63) as usize] as char } else { '=' });
+            out.push(if c.len() > 2 { A[(n & 63) as usize] as char } else { '=' });
+        }
+        out
+    }
+
+    /// 夹具的**两套** pin（压缩包 ＋ 解压后的库）。
+    fn pins_for(archive: &[u8], db: &[u8]) -> PackPins {
+        PackPins {
+            archive_bytes: archive.len() as u64,
+            archive_sha: sha256_hex(archive),
+            db_bytes: db.len() as u64,
+            db_sha: sha256_hex(db),
+        }
+    }
+
+    #[test]
+    fn installs_from_a_gzip_archive_and_the_pack_is_queryable() {
+        // ⭐ 判据 (b)：夹具（真 gzip ＋ 真两套 pin）⇒ 落盘的是**解压后的库**，而且**真的能查到**。
+        let dir = crate::tempdir::dir("dict-gz").unwrap();
+        let (db, _) = pack_fixture("dict-gz-src");
+        let gz = gzip_of(&db);
+        assert_ne!(gz, db, "夹具前提：gzip 与原文不同");
+        let pins = pins_for(&gz, &db);
+        let part = dir.join("ecdict-en-zh.bin.part");
+        let dest = dir.join("ecdict-en-zh.bin");
+        let mut seen: Vec<(u64, Option<u64>)> = Vec::new();
+        let rep = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |r, t| seen.push((r, t))).unwrap();
+
+        assert_eq!(rep.bytes, db.len() as u64, "报的应当是**解压后**的字节数");
+        assert_eq!(rep.sha256, sha256_hex(&db));
+        assert!(dest.exists() && !part.exists(), "落盘后 `.part` 必须已改名");
+        // ⭐ 关键：磁盘上必须是**解压后的库**（⛔ 不是 gzip 本身）—— "两处同名"那条族的预防。
+        assert_eq!(std::fs::read(&dest).unwrap(), db, "磁盘上的字节必须与原库逐字节相同");
+        // 而且真的能查（＝"下载成功 ⇒ 词库可用 ＋ 查询命中"）
+        match lookup_at(&dest, "apple") {
+            LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
+            other => panic!("装好之后必须查得到，实际 {other:?}"),
+        }
+        assert_eq!(seen.last().unwrap().0, db.len() as u64, "进度末次＝解压后的字节数");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn archive_stage_refuses_a_wrong_pin_or_length_and_leaves_no_bytes() {
+        // ⭐ 判据 (a) 在**压缩包**那一段的危险方向：pin 不符 ⇒ 拒绝 ＋ **一个字节都不落盘**。
+        let dir = crate::tempdir::dir("dict-gz-bad").unwrap();
+        let (db, _) = pack_fixture("dict-gz-bad-src");
+        let gz = gzip_of(&db);
+        let part = dir.join("p.part");
+        let dest = dir.join("d.bin");
+
+        // ① 指纹不符
+        let mut pins = pins_for(&gz, &db);
+        pins.archive_sha = "0".repeat(64);
+        let err = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("压缩包 sha256 不匹配"), "{err}");
+        assert!(err.contains("没有写进你的目录"), "{err}");
+        assert!(!dest.exists() && !part.exists(), "压缩包这段拒了 ⇒ 磁盘上不许留字节");
+
+        // ② 长度不符（半包）
+        let mut pins2 = pins_for(&gz, &db);
+        pins2.archive_bytes += 1;
+        let err = install_pack_from_archive_with(&pins2, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("不完整"), "{err}");
+        assert!(!dest.exists() && !part.exists());
+
+        // ③ 压缩包对了、但**解压后的库**指纹不对 ⇒ 第二段拦下（⛔ 两段都要核）
+        let mut pins3 = pins_for(&gz, &db);
+        pins3.db_sha = "1".repeat(64);
+        let err = install_pack_from_archive_with(&pins3, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("sha256"), "{err}");
+        assert!(!dest.exists() && !part.exists(), "解压段拒了也不许留字节");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn blob_json_size_must_equal_the_decoded_length() {
+        // ⭐ 判据 (d)：`git/blobs` 的 base64 解出来必须**正好**是 JSON 说的 `size`。
+        let raw = gzip_of(b"ecdict-blob-fixture");
+        let good = serde_json::json!({ "encoding": "base64", "size": raw.len(), "content": b64(&raw) });
+        assert_eq!(decode_blob_json(&good).unwrap(), raw, "对得上就放行");
+
+        let bad = serde_json::json!({ "encoding": "base64", "size": raw.len() + 1, "content": b64(&raw) });
+        let e = decode_blob_json(&bad).unwrap_err();
+        assert!(e.contains("size") && e.contains("不符"), "{e}");
+
+        let no_size = serde_json::json!({ "encoding": "base64", "content": b64(&raw) });
+        assert!(decode_blob_json(&no_size).unwrap_err().contains("size"), "没 size ⇒ 拒（没核过长度不算校验过）");
+
+        // ⚠️ 这就是 `contents` 对**大文件**的真实症状（实测：元数据对、content 长度 0）
+        let contents_shape = serde_json::json!({ "encoding": "none", "size": 39_126_809u64, "content": "" });
+        let e = decode_blob_json(&contents_shape).unwrap_err();
+        assert!(e.contains("base64") || e.contains("空"), "{e}");
+    }
+
+    #[test]
+    fn production_pins_match_the_published_artifact() {
+        // ⭐ "两处同名"的另一种预防：Rust 侧的 pin 必须与镜像仓上那份的实测值一致
+        //    （gzip 39,126,809 / ce0a2cf3…；解压后 89,735,168 / 5dc10a51…）。
+        let pins = ecdict_pins().unwrap();
+        assert_eq!(pins.archive_bytes, 39_126_809);
+        assert_eq!(pins.archive_sha, "ce0a2cf36c690038ff3d0e4d385ec18c04110db7a34e9bd8ba4ad30d76ee537b");
+        assert_eq!(pins.db_bytes, 89_735_168);
+        assert_eq!(pins.db_sha, "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31");
+        assert!(ECDICT_PACK_MIRROR_PATH.ends_with("ecdict-en-zh-v1.db.gz"));
     }
 }
