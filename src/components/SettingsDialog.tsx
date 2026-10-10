@@ -168,8 +168,11 @@ function hostLabel(url: string): string {
   }
 }
 
-// 「空间」页：低频且有破坏性的空间管理（配色 / 删除 / 导出 / 导入）。
-// 高频的「切换空间」仍留在侧栏——它是工作流入口，不是设置。
+// 「空间」页：空间管理（**切换** / 配色 / 删除 / 导出 / 导入）。
+// ⚠️ **2026-10-10（owner 亲口要求）**：「设置-空间面板要可以切换空间，效果等同于在侧边栏的空间切换。」
+//   ⇒ 本页**也**能切了 ✓；⛔ 但**不是**在这里再写一遍"改 active ＋ 刷新" ✗ ——
+//   切空间**只有一条路**：`useSpaceStore.switchTo`（侧栏顶部那次走的就是它 ✓，
+//   它内部已经含 `setActiveWorkspaceId` ＋ `loadPages` ＋ `refreshVault` ✓）。
 function SpacesPane() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
@@ -190,6 +193,14 @@ function SpacesPane() {
       })
       .catch(() => {});
   }, [spaces.length]);
+
+  // ⭐ 切空间：**只走 store 那一条路**（与侧栏顶部那次完全一致 ✓）。
+  // ⛔ 不在这里 `api.setActiveWorkspaceId` ＋ 自己刷新 ✗ —— 那会多出第二条路 ✓。
+  const pick = async (id: string) => {
+    // 点"当前"那一行＝无事发生：切空间会连带 `loadPages` ＋ `refreshVault`，白跑一趟没必要
+    if (id === activeId) return;
+    await useSpaceStore.getState().switchTo(id);
+  };
 
   const setColor = async (id: string, color: string) => {
     setColorFor(null);
@@ -222,7 +233,14 @@ function SpacesPane() {
             const prof = syncProfiles[s.id];
             return (
               <div key={s.id} className={`set-space-card${active ? " is-active" : ""}`}>
-                <div className="set-space-row">
+                {/* ⭐ 这一行**可点**：点了就切过去（owner 2026-10-10）✓
+                    ⚠️ 处理器挂在**这一层**：下面那两个按钮在它内部 ⇒ 各自 `stopPropagation` ✓；
+                    配色面板是它的**兄弟**节点 ⇒ 点色块本来就不会走到这里 ✓。 */}
+                <div
+                  className="set-space-row"
+                  title={active ? "当前空间" : `切换到「${s.name}」`}
+                  onClick={() => void pick(s.id)}
+                >
                   <span
                     className="set-space-mark"
                     style={s.theme ? { background: s.theme, color: "#fff" } : undefined}
@@ -245,7 +263,11 @@ function SpacesPane() {
                   </div>
                   <button
                     className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
-                    onClick={() => setColorFor((c) => (c === s.id ? null : s.id))}
+                    /* ⛔ 配色不切空间：点完只是展开色板（冒泡上去就变成"顺手切走" ✗） */
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setColorFor((c) => (c === s.id ? null : s.id));
+                    }}
                   >
                     配色
                   </button>
@@ -253,7 +275,11 @@ function SpacesPane() {
                     className="set-btn is-danger-ghost"
                     disabled={busy || spaces.length <= 1 || active}
                     title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
-                    onClick={() => doRemove(s.id, s.name)}
+                    /* ⛔ 删除**绝不**先切过去（那会"切完再删" —— 灾难 ✓） */
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void doRemove(s.id, s.name);
+                    }}
                   >
                     删除
                   </button>
@@ -279,7 +305,7 @@ function SpacesPane() {
           })}
         </div>
         <p className="set-hint">
-          切换空间在侧栏顶部——这里只做低频管理。删除为软删除，数据仍在磁盘上，可在「存储 / 空间管理」里彻底清理。
+          点一行就能切过去（与侧栏顶部那次切换同一条路）。删除为软删除，数据仍在磁盘上，可在「存储 / 空间管理」里彻底清理。
         </p>
       </section>
 

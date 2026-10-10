@@ -1,0 +1,154 @@
+// 设置-空间面板 · 「点一行就切换空间」的判据 —— owner 2026-10-10 亲口要求：
+// 「设置-空间面板要可以切换空间，效果等同于在侧边栏的空间切换。」
+//
+// 为什么值得判据：这一屏原先**只能配色/删除**，切换被那句文案明确排除在外 ✗
+//（`:282` 逐字「切换空间在侧栏顶部——这里只做低频管理」）⇒ 现在要把它打开，
+// 而"打开"最容易出的两个事故正是下面两条**反向**判据钉的：
+//   ① 「配色／删除」的点击**冒泡成切换** ✗（删一个空间不能顺手把当前空间切了）；
+//   ② 点了**要删的那一行** ⇒ **先切过去再删** ✗（那是灾难）。
+//
+// ⚠️ 判据钉的是"**走的是同一条路**"：设置面板必须调 `useSpaceStore.switchTo`（侧栏那一条 ✓），
+//    ⛔ 不许自己写一遍 `api.setActiveWorkspaceId` ＋ 刷新 ✗（那就会出现两条路 ✓）。
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const mocks = vi.hoisted(() => ({
+  confirm: vi.fn(async () => true),
+  removeSpace: vi.fn(async () => true),
+}));
+
+// 这一屏用到的那几条：api 一律给"空数组"够它安静渲染；删除走桩（⛔ 不碰真文件系统）。
+vi.mock("../lib/api", () => ({
+  api: new Proxy({}, { get: () => async () => [] }),
+}));
+vi.mock("../lib/platform", () => ({ isDesktopPlatform: () => true, emailSupported: () => false }));
+vi.mock("../store/confirm", () => ({ confirmDialog: mocks.confirm }));
+vi.mock("../lib/spaceTransfer", () => ({
+  exportCurrentSpace: vi.fn(async () => undefined),
+  importSpacePackage: vi.fn(async () => true),
+  removeSpace: mocks.removeSpace,
+}));
+
+import "../i18n";
+import { useEditorStore } from "../store/editor";
+import { useSpaceStore } from "../store/space";
+import { SettingsDialog } from "./SettingsDialog";
+
+let host: HTMLDivElement;
+let root: Root;
+/** 切换动作的桩：**真的改 store 的 activeId**（＝真 `switchTo` 的行为）。
+ *  ⚠️ 只有真改它，"当前"标跟着走那条判据才测得到东西（否则是空转 ✗）。 */
+let switchTo: ReturnType<typeof vi.fn<(id: string) => Promise<boolean>>>;
+
+const card = (name: string): HTMLElement => {
+  const hit = [...document.querySelectorAll<HTMLElement>(".set-space-card")].find((c) =>
+    (c.textContent ?? "").includes(name),
+  );
+  if (!hit) throw new Error(`找不到空间卡片：${name}`);
+  return hit;
+};
+const button = (scope: HTMLElement, text: string): HTMLButtonElement => {
+  const hit = [...scope.querySelectorAll<HTMLButtonElement>("button")].find(
+    (b) => (b.textContent ?? "").trim() === text,
+  );
+  if (!hit) throw new Error(`卡片里找不到按钮：${text}`);
+  return hit;
+};
+const click = async (el: HTMLElement) => {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+};
+/** 点"那一行"：打在**名字那一片**上（冒泡到行的处理器）——
+ *  ⛔ 不直接打容器 ✗：那样不管处理器挂在哪一层都过，测不出"整行可点"。 */
+const clickRow = (name: string) => click(card(name).querySelector<HTMLElement>(".set-row-name")!);
+
+async function render() {
+  await act(async () => {
+    root.render(createElement(SettingsDialog));
+  });
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+beforeEach(() => {
+  mocks.confirm.mockClear();
+  mocks.removeSpace.mockClear();
+  switchTo = vi.fn(async (id: string) => {
+    useSpaceStore.setState({ activeId: id });
+    return true;
+  });
+  useSpaceStore.setState({
+    spaces: [
+      { id: "s1", name: "工作", created_at: 1, updated_at: 1, kind: "personal" },
+      { id: "s2", name: "生活", created_at: 2, updated_at: 2, kind: "team" },
+    ],
+    activeId: "s1",
+    switchTo: switchTo as unknown as (id: string) => Promise<boolean>,
+  });
+  useEditorStore.setState({ settingsOpen: true, settingsTab: "spaces" });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  host.remove();
+  document.body.innerHTML = "";
+  useEditorStore.setState({ settingsOpen: false });
+});
+
+describe("设置-空间 · 点一行就切换", () => {
+  it("a) 点「生活」那一行 ⇒ 切换动作**恰好被调一次**（走的是 store 同一条路）", async () => {
+    await render();
+    expect(switchTo, "还没点就切了？").not.toHaveBeenCalled();
+
+    await clickRow("生活");
+
+    expect(switchTo, "点了一行却没有切换 ⇒ 这一屏还是只能配色/删除").toHaveBeenCalledTimes(1);
+    expect(switchTo).toHaveBeenCalledWith("s2");
+  });
+
+  it("b) **反向**：点「配色」⇒ ⛔ 不许触发切换", async () => {
+    await render();
+    await click(button(card("生活"), "配色"));
+    expect(switchTo, "点配色把空间切走了").not.toHaveBeenCalled();
+  });
+
+  it("c) **反向**：点「删除」⇒ ⛔ 不许**先切过去再删**", async () => {
+    await render();
+    await click(button(card("生活"), "删除"));
+    // 删除那条路照常问过确认（这里桩成"确认"）⇒ 说明点到的确实是删除，而不是行
+    expect(mocks.confirm, "删除没走确认（判据没打到删除那条路）").toHaveBeenCalled();
+    expect(switchTo, "点删除却先把空间切过去了 —— 那是灾难").not.toHaveBeenCalled();
+  });
+
+  it("d) 切完「当前」标跟着走 ＋ 重开面板仍是新的那个（回归闸）", async () => {
+    await render();
+    expect(card("工作").textContent, "起初「当前」应当在「工作」上").toContain("当前");
+
+    await clickRow("生活");
+    expect(card("生活").textContent, "切完「当前」没跟着走").toContain("当前");
+    expect(card("工作").textContent, "切完旧的那张还挂着「当前」").not.toContain("当前");
+
+    // 重开面板（unmount + remount）⇒ 「当前」从 store 读出来，仍是「生活」✓
+    act(() => root.unmount());
+    root = createRoot(host);
+    await render();
+    expect(card("生活").textContent, "重开面板后「当前」指的是旧的").toContain("当前");
+  });
+
+  it("③ 那句「切换空间在侧栏顶部——这里只做低频管理」必须改掉（⛔ 不许留一句与事实不符的话）", async () => {
+    await render();
+    const copy = document.body.textContent ?? "";
+    expect(copy, "那句旧文案还在（它现在不成立了）").not.toContain("切换空间在侧栏顶部");
+    expect(copy, "没把新的说法写出来：点一行就能切").toContain("点一行就能切过去");
+    // 软删除那句说明照旧留着 ✓（别为了改这句把它删掉）
+    expect(copy).toContain("软删除");
+  });
+});
