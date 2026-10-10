@@ -21,6 +21,9 @@ import { CommandPalette } from "./components/CommandPalette";
 import { MobileHome } from "./components/MobileHome";
 // ⭐ 2026-10-10：移动端「快速记录」（效果图 02-capture.svg，规格 §4.2）—— 同一支里的第二屏 ✓。
 import { MobileCapture } from "./components/MobileCapture";
+// ⭐ 2026-10-10：手机档的**阅读屏**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）——
+//   只在 `isMobile && 有打开页` 时渲染 ✓；⛔ 桌面档仍走 `NoteEditor` ✓。
+import { MobileRead } from "./components/MobileRead";
 import { useMobileNav } from "./store/mobileNav";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
@@ -1172,7 +1175,10 @@ function AppShell() {
       ) : view === "files" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
       ) : currentId ? (
-        <NoteEditor pageId={currentId} />
+        /* ⭐ 2026-10-10：手机档点开一条笔记 ⇒ 走**移动端阅读屏**（效果图 `04-read.svg`，规格 §4.4）✓，
+           而不是桌面块编辑器（顶栏是桌面那套图标工具条、还能拖块 ✗ —— 与效果图差得最远 ✓）。
+           ⛔ **桌面档一个字不动** ✓：同一个三元里，`isMobile` 为假时仍是下面那个 `NoteEditor` ✓。 */
+        isMobile ? <MobileRead pageId={currentId} /> : <NoteEditor pageId={currentId} />
       ) : isMobile ? (
         /* ⭐ 2026-10-10：手机档的"什么都没打开"⇒ 走**移动端首页**（三个入口 ✓ 无侧边栏 ✓），
            而不是桌面空态（那句"或按 Ctrl+N"在手机上本来就是错的 ✗）。

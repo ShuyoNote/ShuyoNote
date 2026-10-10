@@ -24508,3 +24508,130 @@ body.is-plugin-panel-open .main {
   font-size: 15px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「阅读」屏（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
+   ⚠️ 同 `.mhome` / `.mcap` / `.mset`：**只有手机档会渲染它**（`App.tsx` 的
+      `isMobile && currentId` 那一支 ✓）⇒ 这里**不套 @media** ✓。
+   ⛔ 桌面那套 `.editor-*` / `.note-scroll` 一个字没动 ✓。
+   ⚠️ 本段写在文件**最外层**（前一个块 `.mnote-home` 已闭合、净深度 0 ✓，我核过 ✓）。
+   ⚠️ 底部让出约 72px：左下角是全局悬浮汉堡键、右下角是「‹ 首页」浮标与「同步」胶囊
+      （都是 `position: fixed` ✓）—— 不让开的话页脚会被压住 ✓（与 `.mcap-bar` 那次同一类处置 ✓）。
+   ========================================================================== */
+.mread {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  /* 顶部状态栏 ＋ 底部三个悬浮控件都让开 ✓ */
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.mread-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.mread-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.mread-head-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+.mread-title {
+  margin: 4px 0 0;
+  font-size: 26px;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  /* 长英文串/URL 不撑破视口（不然 `verify-mobile-views` 的越界判据会红 ✓） */
+  overflow-wrap: anywhere;
+}
+.mread-meta {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* 「在电脑上继续」提示块（效果图里那块淡蓝 ✓ —— 用既有的 `--accent-soft`，⛔ 不自造色 ✓） */
+.mread-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 12px);
+  background: var(--accent-soft);
+}
+.mread-tip-icon {
+  flex: none;
+  font-size: 18px;
+  line-height: 1.3;
+}
+.mread-tip-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mread-tip-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.mread-tip-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mread-body {
+  margin: 18px 0 0;
+}
+.mread-p {
+  margin: 0 0 12px;
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-note {
+  margin: 18px 0 0;
+  font-size: 14px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mread-foot {
+  margin: 20px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+

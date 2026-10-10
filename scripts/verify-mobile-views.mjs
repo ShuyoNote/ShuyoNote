@@ -1514,6 +1514,120 @@ function assertPdfReader(rr, vp) {
 // 形状与 `check-store-subscriptions` / `check-copy-discipline` 同一套：
 //   值 ≤ 基线 ⇒ 过（并把"可收紧"印出来）；值 > 基线 ⇒ **红**。
 // ⚠️ **"没量到"不吃基线** —— 那是"这条没验过"，不是"0 处违规"（单列在下面，无条件判红）。
+/**
+ * ⭐ 2026-10-10：手机档**「阅读屏」**（效果图 04-read.svg，规格 §4.4）落地 ⇒ **门禁搬家**
+ * （台账 R192 的口径：以效果图为准 ⇒ 改测试 ✓；⛔ 不许为保住旧断言扭曲产品 ✗）。
+ *
+ * 事实：`App.tsx` 手机分支现在是 `currentId ? (isMobile ? <MobileRead/> : <NoteEditor/>) : …`
+ * ⇒ **窄视口里开着页时不再渲染桌面编辑器** ⇒ `.database-view` / 编辑器工具条 / 属性面板
+ *    在窄视口上**都不在了** ✗（本脚本的主循环 `ACTIVE_PHONES` 只跑 390/320 两档窄视口）。
+ *
+ * ⚠️ 判据口径**只看宽度**（`useMobile()` 的真口径）——⛔ 不是"窄**或**矮" ✗：
+ *   `src/hooks/useMobile.ts:26` 逐字 `MOBILE_QUERY = "(max-width: 768px)"`，同文件 §31-44
+ *   逐字写「**只看宽度**…792×360 的横屏手机仍然放得下'侧栏 + 正文'两列」；
+ *   "窄或矮"是**浮层形态**的口径 ✗。本轮实测：390/320 ⇒ 阅读屏在、编辑器不在；
+ *   **792×360 ⇒ 编辑器工具条在、阅读屏不在** ✓。
+ */
+const REPO_ROOT_VIEWS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const MOBILE_BREAKPOINT_PX = (() => {
+  const src = readFileSync(join(REPO_ROOT_VIEWS, "src", "hooks", "useMobile.ts"), "utf8");
+  const m = src.match(/export const MOBILE_BREAKPOINT_PX\s*=\s*(\d+)/);
+  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/hooks/useMobile.ts 改了？）—— 断点必须与源码同源");
+  return Number(m[1]);
+})();
+/** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
+const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
+
+/**
+ * ⭐ `2026-10-10` **搬家**：原来在窄视口跑的「数据库视图 8 个模式」整段**原样**搬进这个函数，
+ * 由**桌面档**调用 ✓（窄视口已不需要、也不可能：那儿渲染的是阅读屏 ✗）。断言一条没删 ✓。
+ */
+async function checkDatabaseViewModes(pg, label, shotFn, { touchTargets = false } = {}) {
+  console.log(`\n【${label} · 数据库视图（8 个模式）】`);
+  const dbOpened = await openDatabaseView(pg);
+  ok(dbOpened, "从模板中心建出数据库页并打开 `.database-view`");
+  if (!dbOpened) return;
+  const modes = await safeEval(pg, () =>
+    Array.from(document.querySelectorAll(".db-view-switch button")).map((b) => (b.textContent || "").trim()),
+  );
+  ok(modes.length === 8, `8 个视图页签都在（实际 ${modes.length} 个：${modes.join("/")}）`);
+  for (const mode of modes) {
+    const switched = await safeEval(
+      pg,
+      (lab) => {
+        const b = Array.from(document.querySelectorAll(".db-view-switch button")).find(
+          (x) => (x.textContent || "").trim() === lab,
+        );
+        if (!b) return null;
+        b.click();
+        return true;
+      },
+      mode,
+    );
+    await sleep(1200);
+    const active = await safeEval(pg, () => {
+      const a = document.querySelector(".db-view-switch .db-view-active");
+      return a ? (a.textContent || "").trim() : null;
+    });
+    ok(switched === true && active === mode, `切到「${mode}」并生效（active=${active}）`);
+    const s = await safeEval(pg, probe, Object.keys(CHROME_BUDGET));
+    ok(
+      s.overflowCount === 0 && s.docW <= s.vw,
+      `「${mode}」无越界（docW ${s.docW}/${s.vw}，越界 ${s.overflowCount} 处` +
+        (s.overflow.length ? `：${s.overflow.map((o) => o.el).join("、")}` : "") +
+        `）`,
+    );
+    // ⚠️ 命中区 ≥44 是**触屏口径**（窄视口）——桌面档的控件本来就是鼠标尺寸
+    //    （`activity-btn` 40x40 / `btn-new` 62x28 / `database-filter` 240x29 …）⇒ 在桌面档
+    //    **不适用** ✗。而这条的**唯一合法视口（窄）已经打不开数据库视图了**（窄视口渲染的是
+    //    移动端阅读屏，规格 §4.4）⇒ **如实记一次"本轮不适用"**，⛔ 不用桌面数据假过 ✗。
+    if (touchTargets) {
+      ok(
+        s.smallCount === 0,
+        s.smallCount === 0
+          ? `「${mode}」控件命中区都 ≥44`
+          : `「${mode}」有 ${s.smallCount} 类控件低于 44：${s.small.map((x) => `${x.el} ${x.w}x${x.h}`).join(" | ")}`,
+      );
+    } else {
+      console.log(`  · 「${mode}」命中区 ≥44 是**触屏口径** ⇒ 桌面档**不适用**（本轮不适用，理由见函数头 ✓）`);
+    }
+    await shotFn(pg, `${label}-db-${mode}`);
+  }
+}
+
+/**
+ * ⭐ `2026-10-10` **换对象**：窄视口上现在渲染的是移动端**阅读屏** —— 量它自己的三件事
+ * （真渲染了 / 顶栏返回键 44×44 / 点了回首页），把被搬走那批的"入口存在性"补回来 ✓。
+ */
+async function checkMobileReadScreen(pg, label, shotFn) {
+  await pg.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+  await sleep(2200);
+  const m = await safeEval(pg, () => {
+    const root = document.querySelector('[data-testid="mobile-read"]');
+    const back = document.querySelector(".mread-back");
+    const b = back ? back.getBoundingClientRect() : null;
+    return {
+      hasRead: !!root,
+      hasHome: !!document.querySelector('[data-testid="mobile-home"]'),
+      backW: b ? Math.round(b.width) : 0,
+      backH: b ? Math.round(b.height) : 0,
+    };
+  });
+  console.log(`\n【${label} · 移动端阅读屏（窄视口不再渲染桌面编辑器）】`);
+  ok(m.hasRead && !m.hasHome, "窄视口开着页时渲染移动端阅读屏（且不是首页）");
+  ok(m.backW >= 44 && m.backH >= 44, `阅读屏顶栏返回键命中区 ≥44×44（实际 ${m.backW}x${m.backH}）`);
+  const clicked = await safeEval(pg, () => {
+    const b = document.querySelector(".mread-back");
+    if (!b) return false;
+    b.click();
+    return true;
+  });
+  await sleep(1100);
+  const home = await safeEval(pg, () => !!document.querySelector('[data-testid="mobile-home"]'));
+  ok(clicked && home, `阅读屏返回键能回到**首页**（点了=${clicked}，到首页=${home}）`);
+  await shotFn(pg, `${label}-mobile-read`);
+}
+
 const VIEWS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VIEWS_BASELINE_PATH = join(VIEWS_ROOT, "scripts", "mobile-views-baseline.json");
 const SYNC_PANEL_BASELINE = (() => {
@@ -1906,55 +2020,12 @@ async function main() {  const executablePath = findChrome();
         await shot(page, `${vp.name}-${v.name}`);
       }
 
-      // ---------- 数据库视图的 **8 个模式**都要量 ----------
-      // 只量默认的表格模式会漏掉后面 7 个（画廊/看板/列表/日历/时间轴/目录/甘特图）——
-      // 而"切不过去"这件事恰恰只会在它们身上发生：8 个页签排成一行是 582px，
-      // 而 `.db-view-switch` 自己不换行也不缩（`flex: 0 0 auto`），
-      // 390px 上 `right=606`，后四个模式以前**根本点不到**。
-      console.log(`\n【${vp.name} · 数据库视图（8 个模式）】`);
-      const dbOpened = await openDatabaseView(page);
-      ok(dbOpened, "从模板中心建出数据库页并打开 `.database-view`");
-      if (dbOpened) {
-        const modes = await safeEval(page, () =>
-          Array.from(document.querySelectorAll(".db-view-switch button")).map((b) => (b.textContent || "").trim()),
-        );
-        ok(modes.length === 8, `8 个视图页签都在（实际 ${modes.length} 个：${modes.join("/")}）`);
-        for (const mode of modes) {
-          // 点页签 → 断言它**真的切过去了**（`.db-view-active` 落在它身上）。
-          const switched = await safeEval(
-            page,
-            (label) => {
-              const b = Array.from(document.querySelectorAll(".db-view-switch button")).find(
-                (x) => (x.textContent || "").trim() === label,
-              );
-              if (!b) return null;
-              b.click();
-              return true;
-            },
-            mode,
-          );
-          await sleep(1200);
-          const active = await safeEval(page, () => {
-            const a = document.querySelector(".db-view-switch .db-view-active");
-            return a ? (a.textContent || "").trim() : null;
-          });
-          ok(switched === true && active === mode, `切到「${mode}」并生效（active=${active}）`);
-          const s = await safeEval(page, probe, Object.keys(CHROME_BUDGET));
-          ok(
-            s.overflowCount === 0 && s.docW <= s.vw,
-            `「${mode}」无越界（docW ${s.docW}/${s.vw}，越界 ${s.overflowCount} 处` +
-              (s.overflow.length ? `：${s.overflow.map((o) => o.el).join("、")}` : "") +
-              `）`,
-          );
-          ok(
-            s.smallCount === 0,
-            s.smallCount === 0
-              ? `「${mode}」控件命中区都 ≥44`
-              : `「${mode}」有 ${s.smallCount} 类控件低于 44：${s.small.map((x) => `${x.el} ${x.w}x${x.h}`).join(" | ")}`,
-          );
-          await shot(page, `${vp.name}-db-${mode}`);
-        }
-      }
+      // ---------- ⭐ 2026-10-10 **搬家**：数据库视图 8 个模式 ----------
+      // 窄视口里开着页时渲染的是移动端**阅读屏**（规格 §4.4）⇒ `.database-view` **不在** ✗
+      // ⇒ 那整段（`checkDatabaseViewModes`）**原样搬到桌面档**跑 ✓（断言一条没删 ✓，见桌面段 ✓）。
+      // 窄视口这一格换成**阅读屏自己的断言** ✓（换对象，不是删断言 ✓）。
+      console.log(`\n[搬家] ${vp.name}：数据库视图 8 模式 → 桌面档 ✓（窄视口走阅读屏）`);
+      await checkMobileReadScreen(page, vp.name, shot);
 
       // ---------- 窄屏：顶端工具栏**已撤**，入口改在编辑器工具条 ＋ 命令面板 ----------
       // ⚠️ 2026-10-01 那版：右侧那条**浮动** rail 撤了 ⇒ 四颗入口常驻**顶端工具栏**（手机自己一行）。
@@ -1990,31 +2061,31 @@ async function main() {  const executablePath = findChrome();
         };
       });
       ok(!tools0.topTools, "顶端工具栏已撤（无插件入口时不渲染 `.top-tools`）—— owner 2026-10-06 的决定");
-      ok(tools0.hasDir && tools0.dirInView, "编辑器工具条上的「目录」在屏内、够得到");
-      ok(tools0.hasMore, "编辑器工具条上有「⋯ 更多」菜单（讨论 / 通知 的新家）");
-
-      // 点「⋯」→「讨论」⇒ 右栏面板真的打开（⛔ 不是"菜单里有个点不动的项"）
-      const menuOpen = await safeEval(page, () => {
-        const b = document.querySelector(".editor-toolbar-more .toolbar-btn");
-        if (b) b.click();
-        return !!b;
+      // ⭐ 2026-10-10 **换对象（不删）**：窄视口里开着页时渲染的是移动端**阅读屏**（规格 §4.4）
+      //   ⇒ 桌面编辑器工具条那两条（「目录」在屏内 / 「⋯ 更多」菜单）与「⋯ → 讨论」
+      //   在窄视口上**没有对象** ✗ ⇒ 它们**照旧在桌面档跑** ✓（本文件桌面段
+      //   「桌面入口改在编辑器工具条：「目录」那颗 ＋ 「⋯ 更多」菜单」✓ ——一条没丢 ✓）。
+      //   窄视口这一格改量**阅读屏的同一件事**（"入口够不够得着" ✓）：
+      const readBack = await safeEval(page, () => {
+        const b = document.querySelector(".mread-back");
+        const r = b?.getBoundingClientRect();
+        return r
+          ? {
+              w: Math.round(r.width),
+              h: Math.round(r.height),
+              inView: r.left >= 0 && r.right <= innerWidth + 0.5 && r.top >= 0 && r.bottom <= innerHeight + 0.5,
+            }
+          : null;
       });
-      await sleep(400);
-      const discussClicked = await safeEval(page, () => {
-        const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
-          (x.textContent || "").includes("讨论"),
-        );
-        if (item) item.click();
-        return !!item;
-      });
-      await sleep(900);
-      const drawerOpen = await safeEval(page, () => !!document.querySelector(".comments-drawer"));
       ok(
-        menuOpen && discussClicked && drawerOpen,
-        `「⋯ → 讨论」真的把右栏面板打开了（menu=${menuOpen} item=${discussClicked} drawer=${drawerOpen}）`,
+        !!readBack && readBack.w >= 44 && readBack.h >= 44,
+        `窄视口渲染移动端阅读屏、其顶栏返回键命中区 ≥44×44（实际 ${readBack ? `${readBack.w}x${readBack.h}` : "没量到"}）`,
       );
-      await page.keyboard.press("Escape");
-      await sleep(400);
+      ok(
+        !!readBack && readBack.inView,
+        "阅读屏返回键在屏内、够得到（与原先「编辑器工具条上的目录在屏内」同一件事 ✓）",
+      );
+      await sleep(300);
       await shot(page, `${vp.name}-panel-entrances`);
 
       // ---------- 小控件（开关 / 色点）不许被"按钮一律 44 高"拉变形 ----------
@@ -2199,8 +2270,13 @@ async function main() {  const executablePath = findChrome();
         await ppage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
         await waitForApp(ppage);
         await sleep(600);
-        const r = await checkProperties(ppage, vp, vp.name);
-        if (r.err) {
+        // ⭐ 2026-10-10 **搬家**：属性面板的「添加属性」入口挂在**桌面编辑器**上 ⇒ 窄视口里
+        //   渲染的是移动端**阅读屏**（规格 §4.4）、**没有那个入口** ✗ ⇒ 这套体检**只在桌面档跑** ✓
+        //   （同文件桌面段 `checkProperties(desk, DESKTOP, "desktop")` **一条没少** ✓）。
+        const r = replacesDesktopEditor(vp) ? { skipped: true } : await checkProperties(ppage, vp, vp.name);
+        if (r.skipped) {
+          console.log(`[搬家] ${vp.name}：属性表体检 → 桌面档 ✓（窄视口走阅读屏）`);
+        } else if (r.err) {
           ok(false, `属性表体检失败：${r.err}`);
         } else {
           ok(r.count >= 5, `面板里量到 ${r.count} 行属性（4 条属性 + 「标签」那一行）`);
@@ -2456,6 +2532,12 @@ async function main() {  const executablePath = findChrome();
       ok(dp.docW <= dp.vw, `桌面属性面板无横向溢出（docW ${dp.docW} ≤ ${dp.vw}）`);
     }
     await shot(desk, `${DESKTOP.name}-properties`);
+
+    // ⭐ 2026-10-10 **搬家**：数据库视图 8 个模式原先在**窄视口**跑；窄视口现在渲染的是移动端
+    //   **阅读屏**（规格 §4.4）⇒ `.database-view` 打不开 ✗ ⇒ 整段搬到**桌面档** ✓
+    //   （函数体原样搬 ✓；只有"命中区 ≥44"那条是触屏口径、桌面档明确记为**不适用** ✓）。
+    //   ⚠️ 必须放在**属性表体检之后**：它会切到数据库页，先跑会把属性表那一步的页面状态带坏 ✗。
+    await checkDatabaseViewModes(desk, DESKTOP.name, shot, { touchTargets: false });
     // 桌面也跑一遍 PDF 阅读器：`⋯` 的隐藏、状态组"与工具组同排（省一行）"这几条
     // **只有桌面档才走得到**（手机档走的是 if 的另一支）——此前漏在这里，等于那几条断言没跑过。
     console.log(`\n【桌面 ${DESKTOP.name} · PDF 阅读器（真 PDF）】`);

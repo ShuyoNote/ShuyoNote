@@ -24,12 +24,43 @@
 //   pnpm test:mobile-overlays          # 有失败即非零退出
 //   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-overlays
 //   node scripts/verify-mobile-overlays.mjs --shots /tmp/shots
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
+
+/**
+ * ⭐ 2026-10-10：手机档**「阅读屏」**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
+ * 落地带来的**门禁搬家**（台账 R192 的口径：以效果图为准 ⇒ 改测试 ✓，⛔ 不许为保住旧断言扭曲产品 ✗）。
+ *
+ * 事实（逐字）：`src/App.tsx` 手机分支现在是
+ *   `currentId ? (isMobile ? <MobileRead …/> : <NoteEditor …/>) : …`
+ * ⇒ **窄视口里开着页时不再渲染桌面编辑器** ⇒ 挂在编辑器工具条上的三层
+ *   （`emoji` / `toc` / `history`）在窄视口上**没有触发器** ✗。
+ *
+ * ⚠️ **判据口径：只看宽度**（`useMobile()` 的真口径）——⛔ 不是"窄**或**矮" ✗。
+ *   依据三条，都是**读数**不是推断：
+ *   ① `src/hooks/useMobile.ts:26` 逐字 `MOBILE_QUERY = \`(max-width: 768px)\``；同文件 §31-44
+ *      逐字写着「**只看宽度**…792×360 的横屏手机**仍然放得下**'侧栏 + 正文'两列」；
+ *      "窄**或**矮" 是**浮层形态**（`isMobileOverlayViewport`）的口径，不是"会不会换掉编辑器" ✗。
+ *   ② 本脚本自己的视口表就把 792×360 标成 `narrow: false` ✓。
+ *   ③ 本轮实测：这三层在 `narrow:true` 的两个视口上红、在 **792×360（矮但不窄）上一条没红** ✓
+ *      ⇒ 编辑器在 792×360 上**确实还在** ✓。
+ */
+const REPO_ROOT_OVERLAYS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const MOBILE_BREAKPOINT_PX = (() => {
+  const src = readFileSync(join(REPO_ROOT_OVERLAYS, "src", "hooks", "useMobile.ts"), "utf8");
+  const m = src.match(/export const MOBILE_BREAKPOINT_PX\s*=\s*(\d+)/);
+  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/hooks/useMobile.ts 改了？）—— 断点必须与源码同源");
+  return Number(m[1]);
+})();
+/** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
+const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
+/** 挂在**桌面编辑器工具条**上的层：窄视口（＝阅读屏）上它们没有触发器 ⇒ 只在非窄视口跑 ✓（搬家）。 */
+const EDITOR_ONLY_OVERLAYS = new Set(["emoji", "toc", "history"]);
 
 // 断点：**窄（宽 ≤768）或矮（高 ≤520）**。两个数分别与 `useMobile.ts` 的
 // `MOBILE_BREAKPOINT_PX` / `SHORT_VIEWPORT_MAX_PX` 同源，都要在这里量一遍。
@@ -809,6 +840,38 @@ async function main() {
         shortMatches: matchMedia("(max-height: 520px)").matches,
         shortMinusOne: matchMedia("(max-height: 519px)").matches,
       }));
+
+      // ⭐ 2026-10-10 **换对象**（规格 §4.4）：窄视口上现在渲染的是移动端**阅读屏** ——
+      //   把"被搬走的那三层（图标选择器/目录/版本历史）"在窄视口的入口断言，换成**阅读屏自己的**
+      //   三件事：① 真的渲染了 ② 顶栏返回键命中区 ≥44×44 ③ 点它能回到**首页** ✓。
+      //   ⛔ 不是摆假元素骗门禁：量的就是产品真有的那三样 ✓。
+      if (replacesDesktopEditor(vp)) {
+        const mr = await safeEval(page, () => {
+          const root = document.querySelector('[data-testid="mobile-read"]');
+          const back = document.querySelector(".mread-back");
+          const b = back ? back.getBoundingClientRect() : null;
+          return {
+            hasRead: !!root,
+            hasHome: !!document.querySelector('[data-testid="mobile-home"]'),
+            backW: b ? Math.round(b.width) : 0,
+            backH: b ? Math.round(b.height) : 0,
+          };
+        });
+        ok(mr.hasRead && !mr.hasHome, `${vp.name} · 开着页时渲染移动端阅读屏（[data-testid="mobile-read"] ✓，且不是首页）`);
+        ok(mr.backW >= 44 && mr.backH >= 44, `${vp.name} · 阅读屏顶栏返回键命中区 ≥44×44（${mr.backW}x${mr.backH}）`);
+        const wentHome = await safeEval(page, () => {
+          const b = document.querySelector(".mread-back");
+          if (!b) return null;
+          b.click();
+          return true;
+        });
+        await sleep(900);
+        const homeAfter = await safeEval(page, () => !!document.querySelector('[data-testid="mobile-home"]'));
+        ok(wentHome === true && homeAfter === true, `${vp.name} · 点阅读屏返回键**回到首页**（点了=${wentHome}，到首页=${homeAfter}）`);
+        // 回到首页之后再走一遍，别把后面的层带到"首页"这个状态里
+        await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+        await sleep(2500);
+      }
       if (vp.narrow) {
         ok(mq.cssMatches, `命中窄屏媒体查询（innerWidth=${mq.jsInnerWidth} ≤ 768）`);
         ok(mq.minWidth769, "断点确实是 768（`max-width:769px` 也命中）——不是残留的 760");
@@ -1161,6 +1224,16 @@ async function main() {
 
       // ---- 浮层打开时内容区的滚动锁 ----
       for (const layer of OVERLAYS) {
+        // ⭐ 2026-10-10 **搬家（不删）**：窄视口里开着页时渲染的是**移动端阅读屏**（规格 §4.4）
+        //   ⇒ 挂在桌面编辑器工具条上的这三层**没有触发器**。它们**照旧在能跑到的地方跑** ——
+        //   本脚本的 `792×360`（矮但不窄 ⇒ 编辑器在 ✓）与桌面档 ✓ ⇒ 覆盖面**没丢** ✓。
+        //   窄视口这一格换的是**阅读屏自己的断言**（见本视口迭代末尾那段 `mobile-read` ✓）。
+        if (replacesDesktopEditor(vp) && EDITOR_ONLY_OVERLAYS.has(layer.id)) {
+          note(
+            `${vp.name} · ${layer.label}：窄视口走移动端阅读屏、不再渲染桌面编辑器 ⇒ 本层**搬到 792×360 与桌面档**跑 ✓`,
+          );
+          continue;
+        }
         // 单层出错（含 CI 里 Chrome 偶发的 CDP 抖动）只算这一层失败，
         // 不能把整轮跑挂掉——挂掉就没有汇总，等于白跑一次。
         try {
