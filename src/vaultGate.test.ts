@@ -16,6 +16,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { __resetVaultForTests, lockVault, unlockVault, vaultState } from "./lib/vault";
+import { useSpaceStore } from "./store/space";
 import "./i18n"; // 外壳里的组件用 useTranslation；先初始化，免得刷一屏 NO_I18NEXT_INSTANCE
 
 const mocks = vi.hoisted(() => ({
@@ -448,5 +449,80 @@ describe("④ 启动口径：跟**最后离开的那个**空间（⛔ 不许每�
     expect(host.querySelector(".app")).toBeNull();
     // ⭐ 「解锁 ／ 选择空间」两段都要在：本机确有明文空间 ⇒ 换空间那条路必须同时给出来 ✓
     expect(escapeBox(), "本机有明文空间 ⇒ 同时给出「选择空间」那一段").not.toBeNull();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-10（owner 拍 A）：「从**明文**空间切到**未解锁的加密**空间 ⇒ 解锁屏必须真的出来」。
+//
+// 本段是**渲染级**判据（⛔ 不拿「代码里有那段」当验收 ✗）：走 store 那条**与界面同一条**的动作
+// （`switchTo` ✓，侧栏那一行点的也是它 ✓）⇒ 读回内核读数 ⇒ 闸门 ⇒ **DOM**。
+//
+// 三样（Lead 点名 ✓）：
+//   ① 锁屏**真的渲出来**（且上面有一个**可输口令的输入框** ✓）
+//   ② **反向**：切到**明文**空间 ⇒ 锁屏⛔ **不**出现（挡「见谁都拦」✗ —— owner 上次报过那条 ✓）
+//   ③ ⭐ 锁屏**不是**靠「偷偷解锁」换来的：一次 `unlockEncryption` 都没发生，且外壳（那个空间的内容）没渲染
+// ⚠️ 「那个加密库**一个字节都没被读**」那一半在 **Rust** 判据 e)（`PRAGMA database_list` ✓）——
+//    渲染链**观测不到文件读**，所以这里**不假装**能判它 ✓（只说清"没渲染 ⇒ 用户看不到内容" ✓）。
+describe("⭐ 从明文空间切到未解锁的加密空间：解锁屏必须真的出来", () => {
+  /** 起始：活动空间是**明文**的 ⇒ 外壳渲染、没有锁屏。 */
+  function startPlaintext() {
+    mocks.overview.mockResolvedValue([encView("enc"), plainView("plain")]);
+    mocks.workspaces.mockResolvedValue([
+      { id: "enc", name: "加密空间" },
+      { id: "plain", name: "明文空间" },
+    ]);
+    mocks.status.mockResolvedValue({ enabled: false, locked: false });
+  }
+
+  it("① 切过去 ⇒ 锁屏渲染出来，且上面有可输口令的输入框", async () => {
+    startPlaintext();
+    await render();
+    expect(host.querySelector(".lock-screen"), "先在明文空间：不该有锁屏").toBeNull();
+    expect(host.querySelector(".app"), "明文空间 ⇒ 外壳要渲染").not.toBeNull();
+
+    // 用户切到那个**加密**空间（界面上点那一行走的就是这条 store 动作 ✓）；
+    // 内核这次**不再拒绝**（本笔修好的那一条 ✓）⇒ 它报「加密在盘上 ＋ 本会话拿不到钥匙」。
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("enc");
+    });
+    await settle();
+
+    expect(mocks.setActive, "要走内核那条换空间的路").toHaveBeenCalledWith("enc");
+    expect(host.querySelector(".lock-screen"), "⭐ 切到未解锁的加密空间 ⇒ 锁屏必须出来").not.toBeNull();
+    expect(host.querySelector(".lock-input"), "锁屏上要真的有一个可输口令的输入框").not.toBeNull();
+    expect(host.querySelector(".app"), "锁屏期间外壳不挂载").toBeNull();
+  });
+
+  it("② 反向：切到**明文**空间 ⇒ 锁屏⛔ 不出现（挡「见谁都拦」）", async () => {
+    fixture(); // 起始在**加密**锁屏
+    await render();
+    expect(host.querySelector(".lock-screen"), "夹具前提：先在锁屏").not.toBeNull();
+
+    mocks.status.mockResolvedValue({ enabled: false, locked: false });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("plain");
+    });
+    await settle();
+
+    expect(host.querySelector(".lock-screen"), "⭐ 明文空间⛔ 不许被拦（owner 上次报的就是这个 ✗）").toBeNull();
+    expect(host.querySelector(".app"), "明文空间 ⇒ 外壳要回来").not.toBeNull();
+  });
+
+  it("③ 锁屏不是靠「偷偷解锁」换来的：一次 `unlockEncryption` 都没有 ＋ 那个空间的内容没渲染", async () => {
+    startPlaintext();
+    await render();
+    const before = mocks.unlockEncryption.mock.calls.length;
+
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("enc");
+    });
+    await settle();
+
+    expect(mocks.unlockEncryption.mock.calls.length, "⛔ 不许在背后替用户解锁").toBe(before);
+    expect(host.querySelector(".lock-screen")).not.toBeNull();
+    expect(host.querySelector(".app"), "锁屏期间那个空间的内容一个都不渲染").toBeNull();
   });
 });
