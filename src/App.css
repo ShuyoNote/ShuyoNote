@@ -943,6 +943,25 @@ html[data-platform="win"] .app-body {
   background: var(--accent);
   color: var(--on-accent);
 }
+/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：那个**文字**标识（⛔ 不只靠颜色 ✓）。
+   ⚠️ **两个落点写在同一处**（侧栏空间行 ＋ 设置-空间那一列 ✓）—— 分开写就会各自漂 ✗。
+   ⚠️ 只要"**看得见但不喧宾夺主**"：它旁边那一格是**同步状态**（`.space-item-local` / `.set-space-local`
+      用 `--text-faint`）⇒ 这里取**强一档**的 `--text-dim` ＋ 描边，够看清、⛔ 不抢旁边那格 ✓。
+   ⚠️ 形状**刻意与「当前」那枚实心 accent 圆片**（`.space-item-current` / `.set-tag`）**不同**：
+      这里是**描边空底** ⇒ 两个标识不会被当成同一个东西 ✓（⛔ 也没用 accent 色 ✗）。
+   ⚠️ 这一处**只加这两个类**（Lead 批的写域就这两格 ✓）；⛔ 没调任何别的视觉 ✓。 */
+.space-item-crypto,
+.set-space-crypto {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 .space-item-local {
   font-size: 11px;
   color: var(--text-faint);

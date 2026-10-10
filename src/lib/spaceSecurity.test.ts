@@ -90,6 +90,16 @@ describe("加密标识 · 接线（侧栏空间切换器那一行）", () => {
     }
   });
 
+  it("⛔ 不许只靠颜色 ＋ 两个落点的样式**写在同一条规则里**（分开写就会各自漂）", () => {
+    // ⚠️ 标识是**文字**（`label` ✓），但**样式**也不能退化成"只有颜色" ✗（色弱用户看不到 ✓）。
+    const css = read("src/App.css");
+    const at = css.indexOf(".space-item-crypto");
+    expect(at, "侧栏那个标识没有任何样式").toBeGreaterThan(-1);
+    const block = css.slice(at, css.indexOf("}", at));
+    expect(block, "设置那一个没跟它写在同一条规则里 ⇒ 两处会各自漂").toContain(".set-space-crypto");
+    expect(block, "样式只有颜色 ⇒ 色弱用户看不到").toMatch(/border|background|padding|outline/);
+  });
+
   it("④ 回归：「仅本机／已同步」那一格**一个字不许变**（owner 没要求动它）", () => {
     expect(pageTreeCode, "同步状态那一格被动了").toContain("仅本机");
     // ⭐ 与 `task-22` 那条（个人空间不显示服务器点）也不许打架：那条规则仍在岗 ✓
