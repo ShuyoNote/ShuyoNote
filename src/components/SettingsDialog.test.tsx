@@ -331,3 +331,83 @@ describe("设置-空间 · 单空间迁移：⛔ 那两个图标不许再回来"
     }
   });
 });
+
+// ⭐ owner 2026-10-10 从截图里挑的**四条**（全在「空间」页 ✓）：
+//   ① 去掉每行那串**空间编号**（`91f96e7f` 那类 ✓ —— 普通用户不需要 ✓）
+//   ② 把那串**公网 IP**（`← 121.199.8.24` ✓）换成人话「已同步」✓，⭐ **完整地址留在 `title` 里** ✓（排障要用 ✓）
+//   ③ 加一个**看得见**的「切换」入口 ✓（现在只有鼠标悬停才提示 ✓）＋ ⭐ **必须 `stopPropagation`** ✗
+//   ④ 副标题那句加上「切换」✓（在 i18n 词条里 ✓）
+// ⚠️ 四条各自能红（⛔ 不包成一条 ✗）。
+describe("设置-空间 · owner 挑的四条（编号／IP／可见切换入口／副标题）", () => {
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const SRC_TSX = resolve(HERE, "SettingsDialog.tsx");
+
+  it("⭐ c) ⛔ 用户面不许出现空间编号（那串 `id.slice(0,8)`）", async () => {
+    await render();
+
+    for (const s of useSpaceStore.getState().spaces) {
+      expect(
+        card(s.name).textContent ?? "",
+        `⭐ 「${s.name}」那行把空间编号露给用户了：${s.id.slice(0, 8)}`,
+      ).not.toContain(s.id.slice(0, 8));
+    }
+  });
+
+  it("⭐ d) ⛔ 用户面不许出现同步地址的**主机** ⇒ ⭐ 但它必须留在 `title` 里（排障用 ✓）", () => {
+    // ⚠️ 测试里 `api.syncProfiles()` 被打桩成空 ⇒ 渲染层**造不出**"有同步配置"那张卡 ✗
+    //    ⇒ 这条改判**源码级**（本仓有先例：`enabled` 那条也是钉源码行 ✓）：
+    //      ① ⛔ 不许把它当**文字**渲染 ✗；② ⭐ 必须传进 `title` ✓。
+    const src = readFileSync(SRC_TSX, "utf8");
+    expect(
+      /↔\s*\{hostLabel\(/.test(src),
+      "⭐ 同步地址还被当文字渲染 ⇒ 用户会在设置里看到一串 IP ✗",
+    ).toBe(false);
+    expect(
+      /title=\{[^}]*hostLabel\(|title=\{[^}]*server_url/.test(src),
+      "⭐ 完整地址要留在 `title` 里（排障要用）—— 别连它也删了 ✗",
+    ).toBe(true);
+  });
+
+  it("⭐ a) 点新加的「切换」按钮 ⇒ 真的切过去（`activeId` 变了）", async () => {
+    await render();
+
+    const btn = card("生活").querySelector<HTMLButtonElement>(".set-space-switch");
+    expect(btn, "⭐ 没有**看得见**的「切换」入口（现在只有悬停提示 ✗）").not.toBeNull();
+    expect((btn!.textContent ?? "").trim(), "按钮上要写「切换」").toBe("切换");
+
+    await click(btn!);
+    expect(useSpaceStore.getState().activeId, "点了「切换」却没切过去").toBe("s2");
+  });
+
+  it("⭐ b) ⭐⭐ **反向**：点「切换」「配色」「删除」任何一个，都⛔ 不许因为冒泡顺手切换 ✗", async () => {
+    await render();
+
+    const switchBtn = card("生活").querySelector<HTMLButtonElement>(".set-space-switch");
+    expect(switchBtn, "没有「切换」按钮 ⇒ 这条此刻测不到东西（先让上面 a) 过）").not.toBeNull();
+
+    // ⚠️ 三条**各自**点一次、各自清一次桩（⛔ 不把三件事包进一条断言 ✗）。
+    switchTo.mockClear();
+    await click(switchBtn!);
+    expect(
+      switchTo,
+      "⭐ 点「切换」触发了**两次**切换（自己的 onClick ＋ 冒泡到整行 ✗）",
+    ).toHaveBeenCalledTimes(1);
+
+    switchTo.mockClear();
+    await click(button(card("生活"), "配色"));
+    expect(switchTo, "点「配色」把空间切走了（冒泡 ✗）").not.toHaveBeenCalled();
+
+    switchTo.mockClear();
+    await click(button(card("生活"), "删除"));
+    expect(switchTo, "点「删除」却先把空间切过去了（冒泡 ✗）").not.toHaveBeenCalled();
+  });
+
+  it("⭐ ④ 副标题那句加上「切换」（两处词条一起改 ✓）", () => {
+    const zh = readFileSync(resolve(HERE, "../i18n/locales/zh.ts"), "utf8");
+    const en = readFileSync(resolve(HERE, "../i18n/locales/en.ts"), "utf8");
+    expect(zh, "zh 词条里没有「切换」").toMatch(/spacesHint:\s*"[^"]*切换/);
+    expect(en, "en 词条里没有 Switch（⛔ 只改 zh 会造出不一致 ✗）").toMatch(
+      /spacesHint:\s*"Switch \/ colors \/ delete \/ migrate"/,
+    );
+  });
+});

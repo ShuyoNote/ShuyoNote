@@ -41,7 +41,7 @@ export default {
     appearance: "Appearance",
     appearanceHint: "Theme & accent",
     spaces: "Spaces",
-    spacesHint: "Colors / delete / migrate",
+    spacesHint: "Switch / colors / delete / migrate",
     account: "Account",
     accountHint: "Identity & sync targets",
     email: "Email",

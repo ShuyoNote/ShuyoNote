@@ -289,14 +289,37 @@ function SpacesPane() {
                           {crypto.label}
                         </span>
                       )}
+                      {/* ⭐ 2026-10-10（owner 截图）：这里原来直接显示 `↔ 121.199.8.24` ✗ ——
+                          一个公网 IP 摆在设置里，普通用户既看不懂也不需要 ✓。
+                          ⇒ 人话「已同步」✓ ＋ ⭐ **完整地址留在 `title` 里** ✓（排障要用 ✓，⛔ 别删它 ✗）。 */}
                       {prof?.server_url ? (
-                        <span className="set-space-sync">↔ {hostLabel(prof.server_url)}</span>
+                        <span className="set-space-sync" title={prof.server_url}>
+                          已同步
+                        </span>
                       ) : (
                         <span className="set-space-local">仅本机</span>
                       )}
-                      <span className="set-space-id" title={s.id}>{s.id.slice(0, 8)}</span>
+                      {/* ⭐ 2026-10-10（owner 截图）：那串空间编号（`91f96e7f` 那类）删掉了 ✓
+                          —— 普通用户不需要 ✓；⛔ 也**不要**改成塞进 `title` 里 ✗（那还是露给用户了 ✓）。 */}
                     </div>
                   </div>
+                  {/* ⭐ 2026-10-10（owner 截图）：切换原来**只有鼠标悬停**才提示 ✗（整行那个 `title`）
+                      ⇒ 给一个**看得见**的入口 ✓。
+                      ⚠️ ⭐ **必须 `stopPropagation`** ✗ —— 整行本来就 `onClick={pick}` ✓
+                      ⇒ 不拦就会**切两次**（自己那次 ＋ 冒泡那次 ✓）；与「配色」「删除」同一处理 ✓。
+                      ⚠️ **当前那一行不显示** ✓（它已经在那儿了，再给个"切过去"很怪 ✓）。 */}
+                  {!active && (
+                    <button
+                      className="set-space-switch set-btn"
+                      title={`切换到「${s.name}」`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void pick(s.id);
+                      }}
+                    >
+                      切换
+                    </button>
+                  )}
                   <button
                     className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
                     /* ⛔ 配色不切空间：点完只是展开色板（冒泡上去就变成"顺手切走" ✗） */
