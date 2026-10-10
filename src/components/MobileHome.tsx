@@ -74,7 +74,22 @@ export function MobileHome() {
               {recent.map((p) => (
                 <li key={p.id}>
                   <button className="mhome-recent-item" onClick={() => void openPage(p.id)}>
-                    <span className="mhome-recent-icon" aria-hidden>{p.icon || "📄"}</span>
+                    {/* ⭐ 2026-10-10 修：`p.icon` **可能是 URI/图片数据**（本机那条应用自带样例页
+                        「快速上手」的 `icon` 就是 `data:image/svg+xml;base64,…` ✗）——把它当**文字**
+                        渲染会让整串 base64 横着冲出屏幕 ✗（实测 `.mhome` 的 `scrollWidth=17561`，
+                        视口只有 390 ✗）。判据**照抄 `PageTree.tsx:625` 那条现成的口径** ✓
+                        （一处判断、两种形态：图片走 `<img>` ✓，emoji 那种单字符仍走文字 ✓）。 */}
+                    <span className="mhome-recent-icon" aria-hidden>
+                      {p.icon ? (
+                        /^(data:image|https?:|\.svg)/i.test(p.icon) ? (
+                          <img className="mhome-recent-icon-img" src={p.icon} alt="" draggable={false} />
+                        ) : (
+                          p.icon
+                        )
+                      ) : (
+                        "📄"
+                      )}
+                    </span>
                     <span className="mhome-recent-title">{p.title || "未命名"}</span>
                     <span className="mhome-recent-time">{timeAgo(p.updated_at)}</span>
                   </button>
