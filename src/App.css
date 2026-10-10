@@ -24490,3 +24490,21 @@ body.is-plugin-panel-open .main {
   font-size: 12px;
   color: var(--text-faint);
 }
+
+/* ⭐ 2026-10-10：手机档"回首页"浮标（台账 R188 的 (b) ✓）—— 只在**开着某个页面**时出现 ✓。
+   ⚠️ `position: fixed` ＋ 不包裹任何容器 ✓（包裹 `NoteEditor` 会多一层布局 ✗）。
+   触控高度 44px ✓；避开左下角那个全局汉堡键（右下角放置 ✓）。 */
+.mnote-home {
+  position: fixed;
+  right: 16px;
+  bottom: calc(20px + var(--sab, 0px));
+  z-index: 40;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
