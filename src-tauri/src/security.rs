@@ -367,18 +367,26 @@ pub(crate) const CIPHER_OPEN_RAW: [&str; 2] = ["file is not a database", "databa
 ///
 /// ⚠️ 只翻**认得出来的**那两句；其余错误**原样返回**（诊断为"可能是页加密算法不同"要有依据，
 /// 不能把所有开库失败都套上这个解释）。
+///
+/// ★ 2026-10-10（owner 从**锁屏截图**里问出来）：**原始报错只进日志，不进用户面** ✓
+///   这个函数返回的是**给用户看的那一句**，而旧写法把 `raw` 也拼了进去 ⇒ 锁屏上直接露出
+///   `file is not a database` ✗ —— 用户完全看不懂 ✓。
+///   而"排查以原文为准"那个需求是**真的** ✓ ⇒ 由函数里那行 `eprintln!` 承担：
+///   控制台/日志里照样是逐字节原文，只是不再糊在用户脸上 ✓
+///   （本文件 `mod tests` 里那条判据的期望**同步改严了**：从"必须含原文"改成"必须不含原文" ✓）
 pub(crate) fn cipher_open_error(raw: &str, what: &str) -> String {
     if !CIPHER_OPEN_RAW.iter().any(|m| raw.contains(m)) {
         return raw.to_string();
     }
+    // ⛔ 别把这一行删掉：它是"排查以原文为准"的唯一载体（用户面上已经看不到原文了）✗
+    eprintln!("[cipher] 库打不开的原始报错（排查以它为准）：{raw}");
     format!(
-        "{what}打不开：{raw}\n\
-         ⇒ 两种成因，报错本身**分不出**是哪一种，请按顺序排除：\n\
+        "{what}打不开。两种成因，报错本身**分不出**是哪一种，请按顺序排除：\n\
          \u{20}1) **口令/密钥不对**（最常见）：确认大小写、输入法、以及是不是另一台设备的口令；\n\
          \u{20}2) **这个库用了另一种页加密算法**（例如库是 AES 页、而本构建是 SM4 页，或反过来）：\n\
          \u{20}   页加密算法是**库文件**的属性、不是开关 ⇒ 换构建后必须**迁移**：用**原构建**打开并先「关闭磁盘加密」\n\
          \u{20}   （导出成明文）⇒ 换本构建 ⇒ 重新「开启磁盘加密」；或改用导出包导入。详见 docs/SM-CRYPTO-DELIVERY.md。\n\
-         原始报错保留在上面，排查时以它为准。"
+         原始报错已写进日志（控制台），排查时以它为准。"
     )
 }
 
@@ -1339,7 +1347,18 @@ mod tests {
             assert!(out.contains("口令"), "没提口令：{out}");
             assert!(out.contains("页加密算法"), "没提页加密算法：{out}");
             assert!(out.contains("关闭磁盘加密"), "没给下一步：{out}");
-            assert!(out.contains(raw), "原始报错必须保留（排查以它为准）：{out}");
+            // ★ 2026-10-10：这条**期望改了**（owner 从锁屏截图里问出来的那一句英文）✗
+            //   当年写的是 `assert!(out.contains(raw), "原始报错必须保留（排查以它为准）")` ——
+            //   那个**需求是真的** ✓，但它不该由**用户可见文本**承担 ✗：锁屏上露出一句
+            //   `file is not a database`，用户完全看不懂 ✓
+            //   ⇒ 改成：原文**进日志**（见 `cipher_open_error` 里那行 `eprintln!`），
+            //     文本里那句"已写进日志"告诉排查的人去哪看 ✓
+            //   ⛔ 别把这条读成"断言被改松了"——它**变严了**：从"必须含原文"改成"必须不含原文" ✓
+            assert!(!out.contains(raw), "原始报错不许进用户面（只进日志）：{out}");
+            for m in CIPHER_OPEN_RAW {
+                assert!(!out.contains(m), "原文碎片「{m}」不许进用户面：{out}");
+            }
+            assert!(out.contains("日志"), "要说清原始报错去哪看（日志）：{out}");
         }
         // 认不出的错误 ⇒ 原样返回（不套解释）
         for raw in ["unable to open database file", "disk I/O error", "some other failure"] {
