@@ -20,10 +20,14 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
         sort_order: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        // ⭐ 2026-10-10：**第 8 列**（追加在最后 ⇒ 前 7 个下标一个都没动 ✓）。
+        // 界面靠它判"个人空间不显示同步标识"（owner 口径 ✓）；列是 `TEXT NOT NULL DEFAULT ''` ✓。
+        kind: row.get(7)?,
     })
 }
 
-const WS_COLS: &str = "id,name,theme,icon,sort_order,created_at,updated_at";
+// ⚠️ `kind` **追加在最后**：`row_to_meta` 按**下标**取值 ⇒ 插在中间会把后面每一列都错位 ✗。
+const WS_COLS: &str = "id,name,theme,icon,sort_order,created_at,updated_at,kind";
 
 const ACCENTS: [&str; 8] = [
     "#3370FF", "#00B578", "#FF8A1E", "#7B61FF", "#00A9C7", "#D9A300", "#F54A45", "#646A73",

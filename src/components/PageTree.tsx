@@ -36,7 +36,7 @@ import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import { useActivity } from "../store/activity";
 import { useWindowChrome } from "../store/windowChrome";
-import { syncTagColor, syncTagTitle } from "../lib/syncTag";
+import { showsServerTag, syncTagColor, syncTagTitle } from "../lib/syncTag";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog, chooseDialog, useInputStore } from "../store/input";
@@ -1302,8 +1302,14 @@ export function PageTree(_props: {
             只在「已登录(有 token)」时展示，与 TitleBar 一致——登出后 sync_profiles
             行仍保留 server_url（供再登录），不能据此判定「已同步」。
             ⚠️ **2026-10-10（owner 拍 C）**：平时**只留颜色点** —— ⛔ 不再把地址渲染成文字 ✗
-            （以前服务器是 IP 时，这里就摊出那个 IP），地址只在 `title`/`aria-label` 里给 ✓。 */}
-        {!collapsed && isDesktop && !customTitleBar && activeSyncProfile?.token && (
+            （以前服务器是 IP 时，这里就摊出那个 IP），地址只在 `title`/`aria-label` 里给 ✓。
+            ⚠️ 同日 owner 补的更准的口径：**个人空间没有服务器 ⇒ 一个字节都不显示** ✗
+            ⇒ 这里多一道 `showsServerTag(activeSpace.kind, …)`（规则只有那一处实现 ✓）。 */}
+        {!collapsed &&
+          isDesktop &&
+          !customTitleBar &&
+          activeSyncProfile?.token &&
+          showsServerTag(activeSpace?.kind, activeSyncProfile.server_url) && (
           <div
             className="sidebar-sync-pill"
             title={syncTagTitle(activeSyncProfile.server_url)}
@@ -1367,14 +1373,17 @@ export function PageTree(_props: {
                           {/* 而不是把同步标签硬塞进名字后面挤成一行。 */}
                           <div className="space-item-meta">
                             {active && <span className="space-item-current">当前</span>}
-                            {isDesktop && prof ? (
+                            {isDesktop && prof && showsServerTag(s.kind, prof.server_url) ? (
                               /* ⚠️ **2026-10-10（owner 拍 C）**：这里以前是一枚**写着地址的文字胶囊** ✗
                                  —— 服务器是 IP 时，那一行右侧就摊出那个 IP（owner 截图里就是它）✓。
                                  现在只留一个**颜色点**：地址进 `title`/`aria-label`（悬停与读屏 ✓），
                                  平时一个字节的地址都不渲染 ✓。
                                  ⚠️ 形状改了但**颜色编码没动**：仍是同一个 `syncTagColor(server_url)` ✓
                                  （同地址在三处必须同色 ✓）。CSS 归别人那几条线 ⇒ 这个点的尺寸/圆角
-                                 走**行内样式**，⛔ 不动 `App.css` ✗。 */
+                                 走**行内样式**，⛔ 不动 `App.css` ✗。
+                                 ⚠️ **2026-10-10 加大门**：`showsServerTag(s.kind, …)` ⇒
+                                 ⭐ 个人空间（如截图里那个「工作」）**连这个点都不显示** ✓
+                                 —— 落到 `else` 那一支「仅本机」（对它而言是实话 ✓）。 */
                               <span
                                 className="space-item-sync-dot"
                                 role="img"

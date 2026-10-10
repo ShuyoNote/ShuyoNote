@@ -8,10 +8,9 @@
 //
 // ⚠️ 三处共用这套标识（`PageTree` 空间行 ／ `TitleBar` 状态芯片 ／ `SyncPanel` 空间标签），
 //    本轮 `SyncPanel` 归另一条线（task-15）⇒ 判据覆盖前两处 ＋ **规则本身**（`showsServerTag`）✓。
-// ⚠️ **已知缺口（2026-10-10，已报 Lead）**：`kind` 现在**到不了渲染层**
-//    （`src-tauri/src/workspaces.rs:26` 的 `WS_COLS` 不含 `kind`，TS `WorkspaceMeta` 也没这个字段）
-//    ⇒ 规则已实现并被判据钉住，但三处调用点**还没法传 kind** ⇒ 本文件里那条"渲染层接线"的断言
-//    只钉"⛔ 不许自己写 kind 判断"，**不假装已经接上了** ✗。
+// ✅ **2026-10-10 接线完成**：`kind` 原先**到不了渲染层**（Rust `workspaces.rs` 的 `WS_COLS` 没选它 ✗）
+//    ⇒ 三处数据流已补（`WS_COLS` ＋ `models.rs::WorkspaceMeta` ＋ `src/types.ts`）＋
+//    三处渲染各加一句 `showsServerTag(kind, url)` ✓ ⇒ 下面那些"接线"断言现在**真的**在岗 ✓。
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -26,6 +25,8 @@ describe("服务器标识 · 规则（纯函数：规则只有这一处实现）
     // ⚠️ 未分类（`""`）按个人处理 —— 与仓内既有口径同向（`set_sync_profile` 那道 team-only 拒）✓
     expect(showsServerTag("", URL_IP)).toBe(false);
     expect(showsServerTag("其它", URL_IP)).toBe(false);
+    // ⚠️ **拿不到 kind ⇒ 也不显示**（fail-closed ✓）：⛔ 不许"传丢了就恰好放行" ✗
+    expect(showsServerTag(undefined, URL_IP)).toBe(false);
   });
 
   it("② 团队空间 ＋ 有服务器 ⇒ 显示；缺一样都不显示", () => {
@@ -37,12 +38,14 @@ describe("服务器标识 · 规则（纯函数：规则只有这一处实现）
     expect(showsServerTag("personal", "")).toBe(false);
   });
 
-  it("②b ⚠️ 过渡态：`kind` 还传不进来时，**有服务器就显示**（⛔ 等那一格接上后这条必须翻成 false）", () => {
-    // 这条**故意**钉住现状：`kind === undefined` ＝ 渲染层拿不到空间类型（见文件头缺口）。
-    // ⇒ 过渡期宁可"先只留颜色点"（把 owner 看得见的 IP 去掉 ✓），也不装作能判个人空间 ✗。
-    expect(showsServerTag(undefined, URL_IP)).toBe(true);
-    // ⛔ 但"没服务器"这一条**不**受过渡影响：一律不显示 ✓
-    expect(showsServerTag(undefined, "")).toBe(false);
+  it("①b ⭐「工作」那一例（截图里那枚 IP 胶囊）：`kind=\"personal\"` ⇒ 那个点也必须消失", () => {
+    // 数据侧读数（只读查 app data 的 `meta.db`）：`工作` ＝ `91f96e7f…`、`kind="personal"`，
+    // 而 `sync_profiles` 里留着一行**过期的** `server_url`（`has_token=0`）—— 见给 Lead 的报告。
+    // ⇒ 这一句就是"那个点还会不会显示"的判据：personal ⇒ false ⇒ **不渲染** ✓
+    const staleRow = { kind: "personal", server_url: "http://121.199.8.9:8787" };
+    expect(showsServerTag(staleRow.kind, staleRow.server_url)).toBe(false);
+    // ⚠️ 反面必须有：同一行若是团队空间 ⇒ 显示 ✓（否则这条判据可能"恒 false"地假绿 ✗）
+    expect(showsServerTag("team", staleRow.server_url)).toBe(true);
   });
 
   it("③ 悬停给的是**完整地址**（含端口）—— 写死一处，⛔ 不许两处两种说法", () => {
@@ -66,37 +69,82 @@ describe("服务器标识 · 规则（纯函数：规则只有这一处实现）
 describe("服务器标识 · 两处渲染（PageTree ／ TitleBar）", () => {
   const pageTree = read("src/components/PageTree.tsx");
   const titleBar = read("src/components/TitleBar.tsx");
+  // ⚠️ 判据只判**代码**，不判注释：注释里会**引用**这些模式去解释规则
+  //    （实测踩过一次：TitleBar 注释里写了「⛔ 不在这里写 `kind === "team"`」⇒ 直接把判据判红 ✗
+  //     —— 与本工作区"讲解规则的文档触发了规则本身"那一类同形 ✓）。
+  const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const pageTreeCode = code(pageTree);
+  const titleBarCode = code(titleBar);
 
   it("① 两处**都不再把地址渲染成文字**（旧行为必红：渲染的就是 `syncTagLabel(...)`）", () => {
-    expect(pageTree, "侧栏胶囊/空间行里的地址文字还在").not.toContain("syncTagLabel(");
-    expect(titleBar, "标题栏里的地址文字还在").not.toContain("syncTagLabel(");
+    expect(pageTreeCode, "侧栏胶囊/空间行里的地址文字还在").not.toContain("syncTagLabel(");
+    expect(titleBarCode, "标题栏里的地址文字还在").not.toContain("syncTagLabel(");
   });
 
-  it("① 规则只有一处：渲染层 ⛔ 不许自己写 `kind === \"team\"` 那种判断", () => {
-    expect(pageTree, "PageTree 自己判 kind 了（规则应当只有一处）").not.toMatch(/kind\s*===\s*"team"/);
-    expect(titleBar, "TitleBar 自己判 kind 了（规则应当只有一处）").not.toMatch(/kind\s*===\s*"team"/);
+  it("① **两处都真的问了那条规则**（⛔ 别只改侧栏 ✗；PageTree 两个渲染点都要问）", () => {
+    expect(
+      (pageTreeCode.match(/showsServerTag\(/g) ?? []).length,
+      "PageTree 的两处渲染都要过这道门（侧栏胶囊 ＋ 空间列表行）",
+    ).toBeGreaterThanOrEqual(2);
+    expect(titleBarCode, "TitleBar 没过那道门 ⇒ 个人空间在标题栏照样显示").toContain("showsServerTag(");
+    // ⛔ 渲染层不许自己判 kind：规则只有一处，否则下一处接上去就会漂 ✗
+    expect(pageTreeCode, "PageTree 自己判 kind 了").not.toMatch(/kind\s*===\s*"team"/);
+    expect(titleBarCode, "TitleBar 自己判 kind 了").not.toMatch(/kind\s*===\s*"team"/);
   });
 
   it("② 颜色点还在（⛔ 不许把整个胶囊删掉）＋ 两处同源 `syncTagColor`", () => {
-    expect(pageTree).toContain("sidebar-sync-dot");
-    expect(pageTree).toContain("space-item-sync-dot");
-    expect(titleBar).toContain("titlebar-sync-dot");
-    expect((pageTree.match(/syncTagColor\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
-    expect(titleBar).toContain("syncTagColor(");
+    expect(pageTreeCode).toContain("sidebar-sync-dot");
+    expect(pageTreeCode).toContain("space-item-sync-dot");
+    expect(titleBarCode).toContain("titlebar-sync-dot");
+    expect((pageTreeCode.match(/syncTagColor\(/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(titleBarCode).toContain("syncTagColor(");
   });
 
   it("③ **悬停仍要给地址**（⛔ 不许连提示都删掉 —— 那就成了「整个去掉」，owner 没选它）", () => {
-    expect(pageTree).toContain("syncTagTitle(");
-    expect(titleBar).toContain("syncTagTitle(");
+    expect(pageTreeCode).toContain("syncTagTitle(");
+    expect(titleBarCode).toContain("syncTagTitle(");
     // 前缀只在 `syncTagTitle` 里拼一次；页面里不许再手拼（两处会漂）
-    expect(pageTree, "PageTree 手拼了提示前缀").not.toContain("同步目标：${");
-    expect(titleBar, "TitleBar 手拼了提示前缀").not.toContain("同步目标：${");
-    expect(pageTree, "PageTree 手拼了另一个前缀").not.toContain("同步：${");
-    expect(titleBar, "TitleBar 手拼了另一个前缀").not.toContain("同步：${");
+    expect(pageTreeCode, "PageTree 手拼了提示前缀").not.toContain("同步目标：${");
+    expect(titleBarCode, "TitleBar 手拼了提示前缀").not.toContain("同步目标：${");
+    expect(pageTreeCode, "PageTree 手拼了另一个前缀").not.toContain("同步：${");
+    expect(titleBarCode, "TitleBar 手拼了另一个前缀").not.toContain("同步：${");
   });
 
   it("⑤ 无障碍：那个点必须有可读的名字（aria-label 与悬停同一处文案）", () => {
-    expect(pageTree, "PageTree 的颜色点没有可读名字").toMatch(/aria-label=\{syncTagTitle\(/);
-    expect(titleBar, "TitleBar 的颜色点没有可读名字").toMatch(/aria-label=\{syncTagTitle\(/);
+    expect(pageTreeCode, "PageTree 的颜色点没有可读名字").toMatch(/aria-label=\{syncTagTitle\(/);
+    expect(titleBarCode, "TitleBar 的颜色点没有可读名字").toMatch(/aria-label=\{syncTagTitle\(/);
+  });
+});
+
+describe("服务器标识 · 数据流（`kind` 真的发出来了吗）", () => {
+  const ws = read("src-tauri/src/workspaces.rs");
+  const models = read("src-tauri/src/models.rs");
+  const types = read("src/types.ts");
+
+  it("① Rust 侧：`WS_COLS` 含 `kind` ＋ `row_to_meta` 取到它（⛔ 追加在最后，别把前 7 列错位）", () => {
+    const cols = /const WS_COLS: &str = "([^"]+)"/.exec(ws)?.[1] ?? "";
+    expect(cols.split(","), "`WS_COLS` 没有 kind ⇒ 界面永远拿不到空间分类").toContain("kind");
+    expect(
+      cols.split(",").indexOf("kind"),
+      "`kind` 必须**追加在最后**（`row_to_meta` 按**下标**取值 ⇒ 插中间会把后面每一列都错位）",
+    ).toBe(cols.split(",").length - 1);
+    expect(ws, "`row_to_meta` 没有把第 8 列读进 `kind`").toMatch(/kind:\s*row\.get\(7\)\?/);
+  });
+
+  it("① 两个结构都带 `kind`（Rust `WorkspaceMeta` ＋ TS `WorkspaceMeta`）", () => {
+    expect(models, "Rust `WorkspaceMeta` 没有 kind").toMatch(
+      /pub struct WorkspaceMeta \{[\s\S]*?pub kind: String/,
+    );
+    expect(types, "TS `WorkspaceMeta` 没有 kind").toMatch(/interface WorkspaceMeta \{[\s\S]*?kind\?: string/);
+  });
+
+  it("① **第二处硬编码的列清单**（导入空间那条路）也要带 `kind`", () => {
+    // ⚠️ 这是 `cargo check` 抓出来的：`workspace_io.rs` **没用** `WS_COLS`，自己写了一遍列清单
+    //    ⇒ 只补 `WS_COLS` 那边的话，**导入回来的空间**会缺 `kind`（`undefined` ⇒ 标识不显示 ✗）。
+    const io = read("src-tauri/src/workspace_io.rs");
+    expect(io, "导入空间那条路的 SELECT 没有 kind").toMatch(
+      /SELECT id,name,theme,icon,sort_order,created_at,updated_at,kind FROM meta\.workspaces/,
+    );
+    expect(io, "导入空间那条路没有把 kind 读出来").toMatch(/kind:\s*r\.get\(7\)\?/);
   });
 });

@@ -488,6 +488,16 @@ export interface WorkspaceMeta {
   sort_order?: number;
   created_at: number;
   updated_at: number;
+  /**
+   * ⭐ **空间分类**：`"personal"` ／ `"team"` ／ `""`（未分类）—— 2026-10-10 加。
+   *
+   * ⚠️ 它原先**到不了渲染层**（Rust `list_workspaces` 的 `WS_COLS` 没选 `kind` ✗），
+   * 而 owner 的口径要按它判「**个人空间没有服务器 ⇒ 那个同步标识不显示**」⇒ 三处一起补上 ✓：
+   * Rust `WS_COLS` ＋ Rust `WorkspaceMeta`（`models.rs`）＋ 这里。
+   * ⚠️ 标成**可选**只为不破坏既有的字面量构造（测试／本地拼的对象）；Rust 侧现在**恒发**它 ✓。
+   * ⛔ 界面**不许**自己判 `kind === "team"` ✗ —— 规则只有一处：`src/lib/syncTag.ts::showsServerTag` ✓。
+   */
+  kind?: string;
 }
 
 /** M24 — a saved PDF annotation page (list per attachment+page). */

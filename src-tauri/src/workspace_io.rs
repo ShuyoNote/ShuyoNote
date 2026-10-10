@@ -534,9 +534,11 @@ pub async fn import_workspace(
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
     // Return the new workspace metadata.
+    // ⚠️ 这里是**第二处硬编码的列清单**（没用 `workspaces.rs::WS_COLS`）⇒ 加 `kind` 时要两处一起加，
+    //    否则 `cargo check` 会直接报 `missing field kind`（2026-10-10 实测就是这样抓到的 ✓）。
     let c = db.0.lock().expect("db mutex poisoned");
     c.query_row(
-        "SELECT id,name,theme,icon,sort_order,created_at,updated_at FROM meta.workspaces WHERE id = ?1",
+        "SELECT id,name,theme,icon,sort_order,created_at,updated_at,kind FROM meta.workspaces WHERE id = ?1",
         params![new_id],
         |r| {
             Ok(WorkspaceMeta {
@@ -547,6 +549,8 @@ pub async fn import_workspace(
                 sort_order: r.get(4)?,
                 created_at: r.get(5)?,
                 updated_at: r.get(6)?,
+                // ⭐ 2026-10-10：与 `workspaces.rs::row_to_meta` 同一个下标（第 8 列）✓
+                kind: r.get(7)?,
             })
         },
     )

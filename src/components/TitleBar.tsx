@@ -7,7 +7,7 @@ import { useWindowChrome } from "../store/windowChrome";
 import { useAuth } from "../store/auth";
 import { isDesktopPlatform } from "../lib/platform";
 import { api, type SyncProfile } from "../lib/api";
-import { syncTagColor, syncTagTitle } from "../lib/syncTag";
+import { showsServerTag, syncTagColor, syncTagTitle } from "../lib/syncTag";
 // ⚠️ 2026-10-01（owner 界面方向之①）：**右侧工具条撤掉** ⇒ 它的入口搬到这条标题栏上 ✓；
 //    入口本身抽在 `TopTools` 里 ✓ —— 因为**手机上标题栏不渲染** ✓，而 owner 要求两端都有 ✓
 //    （同一个组件在 `App.tsx` 的 `.app` 顶部再渲染一处 ✓，⛔ 不各写一份 ✗）。
@@ -28,6 +28,9 @@ export function TitleBar() {
   const pages = useNotes((s) => s.pages);
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
+  // ⭐ 2026-10-10：当前空间的**分类**（`personal`／`team`／`""`）—— 用来判那个同步标识显不显示 ✓
+  //    （⛔ 不在这里写 `kind === "team"` ✗：规则只有一处 `showsServerTag` ✓）
+  const activeSpaceKind = spaces.find((s) => s.id === activeSpaceId)?.kind;
   const [maximized, setMaximized] = useState(false);
   const [focused, setFocused] = useState(true);
   const [syncProfile, setSyncProfile] = useState<SyncProfile | null>(null);
@@ -149,8 +152,12 @@ export function TitleBar() {
       {/* 同步状态搬到顶栏：自绘标题栏腾出来的这条空间总得有用处，顺带让侧栏
           少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。
           ⚠️ **2026-10-10（owner 拍 C）**：平时**只留颜色点** —— ⛔ 地址不再渲染成文字 ✗，
-          只在 `title`/`aria-label` 里给（悬停看得见 ＋ 读屏读得到 ✓）。 */}
-      {syncProfile?.server_url && syncProfile?.token && (
+          只在 `title`/`aria-label` 里给（悬停看得见 ＋ 读屏读得到 ✓）。
+          ⚠️ 同日 owner 补的口径：⭐ **个人空间没有服务器 ⇒ 一个字节都不显示** ✗
+          ⇒ 这里多一道 `showsServerTag(activeSpaceKind, …)`（规则只有那一处实现 ✓）。 */}
+      {syncProfile?.server_url &&
+        syncProfile?.token &&
+        showsServerTag(activeSpaceKind, syncProfile.server_url) && (
         <div
           className="titlebar-sync"
           data-tauri-drag-region

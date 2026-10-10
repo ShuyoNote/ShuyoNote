@@ -65,6 +65,15 @@ pub struct WorkspaceMeta {
     pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// ⭐ **空间分类**：`"personal"` ／ `"team"` ／ `""`（未分类）。
+    ///
+    /// ⚠️ **2026-10-10 加**（owner 口径：「**个人空间没有服务器，就不显示**」）：
+    /// 界面要按它判那个同步标识显不显示 —— 而这一格原先**到不了渲染层**
+    /// （`workspaces.rs` 的 `WS_COLS` 没选 `kind`，TS `WorkspaceMeta` 也没这个字段）⇒ 补上 ✓。
+    /// ⚠️ 数据库里是 `TEXT NOT NULL DEFAULT ''`（`db.rs` 建表处）⇒ 不会为 NULL ✓。
+    /// ⛔ 判据不看这一格的**文案**，只看"个人 ⇒ 不显示"（`src/lib/syncTag.test.ts`）✓。
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

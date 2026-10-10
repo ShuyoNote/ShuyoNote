@@ -8,10 +8,10 @@
 //
 // ⚠️ owner 同日补的更准的规则：⭐「**个人空间没有服务器，就不显示**」✓
 //   ⇒ 这条规则**只有一处实现**：[`showsServerTag`]（⛔ 别在三处渲染层各写一遍 kind 判断 ✗）。
-//   ⚠️ **现状（2026-10-10，已报 Lead）**：`kind` 现在还**到不了渲染层** ——
-//      `src-tauri/src/workspaces.rs:26` 的 `WS_COLS` 没选 `kind`，TS `WorkspaceMeta` 也没这个字段
-//      ⇒ 规则已就位且被判据钉住（`src/lib/syncTag.test.ts`），但三处调用点**暂时没法传 kind** ✓。
-//      那一格补上后，调用点只需各加一句 `showsServerTag(kind, url) &&`（⛔ 不在这里猜 ✗）。
+//   ✅ **2026-10-10 已接线**：`kind` 原先到不了渲染层（Rust `workspaces.rs` 的 `WS_COLS` 没选它 ✗）
+//      ⇒ 三处补齐（Rust `WS_COLS` ＋ `models.rs::WorkspaceMeta` ＋ `src/types.ts`）＋
+//      三处渲染各加一句 `showsServerTag(kind, url) &&` ⇒ 「个人空间 ⇒ 一个字节都不显示」✓
+//      （判据：`src/lib/syncTag.test.ts`；⛔ 界面里不许出现 `kind === "team"` 那种第二份判断 ✗）。
 
 /** 服务器地址 → 短标签（host，去掉 www.）。
  *  ⚠️ 只留给"有地方放文字"的场景（同步面板的空间标签）；侧栏/标题栏**不再**用它渲染文字 ✗。 */
@@ -45,9 +45,9 @@ export function syncTagTitle(serverUrl: string | null | undefined): string {
  *     `src/components/SpacePrivacySection.tsx` 那条文案与 `set_sync_profile` 的 team-only 拒同口径）
  * · 没配服务器（空/空串/`null`）⇒ 不显示 ✓
  *
- * ⚠️ **过渡态**：`kind === undefined` ＝ *渲染层还拿不到空间类型*（见文件头那道缺口）⇒
- *    此时按"有服务器就显示"处理（宁可先只留颜色点，把 owner 看得见的 IP 去掉 ✓）。
- *    ⛔ 那一格接上之后，这条分支**必须删掉** ✗ —— 到那天 `undefined` 应当与"非团队"同义 ✓。
+ * ⚠️ `kind === undefined`（拿不到空间类型）⇒ **一律不显示**（fail-closed ✓）。
+ *    ⛔ 这里**没有**"过渡期先显示"那条分支 ✗ —— `kind` 已于 2026-10-10 补进数据流 ✓，
+ *    所以"传丢了就恰好放行"这种事不该再发生；真丢了就**不显示**（宁可不显示也不误显示 ✓）。
  */
 export function showsServerTag(
   kind: string | undefined,
@@ -55,7 +55,9 @@ export function showsServerTag(
 ): boolean {
   const hasServer = typeof serverUrl === "string" && serverUrl.trim().length > 0;
   if (!hasServer) return false;
-  if (kind === undefined) return true; // ⚠️ 过渡：kind 还没接到渲染层（见文件头）
+  // ⚠️ `kind === undefined`（拿不到空间类型）**一律不显示**（fail-closed ✓）——
+  //    2026-10-10 那一格已经补上（Rust `WS_COLS` ＋ `WorkspaceMeta` ＋ `src/types.ts` ✓）
+  //    ⇒ 这里**没有**"过渡期放行"那条分支 ✓（谁把 `kind` 传丢，标识就消失：宁可不显示也不误显示 ✗）。
   return kind === "team";
 }
 
