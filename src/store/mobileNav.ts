@@ -14,7 +14,7 @@ import { create } from "zustand";
  *    它由 `App.tsx` 的 `isMobile && currentId` 那一支决定 ✓，见 `MobileRead.tsx` 文件头 ✓）。
  * ⚠️ 它**只管移动端**：`App.tsx` 里是在 `isMobile` 那一支里读它的 ✓，桌面分支一个字不动 ✓。
  */
-export type MobileScreen = "home" | "capture" | "search";
+export type MobileScreen = "home" | "capture" | "search" | "pair";
 
 interface MobileNavState {
   screen: MobileScreen;

@@ -25178,3 +25178,132 @@ body.is-plugin-panel-open .main {
   font-size: 11px;
   color: var(--text-faint);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「设备配对 · 同步」屏（效果图 `docs/plans/mobile/mockups/08-pair.svg`，规格 §4.8）
+   ⚠️ 同 `.mhome`/`.mcap`/`.msearch`/`.mread`/`.mabout`：**只有手机档会渲染它**
+      （`App.tsx` 的 `isMobile && mobileScreen === "pair"` 那一支 ✓）⇒ 不套 `@media` ✓。
+   ⛔ 桌面那套 `.sync-panel` / `.sync-popover` 一个字没动 ✓。
+   ⚠️ 本屏是 v1「只读」✓：⛔ 屏上**零"码"类字样** ✗（规格 J14 ✓）、⛔ 不显示任何密钥/暗号 ✗。
+   ========================================================================== */
+.mpair {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.mpair-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ ≥44×44 ✓ */
+.mpair-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.mpair-head-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mpair-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+.mpair-card {
+  margin: 0 0 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+.mpair-card-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mpair-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mpair-line:last-child {
+  margin-bottom: 0;
+}
+.mpair-dim {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mpair-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mpair-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.mpair-item:last-child {
+  border-bottom: 0;
+}
+.mpair-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mpair-item-who {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mpair-item-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+/* ⛔ 「信任」本轮**未接** ⇒ 置灰且点不动 ✓（让缺口看得见 ✓，⛔ 不做假按钮 ✗）——
+   命中区仍按 ≥44 给（它是 button ✓，`verify-mobile-views` 会量 ✓）。 */
+.mpair-trust {
+  flex: none;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.mpair-trust:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

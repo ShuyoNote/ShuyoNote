@@ -1944,9 +1944,34 @@ async function main() {  const executablePath = findChrome();
         await spage.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
         await waitForApp(spage);
         await sleep(600);
-        await openSyncPanel(spage);
-        assertPersistentChrome(await measureSyncPanel(spage), vp);
-        assertScrollReachable(await measureSyncPanelScroll(spage), vp);
+        // ⭐ 2026-10-10 **R192 换对象**：手机档那颗「同步」胶囊现在进**移动端「设备配对 · 同步」屏**
+        //   （效果图 `08-pair.svg`，规格 §4.8 ✓），**不再**开桌面浮层 ✗ ⇒ 这一格改断言
+        //   **它自己的两件如实的事** ✓（比原来那两条更有价值 ✓）。
+        //   ⛔ **一条断言都没删** ✗ —— 原「常驻 chrome」与「滚到底够不够得到」**搬家**到了本文件的
+        //   **桌面段**（`:2623/2624` 那两行本来就在跑 ✓，对象是 `DESKTOP` ✓）。
+        await safeEval(spage, () => document.querySelector(".btn-sync")?.click());
+        await sleep(1000);
+        const pairView = await safeEval(spage, () => {
+          const root = document.querySelector('[data-testid="mobile-pair"]');
+          const trust = document.querySelector(".mpair-trust");
+          return {
+            has: !!root,
+            // ⚠️ 「信任」按钮**只在附近列表非空时**才渲染 ✓（本环境一个对端都没有 ⇒ 列表空 ✓）
+            //    ⇒ 这里量的是"**它一旦存在就必须是 disabled**" ＋ "屏上必须**如实标着未接**" ✓
+            //    （⛔ 我第一版直接断言 `disabled === true` ⇒ 空列表下必然 `null` ⇒ 假红 ✗，已修 ✓）。
+            trustDisabled: trust ? trust.disabled : null,
+            hasPendingNote: !!root && (root.textContent || "").includes("未接"),
+          };
+        });
+        ok(
+          pairView.has,
+          `[壳=${APP_SHELL}] ${vp.name} 点「同步」胶囊 ⇒ 渲染**移动端「设备配对 · 同步」屏**（规格 §4.8 ✓）`,
+        );
+        ok(
+          pairView.trustDisabled !== false && pairView.hasPendingNote,
+          `[壳=${APP_SHELL}] ${vp.name} 屏上**如实标着「未接」**，且「信任」若存在则必定 **disabled**` +
+            `（后端未定形状 ⇒ ⛔ 不做假按钮 ✗；实测 ${pairView.trustDisabled === null ? "本环境无对端 ⇒ 按钮未渲染" : "disabled=" + pairView.trustDisabled}）`,
+        );
         await shot(spage, `${vp.name}-sync-panel`);
         ok(serrs.length === 0, `同步面板页无 JS 报错${serrs.length ? "：" + serrs.join(" | ") : ""}`);
         await sctx.close();

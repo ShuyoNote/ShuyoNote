@@ -69,7 +69,7 @@ const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
  * ⭐ **换对象**（不是删断言 ✓）：窄视口改断言 `[data-testid="mobile-about"]`
  *   （见本视口迭代开头那一段 ✓）；这几层**照旧在 `792×360` 与桌面档跑** ✓ ⇒ 覆盖面没丢 ✓。
  */
-const DESKTOP_CHROME_ONLY_OVERLAYS = new Set(["emoji", "toc", "history", "about"]);
+const DESKTOP_CHROME_ONLY_OVERLAYS = new Set(["emoji", "toc", "history", "about", "sync"]);
 
 // 断点：**窄（宽 ≤768）或矮（高 ≤520）**。两个数分别与 `useMobile.ts` 的
 // `MOBILE_BREAKPOINT_PX` / `SHORT_VIEWPORT_MAX_PX` 同源，都要在这里量一遍。
@@ -1288,14 +1288,22 @@ async function main() {
           return true;
         });
         await sleep(700);
+        // ⭐ 2026-10-10 **R192 换对象**：窄视口里这个入口现在进**移动端「设备配对 · 同步」屏**
+        //   （效果图 `08-pair.svg`，规格 §4.8 ✓），**不再**开桌面同步浮层 ✗。
+        //   ⛔ **一条断言没删** ✗ —— 桌面那批（`.sync-popover` 的几何／常驻 chrome／滚到底）
+        //   **照旧在 `792×360` 与桌面档**被量到 ✓（`isMobileViewport()` 是**宽度**口径 ≤768
+        //   ⇒ 792×360 **不算手机** ✓ ⇒ `OVERLAYS` 里那条 `sync` 在它身上照跑 ✓）。
         const pop = await safeEval(page, () => ({
-          inDom: !!document.querySelector(".sync-popover"),
-          isSheet: !!document.querySelector(".sync-popover.is-sheet"),
+          pairInDom: !!document.querySelector('[data-testid="mobile-pair"]'),
+          saysNotWired: /未接/.test(document.body.innerText || ""),
         }));
-        ok(clicked && pop.inDom, `点它就能打开同步面板（inDom=${pop.inDom}，底部弹层=${pop.isSheet}）`);
+        ok(
+          clicked && pop.pairInDom && pop.saysNotWired,
+          `点它进**移动端「设备配对 · 同步」屏**（渲染=${pop.pairInDom}，如实标着未接=${pop.saysNotWired}）`,
+        );
         // 收起来，别影响后面的层验收
         await safeEval(page, () => {
-          document.querySelector(".mobile-sync-slot button")?.click();
+          document.querySelector(".mpair-back")?.click();
         });
         await sleep(300);
       }

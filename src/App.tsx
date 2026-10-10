@@ -28,6 +28,9 @@ import { MobileRead } from "./components/MobileRead";
 import { MobileAbout } from "./components/MobileAbout";
 // ⭐ 2026-10-10：手机档的**搜索屏**（效果图 `03-search.svg`，规格 §4.3）—— 首页那张「搜索」卡进它 ✓。
 import { MobileSearch } from "./components/MobileSearch";
+// ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（效果图 `08-pair.svg`，规格 §4.8）——
+//   入口＝手机档那颗悬浮「同步」胶囊 ✓（桌面档一个字不动 ✓）。
+import { MobilePair } from "./components/MobilePair";
 import { useMobileNav } from "./store/mobileNav";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
@@ -1184,6 +1187,11 @@ function AppShell() {
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
       ) : view === "files" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
+      ) : isMobile && mobileScreen === "pair" ? (
+        /* ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（规格 §4.8）——
+           它排在 `currentId` **前面**：那颗「同步」胶囊是**常驻**的 ✓ ⇒ 不管底下开着什么，
+           点了就该整屏看到它 ✓。⛔ 桌面档**一个字不动** ✗（Still 走 `SyncPanel` 那个浮层 ✓）。 */
+        <MobilePair />
       ) : isMobile && aboutOpen ? (
         /* ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
            它排在 `currentId` **前面**：从设置里点「关于与更新」时，不管底下有没有开着页，
