@@ -341,6 +341,7 @@ fn apply_upsert(
     page: &PageDetail,
     sync_seq: i64,
     stamp: Option<crate::doc_content::StampWins>,
+    from: crate::doc_content::Ingest,
 ) -> Result<UpsertApply, String> {
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
@@ -361,7 +362,7 @@ fn apply_upsert(
     // ★ **返回值 = 这次留下了几处未裁决的冲突**（AMD 2026-09-22 的要求："留痕 ≠ 已裁决" ⇒
     //   调用方必须能看见"有未裁决冲突"，哪怕只是个计数）。它由 `apply_remote_page` 的
     //   `RemoteMerge::Conflicted(..)` 直接给出 —— 调用方不必"再去查一次表"才知道。
-    let outcome = crate::doc_content::apply_remote_page(c, page, sync_seq)?;
+    let outcome = crate::doc_content::apply_remote_page(c, page, sync_seq, from)?;
     Ok(UpsertApply::Applied {
         unresolved: match outcome {
             crate::doc_content::RemoteMerge::Conflicted(conflicts) => conflicts.len(),
@@ -510,7 +511,14 @@ pub fn resolve_pending_remote(
         // 「保留本地」= 现状：本地那份照旧，它会在下一次 push 推上去（对端届时会走块级合并）。
         PendingChoice::KeepLocal => {}
         PendingChoice::TakeRemote => {
-            crate::doc_content::take_remote_page(c, &page, seq)?;
+            // ⚠️ ⭐ **本轮唯一必须"代人选一个"的边界**：这里是**用户裁决**入口（Tauri 命令
+            //   `commands::resolve_pending_remote` 收不到 `Ingest`），而它重放的那一版是**已经收下过的**远端材料
+            //   —— `stash_pending_remote` 由 `apply_pulled_changes` 那个**两条路共用**的函数写 ⇒ **存档里没记来源**。
+            //   ⇒ 取 `Server`：这一支的含义是「**这不是一次新的对端接入**」⇒ 第二轮的"按名"闸门**不该**拦
+            //   用户已经明确要采用的那一版（拦了就是"点了没反应"）。
+            //   ⚠️ 若第二轮要用 `Peer`，得先让存档**记住来源**（那要动 `commands.rs`／表结构 ⇒ ⛔ 不在本轮写域）。
+            let from = crate::doc_content::Ingest::Server;
+            crate::doc_content::take_remote_page(c, &page, seq, from)?;
             report.adopted_seq = seq;
             // ⚠️ 这一半不能省：本地那笔**还没推上去**的整页改动要丢掉，否则下一次 push 又把本地那版
             //    推上去 —— 用户看到的"已放弃本地未推送改动"就成了假话。
@@ -518,7 +526,9 @@ pub fn resolve_pending_remote(
         }
         PendingChoice::Merge => {
             // 与自动路径**同一套**（`apply_remote_page`：先逐块合并，判不了才回落远端原样并留痕）。
-            let outcome = crate::doc_content::apply_remote_page(c, &page, seq)?;
+            // ⚠️ `from` 同上一支（用户裁决入口 ⇒ `Server`，理由见 `TakeRemote` 那段的注释）。
+            let from = crate::doc_content::Ingest::Server;
+            let outcome = crate::doc_content::apply_remote_page(c, &page, seq, from)?;
             report.merged = matches!(outcome, crate::doc_content::RemoteMerge::Merged { .. });
             if let crate::doc_content::RemoteMerge::Conflicted(conflicts) = &outcome {
                 report.unresolved = conflicts.len();
@@ -2851,6 +2861,7 @@ pub(crate) fn apply_pulled_changes(
     changes: Vec<IncomingChange>,
     last_pulled: i64,
     now: i64,
+    from: crate::doc_content::Ingest,
 ) -> Result<PulledApply, String> {
 // ⭐⭐ **2026-10-09（task-8）**：**守卫搬进函数里** —— 原来它只挂在 `do_pull`（服务器那条路 ✓）✗。
 //   ⚠️ **网格那条路没有它** ✗（`mesh.rs::absorb_peer_batch` 直接调本函数 ✓）⇒ 外键是开的 ⇒
@@ -3003,7 +3014,7 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 ),
                             }
                         }
-                        let unresolved = apply_upsert(&c, &page, change.seq, stamp_wins)?;
+                        let unresolved = apply_upsert(&c, &page, change.seq, stamp_wins, from)?;
                         match unresolved {
                             UpsertApply::Applied { unresolved } => {
                                 if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
@@ -3241,7 +3252,7 @@ async fn do_pull(
         // （attachments.page_id / pages.parent_id 等）。批量应用期间临时关闭外键，应用完恢复原状态。
         // ⚠️ RAII 守卫：调用里的 `?` 早退也会 drop 掉它 ⇒ 外键**一定**被恢复。
         let _fk_guard = ForeignKeysOff::new(&c);
-        let out = apply_pulled_changes(&c, body.changes, last_pulled, now)?;
+        let out = apply_pulled_changes(&c, body.changes, last_pulled, now, crate::doc_content::Ingest::Server)?;
         set_profile_field(&c, &profile.ws_id, "last_pulled_seq", out.max_pulled)?;
         // 外键由 `_fk_guard` 在离开作用域时恢复（成功路径也一样，顺序与原来一致）。
         out
@@ -6901,7 +6912,7 @@ mod tests {
         .unwrap();
 
         // 同 rev、不同内容 ⇒ 判不了 ⇒ 落表 + 回报条数
-        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9, None).unwrap();
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9, None, crate::doc_content::Ingest::Server).unwrap();
         assert_eq!(out, UpsertApply::Applied { unresolved: 1 }, "必须把『有 1 处未裁决冲突』交回来");
         let recorded: i64 = c
             .query_row("SELECT COUNT(*) FROM page_conflicts WHERE page_id='p1' AND resolved_at IS NULL", [], |r| r.get(0))
@@ -6910,7 +6921,7 @@ mod tests {
 
         // 同一页再来一次干净的应用（内容逐字相同）⇒ 这一轮没有未裁决冲突 ⇒ 回报 0
         c.execute("UPDATE pages SET sync_seq = 1, dirty = 0 WHERE id='p1'", []).unwrap();
-        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10, None).unwrap();
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10, None, crate::doc_content::Ingest::Server).unwrap();
         assert_eq!(
             out,
             UpsertApply::Applied { unresolved: 0 },
@@ -7038,7 +7049,7 @@ mod tests {
         insert_local_page(&c, "p1", &mine, 1, 1); // dirty ⇒ 页级判定 = 保留本地
 
         assert_eq!(
-            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None).unwrap(),
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None, crate::doc_content::Ingest::Server).unwrap(),
             UpsertApply::KeptLocal,
             "本地有未推送改动 ⇒ 这一支是『没应用』，不许当成『应用干净』"
         );
@@ -7047,7 +7058,7 @@ mod tests {
         // 把本地清零（已同步）⇒ 同一笔远端变更这次真的应用了
         c.execute("UPDATE pages SET dirty = 0 WHERE id = 'p1'", []).unwrap();
         assert_eq!(
-            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None).unwrap(),
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None, crate::doc_content::Ingest::Server).unwrap(),
             UpsertApply::Applied { unresolved: 0 },
             "应用了且没有未裁决冲突 ⇒ 另一支"
         );
@@ -7223,7 +7234,7 @@ mod tests {
                 updated_at: 2,
             },
         ];
-        let _ = apply_pulled_changes(&c, changes, 0, 1000).unwrap();
+        let _ = apply_pulled_changes(&c, changes, 0, 1000, crate::doc_content::Ingest::Server).unwrap();
 
         for id in ["c1", "p1"] {
             let n: i64 = c
@@ -7258,7 +7269,7 @@ mod tests {
             odd_change(4, "prop", "upsert"), // 同一种搭配再来一次 ⇒ 只记一次（否则一次 pull 能刷几百行）
             page_change(5, "p2", &page_json("b1", 1, "乙")),
         ];
-        let out = apply_pulled_changes(&c, changes, 0, 1_000).unwrap();
+        let out = apply_pulled_changes(&c, changes, 0, 1_000, crate::doc_content::Ingest::Server).unwrap();
 
         // ① **留痕**：两种不认识的搭配、去重、按首次出现顺序 —— 这就是"不静默"的可断言形态。
         assert_eq!(
@@ -7296,7 +7307,7 @@ mod tests {
             page_change(2, "p2", &page_json("b1", 1, "乙")),
             page_change(3, "p3", &page_json("b1", 1, "丙")),
         ];
-        let out = apply_pulled_changes(&c, changes, 0, 1_000).unwrap();
+        let out = apply_pulled_changes(&c, changes, 0, 1_000, crate::doc_content::Ingest::Server).unwrap();
 
         // ① 游标**前进到批尾**（"归档 ＋ 前进"里那个"前进"；改前这里会 Err ⇒ 游标停在 0）
         assert_eq!(out.max_pulled, 3, "坏变更不许把游标钉住");
@@ -7392,7 +7403,7 @@ mod tests {
     /// 再把两个**判定输入**调成想要的样子（`sync_seq` / `dirty`）。
     fn seed_local(c: &Connection, content_json: &str, sync_seq: i64, dirty: i64) {
         let p = remote_page("p1", content_json);
-        apply_pulled_changes(c, vec![stamped_change(1, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(c, vec![stamped_change(1, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
         c.execute("UPDATE pages SET sync_seq = ?1, dirty = ?2 WHERE id = 'p1'", params![sync_seq, dirty])
             .unwrap();
     }
@@ -7400,6 +7411,66 @@ mod tests {
     /// 本页现在那份内容（`remote_page` 造出来的**标题恒为"页"** ⇒ 区分版本只能看正文）。
     fn content_of(c: &Connection) -> String {
         c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap()
+    }
+
+    /// ⭐ **本轮判据要的那把尺子**：把一张表**整行逐字**倒成文本（列序＝建表序；按第一列排序）。
+    /// ⛔ 不做任何"挑几列看看"—— 那正是"逐字相同"这句话最容易骗自己的地方。
+    fn dump_table(c: &Connection, table: &str) -> String {
+        let mut st = c.prepare(&format!("SELECT * FROM {table} ORDER BY 1")).unwrap();
+        let n = st.column_count();
+        let mut rows = st.query([]).unwrap();
+        let mut out = String::new();
+        while let Some(row) = rows.next().unwrap() {
+            for i in 0..n {
+                let v: rusqlite::types::Value = row.get(i).unwrap();
+                out.push_str(&format!("{v:?}\u{1}"));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// ⭐⭐ **task-25 的唯一判据**：`Ingest::Peer` 与 `Ingest::Server` **逐字走同一条老路** ——
+    /// 同一夹具、同一批变更（含戳 ⇒ 会把 `apply_upsert` → `apply_remote_page` → `upsert_remote` 整条链走一遍），
+    /// 只换 `Ingest` ⇒ 落库后**每一张相关表逐字相同**。
+    ///
+    /// ⚠️ **危险方向就是它**：谁第二轮"顺手"把按名闸门只加进 `Peer` 那一支 ⇒ ⭐ **这条当场红** ✓
+    /// （⚠️ 到那一轮这条要**按预期改窄**（两支**该**不同了），⛔ 不是删掉 ✓）
+    ///
+    /// ⚠️ 表清单一律取自"这条写路径真的会碰的"那几张：`pages` / `blocks` / `backlinks` /
+    /// `page_conflicts` / `pending_remote_pages` / `changes` / `meta.sync_state`。
+    /// ⛔ 故意**不收** `page_fts`：它是 `pages.title` ＋ `content_text` 的**纯函数**，而那两个字段已经逐字比过了
+    /// （收它只是多一条会随分词器版本漂的证据，不增加严格性）。
+    #[test]
+    fn peer_and_server_ingest_are_byte_identical_on_the_same_fixture() {
+        let a = stamped_conn();
+        let b = stamped_conn();
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        let batch = || vec![stamped_change(3, &p, Some(&stamp_of("B", 2_000)))];
+
+        apply_pulled_changes(&a, batch(), 0, 1, crate::doc_content::Ingest::Server).unwrap();
+        apply_pulled_changes(&b, batch(), 0, 1, crate::doc_content::Ingest::Peer).unwrap();
+
+        for t in [
+            "pages",
+            "blocks",
+            "backlinks",
+            "page_conflicts",
+            "pending_remote_pages",
+            "changes",
+            "meta.sync_state",
+        ] {
+            assert_eq!(
+                dump_table(&a, t),
+                dump_table(&b, t),
+                "⭐ 表 `{t}` 在 Peer／Server 两支下必须逐字相同（本轮 = 无行为变化）"
+            );
+        }
+        // ⚠️ 顺手钉一句"这批真的落进去了"—— 否则两张空表也能"逐字相同"（假绿）。
+        assert!(
+            dump_table(&a, "pages").contains("p1"),
+            "夹具必须真的落了库，⛔ 不许拿两张空库当'相同'"
+        );
     }
 
     /// ★ 丙-③：**两边都带戳 ⇒ 按戳判**，哪怕今天的规则一定会保留本地（`dirty=1` 且 `seq` 更大）。
@@ -7411,7 +7482,7 @@ mod tests {
 
         let late = stamp_of("B", 2_000);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             content_of(&c).contains("远端那一版"),
@@ -7431,7 +7502,7 @@ mod tests {
 
         let early = stamp_of("B", 2_000);
         let p = remote_page("p1", &page_json("b1", 3, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(900, &p, Some(&early))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(900, &p, Some(&early))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             content_of(&c).contains("本地那一版"),
@@ -7466,7 +7537,7 @@ mod tests {
 
         // ① 收下这条"来自未来"的页 upsert（真收侧路径）
         let p = remote_page("p1", &page_json("b1", 1, "远端那一版（它的表快一小时）"));
-        apply_pulled_changes(&c, vec![stamped_change(2, &p, Some(&far))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(2, &p, Some(&far))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             clock_now(&c) > far,
@@ -7562,7 +7633,7 @@ mod tests {
             .unwrap();
         let late = stamp_of("B", 9_000);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(content_of(&c).contains("远端那一版"), "戳更晚 ⇒ 采用远端：{}", content_of(&c));
         let remote_json_after = content_of(&c);
@@ -7587,7 +7658,7 @@ mod tests {
         let c = stamped_conn();
         seed_local(&c, &page_json("b1", 1, "本机未推送的那一版"), 5, 1);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             content_of(&c).contains("本机未推送"),
@@ -7625,6 +7696,7 @@ mod tests {
             ],
             0,
             1,
+            crate::doc_content::Ingest::Server,
         )
         .unwrap();
 
@@ -7661,7 +7733,7 @@ mod tests {
 
         // 对端那一版**逐字相同**，只是戳更晚（真机现场就是"两台都被恢复成空"那一格）
         let p = remote_page("p1", &same);
-        let out = apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&stamp_of("B", 9_000)))], 0, 1).unwrap();
+        let out = apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&stamp_of("B", 9_000)))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             out.superseded_page_ids.is_empty(),
@@ -7683,14 +7755,14 @@ mod tests {
         seed_local(&c, &page_json("b1", 1, "本地那一版"), 99, 1);
         set_page_stamp(&c, "ws", "p1", &stamp_of("A", 9_000)).unwrap(); // 本地有戳，远端没有 ⇒ 仍走今天
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
         assert!(content_of(&c).contains("本地那一版"), "缺一边 ⇒ 不许按戳判：{}", content_of(&c));
 
         // ② 干净且本地 seq 更小 ⇒ 采用远端（今天）
         let c = stamped_conn();
         seed_local(&c, &page_json("b1", 1, "本地那一版"), 1, 0);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
         assert!(content_of(&c).contains("远端那一版"), "缺一边 ⇒ 走今天那条路：{}", content_of(&c));
     }
 
@@ -7705,7 +7777,7 @@ mod tests {
         set_page_stamp(&c, "ws", "p1", &stamp_of("A", 9_000)).unwrap();
 
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(content_of(&c).contains("远端那一版"), "这一笔按今天那条路判、采用远端");
         assert_eq!(page_stamp(&c, "ws", "p1"), None, "旧戳必须清掉（留着会误导下一轮）");

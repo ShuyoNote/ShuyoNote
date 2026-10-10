@@ -189,7 +189,17 @@ pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, S
             }
         })
         .collect();
-    let out = crate::sync::apply_pulled_changes(c, incoming, 0, crate::db::now_ms())?;
+    // ⭐ **设备直连（网格）** ⇒ `Ingest::Peer`（⛔ 不是服务器那条路）—— 两条路的材料在
+    //   `sync::apply_pulled_changes` 会合，所以"这一笔是从对端来的"必须由**调用方显式说**
+    //   （口径见 `doc_content::Ingest`；作用范围见
+    //   `docs/specs/2026-10-09-multidevice-merge-semantics.md` §2「作用范围」）。
+    let out = crate::sync::apply_pulled_changes(
+        c,
+        incoming,
+        0,
+        crate::db::now_ms(),
+        crate::doc_content::Ingest::Peer,
+    )?;
     let tail = rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
     Ok(Absorbed {
         applied: out.count,
@@ -2125,7 +2135,7 @@ mod tests {
     /// 免得判据手写 `INSERT` 去猜 `pages` 的 NOT NULL 列。它会把 `dirty` 写 0 ——
     /// **本判据不依赖 `dirty`**（网格里两边都带戳 ⇒ 页级按戳判），所以不碍事。
     fn local_edit(c: &Connection, pg: &PageDetail) {
-        crate::doc_content::upsert_remote(c, pg, 0).unwrap();
+        crate::doc_content::upsert_remote(c, pg, 0, crate::doc_content::Ingest::Peer).unwrap();
         crate::sync::record_page_upsert(c, pg).unwrap();
     }
 

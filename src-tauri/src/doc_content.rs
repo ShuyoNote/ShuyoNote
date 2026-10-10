@@ -30,6 +30,23 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+/// ⭐ **这一笔远端材料是从哪来的** —— 由**调用方显式说**，⛔ 不许靠"有没有某个键"去猜。
+///
+/// - `Server`：**服务器同步**（`sync::do_pull` ⇒ 同一账号/空间那条路）
+/// - `Peer`：**设备直连**（网格；`mesh::absorb_peer_batch` ⇒ 两台设备之间那条路）
+///
+/// ⚠️ **第一轮（task-25）只穿参、⛔ 不改行为**：两支**逐字走同一条老路** ⇒ 全量判据应当一个不红。
+/// ⭐ **按名融合只该发生在 `Peer` 那条路上**（⛔ 不含服务器同步）——
+/// 口径与理由见 `docs/specs/2026-10-09-multidevice-merge-semantics.md` §2「作用范围」；
+/// 那一步是**第二轮**（它会把范围写进共用入口 ⇒ 上一次那样做实测 `752 passed / 22 failed`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ingest {
+    /// 服务器同步那条路。
+    Server,
+    /// 设备直连（网格）那条路。
+    Peer,
+}
+
 /// 一页的**内容** —— 那一层的单位。
 ///
 /// 为什么带 `title`：现有三个读调用方（`resolve_block` / `get_page_blocks` / `save_page` 的现状回读）
@@ -337,7 +354,12 @@ pub fn local_state(c: &Connection, page_id: &str) -> Result<Option<LocalState>, 
 ///
 /// 收的是 `&PageDetail`：远端那条路径手上的字段本来就在它里面，
 /// 为调一次函数去拆散/克隆一份可能很大的 `content_json` 不值当。
-pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq: i64) -> Result<(), String> {
+pub fn upsert_remote(
+    c: &Connection,
+    page: &crate::models::PageDetail,
+    sync_seq: i64,
+    _from: Ingest,
+) -> Result<(), String> {
     // ⭐⭐ **2026-10-09（task-8）**：远端那一行**不许**带"本地不存在的引用" ✗ —— 见下面两个锚定函数。
     let workspace_id = anchor_workspace_id(c, &page.workspace_id);
     let parent_id = anchor_parent_id(c, page.parent_id.as_deref());
@@ -1106,10 +1128,11 @@ pub fn apply_remote_page(
     c: &Connection,
     page: &crate::models::PageDetail,
     sync_seq: i64,
+    from: Ingest,
 ) -> Result<RemoteMerge, String> {
     let local = read(c, &page.id)?;
     let Some(local) = local else {
-        upsert_remote(c, page, sync_seq)?;
+        upsert_remote(c, page, sync_seq, from)?;
         derive_fts(c, &page.id, &page.title, &page.content_text)?;
         return Ok(RemoteMerge::NotApplicable);
     };
@@ -1119,7 +1142,7 @@ pub fn apply_remote_page(
         RemoteMerge::Merged { json, kept_local } => {
             let mut merged_page = page.clone();
             merged_page.content_json = json.clone();
-            upsert_remote(c, &merged_page, sync_seq)?;
+            upsert_remote(c, &merged_page, sync_seq, from)?;
             // ★ B1：**只有产物里保留了远端那一版没有的本地块**才打"待重建"。
             //   否则产物就是远端那份内容（正文列正是它）⇒ 打了就是**假账**（补算器白解析一次再清掉），
             //   而"两端内容逐字相同"的合并会**经常**走到这一支。
@@ -1130,9 +1153,9 @@ pub fn apply_remote_page(
         RemoteMerge::Conflicted(conflicts) => {
             // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
             record_page_conflicts(c, &page.id, conflicts)?;
-            upsert_remote(c, page, sync_seq)?;
+            upsert_remote(c, page, sync_seq, from)?;
         }
-        RemoteMerge::NotApplicable => upsert_remote(c, page, sync_seq)?,
+        RemoteMerge::NotApplicable => upsert_remote(c, page, sync_seq, from)?,
     }
     // 派生也只经那一层（今天远端应用只刷 FTS —— 与接线前逐字相同；合并成功时那条正文可能滞后一拍，
     // 见本函数的"已知边界"与 `merge_remote_content`）。
@@ -1332,8 +1355,9 @@ pub fn take_remote_page(
     c: &Connection,
     page: &crate::models::PageDetail,
     sync_seq: i64,
+    from: Ingest,
 ) -> Result<(), String> {
-    upsert_remote(c, page, sync_seq)?;
+    upsert_remote(c, page, sync_seq, from)?;
     derive_fts(c, &page.id, &page.title, &page.content_text)?;
     let now = crate::db::now_ms();
     c.execute(
@@ -2161,7 +2185,7 @@ mod tests {
 
         let unresolved = |c: &Connection| unresolved_page_conflicts(c, "p1").unwrap().len();
         // ① 第一次应用 ⇒ 1 条未决
-        apply_remote_page(&c, &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"), 9)
+        apply_remote_page(&c, &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"), 9, Ingest::Server)
             .unwrap();
         assert_eq!(unresolved(&c), 1);
 
@@ -2197,6 +2221,7 @@ mod tests {
             &c,
             &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         match conflicted {
@@ -2219,6 +2244,7 @@ mod tests {
                 "远端正文",
             ),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(matches!(merged, RemoteMerge::Merged { .. }));
@@ -2245,6 +2271,7 @@ mod tests {
                 "远端那一份正文",
             ),
             9,
+            Ingest::Server,
         )
         .unwrap();
 
@@ -2312,6 +2339,7 @@ mod tests {
                 "远端正文",
             ),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(
@@ -2326,6 +2354,7 @@ mod tests {
             &c,
             &remote_page("p2", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(matches!(conflicted, RemoteMerge::Conflicted(_)));
@@ -2337,6 +2366,7 @@ mod tests {
             &c,
             &remote_page("p3", &jdoc(vec![jblk(Some("b1"), Some(1), "新")]), "远端正文"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert_eq!(na, RemoteMerge::NotApplicable);
@@ -2351,6 +2381,7 @@ mod tests {
             &c,
             &remote_page("p4", &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]), "一模一样"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(
@@ -2565,7 +2596,7 @@ mod tests {
         assert_eq!(unresolved_page_conflicts(&c, "p1").unwrap().len(), 1, "前置：有一条未裁决");
 
         let remote = stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(9), "远端赢了")]), "远端标题");
-        take_remote_page(&c, &remote, 11).unwrap();
+        take_remote_page(&c, &remote, 11, Ingest::Server).unwrap();
 
         let cur = read(&c, "p1").unwrap().unwrap();
         assert_eq!(cur.title, "远端标题");
@@ -2606,7 +2637,7 @@ mod tests {
 
         let mut page = remote_page("p-remote", &jdoc(vec![jblk(Some("b1"), Some(1), "远端")]), "远端页");
         page.workspace_id = "对端那台的空间-本地没有".to_string();
-        upsert_remote(&c, &page, 7).expect(
+        upsert_remote(&c, &page, 7, Ingest::Server).expect(
             "⛔ 远端带对端 workspace_id ⇒ 真机当场炸：FOREIGN KEY constraint failed（裁决/合并全废）",
         );
 
@@ -2628,7 +2659,7 @@ mod tests {
 
         // ① 外键**开着**（＝裁决那条路 ✓）：写 NULL，但**必须落库** ✓
         c.pragma_update(None, "foreign_keys", "ON").unwrap();
-        upsert_remote(&c, &page, 8).expect("父页没到 ⇒ ⛔ 不许因此整行落不了库（真机 38/40 就是这种 ✗）");
+        upsert_remote(&c, &page, 8, Ingest::Server).expect("父页没到 ⇒ ⛔ 不许因此整行落不了库（真机 38/40 就是这种 ✗）");
         let got: Option<String> = c
             .query_row("SELECT parent_id FROM pages WHERE id = 'p-child'", [], |r| r.get(0))
             .unwrap();
@@ -2638,7 +2669,7 @@ mod tests {
         c.pragma_update(None, "foreign_keys", "OFF").unwrap();
         let mut p2 = remote_page("p-child2", &jdoc(vec![jblk(Some("b1"), Some(1), "子2")]), "子页2");
         p2.parent_id = Some("父页-稍后到".to_string());
-        upsert_remote(&c, &p2, 9).expect("外键关着 ⇒ 引用直接写进去 ✓");
+        upsert_remote(&c, &p2, 9, Ingest::Server).expect("外键关着 ⇒ 引用直接写进去 ✓");
         let got2: Option<String> = c
             .query_row("SELECT parent_id FROM pages WHERE id = 'p-child2'", [], |r| r.get(0))
             .unwrap();
@@ -2653,7 +2684,7 @@ mod tests {
         insert_conflict_page(&c, "p-ok-parent", &jdoc(vec![jblk(Some("b1"), Some(1), "父")]));
         let mut p3 = remote_page("p-child3", &jdoc(vec![jblk(Some("b1"), Some(1), "子3")]), "子页3");
         p3.parent_id = Some("p-ok-parent".to_string());
-        upsert_remote(&c, &p3, 10).unwrap();
+        upsert_remote(&c, &p3, 10, Ingest::Server).unwrap();
         let got3: Option<String> = c
             .query_row("SELECT parent_id FROM pages WHERE id = 'p-child3'", [], |r| r.get(0))
             .unwrap();
@@ -2673,7 +2704,7 @@ mod tests {
         };
         assert_eq!(dirty(&c), 1);
         // 远端应用会把它压回 0（这就是"合并之后要重新标上"的原因）
-        take_remote_page(&c, &stashed_page("p1", "{}", "页"), 3).unwrap();
+        take_remote_page(&c, &stashed_page("p1", "{}", "页"), 3, Ingest::Server).unwrap();
         assert_eq!(dirty(&c), 0);
         mark_page_dirty(&c, "p1").unwrap();
         assert_eq!(dirty(&c), 1);
