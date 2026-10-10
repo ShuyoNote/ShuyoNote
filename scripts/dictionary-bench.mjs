@@ -19,7 +19,15 @@
 // · **不**量 Rust 那条路（`dictionary.rs` 的规范化/失败分类）—— 那条由
 //   `cargo test --lib dictionary` 量（含"词典不在"与"半包"两种失败态）。
 // · **不**量界面文案 —— 那是 `src/lib/dictionary/lookup.test.ts`（vitest）的事。
+// · **不**量**下载链路**（首次下载/进度/强制 sha256）—— 那是 `src/lib/dictionary/download.test.ts`
+//   ＋ `dictionary.rs::a_verified_pack_at_the_pack_path_is_queryable` 的事（见评估文档 §11）。
 // 三层的**权威**分别是：Rust（查询与分类）、TS（呈现）、本脚本（数据与耗时）。
+//
+// ## 它现在的定位（2026-10-10）
+//
+// 它是**数据层**那条判据，且**可复跑**：`--db <pack 路径>` 指哪份就量哪份
+// （`_tmp/` 的 pack、`--sample` 出来的小样本、用户数据目录里装好的那份都行）。
+// ⛔ 它**不**代替任何一层：不联网、不落盘、不看界面 —— 所以"本脚本绿"只在**它这一段**上算过。
 //
 // ## 为什么用 `node:sqlite`
 //

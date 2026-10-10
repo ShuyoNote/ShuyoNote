@@ -13,6 +13,20 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
+import {
+  ECDICT_PACK_ID,
+  describeDownloadResult,
+  downloadDictionaryPack,
+  type PackDownloadProgress,
+} from "../lib/dictionary/download";
+
+/** 下载进度 → 界面那一行字（字节/百分比；服务端没给长度时**如实**说"百分比未知"）。 */
+function fmtProgress(name: string, p: PackDownloadProgress): string {
+  if (p.phase === "verifying") return `${name}：已下载 ${p.received} 字节，正在核 sha256 …`;
+  if (p.phase === "saving") return `${name}：sha256 已通过，正在落盘 …`;
+  const pct = p.percent === null ? "百分比未知（服务端没给 Content-Length）" : `${p.percent}%`;
+  return `${name}：下载中 ${p.received}${p.total ? ` / ${p.total}` : ""} 字节 · ${pct}`;
+}
 
 /** 清单条目 —— 只认**真实值** ✓（url / sha256 任缺 ⇒ 不许出现下载按钮 ✗）。 */
 interface Ability {
@@ -49,9 +63,9 @@ const ABILITIES: Ability[] = [
     sha256: "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31",
     state: "not-available",
     note:
-      "包已产出（`node scripts/fetch-ecdict.mjs` 报出 sha256 与字节数，与 Rust 侧白名单同源），但**还没托管**到镜像仓 ⇒ 现在还不能下载。" +
-      "⚠️ 另：85.6 MiB 走「base64 过 IPC」那条链**太大**（那条链的设计目标是 3.8 MB 级的 PDFium，见 abilities.rs 文件头）" +
-      "⇒ 要不要改成 Rust 侧下载（同一份白名单＋sha256＋fail-closed，先写 .part 再改名）待拍板。",
+      "⭐ 下载**代码与判据已就绪**（`src/lib/dictionary/download.ts`：流式进度 ＋ 强制 sha256，不匹配即拒绝且不落盘；" +
+      "Rust 侧 `abilities.rs` 白名单已钉同一份 sha256 ＝ 5dc10a51…）；❌ **真地址＝未做**（还没托管到任何稳定地址）⇒ " +
+      "托管后把 `path` 那一行的地址填上、状态改成 `downloadable` 即可（判据不变）。",
   },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
   { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },
@@ -83,6 +97,23 @@ export function AbilitiesPane() {
 
   const download = async (a: Ability) => {
     if (!a.path || !a.sha256) return;
+    // ⭐ 词库那条走**流式**那条路（`src/lib/dictionary/download.ts`）：进度按字节/百分比报，
+    //    强制 sha256（不匹配即拒绝且**不落盘**）；地址未托管时给**可读原因**（⛔ 不静默）。
+    //    ⚠️ 与下面 GitCode「contents API（base64 JSON）」那条**不是同一个传输**：词库 85.6 MiB
+    //    走 JSON 那一圈纯属多绕一遍，而流式这条路才有真实进度读数。
+    if (a.id === ECDICT_PACK_ID) {
+      setPhase({ kind: "working", text: `${t("abilities.fetching", "正在取回")} ${a.name} …` });
+      const r = await downloadDictionaryPack({
+        expectedSha256: a.sha256,
+        expectedBytes: a.bytes ?? 0,
+        packId: a.id,
+        savePack: api.saveAbilityPack,
+        onProgress: (p) => setPhase({ kind: "working", text: fmtProgress(a.name, p) }),
+      });
+      // "拒绝"（指纹不符/半包）与"没成"（网络/落盘）都是**如实报**，但用词不同 ✓。
+      setPhase(r.kind === "saved" ? { kind: "ok", text: describeDownloadResult(r) } : { kind: "err", text: describeDownloadResult(r) });
+      return;
+    }
     setPhase({ kind: "working", text: `${t("abilities.fetching", "正在取回")} ${a.name} …` });
     try {
       const res = await fetch(API + a.path + "?ref=main");

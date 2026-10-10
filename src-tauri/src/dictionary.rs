@@ -841,6 +841,39 @@ mod tests {
     }
 
     #[test]
+    fn a_verified_pack_at_the_pack_path_is_queryable() {
+        // ⭐ 与前端「下载成功（夹具）⇒ 词库可用」配对的 **Rust 半边**：
+        //    下载落盘之后，这份 pack 在**能力包的落点形状**上能不能被查到。
+        //    用真文件 ＋ 真 sha256（不 mock）：`pack_path` → `resolve_db_path` → `pack_check` → 查询。
+        let app_data = crate::tempdir::dir("dict-pack-appdata").expect("建夹具 app data 目录");
+        let pack = pack_path(&app_data);
+        std::fs::create_dir_all(pack.parent().unwrap()).expect("建 packs/<id> 目录");
+        std::fs::copy(fixture_file("dict-pack-src"), &pack).expect("把夹具放进能力包落点");
+
+        let len = std::fs::metadata(&pack).unwrap().len();
+        let sha = sha256_file(&pack).unwrap();
+
+        // ① 路径解析认它（env 没设 ⇒ 第 2 顺位就是能力包）
+        assert_eq!(resolve_db_path(None, Some(&app_data)), Some(pack.clone()));
+
+        // ② 指纹对 ⇒ 过闸门，并且**真的查得到**
+        assert!(pack_check(&pack, len, &sha).is_ok(), "自算的指纹应当过");
+        match lookup_at(&pack, "apple") {
+            LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
+            other => panic!("指纹核对通过后必须查得到，实际 {other:?}"),
+        }
+
+        // ③ 指纹错 ⇒ 闸门关（生产路径是"先 pack_check，不过就**根本不查**"）
+        assert!(pack_check(&pack, len, "0".repeat(64).as_str()).is_err());
+
+        // ④ 截断（半包）⇒ 长度这条便宜的判据先挡住
+        std::fs::write(&pack, b"truncated").unwrap();
+        assert!(pack_check(&pack, len, &sha).is_err());
+
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
     fn status_says_not_ready_instead_of_pretending() {
         let st = status_at(None, None, None, None);
         assert!(!st.available);
