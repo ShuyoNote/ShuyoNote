@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listPlaintextSpaces, switchToSpace, unlockVault } from "../lib/vault";
+import { useOverlayLayer } from "../hooks/useOverlayLayer";
+import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 
 // Full-screen gate shown when local at-rest encryption is enabled and the session is
 // locked (the default after a restart — no key is persisted). While locked the space
@@ -49,6 +51,21 @@ export function LockScreen() {
   useEffect(() => {
     if (tries >= 3) setForgotOpen(true);
   }, [tries]);
+
+  // ⭐ 2026-10-10（owner）：「忘记口令」那段改成**弹窗**（模态 ✓）—— 底层锁屏保持短、清楚 ✓。
+  // ⚠️ **登记进浮层栈**（`check-overlay-registry` 的门禁原话：不登记 ⇒ **安卓返回键直接退出应用** ✗）。
+  useOverlayLayer("lockForgot", forgotOpen, () => setForgotOpen(false));
+  // ⚠️ 模态浮层**同时要锁外壳滚动**（移动端门禁 (5) 段是**无条件**断言"打开任一层 ⇒ 外壳被锁" ✗）。
+  useOverlayScrollLock(forgotOpen);
+  // ⚠️ **Esc 得自己挂** ✗ —— `overlayStack` 只管**安卓返回键** ✓，⛔ 不管键盘 ✗（读门禁源码得出的 ✓）。
+  useEffect(() => {
+    if (!forgotOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setForgotOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [forgotOpen]);
 
   const submit = async () => {
     if (!pass || busy) return;
@@ -179,24 +196,50 @@ export function LockScreen() {
         </button>
 
         {forgotOpen && (
-          <div className="lock-forgot">
-            <p className="lock-forgot-lead">
-              <b>没有找回流程，也没有后门。</b>口令只由你保管（不存本机、不上传服务器）。
-            </p>
-            <ul className="lock-forgot-list">
-              <li>
-                <b>连服务器那份也打不开。</b>同步上去的内容用的是<b>同一把钥匙</b>（内核里同步载荷走的就是这把会话密钥）。
-              </li>
-              <li>
-                <b>唯一可能救回来的：开启加密之前导出的备份。</b>那是明文备份，恢复出来是最后一次导出的样子 —— 之后的改动不在里面。
-              </li>
-              <li>
-                <b>没有那样的备份：</b>这批加密内容就永久取不回来了，只能清空本机数据重新开始。
-              </li>
-            </ul>
-            <p className="lock-forgot-foot">
-              输错多少次都不会被锁死；每次慢是密钥派生（Argon2id）本来的代价，不是卡住了。
-            </p>
+          // ⭐ 形态：**模态弹窗**（⛔ 不再就地展开 ✗）。
+          // ⚠️ 关的判据用 `onMouseDown` ＋ `e.target === e.currentTarget` ✓（**只有遮罩本身**才算点背景 ✓；
+          //    用 `onMouseDown` 而**不是** `onClick` 的理由：若用户在弹窗里**选中文字**、手松在遮罩上，
+          //    `onClick` 会把它当成"点背景"而**关掉** ✓（选字被吞）；`mousedown` 的 target 是**按下**的位置 ⇒ 不会误关 ✓。
+          //    ⛔ 所以"点里面不许关"（判据 e)）与这条是同一条判据的两面 ✓。
+          <div
+            className="lock-forgot-overlay"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setForgotOpen(false);
+            }}
+          >
+            <div className="lock-forgot-modal" role="dialog" aria-modal="true" aria-label="忘记口令">
+              <div className="lock-forgot-modal-head">
+                <span className="lock-forgot-modal-icon" aria-hidden="true">🔑</span>
+                <span className="lock-forgot-modal-title">忘记口令？</span>
+                <button
+                  type="button"
+                  className="lock-forgot-close"
+                  aria-label="关闭"
+                  onClick={() => setForgotOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <div className="lock-forgot-modal-body">
+                <p className="lock-forgot-lead">
+                  <b>没有找回流程，也没有后门。</b>口令只由你保管（不存本机、不上传服务器）。
+                </p>
+                <ul className="lock-forgot-list">
+                  <li>
+                    <b>连服务器那份也打不开。</b>同步上去的内容用的是<b>同一把钥匙</b>（内核里同步载荷走的就是这把会话密钥）。
+                  </li>
+                  <li>
+                    <b>唯一可能救回来的：开启加密之前导出的备份。</b>那是明文备份，恢复出来是最后一次导出的样子 —— 之后的改动不在里面。
+                  </li>
+                  <li>
+                    <b>没有那样的备份：</b>这批加密内容就永久取不回来了，只能清空本机数据重新开始。
+                  </li>
+                </ul>
+                <p className="lock-forgot-foot">
+                  输错多少次都不会被锁死；每次慢是密钥派生（Argon2id）本来的代价，不是卡住了。
+                </p>
+              </div>
+            </div>
           </div>
         )}
       </div>
