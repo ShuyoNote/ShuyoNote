@@ -106,6 +106,7 @@ import { platform } from "./lib/platform";
 import { useAuth } from "./store/auth";
 import { withSyncStatus } from "./store/syncStatus";
 import "./App.css";
+import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
 // when the user switches to graph / board / files / template-center (the default
@@ -1241,6 +1242,10 @@ function AppShell() {
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
         <FormulaEditorDialog />
+        {/* ⭐ task-14：Office 导入的**唯一入口**（右下角小按钮 ＋ `office-import://request` 监听）。
+            ⚠️ 它**不是浮层**（容器类名不以 `-overlay`/`-popover` 结尾 ⇒ 无需登记返回栈 ✓）；
+            放进 `PanelBoundary` 是为了它万一渲染出错也**带不走整个界面** ✓（与上面几条同理由 ✓）。 */}
+        <OfficeImportPanel parentId={null} />
       </PanelBoundary>
       {/* 插件管理单独一层：它渲染的全是插件声明的数据（权限/设置/日志/校验报告），
           是根部浮层里最可能崩的一个，所以不与别的浮层共享边界。 */}
