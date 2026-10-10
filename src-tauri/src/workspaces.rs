@@ -170,10 +170,34 @@ pub(crate) fn switch_active_space(
 /// ⇒ 所以这里只做"落法"本身：**主连接换成内存库 ＋ 挂 meta** ✓。
 /// ⚠️ **不碰 `session_master`**：本条只在"会话本来就锁着"时走 ✓ ⇒ 卸主密钥是空操作，
 ///   而它一旦被卸掉会误伤**别的**空间 ✓。
+/// ⚠️ **只给判据用**的故障注入：让"停在锁定态"这一步**故意失败** ⇒ 好把**回滚那条路**钉住 ✓。
+///
+/// 为什么要有它：回滚那三行（`reopen_space_at(c, prev)`）在**没有注入**时几乎不可能失败 ——
+/// 若判据只断言"返回了 `Err`"✗，那**把回滚整段删掉**它照样过 ✓ ⇒ 那种判据等于没有 ✓（Lead 点名的形状）。
+/// ⚠️ **线程局部**（⛔ 不是进程级静态 ✗）：Rust 测试是**多线程并行**的 ⇒ 进程级会串到别的用例 ✓。
+/// ⚠️ `#[cfg(test)]` ⇒ ⛔ **生产代码里一个字节都不存在** ✓。
+#[cfg(test)]
+thread_local! {
+    static PARK_FAIL_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// 测试用：开关"停在锁定态必失败"（默认关 ✓）。
+#[cfg(test)]
+pub(crate) fn set_park_fail_for_test(on: bool) {
+    PARK_FAIL_FOR_TEST.with(|f| f.set(on));
+}
+
 fn park_locked_connection(c: &mut rusqlite::Connection, dir: &std::path::Path) -> Result<(), String> {
     let meta = crate::db::meta_path(dir).display().to_string().replace('\'', "''");
     let fresh = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
     let _ = std::mem::replace(c, fresh);
+    // ⚠️ 注入点**必须在换连接之后** ✗ —— 否则失败发生在"还没换"的状态里 ⇒ 主连接**本来就是好的** ✓
+    //   ⇒ 判据光断言"回到旧空间"在**删掉回滚**的实现上**照样过** ✗（我第一版就栽在这：红跑一遍才发现 ✓）。
+    //   放在这里才造出**真的半成品**（内存库）⇒ 只有回滚能收拾 ✓ ⇒ 判据有牙 ✓。
+    #[cfg(test)]
+    if PARK_FAIL_FOR_TEST.with(|f| f.get()) {
+        return Err("（测试注入）停在锁定态失败（连接已换成内存库）".to_string());
+    }
     c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
         .map_err(|e| format!("切到锁定态失败（内存库挂 meta）: {e}"))?;
     Ok(())
@@ -1118,6 +1142,152 @@ mod tests {
         );
 
         // 还原进程级全局态（KEYRING / SESSION_MASTER 是全局的 ✓；不还原会污染别的判据）
+        crate::space_crypto::set_keyring_for_test(None);
+        let _ = crate::space_crypto::set_session_master(None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **(i) switch 级联合断言**（Lead 2026-10-10 点名）：别的 `Err`（打不开 ⇒ 既不是"需要口令"）时，
+    /// ⭐ **指针没变 ＋ 主连接仍指旧空间**要在**同一条**判据里一起成立 ✓。
+    ///
+    /// 为什么必须同一条：这两件承诺原来**分开在两层**判（指针在 switch 层、连接在 `reopen_space_at` 层 ✓）
+    /// ⇒ ⭐ **谁都不知道"一起看"是不是真的** ✗ —— 而"先换连接、后写指针"那次事故正是**这种组合**出的问题 ✓。
+    #[test]
+    fn a_refused_switch_leaves_both_the_pointer_and_the_main_connection_alone() {
+        let dir = std::env::temp_dir().join(format!("shuyo-switch-joint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        // A：真 schema（明文）；B：加密形状的垃圾（**没有钥匙袋** ⇒ 谓词 false ⇒ 走原路 ⇒ 打不开）
+        let a = crate::db::space_db_path(&dir, "space-a");
+        {
+            let c = rusqlite::Connection::open(&a).unwrap();
+            crate::db::migrate(&c, "space-a").unwrap();
+        }
+        let b = crate::db::space_db_path(&dir, "space-b");
+        std::fs::write(&b, vec![0x41u8; 4096]).unwrap();
+
+        // 真 meta **文件**（跑一次生产的 migrate ⇒ 表都在 ✓），把它挂成 `meta`；main 就是 A ✓（与生产同形）
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let mut c = rusqlite::Connection::open(&a).unwrap();
+        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
+            .unwrap();
+        insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
+        insert_new_local_space(&c, "space-b", "B", "#e12", 2.0, 1_000).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_KEY, "space-a"],
+        )
+        .unwrap();
+        assert!(
+            !crate::space_crypto::space_needs_passphrase("space-b"),
+            "夹具前提：没有钥匙袋 ⇒ 谓词必须 false（⇒ 走原路 ⇒ 由 reopen 拒 ✓）"
+        );
+
+        let main_before: String = c
+            .query_row("PRAGMA database_list", [], |r| r.get::<_, String>(2))
+            .unwrap();
+        assert_eq!(main_before, a.display().to_string(), "夹具前提：main 是 A");
+
+        // 切 B ⇒ **Err**（打不开 ⇒ 不是"需要口令"那一档）
+        assert!(
+            switch_active_space(&mut c, "space-b", &dir).is_err(),
+            "打不开的空间必须照旧被拒"
+        );
+
+        // ⭐ 联合断言（同一条里两件都要成立 ✓）
+        let active: String = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                params![ACTIVE_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, "space-a", "⭐ 指针被写到一个打不开的空间去了 ✗");
+        let main_after: String = c
+            .query_row("PRAGMA database_list", [], |r| r.get::<_, String>(2))
+            .unwrap();
+        assert_eq!(
+            main_after,
+            a.display().to_string(),
+            "⭐ 主连接被换到那个打不开的空间去了 ✗（指针没变但连接变了 ＝ 界面与连接分家）"
+        );
+        // 连接仍可用（不只是"路径没变"）
+        let _: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **(ii) 回滚那条路**（Lead 2026-10-10 点名，**要能真的红** ✗）：
+    /// "停在锁定态"失败 ⇒ ⭐ **返回 `Err`** ＋ ⭐ **主连接必须回到旧空间**（⛔ 不许留在半成品的内存库 ✗）。
+    ///
+    /// ⚠️ 判据的形状很要紧：光断言"返回了 `Err`"**在删掉回滚的实现上照样过** ✗（那种判据没有牙 ✓）
+    /// ⇒ 所以这里断言的是**连接回到 A** ✓ —— 把回滚那三行删掉 ⇒ 主连接会停在 park 换出的**内存库**
+    /// ⇒ `main` 路径变成空串 ⇒ **本判据必红** ✓。
+    #[test]
+    fn a_failed_park_rolls_the_main_connection_back_to_the_previous_space() {
+        let dir = std::env::temp_dir().join(format!("shuyo-switch-park-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        let a = crate::db::space_db_path(&dir, "space-a");
+        {
+            let c = rusqlite::Connection::open(&a).unwrap();
+            crate::db::migrate(&c, "space-a").unwrap();
+        }
+        let b = crate::db::space_db_path(&dir, "space-b");
+        std::fs::write(&b, vec![0x41u8; 4096]).unwrap();
+
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let mut c = rusqlite::Connection::open(&a).unwrap();
+        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
+            .unwrap();
+        insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
+        insert_new_local_space(&c, "space-b", "B", "#e12", 2.0, 1_000).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_KEY, "space-a"],
+        )
+        .unwrap();
+
+        // 袋子：给 B 装盒子 ⇒ 谓词 true（"需要口令"那一档）⇒ 会走到 park ✓
+        let _ = crate::space_crypto::set_space_box_for_test("space-b", &[7u8; 32], "pw-for-test");
+        crate::space_crypto::set_session_master(None).unwrap();
+        assert!(
+            crate::space_crypto::space_needs_passphrase("space-b"),
+            "夹具前提：这一档要走到 park"
+        );
+
+        // ⭐ 注入：让 park **必失败** ⇒ 走回滚那条路 ✓
+        crate::workspaces::set_park_fail_for_test(true);
+        let r = switch_active_space(&mut c, "space-b", &dir);
+        crate::workspaces::set_park_fail_for_test(false);
+
+        let e = r.expect_err("park 失败了 ⇒ 这次切换必须**如实失败**（⛔ 不许假装成功 ✗）");
+        assert!(e.contains("停在锁定态失败"), "{e}");
+        // ⭐ 有牙的那半：连接**回到旧空间**（⛔ 不许留在半成品的内存库 ✗）
+        let main: String = c
+            .query_row("PRAGMA database_list", [], |r| r.get::<_, String>(2))
+            .unwrap();
+        assert_eq!(
+            main,
+            a.display().to_string(),
+            "⭐ 回滚没做 ⇒ 主连接停在 park 换出的内存库（main 路径为空）✗"
+        );
+        let _: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+        // 指针也没被写（失败 ⇒ 一个都不许成 ✓）
+        let active: String = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                params![ACTIVE_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, "space-a", "⭐ 失败时指针不许被写 ✗");
+
         crate::space_crypto::set_keyring_for_test(None);
         let _ = crate::space_crypto::set_session_master(None);
         let _ = std::fs::remove_dir_all(&dir);
