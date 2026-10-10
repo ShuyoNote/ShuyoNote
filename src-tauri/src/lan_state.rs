@@ -215,6 +215,23 @@ static BACKGROUND_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 /// [`background_round_interval_ms`] 决定 ✓。
 static BACKGROUND_EMPTY_STREAK: AtomicUsize = AtomicUsize::new(0);
 
+/// ⭐ **task-12（Lead 批）**：**累计收到过多少条公告**（⭐ 与"候选"是**两件不同的事** ✗ ——
+/// "候选 0" 可能是"没看到对端"✗、也可能是"看到了但没什么可拉"✓ ⇒ 两个数一分开就不必猜 ✓）。
+static BACKGROUND_HEARD_TOTAL: AtomicUsize = AtomicUsize::new(0);
+
+/// ⭐ **task-12（Lead 批）**：把"这一轮看到了什么"落成**两个可核读数** —— 纯函数（判据够得着 ✓）。
+///
+/// ⚠️ 为什么要落**库**而不是日志：⭐ 日志会被句柄/重定向/轮转弄丢 ✗（真机上**已经**发生过一次 ✓），
+/// 而 ⭐ **库里的键不会** ✓。
+/// · `mesh_bg_last_candidates` ＝ 上一轮**挑出几台对端**（0 ⇒ 没看到能拉的人 ✗）；
+/// · `mesh_bg_last_heard` ＝ 上一轮**期间收到过几条公告**（>0 而 candidates=0 ⇒ ⭐ 看见了但对不上 ✗）。
+pub fn background_round_readings(candidates: usize, heard: usize) -> Vec<(&'static str, String)> {
+    vec![
+        ("mesh_bg_last_candidates", candidates.to_string()),
+        ("mesh_bg_last_heard", heard.to_string()),
+    ]
+}
+
 /// ⭐ **task-12**：**归还**那把闸 —— 用 RAII（⛔ 手写"跑完再置回 false" ✗：一轮里任何 `?`/panic
 /// 都会把它永远留在 `true` ⇒ **后台节拍从此死掉** ✓，而那正是"静默失效"的形状 ✓）。
 struct BackgroundInFlightGuard;
@@ -263,9 +280,12 @@ fn spawn_background_round(
         let _guard = BackgroundInFlightGuard; // ⭐ 无论怎么退出都归还 ✓
         let db = app2.state::<Db>();
         let mut found_any = false;
+        let mut candidates_total: usize = 0;
+        let heard_before = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst);
         for (proto_space, db_space) in pairs {
             match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers).await {
                 Ok(r) => {
+                    candidates_total += r.candidates;
                     if r.candidates > 0 {
                         found_any = true;
                     }
@@ -294,6 +314,16 @@ fn spawn_background_round(
             BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
         } else {
             BACKGROUND_EMPTY_STREAK.fetch_add(1, Ordering::SeqCst);
+        }
+        // ⭐ **task-12（Lead 批）**：把"这一轮看到了什么"**落进库** ✓ ——
+        //   ① `候选 0` 与 ② `看到了但没什么可拉` **再也不用猜** ✓（⭐ 日志会被句柄弄丢 ✗，⭐ 库里的键不会 ✓）。
+        {
+            let heard = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst).saturating_sub(heard_before);
+            let db_read = app2.state::<Db>();
+            let c = db_read.0.lock().unwrap_or_else(|e| e.into_inner());
+            for (key, value) in background_round_readings(candidates_total, heard) {
+                let _ = crate::sync::set_meta_state(&c, key, &value);
+            }
         }
     });
     Some(format!("{count} 个空间，设备直连、不靠界面 ✓"))
@@ -508,6 +538,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     // ⭐ **task-12（Lead 拍）**：⭐ **收到公告 ⇒ 这一档有戏** ✓ ⇒ 把"空转连击"清零 ✓
                     //   （"一旦候选 ≥1 或收到过公告 ⇒ 恢复常态" ✓）。
                     BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
+                    BACKGROUND_HEARD_TOTAL.fetch_add(1, Ordering::SeqCst);
                     eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
                 }
                 Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
@@ -937,6 +968,20 @@ mod tests {
     // —— stderr `[mesh]` **259 行**（发现层照常 ✓）而网格历史**停在面板关闭那一刻**（09:01:45 ✓）；
     // 把 app 从同步面板切走 ⇒ **8+ 分钟里一次 TCP 连接都没有** ✗。
     // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ **task-12（Lead 批）**：⭐ 「**候选 0**」与「**收到了公告但没进候选**」是**两件不同的事** ✗
+    /// ⇒ 两个读数必须**都**落进库 ✓（⭐ 日志会被句柄弄丢 ✗ —— 真机上已经发生过一次 ✓）。
+    /// ⚠️ 未修时（两个读数都不存在）**必红** ✓。
+    #[test]
+    fn a_background_round_records_both_what_it_saw_and_what_it_heard() {
+        let rows = background_round_readings(0, 3);
+        assert_eq!(rows.len(), 2, "两个读数都要 ✓（⭐ 少一个就又要猜 ✗）");
+        let got: Vec<(&str, String)> = rows.into_iter().collect();
+        assert_eq!(got[0], ("mesh_bg_last_candidates", "0".to_string()), "候选数要落库 ✓");
+        assert_eq!(got[1], ("mesh_bg_last_heard", "3".to_string()), "收到的公告条数要落库 ✓");
+        // ⭐ 就是这一格：⭐ 收到了 3 条公告、⭐ 却一台候选都没有 ⇒ ⭐ "看见了但对不上" ✓（不是"没看见"✗）
+        assert_eq!(background_round_readings(2, 0)[0].1, "2", "看到了能拉的 ⇒ 候选数如实 ✓");
+    }
 
     /// ⭐ **task-12 判据 a**：⭐ **不打开任何面板也要有轮次** ✓（可注入时钟 ✓）。
     /// ⚠️ 未修时（没有后台节拍）这里恒 `false` ⇒ **必红** ✓（红读数＝真机那条"面板一走就不跑"✓）。
