@@ -267,14 +267,19 @@ fn truncate(s: &str, max: usize) -> String {
 ///
 /// 三档分开写，因为它们对用户意味着不同的事：
 /// 中文词条是"这个词典结构上没有"，未收录是"这条冷门"，太长是"你选多了"。
+///
+/// ⭐ 2026-10-09 收口（评估 §3-④）：未收录那两档**必须出现「无法确定」**这个说法 ——
+/// 它是一条**会红的判据**（`a_word_the_dictionary_lacks_says_undetermined_and_never_fabricates`，
+/// 先跑红、再改绿）。为什么非要有这四个字：只说"未收录"容易被读成"这个词不存在"，
+/// 而**本地无法确定**才是实情（词典不是全集）；⛔ 更要紧的是**不许**用任何编造的释义去补这个空。
 fn miss_message(kind: MissKind, query: &str, extra: &str) -> String {
     match kind {
         MissKind::Empty => "没有选中文本 —— 划词查词不会凭空给释义。".to_string(),
         MissKind::NotEnglish => format!(
-            "本地词典是英汉词典，不含中文词条：「{query}」未收录 ⇒ 需要解释请走 AI（这里不编造本地释义）。"
+            "本地词典是英汉词典，不含中文词条：「{query}」未收录 ⇒ 本地无法确定它的释义，需要解释请走 AI（这里不编造本地释义）。"
         ),
         MissKind::NotFound => format!(
-            "「{query}」未收录于本地英汉词典（ECDICT）{extra} ⇒ 可走 AI 解释；这里不猜。"
+            "「{query}」未收录于本地英汉词典（ECDICT）{extra} ⇒ 本地无法确定它的释义；可走 AI 解释（这里不猜、不编造）。"
         ),
         MissKind::TooLong => format!(
             "选中的文本太长（{} 字，上限 {QUERY_MAX_CHARS}）{extra} ⇒ 本地词典只查单词/短语。",
@@ -661,6 +666,35 @@ mod tests {
                 }
             }
             other => panic!("不存在的词必须走未收录那条，实际 {other:?}"),
+        }
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn a_word_the_dictionary_lacks_says_undetermined_and_never_fabricates() {
+        // ⭐⭐ 评估 §3-④ 要的**会红的判据**（2026-10-09 收口补）：
+        //    喂一个**词库里不存在**的词 ⇒ 必须出现「无法确定」，且**不出现任何编造定义**。
+        //    ⚠️ 与上一条的分工：上一条管"走未收录那条 ＋ 不漏释义"，这一条管**那句话本身**
+        //    必须承认"本地无法确定"（而不是给一个含糊的答复让人以为查过了）。
+        let p = fixture_file("dict-undetermined");
+        // 英文词（词库结构上该收、但这一条没有）与中文术语（词库结构上就没有）两类都要说「无法确定」。
+        for raw in ["zzqxwv", "方法论"] {
+            match lookup_at(&p, raw) {
+                LookupOutcome::NotFound { message, .. } => {
+                    assert!(
+                        message.contains("无法确定"),
+                        "{raw} 未收录时必须明说「无法确定」，实际：{message}"
+                    );
+                    // ⛔ 不许出现夹具里任何一条释义 —— 那才是"编造"。
+                    for leaked in ["苹果", "笔记", "中国", "放弃", "fruit", "record", "country"] {
+                        assert!(
+                            !message.contains(leaked),
+                            "{raw} 的未收录文案里混进了释义「{leaked}」：{message}"
+                        );
+                    }
+                }
+                other => panic!("{raw} 必须走未收录那条，实际 {other:?}"),
+            }
         }
         let _ = std::fs::remove_file(&p);
     }

@@ -73,15 +73,21 @@ const isCjk = (c) => {
 };
 const looksEnglish = (t) => [...t].some((c) => /[a-z]/.test(c)) && ![...t].some(isCjk);
 
-/** 未收录时那句话（与 Rust `miss_message` 同口径；权威在 Rust，见文件头）。 */
+/**
+ * 未收录时那句话 —— **逐字镜像** `src-tauri/src/dictionary.rs::miss_message`（权威在 Rust，见文件头）。
+ *
+ * ⚠️ 2026-10-09 实测踩过一次"两份真相源"：Rust 侧把未收录文案改成含「无法确定」之后，
+ * 这里**没跟着改**，于是本脚本 ③ 那一栏印的还是旧话 —— 而那一栏正是**判据的读数之一**
+ * （"查不到的词如何呈现"）⇒ 读数变成了假的。改文案时**两处一起改**（见 §3-④）。
+ */
 function missMessage(kind, query) {
   switch (kind) {
     case "empty":
       return "没有选中文本 —— 划词查词不会凭空给释义。";
     case "not_english":
-      return `本地词典是英汉词典，不含中文词条：「${query}」未收录 ⇒ 需要解释请走 AI（这里不编造本地释义）。`;
+      return `本地词典是英汉词典，不含中文词条：「${query}」未收录 ⇒ 本地无法确定它的释义，需要解释请走 AI（这里不编造本地释义）。`;
     case "not_found":
-      return `「${query}」未收录于本地英汉词典（ECDICT） ⇒ 可走 AI 解释；这里不猜。`;
+      return `「${query}」未收录于本地英汉词典（ECDICT） ⇒ 本地无法确定它的释义；可走 AI 解释（这里不猜、不编造）。`;
     default:
       return `选中的文本太长 ⇒ 本地词典只查单词/短语。`;
   }
