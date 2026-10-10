@@ -695,7 +695,8 @@ pub fn install_pack_from_archive_with(
             &got[..12],
             &pins.archive_sha[..12.min(pins.archive_sha.len())]
         ));
-    }    let mut gz = flate2::read::GzDecoder::new(std::io::Cursor::new(archive));
+    }
+    let mut gz = flate2::read::GzDecoder::new(std::io::Cursor::new(archive));
     install_pack_from_reader(
         &mut gz,
         pins.db_bytes,
@@ -754,6 +755,13 @@ pub fn install_pack_from_reader<R: std::io::Read>(
         std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败（{}）：{e}", dir.display()))?;
     }
 
+    // ⭐ `.part` 策略（**选一个并写明**，owner 2026-10-10 要求）：
+    //   · **残留 ⇒ 覆盖**：`File::create` 是**截断打开**（⛔ 不是 append）⇒ 上一次崩溃留下的 `.part`
+    //     会被整份覆盖，**下次自然能重来**，不需要用户先手工删文件。
+    //     ⚠️ 这一条不是"顺手"：若哪天改成 append，旧字节会被**拼**进新内容里 ⇒ 长度与 sha256 都会不符，
+    //     而失败现象是"下载完却校验不过"（**静默坏法**）—— `a_stale_part_file_does_not_corrupt_the_install` 守着它。
+    //   · **检测到的失败 ⇒ 删**：读到一半断流/写失败/长度不符/指纹不符，每一处 return 前都 `remove_file(part)`
+    //     ⇒ ⛔ 磁盘上不留半个字节，也不会把半成品留给下一次"以为已经下好了"。
     let cleanup = |part: &Path| {
         let _ = std::fs::remove_file(part);
     };
@@ -1554,6 +1562,60 @@ mod tests {
         let contents_shape = serde_json::json!({ "encoding": "none", "size": 39_126_809u64, "content": "" });
         let e = decode_blob_json(&contents_shape).unwrap_err();
         assert!(e.contains("base64") || e.contains("空"), "{e}");
+    }
+
+    #[test]
+    fn a_stale_part_file_does_not_corrupt_the_install() {
+        // ⭐ 判据 (c) 的**正名**（owner 2026-10-10 放行）：上一次崩溃留下的 `.part` 必须被**覆盖**，
+        //    而不是被**追加**。⛔ 这条挡的是"append 类写法把旧字节拼进去"那种**静默**坏法：
+        //    它不报错、长度与 sha256 都不符 ⇒ 用户看到的是"下载完却校验不过/库是坏的"。
+        let dir = crate::tempdir::dir("dict-stale-part").unwrap();
+        let (db, _) = pack_fixture("dict-stale-part-src");
+        let gz = gzip_of(&db);
+        let pins = pins_for(&gz, &db);
+        let part = dir.join("ecdict-en-zh.bin.part");
+        let dest = dir.join("ecdict-en-zh.bin");
+
+        // 预置一份**比真内容更长**的垃圾 `.part`（若写成 append，结果一定指纹不符 ⇒ 这条会红）
+        let junk = vec![0xABu8; db.len() + 4096];
+        std::fs::write(&part, &junk).unwrap();
+        assert!(part.exists(), "夹具前提：垃圾 .part 先存在");
+
+        let rep = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap();
+        assert_eq!(rep.bytes, db.len() as u64);
+        assert!(dest.exists() && !part.exists(), "装完：正式文件在、`.part` 已改名");
+        // ⭐ 关键：磁盘上必须是**干净的解压结果**（⛔ 不含一个字节的旧垃圾）
+        assert_eq!(std::fs::read(&dest).unwrap(), db, "旧 `.part` 的字节不许混进结果");
+        match lookup_at(&dest, "apple") {
+            LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
+            other => panic!("覆盖之后必须查得到，实际 {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_refused_install_leaves_the_dictionary_unavailable() {
+        // ⭐ 判据 (b) 的**界面那半**（owner 2026-10-10 放行）：文件下下来了、但校验不过 ⇒
+        //    ⛔ 它**不许**出现在"可用"里（挡住"下下来了就算装上了"）。
+        let app_data = crate::tempdir::dir("dict-refused-appdata").unwrap();
+        let dest = pack_path(&app_data);
+        let part = dest.with_extension("bin.part");
+        let (db, _) = pack_fixture("dict-refused-src");
+        let gz = gzip_of(&db);
+        let mut pins = pins_for(&gz, &db);
+        pins.archive_sha = "0".repeat(64); // 指纹不符 ⇒ 必须拒绝
+
+        let err = install_pack_from_archive_with(&pins, &gz, &part, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("sha256"), "{err}");
+
+        // ① 落点不存在 ⇒ 路径解析拿不到它
+        assert!(!dest.exists(), "拒绝之后不许留下正式文件");
+        assert_eq!(resolve_db_path(None, Some(&app_data)), None, "拒绝之后不许被解析成词库");
+        // ② 状态读数如实说"未就绪"（而不是"可用"）
+        let st = status_at(None, None, Some(&app_data), None);
+        assert!(!st.available, "校验不过 ⇒ available 必须为 false：{st:?}");
+        assert!(st.message.contains("未就绪"), "{}", st.message);
+        let _ = std::fs::remove_dir_all(&app_data);
     }
 
     #[test]
