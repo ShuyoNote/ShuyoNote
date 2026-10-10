@@ -643,6 +643,14 @@ impl AnnounceOutcome {
     }
 }
 
+/// ⭐ **task-12（owner/Lead 已批）**：日志行的**本地时刻**（`HH:MM:SS` ✓）。
+///
+/// ⛔ 没有它，**两边的日志对不上时刻** ✗ —— 今天正是需要对齐"我方某一刻失败"与"同一刻对端在说什么"
+/// 而做不到 ✓（Lead 原话：这条**已经在咬我们** ✓）。格式刻意与 `sync_history.at` 的展示口径一致 ✓。
+pub fn log_stamp() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
 /// ⭐ **2026-10-09（task-8）**：发送那一行的**人话** —— 纯函数（判据够得着 ✓，与 `mesh_history_message` 同一形状 ✓）。
 ///
 /// 三样都要在：**成功/共几条** ✓、**目标长什么样** ✓、**空间**（打码 ✓）；
@@ -659,7 +667,8 @@ pub fn announce_send_line(o: &AnnounceOutcome, space: &str) -> String {
     let loopback = o.targets.iter().filter(|t| t.ip().is_loopback()).count();
     let other = o.targets.len().saturating_sub(bcast255 + loopback);
     let mut line = format!(
-        "[mesh] 公告：发出 {}/{}（目标 {} 条：受限广播 {} ｜ 回环 {} ｜ 其它 {}）｜ 空间 {}",
+        "[{}] [mesh] 公告：发出 {}/{}（目标 {} 条：受限广播 {} ｜ 回环 {} ｜ 其它 {}）｜ 空间 {}",
+        log_stamp(),
         o.sent(),
         o.targets.len(),
         o.targets.len(),
@@ -676,7 +685,7 @@ pub fn announce_send_line(o: &AnnounceOutcome, space: &str) -> String {
 }
 
 /// 空间名**打码**：只给前几位 ✓（日志里没有任何理由出现完整空间标识 ✓）。
-fn mask_space(s: &str) -> String {
+pub fn mask_space(s: &str) -> String {
     let s = s.trim();
     if s.is_empty() {
         return "(无)".to_string();
@@ -709,12 +718,24 @@ pub fn announce_recv_line(peer: &Peer, our_spaces: &[String]) -> String {
     };
     let theirs_shown: Vec<String> = theirs.iter().map(|s| mask_space(s)).collect();
     let ours_shown: Vec<String> = our_spaces.iter().map(|s| mask_space(s)).collect();
+    // ⭐ **task-12（Lead 批）**：⭐ **把 `hub_base` 也打出来** ✗ —— 因为 `mesh_peers` **拨的就是它** ✓
+    //   ⇒ 哪天出现"公告说 A、拨的却是 B"，没有这一格**看不出来** ✓（"两个东西同名"那一族 ✓）。
+    //   ⚠️ 它是**我们自己的地址**（不是秘密 ✓）⇒ 可以打全 ✓。
+    let base = peer
+        .announce
+        .hub_base
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or("(不代言)");
     format!(
-        "[mesh] 收到公告：来源 {} ｜ 对端 {} ｜ 它代言 {} 个空间 [{}] ｜ {}（本机空间 [{}]）",
+        "[{}] [mesh] 收到公告：来源 {} ｜ 对端 {} ｜ 它代言 {} 个空间 [{}] ｜ 它报的地址 {} ｜ {}（本机空间 [{}]）",
+        log_stamp(),
         peer.addr,
         short_id(&peer.announce.device_id),
         theirs.len(),
         if theirs_shown.is_empty() { "无".to_string() } else { theirs_shown.join("、") },
+        base,
         verdict,
         if ours_shown.is_empty() { "无".to_string() } else { ours_shown.join("、") }
     )
@@ -726,7 +747,7 @@ pub fn announce_recv_line(peer: &Peer, our_spaces: &[String]) -> String {
 /// 今天 `lan_state` 把 `recv_into_within` 的返回值**整个丢掉**（`let _ = …` ✓）⇒ 坏报文、
 /// 自己的回环报文、超长报文，全都**无声** ✓。
 pub fn announce_drop_line(addr: &str, reason: &str) -> String {
-    format!("[mesh] 收到但**没进表**：来源 {addr} ｜ 原因：{reason}")
+    format!("[{}] [mesh] 收到但**没进表**：来源 {addr} ｜ 原因：{reason}", log_stamp())
 }
 
 /// 收**一条**的结果 —— ⛔ 三件事必须**分得开**（以前 `Option` 把前两件混成一个 `None` ✗）。

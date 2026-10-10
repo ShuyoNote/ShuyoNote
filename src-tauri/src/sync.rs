@@ -3328,6 +3328,47 @@ pub async fn mesh_sync_now(
     Ok(report)
 }
 
+/// ⭐⭐ **task-12（owner 拍 C：后台每 5 分钟一轮）**：**不靠界面**也把网格那一轮跑掉 ✓。
+///
+/// ## 为什么要有它（真机实锤）
+/// `mesh_sync_now` 是 `#[tauri::command]` ⇒ ⭐ **只在"前端调它"时才跑** ✗ ⇒ 面板不在那一页就
+/// **一轮都不跑** ✓：实测我方 stderr `[mesh]` **259 行**（发现层照常 ✓）而网格历史**停在面板关闭那一刻**
+/// （最后一条 `09:01:45` ✓）；把 app 从同步面板切走，**8+ 分钟里一次 TCP 连接都没有** ✗（两条独立采样一致 ✓）。
+///
+/// ## 形状（三条边界）
+/// · ⭐ 只接受**已经解析出空间**的那一个（调用方按 `meshed` 传 ✓）⇒ ⛔ **没配网格的空间一个字节都不动** ✗
+///   （"没配 ⇒ 默认零行为变化"这条口径**一个字不变** ✓，判据钉着 ✓）；
+/// · ⭐ **可核读数**：KV `mesh_bg_rounds:<空间>` **每跑一轮 +1**（⚠️ **空转轮也 +1** ✓）⇒
+///   "到底跑没跑、跑了几轮"**永远查得到** ✓（⛔ 不是靠翻日志 ✗）；
+/// · ⭐ 与 `mesh_sync_now` **共用同一套落库**（`mesh_history_write` ＋ `write_sync_history_with` ✓）
+///   ⇒ 两条路写出来的历史**长得一样** ✓，⛔ 不出现"面板跑的记、后台跑的不记" ✗。
+pub(crate) async fn mesh_round_once(
+    conn: &std::sync::Mutex<Connection>,
+    proto_space: &str,
+    db_space: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+) -> Result<crate::mesh::MeshRoundReport, String> {
+    let mut report = crate::mesh::round(conn, proto_space, my_device, peers).await?;
+    report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
+    // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
+    if report.enabled {
+        let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let key = format!("mesh_bg_rounds:{proto_space}");
+        let n: i64 = get_meta_state(&c, &key).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+        let _ = set_meta_state(&c, &key, &(n + 1).to_string());
+    }
+    // 与 `mesh_sync_now` 同一套历史写入（含 B 方案的限流 ✓）。
+    if let Some(h) = mesh_history_write(&report, db_space) {
+        let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let last = read_last_mesh_history(&c, &h.ws_id);
+        if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
+            write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        }
+    }
+    Ok(report)
+}
+
 /// ⭐ **2026-10-09（task-8）**：网格那一轮**要不要**进 `sync_history`、进什么 —— **纯函数** ✓。
 ///
 /// ## 为什么要有它（真机读数 → 判据）
