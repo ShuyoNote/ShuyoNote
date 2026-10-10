@@ -17,7 +17,7 @@
 //! 以及**驱动那两件事的循环**（[`start`]：一个 tokio 任务，绑 UDP ＋ 周期广播 ＋ 收报入库 ＋
 //! 按 TTL 腾过期行）。"这一轮走哪个地址"仍是 `lan::resolve_base` 的活（纯函数、判据在那儿）。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use tauri::Manager;
@@ -158,25 +158,62 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 /// 两条路**共用同一套落库**（`sync::mesh_round_once` ✓）⇒ 不会出现"面板跑的记、后台跑的不记" ✗。
 pub const BACKGROUND_ROUND_MS: i64 = 5 * 60 * 1000;
 
+/// ⭐ **task-12（Lead 拍 B）**：本轮 **`候选 0`** ⇒ 下次约 60 秒再来 ✓（"没找到对端"**不算**"跑过一轮" ✓）。
+pub const BACKGROUND_RETRY_MS: i64 = 60 * 1000;
+
+/// ⭐ **task-12（Lead 拍上限）**：**连续这么多次仍然 `候选 0`** ⇒ ⭐ **退回 5 分钟** ✓
+/// （⛔ 别在没对端的网段里每 60 秒空转一小时 ✗）。
+pub const BACKGROUND_EMPTY_GIVE_UP: usize = 5;
+
+/// ⭐ **task-12**：**启动后第一轮等一会儿再跑** ✓ —— 实测（真机日志）启动后 3 秒就跑了，
+/// 而 **对端的公告 27 秒后才到** ✗ ⇒ 那一轮 `候选 0`、白跑 ✓，而下一次要等满 5 分钟 ✓。
+pub const BACKGROUND_WARMUP_MS: i64 = 45 * 1000;
+
+/// ⭐ **task-12（Lead 拍 B ＋ 上限）**：**下一次后台轮该等多久** —— 纯函数（判据够得着 ✓）。
+///
+/// 三条口径（Lead 逐条拍 ✓）：
+/// · `empty_streak == 0`（上一轮找到了对端）⇒ ⭐ **5 分钟常态** ✓；
+/// · `1..5`（最近有空手）⇒ ⭐ **60 秒**再来一次 ✓；
+/// · `>= 5` ⇒ ⭐ **退回 5 分钟** ✓（放弃这次"快试" ✓）。
+/// ⚠️ ⭐ **只影响后台这一条** ✗ —— 面板那条的节拍**一个字不动** ✓（owner 拍的是"面板打开时更勤"✓）。
+pub fn background_round_interval_ms(empty_streak: usize) -> i64 {
+    if empty_streak == 0 || empty_streak >= BACKGROUND_EMPTY_GIVE_UP {
+        BACKGROUND_ROUND_MS
+    } else {
+        BACKGROUND_RETRY_MS
+    }
+}
+
+/// ⭐ **task-12**：后台那一轮的**起算时刻**（启动时用一次 ✓）——
+/// ⭐ 让第一轮落在**启动后约 [`BACKGROUND_WARMUP_MS`]**，⛔ 不是"启动那一瞬间" ✗（实测那一轮必然空手 ✓）。
+pub fn background_round_initial_last(started_ms: i64) -> i64 {
+    started_ms - BACKGROUND_ROUND_MS + BACKGROUND_WARMUP_MS
+}
+
 /// ⭐ **task-12 的判据面**：**后台这一轮该不该跑** —— 纯函数（**可注入时钟** ✓，判据不打桩 ✓）。
 ///
 /// 三条一次说清：
 /// · **一个网格空间都没有 ⇒ `false`** ✓ —— ⛔ "没配 ⇒ 一个字节都不动"这条口径**一个字不变** ✗
 ///   （`meshed` 是**解析后且配了监听地址**的那些 ✓，与发现层同尺 ✓）；
 /// · `last_ms <= 0` ⇒ 第一次就该跑 ✓（复用 `announce_due` 的同一口径 ✓，⛔ 不另立一套 ✗）；
-/// · 到点（≥ [`BACKGROUND_ROUND_MS`]）⇒ 跑 ✓。
-pub fn background_round_due(last_ms: i64, now_ms: i64, meshed_n: usize) -> bool {
+/// · 到点（≥ [`background_round_interval_ms`]）⇒ 跑 ✓。
+pub fn background_round_due(last_ms: i64, now_ms: i64, meshed_n: usize, empty_streak: usize) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
         return false;
     }
     // ⭐ ② 到点就跑 ✓（`last_ms <= 0` ＝ 还没跑过 ⇒ 第一轮就跑 ✓ —— 复用 `announce_due` 的同一口径 ✓，
     //    ⛔ 不另立一套 ✗：两处各写一遍的间隔判断迟早会漂 ✓）。
-    announce_due(last_ms, now_ms, BACKGROUND_ROUND_MS)
+    announce_due(last_ms, now_ms, background_round_interval_ms(empty_streak))
 }
 
 /// ⭐ **task-12**：后台那一轮**是不是还在跑**（⛔ 不许两轮叠在一起 ✗）。
 static BACKGROUND_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// ⭐ **task-12（Lead 拍）**：最近**连续几次**后台轮是空手的（`候选 0` ✓）——
+/// ⭐ 找到对端 ⇒ **清零** ✓／空手 ⇒ **+1** ✓／收到公告 ⇒ **清零** ✓ ⇒ 下一次等多久由
+/// [`background_round_interval_ms`] 决定 ✓。
+static BACKGROUND_EMPTY_STREAK: AtomicUsize = AtomicUsize::new(0);
 
 /// ⭐ **task-12**：**归还**那把闸 —— 用 RAII（⛔ 手写"跑完再置回 false" ✗：一轮里任何 `?`/panic
 /// 都会把它永远留在 `true` ⇒ **后台节拍从此死掉** ✓，而那正是"静默失效"的形状 ✓）。
@@ -209,12 +246,29 @@ fn spawn_background_round(
     let dev = device_id.to_string();
     let peers: Vec<lan::Peer> = peers.to_vec();
     let app2 = app.clone();
+    // ⭐ **Lead 拍（缺陷 2）**：**两个计数器都要** ✓ ——
+    //   · `mesh_bg_rounds:<空间>`（在 `sync::mesh_round_once` 里）＝ **空间 × 轮** ✓（诊断"哪个空间被服务"✓）；
+    //   · `mesh_bg_rounds_total`（这里）＝ ⭐ **跑了几轮** ✓。
+    //   ⚠️ ⭐ **两个数不一样，差的就是空间数** ✗（真机实测 `=4` 而只跑了 **1** 轮 ✓ —— 4 个活空间共用一个暗号 ✓）；
+    //   ⭐ 两个键**都是空转轮也 +1** ✓（那是要的口径 ✓）。
+    {
+        let db = app.state::<Db>();
+        let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        let n: i64 = crate::sync::get_meta_state(&c, "mesh_bg_rounds_total")
+            .and_then(|s| s.parse::<i64>().ok())
+            .unwrap_or(0);
+        let _ = crate::sync::set_meta_state(&c, "mesh_bg_rounds_total", &(n + 1).to_string());
+    }
     tauri::async_runtime::spawn(async move {
         let _guard = BackgroundInFlightGuard; // ⭐ 无论怎么退出都归还 ✓
         let db = app2.state::<Db>();
+        let mut found_any = false;
         for (proto_space, db_space) in pairs {
             match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers).await {
                 Ok(r) => {
+                    if r.candidates > 0 {
+                        found_any = true;
+                    }
                     let pulled: usize = r.peers.iter().map(|p| p.applied).sum();
                     let bad = r.peers.iter().filter(|p| p.error.is_some()).count();
                     eprintln!(
@@ -232,6 +286,14 @@ fn spawn_background_round(
                     crate::lan::mask_space(&proto_space)
                 ),
             }
+        }
+        // ⭐ **task-12（Lead 拍 B ＋ 上限）**：⭐ **找到对端 ⇒ 清零** ✓／**空手 ⇒ +1** ✓ ——
+        //   下一次等多久由 `background_round_interval_ms(streak)` 决定 ✓：
+        //   0 ⇒ 5 分钟常态 ✓；1..5 ⇒ 60 秒再来 ✓；≥5 ⇒ 退回 5 分钟 ✓。
+        if found_any {
+            BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
+        } else {
+            BACKGROUND_EMPTY_STREAK.fetch_add(1, Ordering::SeqCst);
         }
     });
     Some(format!("{count} 个空间，设备直连、不靠界面 ✓"))
@@ -409,8 +471,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);
         let mut last_announce_ms: i64 = 0;
-    // ⭐ **task-12**：后台那一轮的**上一次跑的时刻**（`0` ⇒ 还没跑过 ⇒ 第一轮就跑 ✓）。
-    let mut last_bg_round_ms: i64 = 0;
+    // ⭐ **task-12**：后台那一轮的**上一次跑的时刻** —— ⭐ 起算值刻意**不是 0** ✗：
+    //   真机日志显示"启动后 3 秒就跑第一轮 ⇒ 候选 0（对端公告 27 秒后才到）⇒ 白跑一次 ✓"
+    //   ⇒ 从 `background_round_initial_last()` 起算 ⇒ 第一轮落在**启动后约 45 秒** ✓。
+    let mut last_bg_round_ms: i64 = background_round_initial_last(crate::db::now_ms());
         // ⭐ **2026-10-09（task-8）**：本机**在用**哪些空间（解析后 ✓）—— 只为**日志**里
         //   「这条公告与本机空间匹不匹配」那一句判定 ✓（⛔ 不参与任何路由决策 ✗）。
         //   ⚠️ 先取一次再进循环：否则第一片收到的公告会报"本机还没有可匹配的空间"（假读数 ✗）。
@@ -441,6 +505,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //        这一片什么都没收到 ⇒ ⛔ **不打日志** ✗（每 1s 一次，打就是刷屏 ✓）。
             match lan::recv_into_within(&sock, state, RECV_SLICE_MS).await {
                 Ok(lan::RecvOutcome::Peer(p)) => {
+                    // ⭐ **task-12（Lead 拍）**：⭐ **收到公告 ⇒ 这一档有戏** ✓ ⇒ 把"空转连击"清零 ✓
+                    //   （"一旦候选 ≥1 或收到过公告 ⇒ 恢复常态" ✓）。
+                    BACKGROUND_EMPTY_STREAK.store(0, Ordering::SeqCst);
                     eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
                 }
                 Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
@@ -574,7 +641,12 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   ⚠️ 三条边界：① 只在**真的开了网格**的空间上跑 ✓（`meshed` ✓ ⇒ ⛔ 没配的一个字节都不动 ✗）；
             //   ② **`spawn`**（⛔ 不阻塞这条每秒的发现循环 ✗ —— 一轮 HTTP 可能十几秒 ✓）；
             //   ③ **同时只跑一轮** ✓（`BACKGROUND_IN_FLIGHT` ＋ RAII 归还 ✓，上一轮没完就跳过 ✓）。
-            if background_round_due(last_bg_round_ms, now, meshed.len()) {
+            if background_round_due(
+                last_bg_round_ms,
+                now,
+                meshed.len(),
+                BACKGROUND_EMPTY_STREAK.load(Ordering::SeqCst),
+            ) {
                 last_bg_round_ms = now;
                 match spawn_background_round(&app2, &device_id, &mesh_cfgs, &state.peers(now)) {
                     Some(what) => eprintln!("[{}] [mesh] 后台一轮：开跑（{what}）", lan::log_stamp()),
@@ -870,23 +942,68 @@ mod tests {
     /// ⚠️ 未修时（没有后台节拍）这里恒 `false` ⇒ **必红** ✓（红读数＝真机那条"面板一走就不跑"✓）。
     #[test]
     fn a_background_round_happens_without_any_panel() {
-        // ① 从没跑过 ⇒ **第一轮就跑**（⛔ 不让用户等满 5 分钟 ✗）
+        // ① 从没跑过 ⇒ 该跑（`last <= 0` 那一支 ✓ —— 复用 `announce_due` 的同一口径 ✓）
         assert!(
-            background_round_due(0, 1_000, 1),
+            background_round_due(0, 1_000, 1, 0),
             "⛔ 没有后台节拍 ⇒ 关掉面板就一轮都不跑 ✗（真机实测：8+ 分钟零连接 ✓）"
         );
         // ② 到点 ⇒ 跑
-        assert!(background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS, 1), "到点必须跑 ✓");
+        assert!(background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS, 1, 0), "到点必须跑 ✓");
         // ③ 没到点 ⇒ 不跑（⛔ 也不能退化成"每秒一次" ✗）
-        assert!(!background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS - 1, 1), "没到点不跑 ✓");
+        assert!(!background_round_due(1_000, 1_000 + BACKGROUND_ROUND_MS - 1, 1, 0), "没到点不跑 ✓");
+    }
+
+    /// ⭐ **task-12（Lead 拍 B）**：⭐ **`候选 0` ⇒ 下次 < 5 分钟** ✓（"没找到对端"**不算**"跑过一轮" ✓）。
+    /// ⚠️ 未修时（永远 5 分钟）这里必红 ✓ —— 真机日志就是它抓到的：启动后 3 秒那一轮 `候选 0`，
+    /// 而下一次要等满 5 分钟 ✓。
+    #[test]
+    fn an_empty_background_round_is_retried_sooner_than_five_minutes() {
+        assert_eq!(
+            background_round_interval_ms(1),
+            BACKGROUND_RETRY_MS,
+            "⛔ 空手也要等满 5 分钟 ⇒ 对端 27 秒后才出现，白等一轮 ✗"
+        );
+        assert!(background_round_interval_ms(1) < BACKGROUND_ROUND_MS, "必须**短于**常态 ✓");
+    }
+
+    /// ⭐ **task-12（Lead 拍上限）**：⭐ **连续 5 次仍 `候选 0` ⇒ 退回 5 分钟** ✓
+    /// —— ⛔ 别在"网段里根本没有对端"的地方每 60 秒空转一小时 ✗。
+    #[test]
+    fn a_long_empty_streak_gives_up_the_fast_retry() {
+        assert_eq!(background_round_interval_ms(BACKGROUND_EMPTY_GIVE_UP), BACKGROUND_ROUND_MS);
+        assert_eq!(background_round_interval_ms(BACKGROUND_EMPTY_GIVE_UP + 9), BACKGROUND_ROUND_MS);
+        // ⭐ 反向：**上一轮找到了对端**（streak 0）⇒ 常态 5 分钟 ✓（⛔ 不许永久停在 60 秒 ✗）
+        assert_eq!(background_round_interval_ms(0), BACKGROUND_ROUND_MS, "找到对端 ⇒ 回到常态 ✓");
+    }
+
+    /// ⭐ **task-12**：⭐ **启动后第一轮不是"立刻"** ✓ —— 实测启动后 3 秒跑 ⇒ `候选 0`（对端公告 27 秒后才到）
+    /// ⇒ 白跑一次 ✓。修法：起算值让第一轮落在**启动后约 45 秒** ✓。
+    #[test]
+    fn the_first_background_round_waits_for_the_discovery_layer() {
+        let t0 = 1_000_000i64;
+        let last = background_round_initial_last(t0);
+        assert!(
+            !background_round_due(last, t0, 1, 0),
+            "⛔ 启动**那一瞬间**就跑 ⇒ 必然 `候选 0`（真机日志逐字 ✓）"
+        );
+        assert!(
+            !background_round_due(last, t0 + BACKGROUND_WARMUP_MS - 1, 1, 0),
+            "还没热够 ⇒ 再等等"
+        );
+        assert!(
+            background_round_due(last, t0 + BACKGROUND_WARMUP_MS, 1, 0),
+            "热够 45 秒 ⇒ 该跑了 ✓（对端的公告通常 ~30 秒内就到 ✓）"
+        );
     }
 
     /// ⭐ **task-12 判据 c（反向）**：⭐ **一个网格空间都没有 ⇒ 后台这一轮不许跑** ✗ ——
     /// "没配 ⇒ 一个字节都不动"这条口径**一个字不变** ✓。
     #[test]
     fn a_background_round_never_runs_when_no_space_has_the_mesh() {
-        assert!(!background_round_due(0, 1_000_000, 0), "⭐ 没配网格 ⇒ 后台**不许**碰任何东西 ✗");
-        assert!(!background_round_due(0, i64::MAX, 0), "⛔ 时间再久也一样：没有空间就没有轮次 ✗");
+        assert!(!background_round_due(0, 1_000_000, 0, 0), "⭐ 没配网格 ⇒ 后台**不许**碰任何东西 ✗");
+        assert!(!background_round_due(0, i64::MAX, 0, 0), "⛔ 时间再久也一样：没有空间就没有轮次 ✗");
+        // ⚠️ 连"空手在重试"也一样不跑 ✓（⭐ 否则"没配 + 刚空手"会绕开这一关 ✗）
+        assert!(!background_round_due(0, i64::MAX, 0, 1), "空手重试那支也不许碰没配的空间 ✗");
     }
 
     /// 判据 ①：**默认是关的**（新进程不会一上来就往网段里发声）。
