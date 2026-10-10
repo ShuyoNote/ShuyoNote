@@ -13,6 +13,16 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
+import { platform } from "../lib/platform";
+// ⚠️ 只从 `download.ts` 取 **pack id**（单一来源）——真下载已改由 Rust 做（见 `download()` 里那段注释），
+//    那个模块**保留**为"前端侧那套接口与判据"（它的 11 条判据就是它的凭据），⛔ 不是死代码。
+import { ECDICT_PACK_ID } from "../lib/dictionary/download";
+
+/** Rust 侧下载的进度事件 → 界面那一行字（字节；没给 Content-Length ⇒ **如实**说"总量未知"）。 */
+function fmtRustProgress(name: string, p: { received: number; total: number | null }): string {
+  const pct = p.total === null ? "百分比未知（服务端没给 Content-Length）" : `${Math.min(100, Math.round((p.received / p.total) * 100))}%`;
+  return `${name}：下载中 ${p.received}${p.total === null ? "" : ` / ${p.total}`} 字节 · ${pct}`;
+}
 
 /** 清单条目 —— 只认**真实值** ✓（url / sha256 任缺 ⇒ 不许出现下载按钮 ✗）。 */
 interface Ability {
@@ -43,24 +53,18 @@ const ABILITIES: Ability[] = [
   {
     id: "ecdict-en-zh",
     name: "英汉词库（ECDICT）",
-    summary: "应用内划词查词的英汉词典（770,611 条词条 / 85.6 MiB）—— ⚠️ 中文词条不在其中，界面会如实说未收录、走 AI",
-    bytes: 89735168,
-    path: "mirror/ecdict/ecdict-en-zh.bin",
-    sha256: "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31",
-    state: "not-available",
-    // ⚠️ ⭐ **2026-10-10（owner 拍「那句文案改掉」）**：用户面这一句里**不许出现内部词** ✗ ——
-    //    原句末尾印着「**待拍板。**」（内部流程词）＋ 一串内部路径（`node scripts/fetch-ecdict.mjs`、
-    //    `abilities.rs` 文件头、`.part`／`fail-closed`）⇒ 全换成用户看得懂的话 ✓
-    //    ⇒ ⭐ **用户面只描述用户看得见的状态**（能不能下、多大）✓；⭐ **真状态留在规格／台账／那条分支的代码里** ✓。
-    //    ⭐ **被 lead 纠过一次，两条必须分清（记在这里免得再犯）**：
-    //      ① **"下载方式"**：「改由 Rust 侧下载」**已在另一条分支做完**（`feat/inline-lookup-2`：`e68c3289`／`3b977a36`）
-    //         ⇒ ⛔ 不许再写"待做／待拍板" ✗；
-    //      ② **"包有没有托管到镜像仓"**：那是**另一件事**，⭐ 我**没有可核读数** ⇒ ⛔ **不断言** ✗
-    //         （⚠️ 别把①的"完成了"外推成②的"已托管" —— 那正是"拿相邻的东西当证据"）。
-    //    ⚠️ 改文案 ⇒ `AbilitiesPane.test.tsx` 里那条"长度 > 200"的阈值跟着调（⭐ 阈值随文案走，
-    //        ⛔ 不是为了让红变绿 —— "DOM ＝ 源码那句"那条判据**一个字都没动** ✓）。
+    // ⚠️ 这里的 bytes/sha256 是**镜像仓上那份 gzip 压缩包**的读数（⛔ 不是解压后的库）——
+    //    与 `shuyo-mirror/manifest.json` 那条**逐字一致**（别抄第二份）。解压后的库另有钉子：
+    //    89,735,168 字节 / 5dc10a51…，钉在 `src-tauri/src/dictionary.rs`（下载链路会核两遍）。
+    summary: "应用内划词查词的英汉词典（770,611 条词条；下载 39.1 MiB，解压后 85.6 MiB）—— ⚠️ 中文词条不在其中，界面会如实说未收录、走 AI",
+    bytes: 39126809,
+    path: "mirror/ecdict/ecdict-en-zh-v1.db.gz",
+    sha256: "ce0a2cf36c690038ff3d0e4d385ec18c04110db7a34e9bd8ba4ad30d76ee537b",
+    state: "downloadable",
     note:
-      "这本词典较大（85.6 MiB／770,611 条词条）—— 下载渠道还在准备，开放后在这里点一下就能用。",
+      "下载走 **Rust 侧**（`dictionary.rs`：先核压缩包的 sha256，再解压并核解压后那份的 sha256，" +
+      "两段都过才 rename 落盘；⛔ 不过则一个字节都不留）。⚠️ 取法是 `contents` 拿 blob sha ⇒ `git/blobs` 取内容" +
+      "（实测：`contents` 对大文件不回内容、`raw` 回的是 HTML）。",
   },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
   { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },
@@ -92,6 +96,35 @@ export function AbilitiesPane() {
 
   const download = async (a: Ability) => {
     if (!a.path || !a.sha256) return;
+    // ⭐ 词库那条：**真下载由 Rust 侧做**（owner 2026-10-10 拍；86 MiB 过 base64-IPC 那条链
+    //    结构上不成立 —— `abilities.rs` 文件头写明那条链的设计目标是 3.8 MB 级的 PDFium）。
+    //    Rust 侧语义与前端那套**逐条一致**：白名单＋钉死 sha256＋体积（＝pin）＋先写 `.part`
+    //    再改名＋校验不过**一个字节都不留**；进度走事件（字节数；服务端没给 Content-Length ⇒ total 为 null，⛔ 不猜）。
+    //    ⚠️ 这一格今天是 `not-available`（镜像仓里那个文件**还没提**）⇒ 按钮不会出现；
+    //       提包之后把 `state` 改成 `downloadable` 即可（判据不变）。
+    if (a.id === ECDICT_PACK_ID) {
+      setPhase({ kind: "working", text: `${t("abilities.fetching", "正在取回")} ${a.name} …` });
+      let off: (() => void) | null = null;
+      try {
+        off = await platform.event.listen<{ received: number; total: number | null }>(
+          "dictionary-pack-progress",
+          (e) => setPhase({ kind: "working", text: fmtRustProgress(a.name, e.payload) }),
+        );
+        const rep = await platform.executor.invoke<{ path: string; bytes: number; sha256: string; source: string }>(
+          "dictionary_install_pack",
+          { url: null },
+        );
+        setPhase({
+          kind: "ok",
+          text: `${t("abilities.saved", "已保存到本地")}：${rep.bytes} B · sha256 ${rep.sha256.slice(0, 12)}… · ${rep.path}`,
+        });
+      } catch (e) {
+        setPhase({ kind: "err", text: `${t("abilities.needNetwork", "这个能力需要一次下载 —— 现在取不到")}：${String(e)}` });
+      } finally {
+        off?.();
+      }
+      return;
+    }
     setPhase({ kind: "working", text: `${t("abilities.fetching", "正在取回")} ${a.name} …` });
     try {
       const res = await fetch(API + a.path + "?ref=main");

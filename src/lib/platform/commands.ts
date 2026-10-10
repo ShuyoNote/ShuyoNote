@@ -553,6 +553,22 @@ export type DictionaryLookupOutcome =
   | { status: "not_found"; query: string; kind: DictionaryMissKind; message: string }
   | { status: "unavailable"; message: string };
 
+/**
+ * 词库 pack **首次下载**完成后的读数（对应 `dictionary.rs::PackInstallReport`）。
+ *
+ * ⚠️ 下载由 **Rust 侧**做（86 MiB 过 base64-IPC 那条链结构上不成立）：先写 `.part` 再改名，
+ * 白名单 ＋ 钉死 sha256 ＋ 体积（＝pin），校验不过 ⇒ **一个字节都不留**。
+ * 进度走事件 `dictionary-pack-progress`（`{ received, total }`；没给 Content-Length ⇒ `total: null`）。
+ */
+export interface DictionaryPackInstallReport {
+  /** 落点（`dictionary.rs` 第 2 顺位读的那个文件）。 */
+  path: string;
+  bytes: number;
+  sha256: string;
+  /** 取数来源（镜像仓地址），排错用。 */
+  source: string;
+}
+
 /** 词典状态读数（界面据此决定显不显示"本地词典"那一档；`entries: null` = 读不出来，不猜）。 */
 export interface DictionaryStatus {
   available: boolean;
@@ -1436,4 +1452,8 @@ export interface CommandMap {
   //    数据没就位时 `dictionary_status.available` 为 false ⇒ 界面说"未安装"，不假装查过。
   dictionary_lookup: { args: { word: string }; result: DictionaryLookupOutcome };
   dictionary_status: { args: undefined; result: DictionaryStatus };
+  // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：`url: null` ⇒ 用镜像仓那条默认地址。
+  // ⚠️ 这一条命令的 `lib.rs` 登记行由 **Lead 统一加**（与 office-import 那条同一处 ⇒ 避免撞车）；
+  //    在那之前 `check-web-commands` 会**如实红**（"CommandMap 有、Rust 没注册"）—— 那不是缺陷，是顺序。
+  dictionary_install_pack: { args: { url: string | null }; result: DictionaryPackInstallReport };
 }

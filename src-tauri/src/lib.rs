@@ -1077,6 +1077,9 @@ pub fn run() {
   //    ⛔ **不是**空串、⛔ **不是**编造的释义。
   dictionary::dictionary_lookup,
   dictionary::dictionary_status,
+  // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：86 MiB 过 base64-IPC 那条链结构上不成立
+  //    ⇒ 下载/解压/校验/落盘全在 Rust 侧（`dictionary.rs`：先核压缩包、再核解压后的库，两段都过才 rename）。
+  dictionary::dictionary_install_pack,
 ])
         .run(app_context())
         .expect("error while running tauri application");

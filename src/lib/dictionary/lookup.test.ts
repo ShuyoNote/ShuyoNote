@@ -76,7 +76,7 @@ describe("presentOutcome：三种状态各自的形状", () => {
         query: zh,
         kind: "not_english",
         // 与 Rust `dictionary::miss_message` 同口径的那句人话。
-        message: `本地词典是英汉词典，不含中文词条：「${zh}」未收录 ⇒ 需要解释请走 AI（这里不编造本地释义）。`,
+        message: `本地词典是英汉词典，不含中文词条：「${zh}」未收录 ⇒ 本地无法确定它的释义，需要解释请走 AI（这里不编造本地释义）。`,
       };
       const p = presentOutcome(outcome);
       expect(p.tone).toBe("miss");
@@ -127,7 +127,7 @@ describe("presentOutcome：三种状态各自的形状", () => {
       status: "not_found",
       query: "zzqxwv",
       kind: "not_found",
-      message: "「zzqxwv」未收录于本地英汉词典（ECDICT） ⇒ 可走 AI 解释；这里不猜。",
+      message: "「zzqxwv」未收录于本地英汉词典（ECDICT） ⇒ 本地无法确定它的释义；可走 AI 解释（这里不猜、不编造）。",
     });
     // 释义只可能来自 `found` 那条分支 —— 未收录的展示里不许出现词条字段。
     expect(Object.keys(p)).not.toContain("entry");
