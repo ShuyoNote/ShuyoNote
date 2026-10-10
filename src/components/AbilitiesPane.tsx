@@ -196,7 +196,11 @@ export function AbilitiesPane() {
                    ⇒ 修法＝**给这一格一个确定且有限的宽度** ✗（`set-row-note` 里给死 `flex: 0 0 40%` ✓，
                      ⛔ 不是靠收缩 ✗）：修后实测 `textW = 349.2` ／ `nameH = 18`（一行 ✓）／`noteW = 240.8` ✓。
                 ⛔ 别把这几条注释删掉：上一次事故正是"用现成的类、⛔ 不新增 CSS"这个决定造成的 ✓。 */}
-            <span className="set-row-sub set-row-note">{a.note ?? t("abilities.soon", "还没上架")}</span>
+            {/* ⭐ **2026-10-10（owner 拍 C）**：这一格在列表里**只显示 2 行 ＋ 省略号** ✗（CSS 在 `App.css` 的
+                `.set-row-note`）★ 而 ⭐ **全文一个字都不许少** ✗ —— ⛔ 不许把文案改短 ✗：
+                DOM 里仍是**完整那句**（只是视觉上截断）＋ ⭐ **悬停看全文**（`title` ＝ 同一句，用现成属性 ⇒ ⛔ 不自己写浮层）。
+                ⚠️ 判据：`AbilitiesPane.test.tsx` 的 f／g／h（2 行 ／ 全文还在 ／ `title` ＝ 全文）＋ 真量高度。 */}
+            <span className="set-row-sub set-row-note" title={a.note ?? t("abilities.soon", "还没上架")}>{a.note ?? t("abilities.soon", "还没上架")}</span>
           </div>
         ))}
       </section>

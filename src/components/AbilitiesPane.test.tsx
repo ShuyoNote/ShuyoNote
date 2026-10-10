@@ -128,4 +128,60 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
       "裸 span 又回来了 ⇒ 下一次长文本还会被压成一列",
     ).toBe(false);
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ⭐⭐ **2026-10-10（owner 拍 C）**：那条 236 字的说明**压到 2 行 ＋ 悬停看全**。
+  //
+  // ⚠️ owner 自己承认过的顾虑：**"压缩 ＝ 把字藏起来"** ✗ ⇒ 所以判据**不能只判"有 2 行"** ✗，
+  //    必须同时钉住：⭐ **全文仍在 DOM 里**（只是视觉截断）＋ ⭐ **悬停看得到全文**。
+  //    ⛔ 也不许"把文案改短"（那是 owner **没选**的那个）⇒ 源码那句的长度也要钉 ✓。
+  //
+  // ⚠️ 真验收**不是** f)：它是回归闸 ✓ —— 真验收是**实量高度**（626px 面板、真 App.css、真那句 236 字，
+  //    同一夹具 A/B：修前 `note.h = 130`（≈8.1 行）／长行 `57 → 152` ⇒ 修后 `note.h = 32`（＝2 行）／长行 `57`，
+  //    四条短 note 两次都是 `16` ✓）。
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /** ⭐ 从**真源码**取 ecdict 那条 note（⛔ 不手抄 ⇒ 判据与被判对象同源）。 */
+  function ecdictNoteFromSource(): string {
+    const src = readFileSync(SRC_TSX, "utf8");
+    const m = /id:\s*"ecdict-en-zh"[\s\S]*?note:\s*([\s\S]*?),\n\s*\}/.exec(src);
+    expect(m, "源码里必须有 ecdict 那条 note").not.toBeNull();
+    const parts = [...m![1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1].replace(/\\"/g, '"'));
+    return parts.join("");
+  }
+
+  it("⭐ f) CSS：那一格**最多 2 行**（视觉截断生效的三件套）", () => {
+    const css = readFileSync(APP_CSS, "utf8");
+    const m = /\.set-row-note\s*\{([^}]*)\}/.exec(css);
+    expect(m, "`set-row-note` 必须有它自己的规则").not.toBeNull();
+    const rule = m![1];
+    expect(
+      /-webkit-line-clamp\s*:\s*2\b/.test(rule),
+      "少了 `-webkit-line-clamp: 2` ⇒ 那条 236 字还是 7–8 行（owner 拍的是 2 行）",
+    ).toBe(true);
+    expect(/display\s*:\s*-webkit-box/.test(rule), "`line-clamp` 只对 `-webkit-box` 生效").toBe(true);
+    expect(/overflow\s*:\s*hidden/.test(rule), "没有 `overflow: hidden` ⇒ 截断不生效").toBe(true);
+  });
+
+  it("⭐ g) 反向：**全文仍在 DOM 里**（⛔ 不许把话改短 —— 截断只发生在视觉层）", () => {
+    const cell = noteCellOf(soonRows()[0]);
+    const full = ecdictNoteFromSource();
+    expect(full.length, "那条说明是 236 字（owner 的原话就是这个量级）").toBeGreaterThan(200);
+    expect(
+      cell.textContent ?? "",
+      "⭐ DOM 里必须是**完整那句** ⇒ ⛔ 不许把文案本身改短 ✗（那是 owner 没选的那个）",
+    ).toBe(full);
+    expect((cell.textContent ?? "").length).toBeGreaterThan(200);
+  });
+
+  it("⭐ h) 悬停能看到全文（`title` ＝ 完整那句）", () => {
+    const cell = noteCellOf(soonRows()[0]);
+    const title = cell.getAttribute("title") ?? "";
+    expect(
+      title,
+      "⭐ 既然列表里截断了，就必须能看全：`title` 是**完整那句**（⛔ 不是缩写、⛔ 不是空）",
+    ).toBe(ecdictNoteFromSource());
+    expect(title.length).toBeGreaterThan(200);
+    // ⛔ 不许自己写浮层（owner 拍的形状就是现成的 `title` ✓）
+  });
 });
