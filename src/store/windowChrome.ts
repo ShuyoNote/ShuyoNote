@@ -29,24 +29,22 @@ function load(key: string): boolean {
 }
 /** 出厂默认值（无 localStorage 时）。⭐ 两个键的默认值**不一样**，见下。 */
 export function defaultFor(key: string): boolean {
-  // ⚠️⚠️ 2026-10-10（**真事故**，owner 报的现象）：自绘标题栏**必须默认开**。
+  // ⚠️⚠️ 2026-10-10（**真事故**，owner 报"标题栏一条都没有"）—— 结论与修法：
   //
-  //   Rust 侧窗口是以 `decorations(false)` 创建的（`src-tauri/src/lib.rs:610`）✗
-  //   ⇒ **系统标题栏根本不存在** ✗ —— 而这里原来注释写着"Windows 上默认系统栏，更稳妥"✗，
-  //     那个前提是**假的**：系统栏只在 `custom=false` 时才是"系统栏"，
-  //     可此时**没有任何代码把它打开**（唯一出路是前端运行时调 `setDecorations` ✓）。
-  //   ⇒ ⭐ 两个互相独立的开关**同时为假** ⇒ **"系统栏 ✗ ＋ 自绘栏 ✗ ＝ 一条标题栏都没有"** ✗
-  //     （`TitleBar.tsx:116` 是 `if (!desktop || !custom) return null` ✓）
-  //
-  //   实测读数（AMD 侧只读调查，几何＋像素双证 ✓）：窗口 `Tauri Window`／`MainWindowTitle=测试`／
-  //   内嵌 dist（⛔ 不是浏览器页 ✗）｜ ⭐ `NC top = 2` 物理像素 ✗（同 DPI 下真标题栏 ≥46 ✓）｜
-  //   右上角（最小化/最大化/关闭该在的地方）**整片空白** ✓
-  //   ⚠️ 而窗口样式位 `WS_CAPTION` **是置位的** ✗ ⇒ **拿样式位判会得到假答案** ✓（别再踩 ✗）。
-  //
-  //   ⇒ 所以：自绘栏默认**开**（这才是设计意图 —— 本仓有 `TitleBar.tsx` ✓）；
-  //     Mica 仍默认**关**（与换壁纸／低配机器发花有关 ✓，与上面那条无关 ✓）。
+  //   ① Rust 侧现在以 `decorations(true)` 创建窗口（`src-tauri/src/lib.rs` ✓，
+  //      2026-10-10 从 `false` 改过来）⇒ ⭐ **系统标题栏默认就在** ✓
+  //   ② 所以自绘栏的出厂默认**必须是 `false`** ✓ —— 否则默认会同时出现两条栏 ✗
+  //   ③ ⭐ **"旧值"这件事要讲清**：这台机器的 `localStorage["shuyonote:customTitleBar"]`
+  //      里存着 `"0"` ✓（由 `setCustom(false)` 写的 ✓）⇒ 上面那条 `v === "1"` 会把它当真 ✓。
+  //      当时 Rust 侧是 `decorations(false)` ✗ ⇒ ⭐ **"自绘关 ＋ 系统栏不存在"** ⇒ 一条都没有 ✗。
+  //      现在 Rust 侧**默认有**系统栏 ⇒ **那个组合不再危险** ✓（这正是 owner 拍 A 的理由 ✓）。
+  //   ④ ⚠️ 一条**仍然成立的限制**（别再踩 ✓）：前端运行时 `setDecorations(true)`
+  //      （⭐ **"从无到有"** ✓）在 Windows 上实测**不报错、也不生效** ✗
+  //      （几何读数 `NC top = 7` 物理像素 ✗，真标题栏 ≥46 ✓；而且 `console` 里**没有错**✓）
+  //      ⇒ ⭐ 所以**不许**再依赖"运行时把系统栏找回来"✗；**要系统栏就靠 Rust 侧的默认值** ✓。
+  //   ⑤ Mica 仍默认关（与换壁纸／低配机器发花有关 ✓，与标题栏那条无关 ✓）。
   if (key === KEY_MATERIAL) return false;
-  return true;
+  return false;
 }
 
 /** 把设置应用到窗口：无边框由前端 API 运行时切换，无需重启。 */
