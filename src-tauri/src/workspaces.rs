@@ -127,8 +127,23 @@ pub(crate) fn switch_active_space(
             |r| r.get(0),
         )
         .ok();
-    // ① **先换连接**：它失败 ⇒ 连接与指针**都没动** ✓（今天那个 bug 正是这一步的顺序反了 ✓）
-    crate::db::reopen_space_at(c, id, dir)?;
+    // ⭐⓪ 2026-10-10（owner：「点『保险柜』⇒ 没有弹窗」）：**先问一句这个空间本会话需不需要口令** ✓。
+    //   **需要** ⇒ ⛔ **不打开那个加密库** ✗（安全判据 e：一个字节都不读 ✓）⇒ 把主连接停在**锁定态** ✓
+    //     ＋ 照常往下写指针 ✓ ⇒ `encryption_status` 读出 `enabled:true` ＋ `locked:true`
+    //     ⇒ **解锁屏成立、弹出来** ✓（那两格的算法在 `security.rs:790/802`，本函数**不改它** ✓）。
+    //   **不需要** ⇒ 照旧走原路 ✓；⚙ 其它 `Err`（盒子坏／路径没／IO）**照旧拒** ✓（判据 c ✓）。
+    if crate::space_crypto::space_needs_passphrase(id) {
+        if let Err(e) = park_locked_connection(c, dir) {
+            // ⛔ 不许留混合态：停不下来就把连接换回旧空间（换不回也如实上报，⛔ 不吞 ✗）
+            if let Some(prev) = prev.as_deref() {
+                let _ = crate::db::reopen_space_at(c, prev, dir);
+            }
+            return Err(e);
+        }
+    } else {
+        // ① **先换连接**：它失败 ⇒ 连接与指针**都没动** ✓（今天那个 bug 正是这一步的顺序反了 ✓）
+        crate::db::reopen_space_at(c, id, dir)?;
+    }
     // ② 连接切成了，**才**写活动指针
     if let Err(e) = c.execute(
         "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
@@ -141,6 +156,26 @@ pub(crate) fn switch_active_space(
         }
         return Err(e.to_string());
     }
+    Ok(())
+}
+
+/// ⭐ 把主连接**停在"锁定态"**（内存库 ＋ 挂上明文 `meta`）—— 复用 `security.rs::lock_encryption_impl`
+/// 的**落法**（`security.rs:857-860`：`open_in_memory` ＋ `ATTACH … AS meta KEY ""` ✓）。
+///
+/// ⚠️ 为什么**不直接调** `lock_encryption_impl`（两处都拦着）：
+/// · 它第一件事是 `if !encryption_enabled(conn) { return Err("这个空间没有加密…") }` —— 而本条的场景
+///   恰恰是**从明文空间切过去**（主连接就是明文）⇒ 当场被它拒 ✓；
+/// · 它还要动 `security.rs` 里那个**私有** `LOCKED`（**进程级会话锁** ✓）—— 那一格是"**整个会话**"的语义，
+///   ⛔ 与本条（"**这个活动空间**读不出来"）不是一回事 ✓（`security.rs:791-802` 逐字讲了这条分界 ✓）。
+/// ⇒ 所以这里只做"落法"本身：**主连接换成内存库 ＋ 挂 meta** ✓。
+/// ⚠️ **不碰 `session_master`**：本条只在"会话本来就锁着"时走 ✓ ⇒ 卸主密钥是空操作，
+///   而它一旦被卸掉会误伤**别的**空间 ✓。
+fn park_locked_connection(c: &mut rusqlite::Connection, dir: &std::path::Path) -> Result<(), String> {
+    let meta = crate::db::meta_path(dir).display().to_string().replace('\'', "''");
+    let fresh = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
+    let _ = std::mem::replace(c, fresh);
+    c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
+        .map_err(|e| format!("切到锁定态失败（内存库挂 meta）: {e}"))?;
     Ok(())
 }
 
@@ -1001,6 +1036,90 @@ mod tests {
             )
             .unwrap();
         assert_eq!(active, "space-a", "⭐ 指针被写到那个打不开的空间去了 ✗");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ owner 2026-10-10「点『保险柜』⇒ **没有弹窗**」的真判据（判据 **a** ＋ 安全 **e**）：
+    /// 切到"袋里**有**盒子、但本会话**没解锁**"的空间 ⇒ ⭐ **切换成功** ✓（指针真的改了 ✓）
+    /// ＋ ⭐ **一个字节都没打开那个加密库** ✓ ＋ 那个库**仍然打不开** ✓ ＋ 明文空间的行为**一点没变** ✓。
+    ///
+    /// ⚠️ 夹具必须用**文件 meta**（⛔ 不是 `conn_with_workspaces()` 的 `:memory:` meta ✗）：
+    ///    锁定态那一步是 `ATTACH <文件> AS meta` ⇒ 内存 meta 里的指针**会当场消失** ⇒ 那条路测不出来 ✓
+    ///    （生产里 meta 就是文件 ✓）。
+    #[test]
+    fn switching_to_a_locked_encrypted_space_succeeds_and_never_opens_that_db() {
+        let dir = std::env::temp_dir().join(format!("shuyo-switch-locked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        let a = crate::db::space_db_path(&dir, "space-a");
+        {
+            let c = rusqlite::Connection::open(&a).unwrap();
+            crate::db::migrate(&c, "space-a").unwrap();
+        }
+        // B：加密形状（头 16 字节不是 SQLite magic ⇒ `space_db_is_encrypted` ⇒ true ✓，与既有夹具同法）
+        let b = crate::db::space_db_path(&dir, "space-b");
+        std::fs::write(&b, vec![0x41u8; 4096]).unwrap();
+
+        // 真 meta 文件（跑一次生产的 `meta_migrate` ⇒ 表都在 ✓），再挂成 `meta` 用
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let mut c = rusqlite::Connection::open_in_memory().unwrap();
+        let meta = crate::db::meta_path(&dir).display().to_string().replace('\'', "''");
+        c.execute_batch(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""))
+            .unwrap();
+        insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
+        insert_new_local_space(&c, "space-b", "B", "#e12", 2.0, 1_000).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_KEY, "space-a"],
+        )
+        .unwrap();
+
+        // 袋子：给 B 装盒子（那个测试助手**会同时**装上会话主密钥 ⇒ 随后卸掉它 ✓ ⇒ "袋里有、会话锁着"）
+        let _ = crate::space_crypto::set_space_box_for_test("space-b", &[7u8; 32], "pw-for-test");
+        crate::space_crypto::set_session_master(None).unwrap();
+        // 谓词的两条边界（判据 c 的"行为不变"那半）：
+        assert!(
+            crate::space_crypto::space_needs_passphrase("space-b"),
+            "夹具前提：B 在袋里且会话锁着 ⇒ 谓词必须 true"
+        );
+        assert!(
+            !crate::space_crypto::space_needs_passphrase("space-a"),
+            "A 不在袋里（明文）⇒ 谓词必须 false（否则明文空间的行为会被改 ✗）"
+        );
+
+        // ① 切 B ⇒ ⭐ **成功**（这就是"点了没反应"的反面 ✓）
+        switch_active_space(&mut c, "space-b", &dir).expect("切到未解锁的加密空间必须成功，而不是拒绝");
+        // ② 指针**真的改成了 B** ✓
+        let active: String = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                params![ACTIVE_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, "space-b", "切换成功后指针必须指向 B");
+        // ③ ⭐ 安全（判据 e）：主连接**不是**那个加密库 —— 停在内存库 ⇒ `main` 的路径为空 ✓
+        let main_file: String = c
+            .query_row("PRAGMA database_list", [], |r| r.get::<_, String>(2))
+            .unwrap();
+        assert_ne!(
+            main_file,
+            b.display().to_string(),
+            "⛔ 不许真的打开那个加密库（那等于绕过加密）"
+        );
+        assert_eq!(main_file, "", "锁定态 ⇒ main 应当是内存库（路径为空）");
+        // ④ 而那个库**仍然打不开** ✓（不是"顺手把它开了就看不见问题"）
+        let mut probe = rusqlite::Connection::open_in_memory().unwrap();
+        assert!(
+            crate::db::reopen_space_at(&mut probe, "space-b", &dir).is_err(),
+            "那个加密库本会话仍然打不开"
+        );
+
+        // 还原进程级全局态（KEYRING / SESSION_MASTER 是全局的 ✓；不还原会污染别的判据）
+        crate::space_crypto::set_keyring_for_test(None);
+        let _ = crate::space_crypto::set_session_master(None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

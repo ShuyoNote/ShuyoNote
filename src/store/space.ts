@@ -3,7 +3,28 @@ import { emitHostEvent } from "../lib/pluginEvents";
 import { api } from "../lib/api";
 import { refreshVault } from "../lib/vault";
 import { useNotes } from "./notes";
+import { toast } from "./toast";
 import type { WorkspaceMeta } from "../types";
+
+/**
+ * ⭐ 拒绝的**两档**要从**明确信号**判 —— 用 `space_security_overview` 的每空间读数 ✓，
+ * ⛔ **不再嗅错误字符串** ✗（内核换一句文案，那种判法就**静默失准** ✓ —— 那正是"判据要有牙"的反面 ✗）。
+ *
+ * ⚠️ 与内核那条闸门**同一算法**（`security.rs:703` `active_space_needs_passphrase`
+ *    ＝ `encrypted_on_disk && !key_available` ✓）⇒ 两侧口径**不许分家** ✓。
+ * ⚠️ 读数拿不到（命令失败／这个空间不在列表里）⇒ **保守当"别的失败"** ✓：
+ *    宁可少说一句"要口令"，也⛔ 不许凭空让用户去输口令 ✗。
+ */
+export async function refusalNeedsPassphrase(spaceId: string): Promise<boolean> {
+  try {
+    const rows = await api.spaceSecurityOverview();
+    const st = rows.find((r) => r.space_id === spaceId);
+    return Boolean(st && st.encrypted_on_disk && !st.key_available);
+  } catch (e) {
+    console.error("read space security overview failed", e);
+    return false;
+  }
+}
 
 // Active workspace (space). The DB stores `active_workspace_id`; switching calls
 // the backend then reloads pages. Built-in "默认空间" is created on first run.
@@ -19,7 +40,7 @@ interface SpaceState {
   remove: (id: string) => Promise<boolean>;
 }
 
-export const useSpaceStore = create<SpaceState>((set) => ({
+export const useSpaceStore = create<SpaceState>((set, get) => ({
   spaces: [],
   activeId: null,
   load: async () => {
@@ -79,7 +100,21 @@ export const useSpaceStore = create<SpaceState>((set) => ({
       await refreshVault();
       return true;
     } catch (e) {
+      // ⚠️ **原始报错照旧进日志** ✓（排查全靠它 ✓）—— 只是**不进用户面** ✓（判据 d ✓）。
       console.error("switch workspace failed", e);
+      // ⭐ 2026-10-10（owner 报「点了，没有弹窗」）：**拒绝不许只剩 `console.error`** ✗ ——
+      //   用户那边读成「什么都没发生」✓ ⇒ 这里给一条**看得见**的反馈 ✓（Lead 拍的改法 ① ✓）。
+      // ⚠️ Lead 的两条要求：a) 理由分两档、能分辨 ✓（判据＝`refusalNeedsPassphrase` 那个**明确信号** ✓
+      //   ⛔ 不是这句话里有没有"口令" ✗）；b) ⛔ **只报一条**，不许把「拒绝」做成「什么都点不了」✗。
+      // ⚠️ ⭐ **刻意不在这里 `refreshVault()`** ✗ —— 活动空间**没变** ⇒ 那句读数仍是原来那个空间的 ✓
+      //   （刷了它就可能把闸门写成 true ⇒ 弹出一个**不该弹**的锁屏 ✗，那正是 owner 上次那条 ✓）。
+      // ⚠️ 判据 d：这句话里 ⛔ **不许有空间 id** ✗（故回落用"那个空间"，⛔ 不是回落成 id ✗）、
+      //   ⛔ **不许有「钥匙袋」**✗、⛔ **不许有英文原文** ✗ —— 原文只走上面那行 `console.error` ✓。
+      const name = get().spaces.find((s) => s.id === id)?.name ?? "那个空间";
+      const why = (await refusalNeedsPassphrase(id))
+        ? "那个空间是加密的，要先输入口令才能进去。"
+        : "内核拒绝了这次切换，请稍后再试。";
+      toast(`切到「${name}」失败：${why}`, "error");
       return false;
     }
   },
