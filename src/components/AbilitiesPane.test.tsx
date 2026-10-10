@@ -62,24 +62,6 @@ function soonRows(): HTMLElement[] {
 /** 一行里"那一格"＝ `.set-row` 的最后一个直接子元素（就是说明文字那格）。 */
 const noteCellOf = (row: HTMLElement) => row.lastElementChild as HTMLElement;
 
-/**
- * ⭐⭐ **2026-10-10 订正**：那格原来按"「还没上架」节里的第 0 行"取 ✗ ——
- *   而「英汉词库」那条**升级成 `downloadable` 之后搬去了另一节** ⇒ ⭐ 那个位置现在是「版面分析」，
- *   它的 note 就是「还没上架」四个字 ⇒ 下面三条判据**全红**（而现象一个都没坏 ✗）。
- *   ⇒ ⭐ 改成**按那句话本身**找那格（⛔ 不靠它在哪一节、也不靠下标 ✓）：
- *     判据要钉的是「**那条长说明**不许被压成一列」，不是「它在第几节第几行」✓。
- */
-function longNoteCell(): HTMLElement {
-  const want = ecdictNoteFromSource();
-  const cells = [...host.querySelectorAll<HTMLElement>(".set-row-note")];
-  const hit = cells.find((c) => (c.textContent ?? "") === want);
-  expect(
-    hit,
-    "⭐ 全文里必须有一格的文字**逐字**等于源码里那条长说明（长说明不见了 ⇒ 判据失去对象）",
-  ).not.toBeUndefined();
-  return hit!;
-}
-
 describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", () => {
   it("⭐ a) 那一格带**明确的宽度策略**（`set-row-note`），⛔ 不是裸的 `set-row-sub`", () => {
     const rows = soonRows();
@@ -180,6 +162,25 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     expect(m, "源码里必须有 ecdict 那条 note").not.toBeNull();
     const parts = [...m![1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1].replace(/\\"/g, '"'));
     return parts.join("");
+  }
+
+  /**
+   * ⭐⭐ **2026-10-10 订正**：那格原来按"「还没上架」节里的第 0 行"取 ✗ ——
+   *   而「英汉词库」那条**升级成 `downloadable` 之后搬去了另一节** ⇒ ⭐ 那个位置现在是「版面分析」，
+   *   它的 note 就是「还没上架」四个字 ⇒ 下面三条判据**全红**（而现象一个都没坏 ✗）。
+   *   ⇒ ⭐ 改成**按那句话本身**找那格（⛔ 不靠它在哪一节、也不靠下标 ✓）：
+   *     判据要钉的是「**那条长说明**不许被压成一列」，不是「它在第几节第几行」✓。
+   *   ⚠️ **必须定义在 `describe` 内**（它要用上面的 `ecdictNoteFromSource` ✓ —— 放到文件顶层会 tsc 报错 ✗）。
+   */
+  function longNoteCell(): HTMLElement {
+    const want = ecdictNoteFromSource();
+    const cells = [...host.querySelectorAll<HTMLElement>(".set-row-note")];
+    const hit = cells.find((c) => (c.textContent ?? "") === want);
+    expect(
+      hit,
+      "⭐ 全文里必须有一格的文字**逐字**等于源码里那条长说明（长说明不见了 ⇒ 判据失去对象）",
+    ).not.toBeUndefined();
+    return hit!;
   }
 
   it("⭐ f) CSS：那一格**最多 2 行**（视觉截断生效的三件套）", () => {
