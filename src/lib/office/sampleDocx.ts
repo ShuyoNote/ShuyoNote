@@ -45,7 +45,7 @@ export type SampleElement =
   | { t: "emph"; bold?: string; italic?: string; strike?: string }
   | { t: "break" }
   | { t: "li"; numId: string; level: number; text: string }
-  | { t: "img"; media: string }
+  | { t: "img"; media: string; missing?: boolean }
   | { t: "table"; rows: string[][]; gridCols?: number };
 
 /**
@@ -124,6 +124,8 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
     `</w:numbering>`;
 
   const mediaEntries: Record<string, Uint8Array> = {};
+  /** 媒体名 → rId（⚠️ 与"字节在不在"**无关** —— `missing` 的那种也有 rId ✓）。 */
+  const mediaRid: Record<string, string> = {};
   const relEntries: string[] = [
     `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>`,
   ];
@@ -161,16 +163,17 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
         );
         break;
       case "img": {
-        if (!mediaEntries[el.media]) {
+        // ⭐ `missing: true` ⇒ **故意不写 media 那个 part**，但关系与引用照写 ✓
+        //    （这就是"保留率会掉到门槛以下"的真输入 —— 见 `imageWithoutBytesSample` ✓）
+        if (!mediaRid[el.media]) {
           mediaIndex += 1;
-          mediaEntries[el.media] = samplePng();
+          mediaRid[el.media] = `rId${10 + mediaIndex}`;
           relEntries.push(
-            `<Relationship Id="rId${10 + mediaIndex}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${el.media}"/>`,
+            `<Relationship Id="${mediaRid[el.media]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${el.media}"/>`,
           );
+          if (!el.missing) mediaEntries[el.media] = samplePng();
         }
-        // media 名 → rId：第 N 个媒体就是 rId(10+N)（newest-first 的 `mediaIndex` 与之一致 ✓）
-        const rid = `rId${10 + Object.keys(mediaEntries).indexOf(el.media) + 1}`;
-        body.push(imageParagraph(rid));
+        body.push(imageParagraph(mediaRid[el.media]));
         break;
       }
       case "table":
@@ -275,6 +278,27 @@ export function officeSamples(): OfficeSample[] {
   const big = sample("大样本.docx", "200 段 ＋ 20 列表项 ＋ 1 表（量耗时）", bigEls);
 
   return [small, full, big];
+}
+
+/**
+ * ⭐ **真输入对照（保留率门槛的"会红"那一侧）**：正文里有 **2 处图片引用**，
+ * 但 `word/media` 里**只有一张**的字节 —— 关系与引用**都在**（所以分母照数 2 ✓），
+ * 另一张取不到字节 ⇒ 图片保留率必然 **50% < 门槛 95%** ✓。
+ * ⛔ 它**不是**"坏样本"（文档能转、文字照出 ✓）⇒ 归在这里、与 `brokenSamples()` 分开 ✓。
+ */
+export function imageWithoutBytesSample(): OfficeSample {
+  const els: SampleElement[] = [
+    { t: "h", level: 1, text: "图片字节缺失的样本" },
+    { t: "p", text: "正文在这里。" },
+    { t: "img", media: "image1.png" }, // 有字节
+    { t: "img", media: "image2.png", missing: true }, // 关系在、字节**不在**
+  ];
+  return {
+    name: "图片字节缺失.docx",
+    note: "2 处图片引用里 1 张的 media 字节不在（关系照写）",
+    bytes: buildSampleDocx(els),
+    truth: countTruth(els),
+  };
 }
 
 /** 一个"应当**可读失败**"的坏样本（转不成功不算异常，必须有 code ＋ 人话 ✓）。 */
