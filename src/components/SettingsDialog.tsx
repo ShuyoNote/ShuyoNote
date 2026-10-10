@@ -25,6 +25,8 @@ import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
+// ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
+import { filterSpaces } from "../lib/spaceFilter";
 import { useNotes } from "../store/notes";
 import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
@@ -178,6 +180,10 @@ function SpacesPane() {
   const activeId = useSpaceStore((s) => s.activeId);
   const [colorFor, setColorFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // ⭐ 2026-10-10：筛选词（owner：「20+ 个空间怎么办」✓）⇒ 只影响**列表显示**：
+  //    ⛔ 不动 `spaces`、⛔ 不动"当前空间" ✗（见 `filterSpaces`：签名里根本没有 active ✓）
+  const [spaceQuery, setSpaceQuery] = useState("");
+  const shownSpaces = filterSpaces(spaces, spaceQuery);
   // 每个空间的同步目标：让「这个空间到底同不同步、同步到哪」在管理页就能看到，
   // 不用再切回同步面板逐个点开。
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
@@ -227,8 +233,26 @@ function SpacesPane() {
     <>
       <section className="set-section">
         <div className="set-section-title">全部空间（{spaces.length}）</div>
+        {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
+            ⚠️ 与侧栏那个空间切换器**共用同一份匹配**（`src/lib/spaceFilter.ts` ✓），⛔ 不各写一份 ✗。 */}
+        <input
+          className="set-space-filter sync-input"
+          value={spaceQuery}
+          onChange={(e) => setSpaceQuery(e.target.value)}
+          placeholder="筛选空间…"
+          aria-label="筛选空间"
+        />
         <div className="set-space-list">
-          {spaces.map((s) => {
+          {spaces.length === 0 ? (
+            <div className="set-space-empty">还没有空间</div>
+          ) : shownSpaces.length === 0 ? (
+            /* ⛔ 零命中**不许**只给空列表 ✗（用户会以为空间没了 ✓）⇒ 说人话 ＋ 给出路 ✓ */
+            <div className="set-space-empty">
+              没有匹配的空间
+              <button className="set-btn" onClick={() => setSpaceQuery("")}>清空筛选</button>
+            </div>
+          ) : (
+            shownSpaces.map((s) => {
             const active = s.id === activeId;
             const prof = syncProfiles[s.id];
             return (
@@ -302,7 +326,8 @@ function SpacesPane() {
                 )}
               </div>
             );
-          })}
+            })
+          )}
         </div>
         <p className="set-hint">
           点一行就能切过去（与侧栏顶部那次切换同一条路）。删除为软删除，数据仍在磁盘上，可在「存储 / 空间管理」里彻底清理。

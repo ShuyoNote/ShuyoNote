@@ -37,6 +37,8 @@ import { useTreeDrag } from "../store/treeDrag";
 import { useActivity } from "../store/activity";
 import { useWindowChrome } from "../store/windowChrome";
 import { showsServerTag, syncTagColor, syncTagTitle } from "../lib/syncTag";
+// ⭐ 2026-10-10：空间**筛选**（20+ 个空间时"眼睛在长列表里找"）—— 与设置-空间列表**共用这一份** ✓
+import { filterSpaces } from "../lib/spaceFilter";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog, chooseDialog, useInputStore } from "../store/input";
@@ -1009,6 +1011,9 @@ export function PageTree(_props: {
   // 空间面板比默认弹层宽，把尺寸告知 usePopover，靠边打开才不会被裁切。
   const spaceChooser = usePopover<HTMLButtonElement>({ width: 380, minSpace: 400 });
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
+  // ⭐ 2026-10-10：空间切换器里的**筛选词**（owner：「20+ 个空间怎么办」✓）。
+  //    ⚠️ 与设置-空间列表共用同一份匹配（`src/lib/spaceFilter.ts` ✓）—— ⛔ 不各写一份 ✗。
+  const [spaceQuery, setSpaceQuery] = useState("");
   const isDesktop = useMemo(() => (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window), []);
   // 登录/登出（auth store 的 authed 变化）会影响各空间的同步 token：登出后
   // ListSyncProfiles 里 server_url 仍在但 token 被清空，侧栏胶囊要随登出消失。
@@ -1031,6 +1036,8 @@ export function PageTree(_props: {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeSpaceId = useSpaceStore((s) => s.activeId);
   const activeSpace = spaces.find((s) => s.id === activeSpaceId);
+  // ⭐ 2026-10-10：切换器里的**筛选**（空串 ⇒ 原样全列 ✓；⛔ 不排序 ✗、⛔ 不碰当前空间 ✗）
+  const shownSpaces = filterSpaces(spaces, spaceQuery);
   const activeTheme = activeSpace?.theme ?? "";
   const activeSyncProfile = activeSpaceId ? syncProfiles[activeSpaceId] : undefined;
 
@@ -1338,11 +1345,28 @@ export function PageTree(_props: {
               <span className="space-switcher-count">{spaces.length}</span>
             </header>
 
+            {/* ⭐ 2026-10-10：**筛选框**（owner：「20+ 个空间怎么办」✓）。
+                ⚠️ 位置在**切换器头与列表之间** ⇒ `position:fixed` 与 `is-sheet`（手机底部弹层）
+                **两形态共用** ✓（⛔ 不塞进任何一支里 ✗）；匹配与设置-空间**同一份实现** ✓。 */}
+            <input
+              className="space-switcher-filter sync-input"
+              value={spaceQuery}
+              onChange={(e) => setSpaceQuery(e.target.value)}
+              placeholder="筛选空间…"
+              aria-label="筛选空间"
+            />
+
             <div className="space-switcher-list">
               {spaces.length === 0 ? (
                 <div className="space-switcher-empty">暂无工作空间</div>
+              ) : shownSpaces.length === 0 ? (
+                /* ⛔ 零命中**不许**只给一个空列表 ✗（用户会以为空间没了 ✓）⇒ 说人话 ＋ 给出路 ✓ */
+                <div className="space-switcher-empty">
+                  没有匹配的空间
+                  <button className="sync-btn" onClick={() => setSpaceQuery("")}>清空筛选</button>
+                </div>
               ) : (
-                spaces.map((s) => {
+                shownSpaces.map((s) => {
                   const active = s.id === activeSpaceId;
                   const prof = syncProfiles[s.id];
                   return (

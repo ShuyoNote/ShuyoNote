@@ -152,3 +152,65 @@ describe("设置-空间 · 点一行就切换", () => {
     expect(copy).toContain("软删除");
   });
 });
+
+// ── 空间 20+ 时的**筛选**（owner 2026-10-10：「如何用户的空间很多，比如 20+，怎么办？」）──
+// ⚠️ 这里钉的是**这一屏真的用上了**那份共用匹配（规则本身在 `src/lib/spaceFilter.test.ts` ✓，
+//    含 25 项夹具「恰好 3 个」那条 ✓）——⛔ 两处都只测纯函数 ＝ 谁都没验"接上了没有" ✗。
+describe("设置-空间 · 筛选", () => {
+  const cards = () => [...document.querySelectorAll<HTMLElement>(".set-space-card")];
+  const filter = () => document.querySelector<HTMLInputElement>(".set-space-filter")!;
+
+  /** 往**受控输入框**里打字（React 的 value setter ＋ `input` 事件 ✓）。 */
+  const type = async (el: HTMLInputElement, v: string) => {
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("a) 输入一段字 ⇒ 列表**真的变短**（只列匹配的）", async () => {
+    await render();
+    expect(cards(), "起初两个空间都要在").toHaveLength(2);
+    expect(filter(), "这一屏没有筛选框").not.toBeNull();
+
+    await type(filter(), "生活");
+
+    expect(cards(), "输入了却没有变短 ⇒ 筛选没接上").toHaveLength(1);
+    expect(cards()[0].textContent).toContain("生活");
+  });
+
+  it("b) **反向**：清空筛选 ⇒ 全部**一个不少**地回来", async () => {
+    await render();
+    await type(filter(), "生活");
+    expect(cards()).toHaveLength(1);
+
+    await type(filter(), ""); // 把筛选词清掉（最直接的那条路）
+
+    expect(cards(), "清空之后应当两个都回来（⛔ 不许把不匹配的丢掉）").toHaveLength(2);
+    expect(cards().map((c) => c.textContent).join(" ")).toContain("工作");
+  });
+
+  it("⑤ 零命中 ⇒ **说人话 ＋ 给「清空筛选」的出路**（⛔ 不许只剩一个空列表）", async () => {
+    await render();
+    await type(filter(), "zzz");
+    expect(cards(), "零命中却还有卡片").toHaveLength(0);
+    expect(document.body.textContent, "零命中没说人话 —— 用户会以为空间没了").toContain("没有匹配的空间");
+    expect(document.body.textContent, "零命中没有出路").toContain("清空筛选");
+
+    // ⭐ 那条"出路"**真的能用**（不是一句摆设）：点了 ⇒ 全部回来 ✓
+    await click(button(document.body, "清空筛选"));
+    expect(cards(), "点了「清空筛选」却没回来").toHaveLength(2);
+  });
+
+  it("c) **反向**：筛选**不许**改变「当前空间」（输字不能顺手切空间）", async () => {
+    await render();
+    await type(filter(), "生活");
+    expect(switchTo, "筛选把空间切走了").not.toHaveBeenCalled();
+    expect(useSpaceStore.getState().activeId, "筛选改了 activeId").toBe("s1");
+
+    // 被筛掉不等于"不再是当前"：清空后「当前」仍应在「工作」上 ✓
+    await type(filter(), "");
+    expect(card("工作").textContent, "筛选把「当前」标也带走了").toContain("当前");
+  });
+});
