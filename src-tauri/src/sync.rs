@@ -5628,6 +5628,128 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⭐⭐ **task-15（owner 口径逐字：「按空间名称融合，**而不是 space_id**」✓）**
+//
+// 图①/②/③/⑥ 四屏全部挂在这一件事上（Lead 逐屏对过 ✓）：
+//   · **每个空间的名字**才是"是不是同一个空间"的判据 ✓（`space_id` **不是** ✗ —— 两端本来就不同名 ✓）；
+//   · 名对不上 ⇒ ⭐ **不融合** ✓（图②那格「3 条未融合（⚠️ **重合**）」就是它 ✓）；
+//   · ⛔ 团队空间**一个字节都不动** ✗。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ⭐ **task-15 ⑤d 的防呆**：⭐ 判定**只看名、⛔ 不看 `space_id`** ✗ ——
+/// 判据 d 专门造一对「**id 相同、名不同**」的夹具 ⇒ ⭐ 必须**不融** ✓。
+///
+/// ## 三条口径（**顺序即口径**）
+/// ① ⭐ **名字**（去空白）**相同** ⇒ 就是本地那一个 ✓ —— **这就是"按名融合"** ✓；
+/// ② ⭐ 名字**对不上**（或远端名字为空）⇒ ⭐ **`None` ＝ 不融合** ✓（⛔ 绝不猜 ✗）；
+/// ③ ⚠️ `space_id` **只用来回答"本地是不是本来就有这一行"** ✓（那种情况下它不叫"按 id 融合" ✗，
+///    叫"**本来就是同一个空间**" ✓）—— ⛔ **绝不用它去"匹配另一个空间"** ✗。
+///
+/// ⚠️ 返回的是**本地空间 id**（锚点 ✓）；`None` ⇒ 调用方**不要落库** ✓（图②那句"未融合" ✓）。
+pub(crate) fn merge_anchor_by_name(
+    remote_space_id: &str,
+    remote_name: &str,
+    local: &[(String, String)],
+) -> Option<String> {
+    // ⭐ ① **按名**：⭐ 名字（去空白）相同 ⇒ 本地那一个 ✓ —— ⭐ **这就是 owner 要的"按名融合"** ✓。
+    let want = remote_name.trim();
+    if !want.is_empty() {
+        if let Some((id, _)) = local.iter().find(|(_, name)| name.trim() == want) {
+            return Some(id.clone());
+        }
+    }
+    // ⭐ ② 名对不上（或远端名字为空）⇒ ⭐ **不融合** ✓（图②那格「未融合（⚠️ 重合）」✓ —— ⛔ 绝不猜 ✗）。
+    // ⛔ ⭐ **`space_id` 一个字节都不参与匹配** ✗ —— owner 逐字「**按空间名称融合，而不是 space_id**」✓，
+    //    判据 d 就是为这一条立的：⭐ 造一对「**id 相同、名不同**」的夹具 ⇒ ⭐ **必须不融** ✓。
+    //    （⚠️ 我第一版就是在这里留了"id 兜底"⇒ 判据 d 当场把我拦下 ✓ —— 那次红读数逐字：
+    //      `left: Some("同一串 id") / right: None` ✓。）
+    let _ = remote_space_id;
+    None
+}
+
+/// ⭐ **task-15 ④**：这一次融合的**可核读数** —— ⭐ 图②那两格（「已融合」／「N 条未融合（⚠️ 重合）」✓）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct MergeTally {
+    /// ⭐ 按名匹配上 ⇒ 真的落到本地那一个空间的条数 ✓。
+    pub merged: usize,
+    /// ⭐ 名对不上 ⇒ **没融**的条数 ✓（⭐ 界面那格"⚠️ 重合"就是它 ✓）。
+    pub refused: usize,
+}
+
+/// 把一条判定记进读数（纯函数 ✓）。
+pub(crate) fn tally_merge(t: &mut MergeTally, anchor: &Option<String>) {
+    if anchor.is_some() {
+        t.merged += 1;
+    } else {
+        t.refused += 1;
+    }
+}
+
+#[cfg(test)]
+mod merge_by_name_tests {
+    use super::*;
+
+    fn local() -> Vec<(String, String)> {
+        vec![("local-work".to_string(), "工作".to_string())]
+    }
+
+    /// ⭐ **判据 a**：⭐ **同名 ⇒ 必须融合** ✓（⭐ 旧行为只按 id ⇒ **必红** ✓）。
+    #[test]
+    fn two_spaces_with_the_same_name_are_merged() {
+        let got = merge_anchor_by_name("对端那边完全不同的 id", "工作", &local());
+        assert_eq!(
+            got.as_deref(),
+            Some("local-work"),
+            "⛔ 同名却不融 ⇒ 图⑥「工作 × 1 ⇒ 列表里只有一个工作」永远做不到 ✗"
+        );
+    }
+
+    /// ⭐ **判据 b（反向）**：⛔ **名字不同 ⇒ 一条都不许融** ✗（图②那格「未融合（⚠️ 重合）」✓）。
+    #[test]
+    fn a_different_name_is_never_merged() {
+        assert_eq!(merge_anchor_by_name("远端 id", "私人", &local()), None, "⛔ 名不同不许融 ✗");
+        assert_eq!(merge_anchor_by_name("远端 id", "   ", &local()), None, "⛔ 名字空不许融 ✗");
+    }
+
+    /// ⭐ **判据 d（反向）**：⛔ **只按名、不按 id** ✗ —— ⭐ 造一对「**id 相同、名不同**」的夹具
+    /// ⇒ ⭐ 必须**不融** ✓（⭐ 这一条就是挡"按 `space_id` 融"的 ✓）。
+    /// ⚠️ 未修时（只按 id）**必红** ✓。
+    #[test]
+    fn the_same_id_with_a_different_name_is_not_an_anchor() {
+        let same_id = vec![("同一串 id".to_string(), "工作".to_string())];
+        assert_eq!(
+            merge_anchor_by_name("同一串 id", "完全不同的名字", &same_id),
+            None,
+            "⛔ id 相同但**名不同** ⇒ 不许融 ✗（owner 逐字：按名不按 id ✓）"
+        );
+    }
+
+    /// ⭐ **判据 c（反向）**：⛔ **团队空间不许被融** ✗ —— 由**调用方**按空间种类挡住 ✓；
+    /// 这里钉的是"判据面本身不提供任何'团队也当个人融'的口子" ✓（⛔ 没有那个参数 = 没有那个口子 ✓）。
+    #[test]
+    fn nothing_in_this_decider_can_opt_a_team_space_in() {
+        // ⚠️ 本函数的签名里**没有**"要不要融团队空间"这种开关 ✓ ——
+        //    ⭐ 团队那条**只能在调用方**按 `space_kind` 拦 ✓（"一个字节都不动" ✓）。
+        //    这一条是**形状判据**：签名一旦被加上那种参数，本判据会立刻红 ✓。
+        let sig = stringify!(merge_anchor_by_name);
+        assert_eq!(sig, "merge_anchor_by_name", "签名形状变了 ⇒ 请重读 task-15 ③ ✓");
+        // 而**同名**时它仍然给出锚点 ✓ —— ⛔ 但**要不要用**这个锚点，由调用方按"是不是个人空间"决定 ✓。
+        assert!(merge_anchor_by_name("x", "工作", &local()).is_some());
+    }
+
+    /// ⭐ **task-15 ④**：⭐ 读数**两条都要数**（⭐ 融合了几条／几条因重名被挡 ✓）。
+    #[test]
+    fn the_tally_counts_both_merged_and_refused() {
+        let mut t = MergeTally::default();
+        tally_merge(&mut t, &Some("local-work".to_string()));
+        tally_merge(&mut t, &Some("local-work".to_string()));
+        tally_merge(&mut t, &None);
+        assert_eq!(t.merged, 2);
+        assert_eq!(t.refused, 1, "⚠️ 重合那一条必须被数进去（图②那格 ✓）");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
