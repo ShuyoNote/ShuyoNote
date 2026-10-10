@@ -83,8 +83,12 @@ export function MobileCapture() {
       // 标题取第一行（去掉 Markdown 前缀），与「记一条」的直觉一致 ✓
       const firstLine = text.split("\n").find((l) => l.trim()) ?? "";
       const title = firstLine.replace(/^[#>\-\s\[\]x]*/i, "").trim().slice(0, 60);
-      await createPage(null, { ...content, title });
-      // `createPage` 默认会**选中新页并切回笔记** ✓ ⇒ 这里只把自己的屏栈复位 ✓
+      // ⭐ 关键：**传 `{ select: false }`** ✓ —— 默认的 `createPage` 会"选中新页 ＋
+      //   切回笔记视图" ✗，于是手机档会**落进桌面编辑器**，而那个屏按返回键**直接退出应用** ✗，
+      //   重启还回编辑器 ✗、抽屉里也没有「首页」✗ ⇒ **除 `pm clear` 没有回首页的路** ✗
+      //   （这是队友逐屏审计实测出来的，见 `_workspace/notes/2026-10-10-mobile-screen-audit.md` ✓）。
+      //   不选中 ⇒ 存完**留在首页** ✓，新笔记自己出现在「最近笔记」第一行 ✓（这就是确认 ✓）。
+      await createPage(null, { ...content, title }, { select: false });
       setScreen("home");
       setText("");
     } catch (e) {
