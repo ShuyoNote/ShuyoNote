@@ -14083,17 +14083,11 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-md);
   background: var(--card-bg);
 }
-.set-migrate-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--chip-bg);
-  color: var(--text-dim);
-  font-size: 14px;
-  margin-bottom: 2px;
-}
+/* ⚠️ 2026-10-10：这里原本是 `.set-migrate-icon`（卡片顶上那个 28px 方块图标，内容是 ↑／↓）——
+   owner 要求「去掉这两个图标」✓ ⇒ 节点已删 ✗ ⇒ **这条规则也一并删掉** ✓
+   （留着一条没人用的规则，会让下一个人以为它还承重 ✓）。
+   ⛔ 别再凭"这里看着该有个图标"把它加回来：判据在 `SettingsDialog.test.tsx`
+   （卡片里**只能**有 标题／说明／按钮 三样节点 ✓），加回来当场红 ✓。 */
 .set-migrate-name {
   font-size: 13px;
   font-weight: 600;

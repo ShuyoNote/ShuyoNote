@@ -353,8 +353,9 @@ function SpacesPane() {
             标题（导出当前空间／导入空间包）＋ 说明那句 ＋ 两个按钮**一个不少** ✓。
             ⚠️ 卡片是**内容撑高**的（`.set-migrate-card` 没写死高度 ✓）⇒ 少一个 28px 图标只是矮一截、
             **不会塌** ✓ —— 真高度由 `_tmp/scratch/migrate-card-height.mjs`（真 Chromium／Edge）量过 ✓。
-            ⚠️ 因此 `.set-migrate-icon` 那条 CSS **不再被任何元素使用** ✗ —— 本笔按边界**不动 App.css** ✓
-              （另一个写者正在那一带改 ⇒ 何时删那条规则归 Lead 协调 ✓）。 */}
+            ⚠️ 那条 CSS（原来卡片顶上那个方块图标的规则）**已随节点一起删掉** ✓
+              （2026-10-10；App.css 里留了一行墓碑注释说明为什么不能再加回来 ✓）
+              —— 防线在测试里：卡片**只能**有 标题／说明／按钮 三样节点 ✓，谁加回来当场红 ✓。 */}
         <div className="set-migrate">
           <div className="set-migrate-card">
             <div className="set-migrate-name">导出当前空间</div>

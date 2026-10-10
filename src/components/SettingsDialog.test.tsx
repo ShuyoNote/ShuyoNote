@@ -275,13 +275,18 @@ describe("设置-空间 · 加密标识", () => {
 describe("设置-空间 · 单空间迁移：⛔ 那两个图标不许再回来", () => {
   const migrateCards = () => [...document.querySelectorAll<HTMLElement>(".set-migrate-card")];
 
-  it("⭐ a) 两张卡片里都没有图标节点（`.set-migrate-icon`）＋ 也没有 ↑／↓ 那两个字符", async () => {
+  it("⭐ a) 两张卡片里**只有**那三样（标题／说明／按钮）—— ⛔ 没有第四个节点（图标）", async () => {
     await render();
 
     const cards = migrateCards();
     expect(cards.length, "两张对称卡片还在").toBe(2);
+    // ⭐ 判据**不点名图标的类名** ✗（点名了就会"类名一改、这条判据空转"✗），而是钉**子元素的确切形状** ✓：
+    //    卡片里**只能**有这三样 ⇒ 任何被塞回来的第四个节点（图标／徽章／箭头…）都会红 ✓。
+    //    ⚠️ 所以那条死 CSS（`.set-migrate-icon`）可以**跟着删掉** ✓ —— 全仓不再引用它 ✓。
+    const EXPECTED = ["set-migrate-name", "set-migrate-sub", "set-btn"];
     for (const [i, c] of cards.entries()) {
-      expect(c.querySelector(".set-migrate-icon"), `第 ${i + 1} 张卡片顶上还有图标`).toBeNull();
+      const got = [...c.children].map((el) => String(el.className).trim());
+      expect(got, `第 ${i + 1} 张卡片的子节点形状变了（多/少了东西）`).toEqual(EXPECTED);
       expect(c.textContent ?? "", `第 ${i + 1} 张卡片里还有箭头字符`).not.toMatch(/[↑↓]/);
     }
   });
