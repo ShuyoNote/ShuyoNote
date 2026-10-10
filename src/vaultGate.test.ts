@@ -238,9 +238,39 @@ describe("一个空间加密，⛔ 不锁住其它空间（owner 拍 B：明文�
     //    那是拿**文案里有没有那三个字**当代理信号 ✗；而 owner 要的就是让它说清"这是**放弃打开
     //    这个加密空间**" ⇒ 那三个字**本来就该出现** ✓。⇒ 改成按**按钮**判（真信号）：
     expect(host.querySelector('[data-testid="lock-go-enc"]'), "加密空间不许出现在去处清单里").toBeNull();
-    // ⭐ 而 owner 逐字要的「放弃打开加密空间」必须**看得出来** ✓（⛔ 不许写成"关掉应用" ✗）
-    expect(box, "文案要让用户看出这是在**放弃打开**这个加密空间").toContain("放弃打开");
+    // ⭐ b) 反向：「放弃打开」的意思**必须由上面那段说明承担** ✓
+    //    ⚠️ 2026-10-10 订正这条判据的口径：原先它打在**整块**的 `textContent` 上 ✗ ⇒
+    //    「说明被删了、而按钮上还留着『放弃打开它，』」时它**照样绿** ✗（又是一个代理信号 ✓）。
+    //    ⇒ 改成**指名那段说明**：按钮去前缀之后，"放弃"的语义就只剩它一个承重墙了 ✓
+    const lead = escapeBox()!.querySelector(".lock-forgot-lead")!.textContent ?? "";
+    expect(lead, "⭐ 「放弃打开」的意思必须在那段说明里（⛔ 别顺手把整块文案删干净）").toContain("放弃打开");
     expect(box, "⛔ owner 没选「关掉应用」那条").not.toContain("关掉应用");
+  });
+
+  it("⭐ a3) 按钮只留「去「<名字>」」：⛔ 前缀一个字都不许有 ＋ 每颗带名字 ＋ 数量＝明文空间数", async () => {
+    // owner 2026-10-10 的截图那一排（工作／运营／山焦招标…）⇒ 去掉前缀后每颗都短一截 ✓
+    const plains = ["工作", "运营", "山焦招标"];
+    mocks.overview.mockResolvedValue([encView("enc"), ...plains.map((n) => plainView(n))]);
+    mocks.workspaces.mockResolvedValue([
+      { id: "enc", name: "加密空间" },
+      ...plains.map((n) => ({ id: n, name: n })),
+    ]);
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+
+    await render();
+
+    const box = escapeBox();
+    expect(box, "有明文空间 ⇒ 那一段必须在").not.toBeNull();
+    const btns = [...box!.querySelectorAll("button")];
+    // ⭐ d) 回归闸：按钮数量**等于**明文空间数（⛔ 别顺手改成只给一个 ✗）
+    expect(btns.length, "明文空间有几个就要给几条路").toBe(plains.length);
+    for (const [i, b] of btns.entries()) {
+      const t = b.textContent ?? "";
+      // ⭐ a) 前缀必须去掉（⭐ 旧行为**必红** —— owner 那张截图就是红读数 ✓）
+      expect(t, `第 ${i + 1} 颗按钮不许再带「放弃打开它，」前缀`).not.toContain("放弃打开");
+      // ⭐ c) 每颗仍要带自己的空间名（⛔ 不许出现一排光秃秃的「去」✗）
+      expect(t, `第 ${i + 1} 颗按钮要带上空间名「${plains[i]}」`).toContain(plains[i]);
+    }
   });
 
   it("⭐ a2) 点一下就换过去：闸门随之放开，明文空间**直接可用**", async () => {
