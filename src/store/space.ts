@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { emitHostEvent } from "../lib/pluginEvents";
 import { api } from "../lib/api";
+import { refreshVault } from "../lib/vault";
 import { useNotes } from "./notes";
 import type { WorkspaceMeta } from "../types";
 
@@ -65,6 +66,17 @@ export const useSpaceStore = create<SpaceState>((set) => ({
       //   ⛔ 本笔**刻意不给 `loadPages` 加防重入/去重** ✗ —— 那是**改行为**（两个并发调用者会共享一次读，
       //   而"第二个拿到的是不是它要的那一份"没人答得上来）⇒ 属于另一笔 ✓。
       await useNotes.getState().loadPages();
+      // ⭐ 2026-10-10（本笔）：**切完还要重读一次口令锁读数** ✗ —— 否则界面**不知道活动空间换类型了** ✓。
+      //
+      // ⭐ 为什么必须有（owner 亲口问的「用户从明文空间，切换到加密空间怎么办？」✓）：
+      //   `vaultState().locked` 原先只在**三处**被刷新 —— 挂载 ✓／开·关加密后 ✓／解锁后 ✓
+      //   ⇒ ⭐ **切空间不刷新** ✗ ⇒ 启动时是明文空间（`LOCKED=false` ✓）⇒ 之后切到**加密**空间
+      //     界面那边仍是 `locked=false` ⇒ 闸门 `activeSpaceEncrypted && locked` **判为 false** ✗
+      //     ⇒ **不弹锁屏**，而那个空间其实读不出来 ✗（owner 报的正是这个 ✓）。
+      //   ⇒ 读一次真读数，闸门就自己判对了 ✓（⛔ 判定**不在前端**做 ✗ —— 那是 owner 没选的 B ✓）。
+      // ⚠️ `refreshVault()` 自己 `catch` 掉异常 ⇒ 它**不会**把切换弄成失败 ✓
+      //   （返回值语义仍与以前一致 ✓）。
+      await refreshVault();
       return true;
     } catch (e) {
       console.error("switch workspace failed", e);
