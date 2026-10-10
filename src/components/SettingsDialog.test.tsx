@@ -12,6 +12,12 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+/** 判据 c) 要读**真的** CSS 规则（⛔ 不是凭印象说"卡片不会塌"✗）。 */
+const APP_CSS = resolve(dirname(fileURLToPath(import.meta.url)), "../App.css");
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -254,5 +260,69 @@ describe("设置-空间 · 加密标识", () => {
     seed();
     await render();
     expect(card("加密的").textContent, "同步状态那一格被标识顶掉了").toContain("仅本机");
+  });
+});
+
+// ⭐ 2026-10-10（owner **第二次**提：「去掉这两个图标」）：
+//   「单空间迁移」两张卡片顶上原本各有一个方块图标（↑ ／ ↓）✗ ⇒ owner 要只留 **标题 ＋ 说明 ＋ 按钮** ✓。
+//   ⚠️ 上一次提过、**没落** ✗ ⇒ 所以判据里要有两条**反向**（挡"顺手把整块删了"✗）＋ 一条"卡片别塌" ✓：
+//     · a) 结构级：图标节点不在了 ✓
+//     · b) 反向：标题 ＋ 说明 ＋ 两个按钮**都还在** ✓
+//     · c) 卡片**不会塌**：那两条规则里**没有**写死高度 ✓（内容撑高 ⇒ 少一个 28px 图标只是矮一截 ✓）
+//   ⚠️ ⭐ **c) 的"真高度"不在这个文件里量** ✗ —— happy-dom **没有布局引擎** ✗，
+//      所以真高度由 `_tmp/scratch/migrate-card-height.mjs`（真 Chromium／Edge，走仓库自己的
+//      `scripts/lib/launch-chrome.mjs`）量，读数写进提交信息与汇报 ✓（⛔ 不假装这里量过 ✗）。
+describe("设置-空间 · 单空间迁移：⛔ 那两个图标不许再回来", () => {
+  const migrateCards = () => [...document.querySelectorAll<HTMLElement>(".set-migrate-card")];
+
+  it("⭐ a) 两张卡片里都没有图标节点（`.set-migrate-icon`）＋ 也没有 ↑／↓ 那两个字符", async () => {
+    await render();
+
+    const cards = migrateCards();
+    expect(cards.length, "两张对称卡片还在").toBe(2);
+    for (const [i, c] of cards.entries()) {
+      expect(c.querySelector(".set-migrate-icon"), `第 ${i + 1} 张卡片顶上还有图标`).toBeNull();
+      expect(c.textContent ?? "", `第 ${i + 1} 张卡片里还有箭头字符`).not.toMatch(/[↑↓]/);
+    }
+  });
+
+  it("⭐ b) 反向：标题 ＋ 说明 ＋ 两个按钮**都还在**（⛔ 不许顺手把整块删了）", async () => {
+    await render();
+
+    const text = document.body.textContent ?? "";
+    expect(text, "左卡标题").toContain("导出当前空间");
+    expect(text, "右卡标题").toContain("导入空间包");
+    expect(text, "左卡说明那一句").toContain("打包成一个 zip");
+    expect(text, "右卡说明那一句").toContain("绝不覆盖现有空间");
+
+    // 两个动作按钮：按**文字**找（⛔ 不按下标 —— 下标一变这条就变成空转 ✓）
+    // ⚠️ ⛔ **别用 `.sort()` 去比顺序** ✗：这两条文案**首字相同**（都是「导」）⇒ 默认 `.sort()`
+    //    按**码位**比第二个字（入 U+5165 < 出 U+51FA）⇒ 结果与**读的顺序**相反 ✗
+    //    （我第一版就这么写，于是这条判据**因为排序**变红、而不是因为产品 ✗ ⇒ 改成与顺序无关 ✓）
+    const btns = [...document.querySelectorAll<HTMLButtonElement>(".set-migrate-card .set-btn")].map(
+      (b) => (b.textContent ?? "").trim(),
+    );
+    expect(btns.length, "迁移卡片里恰好两个动作按钮").toBe(2);
+    expect(btns, "「导出…」「导入…」两个按钮都要在").toEqual(
+      expect.arrayContaining(["导出…", "导入…"]),
+    );
+  });
+
+  it("⭐ c) 卡片**不会塌**：那两条规则里没有写死高度 ＋ 三样可见内容各自都在", async () => {
+    await render();
+
+    const css = readFileSync(APP_CSS, "utf8");
+    for (const sel of [".set-migrate-card", ".set-migrate"]) {
+      const m = new RegExp(`\\${sel}\\s*\\{([^}]*)\\}`).exec(css);
+      expect(m, `${sel} 的规则不见了`).not.toBeNull();
+      expect(/\bheight\s*:/.test(m![1]), `${sel} 写死了高度 ⇒ 少一个子节点就可能塌`).toBe(false);
+    }
+
+    // 结构级：卡片里那三样可见内容**各自**还在（真高度见文件头那条说明 ⇒ 由 Edge 那次量 ✓）
+    for (const [i, c] of migrateCards().entries()) {
+      expect(c.querySelector(".set-migrate-name"), `第 ${i + 1} 张：标题`).not.toBeNull();
+      expect(c.querySelector(".set-migrate-sub"), `第 ${i + 1} 张：说明`).not.toBeNull();
+      expect(c.querySelector(".set-btn"), `第 ${i + 1} 张：按钮`).not.toBeNull();
+    }
   });
 });

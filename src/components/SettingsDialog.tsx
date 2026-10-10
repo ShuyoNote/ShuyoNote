@@ -348,9 +348,15 @@ function SpacesPane() {
 
       <section className="set-section">
         <div className="set-section-title">单空间迁移</div>
+        {/* ⭐ 2026-10-10（owner **第二次**提：「去掉这两个图标」）：两张卡片顶上原本各有一个方块图标
+            （`.set-migrate-icon`，写的是 ↑ ／ ↓）✗ ⇒ **只删图标** ✓：
+            标题（导出当前空间／导入空间包）＋ 说明那句 ＋ 两个按钮**一个不少** ✓。
+            ⚠️ 卡片是**内容撑高**的（`.set-migrate-card` 没写死高度 ✓）⇒ 少一个 28px 图标只是矮一截、
+            **不会塌** ✓ —— 真高度由 `_tmp/scratch/migrate-card-height.mjs`（真 Chromium／Edge）量过 ✓。
+            ⚠️ 因此 `.set-migrate-icon` 那条 CSS **不再被任何元素使用** ✗ —— 本笔按边界**不动 App.css** ✓
+              （另一个写者正在那一带改 ⇒ 何时删那条规则归 Lead 协调 ✓）。 */}
         <div className="set-migrate">
           <div className="set-migrate-card">
-            <div className="set-migrate-icon">↑</div>
             <div className="set-migrate-name">导出当前空间</div>
             <div className="set-migrate-sub">「{activeName}」及其引用到的附件，打包成一个 zip</div>
             <button className="set-btn" onClick={() => void exportCurrentSpace(activeName)}>
@@ -358,7 +364,6 @@ function SpacesPane() {
             </button>
           </div>
           <div className="set-migrate-card">
-            <div className="set-migrate-icon">↓</div>
             <div className="set-migrate-name">导入空间包</div>
             <div className="set-migrate-sub">始终新建一个空间，绝不覆盖现有空间</div>
             <button className="set-btn" onClick={() => void importSpacePackage()}>
