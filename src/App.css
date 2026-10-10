@@ -13652,6 +13652,19 @@ p:has(> .editor-drawing-container) {
   margin-top: 2px;
 }
 
+/* ⚠️ 「还没上架」那节里那一格（说明文字 note）—— 它是 `.set-row` 的**直接 flex 子项** ✗
+   ⇒ ⛔ **必须**带 `min-width: 0`：不加它，flex 的自动最小尺寸 ＝ min-content ＝ **一个汉字**
+   （CJK 可以在任何字之间断行）⇒ 长说明会被压成"一个字一列" ✗。
+   owner 2026-10-10 截图：只有 ECDICT 那条长，所以只有它看得出坏 ✓；
+   同页 `.set-row-text` **早就有** `min-width: 0` ✓ —— 少的一直是这一格 ✗。
+   `flex: 0 1 auto`＝按内容自然宽、**必要时才收缩** ⇒ 短说明（其它四条）观感不变 ✓。
+   ⛔ 别把 `min-width: 0` 删掉：`src/components/AbilitiesPane.test.tsx` 的判据 d) 就是钉它的 ✓ */
+.set-row-note {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: right;
+}
+
 /* ---------------------------------------------------------------------------
  * 插件面板：卡片网格。之前一行一个「名字 + 开关」太素；改成图标 + 状态灯 +
  * 命令数的卡片，视觉上更有层次，但强弱对比仍靠开关与底色，绝不彩色堆砌。
