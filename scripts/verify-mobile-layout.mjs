@@ -15,15 +15,48 @@
 //   pnpm test:mobile-layout            # 有失败即非零退出
 //   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-layout
 //   node scripts/verify-mobile-layout.mjs --shots /tmp/shots   # 顺便存图
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { pinAppLanguage } from "./lib/pin-locale.mjs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
 const PHONE = { width: 390, height: 844 };   // iPhone 14/15 逻辑分辨率
 const DESKTOP = { width: 1280, height: 800 };
+
+/**
+ * ⭐ 2026-10-10：手机档**「阅读屏」**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
+ * 落地带来的**门禁搬家**（台账 R192：以效果图为准 ⇒ 改测试 ✓；⛔ 不许为保住旧断言扭曲产品 ✗）。
+ *
+ * 事实（逐字）：`App.tsx` 手机分支现在是
+ *   `currentId ? (isMobile ? <MobileRead …/> : <NoteEditor …/>) : …`
+ * ⇒ **窄视口里开着页时不再渲染桌面编辑器** ⇒ 本节原先"经编辑器工具条开右栏三块面板"
+ *   在窄视口上**必然找不到元素** ✗。
+ *
+ * ⚠️ **判据口径：只看宽度**（`useMobile()` 的真口径）——⛔ 不是"窄**或**矮" ✗。三条依据：
+ *   ① `src/hooks/useMobile.ts:26` 逐字 `MOBILE_QUERY = \`(max-width: 768px)\``；同文件 §31-44
+ *      逐字写「**只看宽度**…792×360 的横屏手机**仍然放得下**'侧栏 + 正文'两列」；
+ *      "窄**或**矮"是**浮层形态**（`isMobileOverlayViewport`）的口径，不是"会不会换掉编辑器" ✗。
+ *   ② 本轮实测（Chromium，四个视口）：`390×844`/`320×568` ⇒ `mobile-read` 在、编辑器工具条不在；
+ *      **`792×360`（矮但不窄）⇒ 编辑器工具条在、`mobile-read` 不在** ✓。
+ */
+const REPO_ROOT_LAYOUT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const MOBILE_BREAKPOINT_PX = (() => {
+  const src = readFileSync(join(REPO_ROOT_LAYOUT, "src", "hooks", "useMobile.ts"), "utf8");
+  const m = src.match(/export const MOBILE_BREAKPOINT_PX\s*=\s*(\d+)/);
+  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/hooks/useMobile.ts 改了？）—— 断点必须与源码同源");
+  return Number(m[1]);
+})();
+/** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
+const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
+/** 挂在**桌面编辑器工具条**上的右栏三块面板（窄视口上它们的入口已不存在 ⇒ 搬到桌面档 ✓）。 */
+const RIGHT_PANELS = [
+  { kind: "discuss", name: "讨论" },
+  { kind: "notify", name: "通知" },
+  { kind: "toc", name: "目录" },
+];
 
 const shotsArg = process.argv.indexOf("--shots");
 const SHOTS = shotsArg > -1 ? process.argv[shotsArg + 1] : null;
@@ -399,11 +432,7 @@ async function main() {
     // ⚠️ **2026-10-06（owner：「关闭这个顶部工具栏」）**：右侧面板的**可见**入口从"顶端四颗"
     //    搬到了**编辑器工具条**（「⋯ 更多」里的讨论/通知 ＋ 那一排里的「目录」）。
     //    本节验的仍是同一件事（窄屏上面板是叠加、不许把主区挤走 ✓），只是**开面板的手**换了 ✓。
-    const RIGHT_PANELS = [
-      { kind: "discuss", name: "讨论" },
-      { kind: "notify", name: "通知" },
-      { kind: "toc", name: "目录" },
-    ];
+    // ⚠️ `RIGHT_PANELS` 已**提到文件顶部**（2026-10-10：桌面段也要用它 ⇒ 别再在函数里声明一份 ✗）。
     const mainGeometry = () => {
       const main = document.querySelector(".main");
       if (!main) return null;
@@ -415,6 +444,40 @@ async function main() {
         winWidth: innerWidth,
       };
     };
+    if (replacesDesktopEditor(PHONE)) {
+      // ⭐ 2026-10-10 **换对象**（规格 §4.4）：窄视口里开着页时渲染的是移动端**阅读屏** ⇒
+      //   原「三块右栏面板」的入口在窄视口上**已不存在**（桌面编辑器不在 ⇒ 没有那条工具条）。
+      //   ⛔ 没删断言：**同一批几何断言**（主区不让位 / 不超出视口 / 无横向溢出）改成量**阅读屏** ✓；
+      //   那三块面板的**入口存在性**断言**搬到桌面档**（本文件下面桌面段 ✓）。
+      await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await sleep(2000);
+      const readShot = await phone.evaluate(() => {
+        const root = document.querySelector('[data-testid="mobile-read"]');
+        const back = document.querySelector(".mread-back");
+        const b = back ? back.getBoundingClientRect() : null;
+        return { hasRead: !!root, backW: b ? Math.round(b.width) : 0, backH: b ? Math.round(b.height) : 0 };
+      });
+      ok(readShot.hasRead, '窄视口开着页时渲染移动端阅读屏（[data-testid="mobile-read"]）');
+      ok(
+        readShot.backW >= 44 && readShot.backH >= 44,
+        `阅读屏顶栏返回键命中区 ≥44×44（实际 ${readShot.backW}x${readShot.backH}）`,
+      );
+      const gRead = await phone.evaluate(mainGeometry);
+      console.log(`\n【手机 · 移动端阅读屏（窄视口不再渲染桌面编辑器）】`);
+      ok(gRead.paddingRight === "0px", `阅读屏主区不让位（padding-right=${gRead.paddingRight}）`);
+      ok(gRead.right <= gRead.winWidth, `阅读屏主区不超出视口（right=${gRead.right} ≤ ${gRead.winWidth}）`);
+      ok(gRead.docWidth <= gRead.winWidth, `阅读屏无横向溢出（文档宽=${gRead.docWidth}）`);
+      const backClicked = await phone.evaluate(() => {
+        const b = document.querySelector(".mread-back");
+        if (!b) return false;
+        b.click();
+        return true;
+      });
+      await sleep(1000);
+      const backHome = await phone.evaluate(() => !!document.querySelector('[data-testid="mobile-home"]'));
+      ok(backClicked && backHome, `阅读屏返回键能回到**首页**（点了=${backClicked}，到首页=${backHome}）`);
+      await shot(phone, "05-phone-read");
+    } else {
     for (const p of RIGHT_PANELS) {
       // 每次重新加载，避免上一个面板的开关状态串进来
       await phone.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
@@ -458,6 +521,7 @@ async function main() {
       ok(g.right <= g.winWidth, `主区不超出视口（right=${g.right} ≤ ${g.winWidth}）`);
       ok(g.docWidth <= g.winWidth, `无横向溢出（文档宽=${g.docWidth}）`);
       await shot(phone, `05-phone-panel-${p.kind}`);
+    }
     }
     // ---------- 小屏 320×568：模板中心不许退回"一张卡占满整屏" ----------
     // 390px 只是主流尺寸。320px（iPhone SE / 老 Android）可用宽只有 320 − 14×2 = 292px：
@@ -592,6 +656,60 @@ async function main() {
       );
     }
     await shot(desktop, "07-desktop-template-center");
+
+    // ⭐ 2026-10-10 **搬家（不删）**：原先在**窄视口**验的那三块右栏面板（讨论 / 通知 / 目录）
+    //   的「入口真的在、点得开」，现在跑在**桌面档** ✓ —— 窄视口里开着页时渲染的是移动端
+    //   **阅读屏**（规格 §4.4），那条编辑器工具条**根本不在** ✗ ⇒ 入口断言必须跟着编辑器走 ✓。
+    //   ⚠️ 这里**不重复**窄屏那套「叠加 / `padding-right=0`」几何：桌面是**固定侧板**、
+    //      本来就该让位 ⇒ 硬搬会造**假红** ✗（那三条仍在窄视口上量，只是对象换成了阅读屏 ✓）。
+    for (const p of RIGHT_PANELS) {
+      await desktop.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+      await sleep(1800);
+      await desktop.evaluate(() => {
+        const row = document.querySelector('.tree-row[data-node-kind="page"]');
+        if (row) row.click();
+      });
+      await sleep(1300);
+      const openedVia = await desktop.evaluate((kind) => {
+        if (kind === "toc") {
+          const b = Array.from(document.querySelectorAll(".toolbar-btn")).find((x) =>
+            (x.getAttribute("title") || "").startsWith("目录"),
+          );
+          if (!b) return "没有「目录」那颗";
+          b.click();
+          return "工具条·目录";
+        }
+        const more = document.querySelector(".editor-toolbar-more .toolbar-btn");
+        if (!more) return "没有「⋯ 更多」";
+        more.click();
+        return "menu";
+      }, p.kind);
+      if (openedVia === "menu") {
+        await sleep(400);
+        const label = p.kind === "discuss" ? "讨论" : "通知";
+        const hit = await desktop.evaluate((text) => {
+          const item = Array.from(document.querySelectorAll(".editor-more-menu .toolbar-menu-item")).find((x) =>
+            (x.textContent || "").includes(text),
+          );
+          if (item) item.click();
+          return !!item;
+        }, label);
+        if (!hit) {
+          ok(false, `桌面 · ${p.name}：编辑器工具条「⋯ 更多」里没有这一项`);
+          continue;
+        }
+      } else if (openedVia !== "工具条·目录") {
+        ok(false, `桌面 · ${p.name}：找不到入口（${openedVia}）`);
+        continue;
+      }
+      await sleep(1100);
+      const dg = await desktop.evaluate(mainGeometry);
+      console.log(`\n【桌面 · 打开「${p.name}」（经 ${openedVia}）】`);
+      ok(dg.right <= dg.winWidth, `桌面主区不超出视口（right=${dg.right} ≤ ${dg.winWidth}）`);
+      ok(dg.docWidth <= dg.winWidth, `桌面无横向溢出（文档宽=${dg.docWidth}）`);
+      await shot(desktop, `07-desktop-panel-${p.kind}`);
+    }
+
     await deskCtx.close();
   } finally {
     await browser.close();

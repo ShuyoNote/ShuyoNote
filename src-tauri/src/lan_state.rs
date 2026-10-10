@@ -345,9 +345,10 @@ fn spawn_background_round(
 pub fn announces_for(
     local_device_id: &str,
     device_name: &str,
+    short_id: &str,
     profiles: &[(String, String, String)],
 ) -> Vec<lan::LanAnnounce> {
-    announces_for_with_mesh(local_device_id, device_name, profiles, &[])
+    announces_for_with_mesh(local_device_id, device_name, short_id, profiles, &[])
 }
 
 /// ⭐★ **2026-10-09（task-8「设备直连」）**：**这一轮该发哪些公告** —— 产品路径的**唯一入口** ✓。
@@ -383,6 +384,13 @@ pub(crate) fn announces_for_this_round(
     profiles: &[(String, String, String)],
     mesh_bases: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
+    // ⭐ **08-b②（合 `origin/dev` 时并进来）**：本机短标识**在本函数里读一次** ✓ ——
+    //    本函数**每轮只调一次** ⇒ 这就是"一轮读一次" ✓，⛔ **不是"一条公告读一次"** ✗
+    //    （dev 那侧把它写在 `start()` 的调用点上；⭐ 收进唯一入口后**两件事只有一处管** ✓，
+    //     且 ⛔ 不必去动 `mesh.rs`：⭐ 那里既有 4 参调用点、⭐ 还有一条**源码级判据**盯着这行文本 ✓）。
+    //    拿不到 ⇒ **如实用空串** ✓（对端显示「对方没报短标识」✓），
+    //    ⛔ **绝不回落成 `device_id` 前几位** ✗。
+    let short_id = local_short_id(c).unwrap_or_default();
     // ⭐ 本笔的修：把档案里的 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）——
     //   与窗口服务（`window_serve_space` ✓）和 `mesh_bases` 的键**同一把尺** ✓。
     //   ⚠️ 红读数（改前逐字的行为 ＝ 下面这行换成 `profiles.to_vec()`）：
@@ -391,7 +399,9 @@ pub(crate) fn announces_for_this_round(
         .iter()
         .map(|(s, url, ws)| (window_serve_space(c, s, ws), url.clone(), ws.clone()))
         .collect();
-    announces_for_with_mesh(local_device_id, device_name, &resolved, mesh_bases)
+    // ⭐ 两段合起来：**唯一入口**（把空间解析对 ✓）＋ **短标识**（跟着公告出去 ✓）——
+    //    ⛔ 少任何一半都会丢东西：少了前者 ⇒ 个人空间 0 条公告；少了后者 ⇒ 公告里没短标识。
+    announces_for_with_mesh(local_device_id, device_name, &short_id, &resolved, mesh_bases)
 }
 
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
@@ -406,6 +416,7 @@ pub(crate) fn announces_for_this_round(
 pub fn announces_for_with_mesh(
     local_device_id: &str,
     device_name: &str,
+    short_id: &str,
     profiles: &[(String, String, String)],
     mesh_bases: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
@@ -426,11 +437,13 @@ pub fn announces_for_with_mesh(
         if !is_fully_bound(space_id, server_url) && mesh_base.is_none() {
             continue;
         }
-        let mut a = lan::announce_for_own_hub(dev, device_name, url, space)
+        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space)
             .unwrap_or_else(|| lan::LanAnnounce {
                 v: lan::WIRE_VERSION,
                 device_id: dev.to_string(),
                 device_name: device_name.trim().to_string(),
+                // ⭐ 08-b②：那一格**同样显式给**（这个兜底分支也是产出点 ✓）
+                short_id: short_id.trim().to_string(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
                 // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
@@ -486,7 +499,11 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
         crate::sync::device_id(&c).unwrap_or_default()
     };
-    let device_name = host_name();
+    let device_name = {
+        let db = app.state::<Db>();
+        let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+        local_device_name(&c)
+    };
     let _ = STARTED.set(());
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -646,6 +663,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //    它在发之前把 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）。
                 //    ⛔ 不要再退回"把 `profiles` 直接喂给 `announces_for_with_mesh`" ✗
                 //    （那就是今天这条断点：`''` 与暗号**两把尺不同名** ⇒ 一条公告都发不出去 ✓）。
+                // ⭐ **08-b②（合 `origin/dev`）**：本机短标识**在唯一入口里读**（一轮一次 ✓）——
+                //    ⛔ 别挪回这里当"调用点自己读" ✗：`mesh.rs` 既有 4 参调用点、又有一条
+                //    **源码级判据**盯着这一行的文本（见 `mesh.rs::…` 那条）⇒ 两边会打架 ✓。
                 //    ⚠️ 锁只在这一个小块里拿（不在 `.await` 上跨着 ✓）：算完就把清单移出去发。
                 let announced = {
                     let db = app2.state::<Db>();
@@ -696,7 +716,47 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 本机名（公告里的 `device_name`，只给人看）：拿不到就留空，**不编**一个假的。
+/// `sync_state` 里**用户自己设的**本机名（规格 `merge-semantics.md:150` 逐字
+/// 「**名字是用户自己起的**」✓）—— 键与 `device_id` 同一个表 ✓（`crate::sync::get_meta_state` ✓）。
+///
+/// ⚠️ 空串/纯空白**不算设过** ✓（否则用户清空一次就再也回不到主机名 ✗）。
+fn stored_device_name(c: &rusqlite::Connection) -> Option<String> {
+    crate::sync::get_meta_state(c, KEY_DEVICE_NAME)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// ⭐ **本机名的回退链**（2026-10-10；纯函数 ⇒ 可单测 ✓）：
+/// ① **用户设的名** ⇒ ② 没有就**主机名** ⇒ ③ 仍然空 ⇒ **一个非空的如实默认** ✓。
+///
+/// ⛔ 三档都**不许**回落成 `device_id`（或它的前几位／哈希）✗ —— 规格逐字禁 ✓
+/// （同一条也写在 `sync.rs` 的 `NearbyPeer::device_name` 注释里 ✓）；
+/// ⛔ 也**不许**返回空串 ✗ —— 修前 `host_name()` 拿不到环境变量就返回空 ✗，
+/// 于是对端只能显示一个空白名字 ✗（`lan.rs` 那侧 `trim()` 之后确实会判成"没报名字" ✓）。
+fn resolve_local_name(stored: Option<&str>, host: &str) -> String {
+    if let Some(n) = stored.map(str::trim).filter(|n| !n.is_empty()) {
+        return n.to_string();
+    }
+    let h = host.trim();
+    if !h.is_empty() {
+        return h.to_string();
+    }
+    DEFAULT_DEVICE_NAME.to_string()
+}
+
+/// 本机名（公告里的 `device_name`，只给人看 ✓）＝ 回退链的**取数入口** ✓。
+fn local_device_name(c: &rusqlite::Connection) -> String {
+    resolve_local_name(stored_device_name(c).as_deref(), &host_name())
+}
+
+/// `sync_state` 里那个键 ✓（与 `KEY_DEVICE_ID` 同在 `crate::sync` 的口径下 ✓）。
+const KEY_DEVICE_NAME: &str = "device_name";
+
+/// 主机名与用户设置都拿不到时的**如实默认** ✓（⛔ 不是编造的身份 ✗；也不含任何码 ✓）。
+const DEFAULT_DEVICE_NAME: &str = "未命名设备";
+
+/// 主机名（公告里的第三个回退档，只给人看）：拿不到就留空，**不编**一个假的
+/// （⇒ 交给 [`resolve_local_name`] 的第三档 ✓）。
 fn host_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -814,6 +874,73 @@ mod mesh_serve_space_tests {
             "room-123",
             "个人空间没有 space_id ⇒ 窗口/公告必须报**配对暗号**（报空串 ⇒ 对端永远匹配不上 ✗）"
         );
+    }
+
+    /// ⭐⭐ **合 `origin/dev` 的 08-b②**：短标识**真的进公告** ✓ —— 而"拿不到"⇒ **如实空串** ✓。
+    ///
+    /// ⚠️ 三种情形都要判，⛔ 少一种就会漏掉一种坏法：
+    /// · ① 有 ⇒ **逐字进公告** ✓（只判"能拿到"⇒ 看不出"`short_id` 压根没进公告"✗：那样每台设备都报空，
+    ///   对端全都显示「对方没报短标识」✓）；
+    /// · ② **没有** ⇒ `local_short_id` **当场生成并落库**（⭐ dev 的设计：`short_id_or_init` 自愈 ✓）
+    ///   ⇒ 公告里是一个**合法短标识**、⭐ **不是 `device_id` 前几位** ✗、⭐ 而且**第二次是同一个**（落了库 ✓）；
+    /// · ③ **读不到**（库坏了／表没了）⇒ ⭐ **如实的空串** ✓（⛔ 不编一个、⛔ 不回落 `device_id` ✗）。
+    ///
+    /// ⚠️ 红读数（定向变异 β ＝ 入口里把 `&short_id` 恒写成 `""`）⇒ ① 红 ✓；
+    /// ⚠️ 红读数（定向变异 γ ＝ "拿不到"回落成 `device_id`）⇒ ③ 红 ✓。
+    #[test]
+    fn the_short_id_really_lands_in_the_announce_and_missing_stays_honestly_empty() {
+        let profiles = vec![(String::new(), String::new(), "ws-personal".to_string())];
+        let bases = vec![("room-123".to_string(), "http://192.168.1.5:8788".to_string())];
+        let with_room = |c: &rusqlite::Connection| {
+            c.execute(
+                "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+                [],
+            )
+            .unwrap();
+        };
+
+        // ① 有短标识 ⇒ 逐字进公告（⭐ 它就是要给对端看的那一格）
+        // ⚠️ 值必须是**合法**短标识：`SHORT_ID_ALPHABET` ＝ `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`
+        //    （**没有 `0`／`1`／`I`／`O`** ✓）⇒ ⚠️ 拿 `"T3ST1"` 当夹具会被 `short_id_or_init`
+        //    **判非法当场换掉**（⭐ 实得 `"Z8HMK"` ✗）—— ⭐ 这正是本条判据**要盯住**的行为 ✓。
+        let c = fixture();
+        with_room(&c);
+        crate::sync::set_meta_state(&c, "short_id", "K7M2Q").unwrap();
+        let got = announces_for_this_round(&c, "dev-a", "本机", &profiles, &bases);
+        assert_eq!(got.len(), 1, "前提：开了网格的个人空间要发言（{got:#?}）");
+        assert_eq!(
+            got[0].short_id, "K7M2Q",
+            "⭐ 短标识没进公告 ⇒ 对端全都显示「对方没报短标识」✗"
+        );
+        assert_ne!(got[0].short_id, got[0].device_id, "⛔ 不许回落成 device_id 前几位");
+
+        // ② 没有 ⇒ 生成并落库（自愈 ✓）；第二次必须是同一个（落了库 ✓）
+        let c2 = fixture();
+        with_room(&c2);
+        let first = announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases);
+        assert_eq!(first.len(), 1);
+        assert!(
+            !first[0].short_id.is_empty() && first[0].short_id != "dev-a",
+            "⭐ 没有短标识时应当**生成一个**（⛔ 不是空串、⛔ 不是 device_id）：得到 {:?}",
+            first[0].short_id
+        );
+        assert_eq!(
+            announces_for_this_round(&c2, "dev-a", "本机", &profiles, &bases)[0].short_id,
+            first[0].short_id,
+            "⭐ 第二次必须一样（说明**落库了** ⇒ 对端看到的是稳定的一个标识 ✓）"
+        );
+
+        // ③ 读不到（表没了）⇒ 如实空串 ✓（⛔ 不编、⛔ 不回落 device_id）
+        let c3 = fixture();
+        with_room(&c3);
+        c3.execute_batch("DROP TABLE meta.sync_state;").unwrap();
+        let got3 = announces_for_this_round(&c3, "dev-a", "本机", &profiles, &bases);
+        assert_eq!(got3.len(), 1, "短标识读不到⛔ 不该连公告一起没了 ✓");
+        assert_eq!(
+            got3[0].short_id, "",
+            "拿不到就得**如实说没有** ✓（⛔ 不许编一个 / ⛔ 不许回落 device_id）"
+        );
+        assert_ne!(got3[0].short_id, got3[0].device_id, "⛔ 更不许回落成 device_id");
     }
 
     /// 反向：团队空间照旧用 `space_id` ✓（不许串味 ✓）。
@@ -952,6 +1079,7 @@ mod tests {
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: device.to_string(),
+                short_id: "T3ST1".into(),
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -1165,7 +1293,7 @@ mod tests {
         let bases = mesh_bases_of(&[("sp-1", "http://192.168.1.5:8788")]);
 
         assert!(should_run_discovery(&profiles, &["sp-1".to_string()]), "开了网格 ⇒ 发现层要起");
-        let got = announces_for_with_mesh("dev-me", "本机", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &profiles, &bases);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
         assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
@@ -1177,7 +1305,7 @@ mod tests {
     fn a_mesh_base_overrides_the_configured_server_in_the_announce() {
         let profiles = profiles_of(&[("sp-1", "https://s.example.com")]);
         let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
-        let got = announces_for_with_mesh("dev-me", "本机", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &profiles, &bases);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://10.0.0.7:9000"), "覆盖成我自己的窗口");
     }
@@ -1188,16 +1316,16 @@ mod tests {
         // ① 半截配置（有地址没空间）：不开发现层、不发言
         let half = profiles_of(&[("", "http://192.168.1.5:8787")]);
         assert!(!should_run_discovery(&half, &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", &half, &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", &half, &[]).is_empty());
         // ② 绑上了：开，而且报的是配置地址（甲那条路）
         let bound = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         assert!(should_run_discovery(&bound, &[]));
-        let got = announces_for_with_mesh("dev-me", "本机", &bound, &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &bound, &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
         // ③ 什么都没配：不开、不发言
         assert!(!should_run_discovery(&[], &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", &[], &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", &[], &[]).is_empty());
     }
 
     /// ★ 判据 ⑥（口径 2 的直接上游）：**"绑了同步"才算绑** —— 只填了地址还没选空间
@@ -1223,18 +1351,19 @@ mod tests {
     /// 而且**每个空间一条**（一条公告只替一个空间代言，`hub_spaces` 就是那个匹配键）。
     #[test]
     fn we_announce_only_the_spaces_that_are_actually_bound() {
-        assert!(announces_for("dev-me", "本机", &[]).is_empty());
+        assert!(announces_for("dev-me", "本机", "T3ST1", &[]).is_empty());
         assert!(
-            announces_for("dev-me", "本机", &profiles_of(&[("", "http://192.168.1.5:8787")])).is_empty(),
+            announces_for("dev-me", "本机", "T3ST1", &profiles_of(&[("", "http://192.168.1.5:8787")])).is_empty(),
             "只填了地址没选空间 ⇒ 不许发言（产出的公告没人能用）"
         );
         // 没有设备身份 ⇒ 一条都不发（`decode_announce` 会以 NoDeviceId 丢掉它）
-        assert!(announces_for("  ", "本机", &profiles_of(&[("sp-1", "http://192.168.1.5:8787")])).is_empty());
+        assert!(announces_for("  ", "本机", "T3ST1", &profiles_of(&[("sp-1", "http://192.168.1.5:8787")])).is_empty());
 
         // 两个空间、地址是私有网段 ⇒ 两条，各自代言各自的空间
         let got = announces_for(
             "dev-me",
             "本机",
+            "T3ST1",
             &profiles_of(&[("sp-1", "http://192.168.1.5:8787"), ("sp-2", "http://192.168.1.5:8787")]),
         );
         assert_eq!(got.len(), 2);
@@ -1252,7 +1381,7 @@ mod tests {
     /// 而它明明还在听。
     #[test]
     fn a_device_with_nothing_to_vouch_for_still_says_it_is_here() {
-        let got = announces_for("dev-me", "本机", &profiles_of(&[("sp-1", "https://s.example.com")]));
+        let got = announces_for("dev-me", "本机", "T3ST1", &profiles_of(&[("sp-1", "https://s.example.com")]));
         assert_eq!(got.len(), 1, "没得代言也要露面（否则别人看不见这台设备）");
         assert_eq!(got[0].hub_base, None, "公网地址 ⇒ 不代言");
         assert!(got[0].hub_spaces.is_empty(), "不代言就不带空间（`resolve_base` 只认 hub_base 那一条）");
@@ -1311,5 +1440,177 @@ mod tests {
         // 于是"再等一个间隔"；宁可晚一轮，也不要在时钟乱跳时往网段里刷公告）。
         assert!(!announce_due(10_000, 5, ANNOUNCE_INTERVAL_MS));
         assert_eq!(announce_due(10_000, i64::MIN, ANNOUNCE_INTERVAL_MS), false, "极端回绕也不许 panic");
+    }
+}
+
+/// 「本机名回退链」的判据（2026-10-10，08-a①）—— **行为**读数 ✓。
+///
+/// ⭐ 这次要修的两条，各有一条判据钉住 ✓：
+///   ① **空串不许再出现** ✗（修前 `host_name()` 拿不到环境变量就返回空 ⇒ 对端显示空白 ✗）；
+///   ② ⛔ **不许回落成 `device_id` 前几位/哈希** ✗（规格逐字禁 ✓）。
+#[cfg(test)]
+mod device_name_tests {
+    use super::*;
+
+    #[test]
+    fn user_set_name_wins() {
+        assert_eq!(resolve_local_name(Some("书房的那台"), "MacBook-Pro"), "书房的那台");
+    }
+
+    #[test]
+    fn blank_stored_name_falls_back_to_host() {
+        // 用户清空一次（或数据里是空白）⇒ 回到主机名 ✓，**不是**空串 ✗
+        assert_eq!(resolve_local_name(Some("   "), "MacBook-Pro"), "MacBook-Pro");
+        assert_eq!(resolve_local_name(None, "MacBook-Pro"), "MacBook-Pro");
+    }
+
+    #[test]
+    fn never_blank_when_host_is_missing_too() {
+        // ⭐ 这就是修前的那条错：两档都拿不到 ⇒ 旧 `host_name()` 返回 **空串** ✗
+        let n = resolve_local_name(None, "");
+        assert!(!n.trim().is_empty(), "本机名**永远不许是空白** ✗（对端会显示成没名字）");
+        assert_eq!(n, DEFAULT_DEVICE_NAME);
+        assert_eq!(resolve_local_name(Some("  "), "   "), DEFAULT_DEVICE_NAME);
+    }
+
+    #[test]
+    fn never_looks_like_a_device_id_prefix() {
+        // ⛔ 规格逐字不许用 `device_id`（或其前几位/哈希）当兜底 ✓ ⇒ 兜底值里不许像 uuid/hex ✗
+        let fallback = resolve_local_name(None, "");
+        assert!(!fallback.contains('-'), "兜底名里不许出现 uuid 形状的连字符 ✗");
+        assert!(
+            fallback.chars().all(|c| !c.is_ascii_hexdigit() || !c.is_ascii()),
+            "兜底名不许是纯 ascii 十六进制（那就是 id 前几位的形状 ✗）"
+        );
+    }
+}
+
+// ─────────────── 08-a②（2026-10-10）：设备名的读写命令 ───────────────
+//
+// ⚠️ 落库位置与 `device_id` **同一张表**（`meta.sync_state` ✓，走 `crate::sync::get_meta_state`
+//   ／`set_meta_state` ✓）⇒ **不需要迁移** ✓。
+// ⚠️ 语义：**没设过 ⇒ `None`** ✓（界面据此显示"用的是主机名"✓，⛔ 不编一个假名字 ✗）；
+//    **设成空串 ⇒ 等于清掉**设置 ✓（回退链接管 ✓），⛔ 不落一个空值 ✗（那会让对端显示空白 ✗）。
+
+/// 读**用户设的**本机名（没设过／被清空 ⇒ `None` ✓）。
+#[tauri::command]
+pub fn get_device_name(db: tauri::State<'_, Db>) -> Result<Option<String>, String> {
+    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(stored_device_name(&c))
+}
+
+/// 设本机名；`name` 为空白 ⇒ **清掉设置** ✓。返回**落库后真正生效的名字** ✓
+/// （＝回退链的结果 ✓，界面拿它显示"现在叫什么"✓）。
+#[tauri::command]
+pub fn set_device_name(db: tauri::State<'_, Db>, name: String) -> Result<String, String> {
+    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        c.execute("DELETE FROM meta.sync_state WHERE key = ?1", rusqlite::params![KEY_DEVICE_NAME])
+            .map_err(|e| e.to_string())?;
+    } else {
+        crate::sync::set_meta_state(&c, KEY_DEVICE_NAME, trimmed)?;
+    }
+    Ok(local_device_name(&c))
+}
+
+// ─────────────── 08-b①（2026-10-10）：随机短标识 ───────────────
+//
+// 用途：**信任前要展示对方身份**（规格 J21：设备名 ＋ 短标识 ✓）—— 而设备名可能为空 ✓、
+// `device_id` **不许进用户可见的句子** ✗（`sync.rs:3923` 逐字禁 ✓）⇒ 需要一个**可显示**的短标识 ✓。
+//
+// ⛔ **硬要求（逐字）**：**随机生成** ✗ **不许**从 `device_id` 截断／取前缀／哈希 ✗
+//   （规格逐字：「不许回落成 `device_id` **前缀**」✗）⇒ 这里是**独立随机源** ✓，函数**不接受**
+//   任何身份输入 ✓（结构上就派生不出来 ✓）。
+// ⚠️ 长度 **4–6 字符** ✓；**必须持久化** ✓（否则重启就变 ✗ ⇒ 用户刚认过的身份下一次又变了 ✗）；
+//   落在 `meta.sync_state` 的 `short_id` 键 ✓（与 `device_id` / `device_name` **同表 ⇒ 免迁移** ✓）。
+
+/// `meta.sync_state` 里的键 ✓。
+const KEY_SHORT_ID: &str = "short_id";
+
+/// 短标识长度：**4–6** 之间取 5 ✓（够短能念、够长不易撞：32⁵ ≈ 3.3×10⁷ ✓）。
+const SHORT_ID_LEN: usize = 5;
+
+/// 字母表：**去掉易混字符**（`0/O`、`1/I`）✓ —— 它是要**念给人听/对着看**的 ✓。
+const SHORT_ID_ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 32 个 ⇒ 256 % 32 == 0，取模无偏 ✓
+
+/// 生成一个**随机**短标识 ✓（⛔ 与任何身份字段无关 ✗ —— 见上面那段硬要求 ✓）。
+fn new_short_id() -> String {
+    let raw = uuid::Uuid::new_v4();
+    let bytes = raw.as_bytes();
+    (0..SHORT_ID_LEN)
+        .map(|i| SHORT_ID_ALPHABET[(bytes[i] as usize) % SHORT_ID_ALPHABET.len()] as char)
+        .collect()
+}
+
+/// 短标识的**取值规则**（纯函数 ⇒ 可单测 ✓）：
+/// **已有且合法 ⇒ 原样返回** ✓（⇒ 重启后不变 ✓）；否则**新生成一个** ✓。
+fn short_id_or_init(existing: Option<&str>) -> String {
+    if let Some(v) = existing {
+        let v = v.trim();
+        let ok = (4..=6).contains(&v.len()) && v.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8)));
+        if ok {
+            return v.to_string();
+        }
+    }
+    new_short_id()
+}
+
+/// 读写口：库里没有（或值非法）就**生成并落库** ✓，有就原样用 ✓。
+fn local_short_id(c: &rusqlite::Connection) -> Result<String, String> {
+    let existing = crate::sync::get_meta_state(c, KEY_SHORT_ID);
+    let id = short_id_or_init(existing.as_deref());
+    if existing.as_deref() != Some(id.as_str()) {
+        crate::sync::set_meta_state(c, KEY_SHORT_ID, &id)?;
+    }
+    Ok(id)
+}
+
+/// 08-b① 的四条判据（Lead 照收的那四条 ✓）—— **行为**读数，不是注释 ✓。
+#[cfg(test)]
+mod short_id_tests {
+    use super::*;
+
+    #[test]
+    fn length_is_within_4_to_6() {
+        for _ in 0..64 {
+            let id = new_short_id();
+            assert!((4..=6).contains(&id.len()), "短标识长度必须在 4–6，实际 {}", id.len());
+        }
+    }
+
+    #[test]
+    fn is_random_two_calls_differ() {
+        // 32⁵ ≈ 3.3×10⁷ ⇒ 连测 16 对，撞上的概率可忽略 ✓（真撞了说明随机源没在动 ✗）
+        for _ in 0..16 {
+            assert_ne!(new_short_id(), new_short_id(), "连续两次生成相同 ⇒ 不是随机 ✗");
+        }
+    }
+
+    #[test]
+    fn never_derived_from_device_id() {
+        // ⛔ 规格逐字禁"截断／前缀／哈希 `device_id`" ✗ —— 这一条**就是**钉它的 ✓。
+        let device_id = uuid::Uuid::new_v4().to_string(); // 小写 uuid（与线上同形 ✓）
+        assert!(!device_id.starts_with(&new_short_id()));
+        // 取一批生成值，都不许出现在 device_id 里（大写字母表 ⇒ 与小写 uuid 天然不重叠 ✓）
+        for _ in 0..32 {
+            let id = new_short_id();
+            assert!(!device_id.contains(&id), "短标识不许是 device_id 的片段 ✗：{id}");
+            assert!(!device_id.to_uppercase().contains(&id), "短标识不许是 device_id 的派生 ✗：{id}");
+        }
+    }
+
+    #[test]
+    fn stable_across_restart_when_already_stored() {
+        // ⭐ "重启后不变"的**规则本身**：已有合法值 ⇒ 原样返回 ✓（不重新生成 ✗）
+        let stored = "K7M2Q";
+        assert_eq!(short_id_or_init(Some(stored)), stored);
+        assert_eq!(short_id_or_init(Some("  K7M2Q  ")), stored, "空白要折掉再判定 ✓");
+        // 库里是空/非法（老库、被手改过）⇒ 补一个新生成的 ✓（那也算"重启后有个稳定值" ✓）
+        let healed = short_id_or_init(Some(""));
+        assert!((4..=6).contains(&healed.len()));
+        let healed2 = short_id_or_init(Some("abc")); // 小写/太短 ⇒ 非法 ✓
+        assert!((4..=6).contains(&healed2.len()));
+        assert!(healed2.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8))));
     }
 }

@@ -24,12 +24,52 @@
 //   pnpm test:mobile-overlays          # 有失败即非零退出
 //   APP_URL=http://192.168.31.89:5173/ pnpm test:mobile-overlays
 //   node scripts/verify-mobile-overlays.mjs --shots /tmp/shots
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { pinAppLanguage } from "./lib/pin-locale.mjs";
 
 const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/, "") + "/";
+
+/**
+ * ⭐ 2026-10-10：手机档**「阅读屏」**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
+ * 落地带来的**门禁搬家**（台账 R192 的口径：以效果图为准 ⇒ 改测试 ✓，⛔ 不许为保住旧断言扭曲产品 ✗）。
+ *
+ * 事实（逐字）：`src/App.tsx` 手机分支现在是
+ *   `currentId ? (isMobile ? <MobileRead …/> : <NoteEditor …/>) : …`
+ * ⇒ **窄视口里开着页时不再渲染桌面编辑器** ⇒ 挂在编辑器工具条上的三层
+ *   （`emoji` / `toc` / `history`）在窄视口上**没有触发器** ✗。
+ *
+ * ⚠️ **判据口径：只看宽度**（`useMobile()` 的真口径）——⛔ 不是"窄**或**矮" ✗。
+ *   依据三条，都是**读数**不是推断：
+ *   ① `src/hooks/useMobile.ts:26` 逐字 `MOBILE_QUERY = \`(max-width: 768px)\``；同文件 §31-44
+ *      逐字写着「**只看宽度**…792×360 的横屏手机**仍然放得下**'侧栏 + 正文'两列」；
+ *      "窄**或**矮" 是**浮层形态**（`isMobileOverlayViewport`）的口径，不是"会不会换掉编辑器" ✗。
+ *   ② 本脚本自己的视口表就把 792×360 标成 `narrow: false` ✓。
+ *   ③ 本轮实测：这三层在 `narrow:true` 的两个视口上红、在 **792×360（矮但不窄）上一条没红** ✓
+ *      ⇒ 编辑器在 792×360 上**确实还在** ✓。
+ */
+const REPO_ROOT_OVERLAYS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const MOBILE_BREAKPOINT_PX = (() => {
+  const src = readFileSync(join(REPO_ROOT_OVERLAYS, "src", "hooks", "useMobile.ts"), "utf8");
+  const m = src.match(/export const MOBILE_BREAKPOINT_PX\s*=\s*(\d+)/);
+  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/hooks/useMobile.ts 改了？）—— 断点必须与源码同源");
+  return Number(m[1]);
+})();
+/** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
+const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
+/**
+ * 只在**非窄视口**跑的层（窄视口上它们的宿主不在，**或宿主已被移动端自己的屏取代**）：
+ * · `emoji` / `toc` / `history` —— 挂在**桌面编辑器工具条**上；窄视口里开着页时渲染的是
+ *   移动端**阅读屏**（规格 §4.4）⇒ 那条工具条不在 ✗；
+ * · `about`（**2026-10-10 加**）—— 窄视口里 `openAbout()` 渲染的是移动端**「关于」屏**
+ *   （`MobileAbout` ✓，规格 §4.10 ✓）⇒ 桌面那个 `.about` **不在 DOM 里** ✗
+ *   （实测逐字：`✗ 360x640 · 关于：没能打开（.shortcuts-overlay / .about 不在 DOM 里，opened=true）`）。
+ * ⭐ **换对象**（不是删断言 ✓）：窄视口改断言 `[data-testid="mobile-about"]`
+ *   （见本视口迭代开头那一段 ✓）；这几层**照旧在 `792×360` 与桌面档跑** ✓ ⇒ 覆盖面没丢 ✓。
+ */
+const DESKTOP_CHROME_ONLY_OVERLAYS = new Set(["emoji", "toc", "history", "about", "sync"]);
 
 // 断点：**窄（宽 ≤768）或矮（高 ≤520）**。两个数分别与 `useMobile.ts` 的
 // `MOBILE_BREAKPOINT_PX` / `SHORT_VIEWPORT_MAX_PX` 同源，都要在这里量一遍。
@@ -809,6 +849,155 @@ async function main() {
         shortMatches: matchMedia("(max-height: 520px)").matches,
         shortMinusOne: matchMedia("(max-height: 519px)").matches,
       }));
+
+      // ⭐ 2026-10-10 **换对象**（规格 §4.4）：窄视口上现在渲染的是移动端**阅读屏** ——
+      //   把"被搬走的那三层（图标选择器/目录/版本历史）"在窄视口的入口断言，换成**阅读屏自己的**
+      //   三件事：① 真的渲染了 ② 顶栏返回键命中区 ≥44×44 ③ 点它能回到**首页** ✓。
+      //   ⛔ 不是摆假元素骗门禁：量的就是产品真有的那三样 ✓。
+      if (replacesDesktopEditor(vp)) {
+        const mr = await safeEval(page, () => {
+          const root = document.querySelector('[data-testid="mobile-read"]');
+          const back = document.querySelector(".mread-back");
+          const b = back ? back.getBoundingClientRect() : null;
+          return {
+            hasRead: !!root,
+            hasHome: !!document.querySelector('[data-testid="mobile-home"]'),
+            backW: b ? Math.round(b.width) : 0,
+            backH: b ? Math.round(b.height) : 0,
+          };
+        });
+        ok(mr.hasRead && !mr.hasHome, `${vp.name} · 开着页时渲染移动端阅读屏（[data-testid="mobile-read"] ✓，且不是首页）`);
+        ok(mr.backW >= 44 && mr.backH >= 44, `${vp.name} · 阅读屏顶栏返回键命中区 ≥44×44（${mr.backW}x${mr.backH}）`);
+        const wentHome = await safeEval(page, () => {
+          const b = document.querySelector(".mread-back");
+          if (!b) return null;
+          b.click();
+          return true;
+        });
+        await sleep(900);
+        const homeAfter = await safeEval(page, () => !!document.querySelector('[data-testid="mobile-home"]'));
+        ok(wentHome === true && homeAfter === true, `${vp.name} · 点阅读屏返回键**回到首页**（点了=${wentHome}，到首页=${homeAfter}）`);
+
+        // ⭐ 2026-10-10 **换对象（不删）**：`about` 那一层在窄视口里渲染的是移动端**「关于」屏**
+        //   （`MobileAbout` ✓，规格 §4.10 ✓）⇒ 这一格改断言**它自己的三件事** ✓。
+        //   桌面那个 `.about` 照旧在 **792×360 与桌面档**被完整量到 ✓（覆盖面没丢 ✓）。
+        const aboutOpened = await safeEval(page, openOverlay, "about");
+        await sleep(1100);
+        const ma = await safeEval(page, () => {
+          const el = document.querySelector('[data-testid="mobile-about"]');
+          const back = document.querySelector(".mabout-back");
+          const b = back ? back.getBoundingClientRect() : null;
+          const txt = el ? el.textContent || "" : "";
+          return {
+            has: !!el,
+            backW: b ? Math.round(b.width) : 0,
+            backH: b ? Math.round(b.height) : 0,
+            hasSourceUrl: /gitcode\.com|github\.com/.test(txt),
+          };
+        });
+        ok(aboutOpened === true && ma.has, `${vp.name} · 手机档「关于」渲染成**移动端关于屏**（不是桌面对话框 ✓）`);
+        ok(ma.backW >= 44 && ma.backH >= 44, `${vp.name} · 关于屏返回键命中区 ≥44×44（${ma.backW}x${ma.backH}）`);
+        ok(!ma.hasSourceUrl, `${vp.name} · 关于屏**不出现源码网址**（规格 §4.10 硬规则 ✓）`);
+        await safeEval(page, closeAllOverlays);
+        await sleep(400);
+
+        // ⭐ 2026-10-10 **新增覆盖**（换对象的另一半 ✓）：窄视口上「关于」与「搜索」这两张
+        //   **移动端自己的屏**此前门禁**一条都没量到** ✓ ⇒ 把该有的常识补上 ——
+        //   量的都是**真元素、真尺寸** ✓，⛔ 不是凑数 ✗：
+        //   ① 关于屏「链接」两行可点且命中区 ≥44；② `检查更新` 命中区 ≥44；
+        //   ③ 首页那张「搜索」卡真的进得去 03 屏；④ 搜索框与 chips 命中区 ≥44；
+        //   ⑤ ⛔「标题／正文」两个 chip **必须是 `disabled`** —— 数据层没有字段过滤
+        //      （`SearchArgs` 无 scope ✗，见 `MobileSearch.tsx` 文件头 ✓），
+        //      「看着能用、实际没用」正是本仓最反感的那族 ✓ ⇒ 机器钉住它 ✓。
+        await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+        await sleep(2200);
+        await safeEval(page, () => document.querySelector(".mread-back")?.click());
+        await sleep(1000);
+        // ⚠️ 先**真的打开「关于」**再量（我第一版在首页上量 `.mabout-link` ⇒ 全空 ✗，实测抓到 ✓）
+        await safeEval(page, openOverlay, "about");
+        await sleep(1100);
+        const cards = await safeEval(page, () => {
+          const R = (el) => {
+            const b = el.getBoundingClientRect();
+            return { w: Math.round(b.width), h: Math.round(b.height) };
+          };
+          const links = [...document.querySelectorAll(".mabout-link")];
+          const btns = [...document.querySelectorAll(".mabout-btn")];
+          const search = [...document.querySelectorAll(".mhome-card")].find((x) =>
+            (x.textContent || "").includes("搜索"),
+          );
+          return {
+            aboutLinks: links.filter((l) => l.tagName === "BUTTON").map(R),
+            aboutLinkCount: links.length,
+            pending: !!document.querySelector(".mabout-link.is-pending"),
+            checkBtn: btns.length ? R(btns[0]) : null,
+            hasSearchCard: !!search,
+          };
+        });
+        // 关于屏（03 屏之外的另一张新屏）：链接行与主按钮的命中区
+        ok(
+          cards.aboutLinks.length === 2 && cards.aboutLinks.every((x) => x.h >= 44),
+          `${vp.name} · 关于屏两行外链都可点且命中区 ≥44（${cards.aboutLinks.map((x) => `${x.w}x${x.h}`).join(" / ")}）`,
+        );
+        ok(cards.aboutLinkCount === 3 && cards.pending, `${vp.name} · 关于屏「隐私政策」那行是**占位**（不可点 ✓）`);
+        ok(
+          !!cards.checkBtn && cards.checkBtn.h >= 44,
+          `${vp.name} · 关于屏「检查更新」命中区 ≥44（${cards.checkBtn ? `${cards.checkBtn.w}x${cards.checkBtn.h}` : "没量到"}）`,
+        );
+        // ⚠️ 关掉「关于」再点首页那张卡（不然点在关于屏上 ✗ —— 这一处我第一版栽过两次 ✓）
+        await safeEval(page, closeAllOverlays);
+        await sleep(600);
+        // 03 搜索屏：入口 ＋ 命中区 ＋ 「标题／正文」必须置灰
+        const hasSearchCard = await safeEval(
+          page,
+          () =>
+            !!Array.from(document.querySelectorAll(".mhome-card")).find((x) =>
+              (x.textContent || "").includes("搜索"),
+            ),
+        );
+        ok(hasSearchCard, `${vp.name} · 首页有「搜索」入口（进 03 屏 ✓）`);
+        const sr = await safeEval(page, () => {
+          const card = [...document.querySelectorAll(".mhome-card")].find((x) =>
+            (x.textContent || "").includes("搜索"),
+          );
+          if (card) card.click();
+          return !!card;
+        });
+        await sleep(1200);
+        const sf = await safeEval(page, () => {
+          const R = (el) => {
+            const b = el.getBoundingClientRect();
+            return { w: Math.round(b.width), h: Math.round(b.height) };
+          };
+          const input = document.querySelector(".msearch-input");
+          const chips = [...document.querySelectorAll(".msearch-chip")];
+          return {
+            has: !!document.querySelector('[data-testid="mobile-search"]'),
+            input: input ? R(input) : null,
+            chips: chips.map((c) => ({ t: (c.textContent || "").trim(), disabled: c.disabled, ...R(c) })),
+          };
+        });
+        ok(sr === true && sf.has, `${vp.name} · 首页「搜索」卡真的进得去 **03 搜索屏**`);
+        ok(
+          !!sf.input && sf.input.h >= 44,
+          `${vp.name} · 搜索屏输入框命中区 ≥44（${sf.input ? `${sf.input.w}x${sf.input.h}` : "没量到"}）`,
+        );
+        ok(
+          sf.chips.length === 3 && sf.chips.every((c) => c.h >= 44),
+          `${vp.name} · 搜索屏三个 chip 命中区都 ≥44（${sf.chips.map((c) => `${c.t}:${c.h}`).join(" / ")}）`,
+        );
+        ok(
+          sf.chips.length === 3 &&
+            sf.chips[0].disabled === false &&
+            sf.chips[1].disabled === true &&
+            sf.chips[2].disabled === true,
+          `${vp.name} · 「全部」可用、「标题／正文」**置灰**（数据层没有字段过滤 ⇒ 不许看着能用 ✗）`,
+        );
+
+        // 回到首页之后再走一遍，别把后面的层带到"首页"这个状态里
+        await page.goto(APP_URL, { waitUntil: "networkidle2", timeout: 60000 });
+        await sleep(2500);
+      }
       if (vp.narrow) {
         ok(mq.cssMatches, `命中窄屏媒体查询（innerWidth=${mq.jsInnerWidth} ≤ 768）`);
         ok(mq.minWidth769, "断点确实是 768（`max-width:769px` 也命中）——不是残留的 760");
@@ -1099,14 +1288,22 @@ async function main() {
           return true;
         });
         await sleep(700);
+        // ⭐ 2026-10-10 **R192 换对象**：窄视口里这个入口现在进**移动端「设备配对 · 同步」屏**
+        //   （效果图 `08-pair.svg`，规格 §4.8 ✓），**不再**开桌面同步浮层 ✗。
+        //   ⛔ **一条断言没删** ✗ —— 桌面那批（`.sync-popover` 的几何／常驻 chrome／滚到底）
+        //   **照旧在 `792×360` 与桌面档**被量到 ✓（`isMobileViewport()` 是**宽度**口径 ≤768
+        //   ⇒ 792×360 **不算手机** ✓ ⇒ `OVERLAYS` 里那条 `sync` 在它身上照跑 ✓）。
         const pop = await safeEval(page, () => ({
-          inDom: !!document.querySelector(".sync-popover"),
-          isSheet: !!document.querySelector(".sync-popover.is-sheet"),
+          pairInDom: !!document.querySelector('[data-testid="mobile-pair"]'),
+          saysNotWired: /未接/.test(document.body.innerText || ""),
         }));
-        ok(clicked && pop.inDom, `点它就能打开同步面板（inDom=${pop.inDom}，底部弹层=${pop.isSheet}）`);
+        ok(
+          clicked && pop.pairInDom && pop.saysNotWired,
+          `点它进**移动端「设备配对 · 同步」屏**（渲染=${pop.pairInDom}，如实标着未接=${pop.saysNotWired}）`,
+        );
         // 收起来，别影响后面的层验收
         await safeEval(page, () => {
-          document.querySelector(".mobile-sync-slot button")?.click();
+          document.querySelector(".mpair-back")?.click();
         });
         await sleep(300);
       }
@@ -1161,6 +1358,17 @@ async function main() {
 
       // ---- 浮层打开时内容区的滚动锁 ----
       for (const layer of OVERLAYS) {
+        // ⭐ 2026-10-10 **搬家（不删）**：窄视口里开着页时渲染的是**移动端阅读屏**（规格 §4.4）
+        //   ⇒ 挂在桌面编辑器工具条上的这三层**没有触发器**。它们**照旧在能跑到的地方跑** ——
+        //   本脚本的 `792×360`（矮但不窄 ⇒ 编辑器在 ✓）与桌面档 ✓ ⇒ 覆盖面**没丢** ✓。
+        //   窄视口这一格换的是**阅读屏自己的断言**（见本视口迭代末尾那段 `mobile-read` ✓）。
+        if (replacesDesktopEditor(vp) && DESKTOP_CHROME_ONLY_OVERLAYS.has(layer.id)) {
+          note(
+            `${vp.name} · ${layer.label}：窄视口里它的宿主被移动端自己的屏取代（阅读屏／关于屏 ✓）` +
+              `⇒ 本层**搬到 792×360 与桌面档**跑 ✓`,
+          );
+          continue;
+        }
         // 单层出错（含 CI 里 Chrome 偶发的 CDP 抖动）只算这一层失败，
         // 不能把整轮跑挂掉——挂掉就没有汇总，等于白跑一次。
         try {
@@ -1420,6 +1628,39 @@ async function main() {
                 ? `设置正文区没被分类栏挤掉（正文宽 ${body.bodyW} ≥ ${Math.round(body.innerW * 0.7)}；` +
                   `分类栏 ${body.railW}x${body.railH}、弹层 ${body.flexDir}）`
                 : "量不到设置正文区",
+            );
+            // ⭐ 2026-10-10 加：**分类栏横排后，分组容器与组内标签的几何要有判据**。
+            //   来由（**真机肉眼看到的** ✗）：安卓真机上「设置」分类栏被挤成**单字竖排**
+            //   （逐字所见：「外 观」「账 户」「外部 AI 接入 (MCP)」竖成四行 ✗），
+            //   而当时本文件 **1017 条断言全过** —— 它只量了正文宽度（(6b)）与"被裁却滚不动"，
+            //   **没有一条量分类栏自己的几何** ✗ ⇒ 这是真盲区 ✓。
+            //   ⭐ **这条判据有效性（看过它红 ✓）**：把 `App.css` 里那段 `.set-rail-group`
+            //   的修复**整块**删掉 ⇒ 本断言立刻红，逐字：
+            //     `✗ 分类栏分组没被挤成竖排（分组宽 69/69/69/69px；组内标签最高 90px ≤ 30 …）`
+            //   （3 个视口各一条 ⇒ `[结果] 1017 通过 / 3 失败` ✓）；装回去 ⇒ 恢复
+            //   `82/82/82/121px`、`18px`、`exit 0` ✓。
+            //   ⚠️ **但我没能定位承重的"单条"声明** ✗：只把 `flex: 0 0 auto` 变异成 `1 1 0`、
+            //   或只把 `white-space: nowrap` 变异成 `normal`，**两次都不红** ✗
+            //   （每次都是"先改文件、再起服务"，避开热更新的假绿 ✗）⇒ 所以账上只写
+            //   "**整块必需**"，⛔ 不写"哪一条必需"（不许编 ✗）。
+            //   判据：每个分组宽 ≥ 48px（挤扁时掉到 60~70px 甚至更低），且组内标签高 ≤ 30px
+            //   （一行 ≈ 18~20px；竖排两字即 ≥ 40px，四行到 90px ✓）。本机实测：82/82/82/121px、18px ✓。
+            const railGroups = await safeEval(page, () => {
+              const gs = [...document.querySelectorAll(".set-rail-group")];
+              if (!gs.length) return null;
+              return gs.map((g) => {
+                const b = g.getBoundingClientRect();
+                const ls = [...g.querySelectorAll(".set-rail-label")];
+                const hs = ls.map((l) => Math.round(l.getBoundingClientRect().height));
+                return { w: Math.round(b.width), maxLabelH: hs.length ? Math.max(...hs) : 0 };
+              });
+            });
+            ok(
+              railGroups !== null && railGroups.every((g) => g.w >= 48 && g.maxLabelH <= 30),
+              railGroups
+                ? `分类栏分组没被挤成竖排（分组宽 ${railGroups.map((g) => g.w).join("/")}px；` +
+                  `组内标签最高 ${Math.max(...railGroups.map((g) => g.maxLabelH))}px ≤ 30 —— 竖排时会到 40px+）`
+                : "量不到分类栏分组",
             );
           }
 

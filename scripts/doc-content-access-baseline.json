@@ -1,6 +1,6 @@
 {
   "src-tauri/src/backlinks.rs": 2,
-  "src-tauri/src/blocks.rs": 24,
+  "src-tauri/src/blocks.rs": 22,
   "src-tauri/src/commands.rs": 18,
   "src-tauri/src/db.rs": 9,
   "src-tauri/src/email.rs": 2,
@@ -34,7 +34,7 @@
   "src/editor/nodes/MermaidNode.tsx": 1,
   "src/editor/nodes/PageLinkNode.tsx": 2,
   "src/editor/plugins/PageLinkPlugin.tsx": 1,
-  "src/lib/ai/apply.ts": 13,
+  "src/lib/ai/apply.ts": 12,
   "src/lib/ai/inlineDraft.ts": 1,
   "src/lib/ai/lexical.ts": 11,
   "src/lib/ai/preview.ts": 1,

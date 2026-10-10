@@ -730,6 +730,9 @@ export const api = {
   listVersions: (pageId: string) => invoke("list_versions", { pageId }),
   restoreVersion: (versionId: string) => invoke("restore_version", { versionId }),
   clearPageVersions: (pageId: string) => invoke("clear_page_versions", { pageId }),
+  // 08-a②（2026-10-10）：本机名（08 去码化配对里"信任前显示设备名 ＋ 短标识"的那一半 ✓）。
+  getDeviceName: () => invoke("get_device_name", undefined),
+  setDeviceName: (name: string) => invoke("set_device_name", { name }),
   // ---- 阶段 1 · 冲突留痕与裁决（提示 UI 用这两个入口）----
   listPageConflicts: (pageId: string) => invoke("list_page_conflicts", { pageId }),
   resolvePageConflict: (conflictId: string, choice: "local" | "remote") =>

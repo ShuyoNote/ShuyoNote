@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><title>移动端进展（2026-10-10）</title>
+<style>body{font:15px/1.7 -apple-system,"PingFang SC",sans-serif;max-width:980px;margin:24px auto;padding:0 16px;color:#222}
+h1{font-size:24px}h2{font-size:18px;margin-top:28px;border-bottom:1px solid #eee;padding-bottom:6px}
+table{border-collapse:collapse;width:100%;margin:10px 0}td,th{border:1px solid #e5e5e5;padding:8px 10px;text-align:left;vertical-align:top;font-size:14px}
+th{background:#fafafa}.ok{color:#137333;font-weight:600}.warn{color:#b06000;font-weight:600}.bad{color:#c5221f;font-weight:600}
+.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin:12px 0}
+figure{margin:0;border:1px solid #eee;border-radius:10px;padding:8px;background:#fff}figure img{width:100%;height:auto;display:block}
+figcaption{font-size:12px;color:#666;margin-top:6px;text-align:center}.note{background:#f7f9fc;border-left:3px solid #6b8afd;padding:10px 14px;font-size:14px}
+</style>
+<h1>移动端进展一览 <span style="font-size:14px;color:#888">（2026-10-10 · 数据现取）</span></h1>
+<div class="note" style="border-left-color:#c5221f">⚠️ <b>本页是 2026-10-10 早先那一刻的快照</b>（用于给 owner 看进度），<b>不是当前实况</b> ✗ —— 它里面的「iOS ⛔ 未出包」「Android 本机没验过（无 SDK）」等行<b>已经过期</b> ✗。当前实况以这三处为准 ✓：<code>docs/MOBILE.md</code>（iOS 已出包但界面画不出来）、<code>docs/TESTING.md</code>（门禁读数）、以及工作区台账 <code>_workspace/REQUESTS.md</code> （R178–R192）。</div>
+<div class="note">一句话：<b>设计已成文、界面适配在仓里 ✓；Android 有 CI 自测包（本机没验过 ✗）；iOS 差上游一步 ✗；同步未通 ✗。</b></div>
+<h2>① 四个维度</h2><table><tr><th>维度</th><th>关键读数</th><th>状态</th><th>判据（逐字）</th></tr>
+<tr><td>设计（说明书/需求/技术方案）</td><td>说明书 676 行 · 需求 144 行 · 技术方案 423 行</td><td class="ok">✅ 已成文</td><td><code>文档在 docs/plans/mobile/2026-10-08-mobile-spec.md 等三份 ✓</code></td></tr>
+<tr><td>效果图</td><td>10 张 SVG（首页…配对、启动页、关于页）</td><td class="ok">✅ 已出图</td><td><code>`docs/plans/mobile/mockups/` ✓</code></td></tr>
+<tr><td>界面适配（代码）</td><td>mobile 相关 npm 脚本 18 条</td><td class="ok">✅ 在仓里</td><td><code>`package.json` ✓ 门禁：mobile-layout / mobile-views / mobile-overlays ✓</code></td></tr>
+<tr><td>Android 出包</td><td>`.github/workflows/android.yml` 在 ✓（带签名的自测包）</td><td class="warn">⚠️ 我没在本机验过</td><td><code>本机**没有** adb/SDK/NDK ✗ ⇒ 我只能引用 CI，不能给本机读数 ✗</code></td></tr>
+<tr><td>iOS 出包</td><td>卡在**最后一个**符号族（Swift private）</td><td class="bad">⛔ 未出包</td><td><code>R168：已修 llvm-tools（6 个 C 符号 6/6 ✓）；剩 `Tauri.StdoutRedirector.start()` 一族 ✗ ⇒ 属上游</code></td></tr>
+<tr><td>真机通道</td><td>设备在线：zhiyong的iPhone</td><td class="ok">✅ 通道通</td><td><code>曾用 devicectl 装并启动成功（`App installed` ＋ `Launched` ✓）</code></td></tr>
+<tr><td>同步（前置条件）</td><td>我 Mac 上 `plugin_data`／`sync_state` 均 0 行</td><td class="bad">⛔ 未通</td><td><code>R179 的判据②：同步端到端搬通一次 ✓ —— 还没到</code></td></tr>
+</table>
+<h2>② 效果图（10 张）</h2><div class="g">
+<figure><img src="mockups/01-home.svg" alt="01-home.svg"><figcaption>01-home.svg</figcaption></figure>
+<figure><img src="mockups/02-capture.svg" alt="02-capture.svg"><figcaption>02-capture.svg</figcaption></figure>
+<figure><img src="mockups/03-search.svg" alt="03-search.svg"><figcaption>03-search.svg</figcaption></figure>
+<figure><img src="mockups/04-read.svg" alt="04-read.svg"><figcaption>04-read.svg</figcaption></figure>
+<figure><img src="mockups/05-todo.svg" alt="05-todo.svg"><figcaption>05-todo.svg</figcaption></figure>
+<figure><img src="mockups/06-dict.svg" alt="06-dict.svg"><figcaption>06-dict.svg</figcaption></figure>
+<figure><img src="mockups/07-settings.svg" alt="07-settings.svg"><figcaption>07-settings.svg</figcaption></figure>
+<figure><img src="mockups/08-pair.svg" alt="08-pair.svg"><figcaption>08-pair.svg</figcaption></figure>
+<figure><img src="mockups/09-splash.svg" alt="09-splash.svg"><figcaption>09-splash.svg</figcaption></figure>
+<figure><img src="mockups/10-about.svg" alt="10-about.svg"><figcaption>10-about.svg</figcaption></figure>
+</div>
+<h2>③ 卡在哪 / 下一步</h2><table><tr><th>卡点</th><th>性质</th><th>下一步（判据）</th></tr><tr><td>iOS：<code>Tauri.StdoutRedirector.start()</code> 一族未定义</td><td>上游（swift-rs 只外化 @_cdecl 候选；插件各编一份 Tauri Swift）</td><td>已写上游 issue 草案 ✓；判据＝<code>pnpm tauri ios build</code> 出 BUILD SUCCEEDED ＋ 新 .ipa</td></tr><tr><td>同步未端到端搬通</td><td>前置条件（没有它手机版是孤岛）</td><td>已发对齐信请 windows 指一块 ✓；判据＝<code>mesh_paired_devices</code> 非 0 且一次搬运成功</td></tr><tr><td>Android 本机无法验</td><td>本机缺工具链（无 adb/SDK/NDK，也没有 Homebrew 之外的路）</td><td>要验就得装 Android 工具链（要你点头 ✓）</td></tr></table>
+<h2>④ 立项口径（owner 2026-10-09 拍）</h2><p>台账 <b>R179</b>：移动端立项＝<b>做</b> ✓ ⇒ 长期义务四类（上架／合规／持续发版／真机验收）＋ 判据三条（出包 ✓／同步搬通 ✓／合规材料非占位 ✓）。</p>

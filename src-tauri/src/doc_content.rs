@@ -2711,3 +2711,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// 顶层块提取 —— `blocks::get_page_blocks` 的**读出口**（**在本层里** ✓）。
+///
+/// ⚠️ 为什么放在这一层：`blocks.rs` 里有 `check-doc-content-access` 的**只减不增**基线 ✗
+/// （那 5 次直接访问会让它 24 → 29 ⇒ **红了** ✗，而基线的 `--update` 只允许往下调 ✗）。
+/// 本文件在门禁的 `LAYER_FILES` 白名单里 ✓ —— 它**本来就是**"只经这一层"的那个"一层" ✓
+/// （见本文件 §8-11 的纪律：`blocks::get_page_blocks` 本来就是它列的调用方之一 ✓）。
+///
+/// ⚠️ **`blockId` 是可选字段**（只在块被引用/嵌入时才存在，见 `src/lib/blockIdentity.ts` ✓）
+/// ⇒ ⛔ 它**不能**当"有没有正文"的判据 ✗：真实存下来的普通页面没有这个键，
+///    那么过滤会让**有正文的页永远返回空** ✗（2026-10-10 的用户可见错：手机阅读屏显示
+///    「这一页还没有内容。」✗）。⇒ 没有就**按位置回退** `block-<下标>` ✓（与 web 侧
+///    `src/lib/platform/pageBlocks.ts::pageBlocksFromDoc` **同语义** ✓）；空文本块不收 ✓。
+pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<(String, String)>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let mut out: Vec<(String, String)> = Vec::new();
+    let children = v
+        .get("root")
+        .and_then(|r| r.get("children"))
+        .and_then(|c| c.as_array());
+    if let Some(children) = children {
+        for (i, child) in children.iter().enumerate() {
+            let text = crate::blocks::node_text(child).trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let block_id = child
+                .get("blockId")
+                .and_then(|b| b.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("block-{i}"));
+            out.push((block_id, text));
+        }
+    }
+    Ok(out)
+}
+
+/// `get_page_blocks` 的读出口：**读一次 + 解析**都在本层完成 ✓（调用方不再碰落盘形态 ✓）。
+/// `Ok(None)` ＝ 该页不存在 ✓。
+pub fn page_blocks(c: &Connection, page_id: &str) -> Result<Option<Vec<(String, String)>>, String> {
+    let Some(doc) = read(c, page_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(page_blocks_from_doc(&doc.json)?))
+}
+
+/// `get_page_blocks` 的**顶层块提取** —— 2026-10-10 那次用户可见的错 ✗ 的回归判据。
+///
+/// ⭐ 主判据与**前端** `pageBlocksFromDoc` 那条**同形** ✓：
+///   「**顶层块没有 `blockId` ⇒ 块数 > 0 且文本非空**」✓
+/// （修前它必红 ✓：旧实现要求顶层块有 `blockId`，而**真实文档里普通页面没有它** ✗
+///   ⇒ 返回空 ⇒ 手机档 04 阅读屏显示「这一页还没有内容」✗。）
+#[cfg(test)]
+mod page_blocks_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// **实测抓到的真实形状**：顶层 `paragraph` **没有** `blockId` ✗（键与线上一致 ✓）。
+    fn real_shape_doc() -> String {
+        json!({ "root": {
+            "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
+            "children": [
+                { "type": "paragraph", "version": 1, "direction": "ltr", "format": "",
+                  "indent": 0, "textFormat": 0, "textStyle": "",
+                  "children": [{ "type": "text", "text": "The apple is red.", "version": 1 }] }
+            ]}})
+        .to_string()
+    }
+
+    #[test]
+    fn real_page_without_block_id_still_yields_blocks() {
+        let blocks = page_blocks_from_doc(&real_shape_doc()).expect("应能解析");
+        assert!(
+            !blocks.is_empty(),
+            "有正文的页必须给出块 —— 修前这里是 **0 块** ✗（就是那个用户可见的错）"
+        );
+        assert_eq!(blocks[0].1, "The apple is red.");
+        assert!(!blocks[0].0.is_empty(), "回退 id 不许是空串");
+    }
+
+    #[test]
+    fn block_id_is_kept_when_present() {
+        let doc = json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": "b-real-1",
+              "children": [{ "type": "text", "text": "有 id 的块" }] }
+        ]}})
+        .to_string();
+        let blocks = page_blocks_from_doc(&doc).expect("应能解析");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].0, "b-real-1");
+        assert_eq!(blocks[0].1, "有 id 的块");
+    }
+
+    #[test]
+    fn empty_text_blocks_are_skipped() {
+        let doc = json!({ "root": { "children": [
+            { "type": "paragraph", "children": [{ "type": "text", "text": "甲" }] },
+            { "type": "paragraph", "children": [] },
+            { "type": "paragraph", "children": [{ "type": "text", "text": "乙" }] }
+        ]}})
+        .to_string();
+        let texts: Vec<String> = page_blocks_from_doc(&doc)
+            .expect("应能解析")
+            .into_iter()
+            .map(|b| b.1)
+            .collect();
+        assert_eq!(texts, vec!["甲".to_string(), "乙".to_string()]);
+    }
+
+    #[test]
+    fn bad_json_is_an_error_not_a_panic() {
+        assert!(page_blocks_from_doc("{ not json").is_err());
+    }
+}

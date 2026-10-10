@@ -17,6 +17,21 @@ import { DatabaseView } from "./components/DatabaseView";
 import { TableOfContents } from "./components/TableOfContents";
 import { NewPageGuide } from "./components/NewPageGuide";
 import { CommandPalette } from "./components/CommandPalette";
+// ⭐ 2026-10-10：移动端首页（效果图 01-home.svg，规格 §4.1）—— 只在 `isMobile` 且"什么都没打开"时渲染 ✓。
+import { MobileHome } from "./components/MobileHome";
+// ⭐ 2026-10-10：移动端「快速记录」（效果图 02-capture.svg，规格 §4.2）—— 同一支里的第二屏 ✓。
+import { MobileCapture } from "./components/MobileCapture";
+// ⭐ 2026-10-10：手机档的**阅读屏**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）——
+//   只在 `isMobile && 有打开页` 时渲染 ✓；⛔ 桌面档仍走 `NoteEditor` ✓。
+import { MobileRead } from "./components/MobileRead";
+// ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）—— 沿用 `aboutOpen` ✓。
+import { MobileAbout } from "./components/MobileAbout";
+// ⭐ 2026-10-10：手机档的**搜索屏**（效果图 `03-search.svg`，规格 §4.3）—— 首页那张「搜索」卡进它 ✓。
+import { MobileSearch } from "./components/MobileSearch";
+// ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（效果图 `08-pair.svg`，规格 §4.8）——
+//   入口＝手机档那颗悬浮「同步」胶囊 ✓（桌面档一个字不动 ✓）。
+import { MobilePair } from "./components/MobilePair";
+import { useMobileNav } from "./store/mobileNav";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
 import { ShortcutsPanel } from "./components/ShortcutsPanel";
@@ -990,6 +1005,13 @@ function AppShell() {
     };
   }, []);
   const isMobile = useMobile();
+  // ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
+  // **沿用既有的 `aboutOpen`** ✓（设置 → 关于与更新 ✓／命令面板 ✓），⛔ 不新造入口 ✗；
+  // 手机档改渲染 `MobileAbout` ✓，桌面档仍是那个 `AboutDialog` ✓（一个字不动 ✓）。
+  const aboutOpen = useEditorStore((s) => s.aboutOpen);
+  // ⭐ 2026-10-10：移动端的**整屏**屏栈（首页／快速记录…）—— 只在 `isMobile` 那一支里用 ✓，
+  // 桌面的 `view`（`useViewStore`）**一个字不动** ✓（两者不是一回事，见 `store/mobileNav.ts` ✓）。
+  const mobileScreen = useMobileNav((s) => s.screen);
   // M24：PDF 阅读器在**桌面端是内容区的一种视图**（和 Markdown 阅读器一样，侧边栏与右栏都留着），
   // 窄屏才回到全屏浮层（那时侧边栏本来就是抽屉）。
   const pdfOpen = usePdfReader((s) => s.open);
@@ -1028,6 +1050,13 @@ function AppShell() {
   //    `startupSettled` 是 `loadPages` 落定后置的字段；它变 true 时本 effect 会重跑 ✓（在依赖里 ✓）。
   useEffect(() => {
     if (!startupSettled) return;
+    // ⭐ 2026-10-10：手机档停在「首页」时**不许**把用户拽进页面 ✗ ——
+    //   否则"存完回首页"与「‹ 首页」浮标都会被这一步**立刻抵消** ✗
+    //   （队友实测：DB 里真写进去了 ✓、点击也到了应用 ✓，但界面就是不动 ✗；
+    //    真因就是这个"没选中就打开第一页"的兜底 ✗）。
+    //   ⚠️ 条件用 `isMobile`（与渲染 `MobileHome` 的那一支**同一个条件** ✓）
+    //   ⇒ **桌面档一个字不动** ✓。
+    if (isMobile && useMobileNav.getState().screen === "home") return;
     if (!currentId && pages.length > 0 && useViewStore.getState().view === "notes") {
       const first = pages.find((p) => p.kind === "page" || p.kind === "database");
       if (first) useNotes.getState().openPage(first.id);
@@ -1066,7 +1095,9 @@ function AppShell() {
             把整个界面带走（1.85.1 的白屏就是这么发生的）。 */}
         <PanelBoundary name="浮层">
           <ShortcutsPanel />
-          <AboutDialog />
+          {/* ⭐ 2026-10-10：手机档这一层由**主区**的 `MobileAbout` 承担 ✓（规格 §4.10）——
+              ⛔ 桌面档一个字不动 ✓：`isMobile` 为假时照旧是那个 `AboutDialog` ✓。 */}
+          {isMobile ? null : <AboutDialog />}
           <SettingsDialog />
           <SpaceTransferProgress />
           {/* ⚠️ **2026-10-04 改**：⭐ 顶层这份**只在浮层形态**渲染 ✗ —— 桌面端它在上面那条 `.main` 分支里 ✓
@@ -1097,6 +1128,25 @@ function AppShell() {
           而 owner 要求两端都有这条顶端工具栏 ✓ ⇒ 这里给手机渲染一行，用的是**同一个组件** ✓。
           桌面那一份在 `TitleBar` 里 ✓（⛔ 两处各写一份 = 两份真相源 ✗）。 */}
       {isMobile && <TopTools className="is-mobile" />}
+      {/* ⭐ 2026-10-10：手机档**开着某个页面**时的「回首页」入口 ✓（台账 R188 的 (b) ✓）。
+          来由（队友逐屏审计**实拍**出来的真缺陷 ✗）：今晚做的「快速记录」存完会落进编辑器 ✗，
+          而那个屏**按返回键直接退出应用** ✗、`am start` 重启**仍回编辑器** ✗、抽屉里也**没有「首页」**✗
+          ⇒ **除 `pm clear` 没有回首页的路** ✗。
+          ⚠️ 它是个 `position: fixed` 的**浮标** ✓ —— ⛔ **不包裹** `NoteEditor`（包裹会多一层布局容器 ✗）。
+          ⭐ 它让"任何一屏都能回首页" ✓ **不依赖**对 store 恢复逻辑的猜测 ✓
+          （(a) 存完清 `currentId` 已单独做在 `MobileCapture` 里 ✓）。 */}
+      {isMobile && currentId && (
+        <button
+          className="mnote-home"
+          onClick={() => {
+            // 清掉当前页 ⇒ `App.tsx` 的手机分支才会渲染 `MobileHome` ✓；再把自己的屏栈复位 ✓。
+            useNotes.setState({ currentId: null, current: null });
+            useMobileNav.getState().setScreen("home");
+          }}
+        >
+          ‹ 首页
+        </button>
+      )}
       <div className="app-body">
         <ActivityBar />
         <PageTree view={view} onViewChange={setView} />
@@ -1154,8 +1204,34 @@ function AppShell() {
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
       ) : view === "files" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
+      ) : isMobile && mobileScreen === "pair" ? (
+        /* ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（规格 §4.8）——
+           它排在 `currentId` **前面**：那颗「同步」胶囊是**常驻**的 ✓ ⇒ 不管底下开着什么，
+           点了就该整屏看到它 ✓。⛔ 桌面档**一个字不动** ✗（Still 走 `SyncPanel` 那个浮层 ✓）。 */
+        <MobilePair />
+      ) : isMobile && aboutOpen ? (
+        /* ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
+           它排在 `currentId` **前面**：从设置里点「关于与更新」时，不管底下有没有开着页，
+           都该整屏看到「关于」✓。⛔ 桌面档的 `AboutDialog` 一个字不动 ✓
+           （下面那两处根部浮层照旧渲染它 ✓）。 */
+        <MobileAbout />
       ) : currentId ? (
-        <NoteEditor pageId={currentId} />
+        /* ⭐ 2026-10-10：手机档点开一条笔记 ⇒ 走**移动端阅读屏**（效果图 `04-read.svg`，规格 §4.4）✓，
+           而不是桌面块编辑器（顶栏是桌面那套图标工具条、还能拖块 ✗ —— 与效果图差得最远 ✓）。
+           ⛔ **桌面档一个字不动** ✓：同一个三元里，`isMobile` 为假时仍是下面那个 `NoteEditor` ✓。 */
+        isMobile ? <MobileRead pageId={currentId} /> : <NoteEditor pageId={currentId} />
+      ) : isMobile ? (
+        /* ⭐ 2026-10-10：手机档的"什么都没打开"⇒ 走**移动端首页**（三个入口 ✓ 无侧边栏 ✓），
+           而不是桌面空态（那句"或按 Ctrl+N"在手机上本来就是错的 ✗）。
+           第二屏「快速记录」、第三屏「**03 搜索**」也在这支里（`mobileNav.screen` ✓）。
+           ⛔ 桌面分支一个字没动 ✓（下一个 else 就是原来那套 ✓）。 */
+        mobileScreen === "capture" ? (
+          <MobileCapture />
+        ) : mobileScreen === "search" ? (
+          <MobileSearch />
+        ) : (
+          <MobileHome />
+        )
       ) : (
         <div className="main empty">
           <div className="empty-state">
@@ -1192,7 +1268,11 @@ function AppShell() {
         {/* 阶段 1 · B1：正文索引补算（合并/裁决过的页面在后台补上；应用启动与每次同步结束后跑一趟） */}
         <TextRepairRunner />
         <ShortcutsPanel />
-        <AboutDialog />
+        {/* ⭐ 2026-10-10：手机档这一层由**主区**的 `MobileAbout` 承担 ✓（规格 §4.10）——
+            ⛔ 桌面档一个字不动 ✓：`isMobile` 为假时照旧是那个 `AboutDialog` ✓。
+            ⚠️ 这里与上面 `PanelBoundary` 那份是**两处**渲染点（上面那份在浮层边界里 ✓），
+            两处都要挡 —— 我第一版只挡了一处，**实测截图里桌面对话框盖在我的屏上** ✗（已修 ✓）。 */}
+        {isMobile ? null : <AboutDialog />}
         <SettingsDialog />
         <SpaceTransferProgress />
         {/* ⚠️ **2026-10-04 改**：⭐ 顶层这份**只在浮层形态**渲染 ✗ —— 桌面端它在上面那条 `.main` 分支里 ✓

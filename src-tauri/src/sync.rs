@@ -4622,6 +4622,10 @@ pub struct NearbyPeer {
     /// `host_name()`，拿不到就留空，**不编**）⇒ 界面**如实说没报名字**，
     /// **不许**回落成 `device_id` 前几位。
     pub device_name: String,
+    /// ⭐ 08-b②（2026-10-10）：对方公告里那格**可显示的短标识**（4–6 字符 ✓）。
+    /// ⚠️ **老对端不发 ⇒ 空串** ✓ ⇒ 界面**如实**说「对方没报短标识」✗，
+    /// ⛔ **绝不回落**成 `device_id`（或它的前几位／哈希）✗ —— 与 `device_name` 同一条纪律 ✓。
+    pub short_id: String,
     /// 收到它公告的来源地址（ip，不含端口）。⚠️ 默认**不显示**，只用于排障（规格 §3.4）。
     pub addr: String,
     /// **它自己声明**在服务哪些空间（`LanAnnounce.hub_spaces`，远端 `space_id`）。
@@ -4655,6 +4659,7 @@ pub fn nearby_of(
         .map(|p| NearbyPeer {
             device_id: p.announce.device_id.trim().to_string(),
             device_name: p.announce.device_name.trim().to_string(),
+            short_id: p.announce.short_id.trim().to_string(),
             addr: p.addr.trim().to_string(),
             spaces: spaces_of(p),
             serves_current: lan::serves_space(space_id, p),
@@ -5961,8 +5966,17 @@ mod tests {
                 k.len()
             ),
             Err(e) => {
-                assert!(e.contains("盒子打不开"), "{e}");
-                assert!(e.contains("口令不对或盒子被改过"), "要说清两种可能：{e}");
+                // ⭐ **判形状，⛔ 不判旧文案**（2026-10-10 修）：这两句原来把旧报错**整句钉死**
+                //    （`盒子打不开` ＋ `口令不对或盒子被改过`）✗ ⇒ 文案精简过（owner 拍「全都压」）之后
+                //    实得 `这个盒子解不开：密文校验不通过（内容没有被解开）` ⇒ ⭐ **红的是判据、⛔ 不是行为** ✓。
+                //    ⭐ 真正要守的形状：⭐ **打不开**（`Err` ✓）＋ ⭐ 说清"是盒子这一层" ✓。
+                assert!(
+                    e.contains("盒子") && (e.contains("解不开") || e.contains("打不开")),
+                    "换过的盒子必须**报打不开**（⛔ 不是静默给一把钥匙）：{e}"
+                );
+                // ⚠️ **如实记**：旧判据后半句还要求"⭐ 说清两种可能（口令不对／盒子被改过）"✗ ——
+                //    那句话在文案精简后**没了** ✗ ⇒ ⭐ 这个**要求本身**要不要保留，**归 owner／lead** ✓
+                //    （⛔ 我不擅自把旧文案改回去：那是 owner 拍过 C 的 ✓）。
             }
         }
 
@@ -6736,6 +6750,7 @@ mod tests {
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.into(),
                 device_name: device.into(),
+                short_id: "T3ST1".into(),
                 hub_base: Some(base.into()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -8031,6 +8046,7 @@ mod tests {
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: name.to_string(),
+                short_id: "T3ST1".into(),
                 hub_base: base.map(|b| b.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: device.to_string(),

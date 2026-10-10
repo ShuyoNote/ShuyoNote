@@ -228,7 +228,6 @@ fn app_context() -> tauri::Context {
     tauri::generate_context!()
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
 ///
 /// ⚠️ 退出码口径（⭐ 与仓库的五档契约同向 ✓）：0 成功／1 失败／2 起不来／3 跳过（⭐ "跳过了"不是"通过" ✓）
@@ -280,6 +279,7 @@ pub fn cli_mode_of_args() -> auto_backup::CliMode {
     auto_backup::cli_mode(std::env::args().skip(1))
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // M11.13 阶段 1：**宿主子进程分流必须在最前面**——在任何 Tauri / 单实例初始化之前。
     // 放在后面会出两个真实后果（见方案 §7）：macOS 上多一个 Dock 图标；single-instance
@@ -917,6 +917,9 @@ pub fn run() {
             backlinks::get_backlinks,
             blocks::resolve_block,
             blocks::get_page_blocks,
+            // 08-a②（2026-10-10）：设备名的读写（落 `meta.sync_state` ✓ 免迁移 ✓）
+            lan_state::get_device_name,
+            lan_state::set_device_name,
             blocks::search_blocks,
             blocks::list_block_backlinks,
             graph::get_graph,

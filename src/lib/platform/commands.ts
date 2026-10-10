@@ -227,6 +227,9 @@ export interface NearbyPeer {
   device_id: string;
   /** 可能是空串（那台设备没报名字）⇒ 界面**如实说**，不许回落成 id 前几位。 */
   device_name: string;
+  /** ⭐ 08-b②：对方公告里的**可显示短标识**（4–6 字符）。老对端不发 ⇒ 空串 ⇒
+   *  界面**如实**说「对方没报短标识」（用 `src/lib/peerIdentity.ts` ✓），⛔ 不许回落成 id ✗。 */
+  short_id: string;
   /** 收到它公告的来源地址（ip）。⚠️ 默认**不显示**（规格 §3.4：只用于排障）。 */
   addr: string;
   /** 它**自己声明**在服务哪些空间（远端 `space_id`）。界面不许自己算交集。 */
@@ -1271,6 +1274,10 @@ export interface CommandMap {
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
+  // 08-a②（2026-10-10）：本机名的读写。`null` ＝ **没设过**（界面显示"用主机名"✓，⛔ 不编假名 ✗）；
+  // `set_device_name` 传空白 ⇒ **清掉设置** ✓，返回**回落到的主机名/默认名** ✓。
+  get_device_name: { args: undefined; result: string | null };
+  set_device_name: { args: { name: string }; result: string };
   // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
   // 否则用户会把"少数据的备份"当成完整备份。
   export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
