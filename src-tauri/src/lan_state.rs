@@ -990,3 +990,32 @@ mod device_name_tests {
         );
     }
 }
+
+// ─────────────── 08-a②（2026-10-10）：设备名的读写命令 ───────────────
+//
+// ⚠️ 落库位置与 `device_id` **同一张表**（`meta.sync_state` ✓，走 `crate::sync::get_meta_state`
+//   ／`set_meta_state` ✓）⇒ **不需要迁移** ✓。
+// ⚠️ 语义：**没设过 ⇒ `None`** ✓（界面据此显示"用的是主机名"✓，⛔ 不编一个假名字 ✗）；
+//    **设成空串 ⇒ 等于清掉**设置 ✓（回退链接管 ✓），⛔ 不落一个空值 ✗（那会让对端显示空白 ✗）。
+
+/// 读**用户设的**本机名（没设过／被清空 ⇒ `None` ✓）。
+#[tauri::command]
+pub fn get_device_name(db: tauri::State<'_, Db>) -> Result<Option<String>, String> {
+    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(stored_device_name(&c))
+}
+
+/// 设本机名；`name` 为空白 ⇒ **清掉设置** ✓。返回**落库后真正生效的名字** ✓
+/// （＝回退链的结果 ✓，界面拿它显示"现在叫什么"✓）。
+#[tauri::command]
+pub fn set_device_name(db: tauri::State<'_, Db>, name: String) -> Result<String, String> {
+    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        c.execute("DELETE FROM meta.sync_state WHERE key = ?1", rusqlite::params![KEY_DEVICE_NAME])
+            .map_err(|e| e.to_string())?;
+    } else {
+        crate::sync::set_meta_state(&c, KEY_DEVICE_NAME, trimmed)?;
+    }
+    Ok(local_device_name(&c))
+}

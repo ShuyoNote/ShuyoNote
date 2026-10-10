@@ -905,6 +905,9 @@ pub fn run() {
             backlinks::get_backlinks,
             blocks::resolve_block,
             blocks::get_page_blocks,
+            // 08-a②（2026-10-10）：设备名的读写（落 `meta.sync_state` ✓ 免迁移 ✓）
+            lan_state::get_device_name,
+            lan_state::set_device_name,
             blocks::search_blocks,
             blocks::list_block_backlinks,
             graph::get_graph,

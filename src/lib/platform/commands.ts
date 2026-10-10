@@ -1271,6 +1271,10 @@ export interface CommandMap {
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
+  // 08-a②（2026-10-10）：本机名的读写。`null` ＝ **没设过**（界面显示"用主机名"✓，⛔ 不编假名 ✗）；
+  // `set_device_name` 传空白 ⇒ **清掉设置** ✓，返回**回落到的主机名/默认名** ✓。
+  get_device_name: { args: undefined; result: string | null };
+  set_device_name: { args: { name: string }; result: string };
   // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
   // 否则用户会把"少数据的备份"当成完整备份。
   export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
