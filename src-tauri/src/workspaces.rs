@@ -89,29 +89,69 @@ pub async fn get_active_workspace_id(db: State<'_, Db>) -> Result<String, String
     active_workspace_id(&c)
 }
 
-#[tauri::command]
-pub async fn set_active_workspace_id(db: State<'_, Db>, id: String) -> Result<(), String> {
-    let exists: bool = {
-        let c = conn(&db);
-        c.query_row("SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1)", params![id], |row| row.get(0))
-            .map_err(|e| e.to_string())?
-    };
+/// ⭐ **切活动空间的核心**（2026-10-10：owner 报的「点了加密空间就卡死」那个 bug 的修法 ✓）：
+/// ⛔ **指针与连接不许一个成一个败** ✗ —— 原来的顺序是「**先写指针、再换连接**」✗，
+/// 而换连接**会失败**（切到一个加密空间、而本会话没有钥匙时必然失败 ✓）。
+///
+/// ⚠️⭐ **这里曾经被我写错过一次，把纠正一起留下**（否则下一个人会重新推错 ✓）：
+///   我当初的推断是「失败之后**指针已经改过去了**」✗ ⇒ 于是"重启应当开在**那个加密空间**并弹锁屏"✗。
+///   ⭐ **2026-10-10 实测证伪**：重启后窗口标题是「**项目私密 · 工作**」✗（＝**原来那个明文空间** ✓），
+///   且**没有锁屏** ✓。真因是：那条 `INSERT INTO meta.sync_state` 自己就**跑在已经坏掉的连接上** ✗
+///   ⇒ **它也没成** ⇒ ⭐ **两者都没成**（指针没变 ＋ 连接坏了）＋ **界面停在旧空间** ✗
+///   ⇒ ⭐ 真实形状是「**界面与连接分家**」✗，⛔ 不是「指针改了而连接读不出来」✗。
+///   ⇒ ⚠️ **这条纠正很值**：若照那个错前提去写**回滚指针**的代码，就会去回滚一件**根本没发生的事** ✗。
+///
+/// 现在的顺序：⭐ **先换连接**（`db::reopen_space_at` 已经是**全成或全不动** ✓ ⇒ 它失败时
+/// 连接与指针**都没动** ✓），**连接真的切成了才写指针** ✓；⚠️ 万一写指针失败 ⇒
+/// **把连接换回旧空间** ✓（⛔ 不留混合状态 ✗）。
+/// ⚠️ 抽成这个函数是为了**能在测试里直接判它**（`#[tauri::command]` 那层要 `State<Db>`，单元测试里造不出来 ✓）。
+pub(crate) fn switch_active_space(
+    c: &mut rusqlite::Connection,
+    id: &str,
+    dir: &std::path::Path,
+) -> Result<(), String> {
+    let exists: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta.workspaces WHERE id = ?1)",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
     if !exists {
         return Err("工作空间不存在".to_string());
     }
-    {
-        let c = conn(&db);
-        c.execute(
-            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![ACTIVE_KEY, id],
+    let prev: Option<String> = c
+        .query_row(
+            "SELECT value FROM meta.sync_state WHERE key = ?1",
+            params![ACTIVE_KEY],
+            |r| r.get(0),
         )
-        .map_err(|e| e.to_string())?;
+        .ok();
+    // ① **先换连接**：它失败 ⇒ 连接与指针**都没动** ✓（今天那个 bug 正是这一步的顺序反了 ✓）
+    crate::db::reopen_space_at(c, id, dir)?;
+    // ② 连接切成了，**才**写活动指针
+    if let Err(e) = c.execute(
+        "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![ACTIVE_KEY, id],
+    ) {
+        // ⭐ 不许一个成一个败：指针没写成 ⇒ 把连接换回旧空间 ✓（换不回也如实上报，⛔ 不吞 ✗）
+        if let Some(prev) = prev.as_deref() {
+            let _ = crate::db::reopen_space_at(c, prev, dir);
+        }
+        return Err(e.to_string());
     }
-    // Re-point the main connection to the target space's DB file.
-    let mut c = db.0.lock().expect("db mutex poisoned");
-    crate::db::reopen_space(&mut c, &id)?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn set_active_workspace_id(db: State<'_, Db>, id: String) -> Result<(), String> {
+    // ⚠️ 整段**持同一把锁**：换连接与写指针是**一件事**，中间不许被别的命令插进来 ✓
+    let dir = crate::db::app_data_dir_ref()
+        .ok_or("app data dir not initialised")?
+        .to_path_buf();
+    let mut c = db.0.lock().expect("db mutex poisoned");
+    switch_active_space(&mut c, &id, &dir)
 }
 
 /// The active workspace's name (for the sidebar title), falling back to the first workspace.
@@ -843,5 +883,80 @@ mod tests {
         // 导入那条路同样（口径与新建完全一致）
         insert_imported_space(&c, "s-import", "导入的", "#e12", "", 2.0, 1_000, false).unwrap();
         assert_eq!(kind_of(&c, "s-import"), "personal");
+    }
+
+    /// ⭐ **2026-10-10（owner 报的「点了加密空间就卡死」）—— 这次那条 bug 的真判据** ✗：
+    /// 切到一个**打不开**的空间（加密 ＋ 本会话没钥匙）时，⭐ **主连接绝不许被弄坏** ✗。
+    ///
+    /// 修之前：`reopen_space_at` 先把 `c` 换成新库、再上钥匙 ⇒ 上钥匙失败 ✗ ⇒ 可 `c` 已经指向
+    /// 那个打不开的库 ⇒ **之后整条连接上每一句 SQL** 都报 `file is not a database` ✗
+    ///（前端满屏「保存失败：file is not a database」✓ ／ `encryption_status` 读活动空间失败被吞 ⇒
+    /// 报「还没有活动空间」⇒ 锁屏闸门永不成立 ✓）。
+    #[test]
+    fn switching_to_an_unreadable_space_keeps_the_connection_usable() {
+        let dir = std::env::temp_dir().join(format!("shuyo-switch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        // 明文空间 A：真 schema（用 `migrate` 建 ✓）
+        let a = crate::db::space_db_path(&dir, "space-a");
+        {
+            let c = rusqlite::Connection::open(&a).unwrap();
+            crate::db::migrate(&c, "space-a").unwrap();
+        }
+        // "加密但本会话没钥匙" 的空间 B：头 16 字节不是 SQLite magic ⇒ `space_db_is_encrypted` ⇒ true ✓
+        //（⚠️ 只造形状，不放任何数据 ✓）
+        let b = crate::db::space_db_path(&dir, "space-b");
+        std::fs::write(&b, vec![0x41u8; 4096]).unwrap();
+
+        // 先真的开到 A（走同一条路 ✓）⇒ 此后 A 的表在这条连接上是可查的
+        let mut c = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::reopen_space_at(&mut c, "space-a", &dir).unwrap();
+        let before: i64 = c.query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0)).unwrap();
+
+        // ① 切 B ⇒ **Err** ✓
+        let err = crate::db::reopen_space_at(&mut c, "space-b", &dir)
+            .expect_err("切到一个打不开的加密空间居然成功了");
+        // ② 那句话得是**人话**：不许把 SQLCipher 原文漏给用户 ✓（D3 ✓）
+        assert!(
+            !err.contains("file is not a database"),
+            "英文原文漏到用户面了：{err}"
+        );
+        // ③ ⭐ **主连接还能用**：同一个 `c` 上照样查得到 A 的表 ✓ —— 这条就是这次的重点 ✗
+        let after: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .expect("主连接被弄坏了 —— 这正是 owner 那个 bug");
+        assert_eq!((before, after), (0, 0));
+        // ④ 再来一次也一样（不是"坏一次就好了" ✓）
+        assert!(crate::db::reopen_space_at(&mut c, "space-b", &dir).is_err());
+        let again: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .expect("第二次失败把主连接弄坏了");
+
+        assert_eq!(again, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **结构判据**：`switch_active_space` 里 ⭐ **先换连接、后写指针** ✗ ——
+    /// 今天的 bug 就是**反过来的**（先写指针 ⇒ 换连接失败时指针已经改过去 ✓）。
+    /// ⚠️ 顺序这种东西编译器看不见，只能钉文本 ✓。
+    /// ⚠️ **必须只在那个函数体内找** ✗：本文件**前面**还有一处写 `ACTIVE_KEY` 的地方，
+    ///    用全文件的 `find` 会命中它 ⇒ 判据**假红**（2026-10-10 实测栽过一次 ✓）。
+    #[test]
+    fn the_active_pointer_is_written_only_after_the_connection_switched() {
+        let src = include_str!("workspaces.rs");
+        let body = &src[src
+            .find("fn switch_active_space")
+            .expect("找不到 `switch_active_space`")..];
+        let at_reopen = body
+            .find("crate::db::reopen_space_at(c, id, dir)")
+            .expect("找不到「换连接」那一步");
+        let at_pointer = body
+            .find("ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+            .expect("找不到「写活动指针」那一步");
+        assert!(
+            at_reopen < at_pointer,
+            "顺序反了：先写指针再换连接（2026-10-10 那个 bug ✓）"
+        );
     }
 }
