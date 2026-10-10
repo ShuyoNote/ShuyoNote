@@ -233,8 +233,14 @@ describe("一个空间加密，⛔ 不锁住其它空间（owner 拍 B：明文�
     expect(escapeBox(), "锁定屏上必须有「其它空间不用口令」那一段").not.toBeNull();
     const box = escapeBox()!.textContent ?? "";
     expect(box, "要把那个明文空间的名字摆出来").toContain("明文空间");
-    // ⛔ 加密的那个**不许**混进"直接进去"的清单里 ✗
-    expect(box).not.toContain("加密空间");
+    // ⛔ 加密的那个**不许**被当成"去处"摆出来 ✗
+    // ⚠️ 2026-10-10 订正这条判据的口径：原先写的是 `expect(box).not.toContain("加密空间")` ——
+    //    那是拿**文案里有没有那三个字**当代理信号 ✗；而 owner 要的就是让它说清"这是**放弃打开
+    //    这个加密空间**" ⇒ 那三个字**本来就该出现** ✓。⇒ 改成按**按钮**判（真信号）：
+    expect(host.querySelector('[data-testid="lock-go-enc"]'), "加密空间不许出现在去处清单里").toBeNull();
+    // ⭐ 而 owner 逐字要的「放弃打开加密空间」必须**看得出来** ✓（⛔ 不许写成"关掉应用" ✗）
+    expect(box, "文案要让用户看出这是在**放弃打开**这个加密空间").toContain("放弃打开");
+    expect(box, "⛔ owner 没选「关掉应用」那条").not.toContain("关掉应用");
   });
 
   it("⭐ a2) 点一下就换过去：闸门随之放开，明文空间**直接可用**", async () => {
@@ -306,5 +312,111 @@ describe("一个空间加密，⛔ 不锁住其它空间（owner 拍 B：明文�
 
     expect(host.querySelector(".lock-screen"), "闸门照旧").not.toBeNull();
     expect(escapeBox(), "读不到就不给路，但也不假报有一个").toBeNull();
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-10（owner 从**锁屏截图**里量出来的）：
+//   ① 解锁失败那一行漏出了 SQLCipher 的英文原文（截图逐字：`file is not a database`）✗
+//   ② owner 已拍「**不改，就现在这样**」✗ —— 「已连续输错 N 次」的计数只查只报：
+//      `LockScreen` 用的是普通组件 state（`useState(0)`）+ 进程级会话，**没有任何持久化**
+//      ⇒ 窗口重载/应用重启后必然从 0 重新数 ✓。本文件**只钉前端不许自己造映射**这一半 ✓
+//      （⛔ 不在这里改行为，也⛔ 不顺手加持久化）。
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 真的往输入框里打字（React 受控组件的原生 setter 写法）——否则 `submit()` 会被 `!pass` 挡掉。 */
+function typePassphrase(v: string) {
+  const el = host.querySelector(".lock-input") as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  setter.call(el, v);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+/** 点「解锁」（DOM 里第一个 `.lock-button` 就是它；出路那段的按钮在它后面）。 */
+async function clickUnlock() {
+  await act(async () => {
+    typePassphrase("随便打的");
+  });
+  await act(async () => {
+    (host.querySelectorAll(".lock-button")[0] as HTMLButtonElement).click();
+  });
+  await settle();
+}
+
+describe("① 解锁失败那句话：只透传内核那一份翻译，⛔ 前端不许自己造第二条映射", () => {
+  it("⭐ c) 正面：内核给什么就逐字显示什么，且用户可见文本里**没有**英文原文", async () => {
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+    // 内核（`Result<(), String>`）给的那一份 —— 可操作的中文，**不含** `file is not a database` ✓
+    const KERNEL =
+      "空间 s1 的库打不开：口令/密钥不对（最常见）：确认大小写、输入法、以及是不是另一台设备的口令；" +
+      "也可能是这个库用了另一种页加密算法（换过构建的话见 docs/SM-CRYPTO-DELIVERY.md）。";
+    mocks.unlockEncryption.mockRejectedValue(KERNEL);
+    await render();
+
+    await clickUnlock();
+
+    const shown = host.querySelector(".lock-error")?.textContent ?? "";
+    expect(shown, "内核那句必须逐字到达用户面（前端只透传）").toContain(KERNEL);
+    expect(shown, "⭐ 截图那一幕：用户可见文本里不许出现英文原文").not.toMatch(/not a database|malformed/);
+    expect(shown, "要有可操作的话（说清怎么确认口令）").toContain("口令");
+  });
+
+  it("⭐ c) 反向：前端**不许**自己做英文→中文的映射（内核认不出的英文必须原样透传）", async () => {
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+    // 一句内核翻译函数**不认识**的英文 ⇒ 若前端悄悄把它换成中文，本用例红 ✗
+    // （真因见 `src-tauri/src/security.rs` 的 `cipher_open_error`：只翻认得的那两句，其余原样返回。）
+    const UNKNOWN = "unable to open database file";
+    mocks.unlockEncryption.mockRejectedValue(UNKNOWN);
+    await render();
+
+    await clickUnlock();
+
+    const shown = host.querySelector(".lock-error")?.textContent ?? "";
+    expect(shown, "前端只负责显示：内核给什么就显示什么（⛔ 第二条映射会随上游改版静默失效）").toContain(
+      UNKNOWN,
+    );
+  });
+});
+
+describe("④ 启动口径：跟**最后离开的那个**空间（⛔ 不许每次从最早那个开始）", () => {
+  it("⭐ h+j) 最后离开的是**明文**空间 ⇒ 启动不出现锁屏（最早那个是加密的也不行）", async () => {
+    // ⚠️ **夹具形状必须自证**：最早的是加密的、最后离开的是明文的 ⇒ 两者**不是同一个** ✓
+    //    （否则这条退化成"最早＝最后"，就测不出 ④ 的反向了 ✓）
+    const views = [encView("old-enc"), plainView("plain-last")];
+    expect(views[0].encrypted_on_disk, "夹具：最早那个是**加密**的").toBe(true);
+    expect(views[1].encrypted_on_disk, "夹具：最后离开的是**明文**的").toBe(false);
+    mocks.overview.mockResolvedValue(views);
+    mocks.workspaces.mockResolvedValue([
+      { id: "old-enc", name: "老加密空间" },
+      { id: "plain-last", name: "明文空间" },
+    ]);
+    // 内核按**活动（最后离开的）**空间报：不加密 ⇒ ⭐ 这一格就是 ④ 的判据
+    mocks.status.mockResolvedValue({ enabled: false, locked: true });
+
+    await render();
+
+    expect(
+      host.querySelector(".lock-screen"),
+      "活动空间是明文 ⇒ ⛔ 不许拿「最早那个加密空间」把人挡在启动处",
+    ).toBeNull();
+    expect(host.querySelector(".app"), "直接进最后离开的那一个").not.toBeNull();
+  });
+
+  it("⭐ i) 最后离开的是**加密**空间 ⇒ 出锁定屏（解锁 ＋ 选择空间两段都在）", async () => {
+    const views = [plainView("plain-first"), encView("enc-last")];
+    expect(views[0].encrypted_on_disk, "夹具：最早那个是**明文**的").toBe(false);
+    expect(views[1].encrypted_on_disk, "夹具：最后离开的是**加密**的").toBe(true);
+    mocks.overview.mockResolvedValue(views);
+    mocks.workspaces.mockResolvedValue([
+      { id: "plain-first", name: "明文空间" },
+      { id: "enc-last", name: "加密空间" },
+    ]);
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+
+    await render();
+
+    expect(host.querySelector(".lock-screen"), "活动空间加密且没解锁 ⇒ 必须出锁定屏").not.toBeNull();
+    expect(host.querySelector(".app")).toBeNull();
+    // ⭐ 「解锁 ／ 选择空间」两段都要在：本机确有明文空间 ⇒ 换空间那条路必须同时给出来 ✓
+    expect(escapeBox(), "本机有明文空间 ⇒ 同时给出「选择空间」那一段").not.toBeNull();
   });
 });

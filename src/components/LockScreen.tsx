@@ -134,8 +134,9 @@ export function LockScreen() {
         {otherSpaces.length > 0 && (
           <div className="lock-forgot" data-testid="lock-other-spaces">
             <p className="lock-forgot-lead">
-              <b>其它空间不用口令。</b>
-              本机还有 {otherSpaces.length} 个空间没有加密 —— 直接进去就行，不用输这里的口令。
+              <b>放弃打开这个加密空间？</b>
+              本机还有 {otherSpaces.length} 个空间没有加密 —— 换过去马上就能用，不用输这里的口令。
+              换过去只是<b>先不打开它</b>：这个空间的内容在解锁之前一直读不出来，随时可以切回来再输口令。
             </p>
             {otherSpaces.map((s) => (
               <button
@@ -146,7 +147,7 @@ export function LockScreen() {
                 disabled={goingTo !== ""}
                 onClick={() => void goOther(s.id)}
               >
-                {goingTo === s.id ? "正在切过去…" : `去「${s.name}」`}
+                {goingTo === s.id ? "正在切过去…" : `放弃打开它，去「${s.name}」`}
               </button>
             ))}
             {otherErr && (
