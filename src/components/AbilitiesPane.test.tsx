@@ -88,8 +88,11 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     //    （⚠️ 而且「还没托管」那半**没有可核读数** ⇒ 已按 lead 的口径**不再断言、也不写** ✓）。
     //    ⭐ "不许换成四个字了事"这条**含义没变**：下限 30 远大于「还没上架」的 4 ✓。
     expect(text.length, "那条说明是长文本 ⇒ 不许被截成一句").toBeGreaterThan(30);
-    expect(text, "它如实说了**现在还不能下**（用户看得见的状态）").toContain("下载渠道还在准备");
-    expect(text, "以及它有多大（用户据此决定要不要下）").toContain("85.6 MiB");
+    // ⚠️⭐ **2026-10-10 第三次订正**：这一格现在是「按需下载」节里那行 ⇒ 它写的是
+    //    `{summary} · {大小} · sha256 {前 12 位}…` ✓ ⇒ 断言跟着**现在用户看到的那句**走 ✓：
+    expect(text, "它如实说了**下载多大**（用户据此决定要不要下）").toContain("39.1 MiB");
+    expect(text, "以及**解压后多大**（磁盘占用据此判断）").toContain("85.6 MiB");
+    expect(text, "并且写明了**校验收口**（sha256 前 12 位可见）").toContain("sha256");
   });
 
   it("⭐ c) 回归：别的条（短 note）文字不变", () => {
@@ -155,13 +158,18 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
   //    （"DOM ＝ 源码那句"那条判据**一个字都没动** ✓）。
   // ─────────────────────────────────────────────────────────────────────────────
 
-  /** ⭐ 从**真源码**取 ecdict 那条 note（⛔ 不手抄 ⇒ 判据与被判对象同源）。 */
-  function ecdictNoteFromSource(): string {
+  /**
+   * ⭐ 从**真源码**取 ecdict 那条的 **`summary`**（⛔ 不手抄 ⇒ 判据与被判对象同源）。
+   * ⚠️⭐ **2026-10-10 第四次订正**：原来取的是 **`note`** 字段 ✗ —— 而「英汉词库」升级成
+   *    `downloadable` 后搬进「按需下载」节，**那节只渲染 `summary`**（`note` 不渲染 ✗）⇒
+   *    ⭐ 拿 `note` 去 DOM 里找**必然找不到**（候选里明明有那一格，却比不中 ✓）。
+   *    ⇒ ⭐ 改取 `summary`：**用户实际看到的那一句**才该被钉 ✓。
+   */
+  function ecdictSummaryFromSource(): string {
     const src = readFileSync(SRC_TSX, "utf8");
-    const m = /id:\s*"ecdict-en-zh"[\s\S]*?note:\s*([\s\S]*?),\n\s*\}/.exec(src);
-    expect(m, "源码里必须有 ecdict 那条 note").not.toBeNull();
-    const parts = [...m![1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1].replace(/\\"/g, '"'));
-    return parts.join("");
+    const m = /id:\s*"ecdict-en-zh"[\s\S]*?summary:\s*"((?:[^"\\]|\\.)*)"/.exec(src);
+    expect(m, "源码里必须有 ecdict 那条 summary").not.toBeNull();
+    return m![1].replace(/\\"/g, '"');
   }
 
   /**
@@ -173,12 +181,21 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
    *   ⚠️ **必须定义在 `describe` 内**（它要用上面的 `ecdictNoteFromSource` ✓ —— 放到文件顶层会 tsc 报错 ✗）。
    */
   function longNoteCell(): HTMLElement {
-    const want = ecdictNoteFromSource();
-    const cells = [...host.querySelectorAll<HTMLElement>(".set-row-note")];
-    const hit = cells.find((c) => (c.textContent ?? "") === want);
+    const want = ecdictSummaryFromSource();
+    // ⚠️⭐ **2026-10-10 第二次订正**：那一格**换了类名** —— 「英汉词库」升级成 `downloadable` 后
+    //    从「还没上架」节搬进了「按需下载」节，而那节用的是 `.set-row-sub`（⛔ 不是 `.set-row-note`）✓
+    //    ⇒ 判据按**那句话本身**找（⛔ 不靠类名、不靠哪一节、不靠下标 ✓），
+    //      因为要钉的是"**那条长说明**不许被压成一列"，不是"它挂在哪个类上" ✓。
+    const cells = [...host.querySelectorAll<HTMLElement>(".set-row-note, .set-row-sub")];
+    const hit = cells.find((c) => (c.textContent ?? "").includes(want));
+    // ⚠️ 找不到时**把候选印出来**（自诊断 ⇒ 别让人去猜为什么没找到 ✓）
     expect(
       hit,
-      "⭐ 全文里必须有一格的文字**逐字**等于源码里那条长说明（长说明不见了 ⇒ 判据失去对象）",
+      "⭐ 全文里必须有一格的文字**含**源码里那条长说明（长说明不见了 ⇒ 判据失去对象）。"
+        + `候选 ${cells.length} 格：`
+        + cells
+            .map((c) => `〔${(c.textContent ?? "").slice(0, 26)}…〕`)
+            .join(" "),
     ).not.toBeUndefined();
     return hit!;
   }
@@ -198,24 +215,28 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
 
   it("⭐ g) 反向：**全文仍在 DOM 里**（⛔ 不许把话改短 —— 截断只发生在视觉层）", () => {
     const cell = longNoteCell();
-    const full = ecdictNoteFromSource();
+    const full = ecdictSummaryFromSource();
     // ⭐ 下限 30：挡"换成四个字了事"（⚠️ 2026-10-10 文案改短后从 200 调到 30 —— 含义未变，见上面那段注释）
     expect(full.length, "那条说明仍旧是一整段（⛔ 不是四个字）").toBeGreaterThan(30);
     expect(
       cell.textContent ?? "",
-      "⭐ DOM 里必须是**完整那句** ⇒ ⛔ 不许把文案本身改短 ✗（那是 owner 没选的那个）",
-    ).toBe(full);
+      "⭐ DOM 里的那格必须**含完整那句** ⇒ ⛔ 不许把文案本身改短 ✗（那是 owner 没选的那个）",
+    ).toContain(full);
     expect((cell.textContent ?? "").length).toBeGreaterThan(30);
   });
 
-  it("⭐ h) 悬停能看到全文（`title` ＝ 完整那句）", () => {
+  it("⭐ h) 那一格**刻意没有** `title`（⛔ 不把内部措辞写进用户面）", () => {
     const cell = longNoteCell();
-    const title = cell.getAttribute("title") ?? "";
+    // ⚠️⭐ **2026-10-10 第三次订正**：原来这条判「`title` ＝ 完整那句」—— ⭐ 那是为
+    //    「还没上架」节里**被 `line-clamp: 2` 截断**的那格设计的 ✓。
+    //    而「英汉词库」升级后搬进「按需下载」节 ⇒ ⭐ **那节不截断**（没有 `line-clamp`）⇒
+    //    全文本来就在，**不需要** `title` 兜底 ✓；⚠️ 而那条 note 的措辞里带内部实现
+    //    （`dictionary.rs`、两段校验）⇒ ⭐ **按 owner 的口径，⛔ 不许把它塞进用户面的 `title`** ✗。
+    //    ⇒ 这条判据改成钉**那个决定**：这一格**没有** `title` ✓（⛔ 不是"忘了加" ✗）。
     expect(
-      title,
-      "⭐ 既然列表里截断了，就必须能看全：`title` 是**完整那句**（⛔ 不是缩写、⛔ 不是空）",
-    ).toBe(ecdictNoteFromSource());
-    expect(title.length).toBeGreaterThan(30);
-    // ⛔ 不许自己写浮层（owner 拍的形状就是现成的 `title` ✓）
+      cell.getAttribute("title"),
+      "⭐ 这一格不许有 `title` —— 内部措辞不进用户面（要改这条得先改 owner 那条口径 ✓）",
+    ).toBeNull();
+    expect((cell.textContent ?? "").length).toBeGreaterThan(30);
   });
 });
