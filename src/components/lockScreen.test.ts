@@ -146,6 +146,22 @@ describe("锁定屏", () => {
     expect(host.querySelector(".lock-forgot")).toBeNull();
   });
 
+  it("文案精简后 ⭐ 要点一个都不许丢（不可逆那半必须**原意**保留）", async () => {
+    await act(() => button("忘记口令？").click());
+    const text = host.querySelector(".lock-forgot")?.textContent ?? "";
+
+    // ③ 导语的口径
+    expect(text, "要说清口令只由用户自己保管").toContain("口令只由你保管");
+    // ⑤ 脚注两条
+    expect(text, "要说清输错不会被锁死").toContain("输错多少次都不会被锁死");
+    expect(text, "要说清慢是密钥派生的代价").toContain("每次慢是密钥派生");
+    expect(text, "「不是卡住了」这半不许丢").toContain("不是卡住了");
+    // ⭐ (c) 整段里**唯一**说"不可逆"的地方 ⇒ 原意必须留着（不只是"永久"两个字）
+    expect(text, "⭐ 不可逆这半必须原意保留").toContain("永久取不回来了");
+    // ① 顶部压成一句，但要点还在
+    expect(host.querySelector(".lock-desc")?.textContent, "顶部要点不许丢").toContain("输入口令后才会加载");
+  });
+
   it("输对：状态变成已解锁（界面切换由状态中枢驱动）", async () => {
     mocks.unlockEncryption.mockResolvedValue(undefined);
 

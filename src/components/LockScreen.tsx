@@ -95,7 +95,7 @@ export function LockScreen() {
         <div className="lock-logo">🔐</div>
         <div className="lock-title">ShuyoNote 已加密锁定</div>
         <div className="lock-desc">
-          本机笔记已使用端到端加密保护。输入口令解锁后才会加载内容。
+          本机笔记已端到端加密，输入口令后才会加载。
         </div>
         <div className="lock-input-row">
           <input
@@ -143,8 +143,7 @@ export function LockScreen() {
           <div className="lock-forgot" data-testid="lock-other-spaces">
             <p className="lock-forgot-lead">
               <b>放弃打开这个加密空间？</b>
-              本机还有 {otherSpaces.length} 个空间没有加密 —— 换过去马上就能用，不用输这里的口令。
-              换过去只是<b>先不打开它</b>：这个空间的内容在解锁之前一直读不出来，随时可以切回来再输口令。
+              本机还有 {otherSpaces.length} 个空间没有加密 —— 换过去马上就能用，不用输这里的口令；随时可以切回来。
             </p>
             {otherSpaces.map((s) => (
               <button
@@ -182,25 +181,21 @@ export function LockScreen() {
         {forgotOpen && (
           <div className="lock-forgot">
             <p className="lock-forgot-lead">
-              <b>没有找回流程，也没有后门。</b>口令不存本机、不上传服务器，只由你脑子（或密码管理器）保管。
+              <b>没有找回流程，也没有后门。</b>口令只由你保管（不存本机、不上传服务器）。
             </p>
             <ul className="lock-forgot-list">
               <li>
-                <b>连服务器那份也打不开。</b>同步上去的内容是用<b>同一把钥匙</b>加密的
-                （内核里同步载荷走的就是这把会话密钥），所以忘掉口令不等于"还有云端备份"。
+                <b>连服务器那份也打不开。</b>同步上去的内容用的是<b>同一把钥匙</b>（内核里同步载荷走的就是这把会话密钥）。
               </li>
               <li>
-                <b>唯一可能救回来的：开启加密之前导出的备份。</b>那是明文备份，用它可以恢复到最后
-                一次导出的样子——之后的改动不在里面。
+                <b>唯一可能救回来的：开启加密之前导出的备份。</b>那是明文备份，恢复出来是最后一次导出的样子 —— 之后的改动不在里面。
               </li>
               <li>
                 <b>没有那样的备份：</b>这批加密内容就永久取不回来了，只能清空本机数据重新开始。
-                愿意的话可以把本机的加密库文件留着（口令万一以后想起来还能用），但不要指望它自己恢复。
               </li>
             </ul>
             <p className="lock-forgot-foot">
-              说明：本机解锁不设"账号锁定"，输错多少次都不会被锁死；每次尝试都很慢，那是密钥派生
-              （Argon2id）本来的代价，不是卡住了。
+              输错多少次都不会被锁死；每次慢是密钥派生（Argon2id）本来的代价，不是卡住了。
             </p>
           </div>
         )}
