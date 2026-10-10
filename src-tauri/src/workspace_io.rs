@@ -551,6 +551,12 @@ pub async fn import_workspace(
                 updated_at: r.get(6)?,
                 // ⭐ 2026-10-10：与 `workspaces.rs::row_to_meta` 同一个下标（第 8 列）✓
                 kind: r.get(7)?,
+                // ⭐ 2026-10-10（`task-27`）：同 `list_workspaces` —— 派生读数（磁盘上是不是密文）。
+                // ⚠️ 导入这条路上**可能刚把这个库标成加密**（见上面 `set_space_encrypted_marked` 那段）
+                //    ⇒ 必须**真的嗅一次**，⛔ 不许写死 `false` ✗；拿不到目录 ⇒ `None` ＝ "读不到" ✓。
+                encrypted_on_disk: crate::db::app_data_dir_ref().map(|dir| {
+                    crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, &new_id))
+                }),
             })
         },
     )

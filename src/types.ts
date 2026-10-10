@@ -498,6 +498,18 @@ export interface WorkspaceMeta {
    * ⛔ 界面**不许**自己判 `kind === "team"` ✗ —— 规则只有一处：`src/lib/syncTag.ts::showsServerTag` ✓。
    */
   kind?: string;
+  /**
+   * ⭐ **这个空间的库在磁盘上是不是密文** —— 2026-10-10 加（`task-27`：owner「加密空间要做个特殊标识」）。
+   *
+   * ⚠️ 三态，**别用 `!x` 一把判** ✗：
+   * · `true`  ＝ 磁盘上是密文 ⇒ 界面显示那个标识 ✓
+   * · `false` ＝ 确认是明文 ⇒ 不显示 ✓
+   * · `undefined`／`null` ＝ **读不到**（例如后端老形状缺这一格／拿不到数据目录）⇒ **也不显示** ✓
+   *   ⛔ 但**不许把它当成"明文"** ✗（那是把"不知道"说成了"没有" ✓）。
+   * ⚠️ 判定规则只有一处：Rust `crate::security::space_db_is_encrypted`（只读头 16 字节）；
+   *   界面**不许**自己再判一次 ✗ —— 映射只有一处：`src/lib/spaceSecurity.ts` ✓。
+   */
+  encrypted_on_disk?: boolean | null;
 }
 
 /** M24 — a saved PDF annotation page (list per attachment+page). */

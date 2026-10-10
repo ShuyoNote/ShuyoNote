@@ -39,6 +39,8 @@ import { useWindowChrome } from "../store/windowChrome";
 import { showsServerTag, syncTagColor, syncTagTitle } from "../lib/syncTag";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间时"眼睛在长列表里找"）—— 与设置-空间列表**共用这一份** ✓
 import { filterSpaces } from "../lib/spaceFilter";
+// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：那一格的**唯一**映射（文字标识，⛔ 不只靠颜色）✓
+import { spaceCryptoBadge } from "../lib/spaceSecurity";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog, chooseDialog, useInputStore } from "../store/input";
@@ -1369,6 +1371,8 @@ export function PageTree(_props: {
                 shownSpaces.map((s) => {
                   const active = s.id === activeSpaceId;
                   const prof = syncProfiles[s.id];
+                  // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（映射只有一处 ✓）
+                  const crypto = spaceCryptoBadge(s.encrypted_on_disk);
                   return (
                     <Fragment key={s.id}>
                       <div
@@ -1397,6 +1401,16 @@ export function PageTree(_props: {
                           {/* 而不是把同步标签硬塞进名字后面挤成一行。 */}
                           <div className="space-item-meta">
                             {active && <span className="space-item-current">当前</span>}
+                            {/* ⭐ 2026-10-10（owner：「**加密空间要做个特殊标识**」）——
+                                只显示**文字**标识（⛔ 不许只靠颜色 ✗：色弱用户看不到）；
+                                语义只说"**库在磁盘上是密文**"（⛔ 不说"安全"／"别人看不到" ✗，
+                                也不把 `in_keyring`／`key_available` 揉进来 ✗）；
+                                ⚠️ 读数**拿不到就不显示**（`spaceCryptoBadge` 里分 `unknown` 与 `plaintext` ✓）。 */}
+                            {crypto.show && (
+                              <span className="space-item-crypto" title={crypto.title} aria-label={crypto.title}>
+                                {crypto.label}
+                              </span>
+                            )}
                             {isDesktop && prof && showsServerTag(s.kind, prof.server_url) ? (
                               /* ⚠️ **2026-10-10（owner 拍 C）**：这里以前是一枚**写着地址的文字胶囊** ✗
                                  —— 服务器是 IP 时，那一行右侧就摊出那个 IP（owner 截图里就是它）✓。

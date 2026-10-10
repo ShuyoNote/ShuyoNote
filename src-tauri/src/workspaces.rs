@@ -12,8 +12,14 @@ fn conn<'a>(db: &'a State<'_, Db>) -> MutexGuard<'a, Connection> {
 }
 
 fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
+    let id: String = row.get(0)?;
     Ok(WorkspaceMeta {
-        id: row.get(0)?,
+        // ⭐ 2026-10-10（`task-27`）：在这里算**派生读数**（磁盘上是不是密文）⇒ **每个**调用点都拿到 ✓
+        //（⛔ 不放调用点 ✗：`row_to_meta` 有两个调用方，漏一个那一处的读数就悄悄是 `None` ✗）。
+        encrypted_on_disk: crate::db::app_data_dir_ref().map(|dir| {
+            crate::security::space_db_is_encrypted(&crate::db::space_db_path(dir, &id))
+        }),
+        id,
         name: row.get(1)?,
         theme: row.get(2)?,
         icon: row.get(3)?,
@@ -22,6 +28,9 @@ fn row_to_meta(row: &rusqlite::Row) -> rusqlite::Result<WorkspaceMeta> {
         updated_at: row.get(6)?,
         // ⭐ 2026-10-10：**第 8 列**（追加在最后 ⇒ 前 7 个下标一个都没动 ✓）。
         // 界面靠它判"个人空间不显示同步标识"（owner 口径 ✓）；列是 `TEXT NOT NULL DEFAULT ''` ✓。
+        // ⚠️ 凡是用 `row_to_meta` 的 SELECT **都必须带上这一列** ✗ —— 编译器**看不见列清单** ✗：
+        //    2026-10-10 实测漏了一处（`create_workspace` 那条，见下面 `,kind` 那笔）⇒ 那是**运行期**
+        //    `Invalid column index`，`cargo check` 与所有测试都不会红 ✓。
         kind: row.get(7)?,
     })
 }
@@ -200,6 +209,8 @@ pub async fn list_workspaces(db: State<'_, Db>) -> Result<Vec<WorkspaceMeta>, St
     for row in mapped {
         out.push(row.map_err(|e| e.to_string())?);
     }
+    // ⭐ 2026-10-10（`task-27`）：派生读数（磁盘上是不是密文）**在 `row_to_meta` 里算** ✓
+    //（⛔ 不在这里再跑一遍后处理 ✗ —— 那会把每个空间嗅两次）。
     Ok(out)
 }
 
@@ -435,7 +446,12 @@ pub async fn create_workspace(
     .map_err(|e| e.to_string())?;
 
     c.query_row(
-        &format!("SELECT id,name,theme,icon,sort_order,created_at,updated_at FROM meta.workspaces WHERE id = ?1"),
+        // ⚠️ ⭐ 2026-10-10 **修**：这一条原先只有 7 列（漏了 `kind`）✗ —— 而它走 `row_to_meta`，
+        //    那一头读的是**第 8 列** ⇒ 运行期 `Invalid column index` ⇒ **`create_workspace` 直接报错** ✗
+        //    （＝"新建空间"坏了 ✓）。根因是**加 `kind` 那一笔漏了列清单的一处**，而
+        //    `cargo check` **看不见列清单**（它只看得见"构造点缺字段"）⇒ 编译器与全部测试都不红 ✓。
+        //    ⇒ 凡是走 `row_to_meta` 的 SELECT，新列一律**追加在最后**并在这里同步 ✓。
+        &format!("SELECT id,name,theme,icon,sort_order,created_at,updated_at,kind FROM meta.workspaces WHERE id = ?1"),
         params![id],
         |row| row_to_meta(row),
     )
