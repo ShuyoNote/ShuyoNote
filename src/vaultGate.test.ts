@@ -221,6 +221,30 @@ function fixture() {
 
 const escapeBox = () => host.querySelector('[data-testid="lock-other-spaces"]');
 
+// ⭐ 2026-10-10（owner 拍 C：「全都压」）：文案精简后 ⛔ **要点一个都不许丢** ✗ ＋ ⭐ 那排按钮的形态**一个字不许动** ✗。
+describe("锁屏文案精简后：要点还在 ＋ 按钮形态没动", () => {
+  it("「放弃打开」那段：两条要点还在（不用输口令 ／ 随时可以切回来）", async () => {
+    fixture();
+    await render();
+
+    const text = escapeBox()?.textContent ?? "";
+    expect(text, "要点：换过去马上就能用、不用输这里的口令").toContain("不用输这里的口令");
+    expect(text, "要点：随时可以切回来").toContain("随时可以切回来");
+    // ⚠️ 压掉的那两句是**同义重复** ✓（"先不打开它" / "解锁之前读不出来"）——
+    //    但它们说的是**同一件事**：换过去 ≠ 解锁 ⇒ 前半句（不用输口令）已承担该语义 ✓。
+  });
+
+  it("⭐ 那排「去「名字」」按钮的形态：⛔ 不许把「放弃打开它，」前缀加回来", async () => {
+    // ⚠️ 这一格**本来就有判据**（`a3)`「按钮只留『去「<名字>」』：⛔ 前缀一个字都不许有 ＋ 每颗带名字 ＋
+    //    数量＝明文空间数」✓）⇒ 这里**只写一句指向它**，⛔ 不重复造第二条 ✗（账本上重复判据会被当成新覆盖 ✓）。
+    //    ⭐ 收尾前我实测过：把前缀加回来 ⇒ `a3)` 与新写的那版**都会红** ✓ ⇒ 既有那条已经够 ✓。
+    fixture();
+    await render();
+    const go = host.querySelector('[data-testid^="lock-go-"]') as HTMLButtonElement;
+    expect(go.textContent, "按钮只留「去「<名字>」」（权威判据见 a3)）").toMatch(/^去「.+」$/);
+  });
+});
+
 describe("一个空间加密，⛔ 不锁住其它空间（owner 拍 B：明文空间直接可用）", () => {
   it("⭐ a) 正面：本机有明文空间 ⇒ 锁定屏上**必须有一条直接进去的路**（旧行为必红）", async () => {
     fixture();
