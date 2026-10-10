@@ -13987,6 +13987,13 @@ p:has(> .editor-drawing-container) {
   gap: 12px;
   padding: 12px 14px;
 }
+/* ⭐ 2026-10-10（owner 要求"设置里点一行就切换"）：那一行**可点** ⇒ 给鼠标反馈。
+   ⚠️ **只给"能切的那一行"**：当前空间那一行点了无事发生（`pick()` 直接返回 ⇒ 不白跑
+   `loadPages`/`refreshVault`）⇒ 它**不给** pointer ✓（否则等于承诺一个不会发生的动作 ✗）。
+   ⚠️ 这一处**只加这一条**（Lead 批的写域就这一格 ✓）。 */
+.set-space-card:not(.is-active) .set-space-row {
+  cursor: pointer;
+}
 .set-space-meta {
   display: flex;
   align-items: center;
