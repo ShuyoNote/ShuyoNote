@@ -126,10 +126,12 @@ describe("自动备份那一格（task-19）", () => {
     //    wrapper 的 max-content 撑到 **590px** ⇒ 同一行的 `.set-row-text` 宽**恰好 0** ⇒
     //    「备份 / 恢复（全库）」与说明**一个字一列** ✗（CDP 实测：0 ⇒ 修后 **487.5** ✓）。
     //    ⇒ ⭐ 收据跟着**新接线**走：面板由页面挂、位置在**行外** ✓。
-    expect(
-      btn,
-      "`BackupButton` 里又出现了 `BackupSettingsPanel` ⇒ 面板会被塞回 `.backup-menu`（那一行又会被挤成 0 ✗）",
-    ).not.toContain("BackupSettingsPanel");
+    // ⚠️ 只钉**接线**（import ＋ JSX 用法），⛔ 不用 `not.toContain("BackupSettingsPanel")` ✗ ——
+    //    那个太粗：文件里的**注释**会讲这段来由、名字必然出现 ⇒ 判据会被自己的解释文字绊倒 ✓（实测踩过一次）。
+    expect(btn, "`BackupButton` 又 import 了面板 ⇒ 它会被塞回 `.backup-menu`（那一行又会被挤成 0 ✗）").not.toMatch(
+      /import\s*\{\s*BackupSettingsPanel\s*\}/,
+    );
+    expect(btn, "`BackupButton` 又把面板渲染进去了 ⇒ 同上 ✗").not.toMatch(/<BackupSettingsPanel\b/);
     const page = read("src", "components", "SettingsDialog.tsx");
     expect(page, "页面里没挂 BackupSettingsPanel ⇒ 面板没地方显示了").toMatch(/<BackupSettingsPanel\s*\/>/);
     // ⭐ 位置收据：它必须在那个带 label 的 `<BackupButton …>` **之后**，且两者之间已经闭合了 `.set-row`

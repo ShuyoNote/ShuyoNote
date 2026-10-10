@@ -171,12 +171,14 @@ export function BackupButton({ label }: { label?: string } = {}) {
         </div>
       )}
 
-      {/* ⚠️⭐ **2026-10-11 搬走**：「自动备份」那一格原来挂在这里（`{label && <BackupSettingsPanel />}`）✗ ——
+      {/* ⚠️⭐ **2026-10-11 搬走**：「自动备份」那一格原来挂在这里（原先是 `{label && <本面板 />}` ✗）——
           而这里是 `.backup-menu` 的**内部** ⇒ ⭐ 那个 wrapper 的 max-content 被整块面板撑到 **590px** ✗
           ⇒ CDP 实测同一行里 `.set-row-text` 的宽**恰好是 0** ⇒ 「备份 / 恢复（全库）」与那句说明
           **一个字一列** ✗（owner 截图 ✓）。⇒ ⭐ 改由**页面**在**行外**挂它（`SettingsDialog` ✓）：
           一行＝"左文字 ＋ 右按钮"，面板是它下面**另一块** ✓。⛔ 别再塞回 `.backup-menu` 里 ✗ ——
-          判据就是那两条量出来的宽（`set-row-text` 不许是 0 ✗ ／ `.backup-menu` 不许是 590 ✗）。 */}
+          判据就是那两条量出来的宽（`set-row-text` 不许是 0 ✗ ／ `.backup-menu` 不许是 590 ✗），
+          外加 `BackupSettingsPanel.test.ts` 的接线收据（它钉的就是"这文件里不许再出现那个组件"✓）。
+          ⚠️ 注释里**故意不写**那个组件的 JSX 字面写法 ⇒ 否则那条收据会被这段解释文字绊倒 ✗（踩过）。 */}
     </div>
   );
 }
