@@ -89,6 +89,14 @@ export function MobileCapture() {
       //   （这是队友逐屏审计实测出来的，见 `_workspace/notes/2026-10-10-mobile-screen-audit.md` ✓）。
       //   不选中 ⇒ 存完**留在首页** ✓，新笔记自己出现在「最近笔记」第一行 ✓（这就是确认 ✓）。
       await createPage(null, { ...content, title }, { select: false });
+      // ⭐ 2026-10-10 第二次修（第一次只加 `select: false` **不够** ✗，实拍复核仍在编辑器 ✗）：
+      //   真因是 `src/store/notes.ts:139` 那段"**恢复上次那一页**"的 effect ✓ ——
+      //   `createPage` 存完会 `loadPages()` ✓，而 `lastPageId` 已是刚存那页 ⇒ 它又把页面打开了 ✗。
+      //   ⇒ 这里**显式清掉当前页** ✓（不依赖对那段 effect 的猜测 ✓）：
+      //   `currentId === null` ⇒ `App.tsx` 的手机分支才会渲染 `MobileHome` ✓。
+      //   ⚠️ 用 `setState` 而不是新加 store 方法：`useNotes` 是 zustand store ✓，`currentId`／`current`
+      //   是它自己的状态字段 ✓（`notes.ts:96` 初始值就是这两个 ✓），改它们不引入新 API ✓。
+      useNotes.setState({ currentId: null, current: null });
       setScreen("home");
       setText("");
     } catch (e) {
