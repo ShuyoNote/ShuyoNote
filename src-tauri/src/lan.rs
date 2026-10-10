@@ -70,6 +70,14 @@ pub struct LanAnnounce {
     /// 设备名（给人看的状态行用；缺失不影响路由）。
     #[serde(default)]
     pub device_name: String,
+    /// ⭐ 08-b②（2026-10-10）：**可显示的短标识**（4–6 字符 ✓，随机生成 ✓，见 `lan_state::new_short_id`）。
+    ///
+    /// 用途：信任前要展示对方身份（规格 J21「设备名 ＋ 短标识」✓），而设备名**可能为空** ✗、
+    /// `device_id` **不许进用户可见的句子** ✗（见 `sync.rs` 的 `NearbyPeer::device_id` 注释 ✓）。
+    /// ⚠️ `#[serde(default)]` ⇒ **老对端不发这一格也收得下** ✓（读到就是空串 ✓ ⇒ 界面**如实**说
+    /// 「对方没报短标识」✓，⛔ 绝不回落成 `device_id` 前几位 ✗）；⇒ **不升 `WIRE_VERSION`** ✓。
+    #[serde(default)]
+    pub short_id: String,
     /// 代言的服务端基址（如 `http://192.168.1.5:8787`）。不代言 ⇒ `None`。
     #[serde(default)]
     pub hub_base: Option<String>,
@@ -293,6 +301,7 @@ fn is_private_ipv4(host: &str) -> bool {
 pub fn announce_for_own_hub(
     local_device_id: &str,
     device_name: &str,
+    short_id: &str,
     configured_url: &str,
     space_id: &str,
 ) -> Option<LanAnnounce> {
@@ -312,6 +321,8 @@ pub fn announce_for_own_hub(
         v: WIRE_VERSION,
         device_id: dev.to_string(),
         device_name: device_name.trim().to_string(),
+        // ⭐ 08-b②：**必须由调用方给**（参数 ⇒ 漏填编译不过 ✓ —— 与"不许派生"同一等级的保证 ✓）。
+        short_id: short_id.trim().to_string(),
         hub_base: Some(base.to_string()),
         hub_spaces: vec![space.to_string()],
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
@@ -677,6 +688,7 @@ mod tests {
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
+                short_id: "T3ST1".into(),
                 hub_base: base.map(|s| s.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -820,6 +832,7 @@ mod tests {
             v: WIRE_VERSION,
             device_id: device.to_string(),
             device_name: format!("{device} 的机器"),
+            short_id: "T3ST1".into(),
             hub_base: base.map(|s| s.to_string()),
             hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
             fp: "fp".into(),
@@ -1090,7 +1103,7 @@ mod tests {
             ("", false),                        // 没配置 ⇒ 不许代言
         ];
         for (url, should_produce) in cases {
-            let mine = announce_for_own_hub("dev-me", "本机", url, "sp-1");
+            let mine = announce_for_own_hub("dev-me", "本机", "T3ST1", url, "sp-1");
             assert_eq!(
                 mine.is_some(),
                 should_produce,
@@ -1106,8 +1119,8 @@ mod tests {
         }
 
         // 没有设备身份 / 没有空间身份 ⇒ 代言不成立（空身份只会产出没人能用的公告）。
-        assert!(announce_for_own_hub("", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
-        assert!(announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "  ").is_none());
+        assert!(announce_for_own_hub("", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1").is_none());
+        assert!(announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "  ").is_none());
     }
 
     /// ★ 判据 ⑰（B 片施工单 §8.3 的收口）：**`fp` 真的填了，且填的是 `device_id`**。
@@ -1121,17 +1134,17 @@ mod tests {
     /// "有人顺手把 `fp` 的语义换成密钥指纹"（那会让老接收方读到一串它解释不了的东西）。
     #[test]
     fn the_fingerprint_is_the_device_id_and_is_actually_filled() {
-        let a = announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "sp-1")
+        let a = announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1")
             .expect("该代言");
         assert_eq!(a.fp, "dev-me", "fp 必须就是 device_id（不是密钥材料指纹）");
         assert_eq!(a.fp, a.device_id, "两者是同一个应用级事实，不许各填一份");
         // 前后空白照 trim（与 device_id 同一把尺，免得出现"身份一样但 fp 字符串不同"）
-        let b = announce_for_own_hub("  dev-me  ", "本机", "http://192.168.1.5:8787", "sp-1")
+        let b = announce_for_own_hub("  dev-me  ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1")
             .expect("该代言");
         assert_eq!(b.fp, "dev-me");
         assert_eq!(b.fp, b.device_id, "trim 之后两者也必须一致");
         // 空身份 ⇒ 根本产出不了公告（这条与判据 ⑫ 同一支），所以不存在"fp 是空串"的合法产出
-        assert!(announce_for_own_hub("   ", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
+        assert!(announce_for_own_hub("   ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1").is_none());
     }
 
     /// ★ 判据 ⑬：状态行要能把**三件处置不同的事**分开 —— 走了局域网 / 网段里什么都没有 /
@@ -1230,8 +1243,8 @@ mod tests {
         st_b.set_enabled(true);
 
         // ① 产出侧：两台各产一条（第一轮就该发 —— `announce_due(0, …)` 为真）。
-        let out_a = announces_for("dev-a", "A 的机器", &profiles);
-        let out_b = announces_for("dev-b", "B 的机器", &profiles);
+        let out_a = announces_for("dev-a", "A 的机器", "T3ST1", &profiles);
+        let out_b = announces_for("dev-b", "B 的机器", "T3ST1", &profiles);
         assert_eq!(out_a.len(), 1);
         assert_eq!(out_b.len(), 1);
         assert!(announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS), "第一轮必须发声");
@@ -1286,5 +1299,49 @@ mod tests {
         let got = resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap();
         assert_eq!(got.url, "http://192.168.1.5:8787");
         assert_eq!(got.kind, LinkKind::Lan);
+    }
+}
+
+/// ⭐ 08-b② 的两条硬判据（Lead 照收 ✓）—— **行为**读数，不是注释 ✓。
+#[cfg(test)]
+mod short_id_wire_tests {
+    use super::*;
+
+    /// ⭐① **缺该字段的公告（老对端）⇒ `short_id == ""`，且**不许**回落成 `device_id` ✗。
+    ///
+    /// 这一条钉的正是"两台一起升级"那段过渡期的**正确行为** ✓：
+    /// 界面对"没报"必须**如实说没报** ✗，⛔ 不是拿 `device_id` 凑一格 ✗
+    /// （`sync.rs` 的 `NearbyPeer::device_id` 注释逐字禁 ✓）。
+    #[test]
+    fn old_announce_without_short_id_decodes_to_empty_not_device_id() {
+        // 老版本发出来的公告：**整格都不在** ✓（这正是 `#[serde(default)]` 要收下的形状 ✓）
+        let raw = format!(
+            r#"{{"v":{v},"device_id":"dev-old","device_name":"老机器","fp":"dev-old"}}"#,
+            v = WIRE_VERSION
+        );
+        let a = decode_announce(&raw).expect("老公告必须照样收得下 ✓");
+        assert_eq!(a.short_id, "", "缺这一格 ⇒ 空串 ✓（界面据此显示「对方没报短标识」✓）");
+        assert_ne!(a.short_id, a.device_id, "⛔ 绝不回落成 device_id ✗");
+        assert_ne!(a.short_id, &a.device_id[..3.min(a.device_id.len())], "⛔ 也不许回落成它的前几位 ✗");
+    }
+
+    /// ⭐③ **上限真读数**：编码一条**真实形状**的公告 ⇒ 打印字节数 ＋ 断言 ≤ 上限 ✓，
+    /// 并把**短标识那一格的增量**也量出来 ✓（Lead 要的那两个数 ✓）。
+    #[test]
+    fn announce_bytes_reading_with_and_without_short_id() {
+        let a = announce_for_own_hub("dev-me", "本机", "K7M2Q", "http://192.168.1.5:8787", "sp-1")
+            .expect("这条应当能代言 ✓");
+        let with = encode_announce(&a).expect("可编码 ✓");
+        let mut b = a.clone();
+        b.short_id = String::new();
+        let without = encode_announce(&b).expect("可编码 ✓");
+        println!(
+            "[读数] 真实公告 {} 字节（上限 {}）｜短标识那一格的增量 = {} 字节",
+            with.len(),
+            MAX_ANNOUNCE_BYTES,
+            with.len() as i64 - without.len() as i64
+        );
+        assert!(with.len() <= MAX_ANNOUNCE_BYTES, "公告 {} 字节 ≤ 上限 {}", with.len(), MAX_ANNOUNCE_BYTES);
+        assert!(with.len() > without.len(), "短标识必须真的进了线格式 ✓（不是被 serde 丢掉 ✗）");
     }
 }

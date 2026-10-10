@@ -166,9 +166,10 @@ pub fn announce_due(last_announce_ms: i64, now_ms: i64, interval_ms: i64) -> boo
 pub fn announces_for(
     local_device_id: &str,
     device_name: &str,
+    short_id: &str,
     profiles: &[(String, String, String)],
 ) -> Vec<lan::LanAnnounce> {
-    announces_for_with_mesh(local_device_id, device_name, profiles, &[])
+    announces_for_with_mesh(local_device_id, device_name, short_id, profiles, &[])
 }
 
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
@@ -183,6 +184,7 @@ pub fn announces_for(
 pub fn announces_for_with_mesh(
     local_device_id: &str,
     device_name: &str,
+    short_id: &str,
     profiles: &[(String, String, String)],
     mesh_bases: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
@@ -203,11 +205,13 @@ pub fn announces_for_with_mesh(
         if !is_fully_bound(space_id, server_url) && mesh_base.is_none() {
             continue;
         }
-        let mut a = lan::announce_for_own_hub(dev, device_name, url, space)
+        let mut a = lan::announce_for_own_hub(dev, device_name, short_id, url, space)
             .unwrap_or_else(|| lan::LanAnnounce {
                 v: lan::WIRE_VERSION,
                 device_id: dev.to_string(),
                 device_name: device_name.trim().to_string(),
+                // ⭐ 08-b②：那一格**同样显式给**（这个兜底分支也是产出点 ✓）
+                short_id: short_id.trim().to_string(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
                 // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
@@ -365,7 +369,15 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //    单播那一条把反方向补回来（客户端先被主机听见 ⇒ 主机直接发回给它）。
                 // ⚠️ 以前这里是循环外算一次的 `default_targets` ⇒ 表里就算有对端也发不到它们。
                 let targets = lan::announce_targets(lan::LAN_PORT, &state.peers(now));
-                for a in announces_for_with_mesh(&device_id, &device_name, &profiles, &mesh_bases) {
+                // ⭐ 08-b②：本机短标识**只在这里读一次** ✓（⛔ 别挪进循环里一条读一次 ✗ ——
+                //    那会把一把锁按公告数重复上 ✓）。拿不到 ⇒ **如实用空串** ✓
+                //    ⇒ 对端显示「对方没报短标识」✓，⛔ 绝不回落成 `device_id` 前几位 ✗。
+                let short_id = {
+                    let db = app.state::<Db>();
+                    let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+                    local_short_id(&c).unwrap_or_default()
+                };
+                for a in announces_for_with_mesh(&device_id, &device_name, &short_id, &profiles, &mesh_bases) {
                     let _ = lan::announce_once(&sock, &targets, &a).await;
                 }
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"
@@ -677,6 +689,7 @@ mod tests {
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: device.to_string(),
+                short_id: "T3ST1".into(),
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -800,7 +813,7 @@ mod tests {
         let bases = mesh_bases_of(&[("sp-1", "http://192.168.1.5:8788")]);
 
         assert!(should_run_discovery(&profiles, &["sp-1".to_string()]), "开了网格 ⇒ 发现层要起");
-        let got = announces_for_with_mesh("dev-me", "本机", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &profiles, &bases);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
         assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
@@ -812,7 +825,7 @@ mod tests {
     fn a_mesh_base_overrides_the_configured_server_in_the_announce() {
         let profiles = profiles_of(&[("sp-1", "https://s.example.com")]);
         let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
-        let got = announces_for_with_mesh("dev-me", "本机", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &profiles, &bases);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://10.0.0.7:9000"), "覆盖成我自己的窗口");
     }
@@ -823,16 +836,16 @@ mod tests {
         // ① 半截配置（有地址没空间）：不开发现层、不发言
         let half = profiles_of(&[("", "http://192.168.1.5:8787")]);
         assert!(!should_run_discovery(&half, &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", &half, &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", &half, &[]).is_empty());
         // ② 绑上了：开，而且报的是配置地址（甲那条路）
         let bound = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         assert!(should_run_discovery(&bound, &[]));
-        let got = announces_for_with_mesh("dev-me", "本机", &bound, &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &bound, &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
         // ③ 什么都没配：不开、不发言
         assert!(!should_run_discovery(&[], &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", &[], &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", &[], &[]).is_empty());
     }
 
     /// ★ 判据 ⑥（口径 2 的直接上游）：**"绑了同步"才算绑** —— 只填了地址还没选空间
@@ -858,18 +871,19 @@ mod tests {
     /// 而且**每个空间一条**（一条公告只替一个空间代言，`hub_spaces` 就是那个匹配键）。
     #[test]
     fn we_announce_only_the_spaces_that_are_actually_bound() {
-        assert!(announces_for("dev-me", "本机", &[]).is_empty());
+        assert!(announces_for("dev-me", "本机", "T3ST1", &[]).is_empty());
         assert!(
-            announces_for("dev-me", "本机", &profiles_of(&[("", "http://192.168.1.5:8787")])).is_empty(),
+            announces_for("dev-me", "本机", "T3ST1", &profiles_of(&[("", "http://192.168.1.5:8787")])).is_empty(),
             "只填了地址没选空间 ⇒ 不许发言（产出的公告没人能用）"
         );
         // 没有设备身份 ⇒ 一条都不发（`decode_announce` 会以 NoDeviceId 丢掉它）
-        assert!(announces_for("  ", "本机", &profiles_of(&[("sp-1", "http://192.168.1.5:8787")])).is_empty());
+        assert!(announces_for("  ", "本机", "T3ST1", &profiles_of(&[("sp-1", "http://192.168.1.5:8787")])).is_empty());
 
         // 两个空间、地址是私有网段 ⇒ 两条，各自代言各自的空间
         let got = announces_for(
             "dev-me",
             "本机",
+            "T3ST1",
             &profiles_of(&[("sp-1", "http://192.168.1.5:8787"), ("sp-2", "http://192.168.1.5:8787")]),
         );
         assert_eq!(got.len(), 2);
@@ -887,7 +901,7 @@ mod tests {
     /// 而它明明还在听。
     #[test]
     fn a_device_with_nothing_to_vouch_for_still_says_it_is_here() {
-        let got = announces_for("dev-me", "本机", &profiles_of(&[("sp-1", "https://s.example.com")]));
+        let got = announces_for("dev-me", "本机", "T3ST1", &profiles_of(&[("sp-1", "https://s.example.com")]));
         assert_eq!(got.len(), 1, "没得代言也要露面（否则别人看不见这台设备）");
         assert_eq!(got[0].hub_base, None, "公网地址 ⇒ 不代言");
         assert!(got[0].hub_spaces.is_empty(), "不代言就不带空间（`resolve_base` 只认 hub_base 那一条）");

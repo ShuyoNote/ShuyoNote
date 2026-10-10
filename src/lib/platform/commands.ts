@@ -227,6 +227,9 @@ export interface NearbyPeer {
   device_id: string;
   /** 可能是空串（那台设备没报名字）⇒ 界面**如实说**，不许回落成 id 前几位。 */
   device_name: string;
+  /** ⭐ 08-b②：对方公告里的**可显示短标识**（4–6 字符）。老对端不发 ⇒ 空串 ⇒
+   *  界面**如实**说「对方没报短标识」（用 `src/lib/peerIdentity.ts` ✓），⛔ 不许回落成 id ✗。 */
+  short_id: string;
   /** 收到它公告的来源地址（ip）。⚠️ 默认**不显示**（规格 §3.4：只用于排障）。 */
   addr: string;
   /** 它**自己声明**在服务哪些空间（远端 `space_id`）。界面不许自己算交集。 */
