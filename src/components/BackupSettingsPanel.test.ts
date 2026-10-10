@@ -7,8 +7,8 @@
 //   c) ⭐ **反向**：后端**没有**开关能力 ⇒ ⭐ 界面**不许出现开关** ✗（挡"画一个假的" ✓）
 //   d) ⭐ **回归闸**：手动导出/导入那两条**仍然可用** ✓（⭐ `BackupButton.tsx` 一个字不改 ✓）
 //   e) ⭐ **漂移守卫**：保留策略／间隔**照后端常量说**（⛔ 不许自己写一个数 ✗）—— 直接读 `.rs` 比对 ✓
-//   f) ⭐ **接线收据**：面板挂在 `BackupButton` 的**有 `label` 那一支**（＝设置中心「数据」页 ✓），
-//      ⛔ 无 `label`（侧栏那支）不许渲染它 ✓
+//   f) ⭐ **接线收据**：面板由**页面**挂、位置在**行外** ✓（⛔ 不许塞回 `BackupButton` 的 `.backup-menu` 里 ✗ ——
+//      那个形状 2026-10-11 实测把同一行挤成「一个字一列」✗，见那条判据里的读数和来由 ✓）
 //
 // 一条命令：`npx vitest run src/components/BackupSettingsPanel.test.ts --reporter=verbose`
 
@@ -89,9 +89,10 @@ describe("自动备份那一格（task-19）", () => {
     expect(panel, "面板里不许自己调 export_backup/import_backup（那会变成第二份实现）").not.toMatch(
       /exportBackup\(|importBackup\(/,
     );
-    // ⭐⭐ **嵌套守卫**：`BackupButton` 在有 `label` 时会挂本面板 ⇒ 面板里那个 `<BackupButton>` **不许带 label**
-    //     （带了就是**无限自我嵌套** ✗ —— 这条判据是第一版实现当场会踩的坑 ✓）
-    expect(panel, "面板里的 <BackupButton> 带了 label ⇒ 会无限自我嵌套 ✗").not.toMatch(
+    // ⭐⭐ **嵌套守卫**（⚠️ 2026-10-11 理由更新）：`BackupButton` **不再**自己挂本面板了 ✓ ——
+    //     所以这条不再挡"无限自我嵌套"，而是挡**另一件事**：面板里那个 `<BackupButton>` 带 `label` 的话，
+    //     display 上就多一个文字按钮 ✓（而且一旦谁把面板重新接回 `BackupButton`，它当场就成了嵌套 ✗）。
+    expect(panel, "面板里的 <BackupButton> 带了 label ✗").not.toMatch(
       /<BackupButton\s+label=/,
     );
   });
@@ -118,12 +119,28 @@ describe("自动备份那一格（task-19）", () => {
     expect(text, "面板没写清间隔（应当来自 DEFAULT_INTERVAL_SECS）").toMatch(/24\s*小时/);
   });
 
-  it("f) ⭐ 接线收据：面板只挂在 `label` 那一支（设置中心「数据」页 ✓），侧栏那支不挂", () => {
+  it("f) ⭐ 接线收据：面板由**页面在行外**挂（⛔ 不许塞回 `.backup-menu` 里 ✗）", () => {
     const btn = read("src", "components", "BackupButton.tsx");
-    expect(btn, "BackupButton 里没有 import BackupSettingsPanel").toMatch(
-      /import\s*\{\s*BackupSettingsPanel\s*\}\s*from\s*"\.\/BackupSettingsPanel"/,
-    );
-    expect(btn, "没有把面板挂在 label 那一支上").toMatch(/\{\s*label\s*&&\s*<BackupSettingsPanel\b/);
+    // ⚠️⭐ **2026-10-11 改**：原断言是「面板挂在 `BackupButton` 的**有 `label` 那一支**」✗ ——
+    //    那个形状**本身就是 bug** ✗：`.backup-menu` 是 `.set-row` 的 flex 子项 ⇒ 整块面板把
+    //    wrapper 的 max-content 撑到 **590px** ⇒ 同一行的 `.set-row-text` 宽**恰好 0** ⇒
+    //    「备份 / 恢复（全库）」与说明**一个字一列** ✗（CDP 实测：0 ⇒ 修后 **487.5** ✓）。
+    //    ⇒ ⭐ 收据跟着**新接线**走：面板由页面挂、位置在**行外** ✓。
+    expect(
+      btn,
+      "`BackupButton` 里又出现了 `BackupSettingsPanel` ⇒ 面板会被塞回 `.backup-menu`（那一行又会被挤成 0 ✗）",
+    ).not.toContain("BackupSettingsPanel");
+    const page = read("src", "components", "SettingsDialog.tsx");
+    expect(page, "页面里没挂 BackupSettingsPanel ⇒ 面板没地方显示了").toMatch(/<BackupSettingsPanel\s*\/>/);
+    // ⭐ 位置收据：它必须在那个带 label 的 `<BackupButton …>` **之后**，且两者之间已经闭合了 `.set-row`
+    const at = page.indexOf("<BackupSettingsPanel />");
+    const btnAt = page.indexOf("<BackupButton label=");
+    expect(btnAt, "页面里找不到那个带 label 的 `<BackupButton>`").toBeGreaterThan(-1);
+    expect(at, "面板必须在 `<BackupButton>` **之后**").toBeGreaterThan(btnAt);
+    expect(
+      page.slice(btnAt, at),
+      "面板与 `<BackupButton>` 之间没有闭合 `.set-row` ⇒ 它又成了「那一行的右控件」（会重演那个 bug ✗）",
+    ).toContain("</div>");
   });
 
   // ⭐⭐ 下面四条是 **task-20** 加的（补两条后端命令 ⇒ 那格从"读不到"变成**真读数** ✓）
