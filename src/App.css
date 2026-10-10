@@ -14007,6 +14007,65 @@ p:has(> .editor-drawing-container) {
   gap: 8px;
 }
 
+/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：原先它就是一个**裸的** `.sync-input` ✗ ——
+   现在：左边放大镜 ＋ 右边「清空」（⭐ 空查询时**根本不渲染**它 ✓）、圆角与下面那些空间卡片**同一档** ✓、
+   悬停有反馈、聚焦沿用 `.sync-input:focus` 那圈强调色 ✓。
+   ⚠️ 高度**不许低于 44**（本仓规则：可点控件 ≥44px ⇒ 见 `verify-mobile-views.mjs`）——
+   所以清空按钮也做成 44×44 的命中区，只是里面的 × 画小一点 ✓（⛔ 别为了好看把命中区缩下去 ✗）。
+   ⚠️ `:has()` 用来在**没有清空按钮**时把右边那 44px 让回来 ✓（WebView2 是 Chromium ⇒ 支持 ✓）。 */
+.set-space-filter-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.set-space-filter-wrap > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.set-space-filter.sync-input {
+  padding-left: 36px;
+  padding-right: 44px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background var(--transition-fast);
+}
+.set-space-filter-wrap:not(:has(.set-space-filter-clear)) .set-space-filter.sync-input {
+  padding-right: 12px;
+}
+.set-space-filter.sync-input:hover {
+  border-color: var(--border-strong, var(--border));
+}
+.set-space-filter-clear {
+  position: absolute;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+.set-space-filter-clear:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
 /* 「空间」页：每个空间一张卡片（色块 + 名称 + 同步目标），配色抽屉在卡片内展开。 */
 .set-space-list {
   display: flex;

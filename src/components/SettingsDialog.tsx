@@ -8,6 +8,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
+import { SearchIcon } from "./icons";
 import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
@@ -243,13 +244,29 @@ function SpacesPane() {
         <div className="set-section-title">全部空间（{spaces.length}）</div>
         {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
             ⚠️ 与侧栏那个空间切换器**共用同一份匹配**（`src/lib/spaceFilter.ts` ✓），⛔ 不各写一份 ✗。 */}
-        <input
-          className="set-space-filter sync-input"
-          value={spaceQuery}
-          onChange={(e) => setSpaceQuery(e.target.value)}
-          placeholder="筛选空间…"
-          aria-label="筛选空间"
-        />
+        {/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：外面套一层只为放**放大镜**与
+            **清空**两个附件 ✓ —— ⛔ 输入框自己的类名一个字没改 ✗（`.set-space-filter` 有判据在用 ✓），
+            高度也不许动（本仓规则：可点控件 ≥44px ✓）。 */}
+        <div className="set-space-filter-wrap">
+          <SearchIcon width={16} height={16} />
+          <input
+            className="set-space-filter sync-input"
+            value={spaceQuery}
+            onChange={(e) => setSpaceQuery(e.target.value)}
+            placeholder="筛选空间…"
+            aria-label="筛选空间"
+          />
+          {spaceQuery !== "" && (
+            <button
+              className="set-space-filter-clear"
+              onClick={() => setSpaceQuery("")}
+              aria-label="清空筛选"
+              title="清空筛选"
+            >
+              ×
+            </button>
+          )}
+        </div>
         <div className="set-space-list">
           {spaces.length === 0 ? (
             <div className="set-space-empty">还没有空间</div>
