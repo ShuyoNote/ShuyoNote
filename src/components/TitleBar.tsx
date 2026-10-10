@@ -7,7 +7,7 @@ import { useWindowChrome } from "../store/windowChrome";
 import { useAuth } from "../store/auth";
 import { isDesktopPlatform } from "../lib/platform";
 import { api, type SyncProfile } from "../lib/api";
-import { syncTagLabel, syncTagColor } from "../lib/syncTag";
+import { syncTagColor, syncTagTitle } from "../lib/syncTag";
 // ⚠️ 2026-10-01（owner 界面方向之①）：**右侧工具条撤掉** ⇒ 它的入口搬到这条标题栏上 ✓；
 //    入口本身抽在 `TopTools` 里 ✓ —— 因为**手机上标题栏不渲染** ✓，而 owner 要求两端都有 ✓
 //    （同一个组件在 `App.tsx` 的 `.app` 顶部再渲染一处 ✓，⛔ 不各写一份 ✗）。
@@ -147,18 +147,21 @@ export function TitleBar() {
       </div>
       <PresenceBar />
       {/* 同步状态搬到顶栏：自绘标题栏腾出来的这条空间总得有用处，顺带让侧栏
-          少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。 */}
+          少一行。颜色与侧栏空间行、同步面板共用 syncTag 的同一套编码。
+          ⚠️ **2026-10-10（owner 拍 C）**：平时**只留颜色点** —— ⛔ 地址不再渲染成文字 ✗，
+          只在 `title`/`aria-label` 里给（悬停看得见 ＋ 读屏读得到 ✓）。 */}
       {syncProfile?.server_url && syncProfile?.token && (
         <div
           className="titlebar-sync"
           data-tauri-drag-region
-          title={`同步目标：${syncProfile.server_url}`}
+          title={syncTagTitle(syncProfile.server_url)}
         >
           <span
             className="titlebar-sync-dot"
+            role="img"
+            aria-label={syncTagTitle(syncProfile.server_url)}
             style={{ background: syncTagColor(syncProfile.server_url) }}
           />
-          <span className="titlebar-sync-text">{syncTagLabel(syncProfile.server_url)}</span>
         </div>
       )}
       {/* ⚠️ 2026-10-01（owner 界面方向之①）：右侧那条竖向工具条撤掉 ⇒ 入口搬进**这一行** ✓

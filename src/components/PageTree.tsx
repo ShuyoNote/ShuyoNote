@@ -36,7 +36,7 @@ import { useTreeSelection } from "../store/treeSelection";
 import { useTreeDrag } from "../store/treeDrag";
 import { useActivity } from "../store/activity";
 import { useWindowChrome } from "../store/windowChrome";
-import { syncTagLabel, syncTagColor } from "../lib/syncTag";
+import { syncTagColor, syncTagTitle } from "../lib/syncTag";
 import * as reorder from "../lib/treeReorder";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog, chooseDialog, useInputStore } from "../store/input";
@@ -1300,16 +1300,20 @@ export function PageTree(_props: {
             也省下侧栏一行）；关掉自绘标题栏用系统栏时，这里补回来，否则这条
             信息会整个消失。
             只在「已登录(有 token)」时展示，与 TitleBar 一致——登出后 sync_profiles
-            行仍保留 server_url（供再登录），不能据此判定「已同步」。 */}
+            行仍保留 server_url（供再登录），不能据此判定「已同步」。
+            ⚠️ **2026-10-10（owner 拍 C）**：平时**只留颜色点** —— ⛔ 不再把地址渲染成文字 ✗
+            （以前服务器是 IP 时，这里就摊出那个 IP），地址只在 `title`/`aria-label` 里给 ✓。 */}
         {!collapsed && isDesktop && !customTitleBar && activeSyncProfile?.token && (
-          <div className="sidebar-sync-pill" title={`同步目标：${activeSyncProfile.server_url}`}>
+          <div
+            className="sidebar-sync-pill"
+            title={syncTagTitle(activeSyncProfile.server_url)}
+          >
             <span
               className="sidebar-sync-dot"
+              role="img"
+              aria-label={syncTagTitle(activeSyncProfile.server_url)}
               style={{ background: syncTagColor(activeSyncProfile.server_url) }}
             />
-            <span className="sidebar-sync-pill-text">
-              {syncTagLabel(activeSyncProfile.server_url)}
-            </span>
           </div>
         )}
         {spaceChooser.open && (
@@ -1364,13 +1368,27 @@ export function PageTree(_props: {
                           <div className="space-item-meta">
                             {active && <span className="space-item-current">当前</span>}
                             {isDesktop && prof ? (
+                              /* ⚠️ **2026-10-10（owner 拍 C）**：这里以前是一枚**写着地址的文字胶囊** ✗
+                                 —— 服务器是 IP 时，那一行右侧就摊出那个 IP（owner 截图里就是它）✓。
+                                 现在只留一个**颜色点**：地址进 `title`/`aria-label`（悬停与读屏 ✓），
+                                 平时一个字节的地址都不渲染 ✓。
+                                 ⚠️ 形状改了但**颜色编码没动**：仍是同一个 `syncTagColor(server_url)` ✓
+                                 （同地址在三处必须同色 ✓）。CSS 归别人那几条线 ⇒ 这个点的尺寸/圆角
+                                 走**行内样式**，⛔ 不动 `App.css` ✗。 */
                               <span
-                                className="space-item-sync-tag"
-                                style={{ color: syncTagColor(prof.server_url) }}
-                                title={`同步：${prof.server_url}`}
-                              >
-                                {syncTagLabel(prof.server_url)}
-                              </span>
+                                className="space-item-sync-dot"
+                                role="img"
+                                title={syncTagTitle(prof.server_url)}
+                                aria-label={syncTagTitle(prof.server_url)}
+                                style={{
+                                  background: syncTagColor(prof.server_url),
+                                  width: 7,
+                                  height: 7,
+                                  borderRadius: "50%",
+                                  display: "inline-block",
+                                  flex: "none",
+                                }}
+                              />
                             ) : (
                               <span className="space-item-local">仅本机</span>
                             )}
