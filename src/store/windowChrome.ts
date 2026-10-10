@@ -22,13 +22,28 @@ interface WindowChromeState {
 function load(key: string): boolean {
   try {
     const v = localStorage.getItem(key);
-    return v === null ? defaultFor() : v === "1";
+    return v === null ? defaultFor(key) : v === "1";
   } catch {
-    return defaultFor();
+    return defaultFor(key);
   }
 }
-function defaultFor(): boolean {
-  // 自定义标题栏与材质均默认关闭（Windows 上默认系统栏，更稳妥；用户可在设置里开启）。
+/** 出厂默认值（无 localStorage 时）。⭐ 两个键的默认值**不一样**，见下。 */
+export function defaultFor(key: string): boolean {
+  // ⚠️⚠️ 2026-10-10（**真事故**，owner 报"标题栏一条都没有"）—— 结论与修法：
+  //
+  //   ① Rust 侧现在以 `decorations(true)` 创建窗口（`src-tauri/src/lib.rs` ✓，
+  //      2026-10-10 从 `false` 改过来）⇒ ⭐ **系统标题栏默认就在** ✓
+  //   ② 所以自绘栏的出厂默认**必须是 `false`** ✓ —— 否则默认会同时出现两条栏 ✗
+  //   ③ ⭐ **"旧值"这件事要讲清**：这台机器的 `localStorage["shuyonote:customTitleBar"]`
+  //      里存着 `"0"` ✓（由 `setCustom(false)` 写的 ✓）⇒ 上面那条 `v === "1"` 会把它当真 ✓。
+  //      当时 Rust 侧是 `decorations(false)` ✗ ⇒ ⭐ **"自绘关 ＋ 系统栏不存在"** ⇒ 一条都没有 ✗。
+  //      现在 Rust 侧**默认有**系统栏 ⇒ **那个组合不再危险** ✓（这正是 owner 拍 A 的理由 ✓）。
+  //   ④ ⚠️ 一条**仍然成立的限制**（别再踩 ✓）：前端运行时 `setDecorations(true)`
+  //      （⭐ **"从无到有"** ✓）在 Windows 上实测**不报错、也不生效** ✗
+  //      （几何读数 `NC top = 7` 物理像素 ✗，真标题栏 ≥46 ✓；而且 `console` 里**没有错**✓）
+  //      ⇒ ⭐ 所以**不许**再依赖"运行时把系统栏找回来"✗；**要系统栏就靠 Rust 侧的默认值** ✓。
+  //   ⑤ Mica 仍默认关（与换壁纸／低配机器发花有关 ✓，与标题栏那条无关 ✓）。
+  if (key === KEY_MATERIAL) return false;
   return false;
 }
 

@@ -48,10 +48,19 @@ const ABILITIES: Ability[] = [
     path: "mirror/ecdict/ecdict-en-zh.bin",
     sha256: "5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31",
     state: "not-available",
+    // ⚠️ ⭐ **2026-10-10（owner 拍「那句文案改掉」）**：用户面这一句里**不许出现内部词** ✗ ——
+    //    原句末尾印着「**待拍板。**」（内部流程词）＋ 一串内部路径（`node scripts/fetch-ecdict.mjs`、
+    //    `abilities.rs` 文件头、`.part`／`fail-closed`）⇒ 全换成用户看得懂的话 ✓
+    //    ⇒ ⭐ **用户面只描述用户看得见的状态**（能不能下、多大）✓；⭐ **真状态留在规格／台账／那条分支的代码里** ✓。
+    //    ⭐ **被 lead 纠过一次，两条必须分清（记在这里免得再犯）**：
+    //      ① **"下载方式"**：「改由 Rust 侧下载」**已在另一条分支做完**（`feat/inline-lookup-2`：`e68c3289`／`3b977a36`）
+    //         ⇒ ⛔ 不许再写"待做／待拍板" ✗；
+    //      ② **"包有没有托管到镜像仓"**：那是**另一件事**，⭐ 我**没有可核读数** ⇒ ⛔ **不断言** ✗
+    //         （⚠️ 别把①的"完成了"外推成②的"已托管" —— 那正是"拿相邻的东西当证据"）。
+    //    ⚠️ 改文案 ⇒ `AbilitiesPane.test.tsx` 里那条"长度 > 200"的阈值跟着调（⭐ 阈值随文案走，
+    //        ⛔ 不是为了让红变绿 —— "DOM ＝ 源码那句"那条判据**一个字都没动** ✓）。
     note:
-      "包已产出（`node scripts/fetch-ecdict.mjs` 报出 sha256 与字节数，与 Rust 侧白名单同源），但**还没托管**到镜像仓 ⇒ 现在还不能下载。" +
-      "⚠️ 另：85.6 MiB 走「base64 过 IPC」那条链**太大**（那条链的设计目标是 3.8 MB 级的 PDFium，见 abilities.rs 文件头）" +
-      "⇒ 要不要改成 Rust 侧下载（同一份白名单＋sha256＋fail-closed，先写 .part 再改名）待拍板。",
+      "这本词典较大（85.6 MiB／770,611 条词条）—— 下载渠道还在准备，开放后在这里点一下就能用。",
   },
   { id: "layout", name: "版面分析", summary: "识别表格与分栏；模型较大", state: "not-available", note: "还没上架" },
   { id: "vlm-ocr", name: "看图识字（VLM）", summary: "复杂扫描件与手写", state: "not-available", note: "还没上架" },
@@ -184,8 +193,23 @@ export function AbilitiesPane() {
               <div className="set-row-sub">{a.summary}</div>
             </div>
             {/* ⚠️ 2026-10-02 观感修正：这一格原来是 `.set-status`（带边框，像按钮 ✗ ⇒ 会被当成"能点"）。
-                改成**灰字** ✓ —— 用现成的 `set-row-sub`（说明文字那档灰 ✓）⇒ ⛔ 不新增 CSS ✗。 */}
-            <span className="set-row-sub">{a.note ?? t("abilities.soon", "还没上架")}</span>
+                改成**灰字** ✓ —— 用现成的 `set-row-sub`（说明文字那档灰 ✓）。
+                ⚠️⭐ **2026-10-10 修 bug（owner 截图：ECDICT 那条的说明 + 名字都被压成"一个字一列"✗）——
+                   我第一版诊断写反了 ✗，纠正留在这里**：
+                   · 我说"少 `min-width: 0` ⇒ 被压成一列"✗ —— **反了**：`min-width: 0` 是**允许它缩到 0** ✗，
+                     那**正是**成因；而 `min-width: auto`（默认）**反而**会撑着不缩 ✓。
+                   · 真成因（CDP 实量，面板 626px）：这一格 `flex: 0 1 auto` ⇒ flex base ＝ max-content
+                     ＝ **整句自然宽**（那条 note 236 字 ⇒ **590px**）✗，而 `.set-row-text` 是 `flex: 1`
+                     （`1 1 0%`，base ＝ **0**，没有要守护的基准 ✗）⇒ **被它饿死**：
+                     实测 `textW = 0` ／ `nameW = 0` ／ `nameH = 90`（名字一列一个字 ✓）。
+                   ⇒ 修法＝**给这一格一个确定且有限的宽度** ✗（`set-row-note` 里给死 `flex: 0 0 40%` ✓，
+                     ⛔ 不是靠收缩 ✗）：修后实测 `textW = 349.2` ／ `nameH = 18`（一行 ✓）／`noteW = 240.8` ✓。
+                ⛔ 别把这几条注释删掉：上一次事故正是"用现成的类、⛔ 不新增 CSS"这个决定造成的 ✓。 */}
+            {/* ⭐ **2026-10-10（owner 拍 C）**：这一格在列表里**只显示 2 行 ＋ 省略号** ✗（CSS 在 `App.css` 的
+                `.set-row-note`）★ 而 ⭐ **全文一个字都不许少** ✗ —— ⛔ 不许把文案改短 ✗：
+                DOM 里仍是**完整那句**（只是视觉上截断）＋ ⭐ **悬停看全文**（`title` ＝ 同一句，用现成属性 ⇒ ⛔ 不自己写浮层）。
+                ⚠️ 判据：`AbilitiesPane.test.tsx` 的 f／g／h（2 行 ／ 全文还在 ／ `title` ＝ 全文）＋ 真量高度。 */}
+            <span className="set-row-sub set-row-note" title={a.note ?? t("abilities.soon", "还没上架")}>{a.note ?? t("abilities.soon", "还没上架")}</span>
           </div>
         ))}
       </section>

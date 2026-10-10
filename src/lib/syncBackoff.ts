@@ -126,6 +126,12 @@ export type MeshLike = {
  *   · 出错 / 读不到 / 空数组 ⇒ **一律算空**（最坏是"多退一点"，不是"少拉" ✓）
  */
 export function roundWasEmpty(syncResults: SyncLike[], meshReports: MeshLike[]): boolean {
+  // ⭐ **task-12（owner 拍 C）**：整轮跑完了也**留一行** ✓ ——
+  //   否则「没触发」（闸门没放行 ✓）与「触发了、跑完了、什么都没换到」**在日志里同形** ✗。
+  //   ⚠️ 这一处是**被 App.tsx 已经调到的地方** ✓（⛔ 不改 App.tsx ✗ —— 那是 task-14 的写域 ✗）。
+  //   ⚠️ 加了这一行之后本函数**不再是纯函数**（多了一次日志 ✓）—— 所以"拼那一行"那一半
+  //      抽成了纯函数 [`autoSyncRoundLine`] ✓，判据打在它上面 ✓。
+  console.info(autoSyncRoundLine(syncResults, meshReports));
   for (const r of syncResults ?? []) {
     const pulled = r?.pulled;
     if (typeof pulled === "number" && pulled > 0) return false;
@@ -139,4 +145,32 @@ export function roundWasEmpty(syncResults: SyncLike[], meshReports: MeshLike[]):
     }
   }
   return true;
+}
+
+/**
+ * ⭐ **task-12（owner 拍 C）**：那一轮**跑完了**的人话 —— **纯函数**（判据够得着 ✓，与
+ * `syncGate.autoSyncGateLine` 同一形状 ✓）。
+ *
+ * 三样都在：**服务端那条跑了几个空间** ✓（`syncResults` 长度）、**网格那条几个空间/几台对端/收下几条** ✓、
+ * 于是「触发了并跑完」与「没触发」「被闸门挡下」**分得开** ✓（后两件由 [`autoSyncGateLine`] 负责 ✓）。
+ */
+export function autoSyncRoundLine(syncResults: SyncLike[], meshReports: MeshLike[]): string {
+  const server = (syncResults ?? []).length;
+  const serverPulled = (syncResults ?? []).reduce(
+    (a, r) => a + (typeof r?.pulled === "number" ? r.pulled : 0),
+    0,
+  );
+  const meshSpaces = (meshReports ?? []).length;
+  let peers = 0;
+  let got = 0;
+  for (const m of meshReports ?? []) {
+    for (const p of m?.peers ?? []) {
+      peers += 1;
+      if (typeof p?.fetched === "number") got += p.fetched;
+    }
+  }
+  return (
+    `[sync] 自动同步这一轮**跑完了**：服务端 ${server} 个空间（收下 ${serverPulled}）` +
+    `｜ 网格 ${meshSpaces} 个空间、${peers} 台对端（收下 ${got}）`
+  );
 }

@@ -172,8 +172,9 @@ async function runAutoSyncRound(): Promise<void> {
     // ——把面板间隔设成"每 10 秒"就会在蜂窝上照拉）。判据只有一处实现，见 `lib/syncGate.ts`。
     if (!(await shouldAutoSyncNow())) return;
     const profiles = await api.listSyncProfiles();
-    const withSpace = (profiles || []).filter((p: any) => p.space_id);
-    const bound = withSpace.filter((p: any) => p.server_url);
+    // ⚠️ **服务端那条**：口径**逐字不变** —— 仍要求 `space_id` ＋ `server_url` ✓
+    //（`space_id` 是"服务端给这个空间分配的 id"，⛔ 它**不是**"这个空间要不要同步"的判据 ✗）
+    const bound = (profiles || []).filter((p: any) => p.space_id && p.server_url);
     let syncResults: SyncLike[] = [];
     if (bound.length) {
       // P1：**自动同步必须配对 begin/end**（`withSyncStatus` 保证），
@@ -185,12 +186,18 @@ async function runAutoSyncRound(): Promise<void> {
         ),
       );
     }
-    // ★ 网格（丙）：同一批空间顺手各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
+    // ★ 网格（丙）：**每一份档案**都各跑一轮对等交换；失败不连坐（每条自己 `.catch`）。
     // ⚠️ "没配网格 ⇒ 一个字节都不动"这条 gate **只在 Rust 侧**（`mesh_sync_now` 自己早退）
     // ——前端**不重复判一遍**（两处各解释一遍迟早漂）。
+    // ⚠️⚠️ **2026-10-09 修（真事故）**：这里原来写的是 `if (withSpace.length)` ✗，而 `withSpace`
+    // 滤的是 `p.space_id` —— **个人空间的 `space_id` 就是空串** ✗（那正是 2026-10-08 那一整批修的口径）
+    // ⇒ **个人空间＝"设备直连"的主用例**，却因为"没有服务端空间 id"被**整批滤掉** ✗
+    // ⇒ 自动同步那条路**一个 `meshSyncNow` 都不发** ⇒ 网格**一次都不跑** ✗（用户只能手点面板才会同步）。
+    // ⇒ 现在：**对每一份档案都发**，配没配由 Rust 侧那**一处**判 ✓（与上面同一句口径，不新增第二处判据 ✓）。
+    const meshCandidates = profiles || [];
     let meshReports: MeshLike[] = [];
-    if (withSpace.length) {
-      meshReports = await Promise.all(withSpace.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
+    if (meshCandidates.length) {
+      meshReports = await Promise.all(meshCandidates.map((p: any) => api.meshSyncNow(p.ws_id).catch(() => null)));
       await useNotes.getState().loadPages();
     }
     // ★ 空闲退避（2026-09-30）：**跑完了才记时**（被闸门拦掉、或忙的时候不算"跑过" ✓）。
@@ -926,11 +933,21 @@ function NoteEditor({ pageId }: { pageId: string }) {
 //
 // 现在：`App` 自己只有一个 hook，分支只决定渲染**哪个组件**，不再改变 hook 数量；
 // 而读库的外壳（AppShell）在锁定态下**根本不挂载**，比"挂载起来再把界面挡住"更干净。
+//
+// ⭐ 2026-10-10（owner 亲口报的缺陷：「一个空间加密，其它空间怎么还需要密码？」）：
+//   闸门判的是 ⭐ **当前活动空间**加不加密（`activeSpaceEncrypted` ✓）—— 这一点原先就是对的
+//   （内核的 `enabled` 按活动空间算；启动时的 `LOCKED` 也只看活动空间的文件头 ✓）。
+//   ✗ 真正出事的是**下一层**：`enabled && locked` 一旦为真，`AppShell` **整块不挂载**，
+//     而**空间切换器在 AppShell 里** ⇒ 用户**出不去**，只能先输那个加密空间的口令 ——
+//     于是"一个空间的口令"事实上变成了"整个应用的开关" ✗，这就是 owner 说的那件事 ✓。
+//   ⇒ 修法不是把闸门放开（那会把加密空间也放进来 ✗），而是**在锁定屏上给一条出路**：
+//     `LockScreen` 会列出本机**明文**的那些空间，点一下就换过去 ⇒ 换完 `activeSpaceEncrypted`
+//     自己变 false ⇒ 闸门自然放开 ✓（见 `lib/vault.ts::switchToSpace` ✓）。
 function App() {
   const vault = useVault();
   // 状态未知的首帧什么都不渲染：锁定安装上若先挂外壳，外壳会立刻去读还没解锁的库。
   if (!vault.ready) return null;
-  if (vault.enabled && vault.locked) return <LockScreen />;
+  if (vault.activeSpaceEncrypted && vault.locked) return <LockScreen />;
   return <AppShell />;
 }
 

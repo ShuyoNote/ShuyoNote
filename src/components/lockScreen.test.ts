@@ -103,9 +103,9 @@ describe("锁定屏", () => {
   });
 
   it("输错：报错留在屏上、输入被清空、焦点回到输入框、不再尝试解锁", async () => {
-    // ★ 用**当前**的内核文案（owner 第三轮拍板后：口令对不对由**解盒子**回答 ⇒ 报的是
-    //   「打不开（口令不对或盒子被改过）」，不再是旧哨兵那句「口令不正确」）。
-    mocks.unlockEncryption.mockRejectedValue(new Error("打不开（口令不对或盒子被改过）"));
+    // ★ 用**当前**的内核文案（2026-10-10 起：用户面只剩**一句人话** ⇒ 不再是三层套娃、也不带术语 ✓；
+    //   原文只进日志 ✓ —— 内核那句的形状由 `space_crypto::tests::a_wrong_master_gives_one_human_sentence_without_jargon` 钉 ✓）。
+    mocks.unlockEncryption.mockRejectedValue(new Error("打不开：口令不对，或者这把锁被改过 —— 内容没有被解开"));
 
     await submit("错误口令");
 
@@ -121,7 +121,7 @@ describe("锁定屏", () => {
   });
 
   it("连错 3 次：自动摊开「忘记口令？」，并说真话（服务器那份也打不开 / 唯一出路是加密前的备份）", async () => {
-    mocks.unlockEncryption.mockRejectedValue(new Error("打不开（口令不对或盒子被改过）"));
+    mocks.unlockEncryption.mockRejectedValue(new Error("打不开：口令不对，或者这把锁被改过 —— 内容没有被解开"));
     await submit("错1");
     expect(host.querySelector(".lock-forgot"), "错 1 次还不该展开").toBeNull();
     await submit("错2");
@@ -144,6 +144,22 @@ describe("锁定屏", () => {
     expect(host.querySelector(".lock-forgot")).not.toBeNull();
     await act(() => button("收起").click());
     expect(host.querySelector(".lock-forgot")).toBeNull();
+  });
+
+  it("文案精简后 ⭐ 要点一个都不许丢（不可逆那半必须**原意**保留）", async () => {
+    await act(() => button("忘记口令？").click());
+    const text = host.querySelector(".lock-forgot")?.textContent ?? "";
+
+    // ③ 导语的口径
+    expect(text, "要说清口令只由用户自己保管").toContain("口令只由你保管");
+    // ⑤ 脚注两条
+    expect(text, "要说清输错不会被锁死").toContain("输错多少次都不会被锁死");
+    expect(text, "要说清慢是密钥派生的代价").toContain("每次慢是密钥派生");
+    expect(text, "「不是卡住了」这半不许丢").toContain("不是卡住了");
+    // ⭐ (c) 整段里**唯一**说"不可逆"的地方 ⇒ 原意必须留着（不只是"永久"两个字）
+    expect(text, "⭐ 不可逆这半必须原意保留").toContain("永久取不回来了");
+    // ① 顶部压成一句，但要点还在
+    expect(host.querySelector(".lock-desc")?.textContent, "顶部要点不许丢").toContain("输入口令后才会加载");
   });
 
   it("输对：状态变成已解锁（界面切换由状态中枢驱动）", async () => {

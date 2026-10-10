@@ -85,8 +85,9 @@ export function SearchPanel() {
     if (workspaceId) {
       const { activeId, switchTo } = useSpaceStore.getState();
       if (workspaceId !== activeId) {
-        const ok = await switchTo(workspaceId);
-        if (ok) await useNotes.getState().loadPages();
+        // ⚠️ 2026-10-10：切完的 `loadPages()` 已**收进 `switchTo` 一处**（`store/space.ts` ✓）⇒
+        //   这里**不再自己再调一次** ✗（失败时 `switchTo` 内部不读列表 ⇒ 行为与以前一致 ✓）。
+        await switchTo(workspaceId);
       }
     }
     // openPage / setSearchQuery 都是 store 动作（引用恒定）⇒ 走 getState() 现取：

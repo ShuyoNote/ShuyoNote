@@ -604,10 +604,22 @@ pub fn run() {
             // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
             // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
             // 与边缘 resize，万一某台机器手感不对得有退路。
+            // ⚠️⚠️ 2026-10-10（**真事故**，owner 报"标题栏一条都没有"）：这里原来是
+            // `decorations(false)` ✗，上面那段注释假定"用户可在设置里关掉自绘栏、
+            // 前端运行时 `setDecorations(true)` 恢复系统标题栏" —— ⭐ **那条恢复在真机上不成立** ✗：
+            // 无边框窗口创建之后再运行时切 `decorations`，Windows 上往往要重建窗口
+            // ⇒ 实测 `setDecorations(true)` **不报错、也不生效** ✓
+            //   （几何读数 `NC top = 7` 物理像素 ✗，而真标题栏该 ≥46 ✓）；
+            //   同时前端 `custom` 的出厂默认曾是 false ✗
+            // ⇒ **两个开关同时为假 ⇒ "一条标题栏都没有"是可达状态** ✗（owner 看到的正是它 ✓）。
+            // ⇒ 改成 `true`：**默认就有系统标题栏** ✓ ⇒ 那个可达状态**结构性消失** ✓。
+            //   自绘栏（前端 `<TitleBar />`）改为**用户显式开启** ✓ —— 那时前端调
+            //   `setDecorations(false)`，方向是"**从有到无**"✓，与上面那条不可靠的
+            //   "从无到有"**不是同一件事** ✓（owner 2026-10-10 拍 A：默认系统栏 ✓）。
             // 注意：`decorations` 是桌面概念，移动端（Android/iOS）的 builder 无此
             // 方法（窗口装饰由系统管理），故按平台条件编译——与下面 drag_and_drop 同款写法。
             #[cfg(desktop)]
-            let main_builder = main_builder.decorations(false);
+            let main_builder = main_builder.decorations(true);
             // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
             // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
             // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件

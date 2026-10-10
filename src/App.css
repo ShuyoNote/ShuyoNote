@@ -943,6 +943,25 @@ html[data-platform="win"] .app-body {
   background: var(--accent);
   color: var(--on-accent);
 }
+/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：那个**文字**标识（⛔ 不只靠颜色 ✓）。
+   ⚠️ **两个落点写在同一处**（侧栏空间行 ＋ 设置-空间那一列 ✓）—— 分开写就会各自漂 ✗。
+   ⚠️ 只要"**看得见但不喧宾夺主**"：它旁边那一格是**同步状态**（`.space-item-local` / `.set-space-local`
+      用 `--text-faint`）⇒ 这里取**强一档**的 `--text-dim` ＋ 描边，够看清、⛔ 不抢旁边那格 ✓。
+   ⚠️ 形状**刻意与「当前」那枚实心 accent 圆片**（`.space-item-current` / `.set-tag`）**不同**：
+      这里是**描边空底** ⇒ 两个标识不会被当成同一个东西 ✓（⛔ 也没用 accent 色 ✗）。
+   ⚠️ 这一处**只加这两个类**（Lead 批的写域就这两格 ✓）；⛔ 没调任何别的视觉 ✓。 */
+.space-item-crypto,
+.set-space-crypto {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 .space-item-local {
   font-size: 11px;
   color: var(--text-faint);
@@ -13633,6 +13652,33 @@ p:has(> .editor-drawing-container) {
   margin-top: 2px;
 }
 
+/* ⚠️⭐ 「还没上架」那节里那一格（说明文字 note）—— 它是 `.set-row` 的**直接 flex 子项** ✓。
+   ⭐ **2026-10-10 订正（我先前把那个经典口诀写反了 ✗，连同纠正一起留下）**：
+   口诀「加 `min-width: 0`」管的是 ⭐ **"不加 ⇒ flex 子项撑破容器"** ✗ ；
+   而**这一格的问题是反过来的** —— ⛔ **它把别人挤没了** ✗：
+     · `flex: 0 1 auto` ⇒ 它的 flex base ＝ **max-content ＝ 整句自然宽** ✗（实测那条 note 236 字 ＝ **590px**）
+     · 而 `.set-row-text` 是 `flex: 1`（＝`1 1 0%`）⇒ base 是 **0** ⇒ 没有"要守护的基准" ✗
+     ⇒ ⭐ 实测（CDP，2026-10-10，面板宽 626）：`textW = 0` ✗ ／ `nameW = 0` ✗ ／ `nameH = 90`（＝**名字一列一个字** ✓）
+       ／ 而 note 拿了 **590px** ✓ —— ⭐ owner 截图里"竖排"的正是这条 ✓（短说明那几条观感没问题 ✓，所以只有它看得出坏 ✓）。
+   ⇒ ⭐ 修法：**给一个"确定且有限"的宽度** ✗（⛔ 不是"允许它缩到 0" ✗）：
+     给死 `flex: 0 0 40%` ⇒ note 在**自己那一格**里换行 ✓、名字那格拿到剩下的 60% ✓。
+     ⚠️ 同时**不再靠 `min-width: 0`** ✗：给死基准之后它压根不需要靠收缩来活 ✓，
+        而留着它反而会让人以为"收缩是解法" ✗（那就是这次的误诊 ✓）。
+   ⚠️ 判据：`src/components/AbilitiesPane.test.tsx` —— ⛔ 旧的 d) 判据（"必须有 `min-width: 0`"）**是错的** ⇒ 已改成
+      "**必须有确定的宽度基准（`flex: 0 0 …`／`width`）** ＋ ⛔ 不许是 `0 1 auto`" ✓（**真验收是 CDP 那两个宽度数** ✓）。 */
+.set-row-note {
+  flex: 0 0 40%;
+  text-align: right;
+  /* ⭐ 2026-10-10（owner 拍 C）：列表里**只显示 2 行 ＋ 省略号**；⭐ 而**全文一个字都不许少** ✗ ——
+     ⛔ 不许把文案改短 ✗（DOM 里仍是完整那句）⇒ 悬停看全文（`title` ＝ 完整那句，见 `AbilitiesPane.tsx`）。
+     ⚠️ `-webkit-box` ＋ `line-clamp` 是**视觉截断**，⛔ 不动文本本身；`overflow: hidden` 是它生效的必要条件 ✓。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---------------------------------------------------------------------------
  * 插件面板：卡片网格。之前一行一个「名字 + 开关」太素；改成图标 + 状态灯 +
  * 命令数的卡片，视觉上更有层次，但强弱对比仍靠开关与底色，绝不彩色堆砌。
@@ -13987,6 +14033,13 @@ p:has(> .editor-drawing-container) {
   gap: 12px;
   padding: 12px 14px;
 }
+/* ⭐ 2026-10-10（owner 要求"设置里点一行就切换"）：那一行**可点** ⇒ 给鼠标反馈。
+   ⚠️ **只给"能切的那一行"**：当前空间那一行点了无事发生（`pick()` 直接返回 ⇒ 不白跑
+   `loadPages`/`refreshVault`）⇒ 它**不给** pointer ✓（否则等于承诺一个不会发生的动作 ✗）。
+   ⚠️ 这一处**只加这一条**（Lead 批的写域就这一格 ✓）。 */
+.set-space-card:not(.is-active) .set-space-row {
+  cursor: pointer;
+}
 .set-space-meta {
   display: flex;
   align-items: center;
@@ -14000,10 +14053,10 @@ p:has(> .editor-drawing-container) {
 .set-space-local {
   color: var(--text-faint);
 }
-.set-space-id {
-  color: var(--text-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+/* ⭐ 2026-10-10（owner 截图）：`.set-space-id` 那条规则**随那一行 DOM 一起删了** ✓ ——
+ *   空间编号是**内部标识**，⛔ 不许进用户面 ✗（同族：`SettingsDialog.test.tsx` 的 c) 判据 ✓）。
+ *   ⚠️ **别再加回来** ✓ —— 防线在判据里，⛔ 不靠这条注释 ✗。
+ *   ⚠️ 而 `.set-space-sync` 那条**仍在用** ✓（「已同步」那个 span 带着它 ✓）⇒ ⛔ 别顺手删它 ✗。 */
 .set-space-colors {
   display: flex;
   align-items: center;
@@ -14038,17 +14091,11 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-md);
   background: var(--card-bg);
 }
-.set-migrate-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--chip-bg);
-  color: var(--text-dim);
-  font-size: 14px;
-  margin-bottom: 2px;
-}
+/* ⚠️ 2026-10-10：这里原本是 `.set-migrate-icon`（卡片顶上那个 28px 方块图标，内容是 ↑／↓）——
+   owner 要求「去掉这两个图标」✓ ⇒ 节点已删 ✗ ⇒ **这条规则也一并删掉** ✓
+   （留着一条没人用的规则，会让下一个人以为它还承重 ✓）。
+   ⛔ 别再凭"这里看着该有个图标"把它加回来：判据在 `SettingsDialog.test.tsx`
+   （卡片里**只能**有 标题／说明／按钮 三样节点 ✓），加回来当场红 ✓。 */
 .set-migrate-name {
   font-size: 13px;
   font-weight: 600;
