@@ -587,6 +587,48 @@ export interface DictionaryStatus {
   message: string;
 }
 
+/**
+ * 中继「连接那一格」的读数（图⑤）—— ⭐ **`label` 与 `detail` 都是后端出的原文** ✓，
+ * 界面只负责摆上去（与 `LanStatus.line` 同一条纪律：同一件事只有一处实现 ✓）。
+ *
+ * ⚠️ `state === "unchecked"` ＝ **还没检查过** ⇒ ⛔ 界面绝不许把它显示成"已连上" ✗。
+ */
+export interface RelayConnectionView {
+  state: "unchecked" | "connected" | "denied" | "refused" | "unreachable";
+  label: string;
+  detail: string | null;
+  checked_at: number | null;
+}
+
+/**
+ * 中继「许可那一格」的读数（图⑧）—— ⭐ 天数与那句人话都由后端出 ✓。
+ *
+ * ⚠️ 两条硬口径：
+ * 1. **读不到就明说** ✗ ⇒ `state === "missing"` 时 `days_left === null`，
+ *    ⛔ 不等于 0 天、⛔ 更不许显示"永久" ✗；
+ * 2. `crossnet_allowed` **只**表示"放不放行**新建**跨网连接" ✓ ——
+ *    ⛔ 与"本机能不能用"无关 ✗（到期只收回跨网：本机读写搜改一律照旧 ✓）。
+ */
+export interface RelayLicenseView {
+  state: "ok" | "grace" | "expired" | "not_yet" | "missing";
+  days_left: number | null;
+  grace_days_left: number | null;
+  label: string;
+  crossnet_allowed: boolean;
+}
+
+/** ⭐ 中继那两格的完整读数（形状与 `src-tauri/src/relay_client.rs::RelayStatus` 逐字段相同 ✓）。 */
+export interface RelayStatus {
+  /** 这一档在当前平台能不能用（Web 版恒 `false` ＋ 一句为什么 ✓）。 */
+  available: boolean;
+  /** 一句补充说明（用户可见；没有 ⇒ 空串）。 */
+  note: string;
+  configured: boolean;
+  url: string | null;
+  connection: RelayConnectionView;
+  license: RelayLicenseView;
+}
+
 export interface CommandMap {
   // ---- 交付通道 shuyonote:// 的 OS 层（桌面） ----
   /**
@@ -1514,4 +1556,13 @@ export interface CommandMap {
   // ⚠️ 这一条命令的 `lib.rs` 登记行由 **Lead 统一加**（与 office-import 那条同一处 ⇒ 避免撞车）；
   //    在那之前 `check-web-commands` 会**如实红**（"CommandMap 有、Rust 没注册"）—— 那不是缺陷，是顺序。
   dictionary_install_pack: { args: { url: string | null }; result: DictionaryPackInstallReport };
+
+  // ---- 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）----
+  // ⭐ owner 口径：**数字必须来自后端读数** ✗ ⇒ 连"那句人话"都由 Rust 出
+  //    （`src-tauri/src/relay_client.rs` 的 `RelayConnectionView` / `RelayLicenseView`）✓，
+  //    界面**只**摆上去（唯一映射在 `src/lib/relay/statusView.ts` ✓）。
+  // ⚠️ 两条命令**两侧都实现**（不登记成桌面专属）：Web 侧如实回 `available:false` ＋ 一句为什么 ✓
+  //    （与 `mesh_sync_now` 同一处置 —— ⛔ 不假装连上了 ✗，⛔ 也不显示 0 天 ✗）。
+  relay_status: { args: undefined; result: RelayStatus };
+  relay_probe: { args: undefined; result: RelayStatus };
 }

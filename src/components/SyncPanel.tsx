@@ -44,6 +44,9 @@ import {
   type SyncMode,
 } from "../lib/syncMode";
 import { SpacePrivacySection } from "./SpacePrivacySection";
+// ⭐ 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）——
+//    读数（连上没连上 ＋ 剩余 N 天）**全部来自后端**，这一块只摆上去 ✓。
+import { RelayStatusSection } from "./RelayStatusSection";
 import {
   publishPendingRemoteTotal,
   subscribePendingRemoteTotal,
@@ -1946,6 +1949,12 @@ export function SyncPanel() {
                 </div>
               </details>
             )}
+
+            {/* ④ 中继 ← 2026-10-10：**跨网送达那一格**（owner 2026-10-10 要的两格之一）。
+                ⭐ 两句话都是**后端出的原文**（`api.relayStatus` / `api.relayProbe` ⇒
+                `src/lib/relay/statusView.ts` ⇒ 这一块只摆上去）——
+                ⛔ 界面不自己算天数、⛔ 读不到时也不编一个数（那两格说"读不到有效期"）✓。 */}
+            <RelayStatusSection />
 
             {/* ④ 设备直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
                 （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）

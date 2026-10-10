@@ -1103,6 +1103,14 @@ pub fn run() {
   // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：86 MiB 过 base64-IPC 那条链结构上不成立
   //    ⇒ 下载/解压/校验/落盘全在 Rust 侧（`dictionary.rs`：先核压缩包、再核解压后的库，两段都过才 rename）。
   dictionary::dictionary_install_pack,
+  // ── 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」）──────────────────────────────
+  // ⭐ 两格读数（人话与天数**都由后端出** ⇒ 界面只摆上去 ✓）：
+  //   · `relay_status` —— **不联网**：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格 ✓
+  //   · `relay_probe`  —— 真发起一次连接＋握手（UI 的「重新检查」走这条 ✓）
+  // ⚠️ 两条都**不是**桌面专属：Web 侧（`web.ts`）如实回 `available:false` ＋ 一句为什么 ✓
+  //    —— 与 `mesh_sync_now` 同一处置（⛔ 不假装连上了 ✗）。
+  relay_client::relay_status,
+  relay_client::relay_probe,
 ])
         .run(app_context())
         .expect("error while running tauri application");

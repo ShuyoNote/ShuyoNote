@@ -566,6 +566,200 @@ pub async fn probe(cfg: &RelayConfig, now: i64) -> RelayProbe {
     }
 }
 
+// ───────── 给界面的读数（⭐ 人话与数字**都由后端出** —— ⛔ 界面不许自己算 ✗） ─────────
+
+/// 连接那一格（图⑤「中继」）。
+///
+/// ⚠️ `label` 与 `detail` 都是**后端出的原文** ✓ —— 界面只负责摆上去 ✓
+/// （与 `lanStatus.line` / `rep.note` 同一条纪律：同一件事只有一处实现 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RelayConnectionView {
+    /// 机器可读的状态字：`unchecked` ／ `connected` ／ `denied` ／ `refused` ／ `unreachable`。
+    pub state: String,
+    /// 用户可见那句话（「已连上中继」／「未连上中继」…）。
+    pub label: String,
+    /// 具体原因（可缺省）：中继给的拒绝原因**原样**放在这里 ✓。
+    pub detail: Option<String>,
+    /// 上一次检查的时刻（Unix 秒）；没检查过 ⇒ `None` ✓。
+    pub checked_at: Option<i64>,
+}
+
+/// 许可那一格（图⑧「中继许可证」）。
+///
+/// ⚠️ **读不到就明说** ✓ —— ⛔ 不许编 `0 天`、⛔ 不许写"永久" ✗。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RelayLicenseView {
+    /// 机器可读的状态字：`ok` ／ `grace` ／ `expired` ／ `not_yet` ／ `missing`。
+    pub state: String,
+    /// 距 `exp` 还剩几天（**读不到 ⇒ `None`** ✓，⛔ 不是 0 ✗）；过期后为 `Some(0)`（⛔ 不许负数 ✗）。
+    pub days_left: Option<i64>,
+    /// 宽限还剩几天（不在宽限里 ⇒ `None`）。
+    pub grace_days_left: Option<i64>,
+    /// 用户可见那句话（「剩余 27 天」／「已到期」／「许可证状态未接线（读不到有效期）」）。
+    pub label: String,
+    /// 这一态**放不放行新建跨网连接** ✓ —— ⚠️ 与"本机能不能用"**无关** ✗
+    /// （到期**只**收回跨网：本机读写搜改一律照旧 ✓）。
+    pub crossnet_allowed: bool,
+}
+
+/// ⭐ 中继那两格的**完整读数**（图⑤「中继：已连上中继 ｜ 剩余 N 天」＋ 图⑧「中继许可证」）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RelayStatus {
+    /// 这一档在**当前平台**能不能用（Web 版恒 `false` ＋ 一句为什么 ✓，由 `web.ts` 出）。
+    pub available: bool,
+    /// 一句补充说明（用户可见；没有 ⇒ 空串）。
+    pub note: String,
+    /// 配了中继地址没有 ✓。
+    pub configured: bool,
+    /// 中继地址（配了才有 ✓）。
+    pub url: Option<String>,
+    /// 连接那一格 ✓。
+    pub connection: RelayConnectionView,
+    /// 许可那一格 ✓。
+    pub license: RelayLicenseView,
+}
+
+/// 连接那一格 ⇒ 读数 ✓（`None` ＝ **还没检查过** ⇒ ⛔ 绝不许显示成"已连上" ✗）。
+pub fn connection_view(
+    outcome: Option<&ProbeOutcome>,
+    checked_at: Option<i64>,
+) -> RelayConnectionView {
+    match outcome {
+        None => RelayConnectionView {
+            state: "unchecked".to_string(),
+            label: "未连上中继（还没检查）".to_string(),
+            detail: None,
+            checked_at: None,
+        },
+        Some(ProbeOutcome::Connected) => RelayConnectionView {
+            state: "connected".to_string(),
+            label: "已连上中继".to_string(),
+            detail: None,
+            checked_at,
+        },
+        Some(ProbeOutcome::Denied { reason }) => RelayConnectionView {
+            state: "denied".to_string(),
+            label: "未连上中继".to_string(),
+            detail: Some(format!("中继拒绝了这条连接（原因：{reason}）")),
+            checked_at,
+        },
+        Some(ProbeOutcome::Refused { code, message }) => RelayConnectionView {
+            state: "refused".to_string(),
+            label: "未连上中继".to_string(),
+            detail: Some(format!("本机就没放行（{code}）：{message}")),
+            checked_at,
+        },
+        Some(ProbeOutcome::Unreachable { error }) => RelayConnectionView {
+            state: "unreachable".to_string(),
+            label: "未连上中继".to_string(),
+            detail: Some(format!("连不上中继：{error}")),
+            checked_at,
+        },
+    }
+}
+
+/// 许可窗口 ⇒ 读数 ✓（人话只有这一处实现 ✓）。
+pub fn license_view(window: LicenseWindow) -> RelayLicenseView {
+    let (state, days_left, grace_days_left, label, crossnet_allowed) = match window {
+        LicenseWindow::Active { days_left } => (
+            "ok",
+            Some(days_left),
+            None,
+            format!("剩余 {days_left} 天"),
+            true,
+        ),
+        LicenseWindow::Grace {
+            days_left,
+            grace_days_left,
+        } => (
+            "grace",
+            Some(days_left),
+            Some(grace_days_left),
+            format!("剩余 {days_left} 天 · 宽限 {grace_days_left} 天"),
+            true,
+        ),
+        LicenseWindow::Expired => ("expired", None, None, "已到期".to_string(), false),
+        LicenseWindow::NotYet { .. } => ("not_yet", None, None, "还没到生效时间".to_string(), false),
+        LicenseWindow::Unconfigured => (
+            "missing",
+            None,
+            None,
+            "许可证状态未接线（读不到有效期）".to_string(),
+            false,
+        ),
+    };
+    RelayLicenseView {
+        state: state.to_string(),
+        days_left,
+        grace_days_left,
+        label,
+        crossnet_allowed,
+    }
+}
+
+/// 纯函数那一半：**配置的读取结果** ＋ 时刻 ＋（可选的）一次探测 ⇒ 整份读数 ✓
+/// （判据不需要磁盘／网络就能把两格人话钉死 ✓）。
+pub fn status_payload_from(
+    cfg: Result<RelayConfig, String>,
+    now: i64,
+    probed: Option<(&ProbeOutcome, i64)>,
+) -> RelayStatus {
+    let (cfg, note) = match cfg {
+        Ok(c) => (Some(c), String::new()),
+        // ⚠️ 读不到配置**不是**错误：界面要的是一句"读不到"的读数，不是一次异常 ✓
+        Err(e) => (None, e),
+    };
+    let url = cfg
+        .as_ref()
+        .and_then(|c| c.url.clone())
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty());
+    let configured = url.is_some();
+    let window = cfg
+        .as_ref()
+        .map(|c| config_window(c, now))
+        .unwrap_or(LicenseWindow::Unconfigured);
+    RelayStatus {
+        available: true,
+        note,
+        configured,
+        url,
+        connection: connection_view(probed.map(|(o, _)| o), probed.map(|(_, at)| at)),
+        license: license_view(window),
+    }
+}
+
+/// 中继那两格的读数（**不联网** ✓）：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格 ✓。
+///
+/// ⚠️ 它**不**动本机任何东西（只读一个配置文件 ✓）—— 到期只收回跨网 ✓。
+#[tauri::command]
+pub fn relay_status() -> RelayStatus {
+    status_payload_from(load_config(), now_unix(), None)
+}
+
+/// ⭐ **发起一次连接 ＋ 握手**，并把结果摊成同一份读数 ✓（「重新检查」按钮走这条 ✓）。
+///
+/// 连上 ⇒ 连接那一格是「已连上中继」✓；被中继拒 ⇒ 那句话里带**中继给的原因** ✓；
+/// 连不上 ⇒ 如实说连不上 ✓。⛔ 无论哪一态都**不碰**本地数据/功能 ✗。
+#[tauri::command]
+pub async fn relay_probe() -> RelayStatus {
+    let now = now_unix();
+    match load_config() {
+        Ok(cfg) => {
+            let report = probe(&cfg, now).await;
+            status_payload_from(Ok(cfg), now, Some((&report.outcome, now)))
+        }
+        // 连配置都没有 ⇒ 不假装"检查过了"，也不抛异常：给一句可读的"本机就没放行"✓
+        Err(e) => {
+            let refused = ProbeOutcome::Refused {
+                code: "not_configured",
+                message: e.clone(),
+            };
+            status_payload_from(Err(e), now, Some((&refused, now)))
+        }
+    }
+}
+
 // ─────────────────────────────── 判据 ───────────────────────────────
 
 #[cfg(test)]
@@ -760,6 +954,30 @@ mod tests {
         let cfg = load_config_from(Path::new(&path)).expect("配置读不出来");
         let report = probe(&cfg, now_unix()).await;
         println!("relay_probe={}", report.machine_line());
+        // ⭐ 把**给界面的那两格原文**也打出来（图⑤/图⑧ 在用户那儿看到的就是这两句 ✓）——
+        //    判据因此能直接读到"已连上中继 ／ 剩余 N 天"，而不只是内部状态字 ✓。
+        let now = now_unix();
+        let st = status_payload_from(Ok(cfg.clone()), now, Some((&report.outcome, now)));
+        println!(
+            "relay_cell connection=\"{}\" license=\"{}\" detail=\"{}\"",
+            st.connection.label,
+            st.license.label,
+            st.connection.detail.clone().unwrap_or_default()
+        );
+        if report.connected() {
+            assert_eq!(st.connection.label, "已连上中继", "连上那一格的人话不对");
+            assert!(
+                st.license.label.contains("剩余"),
+                "许可那一格没说剩多少天，实得 {}",
+                st.license.label
+            );
+        } else {
+            assert!(
+                !st.connection.label.contains("已连上"),
+                "没连上却显示已连上，实得 {}",
+                st.connection.label
+            );
+        }
         match std::env::var("SHUYONOTE_RELAY_EXPECT").as_deref() {
             Ok("connected") => assert!(
                 report.connected(),
@@ -777,5 +995,134 @@ mod tests {
                 report.machine_line()
             ),
         }
+    }
+
+    // ───────── 给界面的那两格（图⑤／图⑧）：判据要钉的是"读数怎么来的" ✓ ─────────
+
+    /// ① 连上与未连上**都是后端出的那句话**；⛔「没检查过」绝不许显示成"已连上" ✗。
+    #[test]
+    fn 读数_两格的人话都由后端出() {
+        let cfg = cfg_ok(NOW + 27 * 86_400 + 12 * 3_600);
+        // 连上 ⇒ 「已连上中继」；许可 ⇒ 「剩余 27 天」（向下取整 ✓）
+        let st = status_payload_from(Ok(cfg.clone()), NOW, Some((&ProbeOutcome::Connected, NOW)));
+        assert_eq!(st.connection.state, "connected");
+        assert_eq!(st.connection.label, "已连上中继");
+        assert_eq!(st.license.label, "剩余 27 天");
+        assert_eq!(st.license.days_left, Some(27));
+        assert!(st.license.crossnet_allowed);
+        assert_eq!(st.url.as_deref(), Some("http://127.0.0.1:8899"));
+
+        // 还没检查过 ⇒ 那句话说"没检查"，⛔ 不是"已连上" ✗
+        let un = status_payload_from(Ok(cfg.clone()), NOW, None);
+        assert_eq!(un.connection.state, "unchecked");
+        assert!(!un.connection.label.contains("已连上"), "实得 {}", un.connection.label);
+        assert_eq!(un.connection.checked_at, None);
+
+        // 中继拒绝 ⇒ 一句话 ＋ **中继给的原因原样**在 detail 里 ✓
+        let denied = status_payload_from(
+            Ok(cfg.clone()),
+            NOW,
+            Some((
+                &ProbeOutcome::Denied {
+                    reason: "missing".to_string(),
+                },
+                NOW,
+            )),
+        );
+        assert_eq!(denied.connection.label, "未连上中继");
+        assert!(denied
+            .connection
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("missing"));
+        assert!(!denied.connection.label.contains("已连上"));
+
+        // 连不上 ⇒ 如实说连不上（原因也带出来 ✓）
+        let un_reach = status_payload_from(
+            Ok(cfg),
+            NOW,
+            Some((
+                &ProbeOutcome::Unreachable {
+                    error: "deadline has elapsed".to_string(),
+                },
+                NOW,
+            )),
+        );
+        assert_eq!(un_reach.connection.state, "unreachable");
+        assert!(un_reach.connection.detail.as_deref().unwrap().contains("deadline"));
+    }
+
+    /// ② **读不到就不编数字** ✓（⛔ 不许 0 天冒充、⛔ 不许说已连上 ✗）。
+    #[test]
+    fn 读数_读不到时不编数字() {
+        let st = status_payload_from(Err("还没配置中继：读不到 relay/config.json".to_string()), NOW, None);
+        // ⚠️ "读不到配置" ≠ "这一档不可用"：桌面版这一档本身在岗 ✓（不可用是 Web 版的事 ✓）
+        assert!(st.available);
+        assert!(!st.configured);
+        assert_eq!(st.url, None);
+        assert_eq!(st.license.state, "missing");
+        assert_eq!(st.license.days_left, None, "读不到 ⇒ 不许有天数（更不许是 0）");
+        assert!(st.license.label.contains("读不到有效期"), "实得 {}", st.license.label);
+        assert!(
+            !st.license.label.chars().any(|c| c.is_ascii_digit()),
+            "读不到那一句里不许有数字，实得 {}",
+            st.license.label
+        );
+        assert!(!st.license.crossnet_allowed, "读不到 ⇒ 不放行（fail-closed）");
+        assert!(!st.connection.label.contains("已连上"));
+        assert!(st.note.contains("还没配置中继"), "那句为什么也要带给界面");
+    }
+
+    /// ③ **到期只收回跨网** ✓：读数上说"已到期"，而**没有任何**"本机被锁/被禁用"的字段 ✗。
+    #[test]
+    fn 读数_到期只收回跨网() {
+        let cfg = cfg_ok(NOW - 20 * 86_400);
+        let st = status_payload_from(
+            Ok(cfg),
+            NOW,
+            Some((
+                &ProbeOutcome::Refused {
+                    code: "expired",
+                    message: "跨网已暂停：已到期".to_string(),
+                },
+                NOW,
+            )),
+        );
+        assert_eq!(st.license.state, "expired");
+        assert_eq!(st.license.label, "已到期");
+        assert!(!st.license.crossnet_allowed, "到期 ⇒ 跨网停");
+        assert_eq!(st.license.days_left, None, "⛔ 不许负天数 ✗");
+        // 整份读数里**只有**"跨网放不放行"这一个布尔 ⇒ 不存在"本机禁用"那种东西 ✓
+        let json = serde_json::to_string(&st).unwrap();
+        for bad in ["lock", "locked", "disabled", "readonly", "read_only"] {
+            assert!(!json.contains(bad), "读数里不该有 {bad} 这种本地开关：{json}");
+        }
+        // 宽限期内则相反：跨网**仍放行** ＋ 界面把宽限一并说清 ✓
+        // ⚠️ 取"刚好过期 1 秒"：此时宽限还剩 14 天差 1 秒 ⇒ 向上取整报 **14 天** ✓
+        //    （规格里的界面形状就是这个例子：「剩余 0 天 · 宽限 14 天」✓）
+        //    —— 而"过期满 1 天"那张卡会报 **13 天**（向上取整，不是 14 ✓，别把两者当成一样）
+        let grace = status_payload_from(Ok(cfg_ok(NOW - 1)), NOW, None);
+        assert_eq!(grace.license.state, "grace");
+        assert!(grace.license.crossnet_allowed);
+        assert!(
+            grace.license.label.contains("宽限 14 天"),
+            "实得 {}",
+            grace.license.label
+        );
+        let grace_later = status_payload_from(Ok(cfg_ok(NOW - 86_400)), NOW, None);
+        assert!(
+            grace_later.license.label.contains("宽限 13 天"),
+            "过期满一天之后宽限只剩 13 天，实得 {}",
+            grace_later.license.label
+        );
+    }
+
+    /// ④ 两格读数的**形状**：`available` 在桌面版为真 ⇒ 界面照常渲染（Web 版由 `web.ts` 回 false ✓）。
+    #[test]
+    fn 读数_桌面版这一档可用() {
+        let st = status_payload_from(Ok(cfg_ok(NOW + 86_400)), NOW, None);
+        assert!(st.available);
+        assert!(st.configured);
     }
 }
