@@ -864,9 +864,11 @@ mod snapshot_list_tests {
         assert_eq!(got.last_success_unix, None);
     }
 
-    /// ⭐ 追加一份 ⇒ 份数 +1（那正是"立刻备份一次"跑完之后应当发生的事 ✓）
+    /// ⭐ **列举**的语义：**直接往目录里放一份** ⇒ 份数 +1、`last_success_unix` 跟着走 ✓
+    /// ⚠️ ⭐ 这一条**不是**"跑一次备份 ⇒ 份数 +1"✗（那个**不成立** ✓ —— 见下面那条 retention 用例 ✓）：
+    ///    真跑一次会**随后过一遍保留分层** ⇒ 同一天的第二份把第一份**换掉**（份数不动 ✓）。
     #[test]
-    fn adding_one_snapshot_bumps_the_count_by_exactly_one() {
+    fn listing_counts_a_directly_added_snapshot_and_moves_last_success() {
         let dir = tmp("bump");
         std::fs::write(dir.join("shuyonote-backup-1759900000.zip"), vec![0u8; 4]).unwrap();
         let before = list_snapshots(&dir).unwrap();
@@ -876,5 +878,30 @@ mod snapshot_list_tests {
         assert_eq!(after.bytes, before.bytes + 6);
         assert_eq!(after.last_success_unix, Some(1_759_900_001));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐⭐ **判据 d 的正确形状**（2026-10-10 实测撞到的那条反直觉读数 ✓）：
+    /// 真跑一次"立刻备份"之后，**同一天**的旧那份会被最新的**换掉** ⇒
+    ///   · ⛔ **份数不变** ✗ ⇒ 拿「份数 +1」当判据会**假红**（也会**假绿** ✓）
+    ///   · ✅ **变的是"最新那份的时刻/名字"** ✓ ⇒ 界面该看的是「上次成功备份」那一行 ✓
+    /// 本用例**复用**既有的 `retention_keep`（⛔ 不写第二份保留逻辑 ✗）来钉住这件事 ✓。
+    #[test]
+    fn same_day_second_backup_moves_last_success_while_retention_keeps_one_per_day() {
+        let older = Snapshot { name: "shuyonote-backup-1759900000000.zip".into(), unix: 1_759_900_000 };
+        let newer = Snapshot { name: "shuyonote-backup-1759903600000.zip".into(), unix: 1_759_903_600 };
+        // 同一天（相隔 1 小时）⇒ 同一个桶 ⇒ 只留最新那份 ✓
+        let plan = retention_keep(&[older.clone(), newer.clone()], 1_759_903_600 + 60);
+        assert_eq!(plan.keep.len(), 1, "同一天只留最新一份 ⇒ ⛔ 份数不该 +1：{plan:?}");
+        assert_eq!(plan.remove.len(), 1, "旧那份会被删：{plan:?}");
+        assert_eq!(plan.keep[0], newer.name);
+
+        // ⭐ 界面**看得见**的那个变化：最新那份的时刻 ✓（名字里带的时刻解得出来 ✓）
+        let newest_unix = [&older, &newer]
+            .iter()
+            .filter_map(|s| unix_from_snapshot_name(&s.name))
+            .max()
+            .expect("两份名字都应能解出时刻");
+        assert_eq!(newest_unix, 1_759_903_600, "「上次成功备份」显示的是**最新**那份的时刻 ✓");
+        assert_ne!(newest_unix, older.unix, "⛔ 不许把旧那份的时刻当'上次成功' ✗");
     }
 }

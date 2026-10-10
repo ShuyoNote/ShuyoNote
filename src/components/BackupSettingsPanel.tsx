@@ -239,6 +239,12 @@ export function BackupSettingsPanel() {
           {lastRun.ran
             ? `刚跑完：保留 ${lastRun.kept} 份 ／ 删除 ${lastRun.removed} 份 —— ${lastRun.note}`
             : `没跑成：${lastRun.note}`}
+          {lastRun.ran && (
+            <div className="backup-auto-lastrun-hint">
+              ⚠️ 保留策略是「**同一天只留最新一份**」⇒ 刚跑完**份数可能不变**：那说明旧那份被换掉了
+              —— 看上面「**上次成功备份**」那个时刻有没有往前动 ✓
+            </div>
+          )}
         </div>
       )}
       <div className="backup-auto-manual" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>

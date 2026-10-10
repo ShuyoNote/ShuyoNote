@@ -234,4 +234,19 @@ describe("自动备份那一格（task-19）", () => {
       /exportBackup\(|importBackup\(/,
     );
   });
+
+  it("k) ⭐ 那条**反直觉**读数：界面必须说清『同一天只留最新一份 ⇒ 份数可能不变』", () => {
+    // ⚠️ 来由（2026-10-10 实测）：真跑一次「立刻备份」之后，**同一天**的旧那份会被换掉 ⇒
+    //    ⛔ 拿「份数 +1」当判据会**假红**（也会**假绿** ✓）⇒ 界面要指明"看的是**时刻**" ✓
+    const panel = read("src", "components", "BackupSettingsPanel.tsx");
+    expect(panel, "面板没说清『份数可能不变』⇒ 用户会以为按钮没生效").toContain("份数可能不变");
+    expect(panel, "面板没指向那个会动的读数（上次成功备份的时刻）").toMatch(
+      /上次成功备份[\s\S]{0,40}时刻|时刻[\s\S]{0,40}上次成功备份/,
+    );
+    // Rust 侧同族用例（⭐ 复用 `retention_keep`，⛔ 不写第二份保留逻辑 ✗）
+    const rust = read("src-tauri", "src", "auto_backup.rs");
+    expect(rust, "Rust 侧没有『同一天第二份只留最新』的用例").toMatch(
+      /same_day_second_backup_moves_last_success_while_retention_keeps_one_per_day/,
+    );
+  });
 });
