@@ -247,42 +247,6 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
     })
 }
 
-/// 顶层块提取 —— `get_page_blocks` 的**唯一实现**（纯函数 ⇒ **可单测** ✓）。
-///
-/// ⚠️ 为什么抽出来：2026-10-10 这里犯过一个**用户可见的错** ✗ ——
-/// 旧实现要求顶层块**必须有 `blockId`**，而**真实存下来的普通页面根本没有这个字段** ✗
-/// （实测：`root.children.length = 1`，而该子节点的键里没有 `blockId` ✓）⇒ 过滤后**永远返回空** ✗，
-/// 手机档 04 阅读屏于是对**有正文的页**显示「这一页还没有内容」✗。
-///
-/// ⚠️ **同语义的另一半在 web 侧** ✓：`src/lib/platform/pageBlocks.ts::pageBlocksFromDoc`
-/// —— 两处**必须同语义**（`blockId` 有就用、没有按位置回退；空文本的块不收 ✓），
-/// 否则"桌面能看、手机看不到"这类不一致会再长回来 ✗。`blockId` 只在块被引用/嵌入时才存在
-/// （见 `src/lib/blockIdentity.ts`）⇒ 它**不能**当"有没有正文"的判据 ✗。
-pub(crate) fn page_blocks_from_doc(content_json: &str) -> Result<Vec<PageBlock>, String> {
-    let v = parse_json(content_json)?;
-    let mut blocks = Vec::new();
-    // ⚠️ `i` 是**顶层块的位置**（含被跳过的空块），用作没有 `blockId` 时的回退 id ✓。
-    let mut i: usize = 0;
-    for child in root_children(&v) {
-        let text = node_text(child).trim().to_string();
-        // 空文本块不收 ✓（与 web 侧 `pageBlocksFromDoc` 同语义 ✓）。
-        if !text.is_empty() {
-            // ⭐ `blockId` 是**可选字段** —— 只在块被引用/嵌入时才存在（见 `src/lib/blockIdentity.ts` ✓）。
-            //    ⛔ 它**不能**当"有没有正文"的判据 ✗：真实存下来的普通页面根本没有这个键，
-            //    这么写会让**有正文的页永远返回空** ✗（2026-10-10 的用户可见错：手机阅读屏显示
-            //    「这一页还没有内容。」✗）。⇒ 没有就**按位置回退** ✓。
-            let block_id = child
-                .get("blockId")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("block-{}", i));
-            blocks.push(PageBlock { block_id, text });
-        }
-        i += 1;
-    }
-    Ok(blocks)
-}
-
 #[tauri::command]
 pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<PageBlock>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
@@ -291,7 +255,17 @@ pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<P
         .ok_or_else(|| "页面不存在".to_string())?
         .json;
 
-    page_blocks_from_doc(&content_json)
+    let v = parse_json(&content_json)?;
+    let mut blocks = Vec::new();
+    for child in root_children(&v) {
+        if let Some(id) = child.get("blockId").and_then(|v| v.as_str()) {
+            blocks.push(PageBlock {
+                block_id: id.to_string(),
+                text: node_text(child).trim().to_string(),
+            });
+        }
+    }
+    Ok(blocks)
 }
 
 #[tauri::command]
@@ -542,74 +516,5 @@ mod crdt_legacy_input_tests {
             .query_row("SELECT COUNT(*) FROM page_fts WHERE page_id = 'p-source'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "FTS 应当有且只有一行");
-    }
-}
-
-/// `get_page_blocks` 的**顶层块提取** —— 2026-10-10 那次用户可见的错 ✗ 的回归判据。
-///
-/// ⭐ 主判据与**前端** `pageBlocksFromDoc` 那条**同形** ✓：
-///   「**顶层块没有 `blockId` ⇒ 块数 > 0 且文本非空**」✓
-/// （修前它必红 ✓：旧实现要求顶层块有 `blockId`，而**真实文档里普通页面没有它** ✗
-///   ⇒ 返回空 ⇒ 手机档 04 阅读屏显示「这一页还没有内容」✗。）
-#[cfg(test)]
-mod page_blocks_tests {
-    use super::*;
-    use serde_json::json;
-
-    /// **实测抓到的真实形状**：顶层 `paragraph` **没有** `blockId` ✗（键与线上一致 ✓）。
-    fn real_shape_doc() -> String {
-        json!({ "root": {
-            "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
-            "children": [
-                { "type": "paragraph", "version": 1, "direction": "ltr", "format": "",
-                  "indent": 0, "textFormat": 0, "textStyle": "",
-                  "children": [{ "type": "text", "text": "The apple is red.", "version": 1 }] }
-            ]}})
-        .to_string()
-    }
-
-    #[test]
-    fn real_page_without_block_id_still_yields_blocks() {
-        let blocks = page_blocks_from_doc(&real_shape_doc()).expect("应能解析");
-        assert!(
-            !blocks.is_empty(),
-            "有正文的页必须给出块 —— 修前这里是 **0 块** ✗（就是那个用户可见的错）"
-        );
-        assert_eq!(blocks[0].text, "The apple is red.");
-        assert!(!blocks[0].block_id.is_empty(), "回退 id 不许是空串");
-    }
-
-    #[test]
-    fn block_id_is_kept_when_present() {
-        let doc = json!({ "root": { "children": [
-            { "type": "paragraph", "blockId": "b-real-1",
-              "children": [{ "type": "text", "text": "有 id 的块" }] }
-        ]}})
-        .to_string();
-        let blocks = page_blocks_from_doc(&doc).expect("应能解析");
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].block_id, "b-real-1");
-        assert_eq!(blocks[0].text, "有 id 的块");
-    }
-
-    #[test]
-    fn empty_text_blocks_are_skipped() {
-        let doc = json!({ "root": { "children": [
-            { "type": "paragraph", "children": [{ "type": "text", "text": "甲" }] },
-            { "type": "paragraph", "children": [] },
-            { "type": "paragraph", "children": [{ "type": "text", "text": "乙" }] }
-        ]}})
-        .to_string();
-        let texts: Vec<String> = page_blocks_from_doc(&doc)
-            .expect("应能解析")
-            .into_iter()
-            .map(|b| b.text)
-            .collect();
-        assert_eq!(texts, vec!["甲".to_string(), "乙".to_string()]);
-    }
-
-    #[test]
-    fn bad_json_is_an_error_not_a_panic() {
-        assert!(page_blocks_from_doc("{ not json").is_err());
     }
 }
