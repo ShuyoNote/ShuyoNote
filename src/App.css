@@ -14053,10 +14053,10 @@ p:has(> .editor-drawing-container) {
 .set-space-local {
   color: var(--text-faint);
 }
-.set-space-id {
-  color: var(--text-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+/* ⭐ 2026-10-10（owner 截图）：`.set-space-id` 那条规则**随那一行 DOM 一起删了** ✓ ——
+ *   空间编号是**内部标识**，⛔ 不许进用户面 ✗（同族：`SettingsDialog.test.tsx` 的 c) 判据 ✓）。
+ *   ⚠️ **别再加回来** ✓ —— 防线在判据里，⛔ 不靠这条注释 ✗。
+ *   ⚠️ 而 `.set-space-sync` 那条**仍在用** ✓（「已同步」那个 span 带着它 ✓）⇒ ⛔ 别顺手删它 ✗。 */
 .set-space-colors {
   display: flex;
   align-items: center;
