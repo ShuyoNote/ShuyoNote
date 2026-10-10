@@ -128,7 +128,7 @@ pub fn decrypt(blob: &[u8], enc_key: &[u8; 32], mac_key: &[u8; 32]) -> Result<Ve
     let mut m = HmacSm3::new_from_slice(mac_key).map_err(|e| format!("HMAC-SM3 初始化失败: {e}"))?;
     m.update(body);
     m.verify_slice(tag).map_err(|_| {
-        "SM4 密文完整性校验失败（HMAC-SM3 不匹配）—— 已按 EtM 拒绝，未做任何解密".to_string()
+        "密文校验不通过（内容没有被解开）".to_string()
     })?;
     let iv = &body[HEADER_LEN..HEADER_LEN + SM_IV_LEN];
     let ct = &body[HEADER_LEN + SM_IV_LEN..];

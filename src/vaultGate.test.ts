@@ -525,4 +525,43 @@ describe("⭐ 从明文空间切到未解锁的加密空间：解锁屏必须真
     expect(host.querySelector(".lock-screen")).not.toBeNull();
     expect(host.querySelector(".app"), "锁屏期间那个空间的内容一个都不渲染").toBeNull();
   });
+
+  it("e) 失败一次 ⇒ 切走 ⇒ 切回来 ⇒ 屏上⛔ 不许还挂着上次那句报错", async () => {
+    fixture();
+    await render();
+
+    // 先看见一次报错（输一次错口令）
+    mocks.unlockEncryption.mockRejectedValueOnce(new Error("打不开：口令不对，或者这把锁被改过"));
+    const input = host.querySelector(".lock-input") as HTMLInputElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, "wrong-pass");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    const btn = host.querySelector(".lock-button") as HTMLButtonElement;
+    await act(async () => {
+      btn.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await settle();
+    expect(host.querySelector(".lock-error"), "夹具前提：先得看见一次报错").not.toBeNull();
+
+    // 切走（明文空间）⇒ 锁屏消失；再切回那个加密空间 ⇒ 锁屏再来
+    mocks.status.mockResolvedValue({ enabled: false, locked: false });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("plain");
+    });
+    await settle();
+    expect(host.querySelector(".lock-screen"), "切到明文 ⇒ 锁屏该消失").toBeNull();
+
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+    await act(async () => {
+      await useSpaceStore.getState().switchTo("enc");
+    });
+    await settle();
+    expect(host.querySelector(".lock-screen"), "切回来 ⇒ 锁屏再来").not.toBeNull();
+    // ⭐ 关键：⛔ 不许还挂着**上一次**那句报错
+    expect(host.querySelector(".lock-error"), "⭐ 人还没输就先看到上一轮的报错 ✗").toBeNull();
+  });
 });

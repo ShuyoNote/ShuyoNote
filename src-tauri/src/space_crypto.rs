@@ -180,7 +180,12 @@ pub fn verify_master_against_keyring(kr: &Keyring, master: &AppKeys) -> Result<(
             Err(e) => last = e,
         }
     }
-    Err(format!("打不开（口令不对或盒子被改过）：{last}"))
+    // ⭐ 用户面**只在这一处出人话** ✓，原文进日志 ✓（2026-10-10：锁屏那句原来三层套娃、还带术语 ✓）。
+    // ⚠️ ⭐ **两种可能都要说** ✗ —— AEAD 解不开时**连程序自己都分不清**是"口令不对"还是"盒子被改过"
+    //   （见 `verify_master_against_keyring` 上面那段逐字："口令对不对**由解盒子回答**（AEAD）"✓）
+    //   ⇒ ⛔ **不许假装能判出是哪一档** ✗（那会变成编造 ✓）。
+    eprintln!("[space_crypto] 袋子里没有任何一个盒子能被这个主口令解开（原文，排查以它为准）：{last}");
+    Err("打不开：口令不对，或者这把锁被改过 —— 内容没有被解开（详细原因已写进日志，排查时以它为准）".to_string())
 }
 
 /// 测试用：直接装/卸公开材料（**跨模块的集成判据**要用；生产路径走 `carry_keyring` / `store_keyring`）。
@@ -677,6 +682,47 @@ mod tests {
         let kr = Keyring::new();
         let m = kr.kdf.derive_master(passphrase).unwrap();
         (kr, m)
+    }
+
+    /// ⭐ owner 2026-10-10 截图：锁屏那句是**三层套娃** ＋ 把密码学术语直接给用户看 ✗。
+    /// 一条夹具同时踩到 ①②③ 三层 ✓ —— 拿一个**错的主口令**去解袋子 ⇒ 三层各出一句 ⇒ 拼成用户看到的那句。
+    /// **a)** 旧前缀「打不开（口令不对或盒子被改过）」**一次都不出现**（改之前是 2 次 ✓）；
+    /// **b)** 用户面⛔ 无 `SM4`／`HMAC-SM3`／`EtM`／`密文完整性校验` ✗（改之前 4 个都在 ✓）；
+    /// **d)** ⭐ **两种可能都要说**（「口令」＋「改过」✓）＋ ⛔ **不许假装能判是哪一档** ✗
+    ///        （AEAD 解不开时**程序自己也分不清**是口令还是锁 ✓ —— 见 `verify_master_against_keyring` 上面那段 ✓）；
+    /// ＋ 说清"原文去哪了"（日志 ✓ —— 那一行的**内容**另由 `--nocapture` 那次读数核 ✓）。
+    #[test]
+    fn a_wrong_master_gives_one_human_sentence_without_jargon() {
+        // 袋子：一个**已知主口令**的盒子
+        let (mut kr, good) = master("the-right-passphrase");
+        kr.wrap(&good, "s1", &[7u8; 32]).unwrap();
+        // 另一个**错的主口令**
+        let (_k2, bad) = master("the-wrong-passphrase");
+
+        let e = verify_master_against_keyring(&kr, &bad).expect_err("错口令必须解不开");
+        // a) 旧前缀**一次都不出现**（"≤1 次"的**更强**形式 ✓）
+        assert!(
+            !e.contains("打不开（口令不对或盒子被改过）"),
+            "旧的三层套娃前缀还在：{e}"
+        );
+        // b) 四个术语一个都不许漏到用户面
+        for word in ["SM4", "HMAC-SM3", "EtM", "密文完整性校验"] {
+            assert!(!e.contains(word), "术语「{word}」漏到用户面了：{e}");
+        }
+        // d) 两种可能都在 ＋ ⛔ 不假装能判是哪一档
+        assert!(e.contains("口令"), "要说清「口令不对」这一种可能：{e}");
+        assert!(e.contains("改过"), "要说清「这把锁被改过」这一种可能：{e}");
+        assert!(
+            !e.contains("就是口令") && !e.contains("确定是口令") && !e.contains("不是锁的问题"),
+            "⛔ 不许假装能判出是哪一档（那是编造）：{e}"
+        );
+        // 说清原文去哪了（排查靠它 ✓）
+        assert!(e.contains("日志"), "要说清原文已经写进日志：{e}");
+        // ⚠️ 反向：**对**的主口令必须照样解得开（⛔ 别把功能关了 ✗）
+        assert!(
+            verify_master_against_keyring(&kr, &good).is_ok(),
+            "对的主口令必须解得开"
+        );
     }
 
     /// ★ 第 1 步（1b-2a）：**按空间启用/禁用** —— 只动那一个空间；旁边那个（明文）**不受影响**，
