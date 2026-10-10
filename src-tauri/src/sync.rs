@@ -175,6 +175,120 @@ fn get_auth_email(c: &Connection, server_url: &str) -> Option<String> {
     .ok()
 }
 
+// ─────────────── ⭐ 账号身份（owner 2026-10-10「让账号跟着数据走」第 1 步） ───────────────
+//
+// ⚠️ 这一节只做**本机**：把账号 id 取回来、存住、读出来。⛔ 不碰协议（那是第 2 步）✓。
+// ⭐ 它服务的是"**同名 ≠ 同一个人**"那道闸：闸门要问"是不是同一个人"，
+//    而今天客户端**连自己的账号 id 都没有**（`set_auth_session` 写的是**空串**）⇒ 无从下手 ✓。
+
+/// ⭐ **账号身份的三态**（⛔ **不是 `Option`、⛔ 不是 `bool`**）。
+///
+/// ⚠️ 尺子＝**读不到 ≠ 读到 0** ⇒ 下面三种**必须分得开**：
+/// · `Known(id)` —— 拿得到服务端 `users.id` ✓；
+/// · `NoSession` —— **这台机器没登录**（⭐ 正常用法：个人空间不走服务器 ✓）；
+/// · `NotFetched` —— 登录了，但**那次 `/auth/me` 没取到**（网络／服务端出错）✓。
+///
+/// ⇒ ⭐ **后两种在"是不是同一个人"的判定里都落 `Unknown`（⇒ 不融合）**，
+///   ⛔ **但它们是两条不同的拒绝理由**（排障要看得出是"没登录"还是"取不到"）✓ ——
+///   折成一个 `false` 就等于**替用户断言"不是同一个人"**，而我们没有依据 ✗。
+// ⭐⭐ **死代码收据（2026-10-10）**｜为什么留着：它是"**是不是同一个人**"那道闸的**三态类型**，
+//    而闸门的落点（`Ingest::Peer` 的消费处）在**接线那一轮**才写 ✓ —— 本轮先落地＋带判据 ✓。
+//    ⛔ 什么时候删：⭐ **接线那一轮把消费方接上之后，立刻删掉这处 `#[allow(dead_code)]`** ✓；
+//    若那时它还在，说明闸门**没真接上** ✗（这条 `allow` 就是证据）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthUserId {
+    Known(String),
+    NoSession,
+    NotFetched,
+}
+
+/// ⭐ **只写 `user_id` 这一格**：⛔ **绝不用空值抹掉已经存下的 id** ✗。
+///
+/// ⚠️ **为什么必须单独一个 helper**：`set_auth_session` 的 `ON CONFLICT` **不更新这一列** ✓，
+/// 但它的 **`INSERT` 写的是 `''`** ⇒ 万一它后跑，就会把已存的 id 清掉 ⇒
+/// ⭐ 症状是「**融合忽然不合了**」而且**没有任何报错** ✓（正是那一族"静默退化"）。
+/// ⇒ 空白 id **直接不写**（返回 `false`）✓；
+/// ⇒ 用 `UPDATE`（⛔ **不 `INSERT`**）：硬插一行会造出"有会话行但 token 为空"的**幽灵会话** ✗
+///   ⇒ 那会让"登录了吗"变成**假阳性** ✓。
+///
+/// 返回：是否**真的**更新到了那一行（行不存在 ⇒ `false`）。
+fn set_auth_user_id(c: &Connection, server_url: &str, user_id: &str) -> Result<bool, String> {
+    let id = user_id.trim();
+    if id.is_empty() {
+        return Ok(false); // ⛔ 空值不写（写下去就是一次静默退化）
+    }
+    let n = c
+        .execute(
+            "UPDATE auth_sessions SET user_id = ?2 WHERE server_url = ?1",
+            params![server_url, id],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(n > 0)
+}
+
+/// ⭐ **读**账号身份（**三态**）—— 与 `get_auth_token`／`get_auth_email` 同形，
+/// ⚠️ 但 ⛔ **不把三态揉成一个** ✓（"没会话"与"有会话但 id 空"是两件事）。
+// ⭐⭐ **死代码收据（2026-10-10）**｜为什么留着：它是那道闸的**读取器**，消费方（`Ingest::Peer`
+//    的判定处）在**接线那一轮**才写 ✓ —— 本轮先落地＋带判据（三条，见 `mod tests`）✓。
+//    ⛔ 什么时候删：⭐ **接线那一轮接上消费方之后立刻删掉这处 `#[allow(dead_code)]`** ✓
+//    （它还在 ⇒ 说明没真接上 ✗）。
+#[allow(dead_code)]
+pub fn auth_user_id(c: &Connection, server_url: &str) -> AuthUserId {
+    let row: Option<String> = c
+        .query_row(
+            "SELECT user_id FROM auth_sessions WHERE server_url = ?1",
+            params![server_url],
+            |r| r.get(0),
+        )
+        .ok();
+    match row {
+        None => AuthUserId::NoSession,
+        Some(id) if id.trim().is_empty() => AuthUserId::NotFetched,
+        Some(id) => AuthUserId::Known(id),
+    }
+}
+
+/// ⭐ **第 1 步的"网络那一腿"**：登录/注册成功后**顺手**问一次 `/auth/me`，把账号 id 取回来。
+///
+/// ⚠️ **它失败不算登录失败** ✗ —— 登录**已经成功**了，⛔ 不许因为"顺带这一下"没成，
+///   就把用户刚拿到的会话丢掉 ✓。失败 ⇒ 返回 `None` ⇒ `auth_user_id` 停在
+///   `AuthUserId::NotFetched` ⇒ 判身份时落 `Unknown` ⇒ **不合**（保守 ✓）。
+///
+/// ⚠️ 选 (a)（登录后就取）而不是 (b)（等打开账号面板才存）：⭐ **"一登录就有身份"才可靠** ✓ ——
+///    (b) 会让"有没有身份"取决于**一次用户动作** ⇒ 哪天 UI 改了它就**静默失效** ✓。
+async fn fetch_me_user_id(server_url: &str, token: &str) -> Option<String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/auth/me", server_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let id = parse_team_me(&v).user_id;
+    if id.trim().is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// ⭐ `/auth/me` 的**纯解析**（网络那一腿在 [`fetch_me_user_id`]／`team_get_me` 里）——
+/// 抽成纯函数 ⇒ **判据够得着** ✓。⚠️ `id` 是**账号身份**；`email` 只是显示用 ✓
+/// （⛔ `email` 不能单独当身份：会变、可能是别名）。
+fn parse_team_me(v: &serde_json::Value) -> TeamMe {
+    TeamMe {
+        email: v["email"].as_str().unwrap_or("").to_string(),
+        user_id: v["id"].as_str().unwrap_or("").trim().to_string(),
+    }
+}
+
+
 pub fn device_id(c: &Connection) -> Result<String, String> {
     get_meta_state(c, KEY_DEVICE_ID).ok_or_else(|| "设备 ID 未初始化".to_string())
 }
@@ -1327,10 +1441,19 @@ pub async fn team_register(
     if token.is_empty() {
         return Err("服务端未返回 token".to_string());
     }
+    // ⭐ **第 1 步 (a)**：登录/注册成功后**顺手**把账号 id 取回来（⭐ "一登录就有身份" ✗ ——
+    //    ⛔ 别让"有没有身份"取决于用户有没有打开过账号面板 ✓）。
+    // ⚠️ 网络那一腿在**取锁之前**（⛔ 不持 DB 锁跨 await）✓；⚠️ 失败 ⇒ `None` ⇒ 停在 `NotFetched`
+    //    ⇒ 判身份时落 `Unknown` ⇒ **不合** ✓（⛔ 不当"没有账号"、⛔ 不当"不是同一个人"）。
+    let user_id = fetch_me_user_id(&url, &token).await;
     let c = db.0.lock().expect("db mutex poisoned");
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, &token)?;
     set_auth_session(&c, &url, &email, &token)?;
+    if let Some(id) = user_id {
+        // ⭐ 只写 `user_id` 那一格（⛔ 不动 token／email；⛔ 空值不写 —— 见 `set_auth_user_id`）。
+        let _ = set_auth_user_id(&c, &url, &id)?;
+    }
     Ok(TeamAuthResult { token })
 }
 
@@ -1358,10 +1481,19 @@ pub async fn team_login(
     if token.is_empty() {
         return Err("服务端未返回 token".to_string());
     }
+    // ⭐ **第 1 步 (a)**：登录/注册成功后**顺手**把账号 id 取回来（⭐ "一登录就有身份" ✗ ——
+    //    ⛔ 别让"有没有身份"取决于用户有没有打开过账号面板 ✓）。
+    // ⚠️ 网络那一腿在**取锁之前**（⛔ 不持 DB 锁跨 await）✓；⚠️ 失败 ⇒ `None` ⇒ 停在 `NotFetched`
+    //    ⇒ 判身份时落 `Unknown` ⇒ **不合** ✓（⛔ 不当"没有账号"、⛔ 不当"不是同一个人"）。
+    let user_id = fetch_me_user_id(&url, &token).await;
     let c = db.0.lock().expect("db mutex poisoned");
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, &token)?;
     set_auth_session(&c, &url, &email, &token)?;
+    if let Some(id) = user_id {
+        // ⭐ 只写 `user_id` 那一格（⛔ 不动 token／email；⛔ 空值不写 —— 见 `set_auth_user_id`）。
+        let _ = set_auth_user_id(&c, &url, &id)?;
+    }
     Ok(TeamAuthResult { token })
 }
 
@@ -1835,11 +1967,15 @@ pub fn team_get_session(db: State<'_, Db>) -> Result<TeamSession, String> {
     })
 }
 
-/// Return the current user's identity (email) for the given server, so the UI can
-/// show which account is logged in.
+/// Return the current user's identity (email + account id) for the given server, so the UI
+/// can show which account is logged in —— ⭐ 而 `user_id` 那半是给"**是不是同一个人**"用的。
 #[derive(serde::Serialize)]
 pub struct TeamMe {
     pub email: String,
+    /// ⭐ **账号 id**（服务端 `users.id`）—— owner 2026-10-10「让账号跟着数据走」。
+    /// ⚠️ 它才是**身份**；`email` ⛔ 不能单独当身份（会变／可能是别名）✓。
+    /// ⚠️ 空串 ＝ **这一版没拿到**（⛔ 不代表"没有账号"）⇒ 判身份时落 `Unknown` ⇒ 不合 ✓。
+    pub user_id: String,
 }
 
 #[tauri::command]
@@ -1857,9 +1993,8 @@ pub async fn team_get_me(server_url: String, token: String) -> Result<TeamMe, St
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(TeamMe {
-        email: v["email"].as_str().unwrap_or("").to_string(),
-    })
+    // ⭐ 从这里开始**把 `id` 也读出来**（原先只读 `email`、`id` 就地扔了 ✗）。
+    Ok(parse_team_me(&v))
 }
 
 /// Return the email last logged in for a server (local `meta.auth_sessions`), so a
@@ -6044,6 +6179,74 @@ mod tests {
              );",
         )
         .unwrap();
+    }
+
+    // ⭐⭐ **第 1 步的三条判据**（owner 2026-10-10「让账号跟着数据走」；task-29）——
+    //   ⚠️ 三条挡的都不是"功能没做"，而是**三种会静默发生的坏法**：
+    //   ① 把"没登录"折成一个 `false`（＝替用户断言"不是同一个人"，而我们没有依据）；
+    //   ② 造出"有会话行但 token 为空"的**幽灵会话**（⇒"登录了吗"变假阳性）；
+    //   ③ **普通会话刷新把已存的 id 抹掉**（⇒ 症状是"融合忽然不合了"，而且**没有任何报错**）。
+    #[test]
+    fn auth_user_id_is_three_state_and_survives_an_ordinary_session_refresh() {
+        let c = conn_with_meta();
+        with_auth_sessions(&c);
+
+        // ① 没登录 ⇒ `NoSession`（⭐ 正常用法 ⇒ 判身份时落 `Unknown` ⇒ 不合 ✓，⛔ 不是"没有身份=假"）
+        assert_eq!(auth_user_id(&c, "http://srv"), AuthUserId::NoSession);
+
+        // ② ⛔ 空白 id **不许写库**（写了就会造出幽灵会话 ⇒"登录了吗"假阳性）
+        assert!(
+            !set_auth_user_id(&c, "http://srv", "   ").unwrap(),
+            "空白 id 不该写进去"
+        );
+        assert_eq!(
+            auth_user_id(&c, "http://srv"),
+            AuthUserId::NoSession,
+            "⛔ 空白 id 不许造出一行（幽灵会话 ⇒ `get_auth_token` 会回 `Some(\"\")`）"
+        );
+
+        // ③ 登录（`set_auth_session` 写的 `user_id` 是 `''`）⇒ 有会话但没 id ⇒ `NotFetched`
+        //    ⭐ 它与 `NoSession` **必须分得开**（"没登录" vs "登录了但没取到"）
+        set_auth_session(&c, "http://srv", "a@b", "tok").unwrap();
+        assert_eq!(auth_user_id(&c, "http://srv"), AuthUserId::NotFetched);
+
+        // ④ 取到 id ⇒ `Known`
+        assert!(set_auth_user_id(&c, "http://srv", "user-1").unwrap(), "该更新到那一行");
+        assert_eq!(
+            auth_user_id(&c, "http://srv"),
+            AuthUserId::Known("user-1".into())
+        );
+
+        // ⑤ ⭐ **关键那条**：再来一次**普通会话更新**（刷新 token／改邮箱）⇒ id **仍在** ✓
+        set_auth_session(&c, "http://srv", "a@b2", "tok2").unwrap();
+        assert_eq!(
+            auth_user_id(&c, "http://srv"),
+            AuthUserId::Known("user-1".into()),
+            "⭐ 普通会话刷新把 id 抹掉了 ⇒ 以后融合会**静默**不合（无报错）"
+        );
+        // ⚠️ 顺带钉住"写 id 那一下没弄坏另外两格"
+        assert_eq!(get_auth_token(&c, "http://srv").as_deref(), Some("tok2"));
+        assert_eq!(get_auth_email(&c, "http://srv").as_deref(), Some("a@b2"));
+        // ⚠️ 别的服务器（另一个 `server_url`）**互不影响**（身份是按服务器的）
+        assert_eq!(auth_user_id(&c, "http://other"), AuthUserId::NoSession);
+    }
+
+    /// ⭐ `/auth/me` 的**纯解析**：`id` **要读出来**（今天它被就地扔了 ✗）；缺字段 ⇒ **如实为空**
+    /// （⛔ 不 panic、⛔ 不编一个）。
+    #[test]
+    fn parse_team_me_reads_the_account_id_and_never_invents_one() {
+        let v: serde_json::Value = serde_json::from_str(r#"{"id":"user-9","email":"a@b"}"#).unwrap();
+        let me = parse_team_me(&v);
+        assert_eq!(me.user_id, "user-9", "⭐ `id` 才是身份（服务端 users.id）");
+        assert_eq!(me.email, "a@b", "email 仍要读到（界面显示用）");
+
+        // 旧服务端／异常响应：没有 `id` ⇒ 空串（⭐ 如实说"没拿到"，⛔ 不是编一个）
+        let v2: serde_json::Value = serde_json::from_str(r#"{"email":"a@b"}"#).unwrap();
+        assert_eq!(parse_team_me(&v2).user_id, "");
+
+        // `id` 前后有空白 ⇒ 归一掉（⛔ 别让"同一个 id"因为空格看起来不同 —— 那会判成"不同人"）
+        let v3: serde_json::Value = serde_json::from_str(r#"{"id":"  user-9  "}"#).unwrap();
+        assert_eq!(parse_team_me(&v3).user_id, "user-9");
     }
 
     /// ⭐ **2026-10-08（owner 现场截图）**：**没有服务器档案的个人空间，也要能存"设备直连"设置** ✓。

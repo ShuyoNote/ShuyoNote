@@ -667,6 +667,118 @@ impl<'a> MergeLedger<'a> {
     }
 }
 
+// ─────────────────────────── ⭐ 身份闸（Q1–Q4；**第一档**） ───────────────────────────
+//
+// ⚠️ 这一节**只有形状与纯逻辑**：⛔ 今天**不接线**（判据主体在还没写的接线里 ⇒ 它天然属于接线那一轮）。
+// 口径：owner 2026-10-10「现在修」＝ **让这道闸立起来**（⛔ 不是"今天就把账号身份打通"）。
+//
+// ⭐ **顺序**：**先取身份、再判名**（反过来会先花力气归一名字、最后才否决 ⇒ 白做，而且容易漏）。
+
+/// ⭐ 「是不是**同一个人**」—— ⭐ **三态**，⛔ **不是 `bool`**。
+///
+/// ⚠️ 尺子（与"读不到 ≠ 读到 0"同一条）：`Unknown` 是**独立状态** ⇒ ⛔ 不许折叠成 `No`
+/// （两条拒绝理由必须分得开：`RefuseUnknownIdentity` ／ `RefuseDifferentPerson`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SamePerson {
+    /// 判得出来：**是**（带上凭什么 ⇒ 将来记进账本）。
+    Yes(IdentityBasis),
+    /// 判得出来：**不是**。
+    No(IdentityBasis),
+    /// ⭐ **判不出来**（今天最常见：没配对过／没有账号／读不到许可证）。
+    Unknown(WhyUnknown),
+}
+
+/// ⭐ **凭什么**判成／判不成（⭐ 审计要能回答"为什么判成同一人"）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdentityBasis {
+    /// ⭐ **第一档（今天就有）**：本机**显式信任过**那台（`mesh_paired_devices`）。
+    /// ⚠️ 它是**设备级**、⛔ **不是"人"** ⇒ ⭐ **起步档，⛔ 不是终态**。
+    PairedDevice,
+    /// ⭐ 第二档（留位）：**账号** `user_id` —— ⚠️ 客户端**今天连自己的都没存**
+    /// （`sync.rs:148`／`:1257` 写的是**空串**）⇒ 要先做"本机把 `user_id` 真存下来"那一步。
+    Account(String),
+    /// ⭐ 第三档（留位）：**许可证** —— ⚠️ 客户端**今天读不到**（代码面零命中）。
+    License(String),
+}
+
+/// 判不出来的**原因**（⭐ 如实说，⛔ 不糊成一句"未知" —— 排障要看得出是哪一种）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WhyUnknown {
+    /// ⛔ 没配对过（本机从没显式信任过那台）。
+    NotPaired,
+    /// ⛔ 没有账号（那条服务器会话不存在／没登录过）。
+    NoAccount,
+    /// ⛔ 读不到许可证。
+    NoLicense,
+    /// 查身份这一步本身**失败**了（⚠️ 与"查到了但是否"分得开）。
+    LookupFailed(String),
+}
+
+/// ⭐ 融合的**唯一**闸门（**先身份、后名字**）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeGate {
+    /// ⭐ Q3：同一人 ＋ 同名 ⇒ **才允许融**。
+    Allow,
+    /// ⭐ Q1：**判不出** ⇒ 不融（今天最常见的那一支）。
+    RefuseUnknownIdentity,
+    /// ⭐ Q2：判得出、但**不是同一人** ⇒ 不融。
+    RefuseDifferentPerson,
+    /// 同一人、但**名字不同** ⇒ 不融（按名融合的既有口径）。
+    RefuseDifferentName,
+}
+
+/// ⭐⭐ **Q1–Q4 的唯一实现**（纯函数 ⇒ 判据够得着）。
+///
+/// ⚠️ **签名本身是 Q4 的第一道防线**：`identity` **必填** ⇒ ⛔ 调用方**没法**"只拿名字来问"
+/// （想拿名字兜底就得先**编**一个身份出来 ⇒ 那是显式的、看得见的 ✗）。
+pub fn merge_gate(identity: &SamePerson, same_name: bool) -> MergeGate {
+    match identity {
+        // ⭐ Q1：判不出 ⇒ 不融（⛔ 宁可更保守，也不猜）。
+        SamePerson::Unknown(_) => MergeGate::RefuseUnknownIdentity,
+        // ⭐ Q2：判得出但不是同一人 ⇒ 不融。
+        SamePerson::No(_) => MergeGate::RefuseDifferentPerson,
+        // ⭐ Q3：同一人才轮到"名字对不对"。
+        SamePerson::Yes(_) => {
+            if same_name {
+                MergeGate::Allow
+            } else {
+                MergeGate::RefuseDifferentName
+            }
+        }
+    }
+}
+
+/// ⭐ 身份**从哪来** —— **可注入**（接线时由 `mesh` 那条路实现：查 `mesh_paired_devices`）。
+/// ⚠️ 返回**三态**（⛔ 不是 `Option<bool>`）：⭐ "查不到"与"查到且为否"**必须分得开**。
+pub trait IdentityOracle {
+    fn same_person(&self, peer_device: &str, space_name: &str) -> SamePerson;
+}
+
+/// ⭐ **第一档**实现（今天就能用）：**本机显式信任过那台 ⇒ 视为同一人**。
+///
+/// ⚠️ ⭐ **它有代价，⛔ 别只写"保守" —— 两种判错情形都写在这儿**：
+/// 1. 那台**换了主人** ⇒ 仍被判成"同一人" ⇒ ⭐ **可能融错**；
+/// 2. **同一个人**的两台设备**没配对过** ⇒ 判 `NotPaired` ⇒ ⭐ **不融**
+///    （用户会觉得"我自己的两台怎么没合"）—— ⚠️ 而这是**对的默认值**：
+///    ⭐ **少合 ＋ 可撤 ✓ ／ 多合 ＝ 不可逆** ✗。
+///
+/// ⚠️ 它**只是起步档**：账号／许可证那两档能覆盖它覆盖不了的情形（见 [`IdentityBasis`]）。
+pub struct PairedDeviceOracle<'a> {
+    /// 本机**认过**的设备（接线时＝`mesh_paired_devices.device_id` 那一列；⛔ 秘密那一列只存哈希，这里用不到）。
+    pub paired_devices: &'a [String],
+}
+
+impl IdentityOracle for PairedDeviceOracle<'_> {
+    fn same_person(&self, peer_device: &str, _space_name: &str) -> SamePerson {
+        if self.paired_devices.iter().any(|d| d == peer_device) {
+            SamePerson::Yes(IdentityBasis::PairedDevice)
+        } else {
+            // ⚠️ 是 `Unknown`，⛔ **不是** `No`：我们**判不出**"不同人"，只能判"无法认定"。
+            SamePerson::Unknown(WhyUnknown::NotPaired)
+        }
+    }
+}
+
 // ─────────────────────────── 文本编解码（存那个 KV） ───────────────────────────
 
 fn esc(s: &str) -> String {
@@ -1147,5 +1259,74 @@ mod tests {
             "⛔ 别名的编号也撤不动"
         );
         assert_eq!(store.save_count(), 1, "被拒的撤销⛔ 一次都不许写库");
+    }
+
+    // ── ⭐ 身份闸（Q1–Q4）的真值表 ─────────────────────────────────────────────
+
+    /// ⭐ j) **Q1–Q4：6 组全跑** —— ⛔ **名字从来不是充分条件**（Q4 的机器形态）。
+    #[test]
+    fn j_identity_gate_truth_table_never_lets_the_name_decide() {
+        let pairs = [
+            (SamePerson::Yes(IdentityBasis::PairedDevice), true, MergeGate::Allow), // Q3
+            (SamePerson::Yes(IdentityBasis::PairedDevice), false, MergeGate::RefuseDifferentName),
+            (SamePerson::No(IdentityBasis::Account("bob".into())), true, MergeGate::RefuseDifferentPerson), // Q2
+            (SamePerson::No(IdentityBasis::Account("bob".into())), false, MergeGate::RefuseDifferentPerson),
+            (SamePerson::Unknown(WhyUnknown::NotPaired), true, MergeGate::RefuseUnknownIdentity), // Q1
+            (SamePerson::Unknown(WhyUnknown::NotPaired), false, MergeGate::RefuseUnknownIdentity),
+        ];
+        for (id, same_name, want) in pairs {
+            assert_eq!(merge_gate(&id, same_name), want, "身份 {id:?} ＋ 同名={same_name}");
+        }
+        // ⭐⭐ **反向断言（Q4）**：把"名字相同"当同一人 ⇒ 上面那张表就红。
+        //    这里把它写成一条**只依赖身份**的断言：允许融 ⟺ 身份是 `Yes`（⛔ 与名字无关）。
+        for id in [
+            SamePerson::Yes(IdentityBasis::PairedDevice),
+            SamePerson::No(IdentityBasis::Account("x".into())),
+            SamePerson::Unknown(WhyUnknown::NotPaired),
+        ] {
+            assert_eq!(
+                merge_gate(&id, true) == MergeGate::Allow,
+                matches!(id, SamePerson::Yes(_)),
+                "⭐ 允许融**只能**由身份决定：⛔ 名字相同不许兜底当同一人（Q4）"
+            );
+        }
+    }
+
+    /// ⭐ k) **"读不到" ≠ "读到否"** —— 两条拒绝理由**必须分得开**（谁把三态折成 bool ⇒ 红）。
+    #[test]
+    fn k_unknown_and_no_are_two_different_refusals() {
+        let unknown = merge_gate(&SamePerson::Unknown(WhyUnknown::NotPaired), true);
+        let no = merge_gate(&SamePerson::No(IdentityBasis::Account("bob".into())), true);
+        assert_ne!(unknown, no, "⭐ 「判不出」与「判得出、但不是同一人」**不是一回事** ⇒ 理由不许合并");
+        assert_eq!(unknown, MergeGate::RefuseUnknownIdentity);
+        assert_eq!(no, MergeGate::RefuseDifferentPerson);
+        // ⚠️ 三态也不是 Option<bool>：`Unknown` 带着**为什么**（如实说，⛔ 不糊成一句"未知"）。
+        assert_ne!(
+            SamePerson::Unknown(WhyUnknown::NotPaired),
+            SamePerson::Unknown(WhyUnknown::LookupFailed("库读不了".into())),
+            "⭐ 判不出的**原因**要能分开（排障要看得出是哪一种）"
+        );
+    }
+
+    /// ⭐ l) **第一档**（今天就有）：本机显式信任过 ⇒ `Yes(PairedDevice)`；没配对过 ⇒ ⭐ **`Unknown(NotPaired)`**
+    /// （⛔ 不是 `No` —— 我们**判不出**"不同人"，只能判"无法认定"）。
+    #[test]
+    fn l_paired_oracle_is_conservative_and_says_unknown_when_unpaired() {
+        let paired = vec!["平板".to_string()];
+        let oracle = PairedDeviceOracle { paired_devices: &paired };
+        assert_eq!(
+            oracle.same_person("平板", "工作"),
+            SamePerson::Yes(IdentityBasis::PairedDevice)
+        );
+        assert_eq!(
+            oracle.same_person("陌生设备", "工作"),
+            SamePerson::Unknown(WhyUnknown::NotPaired),
+            "⭐ 没配对过 ⇒ 判**不出**（⛔ 不是判「否」）⇒ Q1 不融 ✓"
+        );
+        // ⭐ 第一档非终态：即使**同名**，只要身份不是 Yes，闸门也不放行（Q1/Q2）。
+        assert_ne!(
+            merge_gate(&oracle.same_person("陌生设备", "工作"), true),
+            MergeGate::Allow
+        );
     }
 }
