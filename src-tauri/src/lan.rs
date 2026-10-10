@@ -70,6 +70,14 @@ pub struct LanAnnounce {
     /// 设备名（给人看的状态行用；缺失不影响路由）。
     #[serde(default)]
     pub device_name: String,
+    /// ⭐ 08-b②（2026-10-10）：**可显示的短标识**（4–6 字符 ✓，随机生成 ✓，见 `lan_state::new_short_id`）。
+    ///
+    /// 用途：信任前要展示对方身份（规格 J21「设备名 ＋ 短标识」✓），而设备名**可能为空** ✗、
+    /// `device_id` **不许进用户可见的句子** ✗（见 `sync.rs` 的 `NearbyPeer::device_id` 注释 ✓）。
+    /// ⚠️ `#[serde(default)]` ⇒ **老对端不发这一格也收得下** ✓（读到就是空串 ✓ ⇒ 界面**如实**说
+    /// 「对方没报短标识」✓，⛔ 绝不回落成 `device_id` 前几位 ✗）；⇒ **不升 `WIRE_VERSION`** ✓。
+    #[serde(default)]
+    pub short_id: String,
     /// 代言的服务端基址（如 `http://192.168.1.5:8787`）。不代言 ⇒ `None`。
     #[serde(default)]
     pub hub_base: Option<String>,
@@ -293,6 +301,7 @@ fn is_private_ipv4(host: &str) -> bool {
 pub fn announce_for_own_hub(
     local_device_id: &str,
     device_name: &str,
+    short_id: &str,
     configured_url: &str,
     space_id: &str,
 ) -> Option<LanAnnounce> {
@@ -312,6 +321,8 @@ pub fn announce_for_own_hub(
         v: WIRE_VERSION,
         device_id: dev.to_string(),
         device_name: device_name.trim().to_string(),
+        // ⭐ 08-b②：**必须由调用方给**（参数 ⇒ 漏填编译不过 ✓ —— 与"不许派生"同一等级的保证 ✓）。
+        short_id: short_id.trim().to_string(),
         hub_base: Some(base.to_string()),
         hub_spaces: vec![space.to_string()],
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
@@ -595,35 +606,179 @@ pub fn announce_targets(port: u16, peers: &[Peer]) -> Vec<SocketAddr> {
     out
 }
 
-/// 把一条公告发给这些目标。返回**成功发出去的条数**；
+/// 把一条公告发给这些目标。返回**这一次到底发生了什么**；
 /// 一条都没成功才报错（某一条目标不可达 —— 例如广播被禁 —— 不该让整轮发现失败）。
+///
+/// ⭐ **2026-10-09（task-8）**：返回值从 `usize` 换成 [`AnnounceOutcome`] —— ⛔ 原来的形状
+/// **部分失败是静默的** ✗（只留 `last_err`、只在**全部**失败时用它 ✓）⇒ 「要发 5 条只出去 1 条」
+/// 这种最难查的形状在日志里**一个字都没有** ✓ ⇒ 现在**逐条**记下是哪一条失败、为什么 ✓。
 pub async fn announce_once(
     sock: &UdpSocket,
     targets: &[SocketAddr],
     a: &LanAnnounce,
-) -> Result<usize, String> {    let raw = encode_announce(a)?;
-    let mut sent = 0usize;
-    let mut last_err: Option<String> = None;
+) -> Result<AnnounceOutcome, String> {
+    let raw = encode_announce(a)?;
+    let mut failures: Vec<(SocketAddr, String)> = Vec::new();
     for t in targets {
-        match sock.send_to(raw.as_bytes(), t).await {
-            Ok(_) => sent += 1,
-            Err(e) => last_err = Some(e.to_string()),
+        if let Err(e) = sock.send_to(raw.as_bytes(), t).await {
+            failures.push((*t, e.to_string()));
         }
     }
+    let sent = targets.len().saturating_sub(failures.len());
     if sent == 0 {
-        return Err(format!(
-            "一条公告都没发出去：{}",
-            last_err.unwrap_or_else(|| "没有目标地址".into())
-        ));
+        let why = failures
+            .first()
+            .map(|(t, e)| format!("{t} ← {e}"))
+            .unwrap_or_else(|| "没有目标地址".into());
+        return Err(format!("一条公告都没发出去：{why}"));
     }
-    Ok(sent)
+    Ok(AnnounceOutcome { targets: targets.to_vec(), failures })
 }
 
-/// 收**一条**并入库。三种结果，故意分得清清楚楚：
+/// ⭐ **2026-10-09（task-8）**：一条公告**发出去之后**的读数。
 ///
-/// - `Ok(Some(peer))` ＝ 收了、记了；
-/// - `Ok(None)` ＝ 是我自己的公告（回环回来的），**忽略**（不是错误）；
-/// - `Err(原因)` ＝ 报文不合法，**丢弃**且**不入表**（原因从 [`AnnounceReject::reason`] 来）。
+/// ⚠️ 逐条记失败（⛔ 不是"只记最后一条"✗）：真机上"发出去几条"这一格今天**除了日志没有别的观测面**
+/// （`47821` 被应用独占 ⇒ 外部绑不上 ✗）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnounceOutcome {
+    /// 这一轮要发给哪些目标（含广播/回环 ✓）。
+    pub targets: Vec<SocketAddr>,
+    /// ⭐ **失败的那些**：`(目标地址, 错误原文)` ✓。
+    pub failures: Vec<(SocketAddr, String)>,
+}
+
+impl AnnounceOutcome {
+    /// 成功发出去的条数 ✓。
+    pub fn sent(&self) -> usize {
+        self.targets.len().saturating_sub(self.failures.len())
+    }
+}
+
+/// ⭐ **task-12（owner/Lead 已批）**：日志行的**本地时刻**（`HH:MM:SS` ✓）。
+///
+/// ⛔ 没有它，**两边的日志对不上时刻** ✗ —— 今天正是需要对齐"我方某一刻失败"与"同一刻对端在说什么"
+/// 而做不到 ✓（Lead 原话：这条**已经在咬我们** ✓）。格式刻意与 `sync_history.at` 的展示口径一致 ✓。
+pub fn log_stamp() -> String {
+    chrono::Local::now().format("%H:%M:%S").to_string()
+}
+
+/// ⭐ **2026-10-09（task-8）**：发送那一行的**人话** —— 纯函数（判据够得着 ✓，与 `mesh_history_message` 同一形状 ✓）。
+///
+/// 三样都要在：**成功/共几条** ✓、**目标长什么样** ✓、**空间**（打码 ✓）；
+/// 而 ⭐ **部分失败逐条点名 ＋ 带上错误原文** ✓ —— 那正是今天判不了的那一格 ✓。
+/// 改这一处时守住：⛔ 失败一条都不许吞 ✗、⛔ 空间名不许整串打出来 ✗（只给前几位 ✓）。
+pub fn announce_send_line(o: &AnnounceOutcome, space: &str) -> String {
+    // ⚠️ 目标**如实分类**（⛔ 不猜"哪些是对端"✗ —— `announce_targets` 里既有广播/回环、也有已知对端，
+    //    而本函数拿不到那张分表 ✓ ⇒ 只按**地址本身**说得出的那三类报 ✓）。
+    let bcast255 = o
+        .targets
+        .iter()
+        .filter(|t| matches!(t.ip(), IpAddr::V4(v) if v.is_broadcast()))
+        .count();
+    let loopback = o.targets.iter().filter(|t| t.ip().is_loopback()).count();
+    let other = o.targets.len().saturating_sub(bcast255 + loopback);
+    let mut line = format!(
+        "[{}] [mesh] 公告：发出 {}/{}（目标 {} 条：受限广播 {} ｜ 回环 {} ｜ 其它 {}）｜ 空间 {}",
+        log_stamp(),
+        o.sent(),
+        o.targets.len(),
+        o.targets.len(),
+        bcast255,
+        loopback,
+        other,
+        mask_space(space)
+    );
+    // ⭐ 部分失败逐条点名 ＋ 错误原文 ✓（⛔ 一条都不许吞 ✗）—— 这正是"发出去了几条"这一格的关键 ✓。
+    for (t, e) in &o.failures {
+        line.push_str(&format!(" ｜ ⚠️ {t} 发送失败：{e}"));
+    }
+    line
+}
+
+/// 空间名**打码**：只给前几位 ✓（日志里没有任何理由出现完整空间标识 ✓）。
+pub fn mask_space(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() {
+        return "(无)".to_string();
+    }
+    format!("{}…", s.chars().take(4).collect::<String>())
+}
+
+/// device_id **前 8 位**（日志里点得到名、又不必整串 ✓）。
+fn short_id(s: &str) -> String {
+    s.trim().chars().take(8).collect()
+}
+
+/// ⭐ **2026-10-09（task-8）**：收到一条公告之后的那一行 —— 纯函数 ✓。
+///
+/// ⚠️ ⭐ **"收到但不会进网格候选"必须说得出为什么** ✗：真机上「公告到底有没有到」「到了为什么没用上」
+/// 是**两件事**，而它们今天在日志里完全同形（都是"什么都没有"）✗ ⇒ 这一行把 **来源 ＋ 对端 ＋ 它代言的空间
+/// ＋ 与本机空间匹配与否** 一次说清 ✓。
+pub fn announce_recv_line(peer: &Peer, our_spaces: &[String]) -> String {
+    let theirs = &peer.announce.hub_spaces;
+    let matched = theirs
+        .iter()
+        .any(|s| our_spaces.iter().any(|o| o.trim() == s.trim()));
+    // ⭐ 这一句就是"收到了但不会进网格候选"的**原因** ✓（⛔ 不许含糊成"收到了一条"✗）。
+    let verdict = if our_spaces.is_empty() {
+        "⛔ 本机现在**没有**在用/代言的网格空间 ⇒ 它不会成为网格对端"
+    } else if matched {
+        "✅ 与本机空间**匹配** ⇒ 可以成为网格对端"
+    } else {
+        "⛔ 与本机空间**不匹配** ⇒ 不会成为网格对端"
+    };
+    let theirs_shown: Vec<String> = theirs.iter().map(|s| mask_space(s)).collect();
+    let ours_shown: Vec<String> = our_spaces.iter().map(|s| mask_space(s)).collect();
+    // ⭐ **task-12（Lead 批）**：⭐ **把 `hub_base` 也打出来** ✗ —— 因为 `mesh_peers` **拨的就是它** ✓
+    //   ⇒ 哪天出现"公告说 A、拨的却是 B"，没有这一格**看不出来** ✓（"两个东西同名"那一族 ✓）。
+    //   ⚠️ 它是**我们自己的地址**（不是秘密 ✓）⇒ 可以打全 ✓。
+    let base = peer
+        .announce
+        .hub_base
+        .as_deref()
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .unwrap_or("(不代言)");
+    format!(
+        "[{}] [mesh] 收到公告：来源 {} ｜ 对端 {} ｜ 它代言 {} 个空间 [{}] ｜ 它报的地址 {} ｜ {}（本机空间 [{}]）",
+        log_stamp(),
+        peer.addr,
+        short_id(&peer.announce.device_id),
+        theirs.len(),
+        if theirs_shown.is_empty() { "无".to_string() } else { theirs_shown.join("、") },
+        base,
+        verdict,
+        if ours_shown.is_empty() { "无".to_string() } else { ours_shown.join("、") }
+    )
+}
+
+/// ⭐ **2026-10-09（task-8）**：收到**但没进表**时的那一行 —— 纯函数 ✓。
+///
+/// ⚠️ ⭐ 它存在的理由就一句：**"收到了但被丢掉"与"根本没收到"必须分得开** ✗ ——
+/// 今天 `lan_state` 把 `recv_into_within` 的返回值**整个丢掉**（`let _ = …` ✓）⇒ 坏报文、
+/// 自己的回环报文、超长报文，全都**无声** ✓。
+pub fn announce_drop_line(addr: &str, reason: &str) -> String {
+    format!("[{}] [mesh] 收到但**没进表**：来源 {addr} ｜ 原因：{reason}", log_stamp())
+}
+
+/// 收**一条**的结果 —— ⛔ 三件事必须**分得开**（以前 `Option` 把前两件混成一个 `None` ✗）。
+///
+/// ⭐ **2026-10-09（task-8）**：为什么必须分：真机上「**收到但没进表**」与「**根本没收到**」
+/// 在调用方看来以前是**同一个** `Ok(None)` ✗ ⇒ 日志里两件完全不同的事同形 ✓ ——
+/// 而这一格恰恰是"发现层到底通没通"的判据 ✓。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecvOutcome {
+    /// 收了、入库了（`peer` 就是入库的那一条 ✓）。
+    Peer(Peer),
+    /// 收到的是**我自己**的公告（回环回来）⇒ **有意丢弃**（不是错误 ✓）。
+    OwnAnnounce { from: String },
+    /// 报文**不合法** ⇒ 丢弃且不入表（⚠️ 带上来源，否则日志说不清是谁在发坏包 ✓）。
+    Rejected { from: String, reason: String },
+    /// 这一片**什么都没收到**（超时 ✓）—— ⛔ 不是错误，也⛔ 不该打日志刷屏（每 1s 一次 ✓）。
+    Nothing,
+}
+
+/// 收**一条**并入库。四种结果见 [`RecvOutcome`]（**故意分得清清楚楚**）。
 ///
 /// ⚠️ 入库那一步走的是 `LanState::record_datagram`（**解码只有那一处**）—— 本函数只负责
 /// "从 socket 收字节 ＋ 长报文那一关"，语义与状态在 `lan_state.rs`（那里是判据的主场）。
@@ -631,38 +786,47 @@ pub async fn recv_into(
     sock: &UdpSocket,
     state: &crate::lan_state::LanState,
     now_ms: i64,
-) -> Result<Option<Peer>, String> {
+) -> Result<RecvOutcome, String> {
     // 缓冲比上限多 1 字节 ⇒ 超长能被**识别成超长**，而不是被截断后误判成"不是 JSON"。
     let mut buf = vec![0u8; MAX_ANNOUNCE_BYTES + 1];
     let (n, from) = sock
         .recv_from(&mut buf)
         .await
         .map_err(|e| format!("收公告失败：{e}"))?;
+    let from = from.ip().to_string();
     if n > MAX_ANNOUNCE_BYTES {
-        return Err(AnnounceReject::TooLong.reason().to_string());
+        return Ok(RecvOutcome::Rejected { from, reason: AnnounceReject::TooLong.reason().to_string() });
     }
-    let raw = std::str::from_utf8(&buf[..n])
-        .map_err(|_| AnnounceReject::BadJson.reason().to_string())?;
-    state.record_datagram(raw, &from.ip().to_string(), now_ms)
+    let raw = match std::str::from_utf8(&buf[..n]) {
+        Ok(r) => r,
+        Err(_) => {
+            return Ok(RecvOutcome::Rejected {
+                from,
+                reason: AnnounceReject::BadJson.reason().to_string(),
+            })
+        }
+    };
+    match state.record_datagram(raw, &from, now_ms) {
+        Ok(Some(p)) => Ok(RecvOutcome::Peer(p)),
+        Ok(None) => Ok(RecvOutcome::OwnAnnounce { from }),
+        Err(reason) => Ok(RecvOutcome::Rejected { from, reason }),
+    }
 }
 
-/// [`recv_into`] 的**带超时**外壳：最多等 `slice_ms` 就回 `Ok(None)`（＝这一片没收到东西）。
-///
-/// ⚠️ 为什么必须有它：`recv_from` 在"网段里一个人都不说话"时会**一直等**，而驱动循环
-/// （`lan_state::start`）还要**周期广播**与**腾过期行** —— 没有这个上限，那两件事就永远轮不上。
+/// [`recv_into`] 的**带超时**外壳：最多等 `slice_ms`；超时 ⇒ [`RecvOutcome::Nothing`]
+/// （⚠️ **与"自己的公告"分得开** ✗ —— 旧版两件都回 `None` ✓，那正是判不了的那一格 ✓）。
 pub async fn recv_into_within(
     sock: &UdpSocket,
     state: &crate::lan_state::LanState,
     slice_ms: u64,
-) -> Result<Option<Peer>, String> {
+) -> Result<RecvOutcome, String> {
     match tokio::time::timeout(
         std::time::Duration::from_millis(slice_ms),
         recv_into(sock, state, crate::db::now_ms()),
     )
     .await
     {
-        // 超时 ＝ "这一片没人说话"，不是错误（与 `Ok(None)` 同形，调用方不必分辨）。
-        Err(_) => Ok(None),
+        Err(_) => Ok(RecvOutcome::Nothing),
         Ok(r) => r,
     }
 }
@@ -677,6 +841,7 @@ mod tests {
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
+                short_id: "T3ST1".into(),
                 hub_base: base.map(|s| s.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -820,6 +985,7 @@ mod tests {
             v: WIRE_VERSION,
             device_id: device.to_string(),
             device_name: format!("{device} 的机器"),
+            short_id: "T3ST1".into(),
             hub_base: base.map(|s| s.to_string()),
             hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
             fp: "fp".into(),
@@ -837,9 +1003,12 @@ mod tests {
         let st = crate::lan_state::LanState::new("dev-b".to_string());
 
         let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
-        assert_eq!(announce_once(&a, &[b_addr], &ann).await.unwrap(), 1);
+        assert_eq!(announce_once(&a, &[b_addr], &ann).await.unwrap().sent(), 1);
 
-        let got = recv_into(&b, &st, 1_000).await.unwrap().expect("应当收到对端");
+        let got = match recv_into(&b, &st, 1_000).await.unwrap() {
+            RecvOutcome::Peer(p) => p,
+            other => panic!("应当收到对端，实际 {other:?}"),
+        };
         assert_eq!(got.announce.device_id, "dev-a");
         assert_eq!(got.addr, "127.0.0.1", "来源地址要如实记下（诊断用）");
         assert_eq!(got.seen_at_ms, 1_000);
@@ -896,13 +1065,20 @@ mod tests {
         )
         .await
         .expect("按自动目标应当至少发出去一条");
-        assert!(sent >= 1);
+        assert!(sent.sent() >= 1);
+        // ⚠️ 这个判据的 socket 只绑了回环 ⇒ 发 `255.255.255.255` 必然被系统拒（实测 **os error 10013**）✓
+        //    ⭐ 而**"逐条看得见失败"正是本笔要的**（旧实现这一段是静默的 ✗）⇒ 这里只钉"回环那条不许失败" ✓。
+        assert!(
+            sent.failures.iter().all(|(t, _)| !t.ip().is_loopback()),
+            "回环那一条不该失败：{:?}",
+            sent.failures
+        );
 
         // ③ 中枢**无需任何手工配置**就收到它（回环那一条把它送过来的 ✓）⇒ 而且**进表** ✓
-        let got = recv_into_within(&hub, &st_hub, 1_000)
-            .await
-            .unwrap()
-            .expect("中枢应当收到加入方");
+        let got = match recv_into_within(&hub, &st_hub, 1_000).await.unwrap() {
+            RecvOutcome::Peer(p) => p,
+            other => panic!("中枢应当收到加入方，实际 {other:?}"),
+        };
         assert_eq!(got.announce.device_id, "dev-join");
         assert_eq!(st_hub.peers(1_000).len(), 1, "收进来必须进表 ✓");
 
@@ -952,10 +1128,15 @@ mod tests {
 
         // 不是 JSON
         a.send_to(b"hello", b.local_addr().unwrap()).await.unwrap();
-        assert_eq!(
-            recv_into(&b, &st, 1_000).await.unwrap_err(),
-            AnnounceReject::BadJson.reason()
-        );
+        // ⭐ 2026-10-09（task-8）：坏报文不再是一个"没有来源的错误" ✗ —— ⭐ 现在**带回来源 ＋ 原因** ✓
+        //    （日志那一行要靠它说清"谁在发坏包" ✓）。
+        match recv_into(&b, &st, 1_000).await.unwrap() {
+            RecvOutcome::Rejected { from, reason } => {
+                assert_eq!(reason, AnnounceReject::BadJson.reason());
+                assert_eq!(from, "127.0.0.1", "来源要如实带回来（日志靠它点名 ✓）");
+            }
+            other => panic!("坏报文必须是 Rejected，实际 {other:?}"),
+        }
         // 版本不认识（合法 JSON，但 v 不是我们的）
         let mut other = announce_of("dev-a", None, &[]);
         other.v = WIRE_VERSION + 1;
@@ -965,10 +1146,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            recv_into(&b, &st, 1_000).await.unwrap_err(),
-            AnnounceReject::UnknownVersion.reason()
-        );
+        match recv_into(&b, &st, 1_000).await.unwrap() {
+            RecvOutcome::Rejected { reason, .. } => {
+                assert_eq!(reason, AnnounceReject::UnknownVersion.reason())
+            }
+            other => panic!("不认识的版本必须是 Rejected，实际 {other:?}"),
+        }
 
         assert!(st.observed_all().is_empty(), "坏报文不许留下任何痕迹");
         assert!(st.peers(1_000).is_empty());
@@ -985,8 +1168,118 @@ mod tests {
         let ann = announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]);
         announce_once(&a, &[b.local_addr().unwrap()], &ann).await.unwrap();
 
-        assert!(recv_into(&b, &st, 1_000).await.unwrap().is_none(), "自己的公告要回 None");
+        // ⭐ 2026-10-09（task-8）：⭐ 自己的公告**必须与"这一片什么都没收到"分得开** ✗
+        //    （旧版两件都回 `None` ⇒ 日志里同形 ⇒ "收到了但没进表"根本判不出来 ✓）。
+        assert!(
+            matches!(recv_into(&b, &st, 1_000).await.unwrap(), RecvOutcome::OwnAnnounce { .. }),
+            "自己的公告要回 OwnAnnounce（⛔ 不是 Nothing ✗）"
+        );
         assert!(st.observed_all().is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ task-8（2026-10-09）：**发现层的三行日志**（"发了几条／收了几条／为什么没进表"）
+    //
+    // 为什么要有它们（真机，逐字）：`47821` 被应用**独占** ⇒ 外部绑不上 ✗ ⇒ ⭐ **"应用到底发没发、
+    // 收没收到"除了日志没有别的观测面** ✓；而当时两边**只有**「窗口启动」一行 ✗：
+    //   · 发送侧：`announce_once` 只留 `last_err`、**只在全部失败时才报** ⇒ 部分失败**静默** ✗；
+    //   · 接收侧：`lan_state` 把返回值**整个丢掉**（`let _ = …`）⇒ 坏报文／自己的回环报文全都**无声** ✗；
+    //   · 而 `Ok(None)` 同时表示"超时没收到"与"收到了但是我自己的" ✗ ⇒ ⭐ **两件完全不同的事同形** ✓。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ **判据 a**：⭐ **部分失败**必须**点名到哪一条 ＋ 带上错误原文** ✓。
+    ///
+    /// ⚠️ 未修时那一行只说"发出 1/2" ⇒ 哪一条失败了、为什么，**一个字都没有** ✗ ⇒ **必红** ✓。
+    #[test]
+    fn a_partially_failed_announce_names_every_target_that_failed() {
+        let bad: SocketAddr = "255.255.255.255:47821".parse().unwrap();
+        let ok: SocketAddr = "192.168.43.190:47821".parse().unwrap();
+        let o = AnnounceOutcome {
+            targets: vec![bad, ok],
+            failures: vec![(bad, "Permission denied (os error 13)".to_string())],
+        };
+        let line = announce_send_line(&o, "123456789Ok,./");
+
+        assert!(line.contains("发出 1/2"), "成功/共几条要在：{line}");
+        assert!(
+            line.contains("255.255.255.255:47821"),
+            "⛔ 部分失败必须**点名到哪一条** ✗（旧实现只留最后一条错误 ＋ 只在全部失败时才报 ✓）：{line}"
+        );
+        assert!(line.contains("Permission denied"), "而且要带上**错误原文** ✓：{line}");
+        assert!(line.contains("1234"), "空间要给（打码/前几位即可 ✓）：{line}");
+        assert!(
+            !line.contains("123456789Ok,./"),
+            "⛔ 空间名不许整串打出来 ✗（这是日志，不是协议）：{line}"
+        );
+    }
+
+    /// ⭐ **判据 b**：⭐ 收到一条**空间不匹配**的公告 ⇒ 那一行必须说清 **来源 ＋ 对端 ＋ 为什么不会用上** ✓。
+    ///
+    /// ⚠️ 未修时那一行只有"收到公告：来源 …" ⇒ **匹配与否一个字都没有** ✗ ⇒ **必红** ✓。
+    #[test]
+    fn a_received_announce_from_another_space_says_so_and_why() {
+        let p = peer("94bfb27e-7d25-4b65-8b06-5846c561161c", Some("http://192.168.43.190:8788"), &["别的空间"]);
+        let line = announce_recv_line(&p, &["123456789Ok,./".to_string()]);
+
+        assert!(line.contains("192.168.1.9"), "来源 IP 要打（不然分不清谁在说话 ✓）：{line}");
+        assert!(line.contains("94bfb27e"), "对端 device_id 前 8 位要打 ✓：{line}");
+        assert!(
+            line.contains("不匹配"),
+            "⛔「收到了但不会进网格候选」必须说清**为什么** ✗（今天判不了的就是这一格 ✓）：{line}"
+        );
+
+        // 匹配那一支也要能说 ✓（⛔ 别写成"永远说好话"✗）
+        let same = peer("dev-a", Some("http://192.168.1.5:8788"), &["123456789Ok,./"]);
+        let ok = announce_recv_line(&same, &["123456789Ok,./".to_string()]);
+        assert!(ok.contains("匹配") && !ok.contains("不匹配"), "同空间要说「匹配」✓：{ok}");
+    }
+
+    /// ⭐ **判据 c**：⭐ "收到了但没进表"那一行必须**说得出原因 ＋ 是谁** ✓（⛔ 不许静默 ✗）。
+    #[test]
+    fn a_dropped_datagram_names_its_source_and_reason() {
+        let line = announce_drop_line("192.168.43.190", AnnounceReject::BadJson.reason());
+        assert!(line.contains("192.168.43.190"), "来源要有：{line}");
+        assert!(line.contains(AnnounceReject::BadJson.reason()), "原因原文要有：{line}");
+        assert!(line.contains("没进表"), "而且要一眼看出**没有进表** ✓：{line}");
+    }
+
+    /// ⭐ **判据 d（回归闸）**：⭐ 四种收报结果**彼此分得开** ✓ ——
+    /// ⛔ 尤其：⭐ **"这一片什么都没收到"（超时）绝不能与"收到了但是我自己的"同形** ✗
+    /// （旧版两件都回 `None` ✓ ⇒ 那正是真机上判不出来的一格 ✓）。
+    #[tokio::test]
+    async fn the_receiver_keeps_timeout_own_and_rejected_apart() {
+        let a = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let st = crate::lan_state::LanState::new("dev-b".to_string());
+        st.set_enabled(true);
+
+        // ① 空 socket ＋ 短超时 ⇒ **Nothing**（不是错误、也不打日志 ✓）
+        assert_eq!(
+            recv_into_within(&b, &st, 50).await.unwrap(),
+            RecvOutcome::Nothing,
+            "超时必须是 Nothing ✓"
+        );
+
+        // ② 自己的公告 ⇒ **OwnAnnounce**（⛔ 不是 Nothing ✗）
+        let mine = announce_of("dev-b", Some("http://192.168.1.9:8788"), &["sp-1"]);
+        a.send_to(encode_announce(&mine).unwrap().as_bytes(), b.local_addr().unwrap())
+            .await
+            .unwrap();
+        assert!(
+            matches!(recv_into(&b, &st, 1_000).await.unwrap(), RecvOutcome::OwnAnnounce { .. }),
+            "自己的公告必须是 OwnAnnounce ✓"
+        );
+
+        // ③ 坏报文 ⇒ **Rejected{from, reason}**（带来源 ✓）
+        a.send_to(b"{ not json", b.local_addr().unwrap()).await.unwrap();
+        match recv_into(&b, &st, 1_000).await.unwrap() {
+            RecvOutcome::Rejected { from, reason } => {
+                assert_eq!(from, "127.0.0.1");
+                assert_eq!(reason, AnnounceReject::BadJson.reason());
+            }
+            other => panic!("坏报文必须 Rejected，实际 {other:?}"),
+        }
+        assert!(st.observed_all().is_empty(), "以上三种都不许进表 ✓");
     }
 
     /// 判据 ⑩：不再发声的对端会过期；表不是只增不减的（同一台再发声则是**刷新**）。
@@ -1090,7 +1383,7 @@ mod tests {
             ("", false),                        // 没配置 ⇒ 不许代言
         ];
         for (url, should_produce) in cases {
-            let mine = announce_for_own_hub("dev-me", "本机", url, "sp-1");
+            let mine = announce_for_own_hub("dev-me", "本机", "T3ST1", url, "sp-1");
             assert_eq!(
                 mine.is_some(),
                 should_produce,
@@ -1106,8 +1399,8 @@ mod tests {
         }
 
         // 没有设备身份 / 没有空间身份 ⇒ 代言不成立（空身份只会产出没人能用的公告）。
-        assert!(announce_for_own_hub("", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
-        assert!(announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "  ").is_none());
+        assert!(announce_for_own_hub("", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1").is_none());
+        assert!(announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "  ").is_none());
     }
 
     /// ★ 判据 ⑰（B 片施工单 §8.3 的收口）：**`fp` 真的填了，且填的是 `device_id`**。
@@ -1121,17 +1414,17 @@ mod tests {
     /// "有人顺手把 `fp` 的语义换成密钥指纹"（那会让老接收方读到一串它解释不了的东西）。
     #[test]
     fn the_fingerprint_is_the_device_id_and_is_actually_filled() {
-        let a = announce_for_own_hub("dev-me", "本机", "http://192.168.1.5:8787", "sp-1")
+        let a = announce_for_own_hub("dev-me", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1")
             .expect("该代言");
         assert_eq!(a.fp, "dev-me", "fp 必须就是 device_id（不是密钥材料指纹）");
         assert_eq!(a.fp, a.device_id, "两者是同一个应用级事实，不许各填一份");
         // 前后空白照 trim（与 device_id 同一把尺，免得出现"身份一样但 fp 字符串不同"）
-        let b = announce_for_own_hub("  dev-me  ", "本机", "http://192.168.1.5:8787", "sp-1")
+        let b = announce_for_own_hub("  dev-me  ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1")
             .expect("该代言");
         assert_eq!(b.fp, "dev-me");
         assert_eq!(b.fp, b.device_id, "trim 之后两者也必须一致");
         // 空身份 ⇒ 根本产出不了公告（这条与判据 ⑫ 同一支），所以不存在"fp 是空串"的合法产出
-        assert!(announce_for_own_hub("   ", "本机", "http://192.168.1.5:8787", "sp-1").is_none());
+        assert!(announce_for_own_hub("   ", "本机", "T3ST1", "http://192.168.1.5:8787", "sp-1").is_none());
     }
 
     /// ★ 判据 ⑬：状态行要能把**三件处置不同的事**分开 —— 走了局域网 / 网段里什么都没有 /
@@ -1230,8 +1523,8 @@ mod tests {
         st_b.set_enabled(true);
 
         // ① 产出侧：两台各产一条（第一轮就该发 —— `announce_due(0, …)` 为真）。
-        let out_a = announces_for("dev-a", "A 的机器", &profiles);
-        let out_b = announces_for("dev-b", "B 的机器", &profiles);
+        let out_a = announces_for("dev-a", "A 的机器", "T3ST1", &profiles);
+        let out_b = announces_for("dev-b", "B 的机器", "T3ST1", &profiles);
         assert_eq!(out_a.len(), 1);
         assert_eq!(out_b.len(), 1);
         assert!(announce_due(0, 1_000, ANNOUNCE_INTERVAL_MS), "第一轮必须发声");
@@ -1240,12 +1533,18 @@ mod tests {
         assert_eq!(out_b[0].fp, "dev-b");
 
         // ② 真发（显式单播到对端，避免依赖广播）+ ③ 真收。
-        assert_eq!(announce_once(&a, &[b_addr], &out_a[0]).await.unwrap(), 1);
-        assert_eq!(announce_once(&b, &[a_addr], &out_b[0]).await.unwrap(), 1);
-        let got_b = recv_into_within(&b, &st_b, 2_000).await.unwrap().expect("B 应当收到 A");
+        assert_eq!(announce_once(&a, &[b_addr], &out_a[0]).await.unwrap().sent(), 1);
+        assert_eq!(announce_once(&b, &[a_addr], &out_b[0]).await.unwrap().sent(), 1);
+        let got_b = match recv_into_within(&b, &st_b, 2_000).await.unwrap() {
+            RecvOutcome::Peer(p) => p,
+            other => panic!("B 应当收到 A，实际 {other:?}"),
+        };
         assert_eq!(got_b.announce.device_id, "dev-a");
         assert_eq!(got_b.addr, "127.0.0.1");
-        let got_a = recv_into_within(&a, &st_a, 2_000).await.unwrap().expect("A 应当收到 B");
+        let got_a = match recv_into_within(&a, &st_a, 2_000).await.unwrap() {
+            RecvOutcome::Peer(p) => p,
+            other => panic!("A 应当收到 B，实际 {other:?}"),
+        };
         assert_eq!(got_a.announce.device_id, "dev-b");
 
         // ④ 后置条件：生产代码判"还在不在"用的是**真实时钟**（`crate::db::now_ms()`）——
@@ -1286,5 +1585,49 @@ mod tests {
         let got = resolve_base("sp-1", "https://shuyo.cn/sync", &st.peers(1_000)).unwrap();
         assert_eq!(got.url, "http://192.168.1.5:8787");
         assert_eq!(got.kind, LinkKind::Lan);
+    }
+}
+
+/// ⭐ 08-b② 的两条硬判据（Lead 照收 ✓）—— **行为**读数，不是注释 ✓。
+#[cfg(test)]
+mod short_id_wire_tests {
+    use super::*;
+
+    /// ⭐① **缺该字段的公告（老对端）⇒ `short_id == ""`，且**不许**回落成 `device_id` ✗。
+    ///
+    /// 这一条钉的正是"两台一起升级"那段过渡期的**正确行为** ✓：
+    /// 界面对"没报"必须**如实说没报** ✗，⛔ 不是拿 `device_id` 凑一格 ✗
+    /// （`sync.rs` 的 `NearbyPeer::device_id` 注释逐字禁 ✓）。
+    #[test]
+    fn old_announce_without_short_id_decodes_to_empty_not_device_id() {
+        // 老版本发出来的公告：**整格都不在** ✓（这正是 `#[serde(default)]` 要收下的形状 ✓）
+        let raw = format!(
+            r#"{{"v":{v},"device_id":"dev-old","device_name":"老机器","fp":"dev-old"}}"#,
+            v = WIRE_VERSION
+        );
+        let a = decode_announce(&raw).expect("老公告必须照样收得下 ✓");
+        assert_eq!(a.short_id, "", "缺这一格 ⇒ 空串 ✓（界面据此显示「对方没报短标识」✓）");
+        assert_ne!(a.short_id, a.device_id, "⛔ 绝不回落成 device_id ✗");
+        assert_ne!(a.short_id, &a.device_id[..3.min(a.device_id.len())], "⛔ 也不许回落成它的前几位 ✗");
+    }
+
+    /// ⭐③ **上限真读数**：编码一条**真实形状**的公告 ⇒ 打印字节数 ＋ 断言 ≤ 上限 ✓，
+    /// 并把**短标识那一格的增量**也量出来 ✓（Lead 要的那两个数 ✓）。
+    #[test]
+    fn announce_bytes_reading_with_and_without_short_id() {
+        let a = announce_for_own_hub("dev-me", "本机", "K7M2Q", "http://192.168.1.5:8787", "sp-1")
+            .expect("这条应当能代言 ✓");
+        let with = encode_announce(&a).expect("可编码 ✓");
+        let mut b = a.clone();
+        b.short_id = String::new();
+        let without = encode_announce(&b).expect("可编码 ✓");
+        println!(
+            "[读数] 真实公告 {} 字节（上限 {}）｜短标识那一格的增量 = {} 字节",
+            with.len(),
+            MAX_ANNOUNCE_BYTES,
+            with.len() as i64 - without.len() as i64
+        );
+        assert!(with.len() <= MAX_ANNOUNCE_BYTES, "公告 {} 字节 ≤ 上限 {}", with.len(), MAX_ANNOUNCE_BYTES);
+        assert!(with.len() > without.len(), "短标识必须真的进了线格式 ✓（不是被 serde 丢掉 ✗）");
     }
 }

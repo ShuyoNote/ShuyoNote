@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { isMobileViewport } from "../hooks/useMobile";
+import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
@@ -1222,7 +1224,19 @@ export function SyncPanel() {
       <button
         ref={triggerRef}
         className="btn-sync"
-        onClick={toggle}
+        onClick={() => {
+          // ⭐ 2026-10-10：手机档 ⇒ 进我们自己的「设备配对 · 同步」屏 ✓（与 03/04/10 同一处置 ✓）。
+          // ⚠️ **故意不用 `useMobile()`** ✗ —— 那个 hook 有副作用（进窄屏时**强制把侧栏关掉** ✓，
+          //    见它自己的文档）：在 SyncPanel 里再挂一个 ⇒ 等于**第二个订阅者** ⇒ 会把用户
+          //    手动打开的侧栏抽屉又压回去 ✗（实测：`mobile-layout` 三条抽屉断言因此变红 ✗）。
+          //    ⇒ 这里要的是**一次纯判定**，所以用同模块导出的**纯函数** `isMobileViewport()` ✓
+          //      （点击时求值 ✓，不订阅、不产生副作用 ✓）。
+          if (isMobileViewport()) {
+            useMobileNav.getState().setScreen("pair");
+            return;
+          }
+          toggle();
+        }}
         title={pendingTotal > 0 ? `同步设置（有 ${pendingTotal} 页等你裁决）` : "同步设置"}
       >
         <CloudSyncIcon width={14} height={14} />

@@ -943,6 +943,25 @@ html[data-platform="win"] .app-body {
   background: var(--accent);
   color: var(--on-accent);
 }
+/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：那个**文字**标识（⛔ 不只靠颜色 ✓）。
+   ⚠️ **两个落点写在同一处**（侧栏空间行 ＋ 设置-空间那一列 ✓）—— 分开写就会各自漂 ✗。
+   ⚠️ 只要"**看得见但不喧宾夺主**"：它旁边那一格是**同步状态**（`.space-item-local` / `.set-space-local`
+      用 `--text-faint`）⇒ 这里取**强一档**的 `--text-dim` ＋ 描边，够看清、⛔ 不抢旁边那格 ✓。
+   ⚠️ 形状**刻意与「当前」那枚实心 accent 圆片**（`.space-item-current` / `.set-tag`）**不同**：
+      这里是**描边空底** ⇒ 两个标识不会被当成同一个东西 ✓（⛔ 也没用 accent 色 ✗）。
+   ⚠️ 这一处**只加这两个类**（Lead 批的写域就这两格 ✓）；⛔ 没调任何别的视觉 ✓。 */
+.space-item-crypto,
+.set-space-crypto {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.6;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
 .space-item-local {
   font-size: 11px;
   color: var(--text-faint);
@@ -13633,6 +13652,33 @@ p:has(> .editor-drawing-container) {
   margin-top: 2px;
 }
 
+/* ⚠️⭐ 「还没上架」那节里那一格（说明文字 note）—— 它是 `.set-row` 的**直接 flex 子项** ✓。
+   ⭐ **2026-10-10 订正（我先前把那个经典口诀写反了 ✗，连同纠正一起留下）**：
+   口诀「加 `min-width: 0`」管的是 ⭐ **"不加 ⇒ flex 子项撑破容器"** ✗ ；
+   而**这一格的问题是反过来的** —— ⛔ **它把别人挤没了** ✗：
+     · `flex: 0 1 auto` ⇒ 它的 flex base ＝ **max-content ＝ 整句自然宽** ✗（实测那条 note 236 字 ＝ **590px**）
+     · 而 `.set-row-text` 是 `flex: 1`（＝`1 1 0%`）⇒ base 是 **0** ⇒ 没有"要守护的基准" ✗
+     ⇒ ⭐ 实测（CDP，2026-10-10，面板宽 626）：`textW = 0` ✗ ／ `nameW = 0` ✗ ／ `nameH = 90`（＝**名字一列一个字** ✓）
+       ／ 而 note 拿了 **590px** ✓ —— ⭐ owner 截图里"竖排"的正是这条 ✓（短说明那几条观感没问题 ✓，所以只有它看得出坏 ✓）。
+   ⇒ ⭐ 修法：**给一个"确定且有限"的宽度** ✗（⛔ 不是"允许它缩到 0" ✗）：
+     给死 `flex: 0 0 40%` ⇒ note 在**自己那一格**里换行 ✓、名字那格拿到剩下的 60% ✓。
+     ⚠️ 同时**不再靠 `min-width: 0`** ✗：给死基准之后它压根不需要靠收缩来活 ✓，
+        而留着它反而会让人以为"收缩是解法" ✗（那就是这次的误诊 ✓）。
+   ⚠️ 判据：`src/components/AbilitiesPane.test.tsx` —— ⛔ 旧的 d) 判据（"必须有 `min-width: 0`"）**是错的** ⇒ 已改成
+      "**必须有确定的宽度基准（`flex: 0 0 …`／`width`）** ＋ ⛔ 不许是 `0 1 auto`" ✓（**真验收是 CDP 那两个宽度数** ✓）。 */
+.set-row-note {
+  flex: 0 0 40%;
+  text-align: right;
+  /* ⭐ 2026-10-10（owner 拍 C）：列表里**只显示 2 行 ＋ 省略号**；⭐ 而**全文一个字都不许少** ✗ ——
+     ⛔ 不许把文案改短 ✗（DOM 里仍是完整那句）⇒ 悬停看全文（`title` ＝ 完整那句，见 `AbilitiesPane.tsx`）。
+     ⚠️ `-webkit-box` ＋ `line-clamp` 是**视觉截断**，⛔ 不动文本本身；`overflow: hidden` 是它生效的必要条件 ✓。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ---------------------------------------------------------------------------
  * 插件面板：卡片网格。之前一行一个「名字 + 开关」太素；改成图标 + 状态灯 +
  * 命令数的卡片，视觉上更有层次，但强弱对比仍靠开关与底色，绝不彩色堆砌。
@@ -13987,6 +14033,13 @@ p:has(> .editor-drawing-container) {
   gap: 12px;
   padding: 12px 14px;
 }
+/* ⭐ 2026-10-10（owner 要求"设置里点一行就切换"）：那一行**可点** ⇒ 给鼠标反馈。
+   ⚠️ **只给"能切的那一行"**：当前空间那一行点了无事发生（`pick()` 直接返回 ⇒ 不白跑
+   `loadPages`/`refreshVault`）⇒ 它**不给** pointer ✓（否则等于承诺一个不会发生的动作 ✗）。
+   ⚠️ 这一处**只加这一条**（Lead 批的写域就这一格 ✓）。 */
+.set-space-card:not(.is-active) .set-space-row {
+  cursor: pointer;
+}
 .set-space-meta {
   display: flex;
   align-items: center;
@@ -14000,10 +14053,10 @@ p:has(> .editor-drawing-container) {
 .set-space-local {
   color: var(--text-faint);
 }
-.set-space-id {
-  color: var(--text-faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+/* ⭐ 2026-10-10（owner 截图）：`.set-space-id` 那条规则**随那一行 DOM 一起删了** ✓ ——
+ *   空间编号是**内部标识**，⛔ 不许进用户面 ✗（同族：`SettingsDialog.test.tsx` 的 c) 判据 ✓）。
+ *   ⚠️ **别再加回来** ✓ —— 防线在判据里，⛔ 不靠这条注释 ✗。
+ *   ⚠️ 而 `.set-space-sync` 那条**仍在用** ✓（「已同步」那个 span 带着它 ✓）⇒ ⛔ 别顺手删它 ✗。 */
 .set-space-colors {
   display: flex;
   align-items: center;
@@ -14038,17 +14091,11 @@ p:has(> .editor-drawing-container) {
   border-radius: var(--radius-md);
   background: var(--card-bg);
 }
-.set-migrate-icon {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-sm);
-  background: var(--chip-bg);
-  color: var(--text-dim);
-  font-size: 14px;
-  margin-bottom: 2px;
-}
+/* ⚠️ 2026-10-10：这里原本是 `.set-migrate-icon`（卡片顶上那个 28px 方块图标，内容是 ↑／↓）——
+   owner 要求「去掉这两个图标」✓ ⇒ 节点已删 ✗ ⇒ **这条规则也一并删掉** ✓
+   （留着一条没人用的规则，会让下一个人以为它还承重 ✓）。
+   ⛔ 别再凭"这里看着该有个图标"把它加回来：判据在 `SettingsDialog.test.tsx`
+   （卡片里**只能**有 标题／说明／按钮 三样节点 ✓），加回来当场红 ✓。 */
 .set-migrate-name {
   font-size: 13px;
   font-weight: 600;
@@ -22957,6 +23004,16 @@ body.is-plugin-panel-open .main {
   .set-body-scroll {
     min-height: 0;
   }
+  /* ⭐ 2026-10-10 补：`.set-body{min-height:0}` 之后**仍剩 26px 裁切**（`mobile-overlays`
+     逐字：`✗ 有内容被裁却滚不动：set-dialog(+26px, overflow-y:hidden)`）——
+     因为外层 `.set-dialog` 的 `overflow:hidden`（桌面那条 13290 行）在矮视口下
+     会把"内部各段加起来比面板高"的那 26px **直接裁掉且滚不动**。
+     ⇒ 矮视口里让**面板自己**成为可滚容器（`overflow-y:auto`）：桌面布局不受影响
+     （这条只在 `max-width:768px` / `max-height:520px` 里生效 ✓）；
+     内层 `.set-body-scroll` 仍是主滚动容器 ✓，面板这层只兜住"谁都没接住"的那几像素 ✓。 */
+  .set-dialog {
+    overflow-y: auto;
+  }
   .set-rail {
     flex: none;
     width: 100%;
@@ -22979,6 +23036,22 @@ body.is-plugin-panel-open .main {
     flex: 0 0 auto;
     padding: 8px 10px;
     min-height: 44px;
+  }
+  /* ⭐ 2026-10-10：手机横排时，`.set-rail` 的子项是**分组容器** `.set-rail-group`，
+     而它没有 `flex: 0 0 auto` ⇒ 作为横排 flex 子项被**挤压** ⇒ 组内每一项窄到只能
+     **单字竖排**（门禁逐字：`分组宽 69/69/69/69px；组内标签最高 90px` ✗；真机同形 ✓）。
+     ⚠️ 这两条一度被我**误撤**（我拿"改完只等 2 秒就量"的假绿变异当证据 ✗，
+     那次 dev server 已在跑、CSS 热更新还没生效 ✗）——是**门禁自己**把真相顶回来的 ✓
+     （撤掉后 `mobile-overlays` 立刻 `1017 通过 / 3 失败` ✗）。 */
+  .set-rail-group {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .set-rail-group-title,
+  .set-rail-label {
+    white-space: nowrap;
   }
   .set-body-scroll {
     padding: 16px 14px;
@@ -24101,4 +24174,1183 @@ body.is-plugin-panel-open .main {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端首页（效果图 `docs/plans/mobile/mockups/01-home.svg`，规格 §4.1）
+   ⚠️ 只有手机档才渲染它（`App.tsx` 的 `isMobile` 分支 ✓）⇒ 这里**不套 @media** ✓；
+   ⛔ 也**不动**桌面那套 `.empty-state`（桌面空态照旧 ✓）。
+   ⚠️ 这一段写在文件**最外层**（前一个块在 24114 行以 `}` 结束、净深度 0 ✓，我核过 ✓）。
+   ========================================================================== */
+.mhome {
+  padding: 18px 16px calc(24px + var(--sab, 0px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mhome-head {
+  margin: 6px 2px 10px;
+}
+.mhome-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+.mhome-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+/* 卡片：整块可点，最小高度 88px（远高于移动端 44px 的触控下限 ✓） */
+.mhome-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 88px;
+  padding: 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+.mhome-card.is-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.mhome-card-icon {
+  flex: none;
+  width: 40px;
+  text-align: center;
+  font-size: 22px;
+}
+.mhome-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mhome-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 600;
+}
+.mhome-card-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.mhome-card.is-accent .mhome-card-hint {
+  color: rgba(255, 255, 255, 0.85);
+}
+.mhome-card-go {
+  flex: none;
+  font-size: 22px;
+  color: var(--text-faint);
+}
+.mhome-card.is-accent .mhome-card-go {
+  color: rgba(255, 255, 255, 0.9);
+}
+.mhome-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.mhome-recent {
+  display: block;
+}
+.mhome-recent-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.mhome-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+}
+/* ⭐ 2026-10-10：`p.icon` 是 URI/图片数据时要渲染成 `<img>` ✓ ⇒ 给它一个**固定的小盒** ✓。
+   ⚠️ 这里原来**一条规则都没有** ✗ —— 于是 `<img>` 会按它自己的固有尺寸撑开 ✗
+   （那是"整串 base64 当文字画到屏外"之外的第二条路 ✗；实测样例页的 `.mhome.scrollWidth`
+   曾达 **17561** 而视口只有 390 ✗）。文字那条（emoji 单字符）也走同一个盒子 ✓。 */
+.mhome-recent-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1;
+}
+.mhome-recent-icon-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.mhome-recent-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mhome-recent-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「快速记录」（效果图 `docs/plans/mobile/mockups/02-capture.svg`，规格 §4.2）
+   ⚠️ 同 `.mhome`：只有手机档会渲染它（`App.tsx` 的 `isMobile` 分支 ✓）⇒ 不套 @media ✓。
+   ⚠️ 工具栏钉在**底部**：`index.html` 的 viewport 带 `interactive-widget=resizes-content` ✓
+      ⇒ 软键盘弹出时可视区缩短 ⇒ 这条自然落在**键盘上方** ✓（正是效果图的位置 ✓）。
+   ========================================================================== */
+.mcap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px calc(8px + var(--sab, 0px));
+  min-height: 100%;
+}
+.mcap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mcap-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+}
+/* 「存」＝主按钮（效果图里它是右上角那块主色 ✓），触控高度 ≥48px ✓ */
+.mcap-save {
+  flex: none;
+  min-width: 72px;
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-md, 10px);
+  background: var(--accent);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+}
+.mcap-save:disabled {
+  opacity: 0.6;
+}
+.mcap-area {
+  flex: 1 1 auto;
+  min-height: 160px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.7;
+  resize: none;
+}
+.mcap-err {
+  font-size: 13px;
+  color: #c5221f;
+}
+.mcap-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* 快捷工具栏：6 项横排，可横滚（窄屏不挤扁 ✓ —— 与设置分类栏那次同类的坑 ✗ 先避开 ✓）*/
+.mcap-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  /* ⚠️ 真机上「段落」被左下角那个**悬浮汉堡键**压住了一半 ✗（实测截图 ✓）。
+     那个键是全局的、`position: fixed` 在左下 ⇒ 这里给它让出约 56px 的宽度 ✓
+     （只让开第一条按钮的位置，不改变整条的高度与横滚 ✓）。 */
+  padding: 6px 0 6px 56px;
+  border-top: 1px solid var(--border);
+}
+.mcap-bar-btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.mcap-bar-btn:active {
+  background: var(--accent-soft);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「设置」（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）
+   ⚠️ 只有手机档会渲染它（`App.tsx` 两处渲染点都按 `isMobile` 切 ✓）⇒ 不套 @media ✓。
+   ⚠️ 桌面档照旧走 `SettingsDialog` ✓ —— 这里**不动** `.set-*` 那套一个字 ✓。
+   ========================================================================== */
+.mset {
+  padding: 14px 16px calc(20px + var(--sab, 0px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mset-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.mset-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+}
+.mset-close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+}
+.mset-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+/* 分组小标题（效果图里是「账户／同步／外观…」这几个淡色小字 ✓）*/
+.mset-group {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.mset-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.mset-row[aria-disabled="true"] {
+  opacity: 0.75;
+}
+.mset-ico {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--bg-sidebar);
+  font-size: 17px;
+}
+.mset-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mset-row-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mset-row-sub {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.mset-go {
+  flex: none;
+  font-size: 20px;
+  color: var(--text-faint);
+}
+/* 同步状态那一行：小圆点 ＋ 一句话（效果图里点是有颜色的 ✓）*/
+.mset-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.mset-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f0a020;
+}
+.mset-dot.is-bad {
+  background: #c5221f;
+}
+.mset-dot.is-busy {
+  background: var(--accent);
+}
+.mset-status-text {
+  font-size: 13px;
+  color: var(--text);
+}
+/* 外观：三段选择（触控 ≥44px ✓）*/
+.mset-seg {
+  display: flex;
+  gap: 8px;
+}
+.mset-seg-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+.mset-seg-btn.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.mset-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mset-note.is-strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.mset-foot {
+  margin: 2px 2px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ⭐ 2026-10-10：手机档"回首页"浮标（台账 R188 的 (b) ✓）—— 只在**开着某个页面**时出现 ✓。
+   ⚠️ `position: fixed` ＋ 不包裹任何容器 ✓（包裹 `NoteEditor` 会多一层布局 ✗）。
+   触控高度 44px ✓；避开左下角那个全局汉堡键（右下角放置 ✓）。 */
+.mnote-home {
+  position: fixed;
+  right: 16px;
+  bottom: calc(20px + var(--sab, 0px));
+  z-index: 40;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「阅读」屏（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）
+   ⚠️ 同 `.mhome` / `.mcap` / `.mset`：**只有手机档会渲染它**（`App.tsx` 的
+      `isMobile && currentId` 那一支 ✓）⇒ 这里**不套 @media** ✓。
+   ⛔ 桌面那套 `.editor-*` / `.note-scroll` 一个字没动 ✓。
+   ⚠️ 本段写在文件**最外层**（前一个块 `.mnote-home` 已闭合、净深度 0 ✓，我核过 ✓）。
+   ⚠️ 底部让出约 72px：左下角是全局悬浮汉堡键、右下角是「‹ 首页」浮标与「同步」胶囊
+      （都是 `position: fixed` ✓）—— 不让开的话页脚会被压住 ✓（与 `.mcap-bar` 那次同一类处置 ✓）。
+   ========================================================================== */
+.mread {
+  /* ⭐ 2026-10-10：06 词条卡是 `position: absolute` 压在本屏上 ✓ ⇒ 本屏必须是定位上下文 ✓ */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  /* 顶部状态栏 ＋ 底部三个悬浮控件都让开 ✓ */
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.mread-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.mread-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.mread-head-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+.mread-title {
+  margin: 4px 0 0;
+  font-size: 26px;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  /* 长英文串/URL 不撑破视口（不然 `verify-mobile-views` 的越界判据会红 ✓） */
+  overflow-wrap: anywhere;
+}
+.mread-meta {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* 「在电脑上继续」提示块（效果图里那块淡蓝 ✓ —— 用既有的 `--accent-soft`，⛔ 不自造色 ✓） */
+.mread-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 12px);
+  background: var(--accent-soft);
+}
+.mread-tip-icon {
+  flex: none;
+  font-size: 18px;
+  line-height: 1.3;
+}
+.mread-tip-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mread-tip-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.mread-tip-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mread-body {
+  margin: 18px 0 0;
+}
+.mread-p {
+  margin: 0 0 12px;
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mread-note {
+  margin: 18px 0 0;
+  font-size: 14px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mread-foot {
+  margin: 20px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「搜索」屏（效果图 `docs/plans/mobile/mockups/03-search.svg`，规格 §4.3）
+   ⚠️ 同 `.mhome` / `.mcap` / `.mread` / `.mset`：**只有手机档会渲染它**
+      （`App.tsx` 的 `mobileNav.screen === "search"` 那一支 ✓）⇒ 这里**不套 @media** ✓。
+   ⛔ 桌面那套 `.search-popover` / `.search-item*` 一个字没动 ✓。
+   ⚠️ 两档底色**照规格逐字**（§4.3：「当前命中与其他命中两档底色
+      （`--highlight-active-bg` vs `--highlight-bg`）」）：
+      第一张卡（`.is-active`）吃 `--highlight-active-bg`，其余吃 `--highlight-bg` ✓。
+   ========================================================================== */
+.msearch {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.msearch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.msearch-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.msearch-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* ⚠️ 46 = 44（输入框自己的命中区 ✓）＋ 上下各 1px 边框 ✓ ——
+     实测过：盒子给 44 / 输入框给 42 时，门禁量的是**输入框自己**（42 < 44）⇒ 红 ✗ */
+  height: 46px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+/* 效果图里输入框是**聚焦态**（蓝框）✓ —— `:focus-within` 就是那个状态，⛔ 不是常亮 ✗ */
+.msearch-box:focus-within {
+  border-color: var(--accent);
+}
+.msearch-box-icon {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+.msearch-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 输入框的**命中区**：门禁按元素自己量 ⇒ 44 ✓（不许靠外层盒子撑 ✗） */
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+}
+.msearch-input:focus {
+  outline: none;
+}
+.msearch-input::placeholder {
+  color: var(--text-faint);
+}
+/* 「×」＝图标按钮 ⇒ ≥44×44 ✓ */
+.msearch-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+}
+.msearch-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+.msearch-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.msearch-chip {
+  flex: none;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.msearch-chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* ⚠️ 这两个 chip **没做**（检索接口没有字段参数 ✗）⇒ 置灰且不可点 ✓，让缺口看得见 ✓ */
+.msearch-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.msearch-stat {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.msearch-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 12px;
+}
+.msearch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin: 0 0 10px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  text-align: left;
+}
+.msearch-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msearch-item-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.msearch-item-snippet {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+/* 命中片段：**其他命中**那一档 ✓ */
+.msearch-item-snippet mark {
+  background: var(--highlight-bg);
+  color: var(--text);
+  border-radius: var(--radius-xs, 3px);
+  padding: 0 2px;
+}
+/* 命中片段：**当前（第一张卡）** 那一档 ✓ —— 与上一档是两个变量，照规格 §4.3 ✓ */
+.msearch-item.is-active .msearch-item-snippet mark {
+  background: var(--highlight-active-bg);
+}
+.msearch-item-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.msearch-item-go {
+  flex: none;
+  font-size: 18px;
+  color: var(--text-faint);
+}
+.msearch-empty,
+.msearch-hint {
+  margin: 18px 2px 0;
+  font-size: 14px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.msearch-foot {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「关于」屏（效果图 `docs/plans/mobile/mockups/10-about.svg`，规格 §4.10）
+   ⚠️ 同 `.mhome` / `.mcap` / `.mread` / `.msearch`：**只有手机档会渲染它**
+      （`App.tsx` 的 `isMobile && aboutOpen` 那一支 ✓）⇒ 这里**不套 @media** ✓。
+   ⛔ 桌面那套 `.about-*` 一个字没动 ✓。
+   ========================================================================== */
+.mabout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.mabout-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.mabout-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.mabout-head-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mabout-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+.mabout-app {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 14px;
+}
+.mabout-icon {
+  flex: none;
+  display: block;
+}
+.mabout-app-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mabout-brand {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mabout-version {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mabout-latest {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.mabout-card {
+  margin: 0 0 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+.mabout-card-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mabout-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mabout-line:last-child {
+  margin-bottom: 0;
+}
+.mabout-dim {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mabout-license {
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+/* 开源组件：**两列**（效果图就是两列 ✓），每列 6 项 ✓ */
+.mabout-deps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 16px;
+  row-gap: 6px;
+  margin-bottom: 8px;
+}
+.mabout-dep {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.mabout-dep-name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mabout-dep-ver {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+/* 链接行：可点的两行是 button ⇒ 命中区 ≥44 ✓；`待填（占位）`那行是 div（不可点 ✓） */
+.mabout-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.mabout-link:last-child {
+  border-bottom: 0;
+}
+.mabout-link.is-pending {
+  color: var(--text-faint);
+  cursor: default;
+}
+.mabout-link-label {
+  flex: none;
+  color: inherit;
+}
+.mabout-link-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mabout-actions {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+/* 两颗按钮：主按钮吃 accent ✓；「导出诊断信息」是**未接** ⇒ 置灰且点不动 ✓ */
+.mabout-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.mabout-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.mabout-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mabout-check-result {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mabout-foot {
+  margin: 18px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「划词查词」词条卡（效果图 `docs/plans/mobile/mockups/06-dict.svg`，规格 §4.6）
+   ⚠️ 形态照图：**卡片压在正文上** ✓（正文还在、卡盖在下半屏 ✓），⛔ 不是换掉正文 ✗。
+   ⚠️ 它是移动端阅读屏里的一层（`MobileDictCard` ✓）⇒ 不套 `@media` ✓。
+   ========================================================================== */
+.mdict {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(74px + var(--sab, 0px));
+  z-index: 30;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+.mdict-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mdict-word {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+/* 「×」＝图标按钮 ⇒ ≥44×44 ✓ */
+.mdict-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+}
+.mdict-meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mdict-body {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mdict-actions {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+.mdict-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.mdict-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+/* ⛔ 「加入词库」没这个功能 ⇒ 置灰且点不动 ✓（让缺口看得见 ✓） */
+.mdict-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mdict-src {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「设备配对 · 同步」屏（效果图 `docs/plans/mobile/mockups/08-pair.svg`，规格 §4.8）
+   ⚠️ 同 `.mhome`/`.mcap`/`.msearch`/`.mread`/`.mabout`：**只有手机档会渲染它**
+      （`App.tsx` 的 `isMobile && mobileScreen === "pair"` 那一支 ✓）⇒ 不套 `@media` ✓。
+   ⛔ 桌面那套 `.sync-panel` / `.sync-popover` 一个字没动 ✓。
+   ⚠️ 本屏是 v1「只读」✓：⛔ 屏上**零"码"类字样** ✗（规格 J14 ✓）、⛔ 不显示任何密钥/暗号 ✗。
+   ========================================================================== */
+.mpair {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.mpair-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ ≥44×44 ✓ */
+.mpair-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.mpair-head-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mpair-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+.mpair-card {
+  margin: 0 0 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+.mpair-card-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mpair-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mpair-line:last-child {
+  margin-bottom: 0;
+}
+.mpair-dim {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mpair-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mpair-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.mpair-item:last-child {
+  border-bottom: 0;
+}
+.mpair-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mpair-item-who {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mpair-item-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+/* ⛔ 「信任」本轮**未接** ⇒ 置灰且点不动 ✓（让缺口看得见 ✓，⛔ 不做假按钮 ✗）——
+   命中区仍按 ≥44 给（它是 button ✓，`verify-mobile-views` 会量 ✓）。 */
+.mpair-trust {
+  flex: none;
+  height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.mpair-trust:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

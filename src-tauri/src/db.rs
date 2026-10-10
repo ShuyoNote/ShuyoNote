@@ -88,23 +88,50 @@ pub(crate) fn reopen_space(c: &mut Connection, space_id: &str) -> Result<(), Str
 
 /// [`reopen_space`] with an explicit app-data-dir, so the E1 enable/unlock/disable cores
 /// and their tests do not depend on the global [`APP_DATA_DIR`].
+/// ⭐ **库打不开这条路上的唯一翻译出口**（2026-10-10，owner 报的「卡死」截图里那两条
+/// `CRDT 状态保存失败：file is not a database` ✓）：
+/// SQLCipher 的原文（`file is not a database` ／ `database disk image is malformed`）**只进日志**
+/// （`security::cipher_open_error` 里那行 `eprintln!` ✓），⛔ **不许直达用户** ✗。
+/// ⚠️ 与 `db.rs` 里 `open_space_conn` 那处、`security.rs:630` 用的是**同一个**翻译函数
+/// ⇒ 规则仍只有一处 ✓（这里只是**第三个调用点** ✓）。
+fn space_open_err(e: &dyn std::fmt::Display, space_id: &str) -> String {
+    crate::security::cipher_open_error(&e.to_string(), &format!("空间 {space_id} 的库"))
+}
+
 pub(crate) fn reopen_space_at(c: &mut Connection, space_id: &str, dir: &Path) -> Result<(), String> {
     if !is_safe_space_id(space_id) {
         return Err("非法空间 id".to_string());
     }
     let path = space_db_path(dir, space_id);
-    let _ = std::mem::replace(c, Connection::open(&path).map_err(|e| e.to_string())?);
+    // ⭐ **2026-10-10（owner 报的「点了加密空间就卡死」）—— 这一段的形状就是根因，别改回去** ✗：
+    //   原来是 `let _ = std::mem::replace(c, Connection::open(&path)?);` —— **先把 `c` 换成新库** ✗，
+    //   之后才上钥匙／设 pragma／迁移 ✗。加密空间＋本会话没有钥匙时后面某一步必然失败 ✗
+    //   ⇒ **可是 `c` 已经指向那个打不开的库** ✗ ⇒ 从那以后**整条主连接**上每一句 SQL 都报
+    //   `file is not a database` ✗（前端满屏「保存失败：…」✓），而 `encryption_status` 读活动空间
+    //   失败被 `.ok()` 吞掉 ⇒ 报「还没有活动空间」⇒ 锁屏闸门永不成立 ✗（＝不锁屏、继续往打不开的库写 ✓）。
+    //   ⇒ 现在**先在一个临时连接上把活全干完**（开库／上钥匙／pragma／迁移／attach meta／补自己那一行 ✓），
+    //     **最后一步才 `mem::replace`** ✓ ⇒ **任何一步失败时 `c` 一个字节都没动** ✓。
+    let fresh = Connection::open(&path).map_err(|e| space_open_err(&e, space_id))?;
     // E1: if the space DB is SQLCipher-encrypted at rest, key the connection before
-    // any pragma/query runs.
-    security::key_space_conn(c, &path)?;
-    c.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
-    c.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
-    c.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
-    migrate(c, space_id).map_err(|e| e.to_string())?;
+    // any pragma/query runs. ⚠️ 它自己返回的就是人话（"先输口令解锁，再打开这个空间" ✓）⇒ 原样透传 ✓
+    security::key_space_conn(&fresh, &path)?;
+    fresh
+        .pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| space_open_err(&e, space_id))?;
+    fresh
+        .pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| space_open_err(&e, space_id))?;
+    fresh
+        .pragma_update(None, "foreign_keys", "ON")
+        .map_err(|e| space_open_err(&e, space_id))?;
+    migrate(&fresh, space_id).map_err(|e| space_open_err(&e, space_id))?;
     let meta = meta_path(dir).display().to_string().replace('\'', "''");
-    c.execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
-        .map_err(|e| format!("attach meta failed: {e}"))?;
-    ensure_space_workspace(c, space_id)?;
+    fresh
+        .execute(&format!("ATTACH DATABASE '{meta}' AS meta KEY \"\""), [])
+        .map_err(|e| format!("attach meta failed: {}", space_open_err(&e, space_id)))?;
+    ensure_space_workspace(&fresh, space_id)?;
+    // ⭐ 到这里才换：前面任何一步失败 ⇒ `c` 仍旧是**原来那个好连接** ✓
+    let _ = std::mem::replace(c, fresh);
     Ok(())
 }
 
@@ -1697,5 +1724,69 @@ mod tests {
 
         drop(other);
         drop(c);
+    }
+
+    /// ⭐ **2026-10-10（owner 报的「点了加密空间就卡死」· D0 的**后半**判据 ✓）**：
+    /// 切到一个**打不开**的加密空间失败之后 —— ⭐ **指针与连接**都要留在原来那个空间**** ✗，
+    /// 且**之后照常能列空间／列活动空间** ✓。
+    ///
+    /// ⚠️ 为什么"两半都要判"：⭐ 2026-10-10 我先推成「指针改了、连接坏了」✗，那条预测被
+    /// **实测证伪**（重启开在原空间「工作」✓）⇒ 真形状是「**两者都没成** ＋ 界面停在旧空间」✗
+    /// ⇒ 只判"指针没变"会放过"连接仍坏"✗，只判"连接仍好"会放过"指针被改走"✗。
+    /// ⚠️ 为什么这条住在 `db.rs`：夹具要 `meta_migrate`（它只在本文件可见 ✓）。
+    #[test]
+    fn a_failed_switch_leaves_both_pointer_and_connection_on_the_previous_space() {
+        let dir = std::env::temp_dir().join(format!("shuyo-switch-both-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(super::spaces_dir(&dir)).unwrap();
+        // meta：真 schema（`meta_migrate` ✓）＋ 两个空间各一行（`switch_active_space` 的存在性检查要 ✓）
+        {
+            let m = Connection::open(super::meta_path(&dir)).unwrap();
+            meta_migrate(&m).unwrap();
+            m.execute(
+                "INSERT INTO workspaces (id, name, created_at, updated_at)
+                 VALUES ('space-a', 'A', 1, 1), ('space-b', 'B', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+        // 空间 A：真 schema；空间 B：**加密但本会话没钥匙**（头 16 字节不是 SQLite magic ✓）
+        {
+            let c = Connection::open(super::space_db_path(&dir, "space-a")).unwrap();
+            super::migrate(&c, "space-a").unwrap();
+        }
+        std::fs::write(super::space_db_path(&dir, "space-b"), vec![0x42u8; 4096]).unwrap();
+
+        let mut c = Connection::open_in_memory().unwrap();
+        super::reopen_space_at(&mut c, "space-a", &dir).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('active_workspace_id', 'space-a')",
+            [],
+        )
+        .unwrap();
+
+        // ① 切 B ⇒ **Err** ✓
+        let err = crate::workspaces::switch_active_space(&mut c, "space-b", &dir)
+            .expect_err("切到一个没钥匙的加密空间居然成功了");
+        assert!(!err.contains("file is not a database"), "英文原文漏给用户了：{err}");
+        // ② **指针没被改走** ✓
+        let ptr: String = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = 'active_workspace_id'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ptr, "space-a", "失败了却把活动空间指针改走了");
+        // ③ **连接也还在 A** ✓（`pages` 是**空间库**里的表 ⇒ 查到它就说明连接没被换成那个坏库 ✓）
+        let pages: i64 = c
+            .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
+            .expect("主连接被弄坏了 —— 这正是 owner 那个 bug");
+        // ④ **之后照常能列空间** ✓（＝"列不出空间/活动空间是空的"那两条症状不会再发生 ✓）
+        let listed: i64 = c
+            .query_row("SELECT COUNT(*) FROM meta.workspaces WHERE deleted_at IS NULL", [], |r| r.get(0))
+            .expect("失败之后列不出空间了");
+        assert_eq!((pages, listed), (0, 2));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

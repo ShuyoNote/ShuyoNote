@@ -65,6 +65,26 @@ pub struct WorkspaceMeta {
     pub sort_order: f64,
     pub created_at: i64,
     pub updated_at: i64,
+    /// ⭐ **空间分类**：`"personal"` ／ `"team"` ／ `""`（未分类）。
+    ///
+    /// ⚠️ **2026-10-10 加**（owner 口径：「**个人空间没有服务器，就不显示**」）：
+    /// 界面要按它判那个同步标识显不显示 —— 而这一格原先**到不了渲染层**
+    /// （`workspaces.rs` 的 `WS_COLS` 没选 `kind`，TS `WorkspaceMeta` 也没这个字段）⇒ 补上 ✓。
+    /// ⚠️ 数据库里是 `TEXT NOT NULL DEFAULT ''`（`db.rs` 建表处）⇒ 不会为 NULL ✓。
+    /// ⛔ 判据不看这一格的**文案**，只看"个人 ⇒ 不显示"（`src/lib/syncTag.test.ts`）✓。
+    #[serde(default)]
+    pub kind: String,
+    /// ⭐ **这个空间的库在磁盘上是不是密文**（2026-10-10 加，`task-27`：owner「加密空间要做个特殊标识」）。
+    ///
+    /// ⚠️ 语义**只有这一条**：`Some(true)` ＝ 磁盘上是密文 ／ `Some(false)` ＝ 明文 ／
+    /// **`None` ＝ 读不到**（连 app data 目录都拿不到 ⇒ 拼不出库路径）⇒ 界面**不显示**那个标识 ✓，
+    /// ⛔ 不许当成"没加密" ✗（`#[serde(default)]` ⇒ 老形状／缺字段也落在 `None` ✓）。
+    /// ⚠️ 判定规则**只有一处**：`crate::security::space_db_is_encrypted`（只读头 16 字节 ✓）——
+    ///   它与 `space_security_overview` 的 `encrypted_on_disk` **同源**（⛔ 不是第二份规则 ✗，
+    ///   只是第二个**调用点** ✓）。
+    /// ⚠️ 它**不是** `meta.workspaces` 的列（是**文件系统**上的事实）⇒ ⛔ 不进 `WS_COLS` ✗。
+    #[serde(default)]
+    pub encrypted_on_disk: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

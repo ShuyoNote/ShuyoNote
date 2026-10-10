@@ -1,4 +1,5 @@
 import { semanticScore } from "../searchSemantic";
+import { pageBlocksFromDoc } from "./pageBlocks";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
@@ -2238,11 +2239,11 @@ export function makeInvoke(store: SqliteStore) {
       // 读出口只有一处（`docContent.readContent`）：谓词与原先逐字相同（`deleted_at IS NULL`）。
       const page = readContent(store, pageId);
       if (!page) throw new Error("页面不存在");
-      const v = parseJson(page.json);
-      const blocks = rootChildren(v)
-        .filter((c) => topBlockId(c))
-        .map((c) => ({ block_id: topBlockId(c), text: nodeText(c).trim() }));
-      return blocks as T;
+      // ⭐ 2026-10-10 **修根**：提取逻辑收敛到**可单测的** `pageBlocksFromDoc` ✓
+      //    （旧实现要求顶层块**必须有 `blockId`** ⇒ 普通页面**永远返回空** ✗，
+      //     04 阅读屏因此对**有正文的页**显示「这一页还没有内容」✗ —— 逐字读数与回归判据
+      //     见 `src/lib/platform/pageBlocks.ts` 文件头 ＋ `pageBlocks.test.ts` ✓）。
+      return pageBlocksFromDoc(page.json) as T;
     }
     if (cmd === "get_backlinks") {
       // Page-level backlinks: pages whose content_text references the target page
@@ -2592,6 +2593,29 @@ export function makeInvoke(store: SqliteStore) {
       // Web 端**跑不了外部进程** ⇒ 如实说不支持（而不是回一份空字节让上层以为"转换成功但没内容"）。
       // 抽取器会把它映射成 provider_error：与"这台机器没装 LibreOffice"同一条答复（§15.3-7）。
       throw new Error("Web 版不支持旧格式转换（.doc/.xls/.ppt 需要本机的 LibreOffice；请用桌面版）。");
+    }
+    // ---- 本地英汉词典（ECDICT）· 应用内划词查词第一期（2026-10-09） ----
+    // ⚠️ Web 版**没有本地词库**：词库是**能力包**（65.9MB），而落盘那条命令
+    //    （`save_ability_pack`）在 Rust 侧 ⇒ 浏览器里没有安放它的地方。
+    // ⚠️ 照上面 `convert_legacy_office` 那条先例：**如实**说不支持，⛔ **不许**回空数据当成功
+    //    （那会让界面出现一个"查过了但什么都没有"的浮层 —— 与"编造释义"同族：
+    //     用户分不清"没查到"与"卡住了"）。
+    if (cmd === "dictionary_status") {
+      return {
+        available: false,
+        path: null,
+        bytes: null,
+        entries: null,
+        source: "web",
+        verified: null,
+        message: "Web 版没有本地词库（词库走能力包，需要本机落盘）⇒ 划词只会如实说未收录／可走 AI，不会编造释义。",
+      } as T;
+    }
+    if (cmd === "dictionary_lookup") {
+      return {
+        status: "unavailable",
+        message: "Web 版没有本地词库（词库走能力包，需要本机落盘）⇒ 这次没查到，不编造释义。",
+      } as T;
     }
     if (cmd === "write_attachment_bytes") {
       const hash = String(a.hash ?? "");

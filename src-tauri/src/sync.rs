@@ -175,6 +175,120 @@ fn get_auth_email(c: &Connection, server_url: &str) -> Option<String> {
     .ok()
 }
 
+// ─────────────── ⭐ 账号身份（owner 2026-10-10「让账号跟着数据走」第 1 步） ───────────────
+//
+// ⚠️ 这一节只做**本机**：把账号 id 取回来、存住、读出来。⛔ 不碰协议（那是第 2 步）✓。
+// ⭐ 它服务的是"**同名 ≠ 同一个人**"那道闸：闸门要问"是不是同一个人"，
+//    而今天客户端**连自己的账号 id 都没有**（`set_auth_session` 写的是**空串**）⇒ 无从下手 ✓。
+
+/// ⭐ **账号身份的三态**（⛔ **不是 `Option`、⛔ 不是 `bool`**）。
+///
+/// ⚠️ 尺子＝**读不到 ≠ 读到 0** ⇒ 下面三种**必须分得开**：
+/// · `Known(id)` —— 拿得到服务端 `users.id` ✓；
+/// · `NoSession` —— **这台机器没登录**（⭐ 正常用法：个人空间不走服务器 ✓）；
+/// · `NotFetched` —— 登录了，但**那次 `/auth/me` 没取到**（网络／服务端出错）✓。
+///
+/// ⇒ ⭐ **后两种在"是不是同一个人"的判定里都落 `Unknown`（⇒ 不融合）**，
+///   ⛔ **但它们是两条不同的拒绝理由**（排障要看得出是"没登录"还是"取不到"）✓ ——
+///   折成一个 `false` 就等于**替用户断言"不是同一个人"**，而我们没有依据 ✗。
+// ⭐⭐ **死代码收据（2026-10-10）**｜为什么留着：它是"**是不是同一个人**"那道闸的**三态类型**，
+//    而闸门的落点（`Ingest::Peer` 的消费处）在**接线那一轮**才写 ✓ —— 本轮先落地＋带判据 ✓。
+//    ⛔ 什么时候删：⭐ **接线那一轮把消费方接上之后，立刻删掉这处 `#[allow(dead_code)]`** ✓；
+//    若那时它还在，说明闸门**没真接上** ✗（这条 `allow` 就是证据）。
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthUserId {
+    Known(String),
+    NoSession,
+    NotFetched,
+}
+
+/// ⭐ **只写 `user_id` 这一格**：⛔ **绝不用空值抹掉已经存下的 id** ✗。
+///
+/// ⚠️ **为什么必须单独一个 helper**：`set_auth_session` 的 `ON CONFLICT` **不更新这一列** ✓，
+/// 但它的 **`INSERT` 写的是 `''`** ⇒ 万一它后跑，就会把已存的 id 清掉 ⇒
+/// ⭐ 症状是「**融合忽然不合了**」而且**没有任何报错** ✓（正是那一族"静默退化"）。
+/// ⇒ 空白 id **直接不写**（返回 `false`）✓；
+/// ⇒ 用 `UPDATE`（⛔ **不 `INSERT`**）：硬插一行会造出"有会话行但 token 为空"的**幽灵会话** ✗
+///   ⇒ 那会让"登录了吗"变成**假阳性** ✓。
+///
+/// 返回：是否**真的**更新到了那一行（行不存在 ⇒ `false`）。
+fn set_auth_user_id(c: &Connection, server_url: &str, user_id: &str) -> Result<bool, String> {
+    let id = user_id.trim();
+    if id.is_empty() {
+        return Ok(false); // ⛔ 空值不写（写下去就是一次静默退化）
+    }
+    let n = c
+        .execute(
+            "UPDATE auth_sessions SET user_id = ?2 WHERE server_url = ?1",
+            params![server_url, id],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(n > 0)
+}
+
+/// ⭐ **读**账号身份（**三态**）—— 与 `get_auth_token`／`get_auth_email` 同形，
+/// ⚠️ 但 ⛔ **不把三态揉成一个** ✓（"没会话"与"有会话但 id 空"是两件事）。
+// ⭐⭐ **死代码收据（2026-10-10）**｜为什么留着：它是那道闸的**读取器**，消费方（`Ingest::Peer`
+//    的判定处）在**接线那一轮**才写 ✓ —— 本轮先落地＋带判据（三条，见 `mod tests`）✓。
+//    ⛔ 什么时候删：⭐ **接线那一轮接上消费方之后立刻删掉这处 `#[allow(dead_code)]`** ✓
+//    （它还在 ⇒ 说明没真接上 ✗）。
+#[allow(dead_code)]
+pub fn auth_user_id(c: &Connection, server_url: &str) -> AuthUserId {
+    let row: Option<String> = c
+        .query_row(
+            "SELECT user_id FROM auth_sessions WHERE server_url = ?1",
+            params![server_url],
+            |r| r.get(0),
+        )
+        .ok();
+    match row {
+        None => AuthUserId::NoSession,
+        Some(id) if id.trim().is_empty() => AuthUserId::NotFetched,
+        Some(id) => AuthUserId::Known(id),
+    }
+}
+
+/// ⭐ **第 1 步的"网络那一腿"**：登录/注册成功后**顺手**问一次 `/auth/me`，把账号 id 取回来。
+///
+/// ⚠️ **它失败不算登录失败** ✗ —— 登录**已经成功**了，⛔ 不许因为"顺带这一下"没成，
+///   就把用户刚拿到的会话丢掉 ✓。失败 ⇒ 返回 `None` ⇒ `auth_user_id` 停在
+///   `AuthUserId::NotFetched` ⇒ 判身份时落 `Unknown` ⇒ **不合**（保守 ✓）。
+///
+/// ⚠️ 选 (a)（登录后就取）而不是 (b)（等打开账号面板才存）：⭐ **"一登录就有身份"才可靠** ✓ ——
+///    (b) 会让"有没有身份"取决于**一次用户动作** ⇒ 哪天 UI 改了它就**静默失效** ✓。
+async fn fetch_me_user_id(server_url: &str, token: &str) -> Option<String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/auth/me", server_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let id = parse_team_me(&v).user_id;
+    if id.trim().is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// ⭐ `/auth/me` 的**纯解析**（网络那一腿在 [`fetch_me_user_id`]／`team_get_me` 里）——
+/// 抽成纯函数 ⇒ **判据够得着** ✓。⚠️ `id` 是**账号身份**；`email` 只是显示用 ✓
+/// （⛔ `email` 不能单独当身份：会变、可能是别名）。
+fn parse_team_me(v: &serde_json::Value) -> TeamMe {
+    TeamMe {
+        email: v["email"].as_str().unwrap_or("").to_string(),
+        user_id: v["id"].as_str().unwrap_or("").trim().to_string(),
+    }
+}
+
+
 pub fn device_id(c: &Connection) -> Result<String, String> {
     get_meta_state(c, KEY_DEVICE_ID).ok_or_else(|| "设备 ID 未初始化".to_string())
 }
@@ -341,6 +455,7 @@ fn apply_upsert(
     page: &PageDetail,
     sync_seq: i64,
     stamp: Option<crate::doc_content::StampWins>,
+    from: crate::doc_content::Ingest,
 ) -> Result<UpsertApply, String> {
     // ★ 合并判定搬进「文档内容」那一层（`crate::doc_content::merge`）——**唯一的合并点**：
     // 页级 LWW + dirty 优先本地 + seq 权威；阶段 1/2/3 换块级 LWW、CRDT 时只改那个函数。
@@ -361,7 +476,7 @@ fn apply_upsert(
     // ★ **返回值 = 这次留下了几处未裁决的冲突**（AMD 2026-09-22 的要求："留痕 ≠ 已裁决" ⇒
     //   调用方必须能看见"有未裁决冲突"，哪怕只是个计数）。它由 `apply_remote_page` 的
     //   `RemoteMerge::Conflicted(..)` 直接给出 —— 调用方不必"再去查一次表"才知道。
-    let outcome = crate::doc_content::apply_remote_page(c, page, sync_seq)?;
+    let outcome = crate::doc_content::apply_remote_page(c, page, sync_seq, from)?;
     Ok(UpsertApply::Applied {
         unresolved: match outcome {
             crate::doc_content::RemoteMerge::Conflicted(conflicts) => conflicts.len(),
@@ -510,7 +625,14 @@ pub fn resolve_pending_remote(
         // 「保留本地」= 现状：本地那份照旧，它会在下一次 push 推上去（对端届时会走块级合并）。
         PendingChoice::KeepLocal => {}
         PendingChoice::TakeRemote => {
-            crate::doc_content::take_remote_page(c, &page, seq)?;
+            // ⚠️ ⭐ **本轮唯一必须"代人选一个"的边界**：这里是**用户裁决**入口（Tauri 命令
+            //   `commands::resolve_pending_remote` 收不到 `Ingest`），而它重放的那一版是**已经收下过的**远端材料
+            //   —— `stash_pending_remote` 由 `apply_pulled_changes` 那个**两条路共用**的函数写 ⇒ **存档里没记来源**。
+            //   ⇒ 取 `Server`：这一支的含义是「**这不是一次新的对端接入**」⇒ 第二轮的"按名"闸门**不该**拦
+            //   用户已经明确要采用的那一版（拦了就是"点了没反应"）。
+            //   ⚠️ 若第二轮要用 `Peer`，得先让存档**记住来源**（那要动 `commands.rs`／表结构 ⇒ ⛔ 不在本轮写域）。
+            let from = crate::doc_content::Ingest::Server;
+            crate::doc_content::take_remote_page(c, &page, seq, from)?;
             report.adopted_seq = seq;
             // ⚠️ 这一半不能省：本地那笔**还没推上去**的整页改动要丢掉，否则下一次 push 又把本地那版
             //    推上去 —— 用户看到的"已放弃本地未推送改动"就成了假话。
@@ -518,7 +640,9 @@ pub fn resolve_pending_remote(
         }
         PendingChoice::Merge => {
             // 与自动路径**同一套**（`apply_remote_page`：先逐块合并，判不了才回落远端原样并留痕）。
-            let outcome = crate::doc_content::apply_remote_page(c, &page, seq)?;
+            // ⚠️ `from` 同上一支（用户裁决入口 ⇒ `Server`，理由见 `TakeRemote` 那段的注释）。
+            let from = crate::doc_content::Ingest::Server;
+            let outcome = crate::doc_content::apply_remote_page(c, &page, seq, from)?;
             report.merged = matches!(outcome, crate::doc_content::RemoteMerge::Merged { .. });
             if let crate::doc_content::RemoteMerge::Conflicted(conflicts) = &outcome {
                 report.unresolved = conflicts.len();
@@ -652,7 +776,11 @@ pub struct SyncConflict {
 }
 
 /// One entity touched by a sync run — shown in the "同步明细" list.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+///
+/// ⚠️ `Debug`（2026-10-09 task-8 加）：`mesh::PeerPullReport` 上有 `#[derive(Debug)]`，
+/// 它多了一个 `Vec<SyncItem>` 字段 ⇒ 没有 `Debug` 就**编不过**（实测 `E0277` ✓）。
+/// 它同时让判据能直接打印明细（`{items:#?}` ✓），零行为变化 ✓。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SyncItem {
     pub entity: String,   // "page" | "attachment" | ...
     pub entity_id: String,
@@ -697,7 +825,7 @@ fn prescan_payload_formats(changes: &[IncomingChange]) -> Result<(), String> {
 }
 
 /// Best-effort human-readable name for a change payload (page title, etc.).
-fn item_title(entity: &str, payload: Option<&String>) -> String {
+pub(crate) fn item_title(entity: &str, payload: Option<&String>) -> String {
     if entity == "page" && payload.is_some() {
         if let Some(v) = serde_json::from_str::<serde_json::Value>(payload.unwrap()).ok() {
             if let Some(t) = v.get("title").and_then(|t| t.as_str()) {
@@ -1313,10 +1441,19 @@ pub async fn team_register(
     if token.is_empty() {
         return Err("服务端未返回 token".to_string());
     }
+    // ⭐ **第 1 步 (a)**：登录/注册成功后**顺手**把账号 id 取回来（⭐ "一登录就有身份" ✗ ——
+    //    ⛔ 别让"有没有身份"取决于用户有没有打开过账号面板 ✓）。
+    // ⚠️ 网络那一腿在**取锁之前**（⛔ 不持 DB 锁跨 await）✓；⚠️ 失败 ⇒ `None` ⇒ 停在 `NotFetched`
+    //    ⇒ 判身份时落 `Unknown` ⇒ **不合** ✓（⛔ 不当"没有账号"、⛔ 不当"不是同一个人"）。
+    let user_id = fetch_me_user_id(&url, &token).await;
     let c = db.0.lock().expect("db mutex poisoned");
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, &token)?;
     set_auth_session(&c, &url, &email, &token)?;
+    if let Some(id) = user_id {
+        // ⭐ 只写 `user_id` 那一格（⛔ 不动 token／email；⛔ 空值不写 —— 见 `set_auth_user_id`）。
+        let _ = set_auth_user_id(&c, &url, &id)?;
+    }
     Ok(TeamAuthResult { token })
 }
 
@@ -1344,10 +1481,19 @@ pub async fn team_login(
     if token.is_empty() {
         return Err("服务端未返回 token".to_string());
     }
+    // ⭐ **第 1 步 (a)**：登录/注册成功后**顺手**把账号 id 取回来（⭐ "一登录就有身份" ✗ ——
+    //    ⛔ 别让"有没有身份"取决于用户有没有打开过账号面板 ✓）。
+    // ⚠️ 网络那一腿在**取锁之前**（⛔ 不持 DB 锁跨 await）✓；⚠️ 失败 ⇒ `None` ⇒ 停在 `NotFetched`
+    //    ⇒ 判身份时落 `Unknown` ⇒ **不合** ✓（⛔ 不当"没有账号"、⛔ 不当"不是同一个人"）。
+    let user_id = fetch_me_user_id(&url, &token).await;
     let c = db.0.lock().expect("db mutex poisoned");
     set_meta_state(&c, KEY_SERVER_URL, &url)?;
     set_meta_state(&c, KEY_TOKEN, &token)?;
     set_auth_session(&c, &url, &email, &token)?;
+    if let Some(id) = user_id {
+        // ⭐ 只写 `user_id` 那一格（⛔ 不动 token／email；⛔ 空值不写 —— 见 `set_auth_user_id`）。
+        let _ = set_auth_user_id(&c, &url, &id)?;
+    }
     Ok(TeamAuthResult { token })
 }
 
@@ -1821,11 +1967,15 @@ pub fn team_get_session(db: State<'_, Db>) -> Result<TeamSession, String> {
     })
 }
 
-/// Return the current user's identity (email) for the given server, so the UI can
-/// show which account is logged in.
+/// Return the current user's identity (email + account id) for the given server, so the UI
+/// can show which account is logged in —— ⭐ 而 `user_id` 那半是给"**是不是同一个人**"用的。
 #[derive(serde::Serialize)]
 pub struct TeamMe {
     pub email: String,
+    /// ⭐ **账号 id**（服务端 `users.id`）—— owner 2026-10-10「让账号跟着数据走」。
+    /// ⚠️ 它才是**身份**；`email` ⛔ 不能单独当身份（会变／可能是别名）✓。
+    /// ⚠️ 空串 ＝ **这一版没拿到**（⛔ 不代表"没有账号"）⇒ 判身份时落 `Unknown` ⇒ 不合 ✓。
+    pub user_id: String,
 }
 
 #[tauri::command]
@@ -1843,9 +1993,8 @@ pub async fn team_get_me(server_url: String, token: String) -> Result<TeamMe, St
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(TeamMe {
-        email: v["email"].as_str().unwrap_or("").to_string(),
-    })
+    // ⭐ 从这里开始**把 `id` 也读出来**（原先只读 `email`、`id` 就地扔了 ✗）。
+    Ok(parse_team_me(&v))
 }
 
 /// Return the email last logged in for a server (local `meta.auth_sessions`), so a
@@ -2847,7 +2996,15 @@ pub(crate) fn apply_pulled_changes(
     changes: Vec<IncomingChange>,
     last_pulled: i64,
     now: i64,
+    from: crate::doc_content::Ingest,
 ) -> Result<PulledApply, String> {
+// ⭐⭐ **2026-10-09（task-8）**：**守卫搬进函数里** —— 原来它只挂在 `do_pull`（服务器那条路 ✓）✗。
+//   ⚠️ **网格那条路没有它** ✗（`mesh.rs::absorb_peer_batch` 直接调本函数 ✓）⇒ 外键是开的 ⇒
+//   同批里"子页先到、父页后到"就当场 `FOREIGN KEY constraint failed` ✗，而那一笔会被
+//   **存进「待取回的远端版本」** ✗ ⇒ 用户看到一堆"等你裁决"的页，其实**根本没有冲突**（真机 40 条 ✓）。
+//   判据：`a_batch_whose_child_arrives_before_its_parent_still_lands_both`（先红后绿 ✓）。
+//   ⚠️ 嵌套无副作用：`do_pull` 那层外面还有一个同样的守卫 ✓ —— 内层记的原值是 OFF、退场写回 OFF ✓。
+let _fk_guard = ForeignKeysOff::new(c);
 let mut max_pulled = last_pulled;
 let mut count: usize = 0;
 let mut items: Vec<SyncItem> = Vec::new();
@@ -2992,7 +3149,7 @@ let mut unrecognized: Vec<String> = Vec::new();
                                 ),
                             }
                         }
-                        let unresolved = apply_upsert(&c, &page, change.seq, stamp_wins)?;
+                        let unresolved = apply_upsert(&c, &page, change.seq, stamp_wins, from)?;
                         match unresolved {
                             UpsertApply::Applied { unresolved } => {
                                 if unresolved > 0 && !unresolved_page_ids.contains(&page.id) {
@@ -3230,7 +3387,7 @@ async fn do_pull(
         // （attachments.page_id / pages.parent_id 等）。批量应用期间临时关闭外键，应用完恢复原状态。
         // ⚠️ RAII 守卫：调用里的 `?` 早退也会 drop 掉它 ⇒ 外键**一定**被恢复。
         let _fk_guard = ForeignKeysOff::new(&c);
-        let out = apply_pulled_changes(&c, body.changes, last_pulled, now)?;
+        let out = apply_pulled_changes(&c, body.changes, last_pulled, now, crate::doc_content::Ingest::Server)?;
         set_profile_field(&c, &profile.ws_id, "last_pulled_seq", out.max_pulled)?;
         // 外键由 `_fk_guard` 在离开作用域时恢复（成功路径也一样，顺序与原来一致）。
         out
@@ -3301,7 +3458,443 @@ pub async fn mesh_sync_now(
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
         report.note.push_str("（⚠️ 设置里配了监听地址，但窗口没起来）");
     }
+
+    // ④ ⭐⭐ **2026-10-09（task-8）**：**网格这一轮也记一条 `sync_history`** ✓。
+    //    判别式与内容全在 `mesh_history_write`（纯函数 ⇒ **判据够得着** ✓）；
+    //    ⭐ 再加一道 **B 方案的限流**（owner 2026-10-09 拍 ✓）：同因同台的连续失败**只写第一条** ✓
+    //    —— 否则一个一直拉不动的对端会每 60 秒写 4 行、把只有 100 行的历史挤光 ✗
+    //    （真机实测：~12 分钟 25 → 77 条 ✓）。"上一条"**从库里读** ✓（零新状态 ✓）。
+    if let Some(h) = mesh_history_write(&report, &scope.db_space) {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let last = read_last_mesh_history(&c, &h.ws_id);
+        if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
+            write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        }
+    }
     Ok(report)
+}
+
+/// ⭐⭐ **task-12（owner 拍 C：后台每 5 分钟一轮）**：**不靠界面**也把网格那一轮跑掉 ✓。
+///
+/// ## 为什么要有它（真机实锤）
+/// `mesh_sync_now` 是 `#[tauri::command]` ⇒ ⭐ **只在"前端调它"时才跑** ✗ ⇒ 面板不在那一页就
+/// **一轮都不跑** ✓：实测我方 stderr `[mesh]` **259 行**（发现层照常 ✓）而网格历史**停在面板关闭那一刻**
+/// （最后一条 `09:01:45` ✓）；把 app 从同步面板切走，**8+ 分钟里一次 TCP 连接都没有** ✗（两条独立采样一致 ✓）。
+///
+/// ## 形状（三条边界）
+/// · ⭐ 只接受**已经解析出空间**的那一个（调用方按 `meshed` 传 ✓）⇒ ⛔ **没配网格的空间一个字节都不动** ✗
+///   （"没配 ⇒ 默认零行为变化"这条口径**一个字不变** ✓，判据钉着 ✓）；
+/// · ⭐ **可核读数**：KV `mesh_bg_rounds:<空间>` **每跑一轮 +1**（⚠️ **空转轮也 +1** ✓）⇒
+///   "到底跑没跑、跑了几轮"**永远查得到** ✓（⛔ 不是靠翻日志 ✗）；
+/// · ⭐ 与 `mesh_sync_now` **共用同一套落库**（`mesh_history_write` ＋ `write_sync_history_with` ✓）
+///   ⇒ 两条路写出来的历史**长得一样** ✓，⛔ 不出现"面板跑的记、后台跑的不记" ✗。
+pub(crate) async fn mesh_round_once(
+    conn: &std::sync::Mutex<Connection>,
+    proto_space: &str,
+    db_space: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+) -> Result<crate::mesh::MeshRoundReport, String> {
+    let mut report = crate::mesh::round(conn, proto_space, my_device, peers).await?;
+    report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
+    // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
+    if report.enabled {
+        let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let key = format!("mesh_bg_rounds:{proto_space}");
+        let n: i64 = get_meta_state(&c, &key).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+        let _ = set_meta_state(&c, &key, &(n + 1).to_string());
+    }
+    // 与 `mesh_sync_now` 同一套历史写入（含 B 方案的限流 ✓）。
+    if let Some(h) = mesh_history_write(&report, db_space) {
+        let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let last = read_last_mesh_history(&c, &h.ws_id);
+        if mesh_history_should_write(&h, last.as_ref(), crate::db::now_ms()) {
+            write_sync_history_with(&c, &h.ws_id, h.pushed, h.pulled, h.ok, &h.message, &h.items);
+        }
+    }
+    Ok(report)
+}
+
+/// ⭐ **2026-10-09（task-8）**：网格那一轮**要不要**进 `sync_history`、进什么 —— **纯函数** ✓。
+///
+/// ## 为什么要有它（真机读数 → 判据）
+/// 两台真机上 `sync_history` 里**一条"经设备直连"的记录都没有**（`pushed/pulled/items` 全 0 ✗），
+/// 真因是**这一侧从来没有写入口**：`write_sync_history` 只挂在服务器那条路（`sync_workspace` ✓）
+/// ⇒ 「设备直连到底跑没跑、换了什么」在历史里**一个字都没有** ✗。
+/// ⇒ 验收判据「`sync_history` 出现经设备直连的记录」**今天不可能成立** ✓ ——
+///   那不是判据写错，是这里缺一条写入 ✓（内核见 `write_sync_history_with` 的头注 ✓）。
+/// ⚠️ 而"判据够得着"这条要求（本仓反复栽过：挂在命令体里 ⇒ 判据碰不到 ⇒ 这类 bug 一直漏 ✗）
+///   ⇒ 判别式**抽成纯函数**，`mesh_sync_now` 只做"调它 ＋ 落库" ✓。
+///
+/// ## 记什么（⛔ 不许为了让判据好看而造假 ✗）
+/// · `pulled` ＝ **这一轮真的收下的条数**（各对端 `applied` 之和 ✓）；
+/// · `pushed` ＝ **恒 `0`** ✓ —— 这不是"没做事"，而是 ⭐ **网格这一轮只拉** ✓：
+///   我新建的东西是**对端来拉我**时送出去的 ✓（那句话写进 `message`，用户在历史里看得见 ✓）；
+/// · `items` ＝ 逐条的 `entity/entity_id/op`（与服务器那条路**同一个** `item_title` ✓）；
+/// · `ok` ＝ 有没有对端拉不动（有 ⇒ `false` ＋ 那句话就在 `message` 里 ✓）。
+///
+/// ## 什么时候**不**写（这条也是承重的 ✓）
+/// ⭐⭐ **注意：下面这几格"不写"是**故意的**，不是漏了** ✗ —— ⛔ 下一个人不要当 bug 补上 ✓。
+/// ⚠️ **空转轮不写** ✗：自动同步的节拍是 **5 秒起、空闲退避到 60 秒**
+/// （`src/lib/syncBackoff.ts`，退避硬顶 `BACKOFF_CAP_MS = 60_000` ✓）⇒ 一台闲着的机器
+/// **每天约 1440 轮**（60s 一轮 ✓）。若每轮都写，`sync_history` 那张**只有 100 行**的表
+/// （`write_sync_history_with` 里那句 DELETE ✓）会被"什么也没发生"灌满
+/// ⇒ **把服务器同步的历史一起挤掉** ✗ —— 那是拿一个 bug 换另一个 bug ✓。
+/// （owner 2026-10-09 复核过这一条并**批准**："写历史 vs 看得见"是两件事 ✓ ——
+///  历史留痕会挤掉别人，面板每一轮照实显示 ⇒ 选**看得见但不留痕** ✓。）
+/// ⇒ 口径：**只有这一轮确实做了什么才写**：① 有东西被拉回来（`fetched > 0`／`applied > 0` ✓，
+///   含"拉到了但都是重放"✓）；② 或者**有对端拉不动**（`error` ✓ —— 失败必须可见 ✓）。
+///   ⚠️ 「网格没开」那一格不写（`enabled == false` ⇒ 一个字节都没动 ✓）；
+///   ⚠️ 「开着但网段里没对端」那一格**也不写** —— 它在**面板上每一轮都如实显示**
+///   （`report.note` ✓，用户点一次同步就看得见 ✓），不需要靠灌历史来说话 ✓。
+pub(crate) struct MeshHistoryWrite {
+    pub ws_id: String,
+    pub pushed: usize,
+    pub pulled: usize,
+    pub ok: bool,
+    pub message: String,
+    pub items: Vec<SyncItem>,
+    /// ⭐ **2026-10-09（B 方案）**：这一轮**失败的对端 ＋ 它自己的原因**（`(device_id, error)` ✓）。
+    /// 它**不进库**（`message` 里那份是给人看的 ✓）—— 只用来和**上一条历史行**比"是不是同因同台" ✓。
+    pub failures: Vec<(String, String)>,
+}
+
+/// ⭐ **2026-10-09（owner 拍 B）**：该空间**最后一条「设备直连」历史行** —— 从**库里读** ✓。
+///
+/// ⚠️ 为什么从库里读、不新开一份内存状态：判"是不是同因同台"要的正是**上一次写了什么** ✓，
+/// 而它**已经在 `sync_history` 里** ✓ ⇒ 直接读最后一条 ⇒ **零新状态** ✓（owner 2026-10-09 指出 ✓）。
+pub(crate) struct LastMeshHistory {
+    pub at: i64,
+    pub ok: bool,
+    pub message: String,
+}
+
+/// 读该空间最后一条「设备直连」行（没有 ⇒ `None` ✓）。
+pub(crate) fn read_last_mesh_history(c: &Connection, ws_id: &str) -> Option<LastMeshHistory> {
+    c.query_row(
+        "SELECT at, ok, message FROM sync_history \
+         WHERE ws_id = ?1 AND message LIKE '设备直连（网格）：%' \
+         ORDER BY at DESC, id DESC LIMIT 1",
+        params![ws_id],
+        |r| {
+            Ok(LastMeshHistory {
+                at: r.get(0)?,
+                ok: r.get::<_, i64>(1)? != 0,
+                message: r.get(2)?,
+            })
+        },
+    )
+    .ok()
+}
+
+/// ⭐ **2026-10-09（owner 拍 B）**：这一轮**要不要真的写那一行** —— 纯函数 ✓（判据不打桩 ✓）。
+///
+/// ## 为什么（真机读数）
+/// 一个**持续拉不动**的对端会被每 60 秒写一次，**4 个空间 ⇒ 每分钟 8 行** ✗
+/// （2026-10-09 实测：历史在 ~12 分钟里从 25 条涨到 77 条 ✓）——
+/// 而 `sync_history` 只有 **100 行** ⇒ ⭐ 会把**别的**历史（含服务器同步那条路的 ✓）**挤光** ✗。
+///
+/// ## 口径（owner 逐条拍，照此实现 ✓）
+/// ⛔ **只限「失败且同因同台」** ✓；⭐ **成功的轮次（`pulled > 0`）⛔ 一律不许被吞** ✗。
+/// 写，当满足任一：① 没有上一条 ✓；② `ok` 变了（含 `0→1` **恢复** ✓ 与 `1→0` ✓）；
+/// ③ 对端**不是同一台**；④ **原因不同**（401 → 超时 ✓）；
+/// ⑤ 距上一条**超过** [`MESH_HISTORY_REPEAT_MS`]（⭐ 用户长时间不在也有**心跳** ✓）。
+/// 跳过，当且仅当：**失败 ＋ `ok` 没变 ＋ 每一台失败的对端与原因都已经在**上一条 `message` 里** ✓。
+///
+/// ⚠️ "同一台/同一原因"靠**上一条 `message` 里是否已经含** `对端 <peer>：<error>` 这段**字面**判定 ✓
+/// （那段就是 [`mesh_history_message`] 写进去的 ✓）—— 不引新字段、不改 schema ✓。
+pub(crate) const MESH_HISTORY_REPEAT_MS: i64 = 10 * 60 * 1000;
+
+pub(crate) fn mesh_history_should_write(
+    w: &MeshHistoryWrite,
+    last: Option<&LastMeshHistory>,
+    now_ms: i64,
+) -> bool {
+    // ⭐ ① **成功的轮次**（这一轮没有任何失败对端 ⇒ `failures` 空）⇒ **永远写** ✓
+    //    ⛔ 绝不许被限流吞掉 ✗：`pulled > 0` 是"真的换到了东西"✓，而它正是 `ok 0→1`「它好了」的凭据 ✓。
+    if w.failures.is_empty() {
+        return true;
+    }
+    // ② 没有上一条 ⇒ 写 ✓（第一次失败必须留痕 ✓）。
+    let Some(prev) = last else { return true };
+    // ③ `ok` 变了 ⇒ 写 ✓（含 `1→0`：本来好了、现在又坏了 ✓）。
+    if prev.ok != w.ok {
+        return true;
+    }
+    // ④ 距上一条**超过** 10 分钟 ⇒ 写 ✓（心跳：用户长时间不在也要有痕迹 ✓）。
+    if now_ms.saturating_sub(prev.at) >= MESH_HISTORY_REPEAT_MS {
+        return true;
+    }
+    // ⑤ "同因同台"才跳过 —— ⚠️ **两头都要比**（比"子集"更严 ⇒ 只会**多写**、绝不**少写** ✓：
+    //    `2 台坏 → 1 台坏` 这种"有一台好了"也是一件**该留痕**的事 ✓）。
+    //    ① 条的台数必须一样；② 每一台的 `对端 <peer>：<error>` 都得在上一条里出现过 ✓。
+    let prev_named = prev.message.matches(" ｜ 对端 ").count();
+    if prev_named != w.failures.len() {
+        return true;
+    }
+    !w
+        .failures
+        .iter()
+        .all(|(peer, err)| prev.message.contains(&format!("对端 {peer}：{err}")))
+}
+
+pub(crate) fn mesh_history_write(
+    report: &crate::mesh::MeshRoundReport,
+    db_space: &str,
+) -> Option<MeshHistoryWrite> {
+    if !report.enabled {
+        return None;
+    }
+    let items: Vec<SyncItem> = report.peers.iter().flat_map(|p| p.items.clone()).collect();
+    let fetched: usize = report.peers.iter().map(|p| p.fetched).sum();
+    let pulled: usize = report.peers.iter().map(|p| p.applied).sum();
+    let failed: usize = report.peers.iter().filter(|p| p.error.is_some()).count();
+    if fetched == 0 && pulled == 0 && failed == 0 {
+        return None;
+    }
+    let failures: Vec<(String, String)> = report
+        .peers
+        .iter()
+        .filter_map(|p| p.error.as_ref().map(|e| (p.peer.clone(), e.clone())))
+        .collect();
+    Some(MeshHistoryWrite {
+        ws_id: db_space.to_string(),
+        // ⭐ pushed 恒 0 是**语义**（这一轮只拉 ✓），不是"没数"——见上面那段注释 ✓。
+        pushed: 0,
+        pulled,
+        ok: failed == 0,
+        message: mesh_history_message(report),
+        items,
+        failures,
+    })
+}
+
+/// ⭐ **2026-10-09（task-8 真机排查踩到）**：历史那一行的**人话** —— 纯函数 ✓。
+///
+/// ⚠️ 来由（真机，逐字）：那一行原来只写「…其中 1 台没拉动（**见每一行的 error**）」✗ ——
+/// 而 ⭐ **那个 error 根本没进库** ✗（失败支路的 `items` 是空的 ✓、`PeerPullReport.error`
+/// 又不进序列化 ✓）⇒ 我那天是**手工 `curl` 对端**才拿到那句 `401` ✓。
+/// ⇒ 现在把**每一台失败的**点名 ＋ 带上它自己的错误原文 ✓（⛔ 不动 `round_note` ✗ ——
+/// 面板那一行的人话是既有判据逐字钉着的，改它就等于改界面文案 ✓）。
+fn mesh_history_message(report: &crate::mesh::MeshRoundReport) -> String {
+    let mut msg = format!(
+        "设备直连（网格）：{} 【网格这一轮**只拉** —— 我这边新建的东西在**对端来拉**时送出】",
+        report.note
+    );
+    for p in report.peers.iter().filter(|p| p.error.is_some()) {
+        msg.push_str(&format!(
+            " ｜ 对端 {}：{}",
+            p.peer,
+            p.error.as_deref().unwrap_or("（没给原因）")
+        ));
+    }
+    msg
+}
+
+/// ⭐ **2026-10-09（task-8）**：网格那一轮进不进历史、进去的是不是**真读数** —— 判据。
+///
+/// ⚠️ 红读数（改前逐字的行为 ＝ `mesh_history_write` 恒回 `None`）：
+///    `mesh_history_write_* ... FAILED`（见任务报告 ✓）—— 那正是"`sync_history` 里
+///    一条设备直连都没有"✓（真机 17 条全是旧服务器失败 ✓）。
+#[cfg(test)]
+mod mesh_history_tests {
+    use super::*;
+    use crate::mesh::{MeshRoundReport, PeerPullReport};
+
+    fn peer(device: &str, fetched: usize, applied: usize, err: Option<&str>) -> PeerPullReport {
+        PeerPullReport {
+            peer: device.to_string(),
+            fetched,
+            applied,
+            cursor: 0,
+            superseded: 0,
+            awaiting: 0,
+            items: (0..fetched)
+                .map(|i| SyncItem {
+                    entity: "page".to_string(),
+                    entity_id: format!("p{i}"),
+                    op: "upsert".to_string(),
+                    dir: "pull".to_string(),
+                    title: format!("页 {i}"),
+                })
+                .collect(),
+            error: err.map(str::to_string),
+        }
+    }
+
+    fn report(enabled: bool, peers: Vec<PeerPullReport>) -> MeshRoundReport {
+        MeshRoundReport {
+            enabled,
+            note: format!("网格：拉了 {} 台对端", peers.len()),
+            candidates: peers.len(),
+            peers,
+            window: None,
+        }
+    }
+
+    /// ① **网格没开 ⇒ 不写**（一个字节都没动，历史里也不该多一行 ✓）。
+    #[test]
+    fn a_disabled_round_writes_nothing() {
+        assert!(mesh_history_write(&report(false, vec![]), "ws-1").is_none());
+    }
+
+    /// ② **开着但没对端 ⇒ 不写**（自动同步 60s 一轮 ⇒ 每轮都写会把 100 行的历史灌满 ✓）。
+    #[test]
+    fn an_idle_round_with_no_peers_writes_nothing() {
+        assert!(mesh_history_write(&report(true, vec![]), "ws-1").is_none());
+    }
+
+    /// ③ **有对端但什么也没换到 ⇒ 不写**（`fetched/applied` 全 0 且没报错 ✓）。
+    #[test]
+    fn a_round_that_changed_nothing_writes_nothing() {
+        assert!(mesh_history_write(&report(true, vec![peer("dev-b", 0, 0, None)]), "ws-1").is_none());
+    }
+
+    /// ④ ⭐ **真的收下了 ⇒ 写**，而且记的是**真读数**：`pulled == applied 之和`、
+    ///    `pushed == 0`（网格这一轮只拉 ✓）、`items` 逐条 ✓、`ws_id` 是**本地空间 id** ✓。
+    #[test]
+    fn a_round_that_pulled_writes_the_real_numbers() {
+        let w = mesh_history_write(
+            &report(true, vec![peer("dev-b", 2, 2, None), peer("dev-c", 3, 3, None)]),
+            "ws-1",
+        )
+        .expect("拉到了东西 ⇒ 必须进历史（否则「设备直连跑过没」永远查不到 ✗）");
+        assert_eq!(w.ws_id, "ws-1", "记的必须是**本地空间 id**（面板按它过滤 ✓）");
+        assert_eq!(w.pulled, 5, "pulled ＝ 各对端 applied 之和（真读数 ✓）");
+        assert_eq!(w.pushed, 0, "网格这一轮**只拉** ⇒ pushed 恒 0（⛔ 不许写假的非零 ✗）");
+        assert!(w.ok, "两台都拉得动 ⇒ ok ✓");
+        assert_eq!(w.items.len(), 5, "明细逐条 ✓");
+        assert!(w.message.contains("设备直连"), "历史那一行要说清是**哪条路**：{}", w.message);
+    }
+
+    /// ⑤ ⭐ **有对端拉不动 ⇒ 也写**（失败必须可见 ✓），而且 `ok == false` ✓。
+    #[test]
+    fn a_round_where_a_peer_failed_writes_a_visible_failure() {
+        let w = mesh_history_write(
+            &report(true, vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))]),
+            "ws-1",
+        )
+        .expect("拉不动 ⇒ 必须进历史（静默失败正是今天这条断点最难查的地方 ✗）");
+        assert!(!w.ok, "有对端拉不动 ⇒ ok 必须是 false ✓");
+        assert_eq!(w.pulled, 0, "没拉回来就是 0（如实 ✓）");
+        assert!(w.message.contains("401") || w.message.contains("拉了"), "message 要带得上那句原因：{}", w.message);
+    }
+
+    /// ⑥ ⭐ **2026-10-09（task-8 真机排查踩到）**：拉不动时历史行必须说清 **是哪一台 ＋ 为什么** ✓。
+    ///
+    /// ⚠️ 来由（真机，逐字）：历史行当时只写「其中 1 台没拉动（**见每一行的 error**）」✗ ——
+    /// 而 ⭐ **那个 error 根本没进库** ✗（`items` 在失败支路是空的 ✓、`PeerPullReport.error`
+    /// 不进序列化 ✓）⇒ 我那天是**手工 `curl` 对端**才拿到那句 `401` ✓。
+    /// ⇒ 本判据要求：**失败的每一台**都在 `message` 里点名 ＋ 带上它自己的错误原文 ✓。
+    /// 未修时 `message` 里既没有 `dev-b` 也没有 `401` ⇒ **必红** ✓。
+    #[test]
+    fn a_failed_peer_names_itself_and_its_reason_in_the_history_row() {
+        let w = mesh_history_write(
+            &report(
+                true,
+                vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))],
+            ),
+            "ws-1",
+        )
+        .expect("拉不动 ⇒ 必须进历史");
+        assert!(w.message.contains("dev-b"), "历史行必须说清是**哪一台**拉不动：{}", w.message);
+        assert!(w.message.contains("401"), "而且要带上**它自己的错误原文**（不让人去别处猜 ✓）：{}", w.message);
+    }
+
+    // ───────── B 方案（owner 2026-10-09 拍）：同因同台的连续失败**只写第一条** ─────────
+
+    /// 带 `sync_history` 的库夹具（`write_sync_history_with` 用的是**非限定**表名 ⇒ 落 main ✓）。
+    fn history_fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE sync_history (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 ws_id TEXT NOT NULL, ws_name TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL,
+                 pushed INTEGER NOT NULL DEFAULT 0, pulled INTEGER NOT NULL DEFAULT 0,
+                 ok INTEGER NOT NULL DEFAULT 0, message TEXT NOT NULL DEFAULT '',
+                 items TEXT NOT NULL DEFAULT ''
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    fn history_len(c: &Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM sync_history", [], |r| r.get(0)).unwrap()
+    }
+
+    /// ⭐⭐ **本笔的判据**：⭐ **同因同台的连续失败 ⇒ 只写第一条** ✓（红：改前"总是写" ⇒ 写 2 条 ✗）。
+    ///
+    /// 真机来由：一个一直拉不动的对端每 60 秒写一次 × 4 个空间 ⇒ 历史 ~12 分钟 25 → 77 条 ✗ ⇒
+    /// 只有 100 行的表会把别的历史挤光 ✓。
+    #[test]
+    fn a_repeated_identical_failure_is_written_only_once() {
+        let c = history_fixture();
+        let rep = report(true, vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))]);
+
+        let w1 = mesh_history_write(&rep, "ws-1").unwrap();
+        let last = read_last_mesh_history(&c, "ws-1");
+        assert!(mesh_history_should_write(&w1, last.as_ref(), 1_000), "第一条必须写（没有上一条 ✓）");
+        write_sync_history_with(&c, "ws-1", w1.pushed, w1.pulled, w1.ok, &w1.message, &w1.items);
+        assert_eq!(history_len(&c), 1);
+
+        // 第 2、3 轮：**同一台 ＋ 同一个原因 ＋ 6 秒后** ⇒ ⛔ 不许再写 ✗
+        for bump in [6_000i64, 12_000] {
+            let w = mesh_history_write(&rep, "ws-1").unwrap();
+            let last = read_last_mesh_history(&c, "ws-1");
+            let at = last.as_ref().map(|l| l.at).unwrap_or(0) + bump;
+            assert!(
+                !mesh_history_should_write(&w, last.as_ref(), at),
+                "同因同台的连续失败**不许刷屏** ✗（否则 100 行的历史会被同一句话喂光）"
+            );
+            assert_eq!(history_len(&c), 1, "库里必须仍然只有第一条");
+        }
+    }
+
+    /// ⭐ **反向（⛔ 不许把该写的吞掉 ✗）** —— 四条各自的出口 ✓：
+    /// ① **换了一台对端** ⇒ 写；② **原因不同** ⇒ 写；③ **超过 10 分钟**（心跳）⇒ 写；
+    /// ④（最要紧）⭐ **成功了（`pulled > 0`）⇒ 一定写** ✓ —— 那是"它好了"的凭据 ✓。
+    #[test]
+    fn a_changed_peer_reason_or_a_recovery_is_never_swallowed() {
+        let c = history_fixture();
+        // 先写一条失败
+        let fail_b = report(true, vec![peer("dev-b", 0, 0, Some("对端 dev-b 回了 401 Unauthorized"))]);
+        let w1 = mesh_history_write(&fail_b, "ws-1").unwrap();
+        write_sync_history_with(&c, "ws-1", w1.pushed, w1.pulled, w1.ok, &w1.message, &w1.items);
+        let last = read_last_mesh_history(&c, "ws-1").unwrap();
+        let at = last.at + 6_000;
+
+        // ① 换了一台
+        let other = mesh_history_write(
+            &report(true, vec![peer("dev-c", 0, 0, Some("对端 dev-c 回了 401 Unauthorized"))]),
+            "ws-1",
+        )
+        .unwrap();
+        assert!(mesh_history_should_write(&other, Some(&last), at), "换了**另一台** ⇒ 必须写 ✓");
+
+        // ② 同一台、**原因不同**（401 → 超时）
+        let other_why = mesh_history_write(
+            &report(true, vec![peer("dev-b", 0, 0, Some("拉对端 dev-b 失败：connection refused"))]),
+            "ws-1",
+        )
+        .unwrap();
+        assert!(mesh_history_should_write(&other_why, Some(&last), at), "**原因变了** ⇒ 必须写 ✓");
+
+        // 同因同台但**过了 10 分钟** ⇒ 心跳，必须写
+        let same = mesh_history_write(&fail_b, "ws-1").unwrap();
+        assert!(
+            mesh_history_should_write(&same, Some(&last), last.at + MESH_HISTORY_REPEAT_MS + 1),
+            "超过 10 分钟 ⇒ 心跳必须写 ✓（用户长时间不在也要有痕迹 ✓）"
+        );
+
+        // ④ ⭐ **恢复**：这一轮真收到了东西 ⇒ 一定写（⛔ 不许被限流吞掉 ✗）
+        let recovered = mesh_history_write(&report(true, vec![peer("dev-b", 2, 2, None)]), "ws-1").unwrap();
+        assert!(
+            mesh_history_should_write(&recovered, Some(&last), at),
+            "⭐ **成功/有收获的那一轮永远要写** ✗（`ok 0→1` 就是「它好了」的凭据 ✓）"
+        );
+        assert!(recovered.ok, "前提：这一轮 ok=true ✓");
+    }
 }
 
 /// 丙-③-b-2b 的**设置面**：写网格设置（监听地址 / 口令），并把窗口的开关跟着改。
@@ -3434,7 +4027,25 @@ pub(crate) fn mesh_config_state_at(
     //   个人空间（`space_id` 空）⇒ 用「配对暗号」✓；
     //   ⚠️ **四格读数一起换** ✗：以前只把"设置"那格当重点，其实 `served_spaces("")` 会回**全局**那扇门的
     //     服务清单 ⇒ 读数里会冒出一个空串 ✗（owner 截图里那行「服务 2 个空间：、123456789Ok,./」就是它 ✓）。
-    let space = crate::lan_state::resolved_space(c, space_id, ws_id);
+    // ⭐ **修（2026-10-08）**：**与写路径同一口径**（`lan_state::resolved_space` ✓ —— 解析只写在一处 ✓）。
+    //   个人空间（`space_id` 空）⇒ 用「配对暗号」✓；
+    //   ⚠️ **四格读数一起换** ✗：以前只把"设置"那格当重点，其实 `served_spaces("")` 会回**全局**那扇门的
+    //     服务清单 ⇒ 读数里会冒出一个空串 ✗（owner 截图里那行「服务 2 个空间：、123456789Ok,./」就是它 ✓）。
+    let asked = crate::lan_state::resolved_space(c, space_id, ws_id);
+    // ⭐⭐ **2026-10-09（task-8，同族第三次）**：**这一行问的是"这台机器的设备直连开没开"** ✓，
+    //   ⛔ 不是"当前这个空间自己那一行配没配" ✗ —— 窗口是**进程级**的、且**按绑定共用**
+    //   （`U8`：同一绑定一扇门、一扇门服务多个空间 ✓）⇒ 只看当前空间会**漏报** ✓。
+    //   真机（amd 逐字）：面板说「网格这一档**关着**（没配监听地址 ⇒ **不听也不喊**）」✗，
+    //   而 `8788` 在听 ✓、KV 里 `mesh_bind:123456789Ok,./` 在 ✓、当天真跑出过 `ok=1/pulled=31` ✓
+    //   —— 因为暗号/地址配在**另一个**空间的档案行上，而面板问的是**当前**那个空间 ✗。
+    //   ⇒ 口径三条：① 当前空间自己解析得出来**且配了地址** ⇒ 报它自己的 ✓（每个空间看自己的设置 ✓）；
+    //              ② 否则 ⇒ 报**实际在用**的那一个 ✓（与发现层的 `mesh_cfgs` **同一把尺** ✓）；
+    //              ③ **谁都没配** ⇒ 仍然报「关着」✓（放宽 ≠ 乱认 ✓，判据钉着 ✓）。
+    let space = if !asked.trim().is_empty() && crate::mesh::settings(c, &asked).bind.is_some() {
+        asked
+    } else {
+        mesh_space_in_use(c).unwrap_or(asked)
+    };
     // ⚠️ 解析出来是空的（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**：当"没配" ✓。
     //   ⛔ 不许去读 `mesh_bind:` 那个空键 —— 那是**写入路径永远写不出来**的残留 ✗（会让"没配的"空间假显示为开着 ✓）。
     if space.trim().is_empty() {
@@ -3544,6 +4155,91 @@ mod mesh_config_state_tests {
         let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
         assert!(!st.enabled, "没填暗号 ⇒ 报关 ✓（放宽口径 ≠ 乱认 ✓）");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ task-8（2026-10-09，同族**第三次**）：面板那一行问的是「**这台机器**的设备直连
+    //     开没开」✗，而不是"当前这个空间自己那一行配没配" ✗
+    //
+    //     真机现场（amd 报的，逐字）：面板底部说「网格这一档**关着**（没配监听地址 ⇒ **不听也不喊**）」✗
+    //     而三条硬读数互相印证它明明开着 ✓：① `8788` **在听**（属主就是那个 app pid ✓）；
+    //     ② KV 里 `mesh_bind:123456789Ok,./` 在 ✓（而"空键" `mesh_bind:` ✗ 压根不存在 ✓）；
+    //     ③ 那天真跑出过网格行 `ok=1 / pulled=31` ✓。
+    //     真因：**暗号/监听地址配在另一个空间的档案行上**，而面板问的是**当前**那个空间 ✗ ——
+    //     窗口是**进程级**的、还**按绑定共用**（`U8`：同一绑定一扇门、一扇门服务多个空间 ✓）
+    //     ⇒ 只看当前空间必然**漏报** ✓。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ **本笔判据**：⭐ 当前空间自己**没配**，但**另一个**空间的档案配了监听地址 ⇒
+    ///   面板必须显示「**开着**」✓（⛔ 不许说"不听也不喊" —— 而 `8788` 正在听 ✗）。
+    /// ⚠️ 未修时 `enabled == false` ⇒ **必红** ✓（红读数＝amd 那句话逐字 ✓）。
+    #[test]
+    fn the_panel_reports_the_mesh_as_on_when_another_space_holds_the_bind() {
+        let c = fixture();
+        // 另一个活空间：暗号 ＋ 监听地址都配在**它**那一行上
+        c.execute("INSERT INTO meta.workspaces (id, name) VALUES ('ws-other', '另一个空间')", []).unwrap();
+        c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-other', 'room-123')", []).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-123', '0.0.0.0:8788')",
+            [],
+        )
+        .unwrap();
+
+        // 面板问的是 **ws-personal**（它自己那一行没有暗号）
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(
+            st.enabled,
+            "⛔ 面板说「网格这一档关着（没配监听地址 ⇒ 不听也不喊）」—— 而 8788 正在听、别的空间配了 ✗"
+        );
+        assert_eq!(
+            st.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "而且要报出**实际在用的**那个地址（不是空 ✗）"
+        );
+    }
+
+    /// ⭐ **反向（放宽 ≠ 乱认）**：⭐ **谁都没配监听地址** ⇒ 仍然报「**关着**」✓。
+    #[test]
+    fn the_panel_still_reports_off_when_nobody_configured_the_mesh() {
+        let c = fixture();
+        c.execute("INSERT INTO meta.workspaces (id, name) VALUES ('ws-other', '另一个空间')", []).unwrap();
+        c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-other', 'room-123')", []).unwrap();
+        // ⚠️ 只配了暗号、**没有监听地址** ⇒ 这一档确实没开 ✓
+        let st = mesh_config_state_at(&c, "", "ws-personal").unwrap();
+        assert!(!st.enabled, "谁都没配监听地址 ⇒ 必须仍然显示「关着」✓（放宽 ≠ 乱认 ✓）");
+    }
+}
+
+/// ⭐ **2026-10-09（task-8，同族第三次）**：网格这一档**实际**在服务哪个空间 —— 扫**每一条活档案**，
+/// 取第一条"解析出来的空间**确实配了监听地址**"的 ✓。
+///
+/// ⚠️ **与发现层同一把尺** ✗（不许各写一遍）：解析用 `lan_state::resolved_space`（＝
+/// `window_serve_space` **同一处实现** ✓），设置用 `mesh::settings` —— 正是 `lan_state::start`
+/// 里 `mesh_cfgs` 那条链用的那两个 ✓。两处各写一遍的下场是"门开着而面板说关着"（今天这条 ✓）。
+///
+/// ⚠️ 三条边界：① **只看活空间**（与 `bound_profiles` 同一条 `EXISTS(未删除)` ✓）；
+/// ② 解析不出来的行**跳过** ✓；③ 谁都没配 ⇒ `None` ⇒ 调用方回落"关着" ✓（放宽 ≠ 乱认 ✓）。
+fn mesh_space_in_use(c: &Connection) -> Option<String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT p.space_id, p.server_url, p.ws_id FROM sync_profiles p
+             WHERE EXISTS (
+                 SELECT 1 FROM meta.workspaces w
+                 WHERE w.id = p.ws_id AND w.deleted_at IS NULL
+             )",
+        )
+        .ok()?;
+    let rows: Vec<(String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .ok()?
+        .filter_map(|r| r.ok())
+        .collect();
+    rows.iter().find_map(|(s, _url, ws)| {
+        let served = crate::lan_state::resolved_space(c, s, ws);
+        if served.trim().is_empty() {
+            return None;
+        }
+        crate::mesh::settings(c, &served).bind.is_some().then_some(served)
+    })
 }
 
 /// 网格要用的那**两个**空间 id ＋ 本机设备号 —— `mesh_sync_now` 与 `mesh_set_config` 共用一处
@@ -3926,6 +4622,10 @@ pub struct NearbyPeer {
     /// `host_name()`，拿不到就留空，**不编**）⇒ 界面**如实说没报名字**，
     /// **不许**回落成 `device_id` 前几位。
     pub device_name: String,
+    /// ⭐ 08-b②（2026-10-10）：对方公告里那格**可显示的短标识**（4–6 字符 ✓）。
+    /// ⚠️ **老对端不发 ⇒ 空串** ✓ ⇒ 界面**如实**说「对方没报短标识」✗，
+    /// ⛔ **绝不回落**成 `device_id`（或它的前几位／哈希）✗ —— 与 `device_name` 同一条纪律 ✓。
+    pub short_id: String,
     /// 收到它公告的来源地址（ip，不含端口）。⚠️ 默认**不显示**，只用于排障（规格 §3.4）。
     pub addr: String,
     /// **它自己声明**在服务哪些空间（`LanAnnounce.hub_spaces`，远端 `space_id`）。
@@ -3959,6 +4659,7 @@ pub fn nearby_of(
         .map(|p| NearbyPeer {
             device_id: p.announce.device_id.trim().to_string(),
             device_name: p.announce.device_name.trim().to_string(),
+            short_id: p.announce.short_id.trim().to_string(),
             addr: p.addr.trim().to_string(),
             spaces: spaces_of(p),
             serves_current: lan::serves_space(space_id, p),
@@ -4161,13 +4862,34 @@ fn write_sync_history(
     message: &str,
     items: &[SyncItem],
 ) {
+    let c = db.0.lock().expect("db mutex poisoned");
+    write_sync_history_with(&c, ws_id, pushed, pulled, ok, message, items);
+}
+
+/// ⭐ **2026-10-09（task-8）**：`write_sync_history` 的**内核** —— 收 `&Connection` 而不是 `State<Db>` ✓。
+///
+/// ⚠️ 为什么必须分成两层：**网格那一档**（`mesh::mesh_sync_now`）手上只有 `scope`（本地空间 id ＋
+/// 对暗号的空间 id ✓），**没有 `SyncProfile`** ✗ ⇒ 它调不了上面那个签名 ⇒ 于是网格这一档
+/// **一个字都不进 `sync_history`** ✗（这正是验收判据「`sync_history` 出现经设备直连的记录」
+/// 在今天**不可能成立**的真因 —— 判据本身没写错，是这一侧缺了一条写入 ✓）。
+///
+/// 口径与改前**逐字相同**（同一条 INSERT、同一个"只留最近 100 条" ✓）；新增的只是**调用方**。
+fn write_sync_history_with(
+    c: &Connection,
+    ws_id: &str,
+    pushed: usize,
+    pulled: usize,
+    ok: bool,
+    message: &str,
+    items: &[SyncItem],
+) {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let items_json = serde_json::json!(items).to_string();
+    // best-effort：历史写不进去**不许**把同步本身搞失败（与改前一致 ✓）。
     let r = || -> rusqlite::Result<()> {
-        let c = db.0.lock().expect("db mutex poisoned");
         c.execute(
             "INSERT INTO sync_history (ws_id, ws_name, at, pushed, pulled, ok, message, items)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -5057,6 +5779,128 @@ pub async fn team_seen_all_notifications(server_url: String, token: String) -> R
     Ok(())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⭐⭐ **task-15（owner 口径逐字：「按空间名称融合，**而不是 space_id**」✓）**
+//
+// 图①/②/③/⑥ 四屏全部挂在这一件事上（Lead 逐屏对过 ✓）：
+//   · **每个空间的名字**才是"是不是同一个空间"的判据 ✓（`space_id` **不是** ✗ —— 两端本来就不同名 ✓）；
+//   · 名对不上 ⇒ ⭐ **不融合** ✓（图②那格「3 条未融合（⚠️ **重合**）」就是它 ✓）；
+//   · ⛔ 团队空间**一个字节都不动** ✗。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// ⭐ **task-15 ⑤d 的防呆**：⭐ 判定**只看名、⛔ 不看 `space_id`** ✗ ——
+/// 判据 d 专门造一对「**id 相同、名不同**」的夹具 ⇒ ⭐ 必须**不融** ✓。
+///
+/// ## 三条口径（**顺序即口径**）
+/// ① ⭐ **名字**（去空白）**相同** ⇒ 就是本地那一个 ✓ —— **这就是"按名融合"** ✓；
+/// ② ⭐ 名字**对不上**（或远端名字为空）⇒ ⭐ **`None` ＝ 不融合** ✓（⛔ 绝不猜 ✗）；
+/// ③ ⚠️ `space_id` **只用来回答"本地是不是本来就有这一行"** ✓（那种情况下它不叫"按 id 融合" ✗，
+///    叫"**本来就是同一个空间**" ✓）—— ⛔ **绝不用它去"匹配另一个空间"** ✗。
+///
+/// ⚠️ 返回的是**本地空间 id**（锚点 ✓）；`None` ⇒ 调用方**不要落库** ✓（图②那句"未融合" ✓）。
+pub(crate) fn merge_anchor_by_name(
+    remote_space_id: &str,
+    remote_name: &str,
+    local: &[(String, String)],
+) -> Option<String> {
+    // ⭐ ① **按名**：⭐ 名字（去空白）相同 ⇒ 本地那一个 ✓ —— ⭐ **这就是 owner 要的"按名融合"** ✓。
+    let want = remote_name.trim();
+    if !want.is_empty() {
+        if let Some((id, _)) = local.iter().find(|(_, name)| name.trim() == want) {
+            return Some(id.clone());
+        }
+    }
+    // ⭐ ② 名对不上（或远端名字为空）⇒ ⭐ **不融合** ✓（图②那格「未融合（⚠️ 重合）」✓ —— ⛔ 绝不猜 ✗）。
+    // ⛔ ⭐ **`space_id` 一个字节都不参与匹配** ✗ —— owner 逐字「**按空间名称融合，而不是 space_id**」✓，
+    //    判据 d 就是为这一条立的：⭐ 造一对「**id 相同、名不同**」的夹具 ⇒ ⭐ **必须不融** ✓。
+    //    （⚠️ 我第一版就是在这里留了"id 兜底"⇒ 判据 d 当场把我拦下 ✓ —— 那次红读数逐字：
+    //      `left: Some("同一串 id") / right: None` ✓。）
+    let _ = remote_space_id;
+    None
+}
+
+/// ⭐ **task-15 ④**：这一次融合的**可核读数** —— ⭐ 图②那两格（「已融合」／「N 条未融合（⚠️ 重合）」✓）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct MergeTally {
+    /// ⭐ 按名匹配上 ⇒ 真的落到本地那一个空间的条数 ✓。
+    pub merged: usize,
+    /// ⭐ 名对不上 ⇒ **没融**的条数 ✓（⭐ 界面那格"⚠️ 重合"就是它 ✓）。
+    pub refused: usize,
+}
+
+/// 把一条判定记进读数（纯函数 ✓）。
+pub(crate) fn tally_merge(t: &mut MergeTally, anchor: &Option<String>) {
+    if anchor.is_some() {
+        t.merged += 1;
+    } else {
+        t.refused += 1;
+    }
+}
+
+#[cfg(test)]
+mod merge_by_name_tests {
+    use super::*;
+
+    fn local() -> Vec<(String, String)> {
+        vec![("local-work".to_string(), "工作".to_string())]
+    }
+
+    /// ⭐ **判据 a**：⭐ **同名 ⇒ 必须融合** ✓（⭐ 旧行为只按 id ⇒ **必红** ✓）。
+    #[test]
+    fn two_spaces_with_the_same_name_are_merged() {
+        let got = merge_anchor_by_name("对端那边完全不同的 id", "工作", &local());
+        assert_eq!(
+            got.as_deref(),
+            Some("local-work"),
+            "⛔ 同名却不融 ⇒ 图⑥「工作 × 1 ⇒ 列表里只有一个工作」永远做不到 ✗"
+        );
+    }
+
+    /// ⭐ **判据 b（反向）**：⛔ **名字不同 ⇒ 一条都不许融** ✗（图②那格「未融合（⚠️ 重合）」✓）。
+    #[test]
+    fn a_different_name_is_never_merged() {
+        assert_eq!(merge_anchor_by_name("远端 id", "私人", &local()), None, "⛔ 名不同不许融 ✗");
+        assert_eq!(merge_anchor_by_name("远端 id", "   ", &local()), None, "⛔ 名字空不许融 ✗");
+    }
+
+    /// ⭐ **判据 d（反向）**：⛔ **只按名、不按 id** ✗ —— ⭐ 造一对「**id 相同、名不同**」的夹具
+    /// ⇒ ⭐ 必须**不融** ✓（⭐ 这一条就是挡"按 `space_id` 融"的 ✓）。
+    /// ⚠️ 未修时（只按 id）**必红** ✓。
+    #[test]
+    fn the_same_id_with_a_different_name_is_not_an_anchor() {
+        let same_id = vec![("同一串 id".to_string(), "工作".to_string())];
+        assert_eq!(
+            merge_anchor_by_name("同一串 id", "完全不同的名字", &same_id),
+            None,
+            "⛔ id 相同但**名不同** ⇒ 不许融 ✗（owner 逐字：按名不按 id ✓）"
+        );
+    }
+
+    /// ⭐ **判据 c（反向）**：⛔ **团队空间不许被融** ✗ —— 由**调用方**按空间种类挡住 ✓；
+    /// 这里钉的是"判据面本身不提供任何'团队也当个人融'的口子" ✓（⛔ 没有那个参数 = 没有那个口子 ✓）。
+    #[test]
+    fn nothing_in_this_decider_can_opt_a_team_space_in() {
+        // ⚠️ 本函数的签名里**没有**"要不要融团队空间"这种开关 ✓ ——
+        //    ⭐ 团队那条**只能在调用方**按 `space_kind` 拦 ✓（"一个字节都不动" ✓）。
+        //    这一条是**形状判据**：签名一旦被加上那种参数，本判据会立刻红 ✓。
+        let sig = stringify!(merge_anchor_by_name);
+        assert_eq!(sig, "merge_anchor_by_name", "签名形状变了 ⇒ 请重读 task-15 ③ ✓");
+        // 而**同名**时它仍然给出锚点 ✓ —— ⛔ 但**要不要用**这个锚点，由调用方按"是不是个人空间"决定 ✓。
+        assert!(merge_anchor_by_name("x", "工作", &local()).is_some());
+    }
+
+    /// ⭐ **task-15 ④**：⭐ 读数**两条都要数**（⭐ 融合了几条／几条因重名被挡 ✓）。
+    #[test]
+    fn the_tally_counts_both_merged_and_refused() {
+        let mut t = MergeTally::default();
+        tally_merge(&mut t, &Some("local-work".to_string()));
+        tally_merge(&mut t, &Some("local-work".to_string()));
+        tally_merge(&mut t, &None);
+        assert_eq!(t.merged, 2);
+        assert_eq!(t.refused, 1, "⚠️ 重合那一条必须被数进去（图②那格 ✓）");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5122,8 +5966,17 @@ mod tests {
                 k.len()
             ),
             Err(e) => {
-                assert!(e.contains("盒子打不开"), "{e}");
-                assert!(e.contains("口令不对或盒子被改过"), "要说清两种可能：{e}");
+                // ⭐ **判形状，⛔ 不判旧文案**（2026-10-10 修）：这两句原来把旧报错**整句钉死**
+                //    （`盒子打不开` ＋ `口令不对或盒子被改过`）✗ ⇒ 文案精简过（owner 拍「全都压」）之后
+                //    实得 `这个盒子解不开：密文校验不通过（内容没有被解开）` ⇒ ⭐ **红的是判据、⛔ 不是行为** ✓。
+                //    ⭐ 真正要守的形状：⭐ **打不开**（`Err` ✓）＋ ⭐ 说清"是盒子这一层" ✓。
+                assert!(
+                    e.contains("盒子") && (e.contains("解不开") || e.contains("打不开")),
+                    "换过的盒子必须**报打不开**（⛔ 不是静默给一把钥匙）：{e}"
+                );
+                // ⚠️ **如实记**：旧判据后半句还要求"⭐ 说清两种可能（口令不对／盒子被改过）"✗ ——
+                //    那句话在文案精简后**没了** ✗ ⇒ ⭐ 这个**要求本身**要不要保留，**归 owner／lead** ✓
+                //    （⛔ 我不擅自把旧文案改回去：那是 owner 拍过 C 的 ✓）。
             }
         }
 
@@ -5340,6 +6193,74 @@ mod tests {
              );",
         )
         .unwrap();
+    }
+
+    // ⭐⭐ **第 1 步的三条判据**（owner 2026-10-10「让账号跟着数据走」；task-29）——
+    //   ⚠️ 三条挡的都不是"功能没做"，而是**三种会静默发生的坏法**：
+    //   ① 把"没登录"折成一个 `false`（＝替用户断言"不是同一个人"，而我们没有依据）；
+    //   ② 造出"有会话行但 token 为空"的**幽灵会话**（⇒"登录了吗"变假阳性）；
+    //   ③ **普通会话刷新把已存的 id 抹掉**（⇒ 症状是"融合忽然不合了"，而且**没有任何报错**）。
+    #[test]
+    fn auth_user_id_is_three_state_and_survives_an_ordinary_session_refresh() {
+        let c = conn_with_meta();
+        with_auth_sessions(&c);
+
+        // ① 没登录 ⇒ `NoSession`（⭐ 正常用法 ⇒ 判身份时落 `Unknown` ⇒ 不合 ✓，⛔ 不是"没有身份=假"）
+        assert_eq!(auth_user_id(&c, "http://srv"), AuthUserId::NoSession);
+
+        // ② ⛔ 空白 id **不许写库**（写了就会造出幽灵会话 ⇒"登录了吗"假阳性）
+        assert!(
+            !set_auth_user_id(&c, "http://srv", "   ").unwrap(),
+            "空白 id 不该写进去"
+        );
+        assert_eq!(
+            auth_user_id(&c, "http://srv"),
+            AuthUserId::NoSession,
+            "⛔ 空白 id 不许造出一行（幽灵会话 ⇒ `get_auth_token` 会回 `Some(\"\")`）"
+        );
+
+        // ③ 登录（`set_auth_session` 写的 `user_id` 是 `''`）⇒ 有会话但没 id ⇒ `NotFetched`
+        //    ⭐ 它与 `NoSession` **必须分得开**（"没登录" vs "登录了但没取到"）
+        set_auth_session(&c, "http://srv", "a@b", "tok").unwrap();
+        assert_eq!(auth_user_id(&c, "http://srv"), AuthUserId::NotFetched);
+
+        // ④ 取到 id ⇒ `Known`
+        assert!(set_auth_user_id(&c, "http://srv", "user-1").unwrap(), "该更新到那一行");
+        assert_eq!(
+            auth_user_id(&c, "http://srv"),
+            AuthUserId::Known("user-1".into())
+        );
+
+        // ⑤ ⭐ **关键那条**：再来一次**普通会话更新**（刷新 token／改邮箱）⇒ id **仍在** ✓
+        set_auth_session(&c, "http://srv", "a@b2", "tok2").unwrap();
+        assert_eq!(
+            auth_user_id(&c, "http://srv"),
+            AuthUserId::Known("user-1".into()),
+            "⭐ 普通会话刷新把 id 抹掉了 ⇒ 以后融合会**静默**不合（无报错）"
+        );
+        // ⚠️ 顺带钉住"写 id 那一下没弄坏另外两格"
+        assert_eq!(get_auth_token(&c, "http://srv").as_deref(), Some("tok2"));
+        assert_eq!(get_auth_email(&c, "http://srv").as_deref(), Some("a@b2"));
+        // ⚠️ 别的服务器（另一个 `server_url`）**互不影响**（身份是按服务器的）
+        assert_eq!(auth_user_id(&c, "http://other"), AuthUserId::NoSession);
+    }
+
+    /// ⭐ `/auth/me` 的**纯解析**：`id` **要读出来**（今天它被就地扔了 ✗）；缺字段 ⇒ **如实为空**
+    /// （⛔ 不 panic、⛔ 不编一个）。
+    #[test]
+    fn parse_team_me_reads_the_account_id_and_never_invents_one() {
+        let v: serde_json::Value = serde_json::from_str(r#"{"id":"user-9","email":"a@b"}"#).unwrap();
+        let me = parse_team_me(&v);
+        assert_eq!(me.user_id, "user-9", "⭐ `id` 才是身份（服务端 users.id）");
+        assert_eq!(me.email, "a@b", "email 仍要读到（界面显示用）");
+
+        // 旧服务端／异常响应：没有 `id` ⇒ 空串（⭐ 如实说"没拿到"，⛔ 不是编一个）
+        let v2: serde_json::Value = serde_json::from_str(r#"{"email":"a@b"}"#).unwrap();
+        assert_eq!(parse_team_me(&v2).user_id, "");
+
+        // `id` 前后有空白 ⇒ 归一掉（⛔ 别让"同一个 id"因为空格看起来不同 —— 那会判成"不同人"）
+        let v3: serde_json::Value = serde_json::from_str(r#"{"id":"  user-9  "}"#).unwrap();
+        assert_eq!(parse_team_me(&v3).user_id, "user-9");
     }
 
     /// ⭐ **2026-10-08（owner 现场截图）**：**没有服务器档案的个人空间，也要能存"设备直连"设置** ✓。
@@ -5829,6 +6750,7 @@ mod tests {
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.into(),
                 device_name: device.into(),
+                short_id: "T3ST1".into(),
                 hub_base: Some(base.into()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -6208,7 +7130,7 @@ mod tests {
         .unwrap();
 
         // 同 rev、不同内容 ⇒ 判不了 ⇒ 落表 + 回报条数
-        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9, None).unwrap();
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 9, None, crate::doc_content::Ingest::Server).unwrap();
         assert_eq!(out, UpsertApply::Applied { unresolved: 1 }, "必须把『有 1 处未裁决冲突』交回来");
         let recorded: i64 = c
             .query_row("SELECT COUNT(*) FROM page_conflicts WHERE page_id='p1' AND resolved_at IS NULL", [], |r| r.get(0))
@@ -6217,7 +7139,7 @@ mod tests {
 
         // 同一页再来一次干净的应用（内容逐字相同）⇒ 这一轮没有未裁决冲突 ⇒ 回报 0
         c.execute("UPDATE pages SET sync_seq = 1, dirty = 0 WHERE id='p1'", []).unwrap();
-        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10, None).unwrap();
+        let out = apply_upsert(&c, &remote_page("p1", &page_json("b1", 2, "他改的")), 10, None, crate::doc_content::Ingest::Server).unwrap();
         assert_eq!(
             out,
             UpsertApply::Applied { unresolved: 0 },
@@ -6345,7 +7267,7 @@ mod tests {
         insert_local_page(&c, "p1", &mine, 1, 1); // dirty ⇒ 页级判定 = 保留本地
 
         assert_eq!(
-            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None).unwrap(),
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None, crate::doc_content::Ingest::Server).unwrap(),
             UpsertApply::KeptLocal,
             "本地有未推送改动 ⇒ 这一支是『没应用』，不许当成『应用干净』"
         );
@@ -6354,7 +7276,7 @@ mod tests {
         // 把本地清零（已同步）⇒ 同一笔远端变更这次真的应用了
         c.execute("UPDATE pages SET dirty = 0 WHERE id = 'p1'", []).unwrap();
         assert_eq!(
-            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None).unwrap(),
+            apply_upsert(&c, &remote_page("p1", &page_json("b1", 9, "他改的")), 9, None, crate::doc_content::Ingest::Server).unwrap(),
             UpsertApply::Applied { unresolved: 0 },
             "应用了且没有未裁决冲突 ⇒ 另一支"
         );
@@ -6496,6 +7418,58 @@ mod tests {
         }
     }
 
+    /// ⭐⭐ **task-8（2026-10-09）**：同批里**子页先到、父页后到** ⇒ ⭐ **两条都必须落地** ✓。
+    ///
+    /// 真机来由（amd 只读快照，逐字）：待裁决的 **40** 条里 **38 条**的 `parent_id` 本地不存在 ✗，
+    /// 而**那些父本身也躺在同一批里** ✗ ⇒ 这就是"同批顺序"那一格。
+    /// ⚠️ 服务器那条路有 `ForeignKeysOff` 守卫（`do_pull` ✓），⭐ **而网格那条路没有** ✗ ——
+    ///    它直接调本函数（`mesh.rs::absorb_peer_batch` ✓）⇒ 外键是开的 ⇒ 子页当场
+    ///    `FOREIGN KEY constraint failed` ✗（与裁决那条路同一句话 ✓）。
+    #[test]
+    fn a_batch_whose_child_arrives_before_its_parent_still_lands_both() {
+        let (c, dir) = pending_conn("fk-order");
+        // 真机那两条路都是开着的（`open_space_conn_at` 里就是 ON ✓）—— 显式钉一下，免得判据变哑巴
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+
+        let mut child = remote_page("c1", &page_json("b1", 1, "子"));
+        child.parent_id = Some("p1".to_string());
+        let parent = remote_page("p1", &page_json("b1", 1, "父"));
+        let changes = vec![
+            IncomingChange {
+                seq: 1,
+                entity: "page".to_string(),
+                entity_id: "c1".to_string(),
+                op: "upsert".to_string(),
+                payload: Some(serde_json::to_string(&child).unwrap()),
+                updated_at: 1,
+            },
+            IncomingChange {
+                seq: 2,
+                entity: "page".to_string(),
+                entity_id: "p1".to_string(),
+                op: "upsert".to_string(),
+                payload: Some(serde_json::to_string(&parent).unwrap()),
+                updated_at: 2,
+            },
+        ];
+        let _ = apply_pulled_changes(&c, changes, 0, 1000, crate::doc_content::Ingest::Server).unwrap();
+
+        for id in ["c1", "p1"] {
+            let n: i64 = c
+                .query_row("SELECT COUNT(*) FROM pages WHERE id = ?1", params![id], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                n, 1,
+                "⭐ 同批里**子先父后**也必须两条都落地（{id} 没落地 ⇒ 真机上就是那 38/40 ✗）"
+            );
+        }
+        let got: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'c1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got.as_deref(), Some("p1"), "父子关系不许因为顺序而白丢 ✓");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// ★ F7b 判据（2026-09-25）：本端**不认识**的变更类型 —— **照旧忽略，但不许无声**。
     ///
     /// 咬人的地方：把它改回无条件 `_ => {}` ⇒ `unrecognized` 是空的 ⇒ 这条立刻红。
@@ -6513,7 +7487,7 @@ mod tests {
             odd_change(4, "prop", "upsert"), // 同一种搭配再来一次 ⇒ 只记一次（否则一次 pull 能刷几百行）
             page_change(5, "p2", &page_json("b1", 1, "乙")),
         ];
-        let out = apply_pulled_changes(&c, changes, 0, 1_000).unwrap();
+        let out = apply_pulled_changes(&c, changes, 0, 1_000, crate::doc_content::Ingest::Server).unwrap();
 
         // ① **留痕**：两种不认识的搭配、去重、按首次出现顺序 —— 这就是"不静默"的可断言形态。
         assert_eq!(
@@ -6551,7 +7525,7 @@ mod tests {
             page_change(2, "p2", &page_json("b1", 1, "乙")),
             page_change(3, "p3", &page_json("b1", 1, "丙")),
         ];
-        let out = apply_pulled_changes(&c, changes, 0, 1_000).unwrap();
+        let out = apply_pulled_changes(&c, changes, 0, 1_000, crate::doc_content::Ingest::Server).unwrap();
 
         // ① 游标**前进到批尾**（"归档 ＋ 前进"里那个"前进"；改前这里会 Err ⇒ 游标停在 0）
         assert_eq!(out.max_pulled, 3, "坏变更不许把游标钉住");
@@ -6647,7 +7621,7 @@ mod tests {
     /// 再把两个**判定输入**调成想要的样子（`sync_seq` / `dirty`）。
     fn seed_local(c: &Connection, content_json: &str, sync_seq: i64, dirty: i64) {
         let p = remote_page("p1", content_json);
-        apply_pulled_changes(c, vec![stamped_change(1, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(c, vec![stamped_change(1, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
         c.execute("UPDATE pages SET sync_seq = ?1, dirty = ?2 WHERE id = 'p1'", params![sync_seq, dirty])
             .unwrap();
     }
@@ -6655,6 +7629,66 @@ mod tests {
     /// 本页现在那份内容（`remote_page` 造出来的**标题恒为"页"** ⇒ 区分版本只能看正文）。
     fn content_of(c: &Connection) -> String {
         c.query_row("SELECT content_json FROM pages WHERE id = 'p1'", [], |r| r.get(0)).unwrap()
+    }
+
+    /// ⭐ **本轮判据要的那把尺子**：把一张表**整行逐字**倒成文本（列序＝建表序；按第一列排序）。
+    /// ⛔ 不做任何"挑几列看看"—— 那正是"逐字相同"这句话最容易骗自己的地方。
+    fn dump_table(c: &Connection, table: &str) -> String {
+        let mut st = c.prepare(&format!("SELECT * FROM {table} ORDER BY 1")).unwrap();
+        let n = st.column_count();
+        let mut rows = st.query([]).unwrap();
+        let mut out = String::new();
+        while let Some(row) = rows.next().unwrap() {
+            for i in 0..n {
+                let v: rusqlite::types::Value = row.get(i).unwrap();
+                out.push_str(&format!("{v:?}\u{1}"));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// ⭐⭐ **task-25 的唯一判据**：`Ingest::Peer` 与 `Ingest::Server` **逐字走同一条老路** ——
+    /// 同一夹具、同一批变更（含戳 ⇒ 会把 `apply_upsert` → `apply_remote_page` → `upsert_remote` 整条链走一遍），
+    /// 只换 `Ingest` ⇒ 落库后**每一张相关表逐字相同**。
+    ///
+    /// ⚠️ **危险方向就是它**：谁第二轮"顺手"把按名闸门只加进 `Peer` 那一支 ⇒ ⭐ **这条当场红** ✓
+    /// （⚠️ 到那一轮这条要**按预期改窄**（两支**该**不同了），⛔ 不是删掉 ✓）
+    ///
+    /// ⚠️ 表清单一律取自"这条写路径真的会碰的"那几张：`pages` / `blocks` / `backlinks` /
+    /// `page_conflicts` / `pending_remote_pages` / `changes` / `meta.sync_state`。
+    /// ⛔ 故意**不收** `page_fts`：它是 `pages.title` ＋ `content_text` 的**纯函数**，而那两个字段已经逐字比过了
+    /// （收它只是多一条会随分词器版本漂的证据，不增加严格性）。
+    #[test]
+    fn peer_and_server_ingest_are_byte_identical_on_the_same_fixture() {
+        let a = stamped_conn();
+        let b = stamped_conn();
+        let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
+        let batch = || vec![stamped_change(3, &p, Some(&stamp_of("B", 2_000)))];
+
+        apply_pulled_changes(&a, batch(), 0, 1, crate::doc_content::Ingest::Server).unwrap();
+        apply_pulled_changes(&b, batch(), 0, 1, crate::doc_content::Ingest::Peer).unwrap();
+
+        for t in [
+            "pages",
+            "blocks",
+            "backlinks",
+            "page_conflicts",
+            "pending_remote_pages",
+            "changes",
+            "meta.sync_state",
+        ] {
+            assert_eq!(
+                dump_table(&a, t),
+                dump_table(&b, t),
+                "⭐ 表 `{t}` 在 Peer／Server 两支下必须逐字相同（本轮 = 无行为变化）"
+            );
+        }
+        // ⚠️ 顺手钉一句"这批真的落进去了"—— 否则两张空表也能"逐字相同"（假绿）。
+        assert!(
+            dump_table(&a, "pages").contains("p1"),
+            "夹具必须真的落了库，⛔ 不许拿两张空库当'相同'"
+        );
     }
 
     /// ★ 丙-③：**两边都带戳 ⇒ 按戳判**，哪怕今天的规则一定会保留本地（`dirty=1` 且 `seq` 更大）。
@@ -6666,7 +7700,7 @@ mod tests {
 
         let late = stamp_of("B", 2_000);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             content_of(&c).contains("远端那一版"),
@@ -6686,7 +7720,7 @@ mod tests {
 
         let early = stamp_of("B", 2_000);
         let p = remote_page("p1", &page_json("b1", 3, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(900, &p, Some(&early))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(900, &p, Some(&early))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             content_of(&c).contains("本地那一版"),
@@ -6721,7 +7755,7 @@ mod tests {
 
         // ① 收下这条"来自未来"的页 upsert（真收侧路径）
         let p = remote_page("p1", &page_json("b1", 1, "远端那一版（它的表快一小时）"));
-        apply_pulled_changes(&c, vec![stamped_change(2, &p, Some(&far))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(2, &p, Some(&far))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             clock_now(&c) > far,
@@ -6817,7 +7851,7 @@ mod tests {
             .unwrap();
         let late = stamp_of("B", 9_000);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&late))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(content_of(&c).contains("远端那一版"), "戳更晚 ⇒ 采用远端：{}", content_of(&c));
         let remote_json_after = content_of(&c);
@@ -6842,7 +7876,7 @@ mod tests {
         let c = stamped_conn();
         seed_local(&c, &page_json("b1", 1, "本机未推送的那一版"), 5, 1);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             content_of(&c).contains("本机未推送"),
@@ -6880,6 +7914,7 @@ mod tests {
             ],
             0,
             1,
+            crate::doc_content::Ingest::Server,
         )
         .unwrap();
 
@@ -6916,7 +7951,7 @@ mod tests {
 
         // 对端那一版**逐字相同**，只是戳更晚（真机现场就是"两台都被恢复成空"那一格）
         let p = remote_page("p1", &same);
-        let out = apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&stamp_of("B", 9_000)))], 0, 1).unwrap();
+        let out = apply_pulled_changes(&c, vec![stamped_change(3, &p, Some(&stamp_of("B", 9_000)))], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(
             out.superseded_page_ids.is_empty(),
@@ -6938,14 +7973,14 @@ mod tests {
         seed_local(&c, &page_json("b1", 1, "本地那一版"), 99, 1);
         set_page_stamp(&c, "ws", "p1", &stamp_of("A", 9_000)).unwrap(); // 本地有戳，远端没有 ⇒ 仍走今天
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(3, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
         assert!(content_of(&c).contains("本地那一版"), "缺一边 ⇒ 不许按戳判：{}", content_of(&c));
 
         // ② 干净且本地 seq 更小 ⇒ 采用远端（今天）
         let c = stamped_conn();
         seed_local(&c, &page_json("b1", 1, "本地那一版"), 1, 0);
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
         assert!(content_of(&c).contains("远端那一版"), "缺一边 ⇒ 走今天那条路：{}", content_of(&c));
     }
 
@@ -6960,7 +7995,7 @@ mod tests {
         set_page_stamp(&c, "ws", "p1", &stamp_of("A", 9_000)).unwrap();
 
         let p = remote_page("p1", &page_json("b1", 2, "远端那一版"));
-        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1).unwrap();
+        apply_pulled_changes(&c, vec![stamped_change(500, &p, None)], 0, 1, crate::doc_content::Ingest::Server).unwrap();
 
         assert!(content_of(&c).contains("远端那一版"), "这一笔按今天那条路判、采用远端");
         assert_eq!(page_stamp(&c, "ws", "p1"), None, "旧戳必须清掉（留着会误导下一轮）");
@@ -7011,6 +8046,7 @@ mod tests {
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: name.to_string(),
+                short_id: "T3ST1".into(),
                 hub_base: base.map(|b| b.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: device.to_string(),

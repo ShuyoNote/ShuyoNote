@@ -42,7 +42,7 @@ export default {
     appearance: "外观",
     appearanceHint: "主题与强调色",
     spaces: "空间",
-    spacesHint: "配色 / 删除 / 迁移",
+    spacesHint: "切换 / 配色 / 删除 / 迁移",
     account: "账户",
     accountHint: "登录身份与同步目标",
     email: "邮箱",

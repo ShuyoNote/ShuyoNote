@@ -17,6 +17,8 @@ mod abilities;
 mod extract_kz;
 mod backlinks;
 mod backup;
+mod backup_verify;
+pub mod auto_backup;
 mod block_rev;
 mod blocks;
 mod bookmark;
@@ -43,6 +45,10 @@ mod gm_provider;
 mod gm_patch_probe;
 mod database;
 mod db;
+// 本地英汉词典（ECDICT）：应用内划词查词第一期，**只读**两条命令。
+// ⚠️ 本模块**不碰**系统钩子/全局划词（owner 2026-10-09 拍"只做应用内划词"），
+//    数据文件不入库（65.9MB，见 `scripts/fetch-ecdict.mjs`）。
+mod dictionary;
 mod disk;
 // 「文档内容」那一层（read/write/merge/derive）：阶段 0「接口收口」的壳，**行为等价**。
 // 它存在的唯一目的：换 CRDT / 做块级 LWW 时**只改这一个文件**。
@@ -212,6 +218,65 @@ fn with_cache_headers(
     if let Ok(header_value) = value.parse() {
         response.headers_mut().insert(CACHE_CONTROL, header_value);
     }
+}
+
+/// ⭐ 2026-10-09 修复（macOS 侧）：`generate_context!` 在整个 crate 里**只能展开一次** ✗
+/// —— 每次展开都会发一份 `_EMBED_INFO_PLIST` ⇒ 两处（`run()` 与 `run_backup_once()`）
+/// 会**链接期重复定义** ✗（`cargo build` 报 `symbol _EMBED_INFO_PLIST is already defined` ✓）。
+/// ⇒ 收敛到这一个函数 ✓：调用点可以有多个，**宏展开只此一处** ✓（上下文语义不变 ✓）。
+fn app_context() -> tauri::Context {
+    tauri::generate_context!()
+}
+
+/// P3：⭐ **无头**跑一次备份 ⇒ 返回退出码（⛔ 不建窗口 ✓；⭐ 也不起周期线程 ✓）
+///
+/// ⚠️ 退出码口径（⭐ 与仓库的五档契约同向 ✓）：0 成功／1 失败／2 起不来／3 跳过（⭐ "跳过了"不是"通过" ✓）
+pub fn run_backup_once() -> i32 {
+    use auto_backup::{CliMode, RunResult};
+    if cli_mode_of_args() != CliMode::BackupOnce {
+        return 4; // ⭐ 不是无头调用 ⇒ 不该走到这里 ✓
+    }
+    let app = match tauri::Builder::default().build(app_context()) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("[auto-backup] 无头启动失败：{e}");
+            return 2;
+        }
+    };
+    // ⭐ 无头路径用的是**裸 Builder** ✗ ⇒ 它不带 `run()` 那条链（插件 ＋ `.setup()` ✓）
+    //    ⇒ ⭐ `Db` 不会有人托管 ✓ —— 这就是上一轮量到「数据库 5 秒内没就绪 ⇒ 包数 0」的根因 ✓
+    //    ⇒ ⭐ 这里**照 `setup()` 里那三步**自己来 ✓（⛔ 不多复制别的：不建窗口、不起插件 ✓）
+    {
+        use tauri::Manager;
+        let app_data_dir = match app.path().app_data_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("[auto-backup] 拿不到应用数据目录：{e}");
+                return 2;
+            }
+        };
+        let conn = match db::init(app_data_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[auto-backup] 初始化数据库失败：{e}");
+                return 2;
+            }
+        };
+        security::startup_lock(&conn);
+        app.manage(Db(Mutex::new(conn)));
+    }
+    let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(app.handle()));
+    eprintln!("[auto-backup] headless {}", r.note());
+    match r {
+        RunResult::Ok { .. } => 0,
+        RunResult::Failed { .. } => 1,
+        RunResult::Skipped { .. } => 3,
+    }
+}
+
+/// 本进程的启动模式（⭐ 收在一处 ⇒ `setup()` 与 `main.rs` 用同一口径 ✓）
+pub fn cli_mode_of_args() -> auto_backup::CliMode {
+    auto_backup::cli_mode(std::env::args().skip(1))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -432,6 +497,25 @@ pub fn run() {
             // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
 
+	// P1 自动备份：⭐ 启动时先跑一轮，然后按间隔再看
+	//（P1 逐字＝「调度器（启动触发 ＋ 每 24h）」✓）
+	// ⚠️ 间隔与轮询都可用环境变量缩短 ⇒ 本机能把 P1 的端到端判据真的跑一遍 ✓
+	//    （不设时：每 24h 才真跑一次、每 3600s 醒一次 ✓）
+	{
+	    let handle = app.handle().clone();
+	    let secs = |k: &str, d: u64| -> u64 {
+	        std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+	    };
+	    let interval = secs("SHUYONOTE_AUTO_BACKUP_INTERVAL_SECS", auto_backup::DEFAULT_INTERVAL_SECS);
+	    let tick = secs("SHUYONOTE_AUTO_BACKUP_TICK_SECS", 3600);
+	    auto_backup::spawn_loop(auto_backup::MemoryStore::default(), interval, tick, move || {
+	        let r = tauri::async_runtime::block_on(backup::run_auto_backup_once(&handle));
+	        // ⭐ 目标要求「可读读数/日志」⇒ 每轮都打一行固定形状的日志（`[auto-backup] …` ✓）
+	        eprintln!("[auto-backup] {}", r.note());
+	        r
+	    });
+	}
+
             // PDFium 动态库在**打包形态**下的所在目录。必须在这里登记：
             // Tauri 在 Linux 上 `resource_dir` ≠ 可执行文件目录（deb = `/usr/lib/<id>`、
             // AppImage = `$APPDIR/usr/lib/<id>`），而库正是被 `tauri.linux.conf.json`
@@ -520,10 +604,22 @@ pub fn run() {
             // 用户可在 设置 → 外观 关掉，前端会运行时 setDecorations(true)
             // 恢复系统标题栏——因为 Windows 上无边框要自己接管 Aero Snap
             // 与边缘 resize，万一某台机器手感不对得有退路。
+            // ⚠️⚠️ 2026-10-10（**真事故**，owner 报"标题栏一条都没有"）：这里原来是
+            // `decorations(false)` ✗，上面那段注释假定"用户可在设置里关掉自绘栏、
+            // 前端运行时 `setDecorations(true)` 恢复系统标题栏" —— ⭐ **那条恢复在真机上不成立** ✗：
+            // 无边框窗口创建之后再运行时切 `decorations`，Windows 上往往要重建窗口
+            // ⇒ 实测 `setDecorations(true)` **不报错、也不生效** ✓
+            //   （几何读数 `NC top = 7` 物理像素 ✗，而真标题栏该 ≥46 ✓）；
+            //   同时前端 `custom` 的出厂默认曾是 false ✗
+            // ⇒ **两个开关同时为假 ⇒ "一条标题栏都没有"是可达状态** ✗（owner 看到的正是它 ✓）。
+            // ⇒ 改成 `true`：**默认就有系统标题栏** ✓ ⇒ 那个可达状态**结构性消失** ✓。
+            //   自绘栏（前端 `<TitleBar />`）改为**用户显式开启** ✓ —— 那时前端调
+            //   `setDecorations(false)`，方向是"**从有到无**"✓，与上面那条不可靠的
+            //   "从无到有"**不是同一件事** ✓（owner 2026-10-10 拍 A：默认系统栏 ✓）。
             // 注意：`decorations` 是桌面概念，移动端（Android/iOS）的 builder 无此
             // 方法（窗口装饰由系统管理），故按平台条件编译——与下面 drag_and_drop 同款写法。
             #[cfg(desktop)]
-            let main_builder = main_builder.decorations(false);
+            let main_builder = main_builder.decorations(true);
             // 关键：Windows 上内置 drag-drop handler 开着时，HTML5 拖拽
             // API 不可用——data-tauri-drag-region 正是依赖它拖窗口，所以
             // 标题栏拖不动。这里关掉，让标题栏可拖；文件视图需要 OS 拖文件
@@ -821,6 +917,9 @@ pub fn run() {
             backlinks::get_backlinks,
             blocks::resolve_block,
             blocks::get_page_blocks,
+            // 08-a②（2026-10-10）：设备名的读写（落 `meta.sync_state` ✓ 免迁移 ✓）
+            lan_state::get_device_name,
+            lan_state::set_device_name,
             blocks::search_blocks,
             blocks::list_block_backlinks,
             graph::get_graph,
@@ -950,8 +1049,16 @@ pub fn run() {
   mcp_channel::mcp_set_write_grant,
   mcp_channel::mcp_set_level,
   mcp_channel::mcp_log_apply_result,
+  // 本地英汉词典（ECDICT）第一期：**只读**两条 —— 查词 ＋ 状态读数。
+  // ⚠️ 与 `check-web-commands.mjs` 的 `DESKTOP_ONLY_COMMANDS` 登记**不同**：
+  //    这里**两条平台都要**（Web 侧同一条命令面走 sql.js 直查 —— 词典数据是普通 SQLite，
+  //    浏览器里的 sql.js 完全够用，写第二份实现没有意义），所以**不登记**为桌面专属。
+  // ⚠️ 查不到时返回的是"如实未收录"的三种状态之一（见 `dictionary::LookupOutcome`），
+  //    ⛔ **不是**空串、⛔ **不是**编造的释义。
+  dictionary::dictionary_lookup,
+  dictionary::dictionary_status,
 ])
-        .run(tauri::generate_context!())
+        .run(app_context())
         .expect("error while running tauri application");
 }
 

@@ -78,8 +78,10 @@ export function NotificationCenter() {
     if (n.seen === 0) void seenOne(n.id);
     try {
       if (n.space_id && n.space_id !== activeId) {
-        const ok = await useSpaceStore.getState().switchTo(n.space_id);
-        if (ok) await useNotes.getState().loadPages();
+        // ⚠️ 2026-10-10：切完的 `loadPages()` 已**收进 `switchTo` 一处**（`store/space.ts` ✓）⇒
+        //   这里**不再自己再调一次** ✗。返回值 `ok` 在本函数里本来就没有第二个用途 ✓
+        //   （失败时 `switchTo` 内部不会去读列表 ✓ ⇒ 行为与以前一致 ✓）。
+        await useSpaceStore.getState().switchTo(n.space_id);
       }
       if (n.page_id) {
         await useNotes.getState().openPage(n.page_id);

@@ -189,7 +189,17 @@ pub fn absorb_peer_batch(c: &Connection, rows: &[MeshRow]) -> Result<Absorbed, S
             }
         })
         .collect();
-    let out = crate::sync::apply_pulled_changes(c, incoming, 0, crate::db::now_ms())?;
+    // ⭐ **设备直连（网格）** ⇒ `Ingest::Peer`（⛔ 不是服务器那条路）—— 两条路的材料在
+    //   `sync::apply_pulled_changes` 会合，所以"这一笔是从对端来的"必须由**调用方显式说**
+    //   （口径见 `doc_content::Ingest`；作用范围见
+    //   `docs/specs/2026-10-09-multidevice-merge-semantics.md` §2「作用范围」）。
+    let out = crate::sync::apply_pulled_changes(
+        c,
+        incoming,
+        0,
+        crate::db::now_ms(),
+        crate::doc_content::Ingest::Peer,
+    )?;
     let tail = rows.iter().map(|r| r.device_seq).max().unwrap_or(0);
     Ok(Absorbed {
         applied: out.count,
@@ -316,6 +326,18 @@ pub struct PeerPullReport {
     pub superseded: usize,
     /// ★★ 丙-⑤：这一轮里**等你裁决**的页数（⇒ 远端那一版进了「待取回的远端版本」）。
     pub awaiting: usize,
+    /// ⭐ **2026-10-09（task-8）**：这一轮**真的拉回来了**的那些条（逐条 `entity` / `entity_id` / `op` ✓）。
+    ///
+    /// 用途**只有一个**：`mesh_sync_now` 拿它写 `sync_history` 的「N 项明细」✓ —— 在它之前，
+    /// 网格这一档**一个字都不进历史**（`write_sync_history` 只挂在服务器那条路上 ✗）⇒
+    /// 用户在「同步历史」里**永远看不到设备直连发生过什么**，验收判据
+    /// 「`sync_history` 出现经设备直连的记录」也就**永远不可能成立** ✓。
+    ///
+    /// ⚠️ `#[serde(skip)]`：**不进 JSON** ✗ ⇒ `commands.ts` 里 `MeshRoundReport` 的契约
+    /// **一个字都不变** ✓（明细走历史那条路，界面读的是 `list_sync_history` ✓）。
+    /// 标题用 `sync::item_title`（与服务器那条路**同一个函数** ✓ —— 两处各写一遍迟早漂 ✓）。
+    #[serde(skip)]
+    pub items: Vec<crate::sync::SyncItem>,
     /// 拉不动时**如实写在这里**（`None` ＝ 这一台这一轮没问题）。
     pub error: Option<String>,
 }
@@ -354,6 +376,18 @@ pub async fn pull_and_absorb(
     };
     let rows = pull_from_peer(client, peer, space_id, since, token).await?;
     let fetched = rows.len();
+    // ⭐ 2026-10-09（task-8）：把**这一批真的换过来的条**留给 `sync_history` 的明细 ✓。
+    //    ⚠️ 与服务器那条路同一口径（`sync::item_title` ✓）、同一条 dir＝`"pull"`（网格这一轮只拉 ✓）。
+    let items: Vec<crate::sync::SyncItem> = rows
+        .iter()
+        .map(|r| crate::sync::SyncItem {
+            entity: r.entity.clone(),
+            entity_id: r.entity_id.clone(),
+            op: r.op.clone(),
+            dir: "pull".to_string(),
+            title: crate::sync::item_title(&r.entity, r.payload.as_ref()),
+        })
+        .collect();
     let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
     let ab = absorb_peer_batch(&g, &rows)?;
     if ab.tail > since {
@@ -366,6 +400,7 @@ pub async fn pull_and_absorb(
         cursor: ab.tail.max(since),
         superseded: ab.superseded,
         awaiting: ab.awaiting,
+        items,
         error: None,
     })
 }
@@ -553,6 +588,7 @@ pub async fn round_candidates(
                 // 拉不动 ⇒ 一个字节都没换过，这两项必然是 0（不是"不知道"，是"没发生"）。
                 superseded: 0,
                 awaiting: 0,
+                items: Vec::new(),
                 error: Some(e),
             }),
         }
@@ -1006,6 +1042,64 @@ pub fn local_addrs() -> Vec<IpAddr> {
         Err(_) => Vec::new(),
     }
 }
+/// ⭐ **2026-10-09 修**：枚举本机地址**并带上网卡名** —— 只多一层，判定仍是纯函数 ✓。
+///
+/// **为什么必须有它**（amd 报的真发现，逐字）：绑通配时原来是"从枚举到的候选里取**第一个**"✓，
+/// 而排序按**地址字节** ⇒ 在多网卡机器上（Windows 装 WSL / Hyper-V / Docker 就**必然多张** ✓）
+/// 会撞到**虚拟网卡** ✗ —— 现场：vEthernet (WSL) 的 172.18.224.1 排在一张真 WLAN 的
+/// 192.168.43.190 **前面**（字节序 ✓），于是报出去的是对面**永远到不了**的地址 ✓，
+/// 而症状是**静默的**（没有任何提示 ✓）。
+///
+/// ⚠️ 口径：**只看名字，不猜地址** —— 172.18.x 也可能是真内网 ✓，所以判"虚拟"只按网卡**名字** ✓。
+pub fn local_addrs_named() -> Vec<(String, IpAddr)> {
+    match if_addrs::get_if_addrs() {
+        Ok(ifs) => ifs.into_iter().map(|i| (i.name, i.addr.ip())).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// 这张网卡**名字**看起来是不是"本机内部"的虚拟网卡（WSL / Hyper-V / Docker / 环回 / 仅主机 ✓）。
+///
+/// ⚠️ **刻意只列"明显不是对端能到的"那几家** ✓：⛔ 不列 Tailscale / ZeroTier 这类 ✗
+/// （它们是**真的网络** ✓，用户可能正要用它们当对端 ✓）。
+fn is_virtual_if_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    const NEEDLES: [&str; 8] = [
+        "vethernet",      // Hyper-V / WSL 的 vEthernet
+        "hyper-v",
+        "wsl",
+        "docker",
+        "loopback",       // 环回伪网卡
+        "default switch", // Hyper-V 默认交换机
+        "virtualbox",
+        "vmware",
+    ];
+    NEEDLES.iter().any(|k| n.contains(k))
+}
+
+/// ⭐ 排序键（**一条口径** ✓）：第一档是"像不像一张对端能到的网卡" ✓，
+/// 第二档才是链路本地，第三档回到原来的**地址字节序**（确定性 ✓，判据可逐字节钉 ✓）。
+fn lan_rank_key(name: Option<&str>, ip: IpAddr) -> (u8, u8, (u8, u128)) {
+    let virt = name.map(is_virtual_if_name).unwrap_or(false);
+    (u8::from(virt), u8::from(is_link_local_addr(ip)), ip_bits(ip))
+}
+
+/// 与 announced_bases_with 同一个内核，但**带网卡名** ⇒ 能按 lan_rank_key 把虚拟网卡排到最后 ✓。
+pub fn announced_bases_with_named(addr: SocketAddr, locals: &[(String, IpAddr)]) -> Vec<String> {
+    if addr.port() == 0 {
+        return Vec::new();
+    }
+    let mut cands: Vec<(Option<&str>, IpAddr)> = if addr.ip().is_unspecified() {
+        locals.iter().map(|(n, ip)| (Some(n.as_str()), *ip)).collect()
+    } else {
+        vec![(None, addr.ip())]
+    };
+    cands.retain(|(_, ip)| matches!(ip, IpAddr::V4(_)));
+    cands.retain(|(_, ip)| !ip.is_loopback() && !ip.is_unspecified() && is_lan_only(*ip));
+    cands.sort_by_key(|(n, ip)| lan_rank_key(*n, *ip));
+    cands.dedup_by_key(|(_, ip)| *ip);
+    cands.into_iter().map(|(_, ip)| format!("http://{}", SocketAddr::new(ip, addr.port()))).collect()
+}
 
 /// ★ 丙-③-b-2b：这个**实际绑上的**窗口地址该报哪个（＝别人能不能来拉我）。
 ///
@@ -1021,7 +1115,8 @@ pub fn local_addrs() -> Vec<IpAddr> {
 /// ⚠️ **只报第一个**是今天**唯一**能做的形态：一次报**多个** `hub_base` 要动 `LanAnnounce`
 /// （`lan.rs` 的线上字段）—— 那条路不在本任务写域里，属显式决定（见报告 §拿不准）。
 pub fn announced_base(addr: SocketAddr) -> Option<String> {
-    announced_bases_with(addr, &local_addrs()).into_iter().next()
+    // ⭐ 2026-10-09：走**带网卡名**的那条 ⇒ 虚拟网卡不再抢到第一个 ✓（原来按字节序，172.18.* 会赢 ✓）。
+    announced_bases_with_named(addr, &local_addrs_named()).into_iter().next()
 }
 
 // ─────────────────────────── 供的那一侧（最小 HTTP/1.1，不引依赖） ───────────────────────────
@@ -1812,6 +1907,167 @@ pub async fn request_attachment_from_peer(
     req.send().await.map_err(|e| format!("问对端 {} 失败：{e}", peer.device_id))
 }
 
+/// ⭐⭐ **2026-10-09（task-8「设备直连」）**：**公告报的空间 == 窗口服务的空间**。
+///
+/// ## 这一条挡的是哪一次事故（真机读数，逐字）
+///
+/// 两台真机都在同一热点、`8788` 在听、`UDP 47821` 在听、双向包都通、配对表两边各一行、
+/// `secret_sha256` 前 8 位都是 `e304c53b` —— 而 **`sync_history` 一条"经设备直连"的记录都没有**
+/// （`pushed/pulled/items` 全 0），面板「附近的设备」**为空**。⇒ **网格那条路从未发起。**
+///
+/// 真因是**两把尺不同名**：
+/// · **窗口服务 / 网格匹配**用的是**解析后**的空间 —— 个人空间（`sync_profiles.space_id` 是空串）
+///   解析成用户填的「配对暗号」（`lan_state::window_serve_space` ✓，`dde69cbe` 修的就是这一半 ✓）；
+/// · 而**公告产出**那一半仍拿 `bound_profiles()` 给的**原始 `space_id`**（＝空串 ✗）去和
+///   `mesh_bases` 比 ⇒ `find` 永远 miss ✗；`is_fully_bound("", url)` 也永远 false ✗
+///   ⇒ 那条 `continue` 把**每一行档案**都跳过 ⇒ **0 条公告** ✗。
+///
+/// ⇒ 两台设备在网段里**互相看不见**（对端表恒空）⇒ `mesh_peers` 恒空 ⇒ `round` 永远走
+/// 「网段里没有能直接拉的对端」那一支 ⇒ **一次交换都没发生过**。
+///
+/// ## 形状**逐字**取自产品路径，不是构造出来的
+/// · `profiles` ＝ `lan_state::bound_profiles()` 的返回（**原始** `p.space_id` ✓）；
+/// · `mesh_bases` ＝ `lan_state::start()` 里那一份（键是 `window_serve_space()` 解析出来的 ✓）。
+/// 判据红 ＝ 产品路径就会那样坏 ✓（红读数见任务报告）。
+#[cfg(test)]
+mod direct_sync_tests {
+    use super::*;
+
+    /// 与 `lan_state::mesh_serve_space_tests::fixture` 同一形状（那几张表够 `mesh_scope_at` 读）。
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-personal', '测试');
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-win');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// 个人空间：`space_id` 空 ＋ 用户填了配对暗号（**真库那几行的形状** `123456789Ok,./` 同族 ✓）。
+    fn personal_space_with_room() -> Connection {
+        let c = fixture();
+        c.execute(
+            "INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', 'room-123')",
+            [],
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ 本判据（产出侧）：开了网格的个人空间**必须**发一条公告，而且**公告报的空间
+    /// 就是窗口/网格匹配的那个空间**（＝配对暗号 ✓）。
+    ///
+    /// ⚠️ 调的是**产品路径的唯一入口** `lan_state::announces_for_this_round` ✓ —— 不是把两半各测一遍。
+    /// 这正是这条 bug 活下来的原因：两半各自绿、**接起来对不上**没人管 ✗。
+    ///
+    /// ⚠️ 未修时 `got.len() == 0` ✗ ⇒ **必红** ✓（这正是"网段里一个包都不喊"那一格）。
+    #[test]
+    fn a_personal_spaces_announce_carries_the_served_space() {
+        let c = personal_space_with_room();
+        // ① 与 `bound_profiles()` 同一形状：**原始** `space_id`（个人空间＝空串 ✓）。
+        let profiles = vec![("".to_string(), "".to_string(), "ws-personal".to_string())];
+        // ② 与 `start()` 同一形状：`mesh_bases` 的键是**解析后**的空间 ✓。
+        let served = crate::lan_state::window_serve_space(&c, "", "ws-personal");
+        assert_eq!(served, "room-123", "前提：个人空间的服务空间就是配对暗号 ✓");
+        let bases = vec![(served.clone(), "http://192.168.43.206:8788".to_string())];
+
+        let got = crate::lan_state::announces_for_this_round(&c, "dev-win", "WIN", &profiles, &bases);
+        assert_eq!(
+            got.len(),
+            1,
+            "开了网格的个人空间**必须发一条公告** ✗ —— 0 条 ⇒ 同一热点里的对端**永远看不见它** \
+             ⇒ 对端表恒空 ⇒ 网格一轮都跑不起来（真机读数：面板「附近的设备」为空 ＋ sync_history 零条设备直连）"
+        );
+        assert_eq!(
+            got[0].hub_spaces,
+            vec!["room-123".to_string()],
+            "公告报的空间必须是**窗口服务的那个**（报空串 ⇒ `lan::serves_space` 永远匹配不上 ✗）"
+        );
+        assert_eq!(
+            got[0].hub_base.as_deref(),
+            Some("http://192.168.43.206:8788"),
+            "而且基址必须是我自己的窗口（丙-③-b-2b 的那一格 ✓）"
+        );
+    }
+
+    /// ⭐⭐ **往返性质**（本判据最承重的一条）：**我产出的公告，对端一定能把我挑进候选**。
+    ///
+    /// 它把两台真机上那两半接起来：`announces_for_with_mesh`（乙的产出 ✓）⇒ 原样喂给
+    /// `mesh_peers`（甲的挑选 ✓）⇒ **必须恰好一条** ✓。
+    /// ⚠️ 这比"各自单测绿"强：两半各自自洽、**接起来对不上**正是今天这台机器上的形状
+    ///（`dde69cbe` 只修了挑人那一半 ⇒ 每一片单测照绿，而真机上一个包都不发 ✓）。
+    #[test]
+    fn a_personal_space_peer_survives_the_round_trip_into_the_round_candidates() {
+        let c = personal_space_with_room();
+        let room = crate::lan_state::window_serve_space(&c, "", "ws-personal");
+        // 乙那台：个人空间 ＋ 同一个暗号 ＋ 窗口绑在它的真 WLAN 地址上。
+        let profiles_b = vec![("".to_string(), "".to_string(), "ws-personal".to_string())];
+        let bases_b = vec![(room.clone(), "http://192.168.43.190:8788".to_string())];
+        let announced =
+            crate::lan_state::announces_for_this_round(&c, "dev-amd", "AMD", &profiles_b, &bases_b);
+        assert_eq!(announced.len(), 1, "乙必须先真的喊出去（上一条判据管这一格）");
+
+        // 甲那台：收到的就是乙那一条原样（发现层 decode 之后 `Peer` 就是这个形状 ✓）。
+        let peers = vec![crate::lan::Peer {
+            announce: announced[0].clone(),
+            addr: "192.168.43.190".to_string(),
+            seen_at_ms: 1_000,
+        }];
+        let got = mesh_peers(&room, "dev-win", &peers);
+        assert_eq!(
+            got.len(),
+            1,
+            "同一暗号、同网段的乙**必须**进甲的候选（否则甲一轮都不会去拉它 ✗）：{got:#?}"
+        );
+        assert_eq!(got[0].device_id, "dev-amd");
+        assert_eq!(got[0].base, "http://192.168.43.190:8788");
+    }
+
+    /// ⭐ **反向（放宽 ≠ 乱认）**：**没填暗号**的个人空间 ⇒ 解析不出来 ⇒ `window_serve_space`
+    /// 保持旧口径回落成 `''` ⇒ **仍然一条公告都不发** ✓。
+    /// ⚠️ 这条挡的是"为了修 A 把 B 放掉"：把回落口径改成"随便给个空间"就能让上一条绿，
+    /// 而那样会让**没配过的**空间在网段里发声 ✗。
+    #[test]
+    fn a_personal_space_without_a_room_still_says_nothing() {
+        let c = fixture();
+        c.execute("INSERT INTO meta.sync_profiles (ws_id, mesh_room) VALUES ('ws-personal', '')", []).unwrap();
+        let profiles = vec![("".to_string(), "".to_string(), "ws-personal".to_string())];
+        let got = crate::lan_state::announces_for_this_round(&c, "dev-win", "WIN", &profiles, &[]);
+        assert!(got.is_empty(), "没暗号 ⇒ 保持旧口径不发言（⛔ 不许凭空报一个空间出来 ✗）：{got:#?}");
+    }
+
+    /// ⭐ **接线判据**：公告那一行必须走**唯一入口** ✓，⛔ 不许退回"把原始 `profiles` 直接喂给
+    /// `announces_for_with_mesh`" ✗ —— 那正是今天这条断点的形状，而它**编译得过、单测照绿** ✓
+    /// （与 `lan_state::tests::the_announce_loop_recomputes_targets_from_the_live_peer_table` 同一种判据 ✓，
+    /// 也正是本笔能成立的前提：判据够得着那一行 ✓）。
+    #[test]
+    fn the_announce_loop_goes_through_the_resolving_entry_point() {
+        let code = include_str!("lan_state.rs")
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code.contains("announces_for_this_round(&c, &device_id, &device_name, &profiles, &mesh_bases)"),
+            "公告那一行没有走 `announces_for_this_round` ⇒ 个人空间又会一条都发不出去（静默、单测照绿）"
+        );
+        // ⚠️ 这个"不许出现"的模式**必须拼出来**：`include_str!` 把**本判据自己**也读进去了
+        //    （写成字面量就会自己命中自己 —— 与 `lan_state` 那条判据同一个坑 ✓）。
+        let forbidden = format!("announces_for_with_mesh(&device_id, &device_name, &{}", "profiles");
+        assert!(!code.contains(&forbidden), "公告那一行退回了**原始** `profiles`（个人空间＝空串 ⇒ 0 条公告 ✗）");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1879,7 +2135,7 @@ mod tests {
     /// 免得判据手写 `INSERT` 去猜 `pages` 的 NOT NULL 列。它会把 `dirty` 写 0 ——
     /// **本判据不依赖 `dirty`**（网格里两边都带戳 ⇒ 页级按戳判），所以不碍事。
     fn local_edit(c: &Connection, pg: &PageDetail) {
-        crate::doc_content::upsert_remote(c, pg, 0).unwrap();
+        crate::doc_content::upsert_remote(c, pg, 0, crate::doc_content::Ingest::Peer).unwrap();
         crate::sync::record_page_upsert(c, pg).unwrap();
     }
 
@@ -1908,6 +2164,7 @@ mod tests {
                 v: 1,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
+                short_id: String::new(),
                 hub_base: base.map(str::to_string),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
@@ -1961,6 +2218,7 @@ mod tests {
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: String::new(),
+                short_id: String::new(),
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: device.to_string(),
@@ -2485,6 +2743,7 @@ mod tests {
             cursor: 3,
             superseded,
             awaiting,
+            items: Vec::new(),
             error: None,
         };
         assert_eq!(round_note(&[ok(0, 0)]), "网格：拉了 1 台对端", "老那一句**逐字不变**");
@@ -2795,6 +3054,53 @@ mod tests {
         assert!(announced_bases_with(wild, &["fc00::1".parse().unwrap()]).is_empty());
         // 具体绑在 IPv6 上 ⇒ 也不再宣告（**行为变更**：今天它会报一个对方必然跳过的地址）
         assert!(announced_bases_with("[fc00::1]:8788".parse().unwrap(), &locals).is_empty());
+    }
+
+    /// ⭐ **2026-10-09 修（amd 报的真发现）**：多网卡机器上，绑通配报出去的必须是**真网卡**，
+    /// ⛔ 不是 WSL/Hyper-V 的虚拟网卡 ✗ —— 现场是"报出去的是 172.18.224.1（vEthernet (WSL)），
+    /// 而真地址是 192.168.43.190（WLAN）"✓ ⇒ 对面拿虚拟地址来连**永远连不上**，且**没有任何提示** ✓。
+    ///
+    /// **变异**：把 lan_rank_key 里第一档 u8::from(virt) 去掉（或恒为 0）⇒ ⭐ 本判据**必须红** ✓
+    /// （那时 172.18.224.1 会因字节序小于 192.168.43.190 而重新夺回第一位 ✓）。
+    #[test]
+    fn a_wildcard_bind_prefers_a_real_adapter_over_virtual_ones() {
+        let wild: SocketAddr = "0.0.0.0:8788".parse().unwrap();
+        // amd 那台的真实读数（逐字）：6 个 IPv4，两张虚拟 ＋ 一张真 WLAN ＋ 三张没连上的链路本地
+        let named: Vec<(String, IpAddr)> = [
+            ("vEthernet (Default Switch)", "172.31.32.1"),
+            ("vEthernet (WSL (Hyper-V firewall))", "172.18.224.1"),
+            ("WLAN 6", "192.168.43.190"),
+            ("以太网 2", "169.254.10.5"),
+            ("以太网 3", "169.254.20.6"),
+            ("以太网 4", "169.254.30.7"),
+        ]
+        .iter()
+        .map(|(n, ip)| (n.to_string(), ip.parse().unwrap()))
+        .collect();
+        let got = announced_bases_with_named(wild, &named);
+        // ⭐ 第一位必须是真 WLAN ✓（这就是产品路径 announced_base 取的那个 ✓）
+        assert_eq!(
+            got.first().map(String::as_str),
+            Some("http://192.168.43.190:8788"),
+            "绑通配时第一位必须是真网卡，⛔ 不是虚拟网卡：{got:?}"
+        );
+        // ⭐ 顺序（**实测出来的**，我第一次写反了 ✗）：真网卡 → **链路本地** → 虚拟。
+        //    原因：排序键**第一档**是"像不像虚拟网卡" ✓（链路本地那张网卡名是真网卡 ⇒ 第一档 0 ✓），
+        //    **第二档**才是链路本地 ⇒ 于是"非虚拟的链路本地"排在"虚拟的真地址"之前 ✓。
+        //    ⚠️ 产品目标只看**第一位**（`announced_base` 取 `.next()` ✓）⇒ 这个先后不影响结论 ✓，
+        //    但判据要钉**本函数真实的序** ✓，不能钉我以为的序 ✗。
+        let pos = |s: &str| got.iter().position(|g| g == s).unwrap_or(usize::MAX);
+        assert!(pos("http://192.168.43.190:8788") < pos("http://169.254.10.5:8788"), "{got:?}");
+        assert!(pos("http://169.254.10.5:8788") < pos("http://172.18.224.1:8788"), "{got:?}");
+        // ⚠️ 虚拟网卡**仍然报**（不排除 ✓）—— 只是**不许抢第一** ✓
+        assert_eq!(got.len(), 6, "六张都要在（顺序变、集合不变）：{got:?}");
+        assert_eq!(got, announced_bases_with_named(wild, &named));
+        // 具体绑虚拟网卡 ⇒ **仍然只报它自己**（用户显式选的，不许替他改 ✓）
+        let concrete: SocketAddr = "172.18.224.1:8788".parse().unwrap();
+        assert_eq!(
+            announced_bases_with_named(concrete, &named),
+            vec!["http://172.18.224.1:8788".to_string()]
+        );
     }
 
     /// ⭐ **判据⑤：绑了通配也真的"拉得通"** —— 这就是"用户不填 IP"那一档的端到端形状。

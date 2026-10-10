@@ -38,6 +38,7 @@ import { BookmarkPastePlugin } from "./plugins/BookmarkPastePlugin";
 import { SearchHighlightPlugin } from "./plugins/SearchHighlightPlugin";
 import { FindPlugin } from "./plugins/FindPlugin";
 import { SelectionToolbarPlugin } from "./plugins/SelectionToolbarPlugin";
+import { DictionaryLookupPlugin } from "./plugins/DictionaryLookupPlugin";
 import { LinkPopoverPlugin } from "./plugins/LinkPopoverPlugin";
 import { TableMenuPlugin } from "./plugins/TableMenuPlugin";
 import { TableResizerPlugin } from "./plugins/TableResizerPlugin";
@@ -729,6 +730,7 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         {searchQuery && <SearchHighlightPlugin query={searchQuery} />}
         <FindPlugin />
         <SelectionToolbarPlugin />
+        <DictionaryLookupPlugin />
         <LinkPopoverPlugin />
         <TableMenuPlugin />
         <TableResizerPlugin />

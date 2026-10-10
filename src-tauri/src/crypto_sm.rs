@@ -128,7 +128,7 @@ pub fn decrypt(blob: &[u8], enc_key: &[u8; 32], mac_key: &[u8; 32]) -> Result<Ve
     let mut m = HmacSm3::new_from_slice(mac_key).map_err(|e| format!("HMAC-SM3 初始化失败: {e}"))?;
     m.update(body);
     m.verify_slice(tag).map_err(|_| {
-        "SM4 密文完整性校验失败（HMAC-SM3 不匹配）—— 已按 EtM 拒绝，未做任何解密".to_string()
+        "密文校验不通过（内容没有被解开）".to_string()
     })?;
     let iv = &body[HEADER_LEN..HEADER_LEN + SM_IV_LEN];
     let ct = &body[HEADER_LEN + SM_IV_LEN..];
@@ -202,7 +202,20 @@ mod tests {
             let mut bad = base.clone();
             bad[idx] ^= 0x01;
             let err = decrypt(&bad, &enc, &mac).unwrap_err();
-            assert!(err.contains("完整性校验失败"), "{what} 被改后竟然不是完整性失败：{err}");
+            // ⭐ **判形状，⛔ 不判旧文案**（2026-10-10 修）：这句报错被 owner 拍过「全都压」精简过 ——
+            //    旧：`SM4 密文完整性校验失败（HMAC-SM3 不匹配）—— 已按 EtM 拒绝，未做任何解密`
+            //    新：`密文校验不通过（内容没有被解开）` ✓
+            //    ⇒ ⭐ 旧判据钉的是**文案** ✗ ⇒ 文案一改它就红 ✗（**红的是判据，⛔ 不是行为** ✓）。
+            //    ⚠️ 它**真正要守的形状**：⭐ 篡改**必须先被拒**（⛔ 不是解开之后再报错 ✗）＋ ⭐ **什么都没解开** ✓
+            //    ⇒ 断言"这是**校验类**拒绝"＋"说清了没解开"✓，⛔ 不钉整句 ✓（两种措辞都过 ✓）。
+            assert!(
+                err.contains("校验"),
+                "{what} 被改后竟然不是**校验类**拒绝（⭐ 篡改必须先被拒，⛔ 不是解开后再报错）：{err}"
+            );
+            assert!(
+                err.contains("没有被解开") || err.contains("未做任何解密"),
+                "{what} 被改后没把「⭐ 什么都没解开」说清：{err}"
+            );
         }
         // tag 自己也被保护：改 tag 同样必须先失败。
         let mut bad_tag = base.clone();

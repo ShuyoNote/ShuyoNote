@@ -227,6 +227,9 @@ export interface NearbyPeer {
   device_id: string;
   /** 可能是空串（那台设备没报名字）⇒ 界面**如实说**，不许回落成 id 前几位。 */
   device_name: string;
+  /** ⭐ 08-b②：对方公告里的**可显示短标识**（4–6 字符）。老对端不发 ⇒ 空串 ⇒
+   *  界面**如实**说「对方没报短标识」（用 `src/lib/peerIdentity.ts` ✓），⛔ 不许回落成 id ✗。 */
+  short_id: string;
   /** 收到它公告的来源地址（ip）。⚠️ 默认**不显示**（规格 §3.4：只用于排障）。 */
   addr: string;
   /** 它**自己声明**在服务哪些空间（远端 `space_id`）。界面不许自己算交集。 */
@@ -516,6 +519,55 @@ export interface PairingImportOutcome {
   /** `already_local` 时：覆盖之后会**失去**的空间（覆盖后那台设备再也开不开它自己的库）。 */
   would_lose: string[];
   /** 一句**人话**（界面原样显示）。 */
+  message: string;
+}
+
+/** 一条 ECDICT 词条（只带界面要用的列；上游还有 bnc/frq/collins，本期不消费）。 */
+export interface DictionaryEntry {
+  word: string;
+  phonetic: string;
+  translation: string;
+  definition: string;
+  pos: string;
+  tag: string;
+  exchange: string;
+}
+
+/**
+ * 查不到的**类别**。
+ *
+ * ⚠️ 存在的理由与 Rust 侧 `dictionary::MissKind` 同一条：界面文案要**如实**
+ * （"没选中"／"中文词条英汉词典结构上没有"／"英文词但未收录"／"选太长了"是四件不同的事）。
+ * 用一个 `null` 表达不了，于是界面只能含糊其辞 —— 那正是"不许静默空白"要挡的。
+ */
+export type DictionaryMissKind = "empty" | "not_english" | "not_found" | "too_long";
+
+/**
+ * 一次划词查询的结果。**三种状态互斥**（`status` 是判别键），**没有"空结果"这第四态**。
+ *
+ * ⚠️ `unavailable`（没装词典）与 `not_found`（装了但没这个词）**必须分开**：
+ * 混在一起会让用户以为"查过了、没这个词"，而事实是"根本没查"。
+ */
+export type DictionaryLookupOutcome =
+  | { status: "found"; query: string; matched: string; entry: DictionaryEntry }
+  | { status: "not_found"; query: string; kind: DictionaryMissKind; message: string }
+  | { status: "unavailable"; message: string };
+
+/** 词典状态读数（界面据此决定显不显示"本地词典"那一档；`entries: null` = 读不出来，不猜）。 */
+export interface DictionaryStatus {
+  available: boolean;
+  path: string | null;
+  bytes: number | null;
+  entries: number | null;
+  source: string | null;
+  /**
+   * ⭐ 完整性：`true` = 字节数与 sha256 都过了；`false` = 没过（半包/指纹不符）；
+   * `null` = 没有文件可核。
+   *
+   * ⚠️ `available: false` 时它才可能是 `false` —— 界面必须把"没装"与"装了但坏了"分开说
+   * （两句话不同），⛔ 两者都不许说成"就绪"。
+   */
+  verified: boolean | null;
   message: string;
 }
 
@@ -1222,6 +1274,10 @@ export interface CommandMap {
   list_versions: { args: { pageId: string }; result: PageVersion[] };
   restore_version: { args: { versionId: string }; result: PageDetail };
   clear_page_versions: { args: { pageId: string }; result: number };
+  // 08-a②（2026-10-10）：本机名的读写。`null` ＝ **没设过**（界面显示"用主机名"✓，⛔ 不编假名 ✗）；
+  // `set_device_name` 传空白 ⇒ **清掉设置** ✓，返回**回落到的主机名/默认名** ✓。
+  get_device_name: { args: undefined; result: string | null };
+  set_device_name: { args: { name: string }; result: string };
   // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
   // 否则用户会把"少数据的备份"当成完整备份。
   export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
@@ -1332,4 +1388,14 @@ export interface CommandMap {
   convert_legacy_office: { args: { data: number[]; to: string }; result: number[] };
   list_attachment_hashes: { args: undefined; result: string[] };
   render_pdf_page: { args: { args: { attachment_id: string; page_index: number; scale: number } }; result: unknown };
+
+  // ---- 本地英汉词典（ECDICT）· 应用内划词查词第一期（2026-10-09） ----
+  // ⚠️ 只**只读**两条。查不到时返回的是"如实未收录"的三种状态之一
+  //    （见 `DictionaryLookupOutcome`），⛔ 不是空串、⛔ 不是编造的释义 ——
+  //    这是评估文档 §3-③/§3-④ 的口径：中文术语（"方法论"/"核聚变"）本地词典**一定**查不到，
+  //    界面必须**明说**"未收录／走 AI"。
+  // ⚠️ 词典数据（65.9MB）**不入库**，取法见 `scripts/fetch-ecdict.mjs`；
+  //    数据没就位时 `dictionary_status.available` 为 false ⇒ 界面说"未安装"，不假装查过。
+  dictionary_lookup: { args: { word: string }; result: DictionaryLookupOutcome };
+  dictionary_status: { args: undefined; result: DictionaryStatus };
 }

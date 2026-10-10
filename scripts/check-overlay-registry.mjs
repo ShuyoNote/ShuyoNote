@@ -207,6 +207,7 @@ const EXEMPT_COMPONENTS = new Map([
   ["src/editor/plugins/BlockInsertPlugin.tsx", { kind: "inline", reason: "编辑器内联浮层（块插入菜单），由编辑器插件自己的 state 管，随编辑器卸载" }],
   ["src/editor/plugins/BlockSelectorPlugin.tsx", { kind: "inline", reason: "编辑器内联浮层（块选择器），同上" }],
   ["src/editor/plugins/LinkPopoverPlugin.tsx", { kind: "inline", reason: "编辑器内联浮层（链接编辑气泡），同上" }],
+  ["src/editor/plugins/DictionaryLookupPlugin.tsx", { kind: "inline", reason: "编辑器内联浮层（划词释义卡 `.dict-popover`）：由 Lexical 插件自己的 state 管、随编辑器卸载，Esc/点浮层外面自己关 ⇒ 不接管安卓返回键" }],
   // ── 不是"可关闭浮层" ──────────────────────────────────────────────────────
   ["src/components/SpaceTransferProgress.tsx", { kind: "not-a-layer", reason: "全局导出/导入进度条：没有关闭动作（不吃点击、不吃 Esc）" }],
   // ── ⚠️ `gap` 级别的"同类缺口"目前**已经清零**（2026-09-15 第二轮） ─────────────

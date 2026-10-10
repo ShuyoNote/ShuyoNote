@@ -18,11 +18,30 @@ use tauri::Manager;
 /// 单包上限 256 MB ✓（按需下载的都是引擎/模型，超过这个尺寸就不该走这条路 ✓）。
 const MAX_PACK_BYTES: usize = 256 * 1024 * 1024;
 
+/// 本地英汉词库（ECDICT）的 pack id —— ⭐ **与 `src/components/AbilitiesPane.tsx` 清单里那条逐字一致**
+/// （`abilities.rs:21` 的"同源"要求；改一处必须改另一处）。
+pub(crate) const ECDICT_PACK_ID: &str = "ecdict-en-zh";
+
+/// 词库 pack 的**字节数**（产物实测）。
+///
+/// ⚠️ 它存在的理由：能力包链在落盘前已核过 sha256 ✓，但落盘是**一次 90MB 级的写**
+/// ⇒ 进程中途死掉会留下截断文件。`dictionary.rs::pack_check` 用这个常数做**便宜的第一道**判据
+/// （长度对不上 ⇒ 立刻不算就绪），再用 sha256 做第二道（每进程一次）。
+///
+/// 实测（2026-10-09，`scripts/fetch-ecdict.mjs`）：770,611 条词条 / 89,735,168 字节。
+pub(crate) const ECDICT_PACK_BYTES: u64 = 89_735_168;
+
 /// 白名单 ＋ 钉住的 sha256 ✓（与 `src/components/AbilitiesPane.tsx` 里那份清单**同源** ✓；
 /// ⚠️ 将来清单搬进 `src/lib/abilities/manifest.json` 时，这里必须跟着一起搬 ✓）。
-fn expected_sha256(pack_id: &str) -> Option<&'static str> {
+pub(crate) fn expected_sha256(pack_id: &str) -> Option<&'static str> {
     match pack_id {
         "pdf-engine-win-x64" => Some("808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac"),
+        // 本地英汉词库（ECDICT，2026-10-09）：**数据不入库**，pack 由 `scripts/fetch-ecdict.mjs`
+        // 产出（钉上游 commit/blob sha ＋ 报产物 sha256）⇒ 这里的哈希是**产物实测值**：
+        //   `node scripts/fetch-ecdict.mjs` ⇒ pack sha256（同一份也写在 AbilitiesPane 清单里）。
+        x if x == ECDICT_PACK_ID => {
+            Some("5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31")
+        }
         // ⚠️ 还没上架的（版面分析/VLM/向量/转写）**故意不在白名单里** ✓ ⇒ 传了也拒收 ✓
         _ => None,
     }
@@ -173,6 +192,17 @@ mod tests {
     #[test]
     fn whitelist_only_allows_the_packs_we_shipped() {
         assert!(expected_sha256("pdf-engine-win-x64").is_some());
+        assert!(expected_sha256(ECDICT_PACK_ID).is_some(), "词库 pack 应在白名单里");
+        // ⚠️ 钉的哈希必须是**真的 64 位十六进制** —— 这个位置最容易留下的坏值不是"没有条目"，
+        //    而是"占了位、值是空的/占位的"：那样 `verify_pack` 会把它当成"永远对不上"，
+        //    表现是"能力页永远装不上"（而不是报错）。判据 machine-check 一次。
+        let sha = expected_sha256(ECDICT_PACK_ID).unwrap();
+        assert_eq!(sha.len(), 64, "词库 pin 应当是 64 位十六进制，实际 {sha:?}");
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+            "词库 pin 应当是小写十六进制，实际 {sha:?}"
+        );
+        assert!(ECDICT_PACK_BYTES > 0, "词库 pack 的字节数必须是真的读数（半包判据要用它）");
         // 还没上架的四个 ⇒ 一律拒收 ✓
         for id in ["layout", "vlm-ocr", "embeddings", "transcription"] {
             assert!(expected_sha256(id).is_none(), "{id} 不该在白名单里");

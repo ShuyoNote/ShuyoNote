@@ -6,6 +6,7 @@ import { useViewStore } from "../store/view";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
+import { OfficeImportPanel } from "./OfficeImportPanel";
 import {
   SparkleIcon,
   TemplateIcon,
@@ -69,6 +70,7 @@ export function NewPageGuide() {
   }, [dismissed]);
 
   const importMarkdown = () => setImporting(true);
+  const [officeImporting, setOfficeImporting] = useState(false);
 
   const views = [
     { key: "table", name: "表格", Icon: TableIcon },
@@ -114,6 +116,7 @@ export function NewPageGuide() {
             <button className="npg-act" onClick={importMarkdown}>
               <DownloadIcon className="npg-act-icon" /> 从导入文件创建...
             </button>
+            <button className="npg-act" onClick={() => setOfficeImporting(true)}>导入 Office 文档（docx）</button>
           </div>
           <div className="new-page-guide-db">
             <div className="npg-db-title">创建为数据表格</div>
@@ -134,6 +137,7 @@ export function NewPageGuide() {
         </div>
       )}
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
+      {officeImporting && <OfficeImportPanel parentId={null} />}
       </>
   );
 }

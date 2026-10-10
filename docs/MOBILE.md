@@ -32,7 +32,7 @@ IndexedDB）。2026-09-13 明确改为**安卓/iOS 走 Tauri 原生壳**，理�
 | 平台 | 路线 | 状态 |
 |---|---|---|
 | **Android** | **Tauri 原生壳** | 已能构建出**已签名**的 APK——自检包（`.github/workflows/android.yml`）与对外发版件（`.github/workflows/release.yml`）都用正式密钥签名并硬比对指纹；发版件见 [RELEASING.md](RELEASING.md) §⑨ |
-| **iOS** | **Tauri 原生壳** | 未开始；**环境结论见 §5**（那台 Mac 上 Tauri iOS 全链路不可行，需先解决工具链） |
+| **iOS** | **Tauri 原生壳** | ✅ **已出包、已装上真机、能启动**（2026-10-10）；⛔ **但界面画不出来**：模拟器补完 Scene Manifest 后进程活着而**画面全黑** ✗、真机装/启动都成功而**白屏** ✗ —— 完整读数见下面的「iOS 现状」一节 |
 | **鸿蒙** | **WebView 壳（ArkWeb）** | Tauri 不可达 → 保留本文档原有的壳路线；见 [鸿蒙桌面版计划](鸿蒙桌面版计划.md) 与 [鸿蒙 Web 天花板](harmony-web-ceiling.md) |
 | **浏览器** | Web 平台（PWA） | ✅ M16.1b 已落地，是首个 Web 壳 |
 
@@ -1532,13 +1532,72 @@ z-index + localStorage）：侧栏默认收起、竖条浮层化且主区拿到�
 - **WebView 壳（鸿蒙）**：每个壳在真实设备上验「打开外链走系统、附件可读、
   编辑/数据库/检索正常」，并跑 `scripts/smoke-web.mjs` 回归。
 
-## iOS 现状（2026-10-09 实测，macOS 侧）
+## iOS 现状（2026-10-09 实测 ＋ **2026-10-10 更新**，macOS 侧）
+
+> 🔄 **2026-10-10**：下面这张表里**「现有产物」与「⛔ 新构建」两行已过期** ✗ —— **今天出包成功了** ✓
+> （依据：台账 R182 逐字「`pnpm tauri ios build` ⇒ 退出码 **0** ／ `BUILD SUCCEEDED` **1** ／ `Undefined symbols` **0**」）。
+> 卡点从「**链不上**」换成了「**画不出来**」✗ ⇒ 见本节末尾新增的「iOS 2026-10-10：模拟器黑屏／真机白屏」。
 
 | 项 | 读数（逐字） |
 |---|---|
 | 设备通道 | ✅ 通：`xcrun devicectl list devices` 读到 iPhone（iPhone 17 / iPhone18,3）；`device install app` ⇒ `App installed`；`process launch cn.shuyo.shuyonote` ⇒ `Launched application` |
-| 现有产物 | `src-tauri/gen/apple/build/arm64/ShuyoNote.ipa`（59,591,930 字节，09-30 17:17）＋ `build/shuyonote_iOS.xcarchive`；签名 `Apple Development: xuechen zhai`，identifier `cn.shuyo.shuyonote` |
-| ⛔ 新构建 | `pnpm tauri ios build` 会红在链接：`Undefined symbols for architecture arm64`（`_init_plugin_dialog`／`_init_plugin_opener`／`_log_stdout`／`_on_webview_created`／`_register_plugin`／`_run_plugin_command`／`_retain_object`／`_release_object`／`_string_from_bytes`）⇒ `cargo` **101** ⇒ `xcodebuild` **65** |
+| 现有产物 | `src-tauri/gen/apple/build/arm64/ShuyoNote.ipa`（**30,837,742 字节，10-10 08:59** —— 2026-10-10 复量；⚠️ 原写「59,591,930 字节，09-30 17:17」**已过期** ✗；里面 `CFBundleShortVersionString` ＝ `1.92.6` ✓）＋ `build/shuyonote_iOS.xcarchive`；签名 `Apple Development: xuechen zhai`，identifier `cn.shuyo.shuyonote` |
+| ✅ 新构建（2026-10-10 更新） | **已能出包** ✓：台账 R182 逐字「`pnpm tauri ios build` ⇒ 退出码 **0** ／ `BUILD SUCCEEDED` **1** ／ `Undefined symbols` **0** ／ `duplicate symbol` **0**」。⚠️ 本行原文是「`pnpm tauri ios build` 会红在链接：`Undefined symbols for architecture arm64`（那 9 个 Swift 符号）⇒ `cargo` **101** ⇒ `xcodebuild` **65**」—— **已过期** ✗（那一串当时由 `-Wl,-undefined,dynamic_lookup` 解掉，见下面 10-09 排查表第 7 行） |
 | 已排除 | ① 「缺 iOS 平台」✗：装上模拟器运行时（`xcodebuild -downloadPlatform iOS` ⇒ exit 0，`simctl list runtimes` 出现 iOS 27.0）后**仍然一样** ✗；② CocoaPods/Xcode 版本 ✗：`gen/apple/Podfile` 是**空模板**（无 `Pods/`／`Podfile.lock`／`.xcworkspace`），而 Xcode 27.0 九月十五就在、九月三十同类构建**成功过** |
 | ⚠️ 环境 | 本机**没有 Homebrew** ✗ ⇒ `brew install …` 这条路不通 |
-| 待办 | 查 Tauri 2.11 的 iOS Swift 静态库是否需随 Xcode 27 重新生成工程（`gen/apple/project.yml` ＋ xcodegen），或升 Tauri 到 2.12 —— 两条都要单独开一轮；⛔ 不许用"旧包能装"当作"新构建没问题" ✗ |
+| 待办（2026-10-10 更新） | 「出包」那件事**已收口** ✓；现在唯一的卡点是**界面画不出来**（见本节末尾新增那节）⇒ 要查的是 `tao`／`tauri` 在 **iOS 27 SDK** 下的 scene 路径（窗口**何时 attach 到 scene**）。⚠️ 原待办（查 Tauri 2.11 的 Swift 静态库是否需随 Xcode 27 重生成工程／升 Tauri 到 2.12）**已过期** ✗。⛔ 仍然：不许用"旧包能装"当作"新构建没问题" ✗ |
+
+### iOS 2026-10-10：出包成功了，但**界面画不出来** ✗（模拟器黑屏／真机白屏）
+
+| 项 | 读数（逐字） |
+|---|---|
+| **模拟器：通道已打通** ✅ | 编 → 装 → 启 → `xcrun simctl io screenshot` **全链 `exit=0`** ✓；⚠️ 但**画面全黑** ✗ |
+| 模拟器：补 Scene Manifest 之前 | **启动即 SIGTRAP** ✗ —— 逐字：`Application failed to launch: UIScene life cycle is required for apps built with this SDK.`（`EXC_BREAKPOINT (SIGTRAP)`，栈顶 `___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption_block_invoke`）；生成的 `Info.plist` **根本没有** `UIApplicationSceneManifest` 键 ✗ |
+| 模拟器：补**完整**清单之后 | 进程**活着** ✓（不再 SIGTRAP），但**画面仍是全黑** ✗。⚠️ 只加 `UIApplicationSupportsMultipleScenes` **不够** ✗ ⇒ 必须给 `UISceneConfigurations` ＋ `UISceneDelegateClassName = TaoSceneDelegate` |
+| **黑屏不是「取不到前端」** ✓ | release 包（内嵌 `dist`、**不需要任何 dev server**）的日志里有 `WebPageProxy::didCommitLoadForFrame: frameID=4294967297, isMainFrame=1` ⇒ **页面真的加载并提交了** ⇒ 黑屏只剩一处：**WebView 的 `UIWindow` 没在 scene 路径下可见**（**推断** ✓，未直读） |
+| **真机：白屏** ✗ | `devicectl device install app` ⇒ `App installed` ✓ ／ `process launch` ⇒ `Launched application` ✓ ／ 进程在 **4 秒与 12 秒**都还在 ✓ —— 而 owner 亲眼看是**白屏** ✗ ⇒ ⭐ **「启动通过」不等于「界面起来了」** |
+| ⚠️ 真机**没有**崩溃报告 | `~/Library/Logs/CrashReporter/MobileDevice/` **空** ✓；`~/Library/Logs/DiagnosticReports/` 里今天那 4 份 `ShuyoNote-2026-10-10-08*.ips` 全是**模拟器**的（`procPath` 含 `CoreSimulator`、`platform: 7`）✗ —— **不是**真机 |
+| ⛔ 真机读不到内部状态 | 本机**没有** `libimobiledevice`（`idevicesyslog` 等）⇒ **设备 os_log / syslog 这条路走不通** ✗；`devicectl … process launch --console` 全程**只有两行**（`Launched application…` ／ `Waiting for the application to terminate…`）⇒ 拿不到窗口/WebView 的状态 |
+| ✅ Rust 侧**活着**（不是 panic） | `Library/Application Support/cn.shuyo.shuyonote/spaces/default.db-shm` 的 mtime ＝ `2026/10/10 08:50`（＝那次启动之后 **2 秒**）⇒ SQLite 真被打开过 ⇒ 真机白屏**与 Rust 侧无关** |
+
+**⭐ `UIApplicationSupportsMultipleScenes` 的实测对照（真机 · iPhone 17 · iOS 27）**：
+
+| 取值 | 结果（逐字） |
+|---|---|
+| `<false/>`（原本；也是补完整 scene manifest 之后） | `devicectl … launch` ⇒ `Launched application`；进程在 **4 秒／12 秒**都在 ✓；**画面白屏、什么都不画** ✗ |
+| `<true/>`（按 `tao 0.35.3` 的场景开关推出的候选修法） | `devicectl … launch` ⇒ `Launched application`，但**一打开就退出** ✗（owner 按图标亲眼所见）；`devicectl device info processes` 在 **3／8／15 秒**都**找不到**该进程 ✗ |
+
+⇒ ⛔ **两个取值都不可用**（一个不画、一个即退）⇒ **已把 plist 回退到 `<false/>`** ✓ 并重编重装，恢复到「进程活、白屏」那一态 ✓。
+⇒ 由此得一条结论：`tao 0.35.3` 的场景开关**不是**唯一卡点 —— 把开关打开（靠 plist 的 `<true/>`）**仍然**出不来窗口 ✗。
+⚠️ `tao` 的实际版本是 **0.35.3**（`Cargo.lock` 解析值；`tauri-runtime-wry 2.11.4` 要求 `tao 0.35.0`）—— 不是先前误记的 0.37.1 ✗。
+
+**完整读数与上游 issue 草案**（都在**工作区**、不随本仓分发）：
+工作区 `_workspace/notes/2026-10-10-ios-scene-lifecycle-upstream.en.md`（含 `UIApplicationSupportsMultipleScenes` 的 addendum）、
+`_workspace/notes/2026-10-10-ios-device-white-screen.md`（真机白屏分层诊断）、
+`_workspace/notes/2026-10-10-ios-simulator-screenshot.md`（模拟器通道打通全过程）。
+
+### iOS 新构建：2026-10-09 逐层排查记录（未成功，已到最后一层）
+
+> ⚠️ 本节是 **2026-10-09** 的历史记录（**那天确实没出包** ✗）。其中「卡在 App 级链接」那一条
+> **已被 2026-10-10 取代** ✓ —— 见上一节：今天 `pnpm tauri ios build` 已 ⇒ `BUILD SUCCEEDED` ✓。
+> 保留本节是因为那 9 层排查的读数仍然可复用（尤其第 7 行的 `-Wl,-undefined,dynamic_lookup`）。
+
+> 触发：owner 把 iPhone 插上后要求"自主修新包"。**结论：仍未出包** ✗，但**签名层与 Rust 库链接层已修好** ✓，
+> 卡点收窄到**最后一处 App 级链接**。下表每一行都有逐字读数，可直接交接。
+
+| # | 层 | 症状（逐字） | 处置 | 状态 |
+|---|---|---|---|---|
+| 1 | 平台 | `iOS platform not installed` | `xcodebuild -downloadPlatform iOS` ⇒ exit 0；`simctl list runtimes` 出现 `iOS 27.0` | ✅ 解决 |
+| 2 | 工具 | `Info package xcodegen not found` ⇒ `Installing xcodegen with brew...` ⇒ `No such file or directory` | Homebrew 无 sudo 装到 `~/homebrew` ✓；`xcodegen 2.46.0` | ✅ 解决 |
+| 3 | 工具（其实不需要） | `failed to run command pod install` | `gen/apple/Podfile` 是**空模板**（无 pods）⇒ 工程不需要 CocoaPods；系统 ruby 2.6 撞 macOS 27 SDK 编不出 gem ⇒ 放弃该路 | ✅ 判定不需要 |
+| 4 | 签名 | `Signing for "shuyonote_iOS" requires a development team` | 把 `DEVELOPMENT_TEAM` 写进 **iOS target** 的 `settings.base`（不是 targetTemplate） | ✅ 解决 |
+| 5 | 签名 | `No Account for Team "6GL2GRPTUW"` | 团队搞错：描述文件的团队是 **M3UZLB6XK6**（`security cms -D` 读出；本机装了 `df1d5bae-…mobileprovision`） | ✅ 解决 |
+| 6 | 签名 | `Provisioning profile … is Xcode managed, but signing settings require a manually managed profile` | 改回 `CODE_SIGN_STYLE: Automatic` ＋ `DEVELOPMENT_TEAM: M3UZLB6XK6` ⇒ **签名通过** | ✅ 解决 |
+| 7 | Rust 链接 | `Undefined symbols … _init_plugin_dialog／_log_stdout／_retain_object／_string_from_bytes …`（9 个 Swift 符号） | 缺 `-Wl,-undefined,dynamic_lookup`（iOS 上必须让 Rust 库把 Swift 符号留给 App 运行时）；写进 Xcode 构建设置 `RUSTFLAGS` ⇒ `dynamic_lookup` 进入链接行 1 次、`Undefined symbols` **0 次** | ✅ 解决 |
+| 8 | 构建脚本取源 | `Failed to clone repository https://github.com/Brendonovich/swift-rs`（本机 github.com 不可达；**且缓存被我 `cargo clean -p swift-rs` 清掉** ✗） | 从残留构建目录取出真 git checkout ⇒ `/tmp/swift-rs-mirror/swift-rs` ⇒ `git config --global url."file:///tmp/swift-rs-mirror/".insteadOf "https://github.com/Brendonovich/"` ⇒ `clone 失败 0 次` | ✅ 解决 |
+| 9 | **App 级链接** | `Ld …/ShuyoNote.app/ShuyoNote` ⇒ 仍 `Undefined symbols`（同一批 Swift 符号） | 未解决 | ⛔ **卡在这** |
+
+已知**排除**的假设（各有读数 ✓，别再走一遍）：依赖漂移 ✗（`tauri 2.11.5`／`wry 0.55.1`／`swift-rs 1.0.8` 与 09-30 **逐字相同**）· Xcode 版本 ✗（09-30 成功时就是 27.0）· 产物陈旧 ✗（清 636 MB 后一样）· 工程被 xcodegen 抹设置 ✗（还原原 `project.pbxproj` 后一样；且逐项比对构建设置差异为**空**）。
+
+下一步两条（都未做，需拍板）：① 查 App target 为何没链上 `libTauri.a`/`libswift-rs.a`（工程 `dependencies` 与 `LIBRARY_SEARCH_PATHS` 是否覆盖 build 脚本产出路径）；② 升 Tauri 2.11.5 → 2.12.1（会动 Cargo/JS 依赖）。
+⚠️ 本机改动（可回滚）：`~/homebrew`（926 MB）· 一条只针对 `Brendonovich/` 的 git URL 改写 · `/tmp/swift-rs-mirror`。

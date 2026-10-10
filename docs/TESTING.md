@@ -56,8 +56,8 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 79 条（contract 52 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 26 条 · 命令 Rust 274 / web 255 / CommandMap 275
-基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2730 · smoke-web 363 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 65 · mobile-overlays 1010 · mobile-views 307 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
+门禁 80 条（contract 53 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 26 条 · 命令 Rust 278 / web 257 / CommandMap 279
+基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2795 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 69 · mobile-overlays 810 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
 > ⚠️ 上面这一段**由 `scripts/check-doc-facts.mjs` 门禁核对**：改了注册表／能力／命令面就要同步改它，否则红；
@@ -78,6 +78,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-ontology-generated` | **本体表与能力注册表不一致**（生成物被手改／注册表改了没重新生成）—— 来由：2026-09-28 MCP 规格把 `isWrite: true` 当判据，而该字段在原始 JSON 里**出现 0 次** ✗（真实字段是 `kind`）⇒ 本体只能生成、并逐字节卡漂移 |
 | contract | `check-agent-surface` | **工具面（生成物）与注册表不一致** ／ **只读面里出现写能力** ／ **描述里写进内部标识**（工具面＝对外暴露面） ／ **能力面超出笔记域**（`ai:true` 的能力不许是库外／host／全局 —— R43：库权限 ≠ 仓库权限）。来由：注册表 `ai:true` 实测 10 条（read 8 / write 2），而规格曾把写判定写成查不存在的 `isWrite` ✗ |
 | contract | `check-audit-shape` | **审计形状坏了**：写审计的文件不止一个（漏记 ✗）／条目里出现内容类字段（审计变成第二份内容副本 ✗）／出现 `UPDATE`／`DELETE`（不再只增 ✗）。纯读 Rust 源码 ⇒ **不需要 cargo** ✓ |
+| contract | `check-headless-backup` | **无头备份（`--backup-once`）的接线还在不在**：2026-10-09 真事故 —— 接线"接上了却**出不了包**"✗（`main.rs` 分流 ✓、`lib.rs` 入口 ✓、编译过 ✓、进程自退 ✓、窗口 0 ✓，**但包数 ＝ 0** ✗；真因：无头路径用的是**裸 Builder** ⇒ 不带 `run()` 那条链 ⇒ `Db` 没人托管 ✓）；症状**静默**（无报错、无 panic）⇒ 只能靠静态判据挡 ✓。纯读源码 ⇒ **不需要 cargo** ✓ |
 | contract | `check-derived-provenance` | **派生内容失去「从哪来」**：`ExtractedSegment.kind`／`loc` 被改成可选（引用与定位会**静默**降级 ✗）／`SegmentKind` 退化到少于 3 个成员（等于没在区分 ✓）。纯读 TS 源码 ✓ |
 | contract | `check-locked-loud` | **锁定被说成"没内容"**：未解锁空间的失败被映射成空结果（用户以为数据丢了 ✗）／稳定错误码 `space_locked` 丢了／钉它的单测没了（没有承重渠道 ✗）。纯读 Rust 源码 ✓ |
 | contract | `check-invariants-pointers` | **规格在说一件没有的事**：标「能」的 `INV-KB-*` 指的判据**不存在**／**没进注册表**（＝不进 `pnpm verify`／CI ⇒ 等于没人跑 ✗） |

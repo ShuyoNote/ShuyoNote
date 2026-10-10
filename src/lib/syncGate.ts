@@ -23,10 +23,36 @@
 // ⚠️ **只管自动**：手动点「同步」不经过这里（用户明确要求就该照做）。
 import { api } from "./api";
 
+/**
+ * ⭐ **task-12（owner 拍 C）**：闸门那一轮的**人话** —— 纯函数（判据够得着 ✓）。
+ *
+ * ⚠️ 为什么必须有它：`shouldAutoSyncNow()` 以前**被挡时一句日志都不打** ✗ ⇒
+ * 「**没触发** ／ ⭐ **触发了但被闸门挡下** ／ ⭐ **触发了但同步失败**」这三件**在日志里同形** ✓ ——
+ * 而它们**处置完全不同** ✓（前者去看谁该触发 ✓、中间去看闸门口径 ✓、后者去看错误 ✓）。
+ * 与本轮发现层那三行**同一形状** ✓（Lead 原话 ✓）。
+ */
+export function autoSyncGateLine(kind: string, wifiOnly: boolean, allow: boolean): string {
+  const why = !wifiOnly
+    ? "用户允许非 Wi-Fi（wifi_only 关 ✓）"
+    : kind === "n/a"
+      ? "桌面端：闸门不适用（network_type = n/a ✓）"
+      : kind === "wifi" || kind === "ethernet"
+        ? `在有线/无线网络上（${kind} ✓）`
+        : `**网络类型不合适**（${kind}）⇒ 按 fail-safe 拦下：宁可少跑一次，也不偷偷跑用户流量`;
+  return `[sync] 自动同步这一轮${allow ? "**放行**" : "**被闸门挡下**"}：原因＝${why}`;
+}
+
 export async function shouldAutoSyncNow(): Promise<boolean> {
   // 读不到预算（老库 / 命令失败）时**按默认放行**：不能因为读不到设置就把自动同步整个停掉。
   const budget = await api.getSyncBudget().catch(() => null);
-  if (!budget?.wifi_only) return true;
+  if (!budget?.wifi_only) {
+    // ⭐ task-12：放行也要留一行 ✓（否则"没触发"与"放行了但没跑"分不开 ✗）
+    console.info(autoSyncGateLine("n/a", false, true));
+    return true;
+  }
   const kind = await api.networkType().catch(() => "unknown");
-  return kind === "n/a" || kind === "wifi" || kind === "ethernet";
+  const allow = kind === "n/a" || kind === "wifi" || kind === "ethernet";
+  // ⭐ task-12：**挡下时逐字写出原因** ✓ —— 这一格以前是完全静默的 ✗。
+  console.info(autoSyncGateLine(kind, true, allow));
+  return allow;
 }

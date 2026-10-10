@@ -37,10 +37,37 @@
          during HTML parse before the app bundle (unchanged ordering). -->
     <script src="boot-scripts.js"></script>
     <style>
-      /* Splash is intentionally self-contained (no external CSS) so it paints
-         the instant the HTML document is parsed — before the app JS bundle
-         loads. It's a sibling of #root and gets faded out on app mount. */
+      /* ==========================================================================
+         Boot splash —— 逐项照 `docs/plans/mobile/mockups/09-splash.svg`
+         （390×844 画布，标题「启动页 A：发光字标」）实现。
+
+         ⛔ 本层**刻意是纯静态的**，两个原因：
+           ① 它必须在 app bundle 加载**之前**就画出画面；
+           ② 上面那条 CSP 的 `script-src` **不含 `'unsafe-inline'`** ⇒ 本文件里
+              **不能有任何内联 `<script>`**（`public/boot-scripts.js` 的文件头就是
+              为这条把它搬出 index.html 的）⇒ 开屏自己**不能**做任何脚本动作。
+         ⇒ 消失机制**复用既有钩子**（这正是"最不侵入"的走法）：
+           `src/main.tsx` 的 `hideSplash()` 按 `id="app-splash"` 找它、加 `.is-hide`
+           淡出、500ms 后 `remove()`（`DOMContentLoaded` +60ms 触发，另有 1500ms 硬兜底）；
+           `public/boot-scripts.js` 的启动诊断也复用同一个节点。
+         ⛔ 因此 **`id="app-splash"` 与 class `.is-hide` 都是契约**：改任一个都等于
+            要同时改 `src/main.tsx` / `public/boot-scripts.js`（本任务不许碰 ✗）。
+
+         配色一律取 `design/design-system.md`（**深色列**），并且只声明在 `#app-splash`
+         上（不写 `:root`）—— 免得这些变量泄漏进 app 自己的主题。
+         ========================================================================== */
       #app-splash {
+        /* design-system.md §2.1 品牌与中性色（深色列） */
+        --splash-bg: #17181a; /* --bg */
+        --splash-accent: #4d8dff; /* --accent */
+        --splash-accent-strong: #6ba0ff; /* --accent-strong */
+        --splash-on-accent: #0b1220; /* --on-accent */
+        --splash-text: #e6e8eb; /* --text */
+        --splash-text-dim: #9ca3af; /* --text-dim */
+        --splash-text-faint: #6b7280; /* --text-faint */
+        --splash-border: #2e3034; /* --border */
+        --splash-track: #2a2b2e; /* --hover */
+
         position: fixed;
         inset: 0;
         z-index: 9999;
@@ -48,161 +75,248 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 26px;
-        color: #fff;
-        font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-        background:
-          radial-gradient(80% 60% at 18% 8%, rgba(94, 139, 255, 0.28), transparent 60%),
-          radial-gradient(70% 55% at 85% 92%, rgba(41, 82, 204, 0.55), transparent 60%),
-          linear-gradient(135deg, #0a1026 0%, #101c3f 52%, #152a5e 100%);
+        /* 字体族取自效果图第 4 行的 `text{...}` 声明 */
+        font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+          "Helvetica Neue", sans-serif;
+        /* ① 深底：mockup 手机框 fill #17181A（= --bg 深色列） */
+        background: var(--splash-bg);
+        color: var(--splash-text);
         overflow: hidden;
         transition: opacity 0.45s ease, visibility 0.45s ease;
       }
-      /* 动态网格 + 环绕光带，增强科技感 */
-      #app-splash::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background-image:
-          linear-gradient(rgba(120, 150, 220, 0.07) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(120, 150, 220, 0.07) 1px, transparent 1px);
-        background-size: 54px 54px;
-        -webkit-mask-image: radial-gradient(75% 75% at 50% 44%, #000 25%, transparent 100%);
-        mask-image: radial-gradient(75% 75% at 50% 44%, #000 25%, transparent 100%);
-      }
-      #app-splash::after {
-        content: "";
-        position: absolute;
-        inset: -60%;
-        background: conic-gradient(from 0deg, transparent 0deg, rgba(94, 139, 255, 0.14) 70deg, transparent 150deg, rgba(41, 82, 204, 0.12) 250deg, transparent 330deg);
-        animation: splashOrbit 14s linear infinite;
-      }
-      @keyframes splashOrbit { to { transform: rotate(360deg); } }
+      /* 淡出态：由 src/main.tsx 的 hideSplash() 加上；名字是契约，见上面的注释 */
       #app-splash.is-hide {
         opacity: 0;
         visibility: hidden;
         pointer-events: none;
       }
-      .splash-logo {
-        width: 116px;
-        height: 116px;
+      .splash-main {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        /* 图上这一组的中心不在画布正中，而是偏下约 40px（图标 314..426、状态行 606
+           ⇒ 块中心 ≈463，而 844 的一半是 422）⇒ 不补这一下，整组会高 ~40px */
+        transform: translateY(46px);
+      }
+      /* ③ 光晕：mockup 第 25-30 行的两个 radialGradient
+            `glow`（#4D8DFF 0.40 → 0.13 → 0）与 `glow-soft`（0.22 → 0） */
+      .splash-glow,
+      .splash-glow-soft {
+        position: absolute;
+        left: 50%;
+        pointer-events: none;
+      }
+      .splash-glow {
+        /* cx=195 cy=386 r=212 ⇒ 直径 424，圆心落在图标中心（图标高 112 ⇒ 中心在 56px） */
+        top: 56px;
+        width: 424px;
+        height: 424px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(
+          circle,
+          rgba(77, 141, 255, 0.4) 0%,
+          rgba(77, 141, 255, 0.13) 55%,
+          rgba(77, 141, 255, 0) 100%
+        );
+      }
+      .splash-glow-soft {
+        /* cx=195 cy=478 rx=152 ry=40 ⇒ 图标中心之下 108px、304×80 */
+        top: 164px;
+        width: 304px;
+        height: 80px;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(
+          circle,
+          rgba(77, 141, 255, 0.22) 0%,
+          rgba(77, 141, 255, 0) 100%
+        );
+      }
+      /* ② 居中图标：几何**逐字照抄**效果图第 31-32 行（外圈 112×112 rx=30 的
+             `#4D8DFF` 30% 描边 ＋ 里面 88×88 rx=22 的 `#4D8DFF` 圆角块，
+             `scale(1.0909)` 后落成 96×96；三条递减横线 ＋ 一支铅笔，描边 `#0B1220`）。
+             viewBox 直接取图里外圈那一格（139 314 112 112）⇒ 坐标与图上**一一对应**。 */
+      .splash-icon {
         position: relative;
         z-index: 1;
-        filter: drop-shadow(0 14px 46px rgba(51, 112, 255, 0.55));
-        animation: splashBreath 2.6s ease-in-out infinite;
+        width: 112px;
+        height: 112px;
       }
-      .splash-logo::before {
-        content: "";
-        position: absolute;
-        inset: -16px;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(94, 139, 255, 0.5), transparent 72%);
-        animation: splashGlow 3s ease-in-out infinite;
+      .splash-icon svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        /* 外圈描边中心正好压在 viewBox 边上，visible 才不会被裁掉 0.75px */
+        overflow: visible;
       }
-      @keyframes splashBreath {
-        0%, 100% { transform: scale(1); }
-        50%      { transform: scale(1.06); }
-      }
-      @keyframes splashGlow {
-        0%, 100% { opacity: 0.5; transform: scale(0.96); }
-        50%      { opacity: 0.9; transform: scale(1.06); }
-      }
-      .splash-logo svg { display: block; width: 100%; height: 100%; position: relative; z-index: 1; }
       .splash-title {
         position: relative;
         z-index: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 7px;
-        letter-spacing: 1px;
+        /* 图上：图标底 426 → 字标基线 494；图上：副标基线 526 */
+        margin-top: 44px;
+        gap: 6px;
       }
+      /* ④ 字标 `ShuyoNote`：图上 font-size=34 / weight=700 / letter-spacing=0.5 / fill #E6E8EB */
       .splash-brand {
-        font-size: 32px;
-        font-weight: 800;
-        letter-spacing: 1px;
-        background: linear-gradient(90deg, #ffffff 0%, #bcd0ff 30%, #ffffff 55%, #bcd0ff 80%, #ffffff 100%);
-        background-size: 220% 100%;
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
-        animation: splashShine 3.2s linear infinite, splashFadeUp 0.9s ease both;
+        font-size: 34px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        line-height: 1.15;
+        color: var(--splash-text);
       }
-      @keyframes splashShine {
-        0%   { background-position: 120% 0; }
-        100% { background-position: -120% 0; }
-      }
+      /* ⑤ 副标：图上 `本机优先的笔记应用`（font-size=14 / fill #9CA3AF = --text-dim） */
       .splash-sub {
         font-size: 14px;
-        color: rgba(255, 255, 255, 0.62);
-        animation: splashFadeUp 0.9s 0.15s ease both;
+        line-height: 1.3;
+        color: var(--splash-text-dim);
       }
+      /* ⑥ 进度条：图上 x=95..295 y=576（200×3 rx=1.5），轨道 #2A2B2E（= --hover），
+             填充 82/200 = 41% 的 #4D8DFF，另有一段 27px 的 sheen 高光与填充右端一颗
+             r=2.4 的 #6BA0FF 圆点（= --accent-strong）。*/
       .splash-bar {
-        width: 220px;
-        height: 5px;
         position: relative;
         z-index: 1;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.13);
-        overflow: hidden;
-        box-shadow: 0 0 16px rgba(94, 139, 255, 0.4);
+        margin-top: 46px;
+        width: 200px;
+        height: 3px;
+        border-radius: 1.5px;
+        background: var(--splash-track);
       }
-      .splash-bar::after {
-        content: "";
-        display: block;
-        width: 42%;
+      .splash-bar-fill {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 41%;
         height: 100%;
-        border-radius: 999px;
-        background: linear-gradient(90deg, #4f8cff, #7fb0ff, #4f8cff);
-        background-size: 200% 100%;
-        animation: splashSlide 1.3s ease-in-out infinite;
+        border-radius: 1.5px;
+        background: var(--splash-accent);
       }
-      @keyframes splashSlide {
-        0%   { transform: translateX(-120%); }
-        100% { transform: translateX(420%); }
+      .splash-bar-sheen {
+        position: absolute;
+        left: 55px;
+        top: 0;
+        width: 27px;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          rgba(230, 232, 235, 0) 0%,
+          rgba(230, 232, 235, 0.85) 50%,
+          rgba(230, 232, 235, 0) 100%
+        );
       }
-      @keyframes splashFadeUp {
-        from { opacity: 0; transform: translateY(14px); }
-        to   { opacity: 1; transform: translateY(0); }
+      .splash-bar-fill::after {
+        content: "";
+        position: absolute;
+        right: -2.4px;
+        top: 50%;
+        width: 4.8px;
+        height: 4.8px;
+        margin-top: -2.4px;
+        border-radius: 50%;
+        background: var(--splash-accent-strong);
       }
-      @media (prefers-reduced-motion: reduce) {
-        #app-splash::after { animation: none; }
-        #app-splash .splash-logo,
-        #app-splash .splash-logo::before,
-        #app-splash .splash-bar::after { animation: none; }
-        #app-splash .splash-brand,
-        #app-splash .splash-sub { animation: none; }
+      /* ⑦ `正在准备本机数据…`：图上 font-size=12 / fill #6B7280（= --text-faint） */
+      .splash-status {
+        position: relative;
+        z-index: 1;
+        margin-top: 26px;
+        font-size: 12px;
+        line-height: 1.3;
+        color: var(--splash-text-faint);
+      }
+      /* ⑧ 版本行：图上 y=726 一条 96px 的 #2E3034（= --border）分隔线，下面两行
+             font-size=11 / fill #6B7280 的文字。整体贴底（留出 Home Indicator 的安全区）。*/
+      .splash-footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 46px);
+      }
+      .splash-footer-rule {
+        width: 96px;
+        height: 1px;
+        margin-bottom: 14px;
+        background: var(--splash-border);
+      }
+      .splash-version,
+      .splash-note {
+        font-size: 11px;
+        line-height: 1.6;
+        color: var(--splash-text-faint);
       }
     </style>
   </head>
 
   <body>
+    <!-- 开屏（静态层）。⛔ `id` 与 `.is-hide` 是契约，见 <head> 里那段注释与报告。 -->
     <div id="app-splash" role="status" aria-label="正在启动 ShuyoNote">
-      <div class="splash-logo">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ShuyoNote">
-          <defs>
-            <linearGradient id="splashG" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#4D8DFF"/>
-              <stop offset="1" stop-color="#2952CC"/>
-            </linearGradient>
-          </defs>
-          <rect x="0" y="0" width="1024" height="1024" rx="230" fill="url(#splashG)"/>
-          <rect x="248" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
-          <rect x="526" y="318" width="250" height="388" rx="42" fill="#FFFFFF"/>
-          <rect x="290" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
-          <rect x="290" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
-          <rect x="290" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
-          <rect x="568" y="388" width="166" height="18" rx="9" fill="#C7D6FF"/>
-          <rect x="568" y="450" width="166" height="18" rx="9" fill="#C7D6FF"/>
-          <rect x="568" y="512" width="118" height="18" rx="9" fill="#C7D6FF"/>
-          <path d="M 770 238 Q 775.4 262.6, 800 268 Q 775.4 273.4, 770 298 Q 764.6 273.4, 740 268 Q 764.6 262.6, 770 238 Z" fill="#FFFFFF"/>
-        </svg>
+      <div class="splash-main">
+        <div class="splash-glow" aria-hidden="true"></div>
+        <div class="splash-glow-soft" aria-hidden="true"></div>
+        <!-- 图标：坐标逐字取自 09-splash.svg 第 31-32 行 -->
+        <div class="splash-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="139 314 112 112">
+            <rect
+              x="139"
+              y="314"
+              width="112"
+              height="112"
+              rx="30"
+              fill="none"
+              stroke="#4D8DFF"
+              stroke-opacity="0.30"
+              stroke-width="1.5"
+            />
+            <g transform="translate(147,322) scale(1.0909)">
+              <rect x="0" y="0" width="88" height="88" rx="22" fill="#4D8DFF" />
+              <g fill="none" stroke="#0B1220" stroke-width="3.2" stroke-linecap="round">
+                <path d="M26 31 H62" />
+                <path d="M26 45 H54" />
+                <path d="M26 59 H44" />
+              </g>
+              <g
+                fill="none"
+                stroke="#0B1220"
+                stroke-width="3.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M46 70 L66 50 L72 56 L52 76 Z" />
+              </g>
+            </g>
+          </svg>
+        </div>
+        <div class="splash-title">
+          <div class="splash-brand">ShuyoNote</div>
+          <div class="splash-sub">本机优先的笔记应用</div>
+        </div>
+        <div class="splash-bar" aria-hidden="true">
+          <span class="splash-bar-fill"></span>
+          <span class="splash-bar-sheen"></span>
+        </div>
+        <div class="splash-status">正在准备本机数据…</div>
       </div>
-      <div class="splash-title">
-        <div class="splash-brand">ShuyoNote</div>
-        <div class="splash-sub">数友笔记 · 本地优先</div>
+      <div class="splash-footer">
+        <div class="splash-footer-rule" aria-hidden="true"></div>
+        <!-- ⚠️ 版本号这一格：效果图写的是「版本 1.92.5（开发）」，而 `package.json`
+             已经是 **1.92.6**（图那一格已过期，见
+             `_workspace/notes/2026-10-10-mobile-acceptance-checklist.md` §3 第 7 条）。
+             这里**只能写字面量**：CSP 的 `script-src` 不含 `'unsafe-inline'` ⇒ 本文件
+             不许有内联 `<script>`；而 `index.html` 也没有任何构建期注入
+             （`vite.config.ts` 里没有 `transformIndexHtml`）。
+             ⇒ 它**会随发版漂移** ✗。要根治得动 index.html 以外的文件，见报告 §未做。 -->
+        <div class="splash-version">版本 1.92.6（开发）</div>
+        <div class="splash-note">你的笔记在本机 · 本地 SQLite 即可用</div>
       </div>
-      <div class="splash-bar" aria-hidden="true"></div>
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

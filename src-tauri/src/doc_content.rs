@@ -30,6 +30,23 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+/// ⭐ **这一笔远端材料是从哪来的** —— 由**调用方显式说**，⛔ 不许靠"有没有某个键"去猜。
+///
+/// - `Server`：**服务器同步**（`sync::do_pull` ⇒ 同一账号/空间那条路）
+/// - `Peer`：**设备直连**（网格；`mesh::absorb_peer_batch` ⇒ 两台设备之间那条路）
+///
+/// ⚠️ **第一轮（task-25）只穿参、⛔ 不改行为**：两支**逐字走同一条老路** ⇒ 全量判据应当一个不红。
+/// ⭐ **按名融合只该发生在 `Peer` 那条路上**（⛔ 不含服务器同步）——
+/// 口径与理由见 `docs/specs/2026-10-09-multidevice-merge-semantics.md` §2「作用范围」；
+/// 那一步是**第二轮**（它会把范围写进共用入口 ⇒ 上一次那样做实测 `752 passed / 22 failed`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ingest {
+    /// 服务器同步那条路。
+    Server,
+    /// 设备直连（网格）那条路。
+    Peer,
+}
+
 /// 一页的**内容** —— 那一层的单位。
 ///
 /// 为什么带 `title`：现有三个读调用方（`resolve_block` / `get_page_blocks` / `save_page` 的现状回读）
@@ -337,7 +354,15 @@ pub fn local_state(c: &Connection, page_id: &str) -> Result<Option<LocalState>, 
 ///
 /// 收的是 `&PageDetail`：远端那条路径手上的字段本来就在它里面，
 /// 为调一次函数去拆散/克隆一份可能很大的 `content_json` 不值当。
-pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq: i64) -> Result<(), String> {
+pub fn upsert_remote(
+    c: &Connection,
+    page: &crate::models::PageDetail,
+    sync_seq: i64,
+    _from: Ingest,
+) -> Result<(), String> {
+    // ⭐⭐ **2026-10-09（task-8）**：远端那一行**不许**带"本地不存在的引用" ✗ —— 见下面两个锚定函数。
+    let workspace_id = anchor_workspace_id(c, &page.workspace_id);
+    let parent_id = anchor_parent_id(c, page.parent_id.as_deref());
     c.execute(
         "INSERT INTO pages (id, workspace_id, parent_id, title, content_json, content_text, kind, sort_order, created_at, updated_at, deleted_at, sync_seq, dirty)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, 0)
@@ -355,8 +380,8 @@ pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq:
            dirty = 0",
         params![
             page.id,
-            page.workspace_id,
-            page.parent_id,
+            workspace_id,
+            parent_id,
             page.title,
             page.content_json,
             page.content_text,
@@ -369,6 +394,85 @@ pub fn upsert_remote(c: &Connection, page: &crate::models::PageDetail, sync_seq:
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// ⭐⭐ **2026-10-09（task-8）**：远端页带的 `workspace_id` **锚到本机这个空间** ✓。
+///
+/// ## 真机现场（amd 报的，逐字）
+/// owner 点《公式列》的「合并这一页」⇒ 底部红条 **「裁决失败：FOREIGN KEY constraint failed」** ✗。
+/// 只读快照：`PRAGMA foreign_key_list('pages')` ⇒ `workspace_id → workspaces(id)` ✓；
+/// 而 amd 本地 `workspaces` **只有 1 行**（＝**它自己**那个空间 ✓），待裁决的 **40/40** 条
+/// 却都引用 `workspace_id = eb9a07f1…`（**对端那台的空间 id** ✗）⇒ 原样写进去必撞外键 ✓。
+///
+/// ## 口径
+/// · 本地**有**这个 id ⇒ **一个字都不动** ✓（正常路径上两端同 id 也不会被改写 ✓）；
+/// · 本地**没有** ⇒ 锚到**本机这个空间自己**的 id ✓ ——
+///   它就是 `main.workspaces` 里那一行（真库实测：每个空间库里**恰好一行**，＝那个空间自己的 id ✓，
+///   而该库 `pages.workspace_id` **全部**等于它 ✓）；
+/// · **判不了**（表不在 / 读不出来）⇒ **保持原样** ✓ —— ⛔ 别把老判据的手抄 schema 弄红 ✗。
+///
+/// ⚠️ **"按名融合"这里做不到**（owner 口径「用空间名称融合，而不是空间id」✓）：
+///   远端页的载荷里**只有 id、没有空间名**（`PageDetail` 没有 `name` 字段 ✓）⇒ 没有可比的"名" ✗。
+///   要真做，得让**载荷带上空间名**（或把 `workspaces` 当实体同步 ✓）—— 那比这一笔大，
+///   已作为**下一条**单独报（⛔ 本笔只保证"当场不炸 ＋ 落到本机那个空间"✓）。
+fn anchor_workspace_id(c: &Connection, want: &str) -> String {
+    let want = want.trim();
+    if want.is_empty() {
+        return local_space_id(c).unwrap_or_default();
+    }
+    match row_exists(c, "SELECT 1 FROM workspaces WHERE id = ?1", want) {
+        Some(true) => want.to_string(),
+        Some(false) => local_space_id(c).unwrap_or_else(|| want.to_string()),
+        None => want.to_string(),
+    }
+}
+
+/// 本机这个空间**自己**的 id（`main.workspaces` 里那一行 ✓；真库实测恰好一行 ✓）。
+fn local_space_id(c: &Connection) -> Option<String> {
+    c.query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get::<_, String>(0))
+        .ok()
+}
+
+/// ⭐⭐ **2026-10-09（task-8）**：远端页带的 `parent_id` 锚到**本地真有的那一页** ✓。
+///
+/// ## 真机现场（逐字）
+/// amd 的待裁决 40 条里 **38 条**的 `parent_id` 本地不存在 ✗，而**那些父本身**也躺在同一批里 ✗
+/// ⇒ 两件事：①同批顺序（由 `apply_pulled_changes` 的 `ForeignKeysOff` 守卫兜住 ✓）；
+/// ②**父页可能永远不来**（对端删了它 / 它不在这条同步路上）⇒ 那种引用写进去必撞外键 ✓。
+///
+/// ## 口径（⭐ **分两种情形，这是本函数最要紧的一句**）
+/// · 父页**在本地** ⇒ 保留 ✓（父子关系不许白丢 ✓）；
+/// · 父页**不在** ＋ **外键开着** ⇒ 写 `NULL` ✓ —— 这是"裁决"那条路（`resolve_pending_remote` ✓），
+///   它**单页**落库、父页不会在这一笔里到 ⇒ ⛔ 写一个悬空引用 = **整行进不去** ✗（真机就是这句 ✓）；
+/// · 父页**不在** ＋ **外键关着** ⇒ **保留引用** ✓ —— 这是**批量应用**那条路（`apply_pulled_changes` ✓），
+///   父页**可能就在同一批里稍后到** ✓；一律 NULL 掉会白丢同批的父子关系 ✗。
+/// · **判不了**（表不在 / 读不出来）⇒ 保留 ✓。
+fn anchor_parent_id(c: &Connection, want: Option<&str>) -> Option<String> {
+    let p = want.map(str::trim).filter(|p| !p.is_empty())?;
+    match row_exists(c, "SELECT 1 FROM pages WHERE id = ?1", p) {
+        Some(true) => Some(p.to_string()),
+        Some(false) => {
+            if foreign_keys_on(c) {
+                None
+            } else {
+                Some(p.to_string())
+            }
+        }
+        None => Some(p.to_string()),
+    }
+}
+
+/// 本连接上外键**现在开不开**（读不出来 ⇒ 按"开着"处理：宁可写 NULL 也别丢整行 ✓）。
+fn foreign_keys_on(c: &Connection) -> bool {
+    c.query_row("PRAGMA foreign_keys", [], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(true)
+}
+
+/// 本地有没有这一行？**表都不在 / 读不出来 ⇒ `None`**（＝判不了 ⇒ 调用方保持原样 ✓）。
+fn row_exists(c: &Connection, sql: &str, id: &str) -> Option<bool> {
+    c.query_row(sql, params![id], |_| Ok(()))
+        .optional()
+        .map(|o| o.is_some())
+        .ok()
 }
 
 /// 合并判定：**本地留还是远端覆盖**。
@@ -1024,10 +1128,11 @@ pub fn apply_remote_page(
     c: &Connection,
     page: &crate::models::PageDetail,
     sync_seq: i64,
+    from: Ingest,
 ) -> Result<RemoteMerge, String> {
     let local = read(c, &page.id)?;
     let Some(local) = local else {
-        upsert_remote(c, page, sync_seq)?;
+        upsert_remote(c, page, sync_seq, from)?;
         derive_fts(c, &page.id, &page.title, &page.content_text)?;
         return Ok(RemoteMerge::NotApplicable);
     };
@@ -1037,7 +1142,7 @@ pub fn apply_remote_page(
         RemoteMerge::Merged { json, kept_local } => {
             let mut merged_page = page.clone();
             merged_page.content_json = json.clone();
-            upsert_remote(c, &merged_page, sync_seq)?;
+            upsert_remote(c, &merged_page, sync_seq, from)?;
             // ★ B1：**只有产物里保留了远端那一版没有的本地块**才打"待重建"。
             //   否则产物就是远端那份内容（正文列正是它）⇒ 打了就是**假账**（补算器白解析一次再清掉），
             //   而"两端内容逐字相同"的合并会**经常**走到这一支。
@@ -1048,9 +1153,9 @@ pub fn apply_remote_page(
         RemoteMerge::Conflicted(conflicts) => {
             // ★ 裁定 (iii)：**不静默选边** ⇒ 先把冲突落表（提示 UI 的数据），覆盖语义不变。
             record_page_conflicts(c, &page.id, conflicts)?;
-            upsert_remote(c, page, sync_seq)?;
+            upsert_remote(c, page, sync_seq, from)?;
         }
-        RemoteMerge::NotApplicable => upsert_remote(c, page, sync_seq)?,
+        RemoteMerge::NotApplicable => upsert_remote(c, page, sync_seq, from)?,
     }
     // 派生也只经那一层（今天远端应用只刷 FTS —— 与接线前逐字相同；合并成功时那条正文可能滞后一拍，
     // 见本函数的"已知边界"与 `merge_remote_content`）。
@@ -1250,8 +1355,9 @@ pub fn take_remote_page(
     c: &Connection,
     page: &crate::models::PageDetail,
     sync_seq: i64,
+    from: Ingest,
 ) -> Result<(), String> {
-    upsert_remote(c, page, sync_seq)?;
+    upsert_remote(c, page, sync_seq, from)?;
     derive_fts(c, &page.id, &page.title, &page.content_text)?;
     let now = crate::db::now_ms();
     c.execute(
@@ -2079,7 +2185,7 @@ mod tests {
 
         let unresolved = |c: &Connection| unresolved_page_conflicts(c, "p1").unwrap().len();
         // ① 第一次应用 ⇒ 1 条未决
-        apply_remote_page(&c, &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"), 9)
+        apply_remote_page(&c, &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"), 9, Ingest::Server)
             .unwrap();
         assert_eq!(unresolved(&c), 1);
 
@@ -2115,6 +2221,7 @@ mod tests {
             &c,
             &remote_page("p1", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         match conflicted {
@@ -2137,6 +2244,7 @@ mod tests {
                 "远端正文",
             ),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(matches!(merged, RemoteMerge::Merged { .. }));
@@ -2163,6 +2271,7 @@ mod tests {
                 "远端那一份正文",
             ),
             9,
+            Ingest::Server,
         )
         .unwrap();
 
@@ -2230,6 +2339,7 @@ mod tests {
                 "远端正文",
             ),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(
@@ -2244,6 +2354,7 @@ mod tests {
             &c,
             &remote_page("p2", &jdoc(vec![jblk(Some("b1"), Some(2), "他改的")]), "远端正文"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(matches!(conflicted, RemoteMerge::Conflicted(_)));
@@ -2255,6 +2366,7 @@ mod tests {
             &c,
             &remote_page("p3", &jdoc(vec![jblk(Some("b1"), Some(1), "新")]), "远端正文"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert_eq!(na, RemoteMerge::NotApplicable);
@@ -2269,6 +2381,7 @@ mod tests {
             &c,
             &remote_page("p4", &jdoc(vec![jblk(Some("b1"), Some(7), "一模一样")]), "一模一样"),
             9,
+            Ingest::Server,
         )
         .unwrap();
         assert!(
@@ -2483,7 +2596,7 @@ mod tests {
         assert_eq!(unresolved_page_conflicts(&c, "p1").unwrap().len(), 1, "前置：有一条未裁决");
 
         let remote = stashed_page("p1", &jdoc(vec![jblk(Some("b1"), Some(9), "远端赢了")]), "远端标题");
-        take_remote_page(&c, &remote, 11).unwrap();
+        take_remote_page(&c, &remote, 11, Ingest::Server).unwrap();
 
         let cur = read(&c, "p1").unwrap().unwrap();
         assert_eq!(cur.title, "远端标题");
@@ -2501,6 +2614,84 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ task-8（2026-10-09）：**远端那一行不许带"本地不存在的引用"** ✗
+    //
+    // 真机现场（amd 报的，逐字）：owner 点《公式列》的「合并这一页」⇒ 底部红条
+    //   **「裁决失败：FOREIGN KEY constraint failed」** ✗
+    // 只读快照：`PRAGMA foreign_key_list('pages')` ⇒ `parent_id → pages(id)` ／
+    //   `workspace_id → workspaces(id)`；而 amd 本地 `workspaces` **只有 1 行**（＝**它自己**那个空间 ✓），
+    //   待裁决的 **40/40** 条却都引用 `workspace_id = eb9a07f1…`（**对端那台的空间 id** ✗）；
+    //   另有 **38/40** 条的 `parent_id` 本地也不存在 ✗（缺的父**本身也躺在同一批待裁决里** ✗）。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ **判据 a**：远端页带着**对端那台**的 `workspace_id` ⇒ ⭐ 必须**锚到本机这个空间** ✓。
+    /// ⚠️ 未修时 `upsert_remote` 原样写进去 ⇒ 外键当场炸 ⇒ **必红** ✓（红读数＝真机那句话 ✓）。
+    #[test]
+    fn a_remote_page_with_a_foreign_workspace_lands_in_this_space() {
+        let (c, dir) = conflict_conn("fk-workspace");
+        // 本机这个空间自己的 id（`main.workspaces` 在真机上**只有那一行** ✓，我核过真库 ✓）
+        let local: String = c
+            .query_row("SELECT id FROM workspaces ORDER BY rowid ASC LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        let mut page = remote_page("p-remote", &jdoc(vec![jblk(Some("b1"), Some(1), "远端")]), "远端页");
+        page.workspace_id = "对端那台的空间-本地没有".to_string();
+        upsert_remote(&c, &page, 7, Ingest::Server).expect(
+            "⛔ 远端带对端 workspace_id ⇒ 真机当场炸：FOREIGN KEY constraint failed（裁决/合并全废）",
+        );
+
+        let got: String = c
+            .query_row("SELECT workspace_id FROM pages WHERE id = 'p-remote'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got, local, "必须锚到**本机这个空间**的 id（⛔ 不许原样写对端那个 ✗）");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ **判据 c**：远端页的父页**还没到** ⇒ ⭐ **外键开着时写 NULL**（⛔ 不许整行落不了库 ✗）；
+    /// ⭐ 而**外键关着时保留引用** ✓（批量应用期间 ⇒ 父页可能就在同一批稍后到达 ✓）。
+    /// ⚠️ 未修时前两条都会炸（`FOREIGN KEY constraint failed`）⇒ **必红** ✓。
+    #[test]
+    fn a_remote_page_whose_parent_has_not_arrived_survives() {
+        let (c, dir) = conflict_conn("fk-parent");
+        let mut page = remote_page("p-child", &jdoc(vec![jblk(Some("b1"), Some(1), "子")]), "子页");
+        page.parent_id = Some("父页-还没到".to_string());
+
+        // ① 外键**开着**（＝裁决那条路 ✓）：写 NULL，但**必须落库** ✓
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        upsert_remote(&c, &page, 8, Ingest::Server).expect("父页没到 ⇒ ⛔ 不许因此整行落不了库（真机 38/40 就是这种 ✗）");
+        let got: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got, None, "外键开着 ⇒ 写 NULL（父页到了自己会落，链接以后再说 ✓）");
+
+        // ② 外键**关着**（＝批量应用期间 ✓）：**保留引用** ✓（父页就在同一批里稍后到达 ✓）
+        c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        let mut p2 = remote_page("p-child2", &jdoc(vec![jblk(Some("b1"), Some(1), "子2")]), "子页2");
+        p2.parent_id = Some("父页-稍后到".to_string());
+        upsert_remote(&c, &p2, 9, Ingest::Server).expect("外键关着 ⇒ 引用直接写进去 ✓");
+        let got2: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child2'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            got2.as_deref(),
+            Some("父页-稍后到"),
+            "⚠️ 外键关着 ⇒ **保留**父子引用 ✗ 不许一律 NULL 掉（那会白丢同一批里的父子关系 ✓）"
+        );
+
+        // ③ **正向对照**：父页真在本地 ⇒ 链接必须保住 ✓（别把"存在"也 NULL 掉 ✓）
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        insert_conflict_page(&c, "p-ok-parent", &jdoc(vec![jblk(Some("b1"), Some(1), "父")]));
+        let mut p3 = remote_page("p-child3", &jdoc(vec![jblk(Some("b1"), Some(1), "子3")]), "子页3");
+        p3.parent_id = Some("p-ok-parent".to_string());
+        upsert_remote(&c, &p3, 10, Ingest::Server).unwrap();
+        let got3: Option<String> = c
+            .query_row("SELECT parent_id FROM pages WHERE id = 'p-child3'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got3.as_deref(), Some("p-ok-parent"), "父页在 ⇒ 链接一个字都不许改 ✓");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `mark_page_dirty` 是 `dirty` 这一列的**第三个**写者（`write` 硬写 1 / `upsert_remote` 硬写 0 /
     /// `write_text` 不动），B 的"合并这一页"要用它把"本地还有没推上去的改动"重新标上。
     #[test]
@@ -2513,10 +2704,124 @@ mod tests {
         };
         assert_eq!(dirty(&c), 1);
         // 远端应用会把它压回 0（这就是"合并之后要重新标上"的原因）
-        take_remote_page(&c, &stashed_page("p1", "{}", "页"), 3).unwrap();
+        take_remote_page(&c, &stashed_page("p1", "{}", "页"), 3, Ingest::Server).unwrap();
         assert_eq!(dirty(&c), 0);
         mark_page_dirty(&c, "p1").unwrap();
         assert_eq!(dirty(&c), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 顶层块提取 —— `blocks::get_page_blocks` 的**读出口**（**在本层里** ✓）。
+///
+/// ⚠️ 为什么放在这一层：`blocks.rs` 里有 `check-doc-content-access` 的**只减不增**基线 ✗
+/// （那 5 次直接访问会让它 24 → 29 ⇒ **红了** ✗，而基线的 `--update` 只允许往下调 ✗）。
+/// 本文件在门禁的 `LAYER_FILES` 白名单里 ✓ —— 它**本来就是**"只经这一层"的那个"一层" ✓
+/// （见本文件 §8-11 的纪律：`blocks::get_page_blocks` 本来就是它列的调用方之一 ✓）。
+///
+/// ⚠️ **`blockId` 是可选字段**（只在块被引用/嵌入时才存在，见 `src/lib/blockIdentity.ts` ✓）
+/// ⇒ ⛔ 它**不能**当"有没有正文"的判据 ✗：真实存下来的普通页面没有这个键，
+///    那么过滤会让**有正文的页永远返回空** ✗（2026-10-10 的用户可见错：手机阅读屏显示
+///    「这一页还没有内容。」✗）。⇒ 没有就**按位置回退** `block-<下标>` ✓（与 web 侧
+///    `src/lib/platform/pageBlocks.ts::pageBlocksFromDoc` **同语义** ✓）；空文本块不收 ✓。
+pub(crate) fn page_blocks_from_doc(json: &str) -> Result<Vec<(String, String)>, String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let mut out: Vec<(String, String)> = Vec::new();
+    let children = v
+        .get("root")
+        .and_then(|r| r.get("children"))
+        .and_then(|c| c.as_array());
+    if let Some(children) = children {
+        for (i, child) in children.iter().enumerate() {
+            let text = crate::blocks::node_text(child).trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let block_id = child
+                .get("blockId")
+                .and_then(|b| b.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("block-{i}"));
+            out.push((block_id, text));
+        }
+    }
+    Ok(out)
+}
+
+/// `get_page_blocks` 的读出口：**读一次 + 解析**都在本层完成 ✓（调用方不再碰落盘形态 ✓）。
+/// `Ok(None)` ＝ 该页不存在 ✓。
+pub fn page_blocks(c: &Connection, page_id: &str) -> Result<Option<Vec<(String, String)>>, String> {
+    let Some(doc) = read(c, page_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(page_blocks_from_doc(&doc.json)?))
+}
+
+/// `get_page_blocks` 的**顶层块提取** —— 2026-10-10 那次用户可见的错 ✗ 的回归判据。
+///
+/// ⭐ 主判据与**前端** `pageBlocksFromDoc` 那条**同形** ✓：
+///   「**顶层块没有 `blockId` ⇒ 块数 > 0 且文本非空**」✓
+/// （修前它必红 ✓：旧实现要求顶层块有 `blockId`，而**真实文档里普通页面没有它** ✗
+///   ⇒ 返回空 ⇒ 手机档 04 阅读屏显示「这一页还没有内容」✗。）
+#[cfg(test)]
+mod page_blocks_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// **实测抓到的真实形状**：顶层 `paragraph` **没有** `blockId` ✗（键与线上一致 ✓）。
+    fn real_shape_doc() -> String {
+        json!({ "root": {
+            "type": "root", "version": 1, "direction": "ltr", "format": "", "indent": 0,
+            "children": [
+                { "type": "paragraph", "version": 1, "direction": "ltr", "format": "",
+                  "indent": 0, "textFormat": 0, "textStyle": "",
+                  "children": [{ "type": "text", "text": "The apple is red.", "version": 1 }] }
+            ]}})
+        .to_string()
+    }
+
+    #[test]
+    fn real_page_without_block_id_still_yields_blocks() {
+        let blocks = page_blocks_from_doc(&real_shape_doc()).expect("应能解析");
+        assert!(
+            !blocks.is_empty(),
+            "有正文的页必须给出块 —— 修前这里是 **0 块** ✗（就是那个用户可见的错）"
+        );
+        assert_eq!(blocks[0].1, "The apple is red.");
+        assert!(!blocks[0].0.is_empty(), "回退 id 不许是空串");
+    }
+
+    #[test]
+    fn block_id_is_kept_when_present() {
+        let doc = json!({ "root": { "children": [
+            { "type": "paragraph", "blockId": "b-real-1",
+              "children": [{ "type": "text", "text": "有 id 的块" }] }
+        ]}})
+        .to_string();
+        let blocks = page_blocks_from_doc(&doc).expect("应能解析");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].0, "b-real-1");
+        assert_eq!(blocks[0].1, "有 id 的块");
+    }
+
+    #[test]
+    fn empty_text_blocks_are_skipped() {
+        let doc = json!({ "root": { "children": [
+            { "type": "paragraph", "children": [{ "type": "text", "text": "甲" }] },
+            { "type": "paragraph", "children": [] },
+            { "type": "paragraph", "children": [{ "type": "text", "text": "乙" }] }
+        ]}})
+        .to_string();
+        let texts: Vec<String> = page_blocks_from_doc(&doc)
+            .expect("应能解析")
+            .into_iter()
+            .map(|b| b.1)
+            .collect();
+        assert_eq!(texts, vec!["甲".to_string(), "乙".to_string()]);
+    }
+
+    #[test]
+    fn bad_json_is_an_error_not_a_panic() {
+        assert!(page_blocks_from_doc("{ not json").is_err());
     }
 }

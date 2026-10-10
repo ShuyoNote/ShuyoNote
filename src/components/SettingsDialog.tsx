@@ -25,6 +25,10 @@ import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
+// ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
+import { filterSpaces } from "../lib/spaceFilter";
+// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
+import { spaceCryptoBadge } from "../lib/spaceSecurity";
 import { useNotes } from "../store/notes";
 import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
@@ -168,13 +172,20 @@ function hostLabel(url: string): string {
   }
 }
 
-// 「空间」页：低频且有破坏性的空间管理（配色 / 删除 / 导出 / 导入）。
-// 高频的「切换空间」仍留在侧栏——它是工作流入口，不是设置。
+// 「空间」页：空间管理（**切换** / 配色 / 删除 / 导出 / 导入）。
+// ⚠️ **2026-10-10（owner 亲口要求）**：「设置-空间面板要可以切换空间，效果等同于在侧边栏的空间切换。」
+//   ⇒ 本页**也**能切了 ✓；⛔ 但**不是**在这里再写一遍"改 active ＋ 刷新" ✗ ——
+//   切空间**只有一条路**：`useSpaceStore.switchTo`（侧栏顶部那次走的就是它 ✓，
+//   它内部已经含 `setActiveWorkspaceId` ＋ `loadPages` ＋ `refreshVault` ✓）。
 function SpacesPane() {
   const spaces = useSpaceStore((s) => s.spaces);
   const activeId = useSpaceStore((s) => s.activeId);
   const [colorFor, setColorFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // ⭐ 2026-10-10：筛选词（owner：「20+ 个空间怎么办」✓）⇒ 只影响**列表显示**：
+  //    ⛔ 不动 `spaces`、⛔ 不动"当前空间" ✗（见 `filterSpaces`：签名里根本没有 active ✓）
+  const [spaceQuery, setSpaceQuery] = useState("");
+  const shownSpaces = filterSpaces(spaces, spaceQuery);
   // 每个空间的同步目标：让「这个空间到底同不同步、同步到哪」在管理页就能看到，
   // 不用再切回同步面板逐个点开。
   const [syncProfiles, setSyncProfiles] = useState<Record<string, SyncProfile>>({});
@@ -190,6 +201,14 @@ function SpacesPane() {
       })
       .catch(() => {});
   }, [spaces.length]);
+
+  // ⭐ 切空间：**只走 store 那一条路**（与侧栏顶部那次完全一致 ✓）。
+  // ⛔ 不在这里 `api.setActiveWorkspaceId` ＋ 自己刷新 ✗ —— 那会多出第二条路 ✓。
+  const pick = async (id: string) => {
+    // 点"当前"那一行＝无事发生：切空间会连带 `loadPages` ＋ `refreshVault`，白跑一趟没必要
+    if (id === activeId) return;
+    await useSpaceStore.getState().switchTo(id);
+  };
 
   const setColor = async (id: string, color: string) => {
     setColorFor(null);
@@ -216,13 +235,40 @@ function SpacesPane() {
     <>
       <section className="set-section">
         <div className="set-section-title">全部空间（{spaces.length}）</div>
+        {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
+            ⚠️ 与侧栏那个空间切换器**共用同一份匹配**（`src/lib/spaceFilter.ts` ✓），⛔ 不各写一份 ✗。 */}
+        <input
+          className="set-space-filter sync-input"
+          value={spaceQuery}
+          onChange={(e) => setSpaceQuery(e.target.value)}
+          placeholder="筛选空间…"
+          aria-label="筛选空间"
+        />
         <div className="set-space-list">
-          {spaces.map((s) => {
+          {spaces.length === 0 ? (
+            <div className="set-space-empty">还没有空间</div>
+          ) : shownSpaces.length === 0 ? (
+            /* ⛔ 零命中**不许**只给空列表 ✗（用户会以为空间没了 ✓）⇒ 说人话 ＋ 给出路 ✓ */
+            <div className="set-space-empty">
+              没有匹配的空间
+              <button className="set-btn" onClick={() => setSpaceQuery("")}>清空筛选</button>
+            </div>
+          ) : (
+            shownSpaces.map((s) => {
             const active = s.id === activeId;
             const prof = syncProfiles[s.id];
+            // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（与侧栏**同一处**映射 ✓）
+            const crypto = spaceCryptoBadge(s.encrypted_on_disk);
             return (
               <div key={s.id} className={`set-space-card${active ? " is-active" : ""}`}>
-                <div className="set-space-row">
+                {/* ⭐ 这一行**可点**：点了就切过去（owner 2026-10-10）✓
+                    ⚠️ 处理器挂在**这一层**：下面那两个按钮在它内部 ⇒ 各自 `stopPropagation` ✓；
+                    配色面板是它的**兄弟**节点 ⇒ 点色块本来就不会走到这里 ✓。 */}
+                <div
+                  className="set-space-row"
+                  title={active ? "当前空间" : `切换到「${s.name}」`}
+                  onClick={() => void pick(s.id)}
+                >
                   <span
                     className="set-space-mark"
                     style={s.theme ? { background: s.theme, color: "#fff" } : undefined}
@@ -235,17 +281,52 @@ function SpacesPane() {
                       {active && <span className="set-tag">当前</span>}
                     </div>
                     <div className="set-space-meta">
+                      {/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）——与**侧栏切换器**同一格读数、
+                          同一个映射（`spaceCryptoBadge` ✓）⇒ "两处一致"是**结构性**的 ✓。
+                          ⚠️ 只显示**文字**（⛔ 不只靠颜色 ✗）；读数拿不到 ⇒ 不显示 ✓。 */}
+                      {crypto.show && (
+                        <span className="set-space-crypto" title={crypto.title} aria-label={crypto.title}>
+                          {crypto.label}
+                        </span>
+                      )}
+                      {/* ⭐ 2026-10-10（owner 截图）：这里原来直接显示 `↔ 121.199.8.24` ✗ ——
+                          一个公网 IP 摆在设置里，普通用户既看不懂也不需要 ✓。
+                          ⇒ 人话「已同步」✓ ＋ ⭐ **完整地址留在 `title` 里** ✓（排障要用 ✓，⛔ 别删它 ✗）。 */}
                       {prof?.server_url ? (
-                        <span className="set-space-sync">↔ {hostLabel(prof.server_url)}</span>
+                        <span className="set-space-sync" title={prof.server_url}>
+                          已同步
+                        </span>
                       ) : (
                         <span className="set-space-local">仅本机</span>
                       )}
-                      <span className="set-space-id" title={s.id}>{s.id.slice(0, 8)}</span>
+                      {/* ⭐ 2026-10-10（owner 截图）：那串空间编号（`91f96e7f` 那类）删掉了 ✓
+                          —— 普通用户不需要 ✓；⛔ 也**不要**改成塞进 `title` 里 ✗（那还是露给用户了 ✓）。 */}
                     </div>
                   </div>
+                  {/* ⭐ 2026-10-10（owner 截图）：切换原来**只有鼠标悬停**才提示 ✗（整行那个 `title`）
+                      ⇒ 给一个**看得见**的入口 ✓。
+                      ⚠️ ⭐ **必须 `stopPropagation`** ✗ —— 整行本来就 `onClick={pick}` ✓
+                      ⇒ 不拦就会**切两次**（自己那次 ＋ 冒泡那次 ✓）；与「配色」「删除」同一处理 ✓。
+                      ⚠️ **当前那一行不显示** ✓（它已经在那儿了，再给个"切过去"很怪 ✓）。 */}
+                  {!active && (
+                    <button
+                      className="set-space-switch set-btn"
+                      title={`切换到「${s.name}」`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void pick(s.id);
+                      }}
+                    >
+                      切换
+                    </button>
+                  )}
                   <button
                     className={`set-btn${colorFor === s.id ? " is-on" : ""}`}
-                    onClick={() => setColorFor((c) => (c === s.id ? null : s.id))}
+                    /* ⛔ 配色不切空间：点完只是展开色板（冒泡上去就变成"顺手切走" ✗） */
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setColorFor((c) => (c === s.id ? null : s.id));
+                    }}
                   >
                     配色
                   </button>
@@ -253,7 +334,11 @@ function SpacesPane() {
                     className="set-btn is-danger-ghost"
                     disabled={busy || spaces.length <= 1 || active}
                     title={active ? "当前空间不可删除，请先切换到别的空间" : spaces.length <= 1 ? "至少保留一个空间" : "删除该空间"}
-                    onClick={() => doRemove(s.id, s.name)}
+                    /* ⛔ 删除**绝不**先切过去（那会"切完再删" —— 灾难 ✓） */
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void doRemove(s.id, s.name);
+                    }}
                   >
                     删除
                   </button>
@@ -276,18 +361,26 @@ function SpacesPane() {
                 )}
               </div>
             );
-          })}
+            })
+          )}
         </div>
         <p className="set-hint">
-          切换空间在侧栏顶部——这里只做低频管理。删除为软删除，数据仍在磁盘上，可在「存储 / 空间管理」里彻底清理。
+          点一行就能切过去（与侧栏顶部那次切换同一条路）。删除为软删除，数据仍在磁盘上，可在「存储 / 空间管理」里彻底清理。
         </p>
       </section>
 
       <section className="set-section">
         <div className="set-section-title">单空间迁移</div>
+        {/* ⭐ 2026-10-10（owner **第二次**提：「去掉这两个图标」）：两张卡片顶上原本各有一个方块图标
+            （`.set-migrate-icon`，写的是 ↑ ／ ↓）✗ ⇒ **只删图标** ✓：
+            标题（导出当前空间／导入空间包）＋ 说明那句 ＋ 两个按钮**一个不少** ✓。
+            ⚠️ 卡片是**内容撑高**的（`.set-migrate-card` 没写死高度 ✓）⇒ 少一个 28px 图标只是矮一截、
+            **不会塌** ✓ —— 真高度由 `_tmp/scratch/migrate-card-height.mjs`（真 Chromium／Edge）量过 ✓。
+            ⚠️ 那条 CSS（原来卡片顶上那个方块图标的规则）**已随节点一起删掉** ✓
+              （2026-10-10；App.css 里留了一行墓碑注释说明为什么不能再加回来 ✓）
+              —— 防线在测试里：卡片**只能**有 标题／说明／按钮 三样节点 ✓，谁加回来当场红 ✓。 */}
         <div className="set-migrate">
           <div className="set-migrate-card">
-            <div className="set-migrate-icon">↑</div>
             <div className="set-migrate-name">导出当前空间</div>
             <div className="set-migrate-sub">「{activeName}」及其引用到的附件，打包成一个 zip</div>
             <button className="set-btn" onClick={() => void exportCurrentSpace(activeName)}>
@@ -295,7 +388,6 @@ function SpacesPane() {
             </button>
           </div>
           <div className="set-migrate-card">
-            <div className="set-migrate-icon">↓</div>
             <div className="set-migrate-name">导入空间包</div>
             <div className="set-migrate-sub">始终新建一个空间，绝不覆盖现有空间</div>
             <button className="set-btn" onClick={() => void importSpacePackage()}>
@@ -1372,7 +1464,12 @@ function SecurityPane() {
   // 状态来自 vault 状态中枢（不是本地 useState 的副本）：在这里点「立即锁定」，
   // 整个界面会立刻切到锁定屏——旧写法只改了设置页自己的状态，用户会继续看着已经
   // 读不出来的内容（E2 补的就是这一刀）。
-  const { enabled, locked } = useVault();
+  //
+  // ⚠️ 字段名（2026-10-10）：这里读的是 **`activeSpaceEncrypted`** ——
+  //「**当前活动空间**是不是加密的」✓。⛔ 它**不是**"本机有没有加密空间" ✗ ——
+  // 那条"两个真相源"就是这么来的（`lib/vault.ts` 与这里曾各说一套 ✓）：
+  // 现在**语义只在 `lib/vault.ts` 定义一次** ✓，这里只是用它 ✓，两处说的是同一句话 ✓。
+  const { activeSpaceEncrypted, locked } = useVault();
   const spaces = useSpaceStore((s) => s.spaces);
   const [busy, setBusy] = useState(false);
 
@@ -1393,8 +1490,12 @@ function SecurityPane() {
       {/* ★ owner 2026-09-24 拍板（选项 A）：**本机还没有加密空间时，整节隐藏**。
           理由：那时这一节既没有动作（`lock_encryption` 会直接报"这个空间没有加密"）、
           也没有新信息（下面就是空间列表）—— 留着只是占位。
-          ⚠️ `enabled` 是"**活动空间**是不是加密的"（内核读数）：活动空间加密 ⇒ 有东西可锁 ⇒ 出现。 */}
-      {enabled && (
+          ⚠️ 判据是 `activeSpaceEncrypted` ＝ "**活动空间**是不是加密的"（内核读数 ✓）：
+          活动空间加密 ⇒ 有东西可锁 ⇒ 出现 ✓。
+          ⚠️ **⛔ 不要**改成"本机任意一个空间加密就出现" ✗：那会在**明文活动空间**上摆一颗
+          「立即锁定」，而内核 `lock_encryption_impl` 对明文空间是**直接报错拒绝**的
+          （逐字：「这个空间没有加密，没有什么可锁的」）⇒ 那等于给一个按下去就报错的按钮 ✗。 */}
+      {activeSpaceEncrypted && (
         <section className="set-section">
           <div className="set-section-title">会话锁定</div>
           <div className="set-row">
