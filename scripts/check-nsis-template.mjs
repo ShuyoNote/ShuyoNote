@@ -57,9 +57,10 @@ export function upstreamPart(text) {
 
 /**
  * 纯逻辑：返回问题清单（空数组 = 通过）。
- * @param {{conf:any, templateText:string|null, cliVersion:string, upstreamText:string|null, upstreamFetched:boolean}} o
+ * @param {{conf:any, templateText:string|null, cliVersion:string, upstreamText:string|null, upstreamFetched:boolean, hooksText?:string|null}} o
+ *   `hooksText` = `bundle.windows.nsis.installerHooks` 指的那个 `.nsh` 的内容（文件关联那一半，见 `inspectFileAssociations`）。
  */
-export function inspect({ conf, templateText, cliVersion, upstreamText, upstreamFetched }) {
+export function inspect({ conf, templateText, cliVersion, upstreamText, upstreamFetched, hooksText = null }) {
   const problems = [];
   const declared = conf?.bundle?.windows?.nsis?.template;
 
@@ -120,6 +121,167 @@ export function inspect({ conf, templateText, cliVersion, upstreamText, upstream
     }
   }
 
+  problems.push(...inspectFileAssociations({ conf, hooksText, templateText }));
+
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// 文件关联（`bundle.windows.nsis.installerHooks`）—— 判据 a / b / c / d
+//
+// 为什么长在这条门禁里：它本来就同时读 `tauri.conf.json` 与 `nsis/` 下的模板，而
+// 「双击 .docx 能唤起本应用、但 ⛔ 不抢默认」正是 Windows 安装器配置的另一半。
+// 形状、两条红线与逐字依据见 docs/specs/2026-10-09-file-associations.md。
+// ---------------------------------------------------------------------------
+
+/** 这一轮登记的 4 个扩展名（只取导入引擎真的支持的那些，源码行号见那份 docs）。 */
+export const FILE_ASSOC_EXTS = ["docx", "xlsx", "pptx", "md"];
+
+/** Tauri `installerHooks` 支持的四个 hook 名。写错名字时模板用 `!ifmacrodef` ⇒ **静默不插入** ✗ */
+export const SUPPORTED_HOOKS = [
+  "NSIS_HOOK_PREINSTALL",
+  "NSIS_HOOK_POSTINSTALL",
+  "NSIS_HOOK_PREUNINSTALL",
+  "NSIS_HOOK_POSTUNINSTALL",
+];
+
+/**
+ * 剥掉 NSIS 行注释（`;` 到行尾）。
+ * 为什么必须先剥：说明「红线长什么样」的**注释里**本来就会写出那条不许出现的语句 ——
+ * 不剥就会把**讲解**判成**违规**（本仓记过同形的"围栏感知"教训）。
+ * ⚠️ 边界：不解析字符串里的 `;`（当前文件用不到；真需要时再按引号感知重写）。
+ */
+export function stripNsisComments(text) {
+  return text
+    .split("\n")
+    .map((l) => l.replace(/;.*$/, ""))
+    .join("\n");
+}
+
+/** 「把 `.ext` 的默认值写成自己」那种形态 —— **判据 b 就是钉住它不出现**。 */
+const WRITE_EXT_DEFAULT_RE =
+  /(?:WriteRegStr|WriteRegExpandStr)\s+\S+\s+"Software\\Classes\\\.\$\{EXT\}"\s+""/;
+
+/** 文件关联那一半的纯逻辑（判据 a/b/c/d）。返回问题清单；空数组 = 通过。 */
+export function inspectFileAssociations({ conf, hooksText, templateText }) {
+  const problems = [];
+  const declared = conf?.bundle?.windows?.nsis?.installerHooks;
+
+  // ---- 判据 b 前半（反向）：`bundle.fileAssociations` 一个都不许有 ----
+  // 它在 Windows 上走上游 FileAssociation.nsh 的 APP_ASSOCIATE，那个宏里逐字有
+  //   WriteRegStr SHELL_CONTEXT "Software\Classes\.${EXT}" "" "${FILECLASS}"
+  // = 把用户双击 .docx 时打开的程序改成我们 ⇒ 抢掉 Word ✗
+  if (conf?.bundle?.fileAssociations !== undefined) {
+    problems.push(
+      "出现了 `bundle.fileAssociations` —— 它在 Windows 上走上游 `APP_ASSOCIATE`，写的是 " +
+        "`Software\\Classes\\.<ext>` 的**默认值**（= 抢掉 Word）⇒ 必须改走 " +
+        "`bundle.windows.nsis.installerHooks` ＋ 只写 `OpenWithProgids`",
+    );
+  }
+
+  // ---- 判据 a：必须真的配了 installerHooks，且文件在 ----
+  if (typeof declared !== "string" || declared.length === 0) {
+    problems.push(
+      "`bundle.windows.nsis.installerHooks` 没配 —— 文件关联不会登记，双击 .docx 不会唤起本应用",
+    );
+    return problems;
+  }
+  if (hooksText === null) {
+    problems.push("`installerHooks` 指的文件不存在：" + declared + "（路径相对 src-tauri/）");
+    return problems;
+  }
+
+  const body = stripNsisComments(hooksText);
+
+  // ---- 判据 b 后半：剥注释后，任何"写 .ext 默认值"的形态都不许有 ----
+  if (WRITE_EXT_DEFAULT_RE.test(body)) {
+    problems.push(
+      "installerHooks 文件里出现了「写 `.ext` 默认值」的语句（剥注释后）：" +
+        '`WriteRegStr … "Software\\Classes\\.${EXT}" "" …` ⇒ 那就是抢默认 ✗',
+    );
+  }
+
+  // ---- 判据 a 后半：每个扩展名都真的登记了，且走 OpenWithProgids ----
+  if (!/OpenWithProgids/.test(body)) {
+    problems.push("installerHooks 文件里没有 `OpenWithProgids` —— 那就不是「可以用它打开」语义");
+  }
+  for (const ext of FILE_ASSOC_EXTS) {
+    if (!body.includes(`SHUYONOTE_OPENWITH_REGISTER "${ext}"`)) {
+      problems.push(`installerHooks 文件没有登记 .${ext}（缺 ` + "`SHUYONOTE_OPENWITH_REGISTER \"" + ext + "\" …`" + `）`);
+    }
+  }
+  if (!/--import/.test(body)) {
+    problems.push("installerHooks 文件的打开命令里没有 `--import` —— 双击后不会走那条导入路径");
+  }
+
+  // ---- 判据 c：卸载必须把我们登记的两处都清掉，且不碰别人的默认值 ----
+  const unregHook = /!macro\s+NSIS_HOOK_POSTUNINSTALL([\s\S]*?)!macroend/.exec(body);
+  if (!unregHook) {
+    problems.push("没有 `NSIS_HOOK_POSTUNINSTALL` —— 卸载后登记不会被清掉（留孤儿关联）");
+  } else {
+    for (const ext of FILE_ASSOC_EXTS) {
+      if (!unregHook[1].includes(`SHUYONOTE_OPENWITH_UNREGISTER "${ext}"`)) {
+        problems.push(`卸载段没有清理 .${ext}（缺 ` + "`SHUYONOTE_OPENWITH_UNREGISTER \"" + ext + "\" …`" + `）`);
+      }
+    }
+  }
+  const unregMacro = /!macro\s+SHUYONOTE_OPENWITH_UNREGISTER[\s\S]*?!macroend/.exec(body);
+  if (!unregMacro) {
+    problems.push("找不到 `SHUYONOTE_OPENWITH_UNREGISTER` 宏（卸载靠它清理）");
+  } else {
+    const m = unregMacro[0];
+    if (!/DeleteRegValue\s+\S+\s+"Software\\Classes\\\.\$\{EXT\}\\OpenWithProgids"/.test(m)) {
+      problems.push("反登记没删 `.ext\\OpenWithProgids\\<ProgID>` ⇒ 留孤儿项");
+    }
+    if (!/DeleteRegKey\s+\/ifempty\s+\S+\s+"Software\\Classes\\\.\$\{EXT\}\\OpenWithProgids"/.test(m)) {
+      problems.push(
+        "反登记清理 `.ext\\OpenWithProgids` 时**必须**用 `DeleteRegKey /ifempty`" +
+          "（别人还有条目时不许整键删 ⇒ 否则会把 Word/WPS 的「打开方式」一起扫掉）",
+      );
+    }
+    if (!/DeleteRegKey\s+\S+\s+"Software\\Classes\\\$\{PROGID\}"/.test(m)) {
+      problems.push("反登记没删自有 ProgID 类键 ⇒ 留孤儿");
+    }
+    if (/DeleteRegKey[\s\S]{0,200}?"Software\\Classes\\\.\$\{EXT\}"/.test(m)) {
+      problems.push("反登记在删 `.ext` 本身/它的默认值 ⇒ 会破坏**别人的**关联 ✗");
+    }
+  }
+
+  // ---- 判据 d：hook 名必须是 Tauri 支持的四个，且模板真的在调它 ----
+  const defined = [...body.matchAll(/!macro\s+(NSIS_HOOK_[A-Z_]+)/g)].map((mm) => mm[1]);
+  if (defined.length === 0) {
+    problems.push("installerHooks 文件里一个 `NSIS_HOOK_*` 都没定义 ⇒ 什么都不会发生");
+  }
+  for (const h of defined) {
+    if (!SUPPORTED_HOOKS.includes(h)) {
+      problems.push(
+        `自定义 hook \`${h}\` 不是 Tauri 支持的名字（支持：${SUPPORTED_HOOKS.join(" / ")}）` +
+          "—— 模板用 `!ifmacrodef`，写错会**静默不插入**",
+      );
+    }
+  }
+  if (templateText) {
+    for (const h of defined) {
+      if (!new RegExp(`!insertmacro\\s+${h}\\b`).test(templateText)) {
+        problems.push(`模板里没有 \`!insertmacro ${h}\` ⇒ 它永远不会跑`);
+      }
+    }
+    const iAssoc = templateText.indexOf('!include "FileAssociation.nsh"');
+    const iHooks = templateText.indexOf('!include "{{installer_hooks}}"');
+    if (iAssoc < 0) {
+      problems.push('模板没有 `!include "FileAssociation.nsh"` ⇒ `UPDATEFILEASSOC` 未定义（编译不过）');
+    }
+    if (iHooks < 0) {
+      problems.push('模板没有 `!include "{{installer_hooks}}"` ⇒ installerHooks 根本不会被 include');
+    }
+    if (iAssoc >= 0 && iHooks >= 0 && iAssoc > iHooks) {
+      problems.push(
+        "模板里 `FileAssociation.nsh` 的 include 排在 installerHooks **之后** ⇒ " +
+          "我们的 hook 用到 `UPDATEFILEASSOC` 时它还没定义",
+      );
+    }
+  }
+
   return problems;
 }
 
@@ -159,6 +321,14 @@ async function main() {
   const abs = typeof declared === "string" ? join(ROOT, "src-tauri", declared) : null;
   const templateText = abs && existsSync(abs) ? readFileSync(abs, "utf8") : null;
 
+  // 文件关联那一半的输入：`installerHooks` 指的 `.nsh`（判据 a/b/c/d 靠它）
+  const hooksDeclared = conf?.bundle?.windows?.nsis?.installerHooks;
+  const hooksAbs =
+    typeof hooksDeclared === "string" && hooksDeclared.length > 0
+      ? join(ROOT, "src-tauri", hooksDeclared)
+      : null;
+  const hooksText = hooksAbs && existsSync(hooksAbs) ? readFileSync(hooksAbs, "utf8") : null;
+
   const crateVersion = templateText
     ? (parseMeta(templateText)["upstream-crate"] ?? "").split(/\s+/).pop()
     : "";
@@ -173,12 +343,20 @@ async function main() {
       : "[nsis-template] · 跳过与上游的逐行比对（取不到 crates.io，网络原因）—— 离线三条仍已检查",
   );
 
+  if (typeof hooksDeclared === "string" && hooksDeclared.length > 0) {
+    console.log(
+      `[nsis-template] 文件关联走 installerHooks：${hooksDeclared}` +
+        (hooksText === null ? "（⚠️ 文件读不到）" : "（只写 OpenWithProgids，不写 .ext 默认值）"),
+    );
+  }
+
   const problems = inspect({
     conf,
     templateText,
     cliVersion,
     upstreamText: up.fetched ? up.text : null,
     upstreamFetched: up.fetched,
+    hooksText,
   });
 
   if (problems.length) {
@@ -189,6 +367,10 @@ async function main() {
   console.log("  ✓ fork 存在，且与上游的差异只在默认安装目录那一行");
   console.log("  ✓ 新装用户默认目录 = %LOCALAPPDATA%\\Programs\\ShuyoNote（老用户沿用注册表里记着的位置）");
   console.log("  ✓ 头部记录的 Tauri CLI 版本与 package.json 一致");
+  console.log(
+    "  ✓ 文件关联：走 installerHooks ＋ 只写 OpenWithProgids（⛔ 没有写任何 `.ext` 的默认值），" +
+      "卸载段清掉自己登记的两处",
+  );
   console.log("[结果] nsis-template 通过");
 }
 

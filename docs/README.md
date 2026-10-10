@@ -163,6 +163,7 @@ CHANGELOG.md                     # 版本变更日志
 | [specs/2026-09-28-llm-wiki-requirements.md](specs/2026-09-28-llm-wiki-requirements.md) | **需求：LLM wiki（库地图 / 专题页）（待 owner 拍板）**：一句话＝"库能「被回答」，但还不能「被浏览」"；六段（诉求原话 / 现状读数 / 要什么 / 不要什么 / 边界 / ＋成功判据、砍掉条件）；⚠️ **痛点的量级没有读数**（前置测量在 §8，其中"模型成本"是 **go/no-go**） |
 | [specs/2026-09-28-llm-wiki-spec.md](specs/2026-09-28-llm-wiki-spec.md) | **规格：LLM wiki 的入口与边界（三条不变式，第四列全 `❌ 无`）**：`INV-WIKI-provenance` / `-coverage-visible` / `-readonly-default`；含每条"怎么弄红"的负例与对照、落地三步（先纯函数断言 → 弄红记账本 → 够条件才进 `INVARIANTS.md`）；**按本层铁律现在还不在 `INVARIANTS.md` 里** |
 | [specs/2026-10-08-network-targets-declaration-surface.md](specs/2026-10-08-network-targets-declaration-surface.md) | **设计：网络目标声明面（方案 B，不锁实现）** —— `INV-KB-space-split` 的「个人侧网络目标清单必须为空」这句**今天没有着力点**（那份"清单"在代码里**不存在** ✗）⇒ 先定「谁声明／声明在哪（仓内 `network-targets.json` 一处、两侧同一个字节）／怎么核（`check-network-targets.mjs` 的三条形状）」，并把与 **2026-10-05「未加密空间可用云端」冲突**的**方案 A（锁死 AI 端点）** 单列待拍 ✓ |
+| [specs/2026-10-09-file-associations.md](specs/2026-10-09-file-associations.md) | **设计：文件关联（双击 `.docx` 能唤起，但⛔不抢默认）** —— 走 `bundle.windows.nsis.installerHooks` ＋ 自写 `.nsh`（只写 `OpenWithProgids`）；**贴上游 `APP_ASSOCIATE` 宏原文说明为什么不用 `fileAssociations`**（那一行会把我们写成 `.docx` 的默认值 ✗）；两条红线 ＋ 判据 a/b/c/d 进既有 `check-nsis-template.mjs`；⚠️ **未做安装验证**（无 `makensis`，安装归 Lead） |
 
 > ⚠️ 与上面那张 `plans` 表的区别：**`plans/` 记过程（怎么想、施工单），`specs/` 只放「现在仍然必须成立」的东西**。
 > 两边的登记判据也不同：`plans` 由 `check-doc-links` 逐篇对应，`specs` 的准入靠**判据能不能被证明会红**。
