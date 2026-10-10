@@ -927,6 +927,17 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM pages", [], |r| r.get(0))
             .expect("主连接被弄坏了 —— 这正是 owner 那个 bug");
         assert_eq!((before, after), (0, 0));
+        // ⭐ 判据加强（2026-10-10）：`0 == 0` **证明不了"还是 A"** ✗ —— 换一个**空库**也是 0 ✓。
+        //    ⇒ 把主连接指向的**文件名**读出来 ✓：它必须**逐字**还是 A 那个文件 ✓
+        //    （`PRAGMA database_list` 的第一行就是 `main` ✓，第 3 列是文件路径 ✓）。
+        let main_file: String = c
+            .query_row("PRAGMA database_list", [], |r| r.get::<_, String>(2))
+            .unwrap();
+        assert_eq!(
+            main_file,
+            a.display().to_string(),
+            "⭐ 主连接不再指向原来的空间 A ✗（0 == 0 那种弱断言看不出这一点 ✗）"
+        );
         // ④ 再来一次也一样（不是"坏一次就好了" ✓）
         assert!(crate::db::reopen_space_at(&mut c, "space-b", &dir).is_err());
         let again: i64 = c
@@ -934,6 +945,62 @@ mod tests {
             .expect("第二次失败把主连接弄坏了");
 
         assert_eq!(again, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ ③（2026-10-10，**A 形状的前提** ✓）：切到一个**未解锁的加密空间**失败时，
+    /// ⭐ **活动指针不许被写** ✗。
+    /// ⚠️ 这一条只能在 `switch_active_space` 这一层判 ✓ —— 上面那个夹具直接调 `reopen_space_at` ✓，
+    ///    它**管不到指针** ✗（指针是 `switch_active_space` 的第 ② 步 ✓）。
+    /// ⭐ 而原来"先换连接、后写指针"只由一条**文本判据**钉着 ✗（那条自己写着"只能钉文本" ✓）
+    ///    ⇒ 这里补一条**行为**判据 ✓。
+    #[test]
+    fn a_refused_switch_leaves_the_active_pointer_untouched() {
+        let dir = std::env::temp_dir().join(format!("shuyo-switch-ptr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+
+        let a = crate::db::space_db_path(&dir, "space-a");
+        {
+            let c = rusqlite::Connection::open(&a).unwrap();
+            crate::db::migrate(&c, "space-a").unwrap();
+        }
+        // B："加密但本会话没钥匙"的形状（头 16 字节不是 SQLite magic ✓，与上面那条同法 ✓）
+        let b = crate::db::space_db_path(&dir, "space-b");
+        std::fs::write(&b, vec![0x41u8; 4096]).unwrap();
+
+        // meta 侧：两个空间都在册 ✓ ＋ 指针**先指向 A** ✓（否则"没被写"是空转 ✗）
+        let mut c = conn_with_workspaces();
+        // ⚠️ `conn_with_workspaces()` **只建 `meta.workspaces`** ✗ ⇒ 指针那张表要自己建 ✓
+        //    （我第一版漏了 ⇒ 真读数 `no such table: meta.sync_state` ✓ —— 那次红是**夹具**的错 ✗，
+        //     不是产品 ✗；补上再跑 ✓。）
+        c.execute_batch(
+            "CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')",
+        )
+        .unwrap();
+        insert_new_local_space(&c, "space-a", "A", "#e11", 1.0, 1_000).unwrap();
+        insert_new_local_space(&c, "space-b", "B", "#e12", 2.0, 1_000).unwrap();
+        c.execute(
+            "INSERT INTO meta.sync_state (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![ACTIVE_KEY, "space-a"],
+        )
+        .unwrap();
+
+        // ① 切 B ⇒ Err ✓
+        assert!(
+            switch_active_space(&mut c, "space-b", &dir).is_err(),
+            "切到一个打不开的加密空间居然成功了"
+        );
+        // ② ⭐ 指针**没被写** ✓
+        let active: String = c
+            .query_row(
+                "SELECT value FROM meta.sync_state WHERE key = ?1",
+                params![ACTIVE_KEY],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, "space-a", "⭐ 指针被写到那个打不开的空间去了 ✗");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
