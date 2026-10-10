@@ -2616,6 +2616,11 @@ export function makeInvoke(store: SqliteStore) {
         message: "Web 版没有本地词库（词库走能力包，需要本机落盘）⇒ 这次没查到，不编造释义。",
       } as T;
     }
+    if (cmd === "dictionary_install_pack") {
+      // Web 版没有"本机落盘"这件事（词库走能力包，落盘在 Rust 侧）⇒ **如实**说不支持，
+      // ⛔ 不许回一个假的成功（那会让界面显示"已下载"，而磁盘上什么都没有）。
+      throw new Error("Web 版不能下载并落盘本地词库（能力包依赖本机文件系统）⇒ 请用桌面版。");
+    }
     if (cmd === "write_attachment_bytes") {
       const hash = String(a.hash ?? "");
       const data = (a.data as number[]) ?? [];
