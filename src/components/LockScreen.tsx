@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { unlockVault } from "../lib/vault";
+import { listPlaintextSpaces, switchToSpace, unlockVault } from "../lib/vault";
 
 // Full-screen gate shown when local at-rest encryption is enabled and the session is
 // locked (the default after a restart — no key is persisted). While locked the space
@@ -17,6 +17,22 @@ export function LockScreen() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [reveal, setReveal] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // ⭐ 出路那一段（见下面的注释）：正在换去的那个空间 id ＋ 换失败时如实说。
+  const [goingTo, setGoingTo] = useState("");
+  const [otherErr, setOtherErr] = useState<string | null>(null);
+  // ⚠️ hook 一律在**没有提前 return** 的这条路上（这块屏本来就没有早退 ✓）。
+  // ⚠️ 出路清单**按需取**（⛔ 不放进 `refreshVault()` ✗ —— 那会让既有判据红，见 `lib/vault.ts` ✓）：
+  //    这块屏出现 ⇒ 闸门为真 ⇒ 正是需要出路的时候 ✓。
+  const [otherSpaces, setOtherSpaces] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void listPlaintextSpaces().then((rows) => {
+      if (alive) setOtherSpaces(rows);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -41,6 +57,27 @@ export function LockScreen() {
       inputRef.current?.focus();
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * ⭐ 换到本机某个**明文**空间 —— 闸门的出路 ✓。
+   *
+   * ⚠️ 这里**不判**"能不能进"✗：换完由 `switchToSpace()` 再问一次内核，
+   * `activeSpaceEncrypted` 自己会变成 `false`，闸门随之放开 ✓。
+   * 界面自己判"能不能开"就等于把闸门搬到前端了 ✗ —— 那条路不许走。
+   */
+  const goOther = async (id: string) => {
+    if (goingTo) return;
+    setGoingTo(id);
+    setOtherErr(null);
+    try {
+      await switchToSpace(id);
+    } catch (e) {
+      // ⛔ 失败不许静默：说清是"没换过去"，别让人以为是点空了。
+      setOtherErr(String(e));
+    } finally {
+      setGoingTo("");
     }
   };
 
@@ -84,6 +121,39 @@ export function LockScreen() {
           <div className="lock-error" role="alert">
             {err}
             {tries > 1 && <span className="lock-error-count">（已连续输错 {tries} 次）</span>}
+          </div>
+        )}
+
+        {/* ⭐ 2026-10-10（owner 亲口报：「一个空间加密，其它空间怎么还需要密码？」）：
+            闸门只在**这个加密空间**没解锁时挡路 ✓ ⇒ 本机还有**明文空间**的话，这里必须给一条
+            **直接进去**的路 —— ⛔ 否则"一个空间的口令"事实上就成了"整个应用的开关" ✗
+            （闸门触发时 `AppShell` 整块不挂载，而空间切换器就在它里面 ⇒ 用户出不去 ✓）。
+            ⚠️ 一条好消息：`.lock-*` 的样式已经在 App.css 里了 ⇒ 这里**只复用**既有的类
+               （`lock-forgot` / `lock-forgot-lead` / `lock-button` / `lock-error` ✓），
+               ⛔ 不新造类名 ✗（新造了没有规则，会是"裸"的 —— `McpAccessPane` 2026-10-06 踩过 ✓）。 */}
+        {otherSpaces.length > 0 && (
+          <div className="lock-forgot" data-testid="lock-other-spaces">
+            <p className="lock-forgot-lead">
+              <b>其它空间不用口令。</b>
+              本机还有 {otherSpaces.length} 个空间没有加密 —— 直接进去就行，不用输这里的口令。
+            </p>
+            {otherSpaces.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="lock-button"
+                data-testid={`lock-go-${s.id}`}
+                disabled={goingTo !== ""}
+                onClick={() => void goOther(s.id)}
+              >
+                {goingTo === s.id ? "正在切过去…" : `去「${s.name}」`}
+              </button>
+            ))}
+            {otherErr && (
+              <div className="lock-error" role="alert">
+                没换过去：{otherErr}
+              </div>
+            )}
           </div>
         )}
 

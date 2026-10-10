@@ -656,8 +656,12 @@ pub fn sync_gate(c: &Connection) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
-pub struct EncryptionStatus {
-    pub enabled: bool,
+pub struct EncryptionStatus {    pub enabled: bool,
+    /// ⭐ **"当前这个活动空间现在读不出来（需要口令）"** —— ⚠️ **不是**"整个会话锁着" ✗
+    /// （owner 2026-10-10 拍 A：明文空间与加密空间必须**各算各的** ✓）。
+    /// 算法 ＝ `active_space.encrypted_on_disk && !active_space.key_available` ✓
+    /// （见 `encryption_status` 里那段注释 ✓）。
+    /// ⚠️ **进程级**那个锁是**另一个量**（`LOCKED`，供 `gate_sync` 与 lock/unlock 用 ✓）⇒ ⛔ 两者别混 ✗。
     pub locked: bool,
     /// **本会话写新数据用的密文版本**（§0-C：算法标识不能只藏在密文里，状态上也要有一份）。
     /// 解锁着 ⇒ 手上这套密钥材料真正会写出来的版本；锁着/未开启 ⇒ 本构建的默认写入版本。
@@ -679,10 +683,21 @@ pub struct EncryptionStatus {
     pub active_space_gate: crate::space_crypto::SyncGateView,
 }
 
+/// ⭐ **"这个活动空间现在需要口令吗"** —— `encryption_status.locked` 的**唯一算法**（纯函数 ✓）。
+///
+/// ⚠️ 抽成纯函数**不是为了好看**：`encryption_status` 的入参是 `State<Db>`（Tauri 命令 ✓）⇒
+/// 那样的函数**单测直接调不了** ✗ ⇒ 判据就没法钉住这一格 ✓。现在判据可以自己造
+/// `SpaceCryptoStatus` 直接钉 ✓（a–f 六条 ✓）。
+///
+/// ⚠️ ⛔ 它**刻意只吃这个空间的状态** ✗ —— **进程级**的 `LOCKED` **不进这个函数** ✓：
+/// 那个量是"**整个会话**"的语义（`gate_sync` / lock / unlock 用 ✓），不是这一格 ✓。
+fn active_space_needs_passphrase(st: &crate::space_crypto::SpaceCryptoStatus) -> bool {
+    st.encrypted_on_disk && !st.key_available
+}
+
 #[tauri::command]
 pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     let c = conn(&db);
-    let locked = LOCKED.load(Ordering::SeqCst);
     let format = match key_if_enabled(&c) {
         Some(k) => crypto::active_format(&k),
         None => crypto::CURRENT_FORMAT,
@@ -715,6 +730,19 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     //   用户直接对着一个读不出来的外壳。旧版靠应用级标志（meta 里那个 `ENC_ENABLED`）躲过这一条，
     //   而那个标志已随应用级加密一起删 ⇒ 这里按活动空间的文件头 ＋ 盒子补上。
     let enabled = encryption_enabled(&c) || active_space.encrypted_on_disk || active_space.in_keyring;
+    // ⭐ 2026-10-10（owner 拍 A：「用户从明文空间，切换到加密空间怎么办？」）：
+    //   `locked` 这一格**从"进程级的会话锁"改成"**这个活动空间**现在读不出来（需要口令）"** ✓。
+    //   算法 ＝ **活动空间是密的 且 本会话拿不到它的钥匙** ✓ ——
+    //   `key_available` 天生按空间（袋里有**这个空间**的盒子 ＋ 会话主密钥还在；`space_crypto.rs:416` ✓）。
+    //   ⚠️ ⛔ **进程级 `LOCKED` 一个字节都没动** ✗：它仍供 `gate_sync`（`:644-647`）与
+    //      `lock_encryption` / `unlock_encryption`（`:746-805`）使用 —— 那两处是**整个会话**的语义 ✓，
+    //      与本格不是一回事 ✓。
+    //   ⇒ 明文活动空间 ⇒ false ✓（明文库本来就能读）；切到加密空间且没解锁 ⇒ true ✓（闸门弹锁屏 ✓）；
+    //      解锁后 ⇒ false ✓；切回明文 ⇒ 立刻 false ✓。
+    //   ⚠️ 边界：**加密但袋里没盒子**（异常形态）⇒ 也是 true ⇒ 该拦 ✓
+    //      （那库本来就读不出来；解锁时内核会**响亮报错**，⛔ 不是静默 ✓）；
+    //      **没有活动空间**（上面那个全 false 的兜底）⇒ false ⇒ 不弹 ✓（与今天一致 ✓）。
+    let needs_passphrase = active_space_needs_passphrase(&active_space);
     // ★ 第 2 步：闸门裁决（同一份读数 ＋ 本地分类标记 ⇒ 视图）。
     let active_space_gate = match active_id.as_deref() {
         Some(sid) => crate::space_crypto::sync_gate_view(
@@ -729,7 +757,7 @@ pub fn encryption_status(db: State<Db>) -> Result<EncryptionStatus, String> {
     };
     Ok(EncryptionStatus {
         enabled,
-        locked,
+        locked: needs_passphrase,
         format,
         algorithm: crypto::format_name(format).to_string(),
         space_format,
@@ -2501,5 +2529,109 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ⭐ 2026-10-10（owner 拍 A）：「用户从明文空间，切换到加密空间怎么办？」
+    //
+    // 那一格的算法 ＝ **活动空间是密的 且 本会话拿不到它的钥匙** ✓（`active_space_needs_passphrase` ✓）。
+    // ⛔ **进程级 `LOCKED` 不进这个函数** ✗ —— 它是"整个会话"的语义（判据 c／g 由既有那条守 ✓）。
+    // ⚠️ 每条**各自能红**（⛔ 不把三件事包进一条断言 ✗）。
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// 造一个活动空间读数（只给这几条判据用 ✓）。
+    fn status(encrypted_on_disk: bool, in_keyring: bool, key_available: bool) -> crate::space_crypto::SpaceCryptoStatus {
+        crate::space_crypto::SpaceCryptoStatus {
+            space_id: "sp-t".to_string(),
+            name: "测试空间".to_string(),
+            encrypted_on_disk,
+            in_keyring,
+            key_available,
+        }
+    }
+
+    /// ⭐ a) **明文空间 ⇒ 不需要口令**（`locked` 为 false）。
+    /// 旧算法（读进程级 `LOCKED`）在"启动时是明文 ⇒ LOCKED=false，之后切到加密空间"这条路上给 false ✓，
+    /// 但它**说不清"现在是哪个空间"** ⇒ 本判据钉的是"按空间算"这件事本身 ✓。
+    #[test]
+    fn 明文活动空间_不需要口令() {
+        assert!(!active_space_needs_passphrase(&status(false, false, false)));
+        // ⚠️ 明文空间**即使**会话"锁着"（`LOCKED` 与它无关）也不该要口令 ✓ —— 这一条把
+        //    `encrypted_on_disk || !key_available` 那种写法当场判红 ✓（那写法会让明文空间也要口令 ✗）。
+        assert!(!active_space_needs_passphrase(&status(false, false, true)));
+        assert!(!active_space_needs_passphrase(&status(false, true, false)));
+    }
+
+    /// ⭐ b) **加密空间且本会话没有它的钥匙 ⇒ 需要口令**（＝切过去就该弹锁屏 ✓）。
+    #[test]
+    fn 加密活动空间_没钥匙_需要口令() {
+        assert!(active_space_needs_passphrase(&status(true, true, false)), "袋里有盒子但会话没解锁 ⇒ 要口令");
+        assert!(active_space_needs_passphrase(&status(true, false, false)), "★ 异常形态：密的但袋里没盒子 ⇒ 也要拦");
+    }
+
+    /// ⭐ c) **解锁之后 ⇒ 不再需要口令**（钥匙到手 ✓）。
+    #[test]
+    fn 加密活动空间_拿到钥匙_不需要口令() {
+        assert!(!active_space_needs_passphrase(&status(true, true, true)));
+    }
+
+    /// ⭐ d) ⭐⭐ **反向**：⭐ **换到另一个加密空间 ⇒ 仍要口令** ✗ ——
+    /// 「一个空间解锁」**不许**顺手把别的空间也算解锁 ✓（与 task-21 那条 c 同族 ✓）。
+    /// ⚠️ 为什么这条能成立：这个函数只吃**传进来那个空间**的读数 ✓ ⇒ 空间换了、它的 `key_available`
+    ///    就是它自己的 ✓（⛔ 不带别人的 ✗）。
+    #[test]
+    fn 换到另一个加密空间_仍要口令() {
+        let unlocked_one = status(true, true, true); // 刚才解锁的那个
+        let other_encrypted = status(true, true, false); // 另一个：盒子在，但会话没给它钥匙
+        assert!(!active_space_needs_passphrase(&unlocked_one));
+        assert!(active_space_needs_passphrase(&other_encrypted), "★ 不许顺手把别的加密空间也算解锁");
+    }
+
+    /// ⭐ e) **"异常形态要拦，正常形态不能多拦"** —— `encrypted_on_disk` 是**必要条件** ✓。
+    /// 判据 a 的反面：把算法写成 `!key_available`（漏掉 `encrypted_on_disk` ✓）⇒ 明文空间也会被拦 ✗ ⇒ 这条红 ✓。
+    #[test]
+    fn 明文空间永远不因钥匙缺失而被拦() {
+        assert!(
+            !active_space_needs_passphrase(&status(false, true, false)),
+            "明文空间不许被拦 —— 它本来就读得出来 ✓"
+        );
+    }
+
+    /// ⭐ f) ⭐⭐ **反向：`enabled` 那一格不许按"别的意思"改** ✗ ——
+    /// 它**本来就**按活动空间算（`encryption_enabled(&c) || encrypted_on_disk || in_keyring` ✓），
+    /// 改动就在它旁边 ⇒ 容易被顺手改掉 ✗。这里钉住"**袋里有盒子 也算 enabled**"这半边 ✓
+    /// （＝"密的"与"袋里有盒子"**都**要算进去 ✓，⛔ 不是只看 `encrypted_on_disk` ✗）。
+    /// ⚠️ 这一条判的是**表达式**，不是调 `encryption_status`（那是 Tauri 命令，单测调不了 ✓）。
+    #[test]
+    fn enabled_那一格仍按活动空间算_两个半边都在() {
+        // 把 `encryption_status` 里那一行的**源码**钉住：两个半边缺一 ⇒ 红 ✓
+        let src = include_str!("security.rs");
+        let line = src
+            .lines()
+            .find(|l| l.trim_start().starts_with("let enabled ="))
+            .expect("找不到 `let enabled = …` 那一行（结构变了？）");
+        assert!(
+            line.contains("active_space.encrypted_on_disk") && line.contains("active_space.in_keyring"),
+            "`enabled` 的两个半边必须都在（密的／袋里有盒子）—— 实际：{line}"
+        );
+    }
+
+    /// ⭐ g) **进程级 `LOCKED` 没被动** —— 这一点由既有判据机器守着 ✓，这里点名它们，并**当场各读一次**
+    /// 证明它们依赖的就是那个全局量 ✓（⛔ 不是我在报告里"声称"✓）。
+    /// ⚠️ 若哪天有人把 `LOCKED` 的语义改掉 ⇒ 下面这两行断言会红 ✓（它们就是那两条既有判据的核心断言 ✓）。
+    #[test]
+    fn 进程级locked_仍是那个全局量_且与本函数无关() {
+        // 本函数**签名里就没有** `LOCKED` ⇒ 它不可能偷偷读它 ✓（结构事实 ✓）。
+        let before = LOCKED.load(Ordering::SeqCst);
+        LOCKED.store(true, Ordering::SeqCst);
+        assert!(
+            !active_space_needs_passphrase(&status(false, false, false)),
+            "★ 进程级 LOCKED 开着也不许影响「明文空间不要口令」 ✓"
+        );
+        assert!(
+            active_space_needs_passphrase(&status(true, true, false)),
+            "★ 进程级 LOCKED 开着时，加密空间照样要口令 ✓"
+        );
+        LOCKED.store(before, Ordering::SeqCst);
     }
 }

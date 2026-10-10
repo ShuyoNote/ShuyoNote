@@ -22,6 +22,10 @@ const mocks = vi.hoisted(() => ({
   status: vi.fn<() => Promise<{ enabled: boolean; locked: boolean }>>(),
   lockEncryption: vi.fn<() => Promise<void>>(),
   unlockEncryption: vi.fn<(p: string) => Promise<void>>(),
+  // ⭐ 2026-10-10：锁定屏的**出路**要读"本机哪些空间是明文" ⇒ 两条命令都得给桩。
+  overview: vi.fn<() => Promise<unknown[]>>(async () => []),
+  workspaces: vi.fn<() => Promise<{ id: string; name: string }[]>>(async () => []),
+  setActive: vi.fn<(id: string) => Promise<void>>(async () => undefined),
 }));
 
 // 只替换加密那几个命令；外壳里的其它命令一律给空数组，够它安静地渲染。
@@ -33,6 +37,9 @@ vi.mock("./lib/api", () => ({
       encryptionStatus: mocks.status,
       lockEncryption: mocks.lockEncryption,
       unlockEncryption: mocks.unlockEncryption,
+      spaceSecurityOverview: mocks.overview,
+      listWorkspaces: mocks.workspaces,
+      setActiveWorkspaceId: mocks.setActive,
     },
     {
       get: (target: Record<string, unknown>, name: string) =>
@@ -162,5 +169,142 @@ describe("加密锁定的启动闸门", () => {
     expect(host.querySelector(".lock-screen")).toBeNull();
     expect(host.querySelector(".app")).not.toBeNull();
     expect(vaultState()).toMatchObject({ enabled: false, locked: false, ready: true });
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ⭐ 2026-10-10：owner 亲口报的缺陷 ——「**一个空间加密，其它空间怎么还需要密码？**」
+//
+// 量到的机制（⛔ 不是猜 ✗）：
+//   · 闸门 = `vault.activeSpaceEncrypted && vault.locked`，判的是**当前活动空间**
+//     （内核 `encryption_status.enabled` 按活动空间算；启动时的 `LOCKED` 也只看活动空间的文件头 ✓）
+//     ⇒ ⭐ **这一半原先就是对的** ✓；
+//   · ✗ 出事的是下一层：闸门一为真，`AppShell` **整块不挂载**，而**空间切换器就在 AppShell 里**
+//     ⇒ 用户**出不去**，只能先输那个加密空间的口令 ⇒ 「一个空间的口令」事实上成了「整个应用的开关」✗。
+// ⇒ 所以这四条判据守的不是"把闸门放开"✗，而是：**闸门照挡 ＋ 明文空间有一条直接进去的路** ✓。
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 一个加密空间的读数（与 `SpaceSecurityView` 同形 ✓）。 */
+function encView(id: string) {
+  return {
+    space_id: id,
+    kind: "personal",
+    encrypted_on_disk: true,
+    in_keyring: true,
+    key_available: false,
+    gate: { allow: true, unclassified: false, reason: "" },
+  };
+}
+/** 一个**明文**空间的读数。 */
+function plainView(id: string) {
+  return {
+    space_id: id,
+    kind: "personal",
+    encrypted_on_disk: false,
+    in_keyring: false,
+    key_available: false,
+    gate: { allow: true, unclassified: false, reason: "" },
+  };
+}
+
+/** 夹具：本机**一个加密空间（未解锁）＋ 一个明文空间** ✓（就是 owner 那个现场 ✓）。 */
+function fixture() {
+  mocks.overview.mockResolvedValue([encView("enc"), plainView("plain")]);
+  mocks.workspaces.mockResolvedValue([
+    { id: "enc", name: "加密空间" },
+    { id: "plain", name: "明文空间" },
+  ]);
+  // 活动空间是**加密**那个，且会话锁着 ⇒ 闸门该出来 ✓
+  mocks.status.mockResolvedValue({ enabled: true, locked: true });
+}
+
+const escapeBox = () => host.querySelector('[data-testid="lock-other-spaces"]');
+
+describe("一个空间加密，⛔ 不锁住其它空间（owner 拍 B：明文空间直接可用）", () => {
+  it("⭐ a) 正面：本机有明文空间 ⇒ 锁定屏上**必须有一条直接进去的路**（旧行为必红）", async () => {
+    fixture();
+    await render();
+
+    // 闸门**照旧挡着**（不是在"放开"✗）
+    expect(host.querySelector(".lock-screen"), "加密空间未解锁 ⇒ 仍然要口令").not.toBeNull();
+    expect(host.querySelector(".app"), "那一个空间锁着时，外壳不挂载").toBeNull();
+
+    // ⭐ 但**出口必须在**：旧代码在这一步是**死路** ⇒ 本用例红 ✓
+    expect(escapeBox(), "锁定屏上必须有「其它空间不用口令」那一段").not.toBeNull();
+    const box = escapeBox()!.textContent ?? "";
+    expect(box, "要把那个明文空间的名字摆出来").toContain("明文空间");
+    // ⛔ 加密的那个**不许**混进"直接进去"的清单里 ✗
+    expect(box).not.toContain("加密空间");
+  });
+
+  it("⭐ a2) 点一下就换过去：闸门随之放开，明文空间**直接可用**", async () => {
+    fixture();
+    await render();
+
+    // 换过去之后内核会这么报：**活动空间**不再加密，而会话**仍然锁着** ✓（锁定是会话级 ✓）
+    mocks.status.mockResolvedValue({ enabled: false, locked: true });
+
+    await act(async () => {
+      (host.querySelector('[data-testid="lock-go-plain"]') as HTMLButtonElement).click();
+    });
+    await settle();
+
+    expect(mocks.setActive, "要走内核那条换空间的路").toHaveBeenCalledWith("plain");
+    expect(host.querySelector(".lock-screen"), "明文空间不该再被拦").toBeNull();
+    expect(host.querySelector(".app"), "明文空间必须能直接用").not.toBeNull();
+  });
+
+  it("⭐ b) 反向：加密空间未解锁 ⇒ 仍然读不出来（⛔ 不许修成「谁都能开」）", async () => {
+    // 只有加密空间、**没有**明文出路 ⇒ 一个字节都不许松
+    mocks.overview.mockResolvedValue([encView("enc")]);
+    mocks.workspaces.mockResolvedValue([{ id: "enc", name: "加密空间" }]);
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+
+    await render();
+
+    expect(host.querySelector(".lock-screen")).not.toBeNull();
+    expect(host.querySelector(".app"), "没有出路时就该老实挡着").toBeNull();
+    expect(escapeBox(), "没有明文空间时不许摆那个空盒子").toBeNull();
+    expect(vaultState().locked, "仍然锁着").toBe(true);
+  });
+
+  it("⭐ c) 反向：换到明文空间**不是**「偷偷解锁」（会话仍然锁着）", async () => {
+    fixture();
+    await render();
+    // ⚠️ 用**增量**判，不用"从没调过"：同一个文件里前面的用例已经调解锁过 ✓。
+    const before = mocks.unlockEncryption.mock.calls.length;
+    mocks.status.mockResolvedValue({ enabled: false, locked: true });
+
+    await act(async () => {
+      (host.querySelector('[data-testid="lock-go-plain"]') as HTMLButtonElement).click();
+    });
+    await settle();
+
+    // ⭐ 出路是"换空间"，⛔ 不是"解锁"✗ —— 锁还在，主密钥没被放出来 ✓
+    expect(vaultState().locked, "换空间不许顺手把会话解锁").toBe(true);
+    expect(mocks.unlockEncryption.mock.calls.length, "⛔ 不许在背后调解锁").toBe(before);
+  });
+
+  it("⭐ d) 回归：本机**没有**加密空间 ⇒ 一个字节都不变（不出现锁定屏、也不出现那一段）", async () => {
+    mocks.overview.mockResolvedValue([plainView("plain")]);
+    mocks.workspaces.mockResolvedValue([{ id: "plain", name: "明文空间" }]);
+    mocks.status.mockResolvedValue({ enabled: false, locked: false });
+
+    await render();
+
+    expect(host.querySelector(".lock-screen")).toBeNull();
+    expect(host.querySelector(".app"), "没有加密空间 ⇒ 直接进外壳（同旧行为）").not.toBeNull();
+    expect(escapeBox(), "没锁就不该有那一段").toBeNull();
+    expect(vaultState()).toMatchObject({ enabled: false, locked: false, ready: true });
+  });
+
+  it("⭐ 出路读不到时**如实不给**（⛔ 不摆一个点不动的空间名）", async () => {
+    mocks.overview.mockRejectedValue(new Error("no such command"));
+    mocks.status.mockResolvedValue({ enabled: true, locked: true });
+
+    await render();
+
+    expect(host.querySelector(".lock-screen"), "闸门照旧").not.toBeNull();
+    expect(escapeBox(), "读不到就不给路，但也不假报有一个").toBeNull();
   });
 });

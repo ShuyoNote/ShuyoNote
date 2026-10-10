@@ -918,11 +918,21 @@ function NoteEditor({ pageId }: { pageId: string }) {
 //
 // 现在：`App` 自己只有一个 hook，分支只决定渲染**哪个组件**，不再改变 hook 数量；
 // 而读库的外壳（AppShell）在锁定态下**根本不挂载**，比"挂载起来再把界面挡住"更干净。
+//
+// ⭐ 2026-10-10（owner 亲口报的缺陷：「一个空间加密，其它空间怎么还需要密码？」）：
+//   闸门判的是 ⭐ **当前活动空间**加不加密（`activeSpaceEncrypted` ✓）—— 这一点原先就是对的
+//   （内核的 `enabled` 按活动空间算；启动时的 `LOCKED` 也只看活动空间的文件头 ✓）。
+//   ✗ 真正出事的是**下一层**：`enabled && locked` 一旦为真，`AppShell` **整块不挂载**，
+//     而**空间切换器在 AppShell 里** ⇒ 用户**出不去**，只能先输那个加密空间的口令 ——
+//     于是"一个空间的口令"事实上变成了"整个应用的开关" ✗，这就是 owner 说的那件事 ✓。
+//   ⇒ 修法不是把闸门放开（那会把加密空间也放进来 ✗），而是**在锁定屏上给一条出路**：
+//     `LockScreen` 会列出本机**明文**的那些空间，点一下就换过去 ⇒ 换完 `activeSpaceEncrypted`
+//     自己变 false ⇒ 闸门自然放开 ✓（见 `lib/vault.ts::switchToSpace` ✓）。
 function App() {
   const vault = useVault();
   // 状态未知的首帧什么都不渲染：锁定安装上若先挂外壳，外壳会立刻去读还没解锁的库。
   if (!vault.ready) return null;
-  if (vault.enabled && vault.locked) return <LockScreen />;
+  if (vault.activeSpaceEncrypted && vault.locked) return <LockScreen />;
   return <AppShell />;
 }
 

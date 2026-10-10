@@ -1372,7 +1372,12 @@ function SecurityPane() {
   // 状态来自 vault 状态中枢（不是本地 useState 的副本）：在这里点「立即锁定」，
   // 整个界面会立刻切到锁定屏——旧写法只改了设置页自己的状态，用户会继续看着已经
   // 读不出来的内容（E2 补的就是这一刀）。
-  const { enabled, locked } = useVault();
+  //
+  // ⚠️ 字段名（2026-10-10）：这里读的是 **`activeSpaceEncrypted`** ——
+  //「**当前活动空间**是不是加密的」✓。⛔ 它**不是**"本机有没有加密空间" ✗ ——
+  // 那条"两个真相源"就是这么来的（`lib/vault.ts` 与这里曾各说一套 ✓）：
+  // 现在**语义只在 `lib/vault.ts` 定义一次** ✓，这里只是用它 ✓，两处说的是同一句话 ✓。
+  const { activeSpaceEncrypted, locked } = useVault();
   const spaces = useSpaceStore((s) => s.spaces);
   const [busy, setBusy] = useState(false);
 
@@ -1393,8 +1398,12 @@ function SecurityPane() {
       {/* ★ owner 2026-09-24 拍板（选项 A）：**本机还没有加密空间时，整节隐藏**。
           理由：那时这一节既没有动作（`lock_encryption` 会直接报"这个空间没有加密"）、
           也没有新信息（下面就是空间列表）—— 留着只是占位。
-          ⚠️ `enabled` 是"**活动空间**是不是加密的"（内核读数）：活动空间加密 ⇒ 有东西可锁 ⇒ 出现。 */}
-      {enabled && (
+          ⚠️ 判据是 `activeSpaceEncrypted` ＝ "**活动空间**是不是加密的"（内核读数 ✓）：
+          活动空间加密 ⇒ 有东西可锁 ⇒ 出现 ✓。
+          ⚠️ **⛔ 不要**改成"本机任意一个空间加密就出现" ✗：那会在**明文活动空间**上摆一颗
+          「立即锁定」，而内核 `lock_encryption_impl` 对明文空间是**直接报错拒绝**的
+          （逐字：「这个空间没有加密，没有什么可锁的」）⇒ 那等于给一个按下去就报错的按钮 ✗。 */}
+      {activeSpaceEncrypted && (
         <section className="set-section">
           <div className="set-section-title">会话锁定</div>
           <div className="set-row">
