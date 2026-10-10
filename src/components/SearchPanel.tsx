@@ -3,6 +3,7 @@ import { usePopover } from "../hooks/usePopover";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api } from "../lib/api";
+import { Highlighted } from "../lib/snippetHighlight";
 import { useNotes } from "../store/notes";
 import { useSpaceStore } from "../store/space";
 import type { SearchResult } from "../types";
@@ -18,22 +19,9 @@ function formatScore(score: number): string {
 // 几乎没人能发现——做成可点击的 chip，点一下就填进输入框。
 const EXAMPLES = ["prop:状态=进行中", "prop:标签=读书", "会议纪要"];
 
-// Render a snippet containing [[...]] highlight markers.
-function Highlighted({ text }: { text: string }) {
-  const parts = text.split(/\[\[|\]\]/);
-  // markers come in pairs: [[ starts highlight, ]] ends it.
-  const nodes: React.ReactNode[] = [];
-  parts.forEach((part, i) => {
-    if (part === "") return;
-    // The split leaves even indexes outside markers, odd inside.
-    if (i % 2 === 1) {
-      nodes.push(<mark key={i}>{part}</mark>);
-    } else {
-      nodes.push(<span key={i}>{part}</span>);
-    }
-  });
-  return <>{nodes}</>;
-}
+// ⚠️ `Highlighted`（`[[命中]]` → `<mark>` 的渲染器）**已抽到 `src/lib/snippetHighlight.tsx`** ✓ ——
+//    2026-10-10 做 03 搜索屏时出现了第二处调用方（移动端同款片段高亮）⇒ 按"两处各留一份必然漂"
+//    的规矩收敛成一处 ✓（同一个标记格式在两张屏上必须解析成同一种东西 ✓）。
 
 export function SearchPanel() {
   // 面板比默认弹层宽，把真实尺寸告诉 usePopover，靠边打开才不会被裁切。

@@ -24,6 +24,8 @@ import { MobileCapture } from "./components/MobileCapture";
 // ⭐ 2026-10-10：手机档的**阅读屏**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）——
 //   只在 `isMobile && 有打开页` 时渲染 ✓；⛔ 桌面档仍走 `NoteEditor` ✓。
 import { MobileRead } from "./components/MobileRead";
+// ⭐ 2026-10-10：手机档的**搜索屏**（效果图 `03-search.svg`，规格 §4.3）—— 首页那张「搜索」卡进它 ✓。
+import { MobileSearch } from "./components/MobileSearch";
 import { useMobileNav } from "./store/mobileNav";
 import { PluginViewOverlay } from "./components/PluginViewOverlay";
 import { PluginViewPanel } from "./components/PluginViewPanel";
@@ -1182,9 +1184,15 @@ function AppShell() {
       ) : isMobile ? (
         /* ⭐ 2026-10-10：手机档的"什么都没打开"⇒ 走**移动端首页**（三个入口 ✓ 无侧边栏 ✓），
            而不是桌面空态（那句"或按 Ctrl+N"在手机上本来就是错的 ✗）。
-           第二屏「快速记录」也在这支里（`mobileNav.screen === "capture"` ✓）。
+           第二屏「快速记录」、第三屏「**03 搜索**」也在这支里（`mobileNav.screen` ✓）。
            ⛔ 桌面分支一个字没动 ✓（下一个 else 就是原来那套 ✓）。 */
-        mobileScreen === "capture" ? <MobileCapture /> : <MobileHome />
+        mobileScreen === "capture" ? (
+          <MobileCapture />
+        ) : mobileScreen === "search" ? (
+          <MobileSearch />
+        ) : (
+          <MobileHome />
+        )
       ) : (
         <div className="main empty">
           <div className="empty-state">

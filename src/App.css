@@ -24635,3 +24635,218 @@ body.is-plugin-panel-open .main {
   color: var(--text-faint);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「搜索」屏（效果图 `docs/plans/mobile/mockups/03-search.svg`，规格 §4.3）
+   ⚠️ 同 `.mhome` / `.mcap` / `.mread` / `.mset`：**只有手机档会渲染它**
+      （`App.tsx` 的 `mobileNav.screen === "search"` 那一支 ✓）⇒ 这里**不套 @media** ✓。
+   ⛔ 桌面那套 `.search-popover` / `.search-item*` 一个字没动 ✓。
+   ⚠️ 两档底色**照规格逐字**（§4.3：「当前命中与其他命中两档底色
+      （`--highlight-active-bg` vs `--highlight-bg`）」）：
+      第一张卡（`.is-active`）吃 `--highlight-active-bg`，其余吃 `--highlight-bg` ✓。
+   ========================================================================== */
+.msearch {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.msearch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.msearch-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.msearch-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* ⚠️ 46 = 44（输入框自己的命中区 ✓）＋ 上下各 1px 边框 ✓ ——
+     实测过：盒子给 44 / 输入框给 42 时，门禁量的是**输入框自己**（42 < 44）⇒ 红 ✗ */
+  height: 46px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+/* 效果图里输入框是**聚焦态**（蓝框）✓ —— `:focus-within` 就是那个状态，⛔ 不是常亮 ✗ */
+.msearch-box:focus-within {
+  border-color: var(--accent);
+}
+.msearch-box-icon {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+.msearch-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 输入框的**命中区**：门禁按元素自己量 ⇒ 44 ✓（不许靠外层盒子撑 ✗） */
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+}
+.msearch-input:focus {
+  outline: none;
+}
+.msearch-input::placeholder {
+  color: var(--text-faint);
+}
+/* 「×」＝图标按钮 ⇒ ≥44×44 ✓ */
+.msearch-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+}
+.msearch-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px 10px;
+}
+.msearch-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.msearch-chip {
+  flex: none;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 14px;
+  white-space: nowrap;
+}
+.msearch-chip.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* ⚠️ 这两个 chip **没做**（检索接口没有字段参数 ✗）⇒ 置灰且不可点 ✓，让缺口看得见 ✓ */
+.msearch-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.msearch-stat {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.msearch-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 12px;
+}
+.msearch-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin: 0 0 10px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  text-align: left;
+}
+.msearch-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msearch-item-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.msearch-item-snippet {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+/* 命中片段：**其他命中**那一档 ✓ */
+.msearch-item-snippet mark {
+  background: var(--highlight-bg);
+  color: var(--text);
+  border-radius: var(--radius-xs, 3px);
+  padding: 0 2px;
+}
+/* 命中片段：**当前（第一张卡）** 那一档 ✓ —— 与上一档是两个变量，照规格 §4.3 ✓ */
+.msearch-item.is-active .msearch-item-snippet mark {
+  background: var(--highlight-active-bg);
+}
+.msearch-item-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.msearch-item-go {
+  flex: none;
+  font-size: 18px;
+  color: var(--text-faint);
+}
+.msearch-empty,
+.msearch-hint {
+  margin: 18px 2px 0;
+  font-size: 14px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.msearch-foot {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+
