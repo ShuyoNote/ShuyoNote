@@ -576,6 +576,211 @@ pub async fn dictionary_status(app: tauri::AppHandle) -> DictionaryStatus {
 }
 
 // ---------------------------------------------------------------------------
+// 首次下载（owner 2026-10-10 拍 A：「首次使用时联网下一份，校验 sha256」）
+//
+// ⚠️ 2026-10-10 追加拍板：**改成 Rust 侧下载**（⛔ 不走 webview 的 base64-IPC ——
+//    86 MiB 那条链**结构上**不成立：`abilities.rs` 文件头写明那条链的设计目标是 3.8 MB 级的
+//    PDFium）。语义与前端那套**逐条一致**，只是换执行者：白名单＋钉死 sha256＋体积（＝pin）
+//    ＋**先写 `.part` 再改名**＋校验不过⇒**一个字节都不留**。
+// ---------------------------------------------------------------------------
+
+/// 词库 pack 在镜像仓里的相对路径（⭐ 与 `AbilitiesPane` 清单里那条 `path` **逐字一致**）。
+pub const ECDICT_PACK_MIRROR_PATH: &str = "mirror/ecdict/ecdict-en-zh.bin";
+/// 镜像仓的 contents API 前缀（⭐ 与 `AbilitiesPane` 的 `API` 常量**逐字一致**）。
+pub const MIRROR_CONTENTS_API: &str = "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/contents/";
+
+/// 默认下载地址：contents API ＋ 相对路径 ＋ `?ref=main`（与前端那条**同一个形状**）。
+///
+/// ⚠️ **这个文件还没提进镜像仓**（提包归 Lead）⇒ 今天点下载会拿到"取不到"，而不是假装成功。
+pub fn default_pack_url() -> String {
+    format!("{MIRROR_CONTENTS_API}{ECDICT_PACK_MIRROR_PATH}?ref=main")
+}
+
+/// 下载完成后的读数（界面直接显示）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PackInstallReport {
+    /// 落点（就是 `dictionary.rs` 第 2 顺位读的那个文件）。
+    pub path: String,
+    pub bytes: u64,
+    pub sha256: String,
+    /// 取数来源（`mirror` 或调用方给的地址），排错用。
+    pub source: String,
+}
+
+/// 进度回调：`(已收字节, 总字节)`；`None` = 服务端没给 `Content-Length` ⇒ **如实为 None**（⛔ 不猜）。
+pub type PackProgress<'a> = &'a mut dyn FnMut(u64, Option<u64>);
+
+/// **纯逻辑**：把 `reader` 落到 `dest`（先 `part` 再改名）。四条判据全在这里，可单测。
+///
+/// 顺序（⭐ 危险方向优先）：**边收边核长度上限** → 收完核长度 → 核 sha256 → 才 `rename`。
+/// 任一不过 ⇒ 删 `.part` ＋ 返回**可读原因**；⛔ 磁盘上不留半个字节（与 `abilities.rs:9` 同族）。
+pub fn install_pack_from_reader<R: std::io::Read>(
+    reader: &mut R,
+    expected_bytes: u64,
+    expected_sha: &str,
+    part: &Path,
+    dest: &Path,
+    total_hint: Option<u64>,
+    on_progress: PackProgress<'_>,
+) -> Result<PackInstallReport, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read as _, Write as _};
+
+    if expected_sha.is_empty() {
+        return Err("清单里没有钉 sha256 ⇒ 拒绝落盘（不核指纹就不算校验过）".to_string());
+    }
+    if expected_bytes == 0 {
+        return Err("清单里没有钉字节数 ⇒ 拒绝落盘（没有上限就没法挡半包）".to_string());
+    }
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败（{}）：{e}", dir.display()))?;
+    }
+
+    let cleanup = |part: &Path| {
+        let _ = std::fs::remove_file(part);
+    };
+
+    let mut file = std::fs::File::create(part)
+        .map_err(|e| format!("建临时文件失败（{}）：{e}", part.display()))?;
+    let mut hasher = Sha256::new();
+    let mut received: u64 = 0;
+    let mut buf = vec![0u8; 1 << 20];
+    on_progress(0, total_hint);
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                // 半包 ⇒ 删掉临时文件（⛔ 不许留一个"看起来像词库"的残片）
+                drop(file);
+                cleanup(part);
+                return Err(format!("下载中断（已收到 {received} 字节）：{e}"));
+            }
+        };
+        received += n as u64;
+        if received > expected_bytes {
+            // 上限＝**清单里钉的字节数**：多一个字节就说明这不是那一份 ⇒ 当场停（⛔ 不先写完再说）。
+            drop(file);
+            cleanup(part);
+            return Err(format!(
+                "下载内容超过清单里钉的 {expected_bytes} 字节（已收到 {received}）⇒ 拒绝落盘"
+            ));
+        }
+        hasher.update(&buf[..n]);
+        if let Err(e) = file.write_all(&buf[..n]) {
+            drop(file);
+            cleanup(part);
+            return Err(format!("写临时文件失败：{e}"));
+        }
+        on_progress(received, total_hint);
+    }
+    if let Err(e) = file.flush() {
+        drop(file);
+        cleanup(part);
+        return Err(format!("落盘失败：{e}"));
+    }
+    drop(file);
+
+    if received != expected_bytes {
+        cleanup(part);
+        return Err(format!(
+            "下载不完整：收到 {received} 字节 ≠ 清单里钉的 {expected_bytes} 字节 ⇒ 拒绝落盘"
+        ));
+    }
+
+    let got = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect::<String>();
+    // ⚠️ 这一条就是"危险方向优先"那一条：不匹配 ⇒ 删掉 `.part` ＋ 拒绝，⛔ 绝不 rename 成正式文件。
+    if got != expected_sha {
+        cleanup(part);
+        return Err(format!(
+            "sha256 不匹配 ⇒ 拒绝使用（算出 {}… ≠ 清单里钉的 {}…）—— 这次没有写进你的目录",
+            &got[..12],
+            &expected_sha[..12.min(expected_sha.len())]
+        ));
+    }
+
+    if let Err(e) = std::fs::rename(part, dest) {
+        cleanup(part);
+        return Err(format!("改名失败（{}）：{e}", dest.display()));
+    }
+    Ok(PackInstallReport {
+        path: dest.display().to_string(),
+        bytes: received,
+        sha256: got,
+        source: String::new(),
+    })
+}
+
+/// 取一份（前端/镜像）并落盘：`url` 不给就用镜像仓那条默认地址。
+///
+/// ⚠️ 本命令**要由 `lib.rs` 的 `generate_handler!` 登记**才会对前端可见（那一行归 Lead 统一加）。
+#[tauri::command]
+pub async fn dictionary_install_pack(
+    app: tauri::AppHandle,
+    url: Option<String>,
+) -> Result<PackInstallReport, String> {
+    let source = url.clone().unwrap_or_else(default_pack_url);
+    // pin **只从 `abilities.rs` 取**（⭐ 单一来源：白名单在那儿）⇒ 这里不抄第二份哈希。
+    let expected_sha = crate::abilities::expected_sha256(crate::abilities::ECDICT_PACK_ID)
+        .ok_or_else(|| "词库不在能力包白名单里 ⇒ 拒绝下载".to_string())?;
+    let expected_bytes = crate::abilities::ECDICT_PACK_BYTES;
+    let app_data = crate::db::app_data_dir_ref()
+        .ok_or_else(|| "app data dir 未初始化".to_string())?
+        .to_path_buf();
+    let dest = pack_path(&app_data);
+    let part = dest.with_extension("bin.part");
+
+    let res = reqwest::get(&source)
+        .await
+        .map_err(|e| format!("连不上下载地址（{source}）：{e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("下载失败：HTTP {}（{source}）", res.status().as_u16()));
+    }
+    let total = res.content_length();
+    let ctype = res
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    // 两条形状都认（⭐ 不发明新地址形状）：① 镜像仓的 contents API（base64 JSON）
+    // ② 普通二进制（raw / 文件服务器）——判据用 `file://` 或夹具注入走的也是这一条。
+    let bytes: Vec<u8> = if ctype.contains("json") {
+        let j: serde_json::Value = res.json().await.map_err(|e| format!("返回结构不是 JSON：{e}"))?;
+        let enc = j.get("encoding").and_then(|v| v.as_str()).unwrap_or("");
+        let content = j.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        if enc != "base64" || content.is_empty() {
+            return Err(format!("contents API 的形状不是 base64（encoding={enc}）⇒ 不猜"));
+        }
+        crate::abilities::base64_decode(&content.replace(['\n', '\r', ' '], ""))?
+    } else {
+        res.bytes().await.map_err(|e| format!("读响应失败：{e}"))?.to_vec()
+    };
+
+    let mut app_for_emit = app.clone();
+    let mut progress = |received: u64, total: Option<u64>| {
+        use tauri::Emitter as _;
+        let _ = app_for_emit.emit(
+            "dictionary-pack-progress",
+            serde_json::json!({ "received": received, "total": total }),
+        );
+    };
+    let mut cursor = std::io::Cursor::new(&bytes);
+    let mut report = install_pack_from_reader(
+        &mut cursor,
+        expected_bytes,
+        expected_sha,
+        &part,
+        &dest,
+        total,
+        &mut progress,
+    )?;
+    report.source = source;
+    Ok(report)
+}
+
+// ---------------------------------------------------------------------------
 // 判据（`cargo test --lib dictionary`）
 // ---------------------------------------------------------------------------
 
@@ -947,5 +1152,138 @@ mod tests {
             }
         }
         assert_eq!(hits, total, "英文样本应全部命中、中文/乱码应全部如实未收录");
+    }
+
+    // -----------------------------------------------------------------------
+    // 首次下载（Rust 侧）—— ⭐ 危险方向优先：**校验不过 ⇒ 一个字节都不留**
+    // -----------------------------------------------------------------------
+
+    /// 一份"读得出"的夹具字节 ＋ 它的真 sha256（`Cursor` 就是注入点：真下载走 reqwest）。
+    fn pack_fixture(tag: &str) -> (Vec<u8>, String) {
+        let p = fixture_file(tag);
+        let bytes = std::fs::read(&p).unwrap();
+        let sha = sha256_file(&p).unwrap();
+        let _ = std::fs::remove_file(&p);
+        (bytes, sha)
+    }
+
+    #[test]
+    fn install_refuses_a_sha256_mismatch_and_leaves_no_bytes() {
+        // ⭐⭐ 这条就是"危险方向优先"：指纹不符 ⇒ **拒绝**，⛔ 既不 rename、也不留 `.part`。
+        let dir = crate::tempdir::dir("dict-install").unwrap();
+        let part = dir.join("ecdict-en-zh.bin.part");
+        let dest = dir.join("ecdict-en-zh.bin");
+        let (bytes, real_sha) = pack_fixture("dict-install-src");
+        let total = Some(bytes.len() as u64);
+
+        let wrong = "0".repeat(64);
+        let mut cursor = std::io::Cursor::new(&bytes);
+        let err = install_pack_from_reader(
+            &mut cursor,
+            bytes.len() as u64,
+            &wrong,
+            &part,
+            &dest,
+            total,
+            &mut |_, _| {},
+        )
+        .unwrap_err();
+        assert!(err.contains("sha256"), "原因里要说清是 sha256：{err}");
+        assert!(err.contains("没有写进你的目录"), "要告诉用户磁盘没动：{err}");
+        assert!(!dest.exists(), "⛔ 指纹不符时不许留下正式文件");
+        assert!(!part.exists(), "⛔ 指纹不符时连 .part 都要清掉");
+
+        // 同一套调用、换成**真指纹** ⇒ 成功（＝判据不是靠"永远拒绝"变绿的）
+        let mut seen: Vec<(u64, Option<u64>)> = Vec::new();
+        let mut cursor2 = std::io::Cursor::new(&bytes);
+        let rep = install_pack_from_reader(
+            &mut cursor2,
+            bytes.len() as u64,
+            &real_sha,
+            &part,
+            &dest,
+            total,
+            &mut |r, t| seen.push((r, t)),
+        )
+        .unwrap();
+        assert_eq!(rep.bytes, bytes.len() as u64);
+        assert_eq!(rep.sha256, real_sha);
+        assert!(dest.exists() && !part.exists(), "成功路径：正式文件在、`.part` 已改名");
+        // ⭐ 与下载判据 (b) 配对：装好之后**真的能查到**
+        match lookup_at(&dest, "apple") {
+            LookupOutcome::Found { entry, .. } => assert!(entry.translation.contains("苹果")),
+            other => panic!("装好之后必须查得到，实际 {other:?}"),
+        }
+        // 进度读数：0 → … → 末次 == 总字节；total 照传（这条给了 Content-Length）
+        assert_eq!(seen.first().unwrap().0, 0);
+        assert_eq!(seen.last().unwrap().0, bytes.len() as u64);
+        assert!(seen.iter().all(|(_, t)| *t == total), "给了 Content-Length 就要如实带上");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_refuses_truncation_and_overrun_and_leaves_no_bytes() {
+        let dir = crate::tempdir::dir("dict-install-edge").unwrap();
+        let part = dir.join("p.part");
+        let dest = dir.join("d.bin");
+        let (bytes, sha) = pack_fixture("dict-install-edge-src");
+
+        // ① 半包（读到的比钉的少）⇒ 拒绝 ＋ 不留字节
+        let mut c = std::io::Cursor::new(&bytes[..bytes.len() - 1]);
+        let err = install_pack_from_reader(&mut c, bytes.len() as u64, &sha, &part, &dest, None, &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("不完整"), "{err}");
+        assert!(!dest.exists() && !part.exists(), "半包不许留字节");
+
+        // ② 超长（读到的比钉的多）⇒ 当场停 ＋ 不留字节
+        let mut extra = bytes.clone();
+        extra.push(0);
+        let mut c = std::io::Cursor::new(&extra);
+        let err = install_pack_from_reader(&mut c, bytes.len() as u64, &sha, &part, &dest, None, &mut |_, _| {}).unwrap_err();
+        assert!(err.contains("超过"), "{err}");
+        assert!(!dest.exists() && !part.exists(), "超长不许留字节");
+
+        // ③ 清单没钉指纹 / 没钉字节数 ⇒ fail-closed（不许"没核就装"）
+        let mut c = std::io::Cursor::new(&bytes);
+        assert!(install_pack_from_reader(&mut c, bytes.len() as u64, "", &part, &dest, None, &mut |_, _| {})
+            .unwrap_err()
+            .contains("sha256"));
+        let mut c = std::io::Cursor::new(&bytes);
+        assert!(install_pack_from_reader(&mut c, 0, &sha, &part, &dest, None, &mut |_, _| {})
+            .unwrap_err()
+            .contains("字节数"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_reports_total_as_none_when_the_server_does_not_say() {
+        // ⭐ 口径不变：**读不到就不编数字**（服务端没给 Content-Length ⇒ 如实 None）。
+        let dir = crate::tempdir::dir("dict-install-nolen").unwrap();
+        let (bytes, sha) = pack_fixture("dict-install-nolen-src");
+        let mut seen: Vec<(u64, Option<u64>)> = Vec::new();
+        let mut c = std::io::Cursor::new(&bytes);
+        let rep = install_pack_from_reader(
+            &mut c,
+            bytes.len() as u64,
+            &sha,
+            &dir.join("p.part"),
+            &dir.join("d.bin"),
+            None,
+            &mut |r, t| seen.push((r, t)),
+        )
+        .unwrap();
+        assert_eq!(rep.bytes, bytes.len() as u64);
+        assert!(seen.iter().all(|(_, t)| t.is_none()), "没给 Content-Length ⇒ total 必须如实为 None");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_pack_url_matches_the_manifest_path() {
+        // ⭐ "两处同名"那条族的预防：Rust 这条默认地址必须与 `AbilitiesPane` 清单里那个 path 同形。
+        let u = default_pack_url();
+        assert!(u.starts_with(MIRROR_CONTENTS_API), "{u}");
+        assert!(u.contains(ECDICT_PACK_MIRROR_PATH), "{u}");
+        assert!(u.ends_with("?ref=main"), "{u}");
     }
 }

@@ -13,19 +13,15 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
-import {
-  ECDICT_PACK_ID,
-  describeDownloadResult,
-  downloadDictionaryPack,
-  type PackDownloadProgress,
-} from "../lib/dictionary/download";
+import { platform } from "../lib/platform";
+// ⚠️ 只从 `download.ts` 取 **pack id**（单一来源）——真下载已改由 Rust 做（见 `download()` 里那段注释），
+//    那个模块**保留**为"前端侧那套接口与判据"（它的 11 条判据就是它的凭据），⛔ 不是死代码。
+import { ECDICT_PACK_ID } from "../lib/dictionary/download";
 
-/** 下载进度 → 界面那一行字（字节/百分比；服务端没给长度时**如实**说"百分比未知"）。 */
-function fmtProgress(name: string, p: PackDownloadProgress): string {
-  if (p.phase === "verifying") return `${name}：已下载 ${p.received} 字节，正在核 sha256 …`;
-  if (p.phase === "saving") return `${name}：sha256 已通过，正在落盘 …`;
-  const pct = p.percent === null ? "百分比未知（服务端没给 Content-Length）" : `${p.percent}%`;
-  return `${name}：下载中 ${p.received}${p.total ? ` / ${p.total}` : ""} 字节 · ${pct}`;
+/** Rust 侧下载的进度事件 → 界面那一行字（字节；没给 Content-Length ⇒ **如实**说"总量未知"）。 */
+function fmtRustProgress(name: string, p: { received: number; total: number | null }): string {
+  const pct = p.total === null ? "百分比未知（服务端没给 Content-Length）" : `${Math.min(100, Math.round((p.received / p.total) * 100))}%`;
+  return `${name}：下载中 ${p.received}${p.total === null ? "" : ` / ${p.total}`} 字节 · ${pct}`;
 }
 
 /** 清单条目 —— 只认**真实值** ✓（url / sha256 任缺 ⇒ 不许出现下载按钮 ✗）。 */
@@ -97,21 +93,33 @@ export function AbilitiesPane() {
 
   const download = async (a: Ability) => {
     if (!a.path || !a.sha256) return;
-    // ⭐ 词库那条走**流式**那条路（`src/lib/dictionary/download.ts`）：进度按字节/百分比报，
-    //    强制 sha256（不匹配即拒绝且**不落盘**）；地址未托管时给**可读原因**（⛔ 不静默）。
-    //    ⚠️ 与下面 GitCode「contents API（base64 JSON）」那条**不是同一个传输**：词库 85.6 MiB
-    //    走 JSON 那一圈纯属多绕一遍，而流式这条路才有真实进度读数。
+    // ⭐ 词库那条：**真下载由 Rust 侧做**（owner 2026-10-10 拍；86 MiB 过 base64-IPC 那条链
+    //    结构上不成立 —— `abilities.rs` 文件头写明那条链的设计目标是 3.8 MB 级的 PDFium）。
+    //    Rust 侧语义与前端那套**逐条一致**：白名单＋钉死 sha256＋体积（＝pin）＋先写 `.part`
+    //    再改名＋校验不过**一个字节都不留**；进度走事件（字节数；服务端没给 Content-Length ⇒ total 为 null，⛔ 不猜）。
+    //    ⚠️ 这一格今天是 `not-available`（镜像仓里那个文件**还没提**）⇒ 按钮不会出现；
+    //       提包之后把 `state` 改成 `downloadable` 即可（判据不变）。
     if (a.id === ECDICT_PACK_ID) {
       setPhase({ kind: "working", text: `${t("abilities.fetching", "正在取回")} ${a.name} …` });
-      const r = await downloadDictionaryPack({
-        expectedSha256: a.sha256,
-        expectedBytes: a.bytes ?? 0,
-        packId: a.id,
-        savePack: api.saveAbilityPack,
-        onProgress: (p) => setPhase({ kind: "working", text: fmtProgress(a.name, p) }),
-      });
-      // "拒绝"（指纹不符/半包）与"没成"（网络/落盘）都是**如实报**，但用词不同 ✓。
-      setPhase(r.kind === "saved" ? { kind: "ok", text: describeDownloadResult(r) } : { kind: "err", text: describeDownloadResult(r) });
+      let off: (() => void) | null = null;
+      try {
+        off = await platform.event.listen<{ received: number; total: number | null }>(
+          "dictionary-pack-progress",
+          (e) => setPhase({ kind: "working", text: fmtRustProgress(a.name, e.payload) }),
+        );
+        const rep = await platform.executor.invoke<{ path: string; bytes: number; sha256: string; source: string }>(
+          "dictionary_install_pack",
+          { url: null },
+        );
+        setPhase({
+          kind: "ok",
+          text: `${t("abilities.saved", "已保存到本地")}：${rep.bytes} B · sha256 ${rep.sha256.slice(0, 12)}… · ${rep.path}`,
+        });
+      } catch (e) {
+        setPhase({ kind: "err", text: `${t("abilities.needNetwork", "这个能力需要一次下载 —— 现在取不到")}：${String(e)}` });
+      } finally {
+        off?.();
+      }
       return;
     }
     setPhase({ kind: "working", text: `${t("abilities.fetching", "正在取回")} ${a.name} …` });
