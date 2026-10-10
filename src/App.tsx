@@ -1019,6 +1019,13 @@ function AppShell() {
   //    `startupSettled` 是 `loadPages` 落定后置的字段；它变 true 时本 effect 会重跑 ✓（在依赖里 ✓）。
   useEffect(() => {
     if (!startupSettled) return;
+    // ⭐ 2026-10-10：手机档停在「首页」时**不许**把用户拽进页面 ✗ ——
+    //   否则"存完回首页"与「‹ 首页」浮标都会被这一步**立刻抵消** ✗
+    //   （队友实测：DB 里真写进去了 ✓、点击也到了应用 ✓，但界面就是不动 ✗；
+    //    真因就是这个"没选中就打开第一页"的兜底 ✗）。
+    //   ⚠️ 条件用 `isMobile`（与渲染 `MobileHome` 的那一支**同一个条件** ✓）
+    //   ⇒ **桌面档一个字不动** ✓。
+    if (isMobile && useMobileNav.getState().screen === "home") return;
     if (!currentId && pages.length > 0 && useViewStore.getState().view === "notes") {
       const first = pages.find((p) => p.kind === "page" || p.kind === "database");
       if (first) useNotes.getState().openPage(first.id);
