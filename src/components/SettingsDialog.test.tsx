@@ -214,3 +214,45 @@ describe("设置-空间 · 筛选", () => {
     expect(card("工作").textContent, "筛选把「当前」标也带走了").toContain("当前");
   });
 });
+
+// ── 「加密空间要有特殊标识」（owner 2026-10-10）· 设置这一侧 ──
+// ⚠️ 这里钉的是**这一屏真的用上了**那份映射（规则本身在 `src/lib/spaceSecurity.test.ts` ✓，
+//    含三态与禁词判据 ✓）——两处都只看纯函数 ＝ 谁都没验"两处都接上了没有" ✗。
+describe("设置-空间 · 加密标识", () => {
+  /** 一个加密 / 一个明文 / 一个读数拿不到 ✓ */
+  const seed = () =>
+    useSpaceStore.setState({
+      spaces: [
+        { id: "s1", name: "加密的", created_at: 1, updated_at: 1, kind: "personal", encrypted_on_disk: true },
+        { id: "s2", name: "明文的", created_at: 2, updated_at: 2, kind: "personal", encrypted_on_disk: false },
+        { id: "s3", name: "读不到的", created_at: 3, updated_at: 3, kind: "personal" },
+      ],
+      activeId: "s1",
+    });
+
+  it("a) 加密那个有标识、明文那个没有、**读不到的那个也没有**（⛔ 不许当成明文）", async () => {
+    seed();
+    await render();
+
+    expect(card("加密的").textContent, "加密空间没标识 ⇒ owner 那条要求没落地").toContain("已加密");
+    expect(card("明文的").textContent, "明文也带标识 ⇒ 标识没信息量").not.toContain("已加密");
+    expect(card("读不到的").textContent, "读不到却当了明文/显示了标识").not.toContain("已加密");
+  });
+
+  it("⛔ 不许只靠颜色：标识是**文字**，且带可读的悬停/读屏说明", async () => {
+    seed();
+    await render();
+
+    const badge = card("加密的").querySelector<HTMLElement>(".set-space-crypto");
+    expect(badge, "标识元素不在（可能只加了个颜色）").not.toBeNull();
+    expect((badge!.textContent ?? "").trim(), "标识里没有文字 ⇒ 色弱用户看不到").toMatch(/\S/);
+    expect(badge!.getAttribute("aria-label"), "读屏拿不到说明").toMatch(/\S/);
+    expect(badge!.getAttribute("title")).toContain("磁盘");
+  });
+
+  it("④ 回归：「仅本机／已同步」那一格照旧在（标识是**另加**的，⛔ 不是顶掉它）", async () => {
+    seed();
+    await render();
+    expect(card("加密的").textContent, "同步状态那一格被标识顶掉了").toContain("仅本机");
+  });
+});

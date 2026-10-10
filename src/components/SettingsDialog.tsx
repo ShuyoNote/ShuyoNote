@@ -27,6 +27,8 @@ import { inputDialog } from "../store/input";
 import { useSpaceStore } from "../store/space";
 // ⭐ 2026-10-10：空间**筛选**（20+ 个空间）—— 与侧栏那个空间切换器**共用这一份**匹配 ✓
 import { filterSpaces } from "../lib/spaceFilter";
+// ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）：与侧栏**同一处**映射（文字标识，⛔ 不只靠颜色）✓
+import { spaceCryptoBadge } from "../lib/spaceSecurity";
 import { useNotes } from "../store/notes";
 import { withSyncStatus } from "../store/syncStatus";
 import { useAuth } from "../store/auth";
@@ -255,6 +257,8 @@ function SpacesPane() {
             shownSpaces.map((s) => {
             const active = s.id === activeId;
             const prof = syncProfiles[s.id];
+            // ⭐ 2026-10-10：「这个空间加密了吗」那一格 ⇒ 文字标识（与侧栏**同一处**映射 ✓）
+            const crypto = spaceCryptoBadge(s.encrypted_on_disk);
             return (
               <div key={s.id} className={`set-space-card${active ? " is-active" : ""}`}>
                 {/* ⭐ 这一行**可点**：点了就切过去（owner 2026-10-10）✓
@@ -277,6 +281,14 @@ function SpacesPane() {
                       {active && <span className="set-tag">当前</span>}
                     </div>
                     <div className="set-space-meta">
+                      {/* ⭐ 2026-10-10（owner：「加密空间要做个特殊标识」）——与**侧栏切换器**同一格读数、
+                          同一个映射（`spaceCryptoBadge` ✓）⇒ "两处一致"是**结构性**的 ✓。
+                          ⚠️ 只显示**文字**（⛔ 不只靠颜色 ✗）；读数拿不到 ⇒ 不显示 ✓。 */}
+                      {crypto.show && (
+                        <span className="set-space-crypto" title={crypto.title} aria-label={crypto.title}>
+                          {crypto.label}
+                        </span>
+                      )}
                       {prof?.server_url ? (
                         <span className="set-space-sync">↔ {hostLabel(prof.server_url)}</span>
                       ) : (

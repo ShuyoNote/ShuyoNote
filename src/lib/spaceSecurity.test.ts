@@ -77,6 +77,19 @@ describe("加密标识 · 接线（侧栏空间切换器那一行）", () => {
     expect(pageTreeCode, "页面里写死了标识文字（映射应当只有一处）").not.toContain("已加密");
   });
 
+  it("d) **两处一致**：侧栏切换器 ＋ 设置-空间都走**同一处**映射（⛔ 不许各自判／各自写文案 ✗）", () => {
+    const settings = code(read("src/components/SettingsDialog.tsx"));
+    for (const [who, src] of [
+      ["PageTree", pageTreeCode],
+      ["SettingsDialog", settings],
+    ] as const) {
+      expect(src, `${who} 没走那处映射（＝各自判一遍 ⇒ 两处迟早不一致）`).toContain("spaceCryptoBadge(");
+      // ⚠️ 判据只钉"**渲染出来的字来自那处映射**" ✓ —— ⛔ 不用"页面里不许出现「已加密」"那种钝刀 ✗：
+      //    设置面板里「已加密 · 已锁定」是**会话锁**那件事（另一回事 ✓），钝刀会误伤它 ✓。
+      expect(src, `${who} 自己写死了标识文字（＝第二份文案 ⇒ 两处会漂）`).toMatch(/\{crypto\.label\}/);
+    }
+  });
+
   it("④ 回归：「仅本机／已同步」那一格**一个字不许变**（owner 没要求动它）", () => {
     expect(pageTreeCode, "同步状态那一格被动了").toContain("仅本机");
     // ⭐ 与 `task-22` 那条（个人空间不显示服务器点）也不许打架：那条规则仍在岗 ✓
