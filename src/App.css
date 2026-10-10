@@ -14790,6 +14790,85 @@ p:has(> .editor-drawing-container) {
   color: rgba(255, 255, 255, 0.55);
 }
 
+/* ⭐ 2026-10-10（owner）：「忘记口令」改成**弹窗** —— 锁屏本身保持短，说明进浮层 ✓。
+   ⚠️ 纯 CSS（⛔ 不引依赖 ✗）；颜色/圆角/阴影**复用既有变量** ✓（与 `.confirm-overlay` / `.lock-*` 同一套 ✓）。
+   ⚠️ 正文字号**不小于**原来那条（12px ✓）——「酷炫」⛔ 不许牺牲可读性 ✗。 */
+.lock-forgot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500; /* ⚠️ 高于 `.confirm-overlay` 的 1400：这块屏本身就是最高优先级的门口 ✓ */
+  background: rgba(8, 12, 22, 0.62);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: lock-forgot-fade 140ms ease-out;
+}
+.lock-forgot-modal {
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.82);
+  background: var(--surface, #16203a);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-xl, 0 24px 60px rgba(0, 0, 0, 0.45));
+  padding: 16px 18px 14px;
+  animation: lock-forgot-pop 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.lock-forgot-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.lock-forgot-modal-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.lock-forgot-modal-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+.lock-forgot-close {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lock-forgot-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.lock-forgot-modal-body {
+  font-size: 12px;
+  line-height: 1.65;
+}
+@keyframes lock-forgot-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lock-forgot-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
 /* Markdown import dialog */
 .markdown-import-overlay {
   position: fixed;
