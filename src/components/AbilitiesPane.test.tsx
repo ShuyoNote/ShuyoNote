@@ -97,14 +97,28 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     }
   });
 
-  it("⭐ d) 挡住下一次：`set-row-note` 规则**必须**有 `min-width: 0`（flex 的经典坑）", () => {
+  // ⭐ **2026-10-10 订正**：这条判据原来要求"`set-row-note` **必须**有 `min-width: 0`" ✗ ——
+  //    ⛔ **它是错的**：`min-width: 0` 正是**允许那一格被压到 0** 的那一半 ✗（＝成因 ✓），
+  //    而它当时**绿着、现象没变** ✗（owner 截图里还是"一个字一列" ✓）。
+  //    ⇒ 教训：⭐ **别判"文本里有没有某个声明"✗，判"那个形状对不对"** ✓（同 `spaceSecurity` 那次的误伤 ✓）。
+  it("⭐ d) 那一格必须有**确定的宽度基准**（⛔ 不许 `0 1 auto`）—— 钉住「被 `.set-row-text` 饿死」那个成因", () => {
     const css = readFileSync(APP_CSS, "utf8");
     const m = /\.set-row-note\s*\{([^}]*)\}/.exec(css);
     expect(m, "`set-row-note` 必须有它自己的规则（本仓规矩：新类名没规则 = 裸的 ✗）").not.toBeNull();
+    const rule = m![1];
+    // ⛔ 成因那一半：base ＝ auto（＝ max-content ＝ 整句宽）⇒ 把兄弟饿死
     expect(
-      /min-width\s*:\s*0/.test(m![1]),
-      "⭐ flex 子项不加 `min-width: 0` ⇒ 长 CJK 的自动最小尺寸就是一个字 ⇒ 又会被压成一列",
+      /flex\s*:\s*0\s+1\s+auto/.test(rule),
+      "又变成 `flex: 0 1 auto` 了 ⇒ 它的基准会是整句自然宽（实测 590px）⇒ 兄弟会被压到 0 ✗",
+    ).toBe(false);
+    // ⭐ 解药那一半：确定且有限的宽度（`flex: 0 0 <n>%` 或显式 width）
+    expect(
+      /flex\s*:\s*0\s+0\s+\d+%/.test(rule) || /width\s*:\s*\d+%/.test(rule),
+      "少了确定的宽度基准 ⇒ 长 CJK 又会被压成一列（实测 textW = 0 ／ nameH = 90 ✗）",
     ).toBe(true);
+    // ⚠️ 真验收**不是**这条判据：它是**回归闸** ✓ —— 真验收是 CDP 上的两个宽度数
+    //    （修前 `textW = 0` ／ `nameH = 90` ⇒ 修后 `textW = 349.2` ／ `nameH = 18` ✓，
+    //     626px 面板、同一夹具、同一轮 A/B ✓）。
   });
 
   it("⭐ e) 源码级：那份 JSX 里**不许**再出现裸的 `set-row-sub` 直接当 flex 子项", () => {

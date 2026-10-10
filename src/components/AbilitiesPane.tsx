@@ -185,12 +185,17 @@ export function AbilitiesPane() {
             </div>
             {/* ⚠️ 2026-10-02 观感修正：这一格原来是 `.set-status`（带边框，像按钮 ✗ ⇒ 会被当成"能点"）。
                 改成**灰字** ✓ —— 用现成的 `set-row-sub`（说明文字那档灰 ✓）。
-                ⚠️ 2026-10-10 修 bug（owner 截图：ECDICT 那条的说明被压成"一个字一列" ✗）：
-                **光用 `set-row-sub` 不够** ✗ —— 这一格是 `.set-row` 的**直接 flex 子项** ✗，而
-                `set-row-sub` 没有 `min-width` ⇒ flex 的自动最小尺寸 ＝ min-content ＝ **一个汉字**
-                （CJK 可以在任何字之间断行）⇒ 说明一长就被挤成一列 ✓（只有 ecdict 那条长 ✓）。
-                ⇒ 加一个**明确的宽度策略**类 `set-row-note`（规则在 App.css，含 `min-width: 0` ✓）。
-                ⛔ 别把这两条注释删掉：上一次事故正是"用现成的类、⛔ 不新增 CSS"这个决定造成的 ✓。 */}
+                ⚠️⭐ **2026-10-10 修 bug（owner 截图：ECDICT 那条的说明 + 名字都被压成"一个字一列"✗）——
+                   我第一版诊断写反了 ✗，纠正留在这里**：
+                   · 我说"少 `min-width: 0` ⇒ 被压成一列"✗ —— **反了**：`min-width: 0` 是**允许它缩到 0** ✗，
+                     那**正是**成因；而 `min-width: auto`（默认）**反而**会撑着不缩 ✓。
+                   · 真成因（CDP 实量，面板 626px）：这一格 `flex: 0 1 auto` ⇒ flex base ＝ max-content
+                     ＝ **整句自然宽**（那条 note 236 字 ⇒ **590px**）✗，而 `.set-row-text` 是 `flex: 1`
+                     （`1 1 0%`，base ＝ **0**，没有要守护的基准 ✗）⇒ **被它饿死**：
+                     实测 `textW = 0` ／ `nameW = 0` ／ `nameH = 90`（名字一列一个字 ✓）。
+                   ⇒ 修法＝**给这一格一个确定且有限的宽度** ✗（`set-row-note` 里给死 `flex: 0 0 40%` ✓，
+                     ⛔ 不是靠收缩 ✗）：修后实测 `textW = 349.2` ／ `nameH = 18`（一行 ✓）／`noteW = 240.8` ✓。
+                ⛔ 别把这几条注释删掉：上一次事故正是"用现成的类、⛔ 不新增 CSS"这个决定造成的 ✓。 */}
             <span className="set-row-sub set-row-note">{a.note ?? t("abilities.soon", "还没上架")}</span>
           </div>
         ))}
