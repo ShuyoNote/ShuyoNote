@@ -24519,6 +24519,8 @@ body.is-plugin-panel-open .main {
       （都是 `position: fixed` ✓）—— 不让开的话页脚会被压住 ✓（与 `.mcap-bar` 那次同一类处置 ✓）。
    ========================================================================== */
 .mread {
+  /* ⭐ 2026-10-10：06 词条卡是 `position: absolute` 压在本屏上 ✓ ⇒ 本屏必须是定位上下文 ✓ */
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -25063,5 +25065,95 @@ body.is-plugin-panel-open .main {
   color: var(--text-faint);
 }
 
-
-
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「划词查词」词条卡（效果图 `docs/plans/mobile/mockups/06-dict.svg`，规格 §4.6）
+   ⚠️ 形态照图：**卡片压在正文上** ✓（正文还在、卡盖在下半屏 ✓），⛔ 不是换掉正文 ✗。
+   ⚠️ 它是移动端阅读屏里的一层（`MobileDictCard` ✓）⇒ 不套 `@media` ✓。
+   ========================================================================== */
+.mdict {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(74px + var(--sab, 0px));
+  z-index: 30;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+.mdict-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mdict-word {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+/* 「×」＝图标按钮 ⇒ ≥44×44 ✓ */
+.mdict-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+}
+.mdict-meta {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mdict-body {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mdict-actions {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+.mdict-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.mdict-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+/* ⛔ 「加入词库」没这个功能 ⇒ 置灰且点不动 ✓（让缺口看得见 ✓） */
+.mdict-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mdict-src {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}

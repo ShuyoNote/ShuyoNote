@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { hasLookupChars, normalizeSelection } from "../lib/dictionary/lookup";
 import { pushOverlay } from "../lib/overlayStack";
 import { useMobileNav } from "../store/mobileNav";
 import { useNotes } from "../store/notes";
 import type { PageBlock } from "../types";
+import { MobileDictCard } from "./MobileDictCard";
 
 /**
  * **移动端「阅读」屏**（效果图 `docs/plans/mobile/mockups/04-read.svg`，规格 §4.4）。
@@ -41,6 +43,9 @@ export function MobileRead({ pageId }: { pageId: string }) {
 
   const [blocks, setBlocks] = useState<PageBlock[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // ⭐ 2026-10-10 **06 划词查词**：选中的词（null ＝ 没在查）—— 形态照 `06-dict.svg`：
+  //   卡片**压在正文上**，正文不动 ✓（见 `MobileDictCard.tsx` 文件头 ✓）。
+  const [dictWord, setDictWord] = useState<string | null>(null);
 
   /**
    * 回首页：清掉"当前页" ⇒ `App.tsx` 的手机分支才会渲染 `MobileHome` ✓，
@@ -55,6 +60,26 @@ export function MobileRead({ pageId }: { pageId: string }) {
   //   ⛔ 不用 `useOverlayLayer()` ✗：那条要求把 id 登记进 `verify-mobile-overlays.mjs` 的清单，
   //   而那份清单会在**每个视口**打开它，本屏只在手机档渲染 ⇒ 塞进去会造**假红** ✗。
   useEffect(() => pushOverlay("mobile-read", goHome), [goHome]);
+
+  /**
+   * ⭐ **06 划词查词**（规格 §4.6）：在正文里**选中一段** ⇒ 查本机词典 ⇒ 卡片浮上来 ✓。
+   *
+   * ⚠️ **不动桌面那个 Lexical 插件** ✗（`src/editor/plugins/DictionaryLookupPlugin.tsx` 是
+   *    **桌面编辑器专用** ✓）—— 这里是**阅读屏专属**的第二条取词路径 ✓（Lead 2026-10-10 明确要求 ✓）。
+   * ⚠️ 判据用仓里**现成的两个纯函数** ✓：`normalizeSelection`（折空白 ✓）＋ `hasLookupChars`
+   *    （空/太长/没字母 ⇒ 不查 ✓）—— ⛔ 不自己写一套"什么算一个词" ✗。
+   */
+  const pickWord = useCallback(() => {
+    const sel = window.getSelection();
+    const word = normalizeSelection(sel ? sel.toString() : "");
+    if (hasLookupChars(word)) setDictWord(word);
+  }, []);
+
+  // 卡片开着时，**安卓返回键先关卡片**（而不是直接回首页 ✓）—— 与浮层同一套"后进先出" ✓。
+  useEffect(() => {
+    if (!dictWord) return;
+    return pushOverlay("mobile-dict", () => setDictWord(null));
+  }, [dictWord]);
 
   // 正文：**块级只读接口**（唯一门禁安全的那条路 ✓，见文件头 ⚠️）。
   useEffect(() => {
@@ -116,7 +141,8 @@ export function MobileRead({ pageId }: { pageId: string }) {
         ) : count === 0 ? (
           <p className="mread-note">这一页还没有内容。</p>
         ) : (
-          <div className="mread-body">
+          /* ⭐ 选中即查词（06 ✓）：`onPointerUp` 覆盖鼠标与触屏两种"选完松手" ✓ */
+          <div className="mread-body" onPointerUp={pickWord}>
             {blocks.map((b) =>
               b.text ? (
                 <p key={b.block_id} className="mread-p">
@@ -131,6 +157,9 @@ export function MobileRead({ pageId }: { pageId: string }) {
           本页共 {count} 块 · 本机已保存
         </p>
       </div>
+
+      {/* 词条卡**压在正文上** ✓（效果图 06 就是"正文还在、卡盖在下半屏"✓）—— 关掉它正文原样 ✓ */}
+      {dictWord ? <MobileDictCard word={dictWord} onClose={() => setDictWord(null)} /> : null}
     </div>
   );
 }

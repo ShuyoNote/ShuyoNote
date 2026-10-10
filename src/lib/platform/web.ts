@@ -1,4 +1,5 @@
 import { semanticScore } from "../searchSemantic";
+import { pageBlocksFromDoc } from "./pageBlocks";
 import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
@@ -2238,11 +2239,11 @@ export function makeInvoke(store: SqliteStore) {
       // 读出口只有一处（`docContent.readContent`）：谓词与原先逐字相同（`deleted_at IS NULL`）。
       const page = readContent(store, pageId);
       if (!page) throw new Error("页面不存在");
-      const v = parseJson(page.json);
-      const blocks = rootChildren(v)
-        .filter((c) => topBlockId(c))
-        .map((c) => ({ block_id: topBlockId(c), text: nodeText(c).trim() }));
-      return blocks as T;
+      // ⭐ 2026-10-10 **修根**：提取逻辑收敛到**可单测的** `pageBlocksFromDoc` ✓
+      //    （旧实现要求顶层块**必须有 `blockId`** ⇒ 普通页面**永远返回空** ✗，
+      //     04 阅读屏因此对**有正文的页**显示「这一页还没有内容」✗ —— 逐字读数与回归判据
+      //     见 `src/lib/platform/pageBlocks.ts` 文件头 ＋ `pageBlocks.test.ts` ✓）。
+      return pageBlocksFromDoc(page.json) as T;
     }
     if (cmd === "get_backlinks") {
       // Page-level backlinks: pages whose content_text references the target page
