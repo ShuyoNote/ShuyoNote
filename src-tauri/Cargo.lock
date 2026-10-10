@@ -5802,6 +5802,7 @@ dependencies = [
  "chrono",
  "encoding_rs",
  "fast_qr",
+ "flate2",
  "futures-util",
  "hex",
  "hmac",
