@@ -158,11 +158,14 @@ export function backupFactsLines(facts: BackupFacts | null): string[] {
   // ⭐ 窗口**优先用后端给的**（`facts.windows`）；取不到才回落到界面那份兜底（判据 i ✓）
   const w = facts?.windows ?? BACKUP_RETENTION;
   lines.push(
-    `保留策略（照后端 ${"`retention_keep`"} ✓）：${w.keepDays} 天内**每天留 1 份** ／ ` +
-      `${w.keepWeeks} 周内**每周留 1 份** ／ ${w.keepMonths} 个月内**每月留 1 份** ／ 更早的删除`,
+    `保留策略（照后端「retention_keep」✓）：${w.keepDays} 天内每天留 1 份 ／ ` +
+      `${w.keepWeeks} 周内每周留 1 份 ／ ${w.keepMonths} 个月内每月留 1 份 ／ 更早的删除`,
   );
   lines.push(
-    "触发方式：**随应用启动先跑一轮**，之后每 24 小时再看一次（本机后端**没有**「开／关」这个能力 ⇒ 这里不摆那个假控件）",
+    // ⚠️⭐ **2026-10-11 订正**：这两行原来写着 markdown 记号（`**每天留 1 份**` ／ 反引号）✗ ——
+    //    这里是**纯文本**，不是 markdown ⇒ owner 截图里 `**` 与反引号**原样露在界面上** ✗。
+    //    ⇒ 一律换成普通文字（要强调就用「」或直接说 ✓）。
+    "触发方式：随应用启动先跑一轮，之后每 24 小时再看一次（本机后端没有「开／关」这个能力 ⇒ 这里不摆那个假控件）",
   );
   return lines;
 }

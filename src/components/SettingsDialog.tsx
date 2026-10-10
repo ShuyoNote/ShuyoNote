@@ -8,6 +8,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
+import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
@@ -117,6 +118,11 @@ function DataPane() {
           </div>
           <BackupButton label="备份 / 恢复…" />
         </div>
+        {/* ⚠️⭐ **2026-10-11 搬出来**：「自动备份」那一格原来挂在 `<BackupButton>` 里面 ⇒ 被塞进了
+            `.backup-menu` ⇒ CDP 实测那个 wrapper 的 max-content 变成 **590px** ⇒ 把上面那一行的
+            `.set-row-text` 挤成 **宽 0** ⇒ 「备份 / 恢复（全库）」与说明**一个字一列** ✗（owner 截图 ✓）。
+            ⭐ 这里它是**独立一块**（⛔ 不是那一行的右控件 ✗）⇒ 行＝"左文字＋右按钮"，面板在行下面 ✓。 */}
+        <BackupSettingsPanel />
         <p className="set-hint">
           单个空间的导出/导入在「空间」页；这里是整机全库级别的备份。
         </p>

@@ -9,7 +9,6 @@ import { useSpaceStore } from "../store/space";
 import { toast } from "../store/toast";
 import { confirmDialog } from "../store/confirm";
 import { DownloadIcon, UploadIcon } from "./icons";
-import { BackupSettingsPanel } from "./BackupSettingsPanel";
 
 type BackupProgress = {
   phase: string;
@@ -172,9 +171,12 @@ export function BackupButton({ label }: { label?: string } = {}) {
         </div>
       )}
 
-      {/* ⭐ task-19 **追加**：只有带 `label` 的那一支（＝设置中心「数据」页 ✓）才挂"自动备份"那一格。
-          ⛔ 侧栏那支（无 label）不挂 ⇒ 侧栏不会被塞进一块面板 ✓；⛔ 上面导出/导入那些行一个字没动 ✓ */}
-      {label && <BackupSettingsPanel />}
+      {/* ⚠️⭐ **2026-10-11 搬走**：「自动备份」那一格原来挂在这里（`{label && <BackupSettingsPanel />}`）✗ ——
+          而这里是 `.backup-menu` 的**内部** ⇒ ⭐ 那个 wrapper 的 max-content 被整块面板撑到 **590px** ✗
+          ⇒ CDP 实测同一行里 `.set-row-text` 的宽**恰好是 0** ⇒ 「备份 / 恢复（全库）」与那句说明
+          **一个字一列** ✗（owner 截图 ✓）。⇒ ⭐ 改由**页面**在**行外**挂它（`SettingsDialog` ✓）：
+          一行＝"左文字 ＋ 右按钮"，面板是它下面**另一块** ✓。⛔ 别再塞回 `.backup-menu` 里 ✗ ——
+          判据就是那两条量出来的宽（`set-row-text` 不许是 0 ✗ ／ `.backup-menu` 不许是 590 ✗）。 */}
     </div>
   );
 }
