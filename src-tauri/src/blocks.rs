@@ -261,13 +261,24 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
 pub(crate) fn page_blocks_from_doc(content_json: &str) -> Result<Vec<PageBlock>, String> {
     let v = parse_json(content_json)?;
     let mut blocks = Vec::new();
+    // ⚠️ `i` 是**顶层块的位置**（含被跳过的空块），用作没有 `blockId` 时的回退 id ✓。
+    let mut i: usize = 0;
     for child in root_children(&v) {
-        if let Some(id) = child.get("blockId").and_then(|v| v.as_str()) {
-            blocks.push(PageBlock {
-                block_id: id.to_string(),
-                text: node_text(child).trim().to_string(),
-            });
+        let text = node_text(child).trim().to_string();
+        // 空文本块不收 ✓（与 web 侧 `pageBlocksFromDoc` 同语义 ✓）。
+        if !text.is_empty() {
+            // ⭐ `blockId` 是**可选字段** —— 只在块被引用/嵌入时才存在（见 `src/lib/blockIdentity.ts` ✓）。
+            //    ⛔ 它**不能**当"有没有正文"的判据 ✗：真实存下来的普通页面根本没有这个键，
+            //    这么写会让**有正文的页永远返回空** ✗（2026-10-10 的用户可见错：手机阅读屏显示
+            //    「这一页还没有内容。」✗）。⇒ 没有就**按位置回退** ✓。
+            let block_id = child
+                .get("blockId")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("block-{}", i));
+            blocks.push(PageBlock { block_id, text });
         }
+        i += 1;
     }
     Ok(blocks)
 }
