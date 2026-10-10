@@ -1,12 +1,16 @@
 //! **`--import <文件>` 的参数解析 ＋ 待导入路径的交班**（Office 导入第一期 · task-10 ③）。
 //!
-//! ## 一、为什么是纯 `std`（⭐ 这是刻意的，别改成引 tauri）
-//! 纯 std ⇒ ⭐ **不用 cargo 也能把单测跑起来**：
-//! `rustc --test src-tauri/src/office_import.rs` ✓ —— 本机 `cargo` 那条链要编整棵树，
-//! 而 `win-cargo-test.ps1` 又会先 `cargo build --bin shuyonote` ⇒ **替换正在运行的 app exe ⇒ 白屏** ✗
-//! （见 `AGENTS.md` §7 与 `docs/TESTING.md`）。窄口径的判据能当场跑，比等冷编译值钱 ✓。
-//! ⇒ 因此本文件**不许** `use tauri::…` ✗、不许碰数据库 ✗。需要 tauri 的那一丁点接线留在 `lib.rs`
-//!   （**一行闭包** ✓，形状见 `forward_import_args` / `deliver_pending` 的注释 ✓）。
+//! ## 一、为什么**曾经**是纯 `std`（⭐ 现在只剩"逻辑层"是；判据怎么跑见下）
+//! 纯 std 的好处是 ⭐ **不用 cargo 也能把单测跑起来**：`rustc --test src-tauri/src/office_import.rs` ✓
+//! —— 本机 `cargo` 那条链要编整棵树，而 `win-cargo-test.ps1` 又会先 `cargo build --bin shuyonote`
+//! ⇒ **替换正在运行的 app exe ⇒ 白屏** ✗（见 `AGENTS.md` §7 与 `docs/TESTING.md`）。
+//! ⚠️ **task-20 订正**：文件尾部那条 `#[tauri::command] office_import_take`（task-15 加的）需要 `tauri`
+//! ⇒ 裸 `rustc --test` **跑不动这个文件了** ✗。而当时我为保住它加的 `#[cfg(not(test))]`
+//! **更糟** ✗：它让 `cargo test --lib` **编不过**（`lib.rs` 的 `generate_handler!` 还引用着那条命令 ✓）
+//! ⇒ 现已**去掉那个门** ✓、判据改由 `cargo test --lib` 跑 ✓（**逻辑层仍然不碰数据库** ✓）。
+//! ⇒ 边界仍在：**本模块的身份是"参数解析 ＋ 队列交班"**，⛔ 不许碰数据库、⛔ 不许长出业务逻辑 ✗；
+//!   需要 tauri 的那一丁点接线留在 `lib.rs`（**一行闭包** ✓，形状见 `forward_import_args` /
+//!   `deliver_pending` 的注释 ✓）。
 //!
 //! ## 二、单实例守卫在哪（⛔ 不在这里重造第二份）
 //! 守卫**已经有了**：`lib.rs` 注册的 `tauri_plugin_single_instance`（`lib.rs:346` 那一段），
@@ -171,12 +175,16 @@ pub fn forward_import_args<F: FnOnce(&str)>(args: &[String], emit: F) -> Option<
 /// （深链桥就是为了盖住这个洞才"先订阅、再 drain" ✓）。
 /// ⭐ 返回空数组 ⇒ 调用方什么都不做（**普通启动零副作用** ✓）。
 ///
-/// ⚠️ 为什么套 `#[cfg(not(test))]`（这是刻意的，别顺手删 ✗）：`#[tauri::command]` 需要 `tauri` crate，
-///    而本文件的上半部分是**纯 std** —— 那样才能 `rustc --test src-tauri/src/office_import.rs`
-///    跑单测（不用 cargo ⇒ ⛔ 不碰正在运行的 app ✓，见文件头 ✓）。
-///    ⇒ 被排除的**只有这一个转发函数**；它**全部的逻辑**在 `take_pending_imports()` 上，
-///      而那条是纯函数、**在单测里被逐条验过**（含"取走即空"✓）。
-#[cfg(not(test))]
+/// ⚠️ ⭐ **task-20 的订正（别把 `#[cfg(not(test))]` 加回来 ✗）**：
+///    task-15 我先给这条命令套了 `#[cfg(not(test))]`，为的是让本文件上半部分保持**纯 std**、
+///    好跑 `rustc --test src-tauri/src/office_import.rs` ✓。
+///    ⚠️ **但那个门会把整个 lib 测试面挡住** ✗ —— `lib.rs` 的 `generate_handler!` 仍然引用
+///    `office_import_take`，而 `cfg(test)` 下它**不存在** ⇒
+///    `error[E0433]: could not find __cmd__office_import_take in office_import` ✗
+///    （实测：`cargo test --lib --no-run` ⇒ `error: could not compile shuyonote (lib test) due to 2 previous errors` ✓）。
+///    ⇒ 两害相权：**保 lib 测试面**（那是 CI 与所有人的入口 ✓）⇒ 命令**不加门** ✓；
+///      本模块那 7 条判据照旧在 `#[cfg(test)] mod tests` 里 ✓，只是跑法从"裸 `rustc --test`"
+///      改成 `cargo test --lib` ✓（判据本身一条没少 ✓）。
 #[tauri::command]
 pub fn office_import_take() -> Vec<String> {
     take_pending_imports()

@@ -1,31 +1,37 @@
-// **设置中心「数据」页：自动备份那一格**（task-19）—— 目标是"**它在跑，但用户看不见**" ⇒ "用户看得见" ✓。
+// **设置中心「数据」页：自动备份那一格**（task-19 接界面 ＋ task-20 补后端两条命令）。
 //
-// ## ⭐ 这一格的**诚实底线**（这一笔最容易犯、也最该被机器挡住的错）
-// 后端 `auto_backup.rs` ＋ `backup.rs::run_auto_backup_once` ＋ `lib.rs:513-530` 的调度**都在、真的在跑** ✓；
-// ⛔ 但它**没有**两样东西 ⇒ 界面**如实说**，⛔ 不画：
-//   · **没有开关**（只有"启动先跑一轮 ＋ 每 24h 轮询"✓）⇒ 界面写「随应用启动自动跑一轮…」，
-//     ⛔ 不摆那个假控件 ✗（判据 c 挡着 ✓，方向是双向的：后端将来真加了开关，它也会红 ⇒ 提醒补界面 ✓）
-//   · **没有"立刻备份一次"的命令**（`run_auto_backup_once` 是 `backup.rs` 里的**普通函数**，没开成命令 ✓）
-//     ⇒ ⛔ 不摆一个点了没用的按钮 ✗，而是**如实写清现在怎么才能立刻备一份**（重启应用／无头 `--backup-once` ✓）
+// ## 这一格现在是什么（task-20 之后）
+// 后端把**已有的**自动备份能力开成了两条命令 ⇒ 这里显示**真读数** ✓、并且能**立刻备一次** ✓：
+//   · 读：`auto_backup_status`（`src-tauri/src/backup.rs`）⇒ 目录／份数／共多大／上次成功时刻／保留窗口 ✓
+//   · 写：`auto_backup_run_now` ⇒ ⭐ **直接走既有的 `run_auto_backup_once`**（⛔ 不重写备份逻辑 ✗）
 //
-// ## ⚠️ 为什么"上次备份时刻／份数／大小"现在显示**读不到**
-// 实测（2026-10-10）：`commands.ts` 里与备份有关的命令**只有** `export_backup`（手动导出到用户选的路径 ✗）
-// 与 `import_backup` ✗ ⇒ ⛔ **没有**任何命令能给出"自动备份的状态／上次时刻／backups 目录里有几份" ✗。
-// ⇒ 本面板把 `facts` 传 `null` ＋ 一句**原因** ✓（⛔ 不显示 0 份装作"没有备份" ✗ —— 判据 b 挡着 ✓）；
-//   要真显示，缺的是后端那 **1 条只读命令**（见文件末尾的"缺什么"注释 ✓）。
+// ## ⭐ 这一格的诚实底线（三条，都有判据挡着）
+// ① ⛔ **不画假开关**：后端**没有**"开／关"这个能力（只有"启动先跑一轮 ＋ 每 24h 轮询"✓）
+//    ⇒ 界面写清触发方式，⛔ 不摆那个假控件 ✗（判据 c；而且**反向**：后端真加了开关能力它会红 ✓）
+// ② ⛔ **不把"读不到"显示成"0 份"**：`unreadable`（目录读不了／拿不到数据目录）⇒ **如实说"读不到"** ✓；
+//    而目录**只是不存在**（还没备份过）⇒ 那是**真的 0 份**，照实显示 ✓（判据 b：两种"没有"要分清 ✓）
+// ③ ⛔ **保留窗口不写第二遍**：优先用后端给的 `keepDays/keepWeeks/keepMonths` ✓；
+//    界面里那份 `BACKUP_RETENTION` 只作**兜底**（且被判据 e 钉着与 `auto_backup.rs` 常量逐字一致 ✓）
 //
 // ## 复用，⛔ 不重写
 // 手动「导出完整备份／导入备份」仍然是 `BackupButton.tsx` 那一份实现 ✓（本面板**渲染它** ✓，
 // ⛔ 自己不调 `exportBackup`/`importBackup` ✗ —— 判据 d 挡着 ✓）。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { platform } from "../lib/platform";
+import { toast } from "../store/toast";
 import { BackupButton } from "./BackupButton";
 
+/** ⭐ task-20 ①：只读读数（三处同名：这里 ↔ `backup.rs` ↔ `lib.rs` 的登记，判据 g 钉着 ✓）。 */
+export const AUTO_BACKUP_STATUS_COMMAND = "auto_backup_status";
+/** ⭐ task-20 ②：立刻备份一次（判据 j 钉着 ✓）。 */
+export const AUTO_BACKUP_RUN_COMMAND = "auto_backup_run_now";
+
 /**
- * ⭐ **保留策略／间隔**：数字**照后端常量说**（⛔ 不许自己写一个数 ✗），
+ * ⭐ **保留策略／间隔的兜底**：数字**照后端常量说**（⛔ 不许自己写一个数 ✗），
  * 并由判据 e 直接读 `src-tauri/src/auto_backup.rs` **逐字比对** ✓（改后端不改这里 ⇒ 红 ✓）。
- * 出处：`KEEP_DAYS=7` ／ `KEEP_WEEKS=4` ／ `KEEP_MONTHS=12` ／ `DEFAULT_INTERVAL_SECS=24*60*60` ✓。
+ * ⚠️ 运行时**优先用后端给的窗口**（`facts.windows` ✓）—— 这一份只在"读数取不到"时兜底显示 ✓。
  */
 export const BACKUP_RETENTION = {
   keepDays: 7,
@@ -34,7 +40,28 @@ export const BACKUP_RETENTION = {
   intervalSecs: 86_400,
 } as const;
 
-/** 后端能给的读数（⭐ 现在后端给不了 ⇒ 传 `null` ⇒ 如实说"读不到" ✓）。 */
+/** `auto_backup_status` 的返回（与 `commands.ts` 的声明同形 ✓）。 */
+export interface AutoBackupStatusPayload {
+  dir: string;
+  count: number;
+  bytes: number;
+  lastSuccessUnix: number | null;
+  snapshots: Array<{ name: string; unix: number; size: number }>;
+  keepDays: number;
+  keepWeeks: number;
+  keepMonths: number;
+  unreadable: string | null;
+}
+
+/** `auto_backup_run_now` 的返回 ✓。 */
+export interface AutoBackupRunPayload {
+  ran: boolean;
+  kept: number;
+  removed: number;
+  note: string;
+}
+
+/** 后端能给的读数（⭐ 取不到 ⇒ `unreadableReason` 有话 ⇒ 如实说"读不到" ✓）。 */
 export interface BackupFacts {
   /** 上次**成功**备份的时刻（Unix 秒）；读不到 ⇒ `null` ✓ */
   lastSuccessUnix: number | null;
@@ -42,15 +69,48 @@ export interface BackupFacts {
   count: number | null;
   /** 共多大（字节）；读不到 ⇒ `null` ✓ */
   bytes: number | null;
-  /** 备份目录（后端未开放绝对路径 ⇒ `null` ⇒ 只说平台约定 ✓） */
+  /** 备份目录（后端未给 ⇒ `null` ⇒ 只说平台约定 ✓） */
   dir: string | null;
-  /** 为什么读不到（一句人话 ⇒ 显示给用户 ✓；`null` ＝ 读数都在 ✓） */
+  /** 一句人话：为什么读不到（`null` ＝ 读数都在 ✓） */
   unreadableReason: string | null;
+  /** ⭐ 后端给的保留窗口（有就**优先用** ✓；⛔ 界面不写第二遍 ✗） */
+  windows?: { keepDays: number; keepWeeks: number; keepMonths: number } | null;
 }
 
-/** 后端**还没有**的那条读数的原因（⭐ 一句话、不装 ✓）。 */
-export const BACKUP_READINGS_UNAVAILABLE =
-  "后端还没有开放这条读数（缺一条只读命令：列出 backups/ 里的快照 ＋ 上次成功时刻）";
+/** 读数取不到时的兜底原因（⭐ 一句话、不装 ✓）。 */
+export const BACKUP_READINGS_UNAVAILABLE = "后端还没给出这条读数（`auto_backup_status` 没返回内容）";
+
+/**
+ * ⭐ **命令返回 ⇒ 界面事实**（纯函数 ⇒ 判据 h/i 直接测它 ✓，不用起真宿主 ✓）。
+ * ⚠️ 两种"没有"**必须分开**：`failureReason`／`unreadable` ⇒ **读不到** ✓；
+ *    目录不存在（`unreadable: null` ＋ `count: 0`）⇒ **真的 0 份** ✓（照实显示 ✓）。
+ */
+export function factsFromStatus(
+  status: AutoBackupStatusPayload | null,
+  failureReason?: string | null,
+): BackupFacts {
+  const reason = failureReason ?? status?.unreadable ?? null;
+  if (!status || reason) {
+    return {
+      lastSuccessUnix: null,
+      count: null,
+      bytes: null,
+      dir: status?.dir || null,
+      unreadableReason: reason || BACKUP_READINGS_UNAVAILABLE,
+    };
+  }
+  return {
+    lastSuccessUnix: status.lastSuccessUnix,
+    count: status.count,
+    bytes: status.bytes,
+    dir: status.dir || null,
+    unreadableReason: null,
+    windows:
+      status.keepDays > 0
+        ? { keepDays: status.keepDays, keepWeeks: status.keepWeeks, keepMonths: status.keepMonths }
+        : null,
+  };
+}
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -93,11 +153,13 @@ export function backupFactsLines(facts: BackupFacts | null): string[] {
   lines.push(
     facts?.dir
       ? `备份目录：${facts.dir}`
-      : "备份目录：应用数据目录下的 `backups/`（绝对路径后端未开放 ⇒ 只写平台约定 ✓）",
+      : "备份目录：应用数据目录下的 `backups/`（绝对路径后端未给出 ⇒ 只写平台约定 ✓）",
   );
+  // ⭐ 窗口**优先用后端给的**（`facts.windows`）；取不到才回落到界面那份兜底（判据 i ✓）
+  const w = facts?.windows ?? BACKUP_RETENTION;
   lines.push(
-    `保留策略（照后端 ${"`retention_keep`"} ✓）：${BACKUP_RETENTION.keepDays} 天内**每天留 1 份** ／ ` +
-      `${BACKUP_RETENTION.keepWeeks} 周内**每周留 1 份** ／ ${BACKUP_RETENTION.keepMonths} 个月内**每月留 1 份** ／ 更早的删除`,
+    `保留策略（照后端 ${"`retention_keep`"} ✓）：${w.keepDays} 天内**每天留 1 份** ／ ` +
+      `${w.keepWeeks} 周内**每周留 1 份** ／ ${w.keepMonths} 个月内**每月留 1 份** ／ 更早的删除`,
   );
   lines.push(
     "触发方式：**随应用启动先跑一轮**，之后每 24 小时再看一次（本机后端**没有**「开／关」这个能力 ⇒ 这里不摆那个假控件）",
@@ -109,9 +171,48 @@ export function backupFactsLines(facts: BackupFacts | null): string[] {
  * 设置中心「数据」页的那一格（自包含 ⇒ Lead 一行就能挂 ✓，或由 `BackupButton` 带 `label` 时挂 ✓）。
  */
 export function BackupSettingsPanel() {
-  const [showMissing, setShowMissing] = useState(false);
-  // ⚠️ 现在**只能**传 `null`：没有命令能给这些读数 ✗（见文件头"为什么显示读不到" ✓）
-  const facts: BackupFacts | null = null;
+  const [facts, setFacts] = useState<BackupFacts | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [lastRun, setLastRun] = useState<AutoBackupRunPayload | null>(null);
+
+  /** 取一次读数（⭐ 取不到 ⇒ **如实**映射成"读不到" ✓，⛔ 不回落到 0 份 ✗）。 */
+  const refresh = async (): Promise<void> => {
+    try {
+      const status = await platform.executor.invoke<AutoBackupStatusPayload>(AUTO_BACKUP_STATUS_COMMAND);
+      setFacts(factsFromStatus(status, null));
+    } catch (e) {
+      setFacts(factsFromStatus(null, `取读数失败：${e instanceof Error ? e.message : String(e)}`));
+    }
+  };
+
+  // ⭐ 挂载时取一次（hooks 顺序：useState ×3 ＋ useEffect 紧随其后 ✓，⛔ 没有早退越过 hooks ✗）
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** ⭐ **立刻备份一次**：只调那条命令（⛔ 不在这里写任何备份逻辑 ✗），跑完**刷新读数** ✓。 */
+  const runNow = async (): Promise<void> => {
+    if (busy) return;
+    setBusy(true);
+    setLastRun(null);
+    try {
+      const r = await platform.executor.invoke<AutoBackupRunPayload>(AUTO_BACKUP_RUN_COMMAND);
+      setLastRun(r);
+      if (r.ran) {
+        toast(`已备份一份（保留 ${r.kept} 份，删除 ${r.removed} 份）`, "success");
+      } else {
+        // ⭐ 跳过／失败都**照实说**（⛔ 不假装成功 ✗）
+        toast(`没备份：${r.note}`, "error");
+      }
+      await refresh(); // ⇒ 份数真的 +1（判据 d 想要的就是这个形状 ✓）
+    } catch (e) {
+      toast(`立刻备份失败：${e}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const lines = backupFactsLines(facts);
 
   return (
@@ -124,6 +225,22 @@ export function BackupSettingsPanel() {
           <li key={line}>{line}</li>
         ))}
       </ul>
+      <div className="backup-auto-actions" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {/* ⭐ 后端真有这条命令了 ⇒ 这个按钮是**真的**（走既有 `run_auto_backup_once` ✓） */}
+        <button className="set-btn" onClick={() => void runNow()} disabled={busy}>
+          {busy ? "正在备份…" : "立即备份一次"}
+        </button>
+        <button className="set-btn" onClick={() => void refresh()} disabled={busy}>
+          刷新读数
+        </button>
+      </div>
+      {lastRun && (
+        <div className="backup-auto-lastrun" style={{ fontSize: 12, lineHeight: 1.7, opacity: 0.9 }}>
+          {lastRun.ran
+            ? `刚跑完：保留 ${lastRun.kept} 份 ／ 删除 ${lastRun.removed} 份 —— ${lastRun.note}`
+            : `没跑成：${lastRun.note}`}
+        </div>
+      )}
       <div className="backup-auto-manual" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 13 }}>手动那条路（导出／导入备份）仍在这里：</span>
         {/* ⭐ 复用既有实现 ⇒ ⛔ 不写第二份备份逻辑 ✓（判据 d 挡着 ✓）。
@@ -131,23 +248,6 @@ export function BackupSettingsPanel() {
                带 label 会**无限自我嵌套** ✗（判据 d 里有一条专门挡这个 ✓）*/}
         <BackupButton />
       </div>
-      <button
-        className="set-btn"
-        style={{ alignSelf: "flex-start", fontSize: 12 }}
-        onClick={() => setShowMissing((v) => !v)}
-      >
-        {showMissing ? "收起：现在怎么才能立刻备一份" : "现在怎么才能**立刻**备一份？"}
-      </button>
-      {showMissing && (
-        <div className="backup-auto-howto" style={{ fontSize: 12, lineHeight: 1.7, opacity: 0.9 }}>
-          ⛔ 后端**还没有**「立刻备份一次」的命令（`run_auto_backup_once` 是 `backup.rs` 里的普通函数，
-          没开成命令 ⇒ 界面不摆一个点了没用的按钮）⇒ 现在要立刻备一份，只有两条真路：
-          <br />· **重启应用**：启动时会先跑一轮（`lib.rs:513` 的"启动触发"✓）；
-          <br />· **无头模式**：`ShuyoNote.exe --backup-once`（跑一次就退出 ⛔ 不建窗口 ✓，P3 已接 ✓）。
-          <br />补上界面的那一条要后端加 **1 条写命令**（`#[tauri::command] run_auto_backup_once` ＋
-          `lib.rs` 登记 ＋ `commands.ts` 声明 ＋ Web 侧 stub）—— 那不在这一笔的写域里 ✓。
-        </div>
-      )}
     </div>
   );
 }

@@ -736,6 +736,128 @@ pub fn read_text_file(app: tauri::AppHandle, path: String) -> Result<String, Str
     std::fs::read_to_string(picked.path()).map_err(|e| e.to_string())
 }
 
+// ============================================================================
+// **task-20：把已有的自动备份能力开成两条命令**（界面那格从"读不到"变成**真读数**）
+// ----------------------------------------------------------------------------
+// ⚠️ 为什么要开：`task-19` 把界面接上之后查出**真缺口** —— 后端**明明有**这个能力（备份真的在跑 ✓），
+//    却**没有**任何命令能把读数给前端 ✗、也没有命令能"立刻备一次" ✗
+//    ⇒ 于是界面只能**如实说"读不到"** ✓（⛔ 它没画假开关／假按钮 ✓）。
+// ⭐ 这一节只做"**开两个口**"，⛔ 一条备份逻辑都不重写 ✗：
+//    · 读：照 `run_auto_backup_once` **同一个目录算法**（`app_data.join("backups")` ✓）
+//      ＋ **复用** `auto_backup::is_valid_snapshot`（半个包不算一份 ✓）
+//    · 写：**直接调**既有的 `run_auto_backup_once` ✓
+// ============================================================================
+
+/// 自动备份的一份快照（⭐ 带大小 ⇒ 前端"共多大"不用猜 ✓）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoBackupSnapshot {
+    pub name: String,
+    pub unix: u64,
+    pub size: u64,
+}
+
+/// 自动备份的**只读读数**（task-20 ①）。
+///
+/// ⚠️ `unreadable` 与 `count = 0` **不是一回事**（判据 b 挡的就是这个 ✓）：
+///   · 目录不存在（还没备份过）⇒ `count = 0` ＋ `unreadable = None` ⇒ **真的 0 份** ✓
+///   · `read_dir` 失败 ⇒ `unreadable = Some(原因)` ⇒ 界面**如实说"读不到"** ✓（⛔ 不许显示 0 ✗）
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoBackupStatus {
+    pub dir: String,
+    pub count: usize,
+    pub bytes: u64,
+    pub last_success_unix: Option<u64>,
+    pub snapshots: Vec<AutoBackupSnapshot>,
+    /// 保留窗口（⭐ **照 `auto_backup` 的常量说** ⇒ ⛔ 界面不写第二遍 ✗，判据 i 会读这段源码核它 ✓）
+    pub keep_days: u64,
+    pub keep_weeks: u64,
+    pub keep_months: u64,
+    pub unreadable: Option<String>,
+}
+
+/// **立刻看一眼自动备份的读数**（只读 ✓，⛔ 不写盘、不跑备份 ✓）。
+#[tauri::command]
+pub fn auto_backup_status(app: tauri::AppHandle) -> AutoBackupStatus {
+    use crate::auto_backup::{KEEP_DAYS, KEEP_MONTHS, KEEP_WEEKS};
+    use tauri::Manager;
+
+    let keep = |d: u64, w: u64, m: u64| (d, w, m);
+    let (keep_days, keep_weeks, keep_months) = keep(KEEP_DAYS, KEEP_WEEKS, KEEP_MONTHS);
+
+    let app_data = app.path().app_data_dir();
+    let dir = match &app_data {
+        Ok(d) => d.join("backups"), // ⭐ 与 `run_auto_backup_once` **同一算法** ✓
+        Err(e) => {
+            return AutoBackupStatus {
+                dir: String::new(),
+                count: 0,
+                bytes: 0,
+                last_success_unix: None,
+                snapshots: Vec::new(),
+                keep_days,
+                keep_weeks,
+                keep_months,
+                unreadable: Some(format!("拿不到应用数据目录：{e}")),
+            }
+        }
+    };
+
+    match crate::auto_backup::list_snapshots(&dir) {
+        Ok(list) => AutoBackupStatus {
+            dir: dir.to_string_lossy().into_owned(),
+            count: list.entries.len(),
+            bytes: list.bytes,
+            last_success_unix: list.last_success_unix,
+            snapshots: list
+                .entries
+                .into_iter()
+                .map(|e| AutoBackupSnapshot { name: e.name, unix: e.unix, size: e.size })
+                .collect(),
+            keep_days,
+            keep_weeks,
+            keep_months,
+            unreadable: None,
+        },
+        // ⭐ 读不到就**说读不到**（⛔ 不吞成 0 份 ✗ —— 那会让用户以为"没有备份" ✓）
+        Err(reason) => AutoBackupStatus {
+            dir: dir.to_string_lossy().into_owned(),
+            count: 0,
+            bytes: 0,
+            last_success_unix: None,
+            snapshots: Vec::new(),
+            keep_days,
+            keep_weeks,
+            keep_months,
+            unreadable: Some(reason),
+        },
+    }
+}
+
+/// 一次"立刻备份"的读数（⭐ 形状与 `auto_backup` 那行日志**同源** ✓）。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoBackupRunReport {
+    pub ran: bool,
+    pub kept: usize,
+    pub removed: usize,
+    pub note: String,
+}
+
+/// **立刻备份一次**（task-20 ②）—— ⭐ **不重写备份逻辑**：直接走既有的 `run_auto_backup_once` ✓
+/// （它已经做过：建目录／写 `.part` ⇒ 成功才 rename／跑保留分层／拿不到密钥就**如实跳过** ✓）。
+#[tauri::command]
+pub async fn auto_backup_run_now(app: tauri::AppHandle) -> AutoBackupRunReport {
+    use crate::auto_backup::RunResult;
+    match run_auto_backup_once(&app).await {
+        RunResult::Ok { kept, removed, note } => AutoBackupRunReport { ran: true, kept, removed, note },
+        // ⭐ 跳过／失败都**照实回**（⛔ 不假装跑成功 ✗）
+        RunResult::Skipped { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
+        RunResult::Failed { note } => AutoBackupRunReport { ran: false, kept: 0, removed: 0, note },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

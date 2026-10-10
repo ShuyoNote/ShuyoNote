@@ -746,3 +746,135 @@ a.timer: Command /opt/x is not executable: No such file or directory
         assert!(p[0].contains("Unknown key name"), "{p:?}");
     }
 }
+
+// ============================================================================
+// **只读读数**（task-20 ①）：目录里有几份／共多大／上次成功备份在什么时候
+// ----------------------------------------------------------------------------
+// ⚠️ 为什么放在这里（而不是 `backup.rs`）：本模块**不碰 Tauri、不碰数据库** ⇒ 这一层
+//    **可以拿真临时目录单测** ✓（判据 d 那一半"真的多出一份"就靠它 ✓）；
+//    而"拿 AppHandle 跑一次真备份"那一半不可单测 ✗ ⇒ 留在 `backup.rs` 的薄命令里 ✓。
+// ⚠️ 复用既有口径：`is_valid_snapshot`（0 字节／`.part` 都不算一份 ✓）——⛔ 不写第二份 ✗。
+// ⚠️ 既有的 `Snapshot{name,unix}` **一个字没动** ✗：它是保留策略的输入，动它会牵动既有判据 ✓
+//    ⇒ 这里另加 `SnapshotEntry`（**带 size** ⇒ 「共多大」不用猜 ✓）。
+// ============================================================================
+
+/// 目录里的一份**有效快照**（⭐ 带 `size` ✓）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotEntry {
+    pub name: String,
+    /// 生成时刻（unix **秒**）—— ⭐ 优先从文件名解（`shuyonote-backup-<millis>.zip` ✓），解不出用 mtime ✓
+    pub unix: u64,
+    pub size: u64,
+}
+
+/// 「现在有几份 ／ 共多大 ／ 上次成功时刻」的**只读读数** ✓。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnapshotList {
+    /// 按时刻**从新到旧**排（⛔ 不依赖 `read_dir` 的顺序 ✗）
+    pub entries: Vec<SnapshotEntry>,
+    pub bytes: u64,
+    pub last_success_unix: Option<u64>,
+}
+
+/// 文件名里的时刻 ⇒ unix 秒。`shuyonote-backup-<n>.zip` ⇒ `n` 是**毫秒**（`run_auto_backup_once`
+/// 用 `as_millis()` 命名 ✓）⇒ 这里**毫秒/秒都认**（≥ 10^12 当毫秒 ✓），解不出返回 `None`（由调用方用 mtime 兜底 ✓）。
+pub fn unix_from_snapshot_name(name: &str) -> Option<u64> {
+    let stem = name.strip_prefix("shuyonote-backup-")?.strip_suffix(".zip")?;
+    let n: u64 = stem.parse().ok()?;
+    Some(if n >= 1_000_000_000_000 { n / 1000 } else { n })
+}
+
+/// **列一份目录里的有效快照**（只读 ✓）。
+///
+/// ⚠️ 两种"没有"要分清（判据 b 就是挡这个 ✓）：
+///   · 目录**不存在**（还没备份过）⇒ `Ok(空)` ＝ **真的 0 份** ✓（那是**真读数** ✓）
+///   · `read_dir` **失败**（权限／IO）⇒ `Err(原因)` ✓ ⇒ 调用方映射成 `unreadable` ⇒ 界面说"读不到" ✓
+///     （⛔ 不许把"读不到"和"0 份"混成一个 ✗ —— 用户会以为"没有备份"而其实只是读不到 ✓）
+pub fn list_snapshots(dir: &std::path::Path) -> Result<SnapshotList, String> {
+    let mut out = SnapshotList::default();
+    if !dir.exists() {
+        return Ok(out); // ⭐ 还没备份过 ＝ 真的 0 份 ✓
+    }
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("读目录失败：{e}"))?;
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("shuyonote-backup-") {
+            continue; // 别人的文件不受我们管 ✓
+        }
+        let path = ent.path();
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue, // 竞态（刚好被删）⇒ 跳过 ✓，⛔ 不让整条读数失败 ✗
+        };
+        let size = meta.len();
+        if !is_valid_snapshot(&name, size) {
+            continue; // ⭐ 半个包（0 字节／`.part`）不算一份 ✓（复用同一处口径 ✓）
+        }
+        let unix = unix_from_snapshot_name(&name)
+            .or_else(|| meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()))
+            .unwrap_or(0);
+        out.entries.push(SnapshotEntry { name, unix, size });
+    }
+    out.entries.sort_by(|a, b| b.unix.cmp(&a.unix).then_with(|| b.name.cmp(&a.name)));
+    out.bytes = out.entries.iter().map(|e| e.size).sum();
+    out.last_success_unix = out.entries.first().map(|e| e.unix);
+    Ok(out)
+}
+
+#[cfg(test)]
+mod snapshot_list_tests {
+    use super::*;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("shuyonote-list-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("建临时目录");
+        d
+    }
+
+    /// ⭐ **真文件系统**：真的写出几份"像样的"快照 ⇒ 数出来的份数／总大小／上次时刻都要对 ✓
+    /// （这就是判据 d 里"跑完真的多出一份"能**机器判**的那一半 ✓ —— 增量那半边同理 ✓）
+    #[test]
+    fn lists_only_real_snapshots_and_totals_them() {
+        let dir = tmp("list");
+        // 两份有效（第二份用**毫秒**命名 ⇒ 解出来应当是秒 ✓）
+        std::fs::write(dir.join("shuyonote-backup-1759900000.zip"), vec![0u8; 10]).unwrap();
+        std::fs::write(dir.join("shuyonote-backup-1759903600000.zip"), vec![0u8; 20]).unwrap();
+        // 三个"不算一份"的：0 字节 zip ／ `.part` ／ 别人的文件 ✓
+        std::fs::write(dir.join("shuyonote-backup-1759909999.zip"), Vec::<u8>::new()).unwrap();
+        std::fs::write(dir.join("shuyonote-backup-1760000000.zip.part"), vec![0u8; 5]).unwrap();
+        std::fs::write(dir.join("别人的文件.zip"), vec![0u8; 99]).unwrap();
+
+        let got = list_snapshots(&dir).expect("目录在 ⇒ 应当 Ok");
+        assert_eq!(got.entries.len(), 2, "⛔ 半个包／别人的文件不许算一份：{:?}", got.entries);
+        assert_eq!(got.bytes, 30, "总大小只算有效那两份");
+        assert_eq!(got.last_success_unix, Some(1_759_903_600), "毫秒命名要解成秒 ✓");
+        assert_eq!(got.entries[0].name, "shuyonote-backup-1759903600000.zip", "从新到旧 ✓");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ 判据 b 的地基：**"目录不存在"＝真的 0 份**（`Ok` ✓，⛔ 不是 `Err` ✗）
+    #[test]
+    fn missing_dir_is_a_real_zero_not_an_error() {
+        let dir = std::env::temp_dir().join(format!("shuyonote-list-{}-missing", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let got = list_snapshots(&dir).expect("目录不存在 ⇒ Ok(空)（＝真的 0 份 ✓）");
+        assert_eq!(got.entries.len(), 0);
+        assert_eq!(got.bytes, 0);
+        assert_eq!(got.last_success_unix, None);
+    }
+
+    /// ⭐ 追加一份 ⇒ 份数 +1（那正是"立刻备份一次"跑完之后应当发生的事 ✓）
+    #[test]
+    fn adding_one_snapshot_bumps_the_count_by_exactly_one() {
+        let dir = tmp("bump");
+        std::fs::write(dir.join("shuyonote-backup-1759900000.zip"), vec![0u8; 4]).unwrap();
+        let before = list_snapshots(&dir).unwrap();
+        std::fs::write(dir.join("shuyonote-backup-1759900001.zip"), vec![0u8; 6]).unwrap();
+        let after = list_snapshots(&dir).unwrap();
+        assert_eq!(after.entries.len(), before.entries.len() + 1);
+        assert_eq!(after.bytes, before.bytes + 6);
+        assert_eq!(after.last_success_unix, Some(1_759_900_001));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

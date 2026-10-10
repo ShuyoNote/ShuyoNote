@@ -1284,6 +1284,34 @@ export interface CommandMap {
   // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
   // 否则用户会把"少数据的备份"当成完整备份。
   export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
+  /**
+   * ⭐ task-20 ①：自动备份的**只读读数**（目录 ＋ 份数 ＋ 共多大 ＋ 上次成功时刻 ＋ 保留窗口）。
+   * ⚠️ `unreadable` 与 `count: 0` **不是一回事**：目录不存在（还没备份过）⇒ `unreadable: null` ＋ `count: 0`
+   * ＝**真的 0 份**；`read_dir` 失败 ⇒ `unreadable: "原因"` ⇒ 界面**如实说"读不到"**（⛔ 不许显示 0 ✗）。
+   */
+  auto_backup_status: {
+    args: undefined;
+    result: {
+      dir: string;
+      count: number;
+      bytes: number;
+      lastSuccessUnix: number | null;
+      snapshots: Array<{ name: string; unix: number; size: number }>;
+      /** 保留窗口（⭐ 后端照 `auto_backup::KEEP_*` 给 ⇒ 界面⛔ 不写第二遍 ✗） */
+      keepDays: number;
+      keepWeeks: number;
+      keepMonths: number;
+      unreadable: string | null;
+    };
+  };
+  /**
+   * ⭐ task-20 ②：**立刻备份一次** —— 走既有的 `run_auto_backup_once` ✓（⛔ 不重写备份逻辑 ✗）。
+   * `ran: false` ⇒ 没跑（例如加密空间不支持在线备份／数据库 5 秒内没就绪）⇒ `note` 里是原因，**照实显示** ✓。
+   */
+  auto_backup_run_now: {
+    args: undefined;
+    result: { ran: boolean; kept: number; removed: number; note: string };
+  };
   /** 阶段 1 · 冲突留痕：这一页**未裁决**的冲突（字段名与 Rust 侧 `PageConflict` 的 snake_case 一致）。 */
   list_page_conflicts: {
     args: { pageId: string };

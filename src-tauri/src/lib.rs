@@ -968,6 +968,9 @@ pub fn run() {
             backup::write_text_file,
             backup::write_binary_file,
             backup::read_text_file,
+            // ⭐ task-20：自动备份那两条（只读读数 ＋ 立刻备份一次）—— 都只是"把已有能力开口" ✓
+            backup::auto_backup_status,
+            backup::auto_backup_run_now,
             workspace_io::export_workspace,
         wiki_export::export_wiki,
         wiki_export::wiki_export_pages,

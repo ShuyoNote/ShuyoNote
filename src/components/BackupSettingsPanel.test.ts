@@ -18,8 +18,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  AUTO_BACKUP_RUN_COMMAND,
+  AUTO_BACKUP_STATUS_COMMAND,
   BACKUP_RETENTION,
   backupFactsLines,
+  factsFromStatus,
   type BackupFacts,
 } from "./BackupSettingsPanel";
 
@@ -121,5 +124,114 @@ describe("自动备份那一格（task-19）", () => {
       /import\s*\{\s*BackupSettingsPanel\s*\}\s*from\s*"\.\/BackupSettingsPanel"/,
     );
     expect(btn, "没有把面板挂在 label 那一支上").toMatch(/\{\s*label\s*&&\s*<BackupSettingsPanel\b/);
+  });
+
+  // ⭐⭐ 下面四条是 **task-20** 加的（补两条后端命令 ⇒ 那格从"读不到"变成**真读数** ✓）
+
+  it("g) ⭐ **只读命令**三处同名 ＋ 面板真的去取（旧行为：面板写死 `null` ⇒ 只能显示「读不到」⇒ 必红 ✓）", () => {
+    // ① Rust 侧真有这条命令
+    const backupRs = read("src-tauri", "src", "backup.rs");
+    expect(backupRs, `Rust 侧没有 pub fn ${AUTO_BACKUP_STATUS_COMMAND}`).toMatch(
+      new RegExp(`pub (async )?fn ${AUTO_BACKUP_STATUS_COMMAND}\\s*\\(`),
+    );
+    // ② lib.rs 登记了
+    const lib = read("src-tauri", "src", "lib.rs");
+    expect(lib, `lib.rs 的 generate_handler! 没登记 ${AUTO_BACKUP_STATUS_COMMAND}`).toMatch(
+      new RegExp(`backup::${AUTO_BACKUP_STATUS_COMMAND}\\s*,`),
+    );
+    // ③ 面板真的去取（⛔ 不许写死 null ✗）
+    const panel = read("src", "components", "BackupSettingsPanel.tsx");
+    expect(panel, "面板没有去取那条只读读数（还是写死的 null）").toContain(AUTO_BACKUP_STATUS_COMMAND);
+    expect(panel, "面板不该再把 facts 写死成 null").not.toMatch(/const facts: BackupFacts \| null = null/);
+  });
+
+  it("h) ⭐ **反向**：读数取不到 ⇒ 映射成「读不到」⇒ ⛔ 不许显示 0 份", () => {
+    // 命令抛错（目录不可读／平台不支持）⇒ 必须**如实**（⛔ 不是 0 份 ✗）
+    for (const facts of [
+      factsFromStatus(null, "读目录失败：Permission denied"),
+      factsFromStatus(
+        {
+          dir: "",
+          count: 0,
+          bytes: 0,
+          lastSuccessUnix: null,
+          snapshots: [],
+          keepDays: 7,
+          keepWeeks: 4,
+          keepMonths: 12,
+          unreadable: "读目录失败：Permission denied",
+        },
+        null,
+      ),
+    ]) {
+      expect(facts.unreadableReason, "取不到时必须给出一句人话的原因").toBeTruthy();
+      const text = backupFactsLines(facts).join("\n");
+      expect(text).toContain("读不到");
+      expect(text, "⛔ 取不到却显示 0 份").not.toMatch(/0\s*份/);
+    }
+    // ⭐ 而**真的 0 份**（目录不存在／里面确实没有有效快照）⇒ 那是**真读数**，照实显示 ✓
+    const real = factsFromStatus(
+      {
+        dir: "C:\\tmp\\backups",
+        count: 0,
+        bytes: 0,
+        lastSuccessUnix: null,
+        snapshots: [],
+        keepDays: 7,
+        keepWeeks: 4,
+        keepMonths: 12,
+        unreadable: null,
+      },
+      null,
+    );
+    expect(real.unreadableReason, "目录在、只是没有快照 ⇒ 不该说读不到").toBeNull();
+    expect(backupFactsLines(real).join("\n")).toMatch(/0\s*份/);
+  });
+
+  it("i) ⭐ **反向**：保留策略窗口**不许在界面里写第二遍**（必须来自后端那处 `retention_keep`）", () => {
+    // ① 后端给的窗口**优先**（面板照它说 ✓）
+    const fromBackend = factsFromStatus(
+      {
+        dir: "C:\\tmp\\backups",
+        count: 1,
+        bytes: 1024,
+        lastSuccessUnix: 1_760_000_000,
+        snapshots: [],
+        keepDays: 99,
+        keepWeeks: 88,
+        keepMonths: 77,
+        unreadable: null,
+      },
+      null,
+    );
+    const text = backupFactsLines(fromBackend).join("\n");
+    expect(text, "面板没用后端给的窗口（还在用自己那份常量）").toMatch(/99\s*天/);
+    expect(text).toMatch(/88\s*周/);
+    expect(text).toMatch(/77\s*个?月/);
+    // ② ⭐ Rust 那条命令的窗口必须**取自常量**（⛔ 不许写死数字 ✗）
+    const backupRs = read("src-tauri", "src", "backup.rs");
+    expect(backupRs, "后端那条读数没引用 KEEP_DAYS（窗口写死了？）").toMatch(/KEEP_DAYS/);
+    expect(backupRs, "后端那条读数没引用 KEEP_WEEKS").toMatch(/KEEP_WEEKS/);
+    expect(backupRs, "后端那条读数没引用 KEEP_MONTHS").toMatch(/KEEP_MONTHS/);
+  });
+
+  it("j) ⭐ **写命令**三处同名 ＋ 面板那个按钮真的调它（⛔ 不许写第二份备份逻辑）", () => {
+    const backupRs = read("src-tauri", "src", "backup.rs");
+    expect(backupRs, `Rust 侧没有 pub fn ${AUTO_BACKUP_RUN_COMMAND}`).toMatch(
+      new RegExp(`pub (async )?fn ${AUTO_BACKUP_RUN_COMMAND}\\s*\\(`),
+    );
+    // ⭐ **复用**既有实现（⛔ 不重写备份逻辑 ✗）
+    expect(backupRs, "写命令没有走既有的 run_auto_backup_once（难道重写了一份？）").toMatch(
+      /run_auto_backup_once\s*\(/,
+    );
+    const lib = read("src-tauri", "src", "lib.rs");
+    expect(lib, `lib.rs 没登记 ${AUTO_BACKUP_RUN_COMMAND}`).toMatch(
+      new RegExp(`backup::${AUTO_BACKUP_RUN_COMMAND}\\s*,`),
+    );
+    const panel = read("src", "components", "BackupSettingsPanel.tsx");
+    expect(panel, "面板里没有调那条写命令的按钮").toContain(AUTO_BACKUP_RUN_COMMAND);
+    expect(panel, "那个按钮必须只调命令（⛔ 不许在这里自己写备份逻辑）").not.toMatch(
+      /exportBackup\(|importBackup\(/,
+    );
   });
 });

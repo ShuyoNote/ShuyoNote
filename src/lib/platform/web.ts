@@ -1503,6 +1503,31 @@ export function makeInvoke(store: SqliteStore) {
       // （Web 版的等价入口是面板里那个按钮）。返回空数组＝没有待导入路径，与桌面「队列空」同语义 ✓。
       return [] as T;
     }
+    if (cmd === "auto_backup_status") {
+      // 自动备份是**桌面端机制**（启动时跑一轮 ＋ 每 24h 轮询，见 lib.rs 的调度块）：浏览器里没有
+      // "应用数据目录 / backups/" 这回事 ⇒ 如实回一条 `unreadable`（⛔ 不假装"0 份" ✗ ——
+      // 那会被界面读成"没有备份"，而真相是"Web 上没有这套机制" ✓）。
+      return {
+        dir: "",
+        count: 0,
+        bytes: 0,
+        lastSuccessUnix: null,
+        snapshots: [],
+        keepDays: 0,
+        keepWeeks: 0,
+        keepMonths: 0,
+        unreadable: "Web 平台没有自动备份（这是桌面端机制：启动时跑一轮 ＋ 每 24 小时轮询）",
+      } as T;
+    }
+    if (cmd === "auto_backup_run_now") {
+      // 同上：Web 上没有可跑的自动备份 ⇒ 如实回"没跑"（⛔ 不假装成功 ✗）
+      return {
+        ran: false,
+        kept: 0,
+        removed: 0,
+        note: "Web 平台没有自动备份（这是桌面端机制）⇒ 这里不能立刻备份",
+      } as T;
+    }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
       const args = a.args ?? a;
