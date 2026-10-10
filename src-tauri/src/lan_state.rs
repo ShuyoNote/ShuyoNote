@@ -322,11 +322,51 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);
         let mut last_announce_ms: i64 = 0;
+        // ⭐ **2026-10-09（task-8）**：本机**在用**哪些空间（解析后 ✓）—— 只为**日志**里
+        //   「这条公告与本机空间匹不匹配」那一句判定 ✓（⛔ 不参与任何路由决策 ✗）。
+        //   ⚠️ 先取一次再进循环：否则第一片收到的公告会报"本机还没有可匹配的空间"（假读数 ✗）。
+        let mut own_spaces: Vec<String> = {
+            let profiles0 = bound_profiles(&app2);
+            let db = app2.state::<Db>();
+            let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
+            let mut v: Vec<String> = Vec::new();
+            for (s, _, ws) in &profiles0 {
+                let served = window_serve_space(&c, s, ws);
+                if served.trim().is_empty() {
+                    continue;
+                }
+                if settings_for_profile(&c, s, ws).bind.is_some() && !v.contains(&served) {
+                    v.push(served);
+                }
+            }
+            v
+        };
         loop {
             let now = crate::db::now_ms();
             // ① 收（有超时 ⇒ "网段里没人说话"时循环照常推进，广播与腾表不会被卡住）。
             //    ⚠️ 收报走 `recv_into_within` ⇒ **解码只有一处**（`record_datagram`）。
-            let _ = lan::recv_into_within(&sock, state, RECV_SLICE_MS).await;
+            // ⭐ **2026-10-09（task-8）**：⭐ **四种结果各自打一行** ✓ —— 真机上「发了没」「收了没」
+            //   「收到了为什么没用上」**除了日志没有别的观测面**（`47821` 被应用独占 ⇒ 外部绑不上 ✗）。
+            //   口径：⭐ 收到并入库 ⇒ 说清来源/对端/它代言的空间/**与本机匹不匹配** ✓；
+            //        收到但没进表（自己的回环 / 坏报文 / 超长）⇒ ⭐ **必须说出原因** ✓；
+            //        这一片什么都没收到 ⇒ ⛔ **不打日志** ✗（每 1s 一次，打就是刷屏 ✓）。
+            match lan::recv_into_within(&sock, state, RECV_SLICE_MS).await {
+                Ok(lan::RecvOutcome::Peer(p)) => {
+                    eprintln!("{}", lan::announce_recv_line(&p, &own_spaces));
+                }
+                Ok(lan::RecvOutcome::OwnAnnounce { from }) => {
+                    eprintln!(
+                        "{}",
+                        lan::announce_drop_line(&from, "这是**我自己**的公告（回环回来的）⇒ 有意丢弃")
+                    );
+                }
+                Ok(lan::RecvOutcome::Rejected { from, reason }) => {
+                    eprintln!("{}", lan::announce_drop_line(&from, &reason));
+                }
+                // 这一片没人说话 —— 正常，不刷屏 ✓
+                Ok(lan::RecvOutcome::Nothing) => {}
+                Err(e) => eprintln!("[mesh] 收公告出错：{e}"),
+            }
             // ② 按需启用（每轮重读：绑了同步才发言，见口径 2）。
             //    ⚠️ 判别式走 `should_enable(bound_profile_count(..))` —— 与判据用的是**同一把尺**
             //    （不是 `profiles.len()`）：只填了地址还没选空间的行**不许**让我们开始广播。
@@ -352,6 +392,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     .collect()
             };
             let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
+            // ⭐ 2026-10-09（task-8）：日志那一句「匹不匹配」用的就是这份（去重 ✓、与网格**同一把尺** ✓）。
+            own_spaces = {
+                let mut v: Vec<String> = Vec::new();
+                for s in &meshed {
+                    if !v.contains(s) {
+                        v.push(s.clone());
+                    }
+                }
+                v
+            };
             let mut mesh_bases: Vec<(String, String)> = Vec::new();
             // ⭐ **U8（2026-10-01）：一次开窗，而不是"逐空间开"** ——
             //   把配了地址的那些空间**按绑定分组** ⇒ **一个绑定只调一次** ✓
@@ -416,7 +466,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     announces_for_this_round(&c, &device_id, &device_name, &profiles, &mesh_bases)
                 };
                 for a in announced {
-                    let _ = lan::announce_once(&sock, &targets, &a).await;
+                    // ⭐ **2026-10-09（task-8）**：**每一轮公告都留一行读数** ✓ ——
+                    // "发出去几条 / 目标长什么样 / **哪一条失败了、为什么**" 以前**完全不可见** ✗
+                    // （`announce_once` 只留最后一条错误、且只在**全部**失败时才报 ⇒ 部分失败静默 ✗）。
+                    match lan::announce_once(&sock, &targets, &a).await {
+                        Ok(o) => eprintln!(
+                            "{}",
+                            lan::announce_send_line(&o, a.hub_spaces.first().map(String::as_str).unwrap_or(""))
+                        ),
+                        Err(e) => eprintln!("[mesh] 公告一条都没发出去：{e}"),
+                    }
                 }
                 // ⚠️ **不管发出去几条都记时刻**：一条没发出去只说明"这个网段的广播被禁了"
                 //    （受限网络），每 1s 重试一次等于自己打自己 ⇒ 到点才试下一轮。
