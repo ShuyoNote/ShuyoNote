@@ -24340,3 +24340,153 @@ body.is-plugin-panel-open .main {
 .mcap-bar-btn:active {
   background: var(--accent-soft);
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「设置」（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）
+   ⚠️ 只有手机档会渲染它（`App.tsx` 两处渲染点都按 `isMobile` 切 ✓）⇒ 不套 @media ✓。
+   ⚠️ 桌面档照旧走 `SettingsDialog` ✓ —— 这里**不动** `.set-*` 那套一个字 ✓。
+   ========================================================================== */
+.mset {
+  padding: 14px 16px calc(20px + var(--sab, 0px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mset-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.mset-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+}
+.mset-close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+}
+.mset-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+/* 分组小标题（效果图里是「账户／同步／外观…」这几个淡色小字 ✓）*/
+.mset-group {
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.mset-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.mset-row[aria-disabled="true"] {
+  opacity: 0.75;
+}
+.mset-ico {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--bg-sidebar);
+  font-size: 17px;
+}
+.mset-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mset-row-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mset-row-sub {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.mset-go {
+  flex: none;
+  font-size: 20px;
+  color: var(--text-faint);
+}
+/* 同步状态那一行：小圆点 ＋ 一句话（效果图里点是有颜色的 ✓）*/
+.mset-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.mset-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f0a020;
+}
+.mset-dot.is-bad {
+  background: #c5221f;
+}
+.mset-dot.is-busy {
+  background: var(--accent);
+}
+.mset-status-text {
+  font-size: 13px;
+  color: var(--text);
+}
+/* 外观：三段选择（触控 ≥44px ✓）*/
+.mset-seg {
+  display: flex;
+  gap: 8px;
+}
+.mset-seg-btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+.mset-seg-btn.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.mset-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mset-note.is-strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.mset-foot {
+  margin: 2px 2px 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}
