@@ -1019,3 +1019,104 @@ pub fn set_device_name(db: tauri::State<'_, Db>, name: String) -> Result<String,
     }
     Ok(local_device_name(&c))
 }
+
+// ─────────────── 08-b①（2026-10-10）：随机短标识 ───────────────
+//
+// 用途：**信任前要展示对方身份**（规格 J21：设备名 ＋ 短标识 ✓）—— 而设备名可能为空 ✓、
+// `device_id` **不许进用户可见的句子** ✗（`sync.rs:3923` 逐字禁 ✓）⇒ 需要一个**可显示**的短标识 ✓。
+//
+// ⛔ **硬要求（逐字）**：**随机生成** ✗ **不许**从 `device_id` 截断／取前缀／哈希 ✗
+//   （规格逐字：「不许回落成 `device_id` **前缀**」✗）⇒ 这里是**独立随机源** ✓，函数**不接受**
+//   任何身份输入 ✓（结构上就派生不出来 ✓）。
+// ⚠️ 长度 **4–6 字符** ✓；**必须持久化** ✓（否则重启就变 ✗ ⇒ 用户刚认过的身份下一次又变了 ✗）；
+//   落在 `meta.sync_state` 的 `short_id` 键 ✓（与 `device_id` / `device_name` **同表 ⇒ 免迁移** ✓）。
+
+/// `meta.sync_state` 里的键 ✓。
+const KEY_SHORT_ID: &str = "short_id";
+
+/// 短标识长度：**4–6** 之间取 5 ✓（够短能念、够长不易撞：32⁵ ≈ 3.3×10⁷ ✓）。
+const SHORT_ID_LEN: usize = 5;
+
+/// 字母表：**去掉易混字符**（`0/O`、`1/I`）✓ —— 它是要**念给人听/对着看**的 ✓。
+const SHORT_ID_ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 32 个 ⇒ 256 % 32 == 0，取模无偏 ✓
+
+/// 生成一个**随机**短标识 ✓（⛔ 与任何身份字段无关 ✗ —— 见上面那段硬要求 ✓）。
+fn new_short_id() -> String {
+    let raw = uuid::Uuid::new_v4();
+    let bytes = raw.as_bytes();
+    (0..SHORT_ID_LEN)
+        .map(|i| SHORT_ID_ALPHABET[(bytes[i] as usize) % SHORT_ID_ALPHABET.len()] as char)
+        .collect()
+}
+
+/// 短标识的**取值规则**（纯函数 ⇒ 可单测 ✓）：
+/// **已有且合法 ⇒ 原样返回** ✓（⇒ 重启后不变 ✓）；否则**新生成一个** ✓。
+fn short_id_or_init(existing: Option<&str>) -> String {
+    if let Some(v) = existing {
+        let v = v.trim();
+        let ok = (4..=6).contains(&v.len()) && v.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8)));
+        if ok {
+            return v.to_string();
+        }
+    }
+    new_short_id()
+}
+
+/// 读写口：库里没有（或值非法）就**生成并落库** ✓，有就原样用 ✓。
+fn local_short_id(c: &rusqlite::Connection) -> Result<String, String> {
+    let existing = crate::sync::get_meta_state(c, KEY_SHORT_ID);
+    let id = short_id_or_init(existing.as_deref());
+    if existing.as_deref() != Some(id.as_str()) {
+        crate::sync::set_meta_state(c, KEY_SHORT_ID, &id)?;
+    }
+    Ok(id)
+}
+
+/// 08-b① 的四条判据（Lead 照收的那四条 ✓）—— **行为**读数，不是注释 ✓。
+#[cfg(test)]
+mod short_id_tests {
+    use super::*;
+
+    #[test]
+    fn length_is_within_4_to_6() {
+        for _ in 0..64 {
+            let id = new_short_id();
+            assert!((4..=6).contains(&id.len()), "短标识长度必须在 4–6，实际 {}", id.len());
+        }
+    }
+
+    #[test]
+    fn is_random_two_calls_differ() {
+        // 32⁵ ≈ 3.3×10⁷ ⇒ 连测 16 对，撞上的概率可忽略 ✓（真撞了说明随机源没在动 ✗）
+        for _ in 0..16 {
+            assert_ne!(new_short_id(), new_short_id(), "连续两次生成相同 ⇒ 不是随机 ✗");
+        }
+    }
+
+    #[test]
+    fn never_derived_from_device_id() {
+        // ⛔ 规格逐字禁"截断／前缀／哈希 `device_id`" ✗ —— 这一条**就是**钉它的 ✓。
+        let device_id = uuid::Uuid::new_v4().to_string(); // 小写 uuid（与线上同形 ✓）
+        assert!(!device_id.starts_with(&new_short_id()));
+        // 取一批生成值，都不许出现在 device_id 里（大写字母表 ⇒ 与小写 uuid 天然不重叠 ✓）
+        for _ in 0..32 {
+            let id = new_short_id();
+            assert!(!device_id.contains(&id), "短标识不许是 device_id 的片段 ✗：{id}");
+            assert!(!device_id.to_uppercase().contains(&id), "短标识不许是 device_id 的派生 ✗：{id}");
+        }
+    }
+
+    #[test]
+    fn stable_across_restart_when_already_stored() {
+        // ⭐ "重启后不变"的**规则本身**：已有合法值 ⇒ 原样返回 ✓（不重新生成 ✗）
+        let stored = "K7M2Q";
+        assert_eq!(short_id_or_init(Some(stored)), stored);
+        assert_eq!(short_id_or_init(Some("  K7M2Q  ")), stored, "空白要折掉再判定 ✓");
+        // 库里是空/非法（老库、被手改过）⇒ 补一个新生成的 ✓（那也算"重启后有个稳定值" ✓）
+        let healed = short_id_or_init(Some(""));
+        assert!((4..=6).contains(&healed.len()));
+        let healed2 = short_id_or_init(Some("abc")); // 小写/太短 ⇒ 非法 ✓
+        assert!((4..=6).contains(&healed2.len()));
+        assert!(healed2.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8))));
+    }
+}
