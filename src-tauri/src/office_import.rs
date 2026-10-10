@@ -96,34 +96,59 @@ pub fn startup_from_args<I: IntoIterator<Item = String>>(args: I) -> Startup {
 /// ⚠️ 为什么用进程内的 `static` 而不是环境变量：`std::env::set_var` 在多线程下**不是**安全的
 /// （且新版 edition 里已经是 `unsafe`）✗；而这条交班**只在同一个进程内**（`main` → `run` → 前端）
 /// 发生 ✓ ⇒ 一把 `Mutex` 就够，且**不需要**碰环境 ✓。
-static PENDING: Mutex<Option<String>> = Mutex::new(None);
+///
+/// ## ⭐ 为什么是**队列**而不是单槽（2026-10-10 改，照 `deeplink::PendingDeepLinks` ✓）
+/// 1. **单槽会丢**：连点两个文件 ⇒ 后到的把先到的**覆盖**掉 ✗（而用户看不到任何提示 ✓）；
+/// 2. **取走即空是去重的唯一依据**（`deepLinkBridge.ts` 文件头那句"两边的去重靠同一个队列，
+///    不靠猜"✓）—— 单槽做不到"取走即空 ＋ 还能留住没被听到的那一次" ✓。
+/// ⇒ `Vec<String>` ＋ `mem::take`（⭐ 与深链那条**同形** ✓）。
+static PENDING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-fn lock() -> std::sync::MutexGuard<'static, Option<String>> {
+fn lock() -> std::sync::MutexGuard<'static, Vec<String>> {
     // ⚠️ 中毒（poison）不该让"导入"这件事整个失效 ⇒ 取回内层值继续 ✓（本模块没有会 panic 的临界区 ✓）
     PENDING.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// 冷启动：`main.rs` 在 `run()` **之前**把 `--import` 给的路径记下 ✓
-/// （真正交付由 `lib.rs` 的 setup 调 `deliver_pending` ✓）。
+/// 冷启动／第二个实例：把 `--import` 给的路径**入队** ✓。
+/// （真正叫醒前端由 `deliver_pending` / `forward_import_args` 的 `emit` 负责 ✓）。
 pub fn set_pending_import(path: &str) {
-    *lock() = Some(path.to_string());
+    let mut q = lock();
+    // 同一条路径不必入队两次（连点两次同一个文件 ⇒ 一页 ✓；**不同**路径都留着 ✓）
+    if !q.iter().any(|p| p == path) {
+        q.push(path.to_string());
+    }
 }
 
-/// 交付待导入路径：有就交给 `emit`，并且**取走**（⇒ 只交付一次 ✓）。
+/// **取走即空**（⭐ 与 `deeplink::PendingDeepLinks::drain` 同形 ✓）。
+/// 前端挂载时 drain 一次 ⇒ 冷启动那条（前端挂载**之前**就 emit 过、没人听）也能拿到 ✓。
+pub fn take_pending_imports() -> Vec<String> {
+    std::mem::take(&mut *lock())
+}
+
+/// 队列里**还有没有**待导入路径（判据与诊断用；⛔ 不取走 ✓）。
+pub fn pending_import_count() -> usize {
+    lock().len()
+}
+
+/// 交付：有就交给 `emit`，但 **⛔ 不取走** ✓ —— 这是本轮修的那个洞：
+/// 早先这里是 `take()` ⇒ 冷启动时前端**还没挂载**、没人听 ⇒ 路径**当场丢了** ✗
+/// （与 `deepLinkBridge.ts` 文件头第 17-23 行记的是**同一个坑** ✓）。
+/// ⇒ 现在：`emit` 只是"叫醒"；**取走由前端的 drain 做**（`office_import_take` 命令 ✓）
+///   ⇒ 于是"没人听"只会让那次叫醒白叫，路径**还在队列里** ✓。
 /// ⭐ 接线那一行长这样（`lib.rs` 的 `.setup(...)` 里 ✓）：
 /// ```ignore
 /// office_import::deliver_pending(|p| { let _ = app.emit(office_import::IMPORT_EVENT, p.to_string()); });
 /// ```
 pub fn deliver_pending<F: FnOnce(&str)>(emit: F) -> Option<String> {
-    let taken = lock().take();
-    if let Some(path) = &taken {
+    let first = lock().first().cloned();
+    if let Some(path) = &first {
         emit(path);
     }
-    taken
+    first
 }
 
-/// **第二个实例**带来的 argv ⇒ 取出待导入路径 ⇒ 记下 ＋ 交给 `emit` ✓。
-/// ⭐ 接线那一行在 `lib.rs:346` 的单实例回调里（`_args` 要改成 `args` ✓）：
+/// **第二个实例**带来的 argv ⇒ 解析出待导入路径 ⇒ **入队** ＋ 交给 `emit`（叫醒）✓。
+/// ⭐ 接线那一行在 `lib.rs` 的单实例回调里 ✓：
 /// ```ignore
 /// office_import::forward_import_args(&args, |p| { let _ = app.emit(office_import::IMPORT_EVENT, p.to_string()); });
 /// ```
@@ -137,6 +162,24 @@ pub fn forward_import_args<F: FnOnce(&str)>(args: &[String], emit: F) -> Option<
         }
         Startup::Normal => None,
     }
+}
+
+/// **前端启动时 drain 一次**（取走即空 ✓）—— ⭐ 与 `deeplink::deep_link_take` **同形** ✓。
+///
+/// 为什么必须有这条命令：冷启动那一次 `emit` 发生在 `.setup()`，而那一刻**前端还没挂载**
+/// （主窗口 `visible(false)`、JS 还没跑）⇒ 只靠事件会**稳定漏掉第一次** ✗
+/// （深链桥就是为了盖住这个洞才"先订阅、再 drain" ✓）。
+/// ⭐ 返回空数组 ⇒ 调用方什么都不做（**普通启动零副作用** ✓）。
+///
+/// ⚠️ 为什么套 `#[cfg(not(test))]`（这是刻意的，别顺手删 ✗）：`#[tauri::command]` 需要 `tauri` crate，
+///    而本文件的上半部分是**纯 std** —— 那样才能 `rustc --test src-tauri/src/office_import.rs`
+///    跑单测（不用 cargo ⇒ ⛔ 不碰正在运行的 app ✓，见文件头 ✓）。
+///    ⇒ 被排除的**只有这一个转发函数**；它**全部的逻辑**在 `take_pending_imports()` 上，
+///      而那条是纯函数、**在单测里被逐条验过**（含"取走即空"✓）。
+#[cfg(not(test))]
+#[tauri::command]
+pub fn office_import_take() -> Vec<String> {
+    take_pending_imports()
 }
 
 #[cfg(test)]
@@ -211,27 +254,51 @@ mod tests {
         assert_eq!(startup_from_args(args(&["--backup-once"])), Startup::Normal);
     }
 
-    /// ⚠️ 只写**一个**碰全局交班的用例：`PENDING` 是进程级的，多个用例并行会互相偷值 ✗
-    /// （这一条刻意把"转发 ⇒ 交付"的整条序列放在同一个用例里 ✓）。
+    /// ⚠️ 只写**一个**碰全局队列的用例：`PENDING` 是进程级的，多个用例并行会互相偷值 ✗
+    /// （这一条刻意把"转发 ⇒ 交付 ⇒ drain"的整条序列放在同一个用例里 ✓）。
     #[test]
-    fn forward_then_deliver_is_one_shot() {
+    fn forward_deliver_then_drain_is_one_shot_and_survives_a_deaf_frontend() {
         // 先清干净（同一进程里别的用例不碰它 ✓）
-        let _ = deliver_pending(|_| {});
+        let _ = take_pending_imports();
+        assert_eq!(pending_import_count(), 0);
 
+        // ① 第二个实例：转发 ⇒ 入队 ＋ 叫醒一次 ✓
         let seen = std::cell::RefCell::new(Vec::<String>::new());
         let forwarded = forward_import_args(&args(&["--import", "C:\\tmp\\x.docx"]), |p| {
             seen.borrow_mut().push(p.to_string());
         });
         assert_eq!(forwarded.as_deref(), Some("C:\\tmp\\x.docx"));
         assert_eq!(seen.borrow().as_slice(), ["C:\\tmp\\x.docx"]);
+        assert_eq!(pending_import_count(), 1, "转发之后必须**留在队列里** ✓");
 
-        // ⭐ 交付**只发一次**（第二次调 deliver_pending 什么也不发 ✓）
-        let first = deliver_pending(|_| {});
-        assert_eq!(first.as_deref(), Some("C:\\tmp\\x.docx"));
-        assert_eq!(deliver_pending(|_| {}), None);
+        // ② 交付（冷启动那条路）：**叫醒**，但 ⭐ **不取走** —— 这就是本轮修的洞 ✓
+        //    （前端此刻可能还没挂载 ⇒ 早先那版 take() 会把路径当场丢掉 ✗）
+        let delivered = deliver_pending(|p| seen.borrow_mut().push(format!("wake:{p}")));
+        assert_eq!(delivered.as_deref(), Some("C:\\tmp\\x.docx"));
+        assert_eq!(pending_import_count(), 1, "⛔ 交付不许把没被听到的那一次吃掉");
+        assert_eq!(seen.borrow().as_slice(), ["C:\\tmp\\x.docx", "wake:C:\\tmp\\x.docx"]);
 
-        // 与导入无关的唤起 ⇒ 不记录、不交付 ✓
+        // ③ 前端挂载时 drain：**取走即空** ✓（⭐ 与深链 `deep_link_take` 同形 ✓）
+        assert_eq!(take_pending_imports(), vec!["C:\\tmp\\x.docx".to_string()]);
+        assert_eq!(pending_import_count(), 0);
+        assert!(take_pending_imports().is_empty(), "取走即空 ⇒ 第二次必须空 ✓");
+
+        // ④ 队列空了之后再来一次叫醒 ⇒ 什么都不发（⛔ 不会重复建页 ✓）
+        assert_eq!(deliver_pending(|_| panic!("队列空时不许再叫醒")), None);
+
+        // ⑤ 同一条路径重复入队 ⇒ 只留一条（连点两次同一个文件 = 一页 ✓）；
+        //    不同路径 ⇒ 都留着（⛔ 后到覆盖先到 = 静默丢 ✗）
+        set_pending_import("same.docx");
+        set_pending_import("same.docx");
+        set_pending_import("other.docx");
+        assert_eq!(pending_import_count(), 2);
+        assert_eq!(
+            take_pending_imports(),
+            vec!["same.docx".to_string(), "other.docx".to_string()]
+        );
+
+        // ⑥ 与导入无关的唤起 ⇒ 不入队、不叫醒 ✓
         assert_eq!(forward_import_args(&args(&["--other"]), |_| {}), None);
-        assert_eq!(deliver_pending(|_| {}), None);
+        assert_eq!(pending_import_count(), 0);
     }
 }

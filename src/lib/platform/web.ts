@@ -1498,6 +1498,11 @@ export function makeInvoke(store: SqliteStore) {
       // 返回空数组＝没有待处理深链，调用方据此什么都不做——与桌面「队列空」同语义。
       return [] as T;
     }
+    if (cmd === "office_import_take") {
+      // OS 层「被文件关联唤起」仅桌面版：浏览器里没有"起第二个进程并把 argv 交给已在跑的实例"这回事
+      // （Web 版的等价入口是面板里那个按钮）。返回空数组＝没有待导入路径，与桌面「队列空」同语义 ✓。
+      return [] as T;
+    }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
       const args = a.args ?? a;

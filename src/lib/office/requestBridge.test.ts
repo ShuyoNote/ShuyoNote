@@ -20,6 +20,7 @@ import {
   createOfficeImportRequestHandler,
   mountOfficeImportRequests,
   OFFICE_IMPORT_EVENT,
+  OFFICE_IMPORT_TAKE_COMMAND,
   type OfficeRequestDeps,
 } from "./requestBridge";
 
@@ -138,20 +139,78 @@ describe("office-import://request ⇒ 真建页（task-14 ④）", () => {
 
     let emit: ((event: { payload: unknown }) => void) | null = null;
     const seenEvents: string[] = [];
+    let queue = ["C:\\tmp\\" + FULL.name];
     const unlisten = await mountOfficeImportRequests(handler, {
       listen: async (event, cb) => {
         seenEvents.push(event);
         emit = cb;
         return () => {};
       },
+      // ⭐ drain：**取走即空**（真实现是 `office_import_take` 命令 ✓）
+      takePending: async () => {
+        const taken = queue;
+        queue = [];
+        return taken;
+      },
     });
 
     expect(seenEvents).toEqual([OFFICE_IMPORT_EVENT]);
     expect(emit, "没有订阅成功").toBeTruthy();
-    emit!({ payload: "C:\\tmp\\" + FULL.name });
+    // ⚠️ 挂载时那次 drain 已经把队列取空 ⇒ 事件只是"叫醒"，路径仍从 drain 拿 ✓
+    expect(pages, "挂载时的那次 drain 应该已经建了一页").toHaveLength(1);
+    queue = ["C:\\tmp\\" + FULL.name]; // 再放一条（模拟"应用开着时又双击了一次"）
+    emit!({ payload: "ignored-by-design" });
     await flush(); // handler 是异步的 ⇒ 等一个 tick ✓
 
-    expect(pages, "收到事件之后必须真的去建页").toHaveLength(1);
+    expect(pages, "收到事件之后必须真的去建页").toHaveLength(2);
+    unlisten();
+  });
+
+  it("⭐ h) **drain 之前挂载也拿得到**（冷启动那一路：路径在挂载前就在队列里 ⇒ 挂载时必须建页）", async () => {
+    const pages: { title: string; payload: string }[] = [];
+    const handler = createOfficeImportRequestHandler(okDeps(pages));
+
+    // 模拟冷启动：`main.rs` 解析 ⇒ 队列里已经有那条路径，而前端**还没挂载**
+    const queue = ["C:\\tmp\\" + FULL.name];
+    const unlisten = await mountOfficeImportRequests(handler, {
+      listen: async () => () => {},
+      takePending: async () => {
+        const taken = queue.splice(0, queue.length);
+        return taken;
+      },
+    });
+    await flush();
+
+    // ⭐ 旧行为（只订阅、不 drain）在这一条上**必红**：没人 emit 过事件 ⇒ 一页都不会建 ✓
+    expect(pages, "挂载时的 drain 没把冷启动那条路径取出来 ⇒ 冷启动会丢 ✗").toHaveLength(1);
+    expect(pages[0].payload).toContain("华东区");
+    unlisten();
+  });
+
+  it("⭐ i) **取走即空**：事件重复到达不会重复建页（靠队列去重，⛔ 不靠猜）", async () => {
+    const pages: { title: string; payload: string }[] = [];
+    const handler = createOfficeImportRequestHandler(okDeps(pages));
+
+    let emit: ((event: { payload: unknown }) => void) | null = null;
+    let queue = ["C:\\tmp\\" + FULL.name];
+    const unlisten = await mountOfficeImportRequests(handler, {
+      listen: async (_event, cb) => {
+        emit = cb;
+        return () => {};
+      },
+      takePending: async () => {
+        const taken = queue.splice(0, queue.length);
+        return taken;
+      },
+    });
+    await flush();
+    expect(pages, "挂载时 drain 应当建一页").toHaveLength(1);
+
+    // 同一条路径的事件再来两次（缓存/重放/两个实例同时叫醒）⇒ **一页都不许多建** ✓
+    emit!({ payload: "C:\\tmp\\" + FULL.name });
+    emit!({ payload: "C:\\tmp\\" + FULL.name });
+    await flush();
+    expect(pages, "队列已空却还在建页 ⇒ 重复建页 ✗").toHaveLength(1);
     unlisten();
   });
 
@@ -173,6 +232,18 @@ describe("office-import://request ⇒ 真建页（task-14 ④）", () => {
     );
     expect(panel, "面板里没有 mountOfficeImportRequests ⇒ 双击那一路又断了").toMatch(
       /mountOfficeImportRequests\(/,
+    );
+  });
+
+  it("j) ⭐ `office_import_take` 这条命令**三处同名**（TS ↔ Rust 函数 ↔ lib.rs 登记）", () => {
+    // ⭐ 与判据 d 同族：命令名两边各写一遍 ⇒ 漂了就是运行期 "command not found"（**静默** ✗）
+    const rust = readFileSync(join(process.cwd(), "src-tauri", "src", "office_import.rs"), "utf8");
+    expect(rust, `Rust 侧没有 pub fn ${OFFICE_IMPORT_TAKE_COMMAND}`).toMatch(
+      new RegExp(`pub fn ${OFFICE_IMPORT_TAKE_COMMAND}\\s*\\(`),
+    );
+    const lib = readFileSync(join(process.cwd(), "src-tauri", "src", "lib.rs"), "utf8");
+    expect(lib, `lib.rs 的 generate_handler! 里没有登记 ${OFFICE_IMPORT_TAKE_COMMAND}`).toMatch(
+      new RegExp(`office_import::${OFFICE_IMPORT_TAKE_COMMAND}\\s*,`),
     );
   });
 });

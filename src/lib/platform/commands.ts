@@ -581,6 +581,16 @@ export interface CommandMap {
    * 参数合不合法，全部交给 `src/lib/deepLink.ts` 判——OS 层不重复一遍白名单。
    */
   deep_link_take: { args: undefined; result: string[] };
+  /**
+   * ⭐ Office 导入（task-15）：**取走**待导入的文件路径（**取走即空**）。
+   *
+   * 与上面的 `deep_link_take` **同一个理由**：`--import <文件>` 冷启动那条在 `.setup()` 里
+   * `emit`，而那一刻前端还没挂载 ⇒ 只听事件会**稳定漏掉第一次** ✗
+   * ⇒ 队列 ＋ 挂载时 drain 一次 ✓（去重靠"取走即空"，⛔ 不靠猜 ✗）。
+   * 队列空时返回 `[]`（普通启动**零副作用** ✓）；路径是**原样的文件路径**，
+   * 认不认、能不能转由 `src/lib/office/` 那条链判（OS 层不重复一遍白名单 ✓）。
+   */
+  office_import_take: { args: undefined; result: string[] };
   // ---- 能力（官方引擎 · 按需下载，桌面专属） ----
   // ⚠️ 落盘判据在 **Rust 侧**（白名单 ＋ 体积上限 ＋ sha256 自己再算一遍 ✓）——
   //    这里只是契约声明；`base64` 是下载好的包（页面已校验过一次，Rust 会再校验 ✓）。
