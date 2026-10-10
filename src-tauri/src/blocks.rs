@@ -251,21 +251,15 @@ pub fn resolve_block(db: State<'_, Db>, block_id: String) -> Result<BlockInfo, S
 pub async fn get_page_blocks(db: State<'_, Db>, page_id: String) -> Result<Vec<PageBlock>, String> {
     let c = db.0.lock().expect("db mutex poisoned");
 
-    let content_json = crate::doc_content::read(&c, &page_id)?
-        .ok_or_else(|| "页面不存在".to_string())?
-        .json;
-
-    let v = parse_json(&content_json)?;
-    let mut blocks = Vec::new();
-    for child in root_children(&v) {
-        if let Some(id) = child.get("blockId").and_then(|v| v.as_str()) {
-            blocks.push(PageBlock {
-                block_id: id.to_string(),
-                text: node_text(child).trim().to_string(),
-            });
-        }
-    }
-    Ok(blocks)
+    // ⭐ 2026-10-10：**读 ＋ 提取都挪进 `doc_content`（那一层 ✓）** —— 逐字说明在
+    //    `doc_content::page_blocks_from_doc` 头上 ✓（`blockId` 可选 ⇒ 不许当"有没有正文"的判据 ✗）。
+    //    ⛔ 本文件**不再**直接碰落盘形态：那会把「文档内容直接访问」的**只减不增**基线顶到 24 → 29 ⇒ 红 ✗
+    //    （本文件不在那条门禁的 `LAYER_FILES` 白名单里 ✗，`doc_content.rs` 在 ✓）。
+    let rows = crate::doc_content::page_blocks(&c, &page_id)?.ok_or_else(|| "页面不存在".to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(block_id, text)| PageBlock { block_id, text })
+        .collect())
 }
 
 #[tauri::command]
