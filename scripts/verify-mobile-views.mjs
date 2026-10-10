@@ -2192,31 +2192,61 @@ async function main() {  const executablePath = findChrome();
         ok(tab === "ok" && btn === "ok", `竖条上没有「关于」了 ⇒ 从**设置**也进得去（设置项=${tab}／页内按钮=${btn}）`);
       };
       await openAboutOrSettings("关于");
-      // 「关于」里的外链清单（2026-09-22：加产品官网、去掉文档）——数据源在 `src/lib/links.ts`，
-      // 那条由 smoke 门禁钉着；这里钉**界面上真的渲染出来**（别只有数据改了、UI 没跟上）。
-      const aboutLinks = await safeEval(page, () =>
-        Array.from(document.querySelectorAll(".about-links .about-link")).map((b) => (b.textContent || "").trim()),
-      );
-      ok(
-        aboutLinks.includes("产品官网"),
-        `「关于 → 开源与反馈」里有「产品官网」入口（实际：[${aboutLinks.join(" / ")}]）`,
-      );
-      ok(!aboutLinks.includes("文档"), `「文档」入口已从「关于」里移除（实际：[${aboutLinks.join(" / ")}]）`);
-      ok(aboutLinks.length === 4, `外链仍是四条（产品官网 / 项目主页 / 发布 / 问题），实际 ${aboutLinks.length} 条`);
       let m = await measureMicro();
-      if (!m.toggle) {
-        ok(false, "「关于」里找不到 `.ui-toggle`（开关）——这一档没能验到");
+      if (replacesDesktopEditor(vp)) {
+        // ⭐ 2026-10-10 **换对象（不删）**：窄视口里点「关于与更新」后，`App.tsx` 渲染的是
+        //   移动端**「关于」屏**（`MobileAbout` ✓，规格 §4.10 ✓）⇒ 桌面那套
+        //   「四条外链 ＋ 允许外链开关」**在这一档没有对象** ✗ ⇒ 它们**搬到桌面档**跑 ✓
+        //   （见本文件桌面段那段 `moveAboutChecksToDesktop` ✓），这一档改断它**自己的**东西 ✓。
+        const ma = await safeEval(page, () => {
+          const el = document.querySelector('[data-testid="mobile-about"]');
+          const txt = el ? el.textContent || "" : "";
+          const labels = Array.from(document.querySelectorAll(".mabout-link-label")).map((x) =>
+            (x.textContent || "").trim(),
+          );
+          const back = document.querySelector(".mabout-back");
+          const b = back ? back.getBoundingClientRect() : null;
+          return {
+            has: !!el,
+            labels,
+            backW: b ? Math.round(b.width) : 0,
+            backH: b ? Math.round(b.height) : 0,
+            hasSourceUrl: /gitcode\.com|github\.com/.test(txt),
+          };
+        });
+        ok(ma.has, "窄视口「关于」渲染成**移动端关于屏**（不是桌面对话框 ✓）");
+        ok(
+          ma.labels.includes("官网") && ma.labels.includes("社区"),
+          `关于屏「链接」区有官网与社区两行（实际：[${ma.labels.join(" / ")}]）`,
+        );
+        ok(!ma.hasSourceUrl, "关于屏**不出现源码网址**（规格 §4.10 硬规则 ✓）");
+        ok(ma.backW >= 44 && ma.backH >= 44, `关于屏返回键命中区 ≥44×44（${ma.backW}x${ma.backH}）`);
       } else {
-        ok(
-          m.toggle.w === 38 && m.toggle.h === 22,
-          `开关保持设计尺寸 38×22（实际 ${m.toggle.w}×${m.toggle.h}，圆角 ${m.toggle.radius}）` +
-            `——被拉成 44×44 就是用户截图里那个"扁方疙瘩 + 角上的球"`,
+        // 「关于」里的外链清单（2026-09-22：加产品官网、去掉文档）——数据源在 `src/lib/links.ts`，
+        // 那条由 smoke 门禁钉着；这里钉**界面上真的渲染出来**（别只有数据改了、UI 没跟上）。
+        const aboutLinks = await safeEval(page, () =>
+          Array.from(document.querySelectorAll(".about-links .about-link")).map((b) => (b.textContent || "").trim()),
         );
         ok(
-          m.toggle.up21 && m.toggle.down21,
-          `开关的命中区仍然到了 44（中心上下各 21px 处都能命中：${m.toggle.up21}/${m.toggle.down21}）` +
-            `——视觉小、命中大，靠的是 `+ "`::after` 扩出来的透明层",
+          aboutLinks.includes("产品官网"),
+          `「关于 → 开源与反馈」里有「产品官网」入口（实际：[${aboutLinks.join(" / ")}]）`,
         );
+        ok(!aboutLinks.includes("文档"), `「文档」入口已从「关于」里移除（实际：[${aboutLinks.join(" / ")}]）`);
+        ok(aboutLinks.length === 4, `外链仍是四条（产品官网 / 项目主页 / 发布 / 问题），实际 ${aboutLinks.length} 条`);
+        if (!m.toggle) {
+          ok(false, "「关于」里找不到 `.ui-toggle`（开关）——这一档没能验到");
+        } else {
+          ok(
+            m.toggle.w === 38 && m.toggle.h === 22,
+            `开关保持设计尺寸 38×22（实际 ${m.toggle.w}×${m.toggle.h}，圆角 ${m.toggle.radius}）` +
+              `——被拉成 44×44 就是用户截图里那个"扁方疙瘩 + 角上的球"`,
+          );
+          ok(
+            m.toggle.up21 && m.toggle.down21,
+            `开关的命中区仍然到了 44（中心上下各 21px 处都能命中：${m.toggle.up21}/${m.toggle.down21}）` +
+              `——视觉小、命中大，靠的是 `+ "`::after` 扩出来的透明层",
+          );
+        }
       }
       await page.keyboard.press("Escape");
       await sleep(700);
@@ -2543,6 +2573,35 @@ async function main() {  const executablePath = findChrome();
     console.log(`\n【桌面 ${DESKTOP.name} · PDF 阅读器（真 PDF）】`);
     assertPdfReader(await checkPdfReader(desk, DESKTOP), DESKTOP);
     await shot(desk, `${DESKTOP.name}-pdf-reader`);
+
+    // ⭐ 2026-10-10 **搬家（不删）**：原先在**窄视口**验的「关于」**桌面版**内容 ——
+    //   四条外链（产品官网 / 项目主页 / 发布 / 问题）＋「允许跳转到外部项目网站」开关 ——
+    //   在窄视口上**已经没有对象**了 ✗（那儿 `openAbout()` 渲染的是移动端「关于」屏，
+    //   规格 §4.10 ✓）⇒ 整段搬到**桌面档**跑 ✓（断言一条没少 ✓）。
+    {
+      const aboutOpened = await openViewViaPalette(desk, "关于");
+      await sleep(1200);
+      ok(aboutOpened === true, "桌面档能从命令面板打开「关于」（搬家后的入口 ✓）");
+      const dLinks = await safeEval(desk, () =>
+        Array.from(document.querySelectorAll(".about-links .about-link")).map((b) => (b.textContent || "").trim()),
+      );
+      ok(dLinks.includes("产品官网"), `桌面「关于 → 开源与反馈」里有「产品官网」入口（实际：[${dLinks.join(" / ")}]）`);
+      ok(!dLinks.includes("文档"), `桌面「关于」已去掉「文档」（实际：[${dLinks.join(" / ")}]）`);
+      ok(dLinks.length === 4, `桌面外链仍是四条（产品官网 / 项目主页 / 发布 / 问题），实际 ${dLinks.length} 条`);
+      const dt = await safeEval(desk, () => {
+        const t = document.querySelector(".about .ui-toggle");
+        if (!t) return null;
+        const r = t.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) };
+      });
+      ok(dt !== null, "桌面「关于」里有「允许跳转到外部项目网站」开关（`.ui-toggle` ✓）");
+      if (dt) {
+        ok(dt.w === 38 && dt.h === 22, `桌面开关保持设计尺寸 38×22（实际 ${dt.w}×${dt.h}）`);
+      }
+      await desk.keyboard.press("Escape");
+      await sleep(700);
+    }
+
     await deskCtx.close();
 
     // ---------- 同步面板：桌面「允许滚动，但只许不增」（规格 §2 第 3 条 ⇒ §12.2 改语义）----------

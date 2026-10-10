@@ -24849,4 +24849,219 @@ body.is-plugin-panel-open .main {
   color: var(--text-faint);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   移动端「关于」屏（效果图 `docs/plans/mobile/mockups/10-about.svg`，规格 §4.10）
+   ⚠️ 同 `.mhome` / `.mcap` / `.mread` / `.msearch`：**只有手机档会渲染它**
+      （`App.tsx` 的 `isMobile && aboutOpen` 那一支 ✓）⇒ 这里**不套 @media** ✓。
+   ⛔ 桌面那套 `.about-*` 一个字没动 ✓。
+   ========================================================================== */
+.mabout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: calc(10px + var(--sat, 0px)) 0 calc(72px + var(--sab, 0px));
+  overflow: hidden;
+}
+.mabout-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 12px 10px;
+}
+/* 「‹」＝图标按钮 ⇒ 宽高都要 ≥44（`verify-mobile-views` 的命中区判据 ✓） */
+.mabout-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+}
+.mabout-head-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mabout-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px;
+}
+.mabout-app {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 14px;
+}
+.mabout-icon {
+  flex: none;
+  display: block;
+}
+.mabout-app-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mabout-brand {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mabout-version {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mabout-latest {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.mabout-card {
+  margin: 0 0 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+}
+.mabout-card-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mabout-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.mabout-line:last-child {
+  margin-bottom: 0;
+}
+.mabout-dim {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mabout-license {
+  margin-bottom: 6px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+/* 开源组件：**两列**（效果图就是两列 ✓），每列 6 项 ✓ */
+.mabout-deps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 16px;
+  row-gap: 6px;
+  margin-bottom: 8px;
+}
+.mabout-dep {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.mabout-dep-name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mabout-dep-ver {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+/* 链接行：可点的两行是 button ⇒ 命中区 ≥44 ✓；`待填（占位）`那行是 div（不可点 ✓） */
+.mabout-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.mabout-link:last-child {
+  border-bottom: 0;
+}
+.mabout-link.is-pending {
+  color: var(--text-faint);
+  cursor: default;
+}
+.mabout-link-label {
+  flex: none;
+  color: inherit;
+}
+.mabout-link-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mabout-actions {
+  display: flex;
+  gap: 10px;
+  margin: 4px 0 0;
+}
+/* 两颗按钮：主按钮吃 accent ✓；「导出诊断信息」是**未接** ⇒ 置灰且点不动 ✓ */
+.mabout-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.mabout-btn.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.mabout-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.mabout-check-result {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.mabout-foot {
+  margin: 18px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+
 
