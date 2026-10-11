@@ -57,6 +57,9 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ⭐ 2026-10-11：⭐ 许可证验签（`src/relay_license.rs`）✗ —— ⚠️ 它**已经在 `Cargo.lock` 里**
+#    （3.0.0，由 `iroh` 那条链带进来）⇒ 这里只是把它提成直接依赖，⛔ 不需要拉网络 ✓。
+ed25519-dalek = "3"
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher", "backup"] }
 # 查询侧归一化（§15.9）：只折「兼容表意字」用的 NFKC 数据。
 # ⚠️ 它**已经在 Cargo.lock 里**（2.0.1，由 idna/url 那条链带进来）⇒ 这里只是把它提成直接依赖，

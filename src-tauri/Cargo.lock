@@ -6460,6 +6460,7 @@ dependencies = [
  "cbc 0.2.1",
  "chacha20poly1305",
  "chrono",
+ "ed25519-dalek",
  "encoding_rs",
  "fast_qr",
  "flate2",
