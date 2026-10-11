@@ -69,6 +69,10 @@ const DESKTOP_ONLY_COMMANDS = new Map([
   ["sync_stream_start", "桌面专属：Rust 订 SSE 变更流（Web 侧浏览器自带 SSE，`useSyncStream.ts` 自己那条）"],
   ["sync_stream_stop", "同上（桌面专属：断开且不再重连）"],
   ["sync_stream_status", "同上（桌面专属：流通道读数，排错用）"],
+  // ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ **桌面专属** ✗ ——
+  //    ⭐ 它靠发现层（Rust 的 UDP）才看得见"⭐ 附近的设备 ✗"✓；⭐ Web 没有这一层 ✓
+  //    ⇒ ⭐ 在 `web.ts` 里"实现"它 ＝ ⭐ 假装浏览器能自己发现同网段的设备 ✗（⭐ 那正是做不到的事 ✓）。
+  ["mesh_trust_begin", "桌面专属：一键信任（用本空间已有的网格令牌登记对面；发现层是 Rust 的 UDP，Web 没有这一层）"],
     // MCP 接入的 GUI 开关（M1 收口，2026-10-06）：**桌面专属** —— Web 版没有本机进程可被外部 agent 连，
     // 也开不了回环监听（通道与令牌都在 Rust 侧 `mcp_channel` ✓）；在 `web.ts` 里"实现"它等于
     // **假装浏览器有一条本机通道** ✗（与本表里"Web 无钥匙柜"那几条同一条理由 ✓）。

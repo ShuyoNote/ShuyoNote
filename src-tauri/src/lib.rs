@@ -12,6 +12,11 @@ mod attachments;
 //    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
 //    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
 mod pairing_trust;
+// ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ 一键信任的**命令层** ✗ ——
+//    点一下就通 ✓：⭐ 用本空间**已有的网格令牌**把对面登记好（⭐ 调 `sync::remember_peer_card` ✓，
+//    那是"⭐ 登记对面 ✗"的唯一实现 ✓）＋ ⭐ 广播一条"⭐ 我想信任你 ✗"。⭐ 令牌**不上线** ✓。
+//    ⚠️ 代价与兜底写在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓。
+mod mesh_trust;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
@@ -802,6 +807,10 @@ pub fn run() {
             sync_stream::sync_stream_start,
             sync_stream::sync_stream_stop,
             sync_stream::sync_stream_status,
+            // ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ 一键信任 ✗ ——
+            //    ⭐ 点一下就通 ✓（⭐ 登记对面 ＋ ⭐ 广播"⭐ 我想信任你 ✗"），⭐ 令牌⛔ 不上线 ✓。
+            //    ⚠️ 登记仍调 `sync::remember_peer_card`（⭐ 唯一实现 ✓），⛔ 不另写一遍 ✓。
+            mesh_trust::mesh_trust_begin,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。

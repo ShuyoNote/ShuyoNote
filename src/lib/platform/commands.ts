@@ -1156,6 +1156,21 @@ export interface CommandMap {
   get_attachment: { args: { id: string }; result: AttachmentMeta };
   /** 原始字节以 ArrayBuffer 回传（Rust 侧用 tauri::ipc::Response），不走 JSON 数字数组。 */
   read_attachment_bytes: { args: { hash: string }; result: ArrayBuffer };
+  /**
+   * ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ **一键信任** ✗ ——
+   * 点「信任这台设备」⇒ 用本空间**已有的网格令牌**把对面登记好 ＋ 广播一条「我想信任你」⇒ **通** ✓。
+   *
+   * ⚠️ **只有桌面**（发现层是 Rust 的 UDP；Web 没有这一层 ⇒ 前端根本不该调它）。
+   * ⚠️ ⭐ **空间令牌不上线** ✗：那条广播里**只**有「我想信任你」这一格 ✓。
+   * ⚠️ 甲 的代价（去掉了逐位对码与两端各点 ⇒ 同网段里能喊出设备名的人 ＋ 用户点了一下，就可能建立信任）
+   *    写在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓；兜底只剩「身份摆出来 ＋ 逐台可撤回」✓。
+   * ⚠️ 四档结果都要**如实**处置（⛔ 不许把 `no_token`／`not_configured` 当成成功 ✗）：
+   *    `trusted` ／ `no_token`（这个空间还没设口令）／ `not_configured`（还没有可配对的同步档案）／ `bad_peer`。
+   */
+  mesh_trust_begin: {
+    args: { spaceId: string; peerDeviceId: string };
+    result: { outcome: string; message: string };
+  };
   fetch_bookmark_metadata: {
     args: { url: string };
     result: { url: string; title: string; description: string; site_name: string; image_hash: string; image_mime: string };
