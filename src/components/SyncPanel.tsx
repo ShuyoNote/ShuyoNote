@@ -9,7 +9,7 @@ import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
 import { TrustDevicePanel } from "./TrustDevicePanel";
-import { MeshAdvancedForm } from "./MeshAdvancedForm";
+// ⭐ 2026-10-11：`MeshAdvancedForm` 已搬到「设置 · 同步」（`SyncSettingsPane` ✓）⇒ 面板不再引它 ✓。
 import {
   MESH_TRUST_BEGIN_COMMAND,
   unavailableTrustDeviceReadings,
@@ -1919,18 +1919,14 @@ export function SyncPanel() {
                     <span className="sync-row-caret" aria-hidden>›</span>
                   </summary>
                   <div className="sync-row-body">
-                    {/* ⭐ task 派单 Round 1（纯抽取）：这一块（监听地址／配对暗号／口令／关掉网格）
-                        抽成了 `MeshAdvancedForm` ✓ —— 界面／类名／文案／行为**一个字没改** ✓，
-                        判据里的**四条承诺**（`0.0.0.0` ／ 听所有网卡 ／ 地址由系统报出 ／
-                        `192.168.1.5:8788` ＋ placeholder）**一条没删** ✓，只是换到了那个文件里 ✓。
-                        ⚠️ 语义务必仍是"**当前空间**"（`activeId` ✓）—— 设置面要不要空间选择器是
-                        **产品口径**（图⑧像"设备级"、而命令是**逐空间**的 ✓）⇒ 归 owner 拍 ✗ 不归这里猜 ✓。 */}
-                    <MeshAdvancedForm
-                      activeId={activeId}
-                      lanStatus={lanStatus}
-                      onStatus={setStatus}
-                      onMeshChanged={(mesh) => setLanStatus((s) => (s ? { ...s, mesh } : s))}
-                    />
+                    {/* ⭐ 2026-10-11（owner 重申「个人空间是设备级」）：那三格（监听地址／配对暗号／口令）
+                        已搬进「设置 · 同步」⇒ 面板这一折**只留读数 ＋ 人话** ✓（按图⑧ ✓）。
+                        ⚠️ 判据里的**四条承诺一条没删** ✓ —— 它们跟着 `MeshAdvancedForm` 去了设置面 ✓，
+                        而 `syncPanelMesh.wiring` 的 ③⑨ 本来就是「两个文件一起读」✓ ⇒ 这里不必改判据 ✓。 */}
+                    <div className="sync-hint">
+                      这一折现在只报读数。要改地址／配对暗号／口令，去 <b>设置 · 同步</b> ——
+                      那是<b>这台设备</b>的一份设置，填一次，所有个人空间共用。
+                    </div>
                   </div>
                 </details>
 
