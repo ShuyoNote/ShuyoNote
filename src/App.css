@@ -818,6 +818,16 @@ html[data-platform="win"] .app-body {
 .space-switcher-filter.sync-input {
   border-color: transparent;
   background: transparent;
+  /* ⭐ 2026-10-11（owner：「缩小控件的高度」）：⭐ 桌面收到 **36** ✓ ——
+     ⚠️ 为什么⛔ 不一律缩 ✗：⭐ 本仓那条"命中区高度一律 ≥44"是**在 390 视口下量的** ✓
+     （`scripts/verify-mobile-views.mjs:19`；⭐ 那个面板它也打开来量 ✓）⇒ ⭐ 桌面缩、⛔ 手机不缩 ✓
+     —— ⭐ 与设置面板那个筛选框**同一套写法** ✓（⭐ 那次实测：⭐ 桌面 36 ／ ⭐ 390 视口仍 44 ✓ 门禁绿 ✓）。 */
+  min-height: 36px;
+}
+@media (max-width: 600px) {
+  .space-switcher-filter.sync-input {
+    min-height: 44px;
+  }
 }
 .space-switcher-filter.sync-input:hover:not(:disabled) {
   border-color: transparent;
