@@ -19,9 +19,10 @@
 //! ⭐ 拿它当第 ① 步，⭐ 判据不用起宿主、⭐ 不用网络就能跑 ✓，⭐ 而且**能先看它红** ✓。
 
 /// 这次信任走到哪儿了。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrustState {
     /// ⭐ 还没开始（⭐ 或已被放弃 ✓）。
+    #[default]
     Idle,
     /// ⭐ 本机点过了，⭐ **在等对方也在它自己屏幕上点一下** ✓。
     WaitingRemote,
@@ -135,6 +136,10 @@ pub struct TrustHandshake {
     secret_for: String,
     /// ⭐ 什么时候到期（⭐ 毫秒 ✓，⭐ 0 ＝ ⭐ 没有进行中的东西 ✓）。
     expires_at_ms: i64,
+    /// ⭐ **这次信任走到哪一步了** ✗（⭐ 甲：一端点就通 ⇒ 收到 ask 并采纳之后要推进它 ✓）。
+    /// ⚠️ 放在这里而不是另开一个格子 ✗：⭐ 它就是"⭐ 一次握手里本机这边要记住的东西 ✗"之一 ✓，
+    /// ⭐ 而且**判定仍是上面那些纯函数** ✓（本字段只是它们的落点 ✓）。
+    state: TrustState,
 }
 
 impl TrustHandshake {
@@ -147,10 +152,20 @@ impl TrustHandshake {
     }
 
     /// ⭐ 收到对方的「想信任」⇒ ⭐ 记下来（⭐ ⛔ 不因此建立信任 ✓，⭐ 要本机的人再点 ✓）。
+    ///
+    /// ⭐ 2026-10-11（owner 拍「甲：一端点就通」）：⭐ 这一步**只记账** ✗ —— ⭐ 真正"采纳"
+    /// （★ 登记对面 ＋ ★ 推进状态 ✓）在**有 db 的那一层**（`sync.rs` 的网格那一轮 ✓），
+    /// 因为那一步要写库 ✗，而本模块与 `lan_state` 都**不碰 IO** ✓。
     pub fn note_ask(&mut self, peer_device_id: &str, now_ms: i64, ttl_ms: i64) {
-        self.clear();
+        // ⚠️ ⭐ **不调 `clear()`** ✗ —— 它会把已经走到的 `WaitingRemote`／`Trusted`
+        //   **冲回 `Idle`** ✗；而公告是**周期性**的（30 秒一轮 ✓）⇒ 每轮冲一次 ✗。
+        //   ⇒ ⭐ 只清"这次问"这几格 ✓，状态交给 `state_after_ask_seen`（它正是为此存在的 ✓）。
+        self.peer_device_id.clear();
+        self.ask.clear();
+        self.secret_for.clear();
         self.asked_by = peer_device_id.to_string();
         self.expires_at_ms = now_ms + ttl_ms;
+        self.state = state_after_ask_seen(self.state);
     }
 
     /// ⭐ 本机的人点了「信任」⇒ ⭐ 记住**要发出去的那把** ✓（⭐ 由被问的那台生成 ✓）。
@@ -195,6 +210,49 @@ impl TrustHandshake {
     /// ⭐ 有没有进行中的东西 ✓（⭐ 过期的不算 ✓）。
     pub fn is_active(&self, now_ms: i64) -> bool {
         self.expires_at_ms != 0 && !self.is_expired(now_ms)
+    }
+
+    /// ⭐ 这次信任走到哪一步了 ✓（⭐ 只读面 ✓ —— 给接线那层与判据用 ✓）。
+    pub fn state(&self) -> TrustState {
+        self.state
+    }
+
+    /// ⭐⭐ **读取面：这一轮该采纳哪些「想信任」** ✗（Lead 2026-10-11 点名要的形状 ✓）。
+    ///
+    /// ⛔ ⭐ **过期的绝不返回** ✗ —— 一条没走完的握手不许永远等着被采纳 ✓
+    /// （否则一台关过机的对端会在**几天后**突然被采纳 ✓）。
+    /// ⚠️ 形状是 `Vec<String>` ✗（本版一次只跟一台谈 ✓）：⭐ 形状先给宽 ✗，
+    /// ⛔ 免得将来"同时跟两台谈"要改所有调用点 ✓。
+    pub fn pending_asks(&self, now_ms: i64) -> Vec<String> {
+        if self.asked_by.is_empty() || self.is_expired(now_ms) {
+            Vec::new()
+        } else {
+            vec![self.asked_by.clone()]
+        }
+    }
+
+    /// ⭐ **过期的**那一档 ⇒ ⭐ 清掉并回 `true` ✗（⭐ 调用方**据此记一行日志** ✓ —— ⛔ 不许静默 ✓）。
+    ///
+    /// ⚠️ 与 [`TrustHandshake::clear`] 的区别 ✗：⭐ 它**只**清"这次问"✓，⛔ **不动** `state` ✗
+    /// （⭐ 状态是界面要读的东西 ✓，不能让一次 TTL 收尾把它抹掉 ✓）。
+    pub fn drop_expired(&mut self, now_ms: i64) -> bool {
+        if self.asked_by.is_empty() || !self.is_expired(now_ms) {
+            return false;
+        }
+        self.asked_by.clear();
+        self.expires_at_ms = 0;
+        true
+    }
+
+    /// ⭐ 采纳成功之后**推进内核** ✗（⭐ 甲：一端点就通 ⇒ ⭐ 收到 ask 本身就等于"对方点过了" ✓）。
+    ///
+    /// ⚠️ 顺手把"这次问"清掉 ✗ ⇒ ⭐ [`TrustHandshake::pending_asks`] 不再返回它 ✓
+    /// ⇒ ⭐ **不会每轮重复采纳** ✓（公告 30 秒一轮 ⇒ 不清就会每轮重写一遍卡片 ✓）。
+    /// ⚠️ 状态**再多活一个 TTL** ✓：界面那半要读它（"刚通了"那一屏 ✓）；⭐ 没有 ask 了 ⇒ 不会再被采纳 ✓。
+    pub fn note_remote_confirm(&mut self, now_ms: i64, ttl_ms: i64) {
+        self.state = state_after_remote_confirm(self.state);
+        self.asked_by.clear();
+        self.expires_at_ms = now_ms + ttl_ms;
     }
 
     /// ⭐ 清空（⭐ 用户点「先不」／⭐ 走完／⭐ 过期后收尾 ✓）。
@@ -402,6 +460,77 @@ mod tests {
         assert_eq!(h.outbound_secret(1_200), "");
         assert_eq!(h.outbound_ask(1_200), "");
         assert!(!h.is_active(1_200));
+    }
+
+    /// ⭐ 判据③：⭐ **TTL 过期 ⇒ 一个都不许被采纳** ✓ ／ ⭐ 而且过期那一档**要能被调用方看见** ✓
+    /// （否则"点了没反应"就只能靠猜 ✗ —— 调用方据此记一行日志 ✓，见 `sync::adopt_pending_trust_asks` ✓）。
+    ///
+    /// **红读数（真变异）**：把 `pending_asks` 里的过期判断去掉 ⇒ 本判据红 ✓。
+    #[test]
+    fn expired_asks_are_never_offered_for_adoption() {
+        let mut h = TrustHandshake::default();
+        h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        assert_eq!(h.pending_asks(1_500), vec!["dev-a".to_string()], "没过期 ⇒ 看得见 ✓");
+        assert_eq!(
+            h.pending_asks(1_000 + TRUST_TTL_MS - 1),
+            vec!["dev-a".to_string()],
+            "差一毫秒还不算过期 ✓"
+        );
+        assert!(
+            h.pending_asks(1_000 + TRUST_TTL_MS).is_empty(),
+            "⛔ 到点之后绝不许再被采纳 ✗（一台关过机的对端不许几天后被采纳）"
+        );
+        // ⭐ 过期那一档**说得出**：`drop_expired` 回 `true` ⇒ 调用方记日志 ✓；⛔ 清过就回 `false` ✗（别重复报 ✓）。
+        assert!(h.drop_expired(1_000 + TRUST_TTL_MS), "过期 ⇒ 必须回 true（好记日志）");
+        assert!(
+            !h.drop_expired(1_000 + TRUST_TTL_MS),
+            "清过了再问 ⇒ false（⛔ 别每轮重复报同一条 ✗）"
+        );
+        assert!(h.pending_asks(1_000 + TRUST_TTL_MS).is_empty());
+    }
+
+    /// ⭐ 采纳之后：⭐ 状态被推进 ✓ ＋ ⭐ **这次问被消费掉** ✓（⇒ 公告 30 秒一轮不会每轮重采纳 ✓）。
+    #[test]
+    fn adoption_advances_the_state_and_consumes_the_ask_once() {
+        // ① 对方先点、本机还没点 ⇒ ⭐ 只到 `RemotePending` ✓（⛔ 不因为对方说"我点了"就信任 ✗）。
+        let mut h = TrustHandshake::default();
+        h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        h.note_remote_confirm(2_000, TRUST_TTL_MS);
+        assert_eq!(h.state(), TrustState::RemotePending, "对方点过只记账");
+        assert!(
+            h.pending_asks(2_100).is_empty(),
+            "采纳过的这一条不许再返回（否则每轮重写一遍卡片）"
+        );
+        assert!(h.state() == TrustState::RemotePending, "状态在界面上要读得到");
+        // ② ⚠️ **本地"我点过了"那一档**还没接线 ✗（`state_after_local_confirm` 今天**无人调用** ✓ ——
+        //    那是界面那一期（方案 §4 ③）的事 ✓）。⇒ ⭐ 本判据**如实只钉它今天的样子** ✗：
+        //    `begin` ⇒ `Idle` ✓；⭐ 而"两端都点过 ⇒ `Trusted`"由**纯函数**那条判据负责 ✓
+        //    （`both_ends_confirm_reaches_trusted_either_order` ✓）—— ⛔ 不在这里假装它已接线 ✗。
+        let mut g = TrustHandshake::default();
+        g.begin("dev-b", "ask-1", 1_000, TRUST_TTL_MS);
+        assert_eq!(g.state(), TrustState::Idle, "`begin` 只发问：本地「点过」那一档还没接");
+        g.note_ask("dev-a", 1_100, TRUST_TTL_MS);
+        assert_eq!(g.state(), TrustState::RemotePending, "对方发问 ⇒ 只记账");
+        g.note_remote_confirm(1_200, TRUST_TTL_MS);
+        assert_eq!(
+            g.state(),
+            TrustState::RemotePending,
+            "本机没点过 ⇒ 收到对方确认也**不许**进 Trusted（纯函数 `state_after_remote_confirm` 的语义 ✓）"
+        );
+    }
+
+    /// ⭐ `note_ask` 只许**记账** ✗：⭐ 周期性公告（30 秒一轮 ✓）不许把状态冲回 `Idle` ✓。
+    #[test]
+    fn a_repeated_ask_never_resets_an_advanced_state() {
+        let mut h = TrustHandshake::default();
+        h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        h.note_remote_confirm(1_100, TRUST_TTL_MS);
+        let before = h.state();
+        // 对面还在周期性广播同一条问 ⇒ ⭐ 状态不许退 ✓
+        for k in 0..5 {
+            h.note_ask("dev-a", 2_000 + k * 30_000, TRUST_TTL_MS);
+        }
+        assert_eq!(h.state(), before, "重复公告不许把状态冲回 Idle");
     }
 
     /// ⭐ owner 拍的 **甲** ✗：⭐ 一端点就通 ✓ —— ⭐ 而且**密钥不上线** ✓（因为它就是空间令牌 ✓）。

@@ -2679,6 +2679,98 @@ pub(crate) fn remember_peer_card(
     crate::mesh::add_paired(proto_space, &crate::db::sha256_hex(secret))
 }
 
+/// ⭐⭐ **2026-10-11（owner 拍「甲：一端点就通」）：把这一轮**未过期**的「想信任」采纳掉** ✗。
+///
+/// ## 为什么在这一层（分层是钉死的 ✓）
+/// · [`crate::lan_state::LanState::observe`] 只**记账** ✗ —— ⛔ 它不读配置、不写库 ✓
+///   （`lan.rs:471` 那条仓规 ✓）；
+/// · ⭐ 本函数是**有 db 的那一层** ✓ ⇒ 只有它能"采纳"（登记卡片要写库 ✓）。
+///
+/// ## ⭐ 采纳**只经** [`remember_peer_card`] ✗
+/// ⛔ 这里**不许**自己写 `pair_device` ＋ `set_pair_secret` ＋ `add_paired` 那三步 ✗ ——
+/// [`remember_peer_card`] 的头注写着「**一处实现、两处调用** …… ⛔ 两处各写一遍迟早会漂 ✗」，
+/// 而漂的方向是"一边认了、一边没认"⇒ 又是 401 ✓（⭐ 判据②按**源码文本**钉这条 ✓）。
+///
+/// ## 四条口径（都钉着 ✓）
+/// · ⛔ **令牌不上广播** ✗：这一格只写进**本机库** ✓（与发起侧同源：⭐ 空间自己的网格令牌 ✓）；
+/// · ⛔ **不跨空间采纳** ✗：只认**这一轮、这条空间**的对端（`mesh_peers(proto_space, …)` ✓）；
+/// · ⭐ **TTL 过期 ⇒ 不采纳** ✓，⭐ 而且**必须有一行日志** ✓（⛔ 不静默 ✓ —— 判据③ ✓）；
+/// · ⭐ 调用方要在 `mesh::round` **之前**调它 ✓：采纳会把对面加进**正在跑的门** ✓
+///   ⇒ **这一轮**就认得它 ✓；⛔ 放在之后就得等下一轮（60 秒 ✓）✗。
+///
+/// 返回**采纳了哪些设备**（短号 ✓）—— ⭐ 给日志与判据用 ✓。
+///
+/// ⚠️ `now_ms` **由调用方传进来** ✗（⭐ 本仓的老规矩：**判定里一律传时间** ✓ ——
+/// 这样判据才固定得了时间 ✓；⭐ 实测踩过：函数里自取时钟 ⇒ 夹具喂的假时间当场被判过期 ✗）。
+pub(crate) fn adopt_pending_trust_asks(
+    c: &Connection,
+    proto_space: &str,
+    my_device: &str,
+    peers: &[crate::lan::Peer],
+    now_ms: i64,
+) -> Vec<String> {
+    /// ⚠️ 内外有别 ✗：`device_id` **不许进用户文案** ✓（`INV-UI-copy-no-internal-ids` ✓）；
+    /// ⭐ 但日志是**排障面** ✓ ⇒ 这里只印**前 8 位** ✓（够认人、又不把内部号整条摊开 ✓）。
+    fn short(dev: &str) -> String {
+        dev.chars().take(8).collect()
+    }
+
+    let now = now_ms;
+    // ① ⭐ TTL 过期那一档：⭐ 清掉 ＋ **如实报一行** ✓（⛔ 不许静默：否则用户只看到"点了没反应" ✗）。
+    if crate::lan_state::with_trust(|h| h.drop_expired(now)) {
+        eprintln!(
+            "[trust] ⚠️ 有个「想信任」请求**已过期**（TTL {} 秒）⇒ **不采纳** ✓ —— 让对面再点一次 ✓",
+            crate::pairing_trust::TRUST_TTL_MS / 1000
+        );
+    }
+    let asks = crate::lan_state::with_trust(|h| h.pending_asks(now));
+    if asks.is_empty() {
+        return Vec::new();
+    }
+    // ② 令牌 ＝ **这条空间自己的网格令牌** ✓（⭐ 与发起侧同源 ✓；⛔ 不出本机 ✓）。
+    let token = crate::mesh::settings(c, proto_space).token.unwrap_or_default().trim().to_string();
+    if token.is_empty() {
+        eprintln!(
+            "[trust] ⚠️ 收到 {} 个「想信任」请求，但这个空间**还没设口令** ⇒ 一个都不采纳 ✓\
+             （⭐ 如实报出来 ✓，⛔ 不假装成功 ✗）",
+            asks.len()
+        );
+        return Vec::new();
+    }
+    // ③ 只认**这一轮、这条空间**的对端 ✓（⛔ 不跨空间采纳 ✗ —— 判据钉这条 ✓）。
+    let candidates = crate::mesh::mesh_peers(proto_space, my_device, peers);
+    let mut adopted: Vec<String> = Vec::new();
+    for dev in asks {
+        if !candidates.iter().any(|mp| mp.device_id == dev) {
+            eprintln!(
+                "[trust] ⚠️ 一个「想信任」请求不是**这条空间**的对端（{}）⇒ **不采纳** ✓（⛔ 不跨空间 ✗）",
+                short(&dev)
+            );
+            continue;
+        }
+        // ⭐ **唯一实现** ✓ —— ⛔ 那三步不许在这里重写 ✗（判据② ✓）。
+        match remember_peer_card(c, proto_space, &dev, &token) {
+            Ok(_) => {
+                crate::lan_state::with_trust(|h| {
+                    h.note_remote_confirm(now, crate::pairing_trust::TRUST_TTL_MS)
+                });
+                eprintln!(
+                    "[trust] ✓ 一端点就通：已按「{}」的请求把这台登记好\
+                     （⭐ 广播上只有 ask ✓，令牌一个字节都没上过 ✓）",
+                    short(&dev)
+                );
+                adopted.push(dev);
+            }
+            // ⚠️ 采纳失败 ⇒ ⛔ 不静默 ✗，⭐ 也**不假装**通了 ✓。
+            Err(e) => eprintln!(
+                "[trust] ⚠️ 采纳失败（{}）⇒ 这一台这一轮没通 ✓：{e}",
+                short(&dev)
+            ),
+        }
+    }
+    adopted
+}
+
 /// ⭐⭐ **R110（owner 2026-10-02 拍 A）：发起侧真正落库的那一步** —— 「生成时就把对面登记好」✓。
 ///
 /// ⚠️ **为什么单独抽出来**（与 [`apply_device_pair_import`] 同一条理由 ✓）：命令那层拿的是
@@ -3452,6 +3544,14 @@ pub async fn mesh_sync_now(
         cfg.bind.as_deref().unwrap_or(""),
     )?
         .map(|a| format!("http://{a}"));
+    // ⭐ 2026-10-11（甲：一端点就通）：⭐ **先采纳、再拉** ✓ ——
+    //    采纳会把对面加进**正在跑的门**（`add_paired` ✓）⇒ **这一轮**就认得它 ✓；
+    //    ⛔ 放在 `round` 之后就得白等一轮（60 秒 ✓）✗。
+    //    ⚠️ 锁只在这一小段里拿着 ✗（`round` 是 async ✓ ⇒ ⛔ 绝不跨 await 持锁 ✓）。
+    {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let _ = adopt_pending_trust_asks(&c, &scope.space, &scope.device, &peers, crate::db::now_ms());
+    }
     let mut report = crate::mesh::round(&db.0, &scope.space, &scope.device, &peers).await?;
     report.window = window;
     if report.enabled && report.window.is_none() {
@@ -3495,6 +3595,12 @@ pub(crate) async fn mesh_round_once(
     my_device: &str,
     peers: &[crate::lan::Peer],
 ) -> Result<crate::mesh::MeshRoundReport, String> {
+    // ⭐ 2026-10-11（甲：一端点就通）：⭐ 后台那一轮也要采纳 ✓ ——
+    //    ⭐ 与 `mesh_sync_now` **同一处实现** ✓（⛔ 两条路各写一遍迟早会漂 ✗）。
+    {
+        let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+        let _ = adopt_pending_trust_asks(&c, proto_space, my_device, peers, crate::db::now_ms());
+    }
     let mut report = crate::mesh::round(conn, proto_space, my_device, peers).await?;
     report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
     // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
@@ -8457,6 +8563,138 @@ mod tests {
         // ③ 而 `db::pair_device`（**裸表名**）在两边**都能写** ⇒ 这正是"判据挑错连接也全绿"的原因 ✓
         crate::db::pair_device(&bare, "proto-x", "dev-B", "s1").expect("裸 meta 上写得进去");
         crate::db::pair_device(&space, "proto-x", "dev-B", "s2").expect("空间连接上也写得进去");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ 2026-10-11（owner 拍「甲：一端点就通」）：**采纳那一半**的判据 ② ＋ 成品走一遍
+    //    ⭐ 接收侧记账在 `lan_state.rs` ✓；⭐ 采纳（要真库 ✓）就在本文件 ✓。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ 判据②：⭐ 采纳**只经** `remember_peer_card` ✗ —— ⛔ 不许在这里重写那三步 ✓。
+    ///
+    /// **红读数（真变异）**：把 `adopt_pending_trust_asks` 里那句 `remember_peer_card(…)`
+    /// 换成自己写 `pair_device` ＋ `set_pair_secret` ＋ `add_paired` ⇒ **本判据红** ✓（实测过 ✓）。
+    ///
+    /// ⚠️ **必须先剥注释再比** ✗：本函数自己的**文档**里就写着那三个名字 ✓
+    /// （"⛔ 不许自己写这三步 ✗" ✓）—— 按整段文本比会**红在自己的说明上** ✓
+    /// （本工作区有原话：门禁要先剥注释再匹配 ✓）。
+    #[test]
+    fn adopting_a_trust_ask_goes_through_the_single_pairing_implementation() {
+        let src = include_str!("sync.rs");
+        let start = src.find("pub(crate) fn adopt_pending_trust_asks(").expect("这条函数必须在");
+        // ⚠️ 只取**函数体这一段的代码** ✓：先剥掉 `//` 起头的行 ✓，再压平空白 ✓（rustfmt 会换行 ✓）。
+        let code: String = src[start..]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        // ⚠️ 切到**下一个顶层函数**为止 ✓（压平后本函数的签名在最前 ⇒ `nth(1)` 就是本段 ✓）。
+        let body = flat.split("pub(crate) fn ").nth(1).unwrap_or("").to_string();
+        assert!(
+            body.contains("remember_peer_card(c, proto_space, &dev, &token)"),
+            "采纳必须走唯一实现（`remember_peer_card`）—— 否则卡片/出示那份/门 三件少一件就是 401"
+        );
+        for banned in ["pair_device(", "set_pair_secret(", "add_paired("] {
+            assert!(
+                !body.contains(banned),
+                "⛔ 采纳段里不许直接调 {banned} —— 那三步只许在 remember_peer_card 里\
+                 （两处各写一遍迟早会漂 ⇒ 一边认了、一边没认 ⇒ 401）"
+            );
+        }
+    }
+
+    /// ⭐ 成品走一遍（判据①的**采纳侧** ✓）：⭐ 真连接上采纳一次 ⇒ 三件都落 ✓
+    ///   ＋ ⭐ 内核状态被推进 ✓ ＋ ⭐ **采纳过的不再返回** ✓（公告 30 秒一轮 ⇒ 不会每轮重写 ✓）
+    ///   ＋ ⭐ **过期 ⇒ 不采纳** ✓ ＋ ⭐ **不跨空间** ✓。
+    #[test]
+    fn adopting_a_pending_ask_registers_the_peer_once_and_respects_space_and_ttl() {
+        let _serial =
+            crate::lan_state::TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir =
+            crate::db::test_app_data_dir_path().join(format!("adopt-trust-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        // ⚠️ 必须是**空间连接**（生产 `db.0` 的形状 ✓）—— 裸 meta 上 `set_pair_secret` 必失败 ✓。
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        // ⭐ 令牌 ＝ 这条空间**自己已有的**那把 ✓（甲 靠它登记对面；⛔ 它不上广播 ✓）。
+        // ⚠️ 夹具要用**合法**口令 ✗：产品自己拦"少于 8 个字符"✓（判据当场撞到过 ✓ —— 那是**产品在守门** ✓）。
+        crate::mesh::set_mesh_token(&c, "proto-x", Some("k7Qm-2pRt")).unwrap();
+
+        let peer = |device: &str, spaces: &[&str]| crate::lan::Peer {
+            announce: crate::lan::LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
+                v: 1,
+                device_id: device.to_string(),
+                device_name: format!("{device} 的机器"),
+                short_id: String::new(),
+                // ⚠️ 夹具**必须带 `http://`** ✗ —— `lan::is_lan_base` 只认 "http ＋ 私有 IPv4" ✓；
+                //    不带方案名 ⇒ `mesh_peers` 当场判它不可直连 ⇒ 候选为空 ✓（判据当场撞到过 ✓）。
+                hub_base: Some("http://192.168.1.6:8788".to_string()),
+                hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
+                fp: "fp".into(),
+            },
+            addr: "192.168.1.9".into(),
+            seen_at_ms: 0,
+        };
+
+        let t = 7_000_000_i64;
+        let ttl = crate::pairing_trust::TRUST_TTL_MS;
+        crate::lan_state::with_trust(|h| h.clear());
+        crate::lan_state::with_trust(|h| h.note_ask("dev-B", t, ttl));
+
+        // ① 该采纳的 ⇒ ⭐ 三件都落 ✓（卡 ＋ 出示那份 ＋ 正在跑的门 ✓ —— 全在唯一实现里 ✓）。
+        let adopted = adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[peer("dev-B", &["proto-x"])], t);
+        assert_eq!(adopted, vec!["dev-B".to_string()], "带 ask 的那一台必须被采纳");
+        let cards = crate::mesh::paired_devices(&c, "proto-x").unwrap();
+        assert!(
+            cards.iter().any(|d| d.device_id == "dev-B"),
+            "卡片必须落库（否则门不认它）"
+        );
+        assert_eq!(
+            crate::mesh::pair_secret_for(&c, "proto-x", "dev-B").as_deref(),
+            Some("k7Qm-2pRt"),
+            "本机要出示给它的那一份也要落"
+        );
+        // ② ⭐ 采纳过的不许再返回 ✓（否则每 30 秒重写一遍卡片 ✓）
+        assert!(
+            crate::lan_state::with_trust(|h| h.pending_asks(t + 1)).is_empty(),
+            "采纳过的这一条不许再被采纳（公告是周期性的）"
+        );
+        assert_ne!(
+            crate::lan_state::with_trust(|h| h.state()),
+            crate::pairing_trust::TrustState::Idle,
+            "采纳之后状态必须被推进（界面要读它）"
+        );
+
+        // ③ ⭐ 不跨空间：同一台**不服务**这条空间 ⇒ ⛔ 一个都不采纳 ✓
+        crate::lan_state::with_trust(|h| h.clear());
+        crate::lan_state::with_trust(|h| h.note_ask("dev-B", t, ttl));
+        assert!(
+            crate::mesh::mesh_peers("proto-y", "me-dev", &[peer("dev-B", &["proto-x"])]).is_empty(),
+            "候选为空 ⇒ 它根本不是这条空间的对端"
+        );
+        assert!(
+            adopt_pending_trust_asks(&c, "proto-y", "me-dev", &[], t).is_empty(),
+            "⛔ 不跨空间采纳 ✗"
+        );
+
+        // ④ ⭐ 过期 ⇒ ⛔ 不采纳 ✓（而且那一档**有一行日志** ✓ —— 见函数里的 eprintln ✓）
+        crate::lan_state::with_trust(|h| h.clear());
+        crate::lan_state::with_trust(|h| h.note_ask("dev-C", t, 1)); // TTL 1 毫秒 ⇒ 立刻过期 ✓
+        assert!(
+            adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[], t + 2).is_empty(),
+            "⛔ 过期的不许被采纳 ✗（一台关过机的对端不许几天后被采纳）"
+        );
+        assert!(
+            crate::lan_state::with_trust(|h| h.pending_asks(t + 2)).is_empty(),
+            "过期那一档要被清掉（否则每轮重复报同一条日志）"
+        );
+
+        crate::lan_state::with_trust(|h| h.clear());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

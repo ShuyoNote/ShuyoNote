@@ -39,6 +39,12 @@ fn trust_cell() -> &'static Mutex<crate::pairing_trust::TrustHandshake> {
     TRUST.get_or_init(|| Mutex::new(crate::pairing_trust::TrustHandshake::default()))
 }
 
+/// ⭐ 碰 `TRUST` 的判据必须**串起来跑** ✗ —— 它是**进程级**的 ✓，而判据是**并行**跑的 ✗
+/// ⇒ 不串就会偶发假红 ✓（本仓栽过这一族 ✓）。
+/// ⚠️ 放在 `cfg(test)` 下 ✗（⛔ 不进产物 ✓）；⭐ 形状借 `plugins.rs` 的 `CAPABILITY_TEST_LOCK` ✓。
+#[cfg(test)]
+pub(crate) static TRUST_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// ⭐ 改握手状态 ✓（⭐ 命令层用它 ✓，⭐ 判据也能直接用它喂值 ✓）。
 pub fn with_trust<R>(f: impl FnOnce(&mut crate::pairing_trust::TrustHandshake) -> R) -> R {
     let mut g = trust_cell().lock().expect("trust mutex poisoned");
@@ -84,8 +90,31 @@ impl LanState {
 
     /// 记一条公告（**未启用时也不拒绝**：收到就记，看不看得见由 [`LanState::peers`] 决定）。
     /// 返回 `false` ＝ 这条是我自己的（[`PeerTable::upsert`] 的语义）。
+    ///
+    /// ⭐ 2026-10-11（owner 拍「甲：一端点就通」）：⭐ 收下带「我想信任你」的公告 ⇒ **只记账** ✗。
+    ///   ⛔ 这一层**不读配置、不写库** ✗ —— `lan.rs:471` 那条仓规（"本层不知道 `SyncProfile`，
+    ///   接线那一片才把两边接起来 ✓"）在这里同样成立 ✓。
+    ///   ⭐ 真正"采纳"（登记对面 ＋ 推进状态 ✓）在**有 db 的那一层**：`sync.rs` 的网格那一轮 ✓
+    ///   （见 `sync::adopt_pending_trust_asks` ✓）。
+    ///   ⚠️ 时间取 `p.seen_at_ms` ✗（**调用方传进来的那一下** ✓）—— ⛔ 不在这里另取一次时钟 ✗：
+    ///   那样判据固定不了时间 ✓，而且与"看到它的那一刻"会差一截 ✓。
     pub fn observe(&self, p: Peer) -> bool {
-        self.table.upsert(p)
+        let ask_from = if p.announce.trust_ask.is_empty() {
+            None
+        } else {
+            Some(p.announce.device_id.clone())
+        };
+        let seen_at = p.seen_at_ms;
+        let mine = self.table.upsert(p);
+        // ⚠️ ⭐ `upsert` 的语义是"**收下了**（不是我自己的 ✓）" ✗ —— 它**回 `false`** 表示
+        //   "这条是我自己的公告（回环回来的 ✓）" ✓（见 `lan.rs` 的实现与 `record_datagram` 的用法 ✓）。
+        //   ⇒ ⭐ ⚠️ 判据①当场抓到我把这个条件**写反了** ✗（写成 `!mine` ⇒ 永远不记账 ⇒ "点了没反应" ✓）。
+        if mine {
+            if let Some(dev) = ask_from {
+                with_trust(|h| h.note_ask(&dev, seen_at, crate::pairing_trust::TRUST_TTL_MS));
+            }
+        }
+        mine
     }
 
     /// 收**一条原始报文**：按公告解 ⇒ 入库 ⇒ 把入库的那一条还回来（`Ok(Some)`）。
@@ -1676,6 +1705,9 @@ mod short_id_tests {
     /// （⭐ 本文件别的判据都不碰它 ✓）。
     #[test]
     fn outbound_announce_fields_follow_the_handshake() {
+        // ⚠️ 2026-10-11：`TRUST` 是进程级的 ✓ ⇒ 与新增的三条判据**串起来**跑 ✓
+        //    （原先注释写着"本文件别的判据都不碰它"—— 现在**碰了** ⇒ 必须上锁 ✓）。
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let base = 1_000_000_i64;
         let ttl = crate::pairing_trust::TRUST_TTL_MS;
 
@@ -1702,6 +1734,118 @@ mod short_id_tests {
             "过期之后必须停（别让一次没走完的握手永远占用广播）"
         );
 
+        with_trust(|h| h.clear());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ 2026-10-11（owner 拍「甲：一端点就通」）：**接收侧**那半的判据 ① ④ ⑤
+    //    ⭐ 发起侧那半在 `mesh_trust.rs` ✓；⭐ 采纳那半在 `sync.rs` ✓（它要真库 ✓）。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ 本模块**自带**的公告夹具 ✓ —— ⛔ 不复用别处的 `peer_of` ✗（它在 `mod tests` 里 ✓，
+    /// 跨模块看不见 ✓；⭐ 而且夹具自足比到处 `use` 更不容易被搬动弄坏 ✓）。
+    fn peer_with_ask(device: &str, ask: &str, seen_at: i64) -> crate::lan::Peer {
+        crate::lan::Peer {
+            announce: crate::lan::LanAnnounce {
+                trust_ask: ask.to_string(),
+                trust_secret: String::new(),
+                v: crate::lan::WIRE_VERSION,
+                device_id: device.to_string(),
+                device_name: device.to_string(),
+                short_id: "T3ST1".into(),
+                hub_base: Some("10.0.0.9:8899".to_string()),
+                hub_spaces: Vec::new(),
+                fp: "fp".into(),
+            },
+            addr: "192.168.1.9".into(),
+            seen_at_ms: seen_at,
+        }
+    }
+
+    /// ⭐ 判据①：⭐ 收到**带 ask** 的公告 ⇒ ⭐ 内核里**记上了** ✓（`pending_asks` 看得见 ✓）。
+    ///
+    /// **红读数（真变异）**：把 `observe` 里那句 `with_trust(|h| h.note_ask(…))` 拿掉 ⇒ 本判据红 ✓。
+    #[test]
+    fn an_incoming_trust_ask_is_noted_in_the_kernel() {
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_trust(|h| h.clear());
+        let st = LanState::new("me-dev".to_string());
+        let t = 5_000_000_i64;
+        assert!(st.observe(peer_with_ask("dev-b", "ask-1", t)), "别人的公告 ⇒ 记进对端表 ✓");
+        assert_eq!(
+            with_trust(|h| h.pending_asks(t + 1)),
+            vec!["dev-b".to_string()],
+            "带 ask 的公告必须在核心里看得见（否则「点了没反应」）"
+        );
+        assert_eq!(
+            with_trust(|h| h.pending_asks(t + 1)),
+            vec!["dev-b".to_string()],
+            "带 ask 的公告必须在核心里看得见（否则'点了没反应'）"
+        );
+        // ⚠️ ⭐ **看到 ≠ 信任** ✗：记账这一下**不许**把状态推成 `Trusted` ✓
+        //    （甲 是"**采纳**"那一步才推 ✓ —— 见 `sync::adopt_pending_trust_asks` ✓）。
+        assert_eq!(
+            with_trust(|h| h.state()),
+            crate::pairing_trust::TrustState::RemotePending,
+            "收到 ask 只许记成「有人在问」（⛔ 不许直接 Trusted ✗）"
+        );
+        with_trust(|h| h.clear());
+    }
+
+    /// ⭐ 判据④：⭐ **自己的公告**（回环回来的 ✓）⇒ ⛔ 不给自己记账 ✗。
+    ///
+    /// **红读数（真变异）**：把 `observe` 里的 `if !mine` 去掉 ⇒ 本判据红 ✓。
+    #[test]
+    fn my_own_announce_never_arms_the_trust_cell() {
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_trust(|h| h.clear());
+        let st = LanState::new("me-dev".to_string());
+        let t = 5_000_000_i64;
+        assert!(!st.observe(peer_with_ask("me-dev", "ask-self", t)), "自己的公告 ⇒ upsert 回 false ✓");
+        assert!(
+            with_trust(|h| h.pending_asks(t + 1)).is_empty(),
+            "⛔ 自己的公告不许给自己记账 ✗（否则本机会采纳自己）"
+        );
+        with_trust(|h| h.clear());
+    }
+
+    /// ⭐ 判据⑤：⭐ 甲 这条路（`begin` ／ `note_ask` ／ 采纳 ✓）**一个字节的 secret 都不出线** ✓。
+    ///
+    /// ⚠️ 它守的正是那条底线 ✗：⭐ 空间令牌**永远不许**进那两格 ✓
+    /// （规格 §2：去掉对码之后，唯一还能拦住"令牌上广播"的就是这条 ✓）。
+    ///
+    /// **红读数（真变异）**：让 `note_remote_confirm` 顺手把令牌塞进 `secret_for`
+    /// （＝"顺手也发一份"那个错误 ✓）⇒ 本判据红 ✓。
+    #[test]
+    fn adoption_never_puts_a_secret_on_the_outbound_fields() {
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_trust(|h| h.clear());
+        let t = 5_000_000_i64;
+        let ttl = crate::pairing_trust::TRUST_TTL_MS;
+
+        // ① 收到问 ⇒ ⭐ 两格都空 ✓（被问的那台不发问 ✓，也还没有 secret ✓）
+        with_trust(|h| h.note_ask("dev-a", t, ttl));
+        assert_eq!(
+            trust_outbound(t + 1),
+            (String::new(), String::new()),
+            "只是一条「我想信任你」⇒ 出站一个字节都不许有"
+        );
+
+        // ② 采纳之后 ⇒ ⭐ 仍然两格都空 ✓（⭐ 甲 不需要传密钥：令牌两台都有 ✓）
+        with_trust(|h| h.note_remote_confirm(t + 2, ttl));
+        assert_eq!(
+            trust_outbound(t + 3),
+            (String::new(), String::new()),
+            "采纳之后也不许有 secret（令牌只在本机库与内存里）"
+        );
+
+        // ③ 发起侧：⭐ 只有 ask 出线 ✓
+        with_trust(|h| h.begin("dev-b", "ask-9", t + 4, ttl));
+        assert_eq!(
+            trust_outbound(t + 5),
+            ("ask-9".to_string(), String::new()),
+            "发起侧只许带 ask；secret 那一格永远是空"
+        );
         with_trust(|h| h.clear());
     }
 }
