@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useEditorStore, type SettingsTab } from "../store/editor";
@@ -164,18 +164,6 @@ function SpacesPane() {
   // ⭐ 2026-10-10：筛选词（owner：「20+ 个空间怎么办」✓）⇒ 只影响**列表显示**：
   //    ⛔ 不动 `spaces`、⛔ 不动"当前空间" ✗（见 `filterSpaces`：签名里根本没有 active ✓）
   const [spaceQuery, setSpaceQuery] = useState("");
-  // ⭐ 2026-10-11（owner：「这个筛选空间控件太丑了，平时不用，缩小成一个小图标」）：
-  //    ⭐ 默认**收起** ⇒ ⭐ 平时只露一个放大镜按钮 ✓，⭐ 点它才展开输入框 ✓。
-  //    ⚠️ 输入框**一直在 DOM 里**（⭐ 收起态靠 CSS 收窄 ＋ `pointer-events: none` ✓）—— ⛔ 不能条件渲染 ✗：
-  //       · `SettingsDialog.test.tsx` 的判据是**直接往 `.set-space-filter` 打字** ✓；
-  //       · ⭐ 而且 `pointer-events: none` 正好让"手机命中区 ≥44"那条门禁**跳过收起态** ✓（它的口径本来就是这样 ✓）。
-  //    ⭐ **有筛选词时保持展开** ✗ —— ⛔ 否则一失焦就把用户刚输的字藏起来 ✓。
-  const [spaceFilterOpen, setSpaceFilterOpen] = useState(false);
-  const spaceFilterShown = spaceFilterOpen || spaceQuery !== "";
-  const spaceFilterRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (spaceFilterOpen) spaceFilterRef.current?.focus();
-  }, [spaceFilterOpen]);
   const shownSpaces = filterSpaces(spaces, spaceQuery);
   // 每个空间的同步目标：让「这个空间到底同不同步、同步到哪」在管理页就能看到，
   // 不用再切回同步面板逐个点开。
@@ -231,35 +219,12 @@ function SpacesPane() {
         {/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：外面套一层只为放**放大镜**与
             **清空**两个附件 ✓ —— ⛔ 输入框自己的类名一个字没改 ✗（`.set-space-filter` 有判据在用 ✓），
             高度也不许动（本仓规则：可点控件 ≥44px ✓）。 */}
-        <div className={`set-space-filter-wrap${spaceFilterShown ? " is-open" : ""}`}>
-          {/* ⭐ 平时就这一颗（⭐ 桌面 36 ／ ⭐ 手机 44 ⇒ 手机命中区那条规矩仍在 ✓）；⭐ 展开后它让位给放大镜 ✓ */}
-          {!spaceFilterShown && (
-            <button
-              type="button"
-              className="set-space-filter-toggle"
-              onClick={() => setSpaceFilterOpen(true)}
-              aria-label="筛选空间"
-              title="筛选空间"
-            >
-              <SearchIcon width={16} height={16} />
-            </button>
-          )}
-          {spaceFilterShown && <SearchIcon width={16} height={16} />}
+        <div className="set-space-filter-wrap">
+          <SearchIcon width={16} height={16} />
           <input
-            ref={spaceFilterRef}
             className="set-space-filter sync-input"
             value={spaceQuery}
             onChange={(e) => setSpaceQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                setSpaceQuery("");
-                setSpaceFilterOpen(false);
-              }
-            }}
-            onBlur={() => {
-              // ⭐ 没输字就收回去 ✓；⭐ 输了字就留着（⛔ 不许把用户输的东西藏起来 ✓）
-              if (spaceQuery === "") setSpaceFilterOpen(false);
-            }}
             placeholder="筛选空间…"
             aria-label="筛选空间"
           />

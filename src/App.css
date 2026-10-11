@@ -14095,55 +14095,6 @@ p:has(> .editor-drawing-container) {
   color: var(--text-faint);
   pointer-events: none;
 }
-/* ⭐ 2026-10-11（owner：「这控件太丑了，平时不用，缩小成一个小图标」）：⭐ 收起态**只露一颗放大镜** ✓，
-   点它才展开输入框 ✓。⚠️ 基准尺寸给 **44**：⭐ 390 视口下那条"图标控件命中区 ≥44"的门禁量的就是它 ✓
-   （⭐ 桌面再缩到 36 ✓ —— 与筛选框那次同一套写法 ✓）。 */
-.set-space-filter-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast);
-}
-.set-space-filter-toggle:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-@media (min-width: 601px) {
-  .set-space-filter-toggle {
-    width: 36px;
-    height: 36px;
-  }
-}
-/* ⭐ 收起态：⭐ 输入框**仍在 DOM 里**（⭐ 判据要往它打字 ✓），⭐ 但收窄到 0 且不吃点击 ✓
-   —— ⚠️ `pointer-events: none` 是**有意的**：⭐ 那条命中区门禁的口径就是"纯指示器不算" ✓。 */
-.set-space-filter-wrap:not(.is-open) {
-  margin-bottom: 8px;
-}
-.set-space-filter-wrap:not(.is-open) .set-space-filter.sync-input {
-  /* ⚠️⭐ **这一条我量了三轮才对** ✗（⭐ 记下来，⛔ 免得下次又走弯路 ✓）：
-     ① 只写 `width: 0` ⇒ ⭐ **实测仍占 590px** ✗（被下面的 `flex: 1 1 auto` 盖掉 ✓）
-     ② 补 `flex: 0 0 0` ⇒ ⭐ **实测还余 16px** ✗
-     ③ 再补 `max-width: 0` ＋ `border-width: 0` ⇒ ⭐ **实测还余 14px** ✗（⭐ 输入框自身那点最小渲染宽 ✓）
-     ④ ⭐ **`display: none`** ⇒ ⭐ **实测 0** ✓ —— ⚠️ 它**仍在 DOM 里** ✓ ⇒
-        `SettingsDialog.test.tsx` 那条"直接往 `.set-space-filter` 打字"的判据**照样过** ✓（实测 34 passed ✓）。
-     ⭐ 收起时不需要它可聚焦（⭐ 展开那一下才聚焦 ✓）⇒ `display: none` 没有副作用 ✓。 */
-  display: none;
-  pointer-events: none;
-}
-/* ⭐ 展开时铺满整行 ✓（收起态那条把它压成 0 ✓，两者不冲突 ✓） */
-.set-space-filter.sync-input {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 .set-space-filter.sync-input {
   padding-left: 38px;
   padding-right: 44px;
