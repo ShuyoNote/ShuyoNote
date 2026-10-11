@@ -1,9 +1,13 @@
-// **应用内入口：导入 Office 文档（第一期只做 .docx）** —— Office 导入 · task-14 接线。
+// **Office 导入的**结果面板**（第一期只做 .docx）—— Office 导入 · task-14 接线。
 //
-// ## 它同时是**两个入口**（这是刻意的：Office 导入只有这一处触发器 ✓）
-//  ① **人点的**：右下角一个小按钮 ⇒ 展开 ⇒ 选文件 ⇒ 看读数 ⇒ 确认建页 ✓
-//  ② **外部请求**：`office-import://request`（双击 .docx ⇒ Rust 侧 `--import` ＋ 单实例转发 ✓）
+// ## 触发**只剩一条**（⭐ 2026-10-11 owner 拍板去掉按钮 ✓）
+//  ⭐ **外部请求** ✗：`office-import://request`（双击 .docx ⇒ Rust 侧 `--import` ＋ 单实例转发 ✓）
 //     ⇒ 同一个 `importOfficeFromPath` ⇒ **直接建页**，并把结果摆到面板上 ＋ 弹一句 ✓
+//  ⛔⭐ **原来那颗右下角小按钮（`office-import-open`）已删** ✗ —— owner：「去掉右下角这个图示按钮」✓
+//     ⭐ 人要点的话走**新建页面那儿的「从导入文件创建…」** ✓（⭐ 那条现在也吃 .docx ✓）。
+//     ⚠️⭐ 顺带治了 CI：⭐ 那颗按钮在 390 视口下只有 **79×25** ✓ ⇒ ⭐ "命中端 ≥44"那条门禁一直判它不合格 ✓
+//        （⭐ 2026-10-11 本机复现：⭐ `mobile-overlays` 5 失败 ＋ ⭐ `mobile-views` 1 失败 ✓，⭐ 都是它 ✓）。
+//     ⚠️ 去掉按钮**不等于**去掉入口：⭐ 下面那个 `useEffect` 的订阅**必须留着** ✓（⭐ 否则双击就没反应了 ✓）。
 //  ⚠️ 两条路**共用** `pathImport.ts` 的实现与 `requestBridge.ts` 的处理器 ⇒ ⛔ 不写第二份 ✓。
 //
 // ## 挂载（⛔ 只需一行 ⇒ 见 App.tsx 末尾）
@@ -13,6 +17,7 @@
 // ⚠️ 它**不是浮层**：容器类名不以 `-overlay` / `-popover` 结尾 ⇒ 不需要登记返回栈，
 //    也不会有"安卓返回键直接退出应用"那条问题 ✓（那一族要登记的是浮层 ✓）。
 //    代价（如实）：它是 `position: fixed` 的小卡片，**没有**模态语义/背景遮罩 ✓。
+//    ⭐ 并且**没请求就 `return null`** ✓ ⇒ ⭐ 平时一个像素都不占 ✓（⭐ 也不给门禁量到东西 ✓）。
 //
 // ## 三步都**如实**
 //  ① 选文件 ⇒ 原文档作为**附件**入库（内容寻址：同一份选两次不会存两份 ✓）
@@ -133,22 +138,22 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
     }
   }
 
+  // ⭐ 2026-10-11（owner：「去掉右下角这个图示按钮」）：⭐ **没请求就什么都不渲染** ✗ ——
+  //    ⚠️ 只删那颗按钮**不够** ⇒ ⭐ 外面那个固定定位的 `office-import-dock` 还在 ✓（⭐ 白占一层 ✓，
+  //       而且 ⭐ 门禁照样能量到它 ✓）。
+  //    ⚠️⭐ **功能没丢** ✗：⭐ 外部那条 `office-import://request`（⭐ 双击 .docx ✓）仍在上面的 `useEffect` 里 ✓，
+  //       ⭐ 请求一来就 `setOpen(true)` ⇒ ⭐ 面板照旧弹出来 ✓。
+  //    ⭐ 顺手治了 CI：⭐ 那颗按钮在 390 视口下只有 **79×25** ✓ ⇒ ⭐ "命中区 ≥44"那条一直判它不合格 ✓
+  //       （⭐ 本机复现：⭐ `mobile-overlays` 5 失败 ＋ ⭐ `mobile-views` 1 失败 ✓）。
+  //    ⚠️ 这一句写在**所有 hooks 之后**（⭐ 与下面 `announce` 那条注记同一个理由 ✓）。
+  if (!open) return null;
+
   return (
     <div
       className="office-import-dock"
       style={{ position: "fixed", right: 12, bottom: 12, zIndex: 60, maxWidth: 420 }}
     >
-      {!open ? (
-        <button
-          className="office-import-open"
-          onClick={() => setOpen(true)}
-          disabled={busy}
-          title="导入 Office 文档（.docx）⇒ 转成一页新笔记"
-        >
-          导入 Office
-        </button>
-      ) : (
-        <div
+      <div
           className="office-import-card"
           style={{
             display: "flex",
@@ -211,7 +216,6 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
             </pre>
           )}
         </div>
-      )}
     </div>
   );
 }
