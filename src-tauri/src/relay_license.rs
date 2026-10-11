@@ -861,7 +861,48 @@ mod tests {
         );
     }
 
-    /// ⭐ 判据⑥：⭐ **零专有回流** ✗ —— ⭐ 产品仓是 AGPL、那个中继仓是**专有** ✓。
+    /// ⭐ 判据⑩：⭐ **三态读数的来源** ✗ —— ⭐ 验过 ／ ⭐ 拒收 ／ ⭐ 占位，⭐ 三者必须分得开 ✓。
+    ///
+    /// ⚠️ 最要紧的是**最后那一条** ✗：⭐ 配置里同时有"⭐ 一份验不过的文本 ✗"和"⭐ 几个很好看的裸数字 ✗"时，
+    /// ⭐ 结果必须是 **`Refused`** ✗ —— ⛔ 不许退回裸数字 ✗（⭐ 那等于**绕过验签** ✓）。
+    #[test]
+    fn the_three_sources_of_the_license_window_are_distinguishable() {
+        use crate::relay_client::{verified_window_with, LicenseWindow, RelayConfig as Cfg, VerifiedLicense};
+        let (sk, entry) = judge_key();
+        // ① 有文本、⭐ 验得过 ⇒ ⭐ `Verified`，⭐ 而且天数来自**验过的声明** ✓
+        let good = Cfg {
+            license: Some(mint(&sk, &payload(None, None))),
+            license_exp: Some(9_999_999), // ⭐ 故意塞一个假数字：⭐ 它**不该**被采用 ✓
+            ..Default::default()
+        };
+        assert_eq!(
+            verified_window_with(&good, 1_500, &[entry.clone()]),
+            VerifiedLicense::Verified(LicenseWindow::Active { days_left: 0 }),
+            "天数只能来自验过的 exp=2000（now=1500 ⇒ 0 天）"
+        );
+        // ② 有文本、⭐ 验不过 ⇒ ⭐ `Refused`，⛔ **不许**退回裸数字 ✓
+        let bad_text_good_numbers = Cfg {
+            license: Some("SHUYO-LIC-1.notbase64.notasig".to_string()),
+            license_exp: Some(9_999_999),
+            ..Default::default()
+        };
+        match verified_window_with(&bad_text_good_numbers, 1_500, &[entry.clone()]) {
+            VerifiedLicense::Refused(_) => {}
+            other => panic!("⭐ 验不过就必须是 Refused ✗（⛔ 不许拿裸数字顶上）——实际 {other:?}"),
+        }
+        // ③ 没有文本 ⇒ ⭐ `Placeholder`（⭐ 与 `Verified` 必须**不是**同一个东西 ✓）
+        let placeholder = Cfg {
+            license_exp: Some(9_999_999),
+            ..Default::default()
+        };
+        let got = verified_window_with(&placeholder, 1_500, &[entry]);
+        assert!(matches!(got, VerifiedLicense::Placeholder(_)), "实际 {got:?}");
+        assert!(!got.is_verified(), "没有签名文本就不许自称验过");
+        // ④ ⭐ 生产入口 ⭐（占位 keyring）⭐ 对真文本也必须 `Refused` ✗（fail-closed ✓）
+        let prod = crate::relay_client::verified_window(&good, 1_500);
+        assert!(matches!(prod, VerifiedLicense::Refused(_)), "实际 {prod:?}");
+        assert_eq!(prod.window(), None, "拒收那一档**没有**窗口（⛔ 不许编一个）");
+    }
     ///
     /// ⚠️ ⭐ 第一版这条判据**太钝** ✗（实测当场红）：它按"提到名字"扫 `.rs` ⇒ 命中三处，
     /// 一处是**注释里写明出处**（⭐ 好习惯，⛔ 不该判 ✗）、一处是**临时目录名**（⭐ 无害 ✓）、

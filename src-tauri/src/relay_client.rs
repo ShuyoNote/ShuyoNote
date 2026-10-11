@@ -110,13 +110,22 @@ pub struct RelayConfig {
     /// 本机设备身份的种子（32 字节 = 64 个十六进制字符）。⚠️ 占位：还没接钥匙串 ✓。
     #[serde(default)]
     pub device_seed_hex: Option<String>,
-    /// 生效时刻（Unix 秒）。
+    /// ⭐ 2026-10-11：**签名过的许可证文本** ✗（⭐ `SHUYO-LIC-…` ✓）—— ⭐ 与租约同一套放法 ✓。
+    ///
+    /// ⚠️ ⭐ 有它 ⇒ ⭐ 那几个裸数字字段**一概不看** ✗：⭐ 三态读数只从 `relay_license` **验过的声明**出 ✓
+    /// （⭐ 验不过就**如实报拒收原因** ✓，⛔ 不许退回裸数字 —— 那等于绕过验签 ✗）。
+    #[serde(default)]
+    pub license: Option<String>,
+    /// 也可以把许可证放在一个文件里（首尾空白会被去掉 ✓）。
+    #[serde(default)]
+    pub license_file: Option<String>,
+    /// 生效时刻（Unix 秒）。⚠️ **占位**：⭐ 只在没有签名文本时才用 ✓（见 [`VerifiedLicense`] ✓）。
     #[serde(default)]
     pub license_nbf: Option<i64>,
-    /// 失效时刻（Unix 秒）。
+    /// 失效时刻（Unix 秒）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_exp: Option<i64>,
-    /// 宽限天数（缺省 [`DEFAULT_GRACE_DAYS`]）。
+    /// 宽限天数（缺省 [`DEFAULT_GRACE_DAYS`]）。⚠️ **占位**：同上 ✓。
     #[serde(default)]
     pub license_grace_days: Option<i64>,
 }
@@ -312,6 +321,80 @@ pub fn config_window(cfg: &RelayConfig, now: i64) -> LicenseWindow {
         cfg.license_exp,
         cfg.license_grace_days,
     )
+}
+
+// ─────────────────── ⭐ 三态读数的**来源**（2026-10-11 加）✗ ───────────────────
+
+/// ⭐ 手上这一格签名文本 ✗ —— ⭐ 与租约同一套：⭐ 内联优先 ✓，其次文件 ✓（首尾空白去掉 ✓）。
+pub fn license_text(cfg: &RelayConfig) -> Option<String> {
+    if let Some(t) = cfg.license.as_deref() {
+        let t = t.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    let path = cfg.license_file.as_deref()?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// ⭐ 这一格的窗口**是从哪来的** ✗ —— ⭐ 界面必须能区分"验过的"与"只有裸数字的占位" ✓
+/// （⭐ 两者长得像，⭐ 但性质完全不同 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedLicense {
+    /// ⭐ 有签名文本、⭐ **验过了** ⇒ ⭐ 窗口来自**验过的声明** ✓。
+    Verified(LicenseWindow),
+    /// ⭐ 有签名文本、⭐ **验不过** ⇒ ⭐ 如实报拒收原因 ✓
+    /// （⛔ **不**退回裸数字 ✗ —— 那等于绕过验签 ✓）。
+    Refused(crate::relay_license::LicenseRefusal),
+    /// ⭐ 根本没有签名文本 ✗ ⇒ ⭐ 只有裸数字那条**占位**路 ✓（⭐ 界面要说清"没接线"✓）。
+    Placeholder(LicenseWindow),
+}
+
+impl VerifiedLicense {
+    /// ⭐ 实际生效的窗口 ✗（⭐ 拒收那一档**没有窗口** ⇒ `None`：⛔ 不许拿裸数字顶上 ✗）。
+    pub fn window(&self) -> Option<LicenseWindow> {
+        match self {
+            VerifiedLicense::Verified(w) | VerifiedLicense::Placeholder(w) => Some(*w),
+            VerifiedLicense::Refused(_) => None,
+        }
+    }
+
+    /// ⭐ 这一格到底是不是**验过的** ✗（⭐ 界面用它决定要不要硬气地说"已确认" ✓）。
+    pub fn is_verified(&self) -> bool {
+        matches!(self, VerifiedLicense::Verified(_))
+    }
+}
+
+/// ⭐ 三态读数的**生产入口** ✗：⭐ 用内嵌 keyring（⭐ 现在是占位 ⇒ ⭐ 真文本一律 `Refused` ✓）。
+pub fn verified_window(cfg: &RelayConfig, now: i64) -> VerifiedLicense {
+    verified_window_with(cfg, now, crate::relay_license::KEYRING)
+}
+
+/// ⭐ 用**指定的** keyring 算这一格的来源 ✗（⭐ keyring 可注入 ⇒ 判据能自己签一份 ✓）。
+pub fn verified_window_with(
+    cfg: &RelayConfig,
+    now: i64,
+    keyring: &[crate::relay_license::KeyEntry],
+) -> VerifiedLicense {
+    match license_text(cfg) {
+        // ⭐ 有签名文本 ⇒ ⭐ 只认验过的声明；⭐ 验不过就如实报，⛔ **不退回裸数字** ✗。
+        Some(text) => match crate::relay_license::verify_license_with(&text, now, keyring) {
+            Ok(claims) => VerifiedLicense::Verified(evaluate_license(
+                now,
+                Some(claims.nbf),
+                Some(claims.exp),
+                Some(claims.grace_days),
+            )),
+            Err(reason) => VerifiedLicense::Refused(reason),
+        },
+        None => VerifiedLicense::Placeholder(config_window(cfg, now)),
+    }
 }
 
 // ─────────────────────────── 新建连的决定 ───────────────────────────
@@ -774,6 +857,9 @@ mod tests {
             token: Some("SHUYO-TOK-1.不透明.不透明".into()),
             token_file: None,
             device_seed_hex: Some("aa".repeat(32)),
+            // ⭐ 没有签名文本 ⇒ ⭐ 这一条走的是**占位**那条路（⭐ 裸数字 ✓，⭐ 见 `VerifiedLicense` ✓）
+            license: None,
+            license_file: None,
             license_nbf: Some(exp - 30 * 86_400),
             license_exp: Some(exp),
             license_grace_days: Some(14),
