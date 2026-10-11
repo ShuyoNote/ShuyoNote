@@ -435,6 +435,179 @@ fn write_setting(c: &Connection, prefix: &str, space_id: &str, value: Option<&st
     crate::sync::set_meta_state(c, &setting_key(prefix, space_id), v)
 }
 
+// ─────────────────────── ⭐ 设备级（owner 2026-10-11 拍） ───────────────────────
+
+/// ⭐⭐ **设备级那一格的键 ＝ `space_id` 为空** ✗（方案 §9.1 ✓）。
+///
+/// ⛔ **不新造键** ✗：个人空间在生产里**就是**按"`space_id` 空"认的 ✓
+/// （`sync.rs:909 / 1071 / 1093 / 2108` ✓）⇒ ⭐ 语义自然对上 ✓，
+/// 而 `'ws-personal'` 那种名字**只活在测试夹具里** ✗ ⇒ 拿它当键就得造一个假工作区 ✓（那是歪的 ✓）。
+pub const DEVICE_LEVEL_SPACE: &str = "";
+
+/// ⭐ **设备级读取面** ✗：个人档 ⇒ 一律读"空 `space_id`"那一格 ✓；⭐ 团队档 ⇒ 照旧读它自己的 `space_id` ✓。
+///
+/// ⚠️ 个人档**回退**读旧的"按暗号那一格"✓（⭐ 只读、⛔ 不写 ✗）：升级上来的机器**第一次读就看得见旧值** ✓
+/// —— 迁移只发生在写路径 ✓（[`migrate_device_level_mesh`] ✓），⛔ 读路径一个字节都不写 ✓。
+pub fn settings_for(c: &Connection, space: &str, device_level: bool) -> MeshSettings {
+    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    let mut bind = read_setting(c, "mesh_bind", key);
+    let mut token = read_setting(c, "mesh_token", key);
+    if device_level {
+        if bind.is_none() {
+            bind = read_setting(c, "mesh_bind", space);
+        }
+        if token.is_none() {
+            token = read_setting(c, "mesh_token", space);
+        }
+    }
+    MeshSettings { bind, token }
+}
+
+/// ⭐ 写侧**同口径** ✓（个人档 ⇒ 一律写"空 `space_id`"那一格 ✓）。
+pub fn set_mesh_bind_for(
+    c: &Connection,
+    space: &str,
+    device_level: bool,
+    bind: Option<&str>,
+) -> Result<(), String> {
+    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    write_setting(c, "mesh_bind", key, bind)
+}
+
+/// ⭐ 同 [`set_mesh_bind_for`] ✓。
+pub fn set_mesh_token_for(
+    c: &Connection,
+    space: &str,
+    device_level: bool,
+    token: Option<&str>,
+) -> Result<(), String> {
+    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    write_setting(c, "mesh_token", key, token)
+}
+
+/// ⭐ **配对暗号** ⭐ 也搬进**同一张 KV** ✗（方案 §9.2 乙 ✓，Lead 批准的方向 ✓）：
+/// ⭐ 三格从此**同一个存储、同一个键形状** ✓ ⇒ "设备级"只是**一处口径** ✓，⛔ 不是三处特例 ✓；
+/// ⭐ 而且**不用碰 `meta.workspaces`** ✓（甲 那条路要先造一个真工作区 ＝ 又一份真相源 ✗）。
+///
+/// ⚠️ 读侧**保留旧列的回退** ✓（见 [`legacy_mesh_room`] ✓）：升级上来的机器读得到旧值 ✓。
+pub fn mesh_room_device(c: &Connection) -> Option<String> {
+    read_setting(c, "mesh_room", DEVICE_LEVEL_SPACE)
+}
+
+pub fn set_mesh_room_device(c: &Connection, room: Option<&str>) -> Result<(), String> {
+    write_setting(c, "mesh_room", DEVICE_LEVEL_SPACE, room)
+}
+
+/// ⭐ **旧那一份**（`sync_profiles.mesh_room` ✓）：⭐ 个人行（`space_id` 空 ✓）里
+/// **第一个非空 ＋ 按 `ws_id` 定序** ✗（结果确定 ✓ —— 因为没有时间戳，见方案 §8 ① ✓）。
+pub fn legacy_mesh_room(c: &Connection) -> Option<String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT mesh_room FROM sync_profiles \
+             WHERE space_id = '' AND TRIM(mesh_room) <> '' ORDER BY ws_id ASC LIMIT 1",
+        )
+        .ok()?;
+    let mut rows = stmt.query([]).ok()?;
+    let row = rows.next().ok()??;
+    let v: String = row.get(0).ok()?;
+    let v = v.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+pub fn legacy_mesh_room_for(c: &Connection, ws_id: &str) -> Option<String> {
+    let mut stmt = c
+        .prepare("SELECT mesh_room FROM sync_profiles WHERE ws_id = ?1")
+        .ok()?;
+    let mut rows = stmt.query(rusqlite::params![ws_id]).ok()?;
+    let row = rows.next().ok()??;
+    let v: String = row.get(0).ok()?;
+    let v = v.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// ⭐⭐ **迁移（幂等 ✓、只增不删 ✓）**：把老的**逐空间**设置收敛成设备级那一份 ✗。
+///
+/// ## 三条实测口径（方案 §8／§9 ✓ —— ⛔ 都是量过的，不是猜的 ✗）
+/// · ⭐ **没有时间戳** ✗：`sync_state` 只有 `key` / `value` 两列（`lan_state.rs:925` ✓）
+///   ⇒ "取最近改过的"**做不到** ✓ ⇒ 取 ⭐ **第一个非空 ＋ 按 `ws_id`（或键名）定序** ✗
+///   （结果**确定** ✓）＋ ⭐ **记一行日志说取了谁** ✓；
+/// · ⛔ **旧行／旧键一个不删** ✗（⭐ 随时可回退 ✓）；
+/// · ⭐ **幂等** ✓：设备级那格已经有值 ⇒ 那格一个字节都不动 ✓。
+///
+/// 返回**这次采用了谁**（`None` ＝ 没动 ✓）—— ⭐ 给日志与判据用 ✓。
+pub fn migrate_device_level_mesh(c: &Connection) -> Result<Option<String>, String> {
+    let mut moved: Vec<String> = Vec::new();
+    // ① 配对暗号：老的逐空间那一份在 `sync_profiles.mesh_room`（个人行 ✓）
+    if mesh_room_device(c).is_none() {
+        if let Some(room) = legacy_mesh_room(c) {
+            set_mesh_room_device(c, Some(&room))?;
+            moved.push(format!("mesh_room(（{room}）"));
+            eprintln!(
+                "[mesh] ⭐ 设备级迁移：配对暗号取自旧的那一份（「{room}」✓ —— 无时间戳 ⇒ 取第一个非空 ＋ 按 ws_id 定序 ✓）；⛔ 旧行没删 ✓"
+            );
+        }
+    }
+    // ② 监听地址／口令：老的键是 `mesh_bind:<暗号或 space_id>` ✓ ⇒ ⛔ 只认**不属于任何团队空间**的键 ✗
+    for prefix in ["mesh_bind", "mesh_token"] {
+        let dev_key = setting_key(prefix, DEVICE_LEVEL_SPACE);
+        let already = crate::sync::get_meta_state(c, &dev_key)
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if already {
+            continue;
+        }
+        let mut stmt = c
+            .prepare(
+                "SELECT key, value FROM meta.sync_state \
+                 WHERE key LIKE ?1 AND TRIM(value) <> '' ORDER BY key ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let like = format!("{prefix}:%");
+        let mut rows = stmt.query(rusqlite::params![like]).map_err(|e| e.to_string())?;
+        let mut picked: Option<(String, String)> = None;
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let k: String = row.get(0).map_err(|e| e.to_string())?;
+            let v: String = row.get(1).map_err(|e| e.to_string())?;
+            let suffix = k.strip_prefix(&format!("{prefix}:")).unwrap_or("").trim().to_string();
+            if suffix.is_empty() {
+                continue; // 已经是设备级那一格 ✓
+            }
+            // ⭐ 团队空间的键**一个字不动** ✗：后缀**是**某个非空 `space_id` ⇒ 跳过 ✓。
+            let is_team: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM sync_profiles WHERE TRIM(space_id) = ?1",
+                    rusqlite::params![suffix],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if is_team > 0 {
+                continue;
+            }
+            picked = Some((suffix, v.trim().to_string()));
+            break; // ⭐ 取第一个非空（键名已定序 ⇒ 确定 ✓）
+        }
+        if let Some((from, value)) = picked {
+            write_setting(c, prefix, DEVICE_LEVEL_SPACE, Some(&value))?;
+            moved.push(format!("{prefix}（来自「{from}」）"));
+            eprintln!(
+                "[mesh] ⭐ 设备级迁移：{prefix} 取自旧的那一份（「{from}」✓ —— 按键名定序取第一个非空 ✓）；⛔ 旧键没删 ✓"
+            );
+        }
+    }
+    if moved.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(moved.join("、")))
+}
+
 /// ⭐ **U11/T5**：本机**要出示给那一台**的那份秘密（明文 ✓，只在本机 ✓）。
 ///
 /// 键＝`mesh_pair_secret:<space>:<peer_device_id>`（规格 §3.2 定的形状 ✓）。

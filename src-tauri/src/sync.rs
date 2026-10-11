@@ -4073,6 +4073,10 @@ pub fn mesh_set_config(
     if let Some(w) = workspace_id.as_deref().filter(|w| !w.trim().is_empty()) {
         let c = db.0.lock().expect("db mutex poisoned");
         ensure_local_profile_row(&c, w).map_err(|e| e.to_string())?;
+        // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 顺手做一次**幂等迁移** ✗ —— 把老的**逐空间**设置收敛成设备级那一份 ✓
+        //   （⭐ 只增不删 ✓、⭐ 已经有值就一个字节不动 ✓、⭐ 取了谁**记一行日志** ✓ —— 见 `migrate_device_level_mesh` ✓）。
+        //   ⚠️ 放在**写路径**上 ✗：⛔ 读路径不写任何东西 ✓。
+        let _ = crate::mesh::migrate_device_level_mesh(&c);
     }
     if let Some(r) = room.as_deref() {
     let target = mesh_target_ws(&db, workspace_id.as_deref())?;
@@ -4082,17 +4086,23 @@ pub fn mesh_set_config(
     rusqlite::params![r, target],
     )
     .map_err(|e| e.to_string())?;
+    // ⭐ 2026-10-11（设备级 ✓）：⭐ 同时写进**设备级那一格** ✓（⭐ 三格同一存储 ✓，方案 §9.2 乙 ✓）。
+    //   ⛔ 旧的 `sync_profiles.mesh_room` **不删** ✗（⭐ 可回退 ✓）—— 两条路都留着 ✓。
+    if !r.trim().is_empty() {
+        crate::mesh::set_mesh_room_device(&c, Some(r))?;
+    }
     }
     let scope = mesh_scope(&db, workspace_id.as_deref())?;
     let cfg = {
         let c = db.0.lock().expect("db mutex poisoned");
         if let Some(b) = bind.as_deref() {
-            crate::mesh::set_mesh_bind(&c, &scope.space, Some(b))?;
+            // ⭐ 个人档 ⇒ 写"空 `space_id`"那一格 ✓（⭐ 一处改、所有个人空间共用 ✓）；团队档照旧 ✓。
+            crate::mesh::set_mesh_bind_for(&c, &scope.space, scope.device_level, Some(b))?;
         }
         if let Some(t) = token.as_deref() {
-            crate::mesh::set_mesh_token(&c, &scope.space, Some(t))?;
+            crate::mesh::set_mesh_token_for(&c, &scope.space, scope.device_level, Some(t))?;
         }
-        crate::mesh::settings(&c, &scope.space)
+        crate::mesh::settings_for(&c, &scope.space, scope.device_level)
     };
     if cfg.bind.is_none() {
         // 关掉 ⇒ **立刻松口**（不留一个还在听的窗口）。
@@ -4147,7 +4157,10 @@ pub(crate) fn mesh_config_state_at(
     //   ⇒ 口径三条：① 当前空间自己解析得出来**且配了地址** ⇒ 报它自己的 ✓（每个空间看自己的设置 ✓）；
     //              ② 否则 ⇒ 报**实际在用**的那一个 ✓（与发现层的 `mesh_cfgs` **同一把尺** ✓）；
     //              ③ **谁都没配** ⇒ 仍然报「关着」✓（放宽 ≠ 乱认 ✓，判据钉着 ✓）。
-    let space = if !asked.trim().is_empty() && crate::mesh::settings(c, &asked).bind.is_some() {
+    let device_level = space_id.trim().is_empty();
+    let space = if !asked.trim().is_empty()
+        && crate::mesh::settings_for(c, &asked, device_level).bind.is_some()
+    {
         asked
     } else {
         mesh_space_in_use(c).unwrap_or(asked)
@@ -4162,7 +4175,7 @@ pub(crate) fn mesh_config_state_at(
             &[],
         ));
     }
-    let cfg = crate::mesh::settings(c, &space);
+    let cfg = crate::mesh::settings_for(c, &space, device_level);
     let window = crate::mesh::window_addr(&space);
     Ok(crate::mesh::config_state(
         &cfg,
@@ -4364,6 +4377,10 @@ pub(crate) struct MeshScope {
     pub(crate) db_space: String,
     /// 本机设备号（发现层与"只服务我自己产生的记录"都用它）。
     pub(crate) device: String,
+    /// ⭐⭐ 2026-10-11（owner 拍「个人空间的网格设置是设备级」）：⭐ **这一档是不是个人档** ✗
+    /// （＝ 那一行的 `space_id` 为空 ✓ —— 生产里"个人空间"**就是**这么认的 ✓，方案 §9.1／§8③ ✓）。
+    /// ⭐ 个人档 ⇒ 三格**一律读写"空 `space_id`"那一格** ✓；⭐ 团队档 ⇒ ⛔ 一个字节不变 ✗。
+    pub(crate) device_level: bool,
 }
 
 /// ⭐ **2026-10-08**：给「**从没绑过服务器**」的空间补一行**本地**档案 ✓ ——
@@ -4479,7 +4496,15 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     //   而**个人空间恰恰就是空** ⇒ 那条 guard 让"个人空间＋设备直连"这条**主用例必然报错** ✗，并且让紧随
     //   其后的兜底成了**死代码** ✗（`mesh_room` 除 SELECT 取出外一个字节都没被读 ✓）。
     //   判据 `r146_mesh_scope_tests` 先把它照了出来 ✓（先红：`FAILED. 2 passed; 1 failed` ✓）。
-    let space = if pick.0.trim().is_empty() { pick.2.trim().to_string() } else { pick.0.trim().to_string() };
+    // ⭐⭐ 2026-10-11（设备级 ✓，方案 §9.1／§9.2 乙 ✓）：⭐ 个人档的「配对暗号」优先读**设备级那一格** ✗
+    //   （同一张 KV、键里空间留空 ✓）⇒ ⭐ 一处填好、**所有个人空间共用** ✓。
+    //   ⚠️ 没迁移过（或老机器）⇒ **回退**读旧的逐空间那一份 ✓（⭐ 只读、⛔ 不写 ✗）。
+    let personal = pick.0.trim().is_empty();
+    let space = if personal {
+        crate::mesh::mesh_room_device(c).unwrap_or_else(|| pick.2.trim().to_string())
+    } else {
+        pick.0.trim().to_string()
+    };
     // ⭐ 判**最终**这个值是否为空 ✓（团队＝`space_id`；个人＝配对暗号 ✓）—— 该拒的仍然拒 ✓，但不再误伤个人空间 ✓。
     if space.is_empty() {
         return Err(
@@ -4487,7 +4512,9 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
         .to_string(),
         );
     }
-    Ok(MeshScope { space, db_space: pick.1, device: device_id })
+    // ⭐ 2026-10-11：⭐ 个人档 ＝ `space_id` 为空 ✓（**这一行就是那个判定的出处** ✓ ——
+    //   `space` 那一格在个人档下会被换成"配对暗号"✓，⛔ 不能拿它反推是不是个人 ✓）。
+    Ok(MeshScope { space, db_space: pick.1, device: device_id, device_level: personal })
 }
 
 /// ⭐ **R146 的判据（owner 2026-10-08 已签 ✓）** —— 这两条**先看红** ✗：
@@ -4496,6 +4523,101 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
 #[cfg(test)]
 mod r146_mesh_scope_tests {
     use super::*;
+
+    /// ⭐⭐ 判据①（方案 §5 ① ✓）：⭐ **一处改、全部生效** ✗ ——
+    /// 写一次**设备级**的设置 ⇒ ⭐ **两个个人空间读出来都一样** ✓；⭐ **团队空间没变** ✓。
+    ///
+    /// ⚠️ 走的是**真解析**（`mesh_scope_at` ✓）而不只是 `settings_for` ✓ —— 因为"设备级"的关键那一步
+    /// 就是 ⭐ 个人档解析出**同一个暗号** ✗（方案 §9.1／§9.2 乙 ✓）。
+    ///
+    /// **红读数（真变异）**：把 `mesh_scope_at` 里 `mesh_room_device(c)` 那一句去掉
+    /// （＝退回"各空间读各自那一格"✗）⇒ 两个个人空间解析出**不同**的暗号 ⇒ 本判据红 ✓。
+    #[test]
+    fn one_device_level_write_applies_to_every_personal_space_and_leaves_team_alone() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-me-1', '个人 1');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-me-2', '个人 2');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-team', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me-1', '', 'room-1');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me-2', '', 'room-2');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-team', 'org-x', 'room-t');",
+        )
+        .unwrap();
+
+        // ⭐ 一次**设备级**写入 ✓（⭐ 写的是"空 `space_id`"那一格 ✓，⛔ 不是某一个空间 ✓）
+        crate::mesh::set_mesh_room_device(&c, Some("room-dev")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
+        crate::mesh::set_mesh_token_for(&c, "", true, Some("pw-device-1")).unwrap();
+
+        // ① ⭐ 两个个人空间：解析出来的暗号与设置**逐字相同** ✓（＝ 一处改、全部生效 ✓）
+        let a = mesh_scope_at(&c, Some("ws-me-1")).expect("个人档必须解析得出");
+        let b = mesh_scope_at(&c, Some("ws-me-2")).expect("个人档必须解析得出");
+        assert!(a.device_level && b.device_level, "个人档要认成设备级");
+        assert_eq!(a.space, "room-dev", "个人档要读**设备级那一格**的暗号");
+        assert_eq!(a.space, b.space, "两个个人空间必须共用同一份");
+        let sa = crate::mesh::settings_for(&c, &a.space, a.device_level);
+        let sb = crate::mesh::settings_for(&c, &b.space, b.device_level);
+        assert_eq!(sa, sb, "两个个人空间读出来的设置必须一样");
+        assert_eq!(sa.bind.as_deref(), Some("0.0.0.0:8788"));
+        assert_eq!(sa.token.as_deref(), Some("pw-device-1"));
+
+        // ② ⭐ 旧行**一个都没删** ✓（⭐ 可回退 ✓）＋ 旧值也**没被改写** ✓
+        assert_eq!(
+            crate::mesh::legacy_mesh_room_for(&c, "ws-me-1").as_deref(),
+            Some("room-1"),
+            "旧的逐空间那一份必须原样留着（迁移是加法）"
+        );
+        assert_eq!(crate::mesh::legacy_mesh_room_for(&c, "ws-me-2").as_deref(), Some("room-2"));
+
+        // ③ ⭐ 团队空间：⭐ 一个字节不变 ✗（它照旧用自己的 `space_id` ✓，⛔ 读不到设备级那一格 ✓）
+        let t = mesh_scope_at(&c, Some("ws-team")).expect("团队档必须解析得出");
+        assert!(!t.device_level, "团队档**不是**设备级");
+        assert_eq!(t.space, "org-x", "团队档照旧用 space_id");
+        let st = crate::mesh::settings_for(&c, &t.space, t.device_level);
+        assert_eq!(st.bind, None, "⛔ 设备级那一格不许漏进团队空间 ✗");
+        assert_eq!(st.token, None, "⛔ 同上 ✗");
+    }
+
+    /// ⭐ 判据②（方案 §5 ② ✓）：⭐ **迁移不丢** ✗ —— 多个个人空间各带不同暗号 ⇒
+    /// ⭐ 迁移后设备级那份 ＝ **第一个非空 ＋ 按 `ws_id` 定序** ✓（⭐ 无时间戳 ⇒ 只能这么定 ✓，方案 §8① ✓），
+    /// ⭐ 且**旧行仍在** ✓，⭐ 且**幂等** ✓（再跑一次一个字节不动 ✓）。
+    ///
+    /// **红读数（真变异）**：把迁移里"设备级已有值就跳过"去掉 ⇒ 第二次跑会**改写**手改过的值 ⇒ 本判据红 ✓。
+    #[test]
+    fn migration_takes_the_first_non_empty_by_ws_id_and_is_idempotent() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人 a');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-b', '个人 b');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-c', '个人 c');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', '');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-b', '', 'room-b');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-c', '', 'room-c');",
+        )
+        .unwrap();
+        let moved = crate::mesh::migrate_device_level_mesh(&c).expect("迁移不许报错");
+        assert!(moved.is_some(), "有旧值 ⇒ 迁移要真的动了");
+        assert_eq!(
+            crate::mesh::mesh_room_device(&c).as_deref(),
+            Some("room-b"),
+            "取第一个非空（ws-a 空、ws-b 有）＋ 按 ws_id 定序 ⇒ 结果确定"
+        );
+        assert_eq!(
+            crate::mesh::legacy_mesh_room_for(&c, "ws-c").as_deref(),
+            Some("room-c"),
+            "旧行一个不删"
+        );
+        // ⭐ 幂等 ✓：人后来手改过设备级那一份 ⇒ ⛔ 不许被旧值盖回去 ✗
+        crate::mesh::set_mesh_room_device(&c, Some("room-手改")).unwrap();
+        let again = crate::mesh::migrate_device_level_mesh(&c).expect("第二次也不许报错");
+        assert_eq!(
+            crate::mesh::mesh_room_device(&c).as_deref(),
+            Some("room-手改"),
+            "⛔ 幂等：设备级已经有值 ⇒ 一个字节都不许动 ✗"
+        );
+        assert!(again.is_none(), "没动就要如实回 None");
+    }
 
     /// 自带夹具（不依赖本文件既有的测试模块 ✓）：四张表够 `mesh_scope_at` 读 ✓。
     fn fixture() -> Connection {
