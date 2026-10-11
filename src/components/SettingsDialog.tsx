@@ -8,6 +8,7 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
+import { SyncSettingsPane } from "./SyncSettingsPane";
 import { SearchIcon } from "./icons";
 import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
