@@ -22,7 +22,7 @@ function closeOtherTreeMenus() {
   }
 }
 import { toast } from "../store/toast";
-import { pickAndImportOffice } from "../lib/office/pickOfficeFile";
+import { importOfficeAttachmentAsPage } from "../lib/office/pickOfficeFile";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
@@ -413,6 +413,32 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
             </span>
             <span className="menu-text">重命名</span>
           </button>
+          {/* ⭐ 2026-10-11（owner：「在 word 文档的右键菜单里面才有转成笔记」）：
+              ⭐ **只有 Word 附件才有这一项** ✗ —— 别的文件（图片 / PDF / md…）根本转不成笔记 ✓。
+              ⚠️ 直接读**附件自己的字节** ✓（⭐ 内容寻址的 `hash` ✓）⇒ ⭐ 不再弹"选文件"框 ✓
+                 （⭐ 用户已经指着那个文件了 ✓）。
+              ⚠️ 骨架挂在**这批附件所属的那个页面下面** ✓（⭐ 这个组件的 `folderId` ✓）。
+              ⚠️ 走的仍是与「从导入文件创建…」**同一条链** ✓（⭐ `importOfficeAttachmentAsPage` ✓）——
+                 ⛔ 这里不碰解析 / 落库 ✓（⭐ 那就是第二份真相源 ✓）。 */}
+          {/\.(docx|docm)$/i.test(menuFile.name) && (
+            <button
+              onClick={async () => {
+                closeMenu();
+                try {
+                  const outcome = await importOfficeAttachmentAsPage(menuFile, folderId);
+                  // ⭐ 成了 ⇒ 新页要**出现在树里** ✓（⛔ 不然用户以为没转成 ✓）
+                  if (outcome.ok) useNotes.getState().loadPages();
+                } catch (e) {
+                  toast(`转成笔记失败：${e}`, "error");
+                }
+              }}
+            >
+              <span className="menu-icon">
+                <MenuIcon d={ICON.fileDown} />
+              </span>
+              <span className="menu-text">转成笔记</span>
+            </button>
+          )}
           <button
             onClick={() => {
               closeMenu();
@@ -684,26 +710,6 @@ startRename();
                 }}
               >
                 <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
-              </button>
-              {/* ⭐ 2026-10-11（owner：「应用内右键导入笔记」）：⭐ 右键一个页面 ⇒ 把 Word 文档**转成笔记** ✓，
-                  新页挂在**你右键的这个页面下面** ✓（⭐ `parentId` 就是它的 id ✓）。
-                  ⚠️ 文案按 owner 2026-10-11 的原话是「转成笔记」✓（⭐ 与仓里「转为笔记」那一族同一个口径 ✓）。
-                  ⚠️ 走的是与「从导入文件创建…」**同一条链** ✓（⭐ `lib/office/pickOfficeFile.ts` ✓）——
-                  ⛔ 这里不碰解析 / 落库 ✓（⭐ 那就是第二份真相源 ✓，⭐ 本仓最忌这个 ✓）。 */}
-              <button
-                onClick={async () => {
-                  setMenuOpen(false);
-                  try {
-                    const outcome = await pickAndImportOffice(node.id);
-                    // ⭐ 成功了 ⇒ 新页要**出现在树里** ✓（⛔ 不然用户以为没导进来 ✓）
-                    if (outcome?.ok) useNotes.getState().loadPages();
-                  } catch (e) {
-                    toast(`导入失败：${e}`, "error");
-                  }
-                }}
-              >
-                <span className="menu-icon"><MenuIcon d={ICON.fileDown} /></span>
-                <span className="menu-text">转成笔记</span>
               </button>
               <button
                 onClick={() => {

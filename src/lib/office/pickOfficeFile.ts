@@ -10,28 +10,27 @@
 //
 // ⚠️ 失败**不静默** ✓：⭐ 结果一律弹一句人话 ✓（⭐ 且把 `outcome` 交回调用方 ✓，⭐ 便于判据断言 ✓）。
 
-import { platform } from "../platform";
+import { api } from "../api";
 import { toast } from "../../store/toast";
-import { importOfficeFromPath, realOfficePathDeps, type OfficePathOutcome } from "./pathImport";
-
-/** ⭐ 只认 Word（⭐ 第一期只有这条链 ✓）。 */
-export const OFFICE_PICK_FILTERS = [{ name: "Word 文档", extensions: ["docx", "docm"] }];
+import { importOfficeBytes } from "./importPipeline";
+import { realOfficePathDeps, type OfficePathOutcome } from "./pathImport";
 
 /**
- * ⭐ 选一个 Word 文件 ⇒ 导入成一页新笔记 ✓。
- * `parentId` 给非空 ⇒ ⭐ 新页挂在它下面 ✓（⭐ 右键某个页面时就是这个语义 ✓）。
- * ⭐ 用户取消 ⇒ 返回 `null` ✓（⭐ 不弹任何东西 —— ⭐ 取消不是错误 ✓）。
+ * ⭐ 2026-10-11（owner：「在 word 文档的右键菜单里面才有转成笔记」）：
+ * ⭐ **把已经入库的 Word 附件**直接转成一页笔记 ✓ —— 界面上用户已经指着那个文件了 ✓，
+ * ⚠️ 所以**不弹"选文件"框** ✗，⭐ 直接按它的内容指纹读字节 ✓（⭐ 内容寻址 ⇒ 不用管它落在哪个空间目录 ✓）。
+ *
+ * ⚠️ 与上面那条**共用** `importOfficeBytes` ＋ `realOfficePathDeps().importDeps` ✓ ——
+ *    ⛔ 这里不碰解析 / 落库 ✓（⭐ 第二份真相源 ✓）。
  */
-export async function pickAndImportOffice(parentId: string | null): Promise<OfficePathOutcome | null> {
-  const selected = await platform.dialog.open({
-    title: "选择 Word 文档（.docx）",
-    filters: OFFICE_PICK_FILTERS,
-    multiple: false,
-  });
-  if (!selected) return null;
-  const path = Array.isArray(selected) ? selected[0] : selected;
-  if (!path) return null;
-  const outcome = await importOfficeFromPath(String(path), parentId, realOfficePathDeps(parentId));
-  toast(outcome.ok ? "已导入为新笔记" : `没导入：${outcome.message}`, outcome.ok ? "success" : "error");
+export async function importOfficeAttachmentAsPage(
+  attachment: { hash: string; name: string },
+  parentId: string | null,
+): Promise<OfficePathOutcome> {
+  const deps = realOfficePathDeps(parentId);
+  const bytes = new Uint8Array(await api.readAttachmentBytes(attachment.hash));
+  const result = await importOfficeBytes(bytes, attachment.name, parentId, deps.importDeps);
+  const outcome: OfficePathOutcome = result.ok ? { ...result, attachmentName: attachment.name } : result;
+  toast(outcome.ok ? "已转成笔记" : `没转成：${outcome.message}`, outcome.ok ? "success" : "error");
   return outcome;
 }
