@@ -906,7 +906,10 @@ fn settings_for_profile(
     // ⚠️ 解析不出来（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**回落到 `space_id` ✓
     //   （同模块判据 ② 把这条**钉住** ✓；它顺带暴露的"空键假显示为开着"属另一笔 ✓ 已记台账 ✓）。
     let space = resolved_space(c, space_id, ws_id);
-    crate::mesh::settings(c, &space)
+    // ⭐ 2026-10-11（设备级 ✓）：⭐ 个人档 ⇒ 设置读"空 space"那一格 ✓。
+    //   ⚠️ 判定用**同一句谓词**（`space_id` 空 ＝ 个人档 ✓ —— 与 `sync::mesh_scope_at` 那句逐字相同 ✓），
+    //   ⛔ 不新造一处判定 ✗（Lead 2026-10-11 的口径 ✓）。
+    crate::mesh::settings_for(c, &space, space_id.trim().is_empty())
 }
 
 /// ⭐ **2026-10-08 第二笔**：**窗口该服务/宣告哪个空间** —— 与写路径（`sync::mesh_scope`）同一条口径 ✓：
@@ -926,6 +929,31 @@ pub(crate) fn window_serve_space(c: &rusqlite::Connection, space_id: &str, ws_id
 #[cfg(test)]
 mod mesh_serve_space_tests {
     use super::*;
+
+    /// ⭐ 判据②（Lead 2026-10-11 点名 ✓）：⭐ **这一处也要看得见设备级的设置** ✗ ——
+    /// `settings_for_profile`（`lan_state.rs:909` 那一处 ✓）先 `resolved_space` 再按**那个空间**读设置 ✓
+    /// ⇒ ⭐ 设备级下个人档解析出来的是**设备级暗号** ✓，而设置住在"空 space"那一格 ✗
+    /// ⇒ ⭐ 这里读到 `None` ✗（⭐ 与判据⑥ 同一族 ✓）。
+    ///
+    /// ⚠️ **先看它红** ✗ —— ⛔ 实现没动 ✓。
+    #[test]
+    fn settings_for_profile_sees_the_device_level_settings() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) \
+             VALUES ('ws-personal', '', 'room-a');",
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
+
+        let got = settings_for_profile(&c, "", "ws-personal");
+        assert_eq!(
+            got.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "⛔ 这一处（`lan_state.rs:909`）在设备级下也必须看得见监听地址 ✗"
+        );
+    }
 
     fn fixture() -> rusqlite::Connection {
         let c = rusqlite::Connection::open_in_memory().unwrap();

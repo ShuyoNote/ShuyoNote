@@ -4192,7 +4192,7 @@ pub(crate) fn mesh_config_state_at(
     {
         asked
     } else {
-        mesh_space_in_use(c).unwrap_or(asked)
+        mesh_space_in_use(c, device_level).unwrap_or(asked)
     };
     // ⚠️ 解析出来是空的（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**：当"没配" ✓。
     //   ⛔ 不许去读 `mesh_bind:` 那个空键 —— 那是**写入路径永远写不出来**的残留 ✗（会让"没配的"空间假显示为开着 ✓）。
@@ -4366,7 +4366,7 @@ mod mesh_config_state_tests {
 ///
 /// ⚠️ 三条边界：① **只看活空间**（与 `bound_profiles` 同一条 `EXISTS(未删除)` ✓）；
 /// ② 解析不出来的行**跳过** ✓；③ 谁都没配 ⇒ `None` ⇒ 调用方回落"关着" ✓（放宽 ≠ 乱认 ✓）。
-fn mesh_space_in_use(c: &Connection) -> Option<String> {
+fn mesh_space_in_use(c: &Connection, device_level: bool) -> Option<String> {
     let mut stmt = c
         .prepare(
             "SELECT p.space_id, p.server_url, p.ws_id FROM sync_profiles p
@@ -4386,7 +4386,9 @@ fn mesh_space_in_use(c: &Connection) -> Option<String> {
         if served.trim().is_empty() {
             return None;
         }
-        crate::mesh::settings(c, &served).bind.is_some().then_some(served)
+        // ⭐ 2026-10-11（设备级 ✓）：⭐ `device_level` 由调用方传进来 ✓（⛔ 不在这里反推 ✗ —— 那是第二处判定 ✓）。
+            //   ⚠️ **返回值一个字节都不换** ✗：它仍是"⭐ 给门用的空间名 ✗"（＝ 暗号 ✓）✓。
+            crate::mesh::settings_for(c, &served, device_level).bind.is_some().then_some(served)
     })
 }
 
@@ -4552,6 +4554,95 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
 #[cfg(test)]
 mod r146_mesh_scope_tests {
     use super::*;
+
+    /// ⭐ 判据⑧（Lead 2026-10-11 点名 ✓，症状正是他猜的那个 ✓）：
+    /// ⭐ **设备级配了绑定 ⇒ 个人空间仍然被服务** ✗。
+    ///
+    /// `mesh_space_in_use`（`sync.rs:4360` 附近 ✓）拿"⭐ **这个空间**有没有 bind ✗"决定
+    /// ⭐ **要不要服务这个空间** ✗ ⇒ 设备级下个人档的 bind 在"空 space"那一格 ✓
+    /// ⇒ ⭐ 读到 `None` ⇒ **个人空间整个不被服务** ✗（⭐ 症状＝"个人空间那边完全没动静"✓）。
+    ///
+    /// ⚠️ **先看它红** ✗ —— ⛔ 实现没动 ✓。
+    #[test]
+    fn a_personal_space_is_still_served_when_the_bind_is_device_level() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-me', '个人');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me', '', 'room-dev');",
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-dev")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
+
+        assert_eq!(
+            mesh_space_in_use(&c, true).as_deref(),
+            Some("room-dev"),
+            "⛔ 设备级配了绑定 ⇒ 个人空间必须**仍然被服务** ✗（否则它整个不被服务，而且不报错）"
+        );
+    }
+
+    /// ⭐ 判据⑨（Lead 2026-10-11 点名 ✓，⭐ 这条尤其要 ✓）：
+    /// ⭐ 个人档（设备级）下 ⭐ **"一键信任"读得到令牌** ✗ —— 否则它在设备级下会**静默失灵** ✓
+    /// （⭐ 与判据⑥ 一模一样的病 ✓）。
+    ///
+    /// ⚠️ ⭐ **本条绿的「原因」** ✗：⭐ 上一轮**已经**把这两处 token 读改成了
+    /// `settings_for(…, device_level)` ✓（当时自招"**只改了、没判据** ✗"✓）
+    /// ⇒ ⭐ 所以它**不是**抓到新东西的判据 ✗，⭐ **它的职责是防回归** ✓
+    /// （⛔ 下一个人别以为它发现了什么 ✗；⭐ 它现在也**真跑**了一遍采纳 ⇒ 那一刀有读数了 ✓）。
+    #[test]
+    fn one_click_trust_reads_the_token_from_the_device_level_slot() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-me', '个人');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me', '', 'room-dev');",
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-dev")).unwrap();
+        // ⭐ 令牌住在**设备级那一格** ✓（个人档的令牌就是设备级 ✓）
+        crate::mesh::set_mesh_token_for(&c, "", true, Some("pw-device-1")).unwrap();
+
+        let scope = mesh_scope_at(&c, Some("ws-me")).expect("个人档可解析");
+        assert!(scope.device_level, "个人档要认成设备级");
+        // ① 发起侧读的那一处（`mesh_trust.rs` 用的是同一句 ✓）
+        assert_eq!(
+            crate::mesh::settings_for(&c, &scope.space, scope.device_level).token.as_deref(),
+            Some("pw-device-1"),
+            "⛔ 发起侧（一键信任）必须读得到设备级那一格的令牌 ✗"
+        );
+        // ② 采纳那一侧**真跑一遍** ✓（`adopt_pending_trust_asks` 收 `device_level` ✓）
+        crate::lan_state::with_trust(|h| {
+            h.clear();
+            h.note_ask("dev-B", 9_000_000, crate::pairing_trust::TRUST_TTL_MS);
+        });
+        let adopted = adopt_pending_trust_asks(
+            &c,
+            &scope.space,
+            "me-dev",
+            &[crate::lan::Peer {
+                announce: crate::lan::LanAnnounce {
+                    trust_ask: String::new(),
+                    trust_secret: String::new(),
+                    v: crate::lan::WIRE_VERSION,
+                    device_id: "dev-B".to_string(),
+                    device_name: "dev-B 的机器".to_string(),
+                    short_id: String::new(),
+                    hub_base: Some("http://192.168.1.6:8788".to_string()),
+                    hub_spaces: vec![scope.space.clone()],
+                    fp: "fp".into(),
+                },
+                addr: "192.168.1.9".into(),
+                seen_at_ms: 0,
+            }],
+            9_000_001,
+            scope.device_level,
+        );
+        assert_eq!(
+            adopted,
+            vec!["dev-B".to_string()],
+            "⛔ 采纳那一侧也要读得到设备级那一格的令牌 ✗（否则一键信任静默失灵）"
+        );
+        crate::lan_state::with_trust(|h| h.clear());
+    }
 
     /// ⭐⭐ 判据⑤（⭐ **只加判据、一行实现没动** ✗）：⭐ **一个没有档案行的团队空间，它的键不许被搬** ✗。
     ///
