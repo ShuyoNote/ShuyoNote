@@ -90,6 +90,95 @@ pub fn confirm_generates_secret(role: TrustRole) -> bool {
     matches!(role, TrustRole::Responder)
 }
 
+/// ⭐ 握手的**默认有效期**（⭐ 毫秒 ✓）—— ⭐ 四个广播周期（⭐ 广播 30 秒一轮 ✓）。
+/// ⚠️ 为什么要过期 ✗：⭐ 一次没走完的握手（⭐ 对方关机了 ✓）不许**永远**挂在广播里 ✓ ——
+/// ⭐ 那既会一直暴露 `trust_secret` ✓，⭐ 也会让界面一直显示"⭐ 有人在等你 ✗"✓。
+pub const TRUST_TTL_MS: i64 = 120_000;
+
+/// ⭐ 一次握手里**本机这边要记住的东西** ✗（⭐ 命令层只搬它 ✓，⛔ 判定仍在上面那几个纯函数里 ✓）。
+///
+/// ⚠️ `peer_device_id` / `asked_by` 都是**内部标识** ✓ ⇒ ⛔ 不许进用户可见的句子 ✓
+/// （`INV-UI-copy-no-internal-ids` ✓；⭐ 界面上要显示"⭐ 是谁 ✗"就用 ⭐ 设备名 ＋ ⭐ 短标识 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TrustHandshake {
+    /// ⭐ **我要信任的那一台** ✓（⭐ 空 ＝ ⭐ 这次没发问 ✓）。
+    peer_device_id: String,
+    /// ⭐ 我发出去的握手串 ✓（⭐ 空 ＝ ⭐ 我还没发问 ✓）。
+    ask: String,
+    /// ⭐ **是谁在问我** ✓（⭐ 空 ＝ ⭐ 没人问我 ✓）。
+    asked_by: String,
+    /// ⭐ **我给人家的那把** ✓（⭐ 只有被问的那台、⭐ 人点过之后才非空 ✓）。
+    secret_for: String,
+    /// ⭐ 什么时候到期（⭐ 毫秒 ✓，⭐ 0 ＝ ⭐ 没有进行中的东西 ✓）。
+    expires_at_ms: i64,
+}
+
+impl TrustHandshake {
+    /// ⭐ 本机点「信任这台设备」⇒ ⭐ 记下发问（⭐ 等对方确认 ✓）。
+    pub fn begin(&mut self, peer_device_id: &str, ask: &str, now_ms: i64, ttl_ms: i64) {
+        self.clear();
+        self.peer_device_id = peer_device_id.to_string();
+        self.ask = ask.to_string();
+        self.expires_at_ms = now_ms + ttl_ms;
+    }
+
+    /// ⭐ 收到对方的「想信任」⇒ ⭐ 记下来（⭐ ⛔ 不因此建立信任 ✓，⭐ 要本机的人再点 ✓）。
+    pub fn note_ask(&mut self, peer_device_id: &str, now_ms: i64, ttl_ms: i64) {
+        self.clear();
+        self.asked_by = peer_device_id.to_string();
+        self.expires_at_ms = now_ms + ttl_ms;
+    }
+
+    /// ⭐ 本机的人点了「信任」⇒ ⭐ 记住**要发出去的那把** ✓（⭐ 由被问的那台生成 ✓）。
+    /// ⭐ 返回 `false` ＝ ⭐ 这次不是"⭐ 被问的那台该确认 ✗"（⭐ 比如没人问过我 ✓）⇒ ⭐ 调用方如实报错 ✓。
+    pub fn confirm(
+        &mut self,
+        peer_device_id: &str,
+        secret: &str,
+        now_ms: i64,
+        ttl_ms: i64,
+    ) -> bool {
+        if self.asked_by.is_empty() || self.asked_by != peer_device_id {
+            return false;
+        }
+        self.secret_for = secret.to_string();
+        self.expires_at_ms = now_ms + ttl_ms;
+        true
+    }
+
+    /// ⭐ 这条公告该带上的 `trust_ask` ✗（⭐ 过期 ⇒ ⭐ 一个字节都不带 ✓）。
+    pub fn outbound_ask(&self, now_ms: i64) -> &str {
+        if self.is_expired(now_ms) {
+            return "";
+        }
+        &self.ask
+    }
+
+    /// ⭐ 这条公告该带上的 `trust_secret` ✗（⭐ 同上 ✓；⭐ 没确认过 ⇒ ⭐ 空串 ✓）。
+    pub fn outbound_secret(&self, now_ms: i64) -> &str {
+        if self.is_expired(now_ms) {
+            return "";
+        }
+        &self.secret_for
+    }
+
+    /// ⭐ 过期了没 ✓（⭐ `expires_at_ms == 0` ＝ ⭐ 没有任何进行中的东西 ⇒ ⭐ 算"⭐ 没有 ✗"✓，
+    /// ⭐ 不是"⭐ 过期 ✗" ✓ —— ⭐ 两者都会让出站那两格为空 ✓，⭐ 但语义不同 ✓）。
+    pub fn is_expired(&self, now_ms: i64) -> bool {
+        self.expires_at_ms != 0 && now_ms >= self.expires_at_ms
+    }
+
+    /// ⭐ 有没有进行中的东西 ✓（⭐ 过期的不算 ✓）。
+    pub fn is_active(&self, now_ms: i64) -> bool {
+        self.expires_at_ms != 0 && !self.is_expired(now_ms)
+    }
+
+    /// ⭐ 清空（⭐ 用户点「先不」／⭐ 走完／⭐ 过期后收尾 ✓）。
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// ⭐ 这次握手能不能开始 ✗ —— 不能就**说清为什么** ✓（⛔ 不静默失败 ✗）。
 /// ⚠️ 三条判据各自的**说法**要能直接给用户看 ✓（⭐ 与界面上那几行提示同源 ✓）。
 pub fn trust_refusal(
@@ -219,5 +308,75 @@ mod tests {
             !confirm_generates_secret(TrustRole::Asker),
             "发问的那台不生成：否则两边各写一把，谁也不知道对方那把"
         );
+    }
+
+    /// ⭐ 本机发问 ⇒ ⭐ 出站只有 ask ✓，⛔ 一个字节的 secret 都不许有 ✓。
+    #[test]
+    fn begin_publishes_only_the_ask() {
+        let mut h = TrustHandshake::default();
+        h.begin("dev-b", "ask-1", 1_000, TRUST_TTL_MS);
+        assert_eq!(h.outbound_ask(1_500), "ask-1");
+        assert_eq!(h.outbound_secret(1_500), "", "发问的那台永远不带 secret");
+        assert!(h.is_active(1_500));
+        assert!(!h.is_expired(1_500));
+    }
+
+    /// ⭐ 收到别人的问 ⇒ ⭐ **只记账** ✗：⭐ 在**本机的人点过之前**，⭐ 出站不许有 secret ✓。
+    /// ⭐ 这是本模块最要紧的一条 ✗ —— ⭐ 它保证"⭐ 密钥只在人点过之后才出线 ✗" ✓。
+    #[test]
+    fn note_ask_never_publishes_a_secret_before_the_human_confirms() {
+        let mut h = TrustHandshake::default();
+        h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        assert_eq!(h.outbound_secret(1_500), "", "没人点过 ⇒ 不许有 secret 出线");
+        assert_eq!(h.outbound_ask(1_500), "", "被问的那台不发问");
+        assert!(h.is_active(1_500));
+        // ⭐ 本机的人点过之后 ⇒ ⭐ 才有 ✓。
+        assert!(h.confirm("dev-a", "sek-1", 2_000, TRUST_TTL_MS));
+        assert_eq!(h.outbound_secret(2_500), "sek-1");
+    }
+
+    /// ⭐ `confirm` 只认**问过我的那一台** ✗（⭐ 认错人就不写、⭐ 并如实回 `false` ✓）。
+    #[test]
+    fn confirm_refuses_a_peer_that_never_asked() {
+        let mut h = TrustHandshake::default();
+        h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        assert!(!h.confirm("dev-z", "sek-x", 1_500, TRUST_TTL_MS), "没问过我的一台不许确认");
+        assert_eq!(h.outbound_secret(1_600), "");
+        // ⭐ 根本没人问过 ⇒ ⭐ 也不能确认 ✓。
+        let mut empty = TrustHandshake::default();
+        assert!(!empty.confirm("dev-a", "sek-y", 1_500, TRUST_TTL_MS));
+        assert_eq!(empty.outbound_secret(1_600), "");
+    }
+
+    /// ⭐ 过期 ⇒ ⭐ 两格都空 ✓（⭐ 一个没走完的握手不许永远挂在广播里 ✓）。
+    #[test]
+    fn expiry_stops_publishing_both_fields() {
+        let mut h = TrustHandshake::default();
+        h.begin("dev-b", "ask-1", 1_000, TRUST_TTL_MS);
+        let after = 1_000 + TRUST_TTL_MS;
+        assert!(h.is_expired(after), "到点就算过期");
+        assert!(!h.is_active(after));
+        assert_eq!(h.outbound_ask(after), "", "过期后不许再带 ask");
+        let mut g = TrustHandshake::default();
+        g.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        assert!(g.confirm("dev-a", "sek-1", 1_100, TRUST_TTL_MS));
+        assert_eq!(g.outbound_secret(1_100 + TRUST_TTL_MS), "", "过期后不许再带 secret");
+        // ⭐ 「⭐ 从来没有过 ✗」（⭐ 0 ✓）⭐ 不是"⭐ 过期 ✗" ✓ —— ⭐ 语义不同 ✓，⭐ 别混 ✓。
+        let idle = TrustHandshake::default();
+        assert!(!idle.is_expired(9_999_999), "没有进行中的东西 ≠ 过期");
+        assert!(!idle.is_active(9_999_999));
+    }
+
+    /// ⭐ 「⭐ 先不 ✗」／⭐ 走完 ⇒ ⭐ 清干净 ✓，⭐ 不留半截 ✓。
+    #[test]
+    fn clear_leaves_nothing_behind() {
+        let mut h = TrustHandshake::default();
+        h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
+        assert!(h.confirm("dev-a", "sek-1", 1_100, TRUST_TTL_MS));
+        h.clear();
+        assert_eq!(h, TrustHandshake::default());
+        assert_eq!(h.outbound_secret(1_200), "");
+        assert_eq!(h.outbound_ask(1_200), "");
+        assert!(!h.is_active(1_200));
     }
 }
