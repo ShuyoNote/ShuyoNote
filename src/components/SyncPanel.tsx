@@ -2139,7 +2139,18 @@ export function SyncPanel() {
                             {duNote && <div className="sync-hint">{duNote}</div>}
                           </div>
                         )}
-                        <div className="sync-nearby" data-testid="device-pair">
+                        {/* ⭐ 这一步的提示留在**折外** ✗ —— 「附近的设备」里点「信任这台设备」会写进
+                            `dpNote` ✓，⭐ 而它要落在**你看得见的地方** ✓（⛔ 不能藏在刚折起来的那层里 ✓）。 */}
+                        {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
+                        {/* ⭐ 2026-10-11（owner：「参照效果图实现」＋「把同步面板做好」）：⭐ 效果图把"码"收进
+                            **「严格模式（高级）」** ✗ ⇒ ⭐ 主路径（⭐ 附近设备 ＋ ⭐ 信任这台设备 ✓）**不再出现任何码** ✓。
+                            ⚠️ 折起来的是**同一套机制** ✗，⛔ 机制一个字没动 ✓（⭐ 仍是 `device_pair_export` ／ `import` ✓）：
+                               ⭐ 两台不在一起（⭐ 不在同一网络 ✓）时这条路照旧可用 ✓ ——
+                               ⭐ 它只是**不再是第一眼看到的东西** ✓（⭐ 效果图上就是这么摆的 ✓）。
+                            ⚠️ 不给 `open` ⇒ ⭐ 默认**收起** ✓（⭐ 收的正是那两块码 ✓）。 */}
+                        <details className="sync-advanced" data-testid="device-pair-advanced">
+                          <summary>严格模式（高级）—— 两台设备不在同一网络时用这条（要抄一串码）</summary>
+                          <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
                             【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
                             ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
@@ -2237,8 +2248,8 @@ export function SyncPanel() {
                             </>
                           )}
                           {dpOutcome === "ok" && <div className="sync-hint" data-testid="dp-ok">已配对 ✓</div>}
-                          {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
-                        </div>
+                          </div>
+                        </details>
                       </div>
                     </div>
                   </details>
