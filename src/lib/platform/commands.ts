@@ -1291,6 +1291,32 @@ export interface CommandMap {
 
   // ---- Storage / Versions / Backup / File ----
   storage_stats: { args: undefined; result: StorageStats };
+  // ⭐ 2026-10-11：**只读**附件引用体检 —— ⭐ 报表，⛔ 不删不改 ✓。
+  //    ⚠️ 它与"删东西的闸"（`cleanup_orphan_attachments`）**故意不同**：⭐ 读不到的空间**也要报出来** ✓，
+  //    ⛔ 不会因为某个空间锁着就整体失败 ✓（⭐ 因为它的用途就是"⭐ 看清 ✗"，不是"⭐ 动手 ✗"✓）。
+  audit_attachment_refs: {
+    args: undefined;
+    // ⚠️ 字段名**必须是下划线**（⭐ 与 Rust 那边逐字对上 ✓ —— 本仓其它命令也是这个口径，
+    //    例如 `encrypted_on_disk` ✓；⛔ 别在 TS 这边改成驼峰 ✗，那条对不上不会报错、只会全是 undefined ✗）
+    result: {
+      spaces: {
+        name: string;
+        encrypted: boolean;
+        in_use: boolean;
+        readable: boolean;
+        referenced: number;
+        note: string;
+      }[];
+      legacy_files: number;
+      legacy_referenced: number;
+      legacy_orphan: number;
+      /** ⭐ 要害：加密空间引用到的「老布局明文」（若为空 ⇒ ⭐ 这条口子没被踩 ✓） */
+      encrypted_refs_legacy: string[];
+      plain_refs_legacy: number;
+      /** ⚠️ 读不到的空间 —— 它们的引用**未知**，⛔ 不许读成「没有」 ✓ */
+      unreadable: string[];
+    };
+  };
   clear_trash: { args: undefined; result: number };
   cleanup_orphan_attachments: { args: undefined; result: number };
   cleanup_orphan_derived: { args: undefined; result: number };

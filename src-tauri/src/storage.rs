@@ -40,6 +40,146 @@ fn dir_size(dir: &Path) -> DirSize {
     out
 }
 
+/// ⭐ 2026-10-11（owner 要「把加密空间有没有引用老明文」说死）：⭐ **只读**附件引用体检 ✓。
+///
+/// ⛔ 为什么**不复用** `scan_referenced_hashes` ✗：⭐ 那条是**删东西的闸** —— 任何空间读不到就**整体失败**
+/// （⭐ 那是对的 ✓，⭐ 猜错会**真删** ✓）。⭐ 而体检要的恰恰相反：⭐ **读不到也要把话说出来** ✓。
+/// ⇒ ⭐ 所以这里是**宽松版**：⭐ 逐空间记「读到几处引用」／「读不到，因为…」✓，⛔ 不挡任何人 ✓。
+///
+/// ⚠️ **如实**：它会走应用平时"打开空间"那条路（`open_space_conn` ✓ ⇒ 含**幂等迁移** ✓），
+///    但 ⛔ 不删、⛔ 不搬、⛔ 不改任何附件字节 ✓ —— 它是一份**报表** ✓。
+#[derive(Serialize, Clone)]
+pub struct AttachmentAuditSpace {
+    pub name: String,
+    pub encrypted: bool,
+    pub in_use: bool,
+    pub readable: bool,
+    pub referenced: i64,
+    pub note: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AttachmentAudit {
+    pub spaces: Vec<AttachmentAuditSpace>,
+    pub legacy_files: i64,
+    pub legacy_referenced: i64,
+    pub legacy_orphan: i64,
+    /// ⭐ **要害**：加密空间引用到的「老布局」文件（每项 `空间名 ／ hash 前 12 位 ／ 字节`）
+    pub encrypted_refs_legacy: Vec<String>,
+    /// 明文空间引用到的老布局文件处数
+    pub plain_refs_legacy: i64,
+    /// 读不到的空间 —— ⚠️ 它们的引用**未知** ✓，⛔ 不许写成"没有" ✓
+    pub unreadable: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn audit_attachment_refs(app: tauri::AppHandle, db: State<'_, Db>) -> Result<AttachmentAudit, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let att_root = app_data_dir.join("attachments");
+
+    // ① 空间清单（id ／ 名字 ／ 加密 ／ 是否在用）
+    let listed: Vec<(String, String, bool, bool)> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut stmt = c
+            .prepare("SELECT id, name, encrypted, deleted_at FROM meta.workspaces")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                    r.get::<_, Option<i64>>(3)?.is_none(),
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.flatten().collect()
+    };
+
+    // ② 逐空间读它引用的 hash（⭐ 宽松：读不到只记原因 ✓）
+    let mut spaces = Vec::new();
+    let mut refs: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut unreadable = Vec::new();
+    for (sid, name, encrypted, in_use) in &listed {
+        match crate::db::open_space_conn(sid) {
+            Ok(c) => {
+                let mut n: i64 = 0;
+                let mut stmt = c.prepare("SELECT DISTINCT hash FROM attachments").map_err(|e| e.to_string())?;
+                let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+                for h in rows.flatten() {
+                    if h.is_empty() {
+                        continue;
+                    }
+                    refs.entry(h).or_default().push(name.clone());
+                    n += 1;
+                }
+                spaces.push(AttachmentAuditSpace {
+                    name: name.clone(),
+                    encrypted: *encrypted,
+                    in_use: *in_use,
+                    readable: true,
+                    referenced: n,
+                    note: String::new(),
+                });
+            }
+            Err(e) => {
+                let note = format!("读不到：{e}");
+                unreadable.push(format!("「{name}」：{note}"));
+                spaces.push(AttachmentAuditSpace {
+                    name: name.clone(),
+                    encrypted: *encrypted,
+                    in_use: *in_use,
+                    readable: false,
+                    referenced: 0,
+                    note,
+                });
+            }
+        }
+    }
+
+    // ③ 老布局文件 ＝ 附件树里**不属于任何空间目录**的那些（⚠️ 跳过 `.part` 临时件 ✓）
+    let mut legacy = Vec::new();
+    for p in crate::attachments::walk_attachment_files(&att_root) {
+        if crate::space_crypto::space_id_from_path(&p).is_some() {
+            continue;
+        }
+        if p.extension().map(|e| e == "part").unwrap_or(false) {
+            continue;
+        }
+        let hash = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        legacy.push((hash, bytes));
+    }
+
+    let encrypted_names: std::collections::HashSet<String> =
+        listed.iter().filter(|s| s.2).map(|s| s.1.clone()).collect();
+    let mut legacy_referenced = 0i64;
+    let mut plain_refs_legacy = 0i64;
+    let mut encrypted_refs_legacy = Vec::new();
+    for (hash, bytes) in &legacy {
+        if let Some(who) = refs.get(hash) {
+            legacy_referenced += 1;
+            for name in who {
+                if encrypted_names.contains(name) {
+                    encrypted_refs_legacy.push(format!("「{name}」／{}／{} B", &hash[..hash.len().min(12)], bytes));
+                } else {
+                    plain_refs_legacy += 1;
+                }
+            }
+        }
+    }
+
+    Ok(AttachmentAudit {
+        spaces,
+        legacy_files: legacy.len() as i64,
+        legacy_referenced,
+        legacy_orphan: legacy.len() as i64 - legacy_referenced,
+        encrypted_refs_legacy,
+        plain_refs_legacy,
+        unreadable,
+    })
+}
+
 /// M14.1 — Storage breakdown for the space-management panel.
 #[tauri::command]
 pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<StorageStats, String> {

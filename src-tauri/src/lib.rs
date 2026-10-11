@@ -687,6 +687,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             abilities::save_ability_pack,
             storage::cleanup_orphan_derived,
+            // ⭐ 2026-10-11：只读附件引用体检（⭐ 报表，⛔ 不删不改 ✓）—— 用来把"加密空间有没有引用老明文"说死 ✓
+            storage::audit_attachment_refs,
             extract_kz::extract_with_kreuzberg,
             commands::list_pages,
             commands::list_workspace_pages,
