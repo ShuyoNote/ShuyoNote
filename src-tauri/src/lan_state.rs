@@ -1819,12 +1819,12 @@ mod short_id_tests {
             vec!["dev-b".to_string()],
             "带 ask 的公告必须在核心里看得见（否则'点了没反应'）"
         );
-        // ⚠️ ⭐ **看到 ≠ 信任** ✗：记账这一下**不许**把状态推成 `Trusted` ✓
-        //    （甲 是"**采纳**"那一步才推 ✓ —— 见 `sync::adopt_pending_trust_asks` ✓）。
+        // ⭐⭐ 甲（owner 2026-10-11 二次拍板「一端点就通」）：⭐ **看到就是采纳** ✗ ⇒ ⭐ 这里就该是 `Trusted` ✓。
+        //    ⚠️ 原先那句"⭐ 看到 ≠ 信任 ✗、⭐ 记账不许推成 Trusted ✓"**已被甲取代** ✗ ✓。
         assert_eq!(
             with_trust(|h| h.state()),
-            crate::pairing_trust::TrustState::RemotePending,
-            "收到 ask 只许记成「有人在问」（⛔ 不许直接 Trusted ✗）"
+            crate::pairing_trust::TrustState::Trusted,
+            "甲：收到 ask ⇒ 自动采纳 ⇒ 直接信（⛔ 不要人再点一下）"
         );
         with_trust(|h| h.clear());
     }

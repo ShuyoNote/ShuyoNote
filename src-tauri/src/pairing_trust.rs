@@ -35,27 +35,25 @@ pub enum TrustState {
 }
 
 /// ⭐ 本机点「信任这台设备」之后的状态 ✓。
-/// ⚠️ ⭐ 只有**已经知道对方点过**（`RemotePending` ✓）时才进 `Trusted` ✗ ——
-/// ⭐ 单方面点完永远不算 ✓（⭐ 判据钉这条 ✓）。
+/// ⭐⭐ **甲（owner 2026-10-11 二次拍板，逐字「甲：一端点就通」）** ✗：⭐ 点一下**就算通** ✓ ——
+/// ⚠️ 原先那句"⭐ 只有已经知道对方点过才进 `Trusted` ✗、⭐ 单方面点完永远不算 ✗"**已被取代** ✗
+/// （⭐ 代价当初记在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓：⭐ 兜底只剩
+/// 「⭐ 身份在信任前可见 ✓」＋「⭐ 逐台可撤回 ✓」✓ —— ⛔ 不是悄悄消失的 ✗）。
 pub fn state_after_local_confirm(current: TrustState) -> TrustState {
     match current {
-        TrustState::Idle => TrustState::WaitingRemote,
-        // ⭐ 对方已经点过 ⇒ ⭐ 这一下就是"⭐ 两端都点过 ✗" ✓。
-        TrustState::RemotePending => TrustState::Trusted,
-        // ⭐ 再点不推进（⭐ 幂等 ✓）：⭐ 免得「⭐ 连点两下 ✗」被读成「⭐ 两端都点了 ✗」。
-        TrustState::WaitingRemote => TrustState::WaitingRemote,
+        // ⭐ 甲：本机这一点就够 ⇒ 直接通 ✓（⭐ 再点是**幂等** ✓，⛔ 不许来回抖）。
+        TrustState::Idle | TrustState::WaitingRemote | TrustState::RemotePending => TrustState::Trusted,
         TrustState::Trusted => TrustState::Trusted,
     }
 }
 
-/// ⭐ 收到对方的确认（⭐ 它也在它自己屏幕上点了 ✓）之后的状态 ✓。
+/// ⭐ 对方那边动了（⭐ 它点了 ／ ⭐ 它发来「我想信任你」✓）之后的状态 ✓。
+/// ⭐ 甲 之下**这一侧自动采纳** ✗ ⇒ ⭐ 直接通 ✓（⭐ "不问那台的人" ✓）。
 pub fn state_after_remote_confirm(current: TrustState) -> TrustState {
     match current {
-        // ⚠️ ⭐ 只是**记下来** ✗：⭐ 对方单方面说「⭐ 我点了 ✗」**不许**建立信任 ✓
-        //    （⭐ 否则对方一台就能把关系建起来 ✓ ⇒ ⭐ 退化成「⭐ 谁先喊谁算数 ✗」✓）。
-        TrustState::Idle => TrustState::RemotePending,
-        TrustState::WaitingRemote | TrustState::Trusted => TrustState::Trusted,
-        TrustState::RemotePending => TrustState::RemotePending,
+        // ⭐ 甲：对面动过 ⇒ 自动采纳 ⇒ 直接信 ✓（⭐ 原先"⭐ 只记成 `RemotePending` ✗"已取代 ✓）。
+        TrustState::Idle | TrustState::WaitingRemote | TrustState::RemotePending => TrustState::Trusted,
+        TrustState::Trusted => TrustState::Trusted,
     }
 }
 
@@ -73,14 +71,14 @@ pub enum TrustRole {
     Responder,
 }
 
-/// ⭐ 看到对方的「想信任」之后的状态 ✓（⭐ 这一台就是**被问的那台** ✓）。
-/// ⚠️ ⭐ **看到 ≠ 同意** ✗：⭐ 只记成 `RemotePending` ✓ —— ⭐ 一定要**本机的人**再点一下 ✓
-/// （⭐ 只看到一条广播就建立信任 ＝ ⭐ 同网段谁都能塞进来 ✓ ⇒ ⭐ 那正是 T1 ✓）。
+/// ⭐ 看到对方的「想信任」之后的状态 ✓。
+/// ⭐⭐ **甲** ✗：⭐ 看到就是采纳 ⇒ ⭐ 直接通 ✓（⭐ "不问那台的人" ✓）。
+/// ⚠️ 原先那句"⭐ 看到 ≠ 同意 ✗、⭐ 一定要本机的人再点一下 ✓"**已被 owner 的甲取代** ✗ ✓。
 pub fn state_after_ask_seen(current: TrustState) -> TrustState {
     match current {
-        TrustState::Idle => TrustState::RemotePending,
-        // ⭐ 已经点过／已经信任 ⇒ ⭐ 不因"⭐ 又收到一遍广播 ✗"而回退 ✓（⭐ 广播是周期性的 ✓）。
-        other => other,
+        TrustState::Idle | TrustState::WaitingRemote | TrustState::RemotePending => TrustState::Trusted,
+        // ⭐ 已经信任 ⇒ ⭐ 不因"⭐ 又收到一遍广播 ✗"而变化 ✓（⭐ 广播是周期性的 ✓）。
+        TrustState::Trusted => TrustState::Trusted,
     }
 }
 
@@ -143,12 +141,16 @@ pub struct TrustHandshake {
 }
 
 impl TrustHandshake {
-    /// ⭐ 本机点「信任这台设备」⇒ ⭐ 记下发问（⭐ 等对方确认 ✓）。
+    /// ⭐ 本机点「信任这台设备」⇒ ⭐ 记下发问 ✓ ＋ ⭐ **把本机状态推到 `Trusted`** ✗。
+    /// ⚠️ 甲 之下"⭐ 点了 ✗"和"⭐ 通了 ✗"是**同一下** ✓（⭐ 登记对面那一半在同一次点击里由
+    /// `sync::remember_peer_card` 做完 ✓）⇒ ⭐ 所以状态在这里就推进 ✓，⛔ 不是等对方回执 ✗
+    /// （⭐ 甲 里根本没有回执那条路 ✓）。
     pub fn begin(&mut self, peer_device_id: &str, ask: &str, now_ms: i64, ttl_ms: i64) {
         self.clear();
         self.peer_device_id = peer_device_id.to_string();
         self.ask = ask.to_string();
         self.expires_at_ms = now_ms + ttl_ms;
+        self.state = state_after_local_confirm(self.state);
     }
 
     /// ⭐ 收到对方的「想信任」⇒ ⭐ 记下来（⭐ ⛔ 不因此建立信任 ✓，⭐ 要本机的人再点 ✓）。
@@ -292,36 +294,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn local_confirm_alone_never_reaches_trusted() {
-        // ⭐ 正面判据：⭐ 本机点一百下，⭐ 也只在「⭐ 等对方 ✗」✓。
+    fn one_sided_click_reaches_trusted() {
+        // ⭐⭐ 甲（owner 2026-10-11 二次拍板，逐字「甲：一端点就通，图④为准」）⭐ **取代**了原先
+        //    "两端各点一次、单方面点完不算"那条口径 ✓。⚠️ 那道安全职责**换人承担** ✓：
+        //    兜底只剩「身份在信任前可见」＋「逐台可撤回」—— ⭐ 代价当初就记在
+        //    `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓，⛔ 不是悄悄消失的 ✗。
+        //    判据改名（原 `local_confirm_alone_never_reaches_trusted` ✓）就是为了让"它是**反**的"这件事
+        //    在文件里看得见 —— ⛔ 不改名的话，下一个人会以为它还在断言旧口径 ✗。
         let mut s = TrustState::Idle;
         for _ in 0..100 {
             s = state_after_local_confirm(s);
         }
         assert_eq!(
             s,
-            TrustState::WaitingRemote,
-            "本机单方面点完不许进 Trusted（否则同网段谁都能塞进来）"
+            TrustState::Trusted,
+            "甲：本机点一下就算通（而且再点是**幂等**的，⛔ 不许来回抖）"
         );
     }
 
     #[test]
-    fn remote_confirm_alone_never_reaches_trusted() {
-        // ⭐ 对方单方面点 ⇒ ⭐ 只被**记下来** ✓，⛔ 不许建立信任 ✓。
+    fn remote_side_acting_alone_also_reaches_trusted() {
+        // ⭐ 甲 的另一半：⭐ 对面那条路 ⇒ ⭐ 这一侧**自动采纳** ⇒ ⭐ 直接通 ✓（"不问那台的人" ✓）。
         assert_eq!(
             state_after_remote_confirm(TrustState::Idle),
-            TrustState::RemotePending,
-            "对方先说「我点了」只记账，不许直接信任"
-        );
-        assert_ne!(
-            state_after_remote_confirm(TrustState::Idle),
             TrustState::Trusted,
-            "对方单方面点完不许进 Trusted"
+            "甲：收到对面的确认 ⇒ 自动采纳 ⇒ 直接信"
+        );
+        assert_eq!(
+            state_after_ask_seen(TrustState::Idle),
+            TrustState::Trusted,
+            "甲：看到「我想信任你」那条广播 ⇒ 自动采纳 ⇒ 直接信（⛔ 不要人再点一下）"
         );
     }
 
     #[test]
     fn both_ends_confirm_reaches_trusted_either_order() {
+        // ⚠️ 甲 之下这条**仍然成立**（⭐ 只是不再需要"两端"才成立 ✓）—— ⭐ 留着它当**顺序无关**的证据 ✓。
         assert_eq!(
             state_after_remote_confirm(state_after_local_confirm(TrustState::Idle)),
             TrustState::Trusted
@@ -329,13 +337,12 @@ mod tests {
         assert_eq!(
             state_after_local_confirm(state_after_remote_confirm(TrustState::Idle)),
             TrustState::Trusted,
-            "顺序不影响：⭐ 对方先点时本机那一下也必须能收口（否则两边都点过却都在等对方）"
+            "顺序不影响"
         );
     }
 
     #[test]
     fn dismiss_clears_the_half_state() {
-        assert_eq!(state_after_dismiss(TrustState::WaitingRemote), TrustState::Idle);
         assert_eq!(state_after_dismiss(TrustState::Trusted), TrustState::Idle);
     }
 
@@ -363,20 +370,11 @@ mod tests {
     }
 
     #[test]
-    fn seeing_the_ask_is_not_agreeing() {
-        // ⭐ 收到一条"想信任"的广播 ⇒ ⭐ 只进 RemotePending ✓，⛔ 绝不直接 Trusted ✓。
-        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::RemotePending);
-        assert_ne!(state_after_ask_seen(TrustState::Idle), TrustState::Trusted);
-        // ⭐ 被问的那台点了确认（⭐ 它先看到 ask ⇒ RemotePending ⇒ 再点 ⇒ Trusted ✓）。
-        assert_eq!(
-            state_after_local_confirm(state_after_ask_seen(TrustState::Idle)),
-            TrustState::Trusted
-        );
-        // ⭐ 周期性广播重复到达 ⇒ ⭐ 不把已有状态冲回去 ✓。
-        assert_eq!(
-            state_after_ask_seen(TrustState::WaitingRemote),
-            TrustState::WaitingRemote
-        );
+    fn seeing_the_ask_agrees_under_jia() {
+        // ⭐⭐ 甲 之后**反过来了** ✗（原判据名 `seeing_the_ask_is_not_agreeing` ✓ —— ⭐ 改名是为了让翻转看得见 ✓）：
+        //    ⭐ 收到"想信任"那条广播 ⇒ ⭐ 这一侧**自动采纳** ⇒ ⭐ 直接 `Trusted` ✓（"不问那台的人" ✓）。
+        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::Trusted);
+        // ⭐ 周期性广播重复到达 ⇒ ⭐ 不把已有状态冲回去 ✓（这一条甲前后都成立 ✓）。
         assert_eq!(state_after_ask_seen(TrustState::Trusted), TrustState::Trusted);
     }
 
@@ -492,31 +490,24 @@ mod tests {
     /// ⭐ 采纳之后：⭐ 状态被推进 ✓ ＋ ⭐ **这次问被消费掉** ✓（⇒ 公告 30 秒一轮不会每轮重采纳 ✓）。
     #[test]
     fn adoption_advances_the_state_and_consumes_the_ask_once() {
-        // ① 对方先点、本机还没点 ⇒ ⭐ 只到 `RemotePending` ✓（⛔ 不因为对方说"我点了"就信任 ✗）。
+        // ⭐ 甲 之后：⭐ 对面动过 ⇒ ⭐ 这一侧自动采纳 ⇒ ⭐ 直接 `Trusted` ✓
+        //    （⭐ 原先"⭐ 只到 `RemotePending` ✓、⭐ 本机还得再点 ✗"已被 owner 的甲取代 ✓）。
         let mut h = TrustHandshake::default();
         h.note_ask("dev-a", 1_000, TRUST_TTL_MS);
         h.note_remote_confirm(2_000, TRUST_TTL_MS);
-        assert_eq!(h.state(), TrustState::RemotePending, "对方点过只记账");
+        assert_eq!(h.state(), TrustState::Trusted, "甲：对面动过 ⇒ 自动采纳 ⇒ 直接信");
         assert!(
             h.pending_asks(2_100).is_empty(),
             "采纳过的这一条不许再返回（否则每轮重写一遍卡片）"
         );
-        assert!(h.state() == TrustState::RemotePending, "状态在界面上要读得到");
-        // ② ⚠️ **本地"我点过了"那一档**还没接线 ✗（`state_after_local_confirm` 今天**无人调用** ✓ ——
-        //    那是界面那一期（方案 §4 ③）的事 ✓）。⇒ ⭐ 本判据**如实只钉它今天的样子** ✗：
-        //    `begin` ⇒ `Idle` ✓；⭐ 而"两端都点过 ⇒ `Trusted`"由**纯函数**那条判据负责 ✓
-        //    （`both_ends_confirm_reaches_trusted_either_order` ✓）—— ⛔ 不在这里假装它已接线 ✗。
+        // ② ⭐ 本机点过那一档**现在接线了** ✗（`begin` 里推进 ✓ —— 这正是本轮修的缺口 ✓）。
         let mut g = TrustHandshake::default();
         g.begin("dev-b", "ask-1", 1_000, TRUST_TTL_MS);
-        assert_eq!(g.state(), TrustState::Idle, "`begin` 只发问：本地「点过」那一档还没接");
+        assert_eq!(g.state(), TrustState::Trusted, "甲：`begin` ＝ 本机点过了 ⇒ 直接信");
         g.note_ask("dev-a", 1_100, TRUST_TTL_MS);
-        assert_eq!(g.state(), TrustState::RemotePending, "对方发问 ⇒ 只记账");
+        assert_eq!(g.state(), TrustState::Trusted, "甲：对方发问 ⇒ 自动采纳 ⇒ 还是 Trusted");
         g.note_remote_confirm(1_200, TRUST_TTL_MS);
-        assert_eq!(
-            g.state(),
-            TrustState::RemotePending,
-            "本机没点过 ⇒ 收到对方确认也**不许**进 Trusted（纯函数 `state_after_remote_confirm` 的语义 ✓）"
-        );
+        assert_eq!(g.state(), TrustState::Trusted, "甲：两端都动过 ⇒ 仍 Trusted（幂等 ✓）");
     }
 
     /// ⭐ `note_ask` 只许**记账** ✗：⭐ 周期性公告（30 秒一轮 ✓）不许把状态冲回 `Idle` ✓。
