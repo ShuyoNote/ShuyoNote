@@ -14101,8 +14101,12 @@ p:has(> .editor-drawing-container) {
      ⭐ 保留的仍是那几件：⭐ 放大镜 ／ ⭐ 圆角 `radius-lg` ／ ⭐ 左侧 38px 不压字 ／ ⭐ 高度 44px ✓。
      ＋ ⭐ 悬停**只动边框**（⭐ 不再换底色 ✓）；⭐ 聚焦仍是强调色描边 ＋ 3px 光圈 ✓（⛔ 不换底 ✓）。
      ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✗（本仓规则：可点控件 ≥44px ✓）——⛔ 这里不写死更小值 ✓。 */
+  /* ⭐ 2026-10-11 **第四次改**（owner：「外框也去掉」）：⭐ 连接触边也不要 ✓ ——
+     现在**静止与悬停都没有可见边框** ✓（⭐ 只有放大镜 ＋ ⭐ 提示文字 ✓），⭐ 形状完全交给聚焦态 ✓。
+     ⚠️ ⭐ **透明边是刻意留的占位** ✗（`1px solid transparent`）：⭐ 这样聚焦时把颜色换成强调色
+        **不会让整行跳一下** ✗（⛔ 不是"忘了删" ✓）；⭐ 而聚焦那一圈是**可访问性底线** ⇒ ⛔ 不许去掉 ✓。 */
   background: transparent;
-  border-color: var(--border);
+  border-color: transparent;
   color: var(--text);
   outline: none;
   transition:
@@ -14113,8 +14117,10 @@ p:has(> .editor-drawing-container) {
 .set-space-filter-wrap:not(:has(.set-space-filter-clear)) .set-space-filter.sync-input {
   padding-right: 14px;
 }
+/* ⭐ 悬停也**不显形**（owner 要的就是这个 ✓）—— 这条规则是为压过别处的 `.sync-input:hover` ✓，
+   ⛔ 别删：删了就会在悬停时冒出一圈边 ✗。 */
 .set-space-filter.sync-input:hover {
-  border-color: var(--border-strong, var(--border));
+  border-color: transparent;
 }
 .set-space-filter.sync-input:focus {
   background: transparent;
