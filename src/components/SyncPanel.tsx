@@ -7,6 +7,12 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type DevicePairExportOutcome } from "../lib/api";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
+import { toast } from "../store/toast";
+import { TrustDevicePanel } from "./TrustDevicePanel";
+import {
+  MESH_TRUST_BEGIN_COMMAND,
+  unavailableTrustDeviceReadings,
+} from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -14,7 +20,7 @@ import { useNotes } from "../store/notes";
 import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
-import { isDesktopPlatform } from "../lib/platform";
+import { isDesktopPlatform, platform } from "../lib/platform";
 // ⚠️ 2026-09-29（D3）：**行内 Markdown 的契约**。后端（Rust）给人看的话是按行内 Markdown 写的
 // （`**能被别人拉到**` 那种）⇒ 它必须在【渲染边界】过这一道，否则用户看见两个星号。
 // 契约的唯一实现是 `src/lib/inlineMd.tsx`（toast 与 SpacePrivacySection 已在用）⇒ 这里接上它。
@@ -130,6 +136,13 @@ interface EditRow {
 // Per-workspace sync targets (S8): each local workspace binds to its own remote
 // (server + token + space_id), so one person can sync different spaces to
 // different servers/accounts (multi-server × multi-space).
+/**
+ * ⭐ 信任设备那一屏的四条读数（task 派单）—— **这一轮一律如实给"读不到"** ✓：
+ * 后端那几条读数命令还没到位 ✓ ⇒ ⛔ 不编 0、⛔ 不编假数 ✗（界面上出现「读不到」是**预期**的 ✓）。
+ * ⚠️ 放在**模块级常量**：它是常量 ⇒ 不必每帧新建对象 ✓（后端到位后只改 `src/lib/trustDevicePanelReadings.ts` ✓）。
+ */
+const TRUST_DEVICE_READINGS = unavailableTrustDeviceReadings();
+
 export function SyncPanel() {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
@@ -1201,6 +1214,36 @@ export function SyncPanel() {
     if (unknown > 0) parts.push(`另外 ${unknown} 个空间`);
     return `附近 · 服务 ${parts.join("、")}`;
   };
+  // ⭐ 2026-10-11（owner 拍的**甲**：一端点就通）：图④「信任这台设备」——
+  //    点一次就把**勾选的那些空间**在这台设备上登记信任 ⇒ 逐个空间调 `mesh_trust_begin` ✓
+  //    （⛔ 不再要求另一端也点 ✗）。⚠️ 对端**取这一轮看得见、且服务当前空间**的那一台 ✓；
+  //    一台都没有 ⇒ **如实说**"还没有可以信任的设备"，⛔ 不挑一台凑数 ✗。
+  const trustDevice = async (spaceIds: string[]) => {
+    if (!isDesktopPlatform()) {
+      toast("信任设备要在桌面端操作", "info");
+      return;
+    }
+    const peer = nearby.find((p) => p.serves_current && p.invitable) ?? null;
+    if (!peer) {
+      toast("现在还看不到可以信任的设备（先在「附近的设备」里发现一台）", "info");
+      return;
+    }
+    try {
+      for (const spaceId of spaceIds) {
+        // ⚠️ 走 `platform.executor.invoke`：这条命令的声明归 Lead（⛔ 本任务不碰 `commands.ts` ✗）
+        await platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, {
+          spaceId,
+          peerDeviceId: peer.device_id,
+        });
+      }
+      toast("已信任这台设备（一端即可）", "success");
+    } catch (e) {
+      // ⭐ 失败**照实报**（⛔ 不假装成功 ✗）—— 这条命令 Lead 还在落地，报错是预期的一种 ✓
+      toast(`信任失败：${e}`, "error");
+    }
+  };
+  const [strictTrust, setStrictTrust] = useState(false); // 图④ 严格模式（默认**关** ✓）
+
   // 空间隐私：`SpacePrivacySection` 那一份读数（`space_security_overview`）**没有上抛**给外面，
   // 本面板不替它再问一次（问了就是第二份真相，两份迟早各说各话）⇒ 这里只放一句中性摘要，
   // 用词取自它自己的小标题（`🔐 空间隐私 —— 每个空间能不能绑同步`），不编状态。
@@ -2146,6 +2189,19 @@ export function SyncPanel() {
                         {/* ⭐ 这一步的提示留在**折外** ✗ —— 「附近的设备」里点「信任这台设备」会写进
                             `dpNote` ✓，⭐ 而它要落在**你看得见的地方** ✓（⛔ 不能藏在刚折起来的那层里 ✓）。 */}
                         {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
+                        {/* ⭐ 2026-10-11：把**「信任设备」那一屏**（图①/②/④/⑥ 的界面）挂上来 ✓ ——
+                            它原先全仓**挂载点 0 处** ✗（`TrustDevicePanel.tsx` 写好了、17 条判据在跑，
+                            但界面上点不到 ✓ ⇒ 这一块就是"把它接到底" ✓）。
+                            ⭐ 位置按图④：**紧挨着「附近的设备」那一块** ✓，并且在
+                              「严格模式（高级）」那一折**之前** ✓（⛔ 老路一个字不动 ✗ —— 它就在下面 ✓）。
+                            ⚠️ 四条读数这轮**一律如实"读不到"** ✓（见模块级 `TRUST_DEVICE_READINGS` ✓），
+                              点「接入」走 owner 拍的**甲**：一端点就通 ⇒ `trustDevice()` ✓。 */}
+                        <TrustDevicePanel
+                          {...TRUST_DEVICE_READINGS}
+                          initialStrictMode={strictTrust}
+                          onStrictModeChange={setStrictTrust}
+                          onAttach={(spaceIds) => void trustDevice(spaceIds)}
+                        />
                         {/* ⭐ 2026-10-11（owner：「参照效果图实现」＋「把同步面板做好」）：⭐ 效果图把"码"收进
                             **「严格模式（高级）」** ✗ ⇒ ⭐ 主路径（⭐ 附近设备 ＋ ⭐ 信任这台设备 ✓）**不再出现任何码** ✓。
                             ⚠️ 折起来的是**同一套机制** ✗，⛔ 机制一个字没动 ✓（⭐ 仍是 `device_pair_export` ／ `import` ✓）：
@@ -2293,12 +2349,17 @@ export function SyncPanel() {
                   </span>
                   {/* ★ 2026-10-01（免费版上线实测）：**"附近发现 0 台"是第一现场** ✓ ——
                       原先这一块只给读数、不给"然后呢" ✗ ⇒ 用户会以为产品坏了 ✓。
-                      ⚠️ 这里**故意不解析 `lanStatus.line` 里的台数**（界面不自己按读数再判一次档 ✓，
-                      那是上面注释钉着的口径）⇒ 提示**常显**，只在真的 0 台时才有用，代价是多一行字 ✓。
+                      ⚠️ **2026-10-11 改（owner 拍「只动前端」）**：这句话原先**故意常显** ✓
+                      （当时注释写着"代价是多一行字"✓）⇒ 现在按设计图⑦ 收成**只在真的找不到时出现** ✗：
+                      ⭐ 条件用 ⭐ **结构化的 `lanStatus.peers === 0`** ✗ —— ⛔ **不**去解析 `lanStatus.line` ✗
+                      （那是上面钉着的口径：⭐ 界面不自己按读数再判一次档 ✓；`peers` 与状态行那个
+                      "N 台"**是同一个数** ✓，⭐ 由 `INV-NEARBY-one-source` 保证不漂 ✓）。
                       ⛔ 不写"一定能修好"那种话 ✗ —— 只列**最可能的两个**原因 ＋ 指向完整指引 ✓。 */}
-                  <span className="sync-hint">
-                    {inlineMd("**找不到对方？** 两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
-                  </span>
+                  {lanStatus.peers === 0 && (
+                    <span className="sync-hint">
+                      {inlineMd("两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
+                    </span>
+                  )}
                 </span>
               </div>
             )}
