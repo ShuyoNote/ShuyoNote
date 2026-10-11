@@ -823,6 +823,14 @@ html[data-platform="win"] .app-body {
      （`scripts/verify-mobile-views.mjs:19`；⭐ 那个面板它也打开来量 ✓）⇒ ⭐ 桌面缩、⛔ 手机不缩 ✓
      —— ⭐ 与设置面板那个筛选框**同一套写法** ✓（⭐ 那次实测：⭐ 桌面 36 ／ ⭐ 390 视口仍 44 ✓ 门禁绿 ✓）。 */
   min-height: 36px;
+  /* ⭐ 2026-10-11（owner：「筛选控件的宽度与下面的控件对齐」）：⭐ 实测口径（⛔ 不靠眼看 ✓）——
+     面板 **380** 宽 ✓ ／ 列表内边距 **8px** ✓ ／ 卡片左右各缩 **9px**（1 ＋ 8 ✓）、宽 **362** ✓；
+     而输入框**只缩 1px**（宽 378 ✓）⇒ ⭐ 顶满整块面板 ⇒ ⭐ 与卡片差 **8px** ✓（⭐ 截图里那处不齐 ✓）。
+     ⇒ ⭐ 给它 8px 左右外边距 ⇒ ⭐ 两边都是 9px、⭐ 宽 362 ＝ ⭐ 与卡片**同宽** ✓。
+     ⚠️⭐ **必须同时把 `width` 从 100% 改成 auto** ✗（100% 是 `.sync-input` 给的 ✓）——
+     否则 100% ＋ 左右外边距会**溢出面板** ✓（⭐ `box-sizing: border-box` 也救不了 100% ＋ margin ✓）。 */
+  margin: 0 8px;
+  width: auto;
 }
 @media (max-width: 600px) {
   .space-switcher-filter.sync-input {
