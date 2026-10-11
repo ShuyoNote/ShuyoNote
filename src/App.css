@@ -14096,13 +14096,13 @@ p:has(> .editor-drawing-container) {
   padding-left: 38px;
   padding-right: 44px;
   border-radius: var(--radius-lg);
-  /* ⭐ 2026-10-11 **第二次改**（owner 截图：「这个控件还没有美化？」）：
-     上一版**只加了放大镜** ✗ —— ⭐ 清空按钮要**输入后**才出现、⭐ 悬停/聚焦要**交互**才看得见
-     ⇒ ⭐ **静止态看着跟原来几乎一样** ✗（owner 的观感没错 ✓）。
-     ⇒ 这次把**静止态**也做出来：⭐ 填充式软底（默认无边 ✓）＋ ⭐ 悬停加深 ＋ ⭐ 聚焦回白底 ＋ 强调色描边＋光圈 ✓。
-     ⚠️ 高度仍交给 `.sync-input` 的 `min-height: 44px` ✗（本仓规则：可点控件 ≥44px ✓）——⛔ 这里不许写死更小的值 ✓。 */
-  background: var(--hover);
-  border-color: transparent;
+  /* ⭐ 2026-10-11 **第三次改**（owner：「去掉控件的背景色如何？」）：⭐ 去掉填充 ✓ ——
+     上一版是**浅灰填充 ＋ 无边** ✗；现在改成**透明底 ＋ 一圈细边** ✓（⭐ 形状交给边框定 ✓）。
+     ⭐ 保留的仍是那几件：⭐ 放大镜 ／ ⭐ 圆角 `radius-lg` ／ ⭐ 左侧 38px 不压字 ／ ⭐ 高度 44px ✓。
+     ＋ ⭐ 悬停**只动边框**（⭐ 不再换底色 ✓）；⭐ 聚焦仍是强调色描边 ＋ 3px 光圈 ✓（⛔ 不换底 ✓）。
+     ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✗（本仓规则：可点控件 ≥44px ✓）——⛔ 这里不写死更小值 ✓。 */
+  background: transparent;
+  border-color: var(--border);
   color: var(--text);
   outline: none;
   transition:
@@ -14114,10 +14114,10 @@ p:has(> .editor-drawing-container) {
   padding-right: 14px;
 }
 .set-space-filter.sync-input:hover {
-  background: var(--hover-strong, var(--hover));
+  border-color: var(--border-strong, var(--border));
 }
 .set-space-filter.sync-input:focus {
-  background: var(--bg);
+  background: transparent;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
