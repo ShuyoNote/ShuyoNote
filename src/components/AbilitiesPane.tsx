@@ -80,13 +80,23 @@ const ABILITIES: Ability[] = [
   { id: "transcription", name: "音频转写", summary: "会议录音转文字", state: "not-available", note: "还没上架" },
 ];
 
-type Phase = { kind: "idle" } | { kind: "working"; text: string } | { kind: "ok"; text: string } | { kind: "err"; text: string };
+type Phase =
+  | { kind: "idle" }
+  | { kind: "working"; text: string }
+  // ⭐ 2026-10-11（owner 截图「下载完了的界面优化一下」）：成功那档**带上三个事实** ——
+  //    ⛔ 不是把它们从界面删掉 ✗（用户要能自己核 ✓），而是**排版分开**：
+  //    ⭐ 大小并进标题行、⭐ sha256 与路径落到下面那行灰字（⭐ 路径挂 `title` ⇒ 悬停看全 ✓）。
+  //    ⚠️ 原来三样挤成一行、⭐ 还印生字节数（`89735168 B` ✗）⇒ 那一行长到折行 ✓。
+  | { kind: "ok"; text: string; bytes?: number; sha256?: string; path?: string }
+  | { kind: "err"; text: string };
 
 const API = "https://api.gitcode.com/api/v5/repos/shuyo-cn/shuyo-mirror/contents/";
 
+// ⚠️⭐ **2026-10-11 单位订正**：原来这里印的是 `MB` ✗ —— 而同一行里 `summary` 写的是 `MiB` ✓
+//   ⇒ 同一个文件**两个口径并列**（39.1 MiB ／ 37.31 MB ✓ 其实都对，但用户看着像两个数 ✓）⇒ 统一成 `MiB` ＋ 一位小数 ✓。
 function fmtMB(n?: number): string {
   if (!n) return "—";
-  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MiB`;
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -122,10 +132,9 @@ export function AbilitiesPane() {
           "dictionary_install_pack",
           { url: null },
         );
-        setPhase({
-          kind: "ok",
-          text: `${t("abilities.saved", "已保存到本地")}：${rep.bytes} B · sha256 ${rep.sha256.slice(0, 12)}… · ${rep.path}`,
-        });
+        // ⭐ 2026-10-11：⭐ 三个事实**结构化**带下去 ✓（⛔ 不再拼成一长串生数据 ✗）——
+        //    `bytes` 交给 `fmtMB` 变人类可读，`sha256` ／ `path` 由渲染层排到下面那行灰字 ✓。
+        setPhase({ kind: "ok", text: t("abilities.saved", "已保存到本地"), bytes: rep.bytes, sha256: rep.sha256, path: rep.path });
       } catch (e) {
         setPhase({ kind: "err", text: `${t("abilities.needNetwork", "这个能力需要一次下载 —— 现在取不到")}：${String(e)}` });
       } finally {
@@ -227,17 +236,36 @@ export function AbilitiesPane() {
               </div>
             </div>
             <button className="set-btn is-primary" onClick={() => void download(a)} disabled={phase.kind === "working"}>
-              {t("abilities.download", "下载")}
+              {/* ⭐ 2026-10-11：成功后同一颗按钮改叫「重新下载」✓。
+                  ⚠️ **如实记**：`phase` 是**这一节共用**的 ⇒ 今天这节只有一条可下载项 ⇒ 无碍 ✓；
+                  将来多于一条要改成**按条目**记状态 ✗（写在这里免得忘 ✓）。 */}
+              {phase.kind === "ok" ? t("abilities.redownload", "重新下载") : t("abilities.download", "下载")}
             </button>
           </div>
         ))}
-        {phase.kind !== "idle" && (
-          // ⚠️ 不新增 CSS 类 ✓：本仓已有 `set-hint`，与界面别处一样用 `√/×` 前缀表达成败 ✓。
+        {/* ⭐ 2026-10-11（owner 截图「下载完了的界面优化一下」）：成功那档**不再是一句生数据** ✗ ——
+            ⭐ 改成一张小成功卡：⭐ 第一行「√ 已保存到本地 · 85.6 MiB」✓，
+            ⭐ 第二行灰字放 sha256 前 12 位与路径（⭐ 路径挂 `title` 悬停看全 ✓，⭐ 长路径自动折行 ✓）。
+            ⚠️ **如实**：三个事实**一个都没删** ✗ —— 原来它们挤在一行、还印着 `89735168 B` ✓。
+            进行中／失败仍用现成的 `set-hint`（⛔ 不新增类 ✓，⛔ 那两档一个字没动 ✓）。 */}
+        {phase.kind === "ok" ? (
+          <div className="set-pack-result">
+            <div className="set-pack-result-head">
+              <span className="set-pack-result-mark">√</span>
+              <span>{phase.text}</span>
+              {phase.bytes ? <span className="set-pack-result-size">· {fmtMB(phase.bytes)}</span> : null}
+            </div>
+            <div className="set-pack-result-meta" title={phase.path}>
+              {phase.sha256 ? <span>sha256 {phase.sha256.slice(0, 12)}…</span> : null}
+              {phase.path ? <span className="set-pack-result-path">{phase.path}</span> : null}
+            </div>
+          </div>
+        ) : phase.kind !== "idle" ? (
           <p className="set-hint">
-            {phase.kind === "ok" ? "√ " : phase.kind === "err" ? "× " : "… "}
+            {phase.kind === "err" ? "× " : "… "}
             {phase.text}
           </p>
-        )}
+        ) : null}
       </section>
 
       <section className="set-section">

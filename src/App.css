@@ -14013,6 +14013,46 @@ p:has(> .editor-drawing-container) {
    ⚠️ 高度**不许低于 44**（本仓规则：可点控件 ≥44px ⇒ 见 `verify-mobile-views.mjs`）——
    所以清空按钮也做成 44×44 的命中区，只是里面的 × 画小一点 ✓（⛔ 别为了好看把命中区缩下去 ✗）。
    ⚠️ `:has()` 用来在**没有清空按钮**时把右边那 44px 让回来 ✓（WebView2 是 Chromium ⇒ 支持 ✓）。 */
+/* ⭐ 2026-10-11（owner 截图「下载完了的界面优化一下」）：下载成功原来只是**一句生数据** ✗ ——
+   `89735168 B · sha256 5dc10a51f33a… · C:\Users\…\ecdict-en-zh.bin` ⇒ 又长又折行、还印生字节数 ✓。
+   ⇒ ⭐ 改成一张**小成功卡**：第一行「√ 已保存到本地 · 85.6 MiB」（成功色 ✓），
+   第二行灰字放 sha256 与路径（⭐ 路径 `title` 悬停看全 ✓，⭐ 长路径 `overflow-wrap: anywhere` 折行 ✓）。
+   ⚠️ 只用于**块级**结果提示（⛔ 不往 `.set-row` 里塞卡片 ✗ —— 今天已经因为那个栽过两次 ✓）。 */
+.set-pack-result {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success, #2e7d32);
+  background: var(--hover);
+}
+.set-pack-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.set-pack-result-mark {
+  color: var(--success, #2e7d32);
+  font-weight: 700;
+}
+.set-pack-result-size {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.set-pack-result-meta {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.set-pack-result-path {
+  overflow-wrap: anywhere;
+}
+
 /* ⭐ 2026-10-11（owner 截图「优化这个界面」）：能力页那格原来复用 `.set-status` ✗ ——
    而 `.set-status` 是**整块卡片**（`display:flex` ＋ `padding:12px 14px` ＋ `border` ＋
    `background: var(--card-bg)` ＋ **`margin-bottom: 16px`**）⇒ 被塞进 `.set-row` 当**行内徽章**用之后：
