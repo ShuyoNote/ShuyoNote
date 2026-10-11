@@ -5843,6 +5843,8 @@ dependencies = [
  "tokio-native-tls",
  "tokio-util",
  "uuid",
+ "webview2-com",
+ "windows",
  "windows-sys 0.61.2",
  "zip 8.6.0",
 ]

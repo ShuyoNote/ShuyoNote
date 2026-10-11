@@ -191,6 +191,17 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # 实现与取舍见 `src/disk.rs`。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+# ⭐ 2026-10-11（owner：「导出 pdf 时去掉页头页脚，只留页码」）：⭐ 拿 WebView2 那套接口要用它 ✓
+#    —— ⭐ "⭐ 自己出一份 PDF ＋ ⭐ 关掉引擎的页眉页脚 ✗"（`PrintToPdf` ＋ `ShouldPrintHeaderAndFooter` ✓）
+#    ⭐ 见 `src/pdf_export.rs` 的模块头（⭐ 为什么非得这样：⭐ 那个开关是引擎**一整块**的 ✓）。
+#    ⚠️ 它**本来就在 lockfile 里** ✗（⭐ tauri/wry 拉进来的传递依赖 ✓，⭐ 版本 **0.38.2** ✓）
+#    ⇒ ⭐ 这一行只是把它从"⭐ 传递依赖 ✗"变成"⭐ 我能直接 use ✗" ✓，⛔ **不新增任何下载** ✓。
+webview2-com = "0.38"
+# ⭐ 同一个理由：⭐ `cast()`（⭐ 从 `ICoreWebView2` 转型到带打印能力的那个接口 ✓）是
+# ⭐ `windows::core::Interface` 提供的 ✓，⭐ 而 `webview2-com` **不**转出 `windows` ✗（⭐ 只转自己的 `Microsoft::*` ✓，
+# ⭐ 见本机 registry 里它的 `lib.rs` ✓）⇒ ⭐ 直接引它 ✓。
+# ⚠️ 版本跟 lockfile 里对得上 ✗（⭐ 已是 **0.61.3** ✓）⇒ ⛔ **不新增下载** ✓。
+windows = "0.61"
 
 # Android 专属：**SQLCipher 需要一个加密后端**，这里用 libsqlite3-sys 官方提供的
 # vendored-openssl 变体，从源码构建 OpenSSL（借助 NDK 的 clang + Perl），并静态链接 libcrypto。

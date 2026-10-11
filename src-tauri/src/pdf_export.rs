@@ -112,3 +112,29 @@ pub fn probe_webview2_controller(window: &tauri::WebviewWindow) {
         let _controller = webview.controller();
     });
 }
+
+/// ⭐ **探针二** ✗：⭐ 真正**引用打印接口**（⭐ `ICoreWebView2_7` 的 `PrintToPdf` ＋
+/// 打印设置里的 `ShouldPrintHeaderAndFooter` ✓）。
+///
+/// ⭐ 为什么必须探到这一层 ✗：⭐ "⭐ 能拿到控制器 ✗"（⭐探针一 ✓）**不等于**"⭐ 能关掉页眉页脚地出 PDF ✗" ✓。
+/// ⭐ 后者要 ⭐ ① ⭐ 从控制器上转型到带打印能力的接口 ✓ ② ⭐ 拿到打印设置对象 ✓ ③ ⭐ 才谈得上设那个开关 ✓。
+/// ⇒ ⭐ 探针二把它们**在类型层面**点一遍 ✓：⭐ 缺哪个接口 / ⭐ 缺哪个 trait ⭐ 编译期就说话 ✓。
+#[cfg(target_os = "windows")]
+#[allow(dead_code)]
+pub fn probe_print_interfaces(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_7, ICoreWebView2PrintSettings};
+    // ⚠️ `cast()` 来自 `windows::core::Interface` ✗ —— ⭐ `webview2-com` **不**转出 `windows` ✓
+    //    （⭐ 本机 registry 里它的 `lib.rs` 只有 `pub use webview2_com_sys::Microsoft;` ＋ 自己那几个模块 ✓）
+    //    ⇒ ⭐ 这一行非有不可 ✓。
+    use windows::core::Interface;
+    let _ = window.with_webview(|webview| {
+        let controller = webview.controller();
+        let core = unsafe { controller.CoreWebView2() }.ok();
+        if let Some(core) = core {
+            // ⭐ 关键一步：⭐ 带 `PrintToPdf` 的那个接口在这套版本里叫什么、⭐ 转得过去吗 ✓。
+            let _printable: Option<ICoreWebView2_7> = core.cast().ok();
+        }
+        // ⭐ 打印设置那个类型也要够得着（⭐ `ShouldPrintHeaderAndFooter` 就挂在它上面 ✓）。
+        let _settings: Option<ICoreWebView2PrintSettings> = None;
+    });
+}
