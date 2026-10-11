@@ -251,6 +251,222 @@ pub fn verify_license(text: &str, now: i64) -> Result<LicenseClaims, LicenseRefu
     verify_license_with(text, now, KEYRING)
 }
 
+// ─────────────────────────── ⭐ 租约（`SHUYO-TOK-`）✗ ───────────────────────────
+//
+// ⭐ 两种凭证**同形不同格** ✗（⭐ 只读核对出来的）：
+//   · ⭐ 租约 **9 格** ✗：`v/typ/dev[]/nbf/exp/kid/iat/jti/cap` ✓
+//     —— ⚠️ ⭐ **没有** `sub/seats/grace/rot/prev` ✗（⛔ 别照许可证那份写 ✓）
+//   · ⭐ **租约上限** ✗：`exp - nbf ≤ 30 天`（⭐ 中继仓 `MAX_LEASE_SECS` 同值 ✓）
+//   · ⭐ 判定顺序 ✗（⭐ 与中继仓一致 ✓）：验签 ⇒ ⭐ **租约上限** ⇒ 时间窗 ⇒ ⭐ **设备位** ⇒ `cap` ✓
+//   · ⭐ 设备身份是**握手已证明的 `EndpointId`** ✗（⭐ ⛔ 不信客户端自报的任何字段 ✓）
+//     ⇒ ⭐ 所以这里**要把本机端点 id 传进来对** ✓（⭐ 对不上 ⇒ `DeviceNotListed` ✓）
+
+/// ⭐ 租约前缀 ✗。
+pub const LEASE_PREFIX: &str = "SHUYO-TOK-";
+/// ⭐ 租约**最长 30 天** ✗ —— ⭐ 与中继仓逐字同值（只读核过 ✓）。
+pub const MAX_LEASE_SECS: i64 = 30 * 86_400;
+/// ⭐ 租约 payload 的字段面 ✗ —— ⭐ **9 格**（⛔ 与许可证那 14 格不是同一张表 ✓）。
+const LEASE_FIELDS: [&str; 9] = ["v", "typ", "dev", "nbf", "exp", "kid", "iat", "jti", "cap"];
+
+/// ⭐ 租约被拒的原因 ✗。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseRefusal {
+    BadShape,
+    UnknownKid,
+    BadSignature,
+    /// ⭐ 超过 30 天上限 ✗（⭐ 或者 `exp` 早于 `nbf` ✓）—— ⭐ 长期凭证必须由**许可证**那条路给 ✓。
+    TooLong,
+    NotYet,
+    Expired,
+    /// ⭐ 这份租约**不是发给本机端点的** ✗（⭐ 设备位里没有本机 id ✓）。
+    DeviceNotListed,
+    /// ⭐ 时间与设备都对，⭐ 但缺 `"crossnet"` 能力位 ✗ ⇒ ⭐ 仍不许跨网 ✓。
+    NoCrossnetCap,
+}
+
+/// ⭐ 验过的租约声明 ✗。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseClaims {
+    pub devices: Vec<String>,
+    pub nbf: i64,
+    pub exp: i64,
+    pub jti: String,
+    pub crossnet: bool,
+}
+
+impl LeaseClaims {
+    /// ⭐ 落在哪一档 ✗（⭐ 与许可证**同一把尺** ✓ —— 租约没有自己的宽限期 ✓）。
+    pub fn window(&self, now: i64) -> LicenseWindow {
+        if now + CLOCK_TOLERANCE_SECS < self.nbf {
+            return LicenseWindow::NotYet;
+        }
+        if now <= self.exp {
+            return LicenseWindow::Ok;
+        }
+        LicenseWindow::Expired
+    }
+
+    /// ⭐ 现在允不允许跨网 ✗（⭐ 租约没有宽限 ✓ ⇒ 只有 `Ok` ＋ `cap` ✓）。
+    pub fn allows_crossnet(&self, now: i64) -> bool {
+        self.window(now) == LicenseWindow::Ok && self.crossnet
+    }
+
+    /// ⭐ 这份租约是不是发给某个端点的 ✗。
+    pub fn names_device(&self, device_id: &str) -> bool {
+        self.devices.iter().any(|d| d == device_id)
+    }
+}
+
+/// ⭐ 把 `{prefix}{version}.{payload_b64}.{sig_b64}` 拆开 ✗（⭐ 两种凭证共用 ✓）。
+fn split_credential(text: &str, prefix: &str) -> Result<(String, String, String), LicenseRefusal> {
+    let rest = text.strip_prefix(prefix).ok_or_else(bad_shape)?;
+    let mut parts = rest.split('.');
+    let version = parts.next().ok_or_else(bad_shape)?.to_string();
+    let payload_b64 = parts.next().ok_or_else(bad_shape)?.to_string();
+    let sig_b64 = parts.next().ok_or_else(bad_shape)?.to_string();
+    if parts.next().is_some() {
+        return Err(bad_shape());
+    }
+    if version != FORMAT_VERSION.to_string() || payload_b64.is_empty() || sig_b64.is_empty() {
+        return Err(bad_shape());
+    }
+    Ok((version, payload_b64, sig_b64))
+}
+
+/// ⭐ 带前缀的签名消息 ✗（⭐ 租约与许可证各签各的 ⇒ ⛔ 不能互相冒充 ✓）。
+pub fn signing_message_for(prefix: &str, version: &str, payload_b64: &str) -> String {
+    format!("{prefix}{version}.{payload_b64}")
+}
+
+/// ⭐ 验签那一步 ✗（⭐ 两种凭证共用 ✓）。
+fn check_signature(
+    version: &str,
+    payload_b64: &str,
+    sig_b64: &str,
+    prefix: &str,
+    entry: &KeyEntry,
+) -> Result<(), LicenseRefusal> {
+    let sig_bytes = URL_SAFE_NO_PAD
+        .decode(sig_b64.as_bytes())
+        .map_err(|_| bad_shape())?;
+    if sig_bytes.len() != SIG_LEN {
+        return Err(LicenseRefusal::BadSignature);
+    }
+    let mut sig_arr = [0u8; SIG_LEN];
+    sig_arr.copy_from_slice(&sig_bytes);
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&entry.public_key)
+        .map_err(|_| LicenseRefusal::BadSignature)?;
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+    use ed25519_dalek::Verifier;
+    vk.verify(signing_message_for(prefix, version, payload_b64).as_bytes(), &sig)
+        .map_err(|_| LicenseRefusal::BadSignature)
+}
+
+/// ⭐ 用**指定的** keyring 验一份租约 ✗（⭐ keyring 可注入 ⇒ 判据能自己签一份 ✓）。
+pub fn verify_lease_with(
+    text: &str,
+    now: i64,
+    device_id: &str,
+    keyring: &[KeyEntry],
+) -> Result<LeaseClaims, LeaseRefusal> {
+    let (version, payload_b64, sig_b64) = split_credential(text, LEASE_PREFIX).map_err(lease_map)?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload_b64.as_bytes())
+        .map_err(|_| LeaseRefusal::BadShape)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&payload).map_err(|_| LeaseRefusal::BadShape)?;
+    let obj = value.as_object().ok_or(LeaseRefusal::BadShape)?;
+    // ⭐ 字段面严格 9 格 ✗（⭐ 多了少了都拒 ✓）
+    if obj.len() != LEASE_FIELDS.len() || LEASE_FIELDS.iter().any(|f| !obj.contains_key(*f)) {
+        return Err(LeaseRefusal::BadShape);
+    }
+    if obj.get("v").and_then(|v| v.as_u64()) != Some(FORMAT_VERSION as u64) {
+        return Err(LeaseRefusal::BadShape);
+    }
+    let kid = obj
+        .get("kid")
+        .and_then(|v| v.as_str())
+        .ok_or(LeaseRefusal::BadShape)?;
+    // ① `kid` 查表 ⇒ 查不到就拒（fail-closed ✓）
+    let entry = keyring
+        .iter()
+        .find(|e| e.kid == kid)
+        .ok_or(LeaseRefusal::UnknownKid)?;
+    // ② 验签
+    check_signature(&version, &payload_b64, &sig_b64, LEASE_PREFIX, entry).map_err(lease_map)?;
+    // ③ 取字段
+    let devices = obj
+        .get("dev")
+        .and_then(|v| v.as_array())
+        .ok_or(LeaseRefusal::BadShape)?
+        .iter()
+        .map(|d| {
+            d.as_str()
+                .map(|s| s.to_string())
+                .ok_or(LeaseRefusal::BadShape)
+        })
+        .collect::<Result<Vec<String>, LeaseRefusal>>()?;
+    let nbf = obj
+        .get("nbf")
+        .and_then(|v| v.as_i64())
+        .ok_or(LeaseRefusal::BadShape)?;
+    let exp = obj
+        .get("exp")
+        .and_then(|v| v.as_i64())
+        .ok_or(LeaseRefusal::BadShape)?;
+    let jti = obj
+        .get("jti")
+        .and_then(|v| v.as_str())
+        .ok_or(LeaseRefusal::BadShape)?;
+    let crossnet = obj
+        .get("cap")
+        .and_then(|v| v.as_array())
+        .ok_or(LeaseRefusal::BadShape)?
+        .iter()
+        .any(|c| c.as_str() == Some(CROSSNET_CAP));
+    let claims = LeaseClaims {
+        devices,
+        nbf,
+        exp,
+        jti: jti.to_string(),
+        crossnet,
+    };
+    // ④ ⭐ **租约上限** ✗：⭐ 短期租约不许超 30 天（⭐ 长期能力由许可证给 ✓）
+    if exp < nbf || exp.saturating_sub(nbf) > MAX_LEASE_SECS {
+        return Err(LeaseRefusal::TooLong);
+    }
+    // ⑤ 时间窗
+    match claims.window(now) {
+        LicenseWindow::NotYet => return Err(LeaseRefusal::NotYet),
+        LicenseWindow::Expired => return Err(LeaseRefusal::Expired),
+        _ => {}
+    }
+    // ⑥ ⭐ **设备位** ✗：⭐ 必须是发给本机端点的（⭐ 握手已证明的那个 id ✓）
+    if !claims.names_device(device_id) {
+        return Err(LeaseRefusal::DeviceNotListed);
+    }
+    // ⑦ 能力位
+    if !claims.crossnet {
+        return Err(LeaseRefusal::NoCrossnetCap);
+    }
+    Ok(claims)
+}
+
+/// ⭐ **生产入口** ✗：⭐ 用那份内嵌 keyring（⭐ 占位 ⇒ ⭐ 真租约一律验不过 ✓）。
+pub fn verify_lease(text: &str, now: i64, device_id: &str) -> Result<LeaseClaims, LeaseRefusal> {
+    verify_lease_with(text, now, device_id, KEYRING)
+}
+
+/// ⭐ 把共用的形状错误映射成租约那种 ✗。
+fn lease_map(e: LicenseRefusal) -> LeaseRefusal {
+    match e {
+        LicenseRefusal::BadShape => LeaseRefusal::BadShape,
+        LicenseRefusal::UnknownKid => LeaseRefusal::UnknownKid,
+        LicenseRefusal::BadSignature => LeaseRefusal::BadSignature,
+        _ => LeaseRefusal::BadShape,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +513,209 @@ mod tests {
         let msg = signing_message(&FORMAT_VERSION.to_string(), &p64);
         let sig = sk.sign(msg.as_bytes());
         format!("{}{}.{}.{}", LICENSE_PREFIX, FORMAT_VERSION, p64, B64.encode(sig.to_bytes()))
+    }
+
+    // ─────────────────────── ⭐ 租约那半的判据 ✗ ───────────────────────
+
+    /// ⭐ 租约 payload ✗（⭐ **9 格**，⛔ 不带 `sub/seats/grace/rot/prev` ✓）。
+    fn lease_payload(
+        dev: serde_json::Value,
+        cap: serde_json::Value,
+        nbf: i64,
+        exp: i64,
+        extra: Option<(&str, serde_json::Value)>,
+    ) -> String {
+        let mut map = serde_json::Map::new();
+        map.insert("v".into(), serde_json::json!(FORMAT_VERSION));
+        map.insert("typ".into(), serde_json::json!("token"));
+        map.insert("dev".into(), dev);
+        map.insert("nbf".into(), serde_json::json!(nbf));
+        map.insert("exp".into(), serde_json::json!(exp));
+        map.insert("kid".into(), serde_json::json!("JUDGE-KID"));
+        map.insert("iat".into(), serde_json::json!(nbf));
+        map.insert("jti".into(), serde_json::json!("lease-1"));
+        map.insert("cap".into(), cap);
+        if let Some((k, v)) = extra {
+            map.insert(k.to_string(), v);
+        }
+        serde_json::Value::Object(map).to_string()
+    }
+
+    /// ⭐ 签一份租约 ✗（⭐ 前缀是 `SHUYO-TOK-` ✓，⭐ 签名字节也带那个前缀 ✓）。
+    fn mint_lease(sk: &SigningKey, payload_json: &str) -> String {
+        let p64 = B64.encode(payload_json.as_bytes());
+        let msg = signing_message_for(LEASE_PREFIX, &FORMAT_VERSION.to_string(), &p64);
+        let sig = sk.sign(msg.as_bytes());
+        format!(
+            "{}{}.{}.{}",
+            LEASE_PREFIX,
+            FORMAT_VERSION,
+            p64,
+            B64.encode(sig.to_bytes())
+        )
+    }
+
+    fn good_lease(sk: &SigningKey) -> String {
+        mint_lease(
+            sk,
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([CROSSNET_CAP]),
+                1_000,
+                1_000 + 86_400,
+                None,
+            ),
+        )
+    }
+
+    /// ⭐ 判据⑦：⭐ 一份好租约验得过，⭐ 而且**设备位真的对得上** ✗（⭐ 对不上是本条的另一半 ✓）。
+    #[test]
+    fn a_good_lease_verifies_and_must_name_this_endpoint() {
+        let (sk, entry) = judge_key();
+        let claims = verify_lease_with(&good_lease(&sk), 1_500, "endpoint-1", &[entry.clone()])
+            .expect("该过");
+        assert_eq!(claims.jti, "lease-1");
+        assert!(claims.crossnet);
+        assert!(claims.allows_crossnet(1_500));
+        assert!(claims.names_device("endpoint-1"));
+        // ⭐ 设备位里没有本机 id ⇒ ⭐ **拒** ✗（⭐ ⛔ 不信自报字段，⭐ 只认握手证明过的那个 ✓）
+        assert_eq!(
+            verify_lease_with(&good_lease(&sk), 1_500, "some-other-endpoint", &[entry]),
+            Err(LeaseRefusal::DeviceNotListed)
+        );
+    }
+
+    /// ⭐ 判据⑧：⭐ **租约上限 30 天** ✗ —— ⭐ 超一天就拒 ✓（⭐ 长期能力只能由许可证给 ✓）。
+    #[test]
+    fn a_lease_longer_than_thirty_days_is_refused() {
+        let (sk, entry) = judge_key();
+        let at_limit = mint_lease(
+            &sk,
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([CROSSNET_CAP]),
+                1_000,
+                1_000 + MAX_LEASE_SECS,
+                None,
+            ),
+        );
+        assert!(
+            verify_lease_with(&at_limit, 1_500, "endpoint-1", &[entry.clone()]).is_ok(),
+            "正好 30 天应当放行"
+        );
+        let one_over = mint_lease(
+            &sk,
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([CROSSNET_CAP]),
+                1_000,
+                1_001 + MAX_LEASE_SECS,
+                None,
+            ),
+        );
+        assert_eq!(
+            verify_lease_with(&one_over, 1_500, "endpoint-1", &[entry.clone()]),
+            Err(LeaseRefusal::TooLong)
+        );
+        // ⭐ `exp < nbf` 也是形状坏（⭐ 别让它当成"永不过期" ✓）
+        let backwards = mint_lease(
+            &sk,
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([CROSSNET_CAP]),
+                2_000,
+                1_000,
+                None,
+            ),
+        );
+        assert_eq!(
+            verify_lease_with(&backwards, 1_500, "endpoint-1", &[entry]),
+            Err(LeaseRefusal::TooLong)
+        );
+    }
+
+    /// ⭐ 判据⑨：⭐ 租约的**字段面是 9 格** ✗ —— ⭐ 把许可证那几格塞进来必须拒 ✓
+    /// （⭐ 而且**少了** `cap` 之类也要拒 ✓）；⭐ 另外：⭐ 前缀不对／⭐ 缺 `cap`／⭐ 过期都要各自拒 ✓。
+    #[test]
+    fn the_lease_field_face_is_nine_and_the_prefix_cannot_be_swapped() {
+        let (sk, entry) = judge_key();
+        // 多一格（⭐ 塞一个许可证才有的 `seats` ✓）
+        let extra = mint_lease(
+            &sk,
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([CROSSNET_CAP]),
+                1_000,
+                2_000,
+                Some(("seats", serde_json::json!(3))),
+            ),
+        );
+        assert_eq!(
+            verify_lease_with(&extra, 1_500, "endpoint-1", &[entry.clone()]),
+            Err(LeaseRefusal::BadShape)
+        );
+        // 少一格
+        let mut map: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([CROSSNET_CAP]),
+                1_000,
+                2_000,
+                None,
+            ),
+        )
+        .expect("对象");
+        map.remove("typ");
+        let missing = mint_lease(&sk, &serde_json::Value::Object(map).to_string());
+        assert_eq!(
+            verify_lease_with(&missing, 1_500, "endpoint-1", &[entry.clone()]),
+            Err(LeaseRefusal::BadShape)
+        );
+        // ⭐ 缺 `cap` ⇒ ⭐ 时间与设备都对也拒 ✓（⛔ 别把"时间对"当"能跨网" ✗）
+        let no_cap = mint_lease(
+            &sk,
+            &lease_payload(
+                serde_json::json!(["endpoint-1"]),
+                serde_json::json!([]),
+                1_000,
+                2_000,
+                None,
+            ),
+        );
+        assert_eq!(
+            verify_lease_with(&no_cap, 1_500, "endpoint-1", &[entry.clone()]),
+            Err(LeaseRefusal::NoCrossnetCap)
+        );
+        // ⭐ 前缀不能互换 ✗：⭐ 许可证文本当租约 ⇒ 形状坏 ✓（⭐ 反之亦然 ✓）
+        assert_eq!(
+            verify_lease_with(&ok_text(&sk), 1_500, "endpoint-1", &[entry.clone()]),
+            Err(LeaseRefusal::BadShape)
+        );
+        // 过期／还没开始
+        // ⚠️ "还没开始"要把**容差**让出来 ✗：`nbf = 1000` ＋ 容差 600 ⇒ 999 **本来就在容差内** ✓
+        //    （⭐ 我第一版写成 999 ⇒ 判据自己错 ✗，⭐ 代码是对的 ✓）
+        assert_eq!(
+            verify_lease_with(
+                &good_lease(&sk),
+                1_000 - CLOCK_TOLERANCE_SECS - 1,
+                "endpoint-1",
+                &[entry.clone()]
+            ),
+            Err(LeaseRefusal::NotYet)
+        );
+        // ⭐ 容差边界上仍然算对得上 ✓
+        assert!(verify_lease_with(
+            &good_lease(&sk),
+            1_000 - CLOCK_TOLERANCE_SECS,
+            "endpoint-1",
+            &[entry.clone()]
+        )
+        .is_ok());
+        assert_eq!(
+            verify_lease_with(&good_lease(&sk), 1_000 + 86_400 + 10, "endpoint-1", &[entry]),
+            Err(LeaseRefusal::Expired),
+            "租约没有宽限 ⇒ 过期就是过期"
+        );
     }
 
     fn ok_text(sk: &SigningKey) -> String {
