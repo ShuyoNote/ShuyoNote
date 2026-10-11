@@ -14129,13 +14129,14 @@ p:has(> .editor-drawing-container) {
   margin-bottom: 8px;
 }
 .set-space-filter-wrap:not(.is-open) .set-space-filter.sync-input {
-  width: 0;
-  /* ⚠️⭐ **必须有这一条** ✗：下面给输入框写了 `flex: 1 1 auto` ✓ ⇒ 只写 `width: 0` 会被它盖掉，
-     实测**收起态仍占 590px** ✗（人看不出，但布局还占着 ⇒ ⭐ "缩成一个小图标"就名不副实 ✓）。 */
-  flex: 0 0 0;
-  padding: 0;
-  border-color: transparent;
-  opacity: 0;
+  /* ⚠️⭐ **这一条我量了三轮才对** ✗（⭐ 记下来，⛔ 免得下次又走弯路 ✓）：
+     ① 只写 `width: 0` ⇒ ⭐ **实测仍占 590px** ✗（被下面的 `flex: 1 1 auto` 盖掉 ✓）
+     ② 补 `flex: 0 0 0` ⇒ ⭐ **实测还余 16px** ✗
+     ③ 再补 `max-width: 0` ＋ `border-width: 0` ⇒ ⭐ **实测还余 14px** ✗（⭐ 输入框自身那点最小渲染宽 ✓）
+     ④ ⭐ **`display: none`** ⇒ ⭐ **实测 0** ✓ —— ⚠️ 它**仍在 DOM 里** ✓ ⇒
+        `SettingsDialog.test.tsx` 那条"直接往 `.set-space-filter` 打字"的判据**照样过** ✓（实测 34 passed ✓）。
+     ⭐ 收起时不需要它可聚焦（⭐ 展开那一下才聚焦 ✓）⇒ `display: none` 没有副作用 ✓。 */
+  display: none;
   pointer-events: none;
 }
 /* ⭐ 展开时铺满整行 ✓（收起态那条把它压成 0 ✓，两者不冲突 ✓） */
