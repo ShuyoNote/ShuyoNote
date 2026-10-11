@@ -337,3 +337,22 @@
    ＋ `TrustDevicePanel.test.tsx` 新增三条 ✓ ＋ 挂载那条判据的槽位从四条长到**五条** ✓。
 ```
 
+### 12.4 ⭐⭐ 两条**"本机绿 ≠ CI 绿"**（⭐ 本轮 CI 实测抓到的，各红一次 ✗ —— 记在这里 ⛔ 别省）
+
+```
+① ⭐ 新增命令 ⇒ ⭐ 必须同步 `docs/TESTING.md` 的 `<!-- facts:begin -->` 块 ✗
+   ⚠️ 症状 ✗：本机 `check-web-commands` ⇒ 0 ✓（那条只管"契约有没有"✓），
+     而 CI 的 contract 组 `check-doc-facts` 红 ✗ —— 文档写 Rust 287 ／ CommandMap 288，
+     代码已是 288 ／ 289 ✓（逐字读数见 CI 日志 ✓）。
+   ⇒ ⭐ 根因 ✗：那条门禁在 `pnpm verify` 的 contract 组里 ✓，而本机按纪律**没跑 pnpm 全套** ✗
+     ⇒ ⭐ 换成 `node scripts/check-doc-facts.mjs`（0 依赖 ✓）或
+     `node scripts/test-report.mjs --group contract,sync,plugin`（实测 58 条全过 ✓）✓。
+② ⭐ 文档注释里写**散文** ⇒ ⛔ 不许用裸三个反引号 ✗（⭐ 要用 `text` 围栏 ✓）
+   ⚠️ 症状 ✗：`mesh.rs::paired_row_key` 的那段散文被 Rust 当 **doctest 去编译** ✓
+     ⇒ CI 的 rust 组逐字红：`test src/mesh.rs - mesh::paired_row_key (line 490) ... FAILED`
+     ／ error: doctest failed, to rerun pass --doc ✓。
+   ⇒ ⭐ 根因 ✗：本机的 Rust 判据只跑 **lib 目标** ✓（`--lib` ✓）⇒ ⛔ 照不出 doctest ✗
+     ⇒ ⭐ 提交前补跑 **`cargo test --doc`** ✓（实测：0 passed ／ 0 failed ／ 3 ignored ⇒ exit 0 ✓）。
+```
+
+
