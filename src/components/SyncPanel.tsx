@@ -2244,7 +2244,7 @@ export function SyncPanel() {
                           {nearby.filter((p) => p.serves_current).length === 0 && (
                             // ⚠️ 看不到候选 ⇒ **如实说**（⛔ 不说"网段里没有设备" ✗：看不见 ≠ 不存在 ✓）
                             <div className="sync-hint">
-                              「附近的设备」里暂时没有服务这个空间的设备 ⇒ 不指定也能配，只是要**配两次** ✓。
+                              「附近的设备」里暂时没有服务这个空间的设备 ⇒ 不指定也能配，只是要<b>配两次</b> ✓。
                             </div>
                           )}
                           <button className="sync-btn" disabled={dpBusy} onClick={() => void dpGenerate()}>
@@ -2256,13 +2256,13 @@ export function SyncPanel() {
                               <div style={{ wordBreak: "break-all" }} data-testid="dp-text">{dpExport.text}</div>
                               {dpPeer ? (
                                 <div data-testid="dp-one-shot">
-                                  ⭐ 已指定对端 ⇒ 把这段码交给它，**它采纳一次就够** ✓：
-                                  本机生成时已经把它登记好了 ⇒ 采纳完**两个方向都通**（不用再配第二次 ✓）。
+                                  ⭐ 已指定对端 ⇒ 把这段码交给它，<b>它采纳一次就够</b> ✓：
+                                  本机生成时已经把它登记好了 ⇒ 采纳完<b>两个方向都通</b>（不用再配第二次 ✓）。
                                 </div>
                               ) : (
                                 <div>
                                   对端收下后，请当面核对两边的比对码：一样才继续 ✓。
-                                  ⚠️ 没指定对端 ⇒ 这条兜底要**配两次**（见上面的下拉 ✓）。
+                                  ⚠️ 没指定对端 ⇒ 这条兜底要<b>配两次</b>（见上面的下拉 ✓）。
                                 </div>
                               )}
                             </div>
