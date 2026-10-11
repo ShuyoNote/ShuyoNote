@@ -16,6 +16,7 @@ describe("中继那一格 · 面板接线", () => {
   const webTs = read("src/lib/platform/web.ts");
   const apiTs = read("src/lib/api.ts");
   const rust = read("src-tauri/src/relay_client.rs");
+  const licenseRust = read("src-tauri/src/relay_license.rs");
 
   it("① 面板真的挂上了中继那一格（旧行为：面板里一个字都没有 ⇒ 这条必红）", () => {
     expect(panel, "面板没挂中继那一格 ⇒ 用户在哪儿都看不到「中继 ／ 剩余 N 天」").toContain(
@@ -58,13 +59,31 @@ describe("中继那一格 · 面板接线", () => {
   });
 
   it("⑤ 到期只收回跨网：中继模块只读配置，⛔ 不碰库 ／ 正文 ／ 加密", () => {
-    // 唯一允许碰的仓内设施是"拿 app data 目录"那个只读路径助手 —— 别的一律不许出现。
-    const refs = [...rust.matchAll(/crate::[A-Za-z_:]+/g)].map((m) => m[0]);
+    // ⭐ 允许两族 ⭐：
+    //   ① 唯一允许碰的**仓内设施**＝"拿 app data 目录"那个只读助手 ✓；
+    //   ② ⭐ **纯函数**兄弟模块 `crate::relay_license` ✗（⭐ 2026-10-11 加 ✓：⭐ 它做许可证/租约的解析与验签 ✓，
+    //      ⛔ 自己不碰 IO ／ 库 ／ 加密 ✓）—— ⚠️ 但"它是不是纯的"⛔ **不靠这里口头保证** ✗：
+    //      ⭐ 由下面那条**顺着加**的守卫逐个挡着 ✓。
+    const refs = [...new Set([...rust.matchAll(/crate::[A-Za-z_:]+/g)].map((m) => m[0]))];
+    const allowed = [/^crate::db::app_data_dir_ref$/, /^crate::relay_license($|::)/];
     expect(
-      [...new Set(refs)],
+      refs.filter((r) => !allowed.some((re) => re.test(r))),
       "中继模块碰了不该碰的仓内设施（到期只收回跨网 ⇒ 本地数据/功能一个字节都不许动）",
-    ).toEqual(["crate::db::app_data_dir_ref"]);
+    ).toEqual([]);
     // 而且它**只读**：没有写库/落盘/加解密那一类动词。
     expect(rust, "中继模块出现了写库/删除的动作").not.toMatch(/Connection::open|\.execute\(|INSERT INTO|DELETE FROM/);
+    // ⭐ 顺着加的守卫 ✗：⭐ 被允许的那个兄弟模块**自己**也不许碰这些 ✓
+    //    （⛔ 否则"允许一个纯函数模块"就成了绕过上一条判据的后门 ✓）
+    for (const forbidden of [
+      /crate::db(?!::app_data_dir_ref)/,
+      /crate::security/,
+      /crate::crypto/,
+      /crate::sync/,
+      /crate::mesh/,
+      /Connection::open|\.execute\(|INSERT INTO|DELETE FROM/,
+      /std::fs::write|std::fs::remove|std::fs::create_dir/,
+    ]) {
+      expect(licenseRust, `被允许的兄弟模块里出现了 ${forbidden}`).not.toMatch(forbidden);
+    }
   });
 });
