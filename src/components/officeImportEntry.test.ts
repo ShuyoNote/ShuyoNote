@@ -49,4 +49,17 @@ describe("「从文件导入」也吃 Word（.docx）", () => {
     expect(src, "不是「只有 Word 才有」⇒ 别的文件也会看到一项转不成的").toMatch(/docx\|docm/);
     expect(src, "转成后不刷新页面树 ⇒ 用户会以为没转成").toContain("loadPages");
   });
+
+  // ⭐ 2026-10-11（owner：「的确没有『转成笔记』」＋ 截图）—— ⭐ 他指的那份菜单其实是
+  //    **文件管理**页里的 ✓（⭐ 打开 ／ ⭐ 下载 ／ ⭐ 在文件夹中显示 ／ ⭐ 移动到文件夹 ／ ⭐ N 个历史版本 ／ ⭐ 改名 ／ ⭐ 删除 ✓）。
+  //    ⇒ ⭐ 这一条钉它 ✓（⭐ 四条口径与 c) 一致 ✓，⭐ 只是换个文件 ✓）。
+  it("d) 文件管理的右键菜单也有「转成笔记」，同样只对 Word 出现、转完刷新列表", () => {
+    const src = read("FileManagerView.tsx");
+    expect(src, "文件管理那份菜单里没有那一项").toContain("转成笔记");
+    expect(src, "没接共用入口（importOfficeAttachmentAsPage）⇒ 多半自己写了一份").toContain(
+      "importOfficeAttachmentAsPage",
+    );
+    expect(src, "不是「只有 Word 才有」⇒ 图片 / PDF 上也会出现一项转不成的").toMatch(/docx\|docm/);
+    expect(src, "转成后不刷新文件列表 ⇒ 用户会以为没转成").toContain("loadFiles");
+  });
 });
