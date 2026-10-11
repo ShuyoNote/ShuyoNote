@@ -41,10 +41,10 @@ function esc(text: string): string {
 /** 段落里的元素（**顺序即文档顺序** —— 真值就是按它数出来的 ✓）。 */
 export type SampleElement =
   | { t: "h"; level: number; text: string }
-  | { t: "p"; text: string }
+  | { t: "p"; text: string; sz?: number; bold?: boolean }
   | { t: "emph"; bold?: string; italic?: string; strike?: string }
   | { t: "break" }
-  | { t: "li"; numId: string; level: number; text: string }
+  | { t: "li"; numId: string; level: number; text: string; sz?: number; bold?: boolean }
   | { t: "img"; media: string; missing?: boolean }
   | { t: "table"; rows: string[][]; gridCols?: number };
 
@@ -60,6 +60,11 @@ function para(inner: string, pPrInner = ""): string {
 
 function run(text: string, props = ""): string {
   return `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ""}<w:t xml:space="preserve">${esc(text)}</w:t></w:r>`;
+}
+
+/** ⭐ 2026-10-11：把「半磅字号 / 整段加粗」拼成 `w:rPr` 的内容（⭐ 造"手工排版"那种夹具用 ✓）。 */
+function runProps(sz?: number, bold?: boolean): string {
+  return [bold ? "<w:b/>" : "", sz ? `<w:sz w:val="${sz}"/>` : ""].filter(Boolean).join("");
 }
 
 function imageParagraph(rid: string): string {
@@ -137,9 +142,13 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
       case "h":
         body.push(para(run(el.text), `<w:pStyle w:val="Heading${el.level}"/>`));
         break;
-      case "p":
-        body.push(para(run(el.text)));
+      case "p": {
+        // ⭐ 2026-10-11：可选 `sz`（**半磅**）与 `bold` —— ⭐ 用来造"⭐ 手工排版 ✗"那种文档 ✓
+        //    （⭐ 真样张的形状：⭐ Word 标题样式用了 0 次、⭐ 字号却出现几百次 ⇒ ⭐ 标题全靠字号撑 ✓）
+        const props = runProps(el.sz, el.bold);
+        body.push(para(run(el.text, props)));
         break;
+      }
       case "emph":
         body.push(
           para(
@@ -157,7 +166,7 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
       case "li":
         body.push(
           para(
-            run(el.text),
+            run(el.text, runProps(el.sz, el.bold)),
             `<w:numPr><w:ilvl w:val="${el.level}"/><w:numId w:val="${el.numId}"/></w:numPr>`,
           ),
         );
