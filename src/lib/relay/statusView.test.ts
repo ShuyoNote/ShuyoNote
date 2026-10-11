@@ -33,6 +33,9 @@ function payload(over: {
       grace_days_left: null,
       label: "剩余 27 天",
       crossnet_allowed: true,
+      // ⭐ 2026-10-11：⭐ 来源两格（⭐ 这条是"验过的正常读数"✓）
+      source: "verified",
+      refusal: null,
       ...over.license,
     },
   };
@@ -106,5 +109,44 @@ describe("中继那一格 · 读数映射", () => {
         .tone,
     ).toBe("warn");
     expect(relayStatusView(payload({ license: { state: "not_yet", label: "还没到生效时间" } })).tone).toBe("muted");
+  });
+
+  it("⑥ ⭐ 2026-10-11：**来源**照抄后端（⭐ 验过 ／ ⭐ 占位 ／ ⭐ 拒收 分得开，⛔ 界面不自己判 ✗）", () => {
+    // ⭐ 验过 ⇒ 来源是 verified，⭐ 色调仍由**状态字**决定 ✓
+    const okRead = relayStatusView(payload({ license: { source: "verified", refusal: null } }));
+    expect(okRead.licenseSource).toBe("verified");
+    expect(okRead.licenseRefusal).toBe("");
+    expect(okRead.tone).toBe("ok");
+    // ⭐ 没有签名文本 ⇒ placeholder（⭐ 与"验过"分开 ✓）
+    const placeholder = relayStatusView(payload({ license: { source: "placeholder" } }));
+    expect(placeholder.licenseSource).toBe("placeholder");
+    // ⭐ 验不过 ⇒ refused：⭐ 与"已到期"同一档色调（跨网就是不能用 ✓），
+    //    ⛔ 但**不是**"读不到"（⭐ 后端明明给了原因 ✓）
+    const refused = relayStatusView(
+      payload({
+        license: {
+          state: "refused",
+          days_left: null,
+          grace_days_left: null,
+          label: "许可证验不过：签发方不在本机信任的名单里",
+          crossnet_allowed: false,
+          source: "refused",
+          refusal: "unknown_kid",
+        },
+      }),
+    );
+    expect(refused.tone).toBe("bad");
+    expect(refused.licenseSource).toBe("refused");
+    expect(refused.licenseRefusal).toBe("unknown_kid");
+    expect(refused.licenseLabel).toBe("许可证验不过：签发方不在本机信任的名单里");
+    expect(refused.licenseReadable, "拒收也是一条**读数** ⇒ 不是「读不到」").toBe(true);
+    // ⛔ 拒收那一档⛔ 不许带天数：⭐ 整份读数里不许冒出"剩余" ✗
+    expect(JSON.stringify(refused)).not.toContain("剩余");
+    // ⚠️ 形状坏了（后端没给 source）⇒ 空串：⛔ 不许猜成"验过了" ✗
+    const nosource = relayStatusView(
+      payload({ license: { source: undefined as unknown as string, refusal: undefined as unknown as null } }),
+    );
+    expect(nosource.licenseSource).toBe("");
+    expect(nosource.licenseRefusal).toBe("");
   });
 });

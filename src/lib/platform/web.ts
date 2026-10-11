@@ -1373,6 +1373,10 @@ export function relayUnavailableShape(): RelayStatus {
       grace_days_left: null,
       label: "许可证状态未接线（读不到有效期）",
       crossnet_allowed: false,
+      // ⭐ 2026-10-11：⭐ Web 版**根本没有**许可读数 ⇒ ⭐ 来源如实写"没说来源" ✓
+      //    （⛔ 不许写 `verified`：⭐ 那是在假装验过 ✓）
+      source: "unstated",
+      refusal: null,
     },
   };
 }

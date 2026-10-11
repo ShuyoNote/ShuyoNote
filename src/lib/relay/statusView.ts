@@ -28,6 +28,13 @@ export interface RelayStatusView {
   licenseLabel: string;
   /** 后端到底给没给许可证读数 ✓（false ⇒ 界面上那句一定是"读不到" ✓）。 */
   licenseReadable: boolean;
+  /**
+   * ⭐ 这一格的读数**从哪来的** ✗（⭐ 后端原文，⛔ 界面不自己判 ✓）：
+   * `verified` ／ `refused` ／ `placeholder` ／ `unstated`（⭐ 后端没说 ⇒ 空串 ✓）。
+   */
+  licenseSource: string;
+  /** ⭐ 拒收那一档的机器可读码（⭐ 其余档为空串 ✓）。 */
+  licenseRefusal: string;
   /** 色调 —— ⚠️ 由后端的**状态字**决定，⛔ 不从天数算 ✗。 */
   tone: RelayTone;
   /** 后端附的一句说明（可空）。 */
@@ -41,6 +48,9 @@ function toneOf(licenseState: string, connectionState: string): RelayTone {
   if (licenseState === "ok") return "ok";
   if (licenseState === "grace") return "warn";
   if (licenseState === "expired") return "bad";
+  // ⭐ 2026-10-11：⭐ 验不过 ⇒ ⭐ 与"已到期"同一档（⭐ 跨网就是不能用 ✓），
+  //    ⛔ 但**不是**"读不到"（⭐ 后端明明给了拒收原因 ✓）
+  if (licenseState === "refused") return "bad";
   if (licenseState === "not_yet" || licenseState === "missing") return "muted";
   return connectionState === "connected" ? "ok" : "muted";
 }
@@ -63,6 +73,8 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
       connectionDetail: "",
       licenseLabel: RELAY_UNREADABLE,
       licenseReadable: false,
+      licenseSource: "",
+      licenseRefusal: "",
       tone: "muted",
       note: note || "中继这一档在当前平台不可用（Web 版没有本地中继连接面）",
     };
@@ -81,6 +93,9 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
     // 后端给了就**原样**用（⛔ 不解析它、⛔ 不按 days_left 重算 ✗）；没给 ⇒ 明说读不到 ✓
     licenseLabel: licenseLabel || RELAY_UNREADABLE,
     licenseReadable: licenseLabel.length > 0 && licenseState !== "missing",
+    // ⭐ 来源照抄后端（⭐ 形状坏了 ⇒ 空串：⛔ 不许猜成"验过了" ✗）
+    licenseSource: text(p.license?.source),
+    licenseRefusal: text(p.license?.refusal),
     tone: toneOf(licenseState, connectionState),
     note,
   };

@@ -610,11 +610,20 @@ export interface RelayConnectionView {
  *    ⛔ 与"本机能不能用"无关 ✗（到期只收回跨网：本机读写搜改一律照旧 ✓）。
  */
 export interface RelayLicenseView {
-  state: "ok" | "grace" | "expired" | "not_yet" | "missing";
+  /** ⭐ `refused`（2026-10-11 加）：⭐ **有签名文本但验不过** ⇒ 读数里一个天数都没有 ✓。 */
+  state: "ok" | "grace" | "expired" | "not_yet" | "missing" | "refused";
   days_left: number | null;
   grace_days_left: number | null;
   label: string;
   crossnet_allowed: boolean;
+  /**
+   * ⭐ 这一格的读数**从哪来的** ✗（2026-10-11 加，⭐ 后端原文 ✓）：
+   * `verified`（签名文本验过了 ✓）／ `refused`（有文本但验不过 ✓）／
+   * `placeholder`（没有签名文本 ⇒ 只有裸数字 ✓）／ `unstated`（只拿到窗口、没说来源 ✓）。
+   */
+  source: string;
+  /** ⭐ 拒收那一档的机器可读码 ✗（⭐ 其余档为 `null` ✓）：`bad_shape`／`unknown_kid`／`bad_signature`／`not_yet`／`expired`／`no_crossnet_cap`。 */
+  refusal: string | null;
 }
 
 /** ⭐ 中继那两格的完整读数（形状与 `src-tauri/src/relay_client.rs::RelayStatus` 逐字段相同 ✓）。 */
