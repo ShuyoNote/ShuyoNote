@@ -1199,15 +1199,26 @@ export function SyncPanel() {
       toast("现在还看不到可以信任的设备（先在「附近的设备」里发现一台）", "info");
       return;
     }
+    // ⭐ 2026-10-12（设备身份第 3 步 ✓）：⭐ 信任的产物是"把**它的公钥**记进自己那份名单" ✗
+    //   ⇒ ⭐ 对面**没报公钥** ⇒ **如实说**、⛔ 不硬凑一个身份 ✗（老版本的对端就是这一档 ✓）。
+    if (!peer.pubkey) {
+      toast(
+        "这一台还没报出它的身份（它需要这一版的程序，并且开过一次设备直连）—— 现在信任它，说不出「它凭什么证明自己是它」",
+        "info",
+      );
+      return;
+    }
     try {
       for (const spaceId of spaceIds) {
         // ⚠️ 走 `platform.executor.invoke`：这条命令的声明归 Lead（⛔ 本任务不碰 `commands.ts` ✗）
         await platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, {
           spaceId,
           peerDeviceId: peer.device_id,
+          peerPubkey: peer.pubkey,
         });
       }
-      toast("已信任这台设备（一端即可）", "success");
+      // ⭐ 文案说的是**方向** ✗（⛔ 不声称"双向已通" ✗ —— 那要对面也点一次 ✓）
+      toast("已允许这台设备来拿你的内容（要双向，得它那边也点一次）", "success");
       // ⭐ 2026-10-11（任务 B）：⭐ 点完之后**再读一次后端那一格** ✗ —— 界面上要说的是**读数** ✓，
       //    ⛔ 不是一句 toast（它下一秒就没了，而"通了没有"要一直看得见 ✓）。
       await refreshTrustState();

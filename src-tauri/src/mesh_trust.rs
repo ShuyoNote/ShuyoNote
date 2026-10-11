@@ -55,15 +55,21 @@ pub struct MeshTrustStateView {
 /// ⭐ 把内核那两档变成**给人看的两格** ✗ —— ⭐ **纯函数** ✓（⭐ 判据不用起宿主就能钉住"哪档说哪句话" ✓）。
 ///
 /// ⚠️ 兜底那一档要说**下一步做什么** ✗，⛔ 不是只说"没有" ✗（owner 口径：界面上的话要能照着做 ✓）。
+///
+/// ⭐⭐ **2026-10-12（第 3 步改口径 ✓）** ✗：⭐ 那两句**声称的是双向** ✗ ⇒ 与 owner 的口径矛盾 ⇒ 换掉 ✓
+/// （「『信任这台设备』＝『**允许它来拿我的**』」✓ ＋「**单方信任 ⇒ 同步是单向的**」✓）——
+/// ⚠️ 这一格是**进程级的一个槽** ✗（它分不出方向 ✓）⇒ ⭐ 所以人话里**必须**把"方向"说出来 ✓，
+/// ⛔ 不许再声称"已经建立信任"✗（那是上一版的说法 ✓）。
 pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> MeshTrustStateView {
     let (state, message) = match state {
         TrustState::Idle => (
             "idle",
-            "还没有信任过哪台设备 —— 在「附近的设备」里点一下「接入」，点一次就算通",
+            "还没有允许过哪台设备来拿你的内容 —— 在「附近的设备」里点一下「接入」就是允许它",
         ),
         TrustState::Trusted => (
             "trusted",
-            "已经建立信任：你在同一个网络里时它会直接连，不用你再确认一遍",
+            "已经有过信任动作了（⭐ 一方点一次只开一个方向：要双向，两台各点一次）\
+             —— 谁在名单里看下面那份「这台机器认了 N 台设备」",
         ),
     };
     MeshTrustStateView {
@@ -111,12 +117,26 @@ pub fn mesh_trust_begin(
     db: State<'_, crate::db::Db>,
     space_id: String,
     peer_device_id: String,
+    // ⭐⭐ 2026-10-12（设备身份第 3 步 ✓）：⭐ 对面那一台的**公钥**（十六进制 ✓）✗ ——
+    //   ⭐ 界面从「附近的设备」里那一台的公告拿 ✓（公钥**不是秘密** ✓，它随公告走 ✓）。
+    peer_pubkey: String,
 ) -> Result<MeshTrustOutcome, String> {
     let peer = peer_device_id.trim().to_string();
     if peer.is_empty() {
         return Ok(MeshTrustOutcome {
             outcome: "bad_peer".to_string(),
             message: "不知道要信任哪一台设备（没有指定对面）".to_string(),
+        });
+    }
+    // ⭐ 2026-10-12（第 3 步）：⭐ "信任"的产物**不再是"共用口令的哈希"** ✗，⭐ 而是**它的公钥** ✗
+    //   ⇒ ⭐ 门此后**验签** ✓（⭐ 谁都不能靠"知道口令"混进来 ✓ —— 那是 ⓒ 落地后的完整形态 ✓）。
+    let pk = peer_pubkey.trim().to_ascii_lowercase();
+    if !is_pubkey_hex(&pk) {
+        return Ok(MeshTrustOutcome {
+            outcome: "no_identity".to_string(),
+            message: "这一台还没报出它的身份（⭐ 它需要这一版的程序、并且开过一次设备直连 ✓）\
+                      —— 现在信任它的话，**它凭什么证明自己是它**就无从谈起 ✓"
+                .to_string(),
         });
     }
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
@@ -131,23 +151,18 @@ pub fn mesh_trust_begin(
             })
         }
     };
-    // ⭐ 令牌就是那把"⭐ 配对密钥 ✗" ✓（⭐ 两台都从空间密钥推得出 ✓，⭐ 所以**不上线** ✓）。
-    let token = crate::mesh::settings_for(&c, &scope.space, scope.device_level)
-        .token
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Ok(MeshTrustOutcome {
-            outcome: "no_token".to_string(),
-            message: "这个空间还没设口令 ⇒ 先去同步设置里设一个，两台要用同一个".to_string(),
-        });
-    }
-    // ⭐ 唯一实现 ✓ —— ⭐ 三件一起做 ✓（⭐ 少一件就是"⭐ 配对成功却 401 ✗"✓）。
-    //   ⭐ 2026-10-11（丙）：⭐ `scope.device_level` **由调用方传进去** ✗（本层⛔ 不反推 ✓）——
-    //   个人档 ⇒ 卡与"本机要出示的那份"都落**空串那一格** ✓（＝ 本机一份，撤回也是本机级 ✓）。
-    crate::sync::remember_peer_card(&c, &scope.space, &peer, &token, scope.device_level)?;
-    // ⭐ 甲 ✗：⭐ 把"⭐ 我想信任你 ✗"发出去 ✓（⭐ ⛔ 令牌不在这一格里 ✓）。
+    // ⭐⭐ **"允许它来拿我的"就落在这一行** ✗：
+    //   ⭐ 行键照**同一处判定**算 ✓（个人档 ⇒ 设备级那一行 ✓，方案 §10.3 ✓），
+    //   ⛔ 不在这里反推"是不是个人档" ✗。
+    let row = crate::mesh::paired_row_key(&scope.space, scope.device_level);
+    crate::db::pair_pubkey(&c, row, &peer, &pk)?;
+    // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓，与 `add_paired` 同一条纪律 ✓）。
+    crate::mesh::add_paired_pubkey(&scope.space, &peer, &pk)?;
+    // ⚠️ 口令**不再需要** ✗：旧口径下这里要先把空间的共用口令读出来当"配对密钥" ✓；
+    //   ⭐ 第 3 步之后**信任与口令无关** ✓（门认签名 ✓）⇒ ⛔ 没有口令也照样能信任 ✓
+    //   （⚠️ 那是**有意的**：口令从此只在"旧那一档"里有意义 ✓ —— 见 `authorized` 那一段 ✓）。
+    // ⭐ 那条 ask 照旧发 ✗：⭐ 它的含义变了 —— ⭐ 让**对面知道"你允许了它"** ✓
+    //   （⭐ 好让它能如实显示"对面允许你来拿"，⛔ **不是**"它在请求你同意" ✗）。
     let ask = new_trust_ask();
     let now = crate::lan_state::now_ms();
     crate::lan_state::with_trust(|h| {
@@ -155,8 +170,15 @@ pub fn mesh_trust_begin(
     });
     Ok(MeshTrustOutcome {
         outcome: "trusted".to_string(),
-        message: "已信任这台设备：它和你在同一个网络里时就能直接连".to_string(),
+        message: "已允许这台设备来拿你的内容（⭐ 单方就算数 ✓）。\
+                  ⚠️ 反过来你要拿它的，得**它那边也允许你一次** ✓ —— 那时候才是双向 ✓"
+            .to_string(),
     })
+}
+
+/// ⭐ 那串是不是**形状正确的公钥**（⭐ 32 字节 ⇒ 64 个十六进制字符 ✓）—— ⛔ 不猜、⛔ 不补位 ✗。
+fn is_pubkey_hex(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

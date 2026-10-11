@@ -151,12 +151,16 @@ describe("TrustDevicePanel · 图① 接入（不勾就不会动）", () => {
     expect(line()).toContain("1 个未分类");
   });
 
-  it("⑤ 三句文案是**给用户看的人话**（不是图上那三句残留 ✗）", () => {
+  it("⑤ 三句文案是**给用户看的人话**（不是图上那三句残留 ✗）＋ ⭐ 说的是**方向**（第 3 步口径 ✓）", () => {
     render();
     const t = text();
     expect(t).toContain("由它自己挑选：");
-    expect(t).toContain("两台设备之间已重新建立信任");
-    expect(t).toContain("由你决定，我不再询问");
+    // ⭐ 2026-10-12（第 3 步改口径 ✗）：旧那两句（「两台设备之间已重新建立信任」／
+    //   「由你决定，我不再询问」）**声称的是双向** ✗ ⇒ 与 owner「允许它来拿我的」矛盾 ⇒ 换成方向性的话 ✓
+    expect(t).toContain("允许它来拿我的");
+    expect(t).toContain("它那边也要点一次");
+    // ⛔ 而且**不许**再出现"已经建立信任"这类**双向**的说法 ✗（单方只开一个方向 ✓）
+    expect(t).not.toContain("已重新建立信任");
     // ⛔ 那三句**不许**再出现在界面上（它们的落点已经换了 ✓）
     for (const bad of ["要它自己挑选的", "再聚首", "你选你不问我"]) {
       expect(t, `界面上不该再出现「${bad}」`).not.toContain(bad);
@@ -296,7 +300,10 @@ describe("TrustDevicePanel · 图④ 走到哪一步（任务 B：读数是后�
       },
     });
     expect($('[data-testid="trust-state-pending"]')?.textContent ?? "").toContain("2");
-    expect(text()).toContain("想信任你这台");
+    // ⭐ 2026-10-12（第 3 步改口径）：⭐ 那一行的含义变了 —— 从「它请求你同意」变成
+    //   「**它允许了你来拿它的**」✗（⭐ 单方 ⇒ 单向 ✓）⇒ 文案与断言同时改 ✓。
+    expect(text()).toContain("允许了你");
+    expect(text()).toContain("单向");
     // ⛔ 只给条数：读数里根本没有设备号这一格 ✓（这条判据同时钉住形状 ✓）
     expect(text()).not.toMatch(/dev-[0-9a-f]{4,}/);
   });

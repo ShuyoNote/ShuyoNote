@@ -271,8 +271,15 @@ export function TrustDevicePanel({
       {/* ══════ 图④ 「信任设备」＋ 严格模式（默认关） ══════ */}
       <section className="set-section">
         <div className="set-section-title">信任设备</div>
-        <div className="set-hint">两台设备之间已重新建立信任</div>
-        <div className="set-hint">由你决定，我不再询问</div>
+        {/* ⭐ 2026-10-12（第 3 步改口径 ✗）：⭐ 那两句旧文案（「两台设备之间已重新建立信任」／
+            「由你决定，我不再询问」）**声称的是双向** ✗ ⇒ 与 owner 的口径直接矛盾 ✓
+            （「『信任这台设备』＝『**允许它来拿我的**』」＋「单方信任 ⇒ 同步是单向的」✓）⇒ 换掉 ✓。 */}
+        <div className="set-hint">
+          点「接入」＝ <b>允许它来拿我的</b>（⭐ 单方点一次就算数 ✓）
+        </div>
+        <div className="set-hint">
+          要拿<b>它的</b>内容 ⇒ <b>它那边也要点一次</b>（⭐ 那时候才是双向 ✓）
+        </div>
 
         {/* ⭐ 2026-10-11（任务 B）：⭐ **走到哪一步** ✗ —— ⭐ 后端那一格（`mesh_trust_state` ✓）。
             ⚠️ 与上面那四个读数**同一把尺** ✗：读不到就**只说读不到** ✓
@@ -294,8 +301,8 @@ export function TrustDevicePanel({
             </span>
             {trustState.value.pending > 0 && (
               <span className="set-hint" data-testid="trust-state-pending">
-                另有 <b>{trustState.value.pending}</b> 台设备在说「想信任你这台」—— 本机正在处理，
-                不用你再点
+                另有 <b>{trustState.value.pending}</b> 台设备<b>允许了你</b>来拿它的内容
+                （⭐ 它点了、你没点 ⇒ 目前只是<b>单向</b> ✓ 想双向就也点一次 ✓）
               </span>
             )}
             {trustState.value.active && trustState.value.pending === 0 && (

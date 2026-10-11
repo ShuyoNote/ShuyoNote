@@ -240,6 +240,11 @@ export interface NearbyPeer {
    *  ⚠️ 名字取自 2026-09-29 丙-乙片（当时它管的是「有没有邀请按钮」）——同日晚 owner 裁定 §14 撤掉了邀请，
    *  这个字段**留下来了**：它现在的语义是"**能不能被直接拉**"，不是"能不能被邀请"。 */
   invitable: boolean;
+  /** ⭐ 2026-10-12（设备身份第 3 步）：对方的 **Ed25519 公钥**（十六进制 64 字符）。
+   *  ⭐ 点「信任这台设备」时把它一起交给后端（那一下 ＝ **允许它来拿我的**）。
+   *  ⚠️ 公钥**不是秘密**（它本来就随公告发出去）。⚠️ 老对端没这一格 ⇒ **空串** ⇒
+   *  界面**如实**说「这一台还没报出它的身份」，⛔ 不许拿 `device_id` 凑一个。 */
+  pubkey: string;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
@@ -1233,9 +1238,16 @@ export interface CommandMap {
    *    写在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓；兜底只剩「身份摆出来 ＋ 逐台可撤回」✓。
    * ⚠️ 四档结果都要**如实**处置（⛔ 不许把 `no_token`／`not_configured` 当成成功 ✗）：
    *    `trusted` ／ `no_token`（这个空间还没设口令）／ `not_configured`（还没有可配对的同步档案）／ `bad_peer`。
+   *
+   * ⭐⭐ **2026-10-12（设备身份第 3 步改口径 ✓，取代「甲」的一半）** ✗：
+   * ⭐ owner 逐字「『信任这台设备』是『**允许它来拿我的**』」✓ ＋「单方信任 ⇒ 同步是单向的」✓
+   * ⇒ ⭐ 这一下的产物**不再是"共用口令的哈希"** ✗，⭐ 而是 ⭐ **把对方的公钥记进自己那份名单** ✗
+   *   （`peerPubkey` ⇒ 门此后**验签** ✓）。⭐ 想拿**它的**东西 ⇒ ⭐ 得**它那边也点一次** ✓。
+   * ⚠️ 结果档随之变：`trusted` ／ `no_identity`（对面没报公钥 ⇒ 如实说、⛔ 不硬凑）／
+   *   `not_configured` ／ `bad_peer`；⭐ `no_token` **退役**（⛔ 没口令也照样能信任 ✓）。
    */
   mesh_trust_begin: {
-    args: { spaceId: string; peerDeviceId: string };
+    args: { spaceId: string; peerDeviceId: string; peerPubkey: string };
     result: { outcome: string; message: string };
   };
   /**

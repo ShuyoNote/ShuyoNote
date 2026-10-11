@@ -1,7 +1,7 @@
 # 每台设备一把自己的钥匙（Ed25519）—— 让「信任」有方向、且只有被信任的那台拿得走
 
 状态：**施工中**（⭐ 第 1 步「钥匙的生成与落盘」已落地 `c51558a4` ✓；⭐ 第 2 步「门改成验签」已落地 ⓐ（两档并存）✓；
-方向性在第 3 步 —— 见 §4；⭐ 两条待 owner 拍的在 §5）
+⭐ 第 3 步「方向性」已落地 ✓ —— 见 §4 与 §8；⭐ 两条待 owner 拍的在 §5）
 证据：`2026-10-11-one-click-trust-decision.md`（§6 是 owner 本轮的拍板原文与"取代了哪一半"）· `../../src-tauri/src/mesh.rs`（门的鉴权 `authorized`）· `../../src-tauri/src/db.rs`（对端表 `mesh_paired_devices`）· `../../src-tauri/Cargo.toml`（`ed25519-dalek` 已是直接依赖）
 
 ---
@@ -153,4 +153,28 @@ node _workspace/bin/check-all.mjs                  # 工作区门禁
    （签名放行 ✓／改一个字节 401 ✓／换 target 401 ✓／过期 401 ✓／没登记过的设备 401 ✓／
      出站 target 与门重建的**逐字相同** ✓／**撤回后同一个签名立刻 401** ✓）。
 ```
+
+### 8.3 ⭐ 第 3 步（方向性）—— **已落地** ✗（⭐ 取代「甲」的那一半 ✓）
+
+```text
+⭐ 信任的落点 ✗：`mesh_trust_begin` 现在 ⭐ **记对面的公钥** ✗（`db::pair_pubkey` ＋
+   `mesh::add_paired_pubkey` ✓）；⛔ **不再读口令** ✗ ⇒ ⭐ 没设口令也照样能信任 ✓
+   （`no_token` 那一档**退役** ✓）；对面没报公钥 ⇒ `no_identity` ＋ 如实说 ✓（⛔ 不硬凑 ✗）。
+⭐ 收到 ask 那一侧 ✗：`adopt_pending_trust_asks` ⇒ ⭐ 改名成 `note_pending_trust_asks` ✗
+   ＋ ⛔ **一个字节都不写库** ✗（⭐ 只消费那条 ask ＋ 记一行"对面允许了你"✓）——
+   ⭐ 那正是"单方 ⇒ 单向"的来源 ✓（旧口径会**替对面同意** ⇒ 悄悄变双向 ✓）。
+⭐ 判据 ✗：`one_sided_trust_opens_one_direction_only` —— ⭐ 两台机器（两个目录 ＋ 两扇真门 ✓）：
+   ⭐ A 允许 B ⇒ **B 拉得动 A** ✓；⛔ **A 拉不动 B** ✗（401 ✓）；⭐ B 也允许 A ⇒ **双向** ✓；
+   ⛔ 没被允许过的第三台 ⇒ 进不来 ✗。
+   另两条改口径的：`receiving_a_trust_ask_never_writes_any_registration`（源码级 ✓，真变异见它头注 ✓）
+   ＋ `receiving_a_pending_ask_registers_nothing_and_respects_space_and_ttl` ✓。
+⭐ 界面 ✗：`NearbyPeer` 多一格 `pubkey` ✓（⭐ 公钥不是秘密 ✓）；`mesh_trust_begin` 多一格 `peerPubkey` ✓；
+   面板点「接入」前先看对面**报没报身份**（没报 ⇒ 如实说 + ⛔ 不硬凑 ✓）；
+   ⭐ 那两句旧文案（「两台设备之间已重新建立信任」／「由你决定，我不再询问」）**声称的是双向** ✗
+   ⇒ 换成 ⭐ 「点『接入』＝ **允许它来拿我的**」＋「要拿它的 ⇒ **它那边也要点一次**」✗ ✓。
+⚠️ ⭐ 判据自己又撞了本仓写过的那条注释 ✗：`add_paired*` 是"按**服务哪个空间**找门、取**第一个**命中的"✓
+   ⇒ 两扇门同时服务同一空间时登记可能落进**另一扇门** ✓（R110 那条判据里记着同一个坑 ✓）
+   ⇒ ⭐ 本判据改成**一次只开一扇门** ✓。
+```
+
 

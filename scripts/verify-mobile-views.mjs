@@ -88,10 +88,12 @@ async function applyShell(page) {
       line: "同步地址：直连（局域网）http://192.168.43.206:8787 ｜ 本网段发现 2 台",
       mesh: { enabled: true, bind: "192.168.43.1:47832", tokenSet: true, window: "192.168.43.0/24", note: "" },
       nearby: [
+        // ⭐ 2026-10-12（第 3 步）：契约的 `NearbyPeer` 多了 `pubkey` ✗ ⇒ ⭐ 桩**跟着长** ✓
+        //   （否则量的是一个不再存在的形状 ✓ —— 与上面 `invites` 那次同一个理由 ✓）。
         { device_id: "dev-b", device_name: "小王的笔记本", addr: "192.168.43.7",
-          spaces: ["sp1"], serves_current: true, invitable: true },
+          spaces: ["sp1"], serves_current: true, invitable: true, pubkey: "ab".repeat(32) },
         { device_id: "dev-c", device_name: "我的手机", addr: "192.168.43.9",
-          spaces: ["sp1"], serves_current: true, invitable: true },
+          spaces: ["sp1"], serves_current: true, invitable: true, pubkey: "cd".repeat(32) },
       ] };
     const M = {
       list_workspaces: [WS], get_active_workspace_id: "ws1", get_workspace_name: "我的工作空间",

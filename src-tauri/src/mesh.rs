@@ -1318,6 +1318,24 @@ pub fn add_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, String
     Ok(false)
 }
 
+/// ⭐ **2026-10-12（设备身份第 3 步）**：把**那一台的公钥**加进**正在跑的那扇门** ✗
+/// —— ⭐ [`add_paired`] 在**新那一档**上的对应物 ✓，同一条理由（⛔ 只写库不算 ✗）。
+///
+/// ⚠️ 门没开着 ⇒ `Ok(false)` ✓：库里写上就够了（下次开门时 `load_cards` 会把它载进来 ✓）。
+pub fn add_paired_pubkey(
+    proto_space: &str,
+    device_id: &str,
+    pubkey_hex: &str,
+) -> Result<bool, String> {
+    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    for h in guard.values() {
+        if h.serves(proto_space) {
+            return h.add_paired_pubkey(proto_space, device_id, pubkey_hex);
+        }
+    }
+    Ok(false)
+}
+
 /// ⭐ **U8**：这个空间所在的那扇门**服务哪些空间**（**只读** ✓；没开 ⇒ 空 ✓）。
 ///
 /// ⚠️ 读数用 —— ⛔ 它**不开窗** ✗（与 `window_addr` 同一条纪律：面板打开一次不该顺手开端口 ✓）。
@@ -1810,6 +1828,26 @@ impl MeshHandle {
         }
         let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
         Ok(guard.entry(proto_space.to_string()).or_default().hashes.insert(secret_sha256.to_string()))
+    }
+
+    /// ⭐ **2026-10-12（第 3 步）**：把**那一台的公钥**加进这道门的卡册（回"新加的吗"✓）——
+    /// ⭐ `add_paired_hash` 在**新那一档**上的对应物 ✓（同一条"先问服务不服务、再锁卡册"✓）。
+    pub fn add_paired_pubkey(
+        &self,
+        proto_space: &str,
+        device_id: &str,
+        pubkey_hex: &str,
+    ) -> Result<bool, String> {
+        if !self.serves(proto_space) {
+            return Ok(false);
+        }
+        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        let cards = guard.entry(proto_space.to_string()).or_default();
+        Ok(cards
+            .pubkeys
+            .insert(device_id.to_string(), pubkey_hex.trim().to_string())
+            .map(|old| old != pubkey_hex.trim())
+            .unwrap_or(true))
     }
 
     /// ⭐ **U11**：这一扇门现在**认几张卡**（这个空间 ✓；读数用 ✓）。
@@ -4712,6 +4750,116 @@ mod tests {
         );
 
         crate::mesh::stop_window(space).unwrap();
+    }
+
+    /// ⭐⭐ **2026-10-12（设备身份第 3 步）的核心判据**：
+    /// ⭐ **单方信任 ⇒ 同步是单向的** ✗；⭐ **两边都信任 ⇒ 双向** ✓。
+    ///
+    /// 这是 owner 那句话的**代码表达式**（逐字：「『信任这台设备』是『**允许它来拿我的**』」✓
+    /// ＋「**单方信任时，同步就是单向的**」✓）—— ⭐ 两台机器（两个目录 ＋ 两扇真门 ✓）✓。
+    ///
+    /// ⚠️ 它**取代**了「甲」那半（旧口径：点一下 ⇒ 对面一露脸就**自动替它同意** ⇒ 悄悄变双向 ✓）。
+    #[tokio::test]
+    async fn one_sided_trust_opens_one_direction_only() {
+        let dir_a = temp_dir("trust-oneway-a");
+        let dir_b = temp_dir("trust-oneway-b");
+        for d in [&dir_a, &dir_b] {
+            std::fs::create_dir_all(crate::db::spaces_dir(d)).unwrap();
+            drop(crate::db::open_meta_conn_at(d).unwrap());
+        }
+        let ca = crate::db::open_space_conn_at("default", &dir_a).unwrap();
+        let cb = crate::db::open_space_conn_at("default", &dir_b).unwrap();
+        crate::sync::set_meta_state(&ca, "device_id", "dev-a").unwrap();
+        crate::sync::set_meta_state(&cb, "device_id", "dev-b").unwrap();
+        let ida = crate::device_key::load_or_create(&ca).unwrap();
+        let idb = crate::device_key::load_or_create(&cb).unwrap();
+        let space = "room-oneway";
+
+        // ⭐ **A 点一次「信任这台设备」（对象 ＝ B）** ✗ —— ⭐ 生产的落点是 `pair_pubkey`
+        //   ＋ `add_paired_pubkey` ✓；这里先只写库 ✓（⭐ 门在**下面才开** ⇒ 开门时载卡 ✓）。
+        crate::db::pair_pubkey(&ca, "", "dev-b", &idb.public_key_hex()).unwrap();
+
+        // ⚠️⚠️ **一次只开一扇门** ✗（本仓写过这条：`add_paired*` 是"按**服务哪个空间**找门、
+        //   取**第一个**命中的" ✓ ⇒ 两扇门同时服务同一空间时，登记可能落进**另一扇门** ✓
+        //   ⇒ 判据会"看起来全绿、其实什么都没证明"✗ —— R110 那条判据里记着同一个坑 ✓）。
+        let near = |dev: &str, addr: SocketAddr| MeshPeer {
+            device_id: dev.to_string(),
+            base: format!("http://{addr}"),
+        };
+        let client = reqwest::Client::new();
+        let sign = |c: &Connection, dev: &str| {
+            let target = crate::mesh::pull_target(space, 0);
+            let (ts, sig) =
+                crate::mesh::sign_request(c, dev, space, "GET", &target, crate::db::now_ms()).unwrap();
+            (ts, sig)
+        };
+        // ⚠️ 出站那一趟**不抽闭包** ✗：它要把 `client` ／ `space` 借进 `async` 块 ✓
+        //   ⇒ 与后面那几处直用**借不开** ✓（实测：`value borrowed here after move` ✓）。
+
+        // ─── ① 只有 A 的门开着（A 的库里已经有 B 的公钥 ✓）───
+        let addr_a =
+            ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-a", "127.0.0.1:000", &dir_a)
+                .unwrap()
+                .expect("A 的门要起得来");
+        // ⭐ **B 来拿 A 的** ⇒ 放行 ✓（⭐ A 允许了它 ✓ —— 这一条就是"单方"的那个方向 ✓）
+        let (tb, sb) = sign(&cb, "dev-b");
+        let ok = crate::mesh::pull_from_peer(
+            &client,
+            &near("dev-a", addr_a),
+            space,
+            0,
+            None,
+            Some(("dev-b", tb, &sb)),
+        )
+        .await;
+        assert!(ok.is_ok(), "⛔ A 点了「允许 B 来拿」⇒ **B 必须进得来** ✗：{ok:?}");
+        // ⛔ 没被允许过的第三台 ⇒ 进不来 ✓（⭐ 换个设备号用同一把钥匙签 ✓）
+        let tgt = crate::mesh::pull_target(space, 0);
+        let (tc, sc) =
+            crate::mesh::sign_request(&ca, "dev-c", space, "GET", &tgt, crate::db::now_ms()).unwrap();
+        let ghost = crate::mesh::pull_from_peer(
+            &client,
+            &near("dev-a", addr_a),
+            space,
+            0,
+            None,
+            Some(("dev-c", tc, &sc)),
+        )
+        .await;
+        assert!(ghost.is_err(), "⛔ 没被允许过的那台不许进 ✗：{ghost:?}");
+        // 关掉 A 的门（此刻只有它在服务这个空间 ⇒ 摘的就是它 ✓）
+        stop_window(space).unwrap();
+
+        // ─── ② 换成只有 B 的门开着（B 的库里**还没有** A 的公钥 ✓）───
+        let addr_b =
+            ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-b", "127.0.0.1:0000", &dir_b)
+                .unwrap()
+                .expect("B 的门要起得来");
+        // ⛔ **A 去拿 B 的** ⇒ **进不来** ✗（⭐ B 还没允许过 A ✓ ⇒ 单向 ✓）
+        let (ta, sa) = sign(&ca, "dev-a");
+        let blocked =
+            crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)))
+                .await;
+        assert!(
+            blocked.is_err(),
+            "⛔ **单方信任必须是单向的** ✗ —— A 还没被 B 允许 ⇒ 它**不许**拿得到 B 的东西 ✓：{blocked:?}"
+        );
+        assert!(
+            format!("{blocked:?}").contains("401"),
+            "⭐ 而且挡它的理由是 401（不是网络故障 ✓）：{blocked:?}"
+        );
+
+        // ─── ③ ⭐ **B 也点一次（允许 A）** ⇒ ⭐ 双向 ✓，而且 **B 的门不用重启** ✗ ───
+        crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
+        // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
+        crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
+        let (ta2, sa2) = sign(&ca, "dev-a");
+        let both =
+            crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta2, &sa2)))
+                .await;
+        assert!(both.is_ok(), "⭐ 两边都允许过 ⇒ **必须双向** ✓（⭐ 门没重启 ✓）：{both:?}");
+
+        stop_window(space).unwrap();
     }
 
     /// ⭐⭐ **R110（owner 2026-10-02 拍 A）的端到端判据：一趟配对 ⇒ 两个方向都通** ✓。
