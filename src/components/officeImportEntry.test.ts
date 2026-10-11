@@ -36,4 +36,14 @@ describe("「从文件导入」也吃 Word（.docx）", () => {
     expect(src, "老的读文本那条路没了").toContain("readTextFile");
     expect(src, "老路的『灌进当前页』没影了").toContain("$convertFromMarkdownString");
   });
+
+  // ⭐ 2026-10-11（owner：「应用内右键导入笔记」）：⭐ 页行右键菜单里那条入口 ✓。
+  //    ⚠️ 三条缺一不可：⭐ ① 菜单里真有它 ② ⭐ 走**共用**入口（⛔ 不自己写一份解析/落库 ✗）
+  //       ③ ⭐ 导入成功后**刷新页面树**（⭐ 否则用户以为没导进来 ✓）。
+  it("c) 页行右键菜单有「导入 Word 文档…」，且走共用入口、导完刷新树", () => {
+    const src = read("PageTree.tsx");
+    expect(src, "页行右键菜单里没有那一项").toContain("导入 Word 文档");
+    expect(src, "没接共用入口（pickAndImportOffice）⇒ 多半自己写了一份").toContain("pickAndImportOffice");
+    expect(src, "导入成功不刷新页面树 ⇒ 用户会以为没导进来").toContain("loadPages");
+  });
 });

@@ -22,6 +22,7 @@ function closeOtherTreeMenus() {
   }
 }
 import { toast } from "../store/toast";
+import { pickAndImportOffice } from "../lib/office/pickOfficeFile";
 import type { AppView } from "../store/view";
 import type { AttachmentMeta, PageMeta, WorkspaceMeta } from "../types";
 import { useFileManagerStore } from "../store/fileManager";
@@ -104,6 +105,8 @@ const ICON = {
   plus: "M12 5v14M5 12h14",
   folder: "M3 5h6l2 3h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
   trash: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0l-.8 14a1 1 0 0 1-1 .9H7.8a1 1 0 0 1-1-.9L6 6M10 11v6M14 11v6",
+  // ⭐ 2026-10-11 加：给页行右键菜单的「导入 Word 文档…」用 ✓（⭐ 原来这一档没有 ✓）
+  fileDown: "M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2",
 } as const;
 import { SyncPanel } from "./SyncPanel";
 import { EmailPanel } from "./EmailPanel";
@@ -681,6 +684,25 @@ startRename();
                 }}
               >
                 <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
+              </button>
+              {/* ⭐ 2026-10-11（owner：「应用内右键导入笔记」）：⭐ 右键一个页面 ⇒ 把 Word 文档导进来 ✓，
+                  新页挂在**你右键的这个页面下面** ✓（⭐ `parentId` 就是它的 id ✓）。
+                  ⚠️ 走的是与「从导入文件创建…」**同一条链** ✓（⭐ `lib/office/pickOfficeFile.ts` ✓）——
+                  ⛔ 这里不碰解析 / 落库 ✓（⭐ 那就是第二份真相源 ✓，⭐ 本仓最忌这个 ✓）。 */}
+              <button
+                onClick={async () => {
+                  setMenuOpen(false);
+                  try {
+                    const outcome = await pickAndImportOffice(node.id);
+                    // ⭐ 成功了 ⇒ 新页要**出现在树里** ✓（⛔ 不然用户以为没导进来 ✓）
+                    if (outcome?.ok) useNotes.getState().loadPages();
+                  } catch (e) {
+                    toast(`导入失败：${e}`, "error");
+                  }
+                }}
+              >
+                <span className="menu-icon"><MenuIcon d={ICON.fileDown} /></span>
+                <span className="menu-text">导入 Word 文档…</span>
               </button>
               <button
                 onClick={() => {
