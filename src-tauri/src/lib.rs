@@ -12,6 +12,11 @@ mod attachments;
 //    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
 //    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
 mod pairing_trust;
+// ⭐ 2026-10-11（owner：「导出 pdf 时页头页脚去掉，只留页码」）：⭐ **自己出一份 PDF** ✗ ——
+//    打印引擎那个「页眉和页脚」是**一整块**（⭐ 关掉连页码一起没 ✓），⭐ 页面没有 API 只留页码 ✓
+//    ⇒ ⭐ 用 WebView2 的 `PrintToPdfAsync(…, ShouldPrintHeaderAndFooter=false)` ✓，
+//    ⭐ 页码由前端 `pdf-lib` 盖（`src/lib/pdfPageNumbers.ts` ✓）。⭐ 设计前提见模块头（⭐ 要隐藏窗口 ✓）。
+mod pdf_export;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
