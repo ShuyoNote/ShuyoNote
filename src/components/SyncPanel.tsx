@@ -9,6 +9,7 @@ import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
 import { TrustDevicePanel } from "./TrustDevicePanel";
+import { MeshAdvancedForm } from "./MeshAdvancedForm";
 import {
   MESH_TRUST_BEGIN_COMMAND,
   unavailableTrustDeviceReadings,
@@ -243,29 +244,9 @@ export function SyncPanel() {
   //   这里**不再自己解释一遍**（两处各解释一次，迟早会有一处说错）。
   // ⚠️ 它的门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要求这个空间有 `space_id`
   //   （"只开网格、不绑服务端"正是这一档要支持的配置）。
-  const [meshBind, setMeshBind] = useState("");
-  const [meshToken, setMeshToken] = useState("");
-  // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
-  // ⭐ 网格要一个「两边填一样」的字符串来对暗号 ✓，而个人空间**没有** `space_id`（那在服务器上）
-  // ⇒ 这一项就是它的替身 ✓；⭐ 团队空间里 `space_id` 优先 ⇒ 填不填都不影响 ✓。
-  const [meshRoom, setMeshRoom] = useState("");
-  const [meshBusy, setMeshBusy] = useState(false);
-  const meshSavedBind = lanStatus?.mesh.bind ?? "";
-  // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
-  useEffect(() => {
-    setMeshBind(meshSavedBind);
-  }, [meshSavedBind]);
-  const saveMeshBind = async () => {
-    setMeshBusy(true);
-    try {
-      const st = await api.meshSetConfig(activeId, meshBind.trim(), null);
-      setStatus(st.note);
-    } catch (e) {
-      setStatus(`网格设置没保存：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ 监听地址／配对暗号／口令 那几个 state 与 handler **已抽到 `MeshAdvancedForm`** ✓
+  //    （task 派单 Round 1：纯抽取，界面与行为一个字没改 ✓ —— 下一轮换挂载点到设置面 ✓）。
+  //    这里只留"门槛"那几句解释（它属于面板这一层的判断 ✓）。
   // ⭐ **U11/T5（2026-10-02）**：**逐台解除** —— 这个空间认了哪些设备、把哪一台踢出去。
   //
   // ⚠️ **三件不许**（都有既有口径盯着）：
@@ -329,35 +310,8 @@ export function SyncPanel() {
     }
   };
 
-  /** ⭐ 存「配对暗号」：个人空间两台设备填同一个就能互连（团队空间不受影响 ✓）。 */
-  const saveMeshRoom = async () => {
-  if (!meshRoom.trim()) return;
-  setMeshBusy(true);
-  try {
-  // ⚠️ 只写 room 这一项 ⇒ 另两项传 `null`（＝不动 ✓，与 Rust 侧同口径 ✓）。
-  const st = await api.meshSetConfig(activeId, null, null, meshRoom.trim());
-  setLanStatus((s) => (s ? { ...s, mesh: st } : s));
-  setStatus("配对暗号已保存。到另一台设备上填「同一个」暗号，两台在同一个网络里就能直接连上，不经过服务器");
-  } catch (e) {
-  setStatus(String(e));
-  } finally {
-  setMeshBusy(false);
-  }
-  };
-
-  const saveMeshToken = async () => {
-    if (!meshToken.trim()) return;
-    setMeshBusy(true);
-    try {
-      const st = await api.meshSetConfig(activeId, null, meshToken.trim());
-      setMeshToken("");
-      setStatus(st.note);
-    } catch (e) {
-      setStatus(`网格口令没保存：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ `saveMeshRoom` / `saveMeshToken` / `disableMesh` **已抽到 `MeshAdvancedForm`** ✓
+  //    （Round 1 纯抽取：行为逐字照搬 ✓，包括 `saveMeshRoom` 顺手更新 `lanStatus.mesh` 那一下 ✓）。
 
   // ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：**两个入口、两个名字** ✓
   //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
@@ -442,18 +396,8 @@ export function SyncPanel() {
       setDpBusy(false);
     }
   };
-  const disableMesh = async () => {
-    setMeshBusy(true);
-    try {
-      // `""` ＝ **清除监听地址** ⇒ 网格关掉、窗口立刻松口（与命令面同一套口径）。
-      const st = await api.meshSetConfig(activeId, "", null);
-      setStatus(st.note);
-    } catch (e) {
-      setStatus(`网格没关掉：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ `disableMesh` **已抽到 `MeshAdvancedForm`** ✓（Round 1 纯抽取 ✓）—— 那条命令仍在原来那一处调用 ✓：
+  //    `api.meshSetConfig(activeId, "", null)`（`""` ＝ 清除监听地址 ⇒ 网格关掉 ✓，判据 ③ 钉着 ✓）。
   // ⚠️ 这里原来还有一个 `meshRoundNow()`（配一个「立刻交换一轮」按钮）。2026-09-26 **口径收敛**：
   //    交换并进「同步」（见 `syncOne` 里那一段）⇒ 函数与按钮**一起删掉**，不留在那儿当"看起来
   //    还该有个按钮"的线索（本仓对死代码的纪律在 TS 这半边同样适用）。
@@ -1966,73 +1910,18 @@ export function SyncPanel() {
                     <span className="sync-row-caret" aria-hidden>›</span>
                   </summary>
                   <div className="sync-row-body">
-                    <div className="sync-att sync-mesh">
-                      <span className="sync-att-text">
-                        {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
-                            已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
-                            （监听地址 / 口令）与开关。 */}
-                        {/* ★ VL-3（2026-09-30）：**"功能通了，而普通用户不知道有这条路"** —— VL-2 让
-                            `0.0.0.0` 能填了，而这一栏原先只说"填虚拟网卡的地址" ⇒ "地址自动"在用户眼里
-                            没发生。⇒ 两条路都写在**看得见**的文案里（不只在 hover 提示与 placeholder 里）。
-                            ⚠️ 与"口令"合并成**同一个 hint**（只加一行文字，不加块）⇒ 面板高度只多一行。 */}
-                        <span className="sync-hint">
-                          {inlineMd("填 **本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788**（**听所有网卡**，地址由**系统报出**）。")}
-                          <br />
-                          {/* ★ `U9` / `INV-PER-unencrypted-needs-strong-secret`（2026-10-01）：
-                              原先这句只写「同一网段里谁都能拉，**内容仍是密文**」—— 那说的是**已加密**那一半 ✓，
-                              而**未加密**的空间里讲这句话会把危险说小 ✗：那种情况下**口令就是唯一的防线**，
-                              且拉走的是**明文** ✓ ⇒ 两句都要说，并点名"没设＝不设防" ✓。 */}
-                          {lanStatus.mesh.tokenSet
-                            ? inlineMd("口令：**已设** —— ⚠️ **它是这个空间的唯一防线**：同一网络里，拿到「地址 ＋ 空间 ＋ 口令」这三样的人就能把记录**整批拉走**，而且**你不会收到任何提示**。")
-                            : inlineMd("口令：**未设** ⚠️ —— **没设 = 不设防**（同一网络里谁都能拉走记录；未加密时是**明文**）。")}
-                        </span>
-                        {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
-                      </span>
-                      <div className="sync-field">
-                        <input
-                          className="sync-input"
-                          placeholder="监听地址：如 192.168.1.5:8788；或 0.0.0.0:8788（听所有网卡，地址由系统报出）"
-                          value={meshBind}
-                          disabled={meshBusy}
-                          onChange={(e) => setMeshBind(e.target.value)}
-                        />
-                        <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
-                          保存地址
-                        </button>
-                      </div>
-                      {/* ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
-                          ⭐ 两台设备填**同一个**暗号就能在同一个网络里互连 ✓，不需要服务器 ✓。
-                          ⚠️ 团队空间用服务器上的组织空间 id 对暗号 ⇒ 这一项对它们没有影响 ✓。 */}
-                      <div className="sync-field">
-                      <input
-                      className="sync-input"
-                      placeholder="配对暗号：两台设备填得一模一样（例如：我的两台电脑）"
-                      value={meshRoom}
-                      disabled={meshBusy}
-                      onChange={(e) => setMeshRoom(e.target.value)}
-                      />
-                      <button className="sync-btn" disabled={meshBusy || !meshRoom.trim()} onClick={() => void saveMeshRoom()}>
-                      保存暗号
-                      </button>
-                      </div>
-                      <div className="sync-field">
-                        <input
-                          className="sync-input"
-                          placeholder="口令（留空 ＝ 不动已有口令）"
-                          value={meshToken}
-                          disabled={meshBusy}
-                          onChange={(e) => setMeshToken(e.target.value)}
-                        />
-                        <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
-                          设口令
-                        </button>
-                      </div>
-                      <div className="sync-field">
-                        <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
-                          关掉网格
-                        </button>
-                      </div>
-                    </div>
+                    {/* ⭐ task 派单 Round 1（纯抽取）：这一块（监听地址／配对暗号／口令／关掉网格）
+                        抽成了 `MeshAdvancedForm` ✓ —— 界面／类名／文案／行为**一个字没改** ✓，
+                        判据里的**四条承诺**（`0.0.0.0` ／ 听所有网卡 ／ 地址由系统报出 ／
+                        `192.168.1.5:8788` ＋ placeholder）**一条没删** ✓，只是换到了那个文件里 ✓。
+                        ⚠️ 语义务必仍是"**当前空间**"（`activeId` ✓）—— 设置面要不要空间选择器是
+                        **产品口径**（图⑧像"设备级"、而命令是**逐空间**的 ✓）⇒ 归 owner 拍 ✗ 不归这里猜 ✓。 */}
+                    <MeshAdvancedForm
+                      activeId={activeId}
+                      lanStatus={lanStatus}
+                      onStatus={setStatus}
+                      onMeshChanged={(mesh) => setLanStatus((s) => (s ? { ...s, mesh } : s))}
+                    />
                   </div>
                 </details>
 

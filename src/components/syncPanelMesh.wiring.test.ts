@@ -13,6 +13,11 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 describe("网格（丙-③-b）· 面板接线", () => {
   const panel = read("src/components/SyncPanel.tsx");
+  // ⭐ task 派单 Round 1（2026-10-11，**纯抽取**）：监听地址／配对暗号／口令／关掉网格那一块
+  //    从 `SyncPanel.tsx` 抽成了 `MeshAdvancedForm.tsx` ✓ —— ⛔ **承诺一条都没删** ✗，
+  //    只是换了落点 ✓ ⇒ 下面几条凡是"找那一块里的东西"的，都改成 **两个文件一起读**
+  //    （`panel + meshForm` ✓）。⚠️ 这是**唯一**允许的做法：⛔ 不许把文案抄回面板 ✗（那就是第二份真相源）。
+  const meshForm = read("src/components/MeshAdvancedForm.tsx");
   const webTs = read("src/lib/platform/web.ts");
   const commandsTs = read("src/lib/platform/commands.ts");
 
@@ -65,7 +70,8 @@ describe("网格（丙-③-b）· 面板接线", () => {
   });
 
   it("③ 「关掉网格」走清除（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
-    expect(panel).toContain('api.meshSetConfig(activeId, "", null)');
+    // ⭐ Round 1 后这句在抽出去的 `MeshAdvancedForm.tsx` 里 ✓（承诺未删 ✓）⇒ 两个文件一起找 ✓
+    expect(panel + meshForm, "「关掉网格」那条清除没在岗").toContain('api.meshSetConfig(activeId, "", null)');
   });
 
   it("④ 「别人拉不拉得到」那句人话来自 Rust（界面不自己按地址形状判档）", () => {
@@ -170,7 +176,8 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //    而不是一刀切 —— 这条边界写在这里，免得后人"顺手"把它扩成全文。
   it("⑨ ⭐ VL-3：`0.0.0.0`（听所有网卡）那条路要在用户看得见的文案里，且说清它是什么", () => {
     // 去掉行注释：注释里讲"`0.0.0.0 ⇒ Err`"的历史**不算**用户可见文案。
-    const copy = panel.replace(/\/\/[^\n]*/g, "");
+    // ⭐ Round 1 后那一栏在 `MeshAdvancedForm.tsx` ✓ ⇒ 两个文件一起读（⛔ 承诺一条没删 ✗）
+    const copy = (panel + meshForm).replace(/\/\/[^\n]*/g, "");
     expect(copy, "地址那一栏没提 `0.0.0.0` ⇒ `VL-2` 开的这条在用户眼里不存在").toContain("0.0.0.0");
     expect(
       copy,
