@@ -222,9 +222,12 @@ export function BackupSettingsPanel() {
 
   return (
     <div className="backup-auto" style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-      <div className="backup-auto-title" style={{ fontWeight: 600 }}>
-        自动备份
-      </div>
+      {/* ⭐ 2026-10-11（owner：「这个界面的字体样式不协调，美化一下」）：
+          ⭐ 原来这里是个**手写的粗体 div** ✗（⭐ `fontWeight: 600` ＋ ⭐ 继承正文字号 ~14-15px ✓）
+          ⇒ ⭐ 比它自己所属的分组标题（`.set-section-title` ＝ ⭐ 12px/700/暗色 ✓）**还大还黑** ✓ ＝ ⭐ 不协调 ✓。
+          ⇒ ⭐ 改成走 CSS 里的 `.backup-auto-title` ✓（⭐ 与分组标题**同一族**：⭐ 同字重 ／ ⭐ 同暗色 ／ ⭐ 同字距 ✓，
+             ⭐ 但不带那条竖条 —— ⭐ 它是**子分组**，⭐ 不该跟父标题抢 ✓）。 */}
+      <div className="backup-auto-title">自动备份</div>
       <ul className="backup-auto-facts" style={{ margin: 0, paddingLeft: 18, fontSize: 13, lineHeight: 1.6 }}>
         {lines.map((line) => (
           <li key={line}>{line}</li>

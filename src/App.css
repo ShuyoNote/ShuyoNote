@@ -13553,6 +13553,19 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 8px;
 }
+
+/* ⭐ 2026-10-11（owner：「这个界面的字体样式不协调，美化一下」）：
+   ⚠️ 起因：⭐ 「自动备份」那一格原来是个**手写的粗体 div** ✗（⭐ 内联 `fontWeight: 600` ＋ ⭐ 没有类样式 ⇒
+   ⭐ 字号是**继承正文**的 ~14-15px ✓）⇒ ⭐ 比它**自己所属**的分组标题（`.set-section-title` ＝ 12px/700/暗色 ✓）
+   **还大、还黑** ✓ ＝ ⭐ 你看到的那种不协调 ✓。
+   ⇒ ⭐ 这里给它**同一族**的排版 ✓（⭐ 同字号 12 ／ ⭐ 同字重 700 ／ ⭐ 同暗色 ／ ⭐ 同字距 ✓），
+      ⭐ 只是**不带**那条竖条 ✓ —— ⭐ 它是「完整备份」下面的**子分组** ✓，⭐ 靠"⭐ 没有条 ✗"区别于顶层 ✓。 */
+.backup-auto-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
 /* 区块标题前的小强调条，让账户页各区块更有层。 */
 .set-section-title::before {
   content: "";
