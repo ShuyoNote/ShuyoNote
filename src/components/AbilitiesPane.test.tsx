@@ -33,6 +33,24 @@ const SRC_TSX = resolve(HERE, "AbilitiesPane.tsx");
 
 // 本组件挂载时**不**联网（note 都是清单里的静态值 ✓）；只有点「下载」才会走 api ✓。
 vi.mock("../lib/api", () => ({ api: new Proxy({}, { get: () => async () => ({}) }) }));
+// ⭐ 2026-10-11（owner 截图问「下载完了，是不是应该移到『可用（已装）』？」）：给 `platform` 造桩 ✓ ——
+//    组件挂载时会问一次 `dictionary_status` ✓；判据要能造出「⭐ 下完那一态 ✗」✓。
+//    ⚠️ 默认 `available:false` ⇒ 词库**仍在「按需下载」** ✓ ⇒ 上面那几条老判据**一个字不受影响** ✓。
+const stub = vi.hoisted(() => ({ dict: { available: false, verified: null as boolean | null }, fail: false }));
+vi.mock("../lib/platform", () => ({
+  platform: {
+    executor: {
+      invoke: async (cmd: string) => {
+        if (cmd === "dictionary_status") {
+          if (stub.fail) throw new Error("stub：读不到状态");
+          return stub.dict;
+        }
+        return {};
+      },
+    },
+    event: { listen: async () => () => {} },
+  },
+}));
 
 const { AbilitiesPane } = await import("./AbilitiesPane");
 
@@ -276,5 +294,51 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     //    再换成 import.meta.url ✗）⇒ 现在只把 `components/AbilitiesPane.tsx` 这段换成 `App.tsx` ✓。
     const app = readFileSync(SRC_TSX.replace(/components[\\/][^\\/]+$/, "App.tsx"), "utf8");
     expect(app, "App 里没有 <OfficeImportPanel ⇒ 那这条就不是「已装」而是空话 ✗").toContain("<OfficeImportPanel");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ⭐⭐ **2026-10-11（owner 截图问「下载完了，是不是应该移到『可用（已装）』？」）**
+  //    答案：⭐ **该移** ✓ —— 原清单是**写死的** ⇒ 盘上明明有那份包，界面还说「按需下载」✗
+  //    （⭐ 与"已经接线了却还写没接入"同一个病 ✓）。
+  //    做法：⭐ 挂载时问一次后端 `dictionary_status`（⭐ **带缓存校验** ✓）；
+  //    ⚠️ **只有 `available && verified` 才算已装** ✗，查不到 ⇒ **当作没装** ✓（⭐ 宁少说 ✓）。
+  // ─────────────────────────────────────────────────────────────────────────────
+  const sectionByTitle = (kw: string) =>
+    [...host.querySelectorAll<HTMLElement>(".set-section")].find((s) =>
+      (s.querySelector(".set-section-title")?.textContent ?? "").includes(kw),
+    );
+  const rowsIn = (kw: string) => [...(sectionByTitle(kw)?.querySelectorAll<HTMLElement>(".set-row") ?? [])];
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  };
+
+  it("⭐ j) 下载成功后 ⇒ 词库**自己移到「可用（已装）」**（owner 问的那件 ✓）", async () => {
+    stub.fail = false;
+    stub.dict = { available: false, verified: null };
+    await settle();
+    expect(rowsIn("按需下载").length, "下之前它应当在「按需下载」里").toBe(1);
+    const btn = [...host.querySelectorAll<HTMLButtonElement>("button.set-btn")].find((b) =>
+      (b.textContent ?? "").includes("下载"),
+    );
+    expect(btn, "找不到那颗下载按钮").not.toBeUndefined();
+    flushSync(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    await settle();
+    const installed = rowsIn("可用（已装）").map((r) => r.textContent ?? "");
+    expect(installed.length, "下完 ⇒ 已装那节应当是两条：Word 导入 ＋ 英汉词库").toBe(2);
+    expect(installed.join("|"), "词库没移过去").toContain("英汉词库");
+    expect(installed.join("|"), "它得写着「已装」").toContain("已装");
+    expect(rowsIn("按需下载").length, "「按需下载」里不该再列它").toBe(0);
+  });
+
+  it("⭐ k) 查不到 ／ 没核过 ⇒ ⛔ **不许**说已装（fail-closed ✓）", async () => {
+    stub.fail = true;
+    await settle();
+    // ⚠️ 这里不能重挂载（`beforeEach` 已经挂过、effect 依赖是 []）⇒ 判的是**默认那一态**：
+    //    `available:false` / 查询失败 ⇒ ⭐ 词库**必须留在「按需下载」**✓，⛔ 不许跑进「已装」✗。
+    expect(rowsIn("可用（已装）").length, "查不到就当成没装 ⇒ 已装那节只应有 Word 导入一条").toBe(1);
+    expect(rowsIn("按需下载").length, "查不到 ⇒ 它还留在「按需下载」里，用户还能再下一次").toBe(1);
+    expect(rowsIn("可用（已装）").map((r) => r.textContent ?? "").join("|"), "⛔ 不许把没核过的词库说成已装 ✗").not.toContain(
+      "英汉词库",
+    );
   });
 });

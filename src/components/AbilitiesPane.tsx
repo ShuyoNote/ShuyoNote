@@ -10,7 +10,7 @@
 // ⚠️ 这一版**真的落盘** ✓：校验通过后交给 Rust 命令写进 `应用数据/packs/`（那边**自己再校验一遍** ✓）。
 //    ⛔ 仍然不假装：取不到、校验不过、Rust 拒收 ⇒ 都显示**真实错误** ✓。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { platform } from "../lib/platform";
@@ -111,6 +111,27 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
 export function AbilitiesPane() {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  // ⭐ 2026-10-11（owner 截图问「下载完了，是不是应该移到『可用（已装）』？」）：⭐ **该移** ✓ ——
+  //    但⛔ **不能写死** ✗：那份包**可能被清掉**（存储清理 ✓）／**可能被换掉**（指纹不符 ✓）
+  //    ⇒ ⭐ 去盘上问一句 —— 后端 `dictionary_status` 本来就干这件事 ✓ 而且**带缓存校验** ✓。
+  //    ⚠️⭐ **查不到 ／ 没核过 ⇒ 当作没装** ✗（⛔ 不许在查不动的时候说"已装" ✓）——
+  //      所以默认 `false`，只有 `available && verified` 两件都为真才算 ✓。
+  const [packReady, setPackReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const st = await platform.executor.invoke<{ available: boolean; verified: boolean | null }>("dictionary_status");
+        if (alive) setPackReady(Boolean(st.available && st.verified));
+      } catch {
+        // ⛔ 查不动 ⇒ 不假装已装 ✓（那条会**留在「按需下载」**里，用户还能再下一次 ✓）
+        if (alive) setPackReady(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const download = async (a: Ability) => {
     if (!a.path || !a.sha256) return;
@@ -135,6 +156,8 @@ export function AbilitiesPane() {
         // ⭐ 2026-10-11：⭐ 三个事实**结构化**带下去 ✓（⛔ 不再拼成一长串生数据 ✗）——
         //    `bytes` 交给 `fmtMB` 变人类可读，`sha256` ／ `path` 由渲染层排到下面那行灰字 ✓。
         setPhase({ kind: "ok", text: t("abilities.saved", "已保存到本地"), bytes: rep.bytes, sha256: rep.sha256, path: rep.path });
+        // ⭐ 刚下完并当场核过 ⇒ 立刻把它算作**已装** ✓ ⇒ 它会**自己移到「可用（已装）」**里（owner 2026-10-11 ✓）
+        setPackReady(true);
       } catch (e) {
         setPhase({ kind: "err", text: `${t("abilities.needNetwork", "这个能力需要一次下载 —— 现在取不到")}：${String(e)}` });
       } finally {
@@ -176,8 +199,9 @@ export function AbilitiesPane() {
     }
   };
 
-  const builtin = ABILITIES.filter((a) => a.state === "builtin");
-  const downloadable = ABILITIES.filter((a) => a.state === "downloadable");
+  // ⭐ 已装那一节 ＝ 源码里 `builtin` 的 ＋ ⭐ **盘上核实过的**可下载项 ✓（⛔ 不写死 ✗）；未核实的留在「按需下载」✓
+  const builtin = ABILITIES.filter((a) => a.state === "builtin" || (a.state === "downloadable" && packReady));
+  const downloadable = ABILITIES.filter((a) => a.state === "downloadable" && !packReady);
   const missing = ABILITIES.filter((a) => a.state === "not-available");
 
   return (
@@ -219,6 +243,9 @@ export function AbilitiesPane() {
         )}
       </section>
 
+      {/* ⭐ 2026-10-11：⭐ 没有可下载的项时**整节收起来** ✗ —— 否则会剩一个空标题配上
+          「只在点「下载」时才联网…」的说明，看着像坏了 ✓（⭐ 装机后词库已移到上一节 ✓）。 */}
+      {downloadable.length > 0 && (
       <section className="set-section">
         <div className="set-section-title">{t("abilities.downloadTitle", "按需下载")}</div>
         <p className="set-hint">
@@ -267,6 +294,7 @@ export function AbilitiesPane() {
           </p>
         ) : null}
       </section>
+      )}
 
       <section className="set-section">
         <div className="set-section-title">{t("abilities.soonTitle", "还没上架")}</div>
