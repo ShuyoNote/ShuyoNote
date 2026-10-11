@@ -6,6 +6,7 @@ import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type DevicePairExportOutcome } from "../lib/api";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
+import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -2055,11 +2056,44 @@ export function SyncPanel() {
                               {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
                                   （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
                               <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
+                              {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 效果图第 ④ 屏「信任该设备」＋
+                                  规格 **J21**「信任前必须展示对方的身份（设备名 ＋ 短标识）」✗ ⇒
+                                  ⭐ 这一行**就是"信任前"看得见它的地方** ✓ ⇒ ⭐ 补上短标识 ✓。
+                                  ⚠️ 走 `peerIdentityLine` ✓（⭐ 它的**唯一实现** ✓）—— ⭐ 它结构上拿不到 `device_id` ✓
+                                     ⇒ ⭐ 不可能回落成设备号 ✓；⭐ 老对端没报短标识时它**如实说**「对方没报短标识」✓
+                                     （⭐ 那不是降级处理，⭐ 是那段过渡期的正确答案 ✓）。 */}
+                              <span className="sync-hint">{peerIdentityLine(p.device_name, p.short_id)}</span>
                               <span className="sync-hint">{nearbySecondColumn(p)}</span>
                               {!p.invitable && p.serves_current && (
                                 // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
                                 <span className="sync-hint">它没报可以直连的地址</span>
                               )}
+                              {/* ⭐ 效果图那一行的右端：⭐ 「已配对」／⭐ 「配对」✗。
+                                  ⚠️ 「已配对」的判据取**本机认过的那份名单**（`duList` ✓，⭐ 与下面「解除」那块
+                                     **同一个源** ✓）—— ⛔ 不自己再算一遍"算不算配上了" ✓（⭐ 两份真相迟早各说各话 ✓）。
+                                  ⚠️⭐ 「信任这台设备」这一下**今天真做的是**：⭐ 把这一台**指定为这次配对的对端** ✓
+                                     （⭐ 复用手边那条「生成投放码 ⇒ 采纳」的路 ✓，⭐ `dpPeer` 就是那个格 ✓）。
+                                     ⇒ ⭐ 所以这里**不写**"点一下就通" ✗ —— ⭐ 那句话要等一键握手做出来才算真 ✓
+                                        （⛔ 不说假话 ✓，⭐ 本仓最忌这个 ✓）。 */}
+                              {duList.some((d) => d.deviceId === p.device_id) ? (
+                                <span className="sync-hint" data-testid="nearby-paired">
+                                  已配对
+                                </span>
+                              ) : p.serves_current ? (
+                                <button
+                                  className="sync-btn"
+                                  disabled={dpBusy}
+                                  data-testid="nearby-trust"
+                                  onClick={() => {
+                                    setDpPeer(p.device_id);
+                                    setDpNote(
+                                      "已把它指定为对端 ⇒ 到下面「生成投放码」，再让它采纳一次（两个方向就都通了）。",
+                                    );
+                                  }}
+                                >
+                                  信任这台设备
+                                </button>
+                              ) : null}
                             </div>
                           ))
                         )}
