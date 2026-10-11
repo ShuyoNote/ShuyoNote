@@ -4132,6 +4132,12 @@ pub fn mesh_set_config(
         //   （⭐ 只增不删 ✓、⭐ 已经有值就一个字节不动 ✓、⭐ 取了谁**记一行日志** ✓ —— 见 `migrate_device_level_mesh` ✓）。
         //   ⚠️ 放在**写路径**上 ✗：⛔ 读路径不写任何东西 ✓。
         let _ = crate::mesh::migrate_device_level_mesh(&c);
+        // ⭐ 2026-10-11（设备身份 ✓，方案 §4 第 1 步 ✓）：⭐ 顺手确保本机**有身份** ✗ ——
+        //   ⚠️ 与上面那条迁移**同一处、同一个理由** ✗：⭐ 建键只发生在**写路径**上 ✓
+        //   （⛔ 读路径不写库 ✗ —— 公告那条路只**读**公钥 ✓，见 `device_key::public_key_hex_of` ✓）。
+        //   ⚠️ 失败**不拦这次保存** ✗：⭐ 设网格没理由因为"建不出身份"整个失败 ✓；
+        //   ⭐ 而公告那一侧读不到身份 ⇒ 如实报"没有身份"✓（⛔ 不假装有 ✗）。
+        let _ = crate::device_key::load_or_create(&c);
     }
     if let Some(r) = room.as_deref() {
     let target = mesh_target_ws(&db, workspace_id.as_deref())?;
@@ -4936,6 +4942,7 @@ mod r146_mesh_scope_tests {
                     hub_base: Some("http://192.168.1.6:8788".to_string()),
                     hub_spaces: vec![scope.space.clone()],
                     fp: "fp".into(),
+                    pubkey: String::new(),
                 },
                 addr: "192.168.1.9".into(),
                 seen_at_ms: 0,
@@ -7591,6 +7598,7 @@ mod tests {
                 hub_base: Some(base.into()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 0,
@@ -8889,6 +8897,7 @@ mod tests {
                 hub_base: base.map(|b| b.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: device.to_string(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".to_string(),
             seen_at_ms: 1_000,
@@ -9365,6 +9374,7 @@ mod tests {
                 hub_base: Some("http://192.168.1.6:8788".to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 0,

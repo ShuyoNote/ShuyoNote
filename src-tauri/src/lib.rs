@@ -22,6 +22,7 @@ mod relay_license;
 //    那是"⭐ 登记对面 ✗"的唯一实现 ✓）＋ ⭐ 广播一条"⭐ 我想信任你 ✗"。⭐ 令牌**不上线** ✓。
 //    ⚠️ 代价与兜底写在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓。
 mod mesh_trust;
+mod device_key;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;

@@ -107,6 +107,18 @@ pub struct LanAnnounce {
     /// ⭐ 这件事写在 `docs/plans/2026-10-11-one-click-trust-decision.md` ✓ —— ⛔ 不藏着 ✓。
     #[serde(default)]
     pub trust_secret: String,
+    /// ⭐⭐ 2026-10-11（**设备身份**，方案 `2026-10-11-device-identity-keys.md` 第 2 步 ✓）：
+    /// ⭐ **本机的 Ed25519 公钥**（十六进制 ✓，64 个字符 ✓）✗。
+    ///
+    /// ⚠️ **公钥不是秘密** ✗ —— ⭐ 它随公告发出去**不违反**「⭐ 空间令牌永不上线 ✗」那条 ✓
+    /// （那条管的是**私钥/口令** ✓）。⭐ 用途：⭐ 点「信任这台设备」时，把**对方的公钥**记进自己那份名单 ✓
+    /// ⇒ ⭐ 门此后**验签**而不是"认哈希" ✓（方案 §2 ✓）。
+    /// ⚠️ 空串 ＝ ⭐ 这台**还没有身份** ✓（还没开过网格 ⇒ 写路径上还没建键 ✓）⇒ ⭐ 对方**如实**按
+    /// "没有身份"处理 ✓，⛔ 绝不回落成任何猜测 ✗。
+    /// ⚠️ `#[serde(default)]` ＋ 本结构**没有** `deny_unknown_fields` ⇒ ⭐ 老对端收发都兼容 ✓
+    /// ⇒ ⭐ **不升 `WIRE_VERSION`** ✓（⭐ 与 `short_id`（08-b②）／`trust_ask` 同一个手法 ✓）。
+    #[serde(default)]
+    pub pubkey: String,
 }
 
 impl Default for LanAnnounce {
@@ -124,6 +136,7 @@ impl Default for LanAnnounce {
             fp: String::new(),
             trust_ask: String::new(),
             trust_secret: String::new(),
+            pubkey: String::new(),
         }
     }
 }
@@ -396,6 +409,10 @@ pub fn announce_for_own_hub(
         //    （⭐ 见 `pairing_trust.rs` 与 `docs/plans/2026-10-11-one-click-trust-decision.md` ✓）。
         trust_ask: String::new(),
         trust_secret: String::new(),
+        // ⭐ 2026-10-11（设备身份 ✓）：⭐ 本函数是**纯函数**（⛔ 不碰库 ✗ ⇒ 读不到公钥 ✓）
+        //   ⇒ ⭐ 这里**留空** ✓，由调用方（`lan_state::announces_for_with_mesh` ✓）在**调用点之后**填 ✓
+        //   —— ⭐ 与上面那两格**同一个手法** ✓（⭐ 两个产出点因此走同一句 ✓）。
+        pubkey: String::new(),
         hub_base: Some(base.to_string()),
         hub_spaces: vec![space.to_string()],
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
@@ -920,6 +937,7 @@ mod tests {
                 hub_base: base.map(|s| s.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 0,
@@ -1066,6 +1084,7 @@ mod tests {
             hub_base: base.map(|s| s.to_string()),
             hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
             fp: "fp".into(),
+            pubkey: String::new(),
         }
     }
 
