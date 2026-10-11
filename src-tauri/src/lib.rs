@@ -8,6 +8,10 @@ mod mcp_channel;
 mod community;
 mod community_publish;
 mod attachments;
+// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 一键信任的**纯函数内核** ✗
+//    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
+//    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
+mod pairing_trust;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
