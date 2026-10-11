@@ -239,4 +239,40 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     ).toBeNull();
     expect((cell.textContent ?? "").length).toBeGreaterThan(30);
   });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // ⭐⭐ **2026-10-11（owner 拍「把 Office 导入登记成一条能力」）**
+  //    「可用（已装）」那一节从此**不再空** ✓ —— 而这条判据同时钉住三件事：
+  //      ① 收据：源码里真有这条 `builtin`（⛔ 不是只改文案 ✗）；
+  //      ② 那一节**恰好一条**且写着「已装」；
+  //      ③ ⭐ **不许夸大**：导入链第一期**只做 `.docx`** ✗ —— `ooxml.ts` 里虽然还有
+  //         `xlsxExtractor` / `pptxExtractor`，但导入链**一次都没调**它们 ⇒
+  //         用户面写"支持 Excel / PPT / 邮件 / 压缩包"就是**拿相邻的东西当证据** ✗（本仓栽过 ✓）。
+  // ─────────────────────────────────────────────────────────────────────────────
+  it("⭐ i) 「可用（已装）」不再空 ＋ ⛔ 这条能力**不许**把没接线的格式说成支持", () => {
+    const src = readFileSync(SRC_TSX, "utf8");
+    expect(
+      /id:\s*"office-import"[\s\S]*?state:\s*"builtin"/.exec(src),
+      "源码里没有把 office-import 登记成 builtin ⇒ 那一节又会是空的 ✗",
+    ).not.toBeNull();
+
+    const sec = [...host.querySelectorAll<HTMLElement>(".set-section")].find((s) =>
+      (s.querySelector(".set-section-title")?.textContent ?? "").includes("可用（已装）"),
+    );
+    expect(sec, "找不到「可用（已装）」那一节").not.toBeUndefined();
+    const rows = [...sec!.querySelectorAll<HTMLElement>(".set-row")];
+    expect(rows.length, "这一节应当**恰好一条**（多了少了都说明登记面变了）").toBe(1);
+    const claim = rows[0].textContent ?? "";
+    expect(claim, "那条没写「已装」").toContain("已装");
+    expect(claim, "那条的名字不是「Word 导入」").toContain("Word 导入");
+    for (const bad of ["Excel", "PPT", "xlsx", "pptx", "邮件", "压缩包"]) {
+      expect(claim, `⭐ 用户面写了「${bad}」⇒ 那个格式**没接线**（导入链只做 .docx）✗`).not.toContain(bad);
+    }
+
+    // 接线收据：这条能力得**真**有入口（⛔ 不是写一行字就说它有 ✗）
+    // ⚠️ 路径按 `import.meta.url` 推 ⇒ 本文件在 `src/components/`，而 `App.tsx` 在 `src/` 下 ✓
+    //    （⛔ 别像第一版那样拼成 `src/components/App.tsx` ✗ —— 那会 ENOENT 而不是判红说人话 ✓）
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    expect(app, "App 里没有 <OfficeImportPanel ⇒ 那这条就不是「已装」而是空话 ✗").toContain("<OfficeImportPanel");
+  });
 });
