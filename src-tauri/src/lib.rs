@@ -689,6 +689,9 @@ pub fn run() {
             storage::cleanup_orphan_derived,
             // ⭐ 2026-10-11：只读附件引用体检（⭐ 报表，⛔ 不删不改 ✓）—— 用来把"加密空间有没有引用老明文"说死 ✓
             storage::audit_attachment_refs,
+            // ⭐ 2026-10-11（owner 拍「甲」）：给"引用老明文却没自己副本"的加密空间**补一份加密副本** ✓
+            //    ⛔ 不删老布局那份 ✓（别的空间还在用 ✓）、⛔ 不动明文字节 ✓、⭐ 幂等 ✓、⭐ 写前核指纹 ✓
+            storage::adopt_legacy_refs_for_encrypted_spaces,
             extract_kz::extract_with_kreuzberg,
             commands::list_pages,
             commands::list_workspace_pages,

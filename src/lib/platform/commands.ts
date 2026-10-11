@@ -1315,6 +1315,23 @@ export interface CommandMap {
       plain_refs_legacy: number;
       /** ⚠️ 读不到的空间 —— 它们的引用**未知**，⛔ 不许读成「没有」 ✓ */
       unreadable: string[];
+      /** ⭐⭐ 真正要动手的那一份：加密空间引用、**而且它自己目录里还没有副本** ⇒ ⭐ 它在读老明文 ✗ */
+      encrypted_refs_no_private_copy: string[];
+      /** 加密空间引用、但自己已经有副本的处数 ✓（那些只是"老那份还在"，不是在读它 ✓） */
+      encrypted_refs_with_private_copy: number;
+    };
+  };
+  // ⭐ 2026-10-11（owner 拍「甲」）：给"引用老明文却没自己副本"的加密空间补一份加密副本 ✓。
+  //    ⚠️ 它**会写盘**（⭐ 只往各空间自己的目录里写 ✓），⛔ 不删老布局那份 ✓（别的空间还在用 ✓）。
+  adopt_legacy_refs_for_encrypted_spaces: {
+    args: undefined;
+    // ⚠️ 同样**必须下划线**（⭐ 与 Rust 逐字对上 ✓）
+    result: {
+      adopted: number;
+      already: number;
+      bytes: number;
+      items: string[];
+      skipped: string[];
     };
   };
   clear_trash: { args: undefined; result: number };
