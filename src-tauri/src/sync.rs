@@ -4524,6 +4524,84 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
 mod r146_mesh_scope_tests {
     use super::*;
 
+    /// ⭐ 判据③（方案 §6 ＋ §9.2 ✓）：⭐ **团队档的键必须留下** ✗ ——
+    /// 迁移只搬"**不属于任何团队空间**"的那些键 ✓（判法：键的后缀**是**某个非空 `space_id` ⇒ 跳过 ✓）。
+    ///
+    /// ⚠️ 夹具**故意**让团队那个键在字母序上**排在最前** ✗（`mesh_bind:org-x` < `mesh_bind:room-a` ✓）
+    /// ⇒ ⭐ 少了那道过滤，"取第一个非空"会**先拿到团队那一份** ✗ ⇒ 本判据红 ✓。
+    ///
+    /// **红读数（真变异）**：把迁移里那段"后缀是团队空间 ⇒ 跳过"去掉 ⇒ 本判据红 ✓。
+    #[test]
+    fn migration_never_moves_a_team_spaces_key() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-team', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-team', 'org-x', '');
+             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:org-x', '10.9.9.9:8788');
+             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:org-x', 'pw-team');
+             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-a', '0.0.0.0:8788');
+             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:room-a', 'pw-personal');",
+        )
+        .unwrap();
+        let moved = crate::mesh::migrate_device_level_mesh(&c).expect("迁移不许报错");
+        assert!(moved.is_some(), "有个人那一份 ⇒ 迁移要真的动了");
+        // ⭐ 设备级那一格拿的是**个人**那份 ✓（⛔ 不是团队那份 ✗）
+        let dev = crate::mesh::settings_for(&c, "", true);
+        assert_eq!(
+            dev.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "设备级必须拿个人那一份（团队那份字母序在前，正是它来试这道过滤）"
+        );
+        assert_eq!(dev.token.as_deref(), Some("pw-personal"));
+        // ⭐ 团队那两个键**一个字节没动** ✓（⭐ 可回退 ✓）
+        assert_eq!(
+            crate::sync::get_meta_state(&c, "mesh_bind:org-x").as_deref(),
+            Some("10.9.9.9:8788"),
+            "⛔ 团队档的键不许被搬走，也不许被清掉 ✗"
+        );
+        assert_eq!(crate::sync::get_meta_state(&c, "mesh_token:org-x").as_deref(), Some("pw-team"));
+        // ⭐ 团队空间读出来还是**它自己**那份 ✓
+        let t = mesh_scope_at(&c, Some("ws-team")).expect("团队档可解析");
+        assert!(!t.device_level);
+        assert_eq!(
+            crate::mesh::settings_for(&c, &t.space, t.device_level).bind.as_deref(),
+            Some("10.9.9.9:8788"),
+            "团队空间照旧读自己的"
+        );
+    }
+
+    /// ⭐ 判据④（Lead 2026-10-11 点名 ✓，方案 §9.4 待量③ ✓）：⭐ **升级混态** ✗ ——
+    /// ⭐ 设备级暗号（`room-dev`）≠ 各空间旧暗号（`room-old`）时，⭐ 面板读数必须跟**设备级那一份** ✓
+    /// （⭐ 因为那正是用户刚在设置面填的 ✓；⛔ 不能因为旧暗号那一格是空就报"关着" ✗）。
+    ///
+    /// **红读数（真变异）**：把 `mesh_config_state_at` 里的 `settings_for(…, device_level)` 换回
+    /// 按 `space` 读 ⇒ 读到的是旧暗号那一格（空）⇒ 面板报"关着" ⇒ 本判据红 ✓。
+    #[test]
+    fn the_panel_follows_the_device_level_settings_when_they_differ_from_the_old_per_space_ones() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-me', '个人');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me', '', 'room-old');",
+        )
+        .unwrap();
+        // ⭐ 设备级那一份（＝ 用户刚在设置面填的 ✓）
+        crate::mesh::set_mesh_room_device(&c, Some("room-dev")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
+        crate::mesh::set_mesh_token_for(&c, "", true, Some("pw-device-1")).unwrap();
+
+        let st = mesh_config_state_at(&c, "", "ws-me").expect("个人档面板要读得出");
+        assert!(
+            st.enabled,
+            "设备级配了监听地址 ⇒ 面板必须报**开着**（⛔ 别因为旧暗号那一格是空就报关 ✗）"
+        );
+        assert_eq!(
+            st.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "面板要跟**设备级**那一份（混态下这就是唯一对的那一份）"
+        );
+        assert!(st.token_set, "口令也要按设备级那一份报");
+    }
+
     /// ⭐⭐ 判据①（方案 §5 ① ✓）：⭐ **一处改、全部生效** ✗ ——
     /// 写一次**设备级**的设置 ⇒ ⭐ **两个个人空间读出来都一样** ✓；⭐ **团队空间没变** ✓。
     ///
