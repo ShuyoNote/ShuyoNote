@@ -12,6 +12,11 @@ mod attachments;
 //    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
 //    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
 mod pairing_trust;
+// ⭐ 2026-10-11：⭐ 客户端侧的**许可证校验** ✗（`src/relay_license.rs` ✓）—— ⭐ 纯函数 ✓：
+//    形状 ＋ `kid` 查表（⭐ 查不到就拒 ✓ fail-closed）＋ Ed25519 验签 ＋ 时间窗四态 ＋ `cap` 必须含 `crossnet`。
+//    ⚠️ ⭐ 公钥现在是**占位** ✗（真公钥由 owner 给）⇒ ⭐ 真凭证**一律验不过**，⭐ 这是**有意**的 ✓。
+//    ⛔ 边界：⭐ 自己写 ✗，⛔ 不许从专有中继仓拷代码（⭐ 那仓专有、本仓 AGPL ✓）。
+mod relay_license;
 // ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ 一键信任的**命令层** ✗ ——
 //    点一下就通 ✓：⭐ 用本空间**已有的网格令牌**把对面登记好（⭐ 调 `sync::remember_peer_card` ✓，
 //    那是"⭐ 登记对面 ✗"的唯一实现 ✓）＋ ⭐ 广播一条"⭐ 我想信任你 ✗"。⭐ 令牌**不上线** ✓。
@@ -187,6 +192,11 @@ mod tls_android;
 // ping 通、广播收不到；改成单播立刻生效 ⇒ 挡的就是这一层）。见模块头。
 #[cfg(target_os = "android")]
 mod lan_android;
+// 跨网中继（relay）**客户端**那一侧（2026-10-09 第 1 期）—— 读配置 / 连接＋握手 / 许可窗口判定。
+// ⚠️ 只有库级接入：⛔ 今天**没有**注册 Tauri 命令 ✗（那要同步 `commands.ts` ＋ `web.ts`，
+//    门禁 `check-web-commands` 三个方向都查，而那两个文件不在本期写域内）—— 见模块头。
+// `pub`（不是 `mod`）：这一层就是给下一期接线用的**库级接口** ⇒ 不这样做整模块全是 dead_code 警告 ✓
+pub mod relay_client;
 mod security;
 mod storage;
 mod sync;
@@ -1098,6 +1108,14 @@ pub fn run() {
   // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：86 MiB 过 base64-IPC 那条链结构上不成立
   //    ⇒ 下载/解压/校验/落盘全在 Rust 侧（`dictionary.rs`：先核压缩包、再核解压后的库，两段都过才 rename）。
   dictionary::dictionary_install_pack,
+  // ── 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」）──────────────────────────────
+  // ⭐ 两格读数（人话与天数**都由后端出** ⇒ 界面只摆上去 ✓）：
+  //   · `relay_status` —— **不联网**：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格 ✓
+  //   · `relay_probe`  —— 真发起一次连接＋握手（UI 的「重新检查」走这条 ✓）
+  // ⚠️ 两条都**不是**桌面专属：Web 侧（`web.ts`）如实回 `available:false` ＋ 一句为什么 ✓
+  //    —— 与 `mesh_sync_now` 同一处置（⛔ 不假装连上了 ✗）。
+  relay_client::relay_status,
+  relay_client::relay_probe,
 ])
         .run(app_context())
         .expect("error while running tauri application");

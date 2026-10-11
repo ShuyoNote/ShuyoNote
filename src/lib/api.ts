@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -830,4 +830,19 @@ export const api = {
     temperature?: number;
     max_tokens?: number;
   }, runId: string) => invoke("ai_complete_stream", { args, runId }),
+  // ---- 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）----
+  /**
+   * ⭐ 中继那两格的读数（**不联网**）：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格。
+   *
+   * ⚠️ 那句人话与天数**都由后端出**（`src-tauri/src/relay_client.rs`）⇒ 界面只摆上去 ✓；
+   * 读不到时后端给的是"未接线/读不到"那句，⛔ **不是** 0 天 ✗。
+   */
+  relayStatus: () => invoke("relay_status") as Promise<RelayStatus>,
+  /**
+   * ⭐ **发起一次连接 ＋ 握手**（同步面板里「重新检查」走这条）⇒ 回同一份读数：
+   * 连上就是「已连上中继」✓；被中继拒 ⇒ 那句话里带**中继给的原因** ✓；连不上 ⇒ 如实说连不上 ✓。
+   *
+   * ⚠️ 它**不碰**本地数据/功能（到期只收回跨网 ✓）。
+   */
+  relayProbe: () => invoke("relay_probe") as Promise<RelayStatus>,
 };
