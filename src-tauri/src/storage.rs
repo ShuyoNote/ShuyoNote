@@ -40,6 +40,287 @@ fn dir_size(dir: &Path) -> DirSize {
     out
 }
 
+/// ⭐ 2026-10-11（owner 要「把加密空间有没有引用老明文」说死）：⭐ **只读**附件引用体检 ✓。
+///
+/// ⛔ 为什么**不复用** `scan_referenced_hashes` ✗：⭐ 那条是**删东西的闸** —— 任何空间读不到就**整体失败**
+/// （⭐ 那是对的 ✓，⭐ 猜错会**真删** ✓）。⭐ 而体检要的恰恰相反：⭐ **读不到也要把话说出来** ✓。
+/// ⇒ ⭐ 所以这里是**宽松版**：⭐ 逐空间记「读到几处引用」／「读不到，因为…」✓，⛔ 不挡任何人 ✓。
+///
+/// ⚠️ **如实**：它会走应用平时"打开空间"那条路（`open_space_conn` ✓ ⇒ 含**幂等迁移** ✓），
+///    但 ⛔ 不删、⛔ 不搬、⛔ 不改任何附件字节 ✓ —— 它是一份**报表** ✓。
+#[derive(Serialize, Clone)]
+pub struct AttachmentAuditSpace {
+    pub name: String,
+    pub encrypted: bool,
+    pub in_use: bool,
+    pub readable: bool,
+    pub referenced: i64,
+    pub note: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct AttachmentAudit {
+    pub spaces: Vec<AttachmentAuditSpace>,
+    pub legacy_files: i64,
+    pub legacy_referenced: i64,
+    pub legacy_orphan: i64,
+    /// ⭐ **要害**：加密空间引用到的「老布局」文件（每项 `空间名 ／ hash 前 12 位 ／ 字节`）
+    pub encrypted_refs_legacy: Vec<String>,
+    /// ⭐⭐ **真正要动手的那一份**：加密空间引用、**而且它自己目录里还没有副本** ⇒ ⭐ 它在读老明文 ✗
+    pub encrypted_refs_no_private_copy: Vec<String>,
+    /// 加密空间引用、但**自己已经有副本**的处数 ✓（⭐ 那些只是"老那份还在"，⭐ 不是在读它 ✓）
+    pub encrypted_refs_with_private_copy: i64,
+    /// 明文空间引用到的老布局文件处数
+    pub plain_refs_legacy: i64,
+    /// 读不到的空间 —— ⚠️ 它们的引用**未知** ✓，⛔ 不许写成"没有" ✓
+    pub unreadable: Vec<String>,
+}
+
+/// 一次扫描的原始料（⭐ 体检与"补副本"**共用同一遍** ⇒ ⛔ 别各扫一遍 ✗，否则两条读数会分家 ✓）
+struct ScanFacts {
+    spaces: Vec<AttachmentAuditSpace>,
+    /// hash ⇒ [(空间 id, 空间名)]（⭐ id 是给"补副本"用的，⭐ 名字是给人看的 ✓）
+    refs: std::collections::HashMap<String, Vec<(String, String)>>,
+    /// 老布局文件：hash ⇒ (路径, 字节)
+    legacy: std::collections::HashMap<String, (std::path::PathBuf, u64)>,
+    unreadable: Vec<String>,
+}
+
+fn scan_attachment_facts(app_data_dir: &Path, db: &Db) -> Result<ScanFacts, String> {
+    let att_root = app_data_dir.join("attachments");
+
+    // ① 空间清单（id ／ 名字 ／ 加密 ／ 是否在用）
+    let listed: Vec<(String, String, bool, bool)> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut stmt = c
+            .prepare("SELECT id, name, encrypted, deleted_at FROM meta.workspaces")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                    r.get::<_, Option<i64>>(3)?.is_none(),
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.flatten().collect()
+    };
+
+    // ② 逐空间读它引用的 hash（⭐ 宽松：读不到只记原因 ✓）
+    let mut spaces = Vec::new();
+    let mut refs: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+    let mut unreadable = Vec::new();
+    for (sid, name, encrypted, in_use) in &listed {
+        match crate::db::open_space_conn(sid) {
+            Ok(c) => {
+                let mut n: i64 = 0;
+                let mut stmt = c.prepare("SELECT DISTINCT hash FROM attachments").map_err(|e| e.to_string())?;
+                let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+                for h in rows.flatten() {
+                    if h.is_empty() {
+                        continue;
+                    }
+                    refs.entry(h).or_default().push((sid.clone(), name.clone()));
+                    n += 1;
+                }
+                spaces.push(AttachmentAuditSpace {
+                    name: name.clone(),
+                    encrypted: *encrypted,
+                    in_use: *in_use,
+                    readable: true,
+                    referenced: n,
+                    note: String::new(),
+                });
+            }
+            Err(e) => {
+                let note = format!("读不到：{e}");
+                unreadable.push(format!("「{name}」：{note}"));
+                spaces.push(AttachmentAuditSpace {
+                    name: name.clone(),
+                    encrypted: *encrypted,
+                    in_use: *in_use,
+                    readable: false,
+                    referenced: 0,
+                    note,
+                });
+            }
+        }
+    }
+
+    // ③ 老布局文件 ＝ 附件树里**不属于任何空间目录**的那些（⚠️ 跳过 `.part` 临时件 ✓）
+    let mut legacy = std::collections::HashMap::new();
+    for p in crate::attachments::walk_attachment_files(&att_root) {
+        if crate::space_crypto::space_id_from_path(&p).is_some() {
+            continue;
+        }
+        if p.extension().map(|e| e == "part").unwrap_or(false) {
+            continue;
+        }
+        let hash = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        legacy.insert(hash, (p, bytes));
+    }
+
+    Ok(ScanFacts { spaces, refs, legacy, unreadable })
+}
+
+#[tauri::command]
+pub async fn audit_attachment_refs(app: tauri::AppHandle, db: State<'_, Db>) -> Result<AttachmentAudit, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let f = scan_attachment_facts(&app_data_dir, &db)?;
+
+    let encrypted_ids: std::collections::HashSet<String> =
+        f.spaces.iter().filter(|s| s.encrypted).map(|s| s.name.clone()).collect();
+    let mut legacy_referenced = 0i64;
+    let mut plain_refs_legacy = 0i64;
+    let mut encrypted_refs_legacy = Vec::new();
+    let mut encrypted_refs_no_private_copy = Vec::new();
+    let mut encrypted_refs_with_private_copy = 0i64;
+    for (hash, (_path, bytes)) in &f.legacy {
+        if let Some(who) = f.refs.get(hash) {
+            legacy_referenced += 1;
+            for (sid, name) in who {
+                if encrypted_ids.contains(name) {
+                    let has_own = crate::attachments::find_path_by_hash(
+                        &crate::attachments::space_attachments_dir(&app_data_dir, sid),
+                        hash,
+                    )
+                    .is_some();
+                    let line = format!("「{name}」／{}／{} B", &hash[..hash.len().min(12)], bytes);
+                    if has_own {
+                        encrypted_refs_with_private_copy += 1;
+                    } else {
+                        encrypted_refs_no_private_copy.push(line.clone());
+                    }
+                    encrypted_refs_legacy.push(line);
+                } else {
+                    plain_refs_legacy += 1;
+                }
+            }
+        }
+    }
+
+    Ok(AttachmentAudit {
+        spaces: f.spaces,
+        legacy_files: f.legacy.len() as i64,
+        legacy_referenced,
+        legacy_orphan: f.legacy.len() as i64 - legacy_referenced,
+        encrypted_refs_legacy,
+        encrypted_refs_no_private_copy,
+        encrypted_refs_with_private_copy,
+        plain_refs_legacy,
+        unreadable: f.unreadable,
+    })
+}
+
+/// ⭐⭐ **甲（owner 2026-10-11 拍板）**：⭐ 给一个空间补一份**它自己的（加密）副本** ✓。
+///
+/// 为什么不改老布局那份 ✗：⭐ **别的空间还在用它** ✓（⭐ 实测：⭐ 同一份被「工作」和「保险柜」共用 ✓）
+/// ⇒ ⭐ 删了就把明文空间弄坏了 ✗ ⇒ ⭐ **只补、不删** ✓（⭐ 多占几 KB，⭐ 换"加密空间不再读明文"✓）。
+///
+/// ⚠️⭐ **落盘前先核 sha256** ✗：⛔ 不核就写 ＝ 把一份"看起来对"的字节冒充成附件 ✗
+///    （⭐ 而附件是**按内容寻址**的 ⇒ ⭐ 写错一次就是永久错 ✓）。核不上 ⇒ **报错、不写** ✓。
+/// ⭐ **幂等**：⭐ 它自己目录里已经有了 ⇒ 什么都不做 ✓。
+fn adopt_one(
+    app_data_dir: &Path,
+    space_id: &str,
+    hash: &str,
+    legacy: &Path,
+    keys: &crate::crypto::AppKeys,
+) -> Result<bool, String> {
+    let data = std::fs::read(legacy).map_err(|e| e.to_string())?;
+    let got = crate::dictionary::sha256_hex(&data);
+    if !got.eq_ignore_ascii_case(hash) {
+        return Err(format!(
+            "内容指纹不符（算得 {got}）⇒ ⛔ 不写：⭐ 免得把一份坏字节冒充成附件 ✗"
+        ));
+    }
+    let dir = crate::attachments::space_attachments_dir(app_data_dir, space_id);
+    if crate::attachments::find_path_by_hash(&dir, hash).is_some() {
+        return Ok(false);
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let ext = legacy
+        .extension()
+        .map(|e| e.to_string_lossy().to_string())
+        .unwrap_or_else(|| "bin".to_string());
+    let (_p, wrote) = crate::attachments::write_attachment_once(&dir, hash, &ext, &data, Some(keys))?;
+    Ok(wrote)
+}
+
+#[derive(Serialize, Clone)]
+pub struct AdoptReport {
+    /// 真补了几份
+    pub adopted: i64,
+    /// 本来就有 ⇒ 跳过几份
+    pub already: i64,
+    /// 写进去多少字节
+    pub bytes: i64,
+    /// 补了哪些（`空间名 ／ hash 前 12 位 ／ 字节`）
+    pub items: Vec<String>,
+    /// 没补成的（⭐ 原因逐条写清 ✓：⭐ 空间没解锁 ／ ⭐ 指纹不符 ／ ⭐ 读不到 ✓）
+    pub skipped: Vec<String>,
+}
+
+/// ⭐ 甲 的执行者：⭐ 给**每个**"引用老明文却没自己副本"的**加密空间**补一份加密副本 ✓。
+/// ⛔ 不删老文件、⛔ 不动明文空间、⛔ 不改任何被引用的字节 ✓。
+#[tauri::command]
+pub async fn adopt_legacy_refs_for_encrypted_spaces(
+    app: tauri::AppHandle,
+    db: State<'_, Db>,
+) -> Result<AdoptReport, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let f = scan_attachment_facts(&app_data_dir, &db)?;
+
+    let encrypted: std::collections::HashSet<String> =
+        f.spaces.iter().filter(|s| s.encrypted).map(|s| s.name.clone()).collect();
+    let mut rep = AdoptReport { adopted: 0, already: 0, bytes: 0, items: Vec::new(), skipped: Vec::new() };
+
+    // ⚠️ 逐条来：⭐ 一条失败⛔ 不连坐别的 ✓（⭐ 与"删东西的闸"相反：⭐ 这里错了只是少补一份 ✓）
+    for (hash, (path, bytes)) in &f.legacy {
+        let Some(who) = f.refs.get(hash) else { continue };
+        for (sid, name) in who {
+            if !encrypted.contains(name) {
+                continue;
+            }
+            if crate::attachments::find_path_by_hash(
+                &crate::attachments::space_attachments_dir(&app_data_dir, sid),
+                hash,
+            )
+            .is_some()
+            {
+                rep.already += 1;
+                continue;
+            }
+            // ⭐ 钥匙只从**会话钥匙袋**来 ✓ ⇒ ⭐ 没解锁就如实跳过（⛔ 不猜、⛔ 不先写明文 ✓）
+            let dbp = crate::db::space_db_path(&app_data_dir, sid);
+            let keys = match crate::space_crypto::space_app_keys_for_path(&dbp) {
+                Ok(Some(k)) => k,
+                Ok(None) => {
+                    rep.skipped.push(format!("「{name}」／{}：空间未解锁（先打开它再试）", &hash[..hash.len().min(12)]));
+                    continue;
+                }
+                Err(e) => {
+                    rep.skipped.push(format!("「{name}」／{}：取钥匙失败：{e}", &hash[..hash.len().min(12)]));
+                    continue;
+                }
+            };
+            match adopt_one(&app_data_dir, sid, hash, path, &keys) {
+                Ok(true) => {
+                    rep.adopted += 1;
+                    rep.bytes += *bytes as i64;
+                    rep.items.push(format!("「{name}」／{}／{} B", &hash[..hash.len().min(12)], bytes));
+                }
+                Ok(false) => rep.already += 1,
+                Err(e) => rep.skipped.push(format!("「{name}」／{}：{e}", &hash[..hash.len().min(12)])),
+            }
+        }
+    }
+    Ok(rep)
+}
+
 /// M14.1 — Storage breakdown for the space-management panel.
 #[tauri::command]
 pub async fn storage_stats(app: tauri::AppHandle, db: State<'_, Db>) -> Result<StorageStats, String> {
@@ -219,11 +500,8 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
         let c = db.0.lock().expect("db mutex poisoned");
         let current = crate::workspaces::active_workspace_id(&c)?;
         let other = other_spaces_referenced_hashes(&c, &current).map_err(|unreadable| {
-            format!(
-                "有 {} 个空间当前读不到 ⇒ **无法安全判断哪些附件还有人在用，本次不清理、什么都没删**：\n  - {}",
-                unreadable.len(),
-                unreadable.join("\n  - ")
-            )
+            // ⭐ 2026-10-11（owner 选乙）：⭐ 点名空间 ＋ ⭐ 说清出路 ＋ ⭐ 说清兜底 ✓（⭐ 一处定义 ✓）
+            unreadable_spaces_message(&unreadable, &space_name_map(&c, &unreadable), "打不开就判断不了哪些附件还有人在用")
         })?;
         (current, other)
     };
@@ -326,11 +604,8 @@ pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>
     let referenced: std::collections::HashSet<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
         all_referenced_hashes(&c).map_err(|unreadable| {
-            format!(
-                "有 {} 个空间当前读不到 ⇒ **无法判断哪些附件是孤儿，本次不删任何附件**：\n  - {}",
-                unreadable.len(),
-                unreadable.join("\n  - ")
-            )
+            // ⭐ 2026-10-11（owner 选乙）：⭐ 同一句话，⭐ 三处共用 ✓
+            unreadable_spaces_message(&unreadable, &space_name_map(&c, &unreadable), "打不开就判断不了哪些附件是孤儿")
         })?
     };
 
@@ -458,6 +733,60 @@ where
     }
 }
 
+/// ⭐ 2026-10-11（owner 选**乙**）：⭐ 把"读不到的空间"整段变成**人话** ✓。
+///
+/// 要点三件（⛔ **一处定义** ⇒ ⭐ 三处提示**必须说同一件事** ✗）：
+///   ⭐ ① 点名是**哪个**空间（⭐ 原来只印 UUID ⇒ ⭐ 用户对不上是谁 ✗）
+///   ⭐ ② 说清**怎么做**（⭐ 打开它、⭐ 输一次口令 ✓）
+///   ⭐ ③ 说清**兜底**（⭐ 在你打开之前**一个字节都不删** ✗ —— ⭐ 这句最关键：
+///      让"⭐ 失败 ✗"读起来像**保护** ✓，⛔ 不是坏 ✓）。
+///
+/// ⚠️ 空间名查不到就**退回印 id** ✗（⭐ 绝不编一个名字 ✓，⭐ 也绝不因此把整条提示变成空话 ✓）。
+fn space_name_map(c: &rusqlite::Connection, unreadable: &[String]) -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    for line in unreadable {
+        // ⚠️ 这里**故意**按第一个 ':' 切一次 —— ⭐ 这些行都是**本文件**自己拼的 `{sid}: …` ✓
+        //    （⭐ 产出与消费在同一份文件里 ⇒ ⛔ 不是"跨模块解析字符串" ✗；
+        //     ⚠️ 改下面那三个 `push` 的格式时，⛔ 必须同时改这里 ✓）
+        let sid = line.split(':').next().unwrap_or_default();
+        if sid.is_empty() || m.contains_key(sid) {
+            continue;
+        }
+        if let Ok(nm) = c.query_row(
+            "SELECT name FROM meta.workspaces WHERE id = ?1",
+            rusqlite::params![sid],
+            |r| r.get::<_, String>(0),
+        ) {
+            m.insert(sid.to_string(), nm);
+        }
+    }
+    m
+}
+
+/// ⭐ 拼那条人话提示（⭐ 与 `space_name_map` 配对用 ✓）。`action` 是"⭐ 打不开就判断不了什么 ✗"那半句 ✓。
+fn unreadable_spaces_message(
+    unreadable: &[String],
+    id2name: &std::collections::HashMap<String, String>,
+    action: &str,
+) -> String {
+    let named: Vec<String> = unreadable
+        .iter()
+        .map(|line| {
+            let sid = line.split(':').next().unwrap_or_default();
+            match id2name.get(sid) {
+                Some(nm) => format!("「{nm}」{}", &line[sid.len()..]),
+                None => line.clone(),
+            }
+        })
+        .collect();
+    format!(
+        "清理需要先打开加密空间。有 {} 个空间当前读不到 ⇒ **本次什么都没删**（{}）：\n  - {}\n⇒ 打开它（输一次口令）再试一次；在你打开之前，我们一个字节都不删。",
+        named.len(),
+        action,
+        named.join("\n  - ")
+    )
+}
+
 /// M14.4 / M15.4c — Permanently delete soft-deleted workspaces. Under physical
 /// isolation each deleted workspace's content lives in its OWN `spaces/<id>.db`,
 /// so purging removes that DB file (and WAL) rather than deleting rows from the
@@ -499,6 +828,11 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
         rows.map_err(|e| e.to_string())?
     };
     let remaining_for_scan = remaining_ids.clone();
+    // ⭐ 2026-10-11（owner 选乙）：⭐ 空间名要在**进 spawn 之前**取好 ✗ —— ⭐ 那个闭包里没有连接 ✓
+    let name_map = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        space_name_map(&c, &remaining_ids)
+    };
     let referenced_remaining: std::collections::HashSet<String> =
         tauri::async_runtime::spawn_blocking(move || {
             scan_referenced_hashes(&remaining_for_scan, crate::db::open_space_conn)
@@ -506,11 +840,8 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
         .await
         .map_err(|e| e.to_string())?
         .map_err(|unreadable| {
-            format!(
-                "有 {} 个存活空间当前读不到 ⇒ **无法判断哪些附件是孤儿，本次不删任何附件**（什么都还没删）：\n  - {}",
-                unreadable.len(),
-                unreadable.join("\n  - ")
-            )
+            // ⭐ 2026-10-11（owner 选乙）：⭐ 这正是 owner 撞到的那一条 ⇒ ⭐ 现在它会**点名「保险柜」** ✓
+            unreadable_spaces_message(&unreadable, &name_map, "打不开就判断不了哪些附件是孤儿")
         })?
         .into_iter()
         .collect();
@@ -598,6 +929,79 @@ mod tests {
     use super::*;
     use crate::db::migrate;
     use rusqlite::Connection;
+
+    // ⭐⭐ **2026-10-11（owner 拍「甲」）**：⭐ 补副本的合同 —— 四条判据，⭐ 全都钉**结果** ✓：
+    //    ⭐ ① 补出来的那份**必须是密文** ✗（⛔ 不是把明文抄一份 ✓）
+    //    ⭐ ② 而且**解得回原字节** ✓（⛔ "随便加密一下"不算 ✓）
+    //    ⭐ ③ ⭐ ⭐ **老布局那份一个字节都不许动** ✗（⭐ 「工作」还在用它 ✓ —— ⭐ 这是"甲"的要害 ✓）
+    //    ⭐ ④ **幂等** ✓ ＋ ⭐ **指纹不符 ⇒ 报错且什么都不写** ✗（⭐ 这条挡的是"把坏字节冒充成附件"✓）
+    #[test]
+    fn adopt_writes_an_encrypted_copy_and_leaves_the_legacy_one_alone() {
+        let app = std::env::temp_dir().join(format!("shuyo-adopt-{}", uuid::Uuid::new_v4()));
+        let legacy_dir = app.join("attachments").join("9f");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        let plain: Vec<u8> = b"\x89PNG\r\n\x1a\nADOPT-ME".to_vec();
+        let hash = crate::dictionary::sha256_hex(&plain);
+        let legacy = legacy_dir.join(format!("{hash}.png"));
+        std::fs::write(&legacy, &plain).unwrap();
+
+        let keys = crate::crypto::AppKeys::legacy_only([9u8; 32]);
+        assert!(adopt_one(&app, "space-enc", &hash, &legacy, &keys).unwrap(), "第一次应当真写一份 ✓");
+
+        let own_dir = crate::attachments::space_attachments_dir(&app, "space-enc");
+        let own = crate::attachments::find_path_by_hash(&own_dir, &hash).expect("补完之后它自己目录里必须找得到");
+        let raw = std::fs::read(&own).unwrap();
+        assert_ne!(raw, plain, "⭐ 补的这份必须是**密文** ✗（⛔ 不是把明文抄一份 ✓）");
+        assert!(
+            crate::security::decrypt_attachment_bytes(Some(&keys), &raw).unwrap() == plain,
+            "⭐ 而且必须解得回原字节 ✓"
+        );
+        assert!(
+            std::fs::read(&legacy).unwrap() == plain,
+            "⭐⭐ 老布局那份**一个字节都不许动** ✗ —— 「工作」还在用它 ✓"
+        );
+
+        assert!(!adopt_one(&app, "space-enc", &hash, &legacy, &keys).unwrap(), "⭐ 幂等：已经有了 ⇒ 再跑不写 ✓");
+
+        // ⭐ 指纹不符 ⇒ ⛔ **不写**（⭐ 挡"把坏字节冒充成附件"✓）
+        let bogus = "0".repeat(64);
+        let tampered = legacy_dir.join(format!("{bogus}.png"));
+        std::fs::write(&tampered, b"\x89PNG\r\n\x1a\nTAMPERED").unwrap();
+        assert!(adopt_one(&app, "space-enc2", &bogus, &tampered, &keys).is_err(), "⛔ 指纹不符必须报错 ✗");
+        assert!(
+            crate::attachments::find_path_by_hash(&crate::attachments::space_attachments_dir(&app, "space-enc2"), &bogus)
+                .is_none(),
+            "⛔ 指纹不符 ⇒ 它目录里**不许**出现任何东西 ✗"
+        );
+
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    // ⭐⭐ **2026-10-11（owner 选乙）**：那条「读不到」的提示必须**说人话** ——
+    //    ⭐ ① 点名**哪个空间**（⛔ 不是一串 UUID ✗）② 说清**怎么做**（⭐ 打开它、⭐ 输一次口令 ✓）
+    //    ③ 说清**兜底**（⭐ 一个字节都不删 ✓ —— ⭐ 让"失败"读起来像**保护** ✓）
+    //    ＋ ⭐ 名字查不到时**退回印 id** ✓（⛔ 绝不编一个名字 ✗、⛔ 也绝不把整条提示变成空话 ✓）。
+    #[test]
+    fn unreadable_message_names_the_space_and_says_what_to_do() {
+        let sid = "99082b5a-dc25-4712-b2c9-fcff13612e64";
+        let lines = vec![format!("{sid}: 打不开空间库（file is not a database）")];
+        let mut m = std::collections::HashMap::new();
+        m.insert(sid.to_string(), "保险柜".to_string());
+        let msg = unreadable_spaces_message(&lines, &m, "打不开就判断不了哪些附件是孤儿");
+        assert!(msg.contains("保险柜"), "⭐ 必须点名是哪个空间 —— 只说 UUID 用户对不上 ✗：{msg}");
+        assert!(!msg.contains(sid), "⭐ 名字查到了就不该再印那串 id ✗：{msg}");
+        assert!(msg.contains("打开它") && msg.contains("输一次口令"), "⭐ 得说清怎么做 ✗：{msg}");
+        assert!(msg.contains("一个字节都不删"), "⭐ 得说清兜底（让失败读起来像保护）✗：{msg}");
+
+        // ⭐ 反向：名字查不到 ⇒ **如实退回印 id** ✓
+        let msg2 = unreadable_spaces_message(
+            &lines,
+            &std::collections::HashMap::new(),
+            "打不开就判断不了哪些附件是孤儿",
+        );
+        assert!(msg2.contains(sid), "⭐ 查不到名字就得如实印 id ✗：{msg2}");
+        assert!(msg2.contains("一个字节都不删"), "⭐ 即便查不到名字，兜底那句也必须在 ✗：{msg2}");
+    }
 
     // ★ 清理软删空间时"存活空间读不到 ⇒ 一个附件都不许删"（2026-09-20 自查发现的**静默数据丢失**）。
     // 老代码写成 `if let Ok(conn)` ⇒ 少扫一个存活空间，它引用的附件被当孤儿**真删**。

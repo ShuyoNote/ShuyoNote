@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 
 import { docxToNoteBlocks, type NoteBlock } from "../extract/ooxml";
-import { blocksToMarkdown } from "./docxMarkdown";
+import { blocksToMarkdown, officeMetaMarkdown } from "./docxMarkdown";
 import { brokenSamples, buildSampleDocx, officeSamples, samplePng } from "./sampleDocx";
 
 function parseFull() {
@@ -166,5 +166,36 @@ describe("块 ⇒ Markdown（渲染层）", () => {
       { kind: "paragraph", text: "1. 这也不是真列表" },
     ]);
     expect(result.warnings.join("；")).toContain("结构符号开头");
+  });
+});
+
+// ⭐ 2026-10-11（owner：「至少加上元数据」）：⭐ 导入笔记顶部那几行元数据 ✓。
+//    ⚠️ 这一组里**专门有一条钉"不做什么"** ✗ —— owner 提过「目录／图片列表／表格列表／附录」✓，
+//       ⭐ 那些**故意不做**（⭐ 目录要编辑器先有锚点能力 ✓ ／ ⭐ 图与表**已经在正文里** ⇒ 再列一遍是重复 ✓）
+//       ⇒ ⭐ 将来谁想加，**得先把那条判据改掉** ✗（⛔ 不许悄悄加 ✗）。
+describe("officeMetaMarkdown —— 导入笔记的元数据块", () => {
+  const at = new Date(2026, 9, 11, 9, 41); // ⚠️ 月份 0 基 ⇒ 这是 10 月 ✓
+
+  it("a) 三行都**如实**：来源 / 转换时间 / 字数·图片·表格，且整块是引用块", () => {
+    const md = officeMetaMarkdown({ source: "报告.docx", at, chars: 3542, images: 12, tables: 3 });
+    expect(md).toContain("📄 来源：报告.docx");
+    expect(md).toContain("🕐 转换时间：2026-10-11 09:41");
+    expect(md).toContain("📊 字数：3542 字 ｜ 图片：12 张 ｜ 表格：3 个");
+    // ⭐ 每行都以 ── `> ` 起头 ⇒ 落在正文顶部不会跟标题/列表混在一起 ✓
+    expect(md.split("\n").every((l) => l.startsWith("> "))).toBe(true);
+  });
+
+  it("b) 作者拿不到 ⇒ **整行不写**（⛔ 不写「未知」当事实）", () => {
+    const noAuthor = officeMetaMarkdown({ source: "a.docx", at, author: null, chars: 1, images: 0, tables: 0 });
+    expect(noAuthor).not.toContain("原文档作者");
+    const withAuthor = officeMetaMarkdown({ source: "a.docx", at, author: "张三", chars: 1, images: 0, tables: 0 });
+    expect(withAuthor).toContain("✍️ 原文档作者：张三");
+  });
+
+  it("c) ⛔ **不做**目录 / 图片列表 / 表格列表 / 附录 / 原始文件（「不做什么」的判据）", () => {
+    const md = officeMetaMarkdown({ source: "a.docx", at, chars: 1, images: 1, tables: 1 });
+    for (const banned of ["目录", "附录", "图片列表", "表格列表", "原始文件"]) {
+      expect(md, `元数据块里出现了「${banned}」⇒ 那是我们故意不做的东西`).not.toContain(banned);
+    }
   });
 });

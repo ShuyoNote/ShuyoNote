@@ -806,6 +806,40 @@ html[data-platform="win"] .app-body {
   padding: 14px 16px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* ⭐ 2026-10-11（owner：「保持这样的布局；但去掉筛选控件外框」）：
+   ⚠️ 这个筛选框**此前没有任何专有样式** ✗（⭐ 我今天才量到 ✓）⇒ ⭐ 它一直照着 `.sync-input` 的
+   `border: 1px solid var(--border)` ＋ `background: var(--bg)` 长 ✓ ⇒ ⭐ 所以在这儿收口 ✓。
+   ⭐ 做法：⭐ 边框**透明**（⭐ 保留那 1px 占位 ⇒ ⭐ 聚焦换色时**不跳版** ✓）＋ ⭐ 底色透明 ✓。
+   ⚠️ 光写这一条不够 ✗：⭐ 还有 `.sync-input:hover:not(:disabled)` 会在**悬停时把边显出来** ✓
+      ⇒ ⭐ 必须一起压掉（⭐ 今天在设置面板那个控件上就是这么量出来的 ✓）。
+   ⚠️ **聚焦那一圈留着** ✗ —— ⭐ 那是可访问性底线（⭐ 键盘用户得看出焦点在哪 ✓）；
+      ⭐ "去掉外框"我按**静止与悬停**理解 ✓，⭐ 你要连聚焦也不要 ⭐ 说一声我去掉 ✓。
+   ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✓（⭐ 本仓规则：可点控件 ≥44 ✓）——⛔ 这里不动 ✓。 */
+.space-switcher-filter.sync-input {
+  border-color: transparent;
+  background: transparent;
+  /* ⭐ 2026-10-11（owner：「缩小控件的高度」）：⭐ 桌面收到 **36** ✓ ——
+     ⚠️ 为什么⛔ 不一律缩 ✗：⭐ 本仓那条"命中区高度一律 ≥44"是**在 390 视口下量的** ✓
+     （`scripts/verify-mobile-views.mjs:19`；⭐ 那个面板它也打开来量 ✓）⇒ ⭐ 桌面缩、⛔ 手机不缩 ✓
+     —— ⭐ 与设置面板那个筛选框**同一套写法** ✓（⭐ 那次实测：⭐ 桌面 36 ／ ⭐ 390 视口仍 44 ✓ 门禁绿 ✓）。 */
+  min-height: 36px;
+  /* ⭐ 2026-10-11（owner：「筛选控件的宽度与下面的控件对齐」）：⭐ 实测口径（⛔ 不靠眼看 ✓）——
+     面板 **380** 宽 ✓ ／ 列表内边距 **8px** ✓ ／ 卡片左右各缩 **9px**（1 ＋ 8 ✓）、宽 **362** ✓；
+     而输入框**只缩 1px**（宽 378 ✓）⇒ ⭐ 顶满整块面板 ⇒ ⭐ 与卡片差 **8px** ✓（⭐ 截图里那处不齐 ✓）。
+     ⇒ ⭐ 给它 8px 左右外边距 ⇒ ⭐ 两边都是 9px、⭐ 宽 362 ＝ ⭐ 与卡片**同宽** ✓。
+     ⚠️⭐ **必须同时把 `width` 从 100% 改成 auto** ✗（100% 是 `.sync-input` 给的 ✓）——
+     否则 100% ＋ 左右外边距会**溢出面板** ✓（⭐ `box-sizing: border-box` 也救不了 100% ＋ margin ✓）。 */
+  margin: 0 8px;
+  width: auto;
+}
+@media (max-width: 600px) {
+  .space-switcher-filter.sync-input {
+    min-height: 44px;
+  }
+}
+.space-switcher-filter.sync-input:hover:not(:disabled) {
+  border-color: transparent;
+}
 .space-switcher-head-text {
   flex: 1;
   min-width: 0;
@@ -13519,6 +13553,19 @@ p:has(> .editor-drawing-container) {
   align-items: center;
   gap: 8px;
 }
+
+/* ⭐ 2026-10-11（owner：「这个界面的字体样式不协调，美化一下」）：
+   ⚠️ 起因：⭐ 「自动备份」那一格原来是个**手写的粗体 div** ✗（⭐ 内联 `fontWeight: 600` ＋ ⭐ 没有类样式 ⇒
+   ⭐ 字号是**继承正文**的 ~14-15px ✓）⇒ ⭐ 比它**自己所属**的分组标题（`.set-section-title` ＝ 12px/700/暗色 ✓）
+   **还大、还黑** ✓ ＝ ⭐ 你看到的那种不协调 ✓。
+   ⇒ ⭐ 这里给它**同一族**的排版 ✓（⭐ 同字号 12 ／ ⭐ 同字重 700 ／ ⭐ 同暗色 ／ ⭐ 同字距 ✓），
+      ⭐ 只是**不带**那条竖条 ✓ —— ⭐ 它是「完整备份」下面的**子分组** ✓，⭐ 靠"⭐ 没有条 ✗"区别于顶层 ✓。 */
+.backup-auto-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
 /* 区块标题前的小强调条，让账户页各区块更有层。 */
 .set-section-title::before {
   content: "";
@@ -14005,6 +14052,179 @@ p:has(> .editor-drawing-container) {
 .set-danger-btns {
   display: flex;
   gap: 8px;
+}
+
+/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：原先它就是一个**裸的** `.sync-input` ✗ ——
+   现在：左边放大镜 ＋ 右边「清空」（⭐ 空查询时**根本不渲染**它 ✓）、圆角与下面那些空间卡片**同一档** ✓、
+   悬停有反馈、聚焦沿用 `.sync-input:focus` 那圈强调色 ✓。
+   ⚠️ 高度**不许低于 44**（本仓规则：可点控件 ≥44px ⇒ 见 `verify-mobile-views.mjs`）——
+   所以清空按钮也做成 44×44 的命中区，只是里面的 × 画小一点 ✓（⛔ 别为了好看把命中区缩下去 ✗）。
+   ⚠️ `:has()` 用来在**没有清空按钮**时把右边那 44px 让回来 ✓（WebView2 是 Chromium ⇒ 支持 ✓）。 */
+/* ⭐ 2026-10-11（owner 截图「下载完了的界面优化一下」）：下载成功原来只是**一句生数据** ✗ ——
+   `89735168 B · sha256 5dc10a51f33a… · C:\Users\…\ecdict-en-zh.bin` ⇒ 又长又折行、还印生字节数 ✓。
+   ⇒ ⭐ 改成一张**小成功卡**：第一行「√ 已保存到本地 · 85.6 MiB」（成功色 ✓），
+   第二行灰字放 sha256 与路径（⭐ 路径 `title` 悬停看全 ✓，⭐ 长路径 `overflow-wrap: anywhere` 折行 ✓）。
+   ⚠️ 只用于**块级**结果提示（⛔ 不往 `.set-row` 里塞卡片 ✗ —— 今天已经因为那个栽过两次 ✓）。 */
+.set-pack-result {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success, #2e7d32);
+  background: var(--hover);
+}
+.set-pack-result-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.set-pack-result-mark {
+  color: var(--success, #2e7d32);
+  font-weight: 700;
+}
+.set-pack-result-size {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.set-pack-result-meta {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.set-pack-result-path {
+  overflow-wrap: anywhere;
+}
+
+/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：能力页那格原来复用 `.set-status` ✗ ——
+   而 `.set-status` 是**整块卡片**（`display:flex` ＋ `padding:12px 14px` ＋ `border` ＋
+   `background: var(--card-bg)` ＋ **`margin-bottom: 16px`**）⇒ 被塞进 `.set-row` 当**行内徽章**用之后：
+   ① 看着**像一个能点的按钮** ✗（2026-10-02 已经因为同一个观感问题把「还没上架」那节改掉了 ✓）
+   ② 那一行被**撑高一大截**，② 而且 `margin-bottom:16px` 让**两节之间多出一大块空白** ✗
+   ⇒ ⭐ 新增**行内徽章** `.set-badge`：小胶囊、成功色、**不**带按钮感（无边、无阴影、无 `cursor:pointer` ✓）。
+   ⛔ **不动 `.set-status` 自己的定义** ✗ —— 别处（设置里那些整块提示）还在用它 ✓。
+   ⚠️ `flex: 0 0 auto` 是**必须**的：长说明**不许**把它挤扁 ✗（那个"被挤成一列"的病今天已经栽过两次 ✓）。 */
+.set-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--hover);
+}
+.set-badge.is-ok {
+  color: var(--success, #2e7d32);
+  /* 两层写法：`color-mix` 不支持时**退回**上面那档灰底 ✓（⛔ 不会变成透明 ✗） */
+  background: var(--hover);
+  background: color-mix(in srgb, var(--success, #2e7d32) 12%, transparent);
+}
+
+.set-space-filter-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* ⭐ 2026-10-11（owner：「筛选控件聚焦后和下面的控件留点白」）：⭐ 聚焦光圈是 `0 0 0 3px` **向外扩**的 ✗
+     ⇒ ⭐ 不留白就会**贴到第一张空间卡片上** ✓（owner 截图里正是这样 ✓）⇒ ⭐ 这 12px 是给光圈让的位 ✓。 */
+  margin-bottom: 12px;
+}
+.set-space-filter-wrap > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.set-space-filter.sync-input {
+  padding-left: 38px;
+  padding-right: 44px;
+  border-radius: var(--radius-lg);
+  /* ⭐ 2026-10-11 **第三次改**（owner：「去掉控件的背景色如何？」）：⭐ 去掉填充 ✓ ——
+     上一版是**浅灰填充 ＋ 无边** ✗；现在改成**透明底 ＋ 一圈细边** ✓（⭐ 形状交给边框定 ✓）。
+     ⭐ 保留的仍是那几件：⭐ 放大镜 ／ ⭐ 圆角 `radius-lg` ／ ⭐ 左侧 38px 不压字 ／ ⭐ 高度 44px ✓。
+     ＋ ⭐ 悬停**只动边框**（⭐ 不再换底色 ✓）；⭐ 聚焦仍是强调色描边 ＋ 3px 光圈 ✓（⛔ 不换底 ✓）。
+     ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✗（本仓规则：可点控件 ≥44px ✓）——⛔ 这里不写死更小值 ✓。 */
+  /* ⭐ 2026-10-11 **第四次改**（owner：「外框也去掉」）：⭐ 连接触边也不要 ✓ ——
+     现在**静止与悬停都没有可见边框** ✓（⭐ 只有放大镜 ＋ ⭐ 提示文字 ✓），⭐ 形状完全交给聚焦态 ✓。
+     ⚠️ ⭐ **透明边是刻意留的占位** ✗（`1px solid transparent`）：⭐ 这样聚焦时把颜色换成强调色
+        **不会让整行跳一下** ✗（⛔ 不是"忘了删" ✓）；⭐ 而聚焦那一圈是**可访问性底线** ⇒ ⛔ 不许去掉 ✓。 */
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background var(--transition-fast);
+}
+.set-space-filter-wrap:not(:has(.set-space-filter-clear)) .set-space-filter.sync-input {
+  padding-right: 14px;
+}
+/* ⭐ 悬停也**不显形**（owner 要的就是这个 ✓）—— ⚠️⭐ **2026-10-11 订正**：第一版写的是
+   `.set-space-filter.sync-input:hover` ✗，⭐ 而别处 `.sync-input:hover:not(:disabled)` 同权重、又是**后写的**
+   ⇒ ⭐ 它赢了 ⇒ ⭐ **悬停照样冒出一圈强调色边** ✗（CDP 实测 `rgb(51,112,255)` ✓ ——
+   ⭐ 而我当时**只看了 tsc 与判据就提交了** ✗，提交信息里那句"悬停也不显形"**是假的** ✓）。
+   ⇒ ⭐ 修法：**加一层外层类**把权重抬上去 ✗（`.set-space-filter-wrap .set-space-filter.sync-input:hover` ✓）。
+   ⛔ 别删这条：删了就又会在悬停时冒出边框 ✗。 */
+.set-space-filter-wrap .set-space-filter.sync-input:hover {
+  border-color: transparent;
+}
+/* ⚠️⭐ **2026-10-11 再订正**：上面那条把权重抬到 `.wrap .filter.sync-input:hover`（四个类 ✓）之后，
+   ⭐ 它**顺带把聚焦也压住了** ✗ —— ⭐ CDP 实测"聚焦时边框仍是透明" ✗（只剩 3px 光圈 ✓）。
+   ⇒ ⭐ 聚焦这条必须**同样权重、且写在后面** ✗（同权重按先后 ✓）⇒ ⭐ 聚焦才重新显形 ✓。
+   ⛔ 这条是**可访问性底线**：⛔ 不许去掉、⛔ 也不许被 hover 压掉 ✓。 */
+.set-space-filter-wrap .set-space-filter.sync-input:focus {
+  background: transparent;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* ⭐ 2026-10-11（owner：「控件高度是不是可以小点」）：⭐ 桌面给 **36px**，⭐ 手机**仍是 44px** ✗ ——
+   为什么不能一律缩 ✗：本仓那条"⭐ 命中区高度一律 ≥44 ✗"是**在手机视口（390×844）下量的** ✓
+   （`scripts/verify-mobile-views.mjs:19` ＋ ⭐ 它逐层打开浮层来量 ✓），⭐ 而且**有真实事故**：
+   ⭐ 同步面板里 10 个输入控件有 **9 个 < 44**（8 个 32px）而当时三条门禁全绿 ✓。
+   ⇒ ⭐ ⭐ **缩桌面、⛔ 不缩手机** ✓ —— ⭐ 这样 owner 要的紧凑有了 ✓，⭐ 门禁在 390 视口下看到的仍是 44 ✓。
+   ⛔ **别把这条媒体查询去掉** ✗：去掉就等于手机上一起缩到 36 ⇒ ⭐ 那条门禁会红 ✓（那正是它存在的理由 ✓）。 */
+@media (min-width: 601px) {
+  .set-space-filter.sync-input {
+    min-height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+.set-space-filter.sync-input:focus {
+  background: transparent;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.set-space-filter-clear {
+  position: absolute;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+.set-space-filter-clear:hover {
+  color: var(--text);
+  background: var(--hover);
 }
 
 /* 「空间」页：每个空间一张卡片（色块 + 名称 + 同步目标），配色抽屉在卡片内展开。 */
@@ -14788,6 +15008,94 @@ p:has(> .editor-drawing-container) {
 .lock-forgot-foot {
   margin: 8px 0 0;
   color: rgba(255, 255, 255, 0.55);
+}
+
+/* ⭐ 2026-10-10（owner）：「忘记口令」改成**弹窗** —— 锁屏本身保持短，说明进浮层 ✓。
+   ⚠️ 纯 CSS（⛔ 不引依赖 ✗）；颜色/圆角/阴影**复用既有变量** ✓（与 `.confirm-overlay` / `.lock-*` 同一套 ✓）。
+   ⚠️ 正文字号**不小于**原来那条（12px ✓）——「酷炫」⛔ 不许牺牲可读性 ✗。 */
+.lock-forgot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1500; /* ⚠️ 高于 `.confirm-overlay` 的 1400：这块屏本身就是最高优先级的门口 ✓ */
+  background: rgba(8, 12, 22, 0.62);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: lock-forgot-fade 140ms ease-out;
+}
+.lock-forgot-modal {
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.82);
+  /* ⭐ 2026-10-11（owner 截图：「忘记口令的说明是空的？」）—— ⭐ **这是个真 bug** ✗：
+     原来这里是 `background: var(--surface, #16203a)` ✓，⭐ 而 `--surface` **跟着应用主题走** ✗
+     （⭐ 实测：⭐ 浅色主题 `data-theme=light` ⇒ ⭐ `--surface` ＝ **#ffffff** ✓；⭐ 深色主题才是 #242529 ✓）
+     ⇒ ⭐ ⭐ 而这块卡片里的文字是**写死的白** ✗（⭐ 上面那行 ✓）⇒ ⭐ **白底白字 ＝ 整块看不见** ✓
+     （⭐ 截图里只剩那个 🔑 —— ⭐ emoji 自带颜色，⭐ 所以只有它可见 ✓）。
+     ⚠️ 根因是**两套口径混用** ✗：⭐ 它坐在 `.lock-screen` 上，⭐ 而那块屏是**永远深色**的
+     （⭐ `background: #0b1533` **写死** ✓，⭐ 不跟主题 ✓）⇒ ⭐ 卡片**必须**也跟着"⭐ 永远深色 ✗" ✓。
+     ⇒ ⭐ 用原来那个**兜底值** `#16203a` 写死 ✓（⭐ 它就是当初的意图 ✓，⭐ 只是被 `var()` 抢先了 ✓）。
+     ⛔ 不去改锁屏本身：⭐ "⭐ 锁屏永远深色 ✗"是有意为之 ✓（⭐ 门口那块不该随主题忽明忽暗 ✓）。 */
+  background: #16203a;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-xl, 0 24px 60px rgba(0, 0, 0, 0.45));
+  padding: 16px 18px 14px;
+  animation: lock-forgot-pop 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.lock-forgot-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.lock-forgot-modal-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.lock-forgot-modal-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+.lock-forgot-close {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lock-forgot-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.lock-forgot-modal-body {
+  font-size: 12px;
+  line-height: 1.65;
+}
+@keyframes lock-forgot-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes lock-forgot-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
 }
 
 /* Markdown import dialog */

@@ -30,6 +30,51 @@ export interface MarkdownRenderOptions {
   resolveImage?: (image: DocxImage) => string | null;
 }
 
+/** 元数据块要的事实（⭐ 全部**注入** ⇒ 判据能固定时间与计数 ✓，⛔ 不读全局时钟 ✗）。 */
+export interface OfficeMetaInput {
+  /** 来源：这一层只知道**文件名** ✓（完整路径属于界面那层，见 `importPipeline` 的注释 ✓）。 */
+  source: string;
+  /** 转换时刻（注入 ✓）。 */
+  at: Date;
+  /** 原文档作者 —— ⚠️ 解析层**现在没读** `docProps/core.xml` ⇒ 拿不到就**不写这一行** ✓，⛔ 不写「未知」当事实 ✗。 */
+  author?: string | null;
+  /** 去掉空白后的字符数（⭐ 口径写在下面注释里 ✓ —— 「字数」这个词本身有歧义 ✓）。 */
+  chars: number;
+  images: number;
+  tables: number;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * ⭐ 2026-10-11（owner：「至少加上元数据」）：⭐ 导入笔记**顶部那几行元数据** ✓。
+ *
+ * ⚠️ 只做**元数据这一件** ✗ —— ⭐ owner 提过的「目录」「图片列表」「表格列表」「附录」**故意不做** ✓：
+ *   · 目录要编辑器有**锚点/跳转**那套能力 ✓，⭐ 现在没有 ⇒ ⭐ 塞进去就是"看着有、其实没用" ✗；
+ *   · 图/表**已经在正文里** ⇒ 再列一遍是重复 ✓。
+ * ⇒ ⭐ 判据里有一条专门钉这个（`docxMarkdown.test.ts`）✓。
+ *
+ * ⚠️ 作者拿不到时**整行不写** ✗（⛔ 不写「作者：未知」当事实 ✓）。
+ * ⚠️ 「字数」口径 ＝ **去掉空白后的字符数** ✓（中文按字、英文按字符 ✓；⛔ 不说成"词数" ✗）。
+ */
+export function officeMetaMarkdown(meta: OfficeMetaInput): string {
+  const d = meta.at;
+  const lines = [
+    `> 📄 来源：${meta.source}`,
+    `> 🕐 转换时间：${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(
+      d.getHours(),
+    )}:${pad2(d.getMinutes())}`,
+  ];
+  const author = meta.author?.trim();
+  if (author) {
+    lines.push(`> ✍️ 原文档作者：${author}`);
+  }
+  lines.push(`> 📊 字数：${meta.chars} 字 ｜ 图片：${meta.images} 张 ｜ 表格：${meta.tables} 个`);
+  return lines.join("\n");
+}
+
 /** 表格单元格里不能出现的东西：`|` 会被导入器当分隔符（它**不做转义** ⇒ 列会错位 ✗）。 */
 const PIPE_REPLACEMENT = "¦";
 

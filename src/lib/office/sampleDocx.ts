@@ -40,12 +40,12 @@ function esc(text: string): string {
 
 /** 段落里的元素（**顺序即文档顺序** —— 真值就是按它数出来的 ✓）。 */
 export type SampleElement =
-  | { t: "h"; level: number; text: string }
-  | { t: "p"; text: string }
+  | { t: "h"; level: number; text: string; styleId?: string }
+  | { t: "p"; text: string; sz?: number; bold?: boolean }
   | { t: "emph"; bold?: string; italic?: string; strike?: string }
   | { t: "break" }
-  | { t: "li"; numId: string; level: number; text: string }
-  | { t: "img"; media: string }
+  | { t: "li"; numId: string; level: number; text: string; sz?: number; bold?: boolean }
+  | { t: "img"; media: string; missing?: boolean }
   | { t: "table"; rows: string[][]; gridCols?: number };
 
 /**
@@ -60,6 +60,11 @@ function para(inner: string, pPrInner = ""): string {
 
 function run(text: string, props = ""): string {
   return `<w:r>${props ? `<w:rPr>${props}</w:rPr>` : ""}<w:t xml:space="preserve">${esc(text)}</w:t></w:r>`;
+}
+
+/** ⭐ 2026-10-11：把「半磅字号 / 整段加粗」拼成 `w:rPr` 的内容（⭐ 造"手工排版"那种夹具用 ✓）。 */
+function runProps(sz?: number, bold?: boolean): string {
+  return [bold ? "<w:b/>" : "", sz ? `<w:sz w:val="${sz}"/>` : ""].filter(Boolean).join("");
 }
 
 function imageParagraph(rid: string): string {
@@ -124,6 +129,8 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
     `</w:numbering>`;
 
   const mediaEntries: Record<string, Uint8Array> = {};
+  /** 媒体名 → rId（⚠️ 与"字节在不在"**无关** —— `missing` 的那种也有 rId ✓）。 */
+  const mediaRid: Record<string, string> = {};
   const relEntries: string[] = [
     `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>`,
   ];
@@ -132,12 +139,20 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
 
   for (const el of els) {
     switch (el.t) {
-      case "h":
-        body.push(para(run(el.text), `<w:pStyle w:val="Heading${el.level}"/>`));
+      case "h": {
+        // ⭐ 2026-10-11：可给**数字 styleId**（⭐ 中文 Word/WPS 就是这么写的 ✓）——
+        //    ⭐ 那时级别靠 `styles.xml` 里的真名字认 ✓（⭐ 见 `stylesXml` ✓）
+        const sid = el.styleId ?? `Heading${el.level}`;
+        body.push(para(run(el.text), `<w:pStyle w:val="${sid}"/>`));
         break;
-      case "p":
-        body.push(para(run(el.text)));
+      }
+      case "p": {
+        // ⭐ 2026-10-11：可选 `sz`（**半磅**）与 `bold` —— ⭐ 用来造"⭐ 手工排版 ✗"那种文档 ✓
+        //    （⭐ 真样张的形状：⭐ Word 标题样式用了 0 次、⭐ 字号却出现几百次 ⇒ ⭐ 标题全靠字号撑 ✓）
+        const props = runProps(el.sz, el.bold);
+        body.push(para(run(el.text, props)));
         break;
+      }
       case "emph":
         body.push(
           para(
@@ -155,22 +170,23 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
       case "li":
         body.push(
           para(
-            run(el.text),
+            run(el.text, runProps(el.sz, el.bold)),
             `<w:numPr><w:ilvl w:val="${el.level}"/><w:numId w:val="${el.numId}"/></w:numPr>`,
           ),
         );
         break;
       case "img": {
-        if (!mediaEntries[el.media]) {
+        // ⭐ `missing: true` ⇒ **故意不写 media 那个 part**，但关系与引用照写 ✓
+        //    （这就是"保留率会掉到门槛以下"的真输入 —— 见 `imageWithoutBytesSample` ✓）
+        if (!mediaRid[el.media]) {
           mediaIndex += 1;
-          mediaEntries[el.media] = samplePng();
+          mediaRid[el.media] = `rId${10 + mediaIndex}`;
           relEntries.push(
-            `<Relationship Id="rId${10 + mediaIndex}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${el.media}"/>`,
+            `<Relationship Id="${mediaRid[el.media]}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${el.media}"/>`,
           );
+          if (!el.missing) mediaEntries[el.media] = samplePng();
         }
-        // media 名 → rId：第 N 个媒体就是 rId(10+N)（newest-first 的 `mediaIndex` 与之一致 ✓）
-        const rid = `rId${10 + Object.keys(mediaEntries).indexOf(el.media) + 1}`;
-        body.push(imageParagraph(rid));
+        body.push(imageParagraph(mediaRid[el.media]));
         break;
       }
       case "table":
@@ -199,10 +215,30 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
     `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
     `</Relationships>`;
 
+  // ⭐ 2026-10-11：⭐ 造一份 `styles.xml` ✓ —— ⭐ 两种写法都声明：
+  //    ⭐ ① 英文 id `Heading1..6` ✓ ② ⭐ **数字 id `1..6`** ✓（⭐ 中文 Word/WPS 的写法 ✓，⭐ 名字仍是 `heading N` ✓）
+  //    ⇒ ⭐ 解析层必须**按名字**认，⛔ 不能只比 id ✓（⭐ 真样张就是这么被漏掉的 ✓）
+  const styleDefs =
+    [1, 2, 3, 4, 5, 6]
+      .map(
+        (n) =>
+          `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/></w:style>` +
+          // ⚠️⭐ 数字 id **故意错开一位**（⭐ `2` ⇒ `heading 1` ✓）—— ⭐ 与真样张一致 ✓
+          //    （⭐ 真文档：⭐ `id=1` 是 Normal ✓ ／ ⭐ `id=2` 是 `heading 1` ✓ ／ ⭐ `id=3` 是 `heading 2` ✓）
+          //    ⇒ ⭐ 这样才**真的证明**"⭐ 是按名字认的 ✗"，⛔ 不是把数字直接当级别 ✓
+          `<w:style w:type="paragraph" w:styleId="${n + 1}"><w:name w:val="heading ${n}"/></w:style>`,
+      )
+      .join("") +
+    `<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/></w:style>`;
+  const stylesXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${styleDefs}</w:styles>`;
+
   const files: Record<string, Uint8Array> = {
     "[Content_Types].xml": strToU8(contentTypes),
     "_rels/.rels": strToU8(rootRels),
     "word/document.xml": strToU8(document),
+    "word/styles.xml": strToU8(stylesXml),
     "word/numbering.xml": strToU8(numbering),
     "word/_rels/document.xml.rels":
       strToU8(
@@ -275,6 +311,27 @@ export function officeSamples(): OfficeSample[] {
   const big = sample("大样本.docx", "200 段 ＋ 20 列表项 ＋ 1 表（量耗时）", bigEls);
 
   return [small, full, big];
+}
+
+/**
+ * ⭐ **真输入对照（保留率门槛的"会红"那一侧）**：正文里有 **2 处图片引用**，
+ * 但 `word/media` 里**只有一张**的字节 —— 关系与引用**都在**（所以分母照数 2 ✓），
+ * 另一张取不到字节 ⇒ 图片保留率必然 **50% < 门槛 95%** ✓。
+ * ⛔ 它**不是**"坏样本"（文档能转、文字照出 ✓）⇒ 归在这里、与 `brokenSamples()` 分开 ✓。
+ */
+export function imageWithoutBytesSample(): OfficeSample {
+  const els: SampleElement[] = [
+    { t: "h", level: 1, text: "图片字节缺失的样本" },
+    { t: "p", text: "正文在这里。" },
+    { t: "img", media: "image1.png" }, // 有字节
+    { t: "img", media: "image2.png", missing: true }, // 关系在、字节**不在**
+  ];
+  return {
+    name: "图片字节缺失.docx",
+    note: "2 处图片引用里 1 张的 media 字节不在（关系照写）",
+    bytes: buildSampleDocx(els),
+    truth: countTruth(els),
+  };
 }
 
 /** 一个"应当**可读失败**"的坏样本（转不成功不算异常，必须有 code ＋ 人话 ✓）。 */

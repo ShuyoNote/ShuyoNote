@@ -111,6 +111,7 @@ import { platform } from "./lib/platform";
 import { useAuth } from "./store/auth";
 import { withSyncStatus } from "./store/syncStatus";
 import "./App.css";
+import { OfficeImportPanel } from "./components/OfficeImportPanel";
 
 // Secondary views are code-split so the initial bundle stays lean; they load only
 // when the user switches to graph / board / files / template-center (the default
@@ -681,22 +682,11 @@ function NoteEditor({ pageId }: { pageId: string }) {
     };
   }, [pageId, flushPendingSave]);
 
-  // 自动备份提醒（设置 → 数据 可配）：距上次成功备份超过设定天数，启动时提醒一次。
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("shuyonote:backupReminder");
-      if (!raw) return;
-      const cfg = JSON.parse(raw) as { enabled?: boolean; days?: number };
-      if (!cfg.enabled) return;
-      const days = Math.max(1, Number(cfg.days) || 30);
-      const last = Number(localStorage.getItem("shuyonote:lastBackupAt")) || 0;
-      if (last <= 0) return;
-      const daysPast = (Date.now() - last) / 86400000;
-      if (daysPast >= days) {
-        toast(`距离上次备份已 ${Math.floor(daysPast)} 天。建议到「设置 → 数据 → 备份 / 恢复」做一次整库备份。`, "info");
-      }
-    } catch { /* ignore */ }
-  }, []);
+  // ⭐ 2026-10-11（owner 截图「去掉这部分」）：原先这里有一条「自动备份提醒」——
+  //    读 `localStorage["shuyonote:backupReminder"]` ⇒ 距上次备份超过设定天数就在启动时弹一句 ✓。
+  //    ⭐ 已连同设置里那一节一起**删掉** ✓ —— ⛔ 只删界面不删这里的话，用户会**继续被提醒却没法关** ✗。
+  //    ⚠️ **如实记**：老键 `shuyonote:backupReminder` 可能还躺在别人的 localStorage 里 ⇒ 已经没人读了 ✓；
+  //       `shuyonote:lastBackupAt` 仍由 `BackupButton` 写入 ⇒ 现在**只写不读** ✓。
 
   // A database page renders a table view instead of the block editor.
   if (current?.kind === "database") {
@@ -1284,6 +1274,10 @@ function AppShell() {
         {/* 窄屏才用全屏浮层；桌面端它在内容区里（见上面 pdfWhere 那条分支）。 */}
         {pdfWhere === "overlay" && <PdfReader />}
         <FormulaEditorDialog />
+        {/* ⭐ task-14：Office 导入的**唯一入口**（右下角小按钮 ＋ `office-import://request` 监听）。
+            ⚠️ 它**不是浮层**（容器类名不以 `-overlay`/`-popover` 结尾 ⇒ 无需登记返回栈 ✓）；
+            放进 `PanelBoundary` 是为了它万一渲染出错也**带不走整个界面** ✓（与上面几条同理由 ✓）。 */}
+        <OfficeImportPanel parentId={null} />
       </PanelBoundary>
       {/* 插件管理单独一层：它渲染的全是插件声明的数据（权限/设置/日志/校验报告），
           是根部浮层里最可能崩的一个，所以不与别的浮层共享边界。 */}

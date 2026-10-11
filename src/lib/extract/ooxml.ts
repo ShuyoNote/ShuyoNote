@@ -188,14 +188,19 @@ function classifyFailure(extractor: string, input: ExtractInput, e: unknown): Ex
 
 const DOCX_ID = "ooxml.docx@1";
 
-/** 段落是否标题：`w:pStyle` 以 Heading 开头，或 `w:outlineLvl` 存在（0 基）。 */
-function docxHeadingLevel(p: Element): number | null {
+/** 段落是否标题：`w:pStyle` 以 Heading 开头，**或该 id 在 styles.xml 里的真名字是 `heading N`**，或 `w:outlineLvl` 存在。 */
+function docxHeadingLevel(p: Element, styles: Map<string, string>): number | null {
   const pPr = directChildren(p, "pPr")[0];
   if (!pPr) return null;
-  const style = directChildren(pPr, "pStyle")[0];
-  const styleVal = style?.getAttributeNS("*", "val") ?? style?.getAttribute("w:val") ?? "";
-  const m = /^Heading\s*(\d+)$/i.exec(styleVal);
-  if (m) return Number(m[1]);
+  const styleVal = attrOf(directChildren(pPr, "pStyle")[0], "val");
+  const byId = levelFromStyleName(styleVal);
+  if (byId !== null) return byId;
+  // ⭐ id 不是 `HeadingN` ⇒ ⭐ 去样式表里翻它的真名字（⭐ 中文 Word/WPS 的数字 id 走这一条 ✓）
+  const byName = styles.get(styleVal);
+  if (byName) {
+    const lvl = levelFromStyleName(byName);
+    if (lvl !== null) return lvl;
+  }
   if (directChildren(pPr, "outlineLvl").length > 0) return 1;
   return null;
 }
@@ -232,13 +237,15 @@ function extractDocx(input: ExtractInput): ExtractResult {
     if (!body) return fail(DOCX_ID, "corrupt", "word/document.xml 里没有 body（结构不完整）");
 
     const segments: ExtractedSegment[] = [];
+    // ⭐ 样式表（⭐ `styleId ⇒ 真名字` ✓）—— ⭐ 中文 Word/WPS 的标题样式 id 是数字 ✓
+    const styles = docxStyleNames(files);
     // 只走 body 的**直接子元素**，顺序即文档顺序；table 单独成段。
     for (const child of Array.from(body.children)) {
       if (child.localName === "p") {
         const text = normalizeText(runText(child));
         if (!text) continue;
         segments.push({
-          kind: docxHeadingLevel(child) !== null ? "heading" : "text",
+          kind: docxHeadingLevel(child, styles) !== null ? "heading" : "text",
           text,
           loc: "", // docx 无页号，见文件头注释
         });
@@ -718,6 +725,36 @@ function numberingMap(
   return out;
 }
 
+/** 样式**真名字** ⇒ 标题级别（`heading N` ／ `Title` ✓）；认不出来 ⇒ null ✓。 */
+function levelFromStyleName(name: string): number | null {
+  const t = name.trim();
+  const m = /^heading\s*(\d+)$/i.exec(t);
+  if (m) return Math.min(6, Math.max(1, Number(m[1])));
+  if (/^title$/i.test(t)) return 1;
+  return null;
+}
+
+/**
+ * `word/styles.xml` ⇒ `styleId → 样式真名字` ✓。
+ *
+ * ⚠️⭐ **为什么必须有这一层** ✗：⭐ 中文 Word / WPS 把内置标题样式写成**数字 id** ✓ ——
+ * 实测真样张（2026-10-11）：⭐ 正文里是 `<w:pStyle w:val="3"/>` ✓，⭐ 而 `styles.xml` 里
+ * `id=3` 的真名字才是 `heading 2` ✓ ⇒ ⭐ 只拿 id 去比对 `Heading N` ⇒ ⭐ **一个都认不出来** ✓
+ * （⭐ 而按 id 认不出来时，⭐ 只能靠"字号启发式"去蒙 ⇒ ⭐ 就是你看到的那句"标题 1 认了、标题 2 没认"✓）。
+ */
+function docxStyleNames(files: Record<string, Uint8Array>): Map<string, string> {
+  const out = new Map<string, string>();
+  const doc = partXml(files, "word/styles.xml");
+  if (!doc) return out;
+  for (const st of allByLocalName(doc, "style")) {
+    const id = attrOf(st, "styleId");
+    if (!id) continue;
+    const name = attrOf(directChildren(st, "name")[0], "val");
+    if (name) out.set(id, name);
+  }
+  return out;
+}
+
 /** `word/_rels/document.xml.rels` ⇒ `rId → zip 内路径`（外链给空串 ⇒ 当"取不到字节"如实计 ✓）。 */
 function docxRels(files: Record<string, Uint8Array>): Map<string, string> {
   const out = new Map<string, string>();
@@ -891,17 +928,102 @@ function fragsToMarkdown(frags: TextFrag[]): string {
     .join("");
 }
 
-/** 标题层级：`Heading N` / `Title` / `outlineLvl`（0 基 ⇒ ＋1）。⛔ 不改上面 `docxHeadingLevel` ✗。 */
-function noteHeadingLevel(p: Element): number | null {
+/** 段落里**唯一**那一档字号（半磅）；一档都没有、或混了好几档 ⇒ null（⭐ 混排的段落**不猜** ✗）。 */
+function paraHalfPointSize(p: Element): number | null {
+  const sizes = new Set<string>();
+  for (const sz of allByLocalName(p, "sz")) {
+    const v = attrOf(sz, "val");
+    if (v) sizes.add(v);
+  }
+  if (sizes.size !== 1) return null;
+  const n = Number([...sizes][0]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** ⭐ **整段都加粗**吗：⭐ **每个带文字的 run** 都写了 `<w:b/>` ✓ ⇒ 才算（⭐ 一个不加粗就不算 ✗）。 */
+function paraFullyBold(p: Element): boolean {
+  const runs = allByLocalName(p, "r").filter((r) => runText(r).trim().length > 0);
+  if (runs.length === 0) return false;
+  return runs.every((r) => {
+    const rPr = directChildren(r, "rPr")[0];
+    if (!rPr) return false;
+    const b = directChildren(rPr, "b")[0];
+    if (!b) return false;
+    const v = attrOf(b, "val");
+    return v === "" || v === "1" || /^true$/i.test(v);
+  });
+}
+
+/** ⭐ 正文那一档字号（半磅）：⭐ 出现**次数最多**的那个 ✓；算不出来 ⇒ null ⇒ ⭐ 整条启发式**不启用** ✓。 */
+function bodyHalfPointSize(body: Element): number | null {
+  const counts = new Map<string, number>();
+  for (const p of allByLocalName(body, "p")) {
+    if (runText(p).trim().length === 0) continue;
+    const s = paraHalfPointSize(p);
+    if (s === null) continue;
+    const k = String(s);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [k, n] of counts) {
+    if (n > bestN) {
+      best = k;
+      bestN = n;
+    }
+  }
+  return best === null ? null : Number(best);
+}
+
+/** 标题的两种来路：⭐ `style` ＝ 原文真用了 Word 标题体系 ✓；⭐ `size` ＝ **我们按字号猜的** ✓。 */
+type HeadingHit = { level: number; via: "style" | "size" };
+
+/**
+ * 标题层级：`Heading N` / `Title` / `outlineLvl`（0 基 ⇒ ＋1）。⛔ 不改上面 `docxHeadingLevel` ✗。
+ *
+ * ⭐ 2026-10-11（owner 同意）**新增一条启发式** ✗ —— 起因是实测：⭐ 他导入的那份 docx **155 段里
+ * "标题样式"用了 0 次** ✓，⭐ 标题全是"⭐ 整段加粗 ＋ ⭐ 字号调大 ✗"做出来的（⭐ 字号出现 587 处 ✓）⇒
+ * ⭐ 原样导入就是**一坨平文本** ✓。
+ *
+ * ⚠️⭐ **这是猜的** ✗ ⇒ 四道门**必须同时**过（⭐ 门槛保守 ⇒ ⭐ 宁可不认，⛔ 不误伤正文 ✓）：
+ *   ① ⭐ 不是列表（`w:numPr` 不算 ✓）② ⭐ **整段**都加粗 ✓ ③ ⭐ 字号**只一档**、且 ≥ 正文 ＋4 半磅（＝＋2pt ✓）
+ *   ④ ⭐ 文本短（≤ 80 字 ✓）且 ⭐ 不以句号/分号结尾 ✓。
+ * ⭐ 分级按字号差：⭐ ≥＋12 ⇒ 1 级 ✓ ／ ⭐ ≥＋8 ⇒ 2 级 ✓ ／ ⭐ ≥＋4 ⇒ 3 级 ✓。
+ * ⚠️ 认出来的那些**会在报告里标明是猜的** ✓（见 `guessedHeadings` 那条 warning ✓）。
+ */
+function noteHeadingLevel(p: Element, bodyHalf: number | null, styles: Map<string, string>): HeadingHit | null {
   const pPr = directChildren(p, "pPr")[0];
-  if (!pPr) return null;
-  const style = attrOf(directChildren(pPr, "pStyle")[0], "val");
-  const m = /^Heading\s*(\d+)$/i.exec(style);
-  if (m) return Math.min(6, Math.max(1, Number(m[1])));
-  if (/^Title$/i.test(style)) return 1;
-  const outline = directChildren(pPr, "outlineLvl")[0];
-  if (outline) return Math.min(6, Math.max(1, Number(attrOf(outline, "val") || "0") + 1));
-  return null;
+  if (pPr) {
+    const style = attrOf(directChildren(pPr, "pStyle")[0], "val");
+    const byId = levelFromStyleName(style);
+    if (byId !== null) return { level: byId, via: "style" };
+    // ⭐ 数字 id（中文 Word/WPS）⇒ ⭐ 翻真名字 ✓
+    const byName = styles.get(style);
+    if (byName) {
+      const lvl = levelFromStyleName(byName);
+      if (lvl !== null) return { level: lvl, via: "style" };
+    }
+    const outline = directChildren(pPr, "outlineLvl")[0];
+    if (outline) {
+      return { level: Math.min(6, Math.max(1, Number(attrOf(outline, "val") || "0") + 1)), via: "style" };
+    }
+  }
+
+  // ⭐ 下面是**启发式**（⛔ 到此为止都是原文事实 ✓）
+  // ⚠️⭐ **必须在上面那个 `if (pPr)` 的**外面**** ✗ —— ⭐ 我第一版写成"没有 `w:pPr` 就 `return null`"之下 ✓
+  //    ⇒ ⭐ **只有 run 级格式（没有段落级 pPr）的段落永远认不出来** ✓
+  //    ⭐ 抓到它的是判据 a)：⭐ 夹具里标题段就是"只有一个 run、带 `<w:b/>` 与 `<w:sz>`、没有 `pPr`" ✓
+  //    （⭐ 那种写法在真 Word 文档里很常见：⭐ 直接选字改字号加粗，不套样式 ✓）。
+  if (bodyHalf === null) return null;
+  if (noteListInfo(p)) return null;
+  if (!paraFullyBold(p)) return null;
+  const sz = paraHalfPointSize(p);
+  if (sz === null || sz < bodyHalf + 4) return null;
+  const t = runText(p).trim();
+  if (t.length === 0 || t.length > 80) return null;
+  if (/[。．.；;！!？?]$/.test(t)) return null;
+  const gap = sz - bodyHalf;
+  return { level: gap >= 12 ? 1 : gap >= 8 ? 2 : 3, via: "size" };
 }
 
 /** `w:numPr` ⇒ 这一段的列表层级与编号 id（`numId=0` ＝ 无编号 ⇒ null ✓）。 */
@@ -955,11 +1077,17 @@ function noteTableRows(tbl: Element, warnings: string[]): string[][] {
 }
 
 /** 源里的 `w:p` 属于哪一类（分母的算法：**只看 XML 事实**，不看转换结果 ✓）。 */
-function sourceKindOf(p: Element): { kind: keyof NoteBlockCounts; level?: number; numId?: string } {
+function sourceKindOf(
+  p: Element,
+  bodyHalf: number | null,
+  styles: Map<string, string>,
+): { kind: keyof NoteBlockCounts; level?: number; numId?: string; guessed?: boolean } {
   const list = noteListInfo(p);
   if (list) return { kind: "listItems", level: list.level, numId: list.numId };
-  const heading = noteHeadingLevel(p);
-  if (heading !== null) return { kind: "headings", level: heading };
+  const heading = noteHeadingLevel(p, bodyHalf, styles);
+  if (heading !== null) {
+    return { kind: "headings", level: heading.level, guessed: heading.via === "size" };
+  }
   return { kind: "paragraphs" };
 }
 
@@ -1029,6 +1157,12 @@ export function docxToNoteBlocks(bytes: Uint8Array): DocxNoteBlocksResult {
   }
 
   const warnings: string[] = [];
+  // ⭐ 样式表（⭐ `styleId ⇒ 真名字` ✓）—— ⭐ 中文 Word/WPS 的标题样式 id 是数字，⛔ 不比名字就认不出来 ✓
+  const styles = docxStyleNames(files);
+  // ⭐ 正文那一档字号（⭐ 只数一次 ✓）；⭐ 算不出来 ⇒ `null` ⇒ ⭐ 启发式整条不启用 ✓
+  const bodyHalf = bodyHalfPointSize(body);
+  // ⭐ 有多少条标题是**我们按字号猜的**（⭐ 报告里要如实标明 ✓）
+  let guessedHeadings = 0;
   const rels = docxRels(files);
   const numbering = numberingMap(files);
   const source: NoteBlockCounts = { headings: 0, paragraphs: 0, listItems: 0, images: 0, tables: 0 };
@@ -1054,7 +1188,8 @@ export function docxToNoteBlocks(bytes: Uint8Array): DocxNoteBlocksResult {
     const { frags, rids } = paragraphParts(p);
     const text = fragsToMarkdown(frags);
     const hasText = text.trim().length > 0;
-    const src = sourceKindOf(p);
+    const src = sourceKindOf(p, bodyHalf, styles);
+    if (src.kind === "headings" && src.guessed) guessedHeadings += 1;
     // ⚠️ 分母只数**有内容的**那一段：空段落（Word 里用来占行距）不是"要保留的东西" ✓
     //    （数进去会让真文档的保留率凭空变低 —— 那是**指标**的错，不是转换的错 ✗）
     if (hasText) {
@@ -1113,6 +1248,13 @@ export function docxToNoteBlocks(bytes: Uint8Array): DocxNoteBlocksResult {
   if (missingImageRefs > 0) {
     warnings.push(
       `${missingImageRefs} 处图片引用在 zip 里取不到字节（word/media 缺失或引的是外链）⇒ 如实少图，⛔ 没有补空`,
+    );
+  }
+  // ⭐ 2026-10-11：⭐ 如实标明"⭐ 这几条标题是猜的 ✗" ✓ —— ⛔ 不静默把启发式当成原文事实 ✓
+  if (guessedHeadings > 0) {
+    warnings.push(
+      `有 ${guessedHeadings} 条标题是**按「整段加粗 ＋ 字号更大」推出来的**` +
+        `（原文没有用 Word 的标题样式）⇒ 那几条是猜的，标题数量可能偏多`,
     );
   }
 

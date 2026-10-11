@@ -11,7 +11,7 @@
 
 import { docxToNoteBlocks, type DocxImage, type NoteBlockCounts } from "../extract/ooxml";
 import { markdownToPageContent } from "../mdPreview";
-import { blocksToMarkdown } from "./docxMarkdown";
+import { blocksToMarkdown, officeMetaMarkdown } from "./docxMarkdown";
 import { CATEGORIES, type CategoryReading } from "./retention";
 
 /** 转换结果的量纲上限：超过就**如实拒收**（半个页面比没有更糟 ✓ —— 与 R167 同口径）。 */
@@ -112,6 +112,21 @@ export async function importOfficeBytes(
   const markdownMs = Date.now() - tMd;
   warnings.push(...rendered.warnings);
 
+  // ⭐ 2026-10-11（owner：「至少加上元数据」）：⭐ 正文前加**元数据那几行** ✓ ——
+  //    ⚠️ **只加元数据** ✗：owner 提过的「目录／图片列表／表格列表／附录」**故意不做** ✓
+  //       （理由写在 `officeMetaMarkdown` 的注释上：目录要有锚点能力、图/表已在正文里 ✓）。
+  //    ⚠️ **来源**这一层只有**文件名** ✗：完整路径属于界面那层（本函数的入参里没有 ✓）；
+  //       ⭐ 将来要写全路径 ⇒ 从调用方多传一个字段进来 ✓，⛔ 别在这里猜、⛔ 别拼一个假的 ✗。
+  const meta = officeMetaMarkdown({
+    source: filename.replace(/^.*[\\/]/, ""),
+    at: new Date(),
+    author: null, // ⚠️ 解析层没读 `docProps/core.xml` ⇒ 如实留空（⛔ 不写「未知」当事实 ✗）
+    chars: rendered.markdown.replace(/\s/g, "").length,
+    images: parsed.converted.images,
+    tables: parsed.converted.tables,
+  });
+  const fullMarkdown = `${meta}\n\n${rendered.markdown}`;
+
   if (rendered.markdown.trim().length === 0) {
     return {
       ok: false,
@@ -120,7 +135,7 @@ export async function importOfficeBytes(
       warnings,
     };
   }
-  if (rendered.markdown.length > OFFICE_IMPORT_MAX_MARKDOWN_CHARS) {
+  if (fullMarkdown.length > OFFICE_IMPORT_MAX_MARKDOWN_CHARS) {
     return {
       ok: false,
       code: "too_large",
@@ -131,8 +146,8 @@ export async function importOfficeBytes(
     };
   }
 
-  // ④ 走现有 md → Lexical → 建页那条路
-  const payload = markdownToPageContent(rendered.markdown);
+  // ④ 走现有 md → Lexical → 建页那条路（⭐ 带**元数据**那一版 ✓）
+  const payload = markdownToPageContent(fullMarkdown);
   if (!payload) {
     return {
       ok: false,
@@ -161,7 +176,7 @@ export async function importOfficeBytes(
       source: parsed.source,
       converted: parsed.converted,
       categories,
-      markdownChars: rendered.markdown.length,
+      markdownChars: fullMarkdown.length,
       ms: { convert: convertMs, markdown: markdownMs, saveImages: saveMs, total: Date.now() - t0 },
       images: {
         referenced: parsed.converted.images,

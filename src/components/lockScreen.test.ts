@@ -91,7 +91,7 @@ describe("锁定屏", () => {
     expect(input().type, "口令默认必须遮起来").toBe("password");
     expect(button("解锁").disabled, "空口令时不该能点").toBe(true);
     // 没连错之前不摊开长篇说明：那是"忘了"的人需要的，不是所有人需要的。
-    expect(host.querySelector(".lock-forgot")).toBeNull();
+    expect(host.querySelector(".lock-forgot-overlay")).toBeNull();
     expect(button("忘记口令？")).not.toBeNull();
   });
 
@@ -123,13 +123,13 @@ describe("锁定屏", () => {
   it("连错 3 次：自动摊开「忘记口令？」，并说真话（服务器那份也打不开 / 唯一出路是加密前的备份）", async () => {
     mocks.unlockEncryption.mockRejectedValue(new Error("打不开：口令不对，或者这把锁被改过 —— 内容没有被解开"));
     await submit("错1");
-    expect(host.querySelector(".lock-forgot"), "错 1 次还不该展开").toBeNull();
+    expect(host.querySelector(".lock-forgot-overlay"), "错 1 次还不该展开").toBeNull();
     await submit("错2");
-    expect(host.querySelector(".lock-forgot"), "错 2 次还不该展开").toBeNull();
+    expect(host.querySelector(".lock-forgot-overlay"), "错 2 次还不该展开").toBeNull();
 
     await submit("错3");
 
-    const forgot = host.querySelector(".lock-forgot");
+    const forgot = host.querySelector(".lock-forgot-overlay");
     expect(forgot, "错到第 3 次就该主动把出路摊开").not.toBeNull();
     const text = forgot!.textContent ?? "";
     expect(text, "要明说没有找回流程/没有后门").toContain("没有找回流程");
@@ -141,14 +141,14 @@ describe("锁定屏", () => {
 
   it("自己点「忘记口令？」也能随时看到那段说明，并且能收起", async () => {
     await act(() => button("忘记口令？").click());
-    expect(host.querySelector(".lock-forgot")).not.toBeNull();
+    expect(host.querySelector(".lock-forgot-overlay")).not.toBeNull();
     await act(() => button("收起").click());
-    expect(host.querySelector(".lock-forgot")).toBeNull();
+    expect(host.querySelector(".lock-forgot-overlay")).toBeNull();
   });
 
   it("文案精简后 ⭐ 要点一个都不许丢（不可逆那半必须**原意**保留）", async () => {
     await act(() => button("忘记口令？").click());
-    const text = host.querySelector(".lock-forgot")?.textContent ?? "";
+    const text = host.querySelector(".lock-forgot-overlay")?.textContent ?? "";
 
     // ③ 导语的口径
     expect(text, "要说清口令只由用户自己保管").toContain("口令只由你保管");
@@ -170,5 +170,83 @@ describe("锁定屏", () => {
     expect(vaultState().locked).toBe(false);
     expect(vaultState().enabled).toBe(true);
     expect(host.querySelector(".lock-error")).toBeNull();
+  });
+});
+
+// ⭐ 2026-10-10（owner）：「忘记口令」那段改成**弹窗**（模态 ✓），要求**点背景可关** ✓。
+// ⚠️ 这条的必要反面：⛔ **点弹窗里面不许关** ✗（冒泡那个坑 ✓）—— 判据 e) 专钉它 ✓。
+// ⚠️ 文案**一个字节都不动** ✓（那几段刚按 owner 拍的 C 精简过 ⇒ 本轮**只动形态** ✓）。
+const OVERLAY = ".lock-forgot-overlay";
+const MODAL = ".lock-forgot-modal";
+
+describe("「忘记口令」是弹窗：点背景关 ／ Esc 关 ／ × 关 ／ ⛔ 点里面不关", () => {
+  async function openModal() {
+    await act(() => button("忘记口令？").click());
+  }
+  const overlay = () => host.querySelector(OVERLAY);
+
+  it("a) 点「忘记口令？」⇒ **浮层**出现（⛔ 不再是就地展开）", async () => {
+    await openModal();
+    expect(overlay(), "⭐ 必须是浮层，不是就地展开").not.toBeNull();
+    expect(host.querySelector(".lock-forgot"), "⭐ 旧的就地容器不许再出现（那就是没改 ✗）").toBeNull();
+    expect(host.querySelector(MODAL)).not.toBeNull();
+  });
+
+  it("b) 点**背景** ⇒ 关闭（owner 点名 ✓）", async () => {
+    await openModal();
+    await act(() => {
+      overlay()!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(overlay(), "点背景必须关").toBeNull();
+  });
+
+  it("c) **Esc** ⇒ 关闭", async () => {
+    await openModal();
+    // ⚠️ 夹具前提**必须断言**：否则"没有浮层 ⇒ Esc 之后仍为空"会让本判据**空转** ✓
+    //    （红跑时它就是这么"过"的 ✗ —— 没牙的判据不许留在账上 ✓）。
+    expect(overlay(), "夹具前提：先得开着").not.toBeNull();
+    await act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(overlay(), "Esc 必须关").toBeNull();
+  });
+
+  it("d) 点右上角 **×** ⇒ 关闭，且它有可读屏的名字", async () => {
+    await openModal();
+    const close = host.querySelector(".lock-forgot-close") as HTMLButtonElement;
+    expect(close, "要有一个看得见的关闭按钮").not.toBeNull();
+    expect(close.getAttribute("aria-label"), "关闭按钮要能读屏").toBe("关闭");
+    await act(() => close.click());
+    expect(overlay(), "× 必须关").toBeNull();
+  });
+
+  it("e) ⛔ **反向**：点浮层**里面**（那段文字）⇒ 不许关", async () => {
+    await openModal();
+    expect(overlay(), "夹具前提：先得开着").not.toBeNull();
+    const inner = host.querySelector(MODAL)!.querySelector("p") as HTMLElement;
+    await act(() => {
+      inner.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(overlay(), "⭐ 点里面关了 ＝ 这条的反面（冒泡那个坑）").not.toBeNull();
+  });
+
+  it("f) 内容一字不丢：导语 ＋ 三条要点 ＋ 脚注都在", async () => {
+    await openModal();
+    const text = host.querySelector(MODAL)?.textContent ?? "";
+    expect(text, "导语").toContain("口令只由你保管");
+    expect(text, "要点：连服务器那份也打不开").toContain("同一把钥匙");
+    expect(text, "要点：唯一出路是加密前的明文备份").toContain("开启加密之前导出的备份");
+    expect(text, "要点：永久取不回来（不可逆那半）").toContain("永久取不回来了");
+    expect(text, "脚注：不会被锁死").toContain("输错多少次都不会被锁死");
+    expect(text, "脚注：慢是正常的").toContain("每次慢是密钥派生");
+  });
+
+  it("h) 关掉之后 ⛔ 不许还残留在 DOM 里", async () => {
+    await openModal();
+    await act(() => {
+      overlay()!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    expect(host.querySelector(MODAL), "关了就得真没了").toBeNull();
+    expect(host.textContent ?? "", "正文也不许留在屏上").not.toContain("永久取不回来了");
   });
 });

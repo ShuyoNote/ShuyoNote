@@ -13,6 +13,7 @@ import { useSyncStatus } from "../store/syncStatus";
 import { useFilePreview } from "../store/filePreview";
 import type { AttachmentMeta, PageMeta } from "../types";
 import { ChevronRightIcon, DatabaseIcon, FolderIcon, PageIcon, DownloadIcon, TrashIcon, UploadIcon, HistoryIcon } from "./icons";
+import { importOfficeAttachmentAsPage } from "../lib/office/pickOfficeFile";
 import { PluginMenuItems } from "./PluginMenuItems";
 import { fileContextArgs } from "../lib/pluginMenus";
 import { attachmentFetchHint } from "../lib/attachmentFetchHint";
@@ -1230,6 +1231,25 @@ export function FileManagerView() {
               {isFile ? (
                 <>
                   {ctxItem(<OpenIcon size={14} />, "打开", () => { openRow(row); closeCtx(); })}
+                  {/* ⭐ 2026-10-11（owner：「的确没有『转成笔记』」）：⭐ **只有 Word 才有这一项** ✗ ——
+                      别的文件（⭐ 图片 / PDF / md… ✓）根本转不成笔记 ✓。
+                      ⚠️ 与侧栏文件行那份菜单、⭐ 与「从导入文件创建…」**同一条链** ✓
+                         （⭐ `importOfficeAttachmentAsPage` ✓）—— ⛔ 这里不碰解析 / 落库 ✓。
+                      ⚠️ 新页挂在**这个文件所属的那一页**下面 ✓（⭐ `row.pageId` ✓；⭐ 「未整理」那种就是顶层 ✓）。
+                      ⚠️ 图标用 `PageIcon` ✓（⭐ "变成一页" 的语义 ✓，⭐ 且不与「下载」撞图标 ✓）。 */}
+                  {/\.(docx|docm)$/i.test(row.file?.name ?? "") &&
+                    ctxItem(<PageIcon width={14} height={14} />, "转成笔记", () => {
+                      const f = row.file!;
+                      closeCtx();
+                      void (async () => {
+                        try {
+                          const outcome = await importOfficeAttachmentAsPage(f, row.pageId ?? null);
+                          if (outcome.ok) loadFiles();
+                        } catch (e) {
+                          toast(`转成笔记失败：${e}`, "error");
+                        }
+                      })();
+                    })}
                   {/* P6.2：字节不在本机时，右键里给的是"从服务器下载"，而不是会失败的 save-as。 */}
                   {row.file && !onDisk.has(row.file.hash)
                     ? ctxItem(<DownloadIcon width={14} height={14} />, "从服务器下载", () => { void fetchBytes(row.file!); closeCtx(); })

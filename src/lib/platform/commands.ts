@@ -553,6 +553,22 @@ export type DictionaryLookupOutcome =
   | { status: "not_found"; query: string; kind: DictionaryMissKind; message: string }
   | { status: "unavailable"; message: string };
 
+/**
+ * 词库 pack **首次下载**完成后的读数（对应 `dictionary.rs::PackInstallReport`）。
+ *
+ * ⚠️ 下载由 **Rust 侧**做（86 MiB 过 base64-IPC 那条链结构上不成立）：先写 `.part` 再改名，
+ * 白名单 ＋ 钉死 sha256 ＋ 体积（＝pin），校验不过 ⇒ **一个字节都不留**。
+ * 进度走事件 `dictionary-pack-progress`（`{ received, total }`；没给 Content-Length ⇒ `total: null`）。
+ */
+export interface DictionaryPackInstallReport {
+  /** 落点（`dictionary.rs` 第 2 顺位读的那个文件）。 */
+  path: string;
+  bytes: number;
+  sha256: string;
+  /** 取数来源（镜像仓地址），排错用。 */
+  source: string;
+}
+
 /** 词典状态读数（界面据此决定显不显示"本地词典"那一档；`entries: null` = 读不出来，不猜）。 */
 export interface DictionaryStatus {
   available: boolean;
@@ -584,6 +600,16 @@ export interface CommandMap {
    * 参数合不合法，全部交给 `src/lib/deepLink.ts` 判——OS 层不重复一遍白名单。
    */
   deep_link_take: { args: undefined; result: string[] };
+  /**
+   * ⭐ Office 导入（task-15）：**取走**待导入的文件路径（**取走即空**）。
+   *
+   * 与上面的 `deep_link_take` **同一个理由**：`--import <文件>` 冷启动那条在 `.setup()` 里
+   * `emit`，而那一刻前端还没挂载 ⇒ 只听事件会**稳定漏掉第一次** ✗
+   * ⇒ 队列 ＋ 挂载时 drain 一次 ✓（去重靠"取走即空"，⛔ 不靠猜 ✗）。
+   * 队列空时返回 `[]`（普通启动**零副作用** ✓）；路径是**原样的文件路径**，
+   * 认不认、能不能转由 `src/lib/office/` 那条链判（OS 层不重复一遍白名单 ✓）。
+   */
+  office_import_take: { args: undefined; result: string[] };
   // ---- 能力（官方引擎 · 按需下载，桌面专属） ----
   // ⚠️ 落盘判据在 **Rust 侧**（白名单 ＋ 体积上限 ＋ sha256 自己再算一遍 ✓）——
   //    这里只是契约声明；`base64` 是下载好的包（页面已校验过一次，Rust 会再校验 ✓）。
@@ -1265,6 +1291,49 @@ export interface CommandMap {
 
   // ---- Storage / Versions / Backup / File ----
   storage_stats: { args: undefined; result: StorageStats };
+  // ⭐ 2026-10-11：**只读**附件引用体检 —— ⭐ 报表，⛔ 不删不改 ✓。
+  //    ⚠️ 它与"删东西的闸"（`cleanup_orphan_attachments`）**故意不同**：⭐ 读不到的空间**也要报出来** ✓，
+  //    ⛔ 不会因为某个空间锁着就整体失败 ✓（⭐ 因为它的用途就是"⭐ 看清 ✗"，不是"⭐ 动手 ✗"✓）。
+  audit_attachment_refs: {
+    args: undefined;
+    // ⚠️ 字段名**必须是下划线**（⭐ 与 Rust 那边逐字对上 ✓ —— 本仓其它命令也是这个口径，
+    //    例如 `encrypted_on_disk` ✓；⛔ 别在 TS 这边改成驼峰 ✗，那条对不上不会报错、只会全是 undefined ✗）
+    result: {
+      spaces: {
+        name: string;
+        encrypted: boolean;
+        in_use: boolean;
+        readable: boolean;
+        referenced: number;
+        note: string;
+      }[];
+      legacy_files: number;
+      legacy_referenced: number;
+      legacy_orphan: number;
+      /** ⭐ 要害：加密空间引用到的「老布局明文」（若为空 ⇒ ⭐ 这条口子没被踩 ✓） */
+      encrypted_refs_legacy: string[];
+      plain_refs_legacy: number;
+      /** ⚠️ 读不到的空间 —— 它们的引用**未知**，⛔ 不许读成「没有」 ✓ */
+      unreadable: string[];
+      /** ⭐⭐ 真正要动手的那一份：加密空间引用、**而且它自己目录里还没有副本** ⇒ ⭐ 它在读老明文 ✗ */
+      encrypted_refs_no_private_copy: string[];
+      /** 加密空间引用、但自己已经有副本的处数 ✓（那些只是"老那份还在"，不是在读它 ✓） */
+      encrypted_refs_with_private_copy: number;
+    };
+  };
+  // ⭐ 2026-10-11（owner 拍「甲」）：给"引用老明文却没自己副本"的加密空间补一份加密副本 ✓。
+  //    ⚠️ 它**会写盘**（⭐ 只往各空间自己的目录里写 ✓），⛔ 不删老布局那份 ✓（别的空间还在用 ✓）。
+  adopt_legacy_refs_for_encrypted_spaces: {
+    args: undefined;
+    // ⚠️ 同样**必须下划线**（⭐ 与 Rust 逐字对上 ✓）
+    result: {
+      adopted: number;
+      already: number;
+      bytes: number;
+      items: string[];
+      skipped: string[];
+    };
+  };
   clear_trash: { args: undefined; result: number };
   cleanup_orphan_attachments: { args: undefined; result: number };
   cleanup_orphan_derived: { args: undefined; result: number };
@@ -1281,6 +1350,34 @@ export interface CommandMap {
   // `skipped` = 没进备份的空间（E1 加密空间未解锁/快照失败），界面必须显示，
   // 否则用户会把"少数据的备份"当成完整备份。
   export_backup: { args: { destPath: string }; result: { path: string; size: number; skipped: string[] } };
+  /**
+   * ⭐ task-20 ①：自动备份的**只读读数**（目录 ＋ 份数 ＋ 共多大 ＋ 上次成功时刻 ＋ 保留窗口）。
+   * ⚠️ `unreadable` 与 `count: 0` **不是一回事**：目录不存在（还没备份过）⇒ `unreadable: null` ＋ `count: 0`
+   * ＝**真的 0 份**；`read_dir` 失败 ⇒ `unreadable: "原因"` ⇒ 界面**如实说"读不到"**（⛔ 不许显示 0 ✗）。
+   */
+  auto_backup_status: {
+    args: undefined;
+    result: {
+      dir: string;
+      count: number;
+      bytes: number;
+      lastSuccessUnix: number | null;
+      snapshots: Array<{ name: string; unix: number; size: number }>;
+      /** 保留窗口（⭐ 后端照 `auto_backup::KEEP_*` 给 ⇒ 界面⛔ 不写第二遍 ✗） */
+      keepDays: number;
+      keepWeeks: number;
+      keepMonths: number;
+      unreadable: string | null;
+    };
+  };
+  /**
+   * ⭐ task-20 ②：**立刻备份一次** —— 走既有的 `run_auto_backup_once` ✓（⛔ 不重写备份逻辑 ✗）。
+   * `ran: false` ⇒ 没跑（例如加密空间不支持在线备份／数据库 5 秒内没就绪）⇒ `note` 里是原因，**照实显示** ✓。
+   */
+  auto_backup_run_now: {
+    args: undefined;
+    result: { ran: boolean; kept: number; removed: number; note: string };
+  };
   /** 阶段 1 · 冲突留痕：这一页**未裁决**的冲突（字段名与 Rust 侧 `PageConflict` 的 snake_case 一致）。 */
   list_page_conflicts: {
     args: { pageId: string };
@@ -1398,4 +1495,8 @@ export interface CommandMap {
   //    数据没就位时 `dictionary_status.available` 为 false ⇒ 界面说"未安装"，不假装查过。
   dictionary_lookup: { args: { word: string }; result: DictionaryLookupOutcome };
   dictionary_status: { args: undefined; result: DictionaryStatus };
+  // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：`url: null` ⇒ 用镜像仓那条默认地址。
+  // ⚠️ 这一条命令的 `lib.rs` 登记行由 **Lead 统一加**（与 office-import 那条同一处 ⇒ 避免撞车）；
+  //    在那之前 `check-web-commands` 会**如实红**（"CommandMap 有、Rust 没注册"）—— 那不是缺陷，是顺序。
+  dictionary_install_pack: { args: { url: string | null }; result: DictionaryPackInstallReport };
 }

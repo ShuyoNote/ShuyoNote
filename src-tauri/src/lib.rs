@@ -19,6 +19,9 @@ mod backlinks;
 mod backup;
 mod backup_verify;
 pub mod auto_backup;
+// Office 导入第一期（task-10 ③）：`--import <文件>` 的解析与交班。
+// ⚠️ 它**必须是 `pub`**：`main.rs`（bin）要用它做冷启动解析 ✓（见那一份的文件头 ✓）。
+pub mod office_import;
 mod block_rev;
 mod blocks;
 mod bookmark;
@@ -343,9 +346,13 @@ pub fn run() {
         // 于是表现成"应用醒了，但什么也没发生"（最难查的那种：看起来像解析失败）。
         // 开了之后顺序是：插件先 `handle_cli_arguments` ⇒ 入队 + emit，然后才是
         // 「还原窗口 + 抢焦点」。
-        let single_instance = tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        let single_instance = tauri_plugin_single_instance::init(|app, args, _cwd| {
             // `_args` 不用自己解析：`deep-link` feature 已经把 URL 送进 deeplink
             // 模块的队列并 emit 出去了，这里只负责让用户**看见**窗口。
+            // ⭐ 2026-10-09（task-10 ③）**追加**：`args` 里还有一条 `--import <文件>`（Windows 文件关联那一半）——
+            //    deep-link 只认 URL、认不出本地路径 ⇒ 它此前被丢掉 ✗；这里交给 `office_import` 认 ✓
+            //    （⛔ 单实例守卫仍由本插件负责 —— 下面那段"禁止多开"的注释口径不变 ✓）。
+            office_import::forward_import_args(&args, |p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
             //
             // 唤起已有实例到前台：先还原最小化窗口，再抢焦点。否则二次启动时最小化的
             // 实例只是被 set_focus，不会取消最小化/前置，用户以为没响应用户。
@@ -496,6 +503,12 @@ pub fn run() {
             // "先入队再 emit"（来源与对照表见 deeplink.rs 的 attach 文档）。
             // 曾经这里带 `#[cfg(desktop)]`，手机上是"注册了但没人接"。
             deeplink::attach(&app.handle());
+
+            // ⭐ 2026-10-09（task-10 ③）**追加 1 行**：Office 导入那条 `--import <文件>` 的**冷启动交付** ——
+            //    `main.rs` 早在 `run()` 之前就把路径记进本进程了 ✓（app 那时还没建 ⇒ 只能记、不能发 ✓）；
+            //    发（emit）必须等 app 建好 ⇒ 位置只能是**紧接上面那行深链补收** ✓（同族：都是"补收冷启动那一次" ✓）。
+            //    ⚠️ 第二个实例那一路在单实例回调里（`lib.rs:346` 那段 ✓）；两条最终都落到同一个事件名 ✓。
+            office_import::deliver_pending(|p| { let _ = tauri::Emitter::emit(app, office_import::IMPORT_EVENT, p.to_string()); });
 
 	// P1 自动备份：⭐ 启动时先跑一轮，然后按间隔再看
 	//（P1 逐字＝「调度器（启动触发 ＋ 每 24h）」✓）
@@ -674,6 +687,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             abilities::save_ability_pack,
             storage::cleanup_orphan_derived,
+            // ⭐ 2026-10-11：只读附件引用体检（⭐ 报表，⛔ 不删不改 ✓）—— 用来把"加密空间有没有引用老明文"说死 ✓
+            storage::audit_attachment_refs,
+            // ⭐ 2026-10-11（owner 拍「甲」）：给"引用老明文却没自己副本"的加密空间**补一份加密副本** ✓
+            //    ⛔ 不删老布局那份 ✓（别的空间还在用 ✓）、⛔ 不动明文字节 ✓、⭐ 幂等 ✓、⭐ 写前核指纹 ✓
+            storage::adopt_legacy_refs_for_encrypted_spaces,
             extract_kz::extract_with_kreuzberg,
             commands::list_pages,
             commands::list_workspace_pages,
@@ -970,6 +988,9 @@ pub fn run() {
             backup::write_text_file,
             backup::write_binary_file,
             backup::read_text_file,
+            // ⭐ task-20：自动备份那两条（只读读数 ＋ 立刻备份一次）—— 都只是"把已有能力开口" ✓
+            backup::auto_backup_status,
+            backup::auto_backup_run_now,
             workspace_io::export_workspace,
         wiki_export::export_wiki,
         wiki_export::wiki_export_pages,
@@ -1039,6 +1060,10 @@ pub fn run() {
             // 页面 load 完才 show，冷启动那条事件在前端注册监听之前就过去了。
             // 队空 ⇒ 返回空数组 ⇒ 前端什么都不做（普通启动零副作用）。
             deeplink::deep_link_take,
+            // ⭐ Office 导入（task-15）：`--import <文件>` 那条路径的 **drain**（前端挂载时取走一次）。
+            // 与上面 `deep_link_take` **同一个理由**：冷启动那次 `emit` 发生在 `.setup()`，
+            // 而那一刻前端还没挂载 ⇒ 只靠事件会稳定漏掉第一次 ✗ ⇒ 队列 ＋ 取走即空 ✓。
+            office_import::office_import_take,
           // MCP 接入的 GUI 开关（M1 收口，2026-10-06 ✓）：状态／开关／轮换令牌 —— 只服务设置面板；
   // 通道那半仍归 `mcp_channel`（本层只做登记 ✓）。
   mcp_channel::mcp_status,
@@ -1057,6 +1082,9 @@ pub fn run() {
   //    ⛔ **不是**空串、⛔ **不是**编造的释义。
   dictionary::dictionary_lookup,
   dictionary::dictionary_status,
+  // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：86 MiB 过 base64-IPC 那条链结构上不成立
+  //    ⇒ 下载/解压/校验/落盘全在 Rust 侧（`dictionary.rs`：先核压缩包、再核解压后的库，两段都过才 rename）。
+  dictionary::dictionary_install_pack,
 ])
         .run(app_context())
         .expect("error while running tauri application");

@@ -22,25 +22,25 @@ const MAX_PACK_BYTES: usize = 256 * 1024 * 1024;
 /// （`abilities.rs:21` 的"同源"要求；改一处必须改另一处）。
 pub(crate) const ECDICT_PACK_ID: &str = "ecdict-en-zh";
 
-/// 词库 pack 的**字节数**（产物实测）。
+/// 词库 pack（**压缩包**，`mirror/ecdict/ecdict-en-zh-v1.db.gz`）的字节数 —— ⭐ 2026-10-10 起钉的是
+/// **下载到的那个 gzip**（不是解压后的库）；**解压后**那份的字节数与 sha256 钉在
+/// `dictionary.rs`（`ECDICT_DB_BYTES` / `ECDICT_DB_SHA256`）—— 两处**各有各的用处**，⛔ 不要合并。
 ///
-/// ⚠️ 它存在的理由：能力包链在落盘前已核过 sha256 ✓，但落盘是**一次 90MB 级的写**
-/// ⇒ 进程中途死掉会留下截断文件。`dictionary.rs::pack_check` 用这个常数做**便宜的第一道**判据
-/// （长度对不上 ⇒ 立刻不算就绪），再用 sha256 做第二道（每进程一次）。
+/// ⚠️ 这个常数是"便宜的第一道"判据：长度对不上 ⇒ 立刻不算就绪（截断/半包），再用 sha256 做第二道。
 ///
-/// 实测（2026-10-09，`scripts/fetch-ecdict.mjs`）：770,611 条词条 / 89,735,168 字节。
-pub(crate) const ECDICT_PACK_BYTES: u64 = 89_735_168;
+/// 实测（2026-10-10，镜像仓 `shuyo-cn/shuyo-mirror` 上那份）：39,126,809 字节。
+pub(crate) const ECDICT_PACK_BYTES: u64 = 39_126_809;
 
 /// 白名单 ＋ 钉住的 sha256 ✓（与 `src/components/AbilitiesPane.tsx` 里那份清单**同源** ✓；
 /// ⚠️ 将来清单搬进 `src/lib/abilities/manifest.json` 时，这里必须跟着一起搬 ✓）。
 pub(crate) fn expected_sha256(pack_id: &str) -> Option<&'static str> {
     match pack_id {
         "pdf-engine-win-x64" => Some("808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac"),
-        // 本地英汉词库（ECDICT，2026-10-09）：**数据不入库**，pack 由 `scripts/fetch-ecdict.mjs`
-        // 产出（钉上游 commit/blob sha ＋ 报产物 sha256）⇒ 这里的哈希是**产物实测值**：
-        //   `node scripts/fetch-ecdict.mjs` ⇒ pack sha256（同一份也写在 AbilitiesPane 清单里）。
+        // 本地英汉词库（ECDICT）：**数据不入库**，pack 由 `scripts/fetch-ecdict.mjs` 产出（钉上游
+        // commit/blob sha ＋ 报产物 sha256）。⭐ 这里钉的是**镜像仓上那个 gzip 压缩包**的 sha256：
+        //   gzip 39,126,809 字节 / ce0a2cf3…537b ⇒ 解压后 89,735,168 字节 / 5dc10a51…aaaea2bb31（见 dictionary.rs）
         x if x == ECDICT_PACK_ID => {
-            Some("5dc10a51f33a0a61d4cb4f368a220a50f8bccb8c2ff3488fdadd5eaaaea2bb31")
+            Some("ce0a2cf36c690038ff3d0e4d385ec18c04110db7a34e9bd8ba4ad30d76ee537b")
         }
         // ⚠️ 还没上架的（版面分析/VLM/向量/转写）**故意不在白名单里** ✓ ⇒ 传了也拒收 ✓
         _ => None,

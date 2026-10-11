@@ -8,6 +8,8 @@ import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { ACCENTS, useTheme, type Theme } from "../store/theme";
 import { AiSettingsForm } from "./AiSettingsForm";
 import { BackupButton } from "./BackupButton";
+import { SearchIcon } from "./icons";
+import { BackupSettingsPanel } from "./BackupSettingsPanel";
 import { StoragePanel } from "./StoragePanel";
 import { usePlugins } from "../store/plugins";
 import { api } from "../lib/api";
@@ -91,19 +93,12 @@ export const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: J
 // 「数据」页：全库备份/恢复与存储清理——低频、全局、不可逆，按判据归设置。
 // 两个组件都用 `label` 变体渲染成带文字的按钮，实现与侧栏时期完全共用。
 function DataPane() {
-  const [reminder, setReminder] = useState<{ enabled: boolean; days: number }>(() => {
-    try {
-      const raw = localStorage.getItem("shuyonote:backupReminder");
-      if (raw) return { enabled: true, days: 30, ...JSON.parse(raw) };
-    } catch { /* ignore */ }
-    return { enabled: false, days: 30 };
-  });
-  const updateReminder = (next: { enabled: boolean; days: number }) => {
-    setReminder(next);
-    try {
-      localStorage.setItem("shuyonote:backupReminder", JSON.stringify(next));
-    } catch { /* ignore */ }
-  };
+  // ⭐ 2026-10-11（owner 截图「去掉这部分」）：原先这里有一份「备份提醒」偏好状态 ＋ 存/取
+  //    `localStorage["shuyonote:backupReminder"]` ✓ —— ⭐ 已随那一节一起删掉 ✓。
+  //    ⚠️ **如实记**：那条提醒的**触发端**在 `App.tsx`（同一次里也删了 ✓）——
+  //       ⛔ 只删界面不删触发的话，用户会**继续被提醒却没法关** ✗。
+  //    ⚠️ 老键 `shuyonote:backupReminder` 可能还留在别人的 localStorage 里 ⇒ **已经没人读它** ✓
+  //       （不清理也无害 ✓）；`shuyonote:lastBackupAt` 仍由 `BackupButton` 写入 ⇒ 现在**只写不读** ✓。
   return (
     <>
       <section className="set-section">
@@ -117,30 +112,14 @@ function DataPane() {
           </div>
           <BackupButton label="备份 / 恢复…" />
         </div>
+        {/* ⚠️⭐ **2026-10-11 搬出来**：「自动备份」那一格原来挂在 `<BackupButton>` 里面 ⇒ 被塞进了
+            `.backup-menu` ⇒ CDP 实测那个 wrapper 的 max-content 变成 **590px** ⇒ 把上面那一行的
+            `.set-row-text` 挤成 **宽 0** ⇒ 「备份 / 恢复（全库）」与说明**一个字一列** ✗（owner 截图 ✓）。
+            ⭐ 这里它是**独立一块**（⛔ 不是那一行的右控件 ✗）⇒ 行＝"左文字＋右按钮"，面板在行下面 ✓。 */}
+        <BackupSettingsPanel />
         <p className="set-hint">
           单个空间的导出/导入在「空间」页；这里是整机全库级别的备份。
         </p>
-      </section>
-
-      <section className="set-section">
-        <div className="set-section-title">自动备份提醒</div>
-        <div className="set-row">
-          <div className="set-row-text">
-            <div className="set-row-name">定期提醒我备份</div>
-            <div className="set-row-sub">
-              距上次成功备份超过设定天数后，启动应用时提醒一次。数据只在本机，定期整库备份更安心。
-            </div>
-          </div>
-          <input type="checkbox" checked={reminder.enabled} onChange={(e) => updateReminder({ ...reminder, enabled: e.target.checked })} />
-        </div>
-        {reminder.enabled && (
-          <div className="set-row">
-            <div className="set-row-text">
-              <div className="set-row-name">提醒间隔（天）</div>
-            </div>
-            <input type="number" min={1} value={reminder.days} onChange={(e) => updateReminder({ ...reminder, days: Math.max(1, Number(e.target.value) || 30) })} />
-          </div>
-        )}
       </section>
 
       <section className="set-section">
@@ -237,13 +216,29 @@ function SpacesPane() {
         <div className="set-section-title">全部空间（{spaces.length}）</div>
         {/* ⭐ 2026-10-10：**筛选**（owner：「20+ 个空间怎么办」✓）——
             ⚠️ 与侧栏那个空间切换器**共用同一份匹配**（`src/lib/spaceFilter.ts` ✓），⛔ 不各写一份 ✗。 */}
-        <input
-          className="set-space-filter sync-input"
-          value={spaceQuery}
-          onChange={(e) => setSpaceQuery(e.target.value)}
-          placeholder="筛选空间…"
-          aria-label="筛选空间"
-        />
+        {/* ⭐ 2026-10-11（owner 截图「美化一下筛选空间这个控件」）：外面套一层只为放**放大镜**与
+            **清空**两个附件 ✓ —— ⛔ 输入框自己的类名一个字没改 ✗（`.set-space-filter` 有判据在用 ✓），
+            高度也不许动（本仓规则：可点控件 ≥44px ✓）。 */}
+        <div className="set-space-filter-wrap">
+          <SearchIcon width={16} height={16} />
+          <input
+            className="set-space-filter sync-input"
+            value={spaceQuery}
+            onChange={(e) => setSpaceQuery(e.target.value)}
+            placeholder="筛选空间…"
+            aria-label="筛选空间"
+          />
+          {spaceQuery !== "" && (
+            <button
+              className="set-space-filter-clear"
+              onClick={() => setSpaceQuery("")}
+              aria-label="清空筛选"
+              title="清空筛选"
+            >
+              ×
+            </button>
+          )}
+        </div>
         <div className="set-space-list">
           {spaces.length === 0 ? (
             <div className="set-space-empty">还没有空间</div>

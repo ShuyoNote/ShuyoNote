@@ -44,6 +44,40 @@ pub(crate) fn bucket_path(attachments_dir: &Path, hash: &str, ext: &str) -> Path
     attachments_dir.join(bucket_of(hash)).join(format!("{hash}.{ext}"))
 }
 
+/// ⭐ 2026-10-11：把一份附件字节**落盘**那一小段抽到这里 —— 生产（`save_image`）与判据**共用它** ✓
+///   （本仓规矩：判据与被判对象同源；⛔ 判据不许自己抄一份实现 ✗）。
+///
+/// ⚠️⚠️⭐ **2026-10-11 交付订正**：这里原先挂了一段「已知的不一致」✗ —— ⭐ **那段是错的** ✗，
+///   我已删掉，并把真相留在这里 ✓：
+///   · `bucket_path` 确实**不含空间 id** ✓，但**基目录由调用方给** ✗ ——
+///     ⭐ 生产里 `save_image` 传的是 `space_attachments_dir(&app_data_dir, &space)` ✓
+///     ⇒ ⭐ **落点天然就是"每个空间自己一份"** ✓ ⇒ ⛔ 不存在"两个空间共用一个文件" ✗。
+///   · ⭐ 我当时**只读了 `bucket_path` 一层就下了结论** ✗，⭐ 判据的夹具也跟着错（两个"空间"同一个 dir ✓）
+///     ⇒ 红得理所当然、但与生产无关 ✓。⭐ 订正后的判据按生产接线跑，**两条都绿** ✓
+///     （见文件末尾 `cross_space_attachment_tests` ✓）。
+///   · ⭐ 这条设计是 **owner 2026-09-24 拍过的** ✓：见本文件 `space_attachments_dir` 的文档注释（L118 起 ✓）。
+///
+/// 返回 `(落盘路径, 这次是否真的写了)`。
+pub(crate) fn write_attachment_once(
+    attachments_dir: &Path,
+    hash: &str,
+    ext: &str,
+    data: &[u8],
+    key: Option<&crate::crypto::AppKeys>,
+) -> Result<(PathBuf, bool), String> {
+    let path = bucket_path(attachments_dir, hash, ext);
+    if path.exists() {
+        return Ok((path, false));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // 加密开启且本会话已解锁 ⇒ 落盘的就是**密文**；否则**原样透传**（明文 ✓）。
+    let bytes = crate::security::encrypt_attachment_bytes(key, data)?;
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok((path, true))
+}
+
 /// Locate an attachment's bytes by hash. New layout (`attachments/<bucket>/<hash>.<ext>`)
 /// is tried first (O(1) when the extension is known); if absent we fall back to
 /// scanning the bucket dir (and then the legacy flat dir) comparing the hash stem,
@@ -389,23 +423,9 @@ pub fn save_image(app: tauri::AppHandle, db: State<'_, Db>, args: SaveImageArgs)
     hasher.update(&args.data);
     let hash = hex_of(&hasher.finalize());
     let ext = ext_from_mime(&args.mime);
-    let path = bucket_path(&attachments_dir, &hash, ext);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    // Dedup: write only if not already present **in this space**, encrypting at rest when this
-    // space is encrypted+unlocked (the hash is over the PLAINTEXT, so dedup still works).
-    //
-    // ★ owner 第三轮拍板（2026-09-24）：钥匙**按空间**取（`key_if_enabled` ⇒ `space_crypto`）。
-    // ★ owner 2026-09-24 拍板（②）：**去重也按空间** —— 去重只查本空间自己那份，
-    //   于是"加密空间 ＋ 明文空间引用同一份内容"不再互相踩（各自留各自那份）。
-    //   ⚠️ 刻意**不**把老位置（全局那份）算进去：算了就会跳过写入，让一个加密空间继续
-    //   读着老位置的**明文**副本 —— 那是"加密空间里躺着明文"的静默形态。
-    if !path.exists() {
-        let bytes = crate::security::encrypt_attachment_bytes(key.as_ref(), &args.data)?;
-        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    }
+    // ⭐ 2026-10-11：落盘那几行**抽成一处**（`write_attachment_once`）⇒ 生产与判据**共用同一处** ✓
+    //    ⛔ 判据不再"自己抄一份落盘逻辑"（本仓规矩：判据与被判对象同源 ✓）。行为**逐字未变** ✓。
+    let (path, _wrote) = write_attachment_once(&attachments_dir, &hash, ext, &args.data, key.as_ref())?;
 
     let c = db.0.lock().expect("db mutex poisoned");
 
@@ -1576,6 +1596,132 @@ mod picked_mime_tests {
         // 读不到的文件返回 None，不 panic（导入路径上"问不到"不能变成"导入失败"）
         assert_eq!(crate::magic::sniff_file(&dir.join("nope")), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ⭐⭐ **2026-10-11：附件"跨空间同内容"这两条判据**（⚠️ 第一版**夹具写错了** ✗，已订正 ✓）
+//
+// ⚠️⚠️⭐ **诚实的记录（我自己的错，留在这里免得后人重犯）**：
+//   · 我当时的诊断是「注释说去重按空间、实现却是全局路径 ⇒ 两个空间会共用一个文件」✗ ——
+//     ⭐ **那是错的** ✓：`bucket_path` 本身确实不含空间 id ✓，但**调用方给的是空间目录**
+//     （`save_image` 传 `space_attachments_dir(&app_data_dir, &space)` ✓）。
+//   · 我**只读了 `bucket_path` 一层就下了结论** ✗，⭐ 而**判据的夹具也跟着错**：两条都往**同一个 dir** 写 ✓
+//     ⇒ 红得理所当然、⭐ 但**跟生产无关** ✓（就是"拿一个不成立的夹具证明一个不存在的 bug" ✗）。
+//   · ⭐ 真相：**owner 2026-09-24 已经拍板过「附件库按空间分」** ✓，⭐ 实现就在本文件
+//     `space_attachments_dir`（L127）＋ `find_attachment`（L142）＋ `save_image` 那行 ✓ ⇒
+//     ⭐ **"按空间隔离 ＋ 读路径分岔 ＋ 老布局双读回退"这套**早就落地了** ✓**。
+//
+// ⭐ 这两条判据现在按**生产接线**钉两件事（⭐ 都钉结果、⛔ 不钉实现 ⇒ 改实现不会把它们弄红 ✓）：
+//   ① 同一份内容，⭐ 加密空间先写 ⇒ **明文空间仍读得回原字节** ✓（⛔ 不许拿到密文 ✗）
+//      ＋ ⭐ 两边的落点**不是同一个文件** ✓（⭐ 这才是"按空间分"的要害 ✓）
+//   ② 同一份内容，⭐ 两空间各写一份 ⇒ ⭐ 加密那份**是密文且解得回** ✓、⭐ 明文那份**还是明文** ✓、
+//      ⭐ 且两者**不共用文件** ✓
+//
+// ⚠️ **残留（已知、⭐ owner 拍过）**：`find_attachment` 找不到自己那份时会**回退到老根布局** ✓
+//    （2026-09-24「老文件不搬」✓）⇒ ⭐ 加密空间**仍可能读到老布局里的明文** ✓，⭐ 但它**永不**再往根写 ✓。
+//
+// 跑法（本机 Windows；⭐ 只跑这两条 ✓）：
+//   powershell -File _tmp\scratch\mesh-lib-test.ps1 -Filter "cross_space_same_content"
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod cross_space_attachment_tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "shuyonote-xspace-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 与 `save_image` 同一把尺子（`hex_of(sha256(明文))` ⇒ ⛔ 不是照密文算的 ✓）。
+    fn hash_of(data: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        hex_of(&hasher.finalize())
+    }
+
+    fn app_key() -> crate::crypto::AppKeys {
+        crate::crypto::AppKeys::legacy_only([7u8; 32])
+    }
+
+    /// ① 功能那一半：**加密空间先写** ⇒ 明文空间再引用同一内容 ⇒ 它必须读得回原字节。
+    #[test]
+    fn cross_space_same_content_keeps_plaintext_space_readable() {
+        let plain: &[u8] = b"\x89PNG\r\n\x1a\nSAME-CONTENT-ACROSS-TWO-SPACES";
+        let hash = hash_of(plain);
+        let k = app_key();
+        // ⚠️⚠️⭐ **2026-10-11 交付订正（重要）**：这两条判据**第一版的夹具是错的** ✗ ——
+        //    它把"两个空间"都写进**同一个 dir**（`write_attachment_once(&dir, …)` 两次 ✓）⇒
+        //    ⭐ 那**不是生产接线** ✗：生产里 `save_image` 传的是 `space_attachments_dir(&app_data_dir, &space)`
+        //    （⭐ 每个空间**自己的**目录 ✓，见 `save_image` 里那一行 ✓）⇒ ⭐ 于是判据红得**毫无意义** ✗。
+        //    ⇒ ⭐ 现在改成**生产接线**：⭐ 两个空间各自 `space_attachments_dir(...)` ✓ ＋ ⭐ 读走
+        //      `find_attachment(root, space, hash)`（⭐ 正是生产那条：⭐ 先自己目录、⭐ 再回退老根 ✓）。
+        //    ⭐ 结论（下面断言钉着）：⭐ **同一份内容在两个空间里是**两个文件**** ✓ ⇒ 谁先写不影响谁 ✓。
+        let root = temp_dir("fn");
+        let enc_dir = space_attachments_dir(&root, "space-enc");
+        let plain_dir = space_attachments_dir(&root, "space-plain");
+        std::fs::create_dir_all(&enc_dir).unwrap();
+        std::fs::create_dir_all(&plain_dir).unwrap();
+
+        // ① 加密空间先存这一份内容（⭐ 走生产那一处 ✓）
+        write_attachment_once(&enc_dir, &hash, "png", plain, Some(&k)).unwrap();
+        // ② 明文空间再引用同一份内容（⭐ 同样走生产那一处 ✓）
+        write_attachment_once(&plain_dir, &hash, "png", plain, None).unwrap();
+
+        // ③ 明文空间把它读回来 —— 生产路径就是"无钥匙 ⇒ `decrypt_attachment_bytes(None, …)` 透传"
+        let p_plain = find_attachment(&root, "space-plain", &hash).expect("明文空间必须找得到自己那份");
+        let raw = std::fs::read(&p_plain).unwrap();
+        let got = crate::security::decrypt_attachment_bytes(None, &raw).unwrap();
+        assert_eq!(
+            got, plain,
+            "⭐ 明文空间必须拿回**原字节** —— 拿到的是密文 ⇒ 用户看到**坏图** ✗（两个空间共用一个文件才会这样）"
+        );
+        // ⭐ 反证那一半：两边**不是同一个文件** ✓（⭐ 这就是 2026-09-24「按空间分」那条拍板的要害 ✓）
+        let p_enc = find_attachment(&root, "space-enc", &hash).expect("加密空间也该找得到自己那份");
+        assert_ne!(
+            p_enc, p_plain,
+            "⭐ 两个空间**不许**共用同一个文件 ✗ —— ⭐ 共用了就是「谁先写谁说了算」✓（那条缺口 2026-09-24 就该堵上了 ✓）"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// ② 隐私那一半：**明文空间先写** ⇒ 加密空间再引用同一内容 ⇒ 盘上那份**不许还是明文**。
+    #[test]
+    fn cross_space_same_content_does_not_leave_plaintext_for_encrypted_space() {
+        let plain: &[u8] = b"\x89PNG\r\n\x1a\nSAME-CONTENT-ACROSS-TWO-SPACES";
+        let hash = hash_of(plain);
+        let k = app_key();
+        let root = temp_dir("pv");
+        let plain_dir = space_attachments_dir(&root, "space-plain");
+        let enc_dir = space_attachments_dir(&root, "space-enc");
+        std::fs::create_dir_all(&plain_dir).unwrap();
+        std::fs::create_dir_all(&enc_dir).unwrap();
+
+        write_attachment_once(&plain_dir, &hash, "png", plain, None).unwrap(); // 明文空间先写
+        write_attachment_once(&enc_dir, &hash, "png", plain, Some(&k)).unwrap(); // 加密空间再引用
+
+        // ⭐ 加密空间那一份：⭐ 在**它自己**的目录里，⭐ 而且**不许是明文** ✓
+        let p_enc = find_attachment(&root, "space-enc", &hash).expect("加密空间该找得到自己那份");
+        let raw_enc = std::fs::read(&p_enc).unwrap();
+        assert_ne!(
+            raw_enc, plain,
+            "⭐ 加密空间那份**不许是明文** ✗（⭐ 也不许复用明文空间那份 ✓ —— 每空间各存自己的 ✓）"
+        );
+        let got = crate::security::decrypt_attachment_bytes(Some(&k), &raw_enc).unwrap();
+        assert_eq!(got, plain, "而且它必须**解得回原字节**（⛔ 不是随便加密一下就算 ✓）");
+        // ⭐ 明文空间那份仍是明文、⭐ 且与加密那份**不是同一个文件** ✓
+        let p_plain = find_attachment(&root, "space-plain", &hash).expect("明文空间也该找得到自己那份");
+        assert_ne!(p_enc, p_plain, "两边不许共用同一个文件 ✗");
+        assert_eq!(std::fs::read(&p_plain).unwrap(), plain, "明文空间那份必须还是明文 ✓");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

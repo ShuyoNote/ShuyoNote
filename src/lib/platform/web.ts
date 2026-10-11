@@ -1499,6 +1499,36 @@ export function makeInvoke(store: SqliteStore) {
       // 返回空数组＝没有待处理深链，调用方据此什么都不做——与桌面「队列空」同语义。
       return [] as T;
     }
+    if (cmd === "office_import_take") {
+      // OS 层「被文件关联唤起」仅桌面版：浏览器里没有"起第二个进程并把 argv 交给已在跑的实例"这回事
+      // （Web 版的等价入口是面板里那个按钮）。返回空数组＝没有待导入路径，与桌面「队列空」同语义 ✓。
+      return [] as T;
+    }
+    if (cmd === "auto_backup_status") {
+      // 自动备份是**桌面端机制**（启动时跑一轮 ＋ 每 24h 轮询，见 lib.rs 的调度块）：浏览器里没有
+      // "应用数据目录 / backups/" 这回事 ⇒ 如实回一条 `unreadable`（⛔ 不假装"0 份" ✗ ——
+      // 那会被界面读成"没有备份"，而真相是"Web 上没有这套机制" ✓）。
+      return {
+        dir: "",
+        count: 0,
+        bytes: 0,
+        lastSuccessUnix: null,
+        snapshots: [],
+        keepDays: 0,
+        keepWeeks: 0,
+        keepMonths: 0,
+        unreadable: "Web 平台没有自动备份（这是桌面端机制：启动时跑一轮 ＋ 每 24 小时轮询）",
+      } as T;
+    }
+    if (cmd === "auto_backup_run_now") {
+      // 同上：Web 上没有可跑的自动备份 ⇒ 如实回"没跑"（⛔ 不假装成功 ✗）
+      return {
+        ran: false,
+        kept: 0,
+        removed: 0,
+        note: "Web 平台没有自动备份（这是桌面端机制）⇒ 这里不能立刻备份",
+      } as T;
+    }
     if (cmd === "create_page" || cmd === "create_folder" || cmd === "create_database") {
       // api wraps args in `{ args }`.
       const args = a.args ?? a;
@@ -2616,6 +2646,11 @@ export function makeInvoke(store: SqliteStore) {
         status: "unavailable",
         message: "Web 版没有本地词库（词库走能力包，需要本机落盘）⇒ 这次没查到，不编造释义。",
       } as T;
+    }
+    if (cmd === "dictionary_install_pack") {
+      // Web 版没有"本机落盘"这件事（词库走能力包，落盘在 Rust 侧）⇒ **如实**说不支持，
+      // ⛔ 不许回一个假的成功（那会让界面显示"已下载"，而磁盘上什么都没有）。
+      throw new Error("Web 版不能下载并落盘本地词库（能力包依赖本机文件系统）⇒ 请用桌面版。");
     }
     if (cmd === "write_attachment_bytes") {
       const hash = String(a.hash ?? "");

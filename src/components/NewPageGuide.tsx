@@ -6,7 +6,8 @@ import { useViewStore } from "../store/view";
 import { useAiStore } from "../store/ai";
 import { useRightPanel } from "../store/rightPanel";
 import { MarkdownImportDialog } from "./MarkdownImportDialog";
-import { OfficeImportPanel } from "./OfficeImportPanel";
+// ⚠️ 2026-10-11：`OfficeImportPanel` 的 import 已删（⭐ 那一项与它的挂载一起去掉了 ✓，
+//    外部双击那条路由 `App.tsx` 那个实例负责 ✓ —— ⛔ 不是"功能没了" ✗）。
 import {
   SparkleIcon,
   TemplateIcon,
@@ -70,7 +71,6 @@ export function NewPageGuide() {
   }, [dismissed]);
 
   const importMarkdown = () => setImporting(true);
-  const [officeImporting, setOfficeImporting] = useState(false);
 
   const views = [
     { key: "table", name: "表格", Icon: TableIcon },
@@ -116,7 +116,10 @@ export function NewPageGuide() {
             <button className="npg-act" onClick={importMarkdown}>
               <DownloadIcon className="npg-act-icon" /> 从导入文件创建...
             </button>
-            <button className="npg-act" onClick={() => setOfficeImporting(true)}>导入 Office 文档（docx）</button>
+            {/* ⭐ 2026-10-11（owner：「去掉图中红圈部分」）：⭐ 这一项原来叫「导入 Office 文档（docx）」，⭐ 已删 ✓。
+                ⚠️ **功能没丢** ✗：⭐ 上面那条「从导入文件创建…」现在**也吃 .docx** ✓
+                （⭐ 分岔在 `MarkdownImportDialog.importFromFile` ✓：⭐ docx ⇒ ⭐ 建一页新笔记 ✓；⭐ md ⇒ ⭐ 替换当前页 ✓）。
+                ⇒ ⭐ 两条入口并成一条 ⇒ ⭐ 页面上少一个按钮 ✓。 */}
           </div>
           <div className="new-page-guide-db">
             <div className="npg-db-title">创建为数据表格</div>
@@ -137,7 +140,9 @@ export function NewPageGuide() {
         </div>
       )}
       {importing && <MarkdownImportDialog onClose={() => setImporting(false)} />}
-      {officeImporting && <OfficeImportPanel parentId={null} />}
+      {/* ⚠️ 这里原来还挂了 `{officeImporting && <OfficeImportPanel parentId={null} />}` ✗ —— ⭐ 一并删掉 ✓：
+          ⭐ 那个面板**自带右下角那颗浮标** ✓ ⇒ ⭐ 不删它的话，这一页上"红圈那一项"消失、⭐ 浮标还在 ✓。
+          ⭐ 而**外部那条路**（⭐ 双击 .docx ⇒ `office-import://request` ✓）由 `App.tsx` 里那一个实例负责 ✓ ⇒ ⭐ 不受影响 ✓。 */}
       </>
   );
 }

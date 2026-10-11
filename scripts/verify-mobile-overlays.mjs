@@ -259,6 +259,11 @@ const OVERLAYS = [
   { id: "storage", label: "存储 / 空间管理", root: ".stg-overlay", box: ".stg-panel", sheet: false, optional: true, fullscreen: true },
   { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false, fullscreen: true },
   { id: "shortcuts", label: "快捷键", root: ".shortcuts-overlay", box: ".shortcuts", sheet: true },
+  // ⭐ 2026-10-10（owner）：「忘记口令」由**就地展开**改成**模态弹窗** ✓（遮罩点一下关 ✓／Esc ✓／× ✓）。
+  // ⚠️ 形态是**铺满遮罩 ＋ 居中卡片**（⛔ 不是底部弹层那一族 ⇒ 用 `sheet: false` ＋ `fullscreen: true` ✗）；
+  //    它随 `lockForgot` 登记进浮层栈（`LockScreen.tsx` 的 `useOverlayLayer("lockForgot", …)` ✓）
+  //    ＋ `useOverlayScrollLock(forgotOpen)` ✓（(5) 段无条件断言"打开任一层 ⇒ 外壳被锁" ✓）。
+  { id: "lockForgot", label: "忘记口令", root: ".lock-forgot-overlay", box: ".lock-forgot-modal", sheet: false, fullscreen: true },
   { id: "about", label: "关于", root: ".shortcuts-overlay", box: ".about", sheet: true },
   { id: "communitySave", label: "社区保存", root: ".community-save-overlay", box: ".community-save-box", sheet: true },
   { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false, fullscreen: true },
