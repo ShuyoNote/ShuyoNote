@@ -48,6 +48,10 @@ export default {
     emailHint: "Unified inbox · IMAP account",
     data: "Data",
     dataHint: "Backup / storage & cleanup",
+    // 2026-10-11: the direct-connect settings pane (owner ruled "the personal space is device-level"
+    // => fill it once, every personal space shares it).
+    sync: "Sync",
+    syncHint: "Direct connect · one setting per device",
     plugins: "Plugins",
     pluginsHint: "Enable/disable extensions",
     security: "Security",

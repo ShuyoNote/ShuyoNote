@@ -49,6 +49,9 @@ export default {
     emailHint: "聚合收件箱 · IMAP 账号配置",
     data: "数据",
     dataHint: "备份 / 存储与清理",
+    // ⭐ 2026-10-11：⭐ 设备直连的设置面（owner 拍「个人空间是设备级」⇒ 一处填好、所有个人空间共用 ✓）。
+    sync: "同步",
+    syncHint: "设备直连 · 本机一份设置",
     plugins: "插件",
     pluginsHint: "启用/禁用扩展",
     security: "安全",
