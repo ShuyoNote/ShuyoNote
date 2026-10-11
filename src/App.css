@@ -14117,10 +14117,23 @@ p:has(> .editor-drawing-container) {
 .set-space-filter-wrap:not(:has(.set-space-filter-clear)) .set-space-filter.sync-input {
   padding-right: 14px;
 }
-/* ⭐ 悬停也**不显形**（owner 要的就是这个 ✓）—— 这条规则是为压过别处的 `.sync-input:hover` ✓，
-   ⛔ 别删：删了就会在悬停时冒出一圈边 ✗。 */
-.set-space-filter.sync-input:hover {
+/* ⭐ 悬停也**不显形**（owner 要的就是这个 ✓）—— ⚠️⭐ **2026-10-11 订正**：第一版写的是
+   `.set-space-filter.sync-input:hover` ✗，⭐ 而别处 `.sync-input:hover:not(:disabled)` 同权重、又是**后写的**
+   ⇒ ⭐ 它赢了 ⇒ ⭐ **悬停照样冒出一圈强调色边** ✗（CDP 实测 `rgb(51,112,255)` ✓ ——
+   ⭐ 而我当时**只看了 tsc 与判据就提交了** ✗，提交信息里那句"悬停也不显形"**是假的** ✓）。
+   ⇒ ⭐ 修法：**加一层外层类**把权重抬上去 ✗（`.set-space-filter-wrap .set-space-filter.sync-input:hover` ✓）。
+   ⛔ 别删这条：删了就又会在悬停时冒出边框 ✗。 */
+.set-space-filter-wrap .set-space-filter.sync-input:hover {
   border-color: transparent;
+}
+/* ⚠️⭐ **2026-10-11 再订正**：上面那条把权重抬到 `.wrap .filter.sync-input:hover`（四个类 ✓）之后，
+   ⭐ 它**顺带把聚焦也压住了** ✗ —— ⭐ CDP 实测"聚焦时边框仍是透明" ✗（只剩 3px 光圈 ✓）。
+   ⇒ ⭐ 聚焦这条必须**同样权重、且写在后面** ✗（同权重按先后 ✓）⇒ ⭐ 聚焦才重新显形 ✓。
+   ⛔ 这条是**可访问性底线**：⛔ 不许去掉、⛔ 也不许被 hover 压掉 ✓。 */
+.set-space-filter-wrap .set-space-filter.sync-input:focus {
+  background: transparent;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .set-space-filter.sync-input:focus {
   background: transparent;
