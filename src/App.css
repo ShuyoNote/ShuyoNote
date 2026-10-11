@@ -1427,6 +1427,33 @@ html[data-platform="win"] .app-body {
   border-radius: var(--radius-md);
   background: var(--card-bg);
 }
+
+/* ⭐ 2026-10-11（owner：「参照效果图实现」／「把同步面板做好」）：⭐ 「严格模式（高级）」那一层折叠 ✓
+   —— 效果图把配对那串码收在它底下 ✓，⭐ 所以它得**看起来像这个面板自己的东西** ✓。
+   ⚠️ 与 `.sync-row` 同一套外观语言 ✗（⭐ 同样藏掉 webkit 的三角 ✓、⭐ 同样 hover 变强调色 ✓、⭐ 同样 8px 间距 ✓），
+      ⭐ 但**不套外框** ✗ —— ⭐ 它嵌在别的折叠**里面** ✓，⭐ 再加一圈边就成了"盒子里还有个盒子" ✓
+      （⭐ 效果图上它就是一条朴素的可展开行 ✓）。 */
+.sync-advanced {
+  margin-top: 8px;
+}
+.sync-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sync-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.sync-advanced > summary:hover {
+  color: var(--accent);
+}
+.sync-advanced[open] > summary {
+  color: var(--text);
+}
 .sync-row > summary {
   display: flex;
   align-items: center;

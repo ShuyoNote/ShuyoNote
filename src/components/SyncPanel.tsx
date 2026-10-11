@@ -1261,7 +1261,11 @@ export function SyncPanel() {
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>
-              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：填一个配对暗号就能和附近的设备直连" : "每个空间各自绑定服务器与组织空间"}</div>
+              {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 副标题按效果图改写 ✓ ——
+                  原文是「⭐ 填一个配对暗号就能和附近的设备直连 ✗」⇒ ⭐ 那句把"⭐ 码 ✗"摆在了**这一屏最显眼的位置** ✓。
+                  ⚠️ 新句**不改事实** ✗：⭐ 今天建信任那一步**仍然**要那串码 ✓（⭐ 见文件头的拍板口径 ✓）⇒
+                     ⭐ 所以只说"⭐ 建立信任之后 ✗" ✓，⛔ **不说**"⭐ 不用码 ✗"（⭐ 那要等新拍板 ✓）。 */}
+              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：和附近的设备建立信任之后，在同一个网络里直接连" : "每个空间各自绑定服务器与组织空间"}</div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
