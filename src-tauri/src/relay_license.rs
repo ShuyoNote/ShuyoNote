@@ -903,6 +903,62 @@ mod tests {
         assert!(matches!(prod, VerifiedLicense::Refused(_)), "实际 {prod:?}");
         assert_eq!(prod.window(), None, "拒收那一档**没有**窗口（⛔ 不许编一个）");
     }
+
+    /// ⭐ 判据⑪：⭐ **读数那一格**也要分得开 ✗ —— ⭐ 拒收时 ⛔ 不许带天数、⛔ 不许放行跨网 ✓。
+    ///
+    /// ⚠️ 这是 Step C 的**端到端**那一条：⭐ 从"⭐ 配置里一份假文本 ＋ ⭐ 好看的裸数字 ✗"一路走到
+    /// ⭐ **界面读数** ✓，⭐ 结论必须是"⭐ 验不过 ✗"（⭐ 不是"⭐ 剩余 N 天 ✗"✓）。
+    #[test]
+    fn the_reading_itself_refuses_to_borrow_numbers_from_an_unverified_text() {
+        use crate::relay_client::{
+            license_view_from, status_payload_from, verified_window_with, RelayConfig as Cfg,
+        };
+        let (sk, entry) = judge_key();
+        // ① 验过 ⇒ `verified` ＋ ⭐ 天数来自**验过的声明** ✓（⭐ 配置里那个假数字不许被采用 ✓）
+        let good = Cfg {
+            url: Some("http://127.0.0.1:8899".to_string()),
+            license: Some(mint(&sk, &payload(None, None))),
+            license_exp: Some(9_999_999),
+            ..Default::default()
+        };
+        let view = license_view_from(&verified_window_with(&good, 1_500, &[entry.clone()]));
+        assert_eq!(view.source, "verified");
+        assert_eq!(view.refusal, None);
+        assert!(view.crossnet_allowed, "验过且在有效期内 ⇒ 放行跨网");
+        // ② 文本验不过 ⇒ ⭐ 读数里**一个天数都不许有** ✗ ＋ ⭐ 不许放行 ✓
+        let bad = Cfg {
+            url: Some("http://127.0.0.1:8899".to_string()),
+            license: Some("SHUYO-LIC-1.zzz.zzz".to_string()),
+            license_nbf: Some(1),
+            license_exp: Some(9_999_999),
+            ..Default::default()
+        };
+        let bad_view = license_view_from(&verified_window_with(&bad, 1_500, &[entry.clone()]));
+        assert_eq!(bad_view.source, "refused");
+        assert_eq!(bad_view.state, "refused");
+        assert_eq!(bad_view.days_left, None, "⛔ 验不过就不许有天数");
+        assert_eq!(bad_view.grace_days_left, None);
+        assert!(!bad_view.crossnet_allowed, "验不过 ⇒ 跨网不放行");
+        assert!(bad_view.refusal.is_some(), "要给出机器可读的原因码");
+        assert!(
+            !bad_view.label.contains("剩余"),
+            "那句话里⛔ 不许出现天数说法：{}",
+            bad_view.label
+        );
+        // ③ ⭐ **整份读数**（⭐ 界面真正吃到的那份 ✓）⭐ 也必须是拒收 ✗
+        let whole = status_payload_from(Ok(bad), 1_500, None);
+        assert_eq!(whole.license.source, "refused");
+        assert_eq!(whole.license.days_left, None);
+        assert!(!whole.license.crossnet_allowed);
+        // ④ 没有签名文本 ⇒ ⭐ 才是占位（⭐ 与"验过"分开 ✓）
+        let placeholder = Cfg {
+            license_exp: Some(9_999_999),
+            ..Default::default()
+        };
+        let p_view = license_view_from(&verified_window_with(&placeholder, 1_500, &[entry]));
+        assert_eq!(p_view.source, "placeholder");
+        assert!(!p_view.source.contains("verified"));
+    }
     ///
     /// ⚠️ ⭐ 第一版这条判据**太钝** ✗（实测当场红）：它按"提到名字"扫 `.rs` ⇒ 命中三处，
     /// 一处是**注释里写明出处**（⭐ 好习惯，⛔ 不该判 ✗）、一处是**临时目录名**（⭐ 无害 ✓）、

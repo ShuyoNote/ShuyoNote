@@ -683,6 +683,13 @@ pub struct RelayLicenseView {
     /// 这一态**放不放行新建跨网连接** ✓ —— ⚠️ 与"本机能不能用"**无关** ✗
     /// （到期**只**收回跨网：本机读写搜改一律照旧 ✓）。
     pub crossnet_allowed: bool,
+    /// ⭐ 2026-10-11：⭐ 这一格的读数**是从哪来的** ✗ ——
+    /// `verified`（⭐ 签名文本验过了 ✓）／ `refused`（⭐ 有文本但验不过 ✓）／
+    /// `placeholder`（⭐ 没有签名文本 ⇒ 只有裸数字 ✓）／ `unstated`（⭐ 只给了窗口、没说来源 ✓）。
+    pub source: String,
+    /// ⭐ 拒收那一档的**机器可读码** ✗（⭐ 其余档为 `None` ✓）——
+    /// `bad_shape` ／ `unknown_kid` ／ `bad_signature` ／ `not_yet` ／ `expired` ／ `no_crossnet_cap` ✓。
+    pub refusal: Option<String>,
 }
 
 /// ⭐ 中继那两格的**完整读数**（图⑤「中继：已连上中继 ｜ 剩余 N 天」＋ 图⑧「中继许可证」）。
@@ -777,6 +784,65 @@ pub fn license_view(window: LicenseWindow) -> RelayLicenseView {
         grace_days_left,
         label,
         crossnet_allowed,
+        // ⚠️ 只拿到一个窗口 ⇒ ⭐ **不知道**它是验过的还是占位的 ✓ ⇒ 如实写"没说来源" ✓
+        //    （⭐ 要走"知道来源"那条路 ⇒ ⭐ 用 `license_view_from` ✓）
+        source: "unstated".to_string(),
+        refusal: None,
+    }
+}
+
+/// 拒收原因 ⇒ 机器可读码 ✓（⭐ 与中继那边的词对得上 ⇒ 排障时两边能对上 ✓）。
+pub fn refusal_code(reason: &crate::relay_license::LicenseRefusal) -> &'static str {
+    use crate::relay_license::LicenseRefusal as R;
+    match reason {
+        R::BadShape => "bad_shape",
+        R::UnknownKid => "unknown_kid",
+        R::BadSignature => "bad_signature",
+        R::NotYet => "not_yet",
+        R::Expired => "expired",
+        R::NoCrossnetCap => "no_crossnet_cap",
+    }
+}
+
+/// 拒收原因 ⇒ 用户可见那句话 ✓（⭐ 只说实话：⭐ 没验过就说没验过 ✓，⛔ 不许带天数 ✗）。
+pub fn refusal_label(reason: &crate::relay_license::LicenseRefusal) -> &'static str {
+    use crate::relay_license::LicenseRefusal as R;
+    match reason {
+        R::BadShape => "许可证格式不对（读不出内容）",
+        R::UnknownKid => "许可证验不过：签发方不在本机信任的名单里",
+        R::BadSignature => "许可证验不过：签名对不上",
+        R::NotYet => "许可证还没到生效时间",
+        R::Expired => "许可证已到期（跨网暂停；本机读写搜改照旧）",
+        R::NoCrossnetCap => "许可证不含跨网能力",
+    }
+}
+
+/// ⭐ 许可窗口**连同它的来源** ⇒ 读数 ✗（⭐ 这是界面该用的那一个 ✓）。
+///
+/// ⚠️ 拒收那一档**没有窗口** ⇒ `days_left` 为 `None` ✓ —— ⛔ **不许**拿裸数字顶上 ✗
+/// （⭐ 那等于绕过验签：⭐ 一份假文本 ＋ ⭐ 几个好看的裸数字 ⇒ ⭐ 界面会显示"剩余 N 天" ✗）。
+pub fn license_view_from(source: &VerifiedLicense) -> RelayLicenseView {
+    match source {
+        VerifiedLicense::Verified(w) => {
+            let mut v = license_view(*w);
+            v.source = "verified".to_string();
+            v
+        }
+        VerifiedLicense::Placeholder(w) => {
+            let mut v = license_view(*w);
+            v.source = "placeholder".to_string();
+            v
+        }
+        VerifiedLicense::Refused(reason) => RelayLicenseView {
+            state: "refused".to_string(),
+            days_left: None,
+            grace_days_left: None,
+            label: refusal_label(reason).to_string(),
+            // ⭐ 验不过 ⇒ ⭐ 跨网一律不放行 ✓（⭐ 铁律③：⛔ 但这**不**影响本机 ✓）
+            crossnet_allowed: false,
+            source: "refused".to_string(),
+            refusal: Some(refusal_code(reason).to_string()),
+        },
     }
 }
 
@@ -798,17 +864,19 @@ pub fn status_payload_from(
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty());
     let configured = url.is_some();
-    let window = cfg
+    // ⭐ 2026-10-11：⭐ 窗口**连同来源**一起算 ✗ —— ⭐ 有签名文本 ⇒ 只认验过的声明 ✓；
+    //    验不过 ⇒ ⭐ 如实报拒收（⛔ **不退回**裸数字 ✗）；⭐ 没文本 ⇒ 才是占位那条路 ✓。
+    let verified = cfg
         .as_ref()
-        .map(|c| config_window(c, now))
-        .unwrap_or(LicenseWindow::Unconfigured);
+        .map(|c| verified_window(c, now))
+        .unwrap_or(VerifiedLicense::Placeholder(LicenseWindow::Unconfigured));
     RelayStatus {
         available: true,
         note,
         configured,
         url,
         connection: connection_view(probed.map(|(o, _)| o), probed.map(|(_, at)| at)),
-        license: license_view(window),
+        license: license_view_from(&verified),
     }
 }
 
