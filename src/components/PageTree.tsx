@@ -685,8 +685,9 @@ startRename();
               >
                 <span className="menu-icon"><MenuIcon d={ICON.edit} /></span><span className="menu-text">重命名</span>
               </button>
-              {/* ⭐ 2026-10-11（owner：「应用内右键导入笔记」）：⭐ 右键一个页面 ⇒ 把 Word 文档导进来 ✓，
+              {/* ⭐ 2026-10-11（owner：「应用内右键导入笔记」）：⭐ 右键一个页面 ⇒ 把 Word 文档**转成笔记** ✓，
                   新页挂在**你右键的这个页面下面** ✓（⭐ `parentId` 就是它的 id ✓）。
+                  ⚠️ 文案按 owner 2026-10-11 的原话是「转成笔记」✓（⭐ 与仓里「转为笔记」那一族同一个口径 ✓）。
                   ⚠️ 走的是与「从导入文件创建…」**同一条链** ✓（⭐ `lib/office/pickOfficeFile.ts` ✓）——
                   ⛔ 这里不碰解析 / 落库 ✓（⭐ 那就是第二份真相源 ✓，⭐ 本仓最忌这个 ✓）。 */}
               <button
@@ -702,7 +703,7 @@ startRename();
                 }}
               >
                 <span className="menu-icon"><MenuIcon d={ICON.fileDown} /></span>
-                <span className="menu-text">导入 Word 文档…</span>
+                <span className="menu-text">转成笔记</span>
               </button>
               <button
                 onClick={() => {
