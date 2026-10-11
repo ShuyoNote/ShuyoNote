@@ -1,7 +1,7 @@
 # 个人空间的网格设置改为**设备级**
 
-> 状态：已拍板（待施工）
-> 证据：`2026-10-11-one-click-trust-decision.md`（同一批同步口径）／`../../src-tauri/src/mesh.rs`（`settings()` 读三格）／`../../src-tauri/src/sync.rs`（`mesh_set_config()` 与 `meta.sync_profiles.mesh_room`）
+> 状态：**施工中**（Rust 半已落地；界面半在另一条线上做）
+> 证据：`../../src-tauri/src/mesh.rs`（`DEVICE_LEVEL_SPACE`／`settings_for`／`migrate_device_level_mesh`／`is_device_level_space`）／`../../src-tauri/src/sync.rs`（`MeshScope.device_level`／`adopt_pending_trust_asks`／`mesh_space_in_use`）／`../../src-tauri/src/lan_state.rs`（`settings_for(c, &space, space_id.trim().is_empty())`）／`2026-10-11-one-click-trust-decision.md`
 >
 > ⭐ **口径（owner 2026-10-11 重申）** ✗：⭐ **个人空间是设备级** ✗ ——
 > ⭐ 监听地址 ／ ⭐ 配对暗号 ／ ⭐ 口令 **一处填好、⭐ 所有个人空间共用** ✓。
@@ -135,4 +135,80 @@
 ⚠️ ⭐ `mesh_paired_devices` 是按 `space_id` 存的 ✗（⭐ `mesh.rs:815` ✓）⇒ ⭐ 设备级是否**连它一起升** ✗
    ⭐ 是**产品口径**问题 ✓：⭐ "⭐ 这台设备认过谁 ✗" 听着像设备级 ✓，⭐ 但"⭐ 某个空间只认某几台 ✗"也可能是需求 ✓
    ⇒ ⭐ ⛔ 本方案**不动它** ✓，⭐ 先把 `mesh_bind`／`mesh_token`／`mesh_room` 三格做对 ✓（⭐ 一次只变一件事 ✓）
+```
+
+---
+
+## 10. ⭐ 落地实况（2026-10-11 收盘 ✗）
+
+### 10.1 ⭐ Rust 半：**已落地** ✗（`2ff56147` ／ `d3f4778b`）
+
+```
+⭐ 三格同一存储 ✗：`mesh.rs:445 DEVICE_LEVEL_SPACE = ""` ✓；⭐ `settings_for(c, space, device_level)` ✓
+   （⭐ 个人档**只读回退**旧键 ✓，⭐ 写路径才迁移 ✓）；⭐ `mesh_room` 搬进同一张 KV（§9.2 乙 ✓）
+⭐ 迁移 ✗：`migrate_device_level_mesh` ⭐ 幂等 ✓、⭐ 只增不删 ✓、⭐ 取了谁记一行日志 ✓；
+   ⭐ 白名单 ＝ "⭐ **可证明是个人档**的后缀 ✗"（⭐ 证明不了 ⇒ ⛔ 不搬 ✓ ＋ ⭐ 日志 ✓）
+⭐ 一处判定 ✗：`is_device_level_space` ✓；⭐ 下游只许**接收参数** ✓ 或 ⭐ 照**同一句谓词**
+   （`space_id.trim().is_empty()` ✓），⛔ 不许自己反推 ✓
+⭐ 读数 ✗：`r146` **12 passed / 0 failed** ✓；⭐ 下游两组各 5/0 ✓；⭐ `cargo check --lib` ⇒ 0 ✓；
+   ⭐ `check-web-commands` ⇒ exit 0 ✓（⭐ 本改动**没动命令签名** ✓）
+```
+
+### 10.2 ⭐ 顺带清出的**四处同族** ✗（⭐ 都曾是静默的 ✓）
+
+```
+⚠️ ⭐ 这条线真正的收获不是那三格 ✗ —— ⭐ 是顺着"⭐ 还按空间读设置 ✗"清出的四处 ✓：
+   ⭐ ① ⭐ `mesh_sync_now` 读旧那一格 ⇒ ⭐ 用户填了设备级地址 ⭐ 那一轮**静默判"关着"** ✗
+   ⭐ ② ⭐ `lan_state.rs:909` ⭐ 后台那一轮看不见设备级设置 ✗
+   ⭐ ③ ⭐ `mesh_space_in_use` 认不出设备级绑定 ⇒ ⭐ ⭐ **个人空间整个不被服务** ✗（⭐ 本章最重的一处 ✓）
+   ⭐ ④ ⭐ `mesh_trust.rs:78` 与 ⭐ `adopt_pending_trust_asks` 读不到设备级令牌 ⇒ ⭐ **一键信任静默失灵** ✗
+   ⇒ ⭐ 全部按"⭐ 先写判据、⭐ 看它红 ⇒ ⭐ 修 ⇒ ⭐ 转绿 ✗"走完 ✓；⭐ 收口后**两类各 0 处** ✓（⭐ Lead 独立复量 ✓）
+```
+
+### 10.3 ⭐ 一条**判据级的规矩**（⭐ 本轮定 ✗，⭐ 以后照用 ✓）
+
+```
+⭐ ⭐ "⭐ 是不是个人档 ✗"的判定**只能有一处** ✗：⭐ 下游只许 ⭐ **接收参数** ✓（⭐ 调用方知道 `device_level` ✓）
+   或 ⭐ 照**同一句谓词**（⭐ 结构上只有 `space_id` ✓）✓；⛔ ⭐ **在下游反推 ⇒ 那就是第二处判定** ✗ ✓
+⚠️ ⭐ 配套一条 ✗：⭐ ⛔ **不立"⭐ 调用点 ≤ 1 ✗"这种数量判据** ✓ —— ⭐ 它钉的是**数量** ✗、
+   ⭐ 而数量是**快照**不是**不变量** ✓ ⇒ ⭐ 正当新增一处调用就会**假红** ✓ ⇒ ⭐ 假红会让门禁没人跑 ✓
+   ⇒ ⭐ ⭐ **能进机器的是不变量；⭐ 快照只进提交信息** ✗ ✓（⭐ 快照值：⭐ 当时 `is_device_level_space` 1 处 ✓）
+```
+
+### 10.4 ⭐ 界面半：⭐ 落点已全量量清 ✗（⭐ 8 处文件 ＋ ⭐ 行号 ✓）
+
+```
+⭐ 三个手填项 ⭐ 从面板搬进「⭐ 设置 · 同步 → 高级 ✗」✓（⭐ 复用既有 `system` 分组 ✓）
+   ⭐ 面板那侧只留**读数 ＋ 人话** ✗（⭐ 按图⑧ 语气 ✓）
+⭐ ⚠️ ⭐ 关键读数 ✗：⭐ **设备级 ＝ 传空串** ✗ ✓（⭐ `mesh.rs:445` ✓ ／ ⭐ `sync.rs:4189` ✓ ／ ⭐ `sync.rs:4548` ✓）
+   ⇒ ⭐ 设置面表单调 `api.meshSetConfig("", …)` ✓；⭐ 面板那侧照旧传 `activeId` ✓
+   ⚠️ ⭐ 而 `sync.rs:4073` 有 `.filter(|w| !w.trim().is_empty())` ✗ ⇒ ⭐ **`""` 与 `null` 不等价** ✗ ✓
+     ⇒ ⭐ ⛔ 不许简化 ✓ ＋ ⭐ 要补一条判据把"⭐ `""` ⇒ ⭐ 设备级 ✓"钉住 ✓
+⭐ ⚠️ ⭐ 顺带把 §4 那句说准 ✗：⭐ "⭐ 不需要空间选择器 ✗"要落实为 ⭐ **"⭐ 调用时传空串 ✗"** ✓，
+   ⭐ 而不是"⭐ 界面上不出现选择器 ✗"就算完 ✓
+```
+
+### 10.5 ⭐ "⭐ 撤回这台设备 ✗"：⭐ **后端早已有** ✗（⭐ 不用新增命令 ✓）
+
+```
+⭐ `commands.ts:813 device_unpair` ✓ ／ ⭐ `api.ts:420 deviceUnpair(workspaceId, peerDeviceId)` ✓
+   ／ ⭐ `sync.rs:4054 device_unpair(db, workspace_id, peer_device_id)` ✓
+⭐ ⭐ 而且 ⭐ **面板里早就接了** ✗：`SyncPanel` 的 `duUnpair`（`:314-330` ✓）＋
+   ⭐ `data-testid="device-unpair"`（`:2123-2145` ✓）＝ ⭐ "⭐ 这台机器认了 N 台设备 …… 点它那行『解除』✗"✓
+⇒ ⭐ ⛔ **不在设置面再放一份入口** ✗ ✓ —— ⭐ "⭐ 同一件事两个入口 ✗"正是本仓反复消灭的形状 ✓
+```
+
+### 10.6 ⭐ 仍未量（⛔ 不假装 ✗）
+
+```
+⚠️ ⭐ ① ⭐ 390 宽下**几何 ≥44** 的**实测**（⭐ 成分在 ✓：`App.css:1858-1865` 的 `.sync-input { min-height: 44px }` ✓，
+   ⚠️ 但那是"⭐ 成分成立 ✗"，⭐ **要浏览器 ＋ ⭐ dev server 才叫实测** ✗ ⇒ ⭐ 归 browser／mobile 组 ✓）
+⚠️ ⭐ ② ⭐ `check-capabilities` 受不受新 tab 影响 ✗：⭐ 只证到"⭐ `TABS`／`settingsTab`／`SettingsTab`／
+   `SETTINGS_GROUPS` 四个 token 零命中 ✗"✓ ⇒ ⭐ **那条门禁没真跑** ✗ ✓
+⚠️ ⭐ ③ ⭐ `.sync-att` 会不会变**死样式** ✗：⭐ 已量 ✗ —— ⭐ **不会** ✓（⭐ 另有 5 个组件在用 ✓：
+   `MeshAdvancedForm.tsx:107` ／ ⭐ `RelayStatusSection.tsx:63/67/73` ／ ⭐ `SyncPanel.tsx:1431/1711/2236` ／
+   `TrustDevicePanel.tsx:189/318` ✓）
+⚠️ ⭐ ④ ⭐ "⭐ 读代码推断 ✗"类读数累计**三处**（⭐ 混态那一轮到底跑不跑 ✓ ／ ⭐ `mesh_space_in_use` 的下游 ✓
+   ／ ⭐ 面板整条路 ✓）⇒ ⭐ ⭐ **再加第四处就要回头改测法** ✗ ✓（⭐ 不许无限攒 ✓）
+⚠️ ⭐ ⑤ ⭐ `mesh_scope_at` 对 `""` 与 `null` 的差别**只读到那句 `filter`** ✗，⭐ 没实测 ✓
 ```
