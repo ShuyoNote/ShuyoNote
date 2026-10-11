@@ -2161,6 +2161,8 @@ mod tests {
     fn lan_peer_of(device: &str, base: Option<&str>, spaces: &[&str]) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: 1,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
@@ -2215,6 +2217,8 @@ mod tests {
     fn announced(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: String::new(),

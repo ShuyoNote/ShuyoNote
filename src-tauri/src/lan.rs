@@ -89,6 +89,43 @@ pub struct LanAnnounce {
     /// 它要挡的是**掉包**，不是"同一台设备换了钥匙"。语义不许悄悄改（真需要后者时另立字段）。
     #[serde(default)]
     pub fp: String,
+    /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ **「我这台想信任你」** ✗ ——
+    /// 一格**一次性**的请求（⭐ 内容是一次握手的随机串 ✓，⭐ 空串 ＝ 这次没想信任谁 ✓）。
+    ///
+    /// 用途只有一个：⭐ 让**被问的那台**知道「有人在等我确认」✓ ⇒ ⭐ 它才能在屏幕上问那一句 ✓。
+    /// ⚠️ 它**不是**认证材料 ✗，⛔ 不参与任何密钥派生 ✓ —— ⭐ 真正建立信任要**两边的人各点一次** ✓
+    /// （⭐ 判定在 `pairing_trust.rs` ✓，⭐ 那里有判据钉着「⭐ 单方面点完进不了 `Trusted` ✗」✓）。
+    /// ⚠️ `#[serde(default)]` ⇒ ⭐ 老对端**不发**这一格也收得下 ✓；⭐ 而本结构**没有**
+    /// `deny_unknown_fields` ✓ ⇒ ⭐ 老对端**收到**带这一格的公告也收得下（⭐ 直接忽略 ✓）
+    /// ⇒ ⭐ ⭐ **不升 `WIRE_VERSION`** ✓（⭐ 与 `short_id`（08-b②）同一个手法 ✓）。
+    #[serde(default)]
+    pub trust_ask: String,
+    /// ⭐ **「我确认了，这把是给你的」** ✗ —— ⭐ 只有**被问的那台**在**人点过之后**才填 ✓
+    /// （⭐ 见 `pairing_trust::confirm_generates_secret` ✓）；⭐ 发问的那台**永远留空** ✓。
+    /// ⚠️ 它是**密钥材料** ⇒ ⭐ 只在「⭐ 有人点过 ✗」之后才出现在广播里 ✓，⭐ 非空的那段就是它的暴露窗口 ✓。
+    /// ⚠️⭐ **代价如实记**：⭐ 它走的是**明文广播** ✓ ⇒ ⭐ 同一网段的**被动窃听者**在那个窗口里可能拿到 ✓。
+    /// ⭐ 这件事写在 `docs/plans/2026-10-11-one-click-trust-decision.md` ✓ —— ⛔ 不藏着 ✓。
+    #[serde(default)]
+    pub trust_secret: String,
+}
+
+impl Default for LanAnnounce {
+    /// ⭐ 只为「⭐ 结构体字面量太多 ✗」这一件事存在 ✓：⭐ 9 处构造点里大半是**测试夹具** ✓，
+    /// 让它们用 `..Default::default()` 收尾 ⇒ ⭐ 少写一遍那些与本次无关的字段 ✓。
+    /// ⚠️ 它**不**代表「⭐ 可以少填一格 ✗」：⭐ 生产侧的构造点该明写就明写 ✓。
+    fn default() -> Self {
+        Self {
+            v: WIRE_VERSION,
+            device_id: String::new(),
+            device_name: String::new(),
+            short_id: String::new(),
+            hub_base: None,
+            hub_spaces: Vec::new(),
+            fp: String::new(),
+            trust_ask: String::new(),
+            trust_secret: String::new(),
+        }
+    }
 }
 
 /// 丢弃一条公告的**原因**（如实报，不静默）。
@@ -323,6 +360,11 @@ pub fn announce_for_own_hub(
         device_name: device_name.trim().to_string(),
         // ⭐ 08-b②：**必须由调用方给**（参数 ⇒ 漏填编译不过 ✓ —— 与"不许派生"同一等级的保证 ✓）。
         short_id: short_id.trim().to_string(),
+        // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 这条**代言公告**不携带握手意图 ✓
+        //    —— ⭐ 它管的是「⭐ 谁在服务哪些空间 ✗」✓；⭐ 握手那一格由真正发起信任的那条路填 ✓
+        //    （⭐ 见 `pairing_trust.rs` 与 `docs/plans/2026-10-11-one-click-trust-decision.md` ✓）。
+        trust_ask: String::new(),
+        trust_secret: String::new(),
         hub_base: Some(base.to_string()),
         hub_spaces: vec![space.to_string()],
         // ★ 见上面那段：`fp` ＝ 应用级事实 `device_id`（B 片施工单 §8.3 的收口）。
@@ -838,6 +880,8 @@ mod tests {
     fn peer(device: &str, base: Option<&str>, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
@@ -982,6 +1026,8 @@ mod tests {
 
     fn announce_of(device: &str, base: Option<&str>, spaces: &[&str]) -> LanAnnounce {
         LanAnnounce {
+            trust_ask: String::new(),
+            trust_secret: String::new(),
             v: WIRE_VERSION,
             device_id: device.to_string(),
             device_name: format!("{device} 的机器"),
@@ -1629,5 +1675,63 @@ mod short_id_wire_tests {
         );
         assert!(with.len() <= MAX_ANNOUNCE_BYTES, "公告 {} 字节 ≤ 上限 {}", with.len(), MAX_ANNOUNCE_BYTES);
         assert!(with.len() > without.len(), "短标识必须真的进了线格式 ✓（不是被 serde 丢掉 ✗）");
+    }
+
+    /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 握手那两格的**线兼容**判据 ✓。
+    ///
+    /// 钉三件事 ✗：
+    ///  ① ⭐ **老公告**（⭐ 没有这两格 ✓）必须**还能解** ⇒ ⭐ 读到空串 ✓ —— ⭐ 不许报错 ✓
+    ///     （⭐ 两台一起升级的过渡期靠这条 ✓）；
+    ///  ② ⭐ **带这两格的公告，老对端也收得下** ✓ —— ⭐ 结构上**没有** `deny_unknown_fields` ✓
+    ///     ⇒ ⭐ 多出来的字段被忽略 ✓ ⇒ ⭐ 所以**不升 `WIRE_VERSION`** ✓。
+    ///     ⚠️ 这一条**从源码上判** ✓，⛔ 不靠"⭐ 我记得没写 ✗"（⭐ 邻居 `pairing.rs` 就是**故意**硬拒收的 ✓，
+    ///     说明这两条路在本仓并存 ⇒ ⭐ 那就必须由判据说清"⭐ 公告这条不走那一套 ✗"✓）；
+    ///  ③ ⭐ 这两格**真的进了线格式** ✓（⭐ 与上面短标识那条同一个手法 ✓）。
+    #[test]
+    fn trust_fields_are_wire_compatible_and_really_serialized() {
+        // ① 老公告 ⇒ ⭐ **只发老对端认识的那几格** ✓（⭐ 也就是今天**必有**的 `v` ＋ `device_id` ✓），
+        //    ⭐ 其余全靠 `#[serde(default)]` ✓ ⇒ ⭐ 解得回来、⭐ 两格读成空串 ✓。
+        //    ⚠️ 手抄一整份 JSON 的写法我试过 ✗：⭐ 会被解码器的**别的**校验拦下（`v != WIRE_VERSION` ✓），
+        //       而"⭐ 拆键 ✗"那种写法又太脆 ⇒ ⭐ 这条反而是最硬的：⭐ 它测的就是"⭐ 缺字段 ⇒ 走默认值 ✗" ✓。
+        let old = format!(r#"{{"v":{},"device_id":"dev-old"}}"#, WIRE_VERSION);
+        let a = decode_announce(&old).expect("老公告（只有老字段）必须还能解 —— 过渡期靠这条");
+        assert_eq!(a.trust_ask, "", "老对端没发这一格 ⇒ 读成空串");
+        assert_eq!(a.trust_secret, "", "同上");
+
+        // ② 源码上：`LanAnnounce` 这一段里不许出现 `deny_unknown_fields` ✓。
+        //    ⚠️ ⭐ **必须跳过注释行** ✗ —— 我第一版没跳，⭐ 于是**我自己写的说明**里引了那个词 ✓
+        //       ⇒ ⭐ **我的注释把我的判据判红了** ✓（⭐ 这条是当场踩到的 ✓）。
+        //       ⭐ 只扫**代码行**，⭐ 钉的才是"⭐ 属性真的加上去了没 ✗"✓。
+        let src = include_str!("lan.rs");
+        let start = src.find("pub struct LanAnnounce").expect("结构定义必须在");
+        let head = &src[start..];
+        let end = head.find("\n}").expect("结构体必须收尾");
+        let code_only = head[..end]
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code_only.contains("deny_unknown_fields"),
+            "LanAnnounce 一旦加了 deny_unknown_fields ⇒ 老对端拒收带新格的公告 ⇒ 那时必须同时升 WIRE_VERSION"
+        );
+
+        // ③ 两格真的进线格式 ✓ ＋ ⭐ 解得回来 ✓（⭐ 带上合法 `device_id`，⭐ 否则解码器会以别的原因拒收 ✓）。
+        let mut plain = LanAnnounce::default();
+        plain.device_id = "dev-new".into();
+        let without = serde_json::to_string(&plain).unwrap();
+        let mut one = plain.clone();
+        one.trust_ask = "ask-1234".into();
+        let one = serde_json::to_string(&one).unwrap();
+        assert!(one.len() > without.len(), "trust_ask 必须真的进了线格式（不是被 serde 丢掉）");
+
+        let mut both = plain.clone();
+        both.trust_ask = "ask-1234".into();
+        both.trust_secret = "sek-5678".into();
+        let both = serde_json::to_string(&both).unwrap();
+        let back = decode_announce(&both).expect("自己发的必须解得回来");
+        assert_eq!(back.trust_ask, "ask-1234");
+        assert_eq!(back.trust_secret, "sek-5678");
+        assert!(both.len() <= MAX_ANNOUNCE_BYTES, "两格加上去也不许撞上限 {}", MAX_ANNOUNCE_BYTES);
     }
 }

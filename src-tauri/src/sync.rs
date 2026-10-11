@@ -6747,6 +6747,8 @@ mod tests {
     fn lan_peer(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: crate::lan::LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.into(),
                 device_name: device.into(),
@@ -8043,6 +8045,8 @@ mod tests {
     ) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: name.to_string(),

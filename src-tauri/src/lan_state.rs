@@ -444,6 +444,10 @@ pub fn announces_for_with_mesh(
                 device_name: device_name.trim().to_string(),
                 // ⭐ 08-b②：那一格**同样显式给**（这个兜底分支也是产出点 ✓）
                 short_id: short_id.trim().to_string(),
+                // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 与上面那个产出点**同口径** ✓
+                //    —— ⭐ 这个兜底分支也**不携带**握手意图 ✓（⭐ 它只是"⭐ 我在，⭐ 但我没代言 ✗"✓）。
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
                 // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
@@ -1076,6 +1080,8 @@ mod tests {
     fn peer_of(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: device.to_string(),
