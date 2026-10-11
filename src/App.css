@@ -14093,10 +14093,16 @@ p:has(> .editor-drawing-container) {
   pointer-events: none;
 }
 .set-space-filter.sync-input {
-  padding-left: 36px;
+  padding-left: 38px;
   padding-right: 44px;
-  border-radius: var(--radius-md);
-  background: var(--bg);
+  border-radius: var(--radius-lg);
+  /* ⭐ 2026-10-11 **第二次改**（owner 截图：「这个控件还没有美化？」）：
+     上一版**只加了放大镜** ✗ —— ⭐ 清空按钮要**输入后**才出现、⭐ 悬停/聚焦要**交互**才看得见
+     ⇒ ⭐ **静止态看着跟原来几乎一样** ✗（owner 的观感没错 ✓）。
+     ⇒ 这次把**静止态**也做出来：⭐ 填充式软底（默认无边 ✓）＋ ⭐ 悬停加深 ＋ ⭐ 聚焦回白底 ＋ 强调色描边＋光圈 ✓。
+     ⚠️ 高度仍交给 `.sync-input` 的 `min-height: 44px` ✗（本仓规则：可点控件 ≥44px ✓）——⛔ 这里不许写死更小的值 ✓。 */
+  background: var(--hover);
+  border-color: transparent;
   color: var(--text);
   outline: none;
   transition:
@@ -14105,10 +14111,15 @@ p:has(> .editor-drawing-container) {
     background var(--transition-fast);
 }
 .set-space-filter-wrap:not(:has(.set-space-filter-clear)) .set-space-filter.sync-input {
-  padding-right: 12px;
+  padding-right: 14px;
 }
 .set-space-filter.sync-input:hover {
-  border-color: var(--border-strong, var(--border));
+  background: var(--hover-strong, var(--hover));
+}
+.set-space-filter.sync-input:focus {
+  background: var(--bg);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .set-space-filter-clear {
   position: absolute;
