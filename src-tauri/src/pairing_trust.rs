@@ -63,6 +63,33 @@ pub fn state_after_dismiss(_current: TrustState) -> TrustState {
     TrustState::Idle
 }
 
+/// ⭐ 这一台在这次信任里是**哪一边** ✓。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustRole {
+    /// ⭐ 我点了「信任这台设备」⇒ ⭐ 我**先发问** ✓（⭐ 在等它那台确认 ✓）。
+    Asker,
+    /// ⭐ 我看到「这台设备想跟你同步」⇒ ⭐ **我来确认** ✓（⭐ 确认时由我**生成**那把配对密钥 ✓）。
+    Responder,
+}
+
+/// ⭐ 看到对方的「想信任」之后的状态 ✓（⭐ 这一台就是**被问的那台** ✓）。
+/// ⚠️ ⭐ **看到 ≠ 同意** ✗：⭐ 只记成 `RemotePending` ✓ —— ⭐ 一定要**本机的人**再点一下 ✓
+/// （⭐ 只看到一条广播就建立信任 ＝ ⭐ 同网段谁都能塞进来 ✓ ⇒ ⭐ 那正是 T1 ✓）。
+pub fn state_after_ask_seen(current: TrustState) -> TrustState {
+    match current {
+        TrustState::Idle => TrustState::RemotePending,
+        // ⭐ 已经点过／已经信任 ⇒ ⭐ 不因"⭐ 又收到一遍广播 ✗"而回退 ✓（⭐ 广播是周期性的 ✓）。
+        other => other,
+    }
+}
+
+/// ⭐ 确认时要不要**由我生成**那把配对密钥 ✗ —— ⭐ 只有**被问的那台**生成 ✓。
+/// ⚠️ 把它写成纯判定 ✗：⭐ 于是「⭐ 谁写密钥材料 ✗」这条**不用起网络就能被判据钉住** ✓
+/// （⭐ 否则"⭐ 两边都以为对方写 ✗"这种错要跑到真机上才发现 ✓）。
+pub fn confirm_generates_secret(role: TrustRole) -> bool {
+    matches!(role, TrustRole::Responder)
+}
+
 /// ⭐ 这次握手能不能开始 ✗ —— 不能就**说清为什么** ✓（⛔ 不静默失败 ✗）。
 /// ⚠️ 三条判据各自的**说法**要能直接给用户看 ✓（⭐ 与界面上那几行提示同源 ✓）。
 pub fn trust_refusal(
@@ -162,5 +189,35 @@ mod tests {
         assert!(!nonce_matches("", "abc"));
         assert!(nonce_matches("abc", "abc"));
         assert!(!nonce_matches("abc", "abd"));
+    }
+
+    #[test]
+    fn seeing_the_ask_is_not_agreeing() {
+        // ⭐ 收到一条"想信任"的广播 ⇒ ⭐ 只进 RemotePending ✓，⛔ 绝不直接 Trusted ✓。
+        assert_eq!(state_after_ask_seen(TrustState::Idle), TrustState::RemotePending);
+        assert_ne!(state_after_ask_seen(TrustState::Idle), TrustState::Trusted);
+        // ⭐ 被问的那台点了确认（⭐ 它先看到 ask ⇒ RemotePending ⇒ 再点 ⇒ Trusted ✓）。
+        assert_eq!(
+            state_after_local_confirm(state_after_ask_seen(TrustState::Idle)),
+            TrustState::Trusted
+        );
+        // ⭐ 周期性广播重复到达 ⇒ ⭐ 不把已有状态冲回去 ✓。
+        assert_eq!(
+            state_after_ask_seen(TrustState::WaitingRemote),
+            TrustState::WaitingRemote
+        );
+        assert_eq!(state_after_ask_seen(TrustState::Trusted), TrustState::Trusted);
+    }
+
+    #[test]
+    fn only_the_responder_writes_the_secret() {
+        assert!(
+            confirm_generates_secret(TrustRole::Responder),
+            "被问的那台才生成配对密钥"
+        );
+        assert!(
+            !confirm_generates_secret(TrustRole::Asker),
+            "发问的那台不生成：否则两边各写一把，谁也不知道对方那把"
+        );
     }
 }
