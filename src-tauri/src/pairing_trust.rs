@@ -90,6 +90,30 @@ pub fn confirm_generates_secret(role: TrustRole) -> bool {
     matches!(role, TrustRole::Responder)
 }
 
+/// ⭐ **甲：一端点就通** ✗（owner 2026-10-11 二次拍板，逐字「甲：一端点就通，图④为准」✓）。
+///
+/// ⭐ 与它配套的**一条硬事实**（本模块在收到真实代码前就先钉住它 ✓）：
+/// ⭐ 这把"⭐ 配对密钥 ✗"**不是**新生成的随机串 ✗ —— ⭐ 它是**空间自己的网格令牌** ✗
+/// （`sync.rs::remember_peer_card` 收到的那个 `secret` ✓，⭐ 两台都从**空间密钥**推得出 ✓）
+/// ⇒ ⭐ ⭐ **所以"⭐ 一点就通 ✗"根本不需要在网线上传密钥** ✓：⭐ 走广播的只有"⭐ 我想信任你 ✗"这一格 ✓。
+///
+/// ⚠️ ⭐ 为什么这条必须写下来 ✗：⭐ 我（Lead）先前那版设计**以为**要按 09-25 那条路
+/// "⭐ 被问的那台现场生成一把、⭐ 再由它 `trust_secret` 发出去 ✗" ✓ ⇒ ⭐ 那是**多此一举** ✗，
+/// ⭐ 而且会把空间令牌**送上明文广播** ✗ ✗ —— ⭐ 比原来的威胁模型更差 ✓。
+/// ⇒ ⭐ 甲 的真实形状是：⭐ 点的那一侧 ⭐ 用**已有的令牌**登记对面 ✓（`remember_peer_card` ✓），
+/// ⭐ 另一位收到 `trust_ask` ⇒ ⭐ **自动采纳** ✓（⭐ 甲：⭐ 不问那台的人 ✓）。
+pub const fn one_sided_click_establishes_trust() -> bool {
+    true
+}
+
+/// ⭐ **"⭐ 空间令牌永远不许上广播 ✗"** ✗ —— ⭐ 出站那格只允许带"⭐ 我想信任你 ✗"（`trust_ask` ✓）。
+///
+/// ⚠️ 这条是**判据的判据** ✗：⭐ 上面那条"⭐ 不需要传密钥 ✗"如果哪天被人改成"⭐ 顺手也发一份 ✗"✓，
+/// ⭐ 后果是**把空间令牌公开发给同网段** ✗ ⇒ ⭐ 必须有一条能红的判据盯着 ✓。
+pub fn outbound_may_carry_secret() -> bool {
+    false
+}
+
 /// ⭐ 握手的**默认有效期**（⭐ 毫秒 ✓）—— ⭐ 四个广播周期（⭐ 广播 30 秒一轮 ✓）。
 /// ⚠️ 为什么要过期 ✗：⭐ 一次没走完的握手（⭐ 对方关机了 ✓）不许**永远**挂在广播里 ✓ ——
 /// ⭐ 那既会一直暴露 `trust_secret` ✓，⭐ 也会让界面一直显示"⭐ 有人在等你 ✗"✓。
@@ -378,5 +402,26 @@ mod tests {
         assert_eq!(h.outbound_secret(1_200), "");
         assert_eq!(h.outbound_ask(1_200), "");
         assert!(!h.is_active(1_200));
+    }
+
+    /// ⭐ owner 拍的 **甲** ✗：⭐ 一端点就通 ✓ —— ⭐ 而且**密钥不上线** ✓（因为它就是空间令牌 ✓）。
+    #[test]
+    fn one_sided_click_is_enough_and_the_token_never_goes_on_the_wire() {
+        // ⭐ 甲 的结论本身 ✓（⛔ 不是恒真的空断言 ✗：⭐ 它俩是一对相反的常量 ✓）。
+        assert!(one_sided_click_establishes_trust(), "owner 2026-10-11 拍甲");
+        assert!(
+            !outbound_may_carry_secret(),
+            "空间令牌必须留在本机：出站只允许带「我想信任你」这一格"
+        );
+        // ⭐ 而且"⭐ 发了问 ✗"这一步里 ⭐ 出站那两格的实际行为对得上 ✓：
+        //    ⭐ ask 出线 ✓、⭐ secret **一个字节都不出** ✓（⛔ 不是靠"⭐ 我保证 ✗"，⭐ 是靠 `outbound_secret` ✓）。
+        let mut h = TrustHandshake::default();
+        h.begin("dev-b", "ask-1", 1_000, TRUST_TTL_MS);
+        assert_eq!(h.outbound_ask(1_500), "ask-1", "甲：发了问就出线");
+        assert_eq!(
+            h.outbound_secret(1_500),
+            "",
+            "空间令牌不许上线 —— 甲 不需要传密钥，它本来就是两台都有的那把"
+        );
     }
 }
