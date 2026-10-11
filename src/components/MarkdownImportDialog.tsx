@@ -6,6 +6,7 @@ import { SHUYONOTE_TRANSFORMERS, preprocessMarkdownImport } from "../editor/mark
 import { $importHtml } from "../editor/htmlToLexical";
 import { mdToHtml } from "../editor/mdToHtml";
 import { api } from "../lib/api";
+import { importOfficeFromPath, realOfficePathDeps } from "../lib/office/pathImport";
 import { useEditorStore } from "../store/editor";
 import { toast } from "../store/toast";
 import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
@@ -24,15 +25,31 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
   const importFromFile = async () => {
     try {
       const selected = await platform.dialog.open({
-        title: "选择 Markdown 文件",
+        title: "选择要导入的文件（Markdown 或 Word 文档）",
         filters: [
-          { name: "Markdown", extensions: ["md", "markdown", "txt"] },
+          { name: "Markdown / Word", extensions: ["md", "markdown", "txt", "docx", "docm"] },
         ],
         multiple: false,
       });
       if (!selected) return;
       const path = Array.isArray(selected) ? selected[0] : selected;
-      const content = await api.readTextFile(path as string);
+      const p = String(path);
+      // ⭐ 2026-10-11（owner：「把功能加到新建页面的『从文件导入』」）：⭐ 在这儿**按类型分岔** ✗ ——
+      //    ⭐ `.docx` ⇒ ⭐ 走 Office 那条**现成**的路（⭐ 原件入库 ＋ ⭐ 转换 ＋ ⭐ **建一页新笔记** ✓）；
+      //    ⭐ 其余 ⇒ ⭐ 还是老路（⭐ 读文本 ⇒ ⭐ 灌进**当前**这一页 ✓）。
+      //    ⚠️ 两条路的**语义故意不同** ✓：
+      //       ⭐ Word ⇒ ⭐ 「直接变成一页新笔记 ✗」（⭐ 与能力页那句话一致 ✓）；
+      //       ⭐ Markdown ⇒ ⭐ 「替换当前页 ✗」（⭐ 老行为**一个字没动** ✓）。
+      //    ⚠️⭐ 这里**复用** `pathImport` 那条链 ✗ —— ⛔ **不许在这儿自己实现一遍解析/落库** ✓
+      //       （⭐ 那就是第二份真相源 ✓，⭐ 而且判据里有一条钉着"必须复用" ✓）。
+      //    ⚠️ `parentId` 给 `null` ⇒ ⭐ 新页建在**顶层** ✓（⭐ 与右下角那颗入口同口径 ✓）。
+      if (/\.(docx|docm)$/i.test(p)) {
+        const outcome = await importOfficeFromPath(p, null, realOfficePathDeps(null));
+        toast(outcome.ok ? "已导入为新笔记" : `没导入：${outcome.message}`, outcome.ok ? "success" : "error");
+        if (outcome.ok) onClose();
+        return;
+      }
+      const content = await api.readTextFile(p);
       setText(content);
     } catch (e) {
       toast(`读取文件失败：${e}`, "error");
