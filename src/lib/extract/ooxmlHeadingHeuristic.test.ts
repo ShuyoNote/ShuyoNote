@@ -82,4 +82,18 @@ describe("docx 标题启发式（原文没用标题样式时）", () => {
     expect(hs).toEqual([1, 2]);
     expect(r.warnings.join("；"), "老路上不该冒出「猜的」告警").not.toContain("推出来的");
   });
+
+  // ⭐⭐ 2026-10-11（owner：「标题1认了，标题2没认」⇒ 一眼看出是 WPS 的中文标题样式）：
+  //    ⭐ 中文 Word / WPS 把内置标题样式写成**数字 styleId** ✓，⭐ 真名字只在 `styles.xml` 里 ✓
+  //    （⭐ 真样张实测：⭐ 正文是 `<w:pStyle w:val="3"/>` ✓，⭐ 而 `styles.xml` 里 `id=3` ⇒ `heading 2` ✓）
+  //    ⇒ ⭐ 这一条钉"**必须按名字认**" ✓，⭐ 而且认出来**不算猜的** ✓（⛔ 不该进那条告警 ✓）。
+  it("f) 数字样式 id（中文 Word/WPS 的写法）⇒ 按 styles.xml 的真名字认出来，且不算「猜的」", () => {
+    const r = blocksOf([
+      { t: "h", level: 1, text: "标题一（数字 id）", styleId: "2" },
+      { t: "h", level: 2, text: "标题二（数字 id）", styleId: "3" },
+    ]);
+    const hs = r.blocks.filter((b) => b.kind === "heading").map((b) => (b as { level: number }).level);
+    expect(hs, "数字 id 应当按 styles.xml 的真名字认成 1/2 级").toEqual([1, 2]);
+    expect(r.warnings.join("；"), "这是按样式认出来的，⛔ 不该说成猜的").not.toContain("推出来的");
+  });
 });

@@ -40,7 +40,7 @@ function esc(text: string): string {
 
 /** 段落里的元素（**顺序即文档顺序** —— 真值就是按它数出来的 ✓）。 */
 export type SampleElement =
-  | { t: "h"; level: number; text: string }
+  | { t: "h"; level: number; text: string; styleId?: string }
   | { t: "p"; text: string; sz?: number; bold?: boolean }
   | { t: "emph"; bold?: string; italic?: string; strike?: string }
   | { t: "break" }
@@ -139,9 +139,13 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
 
   for (const el of els) {
     switch (el.t) {
-      case "h":
-        body.push(para(run(el.text), `<w:pStyle w:val="Heading${el.level}"/>`));
+      case "h": {
+        // ⭐ 2026-10-11：可给**数字 styleId**（⭐ 中文 Word/WPS 就是这么写的 ✓）——
+        //    ⭐ 那时级别靠 `styles.xml` 里的真名字认 ✓（⭐ 见 `stylesXml` ✓）
+        const sid = el.styleId ?? `Heading${el.level}`;
+        body.push(para(run(el.text), `<w:pStyle w:val="${sid}"/>`));
         break;
+      }
       case "p": {
         // ⭐ 2026-10-11：可选 `sz`（**半磅**）与 `bold` —— ⭐ 用来造"⭐ 手工排版 ✗"那种文档 ✓
         //    （⭐ 真样张的形状：⭐ Word 标题样式用了 0 次、⭐ 字号却出现几百次 ⇒ ⭐ 标题全靠字号撑 ✓）
@@ -211,10 +215,30 @@ export function buildSampleDocx(els: SampleElement[]): Uint8Array {
     `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>` +
     `</Relationships>`;
 
+  // ⭐ 2026-10-11：⭐ 造一份 `styles.xml` ✓ —— ⭐ 两种写法都声明：
+  //    ⭐ ① 英文 id `Heading1..6` ✓ ② ⭐ **数字 id `1..6`** ✓（⭐ 中文 Word/WPS 的写法 ✓，⭐ 名字仍是 `heading N` ✓）
+  //    ⇒ ⭐ 解析层必须**按名字**认，⛔ 不能只比 id ✓（⭐ 真样张就是这么被漏掉的 ✓）
+  const styleDefs =
+    [1, 2, 3, 4, 5, 6]
+      .map(
+        (n) =>
+          `<w:style w:type="paragraph" w:styleId="Heading${n}"><w:name w:val="heading ${n}"/></w:style>` +
+          // ⚠️⭐ 数字 id **故意错开一位**（⭐ `2` ⇒ `heading 1` ✓）—— ⭐ 与真样张一致 ✓
+          //    （⭐ 真文档：⭐ `id=1` 是 Normal ✓ ／ ⭐ `id=2` 是 `heading 1` ✓ ／ ⭐ `id=3` 是 `heading 2` ✓）
+          //    ⇒ ⭐ 这样才**真的证明**"⭐ 是按名字认的 ✗"，⛔ 不是把数字直接当级别 ✓
+          `<w:style w:type="paragraph" w:styleId="${n + 1}"><w:name w:val="heading ${n}"/></w:style>`,
+      )
+      .join("") +
+    `<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/></w:style>`;
+  const stylesXml =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+    `<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${styleDefs}</w:styles>`;
+
   const files: Record<string, Uint8Array> = {
     "[Content_Types].xml": strToU8(contentTypes),
     "_rels/.rels": strToU8(rootRels),
     "word/document.xml": strToU8(document),
+    "word/styles.xml": strToU8(stylesXml),
     "word/numbering.xml": strToU8(numbering),
     "word/_rels/document.xml.rels":
       strToU8(

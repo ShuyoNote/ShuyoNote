@@ -188,14 +188,19 @@ function classifyFailure(extractor: string, input: ExtractInput, e: unknown): Ex
 
 const DOCX_ID = "ooxml.docx@1";
 
-/** 段落是否标题：`w:pStyle` 以 Heading 开头，或 `w:outlineLvl` 存在（0 基）。 */
-function docxHeadingLevel(p: Element): number | null {
+/** 段落是否标题：`w:pStyle` 以 Heading 开头，**或该 id 在 styles.xml 里的真名字是 `heading N`**，或 `w:outlineLvl` 存在。 */
+function docxHeadingLevel(p: Element, styles: Map<string, string>): number | null {
   const pPr = directChildren(p, "pPr")[0];
   if (!pPr) return null;
-  const style = directChildren(pPr, "pStyle")[0];
-  const styleVal = style?.getAttributeNS("*", "val") ?? style?.getAttribute("w:val") ?? "";
-  const m = /^Heading\s*(\d+)$/i.exec(styleVal);
-  if (m) return Number(m[1]);
+  const styleVal = attrOf(directChildren(pPr, "pStyle")[0], "val");
+  const byId = levelFromStyleName(styleVal);
+  if (byId !== null) return byId;
+  // ⭐ id 不是 `HeadingN` ⇒ ⭐ 去样式表里翻它的真名字（⭐ 中文 Word/WPS 的数字 id 走这一条 ✓）
+  const byName = styles.get(styleVal);
+  if (byName) {
+    const lvl = levelFromStyleName(byName);
+    if (lvl !== null) return lvl;
+  }
   if (directChildren(pPr, "outlineLvl").length > 0) return 1;
   return null;
 }
@@ -232,13 +237,15 @@ function extractDocx(input: ExtractInput): ExtractResult {
     if (!body) return fail(DOCX_ID, "corrupt", "word/document.xml 里没有 body（结构不完整）");
 
     const segments: ExtractedSegment[] = [];
+    // ⭐ 样式表（⭐ `styleId ⇒ 真名字` ✓）—— ⭐ 中文 Word/WPS 的标题样式 id 是数字 ✓
+    const styles = docxStyleNames(files);
     // 只走 body 的**直接子元素**，顺序即文档顺序；table 单独成段。
     for (const child of Array.from(body.children)) {
       if (child.localName === "p") {
         const text = normalizeText(runText(child));
         if (!text) continue;
         segments.push({
-          kind: docxHeadingLevel(child) !== null ? "heading" : "text",
+          kind: docxHeadingLevel(child, styles) !== null ? "heading" : "text",
           text,
           loc: "", // docx 无页号，见文件头注释
         });
@@ -718,6 +725,36 @@ function numberingMap(
   return out;
 }
 
+/** 样式**真名字** ⇒ 标题级别（`heading N` ／ `Title` ✓）；认不出来 ⇒ null ✓。 */
+function levelFromStyleName(name: string): number | null {
+  const t = name.trim();
+  const m = /^heading\s*(\d+)$/i.exec(t);
+  if (m) return Math.min(6, Math.max(1, Number(m[1])));
+  if (/^title$/i.test(t)) return 1;
+  return null;
+}
+
+/**
+ * `word/styles.xml` ⇒ `styleId → 样式真名字` ✓。
+ *
+ * ⚠️⭐ **为什么必须有这一层** ✗：⭐ 中文 Word / WPS 把内置标题样式写成**数字 id** ✓ ——
+ * 实测真样张（2026-10-11）：⭐ 正文里是 `<w:pStyle w:val="3"/>` ✓，⭐ 而 `styles.xml` 里
+ * `id=3` 的真名字才是 `heading 2` ✓ ⇒ ⭐ 只拿 id 去比对 `Heading N` ⇒ ⭐ **一个都认不出来** ✓
+ * （⭐ 而按 id 认不出来时，⭐ 只能靠"字号启发式"去蒙 ⇒ ⭐ 就是你看到的那句"标题 1 认了、标题 2 没认"✓）。
+ */
+function docxStyleNames(files: Record<string, Uint8Array>): Map<string, string> {
+  const out = new Map<string, string>();
+  const doc = partXml(files, "word/styles.xml");
+  if (!doc) return out;
+  for (const st of allByLocalName(doc, "style")) {
+    const id = attrOf(st, "styleId");
+    if (!id) continue;
+    const name = attrOf(directChildren(st, "name")[0], "val");
+    if (name) out.set(id, name);
+  }
+  return out;
+}
+
 /** `word/_rels/document.xml.rels` ⇒ `rId → zip 内路径`（外链给空串 ⇒ 当"取不到字节"如实计 ✓）。 */
 function docxRels(files: Record<string, Uint8Array>): Map<string, string> {
   const out = new Map<string, string>();
@@ -954,13 +991,18 @@ type HeadingHit = { level: number; via: "style" | "size" };
  * ⭐ 分级按字号差：⭐ ≥＋12 ⇒ 1 级 ✓ ／ ⭐ ≥＋8 ⇒ 2 级 ✓ ／ ⭐ ≥＋4 ⇒ 3 级 ✓。
  * ⚠️ 认出来的那些**会在报告里标明是猜的** ✓（见 `guessedHeadings` 那条 warning ✓）。
  */
-function noteHeadingLevel(p: Element, bodyHalf: number | null): HeadingHit | null {
+function noteHeadingLevel(p: Element, bodyHalf: number | null, styles: Map<string, string>): HeadingHit | null {
   const pPr = directChildren(p, "pPr")[0];
   if (pPr) {
     const style = attrOf(directChildren(pPr, "pStyle")[0], "val");
-    const m = /^Heading\s*(\d+)$/i.exec(style);
-    if (m) return { level: Math.min(6, Math.max(1, Number(m[1]))), via: "style" };
-    if (/^Title$/i.test(style)) return { level: 1, via: "style" };
+    const byId = levelFromStyleName(style);
+    if (byId !== null) return { level: byId, via: "style" };
+    // ⭐ 数字 id（中文 Word/WPS）⇒ ⭐ 翻真名字 ✓
+    const byName = styles.get(style);
+    if (byName) {
+      const lvl = levelFromStyleName(byName);
+      if (lvl !== null) return { level: lvl, via: "style" };
+    }
     const outline = directChildren(pPr, "outlineLvl")[0];
     if (outline) {
       return { level: Math.min(6, Math.max(1, Number(attrOf(outline, "val") || "0") + 1)), via: "style" };
@@ -1038,10 +1080,11 @@ function noteTableRows(tbl: Element, warnings: string[]): string[][] {
 function sourceKindOf(
   p: Element,
   bodyHalf: number | null,
+  styles: Map<string, string>,
 ): { kind: keyof NoteBlockCounts; level?: number; numId?: string; guessed?: boolean } {
   const list = noteListInfo(p);
   if (list) return { kind: "listItems", level: list.level, numId: list.numId };
-  const heading = noteHeadingLevel(p, bodyHalf);
+  const heading = noteHeadingLevel(p, bodyHalf, styles);
   if (heading !== null) {
     return { kind: "headings", level: heading.level, guessed: heading.via === "size" };
   }
@@ -1114,6 +1157,8 @@ export function docxToNoteBlocks(bytes: Uint8Array): DocxNoteBlocksResult {
   }
 
   const warnings: string[] = [];
+  // ⭐ 样式表（⭐ `styleId ⇒ 真名字` ✓）—— ⭐ 中文 Word/WPS 的标题样式 id 是数字，⛔ 不比名字就认不出来 ✓
+  const styles = docxStyleNames(files);
   // ⭐ 正文那一档字号（⭐ 只数一次 ✓）；⭐ 算不出来 ⇒ `null` ⇒ ⭐ 启发式整条不启用 ✓
   const bodyHalf = bodyHalfPointSize(body);
   // ⭐ 有多少条标题是**我们按字号猜的**（⭐ 报告里要如实标明 ✓）
@@ -1143,7 +1188,7 @@ export function docxToNoteBlocks(bytes: Uint8Array): DocxNoteBlocksResult {
     const { frags, rids } = paragraphParts(p);
     const text = fragsToMarkdown(frags);
     const hasText = text.trim().length > 0;
-    const src = sourceKindOf(p, bodyHalf);
+    const src = sourceKindOf(p, bodyHalf, styles);
     if (src.kind === "headings" && src.guessed) guessedHeadings += 1;
     // ⚠️ 分母只数**有内容的**那一段：空段落（Word 里用来占行距）不是"要保留的东西" ✓
     //    （数进去会让真文档的保留率凭空变低 —— 那是**指标**的错，不是转换的错 ✗）
