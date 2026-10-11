@@ -2449,7 +2449,7 @@ pub fn device_pair_export(
     // ⭐ 「选了自己」在**读设置之前**就拒（与 `device_pair_from` 里那条同口径 ✓，这里先给一句人话 ✓）
     let peer = peer_device_id.unwrap_or_default().trim().to_string();
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    let s = crate::mesh::settings(&c, &scope.space);
+    let s = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
     let bind = s.bind.unwrap_or_default();
     let token = s.token.unwrap_or_default();
     if bind.trim().is_empty() || token.trim().is_empty() {
@@ -2708,6 +2708,8 @@ pub(crate) fn adopt_pending_trust_asks(
     my_device: &str,
     peers: &[crate::lan::Peer],
     now_ms: i64,
+    // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 令牌现在住在"空 space"那一格 ✓ ⇒ 由调用方把判定传进来 ✓。
+    device_level: bool,
 ) -> Vec<String> {
     /// ⚠️ 内外有别 ✗：`device_id` **不许进用户文案** ✓（`INV-UI-copy-no-internal-ids` ✓）；
     /// ⭐ 但日志是**排障面** ✓ ⇒ 这里只印**前 8 位** ✓（够认人、又不把内部号整条摊开 ✓）。
@@ -2728,7 +2730,11 @@ pub(crate) fn adopt_pending_trust_asks(
         return Vec::new();
     }
     // ② 令牌 ＝ **这条空间自己的网格令牌** ✓（⭐ 与发起侧同源 ✓；⛔ 不出本机 ✓）。
-    let token = crate::mesh::settings(c, proto_space).token.unwrap_or_default().trim().to_string();
+    let token = crate::mesh::settings_for(c, proto_space, device_level)
+        .token
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if token.is_empty() {
         eprintln!(
             "[trust] ⚠️ 收到 {} 个「想信任」请求，但这个空间**还没设口令** ⇒ 一个都不采纳 ✓\
@@ -3531,7 +3537,7 @@ pub async fn mesh_sync_now(
     // ② 设置 ＋ 发现层（没开发现层 ⇒ 对端表是空的，**如实**回"网段里没人"）
     let (cfg, peers) = {
         let c = db.0.lock().expect("db mutex poisoned");
-        let cfg = crate::mesh::settings(&c, &scope.space);
+        let cfg = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
         let peers = crate::lan_state::LanState::global(&scope.device).peers(crate::db::now_ms());
         (cfg, peers)
     };
@@ -3550,9 +3556,23 @@ pub async fn mesh_sync_now(
     //    ⚠️ 锁只在这一小段里拿着 ✗（`round` 是 async ✓ ⇒ ⛔ 绝不跨 await 持锁 ✓）。
     {
         let c = db.0.lock().expect("db mutex poisoned");
-        let _ = adopt_pending_trust_asks(&c, &scope.space, &scope.device, &peers, crate::db::now_ms());
+        let _ = adopt_pending_trust_asks(
+            &c,
+            &scope.space,
+            &scope.device,
+            &peers,
+            crate::db::now_ms(),
+            scope.device_level,
+        );
     }
-    let mut report = crate::mesh::round(&db.0, &scope.space, &scope.device, &peers).await?;
+    let mut report = crate::mesh::round(
+        &db.0,
+        &scope.space,
+        &scope.device,
+        &peers,
+        scope.device_level,
+    )
+    .await?;
     report.window = window;
     if report.enabled && report.window.is_none() {
         // 配了地址却没窗口 ⇒ 上面 `ensure_window` 会直接报错，走不到这里；留一句兜底说明。
@@ -3594,14 +3614,23 @@ pub(crate) async fn mesh_round_once(
     db_space: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 同上 —— 判定由**调用方**从 `mesh_scope` 传进来 ✓（⛔ 不在这里再判一次 ✗）。
+    device_level: bool,
 ) -> Result<crate::mesh::MeshRoundReport, String> {
     // ⭐ 2026-10-11（甲：一端点就通）：⭐ 后台那一轮也要采纳 ✓ ——
     //    ⭐ 与 `mesh_sync_now` **同一处实现** ✓（⛔ 两条路各写一遍迟早会漂 ✗）。
     {
         let c = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-        let _ = adopt_pending_trust_asks(&c, proto_space, my_device, peers, crate::db::now_ms());
+        let _ = adopt_pending_trust_asks(
+            &c,
+            proto_space,
+            my_device,
+            peers,
+            crate::db::now_ms(),
+            device_level,
+        );
     }
-    let mut report = crate::mesh::round(conn, proto_space, my_device, peers).await?;
+    let mut report = crate::mesh::round(conn, proto_space, my_device, peers, device_level).await?;
     report.window = crate::mesh::window_addr(proto_space).map(|a| format!("http://{a}"));
     // ⭐ **可核读数**：只在这一档**真的开着**时计数 ✓（没开 ⇒ 不算"跑过一轮" ✓）。
     if report.enabled {
@@ -4524,6 +4553,104 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
 mod r146_mesh_scope_tests {
     use super::*;
 
+    /// ⭐⭐ 判据⑤（⭐ **只加判据、一行实现没动** ✗）：⭐ **一个没有档案行的团队空间，它的键不许被搬** ✗。
+    ///
+    /// 症状（Lead 2026-10-11 点名 ✓）：迁移靠 `sync_profiles.space_id` 认"这是不是团队" ✓
+    /// ⇒ ⭐ 若那个团队空间的档案行**不存在**（从没建过 ✓），它的 `mesh_bind:<space_id>` 会被当成
+    /// "不是团队" ⇒ ⭐ **被搬进设备级** ✗ ⇒ 那**真改坏了那个团队空间的设置** ✗（方案明写"团队一个字节不动" ✓）。
+    ///
+    /// ⚠️ **这条第一版就是要它红** ✗ —— ⛔ 实现没动 ✓（先红后绿 ✓）。
+    #[test]
+    fn migration_must_not_take_a_key_that_is_not_provably_personal() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-team', '团队');
+             -- ⭐ 故意**不建**这个团队空间的档案行 ✗（＝ 从没绑过服务器 ✓）
+             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:org-nobody', '10.9.9.9:8788');",
+        )
+        .unwrap();
+        crate::mesh::migrate_device_level_mesh(&c).expect("迁移不许报错");
+        assert_eq!(
+            crate::mesh::settings_for(&c, "", true).bind,
+            None,
+            "⛔ 一个**无法证明是个人档**的键不许被搬进设备级 ✗（`org-nobody` 既没档案行、也不在个人那两格里）"
+        );
+        assert_eq!(
+            crate::sync::get_meta_state(&c, "mesh_bind:org-nobody").as_deref(),
+            Some("10.9.9.9:8788"),
+            "⛔ 那个键还要原样留着 ✗"
+        );
+    }
+
+    /// ⭐ 判据⑦（Lead 第二步 ✓）：⭐ **后果** ✗ —— ⭐ 那一格会不会真让"所有个人空间"都指向
+    /// **别人那个地址** ✗（⭐ 判据⑤ 只钉了"搬没搬"✓，这条钉**用户那边看到什么**✓）。
+    ///
+    /// ⚠️ 本判据同时覆盖 ⑤ 的修法：⭐ 证明不了的键**既不搬、也不变成个人空间指向的那一份** ✗。
+    #[test]
+    fn the_device_slot_never_points_every_personal_space_at_someone_elses_address() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人 a');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-b', '个人 b');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-team', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-a');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-b', '', 'room-b');
+             -- ⭐ 一个**谁都证明不了**的键 ✗（没有档案行 ⇒ 不是个人档 ✓）
+             INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:org-nobody', '10.9.9.9:8788');",
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
+        crate::mesh::migrate_device_level_mesh(&c).unwrap();
+        // 后果① ⭐ 两个个人空间**都**指向设备级那一份 ✓（＝ 用户看到的是**自己**那一份 ✓）
+        for ws in ["ws-a", "ws-b"] {
+            assert_eq!(
+                mesh_scope_at(&c, Some(ws)).unwrap().space,
+                "room-a",
+                "所有个人空间必须指向同一份（设备级）"
+            );
+        }
+        // 后果② ⛔ 设备级那一格**不许**拿到那个证明不了的地址 ✗（否则它会摊给这台的所有个人空间 ✓）
+        assert_eq!(
+            crate::mesh::settings_for(&c, "", true).bind.as_deref(),
+            None,
+            "⛔ 证明不了的键不许进设备级 ✗（它会把别人的设置摊给所有个人空间）"
+        );
+        assert_eq!(
+            crate::sync::get_meta_state(&c, "mesh_bind:org-nobody").as_deref(),
+            Some("10.9.9.9:8788"),
+            "⛔ 那个键还要原样留着 ✗"
+        );
+    }
+    /// ⭐ 判据⑥（Lead 点名 ✓）：⭐ **跑网格那条路在混态下要看得见设备级的设置** ✗。
+    ///
+    /// ⚠️ 这里判的是**那条路真正用的那个表达式** ✗：
+    ///   `mesh_sync_now` 读 `crate::mesh::settings_for(&c, &scope.space, scope.device_level)`（`sync.rs:3442` 附近 ✓）
+    ///   ⇒ ⭐ 混态（设备级暗号 ≠ 各空间旧暗号 ✓）下它读到的是**旧那一格**（空 ✗）
+    ///   ⇒ `cfg.bind == None` ⇒ ⭐ 那一轮直接判"网格这一档关着" ✗（用户明明刚在设置面填了 ✓）。
+    ///
+    /// ⚠️ **这条第一版就是要它红** ✗ —— ⛔ 实现没动 ✓。
+    #[test]
+    fn the_running_round_sees_the_device_level_settings_in_the_mixed_state() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-me', '个人');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me', '', 'room-old');",
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-dev")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
+
+        let scope = mesh_scope_at(&c, Some("ws-me")).expect("个人档可解析");
+        assert_eq!(scope.space, "room-dev", "解析出来的设备级暗号");
+        // ⭐ 这一句就是 `mesh_sync_now`（`sync.rs:3442`）那一档**真正读的那一处** ✓
+        let round_path_cfg = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
+        assert_eq!(
+            round_path_cfg.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "⛔ 跑网格那条路在混态下必须看得见设备级的监听地址 ✗（否则那一轮静默判「关着」）"
+        );
+    }
+
     /// ⭐ 判据③（方案 §6 ＋ §9.2 ✓）：⭐ **团队档的键必须留下** ✗ ——
     /// 迁移只搬"**不属于任何团队空间**"的那些键 ✓（判法：键的后缀**是**某个非空 `space_id` ⇒ 跳过 ✓）。
     ///
@@ -4536,7 +4663,11 @@ mod r146_mesh_scope_tests {
         let c = fixture();
         c.execute_batch(
             "INSERT INTO meta.workspaces (id, name) VALUES ('ws-team', '团队');
+             -- ⚠️ 反向白名单（判据⑤ 的修法）要求「可证明是个人档」⇒ 那个人档行必须有：
+             --    它的 mesh_room 就是旧键的后缀。少了它 room-a 也证明不了 -> 夹具自己就错了。
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-me', '个人');
              INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-team', 'org-x', '');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-me', '', 'room-a');
              INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:org-x', '10.9.9.9:8788');
              INSERT INTO meta.sync_state (key, value) VALUES ('mesh_token:org-x', 'pw-team');
              INSERT INTO meta.sync_state (key, value) VALUES ('mesh_bind:room-a', '0.0.0.0:8788');
@@ -8125,7 +8256,7 @@ mod tests {
         );
         // 设置 KV 键、对端匹配、关窗键 —— 三处都还是**远端**那个 id（注册表按远端空间记一份窗口）。
         assert!(
-            flat.contains("let cfg = crate::mesh::settings(&c, &scope.space);"),
+            flat.contains("let cfg = crate::mesh::settings_for(&c, &scope.space, scope.device_level);"),
             "设置是**按远端空间**记的 KV（`mesh_bind:<远端 id>`），别顺手改成库名那个 id"
         );
         assert!(
@@ -8672,7 +8803,7 @@ mod tests {
             "生成那一刻就要登记（**空间连接** ✓、**远端空间 id** ✓、**选中的那台** ✓）—— A 的意义全在这行"
         );
         assert!(
-            body.contains("let s = crate::mesh::settings(&c, &scope.space);"),
+            body.contains("let s = crate::mesh::settings_for(&c, &scope.space, scope.device_level);"),
             "设置也要按**远端空间 id** 读（与面板/窗口同一把键 ✓；⛔ 不是界面给的本地工作区 id ✗）"
         );
     }
@@ -8847,7 +8978,7 @@ mod tests {
         crate::lan_state::with_trust(|h| h.note_ask("dev-B", t, ttl));
 
         // ① 该采纳的 ⇒ ⭐ 三件都落 ✓（卡 ＋ 出示那份 ＋ 正在跑的门 ✓ —— 全在唯一实现里 ✓）。
-        let adopted = adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[peer("dev-B", &["proto-x"])], t);
+        let adopted = adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[peer("dev-B", &["proto-x"])], t, false);
         assert_eq!(adopted, vec!["dev-B".to_string()], "带 ask 的那一台必须被采纳");
         let cards = crate::mesh::paired_devices(&c, "proto-x").unwrap();
         assert!(
@@ -8878,7 +9009,7 @@ mod tests {
             "候选为空 ⇒ 它根本不是这条空间的对端"
         );
         assert!(
-            adopt_pending_trust_asks(&c, "proto-y", "me-dev", &[], t).is_empty(),
+            adopt_pending_trust_asks(&c, "proto-y", "me-dev", &[], t, false).is_empty(),
             "⛔ 不跨空间采纳 ✗"
         );
 
@@ -8886,7 +9017,7 @@ mod tests {
         crate::lan_state::with_trust(|h| h.clear());
         crate::lan_state::with_trust(|h| h.note_ask("dev-C", t, 1)); // TTL 1 毫秒 ⇒ 立刻过期 ✓
         assert!(
-            adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[], t + 2).is_empty(),
+            adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[], t + 2, false).is_empty(),
             "⛔ 过期的不许被采纳 ✗（一台关过机的对端不许几天后被采纳）"
         );
         assert!(

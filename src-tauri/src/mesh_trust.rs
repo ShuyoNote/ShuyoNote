@@ -75,7 +75,7 @@ pub fn mesh_trust_begin(
         }
     };
     // ⭐ 令牌就是那把"⭐ 配对密钥 ✗" ✓（⭐ 两台都从空间密钥推得出 ✓，⭐ 所以**不上线** ✓）。
-    let token = crate::mesh::settings(&c, &scope.space)
+    let token = crate::mesh::settings_for(&c, &scope.space, scope.device_level)
         .token
         .unwrap_or_default()
         .trim()

@@ -350,7 +350,16 @@ fn spawn_background_round(
         let mut candidates_total: usize = 0;
         let heard_before = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst);
         for (proto_space, db_space) in pairs {
-            match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers).await {
+            // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定由**这里**（"有 db 那一层" ✓）算出来再传进去 ✓ ——
+            //   `mesh_round_once` 自己不判 ✗（否则就是第二份口径 ✓；方案 §9.1 ✓）。
+            //   ⚠️ 这里**不能用 `?`** ✗（这一段是 `async move`、返回值是 `()` ✓）⇒ 取不到锁就按"不是设备级"✓。
+            let device_level = match db.0.lock() {
+                Ok(c) => crate::mesh::is_device_level_space(&c, &proto_space),
+                Err(_) => false,
+            };
+            match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers, device_level)
+                .await
+            {
                 Ok(r) => {
                     candidates_total += r.candidates;
                     if r.candidates > 0 {

@@ -490,6 +490,13 @@ pub fn set_mesh_token_for(
 /// ⭐ 而且**不用碰 `meta.workspaces`** ✓（甲 那条路要先造一个真工作区 ＝ 又一份真相源 ✗）。
 ///
 /// ⚠️ 读侧**保留旧列的回退** ✓（见 [`legacy_mesh_room`] ✓）：升级上来的机器读得到旧值 ✓。
+/// ⭐ **"⭐ 这个空间是不是设备级那一格 ✗"** ✗ —— ⭐ **唯一判据** ✓（⭐ 调用方用它把这个判定算出来，
+/// ⛔ 不在被调函数里再判一次 ✗ —— 那是第二份口径 ✓）。
+pub fn is_device_level_space(c: &Connection, space: &str) -> bool {
+    let s = space.trim();
+    !s.is_empty() && mesh_room_device(c).as_deref() == Some(s)
+}
+
 pub fn mesh_room_device(c: &Connection) -> Option<String> {
     read_setting(c, "mesh_room", DEVICE_LEVEL_SPACE)
 }
@@ -564,31 +571,50 @@ pub fn migrate_device_level_mesh(c: &Connection) -> Result<Option<String>, Strin
         if already {
             continue;
         }
-        let mut stmt = c
-            .prepare(
-                "SELECT key, value FROM meta.sync_state \
-                 WHERE key LIKE ?1 AND TRIM(value) <> '' ORDER BY key ASC",
-            )
-            .map_err(|e| e.to_string())?;
-        let like = format!("{prefix}:%");
-        let mut rows = stmt.query(rusqlite::params![like]).map_err(|e| e.to_string())?;
+        // ⚠️ ⭐ **先把候选键读完再判** ✗ —— 一边遍历 `rows` 一边在**同一条连接**上再发一次查询，
+        //   rusqlite 会报"语句还在用"✗ ⇒ 那个错会被 `unwrap_or(0)` **吞掉** ⇒ 白名单恒为 0
+        //   ⇒ ⭐ **一个键都搬不动** ✗（实测踩过：判据③当场红 ✓）。⇒ 收集完再逐条判 ✓。
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        {
+            let mut stmt = c
+                .prepare(
+                    "SELECT key, value FROM meta.sync_state \
+                     WHERE key LIKE ?1 AND TRIM(value) <> '' ORDER BY key ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let like = format!("{prefix}:%");
+            let mut rows = stmt.query(rusqlite::params![like]).map_err(|e| e.to_string())?;
+            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                candidates.push((
+                    row.get(0).map_err(|e| e.to_string())?,
+                    row.get(1).map_err(|e| e.to_string())?,
+                ));
+            }
+        }
         let mut picked: Option<(String, String)> = None;
-        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            let k: String = row.get(0).map_err(|e| e.to_string())?;
-            let v: String = row.get(1).map_err(|e| e.to_string())?;
+        for (k, v) in candidates {
             let suffix = k.strip_prefix(&format!("{prefix}:")).unwrap_or("").trim().to_string();
             if suffix.is_empty() {
                 continue; // 已经是设备级那一格 ✓
             }
-            // ⭐ 团队空间的键**一个字不动** ✗：后缀**是**某个非空 `space_id` ⇒ 跳过 ✓。
-            let is_team: i64 = c
+            // ⭐⭐ **反向白名单** ✗（Lead 2026-10-11 拍 ✓）：⭐ 只搬"**可证明是个人档**"的后缀 ✗ ——
+            //   依据：⭐ 个人档的旧键后缀 ＝ 那一行的 `mesh_room`（`space_id` 空 ✓）⇒ ⭐ 这是**可查**的事实 ✓。
+            //   ⛔ 原来的做法（"后缀是某个 `space_id` 才算团队"）**反了** ✗：
+            //     一个**从没建过档案行**的团队空间会被当成"不是团队" ⇒ ⭐ 它的设置**漏进设备级** ✗
+            //     （＝ 会跟着"所有个人空间"一起生效 ✗ —— 判据⑤当场抓到 ✓）。
+            let provable_personal: i64 = c
                 .query_row(
-                    "SELECT COUNT(*) FROM sync_profiles WHERE TRIM(space_id) = ?1",
+                    "SELECT COUNT(*) FROM sync_profiles \
+                     WHERE TRIM(space_id) = '' AND TRIM(mesh_room) = ?1",
                     rusqlite::params![suffix],
                     |r| r.get(0),
                 )
-                .unwrap_or(0);
-            if is_team > 0 {
+                .map_err(|e| e.to_string())?;
+            if provable_personal == 0 {
+                eprintln!(
+                    "[mesh] ⚠️ 设备级迁移：旧键「{k}」**没搬** ✓ —— ⭐ 它证明不了是个人档 ✗\
+                     （个人档的后缀 ＝ 该行的 `mesh_room` ✓）；⛔ 这个键**原样留着** ✓"
+                );
                 continue;
             }
             picked = Some((suffix, v.trim().to_string()));
@@ -702,10 +728,13 @@ pub async fn round(
     space_id: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 由**调用方**从 `mesh_scope` 传进来 ✗ ——
+    //   ⛔ 本函数**不许**自己判"是不是个人档" ✗（那就成了第二份口径 ✓，方案 §9.1 ✓）。
+    device_level: bool,
 ) -> Result<MeshRoundReport, String> {
     let cfg = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-        settings(&g, space_id)
+        settings_for(&g, space_id, device_level)
     };
     let Some(_bind) = cfg.bind.clone() else {
         return Ok(MeshRoundReport {
@@ -3406,7 +3435,7 @@ mod tests {
         assert_eq!(settings(&b.lock().unwrap(), "space-x"), MeshSettings::default(), "默认是关的");
 
         let peers = vec![announced("A", "http://127.0.0.1:9", &["space-x"])]; // 端口 9：连不上
-        let rep = round(&b, "space-x", "B", &peers).await.unwrap();
+        let rep = round(&b, "space-x", "B", &peers, false).await.unwrap();
         assert!(!rep.enabled, "{rep:?}");
         assert_eq!(rep.candidates, 0);
         assert!(rep.peers.is_empty(), "没开就不许碰任何对端：{rep:?}");
