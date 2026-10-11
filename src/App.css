@@ -806,6 +806,22 @@ html[data-platform="win"] .app-body {
   padding: 14px 16px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* ⭐ 2026-10-11（owner：「保持这样的布局；但去掉筛选控件外框」）：
+   ⚠️ 这个筛选框**此前没有任何专有样式** ✗（⭐ 我今天才量到 ✓）⇒ ⭐ 它一直照着 `.sync-input` 的
+   `border: 1px solid var(--border)` ＋ `background: var(--bg)` 长 ✓ ⇒ ⭐ 所以在这儿收口 ✓。
+   ⭐ 做法：⭐ 边框**透明**（⭐ 保留那 1px 占位 ⇒ ⭐ 聚焦换色时**不跳版** ✓）＋ ⭐ 底色透明 ✓。
+   ⚠️ 光写这一条不够 ✗：⭐ 还有 `.sync-input:hover:not(:disabled)` 会在**悬停时把边显出来** ✓
+      ⇒ ⭐ 必须一起压掉（⭐ 今天在设置面板那个控件上就是这么量出来的 ✓）。
+   ⚠️ **聚焦那一圈留着** ✗ —— ⭐ 那是可访问性底线（⭐ 键盘用户得看出焦点在哪 ✓）；
+      ⭐ "去掉外框"我按**静止与悬停**理解 ✓，⭐ 你要连聚焦也不要 ⭐ 说一声我去掉 ✓。
+   ⚠️ 高度仍由 `.sync-input` 的 `min-height: 44px` 管 ✓（⭐ 本仓规则：可点控件 ≥44 ✓）——⛔ 这里不动 ✓。 */
+.space-switcher-filter.sync-input {
+  border-color: transparent;
+  background: transparent;
+}
+.space-switcher-filter.sync-input:hover:not(:disabled) {
+  border-color: transparent;
+}
 .space-switcher-head-text {
   flex: 1;
   min-width: 0;
