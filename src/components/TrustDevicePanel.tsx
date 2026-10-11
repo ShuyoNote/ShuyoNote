@@ -68,12 +68,35 @@ export interface TrustDevicePanelProps {
   mergeOverlap: Reading<MergeOverlapReading>;
   /** 图④：已验证的数字码 ✓ */
   deviceCode: Reading<VerifiedDeviceCode>;
+  /**
+   * ⭐ **2026-10-11（任务 B）**：⭐ **信任走到哪一步** ✗ —— ⭐ 后端那一格（`mesh_trust_state` ✓）。
+   *
+   * ⚠️ 与上面那四个**同一把尺** ✗：读不到 ⇒ ⭐ 如实说"读不到" ✓，⛔ **不许退化成"还没开始"** ✗
+   * （「还没开始」是**一个结论** ✓，「读不到」是**没有结论** ✓ —— 界面上必须长得不一样 ✓）。
+   */
+  trustState: Reading<TrustStateReading>;
   /** 点「接入」时回传**被勾选**的那些 id ✓（一个都没勾时**不会**被调用 ✓）。 */
   onAttach?: (spaceIds: string[]) => void;
   /** 严格模式开关（默认关 ✓） */
   onStrictModeChange?: (on: boolean) => void;
   /** 只给测试/受控场景用 ✓ —— 缺省 **`false` ＝ 关** ✓（owner 口径）。 */
   initialStrictMode?: boolean;
+}
+
+/**
+ * ⭐ **信任走到哪一步** ✗（与后端 `mesh_trust_state` 的结果**逐字段同形** ✓）。
+ *
+ * ⚠️ `state` 是**机器读的那一格** ✓（`idle` ／ `trusted` ✓）—— ⭐ 界面**不许**从人话里猜它 ✗。
+ */
+export interface TrustStateReading {
+  /** `idle`（还没开始）／ `trusted`（通了）✓。 */
+  state: string;
+  /** 后端给的那句人话 ✓（⛔ 界面不许自己编 ✗）。 */
+  message: string;
+  /** 有没有**进行中**的握手 ✓。 */
+  active: boolean;
+  /** 有几条「我想信任你」正等着被采纳 ✓（⭐ 只给**条数** ✗，⛔ 后端不给设备号 ✓）。 */
+  pending: number;
 }
 
 /** 稳定空数组 —— ⛔ 别在渲染里现造 `[]`（那会让下面的 `useMemo` 每次都重算 ✓）。 */
@@ -111,6 +134,7 @@ export function TrustDevicePanel({
   localSpaces,
   mergeOverlap,
   deviceCode,
+  trustState,
   onAttach,
   onStrictModeChange,
   initialStrictMode = false,
@@ -249,6 +273,38 @@ export function TrustDevicePanel({
         <div className="set-section-title">信任设备</div>
         <div className="set-hint">两台设备之间已重新建立信任</div>
         <div className="set-hint">由你决定，我不再询问</div>
+
+        {/* ⭐ 2026-10-11（任务 B）：⭐ **走到哪一步** ✗ —— ⭐ 后端那一格（`mesh_trust_state` ✓）。
+            ⚠️ 与上面那四个读数**同一把尺** ✗：读不到就**只说读不到** ✓
+              （⛔ 绝不写成"还没开始" ✗ —— 那是把一个**没有结论**说成**一个结论** ✓）。 */}
+        {trustState.kind === "unavailable" ? (
+          <div className="sync-status is-warn" data-testid="trust-state-unavailable">
+            {UNAVAILABLE}这一步走到哪了（{trustState.reason}）—— 所以现在<b>说不出</b>通了没有 ✓
+          </div>
+        ) : (
+          <div
+            className={`sync-status ${trustState.value.state === "trusted" ? "is-ok" : ""}`}
+            data-testid="trust-state"
+          >
+            <b data-testid="trust-state-value">
+              {trustState.value.state === "trusted" ? "已经通了" : "还没开始"}
+            </b>
+            <span className="set-hint" data-testid="trust-state-message">
+              {trustState.value.message}
+            </span>
+            {trustState.value.pending > 0 && (
+              <span className="set-hint" data-testid="trust-state-pending">
+                另有 <b>{trustState.value.pending}</b> 台设备在说「想信任你这台」—— 本机正在处理，
+                不用你再点
+              </span>
+            )}
+            {trustState.value.active && trustState.value.pending === 0 && (
+              <span className="set-hint" data-testid="trust-state-active">
+                刚发出的那一条还在有效期内（对面一露面就会跟上）
+              </span>
+            )}
+          </div>
+        )}
 
         {deviceCode.kind === "unavailable" ? (
           <div className="sync-status is-warn" data-testid="code-unavailable">

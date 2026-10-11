@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
@@ -8,10 +8,11 @@ import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
-import { TrustDevicePanel } from "./TrustDevicePanel";
+import { TrustDevicePanel, type Reading, type TrustStateReading } from "./TrustDevicePanel";
 // ⭐ 2026-10-11：`MeshAdvancedForm` 已搬到「设置 · 同步」（`SyncSettingsPane` ✓）⇒ 面板不再引它 ✓。
 import {
   MESH_TRUST_BEGIN_COMMAND,
+  readTrustState,
   unavailableTrustDeviceReadings,
 } from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
@@ -1161,6 +1162,29 @@ export function SyncPanel() {
     if (unknown > 0) parts.push(`另外 ${unknown} 个空间`);
     return `附近 · 服务 ${parts.join("、")}`;
   };
+  // ⭐⭐ 2026-10-11（任务 B）：⭐ **读"信任走到哪一步"** ✗ —— 打开这一屏时读一次 ✓、点过之后**再读一次** ✓
+  //    （⛔ 先前只靠一句 toast 说"已信任" ✗ —— 那既不是读数、也**读不回来** ✓）。
+  //    ⚠️ 初始值如实写"还没读过" ✗：⛔ 不许拿 `idle`（"还没开始"）当默认 ✗ —— 那是一**个结论** ✓
+  //      （与那四条读数同一条口径：⛔ 读不到 ≠ 没有 ✓）。
+  const [trustState, setTrustState] = useState<Reading<TrustStateReading>>({
+    kind: "unavailable",
+    reason: "还没读过（打开这一屏时会读一次）",
+  });
+  const refreshTrustState = useCallback(async () => {
+    if (!isDesktopPlatform()) {
+      // ⛔ 不假装"还没开始" ✗ —— 这一层是桌面才有的（发现层在 Rust 侧 ✓）。
+      setTrustState({
+        kind: "unavailable",
+        reason: "信任这件事只在桌面端（发现层是桌面才有的那一层）",
+      });
+      return;
+    }
+    setTrustState(await readTrustState((cmd) => platform.executor.invoke(cmd as "mesh_trust_state")));
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    void refreshTrustState();
+  }, [open, refreshTrustState]);
   // ⭐ 2026-10-11（owner 拍的**甲**：一端点就通）：图④「信任这台设备」——
   //    点一次就把**勾选的那些空间**在这台设备上登记信任 ⇒ 逐个空间调 `mesh_trust_begin` ✓
   //    （⛔ 不再要求另一端也点 ✗）。⚠️ 对端**取这一轮看得见、且服务当前空间**的那一台 ✓；
@@ -1184,8 +1208,13 @@ export function SyncPanel() {
         });
       }
       toast("已信任这台设备（一端即可）", "success");
+      // ⭐ 2026-10-11（任务 B）：⭐ 点完之后**再读一次后端那一格** ✗ —— 界面上要说的是**读数** ✓，
+      //    ⛔ 不是一句 toast（它下一秒就没了，而"通了没有"要一直看得见 ✓）。
+      await refreshTrustState();
     } catch (e) {
-      // ⭐ 失败**照实报**（⛔ 不假装成功 ✗）—— 这条命令 Lead 还在落地，报错是预期的一种 ✓
+      // ⭐ 失败**照实报**（⛔ 不假装成功 ✗）—— 这一条失败时**也要**把读数刷一遍 ✓
+      //    （多半还是"还没开始" ✓ —— 那正是**如实**✓）。
+      await refreshTrustState();
       toast(`信任失败：${e}`, "error");
     }
   };
@@ -2092,6 +2121,7 @@ export function SyncPanel() {
                               点「接入」走 owner 拍的**甲**：一端点就通 ⇒ `trustDevice()` ✓。 */}
                         <TrustDevicePanel
                           {...TRUST_DEVICE_READINGS}
+                          trustState={trustState}
                           initialStrictMode={strictTrust}
                           onStrictModeChange={setStrictTrust}
                           onAttach={(spaceIds) => void trustDevice(spaceIds)}

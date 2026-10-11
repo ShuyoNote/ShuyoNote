@@ -21,6 +21,8 @@
 
 use tauri::State;
 
+use crate::pairing_trust::TrustState;
+
 /// ⭐ 这次信任的结果 ✓ —— ⭐ 给前端直接显示 ✓（⛔ 里面不许出现裸设备号／空间号 ✗）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct MeshTrustOutcome {
@@ -28,6 +30,61 @@ pub struct MeshTrustOutcome {
     pub outcome: String,
     /// ⭐ 一句能给用户看的话 ✓（⭐ 人话 ✓，⛔ 不含内部标识 ✗）。
     pub message: String,
+}
+
+/// ⭐⭐ **2026-10-11（任务 B）：信任走到哪一步的读数** ✗ —— ⭐ 给界面读 ✓。
+///
+/// ⚠️ 为什么要有它 ✗：⭐ `TrustHandshake::state()` 一直在内核里推进 ✗，而**前端没有读它的口子** ✓
+/// （`commands.ts` 里原先只有 `mesh_trust_begin` ✓）⇒ ⭐ "点了到底通没通"在界面上**说不出来** ✓。
+///
+/// ⛔ **不含任何内部标识** ✗（`INV-UI-copy-no-internal-ids` ✓）：⭐ 只回"走到哪一步" ＋ ⭐ 人话 ＋
+/// ⭐ **有几条在等采纳**（⭐ 一个数 ✓，⛔ 不给设备号 ✗）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeshTrustStateView {
+    /// ⭐ `idle` ／ `trusted` ✓（⭐ 前端的显示靠它 ✓，⛔ 不靠猜人话 ✓）。
+    pub state: String,
+    /// ⭐ 一句能给用户看的话 ✓（⭐ 人话 ✓，⛔ 不含内部标识 ✗）。
+    pub message: String,
+    /// ⭐ 有没有**进行中**的握手 ✓（⭐ 过期的不算 ✓）—— 界面用它说"刚点了、正在处理" ✓。
+    pub active: bool,
+    /// ⭐ 有几条「我想信任你」**正等着被采纳** ✓（⭐ 只给**条数** ✗，⛔ 不给设备号 ✓）。
+    pub pending: usize,
+}
+
+/// ⭐ 把内核那两档变成**给人看的两格** ✗ —— ⭐ **纯函数** ✓（⭐ 判据不用起宿主就能钉住"哪档说哪句话" ✓）。
+///
+/// ⚠️ 兜底那一档要说**下一步做什么** ✗，⛔ 不是只说"没有" ✗（owner 口径：界面上的话要能照着做 ✓）。
+pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> MeshTrustStateView {
+    let (state, message) = match state {
+        TrustState::Idle => (
+            "idle",
+            "还没有信任过哪台设备 —— 在「附近的设备」里点一下「接入」，点一次就算通",
+        ),
+        TrustState::Trusted => (
+            "trusted",
+            "已经建立信任：你在同一个网络里时它会直接连，不用你再确认一遍",
+        ),
+    };
+    MeshTrustStateView {
+        state: state.to_string(),
+        message: message.to_string(),
+        active,
+        pending,
+    }
+}
+
+/// ⭐⭐ **2026-10-11（任务 B）：读一眼"信任走到哪一步"** ✗（⭐ 只读 ✓，⛔ 一个字节都不写 ✗）。
+///
+/// ⚠️ **没有 `space_id` 参数** ✗ —— ⭐ 这是**本机**的握手状态 ✓（`lan_state` 里那一格是进程级的 ✓），
+/// ⛔ 不是"某个空间认了谁" ✗（那个在 `mesh_set_config` 的 `paired` 里 ✓，另有一处 ✓）。
+#[tauri::command]
+pub fn mesh_trust_state() -> MeshTrustStateView {
+    let now = crate::lan_state::now_ms();
+    let (state, active, pending) = crate::lan_state::with_trust(|h| {
+        (h.state(), h.is_active(now), h.pending_asks(now).len())
+    });
+    trust_state_view(state, active, pending)
 }
 
 /// ⭐ 把随机字节写成十六进制 ✗（⭐ 自带小函数 ✓：⛔ 不为一个 nonce 引依赖 ✓）。
@@ -87,7 +144,9 @@ pub fn mesh_trust_begin(
         });
     }
     // ⭐ 唯一实现 ✓ —— ⭐ 三件一起做 ✓（⭐ 少一件就是"⭐ 配对成功却 401 ✗"✓）。
-    crate::sync::remember_peer_card(&c, &scope.space, &peer, &token)?;
+    //   ⭐ 2026-10-11（丙）：⭐ `scope.device_level` **由调用方传进去** ✗（本层⛔ 不反推 ✓）——
+    //   个人档 ⇒ 卡与"本机要出示的那份"都落**空串那一格** ✓（＝ 本机一份，撤回也是本机级 ✓）。
+    crate::sync::remember_peer_card(&c, &scope.space, &peer, &token, scope.device_level)?;
     // ⭐ 甲 ✗：⭐ 把"⭐ 我想信任你 ✗"发出去 ✓（⭐ ⛔ 令牌不在这一格里 ✓）。
     let ask = new_trust_ask();
     let now = crate::lan_state::now_ms();

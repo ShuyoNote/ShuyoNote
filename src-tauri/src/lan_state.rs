@@ -313,19 +313,21 @@ impl Drop for BackgroundInFlightGuard {
 ///
 /// 返回一句人话（这一轮真的要跑了）／`None`（上一轮还没跑完 ⇒ **这一轮跳过** ✓，不是错误 ✓）。
 ///
-/// ⚠️ `mesh_cfgs` 就是上面那份 `(解析后的空间, 本地空间 id, 设置)` ✓ ⇒ ⛔ **没配网格的空间
+/// ⚠️ `mesh_cfgs` 就是上面那份 `(解析后的空间, 本地空间 id, 设置, 是不是个人档)` ✓ ⇒ ⛔ **没配网格的空间
 /// 根本不在这个清单里** ✗ ⇒ "没配 ⇒ 一个字节都不动"这条口径**一个字不变** ✓（有判据 ✓）。
 fn spawn_background_round(
     app: &tauri::AppHandle,
     device_id: &str,
-    mesh_cfgs: &[(String, String, crate::mesh::MeshSettings)],
+    mesh_cfgs: &[(String, String, crate::mesh::MeshSettings, bool)],
     peers: &[lan::Peer],
 ) -> Option<String> {
     if BACKGROUND_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return None;
     }
-    let pairs: Vec<(String, String)> =
-        mesh_cfgs.iter().map(|(space, ws, _)| (space.clone(), ws.clone())).collect();
+    let pairs: Vec<(String, String, bool)> = mesh_cfgs
+        .iter()
+        .map(|(space, ws, _, device_level)| (space.clone(), ws.clone(), *device_level))
+        .collect();
     let count = pairs.len();
     let dev = device_id.to_string();
     let peers: Vec<lan::Peer> = peers.to_vec();
@@ -349,14 +351,9 @@ fn spawn_background_round(
         let mut found_any = false;
         let mut candidates_total: usize = 0;
         let heard_before = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst);
-        for (proto_space, db_space) in pairs {
-            // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定由**这里**（"有 db 那一层" ✓）算出来再传进去 ✓ ——
-            //   `mesh_round_once` 自己不判 ✗（否则就是第二份口径 ✓；方案 §9.1 ✓）。
-            //   ⚠️ 这里**不能用 `?`** ✗（这一段是 `async move`、返回值是 `()` ✓）⇒ 取不到锁就按"不是设备级"✓。
-            let device_level = match db.0.lock() {
-                Ok(c) => crate::mesh::is_device_level_space(&c, &proto_space),
-                Err(_) => false,
-            };
+        for (proto_space, db_space, device_level) in pairs {
+            // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
+            //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
             match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers, device_level)
                 .await
             {
@@ -666,23 +663,31 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。
             // ⚠️ 发现层开关用的是 `meshed`（**配了**网格的空间），不是 `mesh_bases`（**宣告得出去**的）：
             //    绑在回环上的那台宣告不出去，但它**照样要听**（它是客户端那一侧，要能拉别人）。
-            let mesh_cfgs: Vec<(String, String, crate::mesh::MeshSettings)> = {
+            let mesh_cfgs: Vec<(String, String, crate::mesh::MeshSettings, bool)> = {
                 let db = app2.state::<Db>();
                 let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
                 profiles
                     // ⚠️ 两个 id 都要留着：`space` 是对暗号（公告里报的就是它），`ws` 才是**库文件名**
                     //    —— 2026-09-26 真机修（把远端 id 当库名 ⇒ 窗口服务一个新建的空库）。
+                    // ⭐ **2026-10-11（丙）**：⭐ 第四格是"这一档是不是个人档" ✗ ——
+                    //   `ensure_window` 要靠它决定 ⭐ **卡从库里哪一行载** ✗（个人档 ⇒ 空串那一行 ✓）。
+                    //   ⚠️ 判定用**那一处**（`mesh::is_device_level_space` ✓，方案 §10.3 ✓）**只算一次** ✗
+                    //   —— ⛔ 不再"开窗一处、后台轮另算一处" ✗（同一件事两份判定迟早会漂 ✓）。
                     .iter()
-                    .map(|(s, _, ws)| (window_serve_space(&c, s, ws), ws.clone(), settings_for_profile(&c, s, ws)))
+                    .map(|(s, _, ws)| {
+                        let served = window_serve_space(&c, s, ws);
+                        let device_level = crate::mesh::is_device_level_space(&c, &served);
+                        (served, ws.clone(), settings_for_profile(&c, s, ws), device_level)
+                    })
                     // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
                     //   而 `''` 会去读 **`mesh_bind:` 那个空键**（写入路径**永远写不出来** ✓ ⇒ 只可能是更早版本残留 ✓）
                     //   ⇒ 它就在 `served` 里留一个**空项** ✓：面板/日志会显示
                     //   「这一扇门服务 2 个空间：**、**123456789Ok,./」✗（owner 2026-10-08 截图逐字 ✓，本机日志同形 ✓）。
                     //   ⚠️ 这条红读数＝**截图与日志那两行** ✓；修法＝**按"服务空间非空"过滤** ✓。
-                    .filter(|(space, _, cfg)| !space.trim().is_empty() && cfg.bind.is_some())
+                    .filter(|(space, _, cfg, _)| !space.trim().is_empty() && cfg.bind.is_some())
                     .collect()
             };
-            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
+            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _, _)| s.clone()).collect();
             // ⭐ 2026-10-09（task-8）：日志那一句「匹不匹配」用的就是这份（去重 ✓、与网格**同一把尺** ✓）。
             own_spaces = {
                 let mut v: Vec<String> = Vec::new();
@@ -704,16 +709,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //      **保留可读**（不静默删 ✓）但**不再作任何凭证** ✗。
             //   ⚠️ 用 **BTreeMap**（键有序）⇒ 同一组网卡/同一组配置**每次跑出来的顺序一样** ✓
             //      （HashMap 的遍历顺序不定 ⇒ 判据会 flaky ✗）。
-            let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String)>> =
+            let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String, bool)>> =
                 std::collections::BTreeMap::new();
-            for (space, ws, cfg) in &mesh_cfgs {
+            for (space, ws, cfg, device_level) in &mesh_cfgs {
                 let Some(bind) = cfg.bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) else {
                     continue;
                 };
                 by_bind
                     .entry(bind.to_string())
                     .or_default()
-                    .push((ws.clone(), space.clone()));
+                    .push((ws.clone(), space.clone(), *device_level));
             }
             for (bind, pairs) in &by_bind {
                 // ⚠️ 取不到 app data 目录 ⇒ **如实说、这一轮不开窗**（⛔ 不静默跳过 ✗）
@@ -725,7 +730,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
                         Some(base) => {
                             // ⭐ 一扇门服务多个空间 ⇒ **每个空间都记一条基址**（公告是按空间发的 ✓）
-                            for (_, space) in pairs {
+                            for (_, space, _) in pairs {
                                 mesh_bases.push((space.clone(), base.clone()));
                             }
                         }

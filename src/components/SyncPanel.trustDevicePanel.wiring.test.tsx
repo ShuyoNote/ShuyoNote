@@ -2,8 +2,10 @@
 //
 // ⭐ 两半都用机器判：
 //   ⭐ **结果级**：把面板**真渲染**出来（`createRoot` ＋ `flushSync`，照 `TrustDevicePanel.test.tsx:10-11`
-//      的房规 —— 本仓**没有** @testing-library ✓），断言四个"读不到"槽位**都出现** ✓
+//      的房规 —— 本仓**没有** @testing-library ✓），断言那几条"读不到"槽位**都出现** ✓
 //      且**没有一个显示 0** ✓（⛔ 0 是一个**结论**，"读不到"是**没有结论** —— 界面上必须长得不一样 ✓）
+//      ⚠️ 2026-10-11（任务 B）：槽位从四条变**五条** ✗（多了"走到哪一步" ✓，见 `TrustDevicePanel.test.tsx`
+//         那一组 ✓）—— 这条清单**跟着读数一起长** ✓，⛔ 不是漏了一条 ✗。
 //   ⭐ **接线级**：`SyncPanel.tsx` 里真的挂了这个面板 ＋ 老路（严格模式那一折）**还在** ✓
 //
 // ⭐ **怎么看出它会红**（三条，逐条都能真跑）：
@@ -46,7 +48,7 @@ function render(node: React.ReactElement): HTMLElement {
 }
 
 describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () => {
-  it("1) ⭐ 四条读数**全是 unavailable**（⛔ 一个 `ok` 都没有 ⇒ ⛔ 不许拿 0 冒充『没有』）＋ 每条都带人话原因", () => {
+  it("1) ⭐ 读数**全是 unavailable**（⛔ 一个 `ok` 都没有 ⇒ ⛔ 不许拿 0 冒充『没有』）＋ 每条都带人话原因", () => {
     const r = unavailableTrustDeviceReadings();
     for (const [key, value] of Object.entries(r)) {
       expect(value.kind, `${key} 不是「读不到」⇒ 那是拿 0／假数冒充 ✗`).toBe("unavailable");
@@ -54,13 +56,25 @@ describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () =>
         expect(value.reason.trim().length, `${key} 的"读不到"没给原因`).toBeGreaterThan(0);
       }
     }
-    expect(Object.keys(r).sort()).toEqual(["attachOffer", "deviceCode", "localSpaces", "mergeOverlap"]);
+    expect(Object.keys(r).sort()).toEqual([
+      "attachOffer",
+      "deviceCode",
+      "localSpaces",
+      "mergeOverlap",
+      "trustState",
+    ]);
   });
 
-  it("2) ⭐ **结果级**：真渲染那一屏 ⇒ 四个槽位都出现「读不到」，且**没有一个显示 0**", () => {
+  it("2) ⭐ **结果级**：真渲染那一屏 ⇒ 五个槽位都出现「读不到」，且**没有一个显示 0**", () => {
     const el = render(<TrustDevicePanel {...unavailableTrustDeviceReadings()} />);
-    // ⭐ 面板自己给这四个槽位挂了 testid（`TrustDevicePanel.tsx:174/226/254/311` ✓）
-    for (const id of ["offer-unavailable", "overlap-unavailable", "code-unavailable", "local-unavailable"]) {
+    // ⭐ 面板自己给这五个槽位挂了 testid（`TrustDevicePanel.tsx` 里各一处 ✓）
+    for (const id of [
+      "offer-unavailable",
+      "overlap-unavailable",
+      "code-unavailable",
+      "local-unavailable",
+      "trust-state-unavailable",
+    ]) {
       const node = el.querySelector(`[data-testid="${id}"]`);
       expect(node, `${id} 没渲染出来（面板没挂上／读数被当成有值了？）`).toBeTruthy();
       expect(node!.textContent ?? "", `${id} 里没出现「读不到」`).toContain("读不到");

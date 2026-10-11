@@ -1,6 +1,6 @@
 # 个人空间的网格设置改为**设备级**
 
-> 状态：**施工中**（Rust 半已落地；界面半在另一条线上做）
+> 状态：**施工中**（Rust 半已落地；⭐ 丙「对端表升设备级」已落地；⭐ 信任状态界面已落地；团队空间本轮不动）
 > 证据：`../../src-tauri/src/mesh.rs`（`DEVICE_LEVEL_SPACE`／`settings_for`／`migrate_device_level_mesh`／`is_device_level_space`）／`../../src-tauri/src/sync.rs`（`MeshScope.device_level`／`adopt_pending_trust_asks`／`mesh_space_in_use`）／`../../src-tauri/src/lan_state.rs`（`settings_for(c, &space, space_id.trim().is_empty())`）／`2026-10-11-one-click-trust-decision.md`
 >
 > ⭐ **口径（owner 2026-10-11 重申）** ✗：⭐ **个人空间是设备级** ✗ ——
@@ -279,3 +279,61 @@
    ＋ ⭐ 面板显示（⭐ 那块在 `TrustDevicePanel.tsx` ✓，⭐ 16.1 KB ✓）✓
 ⚠️ ⭐ 后端那半**已经有了** ✗：⭐ `TrustHandshake::state()` ✓ 今天刚接上线 ✓（⭐ `begin` 会推进 ✓）
 ```
+
+---
+
+## 12. ⭐ 落地实况（2026-10-11 第二轮 —— ⭐ 丙 ＋ 信任状态界面 ✗）
+
+### 12.1 ⭐ 丙：**已落地** ✗（一条一次性迁移）
+
+```
+⭐ 一处判定 ✗：`mesh.rs paired_row_key(space, device_level)` ✓ —— ⭐ 个人档 ⇒ 空串那一行 ✓；
+   ⭐ 团队档 ⇒ 自己的 `space_id` ✓（⛔ 一个字节不变 ✗）。⭐ 调用方**传参** ✓（⛔ 不在下游反推 ✗）。
+⭐ 落点（⭐ 与 §11.1 那张清单一一对应 ✓）：
+   ⭐ `sync.rs remember_peer_card(…, device_level)` ✓（卡 ＋ 出示那份落在**同一把键**上 ✓）
+   ⭐ `sync.rs device_unpair_at(…)` ✓（⭐ 从命令体抽出来的**可测那一半** ✗ —— 原先判据够不着 ✓）
+   ⭐ `mesh.rs paired_devices(c, space, device_level)` ✓
+   ⭐ `mesh.rs load_cards(dir, proto_space, device_level, into)` ✓
+      ⚠️ ⭐ **两把键不是一回事** ✗：库里读哪一行 ＝ `paired_row_key` ✓，
+         ⭐ 而**内存卡表／门服务哪个空间**永远是 `proto_space` ✓（个人的 `proto_space` 是配对暗号 ✓）
+   ⭐ `mesh.rs ensure_window(spaces: &[(…, …, bool)])` ✓ ／ `open_window_at` ✓ ／ `load_cards_for` ✓
+   ⭐ `round_candidates(…, device_level)` ✓（出示的那一份也按同一把键读 ✓）
+   ⚠️ `db.rs` 那四格**签名未动** ✗：调用方把**算好的行键**传进去 ✓（⛔ 数据库层不认识"个人档" ✗）。
+⭐ 迁移 ✗：`migrate_device_level_paired_devices` ✓ —— ⭐ 并集 ✓（同名取 `added_at_ms` **更早**那条 ✓，
+   与遍历顺序无关 ✓）、⛔ 旧行一个不删 ✓、⭐ 只搬"可证明是个人档"的行 ✓（团队行 ＋ 日志 ✓）、
+   ⭐ 一行日志说合了几条 ✓。
+⭐ 判据 ✗：`sync.rs::device_level_paired_tests` 四条 ✓ ＋ `mesh.rs` 那条端到端的门判据 ✓。
+   红读数（实现之前，逐字）：`test result: FAILED. 0 passed; 4 failed; …` ✓
+   ＋ 两条**真变异**红读数（见提交信息 ✓）。
+```
+
+### 12.2 ⭐⭐ 本轮的**新发现**（方案 §11 里没写 ✗）：⭐ 迁移**只能做一次** ✗
+
+```
+⚠️ ⭐ 症状 ✗：⛔ 旧行**一个不删** ✓ ⇒ ⭐ 若每次写路径都并一遍**对端表** ✗，
+   ⭐ 用户**撤回过**的那一台会被旧行**重新并回来** ✓ —— ⭐ 那是**安全方向**上的回归 ✓
+   （＝"撤回"被静默撤销 ✓）。⭐ 设置那一半**没有**这个形状 ✓（它是"一格有值就跳过" ✓，
+   ⭐ 而对端是一**个集合** ⇒ "已经有值"说不清 ✓）。
+⇒ ⭐ 修法 ✗：一格**一次性标记**（`mesh_paired_migrated_to_device_level` ✓）
+   —— ⚠️ 它**不是第二份真相源** ✓：⛔ 不存"认了谁" ✗，⭐ 只记"这件事做过了" ✓。
+⇒ ⭐ 判据 ✗：`a_migration_never_resurrects_a_device_the_user_unpaired` ✓
+   （**真变异**：去掉那个标记 ⇒ 红 ✓ —— 红读数见提交信息 ✓）。
+```
+
+### 12.3 ⭐ 信任状态的界面：**已落地** ✗（任务 B）
+
+```
+⭐ 命令 ✗：`mesh_trust::mesh_trust_state` ✓ —— ⭐ 只读 ✓（⛔ 一个字节都不写 ✗），
+   ⭐ **没有 `space_id` 参数** ✗（它是**本机**那一格进程级握手状态 ✓，⛔ 不是"某个空间认了谁" ✗）。
+   ⭐ 结果四格 ✓：`state`（`idle`／`trusted` ✓）／ `message`（人话 ✓）／ `active` ✓／ `pending`（**只给条数** ✓）。
+   ⛔ 不含任何内部标识 ✗（`INV-UI-copy-no-internal-ids` ✓）。
+⭐ 契约 ✗：`src/lib/platform/commands.ts` 的 `MeshTrustStateView` ＋ `mesh_trust_state` 条目 ✓
+   （⭐ `check-web-commands` 登记为**桌面专属** ✓，⛔ 不在 `web.ts` 里假造一层 ✗）。
+⭐ 界面 ✗：`trustDevicePanelReadings.ts readTrustState` ✓（⭐ 读不到 ⇒ **如实说读不到** ✓，
+   ⛔ 不退化成一个 `idle` 结论 ✗）＋ `TrustDevicePanel.tsx` 图④ 那一格 ✓
+   （`data-testid="trust-state"` ／ `trust-state-value` ／ `trust-state-unavailable` ✓）
+   ＋ `SyncPanel.tsx` 打开这一屏时读一次 ✓、**点过之后再读一次** ✓。
+⭐ 判据 ✗：`src/lib/trustDevicePanelReadings.test.ts` 五条 ✓（含**真变异**：catch 里编一个 `idle` ⇒ 红 ✓）
+   ＋ `TrustDevicePanel.test.tsx` 新增三条 ✓ ＋ 挂载那条判据的槽位从四条长到**五条** ✓。
+```
+

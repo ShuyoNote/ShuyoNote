@@ -420,6 +420,12 @@ export const api = {
   deviceUnpair: (workspaceId: string | null, peerDeviceId: string) =>
     invoke("device_unpair", { workspaceId, peerDeviceId }),
   /**
+   * ⭐ **2026-10-11（任务 B）**：⭐ **信任走到哪一步** ✗ —— 只读 ✓（内核那条状态一直在推进，
+   * 而前端原先**没有读它的口子** ✗）⇒ 界面因此能如实说"通了没有"✓（⛔ 不靠 toast 猜 ✗）。
+   * ⚠️ **桌面专属**（发现层是 Rust 的 UDP；Web 上它没有对象 ⇒ 调用方会如实说"读不到"✓）。
+   */
+  meshTrustState: () => invoke("mesh_trust_state"),
+  /**
    * ⭐ T3：**设备直连**采纳侧 —— 三态：不传码 ⇒ `need_confirm`（**零写入**，只回算出来的码给人核对）；
    * 传了对不上 ⇒ `rejected`（零写入）；逐位相同 ⇒ `ok`，这时**才**写接线。
    * ⚠️ **没有"等对方同意"这一步**（`INV-PER-pairing-needs-no-acceptance`）。

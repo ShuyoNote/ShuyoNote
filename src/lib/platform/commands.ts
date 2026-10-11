@@ -298,6 +298,22 @@ export interface MeshConfigState {
 }
 
 /**
+ * ⭐ 2026-10-11（任务 B）：⭐ **信任走到哪一步** ✗（与 Rust `mesh_trust::MeshTrustStateView` 逐字段相同 ✓）。
+ *
+ * ⚠️ `state` 是**机器读的那一格** ✓（`idle` ／ `trusted` ✓）—— ⭐ 界面**不许**自己从人话里猜 ✗。
+ */
+export interface MeshTrustStateView {
+  /** `idle`（还没开始）／ `trusted`（通了）✓。 */
+  state: string;
+  /** 一句能给用户看的话 ✓（⛔ 不含任何内部标识 ✗）。 */
+  message: string;
+  /** 有没有**进行中**的握手 ✓（过期的不算 ✓）。 */
+  active: boolean;
+  /** 有几条「我想信任你」正等着被采纳 ✓（⭐ 只给**条数** ✗，⛔ 不给设备号 ✓）。 */
+  pending: number;
+}
+
+/**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
  * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
@@ -1221,6 +1237,18 @@ export interface CommandMap {
   mesh_trust_begin: {
     args: { spaceId: string; peerDeviceId: string };
     result: { outcome: string; message: string };
+  };
+  /**
+   * ⭐ 2026-10-11（任务 B）：⭐ **信任走到哪一步** ✗ —— 只读读数（`TrustHandshake::state()` 一直在推进 ✓，
+   * 而前端原先**没有读它的口子** ✗ ⇒ "点了到底通没通"在界面上说不出来 ✓）。
+   *
+   * ⚠️ **没有参数** ✗：这是 ⭐ **本机**的握手状态 ✓（进程级的那一格 ✓），⛔ 不是"某个空间认了谁" ✗。
+   * ⚠️ 结果里 ⛔ **不含任何内部标识** ✗（只说走到哪一步 ＋ 人话 ＋ 有几条在等采纳 ✓）。
+   * ⚠️ **只有桌面**（与 `mesh_trust_begin` 同一条理由：发现层是 Rust 的 UDP；Web 没有这一层）。
+   */
+  mesh_trust_state: {
+    args: undefined;
+    result: MeshTrustStateView;
   };
   fetch_bookmark_metadata: {
     args: { url: string };

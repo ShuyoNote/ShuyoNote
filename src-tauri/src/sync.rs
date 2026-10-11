@@ -2472,7 +2472,7 @@ pub fn device_pair_export(
         .map_err(|e| format!("没有生成载荷：{e}"))?;
     // ⭐⭐ A 的那一半：**在生成这一刻就把对面登记好** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
     //    ⚠️ 只有"点了对面那一台"才做（没点 ⇒ 本机根本不知道对面是谁 ⇒ 只能走两次配对 ✓）。
-    let registered = apply_device_pair_export(&c, &scope.space, &peer, &token)?;
+    let registered = apply_device_pair_export(&c, &scope.space, &peer, &token, scope.device_level)?;
     let text = crate::pairing::encode_device_pair(&payload)?;
     let check_code = crate::pairing::check_code(&text);
     let qr_fits = crate::pairing::fits_single_qr(&text);
@@ -2644,10 +2644,11 @@ pub(crate) fn apply_device_pair_import(
     peer_device_id: &str,
     bind: &str,
     token: &str,
+    device_level: bool,
 ) -> Result<bool, String> {
     crate::mesh::set_mesh_bind(c, proto_space, Some(bind))?;
     crate::mesh::set_mesh_token(c, proto_space, Some(token))?;
-    remember_peer_card(c, proto_space, peer_device_id, token)
+    remember_peer_card(c, proto_space, peer_device_id, token, device_level)
 }
 
 /// ⭐⭐ **R110（owner 2026-10-02 拍 A）：把"对面那一台"登记好** —— 卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓。
@@ -2670,11 +2671,18 @@ pub(crate) fn remember_peer_card(
     proto_space: &str,
     peer_device_id: &str,
     secret: &str,
+    // ⭐⭐ 2026-10-11（丙）：⭐ 由**调用方**把判定传进来 ✓（它知道这一档是不是个人档 ✓）——
+    //   ⛔ 本层**不许**自己反推 ✗（方案 §10.3：判定只有一处 ✓）。
+    device_level: bool,
 ) -> Result<bool, String> {
+    // ⭐ 库里那一行的键：个人档 ⇒ 空串那一行 ✓（＝ 一份，两个个人空间共用 ✓）；团队档 ⇒ 自己的 ✓。
+    //   ⚠️ 与下面 ③ 那把键**不是一回事** ✗：门/内存卡表永远按**门服务的空间** `proto_space` 记 ✓。
+    let row = crate::mesh::paired_row_key(proto_space, device_level);
     // ① 卡：**只存哈希**（明文只用来算哈希，见 `db::pair_device` ✓）
-    crate::db::pair_device(c, proto_space, peer_device_id, secret)?;
-    // ② 本机要出示给那一台的那份（明文只在本机这一侧 ✓）
-    crate::mesh::set_pair_secret(c, proto_space, peer_device_id, Some(secret))?;
+    crate::db::pair_device(c, row, peer_device_id, secret)?;
+    // ② 本机要出示给那一台的那份（明文只在本机这一侧 ✓）—— ⭐ 与卡片**同一把键** ✓
+    //   （⛔ 两把键 ⇒ "配对成功却 401" ✗：卡片在设备级、出示那份还在逐空间 ✓）。
+    crate::mesh::set_pair_secret(c, row, peer_device_id, Some(secret))?;
     // ③ 正在跑的门也要认它 —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
     crate::mesh::add_paired(proto_space, &crate::db::sha256_hex(secret))
 }
@@ -2755,7 +2763,7 @@ pub(crate) fn adopt_pending_trust_asks(
             continue;
         }
         // ⭐ **唯一实现** ✓ —— ⛔ 那三步不许在这里重写 ✗（判据② ✓）。
-        match remember_peer_card(c, proto_space, &dev, &token) {
+        match remember_peer_card(c, proto_space, &dev, &token, device_level) {
             Ok(_) => {
                 crate::lan_state::with_trust(|h| {
                     h.note_remote_confirm(now, crate::pairing_trust::TRUST_TTL_MS)
@@ -2791,11 +2799,13 @@ pub(crate) fn apply_device_pair_export(
     proto_space: &str,
     peer_device_id: &str,
     secret: &str,
+    // ⭐ 2026-10-11（丙）：⭐ 由调用方传进来 ✗（同上：⛔ 本层不反推 ✓）。
+    device_level: bool,
 ) -> Result<bool, String> {
     if peer_device_id.trim().is_empty() {
         return Ok(false);
     }
-    remember_peer_card(c, proto_space, peer_device_id, secret)
+    remember_peer_card(c, proto_space, peer_device_id, secret, device_level)
 }
 
 /// ⭐ **T3：设备直连「把这台设备接进来」的采纳侧**（`U1`／`U2`／`U3`／`U6`）。
@@ -2882,7 +2892,7 @@ pub fn device_pair_import(
     //   写下的卡不在门认的那个空间里** ✗（同族洞，2026-10-02 与 U11 的洞一起查到 ✓）。
     let scope = mesh_scope(&db, Some(args.space_id.as_str()))?;
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
-    crate::sync::apply_device_pair_import(&c, &scope.space, &peer_device_id, &bind, &token)?;
+    crate::sync::apply_device_pair_import(&c, &scope.space, &peer_device_id, &bind, &token, scope.device_level)?;
     Ok(DevicePairImportResult {
         outcome: "ok".to_string(),
         check_code: computed,
@@ -3545,7 +3555,7 @@ pub async fn mesh_sync_now(
     // ③ 开窗（配了地址才开）＋ 拉一轮
     //    窗口的库 = **本地空间那一份**（`scope.db_space`）；它服务/匹配的空间 = `scope.space`。
     let window = crate::mesh::ensure_window_for(
-        &[(scope.db_space.clone(), scope.space.clone())],
+        &[(scope.db_space.clone(), scope.space.clone(), scope.device_level)],
         &scope.device,
         cfg.bind.as_deref().unwrap_or(""),
     )?
@@ -4056,26 +4066,42 @@ pub fn device_unpair(
     workspace_id: Option<String>,
     peer_device_id: String,
 ) -> Result<crate::mesh::MeshPairedState, String> {
-    let scope = mesh_scope(&db, workspace_id.as_deref())?;
+    let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+    device_unpair_at(&c, workspace_id.as_deref(), &peer_device_id)
+}
+
+/// ⚠️ **2026-10-11（丙）**：把上面那条命令**可测的那一半**抽出来 ✗ ——
+/// 理由与 `mesh_config_state_at` / `apply_device_pair_import` **逐字同源** ✓：
+/// 命令那层拿的是 `State<'_, Db>` ⇒ ⭐ **单测跑不起来** ✗ ⇒ 挂在命令体里的口径
+/// **判据够不着** ✓ ⇒ 而"撤回在个人档上是不是本机级"正是本轮要钉的那一条 ✓。
+///
+/// ⚠️ **纯搬迁** ✗：行为与搬迁前**逐字一致** ✓（锁少拿一次，但那是同一个 `Mutex` 的连续两段，
+/// 中途没有别的写者能插进来 —— 命令是同步的、`State` 就这一把锁 ✓）。
+pub(crate) fn device_unpair_at(
+    c: &Connection,
+    workspace_id: Option<&str>,
+    peer_device_id: &str,
+) -> Result<crate::mesh::MeshPairedState, String> {
+    let scope = mesh_scope_at(c, workspace_id)?;
     let peer = peer_device_id.trim().to_string();
     if peer.is_empty() {
         return Err("要解除哪一台？给一个 device_id".to_string());
     }
-    let hash = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        let h = crate::db::unpair_device(&c, &scope.space, &peer)?;
-        // ③ 本机给他的那一份也清掉（没有 ⇒ 空操作 ✓）
-        crate::mesh::set_pair_secret(&c, &scope.space, &peer, None)?;
-        h
-    };
+    // ⭐⭐ 2026-10-11（丙）：⭐ 库里那一行的键按**同一处判定**算 ✓（个人档 ⇒ 空串 ✓）
+    //   —— ⚠️ 它与"门服务的空间"（`scope.space` ＝ 配对暗号 ✓）**不是一回事** ✗：
+    //   门/内存卡表永远按 `scope.space` 找 ✓（见下面的 `forget_paired` ✓）。
+    let row = crate::mesh::paired_row_key(&scope.space, scope.device_level).to_string();
+    let hash = crate::db::unpair_device(c, &row, &peer)?;
+    // ③ 本机给他的那一份也清掉（没有 ⇒ 空操作 ✓）—— ⭐ 与卡片**同一把键** ✓
+    //   （⛔ 两把键 ⇒ "卡删了、出示的那份还在"✗ —— `remember_peer_card` 那三件是一体的 ✓）。
+    crate::mesh::set_pair_secret(c, &row, &peer, None)?;
     // ② 跑到正在跑的门里把卡摘掉（`hash` 还要用来报"本来就配过吗" ⇒ **借用**它 ✓）
+    //   ⚠️ 门那一侧**按 `scope.space` 找**（内存卡表是"门服务哪个空间"那把键 ✓）——
+    //   ⛔ 拿 `row` 去找会**找不到那扇门** ✗（个人的门服务的是配对暗号，不是空串 ✓）。
     if let Some(h) = hash.as_deref() {
         crate::mesh::forget_paired(&scope.space, h)?;
     }
-    let paired = {
-        let c = db.0.lock().expect("db mutex poisoned");
-        crate::db::paired_device_count(&c, &scope.space)?
-    };
+    let paired = crate::db::paired_device_count(c, &row)?;
     Ok(crate::mesh::MeshPairedState {
         peer: peer,
         was_paired: hash.is_some(),
@@ -4138,13 +4164,13 @@ pub fn mesh_set_config(
         crate::mesh::stop_window(&scope.space)?;
         let paired = {
             let c = db.0.lock().expect("db mutex poisoned");
-            crate::mesh::paired_devices(&c, &scope.space)?
+            crate::mesh::paired_devices(&c, &scope.space, scope.device_level)?
         };
         return Ok(crate::mesh::config_state(&cfg, None, &[], &paired));
     }
     // 窗口的库 = **本地空间那一份**（`scope.db_space`）；服务/匹配的空间 = `scope.space`。
     let window = crate::mesh::ensure_window_for(
-        &[(scope.db_space.clone(), scope.space.clone())],
+        &[(scope.db_space.clone(), scope.space.clone(), scope.device_level)],
         &scope.device,
         cfg.bind.as_deref().unwrap_or(""),
     )?;
@@ -4153,7 +4179,7 @@ pub fn mesh_set_config(
     // ⭐ U11/T5：把"认了哪些设备"一起报出去（界面要能点名再逐台解除 ✓；⛔ 只有 id ＋ 时间 ✗）
     let paired = {
         let c = db.0.lock().expect("db mutex poisoned");
-        crate::mesh::paired_devices(&c, &scope.space)?
+        crate::mesh::paired_devices(&c, &scope.space, scope.device_level)?
     };
     Ok(crate::mesh::config_state(&cfg, window, &served, &paired))
 }
@@ -4210,7 +4236,7 @@ pub(crate) fn mesh_config_state_at(
         &cfg,
         window,
         &crate::mesh::served_spaces(&space),
-        &crate::mesh::paired_devices(c, &space)?,
+        &crate::mesh::paired_devices(c, &space, device_level)?,
     ))
 }
 
@@ -4546,6 +4572,287 @@ pub(crate) fn mesh_scope_at(c: &Connection, workspace_id: Option<&str>) -> Resul
     // ⭐ 2026-10-11：⭐ 个人档 ＝ `space_id` 为空 ✓（**这一行就是那个判定的出处** ✓ ——
     //   `space` 那一格在个人档下会被换成"配对暗号"✓，⛔ 不能拿它反推是不是个人 ✓）。
     Ok(MeshScope { space, db_space: pick.1, device: device_id, device_level: personal })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐⭐ 2026-10-11（owner 补拍「丙」）：⭐ **个人档的对端表升成设备级** ✗ ——
+//    个人档读写一律走"空 `space_id`"那一行 ✓；⭐ 团队档照旧逐空间 ✓（方案 §11 ✓）。
+//
+//    ⚠️ 这几条**先写先红** ✗ —— 实现没动之前，个人档那两个空间**各读自己那一行** ✓
+//      ⇒ ⭐ 判据① 的第一句就红（"写一次 ⇒ 两个个人空间都看得到" ✗）。
+//
+//    ⚠️ **一条实测出来的落点**（方案 §11 里没写 ✓）：⭐ 迁移**只能做一次** ✗ ——
+//      旧行**一个不删** ✗ ⇒ 若每次写路径都并一遍，⭐ 用户**撤回过**的那一台会被**重新并回来** ✗
+//      （＝"撤回"被静默撤销 ✓）⇒ 判据④ 钉这条 ✓。
+// ═══════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod device_level_paired_tests {
+    use super::*;
+
+    /// 自带夹具（与 `r146_mesh_scope_tests` 同一形状 ✓ —— 这四张表够 `mesh_scope_at` 与对端表读 ✓）。
+    fn fixture() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);
+             CREATE TABLE meta.mesh_paired_devices (
+                 space_id TEXT NOT NULL, device_id TEXT NOT NULL, added_at_ms INTEGER NOT NULL DEFAULT 0,
+                 secret_sha256 TEXT NOT NULL DEFAULT '', PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO meta.sync_state (key, value) VALUES ('device_id', 'dev-me');",
+        )
+        .unwrap();
+        c
+    }
+
+    /// ⭐ **直接读"设备级那一行"** ✗（`space_id` 空 ✓）—— 判据要能逐字说出"落在哪一行" ✓，
+    /// 所以这里**故意绕过** `paired_devices`（后者按口径读 ⇒ 拿它验它自己就是循环论证 ✓）。
+    fn device_level_rows(c: &Connection) -> Vec<(String, String, i64)> {
+        let mut stmt = c
+            .prepare(
+                "SELECT device_id, secret_sha256, added_at_ms FROM mesh_paired_devices \
+                 WHERE space_id = '' ORDER BY device_id ASC",
+            )
+            .unwrap();
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
+    /// 某个空间那一行里的 `(device_id, added_at_ms)`（⛔ 不含哈希 ✗ —— 这里的断言不需要它 ✓）。
+    fn rows_in(c: &Connection, space: &str) -> Vec<(String, i64)> {
+        let mut stmt = c
+            .prepare(
+                "SELECT device_id, added_at_ms FROM mesh_paired_devices \
+                 WHERE space_id = ?1 ORDER BY device_id ASC",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map(rusqlite::params![space], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
+    /// ⛔ **空串那一行以外**还剩几行（"旧行一个不删"的机械读数 ✓）。
+    fn count_outside(c: &Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM mesh_paired_devices WHERE space_id <> ''", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// 这个空间（按**口径**读 ✓）认不认这一台。
+    fn seen_by(c: &Connection, space: &str, device_level: bool, dev: &str) -> bool {
+        crate::mesh::paired_devices(c, space, device_level)
+            .unwrap()
+            .iter()
+            .any(|d| d.device_id == dev)
+    }
+
+    /// ⭐ 判据①（方案 §11.4 ① ✓）：⭐ 个人档**写一次 ⇒ 两个个人空间都看得到它** ✗；
+    ///   ⭐ 团队档**不受影响** ✓。
+    ///
+    /// ⚠️ 两个个人空间的旧暗号**故意不同** ✗（`room-a` / `room-b`；设备级那一格还没填
+    ///   ⇒ `mesh_scope_at` 回落各自的旧暗号 ✓）⇒ ⭐ 若还按"逐空间"存，B 必然看不见 A 写的那张卡 ✗。
+    #[test]
+    fn one_card_written_once_is_seen_by_every_personal_space_and_not_by_a_team_one() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人 a');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-b', '个人 b');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-t', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-a');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-b', '', 'room-b');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-t', 'org-t', '');
+             -- ⭐ 团队空间**自己**认过一台 ✓（它一个字节都不许动 ✓）
+             INSERT INTO meta.mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
+                 VALUES ('org-t', 'dev-9', 'h9', 100);",
+        )
+        .unwrap();
+        let a = mesh_scope_at(&c, Some("ws-a")).expect("个人档 a 要解析得出");
+        let b = mesh_scope_at(&c, Some("ws-b")).expect("个人档 b 要解析得出");
+        assert!(a.device_level && b.device_level, "两个都必须是个人档");
+        assert!(a.space != b.space, "前提：混态下两个个人空间解析出的旧暗号不同（否则这条判据分不出东西）");
+        assert_eq!(crate::mesh::mesh_room_device(&c), None, "前提：设备级那一格还没填");
+
+        // ⭐ 个人档**写一次** —— 走**唯一实现** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
+        crate::sync::remember_peer_card(&c, &a.space, "dev-1", "k7Qm-2pRt", true).unwrap();
+
+        // ① ⭐ 两个个人空间**都**看得到它 ✗
+        for (who, s) in [("ws-a", &a), ("ws-b", &b)] {
+            assert!(
+                seen_by(&c, &s.space, s.device_level, "dev-1"),
+                "⛔ 个人档写一次 ⇒ 两个个人空间都要看得到它 ✗（{who} 看不见 ⇒ 它还按逐空间存）"
+            );
+        }
+        // ② ⭐ 它落在**空 `space_id`** 那一行 ✓（＝「设备级」的口径本身 ✓）
+        assert_eq!(
+            device_level_rows(&c).iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
+            vec!["dev-1".to_string()],
+            "⛔ 个人档那张卡必须落在**空串那一行** ✗（这是丙的口径本身 ✓）"
+        );
+        // ③ ⛔ 团队档**不受影响** ✗：它自己那一行原样 ✓，而且它**看不到**上面那张 ✗
+        assert_eq!(rows_in(&c, "org-t"), vec![("dev-9".to_string(), 100)], "⛔ 团队那行一个字节不许动 ✗");
+        assert!(
+            !seen_by(&c, "org-t", false, "dev-1"),
+            "⛔ 个人档那张卡不许漏进团队空间 ✗（设备级那一行只有个人档读 ✓）"
+        );
+        // ④ ⭐ "本机要出示给它的那一份"也按**同一把键**落 ✓
+        //    （⛔ 卡片在设备级、出示那份还在逐空间 ⇒ 一配对就 401 ✗ —— 那三件是一体的 ✓）
+        assert_eq!(
+            crate::mesh::pair_secret_for(&c, "", "dev-1").as_deref(),
+            Some("k7Qm-2pRt"),
+            "⛔ 卡片落设备级、出示那份落逐空间 ⇒ 配对成功却 401 ✗"
+        );
+    }
+
+    /// ⭐ 判据②（方案 §11.4 ② ✓）：⭐ 迁移 —— ⭐ **并集** ✓ ＋ ⭐ **幂等** ✓ ＋
+    ///   ⭐ **团队行没被搬** ✓ ＋ ⭐ **旧行仍在** ✓。
+    #[test]
+    fn migration_unions_the_personal_rows_and_leaves_team_rows_where_they_are() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人 a');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-b', '个人 b');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-t', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-a');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-b', '', 'room-b');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-t', 'org-t', '');
+             -- 两台个人设备分散在两个个人空间里（还有**同一个** `device_id` 的早/晚两条 ✓）
+             INSERT INTO meta.mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms) VALUES
+                 ('room-a', 'dev-1', 'h1', 1000),
+                 ('room-a', 'dev-2', 'h2-late', 5000),
+                 ('room-b', 'dev-2', 'h2-early', 2000),
+                 ('room-b', 'dev-3', 'h3', 3000),
+                 -- ⛔ 团队那一行**证明不了是个人档** ✗ ⇒ 一个字节都不许搬 ✓
+                 ('org-t', 'dev-9', 'h9', 900);",
+        )
+        .unwrap();
+        crate::mesh::migrate_device_level_mesh(&c).expect("迁移不许报错");
+
+        // ① ⭐ 并集：三个人档的卡**都在**设备级那一行 ✓（⛔ 一张都不许丢 ✗）
+        let want = vec![
+            ("dev-1".to_string(), "h1".to_string(), 1000),
+            ("dev-2".to_string(), "h2-early".to_string(), 2000),
+            ("dev-3".to_string(), "h3".to_string(), 3000),
+        ];
+        assert_eq!(
+            device_level_rows(&c),
+            want,
+            "⛔ 并集：三个 `device_id` 都要在设备级那一行 ✗；同名冲突取 **`added_at_ms` 更早**那条（＝「先认的」✓）"
+        );
+        // ② ⛔ 团队行**没被搬** ✗
+        assert!(
+            !device_level_rows(&c).iter().any(|r| r.0 == "dev-9"),
+            "⛔ 证明不了是个人档的行不许被搬进设备级 ✗（团队那一行就是它）"
+        );
+        assert_eq!(rows_in(&c, "org-t"), vec![("dev-9".to_string(), 900)], "⛔ 团队那一行还要原样在 ✗");
+        // ③ ⭐ 旧行**一个不删** ✓（⛔ 可回退 ✗）
+        assert_eq!(count_outside(&c), 5, "⛔ 旧行一个都不许删 ✗（room-a 两条 ＋ room-b 两条 ＋ org-t 一条）");
+        // ④ ⭐ 幂等 ✓：再跑一次 ⇒ 设备级那一行**逐字不变** ✓、旧行也不许多出来 ✓
+        crate::mesh::migrate_device_level_mesh(&c).expect("第二次也不许报错");
+        assert_eq!(device_level_rows(&c), want, "⛔ 幂等：第二次不许再动一个字节 ✗");
+        assert_eq!(count_outside(&c), 5, "⛔ 幂等：旧行也不许多出来 ✗");
+    }
+
+    /// ⭐ 判据③（方案 §11.4 ③ ✓）：⭐ 撤回 —— 个人档上是 ⭐ **本机级** ✗（撤一次，所有个人空间都不认它 ✓）；
+    ///   团队档上 ⭐ **只从那个空间撤** ✗。
+    ///
+    /// ⚠️ 走的是**生产那一个内核** ✓（`device_unpair_at` —— 从命令体抽出来的那一半 ✓），
+    ///   ⛔ 不是把命令里那三句在判据里重抄一遍 ✗（那样命令体改错了判据看不见 ✓）。
+    #[test]
+    fn unpairing_a_personal_card_is_machine_wide_and_a_team_card_is_per_space() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人 a');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-b', '个人 b');
+             INSERT INTO meta.workspaces (id, name) VALUES ('ws-t', '团队');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-a');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-b', '', 'room-b');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-t', 'org-t', '');
+             INSERT INTO meta.mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms) VALUES
+                 ('org-t', 'dev-8', 'h8', 10),
+                 ('org-t', 'dev-9', 'h9', 20);",
+        )
+        .unwrap();
+        // ⭐ 个人档**写两台**（走唯一实现 ✓）
+        crate::sync::remember_peer_card(&c, "room-a", "dev-1", "k7Qm-2pRt", true).unwrap();
+        crate::sync::remember_peer_card(&c, "room-a", "dev-2", "pW3n-8sTq", true).unwrap();
+
+        let a = mesh_scope_at(&c, Some("ws-a")).expect("个人档 a 要解析得出");
+        let b = mesh_scope_at(&c, Some("ws-b")).expect("个人档 b 要解析得出");
+        // 前提（与判据① 同一条口径 ✓）：个人档写一次 ⇒ **别的**个人空间也看得见 ✓
+        assert!(
+            seen_by(&c, &b.space, b.device_level, "dev-1"),
+            "前提：写一次（A）⇒ B 也要看得见（不然下面的撤回无从谈起）"
+        );
+
+        // ① ⭐ 撤回 A 那一侧 ⇒ ⭐ 两个个人空间**都不认它**了 ✗（＝ 本机级 ✓）
+        let st = device_unpair_at(&c, Some("ws-a"), "dev-1").expect("撤回不许报错");
+        assert!(st.was_paired, "它本来在名单里");
+        assert_eq!(st.paired_count, 1, "设备级那一行还剩 dev-2（⛔ 撤回只该撤那一台 ✗）");
+        for (who, s) in [("ws-a", &a), ("ws-b", &b)] {
+            assert!(
+                !seen_by(&c, &s.space, s.device_level, "dev-1"),
+                "⛔ 个人档撤回必须是**本机级**的 ✗（{who} 还认它 ⇒ 撤回没生效）"
+            );
+            assert!(
+                seen_by(&c, &s.space, s.device_level, "dev-2"),
+                "⛔ 撤回只该撤那一台 ✗（别的设备不受影响 ✓）"
+            );
+        }
+        // ② ⭐ 团队档撤回 ⇒ ⭐ **只从那个空间撤** ✗
+        let t = mesh_scope_at(&c, Some("ws-t")).expect("团队档要解析得出");
+        assert!(!t.device_level, "团队档**不是**设备级");
+        let st = device_unpair_at(&c, Some("ws-t"), "dev-9").expect("团队撤回不许报错");
+        assert!(st.was_paired, "它本来在那个团队的名单里");
+        assert_eq!(st.paired_count, 1, "团队那一行只剩 dev-8");
+        assert_eq!(rows_in(&c, "org-t"), vec![("dev-8".to_string(), 10)], "⛔ 团队档只从那个空间撤 ✗（dev-8 照旧 ✓）");
+        // ③ ⭐ 而设备级那一行**一个字节没动** ✓（两件事各管各的 ✓）
+        assert_eq!(
+            device_level_rows(&c).iter().map(|r| r.0.clone()).collect::<Vec<_>>(),
+            vec!["dev-2".to_string()],
+            "⛔ 团队档撤回不许碰设备级那一行 ✗"
+        );
+    }
+
+    /// ⭐ 判据④（⭐ 本轮**实测出来**的一条 ✗ —— 方案 §11 里没写 ✓）：⭐ 旧行一个不删 ✗ ⇒
+    ///   ⭐ 迁移**只能做一次** ✗；否则**撤回被静默撤销** ✓。
+    ///
+    /// **红读数（真变异）**：把迁移那一步的"只做一次"标记去掉（＝每次写路径都并一遍）⇒ 本判据红 ✓
+    ///   （撤回过的那一台**被旧行重新并回来** ✓）。
+    #[test]
+    fn a_migration_never_resurrects_a_device_the_user_unpaired() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name) VALUES ('ws-a', '个人 a');
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-a', '', 'room-a');
+             -- 升级上来的机器：这一台只活在**旧的逐空间**那一行里 ✓
+             INSERT INTO meta.mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
+                 VALUES ('room-a', 'dev-1', 'h1', 1000);",
+        )
+        .unwrap();
+        // ① 升级后的第一次迁移 ⇒ 并进设备级 ✓
+        crate::mesh::migrate_device_level_mesh(&c).expect("迁移不许报错");
+        assert!(
+            device_level_rows(&c).iter().any(|r| r.0 == "dev-1"),
+            "迁移要真的把旧那台并进设备级（不然这条判据的下一句无从谈起）"
+        );
+        // ② 用户把它撤回了 ✓（走生产内核 ✓）
+        device_unpair_at(&c, Some("ws-a"), "dev-1").expect("撤回不许报错");
+        assert!(device_level_rows(&c).is_empty(), "撤回之后本机**不认它**了");
+        assert_eq!(count_outside(&c), 1, "旧行按口径**一个不删** ✓（可回退 ✓）");
+        // ③ ⭐ 用户又打开一次同步设置（＝迁移再跑一次 ✓）⇒ ⛔ 不许把撤回过的那一台并回来 ✗
+        crate::mesh::migrate_device_level_mesh(&c).expect("第二次也不许报错");
+        assert!(
+            device_level_rows(&c).is_empty(),
+            "⛔ 迁移不许把**撤回过**的那一台并回来 ✗ —— 那等于把「撤回」静默撤销 ✓"
+        );
+    }
 }
 
 /// ⭐ **R146 的判据（owner 2026-10-08 已签 ✓）** —— 这两条**先看红** ✗：
@@ -8853,7 +9160,7 @@ mod tests {
             "采纳侧必须先按本地工作区 id 解析出**远端空间 id**（写 KV 与卡表都要它）"
         );
         assert!(
-            body.contains("apply_device_pair_import(&c, &scope.space, &peer_device_id, &bind, &token)?;"),
+            body.contains("apply_device_pair_import(&c, &scope.space, &peer_device_id, &bind, &token, scope.device_level)?;"),
             "落库那一步必须拿到（**空间连接** ✓、**远端空间 id** ✓、对面设备号 ✓）"
         );
         assert!(
@@ -8890,7 +9197,7 @@ mod tests {
             "载荷那一格必须拿到**点选的那台**（否则对面不知道这段码是给自己的）"
         );
         assert!(
-            body.contains("apply_device_pair_export(&c, &scope.space, &peer, &token)?;"),
+            body.contains("apply_device_pair_export(&c, &scope.space, &peer, &token, scope.device_level)?;"),
             "生成那一刻就要登记（**空间连接** ✓、**远端空间 id** ✓、**选中的那台** ✓）—— A 的意义全在这行"
         );
         assert!(
@@ -9015,7 +9322,7 @@ mod tests {
         // ⚠️ 切到**下一个顶层函数**为止 ✓（压平后本函数的签名在最前 ⇒ `nth(1)` 就是本段 ✓）。
         let body = flat.split("pub(crate) fn ").nth(1).unwrap_or("").to_string();
         assert!(
-            body.contains("remember_peer_card(c, proto_space, &dev, &token)"),
+            body.contains("remember_peer_card(c, proto_space, &dev, &token, device_level)"),
             "采纳必须走唯一实现（`remember_peer_card`）—— 否则卡片/出示那份/门 三件少一件就是 401"
         );
         for banned in ["pair_device(", "set_pair_secret(", "add_paired("] {
@@ -9071,7 +9378,7 @@ mod tests {
         // ① 该采纳的 ⇒ ⭐ 三件都落 ✓（卡 ＋ 出示那份 ＋ 正在跑的门 ✓ —— 全在唯一实现里 ✓）。
         let adopted = adopt_pending_trust_asks(&c, "proto-x", "me-dev", &[peer("dev-B", &["proto-x"])], t, false);
         assert_eq!(adopted, vec!["dev-B".to_string()], "带 ask 的那一台必须被采纳");
-        let cards = crate::mesh::paired_devices(&c, "proto-x").unwrap();
+        let cards = crate::mesh::paired_devices(&c, "proto-x", false).unwrap();
         assert!(
             cards.iter().any(|d| d.device_id == "dev-B"),
             "卡片必须落库（否则门不认它）"
