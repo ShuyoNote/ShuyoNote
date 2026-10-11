@@ -14085,6 +14085,9 @@ p:has(> .editor-drawing-container) {
   position: relative;
   display: flex;
   align-items: center;
+  /* ⭐ 2026-10-11（owner：「筛选控件聚焦后和下面的控件留点白」）：⭐ 聚焦光圈是 `0 0 0 3px` **向外扩**的 ✗
+     ⇒ ⭐ 不留白就会**贴到第一张空间卡片上** ✓（owner 截图里正是这样 ✓）⇒ ⭐ 这 12px 是给光圈让的位 ✓。 */
+  margin-bottom: 12px;
 }
 .set-space-filter-wrap > svg {
   position: absolute;
@@ -14134,6 +14137,19 @@ p:has(> .editor-drawing-container) {
   background: transparent;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* ⭐ 2026-10-11（owner：「控件高度是不是可以小点」）：⭐ 桌面给 **36px**，⭐ 手机**仍是 44px** ✗ ——
+   为什么不能一律缩 ✗：本仓那条"⭐ 命中区高度一律 ≥44 ✗"是**在手机视口（390×844）下量的** ✓
+   （`scripts/verify-mobile-views.mjs:19` ＋ ⭐ 它逐层打开浮层来量 ✓），⭐ 而且**有真实事故**：
+   ⭐ 同步面板里 10 个输入控件有 **9 个 < 44**（8 个 32px）而当时三条门禁全绿 ✓。
+   ⇒ ⭐ ⭐ **缩桌面、⛔ 不缩手机** ✓ —— ⭐ 这样 owner 要的紧凑有了 ✓，⭐ 门禁在 390 视口下看到的仍是 44 ✓。
+   ⛔ **别把这条媒体查询去掉** ✗：去掉就等于手机上一起缩到 36 ⇒ ⭐ 那条门禁会红 ✓（那正是它存在的理由 ✓）。 */
+@media (min-width: 601px) {
+  .set-space-filter.sync-input {
+    min-height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
 }
 .set-space-filter.sync-input:focus {
   background: transparent;
