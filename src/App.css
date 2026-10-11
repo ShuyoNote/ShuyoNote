@@ -15031,7 +15031,16 @@ p:has(> .editor-drawing-container) {
   overflow: auto;
   text-align: left;
   color: rgba(255, 255, 255, 0.82);
-  background: var(--surface, #16203a);
+  /* ⭐ 2026-10-11（owner 截图：「忘记口令的说明是空的？」）—— ⭐ **这是个真 bug** ✗：
+     原来这里是 `background: var(--surface, #16203a)` ✓，⭐ 而 `--surface` **跟着应用主题走** ✗
+     （⭐ 实测：⭐ 浅色主题 `data-theme=light` ⇒ ⭐ `--surface` ＝ **#ffffff** ✓；⭐ 深色主题才是 #242529 ✓）
+     ⇒ ⭐ ⭐ 而这块卡片里的文字是**写死的白** ✗（⭐ 上面那行 ✓）⇒ ⭐ **白底白字 ＝ 整块看不见** ✓
+     （⭐ 截图里只剩那个 🔑 —— ⭐ emoji 自带颜色，⭐ 所以只有它可见 ✓）。
+     ⚠️ 根因是**两套口径混用** ✗：⭐ 它坐在 `.lock-screen` 上，⭐ 而那块屏是**永远深色**的
+     （⭐ `background: #0b1533` **写死** ✓，⭐ 不跟主题 ✓）⇒ ⭐ 卡片**必须**也跟着"⭐ 永远深色 ✗" ✓。
+     ⇒ ⭐ 用原来那个**兜底值** `#16203a` 写死 ✓（⭐ 它就是当初的意图 ✓，⭐ 只是被 `var()` 抢先了 ✓）。
+     ⛔ 不去改锁屏本身：⭐ "⭐ 锁屏永远深色 ✗"是有意为之 ✓（⭐ 门口那块不该随主题忽明忽暗 ✓）。 */
+  background: #16203a;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--radius-lg, 14px);
   box-shadow: var(--shadow-xl, 0 24px 60px rgba(0, 0, 0, 0.45));
