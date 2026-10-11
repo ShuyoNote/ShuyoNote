@@ -219,11 +219,8 @@ pub async fn clear_trash(app: tauri::AppHandle, db: State<'_, Db>) -> Result<u64
         let c = db.0.lock().expect("db mutex poisoned");
         let current = crate::workspaces::active_workspace_id(&c)?;
         let other = other_spaces_referenced_hashes(&c, &current).map_err(|unreadable| {
-            format!(
-                "有 {} 个空间当前读不到 ⇒ **无法安全判断哪些附件还有人在用，本次不清理、什么都没删**：\n  - {}",
-                unreadable.len(),
-                unreadable.join("\n  - ")
-            )
+            // ⭐ 2026-10-11（owner 选乙）：⭐ 点名空间 ＋ ⭐ 说清出路 ＋ ⭐ 说清兜底 ✓（⭐ 一处定义 ✓）
+            unreadable_spaces_message(&unreadable, &space_name_map(&c, &unreadable), "打不开就判断不了哪些附件还有人在用")
         })?;
         (current, other)
     };
@@ -326,11 +323,8 @@ pub async fn cleanup_orphan_attachments(app: tauri::AppHandle, db: State<'_, Db>
     let referenced: std::collections::HashSet<String> = {
         let c = db.0.lock().expect("db mutex poisoned");
         all_referenced_hashes(&c).map_err(|unreadable| {
-            format!(
-                "有 {} 个空间当前读不到 ⇒ **无法判断哪些附件是孤儿，本次不删任何附件**：\n  - {}",
-                unreadable.len(),
-                unreadable.join("\n  - ")
-            )
+            // ⭐ 2026-10-11（owner 选乙）：⭐ 同一句话，⭐ 三处共用 ✓
+            unreadable_spaces_message(&unreadable, &space_name_map(&c, &unreadable), "打不开就判断不了哪些附件是孤儿")
         })?
     };
 
@@ -458,6 +452,60 @@ where
     }
 }
 
+/// ⭐ 2026-10-11（owner 选**乙**）：⭐ 把"读不到的空间"整段变成**人话** ✓。
+///
+/// 要点三件（⛔ **一处定义** ⇒ ⭐ 三处提示**必须说同一件事** ✗）：
+///   ⭐ ① 点名是**哪个**空间（⭐ 原来只印 UUID ⇒ ⭐ 用户对不上是谁 ✗）
+///   ⭐ ② 说清**怎么做**（⭐ 打开它、⭐ 输一次口令 ✓）
+///   ⭐ ③ 说清**兜底**（⭐ 在你打开之前**一个字节都不删** ✗ —— ⭐ 这句最关键：
+///      让"⭐ 失败 ✗"读起来像**保护** ✓，⛔ 不是坏 ✓）。
+///
+/// ⚠️ 空间名查不到就**退回印 id** ✗（⭐ 绝不编一个名字 ✓，⭐ 也绝不因此把整条提示变成空话 ✓）。
+fn space_name_map(c: &rusqlite::Connection, unreadable: &[String]) -> std::collections::HashMap<String, String> {
+    let mut m = std::collections::HashMap::new();
+    for line in unreadable {
+        // ⚠️ 这里**故意**按第一个 ':' 切一次 —— ⭐ 这些行都是**本文件**自己拼的 `{sid}: …` ✓
+        //    （⭐ 产出与消费在同一份文件里 ⇒ ⛔ 不是"跨模块解析字符串" ✗；
+        //     ⚠️ 改下面那三个 `push` 的格式时，⛔ 必须同时改这里 ✓）
+        let sid = line.split(':').next().unwrap_or_default();
+        if sid.is_empty() || m.contains_key(sid) {
+            continue;
+        }
+        if let Ok(nm) = c.query_row(
+            "SELECT name FROM meta.workspaces WHERE id = ?1",
+            rusqlite::params![sid],
+            |r| r.get::<_, String>(0),
+        ) {
+            m.insert(sid.to_string(), nm);
+        }
+    }
+    m
+}
+
+/// ⭐ 拼那条人话提示（⭐ 与 `space_name_map` 配对用 ✓）。`action` 是"⭐ 打不开就判断不了什么 ✗"那半句 ✓。
+fn unreadable_spaces_message(
+    unreadable: &[String],
+    id2name: &std::collections::HashMap<String, String>,
+    action: &str,
+) -> String {
+    let named: Vec<String> = unreadable
+        .iter()
+        .map(|line| {
+            let sid = line.split(':').next().unwrap_or_default();
+            match id2name.get(sid) {
+                Some(nm) => format!("「{nm}」{}", &line[sid.len()..]),
+                None => line.clone(),
+            }
+        })
+        .collect();
+    format!(
+        "清理需要先打开加密空间。有 {} 个空间当前读不到 ⇒ **本次什么都没删**（{}）：\n  - {}\n⇒ 打开它（输一次口令）再试一次；在你打开之前，我们一个字节都不删。",
+        named.len(),
+        action,
+        named.join("\n  - ")
+    )
+}
+
 /// M14.4 / M15.4c — Permanently delete soft-deleted workspaces. Under physical
 /// isolation each deleted workspace's content lives in its OWN `spaces/<id>.db`,
 /// so purging removes that DB file (and WAL) rather than deleting rows from the
@@ -499,6 +547,11 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
         rows.map_err(|e| e.to_string())?
     };
     let remaining_for_scan = remaining_ids.clone();
+    // ⭐ 2026-10-11（owner 选乙）：⭐ 空间名要在**进 spawn 之前**取好 ✗ —— ⭐ 那个闭包里没有连接 ✓
+    let name_map = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        space_name_map(&c, &remaining_ids)
+    };
     let referenced_remaining: std::collections::HashSet<String> =
         tauri::async_runtime::spawn_blocking(move || {
             scan_referenced_hashes(&remaining_for_scan, crate::db::open_space_conn)
@@ -506,11 +559,8 @@ pub async fn purge_deleted_workspaces(app: tauri::AppHandle, db: State<'_, Db>) 
         .await
         .map_err(|e| e.to_string())?
         .map_err(|unreadable| {
-            format!(
-                "有 {} 个存活空间当前读不到 ⇒ **无法判断哪些附件是孤儿，本次不删任何附件**（什么都还没删）：\n  - {}",
-                unreadable.len(),
-                unreadable.join("\n  - ")
-            )
+            // ⭐ 2026-10-11（owner 选乙）：⭐ 这正是 owner 撞到的那一条 ⇒ ⭐ 现在它会**点名「保险柜」** ✓
+            unreadable_spaces_message(&unreadable, &name_map, "打不开就判断不了哪些附件是孤儿")
         })?
         .into_iter()
         .collect();
@@ -598,6 +648,32 @@ mod tests {
     use super::*;
     use crate::db::migrate;
     use rusqlite::Connection;
+
+    // ⭐⭐ **2026-10-11（owner 选乙）**：那条「读不到」的提示必须**说人话** ——
+    //    ⭐ ① 点名**哪个空间**（⛔ 不是一串 UUID ✗）② 说清**怎么做**（⭐ 打开它、⭐ 输一次口令 ✓）
+    //    ③ 说清**兜底**（⭐ 一个字节都不删 ✓ —— ⭐ 让"失败"读起来像**保护** ✓）
+    //    ＋ ⭐ 名字查不到时**退回印 id** ✓（⛔ 绝不编一个名字 ✗、⛔ 也绝不把整条提示变成空话 ✓）。
+    #[test]
+    fn unreadable_message_names_the_space_and_says_what_to_do() {
+        let sid = "99082b5a-dc25-4712-b2c9-fcff13612e64";
+        let lines = vec![format!("{sid}: 打不开空间库（file is not a database）")];
+        let mut m = std::collections::HashMap::new();
+        m.insert(sid.to_string(), "保险柜".to_string());
+        let msg = unreadable_spaces_message(&lines, &m, "打不开就判断不了哪些附件是孤儿");
+        assert!(msg.contains("保险柜"), "⭐ 必须点名是哪个空间 —— 只说 UUID 用户对不上 ✗：{msg}");
+        assert!(!msg.contains(sid), "⭐ 名字查到了就不该再印那串 id ✗：{msg}");
+        assert!(msg.contains("打开它") && msg.contains("输一次口令"), "⭐ 得说清怎么做 ✗：{msg}");
+        assert!(msg.contains("一个字节都不删"), "⭐ 得说清兜底（让失败读起来像保护）✗：{msg}");
+
+        // ⭐ 反向：名字查不到 ⇒ **如实退回印 id** ✓
+        let msg2 = unreadable_spaces_message(
+            &lines,
+            &std::collections::HashMap::new(),
+            "打不开就判断不了哪些附件是孤儿",
+        );
+        assert!(msg2.contains(sid), "⭐ 查不到名字就得如实印 id ✗：{msg2}");
+        assert!(msg2.contains("一个字节都不删"), "⭐ 即便查不到名字，兜底那句也必须在 ✗：{msg2}");
+    }
 
     // ★ 清理软删空间时"存活空间读不到 ⇒ 一个附件都不许删"（2026-09-20 自查发现的**静默数据丢失**）。
     // 老代码写成 `if let Ok(conn)` ⇒ 少扫一个存活空间，它引用的附件被当孤儿**真删**。
