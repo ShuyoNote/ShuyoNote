@@ -19,18 +19,15 @@
 //! ⭐ 拿它当第 ① 步，⭐ 判据不用起宿主、⭐ 不用网络就能跑 ✓，⭐ 而且**能先看它红** ✓。
 
 /// 这次信任走到哪儿了。
+/// ⭐⭐ **甲（owner 2026-10-11「一端点就通」）之后只剩两档** ✗ —— 原先的 `WaitingRemote`（⭐ 等对方 ✓）
+/// 与 `RemotePending`（⭐ 对方先点 ✓）**已随旧口径一起退休** ✗ ✓（⭐ 甲 之下没有"⭐ 一端点了、⭐ 另一端还没点 ✗"
+/// 这种半截状态 ✓，⭐ 所以那两档**不可达** ⇒ 留着就是"⭐ 已废的形状 ✗"✓）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrustState {
     /// ⭐ 还没开始（⭐ 或已被放弃 ✓）。
     #[default]
     Idle,
-    /// ⭐ 本机点过了，⭐ **在等对方也在它自己屏幕上点一下** ✓。
-    WaitingRemote,
-    /// ⭐ 对方点过了，⭐ **本机还没点** ✓ —— ⭐ 记住它 ✓，⛔ 但**不因此建立信任** ✗（⭐ T1 ✓）。
-    /// ⚠️ 少了这一档就会**死锁** ✓：⭐ 对方先点、⭐ 本机后点时只会进 `WaitingRemote` ⇒
-    /// ⭐ 两边都点过了、⭐ 却谁都以为在等对方 ✓（⭐ 这是第 ① 步的判据当场抓到的 ✓）。
-    RemotePending,
-    /// ⭐ 两端都点过 ⇒ ⭐ 可以建立信任 ✓。
+    /// ⭐ 通了 ✗（⭐ 本机点过 ✓ ／ ⭐ 收到对方的"⭐ 我想信任你 ✗"✓ ／ ⭐ 两端都动过 ✓ —— ⭐ 任一条即达 ✓）。
     Trusted,
 }
 
@@ -42,7 +39,7 @@ pub enum TrustState {
 pub fn state_after_local_confirm(current: TrustState) -> TrustState {
     match current {
         // ⭐ 甲：本机这一点就够 ⇒ 直接通 ✓（⭐ 再点是**幂等** ✓，⛔ 不许来回抖）。
-        TrustState::Idle | TrustState::WaitingRemote | TrustState::RemotePending => TrustState::Trusted,
+        TrustState::Idle => TrustState::Trusted,
         TrustState::Trusted => TrustState::Trusted,
     }
 }
@@ -52,7 +49,7 @@ pub fn state_after_local_confirm(current: TrustState) -> TrustState {
 pub fn state_after_remote_confirm(current: TrustState) -> TrustState {
     match current {
         // ⭐ 甲：对面动过 ⇒ 自动采纳 ⇒ 直接信 ✓（⭐ 原先"⭐ 只记成 `RemotePending` ✗"已取代 ✓）。
-        TrustState::Idle | TrustState::WaitingRemote | TrustState::RemotePending => TrustState::Trusted,
+        TrustState::Idle => TrustState::Trusted,
         TrustState::Trusted => TrustState::Trusted,
     }
 }
@@ -76,7 +73,7 @@ pub enum TrustRole {
 /// ⚠️ 原先那句"⭐ 看到 ≠ 同意 ✗、⭐ 一定要本机的人再点一下 ✓"**已被 owner 的甲取代** ✗ ✓。
 pub fn state_after_ask_seen(current: TrustState) -> TrustState {
     match current {
-        TrustState::Idle | TrustState::WaitingRemote | TrustState::RemotePending => TrustState::Trusted,
+        TrustState::Idle => TrustState::Trusted,
         // ⭐ 已经信任 ⇒ ⭐ 不因"⭐ 又收到一遍广播 ✗"而变化 ✓（⭐ 广播是周期性的 ✓）。
         TrustState::Trusted => TrustState::Trusted,
     }
