@@ -14013,6 +14013,34 @@ p:has(> .editor-drawing-container) {
    ⚠️ 高度**不许低于 44**（本仓规则：可点控件 ≥44px ⇒ 见 `verify-mobile-views.mjs`）——
    所以清空按钮也做成 44×44 的命中区，只是里面的 × 画小一点 ✓（⛔ 别为了好看把命中区缩下去 ✗）。
    ⚠️ `:has()` 用来在**没有清空按钮**时把右边那 44px 让回来 ✓（WebView2 是 Chromium ⇒ 支持 ✓）。 */
+/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：能力页那格原来复用 `.set-status` ✗ ——
+   而 `.set-status` 是**整块卡片**（`display:flex` ＋ `padding:12px 14px` ＋ `border` ＋
+   `background: var(--card-bg)` ＋ **`margin-bottom: 16px`**）⇒ 被塞进 `.set-row` 当**行内徽章**用之后：
+   ① 看着**像一个能点的按钮** ✗（2026-10-02 已经因为同一个观感问题把「还没上架」那节改掉了 ✓）
+   ② 那一行被**撑高一大截**，② 而且 `margin-bottom:16px` 让**两节之间多出一大块空白** ✗
+   ⇒ ⭐ 新增**行内徽章** `.set-badge`：小胶囊、成功色、**不**带按钮感（无边、无阴影、无 `cursor:pointer` ✓）。
+   ⛔ **不动 `.set-status` 自己的定义** ✗ —— 别处（设置里那些整块提示）还在用它 ✓。
+   ⚠️ `flex: 0 0 auto` 是**必须**的：长说明**不许**把它挤扁 ✗（那个"被挤成一列"的病今天已经栽过两次 ✓）。 */
+.set-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--hover);
+}
+.set-badge.is-ok {
+  color: var(--success, #2e7d32);
+  /* 两层写法：`color-mix` 不支持时**退回**上面那档灰底 ✓（⛔ 不会变成透明 ✗） */
+  background: var(--hover);
+  background: color-mix(in srgb, var(--success, #2e7d32) 12%, transparent);
+}
+
 .set-space-filter-wrap {
   position: relative;
   display: flex;

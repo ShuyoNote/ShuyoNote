@@ -200,7 +200,11 @@ export function AbilitiesPane() {
                 <div className="set-row-name">{a.name}</div>
                 <div className="set-row-sub">{a.summary}</div>
               </div>
-              <span className="set-status">√ {t("abilities.installed", "已装")}</span>
+              {/* ⭐ 2026-10-11（owner 截图「优化这个界面」）：这一格原来复用 `.set-status` ✗ ——
+                  而那是**整块卡片**（`padding:12px 14px` ＋ 边框 ＋ 背景 ＋ **`margin-bottom:16px`** ✓）⇒
+                  ⭐ 既看着**像能点的按钮** ✗，⭐ 又把那一行撑高、还多出一大块节间空白 ✗。
+                  ⇒ ⭐ 换成**行内徽章** `.set-badge is-ok`（小胶囊 ＋ 成功色 ＋ 无边无阴影 ✓）。 */}
+              <span className="set-badge is-ok">√ {t("abilities.installed", "已装")}</span>
             </div>
           ))
         )}
@@ -222,7 +226,7 @@ export function AbilitiesPane() {
                 {a.summary} · {fmtMB(a.bytes)} · sha256 {a.sha256?.slice(0, 12)}…
               </div>
             </div>
-            <button className="set-btn" onClick={() => void download(a)} disabled={phase.kind === "working"}>
+            <button className="set-btn is-primary" onClick={() => void download(a)} disabled={phase.kind === "working"}>
               {t("abilities.download", "下载")}
             </button>
           </div>
