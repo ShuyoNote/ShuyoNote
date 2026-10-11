@@ -270,9 +270,11 @@ describe("「还没上架」那节的说明文字：⛔ 不许被压成一列", 
     }
 
     // 接线收据：这条能力得**真**有入口（⛔ 不是写一行字就说它有 ✗）
-    // ⚠️ 路径按 `import.meta.url` 推 ⇒ 本文件在 `src/components/`，而 `App.tsx` 在 `src/` 下 ✓
-    //    （⛔ 别像第一版那样拼成 `src/components/App.tsx` ✗ —— 那会 ENOENT 而不是判红说人话 ✓）
-    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    // ⚠️ 路径从 `SRC_TSX` 推（它本来就是真文件系统路径 ✓）——
+    //    ⛔ 别用 `new URL(…, import.meta.url)` ✗：**vitest 里那是 http URL** ⇒ `readFileSync`
+    //    报「The URL must be of scheme file」✗（两版都踩过：先拼成 `src/components/App.tsx` ✗，
+    //    再换成 import.meta.url ✗）⇒ 现在只把 `components/AbilitiesPane.tsx` 这段换成 `App.tsx` ✓。
+    const app = readFileSync(SRC_TSX.replace(/components[\\/][^\\/]+$/, "App.tsx"), "utf8");
     expect(app, "App 里没有 <OfficeImportPanel ⇒ 那这条就不是「已装」而是空话 ✗").toContain("<OfficeImportPanel");
   });
 });
