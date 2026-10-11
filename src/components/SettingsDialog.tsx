@@ -84,6 +84,9 @@ export const TABS: { id: SettingsTab; labelKey: string; hintKey: string; icon: J
   { id: "security", labelKey: "settings.security", hintKey: "settings.securityHint", icon: <LockIcon width={16} height={16} />, group: "system" },
   // ⭐ 2026-10-06（owner 拍板 R89）：外部 AI 接入的开关面 —— 与「安全」同一族（都是"谁能碰我的库"✓）。
   { id: "mcp", labelKey: "settings.mcp", hintKey: "settings.mcpHint", icon: <SendIcon width={16} height={16} />, group: "collab" },
+  // ⭐ 2026-10-11（owner 重申「个人空间是设备级」）：设备直连的设置面 —— 三个手填项从同步面板搬到这里 ✓。
+  //   因为是**设备级** ⇒ ⭐ 不需要空间选择器 ✗（写的时候传空串 ✓，见 `SyncSettingsPane` 的头注 ✓）。
+  { id: "sync", labelKey: "settings.sync", hintKey: "settings.syncHint", icon: <SendIcon width={16} height={16} />, group: "system" },
   { id: "ai", labelKey: "settings.ai", hintKey: "settings.aiHint", icon: <SparkleIcon width={16} height={16} />, group: "ai" },
   { id: "about", labelKey: "settings.about", hintKey: "settings.aboutHint", icon: <InfoIcon width={16} height={16} />, group: "system" },
 ];
@@ -1668,6 +1671,8 @@ export function SettingsDialog() {
             )}
             {tab === "mcp" && isDesktopPlatform() && <McpAccessPane />}
         {tab === "about" && <AboutPane />}
+            {/* ⭐ 2026-10-11：设备直连的设置面（桌面专属 ⇒ 与 mcp 同一道平台门 ✓）。 */}
+            {tab === "sync" && isDesktopPlatform() && <SyncSettingsPane />}
             </div>
           </div>
         </div>
