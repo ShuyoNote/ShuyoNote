@@ -317,6 +317,37 @@ fn is_private_ipv4(host: &str) -> bool {
     }
 }
 
+/// ⭐ **这一段地址是不是"虚拟局域网"那类** ✗（owner 2026-10-11 拍「丙」✓）。
+///
+/// ⭐ 丙 的口径（⛔ 不是"禁掉"✗，⭐ 而是"⭐ 允许 ＋ ⭐ 界面上如实说清 ✗"✓）：
+///   · ⭐ **允许直连** ✓ —— ⭐ 虚拟局域网里两台**物理跨网段**却在**同一虚拟网段** ✓，
+///     ⭐ 广播能到 ✓、⭐ 直连也是真的直连 ✓ ⇒ ⭐ 拦它没有道理 ✓（⭐ 而且 09-29 那条路是特意支持它的 ✓）；
+///   · ⭐ **但要如实标注** ✓ —— ⭐ 用户以为"⭐ 同一个 WiFi ✗"、⭐ 其实是"⭐ 走了一条隧道 ✗"✓，
+///     ⭐ 这两件事在**延迟／⭐ 流量／⭐ 谁能看见**上都不一样 ✓ ⇒ ⭐ 界面必须说出来 ✓。
+///
+/// ⚠️ ⭐ **只覆盖认得出的那一段** ✗：`100.64.0.0/10`（RFC 6598）⭐ 是 **Tailscale 的默认段** ✗
+/// （理由见 [`is_private_ipv4`] 的 D14 注释 ✓）。⛔ ⭐ **不许**说得更满 ✗：
+///   ⭐ ZeroTier 那类默认用 `10.x` / `172.16-31.x` ✗ —— ⭐ 那些和**物理内网**长得**一模一样** ✓，
+///   ⭐ 从地址上**根本分不出来** ✓ ⇒ ⭐ 本函数对它们**只能回 false** ✓，
+///   ⭐ 界面那一侧也**只能**在 true 时说"⭐ 这看起来是虚拟局域网 ✗"，⭐ **不许**在 false 时说"⭐ 这不是 ✗" ✓。
+pub(crate) fn is_virtual_lan_ipv4(host: &str) -> bool {
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let mut octets = [0u8; 4];
+    for (i, p) in parts.iter().enumerate() {
+        match p.parse::<u8>() {
+            Ok(v) => octets[i] = v,
+            Err(_) => return false,
+        }
+    }
+    // ⚠️ 与 `is_private_ipv4` 那一段**用同一把尺**（`100.64.0.0/10` 含两端 ✓）——
+    //    ⛔ 别在这里写宽或写窄 ✗：两处一旦不一致，就会出现"允许直连但界面上说不是虚拟网"✓
+    //    （反之亦然）⭐ 这种自相矛盾比不标注更坏 ✓。
+    matches!(octets, [100, 64..=127, ..])
+}
+
 /// ★ **代言的产出侧**：我这台设备该不该替某个地址代言？该 ⇒ 产出那条公告。
 ///
 /// 常开的那台桌面版**自己就是照着某个基址在同步的** ⇒ 如果那个基址本身就是局域网地址，
@@ -1733,5 +1764,31 @@ mod short_id_wire_tests {
         assert_eq!(back.trust_ask, "ask-1234");
         assert_eq!(back.trust_secret, "sek-5678");
         assert!(both.len() <= MAX_ANNOUNCE_BYTES, "两格加上去也不许撞上限 {}", MAX_ANNOUNCE_BYTES);
+    }
+
+    /// ⭐ owner 2026-10-11 拍「丙」：⭐ 虚拟局域网**允许直连** ✗，⭐ 但界面上要**如实标注** ✓。
+    /// 本函数就是"⭐ 认得出那一段吗 ✗"的**唯一判据面** ✓。
+    #[test]
+    fn virtual_lan_range_is_recognised_and_is_the_same_ruler_as_the_private_one() {
+        // ⭐ 认得出：`100.64.0.0/10`（Tailscale 默认段 ✓）—— ⭐ 两端都算 ✓。
+        assert!(is_virtual_lan_ipv4("100.64.0.1"), "下界内");
+        assert!(is_virtual_lan_ipv4("100.100.1.2"), "Tailscale 常见的 100.100 段");
+        assert!(is_virtual_lan_ipv4("100.127.255.254"), "上界内");
+        // ⭐ 出了这一段就不是它 ✓（与 D14 那两个边界判据**同口径** ✓）。
+        assert!(!is_virtual_lan_ipv4("100.63.255.255"), "下界外一格");
+        assert!(!is_virtual_lan_ipv4("100.128.0.1"), "上界外一格");
+        // ⚠️ 物理内网**看不出来** ⇒ ⛔ 不许说"是"✗（也不许在界面说"不是"——那是另一条口径 ✓）。
+        assert!(!is_virtual_lan_ipv4("192.168.1.5"));
+        assert!(!is_virtual_lan_ipv4("10.0.0.7"), "ZeroTier 默认段与物理内网同形 ⇒ 分辨不了");
+        assert!(!is_virtual_lan_ipv4("172.16.5.5"));
+        // ⭐ 非法输入一律 false ✓（⛔ 不 panic ✗）。
+        assert!(!is_virtual_lan_ipv4(""));
+        assert!(!is_virtual_lan_ipv4("100.64.0"));
+        assert!(!is_virtual_lan_ipv4("100.64.0.1.2"));
+        assert!(!is_virtual_lan_ipv4("abc.def.gh.i"));
+        // ⭐ 与"⭐ 允许直连 ✗"那把尺**同一段** ✓：两头必须一致 ✓（不一致 ⇒ 自相矛盾 ✓）。
+        assert!(is_private_ipv4("100.100.1.2"), "同一段必须也允许直连（D14）");
+        assert!(!is_private_ipv4("100.128.0.1"));
+        assert!(!is_virtual_lan_ipv4("100.128.0.1"));
     }
 }
