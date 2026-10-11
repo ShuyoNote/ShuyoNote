@@ -174,8 +174,18 @@ mod tests {
             "⭐ 自己签的、拿自己的公钥验 ⇒ 必须过 ✓"
         );
         // ⛔ 反面（别把"永远返回 true"当成通过 ✗）：换一个字、换一段消息、换一把公钥 ⇒ 都必须**不过**
+        // ⚠️⭐ **"改一个字节"必须真的改掉它** ✗：我原先写的是无条件 `replace_range(0..2, "00")` ✓ ——
+        //    ⭐ 而这一把钥匙是**每次现场随机生成**的 ✓ ⇒ 签名头两位**本来**就是 `"00"` 的概率约
+        //    **1/256** ✗ ⇒ 那一次"篡改后"与原件**逐字节相同** ⇒ 下面那条断言**红在空气上** ✓。
+        //    ⭐ **实测就是这么红的**：CI 的 `rust-sm-wired` 那一趟（`--features sm-library` 全量单测）
+        //    报 `device_key::tests::a_signature_verifies_against_the_public_key ... FAILED` ✓，
+        //    而本机连跑几趟都是绿的 ✓（⇒ 1/256 的偶发 ✗ —— 本地绿 ≠ CI 绿的那一族 ✓）。
         let mut tampered = sig.clone();
-        tampered.replace_range(0..2, "00");
+        let flipped = if sig.starts_with("00") { "11" } else { "00" };
+        tampered.replace_range(0..2, flipped);
+        // ⭐ 前提**明写出来** ✓：不写这一句，将来谁再把它改成"可能等于原件"的写法，
+        //   下面那条断言仍然会**偶发地**绿过去 ✓（本仓老手法：把前提也钉成判据 ✓）。
+        assert_ne!(tampered, sig, "⭐ 前提：这一步必须**真的改掉**它（⛔ 否则下面那条量的是空气 ✗）");
         assert!(!verify_hex(&id.public_key_hex(), msg, &tampered), "改了签名 ⇒ 不许过");
         assert!(!verify_hex(&id.public_key_hex(), b"another-message", &sig), "换了消息 ⇒ 不许过");
         let other = load_or_create(&fixture()).unwrap();
