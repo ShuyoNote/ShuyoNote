@@ -18,12 +18,50 @@
 //! 按 TTL 腾过期行）。"这一轮走哪个地址"仍是 `lan::resolve_base` 的活（纯函数、判据在那儿）。
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use tauri::Manager;
 
 use crate::db::Db;
 use crate::lan::{self, Peer, PeerTable};
+
+/// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 本机那份**握手中**的状态 ✓（⭐ 进程级一份 ✓）。
+///
+/// ⚠️ 它**不塞进 `LanState`** ✗ —— ⭐ 广播的产出链（`announces_for` ⇒ ⭐ `announces_for_this_round`
+/// ⇒ ⭐ `announces_for_with_mesh` ✓）今天是**纯的** ✓（⭐ 参数进、⭐ 值出、⭐ 判据能直接喂值 ✓）；
+/// ⭐ 塞进去就得改那三个签名 ＋ ⭐ 它们的全部调用方 ✗ ⇒ ⭐ 为了两格字段不值当 ✓。
+/// ⇒ ⭐ 这里用一个进程级 `Mutex` ✗：⭐ 与 `LanState::global` 同一个"⭐ 进程里只有一份 ✗"的前提 ✓。
+///
+/// ⚠️ 拿锁期间**只做判定** ✓，⛔ 不做 IO、⛔ 不写库 ✓（⭐ 否则一次网络卡顿会把广播那一路也挂住 ✓）。
+static TRUST: OnceLock<Mutex<crate::pairing_trust::TrustHandshake>> = OnceLock::new();
+
+fn trust_cell() -> &'static Mutex<crate::pairing_trust::TrustHandshake> {
+    TRUST.get_or_init(|| Mutex::new(crate::pairing_trust::TrustHandshake::default()))
+}
+
+/// ⭐ 改握手状态 ✓（⭐ 命令层用它 ✓，⭐ 判据也能直接用它喂值 ✓）。
+pub fn with_trust<R>(f: impl FnOnce(&mut crate::pairing_trust::TrustHandshake) -> R) -> R {
+    let mut g = trust_cell().lock().expect("trust mutex poisoned");
+    f(&mut g)
+}
+
+/// ⭐ 这一轮广播该带的那两格 ✓（⭐ 没进行中／⭐ 过期 ⇒ ⭐ 两格都是空串 ✓）。
+pub fn trust_outbound(now_ms: i64) -> (String, String) {
+    with_trust(|h| {
+        (
+            h.outbound_ask(now_ms).to_string(),
+            h.outbound_secret(now_ms).to_string(),
+        )
+    })
+}
+
+/// ⭐ 本机的毫秒时间戳 ✓（⭐ 只在这一处算 ✓ —— ⭐ 判定里一律**传进去** ✓，⭐ 判据才好固定时间 ✓）。
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 
 /// 应用级的发现状态：一张对端表 ＋ 一个"要不要听/喊"的开关。
 pub struct LanState {
@@ -455,6 +493,13 @@ pub fn announces_for_with_mesh(
                 //   完全隐形 —— 掉包判据要看的就是这个。
                 fp: dev.to_string(),
             });
+        // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 把"⭐ 我想信任谁 ✗"／"⭐ 我给谁的那把 ✗"带上 ✓。
+        //    ⚠️ 在**调用点之后**填 ✗（⭐ `announce_for_own_hub` 是纯函数 ✓，⭐ 它不该知道进程状态 ✓）；
+        //    ⭐ 于是**两个产出点**（⭐ 代言那条 ＋ ⭐ 上面那个兜底 ✓）走的是**同一句** ✓，⛔ 不会各写一套 ✓。
+        let now = now_ms();
+        let (ask, secret) = trust_outbound(now);
+        a.trust_ask = ask;
+        a.trust_secret = secret;
         // 网格开着 ⇒ **覆盖**成我自己的窗口地址（字段没变、语义变宽，见函数头口径 1）。
         // ⚠️ 覆盖之后 `hub_base` **一定有值**，"不代言"那一支（`hub_base: None`）在这里不成立。
         if let Some(base) = mesh_base.filter(|b| !b.is_empty()) {
@@ -1618,5 +1663,45 @@ mod short_id_tests {
         let healed2 = short_id_or_init(Some("abc")); // 小写/太短 ⇒ 非法 ✓
         assert!((4..=6).contains(&healed2.len()));
         assert!(healed2.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8))));
+    }
+
+    /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 出站那两格的**接线**判据 ✓。
+    ///
+    /// 钉三件事 ✗：⭐ ① ⭐ 没有进行中的握手 ⇒ ⭐ 两格都空 ✓（⭐ 别因为"⭐ 从来没配过 ✗"就乱发 ✓）；
+    /// ⭐ ② ⭐ 只是**发了问** ⇒ ⭐ 只有 `ask` 出线 ✓、⭐ `trust_secret` **必须还是空** ✓
+    ///    —— ⭐ 这是那条安全底线在**接线层**的复述 ✓（⭐ 单元层已经钉过一遍 ✓，⭐ 两层都要 ✓）；
+    /// ⭐ ③ ⭐ 被问的那台、⭐ 人点过之后才有 secret ✓；⭐ 过期立刻停 ✓。
+    ///
+    /// ⚠️ `TRUST` 是**进程级**的 ✓ ⇒ ⭐ 这一条自己先清、⭐ 结束时再清 ✓，⭐ 免得与别的判据互踩 ✓
+    /// （⭐ 本文件别的判据都不碰它 ✓）。
+    #[test]
+    fn outbound_announce_fields_follow_the_handshake() {
+        let base = 1_000_000_i64;
+        let ttl = crate::pairing_trust::TRUST_TTL_MS;
+
+        with_trust(|h| h.clear());
+        assert_eq!(
+            trust_outbound(base),
+            (String::new(), String::new()),
+            "没有进行中 ⇒ 两格都空"
+        );
+
+        with_trust(|h| h.begin("dev-b", "ask-1", base, ttl));
+        let (ask, secret) = trust_outbound(base + 1_000);
+        assert_eq!(ask, "ask-1", "发了问 ⇒ ask 出线");
+        assert_eq!(secret, "", "只是发了问 ⇒ 一个字节的 secret 都不许出线");
+
+        with_trust(|h| h.clear());
+        with_trust(|h| h.note_ask("dev-a", base, ttl));
+        assert_eq!(trust_outbound(base + 1_500).1, "", "还没人点过 ⇒ 不许有 secret");
+        with_trust(|h| h.confirm("dev-a", "sek-1", base + 2_000, ttl));
+        assert_eq!(trust_outbound(base + 3_000).1, "sek-1", "人点过之后才有");
+        assert_eq!(
+            trust_outbound(base + 2_000 + ttl).1,
+            "",
+            "过期之后必须停（别让一次没走完的握手永远占用广播）"
+        );
+
+        with_trust(|h| h.clear());
     }
 }
