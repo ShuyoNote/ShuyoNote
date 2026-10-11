@@ -5,7 +5,9 @@
 //   a) ⭐ 有后端读数 ⇒ **如实显示**（上次成功备份的时刻 ＋ 份数 ＋ 大小）✓
 //   b) ⭐ **反向**：读数取不到 ⇒ ⭐ **如实说"读不到"** ✗（⛔ 不许显示 0 份／0 B ✗）
 //   c) ⭐ **反向**：后端**没有**开关能力 ⇒ ⭐ 界面**不许出现开关** ✗（挡"画一个假的" ✓）
-//   d) ⭐ **回归闸**：手动导出/导入那两条**仍然可用** ✓（⭐ `BackupButton.tsx` 一个字不改 ✓）
+//   d) ⭐ **回归闸 ＋ 去重守卫**：手动导出/导入**仍然可用** ✓（`BackupButton.tsx` 一个字不改 ✓）；
+//      ⭐ 且**唯一入口在页面上**（`SettingsDialog` 的 `<BackupButton label=… />` ✓）——
+//      ⛔ 面板里**不许**再放第二个入口 ✗（2026-10-11 owner 截图问出来的重复 ✓）
 //   e) ⭐ **漂移守卫**：保留策略／间隔**照后端常量说**（⛔ 不许自己写一个数 ✗）—— 直接读 `.rs` 比对 ✓
 //   f) ⭐ **接线收据**：面板由**页面**挂、位置在**行外** ✓（⛔ 不许塞回 `BackupButton` 的 `.backup-menu` 里 ✗ ——
 //      那个形状 2026-10-11 实测把同一行挤成「一个字一列」✗，见那条判据里的读数和来由 ✓）
@@ -83,18 +85,23 @@ describe("自动备份那一格（task-19）", () => {
     expect(btn, "手动导入那条路被改掉了").toContain("api.importBackup(");
     expect(btn, "导出菜单项没了").toContain("导出完整备份");
     expect(btn, "导入菜单项没了").toContain("导入备份");
-    // ⭐ 而新那一格必须**复用**这些既有实现，⛔ 不许写第二份备份逻辑 ✗
+    // ⭐⭐ **2026-10-11（owner 截图问「这两部分是不是重复了？」）**：⭐ **是重复的** ✗ ——
+    //    面板里原来又渲染了一颗**光秃秃的** `<BackupButton />`（不带 label ✓）⇒ 它与 `SettingsDialog`
+    //    那一行的「备份 / 恢复…」是**同一个组件、同一个动作** ✓ ⇒ 两处入口 ✗ ⇒ 已删那一处 ✓。
+    //    ⇒ ⭐ 这条判据**反过来钉**（原版要求"面板里**要**有 `<BackupButton>`"✗ —— 那会把重复**当成规格** ✓）：
     const panel = read("src", "components", "BackupSettingsPanel.tsx");
-    expect(panel, "面板应当复用 <BackupButton />（而不是自己再写一遍导出/导入）").toMatch(/<BackupButton\b/);
-    expect(panel, "面板里不许自己调 export_backup/import_backup（那会变成第二份实现）").not.toMatch(
+    // ⚠️⚠️ **先剥注释** ✗ —— 面板的注释里**引了**那行 JSX 来讲来由 ✓ ⇒ 不剥的话判据会被**自己的解释文字**
+    //    绊倒 ✗（⭐ 今天第三次同形：能力页 / BackupButton / 这里 ✓）。判据要钉的是**代码**，⛔ 不是注释 ✓。
+    const panelCode = panel.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(panelCode, "⭐ 面板里不许再放第二个导出/导入入口 —— 那正是 owner 问出来的重复 ✗").not.toMatch(
+      /<BackupButton\b/,
+    );
+    expect(panelCode, "面板里不许自己调 exportBackup/importBackup（那会变成第二份实现 ✗）").not.toMatch(
       /exportBackup\(|importBackup\(/,
     );
-    // ⭐⭐ **嵌套守卫**（⚠️ 2026-10-11 理由更新）：`BackupButton` **不再**自己挂本面板了 ✓ ——
-    //     所以这条不再挡"无限自我嵌套"，而是挡**另一件事**：面板里那个 `<BackupButton>` 带 `label` 的话，
-    //     display 上就多一个文字按钮 ✓（而且一旦谁把面板重新接回 `BackupButton`，它当场就成了嵌套 ✗）。
-    expect(panel, "面板里的 <BackupButton> 带了 label ✗").not.toMatch(
-      /<BackupButton\s+label=/,
-    );
+    // ⭐ 而**唯一的**入口必须在页面上、且**带文字**（⭐ 带 label 才看得懂 ✓）
+    const page = read("src", "components", "SettingsDialog.tsx");
+    expect(page, "页面里那个手动入口不见了 ⇒ 手动备份就没路可走了 ✗").toMatch(/<BackupButton\s+label=/);
   });
 
   it("e) ⭐ 漂移守卫：保留策略／间隔**照后端常量说**（⛔ 不许自己写一个数）", () => {

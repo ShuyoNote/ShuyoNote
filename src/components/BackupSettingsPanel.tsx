@@ -14,14 +14,14 @@
 //    界面里那份 `BACKUP_RETENTION` 只作**兜底**（且被判据 e 钉着与 `auto_backup.rs` 常量逐字一致 ✓）
 //
 // ## 复用，⛔ 不重写
-// 手动「导出完整备份／导入备份」仍然是 `BackupButton.tsx` 那一份实现 ✓（本面板**渲染它** ✓，
-// ⛔ 自己不调 `exportBackup`/`importBackup` ✗ —— 判据 d 挡着 ✓）。
+// 手动「导出完整备份／导入备份」的唯一入口在 `SettingsDialog` 那一行（`<BackupButton label=… />` ✓）。
+// ⭐ 2026-10-11：本面板**不再渲染** `<BackupButton />` ✗ —— 那会变成**第二个入口**（owner 截图问出来的 ✓）；
+// 本面板自己也⛔ 不调 `exportBackup`/`importBackup` ✗（⛔ 不写第二份实现 ✓，判据 d 钉着 ✓）。
 
 import { useEffect, useState } from "react";
 
 import { platform } from "../lib/platform";
 import { toast } from "../store/toast";
-import { BackupButton } from "./BackupButton";
 
 /** ⭐ task-20 ①：只读读数（三处同名：这里 ↔ `backup.rs` ↔ `lib.rs` 的登记，判据 g 钉着 ✓）。 */
 export const AUTO_BACKUP_STATUS_COMMAND = "auto_backup_status";
@@ -250,13 +250,15 @@ export function BackupSettingsPanel() {
           )}
         </div>
       )}
-      <div className="backup-auto-manual" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 13 }}>手动那条路（导出／导入备份）仍在这里：</span>
-        {/* ⭐ 复用既有实现 ⇒ ⛔ 不写第二份备份逻辑 ✓（判据 d 挡着 ✓）。
-            ⚠️⚠️ **故意不传 `label`**：`BackupButton` 在有 `label` 时会挂**本面板** ⇒
-               带 label 会**无限自我嵌套** ✗（判据 d 里有一条专门挡这个 ✓）*/}
-        <BackupButton />
-      </div>
+      {/* ⭐ 2026-10-11（owner 截图问「这两部分是不是重复了？」）：⭐ **是重复的** ✗ ——
+          原来这里还有一条 `手动那条路（导出／导入备份）仍在这里：` ＋ 一颗**光秃秃的 ↓ 图标**
+          （`<BackupButton />` **不带 label** ✓）⇒ ⭐ 它和上面那一行的「备份 / 恢复…」是**同一个组件、
+          同一个动作** ✓（⭐ 两处入口 ✗）⇒ ⭐ **删掉这一处** ✓：
+          · ⭐ 上面那处**带文字** ＋ ⭐ 配着说明「导出所有空间与附件为一个包…」✓ ⇒ ⭐ 比一个图标清楚 ✓
+          · ⭐ 而这一处唯一的额外信息（单个空间导出在「空间」页）**早就写在那一行下面** ✓
+            （`SettingsDialog.tsx:121` ✓）⇒ ⛔ **删了不丢任何信息** ✓
+          ⚠️ 判据也跟着反了过来：`BackupSettingsPanel.test.ts` 的 d 原本要求"面板里**要**有 `<BackupButton>`"✗，
+          ⇒ 现在钉「⭐ 面板里**不许**再放第二个入口 ✗」（⭐ 挡住重复入口重新长回来 ✓）。 */}
     </div>
   );
 }
