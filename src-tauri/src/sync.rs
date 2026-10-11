@@ -4101,6 +4101,11 @@ pub(crate) fn device_unpair_at(
     if let Some(h) = hash.as_deref() {
         crate::mesh::forget_paired(&scope.space, h)?;
     }
+    // ⭐ **2026-10-12（设备身份第 2 步）**：⭐ **新那一档（公钥）也要摘** ✗ ——
+    //   ⛔ 只删库那一行不够 ✗：⭐ 跑着的门里那一份公钥还在 ⇒ **它还能签进来** ✓
+    //   （＝ 上一轮查出来的"删了等于没删"✓，只是换到公钥那一档 ✓）。
+    //   ⚠️ 与上面那句**同一个键**（`scope.space` ＝ 门服务的空间 ✓）。
+    crate::mesh::forget_paired_device(&scope.space, &peer)?;
     let paired = crate::db::paired_device_count(c, &row)?;
     Ok(crate::mesh::MeshPairedState {
         peer: peer,

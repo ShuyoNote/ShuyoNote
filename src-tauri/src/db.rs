@@ -257,6 +257,49 @@ pub(crate) fn paired_device_count(conn: &Connection, space_id: &str) -> Result<i
     .map_err(|e| e.to_string())
 }
 
+/// ⭐ **2026-10-12（设备身份第 2 步）**：把**那一台的公钥**登记进这一行 ✗
+/// （⭐ 信任 ＝ "允许它来拿我的" ✓ ⇒ ⭐ 门此后**验签**而不再只认共用口令 ✓）。
+///
+/// ⚠️ **只动 `pubkey` 这一列** ✗：`secret_sha256`（旧那一档）**一个字节不动** ✓ ——
+/// ⭐ 加法 ✓、可回退 ✓（`pubkey=''` ＝ 这一行回到"只认哈希"✓）。
+/// ⚠️ 那一行**不存在** ⇒ 先插一行（⭐ 与 `pair_device` 同一条 `ON CONFLICT` ✓）：
+/// ⭐ 于是**新那一档的信任不必先有一次旧配对** ✓（⛔ 不要求"先抄码再信任"✗）。
+pub(crate) fn pair_pubkey(
+    conn: &Connection,
+    space_id: &str,
+    device_id: &str,
+    pubkey_hex: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms, pubkey)
+         VALUES (?1, ?2, '', ?3, ?4)
+         ON CONFLICT(space_id, device_id) DO UPDATE SET pubkey = excluded.pubkey",
+        rusqlite::params![space_id, device_id, crate::db::now_ms(), pubkey_hex.trim()],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// ⭐ 这个空间里**每一台已登记的公钥** ✗（⭐ 门把那本册子载进内存用 ✓；空 `pubkey` 的行**不返回** ✓
+/// —— ⭐ 它们属于"旧那一档"，⛔ 不是"有一把空公钥"✗）。
+pub(crate) fn paired_pubkeys(
+    conn: &Connection,
+    space_id: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT device_id, pubkey FROM mesh_paired_devices \
+             WHERE space_id = ?1 AND TRIM(pubkey) <> '' ORDER BY device_id ASC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![space_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
 pub(crate) fn open_meta_conn_at(dir: &Path) -> Result<Connection, String> {
     let conn = Connection::open(meta_path(dir)).map_err(|e| e.to_string())?;
     let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
@@ -449,6 +492,10 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
             device_id     TEXT NOT NULL,
             secret_sha256 TEXT NOT NULL,
             added_at_ms   INTEGER NOT NULL,
+            -- ⭐ 2026-10-12（设备身份第 2 步，方案 `2026-10-11-device-identity-keys.md` §4 ③）：
+            --    ⭐ **那一台的 Ed25519 公钥**（十六进制 ✓；空串 ＝ 这一行还是"旧那一档" ✓）✗。
+            --    ⚠️ **加法** ✗：旧行一个不删、旧那一档照旧认 ✓（停认的时点是 owner 的事 ✓，方案 §5① ✓）。
+            pubkey        TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (space_id, device_id)
         );
         CREATE TABLE IF NOT EXISTS sync_state (
@@ -746,6 +793,21 @@ fn meta_migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
       if has_mesh_room == 0 {
           conn.execute(
               "ALTER TABLE sync_profiles ADD COLUMN mesh_room TEXT NOT NULL DEFAULT ''",
+              [],
+          )?;
+          }
+      // ⭐ 2026-10-12（设备身份第 2 步）：⭐ 对端表补 `pubkey` 列 ✗ ——
+      //   与上面那几条迁移**同一套**：先问 `pragma_table_info`，没有才加 ✓（**幂等** ✓）。
+      //   ⚠️ **加法** ✗：老机器上那些行 `pubkey` 就是空串 ⇒ ⭐ 它们照旧走"认哈希"那一档 ✓
+      //   （⛔ 一个字节都不动 ✗ ⇒ 旧配对不会因为这次升级失效 ✓）。
+      let has_paired_pubkey: i64 = conn.query_row(
+          "SELECT COUNT(*) FROM pragma_table_info('mesh_paired_devices') WHERE name = 'pubkey'",
+          [],
+          |row| row.get(0),
+          )?;
+      if has_paired_pubkey == 0 {
+          conn.execute(
+              "ALTER TABLE mesh_paired_devices ADD COLUMN pubkey TEXT NOT NULL DEFAULT ''",
               [],
           )?;
           }
@@ -1577,6 +1639,66 @@ mod tests {
             .query_row("SELECT cipher_format FROM workspaces WHERE id = 'ws'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(again, 0);
+    }
+
+    /// ⭐ **2026-10-12（设备身份第 2 步）**：老库（对端表**没有 `pubkey` 列**）跑一次 `meta_migrate`
+    /// 必须补上列，⭐ **存量行的公钥是空串** ✗ —— ⭐ 那表示"这一行还是旧那一档" ✓：
+    /// ⛔ 升级**不许**把旧配对照旧作废 ✗（也⛔ 不许凭空给谁一把公钥 ✗）。
+    ///
+    /// ⚠️ 为什么这条必须红过一次：⭐ 少了那次 `ALTER` ⇒ `paired_pubkeys` 的 SELECT 报"没有这一列" ✓
+    /// ⇒ `load_cards` 载不进卡 ✓ ⇒ **门谁都进不来** ✗（而且是一条安静的升级事故 ✓）——
+    /// 与本文件里 `mesh_room` / `cipher_format` 那几条同一条来由 ✓。
+    #[test]
+    fn meta_migrate_adds_pubkey_to_an_old_paired_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 先按第 2 步之前的形状建表（只有那四列）
+        conn.execute_batch(
+            "CREATE TABLE mesh_paired_devices (
+                 space_id      TEXT NOT NULL,
+                 device_id     TEXT NOT NULL,
+                 secret_sha256 TEXT NOT NULL,
+                 added_at_ms   INTEGER NOT NULL,
+                 PRIMARY KEY (space_id, device_id)
+             );
+             INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms)
+                 VALUES ('', 'dev-old', 'hash-old', 1);",
+        )
+        .unwrap();
+
+        meta_migrate(&conn).unwrap();
+
+        let has: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('mesh_paired_devices') WHERE name = 'pubkey'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(has, 1, "meta_migrate 没有给 mesh_paired_devices 补 pubkey 列");
+        let pk: String = conn
+            .query_row(
+                "SELECT pubkey FROM mesh_paired_devices WHERE device_id = 'dev-old'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pk, "", "⛔ 存量行不许凭空得到一把公钥 ✗（空串 ＝ 它还是旧那一档 ✓）");
+        let hash: String = conn
+            .query_row(
+                "SELECT secret_sha256 FROM mesh_paired_devices WHERE device_id = 'dev-old'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hash, "hash-old", "⛔ 旧那一档那列一个字节都不许动 ✗（加法迁移 ✓）");
+        // ⭐ 幂等：再跑一次不报错、值不变 ✓
+        meta_migrate(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT pubkey FROM mesh_paired_devices WHERE device_id = 'dev-old'", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            ""
+        );
     }
 
     /// P6.1：老库（`sync_profiles` 没有 `sync_attachments` 列）跑一次 `meta_migrate`

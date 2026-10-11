@@ -145,11 +145,12 @@ async fn mesh_pull_wire_bytes() {
             Arc::new(Mutex::new(m))
         },
         {
-            let mut cards: std::collections::HashMap<String, std::collections::HashSet<String>> =
-                std::collections::HashMap::new();
+            // ⚠️ 2026-10-12：卡册改成"两档并存"（`CardBook` / `SpaceCards`）⇒ 这里落 **hashes** 那一档 ✓
+            let mut cards: crate::mesh::CardBook = std::collections::HashMap::new();
             cards
                 .entry(space.to_string())
                 .or_default()
+                .hashes
                 .insert(crate::db::sha256_hex(token));
             Arc::new(Mutex::new(cards))
         },

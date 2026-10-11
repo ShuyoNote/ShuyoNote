@@ -1,6 +1,7 @@
 # 每台设备一把自己的钥匙（Ed25519）—— 让「信任」有方向、且只有被信任的那台拿得走
 
-状态：**施工中**（第 1 步：钥匙的生成与落盘；门验签在第 2 步、方向性在第 3 步 —— 见 §4）
+状态：**施工中**（⭐ 第 1 步「钥匙的生成与落盘」已落地 `c51558a4` ✓；⭐ 第 2 步「门改成验签」已落地 ⓐ（两档并存）✓；
+方向性在第 3 步 —— 见 §4；⭐ 两条待 owner 拍的在 §5）
 证据：`2026-10-11-one-click-trust-decision.md`（§6 是 owner 本轮的拍板原文与"取代了哪一半"）· `../../src-tauri/src/mesh.rs`（门的鉴权 `authorized`）· `../../src-tauri/src/db.rs`（对端表 `mesh_paired_devices`）· `../../src-tauri/Cargo.toml`（`ed25519-dalek` 已是直接依赖）
 
 ---
@@ -116,3 +117,40 @@ cargo test --doc                                   # ⭐ 文档注释里的围�
 powershell -File C:\Users\cnzen\zhai\_tmp\scratch\mesh-lib-test.ps1 -Root <本检出> -Filter "<子串>"
 node _workspace/bin/check-all.mjs                  # 工作区门禁
 ```
+
+---
+
+## 8. ⭐ 落地实况
+
+### 8.1 ⭐ 第 1 步（钥匙的生成与落盘）—— **已落地** ✗ `c51558a4`
+
+```text
+⭐ 模块 ✗：`src-tauri/src/device_key.rs` ✓ —— `load_or_create`（⛔ 绝不覆盖已有那把 ✗）／
+   `public_key_hex_of`（**只读**，给公告那条每秒都跑的读路径 ✓）／`sign_hex` ／`verify_hex` ✓
+   ＋ ⭐ 一条**文本级**判据把公开面钉住（⛔ 不许出现"取私钥的出口"✗）。
+⭐ 落盘 ✗：明文进 `meta.sync_state`（键 `device_identity_sk` ✓）—— ⚠️ 与今天的口令**同一保护级** ✗
+   （`meta.db` 本来就是明文库 ✓）；⭐ **建键只在写路径**（`mesh_set_config` ✓）✓。
+⭐ 线格式 ✗：`LanAnnounce` 加可选 `pubkey` ✓ ⇒ ⛔ **不升 `WIRE_VERSION`** ✗（与 `short_id` 同一手法 ✓）。
+⭐ 判据红读数（实现之前，逐字）✗：`error[E0425]: cannot find function load_or_create in this scope`（×5）／
+   `... verify_hex ...`（×3）⇒ `error: could not compile shuyonote (lib test) due to 20 previous errors` ✓。
+```
+
+### 8.2 ⭐ 第 2 步（门改成验签）—— **已落地** ✗（⭐ 两档并存 ＝ §5① 的 **ⓐ** ✓）
+
+```text
+⭐ 表 ✗：`mesh_paired_devices` 加 `pubkey` 列（**加法**、旧行不删 ✓、`ALTER` 幂等 ✓）✓
+   ＋ `db::pair_pubkey` ／ `db::paired_pubkeys` ✓；⭐ 一条判据钉"老库补列 ＋ 存量行公钥为空"✓。
+⭐ 门 ✗：`authorized` 先试**签名**（三格头 `x-shuyo-dev` ／ `-ts` ／ `-sig` ✓）——
+   签的那串由 `auth_message` **一处实现** ✓（覆盖 device_id ／ space ／ ts ／ method ／ **target** ✓）；
+   ⏱ 时间窗 `AUTH_WINDOW_MS = 120s` ✓（⭐ 只挡"旧包重放" ✓，⚠️ 窗口内的重放**不挡** —— 如实写 ✓）。
+   ⚠️ 签名没过**落回**旧那一档 ✓（⭐ 过渡期专用 ✓：老配对行里还没有公钥 ✓，
+     而 ⓐ 之下旧那一档本来就还开着 ⇒ 回退**不额外给任何东西** ✓）。
+   ⚠️⭐ **等 owner 选 ⓒ 时，那一段必须改成"签名不过 ⇒ 直接 401"** ✗（否则"弄坏签名就能降级"✓）。
+⭐ 出站 ✗：`sign_request` ＋ **一处拼 target**（`pull_target` ／ `attachment_target` ✓）——
+   ⛔ 两处各拼一份 URL ⇒ 一漂就 401，而"只测纯函数"照不出来 ✓ ⇒ 判据里那条端到端钉它 ✓。
+⭐ 撤回 ✗：`forget_paired_device`（⭐ 跑着的门里那份公钥也要摘 ✓，与 `forget_paired` 对称 ✓）。
+⭐ 判据 ✗：`a_signed_request_is_let_in_by_the_public_key_it_was_trusted_with` 一条走全七档 ✓
+   （签名放行 ✓／改一个字节 401 ✓／换 target 401 ✓／过期 401 ✓／没登记过的设备 401 ✓／
+     出站 target 与门重建的**逐字相同** ✓／**撤回后同一个签名立刻 401** ✓）。
+```
+
