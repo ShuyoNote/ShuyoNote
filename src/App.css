@@ -24731,14 +24731,31 @@ body.is-plugin-panel-open .main {
 }
 .mcap-bar-btn {
   flex: 0 0 auto;
+  /* ⭐ 2026-10-10：改成**图标在上、文字在下**（效果图形态 ✓）—— ⛔ **命中区不许缩** ✗：
+     `min-height` 仍是 **44** ✓（门禁按元素自己量 ✓），宽仍是 54 ✓（见下面的 padding 与图标宽 ✓）。 */
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   min-height: 44px;
-  padding: 0 12px;
+  padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 12px;
   background: var(--surface);
   color: var(--text);
-  font-size: 14px;
+  font-size: 11px;
   white-space: nowrap;
+}
+.mcap-bar-icon {
+  display: block;
+  line-height: 0;
+}
+.mcap-bar-label {
+  display: block;
+  font-size: 11px;
+  line-height: 1.1;
+  color: inherit;
 }
 .mcap-bar-btn:active {
   background: var(--accent-soft);
