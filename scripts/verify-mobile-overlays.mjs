@@ -260,17 +260,31 @@ const OVERLAYS = [
   { id: "palette", label: "命令面板", root: ".palette-overlay", box: ".palette", sheet: false, fullscreen: true },
   { id: "shortcuts", label: "快捷键", root: ".shortcuts-overlay", box: ".shortcuts", sheet: true },
   // ⭐ 2026-10-10（owner）：「忘记口令」由**就地展开**改成**模态弹窗** ✓（遮罩点一下关 ✓／Esc ✓／× ✓）。
-  // ⚠️ 形态是**铺满遮罩 ＋ 居中卡片**（⛔ 不是底部弹层那一族 ⇒ 用 `sheet: false` ＋ `fullscreen: true` ✗）；
   //    它随 `lockForgot` 登记进浮层栈（`LockScreen.tsx` 的 `useOverlayLayer("lockForgot", …)` ✓）
   //    ＋ `useOverlayScrollLock(forgotOpen)` ✓（(5) 段无条件断言"打开任一层 ⇒ 外壳被锁" ✓）。
-  // ⚠️ ⭐ 2026-10-10（**本环境不适用** ⇒ 按本文件**已有的** `optional` 机制自报跳过 ✓，⛔ 不是删断言 ✗）：
-  //    机制逐字：`src/App.tsx:940` `if (vault.activeSpaceEncrypted && vault.locked) return <LockScreen />;`
-  //    ⇒ **门禁环境是明文／未锁** ✗ ⇒ `LockScreen` 不渲染 ⇒ 它的触发按钮 `.lock-forgot-toggle`
-  //    （`LockScreen.tsx:191`）**不存在** ⇒ 这一层 `opened=false` ✓（`<span>` 那三条红就是这么来的 ✓）。
-  //    ⭐ **「环境不具备 ≠ 通过」** ✓ —— 取不到触发器时 `optional` 只印一条 `note(… 本轮未验证)` ✓，
-  //    ⛔ 不记成通过 ✗；**该层功能本身仍未验** ✗（要真验得先造出「加密且已锁」的前置 ⇒ 归 win/amd 那条线 ✓，
-  //    已升级 ✓）。⚠️ 这与本表里 `storage`/`markdownImport`/`cover` 用的是**同一个** `optional` ✓（不发明新机制 ✓）。
-  { id: "lockForgot", label: "忘记口令", root: ".lock-forgot-overlay", box: ".lock-forgot-modal", sheet: false, fullscreen: true, optional: true },
+  // ⭐ 2026-10-12：**真前置**（把这一层从"自报跳过"变成**真的被打开过一次** ✓）——
+  //    前置怎么造：`App.tsx:939-941` 的闸门只读 `useVault()` 那三个读数 ⇒ 只要把 vault 置成
+  //    「活动空间加密 ＋ 未解锁（`ready` 也真）」它就渲染 `<LockScreen/>` ✓，而 `.lock-forgot-toggle`
+  //    （`LockScreen.tsx:191`）只在锁屏里 ⇒ 它是**唯一**入口 ✓。造法走**应用自己的状态中枢**
+  //    （`lib/vault.ts:160 lockVault()` ✓，与设置页「立即锁定」同一条路 ✓），见 `openOverlay`
+  //    的 `case "lockForgot"` ✓；测完在 `closeAllOverlays` 里**还原**（⇒ 后面 9 层照旧 ✓）。
+  //    ⚠️ **不用** `verify-mobile-views.mjs:76-127` 那套 `__TAURI_INTERNALS__` 桩：那条只在**整页**
+  //    层面成立——`platform/index.ts:27-28/67` 的 `isTauri()` 是**模块加载时**判一次的
+  //    （`let current: Platform = isTauri() ? tauriPlatform : createWebPlatform();`）
+  //    ⇒ 桩一装，**全部命令**都走桩（未知一律 `null`／`/^list_/` 一律 `[]`）⇒ 本门禁里靠真 Web
+  //    内核取页面/附件的那几层（`markdownImport`／`cover`／`history`…）当场坏掉 ✗。
+  //    ⇒ 那是"另一个门禁可用的桩法"，不是"本门禁可用"的证明 ✓（本轮 21 层里 20 层走真 store ✓）。
+  //    ⚠️ 如实标注：Web 形态没有静态加密 ⇒ `lockVault()` 只 publish 状态、库里并没有真加密
+  //    （`platform/web.ts:3521` 的 `lock_encryption` 是空实现 ✓）⇒ **布局真、内核锁假** ✓
+  //    —— 与 views 那套桩同一档 ✓；本层要量的是弹窗的几何／命中区／滚动锁，与"库里是否真加密"无关 ✓。
+  // ⚠️ 形态是**铺满遮罩 ＋ 居中卡片** ⇒ ⛔ **不标 `fullscreen: true`** ✗：
+  //    本脚本的 `fullscreen` 是「全屏 ＋ 内部滚动」那一族（大面板／右栏抽屉），它额外要求
+  //    **盒子铺满遮罩的内容盒**（见下面 (1b)，`:1449-1454`）✗；而这块卡片是居中的小盒子
+  //    （`App.css:15056` `width: min(520px, calc(100vw - 40px))` ✓，遮罩 `:15043-15053` 是
+  //    `position:fixed; inset:0` ＋ `padding:20px` ✓）⇒ 792×360 实测：遮罩内容盒 20..772，
+  //    卡片只有 520 宽（居中 136..656）⇒ 差 116px ⇒ 标了必红 ✗。它与 `.confirm-box`／输入框
+  //    是**同一族**（居中卡片 ⇒ 只有"四边在视口内"＋命中区那几条）✓ ⇒ 两个 flag 都不标 ✓。
+  { id: "lockForgot", label: "忘记口令", root: ".lock-forgot-overlay", box: ".lock-forgot-modal", sheet: false },
   { id: "about", label: "关于", root: ".shortcuts-overlay", box: ".about", sheet: true },
   { id: "communitySave", label: "社区保存", root: ".community-save-overlay", box: ".community-save-box", sheet: true },
   { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false, fullscreen: true },
@@ -500,6 +514,32 @@ async function openOverlay(which) {
         });
         return true;
       }
+      case "lockForgot": {
+        // ⭐ 2026-10-12：先造**前置**，再点**真的那颗触发器**。
+        //   前置逐字：`App.tsx:939-941`
+        //     `if (!vault.ready) return null;`
+        //     `if (vault.activeSpaceEncrypted && vault.locked) return <LockScreen />;`
+        //     `return <AppShell />;`
+        //   ⇒ 只有这三个读数到位，`LockScreen` 才挂上 ⇒ `.lock-forgot-toggle`（`LockScreen.tsx:191`）
+        //     才存在 ✓（此前这一层没有前置 ⇒ 页面一直走 `AppShell` ⇒ 触发器根本不存在 ✗）。
+        // ⚠️ 走**应用自己的**状态中枢（`lib/vault.ts` 的 `lockVault()` ✓，与设置页「立即锁定」
+        //    `lockVault()` 同一条路 ✓），⛔ 不是往 DOM 里塞假节点 ✗、⛔ 也不是给整页装 Tauri 桩 ✗
+        //    （桩那条路为什么在本门禁走不通：见 `OVERLAYS` 里 `lockForgot` 上面那段注释 ✓）。
+        // ⚠️ Web 形态下它只 publish 状态（`platform/web.ts:3521` 的 `lock_encryption` 是空实现 ✓）
+        //    ⇒ **布局真、内核锁假** ✓ —— 这一层量的就是弹窗自己的几何／命中区／滚动锁 ✓。
+        const v = await store("/src/lib/vault.ts");
+        await v.lockVault();
+        // 等 `LockScreen` 真挂上（App 重渲染 ⇒ `AppShell` 整块换成锁屏）：**轮询触发器**，别睡固定时长。
+        let t = null;
+        for (let i = 0; i < 40 && !t; i++) {
+          await new Promise((r) => setTimeout(r, 150));
+          t = document.querySelector(".lock-forgot-toggle");
+        }
+        if (!t) return false;
+        // 点真的那颗开关（`LockScreen.tsx:193` 的 `onClick` ⇒ `forgotOpen=true` ⇒ 渲染浮层 ✓）。
+        t.click();
+        return true;
+      }
       default:
         return false;
     }
@@ -558,6 +598,17 @@ async function closeAllOverlays() {
   }
   if (document.querySelector(".cover-overlay")) {
     document.querySelector(".cover-overlay")?.click();
+  }
+  // ⭐ 2026-10-12：**还原 `lockForgot` 的前置**（`case "lockForgot"` 把 vault 置成了锁定态 ✓）。
+  //    不还原的下场是**假红**：锁定态下 `AppShell` 整块不挂载（`App.tsx:940`）⇒ 这一层之后
+  //    那 9 层全部"触发器不在 DOM 里" ✗。判据取"外壳还在不在"（`.app` 是 AppShell 的根 ✓），
+  //    只有真被锁住时才动，平时零额外调用 ✓。
+  //    还原走同一条中枢：Web 形态的 `refreshVault()` 如实读回「未开启」
+  //    （`platform/web.ts:3510` ⇒ `{enabled:false, locked:false}` ✓）⇒ `AppShell` 重新挂上 ✓。
+  if (!document.querySelector(".app")) {
+    document.querySelector(".lock-forgot-close")?.click();
+    await (await store("/src/lib/vault.ts")).refreshVault();
+    await new Promise((r) => setTimeout(r, 400));
   }
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   return true;
