@@ -9,8 +9,15 @@
 // 判据：`src/lib/relay/statusView.test.ts`（含"数字与那句话打架时以**话**为准"这一条 ✓）。
 import type { RelayStatus } from "../platform/commands";
 
-/** 后端没给许可证读数时，界面**唯一**允许说的那句话（⛔ 不许换成任何带数字的说法 ✗）。 */
-export const RELAY_UNREADABLE = "许可证状态未接线（读不到有效期）";
+/** 后端没给许可证读数时，界面**唯一**允许说的那句话（⛔ 不许换成任何带数字的说法 ✗）。
+ *
+ * ⚠️ **2026-10-12**：原句是「许可证状态未接线（读不到有效期）」✗ —— "未接线"说的是**代码状态**，
+ * 而**实况相反**（验签层 `relay_license.rs` 已经接线；`lib.rs:19 mod relay_license;` ✓）。
+ * 后端那一档（`relay_client.rs` 的 `LicenseWindow::Unconfigured`）的**真因是配置**：没有
+ * `relay/config.json`，或配置里没有 `license_exp` ⇒ ⭐ 改成说**真因** ✓。
+ * ⛔ 「读不到有效期」这五个字**必须留着**：`relayStatus.wiring.test.ts:37` 断言着它 ✓。
+ * 判据：`src/components/relayStatus.test.ts`。 */
+export const RELAY_UNREADABLE = "还没配置中继（读不到有效期）";
 
 /** 后端没给连接读数时，界面**唯一**允许说的那句话（⛔ 不许说成"已连上" ✗）。 */
 export const RELAY_CONNECTION_UNREADABLE = "未连上中继（读不到连接读数）";
@@ -82,6 +89,7 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
 
   const connectionState = text(p.connection?.state);
   const connectionLabel = text(p.connection?.label);
+  const connectionDetail = text(p.connection?.detail);
   const licenseState = text(p.license?.state);
   const licenseLabel = text(p.license?.label);
 
@@ -89,7 +97,7 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
     available: true,
     // 后端给了就**原样**用；没给（形状坏了）⇒ 兜底也**只能**说"未连上" ✓
     connectionLabel: connectionLabel || RELAY_CONNECTION_UNREADABLE,
-    connectionDetail: text(p.connection?.detail),
+    connectionDetail,
     // 后端给了就**原样**用（⛔ 不解析它、⛔ 不按 days_left 重算 ✗）；没给 ⇒ 明说读不到 ✓
     licenseLabel: licenseLabel || RELAY_UNREADABLE,
     licenseReadable: licenseLabel.length > 0 && licenseState !== "missing",
@@ -97,6 +105,13 @@ export function relayStatusView(payload: RelayStatus | null | undefined | unknow
     licenseSource: text(p.license?.source),
     licenseRefusal: text(p.license?.refusal),
     tone: toneOf(licenseState, connectionState),
-    note,
+    // ⚠️ ⭐ **2026-10-12：同一条原因只摆一遍** ✗ —— 后端在"读不到配置"时把**同一个 `e`
+    //   既放进 `connection.detail`**（`relay_client.rs:739` 折成「本机就没放行（{code}）：{e}」）
+    //   **又放进 `note`**（`:856-859`）⇒ 两处都摆 ⇒ 用户看到**那条路径两遍** ✗（owner 截图逐字）。
+    //   ⇒ 这一层去重（`connectionDetail` 里已经有它 ⇒ `note` 不再重复摆）✓。
+    //   ⛔ **后端那份 `note` 不删** ✗：`relay_status`（不探测那条）本来 `detail` 为空
+    //   ⇒ 那时 `note` 是"读不到配置"的**唯一**一句读数（`RelayStatusSection.tsx:27`）✓。
+    //   判据：`src/components/relayStatus.test.ts`（① 那条：路径只许出现一次）。
+    note: connectionDetail && note && connectionDetail.includes(note) ? "" : note,
   };
 }

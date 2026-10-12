@@ -37,10 +37,12 @@
 //! ## ⛔ 今天**没有**做的（如实标注，别读成"中继同步已经能用"）
 //!
 //! ```text
-//! ✗ 前端接线：本模块**还没**注册成 Tauri 命令 —— 注册点在 `src-tauri/src/lib.rs` 的
-//!   `generate_handler!`，而命令必须同步进 `src/lib/platform/commands.ts` ＋ `src/lib/platform/web.ts`
-//!   （门禁 `scripts/check-web-commands.mjs` 三个方向都查 ✓），那两个文件**不在本期写域**内
-//!   ⇒ ⛔ 今天没有"点一下按钮就连中继"这条路 ✗（本模块是**库级**接入 ＋ 判据）
+//! ✗（**已订正，2026-10-12**）原先这里写着"前端接线：本模块**还没**注册成 Tauri 命令" ——
+//!   ⚠️ 那句**已过期** ✗：两条命令**都挂上了** —— `src-tauri/src/lib.rs:1122-1123`
+//!   （`generate_handler!`）＋ `src/lib/platform/commands.ts:1624-1625` ＋ `src/lib/api.ts:849/:856`
+//!   ＋ `src/lib/platform/web.ts:1748/:1757` ＋ 面板挂载点 `src/components/SyncPanel.tsx:1944`
+//!   （门禁 `scripts/check-web-commands.mjs` 三个方向都查 ✓）。
+//!   ⚠️ 但"有这一格"≠"有读数"：见下面那条 —— **本机没有 `relay/config.json` 时那一格就说"还没配置中继"** ✓
 //! ✗ 真正的**同步**：今天只做了"连上 ＋ 握手 ＋ 拿到放行/拒绝"，
 //!   ⛔ 还没有经中继搬一次同步载荷 ✗（那是下一期）
 //! ✗ **长期许可证的离线验签**：口径要求客户端与中继共用**同一份**验签实现（同一个 crate），
@@ -233,7 +235,13 @@ pub enum LicenseWindow {
         /// 距生效还差多少秒。
         seconds_until_nbf: i64,
     },
-    /// **读不到**有效期 ⇒ 界面**明说未接线** ✓（⛔ 不许编一个数字 ✗）。
+    /// **读不到**有效期 ⇒ 界面**明说"还没配置"** ✓（⛔ 不许编一个数字 ✗）。
+    ///
+    /// ⚠️ **不许说成"未接线"** ✗（2026-10-12 改）：这一档的**真因是配置**——
+    /// 没有 `relay/config.json`（[`load_config`] 读不了 ⇒ [`status_payload_from`] 落这一档）
+    /// 或配置里没有 `license_exp`（[`evaluate_license`]）；而"未接线"说的是**代码状态**，
+    /// 与实况**相反**（验签层 [`crate::relay_license`] 已经接线 ✓）⇒ owner 正是被那句读成了
+    /// "功能没做" ✗。判据：`src/components/relayStatus.test.ts`。
     Unconfigured,
 }
 
@@ -267,7 +275,7 @@ impl LicenseWindow {
             } => format!("剩余 {days_left} 天 · 宽限 {grace_days_left} 天"),
             LicenseWindow::Expired => "已到期".to_string(),
             LicenseWindow::NotYet { .. } => "还没到生效时间".to_string(),
-            LicenseWindow::Unconfigured => "许可证状态未接线（读不到有效期）".to_string(),
+            LicenseWindow::Unconfigured => "还没配置中继（读不到有效期）".to_string(),
         }
     }
 }
@@ -678,7 +686,7 @@ pub struct RelayLicenseView {
     pub days_left: Option<i64>,
     /// 宽限还剩几天（不在宽限里 ⇒ `None`）。
     pub grace_days_left: Option<i64>,
-    /// 用户可见那句话（「剩余 27 天」／「已到期」／「许可证状态未接线（读不到有效期）」）。
+    /// 用户可见那句话（「剩余 27 天」／「已到期」／「还没配置中继（读不到有效期）」）。
     pub label: String,
     /// 这一态**放不放行新建跨网连接** ✓ —— ⚠️ 与"本机能不能用"**无关** ✗
     /// （到期**只**收回跨网：本机读写搜改一律照旧 ✓）。
@@ -774,7 +782,7 @@ pub fn license_view(window: LicenseWindow) -> RelayLicenseView {
             "missing",
             None,
             None,
-            "许可证状态未接线（读不到有效期）".to_string(),
+            "还没配置中继（读不到有效期）".to_string(),
             false,
         ),
     };
@@ -991,14 +999,23 @@ mod tests {
         );
     }
 
-    /// ⛔ **读不到有效期时不许编数字** ✗（界面要明说"未接线" ✓）。
+    /// ⛔ **读不到有效期时不许编数字** ✗（界面要明说"还没配置" ✓）。
+    ///
+    /// ⭐ **2026-10-12**：原判据断言的是"未接线" ✗ —— 那是**假话**（真因是本机还没配置，
+    /// 见 [`LicenseWindow::Unconfigured`] 的注释），且 owner 正是被它读成"功能没做" ✗。
+    /// ⇒ 现在钉**两句**：① 仍然如实说「读不到有效期」（⛔ 不许改成编数字 ✗）；
+    /// ② ⛔ **不许**出现「未接线」（改回旧文案 ⇒ 这条当场红 ✓）。
     #[test]
     fn 许可窗口_读不到时不编数字() {
         let w = evaluate_license(NOW, None, None, None);
         assert_eq!(w, LicenseWindow::Unconfigured);
         assert_eq!(w.code(), "missing");
         let text = w.display();
-        assert!(text.contains("未接线"), "实得 {text}");
+        assert!(text.contains("读不到有效期"), "实得 {text}");
+        assert!(
+            !text.contains("未接线"),
+            "「未接线」是假话（真因是本机还没配置：没有 relay/config.json 或配置里没有 license_exp）⇒ 实得 {text}"
+        );
         assert!(
             !text.chars().any(|c| c.is_ascii_digit()),
             "读不到读数时不许出现数字，实得 {text}"

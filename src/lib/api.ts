@@ -844,7 +844,7 @@ export const api = {
    * ⭐ 中继那两格的读数（**不联网**）：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格。
    *
    * ⚠️ 那句人话与天数**都由后端出**（`src-tauri/src/relay_client.rs`）⇒ 界面只摆上去 ✓；
-   * 读不到时后端给的是"未接线/读不到"那句，⛔ **不是** 0 天 ✗。
+   * 读不到时后端给的是「还没配置中继（读不到有效期）」那句，⛔ **不是** 0 天 ✗。
    */
   relayStatus: () => invoke("relay_status") as Promise<RelayStatus>,
   /**

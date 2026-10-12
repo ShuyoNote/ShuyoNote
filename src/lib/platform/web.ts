@@ -1371,7 +1371,9 @@ export function relayUnavailableShape(): RelayStatus {
       state: "missing",
       days_left: null,
       grace_days_left: null,
-      label: "许可证状态未接线（读不到有效期）",
+      // ⚠️ 2026-10-12：原句「许可证状态未接线（读不到有效期）」里的"未接线"是**假话**
+      //    （真因是本机还没配置）⇒ 与 Rust `relay_client.rs` / `statusView.ts` 同口径 ✓。
+      label: "还没配置中继（读不到有效期）",
       crossnet_allowed: false,
       // ⭐ 2026-10-11：⭐ Web 版**根本没有**许可读数 ⇒ ⭐ 来源如实写"没说来源" ✓
       //    （⛔ 不许写 `verified`：⭐ 那是在假装验过 ✓）
