@@ -2698,16 +2698,11 @@ pub(crate) fn apply_device_pair_import(
 ) -> Result<bool, String> {
     crate::mesh::set_mesh_bind(c, proto_space, Some(bind))?;
     crate::mesh::set_mesh_token(c, proto_space, Some(token))?;
-    // ⭐ 1C：⭐ **信任落在公钥那一行** ✗（⭐ 那一行此后就是"我允许它来拿我的"✓）——
-    //   行键照**同一处判定**算 ✓（个人档 ⇒ 设备级那一行 ✓）。
-    let row = crate::mesh::paired_row_key(proto_space, device_level);
-    crate::db::pair_pubkey(c, row, peer_device_id, peer_pubkey)?;
-    // ⚠️ ⭐ 跑着的门**也要认它** ✗（⛔ 只写库不算 ✗ —— 与 `add_paired` 同一条纪律 ✓）。
-    crate::mesh::add_paired_pubkey(proto_space, peer_device_id, peer_pubkey)?;
-    // ⚠️ 旧那一档（哈希 ＋ "本机要出示的那份"）**照旧也写** ✓：⭐ 1C 的**门那一半**是下一条提交
-    //   （`authorized` 里那一段还没删 ✓）⇒ 在那之前**两条路都在** ✓，删早了就是"配了也进不来" ✗。
-    //   ⭐ 门停认旧卡那一步落地时，**这一段**要一起退场 ✓（它现在的存在是**过渡** ✓）。
-    remember_peer_card(c, proto_space, peer_device_id, token, device_level)
+    // ⭐ 1C：⭐ 公钥那一行**收进唯一那处实现** ✗（`remember_peer_card` ✓）——
+    //   ⛔ 这里**不再自己写一遍** ✗（本文件最要紧的那条纪律：两处各写一遍迟早会漂 ✓）。
+    // ⚠️ 旧那一档（哈希 ＋ "本机要出示的那份"）**照旧也写** ✓：门那一半还没删 ⇒
+    //   在那之前**两条路都在** ✓，删早了就是"配了也进不来" ✗。
+    remember_peer_card(c, proto_space, peer_device_id, token, device_level, peer_pubkey)
 }
 
 /// ⭐⭐ **R110（owner 2026-10-02 拍 A）：把"对面那一台"登记好** —— 卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓。
@@ -2718,10 +2713,14 @@ pub(crate) fn apply_device_pair_import(
 /// ⛔ **两处各写一遍迟早会漂** ✗ —— 而漂的方向是"一边认了、一边没认"⇒ 又是 401 ✓
 /// （与 `db::sha256_hex` 只有一处实现同一条纪律 ✓）。
 ///
-/// 做三件（缺一件都不算 ✓）：
-///   ① **登记一张卡**（`mesh_paired_devices`：我认那一台 ✓，⛔ 只存哈希 ✗）
-///   ② **存本机要出示给它的那一份**（`mesh_pair_secret:<空间>:<它>` ✓）
-///   ③ **把新卡加进正在跑的那扇门**（`mesh::add_paired` ✓ —— `forget_paired` 的反面 ✓）
+/// 做**四件**（缺一件都不算 ✓）：
+///   ① **登记那一台的公钥**（`mesh_paired_devices.pubkey` ✓ —— ⭐ 1C 之后**真正**的凭证 ✓）
+///   ② **把新钥匙加进正在跑的那扇门**（`mesh::add_paired_pubkey` ✓ —— `forget_paired_device` 的反面 ✓）
+///   ③ **登记一张卡**（哈希 ✓ —— ⚠️ **过渡**：门那一档还没删 ✓，删早了就是"配了也进不来" ✗）
+///   ④ **存本机要出示给它的那一份**（`mesh_pair_secret:<空间>:<它>` ✓ —— ⚠️ 同样**过渡** ✓：
+///      1C 之后出站**只带签名** ✓ ⇒ 这一份迟早一起退场 ✓）
+///
+/// ⚠️ 2026-10-12：⭐ ③④ 的**退场**与"门停认口令"是**同一笔** ✓ —— ⛔ 别单独删 ✗（方案 §8.6 的作业单 ✓）。
 ///
 /// ⚠️ **`c` 必须是"空间连接"**（`db.0` ✓）：`set_meta_state` 写的是限定名 `meta.sync_state`
 /// ⇒ 裸 meta 连接（`db::open_meta_conn_at`）上必然 `no such table` ✗（见 `mesh::add_paired` 的判据 ✓）。
@@ -2733,14 +2732,33 @@ pub(crate) fn remember_peer_card(
     // ⭐⭐ 2026-10-11（丙）：⭐ 由**调用方**把判定传进来 ✓（它知道这一档是不是个人档 ✓）——
     //   ⛔ 本层**不许**自己反推 ✗（方案 §10.3：判定只有一处 ✓）。
     device_level: bool,
+    // ⭐⭐ **2026-10-12（owner 拍「1C 现在就拔掉」）**：⭐ **对面那把公钥** ✗ ——
+    //   ⭐ 1C 之后"我认哪一台"落的就是**它** ✓（哈希那一档**不再是凭证** ✓）。
+    //   ⚠️ 收进**这一处实现** ✗（⛔ 不许在两个调用点各写一遍 ✗ —— 那正是本条纪律的来由 ✓）。
+    peer_pubkey: &str,
 ) -> Result<bool, String> {
+    // ⭐ 公钥**形状当场验** ✓：空／半截 ⇒ ⭐ **如实拒** ✗（⛔ 不许登记出一个"认不出谁"的名单 ✗）。
+    let pk = peer_pubkey.trim().to_ascii_lowercase();
+    if !crate::device_key::is_public_key_hex(&pk) {
+        return Err(
+            "对面那一台**还没报出它的身份** ⇒ 这一台不能把「允许它来拿我的」落下：\n\
+             ⚠️ 1C 之后门**只认签名**，没有公钥的名单**等于没登记**（对端照样 401）✓。\n\
+             ⇒ 让那台升级到这一版（它会随公告报出公钥），再让它出现在「附近的设备」里 ✓"
+                .to_string(),
+        );
+    }
     // ⭐ 库里那一行的键：个人档 ⇒ 空串那一行 ✓（＝ 一份，两个个人空间共用 ✓）；团队档 ⇒ 自己的 ✓。
     //   ⚠️ 与下面 ③ 那把键**不是一回事** ✗：门/内存卡表永远按**门服务的空间** `proto_space` 记 ✓。
     let row = crate::mesh::paired_row_key(proto_space, device_level);
-    // ① 卡：**只存哈希**（明文只用来算哈希，见 `db::pair_device` ✓）
+    // ①' ⭐ **公钥那一行**（1C 之后**真正**的凭证 ✓）—— 与下面那两件**同一把键** ✓
+    crate::db::pair_pubkey(c, row, peer_device_id, &pk)?;
+    // ②' ⭐ 正在跑的门**也要认它** ✗（⛔ 只写库不算 ✗ —— 那正是"配对成功却 401" ✓）
+    crate::mesh::add_paired_pubkey(proto_space, peer_device_id, &pk)?;
+    // ① 卡：**只存哈希**（明文只用来算哈希，见 `db::pair_device` ✓）—— ⚠️ **过渡**：门那一档还没删 ✓
     crate::db::pair_device(c, row, peer_device_id, secret)?;
     // ② 本机要出示给那一台的那份（明文只在本机这一侧 ✓）—— ⭐ 与卡片**同一把键** ✓
     //   （⛔ 两把键 ⇒ "配对成功却 401" ✗：卡片在设备级、出示那份还在逐空间 ✓）。
+    //   ⚠️ 也属**过渡**：1C 之后出站**只带签名** ✓ ⇒ 这一份迟早一起退场 ✓。
     crate::mesh::set_pair_secret(c, row, peer_device_id, Some(secret))?;
     // ③ 正在跑的门也要认它 —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
     crate::mesh::add_paired(proto_space, &crate::db::sha256_hex(secret))
@@ -2857,11 +2875,9 @@ pub(crate) fn apply_device_pair_export(
                 .to_string(),
         );
     }
-    let row = crate::mesh::paired_row_key(proto_space, device_level);
-    crate::db::pair_pubkey(c, row, peer_device_id, &pk)?;
-    crate::mesh::add_paired_pubkey(proto_space, peer_device_id, &pk)?;
-    // ⚠️ 旧那一档**照旧也写** ✓（门那一半还没改 ⇒ 删早了就是"配了也进不来" ✗）。
-    remember_peer_card(c, proto_space, peer_device_id, secret, device_level)
+    // ⭐ 公钥那一行同样**收进唯一那处实现** ✗（`remember_peer_card` ✓）——
+    //   ⛔ 这里不再自己写一遍 ✗；⚠️ 旧那一档照旧也写 ✓（门那一半还没删 ⇒ 删早了就是"配了也进不来" ✗）。
+    remember_peer_card(c, proto_space, peer_device_id, secret, device_level, &pk)
 }
 
 /// ⭐ **T3：设备直连「把这台设备接进来」的采纳侧**（`U1`／`U2`／`U3`／`U6`）。
@@ -4751,7 +4767,7 @@ mod device_level_paired_tests {
         assert_eq!(crate::mesh::mesh_room_device(&c), None, "前提：设备级那一格还没填");
 
         // ⭐ 个人档**写一次** —— 走**唯一实现** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
-        crate::sync::remember_peer_card(&c, &a.space, "dev-1", "k7Qm-2pRt", true).unwrap();
+        crate::sync::remember_peer_card(&c, &a.space, "dev-1", "k7Qm-2pRt", true, &"ab".repeat(32)).unwrap();
 
         // ① ⭐ 两个个人空间**都**看得到它 ✗
         for (who, s) in [("ws-a", &a), ("ws-b", &b)] {
@@ -4851,8 +4867,8 @@ mod device_level_paired_tests {
         )
         .unwrap();
         // ⭐ 个人档**写两台**（走唯一实现 ✓）
-        crate::sync::remember_peer_card(&c, "room-a", "dev-1", "k7Qm-2pRt", true).unwrap();
-        crate::sync::remember_peer_card(&c, "room-a", "dev-2", "pW3n-8sTq", true).unwrap();
+        crate::sync::remember_peer_card(&c, "room-a", "dev-1", "k7Qm-2pRt", true, &"ab".repeat(32)).unwrap();
+        crate::sync::remember_peer_card(&c, "room-a", "dev-2", "pW3n-8sTq", true, &"cd".repeat(32)).unwrap();
 
         let a = mesh_scope_at(&c, Some("ws-a")).expect("个人档 a 要解析得出");
         let b = mesh_scope_at(&c, Some("ws-b")).expect("个人档 b 要解析得出");

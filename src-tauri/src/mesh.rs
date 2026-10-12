@@ -4650,7 +4650,10 @@ mod tests {
         // ⭐ 个人档：门服务的那个空间是**配对暗号** ✗（⛔ 不是空串 ✓）。
         let room = "room-personal-1";
         let secret = "k7Qm-2pRt-dev1";
-        crate::sync::remember_peer_card(&c, room, "dev-peer", secret, true).unwrap();
+        // ⭐ 2026-10-12（1C）：⭐ 登记**必须有公钥** ✗（`remember_peer_card` 收进一处 ✓）——
+        //   ⚠️ 夹具这里给的是**假钥匙** ✓（本条量的是"个人档落同一行"✓，⛔ 不是量那把钥匙 ✓）；
+        //   ⭐ 门那一档删除之后，本判据要换成**真钥匙 ＋ 签名请求** ✓（方案 §8.6 的作业单 ✓）。
+        crate::sync::remember_peer_card(&c, room, "dev-peer", secret, true, &"ab".repeat(32)).unwrap();
         // 前提：卡片确实落在**空串那一行** ✓（按口径读得到 ✓）
         assert_eq!(
             crate::mesh::paired_devices(&c, room, true).unwrap().len(),
