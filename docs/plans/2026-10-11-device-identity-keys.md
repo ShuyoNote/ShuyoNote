@@ -262,3 +262,33 @@ node _workspace/bin/check-all.mjs                  # 工作区门禁
    施工中实测：它要同时改 **8 条判据、22 处请求**（走口令的 22 处 vs 走签名的 7 处 ✓）⇒
    ⭐ 那一刀**单独一片**做 ✓（⛔ 不许为了让判据过而留一条"只许判据走的旧支路" ✗）。
 ```
+
+#### ⭐⭐ 2026-10-12 第二次开工的**实测清单**（⭐ 下一片照这个走 ✓，⛔ 别重新量一遍 ✗）
+
+```text
+⭐ 一、门本身的改动很小 ✓（`authorized` 里"口令那一档"整条删掉 ⇒ 只认签名 ✓，约 20 行 ✓）。
+⭐ 二、**真正的量在"登记的落点"** ✗ —— ⭐ 门一改成只认签名，凡"登记了却**没登记钥匙**"的地方
+      全部变 401 ✓。实测（把门改掉 ＋ 22 处换成签名请求之后跑 `mesh::tests` ✓）：
+      **26 passed / 13 failed** ✓ ⇒ ⭐ 那 13 条就是**下一片的作业单** ✓：
+        ① 夹具型（用 `ensure_window` 开门的 ✓）：`adopting_a_pairing_makes_…` ／
+           `a_personal_pairing_is_accepted_by_the_door_…` ／ `one_pairing_round_connects_both_directions` ✓
+           ⇒ ⭐ 夹具加 `trust_test_identity(proto)`（＝生产的 `add_paired_pubkey` ✓）
+             ＋ `signed_get(addr, target)`（空间从 `?space_id=` 取 ✓，＝生产的 `sign_request` ✓）；
+             ⚠️ 一份**进程级测试身份**就够 ✓（设备号固定 `"me"` ✓；⛔ 22 处各自造钥匙 ＝ 每处多读一个 conn ✗）。
+        ② **生产线型**（走真 `mesh_round` 的 ✓）：`two_clients_converge_over_real_loopback_…` ／
+           `the_product_entry_pulls_from_a_discovered_peer_over_loopback` ／ `a_wildcard_bound_window_…` ✓
+           ⇒ ⭐ 它们靠 `remember_peer_card`（**哈希** ✓）建立信任 ✗ ⇒ ⭐ 那一处的落点**也要换成公钥** ✓
+             （＝第 ②-b 片在 `apply_device_pair_export` 里已经做的那件事 ✓）。
+        ③ 逐台解除型：`unpairing_one_device_only_stops_that_device` ✓
+           ⇒ ⭐ 一条判据里要**两把不同的钥匙** ＋ 解除之后**签名也立刻不认** ✓
+             （`forget_paired_device` 第 ③ 步已落地 ✓；这条量的是它与"只删库"的差别 ✓）。
+        ④ 其余（`an_attachment_comes_from_whichever_peer_actually_has_it` ／
+           `the_space_id_gate_refuses_by_default_…` ／ `three_spaces_share_one_window_…` ／
+           `the_window_serves_the_local_spaces_db_…` ／
+           `a_peer_that_is_down_is_reported_in_its_own_row_…` ／ `an_unimplemented_endpoint_…` ✓）
+           ⇒ 多半是**同两个根因**（登记落点 ＋ 夹具身份 ✓）⇒ ⭐ 先修①②，再看这六条还剩几条 ✓。
+⭐ 三、**顺序（⛔ 别反过来 ✗）**：①先把"登记的落点"全部换成公钥（生产两处 ＋ 夹具 ✓）
+      ⇒ ②再删门里的口令那一档 ⇒ ③再整条旧机器退场（`pair_secret` ／ 哈希卡 ／ 口令 KV ／ 面板那格 ✓）。
+      ⭐ **我两次都是先做②（门）** ⇒ 两次都撞到"13 条一起红" ✓ ⇒ ⭐ 这就是顺序错了的读数 ✓。
+```
+
