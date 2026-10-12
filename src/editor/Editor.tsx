@@ -719,10 +719,16 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
-        {/* ⭐ 2026-10-02（owner）：「只恢复 ⋮⋮ 手柄与块菜单，不恢复拖拽」✓
-            ⇒ 挂回来但**不开** `dragEnabled`（默认 false ✓）：
-               有左侧沟槽的 ⋮⋮ 手柄 ✓、点一下出块菜单 ✓；⛔ 无拖拽幽灵/指示线 ✗（10-01 的取消继续生效 ✓）。 */}
-        <BlockDragPlugin />
+        {/* ⭐⭐ **2026-10-12（owner：「打开」）**：⭐ **恢复块拖拽** ✗ —— 推翻 2026-10-02 那句
+            「只恢复手柄与菜单、不恢复拖拽」✓（⛔ 旧那行注释不删 ✗，它是"曾经关过、为什么关"的记录 ✓）。
+            ⚠️ 拖拽的**唯一入口**仍是 `BlockDragPlugin` 里的 `beginDrag()` ✓（⛔ 没有第二条路 ✗）——
+              它现在**开着** ✓；⭐ 判据在 `blockDragWiring.test.ts`（接线 ✓）与
+              `blockGestures.test.ts`（手势不误关 ✓）两处钉着 ✓。
+            ⚠️ ⭐ **该补的四条（拖拽真正的验收）现在还没有判据兜住** ✗ ——
+              ① >5px 才起拖 ② 落点线画对块位 ③ 松手**顺序真的落库**（⛔ 不是只动 DOM ✗）
+              ④ 点一下 ≠ 拖（块菜单照旧 ✓）。
+              ⛔ 别把上面那两条接线／手势判据读成"拖拽已被验收" ✗。 */}
+        <BlockDragPlugin dragEnabled />
         <BlockInsertPlugin pageId={pageId} />
         <BlockSelectionPlugin />
         <InsertShortcutPlugin />
