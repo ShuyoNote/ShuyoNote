@@ -4570,7 +4570,12 @@ mod tests {
         assert_eq!(code, 401, "基线：门里零张卡 ⇒ 谁来都得 401（不然这条判据分不出东西）：{body}");
 
         // ② ⭐ **走真采纳**：真载荷 → 真判定 → **生产同一个落库内核** ✓（门**先开着**、**不重启** ✓）
-        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
+        //   ⭐ 2026-10-12（1C）：载荷**必须带对方的公钥** ✗（不带 ⇒ 解码那一步就**如实拒** ✓）。
+        //   ⚠️ 夹具**借门这台自己的钥匙冒充 dev-B** ✓（门只按 `device_id` 查公钥 ✓ ⇒
+        //     这一格量的是"**登记 → 验签放行**"那条链 ✓，⛔ 不是量钥匙归属 ✗）。
+        let id_peer = crate::device_key::load_or_create(&c).unwrap();
+        let mut payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
+        crate::pairing::stamp_pubkey(&mut payload, &id_peer.public_key_hex()).unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
         let decision =
             crate::sync::decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text)), "A").unwrap();
@@ -4578,13 +4583,33 @@ mod tests {
             panic!("核对过就该 Accept：{decision:?}")
         };
         assert_eq!(peer_device_id, "dev-B", "对面设备号来自载荷 ✓");
-        let added = crate::sync::apply_device_pair_import(&c, "proto-e2e", &peer_device_id, &bind, &token, false).unwrap();
+        // ⭐ 2026-10-12（1C）：⭐ 采纳还要交**对面那把公钥** ✗（它来自载荷 ✓）——
+        //   ⚠️ 夹具用的就是**上面那把**（⭐ 借门这台自己的钥匙冒充 dev-B ✓，理由见 ② ✓），⛔ 不另凑一个 ✗。
+        let added = crate::sync::apply_device_pair_import(
+            &c,
+            "proto-e2e",
+            &peer_device_id,
+            &bind,
+            &token,
+            false,
+            &id_peer.public_key_hex(),
+        )
+        .unwrap();
         assert!(added, "门正开着 ⇒ 新卡必须**当场**加进那扇门（否则就是「配对成功却 401」✓）");
 
         // ③ ⭐⭐ **门没有重启也必须立刻认这一台** ⇒ 200 ✓（R109 的洞就在这一格）
         let (code, body) = http_get(addr, pull, Some(secret));
         assert_eq!(code, 200, "配好对之后**不许重启门**就该进得来：{body}");
         assert!(body.contains("p1"), "而且要真拉到东西：{body}");
+        // ③-b ⭐⭐ **2026-10-12（1C）**：⭐ 采纳登记的**公钥**也要**当场**生效 ✗ ——
+        //   ⭐ 这一台此后**凭签名**（⛔ 不带任何口令 ✗）就得进得来 ✓（那正是取代口令的那条路 ✓）。
+        let (ts, sig) =
+            crate::mesh::sign_request(&c, "dev-B", "proto-e2e", "GET", pull, crate::db::now_ms()).unwrap();
+        let (code, body) = http_get_signed(addr, pull, "dev-B", ts, &sig);
+        assert_eq!(
+            code, 200,
+            "⛔ 采纳之后这一台**凭签名**必须进得来 ✗（⭐ 而且一个口令都不带 ✓ —— 1C 之后门认的就是这个 ✓）：{body}"
+        );
         // ⭐「本机要出示给那一台」的那一份也存好了（`round_candidates` 读的就是它 ✓）
         assert_eq!(
             crate::mesh::pair_secret_for(&c, "proto-e2e", "dev-B").as_deref(),
@@ -4912,7 +4937,12 @@ mod tests {
         assert!(addr_a0.port() > 0, "甲的门要真的绑上端口（不然下面那次「当场加进去」无从谈起）");
 
         // ② ⭐ **走真产出内核**（＝ `device_pair_export` 那一步 ✓）：真载荷 ＋ 生成时登记
-        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-jia", "dev-yi").unwrap();
+        //   ⭐ 2026-10-12（1C）：载荷**必须带公钥** ✗（不带 ⇒ 解码就拒 ✓）——
+        //     ⚠️ 夹具借甲自己那把钥匙当"乙的公钥" ✓（⭐ 这一格量的是"登记 → 验签放行"那条链 ✓）。
+        let id_yi = crate::device_key::load_or_create(&ca).unwrap();
+        let mut payload =
+            crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-jia", "dev-yi").unwrap();
+        crate::pairing::stamp_pubkey(&mut payload, &id_yi.public_key_hex()).unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
         let added = crate::sync::apply_device_pair_export(&ca, "proto-r110", "dev-yi", secret, false).unwrap();
         assert!(added, "甲的门正开着 ⇒ 生成时登记的新卡必须**当场**加进去 ✓");
@@ -4937,7 +4967,16 @@ mod tests {
             panic!("给本机的码应当能采纳：{decision:?}")
         };
         assert_eq!(peer_device_id, "dev-jia");
-        crate::sync::apply_device_pair_import(&cb, "proto-r110", &peer_device_id, &bind, &token, false).unwrap();
+        crate::sync::apply_device_pair_import(
+            &cb,
+            "proto-r110",
+            &peer_device_id,
+            &bind,
+            &token,
+            false,
+            &id_yi.public_key_hex(),
+        )
+        .unwrap();
         crate::mesh::stop_window("proto-r110").unwrap(); // 幂等：此刻没有门在服务它 ✓
 
         // ④ **两扇门各自重开**（卡由 `load_cards` 从**各自的库**里载 ✓ ⇒ 不再靠内存里的临时状态 ✓）

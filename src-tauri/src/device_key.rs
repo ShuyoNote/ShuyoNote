@@ -71,6 +71,8 @@ pub fn load_or_create(c: &Connection) -> Result<DeviceIdentity, String> {
 ///
 /// ⚠️ 给**公告**用（⭐ 那是一条每秒都可能跑的读路径 ✓）—— ⛔ 读路径不写库 ✗（本仓的老规矩 ✓）；
 /// 建键只发生在**写路径**上（`mesh_set_config` ✓，与 `migrate_device_level_mesh` 同一处 ✓）。
+///
+/// ⭐ 2026-10-12：它也是**抄码那条路**要的那一格 ✓（载荷里带本机公钥 ⇒ 对面导入即登记 ✓）。
 pub fn public_key_hex_of(c: &Connection) -> Result<Option<String>, String> {
     let Some(stored) = crate::sync::get_meta_state(c, DEVICE_IDENTITY_SK) else {
         return Ok(None);
@@ -82,6 +84,15 @@ pub fn public_key_hex_of(c: &Connection) -> Result<Option<String>, String> {
     // ⭐ 连**形状**一起核 ✓：库里那一格坏了 ⇒ 如实报"读不出来" ✓，⛔ 不许当成"没有身份"✗
     //   （两者的处置完全不同 ⇒ 界面上/日志里必须长得不一样 ✓）。
     Ok(Some(hex::encode(secret_from_hex(t)?.verifying_key().as_bytes())))
+}
+
+/// ⭐ 那串是不是**形状正确的公钥**（⭐ 32 字节 ⇒ 64 个十六进制字符 ✓）—— ⛔ 不猜、⛔ 不补位 ✗。
+///
+/// ⭐ **一处实现** ✗：门那一侧（`mesh_trust` ✓）与抄码载荷（`pairing` ✓）按**同一把尺**判它 ✓ ——
+/// ⛔ 两处各写一份 ⇒ 迟早"这边收、那边拒" ✓（本仓最忌的形状 ✓）。
+pub fn is_public_key_hex(s: &str) -> bool {
+    let t = s.trim();
+    t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// ⭐ 拿**公钥**验一段签名 ✗（⭐ 第 2 步的门要用它 ✓；本步先与"签"配成一对判据 ✓）。
@@ -240,6 +251,9 @@ mod tests {
         // ⭐ 正向：公开面**只有**这几件东西 ✓（多一件就要在这里显式加一行 ⇒ 想加的人得先说服判据 ✓）
         //   ⚠️ 第 5 件（`public_key_hex_of`）是**公告那条读路径**要的只读出口 ✓ ——
         //     它只回**公钥** ✓（⛔ 一个字节的私钥都不回 ✗），所以上面那串"取私钥的出口"照样是空的 ✓。
+        //   ⚠️ 第 6 件（`is_public_key_hex`）是**2026-10-12（1C）**加的 ✓：⭐ "公钥形状"的**一处实现** ✗
+        //     （门 ／ 抄码载荷 ／ 那条读路径都按**同一把尺**判 ✓）—— ⭐ 它只看形状、⛔ 不碰私钥 ✗。
+        //     ⭐ 它进来时**这条判据当场红过** ✓（⭐ 那正是它该有的行为 ✓ —— 公开面变了就得逐条交代 ✓）。
         let pubs: Vec<&str> = code
             .lines()
             .filter(|l| l.trim_start().starts_with("pub fn "))
@@ -247,8 +261,9 @@ mod tests {
             .collect();
         assert_eq!(
             pubs.len(),
-            5,
-            "公开面变了 ⇒ 在这里逐条交代（现在应当是：load_or_create ／ public_key_hex ／ sign_hex ／ public_key_hex_of ／ verify_hex）：{pubs:?}"
+            6,
+            "公开面变了 ⇒ 在这里逐条交代（现在应当是：load_or_create ／ public_key_hex ／ sign_hex ／ \
+             public_key_hex_of ／ is_public_key_hex ／ verify_hex）：{pubs:?}"
         );
     }
 }

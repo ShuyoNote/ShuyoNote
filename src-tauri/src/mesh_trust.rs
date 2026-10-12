@@ -131,7 +131,7 @@ pub fn mesh_trust_begin(
     // ⭐ 2026-10-12（第 3 步）：⭐ "信任"的产物**不再是"共用口令的哈希"** ✗，⭐ 而是**它的公钥** ✗
     //   ⇒ ⭐ 门此后**验签** ✓（⭐ 谁都不能靠"知道口令"混进来 ✓ —— 那是 ⓒ 落地后的完整形态 ✓）。
     let pk = peer_pubkey.trim().to_ascii_lowercase();
-    if !is_pubkey_hex(&pk) {
+    if !crate::device_key::is_public_key_hex(&pk) {
         return Ok(MeshTrustOutcome {
             outcome: "no_identity".to_string(),
             message: "这一台还没报出它的身份（⭐ 它需要这一版的程序、并且开过一次设备直连 ✓）\
@@ -176,10 +176,9 @@ pub fn mesh_trust_begin(
     })
 }
 
-/// ⭐ 那串是不是**形状正确的公钥**（⭐ 32 字节 ⇒ 64 个十六进制字符 ✓）—— ⛔ 不猜、⛔ 不补位 ✗。
-fn is_pubkey_hex(s: &str) -> bool {
-    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
-}
+/// ⚠️ 2026-10-12：本模块**原先**有一份自己的"公钥形状"判定（`fn is_pubkey_hex` ✓）——
+/// ⭐ 现在**整条删掉** ✗，改用 [`crate::device_key::is_public_key_hex`] ✓
+/// （⭐ 一处实现 ✓：抄码载荷那边按**同一把尺**判 ✓；⛔ 两处各写一份 ⇒ 迟早"这边收、那边拒" ✓）。
 
 #[cfg(test)]
 mod tests {

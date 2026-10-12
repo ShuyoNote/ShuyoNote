@@ -94,6 +94,22 @@ pub struct DevicePairPayload {
     /// ⚠️ `#[serde(default)]` ⇒ 老码没有这一格**照样解析得动** ✓（那就是"不指定"✓）。
     #[serde(default)]
     pub to_device_id: String,
+    /// ⭐⭐ **2026-10-12（owner 拍「1C 现在就拔掉」＋「4C 用逐位对一遍」）**：
+    /// ⭐ **给出这段码的那一台的 Ed25519 公钥** ✗（十六进制 64 字符 ✓）。
+    ///
+    /// ⭐ 它让这段码**不再含任何秘密** ✗：⭐ 口令（`token`）**不再是凭证** ✓（1C ✓）⇒
+    ///   拿到这段码的人**连不上任何窗口** ✓（⭐ 只能"知道有这么一台、它的公钥是什么"✓）。
+    /// ⭐ 而"**这串公钥确实是它**"由**两台屏幕上的比对码**来担保 ✓：
+    ///   [`check_code`] 覆盖**整份载荷文本** ⇒ ⭐ 谁改了 `pubkey`（或 `bind`），**那串数字当场不一样** ✓
+    ///   （⭐ 这正是 owner 选的 4C ✓；判据里钉着"只差公钥 ⇒ 数字码必须不同"✓）。
+    ///
+    /// ⚠️ **空串 ＝ 老码**（v1 早期产出、没有这一格 ✓）⇒ ⭐ 采纳侧**如实拒** ✗
+    ///   （⛔ 不猜、⛔ 不回落成"没有公钥也认"✗ —— 1C 之后**没有公钥就进不来** ✓）。
+    /// ⚠️ 本结构是 `deny_unknown_fields` ⇒ ⭐ **老版本读到新码会直接报"字段对不上"** ✗：
+    ///   那是**有意的**坦白 ✓（1C 之下老版本本来就**不可能**被信任 —— 它不会签名 ✓）
+    ///   ⇒ ⛔ 别为了"让老版本能解析"把这格删掉 ✗（那等于把 1C 又放开 ✓）。
+    #[serde(default)]
+    pub pubkey: String,
 }
 
 /// ⭐ **把「我这台的绑定写法」折成「对方可以照抄」的那一份**（2026-10-01 修：owner 追问抓到的**真错** ✓）。
@@ -166,7 +182,31 @@ pub fn device_pair_from(
         fp: from_device_id.to_string(),
         from_device_id: from_device_id.to_string(),
         to_device_id: to_device_id.to_string(),
+        // ⚠️ 公钥**不在这里填** ✗：它由 [`stamp_pubkey`] 单独装 ✓（⭐ 那一格要**先验形状** ✓，
+        //   而本函数的老签名有二十来个调用点（多为判据夹具 ✓）⇒ ⛔ 不为它改签名 ✗）。
+        pubkey: String::new(),
     })
+}
+
+/// ⭐⭐ **2026-10-12**：把**本机的公钥**装进这段码 ✗（⭐ 1C 之后，这是这段码**唯一**的信任来源 ✓）。
+///
+/// ⚠️ **形状当场验** ✗：⛔ 装一个空串／半截进去 ＝ 生成一段**对面必然拒收**的码 ✗
+/// （用户白跑一趟，而且现场看起来像"码坏了"✓ —— 与本文件"先验，再发"那条纪律同一来由 ✓）。
+///
+/// ⚠️ **口令仍然要填**（载荷里那一格留着 ✓）：⭐ 它**不再是凭证** ✓（1C ✓），
+///   ⛔ 但**老版本的对端**只会看它 —— 而那种对端**本来就进不来** ✓（见 `pubkey` 那一格的注释 ✓）。
+pub fn stamp_pubkey(p: &mut DevicePairPayload, pubkey_hex: &str) -> Result<(), String> {
+    let pk = pubkey_hex.trim().to_ascii_lowercase();
+    if !crate::device_key::is_public_key_hex(&pk) {
+        return Err(
+            "这台设备**还没有自己的钥匙**（或那一格坏了）⇒ 不能生成配对码：\n\
+             ⚠️ 配对码要靠这把钥匙让对面认你 —— 少了它，对面只会**当面拒收**。\n\
+             ⇒ 先让应用正常起来（钥匙在设备直连设置里首次生成），再重来 ✓"
+                .to_string(),
+        );
+    }
+    p.pubkey = pk;
+    Ok(())
 }
 
 /// 编码成一段文本（紧凑 JSON）。同 `encode_payload`：⛔ 不许静默变空 ✗。
@@ -184,9 +224,22 @@ pub fn decode_device_pair(raw: &str) -> Result<DevicePairPayload, String> {
             p.v
         ));
     }
-    if p.bind.trim().is_empty() || p.token.trim().is_empty() {
-        return Err("载荷里的地址或口令是空的 ⇒ 收下也没用（**没有采纳**）".to_string());
+    if p.bind.trim().is_empty() {
+        return Err("载荷里的地址是空的 ⇒ 收下也没用（**没有采纳**）".to_string());
     }
+    // ⭐⭐ 2026-10-12（1C）：⭐ **公钥是必须的** ✗ —— ⛔ 空串 ＝ 老码 ✗ ⇒ ⭐ **如实拒** ✓
+    //   （⛔ 不回落成"没有公钥也认"✗：1C 之后门**只认签名** ✓ ⇒ 收下也没有任何用 ✓）。
+    if !crate::device_key::is_public_key_hex(&p.pubkey) {
+        return Err(
+            "这段码**没带对方的钥匙**（是升级前产出的老码）⇒ 本版收不了：\n\
+             ⚠️ 现在的信任靠**两台各自的钥匙**，老码里只有共用口令 —— 而那条路已经**停认**了 ✓。\n\
+             ⇒ 请让那台设备**升级到这一版**，重新生成一次配对码 ✓"
+                .to_string(),
+        );
+    }
+    // ⚠️ 口令**不再是凭证** ✓（1C ✓）⇒ ⛔ 这里**不再因为 `token` 空而拒** ✗。
+    //   ⭐ 这行注释是**有意的路标**：上一版这里写着「地址或口令是空的 ⇒ 拒」✓ ——
+    //   ⭐ 那一条在 1C 之后就是错的 ✓（它会拒掉本版自己产出、而且**更安全**的码 ✓）。
     Ok(p)
 }
 
@@ -710,9 +763,16 @@ mod tests {
 
     // ═══════════════ ⭐ T2：设备直连载荷（`U1`／`U2`／`U3`）═══════════════
 
+    /// ⭐ 2026-10-12（1C）：夹具用**带钥匙**的载荷 ✓（⛔ 老码（没这一格）现在会被**如实拒** ✗）。
+    fn pair_with_key(bind: &str, token: &str, from: &str, to: &str) -> DevicePairPayload {
+        let mut p = device_pair_from(bind, token, from, to).unwrap();
+        stamp_pubkey(&mut p, &"ab".repeat(32)).unwrap();
+        p
+    }
+
     #[test]
     fn a_device_pair_payload_round_trips_byte_for_byte() {
-        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "").unwrap();
+        let p = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "fp-a", "");
         let raw = encode_device_pair(&p).unwrap();
         assert_eq!(decode_device_pair(&raw).unwrap(), p, "编解码必须逐字节往返");
         assert_eq!(p.v, DEVICE_PAIR_VERSION);
@@ -774,7 +834,7 @@ mod tests {
     /// （只有 `fp`、没有新格）与新的"要能点名"这条路会**各自缺一半** ✓。
     #[test]
     fn a_device_pair_payload_carries_the_peers_device_id() {
-        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-A-7f31", "").unwrap();
+        let p = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-A-7f31", "");
         assert_eq!(p.from_device_id, "dev-A-7f31", "对面设备号必须进载荷");
         assert_eq!(p.fp, "dev-A-7f31", "v1 那格（指纹）今天与它同源");
         let back = decode_device_pair(&encode_device_pair(&p).unwrap()).unwrap();
@@ -787,12 +847,24 @@ mod tests {
     /// （`an_old_device_pair_code_without_a_peer_id_is_refused_by_adoption` ✓）——
     /// 分两处钉是**故意的**：这里只量"**解析得动**"（新版本不许把老码当垃圾 ✗），
     /// 那里量"**不许拿它去登记**"（少一格就点不出名字 ⇒ 只能拒 ✓）。
+    /// ⭐⭐ **2026-10-12（1C 改口径 ✓，本条随之改）** ✗：⭐ 老码（没有 `pubkey` 这一格）
+    /// ⇒ ⭐ **不再"解析得动"** ✗，而是**当场拒** ✓（⭐ 拒的理由要点名是哪一格 ✓）。
+    ///
+    /// ⚠️ 本条**原先**量的是「老码解析得动 ✓（新版本不许把它当垃圾 ✗）」✓ ——
+    ///   ⭐ 1C 之后那条口径**反了** ✓：⭐ 门**只认签名** ⇒ 没有公钥的码**收下也没有任何用** ✓
+    ///   ⇒ ⭐ 与其"收下再在采纳那一步拒"，不如**在解析就拒**（⭐ 少一次误以为配上了 ✓）。
+    ///   ⚠️ 而"老版本读到新码"那半边**仍是硬拒**（`deny_unknown_fields` ✓）—— ⭐ 那是**有意的坦白** ✓
+    ///   （1C 之下老版本**本来就进不来** ✓）。
     #[test]
     fn an_old_device_pair_code_without_the_new_field_still_parses() {
         let raw = "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",\"fp\":\"dev-A\"}";
-        let p = decode_device_pair(raw).expect("老码必须解析得动（否则升级后当场变砖）");
-        assert_eq!(p.from_device_id, "", "老码没有这一格 ⇒ 空（不是猜一个 ✗）");
-        assert_eq!(p.fp, "dev-A", "老码既有那格照旧");
+        let why = decode_device_pair(raw).unwrap_err();
+        assert!(why.contains("钥匙"), "⛔ 老码要**如实拒**，而且要点名缺的是哪一格 ✗：{why}");
+        assert!(why.contains("升级"), "⭐ 还要说清下一步做什么（让那台升级重发 ✓）：{why}");
+        // ⚠️ ⭐ 反向**必须仍然解析得动** ✗（⛔ 别让"拒老码"变成"连自己的码也拒" ✗）——
+        //   ⭐ 带钥匙的那段码照旧往返 ✓。
+        let mine = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-A", "");
+        assert_eq!(decode_device_pair(&encode_device_pair(&mine).unwrap()).unwrap(), mine);
     }
 
     /// ⚠️ **产出侧先验**：**没有设备号就不许生成载荷** ✓ —— 那一格是采纳侧唯一的"点名"依据，
@@ -811,7 +883,7 @@ mod tests {
     /// **变异**：把那一格从 `device_pair_from` 里去掉（或恒填空）⇒ 本判据红 ✓。
     #[test]
     fn a_device_pair_payload_carries_the_target_device_id() {
-        let p = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "dev-yi").unwrap();
+        let p = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "dev-yi");
         assert_eq!(p.to_device_id, "dev-yi", "点选的那台必须进载荷（发起侧要按它先登记 ✓）");
         assert_eq!(p.from_device_id, "dev-jia", "发起侧自己那格照旧 ✓");
         let back = decode_device_pair(&encode_device_pair(&p).unwrap()).unwrap();
@@ -822,11 +894,56 @@ mod tests {
             "",
             "不指定 ⇒ 空串（⛔ 不是错 ✗）"
         );
-        // ② **老码**（连这一格都没有）照样解析得动 ⇒ 那就是"不指定" ✓（走两次配对 ✓）
-        let old = "{\"v\":1,\"bind\":\"0.0.0.0:8788\",\"token\":\"k7Qm-2pRt\",\"fp\":\"dev-jia\",\"from_device_id\":\"dev-jia\"}";
-        assert_eq!(decode_device_pair(old).unwrap().to_device_id, "", "老码缺这一格 ⇒ 空（不是猜 ✗）");
+        // ② **不指定那一格**（空）照样解析得动 ⇒ 那就是"不指定" ✓（走两次配对那条路 ✓）
+        //   ⚠️ ⭐ **这一段 2026-10-12 改过** ✗：原先喂的是一段**手写老码**（连公钥都没有 ✓）⇒
+        //   ⭐ 1C 之后那种码**在解码就被如实拒** ✓（见 `an_old_device_pair_code_without_the_new_field_still_parses` ✓）
+        //   ⇒ 这里改成"**带钥匙、但不指定对面**"的码 ✓（⭐ 它量的本来就是"不指定也合法"✓）。
+        let open = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "");
+        assert_eq!(open.to_device_id, "", "不指定 ⇒ 空串（⛔ 不是错 ✗）");
+        assert_eq!(decode_device_pair(&encode_device_pair(&open).unwrap()).unwrap().to_device_id, "");
     }
 
+    /// ⭐⭐ **2026-10-12（owner 拍「4C 用逐位对一遍」）的命门** ✗：
+    /// ⭐ **只差公钥的两段码 ⇒ 那串人工核对的数字必须不同** ✗。
+    ///
+    /// ⚠️ 为什么这条是命门 ✓：`pubkey` 是**新那一档唯一的信任来源** ✓ ——
+    ///   ⭐ 如果它没被 `check_code` 盖住，那么"两台对一串数字"就**担保不到它** ✗：
+    ///   中间人把公钥换成自己的 ⇒ 数字照样一样 ⇒ ⭐ **用户会亲手把冒充者写进名单** ✗。
+    ///   ⭐ [`check_code`] 覆盖**整份载荷文本** ⇒ 这一格**自动**在覆盖范围里 ✓（⭐ 这条判据钉住它 ✓）。
+    ///
+    /// **变异**：把 `check_code` 改成只哈希 `bind`（或先删掉载荷里的 `pubkey` 再哈希）⇒ **本判据红** ✓。
+    #[test]
+    fn two_codes_differing_only_in_the_public_key_have_different_check_codes() {
+        let mut a = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "");
+        let mut b = a.clone();
+        // ⭐ 只改**公钥**那一格（别的字段逐字相同 ✓）
+        b.pubkey = "cd".repeat(32);
+        assert_ne!(a.pubkey, b.pubkey, "前提：两把钥匙确实不同 ✓");
+        let ta = encode_device_pair(&a).unwrap();
+        let tb = encode_device_pair(&b).unwrap();
+        assert_ne!(
+            check_code(&ta),
+            check_code(&tb),
+            "⛔ 只差公钥 ⇒ 数字码**必须不同** ✗ —— 一样的话，「当面逐位对一遍」就**担保不到**公钥 ✓"
+        );
+        // ⭐ 反向：**同一份载荷** ⇒ 数字码必须**逐字相同** ✓（⛔ 否则"对一遍"根本对不上 ✗）
+        assert_eq!(check_code(&ta), check_code(&encode_device_pair(&a).unwrap()));
+        // ⚠️ 顺带钉住"公钥那一格**真的进了载荷文本**"✗（⛔ 不是只在结构体里有 ✗）
+        assert!(ta.contains(&a.pubkey), "载荷文本里必须**看得见**那一把公钥：{ta}");
+    }
+
+    /// ⭐ **别把"拒老码"变成"连自己的码也拒"** ✗：**带钥匙**的码必须**照旧往返** ✓。
+    #[test]
+    fn a_code_with_a_key_still_round_trips() {
+        let p = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-A", "dev-B");
+        let raw = encode_device_pair(&p).unwrap();
+        assert_eq!(decode_device_pair(&raw).unwrap(), p);
+        // ⛔ 而且**空钥匙**不可能被装进去 ✗（`stamp_pubkey` 当场拒 ✓）
+        let mut q = device_pair_from("0.0.0.0:8788", "k7Qm-2pRt", "dev-A", "").unwrap();
+        assert!(stamp_pubkey(&mut q, "").is_err(), "空钥匙 ⇒ 不许装");
+        assert!(stamp_pubkey(&mut q, "zz").is_err(), "半截钥匙 ⇒ 不许装");
+        assert!(q.pubkey.is_empty(), "⛔ 拒了就不许**留下一半** ✗");
+    }
     /// ⚠️ **不许生成"给自己"的配对码** ✓ —— 选到自己 ⇒ 本机既当发起侧又当采纳侧，
     /// 只会在采纳那一步撞车，而且它会把这张卡登记成"自己认自己" ✗。
     ///
