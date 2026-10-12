@@ -728,14 +728,17 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
               ① >5px 才起拖 ② 落点线画对块位 ③ 松手**顺序真的落库**（⛔ 不是只动 DOM ✗）
               ④ 点一下 ≠ 拖（块菜单照旧 ✓）。
               ⛔ 别把上面那两条接线／手势判据读成"拖拽已被验收" ✗。 */}
-        {/* ⚠️⚠️ **2026-10-12 临时 A/B 探针** ✗ —— ⛔ **不是把「打开」的决定退回去** ✗：
-            owner 报「**Markdown 语法失效**」✗，而截图里那两行是**高亮**的（像拖拽/框选状态卡住 ✓）
-            ⇒ ⭐ 头号嫌疑＝刚打开的块拖拽（它常驻挂在编辑器里、和手势/选区抢事件 ✓）。
-            ⭐ 本行**临时**改回不传 `dragEnabled` ⇒ 请在窗口里试一次 Markdown（行首 `## ` ＋ 回车 ✓）：
-              · **恢复** ⇒ ⭐ 就是它 ✓ ⇒ 我**先写会红的判据再修**（⛔ 不是又关掉了事 ✗）；
-              · **照样不转换** ⇒ ⭐ 与它无关 ✓ ⇒ 我立刻把这行改回 `dragEnabled` ✓ 并换方向查 ✓。
-            ⚠️ 无论哪种，这一行都会在同一次提交里回到**最终形态** ✓（⛔ 不留"A/B 半成品" ✗）。 */}
-        <BlockDragPlugin />
+        {/* ⚠️⚠️ **2026-10-12 事故记录（⛔ 不删 ✗）**：owner 报「**Markdown 语法失效**」✗，
+            当时的 A/B（把这一行改回不传 `dragEnabled` ⇒ owner 回「好了」✓）**曾被当成结论** ✗ ——
+            ⭐ 但随后补的判据**重现不出来**（挂 `dragEnabled` 时行首 `## ` 仍真变 `<h2>` ✓；
+               已逐条排除 只挂载／悬停／完整拖一次／卡住的拖拽／`#` 的 keydown ✓）
+            ⇒ ⚠️ **那次 A/B 有混淆变量**（改行 ⇒ 重建 ⇒ **重载**，而重载本身会清会话态 ✗）
+            ⇒ ⭐ **"拖拽吃 Markdown"这条真因未定** ✓（⛔ 不许当成结论写进代码或提交 ✗）。
+            ⭐ 同期**已确证并修掉**的是另一个缺陷：`BlockDragPlugin` 的 `setEditable(false)`
+            **丢 `mouseup` 时会永久卡住**（`contenteditable="false"` ＋ `body.is-dragging-block`
+            带 `user-select:none` ✓）—— 形状正是 owner 截图里的"**高亮卡住**" ✓
+            （判据 `dragVsMarkdown.test.ts` 第④条 ✓）。 */}
+        <BlockDragPlugin dragEnabled />
         <BlockInsertPlugin pageId={pageId} />
         <BlockSelectionPlugin />
         <InsertShortcutPlugin />
