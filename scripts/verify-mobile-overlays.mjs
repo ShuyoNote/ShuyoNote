@@ -263,7 +263,14 @@ const OVERLAYS = [
   // ⚠️ 形态是**铺满遮罩 ＋ 居中卡片**（⛔ 不是底部弹层那一族 ⇒ 用 `sheet: false` ＋ `fullscreen: true` ✗）；
   //    它随 `lockForgot` 登记进浮层栈（`LockScreen.tsx` 的 `useOverlayLayer("lockForgot", …)` ✓）
   //    ＋ `useOverlayScrollLock(forgotOpen)` ✓（(5) 段无条件断言"打开任一层 ⇒ 外壳被锁" ✓）。
-  { id: "lockForgot", label: "忘记口令", root: ".lock-forgot-overlay", box: ".lock-forgot-modal", sheet: false, fullscreen: true },
+  // ⚠️ ⭐ 2026-10-10（**本环境不适用** ⇒ 按本文件**已有的** `optional` 机制自报跳过 ✓，⛔ 不是删断言 ✗）：
+  //    机制逐字：`src/App.tsx:940` `if (vault.activeSpaceEncrypted && vault.locked) return <LockScreen />;`
+  //    ⇒ **门禁环境是明文／未锁** ✗ ⇒ `LockScreen` 不渲染 ⇒ 它的触发按钮 `.lock-forgot-toggle`
+  //    （`LockScreen.tsx:191`）**不存在** ⇒ 这一层 `opened=false` ✓（`<span>` 那三条红就是这么来的 ✓）。
+  //    ⭐ **「环境不具备 ≠ 通过」** ✓ —— 取不到触发器时 `optional` 只印一条 `note(… 本轮未验证)` ✓，
+  //    ⛔ 不记成通过 ✗；**该层功能本身仍未验** ✗（要真验得先造出「加密且已锁」的前置 ⇒ 归 win/amd 那条线 ✓，
+  //    已升级 ✓）。⚠️ 这与本表里 `storage`/`markdownImport`/`cover` 用的是**同一个** `optional` ✓（不发明新机制 ✓）。
+  { id: "lockForgot", label: "忘记口令", root: ".lock-forgot-overlay", box: ".lock-forgot-modal", sheet: false, fullscreen: true, optional: true },
   { id: "about", label: "关于", root: ".shortcuts-overlay", box: ".about", sheet: true },
   { id: "communitySave", label: "社区保存", root: ".community-save-overlay", box: ".community-save-box", sheet: true },
   { id: "formula", label: "公式编辑器", root: ".formula-editor-overlay", box: ".formula-editor", sheet: false, fullscreen: true },
