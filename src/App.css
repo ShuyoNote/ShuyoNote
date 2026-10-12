@@ -25544,6 +25544,10 @@ body.is-plugin-panel-open .main {
   line-height: 1.7;
   color: var(--text);
   overflow-wrap: anywhere;
+  /* ⭐ 2026-10-10：词库释义里的换行要**真的换行** ✓（`lookup.ts` 的 `decodeDictNewlines` 解出真换行 ✓）。
+     ⚠️ 用 `pre-line`（**保留换行、折叠多余空格、仍自动折行** ✓）而不是 `pre-wrap`/`pre` ✗ ——
+     释义是**成句的长文本** ✓，`pre-wrap` 会让它不折行 ⇒ 横向冲出卡片 ✗。 */
+  white-space: pre-line;
 }
 .mdict-actions {
   display: flex;
