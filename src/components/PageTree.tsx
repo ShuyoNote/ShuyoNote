@@ -16,7 +16,16 @@ import { PluginMenuItems } from "./PluginMenuItems";
 const TREE_MENUS_CLOSE_EVT = "shuyo:close-tree-menus";
 function closeOtherTreeMenus() {
   try {
-    window.dispatchEvent(new Event(TREE_MENUS_CLOSE_EVT));
+    // ⚠️ **派发目标必须与监听目标同源**：两处监听都挂在 `document` 上
+    //    （页面行 `TreeItem` 与文件行 `TreeFiles` 各一处 `document.addEventListener(TREE_MENUS_CLOSE_EVT, …)`，
+    //     摘也是 `document.removeEventListener`）✓。
+    // ⭐ 2026-10-12 修（判据 `src/components/treeMenuSingle.test.ts`）：这里原来是
+    //    `window.dispatchEvent(...)` ✗ —— 按 DOM 事件路径，**在 `window` 上派发的事件不会下行到 `document`**
+    //    ⇒ 上面那些监听**一次都收不到** ⇒ 右键 A 行、再右键 B 行 ⇒ **两份菜单并存** ✗（owner 截图那一幕 ✓）。
+    //    实测（happy-dom 与真 Chromium 一致）：同一件事派到 `window` ⇒ `document` 上的监听命中 **0** 次 ✓。
+    // ⛔ **别改回 `window`** ✗；若将来把监听搬到 `window`，在 `document` 上派发**照样能到**
+    //    （事件路径沿 `document → window` 上行 ✓）——反过来**不行** ✗（今天就是栽在这条单向性上）。
+    document.dispatchEvent(new Event(TREE_MENUS_CLOSE_EVT));
   } catch {
     /* ignore */
   }
@@ -698,6 +707,13 @@ function TreeItem({
               e.stopPropagation();
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
               setMenuAnchor({ x: r.right, y: r.bottom });
+              // ⭐ 2026-10-12 修（判据 `src/components/treeMenuSingle.test.ts` 判据②）：
+              //    `⋯` 是**第三个**开菜单的入口，而它原先**不广播** ✗ ⇒「右键 A 行 ⇒ 点 B 行的 ⋯」
+              //    会留下两份菜单（实测 `menuCount = 2` ✗），因为 A 行那条"点别处就关"的监听
+              //    见到目标是 `.tree-more` 就 `return`（它要放行"点自己的 ⋯"✓）⇒ 也不会关 ✓。
+              // ⚠️ **只在"开"这一支广播** ✗——下一行是 **toggle**（`(v) => !v`）：若在 toggle 之前
+              //    无条件广播，本行会先被广播关掉、再被 toggle **打开** ⇒ **点一下收不起来** ✗。
+              if (!menuOpen) closeOtherTreeMenus();
               setMenuOpen((v) => !v);
             }}
           >

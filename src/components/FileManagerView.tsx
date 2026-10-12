@@ -366,6 +366,19 @@ export function FileManagerView() {
     try {
       await api.moveAttachment(f.id, targetFolderId);
       setFiles((prev) => prev.filter((x) => x.id !== f.id));
+      // ⭐ 2026-10-12（判据 `src/components/fileMoveTreeRefresh.test.ts`）：**移动也要通知侧栏** ✓ ——
+      //    上面那行 `setFiles` 只更新**文件管理器自己**那一份 `files` ✗，而侧栏的文件行是
+      //    `PageTree.tsx:186` 的 `TreeFiles`：它的重取条件**只有** `[folderId, revision]`
+      //    （`:211-223`）✓，而"移动"**不改 `folderId`**（用户还站在源文件夹里，`:362`）✗
+      //    ⇒ 只有 `revision` 通知得到它 ✓，否则那一行留在侧栏里，要等刷新/切走再回来才对 ✗
+      //    （owner 实测：「把文件转移到另一个文件夹之后，侧边栏不能即时更新」✓）。
+      //    ⚠️ 口径与同文件那五处**同一句**（上传 `:334`／移除 `:426`／批量删 `:655`／右键删 `:754`／
+      //    改名 `:781`）—— 改名那处已逐字写着为什么（`:778-779`）：
+      //      「强制刷新：页面树（侧边栏）订阅 useNotes.pages 与 fileManager.revision，
+      //        两者都刷新才能让侧边栏 / 文件管理网格及时显示新名字。」
+      //    ⛔ 附件**不在** `useNotes.pages` 里 ⇒ 这里**不需要**（也不该加）`loadPages()` ✗。
+      //    ⚠️ 放在 `await` 之后、`try` 之内 ⇒ **只有移动真的成功才刷** ✓（失败不白刷 ✓）。
+      useFileManagerStore.getState().bumpRevision();
       toast("已移动", "success");
     } catch (e) {
       toast(`移动失败：${e}`, "error");
@@ -402,6 +415,14 @@ export function FileManagerView() {
     try {
       await api.removeAttachment(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
+      // ⭐ 2026-10-12（判据 `src/components/fileManagerDelete.test.ts`）：**不许只信本地那个 filter** ✗ ——
+      //    后端**按 id 查不到那一行时会静默返回成功**（桌面 `src-tauri/src/attachments.rs:998-1008`
+      //    的 `let Some(hash) = hash else { return Ok(()) };`；Web `src/lib/platform/web.ts:2596-2605`
+      //    的 `if (row) { … }`）⇒ 只改本地列表的后果是：那一行当场消失 ＋ 报「已移除文件」✓，
+      //    而**重进文件管理**（`:229-238` 的 `loadFiles()` 再列一次）它**又回来了** ✗
+      //    ⇒ 用户看到的就是「删不掉」，且全程没有一句报错 ✓。
+      //    ⇒ 跟右键那条 `:734` **同一口径**：以**重列结果**为准 ✓（真删掉时列表里就不会再有它 ✓）。
+      loadFiles();
       useFileManagerStore.getState().bumpRevision();
       toast("已移除文件", "success");
     } catch (e) {
