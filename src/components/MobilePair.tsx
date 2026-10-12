@@ -134,7 +134,7 @@ export function MobilePair() {
         <section className="mpair-card">
           <div className="mpair-card-title">已配对的设备</div>
           <p className="mpair-line mpair-dim">
-            本屏未接 ✗ —— 已配对列表那侧**只有设备标识与时间**，没有名字（规格要求显示"哪台"，⛔ 不许拿标识凑 ✗）。
+            本屏未接 ✗ —— 已配对列表那侧只有「设备标识与时间」，没有名字（规格要求显示"哪台"，⛔ 不许拿标识凑 ✗）。
           </p>
         </section>
       </div>

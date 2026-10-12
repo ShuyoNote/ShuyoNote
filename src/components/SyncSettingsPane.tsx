@@ -41,7 +41,7 @@ export function SyncSettingsPane() {
   return (
     <section className="set-section">
       <p>
-        ⭐ 这里是**这台设备**的设备直连设置 ✗：填一次，**所有个人空间共用** ✓
+        ⭐ 这里是「这台设备」的设备直连设置 ✗：填一次，「所有个人空间共用」 ✓
         （⛔ 团队空间不受影响 —— 它们各自按空间来 ✓）。
       </p>
       {lanStatus ? (
