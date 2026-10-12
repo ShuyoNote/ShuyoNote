@@ -181,6 +181,10 @@ export function OfficeImportPanel({ parentId = null }: { parentId?: string | nul
           <div className="office-import-hint" style={{ opacity: 0.7, fontSize: 12 }}>
             第一期只做 .docx 单文件；原文档会作为附件存进库（同一份重复选不会存两份），再转成一页新笔记。
             ⚠️ 双击 .docx 唤起应用时也会走这里（前提：应用已经开着 ⇒ 见说明里的已知缺口）。
+            {/* ⚠️ owner 2026-10-12（拍「甲：只把话说清」）：⭐ 老二进制 `.doc` **不在上面的 filter 里** ✗
+                ⇒ 用户选不到 ⇒ **必须说清出路** ✓。⛔ 别把 `.doc` 加进 `extensions` ✗（导入链只解析 docx
+                ⇒ 加了就是"选得到、然后失败"）。措辞与 `src/lib/extract/ooxml.ts:1108` **同口径** ✓。 */}
+            ⚠️ 老格式 .doc 请先用 Word/WPS「另存为 .docx」再导入。
           </div>
 
           {picked && (
