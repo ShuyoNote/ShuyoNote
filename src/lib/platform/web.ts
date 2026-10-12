@@ -2596,15 +2596,18 @@ export function makeInvoke(store: SqliteStore) {
       const id = String(a.id ?? "");
       // Delete the row; free blob bytes only when no other row references the hash.
       const row = store.query<{ hash: string }>("SELECT hash FROM attachments WHERE id = ?", [id])[0];
-      if (row) {
-        store.run("DELETE FROM attachments WHERE id = ?", [id]);
-        recordChange(store, "attachment", id, "delete", null, Date.now());
-        const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
-        if (refs === 0) {
-          await blobStore.delete(row.hash).catch(() => {});
-        }
+      if (!row) {
+        // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：查不到这一行**不是错** ✗
+        //    ⇒ 如实回 `0`，让界面自己决定提示什么 ✓（与桌面 `attachments.rs` 同口径 ✓）。
+        return 0 as T;
       }
-      return undefined as T;
+      store.run("DELETE FROM attachments WHERE id = ?", [id]);
+      recordChange(store, "attachment", id, "delete", null, Date.now());
+      const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
+      if (refs === 0) {
+        await blobStore.delete(row.hash).catch(() => {});
+      }
+      return 1 as T;
     }
     if (cmd === "remove_attachments") {
       const ids = (a.ids ?? []).map(String);

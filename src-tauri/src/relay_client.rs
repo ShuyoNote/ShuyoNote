@@ -45,10 +45,16 @@
 //!   ⚠️ 但"有这一格"≠"有读数"：见下面那条 —— **本机没有 `relay/config.json` 时那一格就说"还没配置中继"** ✓
 //! ✗ 真正的**同步**：今天只做了"连上 ＋ 握手 ＋ 拿到放行/拒绝"，
 //!   ⛔ 还没有经中继搬一次同步载荷 ✗（那是下一期）
-//! ✗ **长期许可证的离线验签**：口径要求客户端与中继共用**同一份**验签实现（同一个 crate），
-//!   而那份实现是专有组件的一部分 ⇒ ⛔ 不许抄进本仓 ✗。今天客户端这一侧的有效期**从配置读**
-//!   （`license_exp/nbf/grace_days`）—— ⚠️ 这是**占位**，⛔ 不是"许可已验证" ✗
-//!   （读不到就报 `missing`，⛔ 不编一个数字 ✗）
+//! ✅（**已订正，2026-10-12**｜owner 拍「现在就改成实话」）**长期许可证的离线验签**：⭐ **已接线** ——
+//!   客户端**自己写了一版** `src-tauri/src/relay_license.rs`（2026-10-11；⛔ 没抄专有仓 ✗ ——
+//!   那条边界写在它的头注里，还有一条判据钉着 `relay_license.rs` 里的
+//!   `no_proprietary_relay_code_leaked_into_the_product_repo` ✓），`relay_client.rs` 真的在调它
+//!   （见 [`verified_window`] ／ [`license_view_from`]）。
+//!   ⚠️ ⭐ **只剩 keyring 里的公钥仍是占位**（`relay_license.rs:59-62`：`kid` 是
+//!   `PLACEHOLDER-PENDING-OWNER-KEY`、公钥全零，等 owner 给真值 ✓）。
+//!   ⚠️ 旧文这里写的是"客户端今天**不做**离线验签 / 有效期**从配置读**（`license_exp/nbf/grace_days`）" ✗ ——
+//!   ⛔ **那句已过期** ✗：裸数字那一路现在只在**没有签名文本**时才走（见 [`VerifiedLicense`] 的
+//!   `Verified`／`Refused`／`Placeholder` 三档 ✓），且读不到就报 `missing`，⛔ 不编一个数字 ✗。
 //! ✗ 设备私钥的**妥善保管**：今天从配置的 `device_seed_hex` 读（占位）
 //!   ⛔ 还没接系统钥匙串 / 加密落盘 ✗
 //! ✗ 租约的**获取与轮换**（向发卡站要、到期前换新的）✗

@@ -160,4 +160,31 @@ describe("中继那一格 · owner 截图里那两条读数", () => {
     expect(text, "⛔ 不许在读数缺失时冒出任何天数").not.toMatch(/剩余\s*\d/);
     expect(text).not.toContain("已连上中继");
   });
+
+  /**
+   * ④ ⭐ owner 2026-10-12 拍「甲：保持现状但**把话说清**」⇒ 那一格必须**在人眼前**说清
+   * "**为什么永远读不到**" ✓ —— 因为这一格**只会读**本机已有的那份中继配置，
+   * 而 ⛔ **全仓没有任何写入者**能创建它（`relay_client.rs` 只有读路径；`relayStatus.wiring.test.ts:84`
+   * 还禁着 `std::fs::write`）⇒ 用户**在界面上做不到**"去配置一下" ✗。
+   * ⇒ 所以那句话**只许陈述事实**：⛔ 不承诺功能、⛔ 不许写"请配置/请设置"这种界面里做不到的话 ✗。
+   *
+   * ⚠️ 断言走**渲染出来的文字**（⛔ 不扫源码文件 ✗）—— 上次那个坑（② 第一版被自己注释里
+   * 引的旧文案绊红 ✓）在这里从根上避开：注释**永远不会**出现在 DOM 里 ✓。
+   */
+  it("④ 那一格旁边要有一句人话：**本机没有托管中继 ⇒ 这一格不会有读数**（且⛔ 不许写「请配置」✗）", async () => {
+    mocks.relayStatus.mockResolvedValue(UNREADABLE);
+    mocks.relayProbe.mockResolvedValue(UNREADABLE);
+
+    const el = renderSection();
+    await vi.waitFor(() => expect(mocks.relayProbe).toHaveBeenCalled());
+
+    const text = el.textContent ?? "";
+    expect(
+      text,
+      "那一格没解释「为什么读不到」——用户只会看到一句读不到的读数（owner 要的是把原因说在人眼前）",
+    ).toMatch(/本机(没有|未)托管中继[^。]{0,40}读数/);
+    for (const bad of ["请配置", "请设置", "请先配置"]) {
+      expect(text, `⛔ 界面里做不到的事不许写成「${bad}」（全仓没有写入者能建那份配置 ✗）`).not.toContain(bad);
+    }
+  });
 });

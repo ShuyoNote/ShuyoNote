@@ -413,18 +413,23 @@ export function FileManagerView() {
       return;
     }
     try {
-      await api.removeAttachment(id);
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：后端现在回**实际删掉的条数** ✓
+      //    （`commands.ts` 的 `remove_attachment`：`1` = 真删到 / `0` = 本来就没这一行 ⇒ ⛔ 不报错 ✓）
+      //    ⇒ 界面**自己决定提示** ✓，从根上消灭"无声假成功" ✗。
+      const removed = await api.removeAttachment(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
       // ⭐ 2026-10-12（判据 `src/components/fileManagerDelete.test.ts`）：**不许只信本地那个 filter** ✗ ——
-      //    后端**按 id 查不到那一行时会静默返回成功**（桌面 `src-tauri/src/attachments.rs:998-1008`
-      //    的 `let Some(hash) = hash else { return Ok(()) };`；Web `src/lib/platform/web.ts:2596-2605`
-      //    的 `if (row) { … }`）⇒ 只改本地列表的后果是：那一行当场消失 ＋ 报「已移除文件」✓，
+      //    `0` 条那条路下后端**什么都没删**，只改本地列表的后果是：那一行当场消失 ＋ 报「已移除文件」✓，
       //    而**重进文件管理**（`:229-238` 的 `loadFiles()` 再列一次）它**又回来了** ✗
-      //    ⇒ 用户看到的就是「删不掉」，且全程没有一句报错 ✓。
-      //    ⇒ 跟右键那条 `:734` **同一口径**：以**重列结果**为准 ✓（真删掉时列表里就不会再有它 ✓）。
+      //    ⇒ 用户看到的就是「删不掉」✓。⇒ 跟右键那条 **同一口径**：以**重列结果**为准 ✓。
       loadFiles();
       useFileManagerStore.getState().bumpRevision();
-      toast("已移除文件", "success");
+      if (removed === 0) {
+        // 幂等不是错，但⛔不许假装删掉了 ✗（朴实一句：它本来就不在文件里了 ✓）。
+        toast("这条已经不在文件里了", "info");
+      } else {
+        toast("已移除文件", "success");
+      }
     } catch (e) {
       toast(`移除失败：${e}`, "error");
     }
@@ -642,11 +647,18 @@ export function FileManagerView() {
       }
       if (pageCount > 0) await useNotes.getState().loadPages();
       if (fileCount > 0) {
+        // ⭐ 2026-10-12（owner 拍的口径）：`removeAttachments` 现在回**实际删掉的条数** ✓
+        //    （`attachments.rs` 的 `removed` 只在真删到时 +1 ✓）⇒ 这个读数才是活的 ✓。
         const n = await api.removeAttachments(selectedFileIds);
         setFiles((prev) => prev.filter((f) => !selectedFileIds.includes(f.id)));
-        toast(`已删除 ${parts.join("、")}`, "success");
-        if (n !== fileCount) {
-          toast(`文件删除完成：${n} 个`, "info");
+        if (n === 0) {
+          // 幂等不是错，但⛔不许说"已删除" ✗（它本来就不在文件里了 ✓）。
+          toast("这些文件已经不在文件里了", "info");
+        } else {
+          toast(`已删除 ${parts.join("、")}`, "success");
+          if (n !== fileCount) {
+            toast(`文件删除完成：${n} 个`, "info");
+          }
         }
       } else if (pageCount > 0) {
         toast(`已删除 ${pageCount} 个页面/文件夹`, "success");
@@ -745,15 +757,23 @@ export function FileManagerView() {
       : `删除「${label}」？页面/文件夹将移入回收站（可恢复）。`;
     if (!(await confirmDialog({ title: "删除", message: msg, danger: true }))) return;
     try {
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：文件那条现在有读数可用 ✓
+      //    （页面/文件夹走 `deletePage`，没有这个读数 ⇒ 保持 `null` ✓）。
+      let removed: number | null = null;
       if (isFile) {
-        await api.removeAttachment(row.file!.id);
+        removed = await api.removeAttachment(row.file!.id);
       } else if (row.pageId) {
         await api.deletePage(row.pageId);
       }
       await useNotes.getState().loadPages();
       useFileManagerStore.getState().bumpRevision();
       loadFiles();
-      toast("已删除", "success");
+      if (removed === 0) {
+        // ⛔ 后端说"删了 0 条"⇒ 不许说"已删除" ✗（它本来就不在文件里了 ✓）。
+        toast("这条已经不在文件里了", "info");
+      } else {
+        toast("已删除", "success");
+      }
     } catch (e) {
       toast(`删除失败：${e}`, "error");
     }

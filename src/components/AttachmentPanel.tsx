@@ -128,9 +128,20 @@ export function AttachmentPanel({ pageId }: { pageId: string }) {
 
   const removeFile = async (id: string) => {
     try {
-      await api.removeAttachment(id);
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：这条命令现在回**实际删掉的条数** ✓
+      //    （`1` = 真删到 / `0` = 本来就没这一行 ⇒ ⛔ 不报错 ✓）⇒ 提示由界面**自己决定** ✓。
+      const removed = await api.removeAttachment(id);
       setAttachments((prev) => prev.filter((a) => a.id !== id));
-      toast("已移除附件", "success");
+      // ⭐ 与文件管理器**同一口径**（`FileManagerView.tsx` 的 `loadFiles()`）：**不许只信本地那个 filter** ✗
+      //    —— `0` 条那条路下后端什么都没删 ⇒ 让面板重列一次，那一行会**如实**待在那儿 ✓
+      //    （`useAttachmentsStore.revision` 一变，上面 `:48-59` 那个 effect 就重取 ✓）。
+      useAttachmentsStore.getState().bump();
+      if (removed === 0) {
+        // 幂等不是错，但⛔不许假装删掉了 ✗。
+        toast("这个附件已经不在列表里了", "info");
+      } else {
+        toast("已移除附件", "success");
+      }
     } catch (e) {
       toast(`移除失败：${e}`, "error");
     }

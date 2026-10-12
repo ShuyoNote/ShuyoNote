@@ -1279,7 +1279,9 @@ export interface CommandMap {
   import_attachment_files: { args: { pageId: string | null; paths: string[] }; result: AttachmentMeta[] };
   // pageId 为 null = 空间根下的「未整理」文件（page_id IS NULL）。
   list_page_attachments: { args: { pageId: string | null }; result: AttachmentMeta[] };
-  remove_attachment: { args: { id: string }; result: void };
+  // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：返回**实际删掉的条数**
+  //（`1` = 真删到，`0` = 本来就没这一行 ⇒ ⛔ **不报错**）；界面据此自己决定提示什么 ✓。
+  remove_attachment: { args: { id: string }; result: number };
   remove_attachments: { args: { ids: string[] }; result: number };
   move_attachment: { args: { id: string; newPageId: string }; result: void };
   rename_attachment: { args: { id: string; name: string }; result: void };

@@ -70,6 +70,12 @@ export function RelayStatusSection() {
         </div>
         {view.connectionDetail ? <p className="sync-hint">{view.connectionDetail}</p> : null}
         {view.note ? <p className="sync-hint">{view.note}</p> : null}
+        {/* ⭐ owner 2026-10-12 拍「甲：保持现状，但把话说清」⇒ **为什么永远不会有读数**要说在人眼前 ✓。
+            ⚠️ 这句只许陈述事实：⛔ 不承诺功能、⛔ 不写"请配置"（⛔ 全仓没有写入者能建那份配置 ⇒
+            用户在界面上做不到 ✗）；判据：`relayStatus.test.ts` ④。 */}
+        <p className="sync-hint">
+          本机没有托管中继时，这一格不会有读数 —— 它只读本机已有的那份中继配置，不会自己建一份。
+        </p>
         <div className="sync-att">
           <button className="sync-btn" disabled={busy} onClick={() => void recheck()}>
             {busy ? "正在检查…" : "重新检查"}

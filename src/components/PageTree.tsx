@@ -288,9 +288,17 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     });
     if (!ok) return;
     try {
-      await api.removeAttachment(f.id);
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：这条命令现在回**实际删掉的条数** ✓
+      //    （`1` = 真删到 / `0` = 本来就没这一行 ⇒ ⛔ 不报错 ✓）⇒ 提示由界面**自己决定** ✓。
+      const removed = await api.removeAttachment(f.id);
+      // （上面那句 `bumpRevision()` 就是"以重列结果为准" ✓ —— `:203-214` 那个 effect 会重取列表 ✓。）
       useFileManagerStore.getState().bumpRevision();
-      toast("已删除", "success");
+      if (removed === 0) {
+        // 幂等不是错，但⛔不许假装删掉了 ✗（与文件管理器那条 `×` 同一句话 ✓）。
+        toast("这条已经不在文件里了", "info");
+      } else {
+        toast("已删除", "success");
+      }
     } catch (e) {
       toast(`删除失败：${e}`, "error");
     }
