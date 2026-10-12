@@ -2665,6 +2665,180 @@ mod tests {
         c
     }
 
+    // ═══════════ ⭐ 同名融合的「**是不是同一个人**」身份闸（D1/D2/D3）═══════════
+    //
+    // ## 为什么这几条**故意**待在 `mesh.rs`、而不是 `mesh_merge_ledger.rs` 自己的 `mod tests` ✗
+    // ⭐ 它们要证的正是**接线**（真表 ⇒ 真读法 ⇒ 真闸）⇒ 必须待在一个**今天就在构建里**的文件 ✓。
+    // ⚠️ 反面教材就在眼前：`mesh_merge_ledger.rs` 里有一整套纯逻辑判据（它自己的 j/k/l），
+    //    但**`lib.rs` 里原先没有 `mod mesh_merge_ledger;`** ⇒ 那些判据**根本不在二进制里**
+    //    （跑了也看不见：0 条 ✓）✗ —— 这几条放在这儿 ⇒ 模块一旦掉出构建，它们**当场编不过** ✓
+    //    （2026-10-12 实测：加 `mod` 之前，这几条让 lib target 直接 3 条 error ✓）。
+    // 四要件（判据／怎么量／反例逐字／过期条件）写在交付报告里；这里只留最短的那句。
+
+    /// ⭐ **D1**：这一格的"同一个人"＝**本机显式信任过那台**（`mesh_paired_devices`）。
+    /// 判据：库里**没有**那一行 ⇒ `merge_gate` 必须回 `RefuseUnknownIdentity`（⛔ 不是 `Allow`）。
+    /// 反例（逐字）：`left: Allow` ／ `right: RefuseUnknownIdentity`。
+    /// 过期条件：表或主键变（`db.rs:490`）／行键口径变（`paired_row_key`）⇒ 重写。
+    #[test]
+    fn merge_gate_d1_unpaired_device_is_refused() {
+        use crate::mesh_merge_ledger::{merge_gate, IdentityOracle, MergeGate, PairedDeviceOracle};
+
+        let c = conn_with(Connection::open_in_memory().unwrap(), "dev-me");
+        // 真表（照 `db.rs:490-500` 的列与主键；⚠️ 挂 `meta` 上 —— 生产读的 SQL 是**不带前缀**的 `FROM mesh_paired_devices`）
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta.mesh_paired_devices (
+                 space_id      TEXT NOT NULL,
+                 device_id     TEXT NOT NULL,
+                 secret_sha256 TEXT NOT NULL,
+                 added_at_ms   INTEGER NOT NULL,
+                 pubkey        TEXT NOT NULL DEFAULT '',
+                 PRIMARY KEY (space_id, device_id)
+             );",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms, pubkey)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![DEVICE_LEVEL_SPACE, "平板", "sha256:占位", 1_i64, ""],
+        )
+        .unwrap();
+
+        // ⭐ 走**生产那个读法**（`mesh::paired_devices`：只 select 两列 ✓、键走 `paired_row_key` ✓）
+        let rows = paired_devices(&c, DEVICE_LEVEL_SPACE, true).unwrap();
+        let paired: Vec<String> = rows.into_iter().map(|d| d.device_id).collect();
+        assert_eq!(
+            paired,
+            vec!["平板".to_string()],
+            "前提：那一行**真的读出来了**（⛔ 防两张空表假绿 ✗）"
+        );
+        let oracle = PairedDeviceOracle { paired_devices: &paired };
+
+        // 认过的 ⇒ `Yes` ⇒ **同名**才允许融（Q3）
+        assert_eq!(merge_gate(&oracle.same_person("平板", "工作"), true), MergeGate::Allow);
+        // ⭐ 没认过的 ⇒ 判**不出** ⇒ **不融**（反例：`left: Allow` ／ `right: RefuseUnknownIdentity`）
+        assert_eq!(
+            merge_gate(&oracle.same_person("陌生设备", "工作"), true),
+            MergeGate::RefuseUnknownIdentity,
+            "⛔ 没配对过却 Allow ⇒ 陌生人的同名空间会被静默并进来 ✗（Q1）"
+        );
+    }
+
+    /// ⭐ **D2**：对端**身份拿不到** ⇒ 如实 `Unknown` ⇒ 不融；⛔ **不许折成**「不同人」（`No`）。
+    /// 反例（逐字）：`left: RefuseDifferentPerson` ／ `right: RefuseUnknownIdentity`。
+    /// 过期条件：`LanAnnounce` 真的加上**可选**身份字段之后，这一档只该覆盖"**老对端**"⇒ 重写。
+    #[test]
+    fn merge_gate_d2_unknown_never_collapses_into_different_person() {
+        use crate::mesh_merge_ledger::{
+            merge_gate, IdentityOracle, MergeGate, PairedDeviceOracle, SamePerson, WhyUnknown,
+        };
+
+        let none: Vec<String> = Vec::new();
+        let oracle = PairedDeviceOracle { paired_devices: &none };
+        let id = oracle.same_person("陌生设备", "工作");
+        assert_eq!(
+            id,
+            SamePerson::Unknown(WhyUnknown::NotPaired),
+            "⭐ 判不出就是判不出 —— 而且**带着原因**（⛔ 不糊成一句「未知」✗）"
+        );
+        assert_ne!(
+            merge_gate(&id, true),
+            MergeGate::RefuseDifferentPerson,
+            "⛔ 把「拿不到身份」折成「不同人」＝**替用户下一个我们没有依据的断言** ✗"
+        );
+        assert_eq!(merge_gate(&id, true), MergeGate::RefuseUnknownIdentity);
+    }
+
+    /// ⭐ **D2 的"路上那一半"**：⛔ 不许为了对端身份动这两条硬约束 ——
+    ///   ① ⛔ **不许升 `WIRE_VERSION`**（升了 ⇒ 老对端公告被**直接拒收** ⇒ 两台互相看不见 ✗）；
+    ///   ② ⛔ **`user_id` 不许进 `pairing.rs`**（它是 `deny_unknown_fields` ⇒ 老版本把整条码判成"字段对不上" ✗）。
+    ///   ＋ 如实记：**今天链路上根本没有对端身份** ⇒ D2 今天只会走 `Unknown` ✓。
+    /// 反例（逐字）：`assertion failed: lan.contains("pub const WIRE_VERSION: u32 = 1;")`。
+    /// 过期条件：真的加了**可选**身份字段（只许 `#[serde(default)]`，⛔ 不升版本）⇒ 本条与 D2 一起重写。
+    #[test]
+    fn merge_gate_d2_wire_contract_and_peer_identity_absent_today() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let lan = std::fs::read_to_string(src.join("lan.rs")).expect("读得到 src/lan.rs");
+        let pairing = std::fs::read_to_string(src.join("pairing.rs")).expect("读得到 src/pairing.rs");
+
+        assert!(lan.contains("pub const WIRE_VERSION: u32 = 1;"), "⛔ 不许升 WIRE_VERSION ✗");
+        assert!(
+            pairing.contains("deny_unknown_fields"),
+            "⛔ 配对码那条路是**硬**的（老版本会整条拒收）—— 这正是**不能**往它里面放身份字段的理由 ✓"
+        );
+        assert!(
+            !lan.contains("user_id"),
+            "⚠️ `LanAnnounce` 今天**没有**对端身份字段（这就是 D2 只走 `Unknown` 的原因 ✓）；\
+             ⚠️ 哪天加上了（**只许** `#[serde(default)]` 可选取字段）⇒ 这条与 D2 一起重写 ✗"
+        );
+    }
+
+    /// ⭐ **D3**：**许可证不得当身份** ✗ —— 真凭证在**占位 keyring** 下一律 `UnknownKid`
+    /// （`relay_license.rs:59-62`）⇒ 它今天**不能当判据** ✓。
+    /// 反例（逐字）：`left: Yes(IdentityBasis::License("space-1"))` ／ `right: Unknown(NoLicense)`。
+    /// 过期条件：owner 给真 keyring **且**定下"许可证怎么答『是不是同一个人』"之后重写。
+    #[test]
+    fn merge_gate_d3_license_is_never_an_identity_basis() {
+        use crate::mesh_merge_ledger::{IdentityBasis, IdentityOracle, PairedDeviceOracle, SamePerson};
+
+        // ① 唯一的**生产** oracle（`PairedDeviceOracle`）**永远不产** `Account`/`License` 两类身份 ✓
+        let paired = vec!["平板".to_string()];
+        let oracle = PairedDeviceOracle { paired_devices: &paired };
+        for dev in ["平板", "陌生设备"] {
+            let id = oracle.same_person(dev, "工作");
+            assert!(
+                !matches!(
+                    id,
+                    SamePerson::Yes(IdentityBasis::License(_)) | SamePerson::Yes(IdentityBasis::Account(_))
+                ),
+                "⛔ 今天**没有**任何生产数据能支撑「同一个人」的账号/许可证判定 ⇒ 不许凭空造一个 `Yes` ✗"
+            );
+        }
+
+        // ② 全 `src/` 扫一遍：这两类身份的构造点**只许**出现在 `mesh_merge_ledger.rs` 里
+        //    （枚举定义 ＋ 它自己的测试）；⛔ 别处出现 ⇒ 有人把"账号/许可证"当身份接进生产了 ✗
+        //    ⚠️ **排除本文件**（`mesh.rs`）：这条判据**自己**就写着那两个模式串 ⇒ 不排除必然**自绊** ✗
+        //    （实测逐字：`实得 ["mesh.rs", "mesh_merge_ledger.rs"]` ✓）——手法与
+        //    `relay_license.rs` 那条泄漏判据的「排除判据自己」逐字同形 ✓。
+        // ③ ⭐ 更强的一句：**生产里只许有一个 `IdentityOracle` 实现**（＝第一档 `PairedDeviceOracle`）——
+        //    账号/许可证那两档**今天没有实现** ⇒ 哪天别处冒出第二个 impl ⇒ 红 ✗。
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut hits: Vec<String> = Vec::new();
+        let mut impls: Vec<String> = Vec::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for e in std::fs::read_dir(&dir).expect("读得到 src").flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+                    continue;
+                }
+                let name = p.file_name().unwrap().to_string_lossy().to_string();
+                if name == "mesh.rs" {
+                    continue; // ⭐ 判据自己（否则那两个模式串自绊 ✗）
+                }
+                let text = std::fs::read_to_string(&p).expect("读得到 .rs");
+                if text.contains("IdentityBasis::License(") || text.contains("IdentityBasis::Account(") {
+                    hits.push(name.clone());
+                }
+                if text.contains("impl IdentityOracle for") {
+                    impls.push(name);
+                }
+            }
+        }
+        assert!(
+            !hits.iter().any(|f| f != "mesh_merge_ledger.rs"),
+            "⛔ 账号/许可证**不许**在别处当身份用（今天只许出现在 `mesh_merge_ledger.rs` 的枚举定义与它自己的测试里）：实得 {hits:?}"
+        );
+        assert_eq!(
+            impls,
+            vec!["mesh_merge_ledger.rs".to_string()],
+            "⛔ 生产里**只许有一个** `IdentityOracle` 实现（第一档）；多出来的那个多半是「拿账号/许可证当身份」✗"
+        );
+    }
+
     fn page(id: &str, text: &str, updated_at: i64) -> PageDetail {
         PageDetail {
             id: id.to_string(),
