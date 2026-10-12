@@ -8,6 +8,21 @@ mod mcp_channel;
 mod community;
 mod community_publish;
 mod attachments;
+// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 一键信任的**纯函数内核** ✗
+//    —— 判定「要不要两端确认」「收到的确认算不算」✓，⛔ 不碰 IO／网络／密钥 ✓。
+//    出处：`docs/plans/2026-10-11-one-click-trust-decision.md`（第 ① 步 ✓）。
+mod pairing_trust;
+// ⭐ 2026-10-11：⭐ 客户端侧的**许可证校验** ✗（`src/relay_license.rs` ✓）—— ⭐ 纯函数 ✓：
+//    形状 ＋ `kid` 查表（⭐ 查不到就拒 ✓ fail-closed）＋ Ed25519 验签 ＋ 时间窗四态 ＋ `cap` 必须含 `crossnet`。
+//    ⚠️ ⭐ 公钥现在是**占位** ✗（真公钥由 owner 给）⇒ ⭐ 真凭证**一律验不过**，⭐ 这是**有意**的 ✓。
+//    ⛔ 边界：⭐ 自己写 ✗，⛔ 不许从专有中继仓拷代码（⭐ 那仓专有、本仓 AGPL ✓）。
+mod relay_license;
+// ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ 一键信任的**命令层** ✗ ——
+//    点一下就通 ✓：⭐ 用本空间**已有的网格令牌**把对面登记好（⭐ 调 `sync::remember_peer_card` ✓，
+//    那是"⭐ 登记对面 ✗"的唯一实现 ✓）＋ ⭐ 广播一条"⭐ 我想信任你 ✗"。⭐ 令牌**不上线** ✓。
+//    ⚠️ 代价与兜底写在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓。
+mod mesh_trust;
+mod device_key;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
 mod abilities;
@@ -92,6 +107,26 @@ mod mesh;
 //    默认 `#[ignore]`，跑法写在文件头。**它不碰 `mesh.rs`** ✓（那是 AMD 的写域）。
 #[cfg(test)]
 mod mesh_wire_bytes;
+// ⭐⭐ **同名融合的「是不是同一个人」身份闸**（`SamePerson` / `IdentityBasis` / `MergeGate` / `merge_gate` /
+// `IdentityOracle` / `PairedDeviceOracle`）＋ **融合账本**（`MergeLedger`：撤销／永久不分离）。
+// 2026-10-10 入库，**2026-10-12 才接进构建** ✓（在那之前它不在本清单里 ⇒ 连它自己的判据都**不在二进制里** ✗）。
+//
+// ## ⛔ 死代码收据（2026-10-12）｜为什么留着 ＋ 什么时候能删
+// 它**今天没有生产调用方** ✗ —— 而这不是"忘了接"，是**那条路今天不成立** ✓：
+//   · 闸要管的是**按名融合**，而 `sync::merge_anchor_by_name`（`sync.rs:6738`）**零生产调用者**
+//     ⇒ 今天**没有可闸的对象**：硬接在 `sync.rs:3342`（`apply_upsert` 之前）只会变成死代码，
+//     或者更糟 —— 拦住**正常**的按 id 直连同步 ✗（那条路今天就是这么同步的）；
+//   · 按名融合还缺一格数据：`doc_content.rs:414-417` 逐字 —— 远端载荷**只有 id、没有空间名** ⇒ 判不了"同名" ✗；
+//   · 第 2 档（账号）在**设备直连**那条路上拿不到：`LanAnnounce`（`lan.rs:65-122`）**没有**身份字段 ✗
+//     （⛔ 补它只许用 `#[serde(default)]` 可选取字段；⛔ 不许升 `WIRE_VERSION`；⛔ 不许进 `pairing.rs`）。
+// ⇒ ⭐ **判据已就位并能跑**（`mesh.rs` 的 D1/D2/D3 三条 ＋ 本文件自己的 j/k/l），但 **闸不能生效** ✓
+//   ⇒ ⭐ **留给 owner 拍的就是"接按名融合那条路"**（那是另一件、且要动协议形状 ✓）。
+// ⛔ 什么时候删这处 `#[allow(dead_code)]`：**`merge_anchor_by_name` 真有了生产调用者**那一轮
+//   （那时闸被 `Ingest::Peer` 的消费处调 ⇒ 自然有使用者）；⚠️ 若那时它还在，说明闸**没真接上** ✗。
+// ⚠️ 与 `sync.rs:198/:236` 那两条收据是**同一件事**（它们的消费方就是这里说的"那个消费处"）
+//   ⇒ 那两条**同样删不掉** ✓（删了就是谎称接上了 ✗）。
+#[allow(dead_code)]
+mod mesh_merge_ledger;
 // 隐私边界的**第 0 步**（2026-09-23）：**钥匙袋** —— 主口令 ⇒ 主密钥 ⇒ 每空间随机密钥被包裹。
 // ⚠️ 本步**只落格式与判据、不接线**：现有 `encryption_enabled` / `key_space_conn` / `encrypt_payload`
 // 一字不动（按空间是第 1 步、同步闸门是第 2 步）。见 `docs/plans/2026-09-23-keyring-step0-workorder.md`。
@@ -178,6 +213,11 @@ mod tls_android;
 // ping 通、广播收不到；改成单播立刻生效 ⇒ 挡的就是这一层）。见模块头。
 #[cfg(target_os = "android")]
 mod lan_android;
+// 跨网中继（relay）**客户端**那一侧（2026-10-09 第 1 期）—— 读配置 / 连接＋握手 / 许可窗口判定。
+// ⚠️ 只有库级接入：⛔ 今天**没有**注册 Tauri 命令 ✗（那要同步 `commands.ts` ＋ `web.ts`，
+//    门禁 `check-web-commands` 三个方向都查，而那两个文件不在本期写域内）—— 见模块头。
+// `pub`（不是 `mod`）：这一层就是给下一期接线用的**库级接口** ⇒ 不这样做整模块全是 dead_code 警告 ✓
+pub mod relay_client;
 mod security;
 mod storage;
 mod sync;
@@ -798,6 +838,14 @@ pub fn run() {
             sync_stream::sync_stream_start,
             sync_stream::sync_stream_stop,
             sync_stream::sync_stream_status,
+            // ⭐ 2026-10-11（owner 拍「甲：一端点就通，图④为准」）：⭐ 一键信任 ✗ ——
+            //    ⭐ 点一下就通 ✓（⭐ 登记对面 ＋ ⭐ 广播"⭐ 我想信任你 ✗"），⭐ 令牌⛔ 不上线 ✓。
+            //    ⚠️ 登记仍调 `sync::remember_peer_card`（⭐ 唯一实现 ✓），⛔ 不另写一遍 ✓。
+            mesh_trust::mesh_trust_begin,
+            // ⭐ 2026-10-11（任务 B）：⭐ 信任状态的**只读**读数 ✗ ——
+            //    ⭐ 内核（`pairing_trust::TrustHandshake::state()`）一直在推进 ✓，而前端原先**没有读它的口子** ✗
+            //    ⇒ ⭐ "点了到底通没通"在界面上说不出来 ✓。⭐ 它只读 ✓（⛔ 一个字节都不写 ✗）。
+            mesh_trust::mesh_trust_state,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。
@@ -1085,6 +1133,14 @@ pub fn run() {
   // ⭐ 词库首次下载（owner 2026-10-10 拍「Rust 侧下载」）：86 MiB 过 base64-IPC 那条链结构上不成立
   //    ⇒ 下载/解压/校验/落盘全在 Rust 侧（`dictionary.rs`：先核压缩包、再核解压后的库，两段都过才 rename）。
   dictionary::dictionary_install_pack,
+  // ── 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」）──────────────────────────────
+  // ⭐ 两格读数（人话与天数**都由后端出** ⇒ 界面只摆上去 ✓）：
+  //   · `relay_status` —— **不联网**：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格 ✓
+  //   · `relay_probe`  —— 真发起一次连接＋握手（UI 的「重新检查」走这条 ✓）
+  // ⚠️ 两条都**不是**桌面专属：Web 侧（`web.ts`）如实回 `available:false` ＋ 一句为什么 ✓
+  //    —— 与 `mesh_sync_now` 同一处置（⛔ 不假装连上了 ✗）。
+  relay_client::relay_status,
+  relay_client::relay_probe,
 ])
         .run(app_context())
         .expect("error while running tauri application");

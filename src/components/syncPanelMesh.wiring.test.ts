@@ -13,6 +13,11 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 describe("网格（丙-③-b）· 面板接线", () => {
   const panel = read("src/components/SyncPanel.tsx");
+  // ⭐ task 派单 Round 1（2026-10-11，**纯抽取**）：监听地址／配对暗号／口令／关掉网格那一块
+  //    从 `SyncPanel.tsx` 抽成了 `MeshAdvancedForm.tsx` ✓ —— ⛔ **承诺一条都没删** ✗，
+  //    只是换了落点 ✓ ⇒ 下面几条凡是"找那一块里的东西"的，都改成 **两个文件一起读**
+  //    （`panel + meshForm` ✓）。⚠️ 这是**唯一**允许的做法：⛔ 不许把文案抄回面板 ✗（那就是第二份真相源）。
+  const meshForm = read("src/components/MeshAdvancedForm.tsx");
   const webTs = read("src/lib/platform/web.ts");
   const commandsTs = read("src/lib/platform/commands.ts");
 
@@ -65,7 +70,8 @@ describe("网格（丙-③-b）· 面板接线", () => {
   });
 
   it("③ 「关掉网格」走清除（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
-    expect(panel).toContain('api.meshSetConfig(activeId, "", null)');
+    // ⭐ Round 1 后这句在抽出去的 `MeshAdvancedForm.tsx` 里 ✓（承诺未删 ✓）⇒ 两个文件一起找 ✓
+    expect(panel + meshForm, "「关掉网格」那条清除没在岗").toContain('api.meshSetConfig(activeId, "", null)');
   });
 
   it("④ 「别人拉不拉得到」那句人话来自 Rust（界面不自己按地址形状判档）", () => {
@@ -170,7 +176,8 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //    而不是一刀切 —— 这条边界写在这里，免得后人"顺手"把它扩成全文。
   it("⑨ ⭐ VL-3：`0.0.0.0`（听所有网卡）那条路要在用户看得见的文案里，且说清它是什么", () => {
     // 去掉行注释：注释里讲"`0.0.0.0 ⇒ Err`"的历史**不算**用户可见文案。
-    const copy = panel.replace(/\/\/[^\n]*/g, "");
+    // ⭐ Round 1 后那一栏在 `MeshAdvancedForm.tsx` ✓ ⇒ 两个文件一起读（⛔ 承诺一条没删 ✗）
+    const copy = (panel + meshForm).replace(/\/\/[^\n]*/g, "");
     expect(copy, "地址那一栏没提 `0.0.0.0` ⇒ `VL-2` 开的这条在用户眼里不存在").toContain("0.0.0.0");
     expect(
       copy,
@@ -181,6 +188,42 @@ describe("网格（丙-③-b）· 面板接线", () => {
     // ⚠️ 可见性：不许只写在 `title`（悬停才看得见）里 —— `placeholder` 或常规文案里也要有。
     const slots = [...copy.matchAll(/(?:placeholder|aria-label)="([^"]*)"/g)].map((m) => m[1]).join("\n");
     expect(slots, "`0.0.0.0` 只出现在悬停提示里 ⇒ 普通用户照样看不见").toContain("0.0.0.0");
+  });
+
+  it("⑨b ⭐ 2026-10-11（owner 拍「只动前端」）：那句「找不到对方」提示⛔ 不再常显 —— 要挂在结构化的 `peers === 0` 上", () => {
+    // ⚠️ 为什么钉这条：它原先**故意常显**（旧注释写着"代价是多一行字"）⇒ 按设计图⑦ 应改成
+    //    「**连不上时**这里会说出原因」✓。⛔ 而判据**不许**去解析 `lanStatus.line`（那是上面钉着的口径：
+    //    界面不自己按读数再判一次档）⇒ 只能用**结构化**的 `lanStatus.peers`
+    //    （它与状态行那个"N 台"**是同一个数**，`INV-NEARBY-one-source` ✓）。
+    // ⚠️ 注释要**两种都去掉**：上一版只去了 `//` ⇒ 而我自己那段 JSX 注释（`{/* … */}`）里
+    //    也写着 `lanStatus.peers === 0` ⇒ **判据被自己的注释喂饱了**，真变异（把条件改回常显）
+    //    竟然还是绿的 ✗（实测：13 passed）。
+    // ⚠️ 第二版又绿了一次 ✗ ⇒ 真因：`lanStatus.peers === 0` 这个字串在面板里**不止一处**（别处也在用读数）
+    //    ⇒ `toContain` 被**别处**的用法满足 ✓。⇒ 改成**邻近判据**：条件**紧跟着**那句提示才算数。
+    const copy = panel.replace(/\/\/[^\n]*/g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(
+      copy,
+      "按图⑦：那句提示必须**直接挂在** `lanStatus.peers === 0` 上（⛔ 不许常显，也⛔ 不许随便挂个别处的读数）",
+    ).toMatch(/lanStatus\.peers === 0\s*&&\s*\([\s\S]{0,500}?AP 隔离/);
+    // ⭐ 那两句**排障内容**是承重的（⛔ 不是装饰）⇒ 收成条件显示之后，内容一个字都不许丢。
+    expect(copy, "AP 隔离那条提示是承重的，⛔ 不许删").toContain("AP 隔离");
+    expect(copy, "开手机热点是最快的验证，⛔ 不许删").toContain("开手机热点");
+  });
+
+  it("⑨c ⭐ 2026-10-11：面板里的强调要用 `<b>`，⛔ 不许写 Markdown 的 `**…**`（那会在界面上原样显示星号）", () => {
+    // ⚠️ 来由（owner 2026-10-11 截图实测）：「严格模式（高级）」那一折里「只是要**配两次**」
+    //    在界面上**原样显示成了星号** ✗ —— 因为它是**我们自己写死的** JSX 文本（⛔ 不是后端来的），
+    //    所以没走 `inlineMd`（那条契约只管 Rust 来的话 ✓）。⛔ 也不该再补 inlineMd ✗：
+    //    自己写的文案直接用 `<b>` 就对了（`TrustDevicePanel` 头部写着同一条口径 ✓）。
+    // ⚠️ 注释要**两种都去掉**（`//` 与 `/* … */`）：否则注释里的 `**` 会让这条判据**永远是红的**（假红 ✗）。
+    // ⚠️ 还要去掉**走过 `inlineMd("…")`** 的那些 —— ⭐ 那些是**正确用法** ✓（那条契约就是给"后端来的话"用的 ✓）
+    //    举例：`{inlineMd("填 **本机内网地址**（…）")}` ✓。⛔ 不排除 ⇒ 判据一次报 14 处假红（实测 ✓）。
+    const code = panel
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/inlineMd\("(?:[^"\\]|\\.)*"\)/g, "");
+    const bad = code.match(/\*\*[^*\n]{1,40}\*\*/g);
+    expect(bad, `JSX 文本里出现了 Markdown 粗体：${bad?.[0]} ⇒ 请用 <b> 包起来`).toBeNull();
   });
 
   it("⑩ ⭐ VL-3 红线：设备直连那一屏不许出现已废／越界措辞（含裸内部标识）", () => {

@@ -115,6 +115,19 @@ export function aiHintForMiss(kind: DictionaryMissKind): boolean {
   return kind === "not_english" || kind === "not_found";
 }
 
+/** ⭐ 2026-10-10（**真机验收抓到的用户可见 bug** ✗）：词库文本里的**转义换行**解成真换行 ✓。
+ *
+ *  真因：ECDICT 的 `translation` 字段**自带字面 `\n` 两个字符** ✓（多义项就用它分隔 ✓）——
+ *  实测那张卡逐字画出 `acceptance … 承兑，认付，(工程)验收` 外加屏上两个字符 `\n` ✗。
+ *  ⇒ 这在**展示层**解 ✓：⛔ 不改词库文件本身 ✗（那是**数据** ✓，不是我们的错误 ✗）；
+ *  ⛔ 也不去 `dictionary.rs:299` 那条取数路解 ✗ —— `translation` 还有别的用途 ✓，
+ *  在数据层解会**扩大影响面** ✗（只有"给人看"这一处需要真换行 ✓）。
+ *  ⚠️ 只解换行 ✓，⛔ 不做别的转义/排版（那是另一件事 ✓）。
+ *  ⚠️ 配 `.mdict-body { white-space: pre-line }` ✓ —— 否则真换行会被 HTML 折叠掉 ✗（一样看不见 ✓）。 */
+function decodeDictNewlines(text: string): string {
+  return text.replace(/\\n/g, "\n").replace(/\\r/g, "");
+}
+
 /** 把后端结果映射成界面形状。**纯函数** —— 这一层是"文案如实"的落点。 */
 export function presentOutcome(outcome: DictionaryLookupOutcome): LookupPresentation {
   switch (outcome.status) {
@@ -123,10 +136,11 @@ export function presentOutcome(outcome: DictionaryLookupOutcome): LookupPresenta
       // 释义优先中文译文（本词典的 `translation` 就是英汉释义）；没有译文才退到英文定义。
       // ⚠️ 两者都没有时**如实说"这条词条只有词形"** —— ⛔ 不许留空，那与"编造"是同一类问题
       //    （用户分不清"查到了但没内容"与"卡住了"）。
-      const body =
+      const body = decodeDictNewlines(
         entry.translation ||
-        entry.definition ||
-        "（词典里这条词条只有词形，没有译文/定义 —— 如实显示，不补写。）";
+          entry.definition ||
+          "（词典里这条词条只有词形，没有译文/定义 —— 如实显示，不补写。）",
+      );
       return {
         tone: "found",
         title: entry.word || outcome.query || outcome.matched,

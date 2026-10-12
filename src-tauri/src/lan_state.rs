@@ -18,12 +18,56 @@
 //! 按 TTL 腾过期行）。"这一轮走哪个地址"仍是 `lan::resolve_base` 的活（纯函数、判据在那儿）。
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use tauri::Manager;
 
 use crate::db::Db;
 use crate::lan::{self, Peer, PeerTable};
+
+/// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 本机那份**握手中**的状态 ✓（⭐ 进程级一份 ✓）。
+///
+/// ⚠️ 它**不塞进 `LanState`** ✗ —— ⭐ 广播的产出链（`announces_for` ⇒ ⭐ `announces_for_this_round`
+/// ⇒ ⭐ `announces_for_with_mesh` ✓）今天是**纯的** ✓（⭐ 参数进、⭐ 值出、⭐ 判据能直接喂值 ✓）；
+/// ⭐ 塞进去就得改那三个签名 ＋ ⭐ 它们的全部调用方 ✗ ⇒ ⭐ 为了两格字段不值当 ✓。
+/// ⇒ ⭐ 这里用一个进程级 `Mutex` ✗：⭐ 与 `LanState::global` 同一个"⭐ 进程里只有一份 ✗"的前提 ✓。
+///
+/// ⚠️ 拿锁期间**只做判定** ✓，⛔ 不做 IO、⛔ 不写库 ✓（⭐ 否则一次网络卡顿会把广播那一路也挂住 ✓）。
+static TRUST: OnceLock<Mutex<crate::pairing_trust::TrustHandshake>> = OnceLock::new();
+
+fn trust_cell() -> &'static Mutex<crate::pairing_trust::TrustHandshake> {
+    TRUST.get_or_init(|| Mutex::new(crate::pairing_trust::TrustHandshake::default()))
+}
+
+/// ⭐ 碰 `TRUST` 的判据必须**串起来跑** ✗ —— 它是**进程级**的 ✓，而判据是**并行**跑的 ✗
+/// ⇒ 不串就会偶发假红 ✓（本仓栽过这一族 ✓）。
+/// ⚠️ 放在 `cfg(test)` 下 ✗（⛔ 不进产物 ✓）；⭐ 形状借 `plugins.rs` 的 `CAPABILITY_TEST_LOCK` ✓。
+#[cfg(test)]
+pub(crate) static TRUST_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// ⭐ 改握手状态 ✓（⭐ 命令层用它 ✓，⭐ 判据也能直接用它喂值 ✓）。
+pub fn with_trust<R>(f: impl FnOnce(&mut crate::pairing_trust::TrustHandshake) -> R) -> R {
+    let mut g = trust_cell().lock().expect("trust mutex poisoned");
+    f(&mut g)
+}
+
+/// ⭐ 这一轮广播该带的那两格 ✓（⭐ 没进行中／⭐ 过期 ⇒ ⭐ 两格都是空串 ✓）。
+pub fn trust_outbound(now_ms: i64) -> (String, String) {
+    with_trust(|h| {
+        (
+            h.outbound_ask(now_ms).to_string(),
+            h.outbound_secret(now_ms).to_string(),
+        )
+    })
+}
+
+/// ⭐ 本机的毫秒时间戳 ✓（⭐ 只在这一处算 ✓ —— ⭐ 判定里一律**传进去** ✓，⭐ 判据才好固定时间 ✓）。
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 
 /// 应用级的发现状态：一张对端表 ＋ 一个"要不要听/喊"的开关。
 pub struct LanState {
@@ -46,8 +90,31 @@ impl LanState {
 
     /// 记一条公告（**未启用时也不拒绝**：收到就记，看不看得见由 [`LanState::peers`] 决定）。
     /// 返回 `false` ＝ 这条是我自己的（[`PeerTable::upsert`] 的语义）。
+    ///
+    /// ⭐ 2026-10-11（owner 拍「甲：一端点就通」）：⭐ 收下带「我想信任你」的公告 ⇒ **只记账** ✗。
+    ///   ⛔ 这一层**不读配置、不写库** ✗ —— `lan.rs:471` 那条仓规（"本层不知道 `SyncProfile`，
+    ///   接线那一片才把两边接起来 ✓"）在这里同样成立 ✓。
+    ///   ⭐ 真正"采纳"（登记对面 ＋ 推进状态 ✓）在**有 db 的那一层**：`sync.rs` 的网格那一轮 ✓
+    ///   （见 `sync::adopt_pending_trust_asks` ✓）。
+    ///   ⚠️ 时间取 `p.seen_at_ms` ✗（**调用方传进来的那一下** ✓）—— ⛔ 不在这里另取一次时钟 ✗：
+    ///   那样判据固定不了时间 ✓，而且与"看到它的那一刻"会差一截 ✓。
     pub fn observe(&self, p: Peer) -> bool {
-        self.table.upsert(p)
+        let ask_from = if p.announce.trust_ask.is_empty() {
+            None
+        } else {
+            Some(p.announce.device_id.clone())
+        };
+        let seen_at = p.seen_at_ms;
+        let mine = self.table.upsert(p);
+        // ⚠️ ⭐ `upsert` 的语义是"**收下了**（不是我自己的 ✓）" ✗ —— 它**回 `false`** 表示
+        //   "这条是我自己的公告（回环回来的 ✓）" ✓（见 `lan.rs` 的实现与 `record_datagram` 的用法 ✓）。
+        //   ⇒ ⭐ ⚠️ 判据①当场抓到我把这个条件**写反了** ✗（写成 `!mine` ⇒ 永远不记账 ⇒ "点了没反应" ✓）。
+        if mine {
+            if let Some(dev) = ask_from {
+                with_trust(|h| h.note_ask(&dev, seen_at, crate::pairing_trust::TRUST_TTL_MS));
+            }
+        }
+        mine
     }
 
     /// 收**一条原始报文**：按公告解 ⇒ 入库 ⇒ 把入库的那一条还回来（`Ok(Some)`）。
@@ -246,19 +313,21 @@ impl Drop for BackgroundInFlightGuard {
 ///
 /// 返回一句人话（这一轮真的要跑了）／`None`（上一轮还没跑完 ⇒ **这一轮跳过** ✓，不是错误 ✓）。
 ///
-/// ⚠️ `mesh_cfgs` 就是上面那份 `(解析后的空间, 本地空间 id, 设置)` ✓ ⇒ ⛔ **没配网格的空间
+/// ⚠️ `mesh_cfgs` 就是上面那份 `(解析后的空间, 本地空间 id, 设置, 是不是个人档)` ✓ ⇒ ⛔ **没配网格的空间
 /// 根本不在这个清单里** ✗ ⇒ "没配 ⇒ 一个字节都不动"这条口径**一个字不变** ✓（有判据 ✓）。
 fn spawn_background_round(
     app: &tauri::AppHandle,
     device_id: &str,
-    mesh_cfgs: &[(String, String, crate::mesh::MeshSettings)],
+    mesh_cfgs: &[(String, String, crate::mesh::MeshSettings, bool)],
     peers: &[lan::Peer],
 ) -> Option<String> {
     if BACKGROUND_IN_FLIGHT.swap(true, Ordering::SeqCst) {
         return None;
     }
-    let pairs: Vec<(String, String)> =
-        mesh_cfgs.iter().map(|(space, ws, _)| (space.clone(), ws.clone())).collect();
+    let pairs: Vec<(String, String, bool)> = mesh_cfgs
+        .iter()
+        .map(|(space, ws, _, device_level)| (space.clone(), ws.clone(), *device_level))
+        .collect();
     let count = pairs.len();
     let dev = device_id.to_string();
     let peers: Vec<lan::Peer> = peers.to_vec();
@@ -282,8 +351,12 @@ fn spawn_background_round(
         let mut found_any = false;
         let mut candidates_total: usize = 0;
         let heard_before = BACKGROUND_HEARD_TOTAL.load(Ordering::SeqCst);
-        for (proto_space, db_space) in pairs {
-            match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers).await {
+        for (proto_space, db_space, device_level) in pairs {
+            // ⭐ 2026-10-11（设备级 ✓）：⭐ 判定**在上面那一处算好**（`mesh::is_device_level_space` ✓）
+            //   再传进来 ✗ —— `mesh_round_once` 自己不判 ✓（否则就是第二份口径 ✓；方案 §9.1／§10.3 ✓）。
+            match crate::sync::mesh_round_once(&db.0, &proto_space, &db_space, &dev, &peers, device_level)
+                .await
+            {
                 Ok(r) => {
                     candidates_total += r.candidates;
                     if r.candidates > 0 {
@@ -348,7 +421,7 @@ pub fn announces_for(
     short_id: &str,
     profiles: &[(String, String, String)],
 ) -> Vec<lan::LanAnnounce> {
-    announces_for_with_mesh(local_device_id, device_name, short_id, profiles, &[])
+    announces_for_with_mesh(local_device_id, device_name, short_id, "", profiles, &[])
 }
 
 /// ⭐★ **2026-10-09（task-8「设备直连」）**：**这一轮该发哪些公告** —— 产品路径的**唯一入口** ✓。
@@ -391,6 +464,13 @@ pub(crate) fn announces_for_this_round(
     //    拿不到 ⇒ **如实用空串** ✓（对端显示「对方没报短标识」✓），
     //    ⛔ **绝不回落成 `device_id` 前几位** ✗。
     let short_id = local_short_id(c).unwrap_or_default();
+    // ⭐ **2026-10-11（设备身份 ✓，方案 §4 第 2 步 ✓）**：⭐ 本机公钥**每轮读一次** ✗ ——
+    //    与短标识**同一处、同一个理由** ✓（⛔ 不"一条公告读一次" ✗）。
+    //    ⚠️ **只读** ✗：⭐ 建键在写路径上（`mesh_set_config` ✓）—— 本函数每秒都可能跑 ✓，
+    //       ⛔ 读路径不许写库 ✗（本仓老规矩 ✓）。
+    //    拿不到（还没建过 / 那一格坏了）⇒ ⭐ **如实用空串** ✓：⭐ 对端按"这台没有身份"处理 ✓，
+    //    ⛔ 绝不回落成任何猜测 ✗（⭐ 与"对方没报短标识"同一套处置 ✓）。
+    let pubkey = crate::device_key::public_key_hex_of(c).unwrap_or_default().unwrap_or_default();
     // ⭐ 本笔的修：把档案里的 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）——
     //   与窗口服务（`window_serve_space` ✓）和 `mesh_bases` 的键**同一把尺** ✓。
     //   ⚠️ 红读数（改前逐字的行为 ＝ 下面这行换成 `profiles.to_vec()`）：
@@ -401,7 +481,7 @@ pub(crate) fn announces_for_this_round(
         .collect();
     // ⭐ 两段合起来：**唯一入口**（把空间解析对 ✓）＋ **短标识**（跟着公告出去 ✓）——
     //    ⛔ 少任何一半都会丢东西：少了前者 ⇒ 个人空间 0 条公告；少了后者 ⇒ 公告里没短标识。
-    announces_for_with_mesh(local_device_id, device_name, &short_id, &resolved, mesh_bases)
+    announces_for_with_mesh(local_device_id, device_name, &short_id, &pubkey, &resolved, mesh_bases)
 }
 
 /// ★ 丙-③-b-2b：**网格开着的那几个空间，公告里报的是我自己的窗口地址。**
@@ -417,6 +497,10 @@ pub fn announces_for_with_mesh(
     local_device_id: &str,
     device_name: &str,
     short_id: &str,
+    // ⭐ 2026-10-11（设备身份 ✓）：⭐ 本机公钥（十六进制 ✓；空串 ＝ 还没建过身份 ✓）✗。
+    //   ⚠️ **当参数传进来** ✗：本函数是**纯函数**（⛔ 不碰库 ✗）—— 读库那一步在
+    //   `announces_for_this_round` 里**一处** ✓（⭐ 与 `short_id` 同一个手法 ✓）。
+    pubkey: &str,
     profiles: &[(String, String, String)],
     mesh_bases: &[(String, String)],
 ) -> Vec<lan::LanAnnounce> {
@@ -444,6 +528,13 @@ pub fn announces_for_with_mesh(
                 device_name: device_name.trim().to_string(),
                 // ⭐ 08-b②：那一格**同样显式给**（这个兜底分支也是产出点 ✓）
                 short_id: short_id.trim().to_string(),
+                // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 与上面那个产出点**同口径** ✓
+                //    —— ⭐ 这个兜底分支也**不携带**握手意图 ✓（⭐ 它只是"⭐ 我在，⭐ 但我没代言 ✗"✓）。
+                trust_ask: String::new(),
+                trust_secret: String::new(),
+                // ⭐ 2026-10-11（设备身份 ✓）：⭐ 这个兜底分支也**留空** ✓ ——
+                //   ⭐ 公钥由调用点在**这之后**统一填 ✓（两个产出点同一句 ✓）。
+                pubkey: String::new(),
                 hub_base: None,
                 hub_spaces: Vec::new(),
                 // ★ 存在声明也带指纹（owner 2026-09-25 拍板，B 片施工单 §8.3）：那台设备可能
@@ -451,6 +542,18 @@ pub fn announces_for_with_mesh(
                 //   完全隐形 —— 掉包判据要看的就是这个。
                 fp: dev.to_string(),
             });
+        // ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 把"⭐ 我想信任谁 ✗"／"⭐ 我给谁的那把 ✗"带上 ✓。
+        //    ⚠️ 在**调用点之后**填 ✗（⭐ `announce_for_own_hub` 是纯函数 ✓，⭐ 它不该知道进程状态 ✓）；
+        //    ⭐ 于是**两个产出点**（⭐ 代言那条 ＋ ⭐ 上面那个兜底 ✓）走的是**同一句** ✓，⛔ 不会各写一套 ✓。
+        let now = now_ms();
+        let (ask, secret) = trust_outbound(now);
+        a.trust_ask = ask;
+        a.trust_secret = secret;
+        // ⭐ 2026-10-11（设备身份 ✓）：⭐ 公钥**在调用点之后**填 ✗ —— 与上面那两格同一条理由 ✓
+        //   （⭐ 纯函数 `announce_for_own_hub` 不该知道进程状态 ✓；⭐ 于是两个产出点走同一句 ✓）。
+        //   ⚠️ 空串 ＝ 这台还没建过身份 ✓ ⇒ ⭐ 照旧发出去（⛔ 不因为没身份就不发言 ✗ ——
+        //      "发现"与"身份"是两件事 ✓；⭐ 对端会如实按"没有身份"处理 ✓）。
+        a.pubkey = pubkey.trim().to_string();
         // 网格开着 ⇒ **覆盖**成我自己的窗口地址（字段没变、语义变宽，见函数头口径 1）。
         // ⚠️ 覆盖之后 `hub_base` **一定有值**，"不代言"那一支（`hub_base: None`）在这里不成立。
         if let Some(base) = mesh_base.filter(|b| !b.is_empty()) {
@@ -579,23 +682,31 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //   当公告基址。⚠️ 窗口起不来的那一个**不宣告**（宁可这一轮不露面，也不报一个拉不到的地址）。
             // ⚠️ 发现层开关用的是 `meshed`（**配了**网格的空间），不是 `mesh_bases`（**宣告得出去**的）：
             //    绑在回环上的那台宣告不出去，但它**照样要听**（它是客户端那一侧，要能拉别人）。
-            let mesh_cfgs: Vec<(String, String, crate::mesh::MeshSettings)> = {
+            let mesh_cfgs: Vec<(String, String, crate::mesh::MeshSettings, bool)> = {
                 let db = app2.state::<Db>();
                 let c = db.0.lock().unwrap_or_else(|e| e.into_inner());
                 profiles
                     // ⚠️ 两个 id 都要留着：`space` 是对暗号（公告里报的就是它），`ws` 才是**库文件名**
                     //    —— 2026-09-26 真机修（把远端 id 当库名 ⇒ 窗口服务一个新建的空库）。
+                    // ⭐ **2026-10-11（丙）**：⭐ 第四格是"这一档是不是个人档" ✗ ——
+                    //   `ensure_window` 要靠它决定 ⭐ **卡从库里哪一行载** ✗（个人档 ⇒ 空串那一行 ✓）。
+                    //   ⚠️ 判定用**那一处**（`mesh::is_device_level_space` ✓，方案 §10.3 ✓）**只算一次** ✗
+                    //   —— ⛔ 不再"开窗一处、后台轮另算一处" ✗（同一件事两份判定迟早会漂 ✓）。
                     .iter()
-                    .map(|(s, _, ws)| (window_serve_space(&c, s, ws), ws.clone(), settings_for_profile(&c, s, ws)))
+                    .map(|(s, _, ws)| {
+                        let served = window_serve_space(&c, s, ws);
+                        let device_level = crate::mesh::is_device_level_space(&c, &served);
+                        (served, ws.clone(), settings_for_profile(&c, s, ws), device_level)
+                    })
                     // ⭐ **2026-10-08（第三笔）**：**没暗号的行不许进开窗名单** ✗ —— 它的"服务空间"是 `''` ✓，
                     //   而 `''` 会去读 **`mesh_bind:` 那个空键**（写入路径**永远写不出来** ✓ ⇒ 只可能是更早版本残留 ✓）
                     //   ⇒ 它就在 `served` 里留一个**空项** ✓：面板/日志会显示
                     //   「这一扇门服务 2 个空间：**、**123456789Ok,./」✗（owner 2026-10-08 截图逐字 ✓，本机日志同形 ✓）。
                     //   ⚠️ 这条红读数＝**截图与日志那两行** ✓；修法＝**按"服务空间非空"过滤** ✓。
-                    .filter(|(space, _, cfg)| !space.trim().is_empty() && cfg.bind.is_some())
+                    .filter(|(space, _, cfg, _)| !space.trim().is_empty() && cfg.bind.is_some())
                     .collect()
             };
-            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _)| s.clone()).collect();
+            let meshed: Vec<String> = mesh_cfgs.iter().map(|(s, _, _, _)| s.clone()).collect();
             // ⭐ 2026-10-09（task-8）：日志那一句「匹不匹配」用的就是这份（去重 ✓、与网格**同一把尺** ✓）。
             own_spaces = {
                 let mut v: Vec<String> = Vec::new();
@@ -617,16 +728,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             //      **保留可读**（不静默删 ✓）但**不再作任何凭证** ✗。
             //   ⚠️ 用 **BTreeMap**（键有序）⇒ 同一组网卡/同一组配置**每次跑出来的顺序一样** ✓
             //      （HashMap 的遍历顺序不定 ⇒ 判据会 flaky ✗）。
-            let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String)>> =
+            let mut by_bind: std::collections::BTreeMap<String, Vec<(String, String, bool)>> =
                 std::collections::BTreeMap::new();
-            for (space, ws, cfg) in &mesh_cfgs {
+            for (space, ws, cfg, device_level) in &mesh_cfgs {
                 let Some(bind) = cfg.bind.as_deref().map(str::trim).filter(|b| !b.is_empty()) else {
                     continue;
                 };
                 by_bind
                     .entry(bind.to_string())
                     .or_default()
-                    .push((ws.clone(), space.clone()));
+                    .push((ws.clone(), space.clone(), *device_level));
             }
             for (bind, pairs) in &by_bind {
                 // ⚠️ 取不到 app data 目录 ⇒ **如实说、这一轮不开窗**（⛔ 不静默跳过 ✗）
@@ -638,7 +749,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                     Ok(Some(addr)) => match crate::mesh::announced_base(addr) {
                         Some(base) => {
                             // ⭐ 一扇门服务多个空间 ⇒ **每个空间都记一条基址**（公告是按空间发的 ✓）
-                            for (_, space) in pairs {
+                            for (_, space, _) in pairs {
                                 mesh_bases.push((space.clone(), base.clone()));
                             }
                         }
@@ -819,7 +930,10 @@ fn settings_for_profile(
     // ⚠️ 解析不出来（个人空间没填暗号 / 库里没有档案行）⇒ **保持旧口径**回落到 `space_id` ✓
     //   （同模块判据 ② 把这条**钉住** ✓；它顺带暴露的"空键假显示为开着"属另一笔 ✓ 已记台账 ✓）。
     let space = resolved_space(c, space_id, ws_id);
-    crate::mesh::settings(c, &space)
+    // ⭐ 2026-10-11（设备级 ✓）：⭐ 个人档 ⇒ 设置读"空 space"那一格 ✓。
+    //   ⚠️ 判定用**同一句谓词**（`space_id` 空 ＝ 个人档 ✓ —— 与 `sync::mesh_scope_at` 那句逐字相同 ✓），
+    //   ⛔ 不新造一处判定 ✗（Lead 2026-10-11 的口径 ✓）。
+    crate::mesh::settings_for(c, &space, space_id.trim().is_empty())
 }
 
 /// ⭐ **2026-10-08 第二笔**：**窗口该服务/宣告哪个空间** —— 与写路径（`sync::mesh_scope`）同一条口径 ✓：
@@ -839,6 +953,31 @@ pub(crate) fn window_serve_space(c: &rusqlite::Connection, space_id: &str, ws_id
 #[cfg(test)]
 mod mesh_serve_space_tests {
     use super::*;
+
+    /// ⭐ 判据②（Lead 2026-10-11 点名 ✓）：⭐ **这一处也要看得见设备级的设置** ✗ ——
+    /// `settings_for_profile`（`lan_state.rs:909` 那一处 ✓）先 `resolved_space` 再按**那个空间**读设置 ✓
+    /// ⇒ ⭐ 设备级下个人档解析出来的是**设备级暗号** ✓，而设置住在"空 space"那一格 ✗
+    /// ⇒ ⭐ 这里读到 `None` ✗（⭐ 与判据⑥ 同一族 ✓）。
+    ///
+    /// ⚠️ **先看它红** ✗ —— ⛔ 实现没动 ✓。
+    #[test]
+    fn settings_for_profile_sees_the_device_level_settings() {
+        let c = fixture();
+        c.execute_batch(
+            "INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) \
+             VALUES ('ws-personal', '', 'room-a');",
+        )
+        .unwrap();
+        crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
+        crate::mesh::set_mesh_bind_for(&c, "", true, Some("0.0.0.0:8788")).unwrap();
+
+        let got = settings_for_profile(&c, "", "ws-personal");
+        assert_eq!(
+            got.bind.as_deref(),
+            Some("0.0.0.0:8788"),
+            "⛔ 这一处（`lan_state.rs:909`）在设备级下也必须看得见监听地址 ✗"
+        );
+    }
 
     fn fixture() -> rusqlite::Connection {
         let c = rusqlite::Connection::open_in_memory().unwrap();
@@ -1076,6 +1215,8 @@ mod tests {
     fn peer_of(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: device.to_string(),
@@ -1083,6 +1224,7 @@ mod tests {
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 1_000,
@@ -1293,7 +1435,7 @@ mod tests {
         let bases = mesh_bases_of(&[("sp-1", "http://192.168.1.5:8788")]);
 
         assert!(should_run_discovery(&profiles, &["sp-1".to_string()]), "开了网格 ⇒ 发现层要起");
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases);
         assert_eq!(got.len(), 1, "{got:#?}");
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8788"));
         assert_eq!(got[0].hub_spaces, vec!["sp-1".to_string()]);
@@ -1305,7 +1447,7 @@ mod tests {
     fn a_mesh_base_overrides_the_configured_server_in_the_announce() {
         let profiles = profiles_of(&[("sp-1", "https://s.example.com")]);
         let bases = mesh_bases_of(&[("sp-1", "http://10.0.0.7:9000")]);
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &profiles, &bases);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &bases);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://10.0.0.7:9000"), "覆盖成我自己的窗口");
     }
@@ -1316,16 +1458,51 @@ mod tests {
         // ① 半截配置（有地址没空间）：不开发现层、不发言
         let half = profiles_of(&[("", "http://192.168.1.5:8787")]);
         assert!(!should_run_discovery(&half, &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", &half, &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &half, &[]).is_empty());
         // ② 绑上了：开，而且报的是配置地址（甲那条路）
         let bound = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
         assert!(should_run_discovery(&bound, &[]));
-        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &bound, &[]);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &bound, &[]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].hub_base.as_deref(), Some("http://192.168.1.5:8787"));
         // ③ 什么都没配：不开、不发言
         assert!(!should_run_discovery(&[], &[]));
-        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", &[], &[]).is_empty());
+        assert!(announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &[], &[]).is_empty());
+    }
+
+    /// ⭐ 2026-10-11（**设备身份** ✓，方案 `2026-10-11-device-identity-keys.md` §4 第 2 步 ✓）：
+    /// ⭐ 公告里带上**本机的公钥** ✗。
+    ///
+    /// ⚠️ **公钥不是秘密** ✗ —— ⭐ 它随公告发出去**不违反**「空间令牌永不上线」那条 ✓
+    /// （⭐ 那条管的是**私钥／口令** ✓）。
+    /// ⚠️ 空串 ＝ ⭐ 这台**还没有身份** ✓（还没在写路径上建过键 ✓）⇒ ⭐ **照旧发言** ✗ ——
+    /// ⭐ "发现"与"身份"是两件事 ✓；⭐ 对端如实按"没有身份"处理 ✓（⛔ 不猜 ✗）。
+    #[test]
+    fn the_announce_carries_the_public_key_it_was_given() {
+        let profiles = profiles_of(&[("sp-1", "http://192.168.1.5:8787")]);
+        // ⭐ 形状正确的公钥（32 字节 ⇒ 64 个十六进制字符 ✓；值本身随便 ✓）
+        let pk = "ab".repeat(32);
+        let got = announces_for_with_mesh("dev-me", "本机", "T3ST1", &pk, &profiles, &[]);
+        assert_eq!(got.len(), 1, "{got:#?}");
+        assert_eq!(got[0].pubkey, pk, "⛔ 公告里必须是**传进来那把公钥** ✗（⛔ 不是它自己算的 ✗）");
+        // ⭐ 过一遍**线格式**（编／解）⇒ 逐字还在 ✓（⭐ 老对端读不读得动由下一条管 ✓）
+        let raw = crate::lan::encode_announce(&got[0]).expect("编码");
+        let back = crate::lan::decode_announce(&raw).expect("解码");
+        assert_eq!(back.pubkey, pk);
+        // ⭐ 没身份（空串）⇒ **照旧发得出来** ✓（⛔ 不因为"没有身份"就不发言 ✗）
+        let none = announces_for_with_mesh("dev-me", "本机", "T3ST1", "", &profiles, &[]);
+        assert_eq!(none.len(), 1, "没有身份也要照旧发言（发现与身份是两件事）");
+        assert_eq!(none[0].pubkey, "", "没有身份 ⇒ 如实地是空串 ✓（⛔ 不猜成任何东西 ✗）");
+    }
+
+    /// ⭐ 老对端**不发**这一格 ⇒ 收得下 ✓ ＋ ⭐ **不升 `WIRE_VERSION`** ✓
+    /// （⭐ 与 `short_id`（08-b②）／`trust_ask` 同一个手法 ✓：可选字段 ＋ 不 `deny_unknown_fields` ✓）。
+    #[test]
+    fn an_older_announce_without_a_public_key_still_decodes() {
+        let raw = r#"{"v":1,"device_id":"dev-a","device_name":"甲","short_id":"T3ST1","fp":"dev-a"}"#;
+        let a = crate::lan::decode_announce(raw).expect("老公告必须收得下");
+        assert_eq!(a.pubkey, "", "⛔ 没发那一格 ⇒ 空串 ✓，⛔ 不猜 ✗");
+        assert_eq!(a.v, crate::lan::WIRE_VERSION, "⭐ 加一个可选字段**不升版本** ✓");
     }
 
     /// ★ 判据 ⑥（口径 2 的直接上游）：**"绑了同步"才算绑** —— 只填了地址还没选空间
@@ -1612,5 +1789,161 @@ mod short_id_tests {
         let healed2 = short_id_or_init(Some("abc")); // 小写/太短 ⇒ 非法 ✓
         assert!((4..=6).contains(&healed2.len()));
         assert!(healed2.chars().all(|c| SHORT_ID_ALPHABET.contains(&(c as u8))));
+    }
+
+    /// ⭐ 2026-10-11（owner：「确定：点一下就通」）：⭐ 出站那两格的**接线**判据 ✓。
+    ///
+    /// 钉三件事 ✗：⭐ ① ⭐ 没有进行中的握手 ⇒ ⭐ 两格都空 ✓（⭐ 别因为"⭐ 从来没配过 ✗"就乱发 ✓）；
+    /// ⭐ ② ⭐ 只是**发了问** ⇒ ⭐ 只有 `ask` 出线 ✓、⭐ `trust_secret` **必须还是空** ✓
+    ///    —— ⭐ 这是那条安全底线在**接线层**的复述 ✓（⭐ 单元层已经钉过一遍 ✓，⭐ 两层都要 ✓）；
+    /// ⭐ ③ ⭐ 被问的那台、⭐ 人点过之后才有 secret ✓；⭐ 过期立刻停 ✓。
+    ///
+    /// ⚠️ `TRUST` 是**进程级**的 ✓ ⇒ ⭐ 这一条自己先清、⭐ 结束时再清 ✓，⭐ 免得与别的判据互踩 ✓
+    /// （⭐ 本文件别的判据都不碰它 ✓）。
+    #[test]
+    fn outbound_announce_fields_follow_the_handshake() {
+        // ⚠️ 2026-10-11：`TRUST` 是进程级的 ✓ ⇒ 与新增的三条判据**串起来**跑 ✓
+        //    （原先注释写着"本文件别的判据都不碰它"—— 现在**碰了** ⇒ 必须上锁 ✓）。
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let base = 1_000_000_i64;
+        let ttl = crate::pairing_trust::TRUST_TTL_MS;
+
+        with_trust(|h| h.clear());
+        assert_eq!(
+            trust_outbound(base),
+            (String::new(), String::new()),
+            "没有进行中 ⇒ 两格都空"
+        );
+
+        with_trust(|h| h.begin("dev-b", "ask-1", base, ttl));
+        let (ask, secret) = trust_outbound(base + 1_000);
+        assert_eq!(ask, "ask-1", "发了问 ⇒ ask 出线");
+        assert_eq!(secret, "", "只是发了问 ⇒ 一个字节的 secret 都不许出线");
+
+        with_trust(|h| h.clear());
+        with_trust(|h| h.note_ask("dev-a", base, ttl));
+        assert_eq!(trust_outbound(base + 1_500).1, "", "还没人点过 ⇒ 不许有 secret");
+        with_trust(|h| h.confirm("dev-a", "sek-1", base + 2_000, ttl));
+        assert_eq!(trust_outbound(base + 3_000).1, "sek-1", "人点过之后才有");
+        assert_eq!(
+            trust_outbound(base + 2_000 + ttl).1,
+            "",
+            "过期之后必须停（别让一次没走完的握手永远占用广播）"
+        );
+
+        with_trust(|h| h.clear());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // ⭐⭐ 2026-10-11（owner 拍「甲：一端点就通」）：**接收侧**那半的判据 ① ④ ⑤
+    //    ⭐ 发起侧那半在 `mesh_trust.rs` ✓；⭐ 采纳那半在 `sync.rs` ✓（它要真库 ✓）。
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /// ⭐ 本模块**自带**的公告夹具 ✓ —— ⛔ 不复用别处的 `peer_of` ✗（它在 `mod tests` 里 ✓，
+    /// 跨模块看不见 ✓；⭐ 而且夹具自足比到处 `use` 更不容易被搬动弄坏 ✓）。
+    fn peer_with_ask(device: &str, ask: &str, seen_at: i64) -> crate::lan::Peer {
+        crate::lan::Peer {
+            announce: crate::lan::LanAnnounce {
+                trust_ask: ask.to_string(),
+                trust_secret: String::new(),
+                v: crate::lan::WIRE_VERSION,
+                device_id: device.to_string(),
+                device_name: device.to_string(),
+                short_id: "T3ST1".into(),
+                hub_base: Some("10.0.0.9:8899".to_string()),
+                hub_spaces: Vec::new(),
+                fp: "fp".into(),
+                pubkey: String::new(),
+            },
+            addr: "192.168.1.9".into(),
+            seen_at_ms: seen_at,
+        }
+    }
+
+    /// ⭐ 判据①：⭐ 收到**带 ask** 的公告 ⇒ ⭐ 内核里**记上了** ✓（`pending_asks` 看得见 ✓）。
+    ///
+    /// **红读数（真变异）**：把 `observe` 里那句 `with_trust(|h| h.note_ask(…))` 拿掉 ⇒ 本判据红 ✓。
+    #[test]
+    fn an_incoming_trust_ask_is_noted_in_the_kernel() {
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_trust(|h| h.clear());
+        let st = LanState::new("me-dev".to_string());
+        let t = 5_000_000_i64;
+        assert!(st.observe(peer_with_ask("dev-b", "ask-1", t)), "别人的公告 ⇒ 记进对端表 ✓");
+        assert_eq!(
+            with_trust(|h| h.pending_asks(t + 1)),
+            vec!["dev-b".to_string()],
+            "带 ask 的公告必须在核心里看得见（否则「点了没反应」）"
+        );
+        assert_eq!(
+            with_trust(|h| h.pending_asks(t + 1)),
+            vec!["dev-b".to_string()],
+            "带 ask 的公告必须在核心里看得见（否则'点了没反应'）"
+        );
+        // ⭐⭐ 甲（owner 2026-10-11 二次拍板「一端点就通」）：⭐ **看到就是采纳** ✗ ⇒ ⭐ 这里就该是 `Trusted` ✓。
+        //    ⚠️ 原先那句"⭐ 看到 ≠ 信任 ✗、⭐ 记账不许推成 Trusted ✓"**已被甲取代** ✗ ✓。
+        assert_eq!(
+            with_trust(|h| h.state()),
+            crate::pairing_trust::TrustState::Trusted,
+            "甲：收到 ask ⇒ 自动采纳 ⇒ 直接信（⛔ 不要人再点一下）"
+        );
+        with_trust(|h| h.clear());
+    }
+
+    /// ⭐ 判据④：⭐ **自己的公告**（回环回来的 ✓）⇒ ⛔ 不给自己记账 ✗。
+    ///
+    /// **红读数（真变异）**：把 `observe` 里的 `if !mine` 去掉 ⇒ 本判据红 ✓。
+    #[test]
+    fn my_own_announce_never_arms_the_trust_cell() {
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_trust(|h| h.clear());
+        let st = LanState::new("me-dev".to_string());
+        let t = 5_000_000_i64;
+        assert!(!st.observe(peer_with_ask("me-dev", "ask-self", t)), "自己的公告 ⇒ upsert 回 false ✓");
+        assert!(
+            with_trust(|h| h.pending_asks(t + 1)).is_empty(),
+            "⛔ 自己的公告不许给自己记账 ✗（否则本机会采纳自己）"
+        );
+        with_trust(|h| h.clear());
+    }
+
+    /// ⭐ 判据⑤：⭐ 甲 这条路（`begin` ／ `note_ask` ／ 采纳 ✓）**一个字节的 secret 都不出线** ✓。
+    ///
+    /// ⚠️ 它守的正是那条底线 ✗：⭐ 空间令牌**永远不许**进那两格 ✓
+    /// （规格 §2：去掉对码之后，唯一还能拦住"令牌上广播"的就是这条 ✓）。
+    ///
+    /// **红读数（真变异）**：让 `note_remote_confirm` 顺手把令牌塞进 `secret_for`
+    /// （＝"顺手也发一份"那个错误 ✓）⇒ 本判据红 ✓。
+    #[test]
+    fn adoption_never_puts_a_secret_on_the_outbound_fields() {
+        let _serial = TRUST_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_trust(|h| h.clear());
+        let t = 5_000_000_i64;
+        let ttl = crate::pairing_trust::TRUST_TTL_MS;
+
+        // ① 收到问 ⇒ ⭐ 两格都空 ✓（被问的那台不发问 ✓，也还没有 secret ✓）
+        with_trust(|h| h.note_ask("dev-a", t, ttl));
+        assert_eq!(
+            trust_outbound(t + 1),
+            (String::new(), String::new()),
+            "只是一条「我想信任你」⇒ 出站一个字节都不许有"
+        );
+
+        // ② 采纳之后 ⇒ ⭐ 仍然两格都空 ✓（⭐ 甲 不需要传密钥：令牌两台都有 ✓）
+        with_trust(|h| h.note_remote_confirm(t + 2, ttl));
+        assert_eq!(
+            trust_outbound(t + 3),
+            (String::new(), String::new()),
+            "采纳之后也不许有 secret（令牌只在本机库与内存里）"
+        );
+
+        // ③ 发起侧：⭐ 只有 ask 出线 ✓
+        with_trust(|h| h.begin("dev-b", "ask-9", t + 4, ttl));
+        assert_eq!(
+            trust_outbound(t + 5),
+            ("ask-9".to_string(), String::new()),
+            "发起侧只许带 ask；secret 那一格永远是空"
+        );
+        with_trust(|h| h.clear());
     }
 }

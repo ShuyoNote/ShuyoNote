@@ -40,6 +40,10 @@ describe("同步方式：**一个**控件（不是一个间隔下拉 ＋ 一个�
 
 describe("地址只说一处", () => {
   const panel = read("src/components/SyncPanel.tsx");
+  // ⭐ task 派单 Round 1（2026-10-11，**纯抽取**）：网格那一块搬到了 `MeshAdvancedForm.tsx` ✓
+  //    ⇒ 下面 ⑤ 要找**那一块**的边界，改在**新文件**里找 ✓（⛔ 承诺一条没删：`saveMeshBind`／
+  //    `disableMesh` 都还在 ✓；`lanStatus.mesh.note` 仍然一次都没有 ✓）。④ 仍读面板 ✓（"只说一处"是面板的事 ✓）。
+  const meshForm = read("src/components/MeshAdvancedForm.tsx");
 
   it("④ `lanStatus.mesh.note` 在面板里只出现**一次**（并进了「设备直连」那一行）", () => {
     const hits = panel.split("lanStatus.mesh.note").length - 1;
@@ -47,12 +51,12 @@ describe("地址只说一处", () => {
   });
 
   it("⑤ 网格那一块里**不再**自己说地址（它只管设置与开关）", () => {
-    const at = panel.indexOf('className="sync-att sync-mesh"');
+    const at = meshForm.indexOf('className="sync-att sync-mesh"');
     expect(at, "找不到网格那一块").toBeGreaterThan(-1);
     // 切到**下一个块级** `sync-att sync-*`（`sync-att-text` / `-name` 是块内的子元素，不算边界）
     // —— 第一版按 `className="sync-att` 切，结果切在了块自己的 `sync-att-text` 上（差点假绿）。
-    const next = panel.indexOf('className="sync-att sync-', at + 10);
-    const block = panel.slice(at, next === -1 ? panel.length : next);
+    const next = meshForm.indexOf('className="sync-att sync-', at + 10);
+    const block = meshForm.slice(at, next === -1 ? meshForm.length : next);
     expect(block, "网格块里还在重复窗口地址").not.toContain("lanStatus.mesh.note");
     expect(block, "网格块里应当保留它的设置（监听地址 / 口令）").toContain("saveMeshBind");
     expect(block, "网格块里应当保留「关掉网格」").toContain("disableMesh");

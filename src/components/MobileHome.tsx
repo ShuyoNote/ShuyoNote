@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useNotes } from "../store/notes";
+import { PageIcon, PenIcon, SearchIcon } from "./icons";
 import { timeAgo } from "../lib/timeAgo";
 import { useMobileNav } from "../store/mobileNav";
 
@@ -42,7 +43,7 @@ export function MobileHome() {
 
       {/* ① 主行动：主色卡（效果图里唯一用 --accent 的那一张 ✓）—— 进「快速记录」屏（02 ✓） */}
       <button className="mhome-card is-accent" onClick={() => setScreen("capture")}>
-        <span className="mhome-card-icon" aria-hidden>✏️</span>
+        <span className="mhome-card-icon" aria-hidden><PenIcon width={20} height={20} /></span>
         <span className="mhome-card-body">
           <span className="mhome-card-title">快速记录</span>
           <span className="mhome-card-hint">想一句就记一句</span>
@@ -52,7 +53,7 @@ export function MobileHome() {
 
       {/* ② 搜索 */}
       <button className="mhome-card" onClick={() => setScreen("search")}>
-        <span className="mhome-card-icon" aria-hidden>🔍</span>
+        <span className="mhome-card-icon" aria-hidden><SearchIcon width={20} height={20} /></span>
         <span className="mhome-card-body">
           <span className="mhome-card-title">搜索</span>
           <span className="mhome-card-hint">全文搜索 · 结果来自本机索引</span>
@@ -87,7 +88,7 @@ export function MobileHome() {
                           p.icon
                         )
                       ) : (
-                        "📄"
+                        <PageIcon width={16} height={16} />
                       )}
                     </span>
                     <span className="mhome-recent-title">{p.title || "未命名"}</span>

@@ -366,6 +366,19 @@ export function FileManagerView() {
     try {
       await api.moveAttachment(f.id, targetFolderId);
       setFiles((prev) => prev.filter((x) => x.id !== f.id));
+      // ⭐ 2026-10-12（判据 `src/components/fileMoveTreeRefresh.test.ts`）：**移动也要通知侧栏** ✓ ——
+      //    上面那行 `setFiles` 只更新**文件管理器自己**那一份 `files` ✗，而侧栏的文件行是
+      //    `PageTree.tsx:186` 的 `TreeFiles`：它的重取条件**只有** `[folderId, revision]`
+      //    （`:211-223`）✓，而"移动"**不改 `folderId`**（用户还站在源文件夹里，`:362`）✗
+      //    ⇒ 只有 `revision` 通知得到它 ✓，否则那一行留在侧栏里，要等刷新/切走再回来才对 ✗
+      //    （owner 实测：「把文件转移到另一个文件夹之后，侧边栏不能即时更新」✓）。
+      //    ⚠️ 口径与同文件那五处**同一句**（上传 `:334`／移除 `:426`／批量删 `:655`／右键删 `:754`／
+      //    改名 `:781`）—— 改名那处已逐字写着为什么（`:778-779`）：
+      //      「强制刷新：页面树（侧边栏）订阅 useNotes.pages 与 fileManager.revision，
+      //        两者都刷新才能让侧边栏 / 文件管理网格及时显示新名字。」
+      //    ⛔ 附件**不在** `useNotes.pages` 里 ⇒ 这里**不需要**（也不该加）`loadPages()` ✗。
+      //    ⚠️ 放在 `await` 之后、`try` 之内 ⇒ **只有移动真的成功才刷** ✓（失败不白刷 ✓）。
+      useFileManagerStore.getState().bumpRevision();
       toast("已移动", "success");
     } catch (e) {
       toast(`移动失败：${e}`, "error");
@@ -400,10 +413,23 @@ export function FileManagerView() {
       return;
     }
     try {
-      await api.removeAttachment(id);
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：后端现在回**实际删掉的条数** ✓
+      //    （`commands.ts` 的 `remove_attachment`：`1` = 真删到 / `0` = 本来就没这一行 ⇒ ⛔ 不报错 ✓）
+      //    ⇒ 界面**自己决定提示** ✓，从根上消灭"无声假成功" ✗。
+      const removed = await api.removeAttachment(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
+      // ⭐ 2026-10-12（判据 `src/components/fileManagerDelete.test.ts`）：**不许只信本地那个 filter** ✗ ——
+      //    `0` 条那条路下后端**什么都没删**，只改本地列表的后果是：那一行当场消失 ＋ 报「已移除文件」✓，
+      //    而**重进文件管理**（`:229-238` 的 `loadFiles()` 再列一次）它**又回来了** ✗
+      //    ⇒ 用户看到的就是「删不掉」✓。⇒ 跟右键那条 **同一口径**：以**重列结果**为准 ✓。
+      loadFiles();
       useFileManagerStore.getState().bumpRevision();
-      toast("已移除文件", "success");
+      if (removed === 0) {
+        // 幂等不是错，但⛔不许假装删掉了 ✗（朴实一句：它本来就不在文件里了 ✓）。
+        toast("这条已经不在文件里了", "info");
+      } else {
+        toast("已移除文件", "success");
+      }
     } catch (e) {
       toast(`移除失败：${e}`, "error");
     }
@@ -621,11 +647,18 @@ export function FileManagerView() {
       }
       if (pageCount > 0) await useNotes.getState().loadPages();
       if (fileCount > 0) {
+        // ⭐ 2026-10-12（owner 拍的口径）：`removeAttachments` 现在回**实际删掉的条数** ✓
+        //    （`attachments.rs` 的 `removed` 只在真删到时 +1 ✓）⇒ 这个读数才是活的 ✓。
         const n = await api.removeAttachments(selectedFileIds);
         setFiles((prev) => prev.filter((f) => !selectedFileIds.includes(f.id)));
-        toast(`已删除 ${parts.join("、")}`, "success");
-        if (n !== fileCount) {
-          toast(`文件删除完成：${n} 个`, "info");
+        if (n === 0) {
+          // 幂等不是错，但⛔不许说"已删除" ✗（它本来就不在文件里了 ✓）。
+          toast("这些文件已经不在文件里了", "info");
+        } else {
+          toast(`已删除 ${parts.join("、")}`, "success");
+          if (n !== fileCount) {
+            toast(`文件删除完成：${n} 个`, "info");
+          }
         }
       } else if (pageCount > 0) {
         toast(`已删除 ${pageCount} 个页面/文件夹`, "success");
@@ -724,15 +757,23 @@ export function FileManagerView() {
       : `删除「${label}」？页面/文件夹将移入回收站（可恢复）。`;
     if (!(await confirmDialog({ title: "删除", message: msg, danger: true }))) return;
     try {
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：文件那条现在有读数可用 ✓
+      //    （页面/文件夹走 `deletePage`，没有这个读数 ⇒ 保持 `null` ✓）。
+      let removed: number | null = null;
       if (isFile) {
-        await api.removeAttachment(row.file!.id);
+        removed = await api.removeAttachment(row.file!.id);
       } else if (row.pageId) {
         await api.deletePage(row.pageId);
       }
       await useNotes.getState().loadPages();
       useFileManagerStore.getState().bumpRevision();
       loadFiles();
-      toast("已删除", "success");
+      if (removed === 0) {
+        // ⛔ 后端说"删了 0 条"⇒ 不许说"已删除" ✗（它本来就不在文件里了 ✓）。
+        toast("这条已经不在文件里了", "info");
+      } else {
+        toast("已删除", "success");
+      }
     } catch (e) {
       toast(`删除失败：${e}`, "error");
     }

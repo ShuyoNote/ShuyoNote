@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -411,14 +411,23 @@ export const api = {
    *   · 传了 ⇒ 本机在**生成这一刻就把它登记好** ⇒ 对面采纳**一次**，**两个方向都通** ✓；
    *   · 不传 ⇒ 走原来那条路（码可以**离线**传，代价是**要配两次** ✓）—— A 是加法，⛔ 不是替换 ✗。
    */
-  devicePairExport: (spaceId: string, peerDeviceId?: string) =>
-    invoke("device_pair_export", { spaceId, peerDeviceId }),
+  // ⭐ 2026-10-12（1C 第 ②-b 片）：多一格 `peerPubkey` ✗ —— ⭐ 生成这一刻就把
+  //   「**允许它来拿我的**」落下 ✓（⭐ 点选那台在「附近的设备」里有公钥 ✓；
+  //   ⚠️ 拿不到 ⇒ 后端如实说、这一趟退回"两台各配一次" ✓）。
+  devicePairExport: (spaceId: string, peerDeviceId?: string, peerPubkey?: string) =>
+    invoke("device_pair_export", { spaceId, peerDeviceId, peerPubkey }),
   /**
    * ⭐ **U11/T5**：**逐台解除** —— 只把那**一台**踢出去（它拉不动你 ✓），
    * 别的设备不受影响 ✓，⛔ 也**不用**给所有设备换口令（那正是 U11 要消灭的旧办法 ✓）。
    */
   deviceUnpair: (workspaceId: string | null, peerDeviceId: string) =>
     invoke("device_unpair", { workspaceId, peerDeviceId }),
+  /**
+   * ⭐ **2026-10-11（任务 B）**：⭐ **信任走到哪一步** ✗ —— 只读 ✓（内核那条状态一直在推进，
+   * 而前端原先**没有读它的口子** ✗）⇒ 界面因此能如实说"通了没有"✓（⛔ 不靠 toast 猜 ✗）。
+   * ⚠️ **桌面专属**（发现层是 Rust 的 UDP；Web 上它没有对象 ⇒ 调用方会如实说"读不到"✓）。
+   */
+  meshTrustState: () => invoke("mesh_trust_state"),
   /**
    * ⭐ T3：**设备直连**采纳侧 —— 三态：不传码 ⇒ `need_confirm`（**零写入**，只回算出来的码给人核对）；
    * 传了对不上 ⇒ `rejected`（零写入）；逐位相同 ⇒ `ok`，这时**才**写接线。
@@ -830,4 +839,19 @@ export const api = {
     temperature?: number;
     max_tokens?: number;
   }, runId: string) => invoke("ai_complete_stream", { args, runId }),
+  // ---- 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）----
+  /**
+   * ⭐ 中继那两格的读数（**不联网**）：配置 ＋ 许可窗口 ＋「还没检查」的连接那一格。
+   *
+   * ⚠️ 那句人话与天数**都由后端出**（`src-tauri/src/relay_client.rs`）⇒ 界面只摆上去 ✓；
+   * 读不到时后端给的是「还没配置中继（读不到有效期）」那句，⛔ **不是** 0 天 ✗。
+   */
+  relayStatus: () => invoke("relay_status") as Promise<RelayStatus>,
+  /**
+   * ⭐ **发起一次连接 ＋ 握手**（同步面板里「重新检查」走这条）⇒ 回同一份读数：
+   * 连上就是「已连上中继」✓；被中继拒 ⇒ 那句话里带**中继给的原因** ✓；连不上 ⇒ 如实说连不上 ✓。
+   *
+   * ⚠️ 它**不碰**本地数据/功能（到期只收回跨网 ✓）。
+   */
+  relayProbe: () => invoke("relay_probe") as Promise<RelayStatus>,
 };

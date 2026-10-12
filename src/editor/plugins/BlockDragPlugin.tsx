@@ -208,25 +208,29 @@ export function BlockDragPlugin({ dragEnabled = false }: { dragEnabled?: boolean
       });
     };
 
-    const onUp = (e: MouseEvent) => {
+    // ⭐ 拖拽的**唯一收尾口**：可被 `mouseup` / 窗口失焦 / "指针回来但按键已松" 三条路调用 ✓
+    //    （`e === null` ⇒ 没有落点可算，只收状态、**不动文档** ✓）。⛔ 别把它复制成第二份 ✗。
+    const endDrag = (e: MouseEvent | null) => {
       const srcKey = dragKey;
-      const blocks = getTopLevelBlocks(editor);
-      const target = findTargetBlock(blocks, srcKey, e.clientY);
+      if (e !== null) {
+        const blocks = getTopLevelBlocks(editor);
+        const target = findTargetBlock(blocks, srcKey, e.clientY);
 
-      if (target) {
-        const after = target.after;
-        editor.update(() => {
-          const children = $getRoot().getChildren();
-          const src = children.find((c) => c.getKey() === srcKey);
-          const dst = children.find((c) => c.getKey() === target.key);
-          if (!src || !dst) return;
-          src.remove();
-          if (after) {
-            dst.insertAfter(src);
-          } else {
-            dst.insertBefore(src);
-          }
-        });
+        if (target) {
+          const after = target.after;
+          editor.update(() => {
+            const children = $getRoot().getChildren();
+            const src = children.find((c) => c.getKey() === srcKey);
+            const dst = children.find((c) => c.getKey() === target.key);
+            if (!src || !dst) return;
+            src.remove();
+            if (after) {
+              dst.insertAfter(src);
+            } else {
+              dst.insertBefore(src);
+            }
+          });
+        }
       }
 
       draggingRef.current = false;
@@ -234,11 +238,32 @@ export function BlockDragPlugin({ dragEnabled = false }: { dragEnabled?: boolean
       setDropLine(null);
     };
 
+    const onUp = (e: MouseEvent) => endDrag(e);
+
+    // ⭐ 2026-10-12：拖拽态的**收尾**补两条旁证（判据：`src/editor/dragVsMarkdown.test.ts` 判据④）——
+    //    `mouseup` **收不到**时（指针在窗外松手 / 中途把窗口切走），`beginDrag()` 已经
+    //    把编辑器设成不可编辑（`:296`），而收尾**只**挂在下面 effect 的 return 上（`:262-270`）
+    //    ⇒ 那一跳一丢，`contenteditable="false"` ＋ `body.is-dragging-block`（它带
+    //    `user-select: none`，见 `src/App.css:7367-7371`）＋ 拖拽幽灵就**永久留在页面上** ✗
+    //    —— 用户看到的就是"拖拽状态卡住"（同一形状 owner 2026-10-12 报过一次）。
+    //    ⛔ 两条旁证都**只**用来收尾，不改拖拽语义：失焦＝这次拖拽已经结束 ✓；
+    //      指针回到窗口时 `buttons === 0` ⇒ 按键其实早就松开了 ✓（真的按住时是 1 ✓）。
+    // ⛔ 别改成"`onMove` 见到 `buttons === 0` 就收尾" ✗ —— 那会撞坏 `blockDragBehavior.test.ts`
+    //    里既有的派发形状（它派的 `mousemove` 默认 `buttons: 0`），而那个文件不在本任务写域里。
+    const onWindowBlur = () => endDrag(null);
+    const onPointerReturn = (e: MouseEvent) => {
+      if (e.buttons === 0) endDrag(null);
+    };
+
     document.addEventListener("mousemove", onMove, true);
     document.addEventListener("mouseup", onUp, true);
+    window.addEventListener("blur", onWindowBlur, true);
+    document.addEventListener("mouseenter", onPointerReturn, true);
     return () => {
       document.removeEventListener("mousemove", onMove, true);
       document.removeEventListener("mouseup", onUp, true);
+      window.removeEventListener("blur", onWindowBlur, true);
+      document.removeEventListener("mouseenter", onPointerReturn, true);
       document.body.classList.remove("is-dragging-block");
       editor.setEditable(true);
       draggingRef.current = false;

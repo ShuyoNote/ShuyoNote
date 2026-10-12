@@ -15,6 +15,8 @@ import { readEmbedConfig, embedText, cosineSim, VECTOR_BONUS, embeddingText, emb
 import { buildWikiExport } from "../wikiExport";
 import type { WikiPageInput } from "../wikiExport";
 import { DEFAULT_COVER } from "../covers";
+// ⚠️ 只取**类型**（中继那两格的 Web 版读数要按契约形状回 —— 见 `relayUnavailableShape`）✓
+import type { RelayStatus } from "./commands";
 
 // Browser (non-Tauri) implementation of the Platform drivers.
 //
@@ -1350,6 +1352,37 @@ async function migrateAttachmentHashesToSha256(store: SqliteStore): Promise<void
   } catch { /* 迁移失败不阻塞启动 */ }
 }
 
+// 中继那两格的 **Web 版读数**（形状与 Rust `relay_client::RelayStatus` 逐字段相同 ✓）：
+// 这一档在浏览器里**根本不存在** ⇒ `available:false` ＋ 一句为什么 ✓，
+// ⛔ **不是**"剩余 0 天"、⛔ **不是**"已连上"（空壳会让用户分不清"没有这一档"与"真到期了" ✗）。
+export function relayUnavailableShape(): RelayStatus {
+  return {
+    available: false,
+    note: "Web 版没有中继连接面（中继只在桌面版可用）⇒ 这一档不可用，读数一个字节都没有动",
+    configured: false,
+    url: null,
+    connection: {
+      state: "unreachable",
+      label: "中继这一档在当前平台不可用",
+      detail: "Web 版没有中继连接面（客户端连接面在 Rust 侧）",
+      checked_at: null,
+    },
+    license: {
+      state: "missing",
+      days_left: null,
+      grace_days_left: null,
+      // ⚠️ 2026-10-12：原句「许可证状态未接线（读不到有效期）」里的"未接线"是**假话**
+      //    （真因是本机还没配置）⇒ 与 Rust `relay_client.rs` / `statusView.ts` 同口径 ✓。
+      label: "还没配置中继（读不到有效期）",
+      crossnet_allowed: false,
+      // ⭐ 2026-10-11：⭐ Web 版**根本没有**许可读数 ⇒ ⭐ 来源如实写"没说来源" ✓
+      //    （⛔ 不许写 `verified`：⭐ 那是在假装验过 ✓）
+      source: "unstated",
+      refusal: null,
+    },
+  };
+}
+
 // 导出是给验收脚本用的（`scripts/verify-two-device-sync.mjs` 要打**真实的命令路径**
 // ——`restore_version` 的效果必须由它本身产生，而不是脚本里自己重演一遍 restore 逻辑）
 // ——与 `applyChange` 的导出来源相同。
@@ -1713,6 +1746,20 @@ export function makeInvoke(store: SqliteStore) {
         window: null,
         note: "Web 版开不了本机端口 ⇒ 网格这一档只在桌面版可用（设置没有落下）",
       } as T;
+    }
+    if (cmd === "relay_status") {
+      // 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」）：Web 上这一档**根本不可用** ——
+      // 中继连接面是 Rust 侧的事（上游 iroh-relay 客户端 ＋ 本机配置 ＋ 设备私钥），
+      // 浏览器里没有这一层。
+      // ⇒ 回一个**结构完整、`available:false`、说得出为什么**的读数（形状与 Rust 侧逐字段相同），
+      //   而不是抛错、也不是回一个"剩余 0 天 / 已连上"的空壳：
+      //   空壳会让用户分不清"这一档没有"与"真的连上了/真到期了"。
+      return relayUnavailableShape() as T;
+    }
+    if (cmd === "relay_probe") {
+      // 同上：**连检查都做不了**（没有连接面）—— 但不抛错，回同一份"不可用"读数 ✓。
+      // ⚠️ 注意它回来的 `connection.label` 是"<b>不可用</b>"，⛔ 不是"已连上" ✗。
+      return relayUnavailableShape() as T;
     }
     if (cmd === "delete_page") {
       // Soft-delete the page AND recursively all of its descendants (folders'
@@ -2549,15 +2596,18 @@ export function makeInvoke(store: SqliteStore) {
       const id = String(a.id ?? "");
       // Delete the row; free blob bytes only when no other row references the hash.
       const row = store.query<{ hash: string }>("SELECT hash FROM attachments WHERE id = ?", [id])[0];
-      if (row) {
-        store.run("DELETE FROM attachments WHERE id = ?", [id]);
-        recordChange(store, "attachment", id, "delete", null, Date.now());
-        const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
-        if (refs === 0) {
-          await blobStore.delete(row.hash).catch(() => {});
-        }
+      if (!row) {
+        // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：查不到这一行**不是错** ✗
+        //    ⇒ 如实回 `0`，让界面自己决定提示什么 ✓（与桌面 `attachments.rs` 同口径 ✓）。
+        return 0 as T;
       }
-      return undefined as T;
+      store.run("DELETE FROM attachments WHERE id = ?", [id]);
+      recordChange(store, "attachment", id, "delete", null, Date.now());
+      const refs = store.query<{ n: number }>("SELECT COUNT(*) AS n FROM attachments WHERE hash = ?", [row.hash])[0]?.n ?? 0;
+      if (refs === 0) {
+        await blobStore.delete(row.hash).catch(() => {});
+      }
+      return 1 as T;
     }
     if (cmd === "remove_attachments") {
       const ids = (a.ids ?? []).map(String);

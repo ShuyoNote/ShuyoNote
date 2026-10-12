@@ -29,6 +29,14 @@ export const BLOCK_GESTURE_EXCLUDED_SELECTOR = [
   ".tag-picker", // 标签选择浮层
   ".slash-menu", // 斜杠菜单
   ".table-resize-handle", // ⭐ 表格列宽手柄（两次事故的主角 ✓）
+  // ⭐⭐ 2026-10-12（owner：「表格工具栏功能失效了」）：**表格浮动工具栏 ＋ 它的调色板** ✗ ——
+  //   少这两条 ⇒ 按按钮那一下被判成"空白安全区" ⇒ 起**框选** ⇒ 那条挂在 document 捕获上的
+  //   `mouseup` **比 `click` 先跑** ⇒ 光标被挪出表格 ⇒ `TableMenuPlugin` 里 `if (ctx)` 整段跳过
+  //   ＝ ⭐ **按钮点了没反应** ✓（就是用户看到的那一幕 ✓）。
+  //   ⭐ 判据：`src/editor/tableMenu.test.tsx` 第②条（**先红过**：行数 2≠3、光标＝表格外 ✓）；
+  //   A/B 实测：摘掉 `ClickToEditPlugin` ⇒ 那条转绿 ✓ ⇒ 真因是"这层没进清单"✓，⛔ 不是命令坏了 ✗。
+  ".table-menu",
+  ".table-palette",
 ].join(", ");
 
 /** 这个按下目标是不是"块手势该放行"的浮层/手柄（`true` ⇒ 谁都不许把它当成开始块选/框选）✓。 */

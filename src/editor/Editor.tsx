@@ -719,10 +719,26 @@ const EditorImpl = function Editor({ contentJson, onSave, autoFocus, pageId, sea
         <AiSpaceTriggerPlugin />
         <ImagePastePlugin pageId={pageId} />
         <BookmarkPastePlugin />
-        {/* ⭐ 2026-10-02（owner）：「只恢复 ⋮⋮ 手柄与块菜单，不恢复拖拽」✓
-            ⇒ 挂回来但**不开** `dragEnabled`（默认 false ✓）：
-               有左侧沟槽的 ⋮⋮ 手柄 ✓、点一下出块菜单 ✓；⛔ 无拖拽幽灵/指示线 ✗（10-01 的取消继续生效 ✓）。 */}
-        <BlockDragPlugin />
+        {/* ⭐⭐ **2026-10-12（owner：「打开」）**：⭐ **恢复块拖拽** ✗ —— 推翻 2026-10-02 那句
+            「只恢复手柄与菜单、不恢复拖拽」✓（⛔ 旧那行注释不删 ✗，它是"曾经关过、为什么关"的记录 ✓）。
+            ⚠️ 拖拽的**唯一入口**仍是 `BlockDragPlugin` 里的 `beginDrag()` ✓（⛔ 没有第二条路 ✗）——
+              它现在**开着** ✓；⭐ 判据在 `blockDragWiring.test.ts`（接线 ✓）与
+              `blockGestures.test.ts`（手势不误关 ✓）两处钉着 ✓。
+            ⚠️ ⭐ **该补的四条（拖拽真正的验收）现在还没有判据兜住** ✗ ——
+              ① >5px 才起拖 ② 落点线画对块位 ③ 松手**顺序真的落库**（⛔ 不是只动 DOM ✗）
+              ④ 点一下 ≠ 拖（块菜单照旧 ✓）。
+              ⛔ 别把上面那两条接线／手势判据读成"拖拽已被验收" ✗。 */}
+        {/* ⚠️⚠️ **2026-10-12 事故记录（⛔ 不删 ✗）**：owner 报「**Markdown 语法失效**」✗，
+            当时的 A/B（把这一行改回不传 `dragEnabled` ⇒ owner 回「好了」✓）**曾被当成结论** ✗ ——
+            ⭐ 但随后补的判据**重现不出来**（挂 `dragEnabled` 时行首 `## ` 仍真变 `<h2>` ✓；
+               已逐条排除 只挂载／悬停／完整拖一次／卡住的拖拽／`#` 的 keydown ✓）
+            ⇒ ⚠️ **那次 A/B 有混淆变量**（改行 ⇒ 重建 ⇒ **重载**，而重载本身会清会话态 ✗）
+            ⇒ ⭐ **"拖拽吃 Markdown"这条真因未定** ✓（⛔ 不许当成结论写进代码或提交 ✗）。
+            ⭐ 同期**已确证并修掉**的是另一个缺陷：`BlockDragPlugin` 的 `setEditable(false)`
+            **丢 `mouseup` 时会永久卡住**（`contenteditable="false"` ＋ `body.is-dragging-block`
+            带 `user-select:none` ✓）—— 形状正是 owner 截图里的"**高亮卡住**" ✓
+            （判据 `dragVsMarkdown.test.ts` 第④条 ✓）。 */}
+        <BlockDragPlugin dragEnabled />
         <BlockInsertPlugin pageId={pageId} />
         <BlockSelectionPlugin />
         <InsertShortcutPlugin />

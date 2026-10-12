@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
@@ -6,6 +6,15 @@ import { useOverlayScrollLock } from "../hooks/useOverlayScrollLock";
 import { useOverlayLayer } from "../hooks/useOverlayLayer";
 import { api, type SyncProfile, type SyncBudget, type LanStatus, type NearbyPeer, type DevicePairExportOutcome } from "../lib/api";
 import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib/pairTarget.test.ts ✓
+import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
+import { toast } from "../store/toast";
+import { TrustDevicePanel, type Reading, type TrustStateReading } from "./TrustDevicePanel";
+// ⭐ 2026-10-11：`MeshAdvancedForm` 已搬到「设置 · 同步」（`SyncSettingsPane` ✓）⇒ 面板不再引它 ✓。
+import {
+  MESH_TRUST_BEGIN_COMMAND,
+  readTrustState,
+  unavailableTrustDeviceReadings,
+} from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -13,7 +22,7 @@ import { useNotes } from "../store/notes";
 import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
 import { CloudSyncIcon } from "./icons";
-import { isDesktopPlatform } from "../lib/platform";
+import { isDesktopPlatform, platform } from "../lib/platform";
 // ⚠️ 2026-09-29（D3）：**行内 Markdown 的契约**。后端（Rust）给人看的话是按行内 Markdown 写的
 // （`**能被别人拉到**` 那种）⇒ 它必须在【渲染边界】过这一道，否则用户看见两个星号。
 // 契约的唯一实现是 `src/lib/inlineMd.tsx`（toast 与 SpacePrivacySection 已在用）⇒ 这里接上它。
@@ -37,6 +46,9 @@ import {
   type SyncMode,
 } from "../lib/syncMode";
 import { SpacePrivacySection } from "./SpacePrivacySection";
+// ⭐ 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）——
+//    读数（连上没连上 ＋ 剩余 N 天）**全部来自后端**，这一块只摆上去 ✓。
+import { RelayStatusSection } from "./RelayStatusSection";
 import {
   publishPendingRemoteTotal,
   subscribePendingRemoteTotal,
@@ -129,6 +141,13 @@ interface EditRow {
 // Per-workspace sync targets (S8): each local workspace binds to its own remote
 // (server + token + space_id), so one person can sync different spaces to
 // different servers/accounts (multi-server × multi-space).
+/**
+ * ⭐ 信任设备那一屏的四条读数（task 派单）—— **这一轮一律如实给"读不到"** ✓：
+ * 后端那几条读数命令还没到位 ✓ ⇒ ⛔ 不编 0、⛔ 不编假数 ✗（界面上出现「读不到」是**预期**的 ✓）。
+ * ⚠️ 放在**模块级常量**：它是常量 ⇒ 不必每帧新建对象 ✓（后端到位后只改 `src/lib/trustDevicePanelReadings.ts` ✓）。
+ */
+const TRUST_DEVICE_READINGS = unavailableTrustDeviceReadings();
+
 export function SyncPanel() {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
@@ -229,29 +248,9 @@ export function SyncPanel() {
   //   这里**不再自己解释一遍**（两处各解释一次，迟早会有一处说错）。
   // ⚠️ 它的门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要求这个空间有 `space_id`
   //   （"只开网格、不绑服务端"正是这一档要支持的配置）。
-  const [meshBind, setMeshBind] = useState("");
-  const [meshToken, setMeshToken] = useState("");
-  // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
-  // ⭐ 网格要一个「两边填一样」的字符串来对暗号 ✓，而个人空间**没有** `space_id`（那在服务器上）
-  // ⇒ 这一项就是它的替身 ✓；⭐ 团队空间里 `space_id` 优先 ⇒ 填不填都不影响 ✓。
-  const [meshRoom, setMeshRoom] = useState("");
-  const [meshBusy, setMeshBusy] = useState(false);
-  const meshSavedBind = lanStatus?.mesh.bind ?? "";
-  // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
-  useEffect(() => {
-    setMeshBind(meshSavedBind);
-  }, [meshSavedBind]);
-  const saveMeshBind = async () => {
-    setMeshBusy(true);
-    try {
-      const st = await api.meshSetConfig(activeId, meshBind.trim(), null);
-      setStatus(st.note);
-    } catch (e) {
-      setStatus(`网格设置没保存：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ 监听地址／配对暗号／口令 那几个 state 与 handler **已抽到 `MeshAdvancedForm`** ✓
+  //    （task 派单 Round 1：纯抽取，界面与行为一个字没改 ✓ —— 下一轮换挂载点到设置面 ✓）。
+  //    这里只留"门槛"那几句解释（它属于面板这一层的判断 ✓）。
   // ⭐ **U11/T5（2026-10-02）**：**逐台解除** —— 这个空间认了哪些设备、把哪一台踢出去。
   //
   // ⚠️ **三件不许**（都有既有口径盯着）：
@@ -315,35 +314,8 @@ export function SyncPanel() {
     }
   };
 
-  /** ⭐ 存「配对暗号」：个人空间两台设备填同一个就能互连（团队空间不受影响 ✓）。 */
-  const saveMeshRoom = async () => {
-  if (!meshRoom.trim()) return;
-  setMeshBusy(true);
-  try {
-  // ⚠️ 只写 room 这一项 ⇒ 另两项传 `null`（＝不动 ✓，与 Rust 侧同口径 ✓）。
-  const st = await api.meshSetConfig(activeId, null, null, meshRoom.trim());
-  setLanStatus((s) => (s ? { ...s, mesh: st } : s));
-  setStatus("配对暗号已保存。到另一台设备上填「同一个」暗号，两台在同一个网络里就能直接连上，不经过服务器");
-  } catch (e) {
-  setStatus(String(e));
-  } finally {
-  setMeshBusy(false);
-  }
-  };
-
-  const saveMeshToken = async () => {
-    if (!meshToken.trim()) return;
-    setMeshBusy(true);
-    try {
-      const st = await api.meshSetConfig(activeId, null, meshToken.trim());
-      setMeshToken("");
-      setStatus(st.note);
-    } catch (e) {
-      setStatus(`网格口令没保存：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ `saveMeshRoom` / `saveMeshToken` / `disableMesh` **已抽到 `MeshAdvancedForm`** ✓
+  //    （Round 1 纯抽取：行为逐字照搬 ✓，包括 `saveMeshRoom` 顺手更新 `lanStatus.mesh` 那一下 ✓）。
 
   // ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：**两个入口、两个名字** ✓
   //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
@@ -369,9 +341,12 @@ export function SyncPanel() {
     if (!activeId) { setDpNote("先选一个空间"); return; }
     setDpBusy(true);
     try {
-      // ⭐ 选了对面 ⇒ 传它的设备号（本机**生成时就登记** ⇒ 对面采纳一次、两个方向都通 ✓）；
+      // ⭐ 选了对面 ⇒ 传它的设备号 **＋ 它的公钥** ✗（本机**生成时就登记它这把钥匙** ⇒
+      //    对面采纳一次、两个方向都通 ✓ —— ⭐ 1C 之后"登记"的落点就是**钥匙** ✓）；
       //    没选 ⇒ 不传（那条路照旧：码可离线传、要配两次 ✓）
-      const r = await api.devicePairExport(activeId, dpPeer || undefined);
+      //   ⚠️ 点了对面但它**没报身份**（老版本／不在附近）⇒ 后端如实说、这一趟退回两台各配一次 ✓。
+      const dpPeerRow = dpPeer ? nearby.find((p) => p.device_id === dpPeer) ?? null : null;
+      const r = await api.devicePairExport(activeId, dpPeer || undefined, dpPeerRow?.pubkey || undefined);
       setDpExport(r);
       setDpOutcome("idle");
       setDpNote(r.message);
@@ -428,18 +403,8 @@ export function SyncPanel() {
       setDpBusy(false);
     }
   };
-  const disableMesh = async () => {
-    setMeshBusy(true);
-    try {
-      // `""` ＝ **清除监听地址** ⇒ 网格关掉、窗口立刻松口（与命令面同一套口径）。
-      const st = await api.meshSetConfig(activeId, "", null);
-      setStatus(st.note);
-    } catch (e) {
-      setStatus(`网格没关掉：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setMeshBusy(false);
-    }
-  };
+  // ⚠️ `disableMesh` **已抽到 `MeshAdvancedForm`** ✓（Round 1 纯抽取 ✓）—— 那条命令仍在原来那一处调用 ✓：
+  //    `api.meshSetConfig(activeId, "", null)`（`""` ＝ 清除监听地址 ⇒ 网格关掉 ✓，判据 ③ 钉着 ✓）。
   // ⚠️ 这里原来还有一个 `meshRoundNow()`（配一个「立刻交换一轮」按钮）。2026-09-26 **口径收敛**：
   //    交换并进「同步」（见 `syncOne` 里那一段）⇒ 函数与按钮**一起删掉**，不留在那儿当"看起来
   //    还该有个按钮"的线索（本仓对死代码的纪律在 TS 这半边同样适用）。
@@ -1200,6 +1165,75 @@ export function SyncPanel() {
     if (unknown > 0) parts.push(`另外 ${unknown} 个空间`);
     return `附近 · 服务 ${parts.join("、")}`;
   };
+  // ⭐⭐ 2026-10-11（任务 B）：⭐ **读"信任走到哪一步"** ✗ —— 打开这一屏时读一次 ✓、点过之后**再读一次** ✓
+  //    （⛔ 先前只靠一句 toast 说"已信任" ✗ —— 那既不是读数、也**读不回来** ✓）。
+  //    ⚠️ 初始值如实写"还没读过" ✗：⛔ 不许拿 `idle`（"还没开始"）当默认 ✗ —— 那是一**个结论** ✓
+  //      （与那四条读数同一条口径：⛔ 读不到 ≠ 没有 ✓）。
+  const [trustState, setTrustState] = useState<Reading<TrustStateReading>>({
+    kind: "unavailable",
+    reason: "还没读过（打开这一屏时会读一次）",
+  });
+  const refreshTrustState = useCallback(async () => {
+    if (!isDesktopPlatform()) {
+      // ⛔ 不假装"还没开始" ✗ —— 这一层是桌面才有的（发现层在 Rust 侧 ✓）。
+      setTrustState({
+        kind: "unavailable",
+        reason: "信任这件事只在桌面端（发现层是桌面才有的那一层）",
+      });
+      return;
+    }
+    setTrustState(await readTrustState((cmd) => platform.executor.invoke(cmd as "mesh_trust_state")));
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    void refreshTrustState();
+  }, [open, refreshTrustState]);
+  // ⭐ 2026-10-11（owner 拍的**甲**：一端点就通）：图④「信任这台设备」——
+  //    点一次就把**勾选的那些空间**在这台设备上登记信任 ⇒ 逐个空间调 `mesh_trust_begin` ✓
+  //    （⛔ 不再要求另一端也点 ✗）。⚠️ 对端**取这一轮看得见、且服务当前空间**的那一台 ✓；
+  //    一台都没有 ⇒ **如实说**"还没有可以信任的设备"，⛔ 不挑一台凑数 ✗。
+  const trustDevice = async (spaceIds: string[]) => {
+    if (!isDesktopPlatform()) {
+      toast("信任设备要在桌面端操作", "info");
+      return;
+    }
+    const peer = nearby.find((p) => p.serves_current && p.invitable) ?? null;
+    if (!peer) {
+      toast("现在还看不到可以信任的设备（先在「附近的设备」里发现一台）", "info");
+      return;
+    }
+    // ⭐ 2026-10-12（设备身份第 3 步 ✓）：⭐ 信任的产物是"把**它的公钥**记进自己那份名单" ✗
+    //   ⇒ ⭐ 对面**没报公钥** ⇒ **如实说**、⛔ 不硬凑一个身份 ✗（老版本的对端就是这一档 ✓）。
+    if (!peer.pubkey) {
+      toast(
+        "这一台还没报出它的身份（它需要这一版的程序，并且开过一次设备直连）—— 现在信任它，说不出「它凭什么证明自己是它」",
+        "info",
+      );
+      return;
+    }
+    try {
+      for (const spaceId of spaceIds) {
+        // ⚠️ 走 `platform.executor.invoke`：这条命令的声明归 Lead（⛔ 本任务不碰 `commands.ts` ✗）
+        await platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, {
+          spaceId,
+          peerDeviceId: peer.device_id,
+          peerPubkey: peer.pubkey,
+        });
+      }
+      // ⭐ 文案说的是**方向** ✗（⛔ 不声称"双向已通" ✗ —— 那要对面也点一次 ✓）
+      toast("已允许这台设备来拿你的内容（要双向，得它那边也点一次）", "success");
+      // ⭐ 2026-10-11（任务 B）：⭐ 点完之后**再读一次后端那一格** ✗ —— 界面上要说的是**读数** ✓，
+      //    ⛔ 不是一句 toast（它下一秒就没了，而"通了没有"要一直看得见 ✓）。
+      await refreshTrustState();
+    } catch (e) {
+      // ⭐ 失败**照实报**（⛔ 不假装成功 ✗）—— 这一条失败时**也要**把读数刷一遍 ✓
+      //    （多半还是"还没开始" ✓ —— 那正是**如实**✓）。
+      await refreshTrustState();
+      toast(`信任失败：${e}`, "error");
+    }
+  };
+  const [strictTrust, setStrictTrust] = useState(false); // 图④ 严格模式（默认**关** ✓）
+
   // 空间隐私：`SpacePrivacySection` 那一份读数（`space_security_overview`）**没有上抛**给外面，
   // 本面板不替它再问一次（问了就是第二份真相，两份迟早各说各话）⇒ 这里只放一句中性摘要，
   // 用词取自它自己的小标题（`🔐 空间隐私 —— 每个空间能不能绑同步`），不编状态。
@@ -1260,7 +1294,11 @@ export function SyncPanel() {
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>
-              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：填一个配对暗号就能和附近的设备直连" : "每个空间各自绑定服务器与组织空间"}</div>
+              {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 副标题按效果图改写 ✓ ——
+                  原文是「⭐ 填一个配对暗号就能和附近的设备直连 ✗」⇒ ⭐ 那句把"⭐ 码 ✗"摆在了**这一屏最显眼的位置** ✓。
+                  ⚠️ 新句**不改事实** ✗：⭐ 今天建信任那一步**仍然**要那串码 ✓（⭐ 见文件头的拍板口径 ✓）⇒
+                     ⭐ 所以只说"⭐ 建立信任之后 ✗" ✓，⛔ **不说**"⭐ 不用码 ✗"（⭐ 那要等新拍板 ✓）。 */}
+              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：和附近的设备建立信任之后，在同一个网络里直接连" : "每个空间各自绑定服务器与组织空间"}</div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
@@ -1899,6 +1937,12 @@ export function SyncPanel() {
               </details>
             )}
 
+            {/* ④ 中继 ← 2026-10-10：**跨网送达那一格**（owner 2026-10-10 要的两格之一）。
+                ⭐ 两句话都是**后端出的原文**（`api.relayStatus` / `api.relayProbe` ⇒
+                `src/lib/relay/statusView.ts` ⇒ 这一块只摆上去）——
+                ⛔ 界面不自己算天数、⛔ 读不到时也不编一个数（那两格说"读不到有效期"）✓。 */}
+            <RelayStatusSection />
+
             {/* ④ 设备直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
                 （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
                 ★ 2026-09-29（§9.2）：**总闸＝关闭 ⇒ 这一行灰掉**（它是开关；总闸关了它不可能生效）。
@@ -1918,72 +1962,13 @@ export function SyncPanel() {
                     <span className="sync-row-caret" aria-hidden>›</span>
                   </summary>
                   <div className="sync-row-body">
-                    <div className="sync-att sync-mesh">
-                      <span className="sync-att-text">
-                        {/* ★ 2026-09-26 口径收敛：**地址不在这里说第二遍** —— 窗口地址与"别人拉不拉得到"
-                            已经在面板底部那一行"设备直连"里（`lanStatus.mesh.note`）。这一块只管**设置**
-                            （监听地址 / 口令）与开关。 */}
-                        {/* ★ VL-3（2026-09-30）：**"功能通了，而普通用户不知道有这条路"** —— VL-2 让
-                            `0.0.0.0` 能填了，而这一栏原先只说"填虚拟网卡的地址" ⇒ "地址自动"在用户眼里
-                            没发生。⇒ 两条路都写在**看得见**的文案里（不只在 hover 提示与 placeholder 里）。
-                            ⚠️ 与"口令"合并成**同一个 hint**（只加一行文字，不加块）⇒ 面板高度只多一行。 */}
-                        <span className="sync-hint">
-                          {inlineMd("填 **本机内网地址**（如 192.168.1.5:8788），或 **0.0.0.0:8788**（**听所有网卡**，地址由**系统报出**）。")}
-                          <br />
-                          {/* ★ `U9` / `INV-PER-unencrypted-needs-strong-secret`（2026-10-01）：
-                              原先这句只写「同一网段里谁都能拉，**内容仍是密文**」—— 那说的是**已加密**那一半 ✓，
-                              而**未加密**的空间里讲这句话会把危险说小 ✗：那种情况下**口令就是唯一的防线**，
-                              且拉走的是**明文** ✓ ⇒ 两句都要说，并点名"没设＝不设防" ✓。 */}
-                          {lanStatus.mesh.tokenSet
-                            ? inlineMd("口令：**已设** —— ⚠️ **它是这个空间的唯一防线**：同一网络里，拿到「地址 ＋ 空间 ＋ 口令」这三样的人就能把记录**整批拉走**，而且**你不会收到任何提示**。")
-                            : inlineMd("口令：**未设** ⚠️ —— **没设 = 不设防**（同一网络里谁都能拉走记录；未加密时是**明文**）。")}
-                        </span>
-                        {/* 交换**并进「同步」**，这里不再有自己的按钮（同一件事原本两个按钮、用户要记两个动作）。*/}
-                      </span>
-                      <div className="sync-field">
-                        <input
-                          className="sync-input"
-                          placeholder="监听地址：如 192.168.1.5:8788；或 0.0.0.0:8788（听所有网卡，地址由系统报出）"
-                          value={meshBind}
-                          disabled={meshBusy}
-                          onChange={(e) => setMeshBind(e.target.value)}
-                        />
-                        <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
-                          保存地址
-                        </button>
-                      </div>
-                      {/* ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
-                          ⭐ 两台设备填**同一个**暗号就能在同一个网络里互连 ✓，不需要服务器 ✓。
-                          ⚠️ 团队空间用服务器上的组织空间 id 对暗号 ⇒ 这一项对它们没有影响 ✓。 */}
-                      <div className="sync-field">
-                      <input
-                      className="sync-input"
-                      placeholder="配对暗号：两台设备填得一模一样（例如：我的两台电脑）"
-                      value={meshRoom}
-                      disabled={meshBusy}
-                      onChange={(e) => setMeshRoom(e.target.value)}
-                      />
-                      <button className="sync-btn" disabled={meshBusy || !meshRoom.trim()} onClick={() => void saveMeshRoom()}>
-                      保存暗号
-                      </button>
-                      </div>
-                      <div className="sync-field">
-                        <input
-                          className="sync-input"
-                          placeholder="口令（留空 ＝ 不动已有口令）"
-                          value={meshToken}
-                          disabled={meshBusy}
-                          onChange={(e) => setMeshToken(e.target.value)}
-                        />
-                        <button className="sync-btn" disabled={meshBusy || !meshToken.trim()} onClick={() => void saveMeshToken()}>
-                          设口令
-                        </button>
-                      </div>
-                      <div className="sync-field">
-                        <button className="sync-btn" disabled={meshBusy || !lanStatus.mesh.enabled} onClick={() => void disableMesh()}>
-                          关掉网格
-                        </button>
-                      </div>
+                    {/* ⭐ 2026-10-11（owner 重申「个人空间是设备级」）：那三格（监听地址／配对暗号／口令）
+                        已搬进「设置 · 同步」⇒ 面板这一折**只留读数 ＋ 人话** ✓（按图⑧ ✓）。
+                        ⚠️ 判据里的**四条承诺一条没删** ✓ —— 它们跟着 `MeshAdvancedForm` 去了设置面 ✓，
+                        而 `syncPanelMesh.wiring` 的 ③⑨ 本来就是「两个文件一起读」✓ ⇒ 这里不必改判据 ✓。 */}
+                    <div className="sync-hint">
+                      这一折现在只报读数。要改地址／配对暗号／口令，去 <b>设置 · 同步</b> ——
+                      那是<b>这台设备</b>的一份设置，填一次，所有个人空间共用。
                     </div>
                   </div>
                 </details>
@@ -2055,11 +2040,44 @@ export function SyncPanel() {
                               {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
                                   （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
                               <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
+                              {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 效果图第 ④ 屏「信任该设备」＋
+                                  规格 **J21**「信任前必须展示对方的身份（设备名 ＋ 短标识）」✗ ⇒
+                                  ⭐ 这一行**就是"信任前"看得见它的地方** ✓ ⇒ ⭐ 补上短标识 ✓。
+                                  ⚠️ 走 `peerIdentityLine` ✓（⭐ 它的**唯一实现** ✓）—— ⭐ 它结构上拿不到 `device_id` ✓
+                                     ⇒ ⭐ 不可能回落成设备号 ✓；⭐ 老对端没报短标识时它**如实说**「对方没报短标识」✓
+                                     （⭐ 那不是降级处理，⭐ 是那段过渡期的正确答案 ✓）。 */}
+                              <span className="sync-hint">{peerIdentityLine(p.device_name, p.short_id)}</span>
                               <span className="sync-hint">{nearbySecondColumn(p)}</span>
                               {!p.invitable && p.serves_current && (
                                 // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
                                 <span className="sync-hint">它没报可以直连的地址</span>
                               )}
+                              {/* ⭐ 效果图那一行的右端：⭐ 「已配对」／⭐ 「配对」✗。
+                                  ⚠️ 「已配对」的判据取**本机认过的那份名单**（`duList` ✓，⭐ 与下面「解除」那块
+                                     **同一个源** ✓）—— ⛔ 不自己再算一遍"算不算配上了" ✓（⭐ 两份真相迟早各说各话 ✓）。
+                                  ⚠️⭐ 「信任这台设备」这一下**今天真做的是**：⭐ 把这一台**指定为这次配对的对端** ✓
+                                     （⭐ 复用手边那条「生成投放码 ⇒ 采纳」的路 ✓，⭐ `dpPeer` 就是那个格 ✓）。
+                                     ⇒ ⭐ 所以这里**不写**"点一下就通" ✗ —— ⭐ 那句话要等一键握手做出来才算真 ✓
+                                        （⛔ 不说假话 ✓，⭐ 本仓最忌这个 ✓）。 */}
+                              {duList.some((d) => d.deviceId === p.device_id) ? (
+                                <span className="sync-hint" data-testid="nearby-paired">
+                                  已配对
+                                </span>
+                              ) : p.serves_current ? (
+                                <button
+                                  className="sync-btn"
+                                  disabled={dpBusy}
+                                  data-testid="nearby-trust"
+                                  onClick={() => {
+                                    setDpPeer(p.device_id);
+                                    setDpNote(
+                                      "已把它指定为对端 ⇒ 到下面「生成投放码」，再让它采纳一次（两个方向就都通了）。",
+                                    );
+                                  }}
+                                >
+                                  信任这台设备
+                                </button>
+                              ) : null}
                             </div>
                           ))
                         )}
@@ -2105,7 +2123,32 @@ export function SyncPanel() {
                             {duNote && <div className="sync-hint">{duNote}</div>}
                           </div>
                         )}
-                        <div className="sync-nearby" data-testid="device-pair">
+                        {/* ⭐ 这一步的提示留在**折外** ✗ —— 「附近的设备」里点「信任这台设备」会写进
+                            `dpNote` ✓，⭐ 而它要落在**你看得见的地方** ✓（⛔ 不能藏在刚折起来的那层里 ✓）。 */}
+                        {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
+                        {/* ⭐ 2026-10-11：把**「信任设备」那一屏**（图①/②/④/⑥ 的界面）挂上来 ✓ ——
+                            它原先全仓**挂载点 0 处** ✗（`TrustDevicePanel.tsx` 写好了、17 条判据在跑，
+                            但界面上点不到 ✓ ⇒ 这一块就是"把它接到底" ✓）。
+                            ⭐ 位置按图④：**紧挨着「附近的设备」那一块** ✓，并且在
+                              「严格模式（高级）」那一折**之前** ✓（⛔ 老路一个字不动 ✗ —— 它就在下面 ✓）。
+                            ⚠️ 四条读数这轮**一律如实"读不到"** ✓（见模块级 `TRUST_DEVICE_READINGS` ✓），
+                              点「接入」走 owner 拍的**甲**：一端点就通 ⇒ `trustDevice()` ✓。 */}
+                        <TrustDevicePanel
+                          {...TRUST_DEVICE_READINGS}
+                          trustState={trustState}
+                          initialStrictMode={strictTrust}
+                          onStrictModeChange={setStrictTrust}
+                          onAttach={(spaceIds) => void trustDevice(spaceIds)}
+                        />
+                        {/* ⭐ 2026-10-11（owner：「参照效果图实现」＋「把同步面板做好」）：⭐ 效果图把"码"收进
+                            **「严格模式（高级）」** ✗ ⇒ ⭐ 主路径（⭐ 附近设备 ＋ ⭐ 信任这台设备 ✓）**不再出现任何码** ✓。
+                            ⚠️ 折起来的是**同一套机制** ✗，⛔ 机制一个字没动 ✓（⭐ 仍是 `device_pair_export` ／ `import` ✓）：
+                               ⭐ 两台不在一起（⭐ 不在同一网络 ✓）时这条路照旧可用 ✓ ——
+                               ⭐ 它只是**不再是第一眼看到的东西** ✓（⭐ 效果图上就是这么摆的 ✓）。
+                            ⚠️ 不给 `open` ⇒ ⭐ 默认**收起** ✓（⭐ 收的正是那两块码 ✓）。 */}
+                        <details className="sync-advanced" data-testid="device-pair-advanced">
+                          <summary>严格模式（高级）—— 两台设备不在同一网络时用这条（要抄一串码）</summary>
+                          <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
                             【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
                             ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
@@ -2139,7 +2182,7 @@ export function SyncPanel() {
                           {nearby.filter((p) => p.serves_current).length === 0 && (
                             // ⚠️ 看不到候选 ⇒ **如实说**（⛔ 不说"网段里没有设备" ✗：看不见 ≠ 不存在 ✓）
                             <div className="sync-hint">
-                              「附近的设备」里暂时没有服务这个空间的设备 ⇒ 不指定也能配，只是要**配两次** ✓。
+                              「附近的设备」里暂时没有服务这个空间的设备 ⇒ 不指定也能配，只是要<b>配两次</b> ✓。
                             </div>
                           )}
                           <button className="sync-btn" disabled={dpBusy} onClick={() => void dpGenerate()}>
@@ -2151,13 +2194,13 @@ export function SyncPanel() {
                               <div style={{ wordBreak: "break-all" }} data-testid="dp-text">{dpExport.text}</div>
                               {dpPeer ? (
                                 <div data-testid="dp-one-shot">
-                                  ⭐ 已指定对端 ⇒ 把这段码交给它，**它采纳一次就够** ✓：
-                                  本机生成时已经把它登记好了 ⇒ 采纳完**两个方向都通**（不用再配第二次 ✓）。
+                                  ⭐ 已指定对端 ⇒ 把这段码交给它，<b>它采纳一次就够</b> ✓：
+                                  本机生成时已经把它登记好了 ⇒ 采纳完<b>两个方向都通</b>（不用再配第二次 ✓）。
                                 </div>
                               ) : (
                                 <div>
                                   对端收下后，请当面核对两边的比对码：一样才继续 ✓。
-                                  ⚠️ 没指定对端 ⇒ 这条兜底要**配两次**（见上面的下拉 ✓）。
+                                  ⚠️ 没指定对端 ⇒ 这条兜底要<b>配两次</b>（见上面的下拉 ✓）。
                                 </div>
                               )}
                             </div>
@@ -2203,8 +2246,8 @@ export function SyncPanel() {
                             </>
                           )}
                           {dpOutcome === "ok" && <div className="sync-hint" data-testid="dp-ok">已配对 ✓</div>}
-                          {dpNote && <div className="sync-hint" style={{ whiteSpace: "pre-wrap" }}>{dpNote}</div>}
-                        </div>
+                          </div>
+                        </details>
                       </div>
                     </div>
                   </details>
@@ -2244,12 +2287,17 @@ export function SyncPanel() {
                   </span>
                   {/* ★ 2026-10-01（免费版上线实测）：**"附近发现 0 台"是第一现场** ✓ ——
                       原先这一块只给读数、不给"然后呢" ✗ ⇒ 用户会以为产品坏了 ✓。
-                      ⚠️ 这里**故意不解析 `lanStatus.line` 里的台数**（界面不自己按读数再判一次档 ✓，
-                      那是上面注释钉着的口径）⇒ 提示**常显**，只在真的 0 台时才有用，代价是多一行字 ✓。
+                      ⚠️ **2026-10-11 改（owner 拍「只动前端」）**：这句话原先**故意常显** ✓
+                      （当时注释写着"代价是多一行字"✓）⇒ 现在按设计图⑦ 收成**只在真的找不到时出现** ✗：
+                      ⭐ 条件用 ⭐ **结构化的 `lanStatus.peers === 0`** ✗ —— ⛔ **不**去解析 `lanStatus.line` ✗
+                      （那是上面钉着的口径：⭐ 界面不自己按读数再判一次档 ✓；`peers` 与状态行那个
+                      "N 台"**是同一个数** ✓，⭐ 由 `INV-NEARBY-one-source` 保证不漂 ✓）。
                       ⛔ 不写"一定能修好"那种话 ✗ —— 只列**最可能的两个**原因 ＋ 指向完整指引 ✓。 */}
-                  <span className="sync-hint">
-                    {inlineMd("**找不到对方？** 两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
-                  </span>
+                  {lanStatus.peers === 0 && (
+                    <span className="sync-hint">
+                      {inlineMd("两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
+                    </span>
+                  )}
                 </span>
               </div>
             )}

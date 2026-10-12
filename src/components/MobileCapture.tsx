@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import type { ReactElement } from "react";
 import { markdownToPageContent } from "../lib/mdPreview";
+import { AlignLeftIcon, CheckIcon, CommentIcon, ImageIcon, ListIcon, OutlineIcon } from "./icons";
 import { pushOverlay } from "../lib/overlayStack";
 import { useNotes } from "../store/notes";
 import { useMobileNav } from "../store/mobileNav";
@@ -31,7 +33,20 @@ const BAR = [
   { id: "todo", label: "待办", insert: "- [ ] " },
   { id: "quote", label: "引用", insert: "> " },
   { id: "img", label: "图片", insert: "![]()" },
-] as const;
+];
+
+/** ⭐ 2026-10-10：每项配一个**仓里现成**的细线矢量图标 ✓（效果图是"图标在上、文字在下"✓）。
+ *  ⛔ 不自造图标 ✗；映射：段落＝左对齐 ✓／标题＝大纲（`OutlineIcon`）✓（仓里没有 Title/Heading 图标 ✗）／
+ *  列表＝`ListIcon` ✓／待办＝`CheckIcon` ✓／引用＝`CommentIcon` ✓／图片＝`ImageIcon` ✓。
+ *  ⚠️ 这就是 BAR 的**第二份真相源** ✗（按 id 配图标 ✓）⇒ 若将来加项，两处都要动 ✓（已在 `BAR` 那条注释里点名 ✓）。 */
+const BAR_ICONS: Record<string, (p: { width?: number; height?: number }) => ReactElement> = {
+  p: AlignLeftIcon,
+  h: OutlineIcon,
+  ul: ListIcon,
+  todo: CheckIcon,
+  quote: CommentIcon,
+  img: ImageIcon,
+};
 
 export function MobileCapture() {
   const [text, setText] = useState("");
@@ -134,7 +149,9 @@ export function MobileCapture() {
       <div className="mcap-bar" role="toolbar" aria-label="快捷工具栏">
         {BAR.map((b) => (
           <button key={b.id} className="mcap-bar-btn" onClick={() => insert(b.insert)}>
-            {b.label}
+            {/* ⭐ 图标在上、文字在下 ✓（效果图形态 ✓）；命中区仍由 CSS 的 min-height:44 保证 ✓ */}
+            <span className="mcap-bar-icon" aria-hidden>{BAR_ICONS[b.id]?.({ width: 14, height: 14 })}</span>
+            <span className="mcap-bar-label">{b.label}</span>
           </button>
         ))}
       </div>

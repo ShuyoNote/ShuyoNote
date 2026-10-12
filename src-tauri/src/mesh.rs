@@ -272,21 +272,29 @@ pub fn mesh_peers(space_id: &str, my_device: &str, peers: &[crate::lan::Peer]) -
 // ─────────────────────────── 拉的那一侧 ───────────────────────────
 
 /// 拉一台对端**自己**的记录（游标之后的那一批）。
+///
+/// ⭐ **2026-10-12（设备身份第 2 步）**：多一个 `auth` ✗（⭐ `(device_id, ts_ms, sig_hex)` ✓）——
+/// ⚠️ **由调用方签好再传进来** ✗：签名要拿库锁 ✓，而这里在 await 里 ⇒ ⛔ 不许跨 await 持锁 ✗（本仓老规矩 ✓）。
+/// ⚠️ 签名**过不过**是**对面**的事 ✓：⭐ 这一侧照样把口令也带上 ✓（⭐ 过渡期两档并存 ✓，
+/// 见 `authorized` 那段"等 owner 选 ⓒ 时怎么改"✓）。
 pub async fn pull_from_peer(
     client: &reqwest::Client,
     peer: &MeshPeer,
     space_id: &str,
     since: i64,
     token: Option<&str>,
+    auth: Option<(&str, i64, &str)>,
 ) -> Result<Vec<MeshRow>, String> {
-    let url = format!(
-        "{}/mesh/pull?space_id={}&since={}&limit={}",
-        peer.base.trim_end_matches('/'),
-        space_id,
-        since,
-        MAX_LIMIT
-    );
+    // ⚠️ target **只拼一次** ✗：⭐ 签的是它、发的也是它 ✓（⛔ 两处各拼一份 ⇒ 一漂就验不过 ✗）。
+    let target = pull_target(space_id, since);
+    let url = format!("{}{}", peer.base.trim_end_matches('/'), target);
     let mut req = client.get(&url);
+    if let Some((device_id, ts, sig)) = auth {
+        req = req
+            .header(HDR_DEVICE, device_id)
+            .header(HDR_TS, ts.to_string())
+            .header(HDR_SIG, sig);
+    }
     if let Some(t) = token.map(str::trim).filter(|t| !t.is_empty()) {
         req = req.bearer_auth(t);
     }
@@ -374,7 +382,23 @@ pub async fn pull_and_absorb(
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
         peer_cursor(&g, space_id, &peer.device_id)
     };
-    let rows = pull_from_peer(client, peer, space_id, since, token).await?;
+    let rows = {
+        // ⭐ 签名要在**拿锁的那一小段**里算好 ✗（⛔ 不许跨 await 持锁 ✗）；拿不到身份 ⇒ `None` ✓
+        //   （⭐ 那就只剩口令那一档 ✓ —— 与今天逐字相同 ✓）。
+        let auth = {
+            let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
+            let device_id = crate::sync::device_id(&g).unwrap_or_default();
+            if device_id.trim().is_empty() {
+                None
+            } else {
+                let target = pull_target(space_id, since);
+                sign_request(&g, &device_id, space_id, "GET", &target, crate::db::now_ms())
+                    .map(|(ts, sig)| (device_id, ts, sig))
+            }
+        };
+        let auth_ref = auth.as_ref().map(|(d, t, s)| (d.as_str(), *t, s.as_str()));
+        pull_from_peer(client, peer, space_id, since, token, auth_ref).await?
+    };
     let fetched = rows.len();
     // ⭐ 2026-10-09（task-8）：把**这一批真的换过来的条**留给 `sync_history` 的明细 ✓。
     //    ⚠️ 与服务器那条路同一口径（`sync::item_title` ✓）、同一条 dir＝`"pull"`（网格这一轮只拉 ✓）。
@@ -433,6 +457,321 @@ fn read_setting(c: &Connection, prefix: &str, space_id: &str) -> Option<String> 
 fn write_setting(c: &Connection, prefix: &str, space_id: &str, value: Option<&str>) -> Result<(), String> {
     let v = value.map(str::trim).unwrap_or("");
     crate::sync::set_meta_state(c, &setting_key(prefix, space_id), v)
+}
+
+// ─────────────────────── ⭐ 设备级（owner 2026-10-11 拍） ───────────────────────
+
+/// ⭐⭐ **设备级那一格的键 ＝ `space_id` 为空** ✗（方案 §9.1 ✓）。
+///
+/// ⛔ **不新造键** ✗：个人空间在生产里**就是**按"`space_id` 空"认的 ✓
+/// （`sync.rs:909 / 1071 / 1093 / 2108` ✓）⇒ ⭐ 语义自然对上 ✓，
+/// 而 `'ws-personal'` 那种名字**只活在测试夹具里** ✗ ⇒ 拿它当键就得造一个假工作区 ✓（那是歪的 ✓）。
+pub const DEVICE_LEVEL_SPACE: &str = "";
+
+/// ⭐ **设备级读取面** ✗：个人档 ⇒ 一律读"空 `space_id`"那一格 ✓；⭐ 团队档 ⇒ 照旧读它自己的 `space_id` ✓。
+///
+/// ⚠️ 个人档**回退**读旧的"按暗号那一格"✓（⭐ 只读、⛔ 不写 ✗）：升级上来的机器**第一次读就看得见旧值** ✓
+/// —— 迁移只发生在写路径 ✓（[`migrate_device_level_mesh`] ✓），⛔ 读路径一个字节都不写 ✓。
+pub fn settings_for(c: &Connection, space: &str, device_level: bool) -> MeshSettings {
+    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    let mut bind = read_setting(c, "mesh_bind", key);
+    let mut token = read_setting(c, "mesh_token", key);
+    if device_level {
+        if bind.is_none() {
+            bind = read_setting(c, "mesh_bind", space);
+        }
+        if token.is_none() {
+            token = read_setting(c, "mesh_token", space);
+        }
+    }
+    MeshSettings { bind, token }
+}
+
+/// ⭐ 写侧**同口径** ✓（个人档 ⇒ 一律写"空 `space_id`"那一格 ✓）。
+pub fn set_mesh_bind_for(
+    c: &Connection,
+    space: &str,
+    device_level: bool,
+    bind: Option<&str>,
+) -> Result<(), String> {
+    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    write_setting(c, "mesh_bind", key, bind)
+}
+
+/// ⭐ 同 [`set_mesh_bind_for`] ✓。
+pub fn set_mesh_token_for(
+    c: &Connection,
+    space: &str,
+    device_level: bool,
+    token: Option<&str>,
+) -> Result<(), String> {
+    let key = if device_level { DEVICE_LEVEL_SPACE } else { space };
+    write_setting(c, "mesh_token", key, token)
+}
+
+/// ⭐⭐ **2026-10-11（owner 补拍「丙」）：对端表那一行的键** ✗。
+///
+/// ```text
+/// ⭐ 个人档 ⇒ DEVICE_LEVEL_SPACE（空串 ✓）—— "这台设备认过谁" ＝ 一份 ✓（撤回 ＝ 本机从此不认它 ✓）
+/// ⭐ 团队档 ⇒ 它自己的 `space_id` ✓ —— ⛔ 一个字节不动 ✗（"撤回"仍只从那个空间撤 ✓）
+/// ```
+///
+/// ⚠️ **口径照方案 §10.3** ✗：**判定只有这一处** ✓ —— ⭐ 调用方知道 `device_level` ⇒ 就**传进来** ✓；
+/// ⛔ 不许在下游拿"这是不是个人档"反推 ✗（那就是第二处判定 ⇒ 两份口径迟早会漂 ✓）。
+///
+/// ⚠️ **上面那一段是 `text` 围栏、不是 Rust 代码** ✗ —— ⛔ 别写成**裸三个反引号** ✗：
+/// ⭐ Rust 会把它当 **doctest 去编译** ✓（散文编不过 ⇒ `cargo test --doc` 红 ✓）。
+/// ⚠️ 而**本机那套 `--lib` 判据照不出来** ✗（它只跑 lib 目标 ✓）⇒ ⭐ 这条是 CI 里那条 rust 组抓到的 ✓。
+///
+/// ⚠️ **它只决定"库里哪一行"，不决定"门服务哪个空间"** ✗ —— 门那一侧（`add_paired` /
+/// `forget_paired` 扫的内存卡表）永远按**门服务的那个空间** `proto_space` 记 ✓（个人的 `proto_space`
+/// 是配对暗号 ✓，不是空串 ✗）⇒ ⭐ 两者**不是一回事**，别合 ✗。
+pub fn paired_row_key<'a>(space: &'a str, device_level: bool) -> &'a str {
+    if device_level {
+        DEVICE_LEVEL_SPACE
+    } else {
+        space
+    }
+}
+
+/// ⭐ **配对暗号** ⭐ 也搬进**同一张 KV** ✗（方案 §9.2 乙 ✓，Lead 批准的方向 ✓）：
+/// ⭐ 三格从此**同一个存储、同一个键形状** ✓ ⇒ "设备级"只是**一处口径** ✓，⛔ 不是三处特例 ✓；
+/// ⭐ 而且**不用碰 `meta.workspaces`** ✓（甲 那条路要先造一个真工作区 ＝ 又一份真相源 ✗）。
+///
+/// ⚠️ 读侧**保留旧列的回退** ✓（见 [`legacy_mesh_room`] ✓）：升级上来的机器读得到旧值 ✓。
+/// ⭐ **"⭐ 这个空间是不是设备级那一格 ✗"** ✗ —— ⭐ **唯一判据** ✓（⭐ 调用方用它把这个判定算出来，
+/// ⛔ 不在被调函数里再判一次 ✗ —— 那是第二份口径 ✓）。
+pub fn is_device_level_space(c: &Connection, space: &str) -> bool {
+    let s = space.trim();
+    !s.is_empty() && mesh_room_device(c).as_deref() == Some(s)
+}
+
+pub fn mesh_room_device(c: &Connection) -> Option<String> {
+    read_setting(c, "mesh_room", DEVICE_LEVEL_SPACE)
+}
+
+pub fn set_mesh_room_device(c: &Connection, room: Option<&str>) -> Result<(), String> {
+    write_setting(c, "mesh_room", DEVICE_LEVEL_SPACE, room)
+}
+
+/// ⭐ **旧那一份**（`sync_profiles.mesh_room` ✓）：⭐ 个人行（`space_id` 空 ✓）里
+/// **第一个非空 ＋ 按 `ws_id` 定序** ✗（结果确定 ✓ —— 因为没有时间戳，见方案 §8 ① ✓）。
+pub fn legacy_mesh_room(c: &Connection) -> Option<String> {
+    let mut stmt = c
+        .prepare(
+            "SELECT mesh_room FROM sync_profiles \
+             WHERE space_id = '' AND TRIM(mesh_room) <> '' ORDER BY ws_id ASC LIMIT 1",
+        )
+        .ok()?;
+    let mut rows = stmt.query([]).ok()?;
+    let row = rows.next().ok()??;
+    let v: String = row.get(0).ok()?;
+    let v = v.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+pub fn legacy_mesh_room_for(c: &Connection, ws_id: &str) -> Option<String> {
+    let mut stmt = c
+        .prepare("SELECT mesh_room FROM sync_profiles WHERE ws_id = ?1")
+        .ok()?;
+    let mut rows = stmt.query(rusqlite::params![ws_id]).ok()?;
+    let row = rows.next().ok()??;
+    let v: String = row.get(0).ok()?;
+    let v = v.trim().to_string();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+/// ⭐⭐ **迁移（幂等 ✓、只增不删 ✓）**：把老的**逐空间**设置收敛成设备级那一份 ✗。
+///
+/// ## 三条实测口径（方案 §8／§9 ✓ —— ⛔ 都是量过的，不是猜的 ✗）
+/// · ⭐ **没有时间戳** ✗：`sync_state` 只有 `key` / `value` 两列（`lan_state.rs:925` ✓）
+///   ⇒ "取最近改过的"**做不到** ✓ ⇒ 取 ⭐ **第一个非空 ＋ 按 `ws_id`（或键名）定序** ✗
+///   （结果**确定** ✓）＋ ⭐ **记一行日志说取了谁** ✓；
+/// · ⛔ **旧行／旧键一个不删** ✗（⭐ 随时可回退 ✓）；
+/// · ⭐ **幂等** ✓：设备级那格已经有值 ⇒ 那格一个字节都不动 ✓。
+///
+/// 返回**这次采用了谁**（`None` ＝ 没动 ✓）—— ⭐ 给日志与判据用 ✓。
+///
+/// ⭐ **2026-10-11（丙）**：多了 ③ —— ⭐ **已认的对端也并进设备级那一行** ✗
+/// （见 [`migrate_device_level_paired_devices`] ✓：并集 ✓、只用一次 ✓、⛔ 旧行不删 ✗）。
+pub fn migrate_device_level_mesh(c: &Connection) -> Result<Option<String>, String> {
+    let mut moved: Vec<String> = Vec::new();
+    // ① 配对暗号：老的逐空间那一份在 `sync_profiles.mesh_room`（个人行 ✓）
+    if mesh_room_device(c).is_none() {
+        if let Some(room) = legacy_mesh_room(c) {
+            set_mesh_room_device(c, Some(&room))?;
+            moved.push(format!("mesh_room(（{room}）"));
+            eprintln!(
+                "[mesh] ⭐ 设备级迁移：配对暗号取自旧的那一份（「{room}」✓ —— 无时间戳 ⇒ 取第一个非空 ＋ 按 ws_id 定序 ✓）；⛔ 旧行没删 ✓"
+            );
+        }
+    }
+    // ② 监听地址／口令：老的键是 `mesh_bind:<暗号或 space_id>` ✓ ⇒ ⛔ 只认**不属于任何团队空间**的键 ✗
+    for prefix in ["mesh_bind", "mesh_token"] {
+        let dev_key = setting_key(prefix, DEVICE_LEVEL_SPACE);
+        let already = crate::sync::get_meta_state(c, &dev_key)
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if already {
+            continue;
+        }
+        // ⚠️ ⭐ **先把候选键读完再判** ✗ —— 一边遍历 `rows` 一边在**同一条连接**上再发一次查询，
+        //   rusqlite 会报"语句还在用"✗ ⇒ 那个错会被 `unwrap_or(0)` **吞掉** ⇒ 白名单恒为 0
+        //   ⇒ ⭐ **一个键都搬不动** ✗（实测踩过：判据③当场红 ✓）。⇒ 收集完再逐条判 ✓。
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        {
+            let mut stmt = c
+                .prepare(
+                    "SELECT key, value FROM meta.sync_state \
+                     WHERE key LIKE ?1 AND TRIM(value) <> '' ORDER BY key ASC",
+                )
+                .map_err(|e| e.to_string())?;
+            let like = format!("{prefix}:%");
+            let mut rows = stmt.query(rusqlite::params![like]).map_err(|e| e.to_string())?;
+            while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+                candidates.push((
+                    row.get(0).map_err(|e| e.to_string())?,
+                    row.get(1).map_err(|e| e.to_string())?,
+                ));
+            }
+        }
+        let mut picked: Option<(String, String)> = None;
+        for (k, v) in candidates {
+            let suffix = k.strip_prefix(&format!("{prefix}:")).unwrap_or("").trim().to_string();
+            if suffix.is_empty() {
+                continue; // 已经是设备级那一格 ✓
+            }
+            // ⭐⭐ **反向白名单** ✗（Lead 2026-10-11 拍 ✓）：⭐ 只搬"**可证明是个人档**"的后缀 ✗ ——
+            //   依据：⭐ 个人档的旧键后缀 ＝ 那一行的 `mesh_room`（`space_id` 空 ✓）⇒ ⭐ 这是**可查**的事实 ✓。
+            //   ⛔ 原来的做法（"后缀是某个 `space_id` 才算团队"）**反了** ✗：
+            //     一个**从没建过档案行**的团队空间会被当成"不是团队" ⇒ ⭐ 它的设置**漏进设备级** ✗
+            //     （＝ 会跟着"所有个人空间"一起生效 ✗ —— 判据⑤当场抓到 ✓）。
+            let provable_personal: i64 = c
+                .query_row(
+                    "SELECT COUNT(*) FROM sync_profiles \
+                     WHERE TRIM(space_id) = '' AND TRIM(mesh_room) = ?1",
+                    rusqlite::params![suffix],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if provable_personal == 0 {
+                eprintln!(
+                    "[mesh] ⚠️ 设备级迁移：旧键「{k}」**没搬** ✓ —— ⭐ 它证明不了是个人档 ✗\
+                     （个人档的后缀 ＝ 该行的 `mesh_room` ✓）；⛔ 这个键**原样留着** ✓"
+                );
+                continue;
+            }
+            picked = Some((suffix, v.trim().to_string()));
+            break; // ⭐ 取第一个非空（键名已定序 ⇒ 确定 ✓）
+        }
+        if let Some((from, value)) = picked {
+            write_setting(c, prefix, DEVICE_LEVEL_SPACE, Some(&value))?;
+            moved.push(format!("{prefix}（来自「{from}」）"));
+            eprintln!(
+                "[mesh] ⭐ 设备级迁移：{prefix} 取自旧的那一份（「{from}」✓ —— 按键名定序取第一个非空 ✓）；⛔ 旧键没删 ✓"
+            );
+        }
+    }
+    // ③ ⭐⭐ **2026-10-11（丙）**：⭐ 已认的对端也并进设备级那一行 ✗（方案 §11.3 ✓）。
+    let pairs_moved = migrate_device_level_paired_devices(c)?;
+    if pairs_moved > 0 {
+        moved.push(format!("已认的对端 {pairs_moved} 条"));
+    }
+    if moved.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(moved.join("、")))
+}
+
+/// ⛔ **"对端表的设备级迁移做过了"那一格** ✗ —— ⭐ 它不是第二份真相源 ✓：
+/// 它不存"认了谁"（那是 `mesh_paired_devices` 自己的事 ✓），只记"这件事做过了"✓。
+const PAIRED_MIGRATED_KEY: &str = "mesh_paired_migrated_to_device_level";
+
+/// ⭐⭐ **2026-10-11（丙）：把各个人空间的 `mesh_paired_devices` 行并进设备级那一行** ✗
+/// （方案 §11.3 ✓）。返回**这次真合进去几条** ✓。
+///
+/// ## 三条口径
+/// · ⭐ **并集** ✗：同一个 `device_id` 冲突 ⇒ ⭐ 保留 `added_at_ms` **更早**的那条 ✓
+///   （＝"先认的"✓）—— ⚠️ 这个规则**与遍历顺序无关** ✓ ⇒ 结果确定 ✓；
+/// · ⛔ **旧行一个不删** ✗（⭐ 可回退 ✓）；
+/// · ⭐ **只搬"可证明是个人档"的行** ✗：判据＝`sync_profiles` 里有一个 `space_id` 空的行、
+///   它的 `mesh_room` ＝ 这一行的 `space_id` ✓（⭐ 与设置那一半§10.1 **同一把尺** ✓）。
+///   ⛔ 证明不了 ⇒ **不搬** ＋ ⭐ 记一行日志 ✓（团队行就是这样被挡在外面的 ✓）。
+///
+/// ## ⚠️⭐ 它**只做一次** ✗ —— 本轮**实测出来**的一条（方案 §11 里没写 ✓）
+/// ⛔ 旧行**一个不删** ✗ ⇒ 若每次写路径都并一遍，⭐ **用户撤回过的那一台会被旧行重新并回来** ✗
+/// （＝"撤回"被静默撤销 ✓ —— 那是**安全方向**上的回归 ✓）⇒ 用一格一次性标记挡住 ✓。
+/// ⚠️ 标记**建完就写** ✓（⛔ 不是"搬动了才写" ✗）：一行都没搬到时也要记住做过 ✓。
+fn migrate_device_level_paired_devices(c: &Connection) -> Result<usize, String> {
+    if crate::sync::get_meta_state(c, PAIRED_MIGRATED_KEY)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return Ok(0);
+    }
+    // ⚠️ ⭐ **先把候选行读完再判** ✗ —— 一边遍历 `rows` 一边在同一条连接上再发查询，
+    //   rusqlite 会报"语句还在用" ✗（设置那一半**实测踩过** ✓，见 `migrate_device_level_mesh` ✓）。
+    let rows: Vec<(String, String, String, i64)> = {
+        let mut stmt = c
+            .prepare(
+                "SELECT space_id, device_id, secret_sha256, added_at_ms FROM mesh_paired_devices \
+                 WHERE TRIM(space_id) <> '' ORDER BY space_id ASC, device_id ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let it = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| e.to_string())?;
+        it.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?
+    };
+    let mut moved = 0usize;
+    let mut skipped = 0usize;
+    for (space, device, secret, added_at) in rows {
+        let provable_personal: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM sync_profiles \
+                 WHERE TRIM(space_id) = '' AND TRIM(mesh_room) = ?1",
+                rusqlite::params![space],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if provable_personal == 0 {
+            skipped += 1;
+            eprintln!(
+                "[mesh] ⚠️ 设备级迁移：对端行（空间「{space}」／设备 {}）**没搬** ✓ —— \
+                 它证明不了是个人档 ✗；⛔ 旧行原样留着 ✓",
+                device.chars().take(8).collect::<String>()
+            );
+            continue;
+        }
+        // ⭐ 幂等 ＋ 早者优先：`WHERE` 挂在 `DO UPDATE` 上 ⇒ 条件不成立就是**空操作** ✓
+        //   （⛔ 不是"先查再写"✗ —— 一次语句里做完，早/晚两条无论谁先来，结果都一样 ✓）。
+        let n = c
+            .execute(
+                "INSERT INTO mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms) \
+                 VALUES ('', ?1, ?2, ?3) \
+                 ON CONFLICT(space_id, device_id) DO UPDATE SET \
+                     secret_sha256 = excluded.secret_sha256, \
+                     added_at_ms = excluded.added_at_ms \
+                 WHERE excluded.added_at_ms < mesh_paired_devices.added_at_ms",
+                rusqlite::params![device, secret, added_at],
+            )
+            .map_err(|e| e.to_string())?;
+        moved += n;
+    }
+    crate::sync::set_meta_state(c, PAIRED_MIGRATED_KEY, "1")?;
+    eprintln!(
+        "[mesh] ⭐ 设备级迁移：已认的对端并进设备级那一行 —— 合了 {moved} 条\
+         （⛔ 旧行一个没删 ✓；⭐ 证明不了是个人档的 {skipped} 条没搬 ✓）"
+    );
+    Ok(moved)
 }
 
 /// ⭐ **U11/T5**：本机**要出示给那一台**的那份秘密（明文 ✓，只在本机 ✓）。
@@ -529,10 +868,13 @@ pub async fn round(
     space_id: &str,
     my_device: &str,
     peers: &[crate::lan::Peer],
+    // ⭐⭐ 2026-10-11（设备级 ✓）：⭐ 由**调用方**从 `mesh_scope` 传进来 ✗ ——
+    //   ⛔ 本函数**不许**自己判"是不是个人档" ✗（那就成了第二份口径 ✓，方案 §9.1 ✓）。
+    device_level: bool,
 ) -> Result<MeshRoundReport, String> {
     let cfg = {
         let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-        settings(&g, space_id)
+        settings_for(&g, space_id, device_level)
     };
     let Some(_bind) = cfg.bind.clone() else {
         return Ok(MeshRoundReport {
@@ -553,7 +895,7 @@ pub async fn round(
             window: None,
         });
     }
-    round_candidates(conn, space_id, candidates).await
+    round_candidates(conn, space_id, candidates, device_level).await
 }
 
 /// `round` 的**后半**：对端由调用方给，只做"逐个拉 ＋ 不连坐 ＋ 把读数整理成人话"。
@@ -562,10 +904,14 @@ pub async fn round(
 /// 而 `lan::is_lan_base` **明确把回环排除**在"网段里的别人"之外（甲-1 的口径）⇒
 /// `round` 前半挑出来的对端在判据里必然是空集。所以：
 /// **前半（设置 ＋ 挑对端）与后半各有判据**，"合起来那一趟"要两个真内网地址（真机/两进程）。
+///
+/// ⭐ **2026-10-11（丙）**：`device_level` 由调用方传进来 ✗ —— 它决定 ⭐ **"本机要出示的那一份"
+/// 从哪一格读** ✗（个人档 ⇒ 空串那一格 ✓，与 `remember_peer_card` 写的那把键**同一把** ✓）。
 pub async fn round_candidates(
     conn: &Mutex<Connection>,
     space_id: &str,
     candidates: Vec<MeshPeer>,
+    device_level: bool,
 ) -> Result<MeshRoundReport, String> {
     let client = reqwest::Client::new();
     let mut out: Vec<PeerPullReport> = Vec::with_capacity(candidates.len());
@@ -575,7 +921,7 @@ pub async fn round_candidates(
         //    ⇒ 对端回 401（如实报出来 ✓，⛔ 不是静默跳过 ✗）
         let secret = {
             let g = conn.lock().map_err(|_| "空间库的锁被毒掉了".to_string())?;
-            pair_secret_for(&g, space_id, &p.device_id)
+            pair_secret_for(&g, paired_row_key(space_id, device_level), &p.device_id)
         };
         match pull_and_absorb(conn, &client, p, space_id, secret.as_deref()).await {
             Ok(rep) => out.push(rep),
@@ -681,8 +1027,13 @@ fn windows() -> &'static Mutex<std::collections::HashMap<String, MeshHandle>> {
 /// ⚠️ 窗口用**自己那条**空间库连接（`db::open_space_conn_at`）：不与界面那条抢锁，
 /// 也不会因为界面切空间而被换掉。**代价如实写**：加密空间**必须已解锁**，
 /// 否则这条连接打不开 ⇒ 这里如实报错（"开不起来"比"开着一个读不了库的窗口"好）。
+///
+/// ⭐ **2026-10-11（丙）：`spaces` 的第三格是"这一档是不是个人档"** ✗ ——
+///   它决定 ⭐ **卡从库里哪一行载** ✗（个人档 ⇒ 空串那一行 ✓，见 [`paired_row_key`] ✓）；
+///   ⛔ **不影响**门服务哪个空间／内存卡表的键 ✗（那两个永远是 `proto_space` ✓）。
+///   ⚠️ 由**调用方**传进来 ✓（它知道这一行的 `space_id` 空不空 ✓）—— 本层**不反推** ✗（方案 §10.3 ✓）。
 pub fn ensure_window(
-    spaces: &[(String, String)],
+    spaces: &[(String, String, bool)],
     device_id: &str,
     bind: &str,
     dir: &Path,
@@ -694,24 +1045,24 @@ pub fn ensure_window(
     let mut guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
     // ① 这一扇门**已经在开** ⇒ 只把缺的空间加进去（⛔ 不重启 ✗）
     if let Some(h) = guard.get(bind) {
-        for (db_space, proto_space) in spaces {
+        for (db_space, proto_space, device_level) in spaces {
             h.add_space(db_space, proto_space, dir)?;
             // ⭐ **U11**：连接加了，**卡也要一起载** ✗→✓（否则那个空间"服务着但谁都进不来" ✓）
-            h.load_cards_for(proto_space, dir)?;
+            h.load_cards_for(proto_space, dir, *device_level)?;
         }
         return Ok(Some(h.addr()));
     }
     // ② 新开一扇门：先把这些空间的库连接都开好（⭐ 服务范围＝这张表的键 ✓）
     let mut conns: std::collections::HashMap<String, Arc<Mutex<Connection>>> = std::collections::HashMap::new();
-    for (db_space, proto_space) in spaces {
+    for (db_space, proto_space, _) in spaces {
         let conn = crate::db::open_space_conn_at(db_space, dir)?;
         conns.insert(proto_space.clone(), Arc::new(Mutex::new(conn)));
     }
     // ⭐ U11：把**每个空间各自的**卡表载进来（一个空间一组 ✓）
-    let mut paired: std::collections::HashMap<String, std::collections::HashSet<String>> =
+    let mut paired: CardBook =
         std::collections::HashMap::new();
-    for (_, proto_space) in spaces {
-        load_cards(dir, proto_space, &mut paired);
+    for (_, proto_space, device_level) in spaces {
+        load_cards(dir, proto_space, *device_level, &mut paired);
     }
     let handle = start(
         MeshConfig {
@@ -733,7 +1084,7 @@ pub fn ensure_window(
 ///
 /// ⚠️ 窗口级的口令按 **R3 的裁定**取（调用方给的那一份＝「最早那个空间」✓）。
 pub fn ensure_window_for(
-    spaces: &[(String, String)],
+    spaces: &[(String, String, bool)],
     device_id: &str,
     bind: &str,
 ) -> Result<Option<SocketAddr>, String> {
@@ -752,6 +1103,7 @@ pub fn ensure_window_for(
 pub(crate) fn open_window_at(
     db_space: &str,
     proto_space: &str,
+    device_level: bool,
     device_id: &str,
     bind: &str,
     token: Option<String>,
@@ -762,13 +1114,13 @@ pub(crate) fn open_window_at(
     conns.insert(proto_space.to_string(), Arc::new(Mutex::new(conn)));
     // ⭐ **U11**：判据传进来的那个 `token` 现在当**一张已登记的卡** ✓
     //   （A 之后门只认卡 ✓）—— 于是既有那批判据**不用改形状**，而它们**真的在走卡那条路** ✓。
-    let mut paired: std::collections::HashMap<String, std::collections::HashSet<String>> =
+    let mut paired: CardBook =
         std::collections::HashMap::new();
     if let Some(t) = token.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-        paired.entry(proto_space.to_string()).or_default().insert(crate::db::sha256_hex(t));
+        paired.entry(proto_space.to_string()).or_default().hashes.insert(crate::db::sha256_hex(t));
     }
     // ⚠️ 而**真实**的卡从库里来（判据通常没有 ✓ ⇒ 上面那张就是它唯一的卡 ✓）
-    load_cards(dir, proto_space, &mut paired);
+    load_cards(dir, proto_space, device_level, &mut paired);
     start(
         MeshConfig {
             bind: bind.to_string(),
@@ -809,7 +1161,15 @@ pub struct MeshPairedDevice {
 }
 
 /// 读"认了哪些设备"（**只 select 两列** ✓ —— ⛔ 不把哈希带出库 ✗）。
-pub fn paired_devices(c: &Connection, space_id: &str) -> Result<Vec<MeshPairedDevice>, String> {
+///
+/// ⭐ **2026-10-11（丙）**：那一行的键走 [`paired_row_key`] ✓ —— ⭐ 个人档读"空串那一行" ✗
+/// （⇒ 两个个人空间看到的是**同一个集合** ✓）、⭐ 团队档读自己的 ✓（⛔ 行为逐字不变 ✗）。
+pub fn paired_devices(
+    c: &Connection,
+    space_id: &str,
+    device_level: bool,
+) -> Result<Vec<MeshPairedDevice>, String> {
+    let row = paired_row_key(space_id, device_level);
     let mut stmt = c
         .prepare(
             "SELECT device_id, added_at_ms FROM mesh_paired_devices \
@@ -817,7 +1177,7 @@ pub fn paired_devices(c: &Connection, space_id: &str) -> Result<Vec<MeshPairedDe
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(rusqlite::params![space_id], |r| {
+        .query_map(rusqlite::params![row], |r| {
             Ok(MeshPairedDevice { device_id: r.get(0)?, added_at_ms: r.get(1)? })
         })
         .map_err(|e| e.to_string())?;
@@ -925,6 +1285,20 @@ pub fn forget_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, Str
     Ok(false) // 门没开着 ⇒ 库里删掉就够了（下次开门时它就不在卡表里 ✓）
 }
 
+/// ⭐ **2026-10-12（设备身份第 2 步）**：把**那一台的公钥**从**正在跑的那扇门**里摘掉 ✗
+/// —— ⭐ [`forget_paired`] 在**新那一档**上的对应物 ✓，同一条理由（⛔ 只删库不算 ✗）。
+///
+/// ⚠️ 撤回时**两档都要摘** ✗：那一行可能既有哈希又有公钥 ✓ ⇒ ⛔ 只摘一半 ＝ 它还能从另一半进来 ✗。
+pub fn forget_paired_device(proto_space: &str, device_id: &str) -> Result<bool, String> {
+    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    for h in guard.values() {
+        if h.serves(proto_space) {
+            return h.forget_paired_device(proto_space, device_id);
+        }
+    }
+    Ok(false) // 门没开着 ⇒ 库里删掉就够了（下次开门时它就不在卡册里 ✓）
+}
+
 /// ⭐ **U11/T5：`forget_paired` 的反面** —— 把**刚登记的这一张卡**加进**正在跑的那扇门** ✓。
 ///
 /// ⚠️ **它同样必须做** ✗（今天缺的正是这一半 ✓）：门的卡表是**开门时载一次**的
@@ -939,6 +1313,24 @@ pub fn add_paired(proto_space: &str, secret_sha256: &str) -> Result<bool, String
     for h in guard.values() {
         if h.serves(proto_space) {
             return h.add_paired_hash(proto_space, secret_sha256);
+        }
+    }
+    Ok(false)
+}
+
+/// ⭐ **2026-10-12（设备身份第 3 步）**：把**那一台的公钥**加进**正在跑的那扇门** ✗
+/// —— ⭐ [`add_paired`] 在**新那一档**上的对应物 ✓，同一条理由（⛔ 只写库不算 ✗）。
+///
+/// ⚠️ 门没开着 ⇒ `Ok(false)` ✓：库里写上就够了（下次开门时 `load_cards` 会把它载进来 ✓）。
+pub fn add_paired_pubkey(
+    proto_space: &str,
+    device_id: &str,
+    pubkey_hex: &str,
+) -> Result<bool, String> {
+    let guard = windows().lock().map_err(|_| "网格窗口表的锁被毒掉了".to_string())?;
+    for h in guard.values() {
+        if h.serves(proto_space) {
+            return h.add_paired_pubkey(proto_space, device_id, pubkey_hex);
         }
     }
     Ok(false)
@@ -1259,7 +1651,7 @@ struct State {
     /// ⇒ ⛔ 旧的共享口令**不再能进** ✗（否则「删掉那一行」对拿到过共享口令的设备不成立 ✗，
     /// U11 就成了「看起来有其实没有」✓）。
     /// ⚠️ 键＝`proto_space`；值＝那一组卡的哈希（**只存哈希** ✓，明文只在本机"我要出示"那一侧 ✓）。
-    paired: Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
+    paired: Arc<Mutex<CardBook>>,
     cfg: MeshConfig,
     /// ★ **T-10**（`U14` 的判据承载）：这个窗口**真正服务过**的 `/mesh/pull` 次数（只增）。
     ///
@@ -1351,7 +1743,7 @@ pub struct MeshHandle {
     conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
     /// ⭐ **U11**：与 `State::paired` 同一份 ⇒ **逐台解除**时要把那张卡从**正在跑的门**里也摘掉 ✓
     /// （⛔ 只删库不算 ✗ —— 那个窗口还认着它，直到下次重启 ⇒ 那就是"删了等于没删"✓）。
-    paired: Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
+    paired: Arc<Mutex<CardBook>>,
 }
 
 impl MeshHandle {
@@ -1390,15 +1782,19 @@ impl MeshHandle {
     /// 只加连接不载卡 ⇒ 那个空间**服务着、但谁都进不来**（401 ✓）
     /// ⇒ ⭐ **这是 U8 判据当场抓到的真 bug** ✓（2026-10-02 实测：`three_spaces_share_one_window_…`
     /// 里 proto-2 回 401 而期望 200 ✓）。
-    pub fn load_cards_for(&self, proto_space: &str, dir: &Path) -> Result<(), String> {
-        let mut fresh: std::collections::HashMap<String, std::collections::HashSet<String>> =
-            std::collections::HashMap::new();
-        load_cards(dir, proto_space, &mut fresh);
+    pub fn load_cards_for(&self, proto_space: &str, dir: &Path, device_level: bool) -> Result<(), String> {
+        let mut fresh = CardBook::new();
+        load_cards(dir, proto_space, device_level, &mut fresh);
         let add = fresh.remove(proto_space).unwrap_or_default();
         let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
-        let set = guard.entry(proto_space.to_string()).or_default();
-        for h in add {
-            set.insert(h);
+        let cards = guard.entry(proto_space.to_string()).or_default();
+        for h in add.hashes {
+            cards.hashes.insert(h);
+        }
+        // ⭐ 2026-10-12（第 2 步）：⭐ 公钥那一档**也一起并** ✗
+        //   （⛔ 只并哈希 ⇒ 新那一档配对出来的门**永远认不出来** ✗ —— "库里有、跑着的门不认"那一族 ✓）。
+        for (dev, pk) in add.pubkeys {
+            cards.pubkeys.insert(dev, pk);
         }
         Ok(())
     }
@@ -1409,7 +1805,14 @@ impl MeshHandle {
     /// ⇒ 用户看到的是"**删了等于没删**" ✗（正是 T5 判据① 要挡的 ✓）。
     pub fn forget_paired_hash(&self, proto_space: &str, secret_sha256: &str) -> Result<bool, String> {
         let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
-        Ok(guard.get_mut(proto_space).map(|set| set.remove(secret_sha256)).unwrap_or(false))
+        Ok(guard.get_mut(proto_space).map(|c| c.hashes.remove(secret_sha256)).unwrap_or(false))
+    }
+
+    /// ⭐ **2026-10-12（第 2 步）**：把**那一台的公钥**从正在跑的门里摘掉 ✗
+    /// （⭐ `forget_paired_hash` 在新那一档上的对应物 ✓ —— ⛔ 只删库那一步不够 ✗，同一条理由 ✓）。
+    pub fn forget_paired_device(&self, proto_space: &str, device_id: &str) -> Result<bool, String> {
+        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        Ok(guard.get_mut(proto_space).map(|c| c.pubkeys.remove(device_id).is_some()).unwrap_or(false))
     }
 
     /// ⭐ **U11/T5**：把**刚登记的这一张卡**加进正在跑的门（回"新加的吗"✓）——
@@ -1424,13 +1827,36 @@ impl MeshHandle {
             return Ok(false);
         }
         let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
-        Ok(guard.entry(proto_space.to_string()).or_default().insert(secret_sha256.to_string()))
+        Ok(guard.entry(proto_space.to_string()).or_default().hashes.insert(secret_sha256.to_string()))
+    }
+
+    /// ⭐ **2026-10-12（第 3 步）**：把**那一台的公钥**加进这道门的卡册（回"新加的吗"✓）——
+    /// ⭐ `add_paired_hash` 在**新那一档**上的对应物 ✓（同一条"先问服务不服务、再锁卡册"✓）。
+    pub fn add_paired_pubkey(
+        &self,
+        proto_space: &str,
+        device_id: &str,
+        pubkey_hex: &str,
+    ) -> Result<bool, String> {
+        if !self.serves(proto_space) {
+            return Ok(false);
+        }
+        let mut guard = self.paired.lock().map_err(|_| "配对卡表的锁被毒掉了".to_string())?;
+        let cards = guard.entry(proto_space.to_string()).or_default();
+        Ok(cards
+            .pubkeys
+            .insert(device_id.to_string(), pubkey_hex.trim().to_string())
+            .map(|old| old != pubkey_hex.trim())
+            .unwrap_or(true))
     }
 
     /// ⭐ **U11**：这一扇门现在**认几张卡**（这个空间 ✓；读数用 ✓）。
+    ///
+    /// ⚠️ 2026-10-12（第 2 步）后**两档各算一份** ✗（哈希 ＋ 公钥 ✓）——
+    /// ⭐ 它只是**读数** ✓，⛔ 不参与任何判定 ✗（真判定在 `authorized` ✓）。
     pub fn paired_card_count(&self, proto_space: &str) -> usize {
         match self.paired.lock() {
-            Ok(g) => g.get(proto_space).map(|s| s.len()).unwrap_or(0),
+            Ok(g) => g.get(proto_space).map(|c| c.hashes.len() + c.pubkeys.len()).unwrap_or(0),
             Err(_) => 0,
         }
     }
@@ -1477,7 +1903,7 @@ impl Drop for MeshHandle {
 pub fn start(
     cfg: MeshConfig,
     conns: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<Connection>>>>>,
-    paired: Arc<Mutex<std::collections::HashMap<String, std::collections::HashSet<String>>>>,
+    paired: Arc<Mutex<CardBook>>,
 ) -> Result<MeshHandle, String> {
     let addr = checked_bind(&cfg.bind)?;
     let listener = TcpListener::bind(addr).map_err(|e| format!("网格窗口绑不上 {addr}：{e}"))?;
@@ -1495,7 +1921,7 @@ pub fn start(
     //    零张卡 ⇒ **谁都进不来**（门只认卡 ✓）⇒ 所以这里要说的不是"危险"，而是"**进不来**" ✓。
     {
         let cards: usize = match paired.lock() {
-            Ok(g) => g.values().map(|v| v.len()).sum(),
+            Ok(g) => g.values().map(|c| c.hashes.len() + c.pubkeys.len()).sum(),
             Err(_) => 0,
         };
         if cards == 0 {
@@ -1744,18 +2170,69 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
             json_error(&format!("这个窗口不服务空间 {space}（不是「没带证件」，是「这不是我的空间」）")),
         ));
     }
-    // ③ 凭证不对 ⇒ **401**（认不出你是谁 ⇒ 先亮卡 ✓）
+    // ③ ⭐⭐ **2026-10-12（设备身份第 2 步）**：⭐ **先试签名那一档** ✗ ——
+    //    三格头（`x-shuyo-dev` ／ `x-shuyo-ts` ／ `x-shuyo-sig`）齐 ⇒ ⭐ 按**那一台的公钥**验签 ✓。
+    //    ⚠️ **两档各看各的** ✗（方案 §5① 选 ⓐ：旧那一档**继续认** ✓ —— 停认的时点是 owner 的事 ✓）：
+    //      · 签名**过** ⇒ 立刻放行 ✓（⭐ 而且出站那一侧签完就**不再带口令** ✓ ⇒ 口令的上线窗口收窄 ✓）；
+    //      · 签名**没过** ⇒ ⛔ **不在这里直接 401** ✗，而是**落回**下面旧那一档 ✓ ——
+    //        ⭐ 理由（过渡期专用 ✓）：⭐ 老配对的**行里还没有公钥** ✓（第 3 步才开始登记 ✓）；
+    //        若这里硬拒，那些对端会**当场断** ✓，而 ⓐ 之下旧那一档本来就还开着 ✓
+    //        （⇒ 回退**不额外给任何东西** ✓：知道口令的人本来就能走旧那一档 ✓）。
+    //    ⚠️⭐ **等 owner 选 ⓒ（停认旧那一档）时，这一段必须改成"签名不过 ⇒ 直接 401"** ✗ ——
+    //      否则"把签名弄坏就能降级"就是一条真洞 ✓（⛔ 那时标志是：旧那一档那一段被删掉 ✓）。
+    let mut sig_refusal: Option<&'static str> = None;
+    if let Some(dev) = req.header(HDR_DEVICE).map(str::trim).filter(|s| !s.is_empty()) {
+        let ts = req.header(HDR_TS).and_then(|v| v.trim().parse::<i64>().ok());
+        let sig = req.header(HDR_SIG).map(str::trim).filter(|s| !s.is_empty());
+        match (ts, sig) {
+            (Some(ts), Some(sig)) => {
+                let now = crate::db::now_ms();
+                if (now - ts).abs() > AUTH_WINDOW_MS {
+                    sig_refusal = Some("这份签名**过期**了（或对端时钟偏得太多）");
+                } else {
+                    let pk = match state.paired.lock() {
+                        Ok(g) => g.get(&space).and_then(|c| c.pubkeys.get(dev).cloned()),
+                        Err(_) => None,
+                    };
+                    match pk {
+                        None => {
+                            sig_refusal =
+                                Some("这个空间里**没有登记过这台设备的公钥**（没被信任过，或已被逐台解除）")
+                        }
+                        Some(pk) => {
+                            // ⭐ 签的那串由**同一句**重建 ✗（`auth_message` ✓）—— ⚠️ 用的是
+                            //   **这一条请求真实的** `method` ／ `target` ✓（⭐ 签名绑死"这一个请求" ✓）
+                            let msg = auth_message(dev, &space, ts, &req.method, &req.target);
+                            if crate::device_key::verify_hex(&pk, msg.as_bytes(), sig) {
+                                return Ok(());
+                            }
+                            sig_refusal = Some("签名对不上（不是这台签的，或这条请求被改过）");
+                        }
+                    }
+                }
+            }
+            _ => sig_refusal = Some("签名那一档要**三格一起**给（设备号／时间戳／签名）—— 现在缺格，不猜"),
+        }
+    }
+    // ③-b ⭐ **旧那一档（过渡）**：出示共用口令 ⇒ 它的 `sha256` 在名单里就算过 ✓
     let Some(got) = req
         .header("authorization")
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim)
         .filter(|t| !t.is_empty())
     else {
-        return Err(Reply::json(401, "Unauthorized", json_error("这个网格窗口要**配对的卡**（Authorization: Bearer …），没出示")));
+        return Err(Reply::json(
+            401,
+            "Unauthorized",
+            json_error(&match sig_refusal {
+                Some(why) => format!("没通过，而且口令那一档也没出示：{why}"),
+                None => "这个网格窗口要**配对的卡**（Authorization: Bearer …）或一份**设备签名**，两者都没出示".to_string(),
+            }),
+        ));
     };
     let h = crate::db::sha256_hex(got);
     let ok = match state.paired.lock() {
-        Ok(g) => g.get(&space).map(|cards| cards.contains(&h)).unwrap_or(false),
+        Ok(g) => g.get(&space).map(|cards| cards.hashes.contains(&h)).unwrap_or(false),
         Err(_) => false,
     };
     if ok {
@@ -1769,19 +2246,100 @@ fn authorized(state: &State, req: &Request) -> Result<(), Reply> {
     }
 }
 
+// ─────────────── ⭐ 2026-10-12（设备身份第 2 步）：请求签名 ✗ ───────────────
+
+/// 签名请求头的三格（⭐ 客户端与门**共用**这三格 ✓ —— ⛔ 不许各写一份字面量 ✗）。
+pub(crate) const HDR_DEVICE: &str = "x-shuyo-dev";
+pub(crate) const HDR_TS: &str = "x-shuyo-ts";
+pub(crate) const HDR_SIG: &str = "x-shuyo-sig";
+
+/// ⭐ 签名的**有效窗口**（毫秒 ✓）—— ⚠️ 它挡的是「**旧包**重放」✗，⛔ **不挡**"窗口内的重放" ✗。
+///
+/// ⭐ 如实记（不做假保证）✗：网线上那条 `/mesh/pull` 的**响应本来就是明文** ✓ ⇒
+/// ⭐ 一个**被动窃听者**根本不需要重放 ✓（它直接读响应 ✓）。这条窗口针对的是
+/// ⭐ "把**旧请求**捡起来再发一遍"这一类 ✓，而 2 分钟足够盖住正常的时钟偏差 ✓。
+pub(crate) const AUTH_WINDOW_MS: i64 = 120_000;
+
+/// ⭐⭐ **签名覆盖的那串**（⭐ **一处实现** ✗ —— 门那一侧照**同一句**重建 ✓）。
+///
+/// 覆盖五样（⭐ 少一样就少一道绑定 ✓）：
+/// `device_id`（⭐ 哪台在说话 ✓）／`space`（⭐ 对哪个空间 ✓）／`ts_ms`（⭐ 抗重放窗口用它 ✓）
+/// ／`method` ＋ `target`（⭐ **哪一个请求** ✓ —— ⛔ 少了 target，一次签名就能换任何路径 ✗）。
+pub(crate) fn auth_message(
+    device_id: &str,
+    space: &str,
+    ts_ms: i64,
+    method: &str,
+    target: &str,
+) -> String {
+    format!("SHUYO-MESH-AUTH-1\n{device_id}\n{space}\n{ts_ms}\n{method}\n{target}")
+}
+
+/// ⭐ `/mesh/pull` 要的 **target**（⭐ 纯函数、**一处拼** ✗）——
+/// ⚠️ 签的是它、发的也是它 ✓：⛔ 两处各拼一份 ⇒ 一漂就验不过 ✗（判据里那条端到端钉这条 ✓）。
+pub(crate) fn pull_target(space_id: &str, since: i64) -> String {
+    format!("/mesh/pull?space_id={space_id}&since={since}&limit={MAX_LIMIT}")
+}
+
+/// ⭐ `/mesh/attachment` 要的 target（⭐ 同上：一处拼 ✗）。
+pub(crate) fn attachment_target(space_id: &str, hash: &str) -> String {
+    format!("/mesh/attachment?space_id={space_id}&hash={hash}")
+}
+
+/// ⭐ 为**这一次请求**签一份凭证 ✗（⭐ `(ts_ms, sig_hex)` ✓）。
+///
+/// ⚠️ **拿不到身份 ⇒ `None`** ✓（⭐ 调用方据此退回"旧那一档"✓，⛔ 不假装签了 ✗）。
+pub fn sign_request(
+    c: &Connection,
+    device_id: &str,
+    space: &str,
+    method: &str,
+    target: &str,
+    now_ms: i64,
+) -> Option<(i64, String)> {
+    let id = crate::device_key::load_or_create(c).ok()?;
+    let msg = auth_message(device_id, space, now_ms, method, target);
+    Some((now_ms, id.sign_hex(msg.as_bytes())))
+}
+
+/// ⭐ 一个空间的**卡册** ✗ —— ⭐ 两档**并存** ✓（方案 §4 ③ 的"加法"）：
+/// · `hashes` ＝ **旧那一档**：出示共用口令 ⇒ 它的 `sha256` 在这儿 ✓（⚠️ 过渡用 ✓，
+///   ⛔ 认不认它由 owner 拍 ✓：方案 §5① ✓）；
+/// · `pubkeys` ＝ **新那一档**：`device_id → 公钥十六进制` ✓（⭐ 门据此**验签** ✓）。
+#[derive(Default, Clone)]
+pub(crate) struct SpaceCards {
+    pub(crate) hashes: std::collections::HashSet<String>,
+    pub(crate) pubkeys: std::collections::HashMap<String, String>,
+}
+
+/// 整本卡册（键 ＝ 门服务的那个空间 `proto_space` ✓）。
+pub(crate) type CardBook = std::collections::HashMap<String, SpaceCards>;
+
 /// ⭐ **U11**：把库里那个空间的卡**载进内存表**（开门时载一次 ✓；解除时摘一张 ✓）。
 ///
 /// ⚠️ 载不进来（库打不开 / 表不在）⇒ **空表** ⇒ 门**谁都进不来** ✓（⛔ 不是"放行" ✗）。
-fn load_cards(
-    dir: &Path,
-    proto_space: &str,
-    into: &mut std::collections::HashMap<String, std::collections::HashSet<String>>,
-) {
+///
+/// ⭐⭐ **2026-10-11（丙）**：⭐ **库里读哪一行**由 [`paired_row_key`] 定 ✓（个人档 ⇒ 空串那一行 ✓），
+/// 而**内存卡表的键**永远是 `proto_space` ✓（＝ 门服务的那个空间 ＝ 请求里 `?space_id=` ✓）。
+/// ⛔ **这两个不是一回事** ✗ —— 个人的 `proto_space` 是配对暗号 ✓，不是空串 ✗（合起来就串空间 ✓）。
+///
+/// ⭐⭐ **2026-10-12（第 2 步）**：⭐ 两档**一起载** ✗（旧：哈希 ✓／新：公钥 ✓）——
+/// ⚠️ 行键那一步**只有这一处** ✓ ⇒ ⛔ 两档不许各算一次行键 ✗（那是第二处判定 ✓）。
+fn load_cards(dir: &Path, proto_space: &str, device_level: bool, into: &mut CardBook) {
     let Ok(meta) = crate::db::open_meta_conn_at(dir) else { return };
-    let Ok(hashes) = crate::db::paired_secret_hashes(&meta, proto_space) else { return };
-    let set = into.entry(proto_space.to_string()).or_default();
-    for h in hashes {
-        set.insert(h);
+    let row = paired_row_key(proto_space, device_level);
+    let cards = into.entry(proto_space.to_string()).or_default();
+    // ⭐ 两档**各查各的、互不连坐** ✗：⭐ 一档的查询失败（老库缺列 / 表不在）**不该把另一档也清空** ✓
+    //   （⛔ 否则一个 SELECT 出错 ＝ 门谁都进不来 ＝ 一条安静的升级事故 ✓）。
+    if let Ok(hashes) = crate::db::paired_secret_hashes(&meta, row) {
+        for h in hashes {
+            cards.hashes.insert(h);
+        }
+    }
+    if let Ok(pubkeys) = crate::db::paired_pubkeys(&meta, row) {
+        for (dev, pk) in pubkeys {
+            cards.pubkeys.insert(dev, pk);
+        }
     }
 }
 
@@ -2107,6 +2665,180 @@ mod tests {
         c
     }
 
+    // ═══════════ ⭐ 同名融合的「**是不是同一个人**」身份闸（D1/D2/D3）═══════════
+    //
+    // ## 为什么这几条**故意**待在 `mesh.rs`、而不是 `mesh_merge_ledger.rs` 自己的 `mod tests` ✗
+    // ⭐ 它们要证的正是**接线**（真表 ⇒ 真读法 ⇒ 真闸）⇒ 必须待在一个**今天就在构建里**的文件 ✓。
+    // ⚠️ 反面教材就在眼前：`mesh_merge_ledger.rs` 里有一整套纯逻辑判据（它自己的 j/k/l），
+    //    但**`lib.rs` 里原先没有 `mod mesh_merge_ledger;`** ⇒ 那些判据**根本不在二进制里**
+    //    （跑了也看不见：0 条 ✓）✗ —— 这几条放在这儿 ⇒ 模块一旦掉出构建，它们**当场编不过** ✓
+    //    （2026-10-12 实测：加 `mod` 之前，这几条让 lib target 直接 3 条 error ✓）。
+    // 四要件（判据／怎么量／反例逐字／过期条件）写在交付报告里；这里只留最短的那句。
+
+    /// ⭐ **D1**：这一格的"同一个人"＝**本机显式信任过那台**（`mesh_paired_devices`）。
+    /// 判据：库里**没有**那一行 ⇒ `merge_gate` 必须回 `RefuseUnknownIdentity`（⛔ 不是 `Allow`）。
+    /// 反例（逐字）：`left: Allow` ／ `right: RefuseUnknownIdentity`。
+    /// 过期条件：表或主键变（`db.rs:490`）／行键口径变（`paired_row_key`）⇒ 重写。
+    #[test]
+    fn merge_gate_d1_unpaired_device_is_refused() {
+        use crate::mesh_merge_ledger::{merge_gate, IdentityOracle, MergeGate, PairedDeviceOracle};
+
+        let c = conn_with(Connection::open_in_memory().unwrap(), "dev-me");
+        // 真表（照 `db.rs:490-500` 的列与主键；⚠️ 挂 `meta` 上 —— 生产读的 SQL 是**不带前缀**的 `FROM mesh_paired_devices`）
+        c.execute_batch(
+            "CREATE TABLE IF NOT EXISTS meta.mesh_paired_devices (
+                 space_id      TEXT NOT NULL,
+                 device_id     TEXT NOT NULL,
+                 secret_sha256 TEXT NOT NULL,
+                 added_at_ms   INTEGER NOT NULL,
+                 pubkey        TEXT NOT NULL DEFAULT '',
+                 PRIMARY KEY (space_id, device_id)
+             );",
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO meta.mesh_paired_devices (space_id, device_id, secret_sha256, added_at_ms, pubkey)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![DEVICE_LEVEL_SPACE, "平板", "sha256:占位", 1_i64, ""],
+        )
+        .unwrap();
+
+        // ⭐ 走**生产那个读法**（`mesh::paired_devices`：只 select 两列 ✓、键走 `paired_row_key` ✓）
+        let rows = paired_devices(&c, DEVICE_LEVEL_SPACE, true).unwrap();
+        let paired: Vec<String> = rows.into_iter().map(|d| d.device_id).collect();
+        assert_eq!(
+            paired,
+            vec!["平板".to_string()],
+            "前提：那一行**真的读出来了**（⛔ 防两张空表假绿 ✗）"
+        );
+        let oracle = PairedDeviceOracle { paired_devices: &paired };
+
+        // 认过的 ⇒ `Yes` ⇒ **同名**才允许融（Q3）
+        assert_eq!(merge_gate(&oracle.same_person("平板", "工作"), true), MergeGate::Allow);
+        // ⭐ 没认过的 ⇒ 判**不出** ⇒ **不融**（反例：`left: Allow` ／ `right: RefuseUnknownIdentity`）
+        assert_eq!(
+            merge_gate(&oracle.same_person("陌生设备", "工作"), true),
+            MergeGate::RefuseUnknownIdentity,
+            "⛔ 没配对过却 Allow ⇒ 陌生人的同名空间会被静默并进来 ✗（Q1）"
+        );
+    }
+
+    /// ⭐ **D2**：对端**身份拿不到** ⇒ 如实 `Unknown` ⇒ 不融；⛔ **不许折成**「不同人」（`No`）。
+    /// 反例（逐字）：`left: RefuseDifferentPerson` ／ `right: RefuseUnknownIdentity`。
+    /// 过期条件：`LanAnnounce` 真的加上**可选**身份字段之后，这一档只该覆盖"**老对端**"⇒ 重写。
+    #[test]
+    fn merge_gate_d2_unknown_never_collapses_into_different_person() {
+        use crate::mesh_merge_ledger::{
+            merge_gate, IdentityOracle, MergeGate, PairedDeviceOracle, SamePerson, WhyUnknown,
+        };
+
+        let none: Vec<String> = Vec::new();
+        let oracle = PairedDeviceOracle { paired_devices: &none };
+        let id = oracle.same_person("陌生设备", "工作");
+        assert_eq!(
+            id,
+            SamePerson::Unknown(WhyUnknown::NotPaired),
+            "⭐ 判不出就是判不出 —— 而且**带着原因**（⛔ 不糊成一句「未知」✗）"
+        );
+        assert_ne!(
+            merge_gate(&id, true),
+            MergeGate::RefuseDifferentPerson,
+            "⛔ 把「拿不到身份」折成「不同人」＝**替用户下一个我们没有依据的断言** ✗"
+        );
+        assert_eq!(merge_gate(&id, true), MergeGate::RefuseUnknownIdentity);
+    }
+
+    /// ⭐ **D2 的"路上那一半"**：⛔ 不许为了对端身份动这两条硬约束 ——
+    ///   ① ⛔ **不许升 `WIRE_VERSION`**（升了 ⇒ 老对端公告被**直接拒收** ⇒ 两台互相看不见 ✗）；
+    ///   ② ⛔ **`user_id` 不许进 `pairing.rs`**（它是 `deny_unknown_fields` ⇒ 老版本把整条码判成"字段对不上" ✗）。
+    ///   ＋ 如实记：**今天链路上根本没有对端身份** ⇒ D2 今天只会走 `Unknown` ✓。
+    /// 反例（逐字）：`assertion failed: lan.contains("pub const WIRE_VERSION: u32 = 1;")`。
+    /// 过期条件：真的加了**可选**身份字段（只许 `#[serde(default)]`，⛔ 不升版本）⇒ 本条与 D2 一起重写。
+    #[test]
+    fn merge_gate_d2_wire_contract_and_peer_identity_absent_today() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let lan = std::fs::read_to_string(src.join("lan.rs")).expect("读得到 src/lan.rs");
+        let pairing = std::fs::read_to_string(src.join("pairing.rs")).expect("读得到 src/pairing.rs");
+
+        assert!(lan.contains("pub const WIRE_VERSION: u32 = 1;"), "⛔ 不许升 WIRE_VERSION ✗");
+        assert!(
+            pairing.contains("deny_unknown_fields"),
+            "⛔ 配对码那条路是**硬**的（老版本会整条拒收）—— 这正是**不能**往它里面放身份字段的理由 ✓"
+        );
+        assert!(
+            !lan.contains("user_id"),
+            "⚠️ `LanAnnounce` 今天**没有**对端身份字段（这就是 D2 只走 `Unknown` 的原因 ✓）；\
+             ⚠️ 哪天加上了（**只许** `#[serde(default)]` 可选取字段）⇒ 这条与 D2 一起重写 ✗"
+        );
+    }
+
+    /// ⭐ **D3**：**许可证不得当身份** ✗ —— 真凭证在**占位 keyring** 下一律 `UnknownKid`
+    /// （`relay_license.rs:59-62`）⇒ 它今天**不能当判据** ✓。
+    /// 反例（逐字）：`left: Yes(IdentityBasis::License("space-1"))` ／ `right: Unknown(NoLicense)`。
+    /// 过期条件：owner 给真 keyring **且**定下"许可证怎么答『是不是同一个人』"之后重写。
+    #[test]
+    fn merge_gate_d3_license_is_never_an_identity_basis() {
+        use crate::mesh_merge_ledger::{IdentityBasis, IdentityOracle, PairedDeviceOracle, SamePerson};
+
+        // ① 唯一的**生产** oracle（`PairedDeviceOracle`）**永远不产** `Account`/`License` 两类身份 ✓
+        let paired = vec!["平板".to_string()];
+        let oracle = PairedDeviceOracle { paired_devices: &paired };
+        for dev in ["平板", "陌生设备"] {
+            let id = oracle.same_person(dev, "工作");
+            assert!(
+                !matches!(
+                    id,
+                    SamePerson::Yes(IdentityBasis::License(_)) | SamePerson::Yes(IdentityBasis::Account(_))
+                ),
+                "⛔ 今天**没有**任何生产数据能支撑「同一个人」的账号/许可证判定 ⇒ 不许凭空造一个 `Yes` ✗"
+            );
+        }
+
+        // ② 全 `src/` 扫一遍：这两类身份的构造点**只许**出现在 `mesh_merge_ledger.rs` 里
+        //    （枚举定义 ＋ 它自己的测试）；⛔ 别处出现 ⇒ 有人把"账号/许可证"当身份接进生产了 ✗
+        //    ⚠️ **排除本文件**（`mesh.rs`）：这条判据**自己**就写着那两个模式串 ⇒ 不排除必然**自绊** ✗
+        //    （实测逐字：`实得 ["mesh.rs", "mesh_merge_ledger.rs"]` ✓）——手法与
+        //    `relay_license.rs` 那条泄漏判据的「排除判据自己」逐字同形 ✓。
+        // ③ ⭐ 更强的一句：**生产里只许有一个 `IdentityOracle` 实现**（＝第一档 `PairedDeviceOracle`）——
+        //    账号/许可证那两档**今天没有实现** ⇒ 哪天别处冒出第二个 impl ⇒ 红 ✗。
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut hits: Vec<String> = Vec::new();
+        let mut impls: Vec<String> = Vec::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for e in std::fs::read_dir(&dir).expect("读得到 src").flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+                    continue;
+                }
+                let name = p.file_name().unwrap().to_string_lossy().to_string();
+                if name == "mesh.rs" {
+                    continue; // ⭐ 判据自己（否则那两个模式串自绊 ✗）
+                }
+                let text = std::fs::read_to_string(&p).expect("读得到 .rs");
+                if text.contains("IdentityBasis::License(") || text.contains("IdentityBasis::Account(") {
+                    hits.push(name.clone());
+                }
+                if text.contains("impl IdentityOracle for") {
+                    impls.push(name);
+                }
+            }
+        }
+        assert!(
+            !hits.iter().any(|f| f != "mesh_merge_ledger.rs"),
+            "⛔ 账号/许可证**不许**在别处当身份用（今天只许出现在 `mesh_merge_ledger.rs` 的枚举定义与它自己的测试里）：实得 {hits:?}"
+        );
+        assert_eq!(
+            impls,
+            vec!["mesh_merge_ledger.rs".to_string()],
+            "⛔ 生产里**只许有一个** `IdentityOracle` 实现（第一档）；多出来的那个多半是「拿账号/许可证当身份」✗"
+        );
+    }
+
     fn page(id: &str, text: &str, updated_at: i64) -> PageDetail {
         PageDetail {
             id: id.to_string(),
@@ -2161,6 +2893,8 @@ mod tests {
     fn lan_peer_of(device: &str, base: Option<&str>, spaces: &[&str]) -> crate::lan::Peer {
         crate::lan::Peer {
             announce: crate::lan::LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: 1,
                 device_id: device.to_string(),
                 device_name: format!("{device} 的机器"),
@@ -2168,6 +2902,7 @@ mod tests {
                 hub_base: base.map(str::to_string),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: "fp".into(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".into(),
             seen_at_ms: 0,
@@ -2215,6 +2950,8 @@ mod tests {
     fn announced(device: &str, base: &str, spaces: &[&str]) -> Peer {
         Peer {
             announce: LanAnnounce {
+                trust_ask: String::new(),
+                trust_secret: String::new(),
                 v: crate::lan::WIRE_VERSION,
                 device_id: device.to_string(),
                 device_name: String::new(),
@@ -2222,6 +2959,7 @@ mod tests {
                 hub_base: Some(base.to_string()),
                 hub_spaces: spaces.iter().map(|s| s.to_string()).collect(),
                 fp: device.to_string(),
+                pubkey: String::new(),
             },
             addr: "192.168.1.9".to_string(),
             seen_at_ms: 0,
@@ -2537,7 +3275,7 @@ mod tests {
             local_edit(&c, &pg);
         }
         // ② 窗口：库名 `default`、对暗号的空间 id `space-x` —— **故意让两个 id 不同名**
-        let win = open_window_at("default", "space-x", "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+        let win = open_window_at("default", "space-x", false, "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
             .expect("窗口应当起得来");
         // ③ 直接问它：那条记录必须**服务得出来**
         let (code, body) = http_get(win.addr(), "/mesh/pull?space_id=space-x&since=0&limit=100", Some("lan-token"));
@@ -2577,7 +3315,7 @@ mod tests {
             pg.workspace_id = "default".to_string();
             local_edit(&c, &pg);
         }
-        let win = open_window_at("default", "space-x", "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
+        let win = open_window_at("default", "space-x", false, "A", "127.0.0.1:0", Some("lan-token".into()), &dir)
             .expect("窗口应当起得来");
 
         // ① 别的空间 ⇒ 403，**且一个字节的记录都不许出现在 body 里**
@@ -2937,11 +3675,12 @@ mod tests {
     ) -> Result<MeshHandle, String> {
         let mut m = std::collections::HashMap::new();
         m.insert(proto.to_string(), conn);
-        let mut cards: std::collections::HashMap<String, std::collections::HashSet<String>> =
+        let mut cards: CardBook =
             std::collections::HashMap::new();
         cards
             .entry(proto.to_string())
             .or_default()
+            .hashes
             .insert(crate::db::sha256_hex(card));
         start(cfg, Arc::new(Mutex::new(m)), Arc::new(Mutex::new(cards)))
     }
@@ -2961,6 +3700,30 @@ mod tests {
             None => String::new(),
         };
         let req = format!("GET {target} HTTP/1.1\r\nHost: x\r\n{auth}Connection: close\r\n\r\n");
+        sock.write_all(req.as_bytes()).unwrap();
+        sock.flush().unwrap();
+        let mut raw = Vec::new();
+        sock.read_to_end(&mut raw).unwrap();
+        let text = String::from_utf8_lossy(&raw).to_string();
+        let code = text.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let body = text.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+        (code, body)
+    }
+
+    /// ⭐ 2026-10-12（设备身份第 2 步）：发一条**带签名**的 GET ✗（⛔ 不带任何口令 ✗）。
+    ///
+    /// ⚠️ `ts` 由调用方给 ✗ ⇒ ⭐ 时间窗那一档能被判据**固定** ✓（本仓老规矩：判定里一律传时间 ✓）。
+    fn http_get_signed(
+        addr: SocketAddr,
+        target: &str,
+        device_id: &str,
+        ts: i64,
+        sig: &str,
+    ) -> (u16, String) {
+        let mut sock = TcpStream::connect(addr).expect("connect");
+        let req = format!(
+            "GET {target} HTTP/1.1\r\nHost: x\r\n{HDR_DEVICE}: {device_id}\r\n{HDR_TS}: {ts}\r\n{HDR_SIG}: {sig}\r\nConnection: close\r\n\r\n"
+        );
         sock.write_all(req.as_bytes()).unwrap();
         sock.flush().unwrap();
         let mut raw = Vec::new();
@@ -3229,7 +3992,7 @@ mod tests {
         assert_eq!(settings(&b.lock().unwrap(), "space-x"), MeshSettings::default(), "默认是关的");
 
         let peers = vec![announced("A", "http://127.0.0.1:9", &["space-x"])]; // 端口 9：连不上
-        let rep = round(&b, "space-x", "B", &peers).await.unwrap();
+        let rep = round(&b, "space-x", "B", &peers, false).await.unwrap();
         assert!(!rep.enabled, "{rep:?}");
         assert_eq!(rep.candidates, 0);
         assert!(rep.peers.is_empty(), "没开就不许碰任何对端：{rep:?}");
@@ -3349,7 +4112,7 @@ mod tests {
         let cands = vec![mesh_peer("A", &format!("http://{}", win.addr()))];
         let cfg = settings(&b.lock().unwrap(), "space-x");
 
-        let rep = round_candidates(&b, "space-x", cands.clone()).await.unwrap();
+        let rep = round_candidates(&b, "space-x", cands.clone(), false).await.unwrap();
         assert!(rep.enabled && rep.candidates == 1, "{rep:?}");
         assert_eq!(rep.peers.len(), 1);
         assert_eq!((rep.peers[0].fetched, rep.peers[0].applied), (1, 1), "{rep:?}");
@@ -3361,7 +4124,7 @@ mod tests {
         );
 
         // 再跑一轮：水位到批尾 ⇒ 什么都不再拉（幂等，不重复搬运）
-        let again = round_candidates(&b, "space-x", cands).await.unwrap();
+        let again = round_candidates(&b, "space-x", cands, false).await.unwrap();
         assert_eq!(again.peers[0].fetched, 0, "{again:?}");
     }
 
@@ -3395,7 +4158,7 @@ mod tests {
             mesh_peer("Z", "http://127.0.0.1:9"),
         ];
         let cfg = settings(&b.lock().unwrap(), "space-x");
-        let rep = round_candidates(&b, "space-x", cands).await.unwrap();
+        let rep = round_candidates(&b, "space-x", cands, false).await.unwrap();
         assert_eq!(rep.candidates, 2);
         let down = rep.peers.iter().find(|r| r.peer == "Z").expect("连不上的那台也要有一行");
         assert!(down.error.is_some(), "拉不动要如实写在自己那一行：{down:?}");
@@ -3583,7 +4346,7 @@ mod tests {
                         .filter(|&k| k != i)
                         .map(|k| mesh_peer(&ids[k], &format!("http://{}", wins[k].addr())))
                         .collect();
-                    async move { round_candidates(&conn, T10_SPACE, peers).await }
+                    async move { round_candidates(&conn, T10_SPACE, peers, false).await }
                 });
                 let reports = futures_util::future::join_all(futs).await;
                 let mut ok_per_dev = vec![0usize; T10_DEVICES];
@@ -3804,7 +4567,7 @@ mod tests {
         }
         let mut addrs = Vec::new();
         for (db, proto) in &pairs {
-            let one = [(db.clone(), proto.clone())];
+            let one = [(db.clone(), proto.clone(), false)];
             addrs.push(
                 ensure_window(&one, "A", "127.0.0.1:0", &dir)
                     .unwrap()
@@ -3897,7 +4660,7 @@ mod tests {
         //   ⇒ 卡摘不掉 ⇒ "删了等于没删" ✓ **实测踩到过**（本判据第一版就是这么红的 ✓）。
         //   ⚠️ 绑定写法要与 U8 判据**不同键**（注册表键＝绑定字符串 ✓）：它用 `127.0.0.1:0`，
         //   这里用 `localhost:0` ⇒ 两条判据不会互相串 ✓。
-        let pairs = [("default".to_string(), "proto-x".to_string())];
+        let pairs = [("default".to_string(), "proto-x".to_string(), false)];
         let addr = ensure_window(&pairs, "A", "localhost:0", &dir)
             .unwrap()
             .expect("窗口应当起得来");
@@ -3972,7 +4735,7 @@ mod tests {
         //    ⚠️ 绑定键同理要与它们不同（注册表键＝绑定字符串 ✓）：U8 用 `127.0.0.1:0`、
         //    U11 用 `localhost:0` ⇒ 这条用 `0.0.0.0:0` ✓；**连的时候换成回环**（0.0.0.0 不是
         //    可连接的地址 —— 与 `config_state` 那条口径同源 ✓）。
-        let pairs = [("default".to_string(), "proto-e2e".to_string())];
+        let pairs = [("default".to_string(), "proto-e2e".to_string(), false)];
         let bound = ensure_window(&pairs, "A", "0.0.0.0:0", &dir).unwrap().expect("窗口应当起得来");
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
         let secret = "k7Qm-2pRt-e2e";
@@ -3981,7 +4744,12 @@ mod tests {
         assert_eq!(code, 401, "基线：门里零张卡 ⇒ 谁来都得 401（不然这条判据分不出东西）：{body}");
 
         // ② ⭐ **走真采纳**：真载荷 → 真判定 → **生产同一个落库内核** ✓（门**先开着**、**不重启** ✓）
-        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
+        //   ⭐ 2026-10-12（1C）：载荷**必须带对方的公钥** ✗（不带 ⇒ 解码那一步就**如实拒** ✓）。
+        //   ⚠️ 夹具**借门这台自己的钥匙冒充 dev-B** ✓（门只按 `device_id` 查公钥 ✓ ⇒
+        //     这一格量的是"**登记 → 验签放行**"那条链 ✓，⛔ 不是量钥匙归属 ✗）。
+        let id_peer = crate::device_key::load_or_create(&c).unwrap();
+        let mut payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-B", "").unwrap();
+        crate::pairing::stamp_pubkey(&mut payload, &id_peer.public_key_hex()).unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
         let decision =
             crate::sync::decide_device_pair_import(&text, Some(&crate::pairing::check_code(&text)), "A").unwrap();
@@ -3989,13 +4757,33 @@ mod tests {
             panic!("核对过就该 Accept：{decision:?}")
         };
         assert_eq!(peer_device_id, "dev-B", "对面设备号来自载荷 ✓");
-        let added = crate::sync::apply_device_pair_import(&c, "proto-e2e", &peer_device_id, &bind, &token).unwrap();
+        // ⭐ 2026-10-12（1C）：⭐ 采纳还要交**对面那把公钥** ✗（它来自载荷 ✓）——
+        //   ⚠️ 夹具用的就是**上面那把**（⭐ 借门这台自己的钥匙冒充 dev-B ✓，理由见 ② ✓），⛔ 不另凑一个 ✗。
+        let added = crate::sync::apply_device_pair_import(
+            &c,
+            "proto-e2e",
+            &peer_device_id,
+            &bind,
+            &token,
+            false,
+            &id_peer.public_key_hex(),
+        )
+        .unwrap();
         assert!(added, "门正开着 ⇒ 新卡必须**当场**加进那扇门（否则就是「配对成功却 401」✓）");
 
         // ③ ⭐⭐ **门没有重启也必须立刻认这一台** ⇒ 200 ✓（R109 的洞就在这一格）
         let (code, body) = http_get(addr, pull, Some(secret));
         assert_eq!(code, 200, "配好对之后**不许重启门**就该进得来：{body}");
         assert!(body.contains("p1"), "而且要真拉到东西：{body}");
+        // ③-b ⭐⭐ **2026-10-12（1C）**：⭐ 采纳登记的**公钥**也要**当场**生效 ✗ ——
+        //   ⭐ 这一台此后**凭签名**（⛔ 不带任何口令 ✗）就得进得来 ✓（那正是取代口令的那条路 ✓）。
+        let (ts, sig) =
+            crate::mesh::sign_request(&c, "dev-B", "proto-e2e", "GET", pull, crate::db::now_ms()).unwrap();
+        let (code, body) = http_get_signed(addr, pull, "dev-B", ts, &sig);
+        assert_eq!(
+            code, 200,
+            "⛔ 采纳之后这一台**凭签名**必须进得来 ✗（⭐ 而且一个口令都不带 ✓ —— 1C 之后门认的就是这个 ✓）：{body}"
+        );
         // ⭐「本机要出示给那一台」的那一份也存好了（`round_candidates` 读的就是它 ✓）
         assert_eq!(
             crate::mesh::pair_secret_for(&c, "proto-e2e", "dev-B").as_deref(),
@@ -4015,6 +4803,265 @@ mod tests {
         assert_eq!(code, 401, "被解除之后必须**立刻** 401（同样不许重启门）：{body}");
 
         crate::mesh::stop_window("proto-e2e").unwrap();
+    }
+
+    /// ⭐⭐ **2026-10-11（丙）判据⑤：个人档配对出来的卡，门真的要放行** ✗。
+    ///
+    /// ## 张力就在"两把键不是一回事"这一点上
+    /// 卡片落 ⭐ **空串那一行** ✗（`paired_row_key` ✓），而门服务的是 ⭐ **配对暗号** ✗
+    /// （`?space_id=room-…` ✓）⇒ ⭐ 门必须去**那一行**载卡 ✓。
+    /// ⛔ 少了这一步，现象就是「**配对显示成功、对端照样 401**」✗（本仓栽过的那一族 ✓）。
+    ///
+    /// **红读数（真变异）**：把 `load_cards` 里那把键换回 `proto_space`
+    /// （＝还按"门服务的空间"读库 ✗）⇒ 本判据**红**（401）✓。
+    #[tokio::test]
+    async fn a_personal_pairing_is_accepted_by_the_door_that_serves_the_room() {
+        let dir = temp_dir("mesh-device-level-door");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-me").unwrap();
+        // ⭐ 个人档：门服务的那个空间是**配对暗号** ✗（⛔ 不是空串 ✓）。
+        let room = "room-personal-1";
+        let secret = "k7Qm-2pRt-dev1";
+        // ⭐ 2026-10-12（1C）：⭐ 登记**必须有公钥** ✗（`remember_peer_card` 收进一处 ✓）——
+        //   ⚠️ 夹具这里给的是**假钥匙** ✓（本条量的是"个人档落同一行"✓，⛔ 不是量那把钥匙 ✓）；
+        //   ⭐ 门那一档删除之后，本判据要换成**真钥匙 ＋ 签名请求** ✓（方案 §8.6 的作业单 ✓）。
+        crate::sync::remember_peer_card(&c, room, "dev-peer", secret, true, &"ab".repeat(32)).unwrap();
+        // 前提：卡片确实落在**空串那一行** ✓（按口径读得到 ✓）
+        assert_eq!(
+            crate::mesh::paired_devices(&c, room, true).unwrap().len(),
+            1,
+            "前提：个人档的卡要落在设备级那一行（不然这条判据量的不是它）"
+        );
+        // ⭐ 门：服务 `room` ✓、按**个人档**载卡（`device_level = true` ✓）。
+        let pairs = [("default".to_string(), room.to_string(), true)];
+        let bound = ensure_window(&pairs, "dev-me", "0.0.0.0:00", &dir)
+            .unwrap()
+            .expect("窗口应当起得来");
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
+        let pull = format!("/mesh/pull?space_id={room}&since=0&limit=10");
+        let (code, body) = http_get(addr, &pull, Some(secret));
+        assert_eq!(
+            code, 200,
+            "⛔ 个人档配对出来的卡，门必须放行 ✗ —— 否则就是「配对成功、对端照样 401」：{body}"
+        );
+        // ⛔ 反面：另一串没登记过的秘密仍然进不来（别把"谁都放行"当成通过 ✗）
+        let (code, _) = http_get(addr, &pull, Some("not-the-secret"));
+        assert_eq!(code, 401, "⛔ 没登记过的秘密不许进 ✗（不是「谁都放行」✓）");
+
+        crate::mesh::stop_window(room).unwrap();
+    }
+
+    /// ⭐⭐ **2026-10-12（设备身份第 2 步）判据**：⭐ 门认的是**那一台的签名**，而不是"谁知道口令" ✗。
+    ///
+    /// 链条一次走全（⭐ 本仓的手法：端到端比"只测纯函数"值钱 ✓）：
+    /// ⭐ 库里登记公钥（`db::pair_pubkey` ✓，第 3 步点信任时会做的那件事）⇒ ⭐ `load_cards` 载进内存 ✓
+    /// ⇒ ⭐ 门**验签**放行 ✓。
+    #[tokio::test]
+    async fn a_signed_request_is_let_in_by_the_public_key_it_was_trusted_with() {
+        let dir = temp_dir("mesh-sig-door");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        drop(crate::db::open_meta_conn_at(&dir).unwrap());
+        let c = crate::db::open_space_conn_at("default", &dir).unwrap();
+        crate::sync::set_meta_state(&c, "device_id", "dev-peer").unwrap();
+        let id = crate::device_key::load_or_create(&c).expect("本机身份");
+        let space = "room-sig-1";
+        // ⭐ 门那一侧：把**这一台**的公钥登记进这个空间（＝ 第 3 步"允许它来拿我的"那一下 ✓）。
+        //   ⚠️⭐ **行键是空串** ✗ —— 个人档的对端表走**设备级那一行** ✓（丙 那套口径 ✓，
+        //   与 `remember_peer_card` 用 `paired_row_key` 算出来的**同一把键** ✓）。
+        //   ⭐ 夹具写错行键时本判据当场红过 ✓（门只会去读 `''` ⇒ 报"没登记过它的公钥"✓）。
+        crate::db::pair_pubkey(&c, "", "dev-peer", &id.public_key_hex()).unwrap();
+        // 门：服务 `space` ✓、按**个人档**载卡（⭐ 库里那一行会被载进内存 ✓）
+        //   ⚠️⭐ **绑定键必须与别的判据不同** ✗：注册表的键**就是绑定字符串** ✓
+        //   ⇒ 撞键 ＝ 两条判据**共用一扇门**（⭐ 而门只认**第一个**开起来的那个库目录 ✓）
+        //   ⇒ 症状是"200 但一条记录都没有" ✓（⭐ 实测踩到过：与 R109 那条共用 `0.0.0.0:0` ✓）。
+        let pairs = [("default".to_string(), space.to_string(), true)];
+        let bound = ensure_window(&pairs, "dev-me", "0.0.0.0:000", &dir).unwrap().expect("窗口应当起得来");
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, bound.port()));
+        let target = format!("/mesh/pull?space_id={space}&since=0&limit=10");
+        let now = crate::db::now_ms();
+        let (ts, sig) =
+            crate::mesh::sign_request(&c, "dev-peer", space, "GET", &target, now).expect("签一份");
+
+        // ① ⭐ **一个口令都不带** ⇒ 也必须放行 ✓（⭐ 这就是"门认的是签名" ✓）
+        let (code, body) = http_get_signed(addr, &target, "dev-peer", ts, &sig);
+        assert_eq!(
+            code, 200,
+            "⛔ 登记过公钥 ⇒ 这一台签的请求必须放行 ✗（⭐ 而且不必再出示共用口令 ✓）：{body}"
+        );
+
+        // ② ⛔ 签名改一个字节 ⇒ 不许过（⭐ 这一档**没有口令可退** ⇒ 必然 401 ✓）
+        let mut bad = sig.clone();
+        bad.replace_range(0..2, if sig.starts_with("00") { "11" } else { "00" });
+        let (code, _) = http_get_signed(addr, &target, "dev-peer", ts, &bad);
+        assert_eq!(code, 401, "⛔ 签名被改过 ⇒ 必须 401 ✗");
+
+        // ③ ⛔ 签名绑在**这一条请求**上 ⇒ 换一条 target 不许过 ✓
+        let other = format!("/mesh/pull?space_id={space}&since=5&limit=10");
+        let (code, _) = http_get_signed(addr, &other, "dev-peer", ts, &sig);
+        assert_eq!(code, 401, "⛔ 签名绑在「这一条请求」上 ✗（换 target 不许过 ✓）");
+
+        // ④ ⛔ 过期的时间戳 ⇒ 不许过（⭐ "旧包重放"那一条 ✓）
+        let stale_ts = now - AUTH_WINDOW_MS - 1;
+        let stale = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &target, stale_ts).unwrap();
+        let (code, _) = http_get_signed(addr, &target, "dev-peer", stale.0, &stale.1);
+        assert_eq!(code, 401, "⛔ 过期签名不许过 ✗（窗口 {} ms）", AUTH_WINDOW_MS);
+
+        // ⑤ ⛔ **没登记过的那一台**签的 ⇒ 不许过（⭐ 换个 device_id 就用同一把钥匙签 ✓）
+        let ghost = crate::mesh::sign_request(&c, "dev-ghost", space, "GET", &target, now).unwrap();
+        let (code, _) = http_get_signed(addr, &target, "dev-ghost", ghost.0, &ghost.1);
+        assert_eq!(code, 401, "⛔ 这个空间里没登记过它的公钥 ⇒ 不许过 ✗");
+
+        // ⑥ ⭐⭐ **出站那一侧**（`pull_from_peer` 自己拼的 target ✓）也必须过 ✗ ——
+        //    ⭐ 这条判据钉的是「⭐ 签的那串」与「⭐ 门重建的那串」**逐字相同** ✓：
+        //    ⛔ 两处各拼一份 URL ⇒ 一漂就 401，而"只测纯函数"照不出来 ✓。
+        let peer = MeshPeer { device_id: "dev-me".to_string(), base: format!("http://{addr}") };
+        let out_target = crate::mesh::pull_target(space, 0);
+        let (ts2, sig2) = crate::mesh::sign_request(&c, "dev-peer", space, "GET", &out_target, now)
+            .expect("签一份");
+        let rows = crate::mesh::pull_from_peer(
+            &reqwest::Client::new(),
+            &peer,
+            space,
+            0,
+            None,
+            Some(("dev-peer", ts2, &sig2)),
+        )
+        .await
+        .expect("⭐ 出站签名的 target 必须与门重建的那一串逐字相同（差一个字符就是 401）");
+        assert!(rows.is_empty(), "这个空间里还没有记录 ⇒ 拉回来是空的一批 ✓（但**放行了** ✓）");
+
+        // ⑦ ⭐⭐ **撤回必须真的生效** ✗（⭐ 走**生产那一半**：`sync::device_unpair_at` ✓）——
+        //    ⚠️ 这一条是上一轮查出来的那个洞（"库里删了、**跑着的门**还认"✓）在新那一档上的对照组 ✓：
+        //    ⭐ 同一个签名**立刻**就该 401 ✓（⛔ 不必重启门 ✗）。
+        // ⚠️ 夹具**不许**用 `INSERT OR IGNORE` ✗：`workspaces` 有 NOT NULL 且**无默认**的列
+        //   （`created_at` / `updated_at` ✓）⇒ 少给一列会被它**静默吞掉** ✓
+        //   （实测踩到：夹具没插进去 ⇒ 报出来的是"没有同步档案"这种**误导**的话 ✓）⇒ ⭐ 一律大声失败 ✓。
+        c.execute_batch(
+            "INSERT INTO meta.workspaces (id, name, created_at, updated_at) VALUES ('ws-sig', '个人', 0, 0);
+             INSERT INTO meta.sync_profiles (ws_id, space_id, mesh_room) VALUES ('ws-sig', '', 'room-sig-1');",
+        )
+        .unwrap();
+        let st = crate::sync::device_unpair_at(&c, Some("ws-sig"), "dev-peer").expect("撤回不许报错");
+        assert!(st.was_paired, "它本来在名单里（不然这条判据量的是空气）");
+        let (code, _) = http_get_signed(addr, &target, "dev-peer", ts, &sig);
+        assert_eq!(
+            code, 401,
+            "⛔ 撤回之后**同一个签名必须立刻不认** ✗（⭐ 库里删了 ＋ ⭐ 跑着的门里也摘掉 ✓ —— 缺一件就是'删了等于没删' ✓）"
+        );
+
+        crate::mesh::stop_window(space).unwrap();
+    }
+
+    /// ⭐⭐ **2026-10-12（设备身份第 3 步）的核心判据**：
+    /// ⭐ **单方信任 ⇒ 同步是单向的** ✗；⭐ **两边都信任 ⇒ 双向** ✓。
+    ///
+    /// 这是 owner 那句话的**代码表达式**（逐字：「『信任这台设备』是『**允许它来拿我的**』」✓
+    /// ＋「**单方信任时，同步就是单向的**」✓）—— ⭐ 两台机器（两个目录 ＋ 两扇真门 ✓）✓。
+    ///
+    /// ⚠️ 它**取代**了「甲」那半（旧口径：点一下 ⇒ 对面一露脸就**自动替它同意** ⇒ 悄悄变双向 ✓）。
+    #[tokio::test]
+    async fn one_sided_trust_opens_one_direction_only() {
+        let dir_a = temp_dir("trust-oneway-a");
+        let dir_b = temp_dir("trust-oneway-b");
+        for d in [&dir_a, &dir_b] {
+            std::fs::create_dir_all(crate::db::spaces_dir(d)).unwrap();
+            drop(crate::db::open_meta_conn_at(d).unwrap());
+        }
+        let ca = crate::db::open_space_conn_at("default", &dir_a).unwrap();
+        let cb = crate::db::open_space_conn_at("default", &dir_b).unwrap();
+        crate::sync::set_meta_state(&ca, "device_id", "dev-a").unwrap();
+        crate::sync::set_meta_state(&cb, "device_id", "dev-b").unwrap();
+        let ida = crate::device_key::load_or_create(&ca).unwrap();
+        let idb = crate::device_key::load_or_create(&cb).unwrap();
+        let space = "room-oneway";
+
+        // ⭐ **A 点一次「信任这台设备」（对象 ＝ B）** ✗ —— ⭐ 生产的落点是 `pair_pubkey`
+        //   ＋ `add_paired_pubkey` ✓；这里先只写库 ✓（⭐ 门在**下面才开** ⇒ 开门时载卡 ✓）。
+        crate::db::pair_pubkey(&ca, "", "dev-b", &idb.public_key_hex()).unwrap();
+
+        // ⚠️⚠️ **一次只开一扇门** ✗（本仓写过这条：`add_paired*` 是"按**服务哪个空间**找门、
+        //   取**第一个**命中的" ✓ ⇒ 两扇门同时服务同一空间时，登记可能落进**另一扇门** ✓
+        //   ⇒ 判据会"看起来全绿、其实什么都没证明"✗ —— R110 那条判据里记着同一个坑 ✓）。
+        let near = |dev: &str, addr: SocketAddr| MeshPeer {
+            device_id: dev.to_string(),
+            base: format!("http://{addr}"),
+        };
+        let client = reqwest::Client::new();
+        let sign = |c: &Connection, dev: &str| {
+            let target = crate::mesh::pull_target(space, 0);
+            let (ts, sig) =
+                crate::mesh::sign_request(c, dev, space, "GET", &target, crate::db::now_ms()).unwrap();
+            (ts, sig)
+        };
+        // ⚠️ 出站那一趟**不抽闭包** ✗：它要把 `client` ／ `space` 借进 `async` 块 ✓
+        //   ⇒ 与后面那几处直用**借不开** ✓（实测：`value borrowed here after move` ✓）。
+
+        // ─── ① 只有 A 的门开着（A 的库里已经有 B 的公钥 ✓）───
+        let addr_a =
+            ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-a", "127.0.0.1:000", &dir_a)
+                .unwrap()
+                .expect("A 的门要起得来");
+        // ⭐ **B 来拿 A 的** ⇒ 放行 ✓（⭐ A 允许了它 ✓ —— 这一条就是"单方"的那个方向 ✓）
+        let (tb, sb) = sign(&cb, "dev-b");
+        let ok = crate::mesh::pull_from_peer(
+            &client,
+            &near("dev-a", addr_a),
+            space,
+            0,
+            None,
+            Some(("dev-b", tb, &sb)),
+        )
+        .await;
+        assert!(ok.is_ok(), "⛔ A 点了「允许 B 来拿」⇒ **B 必须进得来** ✗：{ok:?}");
+        // ⛔ 没被允许过的第三台 ⇒ 进不来 ✓（⭐ 换个设备号用同一把钥匙签 ✓）
+        let tgt = crate::mesh::pull_target(space, 0);
+        let (tc, sc) =
+            crate::mesh::sign_request(&ca, "dev-c", space, "GET", &tgt, crate::db::now_ms()).unwrap();
+        let ghost = crate::mesh::pull_from_peer(
+            &client,
+            &near("dev-a", addr_a),
+            space,
+            0,
+            None,
+            Some(("dev-c", tc, &sc)),
+        )
+        .await;
+        assert!(ghost.is_err(), "⛔ 没被允许过的那台不许进 ✗：{ghost:?}");
+        // 关掉 A 的门（此刻只有它在服务这个空间 ⇒ 摘的就是它 ✓）
+        stop_window(space).unwrap();
+
+        // ─── ② 换成只有 B 的门开着（B 的库里**还没有** A 的公钥 ✓）───
+        let addr_b =
+            ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-b", "127.0.0.1:0000", &dir_b)
+                .unwrap()
+                .expect("B 的门要起得来");
+        // ⛔ **A 去拿 B 的** ⇒ **进不来** ✗（⭐ B 还没允许过 A ✓ ⇒ 单向 ✓）
+        let (ta, sa) = sign(&ca, "dev-a");
+        let blocked =
+            crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)))
+                .await;
+        assert!(
+            blocked.is_err(),
+            "⛔ **单方信任必须是单向的** ✗ —— A 还没被 B 允许 ⇒ 它**不许**拿得到 B 的东西 ✓：{blocked:?}"
+        );
+        assert!(
+            format!("{blocked:?}").contains("401"),
+            "⭐ 而且挡它的理由是 401（不是网络故障 ✓）：{blocked:?}"
+        );
+
+        // ─── ③ ⭐ **B 也点一次（允许 A）** ⇒ ⭐ 双向 ✓，而且 **B 的门不用重启** ✗ ───
+        crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
+        // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
+        crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
+        let (ta2, sa2) = sign(&ca, "dev-a");
+        let both =
+            crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta2, &sa2)))
+                .await;
+        assert!(both.is_ok(), "⭐ 两边都允许过 ⇒ **必须双向** ✓（⭐ 门没重启 ✓）：{both:?}");
+
+        stop_window(space).unwrap();
     }
 
     /// ⭐⭐ **R110（owner 2026-10-02 拍 A）的端到端判据：一趟配对 ⇒ 两个方向都通** ✓。
@@ -4057,7 +5104,7 @@ mod tests {
         //    `0.0.0.0:0` 已各有其主 ⇒ 这里用 `…:00`（**另一个键、同一个临时端口** ✓）：键不同才不会
         //    与别人共用一扇门，而端口 0 仍是系统的临时端口 ✓。
         let mk = |bind: &str, dir: &std::path::PathBuf, dev: &str| {
-            ensure_window(&[("default".to_string(), "proto-r110".to_string())], dev, bind, dir)
+            ensure_window(&[("default".to_string(), "proto-r110".to_string(), false)], dev, bind, dir)
                 .unwrap()
                 .expect("窗口应当起得来")
         };
@@ -4067,10 +5114,37 @@ mod tests {
         assert!(addr_a0.port() > 0, "甲的门要真的绑上端口（不然下面那次「当场加进去」无从谈起）");
 
         // ② ⭐ **走真产出内核**（＝ `device_pair_export` 那一步 ✓）：真载荷 ＋ 生成时登记
-        let payload = crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-jia", "dev-yi").unwrap();
+        //   ⭐ 2026-10-12（1C）：载荷**必须带公钥** ✗（不带 ⇒ 解码就拒 ✓）——
+        //     ⚠️ 夹具借甲自己那把钥匙当"乙的公钥" ✓（⭐ 这一格量的是"登记 → 验签放行"那条链 ✓）。
+        let id_yi = crate::device_key::load_or_create(&ca).unwrap();
+        let mut payload =
+            crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-jia", "dev-yi").unwrap();
+        crate::pairing::stamp_pubkey(&mut payload, &id_yi.public_key_hex()).unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
-        let added = crate::sync::apply_device_pair_export(&ca, "proto-r110", "dev-yi", secret).unwrap();
+        // ⭐ 2026-10-12（1C 第 ②-b 片）：⭐ 生成时登记也要交**乙那把公钥** ✗（它来自界面 ✓）——
+        //   ⭐ 于是"一趟配对、两个方向都通"在新模型下照样成立 ✓（落点换成**钥匙** ✓）。
+        let added = crate::sync::apply_device_pair_export(
+            &ca,
+            "proto-r110",
+            "dev-yi",
+            secret,
+            false,
+            &id_yi.public_key_hex(),
+        )
+        .unwrap();
         assert!(added, "甲的门正开着 ⇒ 生成时登记的新卡必须**当场**加进去 ✓");
+        // ⭐⭐ **2026-10-12（1C 第 ②-b 片）的命门** ✗：⭐ 生成时登记的那把**公钥**必须**当场**生效 ✓ ——
+        //   ⭐ 乙此后**凭签名**（⛔ 不带任何口令 ✗）就得进得来 ✓。
+        //   ⚠️ 夹具借甲自己那把钥匙当"乙的公钥" ✓（这一格量的是"登记 → 验签放行"那条链 ✓）。
+        let pull_r110 = "/mesh/pull?space_id=proto-r110&since=0&limit=100";
+        let (ts_e, sig_e) =
+            crate::mesh::sign_request(&ca, "dev-yi", "proto-r110", "GET", pull_r110, crate::db::now_ms())
+                .unwrap();
+        let (code, body) = http_get_signed(addr_a0, pull_r110, "dev-yi", ts_e, &sig_e);
+        assert_eq!(
+            code, 200,
+            "⛔ 生成时登记的**公钥**必须当场生效 ✗（⭐ 1C 之后「一趟配对两个方向都通」靠的就是它 ✓）：{body}"
+        );
 
         // ⚠️⚠️ **这里必须先把甲的门关掉**（判据自己差点把缺口糊住 —— 第一版就栽在这 ✓）：
         //   `mesh::add_paired` 是按「**服务哪个空间**」找门的，而它取的是**第一个**命中的 ✓。
@@ -4092,7 +5166,16 @@ mod tests {
             panic!("给本机的码应当能采纳：{decision:?}")
         };
         assert_eq!(peer_device_id, "dev-jia");
-        crate::sync::apply_device_pair_import(&cb, "proto-r110", &peer_device_id, &bind, &token).unwrap();
+        crate::sync::apply_device_pair_import(
+            &cb,
+            "proto-r110",
+            &peer_device_id,
+            &bind,
+            &token,
+            false,
+            &id_yi.public_key_hex(),
+        )
+        .unwrap();
         crate::mesh::stop_window("proto-r110").unwrap(); // 幂等：此刻没有门在服务它 ✓
 
         // ④ **两扇门各自重开**（卡由 `load_cards` 从**各自的库**里载 ✓ ⇒ 不再靠内存里的临时状态 ✓）

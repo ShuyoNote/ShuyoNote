@@ -59,6 +59,12 @@ function render(over: Partial<TrustDevicePanelProps> = {}) {
     localSpaces: { kind: "ok", value: [{ id: "w1", name: "工作" } as LocalSpace] },
     mergeOverlap: { kind: "ok", value: { mergedCount: 3, unmergedOverlapCount: 3 } },
     deviceCode: { kind: "ok", value: { code: "4821 7390 1562 8473 0291", verified: true } },
+    // ⭐ 2026-10-11（任务 B）：⭐ "走到哪一步"那一格 ✓（默认给**还没开始** ✓ —— 但⛔ 它只来自**读数** ✗：
+    //    `unavailable` 那一档另有判据（见下面"读不到 ≠ 还没开始"那条 ✓）。
+    trustState: {
+      kind: "ok",
+      value: { state: "idle", message: "还没有信任过哪台设备", active: false, pending: 0 },
+    },
     ...over,
   };
   host = document.createElement("div");
@@ -145,12 +151,16 @@ describe("TrustDevicePanel · 图① 接入（不勾就不会动）", () => {
     expect(line()).toContain("1 个未分类");
   });
 
-  it("⑤ 三句文案是**给用户看的人话**（不是图上那三句残留 ✗）", () => {
+  it("⑤ 三句文案是**给用户看的人话**（不是图上那三句残留 ✗）＋ ⭐ 说的是**方向**（第 3 步口径 ✓）", () => {
     render();
     const t = text();
     expect(t).toContain("由它自己挑选：");
-    expect(t).toContain("两台设备之间已重新建立信任");
-    expect(t).toContain("由你决定，我不再询问");
+    // ⭐ 2026-10-12（第 3 步改口径 ✗）：旧那两句（「两台设备之间已重新建立信任」／
+    //   「由你决定，我不再询问」）**声称的是双向** ✗ ⇒ 与 owner「允许它来拿我的」矛盾 ⇒ 换成方向性的话 ✓
+    expect(t).toContain("允许它来拿我的");
+    expect(t).toContain("它那边也要点一次");
+    // ⛔ 而且**不许**再出现"已经建立信任"这类**双向**的说法 ✗（单方只开一个方向 ✓）
+    expect(t).not.toContain("已重新建立信任");
     // ⛔ 那三句**不许**再出现在界面上（它们的落点已经换了 ✓）
     for (const bad of ["要它自己挑选的", "再聚首", "你选你不问我"]) {
       expect(t, `界面上不该再出现「${bad}」`).not.toContain(bad);
@@ -261,8 +271,54 @@ describe("TrustDevicePanel · 图⑥ 笔记本有哪些空间（同名只出现�
   });
 });
 
-describe("TrustDevicePanel · 文案红线（与 owner 口径同一把尺）", () => {
-  it("① ⛔ 界面上一个字都不许出现（那四个词见文件头：拆开拼的 ✓）", () => {
+describe("TrustDevicePanel · 图④ 走到哪一步（任务 B：读数是后端的，⛔ 界面不猜）", () => {
+  it("① 读数说通了 ⇒ 显示「已经通了」＋ 后端那句话", () => {
+    render({
+      trustState: {
+        kind: "ok",
+        value: { state: "trusted", message: "已经建立信任：它会直接连", active: false, pending: 0 },
+      },
+    });
+    expect($('[data-testid="trust-state-value"]')?.textContent ?? "").toContain("已经通了");
+    expect($('[data-testid="trust-state-message"]')?.textContent ?? "").toContain("已经建立信任");
+    // ⭐ 状态是**机器读的那一格** ✓：换成 idle ⇒ 同一句人话也不许再显示"已经通了" ✓
+    render({
+      trustState: {
+        kind: "ok",
+        value: { state: "idle", message: "还没开始信任任何设备", active: false, pending: 0 },
+      },
+    });
+    expect($('[data-testid="trust-state-value"]')?.textContent ?? "").toContain("还没开始");
+    expect(text()).not.toContain("已经通了");
+  });
+
+  it("② 有设备在等采纳 ⇒ 如实说出**条数**（⛔ 不显示任何设备号）", () => {
+    render({
+      trustState: {
+        kind: "ok",
+        value: { state: "trusted", message: "已经建立信任", active: true, pending: 2 },
+      },
+    });
+    expect($('[data-testid="trust-state-pending"]')?.textContent ?? "").toContain("2");
+    // ⭐ 2026-10-12（第 3 步改口径）：⭐ 那一行的含义变了 —— 从「它请求你同意」变成
+    //   「**它允许了你来拿它的**」✗（⭐ 单方 ⇒ 单向 ✓）⇒ 文案与断言同时改 ✓。
+    expect(text()).toContain("允许了你");
+    expect(text()).toContain("单向");
+    // ⛔ 只给条数：读数里根本没有设备号这一格 ✓（这条判据同时钉住形状 ✓）
+    expect(text()).not.toMatch(/dev-[0-9a-f]{4,}/);
+  });
+
+  it("③ ⭐⭐ 命门：读数取不到 ⇒ 只说「读不到」⇒ ⛔ 绝不许写成「还没开始」", () => {
+    render({ trustState: { kind: "unavailable", reason: "后端那一格没回" } });
+    const t = $('[data-testid="trust-state-unavailable"]')?.textContent ?? "";
+    expect(t).toContain("读不到");
+    expect($('[data-testid="trust-state"]'), "取不到时⛔ 不许有「走到哪一步」那一格").toBeNull();
+    // ⛔ 「读不到」≠「还没开始」：后者是**一个结论** ✓，前者**没有结论** ✓（与那四条读数同一把尺 ✓）
+    expect(text()).not.toContain("还没开始");
+  });
+});
+
+describe("TrustDevicePanel · 文案红线（与 owner 口径同一把尺）", () => {  it("① ⛔ 界面上一个字都不许出现（那四个词见文件头：拆开拼的 ✓）", () => {
     render();
     for (const w of BANNED) {
       expect(text(), `界面上不该出现那个词：${w}`).not.toContain(w);

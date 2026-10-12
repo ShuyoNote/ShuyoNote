@@ -253,3 +253,32 @@ describe("hasLookupChars / normalizeSelection", () => {
     expect(normalizeSelection("  Apple. ")).toBe("Apple.");
   });
 });
+
+describe("⭐ 词库文本里的字面 `\\n` ⇒ 真换行（真机验收抓到的用户可见 bug ✗）", () => {
+  /** 逐字取自验收包 `06-dict-real.png` 那张卡（划中 `acceptance` ✓）。
+   *  ⚠️ 这里是**字面**反斜杠＋n（两个字符 ✓）—— 不是真换行 ✓。 */
+  const RAW = "n.接受，接纳，承认，同意，赞同，容忍，相信\\n[经]承兑，认付，(工程)验收";
+
+  it("① 数据这一侧：它确实是**转义序列**（两个字面字符 ✗）—— 钉住「该在展示层解」这个前提 ✓", () => {
+    expect(RAW).toContain("\\n");
+    expect(RAW).not.toContain("\n");
+  });
+
+  it("② 展示这一侧：`presentOutcome` 吐**真换行** ✓，且**不含**字面 `\\n` ✓（⛔ 屏上不许再出现那两个字符 ✗）", () => {
+    const p = presentOutcome({
+      ...found,
+      query: "acceptance",
+      matched: "acceptance",
+      entry: { ...found.entry, word: "acceptance", translation: RAW, definition: "" },
+    });
+    expect(p.body).toContain("\n");
+    expect(p.body).not.toContain("\\n");
+    expect(p.body.split("\n")).toHaveLength(2);
+    expect(p.body.split("\n")[0]).toContain("接纳");
+    expect(p.body.split("\n")[1]).toContain("承兑");
+  });
+
+  it("③ 没有转义的文本**一个字符都不动** ✓（⛔ 别顺手改排版 ✗）", () => {
+    expect(presentOutcome(found).body).toBe("n. 苹果");
+  });
+});

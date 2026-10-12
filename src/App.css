@@ -1427,6 +1427,33 @@ html[data-platform="win"] .app-body {
   border-radius: var(--radius-md);
   background: var(--card-bg);
 }
+
+/* ⭐ 2026-10-11（owner：「参照效果图实现」／「把同步面板做好」）：⭐ 「严格模式（高级）」那一层折叠 ✓
+   —— 效果图把配对那串码收在它底下 ✓，⭐ 所以它得**看起来像这个面板自己的东西** ✓。
+   ⚠️ 与 `.sync-row` 同一套外观语言 ✗（⭐ 同样藏掉 webkit 的三角 ✓、⭐ 同样 hover 变强调色 ✓、⭐ 同样 8px 间距 ✓），
+      ⭐ 但**不套外框** ✗ —— ⭐ 它嵌在别的折叠**里面** ✓，⭐ 再加一圈边就成了"盒子里还有个盒子" ✓
+      （⭐ 效果图上它就是一条朴素的可展开行 ✓）。 */
+.sync-advanced {
+  margin-top: 8px;
+}
+.sync-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.sync-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.sync-advanced > summary:hover {
+  color: var(--accent);
+}
+.sync-advanced[open] > summary {
+  color: var(--text);
+}
 .sync-row > summary {
   display: flex;
   align-items: center;
@@ -24704,14 +24731,31 @@ body.is-plugin-panel-open .main {
 }
 .mcap-bar-btn {
   flex: 0 0 auto;
+  /* ⭐ 2026-10-10：改成**图标在上、文字在下**（效果图形态 ✓）—— ⛔ **命中区不许缩** ✗：
+     `min-height` 仍是 **44** ✓（门禁按元素自己量 ✓），宽仍是 54 ✓（见下面的 padding 与图标宽 ✓）。 */
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
   min-height: 44px;
-  padding: 0 12px;
+  padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 12px;
   background: var(--surface);
   color: var(--text);
-  font-size: 14px;
+  font-size: 11px;
   white-space: nowrap;
+}
+.mcap-bar-icon {
+  display: block;
+  line-height: 0;
+}
+.mcap-bar-label {
+  display: block;
+  font-size: 11px;
+  line-height: 1.1;
+  color: inherit;
 }
 .mcap-bar-btn:active {
   background: var(--accent-soft);
@@ -25500,6 +25544,10 @@ body.is-plugin-panel-open .main {
   line-height: 1.7;
   color: var(--text);
   overflow-wrap: anywhere;
+  /* ⭐ 2026-10-10：词库释义里的换行要**真的换行** ✓（`lookup.ts` 的 `decodeDictNewlines` 解出真换行 ✓）。
+     ⚠️ 用 `pre-line`（**保留换行、折叠多余空格、仍自动折行** ✓）而不是 `pre-wrap`/`pre` ✗ ——
+     释义是**成句的长文本** ✓，`pre-wrap` 会让它不折行 ⇒ 横向冲出卡片 ✗。 */
+  white-space: pre-line;
 }
 .mdict-actions {
   display: flex;

@@ -928,7 +928,7 @@ pub fn list_all_pdf_attachments(
 }
 
 #[tauri::command]
-pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<(), String> {
+pub fn remove_attachment(app: tauri::AppHandle, db: State<'_, Db>, id: String) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     remove_attachment_inner(&db, &app_data_dir, &id)
 }
@@ -982,17 +982,25 @@ fn remove_attachment_inner(
     db: &State<'_, Db>,
     app_data_dir: &Path,
     id: &str,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let other_refs = other_spaces_refs(db);
     remove_attachment_inner_with(db, app_data_dir, id, &other_refs)
 }
 
+/// 删一行附件，**返回实际删掉的条数**（`1` = 真删到了，`0` = 本来就没有这一行 ✓）。
+///
+/// ⭐ **2026-10-12（owner 拍：「丙 幂等但返回『删了 0 条』」）**：
+///   · **保持幂等** —— 按 id 查不到**不是错** ✗（重复点、别处已删、跨空间同步删过都会走到这里 ✓）；
+///   · 但要**如实报读数** ✓ ⇒ 让界面**自己决定**提示什么 ✓。
+/// ⛔ 从前这里回 `Ok(())` ✗：前端无从分辨"真删了"和"什么都没删" ⇒ 界面照样 `toast("已移除文件")`
+///   ＋ 把那一行从列表里抹掉 ⇒ **无声假成功**（重进文件管理它又回来 = 用户说的「删不掉」✓）。
+///   判据：`src/components/fileManagerDelete.test.ts` 的「后端如实报告『删了 0 条』」那一格 ✓。
 fn remove_attachment_inner_with(
     db: &State<'_, Db>,
     app_data_dir: &Path,
     id: &str,
     other_refs: &Option<std::collections::HashSet<String>>,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let c = db.0.lock().expect("db mutex poisoned");
     let space = active_space_id(&c);
     let hash: Option<String> = c
@@ -1004,7 +1012,8 @@ fn remove_attachment_inner_with(
         .optional()
         .map_err(|e| e.to_string())?;
     let Some(hash) = hash else {
-        return Ok(());
+        // 查不到这一行 ⇒ **幂等返回 0**（不是错 ✓，见上面的 owner 口径）。
+        return Ok(0);
     };
 
     c.execute("DELETE FROM attachments WHERE id = ?1", params![id])
@@ -1037,11 +1046,17 @@ fn remove_attachment_inner_with(
             let _ = std::fs::remove_file(p);
         }
     }
-    Ok(())
+    // 真删到了这一行 ⇒ 1（查不到那条路在上面 `return Ok(0)` ✓）。
+    Ok(1)
 }
 
 /// Batch-remove attachments. Each is deleted via the same zero-reference rule:
 /// its disk bytes are freed only when no row references the hash anymore.
+///
+/// ⭐ **2026-10-12（owner 拍的口径）**：返回值是**实际删掉的条数** ✓ —— 从前这里是
+/// `removed += 1` **按传进来的 id 计** ✗ ⇒ 与 Web 那份（`src/lib/platform/web.ts` 的
+/// `if (!row) continue;`）**口径不一致**，而且前端 `FileManagerView.tsx` 的
+/// `if (n !== fileCount)` 那条读数提示**永远不会触发** ✗（等于这个读数一直是死的 ✓）。
 #[tauri::command]
 pub fn remove_attachments(app: tauri::AppHandle, db: State<'_, Db>, ids: Vec<String>) -> Result<usize, String> {
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -1049,8 +1064,9 @@ pub fn remove_attachments(app: tauri::AppHandle, db: State<'_, Db>, ids: Vec<Str
     let other_refs = other_spaces_refs(&db);
     let mut removed = 0usize;
     for id in &ids {
-        remove_attachment_inner_with(&db, &app_data_dir, id, &other_refs)?;
-        removed += 1;
+        if remove_attachment_inner_with(&db, &app_data_dir, id, &other_refs)? == 1 {
+            removed += 1;
+        }
     }
     Ok(removed)
 }

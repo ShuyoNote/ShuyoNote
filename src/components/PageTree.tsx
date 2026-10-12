@@ -16,7 +16,16 @@ import { PluginMenuItems } from "./PluginMenuItems";
 const TREE_MENUS_CLOSE_EVT = "shuyo:close-tree-menus";
 function closeOtherTreeMenus() {
   try {
-    window.dispatchEvent(new Event(TREE_MENUS_CLOSE_EVT));
+    // ⚠️ **派发目标必须与监听目标同源**：两处监听都挂在 `document` 上
+    //    （页面行 `TreeItem` 与文件行 `TreeFiles` 各一处 `document.addEventListener(TREE_MENUS_CLOSE_EVT, …)`，
+    //     摘也是 `document.removeEventListener`）✓。
+    // ⭐ 2026-10-12 修（判据 `src/components/treeMenuSingle.test.ts`）：这里原来是
+    //    `window.dispatchEvent(...)` ✗ —— 按 DOM 事件路径，**在 `window` 上派发的事件不会下行到 `document`**
+    //    ⇒ 上面那些监听**一次都收不到** ⇒ 右键 A 行、再右键 B 行 ⇒ **两份菜单并存** ✗（owner 截图那一幕 ✓）。
+    //    实测（happy-dom 与真 Chromium 一致）：同一件事派到 `window` ⇒ `document` 上的监听命中 **0** 次 ✓。
+    // ⛔ **别改回 `window`** ✗；若将来把监听搬到 `window`，在 `document` 上派发**照样能到**
+    //    （事件路径沿 `document → window` 上行 ✓）——反过来**不行** ✗（今天就是栽在这条单向性上）。
+    document.dispatchEvent(new Event(TREE_MENUS_CLOSE_EVT));
   } catch {
     /* ignore */
   }
@@ -105,7 +114,9 @@ const ICON = {
   plus: "M12 5v14M5 12h14",
   folder: "M3 5h6l2 3h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z",
   trash: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0l-.8 14a1 1 0 0 1-1 .9H7.8a1 1 0 0 1-1-.9L6 6M10 11v6M14 11v6",
-  // ⭐ 2026-10-11 加：给页行右键菜单的「导入 Word 文档…」用 ✓（⭐ 原来这一档没有 ✓）
+  // ⭐ 2026-10-11 加：给页行右键菜单的「**转成笔记**」用 ✓（⭐ 原来这一档没有 ✓）。
+  // ⚠️ **2026-10-12 订正**：这里原写「导入 Word 文档…」✗ —— 那是**注释写错了** ✓：
+  //    界面文本一直是 :456 的「转成笔记」✓（⛔ 菜单文本是 owner 定过的 ⇒ 没动 ✗；⛔ 锚定这份注释的判据＝零个 ✓）。
   fileDown: "M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2",
 } as const;
 import { SyncPanel } from "./SyncPanel";
@@ -279,9 +290,17 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
     });
     if (!ok) return;
     try {
-      await api.removeAttachment(f.id);
+      // ⭐ 2026-10-12（owner 拍：**幂等但如实返回"删了 0 条"**）：这条命令现在回**实际删掉的条数** ✓
+      //    （`1` = 真删到 / `0` = 本来就没这一行 ⇒ ⛔ 不报错 ✓）⇒ 提示由界面**自己决定** ✓。
+      const removed = await api.removeAttachment(f.id);
+      // （上面那句 `bumpRevision()` 就是"以重列结果为准" ✓ —— `:203-214` 那个 effect 会重取列表 ✓。）
       useFileManagerStore.getState().bumpRevision();
-      toast("已删除", "success");
+      if (removed === 0) {
+        // 幂等不是错，但⛔不许假装删掉了 ✗（与文件管理器那条 `×` 同一句话 ✓）。
+        toast("这条已经不在文件里了", "info");
+      } else {
+        toast("已删除", "success");
+      }
     } catch (e) {
       toast(`删除失败：${e}`, "error");
     }
@@ -611,6 +630,16 @@ function TreeItem({
         className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragSource ? "tree-row-dragging" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         onMouseDown={(e) => {
+          // ⭐ 2026-10-12 修（判据 `src/components/folderClickView.test.ts`）：**一按下就先清掉
+          //    上一次留下的"吞掉尾随 click"标记** ✓ —— `dragJustFinishedRef`（`:126`）是**模块级
+          //    一次性**的，而清它的**唯一**地方是行上 `handleClick`（`:575-579`）⇒ 只要有**一次**
+          //    收尾 click 没落到行上（按 UI Events，拖 A 行、在 B 行松手时 `click` 派到按下/抬起
+          //    两个 target 的**最近公共祖先** `.sidebar-tree`，`:1575`；另有 `.tree-toggle`
+          //    `:642-647` / `⋯` `:683-692` / 开着的菜单 `:705` 这些 `stopPropagation` 的子树 ✓），
+          //    标记就**永久留真** ✗ ⇒ 下一次点文件夹被整个吞掉 ＝ owner 那句「一动都不动」✓。
+          //    ⚠️ 清零放在这里**不会**把本该吞的那一次也放过去：本次拖拽的置真发生在
+          //    **mouseup 之后**（`:1261-1265` 置真 → `:631` 的 click），而清零在本次 mousedown（更早）✓。
+          dragJustFinishedRef.current = false;
           // ⭐ 2026-10-08（owner 实测「要点两下才出来」✗）：**右键在 mousedown 就开菜单** ✓ ——
           //   窗口未激活时，第一次右键常被系统只用来「激活窗口」⇒ contextmenu 那一击不来 ⇒ 要点两下 ✗。
           //   contextmenu 那半**保留** ✓（有些输入设备只发它 ✓）；两边设同一份 state ⇒ 先到的生效、后到的幂等 ✓。
@@ -688,6 +717,13 @@ function TreeItem({
               e.stopPropagation();
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
               setMenuAnchor({ x: r.right, y: r.bottom });
+              // ⭐ 2026-10-12 修（判据 `src/components/treeMenuSingle.test.ts` 判据②）：
+              //    `⋯` 是**第三个**开菜单的入口，而它原先**不广播** ✗ ⇒「右键 A 行 ⇒ 点 B 行的 ⋯」
+              //    会留下两份菜单（实测 `menuCount = 2` ✗），因为 A 行那条"点别处就关"的监听
+              //    见到目标是 `.tree-more` 就 `return`（它要放行"点自己的 ⋯"✓）⇒ 也不会关 ✓。
+              // ⚠️ **只在"开"这一支广播** ✗——下一行是 **toggle**（`(v) => !v`）：若在 toggle 之前
+              //    无条件广播，本行会先被广播关掉、再被 toggle **打开** ⇒ **点一下收不起来** ✗。
+              if (!menuOpen) closeOtherTreeMenus();
               setMenuOpen((v) => !v);
             }}
           >
@@ -1250,15 +1286,19 @@ export function PageTree(_props: {
       }
     };
     const onUp = async () => {
-      const d = dragRef.current;
       dragRef.current = null;
       if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
       const { draggingId, overId, zone } = useTreeDrag.getState();
       useTreeDrag.getState().end();
       lastOverRef.current = null;
-      // Suppress the trailing click that follows a real drag.
-      if (d?.armed) dragJustFinishedRef.current = true;
+      // ⭐ 2026-10-12 修（判据 `src/components/folderClickView.test.ts`）：吞那次尾随 click 的条件
+      //    从 `d?.armed` 收窄到 **"真的把节点搬走了"** ✓ —— `armed` 只是"挪过 5px"
+      //    （`:1188-1190` ✓，原来那句还留着这段历史：`if (d?.armed) dragJustFinishedRef.current = true;`），
+      //    而 `onMove` 只在 `id !== d.id` 时才认落点（`:1211` ✓）⇒ 一次**没有落点的微动**
+      //    （按下挪了几像素、松手还在同一行）也会把这一击整个吞掉 ✗（既没拖动、也没打开 ✓）。
       if (draggingId && overId) {
+        // Suppress the trailing click that follows a real drag.
+        dragJustFinishedRef.current = true;
         const choice = computeReorder(pages, draggingId, overId, zone ?? "inside");
         if (choice) {
           await useNotes.getState().movePage(draggingId, choice.parentId, choice.sortOrder);
@@ -1269,9 +1309,26 @@ export function PageTree(_props: {
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    // ⭐ 2026-10-12 同族加固（与 `src/editor/plugins/BlockDragPlugin.tsx:243-256` 那条**逐字同形** ✓）：
+    //    `mouseup` **收不到**时（指针在窗外松手 / 中途把窗口切走），`dragRef`（`:1174`）就留在那儿
+    //    ⇒ 之后**没有任何键按下**的一次普通移动（≥5px，`:1188-1190`）会起一个幽灵拖拽、
+    //    再在下一次 `mouseup` 置那个标记 ✗。⇒ 失焦、或"指针回到窗口且 `buttons === 0`"就收尾 ✓
+    //    （真的还按着时 `buttons` 是 1 ✓）。
+    //    ⛔ 这里**只清 `dragRef`**：绝对不许动 `dragJustFinishedRef` ✗（在这里置真＝把下一次
+    //       点击白送给上面那条 ✗）；也不清 `useTreeDrag` —— 幽灵拖拽由下一次 `mouseup` 收尾 ✓。
+    const onWindowBlur = () => {
+      dragRef.current = null;
+    };
+    const onPointerReturn = (e: MouseEvent) => {
+      if (e.buttons === 0) dragRef.current = null;
+    };
+    window.addEventListener("blur", onWindowBlur, true);
+    document.addEventListener("mouseenter", onPointerReturn, true);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onWindowBlur, true);
+      document.removeEventListener("mouseenter", onPointerReturn, true);
       if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

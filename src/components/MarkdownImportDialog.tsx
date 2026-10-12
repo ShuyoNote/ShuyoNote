@@ -25,7 +25,12 @@ export function MarkdownImportDialog({ onClose }: { onClose: () => void }) {
   const importFromFile = async () => {
     try {
       const selected = await platform.dialog.open({
-        title: "选择要导入的文件（Markdown 或 Word 文档）",
+        // ⚠️ owner 2026-10-12（拍「甲：只把话说清」）：⭐ 老二进制 `.doc` **不在这条 filter 里** ✗
+        //    ⇒ 用户**选不到它** ⇒ 那就**必须在这儿说清出路** ✓。
+        //    ⛔ **不许**把 `.doc` 加进 `extensions` ✗：导入链**只解析 docx**（`importPipeline.ts:73`
+        //    直连 `docxToNoteBlocks`）⇒ 加了就变成"**选得到、然后失败**" ✗（判据 `docImport.test.ts` ② 挡这个）。
+        //    措辞与 `src/lib/extract/ooxml.ts:1108` **同口径** ✓（那句已经过 owner 级措辞 ⇒ ⛔ 不新造说法 ✗）。
+        title: "选择要导入的文件（Markdown 或 Word 文档；⚠️ 老格式 .doc 请先用 Word/WPS「另存为 .docx」再导入）",
         filters: [
           { name: "Markdown / Word", extensions: ["md", "markdown", "txt", "docx", "docm"] },
         ],
