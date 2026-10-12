@@ -611,6 +611,16 @@ function TreeItem({
         className={`tree-row ${isCurrent ? "tree-row-active" : ""} ${isSelected ? "tree-row-selected" : ""} ${isDragSource ? "tree-row-dragging" : ""} ${isDragTarget && zone ? `tree-drop-${zone}` : ""}`}
         style={{ paddingLeft: depth * 16 + 8 }}
         onMouseDown={(e) => {
+          // ⭐ 2026-10-12 修（判据 `src/components/folderClickView.test.ts`）：**一按下就先清掉
+          //    上一次留下的"吞掉尾随 click"标记** ✓ —— `dragJustFinishedRef`（`:126`）是**模块级
+          //    一次性**的，而清它的**唯一**地方是行上 `handleClick`（`:575-579`）⇒ 只要有**一次**
+          //    收尾 click 没落到行上（按 UI Events，拖 A 行、在 B 行松手时 `click` 派到按下/抬起
+          //    两个 target 的**最近公共祖先** `.sidebar-tree`，`:1575`；另有 `.tree-toggle`
+          //    `:642-647` / `⋯` `:683-692` / 开着的菜单 `:705` 这些 `stopPropagation` 的子树 ✓），
+          //    标记就**永久留真** ✗ ⇒ 下一次点文件夹被整个吞掉 ＝ owner 那句「一动都不动」✓。
+          //    ⚠️ 清零放在这里**不会**把本该吞的那一次也放过去：本次拖拽的置真发生在
+          //    **mouseup 之后**（`:1261-1265` 置真 → `:631` 的 click），而清零在本次 mousedown（更早）✓。
+          dragJustFinishedRef.current = false;
           // ⭐ 2026-10-08（owner 实测「要点两下才出来」✗）：**右键在 mousedown 就开菜单** ✓ ——
           //   窗口未激活时，第一次右键常被系统只用来「激活窗口」⇒ contextmenu 那一击不来 ⇒ 要点两下 ✗。
           //   contextmenu 那半**保留** ✓（有些输入设备只发它 ✓）；两边设同一份 state ⇒ 先到的生效、后到的幂等 ✓。
@@ -1250,15 +1260,19 @@ export function PageTree(_props: {
       }
     };
     const onUp = async () => {
-      const d = dragRef.current;
       dragRef.current = null;
       if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
       const { draggingId, overId, zone } = useTreeDrag.getState();
       useTreeDrag.getState().end();
       lastOverRef.current = null;
-      // Suppress the trailing click that follows a real drag.
-      if (d?.armed) dragJustFinishedRef.current = true;
+      // ⭐ 2026-10-12 修（判据 `src/components/folderClickView.test.ts`）：吞那次尾随 click 的条件
+      //    从 `d?.armed` 收窄到 **"真的把节点搬走了"** ✓ —— `armed` 只是"挪过 5px"
+      //    （`:1188-1190` ✓，原来那句还留着这段历史：`if (d?.armed) dragJustFinishedRef.current = true;`），
+      //    而 `onMove` 只在 `id !== d.id` 时才认落点（`:1211` ✓）⇒ 一次**没有落点的微动**
+      //    （按下挪了几像素、松手还在同一行）也会把这一击整个吞掉 ✗（既没拖动、也没打开 ✓）。
       if (draggingId && overId) {
+        // Suppress the trailing click that follows a real drag.
+        dragJustFinishedRef.current = true;
         const choice = computeReorder(pages, draggingId, overId, zone ?? "inside");
         if (choice) {
           await useNotes.getState().movePage(draggingId, choice.parentId, choice.sortOrder);
@@ -1269,9 +1283,26 @@ export function PageTree(_props: {
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    // ⭐ 2026-10-12 同族加固（与 `src/editor/plugins/BlockDragPlugin.tsx:243-256` 那条**逐字同形** ✓）：
+    //    `mouseup` **收不到**时（指针在窗外松手 / 中途把窗口切走），`dragRef`（`:1174`）就留在那儿
+    //    ⇒ 之后**没有任何键按下**的一次普通移动（≥5px，`:1188-1190`）会起一个幽灵拖拽、
+    //    再在下一次 `mouseup` 置那个标记 ✗。⇒ 失焦、或"指针回到窗口且 `buttons === 0`"就收尾 ✓
+    //    （真的还按着时 `buttons` 是 1 ✓）。
+    //    ⛔ 这里**只清 `dragRef`**：绝对不许动 `dragJustFinishedRef` ✗（在这里置真＝把下一次
+    //       点击白送给上面那条 ✗）；也不清 `useTreeDrag` —— 幽灵拖拽由下一次 `mouseup` 收尾 ✓。
+    const onWindowBlur = () => {
+      dragRef.current = null;
+    };
+    const onPointerReturn = (e: MouseEvent) => {
+      if (e.buttons === 0) dragRef.current = null;
+    };
+    window.addEventListener("blur", onWindowBlur, true);
+    document.addEventListener("mouseenter", onPointerReturn, true);
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onWindowBlur, true);
+      document.removeEventListener("mouseenter", onPointerReturn, true);
       if (expandTimerRef.current !== null) { window.clearTimeout(expandTimerRef.current); expandTimerRef.current = null; }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
