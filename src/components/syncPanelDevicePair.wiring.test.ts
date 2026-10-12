@@ -83,7 +83,11 @@ describe("T4 · 把这台设备接进来", () => {
     // ③ 可见文案走**短码**（`duCode`）✓ —— ⛔ 不是裸设备号 ✗
     expect(block).toContain("duCode(p.device_id)");
     // ④ ⭐ 选中那一台**真的传给了后端**（`peerDeviceId` ⇒ 生成时登记 ⇒ 一趟就双向 ✓）
+    //   ＋ ⭐ **2026-10-12（1C）**：连**它的公钥**也一起传 ✗ —— ⭐ 1C 之后"登记"的落点就是**钥匙** ✓：
+    //     ⛔ 只传设备号 ⇒ 后端拿不到公钥 ⇒ 只能退回"两台各配一次"（判据在 Rust 那一侧 ✓）。
     const gen = between(SRC, "const dpGenerate = async () => {", "\n  };");
-    expect(gen).toContain("api.devicePairExport(activeId, dpPeer || undefined)");
+    expect(gen).toContain("api.devicePairExport(activeId, dpPeer || undefined, dpPeerRow?.pubkey || undefined)");
+    // ⑤ ⭐ 公钥来自**唯一那处读数**（`nearby` ✓）—— ⛔ 界面不许自己造一个身份 ✗
+    expect(gen).toContain("nearby.find((p) => p.device_id === dpPeer)");
   });
 });

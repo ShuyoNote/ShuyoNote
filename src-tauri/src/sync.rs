@@ -2429,6 +2429,10 @@ pub fn device_pair_export(
     db: State<'_, Db>,
     space_id: String,
     peer_device_id: Option<String>,
+    // ⭐⭐ 2026-10-12（1C）：⭐ **你选中的那一台的公钥** ✗（来自「附近的设备」里它的公告 ✓，非秘密 ✓）。
+    //   ⭐ 有它 ⇒ 生成这一刻就把"**允许它来拿我的**"落下 ✓（＝ R110 那个"一趟配对、两个方向"✓，
+    //   只是落点从"共用口令的哈希"换成**它的钥匙** ✓）。
+    peer_pubkey: Option<String>,
 ) -> Result<DevicePairExportResult, String> {
     let scope = match mesh_scope(&db, Some(space_id.as_str())) {
         Ok(s) => s,
@@ -2487,7 +2491,31 @@ pub fn device_pair_export(
     crate::pairing::stamp_pubkey(&mut payload, &pk)?;
     // ⭐⭐ A 的那一半：**在生成这一刻就把对面登记好** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
     //    ⚠️ 只有"点了对面那一台"才做（没点 ⇒ 本机根本不知道对面是谁 ⇒ 只能走两次配对 ✓）。
-    let registered = apply_device_pair_export(&c, &scope.space, &peer, &token, scope.device_level)?;
+    let peer_pk = peer_pubkey.unwrap_or_default().trim().to_ascii_lowercase();
+    let registered = if peer.is_empty() {
+        false
+    } else {
+        // ⚠️ 1C 之后**对面没报身份** ⇒ 这里会回一句人话（⛔ 不硬凑 ✗）——
+        //   ⭐ 而"这一趟还是要把码给出去"✓ ⇒ 所以**不把整条命令打断** ✗，只如实记下"没登记成"✓
+        //   （⭐ 界面上那句 `message` 会照它说清"这一趟只装对面认你"✓）。
+        match apply_device_pair_export(
+            &c,
+            &scope.space,
+            &peer,
+            &token,
+            scope.device_level,
+            &peer_pk,
+        ) {
+            Ok(v) => v,
+            Err(why) => {
+                eprintln!(
+                    "[pair] ⚠️ 生成时没能替对面登记（{}）⇒ 退回「两台各配一次」：{why}",
+                    peer
+                );
+                false
+            }
+        }
+    };
     let text = crate::pairing::encode_device_pair(&payload)?;
     let check_code = crate::pairing::check_code(&text);
     let qr_fits = crate::pairing::fits_single_qr(&text);
@@ -2809,10 +2837,30 @@ pub(crate) fn apply_device_pair_export(
     secret: &str,
     // ⭐ 2026-10-11（丙）：⭐ 由调用方传进来 ✗（同上：⛔ 本层不反推 ✓）。
     device_level: bool,
+    // ⭐⭐ 2026-10-12（owner 拍「1C 现在就拔掉」）：⭐ **对面那把公钥** ✗ ——
+    //   ⭐ 它就是新模型下"**我允许它来拿我的**"那一行 ✓（`mesh_trust_begin` 同一条落点 ✓）。
+    //   ⚠️ 它只能来自**界面**（「附近的设备」里那一台的公告 ✓）⇒ 由 `device_pair_export` 传进来 ✓；
+    //   ⭐ 拿不到（对面是老版本／不在附近）⇒ ⭐ **如实拒** ✗（⛔ 不硬凑一个 ✗）——
+    //   那样这一趟就退回"两台各配一次"的老路 ✓（⭐ 反正老版本本来也进不来 ✓）。
+    peer_pubkey: &str,
 ) -> Result<bool, String> {
     if peer_device_id.trim().is_empty() {
         return Ok(false);
     }
+    // ⭐ **先把"允许它来拿我的"落下** ✗（行键照同一处判定算 ✓）—— 这一句与新那一档对齐 ✓。
+    let pk = peer_pubkey.trim().to_ascii_lowercase();
+    if !crate::device_key::is_public_key_hex(&pk) {
+        return Err(
+            "选中的那一台**还没报出它的身份**（它需要这一版的程序、并开过一次设备直连）⇒\
+             这一趟只装「**对面认你**」：请在码传到对面之后，让**对面也生成一次码**、你在这台采纳一遍 ✓\
+             （两台各配一次 ⇒ 两个方向都通 ✓）"
+                .to_string(),
+        );
+    }
+    let row = crate::mesh::paired_row_key(proto_space, device_level);
+    crate::db::pair_pubkey(c, row, peer_device_id, &pk)?;
+    crate::mesh::add_paired_pubkey(proto_space, peer_device_id, &pk)?;
+    // ⚠️ 旧那一档**照旧也写** ✓（门那一半还没改 ⇒ 删早了就是"配了也进不来" ✗）。
     remember_peer_card(c, proto_space, peer_device_id, secret, device_level)
 }
 
@@ -9250,8 +9298,11 @@ mod tests {
             "载荷那一格必须拿到**点选的那台**（否则对面不知道这段码是给自己的）"
         );
         assert!(
-            body.contains("apply_device_pair_export(&c, &scope.space, &peer, &token, scope.device_level)?;"),
-            "生成那一刻就要登记（**空间连接** ✓、**远端空间 id** ✓、**选中的那台** ✓）—— A 的意义全在这行"
+            body.contains(
+                "apply_device_pair_export( &c, &scope.space, &peer, &token, scope.device_level, &peer_pk, )"
+            ),
+            "生成那一刻就要登记（**空间连接** ✓、**远端空间 id** ✓、**选中的那台** ✓、\
+             ⭐ **它那把公钥** ✗）—— A 的意义全在这行"
         );
         assert!(
             body.contains("let s = crate::mesh::settings_for(&c, &scope.space, scope.device_level);"),

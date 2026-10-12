@@ -411,8 +411,11 @@ export const api = {
    *   · 传了 ⇒ 本机在**生成这一刻就把它登记好** ⇒ 对面采纳**一次**，**两个方向都通** ✓；
    *   · 不传 ⇒ 走原来那条路（码可以**离线**传，代价是**要配两次** ✓）—— A 是加法，⛔ 不是替换 ✗。
    */
-  devicePairExport: (spaceId: string, peerDeviceId?: string) =>
-    invoke("device_pair_export", { spaceId, peerDeviceId }),
+  // ⭐ 2026-10-12（1C 第 ②-b 片）：多一格 `peerPubkey` ✗ —— ⭐ 生成这一刻就把
+  //   「**允许它来拿我的**」落下 ✓（⭐ 点选那台在「附近的设备」里有公钥 ✓；
+  //   ⚠️ 拿不到 ⇒ 后端如实说、这一趟退回"两台各配一次" ✓）。
+  devicePairExport: (spaceId: string, peerDeviceId?: string, peerPubkey?: string) =>
+    invoke("device_pair_export", { spaceId, peerDeviceId, peerPubkey }),
   /**
    * ⭐ **U11/T5**：**逐台解除** —— 只把那**一台**踢出去（它拉不动你 ✓），
    * 别的设备不受影响 ✓，⛔ 也**不用**给所有设备换口令（那正是 U11 要消灭的旧办法 ✓）。

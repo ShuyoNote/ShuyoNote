@@ -4944,8 +4944,30 @@ mod tests {
             crate::pairing::device_pair_from("0.0.0.0:8788", secret, "dev-jia", "dev-yi").unwrap();
         crate::pairing::stamp_pubkey(&mut payload, &id_yi.public_key_hex()).unwrap();
         let text = crate::pairing::encode_device_pair(&payload).unwrap();
-        let added = crate::sync::apply_device_pair_export(&ca, "proto-r110", "dev-yi", secret, false).unwrap();
+        // ⭐ 2026-10-12（1C 第 ②-b 片）：⭐ 生成时登记也要交**乙那把公钥** ✗（它来自界面 ✓）——
+        //   ⭐ 于是"一趟配对、两个方向都通"在新模型下照样成立 ✓（落点换成**钥匙** ✓）。
+        let added = crate::sync::apply_device_pair_export(
+            &ca,
+            "proto-r110",
+            "dev-yi",
+            secret,
+            false,
+            &id_yi.public_key_hex(),
+        )
+        .unwrap();
         assert!(added, "甲的门正开着 ⇒ 生成时登记的新卡必须**当场**加进去 ✓");
+        // ⭐⭐ **2026-10-12（1C 第 ②-b 片）的命门** ✗：⭐ 生成时登记的那把**公钥**必须**当场**生效 ✓ ——
+        //   ⭐ 乙此后**凭签名**（⛔ 不带任何口令 ✗）就得进得来 ✓。
+        //   ⚠️ 夹具借甲自己那把钥匙当"乙的公钥" ✓（这一格量的是"登记 → 验签放行"那条链 ✓）。
+        let pull_r110 = "/mesh/pull?space_id=proto-r110&since=0&limit=100";
+        let (ts_e, sig_e) =
+            crate::mesh::sign_request(&ca, "dev-yi", "proto-r110", "GET", pull_r110, crate::db::now_ms())
+                .unwrap();
+        let (code, body) = http_get_signed(addr_a0, pull_r110, "dev-yi", ts_e, &sig_e);
+        assert_eq!(
+            code, 200,
+            "⛔ 生成时登记的**公钥**必须当场生效 ✗（⭐ 1C 之后「一趟配对两个方向都通」靠的就是它 ✓）：{body}"
+        );
 
         // ⚠️⚠️ **这里必须先把甲的门关掉**（判据自己差点把缺口糊住 —— 第一版就栽在这 ✓）：
         //   `mesh::add_paired` 是按「**服务哪个空间**」找门的，而它取的是**第一个**命中的 ✓。

@@ -341,9 +341,12 @@ export function SyncPanel() {
     if (!activeId) { setDpNote("先选一个空间"); return; }
     setDpBusy(true);
     try {
-      // ⭐ 选了对面 ⇒ 传它的设备号（本机**生成时就登记** ⇒ 对面采纳一次、两个方向都通 ✓）；
+      // ⭐ 选了对面 ⇒ 传它的设备号 **＋ 它的公钥** ✗（本机**生成时就登记它这把钥匙** ⇒
+      //    对面采纳一次、两个方向都通 ✓ —— ⭐ 1C 之后"登记"的落点就是**钥匙** ✓）；
       //    没选 ⇒ 不传（那条路照旧：码可离线传、要配两次 ✓）
-      const r = await api.devicePairExport(activeId, dpPeer || undefined);
+      //   ⚠️ 点了对面但它**没报身份**（老版本／不在附近）⇒ 后端如实说、这一趟退回两台各配一次 ✓。
+      const dpPeerRow = dpPeer ? nearby.find((p) => p.device_id === dpPeer) ?? null : null;
+      const r = await api.devicePairExport(activeId, dpPeer || undefined, dpPeerRow?.pubkey || undefined);
       setDpExport(r);
       setDpOutcome("idle");
       setDpNote(r.message);
