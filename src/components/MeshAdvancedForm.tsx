@@ -33,9 +33,24 @@ export interface MeshAdvancedFormProps {
   onMeshChanged: (mesh: LanStatus["mesh"]) => void;
 }
 
+/** ⭐ **2026-10-13（owner：「地址那格不是应该自动吗？」＋ Lead 核实＋拍板 ✓）**：
+ *  「地址自动」那半**已经落地**在 Rust（通配放行 `mesh.rs:3075`；枚举 `announced_base mesh.rs:1509`
+ *  ＋ `announced_bases_with_named`（WLAN 排第一）✓；`is_unspecified` 分支 `:1232` ✓）；
+ *  ⚠️ 缺的只是**前端那两下**：默认值是空 ✗、且要"先填再保存"两步 ✗。
+ *  ⭐ 所以这里只做两件（⛔ 不碰协议、⛔ 不改后端那条"默认是关的"判据 `mesh.rs:4067` ✗）：
+ *   ① 没保存过时**预填**这个建议值 ✓（只是让人看见，⛔ 不落库 ✗）；
+ *   ② 给一颗**一键**（`enableAutoBind` ✓）⇒ 一下就开起来 ✓。
+ *  ⚠️ 为什么**不**把网格改成"默认自动开" ✗：绑通配＝**监听所有网卡** ✓ ⇒ 未经用户动作就自动开
+ *    属**安全相关默认值** ✗ ⇒ 本仓规矩"默认值只取零风险" ✓；而设计里的 U6
+ *    「配对后重启两台 ⇒ 无需任何操作即同步」在**保存过之后**已经满足 ✓（窗口在**进程启动**时开 ✓
+ *    `lan_state.rs:748` ✓）。⚠️ U6 的**真机**端到端（重启两台）只归 **P5** ✗ —— loopback 证不了 ✓。
+ */
+export const AUTO_MESH_BIND = "0.0.0.0:8788";
+
 /** 设备直连的三个手填项 ＋ 四个按钮（图⑧ 要把这一块搬去「设置 · 同步 → 高级」）。 */
 export function MeshAdvancedForm({ activeId, lanStatus, onStatus, onMeshChanged }: MeshAdvancedFormProps) {
-  const [meshBind, setMeshBind] = useState("");
+  // ⭐ 预填建议值（⛔ 不落库 ✗）：没保存过时也让人**看见**该填什么 ✓（原来这里是 `""` ✗）。
+  const [meshBind, setMeshBind] = useState(AUTO_MESH_BIND);
   // ⚠️ **2026-10-04 加**（owner：个人空间也要能用设备直连）：⭐ 配对暗号 ✗。
   // ⭐ 网格要一个「两边填一样」的字符串来对暗号 ✓，而个人空间**没有** `space_id`（那在服务器上）
   // ⇒ 这一项就是它的替身 ✓；⭐ 团队空间里 `space_id` 优先 ⇒ 填不填都不影响 ✓。
@@ -43,14 +58,37 @@ export function MeshAdvancedForm({ activeId, lanStatus, onStatus, onMeshChanged 
   const [meshBusy, setMeshBusy] = useState(false);
   const meshSavedBind = lanStatus.mesh.bind ?? "";
   // 只在**读数里的值变了**时回填：用户正在输入时轮询到的是同一份值 ⇒ 不会覆盖他打的字。
+  // ⭐ 2026-10-13：读数里**没有**保存过（`""`）⇒ 回填**建议值** ✓（⛔ 不是空 ✗ —— 空的那格
+  //   正是 owner 那句「不是应该自动吗？」看到的样子 ✓）。
   useEffect(() => {
-    setMeshBind(meshSavedBind);
+    setMeshBind(meshSavedBind || AUTO_MESH_BIND);
   }, [meshSavedBind]);
 
   const saveMeshBind = async () => {
     setMeshBusy(true);
     try {
       const st = await api.meshSetConfig(activeId, meshBind.trim(), null);
+      onStatus(st.note);
+    } catch (e) {
+      onStatus(`网格设置没保存：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMeshBusy(false);
+    }
+  };
+
+  /**
+   * ⭐ **一键**（owner：「地址那格不是应该自动吗？」✓）：用**通配**把网格开起来 ✓。
+   *
+   * ⚠️ 与「保存地址」**同一个命令、同一套参数** ✓（`meshSetConfig(activeId, 通配, null)` ✓ ——
+   *   `null` ＝ 不动「配对暗号」那一项 ✓，与 `api.ts:511-517` 同口径 ✓）；差别只是**它自己带值** ✓
+   *   ⇒ 用户不必先知道该填什么 ✓。
+   * ⛔ 它**不**改任何后端默认值 ✗（默认仍是关的 ✓）：这一下**就是**用户的那次动作 ✓。
+   */
+  const enableAutoBind = async () => {
+    setMeshBusy(true);
+    try {
+      const st = await api.meshSetConfig(activeId, AUTO_MESH_BIND, null);
+      setMeshBind(AUTO_MESH_BIND);
       onStatus(st.note);
     } catch (e) {
       onStatus(`网格设置没保存：${e instanceof Error ? e.message : String(e)}`);
@@ -127,6 +165,23 @@ export function MeshAdvancedForm({ activeId, lanStatus, onStatus, onMeshChanged 
         <button className="sync-btn" disabled={meshBusy || !meshBind.trim()} onClick={() => void saveMeshBind()}>
           保存地址
         </button>
+      </div>
+      {/* ⭐ 2026-10-13（owner 问「不是应该自动吗？」✓）：**一键** ✓ —— 文案要把"这一下到底发生了什么"
+          说清 ✓（Lead 逐字：绑通配 ⇒ 听所有网卡，报出去的地址由系统枚举（换网不用改）✓）。 */}
+      <div className="sync-field">
+        <button
+          className="sync-btn"
+          data-testid="mesh-auto-enable"
+          disabled={meshBusy}
+          onClick={() => void enableAutoBind()}
+        >
+          用自动选开启
+        </button>
+        <span className="sync-hint">
+          {inlineMd(
+            "**绑 0.0.0.0:8788 ⇒ 听所有网卡**：**报出去的地址由系统枚举**（**换网不用改**）✓ —— 一下点开；⛔ 默认仍是关的 ✗（开了才会监听所有网卡 ✓）。",
+          )}
+        </span>
       </div>
       <div className="sync-field">
         <input
