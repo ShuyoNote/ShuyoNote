@@ -326,7 +326,7 @@ describe("修 B：那一行**自己**就是「允许」的入口（owner 现场�
     vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
   });
 
-  it("4) ⭐ `serves_current = true` ⇒ 那一行有一颗可点的「接入」，点它 ⇒ 真的调 `mesh_trust_begin`（新契约）", async () => {
+  it("4) ⭐ `serves_current = true` ⇒ 那一行有一颗可点的「接入」；⭐ 点它 ＋ 点「确认」⇒ 真的调 `mesh_trust_begin`（新契约）", async () => {
     const el = await openPanelWith([peer(true)]);
     const btn = el.querySelector<HTMLButtonElement>('[data-testid="nearby-allow"]');
     expect(
@@ -341,9 +341,23 @@ describe("修 B：那一行**自己**就是「允许」的入口（owner 现场�
       await Promise.resolve();
       flushSync(() => {});
     }
+    // ⭐ **P-4 片②b（2026-10-13）**：⭐ 这一下**不再**直接调它了 ✗ —— ⭐ 时点挪到「码对得上，确认」之后 ✓
+    //   （⭐ 断言**一条没删** ✓ —— 按本仓 R192「换对象不删断言」：只是把"点它"换成"点它 ⇒ 再点确认" ✓，
+    //    下面参数那一格照旧逐字 ✓）。
+    const confirm = el.querySelector<HTMLElement>('[data-testid="pair-confirm"]');
+    expect(
+      confirm,
+      "⭐ 点「接入」之后那一屏要开（P-4 片②a ✓）⇒ 「码对得上，确认」那颗要在 ✓",
+    ).toBeTruthy();
+    flushSync(() => confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+      flushSync(() => {});
+    }
     expect(
       invokeSpy.mock.calls.some((c) => c[0] === MESH_TRUST_BEGIN_COMMAND),
-      "点它必须真的调 `mesh_trust_begin` —— ⛔ 只 `setDpPeer`（老行为）不算 ✓",
+      "点「接入」＋「确认」之后必须真的调 `mesh_trust_begin` —— ⛔ 只 `setDpPeer`（老行为）不算 ✓" +
+        "（⭐ 时点归 P-4 片②b ✓）",
     ).toBe(true);
     const [, args] = invokeSpy.mock.calls.find((c) => c[0] === MESH_TRUST_BEGIN_COMMAND)!;
     expect(args, "spaceId 取**真读数**（活动空间 ✓）；对面那两格取公告 ✓").toEqual({
@@ -919,5 +933,97 @@ describe("P-4 片②a：对码那一屏（只显示、不下结论）", () => {
       bad,
       `⛔ 我这一屏的 JSX 里出现了 Markdown 粗体：${bad?.[0]} ⇒ 请用 <b> 包起来 ✓（⭐ 今晚刚踩过 ✓）`,
     ).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐⭐ **P-4 片②b（2026-10-13）**：⭐ **只挪时点** ✗ —— `trustDevice([activeId], p)` 那一次调用
+//   从「接入」搬进「码对得上，确认」✓（⭐ 命令名／参数／返回值处理**一字未改** ✓）。
+//
+// ⭐ 数次数的地方＝ ⭐ `platform.executor.invoke`（桩＝ `invokeSpy` ✓）—— ⭐ 真因：`trustDevice`
+//   自己就是走它调的（`SyncPanel.tsx:1291` 逐字 `await platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, {…})` ✓）
+//   ⇒ ⭐ 按命令名数**恰好**数得到 ✓（⛔ 不是靠 api 层 ✗）。
+//
+// ⚠️ **①②③ 都是今天的红** ✓（⭐ 今天「接入」那一下**就**把它调了 ✓ ⇒ 三种点法都不对 ✓）；
+//   ⚠️ ⭐ ②**必须按"增量"断言** ✗（⭐ 只断言"确认之后恰好一次"会**假绿** ✓ —— 今天「接入」已经调过一次、
+//   总数也是 1 ✓）⇒ ⭐ 这里记 `before` ／ `after` 两个数，断言**差 = 1** ✓。
+// ⭐ **④ 是锁**（今天已绿 ✓，⛔ 不是本片的修 ✗）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** `mesh_trust_begin` 一共被调了几次 ✓（⭐ 按命令名数 ✓ —— `invokeSpy` 里还有 `mesh_trust_state` 等 ✓）。 */
+const trustBeginCalls = () =>
+  invokeSpy.mock.calls.filter((c) => c[0] === "mesh_trust_begin").length;
+
+/** 点一下那颗 ＋ 等微任务落地（⭐ 与既有那几条同一手法 ✓）。 */
+async function clickAndSettle(el: HTMLElement) {
+  flushSync(() => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  for (let i = 0; i < 3; i++) {
+    await Promise.resolve();
+    flushSync(() => {});
+  }
+}
+
+describe("P-4 片②b：把调用时点挪到「确认」之后（只挪时点）", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+    meshSetConfigSpy.mockReset();
+  });
+
+  const okCode = () => ({ pairCode: { kind: "ok" as const, value: "1234 5678 9012 3456 7890" } });
+
+  it("① ⭐ 点「接入」⇒ `mesh_trust_begin` **零调用**（今天【红】：那一它就调了 ✓）", async () => {
+    const el = await openPanelWith([peer(true)], okCode());
+    const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
+    expect(allow, "夹具前提：那一行的「接入」要在 ✓").toBeTruthy();
+    await clickAndSettle(allow!);
+    expect(
+      el.querySelector('[data-testid="pair-code-screen"]'),
+      "⭐ 点「接入」只**开屏** ✓（⭐ 那是片②a 的既有行为 ✓）",
+    ).toBeTruthy();
+    expect(
+      trustBeginCalls(),
+      "⛔ 人**还没确认** ⇒ ⛔ 一个字节都不许发 ✗（⭐ 今天【红】：那一就调了 `mesh_trust_begin` ✓）",
+    ).toBe(0);
+  });
+
+  it("② ⭐ 点「码对得上，确认」⇒ **恰好多一次**（今天【红】：那一下什么都不做 ✓）", async () => {
+    const el = await openPanelWith([peer(true)], okCode());
+    const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
+    await clickAndSettle(allow!);
+    const before = trustBeginCalls();
+    const confirm = el.querySelector<HTMLElement>('[data-testid="pair-confirm"]');
+    expect(confirm, "⭐ 「码对得上，确认」要在 ✓").toBeTruthy();
+    await clickAndSettle(confirm!);
+    expect(
+      trustBeginCalls() - before,
+      "⭐ 确认之后必须**恰好一次** ✓（⚠️ 按**增量**判 ✓ —— 只判总数会假绿 ✓）",
+    ).toBe(1);
+  });
+
+  it("③ ⭐ 点「取消」⇒ 零调用 ＋ 屏关掉（今天【红】：接入那一已调过一次 ✓）", async () => {
+    const el = await openPanelWith([peer(true)], okCode());
+    const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
+    await clickAndSettle(allow!);
+    const cancel = el.querySelector<HTMLElement>('[data-testid="pair-cancel"]');
+    expect(cancel, "⭐ 「取消」要在 ✓").toBeTruthy();
+    await clickAndSettle(cancel!);
+    expect(el.querySelector('[data-testid="pair-code-screen"]'), "⭐ 取消 ⇒ 那一屏要**关掉** ✓").toBeNull();
+    expect(
+      trustBeginCalls(),
+      "⛔ 从「接入」到「取消」这一路**一个字节都不许发** ✗（⭐ 今天【红】：接入那一就发了 ✓）",
+    ).toBe(0);
+  });
+
+  it("④ 锁（今天已绿 ✓，⛔ 不是本片的修 ✗）：整份 `SyncPanel.tsx`（**先剥注释** ✓）里没有「自动通过」", () => {
+    const code = SYNC_PANEL_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code, "⛔ 不许出现「自动通过」✗（⭐ 状态机里没有这一格 ✓ ⇒ 界面也不许长出一个 ✓）").not.toContain(
+      "自动通过",
+    );
   });
 });

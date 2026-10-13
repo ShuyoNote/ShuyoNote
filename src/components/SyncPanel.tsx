@@ -370,6 +370,9 @@ export function SyncPanel({
   /** ⭐ **P-4 片②a**：那一屏（对码）开着没 ✓ —— ⭐ 由「接入」那一下**顺手打开** ✓
    *  （⚠️ 本片⛔ **不动** `trustDevice` 的调用时点 ✗ —— 那是片②b ✓）。 */
   const [pairScreen, setPairScreen] = useState(false);
+  /** ⭐ **P-4 片②b（2026-10-13）**：⭐ 这一轮要对的是**哪一台** ✗ —— ⭐ 「接入」那一下记下来 ✓，
+   *  ⭐ 「码对得上，确认」那一下才拿它去调 `trustDevice` ✓（⭐ 取消 ⇒ 清掉、一个字节都不发 ✓）。 */
+  const [pairPeer, setPairPeer] = useState<NearbyPeer | null>(null);
   const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
   const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
   const [dpPreview, setDpPreview] = useState<string>(""); // 我们这边算出来的码（给人核对）
@@ -2221,12 +2224,13 @@ export function SyncPanel({
                                   data-testid="nearby-allow"
                                   onClick={() => {
                                     if (!activeId) return;
-                                    setDpPeer(p.device_id);
-                                    // ⭐ **P-4 片②a**：⭐ 顺手把「对码」那一屏打开 ✓
-                                    //   ⚠️ ⛔ 本片**不改**这一下的既有行为 ✗（`setDpPeer` ＋ `trustDevice`
-                                    //   逐字不动 ✓ —— 改时点是片②b ✓）。
+                                    // ⭐ **P-4 片②b（2026-10-13）**：⭐ **时点挪走了** ✗ ——
+                                    //   `setDpPeer(p.device_id)` ＋ `void trustDevice([activeId], p)`
+                                    //   这两步**逐字搬进**「码对得上，确认」那个处理里 ✓（⭐ 命令／参数／
+                                    //   返回值处理一字未改 ✓）；⭐ 这一下现在**只**记下这一台 ＋ 打开那一屏 ✓
+                                    //   ⇒ ⭐ 人**没确认**之前，⭐ 一个字节都不发 ✓。
+                                    setPairPeer(p);
                                     setPairScreen(true);
-                                    void trustDevice([activeId], p);
                                   }}
                                 >
                                   接入
@@ -2455,10 +2459,34 @@ export function SyncPanel({
                 </div>
 
                 <div className="sync-field">
-                  <button className="sync-btn primary" data-testid="pair-confirm" type="button">
+                  <button
+                    className="sync-btn primary"
+                    data-testid="pair-confirm"
+                    type="button"
+                    // ⭐ **P-4 片②b（2026-10-13）**：⭐ **原来那两步搬到这里** ✗ —— 逐字是
+                    //   `setDpPeer(peer.device_id)` ＋ `void trustDevice([activeId], peer)` ✓
+                    //   （⚠️ ⭐ 命令名 `mesh_trust_begin`／参数 `{spaceId, peerDeviceId, peerPubkey}`／
+                    //    `refreshTrustState` 那段返回值处理**一字未改** ✓ —— ⛔ 只挪了**时点** ✗）。
+                    onClick={() => {
+                      const peer = pairPeer;
+                      if (!activeId || !peer) return;
+                      setDpPeer(peer.device_id);
+                      void trustDevice([activeId], peer);
+                      setPairScreen(false);
+                    }}
+                  >
                     码对得上，确认
                   </button>
-                  <button className="sync-btn" data-testid="pair-cancel" type="button" onClick={() => setPairScreen(false)}>
+                  <button
+                    className="sync-btn"
+                    data-testid="pair-cancel"
+                    type="button"
+                    // ⭐ P-4 片②b：⭐ 取消 ⇒ 关屏 ＋ ⭐ **一个字节都不发** ✓（⛔ 不调任何东西 ✗）
+                    onClick={() => {
+                      setPairPeer(null);
+                      setPairScreen(false);
+                    }}
+                  >
                     取消
                   </button>
                 </div>
