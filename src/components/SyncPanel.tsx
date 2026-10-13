@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
@@ -2051,14 +2051,41 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         {/* 三种处境三句话（规格 §4 的表）：
                             ① 这一层不可用／读不到列表 ⇒ "看不到这一层"（**不是**"网段里没人"）；
                             ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
-                            ③ 有设备 ⇒ 每台一行。 */}
+                            ③ 有设备 ⇒ 每台一行。
+                            ⭐ **P-2b（2026-10-13）**：③ 里按「本机认没认过」分**两段**（`已信任`／`待配对` ✓）——
+                              判据取**本机认过的那份名单** `duList`（与下面「解除」那块同一份 ✓，⛔ 不新造读数 ✗）。
+                            ⚠️ ⭐ **第三段「需要重新配对（钥匙变了）」待 P-3** ✗：那条**逐台**读数今天
+                              **不存在**（R7 ✓）⇒ ⭐ 先造读数、再画段 ✓；⛔ **别以为这里漏了一段** ✗
+                              （⛔ 也不许为了凑三段去造数 ✗）。 */}
                         {!nearbyReadable || !lanStatus.enabled ? (
                           <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
                         ) : nearby.length === 0 ? (
                           <div className="sync-hint">还没发现别的设备… 正在找</div>
                         ) : (
-                          nearby.map((p) => (
-                            <div className="sync-nearby-row" key={p.device_id}>
+                          nearby
+                            .slice()
+                            .sort(
+                              (a, b) =>
+                                Number(!duList.some((d) => d.deviceId === a.device_id)) -
+                                Number(!duList.some((d) => d.deviceId === b.device_id)),
+                            )
+                            .map((p, i, arr) => (
+                              <Fragment key={p.device_id}>
+                                {(i === 0 ||
+                                  duList.some((d) => d.deviceId === p.device_id) !==
+                                    duList.some((d) => d.deviceId === arr[i - 1].device_id)) && (
+                                  <div
+                                    className="sync-hint"
+                                    data-testid={
+                                      duList.some((d) => d.deviceId === p.device_id)
+                                        ? "nearby-group-trusted"
+                                        : "nearby-group-pending"
+                                    }
+                                  >
+                                    {duList.some((d) => d.deviceId === p.device_id) ? "已信任" : "待配对"}
+                                  </div>
+                                )}
+                            <div className="sync-nearby-row">
                               {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
                                   （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
                               <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
@@ -2128,6 +2155,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                                 </span>
                               )}
                             </div>
+                              </Fragment>
                           ))
                         )}
                         {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：

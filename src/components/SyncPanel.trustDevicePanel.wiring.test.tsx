@@ -49,11 +49,11 @@ import {
 
 /** ⚠️ `__TAURI_INTERNALS__` 必须在**模块加载之前**就在 ⇒ `platform/index.ts:67` 才会选桌面那一档
  *  （`isDesktopPlatform()` ＝ 「有没有 Rust 内核」✓ —— 本判据量的正是桌面那一支 ✓）。 */
-const { invokeSpy, lanStatusSpy } = vi.hoisted(() => {
+const { invokeSpy, lanStatusSpy, meshSetConfigSpy } = vi.hoisted(() => {
   (globalThis as unknown as { window: Record<string, unknown> }).window.__TAURI_INTERNALS__ = {
     transformCallback: (cb: unknown) => cb,
   };
-  return { invokeSpy: vi.fn(), lanStatusSpy: vi.fn() };
+  return { invokeSpy: vi.fn(), lanStatusSpy: vi.fn(), meshSetConfigSpy: vi.fn() };
 });
 
 /** ⚠️ `api` 除下面两条外一律"空读数"（面板那些分支只读、不崩 ✓）—— 本判据只问**那一行的可达性** ✓。
@@ -66,6 +66,10 @@ vi.mock("../lib/api", () => ({
       lanStatus: (id: string) => lanStatusSpy(id),
       listSyncProfiles: async () => [],
       spaceSecurityOverview: async () => [],
+      // ⭐ **P-2b（2026-10-13）**：`duList`（"本机认过哪几台"✓）就是从这条命令的 `paired` 拿的
+      //   （`SyncPanel.tsx:291-292` ✓）⇒ 分段判据要能**给这条桩喂名单** ✓（⛔ 不改它默认的 `null` ✗
+      //   —— 其余用例照旧落到"读不到 ⇒ 空名单" ✓）。
+      meshSetConfig: (...a: unknown[]) => meshSetConfigSpy(...a),
     },
     { get: (t: Record<string, unknown>, k: string) => (k in t ? t[k] : async () => null) },
   ),
@@ -393,5 +397,109 @@ describe("P-2a-1：同一份内容要能进内容区（`contentOnly`）", () => 
       phs.some((p) => p.includes("口令")),
       `⛔ 面板上不许再有「口令」输入格 ✗（owner 2026-10-13 拍了去掉 ✓）：实测 ${JSON.stringify(phs)}`,
     ).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **P-2b（2026-10-13，owner 拍「按这个执行」✓）**：「附近的设备」那一列按
+//   ⭐ **本机认没认过** 分成**两段**（`已信任` ／ `待配对` ✓）——
+//   判据取**本机认过的那份名单** `duList`（⭐ 与下面「解除」那块**同一份读数** ✓
+//   ＝ `api.meshSetConfig(activeId, null, null)` 的 `paired` ✓ `SyncPanel.tsx:291-292` ✓，⛔ 不新造读数 ✗）。
+//
+// ⚠️ ⭐ **第三段「需要重新配对（钥匙变了）」不在本片** ✗：那条**逐台**读数今天**不存在**（R7 ✓）
+//   ⇒ ⭐ 先造读数、再画段 ✓（归 **P-3** ✓）—— ⛔ 也不许为了凑三段去造数 ✗。
+//
+// ⚠️ **本组三条都是"先红后绿"** ✗（⛔ 没有一条是"新写即绿"的锁 ✗）：
+//   ① 两段标题今天**都没有** ✓；② 今天**没有段可分** ✓；③ 那句「待 P-3」的注释**随本片一起进** ✓
+//   （⚠️ 实测：把本片的 `SyncPanel.tsx` 暂时退回 ⇒ **三条一起红** ✓ ⇒ ⛔ 别把 ③ 标成"锁" ✗）。
+//   ⭐ 本片**不带**独立的锁 —— 相邻那几条锁（抽屉仍可用／没有「口令」格）在上一组里已经钉着 ✓。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const TRUSTED_ID = "dev-amd";
+const PENDING_ID = "dev-other";
+
+/** 那一行**归属哪一段**：往上找最近的段标题（`Fragment` 不产生 DOM 节点 ⇒ 二者是兄弟 ✓）。 */
+function groupBefore(row: Element): string | null {
+  let n: Element | null = row.previousElementSibling;
+  while (n) {
+    const id = n.getAttribute("data-testid") ?? "";
+    if (id.startsWith("nearby-group-")) return id;
+    n = n.previousElementSibling;
+  }
+  return null;
+}
+
+/** 行名（`.sync-nearby-name` ✓）→ 那一行元素。 */
+function rowByName(el: HTMLElement, name: string): Element | null {
+  return (
+    [...el.querySelectorAll(".sync-nearby-row")].find(
+      (r) => (r.querySelector(".sync-nearby-name")?.textContent ?? "").trim() === name,
+    ) ?? null
+  );
+}
+
+describe("P-2b：附近的设备分两段（已信任／待配对）", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+    // ⭐ 本组的桩：`duList` 里有**一台**（`dev-amd` ✓）⇒ 它进「已信任」✓，另一台落「待配对」✓。
+    meshSetConfigSpy.mockReset();
+    meshSetConfigSpy.mockResolvedValue({ paired: [{ deviceId: TRUSTED_ID, addedAtMs: 1 }] });
+  });
+  afterEach(() => {
+    meshSetConfigSpy.mockReset();
+  });
+
+  it("① ⭐ 两段标题都在（今天【红】：一段都没有 ✓）", async () => {
+    const el = await openPanelWith([
+      peer(true),
+      peer(false, { device_id: PENDING_ID, device_name: "ZHAI-MAC" } as Partial<NearbyPeer>),
+    ]);
+    expect(
+      el.querySelector('[data-testid="nearby-group-trusted"]'),
+      "⭐ 「已信任」那一段的标题要在 ✓（判据 ＝ `duList` ✓，⛔ 不是服务不服务我 ✗）",
+    ).toBeTruthy();
+    expect(
+      el.querySelector('[data-testid="nearby-group-pending"]'),
+      "⭐ 「待配对」那一段的标题要在 ✓（今天【红】：列表还是**一整片**、没有任何分段 ✗）",
+    ).toBeTruthy();
+  });
+
+  it("② ⭐ 认过的那台落在「已信任」、没认过的落在「待配对」（今天【红】：没有段可分 ✓）", async () => {
+    const el = await openPanelWith([
+      peer(true),
+      peer(false, { device_id: PENDING_ID, device_name: "ZHAI-MAC" } as Partial<NearbyPeer>),
+    ]);
+    const trustedRow = rowByName(el, "ZHAI-AMD");
+    const pendingRow = rowByName(el, "ZHAI-MAC");
+    expect(trustedRow, "夹具前提：认过的那一行要渲染出来").toBeTruthy();
+    expect(pendingRow, "夹具前提：没认过的那一行也要渲染出来").toBeTruthy();
+    expect(
+      groupBefore(trustedRow!),
+      "⭐ 在 `duList` 里的那一台 ⇒ 必须落在「已信任」那一段 ✓（判据是**本机认过** ✓，⛔ 不是 `serves_current` ✗）",
+    ).toBe("nearby-group-trusted");
+    expect(
+      groupBefore(pendingRow!),
+      "⭐ 不在 `duList` 里的那一台 ⇒ 必须落在「待配对」那一段 ✓",
+    ).toBe("nearby-group-pending");
+    // ⭐ 段的**先后**也要对：已信任在前 ✓（排序键就是"认没认过" ✓）。
+    const rows = [...el.querySelectorAll(".sync-nearby-row")];
+    expect(
+      rows.indexOf(trustedRow!),
+      "⭐ 已信任那一段要排在待配对之前 ✓",
+    ).toBeLessThan(rows.indexOf(pendingRow!));
+  });
+
+  it("③（**本片的一部分**，⛔ 不是锁 ✗，先红后绿同 ①②）：源码里留着「第三段待 P-3」那句话", () => {
+    expect(
+      SYNC_PANEL_SRC,
+      "⛔ 别把「第三段（钥匙变了）待 P-3」这句话删掉 ✗ —— 它是**如实交代缺一段**的那条注释 ✓" +
+        "（那条逐台读数今天不存在 ✓，⭐ 先造读数再画段 ✓）",
+    ).toContain("待 P-3");
   });
 });
