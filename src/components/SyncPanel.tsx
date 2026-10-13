@@ -151,6 +151,15 @@ interface EditRow {
  */
 const TRUST_DEVICE_READINGS = unavailableTrustDeviceReadings();
 
+/** ⭐ **P-4 片②a（2026-10-13）**：那一屏要显示的**比对码** ✗ —— ⭐ 默认**如实「读不到」** ✓
+ *  （手法照上面 `TRUST_DEVICE_READINGS` 那条 ✓：⭐ 模块级常量 ⇒ 不必每帧新建对象 ✓）。
+ *  ⚠️ ⛔ **不许编一个码** ✗ —— ⭐ 码由 `pairing_trust::pairing_code_for`（片① 已入库 ✓）算 ✓，
+ *  ⭐ 而**接线**归**下一片**（片②b ✓）⇒ ⭐ 今天这一屏只会如实说"读不到" ✓。 */
+const PAIR_CODE_UNAVAILABLE: Reading<string | null> = {
+  kind: "unavailable",
+  reason: "还没接上读数（码 ＝ 本机公钥 ＋ 对方公钥 ＋ 这一轮的 trust_ask 算出来的）",
+};
+
 /** ⭐ **P-3d（2026-10-13）**：设备列表那**三段**的名字与 testid ✓ ——
  *  ⭐ 数组下标 ＝ 段序（`nearbyBucket` 的返回值 ✓）：需要重新配对 ⇒ 已信任 ⇒ 待配对 ✓。 */
 const NEARBY_GROUPS = [
@@ -162,7 +171,10 @@ const NEARBY_GROUPS = [
 /** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
  *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
  *  ⚠️ 默认 `false` ⇒ ⭐ **抽屉那支逐字不变** ✓（一行 JSX 都没搬 ✓）。 */
-export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
+export function SyncPanel({
+  contentOnly = false,
+  pairCode = PAIR_CODE_UNAVAILABLE,
+}: { contentOnly?: boolean; pairCode?: Reading<string | null> } = {}) {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
@@ -355,6 +367,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //   ③ 采纳：逐位相同才写；**对不上 ⇒ 停在"停"态，且那一态里没有继续入口** ✗（判据钉着）
   const [plaintextCount, setPlaintextCount] = useState<number | null>(null);
   const [dpExport, setDpExport] = useState<DevicePairExportOutcome | null>(null);
+  /** ⭐ **P-4 片②a**：那一屏（对码）开着没 ✓ —— ⭐ 由「接入」那一下**顺手打开** ✓
+   *  （⚠️ 本片⛔ **不动** `trustDevice` 的调用时点 ✗ —— 那是片②b ✓）。 */
+  const [pairScreen, setPairScreen] = useState(false);
   const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
   const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
   const [dpPreview, setDpPreview] = useState<string>(""); // 我们这边算出来的码（给人核对）
@@ -2207,6 +2222,10 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                                   onClick={() => {
                                     if (!activeId) return;
                                     setDpPeer(p.device_id);
+                                    // ⭐ **P-4 片②a**：⭐ 顺手把「对码」那一屏打开 ✓
+                                    //   ⚠️ ⛔ 本片**不改**这一下的既有行为 ✗（`setDpPeer` ＋ `trustDevice`
+                                    //   逐字不动 ✓ —— 改时点是片②b ✓）。
+                                    setPairScreen(true);
                                     void trustDevice([activeId], p);
                                   }}
                                 >
@@ -2397,6 +2416,63 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                   </details>
                 )}
               </>
+            )}
+
+            {/* ══════════════════════════════════════════════════════════════════════
+                ⭐⭐ **P-4 片②a（2026-10-13）**：⭐ 「**对码**」那一屏 ✗ —— ⭐ 由「接入」那一下打开 ✓。
+                ⚠️ ⭐ **只显示、不下结论** ✓：⭐ `kind === "ok"` 才渲染那串码 ✓，⭐ 读不到 ⇒
+                   ⭐ **如实说为什么** ✓（⛔ 不编一个码 ✗）。
+                ⚠️ ⭐ **分组 ＝ 5 组 × 4 位** ✓（`pairing.rs:369` 的 `format!("{n:020}")` ＋ `:371` 的
+                   `.chunks(4)` ✓ ⇒ 屏上写 `XXXX-XXXX-XXXX-XXXX-XXXX` ✓，⛔ 不是 4 组 ✗）。
+                ⛔ 屏上**没有**任何「继续／自动通过」一类入口 ✗（⭐ 仓里逐字：状态机里**没有"自动通过"这一格** ✓）。
+                ══════════════════════════════════════════════════════════════════════ */}
+            {pairScreen && (
+              <div className="set-section" data-testid="pair-code-screen">
+                <div className="set-section-title">两台设备核对一下这串码</div>
+
+                {pairCode.kind === "unavailable" ? (
+                  <div className="sync-status is-warn" data-testid="pair-code-unavailable">
+                    读不到比对码（{pairCode.reason}）—— ⭐ 读不到就<b>不显示任何码</b> ✓
+                  </div>
+                ) : pairCode.value === null ? (
+                  <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码 ✓</div>
+                ) : (
+                  <div
+                    className="sync-status"
+                    data-testid="pair-code-value"
+                    // ⚠️ 大字（⭐ 只为"念得清" ✓）：⭐ 不新造 CSS 类 ✗（行内样式与别处同一手法 ✓）
+                    style={{ fontSize: 22, letterSpacing: 2, fontWeight: 700, wordBreak: "break-all" }}
+                  >
+                    {pairCode.value}
+                  </div>
+                )}
+
+                <div className="sync-hint">
+                  请在两台设备上核对：<b>两边一样</b> ⇒ 确认 ✓
+                </div>
+                <div className="sync-hint" data-testid="pair-code-mismatch">
+                  ⚠️ 两边的码不一样 ⇒ 先别确认（你可能正连到另一个设备）✓
+                </div>
+
+                <div className="sync-field">
+                  <button className="sync-btn primary" data-testid="pair-confirm" type="button">
+                    码对得上，确认
+                  </button>
+                  <button className="sync-btn" data-testid="pair-cancel" type="button" onClick={() => setPairScreen(false)}>
+                    取消
+                  </button>
+                </div>
+
+                {/* ⚠️ 三句如实（⭐ 一句都不许省 ✗）：⭐ 这是"比对码"不是那 6 位码 ✓／⭐ 它含窗口口令 ⇒
+                    只发自己那台 ✓／⭐ 它**不是一次性的** ✓。⛔ JSX 里不用 Markdown `**…**` ✗（用 <b> ✓）。 */}
+                <div className="sync-hint" data-testid="pair-code-notes">
+                  这是<b>比对码</b>；更短的 6 位码要等 PAKE 落地 ✓
+                  <br />
+                  含窗口口令 ＝ 钥匙材料 ⇒ <b>只发你自己那台</b> ✓
+                  <br />
+                  <b>不是一次性的</b> ⇒ 用后建议换一次窗口口令 ✓
+                </div>
+              </div>
             )}
           </div>
 

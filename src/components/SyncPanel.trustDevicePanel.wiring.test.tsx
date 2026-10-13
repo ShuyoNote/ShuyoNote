@@ -281,7 +281,12 @@ function peer(servesCurrent: boolean, over: Partial<NearbyPeer> = {}): NearbyPee
 }
 
 /** 打开面板（`usePopover` 起始是关的 ⇒ 点它自己那颗触发器 `.btn-sync` ✓）并等 `lan_status` 那条 effect 落地 ✓。 */
-async function openPanelWith(nearby: NearbyPeer[]): Promise<HTMLElement> {
+async function openPanelWith(
+  nearby: NearbyPeer[],
+  // ⭐ **P-4 片②a** 起多收一个可选的 `pairCode`（⭐ 那一屏要显示的比对码 ✓）—— ⚠️ 不传 ⇒
+  // `SyncPanel` 的**默认**占位（如实「读不到」✓）⇒ ⭐ 既有调用点一个字不动 ✓。
+  props: { pairCode?: { kind: "ok"; value: string | null } | { kind: "unavailable"; reason: string } } = {},
+): Promise<HTMLElement> {
   lanStatusSpy.mockResolvedValue({
     enabled: true,
     peers: nearby.length,
@@ -293,7 +298,7 @@ async function openPanelWith(nearby: NearbyPeer[]): Promise<HTMLElement> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  flushSync(() => root!.render(<SyncPanel />));
+  flushSync(() => root!.render(<SyncPanel {...props} />));
   const trigger = host.querySelector<HTMLButtonElement>(".btn-sync");
   if (!trigger) throw new Error("夹具失败：面板没渲染出触发器（`.btn-sync`）—— 不是判据红");
   flushSync(() => trigger.dispatchEvent(new MouseEvent("click", { bubbles: true })));
@@ -804,5 +809,115 @@ describe("P-3c：「解除信任」先二次确认（源码级，理由见上）
       callAt,
       "⭐ 摘行必须在**成功分支**里（＝在 api 调用**之后** ✓；⛔ 别挪到确认之前 ✗）",
     ).toBeLessThan(filterAt);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐⭐ **P-4 片②a（2026-10-13）**：⭐ 「**对码**」那一屏 ✗ —— ⭐ 本片**只到"屏能开"** ✓。
+//
+// ⚠️ 范围（⛔ 别越界 ✗）：⭐ 本片＝**新增**一个可选 prop（`pairCode` ✓）＋ 一屏 ✓；
+//   ⛔ **不改** `trustDevice` 的**调用时点** ✗（⭐ 那是**片②b** ✓）⇒ ⭐ 本片只保证「接入」那一下
+//   **顺手把屏打开** ✓（`setPairScreen(true)` ✓），`setDpPeer`／`trustDevice` 逐字不动 ✓。
+//
+// ⚠️ ⭐ 口径（⛔ 一条都不许松 ✗）：
+//   · ⭐ **分组 ＝ 5 组 × 4 位** ✓（`pairing.rs:369` 的 `format!("{n:020}")` ＋ `:371` 的 `.chunks(4)` ✓
+//     ⇒ 屏上写 `XXXX-XXXX-XXXX-XXXX-XXXX` ✓，⛔ 不是 4 组 ✗）；
+//   · ⭐ `kind === "ok"` 才渲染那串码 ✓；⭐ `unavailable` ⇒ **如实说为什么** ✓（⛔ 不编一个码 ✗）；
+//   · ⛔ 屏上**没有**「继续／自动通过」一类入口 ✗（⭐ 仓里逐字：状态机里**没有"自动通过"这一格** ✓）；
+//   · ⭐ **6 位码今天不做** ✗（⭐ 它需要 PAKE ✓，`mesh.rs:825` 逐字「6 位数字…搜索空间只有 10^6」✗）⇒
+//     ⭐ 屏上如实说"更短的 6 位码要等 PAKE 落地" ✓。
+//
+// ⚠️ **本组只有 ① 与 ③ 是先红后绿** ✓（⭐ ③ 钉的那一段**是本片加的** ⇒ ⚠️ **实测它随本片一起红** ✗
+//   ⇒ ⛔ 不许标成"锁" ✗ —— 如实标"本片的一部分" ✓）；⭐ **② 才是锁**（今天已绿 ✓，⛔ 不是本片的修 ✗ ——
+//   ⭐ 实测：整份 `SyncPanel.tsx` 里 `自动通过` **只出现在我新加的注释里** ✓ ⇒ ⭐ 必须先**剥注释**再判 ✓，
+//   而 `继续` 只出现在**严格模式那条既有文案**里 ✓ ⇒ ⭐ ② 只判「自动通过」＋ 那条停态守卫 ✓，
+//   ⛔ 不许拿整份文件判「继续」✗（那会假红 ✓））。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** 我那一屏那一段源码（⭐ 从它的 testid 起到 window 末 ✓，且**先整份剥注释再切** ✓）。
+ *  ⚠️ 顺序不能反 ✗ —— ⭐ 先切再剥的话，窗口里那个**没闭合**的块注释（JSX 注释 ✓）会把
+ *  它后面的**注释文本**当成 JSX 留下 ⇒ ⭐ 实测报出 `**局域网发现的读数**` 这种**假红** ✓。 */
+function pairScreenCode(): string {
+  const stripped = SYNC_PANEL_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const at = stripped.indexOf('data-testid="pair-code-screen"');
+  if (at < 0) throw new Error("SyncPanel.tsx 里找不到 `pair-code-screen`（屏还没加？）");
+  return stripped.slice(at, at + 2200);
+}
+
+describe("P-4 片②a：对码那一屏（只显示、不下结论）", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+    meshSetConfigSpy.mockReset();
+  });
+
+  it("① ⭐ 桩给一个固定的 20 位码 ⇒ 屏上出现**那串**（5 组 × 4 位）＋ `pair-confirm`（今天【红】✓）", async () => {
+    // ⭐ 20 位、按 4 位一组 ⇒ **5 组** ✓（与 `pairing.rs` 的 `format!("{n:020}")` ＋ `.chunks(4)` 同形 ✓）
+    const CODE = "1234 5678 9012 3456 7890";
+    const el = await openPanelWith([peer(true)], { pairCode: { kind: "ok", value: CODE } });
+    expect(CODE.trim().split(/\s+/).length, "夹具前提：桩给的是 5 组 × 4 位 ✓").toBe(5);
+    expect(CODE.replace(/\s/g, "").length, "夹具前提：一共 20 位 ✓").toBe(20);
+
+    const allow = el.querySelector<HTMLButtonElement>('[data-testid="nearby-allow"]');
+    expect(allow, "夹具前提：那一行的「接入」要在 ✓").toBeTruthy();
+    // ⭐ 本片只保证"**屏能开**" ✓：由「接入」那一下顺手打开 ✓
+    flushSync(() => allow!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    for (let i = 0; i < 3; i++) {
+      await Promise.resolve();
+      flushSync(() => {});
+    }
+
+    const screen = el.querySelector<HTMLElement>('[data-testid="pair-code-screen"]');
+    expect(
+      screen,
+      "⭐ 「接入」那一下之后，对码那一屏必须**开** ✓（今天【红】：没有这一屏 ✗；" +
+        "⚠️ 本片**不改** `trustDevice` 的时点 ✓ —— 那归片②b ✓）",
+    ).toBeTruthy();
+    expect(
+      screen!.querySelector('[data-testid="pair-code-value"]')?.textContent ?? "",
+      "⭐ 屏上必须**逐字**显示那串码 ✓（⛔ 不是编一个／也不是空白 ✗）",
+    ).toContain(CODE);
+    expect(
+      screen!.querySelector('[data-testid="pair-confirm"]'),
+      "⭐ 「码对得上，确认」那颗按钮必须在 ✓",
+    ).toBeTruthy();
+    expect(screen!.querySelector('[data-testid="pair-cancel"]'), "⭐ 「取消」也要在 ✓").toBeTruthy();
+    // ⭐ 三句如实都要在（⭐ 一句都不许省 ✗）
+    const notes = screen!.querySelector('[data-testid="pair-code-notes"]')?.textContent ?? "";
+    expect(notes, "⭐ 必须说清它是**比对码**、6 位码要等 PAKE ✓").toContain("比对码");
+    expect(notes, "⭐ 必须说清它含窗口口令 ⇒ 只发你自己那台 ✓").toContain("只发你自己那台");
+    expect(notes, "⭐ 必须说清它**不是一次性的** ✓").toContain("不是一次性的");
+  });
+
+  it("② 锁（今天已绿 ✓，⛔ 不是本片的修 ✗）：整份 `SyncPanel.tsx` 里**没有**「自动通过」这类说法", () => {
+    // ⚠️ ⭐ 实测口径（⛔ 不许拿整份文件判「继续」✗ —— 严格模式那条**既有文案**里本来就有「继续」✓ ⇒ 会假红 ✓）：
+    // ⭐ 「自动通过」这一格全份文件（**先剥注释** ✓）**一次都不许出现** ✓。
+    const code = SYNC_PANEL_SRC.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(
+      code,
+      "⛔ 不许出现「自动通过」✗（⭐ 仓里逐字：状态机里**没有这一格** ✓ ⇒ 界面也不许长出一个 ✓）",
+    ).not.toContain("自动通过");
+    expect(
+      code,
+      "⭐ 反面也要钉：**停态就是停态** ✓（⭐ 既有那条 `dpOutcome === 'stopped'` 的守卫不许被拆掉 ✓）",
+    ).toContain('dpOutcome === "stopped"');
+  });
+
+  it("③（**本片的一部分**，⛔ 不是锁 ✗ —— 实测随本片一起红 ✓）：我这一屏里没有「继续」入口、也没有 Markdown `**…**`", () => {
+    const code = pairScreenCode();
+    expect(
+      code,
+      "⛔ 屏上不许出现「继续」入口 ✗（⭐ 对不上时只能**说文案**、⛔ 不给任何「接着走」的按钮 ✓）",
+    ).not.toContain("继续");
+    const bad = code.match(/\*\*[^*\n]{1,40}\*\*/g);
+    expect(
+      bad,
+      `⛔ 我这一屏的 JSX 里出现了 Markdown 粗体：${bad?.[0]} ⇒ 请用 <b> 包起来 ✓（⭐ 今晚刚踩过 ✓）`,
+    ).toBeNull();
   });
 });
