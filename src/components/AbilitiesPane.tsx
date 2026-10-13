@@ -17,6 +17,9 @@ import { platform } from "../lib/platform";
 // ⚠️ 只从 `download.ts` 取 **pack id**（单一来源）——真下载已改由 Rust 做（见 `download()` 里那段注释），
 //    那个模块**保留**为"前端侧那套接口与判据"（它的 11 条判据就是它的凭据），⛔ 不是死代码。
 import { ECDICT_PACK_ID } from "../lib/dictionary/download";
+// ⭐ **第 0 片（2026-10-14）**：清单**可下发** ✓（⭐ 形状／归一化／回退都在那一处 ✓ ——
+//    ⛔ 本文件不再自己定义 `Ability` ✗，⭐ 那会变成第二份真相 ✓）。
+import { loadAbilitiesManifest, type Ability } from "../lib/abilities/manifest";
 
 /** Rust 侧下载的进度事件 → 界面那一行字（字节；没给 Content-Length ⇒ **如实**说"总量未知"）。 */
 function fmtRustProgress(name: string, p: { received: number; total: number | null }): string {
@@ -24,21 +27,9 @@ function fmtRustProgress(name: string, p: { received: number; total: number | nu
   return `${name}：下载中 ${p.received}${p.total === null ? "" : ` / ${p.total}`} 字节 · ${pct}`;
 }
 
-/** 清单条目 —— 只认**真实值** ✓（url / sha256 任缺 ⇒ 不许出现下载按钮 ✗）。 */
-interface Ability {
-  id: string;
-  name: string;
-  summary: string;
-  bytes?: number;
-  /** GitCode 上的仓库路径（相对 https://gitcode.com/shuyo-cn/shuyo-mirror ✓） */
-  path?: string;
-  sha256?: string;
-  /** 状态：真实三态 ✓ */
-  state: "builtin" | "downloadable" | "not-available";
-  note?: string;
-}
-
-// ⚠️ 清单先**写死在本文件**（随包内置那一份的雏形 ✓）；将来搬进 `src/lib/abilities/manifest.json` ✓。
+// ⚠️ 清单**先写死在本文件**（随包内置那一份 ✓ —— ⭐ **第 0 片之后它同时是"回退那一份"** ✓）；
+//    ⭐ 可下发那一份在 `src/lib/abilities/manifest.ts` ✓（从镜像仓取 `manifest.json` ✓，
+//    ⚠️ **逐 `id` 并到这份上面** ✓ ⇒ ⛔ 它**抹不掉**下面 `office-import` ／ `ecdict-en-zh` 两条 ✗）。
 //    sha256 是 2026-10-02 实测值 ✓（取回后与推送前一致 = True ✓）。
 const ABILITIES: Ability[] = [
   // ⭐ 2026-10-10（owner 截图「去掉这个部分」）：原先这里有一条 `pdf-engine-win-x64`，自称
@@ -122,6 +113,22 @@ export function AbilitiesPane() {
   //    ⚠️⭐ **查不到 ／ 没核过 ⇒ 当作没装** ✗（⛔ 不许在查不动的时候说"已装" ✓）——
   //      所以默认 `false`，只有 `available && verified` 两件都为真才算 ✓。
   const [packReady, setPackReady] = useState(false);
+  /** ⭐ **第 0 片（2026-10-14）**：清单**可下发** ✗ —— ⭐ 起点＝下面那份**内置**的 ✓，
+   *  ⚠️ 拉到了就**并上来**（⛔ 不是整份替换 ✗ —— 那会抹掉代码里 `office-import`／`ecdict-en-zh` ✓），
+   *  ⭐ **拉不到 ⇒ 就是它** ✓（⛔ 不许整屏空白 ✗）。 */
+  const [abilities, setAbilities] = useState<Ability[]>(ABILITIES);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const got = await loadAbilitiesManifest({ fallback: ABILITIES });
+      // ⚠️ 回退是**正常结果**（离线／镜像仓还没有那份清单 ✓）⇒ 不报错、不弹窗 ✓（`got.reason` 留给判据/
+      //    将来做诊断用 ✓ —— ⛔ 界面上不许因此冒出红字 ✗）。
+      if (alive) setAbilities(got.abilities);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -205,9 +212,10 @@ export function AbilitiesPane() {
   };
 
   // ⭐ 已装那一节 ＝ 源码里 `builtin` 的 ＋ ⭐ **盘上核实过的**可下载项 ✓（⛔ 不写死 ✗）；未核实的留在「按需下载」✓
-  const builtin = ABILITIES.filter((a) => a.state === "builtin" || (a.state === "downloadable" && packReady));
-  const downloadable = ABILITIES.filter((a) => a.state === "downloadable" && !packReady);
-  const missing = ABILITIES.filter((a) => a.state === "not-available");
+  //   ⚠️ **第 0 片**：这三行原来吃**写死那份** ✗ ⇒ 现在吃**清单状态** ✓（⭐ 内容默认就是它 ✓）。
+  const builtin = abilities.filter((a) => a.state === "builtin" || (a.state === "downloadable" && packReady));
+  const downloadable = abilities.filter((a) => a.state === "downloadable" && !packReady);
+  const missing = abilities.filter((a) => a.state === "not-available");
 
   return (
     <>
