@@ -326,7 +326,8 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
   //   · 这一块搬**接线**（地址 ＋ 窗口口令）⇒ 名字叫「**把这台设备接进来**」✓
   // ⚠️ **三步两态，且有一步是"停"**（`U2`／`U3`）：
-  //   ① 生成：显示比对码（**一次性**，含窗口口令 ⇒ ⛔ 别外传 ✗）
+  //   ① 生成：显示比对码（**这一轮显示用** ✓；⚠️ 那段文本／载荷**不是一次性的** ✗ —— 它里面
+  //      **没有** nonce／时间戳／有效期 ✓，采纳侧也**幂等**（可以再次采纳 ✓）⇒ ⛔ 别把这句写成"一次性" ✗）
   //   ② **人读码核对**：采纳侧先把**算出来的码**显示出来，**等用户把对方那串填回来** ✓
   //   ③ 采纳：逐位相同才写；**对不上 ⇒ 停在"停"态，且那一态里没有继续入口** ✗（判据钉着）
   const [dpExport, setDpExport] = useState<DevicePairExportOutcome | null>(null);
@@ -2228,7 +2229,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                           <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
                             【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
-                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
+                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。⚠️ 这串码／这段文本**不是一次性的** ⇒ 配对完成后建议**换一次窗口口令** ✓。
                           </div>
                           {/* ⭐ R110（owner 2026-10-02 拍 A）：**先说清这段码给哪一台** ——
                               · 从「附近的设备」里**点选**那一台 ⇒ 本机**生成时就把它登记好** ⇒
