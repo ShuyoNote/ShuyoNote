@@ -5448,7 +5448,7 @@ pub fn lan_status(
         let fallback = profiles
             .first()
             .and_then(|(_, _, ws)| get_profile(&c, ws).ok());
-        pick_lan_scope(explicit, fallback)
+        pick_lan_scope(&c, explicit, fallback)
     };
     let (space_id, server_url) = match picked {
         Some((space, url)) => (space, url),
@@ -5491,12 +5491,22 @@ pub fn lan_status(
 ///
 /// ⚠️ 两条路都可能"查不到"（指定的工作空间其实没配、或库里一条都没有）⇒ 一律回落，
 /// **不许**报错：这只是"面板上那一行字显示哪个空间"，不是同步请求。
+/// ⭐ **2026-10-13（甲）**：`c` 加进来是为了**判定与公告同一把尺** ✗ —— 个人档的 `sync_profiles.space_id`
+/// 是**空串** ✓ ⇒ 老口径下 `lan::serves_space` 的 `!want.is_empty()` 当场**短路成 false** ✗，
+/// 而公告同时刻报的是**配对暗号**（`lan_state::window_serve_space` ✓）⇒ 两把尺不同名 ✗
+/// （现象：明明那台在服务我这个空间，面板却说「没有服务这个空间的设备」✓）。
+/// ⚠️ 解析只放在**这一处**（"这一轮报哪个空间"的唯一函数 ✓）；⛔ 团队档必须一字节不变 ✗
+/// —— `window_serve_space` 对**非空** `space_id` **原样返回** ✓（`lan_state.rs` 逐字"团队空间口径不变"✓）。
 fn pick_lan_scope(
+    c: &Connection,
     explicit: Option<SyncProfile>,
     fallback: Option<SyncProfile>,
 ) -> Option<(String, String)> {
     let p = explicit.or(fallback)?;
-    Some((p.space_id, p.server_url))
+    // ⭐ **甲（2026-10-13）**：把"报哪个空间"换成**公告那一条口径** ✓（`window_serve_space`）
+    //   —— 个人档 ⇒ 配对暗号 ✓（不再是原始空串 ✗）；团队档 ⇒ `window_serve_space` **原样返回**
+    //   ⇒ 与从前**逐字相同** ✓（`lan_state.rs:953-956` ✓）。
+    Some((crate::lan_state::window_serve_space(c, &p.space_id, &p.ws_id), p.server_url))
 }
 
 /// `lan_status` 的形状（**前端契约**，见 `src/lib/platform/commands.ts` 的同名 interface）。
@@ -7838,20 +7848,77 @@ mod tests {
     /// 而用户配的明明就是那一个 —— 它**能编译、别处单测照绿**，只有真机看得见。
     #[test]
     fn the_status_line_reports_the_space_that_was_actually_asked_for() {
+        // ⚠️ 新签名要一个连接（`pick_lan_scope(&c, …)` ✓）：这里**故意**给一个**空库** ⇒
+        //    口径解析查不到任何东西 ⇒ `window_serve_space` **原样回落** `space_id` ✓
+        //    ⇒ 下面三条断言与从前**逐字相同** ✓（团队档路径一字节不变的证据之一 ✓）。
+        let c = Connection::open_in_memory().unwrap();
         let mine = profile_for("sp-mine", "https://s.example.com");
         let other = profile_for("sp-other", "https://other.example.com");
         // 指定了就报指定那个（**不是**第一条）
         assert_eq!(
-            pick_lan_scope(Some(mine.clone()), Some(other.clone())),
+            pick_lan_scope(&c, Some(mine.clone()), Some(other.clone())),
             Some(("sp-mine".to_string(), "https://s.example.com".to_string()))
         );
         // 指定的查不到（工作空间没配）⇒ 回落第一条绑定，**不报错**
         assert_eq!(
-            pick_lan_scope(None, Some(other.clone())),
+            pick_lan_scope(&c, None, Some(other.clone())),
             Some(("sp-other".to_string(), "https://other.example.com".to_string()))
         );
         // 一条都没有 ⇒ None（调用方据此走 `resolve_base("", "")` ⇒ 状态行「尚未绑定」）
-        assert_eq!(pick_lan_scope(None, None), None);
+        assert_eq!(pick_lan_scope(&c, None, None), None);
+    }
+
+    /// ⭐⭐ **甲（2026-10-13）的核心判据**：`pick_lan_scope` 必须与**公告同一把尺** ✗。
+    ///
+    /// 病（逐行）：个人档 `sync_profiles.space_id` ＝ **空串** ✓（`lan_state.rs:439` 一带逐字），
+    /// 而公告报的是**配对暗号**（`lan_state::window_serve_space` ⇒ `resolved_space` ✓）；
+    /// 老口径直接把原始列交给 `lan::serves_space` ⇒ `!want.is_empty()`（`lan.rs:319`）**短路** ⇒
+    /// **个人空间恒 false** ✗ ⇒ 界面说「服务 另外 1 个空间」而用户配的就是那一个 ✓。
+    ///
+    /// ⚠️ 本判据**新加即绿**之前应当**先红**（见回话里的红读数 ✓）；它同时钉住"空 want 不再短路" ✓。
+    #[test]
+    fn personal_profile_scope_must_use_the_same_ruler_as_the_announce() {
+        // 自足夹具：一份带 `meta.sync_profiles` / `meta.sync_state` 的空间连接 ✓
+        // （形状抄 `lan_state.rs` 的 `mesh_serve_space_tests::fixture` ✓）
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);",
+        )
+        .unwrap();
+        // ⚠️ **少了这张表就会静默回落** ✗：`mesh_scope_at` 会查 `meta.workspaces` ⇒ 查不到**报错** ⇒
+        //    `resolved_space` 走 `unwrap_or_else(|_| space_id)` 回落成**空串** ✗ ⇒ 判据假红 ✓
+        //    （实测踩到：第一版只建了 `sync_state`/`sync_profiles`，逐字 `left: Some(("", …))` ✗）。
+        c.execute_batch("INSERT INTO meta.workspaces (id, name, deleted_at) VALUES ('ws', '个人', NULL);")
+            .unwrap();
+        // 个人档：`space_id` **空串** ＋ 用户填的「配对暗号」＝ `room-a`（公告会报的就是它 ✓）
+        c.execute_batch(
+            "INSERT INTO meta.sync_profiles (ws_id, server_url, space_id, mesh_room) \
+             VALUES ('ws', 'https://s.example.com', '', 'room-a');",
+        )
+        .unwrap();
+        // 设备级那格也一起落（口径解析可能先看它 ✓ —— 两条路都通向同一个暗号 ✓）
+        crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
+
+        let picked = pick_lan_scope(&c, Some(profile_for("", "https://s.example.com")), None);
+        assert_eq!(
+            picked,
+            Some(("room-a".to_string(), "https://s.example.com".to_string())),
+            "个人档 ⇒ 必须解析成**公告会报的那个字符串**（配对暗号 `room-a` ✓），⛔ 不是原始空串 ✗"
+        );
+        // ⭐ 与公告同名 ⇒ 判定不再被 `!want.is_empty()` 短路 ✓
+        let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &["room-a"]);
+        assert!(
+            crate::lan::serves_space(&picked.unwrap().0, &peer),
+            "对端报的就是这个暗号 ⇒ `serves_current` 必须是 **true**（老口径下恒 false ✗）"
+        );
     }
 
     // ---- B4-b：兜底行的收编与自愈 ----
