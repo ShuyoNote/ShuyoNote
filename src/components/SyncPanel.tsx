@@ -314,8 +314,10 @@ export function SyncPanel() {
     }
   };
 
-  // ⚠️ `saveMeshRoom` / `saveMeshToken` / `disableMesh` **已抽到 `MeshAdvancedForm`** ✓
+  // ⚠️ `saveMeshRoom` / `disableMesh` **已抽到 `MeshAdvancedForm`** ✓
   //    （Round 1 纯抽取：行为逐字照搬 ✓，包括 `saveMeshRoom` 顺手更新 `lanStatus.mesh` 那一下 ✓）。
+  //    ⭐ 其中 `saveMeshToken` **已于 2026-10-13 删掉** ✓ —— 用户手打的那条 `mesh_token` 已退役 ✗
+  //      （`mesh.rs:787`／`:1727` ✓）；⛔ 后端那格数据**保留可读、不静默删** ✗（本片只动界面 ✓）。
 
   // ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：**两个入口、两个名字** ✓
   //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
