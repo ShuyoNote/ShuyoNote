@@ -1603,7 +1603,16 @@ export function SettingsDialog() {
           if (!items.length) return null;
           return (
             <div className="set-rail-group" key={g.id}>
-              <div className="set-rail-group-title">{t(g.labelKey)}</div>
+              <div className="set-rail-group-title">
+                {/* ⭐ 2026-10-10 R185（真机：分类栏被挤成**单字竖排** ✗）：标签原来是**裸文本节点** ✗
+                    ⇒ 它是 flex 容器里的匿名 flex 子项 ⇒ 自动最小尺寸 ＝ min-content ＝ **一个汉字**
+                    （CJK 可在任何字之间断行 ✓）⇒ 一被压窄就竖成一列 ✓。
+                    ⇒ 包一层带**明确宽度策略**的 `span.set-rail-label` ✓（规则在 App.css ✓）。
+                    ⚠️ 形状借自 win 的 `3f66ff44`（同为"flex 子项缺宽度策略"✓），但**对象不同** ⇒
+                    修法方向也不同 ✗：他那格是"被长文本顶开"⇒ 补 `min-width: 0` ✓；
+                    我们这格是"被挤窄"⇒ 补 `flex: 0 0 auto` ＋ `white-space: nowrap` ✓（⛔ 不是照抄 ✗）。 */}
+                <span className="set-rail-label">{t(g.labelKey)}</span>
+              </div>
               {items.map((it) => (
                 <button
                   key={it.id}
