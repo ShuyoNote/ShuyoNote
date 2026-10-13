@@ -6,7 +6,17 @@ import { usePdfReader } from "./pdfReader";
 // （store/templateCenter 的 open）⇒ ⭐ 不高亮、不记忆、只能"开/关" ✗。
 // ⇒ ⭐ 并进这里之后：⭐ 活动栏能高亮它 ✓ ／ ⭐ 命令面板与别处一条 setView 就能切 ✓ ／
 //    ⭐ 与其它视图一样受"切换时关掉残留浮层"那条规则管 ✓。
-export type AppView = "notes" | "board" | "graph" | "files" | "timeline" | "map" | "templates";
+// ⭐ **P-2a-1（2026-10-13）**：⭐ 加 **`"sync"`** ✗ —— 让「同步」也能进**内容区** ✓（以前只有抽屉那一条路 ✓）。
+//   ⚠️ 它是 **`AppView`**、⛔ **不是** `Activity` 的 id ✗（活动栏那条入口另算，见 P-2a-2 ✓）。
+export type AppView =
+  | "notes"
+  | "board"
+  | "graph"
+  | "files"
+  | "timeline"
+  | "map"
+  | "templates"
+  | "sync";
 export type ContentWidth = "centered" | "full";
 
 interface ViewState {

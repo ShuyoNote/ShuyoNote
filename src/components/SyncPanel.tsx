@@ -148,7 +148,10 @@ interface EditRow {
  */
 const TRUST_DEVICE_READINGS = unavailableTrustDeviceReadings();
 
-export function SyncPanel() {
+/** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
+ *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
+ *  ⚠️ 默认 `false` ⇒ ⭐ **抽屉那支逐字不变** ✓（一行 JSX 都没搬 ✓）。 */
+export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
@@ -1268,6 +1271,9 @@ export function SyncPanel() {
 
   return (
     <div className="sync-panel">
+      {/* ⭐ **P-2a-1**：`contentOnly` ⇒ ⛔ **不渲染抽屉触发器** ✗（它是抽屉那支的东西 ✓ ——
+          内容区那一支只要内容体 ✓）；⭐ 默认那支**逐字不变** ✓。 */}
+      {!contentOnly && (
       <button
         ref={triggerRef}
         className="btn-sync"
@@ -1296,11 +1302,14 @@ export function SyncPanel() {
         )}
         {liveSyncing && <span className="sync-pulse" aria-hidden />}
       </button>
-      {open && (
+      )}
+      {/* ⭐ **P-2a-1**：`contentOnly` ⇒ **强制渲染内容体** ✓（⛔ 一行 JSX 都没搬 ✗）；
+          ⚠️ 并且**去掉浮层定位** ✗ —— 否则 `top/left` 会漏进内容区（那会让它飘起来 ✓）。 */}
+      {(open || contentOnly) && (
         <div
           ref={contentRef}
-          className={`sync-popover is-sync${isSheet ? " is-sheet" : ""}`}
-          style={{ top: pos.top, left: pos.left }}
+          className={`sync-popover is-sync${isSheet ? " is-sheet" : ""}${contentOnly ? " is-inline" : ""}`}
+          style={contentOnly ? undefined : { top: pos.top, left: pos.left }}
           role="dialog"
           aria-label="同步设置"
         >

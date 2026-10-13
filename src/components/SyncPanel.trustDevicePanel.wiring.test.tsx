@@ -303,3 +303,95 @@ describe("P-B：那一条「原因」不许长得像『对端没服务我』", (
     ).toContain("已删");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **P-2a-1（2026-10-13）**：⭐ **同一份内容**要能渲染进**内容区** ✗（今天只有抽屉那一条路 ✓）。
+//   ⭐ 做法＝`SyncPanel` 加 `contentOnly?: boolean` ⇒ **同一份 JSX 两处复用** ✓（⛔ 一行 JSX 都不搬 ✗）。
+// ⚠️ **判据①今天红**：`contentOnly` 还不存在 ⇒ 渲染出来的是**触发器**（`.btn-sync` **在** ✓）
+//    而**内容体**（「立即同步」`SyncPanel.tsx:1419` ✓）**不在** ✗。
+// ⚠️ **判据②今天红**（⭐ owner 点名的**不变量** ✗）：`「立即同步」`（`:1419` ✓）与路线那坨
+//    `.sync-att-text`（`:1494` ✓）⭐ **必须同在一个容器内、且前者在前** ✓ —— 今天内容体压根不渲染 ⇒ 红 ✓。
+// ⭐ 锁（今天应绿 ⇒ 如实标"锁，不是本片的修"✗）：⭐ 抽屉那支**仍可用** ✓（点 `.btn-sync` 仍开浮层 ✓）／
+//    ⛔ 界面**没有**「口令」格 ✓。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** ⚠️ 今天 `contentOnly` **还不存在** ⇒ 用 cast 传（⛔ 不假装契约已在 ✗）；改后同一行就是**真契约** ✓。 */
+async function renderPanelWithContentOnly(): Promise<HTMLElement> {
+  lanStatusSpy.mockResolvedValue({
+    enabled: true,
+    peers: 1,
+    kind: "lan",
+    line: "同步地址：直连（局域网） ｜ 本网段发现 1 台",
+    mesh: { enabled: true, bind: "0.0.0.0:8788", tokenSet: true, window: "172.16.174.0/24", note: "" },
+    nearby: [],
+  });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  const props = { contentOnly: true } as unknown as Record<string, never>;
+  flushSync(() => root!.render(<SyncPanel {...props} />));
+  for (let i = 0; i < 3; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1));
+    });
+    flushSync(() => {});
+  }
+  return host;
+}
+
+describe("P-2a-1：同一份内容要能进内容区（`contentOnly`）", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+  });
+
+  it("① ⭐ `contentOnly` ⇒ ⛔ 不许渲染触发器（`.btn-sync` ✗）＋ ⭐ 内容体必须在（今天【红】）", async () => {
+    const el = await renderPanelWithContentOnly();
+    expect(
+      el.querySelector(".btn-sync"),
+      "⛔ 内容区那支**不该**再带一颗抽屉触发器（那是抽屉那支的事 ✓）—— 今天【红】：触发器就在 ✓",
+    ).toBeNull();
+    expect(
+      el.textContent ?? "",
+      "⭐ 内容体必须**真的**渲染出来（「立即同步」在 `SyncPanel.tsx:1419` ✓）—— 今天【红】：压根不渲染 ✗",
+    ).toContain("立即同步");
+  });
+
+  it("② ⭐ 不变量：「立即同步」与路线那坨**同在一个容器内、且它在前面**（今天【红】）", async () => {
+    const el = await renderPanelWithContentOnly();
+    const pop = el.querySelector<HTMLElement>(".sync-popover");
+    const route = el.querySelector<HTMLElement>(".sync-att-text");
+    const syncNow = [...el.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+      (b.textContent ?? "").includes("立即同步"),
+    );
+    expect(
+      pop && route && syncNow,
+      "⭐ 三者都要在（容器 `.sync-popover` ✓／路线 `.sync-att-text` `:1494` ✓／「立即同步」`:1419` ✓）—— 今天【红】",
+    ).toBeTruthy();
+    expect(pop!.contains(route!) && pop!.contains(syncNow!), "⭐ 二者必须在**同一个容器**内 ✓").toBe(true);
+    expect(
+      syncNow!.compareDocumentPosition(route!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      "⭐ 「立即同步」必须在**路线那坨之前** ✓（顺序变了就是我们弄坏的 ✗）",
+    ).toBeTruthy();
+  });
+
+  it("③ 锁（今天已绿 ✓）：抽屉那支**仍可用** ⇒ 点 `.btn-sync` 仍然开浮层", async () => {
+    const el = await openPanelWith([]);
+    expect(el.querySelector(".btn-sync"), "⭐ 抽屉那支的触发器不许被弄没 ✗").toBeTruthy();
+    expect(el.querySelector(".sync-popover"), "⭐ 点它之后浮层要出来 ✓").toBeTruthy();
+  });
+
+  it("④ 锁（今天已绿 ✓）：⛔ 界面**没有**「口令」格", async () => {
+    const el = await renderPanelWithContentOnly();
+    const phs = [...el.querySelectorAll("input")].map((i) => i.getAttribute("placeholder") ?? "");
+    expect(
+      phs.some((p) => p.includes("口令")),
+      `⛔ 面板上不许再有「口令」输入格 ✗（owner 2026-10-13 拍了去掉 ✓）：实测 ${JSON.stringify(phs)}`,
+    ).toBe(false);
+  });
+});
