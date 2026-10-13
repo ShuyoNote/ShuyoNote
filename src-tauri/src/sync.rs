@@ -2455,8 +2455,15 @@ pub fn device_pair_export(
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     let s = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
     let bind = s.bind.unwrap_or_default();
-    let token = s.token.unwrap_or_default();
-    if bind.trim().is_empty() || token.trim().is_empty() {
+    let mut token = s.token.unwrap_or_default();
+    // ⭐ **R1（2026-10-13，Lead 把范围砍到这一处）**：⭐ **没设窗口口令 ⇒ 当场生成一串 ＋ 写库** ✗
+    //   （⛔ 不再回 `not_configured` ✗ —— 那条路会让"从没填过口令"的人**根本生成不出码** ✓）。
+    //   ⚠️ 随机源**只走 `crate::crypto`** ✓：`crypto.rs:261` 逐字「随机数入口只有这一处」✓ ⇒
+    //      ⛔ 本文件**不引 `rand`，也不直接用底层那个 OS 随机源** ✗（`Cargo.toml` 只有 `rand_core` ✓）。
+    //   ⚠️ 口令**不再是凭证**（已定口径 ✓：门只认配对密钥／签名 ✓）⇒ 这里生成的那一串只是让
+    //      "这一趟能走通"的一格 ✓，⛔ **不进任何可见文案** ✗。
+    // ⚠️ **缺地址那一半照旧** ✓（`bind` 空仍回 `not_configured` ✓ —— ⛔ 别把它一起放行 ✗）。
+    if bind.trim().is_empty() {
         return Ok(DevicePairExportResult {
             outcome: "not_configured".to_string(),
             text: String::new(),
@@ -2466,9 +2473,17 @@ pub fn device_pair_export(
             qr_fits: false,
             qr_svg: None,
             message: "这台设备**还没配好设备直连** ⇒ 没有东西可以配对过去。\n\
-                      先在「同步」面板填**监听地址**（或直接写 `0.0.0.0:8788`）＋ 设一个**窗口口令**，再来。"
+                      先在「同步」面板填**监听地址**（或直接写 `0.0.0.0:8788`），再来。"
                 .to_string(),
         });
+    }
+    // ⭐ 空口令 ⇒ **当场生成 ＋ 写库**（⛔ 不覆盖已有的 ✗：这条路只在**空**时才进 ✓；
+    //   ⚠️ 走 `mesh::set_mesh_token` 那一处实现 ✓ —— 它自己带强度校验 ✓，与面板那条同源 ✓）。
+    let auto_token = token.trim().is_empty();
+    if auto_token {
+        let generated = crate::crypto::key_hex(&crate::crypto::random_32());
+        crate::mesh::set_mesh_token(&c, &scope.space, Some(&generated))?;
+        token = generated;
     }
     // 设备指纹与 `pairing_export` 同源（应用级 `device_id`，**非秘密** ✓）。
     let device_id = crate::sync::get_meta_state(&c, "device_id").unwrap_or_default();
@@ -2549,6 +2564,11 @@ pub fn device_pair_export(
             message.push('\n');
             message.push_str(&warn);
         }
+    }
+    // ⭐ **R1**：那一串是**这一次新生成**的 ⇒ 如实说一句 ✓
+    //   ⚠️ 只写**改后为真**的话 ✗：⛔ 不提"去哪看/换"（那格子还不存在 ⇒ 等下一片 UI 落地后再写 ✓）。
+    if auto_token {
+        message.push_str("\n⭐ 本机**还没有窗口口令** ⇒ 这次生成时**已自动生成**了一串（**无需手填** ✓）。");
     }
     // ⚠️ 长度要**在移动进返回值之前**取好（与 `pairing_export` 同一个坑 ✓ —— 它那儿也写着这句）。
     let bytes = text.len();
@@ -4767,6 +4787,9 @@ mod device_level_paired_tests {
         assert_eq!(crate::mesh::mesh_room_device(&c), None, "前提：设备级那一格还没填");
 
         // ⭐ 个人档**写一次** —— 走**唯一实现** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：这一条量的是**行键**（个人档写一次 ⇒ 两个个人空间
+        //   都看得到它 ✓），`peer_pubkey` 只被**登记/读回** ⇒ **没有验签** ⇒ 真钥匙无信息增益 ✗
+        //   （同族三处：`:4870`／`:4871`／`mesh.rs:4908` ✓）。
         crate::sync::remember_peer_card(&c, &a.space, "dev-1", "k7Qm-2pRt", true, &"ab".repeat(32)).unwrap();
 
         // ① ⭐ 两个个人空间**都**看得到它 ✗
@@ -4867,6 +4890,8 @@ mod device_level_paired_tests {
         )
         .unwrap();
         // ⭐ 个人档**写两台**（走唯一实现 ✓）
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：同上（这一条量的是"**两台各一行**"✓，
+        //   公钥只被登记/读回 ⇒ 无验签 ⇒ 真钥匙无信息增益 ✗）。
         crate::sync::remember_peer_card(&c, "room-a", "dev-1", "k7Qm-2pRt", true, &"ab".repeat(32)).unwrap();
         crate::sync::remember_peer_card(&c, "room-a", "dev-2", "pW3n-8sTq", true, &"cd".repeat(32)).unwrap();
 
@@ -5443,7 +5468,7 @@ pub fn lan_status(
         let fallback = profiles
             .first()
             .and_then(|(_, _, ws)| get_profile(&c, ws).ok());
-        pick_lan_scope(explicit, fallback)
+        pick_lan_scope(&c, explicit, fallback)
     };
     let (space_id, server_url) = match picked {
         Some((space, url)) => (space, url),
@@ -5458,7 +5483,54 @@ pub fn lan_status(
     //   ⚠️ 用的是**上面那一次** `state.peers(now)`（`:3219`）：`peers`（数量）与 `nearby`（列表）
     //      必须来自**同一次读数**（`INV-NEARBY-one-source`），所以 `peers.len() == nearby.len()`
     //      是**恒等式**，而不是"两处各数一遍碰巧相等"。
-    let nearby = nearby_of(&peers, &device_id, &space_id);
+    // ⭐ **P-B（2026-10-13）**：⭐ "对端报的那个空间在**本机已被删**" ✗ 也要**说得出来** ✓ ——
+    //   ⛔ **不动上面那条 SQL 的过滤** ✗（`deleted_at IS NULL` 是 owner 拍的**甲**、**有意保留** ✓）；
+    //   ⭐ 这里**另取一次**：只看"**被删的那些空间本来会报哪个标识**" ✓（`window_serve_space` 同一口径 ✓），
+    //   而且只把它喂给**读数** ✓ ⇒ ⛔ 一个字节都不进判定 ✗（`serves_current` 照旧只有 `lan::serves_space` ✓）。
+    let deleted_hints: Vec<String> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut out: Vec<String> = Vec::new();
+        if let Ok(mut stmt) = c.prepare(
+            "SELECT p.space_id, p.ws_id FROM sync_profiles p
+             WHERE EXISTS (
+                 SELECT 1 FROM meta.workspaces w
+                 WHERE w.id = p.ws_id AND w.deleted_at IS NOT NULL
+             )",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }) {
+                for (space_id, ws_id) in rows.flatten() {
+                    let resolved = crate::lan_state::window_serve_space(&c, &space_id, &ws_id);
+                    let resolved = resolved.trim().to_string();
+                    if !resolved.is_empty() {
+                        out.push(resolved);
+                    }
+                }
+            }
+        }
+        out
+    };
+    // ⭐ **P-3a（2026-10-13）**：逐台"钥匙变了吗"要的那本册子 —— **本机记的公钥** ✓。
+    //   ⚠️ 读法与既有那几处**同一把尺**（`sync.rs:5054/5061` ✓、`mesh.rs:2339` ✓ 都是
+    //   `db::paired_pubkeys(&conn, <row key>)` ✓）；而 row key 有**两种形状**
+    //   （`mesh::paired_row_key(space, device_level)`：设备级 ⇒ 一个常量键 ✓，否则就是 `space` ✓）
+    //   ⇒ ⭐ **两把键都读、并起来** ✓ —— ⛔ 不赌哪一把 ✗（赌错只会得到"没记过"，
+    //   那是**看着像结论的沉默** ✗；并起来最坏也只是多几条不相干的 id ✓）。
+    let recorded_pubkeys: Vec<(String, String)> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut out: Vec<(String, String)> = Vec::new();
+        for key in [
+            crate::mesh::paired_row_key(&space_id, true),
+            crate::mesh::paired_row_key(&space_id, false),
+        ] {
+            if let Ok(rows) = crate::db::paired_pubkeys(&c, key) {
+                out.extend(rows);
+            }
+        }
+        out
+    };
+    let nearby = nearby_of_with(&peers, &device_id, &space_id, &deleted_hints, &recorded_pubkeys);
 
     // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
     //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
@@ -5486,12 +5558,22 @@ pub fn lan_status(
 ///
 /// ⚠️ 两条路都可能"查不到"（指定的工作空间其实没配、或库里一条都没有）⇒ 一律回落，
 /// **不许**报错：这只是"面板上那一行字显示哪个空间"，不是同步请求。
+/// ⭐ **2026-10-13（甲）**：`c` 加进来是为了**判定与公告同一把尺** ✗ —— 个人档的 `sync_profiles.space_id`
+/// 是**空串** ✓ ⇒ 老口径下 `lan::serves_space` 的 `!want.is_empty()` 当场**短路成 false** ✗，
+/// 而公告同时刻报的是**配对暗号**（`lan_state::window_serve_space` ✓）⇒ 两把尺不同名 ✗
+/// （现象：明明那台在服务我这个空间，面板却说「没有服务这个空间的设备」✓）。
+/// ⚠️ 解析只放在**这一处**（"这一轮报哪个空间"的唯一函数 ✓）；⛔ 团队档必须一字节不变 ✗
+/// —— `window_serve_space` 对**非空** `space_id` **原样返回** ✓（`lan_state.rs` 逐字"团队空间口径不变"✓）。
 fn pick_lan_scope(
+    c: &Connection,
     explicit: Option<SyncProfile>,
     fallback: Option<SyncProfile>,
 ) -> Option<(String, String)> {
     let p = explicit.or(fallback)?;
-    Some((p.space_id, p.server_url))
+    // ⭐ **甲（2026-10-13）**：把"报哪个空间"换成**公告那一条口径** ✓（`window_serve_space`）
+    //   —— 个人档 ⇒ 配对暗号 ✓（不再是原始空串 ✗）；团队档 ⇒ `window_serve_space` **原样返回**
+    //   ⇒ 与从前**逐字相同** ✓（`lan_state.rs:953-956` ✓）。
+    Some((crate::lan_state::window_serve_space(c, &p.space_id, &p.ws_id), p.server_url))
 }
 
 /// `lan_status` 的形状（**前端契约**，见 `src/lib/platform/commands.ts` 的同名 interface）。
@@ -5561,6 +5643,23 @@ pub struct NearbyPeer {
     /// 这一条与**当前这个空间**相不相关（**由 Rust 判定**，界面直接显示）。
     /// 口径：与 `lan::serves_space` 同一把尺（＝ `mesh_peers` 用的那把）。
     pub serves_current: bool,
+    /// ⭐ **P-B（2026-10-13）**：上面那个布尔**为什么**是现在这个值 ✗ —— 一个**原因码** ✓。
+    ///
+    /// ⚠️ 来由（owner 现场）：⭐ "**本机没设配对暗号**"✗ 与 "**对端服务的空间在本机已删**"✗，
+    /// 今天在界面上**长得和"对端没服务我"一模一样** ✗（`hub_spaces` 原文只念得出"另外 N 个空间"✓）
+    /// ⇒ 用户会往"对端没服务我"那边查 ✗，而真因在自己这边 ✓。
+    ///
+    /// 取值（⭐ 界面按**码**翻人话 ✓，⛔ 这个字符串里**不含任何值** ✗ —— 尤其**不含暗号** ✓）：
+    /// · `"ok"` ⇒ 对端**就在服务这个空间** ✓；
+    /// · `"no_secret"` ⇒ ⭐ 本机这一侧**还没有可直连的标识**（个人档＝没填配对暗号 ✓；
+    ///   团队档＝没绑组织空间 ✓ —— 个人档那条是 `window_serve_space` 回落空串所致 ✓）；
+    /// · `"space_deleted"` ⇒ ⭐ 对端报的那个标识在本机对应一个**已删**空间 ✓
+    ///   （`sync.rs` 那条 profile SQL **有意**滤掉已删空间 ✓ ⇒ 这里只**说出来**，⛔ 不把过滤放宽 ✗）；
+    /// · `"peer_not_serving"` ⇒ 对端**没报**它在服务任何空间 ✓；
+    /// · `"mismatch"` ⇒ 两边都报了、但对不上 ✓（⭐ 多半是**两边暗号不一样**，或它服务的是别的空间 ✓）。
+    ///
+    /// ⚠️ 它**不参与任何判定** ✗（判定仍旧只有 `serves_current` 一条 ✓ ⇒ ⛔ 别拿它去开关按钮 ✗）。
+    pub serves_reason: String,
     /// ★ **只有这一台能被直接拉**（＝界面上那一行的第二列有没有落到「它没报可以直连的地址」）：
     /// 与 `mesh::invitable_base` 同一套过滤（不是我自己 · 服务这个空间 · `hub_base` 是局域网地址）。
     ///
@@ -5576,6 +5675,54 @@ pub struct NearbyPeer {
     /// ⚠️ 老对端**还没带这一格** ⇒ **空串** ✓ ⇒ 界面**如实**说「这一台还没报出它的身份」✗，
     /// ⛔ 不许拿 `device_id` 或别的字段凑一个 ✗（与 `short_id` 同一条纪律 ✓）。
     pub pubkey: String,
+    /// ⭐ **P-3a（2026-10-13，owner 承诺 R7）**：⭐ **这一台"钥匙变了"吗** ✗ ——
+    /// ⭐ **逐台**读数 ✓（现在那条全局 `trustState` 推不出逐台 ✓）。
+    ///
+    /// ⚠️ **比的是这两个字段**（⭐ 明写，⛔ 不许猜 ✗）：
+    /// · **对面报的那一份** ＝ 本条公告的 `pubkey`（`lan::LanAnnounce.pubkey` ✓，上抛见 `:5730` ✓）；
+    /// · **本机记的那一份** ＝ `mesh_paired_devices.pubkey`（读法 `db.rs:285-293 paired_pubkeys`
+    ///   逐字 `SELECT device_id, pubkey FROM mesh_paired_devices WHERE space_id = ?1 AND TRIM(pubkey) <> ''` ✓；
+    ///   写入在 `db.rs:268-280` 的 upsert ✓，键与写路径同一把尺 `mesh::paired_row_key(…, true)` ✓）。
+    /// ⇒ `true` ＝ 两边**都有公钥且不相等** ✓（换过钥匙 ⇒ 门那边签名验不过 ⇒ 401 ✓，所以要重新配对 ✓）。
+    ///
+    /// ⚠️ ⭐ **可空** ✗（`None` ⇒ **读不到**，原因见 [`NearbyPeer::key_reason`] ✓）：对面没报公钥（老对端 ✓）
+    /// ／本机那本册子里**没记过**它（旧那一档 ✓）⇒ ⭐ 这两件事**都不是"变了"** ✗ ⇒
+    /// ⛔ **绝不许默认成 `false`（"没变"）或 `true`（"变了"）** ✗ —— 那是拿一个**结论**冒充"读不到" ✓。
+    /// ⛔ **不参与任何判定** ✗（判定仍是 `serves_current` ✓；界面只许**显示** ✓）。
+    pub key_changed: Option<bool>,
+    /// ⭐ 上面那一格的**原因码** ✓（⛔ 不含任何值 ✗ —— 尤其**不含公钥本身** ✓）：`"ok"`（两边都有、比过 ✓）
+    /// ／`"peer_no_key"`（对面没报公钥 ✓）／`"no_record"`（本机册子里没记过它 ✓）。
+    pub key_reason: String,
+}
+
+/// ⭐ **P-B（2026-10-13）**：这一条**为什么**不服务当前空间 ✗ —— ⭐ **纯函数**（判据不打桩、不开网络、不碰库 ✓）。
+///
+/// ⚠️ 它与 `lan::serves_space` **同源不同职** ✗：判定仍旧只有 `serves_space`（`serves_current` ✓），
+/// 这个函数**只解释原因** ✓ —— 但两处**说的必须是同一件事** ⇒ 判据里钉住"`ok` ⇔ `serves_space` 为真" ✓。
+///
+/// ⛔ 返回的是**码**，不是人话 ✗；⛔ **不许**把 `want` ／ `hub_spaces` 里的任何值拼进去 ✗
+/// （`want` 在个人档**就是那把配对暗号** ✗ ⇒ 拼进去＝把暗号摆到界面上 ✓）。
+pub(crate) fn serves_reason(want: &str, hub_spaces: &[String], deleted_hints: &[String]) -> &'static str {
+    let want = want.trim();
+    // ⭐ 本机这一侧**没有可直连的标识**（个人档＝没填暗号 ⇒ `window_serve_space` 回落空串 ✓）
+    //   ⇒ ⛔ 这**不是**"对端没服务我" ✗（`lan::serves_space` 对空 `want` 一律 short-circuit ✓）。
+    if want.is_empty() {
+        return "no_secret";
+    }
+    if hub_spaces.iter().any(|s| s.trim() == want) {
+        return "ok";
+    }
+    // ⭐ 对端报的那个标识**在本机对应一个已删空间** ✓ ⇒ 说出来（⛔ 过滤照旧不动 ✗）。
+    if hub_spaces
+        .iter()
+        .any(|s| !s.trim().is_empty() && deleted_hints.iter().any(|d| d.trim() == s.trim()))
+    {
+        return "space_deleted";
+    }
+    if hub_spaces.iter().all(|s| s.trim().is_empty()) {
+        return "peer_not_serving";
+    }
+    "mismatch"
 }
 
 /// 把对端表映射成**给人看的列表** —— 纯函数（判据不打桩、不开网络、不碰库）。
@@ -5584,23 +5731,66 @@ pub struct NearbyPeer {
 /// ⇒ `nearby.len() == peers.len()` 是**结构上**成立的（`INV-NEARBY-one-source`）。
 /// ⚠️ 名字空的、`hub_spaces` 空的那些**照样在列表里**（"看得见"不等于"能被拉"）——
 /// 少一行就会让"网段里发现 N 台"与列表行数漂开，而那正是这一片要消灭的东西。
+///
+/// ⚠️ 这是**不带"已删空间提示"**的那一版（判据与既有调用方照旧 ✓）：它的 `serves_reason`
+/// 里**永远**不会出现 `"space_deleted"` ✗（那需要一次库读 ✓）—— 生产那一侧走 [`nearby_of_with`] ✓。
 pub fn nearby_of(
     peers: &[lan::Peer],
     my_device: &str,
     space_id: &str,
 ) -> Vec<NearbyPeer> {
+    // ⚠️ **这一版不带本机册子** ⇒ `key_changed` 一律 `None`（原因 `"no_record"` ✓，⛔ 不猜 ✗）——
+    //    生产那一侧走 [`nearby_of_with`]（那里把 `paired_pubkeys` 喂进来 ✓）。
+    nearby_of_with(peers, my_device, space_id, &[], &[])
+}
+
+/// [`nearby_of`] 的**带提示**版：多收一组"**本机已删空间本来会报的标识**" ✓ ⇒ 才判得出 `space_deleted` ✓。
+///
+/// ⚠️ 多出来的这一组**只进读数** ✗，⛔ 不进任何判定 ✓（判定仍是 `lan::serves_space` 那一条 ✓）。
+///
+/// ⭐ **P-3a（2026-10-13）**：再收一组"**本机册子里记的那份公钥**"（`device_id, pubkey` ✓，
+///   来自 `db::paired_pubkeys` ✓）⇒ 逐台算出 [`NearbyPeer::key_changed`] ✓ ——
+///   ⚠️ 本函数仍是**纯函数**（零网络零库 ✓）：册子由**调用方**读好喂进来 ✓。
+pub(crate) fn nearby_of_with(
+    peers: &[lan::Peer],
+    my_device: &str,
+    space_id: &str,
+    deleted_hints: &[String],
+    recorded_pubkeys: &[(String, String)],
+) -> Vec<NearbyPeer> {
     peers
         .iter()
-        .map(|p| NearbyPeer {
-            device_id: p.announce.device_id.trim().to_string(),
-            device_name: p.announce.device_name.trim().to_string(),
-            short_id: p.announce.short_id.trim().to_string(),
-            addr: p.addr.trim().to_string(),
-            spaces: spaces_of(p),
-            serves_current: lan::serves_space(space_id, p),
-            invitable: crate::mesh::invitable_base(space_id, my_device, p).is_some(),
-            // ⭐ 2026-10-12（第 3 步）：⭐ 公钥照**原样**上抛 ✓（空串 ＝ 老对端没报 ✓，⛔ 不凑 ✗）
-            pubkey: p.announce.pubkey.trim().to_string(),
+        .map(|p| {
+            let spaces = spaces_of(p);
+            let announced = p.announce.pubkey.trim();
+            // ⭐ 逐台"钥匙变了吗" ✓ —— ⛔ 只在**两边都有公钥**时才比 ✗（其余一律 `None` ＋ 原因 ✓）。
+            let recorded = recorded_pubkeys
+                .iter()
+                .find(|(id, _)| id == p.announce.device_id.trim())
+                .map(|(_, k)| k.trim())
+                .filter(|k| !k.is_empty());
+            let (key_changed, key_reason) = if announced.is_empty() {
+                (None, "peer_no_key")
+            } else if let Some(rec) = recorded {
+                (Some(!rec.eq_ignore_ascii_case(announced)), "ok")
+            } else {
+                (None, "no_record")
+            };
+            NearbyPeer {
+                device_id: p.announce.device_id.trim().to_string(),
+                device_name: p.announce.device_name.trim().to_string(),
+                short_id: p.announce.short_id.trim().to_string(),
+                addr: p.addr.trim().to_string(),
+                serves_current: lan::serves_space(space_id, p),
+                serves_reason: serves_reason(space_id, &spaces, deleted_hints).to_string(),
+                invitable: crate::mesh::invitable_base(space_id, my_device, p).is_some(),
+                // ⭐ 2026-10-12（第 3 步）：⭐ 公钥照**原样**上抛 ✓（空串 ＝ 老对端没报 ✓，⛔ 不凑 ✗）
+                pubkey: p.announce.pubkey.trim().to_string(),
+                spaces,
+                // ⭐ P-3a：逐台"钥匙变了吗" ✓（`None` ＝ 读不到 ✓，原因在下一格 ✓）
+                key_changed,
+                key_reason: key_reason.to_string(),
+            }
         })
         .collect()
 }
@@ -7833,20 +8023,77 @@ mod tests {
     /// 而用户配的明明就是那一个 —— 它**能编译、别处单测照绿**，只有真机看得见。
     #[test]
     fn the_status_line_reports_the_space_that_was_actually_asked_for() {
+        // ⚠️ 新签名要一个连接（`pick_lan_scope(&c, …)` ✓）：这里**故意**给一个**空库** ⇒
+        //    口径解析查不到任何东西 ⇒ `window_serve_space` **原样回落** `space_id` ✓
+        //    ⇒ 下面三条断言与从前**逐字相同** ✓（团队档路径一字节不变的证据之一 ✓）。
+        let c = Connection::open_in_memory().unwrap();
         let mine = profile_for("sp-mine", "https://s.example.com");
         let other = profile_for("sp-other", "https://other.example.com");
         // 指定了就报指定那个（**不是**第一条）
         assert_eq!(
-            pick_lan_scope(Some(mine.clone()), Some(other.clone())),
+            pick_lan_scope(&c, Some(mine.clone()), Some(other.clone())),
             Some(("sp-mine".to_string(), "https://s.example.com".to_string()))
         );
         // 指定的查不到（工作空间没配）⇒ 回落第一条绑定，**不报错**
         assert_eq!(
-            pick_lan_scope(None, Some(other.clone())),
+            pick_lan_scope(&c, None, Some(other.clone())),
             Some(("sp-other".to_string(), "https://other.example.com".to_string()))
         );
         // 一条都没有 ⇒ None（调用方据此走 `resolve_base("", "")` ⇒ 状态行「尚未绑定」）
-        assert_eq!(pick_lan_scope(None, None), None);
+        assert_eq!(pick_lan_scope(&c, None, None), None);
+    }
+
+    /// ⭐⭐ **甲（2026-10-13）的核心判据**：`pick_lan_scope` 必须与**公告同一把尺** ✗。
+    ///
+    /// 病（逐行）：个人档 `sync_profiles.space_id` ＝ **空串** ✓（`lan_state.rs:439` 一带逐字），
+    /// 而公告报的是**配对暗号**（`lan_state::window_serve_space` ⇒ `resolved_space` ✓）；
+    /// 老口径直接把原始列交给 `lan::serves_space` ⇒ `!want.is_empty()`（`lan.rs:319`）**短路** ⇒
+    /// **个人空间恒 false** ✗ ⇒ 界面说「服务 另外 1 个空间」而用户配的就是那一个 ✓。
+    ///
+    /// ⚠️ 本判据**新加即绿**之前应当**先红**（见回话里的红读数 ✓）；它同时钉住"空 want 不再短路" ✓。
+    #[test]
+    fn personal_profile_scope_must_use_the_same_ruler_as_the_announce() {
+        // 自足夹具：一份带 `meta.sync_profiles` / `meta.sync_state` 的空间连接 ✓
+        // （形状抄 `lan_state.rs` 的 `mesh_serve_space_tests::fixture` ✓）
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS meta;
+             CREATE TABLE meta.sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE meta.sync_profiles (
+                 ws_id TEXT PRIMARY KEY, server_url TEXT NOT NULL DEFAULT '',
+                 token TEXT NOT NULL DEFAULT '', space_id TEXT NOT NULL DEFAULT '',
+                 last_pushed_seq INTEGER NOT NULL DEFAULT 0, last_pulled_seq INTEGER NOT NULL DEFAULT 0,
+                 sync_attachments INTEGER NOT NULL DEFAULT 1, mesh_room TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE meta.workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', deleted_at INTEGER);",
+        )
+        .unwrap();
+        // ⚠️ **少了这张表就会静默回落** ✗：`mesh_scope_at` 会查 `meta.workspaces` ⇒ 查不到**报错** ⇒
+        //    `resolved_space` 走 `unwrap_or_else(|_| space_id)` 回落成**空串** ✗ ⇒ 判据假红 ✓
+        //    （实测踩到：第一版只建了 `sync_state`/`sync_profiles`，逐字 `left: Some(("", …))` ✗）。
+        c.execute_batch("INSERT INTO meta.workspaces (id, name, deleted_at) VALUES ('ws', '个人', NULL);")
+            .unwrap();
+        // 个人档：`space_id` **空串** ＋ 用户填的「配对暗号」＝ `room-a`（公告会报的就是它 ✓）
+        c.execute_batch(
+            "INSERT INTO meta.sync_profiles (ws_id, server_url, space_id, mesh_room) \
+             VALUES ('ws', 'https://s.example.com', '', 'room-a');",
+        )
+        .unwrap();
+        // 设备级那格也一起落（口径解析可能先看它 ✓ —— 两条路都通向同一个暗号 ✓）
+        crate::mesh::set_mesh_room_device(&c, Some("room-a")).unwrap();
+
+        let picked = pick_lan_scope(&c, Some(profile_for("", "https://s.example.com")), None);
+        assert_eq!(
+            picked,
+            Some(("room-a".to_string(), "https://s.example.com".to_string())),
+            "个人档 ⇒ 必须解析成**公告会报的那个字符串**（配对暗号 `room-a` ✓），⛔ 不是原始空串 ✗"
+        );
+        // ⭐ 与公告同名 ⇒ 判定不再被 `!want.is_empty()` 短路 ✓
+        let peer = lan_peer("dev-amd", "http://172.16.174.226:8787", &["room-a"]);
+        assert!(
+            crate::lan::serves_space(&picked.unwrap().0, &peer),
+            "对端报的就是这个暗号 ⇒ `serves_current` 必须是 **true**（老口径下恒 false ✗）"
+        );
     }
 
     // ---- B4-b：兜底行的收编与自愈 ----
@@ -9026,6 +9273,45 @@ mod tests {
         );
     }
 
+    /// ⭐ **P-3a 判据（2026-10-13）**：逐台「钥匙变了吗」✗ ——
+    /// 比的是 **对面公告的 `pubkey`** vs **本机 `mesh_paired_devices.pubkey`**
+    /// （⭐ 逐字见 [`NearbyPeer::key_changed`] 那段注释 ✓）：
+    /// · 换了 ⇒ `Some(true)` ✓（门那边签名验不过 ⇒ 401 ⇒ 要重新配对 ✓）；
+    /// · 没换 ⇒ `Some(false)` ✓（⛔ 不许永远为真 ✗）；
+    /// · 本机册子里**没记过** ⇒ `None` ＋ `"no_record"` ✓（⛔ 不许当「没变」✗）；
+    /// · 对面**没报**公钥（老对端 ✓）⇒ `None` ＋ `"peer_no_key"` ✓。
+    #[test]
+    fn key_changed_is_per_device_and_never_faked() {
+        const PK_OLD: &str = "aa11";
+        const PK_NEW: &str = "bb22";
+        let mut peers = vec![
+            nearby_fixture("dev-changed", "换了钥匙的", Some("http://192.168.1.5:8788"), &["sp-1"]),
+            nearby_fixture("dev-same", "还是那把钥匙的", Some("http://192.168.1.6:8788"), &["sp-1"]),
+            nearby_fixture("dev-unrecorded", "本机没记过的", Some("http://192.168.1.7:8788"), &["sp-1"]),
+            nearby_fixture("dev-silent", "没报公钥的", Some("http://192.168.1.8:8788"), &["sp-1"]),
+        ];
+        peers[0].announce.pubkey = PK_NEW.to_string();
+        peers[1].announce.pubkey = PK_OLD.to_string();
+        peers[2].announce.pubkey = PK_OLD.to_string();
+        // `peers[3]` 保持空串 ⇒ 老对端没报公钥 ✓（这一格不许被当成「变了」也不许当成「没变」✓）
+        let recorded = vec![
+            ("dev-changed".to_string(), PK_OLD.to_string()),
+            ("dev-same".to_string(), PK_OLD.to_string()),
+        ];
+        let got = nearby_of_with(&peers, "dev-me", "sp-1", &[], &recorded);
+        assert_eq!(got[0].key_changed, Some(true), "⛔ 换了公钥必须说「变了」✗");
+        assert_eq!(got[0].key_reason, "ok");
+        assert_eq!(
+            got[1].key_changed,
+            Some(false),
+            "⛔ 没换必须说「没变」✗（⛔ 不许永远为真 ✗ —— 一个永远为真的读数等于没有读数 ✓）"
+        );
+        assert_eq!(got[2].key_changed, None, "⛔ 本机没记过 ⇒ 读不到 ✗（⛔ 不许当「没变」✗）");
+        assert_eq!(got[2].key_reason, "no_record");
+        assert_eq!(got[3].key_changed, None, "⛔ 对面没报公钥 ⇒ 读不到 ✗");
+        assert_eq!(got[3].key_reason, "peer_no_key");
+    }
+
     /// ★★ 判据 ②（同一把尺）：`nearby.filter(invitable)` 的集合 **==** `mesh::mesh_peers` 的集合
     /// （喂**同一份** `peers`）。退化形态：列表里有「邀请」按钮，点了却拉不动（或反过来）。
     #[test]
@@ -9112,6 +9398,37 @@ mod tests {
         assert!(nearby_of(&peers, "dev-me", "  ").iter().all(|p| !p.serves_current));
     }
 
+    /// ⭐ **P-B（2026-10-13）**：⭐ **原因码**要能把三种"看起来一样"的处境**分开** ✗ ——
+    /// 「对端没服务我」／「本机没设暗号」／「对端服务的空间在本机已删」✓。
+    ///
+    /// ⚠️ 如实（⭐ 不假装它今天红 ✗）：这条判据**新写就是绿的**（`serves_reason` 是本片新加的 ✓）
+    /// ⇒ 它的职责是**锁**：⛔ 谁把"空 `want`"又折回 `"mismatch"`／"没服务" ✗ ⇒ 当场红 ✓。
+    /// ⚠️ 并且钉住**同源**：`ok` ⇔ `lan::serves_space` 为真（两处说的必须是同一件事 ✓）。
+    #[test]
+    fn the_nearby_reason_code_tells_the_three_lookalikes_apart() {
+        let hub = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        // ⭐ ① 本机没暗号（个人档 `window_serve_space` 回落空串 ✓）⇒ ⛔ 不是"对端没服务我" ✗
+        assert_eq!(serves_reason("", &hub(&["k1"]), &[]), "no_secret");
+        assert_eq!(serves_reason("  ", &hub(&["k1"]), &[]), "no_secret");
+        // ⭐ ② 对端报的那个标识在本机**已删** ⇒ 说出来（⛔ 不是"没服务" ✗）
+        //   ⚠️ 前提：它对的是**已删那个**、而不是本机这一侧现在的 `want`（后者是 `ok` ✓）。
+        assert_eq!(serves_reason("k1", &hub(&["k9"]), &hub(&["k9"])), "space_deleted");
+        // ⭐ ③ 两边都报了但对不上 ⇒ `mismatch`；⭐ 对端什么都没报 ⇒ `peer_not_serving`
+        assert_eq!(serves_reason("k1", &hub(&["k2"]), &[]), "mismatch");
+        assert_eq!(serves_reason("k1", &hub(&[]), &[]), "peer_not_serving");
+        // ⭐ ④ 服务着 ⇒ `ok`，且与判定那把尺**同源**（⛔ 两处不许各说一半 ✗）
+        assert_eq!(serves_reason("k1", &hub(&[" k1 "]), &[]), "ok");
+        let peer = nearby_fixture("dev-a", "A", Some("http://192.168.1.5:8788"), &["k1"]);
+        assert!(lan::serves_space("k1", &peer));
+        assert_eq!(serves_reason("k1", &hub(&["k1"]), &[]), "ok");
+        // ⭐ ⑤ 已删提示**不许**越权：对端报的是**别人**（不在已删集里）⇒ 仍然只是 `mismatch`
+        assert_eq!(serves_reason("k1", &hub(&["k2"]), &hub(&["k3"])), "mismatch");
+        // ⭐ ⑥ 生产那一版（带提示）会把它接上 ✓
+        // ⚠️ 本片给 `nearby_of_with` 多了一个参数（本机册子 ✓）⇒ 这一格不关心"钥匙变了" ⇒ 喂空 ✓
+        let with = nearby_of_with(&[peer.clone()], "dev-me", "k1", &hub(&["k1"]), &[]);
+        assert_eq!(with[0].serves_reason, "ok");
+    }
+
     /// ⭐⭐ **T3 的核心安全性质**（`U2`「配对必须有人验证、不许自动通过」＋ `U3`「两端不一致 ⇒ 停」）：
     ///
     /// ⚠️ 这条测试挡的**不是**"某个 if 写错了" ✗，而是**类型事实** ✓：
@@ -9140,6 +9457,9 @@ mod tests {
     /// ⛔ 老码（没这一格）现在会被**如实拒** ✗（见 `decode_device_pair` ✓）⇒ 夹具必须带上一把 ✓。
     fn pair_text(bind: &str, token: &str, from: &str, to: &str) -> String {
         let mut p = crate::pairing::device_pair_from(bind, token, from, to).unwrap();
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：这一档量的是"载荷**带着**那把公钥 ⇒ 采纳侧**拿到**它" ✓
+        //   （`:9203`／`:9247` 逐字比的就是**载荷里那一把** ✓）—— ⛔ **全程没有任何验签** ✗
+        //   ⇒ 真钥匙**无信息增益** ✗。⚠️ 若将来真要换：那三处必须**一起**换（只换一处 ⇒ 两条逐字比必红 ✗）。
         crate::pairing::stamp_pubkey(&mut p, &"ab".repeat(32)).unwrap();
         crate::pairing::encode_device_pair(&p).unwrap()
     }
@@ -9425,6 +9745,8 @@ mod tests {
     /// **红读数（真变异）**：在 `note_pending_trust_asks` 里加一句
     /// `crate::db::pair_pubkey(c, proto_space, &dev, &"ab".repeat(32))?;`
     /// ⇒ ⭐ 本判据当场红 ✓（`paired_pubkeys` 不再是 0 条 ✓）。
+    /// ⭐ P1（2026-10-13）：上句里的 `&"ab".repeat(32)` 是**形状例** ✓（⛔ 不是要换的钥匙 ✗）——
+    /// 这一格判的是"**有没有写库**"（`paired_pubkeys` 是不是 0 条 ✓），与钥匙真假无关 ✓。
     ///
     /// ⚠️ **必须先剥注释再比** ✗：本函数自己的**文档**里就写着那几个名字 ✓
     /// （"⛔ 不许出现 pair_pubkey ✗" ✓）—— 按整段文本比会**红在自己的说明上** ✓

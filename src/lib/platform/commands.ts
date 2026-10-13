@@ -236,6 +236,16 @@ export interface NearbyPeer {
   spaces: string[];
   /** 它跟我**当前这个空间**相不相关（**Rust 判的**，界面直接显示）。 */
   serves_current: boolean;
+  /** ⭐ **P-B（2026-10-13）**：上面那个布尔**为什么**是现在这个值 —— **原因码**（Rust 判的）。
+   *
+   *  取值：`"ok"` ／ `"no_secret"`（⭐ **本机这一侧还没有可直连的标识**：个人档＝没填配对暗号、
+   *  团队档＝没绑组织空间）／ `"space_deleted"`（⭐ 对端报的那个空间在**本机已删**）／
+   *  `"peer_not_serving"`（对端**没报**它服务谁）／ `"mismatch"`（两边都报了但对不上）。
+   *
+   *  ⚠️ 它**不参与任何判定** ⇒ ⛔ 界面**不许**拿它去开关按钮（开关仍旧只看 `serves_current`）；
+   *  它只负责把"**看起来一样**"的三种处境**分开说**（缺暗号 ／ 空间已删 ／ 对端没服务）。
+   *  ⛔ 它是**码**、不是人话，且**不含任何值**（尤其**不含暗号** —— `INV-UI-copy-no-internal-ids`）。 */
+  serves_reason: string;
   /** ★ 它能不能被直接拉（那一行的第二列据此如实说"它没报可以直连的地址"），与 `mesh::mesh_peers` 同一把尺。
    *  ⚠️ 名字取自 2026-09-29 丙-乙片（当时它管的是「有没有邀请按钮」）——同日晚 owner 裁定 §14 撤掉了邀请，
    *  这个字段**留下来了**：它现在的语义是"**能不能被直接拉**"，不是"能不能被邀请"。 */
@@ -245,6 +255,22 @@ export interface NearbyPeer {
    *  ⚠️ 公钥**不是秘密**（它本来就随公告发出去）。⚠️ 老对端没这一格 ⇒ **空串** ⇒
    *  界面**如实**说「这一台还没报出它的身份」，⛔ 不许拿 `device_id` 凑一个。 */
   pubkey: string;
+  /**
+   * ⭐ **P-3a（2026-10-13，owner 承诺 R7）**：⭐ **这一台「钥匙变了」吗** ✗（**逐台** ✓ ——
+   * 那条全局 `trustState` 推不出逐台 ✓）。
+   *
+   * ⚠️ **比的是**：本条公告的 `pubkey`（上面那一格 ✓）**vs** 本机 `mesh_paired_devices.pubkey`
+   * （Rust 侧走 `db::paired_pubkeys` ✓）⇒ 两边**都有**且**不等** ⇒ `true` ✓。
+   *
+   * ⚠️ ⭐ **可空** ✗：`null` ＝ **读不到**（对面没报公钥／本机册子里没记过它 ✓ —— 原因见 `key_reason` ✓）
+   * ⇒ ⛔ **绝不许把 `null` 当 `false`（「没变」）读** ✗：「没变」是**一个结论** ✓，
+   * 「读不到」是**没有结论** ✓（与那几格读数同一把尺 ✓）。
+   * ⛔ **不参与任何判定** ✗（判定仍是 `serves_current` ✓）。
+   */
+  key_changed: boolean | null;
+  /** ⭐ 上面那一格的**原因码** ✓（⛔ 不含任何值 ✗ —— 尤其**不含公钥** ✓）：
+   *  `"ok"`（比过 ✓）／`"peer_no_key"`（对面没报 ✓）／`"no_record"`（本机没记过 ✓）。 */
+  key_reason: string;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */
@@ -277,8 +303,44 @@ export interface MeshRoundReport {
   window: string | null;
 }
 
-/** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */
-export interface MeshConfigState {
+/**
+ * ⭐ **P1.5 主件 · A1**（2026-10-13）：一个空间在"网格面"上的形状 ✗
+ * （与 Rust `mesh_panel::MeshPanelScope` **逐字段相同** ✓）。
+ *
+ * ⚠️ ⭐ **不含任何内部标识** ✗：`ws_id` 是**本机**的空间 id ✓（界面拿它当行键 ✓），
+ * ⛔ 协议空间／暗号（`space_id`）**只在 Rust 侧用来判断**、⛔ 不回给界面 ✗
+ * （`INV-UI-copy-no-internal-ids` ✓）。
+ */
+export interface MeshPanelScope {
+  /** 本机空间 id ✓（与 `list_workspaces` 那些 `id` 同源 ✓）。 */
+  wsId: string;
+  name: string;
+  /** `''` ＝ 未分类 ⇒ 界面**如实说**，⛔ 不替它猜成"个人" ✗。 */
+  kind: string;
+  /** ⭐ 这一侧**对外宣称在服务**它吗 ✓（与窗口同一把尺 ✓；Web 上恒 `false` ✓）。 */
+  announced: boolean;
+}
+
+/** ⭐ 一条"空间"（只够界面列出来 ✓）。 */
+export interface MeshPanelSpace {
+  id: string;
+  name: string;
+}
+
+/**
+ * ⭐ `mesh_panel_spaces` 的读数 ✓。
+ *
+ * ⚠️ ⭐ **`offer` 本片留空** ✗（**待 B 片** ✓：owner 拍板 1 ＝ 这台机器**通过网格对外宣称
+ * "我在服务"**的空间 ✓）⇒ ⛔ 空数组在这里**只表示"还没接线"** ✗，**不表示"没有"** ✗ ——
+ * 界面不许把这两件事显示成同一种 ✓。
+ */
+export interface MeshPanelSpaces {
+  offer: MeshPanelSpace[];
+  /** ⭐ ＝ 本机**现在存在**的空间 ✓（`deleted_at IS NULL` ✓）。 */
+  local: MeshPanelSpace[];
+}
+
+/** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */export interface MeshConfigState {
   enabled: boolean;
   bind: string | null;
   /** ⚠️ **只说"设没设"**：口令本身不会回给界面（没有任何理由再拿回去一遍）。 */
@@ -918,6 +980,22 @@ export interface CommandMap {
    * 契约形状与 `src-tauri/src/mesh.rs::MeshRoundReport` 逐字段相同。
    */
   mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
+  /**
+   * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ ——
+   * ⭐ **只读** ✓（⛔ 一个字节都不写 ✗、⛔ 一个包都不发 ✗）。
+   *
+   * ⚠️ 两条命令**都没有参数** ✗（读的是"本机"这回事 ✓）：
+   * · `mesh_panel_scopes` ⇒ 每个空间"**对外宣称**在服务它吗" ✓
+   *   （⭐ 与窗口**同一把尺**：`lan_state.rs:953 window_serve_space` ✓；`kind` 直读 `meta.workspaces.kind` ✓）；
+   * · `mesh_panel_spaces` ⇒ `{offer, local}` ✓ —— ⚠️ ⭐ **`offer` 本片留空** ✗（**待 B 片** ✓：
+   *   ⛔ 空数组只表示"还没接线" ✗，**不表示"没有"** ✗）；
+   *   `local` ＝ 本机**现在存在**的空间 ✓（`deleted_at IS NULL` ✓）。
+   *
+   * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 上没有发现层（UDP 在 Rust 侧 ✓）
+   * ⇒ 那边的 `announced` 一律 `false` ✓（⛔ 不假装有窗口 ✗），而 `local` 照列它自己的空间 ✓。
+   */
+  mesh_panel_scopes: { args: undefined; result: MeshPanelScope[] };
+  mesh_panel_spaces: { args: undefined; result: MeshPanelSpaces };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
    *

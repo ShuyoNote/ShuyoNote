@@ -22,6 +22,9 @@ mod relay_license;
 //    那是"⭐ 登记对面 ✗"的唯一实现 ✓）＋ ⭐ 广播一条"⭐ 我想信任你 ✗"。⭐ 令牌**不上线** ✓。
 //    ⚠️ 代价与兜底写在 `docs/plans/2026-10-11-one-click-trust-decision.md` §2 ✓。
 mod mesh_trust;
+// ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数**（只读 ✓，⛔ 不动协议 ✗）——
+//    `mesh_panel_scopes`（每个空间"对外宣称"的状态）＋ `mesh_panel_spaces`（本机有哪些空间 ✓；`offer` 待 B 片）。
+mod mesh_panel;
 mod device_key;
 // 「能力」按需下载包的落盘（2026-10-02）—— ⚠️ **不信任 webview**：白名单 ＋ 体积上限 ＋
 // sha256 自己再算一遍，三条任一不过就拒收 ✓（见 `abilities.rs` 头部）。
@@ -846,6 +849,10 @@ pub fn run() {
             //    ⭐ 内核（`pairing_trust::TrustHandshake::state()`）一直在推进 ✓，而前端原先**没有读它的口子** ✗
             //    ⇒ ⭐ "点了到底通没通"在界面上说不出来 ✓。⭐ 它只读 ✓（⛔ 一个字节都不写 ✗）。
             mesh_trust::mesh_trust_state,
+            // ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ ——
+            //    ⭐ 只读 ✓（⛔ 一个字节都不写 ✗、⛔ 一个包都不发 ✗）；⛔ 回给界面的字段不含内部标识 ✓。
+            mesh_panel::mesh_panel_scopes,
+            mesh_panel::mesh_panel_spaces,
             // 甲-1 接线第 1／3 件（2026-09-25）：局域网发现的**启动**与**读数**。
             // ⚠️ 只有桌面：发现靠 Rust 收发的 UDP（`lan.rs`），Web 平台上没有这一层 ——
             //    Web 侧的实现如实回"配置地址那一档 ＋ 局域网不可用"（不是假装发现了谁）。

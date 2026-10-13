@@ -13409,6 +13409,18 @@ p:has(> .editor-drawing-container) {
   color: var(--text-dim);
   padding: 10px 10px 4px;
 }
+/* ⭐ 2026-10-10 R185：分类标签的**明确宽度策略** ✓（修"真机上被挤成单字竖排"✗）。
+   ⚠️ 那格的病根与 win 的 `3f66ff44` **同形**（flex 子项没有宽度策略 ⇒ 自动最小尺寸 ＝ min-content
+   ＝ 一个汉字 ✓，CJK 可在任何字之间断行 ✓），但**对象不同、方向也相反** ✗：
+   · 他那格是「被长文本顶开」⇒ 补 `min-width: 0` ✓；
+   · 我们这格是「容器被挤窄 ⇒ 标签跟着缩」⇒ 要 `flex: 0 0 auto`（**不许缩** ✓）
+     ＋ `white-space: nowrap`（⛔ 不许逐字断行 ✗ ⇒ 这才是"单字竖排"的直接解 ✓）。
+   ⛔ 别删这条：`SettingsDialog` 那边的 JSX 注释点名了它 ✓。
+   ⚠️ **真机观感未验** ✗ —— 这条毛病在本机复现不出来 ✓（量出来必然"正常"✗ ⇒ 那不能当验过 ✗）。 */
+.set-rail-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .set-rail-group-title::after {
   content: "";
   flex: 1;

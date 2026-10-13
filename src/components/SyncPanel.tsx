@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useMobileNav } from "../store/mobileNav";
 import { usePopover } from "../hooks/usePopover";
@@ -21,6 +21,9 @@ import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
+// ⭐ **P-3c**：⭐ 二次确认走**仓内既有**那个件 ✓（⛔ 原生 `confirm` ✗ —— 本仓 `confirm` 只出现在配对
+//   那条路的 `need_confirm` 上 ✓，它不是弹窗 ✓）；⛔ 不自造一个 ✗（样式/文案归 owner ✓）。
+import { confirmDialog } from "../store/confirm";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform, platform } from "../lib/platform";
 // ⚠️ 2026-09-29（D3）：**行内 Markdown 的契约**。后端（Rust）给人看的话是按行内 Markdown 写的
@@ -148,7 +151,18 @@ interface EditRow {
  */
 const TRUST_DEVICE_READINGS = unavailableTrustDeviceReadings();
 
-export function SyncPanel() {
+/** ⭐ **P-3d（2026-10-13）**：设备列表那**三段**的名字与 testid ✓ ——
+ *  ⭐ 数组下标 ＝ 段序（`nearbyBucket` 的返回值 ✓）：需要重新配对 ⇒ 已信任 ⇒ 待配对 ✓。 */
+const NEARBY_GROUPS = [
+  { testid: "nearby-group-keychanged", label: "需要重新配对" },
+  { testid: "nearby-group-trusted", label: "已信任" },
+  { testid: "nearby-group-pending", label: "待配对" },
+] as const;
+
+/** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
+ *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
+ *  ⚠️ 默认 `false` ⇒ ⭐ **抽屉那支逐字不变** ✓（一行 JSX 都没搬 ✓）。 */
+export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {}) {
   // 面板比默认弹层宽/高，把实际尺寸告诉 usePopover，靠边打开时才不会被切掉。
   const { open, pos, isSheet, triggerRef, contentRef, toggle, close } = usePopover<HTMLButtonElement>({
     width: 452,
@@ -298,6 +312,18 @@ export function SyncPanel() {
   }, [activeId]);
   const duUnpair = async (deviceId: string) => {
     if (!activeId) return;
+    // ⭐ **P-3c（2026-10-13，R8）**：⭐ **二次确认** ✗ —— ⛔ 未确认 ⇒ **一个字节都不发** ✗（⛔ 不许"先调再撤" ✗）。
+    //   ⚠️ 用仓内**既有**那个确认件 ✓（`store/confirm` 的 `confirmDialog({title,message})` ✓ ——
+    //      `BackupButton.tsx:101` 就是这么用的 ✓）；⛔ **不用原生 `confirm`** ✗。
+    //   ⚠️ 文案是 owner 的承诺口径 ✓：⭐ 说得含「**重新配对**」✗（解除 ≠ 永久失联 ✓）。
+    //   ⚠️⭐ 乐观摘行（`:312` 那条 `setDuList`）**留在成功分支里** ✓ —— ⛔ 别挪到确认之前 ✗。
+    const ok = await confirmDialog({
+      title: "解除这一台？",
+      // ⚠️ 这里是**纯文本**（不是 JSX ✓）⇒ ⛔ **不能**用 `<b>` ✗、也⛔ **不能**用 Markdown 的 `**…**`
+      //   （那句话会把星号原样显示出来 ✓ —— `syncPanelMesh.wiring.test.ts` ⑨c 那条规矩管的正是它 ✓）。
+      message: "解除后它会拉不动你的内容，想再连要重新配对一次。",
+    });
+    if (!ok) return;
     setDuBusy(deviceId);
     setDuNote("");
     try {
@@ -314,16 +340,20 @@ export function SyncPanel() {
     }
   };
 
-  // ⚠️ `saveMeshRoom` / `saveMeshToken` / `disableMesh` **已抽到 `MeshAdvancedForm`** ✓
+  // ⚠️ `saveMeshRoom` / `disableMesh` **已抽到 `MeshAdvancedForm`** ✓
   //    （Round 1 纯抽取：行为逐字照搬 ✓，包括 `saveMeshRoom` 顺手更新 `lanStatus.mesh` 那一下 ✓）。
+  //    ⭐ 其中 `saveMeshToken` **已于 2026-10-13 删掉** ✓ —— 用户手打的那条 `mesh_token` 已退役 ✗
+  //      （`mesh.rs:787`／`:1727` ✓）；⛔ 后端那格数据**保留可读、不静默删** ✗（本片只动界面 ✓）。
 
   // ⭐ **T4（2026-10-01）：把这台设备接进来** —— owner 拍「乙」：**两个入口、两个名字** ✓
   //   · 老的那块（`SpacePrivacySection` 的「换设备」）搬**钥匙袋** ⇒ 本组件**不碰**它 ✓（写域收窄 ✓）
   //   · 这一块搬**接线**（地址 ＋ 窗口口令）⇒ 名字叫「**把这台设备接进来**」✓
   // ⚠️ **三步两态，且有一步是"停"**（`U2`／`U3`）：
-  //   ① 生成：显示比对码（**一次性**，含窗口口令 ⇒ ⛔ 别外传 ✗）
+  //   ① 生成：显示比对码（**这一轮显示用** ✓；⚠️ 那段文本／载荷**不是一次性的** ✗ —— 它里面
+  //      **没有** nonce／时间戳／有效期 ✓，采纳侧也**幂等**（可以再次采纳 ✓）⇒ ⛔ 别把这句写成"一次性" ✗）
   //   ② **人读码核对**：采纳侧先把**算出来的码**显示出来，**等用户把对方那串填回来** ✓
   //   ③ 采纳：逐位相同才写；**对不上 ⇒ 停在"停"态，且那一态里没有继续入口** ✗（判据钉着）
+  const [plaintextCount, setPlaintextCount] = useState<number | null>(null);
   const [dpExport, setDpExport] = useState<DevicePairExportOutcome | null>(null);
   const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
   const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
@@ -516,7 +546,15 @@ export function SyncPanel() {
       const kindByWs = new Map<string, "personal" | "team">();
       if (isDesktopPlatform()) {
         try {
-          for (const v of await api.spaceSecurityOverview()) {
+          // ⭐ **P-3e-1**：⭐ 同一份读数顺手算"没开加密的个数" ✓（⛔ **不再调一次** ✗ —— 不给自己加一轮网络 ✓）。
+          //   ⚠️⭐ **先置 `null`** ✓ ⇒ 这一趟若抛（或返回空）就**保持 null** ✓ ⇒ 界面**不渲染** ✓
+          //      （⛔ 读不到 ≠ 0 ✗；⛔ 也不能让上一趟的旧数留下来 ✗）。
+          setPlaintextCount(null);
+          const secRows = await api.spaceSecurityOverview();
+          if (Array.isArray(secRows)) {
+            setPlaintextCount(secRows.filter((r) => !r.encrypted_on_disk).length);
+          }
+          for (const v of secRows) {
             // ⚠️ 那个字段名叫 `space_id` ✗，但 `set_space_kind` 收的就是它 ⇒ ⭐ 实为 **workspace id** ✓。
             kindByWs.set(v.space_id, v.kind);
           }
@@ -1154,8 +1192,23 @@ export function SyncPanel() {
    *    `space_id` 换成人能读的名字（对不上名字的说个数），**不算交集**（规格 §2 那条不变式）。
    * ⚠️ **绝不出现裸 `space_id`**（`INV-UI-copy-no-internal-ids`）。
    */
+  /**
+   * ⭐ **P-3d（2026-10-13）**：一台设备该进**哪一段** ✗ ——
+   * `0` ＝ **需要重新配对** ／ `1` ＝ 已信任 ／ `2` ＝ 待配对 ✓。
+   *
+   * ⚠️ ⭐ 只有 `key_changed === true` 才算"钥匙变了" ✗ —— ⭐ **读不到（`null`）与 `false` 一律不算** ✓
+   *   （「读不到」是**没有结论** ✓，⛔ 不许被当「变了」✗ —— 与那几格读数同一把尺 ✓）。
+   * ⚠️ 段序就是 `0/1/2` 这个序：排序键与分段键**同一个** ✓ ⇒ 两处不可能各说各话 ✓。
+   */
+  const nearbyBucket = (p: NearbyPeer): 0 | 1 | 2 =>
+    p.key_changed === true ? 0 : duList.some((d) => d.deviceId === p.device_id) ? 1 : 2;
   const nearbySecondColumn = (p: NearbyPeer) => {
     if (p.serves_current) return `附近 · 服务 ${mySpaceName}`;
+    // ⭐ **P-B（2026-10-13）**：⭐ 先把**原因**说出来 ✗ —— ⛔ 不许把"本机没设暗号"／"那个空间已删"
+    //   说得像"**对端没服务我**" ✗（owner 现场那一行就是这个形状 ✓：起因在自己这边，人却去查对端 ✓）。
+    //   ⚠️ 这两句**不引用任何值** ✓（尤其**不引用暗号** ✗ —— 它只说"哪一类原因"✓）。
+    if (p.serves_reason === "no_secret") return "附近 · 认不出它在服务谁";
+    if (p.serves_reason === "space_deleted") return "附近 · 它服务的空间在本机已删";
     if (!p.spaces.length) return "附近 · 没报服务哪个空间";
     const known = p.spaces
       .map((s) => rows.find((r) => r.space_id === s)?.name?.trim() || "")
@@ -1192,12 +1245,18 @@ export function SyncPanel() {
   //    点一次就把**勾选的那些空间**在这台设备上登记信任 ⇒ 逐个空间调 `mesh_trust_begin` ✓
   //    （⛔ 不再要求另一端也点 ✗）。⚠️ 对端**取这一轮看得见、且服务当前空间**的那一台 ✓；
   //    一台都没有 ⇒ **如实说**"还没有可以信任的设备"，⛔ 不挑一台凑数 ✗。
-  const trustDevice = async (spaceIds: string[]) => {
+  // ⭐ **修 B（2026-10-13，Lead 拍板）**：⭐ 第二个参数＝**那一行自己点名的那一台** ✗ ——
+  //   「附近的设备」里那颗按钮**必须**能把这一台直接交进来 ✓（⛔ 不再要求"恰好只有它一台服务当前空间"✗）。
+  const trustDevice = async (spaceIds: string[], peerInRow?: NearbyPeer) => {
     if (!isDesktopPlatform()) {
       toast("信任设备要在桌面端操作", "info");
       return;
     }
-    const peer = nearby.find((p) => p.serves_current && p.invitable) ?? null;
+    // ⚠️ 两条解析**并存** ✗（不是替换 ✓）：
+    //   · 勾选那条路（`TrustDevicePanel` 的 `onAttach` ✓）**不给** `peerInRow` ⇒ 照旧"找那一台服务当前空间、且可直连的" ✓；
+    //   · 主路径（`data-testid="nearby-allow"` ✓）**点名**那一台 ⇒ ⭐ 不再被 `serves_current && invitable` 挡住 ✗
+    //     （owner 现场那一台恰好 `serves_current === false` ⇒ 旧守卫会让它**静默早退** ✓ —— 那是"点不动"的一半原因 ✓）。
+    const peer = peerInRow ?? nearby.find((p) => p.serves_current && p.invitable) ?? null;
     if (!peer) {
       toast("现在还看不到可以信任的设备（先在「附近的设备」里发现一台）", "info");
       return;
@@ -1255,6 +1314,9 @@ export function SyncPanel() {
 
   return (
     <div className="sync-panel">
+      {/* ⭐ **P-2a-1**：`contentOnly` ⇒ ⛔ **不渲染抽屉触发器** ✗（它是抽屉那支的东西 ✓ ——
+          内容区那一支只要内容体 ✓）；⭐ 默认那支**逐字不变** ✓。 */}
+      {!contentOnly && (
       <button
         ref={triggerRef}
         className="btn-sync"
@@ -1283,14 +1345,31 @@ export function SyncPanel() {
         )}
         {liveSyncing && <span className="sync-pulse" aria-hidden />}
       </button>
-      {open && (
+      )}
+      {/* ⭐ **P-2a-1**：`contentOnly` ⇒ **强制渲染内容体** ✓（⛔ 一行 JSX 都没搬 ✗）；
+          ⚠️ 并且**去掉浮层定位** ✗ —— 否则 `top/left` 会漏进内容区（那会让它飘起来 ✓）。 */}
+      {(open || contentOnly) && (
         <div
           ref={contentRef}
-          className={`sync-popover is-sync${isSheet ? " is-sheet" : ""}`}
-          style={{ top: pos.top, left: pos.left }}
+          className={`sync-popover is-sync${isSheet ? " is-sheet" : ""}${contentOnly ? " is-inline" : ""}`}
+          style={contentOnly ? undefined : { top: pos.top, left: pos.left }}
           role="dialog"
           aria-label="同步设置"
         >
+          {/* ⭐ **P-3e-1（R9 最小片）**：⭐ 未加密空间的**主动提醒** ✗ ——
+              ⚠️ 只在**真读到 `N ≥ 1`** 时出现 ✓；⛔ `null`（读不到）与 `0` **都不出现** ✓（读不到 ≠ 0 ✓）。
+              ⭐ 只说**个数** ✓，⛔ 不摆空间名 ✗（信息泄露 ✓）。
+              ⚠️ ⛔ 这里**不许**写 Markdown 的 `**…**` ✗ —— 要强调用 `<b>` ✓（`syncPanelMesh` ⑨c ✓）。
+              ⚠️ 本片**没做**「去开加密」那颗按钮 ✓（留下一片 ✓，见收口 ✓）。 */}
+          {plaintextCount !== null && plaintextCount > 0 && (
+            <div className="sync-hint" data-testid="plaintext-warning">
+              ⚠️ 本机有 <b>{plaintextCount}</b> 个空间<b>没开加密</b> ⇒ 它们的内容会在局域网上<b>明文</b>传输
+              {/* ⚠️⭐ **本片只放按钮 ＋ testid** ✗ —— ⛔ **不做跳转** ✗：既有入口在 `SettingsDialog` 里
+                  （`SettingsDialog.tsx:19` 挂的 `SpacePrivacySection` ✓），从本组件过去要**开那个对话框** ✗
+                  ⇒ ⭐ 没有既有的 `setView` 路可接 ✓ ⇒ 按 Lead 的退路只放按钮 ✓（跳转留下一片 ✓）。 */}
+              <button className="sync-btn" data-testid="plaintext-go-encrypt">去开加密</button>
+            </div>
+          )}
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>
@@ -2029,14 +2108,33 @@ export function SyncPanel() {
                         {/* 三种处境三句话（规格 §4 的表）：
                             ① 这一层不可用／读不到列表 ⇒ "看不到这一层"（**不是**"网段里没人"）；
                             ② 开着但一台都没发现 ⇒ "还在找…"（**永不**说"网段里没有设备"：看不见 ≠ 不存在）；
-                            ③ 有设备 ⇒ 每台一行。 */}
+                            ③ 有设备 ⇒ 每台一行。
+                            ⭐ **P-2b（2026-10-13）**：③ 里按「本机认没认过」分**两段**（`已信任`／`待配对` ✓）——
+                              判据取**本机认过的那份名单** `duList`（与下面「解除」那块同一份 ✓，⛔ 不新造读数 ✗）。
+                            ⭐⭐ **P-3d（2026-10-13）：第三段已落地** ✓ —— 「**需要重新配对**」✓，
+                              判据取 ⭐ **逐台读数** `key_changed`（P-3a 供的 ✓ `commands.ts` 的 `NearbyPeer` ✓）。
+                              ⚠️ ⭐ **读不到（`null`）不算变了** ✗（`false` 也不算 ✓）⇒ 只有 `=== true` 才进这一段 ✓
+                              （「读不到」是**没有结论** ✓ —— 与那几格读数同一把尺 ✓）。 */}
                         {!nearbyReadable || !lanStatus.enabled ? (
                           <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
                         ) : nearby.length === 0 ? (
                           <div className="sync-hint">还没发现别的设备… 正在找</div>
                         ) : (
-                          nearby.map((p) => (
-                            <div className="sync-nearby-row" key={p.device_id}>
+                          nearby
+                            .slice()
+                            // ⚠️ 排序键与分段键**同一个**（`nearbyBucket` ✓）⇒ 两处不可能各说各话 ✓
+                            .sort((a, b) => nearbyBucket(a) - nearbyBucket(b))
+                            .map((p, i, arr) => (
+                              <Fragment key={p.device_id}>
+                                {(i === 0 || nearbyBucket(p) !== nearbyBucket(arr[i - 1])) && (
+                                  <div
+                                    className="sync-hint"
+                                    data-testid={NEARBY_GROUPS[nearbyBucket(p)].testid}
+                                  >
+                                    {NEARBY_GROUPS[nearbyBucket(p)].label}
+                                  </div>
+                                )}
+                            <div className="sync-nearby-row">
                               {/* 名字空的 ⇒ **如实说没报名字**，不许回落成 id 前几位
                                   （`INV-UI-copy-no-internal-ids`；`lan_state.rs` 的 `host_name()` 拿不到就留空）。 */}
                               <span className="sync-nearby-name">{p.device_name || "这台设备没报名字"}</span>
@@ -2048,6 +2146,20 @@ export function SyncPanel() {
                                      （⭐ 那不是降级处理，⭐ 是那段过渡期的正确答案 ✓）。 */}
                               <span className="sync-hint">{peerIdentityLine(p.device_name, p.short_id)}</span>
                               <span className="sync-hint">{nearbySecondColumn(p)}</span>
+                              {/* ⭐ **P-B（2026-10-13）**：把**原因**说全 ✗ —— ⛔ 这两种处境原先都长得像
+                                  "对端没服务我" ✗（真正的原因在**我们这一侧** ✓）：
+                                  · 没设配对暗号 ⇒ ⭐ 说"本机这个空间还没设暗号" ✓（⛔ **值**一个字符都不出现 ✗）；
+                                  · 对端那个空间在本机已删 ⇒ ⭐ 说"已删" ✓（⛔ 过滤有意不动 ✗ —— 只是说出来 ✓）。 */}
+                              {p.serves_reason === "no_secret" && (
+                                <span className="sync-hint" data-testid="nearby-no-secret">
+                                  本机这个空间还没设配对暗号 —— 没设之前认不出它在服务谁（团队空间则是还没绑组织空间）
+                                </span>
+                              )}
+                              {p.serves_reason === "space_deleted" && (
+                                <span className="sync-hint" data-testid="nearby-space-deleted">
+                                  它服务的那个空间在本机已删 —— 删了就不再直连它；要接着同步得先把那个空间放回来
+                                </span>
+                              )}
                               {!p.invitable && p.serves_current && (
                                 // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
                                 <span className="sync-hint">它没报可以直连的地址</span>
@@ -2059,26 +2171,58 @@ export function SyncPanel() {
                                      （⭐ 复用手边那条「生成投放码 ⇒ 采纳」的路 ✓，⭐ `dpPeer` 就是那个格 ✓）。
                                      ⇒ ⭐ 所以这里**不写**"点一下就通" ✗ —— ⭐ 那句话要等一键握手做出来才算真 ✓
                                         （⛔ 不说假话 ✓，⭐ 本仓最忌这个 ✓）。 */}
-                              {duList.some((d) => d.deviceId === p.device_id) ? (
+                              {p.key_changed === true && p.serves_current ? (
+                                // ⭐ **P-3d（2026-10-13）**：⭐ 钥匙变了 ⇒ 这一行的主动作是**重新配对** ✓
+                                //   （⭐ 复用「接入」那条主路径 ✓：`trustDevice` ⇒ `mesh_trust_begin` ⇒
+                                //   把**新的**那把公钥登记上 ✓ —— ⛔ 不改任何判定语义 ✗，判定仍是 `serves_current` ✓）。
+                                //   ⚠️ 它**不服务当前空间**时 ⇒ 落回下面那句「它服务的是别的空间」✓
+                                //   （⭐ 不在这儿硬塞一颗会动错空间的按钮 ✗）。
+                                <button
+                                  className="sync-btn"
+                                  disabled={dpBusy}
+                                  data-testid="nearby-repair"
+                                  onClick={() => {
+                                    if (!activeId) return;
+                                    setDpPeer(p.device_id);
+                                    void trustDevice([activeId], p);
+                                  }}
+                                >
+                                  重新配对
+                                </button>
+                              ) : duList.some((d) => d.deviceId === p.device_id) ? (
                                 <span className="sync-hint" data-testid="nearby-paired">
                                   已配对
                                 </span>
                               ) : p.serves_current ? (
+                                // ⭐ **修 B（2026-10-13，Lead 拍板 ＋ owner 实测「点不了」）**：
+                                //   ⭐ 这一行**自己**就是「允许」的入口 ✗ —— 走 `trustDevice`（⇒ `mesh_trust_begin` ✓），
+                                //   ⛔ **不经勾选**（`pickedCount`）✗；⛔ 也不再只 `setDpPeer`（那是"指定投放码对端"，
+                                //   点完屏幕上**什么都不变** ⇒ 用户读到的就是"点了没反应" ✓ —— 那正是这一单的词）。
+                                //   ⚠️ 顺带**保留** `setDpPeer`：下面「严格模式（高级）」那条抄码路照旧预选这一台 ✓（老行为不丢 ✓）。
+                                //   ⚠️ 没有活动空间 ⇒ **一个字节都不动** ✓（⛔ 不拿空串／编一个 spaceId 去调 ✗）。
                                 <button
                                   className="sync-btn"
                                   disabled={dpBusy}
-                                  data-testid="nearby-trust"
+                                  data-testid="nearby-allow"
                                   onClick={() => {
+                                    if (!activeId) return;
                                     setDpPeer(p.device_id);
-                                    setDpNote(
-                                      "已把它指定为对端 ⇒ 到下面「生成投放码」，再让它采纳一次（两个方向就都通了）。",
-                                    );
+                                    void trustDevice([activeId], p);
                                   }}
                                 >
-                                  信任这台设备
+                                  接入
                                 </button>
-                              ) : null}
+                              ) : (
+                                // ⛔ **不许再静默 `null`** ✗（owner 截图那一行正是这一档 ✓ —— 屏幕上连一个
+                                //   可点的东西都没有，就是"点不了"的**直接原因** ✓）。
+                                //   ⚠️ 也不许写成"网段里没人"／"这一层看不到" ✗ —— 它**看得见、只是服务别的空间** ✓
+                                //   （判据 `SyncPanel.trustDevicePanel.wiring.test.tsx` 第 5 条钉这句 ✓）。
+                                <span className="sync-hint" data-testid="nearby-other-space">
+                                  它服务的是别的空间 —— 要在那个空间里点「接入」才动得了它（这一行不动它）
+                                </span>
+                              )}
                             </div>
+                              </Fragment>
                           ))
                         )}
                         {/* ★ 第一轮广播的代价必须如实说（需求 §4.4／方案 §4 风险 1）：
@@ -2151,7 +2295,7 @@ export function SyncPanel() {
                           <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
                             【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
-                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。
+                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。⚠️ 这串码／这段文本<b>不是一次性的</b> ⇒ 配对完成后建议<b>换一次窗口口令</b> ✓。
                           </div>
                           {/* ⭐ R110（owner 2026-10-02 拍 A）：**先说清这段码给哪一台** ——
                               · 从「附近的设备」里**点选**那一台 ⇒ 本机**生成时就把它登记好** ⇒

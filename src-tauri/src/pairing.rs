@@ -766,6 +766,9 @@ mod tests {
     /// ⭐ 2026-10-12（1C）：夹具用**带钥匙**的载荷 ✓（⛔ 老码（没这一格）现在会被**如实拒** ✗）。
     fn pair_with_key(bind: &str, token: &str, from: &str, to: &str) -> DevicePairPayload {
         let mut p = device_pair_from(bind, token, from, to).unwrap();
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：`stamp_pubkey` 只**验形状**（32 字节 ⇒ 64 个十六进制 ✓），
+        //   这一格**没有任何连接、也没有验签** ⇒ 换成真钥匙**无信息增益** ✗
+        //   （⛔ 这不是"忘了换" ✗ —— 同族：`pairing.rs:920` ／ `sync.rs:4770` ／ `sync.rs:9143` ✓）。
         stamp_pubkey(&mut p, &"ab".repeat(32)).unwrap();
         p
     }
@@ -917,6 +920,8 @@ mod tests {
         let mut a = pair_with_key("0.0.0.0:8788", "k7Qm-2pRt", "dev-jia", "");
         let mut b = a.clone();
         // ⭐ 只改**公钥**那一格（别的字段逐字相同 ✓）
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓ —— 这一格要的正是"**另一把**（形状合法即可 ✓）"：
+        //   下面只比"两把不同 ⇒ 校验码不同"✓，没有连接、也没有验签 ⇒ 真钥匙**无信息增益** ✗。
         b.pubkey = "cd".repeat(32);
         assert_ne!(a.pubkey, b.pubkey, "前提：两把钥匙确实不同 ✓");
         let ta = encode_device_pair(&a).unwrap();

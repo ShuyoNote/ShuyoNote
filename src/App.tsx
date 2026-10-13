@@ -1194,6 +1194,10 @@ function AppShell() {
         <div className="main"><Suspense fallback={<ViewLoader />}><BoardView /></Suspense></div>
       ) : view === "files" ? (
         <div className="main"><Suspense fallback={<ViewLoader />}><FileManagerView /></Suspense></div>
+      ) : view === "sync" ? (
+        /* ⭐ **P-2a-1（2026-10-13）**：⭐ 同一份内容（`SyncPanel` 的内容体 ✓）也能进**内容区** ✓ ——
+           ⚠️ 抽屉那支（触发器 ＋ 浮层）**逐字不变** ✓；这里只是把同一份 JSX 放进 `main` ✓。 */
+        <div className="main"><SyncPanel contentOnly /></div>
       ) : isMobile && mobileScreen === "pair" ? (
         /* ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（规格 §4.8）——
            它排在 `currentId` **前面**：那颗「同步」胶囊是**常驻**的 ✓ ⇒ 不管底下开着什么，

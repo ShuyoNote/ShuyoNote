@@ -18,6 +18,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { findChrome, launchChrome } from "./lib/launch-chrome.mjs";
 import { pinAppLanguage } from "./lib/pin-locale.mjs";
+import { desktopCardBadgeChecks } from "./lib/desktopCardBadge.mjs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,9 +45,9 @@ const DESKTOP = { width: 1280, height: 800 };
  */
 const REPO_ROOT_LAYOUT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MOBILE_BREAKPOINT_PX = (() => {
-  const src = readFileSync(join(REPO_ROOT_LAYOUT, "src", "hooks", "useMobile.ts"), "utf8");
+  const src = readFileSync(join(REPO_ROOT_LAYOUT, "src", "lib", "platform", "shape.ts"), "utf8");
   const m = src.match(/export const MOBILE_BREAKPOINT_PX\s*=\s*(\d+)/);
-  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/hooks/useMobile.ts 改了？）—— 断点必须与源码同源");
+  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/lib/platform/shape.ts 改了？）—— 断点必须与源码同源");
   return Number(m[1]);
 })();
 /** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
@@ -644,17 +645,16 @@ async function main() {
       dtc.tabsScrollW <= dtc.tabsClientW,
       `桌面页签装得下、不需要横滑（scrollWidth ${dtc.tabsScrollW} ≤ clientWidth ${dtc.tabsClientW}）`,
     );
-    if (!dtc.hoverNone) {
-      ok(
-        dtc.boxPos === "absolute" && dtc.delOpacity === "0" && dtc.delW <= 24,
-        `桌面卡片操作仍是"悬停才出现"的 22px 浮标（position=${dtc.boxPos} / opacity=${dtc.delOpacity} / w=${dtc.delW}）`,
-      );
-    } else {
-      console.log(
-        `  · 本机 headless 报 (hover: none)，"桌面悬停显形"那条跳过` +
-          `（position=${dtc.boxPos} / opacity=${dtc.delOpacity} / w=${dtc.delW}）`,
-      );
-    }
+    // ⭐ 2026-10-13（owner 拍"甲"）：这条判据**在两种平台上都计入总条数** ✓ ——
+    //    原来写成 `if (!dtc.hoverNone) { ok(…) } else { console.log("跳过") }` ✗ ⇒ **通过数随平台变**
+    //    （CI 的 headless 报 `(hover: none)` ⇒ 数出来 68，而 `tests/baseline.json:9` 的下界是 69
+    //    ⇒ "只增不减"那条**人拍的**硬约束永远对不上，红了半个月 ✓）。
+    //    ⛔ 不走"乙"（把平台相关的差写进基线 ✗ —— 那样另一个平台永远对不上 ✓）。
+    //    ⇒ 两边都跑**同一条** `ok()`，只是期望值按 `(hover: none)` 取 ✓：能 hover ⇒ 22px 悬停显形；
+    //      `(hover: none)` ⇒ `src/App.css:22665-22687` 那条让它 44×44 常驻 ✓。
+    //    ⚠️ 定义只有一份：`scripts/lib/desktopCardBadge.mjs` ✓（计数口径的判据在
+    //      `scripts/verify-mobile-layout.test.mjs` ✓）。
+    for (const c of desktopCardBadgeChecks(dtc)) ok(c.ok, c.msg);
     await shot(desktop, "07-desktop-template-center");
 
     // ⭐ 2026-10-10 **搬家（不删）**：原先在**窄视口**验的那三块右栏面板（讨论 / 通知 / 目录）

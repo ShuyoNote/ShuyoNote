@@ -1735,6 +1735,29 @@ export function makeInvoke(store: SqliteStore) {
         window: null,
       } as T;
     }
+    if (cmd === "mesh_panel_scopes") {
+      // ⭐ **P1.5 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗。
+      //   ⚠️ Web 上**没有发现层**（UDP 广播/监听在 Rust 侧 ✓）⇒ ⭐ **没有"窗口"** ✗
+      //   ⇒ ⛔ `announced` 一律 `false` ✓（⛔ 不假装有窗口、⛔ 不编 true ✗）。
+      //   ⭐ 但空间**列表**是真的：照 `list_workspaces` 那条既有口径读本机目录 ✓
+      //   （⛔ 不返回空壳 ✗ —— 空壳会让界面把"这一档没有"与"这一台没有空间"混成一件 ✓）。
+      const metas = await spaceStore.listMetas();
+      return metas.map((m) => ({
+        wsId: m.id,
+        name: m.name,
+        kind: (m as { kind?: string }).kind ?? "",
+        announced: false,
+      })) as T;
+    }
+    if (cmd === "mesh_panel_spaces") {
+      // ⭐ 同上：`local` ＝ 本机**现在存在**的空间（目录里那些 ✓），`offer` ⭐ **待 B 片**
+      //   ⇒ ⛔ 这里留空数组 ✗（它只表示"还没接线" ✓，⛔ 不表示"没有" ✗ —— 与 Rust 侧同口径 ✓）。
+      const metas = await spaceStore.listMetas();
+      return {
+        offer: [],
+        local: metas.map((m) => ({ id: m.id, name: m.name })),
+      } as T;
+    }
     if (cmd === "mesh_set_config") {
       // 丙-③-b-2b：**写网格设置**。Web 上同样不可用（没有发现层、开不了端口）——
       // 但这里**不抛错**：设置面回一个"关着 ＋ 为什么"的读数，界面照常能渲染，

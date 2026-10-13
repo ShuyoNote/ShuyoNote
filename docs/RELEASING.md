@@ -54,10 +54,31 @@ pnpm run build        # check-versions + tsc + vite build
 | ⑤ | **`origin/dev` 已是 `main` 的祖先**（runbook ④ 的硬前提） | 2026-09-15 发 1.91.0 时就卡在这：推到一半发现 dev 还有 3 个提交没进来 |
 | ⑥ | `origin`（gitcode）与 `github` 都可达 | 推一半失败 |
 
+> ⚠️ **「没有未提交的改动」那一条在 `git commit` 之前必然红 —— 那是预期，不是失败** ✗（2026-10-12 实测）：
+> 它查的就是"**已跟踪文件没有未提交改动**"，而按本文顺序，这一步**就发生在 `git commit` 之前** ⇒
+> 你刚 bump 完版本、改完 CHANGELOG，它一定把那几个 `M` 列出来 ✗
+> （实测逐字：`✗ 没有未提交的改动（已跟踪文件）` ＋ 7 个 `M` ＋ `[结果] release-preflight 1 项不满足`；
+> ⚠️ 它印在 `② 版本号` 那一块下，而 `②` 自己的检查是 ✓ 的 —— 别被段落标题带偏 ✓）。
+> ⇒ ⭐ **以「`git commit` 之后再跑一次」的结果为准** ✓（同一次流程实测：提交后 ⇒
+> `[结果] release-preflight 通过 —— 可以打 tag（另有 1 条提醒）` ✓）。
+> ⛔ **顺序故意不动** ✗ —— 提交前先看一眼（版本号／CHANGELOG／tag 占用／dev 祖先）是**有意**的用法 ✓。
+
 > ⑤⑥ 需要联网：离线可用 `--skip-remote` 跳过（会明确打印跳过了什么）。
 > 远端命令**先按环境跑、失败再显式绕开代理重试**，并如实报出走的哪条路——
 > 这台机器的 `HTTP(S)_PROXY` 指向本地 127.0.0.1:7897，那个代理不一定开着，
 > 报出来的是 `Failed to connect to 127.0.0.1 port 7897`，看着像"远端不可达"（其实要绕过代理）。
+
+> ⚠️ **脚本还印第 ⑦ 段「回归门禁」**（读**最近一次** `test-report` 的 JSON，例如 `.test-report-out/*.json`）——
+> 它**不在上表那六件里** ✗，判法也不一样：
+> · **拿不到报告 ⇒ 只印 `!` 提醒**（`没有找到门禁报告——发版前先 pnpm verify:all（或把 CI artifact 落到 .test-report-out/ 下）`）
+>   ⇒ ⛔ 那既**不是通过** ✗、也 **⛔ 不是"可以跳过"** ✗（跳过 ≠ 通过：见 `AGENTS.md` §7 与 `docs/TESTING.md`）；
+> · **拿到报告 ⇒ 它是真判据** ✓：报告里有 `failed` 就 ✗，另有两条提醒（报告 >24h／报告里有显式 `skipped`）✓。
+>
+> ⚠️ **本机（Windows 开发机）上 ⑦ 通常只会是 `!`** ✗（2026-10-12 实测）：
+> ⑦ 要的那份报告来自 `pnpm verify:all` ＝ `node scripts/test-report.mjs --group contract,smoke,sync,plugin,browser`
+> （`package.json:49`），其中 **`browser`／`mobile` 组要真 Chromium**、本机纪律又不许跑 ✗（且本机 `pnpm` 是坏的 ⇒ 要直跑 `node` ✓）
+> ⇒ ⭐ **本机只能跑前四组（`contract,smoke,sync,plugin`）**，⑦ 在本机**多半停在"提醒"** ✓ ——
+> ⛔ **别把它读成"通过"** ✗（要真那一条，得让 CI 的报告落到 `.test-report-out/` 下 ✓）。
 
 ```bash
 pnpm release:preflight                # 退出码非 0 就别打 tag
