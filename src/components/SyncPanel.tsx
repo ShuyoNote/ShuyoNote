@@ -1192,12 +1192,18 @@ export function SyncPanel() {
   //    点一次就把**勾选的那些空间**在这台设备上登记信任 ⇒ 逐个空间调 `mesh_trust_begin` ✓
   //    （⛔ 不再要求另一端也点 ✗）。⚠️ 对端**取这一轮看得见、且服务当前空间**的那一台 ✓；
   //    一台都没有 ⇒ **如实说**"还没有可以信任的设备"，⛔ 不挑一台凑数 ✗。
-  const trustDevice = async (spaceIds: string[]) => {
+  // ⭐ **修 B（2026-10-13，Lead 拍板）**：⭐ 第二个参数＝**那一行自己点名的那一台** ✗ ——
+  //   「附近的设备」里那颗按钮**必须**能把这一台直接交进来 ✓（⛔ 不再要求"恰好只有它一台服务当前空间"✗）。
+  const trustDevice = async (spaceIds: string[], peerInRow?: NearbyPeer) => {
     if (!isDesktopPlatform()) {
       toast("信任设备要在桌面端操作", "info");
       return;
     }
-    const peer = nearby.find((p) => p.serves_current && p.invitable) ?? null;
+    // ⚠️ 两条解析**并存** ✗（不是替换 ✓）：
+    //   · 勾选那条路（`TrustDevicePanel` 的 `onAttach` ✓）**不给** `peerInRow` ⇒ 照旧"找那一台服务当前空间、且可直连的" ✓；
+    //   · 主路径（`data-testid="nearby-allow"` ✓）**点名**那一台 ⇒ ⭐ 不再被 `serves_current && invitable` 挡住 ✗
+    //     （owner 现场那一台恰好 `serves_current === false` ⇒ 旧守卫会让它**静默早退** ✓ —— 那是"点不动"的一半原因 ✓）。
+    const peer = peerInRow ?? nearby.find((p) => p.serves_current && p.invitable) ?? null;
     if (!peer) {
       toast("现在还看不到可以信任的设备（先在「附近的设备」里发现一台）", "info");
       return;
@@ -2064,20 +2070,33 @@ export function SyncPanel() {
                                   已配对
                                 </span>
                               ) : p.serves_current ? (
+                                // ⭐ **修 B（2026-10-13，Lead 拍板 ＋ owner 实测「点不了」）**：
+                                //   ⭐ 这一行**自己**就是「允许」的入口 ✗ —— 走 `trustDevice`（⇒ `mesh_trust_begin` ✓），
+                                //   ⛔ **不经勾选**（`pickedCount`）✗；⛔ 也不再只 `setDpPeer`（那是"指定投放码对端"，
+                                //   点完屏幕上**什么都不变** ⇒ 用户读到的就是"点了没反应" ✓ —— 那正是这一单的词）。
+                                //   ⚠️ 顺带**保留** `setDpPeer`：下面「严格模式（高级）」那条抄码路照旧预选这一台 ✓（老行为不丢 ✓）。
+                                //   ⚠️ 没有活动空间 ⇒ **一个字节都不动** ✓（⛔ 不拿空串／编一个 spaceId 去调 ✗）。
                                 <button
                                   className="sync-btn"
                                   disabled={dpBusy}
-                                  data-testid="nearby-trust"
+                                  data-testid="nearby-allow"
                                   onClick={() => {
+                                    if (!activeId) return;
                                     setDpPeer(p.device_id);
-                                    setDpNote(
-                                      "已把它指定为对端 ⇒ 到下面「生成投放码」，再让它采纳一次（两个方向就都通了）。",
-                                    );
+                                    void trustDevice([activeId], p);
                                   }}
                                 >
-                                  信任这台设备
+                                  接入
                                 </button>
-                              ) : null}
+                              ) : (
+                                // ⛔ **不许再静默 `null`** ✗（owner 截图那一行正是这一档 ✓ —— 屏幕上连一个
+                                //   可点的东西都没有，就是"点不了"的**直接原因** ✓）。
+                                //   ⚠️ 也不许写成"网段里没人"／"这一层看不到" ✗ —— 它**看得见、只是服务别的空间** ✓
+                                //   （判据 `SyncPanel.trustDevicePanel.wiring.test.tsx` 第 5 条钉这句 ✓）。
+                                <span className="sync-hint" data-testid="nearby-other-space">
+                                  它服务的是别的空间 —— 要在那个空间里点「接入」才动得了它（这一行不动它）
+                                </span>
+                              )}
                             </div>
                           ))
                         )}

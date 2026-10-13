@@ -64,7 +64,7 @@ pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> Mesh
     let (state, message) = match state {
         TrustState::Idle => (
             "idle",
-            "还没有允许过哪台设备来拿你的内容 —— 在「附近的设备」里点一下「接入」就是允许它",
+            "还没有允许过哪台设备来拿你的内容 —— 在「附近的设备」里，点那一行右端的「接入」就是允许它",
         ),
         TrustState::Trusted => (
             "trusted",
