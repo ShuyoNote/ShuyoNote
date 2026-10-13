@@ -144,7 +144,7 @@ pub fn install_pack_from_reader<R: std::io::Read>(
     on_progress: PackProgress<'_>,
 ) -> Result<PackInstallReport, String> {
     use sha2::{Digest, Sha256};
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
 
     if expected_sha.is_empty() {
         return Err("清单里没有钉 sha256 ⇒ 拒绝落盘（不核指纹就不算校验过）".to_string());

@@ -583,7 +583,7 @@ pub async fn dictionary_status(app: tauri::AppHandle) -> DictionaryStatus {
 // ⭐ **第 0 片后半（2026-10-14）**：那条链**整段搬到** `engine_pack.rs` ✓ ——
 //   本文件只留**薄适配**（`pack_path` ／ `ecdict_pins` ／ `default_pack_url` ／ `fetch_default_archive` ✓）✓。
 use crate::engine_pack::{
-    decode_blob_json, fetch_archive_from, install_pack_from_archive_with, install_pack_from_reader,
+    decode_blob_json, fetch_archive_from, install_pack_from_archive_with,
     PackInstallReport, PackPins, MIRROR_BLOBS_API, MIRROR_CONTENTS_API,
 };
 // ⚠️ 搬走之后**别的模块仍按老路径用它**（`storage.rs:234/944` 的 `crate::dictionary::sha256_hex` ✓）
@@ -649,7 +649,7 @@ pub async fn dictionary_install_pack(
         Some(u) => (fetch_archive_from(&u).await?, u),
         None => (fetch_default_archive().await?, default_pack_url()),
     };
-    let mut app_for_emit = app.clone();
+    let app_for_emit = app.clone();
     let mut progress = |received: u64, total: Option<u64>| {
         use tauri::Emitter as _;
         let _ = app_for_emit.emit(
