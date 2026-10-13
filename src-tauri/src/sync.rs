@@ -4767,6 +4767,9 @@ mod device_level_paired_tests {
         assert_eq!(crate::mesh::mesh_room_device(&c), None, "前提：设备级那一格还没填");
 
         // ⭐ 个人档**写一次** —— 走**唯一实现** ✓（卡 ＋ 本机要出示的那份 ＋ 正在跑的门 ✓）
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：这一条量的是**行键**（个人档写一次 ⇒ 两个个人空间
+        //   都看得到它 ✓），`peer_pubkey` 只被**登记/读回** ⇒ **没有验签** ⇒ 真钥匙无信息增益 ✗
+        //   （同族三处：`:4870`／`:4871`／`mesh.rs:4908` ✓）。
         crate::sync::remember_peer_card(&c, &a.space, "dev-1", "k7Qm-2pRt", true, &"ab".repeat(32)).unwrap();
 
         // ① ⭐ 两个个人空间**都**看得到它 ✗
@@ -4867,6 +4870,8 @@ mod device_level_paired_tests {
         )
         .unwrap();
         // ⭐ 个人档**写两台**（走唯一实现 ✓）
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：同上（这一条量的是"**两台各一行**"✓，
+        //   公钥只被登记/读回 ⇒ 无验签 ⇒ 真钥匙无信息增益 ✗）。
         crate::sync::remember_peer_card(&c, "room-a", "dev-1", "k7Qm-2pRt", true, &"ab".repeat(32)).unwrap();
         crate::sync::remember_peer_card(&c, "room-a", "dev-2", "pW3n-8sTq", true, &"cd".repeat(32)).unwrap();
 
@@ -9140,6 +9145,9 @@ mod tests {
     /// ⛔ 老码（没这一格）现在会被**如实拒** ✗（见 `decode_device_pair` ✓）⇒ 夹具必须带上一把 ✓。
     fn pair_text(bind: &str, token: &str, from: &str, to: &str) -> String {
         let mut p = crate::pairing::device_pair_from(bind, token, from, to).unwrap();
+        // ⭐ P1（2026-10-13）**留"形状钥匙"** ✓：这一档量的是"载荷**带着**那把公钥 ⇒ 采纳侧**拿到**它" ✓
+        //   （`:9203`／`:9247` 逐字比的就是**载荷里那一把** ✓）—— ⛔ **全程没有任何验签** ✗
+        //   ⇒ 真钥匙**无信息增益** ✗。⚠️ 若将来真要换：那三处必须**一起**换（只换一处 ⇒ 两条逐字比必红 ✗）。
         crate::pairing::stamp_pubkey(&mut p, &"ab".repeat(32)).unwrap();
         crate::pairing::encode_device_pair(&p).unwrap()
     }
@@ -9425,6 +9433,8 @@ mod tests {
     /// **红读数（真变异）**：在 `note_pending_trust_asks` 里加一句
     /// `crate::db::pair_pubkey(c, proto_space, &dev, &"ab".repeat(32))?;`
     /// ⇒ ⭐ 本判据当场红 ✓（`paired_pubkeys` 不再是 0 条 ✓）。
+    /// ⭐ P1（2026-10-13）：上句里的 `&"ab".repeat(32)` 是**形状例** ✓（⛔ 不是要换的钥匙 ✗）——
+    /// 这一格判的是"**有没有写库**"（`paired_pubkeys` 是不是 0 条 ✓），与钥匙真假无关 ✓。
     ///
     /// ⚠️ **必须先剥注释再比** ✗：本函数自己的**文档**里就写着那几个名字 ✓
     /// （"⛔ 不许出现 pair_pubkey ✗" ✓）—— 按整段文本比会**红在自己的说明上** ✓

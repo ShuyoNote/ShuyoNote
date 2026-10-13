@@ -3188,6 +3188,14 @@ mod tests {
         )
         .unwrap();
 
+        // ⭐ P1（2026-10-13）：**摘掉共享口令** ⇒ 进门只剩**签名**那一档 ⇒
+        //   两边各自把**对方的真公钥**登记在**自己门口** ✓（方向＝"**谁进门、谁被登记**"✓：
+        //   A 的门要收 **B 的**公钥 ✓，B 的门要收 **A 的** ✓）。
+        //   ⚠️ 两扇门服务的是**同一个空间**（`space-x`）⇒ ⛔ **不能用那个自由函数** ✗（会落错门 ✓，
+        //   见 `trust_conn` 的注释 ✓）：这里逐个用**手柄**指名 ✓。
+        trust_conn(&win_a, "space-x", "B", &b.lock().unwrap());
+        trust_conn(&win_b, "space-x", "A", &a.lock().unwrap());
+
         // ① A 本地改一页（本机戳 ⇒ 记进它自己的 outbox）
         {
             let c = a.lock().unwrap();
@@ -3200,7 +3208,9 @@ mod tests {
             &client,
             &mesh_peer("A", &format!("http://{}", win_a.addr())),
             "space-x",
-            Some("lan-token"),
+            // ⭐ P1：**摘掉口令** ⇒ 这一趟只能靠 `pull_and_absorb` 自己的真签名进门 ✓
+            //   （B 的钥匙在 A 的门上登记过 ✓）。
+            None,
         )
         .await
         .unwrap();
@@ -3217,7 +3227,8 @@ mod tests {
             &client,
             &mesh_peer("B", &format!("http://{}", win_b.addr())),
             "space-x",
-            Some("lan-token"),
+            // ⭐ P1：同上 —— 换 A 进门，A 的钥匙在 B 的门上登记过 ✓。
+            None,
         )
         .await
         .unwrap();
@@ -3234,7 +3245,8 @@ mod tests {
             &client,
             &mesh_peer("A", &format!("http://{}", win_a.addr())),
             "space-x",
-            Some("lan-token"),
+            // ⭐ P1：幂等那一趟同样**不带口令** ✓。
+            None,
         )
         .await
         .unwrap();
@@ -3734,6 +3746,48 @@ mod tests {
         (code, body)
     }
 
+    // ═══════════ ⭐ P1（2026-10-13）：**摘掉口令之后，判据怎么进门** ═══════════
+    //
+    // 来由：`start1s` 默认往卡册里塞 `lan-token` 的**哈希**（旧那一档 ✓，`:3680-3684`）⇒ 判据一直
+    // 靠"出示口令"进门 ✓。P1 要量的是**签名那一档**（设备身份第 2/3 步 ✓）⇒ 判据必须：
+    //   ① 摘掉口令 ✓；② 在**对面那扇门**上登记**这一份库的真公钥** ✓。
+    // ⚠️ 真钥匙**不是**测试里现造的假钥匙 ✗：走生产那条 `device_key::load_or_create`
+    //   （`device_key.rs:56` ✓），拿的是**这一份空间库自己的**真公钥 ✓（样板＝`:5046-5047` 那两把 ✓）。
+
+    /// 这一份空间库的真公钥（十六进制 ✓）—— ⚠️ **会就地建键** ✓（＝生产 `sign_request` 那条路 ✓）。
+    fn real_pubkey(conn: &Connection) -> String {
+        crate::device_key::load_or_create(conn)
+            .expect("真钥匙要建得出来")
+            .public_key_hex()
+    }
+
+    /// ⭐ **在"对面那扇门"上登记这一份库的真公钥** ⇒ 它签的东西就能过签名那一档 ✓。
+    ///
+    /// ⛔ **走 `MeshHandle` 的方法，不走 `mesh::add_paired_pubkey` 那个自由函数** ✗ ——
+    /// 自由函数是"按**服务哪个空间**去找门、取**第一个**命中的"（`:1330-1336` ✓）⇒
+    /// 判据里**两扇门服务同一个空间**时，登记会落进**另一扇门** ⇒ 判据"看起来全绿、其实什么都没证" ✗。
+    /// ⭐ 这条坑本仓**已经写过一次**：`:5054-5056`（R110 那条判据里记着同一个 ✓）—— 手柄指的就是**那一扇** ✓。
+    fn trust_conn(win: &MeshHandle, proto: &str, device: &str, conn: &Connection) -> String {
+        let pk = real_pubkey(conn);
+        win.add_paired_pubkey(proto, device, &pk)
+            .expect("登记真公钥不该失败");
+        pk
+    }
+
+    /// ⭐ **带签名的裸 GET**（"手写 GET 那一档" ✓，与 `http_get_signed` 配对 ✓）——
+    /// ⭐ 走**生产**的 `sign_request` ✓（⛔ 判据里不自己拼签名 ✗：那会变成"另一份实现" ✗），
+    /// ⭐ 空间从请求串的 `?space_id=` 取 ✓ —— 必须与门那一侧判的**同一个** `space`（`auth_message`
+    /// 把它签进去了 ✓；两边取法不同源 ⇒ 一漂就"永远 401"✓）。
+    fn signed_get(conn: &Connection, addr: SocketAddr, target: &str) -> (u16, String) {
+        let space = query_get(target, "space_id")
+            .expect("查询串不该需要解码")
+            .expect("signed_get 的 target 必须带 ?space_id=");
+        let device = crate::sync::device_id(conn).expect("这一份库要有设备号");
+        let (ts, sig) = sign_request(conn, &device, &space, "GET", target, crate::db::now_ms())
+            .expect("真钥匙应当签得出来");
+        http_get_signed(addr, target, &device, ts, &sig)
+    }
+
     /// ★ 丙-③-b-2b：**报不出去**的地址一个都不许写进公告（端口 0 / 回环 / 公网）——
     /// 宁可这一轮不露面，也不要报一个别人拉不到的地址（那只会往网段里灌噪音）。
     #[test]
@@ -3885,11 +3939,31 @@ mod tests {
             b.clone(),
         )
         .unwrap();
+        // ⭐ P1（2026-10-13）：**摘掉口令** ⇒ 只剩签名那一档 ⇒ 把**进门那一方（A）的真公钥**
+        //   登记在 **B 这扇门**上 ✓（方向＝"谁进门、谁被登记"✓）。
+        trust_conn(&win_b, "space-x", "A", &a.lock().unwrap());
         // ① 通配真的落在一个**具体端口**上（而 `local_addr()` 的 IP 仍是 `0.0.0.0`
         //    ⇒ **它自己不是一个能报给对端的地址**，这就是必须有 `announced_bases_with` 的原因）
         let bound = win_b.addr();
         assert!(bound.ip().is_unspecified(), "绑通配时 local_addr 的 IP 是 0.0.0.0：{bound}");
         assert_ne!(bound.port(), 0, "端口是内核给的具体端口：{bound}");
+        // ⭐ P1 前提读数（判据不许假绿 ✓）：这扇门现在**只有签名这一档能进** ——
+        //   ⛔ 不带任何证件 ⇒ **401** ✓；✅ 带**这一份库的真签名** ⇒ **200** ✓。
+        //   ⚠️ 两条都要量：只量 200 的话，"口令那一档其实还开着"也会绿 ✗（那就什么都没证 ✓）。
+        //   ⚠️ **必须连 `127.0.0.1:port`** ✗ —— 这扇门绑的是 `0.0.0.0`，`connect(0.0.0.0:port)` 会**直接
+        //   失败** ✓（`win_b.addr()` 的 IP 永远是不确定的 `0.0.0.0` ✓ —— 这也正是本判据下面
+        //   要喂假网卡的原因 ✓）；下面那次 `pull_and_absorb` 用的也是 `127.0.0.1:port` ✓（同源 ✓）。
+        let probe: SocketAddr = format!("127.0.0.1:{}", bound.port()).parse().unwrap();
+        assert_eq!(
+            http_get(probe, "/mesh/pull?space_id=space-x&since=0&limit=100", None).0,
+            401,
+            "摘掉口令之后，不带证件必须 401"
+        );
+        assert_eq!(
+            signed_get(&a.lock().unwrap(), probe, "/mesh/pull?space_id=space-x&since=0&limit=100").0,
+            200,
+            "登记过 A 的真公钥 ⇒ A 的真签名必须放行"
+        );
         // ② B 在自己窗口上写一页
         {
             let c = b.lock().unwrap();
@@ -3902,7 +3976,8 @@ mod tests {
             &client,
             &mesh_peer("B", &format!("http://127.0.0.1:{}", bound.port())),
             "space-x",
-            Some("lan-token"),
+            // ⭐ P1：**不带口令** ✓ —— 这一趟靠 A 的真签名进门（A 的钥匙在 B 的门上登记过 ✓）。
+            None,
         )
         .await
         .unwrap();
@@ -4098,10 +4173,13 @@ mod tests {
         {
             let c = b.lock().unwrap();
             set_mesh_bind(&c, "space-x", Some("127.0.0.1:0")).unwrap();
-            // ⭐ **U11（A：门只认卡）**：窗口登记的是**卡**（`start1` 把 "lan-token" 当一张卡 ✓）
-            //   ⇒ 本机出示的必须是**这一台**的那份配对秘密 ✓（⛔ 共享口令已退役 ✗）
-            set_pair_secret(&c, "space-x", "A", Some("lan-token")).unwrap();
+            // ⭐ **P1（2026-10-13）**：这一格**摘掉了** ✗ —— 原来这里存的是"给 A 的那份配对秘密"
+            //   （旧那一档 ✓，窗口把它当一张卡 ✓）；现在**本机不出示任何口令** ✓ ⇒ 只剩签名那一档 ✓。
+            set_pair_secret(&c, "space-x", "A", None).unwrap();
         }
+        // ⭐ P1：签名那一档要过两件事 —— 本机（B）自己签 ✓ ＋ **A 的门上登记过 B 的公钥** ✓
+        //   ⇒ 把 **B 的真公钥**登记在 **A 这扇门**上（方向＝"谁进门、谁被登记"✓）。
+        trust_conn(&win, "space-x", "B", &b.lock().unwrap());
         let peers = vec![announced("A", &format!("http://{}", win.addr()), &["space-x"])];
 
         // ⚠️ 这里走 `round_candidates`（而不是 `round`）：回环地址会被 `mesh_peers` 正确过滤掉
