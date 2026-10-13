@@ -353,6 +353,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   //      **没有** nonce／时间戳／有效期 ✓，采纳侧也**幂等**（可以再次采纳 ✓）⇒ ⛔ 别把这句写成"一次性" ✗）
   //   ② **人读码核对**：采纳侧先把**算出来的码**显示出来，**等用户把对方那串填回来** ✓
   //   ③ 采纳：逐位相同才写；**对不上 ⇒ 停在"停"态，且那一态里没有继续入口** ✗（判据钉着）
+  const [plaintextCount, setPlaintextCount] = useState<number | null>(null);
   const [dpExport, setDpExport] = useState<DevicePairExportOutcome | null>(null);
   const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
   const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
@@ -545,7 +546,15 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
       const kindByWs = new Map<string, "personal" | "team">();
       if (isDesktopPlatform()) {
         try {
-          for (const v of await api.spaceSecurityOverview()) {
+          // ⭐ **P-3e-1**：⭐ 同一份读数顺手算"没开加密的个数" ✓（⛔ **不再调一次** ✗ —— 不给自己加一轮网络 ✓）。
+          //   ⚠️⭐ **先置 `null`** ✓ ⇒ 这一趟若抛（或返回空）就**保持 null** ✓ ⇒ 界面**不渲染** ✓
+          //      （⛔ 读不到 ≠ 0 ✗；⛔ 也不能让上一趟的旧数留下来 ✗）。
+          setPlaintextCount(null);
+          const secRows = await api.spaceSecurityOverview();
+          if (Array.isArray(secRows)) {
+            setPlaintextCount(secRows.filter((r) => !r.encrypted_on_disk).length);
+          }
+          for (const v of secRows) {
             // ⚠️ 那个字段名叫 `space_id` ✗，但 `set_space_kind` 收的就是它 ⇒ ⭐ 实为 **workspace id** ✓。
             kindByWs.set(v.space_id, v.kind);
           }
@@ -1347,6 +1356,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           role="dialog"
           aria-label="同步设置"
         >
+          {/* ⭐ **P-3e-1（R9 最小片）**：⭐ 未加密空间的**主动提醒** ✗ ——
+              ⚠️ 只在**真读到 `N ≥ 1`** 时出现 ✓；⛔ `null`（读不到）与 `0` **都不出现** ✓（读不到 ≠ 0 ✓）。
+              ⭐ 只说**个数** ✓，⛔ 不摆空间名 ✗（信息泄露 ✓）。
+              ⚠️ ⛔ 这里**不许**写 Markdown 的 `**…**` ✗ —— 要强调用 `<b>` ✓（`syncPanelMesh` ⑨c ✓）。
+              ⚠️ 本片**没做**「去开加密」那颗按钮 ✓（留下一片 ✓，见收口 ✓）。 */}
+          {plaintextCount !== null && plaintextCount > 0 && (
+            <div className="sync-hint" data-testid="plaintext-warning">
+              ⚠️ 本机有 <b>{plaintextCount}</b> 个空间<b>没开加密</b> ⇒ 它们的内容会在局域网上<b>明文</b>传输
+            </div>
+          )}
           <header className="sync-head">
             <div className="sync-head-text">
               <div className="sync-title">同步</div>

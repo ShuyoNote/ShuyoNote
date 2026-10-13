@@ -49,23 +49,81 @@ import {
 
 /** ⚠️ `__TAURI_INTERNALS__` 必须在**模块加载之前**就在 ⇒ `platform/index.ts:67` 才会选桌面那一档
  *  （`isDesktopPlatform()` ＝ 「有没有 Rust 内核」✓ —— 本判据量的正是桌面那一支 ✓）。 */
-const { invokeSpy, lanStatusSpy, meshSetConfigSpy } = vi.hoisted(() => {
+const { invokeSpy, lanStatusSpy, meshSetConfigSpy, secOverviewSpy } = vi.hoisted(() => {
   (globalThis as unknown as { window: Record<string, unknown> }).window.__TAURI_INTERNALS__ = {
     transformCallback: (cb: unknown) => cb,
   };
-  return { invokeSpy: vi.fn(), lanStatusSpy: vi.fn(), meshSetConfigSpy: vi.fn() };
+  // ⭐ **P-3e-1**：⭐ 那颗"未加密空间"读数（`spaceSecurityOverview` ✓）走**本文件的 spy** ✓ ——
+  //   ⚠️⭐ **默认仍是 `[]`** ✗（省了它 ⇒ 回 `undefined` ⇒ `refresh()` 里 `new Map(...)` 当场抛 ✗
+  //      ⇒ 既有那几组**变假红** ✓ —— 今晚踩过同形的坑 ✓）。
+  return {
+    invokeSpy: vi.fn(),
+    lanStatusSpy: vi.fn(),
+    meshSetConfigSpy: vi.fn(),
+    secOverviewSpy: vi.fn().mockResolvedValue([]),
+  };
 });
 
 /** ⚠️ `api` 除下面两条外一律"空读数"（面板那些分支只读、不崩 ✓）—— 本判据只问**那一行的可达性** ✓。
  *  ⚠️⭐ 这两条**必须给数组** ✗：`refresh()` 里 `new Map(profiles.map(…))`（`SyncPanel.tsx:541` ✓）拿到
  *  `null` 会当场抛 ⇒ `setRows` 跑不到 ⇒ `activeRow` 空 ⇒ ⭐ 连**「附近设备」那一整块**（它被
  *  `:1962` 的 `!!activeRow` 挡着 ✓）都不渲染 ⇒ 那是一条**夹具假红**（实测踩到一次 ✓）。 */
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **P-3e-1（2026-10-13，R9 的最小片）**：⭐ 未加密空间的**主动提醒** ✗ ——
+//   ⭐ 读数＝既有那条 `spaceSecurityOverview()` ✓ 的 `encrypted_on_disk`（`space_crypto.rs:475-484` ✓）；
+//   ⭐ N ＝ `rows.filter((r) => !r.encrypted_on_disk).length` ✓（⛔ 不用 `in_keyring`／`key_available` ✗）。
+// ⚠️ **判据①今天红**（⭐ 先加断言、先跑 ✓）：还没有那行提醒 ✓。
+// ⛔ 本片**没做**：`[]`／reject 那两条锁 ✗、「去开加密」那颗按钮 ✗（留下一片 ✓，见收口 ✓）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("P-3e-1：未加密空间 ⇒ 主动提醒（只说个数）", () => {
+  afterEach(() => {
+    // ⭐ 本用例把默认值改过 ⇒ **复位** ✓（⛔ 不许把可变状态留给别的组 ✗）。
+    secOverviewSpy.mockResolvedValue([]);
+  });
+
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+  });
+
+  it("① ⭐ 留 1 个 `encrypted_on_disk: false` ⇒ 那行提醒必须在（今天【红】）", async () => {
+    const rows = [
+      {
+        space_id: "ws-2",
+        kind: "personal",
+        encrypted_on_disk: false,
+        in_keyring: false,
+        key_available: false,
+        gate: {},
+      },
+    ];
+    // ⚠️⭐ **默认值也要给同一份** ✗：`refresh()` 会跑**不止一次**（打开一次、事件一次 ✓）
+    //   ⇒ 只给 `Once` 的话第二次就回默认 `[]` ⇒ N=0 ⇒ **假红**（实测踩到 ✓）。
+    secOverviewSpy.mockResolvedValue(rows);
+    secOverviewSpy.mockResolvedValueOnce(rows);
+    const el = await openPanelWith([]);
+    const warn = el.querySelector<HTMLElement>('[data-testid="plaintext-warning"]');
+    expect(
+      warn,
+      "⭐ 真有 1 个未加密空间 ⇒ 必须在同步页顶部提醒 ✓（今天【红】：还没有那行 ✓）",
+    ).toBeTruthy();
+    expect(warn!.textContent ?? "", "⭐ 提示要说清「没开加密 ⇒ 明文传输」✓").toContain("明文");
+    expect(warn!.textContent ?? "", "⭐ 只报**个数** ✓（⛔ 不摆空间名 ✗）").toContain("1");
+  });
+});
+
 vi.mock("../lib/api", () => ({
   api: new Proxy(
     {
       lanStatus: (id: string) => lanStatusSpy(id),
       listSyncProfiles: async () => [],
-      spaceSecurityOverview: async () => [],
+      spaceSecurityOverview: () => secOverviewSpy(),
       // ⭐ **P-2b（2026-10-13）**：`duList`（"本机认过哪几台"✓）就是从这条命令的 `paired` 拿的
       //   （`SyncPanel.tsx:291-292` ✓）⇒ 分段判据要能**给这条桩喂名单** ✓（⛔ 不改它默认的 `null` ✗
       //   —— 其余用例照旧落到"读不到 ⇒ 空名单" ✓）。
