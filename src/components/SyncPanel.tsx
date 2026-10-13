@@ -1411,8 +1411,23 @@ export function SyncPanel({
               ⚠️ ⛔ 这里**不许**写 Markdown 的 `**…**` ✗ —— 要强调用 `<b>` ✓（`syncPanelMesh` ⑨c ✓）。
               ⚠️ 本片**没做**「去开加密」那颗按钮 ✓（留下一片 ✓，见收口 ✓）。 */}
           {plaintextCount !== null && plaintextCount > 0 && (
-            <div className="sync-hint" data-testid="plaintext-warning">
-              ⚠️ 本机有 <b>{plaintextCount}</b> 个空间<b>没开加密</b> ⇒ 它们的内容会在局域网上<b>明文</b>传输
+            <div
+              className="sync-hint"
+              data-testid="plaintext-warning"
+              style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}
+            >
+              {/* ⚠️⭐ **2026-10-14（纯排布修复，owner 截图：文字与按钮撞车）** ✗ ——
+                  ⭐ 症状的机械原因：⭐ 这一格原来只有 `className="sync-hint"` ✓，而
+                  `.sync-hint`（`App.css:1839`）**只有** margin／字号／行高／颜色 ⇒ ⭐ **没有 flex 容器** ✗
+                  ⇒ ⭐ 文字与 `<button>` 挤在**同一个行盒**里 ✓（⭐ 与 `.sync-btn` 无关：它（`App.css:1895`）
+                  是 `display:inline-flex` ✓、⭐ **没有 `position`** ✗ ⇒ ⛔ 样式表一个字节都没动 ✗）。
+                  ⇒ ⭐ 修法：⭐ **行内** flex ＋ `flexWrap` ✓ ＋ 文字那一半 `flex:1 1 auto` ＋ `minWidth:0` ✓
+                  （⭐ 于是文字在**按钮之前**结束 ✓，⛔ 不钻到按钮下面 ✗）。
+                  ⚠️ 本仓**已有**同一形状的先例 `.sync-space-guide`（`App.css:1846-1855` ✓ —— 「提示 ＋ 按钮并排」✓）；
+                  ⭐ 这里照抄**行内**那版（⛔ 不新造 CSS 类 ✗）。 */}
+              <span style={{ flex: "1 1 auto", minWidth: 0 }}>
+                ⚠️ 本机有 <b>{plaintextCount}</b> 个空间<b>没开加密</b> ⇒ 它们的内容会在局域网上<b>明文</b>传输
+              </span>
               {/* ⚠️⭐ **本片只放按钮 ＋ testid** ✗ —— ⛔ **不做跳转** ✗：既有入口在 `SettingsDialog` 里
                   （`SettingsDialog.tsx:19` 挂的 `SpacePrivacySection` ✓），从本组件过去要**开那个对话框** ✗
                   ⇒ ⭐ 没有既有的 `setView` 路可接 ✓ ⇒ 按 Lead 的退路只放按钮 ✓（跳转留下一片 ✓）。 */}
