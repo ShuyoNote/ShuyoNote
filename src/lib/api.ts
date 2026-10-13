@@ -520,6 +520,10 @@ export const api = {
   meshPanelScopes: () => invoke("mesh_panel_scopes") as Promise<MeshPanelScope[]>,
   /** ⚠️ `offer` **本片留空**（**待 B 片** ✓）⇒ ⛔ 别把空数组读成"没有" ✗。 */
   meshPanelSpaces: () => invoke("mesh_panel_spaces") as Promise<MeshPanelSpaces>,
+  /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✓（⭐ 比对码由**后端**算 ✓ ——
+   *  `code: null` ＝ **读不到** ✓，人话原因在 `reason` 里 ✓）。 */
+  pairingCodeReading: (a: { peerDeviceId: string; peerPubkey: string }) =>
+    invoke("pairing_code_reading", a) as Promise<{ code: string | null; reason: string }>,
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令）。
    *

@@ -995,6 +995,14 @@ export interface CommandMap {
    * ⇒ 那边的 `announced` 一律 `false` ✓（⛔ 不假装有窗口 ✗），而 `local` 照列它自己的空间 ✓。
    */
   mesh_panel_scopes: { args: undefined; result: MeshPanelScope[] };
+  /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✗ —— 比对码 ＝ 本机公钥 ＋ 对面那把公钥
+   *  ＋ 这一轮的 `trust_ask`（⭐ 由**后端**算 ✓，⛔ 前端不拼 ✗）。
+   *  ⚠️ ⭐ `code: null` ＝ **读不到** ✓（缺本机身份／对面没报公钥／这一轮没在握手 ✓），
+   *  原因在人话 `reason` 里 ✓ —— ⛔ 不许把 `null` 读成"对不上" ✗（那是两件事 ✓）。 */
+  pairing_code_reading: {
+    args: { peerDeviceId: string; peerPubkey: string };
+    result: { code: string | null; reason: string };
+  };
   mesh_panel_spaces: { args: undefined; result: MeshPanelSpaces };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
