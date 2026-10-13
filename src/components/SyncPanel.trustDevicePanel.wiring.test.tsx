@@ -495,12 +495,105 @@ describe("P-2b：附近的设备分两段（已信任／待配对）", () => {
     ).toBeLessThan(rows.indexOf(pendingRow!));
   });
 
-  it("③（**本片的一部分**，⛔ 不是锁 ✗，先红后绿同 ①②）：源码里留着「第三段待 P-3」那句话", () => {
+  it("③ 换对象不删断言（R192 ✓，P-3d 2026-10-13）：那句注释从「待 P-3」改成「已落地」＋ 读不到不算变了", () => {
+    // ⚠️ 这一格原来钉的是 `待 P-3`（＝"第三段还没造出来" ✓）—— ⭐ P-3d 把第三段画出来之后
+    //    那句话**必须改**（留着就是**过时的读数** ✗）⇒ ⭐ 按本仓 R192「换对象不删断言」✗：
+    //    断言一个字不删 ✓，只把**对象**换成新事实 ✓。
     expect(
       SYNC_PANEL_SRC,
-      "⛔ 别把「第三段（钥匙变了）待 P-3」这句话删掉 ✗ —— 它是**如实交代缺一段**的那条注释 ✓" +
-        "（那条逐台读数今天不存在 ✓，⭐ 先造读数再画段 ✓）",
-    ).toContain("待 P-3");
+      "⭐ 注释必须明说第三段**已落地** ✓（⛔ 别还留着「待 P-3」说它不存在 ✗）",
+    ).toContain("第三段已落地");
+    expect(
+      SYNC_PANEL_SRC,
+      "⭐ 同时必须写清口径来源：判据是 P-3a 供的逐台读数 `key_changed` ✓",
+    ).toContain("key_changed");
+    expect(
+      SYNC_PANEL_SRC,
+      "⭐ 且必须写明「**读不到（`null`）不算变了**」✓ —— 那是本片最容易松掉的一条口径 ✓",
+    ).toContain("读不到（`null`）不算变了");
+    expect(
+      SYNC_PANEL_SRC,
+      "⛔ 过时的那句「待 P-3」不许再留在这一块里 ✗（它已经被兑现了 ✓）",
+    ).not.toContain("第三段「需要重新配对（钥匙变了）」待 P-3");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **P-3d（2026-10-13）**：画第三段 ⭐「**需要重新配对**」✗ —— 判据取的是
+//   ⭐ **逐台读数** `key_changed`（P-3a 供的 ✓ `commands.ts` 的 `NearbyPeer` ✓）。
+//
+// ⚠️⭐ **口径不能松** ✗：⭐ 只有 `key_changed === true` 才进第三段 ✓ ——
+//   ⭐ **读不到（`null`）** 与 **`false`（没变）** 一律**不进** ✗
+//   （「读不到」是**没有结论** ✓，⛔ 不许被当「变了」✗ —— 与那几格读数同一把尺 ✓）。
+//
+// ⭐ 段序（`SyncPanel.tsx` 里那个 bucket ✓）：需要重新配对 ⇒ 已信任 ⇒ 待配对 ✓。
+//
+// ⚠️ **本组只有 ① 是先红后绿** ✓；**② ③ 是锁**（今天已绿 ✓，⛔ 不是本片的修 ✗）——
+//   实测：② 是一条**反向断言**（`null` ⇒ 不许出第三段 ✓），第三段还没造出来时它**天生成绿** ✓
+//   ⇒ ⛔ 不许硬凑成"今天红"✗；③ 钉的是 P-2b 那两段仍在 ✓（用 `nearby-group-pending` ✓ ——
+//   ⚠️⛔ **不许拿「已信任」当锁** ✗：那要求该行在 `duList` 里 ✓，而夹具的 `duList` 是**空的** ✓
+//   ⇒ `peer(true)` **不会**出「已信任」标题 ✓（前一位就这么错过 ✗）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("P-3d：第三段「需要重新配对」（key_changed === true）", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+    // ⚠️ 本组**刻意**不动 `meshSetConfigSpy` ⇒ `duList` 保持**空** ✓（本组不需要"已信任"那一段 ✓）。
+    meshSetConfigSpy.mockReset();
+  });
+
+  it("① ⭐ 一台 `key_changed: true` ⇒ 第三段标题「需要重新配对」必须出现（今天【红】：一段都没有 ✓）", async () => {
+    const el = await openPanelWith([
+      // ⚠️ 用 `peer(true, …)`＝**它服务的正是当前空间** ✓ —— 那才是"要重新配对"的现实场景 ✓
+      //   （`key_changed: true` **优先**于 `duList` ⇒ 这一段排在「已信任」之前 ✓）。
+      //   ⚠️⭐ 它**不服务当前空间**时不给这颗按钮 ✓（会动错空间 ✗）⇒ 那时落回「别的空间」那句 ✓。
+      peer(true, { key_changed: true, key_reason: "ok" } as Partial<NearbyPeer>),
+    ]);
+    const head = el.querySelector<HTMLElement>('[data-testid="nearby-group-keychanged"]');
+    expect(
+      head,
+      "⭐ 逐台读数说「钥匙变了」⇒ 界面必须**单独成段**说出来 ✓（今天【红】：只有「已信任／待配对」两段 ✗）",
+    ).toBeTruthy();
+    expect(head!.textContent ?? "", "⭐ 那一段的文案逐字是「需要重新配对」✓").toContain("需要重新配对");
+    expect(
+      el.querySelector('[data-testid="nearby-repair"]'),
+      "⭐ 那一段的行里要有那颗「重新配对」✓（⛔ 不是「立即同步」✗、也⛔ 不是「解除」✗）",
+    ).toBeTruthy();
+    expect(
+      (el.querySelector('[data-testid="nearby-repair"]') as HTMLElement).textContent ?? "",
+      "⭐ 那颗按钮的文案逐字是「重新配对」✓",
+    ).toContain("重新配对");
+  });
+
+  it("② 锁（今天已绿 ✓，⭐ 不是本片的修）：⭐ 读不到（`null`）**不许**进第三段", async () => {
+    const el = await openPanelWith([
+      peer(false, { key_changed: null, key_reason: "no_record" } as Partial<NearbyPeer>),
+    ]);
+    expect(
+      el.querySelector('[data-testid="nearby-group-keychanged"]'),
+      "⛔ `null` ＝ **读不到**（**没有结论** ✓）⇒ ⛔ **不许**被当成「变了」而进第三段 ✗" +
+        "（那正是这条口径要挡的假结论 ✓；⭐ 第三段只收 `key_changed === true` ✓）",
+    ).toBeNull();
+  });
+
+  it("③ 锁（今天已绿 ✓）：P-2b 那两段仍在 —— ⭐ 没进第三段的那些落在「待配对」✓", async () => {
+    const el = await openPanelWith([
+      peer(false, { key_changed: false, key_reason: "ok" } as Partial<NearbyPeer>),
+    ]);
+    expect(
+      el.querySelector('[data-testid="nearby-group-pending"]'),
+      "⭐ `key_changed: false`（＝**没变** ✓）⇒ 照旧走 P-2b 的「待配对」那一段 ✓",
+    ).toBeTruthy();
+    expect(
+      el.querySelector('[data-testid="nearby-group-keychanged"]'),
+      "⛔ `false`（没变）**不许**进第三段 ✗",
+    ).toBeNull();
   });
 });
 

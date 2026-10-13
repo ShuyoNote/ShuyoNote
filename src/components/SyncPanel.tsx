@@ -151,6 +151,14 @@ interface EditRow {
  */
 const TRUST_DEVICE_READINGS = unavailableTrustDeviceReadings();
 
+/** ⭐ **P-3d（2026-10-13）**：设备列表那**三段**的名字与 testid ✓ ——
+ *  ⭐ 数组下标 ＝ 段序（`nearbyBucket` 的返回值 ✓）：需要重新配对 ⇒ 已信任 ⇒ 待配对 ✓。 */
+const NEARBY_GROUPS = [
+  { testid: "nearby-group-keychanged", label: "需要重新配对" },
+  { testid: "nearby-group-trusted", label: "已信任" },
+  { testid: "nearby-group-pending", label: "待配对" },
+] as const;
+
 /** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
  *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
  *  ⚠️ 默认 `false` ⇒ ⭐ **抽屉那支逐字不变** ✓（一行 JSX 都没搬 ✓）。 */
@@ -1175,6 +1183,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
    *    `space_id` 换成人能读的名字（对不上名字的说个数），**不算交集**（规格 §2 那条不变式）。
    * ⚠️ **绝不出现裸 `space_id`**（`INV-UI-copy-no-internal-ids`）。
    */
+  /**
+   * ⭐ **P-3d（2026-10-13）**：一台设备该进**哪一段** ✗ ——
+   * `0` ＝ **需要重新配对** ／ `1` ＝ 已信任 ／ `2` ＝ 待配对 ✓。
+   *
+   * ⚠️ ⭐ 只有 `key_changed === true` 才算"钥匙变了" ✗ —— ⭐ **读不到（`null`）与 `false` 一律不算** ✓
+   *   （「读不到」是**没有结论** ✓，⛔ 不许被当「变了」✗ —— 与那几格读数同一把尺 ✓）。
+   * ⚠️ 段序就是 `0/1/2` 这个序：排序键与分段键**同一个** ✓ ⇒ 两处不可能各说各话 ✓。
+   */
+  const nearbyBucket = (p: NearbyPeer): 0 | 1 | 2 =>
+    p.key_changed === true ? 0 : duList.some((d) => d.deviceId === p.device_id) ? 1 : 2;
   const nearbySecondColumn = (p: NearbyPeer) => {
     if (p.serves_current) return `附近 · 服务 ${mySpaceName}`;
     // ⭐ **P-B（2026-10-13）**：⭐ 先把**原因**说出来 ✗ —— ⛔ 不许把"本机没设暗号"／"那个空间已删"
@@ -2070,9 +2088,10 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                             ③ 有设备 ⇒ 每台一行。
                             ⭐ **P-2b（2026-10-13）**：③ 里按「本机认没认过」分**两段**（`已信任`／`待配对` ✓）——
                               判据取**本机认过的那份名单** `duList`（与下面「解除」那块同一份 ✓，⛔ 不新造读数 ✗）。
-                            ⚠️ ⭐ **第三段「需要重新配对（钥匙变了）」待 P-3** ✗：那条**逐台**读数今天
-                              **不存在**（R7 ✓）⇒ ⭐ 先造读数、再画段 ✓；⛔ **别以为这里漏了一段** ✗
-                              （⛔ 也不许为了凑三段去造数 ✗）。 */}
+                            ⭐⭐ **P-3d（2026-10-13）：第三段已落地** ✓ —— 「**需要重新配对**」✓，
+                              判据取 ⭐ **逐台读数** `key_changed`（P-3a 供的 ✓ `commands.ts` 的 `NearbyPeer` ✓）。
+                              ⚠️ ⭐ **读不到（`null`）不算变了** ✗（`false` 也不算 ✓）⇒ 只有 `=== true` 才进这一段 ✓
+                              （「读不到」是**没有结论** ✓ —— 与那几格读数同一把尺 ✓）。 */}
                         {!nearbyReadable || !lanStatus.enabled ? (
                           <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
                         ) : nearby.length === 0 ? (
@@ -2080,25 +2099,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                         ) : (
                           nearby
                             .slice()
-                            .sort(
-                              (a, b) =>
-                                Number(!duList.some((d) => d.deviceId === a.device_id)) -
-                                Number(!duList.some((d) => d.deviceId === b.device_id)),
-                            )
+                            // ⚠️ 排序键与分段键**同一个**（`nearbyBucket` ✓）⇒ 两处不可能各说各话 ✓
+                            .sort((a, b) => nearbyBucket(a) - nearbyBucket(b))
                             .map((p, i, arr) => (
                               <Fragment key={p.device_id}>
-                                {(i === 0 ||
-                                  duList.some((d) => d.deviceId === p.device_id) !==
-                                    duList.some((d) => d.deviceId === arr[i - 1].device_id)) && (
+                                {(i === 0 || nearbyBucket(p) !== nearbyBucket(arr[i - 1])) && (
                                   <div
                                     className="sync-hint"
-                                    data-testid={
-                                      duList.some((d) => d.deviceId === p.device_id)
-                                        ? "nearby-group-trusted"
-                                        : "nearby-group-pending"
-                                    }
+                                    data-testid={NEARBY_GROUPS[nearbyBucket(p)].testid}
                                   >
-                                    {duList.some((d) => d.deviceId === p.device_id) ? "已信任" : "待配对"}
+                                    {NEARBY_GROUPS[nearbyBucket(p)].label}
                                   </div>
                                 )}
                             <div className="sync-nearby-row">
@@ -2138,7 +2148,25 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                                      （⭐ 复用手边那条「生成投放码 ⇒ 采纳」的路 ✓，⭐ `dpPeer` 就是那个格 ✓）。
                                      ⇒ ⭐ 所以这里**不写**"点一下就通" ✗ —— ⭐ 那句话要等一键握手做出来才算真 ✓
                                         （⛔ 不说假话 ✓，⭐ 本仓最忌这个 ✓）。 */}
-                              {duList.some((d) => d.deviceId === p.device_id) ? (
+                              {p.key_changed === true && p.serves_current ? (
+                                // ⭐ **P-3d（2026-10-13）**：⭐ 钥匙变了 ⇒ 这一行的主动作是**重新配对** ✓
+                                //   （⭐ 复用「接入」那条主路径 ✓：`trustDevice` ⇒ `mesh_trust_begin` ⇒
+                                //   把**新的**那把公钥登记上 ✓ —— ⛔ 不改任何判定语义 ✗，判定仍是 `serves_current` ✓）。
+                                //   ⚠️ 它**不服务当前空间**时 ⇒ 落回下面那句「它服务的是别的空间」✓
+                                //   （⭐ 不在这儿硬塞一颗会动错空间的按钮 ✗）。
+                                <button
+                                  className="sync-btn"
+                                  disabled={dpBusy}
+                                  data-testid="nearby-repair"
+                                  onClick={() => {
+                                    if (!activeId) return;
+                                    setDpPeer(p.device_id);
+                                    void trustDevice([activeId], p);
+                                  }}
+                                >
+                                  重新配对
+                                </button>
+                              ) : duList.some((d) => d.deviceId === p.device_id) ? (
                                 <span className="sync-hint" data-testid="nearby-paired">
                                   已配对
                                 </span>
