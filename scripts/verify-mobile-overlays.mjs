@@ -52,9 +52,9 @@ const APP_URL = (process.env.APP_URL || "http://localhost:5173/").replace(/\/+$/
  */
 const REPO_ROOT_OVERLAYS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MOBILE_BREAKPOINT_PX = (() => {
-  const src = readFileSync(join(REPO_ROOT_OVERLAYS, "src", "hooks", "useMobile.ts"), "utf8");
+  const src = readFileSync(join(REPO_ROOT_OVERLAYS, "src", "lib", "platform", "shape.ts"), "utf8");
   const m = src.match(/export const MOBILE_BREAKPOINT_PX\s*=\s*(\d+)/);
-  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/hooks/useMobile.ts 改了？）—— 断点必须与源码同源");
+  if (!m) throw new Error("读不到 MOBILE_BREAKPOINT_PX（src/lib/platform/shape.ts 改了？）—— 断点必须与源码同源");
   return Number(m[1]);
 })();
 /** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */

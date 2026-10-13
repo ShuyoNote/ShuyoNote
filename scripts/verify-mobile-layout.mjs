@@ -37,7 +37,7 @@ const DESKTOP = { width: 1280, height: 800 };
  *   在窄视口上**必然找不到元素** ✗。
  *
  * ⚠️ **判据口径：只看宽度**（`useMobile()` 的真口径）——⛔ 不是"窄**或**矮" ✗。三条依据：
- *   ① `src/lib/platform/shape.ts:26` 逐字 `MOBILE_QUERY = \`(max-width: 768px)\``；同文件 §31-44
+ *   ① `src/hooks/useMobile.ts:26` 逐字 `MOBILE_QUERY = \`(max-width: 768px)\``；同文件 §31-44
  *      逐字写「**只看宽度**…792×360 的横屏手机**仍然放得下**'侧栏 + 正文'两列」；
  *      "窄**或**矮"是**浮层形态**（`isMobileOverlayViewport`）的口径，不是"会不会换掉编辑器" ✗。
  *   ② 本轮实测（Chromium，四个视口）：`390×844`/`320×568` ⇒ `mobile-read` 在、编辑器工具条不在；
@@ -51,14 +51,6 @@ const MOBILE_BREAKPOINT_PX = (() => {
   return Number(m[1]);
 })();
 /** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
-/** ⭐ 阶段 0（R203）：粗指针查询串**也只许在 `shape.ts` 里定义** ✓ —— 门禁从源码读出来用 ✓。
- *  ⛔ 门禁里不再留字面量 ✗（原来它内联了两处 ✗ ⇒ 那正是这一阶段要消灭的重复 ✓）。 */
-const COARSE_POINTER_QUERY = (() => {
-  const src = readFileSync(join(REPO_ROOT_LAYOUT, "src", "lib", "platform", "shape.ts"), "utf8");
-  const m = src.match(/export const COARSE_POINTER_QUERY\s*=\s*"([^"]+)"/);
-  if (!m) throw new Error("读不到 COARSE_POINTER_QUERY（src/lib/platform/shape.ts 改了？）—— 能力查询必须与源码同源");
-  return m[1];
-})();
 const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
 /** 挂在**桌面编辑器工具条**上的右栏三块面板（窄视口上它们的入口已不存在 ⇒ 搬到桌面档 ✓）。 */
 const RIGHT_PANELS = [
@@ -352,7 +344,7 @@ async function main() {
     // `align-items: stretch` 会把高度抹平，量了等于没量）——带操作行的那张必须
     // 与不带操作行的那张**一样高**。第一版把它们改成"卡片底部一行"就是因为没有这条
     // 断言：功能全绿，但每张自建模板多出一条 54px 的行、网格还错落。
-    const tcActions = await phone.evaluate((coarseQuery) => {
+    const tcActions = await phone.evaluate(() => {
       const make = (withActions) => {
         const card = document.createElement("div");
         card.className = "tc-card";
@@ -400,11 +392,11 @@ async function main() {
         boxDir: getComputedStyle(box).flexDirection,
         withH: Math.round(withA.getBoundingClientRect().height),
         withoutH: Math.round(without.getBoundingClientRect().height),
-        hoverNone: matchMedia(coarseQuery).matches,
+        hoverNone: matchMedia("(hover: none)").matches,
       };
       host.remove();
       return out;
-    }, COARSE_POINTER_QUERY);
+    });
     ok(
       tcActions.opacity === "1" && tcActions.w >= 44 && tcActions.h >= 44,
       `卡片操作常驻且命中区 ≥44×44（opacity=${tcActions.opacity} / ${tcActions.w}×${tcActions.h}）` +
@@ -476,7 +468,7 @@ async function main() {
       ok(gRead.paddingRight === "0px", `阅读屏主区不让位（padding-right=${gRead.paddingRight}）`);
       ok(gRead.right <= gRead.winWidth, `阅读屏主区不超出视口（right=${gRead.right} ≤ ${gRead.winWidth}）`);
       ok(gRead.docWidth <= gRead.winWidth, `阅读屏无横向溢出（文档宽=${gRead.docWidth}）`);
-      const backClicked = await phone.evaluate((coarseQuery) => {
+      const backClicked = await phone.evaluate(() => {
         const b = document.querySelector(".mread-back");
         if (!b) return false;
         b.click();
@@ -641,11 +633,11 @@ async function main() {
         boxPos: getComputedStyle(box).position,
         delOpacity: getComputedStyle(btn).opacity,
         delW: Math.round(btn.getBoundingClientRect().width),
-        hoverNone: matchMedia(coarseQuery).matches,
+        hoverNone: matchMedia("(hover: none)").matches,
       };
       card.remove();
       return out;
-    }, COARSE_POINTER_QUERY);
+    });
     ok(dtc.open, "桌面能打开模板中心");
     ok(dtc.searchW === 240, `桌面搜索框仍是固定 240px（实际 ${dtc.searchW}）——窄屏那条 width:100% 不许漏到桌面`);
     ok(dtc.cols >= 3, `桌面卡片仍是多列（实际 ${dtc.cols} 列，1280px 下至少 3 列）`);
