@@ -287,8 +287,44 @@ export interface MeshRoundReport {
   window: string | null;
 }
 
-/** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */
-export interface MeshConfigState {
+/**
+ * ⭐ **P1.5 主件 · A1**（2026-10-13）：一个空间在"网格面"上的形状 ✗
+ * （与 Rust `mesh_panel::MeshPanelScope` **逐字段相同** ✓）。
+ *
+ * ⚠️ ⭐ **不含任何内部标识** ✗：`ws_id` 是**本机**的空间 id ✓（界面拿它当行键 ✓），
+ * ⛔ 协议空间／暗号（`space_id`）**只在 Rust 侧用来判断**、⛔ 不回给界面 ✗
+ * （`INV-UI-copy-no-internal-ids` ✓）。
+ */
+export interface MeshPanelScope {
+  /** 本机空间 id ✓（与 `list_workspaces` 那些 `id` 同源 ✓）。 */
+  wsId: string;
+  name: string;
+  /** `''` ＝ 未分类 ⇒ 界面**如实说**，⛔ 不替它猜成"个人" ✗。 */
+  kind: string;
+  /** ⭐ 这一侧**对外宣称在服务**它吗 ✓（与窗口同一把尺 ✓；Web 上恒 `false` ✓）。 */
+  announced: boolean;
+}
+
+/** ⭐ 一条"空间"（只够界面列出来 ✓）。 */
+export interface MeshPanelSpace {
+  id: string;
+  name: string;
+}
+
+/**
+ * ⭐ `mesh_panel_spaces` 的读数 ✓。
+ *
+ * ⚠️ ⭐ **`offer` 本片留空** ✗（**待 B 片** ✓：owner 拍板 1 ＝ 这台机器**通过网格对外宣称
+ * "我在服务"**的空间 ✓）⇒ ⛔ 空数组在这里**只表示"还没接线"** ✗，**不表示"没有"** ✗ ——
+ * 界面不许把这两件事显示成同一种 ✓。
+ */
+export interface MeshPanelSpaces {
+  offer: MeshPanelSpace[];
+  /** ⭐ ＝ 本机**现在存在**的空间 ✓（`deleted_at IS NULL` ✓）。 */
+  local: MeshPanelSpace[];
+}
+
+/** 网格设置的**读数**（与 Rust `mesh::MeshConfigState` 逐字段相同）。 */export interface MeshConfigState {
   enabled: boolean;
   bind: string | null;
   /** ⚠️ **只说"设没设"**：口令本身不会回给界面（没有任何理由再拿回去一遍）。 */
@@ -928,6 +964,22 @@ export interface CommandMap {
    * 契约形状与 `src-tauri/src/mesh.rs::MeshRoundReport` 逐字段相同。
    */
   mesh_sync_now: { args: { workspaceId?: string | null }; result: MeshRoundReport };
+  /**
+   * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ ——
+   * ⭐ **只读** ✓（⛔ 一个字节都不写 ✗、⛔ 一个包都不发 ✗）。
+   *
+   * ⚠️ 两条命令**都没有参数** ✗（读的是"本机"这回事 ✓）：
+   * · `mesh_panel_scopes` ⇒ 每个空间"**对外宣称**在服务它吗" ✓
+   *   （⭐ 与窗口**同一把尺**：`lan_state.rs:953 window_serve_space` ✓；`kind` 直读 `meta.workspaces.kind` ✓）；
+   * · `mesh_panel_spaces` ⇒ `{offer, local}` ✓ —— ⚠️ ⭐ **`offer` 本片留空** ✗（**待 B 片** ✓：
+   *   ⛔ 空数组只表示"还没接线" ✗，**不表示"没有"** ✗）；
+   *   `local` ＝ 本机**现在存在**的空间 ✓（`deleted_at IS NULL` ✓）。
+   *
+   * ⚠️ **两侧都实现**（不登记成 web 专属）：Web 上没有发现层（UDP 在 Rust 侧 ✓）
+   * ⇒ 那边的 `announced` 一律 `false` ✓（⛔ 不假装有窗口 ✗），而 `local` 照列它自己的空间 ✓。
+   */
+  mesh_panel_scopes: { args: undefined; result: MeshPanelScope[] };
+  mesh_panel_spaces: { args: undefined; result: MeshPanelSpaces };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。
    *

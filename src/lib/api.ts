@@ -3,7 +3,7 @@ import { emitImportFinished, emitSyncCompleted } from "./pluginEvents";
 import type { WikiPageInput } from "./wikiExport";
 import { readEmbedConfig } from "./semanticEmbed";
 import { blobStore } from "./platform/blobStore";
-import type { CommandMap, LanStatus, MeshConfigState, MeshRoundReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
+import type { CommandMap, LanStatus, MeshConfigState, MeshPanelScope, MeshPanelSpaces, MeshRoundReport, RelayStatus, SyncBudget, SyncStreamStatus } from "./platform/commands";
 // Route every backend command through the platform executor so a future non-Tauri
 // shell can swap the bridge without touching the ~60 call sites below.
 // The command name, args shape and result are validated at compile time against
@@ -511,6 +511,15 @@ export const api = {
    */
   meshSyncNow: (workspaceId?: string | null) =>
     invoke("mesh_sync_now", { workspaceId: workspaceId ?? null }) as Promise<MeshRoundReport>,
+  /**
+   * ⭐ **P1.5 主件 · A1**（2026-10-13）：设备直连那一屏的**本机读数** ✗ —— ⭐ 只读 ✓。
+   *
+   * ⚠️ 两条都**没有参数** ✗（读的是"本机"这回事 ✓）。⭐ `announced` 与窗口**同一把尺**
+   * （`lan_state.rs:953` ✓）；`kind` 直读 `meta.workspaces.kind` ✓；`local` 只列**现在存在**的空间 ✓。
+   */
+  meshPanelScopes: () => invoke("mesh_panel_scopes") as Promise<MeshPanelScope[]>,
+  /** ⚠️ `offer` **本片留空**（**待 B 片** ✓）⇒ ⛔ 别把空数组读成"没有" ✗。 */
+  meshPanelSpaces: () => invoke("mesh_panel_spaces") as Promise<MeshPanelSpaces>,
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令）。
    *
