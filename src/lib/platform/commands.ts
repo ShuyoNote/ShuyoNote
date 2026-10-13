@@ -255,6 +255,22 @@ export interface NearbyPeer {
    *  ⚠️ 公钥**不是秘密**（它本来就随公告发出去）。⚠️ 老对端没这一格 ⇒ **空串** ⇒
    *  界面**如实**说「这一台还没报出它的身份」，⛔ 不许拿 `device_id` 凑一个。 */
   pubkey: string;
+  /**
+   * ⭐ **P-3a（2026-10-13，owner 承诺 R7）**：⭐ **这一台「钥匙变了」吗** ✗（**逐台** ✓ ——
+   * 那条全局 `trustState` 推不出逐台 ✓）。
+   *
+   * ⚠️ **比的是**：本条公告的 `pubkey`（上面那一格 ✓）**vs** 本机 `mesh_paired_devices.pubkey`
+   * （Rust 侧走 `db::paired_pubkeys` ✓）⇒ 两边**都有**且**不等** ⇒ `true` ✓。
+   *
+   * ⚠️ ⭐ **可空** ✗：`null` ＝ **读不到**（对面没报公钥／本机册子里没记过它 ✓ —— 原因见 `key_reason` ✓）
+   * ⇒ ⛔ **绝不许把 `null` 当 `false`（「没变」）读** ✗：「没变」是**一个结论** ✓，
+   * 「读不到」是**没有结论** ✓（与那几格读数同一把尺 ✓）。
+   * ⛔ **不参与任何判定** ✗（判定仍是 `serves_current` ✓）。
+   */
+  key_changed: boolean | null;
+  /** ⭐ 上面那一格的**原因码** ✓（⛔ 不含任何值 ✗ —— 尤其**不含公钥** ✓）：
+   *  `"ok"`（比过 ✓）／`"peer_no_key"`（对面没报 ✓）／`"no_record"`（本机没记过 ✓）。 */
+  key_reason: string;
 }
 
 /** 一轮网格交换里**一台对端**那一行（与 Rust `mesh::PeerPullReport` 逐字段相同）。 */

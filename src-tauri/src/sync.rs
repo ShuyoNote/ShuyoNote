@@ -5511,7 +5511,26 @@ pub fn lan_status(
         }
         out
     };
-    let nearby = nearby_of_with(&peers, &device_id, &space_id, &deleted_hints);
+    // ⭐ **P-3a（2026-10-13）**：逐台"钥匙变了吗"要的那本册子 —— **本机记的公钥** ✓。
+    //   ⚠️ 读法与既有那几处**同一把尺**（`sync.rs:5054/5061` ✓、`mesh.rs:2339` ✓ 都是
+    //   `db::paired_pubkeys(&conn, <row key>)` ✓）；而 row key 有**两种形状**
+    //   （`mesh::paired_row_key(space, device_level)`：设备级 ⇒ 一个常量键 ✓，否则就是 `space` ✓）
+    //   ⇒ ⭐ **两把键都读、并起来** ✓ —— ⛔ 不赌哪一把 ✗（赌错只会得到"没记过"，
+    //   那是**看着像结论的沉默** ✗；并起来最坏也只是多几条不相干的 id ✓）。
+    let recorded_pubkeys: Vec<(String, String)> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut out: Vec<(String, String)> = Vec::new();
+        for key in [
+            crate::mesh::paired_row_key(&space_id, true),
+            crate::mesh::paired_row_key(&space_id, false),
+        ] {
+            if let Ok(rows) = crate::db::paired_pubkeys(&c, key) {
+                out.extend(rows);
+            }
+        }
+        out
+    };
+    let nearby = nearby_of_with(&peers, &device_id, &space_id, &deleted_hints, &recorded_pubkeys);
 
     // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
     //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
@@ -5656,6 +5675,24 @@ pub struct NearbyPeer {
     /// ⚠️ 老对端**还没带这一格** ⇒ **空串** ✓ ⇒ 界面**如实**说「这一台还没报出它的身份」✗，
     /// ⛔ 不许拿 `device_id` 或别的字段凑一个 ✗（与 `short_id` 同一条纪律 ✓）。
     pub pubkey: String,
+    /// ⭐ **P-3a（2026-10-13，owner 承诺 R7）**：⭐ **这一台"钥匙变了"吗** ✗ ——
+    /// ⭐ **逐台**读数 ✓（现在那条全局 `trustState` 推不出逐台 ✓）。
+    ///
+    /// ⚠️ **比的是这两个字段**（⭐ 明写，⛔ 不许猜 ✗）：
+    /// · **对面报的那一份** ＝ 本条公告的 `pubkey`（`lan::LanAnnounce.pubkey` ✓，上抛见 `:5730` ✓）；
+    /// · **本机记的那一份** ＝ `mesh_paired_devices.pubkey`（读法 `db.rs:285-293 paired_pubkeys`
+    ///   逐字 `SELECT device_id, pubkey FROM mesh_paired_devices WHERE space_id = ?1 AND TRIM(pubkey) <> ''` ✓；
+    ///   写入在 `db.rs:268-280` 的 upsert ✓，键与写路径同一把尺 `mesh::paired_row_key(…, true)` ✓）。
+    /// ⇒ `true` ＝ 两边**都有公钥且不相等** ✓（换过钥匙 ⇒ 门那边签名验不过 ⇒ 401 ✓，所以要重新配对 ✓）。
+    ///
+    /// ⚠️ ⭐ **可空** ✗（`None` ⇒ **读不到**，原因见 [`NearbyPeer::key_reason`] ✓）：对面没报公钥（老对端 ✓）
+    /// ／本机那本册子里**没记过**它（旧那一档 ✓）⇒ ⭐ 这两件事**都不是"变了"** ✗ ⇒
+    /// ⛔ **绝不许默认成 `false`（"没变"）或 `true`（"变了"）** ✗ —— 那是拿一个**结论**冒充"读不到" ✓。
+    /// ⛔ **不参与任何判定** ✗（判定仍是 `serves_current` ✓；界面只许**显示** ✓）。
+    pub key_changed: Option<bool>,
+    /// ⭐ 上面那一格的**原因码** ✓（⛔ 不含任何值 ✗ —— 尤其**不含公钥本身** ✓）：`"ok"`（两边都有、比过 ✓）
+    /// ／`"peer_no_key"`（对面没报公钥 ✓）／`"no_record"`（本机册子里没记过它 ✓）。
+    pub key_reason: String,
 }
 
 /// ⭐ **P-B（2026-10-13）**：这一条**为什么**不服务当前空间 ✗ —— ⭐ **纯函数**（判据不打桩、不开网络、不碰库 ✓）。
@@ -5702,22 +5739,43 @@ pub fn nearby_of(
     my_device: &str,
     space_id: &str,
 ) -> Vec<NearbyPeer> {
-    nearby_of_with(peers, my_device, space_id, &[])
+    // ⚠️ **这一版不带本机册子** ⇒ `key_changed` 一律 `None`（原因 `"no_record"` ✓，⛔ 不猜 ✗）——
+    //    生产那一侧走 [`nearby_of_with`]（那里把 `paired_pubkeys` 喂进来 ✓）。
+    nearby_of_with(peers, my_device, space_id, &[], &[])
 }
 
 /// [`nearby_of`] 的**带提示**版：多收一组"**本机已删空间本来会报的标识**" ✓ ⇒ 才判得出 `space_deleted` ✓。
 ///
 /// ⚠️ 多出来的这一组**只进读数** ✗，⛔ 不进任何判定 ✓（判定仍是 `lan::serves_space` 那一条 ✓）。
+///
+/// ⭐ **P-3a（2026-10-13）**：再收一组"**本机册子里记的那份公钥**"（`device_id, pubkey` ✓，
+///   来自 `db::paired_pubkeys` ✓）⇒ 逐台算出 [`NearbyPeer::key_changed`] ✓ ——
+///   ⚠️ 本函数仍是**纯函数**（零网络零库 ✓）：册子由**调用方**读好喂进来 ✓。
 pub(crate) fn nearby_of_with(
     peers: &[lan::Peer],
     my_device: &str,
     space_id: &str,
     deleted_hints: &[String],
+    recorded_pubkeys: &[(String, String)],
 ) -> Vec<NearbyPeer> {
     peers
         .iter()
         .map(|p| {
             let spaces = spaces_of(p);
+            let announced = p.announce.pubkey.trim();
+            // ⭐ 逐台"钥匙变了吗" ✓ —— ⛔ 只在**两边都有公钥**时才比 ✗（其余一律 `None` ＋ 原因 ✓）。
+            let recorded = recorded_pubkeys
+                .iter()
+                .find(|(id, _)| id == p.announce.device_id.trim())
+                .map(|(_, k)| k.trim())
+                .filter(|k| !k.is_empty());
+            let (key_changed, key_reason) = if announced.is_empty() {
+                (None, "peer_no_key")
+            } else if let Some(rec) = recorded {
+                (Some(!rec.eq_ignore_ascii_case(announced)), "ok")
+            } else {
+                (None, "no_record")
+            };
             NearbyPeer {
                 device_id: p.announce.device_id.trim().to_string(),
                 device_name: p.announce.device_name.trim().to_string(),
@@ -5729,6 +5787,9 @@ pub(crate) fn nearby_of_with(
                 // ⭐ 2026-10-12（第 3 步）：⭐ 公钥照**原样**上抛 ✓（空串 ＝ 老对端没报 ✓，⛔ 不凑 ✗）
                 pubkey: p.announce.pubkey.trim().to_string(),
                 spaces,
+                // ⭐ P-3a：逐台"钥匙变了吗" ✓（`None` ＝ 读不到 ✓，原因在下一格 ✓）
+                key_changed,
+                key_reason: key_reason.to_string(),
             }
         })
         .collect()
@@ -9212,6 +9273,45 @@ mod tests {
         );
     }
 
+    /// ⭐ **P-3a 判据（2026-10-13）**：逐台「钥匙变了吗」✗ ——
+    /// 比的是 **对面公告的 `pubkey`** vs **本机 `mesh_paired_devices.pubkey`**
+    /// （⭐ 逐字见 [`NearbyPeer::key_changed`] 那段注释 ✓）：
+    /// · 换了 ⇒ `Some(true)` ✓（门那边签名验不过 ⇒ 401 ⇒ 要重新配对 ✓）；
+    /// · 没换 ⇒ `Some(false)` ✓（⛔ 不许永远为真 ✗）；
+    /// · 本机册子里**没记过** ⇒ `None` ＋ `"no_record"` ✓（⛔ 不许当「没变」✗）；
+    /// · 对面**没报**公钥（老对端 ✓）⇒ `None` ＋ `"peer_no_key"` ✓。
+    #[test]
+    fn key_changed_is_per_device_and_never_faked() {
+        const PK_OLD: &str = "aa11";
+        const PK_NEW: &str = "bb22";
+        let mut peers = vec![
+            nearby_fixture("dev-changed", "换了钥匙的", Some("http://192.168.1.5:8788"), &["sp-1"]),
+            nearby_fixture("dev-same", "还是那把钥匙的", Some("http://192.168.1.6:8788"), &["sp-1"]),
+            nearby_fixture("dev-unrecorded", "本机没记过的", Some("http://192.168.1.7:8788"), &["sp-1"]),
+            nearby_fixture("dev-silent", "没报公钥的", Some("http://192.168.1.8:8788"), &["sp-1"]),
+        ];
+        peers[0].announce.pubkey = PK_NEW.to_string();
+        peers[1].announce.pubkey = PK_OLD.to_string();
+        peers[2].announce.pubkey = PK_OLD.to_string();
+        // `peers[3]` 保持空串 ⇒ 老对端没报公钥 ✓（这一格不许被当成「变了」也不许当成「没变」✓）
+        let recorded = vec![
+            ("dev-changed".to_string(), PK_OLD.to_string()),
+            ("dev-same".to_string(), PK_OLD.to_string()),
+        ];
+        let got = nearby_of_with(&peers, "dev-me", "sp-1", &[], &recorded);
+        assert_eq!(got[0].key_changed, Some(true), "⛔ 换了公钥必须说「变了」✗");
+        assert_eq!(got[0].key_reason, "ok");
+        assert_eq!(
+            got[1].key_changed,
+            Some(false),
+            "⛔ 没换必须说「没变」✗（⛔ 不许永远为真 ✗ —— 一个永远为真的读数等于没有读数 ✓）"
+        );
+        assert_eq!(got[2].key_changed, None, "⛔ 本机没记过 ⇒ 读不到 ✗（⛔ 不许当「没变」✗）");
+        assert_eq!(got[2].key_reason, "no_record");
+        assert_eq!(got[3].key_changed, None, "⛔ 对面没报公钥 ⇒ 读不到 ✗");
+        assert_eq!(got[3].key_reason, "peer_no_key");
+    }
+
     /// ★★ 判据 ②（同一把尺）：`nearby.filter(invitable)` 的集合 **==** `mesh::mesh_peers` 的集合
     /// （喂**同一份** `peers`）。退化形态：列表里有「邀请」按钮，点了却拉不动（或反过来）。
     #[test]
@@ -9324,7 +9424,8 @@ mod tests {
         // ⭐ ⑤ 已删提示**不许**越权：对端报的是**别人**（不在已删集里）⇒ 仍然只是 `mismatch`
         assert_eq!(serves_reason("k1", &hub(&["k2"]), &hub(&["k3"])), "mismatch");
         // ⭐ ⑥ 生产那一版（带提示）会把它接上 ✓
-        let with = nearby_of_with(&[peer.clone()], "dev-me", "k1", &hub(&["k1"]));
+        // ⚠️ 本片给 `nearby_of_with` 多了一个参数（本机册子 ✓）⇒ 这一格不关心"钥匙变了" ⇒ 喂空 ✓
+        let with = nearby_of_with(&[peer.clone()], "dev-me", "k1", &hub(&["k1"]), &[]);
         assert_eq!(with[0].serves_reason, "ok");
     }
 
