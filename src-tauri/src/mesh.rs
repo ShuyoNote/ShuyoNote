@@ -4954,6 +4954,76 @@ mod tests {
         crate::mesh::stop_window(space).unwrap();
     }
 
+    // ────── ⭐ P0 片②③（设备直连 · 信任链与门禁）：先在 **lib 层**把链做实 ──────
+    //
+    // ⚠️ **命令层未验（需真宿主）** ✗：`mesh_trust_begin`／`mesh_trust_state` 是 `tauri::State`
+    //    命令（`lib.rs:844/848` ✓）⇒ lib 单测起不了宿主 ✗ ⇒ 按 Lead 2026-10-13 拍的口径，
+    //    本片**只钉**「纯函数 `mesh_trust::trust_state_view` ＋ 内核 `pairing_trust::TrustHandshake`」
+    //    这一层 ✓；命令层那一段**如实挂账**（真宿主／P5 真机片 ✗）。
+
+    /// ★ 判据 P0-②：信任链的**读数**沿真内核从 `idle` 走到 `trusted` ✓，且每档的人话对得上 ✓。
+    ///
+    /// ⚠️ 与 P1／P3 的关系：这条钉的是**状态机与投影**（⛔ 不是"名单里认了谁"✗ —— 那是 `mesh.rs` 的
+    /// `paired_devices` 那条 ✓）；改坏了 ⇒ 界面会**说错走到哪一步**（`SyncSettingsPane` 读它 ✓）。
+    #[test]
+    fn p0_trust_state_view_moves_from_idle_to_trusted_along_the_real_handshake_kernel() {
+        use crate::pairing_trust::TrustHandshake;
+        let now = 1_000i64;
+        let ttl = 60_000i64;
+
+        // ① 一开始：idle ＋ 没有任何进行中的握手（兜底那档也要说"下一步做什么" ✓）
+        let mut h = TrustHandshake::default();
+        let v0 = crate::mesh_trust::trust_state_view(h.state(), h.is_active(now), h.pending_asks(now).len());
+        assert_eq!(v0.state, "idle", "默认必须是 idle");
+        assert!(!v0.active, "默认没有进行中的握手");
+        assert_eq!(v0.pending, 0, "默认没有等采纳的条目");
+        assert!(!v0.message.trim().is_empty(), "兜底那档也要给出下一步");
+
+        // ② 对面来问（`note_ask`）⇒ 甲 之下**看到就是采纳** ⇒ 直接 trusted ＋ 有一条等采纳
+        h.note_ask("dev-peer", now, ttl);
+        let v1 = crate::mesh_trust::trust_state_view(h.state(), h.is_active(now), h.pending_asks(now).len());
+        assert_eq!(v1.state, "trusted", "甲：看到对方的「想信任」就是采纳（不再等本机的人点）");
+        assert!(v1.active, "这一秒还有进行中的握手");
+        assert_eq!(v1.pending, 1, "有一条正等着被采纳");
+
+        // ③ 本机自己点（`begin`）⇒ 同样 trusted；且**点的一方没有"等采纳"条目** ✓
+        let mut h2 = TrustHandshake::default();
+        h2.begin("dev-peer", "ask-1", now, ttl);
+        let v2 = crate::mesh_trust::trust_state_view(h2.state(), h2.is_active(now), h2.pending_asks(now).len());
+        assert_eq!(v2.state, "trusted", "点一下就是 trusted");
+        assert_eq!(v2.pending, 0, "发问的一方没有「等采纳」的条目");
+        // ④ 过期之后 active 必须变假（过期的不算 ✓）
+        let later = now + ttl + 1;
+        let v3 = crate::mesh_trust::trust_state_view(h2.state(), h2.is_active(later), h2.pending_asks(later).len());
+        assert!(!v3.active, "过期的不算 active");
+        assert_eq!(v3.pending, 0, "过期的等采纳条目不许再报");
+    }
+
+    /// ★ 判据 P0-③：**没被允许过的第三台进不来** —— 登记名单里只有被信任的那一台 ✓。
+    ///
+    /// ⚠️ **这是"锁"，不是"修"** ✗：⭐ **新加即绿** ✓ —— 同一条不变量在**门那一层**已有真判据：
+    /// `one_sided_trust_opens_one_direction_only` 里的 `dev-c` 那段（真 HTTP ＋ 真签名 ⇒ `ghost.is_err()` ✓）。
+    /// 本判据只把**名单这一格**单独钉住 ✗：门读的就是它（`mesh.rs` 的
+    /// `crate::db::paired_pubkeys(&meta, row)` ✓）⇒ 名单里没有它，门就不可能认它 ✓。
+    #[test]
+    fn p0_a_third_device_never_enters_the_paired_pubkey_registry() {
+        let dir = temp_dir("p0-third-device");
+        std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
+        let meta = crate::db::open_meta_conn_at(&dir).unwrap();
+        let space = "sp-third";
+        // 只登记被信任的那一台（＝ A 点了「允许 B 来拿」）
+        crate::db::pair_pubkey(&meta, space, "dev-b", "bbbb").unwrap();
+        let listed = crate::db::paired_pubkeys(&meta, space).unwrap();
+        assert!(
+            listed.iter().any(|(d, _)| d == "dev-b"),
+            "被信任的那台必须在名单里：{listed:?}"
+        );
+        assert!(
+            !listed.iter().any(|(d, _)| d == "dev-c"),
+            "⛔ 没被允许过的第三台不许进名单（门只认这份名单）：{listed:?}"
+        );
+    }
+
     /// ⭐⭐ **2026-10-12（设备身份第 3 步）的核心判据**：
     /// ⭐ **单方信任 ⇒ 同步是单向的** ✗；⭐ **两边都信任 ⇒ 双向** ✓。
     ///

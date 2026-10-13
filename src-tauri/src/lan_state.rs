@@ -616,7 +616,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         //    真机读数：本机 12 天里 10048 出现过 **9 次**，全是偶发（⭐ 端口随时能绑上 ✓）。
         //    ⇒ ⭐ 现在走 `bind_listener_with_retry`：**退避重试到绑上为止** ✓（1s→2s→…→30s 封顶 ✓）。
         //    ⚠️ 它**不会返回错误** ✓ ⇒ 下面那句"没得听也没得喊"的旧注释不再成立 ✓。
-        let sock = lan::bind_listener_with_retry(lan::LAN_PORT).await;
+        let sock = lan::bind_listener_with_retry(lan::lan_port()).await;
         // ⚠️ 这里**不再**预先把目标算死（原来是这样）——目标要每一轮带上"已经认识的对端"，
         //    见下面 ③ 里 `lan::announce_targets` 那段注释（真机抓到的单向发现）。
         let state = LanState::global(&device_id);
@@ -769,7 +769,13 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 //    热点主机那条 `255.255.255.255` 按默认路由走**蜂窝** ⇒ 底下的客户端永远收不到；
                 //    单播那一条把反方向补回来（客户端先被主机听见 ⇒ 主机直接发回给它）。
                 // ⚠️ 以前这里是循环外算一次的 `default_targets` ⇒ 表里就算有对端也发不到它们。
-                let targets = lan::announce_targets(lan::LAN_PORT, &state.peers(now));
+                // ⭐ **P0 片（2026-10-13）**：外面再套一层 `append_extra_targets` ✓ —— 它只在
+                //    `SHUYONOTE_LAN_EXTRA_TARGETS` 被设了时才追加（⛔ 不设 ⇒ 原样返回 ✓），
+                //    服务的是**只有测试才有的形态**（两个发现实体同机互指 ✓，见那函数的注释 ✓）。
+                //    ⚠️ 底下那句 `announce_targets(lan::LAN_PORT, &state.peers(now))` **保持逐字不变** ✗
+                //    （有判据按源码逐字钉它 ✓）。
+                let targets =
+                    lan::append_extra_targets(lan::announce_targets(lan::LAN_PORT, &state.peers(now)));
                 // ⭐ **2026-10-09（task-8）**：走**唯一入口** `announces_for_this_round` ✓ ——
                 //    它在发之前把 `space_id` 换成**解析后的空间**（个人空间 ⇒ 配对暗号 ✓）。
                 //    ⛔ 不要再退回"把 `profiles` 直接喂给 `announces_for_with_mesh`" ✗

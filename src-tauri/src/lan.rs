@@ -45,6 +45,54 @@ use tokio::net::UdpSocket;
 /// 判据要造「两个实例」时用的是**显式单播目标 ＋ 临时端口**（见 §判据 ⑦），不依赖端口复用。
 pub const LAN_PORT: u16 = 47821;
 
+/// 发现层这一轮**该用的端口** —— **默认就是 [`LAN_PORT`]** ✓（不设环境变量时逐字 47821 ✓）。
+///
+/// ⚠️ 这个缝**只服务"只有测试才有的形态"** ✗：生产里 `tauri-plugin-single-instance`
+/// （见 `Cargo.toml` ✓）保证**同一台机器上不会有两个实例** ⇒ 永远只有一个发现层、固定 47821 ✓
+/// （`lan_state.rs` 的 `bind_listener_with_retry` 读的就是本函数 ✓）。
+/// ⭐ 而 P0 要**在真机上只跑一个进程**也验"发现→配对"整链 ⇒ 必须能让**两个发现实体同机并存** ✓
+/// ⇒ 端口得可注入 ✓。⛔ 同一端口绑两次是**绑不上**的（改前逐字读数：
+/// `监听 UDP 62901 失败：通常每个套接字地址(协议/网络地址/端口)只允许使用一次。 (os error 10048)` ✓）
+/// ⇒ 那个读数正是"注入前本机造不出两个发现实体"的证明 ✓。
+/// ⚠️ 每次调用都读一次环境变量（⛔ 不缓存 ✗）：判据要能在同一个进程里设了就读到 ✓。
+pub fn lan_port() -> u16 {
+    std::env::var("SHUYONOTE_LAN_PORT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+        .unwrap_or(LAN_PORT)
+}
+
+/// **把注入的额外出站目标追加到一批目标的末尾** ✓（`SHUYONOTE_LAN_EXTRA_TARGETS`，逗号分隔 `ip:port`）
+/// —— ⛔ 同样**只服务只有测试才有的形态** ✗，⛔ 不设时**原样返回**（逐字相等，判据钉着 ✓）。
+///
+/// ## 为什么是"另开一个函数"，而不是把读环境变量塞进 `default_targets`／`announce_targets`
+/// ⭐ **这是实测改出来的**（⛔ 不是偏好 ✗）：第一版把 `out.extend(lan_extra_targets())` 放进
+/// [`default_targets`]，于是**任何**并发跑的判据只要读到那个环境变量，看到的目标表就多了两条 ✗ ——
+/// 实测逐字：`lan::tests::the_default_targets_cover_broadcast_and_loopback`
+/// `assertion failed: t.iter().all(|a| a.port() == LAN_PORT)` ✗（并行 90 跑 1 红；
+/// `--test-threads=1` 则 `90 passed; 0 failed` ✓）⇒ **那是判据自己造出来的 flake** ✗。
+/// ⇒ 现在 `default_targets`／`announce_targets` **一个字节都没改** ✓（它们不再读环境变量 ✓），
+/// 注入只发生在**生产那一轮公告**（`lan_state.rs:772`）与判据自己显式调用的地方 ✓。
+///
+/// ## 为什么不改"忽略对端自报端口"那条
+/// [`announce_targets`] **故意忽略**对端自报的端口（用参数 `port` ✓）；`lan.rs` 的判据**要求**
+/// 这个忽略（对端自报 `192.168.43.7:9999` 必须被跳过 ✓）—— ⛔ 那是**安全语义**（对端不许替我们挑
+/// 端口 ✗），本片**一个字都不动** ✓ ⇒ 只能从**目标那一侧**开缝 ✓。
+pub fn append_extra_targets(mut base: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    base.extend(lan_extra_targets());
+    base
+}
+
+/// 读一次 `SHUYONOTE_LAN_EXTRA_TARGETS` 并解析（⛔ 解析不出来的段一律**跳过** ✗：环境变量也是外部输入，
+/// 不许在这里 panic ✓；不设 ⇒ 空 ✓）。
+pub fn lan_extra_targets() -> Vec<SocketAddr> {
+    std::env::var("SHUYONOTE_LAN_EXTRA_TARGETS")
+        .ok()
+        .map(|raw| raw.split(',').filter_map(|s| s.trim().parse::<SocketAddr>().ok()).collect())
+        .unwrap_or_default()
+}
+
 /// 对端表的存活期：超过这么久没再发声 ⇒ 视为已离开（对端表不是只增不减的历史）。
 pub const PEER_TTL_MS: i64 = 90_000;
 
@@ -603,7 +651,9 @@ mod bind_retry_tests {
     use super::*;
 
     /// 取一个**空闲的**临时端口号（⭐ 不用 47821 ✗ —— 那会打扰本机真跑着的那份发现层 ✓）。
-    async fn free_port() -> u16 {
+    /// ⚠️ `pub(super)`：P0 那三条判据（在 `mod tests` 里 ✓）也复用它 ✓ —— 本片的口径是
+    /// **端口一律 `free_port()`，⛔ 不写死号** ✗。
+    pub(super) async fn free_port() -> u16 {
         let probe = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let port = probe.local_addr().unwrap().port();
         drop(probe);
@@ -660,6 +710,7 @@ pub fn default_targets(port: u16) -> Vec<SocketAddr> {
     if let Ok(a) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
         out.push(a);
     }
+    // ⚠️ 这里**不再**追加注入目标 ✗ —— 见 [`append_extra_targets`] 的注释（那会让并发的既有判据 flake ✗）。
     out
 }
 
@@ -1086,6 +1137,155 @@ mod tests {
             fp: "fp".into(),
             pubkey: String::new(),
         }
+    }
+
+    // ────── ⭐ P0 片①（设备直连 · 发现层）：**端口/目标可注入** ＋ 「两个实例互见」 ──────
+    //
+    // ⛔ 本片**不动安全语义** ✗：`announce_targets` 忽略对端自报端口那条（对端报 `:9999` 要被跳过 ✓）
+    //    原样保留 ✓ —— 缝开在**目标一侧**（`SHUYONOTE_LAN_EXTRA_TARGETS` ✓）。
+    // ⭐ 改前逐字读数（探针，已删）：
+    //    `[probe] LAN_PORT(常量) = 47821 ／ env = Ok("44444") ／ default_targets(LAN_PORT) =
+    //     [255.255.255.255:47821, 127.0.0.1:47821]` ⇒ **生产常量不认任何注入** ✗；
+    //    `[probe] 同一端口绑第二次 ⇒ 监听 UDP 62901 失败：通常每个套接字地址(协议/网络地址/端口)
+    //     只允许使用一次。 (os error 10048)` ⇒ **本机根本造不出两个发现实体** ✗。
+
+    /// 设环境变量 → 取值 → **一定还原**（判据不许把进程环境弄脏 ✓）。
+    /// ⚠️ 断言留在闭包**外面** ⇒ 即使断言失败也不会泄漏环境变量 ✓（Rust 的测试线程是并行的 ✓）。
+    fn with_env<T>(k: &str, v: &str, f: impl FnOnce() -> T) -> T {
+        let old = std::env::var(k).ok();
+        std::env::set_var(k, v);
+        let got = f();
+        match old {
+            Some(o) => std::env::set_var(k, o),
+            None => std::env::remove_var(k),
+        }
+        got
+    }
+
+    /// ★ 判据 P0-①a：端口缝 —— ⛔ **不设时逐字 47821** ✓；设了就读到 ✓；坏值/`0` ⇒ 回落常量 ✓。
+    #[test]
+    fn p0_lan_port_defaults_to_the_constant_verbatim_and_honours_the_injection() {
+        let old = std::env::var("SHUYONOTE_LAN_PORT").ok();
+        std::env::remove_var("SHUYONOTE_LAN_PORT");
+        assert_eq!(lan_port(), LAN_PORT, "不设变量时必须与常量一字不差");
+        assert_eq!(lan_port(), 47821, "常量本身也得是 47821（逐字）");
+        if let Some(o) = old {
+            std::env::set_var("SHUYONOTE_LAN_PORT", o);
+        }
+
+        assert_eq!(with_env("SHUYONOTE_LAN_PORT", "44444", lan_port), 44444, "设了就要读到");
+        assert_eq!(with_env("SHUYONOTE_LAN_PORT", "不是端口", lan_port), LAN_PORT, "坏值回落常量");
+        assert_eq!(with_env("SHUYONOTE_LAN_PORT", "0", lan_port), LAN_PORT, "0 回落常量");
+    }
+
+    /// ★ 判据 P0-①b：额外目标缝 —— ⛔ **不设时零影响**（逐字相等 ✓）；设了才追加 ✓；坏段跳过 ✓。
+    ///
+    /// ⚠️ 本判据**故意不碰** `default_targets`／`announce_targets` 的返回值 ✗：那两条**不读环境变量**
+    /// （第一版读了 ⇒ 并发的既有判据 flake ✗，见 `append_extra_targets` 的注释 ✓）⇒
+    /// 这里先逐字证明"它们与从前一字不差"，再证明"追加只发生在显式调用处"✓。
+    #[test]
+    fn p0_extra_targets_change_nothing_when_unset_and_append_only_when_set() {
+        let port = 47821u16;
+        let old = std::env::var("SHUYONOTE_LAN_EXTRA_TARGETS").ok();
+        std::env::remove_var("SHUYONOTE_LAN_EXTRA_TARGETS");
+
+        // ① 不设变量：默认目标与从前**逐字相同**，且"追加"这一步是恒等 ✓
+        let baseline = default_targets(port);
+        assert_eq!(
+            baseline,
+            vec![
+                format!("255.255.255.255:{port}").parse::<SocketAddr>().unwrap(),
+                format!("127.0.0.1:{port}").parse::<SocketAddr>().unwrap(),
+            ],
+            "不设变量时，默认目标必须与从前一字不差：{baseline:?}"
+        );
+        assert_eq!(
+            append_extra_targets(baseline.clone()),
+            baseline,
+            "不设变量时 append 必须是恒等（零影响）"
+        );
+        assert!(lan_extra_targets().is_empty(), "不设变量时解析结果为空");
+        if let Some(o) = old {
+            std::env::set_var("SHUYONOTE_LAN_EXTRA_TARGETS", o);
+        }
+
+        // ② 设了：追加在**末尾** ✓（坏段跳过 ✓，不 panic ✓）
+        let injected = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", "127.0.0.1:49999, 192.168.1.9:50000", || {
+            append_extra_targets(default_targets(port))
+        });
+        assert_eq!(injected.len(), baseline.len() + 2, "设了就要追加两条：{injected:?}");
+        assert_eq!(
+            injected[injected.len() - 1],
+            "192.168.1.9:50000".parse::<SocketAddr>().unwrap(),
+            "追加在末尾"
+        );
+        let bad = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", "不是地址,127.0.0.1:49998", || {
+            append_extra_targets(default_targets(port))
+        });
+        assert_eq!(bad.len(), baseline.len() + 1, "坏段要跳过（不 panic）：{bad:?}");
+    }
+
+    /// 收到**对端**为止（⭐ 自己那一轮也会把公告发回自己 —— `default_targets` 里的回环那一条 ✓ ⇒
+    /// 队列里会先夹一条 `OwnAnnounce` ✓，生产侧也是这么忽略自己的 ✓）。最多等 5 条。
+    async fn wait_for_a_peer(sock: &UdpSocket, st: &crate::lan_state::LanState) -> Peer {
+        for _ in 0..5 {
+            match recv_into_within(sock, st, 2_000).await.unwrap() {
+                RecvOutcome::Peer(p) => return p,
+                RecvOutcome::OwnAnnounce { .. } => continue,
+                other => panic!("不该收到这个：{other:?}"),
+            }
+        }
+        panic!("5 条之内没等到对端公告");
+    }
+
+    /// ★ 判据 P0-①c（**本片的主角**）：两个发现实体**各绑一个注入的端口**，用注入目标互指 ⇒
+    /// ⭐ **两边的对端表各见对方** ✓。
+    ///
+    /// ⚠️ **本机验得到什么／验不到什么（如实 ✓）**：验得到"发现→进表"这条链在**两次收发**上真的通 ✓；
+    /// ⛔ **验不到**真广播能不能到另一台机器（受限广播 / 多网卡 / 防火墙 / 时延 ⇒ **P5 真机片** ✗ ，
+    /// 与 `two_instances_on_one_net_find_each_other_without_a_hand_filled_address`（`:1139`）同一口径 ✓）。
+    #[tokio::test]
+    async fn p0_two_discovery_instances_see_each_other_over_the_injected_ports() {
+        let port_a = super::bind_retry_tests::free_port().await;
+        let port_b = super::bind_retry_tests::free_port().await;
+        let sock_a = bind_listener_with_retry(port_a).await;
+        let sock_b = bind_listener_with_retry(port_b).await;
+        let st_a = crate::lan_state::LanState::new("dev-a".to_string());
+        let st_b = crate::lan_state::LanState::new("dev-b".to_string());
+        st_a.set_enabled(true);
+        st_b.set_enabled(true);
+
+        // A 这一轮的目标 ＝ 「A 自己的端口（广播＋回环 ✓）」＋「注入的 B 端口 ✓」
+        // ⚠️ 端口一律 `free_port()`（本片口径 ✓），⛔ 不写死号 ✗；注入那条走**生产那个追加函数** ✓。
+        let targets_a = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", &format!("127.0.0.1:{port_b}"), || {
+            append_extra_targets(default_targets(port_a))
+        });
+        let targets_b = with_env("SHUYONOTE_LAN_EXTRA_TARGETS", &format!("127.0.0.1:{port_a}"), || {
+            append_extra_targets(default_targets(port_b))
+        });
+        assert!(
+            targets_a.contains(&SocketAddr::from(([127, 0, 0, 1], port_b))),
+            "注入目标没进目标表：{targets_a:?}"
+        );
+
+        let out_a = announce_once(&sock_a, &targets_a, &announce_of("dev-a", Some("http://192.168.1.5:8787"), &["sp-1"]))
+            .await
+            .expect("A 这一轮至少要发出去一条");
+        // ⚠️ `>= 1` 而不是 `== 1`：`255.255.255.255` 在回环 socket 上会被系统拒（实测 os error 10013 ✓）。
+        assert!(out_a.sent() >= 1, "A 一条都没发出去：{:?}", out_a.failures);
+        let got = wait_for_a_peer(&sock_b, &st_b).await;
+        assert_eq!(got.announce.device_id, "dev-a");
+        assert_eq!(got.addr, "127.0.0.1", "来源地址要如实记下");
+        assert_eq!(st_b.peers(1_000).len(), 1, "B 的表里必须有 A");
+
+        // 反向：B 发 ⇒ A 收 ⇒ **两边各见对方** ✓
+        let out_b = announce_once(&sock_b, &targets_b, &announce_of("dev-b", None, &[]))
+            .await
+            .expect("B 这一轮至少要发出去一条");
+        assert!(out_b.sent() >= 1, "B 一条都没发出去：{:?}", out_b.failures);
+        let got2 = wait_for_a_peer(&sock_a, &st_a).await;
+        assert_eq!(got2.announce.device_id, "dev-b");
+        assert_eq!(st_a.peers(1_000).len(), 1, "A 的表里必须有 B");
     }
 
     /// ★ 判据 ⑦：**真的**走一次 UDP 收发（显式单播 ＋ 临时端口，不依赖广播与端口复用），
