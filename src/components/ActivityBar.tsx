@@ -1,10 +1,11 @@
-import { Fragment, useEffect } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
+import { api } from "../lib/api";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
 import {
@@ -17,6 +18,7 @@ import {
   SettingsIcon,
   SidebarIcon,
   LlmWikiIcon,
+  CloudSyncIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -108,6 +110,28 @@ export function ActivityBar() {
   const setSidebarOpen = useActivity((s) => s.setSidebarOpen);
   const view = useViewStore((s) => s.view);
   const setView = useViewStore((s) => s.setView);
+
+  // ⭐ **P-2a-2（2026-10-13）**：⭐ 左栏那颗「同步」入口的**状态徽标** ✗ ——
+  //   ⚠️ 接的是**已有真读数**：⭐ `api.lanStatus(...)` 的 `peers` ✓（`SyncPanel` 的"本网段发现 N 台"
+  //      就是从它来的 ✓ —— ⛔ 不另造一个数 ✗）。
+  //   ⚠️⭐ **只在挂载时拉一次** ✓，⛔ **不轮询** ✗（⛔ 不许为了一颗徽标引入新的网络风暴 ✗）。
+  //   ⚠️⭐ 拉不到 ⇒ `null` ✓；⭐ `0` 与 `null` 都**不显示** ✓ —— ⛔ 绝不写"0 台在线" ✗
+  //      （"没有对端"与"没读到"是两件事 ✓，界面上必须长得不一样 ✓）。
+  const [syncPeers, setSyncPeers] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const s = await api.lanStatus(null);
+        if (alive) setSyncPeers(s && typeof s.peers === "number" ? s.peers : null);
+      } catch {
+        if (alive) setSyncPeers(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
   // ⚠️ 2026-10-01：`updateAvailable` 那个选择器随**竖条上的「关于」按钮**一起去掉了 ✓ ——
   //   它当时只服务那颗"有新版本可用"的小红点 ✗；更新提示仍在**更新横幅**（`UpdateBanner` ✓）
   //   与**设置 → 关于与更新**里 ✓（两个入口都在 ✓），所以不是把提示删掉了 ✓。
@@ -170,6 +194,25 @@ export function ActivityBar() {
           onClick={() => toggleSidebar()}
         >
           <SidebarIcon width={18} height={18} />
+        </button>
+        {/* ⭐ **P-2a-2**：⭐ 左栏常驻「**同步**」入口 ✗ —— 它切的是 **`AppView` 的 `"sync"`** ✓
+            （⛔ **不是** `Activity` 的一员 ✗：两者不是一回事 ✓），走的是 P-2a-1 那条**内容区分支** ✓
+            ⇒ ⛔ 不碰抽屉那条老路 ✗（那颗 `.btn-sync` 仍在 `SyncPanel` 里 ✓）。
+            ⭐ 徽标＝`lanStatus.peers` ✓（真读数 ✓）；⛔ 拉不到／0 台 ⇒ **不显示** ✗（不写"0 台在线" ✗）。 */}
+        <button
+          className="activity-btn"
+          title="同步"
+          aria-label="同步"
+          data-testid="rail-sync"
+          onClick={() => setView("sync")}
+        >
+          <CloudSyncIcon width={18} height={18} />
+          <span>同步</span>
+          {typeof syncPeers === "number" && syncPeers > 0 && (
+            <span className="sync-badge" aria-label={`本网段发现 ${syncPeers} 台`}>
+              {syncPeers}
+            </span>
+          )}
         </button>
         {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
             所以不是一个「活动」，不参与选中态。 */}
