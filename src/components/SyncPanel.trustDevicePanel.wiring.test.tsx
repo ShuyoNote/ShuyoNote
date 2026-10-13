@@ -49,7 +49,7 @@ import {
 
 /** ⚠️ `__TAURI_INTERNALS__` 必须在**模块加载之前**就在 ⇒ `platform/index.ts:67` 才会选桌面那一档
  *  （`isDesktopPlatform()` ＝ 「有没有 Rust 内核」✓ —— 本判据量的正是桌面那一支 ✓）。 */
-const { invokeSpy, lanStatusSpy, meshSetConfigSpy, secOverviewSpy } = vi.hoisted(() => {
+const { invokeSpy, lanStatusSpy, meshSetConfigSpy, secOverviewSpy, pairingCodeReadingSpy } = vi.hoisted(() => {
   (globalThis as unknown as { window: Record<string, unknown> }).window.__TAURI_INTERNALS__ = {
     transformCallback: (cb: unknown) => cb,
   };
@@ -61,6 +61,8 @@ const { invokeSpy, lanStatusSpy, meshSetConfigSpy, secOverviewSpy } = vi.hoisted
     lanStatusSpy: vi.fn(),
     meshSetConfigSpy: vi.fn(),
     secOverviewSpy: vi.fn().mockResolvedValue([]),
+    // ⭐ P-4 片③：命令那一层要能**数次数 ＋ 断言实参** ✓
+    pairingCodeReadingSpy: vi.fn(),
   };
 });
 
@@ -165,6 +167,8 @@ vi.mock("../lib/api", () => ({
       //   （`SyncPanel.tsx:291-292` ✓）⇒ 分段判据要能**给这条桩喂名单** ✓（⛔ 不改它默认的 `null` ✗
       //   —— 其余用例照旧落到"读不到 ⇒ 空名单" ✓）。
       meshSetConfig: (...a: unknown[]) => meshSetConfigSpy(...a),
+      // ⭐ P-4 片③：屏上那份 `pairCode` 走的就是这一条 ✓（⭐ 两个实参 ⇒ 判据能断言它带了哪一台 ✓）
+      pairingCodeReading: (a: { peerDeviceId: string; peerPubkey: string }) => pairingCodeReadingSpy(a),
     },
     { get: (t: Record<string, unknown>, k: string) => (k in t ? t[k] : async () => null) },
   ),
@@ -965,7 +969,10 @@ const trustBeginCalls = () =>
 /** 点一下那颗 ＋ 等微任务落地（⭐ 与既有那几条同一手法 ✓）。 */
 async function clickAndSettle(el: HTMLElement) {
   flushSync(() => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-  for (let i = 0; i < 3; i++) {
+  // ⭐ P-4 片③（2026-10-14）：⭐ 点击路径里多一次 api 往返（⇒ 两条 await 续体）⇒ ⛔ 3 拍不够 ✗
+  //   —— ⚠️ 实测：3 拍时屏上停在「正在取这一轮的比对码…」(＝状态进了渲染 ✓，只是**结果还没回来** ✗) ✓
+  await new Promise((r) => setTimeout(r, 0)); // 让 api 那条宏任务级往返落地 ✓
+  for (let i = 0; i < 8; i++) {
     await Promise.resolve();
     flushSync(() => {});
   }
@@ -1033,5 +1040,91 @@ describe("P-4 片②b：把调用时点挪到「确认」之后（只挪时点�
     expect(code, "⛔ 不许出现「自动通过」✗（⭐ 状态机里没有这一格 ✓ ⇒ 界面也不许长出一个 ✓）").not.toContain(
       "自动通过",
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐⭐ **P-4 片③（2026-10-14）**：⭐ 屏上那份 `pairCode` 从**占位**换成 ⭐ **真读数** ✗ ——
+//   点「接入」之后 ⭐ 调 `api.pairingCodeReading(p.device_id, p.pubkey)` ✓，⭐ 映射成那个 `Reading`：
+//   ⭐ `code` 有值 ⇒ `kind: "ok"` ✓；⭐ `code: null` ⇒ `kind: "unavailable"` ⭐ **带命令给的人话原因** ✓
+//   （⛔ 不自编原因 ✗）；⭐ 还没回来 ⇒ ⭐ **不许显示假码** ✗（维持「读取中」那种如实态 ✓）。
+// ⚠️ ⭐ **不注入 prop 时才自己取** ✗：⭐ 调用方给了 `pairCode` ⇒ ⛔ 不抢它的 ✗
+//   （⭐ 于是片②a／②b 那些当锁的判据照旧可控 ✓）。
+// ⚠️ **①②③ 都是今天的红** ✓（⭐ 今天屏上永远是那个占位 ⇒ 桩改不了它 ✓）；⭐ **④ 是锁** ✓。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+    meshSetConfigSpy.mockReset();
+    pairingCodeReadingSpy.mockReset();
+  });
+
+  it("① ⭐ 命令给了码 ⇒ 屏上出现**那串**（5 组 × 4 位）（今天【红】：屏上只有占位 ✓）", async () => {
+    pairingCodeReadingSpy.mockResolvedValue({ code: "4829-1377-6021-5489-0376", reason: "ok" });
+    const el = await openPanelWith([peer(true)]);
+    const allow = el.querySelector<HTMLElement>('[data-testid="nearby-allow"]');
+    await clickAndSettle(allow!);
+    // ⭐ P-4 片③：⭐ 取值是**点击路径里的一次 api 往返** ✓ ⇒ ⭐ 用 waitFor 等它落地 ✓
+    //   （⛔ 固定拍数在**整套并发**下不够 ✗ —— 实测：单跑绿、整套跑红 ✓）。
+    let shown = "";
+    await vi.waitFor(() => {
+      shown =
+        el.querySelector<HTMLElement>('[data-testid="pair-code-value"]')?.textContent ?? "";
+      expect(shown, "⭐ 命令给的码必须**逐字**上屏 ✓（今天【红】：屏上还是那个占位 ✗）").toContain(
+        "4829-1377-6021-5489-0376",
+      );
+    });
+    // ⭐ 分组形状：**5 组 × 4 位数字** ✓（⭐ 后端用空格 ✓、⭐ 桩里那串用连字符 ✓ ⇒ 两种都认 ✓）
+    const groups = shown.trim().split(/[\s-]+/);
+    expect(groups.length, "⭐ 5 组 ✓（与后端 `chunks(4)` 的**组数**一致 ✓）").toBe(5);
+    expect(
+      groups.every((g) => /^\d{4}$/.test(g)),
+      `⛔ 每组必须是 4 位数字 ✗（实测 ${JSON.stringify(groups)}）`,
+    ).toBe(true);
+  });
+
+  it("② ⭐ 命令说读不到 ⇒ 屏上出现**那句原因**、且**一个码都没有**（今天【红】✓）", async () => {
+    pairingCodeReadingSpy.mockResolvedValue({ code: null, reason: "本机还没生成设备密钥" });
+    const el = await openPanelWith([peer(true)]);
+    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
+    // ⭐ 同上：等那一趟 api 落地 ✓（⛔ 固定拍数在整套并发下不够 ✗）
+    await vi.waitFor(() => {
+      const box = el.querySelector<HTMLElement>('[data-testid="pair-code-unavailable"]');
+      expect(box, "⭐ 读不到 ⇒ 必须走「如实说原因」那一支 ✓").toBeTruthy();
+      expect(box!.textContent ?? "", "⭐ **命令给的那句原因**要逐字在屏上 ✓（⛔ 不许自编 ✗）").toContain(
+        "本机还没生成设备密钥",
+      );
+    });
+    expect(el.querySelector('[data-testid="pair-code-value"]'), "⛔ 读不到时**一个码都不许出现** ✗").toBeNull();
+  });
+
+  it("③ ⭐ 点「接入」⇒ `pairingCodeReading` **恰好一次**，且实参是那一台的 id 与 pubkey（今天【红】✓）", async () => {
+    pairingCodeReadingSpy.mockResolvedValue({ code: null, reason: "先放着" });
+    const el = await openPanelWith([peer(true)]);
+    expect(pairingCodeReadingSpy, "⛔ 还没点就不许取 ✗").not.toHaveBeenCalled();
+    await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
+    expect(pairingCodeReadingSpy, "⭐ 点「接入」⇒ **恰好一次** ✓").toHaveBeenCalledTimes(1);
+    expect(pairingCodeReadingSpy, "⭐ 实参必须是**那一台** ✓（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）").toHaveBeenCalledWith({
+      peerDeviceId: "dev-amd",
+      peerPubkey: PEER_PUBKEY,
+    });
+  });
+
+  it("④ 锁（今天已绿 ✓）：屏上仍没有「继续／自动通过」＋ ⭐ 确认仍是闸门（`trustDevice` 只在确认那一下）", () => {
+    const code = pairScreenCode();
+    expect(code, "⛔ 仍然不许有「继续」入口 ✗").not.toContain("继续");
+    expect(code, "⛔ 仍然不许有「自动通过」✗").not.toContain("自动通过");
+    const atConfirm = SYNC_PANEL_SRC.indexOf('data-testid="pair-confirm"');
+    const atTrust = SYNC_PANEL_SRC.indexOf("void trustDevice([activeId], peer);");
+    expect(atConfirm, "夹具前提：确认那颗在 ✓").toBeGreaterThan(-1);
+    expect(atTrust, "夹具前提：那一次调用在 ✓").toBeGreaterThan(-1);
+    expect(atConfirm, "⭐ 确认仍是**闸门**：调用必须排在确认那颗**之后** ✓（⛔ 不许提前 ✗）").toBeLessThan(atTrust);
   });
 });

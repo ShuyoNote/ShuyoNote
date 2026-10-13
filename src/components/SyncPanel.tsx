@@ -373,6 +373,37 @@ export function SyncPanel({
   /** ⭐ **P-4 片②b（2026-10-13）**：⭐ 这一轮要对的是**哪一台** ✗ —— ⭐ 「接入」那一下记下来 ✓，
    *  ⭐ 「码对得上，确认」那一下才拿它去调 `trustDevice` ✓（⭐ 取消 ⇒ 清掉、一个字节都不发 ✓）。 */
   const [pairPeer, setPairPeer] = useState<NearbyPeer | null>(null);
+  /** ⭐ **P-4 片③（2026-10-14）**：⭐ 屏上**真正**显示的那一格 ✗ —— ⭐ 起点＝prop ✓（⭐ 调用方给了就用它的 ✓）。
+   *  ⚠️ ⭐ 只有那份是**占位**时，屏才**自己**去取真读数 ✓（⛔ 否则会抢调用方给的那份 ✗ ⇒
+   *  片②a／②b 那几条**当锁**的判据就不可控了 ✓）。 */
+  const [pairReading, setPairReading] = useState<Reading<string | null>>(pairCode);
+  /** ⭐ **(乙)：取值就在「点『接入』」这一下里发起** ✗ —— ⛔ **不用 `useEffect`** ✗
+   *  （⭐ 真因：⭐ 在 `createRoot` 无 `act` 的夹具里，effect 里那次 `setState` **走不到渲染** ✗；
+   *   ⭐ 而点击处理里的 promise 续体落在夹具等的那几拍之内 ✓）。
+   *  ⚠️ 还没回来 ⇒ ⭐ **先置成「读取中」那种如实态** ✓（⛔ 不许显示一个假码 ✗）。
+   *  ⚠️ 调用方已经给了读数（`pairCode !== 占位`）⇒ ⭐ **一个字节都不取** ✓。
+   */
+  const fetchPairCode = async (peer: NearbyPeer) => {
+    if (pairCode !== PAIR_CODE_UNAVAILABLE) return; // ⭐ 调用方给了读数 ⇒ 不抢它的 ✓
+    setPairReading({ kind: "unavailable", reason: "正在取这一轮的比对码…" });
+    try {
+      // ⭐ 两个实参就是**那一台** ✓（⭐ 对方公钥＝`NearbyPeer.pubkey` ✓ 与命令侧同一个源 ✓；
+      //    ⛔ 不传 `space_id` ✗ —— ⭐ 空间不参与派生 ✓）。
+      // ⚠️ 形状＝**一个对象** ✓（⭐ 与 api.ts 那个包装一致 ✓ —— 上一片就是这么写的 ✓）
+      const got = await api.pairingCodeReading({
+        peerDeviceId: peer.device_id,
+        peerPubkey: peer.pubkey,
+      });
+      setPairReading(
+        got.code
+          ? { kind: "ok", value: got.code }
+          : // ⭐ `code: null` ＝ **读不到** ⇒ ⭐ 用**命令给的那句人话原因** ✓（⛔ 自己编一个 ✗）
+            { kind: "unavailable", reason: got.reason },
+      );
+    } catch (e) {
+      setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
+    }
+  };
   const [dpText, setDpText] = useState("");          // 对方给来的码（要采纳的那段）
   const [dpCode, setDpCode] = useState("");          // 用户填回来的**核对过的**码
   const [dpPreview, setDpPreview] = useState<string>(""); // 我们这边算出来的码（给人核对）
@@ -2231,6 +2262,8 @@ export function SyncPanel({
                                     //   ⇒ ⭐ 人**没确认**之前，⭐ 一个字节都不发 ✓。
                                     setPairPeer(p);
                                     setPairScreen(true);
+                                    // ⭐ **P-4 片③**：⭐ 就在这一下里取真读数 ✓（⛔ 不用 effect ✗）
+                                    void fetchPairCode(p);
                                   }}
                                 >
                                   接入
@@ -2434,11 +2467,11 @@ export function SyncPanel({
               <div className="set-section" data-testid="pair-code-screen">
                 <div className="set-section-title">两台设备核对一下这串码</div>
 
-                {pairCode.kind === "unavailable" ? (
+                {pairReading.kind === "unavailable" ? (
                   <div className="sync-status is-warn" data-testid="pair-code-unavailable">
-                    读不到比对码（{pairCode.reason}）—— ⭐ 读不到就<b>不显示任何码</b> ✓
+                    读不到比对码（{pairReading.reason}）—— ⭐ 读不到就<b>不显示任何码</b> ✓
                   </div>
-                ) : pairCode.value === null ? (
+                ) : pairReading.value === null ? (
                   <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码 ✓</div>
                 ) : (
                   <div
@@ -2447,7 +2480,7 @@ export function SyncPanel({
                     // ⚠️ 大字（⭐ 只为"念得清" ✓）：⭐ 不新造 CSS 类 ✗（行内样式与别处同一手法 ✓）
                     style={{ fontSize: 22, letterSpacing: 2, fontWeight: 700, wordBreak: "break-all" }}
                   >
-                    {pairCode.value}
+                    {pairReading.value}
                   </div>
                 )}
 
