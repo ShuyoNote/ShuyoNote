@@ -311,7 +311,9 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
     //   ⚠️⭐ 乐观摘行（`:312` 那条 `setDuList`）**留在成功分支里** ✓ —— ⛔ 别挪到确认之前 ✗。
     const ok = await confirmDialog({
       title: "解除这一台？",
-      message: "解除后它会**拉不动**你的内容，想再连要**重新配对**一次。",
+      // ⚠️ 这里是**纯文本**（不是 JSX ✓）⇒ ⛔ **不能**用 `<b>` ✗、也⛔ **不能**用 Markdown 的 `**…**`
+      //   （那句话会把星号原样显示出来 ✓ —— `syncPanelMesh.wiring.test.ts` ⑨c 那条规矩管的正是它 ✓）。
+      message: "解除后它会拉不动你的内容，想再连要重新配对一次。",
     });
     if (!ok) return;
     setDuBusy(deviceId);
@@ -2242,7 +2244,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
                           <div className="sync-nearby" data-testid="device-pair">
                           <div className="sync-hint">
                             【要点】把这台设备接进来：把这台的接线（地址 ＋ 窗口口令）交给对方那台。
-                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。⚠️ 这串码／这段文本**不是一次性的** ⇒ 配对完成后建议**换一次窗口口令** ✓。
+                            ⚠️ 它含窗口口令 ⇒ 只交给你自己那台设备，⛔ 别外传 ✗。⚠️ 这串码／这段文本<b>不是一次性的</b> ⇒ 配对完成后建议<b>换一次窗口口令</b> ✓。
                           </div>
                           {/* ⭐ R110（owner 2026-10-02 拍 A）：**先说清这段码给哪一台** ——
                               · 从「附近的设备」里**点选**那一台 ⇒ 本机**生成时就把它登记好** ⇒
