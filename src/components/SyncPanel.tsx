@@ -21,6 +21,9 @@ import { useEditorStore } from "../store/editor";
 import { useNotes } from "../store/notes";
 import { useSyncStatus } from "../store/syncStatus";
 import { inputDialog } from "../store/input";
+// ⭐ **P-3c**：⭐ 二次确认走**仓内既有**那个件 ✓（⛔ 原生 `confirm` ✗ —— 本仓 `confirm` 只出现在配对
+//   那条路的 `need_confirm` 上 ✓，它不是弹窗 ✓）；⛔ 不自造一个 ✗（样式/文案归 owner ✓）。
+import { confirmDialog } from "../store/confirm";
 import { CloudSyncIcon } from "./icons";
 import { isDesktopPlatform, platform } from "../lib/platform";
 // ⚠️ 2026-09-29（D3）：**行内 Markdown 的契约**。后端（Rust）给人看的话是按行内 Markdown 写的
@@ -301,6 +304,16 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
   }, [activeId]);
   const duUnpair = async (deviceId: string) => {
     if (!activeId) return;
+    // ⭐ **P-3c（2026-10-13，R8）**：⭐ **二次确认** ✗ —— ⛔ 未确认 ⇒ **一个字节都不发** ✗（⛔ 不许"先调再撤" ✗）。
+    //   ⚠️ 用仓内**既有**那个确认件 ✓（`store/confirm` 的 `confirmDialog({title,message})` ✓ ——
+    //      `BackupButton.tsx:101` 就是这么用的 ✓）；⛔ **不用原生 `confirm`** ✗。
+    //   ⚠️ 文案是 owner 的承诺口径 ✓：⭐ 说得含「**重新配对**」✗（解除 ≠ 永久失联 ✓）。
+    //   ⚠️⭐ 乐观摘行（`:312` 那条 `setDuList`）**留在成功分支里** ✓ —— ⛔ 别挪到确认之前 ✗。
+    const ok = await confirmDialog({
+      title: "解除这一台？",
+      message: "解除后它会**拉不动**你的内容，想再连要**重新配对**一次。",
+    });
+    if (!ok) return;
     setDuBusy(deviceId);
     setDuNote("");
     try {

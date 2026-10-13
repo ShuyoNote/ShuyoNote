@@ -553,3 +553,68 @@ describe("P-2c：那段文本不是一次性的（说实话 ＋ 改错注释）"
     expect(text, "⛔ 载荷不是一次性的 ⇒ 不许把文本说成一次性 ✗").not.toContain("文本是一次性的");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **P-3c（2026-10-13，R8）**：⭐ 「解除」那颗按钮必须**先问一句** ✗ —— ⛔ 未确认 ⇒ **一个字节都不发** ✗。
+//
+// ⚠️⭐ **如实交代判据形态**：本组是**源码级**（⛔ 不是 DOM 级 ✗）。原因（实测 ✓）：
+//   要"真点那颗「解除」"就得让那一块过 `activeRow` ✓，而本文件那份**共享** `api` 桩把
+//   `listSyncProfiles` 定成 `[]` ✓ ⇒ 那一整块不渲染 ✓；换成"本组自带夹具"（Lead 拍的 (iii)）
+//   要么动共享桩（会波及 P-B／P-2a／P-2b ✗），要么 `vi.resetModules` ＋ `vi.doMock` ＋ 动态 import
+//   **整个 `SyncPanel` 依赖图** —— 代价大且脆 ✗ ⇒ ⭐ 退 (ii)（Lead 已拍 ✓），并在下面**逐条**说清
+//   每条判据**为什么**等价于"先确认、未确认不发"✓。⭐ DOM 级那一条留待有真夹具时 ✓。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("P-3c：「解除信任」先二次确认（源码级，理由见上）", () => {
+  /** ⭐ 只取 `duUnpair` 的**函数体**（从它的声明到第一个 `catch (e)` ✓）—— 别把别处的代码算进来 ✓。 */
+  function duUnpairBody(): string {
+    const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+    const at = src.indexOf("const duUnpair = async");
+    if (at < 0) throw new Error("夹具失败：SyncPanel.tsx 里找不到 `const duUnpair = async`");
+    const end = src.indexOf("catch (e)", at);
+    if (end < 0) throw new Error("夹具失败：`duUnpair` 里找不到 `catch (e)`");
+    return src.slice(at, end);
+  }
+
+  it("① ⭐ 确认件要在 `api.deviceUnpair(` **之前**、且未确认就 `return`（今天【红】）", () => {
+    const body = duUnpairBody();
+    expect(body, "⭐ 必须调仓内那个确认件（`store/confirm` 的 `confirmDialog(` ✓）").toContain(
+      "confirmDialog(",
+    );
+    expect(
+      body,
+      "⛔ 未确认 ⇒ 必须**当场 return**（＝一个字节都不发 ✓；⛔ 不许「先调再撤」✗）",
+    ).toContain("if (!ok) return;");
+    const confirmAt = body.indexOf("confirmDialog(");
+    const callAt = body.indexOf("api.deviceUnpair(");
+    expect(callAt, "夹具前提：`duUnpair` 里要真有 `api.deviceUnpair(` ✓").toBeGreaterThan(-1);
+    expect(
+      confirmAt,
+      "⭐ 确认那一下必须在调用**之前** ✓（顺序反了就等于「先解除再问」✗）",
+    ).toBeLessThan(callAt);
+  });
+
+  it("② ⭐ 确认文案必须含「解除这一台？」与「重新配对」（今天【红】）", () => {
+    const body = duUnpairBody();
+    expect(body, "⭐ 标题逐字用 owner 那句 ✓").toContain("解除这一台？");
+    expect(
+      body,
+      "⭐ 必须含「**重新配对**」口径 ✓ —— 那是 owner 的承诺（解除 ≠ 永久失联 ✓）",
+    ).toContain("重新配对");
+  });
+
+  it("③ 锁（今天已绿 ✓，⭐ 不是本片的修 ✗）：`api.deviceUnpair` **恰好一处** ＋ 乐观摘行仍在**成功分支**", () => {
+    const body = duUnpairBody();
+    expect(
+      body.split("api.deviceUnpair(").length - 1,
+      "⛔ 只许一处调用 ✓（确认之后**恰好一次** ✓ —— 不许两次 ✗）",
+    ).toBe(1);
+    const callAt = body.indexOf("api.deviceUnpair(");
+    const filterAt = body.indexOf("setDuList((prev) => prev.filter(");
+    expect(filterAt, "夹具前提：那条乐观摘行要在 ✓").toBeGreaterThan(-1);
+    expect(
+      callAt,
+      "⭐ 摘行必须在**成功分支**里（＝在 api 调用**之后** ✓；⛔ 别挪到确认之前 ✗）",
+    ).toBeLessThan(filterAt);
+  });
+});
