@@ -2455,8 +2455,15 @@ pub fn device_pair_export(
     let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
     let s = crate::mesh::settings_for(&c, &scope.space, scope.device_level);
     let bind = s.bind.unwrap_or_default();
-    let token = s.token.unwrap_or_default();
-    if bind.trim().is_empty() || token.trim().is_empty() {
+    let mut token = s.token.unwrap_or_default();
+    // ⭐ **R1（2026-10-13，Lead 把范围砍到这一处）**：⭐ **没设窗口口令 ⇒ 当场生成一串 ＋ 写库** ✗
+    //   （⛔ 不再回 `not_configured` ✗ —— 那条路会让"从没填过口令"的人**根本生成不出码** ✓）。
+    //   ⚠️ 随机源**只走 `crate::crypto`** ✓：`crypto.rs:261` 逐字「随机数入口只有这一处」✓ ⇒
+    //      ⛔ 本文件**不引 `rand`，也不直接用底层那个 OS 随机源** ✗（`Cargo.toml` 只有 `rand_core` ✓）。
+    //   ⚠️ 口令**不再是凭证**（已定口径 ✓：门只认配对密钥／签名 ✓）⇒ 这里生成的那一串只是让
+    //      "这一趟能走通"的一格 ✓，⛔ **不进任何可见文案** ✗。
+    // ⚠️ **缺地址那一半照旧** ✓（`bind` 空仍回 `not_configured` ✓ —— ⛔ 别把它一起放行 ✗）。
+    if bind.trim().is_empty() {
         return Ok(DevicePairExportResult {
             outcome: "not_configured".to_string(),
             text: String::new(),
@@ -2466,9 +2473,17 @@ pub fn device_pair_export(
             qr_fits: false,
             qr_svg: None,
             message: "这台设备**还没配好设备直连** ⇒ 没有东西可以配对过去。\n\
-                      先在「同步」面板填**监听地址**（或直接写 `0.0.0.0:8788`）＋ 设一个**窗口口令**，再来。"
+                      先在「同步」面板填**监听地址**（或直接写 `0.0.0.0:8788`），再来。"
                 .to_string(),
         });
+    }
+    // ⭐ 空口令 ⇒ **当场生成 ＋ 写库**（⛔ 不覆盖已有的 ✗：这条路只在**空**时才进 ✓；
+    //   ⚠️ 走 `mesh::set_mesh_token` 那一处实现 ✓ —— 它自己带强度校验 ✓，与面板那条同源 ✓）。
+    let auto_token = token.trim().is_empty();
+    if auto_token {
+        let generated = crate::crypto::key_hex(&crate::crypto::random_32());
+        crate::mesh::set_mesh_token(&c, &scope.space, Some(&generated))?;
+        token = generated;
     }
     // 设备指纹与 `pairing_export` 同源（应用级 `device_id`，**非秘密** ✓）。
     let device_id = crate::sync::get_meta_state(&c, "device_id").unwrap_or_default();
@@ -2549,6 +2564,11 @@ pub fn device_pair_export(
             message.push('\n');
             message.push_str(&warn);
         }
+    }
+    // ⭐ **R1**：那一串是**这一次新生成**的 ⇒ 如实说一句 ✓
+    //   ⚠️ 只写**改后为真**的话 ✗：⛔ 不提"去哪看/换"（那格子还不存在 ⇒ 等下一片 UI 落地后再写 ✓）。
+    if auto_token {
+        message.push_str("\n⭐ 本机**还没有窗口口令** ⇒ 这次生成时**已自动生成**了一串（**无需手填** ✓）。");
     }
     // ⚠️ 长度要**在移动进返回值之前**取好（与 `pairing_export` 同一个坑 ✓ —— 它那儿也写着这句）。
     let bytes = text.len();
