@@ -1364,6 +1364,10 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
           {plaintextCount !== null && plaintextCount > 0 && (
             <div className="sync-hint" data-testid="plaintext-warning">
               ⚠️ 本机有 <b>{plaintextCount}</b> 个空间<b>没开加密</b> ⇒ 它们的内容会在局域网上<b>明文</b>传输
+              {/* ⚠️⭐ **本片只放按钮 ＋ testid** ✗ —— ⛔ **不做跳转** ✗：既有入口在 `SettingsDialog` 里
+                  （`SettingsDialog.tsx:19` 挂的 `SpacePrivacySection` ✓），从本组件过去要**开那个对话框** ✗
+                  ⇒ ⭐ 没有既有的 `setView` 路可接 ✓ ⇒ 按 Lead 的退路只放按钮 ✓（跳转留下一片 ✓）。 */}
+              <button className="sync-btn" data-testid="plaintext-go-encrypt">去开加密</button>
             </div>
           )}
           <header className="sync-head">

@@ -116,6 +116,43 @@ describe("P-3e-1：未加密空间 ⇒ 主动提醒（只说个数）", () => {
     expect(warn!.textContent ?? "", "⭐ 提示要说清「没开加密 ⇒ 明文传输」✓").toContain("明文");
     expect(warn!.textContent ?? "", "⭐ 只报**个数** ✓（⛔ 不摆空间名 ✗）").toContain("1");
   });
+
+  it("② 锁（今天已绿 ✓，⭐ 不是本片的修 ✗）：`[]` ⇒ ⛔ 那行提醒**不出现**", async () => {
+    secOverviewSpy.mockResolvedValue([]);
+    const el = await openPanelWith([]);
+    expect(
+      el.querySelector('[data-testid="plaintext-warning"]'),
+      "⛔ 一个未加密的空间都没有 ⇒ 不许出现那行提醒 ✓（N=0 ≠ 危险 ✗）",
+    ).toBeNull();
+  });
+
+  it("③ 锁（今天已绿 ✓，⭐ 不是本片的修 ✗）：**读不到**（reject）⇒ ⛔ 不出现（读不到 ≠ 0 ✗）", async () => {
+    secOverviewSpy.mockRejectedValue(new Error("读不到"));
+    const el = await openPanelWith([]);
+    expect(
+      el.querySelector('[data-testid="plaintext-warning"]'),
+      "⛔ 读不到 ⇒ **不许**出现 ✓（⛔ 更不许拿 0 冒充「你很安全」✗）",
+    ).toBeNull();
+  });
+
+  it("④ ⭐ 提醒里要有「去开加密」（今天【红】：还没那颗按钮）", async () => {
+    const rows = [
+      {
+        space_id: "ws-2",
+        kind: "personal",
+        encrypted_on_disk: false,
+        in_keyring: false,
+        key_available: false,
+        gate: {},
+      },
+    ];
+    // ⚠️⭐ 同上：默认值也要给同一份 ✓（`refresh()` 会跑不止一次 ⇒ 只给 `Once` 会假红 ✓）。
+    secOverviewSpy.mockResolvedValue(rows);
+    const el = await openPanelWith([]);
+    const btn = el.querySelector<HTMLElement>('[data-testid="plaintext-go-encrypt"]');
+    expect(btn, "⭐ 那行提醒里要有一颗「去开加密」✓（今天【红】）").toBeTruthy();
+    expect(btn!.textContent ?? "", "⭐ 按钮文案逐字 ✓").toContain("去开加密");
+  });
 });
 
 vi.mock("../lib/api", () => ({
