@@ -5463,7 +5463,35 @@ pub fn lan_status(
     //   ⚠️ 用的是**上面那一次** `state.peers(now)`（`:3219`）：`peers`（数量）与 `nearby`（列表）
     //      必须来自**同一次读数**（`INV-NEARBY-one-source`），所以 `peers.len() == nearby.len()`
     //      是**恒等式**，而不是"两处各数一遍碰巧相等"。
-    let nearby = nearby_of(&peers, &device_id, &space_id);
+    // ⭐ **P-B（2026-10-13）**：⭐ "对端报的那个空间在**本机已被删**" ✗ 也要**说得出来** ✓ ——
+    //   ⛔ **不动上面那条 SQL 的过滤** ✗（`deleted_at IS NULL` 是 owner 拍的**甲**、**有意保留** ✓）；
+    //   ⭐ 这里**另取一次**：只看"**被删的那些空间本来会报哪个标识**" ✓（`window_serve_space` 同一口径 ✓），
+    //   而且只把它喂给**读数** ✓ ⇒ ⛔ 一个字节都不进判定 ✗（`serves_current` 照旧只有 `lan::serves_space` ✓）。
+    let deleted_hints: Vec<String> = {
+        let c = db.0.lock().expect("db mutex poisoned");
+        let mut out: Vec<String> = Vec::new();
+        if let Ok(mut stmt) = c.prepare(
+            "SELECT p.space_id, p.ws_id FROM sync_profiles p
+             WHERE EXISTS (
+                 SELECT 1 FROM meta.workspaces w
+                 WHERE w.id = p.ws_id AND w.deleted_at IS NOT NULL
+             )",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            }) {
+                for (space_id, ws_id) in rows.flatten() {
+                    let resolved = crate::lan_state::window_serve_space(&c, &space_id, &ws_id);
+                    let resolved = resolved.trim().to_string();
+                    if !resolved.is_empty() {
+                        out.push(resolved);
+                    }
+                }
+            }
+        }
+        out
+    };
+    let nearby = nearby_of_with(&peers, &device_id, &space_id, &deleted_hints);
 
     // ★ 丙-③-b-2b-2：把**网格（对等交换）那一档的读数**一并交出去 —— 设置面板要用的就是它。
     //   ⚠️ **只读**：这里**不**开窗（开窗归 `mesh_set_config` / 发现层循环），
@@ -5576,6 +5604,23 @@ pub struct NearbyPeer {
     /// 这一条与**当前这个空间**相不相关（**由 Rust 判定**，界面直接显示）。
     /// 口径：与 `lan::serves_space` 同一把尺（＝ `mesh_peers` 用的那把）。
     pub serves_current: bool,
+    /// ⭐ **P-B（2026-10-13）**：上面那个布尔**为什么**是现在这个值 ✗ —— 一个**原因码** ✓。
+    ///
+    /// ⚠️ 来由（owner 现场）：⭐ "**本机没设配对暗号**"✗ 与 "**对端服务的空间在本机已删**"✗，
+    /// 今天在界面上**长得和"对端没服务我"一模一样** ✗（`hub_spaces` 原文只念得出"另外 N 个空间"✓）
+    /// ⇒ 用户会往"对端没服务我"那边查 ✗，而真因在自己这边 ✓。
+    ///
+    /// 取值（⭐ 界面按**码**翻人话 ✓，⛔ 这个字符串里**不含任何值** ✗ —— 尤其**不含暗号** ✓）：
+    /// · `"ok"` ⇒ 对端**就在服务这个空间** ✓；
+    /// · `"no_secret"` ⇒ ⭐ 本机这一侧**还没有可直连的标识**（个人档＝没填配对暗号 ✓；
+    ///   团队档＝没绑组织空间 ✓ —— 个人档那条是 `window_serve_space` 回落空串所致 ✓）；
+    /// · `"space_deleted"` ⇒ ⭐ 对端报的那个标识在本机对应一个**已删**空间 ✓
+    ///   （`sync.rs` 那条 profile SQL **有意**滤掉已删空间 ✓ ⇒ 这里只**说出来**，⛔ 不把过滤放宽 ✗）；
+    /// · `"peer_not_serving"` ⇒ 对端**没报**它在服务任何空间 ✓；
+    /// · `"mismatch"` ⇒ 两边都报了、但对不上 ✓（⭐ 多半是**两边暗号不一样**，或它服务的是别的空间 ✓）。
+    ///
+    /// ⚠️ 它**不参与任何判定** ✗（判定仍旧只有 `serves_current` 一条 ✓ ⇒ ⛔ 别拿它去开关按钮 ✗）。
+    pub serves_reason: String,
     /// ★ **只有这一台能被直接拉**（＝界面上那一行的第二列有没有落到「它没报可以直连的地址」）：
     /// 与 `mesh::invitable_base` 同一套过滤（不是我自己 · 服务这个空间 · `hub_base` 是局域网地址）。
     ///
@@ -5593,29 +5638,78 @@ pub struct NearbyPeer {
     pub pubkey: String,
 }
 
+/// ⭐ **P-B（2026-10-13）**：这一条**为什么**不服务当前空间 ✗ —— ⭐ **纯函数**（判据不打桩、不开网络、不碰库 ✓）。
+///
+/// ⚠️ 它与 `lan::serves_space` **同源不同职** ✗：判定仍旧只有 `serves_space`（`serves_current` ✓），
+/// 这个函数**只解释原因** ✓ —— 但两处**说的必须是同一件事** ⇒ 判据里钉住"`ok` ⇔ `serves_space` 为真" ✓。
+///
+/// ⛔ 返回的是**码**，不是人话 ✗；⛔ **不许**把 `want` ／ `hub_spaces` 里的任何值拼进去 ✗
+/// （`want` 在个人档**就是那把配对暗号** ✗ ⇒ 拼进去＝把暗号摆到界面上 ✓）。
+pub(crate) fn serves_reason(want: &str, hub_spaces: &[String], deleted_hints: &[String]) -> &'static str {
+    let want = want.trim();
+    // ⭐ 本机这一侧**没有可直连的标识**（个人档＝没填暗号 ⇒ `window_serve_space` 回落空串 ✓）
+    //   ⇒ ⛔ 这**不是**"对端没服务我" ✗（`lan::serves_space` 对空 `want` 一律 short-circuit ✓）。
+    if want.is_empty() {
+        return "no_secret";
+    }
+    if hub_spaces.iter().any(|s| s.trim() == want) {
+        return "ok";
+    }
+    // ⭐ 对端报的那个标识**在本机对应一个已删空间** ✓ ⇒ 说出来（⛔ 过滤照旧不动 ✗）。
+    if hub_spaces
+        .iter()
+        .any(|s| !s.trim().is_empty() && deleted_hints.iter().any(|d| d.trim() == s.trim()))
+    {
+        return "space_deleted";
+    }
+    if hub_spaces.iter().all(|s| s.trim().is_empty()) {
+        return "peer_not_serving";
+    }
+    "mismatch"
+}
+
 /// 把对端表映射成**给人看的列表** —— 纯函数（判据不打桩、不开网络、不碰库）。
 ///
 /// ⚠️ 它**只做映射**：个数不过滤、顺序不动（`PeerTable::live` 已按 `device_id` 排好）
 /// ⇒ `nearby.len() == peers.len()` 是**结构上**成立的（`INV-NEARBY-one-source`）。
 /// ⚠️ 名字空的、`hub_spaces` 空的那些**照样在列表里**（"看得见"不等于"能被拉"）——
 /// 少一行就会让"网段里发现 N 台"与列表行数漂开，而那正是这一片要消灭的东西。
+///
+/// ⚠️ 这是**不带"已删空间提示"**的那一版（判据与既有调用方照旧 ✓）：它的 `serves_reason`
+/// 里**永远**不会出现 `"space_deleted"` ✗（那需要一次库读 ✓）—— 生产那一侧走 [`nearby_of_with`] ✓。
 pub fn nearby_of(
     peers: &[lan::Peer],
     my_device: &str,
     space_id: &str,
 ) -> Vec<NearbyPeer> {
+    nearby_of_with(peers, my_device, space_id, &[])
+}
+
+/// [`nearby_of`] 的**带提示**版：多收一组"**本机已删空间本来会报的标识**" ✓ ⇒ 才判得出 `space_deleted` ✓。
+///
+/// ⚠️ 多出来的这一组**只进读数** ✗，⛔ 不进任何判定 ✓（判定仍是 `lan::serves_space` 那一条 ✓）。
+pub(crate) fn nearby_of_with(
+    peers: &[lan::Peer],
+    my_device: &str,
+    space_id: &str,
+    deleted_hints: &[String],
+) -> Vec<NearbyPeer> {
     peers
         .iter()
-        .map(|p| NearbyPeer {
-            device_id: p.announce.device_id.trim().to_string(),
-            device_name: p.announce.device_name.trim().to_string(),
-            short_id: p.announce.short_id.trim().to_string(),
-            addr: p.addr.trim().to_string(),
-            spaces: spaces_of(p),
-            serves_current: lan::serves_space(space_id, p),
-            invitable: crate::mesh::invitable_base(space_id, my_device, p).is_some(),
-            // ⭐ 2026-10-12（第 3 步）：⭐ 公钥照**原样**上抛 ✓（空串 ＝ 老对端没报 ✓，⛔ 不凑 ✗）
-            pubkey: p.announce.pubkey.trim().to_string(),
+        .map(|p| {
+            let spaces = spaces_of(p);
+            NearbyPeer {
+                device_id: p.announce.device_id.trim().to_string(),
+                device_name: p.announce.device_name.trim().to_string(),
+                short_id: p.announce.short_id.trim().to_string(),
+                addr: p.addr.trim().to_string(),
+                serves_current: lan::serves_space(space_id, p),
+                serves_reason: serves_reason(space_id, &spaces, deleted_hints).to_string(),
+                invitable: crate::mesh::invitable_base(space_id, my_device, p).is_some(),
+                // ⭐ 2026-10-12（第 3 步）：⭐ 公钥照**原样**上抛 ✓（空串 ＝ 老对端没报 ✓，⛔ 不凑 ✗）
+                pubkey: p.announce.pubkey.trim().to_string(),
+                spaces,
+            }
         })
         .collect()
 }
@@ -9182,6 +9276,36 @@ mod tests {
         assert!(!got[1].serves_current, "谁都不代言的设备不是「服务这个空间」");
         // 空空间 ⇒ 一律不算"服务它"（与 `lan::serves_space` 同一把尺）
         assert!(nearby_of(&peers, "dev-me", "  ").iter().all(|p| !p.serves_current));
+    }
+
+    /// ⭐ **P-B（2026-10-13）**：⭐ **原因码**要能把三种"看起来一样"的处境**分开** ✗ ——
+    /// 「对端没服务我」／「本机没设暗号」／「对端服务的空间在本机已删」✓。
+    ///
+    /// ⚠️ 如实（⭐ 不假装它今天红 ✗）：这条判据**新写就是绿的**（`serves_reason` 是本片新加的 ✓）
+    /// ⇒ 它的职责是**锁**：⛔ 谁把"空 `want`"又折回 `"mismatch"`／"没服务" ✗ ⇒ 当场红 ✓。
+    /// ⚠️ 并且钉住**同源**：`ok` ⇔ `lan::serves_space` 为真（两处说的必须是同一件事 ✓）。
+    #[test]
+    fn the_nearby_reason_code_tells_the_three_lookalikes_apart() {
+        let hub = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        // ⭐ ① 本机没暗号（个人档 `window_serve_space` 回落空串 ✓）⇒ ⛔ 不是"对端没服务我" ✗
+        assert_eq!(serves_reason("", &hub(&["k1"]), &[]), "no_secret");
+        assert_eq!(serves_reason("  ", &hub(&["k1"]), &[]), "no_secret");
+        // ⭐ ② 对端报的那个标识在本机**已删** ⇒ 说出来（⛔ 不是"没服务" ✗）
+        //   ⚠️ 前提：它对的是**已删那个**、而不是本机这一侧现在的 `want`（后者是 `ok` ✓）。
+        assert_eq!(serves_reason("k1", &hub(&["k9"]), &hub(&["k9"])), "space_deleted");
+        // ⭐ ③ 两边都报了但对不上 ⇒ `mismatch`；⭐ 对端什么都没报 ⇒ `peer_not_serving`
+        assert_eq!(serves_reason("k1", &hub(&["k2"]), &[]), "mismatch");
+        assert_eq!(serves_reason("k1", &hub(&[]), &[]), "peer_not_serving");
+        // ⭐ ④ 服务着 ⇒ `ok`，且与判定那把尺**同源**（⛔ 两处不许各说一半 ✗）
+        assert_eq!(serves_reason("k1", &hub(&[" k1 "]), &[]), "ok");
+        let peer = nearby_fixture("dev-a", "A", Some("http://192.168.1.5:8788"), &["k1"]);
+        assert!(lan::serves_space("k1", &peer));
+        assert_eq!(serves_reason("k1", &hub(&["k1"]), &[]), "ok");
+        // ⭐ ⑤ 已删提示**不许**越权：对端报的是**别人**（不在已删集里）⇒ 仍然只是 `mismatch`
+        assert_eq!(serves_reason("k1", &hub(&["k2"]), &hub(&["k3"])), "mismatch");
+        // ⭐ ⑥ 生产那一版（带提示）会把它接上 ✓
+        let with = nearby_of_with(&[peer.clone()], "dev-me", "k1", &hub(&["k1"]));
+        assert_eq!(with[0].serves_reason, "ok");
     }
 
     /// ⭐⭐ **T3 的核心安全性质**（`U2`「配对必须有人验证、不许自动通过」＋ `U3`「两端不一致 ⇒ 停」）：

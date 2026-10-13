@@ -1156,6 +1156,11 @@ export function SyncPanel() {
    */
   const nearbySecondColumn = (p: NearbyPeer) => {
     if (p.serves_current) return `附近 · 服务 ${mySpaceName}`;
+    // ⭐ **P-B（2026-10-13）**：⭐ 先把**原因**说出来 ✗ —— ⛔ 不许把"本机没设暗号"／"那个空间已删"
+    //   说得像"**对端没服务我**" ✗（owner 现场那一行就是这个形状 ✓：起因在自己这边，人却去查对端 ✓）。
+    //   ⚠️ 这两句**不引用任何值** ✓（尤其**不引用暗号** ✗ —— 它只说"哪一类原因"✓）。
+    if (p.serves_reason === "no_secret") return "附近 · 认不出它在服务谁";
+    if (p.serves_reason === "space_deleted") return "附近 · 它服务的空间在本机已删";
     if (!p.spaces.length) return "附近 · 没报服务哪个空间";
     const known = p.spaces
       .map((s) => rows.find((r) => r.space_id === s)?.name?.trim() || "")
@@ -2054,6 +2059,20 @@ export function SyncPanel() {
                                      （⭐ 那不是降级处理，⭐ 是那段过渡期的正确答案 ✓）。 */}
                               <span className="sync-hint">{peerIdentityLine(p.device_name, p.short_id)}</span>
                               <span className="sync-hint">{nearbySecondColumn(p)}</span>
+                              {/* ⭐ **P-B（2026-10-13）**：把**原因**说全 ✗ —— ⛔ 这两种处境原先都长得像
+                                  "对端没服务我" ✗（真正的原因在**我们这一侧** ✓）：
+                                  · 没设配对暗号 ⇒ ⭐ 说"本机这个空间还没设暗号" ✓（⛔ **值**一个字符都不出现 ✗）；
+                                  · 对端那个空间在本机已删 ⇒ ⭐ 说"已删" ✓（⛔ 过滤有意不动 ✗ —— 只是说出来 ✓）。 */}
+                              {p.serves_reason === "no_secret" && (
+                                <span className="sync-hint" data-testid="nearby-no-secret">
+                                  本机这个空间还没设配对暗号 —— 没设之前认不出它在服务谁（团队空间则是还没绑组织空间）
+                                </span>
+                              )}
+                              {p.serves_reason === "space_deleted" && (
+                                <span className="sync-hint" data-testid="nearby-space-deleted">
+                                  它服务的那个空间在本机已删 —— 删了就不再直连它；要接着同步得先把那个空间放回来
+                                </span>
+                              )}
                               {!p.invitable && p.serves_current && (
                                 // 看得见但拉不到：**如实说为什么**（口径与 `mesh::invitable_base` 同一把尺）。
                                 <span className="sync-hint">它没报可以直连的地址</span>

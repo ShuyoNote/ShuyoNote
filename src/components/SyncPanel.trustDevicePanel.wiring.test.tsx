@@ -167,7 +167,7 @@ describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () =>
 
 const PEER_PUBKEY = "ab".repeat(32);
 
-function peer(servesCurrent: boolean): NearbyPeer {
+function peer(servesCurrent: boolean, over: Partial<NearbyPeer> = {}): NearbyPeer {
   return {
     device_id: "dev-amd",
     device_name: "ZHAI-AMD",
@@ -177,6 +177,7 @@ function peer(servesCurrent: boolean): NearbyPeer {
     serves_current: servesCurrent,
     invitable: true,
     pubkey: PEER_PUBKEY,
+    ...over,
   } as NearbyPeer;
 }
 
@@ -260,5 +261,45 @@ describe("修 B：那一行**自己**就是「允许」的入口（owner 现场�
       el.querySelector('[data-testid="nearby-allow"]'),
       "它服务的是别的空间 ⇒ ⛔ 不给「允许」按钮（那会对错的空间动手 ✓）",
     ).toBeNull();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **P-B（2026-10-13）**：「缺暗号 ／ 空间已删」**不许再长得像"对端没服务我"** ✗
+//
+// 依据：`_tmp/scratch/personal-space-device-level-scope-20261013.md` §①8、§②、§④P-B ✓。
+// ⚠️ 报告已写明：唯一那条"**必然 false**"的真红**已被 `c86a4843` 吃掉** ✓ ⇒ ⭐ 本片这两条
+//    **今天红**、因为"原因读数"**今天还不存在** ✗（面板只会念 `hub_spaces` 原文 ⇒ 一律
+//    显示成「服务 另外 N 个空间」✗）⇒ ⭐ 这两条是**修**（先红后绿 ✓），不是"新写即绿"的锁 ✓。
+// ⛔ 并且**同时锁住**：⭐ 暗号**值**一个字符都不许出现在界面文本里 ✓（`INV-UI-copy-no-internal-ids` ✓）。
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("P-B：那一条「原因」不许长得像『对端没服务我』", () => {
+  it("6) ⭐ 本机**没设暗号** ⇒ 那一行必须明说「暗号」（⛔ 不是「服务 另外 N 个空间」）", async () => {
+    const SECRET = "ROOM-SECRET-VALUE-MUST-NEVER-RENDER";
+    const el = await openPanelWith([
+      peer(false, { serves_reason: "no_secret", spaces: [SECRET] } as Partial<NearbyPeer>),
+    ]);
+    const row = el.querySelector<HTMLElement>(".sync-nearby-row");
+    expect(row, "夹具前提：那一行要渲染出来").toBeTruthy();
+    const text = row!.textContent ?? "";
+    expect(
+      text,
+      "⭐ 缺暗号时必须出现「暗号」字样（今天【红】：面板还不知道这一格 ⇒ 只念 hub_spaces 原文 ✓）",
+    ).toContain("暗号");
+    expect(
+      text,
+      "⛔ 暗号**值**不许出现在界面文本里（那是内部标识 ⇒ `INV-UI-copy-no-internal-ids` ✓）",
+    ).not.toContain(SECRET);
+  });
+
+  it("7) ⭐ 对端服务的空间**在本机已删** ⇒ 那一行必须明说「已删」（⛔ 不是「没服务我」）", async () => {
+    const el = await openPanelWith([peer(false, { serves_reason: "space_deleted" } as Partial<NearbyPeer>)]);
+    const row = el.querySelector<HTMLElement>(".sync-nearby-row");
+    expect(row, "夹具前提：那一行要渲染出来").toBeTruthy();
+    expect(
+      row!.textContent ?? "",
+      "⭐ 已删空间必须说出来（今天【红】）—— ⛔ 不许让它长得像『对端没服务我』✗",
+    ).toContain("已删");
   });
 });
