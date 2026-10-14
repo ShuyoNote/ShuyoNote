@@ -2374,6 +2374,9 @@ export function SyncPanel({
                        这一块（配对那两块：`device-unpair` ／ `device-pair` ✓）**默认折叠** ✓
                        （⛔ 不再 `open` ✗ —— 它是设置类的 ✓，图上也没有 ✓）；⭐ 而「附近设备」整块留在主视图 ✓。
                        ⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
+                {/* 刀三-2（2026-10-14）：配对那两块 ＋ 它所在的这一层条件 ⇒ 收进一个折叠 ✓（⭐ 主视图只留三段设备 ✓） */}
+                <details className="sync-advanced">
+                  <summary>配对与设备</summary>
                 {lanDirectOn && (
                   <details className="sync-row">
                     <summary>
@@ -2564,6 +2567,7 @@ export function SyncPanel({
                     </div>
                   </details>
                 )}
+                </details>
               </>
             )}
 
