@@ -1470,11 +1470,13 @@ export function SyncPanel({
               ⭐「在线」← `lanStatus.enabled`（发现层开着 ✓）、⭐「同步中／自动同步中」← `syncing` ✓。
               ⚠️ ⭐ 本轮**不动**那张大卡 ✗ —— ⭐「立即同步」那颗按钮还在它里面 ✓（⭐ 移按钮是下一刀的事 ✓）。 */}
           <div className="sync-hero-state">
-            <span className="sync-hero-dot is-on" aria-hidden />
-            <span>{duList.length > 0 ? "已配对" : "未配对"} · {lanStatus?.enabled ? "在线" : "离线"} · {syncing ? "同步中" : "自动同步中"}</span>
+            <span className={`sync-hero-dot${heroDot}`} aria-hidden />
+            <span>{heroState}</span>
           </div>
           <div className="sync-hero-sub">
             监听地址 {splitMeshBind(lanStatus?.mesh?.bind ?? "").addr || "未读到"}（自动）· 端口 {splitMeshBind(lanStatus?.mesh?.bind ?? "").port || "未读到"}（默认）· 报出去的是 {lanStatus?.mesh?.note || "未读到"}
+            {heroSub && <span> · {heroSub}</span>}
+            {heroRoute && <span> · {heroRoute}</span>}
           </div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
@@ -1565,25 +1567,6 @@ export function SyncPanel({
               ⚠️ 放在这一屏是因为闸门拦的正是「绑同步」这个动作（`sync::sync_bind_gate`）——
               读数与动作同屏，用户不用去别处找「为什么绑不上」。
               平台判定在组件内部（Web 上只渲染解释句、一次 api 都不调）。 */}
-          {/* ⚠️ 2026-09-29（D5）：**状态置顶** —— 把「现在同步了没有／这一轮走的是哪条路」
-              放到用户第一眼看的地方，而不是埋在底部的日志行里（owner 反复指出的那一条）。
-              ⚠️ 它里面**不许有 input/select/textarea** —— hero 是给人【看状态】的，不是给人填的
-                 （与 `.sync-foot` 那条「设置控件不行」同一口径）。本笔只有【按钮】。 */}
-          <section className="sync-hero">
-            <div className="sync-hero-state">
-              <span className={`sync-hero-dot${heroDot}`} aria-hidden />
-              <span>{heroState}</span>
-            </div>
-            {heroSub && <div className="sync-hero-sub">{heroSub}</div>}
-            <button
-              className="sync-hero-btn"
-              disabled={syncing || !activeRow}
-              onClick={() => activeRow && void syncOne(activeRow)}
-            >
-              {syncing ? "同步中…" : "立即同步"}
-            </button>
-            <div className="sync-hero-route">{heroRoute}</div>
-          </section>
 
           {!nearbyReadable || !lanStatus.enabled ? (
             <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
@@ -1690,6 +1673,18 @@ export function SyncPanel({
                         ⚠️ ⭐ 它**复用**既有那个 handler（`duUnpair` ✓）⇒ ⭐ **二次确认**
                         （`confirmDialog` ✓，⭐ 文案含「重新配对」✓）与 ⭐ `api.deviceUnpair`
                         **都不新增** ✓（⛔ 不写第二套 invoke ✗）；⭐ 样式用**行内** ✓（⛔ 不动样式表 ✗）。 */}
+                                  {/* ⭐ 刀十七①：⭐「已信任」每一台上给一颗**立即同步** ✓ —— ⭐ 复用大卡那颗**同一条**动作（`syncOne(activeRow)` ✓，
+                                      ⚠️ ⭐ 如实注明：⭐ 它按**空间**同步 ✗（⭐ 与那颗逐字同形 ✓），⛔ 不是「按那台设备」✗；
+                                      ⭐ 忙态同一条：⭐ `syncing || !activeRow` ✓；⛔ 不造新参数／不加 Rust 命令 ✗。 */}
+                                  <button
+                                    className="sync-btn"
+                                    data-testid="nearby-sync"
+                                    disabled={syncing || !activeRow}
+                                    onClick={() => activeRow && void syncOne(activeRow)}
+                                    style={{ marginLeft: 8 }}
+                                  >
+                                    立即同步
+                                  </button>
                     <button
                       className="sync-btn"
                       data-testid="nearby-unpair"

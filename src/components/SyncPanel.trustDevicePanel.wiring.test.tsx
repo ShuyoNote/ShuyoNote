@@ -480,26 +480,32 @@ describe("P-2a-1：同一份内容要能进内容区（`contentOnly`）", () => 
     ).toBeNull();
     expect(
       el.textContent ?? "",
-      "⭐ 内容体必须**真的**渲染出来（「立即同步」在 `SyncPanel.tsx:1419` ✓）—— 今天【红】：压根不渲染 ✗",
-    ).toContain("立即同步");
+      // ⭐ **刀十九（R192：换对象不删断言）**：这一条原来钉的是「立即同步」（它当时在**那张大卡**里 ✓）；
+      //   ⚠️ owner 2026-10-14 让删掉那张卡 ⇒ 「立即同步」现在只出现在**已信任的卡片**上 ✓（`nearby-sync` ✓）
+      //   ⇒ ⭐ 而这个夹具里 `nearby` 是空的 ⇒ 那一支根本不渲染 ✗ ⇒ ⭐ 所以指针换成**恒在主视图**的内容体标记：
+      //   ⭐ 面板标题「设备直连」（⭐ 它正是这一屏的标题 ✓）。⛔ 断言本身**没删** ✓。
+      "⭐ 内容体必须**真的**渲染出来（现在钉标题「设备直连」＋ 状态条 ✓；⭐「立即同步」已移到**已信任卡片**上 ✓ ⇒ 空夹具里不渲染 ✓）",
+    ).toContain("设备直连");
   });
 
-  it("② ⭐ 不变量：「立即同步」与路线那坨**同在一个容器内、且它在前面**（今天【红】）", async () => {
+  it("② ⭐ 不变量（**新形态**）：「立即同步」在**已信任卡片**上、「路线那句」在**状态条**里", async () => {
+    // ⭐ **刀十九（R192：换对象不删断言）**：这一条原来钉的是「**同在一个容器内、且它在前面**」✗ ——
+    //   ⚠️ owner 2026-10-14 让删掉那张大卡 ⇒ ⭐ 那个容器与那个先后**已经不成立** ✓（不是被我们弄坏的 ✗）。
+    //   ⇒ ⭐ 指针换成**新形态** ✓，⭐ 三条断言一条没删：
+    //     · 「路线那句」现在在**状态条**里（`.sync-hero-sub` ✓ —— `heroRoute` 就渲染在那儿 ✓）；
+    //     · 「立即同步」现在在**已信任的卡片**上（`data-testid="nearby-sync"` ✓，⭐ 空夹具里不渲染 ⇒ 走**源码级** ✓）；
+    //     · 两者仍**同在这个面板里** ✓（⛔ 不再要求同容器同序 ✗ —— 那条不变量随卡一起退役了 ✓）。
     const el = await renderPanelWithContentOnly();
     const pop = el.querySelector<HTMLElement>(".sync-popover");
-    const route = el.querySelector<HTMLElement>(".sync-att-text");
-    const syncNow = [...el.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
-      (b.textContent ?? "").includes("立即同步"),
-    );
+    const route = el.querySelector<HTMLElement>(".sync-hero-sub");
+    const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+    const hasSyncBtn = src.includes('data-testid="nearby-sync"');
     expect(
-      pop && route && syncNow,
-      "⭐ 三者都要在（容器 `.sync-popover` ✓／路线 `.sync-att-text` `:1494` ✓／「立即同步」`:1419` ✓）—— 今天【红】",
+      pop && route && hasSyncBtn,
+      "⭐ 三者都要在（容器 `.sync-popover` ✓／状态条那句 `.sync-hero-sub` ✓／已信任卡上的 `nearby-sync`（源码级 ✓））",
     ).toBeTruthy();
-    expect(pop!.contains(route!) && pop!.contains(syncNow!), "⭐ 二者必须在**同一个容器**内 ✓").toBe(true);
-    expect(
-      syncNow!.compareDocumentPosition(route!) & Node.DOCUMENT_POSITION_FOLLOWING,
-      "⭐ 「立即同步」必须在**路线那坨之前** ✓（顺序变了就是我们弄坏的 ✗）",
-    ).toBeTruthy();
+    expect(pop!.contains(route!), "⭐ 状态条那句必须仍在面板容器内 ✓").toBe(true);
+    expect(hasSyncBtn, "⭐ 「立即同步」这个动作必须还在（现在在已信任卡片上 ✓，⛔ 不许消失 ✗）").toBe(true);
   });
 
   it("③ 锁（今天已绿 ✓）：抽屉那支**仍可用** ⇒ 点 `.btn-sync` 仍然开浮层", async () => {

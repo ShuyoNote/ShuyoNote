@@ -25811,3 +25811,26 @@ body.is-plugin-panel-open .main {
 .sync-nearby-row { width: 100%; border-radius: var(--radius-md); }
 /* ⭐ 段标题照图：⭐ 略大一号 ＋ 与上一段拉开（⭐ 只钉那三个 testid ✓）。 */
 [data-testid^="nearby-group-"] { font-size: 13px; margin-top: 14px; }
+
+/* ═══ ⭐ 刀十八（2026-10-14，owner：「上下没有铺满；去掉底部那个滚动条」）✗ ═══
+   ⭐ 真因（⭐ 量出来的 ✓）：⭐ 全站 `box-sizing` 只在 **34 处**逐个组件设 ✓ ⇒ ⭐ `.sync-popover.is-inline`
+   ⭐ 这棵子树**没设** ✗ ⇒ ⭐ `width: 100%` ＋ `padding: 24px 28px`（⭐ 上一刀 ✓）＋ ⭐ `.sync-nearby-row` 的
+   ⭐ `width: 100%` ＋ `padding: 10px 12px`（⭐ 本来就有 ✓）⭐ **每层都宽出 padding** ✗ ⇒ ⭐ 底部横条 ✓。
+   ⭐ 上下：⭐ 那一档没有高度约束 ✗ ⇒ ⭐ 补满高 ✓（⭐ 外层是 flex 时另加 `align-self: stretch` ✓）。
+   ⚠️ ⭐ **只钉 `.sync-popover.is-inline`** ✓（⛔ 浮层那份一条没动 ✗、⛔ 没全站改 ✗）；⭐ 这轮**没用** `overflow-x` 兜底 ✓（⭐ 真因是 `box-sizing` ✓）。 */
+.sync-popover.is-inline,
+.sync-popover.is-inline * {
+  box-sizing: border-box;
+}
+.sync-popover.is-inline {
+  height: 100%;
+  min-height: 100%;
+  /* ⭐ **刀十九-2（owner 复报「滚动条没有去掉」）** ✗：⭐ 那条横条是**滚动容器自己吐的** ✓ ——
+     ⭐ 某个 `overflow-y: auto` 的容器在横向内容超出时**同时**给出横条 ✓ ⇒ ⭐ 这里显式钉住 ✓。 */
+  overflow-x: hidden;
+}
+/* ⭐ 外层若把这一档当 flex 子项 ⇒ ⭐ 让它撑满交叉轴 ✓（⭐ 用**更窄**的选择器 ✓，⛔ 别改 .main 本体 ✗）。 */
+.main > .sync-popover.is-inline {
+  align-self: stretch;
+  flex: 1 1 auto;
+}
