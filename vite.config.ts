@@ -6,6 +6,14 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  // ⭐ 阶段 3（R204 owner 拍「交付单立」）：**构建期注入移动版号** ✓ ——
+  //    只有 Android 那两条 workflow 会设 `MOBILE_APP_VERSION` ✓（`release.yml` 发版件 ✓／`android.yml` 自测件 ✓）。
+  //    ⛔ env 不存在时注入空串 ⇒ `src/lib/links.ts` 的 `APP_VERSION` **退回 `package.json` 的号** ✓
+  //      ⇒ ⭐ **桌面路径逐字不变** ✗（改这里不会影响桌面版任何读数 ✓）。
+  define: {
+    __MOBILE_APP_VERSION__: JSON.stringify(process.env.MOBILE_APP_VERSION ?? ""),
+  },
+
   plugins: [react()],
 
   // Serve under a subpath (web build is hosted at /app/ on shuyo.cn; likewise

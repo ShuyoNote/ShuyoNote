@@ -581,6 +581,15 @@ export const GATES = [
       "2026-09-18 spike 问题二查出**正文文本有两条派生实现**（7 个样本里 4 个结果不同，症状是搜索片段/反链随『谁最后保存』变）；同族风险是派生**表**长出第二个写入者 —— 两边各写一份时两侧测试都绿，用户看到的是同一份附件两套派生文本。Windows 裁定「写只有一处（TS 抽取管线：src/lib/extract/store.ts / chunkStore.ts）」，并要求把这条落成**可执行判据**（原话：只写在文档里的规则会漂）。Rust 侧今天确有两处 INSERT，但都在 #[cfg(test)] 里播种夹具 ⇒ 判据必须做区域判定（与 check-doc-content-access 共用 scripts/lib/rust-scan.mjs）",
   },
   {
+    id: "check-mobile-app-version",
+    group: "contract",
+    label: "移动端自己的版号（棘轮：事实源恰好一处；不许是桌面号的别名；不许往回跳）",
+    // 为什么挂 contract：纯 Node、离线、零依赖、约 1 秒 ⇒ 本机默认组与 CI 的 `checks` 都能跑。
+    cmd: "node scripts/check-mobile-app-version.mjs",
+    incident:
+      "2026-10-14 阶段 3「交付单立」（R204 owner 拍「移动独立版号／从当前桌面号分叉」）：移动端此前**没有自己的版号**，只能跟着桌面号走，而 Android 的 `tauri.properties` 里 `tauri.android.versionName` **没有**对应的 Tauri 配置字段（证据逐字：`node_modules/@tauri-apps/cli/config.schema.json:34`「**Android**: … By default version 1.0 is used on Android」）⇒ 只能靠**独立事实源 ＋ 写入脚本**送进 APK。本门禁钉它的形状：① 事实源恰好一处（⛔ 两份真相源 ✗）；② 不许是 `APP_VERSION` 的别名（否则「独立」名存实亡）；③ 不许低于当前桌面号（手机上装的是 1.92.x，往回跳会让用户看到「版本变低」）。⚠️ 与脚本 `write-mobile-version.mjs` 里的**运行期**护栏不是一回事：本条是纯静态源码扫描，⛔ 不调用那个脚本 ✗。",
+  },
+  {
     id: "check-mobile-screen-reachable",
     group: "contract",
     label: "移动屏可达性（棘轮：显式登记表只增不减；不许有死屏）",

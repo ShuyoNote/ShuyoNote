@@ -310,11 +310,13 @@
         <!-- ⚠️ 版本号这一格：效果图写的是「版本 1.92.5（开发）」，而 `package.json`
              已经是 **1.92.6**（图那一格已过期，见
              `_workspace/notes/2026-10-10-mobile-acceptance-checklist.md` §3 第 7 条）。
-             这里**只能写字面量**：CSP 的 `script-src` 不含 `'unsafe-inline'` ⇒ 本文件
-             不许有内联 `<script>`；而 `index.html` 也没有任何构建期注入
-             （`vite.config.ts` 里没有 `transformIndexHtml`）。
-             ⇒ 它**会随发版漂移** ✗。要根治得动 index.html 以外的文件，见报告 §未做。 -->
-        <div class="splash-version">版本 1.92.6（开发）</div>
+             ⭐ 2026-10-14 阶段 3：**这格已改成运行时填** ✓ —— 由 `src/main.tsx` 在摘掉 splash 之前
+             写入 `版本 <APP_VERSION>（开发）` ✓（来源＝`src/lib/links.ts:10` 的 `APP_VERSION` ✓，
+             ⛔ 不引入第二份事实源 ✗）⇒ 于是它**不再随发版漂移** ✓（此前硬编码 1.92.6 ✗ 与桌面号脱节 ✓）。
+             ⚠️ 兜底：JS 没跑起来（白屏／极慢）⇒ 这格**空着** ✓ —— 比显示一个**错的号**好 ✓。
+             （CSP 的 `script-src` 不含 `'unsafe-inline'` ⇒ 本文件仍不许有内联 `<script>` ✓；
+              构建期注入（`vite.config.ts` 的 `transformIndexHtml`）是另一条路，本轮未走 ✓。） -->
+        <div class="splash-version"></div>
         <div class="splash-note">你的笔记在本机 · 本地 SQLite 即可用</div>
       </div>
     </div>
