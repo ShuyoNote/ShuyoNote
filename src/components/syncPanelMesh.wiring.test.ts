@@ -217,7 +217,7 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(panel, "⭐ 「读数的形状」那条文档仍在（`splitMeshBind` ✓）").toContain("splitMeshBind");
   });
 
-  it("⑨b ⭐ 2026-10-11（owner 拍「只动前端」）：那句「找不到对方」提示⛔ 不再常显 —— 要挂在结构化的 `peers === 0` 上", () => {
+  it("⑨b ⭐ 2026-10-14（owner：「去掉这部分」）：那句「AP 隔离／开手机热点」提示**已删** ⇒ ⛔ 不许再渲染", () => {
     // ⚠️ 为什么钉这条：它原先**故意常显**（旧注释写着"代价是多一行字"）⇒ 按设计图⑦ 应改成
     //    「**连不上时**这里会说出原因」✓。⛔ 而判据**不许**去解析 `lanStatus.line`（那是上面钉着的口径：
     //    界面不自己按读数再判一次档）⇒ 只能用**结构化**的 `lanStatus.peers`
@@ -228,13 +228,18 @@ describe("网格（丙-③-b）· 面板接线", () => {
     // ⚠️ 第二版又绿了一次 ✗ ⇒ 真因：`lanStatus.peers === 0` 这个字串在面板里**不止一处**（别处也在用读数）
     //    ⇒ `toContain` 被**别处**的用法满足 ✓。⇒ 改成**邻近判据**：条件**紧跟着**那句提示才算数。
     const copy = panel.replace(/\/\/[^\n]*/g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    // ⭐⭐ **2026-10-14（owner：「去掉这部分」）** ✗：⭐ 那块提示**整块删了** ✓（连着它的条件块 ✓）——
+    //   ⚠️ 上面那三段注释是**当时的**口径（"⛔ 不许常显、要挂结构化读数上"✓），保留作历史 ✓。
+    //   ⭐ 按 R192「**换对象不删断言**」✗：⛔ 三条一条没删 ✓，全部翻成**反面**（"不许再渲染"）✓：
     expect(
       copy,
-      "按图⑦：那句提示必须**直接挂在** `lanStatus.peers === 0` 上（⛔ 不许常显，也⛔ 不许随便挂个别处的读数）",
-    ).toMatch(/lanStatus\.peers === 0\s*&&\s*\([\s\S]{0,500}?AP 隔离/);
-    // ⭐ 那两句**排障内容**是承重的（⛔ 不是装饰）⇒ 收成条件显示之后，内容一个字都不许丢。
-    expect(copy, "AP 隔离那条提示是承重的，⛔ 不许删").toContain("AP 隔离");
-    expect(copy, "开手机热点是最快的验证，⛔ 不许删").toContain("开手机热点");
+      "⛔ 那句「AP 隔离」提示不许再渲染 ✗（owner 2026-10-14：「去掉这部分」✓）",
+    ).not.toContain("AP 隔离");
+    expect(copy, "⛔ 「开手机热点」那半句也一起去掉了 ✓ —— ⛔ 别只删一半 ✗").not.toContain("开手机热点");
+    expect(
+      copy,
+      "⛔ 也不许把它改挂到别的读数上（`peers === 0 &&` 那种条件块不许回来 ✗）",
+    ).not.toMatch(/peers === 0\s*&&\s*\(/);
   });
 
   it("⑨c ⭐ 2026-10-11：面板里的强调要用 `<b>`，⛔ 不许写 Markdown 的 `**…**`（那会在界面上原样显示星号）", () => {
@@ -337,16 +342,35 @@ describe("片 D1a-1：0 台时也渲染三段标题", () => {
   const branch = () => {
     const at = src.indexOf("nearby.length === 0 ? (");
     if (at < 0) throw new Error("找不到 `nearby.length === 0` 那一支");
-    return src.slice(at, src.indexOf(") : (", at));
+    // ⚠️ ⭐ **必须剥注释** ✗：这一段是**源码切片** ✓ ⇒ 注释里只要提到那句话，
+    //   下面的 `not.toContain` 就会被**自己的解释**喂饱 ✗（2026-10-14 实测踩到 ✓；
+    //   本文件 225-229 行早就抱怨过同族的坑 ✓）。testid 与文案都在**代码**里 ✓ ⇒ 剥了照样判得出 ✓。
+    return src
+      .slice(at, src.indexOf(") : (", at))
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
   };
 
-  it("① ⭐（源码级）那一支里三个 `nearby-group-*` 的 testid 都在（今天【红】✓）", () => {
+  it("① ⭐（源码级）那一支里 `nearby-group-*` 的 testid 都在（⛔ 不含异常段 ✗）", () => {
     const b = branch();
-    for (const id of ["nearby-group-keychanged", "nearby-group-trusted", "nearby-group-pending"]) {
+    for (const id of ["nearby-group-trusted", "nearby-group-pending"]) {
       expect(b, "⛔ 0 台时那一段标题也要在 ✗：" + id).toContain(id);
     }
+    // ⭐⭐ **2026-10-14（owner：「这部分默认不出现可以吗？」）** ✗：⭐「需要重新配对」是**异常段** ✓
+    //   ⇒ ⭐ **0 台时不出现** ✓ —— 这本来就是**有设备那一支**的行为 ✓
+    //   （`showWhenEmpty: g.testid !== "nearby-group-keychanged"` ✓）⇒ 上一版这一支硬渲染它 ✗ 是**两支不一致** ✓。
+    //   ⭐ 按 R192「**换对象不删断言**」✗：⛔ 这条没删 ✓，从 for 里挪出来**翻成反面** ✓。
+    expect(
+      b,
+      "⛔ 「需要重新配对」那一整段不许再渲染 ✗（它是异常段 ✓：0 台时不出现，与有设备那一支一致 ✓）",
+    ).not.toContain("nearby-group-keychanged");
     expect(b, "⭐ 每段底下一行**实话** ✓（⛔ 不编数字 ✗）").toContain("这一轮没找到这一段的设备");
-    expect(b, "⭐ 原来那句总说明**保留** ✓").toContain("还没发现别的设备");
+    // ⭐⭐ **2026-10-14（owner 选 C：「文案合并」）** ✗：⭐ 那句总说明**已删** ✓（它与三段计数同义 ✓）
+    //   ⇒ ⭐ 按 R192「**换对象不删断言**」✗：⛔ 这条没删 ✓，从「保留」翻成「**不许再渲染**」✓。
+    expect(
+      b,
+      "⛔ 那句总说明不许再渲染 ✗（owner 2026-10-14：「文案合并」✓ —— 它与三段计数说的是同一件事 ✓）",
+    ).not.toContain("还没发现别的设备");
   });
 
   it("② 锁（今天已绿 ✓）：`NEARBY_GROUPS` 三条 label 逐字未变 ＋ 另两支逐字未变", () => {

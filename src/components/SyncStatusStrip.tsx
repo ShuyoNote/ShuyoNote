@@ -33,6 +33,11 @@ export interface SyncStatusStripProps {
   /** 同上拆出来的端口；空串 ⇒ 显示「未读到」。 */
   port: string;
   /**
+   * ⭐ **2026-10-14（照桌面版高保真效果图）**：⭐ 小字要**一行**说完 ✓ ——
+   * （调用方从 `lanStatus.mesh.window` 取 `.hostname` ✓ —— ⛔ 不是解析后端人话 ✗）。
+   * 为空 ⇒ 退回下面那句 Rust 原文 ✓（那种情况正是「别人拉不到」✓，判语要看后端原话 ✓）。
+   */
+  /**
    * Rust 侧那句「**别人拉不拉得到**」原文（`lanStatus.mesh.reach` ✓）；空串 ⇒ 显示「报出去的是 未读到」。
    * ⚠️ ⭐ 它是一句**后端来的整句** ✓（自己就写着「能被别人拉到 —— 报出去的是枚举到的 http://…」✓）⇒
    *    ⭐ 这一格**不再**在它前面加一次「报出去的是」✗（会读成"报出去的是 …报出去的是…"✓）。
@@ -41,29 +46,51 @@ export interface SyncStatusStripProps {
    * （`lanStatus.mesh.note` 那句"开没开／窗口在哪"没有再摆 ✗ —— 第一行那两格已经把同一件事说短了 ✓）。
    */
   reach: string;
+  /**
+   * ⭐ **2026-10-14（owner 给了参照图）**：⭐ 「报出去的是 <host>」里那个 host ✓ ——
+   * 调用方从**结构化字段** `mesh.announced`（枚举到的可达 base ✓）取 `.hostname` ✓
+   * （⛔ 不是解析后端人话 ✗，⛔ 也不是 `mesh.window` —— 那是**绑定**地址、绑通配时是 `0.0.0.0` ✗）。
+   * 为空 ⇒ 退回下面 `reach` 那句后端原文 ✓（那种情况正是"别人拉不到"✓）。
+   */
+  announced: string;
 }
 
 /** ⭐ 「读不到」那句话**只有一处**（⛔ 不在调用方再判一次 ✗ —— 两份写法迟早漂开 ✓）。 */
 const NOT_READ = "未读到";
 
-export function SyncStatusStrip({ dotClass, state, addr, port, reach }: SyncStatusStripProps) {
+export function SyncStatusStrip({ dotClass, state, addr, port, reach, announced }: SyncStatusStripProps) {
   const shown = (v: string) => v || NOT_READ;
+  // ⭐ **2026-10-14（owner：「美化酷炫一下」）**：外面包一层 \`sync-hero-card\` ✓ —— 让这一块成为
+  //   **一张卡**（底色/描边/圆角/浮起 都在 \`App.css\` 的 \`.sync-popover.is-inline\` 那一档里 ✓）。
+  //   ⚠️ 用**新类名**而不是既有的 \`.sync-hero\` ✗ —— 后者在面板里**根本没有**（只有 \`.sync-hero-state\`
+  //   与 \`.sync-hero-sub\` ✓）⇒ 写它会是一条死规则 ✓；而且既有的 \`.sync-hero\` 会**居中文字** ✗。
   return (
-    <>
+    <div className="sync-hero-card">
       <div className="sync-hero-state">
         <span className={`sync-hero-dot${dotClass}`} aria-hidden />
         <span>{state}</span>
       </div>
-      {/* ⭐ 第一行：**只有**监听地址与端口（owner 2026-10-14：那一行原来把三件事挤在一起 ✓）。 */}
+      {/* ⭐⭐ **2026-10-14（照桌面版高保真效果图）** ✗：图上状态卡里是**两行** ✓ ——
+          加粗的状态行 ＋ **一行**小灰字 ✓（「监听地址 …（自动）· 端口 …（默认）· …」✓）
+          ⇒ ⭐ 上一版那三行并回两行 ✓（⛔ 内容没删 ✗）。
+          ⚠️ 图上那半句是**裸地址**（`报出去的是 192.168.43.206` ✓）—— ⭐ 那要**后端多给一格**才会精确
+          （`mesh.window` 是**绑定**地址：绑通配时它是 `0.0.0.0` ✗ ⇒ 拿它当"报出去的"是错的 ✓，
+          ⛔ 我不这么干 ✗）。⇒ ⭐ 这一格摆**后端那句原文** ✓（它自己就写着"报出去的是枚举到的 …" ✓）；
+          取不到 ⇒ 如实说「报出去的是 未读到」✓（⛔ 不拿前两格凑一个地址 ✗）。
+          ⚠️ ⭐ **必须过 `inlineMd`** ✗（见文件头那条纪律 ✓：不过就会原样显示星号 ✓）。 */}
       <div className="sync-hero-sub">
         监听地址 {shown(addr)}（自动）· 端口 {shown(port)}（默认）
+        {announced ? (
+          <span>
+            {" · 报出去的是 "}
+            {announced}
+          </span>
+        ) : reach ? (
+          <span> · {inlineMd(reach)}</span>
+        ) : (
+          <span> · 报出去的是 {NOT_READ}</span>
+        )}
       </div>
-      {/* ⭐ 第二行：⭐ 后端那句「别人拉不拉得到」✓（⭐ 原样摆 ✓，自己就写着「报出去的是…」✓；
-          ⛔ 读不到就如实说「报出去的是 未读到」✗ —— ⛔ 不拿前两格凑一个地址 ✗）。
-          ⚠️ ⭐ **必须过 `inlineMd`** ✗（见文件头那条纪律 ✓：不过就会在界面上原样显示星号 ✓）。 */}
-      <div className="sync-hero-sub">
-        {reach ? inlineMd(reach) : <>报出去的是 {NOT_READ}</>}
-      </div>
-    </>
+    </div>
   );
 }

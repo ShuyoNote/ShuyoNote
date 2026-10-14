@@ -161,6 +161,16 @@ const NEARBY_GROUPS = [
   { testid: "nearby-group-trusted", label: "已信任" },
   { testid: "nearby-group-pending", label: "待配对" },
 ] as const;
+/**
+ * ⭐⭐ **2026-10-14（owner）**：「需要重新配对」要夹在**已信任与待配对之间** ✓
+ * ⇒ 显示顺序 ＝ **已信任 → 需要重新配对 → 待配对** ✓（＝桶号 `[1, 0, 2]` ✓）。
+ *
+ * ⚠️ ⛔ **不许靠调换 `NEARBY_GROUPS` 的条目**来实现 ✗ —— 那一份是**按桶号索引**的
+ * （下标就是桶号 ✓；非空支靠 `NEARBY_GROUPS[nearbyBucket(p)].testid` 把设备归段 ✓）
+ * ⇒ 换掉它会把"桶号"和"显示顺序"搅成一份 ✓。⭐ 所以顺序**单独一份** ✓。
+ * ⚠️ ⭐ **两支渲染都必须用它** ✓（0 台那支 ／ 有设备那支 ✓）—— ⛔ 否则两种画面顺序会不同 ✗。
+ */
+const NEARBY_ORDER = [1, 0, 2] as const;
 /** ⭐ **刀十五（2026-10-14，按设计图）**：把 `mesh.bind`（形如 `0.0.0.0:8788` ✓）拆成 ⭐ 地址／端口 ✓
  *  —— ⭐ **一处实现** ✓（⭐ 状态条用 ✓）；⭐ 按**最后一个 `:`** 拆 ✓（IPv6 也安全 ✓），
  *  ⭐ 拆不出来 ⇒ ⭐ 地址给**原文** ✓、⭐ 端口给空串 ✓（⭐ 界面那边如实写「未读到」✓，⛔ 不编 ✗）。 */
@@ -1042,7 +1052,7 @@ export function SyncPanel({
   const serverRows = rows.filter((r) => r.kind === "team");
   // ⭐ 当前空间是个人空间吗？⚠️ `rows` 只有**当前活动空间**那一行（见 refresh 里的 ids）
   //   ⇒ ⭐「服务器那一段一行都没有」就等于「当前不是团队空间」✓（取不到 kind 时兜底当团队 ✓）。
-  //   ⚠️ 必须定义在这里 —— 下面的 `heroRoute` 要用它（放后面会「used before declaration」）。
+  //   ⚠️ 必须定义在这里（放后面会「used before declaration」）。
   //   ⚠️ **刀二十（2026-10-14）**：⭐ `heroState` **不再**用这一格了 ✗ —— 它现在由
   //     「已配对／在线／同步中」三件真事拼成（与当前是个人还是团队无关 ✓）。
   const isPersonalActive = serverRows.length === 0;
@@ -1055,13 +1065,6 @@ export function SyncPanel({
   //   ⚠️ ⛔ 一个都不写死 ✗：读不到 ⇒ 如实说「还没配对／不在线」✓（⛔ 不拿「看起来正常」冒充 ✗）。
   const meshPaired = duList.length > 0;
   const meshOnline = !!lanStatus?.enabled;
-  const heroState = [
-    meshPaired ? "已配对" : "还没配对",
-    meshOnline ? "在线" : "不在线",
-    syncing ? "正在同步" : "自动同步中",
-  ].join(" · ");
-  // ⚠️ 圆点：同步中 ⇒ 蓝；**已配对＋在线** ⇒ 绿；其余 ⇒ 无色（⛔ 不给一个「看起来很健康」的绿 ✗）。
-  const heroDot = syncing ? " is-busy" : meshPaired && meshOnline ? " is-ok" : "";
   const heroSub = [
     activeRow?.name ?? "",
     lastSync ? relTime(lastSync.at) : "",
@@ -1069,22 +1072,12 @@ export function SyncPanel({
   ]
     .filter(Boolean)
     .join(" · ");
-  const heroRoute =
-    lanStatus?.kind === "lan"
-      ? lanStatus.peers === 0
-        ? // ★ 2026-09-29（owner 裁定「修」）：与摘要**同一口径** ——
-          //   一个对端都没发现时**不说"本网段 0 台可用"**（那会被读成"没有"），
-          //   ⚠️ 2026-10-01：这里的用词已按 `lan.rs` 现口径改成「附近发现」✓ —— 上面这句保留当时的说法 ✓
-          //   而真相是"还没找到"（看不见 ≠ 不存在，规格 §12.1 ／ 需求 §4.4）。
-          "这一轮走的是：设备直连 · 正在找附近的设备…"
-        : `这一轮走的是：设备直连 · ${lanStatus.peers} 台可用`
-      : lanStatus?.kind === "configured"
-        ? "这一轮走的是：服务器"
-        // ⚠️ **2026-10-04 改**：⭐ 个人空间不说「还没绑同步」✗（那是叫他去绑服务器 ✓），
-        //   而是如实说它自己这条路：**附近设备直连** ✓。
-        : isPersonalActive
-          ? "这一轮走的是：附近设备直连（个人空间不经过服务器）"
-          : "这一轮走的是：还没绑同步";
+  // ⛔⭐ **2026-10-14（owner：「去掉这部分」）** ✗ —— ⭐ 「这一轮走的是：…」那句（含它的四个变体：
+  //   附近直连／设备直连·N 台可用／服务器／还没绑同步）**整条删掉了** ✓。
+  //   ⭐ 那件事现在由**更准的地方**说：⭐ 附近有几台 → 三段设备的计数（`NEARBY_GROUPS` ✓）；
+  //   ⭐ 走的是服务器还是直连 → 「同步方式」那一行的值 ✓；⭐ 个人空间不经过服务器 → 副标题 ✓。
+  //   ⚠️ 判据按 R192 **换对象**（⛔ 不是删断言 ✗）：从「必须渲染」翻成「不许再渲染」✓
+  //   （见 `SyncPanel.trustDevicePanel.wiring.test.tsx` ② ✓）。
   // ── ★ 2026-09-29（IA）：分组 ＋ 每行一个可展开项 —— 每行右边那个【摘要值】────────
   // 口径：**每一行的值都由真实读数算出来**（写死就是在骗人），且尽量复用既有 <option> /
   //       既有小标题的词 —— 本笔不动任何一句既有文案。
@@ -1100,6 +1093,7 @@ export function SyncPanel({
   //    **不许**把"读不到列表"渲染成"网段里没人"（空数组与"不可用"长得一样、含义相反）。
   const nearbyReadable = Array.isArray(lanStatus?.nearby);
   const nearby = lanStatus?.nearby ?? [];
+
   // ⭐ **2026-10-08（owner：「附近设备同步流程太繁琐了，能简化吗？」）**：
   //   **附近恰好一台时自动选中它** ✓ —— 选中它走的是正路（本机生成时就登记 ⇒
   //   **对面采纳一次、两个方向都通** ✓）；而默认的"不指定"走的是兜底（码离线传 ⇒ **要配两次** ✗）。
@@ -1129,6 +1123,55 @@ export function SyncPanel({
    */
   const nearbyBucket = (p: NearbyPeer): 0 | 1 | 2 =>
     p.key_changed === true ? 0 : duList.some((d) => d.deviceId === p.device_id) ? 1 : 2;
+
+  // ⚠️ ⭐ **2026-10-14（实测两次）** ✗：这两段**必须待在 `nearby` 与 `nearbyBucket` 之后** ✓ ——
+  //   往上搬一次会 `TS2448 / Cannot access 'nearby' before initialization`（整屏白掉 ✓），
+  //   只挪到 `nearby` 之后还会再撞一次 `nearbyBucket` ✓。⛔ 逻辑一个字没改 ✗（只搬位置 ✓）。
+  // ⚠️ ⭐ **2026-10-14**：这两段原来在 `meshOnline` 下面 ✓ —— 但它们要读 `nearby`（**下面**才声明 ✓）
+  //   ⇒ TDZ ⇒ **整个面板白掉** ✗（tsc `TS2448` ＋ 真机探测 no panel ✓；2 条判据当场红 ✓）
+  //   ⇒ ⭐ 挪到 `nearby` 之后 ✓。⚠️ ⛔ 逻辑一个字没改 ✗（只搬位置 ✓）。
+  /**
+   * ⭐⭐ **2026-10-14（owner 选 C：「按状态变句式」）** ✗：这一行原来是**电报腔的短语**
+   * （`已配对 · 在线 · 自动同步中` ✓）—— ⚠️ 它把三件事平铺出来，而且**关掉同步之后仍然写着
+   * "自动同步中"** ✗（那是**假话** ✓）。⇒ ⭐ 改成**一句话**，句子由**真实读数**选：
+   *
+   * · 关掉了（`syncMode === "off"` ✓）⇒ 「同步已关」✓
+   * · 发现层没开（`lanStatus.enabled === false` ✓）⇒ 如实说"没在找附近的设备" ✓
+   * · 正在同步（`syncing` ✓）⇒ 「正在同步…（已配对 N 台）」✓
+   * · 有配对（`duList.length` ✓）⇒ 「已和 N 台设备配对，正在自动同步」✓
+   * · 一台都没有 ⇒ 「还没配对，正在找附近的设备」✓
+   *
+   * ⚠️ ⛔ 一个词都不许写死 ✗：N 来自 `duList`（⭐ 不是 `lanStatus.peers` —— 那是**附近**的台数 ✗），
+   * 开关来自读数 ✓；⭐ 读不到 ⇒ 走"没在找"那一句 ✓（⛔ 不拿"看起来正常"冒充 ✗）。
+   */
+  const heroState = (() => {
+    const n = duList.length;
+    if (syncMode === "off") return "同步已关";
+    if (!meshOnline) {
+      return n > 0 ? `已配对 ${n} 台，但没在找附近的设备` : "还没配对，也没在找附近的设备";
+    }
+    // ⚠️ ⭐ **2026-10-14（owner 追问「属实吗」）** ✗：这一支原来读**本机 state** `syncing` ——
+    //   它只在点「立即同步」时置真（657／744 行 ✓）⇒ ⭐ **后台自动同步在跑时它不变** ✗
+    //   （而同文件 1256 行的脉冲点用的是**真信号** `liveSyncing` ＝ `useSyncStatus` ✓）
+    //   ⇒ ⭐ 两处都用同一把尺：**引擎说在跑，或本机这一下在跑** ✓。
+    if (liveSyncing || syncing) return `正在同步…（已配对 ${n} 台）`;
+    // ⚠️ ⭐ 这里原来写的是「**正在**自动同步」✗ —— 而走到这一支时**并没有**同步在跑 ✓
+    //   ⇒ 那是把"开关是开的"说成了"正在发生" ✓。
+    // ⭐⭐ **2026-10-14（owner：「怎么修改？」）** ✗：只改动词还不够 ✓ —— 那句话仍然**没说
+    //   "对方在不在"** ✗（开关开着 ≠ 对方可达 ✓）。⇒ ⭐ 用**已有读数**把两种情况分开说：
+    //   ⭐ 附近能不能看到**已信任**的那台 ← `nearbyBucket(q) === 1` ✓ —— **与三段里
+    //   「已信任 · N 台」逐字同一个来源** ✓（⛔ 零后端改动、⛔ 不造新参数 ✗）。
+    if (n === 0) return "还没配对，正在找附近的设备";
+    const trustedNearby = nearby.filter((q) => nearbyBucket(q) === 1).length;
+    return trustedNearby > 0
+      ? `已和 ${n} 台设备配对，对方就在附近，自动同步开着`
+      : `已和 ${n} 台设备配对；对方现在不在附近，出现就自动同步`;
+  })();
+  // ⚠️ 圆点：同步中 ⇒ 蓝；**已配对＋在线** ⇒ 绿；其余 ⇒ 无色（⛔ 不给一个「看起来很健康」的绿 ✗）。
+  // ⭐ 同上：**同步关掉了就该无色** ✗ —— 否则会出现"绿点 ＋ 同步已关"这种自相矛盾的画面 ✓。
+  // ⭐ 跟上面对齐："在跑"一律用 `liveSyncing || syncing` ✓（⛔ 别让圆点和那句话用两把尺 ✗）。
+  const heroDot =
+    syncMode === "off" ? "" : liveSyncing || syncing ? " is-busy" : meshPaired && meshOnline ? " is-ok" : "";
   const nearbySecondColumn = (p: NearbyPeer) => {
     if (p.serves_current) return `附近 · 服务 ${mySpaceName}`;
     // ⭐ **P-B（2026-10-13）**：⭐ 先把**原因**说出来 ✗ —— ⛔ 不许把"本机没设暗号"／"那个空间已删"
@@ -1288,7 +1331,12 @@ export function SyncPanel({
           )}
           <header className="sync-head">
             <div className="sync-head-text">
-              <div className="sync-title">设备直连</div>
+              {/* ⛔⭐ **2026-10-14（owner）**：「设备直连」⇒「**局域网同步（近网同步）**」✓
+                  （⭐ 一个名字要同时说清"**范围**＝局域网"与"**走法**＝近网直连"✓ ——
+                    原来的「设备直连」只说走法 ✗；括号里那个是 owner 点名的同义说法 ✓）。
+                  ⚠️ 判据 `SyncPanel.trustDevicePanel.wiring.test.tsx` ① 钉的就是**这一屏的标题** ✓
+                  ⇒ 按 R192 **换对象**（⛔ 断言不删 ✗）。 */}
+              <div className="sync-title">局域网同步（近网同步）</div>
               {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 副标题按效果图改写 ✓ ——
                   原文是「⭐ 填一个配对暗号就能和附近的设备直连 ✗」⇒ ⭐ 那句把"⭐ 码 ✗"摆在了**这一屏最显眼的位置** ✓。
                   ⚠️ 新句**不改事实** ✗：⭐ 今天建信任那一步**仍然**要那串码 ✓（⭐ 见文件头的拍板口径 ✓）⇒
@@ -1296,7 +1344,7 @@ export function SyncPanel({
               <div className="sync-subtitle">{isPersonalActive ? "同一个 Wi-Fi 自动发现：配对一次之后，不用再点任何东西" : "每个空间各自绑定服务器与组织空间"}</div>
 
           {/* ⭐ **刀二十（2026-10-14，owner：按设计图）** ✗：⭐ **绿色状态条** ✓ —— 副标题之后、三段设备之前 ✓。
-              ⭐ 值**全由 props 传** ✓（那些读数在别处一处一处算好 ✓，见上面 `heroState` / `heroDot` 与 `heroSub` / `heroRoute` ✓）：
+              ⭐ 值**全由 props 传** ✓（那些读数在别处一处一处算好 ✓，见上面 `heroState` / `heroDot` / `heroSub` ✓）：
               ⭐ 地址／端口 ← `lanStatus.mesh.bind`（经 `splitMeshBind` ✓）、⭐ 别人拉不拉得到 ← `lanStatus.mesh.reach`（Rust 侧原文 ✓）、
               ⭐「已配对」← `duList`、⭐「在线」← `lanStatus.enabled`、⭐「同步中／自动同步中」← `syncing` ✓。
               ⚠️ ⭐ 取不到就如实说「未读到」✗（那一句在 `SyncStatusStrip.tsx` 里**只有一处** ✓）。
@@ -1308,6 +1356,18 @@ export function SyncPanel({
               addr={splitMeshBind(lanStatus?.mesh?.bind ?? "").addr}
               port={splitMeshBind(lanStatus?.mesh?.bind ?? "").port}
               reach={lanStatus?.mesh?.reach ?? ""}
+              announced={(() => {
+                // ⭐ 参照图那半句是**裸地址**（`报出去的是 192.168.43.206` ✓）⇒ 从结构化字段取 host ✓。
+                // ⚠️ 用 `mesh.announced`（枚举到的可达 base ✓），⛔ **不是** `mesh.window`（那是绑定地址：
+                //    绑通配时它是 `0.0.0.0` ✗ —— 拿它当"报出去的"会写出 0.0.0.0，那是编造 ✓）。
+                const a = lanStatus?.mesh?.announced ?? "";
+                if (!a) return "";
+                try {
+                  return new URL(a).hostname;
+                } catch {
+                  return "";
+                }
+              })()}
             />
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
@@ -1328,15 +1388,19 @@ export function SyncPanel({
             // ⭐⭐ **片 D1a-1（2026-10-14，owner 图）** ✗：⭐ **0 台时三段标题也要在** ✓
             //   （⭐ 原来这一支只给一句灰字 ✓ ⇒ ⭐ 用户看不到「分三段」这件事 ✗）。
             //   ⚠️ ⭐ 每段底下一行**实话** ✓（⛔ 不编数字 ✗ —— 仓规「读不到 ≠ 0」同族 ✓）；
-            //   ⭐ 原来那句「还没发现别的设备… 正在找」**保留** ✓，⭐ 降级成三段**之外**的总说明 ✓。
+            //   ⛔⭐ **2026-10-14（owner 选 C：「文案合并」）** ✗：⭐ 原来那句「还没发现别的设备… 正在找」
+            //   **删掉了** ✓ —— ⭐ 它与下面三段的计数（三段都是 **0 台** ✓）说的是**同一件事** ✓，
+            //   留着就是两处同义 ✓。⚠️ 判据按 R192 **换对象**（见 `syncPanelMesh` 片 D1a-1 ① ✓）。
             //   ⚠️ ⭐ testid 写**字面** ✓（⭐ 判据要能在这一支里逐字找到它 ✓），
             //   ⭐ 而**文案取自** `NEARBY_GROUPS` ✓（⭐ 单一来源 ⇒ ⛔ 不会与上面那份漂开 ✗）。
             <>
-              <div className="sync-hint">还没发现别的设备… 正在找</div>
-              <div className="sync-hint" data-testid="nearby-group-keychanged">
-                {NEARBY_GROUPS[0].label} · {nearby.filter((q) => nearbyBucket(q) === 0).length} 台
-              </div>
-              <div className="sync-hint sync-empty-state" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+              {/* ⭐ **2026-10-14（owner）**：显示顺序照 `NEARBY_ORDER` ＝ 已信任 → 待配对 ✓
+                  （⚠️ ⛔ 不改 `NEARBY_GROUPS` 的条目 ✗：那份**按桶号索引** ✓）。
+                  ⛔⭐ **2026-10-14（owner：「这部分默认不出现可以吗？」）** ✗：⭐「需要重新配对」是
+                  **异常段** ✓ —— ⭐ **一台都没有时不出现** ✓；⚠️ 这与**有设备那一支**本来就一致 ✓
+                  （那支里 `showWhenEmpty: g.testid !== "nearby-group-keychanged"` ✓）
+                  ⇒ 上一版在这一支硬渲染它 ✗ 属于**两支不一致** ✓。
+                  ⚠️ 判据按 R192 **换对象**（`syncPanelMesh` 片 D1a-1 ① ✓）。 */}
               <div className="sync-hint" data-testid="nearby-group-trusted">
                 {NEARBY_GROUPS[1].label} · {nearby.filter((q) => nearbyBucket(q) === 1).length} 台
               </div>
@@ -1345,18 +1409,22 @@ export function SyncPanel({
                 {NEARBY_GROUPS[2].label} · {nearby.filter((q) => nearbyBucket(q) === 2).length} 台
               </div>
               <div className="sync-hint sync-empty-state" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
-              {/* ⭐ **owner 2026-10-14**：⭐ 那句「两台要在同一个网络…」从**被删掉的那条读数行**搬到这里 ✓
-                  —— 图上它就在三段之后那个**虚线空框**里 ✓（⛔ 字一个没删 ✗：判据 `syncPanelMesh` ⑨b 钉着它 ✓）；
-                  ⚠️ 条件仍是**结构化的** `lanStatus.peers === 0` ✓（⛔ 不去解析 `lanStatus.line` ✗，同一条口径 ✓）。 */}
-              {lanStatus.peers === 0 && (
-                <div className="sync-hint sync-empty-state" style={{ paddingLeft: 12, textAlign: "left" }}>
-                  {inlineMd("两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
-                </div>
-              )}
+              {/* ⛔⭐ **2026-10-14（owner：「去掉这部分」）** ✗：⭐ 那句「两台要在同一个网络、且这个网络没开
+                  「AP 隔离／客户端隔离」…」**整块删掉了** ✓（连着它那个 `lanStatus.peers === 0 &&` 条件块 ✓）。
+                  ⚠️ 那条**结构化口径**（"界面不许解析 `lanStatus.line`" ✓）本身没变 ✓ —— 它现在由**别处**
+                  承重（`activityBarSyncEntry` 那条：`peers === 0` ⇒ 不显示徽标 ✓）。
+                  ⚠️ 判据按 R192 **换对象**（⛔ 不是删断言 ✗）：`syncPanelMesh` ⑨b 那三条从
+                  「必须挂着／不许删」翻成「**不许再渲染**」✓。 */}
             </>
           ) : (
+            /* ⭐ 同上：按 `NEARBY_ORDER` 遍历 ✓（⛔ 归段判据仍是 `NEARBY_GROUPS[nearbyBucket(p)]` ✗ ——
+               那是"哪台归哪一段"的唯一来源 ✓，与"显示顺序"是两件事 ✓）。
+               ⚠️ ⭐ 这里处在**三元分支**位置 ⇒ 只能是**一个表达式** ⇒ 注释要用 JS 块注释 ✓；
+               ⛔ 不能写成 JSX 的「花括号 ＋ 块注释」那种（那是子节点写法 ✓）；也⛔ 不能塞进属性列表 ✗。
+               ⚠️ ⭐ 而且注释**正文里不许再出现块注释的结束符** ✗ —— 我刚写过一次：注释在那一点提前闭合 ✓、
+               报错行号乱跳（1422／1569 ✓），花了三轮才看明白 ✓。 */
             <SyncNearbyGroups
-              sections={NEARBY_GROUPS.map((g) => ({
+              sections={NEARBY_ORDER.map((idx) => NEARBY_GROUPS[idx]).map((g) => ({
                 testid: g.testid,
                 label: g.label,
                 // ⭐⭐ **P-3d（2026-10-13）：第三段已落地** ✓ —— 「**需要重新配对**」✓，
@@ -1680,13 +1748,12 @@ export function SyncPanel({
                       ⭐ 「一眼看到绑在哪」由绿条那行负责 ✓；⭐ 值也能 hover 看全（绿条那格带 `title` hmm ——
                       绿条两行本就把地址与端口都写全了 ✓）。
                       ⚠️ 要改成"把行搬上去、同时把绿条那半句去掉"⇒ 说一声 ✓（⭐ 两处只能留一处 ✓）。 */}
-                {/* ⚠️ **2026-10-14（owner：「太丑了，优化美化」）** ✗：这两句**诊断**原来贴在折叠最顶上、
-                    而且是**满宽**的 ✓ —— 它落在 `.sync-profiles` 的 16px 内边距**外面** ⇒ 与别的行**对不齐** ✓。
-                    ⇒ ⭐ 挪进这一组的读数区（紧跟「端口」那一行 ✓），⭐ 用面板自己的 `.sync-hint`（11px 暗色 ✓）。 */}
-                {heroRoute && <div className="sync-hint">{heroRoute}</div>}
+                {/* ⛔ **2026-10-14（owner：「去掉这部分」）** ✗：「这一轮走的是：…」那句已删 ✓；
+                    ⭐ `heroSub`（空间名 · 上次同步 · 今天同步了 N 项）**留着** ✓ —— 它是真读数、主人点名删的不是它 ✓。 */}
                 {heroSub && <div className="sync-hint">{heroSub}</div>}
+            {/* ⛔ **2026-10-14（owner：「去掉这部分」）** ✗：这一组的标题「设置」也去掉了 ✓
+                （⭐ 它下面那些行自己说得清 ✓；⛔ 组容器留着 ✗ —— 折叠与中继卡都在它里面 ✓）。 */}
             <div className="sync-group">
-              <div className="sync-group-title">设置</div>
 
               {/* ⚠️ 2026-09-28（D1）：**设置类控件搬出吸底条** ——
                  §2 第 2 条 `INV-UI-sync-panel-persistent-chrome` 的口径是：

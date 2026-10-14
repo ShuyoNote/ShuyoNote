@@ -25876,3 +25876,212 @@ body.is-plugin-panel-open .main {
   display: flex;
   align-items: center;
 }
+
+
+/* ═══ ⭐ 刀二十一（2026-10-14，owner：「太丑了，美化酷炫一下」）✗ ═══
+   ⚠️ 只钉 `.sync-popover.is-inline`（嵌进内容区那一档 ✓）—— ⛔ 抽屉/浮层/手机 sheet **一字不动** ✗。
+   ⭐ 颜色全部走**既有变量** ✓（新增的只有两处透明 rgba 光晕 ✓）；⛔ 不引外部字体/图片 ✗。
+   ⭐ 动效只有：120ms 的 hover 过渡 ＋ 一颗绿点的慢呼吸 ✓（`prefers-reduced-motion` 里关掉 ✓）。
+   ⚠️ 唯一的 markup 改动＝状态条外面多一层 `.sync-hero-card`（见 `SyncStatusStrip.tsx` ✓）。 */
+
+/* ① 顶部状态条 → ⭐ **照桌面版高保真效果图**：一块**浅绿卡**（软底、⛔ 无描边 ✗、圆角 12 ✓），
+   里面两行：加粗的状态行 ＋ 一行小灰字（照图 ✓ —— ⛔ 上一版那个蓝渐变是我自己发挥的 ✗，已撤 ✓）。
+   ⚠️ 没有 `--success-soft` 这个变量 ✗ ⇒ 用 `color-mix` 把 `--success` 混进 `--surface` ✓
+   （⭐ 深浅色主题都跟着走 ✓，⛔ 不写死色值 ✗）。 */
+.sync-popover.is-inline .sync-hero-card {
+  background: color-mix(in srgb, var(--success) 10%, var(--surface));
+  border: 0;
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+}
+.sync-popover.is-inline .sync-hero-state { letter-spacing: 0.2px; font-weight: 600; font-size: 15px; }
+/* ⭐ **2026-10-14（owner：「这部分不协调」）** ✗：⭐ 读数显示卡里两行**只差 1px**（13.5 vs 12.5 ✓）
+   ⇒ 状态行压不住小字行 ✓，而小字行本体又很长 ⇒ 一团 ✗。⇒ ⭐ 小字行降到 11.5px ✓（明确次要 ✓）。
+   ⚠️ 状态行保持**小于标题**（15 < 16 ✓）—— 上一轮 owner 拍过"17px 比标题还大 ⇒ 层级倒了"✓。 */
+/* ⭐ **2026-10-14（owner：「这两行的间距略大一点」）** ✗：实测状态行与小字行**紧贴**（间距 0 ✓）
+   ⇒ 给小字行 **4px** 上边距 ✓（"略" ✓；⛔ 只动这一处间距 ✗ —— 字号/行高/颜色都不动 ✓）。 */
+.sync-popover.is-inline .sync-hero-sub { font-size: 11.5px; margin-top: 4px; }
+/* ⭐ 绿点：既有规则已经给了光晕 ✓ —— 这一层只让它**慢呼吸**（⛔ 不加新颜色 ✗）。 */
+@keyframes sync-hero-breath {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(34, 160, 107, 0.15); }
+  50% { box-shadow: 0 0 0 7px rgba(34, 160, 107, 0.05); }
+}
+.sync-popover.is-inline .sync-hero-dot.is-ok { animation: sync-hero-breath 2.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sync-popover.is-inline .sync-hero-dot.is-ok { animation: none; }
+}
+
+/* ② 三段：⭐ **照图** —— 段标题是**朴素加粗的黑字** ✓（⛔ 我上一版加的蓝色小竖条已撤 ✗），
+   段之间留白拉开 ✓；虚线空框软化（更淡的边 ＋ 浅底 ✓，图里那个提示框就是虚线圆角 ✓）。 */
+.sync-popover.is-inline [data-testid^="nearby-group-"] {
+  display: block;
+  font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: 0.2px;
+  margin: 22px 0 8px;
+}
+.sync-popover.is-inline .sync-hint.sync-empty-state {
+  border-color: var(--border-strong);
+  background: rgba(248, 249, 250, 0.7);
+  color: var(--text-faint);
+}
+
+/* ③ 「高级」⭐ **照图**：一整条**卡片行**（描边 ＋ 圆角 ＋ 白底 ✓），文字在左、箭头在右 ✓
+   （⛔ 上一版那枚自绘胶囊已撤 ✗ —— 图里它就是一条安静的行 ✓）。
+   ⭐ 展开时只把箭头转一下 ＋ 文字加深 ✓，⛔ 不整条染强调色 ✗。 */
+.sync-popover.is-inline .sync-advanced > summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  /* ⚠️ **实测两条** ✗：① `<summary>` 会继承上面的 `text-align: center` ⇒ 文字跑到中间 ✗；
+     ② `list-style: none` 对 `display: flex` 的 summary **不管用** ✗ ⇒ 左侧原生三角还在
+     ⇒ 必须左对齐 ＋ 显式盖 `::marker` ✓（都是真机看出来的 ✓）。 */
+  text-align: left;
+  padding: 10px 14px; margin: 22px 0 0;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface); color: var(--text);
+  font-size: 12.5px; cursor: pointer; list-style: none;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.sync-popover.is-inline .sync-advanced > summary::-webkit-details-marker { display: none; }
+.sync-popover.is-inline .sync-advanced > summary::marker { content: ""; }
+/* ⚠️ **实测**：基样式里本来就有 `.sync-advanced > summary::before { content: "▸ " }`（`App.css:2070` ✗）
+   ⇒ ⭐ 我加的 `::after` 会让屏幕上出现**两个三角** ✗（真机截图看到的 ✓）⇒ 在这一档里把它**中和掉** ✓。 */
+.sync-popover.is-inline .sync-advanced > summary::before { content: none; }
+.sync-popover.is-inline .sync-advanced > summary::after { content: "\25B8"; font-size: 10px; opacity: 0.7; }
+.sync-popover.is-inline .sync-advanced[open] > summary::after { content: "\25BE"; }
+.sync-popover.is-inline .sync-advanced > summary:hover { background: var(--hover); border-color: var(--border-strong); }
+.sync-popover.is-inline .sync-advanced[open] > summary { color: var(--accent-strong); }
+
+/* ④ 卡片语言统一：读数行/卡片圆角与底色一致 ＋ hover 反馈；中继那格的状态做成小胶囊 */
+.sync-popover.is-inline .sync-row,
+.sync-popover.is-inline .sync-card { border-radius: var(--radius-md); background: var(--surface); }
+.sync-popover.is-inline .sync-card { box-shadow: 0 1px 2px rgba(31, 35, 41, 0.04); }
+.sync-popover.is-inline .sync-row { transition: border-color 120ms ease; }
+.sync-popover.is-inline .sync-row:hover { border-color: var(--border-strong); }
+.sync-popover.is-inline .relay-status .sync-row-value {
+  padding: 2px 9px; border-radius: 999px; background: var(--hover); font-size: 11px;
+}
+.sync-popover.is-inline .relay-status.is-muted .sync-row-value { color: var(--text-faint); }
+
+/* ⑤ 节奏：分组之间留白，别贴在一起 */
+.sync-popover.is-inline .sync-nearby { gap: 12px; }
+.sync-popover.is-inline .sync-group { gap: 10px; }
+.sync-popover.is-inline .sync-profiles { padding: 16px 0; }
+
+/* ⑥ 阅读宽度：面板**照样铺满** ✓（底色与滚动都在 ✓），但**内容**别横跨整屏 ✗ ——
+   ⚠️ 截图里那行字左右拉到 1400px ⇒ 读起来散 ✓；这里给内容一档上限 ✓。
+   ⚠️⭐ **不许加 `margin-inline: auto`** ✗（**实测踩到** ✓）：这一档是 **flex 列**
+   （`.sync-popover.is-sync` 的 `display:flex; flex-direction:column` ✓）⇒ 子项上的 auto 边距会**吸收交叉轴
+   的空隙** ⇒ ⭐ 每一项**按内容宽居中** ✗（真机截图：整块挤成中间一条 ✓）。去掉 auto 边距、吃默认的
+   `align-self: stretch` ⇒ 限宽之后**左对齐** ✓✓（与全站正文一致 ✓）。 */
+.sync-popover.is-inline > * {
+  /* ⭐ **2026-10-14（owner：「右边留白太大了」）** ✗：⭐ 上一版只写 `max-width: 920px` ✓
+     ⇒ 在 ~1093px 的内容区里右边空出 ~170px ✗。⇒ ⭐ `width: 100%` **铺满** ✓，
+     只有超过 1120px 才限宽，而且那时**居中** ✓（左右对称 ✓）。
+     ⚠️ 两个必须**一起写** ✗：flex 子项上只写 `margin-inline: auto`（不带 `width: 100%`）
+     会被解释成"按内容宽居中" ⇒ 上一轮就这么翻过车 ✓。 */
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+}
+
+/* ④ ⭐ **照桌面版高保真效果图**再补两条（⛔ 不加花样 ✗，图上就是这两件事）： */
+
+/* · 同一张卡里两行读数之间是一条**细分割线** ✓（图里「监听地址 / 端口」那段就是这样 ✓），
+     ⛔ 不是每行各套一个框 ✗。 */
+.sync-popover.is-inline .relay-status .sync-att + .sync-att {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+/* · 设备卡右上那颗主按钮照图是**实心强调色** ✓（「立即同步」/「重新配对」/「接入」✓）；
+     ⭐ 但**解除配对**那颗不动 ✗ —— 图里它是次要动作，实心色会让它太抢眼 ✓（nearby-unpair 那颗排除在外 ✓）。 */
+.sync-popover.is-inline .sync-nearby-row > .sync-btn:not([data-testid="nearby-unpair"]) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.sync-popover.is-inline .sync-nearby-row > .sync-btn:not([data-testid="nearby-unpair"]):hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* ⭐⭐ **2026-10-14（owner：「卡片都没有对齐」）** ✗ —— ⭐ 真因是**两条水平内边距**（**量出来的** ✓）：
+   · 状态卡住在 `header.sync-head` 里，而那个 header 有 `padding: 16px` ✗ ⇒ 它比别的卡右缩 16px ✓；
+   · 「设置」组里的卡住在 `.sync-profiles`，那个容器有 18px 内边距 ✗（⭐ **是我上一轮加的** ✗）⇒ 右缩 18px ✓。
+   ⇒ ⭐ 在这一档里把这两处**水平**内边距归零 ✓（垂直留着 ✓），让**所有卡共用同一条左右边缘** ✓
+   （⭐ 这也正是效果图的样子：标题与它下面的卡**左对齐** ✓）。⛔ 只钉 `.is-inline` ✗。 */
+.sync-popover.is-inline .sync-head { padding-left: 0; padding-right: 0; }
+.sync-popover.is-inline .sync-profiles { padding-left: 0; padding-right: 0; }
+
+/* ⭐⭐ **2026-10-14（owner：「中继服务卡片错位」）** ✗ —— ⭐ 真因**量出来的** ✓：
+   `.sync-group.is-advanced` 带着 `margin: 16px 16px` ✗ ⇒ 里面那张中继卡整体**右推 16px**
+   （左 **468** vs 别的卡 **452** ✗），⭐ 而且右边**溢出**出内容区（**1388 > 1372** ✗）。
+   ⇒ ⭐ 水平外边距也要归零 ✓（垂直的留着 ✓）—— ⭐ 与上面那条「水平内边距归零」是同一个病 ✓：
+   ⭐ **任何一层加出来的水平间距，都会让卡片错位** ✓。 */
+.sync-popover.is-inline .sync-group { margin-left: 0; margin-right: 0; }
+
+/* ⭐⭐ **2026-10-14（owner：「这部分不像是一组的」）** ✗ —— ⭐ 真因**量出来的** ✓：折叠里是
+   **三张各自带描边的卡**堆在一起 ✓（`summary` ／ `details.sync-row` ／ `.relay-status` 都是
+   920 宽 ＋ 圆角 8 ＋ 白底 ✓）⇒ 看起来像三个不相干的东西 ✗。
+   ⇒ ⭐ 修法：把**折叠本身**做成一张卡 ✓，摘要＝它的**标题行**（展开时底下一条细线 ✓），
+   里面那些「各自带框」的元素全部降成**组内的行** ✓（⛔ 不再各自一个框 ✗），行与行之间一条细线 ✓。
+   ⭐ 这才是效果图里那种「一张卡装一组设置」的样子 ✓。⛔ 只钉 `.is-inline` ✗（抽屉/浮层不动 ✓）。 */
+.sync-popover.is-inline .sync-advanced {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0;
+  overflow: hidden;
+}
+.sync-popover.is-inline .sync-advanced > summary {
+  margin: 0; border: 0; border-radius: 0; background: transparent;
+}
+.sync-popover.is-inline .sync-advanced[open] > summary { border-bottom: 1px solid var(--border); }
+/* 卡内：所有「各自带框」的行/卡 ⇒ 去框 ✓（保留它们自己的内边距与 hover ✓） */
+.sync-popover.is-inline .sync-advanced .sync-row,
+.sync-popover.is-inline .sync-advanced .sync-card,
+.sync-popover.is-inline .sync-advanced > .sync-profiles details.sync-row {
+  border: 0; border-radius: 0; box-shadow: none; background: transparent;
+}
+/* 组内左右留一点边距 ✓（行自己的内边距还在 ⇒ 文字与标题行大致对齐 ✓） */
+.sync-popover.is-inline .sync-advanced > .sync-profiles,
+.sync-popover.is-inline .sync-advanced > .sync-group { padding-left: 14px; padding-right: 14px; }
+.sync-popover.is-inline .sync-advanced > .sync-profiles { padding-top: 4px; padding-bottom: 12px; }
+.sync-popover.is-inline .sync-advanced > .sync-group { padding-top: 4px; padding-bottom: 10px; }
+/* 行与行、组与组之间的**细线** ✓（顺序：先一条竖线上面的分隔 ✓） */
+.sync-popover.is-inline .sync-advanced > .sync-profiles + .sync-group,
+.sync-popover.is-inline .sync-advanced > .sync-group + .sync-group { border-top: 1px solid var(--border); }
+.sync-popover.is-inline .sync-advanced .sync-group > details.sync-row + details.sync-row { border-top: 1px solid var(--border); }
+
+/* ⭐ **2026-10-14（owner：「去掉这根横虚线」）** ✗ —— ⭐ 真身**量出来的** ✓：那条虚线是
+   `.sync-row-body` 上的 `border-top: 1px dashed` ✓（**基样式**里就有 ✓，折里两行都带 ✓）
+   ⇒ ⭐ 它是"内容区可折叠"那个时代的遗物 ✗（现在这些行是**常开**的 ✓）⇒ 纯多余 ✓。
+   ⭐ 只在**折里**去掉 ✓（⛔ 别处用 `.sync-row-body` 的地方一个字节不动 ✗）。 */
+.sync-popover.is-inline .sync-advanced .sync-row-body { border-top: 0; }
+
+/* ⭐⭐ **2026-10-14（owner：「优化文案及布局」）** ✗：中继那一格的**层级**用两条 CSS 说清 ✓
+   （⛔ 只钉内容区那一档 ✗ —— 抽屉/浮层不动 ✓）：
+   · 动作行原来是"按钮 ＋ 长说明"挤一行 ⇒ 说明被挤到右边折行 ✗ ⇒ 改成**块**：按钮一行 ✓、说明一行 ✓；
+   · 那行**机器细节**（后端原文 ✓）是"证据"不是"结论" ⇒ 更小、更淡 ✓（⛔ 一个字不改写 ✗）。 */
+/* ⭐ **2026-10-14（owner：「把重新检查按钮放在最右边」）** ✗：⭐ DOM 顺序是 **[按钮][说明]** ✓ ⇒
+   光靠 `justify-content` 只会把按钮留在左边 ✗ ⇒ 用 **`row-reverse`**（视觉上：说明在左 ✓、按钮在右 ✓）
+   ＋ `space-between`（按钮贴右边缘 ✓）✓。⛔ 不动 markup ✗、⛔ 只钉内容区那一档 ✗。 */
+.sync-popover.is-inline .relay-status .sync-att:has(> .sync-btn) {
+  display: flex; flex-direction: row-reverse; align-items: center; justify-content: space-between; gap: 10px;
+}
+.sync-popover.is-inline .relay-status .relay-detail { font-size: 10.5px; line-height: 1.5; opacity: 0.9; }
+
+/* ⭐ 同上：「还没发现别的设备… 正在找」那行与绿卡只隔 13px ✗（读数 ✓）⇒ 给它一点上边距 ✓。 */
+.sync-popover.is-inline .sync-hint + .sync-hint { margin-top: 6px; }
+
+/* ⭐⭐ **2026-10-14（owner）**：① 标题**放大** ✓（量出来的现状是 **14px** ✓ ⇒ 20px ✓ —— 这一档里它
+   该是全屏最大的字 ✓）；② **下间距加大** ✓（标题→副标题 6px ✓、副标题→绿卡 12px ✓ ——
+   原来副标题与绿卡是**紧贴**的（间距 0 ✓，实测 ✓））；③ **上留白收小** ✓（面板顶 24 ⇒ 12 ✓、
+   头部自己那 14 ⇒ 6 ✓ ⇒ 标题距顶从 **38** 收到约 **18** ✓）。
+   ⛔ 只钉 `.sync-popover.is-inline` ✗ —— 抽屉／浮层／手机面板一个字节不动 ✓。 */
+/* ⭐ **2026-10-14（owner：「标题上边的留白再略微大一点点」）** ✗：上一轮从 38 收到 18（12 ＋ 6 ✓）
+   ⇒ 这一轮给回 **4px** ⇒ 标题距顶 **22** ✓（"略微" ✓，⛔ 不是回到 38 ✗）。 */
+.sync-popover.is-inline { padding-top: 16px; }
+.sync-popover.is-inline .sync-head { padding-top: 6px; }
+.sync-popover.is-inline .sync-head .sync-title { font-size: 20px; margin: 0 0 6px; line-height: 1.25; }
+.sync-popover.is-inline .sync-subtitle { margin-bottom: 12px; }
