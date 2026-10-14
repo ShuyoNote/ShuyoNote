@@ -25779,3 +25779,35 @@ body.is-plugin-panel-open .main {
   min-height: 0;
   line-height: 1.5;
 }
+
+/* ═══ ⭐ 刀十六①（2026-10-14，owner：「按这个图复刻…要铺满页面内容区」）✗ ═══
+   ⚠️ ⭐ **只钉 `.sync-popover.is-inline`** ✓ —— 那是「面板被嵌进内容区」（`App.tsx`: `<div className="main"><SyncPanel contentOnly /></div>` ✓）
+   ⭐ **那一档** ✓；⛔ ⭐ `.sync-popover` 本体**一个字节不动** ✗（⭐ 浮层那份还在用 ✓ —— 桌面档仍走浮层 ✓）。
+   ⭐ 抽屉那套在这档里要全松开：定位／宽度／最大宽度／最大高度／外边距／描边／圆角／阴影／底色 都归零或铺满 ✓，
+   ⭐ 内边距照图 ≈ `24px 28px` ✓。 */
+.sync-popover.is-inline {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 24px 28px;
+}
+/* ⭐ 里面那几层也跟着铺满 ✓（⭐ 只在这档里 ✓）。 */
+.sync-popover.is-inline .sync-group,
+.sync-popover.is-inline .sync-card,
+.sync-popover.is-inline .sync-profiles {
+  width: 100%;
+  max-width: none;
+}
+/* ⭐ 刀十六③（照图肉眼可辨的那几条 ✓）：⭐ 三段卡片一行占满 ＋ 圆角照图 ✓（⭐ 只钉 `.sync-nearby` 家族 ✓）。 */
+.sync-nearby { gap: 10px; }
+.sync-nearby-row { width: 100%; border-radius: var(--radius-md); }
+/* ⭐ 段标题照图：⭐ 略大一号 ＋ 与上一段拉开（⭐ 只钉那三个 testid ✓）。 */
+[data-testid^="nearby-group-"] { font-size: 13px; margin-top: 14px; }
