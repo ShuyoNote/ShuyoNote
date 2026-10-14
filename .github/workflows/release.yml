@@ -595,6 +595,20 @@ jobs:
         # 桌面那两处同形，只是 release 只在 tags 上跑、还没轮到它红）。
         run: node scripts/sm-library-build.mjs --openssl-dir "$OPENSSL_DIR" --print-env >> "$GITHUB_ENV"
 
+      # ⭐ 阶段 3（R204 owner 拍「交付单立」）：**移动端自己的版号** ✓ —— 一条链，⛔ 不是两条 ✗：
+      #    `mobile-version.json`（唯一事实源 ✓）⇒ `scripts/write-mobile-version.mjs` ⇒
+      #      ① `tauri.properties` 的 `tauri.android.versionName`/`versionCode`（APK 里那个号 ✓）
+      #      ② env `MOBILE_APP_VERSION`（`vite.config.ts` 的 define ⇒ `src/lib/links.ts` 的 `APP_VERSION`
+      #         ⇒ 启动页／关于屏显示的就是**同一个号** ✓）
+      #    ⚠️ 位置：必须在 `tauri android init` **之后**（init 会重写 `tauri.properties`，写在前面会被覆盖 ✗）、
+      #      在 `tauri android build` **之前** ✓（那一步内部的 `beforeBuildCommand: pnpm build` 会再跑一遍前端构建 ✓）。
+      #    ⛔ 这里**不写版号的值** ✗（只读 `mobile-version.json` ✓）；⛔ 不碰任何签名/口令段 ✗。
+      - name: 移动端自己的版号（写 tauri.properties ＋ 导出 MOBILE_APP_VERSION）
+        run: |
+          set -e
+          node scripts/write-mobile-version.mjs
+          echo "MOBILE_APP_VERSION=$(node -p "require('./mobile-version.json').mobileVersion")" >> "$GITHUB_ENV"
+
       - name: Build APK (arm64, unsigned -> 下一步用正式密钥签)
         # 只打 APK（`--apk`），**不打 AAB**。
         # 先钉死"没有测试钩子"：这一步内部会**再跑一遍** `pnpm build`
