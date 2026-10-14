@@ -5,6 +5,7 @@ import { isMobileViewport } from "../hooks/useMobile";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
+import { useEmailPanel } from "../store/emailPanel";
 import { api } from "../lib/api";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
@@ -118,6 +119,11 @@ export function ActivityBar() {
   //   ⚠️⭐ 拉不到 ⇒ `null` ✓；⭐ `0` 与 `null` 都**不显示** ✓ —— ⛔ 绝不写"0 台在线" ✗
   //      （"没有对端"与"没读到"是两件事 ✓，界面上必须长得不一样 ✓）。
   const [syncPeers, setSyncPeers] = useState<number | null>(null);
+  // ⭐ **P-2b（2026-10-13）**：⭐ 左栏那颗「邮箱」入口的**未读徽标** ✗ ——
+  //   ⚠️ 接的是**已有真读数**：⭐ `useEmailPanel` 的 `unread` ✓（⭐ 徽标唯一来源 ✓ ——
+  //      面板自己那份不算 ✗，⛔ 不另造一个数 ✗）。
+  //   ⚠️ 取不到（`undefined`）⇒ ⭐ **如实不显示** ✗（⛔ 不编 0 ✗、⛔ 不编 99 ✗）。
+  const mailUnread = useEmailPanel((s) => s.unread);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -211,6 +217,27 @@ export function ActivityBar() {
           {typeof syncPeers === "number" && syncPeers > 0 && (
             <span className="sync-badge" aria-label={`本网段发现 ${syncPeers} 台`}>
               {syncPeers}
+            </span>
+          )}
+        </button>
+        {/* ⭐ **P-2b**：⭐ 左栏常驻「**邮箱**」入口 ✗ —— 与上面那颗「同步」**同形** ✓，
+            差别只有两处（都是刻意的 ✓）：
+              ⭐ 它**不 `setView`** ✗ —— ⭐ 邮箱是弹层、不是 `AppView` 的一员 ✓
+                ⇒ ⭐ 点它**只调 store**：`useEmailPanel.getState().openPanel()` ✓；
+              ⚠️ 徽标 ⭐ **取不到就先不显示** ✗（`typeof … === "number"` 那一格就是它 ✓）。
+            ⛔ 字形用一个字符（`✉`）✗：⭐ 全仓没有邮箱图标 ✓ ⇒ ⛔ 不引新依赖／不新建图标 ✓。 */}
+        <button
+          className="activity-btn"
+          title="邮箱"
+          aria-label="邮箱"
+          data-testid="rail-mail"
+          onClick={() => useEmailPanel.getState().openPanel()}
+        >
+          <span aria-hidden="true">✉</span>
+          <span>邮箱</span>
+          {typeof mailUnread === "number" && mailUnread > 0 && (
+            <span className="sync-badge" aria-label={`${mailUnread} 封未读`}>
+              {mailUnread > 99 ? "99+" : mailUnread}
             </span>
           )}
         </button>
