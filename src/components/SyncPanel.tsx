@@ -2257,7 +2257,6 @@ export function SyncPanel({
                 ⭐ 两句话都是**后端出的原文**（`api.relayStatus` / `api.relayProbe` ⇒
                 `src/lib/relay/statusView.ts` ⇒ 这一块只摆上去）——
                 ⛔ 界面不自己算天数、⛔ 读不到时也不编一个数（那两格说"读不到有效期"）✓。 */}
-            <RelayStatusSection />
 
             {/* ④ 设备直连 ← 原来的 `.sync-att.sync-mesh`（名字照 owner 裁定 §9.1 改，别的没动）
                 （门槛一个字没改：网格不需要服务端地址，只要这个空间有 `space_id`）
@@ -2289,6 +2288,7 @@ export function SyncPanel({
                 {/* 片 D1e-4（2026-10-14，owner 拍）：深一层的那些 ⇒ 另一个折叠 ✓（⭐ 只包拉取间隔那一块 ✓）*/}
                 <details className="sync-advanced">
                   <summary>更多设置</summary>
+                  <RelayStatusSection />
                 <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                   <summary>
                     <span className="sync-row-label">设备直连</span>
