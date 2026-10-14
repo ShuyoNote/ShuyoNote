@@ -2323,6 +2323,9 @@ export function SyncPanel({
                     ★ 规格 §9.3：「设备直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
                       关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
                     ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
+                {/* 片 D1e-4（2026-10-14，owner 拍）：深一层的那些 ⇒ 另一个折叠 ✓（⭐ 只包拉取间隔那一块 ✓）*/}
+                <details className="sync-advanced">
+                  <summary>更多设置</summary>
                 {lanDirectOn && (
                   <details className="sync-row is-child">
                     <summary>
@@ -2354,6 +2357,7 @@ export function SyncPanel({
                     </div>
                   </details>
                 )}
+                </details>
 
                 {/* ⑥ 附近设备（丙档需求 §4.1 的那一块）。
                     ★ 门槛：**与父项同一个 `lanDirectOn`** —— 设备直连直连关着 ⇒ 不显示（"没开就不会去发现"）。
@@ -2362,12 +2366,12 @@ export function SyncPanel({
                     ★ 2026-09-29（规格 §12.1）：这一块**原本默认折叠**，形态与面板里其它行一致
                        （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
                        摘要那一格是 `nearbySummary`（四态见上面那段注释）。
-                       ⚠️ **2026-10-14（owner：主视图要看得见 ✓）**：⭐ 改成**默认展开** ✗ ——
-                       因为「需要重新配对／已信任／待配对」**三段标题**落在这一块里 ✓，
-                       折起来就**第一眼看不见** ✓；⭐ 其余那些 `sync-row` **仍是折叠** ✓（只这一条开 ✓）。
+                       ⚠️ **2026-10-14**：⭐ 那三段设备**已搬到 hero 之后**（片 D1d ✓）⇒
+                       这一块（配对那两块：`device-unpair` ／ `device-pair` ✓）**默认折叠** ✓
+                       （⛔ 不再 `open` ✗ —— 它是设置类的 ✓，图上也没有 ✓）；⭐ 而「附近设备」整块留在主视图 ✓。
                        ⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
                 {lanDirectOn && (
-                  <details className="sync-row" open>
+                  <details className="sync-row">
                     <summary>
                       <span className="sync-row-label">附近设备</span>
                       <span className="sync-row-value">{nearbySummary}</span>
