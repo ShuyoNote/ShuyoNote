@@ -1570,6 +1570,26 @@ html[data-platform="win"] .app-body {
    ⚠️ 说明这一格要能换行（窄屏下"没报可以直连的地址"那一截不许被裁掉）⇒ `flex: 0 1 auto`。 */
 .sync-nearby-row > .sync-hint { margin-left: auto; text-align: right; flex: 0 1 auto; }
 .sync-nearby-row > .sync-btn { margin-left: auto; flex: none; }
+/* ⭐ **刀六-2（2026-10-14，owner：「按最后的桌面版高保真效果图设计进行开发」）** ✗ ——
+   ⚠️ 只加下面这几条 `.sync-nearby*`（⛔ 别的选择器一个字没动 ✗）；变量名照抄上面那几条：
+   `--border`（`:29` ✓）／`--radius-sm`（`:80` ✓）／`--bg`（`:25`／`:118` ✓）。
+   ⭐ 为什么这几条就够：⭐ 那一行**本来就是**卡片 ✓（`:1556-1558` 已有 `border` ＋ `--radius-md` ＋ `--card-bg` ✓）
+   ＋ ⭐ 动作按钮**本来就**贴右 ✓（`:1571`／`:1572` ✓）⇒ ⭐ 差的只是：
+     · ⭐ 那一段**左对齐** ✓（⭐ 刚搬出 hero ✓，⭐ 这里再保底一道 ✓，⛔ 不吃 `text-align:center` ✗）
+     · ⭐ 名字**加粗** ✓（⭐ 图上名字是粗的 ✓）
+     · ⭐ 卡片内边距**放宽一点** ✓（⭐ 7px 10px ⇒ 10px 12px ✓，⭐ 更像卡片 ✓）
+     · ⭐ 末位元素贴右写成通例 ✓（⭐ 覆盖"状态胶囊"那一类将来会加的元素 ✓）
+   ⚠️ **本轮是纯 CSS** ✓：⛔ `SyncPanel.tsx` 一个字没动 ✗、⛔ 六个 `data-testid` 没动 ✗。 */
+.sync-nearby { text-align: left; }
+.sync-nearby .sync-hint { text-align: left; }
+.sync-nearby-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.sync-nearby-row .sync-nearby-name { font-weight: 600; }
+.sync-nearby-row > :last-child { margin-left: auto; }
 /* 非 Tauri 平台（含桌面浏览器与手机浏览器）**不提供**多设备同步，故整个面板禁灰、不可交互。
  *
  * **产品决定（2026-09-15）**：Web 版不开多设备同步；**但 `web.ts` 的实现保留、不要删**。
