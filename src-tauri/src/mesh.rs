@@ -1212,6 +1212,14 @@ pub struct MeshConfigState {
     /// ⚠️ 从 `note` 里**搬出来**的（⛔ 不是加一份复制 ✗ —— 同一件事两份说法迟早漂开 ✓）：
     /// `note` 现在只说"开没开、窗口在哪" ✓，这一格只说"对面能不能连上我" ✓。
     pub reach: String,
+    /// ⭐ **2026-10-14（owner 给了参照图）** ✗：⭐ **枚举到的那个可达 base** ✓（形如
+    /// `http://192.168.43.206:8788` ✓；枚举不出／窗口没起来 ⇒ `None` ✓）。
+    ///
+    /// ⚠️ ⭐ 与 `window` **不是一回事** ✗：`window` 是"窗口**绑**在哪儿" ✓（绑通配时它就是
+    /// `0.0.0.0` ✗），而这一格是"**报出去的那个**" ✓ —— 界面上那句「报出去的是 …」只能用它 ✓
+    /// （⛔ 拿 `window` 会写出 `0.0.0.0` ✗，那是**编造** ✓）。
+    /// ⚠️ 界面**只取它的 host** ✓（`new URL(...).hostname` ✓ —— 结构化字段 ✓，⛔ 不解析人话 ✗）。
+    pub announced: Option<String>,
 }
 
 /// 把"设置 ＋ 窗口实际地址"变成给人看的读数 —— **纯函数**（判据不打桩）。
@@ -1278,6 +1286,8 @@ pub fn config_state(
         paired: paired.to_vec(),
         note,
         reach,
+        // ⭐ 与上面 `reach` 里那句「报出去的是枚举到的 …」**同一个来源** ✓（`announced_base` ✓，纯函数 ✓）。
+        announced: window.and_then(announced_base),
     }
 }
 
