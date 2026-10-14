@@ -581,6 +581,15 @@ export const GATES = [
       "2026-09-18 spike 问题二查出**正文文本有两条派生实现**（7 个样本里 4 个结果不同，症状是搜索片段/反链随『谁最后保存』变）；同族风险是派生**表**长出第二个写入者 —— 两边各写一份时两侧测试都绿，用户看到的是同一份附件两套派生文本。Windows 裁定「写只有一处（TS 抽取管线：src/lib/extract/store.ts / chunkStore.ts）」，并要求把这条落成**可执行判据**（原话：只写在文档里的规则会漂）。Rust 侧今天确有两处 INSERT，但都在 #[cfg(test)] 里播种夹具 ⇒ 判据必须做区域判定（与 check-doc-content-access 共用 scripts/lib/rust-scan.mjs）",
   },
   {
+    id: "check-mobile-screen-reachable",
+    group: "contract",
+    label: "移动屏可达性（棘轮：显式登记表只增不减；不许有死屏）",
+    // 为什么挂 contract：纯 Node、离线、零依赖、约 1 秒 ⇒ 本机默认组与 CI 的 `checks` 都能跑。
+    cmd: "node scripts/check-mobile-screen-reachable.mjs",
+    incident:
+      "2026-10-14 侦察实测（台账 R205）：**`MobileSettings` 是死屏** ✗ —— 屏在 ✓、**门没有** ✗（全 `src/` grep 排除它自己后零命中，且 `mobileNav.ts:17` 的 `MobileScreen` 联合类型里没有 `settings`）⇒ 用户到不了它，而这是**人读出来的**、没有任何机器挡着 ✓。同轮还量到 `MobileAbout` **不是**死屏（`src/store/editor.ts:83` 有 `openAbout`、`App.tsx:1206` 有渲染），但**手机上同样点不到** ✗（它沿用 `aboutOpen` ⇒ 走桌面 chrome 那条路：设置对话框 `SettingsDialog.tsx:1539`／更新横幅 `UpdateBanner.tsx:45`）⇒ 两种\"到不了\"都必须被**明写**出来，⛔ 不许含糊成\"大概能到\" ✗。判据：盘上每个 `Mobile*.tsx` 屏文件必须在显式登记表里（新屏没登记 ⇒ 红）；登记项写 `reach`（nav／currentId／not-a-screen）与 `reachable`（布尔）⇒ 对 `nav` 且可达的那些，全仓必须存在 `setScreen(\"<id>\")` 的**入口调用**（门被删掉 ⇒ 红）；表长必须等于常量（棘轮，只增不减）。⛔ 纯静态源码扫描，不依赖浏览器/平台 ✗。",
+  },
+  {
     id: "check-mobile-class-namespace",
     group: "contract",
     label: "移动屏借桌面布局类（棘轮：显式白名单只减不增）",

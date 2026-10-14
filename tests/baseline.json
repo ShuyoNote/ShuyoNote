@@ -56,6 +56,7 @@
       "check-mcp-host-authz",
       "check-mcp-host-channel",
       "check-mobile-class-namespace",
+      "check-mobile-screen-reachable",
       "check-nsis-template",
       "check-ocr-assets",
       "check-ontology-generated",
