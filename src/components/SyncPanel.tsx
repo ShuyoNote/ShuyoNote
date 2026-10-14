@@ -2205,12 +2205,15 @@ export function SyncPanel({
                     ★ 门槛：**与父项同一个 `lanDirectOn`** —— 设备直连直连关着 ⇒ 不显示（"没开就不会去发现"）。
                     ⚠️ 列表**只有一处来源**（`lanStatus.nearby`，与 `peers` 同一次读数）；
                        行数**不许**自己数 `lanStatus.peers`（两条数法迟早会漂，规格 §2 第一条不变式）。
-                    ★ 2026-09-29（规格 §12.1）：这一块**默认折叠**，形态与面板里其它行一致
+                    ★ 2026-09-29（规格 §12.1）：这一块**原本默认折叠**，形态与面板里其它行一致
                        （`<details className="sync-row">` ＋ 摘要「N 台」＋ `›`）——
-                       摘要那一格是 `nearbySummary`（四态见上面那段注释），设备行
-                       **点开才显示**。⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
+                       摘要那一格是 `nearbySummary`（四态见上面那段注释）。
+                       ⚠️ **2026-10-14（owner：主视图要看得见 ✓）**：⭐ 改成**默认展开** ✗ ——
+                       因为「需要重新配对／已信任／待配对」**三段标题**落在这一块里 ✓，
+                       折起来就**第一眼看不见** ✓；⭐ 其余那些 `sync-row` **仍是折叠** ✓（只这一条开 ✓）。
+                       ⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
                 {lanDirectOn && (
-                  <details className="sync-row">
+                  <details className="sync-row" open>
                     <summary>
                       <span className="sync-row-label">附近设备</span>
                       <span className="sync-row-value">{nearbySummary}</span>
