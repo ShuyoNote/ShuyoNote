@@ -25769,3 +25769,13 @@ body.is-plugin-panel-open .main {
 
 /* 刀十②：空段的虚线框复用现成的 `.sync-empty-state` ✓ —— 只把它在空段里的居中改回左对齐 ✓（⭐ 只钉那三个 testid ✓，⛔ 别的选择器不动 ✗）。 */
 [data-testid^="nearby-group-"] + .sync-empty-state { text-align: left; }
+
+/* 刀十二①（2026-10-14，owner：「跟效果图差得远！」）：空段那三个虚线框**收紧成一行高** ✓
+   ⚠️ **不动 `.sync-empty-state` 本体** ✓（别处也在用 ✓）⇒ 只加「在空段里」的覆盖 ✓，
+   选择器只钉那三个 `nearby-group-*` 的**紧邻兄弟** ✓（⛔ 别的选择器一个不碰 ✗）。 */
+[data-testid^="nearby-group-"] + .sync-empty-state {
+  padding: 6px 10px;
+  margin: 4px 0 0;
+  min-height: 0;
+  line-height: 1.5;
+}
