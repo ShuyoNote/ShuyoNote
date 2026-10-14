@@ -2303,8 +2303,6 @@ export function SyncPanel({
                       关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
                     ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
                 {/* 片 D1e-4（2026-10-14，owner 拍）：深一层的那些 ⇒ 另一个折叠 ✓（⭐ 只包拉取间隔那一块 ✓）*/}
-                <details className="sync-advanced">
-                  <summary>更多设置</summary>
             {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
                 <span className="sync-att-text">
@@ -2418,7 +2416,6 @@ export function SyncPanel({
                     </div>
                   </details>
                 )}
-                </details>
 
                 {/* ⑥ 附近设备（丙档需求 §4.1 的那一块）。
                     ★ 门槛：**与父项同一个 `lanDirectOn`** —— 设备直连直连关着 ⇒ 不显示（"没开就不会去发现"）。
@@ -2432,8 +2429,6 @@ export function SyncPanel({
                        （⛔ 不再 `open` ✗ —— 它是设置类的 ✓，图上也没有 ✓）；⭐ 而「附近设备」整块留在主视图 ✓。
                        ⚠️ 没开设备直连时整块**不出现**（不是灰掉，§9.3）。 */}
                 {/* 刀三-2（2026-10-14）：配对那两块 ＋ 它所在的这一层条件 ⇒ 收进一个折叠 ✓（⭐ 主视图只留三段设备 ✓） */}
-                <details className="sync-advanced">
-                  <summary>配对与设备</summary>
                 {lanDirectOn && (
                   <details className="sync-row">
                     <summary>
@@ -2624,7 +2619,6 @@ export function SyncPanel({
                     </div>
                   </details>
                 )}
-                </details>
               </>
             )}
 
