@@ -581,6 +581,15 @@ export const GATES = [
       "2026-09-18 spike 问题二查出**正文文本有两条派生实现**（7 个样本里 4 个结果不同，症状是搜索片段/反链随『谁最后保存』变）；同族风险是派生**表**长出第二个写入者 —— 两边各写一份时两侧测试都绿，用户看到的是同一份附件两套派生文本。Windows 裁定「写只有一处（TS 抽取管线：src/lib/extract/store.ts / chunkStore.ts）」，并要求把这条落成**可执行判据**（原话：只写在文档里的规则会漂）。Rust 侧今天确有两处 INSERT，但都在 #[cfg(test)] 里播种夹具 ⇒ 判据必须做区域判定（与 check-doc-content-access 共用 scripts/lib/rust-scan.mjs）",
   },
   {
+    id: "check-mobile-class-namespace",
+    group: "contract",
+    label: "移动屏借桌面布局类（棘轮：显式白名单只减不增）",
+    // 为什么挂 contract：纯 Node、离线、零依赖、约 1 秒 ⇒ 本机默认组与 CI 的 `checks` 都能跑。
+    cmd: "node scripts/check-mobile-class-namespace.mjs",
+    incident:
+      "2026-10-13 owner 问「移动端要不要单立产品线，单立到哪一级」（台账 R203）时，实测出一个反复出现的形状：**移动屏直接借桌面布局类** ✗ —— 最典型就是 7 屏全写成 `<div className=\"main mhome\">` 这类 ✓。`src/App.css` 里 `.main` 有 11 处规则命中，其中 `body.is-toc-open .main`、`body.is-ai-open .main`、`body.is-plugin-panel-open .main` 全是**桌面侧的状态** ⇒ 移动屏借它，就跟着这些状态一起动：**桌面每加一个状态，移动屏被顺带动一下** ✓。这就是 owner 要「UI 单立」的动因之一。判据做成**纯静态源码扫描**（⛔ 不依赖浏览器/平台 ✗ —— 今晚 `(hover:none)`／`opened=false` 那种随环境变的东西不能用来当判据），白名单是**显式清单 ＋ 长度常量**（加行必改常量 ⇒ 悄悄加不了），**只减不增**。",
+  },
+  {
     id: "check-doc-content-access",
     group: "contract",
     label: "文档内容直接访问（只减不增：新文件 / 超基线即红）",

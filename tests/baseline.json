@@ -55,6 +55,7 @@
       "check-mcp-channel-judge",
       "check-mcp-host-authz",
       "check-mcp-host-channel",
+      "check-mobile-class-namespace",
       "check-nsis-template",
       "check-ocr-assets",
       "check-ontology-generated",
