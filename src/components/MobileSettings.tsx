@@ -8,7 +8,9 @@ import { pushOverlay } from "../lib/overlayStack";
 /**
  * **移动端设置**（效果图 `docs/plans/mobile/mockups/07-settings.svg`，规格 §4.7）。
  *
- * ⛔ **本文件当前【尚未接线】** ✗（2026-10-10 如实标注 ✓）：组件与样式都已写完 ✓，但
+ * ✅ **已接线**（2026-10-14 阶段 2 第一刀 ✓）：手机形态点 ⚙️ 即进本屏 ✓（分岔在 `ActivityBar` ✓，
+ *   桌面的 ⚙️ 仍开那个 `SettingsDialog` ✓）。⛔ 下面这段"尚未接线"的旧记录**保留**（它是当时实况 ✓）：
+ * ~~⛔ **本文件当前【尚未接线】** ✗（2026-10-10 如实标注 ✓）：组件与样式都已写完 ✓，但~~
  *   `App.tsx` 里**还没有**任何地方渲染它 ✓ —— 原因是接线方式会改变一个**被门禁测着的形态** ✗：
  *   `verify-mobile-overlays.mjs` 的 `settings` 层（`root: ".set-overlay"`, `box: ".set-dialog"`）
  *   在**每个视口**都会 `openSettings("appearance")` 再量 `.set-dialog` / `.set-rail` 的几何 ✓，
@@ -28,7 +30,7 @@ import { pushOverlay } from "../lib/overlayStack";
  * - 与桌面端的差别：桌面摆得下 26 条能力开关／MCP／插件管理，移动端**只保留日常必需项** ✓
  *
  * ⚠️ 如实标注（不许编 ✗）：
- * - 「设备配对」的 **08 屏还没做** ✗ ⇒ 这一行现在是**只读展示**（`aria-disabled` ✓），点了不会有反应 ✓。
+ * - ⭐ 「设备配对」**已是真入口** ✓（2026-10-14 更新 ✓）：08 屏 owner 拍「走 A」并已落地 ⇒ 点它 `setScreen("pair")` ✓（⛔ 旧记录"08 屏还没做 ⇒ 只读展示"已过期 ✗）。
  *   接上 08 之后把它变成真入口 ✓。
  * - 同步状态那行：`useSyncStatus` 只给"**此刻**在不在搬／上一条消息／错误" ✓；
  *   `phase === "idle"` **只能**说明此刻没在搬 ✗，**不等于**"从没成功过" ✗
@@ -104,13 +106,16 @@ export function MobileSettings() {
       {/* ② 同步 */}
       <section className="mset-card">
         <div className="mset-group">同步</div>
-        <div className="mset-row" aria-disabled="true">
+        {/* ⭐ 阶段 2（R205）：**真入口** ✓ —— 08「设备配对 · 同步」屏 owner 拍了「走 A」并已落地 ✓
+            ⇒ ⛔ 原来的 `aria-disabled="true"` ＋ 「08 屏还没做」那句注释**已过期** ✗（2026-10-14 更新 ✓）。
+            ⚠️ 于是本屏顺手成了 08 的**第二个门** ✓（另一个是常驻「同步」胶囊 ✓）。 */}
+        <button className="mset-row" onClick={() => setScreen("pair")}>
           <span className="mset-body">
             <span className="mset-row-title">设备配对</span>
-            <span className="mset-row-sub">管理附近设备与配对暗号</span>
+            <span className="mset-row-sub">管理附近设备与配对</span>
           </span>
           <span className="mset-go" aria-hidden>›</span>
-        </div>
+        </button>
         <div className="mset-status">
           <span className={"mset-dot" + (error ? " is-bad" : syncing ? " is-busy" : "")} aria-hidden />
           <span className="mset-status-text">同步状态：{syncLine}</span>
@@ -139,6 +144,25 @@ export function MobileSettings() {
       {/* ④ 关于 */}
       <section className="mset-card">
         <div className="mset-group">关于</div>
+        {/* ⭐ 阶段 2（R205）：**手机上「关于」的入口** ✓ —— 沿用既有的 `aboutOpen` ✓
+            （`App.tsx` 那一支 `isMobile && aboutOpen` 自然接管 ✓，所以 `MobileAbout` 的消费者**不用改** ✓，
+             ⛔ 也**不新造状态** ✗）。 */}
+        <button
+          className="mset-row"
+          onClick={() => {
+            // ⚠️ 必须先**离开设置屏**（`setScreen("home")` ✓）：`App.tsx` 里 `settings` 支排在 `aboutOpen` **之前**
+            //    （那是为了让 ⚙️ 在任何时候都整屏进设置 ✓）⇒ 若停在 `settings`，`aboutOpen` 那支**永远轮不到** ✗
+            //    ⇒ 实测：只置 `aboutOpen` 时移动关于屏**不渲染** ✗（读到 `has=false`＋`labels:[]`＋返回键 `0×0` ✓）。
+            setScreen("home");
+            useEditorStore.getState().openAbout();
+          }}
+        >
+          <span className="mset-body">
+            <span className="mset-row-title">关于与更新</span>
+            <span className="mset-row-sub">版本 · 开源许可 · 链接</span>
+          </span>
+          <span className="mset-go" aria-hidden>›</span>
+        </button>
         <div className="mset-row">
           <span className="mset-body">
             <span className="mset-row-title">ShuyoNote · 开源许可 AGPL-3.0</span>
