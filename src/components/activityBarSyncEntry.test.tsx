@@ -80,9 +80,9 @@ async function renderBar(peers: number | null, opts: { reject?: boolean } = {}):
 
 /** 竖条里那颗「同步」按钮（⭐ 按**可见文案**找 ⇒ ⛔ 不依赖 testid ✗）。 */
 function syncEntry(el: HTMLElement): HTMLButtonElement | undefined {
-  return [...el.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
-    (b.textContent ?? "").includes("同步"),
-  );
+  // ⭐ **2026-10-14（owner：「去掉侧边工具栏里面的按钮汉字」）** ✗ —— ⭐ 那颗按钮不再有汉字 ✓
+  //   ⇒ ⭐ 判据改**按 `data-testid` 认它** ✓（⭐ 断言一条没删 ✓ —— 按 R192「换对象不删断言」✓）。
+  return el.querySelector<HTMLButtonElement>('[data-testid="rail-sync"]') ?? undefined;
 }
 
 
@@ -104,7 +104,9 @@ describe("2026-10-14：左栏「邮箱」换成 SVG（与其余图标同一套�
 
   it("② ⭐（源码级）那颗邮箱**用的是新 SVG 组件** `MailIcon`（今天【红】✓）", () => {
     const bar = src("ActivityBar.tsx");
-    expect(bar, "⭐ 必须出现 `<MailIcon width={18} height={18} />` ✓").toContain("<MailIcon width={18} height={18} />");
+    // ⚠️ **2026-10-14**：⭐ 这句原来把**尺寸字面**也钉进去了 ✗ —— ⭐ 而尺寸刚被对齐过 ✓
+    //   ⇒ ⭐ 按 R192「换对象不删断言」：⭐ 只钉**用的是 `MailIcon` 这个组件** ✓，⛔ 不再钉具体像素 ✗。
+    expect(bar, "⭐ 必须用的是 `MailIcon` 这个 SVG 组件 ✓").toContain("<MailIcon width={");
     expect(bar, "⭐ `MailIcon` 也要在 import 名单里 ✓").toContain("  MailIcon,");
   });
 
@@ -126,6 +128,45 @@ describe("2026-10-14：左栏「邮箱」换成 SVG（与其余图标同一套�
     expect(bar, "⭐ `rail-mail` 的 testid 未变 ✓").toContain('data-testid="rail-mail"');
     expect(bar, "⭐ 标题／无障碍名逐字未变 ✓").toContain('title="邮箱"');
     expect(bar, "⭐ 动作仍是走 store ✓（⛔ 不改计数逻辑 ✗）").toContain("useEmailPanel.getState().openPanel()");
+  });
+});
+
+// ⭐ **2026-10-14（owner 逐字：「去掉侧边工具栏里面的按钮汉字」）** ✗ ——
+//   ⭐ 去掉的是 ⭐ 那两颗里的**文字 span** ✓（`<span>同步</span>` ／ `<span>邮箱</span>` ✓），
+//   ⛔ **不动** `title`／`aria-label` ✗（⭐ 它们是**悬停提示 ＋ 无障碍名字** ✓ —— 去了汉字 != 去了名字 ✓）。
+// ⚠️ ① ② ④ 都是**源码级**判据 ✓（⭐ 如实标 ✗：量的是源码里那两个字面 ✓，⛔ 不声称渲染 ✓）；
+//   ⭐ **改前红** ✓；③ 是锁（⭐ 今天已绿 ✓）。
+describe("2026-10-14：左栏按钮去掉汉字（只留图标）", () => {
+  const read = (p: string) => readFileSync(resolve(__dirname, p), "utf8");
+
+  it("① ⭐（源码级）那颗「同步」里**不再有** `<span>同步</span>`（今天【红】✓）", () => {
+    const bar = read("ActivityBar.tsx");
+    expect(bar, "⛔ 那一格汉字 span 必须去掉 ✗（⛔ 也别改成 title 之外的东西 ✗）").not.toContain("<span>同步</span>");
+  });
+
+  it("② ⭐（源码级）那颗「邮箱」里**不再有** `<span>邮箱</span>`（今天【红】✓）", () => {
+    const bar = read("ActivityBar.tsx");
+    expect(bar, "⛔ 那一格汉字 span 必须去掉 ✗").not.toContain("<span>邮箱</span>");
+  });
+
+  it("③ 锁（今天已绿 ✓）：`title`／`aria-label` 仍在 ＋ 两颗 testid 仍在 ＋ 徽标那几行仍在", () => {
+    const bar = read("ActivityBar.tsx");
+    for (const needle of ['title="同步"', 'aria-label="同步"', 'title="邮箱"', 'aria-label="邮箱"']) {
+      expect(bar, "⛔ " + needle + " 不许被删 ✗（⭐ 去了汉字 != 去了无障碍名字 ✓）").toContain(needle);
+    }
+    expect(bar, "⭐ `rail-sync` 仍在 ✓").toContain('data-testid="rail-sync"');
+    expect(bar, "⭐ `rail-mail` 仍在 ✓").toContain('data-testid="rail-mail"');
+    expect(bar, "⭐ 徽标仍在 ✓").toContain('className="sync-badge"');
+    expect(bar, "⭐ 那个 `99+` 封顶口径也在 ✓").toContain('99+');
+  });
+
+  it("④ ⭐（源码级）整个 `ActivityBar.tsx` 里**按钮内的汉字 span 为零**（今天【红】✓）", () => {
+    // ⚠️ ⭐ **先剥注释** ✗（⭐ 说明里写满了汉字 ✓ —— ⛔ 不剥会**假红** ✓，⭐ 今晚踩过同形的坑 ✓）
+    const code = read("ActivityBar.tsx")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const hits = code.match(/>[\u4e00-\u9fa5]+</g) ?? [];
+    expect(hits, "⛔ 按钮里的汉字标签应为 0 ✗（实测 " + JSON.stringify(hits) + "）").toEqual([]);
   });
 });
 describe("P-2a-2：左栏「同步」入口 ＋ 状态徽标", () => {

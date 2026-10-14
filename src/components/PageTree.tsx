@@ -119,8 +119,6 @@ const ICON = {
   //    界面文本一直是 :456 的「转成笔记」✓（⛔ 菜单文本是 owner 定过的 ⇒ 没动 ✗；⛔ 锚定这份注释的判据＝零个 ✓）。
   fileDown: "M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2",
 } as const;
-import { SyncPanel } from "./SyncPanel";
-import { EmailPanel } from "./EmailPanel";
 import { PlusIcon, DatabaseIcon, FolderIcon, PageIcon } from "./icons";
 import { TreeDragGhost } from "./TreeDragGhost";
 
@@ -1568,13 +1566,11 @@ export function PageTree(_props: {
         )}
         </div>
         <div className="sidebar-header-actions">
-          <div className="sidebar-actions-group">
-            {/* 搜索已收编进左侧竖条（activity=search，侧栏变搜索面板），
-                这里不再放第二个搜索入口；快速跳转仍可用 Ctrl+K 命令面板。
-                同步留在这里：它与「当前空间」强相关，且需要状态胶囊常驻可见。 */}
-            <SyncPanel />
-            <EmailPanel />
-          </div>
+          {/* ⭐ **2026-10-14（片 3a）**：⭐ **同步／邮箱已收进左栏** ✗ —— 它们是**全局功能**（⛔ 不随空间变 ✗）
+              ⇒ 不再挂在「当前空间」这个头下面 ✓（⭐ 旧注释那句"同步与当前空间强相关"是**旧口径** ✗，已改 ✓）。
+              ⚠️ 搜索那一半**仍为真** ✓：搜索已收编进左侧竖条（`activity=search` ✓），这里不放第二个搜索入口 ✓；
+                 Ctrl+K 命令面板照旧 ✓。
+              ⚠️ 这层 `sidebar-header-actions` **留着** ✓ —— 它现在只为 `new-menu` 撑排布 ✓（⭐ 没收进 3a ✗）。 */}
           <div className="new-menu">
             {/* 「新建」是侧栏最高频动作，做成带文字的整行按钮：比一个蓝色实心
                 方块克制，也比纯图标好认（点开是页面/文件夹/数据库三选一）。 */}

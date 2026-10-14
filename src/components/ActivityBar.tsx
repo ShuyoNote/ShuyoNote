@@ -37,7 +37,11 @@ import {
 //    ⇒ 收起/展开侧栏**只由上面那颗 `.sidebar-toggle-btn` 负责** ✓（一个动作一个入口 ✓）。
 //    ⚠️ 那句旧行为的注释与提示文案（title）当时**都留下了** ✗ ⇒ 已一并改掉 ✓。
 const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
-  { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
+  // ⚠️ **2026-10-13（owner 口径：全局功能进左栏）**：⭐ `notes`（页面）⭐ **已从这张表里提出来** ✗ ——
+  //   ⭐ 它改由 `ActivityBar` 里**一颗独立按钮**渲染 ✓（⭐ 位置在「搜索」**之前** ✓，
+  //   ⚠️ 因为 owner 要「页面」当第一位 ✓）。⭐ 形态**逐字照抄**本表原来那一颗 ✓
+  //   （同一个 `pick("notes")` ✓、同一条高亮 ✓、同一对 `t("nav.notes")` ✓）——
+  //   ⛔ 只是"位置变了" ✗，⭐ **不是**"页面这个活动变了" ✓。
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
   // ⭐ **2026-10-08 去掉**（owner：「去掉侧边工具栏中系统看板的一级入口图标」✓）：
   //   `{ id: "board", labelKey: "nav.board", icon: <BoardIcon … /> }` 这一条**已删** ✗。
@@ -202,6 +206,24 @@ export function ActivityBar() {
         >
           <SidebarIcon width={18} height={18} />
         </button>
+        {/* ⭐ **2026-10-13（owner 口径：全局功能进左栏 ＋ 「页面」当第一位）** ✗ ——
+            ⭐ 这一颗就是 `ITEMS` 里原来的 `notes` ✓（⭐ 渲染**逐字照抄**那颗：同一个 `pick("notes")` ✓、
+            同一条 `is-on` 高亮 ✓、同一对 `t("nav.notes")` ✓、同一个 `PageIcon` ✓）
+            ⇒ ⛔ 不另造一条"打开页面"的路 ✗（那会变成第二份真相源 ✓）。 */}
+        <button
+          className={`activity-btn${activity === "notes" ? " is-on" : ""}`}
+          title={t("nav.notes")}
+          aria-label={t("nav.notes")}
+          aria-current={activity === "notes"}
+          onClick={() => pick("notes")}
+        >
+          <PageIcon width={18} height={18} />
+        </button>
+        {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
+            所以不是一个「活动」，不参与选中态。
+            ⚠️ **2026-10-13**：⭐ 它从「同步／邮箱」**后面**挪到**前面** ✗（owner 口径：
+            ⭐ 顺序＝页面 → 搜索 → 同步 → 邮箱 ✓）—— ⛔ 只挪位置 ✗，它本身一个字没改 ✓。 */}
+        <SearchPanel />
         {/* ⭐ **P-2a-2**：⭐ 左栏常驻「**同步**」入口 ✗ —— 它切的是 **`AppView` 的 `"sync"`** ✓
             （⛔ **不是** `Activity` 的一员 ✗：两者不是一回事 ✓），走的是 P-2a-1 那条**内容区分支** ✓
             ⇒ ⛔ 不碰抽屉那条老路 ✗（那颗 `.btn-sync` 仍在 `SyncPanel` 里 ✓）。
@@ -213,8 +235,7 @@ export function ActivityBar() {
           data-testid="rail-sync"
           onClick={() => setView("sync")}
         >
-          <CloudSyncIcon width={18} height={18} />
-          <span>同步</span>
+          <CloudSyncIcon width={20} height={20} />
           {typeof syncPeers === "number" && syncPeers > 0 && (
             <span className="sync-badge" aria-label={`本网段发现 ${syncPeers} 台`}>
               {syncPeers}
@@ -234,17 +255,13 @@ export function ActivityBar() {
           data-testid="rail-mail"
           onClick={() => useEmailPanel.getState().openPanel()}
         >
-          <MailIcon width={18} height={18} />
-          <span>邮箱</span>
+          <MailIcon width={20} height={20} />
           {typeof mailUnread === "number" && mailUnread > 0 && (
             <span className="sync-badge" aria-label={`${mailUnread} 封未读`}>
               {mailUnread > 99 ? "99+" : mailUnread}
             </span>
           )}
         </button>
-        {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
-            所以不是一个「活动」，不参与选中态。 */}
-        <SearchPanel />
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (
