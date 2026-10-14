@@ -2112,16 +2112,6 @@ export function SyncPanel({
             <div className="sync-group-title">进阶</div>
 
             {/* ⑤ 空间隐私 ← 原来的 `<SpacePrivacySection>`（组件本身一个字没改） */}
-            <details className="sync-row">
-              <summary>
-                <span className="sync-row-label">空间隐私</span>
-                <span className="sync-row-value">{privacyText}</span>
-                <span className="sync-row-caret" aria-hidden>›</span>
-              </summary>
-              <div className="sync-row-body">
-                <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
-              </div>
-            </details>
 
             {/* ⑥ 同步历史 ← 原来吸底条里的 `.sync-history`（内部结构一个字没改）。
                 它以前是 `.sync-foot` 的常驻内容 —— 折进这里之后吸底条只剩读数行。 */}
@@ -2288,6 +2278,45 @@ export function SyncPanel({
                 {/* 片 D1e-4（2026-10-14，owner 拍）：深一层的那些 ⇒ 另一个折叠 ✓（⭐ 只包拉取间隔那一块 ✓）*/}
                 <details className="sync-advanced">
                   <summary>更多设置</summary>
+            {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
+              <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
+                <span className="sync-att-text">
+                  {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
+                  <span className="sync-att-name">
+                    {lanStatus.kind === "lan" ? "设备直连（同一网络）" : "设备直连"}
+                  </span>
+                  <span className="sync-hint">
+                    {/* ⚠️ 2026-09-29（D3）：这一行【拼了 Rust 来的文案】（`lanStatus.line` 与 `mesh.note`），
+                        而后端是按行内 Markdown 写的（`mesh.rs:602` 那句就是 `**能被别人拉到**`）
+                        ⇒ 在【渲染边界】过 `inlineMd`。这正是契约推荐的方向：Rust 侧一个字不改。 */}
+                    {inlineMd([lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ "))}
+                  </span>
+                  {/* ★ 2026-10-01（免费版上线实测）：**"附近发现 0 台"是第一现场** ✓ ——
+                      原先这一块只给读数、不给"然后呢" ✗ ⇒ 用户会以为产品坏了 ✓。
+                      ⚠️ **2026-10-11 改（owner 拍「只动前端」）**：这句话原先**故意常显** ✓
+                      （当时注释写着"代价是多一行字"✓）⇒ 现在按设计图⑦ 收成**只在真的找不到时出现** ✗：
+                      ⭐ 条件用 ⭐ **结构化的 `lanStatus.peers === 0`** ✗ —— ⛔ **不**去解析 `lanStatus.line` ✗
+                      （那是上面钉着的口径：⭐ 界面不自己按读数再判一次档 ✓；`peers` 与状态行那个
+                      "N 台"**是同一个数** ✓，⭐ 由 `INV-NEARBY-one-source` 保证不漂 ✓）。
+                      ⛔ 不写"一定能修好"那种话 ✗ —— 只列**最可能的两个**原因 ＋ 指向完整指引 ✓。 */}
+                  {lanStatus.peers === 0 && (
+                    <span className="sync-hint">
+                      {inlineMd("两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
+            <details className="sync-row">
+              <summary>
+                <span className="sync-row-label">空间隐私</span>
+                <span className="sync-row-value">{privacyText}</span>
+                <span className="sync-row-caret" aria-hidden>›</span>
+              </summary>
+              <div className="sync-row-body">
+                <SpacePrivacySection nameOf={(id) => spaces.find((s) => s.id === id)?.name ?? id} />
+              </div>
+            </details>
                   <RelayStatusSection />
                 <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                   <summary>
@@ -2673,35 +2702,6 @@ export function SyncPanel({
             {/* ⚠️ **2026-10-04 改**：同上 —— 这一行（附近发现/地址）也不该因为没绑服务器就不显示 ✓。
                 ⚠️ 里面那句 `lanRowBound ? lanStatus.line : ""` **照旧** ✓ ⇒ ⭐ 个人空间看不到
                 "去绑服务器"那句读数 ✓（那个三元本来就是为这一刻写的 ✓）。 */}
-            {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
-              <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
-                <span className="sync-att-text">
-                  {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
-                  <span className="sync-att-name">
-                    {lanStatus.kind === "lan" ? "设备直连（同一网络）" : "设备直连"}
-                  </span>
-                  <span className="sync-hint">
-                    {/* ⚠️ 2026-09-29（D3）：这一行【拼了 Rust 来的文案】（`lanStatus.line` 与 `mesh.note`），
-                        而后端是按行内 Markdown 写的（`mesh.rs:602` 那句就是 `**能被别人拉到**`）
-                        ⇒ 在【渲染边界】过 `inlineMd`。这正是契约推荐的方向：Rust 侧一个字不改。 */}
-                    {inlineMd([lanRowBound ? lanStatus.line : "", lanStatus.mesh.note].filter(Boolean).join(" ｜ "))}
-                  </span>
-                  {/* ★ 2026-10-01（免费版上线实测）：**"附近发现 0 台"是第一现场** ✓ ——
-                      原先这一块只给读数、不给"然后呢" ✗ ⇒ 用户会以为产品坏了 ✓。
-                      ⚠️ **2026-10-11 改（owner 拍「只动前端」）**：这句话原先**故意常显** ✓
-                      （当时注释写着"代价是多一行字"✓）⇒ 现在按设计图⑦ 收成**只在真的找不到时出现** ✗：
-                      ⭐ 条件用 ⭐ **结构化的 `lanStatus.peers === 0`** ✗ —— ⛔ **不**去解析 `lanStatus.line` ✗
-                      （那是上面钉着的口径：⭐ 界面不自己按读数再判一次档 ✓；`peers` 与状态行那个
-                      "N 台"**是同一个数** ✓，⭐ 由 `INV-NEARBY-one-source` 保证不漂 ✓）。
-                      ⛔ 不写"一定能修好"那种话 ✗ —— 只列**最可能的两个**原因 ＋ 指向完整指引 ✓。 */}
-                  {lanStatus.peers === 0 && (
-                    <span className="sync-hint">
-                      {inlineMd("两台要在**同一个网络**、且这个网络没开「**AP 隔离／客户端隔离**」（最快的验证：**开手机热点**再试）。")}
-                    </span>
-                  )}
-                </span>
-              </div>
-            )}
 
             {/* 丙-③-b-2b-2：**网格（对等交换）** —— "不装服务端也能同步"在这里有一个可点的入口。
                 ⚠️ 门槛**不是** `lanRowBound`：网格**不需要**服务端地址，只要这个空间有 `space_id`
