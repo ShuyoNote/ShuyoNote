@@ -35,7 +35,7 @@ export function MobileHome() {
   }, [pages]);
 
   return (
-    <div className="main mhome" data-testid="mobile-home">
+    <div className="mshell mhome" data-testid="mobile-home">
       <header className="mhome-head">
         <h1 className="mhome-title">ShuyoNote</h1>
         <p className="mhome-sub">本地优先 · 离线可用 · 只记你确定要留的</p>

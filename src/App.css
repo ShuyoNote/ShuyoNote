@@ -24529,6 +24529,27 @@ body.is-plugin-panel-open .main {
    ⛔ 也**不动**桌面那套 `.empty-state`（桌面空态照旧 ✓）。
    ⚠️ 这一段写在文件**最外层**（前一个块在 24114 行以 `}` 结束、净深度 0 ✓，我核过 ✓）。
    ========================================================================== */
+/* ⭐ 2026-10-13 阶段 1 **第一刀**（R203 owner 拍「单立，走乙丙」）：移动屏**自己的外壳** ✓ ——
+   把原来从桌面 `.main`（`App.css:4700` ＋ 窄屏媒体查询 `:21251` 那格 `width:100%`）借的东西**逐格接管** ✓。
+   为什么：`.main` 有 **11 处**规则命中，其中 `body.is-toc-open .main`／`body.is-ai-open .main`／
+   `body.is-plugin-panel-open .main` 全是**桌面侧的状态** ⇒ 移动屏借它就会被桌面状态**顺带动一下** ✗。
+   ⚠️ **有界高度怎么来的**（写清楚，⛔ 别让它静默失效 ✗）：父级是 `.app-body`（**row** flex ✓，实测 640px ✓）
+   ⇒ 宽度靠 `flex: 1` ✓、高度靠**默认 `align-items: stretch`** ✓ ⇒ ⛔ 若将来有人把 `.app-body` 的高度
+   改成 `auto` ✗ ⇒ 这一格会**静默失效**（屏内滚动会跟着坏 ✓）⇒ 改那里的人必须同时看这一条 ✓。
+   ⚠️ `.mhome` 自己已有 `flex-direction:column` 与 `overflow-y:auto` ✓ ⇒ 这里补的是**父级那格**
+   （`overflow:hidden` ＋ 有界高度 ✓），否则子级的 `overflow-y:auto` 拿不到有界高度 ⇒ 滚不动 ✓。
+   ⛔ 不改桌面 `.main` 一个字节 ✗；⛔ 不用 `transform` 做转场 ✗（带 transform 的祖先会成为包含块 ⇒
+   里面 `position:fixed` 的浮层会偏 ✗ —— 那条坑 `:21278` 附近有逐字记录 ✓）。 */
+.mshell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  background: var(--bg);
+}
+
 .mhome {
   padding: 18px 16px calc(24px + var(--sab, 0px));
   overflow-y: auto;
