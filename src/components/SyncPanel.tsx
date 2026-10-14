@@ -1450,7 +1450,7 @@ export function SyncPanel({
           )}
           <header className="sync-head">
             <div className="sync-head-text">
-              <div className="sync-title">同步</div>
+              <div className="sync-title">设备直连</div>
               {/* ⭐ 2026-10-11（owner：「参照效果图实现」）：⭐ 副标题按效果图改写 ✓ ——
                   原文是「⭐ 填一个配对暗号就能和附近的设备直连 ✗」⇒ ⭐ 那句把"⭐ 码 ✗"摆在了**这一屏最显眼的位置** ✓。
                   ⚠️ 新句**不改事实** ✗：⭐ 今天建信任那一步**仍然**要那串码 ✓（⭐ 见文件头的拍板口径 ✓）⇒
