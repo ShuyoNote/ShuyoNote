@@ -56,7 +56,7 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 否则后人只会看到"一堆跑得慢的检查"。
 
 <!-- facts:begin -->
-门禁 80 条（contract 53 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 26 条 · 命令 Rust 290 / web 265 / CommandMap 291
+门禁 83 条（contract 56 / smoke 3 / sync 1 / plugin 4 / browser 4 / mobile 3 / rust 8 / artifact 3 / deploy 1）· 能力 26 条 · 命令 Rust 291 / web 266 / CommandMap 292
 基线下限（与 tests/baseline.json 逐字一致，共 15 条）check-mcp-bridge-stdout 9 · check-mcp-audit-single-ledger 7 · check-search-platform-parity 4 · vitest 2795 · smoke-web 365 · check-pdf-reload 8 · check-panel-layout 61 · check-web-build 13 · check-editor-table-gesture 5 · mobile-layout 69 · mobile-overlays 826 · mobile-views 249 · rust-test 386 · rust-plugins-alone 117 · rust-no-sm-crypto 401
 <!-- facts:end -->
 
@@ -101,6 +101,9 @@ node scripts/test-report.mjs --group mobile    # mobile-layout + mobile-overlays
 | contract | `check-nsis-template` | NSIS 安装器模板＝fork 的一行改动 ＋ CLI 版本核对：模板被上游改写后**装出来的东西**与声明不符 |
 | contract | `check-derived-writers` | 派生表的**唯一写入者**：Rust 生产代码不许写派生表（唯一写入口在 TS 侧平台层）——两处写就是两份语义 |
 | contract | `check-doc-content-access` | 「文档内容」的直接访问**只减不增**：换 CRDT 时要改的就是这批位置（当前 562 处，基线在 `scripts/doc-content-access-baseline.json`）；新文件直接引用或超基线即红 |
+| contract | `check-mobile-class-namespace` | **移动屏借了非移动命名空间的类**（棘轮：显式白名单**只减不增**，留在清单外的记号即红）。挡的是：移动屏借桌面布局类 ⇒ 桌面侧每加一个状态、移动屏被顺带动一下（活证据：`.main` 共 11 处命中，含 `body.is-ai-open .main`） |
+| contract | `check-mobile-screen-reachable` | **移动屏"无死屏"**（棘轮：登记表**只增不减**）：每个 `Mobile*.tsx` 屏文件必须在**显式登记表**里；登记为"走屏栈（`nav`）"且可达的 ⇒ 全仓必须存在 `setScreen("<id>")` 的入口调用。**并且要求把"到不了"明写出来**（`reachable: false` ＋ 理由）—— ⛔ 中间态不许含糊 ✗。来由：26-10-14 实测 `MobileSettings` 是**死屏**（屏在、门没有）+ `MobileAbout` 有门但只在桌面 chrome 里 |
+| contract | `check-mobile-app-version` | **移动版号是独立标识**（棘轮：登记表**只增不减**）：移动版号**定义恰好一处**（`mobile-version.json` 的 `mobileVersion`）；⛔ **不许**写成桌面 `APP_VERSION` 的别名 ✗；⭐ **不许低于当前桌面号** ✓（R204：手机上装的是 1.92.x，往回跳会让用户看到「版本变低」）。来由：阶段 3（交付单立）—— Tauri 只有 `bundle.android.versionCode`、⛔ **没有 `versionName` 字段** ✗ ⇒ 移动号走「独立事实源 ＋ 构建步写 `tauri.properties`」 |
 | contract | `check-main-only-commits` | **发布线上不许有"开发线永远拿不到"的内容改动**：非 merge 的发布线独有提交只许动**发布产物**（`RELEASE_ARTIFACTS`），merge 则要求除第一父外的父都能从 `dev` 走到。2026-09-25 实测：`dev` 与 `origin/main` 分叉（208 / 7），7 笔里三笔带着开发线没有的内容——包括一笔**标题写着 `release:` 却夹带了 `mdPreview.ts` 修复**的（那个 bug 只在**打包产物**里显形，dev/vitest 永远绿）⇒ 所以判据按**文件集**、不按标题。⚠️ 非浅克隆才能判（残缺祖先图上 `rev-list A..B` 会静默给偏少的答案）⇒ 浅克隆一律 **exit 3** |
 | contract | `check-prism-components` | **代码块高亮只许有一条装配路径**（`src/editor/prismSetup.ts` 的模块化 import）：`public/prism/` 下不许再有 vendored 组件、`index.html` 里不许再有 `<script src="prism/…">`。2026-09-25 清冗余文件时实测：仓库里本来有**两条并行的 Prism 装配路径**（index.html 的 10 行阻塞 script ＋ 10 份 `public/prism/*.js`，与 `prismSetup.ts` 的 16 个组件 import 完全重合）。把前者整条去掉、在真 Chromium 里重新加载：`window.Prism` 照旧能 highlight json / rust / sql / go / markdown（token 都出来了）、页面零 JS 报错 ⇒ 那 10 个文件（77 KB）＋ 10 行阻塞 script 是纯冗余，已删。门禁钉住「别再长回来」；另有**只报告不判红**的静态对账：选择器列了、而 `prismSetup.ts` 没显式 import 的语言（今天 markdown / yaml —— 静态看不到，运行期 markdown 却可用，所以只摆出来、不下结论） |
 | contract | `check-dead-code-receipts` | **`#[allow(dead_code)]` 不许无名无期**：每处豁免要么删掉、要么把"只服务判据/夹具"的项门进 `#[cfg(test)]`、要么写一句 `// ★ YYYY-MM-DD 收据：为什么留 ＋ 什么时候删`。2026-09-25 清死代码时查出的是**一整类没人管的东西**（豁免不产生输出 ⇒ 过期了也没人看）：`sync.rs::IncomingChange.seq` 挂着豁免却**被生产代码读了 8 处**；`commands.rs::mupdf_compiled()` 的 body 就是 `cfg!(feature)`，唯一使用者是 `assert_eq!(cfg!(f), cfg!(f))` 那种**空转判据**；`security.rs` 一次"文档与属性留在上一个函数下面"的事故让一个夹具生成器**被 libtest 注册两遍**；`build.rs` 里留着一份搬走后的 `find_gm_marker_deprecated` 副本。⚠️ 它**不判**理由好不好、也不判代码该不该留（那要人读）：只判"有没有人会想起来它"；命中必须**在代码里**（掩码判区域，仓里十几处**讲**这件事的注释不算），生成物（`capabilities_gen.rs`）显式列在 `EXEMPT` 里并每次打印 |

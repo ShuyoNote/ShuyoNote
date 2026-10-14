@@ -60,30 +60,42 @@ export function RelayStatusSection() {
   return (
     <div className={`sync-row relay-status is-${view.tone}`}>
       <div className="sync-row-body">
+        {/* ⚠️ **2026-10-14（owner：「太丑了，优化美化」）** ✗：这两行的值原来是 `.sync-att-text`
+            —— 它和 `.sync-row-label` **都是 `flex: 1 1 auto`** ✓ ⇒ 两个各占一半 ⇒ ⭐ 值被顶到**正中间**
+            （真机截图实测 ✓；而面板里别的读数行的值都在**右端** ✓）。⇒ ⭐ 换成 `.sync-row-value`
+            （`flex: 0 1 auto` ✓，与「监听地址／端口」那两行**逐字同形** ✓）。
+            ⛔ 文案／读数／动作**一个字没动** ✗（这一笔只换类名 ✓ —— 它落在"数据接线"之外 ✓）。 */}
         <div className="sync-att">
           <span className="sync-row-label">中继</span>
-          <span className="sync-att-text relay-connection">{view.connectionLabel}</span>
+          <span className="sync-row-value relay-connection">{view.connectionLabel}</span>
         </div>
         <div className="sync-att">
           <span className="sync-row-label">中继许可证</span>
-          <span className="sync-att-text relay-license">{view.licenseLabel}</span>
+          <span className="sync-row-value relay-license">{view.licenseLabel}</span>
         </div>
-        {view.connectionDetail ? <p className="sync-hint">{view.connectionDetail}</p> : null}
-        {view.note ? <p className="sync-hint">{view.note}</p> : null}
-        {/* ⭐ owner 2026-10-12 拍「甲：保持现状，但把话说清」⇒ **为什么永远不会有读数**要说在人眼前 ✓。
-            ⚠️ 这句只许陈述事实：⛔ 不承诺功能、⛔ 不写"请配置"（⛔ 全仓没有写入者能建那份配置 ⇒
-            用户在界面上做不到 ✗）；判据：`relayStatus.test.ts` ④。 */}
+        {/* ⭐⭐ **2026-10-14（owner：「优化文案及布局」）** ✗：⭐ 这一格原来是**三句在说同一件事** ✓
+            （一行机器报错 ＋ 两行长解释 ✓），而且**那句报错排在最前** ✗ ⇒ ⭐ 新顺序：
+            ① 【一句人话解释】**为什么这一格永远不会有读数** ✓（owner 2026-10-12 拍的，判据 ④ 钉着 ✓）；
+            ② 【动作 ＋ 一句后果】✓（原来那句的"这一格只读中继的读数"是 ① 已经说过的 ⇒ 收掉 ✓）；
+            ③ 【机器细节】最后、更小更淡 ✓（它是**证据**不是结论 ✓ —— 后端原文，界面不改写 ✓）。 */}
         <p className="sync-hint">
           本机没有托管中继时，这一格不会有读数 —— 它只读本机已有的那份中继配置，不会自己建一份。
         </p>
+        {/* ⚠️ 这句只许陈述事实：⛔ 不承诺功能、⛔ 不写"请配置"（全仓没有写入者能建那份配置 ⇒
+            用户在界面上做不到 ✗）；判据：`relayStatus.test.ts` ④（那条正则钉的就是上面这句 ✓）。 */}
         <div className="sync-att">
           <button className="sync-btn" disabled={busy} onClick={() => void recheck()}>
             {busy ? "正在检查…" : "重新检查"}
           </button>
-          <span className="sync-hint">
-            这一格只读中继的读数；到期只停跨网，本机功能与本地数据不受影响。
-          </span>
+          <span className="sync-hint">到期只停跨网；本机功能与本地数据不受影响。</span>
         </div>
+        {view.connectionDetail || view.note ? (
+          <p className="sync-hint relay-detail">
+            {view.connectionDetail}
+            {view.connectionDetail && view.note ? " " : null}
+            {view.note}
+          </p>
+        ) : null}
       </div>
     </div>
   );

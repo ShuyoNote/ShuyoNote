@@ -1,4 +1,5 @@
 mod ai;
+mod engine_pack;
 // S3 第三片：**块级活动明细**（只读 ✓）—— 由相邻两条同步载荷算「哪几段被新增/改过/删掉」✓；
 // 时间分桶仍归前端那**一处**口径（`src/lib/kbTimeline.ts` 的 `TIMELINE_DAY_BUCKET`）✓。
 mod activity;
@@ -1148,6 +1149,9 @@ pub fn run() {
   //    —— 与 `mesh_sync_now` 同一处置（⛔ 不假装连上了 ✗）。
   relay_client::relay_status,
   relay_client::relay_probe,
+  // ⭐ P-4 片③-a（2026-10-14）：⭐ 逐台「对码」读数 ✗ —— ⭐ 命令只是薄壳 ✓，
+  //    ⭐ 派生在 `pairing_trust::pairing_code_for`（片① 已入库 ✓）；⛔ 一行算法都不在这儿 ✗。
+  pairing_trust::pairing_code_reading,
 ])
         .run(app_context())
         .expect("error while running tauri application");

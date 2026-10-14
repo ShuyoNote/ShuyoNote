@@ -51,6 +51,14 @@ const MOBILE_BREAKPOINT_PX = (() => {
   return Number(m[1]);
 })();
 /** 这个视口里 `useMobile()` 为真 ⇒ 桌面编辑器被 `MobileRead` 取代 ✓（宽度口径，与源码同源 ✓）。 */
+/** ⭐ 阶段 0（R203）：粗指针查询串**也只许在 `shape.ts` 里定义** ✓ —— 门禁从源码读出来用 ✓。
+ *  ⛔ 门禁里不再留字面量 ✗（原来内联了两处 ✗ —— 一处走 `phone.evaluate`、一处走 `desktop.evaluate` ✓）。 */
+const COARSE_POINTER_QUERY = (() => {
+  const src = readFileSync(join(REPO_ROOT_LAYOUT, "src", "lib", "platform", "shape.ts"), "utf8");
+  const m = src.match(/export const COARSE_POINTER_QUERY\s*=\s*"([^"]+)"/);
+  if (!m) throw new Error("读不到 COARSE_POINTER_QUERY（src/lib/platform/shape.ts 改了？）—— 能力查询必须与源码同源");
+  return m[1];
+})();
 const replacesDesktopEditor = (vp) => vp.width <= MOBILE_BREAKPOINT_PX;
 /** 挂在**桌面编辑器工具条**上的右栏三块面板（窄视口上它们的入口已不存在 ⇒ 搬到桌面档 ✓）。 */
 const RIGHT_PANELS = [
@@ -86,7 +94,7 @@ const probe = () => {
   const railToggle = document.querySelector(".mobile-rail-toggle");
   const backdrop = document.querySelector(".mobile-sidebar-backdrop");
   const railBackdrop = document.querySelector(".mobile-rail-backdrop");
-  const main = document.querySelector(".main");
+  const main = document.querySelector(".mshell, .main");
   const disp = (el) => (el ? getComputedStyle(el).display : null);
   // 窄屏竖条是浮层：收起时被 translateX(-100%) 推到屏外，display 仍是 flex。
   // 所以判"可见"必须看几何（右边缘是否落在视口内），不能看 display。
@@ -344,7 +352,7 @@ async function main() {
     // `align-items: stretch` 会把高度抹平，量了等于没量）——带操作行的那张必须
     // 与不带操作行的那张**一样高**。第一版把它们改成"卡片底部一行"就是因为没有这条
     // 断言：功能全绿，但每张自建模板多出一条 54px 的行、网格还错落。
-    const tcActions = await phone.evaluate(() => {
+    const tcActions = await phone.evaluate((coarseQuery) => {
       const make = (withActions) => {
         const card = document.createElement("div");
         card.className = "tc-card";
@@ -392,11 +400,11 @@ async function main() {
         boxDir: getComputedStyle(box).flexDirection,
         withH: Math.round(withA.getBoundingClientRect().height),
         withoutH: Math.round(without.getBoundingClientRect().height),
-        hoverNone: matchMedia("(hover: none)").matches,
+        hoverNone: matchMedia(coarseQuery).matches,
       };
       host.remove();
       return out;
-    });
+    }, COARSE_POINTER_QUERY);
     ok(
       tcActions.opacity === "1" && tcActions.w >= 44 && tcActions.h >= 44,
       `卡片操作常驻且命中区 ≥44×44（opacity=${tcActions.opacity} / ${tcActions.w}×${tcActions.h}）` +
@@ -435,12 +443,12 @@ async function main() {
     //    本节验的仍是同一件事（窄屏上面板是叠加、不许把主区挤走 ✓），只是**开面板的手**换了 ✓。
     // ⚠️ `RIGHT_PANELS` 已**提到文件顶部**（2026-10-10：桌面段也要用它 ⇒ 别再在函数里声明一份 ✗）。
     const mainGeometry = () => {
-      const main = document.querySelector(".main");
+      const main = document.querySelector(".mshell, .main");
       if (!main) return null;
       const r = main.getBoundingClientRect();
       return {
         right: Math.round(r.right),
-        paddingRight: getComputedStyle(main).paddingRight,
+        paddingRight: (main ? getComputedStyle(main).paddingRight : "NO-SCREEN-ROOT"),
         docWidth: document.documentElement.scrollWidth,
         winWidth: innerWidth,
       };
@@ -612,7 +620,7 @@ async function main() {
     console.log(`\n【桌面 · 模板中心仍是桌面形态】`);
     await desktop.click('.activity-btn[title="模板中心"]');
     await sleep(1200);
-    const dtc = await desktop.evaluate(() => {
+    const dtc = await desktop.evaluate((coarseQuery) => {
       const card = document.createElement("div");
       card.className = "tc-card";
       const box = document.createElement("div");
@@ -633,11 +641,11 @@ async function main() {
         boxPos: getComputedStyle(box).position,
         delOpacity: getComputedStyle(btn).opacity,
         delW: Math.round(btn.getBoundingClientRect().width),
-        hoverNone: matchMedia("(hover: none)").matches,
+        hoverNone: matchMedia(coarseQuery).matches,
       };
       card.remove();
       return out;
-    });
+    }, COARSE_POINTER_QUERY);
     ok(dtc.open, "桌面能打开模板中心");
     ok(dtc.searchW === 240, `桌面搜索框仍是固定 240px（实际 ${dtc.searchW}）——窄屏那条 width:100% 不许漏到桌面`);
     ok(dtc.cols >= 3, `桌面卡片仍是多列（实际 ${dtc.cols} 列，1280px 下至少 3 列）`);

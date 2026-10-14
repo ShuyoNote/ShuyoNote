@@ -70,7 +70,7 @@ export function MobilePair() {
   const nearby = status?.nearby ?? [];
 
   return (
-    <div className="main mpair" data-testid="mobile-pair">
+    <div className="mshell mpair" data-testid="mobile-pair">
       <header className="mpair-head">
         <button className="mpair-back" onClick={goHome} aria-label="返回首页">
           ‹

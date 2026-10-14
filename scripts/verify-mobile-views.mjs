@@ -2175,7 +2175,7 @@ async function main() {  const executablePath = findChrome();
           // ⚠️ 设置会**记住上次那一页**（`tab` 存在 store 里 ✓）⇒ 走"竖条→设置"这条路时必须**显式点目标那一页** ✓，
           //   否则会停在我上一轮点过的「关于」页 ⇒ 后面量色板那条会验不到 ✗
           //   （2026-10-01 实测：拆按钮后这一条由绿转红，就是被这个"记忆"绊的 ✓）。
-          if (clicked && title === "设置") {
+          if (clicked && title === "设置" && !replacesDesktopEditor(vp)) {
             const tab = await safeEval(page, () => {
               const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) =>
                 ((x.querySelector(".set-rail-label")?.textContent) || "").includes("外观"),
@@ -2189,7 +2189,16 @@ async function main() {  const executablePath = findChrome();
           }
           return;
         }
-        // 竖条上已经没有「关于」了 ⇒ 从**设置**进去（那个入口在 ✓）
+        if (title === "关于" && replacesDesktopEditor(vp)) {
+          await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find((x) => (x.getAttribute("title") || "") === "设置"); if (b) b.click(); });
+          await sleep(1200);
+          const row = await safeEval(page, () => { const r = Array.from(document.querySelectorAll(".mset-row")).find((x) => ((x.textContent) || "").includes("关于与更新")); if (!r) return "没找到移动设置屏里的「关于与更新」行"; r.click(); return "ok"; });
+          await sleep(1000);
+          const scr = await safeEval(page, () => (document.querySelector('[data-testid="mobile-about"]') ? "ok" : "没找到移动关于屏"));
+          ok(row === "ok" && scr === "ok", `窄档：从移动设置屏的「关于与更新」进得到移动关于屏（行=${row}／屏=${scr}）`);
+          return;
+        }
+                // 竖条上已经没有「关于」了 ⇒ 从**设置**进去（那个入口在 ✓）
         await page.evaluate(() => {
           const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find(
             (x) => (x.getAttribute("title") || "") === "设置",
@@ -2277,7 +2286,19 @@ async function main() {  const executablePath = findChrome();
       }
       await page.keyboard.press("Escape");
       await sleep(700);
-      await openAboutOrSettings("设置");
+      // ⭐ 阶段 2（R205）：窄档下 ⚙️ 已分岉到移动自己的设置屏 ⇒ 这里改用 store 开那个对话框
+      //   ⭐ 本条断言对象是 `.set-swatch` 的**命中层**（CSS 层）；⛔ 不是“入口还按得到”那条
+      await page.evaluate(async () => {
+        const store = (p) => {
+          const loaded = (performance.getEntriesByType?.("resource") ?? []).map((e) => e.name).filter((n) => n.includes(p));
+          return import(/* @vite-ignore */ (loaded.length ? loaded[loaded.length - 1] : p));
+        };
+        const m = await store("/src/store/editor.ts");
+        m.useEditorStore.getState().openSettings("appearance");
+      });
+      await sleep(1200);
+      await safeEval(page, () => { const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) => ((x.querySelector(".set-rail-label")?.textContent) || "").includes("外观")); if (item) item.click(); return !!item; });
+      await sleep(900);
       m = await measureMicro();
       if (!m.swatch) {
         ok(false, "「设置 → 外观」里找不到 `.set-swatch`（色板）——这一档没能验到");
@@ -2625,7 +2646,15 @@ async function main() {  const executablePath = findChrome();
       if (dt) {
         ok(dt.w === 38 && dt.h === 22, `桌面开关保持设计尺寸 38×22（实际 ${dt.w}×${dt.h}）`);
       }
-      await desk.keyboard.press("Escape");
+      // ⭐ 阶段 2（R205）：桌面档验「设置 → 外观」可达 ⭐ 与色板盒子 30×30（对象只在桌面档存在）
+      await desk.evaluate(() => { const b = Array.from(document.querySelectorAll(".activity-group-end .activity-btn")).find((x) => (x.getAttribute("title") || "") === "设置"); if (b) b.click(); });
+      await sleep(1200);
+      const dtab = await safeEval(desk, () => { const item = Array.from(document.querySelectorAll(".set-rail-item")).find((x) => ((x.querySelector(".set-rail-label")?.textContent) || "").includes("外观")); if (!item) return "没找到设置里的「外观」项"; item.click(); return "ok"; });
+      ok(dtab === "ok", `【桌面】设置里进得到「外观」那一页（${dtab}）`);
+      await sleep(900);
+      const dsw = await safeEval(desk, () => { const el = document.querySelector(".set-swatch"); if (!el) return null; const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height), radius: getComputedStyle(el).borderRadius }; });
+      if (!dsw) { ok(false, "【桌面】「外观」页里找不到 `.set-swatch`"); } else { console.log(`   [读数] 【桌面】色板 = ${JSON.stringify(dsw)}`); ok(dsw.w === 30 && dsw.h === 30, `【桌面】色板保持 30×30 的圆（实际 ${dsw.w}×${dsw.h}，圆角 ${dsw.radius}）`); }
+            await desk.keyboard.press("Escape");
       await sleep(700);
     }
 

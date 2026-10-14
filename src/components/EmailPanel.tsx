@@ -381,7 +381,7 @@ const MONTH_NAMES = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8�
 
 // 聚合收件箱（邮件即笔记）— 桌面专属整页（左列表 + 右阅读），竖分隔线可拖动调整宽度。
 // 账号配置在 设置 → 邮箱；这里只读已保存账号、拉取/阅读/转笔记。
-export function EmailPanel() {
+export function EmailPanel({ withTrigger = true }: { withTrigger?: boolean } = {}) {
   const open = useEmailPanel((s) => s.open);
   const unread = useEmailPanel((s) => s.unread);
   const setUnread = useEmailPanel((s) => s.setUnread);
@@ -1643,13 +1643,20 @@ export function EmailPanel() {
 
   return (
     <>
-      <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
-        <InboxIcon width={14} height={14} />
-        <span>邮箱</span>
-        {unread > 0 && (
-          <span className="email-unread-badge" aria-label={`${unread} 封未读`}>{unread > 99 ? "99+" : unread}</span>
-        )}
-      </button>
+      {/* ⛔⭐ **2026-10-14（owner：「乱了」）** ✗：⭐ 这一颗是组件**自带的"低调入口"** ✓
+          （`21221f13` 那版加的 ✓）—— ⚠️ 而左栏**已经有**一颗 owner 认可的「邮箱」入口
+          （`rail-mail` ✓，P-2b ✓）⇒ ⭐ 挂载方**必须**用 `withTrigger={false}` ✗，
+          否则栏里会**多出一个入口**（真机实测：它就叠在栏内、`99+` 徽标糊在内容区边上 ✗）。
+          ⭐ 默认 `true` 是**刻意**的 ✓：保留组件单挂时的原样 ✓（`EmailPanel.test.ts` 就那样渲染它 ✓）。 */}
+      {withTrigger && (
+        <button ref={btnRef} className="btn-sync" onClick={toggle} title="邮箱（聚合收件箱） · Ctrl+Shift+E">
+          <InboxIcon width={14} height={14} />
+          <span>邮箱</span>
+          {unread > 0 && (
+            <span className="email-unread-badge" aria-label={`${unread} 封未读`}>{unread > 99 ? "99+" : unread}</span>
+          )}
+        </button>
+      )}
 
       {open &&
         createPortal(

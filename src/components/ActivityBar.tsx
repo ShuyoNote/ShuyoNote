@@ -2,12 +2,18 @@ import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
+// ⭐ 阶段 2（R205）：手机形态下 ⚙️ 改走**移动自己的设置屏** ✓（`isMobileViewport` 是 `shape.ts` 的
+//    纯函数、经 `hooks/useMobile` **re-export** ✓ ⇒ 同一个函数 ✓，⛔ 没有第二份 width 判断 ✗）。
+import { useMobileNav } from "../store/mobileNav";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
+import { useEmailPanel } from "../store/emailPanel";
 import { api } from "../lib/api";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
+import { EmailPanel } from "./EmailPanel";
+import { isDesktopPlatform } from "../lib/platform";
 import {
   PageIcon,
   FolderIcon,
@@ -19,6 +25,7 @@ import {
   SidebarIcon,
   LlmWikiIcon,
   CloudSyncIcon,
+  MailIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -35,7 +42,11 @@ import {
 //    ⇒ 收起/展开侧栏**只由上面那颗 `.sidebar-toggle-btn` 负责** ✓（一个动作一个入口 ✓）。
 //    ⚠️ 那句旧行为的注释与提示文案（title）当时**都留下了** ✗ ⇒ 已一并改掉 ✓。
 const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
-  { id: "notes", labelKey: "nav.notes", icon: <PageIcon width={18} height={18} /> },
+  // ⚠️ **2026-10-13（owner 口径：全局功能进左栏）**：⭐ `notes`（页面）⭐ **已从这张表里提出来** ✗ ——
+  //   ⭐ 它改由 `ActivityBar` 里**一颗独立按钮**渲染 ✓（⭐ 位置在「搜索」**之前** ✓，
+  //   ⚠️ 因为 owner 要「页面」当第一位 ✓）。⭐ 形态**逐字照抄**本表原来那一颗 ✓
+  //   （同一个 `pick("notes")` ✓、同一条高亮 ✓、同一对 `t("nav.notes")` ✓）——
+  //   ⛔ 只是"位置变了" ✗，⭐ **不是**"页面这个活动变了" ✓。
   { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
   // ⭐ **2026-10-08 去掉**（owner：「去掉侧边工具栏中系统看板的一级入口图标」✓）：
   //   `{ id: "board", labelKey: "nav.board", icon: <BoardIcon … /> }` 这一条**已删** ✗。
@@ -118,6 +129,25 @@ export function ActivityBar() {
   //   ⚠️⭐ 拉不到 ⇒ `null` ✓；⭐ `0` 与 `null` 都**不显示** ✓ —— ⛔ 绝不写"0 台在线" ✗
   //      （"没有对端"与"没读到"是两件事 ✓，界面上必须长得不一样 ✓）。
   const [syncPeers, setSyncPeers] = useState<number | null>(null);
+  // ⭐ **P-2b（2026-10-13）**：⭐ 左栏那颗「邮箱」入口的**未读徽标** ✗ ——
+  //   ⚠️ 接的是**已有真读数**：⭐ `useEmailPanel` 的 `unread` ✓（⭐ 徽标唯一来源 ✓ ——
+  //      面板自己那份不算 ✗，⛔ 不另造一个数 ✗）。
+  //   ⚠️ 取不到（`undefined`）⇒ ⭐ **如实不显示** ✗（⛔ 不编 0 ✗、⛔ 不编 99 ✗）。
+  const mailUnread = useEmailPanel((s) => s.unread);
+  /**
+   * ⛔⭐ **2026-10-14 修（owner 报障：「点击侧边栏邮箱按钮，没反应」）** ✗ —— ⭐ 真因**量出来的** ✓：
+   * 组件在 ✓、store 在 ✓、按钮也在 ✓（点了 `openPanel()` 确实把 `open` 置真 ✓），
+   * ⛔ 但**全仓没有任何地方挂载 `<EmailPanel />`** ✗（`ActivityBar` 只挂了 `<SearchPanel />`
+   * 与 `<TrashPanel />` ✓）⇒ 点了当然没反应 ✓，而且**一次异常都没有** ✓ ——
+   * ⚠️ 这正是本仓最怕的那类：**不炸、不报错、测试全绿** ✗。
+   *
+   * ⚠️ 因此**不能**无条件挂 ✗：`EmailPanel` 关着的时候**不会**自己隐藏（它根节点没有
+   * 「`!open` ⇒ 不渲染」那一层 ✓，`!open` 只出现在 effect 里 ✓）⇒ 无条件挂会**一直显示** ✗。
+   * ⇒ ⭐ 所以按 `open` **开着才挂** ✓（代价：每次打开会重新挂载、面板自己的选中态不保留 ✓，
+   * 而账号列表在 store 里 ✓ ⇒ 不影响数据 ✓）。
+   * ⚠️ 另按能力口径加**桌面门** ✓（邮箱是**桌面版独有**能力 ✓ —— 见 `lib/platform/capabilities.ts:22` ✓）。
+   */
+  const mailOpen = useEmailPanel((s) => s.open);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -195,6 +225,24 @@ export function ActivityBar() {
         >
           <SidebarIcon width={18} height={18} />
         </button>
+        {/* ⭐ **2026-10-13（owner 口径：全局功能进左栏 ＋ 「页面」当第一位）** ✗ ——
+            ⭐ 这一颗就是 `ITEMS` 里原来的 `notes` ✓（⭐ 渲染**逐字照抄**那颗：同一个 `pick("notes")` ✓、
+            同一条 `is-on` 高亮 ✓、同一对 `t("nav.notes")` ✓、同一个 `PageIcon` ✓）
+            ⇒ ⛔ 不另造一条"打开页面"的路 ✗（那会变成第二份真相源 ✓）。 */}
+        <button
+          className={`activity-btn${activity === "notes" ? " is-on" : ""}`}
+          title={t("nav.notes")}
+          aria-label={t("nav.notes")}
+          aria-current={activity === "notes"}
+          onClick={() => pick("notes")}
+        >
+          <PageIcon width={18} height={18} />
+        </button>
+        {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
+            所以不是一个「活动」，不参与选中态。
+            ⚠️ **2026-10-13**：⭐ 它从「同步／邮箱」**后面**挪到**前面** ✗（owner 口径：
+            ⭐ 顺序＝页面 → 搜索 → 同步 → 邮箱 ✓）—— ⛔ 只挪位置 ✗，它本身一个字没改 ✓。 */}
+        <SearchPanel />
         {/* ⭐ **P-2a-2**：⭐ 左栏常驻「**同步**」入口 ✗ —— 它切的是 **`AppView` 的 `"sync"`** ✓
             （⛔ **不是** `Activity` 的一员 ✗：两者不是一回事 ✓），走的是 P-2a-1 那条**内容区分支** ✓
             ⇒ ⛔ 不碰抽屉那条老路 ✗（那颗 `.btn-sync` 仍在 `SyncPanel` 里 ✓）。
@@ -206,17 +254,41 @@ export function ActivityBar() {
           data-testid="rail-sync"
           onClick={() => setView("sync")}
         >
-          <CloudSyncIcon width={18} height={18} />
-          <span>同步</span>
+          <CloudSyncIcon width={20} height={20} />
           {typeof syncPeers === "number" && syncPeers > 0 && (
             <span className="sync-badge" aria-label={`本网段发现 ${syncPeers} 台`}>
               {syncPeers}
             </span>
           )}
         </button>
-        {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
-            所以不是一个「活动」，不参与选中态。 */}
-        <SearchPanel />
+        {/* ⭐ **P-2b**：⭐ 左栏常驻「**邮箱**」入口 ✗ —— 与上面那颗「同步」**同形** ✓，
+            差别只有两处（都是刻意的 ✓）：
+              ⭐ 它**不 `setView`** ✗ —— ⭐ 邮箱是弹层、不是 `AppView` 的一员 ✓
+                ⇒ ⭐ 点它**只调 store**：`useEmailPanel.getState().openPanel()` ✓；
+              ⚠️ 徽标 ⭐ **取不到就先不显示** ✗（`typeof … === "number"` 那一格就是它 ✓）。
+            ⛔ 字形用一个字符（`✉`）✗：⭐ 全仓没有邮箱图标 ✓ ⇒ ⛔ 不引新依赖／不新建图标 ✓。 */}
+        <button
+          className="activity-btn"
+          title="邮箱"
+          aria-label="邮箱"
+          data-testid="rail-mail"
+          onClick={() => useEmailPanel.getState().openPanel()}
+        >
+          <MailIcon width={20} height={20} />
+          {typeof mailUnread === "number" && mailUnread > 0 && (
+            <span className="sync-badge" aria-label={`${mailUnread} 封未读`}>
+              {mailUnread > 99 ? "99+" : mailUnread}
+            </span>
+          )}
+        </button>
+        {/* ⛔⭐ **2026-10-14 修**：⭐ 这一行是原来**缺失**的那一行 ✗ —— 组件、store、按钮都在，
+            唯独没人挂它 ⇒ 点「邮箱」只改了 store、屏幕上**什么都没发生** ✓（owner 报障 ✓）。
+            ⚠️ 挂在**按钮旁边**（与 `<SearchPanel />`／`<TrashPanel />` 同一种做法 ✓）；
+            ⭐ 按 `mailOpen` 与桌面门（理由见上面 `mailOpen` 的注释 ✓）。
+            ⛔⭐ **同一笔的第二个坑（owner：「乱了」）** ✗：`EmailPanel` **自带一颗"低调入口"按钮**
+            （`.btn-sync` ＋ `email-unread-badge` ✓）⇒ ⭐ 必须传 `withTrigger={false}` ✗，
+            否则栏里**多出一颗入口**、`99+` 徽标直接糊到内容区边上 ✓（真机实测 ✓）。 */}
+        {isDesktopPlatform() && mailOpen && <EmailPanel withTrigger={false} />}
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (
@@ -247,7 +319,15 @@ export function ActivityBar() {
           className="activity-btn"
           title="设置"
           aria-label="设置"
-          onClick={() => useEditorStore.getState().openSettings()}
+          onClick={() => {
+            // ⭐ 阶段 2（R205）：**手机形态** ⇒ 进移动自己的设置屏 ✓
+            //    （⛔ 桌面这一支**逐字不变** ✗ —— 它仍调 `openSettings()` 开桌面对话框 ✓）
+            if (isMobileViewport()) {
+              useMobileNav.getState().setScreen("settings");
+              return;
+            }
+            useEditorStore.getState().openSettings();
+          }}
         >
           <SettingsIcon width={18} height={18} />
         </button>

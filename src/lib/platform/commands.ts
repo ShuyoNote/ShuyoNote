@@ -360,8 +360,26 @@ export interface MeshPanelSpaces {
    * 界面只需要能点名到那一台 ✓；哈希对它毫无用处、漏出去只有坏处 ✓（Rust 侧只 select 两列 ✓）。
    */
   paired: { deviceId: string; addedAtMs: number }[];
-  /** 一句人话：开没开、开在哪、**别人拉不拉得到**（服务多个空间时还会说清是几个）。 */
+  /** 一句人话：开没开、**窗口开在哪**（服务多个空间时还会说清是几个）。 */
   note: string;
+  /**
+   * ⭐ **2026-10-14（owner：顶上那条绿字太长 ⇒ 拆两行）**：⭐ 单独一句「**别人拉不拉得到**」✓
+   * —— 界面把它当**第二行**小灰字摆 ✓（第一行只说「监听地址／端口」✓）。
+   *
+   * ⚠️ 与 `note` 同一把尺：⭐ 后端原文 ✓、界面**不自己判档** ✓、过 `inlineMd` ✓。
+   * ⚠️ 必填（⭐ 与 Rust `MeshConfigState` 同形 ✓）—— ⛔ 别写成可选 ✗：漏了它界面只会显示
+   * 「报出去的是 未读到」✓，而那**看起来像读不到** ✗。
+   */
+  reach: string;
+  /**
+   * ⭐ **2026-10-14（owner 给了参照图）**：⭐ **枚举到的那个可达 base**（形如 `http://192.168.43.206:8788`）✓；
+   * 枚举不出／窗口没起来 ⇒ `null` ✓。
+   *
+   * ⚠️ ⭐ 与 `window` **不是一回事** ✗：`window` 是"窗口**绑**在哪儿"（绑通配时就是 `0.0.0.0` ✗）；
+   * 界面上「报出去的是 …」那句**只能用它** ✓（⛔ 拿 `window` 会写出 `0.0.0.0`，那是编造 ✗）。
+   * ⚠️ 界面**只取 host** ✓（`new URL(...).hostname` ✓ 结构化 ✓，⛔ 不解析人话 ✗）。
+   */
+  announced: string | null;
 }
 
 /**
@@ -995,6 +1013,14 @@ export interface CommandMap {
    * ⇒ 那边的 `announced` 一律 `false` ✓（⛔ 不假装有窗口 ✗），而 `local` 照列它自己的空间 ✓。
    */
   mesh_panel_scopes: { args: undefined; result: MeshPanelScope[] };
+  /** ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✗ —— 比对码 ＝ 本机公钥 ＋ 对面那把公钥
+   *  ＋ 这一轮的 `trust_ask`（⭐ 由**后端**算 ✓，⛔ 前端不拼 ✗）。
+   *  ⚠️ ⭐ `code: null` ＝ **读不到** ✓（缺本机身份／对面没报公钥／这一轮没在握手 ✓），
+   *  原因在人话 `reason` 里 ✓ —— ⛔ 不许把 `null` 读成"对不上" ✗（那是两件事 ✓）。 */
+  pairing_code_reading: {
+    args: { peerDeviceId: string; peerPubkey: string };
+    result: { code: string | null; reason: string };
+  };
   mesh_panel_spaces: { args: undefined; result: MeshPanelSpaces };
   /**
    * 丙-③-b-2b：**写网格设置**（监听地址 / 口令），并把窗口的开关跟着改。

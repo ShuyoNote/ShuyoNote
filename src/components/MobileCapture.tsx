@@ -122,7 +122,7 @@ export function MobileCapture() {
   }
 
   return (
-    <div className="main mcap" data-testid="mobile-capture">
+    <div className="mshell mcap" data-testid="mobile-capture">
       <header className="mcap-head">
         <h1 className="mcap-title">快速记录</h1>
         <button className="mcap-save" onClick={() => void save()} disabled={busy}>

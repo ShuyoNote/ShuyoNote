@@ -7,7 +7,20 @@
 import pkg from "../../package.json";
 
 export const APP_NAME = "ShuyoNote";
-export const APP_VERSION: string = pkg.version || "0.0.0";
+
+/**
+ * ⭐ 阶段 3（R204 owner 拍「交付单立」）：**构建期注入的移动版号** ✓。
+ *
+ * `vite.config.ts` 用 `define` 把 `MOBILE_APP_VERSION` 注入成这个标识 ✓ ⇒
+ * **Android 构建**（那两条 workflow 会设那个 env ✓）里 `APP_VERSION` 就是**移动自己的号** ✓；
+ * ⛔ **env 不存在时它是 `undefined`** ✗ ⇒ 下面退回 `pkg.version` ✓ ⇒ ⭐ **桌面路径逐字不变** ✓
+ *   （本文件也被 smoke 夹具**直接打包** ✓ ⇒ 那种环境里它同样 `undefined` ✓ ⇒ 退回桌面号 ✓，行为不变 ✓）。
+ * ⚠️ ⛔ 不引入**第二份运行期来源** ✗：这里只是"构建期常量"✓，运行期不读任何文件 ✓。
+ */
+declare const __MOBILE_APP_VERSION__: string | undefined;
+
+export const APP_VERSION: string =
+  (typeof __MOBILE_APP_VERSION__ !== "undefined" && __MOBILE_APP_VERSION__) || pkg.version || "0.0.0";
 export const APP_LICENSE = "AGPL-3.0";
 
 export interface LinkItem {

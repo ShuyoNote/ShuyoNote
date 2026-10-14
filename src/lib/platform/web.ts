@@ -1436,6 +1436,16 @@ export function makeInvoke(store: SqliteStore) {
     const a = (args ?? {}) as Record<string, any>;
     seedWorkspaceMeta();
 
+    // ⭐ **P-4 片③-a（2026-10-14）**：⭐ 逐台「对码」读数 ✗ —— ⚠️ Web 版**没有这一层**
+    //    （本机身份在钥匙串 ／ 局域网握手在 Rust 那侧 ✓）⇒ ⭐ 如实回 `null` ＋ 一句为什么 ✓
+    //    （⛔ 不编一个码 ✗；⭐ 与上面 `cleanup_orphan_derived` 同一处置 ✓）。
+    if (cmd === "pairing_code_reading") {
+      return {
+        code: null,
+        reason: "网页版没有这一层（本机身份与局域网握手都在桌面端）⇒ 现在算不出比对码",
+      } as T;
+    }
+
     // ⚠️ 清孤儿派生行：Web 侧**我没验过**（它的派生层走 sql.js，另一条路 ✓）
     //    ⇒ 按"未核实的别假装能做到"的口径，这里**明说做不到** ✓（与 P0 引擎那条同规格 ✓）。
     if (cmd === "cleanup_orphan_derived") {

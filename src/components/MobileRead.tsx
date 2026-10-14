@@ -108,7 +108,7 @@ export function MobileRead({ pageId }: { pageId: string }) {
   const count = blocks?.length ?? 0;
 
   return (
-    <div className="main mread" data-testid="mobile-read">
+    <div className="mshell mread" data-testid="mobile-read">
       <header className="mread-head">
         <button className="mread-back" onClick={goHome} aria-label="返回首页">
           ‹

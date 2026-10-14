@@ -155,11 +155,17 @@ pub fn resolve_config_path() -> Option<PathBuf> {
 }
 
 /// 从一个文件读配置 ✓（读不了／JSON 坏了 ⇒ **可读报错** ✓，⛔ 不静默给默认值 ✗）。
+///
+/// ⚠️⭐ **2026-10-14（owner：真机截图里那句话把本机绝对路径摆到了界面上）** ✗：⭐ 这两句
+/// 原来都带 `path.display()`（`C:\Users\<用户>\AppData\Roaming\…\relay\config.json` ✓）
+/// ⇒ ⭐ 一句用户无用的报错里塞了他自己的目录结构 ✓。⛔ 路径不进用户可见文案 ✗（这一条已在
+/// `INV-UI-copy-no-internal-ids` 同族的口径里 ✓）；⭐ 排障要看路径 ⇒ 走
+/// [`resolve_config_path`]（它本来就回一个 `PathBuf` ✓）。
 pub fn load_config_from(path: &Path) -> Result<RelayConfig, String> {
     let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("读不了中继配置 {}: {e}", path.display()))?;
+        .map_err(|e| format!("读不了中继配置: {e}"))?;
     serde_json::from_str(&text)
-        .map_err(|e| format!("中继配置 {} 不是合法的 JSON: {e}", path.display()))
+        .map_err(|e| format!("中继配置不是合法的 JSON: {e}"))
 }
 
 /// 从 [`resolve_config_path`] 读配置 ✓；路径都取不到 ⇒ 报清楚"还没配置"✓。

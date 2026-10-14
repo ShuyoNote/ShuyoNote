@@ -15,7 +15,9 @@
 // ⚠️ 本模块**只 `import type`**（⛔ 不在运行时拉起那个组件 ✗）⇒ 单测里引它很轻 ✓。
 
 import type { MeshTrustStateView } from "./platform/commands";
-import type { Reading, TrustDevicePanelProps } from "../components/TrustDevicePanel";
+// ⭐ **2026-10-14（owner 拍「去掉孤儿组件」）** ✗：`TrustDevicePanel.tsx` **已删** ✓（它今天先丢了挂载点、
+//   现在整份组件也删了 ✓）⇒ ⭐ 读数形态那两个类型**搬进本模块** ✓（原本住在那组件里 ✓）。
+//   ⛔ 一处也没改形状 ✗：`Reading<T>` 的两种判别式一字未动 ✓，5 个键名一字未动 ✓（判据钉着它们 ✓）。
 
 /** ⭐ 点「信任这台设备」＝ **一端点就通**（owner 拍**甲** ✓）⇒ 一条命令一条空间 ✓。
  *  ⚠️ 名字按 Lead 给的写；他落地时会喊我确认（⛔ 我先不猜参数名之外的形态 ✗）。 */
@@ -28,11 +30,24 @@ export const MESH_TRUST_STATE_COMMAND = "mesh_trust_state";
 export const TRUST_READINGS_UNAVAILABLE_REASON =
   "后端这几条读数还没到位（正在补：可接入空间／本地空间／重合读数／设备数字码）";
 
-/** ⭐ 那一屏的读数形态（＝ `TrustDevicePanel` 里那几个 `Reading<T>` props ✓：四条后端读数 ＋ 信任状态 ✓）。 */
-export type TrustDeviceReadings = Pick<
-  TrustDevicePanelProps,
-  "attachOffer" | "localSpaces" | "mergeOverlap" | "deviceCode" | "trustState"
->;
+/** 一处读数：**拿不到就说拿不到** —— ⛔ 不许拿 0 冒充「没有」✓。（⭐ 从已删的 `TrustDevicePanel.tsx` 原样搬来 ✓） */
+export type Reading<T> =
+  | { kind: "ok"; value: T }
+  | { kind: "unavailable"; reason: string };
+
+/**
+ * ⭐ 那一屏的读数形态（四条后端读数 ＋ 信任状态 ✓：5 个键名**一字没动** ✓ —— 判据钉着它们 ✓）。
+ *
+ * ⚠️ **2026-10-14**：原来是 `Pick<TrustDevicePanelProps, …>` ✗ —— 而那个 props 类型住在**已删**的组件里 ✓
+ * ⇒ ⭐ 这里改成**写死形状** ✓（载荷类型也按原样内联搬过来 ✓，⛔ 一个字没改语义 ✗）。
+ */
+export type TrustDeviceReadings = {
+  attachOffer: Reading<{ id: string; name: string; kind: "personal" | "team" | "" }[]>;
+  localSpaces: Reading<{ id: string; name: string }[]>;
+  mergeOverlap: Reading<{ mergedCount: number; unmergedOverlapCount: number }>;
+  deviceCode: Reading<{ code: string; verified: boolean }>;
+  trustState: Reading<MeshTrustStateView>;
+};
 
 /**
  * ⭐ **读一次信任状态** ✗（⭐ "信任走到哪一步" ✓ —— ⭐ 它**是**后端算的那一格 ✓，⛔ 界面不许自己猜 ✗）。

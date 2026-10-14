@@ -96,8 +96,15 @@ pub fn confirm_generates_secret(role: TrustRole) -> bool {
 /// ⚠️ ⭐ 为什么这条必须写下来 ✗：⭐ 我（Lead）先前那版设计**以为**要按 09-25 那条路
 /// "⭐ 被问的那台现场生成一把、⭐ 再由它 `trust_secret` 发出去 ✗" ✓ ⇒ ⭐ 那是**多此一举** ✗，
 /// ⭐ 而且会把空间令牌**送上明文广播** ✗ ✗ —— ⭐ 比原来的威胁模型更差 ✓。
-/// ⇒ ⭐ 甲 的真实形状是：⭐ 点的那一侧 ⭐ 用**已有的令牌**登记对面 ✓（`remember_peer_card` ✓），
-/// ⭐ 另一位收到 `trust_ask` ⇒ ⭐ **自动采纳** ✓（⭐ 甲：⭐ 不问那台的人 ✓）。
+/// ⇒ ⭐ 甲 的真实形状是：⭐ 点的那一侧 ⭐ 用**已有的令牌**登记对面 ✓（`remember_peer_card` ✓）。
+/// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 这一句原来是「另一位收到 `trust_ask` ⇒
+/// ⭐ **自动采纳** ✓」，⚠️ 它**半对半错** ✗（以代码为准，⛔ 不凭注释 ✗）：
+/// · ✅ 还成立的：⭐ 收到 ask ⇒ ⭐ 本机**状态**推进到已信任 ✓（`state_after_ask_seen` ✓，判据
+///   `remote_side_acting_alone_also_reaches_trusted` ✓ 仍在 ✓）；
+/// · ⛔ 已过期的：⭐ 那**不是"采纳"** ✗ —— ⭐ ⭐ 2026-10-12（owner 逐字「『信任这台设备』是『**允许它来拿我的**』」✓）
+///   之后：⭐ **登记只在"点的那一侧"**（`mesh_trust_begin` ✓），⭐ 这一侧收到 ask ⭐ **只记一行
+///   「对面允许了你」** ✗（`sync.rs:2787-2794` ✓，⭐ 两条判据 `sync.rs:5010`／`:9755` 钉着
+///   "收到 ask **一个字节都不登记**" ✓）。
 pub const fn one_sided_click_establishes_trust() -> bool {
     true
 }
@@ -108,6 +115,113 @@ pub const fn one_sided_click_establishes_trust() -> bool {
 /// ⭐ 后果是**把空间令牌公开发给同网段** ✗ ⇒ ⭐ 必须有一条能红的判据盯着 ✓。
 pub fn outbound_may_carry_secret() -> bool {
     false
+}
+
+/// ⭐⭐ **P-4 片①（2026-10-13）**：⭐ 把**两台的身份 ＋ 这一次的 nonce** 拼成**一段文本** ⇒
+/// ⭐ 交给既有的 [`crate::pairing::check_code`] 派生出**两端一致**的比对码 ✗。
+///
+/// ## ⭐ 为什么只需要这一小片（⭐ 前一位逐字量过 ✓，别重查 ✗）
+/// ⭐ **一次性 nonce 已经存在** ✗ ⇒ ⭐ 就是 `lan::LanAnnounce.trust_ask`（`lan.rs:150` ✓）：
+/// · 生成 ＝ `mesh_trust::new_trust_ask()`（`mesh_trust.rs:108` ✓，⭐ 32 字节随机 ⇒ 64 个十六进制字符 ✓；
+///   ⭐ 随机源只在 `crypto::random_32()`（`crypto.rs:263` ✓，⭐ `OsRng` 只在这一层 ✓））；
+/// · 捎带 ＝ `lan_state.rs:550` 逐字 `a.trust_ask = ask;` ✓；
+/// · ⭐ "**每轮不同**"**已有判据** ＝ `mesh_trust.rs:194-196`（`a_trust_ask_is_long_and_hex_and_never_repeats` ✓）。
+/// ⇒ ⭐ ⭐ **本片不加任何字段** ✗、⛔ **不碰 `LanAnnounce` 的结构** ✗（⭐ 复用那一格更安全 ✓）；
+/// ⭐ 也⛔ **不升 `WIRE_VERSION`** ✗（既有锁：`lan.rs:1936-1983` ＋ `mesh.rs:2752-2763` ✓）。
+///
+/// ## ⚠️ 三条承重口径
+/// 1. ⭐ **两端必须算出同一个码** ✗ ⇒ ⭐ 顺序**固定**：两把公钥按 ⭐ **字典序**排 ✓
+///    （⛔ 不按"我／他"排 ✗ —— 那两端就反了 ✓；⭐ 相同也无妨：交换后是同一个串 ✓）；
+/// 2. ⭐ **整段参与** ✓（那是 `check_code` 自己的承重性质：载荷里**任一字节**变了 ⇒ 码就变 ✓）。
+///    ⇒ ⭐ 于是 ⭐ **换一个 `trust_ask` ⇒ 码必然不同** ✓（重放/换 nonce 才看得出差别 ✓）；
+/// 3. ⚠️ 域分隔**不在这里** ✗：`check_code` 自己用 `CHECK_DOMAIN`（`pairing.rs:344` ✓）＋ 一个 `0u8`
+///    隔开域（`pairing.rs:360` ✓）⇒ ⛔ 别在这儿再拼一个自己的前缀 ✗（那会变成两份口径 ✓）。
+///
+/// ## ⚠️ 一次如实交代（⭐ 免得被读成"6 位码做完了" ✗）
+/// ⭐ 本函数派生的是 ⭐ **既有那段 20 位十进制** ✓（`CHECK_CODE_MIN_BITS = 60` 照旧 ✓）；
+/// ⭐ ⛔ **不是** owner 口径里那个「**6 位码**」✗ —— ⭐ 设计稿逐字：⭐ **短码需要 PAKE，而 PAKE 没做** ✓
+/// ⇒ ⭐ 那一格归后续 ✓，⛔ 本片不假装做了 ✗。
+///
+/// ⚠️ 本函数是 ⭐ **纯函数** ✗（⛔ 不读库、⛔ 不取本机公钥 ✗）：本机那把由**调用方**给 ✓
+/// （`device_key` 的 `public_key_hex()` ✓／⭐ 对方那把**就在公告里** ✓）⇒ ⭐ 判据不起宿主就能钉住"两端一致" ✓。
+pub fn pairing_code_for(my_pubkey_hex: &str, peer_pubkey_hex: &str, trust_ask: &str) -> String {
+    let me = my_pubkey_hex.trim().to_ascii_lowercase();
+    let peer = peer_pubkey_hex.trim().to_ascii_lowercase();
+    // ⭐ 字典序（⭐ 两端各算一次 ⇒ 必须落在同一个顺序上 ✓）
+    let (a, b) = if me <= peer { (me, peer) } else { (peer, me) };
+    // ⚠️ 用 `\n` 分隔 ✗：公钥是定长十六进制、`trust_ask` 是无换行的随机十六进制 ✓
+    //   ⇒ ⛔ 不存在"两段拼起来产生歧义" ✓（⛔ 也不需要再加自己的域串 ✗，见上第 3 条 ✓）。
+    let payload = format!("{a}\n{b}\n{}", trust_ask.trim());
+    crate::pairing::check_code(&payload)
+}
+
+/// ⭐ **P-4 片③-a（2026-10-14）**：⭐ 命令要上抛的那一格 ✗ —— ⭐ `code: None` ＝ **读不到** ✓
+///   （⛔ 不硬凑一个码 ✗ —— ⭐ 与既有的"读不到 ≠ 0"同一条脾气 ✓）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PairingCodeReading {
+    /// ⭐ 比对码（20 位十进制、4 位一组 ✓）；`None` ＝ ⭐ **这一格今天读不到** ✓。
+    pub code: Option<String>,
+    /// ⭐ 为什么读不到（⭐ 人话 ✓）；读到了就是 `"ok"` ✓。
+    pub reason: String,
+}
+
+/// ⭐ 纯编排（⭐ 命令只是它的薄壳 ⇒ ⭐ 判据不起宿主就能钉住"码一字不差"＋"读不到不给假码" ✓）：
+/// ⭐ 三样齐（本机公钥 ✓ ／ 对面公钥 ✓ ／ 这一轮的 `trust_ask` ✓）⇒ [`pairing_code_for`] ✓；
+/// ⭐ 缺任何一样 ⇒ `code: None` ＋ ⭐ **人话原因** ✓（⛔ 绝不拿空串或随便一个串凑成"码" ✗）。
+pub fn pairing_code_reading_of(
+    my_pubkey_hex: Option<&str>,
+    peer_pubkey_hex: &str,
+    trust_ask: &str,
+) -> PairingCodeReading {
+    let my = my_pubkey_hex.unwrap_or("").trim();
+    if my.is_empty() {
+        return PairingCodeReading {
+            code: None,
+            reason: "本机还没有自己的身份（公钥）⇒ 现在算不出比对码".to_string(),
+        };
+    }
+    if peer_pubkey_hex.trim().is_empty() {
+        return PairingCodeReading {
+            code: None,
+            reason: "这一台还没报出它的身份（公钥）⇒ 现在算不出比对码".to_string(),
+        };
+    }
+    if trust_ask.trim().is_empty() {
+        return PairingCodeReading {
+            code: None,
+            reason: "这一轮没有进行中的握手（trust_ask 是空的）⇒ 先点「接入」，再对这一屏".to_string(),
+        };
+    }
+    PairingCodeReading {
+        code: Some(pairing_code_for(my, peer_pubkey_hex, trust_ask)),
+        reason: "ok".to_string(),
+    }
+}
+
+/// ⭐ **薄薄一层命令** ✓（⭐ 包住上面那个纯函数 ✓ —— ⛔ 一行算法都没有 ✗）。
+///
+/// ⚠️ ⭐ **入参为什么是这两格（⭐ 与我派单里那两格不同处，如实说明 ✗）**：
+/// · `peer_device_id` ⇒ ⭐ 去 `lan_state` 取**这一轮**那一串 `trust_ask` ✓（⭐ 走新加的只读小口
+///   [`TrustHandshake::ask_for`] ✓ —— ⭐ 它会核"这一轮对的是不是这一台" ✓，⛔ 不是拿"反正有一串"顶上 ✗）；
+/// · `peer_pubkey` ⇒ ⭐ 由**前端**给 ✓ —— ⚠️ 理由是**省一次查表**：⭐ 前端手上那份就是
+///   `NearbyPeer.pubkey` ✓（⭐ 同一个源 ✓）；⛔ 而且**不给 `NearbyPeer` 加格** ✗（⭐ 读数契约不动 ✓）；
+/// · ⛔ **没有 `space_id`** ✗ —— ⭐ [`pairing_code_for`] 只要**三样**（本机公钥／对面公钥／ask ✓），
+///   ⭐ 空间**不参与派生** ✓ ⇒ ⭐ 收一个用不上的参数 ＝ 噪音 ＋ 让"参数即口径"变模糊 ✓。
+#[tauri::command]
+pub fn pairing_code_reading(
+    db: tauri::State<'_, crate::db::Db>,
+    peer_device_id: String,
+    peer_pubkey: String,
+) -> Result<PairingCodeReading, String> {
+    let my = {
+        // ⭐ 本机那把：⭐ `None`（还没生成）⇒ **如实读不到** ✓（⛔ 不硬凑 ✗）
+        let c = db.0.lock().map_err(|_| "db mutex poisoned".to_string())?;
+        crate::device_key::public_key_hex_of(&c)?
+    };
+    // ⭐ 这一轮那一串：⭐ 没在跟这一台握手 ／ 已过期 ⇒ 空串 ⇒ ⭐ 如实读不到 ✓
+    let ask = crate::lan_state::with_trust(|h| h.ask_for(&peer_device_id, crate::db::now_ms()))
+        .unwrap_or_default();
+    Ok(pairing_code_reading_of(my.as_deref(), &peer_pubkey, &ask))
 }
 
 /// ⭐ 握手的**默认有效期**（⭐ 毫秒 ✓）—— ⭐ 四个广播周期（⭐ 广播 30 秒一轮 ✓）。
@@ -155,6 +269,14 @@ impl TrustHandshake {
     /// ⭐ 2026-10-11（owner 拍「甲：一端点就通」）：⭐ 这一步**只记账** ✗ —— ⭐ 真正"采纳"
     /// （★ 登记对面 ＋ ★ 推进状态 ✓）在**有 db 的那一层**（`sync.rs` 的网格那一轮 ✓），
     /// 因为那一步要写库 ✗，而本模块与 `lan_state` 都**不碰 IO** ✓。
+    ///
+    /// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 上面那段「采纳（登记对面 ＋ 推进状态）
+    /// 在 `sync.rs`」⚠️ **两头都不准** ✗（以代码为准，⛔ 不凭注释 ✗）：
+    /// · ⛔ "推进状态在 sync.rs" ✗ —— ⭐ 它就在**本函数紧下面那一行**（`state_after_ask_seen` ✓）；
+    /// · ⛔ "登记对面在 sync.rs" ✗ —— ⭐ ⭐ 2026-10-12 之后 ⭐ **收到 ask 一个字节都不登记** ✓
+    ///   （`sync.rs:2787-2794` ✓；⭐ 判据 `sync.rs:5010 receiving_a_trust_ask_registers_nothing_at_all` ✓
+    ///   ＋ `sync.rs:9755 receiving_a_trust_ask_never_writes_any_registration` ✓）⇒ ⭐ 登记只在
+    ///   **点的那一侧**（`mesh_trust_begin` ⇒ `remember_peer_card` ✓）。
     pub fn note_ask(&mut self, peer_device_id: &str, now_ms: i64, ttl_ms: i64) {
         // ⚠️ ⭐ **不调 `clear()`** ✗ —— 它会把已经走到的 `WaitingRemote`／`Trusted`
         //   **冲回 `Idle`** ✗；而公告是**周期性**的（30 秒一轮 ✓）⇒ 每轮冲一次 ✗。
@@ -190,6 +312,25 @@ impl TrustHandshake {
             return "";
         }
         &self.ask
+    }
+
+    /// ⭐ **P-4 片③-a（2026-10-14）加的只读小口** ✗ —— ⭐ 按 `peer_device_id` 取**这一轮**那一串
+    /// `trust_ask` ✓（⭐ 命令侧要用 ✓，⛔ 不改任何既有函数签名 ✗、⛔ 不改任何判定 ✗）。
+    ///
+    /// ⚠️ ⭐ **必须核"这一轮对的是不是这一台"** ✗：⭐ 光调 [`Self::outbound_ask`] 拿到的是
+    /// **当前那次握手**的串 ✓ —— ⭐ 若它正对着**另一台** ⇒ 拿它去算码会算出一个**看着像**、
+    /// 其实属于别的设备的码 ✗（⭐ 那正是"读不到"应当出现的地方 ✓）。
+    /// ⇒ ⭐ 不是这一台（或那一串为空 ／ 已过期 ✓）⇒ `None` ＝ **读不到** ✓（⛔ 不硬凑 ✗）。
+    pub fn ask_for(&self, peer_device_id: &str, now_ms: i64) -> Option<String> {
+        if self.peer_device_id.trim().is_empty() || self.peer_device_id.trim() != peer_device_id.trim() {
+            return None;
+        }
+        let a = self.outbound_ask(now_ms);
+        if a.trim().is_empty() {
+            None
+        } else {
+            Some(a.to_string())
+        }
     }
 
     /// ⭐ 这条公告该带上的 `trust_secret` ✗（⭐ 同上 ✓；⭐ 没确认过 ⇒ ⭐ 空串 ✓）。
@@ -539,6 +680,168 @@ mod tests {
             h.outbound_secret(1_500),
             "",
             "空间令牌不许上线 —— 甲 不需要传密钥，它本来就是两台都有的那把"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // ⭐⭐ **P-4 片①（2026-10-13）**：⭐ 两端一致的比对码 ✗（⭐ 复用既有那一格 nonce ✓，⛔ 不加字段 ✗）
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// ⭐⭐ **判据①（本片的新行为）**：⭐ 同一对 `(公钥A, 公钥B, nonce)` ⇒ ⭐ **两端算出的码相同** ✓；
+    /// ⭐ 换一个 nonce ⇒ ⭐ **码不同** ✓。
+    ///
+    /// ⚠️ **本片先红（如实）**：⭐ 落下 [`pairing_code_for`] 之前这条**编译不过** ✓ —— ⭐ 可核：
+    /// `git show HEAD:src-tauri/src/pairing_trust.rs` 里 `pairing_code_for` 是 **0 命中** ✓。
+    /// ⚠️ 且本机 rust 组按 `AGENTS.md` §7 以 **Linux(CI)/WSL** 为准 ⇒ ⭐ 本组**编进 lib** ✓、
+    /// ⭐ **本机未执行** ✗（⭐ 真因：`mt.exe` 不在 ⇒ 注入不了 v6 清单 ⇒ lib 测试 exe 起不来 ✓）。
+    #[test]
+    fn pairing_code_is_identical_on_both_ends_and_follows_the_nonce() {
+        const PK_A: &str = "aa11";
+        const PK_B: &str = "bb22";
+        let ask = "f".repeat(64);
+        // ⭐ ① 两端一致：A 看 B ／ B 看 A（⭐ 参数**反着传**）⇒ 必须同一个码 ✓
+        let a_sees_b = pairing_code_for(PK_A, PK_B, &ask);
+        let b_sees_a = pairing_code_for(PK_B, PK_A, &ask);
+        assert_eq!(
+            a_sees_b, b_sees_a,
+            "⛔ 两端算出的码必须一致 ✗（顺序没定死 ⇒ 两边永远对不上 ✓）"
+        );
+        assert!(!a_sees_b.trim().is_empty(), "码不许是空串");
+        // ⭐ 大小写／空白不该改变结果（两端的写法可能不同 ✓）
+        assert_eq!(
+            pairing_code_for(" AA11 ", "BB22", &ask),
+            a_sees_b,
+            "⭐ 去空白 ＋ 小写之后必须同码 ✓"
+        );
+        // ⭐ ② 换 nonce ⇒ 码必须不同 ✓（⭐ 相同的话"一次性"这一格形同虚设 ✓）
+        assert_ne!(
+            a_sees_b,
+            pairing_code_for(PK_A, PK_B, &"0".repeat(64)),
+            "⛔ 换 nonce 必须换码 ✗（⭐ 那是整段参与那条性质给的 ✓）"
+        );
+        // ⭐ ③ 换公钥 ⇒ 码也必须不同 ✓
+        assert_ne!(
+            a_sees_b,
+            pairing_code_for("aa12", PK_B, &ask),
+            "⛔ 换公钥必须换码 ✗"
+        );
+    }
+
+    /// ⭐⭐ **P-4 片③-a 判据②（本机：⭐ 只能编译 ✓ —— 如实标 ✗）**：⭐ 命令那一层算出的码
+    /// 与**直接调** [`pairing_code_for`] ⭐ **一字不差** ✓（⭐ 它只是薄壳 ⇒ 必须如此 ✓）。
+    ///
+    /// ⚠️ 本机 rust 组按 `AGENTS.md` §7 以 **Linux(CI)/WSL** 为准 ⇒ ⭐ 本组**编进 lib** ✓、
+    /// ⭐ **本机未执行** ✗。
+    #[test]
+    fn the_command_layer_returns_the_same_code_as_the_pure_function() {
+        let my = "aa11";
+        let peer = "bb22";
+        let ask = "f".repeat(64);
+        let via_command = pairing_code_reading_of(Some(my), peer, &ask);
+        assert_eq!(
+            via_command.code.as_deref(),
+            Some(pairing_code_for(my, peer, &ask).as_str()),
+            "⛔ 命令那一层**不许**自己另算一遍（⭐ 那就会出现两个算法 ✓）"
+        );
+        assert_eq!(via_command.reason, "ok");
+    }
+
+    /// ⭐⭐ **判据③**：⭐ **取不到 ⇒ `None` ＋ 人话原因** ✓，⛔ **绝不返回一个假码** ✗
+    /// （⭐ 三种取不到：本机没身份 ／ 对面没报公钥 ／ 这一轮没在握手 ✓）。
+    #[test]
+    fn unreadable_inputs_yield_no_code_and_a_human_reason() {
+        let ask = "f".repeat(64);
+        for (name, got) in [
+            ("本机没身份", pairing_code_reading_of(None, "bb22", &ask)),
+            ("本机身份是空串", pairing_code_reading_of(Some("  "), "bb22", &ask)),
+            ("对面没报公钥", pairing_code_reading_of(Some("aa11"), "", &ask)),
+            ("这一轮没握手", pairing_code_reading_of(Some("aa11"), "bb22", "   ")),
+        ] {
+            assert_eq!(got.code, None, "⛔ {name} ⇒ 必须**读不到** ✗（⛔ 不许拿一个码冒充 ✗）");
+            assert!(
+                got.reason.trim().len() > 8,
+                "⛔ {name} ⇒ 必须给**人话原因** ✗（⭐ 实测 {}）",
+                got.reason
+            );
+        }
+        // ⭐ 反面：⭐ 三样齐时**必须真给码** ✓（⛔ 不许永远读不到 ✗ —— 那与永远为真同罪 ✓）
+        let ok = pairing_code_reading_of(Some("aa11"), "bb22", &ask);
+        assert!(ok.code.is_some(), "⛔ 三样齐还不给码 ⇒ 这一格永远不会亮 ✗");
+    }
+
+    /// ⭐ **P-4 片③-a 判据④ 的两条锁（今天已绿 ✓，⛔ 不是本片的修 ✗）**：
+    /// ⭐ `WIRE_VERSION` 仍 1 ✓ ＋ ⭐ `NearbyPeer` 仍是 **8 格** ✓（⭐ 读数契约没动 ✓）。
+    #[test]
+    fn the_wire_version_and_the_nearby_contract_are_untouched() {
+        let lan_src = include_str!("lan.rs");
+        assert!(
+            lan_src.contains("pub const WIRE_VERSION: u32 = 1;"),
+            "⛔ 本片**不许**升 `WIRE_VERSION` ✗（⭐ 本片只加读数出口 ✓）"
+        );
+        let sync_src = include_str!("sync.rs");
+        let at = sync_src.find("pub struct NearbyPeer {").expect("`NearbyPeer` 必须在");
+        let body = &sync_src[at..sync_src[at..].find("\n}").map(|e| at + e).unwrap_or(at)];
+        let fields = body
+            .lines()
+            .filter(|l| l.trim_start().starts_with("pub ") && l.trim_end().ends_with(','))
+            .count();
+        assert_eq!(fields, 8, "⛔ 本片**不许**给 `NearbyPeer` 加格 ✗（⭐ 读数契约不动 ✓；实际 {fields} 格）");
+    }
+
+    /// ⭐ **判据②（锁，今天已绿 ✓，⛔ 不是本片的修 ✗）**：⭐ 出站**过期 ⇒ 一个字节都不带** ✓。
+    ///
+    /// ⚠️ ⭐ **如实交代**（⭐ 前一位没核这一格 ✓）：⭐ 我核了 ⭐ **"用后作废"没有专门的实现** ✗ ——
+    /// ⭐ 收到 ask 那一侧只**记账**、**不登记** ✓（判据③那条 ✓）⇒ ⭐ 所以本格**不写成"重放被拒"** ✗
+    /// （⭐ 那是我们**没有**的行为 ✓，⛔ 不许假装有 ✗）；⭐ 只钉**真正成立**的那条：
+    /// ⭐ 出站**过期不带** ✓（本文件的 `outbound_ask` ✓）⇒ ⭐ 一条过期的 ask
+    /// **不可能被本机再发出去** ✓。
+    #[test]
+    fn expired_ask_is_never_carried_out() {
+        let mut h = TrustHandshake::default();
+        h.begin("dev-b", "abc", 1_000, TRUST_TTL_MS);
+        assert_eq!(h.outbound_ask(1_000), "abc", "⭐ 没过期 ⇒ 照带 ✓");
+        assert_eq!(
+            h.outbound_ask(1_000 + TRUST_TTL_MS),
+            "",
+            "⛔ 过期 ⇒ 一个字节都不许带 ✗"
+        );
+        assert_eq!(
+            h.outbound_secret(1_000 + TRUST_TTL_MS),
+            "",
+            "⭐ 那把（`trust_secret`）同样不许带 ✓"
+        );
+        // ⭐ 没有任何进行中的东西（`expires_at_ms == 0`）⇒ 也空 ✓（⭐ 与"过期"语义不同、结果同 ✓）
+        let idle = TrustHandshake::default();
+        assert_eq!(idle.outbound_ask(9_999_999), "", "⭐ 没在等 ⇒ 空 ✓");
+    }
+
+    /// ⭐ **判据③（锁，今天已绿 ✓）**：⭐ 收到 ask ⇒ ⭐ **一个字节都不登记** ✓
+    /// （⭐ 与 `sync.rs` 那两条**同源** ✓ —— 本格只是把"我还认这条"钉在这里 ✓）。
+    #[test]
+    fn receiving_an_ask_registers_nothing_here_either() {
+        let src = include_str!("sync.rs");
+        assert!(
+            src.contains("pub(crate) fn note_pending_trust_asks("),
+            "⭐ 那条**唯一实现**要在 ✓（⭐ 名字改了这条要跟着改 ✓）"
+        );
+        assert!(
+            src.contains("receiving_a_trust_ask_registers_nothing_at_all"),
+            "⭐ 它是「收到 ask 不登记」那条判据的名字 ✓"
+        );
+        assert!(
+            src.contains("receiving_a_trust_ask_never_writes_any_registration"),
+            "⭐ 同上（真变异那条 ✓）"
+        );
+    }
+
+    /// ⭐ **判据④（锁，今天已绿 ✓）**：⭐ 「服务不服务我」的判定**仍旧只有** `lan::serves_space` ✓
+    /// （⭐ 本片只**新增**一个纯函数 ⇒ ⛔ 一个字都没动判定 ✗）。
+    #[test]
+    fn the_judgement_is_still_lan_serves_space() {
+        let src = include_str!("sync.rs");
+        assert!(
+            src.contains("serves_current: lan::serves_space(space_id, p)"),
+            "⛔ 不许拿别的读数去决定「服务不服务我」✗（判定只有 `lan::serves_space` 一条 ✓）"
         );
     }
 }

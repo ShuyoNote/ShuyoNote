@@ -28,6 +28,8 @@ import { MobileRead } from "./components/MobileRead";
 import { MobileAbout } from "./components/MobileAbout";
 // ⭐ 2026-10-10：手机档的**搜索屏**（效果图 `03-search.svg`，规格 §4.3）—— 首页那张「搜索」卡进它 ✓。
 import { MobileSearch } from "./components/MobileSearch";
+// ⭐ 阶段 2（R205）：移动端**自己的设置屏**（原来屏在、门没有 ✗ ⇒ 现在由手机 ⚙️ 进 ✓）。
+import { MobileSettings } from "./components/MobileSettings";
 // ⭐ 2026-10-10：手机档的**「设备配对 · 同步」屏**（效果图 `08-pair.svg`，规格 §4.8）——
 //   入口＝手机档那颗悬浮「同步」胶囊 ✓（桌面档一个字不动 ✓）。
 import { MobilePair } from "./components/MobilePair";
@@ -1203,6 +1205,12 @@ function AppShell() {
            它排在 `currentId` **前面**：那颗「同步」胶囊是**常驻**的 ✓ ⇒ 不管底下开着什么，
            点了就该整屏看到它 ✓。⛔ 桌面档**一个字不动** ✗（Still 走 `SyncPanel` 那个浮层 ✓）。 */
         <MobilePair />
+      ) : isMobile && mobileScreen === "settings" ? (
+        /* ⭐ 2026-10-14 阶段 2（R205）：手机档的**「设置」屏**（`MobileSettings` ✓）——
+           它排在 `aboutOpen` **之前**（照 `pair` 的先例 ✓）：那颗 ⚙️ 是"去开一个面板"的**动作** ✓
+           ⇒ 不管底下开着什么（含"关于"是否已打开 ✓），点了就该整屏看到移动设置 ✓。
+           ⛔ 桌面档**一个字不动** ✗（桌面的 ⚙️ 仍开那个 `SettingsDialog` ✓，分岔在 `ActivityBar` 里 ✓）。 */
+        <MobileSettings />
       ) : isMobile && aboutOpen ? (
         /* ⭐ 2026-10-10：手机档的**「关于」屏**（效果图 `10-about.svg`，规格 §4.10）——
            它排在 `currentId` **前面**：从设置里点「关于与更新」时，不管底下有没有开着页，
