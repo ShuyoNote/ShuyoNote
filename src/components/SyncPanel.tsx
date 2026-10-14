@@ -2109,7 +2109,6 @@ export function SyncPanel({
               `opacity:.45 ＋ pointer-events:none` ⇒ 搬进去就是「变灰且点不动」，
               见 `.sync-profiles.is-disabled` 的注释与 D5 修正② 那条现场）。 */}
           <div className="sync-group is-advanced">
-            <div className="sync-group-title">进阶</div>
 
             {/* ⑤ 空间隐私 ← 原来的 `<SpacePrivacySection>`（组件本身一个字没改） */}
 
