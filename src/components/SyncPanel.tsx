@@ -9,7 +9,8 @@ import { autoPickPeer } from "../lib/pairTarget"; // ⭐ 常驻判据在 src/lib
 import { peerIdentityLine } from "../lib/peerIdentity"; // ⭐ 规格 J21 的**唯一实现**（信任前展示身份 ✓）
 import { toast } from "../store/toast";
 import { TrustDevicePanel, type Reading, type TrustStateReading } from "./TrustDevicePanel";
-// ⭐ 2026-10-11：`MeshAdvancedForm` 已搬到「设置 · 同步」（`SyncSettingsPane` ✓）⇒ 面板不再引它 ✓。
+// ⭐ **2026-10-14**：⭐ `MeshAdvancedForm` **又回到面板了** ✓（⭐ 设备级那三格在 `:2120` 一带 ✓）——
+//   ⚠️ 旧注释那句"已搬到「设置 · 同步」⇒ 面板不再引它"是**旧口径** ✗，已改 ✓；⭐ 设置那边已去掉 ✓。
 import {
   MESH_TRUST_BEGIN_COMMAND,
   readTrustState,
@@ -2126,10 +2127,10 @@ export function SyncPanel({
                     ) : (
                       <p>正在读取本机的设备直连设置…</p>
                     )}
-                    {/* ⭐ 2026-10-11（owner 重申「个人空间是设备级」）：那三格（监听地址／配对暗号／口令）
-                        已搬进「设置 · 同步」⇒ 面板这一折**只留读数 ＋ 人话** ✓（按图⑧ ✓）。
-                        ⚠️ 判据里的**四条承诺一条没删** ✓ —— 它们跟着 `MeshAdvancedForm` 去了设置面 ✓，
-                        而 `syncPanelMesh.wiring` 的 ③⑨ 本来就是「两个文件一起读」✓ ⇒ 这里不必改判据 ✓。 */}
+                    {/* ⭐ **2026-10-14**：⭐ 那三格（监听地址／配对暗号／自动开启）**已回到面板** ✓ ——
+                        「设置 · 同步」那一页**已经去掉** ✗（`SyncSettingsPane.tsx` 已删 ✓）⇒ ⭐ **面板是唯一去处** ✓。
+                        ⚠️ 旧注释说"它们跟着 `MeshAdvancedForm` 去了设置面"是**旧口径** ✗，已改 ✓。
+                        ⭐ 判据里的**四条承诺一条没删** ✓ —— `syncPanelMesh.wiring` 的 ③⑨ 本来就是「两个文件一起读」✓。 */}
                     <div className="sync-hint">
                       这一折现在只报读数。要改地址／配对暗号／口令，去 <b>设置 · 同步</b> ——
                       那是<b>这台设备</b>的一份设置，填一次，所有个人空间共用。

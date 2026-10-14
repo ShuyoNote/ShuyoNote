@@ -982,8 +982,8 @@ describe("P-4 片②b：把调用时点挪到「确认」之后（只挪时点�
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ⭐ **片 B（2026-10-14，owner：「完成同步面板」）** ✗：⭐ 把 `MeshAdvancedForm` **也**渲染进同步面板 ✓
-//   （⭐ `activeId=""` ＝ **设备级** ✓，⛔ 空串不许改 ✗；⭐ 设置那边 `SyncSettingsPane` **保持不动** ✓
-//    ＝ ⭐ **有意的中间态** ✓：⭐ 先加后删 ✓，⭐ 中间任何时候都有入口 ✓）。
+//   （⭐ `activeId=""` ＝ **设备级** ✓，⛔ 空串不许改 ✗；⭐ **2026-10-14：⭐ 设置那边已去掉** ✗
+//    ⇒ ⭐ **面板是唯一去处** ✓；⭐ `SyncSettingsPane.tsx` **已删** ✓ ⇒ 判据③**换对象不换断言** ✓）。
 // ⚠️ ① 是 **DOM 级** ✓；⭐ ② 是**源码级** ✓（⭐ 明标 ✗）；⭐ ③④ 是锁 ✓。
 // ═══════════════════════════════════════════════════════════════════════════════
 describe("片 B：同步面板里也有设备直连那三格", () => {
@@ -1016,11 +1016,25 @@ describe("片 B：同步面板里也有设备直连那三格", () => {
     expect(src, "⛔ `activeId` 必须是空串 ✗（⭐ 它就是「设备级」的意思 ✓）").toContain('activeId=""');
   });
 
-  it("③ 锁（今天已绿 ✓）：⭐ 设置那边**仍在**（⭐ 片 C 才删 ✓）＋ 面板里空间隐私仍在 ✓", () => {
-    const pane = readFileSync(resolve(__dirname, "SyncSettingsPane.tsx"), "utf8");
+  it("③ ⭐ **设置那边已去掉** ⇒ 面板是**唯一去处** ✓（⭐ 源码级 ⇒ 明标 ✗）＋ 面板里空间隐私仍在 ✓", () => {
+    // ⭐ **2026-10-14（片 C2，"换对象不删断言" ✓）**：⭐ 设置那份 `SyncSettingsPane.tsx` **已被删** ✗
+    //   ⇒ ⭐ 这根针**改从面板那份读** ✓（⭐ 同一根针 `<MeshAdvancedForm` 照旧 ✓ —— 它现在在 `SyncPanel.tsx` ✓）。
+    const pane = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
     const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
-    expect(pane, "⛔ 本片**不许**动设置那边 ✗（⭐ 它还得留着 ✓）").toContain("<MeshAdvancedForm");
+    expect(
+      pane,
+      "⭐ **面板**渲染了那三格 ⇒ 面板是**唯一去处** ✓（⛔ 判据不删 ✗ —— 删了就等于把守卫撤掉 ✓）",
+    ).toContain("<MeshAdvancedForm");
     expect(src, "⭐ 面板里「空间隐私」那块仍在 ✓").toContain("<SpacePrivacySection");
+    // ⭐ 新增（⭐ 源码级 ⇒ 明标 ✗）：⭐ "设置那边确实没有了" —— 否则"删干净了"没人钉 ✗。
+    const dialog = readFileSync(resolve(__dirname, "SettingsDialog.tsx"), "utf8");
+    const editorTs = readFileSync(resolve(__dirname, "..", "store", "editor.ts"), "utf8");
+    expect(dialog, "⛔ 设置里**不该**再引 `SyncSettingsPane` ✗（⭐ 那个文件已经删了 ✓）").not.toContain(
+      "SyncSettingsPane",
+    );
+    expect(editorTs, "⛔ `SettingsTab` 的 union 里**不该**再有那一格 ✗（⭐ C1 已去掉 ✓）").not.toMatch(
+      /SettingsTab\s*=[^;]*"sync"/,
+    );
   });
 
   it("④ 锁（今天已绿 ✓）：⛔ 没引新依赖 ✗ ＋ ⭐ `MeshAdvancedForm` **一行未改** ✓（⭐ 只「用」它 ✓）", () => {
