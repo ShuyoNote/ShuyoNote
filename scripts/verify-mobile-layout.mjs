@@ -94,7 +94,7 @@ const probe = () => {
   const railToggle = document.querySelector(".mobile-rail-toggle");
   const backdrop = document.querySelector(".mobile-sidebar-backdrop");
   const railBackdrop = document.querySelector(".mobile-rail-backdrop");
-  const main = document.querySelector(".main");
+  const main = document.querySelector(".mshell, .main");
   const disp = (el) => (el ? getComputedStyle(el).display : null);
   // 窄屏竖条是浮层：收起时被 translateX(-100%) 推到屏外，display 仍是 flex。
   // 所以判"可见"必须看几何（右边缘是否落在视口内），不能看 display。
@@ -443,12 +443,12 @@ async function main() {
     //    本节验的仍是同一件事（窄屏上面板是叠加、不许把主区挤走 ✓），只是**开面板的手**换了 ✓。
     // ⚠️ `RIGHT_PANELS` 已**提到文件顶部**（2026-10-10：桌面段也要用它 ⇒ 别再在函数里声明一份 ✗）。
     const mainGeometry = () => {
-      const main = document.querySelector(".main");
+      const main = document.querySelector(".mshell, .main");
       if (!main) return null;
       const r = main.getBoundingClientRect();
       return {
         right: Math.round(r.right),
-        paddingRight: getComputedStyle(main).paddingRight,
+        paddingRight: (main ? getComputedStyle(main).paddingRight : "NO-SCREEN-ROOT"),
         docWidth: document.documentElement.scrollWidth,
         winWidth: innerWidth,
       };

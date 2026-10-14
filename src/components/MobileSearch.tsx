@@ -99,7 +99,7 @@ export function MobileSearch() {
   const count = results.length;
 
   return (
-    <div className="main msearch" data-testid="mobile-search">
+    <div className="mshell msearch" data-testid="mobile-search">
       <header className="msearch-head">
         <button className="msearch-back" onClick={goHome} aria-label="返回首页">
           ‹

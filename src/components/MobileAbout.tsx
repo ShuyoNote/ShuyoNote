@@ -93,7 +93,7 @@ export function MobileAbout() {
   const communityUrl = "https://community.shuyo.cn";
 
   return (
-    <div className="main mabout" data-testid="mobile-about">
+    <div className="mshell mabout" data-testid="mobile-about">
       <header className="mabout-head">
         <button className="mabout-back" onClick={goBack} aria-label="返回">
           ‹

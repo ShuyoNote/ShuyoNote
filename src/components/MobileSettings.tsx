@@ -73,7 +73,7 @@ export function MobileSettings() {
   ];
 
   return (
-    <div className="main mset" data-testid="mobile-settings">
+    <div className="mshell mset" data-testid="mobile-settings">
       <header className="mset-head">
         <h1 className="mset-title">设置</h1>
         <button

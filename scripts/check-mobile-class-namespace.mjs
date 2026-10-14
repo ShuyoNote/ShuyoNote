@@ -38,9 +38,6 @@ const APP_TSX = join(REPO_ROOT, "src", "App.tsx");
  * 每划掉一格都要有读数 ✓（这张表本身就是**阶段 1 的进度表** ✓）。
  */
 const SHARED = [
-  // 桌面主区容器（`App.css:4700` `flex:1; display:flex; flex-direction:column; overflow:hidden` ✓）。
-  // ⭐ **它是承重类** ✗：移动屏的全宽/全高/内部滚动都靠它 ✓ ⇒ 必须先建"移动自己的外壳"才能划掉 ✓。
-  "main",
   // 状态修饰类（改配色/强调 ✓，⛔ 不是布局 ✗）：将来要不要给移动自己的状态命名，是阶段 1 的取舍 ✓。
   "is-accent",
   "is-on",
@@ -53,7 +50,7 @@ const SHARED = [
 ];
 
 /** ⭐ 白名单**长度常量** —— 加行必改它 ✓（棘轮的那一半 ✓）。 */
-const SHARED_EXPECTED = 7;
+const SHARED_EXPECTED = 6;
 
 /** 移动命名空间（照各屏的 `.m*` 族 ✓；`mset*` 是设置屏自己的族 ✓）。 */
 const MOBILE_NS = /^m(home|cap|search|read|dict|pair|about|set|settings|note|merge|rail|sync|scroll|pop|sheet|bar|btn|icon|card|head|body|foot|line|list|item|chip|grid|meta|src|dim|empty|title|when|who|count|undo|mark|back|close|actions|hint|err|send|save|draft|tool|filter|result|thumb|dot|time|tag|badge|kbd|seg|toggle|nav|feed|sub|avatar|state|status|row|col|wrap|stack|cover|preview|quote|code|table|tree|pane|overlay|layer|drawer|shell|top|mid|bot)(-|$)/;
