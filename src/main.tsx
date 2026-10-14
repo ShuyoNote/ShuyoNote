@@ -1,4 +1,5 @@
 import "./lib/polyfills";
+import { APP_VERSION } from "./lib/links";   // ⭐ 阶段 3：启动页那格版号的事实源（与关于屏同一个 ✓）
 import "./i18n"; // 初始化 i18next（zh/en）
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -177,6 +178,14 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 // without waiting for every sub-resource) plus a hard timeout, so the splash can
 // never stay forever even if the browser `window.load` is blocked by a pending
 // resource or a stale cache. On a fatal module error we also force-hide it.
+// ⭐ 2026-10-14 阶段 3（R204 走乙）：**启动页那格版号运行时填** ✓ ——
+//    ⛔ 不引入第二份事实源 ✗：来源就是 `links.ts` 的 `APP_VERSION` ✓（与关于屏／设置页同一个 ✓）。
+//    ⚠️ 必须在摘掉 splash **之前**填 —— 之后再写就没人看得见了 ✓。
+{
+  const sv = document.querySelector(".splash-version");
+  if (sv) sv.textContent = `版本 ${APP_VERSION}（开发）`;
+}
+
 function hideSplash() {
   const el = document.getElementById("app-splash");
   if (!el || el.classList.contains("is-hide")) return;
