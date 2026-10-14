@@ -29,7 +29,7 @@
 //    `[pages, currentId, startupSettled]`（点文件夹一个都不变）、守卫还是 `view === "notes"` ✓。
 //    实测也一致：**不挪手指、干净会话里点一下是好的**（见下面第一条前提断言 ✓）。
 //
-// 形状抄 `src/components/TrustDevicePanel.test.tsx`：`createRoot` ＋ `flushSync` ＋ 原生事件
+// 形状抄 `src/components/SyncPanel.trustDevicePanel.wiring.test.tsx`：`createRoot` ＋ `flushSync` ＋ 原生事件
 // （本仓**没有 @testing-library** ⇒ 没有 `fireEvent`）。⚠️ 本文件路径固定是 `.ts`，所以照
 // `vitest.config.ts:9-11` 的老写法用 `React.createElement`（`.ts` 里不转 JSX）。
 import { afterEach, describe, expect, it } from "vitest";

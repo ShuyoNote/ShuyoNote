@@ -25829,8 +25829,50 @@ body.is-plugin-panel-open .main {
      ⭐ 某个 `overflow-y: auto` 的容器在横向内容超出时**同时**给出横条 ✓ ⇒ ⭐ 这里显式钉住 ✓。 */
   overflow-x: hidden;
 }
-/* ⭐ 外层若把这一档当 flex 子项 ⇒ ⭐ 让它撑满交叉轴 ✓（⭐ 用**更窄**的选择器 ✓，⛔ 别改 .main 本体 ✗）。 */
-.main > .sync-popover.is-inline {
-  align-self: stretch;
+/* ⚠️⭐ **刀二十（2026-10-14，owner：「看看是否需要添加滚动支持」）实测订正** ✗ ——
+   ⭐ 上面那条 `.main > .sync-popover.is-inline` **从来没匹配过** ✗：⭐ 真子级是 `.sync-panel`
+   （`SyncPanel.tsx:1217` 那个 `<div className="sync-panel">` ✓ 包着 popover ✓）⇒ ⭐ 它一直是一条**死规则** ✓。
+   ⭐ 同一族：⭐ `.is-inline { height: 100% }`（⭐ 上面刀十六那条 ✓）也**不生效** ✗ ——
+   ⭐ 父级 `.sync-panel` 是**自动高** ⇒ 百分比高度按 auto 解析 ✓。
+   ⭐ 后果（⭐ CDP 真读数 ✓：`Emulation.setDeviceMetricsOverride` 改视口、⛔ 没 reload ✗）：
+   ⭐ `.main` 是 `display:flex; flex-direction:column; overflow:hidden` ✓ ⇒ 窗口一矮就把面板底部
+   ⭐ **静默裁掉** ✗ —— 实测 1280×860 裁 16px ／ **1280×720 裁 156px** ／ **1180×640 裁 236px**，
+   ⭐ 而面板里**一个能滚的容器都没有** ✗（⭐ `.sync-popover` 本体有 `overflow-y:auto` ✓，
+   ⭐ 但它从没被限高 ⇒ 永远不滚 ✓）。
+   ⇒ ⭐ 修法：⭐ 把这一档钉成「**占满 ＋ 内部滚**」✓（⭐ 用 `:has(> .sync-popover.is-inline)` ✓ ——
+   ⛔ 抽屉/浮层那一支**一个字节不动** ✗；⭐ 全仓 `:has(` 本来就有 8 处 ✓，不是新引入的写法 ✓）。
+   ⚠️ 同一条也把刀十六那句「要铺满页面内容区」真正兑现了 ✓（之前 `height:100%` 是死的 ⇒ 面板一直
+   只有内容那么高 ✓）。判据：`syncControls.wiring` ⑨（源码级钉这两条 ✓）。 */
+.sync-panel:has(> .sync-popover.is-inline) {
   flex: 1 1 auto;
+  /* ⭐ flex 子项的经典坑：不给 `min-height: 0` 就撑破父级 ✓（撑破 ＝ 被 `.main` 裁掉 ✓）。 */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sync-panel:has(> .sync-popover.is-inline) > .sync-popover.is-inline {
+  flex: 1 1 auto;
+  /* ⭐ 覆盖 `.is-inline { height: 100% / min-height: 100% }` —— 那两个在自动高父级下本来也不生效 ✓。 */
+  height: auto;
+  min-height: 0;
+  align-self: stretch;
+}
+
+/* ⭐ 刀二十②（美化，照 owner 2026-10-14「参考设计效果图美化界面」）：⭐ **有读数支撑** ✓ ——
+   ⭐ CDP 量到状态行 `.sync-hero-state` 是 **17px / 600** ✓ ⇒ ⭐ 它是**整个面板里最大的字** ✗
+   （⭐ 比面板标题还大 ✓）⇒ ⭐ **层级倒了**：状态行该是「一行小字 ＋ 一个点」✓、标题领读 ✓
+   （⭐ 设计图 图⑤ 里那一行也是小号 ✓）。⇒ 这一档里压到 **13.5px / 600** ✓
+   （⭐ 只钉 `.is-inline` ✓ —— ⛔ 浮层/抽屉那一支**一个字节不动** ✗）。 */
+.sync-popover.is-inline .sync-hero-state {
+  font-size: 13.5px;
+}
+
+/* ⭐ 刀二十③（美化）：⭐ 虚线空框（`.sync-empty-state`）**会裁自己的字** ✗ ——
+   ⭐ 真读数：窄宽度下 `scrollHeight > clientHeight`（⭐ 文字换行后比框高 ✓）；
+   ⭐ 而且它现在只有一行时 31px、两行时挤 ✓。⇒ ⭐ 给它 `min-height` ＋ 垂直居中 ✓
+   （⛔ 字号、内边距、文案**一个字不改** ✗ —— 只让它**跟内容长** ✓）。 */
+.sync-popover.is-inline .sync-hint.sync-empty-state {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
 }

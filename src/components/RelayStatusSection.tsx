@@ -60,13 +60,18 @@ export function RelayStatusSection() {
   return (
     <div className={`sync-row relay-status is-${view.tone}`}>
       <div className="sync-row-body">
+        {/* ⚠️ **2026-10-14（owner：「太丑了，优化美化」）** ✗：这两行的值原来是 `.sync-att-text`
+            —— 它和 `.sync-row-label` **都是 `flex: 1 1 auto`** ✓ ⇒ 两个各占一半 ⇒ ⭐ 值被顶到**正中间**
+            （真机截图实测 ✓；而面板里别的读数行的值都在**右端** ✓）。⇒ ⭐ 换成 `.sync-row-value`
+            （`flex: 0 1 auto` ✓，与「监听地址／端口」那两行**逐字同形** ✓）。
+            ⛔ 文案／读数／动作**一个字没动** ✗（这一笔只换类名 ✓ —— 它落在"数据接线"之外 ✓）。 */}
         <div className="sync-att">
           <span className="sync-row-label">中继</span>
-          <span className="sync-att-text relay-connection">{view.connectionLabel}</span>
+          <span className="sync-row-value relay-connection">{view.connectionLabel}</span>
         </div>
         <div className="sync-att">
           <span className="sync-row-label">中继许可证</span>
-          <span className="sync-att-text relay-license">{view.licenseLabel}</span>
+          <span className="sync-row-value relay-license">{view.licenseLabel}</span>
         </div>
         {view.connectionDetail ? <p className="sync-hint">{view.connectionDetail}</p> : null}
         {view.note ? <p className="sync-hint">{view.note}</p> : null}

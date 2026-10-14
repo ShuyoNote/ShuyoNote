@@ -363,11 +363,21 @@ describe("SpacePrivacySection（空间隐私：这个空间敢不敢绑同步）
     expect(vaultState().enabled).toBe(false);
   });
 
-  it("⑧ 接线：SyncPanel 里真的挂了这一节（防孤儿组件）", () => {
-    const panel = readFileSync("src/components/SyncPanel.tsx", "utf8");
-    expect(panel, "SyncPanel 里没有挂 SpacePrivacySection ⇒ 用户在同步面板里看不到").toContain(
+  it("⑧ 接线：那一节挂在**设置 · 安全**那一处（防孤儿组件）", () => {
+    // ⭐ **2026-10-14（owner 拍删：同步面板里那一行「空间隐私」与设置的安全面板**重复**）** ✗：
+    //    ⭐ 按本仓 R192「**换对象不删断言**」✗ —— ⛔ 断言一条没删 ✓，只把**对象**从「同步面板」
+    //    换成**现在那个挂载点** ✓：`SettingsDialog.tsx` 的「设置 · 安全」那一节 ✓（`:1514` ✓）。
+    //    ⛔ **不许把这条删掉** ✗ —— 删了就等于把"防孤儿组件"那道守卫撤掉 ✓（那正是它当初存在的理由 ✓）。
+    const dialog = readFileSync("src/components/SettingsDialog.tsx", "utf8");
+    expect(dialog, "设置里没挂 SpacePrivacySection ⇒ 这一节成了没人用的孤儿").toContain(
       "<SpacePrivacySection",
     );
+    // 另一半：⭐ 面板里那一行**确实删了** ✓（否则上面那条只是"还有别处挂着"，删没删没人钉 ✓）。
+    const panel = readFileSync("src/components/SyncPanel.tsx", "utf8");
+    expect(
+      panel,
+      "同步面板里那一行「空间隐私」已删（owner 2026-10-14：与设置的安全面板重复 ✓）",
+    ).not.toContain("<SpacePrivacySection");
   });
 
   // ── B 片 ①-a（2026-09-25）：不经服务器的换设备（配对码）────────────────────────

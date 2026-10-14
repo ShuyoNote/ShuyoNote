@@ -13,7 +13,8 @@
 //    · 随机源只许走 `crate::crypto::` ✓（`crypto.rs:261` 逐字「随机数入口只有这一处」✓）＋
 //      ⛔ `sync.rs` 里**不许**出现 `use rand`／`OsRng` ✗（`Cargo.toml` 只有 `rand_core` ✓）。
 // ⚠️ **判据 B（"人话指向**存在**的控件"）本片不动 UI** ✗ ⇒ ⭐ 它**仍是半绿** ✗、归**下一片**（UI）✓
-//    —— ⛔ 本文件**不声称** B 已修 ✗（今天 `MeshAdvancedForm` 里那格早已删掉 ⇒ 面板上**没有**可点的口令格 ✓）。
+//    —— ⛔ 本文件**不声称** B 已修 ✗（那格早已删掉 ✓，随后承载它的 `MeshAdvancedForm.tsx` 也于
+//    2026-10-14 **整份删了** ✓ ⇒ 界面上**没有**可点的口令格 ✓）。
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

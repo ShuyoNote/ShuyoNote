@@ -1204,8 +1204,14 @@ pub struct MeshConfigState {
     ///
     /// 界面靠它**点得出名字**再逐台解除 ✓ —— 否则用户只知道"有几台"，却不知道"解除哪一台" ✗。
     pub paired: Vec<MeshPairedDevice>,
-    /// 一句人话：开没开、开在哪、**别人拉不拉得到**。
+    /// 一句人话：开没开、**窗口开在哪**。
     pub note: String,
+    /// ⭐ **2026-10-14（owner：顶上那条绿字太长 ⇒ 拆两行）** ✗：⭐ 单独一句
+    /// 「**别人拉不拉得到**」✓ —— ⭐ 界面把它当**第二行**小灰字摆 ✓（第一行只说「监听地址／端口」✓）。
+    ///
+    /// ⚠️ 从 `note` 里**搬出来**的（⛔ 不是加一份复制 ✗ —— 同一件事两份说法迟早漂开 ✓）：
+    /// `note` 现在只说"开没开、窗口在哪" ✓，这一格只说"对面能不能连上我" ✓。
+    pub reach: String,
 }
 
 /// 把"设置 ＋ 窗口实际地址"变成给人看的读数 —— **纯函数**（判据不打桩）。
@@ -1226,20 +1232,34 @@ pub fn config_state(
     paired: &[MeshPairedDevice],
 ) -> MeshConfigState {
     let enabled = cfg.bind.is_some();
-    let note = match (enabled, window) {
-        (false, _) => "网格这一档关着（没配监听地址 ⇒ 不听也不喊）".to_string(),
-        (true, None) => "配了监听地址，但窗口还没起来（见日志）".to_string(),
+    // ⭐ 两句话**各说一件事**（⭐ 2026-10-14 拆的 ✓）：`note` ＝ 开没开／窗口在哪 ✓；`reach` ＝ 别人拉不拉得到 ✓。
+    let (note, reach) = match (enabled, window) {
+        (false, _) => (
+            "网格这一档关着（没配监听地址 ⇒ 不听也不喊）".to_string(),
+            "还没开 ⇒ **别人拉不到**".to_string(),
+        ),
+        (true, None) => (
+            "配了监听地址，但窗口还没起来（见日志）".to_string(),
+            "窗口还没起来 ⇒ **别人暂时拉不到**".to_string(),
+        ),
         (true, Some(addr)) => match (announced_base(addr), addr.ip().is_unspecified()) {
-            (Some(base), true) => format!(
-                "网格开着：窗口**听所有网卡**（绑的是 {addr}），报出去的是枚举到的 {base} —— **能被别人拉到**"
+            (Some(base), true) => (
+                format!("网格开着：窗口**听所有网卡**（绑的是 {addr}）"),
+                format!("**能被别人拉到** —— 报出去的是枚举到的 {base}"),
             ),
-            (Some(base), false) => format!("网格开着：窗口在 {base}，**能被别人拉到**"),
-            (None, true) => format!(
-                "网格开着：窗口**听所有网卡**（绑的是 {addr}），但**枚举不出任何可以宣告的内网/VPN 地址** —— \
-                 ⚠️ 别人拉不到（这一台只有回环/公网地址？插上网线或虚拟网卡再看）"
+            (Some(base), false) => (
+                format!("网格开着：窗口在 {base}"),
+                format!("**能被别人拉到** —— 报出去的是 {base}"),
             ),
-            (None, false) => format!(
-                "网格开着：窗口在 {addr} —— ⚠️ 回环 / 端口 0，**别人拉不到**（这一台只能拉别人）"
+            (None, true) => (
+                format!("网格开着：窗口**听所有网卡**（绑的是 {addr}）"),
+                format!(
+                    "⚠️ **别人拉不到** —— **枚举不出任何可以宣告的内网/VPN 地址**（这一台只有回环/公网地址？插上网线或虚拟网卡再看）"
+                ),
+            ),
+            (None, false) => (
+                format!("网格开着：窗口在 {addr}"),
+                "⚠️ **别人拉不到**（回环 / 端口 0 ⇒ 这一台只能拉别人）".to_string(),
             ),
         },
     };
@@ -1257,6 +1277,7 @@ pub fn config_state(
         served: served.to_vec(),
         paired: paired.to_vec(),
         note,
+        reach,
     }
 }
 
@@ -4004,11 +4025,12 @@ mod tests {
         let on = MeshSettings { bind: Some("192.168.1.5:8788".into()), token: Some("t".into()) };
         let good = config_state(&on, Some("192.168.1.5:8788".parse().unwrap()), &[], &[]);
         assert!(good.enabled && good.token_set);
-        assert!(good.note.contains("能被别人拉到"), "{}", good.note);
+        // ⭐ 2026-10-14：这句搬到了 `reach`（⭐ 界面第二行 ✓）—— ⭐ 判据跟着换对象 ✓（⛔ 断言没删 ✗）。
+        assert!(good.reach.contains("能被别人拉到"), "{}", good.reach);
         assert_eq!(good.window.as_deref(), Some("http://192.168.1.5:8788"));
 
         let loopback = config_state(&on, Some("127.0.0.1:8788".parse().unwrap()), &[], &[]);
-        assert!(loopback.note.contains("别人拉不到"), "{}", loopback.note);
+        assert!(loopback.reach.contains("别人拉不到"), "{}", loopback.reach);
 
         // ★ **D1（owner 2026-09-30）**：绑**通配**时那两句人话 —— ⚠️ **不写死"这台机器有没有网卡"**
         //   （那是机器脸色）：只钉"它说的是通配"＋"与 `announced_base` 的结论一致"。
@@ -4018,11 +4040,11 @@ mod tests {
         assert!(w.note.contains("0.0.0.0:8788"), "通配要把**绑的**地址说出来：{}", w.note);
         match announced_base(wild) {
             Some(base) => {
-                assert!(w.note.contains(&base), "枚举到的地址要出现在读数里：{}", w.note);
-                assert!(w.note.contains("能被别人拉到"), "{}", w.note);
+                assert!(w.reach.contains(&base), "枚举到的地址要出现在读数里：{}", w.reach);
+                assert!(w.reach.contains("能被别人拉到"), "{}", w.reach);
             }
             None => {
-                assert!(w.note.contains("别人拉不到"), "{}", w.note);
+                assert!(w.reach.contains("别人拉不到"), "{}", w.reach);
                 // ⚠️ 通配 + 无候选，**不许**说成"回环 / 端口 0"——那是另一格，用户的下一步不同
                 //    （`INV-VLAN-bind-must-be-reachable`：这里要说**可操作**的话，不许静默）
                 assert!(!w.note.contains("回环"), "通配不是回环，别混两格：{}", w.note);

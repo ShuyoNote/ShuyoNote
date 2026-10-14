@@ -19,29 +19,40 @@ function between(text: string, start: string, end: string): string {
   return text.slice(i, j);
 }
 
-/** 「逐台解除」那一块（⛔ 找不到就抛 ⇒ 不许"没找到当通过" ✗）。 */
-const block = () => between(SRC, 'data-testid="device-unpair"', 'data-testid="device-pair"');
+/** 「逐台解除」那一条的**新落点**（⛔ 找不到就抛 ⇒ 不许"没找到当通过" ✗）。
+ *
+ * ⭐⭐ **2026-10-14（owner 拍删「附近设备」那一行）** ✗：原来这一块是**折叠里的一列**（`data-testid="device-unpair"` ✓，
+ *    「设备 短码 · 配于 时间 ／ 解除」✓）—— ⭐ 那一列**已删** ✓（它是**重复**的：主视图每张已信任卡上的
+ *    「撤销配对」`nearby-unpair` 就是同一件事 ✓，走的仍是**同一条** `duUnpair` ✓）。
+ *    ⭐ 按本仓 R192「**换对象不删断言**」✗：⛔ 三条断言一条没删 ✓，只把**对象**换成**主视图那一支** ✓
+ *    （口径一字不变：⭐ 逐台、点名那一台、可见处不许出现裸设备号 ✓）。 */
+const block = () => between(SRC, ") : duList.some((d) => d.deviceId === p.device_id) ? (", ") : p.serves_current ? (");
 
 describe("U11/T5 · 逐台解除", () => {
   it("① 只在**真认了设备**时才出现（不假装有设备）", () => {
-    expect(SRC).toContain('data-testid="device-unpair"');
-    // 守卫是"列表非空" ⇒ 一台都没认时不渲染这一块 ✓
-    const guard = SRC.slice(SRC.indexOf("duList.length > 0"), SRC.indexOf('data-testid="device-unpair"'));
-    expect(guard).toContain("duList.length > 0");
-    // 顺序：它挂在「把这台设备接进来」那块**之前**（同一屏的同一段 ✓）
-    expect(SRC.indexOf('data-testid="device-unpair"')).toBeLessThan(SRC.indexOf('data-testid="device-pair"'));
+    expect(SRC).toContain('data-testid="nearby-unpair"');
+    // 守卫是"本机认过的那一台" ⇒ 没认过的那几支**不显示**这一颗 ✓
+    const guard = SRC.slice(
+      SRC.indexOf("duList.some((d) => d.deviceId === p.device_id)"),
+      SRC.indexOf('data-testid="nearby-unpair"'),
+    );
+    expect(guard).toContain("duList.some((d) => d.deviceId === p.device_id)");
+    // 顺序：它挂在「已配对」那一句**之后**（同一支里的同一行 ✓）
+    expect(SRC.indexOf('data-testid="nearby-paired"')).toBeLessThan(SRC.indexOf('data-testid="nearby-unpair"'));
   });
 
-  it("② ⭐ 可见处**不许出现裸设备号** ✗（只给短码 ＋ 时间）", () => {
+  it("② ⭐ 可见处**不许出现裸设备号** ✗（只说人话「已配对」）", () => {
     const b = block();
-    // 正：屏幕上出现的是**派生短码** ✓
-    expect(b).toContain("duCode(d.deviceId)");
-    expect(b).toContain("duWhen(d.addedAtMs)");
-    // ★ 变异注入点：把短码换成裸设备号（`{d.deviceId}`）⇒ 必须红 ✓
-    // ⚠️ `key={d.deviceId}` 与 `duUnpair(d.deviceId)` **不算**违规 —— 它们不进可见槽位 ✓
-    //   ⇒ 所以这条只禁"**当作子节点渲染**"那一种形状（`>{d.deviceId}` ✗）✓
-    expect(b).not.toContain(">{d.deviceId}");
-    expect(b).not.toContain("{d.deviceId}<");
+    // 正：这一支里出现的是**人话**（「已配对」✓）—— ⛔ 不是设备号、⛔ 不是短码（短码那一列已删 ✓）
+    expect(b).toContain("已配对");
+    expect(b, "这一支必须**真有**那只动作（否则下面几条是空集 ⇒ 判据自己失效 ✓）").toContain(
+      'data-testid="nearby-unpair"',
+    );
+    // ★ 变异注入点：把可见处换成裸设备号（`>{p.device_id}`）⇒ 必须红 ✓
+    // ⚠️ `key={p.device_id}` 与 `duUnpair(p.device_id)` **不算**违规 —— 它们不进可见槽位 ✓
+    //   ⇒ 所以这条只禁"**当作子节点渲染**"那一种形状（`>{p.device_id}` ✗）✓
+    expect(b).not.toContain(">{p.device_id}");
+    expect(b).not.toContain("{p.device_id}<");
     // ⛔ 也不许把哈希搬上来（读数里根本没有它 —— 见 Rust `MeshPairedDevice` ✓）
     expect(b).not.toContain("secret");
     expect(b).not.toContain("sha256");

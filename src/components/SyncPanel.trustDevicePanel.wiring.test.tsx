@@ -1,7 +1,14 @@
 // 判据（task 派单：把 `TrustDevicePanel` 挂到同步面板上）。
 //
+// ⭐⭐ **2026-10-14（owner：「去掉孤儿组件」）** ✗ —— ⭐ 那一屏先丢了挂载点 ✓、随后**整份组件也删了** ✓
+//    （两个孤儿一起清：它 ＋ `MeshAdvancedForm.tsx` ✓）。⇒ ⭐ 本文件现在的对象是**三件事** ✓，
+//    ⛔ 断言一条没删（**换对象** ✓ —— 本仓 R192）：
+//      · ⭐ 那五条读数的**口径**（读不到 ⇒ 说读不到，⛔ 不拿 0 冒充 ✓）—— 归 `../lib/trustDevicePanelReadings` ✓；
+//      · ⭐ 面板里**两条主路径**（`nearby-allow` ⇒ 对码屏 ⇒ `mesh_trust_begin` ✓）；
+//      · ⭐ 那两个组件**不许回来**（孤儿正是 owner 让清的 ✓）＋ ⭐ 后端命令面**一个字节没动** ✓。
+//
 // ⭐ 两半都用机器判：
-//   ⭐ **结果级**：把面板**真渲染**出来（`createRoot` ＋ `flushSync`，照 `TrustDevicePanel.test.tsx:10-11`
+//   ⭐ **结果级**：把面板**真渲染**出来（`createRoot` ＋ `flushSync`，照本文件下面那组 `renderPanel` ✓）
 //      的房规 —— 本仓**没有** @testing-library ✓），断言那几条"读不到"槽位**都出现** ✓
 //      且**没有一个显示 0** ✓（⛔ 0 是一个**结论**，"读不到"是**没有结论** —— 界面上必须长得不一样 ✓）
 //      ⚠️ 2026-10-11（任务 B）：槽位从四条变**五条** ✗（多了"走到哪一步" ✓，见 `TrustDevicePanel.test.tsx`
@@ -13,7 +20,7 @@
 //     ⇒ 第 1 条红 ✓（那是"编 0 冒充没有"✗ 的**机器版** ✓）
 //   · 把 `SyncPanel.tsx` 里的 `<TrustDevicePanel …/>` 删掉 ⇒ 第 3 条红 ✓（＝"挂载点又变回 0 处" ✓）
 //   · 把「严格模式（高级）」那一折删掉/改名 ⇒ 第 3 条红 ✓（＝"把老路弄坏了" ✓）
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { flushSync } from "react-dom";
@@ -21,7 +28,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TrustDevicePanel } from "./TrustDevicePanel";
+// ⛔ **2026-10-14（owner：「去掉孤儿组件」）** ✗：`TrustDevicePanel.tsx` **已删** ✓（它先丢了挂载点 ✓）
+//    ⇒ ⛔ 这里不再 import 它 ✗；⭐ 它那五条读数的**口径**搬进了 `../lib/trustDevicePanelReadings` ✓（判据 1）／2）钉着 ✓）。
 import {
   MESH_TRUST_BEGIN_COMMAND,
   TRUST_READINGS_UNAVAILABLE_REASON,
@@ -192,13 +200,9 @@ afterEach(() => {
   host = null;
 });
 
-function render(node: React.ReactElement): HTMLElement {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  flushSync(() => root!.render(node));
-  return host;
-}
+// ⛔ **2026-10-14（owner：「去掉孤儿组件」）** ✗：这里原来有个 `render(node)` 助手 ✓ —— ⭐ 它唯一的
+//    调用者就是那条"真渲染 `TrustDevicePanel`"的判据 ✓ ⇒ ⭐ 组件删了、它也成了死代码 ⇒ **删掉** ✓。
+//    ⭐ 下面那几组自己的 `renderPanel`（`createRoot` ＋ `flushSync` ＋ 原生事件 ✓）照旧 ✓。
 
 describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () => {
   it("1) ⭐ 读数**全是 unavailable**（⛔ 一个 `ok` 都没有 ⇒ ⛔ 不许拿 0 冒充『没有』）＋ 每条都带人话原因", () => {
@@ -218,33 +222,40 @@ describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () =>
     ]);
   });
 
-  it("2) ⭐ **结果级**：真渲染那一屏 ⇒ 五个槽位都出现「读不到」，且**没有一个显示 0**", () => {
-    const el = render(<TrustDevicePanel {...unavailableTrustDeviceReadings()} />);
-    // ⭐ 面板自己给这五个槽位挂了 testid（`TrustDevicePanel.tsx` 里各一处 ✓）
-    for (const id of [
-      "offer-unavailable",
-      "overlap-unavailable",
-      "code-unavailable",
-      "local-unavailable",
-      "trust-state-unavailable",
-    ]) {
-      const node = el.querySelector(`[data-testid="${id}"]`);
-      expect(node, `${id} 没渲染出来（面板没挂上／读数被当成有值了？）`).toBeTruthy();
-      expect(node!.textContent ?? "", `${id} 里没出现「读不到」`).toContain("读不到");
-      // ⛔ 这一格里**不许**出现单独的 0（那会读成"没有重合／没有空间"＝一个结论 ✗）
-      expect(node!.textContent ?? "", `${id} 里出现了 0 冒充"没有" ✗`).not.toMatch(/(^|\D)0(\D|$)/);
+  it("2) ⭐ **结果级**（换对象）：那一屏**已删** ⇒ 那五格的**口径**只许留在读数模块里", () => {
+    // ⭐⭐ **2026-10-14（owner：「去掉孤儿组件」）** ✗：这一条原来**真渲染那一屏**、数五个「读不到」槽位 ✓
+    //   （`data-testid="*-unavailable"` ✓）—— ⭐ 组件**已删** ⇒ ⭐ 对象没了 ✓。
+    //   ⭐ 按 R192「换对象不删断言」✗：⛔ 不是把这条删掉 ✓，换成**现在承重的两半** ✓：
+    //     · ⭐ 五条读数**一条不少**、且**每条都带原因**（⛔ 不拿 0 冒充「没有」✓）—— 载体是读数模块 ✓；
+    //     · ⛔ 那一屏的**文件不许回来**（"孤儿"正是 owner 让清的 ✓）。
+    const r = unavailableTrustDeviceReadings();
+    expect(Object.keys(r).sort(), "⛔ 五条读数一条不许少 ✗").toEqual([
+      "attachOffer",
+      "deviceCode",
+      "localSpaces",
+      "mergeOverlap",
+      "trustState",
+    ]);
+    for (const [k, v] of Object.entries(r)) {
+      expect(v.kind, `${k} 不是「读不到」⇒ 那是拿 0／假数冒充 ✗`).toBe("unavailable");
+      if (v.kind === "unavailable") {
+        expect(v.reason.trim().length, `${k} 的「读不到」没给原因`).toBeGreaterThan(0);
+      }
     }
-    // ⭐ 而且原因要**真的写出来**（不是只说"读不到"三个字 ✓）
-    expect(el.textContent ?? "").toContain(TRUST_READINGS_UNAVAILABLE_REASON);
+    expect(
+      existsSync(resolve(__dirname, "TrustDevicePanel.tsx")),
+      "⛔ 那一屏**已删**（owner 2026-10-14「去掉孤儿组件」✓）—— ⛔ 不许加回来一个没人挂的 ✗",
+    ).toBe(false);
+    expect(TRUST_READINGS_UNAVAILABLE_REASON.length, "⭐ 「读不到」那句原因仍在 ✓").toBeGreaterThan(0);
   });
 
-  it("3) ⭐ 接线：`SyncPanel` 真的挂了这一屏 ＋ ⭐ 老路（严格模式（高级）那一折）还在", () => {
-    expect(SYNC_PANEL_SRC, "SyncPanel 没挂 TrustDevicePanel ⇒ 界面上还是点不到").toContain("<TrustDevicePanel");
-    // ⭐ **R192「换对象不删断言」（Lead 2026-10-13 拍）**：这一格原来断言源码**必须含**
-    //    `unavailableTrustDeviceReadings()` ✗ —— 那钉的是"四格读数一律读不到"这个**占位状态**，
-    //    与「用户点得到吗」无关（后端把读数做出来之后它还会**挡路** ✗）。
-    //    ⇒ 改成指向**新契约**：⭐ 那一行自己必须有一颗走 `trustDevice` 的按钮 ✓（⛔ 不是删掉这条 ✗，
-    //    也不是降低强度 ✗ —— 下面第 4 组会**真挂面板、真点它** ✓）。
+  it("3) ⭐ 接线：面板里那两条主路径都在（「接入」＝对码屏 ＋ ⭐ 对码屏**不在收起的折叠里**）", () => {
+    // ⭐⭐ **owner 2026-10-14 拍删「附近设备」那一行** ✗ ⇒ `TrustDevicePanel` 的挂载点与「严格模式（高级）」
+    //    那一折**一起走了** ✓（`device-pair` ／ `device-pair-advanced` 都不在了 ✓）。⭐ 按本仓 R192
+    //    「**换对象不删断言**」✗：⛔ 不是把这条删掉 ✓，换成**现在承重的那三件** ✓：
+    //      ① 「附近的设备」那一行自己那颗「接入」（`nearby-allow` ✓）＋「服务别的空间」那句（`nearby-other-space` ✓）；
+    //      ② ⭐ **对码屏**（`pair-code-screen` ✓）—— 它就是「接入」之后的落点 ✓；
+    //      ③ ⭐ `mesh_trust_begin` 那条命令**仍在岗** ✓（`trustDevice` ✓）。
     expect(SYNC_PANEL_SRC, "「附近的设备」那一行没给「允许」入口 ⇒ 又回到『点不了』✗").toContain(
       'data-testid="nearby-allow"',
     );
@@ -254,9 +265,19 @@ describe("信任设备那一屏 · 挂载 ＋ 读不到（task 派单）", () =>
     expect(SYNC_PANEL_SRC, "没接「信任这台设备」那条命令（owner 拍的甲：一端点就通）").toContain(
       MESH_TRUST_BEGIN_COMMAND,
     );
-    // ⭐⛔ 老路一个字不许动：`device_pair_advanced`（严格模式那一折）与里面的 `device_pair` 都要在 ✓
-    expect(SYNC_PANEL_SRC, "把「严格模式（高级）」那一折弄坏了 ✗").toContain('data-testid="device-pair-advanced"');
-    expect(SYNC_PANEL_SRC, "严格模式里那套机制被删了 ✗").toContain('data-testid="device-pair"');
+    expect(SYNC_PANEL_SRC, "「接入」之后那一屏（对码）不见了 ⇒ 主路径断了").toContain(
+      'data-testid="pair-code-screen"',
+    );
+    // ⭐⭐ **这一条是 2026-10-14 修掉那个真缺陷的守卫** ✗（当天实测：对码屏住在**收起的**「高级」折叠里
+    //    ⇒ 用户在主视图点「接入」**什么都看不见** ✓）：⭐ 对码屏必须排在**那个折叠之前** ✓。
+    const pairAt = SYNC_PANEL_SRC.indexOf('data-testid="pair-code-screen"');
+    const foldAt = SYNC_PANEL_SRC.indexOf("<SyncAdvancedFold>");
+    expect(pairAt, "夹具前提：对码屏要在").toBeGreaterThan(-1);
+    expect(foldAt, "夹具前提：那个「高级」折叠要在").toBeGreaterThan(-1);
+    expect(
+      pairAt,
+      "⛔ 对码屏又跑进那个**默认收起**的折叠里了 ✗ ⇒ 主视图点「接入」用户看不见（2026-10-14 真机实测过 ✓）",
+    ).toBeLessThan(foldAt);
   });
 });
 
@@ -296,7 +317,7 @@ async function openPanelWith(
     peers: nearby.length,
     kind: "lan",
     line: "同步地址：直连（局域网） ｜ 本网段发现 1 台",
-    mesh: { enabled: true, bind: "0.0.0.0:8788", tokenSet: true, window: "172.16.174.0/24", note: "" },
+    mesh: { enabled: true, bind: "0.0.0.0:8788", tokenSet: true, window: "172.16.174.0/24", note: "", reach: "**能被别人拉到**" },
     nearby,
   });
   host = document.createElement("div");
@@ -444,7 +465,7 @@ async function renderPanelWithContentOnly(): Promise<HTMLElement> {
     peers: 1,
     kind: "lan",
     line: "同步地址：直连（局域网） ｜ 本网段发现 1 台",
-    mesh: { enabled: true, bind: "0.0.0.0:8788", tokenSet: true, window: "172.16.174.0/24", note: "" },
+    mesh: { enabled: true, bind: "0.0.0.0:8788", tokenSet: true, window: "172.16.174.0/24", note: "", reach: "**能被别人拉到**" },
     nearby: [],
   });
   host = document.createElement("div");
@@ -488,13 +509,16 @@ describe("P-2a-1：同一份内容要能进内容区（`contentOnly`）", () => 
     ).toContain("设备直连");
   });
 
-  it("② ⭐ 不变量（**新形态**）：「立即同步」在**已信任卡片**上、「路线那句」在**状态条**里", async () => {
+  it("② ⭐ 不变量（**新形态**）：「立即同步」在**已信任卡片**上、状态条与那两句诊断**都还在面板里**", async () => {
     // ⭐ **刀十九（R192：换对象不删断言）**：这一条原来钉的是「**同在一个容器内、且它在前面**」✗ ——
     //   ⚠️ owner 2026-10-14 让删掉那张大卡 ⇒ ⭐ 那个容器与那个先后**已经不成立** ✓（不是被我们弄坏的 ✗）。
     //   ⇒ ⭐ 指针换成**新形态** ✓，⭐ 三条断言一条没删：
-    //     · 「路线那句」现在在**状态条**里（`.sync-hero-sub` ✓ —— `heroRoute` 就渲染在那儿 ✓）；
-    //     · 「立即同步」现在在**已信任的卡片**上（`data-testid="nearby-sync"` ✓，⭐ 空夹具里不渲染 ⇒ 走**源码级** ✓）；
-    //     · 两者仍**同在这个面板里** ✓（⛔ 不再要求同容器同序 ✗ —— 那条不变量随卡一起退役了 ✓）。
+    //     · 状态条那句现在在 `.sync-hero-sub` 里（✓ 仍在面板容器内 ✓）；
+    //     · 「立即同步」在**已信任的卡片**上（`nearby-sync` ✓，⭐ 空夹具里不渲染 ⇒ 走**源码级** ✓）；
+    //     · 两者仍**同在这个面板里** ✓。
+    //   ⭐⭐ **2026-10-14 再改（owner：「清理这个」—— 状态条那一行太长 ✓）** ✗：⭐ `heroSub`／`heroRoute`
+    //   那两句**诊断**从状态条搬进了**折叠** ✓ ⇒ ⭐ 状态条现在只有图上那三格（监听地址／端口／报出去的是 ✓）。
+    //   ⭐ 按 R192：⛔ 断言一条没删 ✓，只把「路线那句」的**对象**换成**它的新家**（折叠里那个 `sync-hint` ✓）。
     const el = await renderPanelWithContentOnly();
     const pop = el.querySelector<HTMLElement>(".sync-popover");
     const route = el.querySelector<HTMLElement>(".sync-hero-sub");
@@ -502,10 +526,18 @@ describe("P-2a-1：同一份内容要能进内容区（`contentOnly`）", () => 
     const hasSyncBtn = src.includes('data-testid="nearby-sync"');
     expect(
       pop && route && hasSyncBtn,
-      "⭐ 三者都要在（容器 `.sync-popover` ✓／状态条那句 `.sync-hero-sub` ✓／已信任卡上的 `nearby-sync`（源码级 ✓））",
+      "⭐ 三者都要在（容器 `.sync-popover` ✓／状态条 `.sync-hero-sub` ✓／已信任卡上的 `nearby-sync`（源码级 ✓））",
     ).toBeTruthy();
     expect(pop!.contains(route!), "⭐ 状态条那句必须仍在面板容器内 ✓").toBe(true);
     expect(hasSyncBtn, "⭐ 「立即同步」这个动作必须还在（现在在已信任卡片上 ✓，⛔ 不许消失 ✗）").toBe(true);
+    // ⭐ 「这一轮走的是…」那句诊断的**新家**（⛔ 不许连它一起丢掉 ✗）。
+    // ⚠️ **2026-10-14 再改（owner：「太丑了」）**：它们在折叠里从"两句拼一行"改成"各占一行 `.sync-hint`" ✓
+    //    ⇒ ⭐ 按 R192 换**对象**（形状 ✓），⛔ 断言本身不删 ✓：⭐ 两句仍必须**在源码里渲染着** ✓。
+    expect(
+      src,
+      "⭐ 那两句诊断要从状态条搬进折叠 —— ⛔ 不许直接把它们删掉 ✗（`heroRoute` ／ `heroSub` 仍要渲染 ✓）",
+    ).toContain('{heroRoute && <div className="sync-hint">{heroRoute}</div>}');
+    expect(src, "⭐ 同上：`heroSub` 也要还在 ✓").toContain('{heroSub && <div className="sync-hint">{heroSub}</div>}');
   });
 
   it("③ 锁（今天已绿 ✓）：抽屉那支**仍可用** ⇒ 点 `.btn-sync` 仍然开浮层", async () => {
@@ -934,10 +966,14 @@ describe("P-4 片②a：对码那一屏（只显示、不下结论）", () => {
       code,
       "⛔ 不许出现「自动通过」✗（⭐ 仓里逐字：状态机里**没有这一格** ✓ ⇒ 界面也不许长出一个 ✓）",
     ).not.toContain("自动通过");
+    // ⭐ **2026-10-14（owner 拍删「附近设备」那一行）** ✗：这一条原来钉的是 `dpOutcome === "stopped"`
+    //    （严格模式那条投放码路的「停」态 ✓）—— ⭐ 那条整块**已删** ✓。⭐ 按 R192「换对象不删断言」✗：
+    //    ⛔ 不是把这条删掉 ✓，换成**现在承重的那条「停」** ✓ —— ⭐ 对码屏上码对不上时**只说一句**、
+    //    ⛔ 不给任何「继续」入口 ✓（口径一字不变：**停就是停** ✓）。
     expect(
       code,
-      "⭐ 反面也要钉：**停态就是停态** ✓（⭐ 既有那条 `dpOutcome === 'stopped'` 的守卫不许被拆掉 ✓）",
-    ).toContain('dpOutcome === "stopped"');
+      "⭐ 反面也要钉：**停态就是停态** ✓（`pair-code-mismatch` 那句『两边的码不一样 ⇒ 先别确认』不许被拆掉 ✓）",
+    ).toContain('data-testid="pair-code-mismatch"');
   });
 
   it("③（**本片的一部分**，⛔ 不是锁 ✗ —— 实测随本片一起红 ✓）：我这一屏里没有「继续」入口、也没有 Markdown `**…**`", () => {
@@ -992,7 +1028,7 @@ describe("P-4 片②b：把调用时点挪到「确认」之后（只挪时点�
 //    ⇒ ⭐ **面板是唯一去处** ✓；⭐ `SyncSettingsPane.tsx` **已删** ✓ ⇒ 判据③**换对象不换断言** ✓）。
 // ⚠️ ① 是 **DOM 级** ✓；⭐ ② 是**源码级** ✓（⭐ 明标 ✗）；⭐ ③④ 是锁 ✓。
 // ═══════════════════════════════════════════════════════════════════════════════
-describe("片 B：同步面板里也有设备直连那三格", () => {
+describe("片 B：同步面板里也有设备直连那几格", () => {
   beforeEach(() => {
     localStorage.setItem(AUTO_SYNC_KEY, "300000");
     useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
@@ -1004,34 +1040,75 @@ describe("片 B：同步面板里也有设备直连那三格", () => {
     meshSetConfigSpy.mockReset();
   });
 
-  it("①（**源码级**，⛔ 不是 DOM 级 ✗ —— 如实标）：面板**渲染**了它，⭐ 而那三项就在它里面", () => {
+  it("①（**源码级**）：那两格**两处都没有去处了**（组件也删了 ✓），⛔ 但后端命令面一个字没动", () => {
     // ⚠️ ⭐ **为什么降级** ✗：DOM 级那条实测**红在夹具上** ✓ —— ⭐ 夹具里面板停在
     //   ⭐「**未登录／还没绑同步**」那一档 ✓（⭐ 实测 DOM 逐字：`同步同步每个空间各自绑定服务器与组织空间未登录还没绑同步ws-1立即同步…` ✓）
     //   ⇒ ⭐ 「进阶」那一段**根本没渲染** ✗ ⇒ ⭐ **测不到 ≠ 没做** ✓（⛔ 不硬凑 ✓）。
+    // ⚠️⭐ **2026-10-14 稍后（owner：「和上面重复了」⇒ 拍「整张卡连输入框一起去掉」）** ✗：⭐ 那一格
+    //   **已从面板删掉** ✓ ⇒ ⭐ 这条判据的**两半**各自钉新的真事实 ✓：
+    //     · 面板：⭐ **不再**渲染它（挂载点 0 处 ✓ —— 见 ②）；
+    //     · 组件：⭐ `MeshAdvancedForm.tsx` **仍在** ✓（⛔ 不是把组件删了 ✗ —— 它现在是**孤儿** ✓），
+    //       ⭐ 那两项（监听地址 ＋ 自动开启 ✓）**照旧在它里面** ✓。
     const panel = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
-    const form = readFileSync(resolve(__dirname, "MeshAdvancedForm.tsx"), "utf8");
-    expect(panel, "⭐ 面板必须**渲染**它 ✓").toContain("<MeshAdvancedForm");
-    for (const needle of ["监听地址", "配对暗号", "mesh-auto-enable"]) {
-      expect(form, "⭐ 那三项必须仍在它里面 ✓：" + needle).toContain(needle);
-    }
+    const cmds = readFileSync(resolve(__dirname, "..", "lib", "platform", "commands.ts"), "utf8");
+    expect(
+      panel.split("\n").some((l) => l.trim() === "<MeshAdvancedForm"),
+      "⛔ 面板里不许再有 `MeshAdvancedForm` 的挂载点 ✗（owner 拍删整张卡 ✓）",
+    ).toBe(false);
+    expect(
+      existsSync(resolve(__dirname, "MeshAdvancedForm.tsx")),
+      "⛔ 那个组件**已删**（owner 2026-10-14「去掉孤儿组件」✓）—— ⛔ 不许加回来一个没人挂的 ✗",
+    ).toBe(false);
+    expect(
+      cmds,
+      "⭐ 后端命令面**一个字节没动** ✓（`mesh_set_config` 仍在 ✓ —— 撤的是界面，⛔ 不是后端 ✗）",
+    ).toContain("mesh_set_config");
   });
 
-  it("② ⭐（源码级）`SyncPanel.tsx` 里出现 `<MeshAdvancedForm`（今天【红】✓）", () => {
+  it("② ⭐（源码级）`SyncPanel.tsx` 里**不许再有**挂载点（owner 2026-10-14 拍删整张卡 ✓）", () => {
+    // ⭐⭐ **2026-10-14 稍后** ✗：这一格原来钉的是「面板里出现 `<MeshAdvancedForm` ＋ `activeId=""`」✓ ——
+    //   ⭐ 而 owner 拍了「整张卡连输入框一起去掉」✓ ⇒ ⭐ 挂载点**已删** ✓。
+    //   ⭐ 按 R192「换对象不删断言」✗：⛔ 不是把这条删掉 ✓，而是**反着钉死这次删除** ✓。
+    //   ⚠️ ⛔ **必须用「整行等于」判** ✗ —— **实测踩到**：`SyncPanel.tsx` 里那段**解释这次删除的注释**
+    //   就写着 `<MeshAdvancedForm` 这个字面 ✓ ⇒ `toContain` 会被它喂饱 ⇒ 假绿 ✓（第一版就是这么写的 ✓）。
     const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
-    expect(src, "⭐ 必须渲染它 ✓（⭐ 而且是 `activeId=\"\"` ＝ 设备级 ✓）").toContain("<MeshAdvancedForm");
-    expect(src, "⛔ `activeId` 必须是空串 ✗（⭐ 它就是「设备级」的意思 ✓）").toContain('activeId=""');
+    const mounts = src.split("\n").filter((l) => l.trim() === "<MeshAdvancedForm").length;
+    expect(mounts, "⛔ 面板里不许再有 `MeshAdvancedForm` 的挂载点 ✗（owner 拍删整张卡 ✓）").toBe(0);
+    // ⭐ 而那条「空串 ＝ **设备级**」的**后端口径**不许跟着丢 ✓（它已搬进注释 ✓）。
+    expect(src, "⭐ 「空串 ＝ 设备级」那条口径要留在注释里（⛔ 不许跟着界面一起删 ✗）").toContain(
+      "空串 ＝ 设备级",
+    );
   });
 
-  it("③ ⭐ **设置那边已去掉** ⇒ 面板是**唯一去处** ✓（⭐ 源码级 ⇒ 明标 ✗）＋ 面板里空间隐私仍在 ✓", () => {
+  it("③ ⭐ 那几格现在**两处都没有了**（如实记）＋ 空间隐私那一行**已删** ✓", () => {
     // ⭐ **2026-10-14（片 C2，"换对象不删断言" ✓）**：⭐ 设置那份 `SyncSettingsPane.tsx` **已被删** ✗
-    //   ⇒ ⭐ 这根针**改从面板那份读** ✓（⭐ 同一根针 `<MeshAdvancedForm` 照旧 ✓ —— 它现在在 `SyncPanel.tsx` ✓）。
-    const pane = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+    //   ⇒ ⭐ 这根针**改从面板那份读** ✓。
+    // ⭐⭐ **2026-10-14 稍后（owner：「和上面重复了」⇒ 拍「整张卡连输入框一起去掉」）** ✗：⭐ 面板那份
+    //   也**删了挂载点** ✓ ⇒ ⭐ 这条原来的口径（"面板是唯一去处"）**已经不成立** ✓。⭐ 按 R192
+    //   「**换对象不删断言**」✗：⛔ 不是把这条删掉 ✓，换成**如实记现在的状态** ✓：
+    //   ⭐ **两处都没有挂载点** ✓ ⇒ ⭐ 那几格（监听地址／自动开启）**在界面上没有去处** ✓ ——
+    //   ⚠️ 这是 owner 在被告知会撞「必留监听地址输入框」之后拍的 ✓，⛔ 不是漏做 ✗。
+    const panel = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
     const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
     expect(
-      pane,
-      "⭐ **面板**渲染了那三格 ⇒ 面板是**唯一去处** ✓（⛔ 判据不删 ✗ —— 删了就等于把守卫撤掉 ✓）",
-    ).toContain("<MeshAdvancedForm");
-    expect(src, "⭐ 面板里「空间隐私」那块仍在 ✓").toContain("<SpacePrivacySection");
+      panel.split("\n").filter((l) => l.trim() === "<MeshAdvancedForm").length,
+      "⭐ 面板里挂载点 0 处（owner 拍删整张卡 ✓；⛔ 判据不删 ✗ —— 删了就等于把守卫撤掉 ✓）",
+    ).toBe(0);
+    const dialogSrc0 = readFileSync(resolve(__dirname, "SettingsDialog.tsx"), "utf8");
+    expect(dialogSrc0, "⭐ 设置那边也没有它（`SyncSettingsPane.tsx` 已删 ✓）").not.toContain(
+      "<MeshAdvancedForm",
+    );
+    // ⭐ **2026-10-14（owner 拍删：面板那一行与设置的安全面板**重复**）** ✗：这一格原来钉的是
+    //   「面板里空间隐私仍在」✗ —— ⭐ 按 R192「换对象不删断言」：换个方向**钉死这次删除** ✓
+    //   （⛔ 不是把这条删掉 ✗），并且⭐ 同一时刻核**它现在的那个挂载点还在** ✓
+    //   （否则"删干净了"会连"别处还有没有人挂"一起没人管 ✓）。
+    expect(src, "⭐ 面板里那一行「空间隐私」已删（与设置的安全面板重复 ✓）").not.toContain(
+      "<SpacePrivacySection",
+    );
+    const dialogSrc = readFileSync(resolve(__dirname, "SettingsDialog.tsx"), "utf8");
+    expect(dialogSrc, "⭐ 删的是**重复的那一份** ⇒ 设置那一份必须还在（否则这节没人用了 ✓）").toContain(
+      "<SpacePrivacySection",
+    );
     // ⭐ 新增（⭐ 源码级 ⇒ 明标 ✗）：⭐ "设置那边确实没有了" —— 否则"删干净了"没人钉 ✗。
     const dialog = readFileSync(resolve(__dirname, "SettingsDialog.tsx"), "utf8");
     const editorTs = readFileSync(resolve(__dirname, "..", "store", "editor.ts"), "utf8");
@@ -1043,9 +1120,13 @@ describe("片 B：同步面板里也有设备直连那三格", () => {
     );
   });
 
-  it("④ 锁（今天已绿 ✓）：⛔ 没引新依赖 ✗ ＋ ⭐ `MeshAdvancedForm` **一行未改** ✓（⭐ 只「用」它 ✓）", () => {
-    const pane = readFileSync(resolve(__dirname, "MeshAdvancedForm.tsx"), "utf8");
-    expect(pane, "⭐ 它自己的签名仍在 ✓（⭐ 本片只**用**它 ✓，⛔ 不改它 ✗）").toContain("export function MeshAdvancedForm");
+  it("④ 锁（今天已绿 ✓）：⛔ 没引新依赖 ✗ ＋ ⭐ 那个组件**已删**（本轮的收口 ✓）", () => {
+    // ⭐ **2026-10-14 稍后（owner：「去掉孤儿组件」）** ✗：这一格原来钉的是「`MeshAdvancedForm` 一行未改」✓ ——
+    //   ⭐ 而它**整份已删** ✓ ⇒ ⭐ 按 R192 换对象：⭐ 换成「它确实走了」＋「⛔ 面板没为这件事引新依赖」✓。
+    expect(
+      existsSync(resolve(__dirname, "MeshAdvancedForm.tsx")),
+      "⭐ 它已删（owner 拍「去掉孤儿组件」✓）",
+    ).toBe(false);
     const pkg = readFileSync(resolve(__dirname, "../../package.json"), "utf8");
     expect(pkg, "⭐ 依赖表里没有因为本片多出东西 ✓（⭐ 本片一个包都没装 ✓）").toContain('"dependencies"');
   });

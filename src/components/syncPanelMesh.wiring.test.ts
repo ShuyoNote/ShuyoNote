@@ -7,18 +7,16 @@
 // ⚠️ 这几条**不是**在验业务逻辑（那在 Rust 侧与 `src/lib/platform` 的判据里），
 // 它们只回答一个问题：**界面接上了没有**。
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("网格（丙-③-b）· 面板接线", () => {
   const panel = read("src/components/SyncPanel.tsx");
-  // ⭐ task 派单 Round 1（2026-10-11，**纯抽取**）：监听地址／配对暗号／口令／关掉网格那一块
-  //    从 `SyncPanel.tsx` 抽成了 `MeshAdvancedForm.tsx` ✓ —— ⛔ **承诺一条都没删** ✗，
-  //    只是换了落点 ✓ ⇒ 下面几条凡是"找那一块里的东西"的，都改成 **两个文件一起读**
-  //    （`panel + meshForm` ✓）。⚠️ 这是**唯一**允许的做法：⛔ 不许把文案抄回面板 ✗（那就是第二份真相源）。
-  const meshForm = read("src/components/MeshAdvancedForm.tsx");
+  // ⭐⭐ **2026-10-14（owner：「去掉孤儿组件」）** ✗：抽出去的那个 `MeshAdvancedForm.tsx` **已删** ✓
+  //    （它先丢了挂载点、随后整份走了 ✓）⇒ ⛔ 不再有「两个文件一起读」✗。⭐ 按 R192「换对象不删断言」✗：
+  //    ⛔ ③ 与 ⑨ 不是删掉 ✓，而是换成**现在承重的落点**（后端命令面 ＋ `mesh.rs` 那条口径 ✓）。
   const webTs = read("src/lib/platform/web.ts");
   const commandsTs = read("src/lib/platform/commands.ts");
 
@@ -80,15 +78,26 @@ describe("网格（丙-③-b）· 面板接线", () => {
     expect(panel.slice(at, at + 120), "serverRows 不是按团队过滤的").toContain('r.kind === "team"');
   });
 
-  it("③ 「关掉网格」走清除（`\"\"`），不是 `null`（`null` ＝ 不动 ⇒ 关不掉）", () => {
-    // ⭐ Round 1 后这句在抽出去的 `MeshAdvancedForm.tsx` 里 ✓（承诺未删 ✓）⇒ 两个文件一起找 ✓
-    expect(panel + meshForm, "「关掉网格」那条清除没在岗").toContain('api.meshSetConfig(activeId, "", null)');
+  it("③ 「关掉网格」走清除（`\"\"`），不是 `null` —— **换对象**：那条界面已撤，口径归后端", () => {
+    // ⭐ **2026-10-14（owner：先拍删那张卡 ⇒ 再拍「去掉孤儿组件」）** ✗：这一条原来钉的是界面里那句
+    //   `api.meshSetConfig(activeId, "", null)` ✓ —— ⭐ 它住的 `MeshAdvancedForm.tsx` **已删** ✓ ⇒ ⭐ 对象没了 ✓。
+    //   ⭐ 按 R192 换对象：⛔ 不删这条 ✓，换成**现在承重的那两半** ✓：
+    //     · ⛔ 界面里不许再有那句（撤了就是撤了 ✓）；
+    //     · ⭐ 「清除 ＝ 空串、⛔ 不是 `null`」这条口径**在后端仍有承重**（`mesh.rs` 的 `mesh_set_config` ✓）。
+    // ⚠️ **必须先剥注释** ✗ —— 本文件的 `read()` 是**原样读**（不剥 ✓），而面板里那条注释**正是**在讲这句
+    //    调用 ✓（`SyncPanel.tsx` 的 `disableMesh` 那条 ✓）⇒ ⛔ 不剥的话这条判据会被**解释它自己的注释**喂饱 ⇒ 假红 ✓
+    //    （实测：第一版就是这么红的 ✓）。
+    const stripped = panel.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(stripped, "⛔ 界面里那条清除调用已撤（owner 2026-10-14 拍删 ✓）").not.toContain('api.meshSetConfig(activeId, "", null)');
+    const meshRs = readFileSync(resolve(__dirname, "..", "..", "src-tauri", "src", "mesh.rs"), "utf8");
+    expect(meshRs, "⭐ 那条口径后端仍在（`mesh_set_config` ✓）").toContain("mesh_set_config");
   });
 
   it("④ 「别人拉不拉得到」那句人话来自 Rust（界面不自己按地址形状判档）", () => {
     // 2026-09-26（地址一处）：这句现在与 `lanStatus.line` 拼在**同一行**里 —— 仍然是 Rust 出的原文
     // （`lanStatus.mesh.note`），界面只是把它摆到那一行去。
-    expect(panel).toContain("lanStatus.mesh.note");
+    // ⭐ **2026-10-14**：那句人话现在分两格 —— ⭐ 绿条第二行取 `.reach` ✓（见 `syncControls` ④ ✓）。
+    expect(panel).toContain("lanStatus.mesh.reach");
     // 面板里不许出现"自己判回环/公网"的痕迹：档位只许由 Rust 出（与 `lan_status` 那条同一纪律）。
     expect(panel).not.toContain("127.0.0.1");
   });
@@ -185,20 +194,27 @@ describe("网格（丙-③-b）· 面板接线", () => {
   //    全文件禁会把那些**正当文案**判红（我核过：`邀请` 在 `SyncPanel.tsx` 里的出现**全在**
   //    「设备直连」那一屏**之前**，且都是团队版成员邀请与它的注释）⇒ 判据按**区域**收敛，
   //    而不是一刀切 —— 这条边界写在这里，免得后人"顺手"把它扩成全文。
-  it("⑨ ⭐ VL-3：`0.0.0.0`（听所有网卡）那条路要在用户看得见的文案里，且说清它是什么", () => {
-    // 去掉行注释：注释里讲"`0.0.0.0 ⇒ Err`"的历史**不算**用户可见文案。
-    // ⭐ Round 1 后那一栏在 `MeshAdvancedForm.tsx` ✓ ⇒ 两个文件一起读（⛔ 承诺一条没删 ✗）
-    const copy = (panel + meshForm).replace(/\/\/[^\n]*/g, "");
-    expect(copy, "地址那一栏没提 `0.0.0.0` ⇒ `VL-2` 开的这条在用户眼里不存在").toContain("0.0.0.0");
+  it("⑨ ⭐ VL-3（**换对象**）：`0.0.0.0` 那条路**已从界面撤掉** —— 它现在只由后端承重", () => {
+    // ⭐⭐ **2026-10-14（owner：先「整张卡连输入框一起去掉」⇒ 再「去掉孤儿组件」）** ✗：这一条原来钉的是
+    //   ⭐「那条路要在**用户看得见的文案**里」✓（`panel + meshForm` ✓）—— ⭐ 而两处载体（面板那张卡 ＋
+    //   `MeshAdvancedForm.tsx` ✓）**都删了** ✓ ⇒ ⭐ 界面这一侧**没有载体**了 ✓。
+    //   ⭐ 按 R192「换对象不删断言」✗：⛔ 不是把这条删掉 ✓，换成**现在承重的两半** ✓：
+    //     · ⛔ 界面**不许再提供**填地址的入口（挂载点 0 处 ＋ 组件文件已删 ✓）；
+    //     · ⭐ 那条口径**仍然后端一侧承重** ✓（`src-tauri/src/mesh.rs`：通配 ⇒ 听所有网卡 ⇒ 报枚举到的 ✓）；
+    //     · ⭐ 而「读数的形状」那条说明留在面板里（`splitMeshBind` ✓ —— 它讲的是拆 `0.0.0.0:8788` 这种串 ✓）。
+    const code = panel.replace(/\/\/[^\n]*/g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
     expect(
-      copy,
-      "提了 `0.0.0.0` 却没说清它是什么 —— 必须写「听所有网卡」＋「地址由系统报出」",
-    ).toMatch(/0\.0\.0\.0[\s\S]{0,160}?听所有网卡[\s\S]{0,40}?系统(自己)?报/);
-    expect(copy, "另一条路（手填本机内网地址）也不许删 —— 两条都通").toContain("192.168.1.5:8788");
-    expect(copy, "不许把地址说成「必须手填」（两条路都通）").not.toMatch(/必须(手填|填写)[^\n]{0,8}地址/);
-    // ⚠️ 可见性：不许只写在 `title`（悬停才看得见）里 —— `placeholder` 或常规文案里也要有。
-    const slots = [...copy.matchAll(/(?:placeholder|aria-label)="([^"]*)"/g)].map((m) => m[1]).join("\n");
-    expect(slots, "`0.0.0.0` 只出现在悬停提示里 ⇒ 普通用户照样看不见").toContain("0.0.0.0");
+      code.split("\n").some((l) => l.trim() === "<MeshAdvancedForm"),
+      "⛔ 面板里不许再有填地址那一块的挂载点 ✗（owner 2026-10-14 拍删 ✓）",
+    ).toBe(false);
+    expect(
+      existsSync(resolve(__dirname, "MeshAdvancedForm.tsx")),
+      "⛔ 那个组件**已删**（owner「去掉孤儿组件」✓）—— ⛔ 不许加回来一个没人挂的 ✗",
+    ).toBe(false);
+    const meshRs = readFileSync(resolve(__dirname, "..", "..", "src-tauri", "src", "mesh.rs"), "utf8");
+    expect(meshRs, "⭐ 那条口径**后端仍在**：通配 ⇒ 「听所有网卡」（⛔ 撤的是界面，⛔ 后端没撤 ✗）").toContain("听所有网卡");
+    expect(meshRs, "⭐ 通配那条分支仍在（`is_unspecified` ✓）").toContain("is_unspecified");
+    expect(panel, "⭐ 「读数的形状」那条文档仍在（`splitMeshBind` ✓）").toContain("splitMeshBind");
   });
 
   it("⑨b ⭐ 2026-10-11（owner 拍「只动前端」）：那句「找不到对方」提示⛔ 不再常显 —— 要挂在结构化的 `peers === 0` 上", () => {
@@ -235,13 +251,34 @@ describe("网格（丙-③-b）· 面板接线", () => {
       .replace(/inlineMd\("(?:[^"\\]|\\.)*"\)/g, "");
     const bad = code.match(/\*\*[^*\n]{1,40}\*\*/g);
     expect(bad, `JSX 文本里出现了 Markdown 粗体：${bad?.[0]} ⇒ 请用 <b> 包起来`).toBeNull();
+    // ⭐⭐ **2026-10-14（实测漏过一次）** ✗：⭐ 一条 JSX 注释的**最后一行**在改它时**掉到了注释外面** ✓
+    //   ⇒ ⭐ 那句话**当成正文渲染出来了** ✓（真机截图里看到「判据 `syncPanelMesh` ② 钉的仍是…」✓）。
+    //   ⚠️ 上面那条 `**` 判据**抓不到它** ✗（漏出来的那行里没有星号 ✓）⇒ ⭐ 这里补一条**注释体**判据：
+    //   ⭐ 剥注释之后，面板里**不许**再出现只有注释里才用的那几种写法 ✓（⛔ 它们不该给用户看 ✗）。
+    for (const marker of ["判据 `", "钉的仍是", "本笔", "owner 2026-10-14"]) {
+      expect(code, `⛔ 注释体「${marker}」漏到 JSX 正文里了（实测踩过一次 ✓）`).not.toContain(marker);
+    }
   });
 
-  it("⑩ ⭐ VL-3 红线：设备直连那一屏不许出现已废／越界措辞（含裸内部标识）", () => {
-    const copy = panel.replace(/\/\/[^\n]*/g, "");
-    const at = copy.indexOf('sync-row-label">设备直连');
+  it("⑩ ⭐ VL-3 红线：设备直连那一屏不许出现已废／越界措辞（含裸内部标识）", () => {    const copy = panel.replace(/\/\/[^\n]*/g, "");
+    // ⚠️ **2026-10-14（owner 拍删「设备直连」那一折）** ✗：这一屏的锚从**那条行的摘要**（`sync-row-label">设备直连` ✓，
+    //    它随行一起删了 ✓）换成 ⭐ **这一组的开头**（`sync-group is-advanced` ✓）—— ⭐ 按 R192「换对象不删断言」✗：
+    //    ⛔ 断言一条没删 ✓，只换**这一屏的入口** ✓。
+    //    ⚠️⭐ **同日再改（owner：「和上面重复了」「一个不剩，全去掉」）** ✗：⭐ 卡片标题「设备直连设置」
+    //    （与**面板标题「设备直连」**重复 ✓）**也删了** ✓ ⇒ ⭐ 再钉一道**语义**（标题没了，就用**那一组的成员**
+    //    认这一屏 ✓）：这一屏里必须**还有** `<MeshAdvancedForm` ✓。
+    //    ⚠️ ⛔ **不能**把锚换成那一块的门槛（`isDesktopPlatform() && lanStatus && …`）✗ —— **实测踩到**：
+    //    那个门槛在**输入框那一格之后** ⇒ ⛔ 后面的 `SyncPanel.tsx` 里**一个可见槽位字面都没有** ✗
+    //    （`placeholder=` 长在 `MeshAdvancedForm.tsx` 里 ✓）⇒ 下面那句 `slots.length > 0` 会假红 ✓。
+    const at = copy.indexOf('className="sync-group is-advanced"');
     expect(at, "找不到「设备直连」那一屏（结构变了？）").toBeGreaterThan(-1);
     const device = copy.slice(at);
+    // ⚠️ **2026-10-14 稍后（owner：「和上面重复了」⇒ 拍「整张卡连输入框一起去掉」）** ✗：⭐ 那张卡
+    //    （`MeshAdvancedForm` 的挂载点 ✓）**也删了** ✓ ⇒ ⭐ 这一屏里现在**真实的成员**是「中继」那张卡 ✓
+    //    （`RelayStatusSection` ✓）⇒ ⭐ 锚语换成它 ✓。
+    //    ⚠️ ⛔ **不许**写 `<MeshAdvancedForm` 来认这一屏 ✗ —— **实测踩到**：上面那段注释里**就写着**这个
+    //    字面 ✓ ⇒ 那条 `toContain` 会被**解释它的注释**喂饱 ⇒ **假绿** ✓（本笔就是顺手把它堵掉 ✓）。
+    expect(device, "这一屏里应当还有中继那张卡").toContain("<RelayStatusSection />");
     // 口径来源：owner §14「设备直连只做配对，没有邀请」＋「只说"已配对"，不许说"已确认是您的设备"」
     // ＋「不承诺所有 VPN 都能用」（我们只放行了常见默认网段）。
     for (const bad of [
@@ -262,6 +299,33 @@ describe("网格（丙-③-b）· 面板接线", () => {
     for (const id of ["space_id", "device_id", "ws_id"]) {
       expect(slots, `用户可见文案里不该出现内部标识 ${id}`).not.toContain(id);
     }
+  });
+
+  // ⭐⭐ **2026-10-14（真机截图：状态条那一行把 `**` 原样摆出来了）** ✗ ——
+  //   ⭐ 「窗口**听所有网卡**」／「**能被别人拉到**」两句在**界面上真出现了星号** ✓。
+  //   ⭐ 真因：那一格是 `{shown(note)}` **裸渲染** ✗ —— 而 `note` 是 **Rust 来的行内 Markdown**
+  //   （`mesh.rs` 那句逐字就是 `**能被别人拉到**` ✓）。⭐ 契约（`src/lib/inlineMd.tsx` ✓）要求：
+  //   ⭐ **后端来的话必须在【渲染边界】过 `inlineMd`** ✓；面板自己写的文案才用 `<b>` ✓（⑨c 那条管的是后者 ✓）。
+  //   ⚠️ 这一格**新增**（⛔ 不是改既有断言 ✗）：那条 `**` 是这一笔真踩出来的 ⇒ 它得有守卫 ✓。
+  it("⑪ ⭐ 后端来的那句（`mesh.reach`）必须在渲染边界过 `inlineMd`（⛔ 不许裸渲染）", () => {
+    const strip = readFileSync(resolve(__dirname, "SyncStatusStrip.tsx"), "utf8");
+    expect(
+      strip,
+      "⛔ 绿条没给 `mesh.reach` 过 `inlineMd` ⇒ 屏上会出现字面 `**`（2026-10-14 真机实测 ✓）",
+    ).toContain("inlineMd(reach)");
+    // 反：⛔ 不许把它**裸**摆上去（`{shown(note)}` 与 `{note}` 这两种形状都算裸 ✓）。
+    // ⚠️ 判据只看**代码**（剥注释 ✓）—— 文件头那段**正是在讲这次事故** ✓，不剥就会拿说明文字当代码判 ✓。
+    const code = strip.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code, "⛔ 不许裸渲染（要过 `inlineMd`）").not.toContain("{shown(reach)}");
+    expect(code, "⛔ 不许裸渲染（要过 `inlineMd`）").not.toMatch(/\{reach\}/);
+    // ⚠️ 旧形状（`note`）也一并禁掉 ✓ —— 那一格已经不摆 `note` 了（第一行那两格说短了同一件事 ✓）。
+    expect(code, "⛔ 不许裸渲染 `note`").not.toContain("{shown(note)}");
+    // 而那句读数的来源仍是 Rust 的**原文**（⛔ 界面不自己拼一句 ✗）：
+    // ⭐ **2026-10-14（owner：顶上那条拆两行）**：⭐ 那句话现在来自 `mesh.reach` ✓ ——
+    //   ⭐ 判据换对象不删条（R192 ✓）：口径一字不变 —— ⭐ 仍是**后端原文**，⛔ 界面不自己拼 ✗。
+    expect(panel, "那句话应当仍是 `mesh.reach` 原文（⛔ 界面不自己拼 ✗）").toContain(
+      "reach={lanStatus?.mesh?.reach",
+    );
   });
 });
 

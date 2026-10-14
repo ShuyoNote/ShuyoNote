@@ -11,7 +11,7 @@
 // 形状抄仓里既有的那一份：`src/editor/insertShortcut.test.ts:29-69`（真 `LexicalComposer` ＋
 // 真 `ContentEditable` ＋ 真 `editor.getEditorState()` 读数，断言落**状态**不落外观）。
 // ⚠️ 本仓**没有 @testing-library**（`package.json` 里没有它）⇒ 没有 `fireEvent`；
-//    用仓内既有惯例 `flushSync` ＋ 原生 `dispatchEvent`（见 `src/components/TrustDevicePanel.test.tsx:82`）。
+//    用仓内既有惯例 `flushSync` ＋ 原生 `dispatchEvent`（见 `src/components/SyncPanel.trustDevicePanel.wiring.test.tsx`）。
 //
 // ⚠️⚠️ **宿主里必须挂上与 `Editor.tsx` 同形的另外两个插件**（`BlockSelectionPlugin` /
 //    `ClickToEditPlugin`）—— 第一版只挂 `TableMenuPlugin` 时这三条**全绿**，而应用里是坏的：

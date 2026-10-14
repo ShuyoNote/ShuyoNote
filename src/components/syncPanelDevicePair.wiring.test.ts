@@ -5,6 +5,17 @@
 //   ② 同仓先例：`SpacePrivacySection.test.ts` 的第 ⑧ 条就是文本级判据（"防它变成没人用的孤儿组件"✓）；
 //   ③ 渲染整块 SyncPanel 要先铺一堆 store/轮询桩 ⇒ 判据本身反而更难信任 ✓。
 // ⛔ 但它**不验**"跑起来长什么样"✗ —— 那是人手/组件测的活 ✓；这一条只钉**文字与结构** ✓。
+//
+// ⭐⭐ **2026-10-14（owner 拍删「附近设备」那一行，连内容）** ✗ —— ⭐ 这一整份原来钉的是
+//    **「严格模式（高级）」那条投放码路**（`device-pair` ／ `device-pair-advanced` ／
+//    「生成投放码」／「先看比对码」／「我核对过了，采纳」✓）—— ⭐ 那些**已经整块删掉** ✓。
+//    ⭐ 按本仓 R192「**换对象不删断言**」✗：⛔ **五条断言一条都没删** ✓，全部换到**现在承重的那条
+//    配对路**上 ✓（「接入」⇒ 对码屏 ⇒ 「码对得上，确认」⇒ `mesh_trust_begin` ✓ —— 它的判据在
+//    `SyncPanel.trustDevicePanel.wiring.test.tsx` 的修 B／P-4 ②a②b③ 里已经**真挂真点**过 ✓，
+//    这里钉的是**文字与结构**那一半 ✓）。⭐ 三条口径一字不变：
+//      ① 这一块**真的挂在**那一行里（不是没人用的孤儿 ✓）；
+//      ② **停**态里没有继续的入口（码不一样 ⇒ 只说一句、⛔ 不给「继续」✓）；
+//      ③ **采纳/确认**必须带上人核对过的那一台（⛔ 不许自动通过 ✓）。
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,74 +31,106 @@ function between(text: string, start: string, end: string): string {
   return text.slice(i, j);
 }
 
+/** 从一条**整行锚**（`trim()` 逐字）切到下一个标记 —— ⛔ 不用 `indexOf(<testid 字面>)` ✗：
+ *  实测（2026-10-14）：`data-testid="nearby-allow"` 这个字面**在注释里也出现过一次**
+ *  （`trustDevice` 里那句"主路径（`data-testid=\"nearby-allow\"` ✓）**点名**那一台"✓）
+ *  ⇒ `indexOf` 从那句注释开始切，切出来的是一大段**别的代码**（`trustDevice` 本体 ✓）——
+ *  于是 `not.toContain("void trustDevice(")` 必然假红（实测踩到 ✓）。 */
+function fromWholeLine(lineText: string, endText: string): string {
+  const lines = SRC.split("\n");
+  const i = lines.findIndex((l) => l.trim() === lineText);
+  expect(i, `找不到整行锚：${lineText}`).toBeGreaterThanOrEqual(0);
+  const at = lines.slice(0, i).join("\n").length;
+  return between(SRC, SRC.slice(at, at + lines[i].length), endText);
+}
+
+/** 「接入」那一颗**按钮本身**（整行锚 `data-testid="nearby-allow"` ⇒ 到它自己的 `</button>` ✓）。
+ *  ⚠️ **再去掉注释** ✗（`//` 行注释与 JSX 注释**两种** ✓）——按钮 `onClick` 里那段注释**正是在讲**
+ *     「原来那两步搬走了」✓ ⇒ ⛔ 不剥的话，下面那条 not.toContain 会被**解释它自己的注释**喂饱 ✓。 */
+const allowRow = () =>
+  fromWholeLine('data-testid="nearby-allow"', "</button>")
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+/** 对码那一屏（`pair-code-screen` ✓）。 */
+const pairScreen = () => between(SRC, 'data-testid="pair-code-screen"', 'data-testid="pair-code-notes"');
+
 describe("T4 · 把这台设备接进来", () => {
-  it("① 这一块真的挂在「附近设备」里（不是没人用的孤儿）", () => {
-    expect(SRC).toContain('data-testid="device-pair"');
-    // 顺序：先「附近设备」那一行，再这一块 ⇒ 它在这一块**内部**
-    expect(SRC.indexOf("附近设备")).toBeLessThan(SRC.indexOf('data-testid="device-pair"'));
+  it("① 这一块真的挂在「附近设备」那一行里（不是没人用的孤儿）", () => {
+    expect(SRC).toContain('data-testid="nearby-allow"');
+    // 顺序：先「附近的设备」那一行，再这一块 ⇒ 它在这一块**内部**
+    expect(SRC.indexOf("附近")).toBeLessThan(SRC.indexOf('data-testid="nearby-allow"'));
+    // ⭐ **2026-10-14 修的真缺陷**（真机实测）：⭐ 对码屏原来住在**默认收起**的「高级」折叠里 ✗
+    //    ⇒ ⭐ 主视图那一行点「接入」**什么都看不见** ✓。⇒ 它必须排在那个折叠**之前** ✓。
+    const pairAt = SRC.indexOf('data-testid="pair-code-screen"');
+    const foldAt = SRC.indexOf("<SyncAdvancedFold>");
+    expect(pairAt, "夹具前提：对码屏要在").toBeGreaterThan(-1);
+    expect(foldAt, "夹具前提：那个「高级」折叠要在").toBeGreaterThan(-1);
+    expect(
+      pairAt,
+      "⛔ 对码屏又跑进那个**默认收起**的折叠里了 ✗ ⇒ 点「接入」用户看不见（2026-10-14 实测过 ✓）",
+    ).toBeLessThan(foldAt);
   });
 
   it("② ⭐「停」态里没有继续的入口（U3：两端不一致 ⇒ 停，且不许给「继续」）", () => {
-    // 停态那一支 = `dpOutcome === "stopped" ? (` 到 `) : (`
-    // ⚠️ 锚点要**从停态那一支开始切**（否则 `) : (` 会先命中文件里前面的三元表达式 —— 实测踩到 ✓）
-    const from = SRC.slice(SRC.indexOf('dpOutcome === "stopped" ? ('));
-    const stopped = between(from, 'dpOutcome === "stopped" ? (', ") : (");
-    // ★ 这一条就是变异注入点：往停态里加**任何**"继续"⇒ 必须红 ✓
-    // ⚠️ **不许只禁那两颗具体按钮** ✗ —— 实测过：加一个别名的「继续」按钮，只禁具体文案的写法**照样绿** ✓
-    //    （第一版就是这么写的，变异没抓住 ⇒ 断言改成"停态里不许出现任何 `<button`" ✓）
-    expect(stopped).not.toContain("<button");
-    expect(stopped).toContain("dp-stopped");
+    // ⭐ 停态那一支 ＝ ⭐ 码不一样时**只说一句**（`pair-code-mismatch` ✓）——
+    //    ⚠️ **不许只禁那两颗具体按钮** ✗：⭐ 那条路是"不许出现**任何**继续入口" ✓
+    //    （实测过：加一个别名的「继续」按钮，只禁具体文案的写法**照样绿** ✓）。
+    const screen = pairScreen();
+    expect(screen).toContain('data-testid="pair-code-mismatch"');
+    expect(screen, "⛔ 停态里不许有「继续」一类入口 ✗").not.toContain("继续");
+    expect(screen, "⛔ 也不许有「自动通过」✗").not.toContain("自动通过");
     // 反过来：**非停态**那一支里必须有这两个动作（否则"停"就没有对立面，判据自己失效 ✓）
-    const normal = between(from, ") : (", '{dpOutcome === "ok" &&');
-    expect(normal).toContain("先看比对码");
-    expect(normal).toContain("我核对过了，采纳");
+    expect(screen).toContain("码对得上，确认");
+    expect(screen).toContain('data-testid="pair-cancel"');
   });
 
   it("③ 采纳必须带上人核对过的那一串（U2：不许自动通过）", () => {
-    const accept = between(SRC, "const dpAccept = async () => {", "\n  };");
-    expect(accept).toContain("confirmed_check_code");
-    // ⭐ 而"先看比对码"那一步**故意不带**码 —— 后端因此只回读数、**零写入** ✓（这条也是结构事实 ✓）
-    const preview = between(SRC, "const dpPreviewImport = async () => {", "\n  };");
-    expect(preview).not.toContain("confirmed_check_code");
-    // ⛔ 预览那一步不许把结果当成功（不传码只可能是 need_confirm ✓）
-    expect(preview).not.toContain("已配对");
+    // ⭐ 「确认」那一下**才**把那一台交给后端 ✓ —— 逐字：`setDpPeer` ＋ `trustDevice` ✓
+    //    （⭐ 命令名/参数/返回值处理**一字未改** ✓，只挪了**时点** ✓：见 P-4 片②b ✓）。
+    const confirm = between(SRC, 'data-testid="pair-confirm"', 'data-testid="pair-cancel"');
+    expect(confirm).toContain("void trustDevice([activeId], peer)");
+    expect(confirm).toContain("setDpPeer(peer.device_id)");
+    // ⛔ 而「接入」那一下**只开屏 ＋ 取读数** ⇒ **零调用**（`syncPanelDevicePair` 的旧断言"预览不许写"
+    //    同一条口径 ✓：⭐ 人没确认之前，一个字节都不发 ✓）。
+    const allow = allowRow();
+    expect(allow, "⛔ 「接入」那一下不许直接调 `trustDevice` ✗（人还没确认 ✓）").not.toContain(
+      "void trustDevice(",
+    );
+    expect(allow, "⭐ 它要开的正是那一屏 ✓").toContain("setPairScreen(true)");
+    // ⭐ 而取读数那一下走的是**这一台**（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）
+    expect(allow).toContain("void fetchPairCode(p)");
   });
 
-  it("④ 文案红线：成功只说「已配对」；不出现判定语、也不出现「自动通过」式的话", () => {
-    const block = between(SRC, 'data-testid="device-pair"', "</details>");
+  it("④ 文案红线：只显示、不下结论；载荷含窗口口令 ⇒ 必须明说不能外传", () => {
+    const screen = pairScreen();
     // 判定语（`U13`：⛔ 不许声称"系统能识别是不是你的设备" ✗）
     for (const bad of ["已确认是您的设备", "已认证", "系统已识别", "自动通过"]) {
-      expect(block).not.toContain(bad);
+      expect(screen).not.toContain(bad);
     }
-    expect(block).toContain("已配对");
-    // ⚠️ 这一块的载荷**含窗口口令** ⇒ 必须**明说**不能外传（与「换设备」那句"它不是秘密"相反 ✓）
-    expect(block).toContain("含窗口口令");
-    expect(block).toContain("别外传");
+    // ⚠️ 这一屏的载荷**含窗口口令** ⇒ 必须**明说**不能外传（与「换设备」那句"它不是秘密"相反 ✓）
+    const notes = between(SRC, 'data-testid="pair-code-notes"', "</div>");
+    expect(notes).toContain("含窗口口令");
+    expect(notes).toContain("只发你自己那台");
+    // ⭐ 而且必须说清它**不是一次性的**（`pairing.rs` 的载荷里没有 nonce／有效期 ✓）
+    expect(notes).toContain("不是一次性的");
   });
 
-  // ⭐ R110（owner 2026-10-02 拍 A · macOS 侧落地）：**生成前先选「这段码给哪一台」**。
-  //   三条口径在这一块里，都是"这条判据能抓住的顺手改"：
-  //     ① **默认仍是「不指定」** ⇒ 老路（码可离线传、要配两次）**必须留着** ✓（A 是加法，⛔ 不是替换 ✗）；
-  //     ② 候选**只列服务本空间的**（`serves_current`，Rust 说了算 ✓）且**只给短码** ✓
-  //        （⛔ 可见文案不出现裸设备号 ✗ —— 与 `syncPanelMesh.wiring.test.ts` ③ 同一族口径 ✓）；
-  //     ③ ⭐ 选中那一台的设备号**真的传给了后端** —— 少了这一步，"生成时就登记"根本不会发生 ✓。
-  //   **变异**：把 `dpPeer` 从 `devicePairExport` 的实参里去掉 ⇒ ③ 必须红 ✓。
-  it("⑤ R110：能选「这段码给哪一台」，且选了就真的传给后端", () => {
-    const block = between(SRC, 'data-testid="device-pair"', "</details>");
-    expect(block).toContain('data-testid="dp-peer"');
-    // ① 默认那项就是「不指定」⇒ 两趟那条路没被 A 吃掉 ✓
-    expect(block).toContain("不指定（两台不在一起时才用这条：码离线传，要配两次）");
-    // ② 候选来自**唯一那处读数**（`nearby` ✓），且**只列服务本空间的** ✓（界面不自己算这条交集 ✓）
-    expect(block).toContain("nearby");
-    expect(block).toContain("p.serves_current");
-    // ③ 可见文案走**短码**（`duCode`）✓ —— ⛔ 不是裸设备号 ✗
-    expect(block).toContain("duCode(p.device_id)");
-    // ④ ⭐ 选中那一台**真的传给了后端**（`peerDeviceId` ⇒ 生成时登记 ⇒ 一趟就双向 ✓）
-    //   ＋ ⭐ **2026-10-12（1C）**：连**它的公钥**也一起传 ✗ —— ⭐ 1C 之后"登记"的落点就是**钥匙** ✓：
-    //     ⛔ 只传设备号 ⇒ 后端拿不到公钥 ⇒ 只能退回"两台各配一次"（判据在 Rust 那一侧 ✓）。
-    const gen = between(SRC, "const dpGenerate = async () => {", "\n  };");
-    expect(gen).toContain("api.devicePairExport(activeId, dpPeer || undefined, dpPeerRow?.pubkey || undefined)");
-    // ⑤ ⭐ 公钥来自**唯一那处读数**（`nearby` ✓）—— ⛔ 界面不许自己造一个身份 ✗
-    expect(gen).toContain("nearby.find((p) => p.device_id === dpPeer)");
+  // ⭐ R110（owner 2026-10-02 拍 A · macOS 侧落地）：**确认前先认下「这一台」**。
+  //   ⭐ **2026-10-14**：那条「这段码给哪一台」的下拉（`dp-peer` ✓）随投放码那一块**一起删掉** ✓ ⇒
+  //     ⭐ 按 R192 换对象：现在承重的是 ⭐ **「接入」那一颗自己记下是哪一台** ✓（`setPairPeer(p)` ✓），
+  //     而**确认**时把它的**设备号 ＋ 公钥**一起交给后端 ✓ —— ⭐ 少了这一步，"登记"根本不会发生 ✓。
+  //   **变异**：把确认那一下的 `peerPubkey` 去掉 ⇒ ③／P-4 片③ 必须红 ✓。
+  it("⑤ R110：认下的是**那一台**，且它的设备号与公钥真的传给了后端", () => {
+    const allow = allowRow();
+    // ① 「接入」记下的是**当前这一台**（⛔ 不是"第一台"／不是全选 ✗）
+    expect(allow).toContain("setPairPeer(p)");
+    // ② 候选来自**唯一那处读数**（`nearby` ✓）—— 界面不自己造一个身份 ✓
+    expect(allow).toContain("void fetchPairCode(p)");
+    // ③ ⭐ 那两格**真的传给了后端**（`mesh_trust_begin` 的实参 ✓ —— 命令名/参数逐字 ✓）
+    const fn = between(SRC, "const trustDevice = async", "\n  };");
+    expect(fn).toContain("peerDeviceId: peer.device_id");
+    expect(fn).toContain("peerPubkey: peer.pubkey");
+    // ④ ⛔ 对面**没报公钥** ⇒ 如实说、⛔ 不硬凑一个身份 ✗（老版本对端就是这一档 ✓）
+    expect(fn).toContain("if (!peer.pubkey)");
   });
 });

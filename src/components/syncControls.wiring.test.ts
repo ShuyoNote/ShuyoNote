@@ -6,7 +6,7 @@
 //
 // ⚠️ 断言一律对着**去过注释**的源码：这一片的注释里到处在解释旧形状（"原来是两个控件"），
 // 不剥注释就会拿说明文字当代码判（本仓踩过同型的坑）。
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -40,26 +40,33 @@ describe("同步方式：**一个**控件（不是一个间隔下拉 ＋ 一个�
 
 describe("地址只说一处", () => {
   const panel = read("src/components/SyncPanel.tsx");
-  // ⭐ task 派单 Round 1（2026-10-11，**纯抽取**）：网格那一块搬到了 `MeshAdvancedForm.tsx` ✓
-  //    ⇒ 下面 ⑤ 要找**那一块**的边界，改在**新文件**里找 ✓（⛔ 承诺一条没删：`saveMeshBind`／
-  //    `disableMesh` 都还在 ✓；`lanStatus.mesh.note` 仍然一次都没有 ✓）。④ 仍读面板 ✓（"只说一处"是面板的事 ✓）。
-  const meshForm = read("src/components/MeshAdvancedForm.tsx");
+  // ⭐⭐ **2026-10-14（owner：「去掉孤儿组件」）** ✗：网格那一块住的 `MeshAdvancedForm.tsx` **已删** ✓
+  //    （它先丢了挂载点、随后整份走了 ✓）⇒ ⛔ 这里不再读它 ✗。⭐ 按 R192「换对象不删断言」✗：
+  //    ⛔ ⑤ 不是删掉 ✓，换成**现在承重的那两半**（文件不许回来 ＋ 后端那条口径仍在 ✓）。
 
-  it("④ `lanStatus.mesh.note` 在面板里只出现**一次**（并进了「设备直连」那一行）", () => {
-    const hits = panel.split("lanStatus.mesh.note").length - 1;
+  it("④ `lanStatus.mesh.note` 那句话在面板里只出现**一次**（现在在绿条上）", () => {
+    // ⭐⭐ **owner 2026-10-14 拍删**「设备直连」那条读数行 ✗ ⇒ 那句人话的**唯一落点**＝ ⭐ **绿条**
+    //    （`SyncStatusStrip` 的 `note` prop ✓）。⭐ 按本仓 R192「**换对象不删断言**」✗：⛔ 不是把这条
+    //    删掉 ✓，只把**对象**换到新的那一处 ✓（口径一字不变：同一件事**只许说一处** ✓）。
+    // ⭐ **2026-10-14（owner：顶上那条拆两行）**：⭐ 绿条第二行取的是 `.reach` ✓（`.note` 那句「开没开／
+//   窗口在哪」没有再摆 ✗ —— 第一行那两格已经把同一件事说短了 ✓）。⭐ 判据换对象不删条（R192 ✓）：
+//   口径一字不变 —— ⭐ 「别人拉不拉得到」那句人话**只许来自 Rust 且只出现一次** ✓。
+    const hits = panel.split("lanStatus?.mesh?.reach").length - 1;
     expect(hits, "地址/可达性那句被说了多遍 ⇒ 两个读数看起来互相矛盾").toBe(1);
+    // 反面：那条**已删**的读数行不许回来（它当年就是"第二处地址"）。
+    expect(panel, "那条被删的读数行不许回来（它会成为第二处地址）").not.toContain("lanRowBound ? lanStatus.line");
   });
 
-  it("⑤ 网格那一块里**不再**自己说地址（它只管设置与开关）", () => {
-    const at = meshForm.indexOf('className="sync-att sync-mesh"');
-    expect(at, "找不到网格那一块").toBeGreaterThan(-1);
-    // 切到**下一个块级** `sync-att sync-*`（`sync-att-text` / `-name` 是块内的子元素，不算边界）
-    // —— 第一版按 `className="sync-att` 切，结果切在了块自己的 `sync-att-text` 上（差点假绿）。
-    const next = meshForm.indexOf('className="sync-att sync-', at + 10);
-    const block = meshForm.slice(at, next === -1 ? meshForm.length : next);
-    expect(block, "网格块里还在重复窗口地址").not.toContain("lanStatus.mesh.note");
-    expect(block, "网格块里应当保留它的设置（监听地址 / 口令）").toContain("saveMeshBind");
-    expect(block, "网格块里应当保留「关掉网格」").toContain("disableMesh");
+  it("⑤ 网格那一块**已删**（它随 `MeshAdvancedForm.tsx` 一起走了）—— ⛔ 但后端那条口径仍在", () => {
+    // ⭐ **2026-10-14（owner：「去掉孤儿组件」）** ✗：这一条原来是「网格那一块里**不再**自己说地址」✓ ——
+    //   ⭐ 而**那一块本身**已随组件删除 ✓ ⇒ ⭐ 对象没了 ✓。⭐ 按 R192 换对象：⛔ 不删这条 ✓，换成
+    //   ⭐「文件不许回来 ＋ 它当年的设置承诺**在后端仍有承重**」✓（⛔ 撤的是界面，⛔ 后端一个字节没动 ✗）。
+    expect(existsSync(join(process.cwd(), "src/components/MeshAdvancedForm.tsx")), "⭐ 那个组件已删 ✓").toBe(false);
+    const cmds = readFileSync(join(process.cwd(), "src/lib/platform/commands.ts"), "utf8");
+    expect(cmds, "⭐ 网格那条命令仍在命令面 ✓（`mesh_set_config` ✓）").toContain("mesh_set_config");
+    const api = readFileSync(join(process.cwd(), "src/lib/api.ts"), "utf8");
+    expect(api, "⭐ 而它的 api 封装也仍在 ✓（⛔ 后端那一侧没撤 ✗）").toContain("meshSetConfig");
+    expect(panel, "⛔ 面板里不该再出现那一块的类名 ✗（它随组件走了 ✓）").not.toContain('className="sync-att sync-mesh"');
   });
 
   it("⑦ 改了档位要让 App 那条定时器**重挂**（否则「选了按间隔可它没动」）", () => {
@@ -86,13 +93,76 @@ describe("地址只说一处", () => {
   });
 
   it("⑥ 合一那一行的门槛不再依赖服务端绑定（个人空间也显示）", () => {
+    const needle = "isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (";
     expect(
       panel,
       "⚠️ 2026-10-04 改：门槛不再依赖服务端绑定 —— 个人空间（没绑、也没有 space_id）也要看到这一行",
       // ⚠️ 2026-10-14：⭐ 只去掉 `space_id` 不够 ✗ —— `!!activeRow` 还在，而个人空间**没有同步档案行**
       //    ⇒ 仍然什么都不显示（真机 CDP 实测）⇒ 断言跟着改成"放行 isPersonalActive"✓，意图不变 ✓。
-    ).toContain("isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (");
-      // ⭐ 保留这一条：那一行仍要按 `lanRowBound` 挑文案（个人空间不该看到「去绑服务器」那句）。
-    expect(panel, "那一行仍要按 lanRowBound 挑文案").toContain('lanRowBound ? lanStatus.line : ""');
+    ).toContain(needle);
+    // ⭐⭐ **2026-10-14（owner 拍删「设备直连」那一折 ⇒ 再拍「整张卡连输入框一起去掉」）** ✗：
+    //    ⭐ 这条门槛里原来装着「设备直连设置」那一组（`MeshAdvancedForm` ✓）—— ⭐ **它已删** ✓。
+    //    ⭐ 按 R192「换对象不删断言」✗：⛔ 不是把这条删掉 ✓，换成**门槛里现在真实的成员**：
+    //    ⭐ 中继（`RelayStatusSection` ✓）。⭐ 要钉的口径一字不变：⭐ **个人空间（`isPersonalActive`）
+    //    必须看得到这一块** ✓（中继那一格正是个人空间也要看得到的东西 ✓）。
+    const at = panel.indexOf(needle);
+    expect(
+      panel.slice(at, at + 800),
+      "门槛里装的应当是「中继」那一格（个人空间看得到它 ✓；⛔ 门槛本身不许再依赖服务端绑定 ✗）",
+    ).toContain("<RelayStatusSection />");
+  });
+});
+
+// ⭐⭐ **2026-10-14（owner：「去掉最下边这（根）横线」）** ✗ —— ⭐ 真机读数（CDP `:9222`）：
+//    `footer.sync-foot` **h=25 ／ textLen=0** ✓，可它自己带着 `border-top: 1px solid` ＋
+//    `padding: 12px 16px` ✓ ⇒ ⭐ 没有进度、也没有状态时，它渲染成**一条空横线**摆在面板最底下 ✓。
+//    ⇒ ⭐ 修法＝**按同一个条件挂整格**（`syncing || status` ✓ —— 里面那两支本来就决定"有没有话说" ✓）；
+//    ⛔ 不碰样式表 ✗（改 CSS 会动到常驻 chrome 那条不变量 `INV-UI-sync-panel-persistent-chrome` ✓）。
+describe("面板底那条常驻状态条（`.sync-foot`）", () => {
+  const panel = read("src/components/SyncPanel.tsx");
+
+  it("⑧ 没有话说时**整格不挂**（⛔ 不许渲染成一条空横线 ✗）", () => {
+    // 正：整格被同一个条件包着 ✓
+    expect(
+      panel,
+      "⛔ `.sync-foot` 必须按「有没有话说」挂 ✗ —— 否则它会渲染成一条 25px 高的空横线（真机实测 ✓）",
+    ).toContain("{(syncing || status) && (");
+    // 反：⛔ 不许把 `.sync-foot` 留成**无条件**挂在面板里（那样横线又回来了 ✗）。
+    //   ⚠️ 判据取**它上一条语句**（⛔ 不是缩进 ✗ —— 缩进判不出"有没有条件" ✓，第一版就写错了 ✓）。
+    const at = panel.indexOf('<footer className="sync-foot">');
+    expect(at, "夹具前提：页脚要在").toBeGreaterThan(-1);
+    const above = (panel.slice(0, at).trimEnd().split("\n").pop() ?? "").trim();
+    expect(
+      above,
+      "⛔ 页脚上一条必须是那个条件 ✗（否则它又**无条件**挂了 ⇒ 空横线回来 ✓）",
+    ).toBe("{(syncing || status) && (");
+  });
+});
+
+// ⭐⭐ **2026-10-14（owner：「看看是否需要添加滚动支持」）** ✗ —— ⭐ 答案是 **需要** ✓，判据＝真读数：
+//    ⭐ CDP（`Emulation.setDeviceMetricsOverride` 改视口、⛔ 没 reload ✗）实测：
+//      · **修前**：视口 1280×720 ⇒ 内容 899 ／ 可视 719 ⇒ ⭐ **静默裁掉 156px**（1180×640 裁 236px ✓），
+//        ⭐ 而面板里**一个能滚的容器都没有** ✗（`.sync-popover` 有 `overflow-y:auto` ✓ 却从没被限高 ✓）；
+//      · **修后**：`.main` 的 `scrollH === clientH` ✓（不再丢内容 ✓）、`.sync-popover` 就是那个滚动容器 ✓、
+//        ⭐ 滚到底能看见最后一个后代 ✓（1180×520 同样成立 ✓）。
+//    ⭐ 真因（⭐ 量出来的 ✓）：⭐ `.main > .sync-popover.is-inline` 那条**直子选择器从没匹配过** ✗
+//    （真子级是 `.sync-panel` ✓）；⭐ 同一族：`.is-inline { height: 100% }` 的父级是**自动高** ⇒ 也不生效 ✗。
+describe("同步面板：嵌进内容区那一档（`.is-inline`）要占满并能滚", () => {
+  const css = readFileSync(join(process.cwd(), "src/App.css"), "utf8");
+
+  it("⑨ 面板要按「占满 ＋ 内部滚」挂（⛔ 不许再被 `.main` 静默裁掉 ✗）", () => {
+    expect(
+      css,
+      "⛔ 父级 `.sync-panel` 不给 flex ＋ `min-height:0` ⇒ 子项的 `flex:1 1 auto` 撑不进去 ⇒ 撑破后被裁 ✗",
+    ).toContain(".sync-panel:has(> .sync-popover.is-inline) {");
+    expect(
+      css,
+      "⛔ 子项没被钉成 `flex:1 1 auto; min-height:0` ⇒ `overflow-y:auto` 永远不会成为滚动容器 ✗",
+    ).toContain(".sync-panel:has(> .sync-popover.is-inline) > .sync-popover.is-inline {");
+    // ⛔ 那条**从来没匹配过**的死规则不许回来 —— ⭐ 它正是"以为修好了、其实没有"的来源 ✓。
+    expect(
+      css.split("\n").some((l) => l.trim() === ".main > .sync-popover.is-inline {"),
+      "⛔ 直子选择器 `.main > .sync-popover` 匹配不到真子级 `.sync-panel` ⇒ 是死规则 ✗",
+    ).toBe(false);
   });
 });
