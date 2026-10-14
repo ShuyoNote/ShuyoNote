@@ -231,3 +231,24 @@ describe("P-2a-2：左栏「同步」入口 ＋ 状态徽标", () => {
     expect(useViewStore.getState().view, "⭐ 点「笔记」仍要切回 `notes` ✓").toBe("notes");
   });
 });
+
+describe("2026-10-14 事故：左栏「邮箱」点了没反应（组件在、却没人挂载）", () => {
+  const src = (p: string) => readFileSync(resolve(__dirname, p), "utf8");
+
+  it("① ⭐ 宿主 `ActivityBar.tsx` 必须**真的渲染** `<EmailPanel`（今天【红】✓）", () => {
+    // 现场（owner 报障）：组件在 ✓、store 在 ✓、按钮也在 ✓（点了 `openPanel()` 确实把 open 置真 ✓），
+    // ⛔ 但**全仓没有任何地方挂载** ✗ ⇒ 点了屏幕上什么都没发生 ✓，
+    // ⚠️ 而且**一次异常都没有** ✓ —— 正是本仓最怕那类：不炸、不报错、测试全绿 ✗。
+    const bar = src("ActivityBar.tsx");
+    expect(bar, "⛔ 邮箱面板必须真的被渲染 ✗（只有 store、没有挂载 ＝ 点了没反应 ✓）").toContain("<EmailPanel");
+    expect(bar, '⛔ 组件也必须真的 import 进来 ✗').toContain('from "./EmailPanel"');
+  });
+
+  it("② ⭐ 而且必须**开着才挂**（那个组件关着**不会**自己隐藏 ✗）", () => {
+    const bar = src("ActivityBar.tsx");
+    // 实测：`EmailPanel` 根节点没有「`!open` ⇒ 不渲染」那一层 ✓（`!open` 只出现在 effect 里 ✓）
+    // ⇒ ⛔ 无条件挂会**一直显示** ✗ ⇒ ⭐ 宿主这一行必须带 `mailOpen` ✓。
+    expect(bar, "⭐ 挂载那一行要带 mailOpen ✓（⛔ 不许无条件挂 ✗）").toMatch(/\{[^\n]*mailOpen[^\n]*<EmailPanel/);
+    expect(bar, "⭐ 那个开关要从 store 取（单一来源 ✓）").toContain("useEmailPanel((s) => s.open)");
+  });
+});

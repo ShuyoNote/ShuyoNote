@@ -12,6 +12,8 @@ import { useEmailPanel } from "../store/emailPanel";
 import { api } from "../lib/api";
 import { TrashPanel } from "./TrashPanel";
 import { SearchPanel } from "./SearchPanel";
+import { EmailPanel } from "./EmailPanel";
+import { isDesktopPlatform } from "../lib/platform";
 import {
   PageIcon,
   FolderIcon,
@@ -132,6 +134,20 @@ export function ActivityBar() {
   //      面板自己那份不算 ✗，⛔ 不另造一个数 ✗）。
   //   ⚠️ 取不到（`undefined`）⇒ ⭐ **如实不显示** ✗（⛔ 不编 0 ✗、⛔ 不编 99 ✗）。
   const mailUnread = useEmailPanel((s) => s.unread);
+  /**
+   * ⛔⭐ **2026-10-14 修（owner 报障：「点击侧边栏邮箱按钮，没反应」）** ✗ —— ⭐ 真因**量出来的** ✓：
+   * 组件在 ✓、store 在 ✓、按钮也在 ✓（点了 `openPanel()` 确实把 `open` 置真 ✓），
+   * ⛔ 但**全仓没有任何地方挂载 `<EmailPanel />`** ✗（`ActivityBar` 只挂了 `<SearchPanel />`
+   * 与 `<TrashPanel />` ✓）⇒ 点了当然没反应 ✓，而且**一次异常都没有** ✓ ——
+   * ⚠️ 这正是本仓最怕的那类：**不炸、不报错、测试全绿** ✗。
+   *
+   * ⚠️ 因此**不能**无条件挂 ✗：`EmailPanel` 关着的时候**不会**自己隐藏（它根节点没有
+   * 「`!open` ⇒ 不渲染」那一层 ✓，`!open` 只出现在 effect 里 ✓）⇒ 无条件挂会**一直显示** ✗。
+   * ⇒ ⭐ 所以按 `open` **开着才挂** ✓（代价：每次打开会重新挂载、面板自己的选中态不保留 ✓，
+   * 而账号列表在 store 里 ✓ ⇒ 不影响数据 ✓）。
+   * ⚠️ 另按能力口径加**桌面门** ✓（邮箱是**桌面版独有**能力 ✓ —— 见 `lib/platform/capabilities.ts:22` ✓）。
+   */
+  const mailOpen = useEmailPanel((s) => s.open);
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -265,6 +281,11 @@ export function ActivityBar() {
             </span>
           )}
         </button>
+        {/* ⛔⭐ **2026-10-14 修**：⭐ 这一行是原来**缺失**的那一行 ✗ —— 组件、store、按钮都在，
+            唯独没人挂它 ⇒ 点「邮箱」只改了 store、屏幕上**什么都没发生** ✓（owner 报障 ✓）。
+            ⚠️ 挂在**按钮旁边**（与 `<SearchPanel />`／`<TrashPanel />` 同一种做法 ✓）；
+            ⭐ 按 `mailOpen` 与桌面门（理由见上面 `mailOpen` 的注释 ✓）。 */}
+        {isDesktopPlatform() && mailOpen && <EmailPanel />}
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (
