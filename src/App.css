@@ -25763,3 +25763,6 @@ body.is-plugin-panel-open .main {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* 刀七②：三段标题加粗（⭐ 只钉那三个 testid ✓ —— owner 的图上标题是粗的 ✓；⛔ 别的选择器不动 ✗）。 */
+[data-testid^="nearby-group-"] { font-weight: 600; }

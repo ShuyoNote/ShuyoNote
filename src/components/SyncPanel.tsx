@@ -1601,7 +1601,7 @@ export function SyncPanel({
                       className="sync-hint"
                       data-testid={NEARBY_GROUPS[nearbyBucket(p)].testid}
                     >
-                      {NEARBY_GROUPS[nearbyBucket(p)].label}
+                      {NEARBY_GROUPS[nearbyBucket(p)].label} · {nearby.filter((q) => nearbyBucket(q) === nearbyBucket(p)).length} 台
                     </div>
                   )}
               <div className="sync-nearby-row">
