@@ -2280,6 +2280,14 @@ export function SyncPanel({
                 （⭐ 逐字：⭐ `details` 只有「同步方式／空间隐私」⇒ 改后应多出「设备直连」✓），⛔ 不假称有单测覆盖 ✗。 */}
             {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <>
+
+                {/* ⑤ 「拉取间隔」——**上一行的子项**（缩进 ＋ 竖线，见 `.sync-row.is-child`）。
+                    ★ 规格 §9.3：「设备直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
+                      关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
+                    ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
+                {/* 片 D1e-4（2026-10-14，owner 拍）：深一层的那些 ⇒ 另一个折叠 ✓（⭐ 只包拉取间隔那一块 ✓）*/}
+                <details className="sync-advanced">
+                  <summary>更多设置</summary>
                 <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                   <summary>
                     <span className="sync-row-label">设备直连</span>
@@ -2322,14 +2330,6 @@ export function SyncPanel({
                     </div>
                   </div>
                 </details>
-
-                {/* ⑤ 「拉取间隔」——**上一行的子项**（缩进 ＋ 竖线，见 `.sync-row.is-child`）。
-                    ★ 规格 §9.3：「设备直连 = 关」⇒ 这一行**不出现**（不是灰掉 ——
-                      关了就没有间隔可谈；灰掉会暗示"还能开、只是暂时不能点"）。
-                    ★ 规格 §9.2：总闸关闭 ⇒ 父项已灰 ⇒ 子项同样不显示（两者都收在 `lanDirectOn` 里）。 */}
-                {/* 片 D1e-4（2026-10-14，owner 拍）：深一层的那些 ⇒ 另一个折叠 ✓（⭐ 只包拉取间隔那一块 ✓）*/}
-                <details className="sync-advanced">
-                  <summary>更多设置</summary>
                 {lanDirectOn && (
                   <details className="sync-row is-child">
                     <summary>
