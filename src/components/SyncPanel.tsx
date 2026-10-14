@@ -2231,7 +2231,27 @@ export function SyncPanel({
                         {!nearbyReadable || !lanStatus.enabled ? (
                           <div className="sync-hint">附近的设备：这台机器上看不到这一层</div>
                         ) : nearby.length === 0 ? (
-                          <div className="sync-hint">还没发现别的设备… 正在找</div>
+                          // ⭐⭐ **片 D1a-1（2026-10-14，owner 图）** ✗：⭐ **0 台时三段标题也要在** ✓
+                          //   （⭐ 原来这一支只给一句灰字 ✓ ⇒ ⭐ 用户看不到「分三段」这件事 ✗）。
+                          //   ⚠️ ⭐ 每段底下一行**实话** ✓（⛔ 不编数字 ✗ —— 仓规「读不到 ≠ 0」同族 ✓）；
+                          //   ⭐ 原来那句「还没发现别的设备… 正在找」**保留** ✓，⭐ 降级成三段**之外**的总说明 ✓。
+                          //   ⚠️ ⭐ testid 写**字面** ✓（⭐ 判据要能在这一支里逐字找到它 ✓），
+                          //   ⭐ 而**文案取自** `NEARBY_GROUPS` ✓（⭐ 单一来源 ⇒ ⛔ 不会与上面那份漂开 ✗）。
+                          <>
+                            <div className="sync-hint">还没发现别的设备… 正在找</div>
+                            <div className="sync-hint" data-testid="nearby-group-keychanged">
+                              {NEARBY_GROUPS[0].label}
+                            </div>
+                            <div className="sync-hint" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+                            <div className="sync-hint" data-testid="nearby-group-trusted">
+                              {NEARBY_GROUPS[1].label}
+                            </div>
+                            <div className="sync-hint" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+                            <div className="sync-hint" data-testid="nearby-group-pending">
+                              {NEARBY_GROUPS[2].label}
+                            </div>
+                            <div className="sync-hint" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+                          </>
                         ) : (
                           nearby
                             .slice()

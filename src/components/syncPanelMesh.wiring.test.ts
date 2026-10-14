@@ -6,6 +6,7 @@
 //
 // ⚠️ 这几条**不是**在验业务逻辑（那在 Rust 侧与 `src/lib/platform` 的判据里），
 // 它们只回答一个问题：**界面接上了没有**。
+import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -261,5 +262,34 @@ describe("网格（丙-③-b）· 面板接线", () => {
     for (const id of ["space_id", "device_id", "ws_id"]) {
       expect(slots, `用户可见文案里不该出现内部标识 ${id}`).not.toContain(id);
     }
+  });
+});
+
+// ⭐ **片 D1a-1（2026-10-14，owner 截图）** ✗：⭐ **0 台时三段标题也要在** ✓（⭐ 每段底下一行实话 ✓，⛔ 不编数字 ✗）
+//   ⚠️ ① 是**源码级**判据 ✓（⭐ 明标 ✗ —— DOM 级**测不到** ✗：⭐ 那一整块被 `lanDirectOn` 挡着 ✓）；
+//   ⭐ ② 是锁（⭐ 今天已绿 ✓）。
+describe("片 D1a-1：0 台时也渲染三段标题", () => {
+  const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+  const branch = () => {
+    const at = src.indexOf("nearby.length === 0 ? (");
+    if (at < 0) throw new Error("找不到 `nearby.length === 0` 那一支");
+    return src.slice(at, src.indexOf(") : (", at));
+  };
+
+  it("① ⭐（源码级）那一支里三个 `nearby-group-*` 的 testid 都在（今天【红】✓）", () => {
+    const b = branch();
+    for (const id of ["nearby-group-keychanged", "nearby-group-trusted", "nearby-group-pending"]) {
+      expect(b, "⛔ 0 台时那一段标题也要在 ✗：" + id).toContain(id);
+    }
+    expect(b, "⭐ 每段底下一行**实话** ✓（⛔ 不编数字 ✗）").toContain("这一轮没找到这一段的设备");
+    expect(b, "⭐ 原来那句总说明**保留** ✓").toContain("还没发现别的设备");
+  });
+
+  it("② 锁（今天已绿 ✓）：`NEARBY_GROUPS` 三条 label 逐字未变 ＋ 另两支逐字未变", () => {
+    expect(src, "⭐ 三条 label 逐字 ✓").toContain('{ testid: "nearby-group-keychanged", label: "需要重新配对" }');
+    expect(src, "⭐ 三条 label 逐字 ✓").toContain('{ testid: "nearby-group-trusted", label: "已信任" }');
+    expect(src, "⭐ 三条 label 逐字 ✓").toContain('{ testid: "nearby-group-pending", label: "待配对" }');
+    expect(src, "⛔ 「看不到这一层」那一支不许动 ✗").toContain("附近的设备：这台机器上看不到这一层");
+    expect(src, "⛔ 有设备那一支不许动 ✗").toContain("NEARBY_GROUPS[nearbyBucket(p)].testid");
   });
 });
