@@ -171,6 +171,13 @@ const NEARBY_GROUPS = [
   { testid: "nearby-group-trusted", label: "已信任" },
   { testid: "nearby-group-pending", label: "待配对" },
 ] as const;
+/** ⭐ **刀十五（2026-10-14，按设计图）**：把 `mesh.bind`（形如 `0.0.0.0:8788` ✓）拆成 ⭐ 地址／端口 ✓
+ *  —— ⭐ **一处实现** ✓（⭐ 状态条用 ✓）；⭐ 按**最后一个 `:`** 拆 ✓（IPv6 也安全 ✓），
+ *  ⭐ 拆不出来 ⇒ ⭐ 地址给**原文** ✓、⭐ 端口给空串 ✓（⭐ 界面那边如实写「未读到」✓，⛔ 不编 ✗）。 */
+const splitMeshBind = (bind: string): { addr: string; port: string } => {
+  const i = bind.lastIndexOf(":");
+  return i > 0 ? { addr: bind.slice(0, i), port: bind.slice(i + 1) } : { addr: bind, port: "" };
+};
 
 /** ⭐ **P-2a-1（2026-10-13）**：`contentOnly` ⇒ ⭐ **只渲染内容体**（⛔ 不带抽屉触发器 ✗、
  *  ⛔ 不带浮层定位 ✗）⇒ 让**同一份 JSX** 也能放进内容区（`App.tsx` 的 `view === "sync"` 那一支 ✓）。
@@ -1456,6 +1463,19 @@ export function SyncPanel({
                   ⚠️ 新句**不改事实** ✗：⭐ 今天建信任那一步**仍然**要那串码 ✓（⭐ 见文件头的拍板口径 ✓）⇒
                      ⭐ 所以只说"⭐ 建立信任之后 ✗" ✓，⛔ **不说**"⭐ 不用码 ✗"（⭐ 那要等新拍板 ✓）。 */}
               <div className="sync-subtitle">{isPersonalActive ? "同一个 Wi-Fi 自动发现：配对一次之后，不用再点任何东西" : "每个空间各自绑定服务器与组织空间"}</div>
+
+          {/* ⭐ **刀十五①（2026-10-14，owner：按设计图）** ✗：⭐ **绿色状态条** ✓ —— 副标题之后、三段设备之前 ✓。
+              ⭐ 三个值全来自**真读数** ✓（⛔ 一个都没写死 ✗）：地址／端口 ← `lanStatus.mesh.bind` ✓（经 `splitMeshBind` ✓）；
+              ⭐ 报出去的地址 ← `lanStatus.mesh.note`（⭐ Rust 侧原文 ✓）；⭐「已配对」← `duList`（本机认过的名单 ✓）、
+              ⭐「在线」← `lanStatus.enabled`（发现层开着 ✓）、⭐「同步中／自动同步中」← `syncing` ✓。
+              ⚠️ ⭐ 本轮**不动**那张大卡 ✗ —— ⭐「立即同步」那颗按钮还在它里面 ✓（⭐ 移按钮是下一刀的事 ✓）。 */}
+          <div className="sync-hero-state">
+            <span className="sync-hero-dot is-on" aria-hidden />
+            <span>{duList.length > 0 ? "已配对" : "未配对"} · {lanStatus?.enabled ? "在线" : "离线"} · {syncing ? "同步中" : "自动同步中"}</span>
+          </div>
+          <div className="sync-hero-sub">
+            监听地址 {splitMeshBind(lanStatus?.mesh?.bind ?? "").addr || "未读到"}（自动）· 端口 {splitMeshBind(lanStatus?.mesh?.bind ?? "").port || "未读到"}（默认）· 报出去的是 {lanStatus?.mesh?.note || "未读到"}
+          </div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
