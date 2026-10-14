@@ -85,6 +85,49 @@ function syncEntry(el: HTMLElement): HTMLButtonElement | undefined {
   );
 }
 
+
+// ⭐ **2026-10-14（owner 逐字：「侧边工具栏按钮用 svg，统一样式风格」）** ✗ ——
+//   ⭐ 那颗邮箱原来用的是**文字字形** `✉` ✗ ⇒ ⭐ 换成 ⭐ **与其余 10 颗同一套写法**的 SVG ✓
+//   （⭐ 自绘 ✓、同一处 `src/components/icons.tsx` ✓、⭐ 同一个 `<Icon>` 外壳 ⇒ 同一个 `viewBox` ✓）。
+// ⚠️ ① ② ③ 都是**源码级**判据 ✓（⭐ 如实标 ✗ —— ⭐ 它们量的是源码里那两个字面 ✓，⛔ 不是渲染 ✓）；
+//   ⭐ **改前红** ✓（⭐ `✉` 字形在 ✓、⭐ 没有 `<MailIcon` ✓、⭐ `MailIcon` 还没定义 ✓）；⭐ ④ 是锁 ✓。
+describe("2026-10-14：左栏「邮箱」换成 SVG（与其余图标同一套写法）", () => {
+  const src = (p: string) => readFileSync(resolve(__dirname, p), "utf8");
+
+  it("① ⭐（源码级）`ActivityBar.tsx` 里**不再**出现 `✉` 那个文字字形（今天【红】✓）", () => {
+    // ⚠️ ⭐ **先剥注释** ✗ —— ⭐ 我自己的说明里就写着那个字形 ✓ ⇒ ⛔ 不剥会**假红** ✗（实测踩到 ✓）。
+    const bar = src("ActivityBar.tsx")
+      .replace(/\/\/[^\n]*/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(bar, "⛔ 不许再用文字字形 ✗（owner：按钮用 svg ✓）").not.toContain("✉");
+  });
+
+  it("② ⭐（源码级）那颗邮箱**用的是新 SVG 组件** `MailIcon`（今天【红】✓）", () => {
+    const bar = src("ActivityBar.tsx");
+    expect(bar, "⭐ 必须出现 `<MailIcon width={18} height={18} />` ✓").toContain("<MailIcon width={18} height={18} />");
+    expect(bar, "⭐ `MailIcon` 也要在 import 名单里 ✓").toContain("  MailIcon,");
+  });
+
+  it("③ ⭐（源码级）新图标与既有那套**同风格**（同一处定义 ＋ 同一个 `<Icon>` 外壳 ⇒ 同一 `viewBox`）（今天【红】✓）", () => {
+    const icons = src("icons.tsx");
+    expect(icons, "⭐ 必须定义在同一处 ✓（`src/components/icons.tsx` ✓ —— 这才是统一样式 ✓）").toContain(
+      "export function MailIcon(props: IconProps)",
+    );
+    const at = icons.indexOf("export function MailIcon(props: IconProps)");
+    const body = icons.slice(at, at + 400);
+    expect(body, "⭐ 必须走同一个 `Icon` 外壳 ✓（⭐ viewBox／描边口径／props 由它统一 ✓）").toContain("<Icon {...props}>");
+    expect(icons, "⭐ 那个外壳的 viewBox 就是 24×24 ✓（⭐ 与隔壁那颗同一个 ✓）").toContain('viewBox="0 0 24 24"');
+  });
+
+  it("④ 锁（今天已绿 ✓）：⛔ 没引新依赖 ✗（自绘 ✓）＋ ⭐ 那颗的其余属性逐字未变 ✓", () => {
+    const icons = src("icons.tsx");
+    expect(icons, "⛔ 图标必须是**自绘**的 ✗（⛔ 不许从库引 ✗ —— 与既有 10 颗同源 ✓）").not.toContain("lucide");
+    const bar = src("ActivityBar.tsx");
+    expect(bar, "⭐ `rail-mail` 的 testid 未变 ✓").toContain('data-testid="rail-mail"');
+    expect(bar, "⭐ 标题／无障碍名逐字未变 ✓").toContain('title="邮箱"');
+    expect(bar, "⭐ 动作仍是走 store ✓（⛔ 不改计数逻辑 ✗）").toContain("useEmailPanel.getState().openPanel()");
+  });
+});
 describe("P-2a-2：左栏「同步」入口 ＋ 状态徽标", () => {
   beforeEach(() => {
     useViewStore.setState({ view: "notes" });

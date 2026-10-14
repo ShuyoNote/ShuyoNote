@@ -20,6 +20,7 @@ import {
   SidebarIcon,
   LlmWikiIcon,
   CloudSyncIcon,
+  MailIcon,
 } from "./icons";
 
 // 左侧竖条（activity bar）。
@@ -233,7 +234,7 @@ export function ActivityBar() {
           data-testid="rail-mail"
           onClick={() => useEmailPanel.getState().openPanel()}
         >
-          <span aria-hidden="true">✉</span>
+          <MailIcon width={18} height={18} />
           <span>邮箱</span>
           {typeof mailUnread === "number" && mailUnread > 0 && (
             <span className="sync-badge" aria-label={`${mailUnread} 封未读`}>
