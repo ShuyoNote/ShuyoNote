@@ -2323,9 +2323,26 @@ export function SyncPanel({
                                   重新配对
                                 </button>
                               ) : duList.some((d) => d.deviceId === p.device_id) ? (
-                                <span className="sync-hint" data-testid="nearby-paired">
-                                  已配对
-                                </span>
+                                <>
+                                  <span className="sync-hint" data-testid="nearby-paired">
+                                    已配对
+                                  </span>
+                                  {/* ⭐⭐ **片 D1b（2026-10-14，owner：「缺撤销配对的按钮」）** ✗：
+                                      ⭐ 这台**已经信任** ✓ ⇒ ⭐ 就在它旁边给一颗「撤销配对」✓
+                                      （⭐ 未配对的那几支**不显示** ✓）。
+                                      ⚠️ ⭐ 它**复用**既有那个 handler（`duUnpair` ✓）⇒ ⭐ **二次确认**
+                                      （`confirmDialog` ✓，⭐ 文案含「重新配对」✓）与 ⭐ `api.deviceUnpair`
+                                      **都不新增** ✓（⛔ 不写第二套 invoke ✗）；⭐ 样式用**行内** ✓（⛔ 不动样式表 ✗）。 */}
+                                  <button
+                                    className="sync-btn"
+                                    data-testid="nearby-unpair"
+                                    disabled={duBusy === p.device_id}
+                                    onClick={() => void duUnpair(p.device_id)}
+                                    style={{ marginLeft: 8 }}
+                                  >
+                                    撤销配对
+                                  </button>
+                                </>
                               ) : p.serves_current ? (
                                 // ⭐ **修 B（2026-10-13，Lead 拍板 ＋ owner 实测「点不了」）**：
                                 //   ⭐ 这一行**自己**就是「允许」的入口 ✗ —— 走 `trustDevice`（⇒ `mesh_trust_begin` ✓），

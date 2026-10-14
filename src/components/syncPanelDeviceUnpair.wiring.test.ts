@@ -65,3 +65,38 @@ describe("U11/T5 · 逐台解除", () => {
     expect(fn).toContain("没解除成");
   });
 });
+
+// ⭐ **片 D1b（2026-10-14，owner：「缺撤销配对的按钮」）** ✗：⭐「已信任」那张卡片上多一颗「撤销配对」✓
+//   ⭐ 它**复用**既有那个 handler（`duUnpair` ✓）⇒ ⭐ 二次确认（`confirmDialog` ✓）与 `api.deviceUnpair`
+//   **都不新增** ✓（⭐ `api.deviceUnpair` 全仓**恰好一处** ✓）。
+// ⚠️ ① ② ③ 都是**源码级** ✓（⭐ 明标 ✗ —— ⭐ DOM 级**测不到** ✗：⭐ 那一行要 `duList` 里有那一台 ✓
+//   而夹具里 `duList` 是空的 ✓）。
+describe("片 D1b：已信任的卡片上有「撤销配对」", () => {
+  const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+  const trustedBranch = () => {
+    const at = src.indexOf(") : duList.some((d) => d.deviceId === p.device_id) ? (");
+    if (at < 0) throw new Error("找不到「已信任」那一支");
+    return src.slice(at, src.indexOf(") : p.serves_current ? (", at));
+  };
+
+  it("① ⭐（源码级）「已信任」那一支里有「撤销配对」（今天【红】✓）", () => {
+    const b = trustedBranch();
+    expect(b, "⭐ 那颗按钮要在「已信任」的卡片上 ✓").toContain("撤销配对");
+    expect(b, "⭐ 而且只在这一支（⭐ 未配对的不显示 ✓）").toContain("nearby-unpair");
+  });
+
+  it("② ⭐（源码级）点它**先二次确认** ✓（⭐ 走既有 `duUnpair` ⇒ `confirmDialog` ✓）", () => {
+    const b = trustedBranch();
+    expect(b, "⭐ 必须复用既有那个 handler ✓（⛔ 不造第二套 ✗）").toContain("duUnpair(p.device_id)");
+    const at = src.indexOf("const duUnpair = async (deviceId: string) => {");
+    expect(at, "夹具前提：那个 handler 要在 ✓").toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n  };", at));
+    expect(body, "⭐ 确认件要用仓内既有那个 ✓（`confirmDialog` ✓，⛔ 别新发明 ✗）").toContain("confirmDialog(");
+    expect(body, "⭐ 文案要说清「重新配对」✓（⭐ owner 的承诺口径 ✓）").toContain("重新配对");
+  });
+
+  it("③ 锁（今天已绿 ✓）：`api.deviceUnpair` 全仓**恰好一处** ＋ 参数名逐字未变", () => {
+    expect(src.split("api.deviceUnpair(").length - 1, "⛔ 不许写第二套 invoke ✗").toBe(1);
+    expect(src, "⭐ 参数逐字 ✓").toContain("api.deviceUnpair(activeId, deviceId)");
+  });
+});
