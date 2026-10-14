@@ -89,7 +89,9 @@ describe("地址只说一处", () => {
     expect(
       panel,
       "⚠️ 2026-10-04 改：门槛不再依赖服务端绑定 —— 个人空间（没绑、也没有 space_id）也要看到这一行",
-    ).toContain("isDesktopPlatform() && lanStatus && !!activeRow && (");
+      // ⚠️ 2026-10-14：⭐ 只去掉 `space_id` 不够 ✗ —— `!!activeRow` 还在，而个人空间**没有同步档案行**
+      //    ⇒ 仍然什么都不显示（真机 CDP 实测）⇒ 断言跟着改成"放行 isPersonalActive"✓，意图不变 ✓。
+    ).toContain("isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (");
       // ⭐ 保留这一条：那一行仍要按 `lanRowBound` 挑文案（个人空间不该看到「去绑服务器」那句）。
     expect(panel, "那一行仍要按 lanRowBound 挑文案").toContain('lanRowBound ? lanStatus.line : ""');
   });

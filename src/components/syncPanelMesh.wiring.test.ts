@@ -54,10 +54,20 @@ describe("网格（丙-③-b）· 面板接线", () => {
     //   ⚠️ 原顾虑「会显示**别的空间**的地址」已不成立：`api.lanStatus(activeId)` 是**按空间查**的
     //   （Rust `lan_status(db, workspace_id)` ✓）。
     //   ⭐ 两处（网格设置那条 ＋ 地址读数那条）现在都只看「有活动空间那一行」。
+    //   ⚠️⭐ **2026-10-14（真机 CDP 实测）**：⭐ 门槛虽然去掉了 `space_id` ✓，⛔ **但 `!!activeRow` 还在** ✗，
+    //     而**个人空间没有同步档案行** ⇒ `activeRow` 为空 ⇒ ⭐ 整块仍不渲染 ✗ ——
+    //     ⭐ 这正是 owner 连问三次「同步面板还是旧的」的机械原因 ✓。⇒ ⭐ 现在放行 `isPersonalActive` ✓。
     expect(panel, "设备直连的门槛不该再依赖服务端绑定").toContain(
-      "isDesktopPlatform() && lanStatus && !!activeRow && (",
+      "isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (",
     );
     expect(panel, "旧门槛（要求 space_id）不该还在").not.toContain("!!activeRow?.space_id.trim() && (");
+    expect(panel, "旧门槛（要求 activeRow）也不该还在").not.toContain("&& !!activeRow && (");
+    // ⚠️⭐ **2026-10-14 第二个真因**：⭐ 读数 effect 原来只在 `open` 时才拉 ✗ ⇒
+    //    ⭐ `contentOnly`（⭐ 左栏那颗「同步」走的正是它 ✓）拿到的 `lanStatus` 永远是 null ✗
+    //    ⇒ ⭐ 依赖它的那两块（⭐ 设备直连折叠／地址行 ✓）**永远不渲染** ✓。⭐ 这条钉住修法 ✓。
+    expect(panel, "contentOnly 也要去读 lanStatus（否则那两块永远不渲染）").toContain(
+      "if ((!open && !contentOnly) || !isDesktopPlatform()) return;",
+    );
   });
 
   it("②b ⭐ 服务器那一段只列团队空间（个人空间不显示服务器同步内容）", () => {

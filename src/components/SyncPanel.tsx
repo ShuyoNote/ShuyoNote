@@ -235,7 +235,17 @@ export function SyncPanel({
   // ⚠️ `line` 是 Rust 侧 `lan::status_line` 的**原文**，这里**只显示、不解释**（档位由 Route 决定）。
   const [lanStatus, setLanStatus] = useState<LanStatus | null>(null);
   useEffect(() => {
-    if (!open || !isDesktopPlatform()) return;
+    // ⚠️⭐ **2026-10-14（owner 连问三次「同步面板还是旧的」的第二个、也是真正的机械原因）** ✗ ——
+    // ⭐ 这一行原来是 `if (!open || !isDesktopPlatform()) return;` ✓ ⇒ ⭐ ⭐ **只有浮层打开时才读** ✗。
+    // ⭐ 而左栏那颗「同步」走的是 ⭐ `contentOnly`（⭐ `view === "sync"` ⇒ `<SyncPanel contentOnly />` ✓，
+    //    它渲染出来是 `.sync-popover.is-sync.is-inline` ✓、⭐ `open` **始终是 false** ✗）
+    //    ⇒ ⭐ ⭐ **本 effect 直接 return ⇒ `lanStatus` 永远是 null** ✗
+    //    ⇒ ⭐ 依赖它的那两块（⭐ 「设备直连」折叠里的 `MeshAdvancedForm` ✓、⭐ 「附近发现/地址」那一行 ✓）
+    //       ⭐ **永远不渲染** ✓ ⇒ ⭐ 界面上一个字都不变 ✓。
+    // ⇒ ⭐ 修法：⭐ `contentOnly` 也算"看得见" ✓（⭐ 它本来就是"内容区那一份"✓）。
+    // ⚠️ ⭐ 判据面：⭐ 夹具走的不是这一档 ⇒ **DOM 级测不到** ✗ ⇒ 本笔靠**真窗口 CDP 读数**收口 ✓
+    //    （⭐ 逐字：⭐ 改前 `details` 只有「同步方式／空间隐私」⇒ 改后应多出「设备直连」＋ 三个控件 ✓）。
+    if ((!open && !contentOnly) || !isDesktopPlatform()) return;
     let alive = true;
     const tick = async () => {
       try {
@@ -260,7 +270,7 @@ export function SyncPanel({
       alive = false;
       window.clearInterval(timer);
     };
-  }, [open, activeId]);
+  }, [open, contentOnly, activeId]);
   // ★ 2026-09-29（丙档）：「拉取间隔」—— 设备直连这一档的节拍。**默认 5 秒**（owner 拍的）。
   // ⚠️ 写入口只有 `writePullIntervalMs`（它会顺便**广播**，让 App 那条定时器按新节拍重挂）——
   //    与 `setAuto` 同一套纪律：面板不自己碰 localStorage、也不自己算有效间隔。
@@ -2100,7 +2110,17 @@ export function SyncPanel({
                 ⇒ ⭐ 个人空间的「设备直连」**永远不显示** ✗ —— 而那正是它唯一的远程路径 ✓。
                 ⚠️ 原顾虑「会显示**别的空间**的地址」已不成立：`api.lanStatus(activeId)` 是**按空间查**的
                 （Rust `lan_status(db, workspace_id)` ✓）。 */}
-            {isDesktopPlatform() && lanStatus && !!activeRow && (
+            {/* ⚠️⭐ **2026-10-14（owner 连问三次「同步面板还是旧的」⇒ 真因就是这一行）** ✗ ——
+                ⭐ 上面把 `space_id` 那条门槛去掉了 ✓，⛔ **但 `!!activeRow` 还留着** ✗，
+                ⭐ ⭐ 而**个人空间根本没有同步档案行** ⇒ `activeRow` 为空 ⇒ ⭐ **整折不渲染** ✗：
+                ⭐ 刚从设置搬进来的那三格（`MeshAdvancedForm` ✓）、⭐ 说明句、⭐ 这一折**全都看不见** ✓。
+                ⇒ ⭐ 这才是"⭐ 代码改了、⭐ 界面一个字没变" ✓ 的机械原因 ✓（⛔ 不是没做 ✗、⛔ 不是旧产物 ✗）。
+                ⇒ ⭐ 修法：⭐ 个人空间（`isPersonalActive` ✓ —— 它**本来**就该走设备直连这条路 ✓）也放行 ✓；
+                   ⭐ 团队空间仍按原口径要求 `activeRow` ✓。⭐ 同一门槛的另一处（`附近发现/地址` 那一行 ✓）一起改 ✓。
+                ⚠️ 本块只用 `lanStatus`／`syncMode`（`meshText:1195`／`totalOff:1207` ✓）⇒ ⛔ 去掉门槛不会读到空对象 ✓。
+                ⚠️ ⭐ 判据面：⭐ 夹具停在别的档位 ⇒ 这条 **DOM 级测不到** ✗ ⇒ 本笔靠**真窗口 CDP 读数**收口 ✓
+                （⭐ 逐字：⭐ `details` 只有「同步方式／空间隐私」⇒ 改后应多出「设备直连」✓），⛔ 不假称有单测覆盖 ✗。 */}
+            {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <>
                 <details className={`sync-row${totalOff ? " is-off" : ""}`}>
                   <summary>
@@ -2600,7 +2620,7 @@ export function SyncPanel({
             {/* ⚠️ **2026-10-04 改**：同上 —— 这一行（附近发现/地址）也不该因为没绑服务器就不显示 ✓。
                 ⚠️ 里面那句 `lanRowBound ? lanStatus.line : ""` **照旧** ✓ ⇒ ⭐ 个人空间看不到
                 "去绑服务器"那句读数 ✓（那个三元本来就是为这一刻写的 ✓）。 */}
-            {isDesktopPlatform() && lanStatus && !!activeRow && (
+            {isDesktopPlatform() && lanStatus && (!!activeRow || isPersonalActive) && (
               <div className="sync-att sync-lan" title="附近自动找到这个空间的中枢时，同步就走设备直连地址（不经服务器）">
                 <span className="sync-att-text">
                   {/* 标题只按 `kind` 换（那一档来自 Rust 的 Route）；**不**按地址形状自己判。 */}
