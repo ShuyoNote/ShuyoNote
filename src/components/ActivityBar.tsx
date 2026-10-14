@@ -284,8 +284,11 @@ export function ActivityBar() {
         {/* ⛔⭐ **2026-10-14 修**：⭐ 这一行是原来**缺失**的那一行 ✗ —— 组件、store、按钮都在，
             唯独没人挂它 ⇒ 点「邮箱」只改了 store、屏幕上**什么都没发生** ✓（owner 报障 ✓）。
             ⚠️ 挂在**按钮旁边**（与 `<SearchPanel />`／`<TrashPanel />` 同一种做法 ✓）；
-            ⭐ 按 `mailOpen` 与桌面门（理由见上面 `mailOpen` 的注释 ✓）。 */}
-        {isDesktopPlatform() && mailOpen && <EmailPanel />}
+            ⭐ 按 `mailOpen` 与桌面门（理由见上面 `mailOpen` 的注释 ✓）。
+            ⛔⭐ **同一笔的第二个坑（owner：「乱了」）** ✗：`EmailPanel` **自带一颗"低调入口"按钮**
+            （`.btn-sync` ＋ `email-unread-badge` ✓）⇒ ⭐ 必须传 `withTrigger={false}` ✗，
+            否则栏里**多出一颗入口**、`99+` 徽标直接糊到内容区边上 ✓（真机实测 ✓）。 */}
+        {isDesktopPlatform() && mailOpen && <EmailPanel withTrigger={false} />}
         {ITEMS.map((it) => {
           const on = activity === it.id;
           return (

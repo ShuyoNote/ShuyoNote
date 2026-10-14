@@ -242,6 +242,13 @@ describe("2026-10-14 事故：左栏「邮箱」点了没反应（组件在、�
     const bar = src("ActivityBar.tsx");
     expect(bar, "⛔ 邮箱面板必须真的被渲染 ✗（只有 store、没有挂载 ＝ 点了没反应 ✓）").toContain("<EmailPanel");
     expect(bar, '⛔ 组件也必须真的 import 进来 ✗').toContain('from "./EmailPanel"');
+    // ⛔⭐ **2026-10-14 同一个报障的第二幕（owner：「乱了」）** ✗：`EmailPanel` **自带一颗
+    //    "低调入口"按钮**（`.btn-sync` ＋ `email-unread-badge` ✓）⇒ ⭐ 宿主必须传
+    //    `withTrigger={false}` ✗，否则左栏**多出一颗入口**、`99+` 徽标糊到内容区边上 ✓（真机实测 ✓）。
+    expect(
+      bar,
+      "⛔ 挂载时必须关掉组件自带的那颗入口 ✗（左栏已经有 owner 认可的 `rail-mail` ✓）",
+    ).toContain("<EmailPanel withTrigger={false} />");
   });
 
   it("② ⭐ 而且必须**开着才挂**（那个组件关着**不会**自己隐藏 ✗）", () => {
