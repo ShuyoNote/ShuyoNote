@@ -49,6 +49,9 @@ import {
   type SyncMode,
 } from "../lib/syncMode";
 import { SpacePrivacySection } from "./SpacePrivacySection";
+// ⭐ **片 B（2026-10-14）**：⭐ 设备直连那三格（监听地址／配对暗号／自动选）**也**渲染进本面板 ✓
+//   （⭐ 原来只在「设置 · 同步」里 ✓ —— ⭐ 那边**先不动** ✓，⭐ 片 C 才删 ✓）。
+import { MeshAdvancedForm } from "./MeshAdvancedForm";
 // ⭐ 跨网中继那两格（图⑤「中继」／图⑧「中继许可证」，2026-10-10）——
 //    读数（连上没连上 ＋ 剩余 N 天）**全部来自后端**，这一块只摆上去 ✓。
 import { RelayStatusSection } from "./RelayStatusSection";
@@ -2105,6 +2108,24 @@ export function SyncPanel({
                     <span className="sync-row-caret" aria-hidden>›</span>
                   </summary>
                   <div className="sync-row-body">
+                    {/* ⭐⭐ **片 B（2026-10-14，owner「完成同步面板」）** ✗：⭐ 设备直连那三格**也**在这里 ✓
+                        —— ⭐ 与上面那段「连不上时去哪看」是**一家人** ✓（⭐ 这段是「怎么让它连上」✓）。
+                        ⚠️ ⭐ 空串 ＝ **设备级** ✓（⭐ 后端 `DEVICE_LEVEL_SPACE` ✓，⛔ 别改成 `null` ✗：
+                        `mesh_set_config` 里那句 `.filter(|w| !w.trim().is_empty())` 会不一样 ✓）。 */}
+                    <p>
+                      ⭐ 这里是「这台设备」的设备直连设置 ✗：填一次，「所有个人空间共用」 ✓
+                      （⛔ 团队空间不受影响 —— 它们各自按空间来 ✓）。
+                    </p>
+                    {lanStatus ? (
+                      <MeshAdvancedForm
+                        activeId=""
+                        lanStatus={lanStatus}
+                        onStatus={setStatus}
+                        onMeshChanged={(mesh) => setLanStatus((prev) => (prev ? { ...prev, mesh } : prev))}
+                      />
+                    ) : (
+                      <p>正在读取本机的设备直连设置…</p>
+                    )}
                     {/* ⭐ 2026-10-11（owner 重申「个人空间是设备级」）：那三格（监听地址／配对暗号／口令）
                         已搬进「设置 · 同步」⇒ 面板这一折**只留读数 ＋ 人话** ✓（按图⑧ ✓）。
                         ⚠️ 判据里的**四条承诺一条没删** ✓ —— 它们跟着 `MeshAdvancedForm` 去了设置面 ✓，

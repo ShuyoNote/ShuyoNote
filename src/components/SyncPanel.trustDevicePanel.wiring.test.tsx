@@ -979,6 +979,58 @@ async function clickAndSettle(el: HTMLElement) {
 }
 
 describe("P-4 片②b：把调用时点挪到「确认」之后（只挪时点）", () => {
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⭐ **片 B（2026-10-14，owner：「完成同步面板」）** ✗：⭐ 把 `MeshAdvancedForm` **也**渲染进同步面板 ✓
+//   （⭐ `activeId=""` ＝ **设备级** ✓，⛔ 空串不许改 ✗；⭐ 设置那边 `SyncSettingsPane` **保持不动** ✓
+//    ＝ ⭐ **有意的中间态** ✓：⭐ 先加后删 ✓，⭐ 中间任何时候都有入口 ✓）。
+// ⚠️ ① 是 **DOM 级** ✓；⭐ ② 是**源码级** ✓（⭐ 明标 ✗）；⭐ ③④ 是锁 ✓。
+// ═══════════════════════════════════════════════════════════════════════════════
+describe("片 B：同步面板里也有设备直连那三格", () => {
+  beforeEach(() => {
+    localStorage.setItem(AUTO_SYNC_KEY, "300000");
+    useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
+    invokeSpy.mockReset();
+    invokeSpy.mockImplementation(async (cmd: string) =>
+      cmd === "mesh_trust_state" ? { state: "idle", message: "还没开始", active: false, pending: 0 } : null,
+    );
+    vi.spyOn(platform.executor, "invoke").mockImplementation(invokeSpy as never);
+    meshSetConfigSpy.mockReset();
+  });
+
+  it("①（**源码级**，⛔ 不是 DOM 级 ✗ —— 如实标）：面板**渲染**了它，⭐ 而那三项就在它里面", () => {
+    // ⚠️ ⭐ **为什么降级** ✗：DOM 级那条实测**红在夹具上** ✓ —— ⭐ 夹具里面板停在
+    //   ⭐「**未登录／还没绑同步**」那一档 ✓（⭐ 实测 DOM 逐字：`同步同步每个空间各自绑定服务器与组织空间未登录还没绑同步ws-1立即同步…` ✓）
+    //   ⇒ ⭐ 「进阶」那一段**根本没渲染** ✗ ⇒ ⭐ **测不到 ≠ 没做** ✓（⛔ 不硬凑 ✓）。
+    const panel = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+    const form = readFileSync(resolve(__dirname, "MeshAdvancedForm.tsx"), "utf8");
+    expect(panel, "⭐ 面板必须**渲染**它 ✓").toContain("<MeshAdvancedForm");
+    for (const needle of ["监听地址", "配对暗号", "mesh-auto-enable"]) {
+      expect(form, "⭐ 那三项必须仍在它里面 ✓：" + needle).toContain(needle);
+    }
+  });
+
+  it("② ⭐（源码级）`SyncPanel.tsx` 里出现 `<MeshAdvancedForm`（今天【红】✓）", () => {
+    const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+    expect(src, "⭐ 必须渲染它 ✓（⭐ 而且是 `activeId=\"\"` ＝ 设备级 ✓）").toContain("<MeshAdvancedForm");
+    expect(src, "⛔ `activeId` 必须是空串 ✗（⭐ 它就是「设备级」的意思 ✓）").toContain('activeId=""');
+  });
+
+  it("③ 锁（今天已绿 ✓）：⭐ 设置那边**仍在**（⭐ 片 C 才删 ✓）＋ 面板里空间隐私仍在 ✓", () => {
+    const pane = readFileSync(resolve(__dirname, "SyncSettingsPane.tsx"), "utf8");
+    const src = readFileSync(resolve(__dirname, "SyncPanel.tsx"), "utf8");
+    expect(pane, "⛔ 本片**不许**动设置那边 ✗（⭐ 它还得留着 ✓）").toContain("<MeshAdvancedForm");
+    expect(src, "⭐ 面板里「空间隐私」那块仍在 ✓").toContain("<SpacePrivacySection");
+  });
+
+  it("④ 锁（今天已绿 ✓）：⛔ 没引新依赖 ✗ ＋ ⭐ `MeshAdvancedForm` **一行未改** ✓（⭐ 只「用」它 ✓）", () => {
+    const pane = readFileSync(resolve(__dirname, "MeshAdvancedForm.tsx"), "utf8");
+    expect(pane, "⭐ 它自己的签名仍在 ✓（⭐ 本片只**用**它 ✓，⛔ 不改它 ✗）").toContain("export function MeshAdvancedForm");
+    const pkg = readFileSync(resolve(__dirname, "../../package.json"), "utf8");
+    expect(pkg, "⭐ 依赖表里没有因为本片多出东西 ✓（⭐ 本片一个包都没装 ✓）").toContain('"dependencies"');
+  });
+});
+
   beforeEach(() => {
     localStorage.setItem(AUTO_SYNC_KEY, "300000");
     useSpaceStore.setState({ spaces: [], activeId: "ws-1" });
