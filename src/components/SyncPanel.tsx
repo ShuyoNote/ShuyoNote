@@ -1455,7 +1455,7 @@ export function SyncPanel({
                   原文是「⭐ 填一个配对暗号就能和附近的设备直连 ✗」⇒ ⭐ 那句把"⭐ 码 ✗"摆在了**这一屏最显眼的位置** ✓。
                   ⚠️ 新句**不改事实** ✗：⭐ 今天建信任那一步**仍然**要那串码 ✓（⭐ 见文件头的拍板口径 ✓）⇒
                      ⭐ 所以只说"⭐ 建立信任之后 ✗" ✓，⛔ **不说**"⭐ 不用码 ✗"（⭐ 那要等新拍板 ✓）。 */}
-              <div className="sync-subtitle">{isPersonalActive ? "个人空间不经过服务器：和附近的设备建立信任之后，在同一个网络里直接连" : "每个空间各自绑定服务器与组织空间"}</div>
+              <div className="sync-subtitle">{isPersonalActive ? "同一个 Wi-Fi 自动发现：配对一次之后，不用再点任何东西" : "每个空间各自绑定服务器与组织空间"}</div>
             </div>
             {/* 顶部胶囊反映【当前激活空间】的绑定状态（与该空间卡片一致），
                 避免全局 authed 显示"已登录"但当前空间仍显示登录表单的矛盾。 */}
@@ -1723,6 +1723,19 @@ export function SyncPanel({
             {/* 刀二（2026-10-14）：浅那层（「已自动填好」的设置）⇒ 收进一个折叠 ✓ */}
             <details className="sync-advanced">
               <summary>高级（已自动填好，一般不用动）</summary>
+                  {/* 刀十四②：⭐ 图上「高级」里就两行只读读数 ✓ —— ⭐ 数据取自真读数 `lanStatus.mesh.bind`（⭐ 按最后一个 `:` 拆成地址／端口 ✓，⛔ 不写死 ✗）。 */}
+                  <div className="sync-row">
+                    <span className="sync-row-label">监听地址</span>
+                    <span className="sync-row-value">
+                      {(lanStatus?.mesh?.bind ?? "").includes(":") ? (lanStatus?.mesh?.bind ?? "").slice(0, (lanStatus?.mesh?.bind ?? "").lastIndexOf(":")) + " · 自动" : (lanStatus?.mesh?.bind ?? "") || "未读到"}
+                    </span>
+                  </div>
+                  <div className="sync-row">
+                    <span className="sync-row-label">端口</span>
+                    <span className="sync-row-value">
+                      {(lanStatus?.mesh?.bind ?? "").includes(":") ? (lanStatus?.mesh?.bind ?? "").slice((lanStatus?.mesh?.bind ?? "").lastIndexOf(":") + 1) + " · 默认" : "未读到"}
+                    </span>
+                  </div>
             <div className="sync-group">
               <div className="sync-group-title">设置</div>
 
