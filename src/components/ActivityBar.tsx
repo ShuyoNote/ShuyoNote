@@ -2,6 +2,9 @@ import { Fragment, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useActivity, isActivity, type Activity } from "../store/activity";
 import { isMobileViewport } from "../hooks/useMobile";
+// ⭐ 阶段 2（R205）：手机形态下 ⚙️ 改走**移动自己的设置屏** ✓（`isMobileViewport` 是 `shape.ts` 的
+//    纯函数、经 `hooks/useMobile` **re-export** ✓ ⇒ 同一个函数 ✓，⛔ 没有第二份 width 判断 ✗）。
+import { useMobileNav } from "../store/mobileNav";
 import { useViewStore } from "../store/view";
 import { useEditorStore } from "../store/editor";
 import { useFilePreview } from "../store/filePreview";
@@ -292,7 +295,15 @@ export function ActivityBar() {
           className="activity-btn"
           title="设置"
           aria-label="设置"
-          onClick={() => useEditorStore.getState().openSettings()}
+          onClick={() => {
+            // ⭐ 阶段 2（R205）：**手机形态** ⇒ 进移动自己的设置屏 ✓
+            //    （⛔ 桌面这一支**逐字不变** ✗ —— 它仍调 `openSettings()` 开桌面对话框 ✓）
+            if (isMobileViewport()) {
+              useMobileNav.getState().setScreen("settings");
+              return;
+            }
+            useEditorStore.getState().openSettings();
+          }}
         >
           <SettingsIcon width={18} height={18} />
         </button>

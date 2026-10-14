@@ -46,7 +46,7 @@ const SCREENS = [
   { file: "MobilePair.tsx", id: "pair", testid: "mobile-pair", reach: "nav", reachable: true, why: "手机档常驻「同步」胶囊（`SyncPanel`）调 `setScreen(\"pair\")` ✓" },
   { file: "MobileRead.tsx", id: "read", testid: "mobile-read", reach: "currentId", reachable: true, why: "⭐ **不在 `mobileScreen` 轴上** ✓：由 `App.tsx` 的 `isMobile && currentId` 那一支决定 ✓（打开任一页即达 ✓）" },
   { file: "MobileAbout.tsx", id: "about", testid: "mobile-about", reach: "nav", reachable: false, why: "⚠️ **手机上点不到** ✗（R205 ✓）：它沿用 `aboutOpen`（`src/store/editor.ts:83`）⇒ 触发点两处都在**桌面 chrome**（设置对话框 `SettingsDialog.tsx:1539`／更新横幅 `UpdateBanner.tsx:45`）⇒ 阶段 2 要给它建**移动自己的入口** ✓" },
-  { file: "MobileSettings.tsx", id: "settings", testid: "mobile-settings", reach: "nav", reachable: false, why: "⛔ **死屏** ✗（R205 ✓）：屏在、**门没有** ✗（全 `src/` grep 排除它自己零命中 ✓，`MobileScreen` 联合类型里也没有 `settings` ✓）⇒ 阶段 2 要建**入口** ✓" },
+  { file: "MobileSettings.tsx", id: "settings", testid: "mobile-settings", reach: "nav", reachable: true, why: "⭐ **阶段 2 已建成** ✓（2026-10-14）：手机 ⚙️（`ActivityBar` 的 `.activity-btn`）在**手机形态**下走 `setScreen(\"settings\")` ✓（桌面仍是原 `SettingsDialog` ✓）" },
   { file: "MobileMergeHistory.tsx", id: "merge-history", testid: "mobile-merge-history", reach: "not-a-screen", reachable: false, why: "未接线**原型** ✓（`0e79ae91` ✓）：**故意不接进任何用户可见路径** ✓ ⇒ 不是屏、也不是死屏 ✓" },
   { file: "MobileDictCard.tsx", id: null, testid: null, reach: "not-a-screen", reachable: false, why: "**卡片**不是屏 ✓（划词卡，锚在 `.mread` 里 ✓）" },
 ];
