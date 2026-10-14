@@ -1577,17 +1577,17 @@ export function SyncPanel({
             <>
               <div className="sync-hint">还没发现别的设备… 正在找</div>
               <div className="sync-hint" data-testid="nearby-group-keychanged">
-                {NEARBY_GROUPS[0].label}
+                {NEARBY_GROUPS[0].label} · {nearby.filter((q) => nearbyBucket(q) === 0).length} 台
               </div>
-              <div className="sync-hint" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+              <div className="sync-hint sync-empty-state" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
               <div className="sync-hint" data-testid="nearby-group-trusted">
-                {NEARBY_GROUPS[1].label}
+                {NEARBY_GROUPS[1].label} · {nearby.filter((q) => nearbyBucket(q) === 1).length} 台
               </div>
-              <div className="sync-hint" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+              <div className="sync-hint sync-empty-state" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
               <div className="sync-hint" data-testid="nearby-group-pending">
-                {NEARBY_GROUPS[2].label}
+                {NEARBY_GROUPS[2].label} · {nearby.filter((q) => nearbyBucket(q) === 2).length} 台
               </div>
-              <div className="sync-hint" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
+              <div className="sync-hint sync-empty-state" style={{ paddingLeft: 12 }}>这一轮没找到这一段的设备</div>
             </>
           ) : (
             nearby

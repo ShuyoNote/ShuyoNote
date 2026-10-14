@@ -25766,3 +25766,6 @@ body.is-plugin-panel-open .main {
 
 /* 刀七②：三段标题加粗（⭐ 只钉那三个 testid ✓ —— owner 的图上标题是粗的 ✓；⛔ 别的选择器不动 ✗）。 */
 [data-testid^="nearby-group-"] { font-weight: 600; }
+
+/* 刀十②：空段的虚线框复用现成的 `.sync-empty-state` ✓ —— 只把它在空段里的居中改回左对齐 ✓（⭐ 只钉那三个 testid ✓，⛔ 别的选择器不动 ✗）。 */
+[data-testid^="nearby-group-"] + .sync-empty-state { text-align: left; }
