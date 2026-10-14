@@ -1719,6 +1719,9 @@ export function SyncPanel({
                         )}
           </section>
           <div className={`sync-profiles${isDesktopPlatform() ? "" : " is-disabled"}`}>
+            {/* 刀二（2026-10-14）：浅那层（「已自动填好」的设置）⇒ 收进一个折叠 ✓ */}
+            <details className="sync-advanced">
+              <summary>高级（已自动填好，一般不用动）</summary>
             <div className="sync-group">
               <div className="sync-group-title">设置</div>
 
@@ -2097,6 +2100,7 @@ export function SyncPanel({
 
 
             </div>
+            </details>
           </div>
 
           {/* ⚠️ 2026-09-29（IA）：【进阶】这一组是 `.sync-profiles` 的**兄弟**，不是孩子 ——
