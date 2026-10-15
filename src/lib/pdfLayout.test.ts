@@ -9,6 +9,7 @@ import {
   zoomContentWidth,
   zoomLabel,
   zoomPct,
+  ZOOM_LADDER,
   type ZoomMode,
 } from "./pdfLayout";
 
@@ -110,5 +111,51 @@ describe("zoomPct / zoomLabel / stepZoom", () => {
   it("stepZoom walks the ladder (dir +1 zooms in, -1 out)", () => {
     expect(stepZoom(1, 1)).toEqual({ mode: "pct", pct: 125 });   // 100 → 125
     expect(stepZoom(1, -1)).toEqual({ mode: "pct", pct: 75 });   // 100 → 75
+  });
+});
+
+describe("2026-10-15：适配模式不许被下界夹住（owner：「为何不能缩小」）", () => {
+  it("⭐ 宽图（2000×800）在 900×600 里 fit-page **必须真的放得下**（0.45，⛔ 不是 0.5）", () => {
+    // 现场：一张超宽横向流程图，fit-page 算出来 0.45，却被 MIN_SCALE=0.5 夹住 ⇒ 屏幕上**看不全** ✓。
+    const s = resolveZoomScale({ mode: "fit-page" }, 2000, 800, 900, 600);
+    expect(s).toBeCloseTo(0.45, 3);
+    // ⚠️ 判据要表达的是"**没被夹子动过**" ✓ —— 而不是"小于 MIN_SCALE" ✗：
+    //   这一档 0.45 本来就**大于** MIN_SCALE(0.25) ✓，拿它去比下界是**我第一版写错了** ✓。
+    expect(s, "⭐ 必须等于**原始比值** min(W/refW, H/refH) ⇒ 说明没被下界夹 ✓").toBeCloseTo(
+      Math.min(900 / 2000, 600 / 800),
+      3,
+    );
+  });
+
+  it("⭐ 极端宽图（10000 宽）fit-page 可以**低于**手动下界（给多少就是多少）", () => {
+    // ⚠️ 这一条才是"不夹下界"的**决定性**断言 ✓：结果 0.09 **低于** MIN_SCALE(0.25) ✓
+    //   —— 旧口径下它会被夹成 0.5 ⇒ 屏幕上一张超宽图永远看不全 ✓。
+    const s = resolveZoomScale({ mode: "fit-page" }, 10000, 800, 900, 600);
+    expect(s).toBeCloseTo(0.09, 3);
+    expect(s, "⭐ 适配模式允许低于手动百分比的下界 ✓（它的语义是\"放得下\" ✓）").toBeLessThan(MIN_SCALE);
+  });
+
+  it("⭐ fit-width / fit-content 同样不被下界夹（一张超宽页）", () => {
+    const w = resolveZoomScale({ mode: "fit-width" }, 4000, 800, 900, 600);
+    const c = resolveZoomScale({ mode: "fit-content" }, 4000, 800, 900, 600);
+    expect(w).toBeCloseTo(0.225, 3);
+    expect(c, "fit-content 忽略四周留白 ⇒ 应比 fit-width 略大 ✓").toBeGreaterThan(w);
+  });
+
+  it("⭐ 适配模式**仍然**夹上界（⛔ 不是把夹子整个删了 ✗）", () => {
+    expect(resolveZoomScale({ mode: "fit-page" }, 100, 100, 4000, 4000)).toBe(MAX_SCALE);
+  });
+
+  it("⭐ 手动百分比：25% 现在**生效** ✓；10% 仍被夹到 MIN_SCALE ✓", () => {
+    expect(resolveZoomScale({ mode: "pct", pct: 25 }, 612, 792, 900, 600)).toBe(0.25);
+    expect(resolveZoomScale({ mode: "pct", pct: 10 }, 612, 792, 900, 600)).toBe(MIN_SCALE);
+  });
+
+  it("⭐ 阶梯到底后按「−」＝原地（边界如实，⛔ 不假装还能缩 ✗）", () => {
+    expect(ZOOM_LADDER).toContain(33);
+    expect(ZOOM_LADDER).toContain(25);
+    expect(Math.min(...ZOOM_LADDER)).toBe(25);
+    expect(stepZoom(0.25, -1)).toEqual({ mode: "pct", pct: 25 });
+    expect(stepZoom(0.5, -1)).toEqual({ mode: "pct", pct: 33 });
   });
 });

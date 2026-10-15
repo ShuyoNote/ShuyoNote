@@ -7,8 +7,17 @@ export const CHROME = 12;
 /** 页间间距 px（相邻两页之间的视觉空隙）。 */
 export const GAP = 16;
 
-/** 最小/最大缩放倍率。最小 50%（够看全局）、最大 4×（400%，页面已明显放大，避免光栅化过大/无穷宽）。 */
-export const MIN_SCALE = 0.5;
+/**
+ * 最大 4×（400%，页面已明显放大，避免光栅化过大/无穷宽）；最小 **0.25**（手动百分比的下界）。
+ *
+ * ⛔⭐ **2026-10-15（owner：「看看这个 pdf 文件为何不能缩小？」）** ✗：最小原来是 **0.5** ✓，
+ *   而它挡住的不只是"手动再缩一档" ✗ —— ⭐ **连"适合页面／适合内容"也一起被夹了** ✗：
+ *   一张**超宽横向流程图**（如 2000×800）在 900×600 里本该是 **0.45** ✓，被夹成 0.5 ⇒ 屏幕上
+ *   **看不全** ✓（实测读数：`fit-page 原始 0.45 ⇒ 夹成 0.5` ✓）。
+ *   ⇒ 现在两件事分开：⭐ **适配模式（fit-*）不夹下界** ✓（语义就是"放得下" ✓ —— 见 `resolveZoomScale` ✓）；
+ *   ⭐ 手动百分比的下界降到 **0.25** ✓（仍然有个底 ✓，⛔ 不是无限制 ✗）。
+ */
+export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 4;
 
 /** 缩放模式：具名适配模式，或一个固定百分比（pct）。 */
@@ -73,14 +82,21 @@ export function resolveZoomScale(
       s = zoom.pct / 100;
       break;
   }
+  // ⭐ 适配模式（fit-*）：⭐ 它们的语义是"**放得下**" ⇒ ⛔ 只夹上界、**不夹下界** ✗
+  //   （一张超宽图本该 45% 却被夹成 50% ⇒ 用户看到的正是"缩不下去、看不全" ✓ —— 2026-10-15 实测 ✓）。
+  const isFit = zoom.mode === "fit-width" || zoom.mode === "fit-page" || zoom.mode === "fit-content";
   // 退化输入（refW/refH 为 0 或 NaN、pct 为 NaN）会让 s 变成 NaN/Infinity。
   // 倍率是"往画布上传"的第一个数：绝不允许非有限值出门。返回 1（实际大小）是安全的默认。
   if (!Number.isFinite(s) || s <= 0) return 1;
-  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(s).toFixed(3)));
+  const capped = Math.min(MAX_SCALE, +(s).toFixed(3));
+  // ⭐ 手动百分比（`pct`）与「实际大小」照旧夹下界 ✓ —— 那是用户直接指定的倍率 ✓。
+  return isFit ? capped : Math.max(MIN_SCALE, capped);
 }
 
-/** 缩放下拉的百分比阶梯（从大到小）。只保留实用档位：50%–400%，全都在 MIN/MAX 范围内、真实生效。 */
-export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50];
+/** 缩放下拉的百分比阶梯（从大到小）。只保留实用档位：**25%–400%**，全都在 MIN/MAX 范围内、真实生效。
+ *  ⭐ **2026-10-15**：补 **33／25** 两档 ✓ —— 原来最低只到 50 ✓，遇到**超宽图**就再也缩不下去 ✗
+ *  （连同「适合页面」一起被 `MIN_SCALE` 夹住 ✓ —— 见上面那段注释 ✓）。 */
+export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50, 33, 25];
 
 /** 把缩放模式映射成展示标签（下拉触发器/当前项）。 */
 export function zoomLabel(zoom: ZoomMode): string {
