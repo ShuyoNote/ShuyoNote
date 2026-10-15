@@ -25782,11 +25782,11 @@ body.is-plugin-panel-open .main {
   font-size: 12px;
   line-height: 1.6;
 }
-.mpair-pill.is-ok {
+.mpair-pill.mpair-pill-ok {
   background: var(--cat-green-soft);
   color: var(--success);
 }
-.mpair-pill.is-bad {
+.mpair-pill.mpair-pill-bad {
   background: var(--danger-soft);
   color: var(--danger);
 }

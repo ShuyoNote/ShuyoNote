@@ -251,12 +251,12 @@ export function MobilePair() {
                         ⛔ 两颗都**不承载动作** ✗（本轮不新增按钮 ✓ —— 三颗动作是面板内部流程 ✓，见 C1 那份记录 ✓）。 */}
                     <span className="mpair-item-pills">
                       {p.key_changed === true ? (
-                        <span className="mpair-pill is-bad" data-testid="mpair-pill-keychanged">
+                        <span className="mpair-pill mpair-pill-bad" data-testid="mpair-pill-keychanged">
                           ⊘ 钥匙不匹配
                         </span>
                       ) : null}
                       {autoSyncMs > 0 && pairedIds.includes(p.device_id) ? (
-                        <span className="mpair-pill is-ok" data-testid="mpair-pill-autosync">
+                        <span className="mpair-pill mpair-pill-ok" data-testid="mpair-pill-autosync">
                           ✓ 自动同步
                         </span>
                       ) : null}
