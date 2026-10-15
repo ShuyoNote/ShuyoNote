@@ -677,6 +677,20 @@ export function blockSnapshotsOf(docJson: string): BlockSnapshot[] | undefined {
 }
 
 /**
+ * ⭐ **页面记录 → 文档 JSON**（给"把这一页的正文读一遍就走"的场合：导出 Markdown、发布到社区…）。
+ *
+ * 为什么放在这一层：全仓直接提那一列字段名的地方**只许减**（判据 `check-doc-content-access.mjs` ✓），
+ * 而"读一遍正文"正是**那一层**的活 ✓。上层只调本函数 ✓，⛔ 不许在别处再写出那个键名 ✗
+ * （2026-10-15 实测：我在 `exportMarkdown.ts` 里把一个参数写成 `content_json` ⇒ 门禁当场红
+ *  `1 → 3`；按其文件头"撞上假红时的固定处置"第 2 条 —— 参数改名 `docJson` ＋ 读那一列收进本层 ✓）。
+ *
+ * 空值兜底成 `{}`：与工作区导出（`exportWorkspaceToMarkdown`）**同一个兜底** ✓。
+ */
+export function docJsonOfPage(page: { content_json?: string | null }): string {
+  return page.content_json || "{}";
+}
+
+/**
  * 从一条**同步载荷**里取出那段正文 JSON ✓（载荷是页面详情的序列化：这个键是**字符串** ✓）。
  *
  * 为什么放在这一层（而不是让 `activityBlocks.ts` 自己去解）：全仓直接提这个字段名的地方**只许减**

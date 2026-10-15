@@ -53,15 +53,25 @@ export const tauriPlatform: Platform = {
       ),
   },
   pdfRender: {
-    renderPdfPage: async (attachmentId, pageIndex, scale) => {
+    renderPdfPage: async (attachmentId, pageIndex, scale, rect) => {
       // 倍率先校验：NaN/Infinity 会被 JSON 编成 null 送到 Rust，也会让画布尺寸变 NaN。
       if (!Number.isFinite(scale) || scale <= 0) {
         throw new Error(`原生 PDF 渲染的缩放倍率无效（scale=${String(scale)}）`);
       }
+      // ⭐ D1b：`rect` 是**可选**的（`[x, y, w, h]`，页面 pt、左上角原点）。
+      // ⚠️ 每项都要先过一遍有限性 —— 否则 NaN 会被 JSON 编成 null，Rust 那边看到的是
+      //    "形状不对"而不是"数值不对"，报错会指错方向（前端这条闸门就是干这个的）。
+      if (rect && !rect.every((v) => Number.isFinite(v))) {
+        throw new Error(`原生 PDF 渲染的矩形无效（rect=${JSON.stringify(rect)}）`);
+      }
       // 响应形状按平台/版本都不同（macOS 的原始响应是数字数组、Windows 是 ArrayBuffer、
       // 现在是 {width,height,rgba_base64}），全部交给 parseNativePageResponse 校验后再用。
       const raw = await tauriInvoke<unknown>("render_pdf_page", {
-        args: { attachment_id: attachmentId, page_index: pageIndex, scale },
+        // ⚠️ 不带 rect 时**不要**塞一个 `rect: undefined` 进去：那会让旧后端把它当"显式给了"
+        //    （虽然 serde 会解成 None，但没必要让报文变大/让旧版判据看到多余字段）。
+        args: rect
+          ? { attachment_id: attachmentId, page_index: pageIndex, scale, rect }
+          : { attachment_id: attachmentId, page_index: pageIndex, scale },
       });
       return parseNativePageResponse(raw);
     },

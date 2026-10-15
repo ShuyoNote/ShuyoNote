@@ -14,7 +14,8 @@ import { buildHelpSite } from "../lib/helpSite";
 import { buildWikiExport, type WikiPageInput } from "../lib/wikiExport";
 import { usePdfReader } from "../store/pdfReader";
 import { useCommunitySave } from "../store/communitySave";
-import { exportWorkspaceToMarkdown } from "../lib/exportMarkdown";
+import { exportWorkspaceToMarkdown, exportPageToMarkdown } from "../lib/exportMarkdown";
+import { docJsonOfPage } from "../lib/docContent";
 import type { PageMeta } from "../types";
 
 // **内置命令组**——不是插件。
@@ -104,6 +105,23 @@ registerCommandGroup({
         const page = await api.getPage(ctx.currentId);
         await navigator.clipboard.writeText(JSON.stringify(page, null, 2));
         return "已复制当前页 JSON 到剪贴板";
+      },
+    },
+    {
+      id: "export.current-markdown",
+      title: "导出当前页为 Markdown",
+      description: "把当前这一页存成 .md 文件（自选存到哪）",
+      // ⭐ 2026-10-15（owner：「添加一个直接导出 Markdown 文件的功能」）：
+      //   命令面板这一格与编辑器工具栏那格**调同一个** `exportPageToMarkdown` ✓ ——
+      //   ⛔ 不在命令里另写一份转换 ✗（列块展开只在 `lib/exportMarkdown.ts` 那一份里）。
+      closeOnRun: true,
+      run: async (ctx) => {
+        // ⚠️ 用 `ctx.currentId`（这次命令**是对着哪一页**发起的 ✓），不是"现在打开的那一页"——
+        //    后者会在后台开着的窗口上导出别人（`PluginMenuItems.tsx` 那条注释记的就是这个坑）。
+        if (!ctx.currentId) return "未打开页面";
+        const page = await api.getPage(ctx.currentId);
+        // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写那个存储列名 ✗ —— 门禁只减不增）
+        return exportPageToMarkdown({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
       },
     },
     {

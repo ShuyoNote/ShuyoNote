@@ -75,10 +75,30 @@ export interface PdfRenderedPage {
   height: number;
 }
 
+/** 页面上一块矩形：`[x, y, w, h]`，单位**页面 pt、左上角为原点**（前端习惯的坐标系）。 */
+export type PdfPageRect = [number, number, number, number];
+
 /** M24 — PDF page rendering. Desktop uses native MuPDF; Web degrades to pdf.js. */
 export interface PdfRenderDriver {
-  /** Render an attachment's PDF page to RGBA samples (native engine when available). */
-  renderPdfPage(attachmentId: string, pageIndex: number, scale: number): Promise<PdfRenderedPage>;
+  /**
+   * Render an attachment's PDF page to RGBA samples (native engine when available).
+   *
+   * ⭐ **D1b（2026-10-15）**：`rect` 可选 —— 给了就**只渲染那一块**（`PdfPageRect`，pt、左上角原点），
+   * 返回的 `width/height` 就是那一块的像素尺寸。
+   *
+   * 为什么要它：D1 的读数说**过桥成本 ∝ 载荷字节数**（约 0.55 ms/KB）⇒ 可见区域（实测约占整页
+   * 3.8%）只出那一块 ⇒ 载荷按面积缩小 ⇒ "送过去"那段同比例缩小。
+   *
+   * ⚠️ 契约：引擎做不到时必须 **reject**（不许静默给整页）⇒ 调用方（D2）据此**退回整页那条路**
+   * （再调一次、不带 `rect`），⛔ 而不是把整页图当成一块贴上去（那会静默错位）。
+   * 实现侧：桌面走 `renderPdfPageRect` 那条命令参数；Web（pdf.js）忽略它 ⇒ 靠上面的 reject 兜底。
+   */
+  renderPdfPage(
+    attachmentId: string,
+    pageIndex: number,
+    scale: number,
+    rect?: PdfPageRect,
+  ): Promise<PdfRenderedPage>;
   /** Whether a native engine is available on this host. */
   nativeAvailable(): boolean;
 }

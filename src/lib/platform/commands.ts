@@ -1705,7 +1705,11 @@ export interface CommandMap {
   // `to` 由抽取器决定（OOXML 的目标 MIME），失败一律 reject ⇒ 抽取器映射成 provider_error。
   convert_legacy_office: { args: { data: number[]; to: string }; result: number[] };
   list_attachment_hashes: { args: undefined; result: string[] };
-  render_pdf_page: { args: { args: { attachment_id: string; page_index: number; scale: number } }; result: unknown };
+  // ⭐ D1b（2026-10-15）：`rect` **可选** —— 给了就只渲染那一块（页面 pt、左上角原点，
+  //    `[x, y, w, h]`），返回的 `width/height` 就是那一块的像素尺寸。
+  //    ⚠️ 缺省 ⇒ 整页（与 D1b 之前逐字节同一条路）；MuPDF 引擎会给一句"退回整页"的错
+  //    （见 Rust 的 `MUPDF_NO_RECT`）⇒ D2 的契约是"命令拒绝就退回整页"，⛔ 不是拿整页当一块贴。
+  render_pdf_page: { args: { args: { attachment_id: string; page_index: number; scale: number; rect?: [number, number, number, number] } }; result: unknown };
 
   // ---- 本地英汉词典（ECDICT）· 应用内划词查词第一期（2026-10-09） ----
   // ⚠️ 只**只读**两条。查不到时返回的是"如实未收录"的三种状态之一

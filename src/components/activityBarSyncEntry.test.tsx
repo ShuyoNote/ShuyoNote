@@ -142,6 +142,16 @@ describe("2026-10-14：左栏按钮去掉汉字（只留图标）", () => {
   it("① ⭐（源码级）那颗「同步」里**不再有** `<span>同步</span>`（今天【红】✓）", () => {
     const bar = read("ActivityBar.tsx");
     expect(bar, "⛔ 那一格汉字 span 必须去掉 ✗（⛔ 也别改成 title 之外的东西 ✗）").not.toContain("<span>同步</span>");
+    // ⛔⭐ **2026-10-14 修（owner 又说了一次：「去掉侧边工具栏按钮里面的汉字」）** ✗：
+    //   ⭐ 上面那条查的是 `ActivityBar.tsx` ⇒ 而**真正渲染在屏幕上的**那颗「同步」
+    //   长在 **`SyncPanel.tsx` 的 `.btn-sync` 触发器**上 ✗ ⇒ 屏幕上的两个字**一直在** ✓，
+    //   而这条判据**一直绿** ✓ —— ⭐ 正是"**判据在它能看见的范围之外**"那一族 ✓（本仓栽过多次 ✓）。
+    //   ⇒ ⭐ 按 R192：⛔ 上面那条**不删** ✓（它仍成立 ✓），**再加一条**指向真正的载体 ✓。
+    const panel = read("SyncPanel.tsx");
+    expect(
+      panel,
+      "⛔ `SyncPanel.tsx` 里那一格汉字 span 也必须去掉 ✗（⭐ 它就渲染在屏幕上 ✓ —— 查 ActivityBar 查不到它 ✓）",
+    ).not.toContain("<span>同步</span>");
   });
 
   it("② ⭐（源码级）那颗「邮箱」里**不再有** `<span>邮箱</span>`（今天【红】✓）", () => {

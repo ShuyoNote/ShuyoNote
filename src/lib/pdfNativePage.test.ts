@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { gzipSync } from "fflate";
 import {
   MAX_PAGE_PIXELS,
   base64ToBytes,
@@ -131,5 +132,27 @@ describe("parseNativePageResponse — 认不出来就说清楚看到了什么", 
   it("base64ToBytes 忽略换行/空白", () => {
     const b64 = bytesToBase64(rgba(1, 1));
     expect(base64ToBytes(`${b64.slice(0, 4)}\n${b64.slice(4)}`).length).toBe(4);
+  });
+});
+
+describe("2026-10-15：载荷先 gzip 再 base64（修「放大很卡」那座桥）", () => {
+  const b64 = (u8: Uint8Array) => Buffer.from(u8).toString("base64");
+
+  it("⭐ gzip 载荷解出来与压缩前**逐字节相同**（无损 ✓）", () => {
+    const w = 4; const h = 3; const src = rgba(w, h);
+    const out = parseNativePageResponse({ width: w, height: h, rgba_gzip_base64: b64(gzipSync(src)) });
+    expect(out.width).toBe(w);
+    expect(out.height).toBe(h);
+    expect(Array.from(out.bytes)).toEqual(Array.from(src));
+  });
+
+  it("⭐ gzip 载荷**仍然校验字节数**（尺寸对不上必须报错 ✓，⛔ 不许静默放行 ✗）", () => {
+    expect(() => parseNativePageResponse({ width: 8, height: 3, rgba_gzip_base64: b64(gzipSync(rgba(4, 3))) })).toThrow();
+  });
+
+  it("⭐ 旧的裸 base64 形状仍然认 ✓（兼容没删 ✓）", () => {
+    const src = rgba(2, 2);
+    const out = parseNativePageResponse({ width: 2, height: 2, rgba_base64: b64(src) });
+    expect(Array.from(out.bytes)).toEqual(Array.from(src));
   });
 });

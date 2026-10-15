@@ -691,6 +691,18 @@ pub struct RenderPdfPageArgs {
     pub attachment_id: String,
     pub page_index: i64,
     pub scale: f32,
+    /// ⭐ **D1b（2026-10-15）**：可选 —— **只渲染页面上的这一块**（D2 的"可见区域"）。
+    ///
+    /// `[x, y, w, h]`，单位**页面 pt、左上角为原点**（前端就是这么想坐标的 ✓；PDF 自己原点在左下，
+    /// 翻转在 `pdfium_native::render_page_rect` 里由 PDFium 的 display transform 完成 ✓）。
+    ///
+    /// * **缺省 / `null` ⇒ 整页**（与 D1b 之前**逐字节同一条路** ✓ —— 旧前端一个字都不用改 ✓）。
+    /// * 返回的 `width/height` **如实**是这一块的像素尺寸（`round(w×scale) × round(h×scale)` ✓）
+    ///   ⇒ 前端可以据此自证"我要的块真的拿到了"，而不是相信后端照做了（"成功 ≠ 生效"那一族 ✓）。
+    /// * 形状只认**恰好四个数**：三个/五个一律报错，⛔ 不许"就近取四个"✗（判据见
+    ///   `render_rect_args_tests` ✓）。
+    #[serde(default)]
+    pub rect: Option<[f64; 4]>,
 }
 
 /// 原生 PDF 渲染的返回载荷：显式宽高 + base64 的 RGBA8。
@@ -708,7 +720,9 @@ pub struct RenderPdfPageArgs {
 pub struct PdfPagePayload {
     pub width: u32,
     pub height: u32,
-    pub rgba_base64: String,
+    /// ⭐ **2026-10-15**：这里装的是**先 gzip 再 base64** 的紧凑 RGBA ✓（不是裸 base64 ✗）
+    /// —— 裸 base64 让一页 24 MB 过桥，前端每按一下放大要等 1.5 s ✗（见构造处的读数注释）。
+    pub rgba_gzip_base64: String,
 }
 
 /// Render an attachment's PDF page to bytes using MuPDF (desktop-native,
@@ -726,6 +740,12 @@ pub struct PdfPagePayload {
 /// shows "(未响应)" and the page never paints. It is now `async`, and the
 /// rasterization runs on the blocking thread pool (`spawn_blocking`), so the
 /// UI thread stays responsive while the page renders in the background.
+///
+/// ⭐ **D1b（2026-10-15）**：`args.rect` 可选 —— 给了就**只渲染那一块**（页面 pt、左上角原点），
+/// 返回的 `width/height` 就是那一块的像素尺寸。为什么值：D1 的读数说**过桥成本 ∝ 载荷字节数**
+/// （约 0.55 ms/KB）⇒ 载荷按面积缩小 ⇒ 「送过去」那一段同比例缩小（可见区域约占整页 4%）。
+/// ⚠️ 没编 MuPDF 的构建里，MuPDF + rect 会先被 `ensure_mupdf_available()` 拦下（那句话更贴切）；
+/// 编了 MuPDF 时由 [`MUPDF_NO_RECT`] 拒绝（原因见 [`engine_supports_rect`] 的注释）。
 #[tauri::command]
 pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: RenderPdfPageArgs) -> Result<PdfPagePayload, String> {
     let hash: String = {
@@ -745,6 +765,12 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     //   **在这里就说清怎么办** —— 绝不静默换成 PDFium（"成功 ≠ 生效"那一族），也不 panic。
     if engine == PdfEngine::Mupdf {
         ensure_mupdf_available()?;
+    }
+    // ⭐ **D1b（2026-10-15）**：`rect` 只有 PDFium 那条路**真有**裁剪入口 ⇒ 别的引擎**显式拒绝**。
+    // ⛔ 不许"忽略 rect、照旧返回整页"✗ —— 那会让前端把一张整页图当成一小块贴到左上角去，
+    //   图会静默错位（那是比"慢"更坏的一类错 ✓）。前端拿这条错误退回整页渲染（D2 的契约 ✓）。
+    if args.rect.is_some() && !engine_supports_rect(engine) {
+        return Err(MUPDF_NO_RECT.to_string());
     }
     // ⚠️ **两套缓存互斥淘汰**（P2 验收项）：同一个 hash 若被两个引擎各持一份，
     // 内存会无声翻倍而两侧 LRU 互不知情 ⇒ 切引擎时先清掉另一侧的同 key 条目。
@@ -777,6 +803,8 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     };
     let page_index = args.page_index;
     let scale = args.scale;
+    // ⭐ D1b：`Option<[f64; 4]>` 是 `Copy` ⇒ 直接搬进阻塞线程（`args` 之后不再用）。
+    let rect = args.rect;
     // 在阻塞线程池上执行栅格化，避免阻塞主（UI）线程。
     // 两条路径都**归一成紧凑 RGBA**（前端按 宽×高×4 校验字节数）：
     //  · MuPDF 出的是带行填充的缓冲 ⇒ 还要 `compact_rgba`；
@@ -804,7 +832,20 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
                     // 而 `pdfium_native` 收 **usize** —— 这里显式转换，别靠隐式推断。
                     let idx = usize::try_from(page_index)
                         .map_err(|_| format!("页码 {page_index} 超出范围"))?;
-                    crate::pdfium_native::render_page_owned(&hash, bytes, idx, scale)
+                    match rect {
+                        // ⭐ **D1b**：只出这一块 ⇒ 载荷按面积缩小 ⇒「送过去」那段同比例缩小
+                        //   （D1 的读数：过桥成本 ∝ 载荷字节数，约 0.55 ms/KB ✓）。
+                        //   ⚠️ `render_page_rect` 自己带判据（`pdfium_native::d1_rect_tests` ✓）。
+                        Some([x, y, w, h]) => crate::pdfium_native::render_page_rect(
+                            &hash,
+                            bytes,
+                            idx,
+                            scale,
+                            (x, y, w, h),
+                        ),
+                        // 没请求 rect ⇒ 与 D1b 之前**逐字节同一条路**（旧行为不退化 ✓）。
+                        None => crate::pdfium_native::render_page_owned(&hash, bytes, idx, scale),
+                    }
                 }
             }
         },
@@ -813,11 +854,46 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     .map_err(|e| format!("render task failed: {e}"))??;
     let width = u32::try_from(w).map_err(|_| format!("PDF: 页面宽度 {w} 超出范围"))?;
     let height = u32::try_from(h).map_err(|_| format!("PDF: 页面高度 {h} 超出范围"))?;
+    // ⛔⭐ **2026-10-15（owner：「pdf 放大很卡」）** ✗ —— ⭐ 实测：过桥的是**原始 RGBA 的 base64**：
+    //   一页 1576×2876 ⇒ RGBA 18 MB ⇒ base64 **24 MB** ✗ ⇒ 前端每按一下放大要等 **1584 ms** ✓；
+    //   25% 那档 788×1438 ⇒ 6 MB ⇒ **779 ms** ✓ ⇒ ⛔ 慢的不是像素算法，是**这座桥** ✗
+    //   （诊断读数与推理见 `_tmp/scratch/probe-zoom-fixed-cost.mjs` 那一轮 ✓）。
+    // ⇒ ⭐ 现在**先 gzip 再 base64**：白底为主的页面通常压到 1/10 上下 ✓。
+    //   ⚠️ 是**无损**压缩 ✓ —— 前端解出来的 RGBA 与压缩前**逐字节相同** ✓（放大看字不会糊 ✓）。
+    //   ⚠️ flate2 **早就是直接依赖**（Cargo.toml:80 ✓，随 zip 进来）⇒ ⛔ 没有新增任何下载 ✗。
+    //   ⚠️ 前端对应改动在 `src/lib/pdfNativePage.ts`（fflate `gunzipSync` ✓ 也已是既有依赖 ✓）。
+    //   ⚠️ 版本不一致时前端会明确报「无法识别的原生渲染响应」并要求重启 ✓ —— ⛔ 不静默出半成品 ✗。
+    //
+    // ⭐⭐ **2026-10-15 对照实验（owner 同意「先量」）** —— ⛔ 它改写了诊断结论 ✗：
+    //   同一台机器上量 `render_page_owned`（纯光栅化 ✓，不含本文件的 gzip/base64 ✓）：
+    //     一份 A4 真文档、2.00 Mpx ⇒ **106 ms** ✓（只出一块 0.10 Mpx ⇒ 44 ms ✓ ⇒ 裁剪只值 2.41× ✓）；
+    //   而 App 里同量级的一步实测 **795 ms** ✗ ⇒ ⭐ **~690 ms 不在光栅化里** ✗，
+    //   而在这条链上：**gzip ＋ base64 ＋ IPC 传输 ＋ 前端解码** ✓
+    //   ⇒ ⭐ 下一步该打的是**这条链**（例如换更小的载体／更省的通道 ✓），
+    //     ⛔ 而不是继续削像素 ✗，也不是急着写「只渲染可视区域」✗（它只值 2.4× ✓）。
+    //
+    // ⭐⭐ **2026-10-15 分段埋点（临时埋点已撤 ✓，读数留档）** —— ⭐ 这一组把方向定死了：
+    //     在 `renderPdfPage` 里分三段量（同一篇真文档、连点两次放大）：
+    //       ① 命令往返（光栅化 ＋ 本文件的 gzip/base64 ＋ IPC）＝ **821 ms**（520 ／ 1122）；
+    //       ② 回来的 base64 载荷 ＝ **1359 KB**（894 KB ／ 1887 KB）；
+    //       ③ 前端解码（gunzip ＋ 字节校验）＝ **102 ms**（65 ／ 139）。
+    //     ⇒ 光栅化只占 ≈106 ms（对照实验 ✓）⇒ ⭐ **约 715 ms 花在把载荷送过去** ✓
+    //     ⇒ 而且**与字节数成正比**：894 KB ⇒ 520 ms ｜ 1887 KB ⇒ 1122 ms
+    //       ⇒ 约 **0.55 ms/KB（≈1.8 MB/s）** ✗ —— 本地 IPC 绝不该这么慢 ✓。
+    //     ⇒ ⭐ 结论：**过桥成本 ∝ 载荷字节数** ✓ ⇒ 任何让载荷变小的做法都直接换算成时间：
+    //       · 只渲染可视区域（D）⇒ 载荷约 1/20 ⇒ 这一段 715 ⇒ 约 36 ms ✓
+    //         （⚠️ 先前按「光栅化」算它只值 2.4× ✗ …… 那是**漏算了传输** ✓）；
+    //       · 或换 JPEG（约 2–4× 小 ✓）／干脆**不走 IPC**（Rust 落盘 ＋ 资源协议 ✓ 最省 ✓）。
+    let gz = {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut e, &compact).map_err(|x| format!("PDF: gzip 失败：{x}"))?;
+        e.finish().map_err(|x| format!("PDF: gzip 收尾失败：{x}"))?
+    };
     use base64::Engine as _;
     Ok(PdfPagePayload {
         width,
         height,
-        rgba_base64: base64::engine::general_purpose::STANDARD.encode(&compact),
+        rgba_gzip_base64: base64::engine::general_purpose::STANDARD.encode(&gz),
     })
 }
 
@@ -836,6 +912,24 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
 pub(crate) const MUPDF_NOT_COMPILED: &str = "这个构建没有编入 MuPDF（构建期特性 `mupdf-rollback`，2026-09-21 起默认不编）。\
 现在请把 SHUYONOTE_PDF_ENGINE 设为 pdfium（或删掉这个环境变量）用默认引擎；\
 若确实要用 MuPDF 回滚，请用带 `--features mupdf-rollback` 重新构建的安装包。";
+
+/// ⭐ **D1b**：哪个引擎**真有**"只渲染一个矩形"这条入口？
+///
+/// * **PDFium 有** ✓ —— `pdfium_native::render_page_rect`（它自己带逐像素判据 ✓）。
+/// * **MuPDF 没有** ✗ —— 那条路只能按整页出图。于是 `rect` 落到它头上时**显式拒绝**，
+///   由前端退回整页渲染；⛔ 绝不"忽略 rect 照旧出整页"✗ —— 那会让前端把整页图当一小块贴到
+///   左上角，**静默错位**（比慢更坏的一类错）。
+///
+/// 单独抽成纯函数是为了**能在 Windows 上判据化**（本机编不了 mupdf-rollback，
+/// 所以"拒绝"这条逻辑必须落在不依赖那个特性的代码里 ✓ —— 见 `render_rect_args_tests`）。
+pub(crate) fn engine_supports_rect(engine: PdfEngine) -> bool {
+    matches!(engine, PdfEngine::Pdfium)
+}
+
+/// 拿一个引擎不支持 `rect` 的请求来时的那句话（**可照着做**：说清换哪个引擎、或退回哪条路）。
+pub(crate) const MUPDF_NO_RECT: &str = "这个引擎（MuPDF，回滚用）没有「只渲染可视矩形」的入口。\
+请把 SHUYONOTE_PDF_ENGINE 设回 pdfium；或让前端退回**整页**渲染 —— \
+⛔ 不要拿一张整页图当成一小块贴上去（会静默错位）。";
 
 /// 命令入口的前置检查：编了就是 `Ok(())`，没编就是上面那句话。
 #[cfg(feature = "mupdf-rollback")]
@@ -945,6 +1039,84 @@ mod pdf_engine_tests {
             assert!(err.contains("mupdf-rollback"), "错里要点名那个特性：{err}");
             assert!(err.contains("pdfium"), "错里要给出当下可用的默认项：{err}");
         }
+    }
+}
+
+/// ⭐ **D1b 的判据**（2026-10-15）：渲染命令 `rect` 入参的契约 —— 可缺省、恰好四个数、
+/// 以及"哪个引擎真的支持只出这一块"。
+///
+/// 为什么这几条值判据（**都不需要 PDFium 动态库** ⇒ 本机 Windows 也能跑 ✓）：
+///   · `rect` 一旦变成**必填**，D2 之前的前端每次渲染都会在反序列化时就失败 ⇒ **整页都出不来**
+///     （不是"退回旧行为"，是直接坏掉）⇒ 所以"缺省可得"这条要钉住；
+///   · 三个数 / 五个数的数组必须**当场报错**，⛔ 不许"就近取四个"糊过去（那会静默裁错位置）；
+///   · MuPDF 那条**没有**裁剪入口 ⇒ 必须显式拒绝（理由见 [`engine_supports_rect`] 的注释）。
+#[cfg(test)]
+mod render_rect_args_tests {
+    use super::{engine_supports_rect, PdfEngine, RenderPdfPageArgs, MUPDF_NO_RECT};
+
+    fn parse(json: &str) -> Result<RenderPdfPageArgs, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    /// ★ 承重：**缺省 ⇒ 整页**（旧前端一个字都不用改）。
+    #[test]
+    fn rect_is_optional_so_older_callers_keep_working() {
+        let a = parse(r#"{"attachment_id":"a","page_index":2,"scale":1.5}"#)
+            .expect("不带 rect 必须能解（旧前端照旧调用）");
+        assert_eq!(a.rect, None, "缺省 ⇒ 整页（D1b 之前的行为）");
+        assert_eq!(a.page_index, 2);
+        assert_eq!(a.scale, 1.5);
+
+        let b = parse(r#"{"attachment_id":"a","page_index":0,"scale":1.0,"rect":null}"#)
+            .expect("显式 null 也要能解");
+        assert_eq!(b.rect, None, "null 与缺省同义 ⇒ 整页");
+    }
+
+    #[test]
+    fn rect_parses_as_exactly_four_page_points() {
+        let a = parse(
+            r#"{"attachment_id":"a","page_index":0,"scale":2.0,"rect":[10.5,20.0,300.0,400.0]}"#,
+        )
+        .expect("四元数组必须能解");
+        assert_eq!(a.rect, Some([10.5, 20.0, 300.0, 400.0]));
+    }
+
+    #[test]
+    fn a_rect_of_the_wrong_shape_is_refused_not_guessed() {
+        for bad in [r#"[1,2,3]"#, r#"[1,2,3,4,5]"#, r#"[1,2,3,"x"]"#, r#"{"x":1}"#, r#""1,2,3,4""#] {
+            let json = format!(r#"{{"attachment_id":"a","page_index":0,"scale":1.0,"rect":{bad}}}"#);
+            assert!(
+                parse(&json).is_err(),
+                "形状不对必须报错（⛔ 不许就近取四个）：{bad}"
+            );
+        }
+    }
+
+    /// ★ 承重的那条：**只有** PDFium 可以声称支持 `rect`。
+    ///
+    /// 变异实测口径：把 `matches!(engine, PdfEngine::Pdfium)` 改成 `true`（即"谁都支持"）
+    /// ⇒ 本条当场红 ✓；而"拒绝"那条路径由 `MUPDF_NO_RECT` 的断言守着 ✓。
+    #[test]
+    fn only_pdfium_claims_to_support_rect() {
+        assert!(
+            engine_supports_rect(PdfEngine::Pdfium),
+            "PDFium 有 render_page_rect（判据在 pdfium_native::d1_rect_tests）"
+        );
+        assert!(
+            !engine_supports_rect(PdfEngine::Mupdf),
+            "MuPDF 那条没有裁剪入口 ⇒ 不许声称支持（否则前端会拿整页图当一块贴）"
+        );
+        assert_eq!(
+            PdfEngine::DEFAULT,
+            PdfEngine::Pdfium,
+            "默认引擎必须落在支持 rect 的那一侧（否则 D2 一上线就是错的）"
+        );
+    }
+
+    #[test]
+    fn refusing_rect_says_what_to_do() {
+        assert!(MUPDF_NO_RECT.contains("pdfium"), "要说清现在该用哪个引擎：{MUPDF_NO_RECT}");
+        assert!(MUPDF_NO_RECT.contains("整页"), "要给出前端可用的退路（退回整页）：{MUPDF_NO_RECT}");
     }
 }
 

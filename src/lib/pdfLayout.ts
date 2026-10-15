@@ -7,8 +7,17 @@ export const CHROME = 12;
 /** 页间间距 px（相邻两页之间的视觉空隙）。 */
 export const GAP = 16;
 
-/** 最小/最大缩放倍率。最小 50%（够看全局）、最大 4×（400%，页面已明显放大，避免光栅化过大/无穷宽）。 */
-export const MIN_SCALE = 0.5;
+/**
+ * 最大 4×（400%，页面已明显放大，避免光栅化过大/无穷宽）；最小 **0.25**（手动百分比的下界）。
+ *
+ * ⛔⭐ **2026-10-15（owner：「看看这个 pdf 文件为何不能缩小？」）** ✗：最小原来是 **0.5** ✓，
+ *   而它挡住的不只是"手动再缩一档" ✗ —— ⭐ **连"适合页面／适合内容"也一起被夹了** ✗：
+ *   一张**超宽横向流程图**（如 2000×800）在 900×600 里本该是 **0.45** ✓，被夹成 0.5 ⇒ 屏幕上
+ *   **看不全** ✓（实测读数：`fit-page 原始 0.45 ⇒ 夹成 0.5` ✓）。
+ *   ⇒ 现在两件事分开：⭐ **适配模式（fit-*）不夹下界** ✓（语义就是"放得下" ✓ —— 见 `resolveZoomScale` ✓）；
+ *   ⭐ 手动百分比的下界降到 **0.25** ✓（仍然有个底 ✓，⛔ 不是无限制 ✗）。
+ */
+export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 4;
 
 /** 缩放模式：具名适配模式，或一个固定百分比（pct）。 */
@@ -73,14 +82,251 @@ export function resolveZoomScale(
       s = zoom.pct / 100;
       break;
   }
+  // ⭐ 适配模式（fit-*）：⭐ 它们的语义是"**放得下**" ⇒ ⛔ 只夹上界、**不夹下界** ✗
+  //   （一张超宽图本该 45% 却被夹成 50% ⇒ 用户看到的正是"缩不下去、看不全" ✓ —— 2026-10-15 实测 ✓）。
+  const isFit = zoom.mode === "fit-width" || zoom.mode === "fit-page" || zoom.mode === "fit-content";
   // 退化输入（refW/refH 为 0 或 NaN、pct 为 NaN）会让 s 变成 NaN/Infinity。
   // 倍率是"往画布上传"的第一个数：绝不允许非有限值出门。返回 1（实际大小）是安全的默认。
   if (!Number.isFinite(s) || s <= 0) return 1;
-  return Math.max(MIN_SCALE, Math.min(MAX_SCALE, +(s).toFixed(3)));
+  const capped = Math.min(MAX_SCALE, +(s).toFixed(3));
+  // ⭐ 手动百分比（`pct`）与「实际大小」照旧夹下界 ✓ —— 那是用户直接指定的倍率 ✓。
+  return isFit ? capped : Math.max(MIN_SCALE, capped);
 }
 
-/** 缩放下拉的百分比阶梯（从大到小）。只保留实用档位：50%–400%，全都在 MIN/MAX 范围内、真实生效。 */
-export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50];
+/**
+ * ⭐⭐ **2026-10-15（owner 选「先 F 再 D」）** ✗：**显示位图的像素预算** ✓。
+ *
+ * 来由（真机读数 ✓）：本机那篇 PDF 的**单页就有 3152×5752 pt**（≈111×203 cm ✓，18.1 Mpx 基准）
+ * ⇒ 就算按倍数封到 2×，位图仍是 **72 Mpx** ✗ ⇒ 每按一下放大要等 ~1.5 s ✓（实测位图换过来 1542 ms ✓）。
+ * ⇒ ⭐ 改成**按像素**封：位图总像素不超过这个预算 ✓。
+ *
+ * ⚠️ **2026-10-15 调过一次：5 Mpx ⇒ 12 Mpx** ✓ —— 因为真机复测证明**真正的瓶颈不是像素数** ✗
+ *   （是 pdfium 每次渲染都要过整页矢量 ✓：25% 那档只有 1.1 Mpx 也要 528 ms ✗）
+ *   ⇒ ⭐ 削像素换不来速度 ✗、却会换来糊 ✗ ⇒ 预算退回去只当"荒谬尺寸"的兜底 ✓。
+ * ⚠️ 这条**不会**削普通页 ✗：A4（612×792 pt）算出 ≈3.2× ⇒ 永远够 ✓；
+ * 只有超大版面才会被削 ✓（那就是 F 的代价：放大后略糊 ✓）。⛔ 清楚留给后面的 D ✗。
+ * ⛔ 只管**显示** ✗：OCR 与导出照旧真实倍率 ✓。
+ */
+export const DISPLAY_PIXEL_BUDGET = 12_000_000;
+
+/**
+ * 显示位图该用多大倍率 ✓（纯函数 ⇒ 好判 ✓）。
+ *
+ * 规则：`min(scale, cap, max(MIN_SCALE, sqrt(预算 / (pageW*pageH))))` ✓
+ *  · ⛔ 不会超过 `scale` ✗（放大时不需要比屏幕更清楚 ✓）；
+ *  · ⛔ 不会低于 `MIN_SCALE` ✗（那会小到连缩小档都不够 ✓）；
+ *  · 尺寸拿不到（0/NaN）⇒ 退回 `min(scale, cap)` ✓（不猜 ✓）。
+ *
+ * @param scale 布局倍率（用户看到的缩放 ✓）
+ * @param pageW/pageH 该页的 **pt** 尺寸（`getPageMeta` ✓）
+ * @param cap 绝对上界（当前 2× ✓）
+ */
+export function displayRasterScale(scale: number, pageW: number, pageH: number, cap: number): number {
+  const need = Math.min(scale, cap);
+  const px = pageW * pageH;
+  if (!Number.isFinite(px) || px <= 0) return need;
+  const budget = Math.sqrt(DISPLAY_PIXEL_BUDGET / px);
+  return Math.min(need, Math.max(MIN_SCALE, budget));
+}
+
+/** 缩放下拉的百分比阶梯（从大到小）。只保留实用档位：**25%–400%**，全都在 MIN/MAX 范围内、真实生效。
+ *  ⭐ **2026-10-15**：补 **33／25** 两档 ✓ —— 原来最低只到 50 ✓，遇到**超宽图**就再也缩不下去 ✗
+ *  （连同「适合页面」一起被 `MIN_SCALE` 夹住 ✓ —— 见上面那段注释 ✓）。 */
+export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50, 33, 25];
+
+// ── D2 / D3（2026-10-15，owner：「pdf 放大很卡」的 D 一步）────────────────────────
+//
+// 读数（真机分段埋点 ＋ D1 的对照实验）：`renderPdfPage` 的「命令往返」821 ms 里纯光栅化只占
+// ≈106 ms ⇒ **约 715 ms 花在把载荷送过去**，而且**与字节数成正比**（≈0.55 ms/KB）。
+// ⇒ 只把**看得见的那一条**送过去，载荷就按"可见带占整页的比例"缩小 ✓（这是 D 的全部要点）。
+//
+// 分工（⚠️ **2026-10-15 活体实测后订正过一次**，别照旧叙述写 ✗）：
+//   · **D3**：底图**不再按显示倍率一路放大** —— 两条渲染路统一走**既有**的"封顶 ＋ 像素预算"
+//     政策（[`DISPLAY_RASTER_CAP`] ＋ [`DISPLAY_PIXEL_BUDGET`]）。原先只有**预取**那条走了它，
+//     主路直接吃 `scale` ⇒ 巨幅页在 200% 时要 145 Mpx、被 Rust 的 40 Mpx 闸门**拒绝**
+//     （用户看到「第 N 页没能显示」✗）；而且每按一下放大都要重出整页 ✗。
+//     ⚠️ 试过"一律封 1×"，**推翻**：那会在"页面比视口大、但可见块占比大"时白糊一档 ✗
+//     （实测：2358×1980 pt 的页在 400% 下可见块占 61%×55%）⇒ 收益与"封顶＋预算"一样，却更糊。
+//   · **D2**：只把**看得见的那块**按真倍率出一张瓦片（[`visibleRectPt`] ＋ [`decideTile`]）——
+//     位图小 ⇒ 像素预算放得住 ⇒ 可以**比底图更清楚**（上限 `MAX_SCALE`），过桥载荷也小得多 ✓。
+//
+// ⚠️ 三条口径必须一致，⛔ 别混：
+//   ① [`visibleBandPt`] 返回的是**页面 pt、左上角为原点**（＝ Rust `render_page_rect` 吃的口径 ✓）；
+//   ② 它只吃**已经量好的 CSS 数字**（DOM 里量出来的 ✓）⇒ 能单测，且不掺任何 DOM 假设 ✓；
+//   ③ 贴回页面时用**百分比**（`topPct = topPt / pageH × 100`，见 PdfReader 的 `tileStyle`）——
+//      这样"请求哪一块"和"贴在哪一块"用的是**同一个 pt 区间**，不会各算一套而贴歪 ✓。
+
+/**
+ * ⭐ **D3**：**底图**（整页）的显示倍率上限 —— 放大到 >100% 时底图**不再跟着放大** ✓。
+ *
+ * 它取代了原来的 `DISPLAY_RASTER_CAP = 2`（整页位图封顶 2×）：
+ *   · 旧口径：>200% 看到的是"放大的位图"（略糊 ✓），而且**每次缩放都要重出一整页** ✗；
+ *   · 新口径：整页只到 1×（一次，之后缩放**不必重出** ✓），高清由可见带负责 ✓。
+ * ⚠️ ≤100% 时两者**完全一致**（`min(scale, 1) === scale`）⇒ 缩小档位的行为一个字节都没变 ✓。
+ */
+/**
+ * **底图（整页）的显示位图封顶**（`PdfReader` 里原来的 `DISPLAY_RASTER_CAP = 2`）。
+ *
+ * ⚠️ 它是 **D3 的那条政策**：两条渲染路（预取 ＋ 主路）**都必须**用它 ＋ [`DISPLAY_PIXEL_BUDGET`]。
+ * 原先只有预取那条走了 ⇒ 主路吃 `scale` ⇒ 巨幅页 200% 要 145 Mpx（超 Rust 的 40 Mpx 闸门 ⇒ 直接失败 ✗）。
+ */
+export const DISPLAY_RASTER_CAP = 2;
+
+/**
+ * D2：**可见带**该用多大倍率（纯函数）。
+ *
+ * 与底图的关键差别：位图只覆盖一条带子 ⇒ 预算按**这条带自己的 pt 面积**算 ✓
+ * （`displayRasterScale` 里的 `sqrt(预算 / px)` 就是这么用的 ✓）⇒ 小带子能拿到 `MAX_SCALE` ✓。
+ * ⚠️ 上限仍是 `MAX_SCALE`（4×）—— 与 `resolveZoomScale` 的上界同一个数，不发明第三个上限 ✓。
+ */
+export function tileRasterScale(scale: number, bandW: number, bandH: number): number {
+  return displayRasterScale(scale, bandW, bandH, MAX_SCALE);
+}
+
+/**
+ * ⭐ **D2 的承重几何**：算出"这一页**真正看得见**的那块矩形"（页面 pt、左上角为原点）。
+ *
+ * 为什么是**两个轴**都要裁（活体实测 2026-10-15 才发现 ✗）：只裁纵向（一条"横带"）在**放大**时
+ * 白送掉大头 —— 200% 下一张 1427 pt 宽的横向流程图有 **一半宽度在视口外**，那条"带子"仍是
+ * **23% 的页面**；而按矩形裁是 **6%**（400% 时）⇒ 载荷与过桥成本直接差 4 倍 ✓。
+ * ⛔ 而 D 的全部要点就是"载荷按面积缩" ✓（读数：过桥 ≈ 0.55 ms/KB ✓）。
+ *
+ * 为什么只吃**量好的数字**、单独抽出来单测：**贴歪比糊更糟** ✗ —— 这块矩形的 pt 区间同时决定
+ * "请求哪一块"和"贴回哪里"（见文件头那段 ③ ✓），错一格就是画面上一块错位的 patch。
+ * 所以它不碰 DOM，并且**去程/回程用同一个 `ptPerCss`** ✓。
+ *
+ * @param imgLeft/imgTop 页图像左上角相对滚动视口左上角的 CSS 坐标（可负：已经滚出视口 ✓）
+ * @param imgWidth/imgHeight 页图像在屏上的 CSS 尺寸（> 0）
+ * @param pageW/pageH 该页的 **pt** 尺寸（> 0）
+ * @param viewWidth/viewHeight 视口的 CSS 尺寸（> 0）
+ * @param marginCss 四周各留多少 CSS 余量（滚一点不必重出 ✓）；⛔ 会被夹在页面内
+ * @returns `null` ⇒ 这块与视口**不相交**，或参数退化（⇒ **不请求**，⛔ 而不是请求一个退化矩形）
+ */
+export function visibleRectPt({
+  imgLeft,
+  imgTop,
+  imgWidth,
+  imgHeight,
+  pageW,
+  pageH,
+  viewWidth,
+  viewHeight,
+  marginCss = 0,
+}: {
+  imgLeft: number;
+  imgTop: number;
+  imgWidth: number;
+  imgHeight: number;
+  pageW: number;
+  pageH: number;
+  viewWidth: number;
+  viewHeight: number;
+  marginCss?: number;
+}): { xPt: number; yPt: number; wPt: number; hPt: number } | null {
+  if (
+    ![imgLeft, imgTop, imgWidth, imgHeight, pageW, pageH, viewWidth, viewHeight].every((v) => Number.isFinite(v)) ||
+    imgWidth <= 0 ||
+    imgHeight <= 0 ||
+    pageW <= 0 ||
+    pageH <= 0 ||
+    viewWidth <= 0 ||
+    viewHeight <= 0
+  ) {
+    return null;
+  }
+  // 视口在"图片坐标系"里的两条区间：视口左上 = (0, 0)，右下 = (viewWidth, viewHeight)。
+  const overlapLeft = Math.max(imgLeft, 0);
+  const overlapRight = Math.min(imgLeft + imgWidth, viewWidth);
+  const overlapTop = Math.max(imgTop, 0);
+  const overlapBottom = Math.min(imgTop + imgHeight, viewHeight);
+  if (!(overlapRight > overlapLeft) || !(overlapBottom > overlapTop)) return null;
+
+  // 两个轴**共用一个换算比**（图片是等比铺开的 ✓：`imgWidth/pageW === imgHeight/pageH`）。
+  const ptPerCss = pageW / imgWidth;
+  const margin = Number.isFinite(marginCss) && marginCss > 0 ? marginCss : 0;
+  const xPt = Math.max(0, (overlapLeft - imgLeft - margin) * ptPerCss);
+  const yPt = Math.max(0, (overlapTop - imgTop - margin) * ptPerCss);
+  const xEnd = Math.min(pageW, (overlapRight - imgLeft + margin) * ptPerCss);
+  const yEnd = Math.min(pageH, (overlapBottom - imgTop + margin) * ptPerCss);
+  if (!(xEnd > xPt) || !(yEnd > yPt)) return null;
+  return { xPt, yPt, wPt: xEnd - xPt, hPt: yEnd - yPt };
+}
+
+/** 把 [`visibleRectPt`] 的 pt 矩形换算回"相对页图像左上角的 CSS 矩形"（贴回去用它 ✓ 同一套换算）。 */
+export function rectCssFromPt(
+  rect: { xPt: number; yPt: number; wPt: number; hPt: number },
+  pageW: number,
+  imgWidth: number,
+): { leftCss: number; topCss: number; widthCss: number; heightCss: number } {
+  const ptPerCss = pageW / imgWidth;
+  return {
+    leftCss: rect.xPt / ptPerCss,
+    topCss: rect.yPt / ptPerCss,
+    widthCss: rect.wPt / ptPerCss,
+    heightCss: rect.hPt / ptPerCss,
+  };
+}
+
+/**
+ * ⭐⭐ **D2 的"值不值得出一块瓦片"**（纯函数 ⇒ 有判据 ✓）。
+ *
+ * 为什么需要它（活体实测 2026-10-15 教的两件事 ✗）：
+ *   ① 瓦片**不是**"有就更好"：块大到接近整页时，它的字节数与"重出一整页"同量级，
+ *      而底图本来就在 ⇒ 白多一层 ✗（实测见过块占 42% / 87% 页面）；
+ *   ② 判据要拿**量出来的**数字算（⛔ 不能用 `refW × scale` 那套布局推算 ✗）：混排文档里
+ *      页块宽与页图像的真实显示宽**可以差 4 倍**（实测：块 9432 CSS、图 2358 CSS），
+ *      按布局推算会把"占 61% 的可见块"算成 6% ⇒ 计划与实际各说一套 ✗。
+ *
+ * 两条都要满足才出瓦片：
+ *   · `tileScale ≥ 底图倍率 × 1.25`（不比底图清楚 ⇒ 白多一层）；
+ *   · 瓦片位图 ≤ 底图位图 × 1.2（**允许略贵**：底图被预算封顶时**根本给不了**那个清晰度 ⇒
+ *     这一条是"看得清"与"省"的折中 ✓；但块大到接近整页时会远超这个比例 ⇒ 仍被挡 ✓）。
+ * ⚠️ **底图倍率不因为 D3 而改**：底图仍走"封顶（`displayCap`）＋ 像素预算"那条**既有**政策 ✓
+ *   —— 实测"一律封 1×"会在"页面比视口大、但可见块占比大"时白糊一档 ✗，而"每按一下放大重出整页"
+ *   的病根是**主路没走那个封顶**（现在走了 ⇒ 倍率饱和、缩放时命中缓存 ✓）。收益一样、且不回退 ✓。
+ */
+export function decideTile({
+  scale,
+  pageW,
+  pageH,
+  rectW,
+  rectH,
+  displayCap,
+  minSharper = 1.25,
+  maxCostRatio = 1.2,
+}: {
+  scale: number;
+  pageW: number;
+  pageH: number;
+  rectW: number;
+  rectH: number;
+  displayCap: number;
+  minSharper?: number;
+  maxCostRatio?: number;
+}): { take: boolean; baseScale: number; tileScale: number; why: string } {
+  const baseScale = displayRasterScale(scale, pageW, pageH, displayCap);
+  const tileScale = tileRasterScale(scale, rectW, rectH);
+  if (!(scale > 1 + 1e-6)) {
+    return { take: false, baseScale, tileScale, why: "≤100%：整页就是真倍率" };
+  }
+  if (!(rectW > 0) || !(rectH > 0)) {
+    return { take: false, baseScale, tileScale, why: "可见块退化" };
+  }
+  if (!(tileScale >= baseScale * minSharper)) {
+    return { take: false, baseScale, tileScale, why: `不比底图清楚（${tileScale.toFixed(2)}× vs 底图 ${baseScale.toFixed(2)}×）` };
+  }
+  const rectPx = rectW * rectH * tileScale * tileScale;
+  const pagePx = pageW * pageH * baseScale * baseScale;
+  if (!(rectPx <= pagePx * maxCostRatio)) {
+    return { take: false, baseScale, tileScale, why: `省不下来（块 ${(rectPx / 1e6).toFixed(2)} vs 整页 ${(pagePx / 1e6).toFixed(2)} Mpx）` };
+  }
+  return {
+    take: true,
+    baseScale,
+    tileScale,
+    why: `更清楚（${tileScale.toFixed(2)}× vs 底图 ${baseScale.toFixed(2)}×）且更省（${(rectPx / 1e6).toFixed(2)} vs ${(pagePx / 1e6).toFixed(2)} Mpx）`,
+  };
+}
 
 /** 把缩放模式映射成展示标签（下拉触发器/当前项）。 */
 export function zoomLabel(zoom: ZoomMode): string {

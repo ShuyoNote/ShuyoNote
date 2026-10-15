@@ -19715,6 +19715,19 @@ p:has(> .editor-drawing-container) {
   width: 100%;
   max-width: none;
 }
+/* ⭐ **2026-10-15（活体实测查出"放大不变大"的真因）**：上面那条 `width:100%` **一直没生效** ✗ ——
+   因为 `.pdf-annot` 是**列向 flex ＋ `align-items:center`**（见上面 `annotation canvas` 那段），
+   而 `.pdf-annot-stage` 是它的 flex item ⇒ 宽度由**内容**（＝`<img>` 的固有尺寸＝光栅的像素宽）决定，
+   `width:100%` 解在 shrink-to-fit 的父级上就等于 `auto` ✗。
+   实测（3152×5752 pt 那篇，250%）：页块 **7880 px**、`.pdf-annot-stage` 只有 **2564 px**
+   （＝光栅自然宽）⇒ 页看着**没变大**，只有页块在长（右/下方留白）✗ —— 用户那句"放大不动"就是这个。
+   这里把 stage 铺满页块宽 ⇒ `width:100%` 才真的拉伸 ✓。
+   ⚠️ 只改这一条（⛔ 不动 `.pdf-annot` 的 `align-items` ✗ —— 那一层还管着页内工具栏的居中）。
+   ⚠️ 拉伸的是**底图**：巨幅页的底图受 12 Mpx 预算封顶 ⇒ 放大后略糊 ✓，
+   可见区域由 **D2 的瓦片**补清 ✓（`PdfReader.tsx` 的 D2/D3 注释）。 */
+.pdf-continuous-page .pdf-annot-stage {
+  width: 100%;
+}
 .pdf-continuous-spacer {
   /* 占位：视口外未挂载的页在滚动轴上占位，保持整段可滚。 */
   width: 1px;
@@ -25679,6 +25692,57 @@ body.is-plugin-panel-open .main {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+/* ⭐ 阶段 3（owner 2026-10-14 参考图）：本机有空间没开加密时的**警示条** ✓。
+   ⚠️ 只做"说明"✓，⛔ 不带任何动作（目的地是桌面专属 ⇒ 假按钮 ✗）。 */
+/* ⭐ 阶段 3（owner 2026-10-14 参考图）：绿卡**两行**（短句 ＋ 副文案 ✓，⛔ 不拼长句 ✗）。
+   ⚠️ 配色用**仓里既有 token** ✓（照 `.sync-status.is-ok` ✓）—— ⛔ 不写死色值 ✗（深色主题会不跟 ✓）。 */
+.mpair-ok {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--cat-green);
+  border-radius: var(--radius-sm);
+  background: var(--cat-green-soft);
+  color: var(--success);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.mpair-ok-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.mpair-ok-dot {
+  font-size: 10px;
+  line-height: 1;
+}
+.mpair-ok-sub {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.mpair-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--cat-yellow);
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
+  /* ⚠️ 用**仓里既有 token** ✓（照 `.sync-status.is-warn` 那一族 ✓）—— ⛔ 不自造变量／不写死颜色 ✗
+     （写死颜色在深色主题下不跟主题走 ✗ —— 这是本仓踩过的一条 ✓）。 */
+  color: var(--cat-yellow);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.mpair-warn b {
+  font-weight: 600;
+}
+
 .mpair-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -25713,6 +25777,65 @@ body.is-plugin-panel-open .main {
   font-size: 12px;
   color: var(--text-dim);
 }
+/* ⭐ 【C2】设备卡上的小胶囊（照 owner 2026-10-14 参考图 ✓）。
+   ⚠️ 颜色一律用**仓里既有 token** ✓（照 `.sync-status.is-err`／`.is-ok` 那一族 ✓）
+      —— ⛔ 不写死色值 ✗（深色主题会不跟 ✓，本仓为此吃过亏 ✓）。 */
+/* ⭐ 【C3】三颗胶囊＝过滤器（选中态**实心蓝** ✓）。⚠️ 类名一律 `mpair-` 开头 ✓
+   （⛔ `.is-active`／`.active` 这类泛名会撞 `check-mobile-class-namespace` ✗ —— 今晚刚栽过 ✓）；
+   ⚠️ 颜色用**既有 token** ✓（⛔ 不写死色值 ✗）。 */
+.mpair-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.mpair-cap {
+  flex: 0 1 auto;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.mpair-cap.mpair-cap-on {
+  background: var(--accent);
+  /* ⚠️ 文字色用**主题感知**的 token ✓ —— `--on-accent`（亮色 `#ffffff`／暗色 `#0b1220` ✓，
+     见 `App.css:24` 与 `:117` ✓）；⛔ 不写死 `#fff` ✗，⛔ 也不用 `--accent-strong` ✗（那是**更深的蓝** ⇒ 蓝底蓝字 ✗）。 */
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.mpair-cap:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mpair-item-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mpair-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mpair-pill.mpair-pill-ok {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+.mpair-pill.mpair-pill-bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .mpair-list {
   margin: 0;
   padding: 0;
@@ -25974,12 +26097,15 @@ body.is-plugin-panel-open .main {
 .sync-popover.is-inline > * {
   /* ⭐ **2026-10-14（owner：「右边留白太大了」）** ✗：⭐ 上一版只写 `max-width: 920px` ✓
      ⇒ 在 ~1093px 的内容区里右边空出 ~170px ✗。⇒ ⭐ `width: 100%` **铺满** ✓，
-     只有超过 1120px 才限宽，而且那时**居中** ✓（左右对称 ✓）。
-     ⚠️ 两个必须**一起写** ✗：flex 子项上只写 `margin-inline: auto`（不带 `width: 100%`）
-     会被解释成"按内容宽居中" ⇒ 上一轮就这么翻过车 ✓。 */
+     只有超过 1120px 才限宽 ✓。
+     ⚠️ 限宽之后**贴左**（⛔ 不居中 ✗）—— **2026-10-15 owner 拍**：「不放开也行，左对齐」✓
+     （2026-10-14 那一版写的是 `margin-inline: auto` ⇒ 居中，今天去掉了 ✓）。
+     ⚠️ 两条必须**一起**理解 ✗：① flex 子项上只写 `margin-inline: auto`（不带 `width: 100%`）
+     会被解释成"按内容宽居中"（上一轮翻过车 ✓）；② 在**列向** flex 里 `margin-inline: auto`
+     正是"居中"的来源 ⇒ 想去掉居中，就得去掉它（⛔ 别改 `width: 100%` ✗）。
+     判据：`header.sync-head` 的 `margin-inline` 计算值要是 `0px`（不是 auto）✓。 */
   width: 100%;
   max-width: 1120px;
-  margin-inline: auto;
 }
 
 /* ④ ⭐ **照桌面版高保真效果图**再补两条（⛔ 不加花样 ✗，图上就是这两件事）： */

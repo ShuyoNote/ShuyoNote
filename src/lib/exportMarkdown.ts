@@ -214,6 +214,51 @@ export function pageContentToMarkdown(docJson: string, resolveImage?: ResolveIma
   return md;
 }
 
+/**
+ * 一次「导出这一页为 .md」要的字段。
+ * ⚠️ 正文那格叫 `docJson`（**文档 JSON 文本**），⛔ 不叫存储列名 ✗ —— 那个键名只许出现在
+ * `docContent.ts`（那一层）里；门禁 `check-doc-content-access.mjs` 会把在这边写它的代价算成
+ * "新增直接访问"（2026-10-15 实测红过：`exportMarkdown.ts 1 → 3`）。取正文用
+ * `docContent.ts::docJsonOfPage(page)` ✓。
+ */
+export type MarkdownPageInput = {
+  id: string;
+  title?: string | null;
+  /** 文档 JSON 文本（页面正文）；取法见上面那条注释 ✓ */
+  docJson: string;
+};
+
+/**
+ * ⭐ **把当前这一页存成一个 `.md` 文件**（存到哪由用户在保存对话框里选）。
+ *
+ * 为什么单开一条（而不是让「导出为 Markdown」继续只复制剪贴板 ✗）：
+ * owner 2026-10-15 要的是**直接拿到一个文件** —— 剪贴板给不了"带走"这件事。
+ * 从此两件事各归各位：**复制**给"我要粘到别处"，**导出**给"我要一个文件" ✓。
+ *
+ * ⚠️ 转换**必须走** [`pageContentToMarkdown`] ✗ —— 它是全应用唯一那份"页面 JSON → Markdown"，
+ * 里面有 Route-B 列块的展开（不展开 ⇒ 列里的内容**整块丢** ✗，这个坑在别处已经付过学费）。
+ * ⛔ 不许在这里另写一份 `$convertToMarkdownString` ✗。
+ * ⚠️ 文件头那行注释与工作区导出**同一个形状**（`<!-- title: … · id: … -->`）⇒ 两个导出件长得一样 ✓。
+ * ⚠️ 两端平台同一份实现：桌面写真实文件（`write_text_file`），Web 触发浏览器下载
+ * （`web.ts` 的 `write_text_file` 实现 ✓）—— 所以这里**不**分平台 ✗。
+ *
+ * @returns 一句给用户的话（取消 ⇒ 明确说"已取消"，⛔ 不假装成功 ✗）
+ */
+export async function exportPageToMarkdown(page: MarkdownPageInput): Promise<string> {
+  const title = page.title || "未命名";
+  const path = await platform.dialog.save({
+    title: "导出为 Markdown",
+    defaultPath: `${sanitizeName(page.title || page.id)}.md`,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  // 用户在对话框里点了取消 ⇒ 一个字节都不写 ✓（也不报成功 ✗）
+  if (!path) return "已取消导出";
+  const md = pageContentToMarkdown(page.docJson);
+  const head = `<!-- title: ${title} · id: ${page.id} -->\n`;
+  await api.writeTextFile(path, head + md);
+  return `已导出「${title}」到 ${path}`;
+}
+
 /** Export every page in the active workspace to Markdown files in a chosen folder. */
 export async function exportWorkspaceToMarkdown(): Promise<string> {
   const dir = await platform.dialog.open({ directory: true, title: "选择导出目录" });

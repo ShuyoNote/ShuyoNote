@@ -12,6 +12,8 @@
 // 教训：**渲染之前先把形状校验掉**，任何非有限/对不上的数值都变成一句说得清的错误，
 // 而不是一路 NaN 冲到画布 API 上。这个模块就是那道闸门。
 
+import { gunzipSync } from "fflate";
+
 /** 一页光栅化结果：RGBA8（长度 = width × height × 4）+ 显式宽高。 */
 export interface NativePage {
   bytes: Uint8Array;
@@ -103,15 +105,33 @@ function parseHeaderBytes(buf: Uint8Array): NativePage {
 /**
  * 解析 `render_pdf_page` 的返回值。
  *
- * 支持三种形状，都是真实平台上会出现的：
- *  1. `{ width, height, rgba_base64 }` —— 现在的契约（所有平台一致，见 commands.rs 的注释）；
+ * 支持四种形状，都是真实平台上会出现的：
+ *  0. `{ width, height, rgba_gzip_base64 }` —— **2026-10-15 起的契约** ✓（先 gzip 再 base64 ✓：
+ *     过桥体积降到 1/10 上下，修的就是「放大很卡」✓；无损 ✓ ⇒ 与裸 base64 解出来逐字节相同 ✓）；
+ *  1. `{ width, height, rgba_base64 }` —— 旧契约（版本不一致时仍可能遇到 ✓ 继续认 ✓）；
  *  2. `ArrayBuffer` / `Uint8Array` —— Windows/Linux 上原始响应的形态，或旧版后端；
  *  3. 数字数组 —— macOS 上原始响应被 JSON 编码后的形态（旧版后端）。
  * 认不出来的形状直接报错并说明看到了什么，绝不返回半成品。
  */
 export function parseNativePageResponse(raw: unknown): NativePage {
   if (typeof raw === "object" && raw !== null && !Array.isArray(raw) && !isByteView(raw) && !(raw instanceof ArrayBuffer)) {
-    const o = raw as { width?: unknown; height?: unknown; rgba_base64?: unknown; bytes?: unknown };
+    const o = raw as {
+      width?: unknown;
+      height?: unknown;
+      rgba_base64?: unknown;
+      rgba_gzip_base64?: unknown;
+      bytes?: unknown;
+    };
+    // ⭐ **2026-10-15（owner：「pdf 放大很卡」）**：⭐ 现在的契约是**先 gzip 再 base64** ✓ ——
+    // 裸 base64 让一页 18 MB 的 RGBA 变成 24 MB 过桥 ⇒ 每按一下放大等 1.5 s ✗
+    // （诊断读数见 `src-tauri/src/commands.rs` 载荷构造处那段注释 ✓）。
+    // ⚠️ **无损** ✓ ⇒ 解出来的 RGBA 与压缩前**逐字节相同** ✓（放大看字不糊 ✓）。
+    if (typeof o.rgba_gzip_base64 === "string") {
+      const bytes = gunzipSync(base64ToBytes(o.rgba_gzip_base64));
+      const { width, height } = validatePage(o.width, o.height, bytes.byteLength);
+      return { bytes, width, height };
+    }
+    // ⚠️ 旧后端／旧应用：裸 base64 照旧认 ✓（⛔ 兼容不是删掉 ✗ —— 版本不一致时会走到这里 ✓）。
     if (typeof o.rgba_base64 === "string") {
       const bytes = base64ToBytes(o.rgba_base64);
       const { width, height } = validatePage(o.width, o.height, bytes.byteLength);
