@@ -25679,6 +25679,27 @@ body.is-plugin-panel-open .main {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+/* ⭐ 阶段 3（owner 2026-10-14 参考图）：本机有空间没开加密时的**警示条** ✓。
+   ⚠️ 只做"说明"✓，⛔ 不带任何动作（目的地是桌面专属 ⇒ 假按钮 ✗）。 */
+.mpair-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--cat-yellow);
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
+  /* ⚠️ 用**仓里既有 token** ✓（照 `.sync-status.is-warn` 那一族 ✓）—— ⛔ 不自造变量／不写死颜色 ✗
+     （写死颜色在深色主题下不跟主题走 ✗ —— 这是本仓踩过的一条 ✓）。 */
+  color: var(--cat-yellow);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.mpair-warn b {
+  font-weight: 600;
+}
+
 .mpair-scroll {
   flex: 1 1 auto;
   min-height: 0;

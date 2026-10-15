@@ -75,6 +75,16 @@ export function MobilePair() {
 
   const nearby = status?.nearby ?? [];
 
+  /**
+   * ⭐ 「本机有 N 个空间**没开加密**」（图上黄条的 N ✓）—— ⛔ **不新造后端** ✗：
+   *    直接用 store 里那份空间表算 ✓（`WorkspaceMeta.encrypted_on_disk` ✓，逐字确认于 `src/types.ts` ✓）。
+   * ⚠️ `N === 0` ⇒ **整条不渲染** ✓（没问题的机器不该看到警告 ✓）。
+   * ⛔ **不渲染「去开加密 ›」那个动作** ✗ —— 目的地（空间隐私）自己写着「**要在桌面端操作**」✗
+   *    （`SpacePrivacySection.tsx:176` ✓）⇒ 渲染它就是**假按钮** ✗（与 08 屏那条同一口径 ✓）。
+   */
+  const spaces = useSpaceStore((s) => s.spaces);
+  const unencryptedCount = spaces.filter((sp) => !sp.encrypted_on_disk).length;
+
   return (
     <div className="mshell mpair" data-testid="mobile-pair">
       <header className="mpair-head">
@@ -86,6 +96,12 @@ export function MobilePair() {
       </header>
 
       <div className="mpair-scroll">
+        {/* ⭐ 黄条（照 owner 2026-10-14 参考图 ✓）：只有**真有问题**时才出现 ✓（`N === 0` ⇒ 不渲染 ✗）。 */}
+        {unencryptedCount > 0 && (
+          <div className="mpair-warn" role="note" data-testid="mpair-unencrypted-warn">
+            <span aria-hidden>⚠</span> 本机有 <b>{unencryptedCount}</b> 个空间没开加密 ⇒ 内容会在局域网上明文传输
+          </div>
+        )}
         {/* ② 如实同步状态：**原样显示后端那句 line** ✓ ＋ 三个读数 ✓ */}
         <section className="mpair-card">
           <div className="mpair-card-title">本机同步</div>
