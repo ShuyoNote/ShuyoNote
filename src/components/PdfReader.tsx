@@ -288,6 +288,21 @@ const EYE_MODES: { id: EyeMode; label: string }[] = [
 //（整页 RGBA, 网页文本+图形占比高、性价比低）；JPEG 编码快一个数量级、体积小、
 // `<img>` 解码也更快。页面是白纸背景（PDF 正文/批注 overlay 是 SVG 叠加在 <img> 上），
 // JPEG 无透明度需求，白底即可。
+/**
+ * ⛔⭐ **2026-10-15（owner：「pdf 放大很卡」）** ✗ —— ⭐ 真机读数（CDP）：
+ *  - 125% 时**显示位图**已经 **2364×4314（≈10.2 Mpx）** ✓ ⇒ 反推该页 ≈ **1891 pt 宽**（大版面 ✓）；
+ *  - ⇒ 250% 约 **40 Mpx**、400% 约 **104 Mpx** ✓；而每按一下 `+` 都要按**新倍率整页重出**
+ *    （Rust 光栅化 ＋ JPEG 编码 ＋ 前端解码 ✓）⇒ 实测**一次主线程长任务 1213 ms** ✓，
+ *    期间旧位图一直挂着 ⇒ 手感就是"点了没反应、过一会儿猛地一跳" ✓。
+ *
+ * ⭐ 修法一：**显示用位图封顶** ✓ —— 超过这个倍率就不再提高位图分辨率，让 `<img>` 按
+ *   页块的 `contentWidth` **拉伸显示** ✓（页块本来就按 `contentWidth` 定宽 ✓）。
+ *    · ⛔ **只管显示** ✗：AI 目录／OCR（`renderPage: (a,i,s) => …` 那一处 ✓）与
+ *      「导出批注副本」照旧按**真实倍率**出图 ✓（它们要的是精度 ✓，不是帧率 ✓）。
+ *    · 代价：>200% 是"放大的位图" ⇒ 略糊 ✓（换来像素数降一档 ✓）。
+ */
+const DISPLAY_RASTER_CAP = 2;
+
 async function renderPagePng(
   eng: ReturnType<typeof createPdfjsEngine>,
   attachmentId: string | null,
@@ -767,6 +782,14 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   // 实际缩放倍率：由缩放模式 + 当前视口解出。适配模式随视口变化自动重算（连续滚动）。
   const scale = useMemo(() => resolveZoomScale(zoom, refW, refH, availW, availH), [zoom, refW, refH, availW, availH]);
 
+  /**
+   * ⛔⭐ **2026-10-15**：⭐ 当前**真实倍率**（不是封顶后的 ✓）—— 给"过期渲染作废"用 ✓：
+   * 渲染是异步的（Rust 那边几百 ms～数秒 ✓），等回来时倍率可能已经又变了 ✓ ⇒ 那张图
+   * 就是给旧倍率出的 ✓ ⇒ 直接丢 ✓（⛔ 不进 state／不进缓存 ✗），连点 `+` 只有最后一次落地 ✓。
+   */
+  const liveScaleRef = useRef(scale);
+  liveScaleRef.current = scale;
+
   // 内容宽（页块显示宽，px）= 基准页宽 × 缩放。真正随 scale 变化 ⇒ 放大即真实放大。
   const contentWidth = zoomContentWidth(refW, scale);
 
@@ -1159,12 +1182,20 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     async (pageIndex: number) => {
       const eng = engRef.current;
       if (!eng || !ready) return;
-      const key = `${pageIndex}@${scale}`;
+      // ⭐ 显示位图封顶 ✓（理由见 `DISPLAY_RASTER_CAP` 那段注释 ✓）—— ⛔ 只影响这一条路 ✗。
+      const rasterScale = Math.min(scale, DISPLAY_RASTER_CAP);
+      const key = `${pageIndex}@${rasterScale}`;
       if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
       inflightRef.current.add(key);
       try {
-        const blob = await renderPagePng(eng, attachmentId, pageIndex, scale);
+        const blob = await renderPagePng(eng, attachmentId, pageIndex, rasterScale);
         const url = URL.createObjectURL(blob);
+        // ⛔⭐ **过期就丢** ✓：等回来时倍率已经变了 ⇒ 这张是给旧倍率出的 ✓（省掉它那次
+        //   **解码 ＋ React 重渲染** ✓ —— 实测长任务主要就在那儿 ✓）。
+        if (liveScaleRef.current !== scale) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         // If the reader was closed while this page was rendering, don't leak a
         // page-image URL into state (it would be revoked on the next open and
         // re-requested → ERR_FILE_NOT_FOUND).
