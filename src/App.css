@@ -25767,6 +25767,38 @@ body.is-plugin-panel-open .main {
 /* ⭐ 【C2】设备卡上的小胶囊（照 owner 2026-10-14 参考图 ✓）。
    ⚠️ 颜色一律用**仓里既有 token** ✓（照 `.sync-status.is-err`／`.is-ok` 那一族 ✓）
       —— ⛔ 不写死色值 ✗（深色主题会不跟 ✓，本仓为此吃过亏 ✓）。 */
+/* ⭐ 【C3】三颗胶囊＝过滤器（选中态**实心蓝** ✓）。⚠️ 类名一律 `mpair-` 开头 ✓
+   （⛔ `.is-active`／`.active` 这类泛名会撞 `check-mobile-class-namespace` ✗ —— 今晚刚栽过 ✓）；
+   ⚠️ 颜色用**既有 token** ✓（⛔ 不写死色值 ✗）。 */
+.mpair-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.mpair-cap {
+  flex: 0 1 auto;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.mpair-cap.mpair-cap-on {
+  background: var(--accent);
+  /* ⚠️ 文字色用**主题感知**的 token ✓ —— `--on-accent`（亮色 `#ffffff`／暗色 `#0b1220` ✓，
+     见 `App.css:24` 与 `:117` ✓）；⛔ 不写死 `#fff` ✗，⛔ 也不用 `--accent-strong` ✗（那是**更深的蓝** ⇒ 蓝底蓝字 ✗）。 */
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.mpair-cap:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .mpair-item-pills {
   display: flex;
   flex-wrap: wrap;

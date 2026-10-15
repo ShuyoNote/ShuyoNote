@@ -92,6 +92,36 @@ export function MobilePair() {
   const nearbyOrdered = [...nearby].sort((x, y) => nearbyGroup(x) - nearbyGroup(y));
 
   /**
+   * ⭐ 【C3】**三颗胶囊 ＝ 过滤器**（照 owner 2026-10-14 参考图 ✓）——
+   *    ⭐ 三颗的数**全部**取自 `nearbyGroup`（**同一判据** ✓，见上）⇒ ⛔ **不另算一套** ✗
+   *    （⭐ 硬判据：**胶囊上的数 ＝ 点进去的卡片数** ✓；两边不同源就是"数字与列表各说各话" ✗）。
+   * ⚠️ ⛔ **不是** `nearby.length` ✗（那是"同网段听得见的台数" ✓ —— 早先那版口径已撤回 ✓）。
+   */
+  type MPairCap = "paired" | "keychanged" | "nearby";
+  const capCounts: Record<MPairCap, number> = {
+    paired: nearbyOrdered.filter((p) => nearbyGroup(p) === 0).length,
+    keychanged: nearbyOrdered.filter((p) => nearbyGroup(p) === 1).length,
+    nearby: nearbyOrdered.filter((p) => nearbyGroup(p) === 2).length,
+  };
+  const [cap, setCap] = useState<MPairCap>("paired"); // ⭐ 默认「已配对」✓（照图它实心蓝 ✓）
+  /**
+   * ⚠️ ⭐ **兜底**（你拍的第二种 ✓）：默认那一档为空 ⇒ ⛔ **不把屏弄成空** ✗：
+   *    ⭐ **灰掉不可选** ✓ ＋ **自动落到非空的那一档** ✓（优先「要重配」⇒ 再「附近」✓）。
+   *    ⛔ 不允许"看起来能点、点进去是空"✗；⚠️ 三档全空 ⇒ 走下面**已有**的空态 ✓（⛔ 不造设备 ✗）。
+   */
+  const capOrder: MPairCap[] = ["paired", "keychanged", "nearby"];
+  const firstNonEmpty = capOrder.find((c) => capCounts[c] > 0) ?? null;
+  const activeCap: MPairCap | null = capCounts[cap] > 0 ? cap : firstNonEmpty;
+  const visiblePeers =
+    activeCap === null
+      ? [] // 三档全空 ⇒ 交给下面的空态 ✓
+      : activeCap === "paired"
+        ? nearbyOrdered.filter((p) => nearbyGroup(p) === 0)
+        : activeCap === "keychanged"
+          ? nearbyOrdered.filter((p) => nearbyGroup(p) === 1)
+          : nearbyOrdered.filter((p) => nearbyGroup(p) === 2);
+
+  /**
    * ⭐ 「本机有 N 个空间**没开加密**」（图上黄条的 N ✓）—— ⛔ **不新造后端** ✗：
    *    直接用 store 里那份空间表算 ✓（`WorkspaceMeta.encrypted_on_disk` ✓，逐字确认于 `src/types.ts` ✓）。
    * ⚠️ `N === 0` ⇒ **整条不渲染** ✓（没问题的机器不该看到警告 ✓）。
@@ -148,6 +178,35 @@ export function MobilePair() {
       </header>
 
       <div className="mpair-scroll">
+        {/* ⭐ 【C3】三颗胶囊（过滤器 ✓）：⛔ 数字全部来自 `capCounts`（＝ `nearbyGroup` 同一判据 ✓）；
+            ⚠️ 该档为空 ⇒ **灰掉不可选** ✓（⛔ 不做"能点进去却是空"的假控件 ✗）。 */}
+        {nearbyOrdered.length > 0 ? (
+          <div className="mpair-caps" role="tablist" aria-label="设备分档">
+            {(
+              [
+                ["paired", "已配对"],
+                ["keychanged", "要重配"],
+                ["nearby", "附近"],
+              ] as const
+            ).map(([id, label]) => {
+              const on = activeCap === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  className={"mpair-cap" + (on ? " mpair-cap-on" : "")}
+                  data-testid={`mpair-cap-${id}`}
+                  disabled={capCounts[id] === 0}
+                  onClick={() => setCap(id)}
+                >
+                  {label} {capCounts[id]}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
         {/**
           * ⭐ 绿卡（照 owner 2026-10-14 参考图 ✓）—— ⭐ **只拼证得出来的词** ✓：
           *    `status.enabled === true` ⇒「在线」✓；`autoSyncMs > 0` ⇒「自动同步中」✓。
@@ -214,7 +273,7 @@ export function MobilePair() {
             <p className="mpair-line mpair-dim">这个网络里还没发现别的设备。</p>
           ) : (
             <ul className="mpair-list">
-              {nearbyOrdered.map((p, i) => (
+              {visiblePeers.map((p, i) => (
                 <li key={`${p.device_id}-${i}`} className="mpair-item">
                   <span className="mpair-item-main">
                     {/* ⭐ 「设备名 ＋ 短标识」；对端**没报**短标识 ⇒ 如实写「对方没报短标识」✓（⛔ 不回落 ✗） */}
