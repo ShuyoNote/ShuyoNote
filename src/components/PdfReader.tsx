@@ -23,7 +23,7 @@ import { loadAiOutline, saveAiOutline } from "../lib/pdfOutlineStore";
 import { tryConsume } from "../lib/ai/gate";
 import { rebuildOutlineTree } from "../lib/pdfOutlineGen";
 import type { ProviderConfig } from "../lib/ai/llm";
-import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, baseRasterScale, tileRasterScale, visibleRectPt, type ZoomMode } from "../lib/pdfLayout";
+import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, DISPLAY_RASTER_CAP, decideTile, displayRasterScale, tileRasterScale, visibleRectPt, type ZoomMode } from "../lib/pdfLayout";
 import type { PdfPageRect } from "../lib/platform/types";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
@@ -302,13 +302,16 @@ const EYE_MODES: { id: EyeMode; label: string }[] = [
  *      「导出批注副本」照旧按**真实倍率**出图 ✓（它们要的是精度 ✓，不是帧率 ✓）。
  *    · 代价：>200% 是"放大的位图" ⇒ 略糊 ✓（换来像素数降一档 ✓）。
  *
- * ⛔⭐ **2026-10-15 D2/D3：上面那个 `DISPLAY_RASTER_CAP = 2` 已经拿掉** ✗ —— 它被 D3 取代：
- *    · **底图（整页）封到 1×**（`pdfLayout.BASE_RASTER_CAP` ✓）⇒ >100% 不再出整页高清 ✓，
- *      而且**缩放时底图不必重出**（倍率都是 1，缓存键不变 ✓）；
- *    · **高清只出可见的那一条带子**（`tileRasterScale`，上限 `MAX_SCALE` ✓）⇒ 位图小得多、
- *      还比原来的 2× 更清楚 ✓（D1 的读数：过桥成本 ∝ 载荷字节数 ⇒ 这条也直接换成了时间 ✓）。
- *    · ⚠️ ≤100% 时与旧行为**逐值相同**（`baseRasterScale` 就是 `displayRasterScale` ✓）：
- *      缩小档、适配模式、OCR／导出一个都没变 ✓。判据在 `pdfLayout.test.ts` 的 D2/D3 那一组 ✓。
+ * ⭐⭐ **2026-10-15 D2/D3（活体实测后订正过一次，别照旧叙述写 ✗）**：
+ *    · **D3 ＝ 上面这个封顶 ＋ 像素预算，两条渲染路都要走** ✗（原先只有**预取**那条走了，
+ *      主路直接吃 `scale` ⇒ 巨幅页在 200% 要 **145 Mpx**、被 Rust 的 40 Mpx 闸门**拒绝**
+ *      ⇒ 用户看到「第 N 页没能显示」✗；而且每按一下放大都重出整页 ✗）。
+ *      ⚠️ 试过"一律封 1×"，**被实测推翻**：那会在"页面比视口大、但可见块占比大"时白糊一档 ✗
+ *      （实测：2358×1980 pt 的页在 400% 下可见块占 61%×55%）⇒ 与"封顶＋预算"收益相同、却更糊。
+ *    · **D2**：只把**看得见的那块**按真倍率出一张瓦片（`decideTile`，上限 `MAX_SCALE` ✓）——
+ *      位图小 ⇒ 预算放得住 ⇒ 比底图**更清楚**，过桥载荷也小得多 ✓（D1 的读数：成本 ∝ 载荷字节 ✓）。
+ *      ⚠️ 只在"更清楚 **且** 更省像素"时才出；否则维持整页那条路 ⇒ ⛔ 不回退 ✗。
+ *    · ⚠️ ≤100% 时两者都与旧行为**逐值相同**（`decideTile` 直接判"不出瓦片" ✓）。
  */
 
 async function renderPagePng(
@@ -1275,15 +1278,15 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     async (pageIndex: number) => {
       const eng = engRef.current;
       if (!eng || !ready) return;
-      // ⭐ **D3（2026-10-15）**：这里从 `displayRasterScale(scale, …)` 换成
-      // `baseRasterScale(scale, …)` —— **底图（整页）封到 1×**（>100% 不再出整页高清 ✓），
-      // 高清交给上面那条"可见带瓦片"（`refreshTiles` ✓）。副作用还有一个：>100% 时倍率恒为 1
-      // ⇒ **缩放时底图命中缓存、不必重出整页** ✓（原来每按一下放大都要重出一整页 ✗）。
+      // ⭐ **D3（2026-10-15）**：**主路与预取路都走"封顶 ＋ 像素预算"**（`displayRasterScale` ✓）
+      //   —— 这正是原来只有预取那条走了的政策。主路原先直接吃 `scale` ⇒ 巨幅页在 200% 要
+      //   145 Mpx、被 Rust 的 40 Mpx 闸门拒绝（「第 N 页没能显示」✗），且每按一下放大重出整页 ✗。
+      //   现在倍率**饱和**（封顶 2× ＋ 预算）⇒ 继续放大时命中缓存、不再重出 ✓。
       // ⚠️ 尺寸取该页自己的 pt 尺寸 ✓（`getPageMeta` ✓）；取不到 ⇒ 按 A4 退 ✓。
       const meta = await eng
         .getPageMeta(pageIndex)
         .catch(() => ({ width: 612, height: 792 }));
-      const rasterScale = baseRasterScale(scale, meta.width, meta.height);
+      const rasterScale = displayRasterScale(scale, meta.width, meta.height, DISPLAY_RASTER_CAP);
       const key = `${pageIndex}@${rasterScale}`;
       if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
       inflightRef.current.add(key);
@@ -1432,12 +1435,20 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       const hPt = qBottom - qTop;
       if (!(wPt > 0) || !(hPt > 0)) continue;
 
-      const baseScale = baseRasterScale(scale, meta.w, meta.h);
       const tileScale = tileRasterScale(scale, wPt, hPt);
-      // ⛔ **只有"真能更清楚"才值得那次过桥** ✗：这块大到接近整页时（巨幅版面 ＋ 中等倍率），
-      //   像素预算会把 `tileScale` 压到跟底图差不多 ⇒ 那就**不要**（白白多一次渲染 + 一次过桥 ✗）。
-      //   活体实测：3152×5752 pt 的页面在 125% 下 `tileScale` 0.87× < 底图 1× ⇒ 正是这种情形 ✓。
-      if (!(tileScale >= baseScale * 1.25)) {
+      // ⭐ **值不值得**（纯函数 `decideTile`，判据在 `pdfLayout.test.ts` ✓）：瓦片要"更清楚
+      //   **且** 更省像素"才出；否则维持整页那条路（封顶＋预算）⇒ ⛔ 不回退 ✗。
+      //   ⚠️ 判据吃的是**量出来的** `wPt/hPt`（⛔ 不是布局推算 ✗ —— 混排文档里两者能差 4 倍，
+      //     实测：页块 9432 CSS 而页图像只有 2358 CSS ⇒ 按推算会把 61% 的可见块算成 6% ✗）。
+      const decision = decideTile({
+        scale,
+        pageW: meta.w,
+        pageH: meta.h,
+        rectW: wPt,
+        rectH: hPt,
+        displayCap: DISPLAY_RASTER_CAP,
+      });
+      if (!decision.take) {
         dropTile(i);
         continue;
       }
@@ -1501,12 +1512,15 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
           setTiles(next);
         } catch (e) {
           // ⛔ 瓦片失败**不改这一页的状态** ✓（底图照旧在，用户看到的仍是完整一页）。
-          // 但引擎"明确说不支持"时记下来 ⇒ 之后不再请求（否则每滚一下撞一次墙 ✗）。
-          // 契约：MuPDF（`MUPDF_NO_RECT`）与 web（pdf.js）都必须**拒绝**，不许静默给整页 ✓。
+          // ⚠️ **但一定要出声** ✗（2026-10-15 活体实测：我第一版这里是静默的 ⇒ 瓦片没出现却
+          //   查不出为什么 ✗ —— 正是本仓最忌的"看着在岗、其实没开火"）。日志进 console，
+          //   `d2-live.mjs` 会把 error/warning 一起打出来 ✓。
           const why = e instanceof Error ? e.message : String(e);
-          if (/可视矩形|rect|MuPDF|不支持/.test(why)) {
+          console.warn("[pdf] 可见带瓦片没成（保持整页那条路）", { pageIndex: j.pageIndex, rect: j.rect, tileScale: j.tileScale, why });
+          // 引擎"明确说不支持"时记下来 ⇒ 之后不再请求（否则每滚一下撞一次墙 ✗）。
+          // 契约：MuPDF（`MUPDF_NO_RECT`）与 web（pdf.js）都必须**拒绝**，不许静默给整页 ✓。
+          if (/可视矩形|不支持|MuPDF/.test(why)) {
             tileUnsupportedRef.current = true;
-            console.warn("可见带瓦片不可用（保持整页那条路）", why);
           }
         } finally {
           tileInflightRef.current.delete(j.key);
@@ -1695,7 +1709,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       }
       const baseScaleFor = (i: number) => {
         const m = metaByPage.get(i);
-        return m ? baseRasterScale(scale, m.w, m.h) : Math.min(scale, 1);
+        if (!m) return displayRasterScale(scale, 612, 792, DISPLAY_RASTER_CAP);
+        return displayRasterScale(scale, m.w, m.h, DISPLAY_RASTER_CAP);
       };
 
       const needImg = pages.filter((i) => !pageCacheRef.current.has(`${i}@${baseScaleFor(i)}`));

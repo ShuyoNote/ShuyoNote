@@ -140,10 +140,15 @@ export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50, 33, 25];
 // ≈106 ms ⇒ **约 715 ms 花在把载荷送过去**，而且**与字节数成正比**（≈0.55 ms/KB）。
 // ⇒ 只把**看得见的那一条**送过去，载荷就按"可见带占整页的比例"缩小 ✓（这是 D 的全部要点）。
 //
-// 分工：
-//   · **D3**：整页（底图）的倍率封到 **1×**（[`baseRasterScale`]）⇒ >100% 不再出整页高清；
-//   · **D2**：可见带按**真倍率**出（[`tileRasterScale`]）⇒ 那块位图小，像素预算管得住，
-//     所以它可以比旧的 2× 封顶**更清楚**（上限 `MAX_SCALE`）✓。
+// 分工（⚠️ **2026-10-15 活体实测后订正过一次**，别照旧叙述写 ✗）：
+//   · **D3**：底图**不再按显示倍率一路放大** —— 两条渲染路统一走**既有**的"封顶 ＋ 像素预算"
+//     政策（[`DISPLAY_RASTER_CAP`] ＋ [`DISPLAY_PIXEL_BUDGET`]）。原先只有**预取**那条走了它，
+//     主路直接吃 `scale` ⇒ 巨幅页在 200% 时要 145 Mpx、被 Rust 的 40 Mpx 闸门**拒绝**
+//     （用户看到「第 N 页没能显示」✗）；而且每按一下放大都要重出整页 ✗。
+//     ⚠️ 试过"一律封 1×"，**推翻**：那会在"页面比视口大、但可见块占比大"时白糊一档 ✗
+//     （实测：2358×1980 pt 的页在 400% 下可见块占 61%×55%）⇒ 收益与"封顶＋预算"一样，却更糊。
+//   · **D2**：只把**看得见的那块**按真倍率出一张瓦片（[`visibleRectPt`] ＋ [`decideTile`]）——
+//     位图小 ⇒ 像素预算放得住 ⇒ 可以**比底图更清楚**（上限 `MAX_SCALE`），过桥载荷也小得多 ✓。
 //
 // ⚠️ 三条口径必须一致，⛔ 别混：
 //   ① [`visibleBandPt`] 返回的是**页面 pt、左上角为原点**（＝ Rust `render_page_rect` 吃的口径 ✓）；
@@ -159,17 +164,13 @@ export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50, 33, 25];
  *   · 新口径：整页只到 1×（一次，之后缩放**不必重出** ✓），高清由可见带负责 ✓。
  * ⚠️ ≤100% 时两者**完全一致**（`min(scale, 1) === scale`）⇒ 缩小档位的行为一个字节都没变 ✓。
  */
-export const BASE_RASTER_CAP = 1;
-
-/** D3：底图该用多大倍率（纯函数 ⇒ 好判）。`scale ≤ 1` 时与 [`displayRasterScale`] 逐值相同。 */
-export function baseRasterScale(
-  scale: number,
-  pageW: number,
-  pageH: number,
-  cap: number = BASE_RASTER_CAP,
-): number {
-  return displayRasterScale(Math.min(scale, cap), pageW, pageH, cap);
-}
+/**
+ * **底图（整页）的显示位图封顶**（`PdfReader` 里原来的 `DISPLAY_RASTER_CAP = 2`）。
+ *
+ * ⚠️ 它是 **D3 的那条政策**：两条渲染路（预取 ＋ 主路）**都必须**用它 ＋ [`DISPLAY_PIXEL_BUDGET`]。
+ * 原先只有预取那条走了 ⇒ 主路吃 `scale` ⇒ 巨幅页 200% 要 145 Mpx（超 Rust 的 40 Mpx 闸门 ⇒ 直接失败 ✗）。
+ */
+export const DISPLAY_RASTER_CAP = 2;
 
 /**
  * D2：**可见带**该用多大倍率（纯函数）。
@@ -263,6 +264,67 @@ export function rectCssFromPt(
     topCss: rect.yPt / ptPerCss,
     widthCss: rect.wPt / ptPerCss,
     heightCss: rect.hPt / ptPerCss,
+  };
+}
+
+/**
+ * ⭐⭐ **D2 的"值不值得出一块瓦片"**（纯函数 ⇒ 有判据 ✓）。
+ *
+ * 为什么需要它（活体实测 2026-10-15 教的两件事 ✗）：
+ *   ① 瓦片**不是**"有就更好"：块大到接近整页时，它的字节数与"重出一整页"同量级，
+ *      而底图本来就在 ⇒ 白多一层 ✗（实测见过块占 42% / 87% 页面）；
+ *   ② 判据要拿**量出来的**数字算（⛔ 不能用 `refW × scale` 那套布局推算 ✗）：混排文档里
+ *      页块宽与页图像的真实显示宽**可以差 4 倍**（实测：块 9432 CSS、图 2358 CSS），
+ *      按布局推算会把"占 61% 的可见块"算成 6% ⇒ 计划与实际各说一套 ✗。
+ *
+ * 两条都要满足才出瓦片：
+ *   · `tileScale ≥ 底图倍率 × 1.25`（不比底图清楚 ⇒ 白多一层）；
+ *   · 瓦片位图 ≤ 底图位图 × 1.2（**允许略贵**：底图被预算封顶时**根本给不了**那个清晰度 ⇒
+ *     这一条是"看得清"与"省"的折中 ✓；但块大到接近整页时会远超这个比例 ⇒ 仍被挡 ✓）。
+ * ⚠️ **底图倍率不因为 D3 而改**：底图仍走"封顶（`displayCap`）＋ 像素预算"那条**既有**政策 ✓
+ *   —— 实测"一律封 1×"会在"页面比视口大、但可见块占比大"时白糊一档 ✗，而"每按一下放大重出整页"
+ *   的病根是**主路没走那个封顶**（现在走了 ⇒ 倍率饱和、缩放时命中缓存 ✓）。收益一样、且不回退 ✓。
+ */
+export function decideTile({
+  scale,
+  pageW,
+  pageH,
+  rectW,
+  rectH,
+  displayCap,
+  minSharper = 1.25,
+  maxCostRatio = 1.2,
+}: {
+  scale: number;
+  pageW: number;
+  pageH: number;
+  rectW: number;
+  rectH: number;
+  displayCap: number;
+  minSharper?: number;
+  maxCostRatio?: number;
+}): { take: boolean; baseScale: number; tileScale: number; why: string } {
+  const baseScale = displayRasterScale(scale, pageW, pageH, displayCap);
+  const tileScale = tileRasterScale(scale, rectW, rectH);
+  if (!(scale > 1 + 1e-6)) {
+    return { take: false, baseScale, tileScale, why: "≤100%：整页就是真倍率" };
+  }
+  if (!(rectW > 0) || !(rectH > 0)) {
+    return { take: false, baseScale, tileScale, why: "可见块退化" };
+  }
+  if (!(tileScale >= baseScale * minSharper)) {
+    return { take: false, baseScale, tileScale, why: `不比底图清楚（${tileScale.toFixed(2)}× vs 底图 ${baseScale.toFixed(2)}×）` };
+  }
+  const rectPx = rectW * rectH * tileScale * tileScale;
+  const pagePx = pageW * pageH * baseScale * baseScale;
+  if (!(rectPx <= pagePx * maxCostRatio)) {
+    return { take: false, baseScale, tileScale, why: `省不下来（块 ${(rectPx / 1e6).toFixed(2)} vs 整页 ${(pagePx / 1e6).toFixed(2)} Mpx）` };
+  }
+  return {
+    take: true,
+    baseScale,
+    tileScale,
+    why: `更清楚（${tileScale.toFixed(2)}× vs 底图 ${baseScale.toFixed(2)}×）且更省（${(rectPx / 1e6).toFixed(2)} vs ${(pagePx / 1e6).toFixed(2)} Mpx）`,
   };
 }
 

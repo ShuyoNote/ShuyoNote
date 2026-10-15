@@ -4,7 +4,7 @@ import {
   MAX_SCALE,
   DISPLAY_PIXEL_BUDGET,
   displayRasterScale,
-  baseRasterScale,
+  decideTile,
   tileRasterScale,
   visibleRectPt,
   rectCssFromPt,
@@ -196,31 +196,32 @@ describe("2026-10-15：显示位图按像素预算削（owner 选「先 F 再 D�
 
 });
 
-describe("2026-10-15 D2/D3：整页封 1× ＋ 只出可见带（owner：「pdf 放大很卡」的 D 一步）", () => {
-  it("⭐ D3：>100% 时底图不再跟着放大；≤100% 与旧口径**逐值相同** ✓", () => {
-    // ≤100%：与旧口径（displayRasterScale(scale, …, 2)）一个数都不差 ⇒ 缩小档位行为没变 ✓
+describe("2026-10-15 D2/D3：底图走「封顶＋预算」；瓦片只在真更清楚更省时出（owner：「pdf 放大很卡」）", () => {
+  it("⭐ D3：底图政策＝**既有的封顶（2×）＋ 像素预算**；>100% 时**饱和**（不再随倍率长）✓", () => {
+    // ≤100%：与改动前逐值相同（缩小档、适配模式一个数不变 ✓）
     for (const s of [0.25, 0.33, 0.5, 0.75, 1]) {
-      expect(baseRasterScale(s, 612, 792)).toBeCloseTo(displayRasterScale(s, 612, 792, 2), 6);
+      expect(displayRasterScale(s, 612, 792, 2)).toBeCloseTo(s, 6);
     }
-    // >100%：封在 1×（旧口径给 2× —— 这次改的就是它）
-    expect(baseRasterScale(2, 612, 792)).toBe(1);
-    expect(baseRasterScale(4, 612, 792)).toBe(1);
+    // >100%：**封顶 2× 就饱和** ⇒ 继续放大不会重出更大的整页（这正是"每按一下重出整页"的病根 ✓）
+    expect(displayRasterScale(2, 612, 792, 2)).toBe(2);
     expect(displayRasterScale(4, 612, 792, 2)).toBe(2);
-    // 巨幅页（那篇 PDF：3152×5752）底图仍受像素预算兜底 ⇒ ≤1 且不超预算 ✓
-    const big = baseRasterScale(4, 3152, 5752);
-    expect(big).toBeLessThanOrEqual(1);
+    // 巨幅页（山西焦煤那篇：3152×5752 pt）：倍率被**像素预算**兜住 ⇒ 不超 12 Mpx
+    // （⛔ 主路原先吃 `scale`：400% 要 290 Mpx、200% 要 145 Mpx ⇒ 都会被 Rust 的 40 Mpx 闸门拒 ✗）
+    const big = displayRasterScale(4, 3152, 5752, 2);
+    expect(big).toBeLessThan(1);
     expect(3152 * 5752 * big * big).toBeLessThanOrEqual(DISPLAY_PIXEL_BUDGET + 1);
+    expect(3152 * 5752 * 2 * 2).toBeGreaterThan(40_000_000); // 整页按 2× ⇒ 会被拒（这就是必须封的原因）
   });
 
-  it("⭐ D2：可见带按**真倍率**出（上限 MAX_SCALE）⇒ 比底图清楚 ✓", () => {
-    // 400% 下一条 250×175 pt 的带子：预算 sqrt(12M/43750) ≈ 16.6 ⇒ 取 min(4, 4) = 4 ✓
+  it("⭐ D2：可见块按**真倍率**出（上限 MAX_SCALE）⇒ 可以比底图清楚 ✓", () => {
+    // 400% 下一块 250×175 pt 的可见块：预算 sqrt(12M/43750) ≈ 16.6 ⇒ 取 min(4, 4) = 4 ✓
     expect(tileRasterScale(4, 250, 175)).toBe(4);
-    expect(tileRasterScale(4, 250, 175)).toBeGreaterThan(baseRasterScale(4, 1891, 3300));
+    expect(tileRasterScale(4, 250, 175)).toBeGreaterThan(displayRasterScale(4, 1891, 3300, 2));
     // ⛔ 不超过布局倍率（100% 时不需要比屏幕更清楚）
     expect(tileRasterScale(1, 250, 175)).toBe(1);
     // ⛔ 不超过 MAX_SCALE
     expect(tileRasterScale(4, 8, 8)).toBeLessThanOrEqual(MAX_SCALE);
-    // 带子大到接近整页时，仍被**像素预算**削（预算按这条带自己的面积算 ✓）
+    // 块大到接近整页时，仍被**像素预算**削（预算按这块自己的面积算 ✓）
     const s = tileRasterScale(4, 3152, 5752);
     expect(3152 * 5752 * s * s).toBeLessThanOrEqual(DISPLAY_PIXEL_BUDGET + 1);
   });
@@ -300,8 +301,7 @@ describe("2026-10-15 D2/D3：整页封 1× ＋ 只出可见带（owner：「pdf 
     expect(visibleRectPt({ ...base, viewHeight: -5 })).toBeNull();
   });
 
-  it("⭐ 余量：滚一点不必重出可复用；但四个边都被夹住，绝不出页面", () => {
-    const common = { pageW: 1000, pageH: 1000, imgWidth: 2000, imgHeight: 2000, viewWidth: 800, viewHeight: 400 };
+  it("⭐ 余量：滚一点不必重出可复用；但四个边都被夹住，绝不出页面", () => {    const common = { pageW: 1000, pageH: 1000, imgWidth: 2000, imgHeight: 2000, viewWidth: 800, viewHeight: 400 };
     const noMargin = visibleRectPt({ ...common, imgLeft: -1600, imgTop: -800 })!;
     expect(noMargin.xPt).toBeCloseTo(800, 6);
     expect(noMargin.wPt).toBeCloseTo(200, 6);
@@ -324,5 +324,56 @@ describe("2026-10-15 D2/D3：整页封 1× ＋ 只出可见带（owner：「pdf 
     expect(atEdge.yPt).toBe(0);
     expect(atEdge.wPt).toBeCloseTo((common.viewWidth + 200) * (common.pageW / common.imgWidth), 6);
     expect(atEdge.hPt).toBeCloseTo((common.viewHeight + 200) * (common.pageW / common.imgWidth), 6);
+  });
+});
+
+// ⭐⭐ D2 的**值不值得**：这一层决定"到底值不值得出那块瓦片"。
+// 三个用例的几何都是**真机量出来的**（2026-10-15 活体 CDP，视口 1450×1101 CSS）✓
+describe("2026-10-15 D2：decideTile —— 要不要出可见块瓦片", () => {
+  const CAP = 2;
+
+  it("⭐ 普通 A4（595×842）@200%：整页 2× 又清楚又便宜（2 Mpx）⇒ **不出瓦片**（不回退 ✓）", () => {
+    // 量到的可见块：整宽 595 pt × 542.5 pt（视口 1085 CSS ÷ 2）
+    const d = decideTile({ scale: 2, pageW: 595, pageH: 842, rectW: 595, rectH: 542.5, displayCap: CAP });
+    expect(d.take).toBe(false);
+    expect(d.baseScale).toBe(2); // ＝ displayRasterScale(2, …, 2) ⇒ 与改动前**逐值相同** ✓
+    expect(d.why).toContain("不比底图清楚");
+  });
+
+  it("⭐ 巨幅页（3152×5752）@400%：底图被预算压到 0.81× ⇒ 出**一块高清**（4×，这才是「放大看得清」的兑现）", () => {
+    const d = decideTile({ scale: 4, pageW: 3152, pageH: 5752, rectW: 1782, rectH: 1353, displayCap: CAP });
+    expect(d.take).toBe(true);
+    expect(d.tileScale).toBeCloseTo(2.227, 2); // 真倍率（这块的面积决定预算上限）
+    expect(d.baseScale).toBeCloseTo(Math.sqrt(DISPLAY_PIXEL_BUDGET / (3152 * 5752)), 3); // 预算兜底
+    expect(d.tileScale).toBeGreaterThan(d.baseScale * 2); // 比底图清楚一倍以上 ✓
+  });
+
+  it("⭐ 混排文档里的巨页（2358×1980）@400%：**也出瓦片**（底图被封顶 1.6×，瓦片给 2.76×）", () => {
+    const d = decideTile({ scale: 4, pageW: 2358, pageH: 1980, rectW: 1450, rectH: 1085, displayCap: CAP });
+    expect(d.take).toBe(true);
+    expect(d.baseScale).toBeCloseTo(displayRasterScale(4, 2358, 1980, 2), 6); // 底图**没有**被封到 1× ✓
+    expect(d.baseScale).toBeGreaterThan(1);
+    expect(d.tileScale).toBeGreaterThan(d.baseScale * 1.25);
+  });
+
+  it("⭐ 瓦片**贵得离谱**时必须拒绝：小页（595×842）@400%、可见块≈整页 ⇒ 位图 4× 于整页 ⇒ 不出", () => {
+    const d = decideTile({ scale: 4, pageW: 595, pageH: 842, rectW: 595, rectH: 842, displayCap: CAP });
+    expect(d.take).toBe(false);
+    expect(d.why).toContain("省不下来");
+    expect(d.baseScale).toBe(2); // 底图照旧（封顶 2× ＝ 又清楚又便宜 ✓）
+  });
+
+  it("⭐ ≤100%：一律走整页（缩放档位行为与改动前逐值相同）", () => {
+    for (const s of [0.25, 0.5, 1]) {
+      const d = decideTile({ scale: s, pageW: 3152, pageH: 5752, rectW: 362.5, rectH: 271.25, displayCap: CAP });
+      expect(d.take).toBe(false);
+      expect(d.baseScale).toBeCloseTo(displayRasterScale(s, 3152, 5752, 2), 6);
+      expect(d.why).toContain("≤100%");
+    }
+  });
+
+  it("⭐ 可见块退化（0 宽/高）⇒ 不出（⛔ 不请求退化矩形）", () => {
+    expect(decideTile({ scale: 4, pageW: 595, pageH: 842, rectW: 0, rectH: 100, displayCap: CAP }).take).toBe(false);
+    expect(decideTile({ scale: 4, pageW: 595, pageH: 842, rectW: 100, rectH: 0, displayCap: CAP }).take).toBe(false);
   });
 });
