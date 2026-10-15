@@ -708,7 +708,9 @@ pub struct RenderPdfPageArgs {
 pub struct PdfPagePayload {
     pub width: u32,
     pub height: u32,
-    pub rgba_base64: String,
+    /// ⭐ **2026-10-15**：这里装的是**先 gzip 再 base64** 的紧凑 RGBA ✓（不是裸 base64 ✗）
+    /// —— 裸 base64 让一页 24 MB 过桥，前端每按一下放大要等 1.5 s ✗（见构造处的读数注释）。
+    pub rgba_gzip_base64: String,
 }
 
 /// Render an attachment's PDF page to bytes using MuPDF (desktop-native,
@@ -813,11 +815,25 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     .map_err(|e| format!("render task failed: {e}"))??;
     let width = u32::try_from(w).map_err(|_| format!("PDF: 页面宽度 {w} 超出范围"))?;
     let height = u32::try_from(h).map_err(|_| format!("PDF: 页面高度 {h} 超出范围"))?;
+    // ⛔⭐ **2026-10-15（owner：「pdf 放大很卡」）** ✗ —— ⭐ 实测：过桥的是**原始 RGBA 的 base64**：
+    //   一页 1576×2876 ⇒ RGBA 18 MB ⇒ base64 **24 MB** ✗ ⇒ 前端每按一下放大要等 **1584 ms** ✓；
+    //   25% 那档 788×1438 ⇒ 6 MB ⇒ **779 ms** ✓ ⇒ ⛔ 慢的不是像素算法，是**这座桥** ✗
+    //   （诊断读数与推理见 `_tmp/scratch/probe-zoom-fixed-cost.mjs` 那一轮 ✓）。
+    // ⇒ ⭐ 现在**先 gzip 再 base64**：白底为主的页面通常压到 1/10 上下 ✓。
+    //   ⚠️ 是**无损**压缩 ✓ —— 前端解出来的 RGBA 与压缩前**逐字节相同** ✓（放大看字不会糊 ✓）。
+    //   ⚠️ flate2 **早就是直接依赖**（Cargo.toml:80 ✓，随 zip 进来）⇒ ⛔ 没有新增任何下载 ✗。
+    //   ⚠️ 前端对应改动在 `src/lib/pdfNativePage.ts`（fflate `gunzipSync` ✓ 也已是既有依赖 ✓）。
+    //   ⚠️ 版本不一致时前端会明确报「无法识别的原生渲染响应」并要求重启 ✓ —— ⛔ 不静默出半成品 ✗。
+    let gz = {
+        let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut e, &compact).map_err(|x| format!("PDF: gzip 失败：{x}"))?;
+        e.finish().map_err(|x| format!("PDF: gzip 收尾失败：{x}"))?
+    };
     use base64::Engine as _;
     Ok(PdfPagePayload {
         width,
         height,
-        rgba_base64: base64::engine::general_purpose::STANDARD.encode(&compact),
+        rgba_gzip_base64: base64::engine::general_purpose::STANDARD.encode(&gz),
     })
 }
 
