@@ -25987,12 +25987,15 @@ body.is-plugin-panel-open .main {
 .sync-popover.is-inline > * {
   /* ⭐ **2026-10-14（owner：「右边留白太大了」）** ✗：⭐ 上一版只写 `max-width: 920px` ✓
      ⇒ 在 ~1093px 的内容区里右边空出 ~170px ✗。⇒ ⭐ `width: 100%` **铺满** ✓，
-     只有超过 1120px 才限宽，而且那时**居中** ✓（左右对称 ✓）。
-     ⚠️ 两个必须**一起写** ✗：flex 子项上只写 `margin-inline: auto`（不带 `width: 100%`）
-     会被解释成"按内容宽居中" ⇒ 上一轮就这么翻过车 ✓。 */
+     只有超过 1120px 才限宽 ✓。
+     ⚠️ 限宽之后**贴左**（⛔ 不居中 ✗）—— **2026-10-15 owner 拍**：「不放开也行，左对齐」✓
+     （2026-10-14 那一版写的是 `margin-inline: auto` ⇒ 居中，今天去掉了 ✓）。
+     ⚠️ 两条必须**一起**理解 ✗：① flex 子项上只写 `margin-inline: auto`（不带 `width: 100%`）
+     会被解释成"按内容宽居中"（上一轮翻过车 ✓）；② 在**列向** flex 里 `margin-inline: auto`
+     正是"居中"的来源 ⇒ 想去掉居中，就得去掉它（⛔ 别改 `width: 100%` ✗）。
+     判据：`header.sync-head` 的 `margin-inline` 计算值要是 `0px`（不是 auto）✓。 */
   width: 100%;
   max-width: 1120px;
-  margin-inline: auto;
 }
 
 /* ④ ⭐ **照桌面版高保真效果图**再补两条（⛔ 不加花样 ✗，图上就是这两件事）： */
