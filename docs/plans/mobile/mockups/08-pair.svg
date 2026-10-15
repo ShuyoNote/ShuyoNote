@@ -1,4 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="390" height="844" viewBox="0 0 390 844" role="img" aria-label="设备配对：指纹前 8 位与如实同步状态">
+<!-- ⛔ **本稿已作废**（2026-10-14 ✓）：画的是「配对**指纹前 8 位**」＋大字 `3F 9A 0C 7E` ✗ —— owner 2026-10-14 给了新参考图 ⇒ **口径改为「20 位对码」**（5 组 × 4 位 · 竖排 5 行 ✓）。
+     ⭐ 现行依据：`docs/plans/mobile/mockups/2026-10-14-owner-mobile-reference.png`（已收进仓 ✓）
+     与 `docs/plans/mobile/2026-10-08-mobile-spec.md` §4.8（已改指新图 ✓）。⛔ 本文件**保留** ✗（可追溯 ✓）。 -->
 <title>设备配对：指纹前 8 位与如实同步状态</title>
 <style>
 text{font-family:-apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;}
