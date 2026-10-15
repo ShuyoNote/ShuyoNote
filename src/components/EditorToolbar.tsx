@@ -11,7 +11,7 @@ import { useViewStore } from "../store/view";
 import { useTemplates } from "../store/templates";
 import { toast } from "../store/toast";
 import { HistoryPanel } from "./HistoryPanel";
-import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon, MicIcon } from "./icons";
+import { DownloadIcon, FileCodeIcon, PrintIcon, SearchIcon, UploadIcon, ContentWidthIcon, TemplateIcon, SendIcon, ListIcon, CommentIcon, BellIcon, MicIcon, CopyIcon } from "./icons";
 import { useSpeechInput } from "../editor/useSpeechInput";
 import { interimBubbleStyle } from "../lib/speechInput";
 import { useRightPanel } from "../store/rightPanel";
@@ -22,6 +22,8 @@ import { PluginMenuItems } from "./PluginMenuItems";
 import { docHtml, printDoc } from "../lib/print";
 import { inlineExportMedia } from "../lib/exportInline";
 import { renderExportMermaid } from "../lib/exportMermaid";
+import { exportPageToMarkdown } from "../lib/exportMarkdown";
+import { docJsonOfPage } from "../lib/docContent";
 
 /**
  * 「发布到社区」要的字段。
@@ -113,7 +115,11 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const toggleWidth = () =>
     setContentWidth(contentWidth === "full" ? "centered" : "full");
 
-  const exportMarkdown = () => {
+  /**
+   * ⭐ **复制** Markdown 到剪贴板（原来这一条挂着「导出为 Markdown」的名字 ✗ —— 2026-10-15 改名）。
+   * 与下面那条"存成文件"分开：这条给"我要粘到别处"，那条给"我要一个文件"。
+   */
+  const copyMarkdown = () => {
     if (!editor) return;
     editor.update(() => {
       const markdown = $convertToMarkdownString(SHUYONOTE_TRANSFORMERS);
@@ -122,6 +128,26 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
         .then(() => toast("已复制 Markdown 到剪贴板", "success"))
         .catch(() => toast("复制失败", "error"));
     });
+  };
+
+  /**
+   * ⭐⭐ **2026-10-15（owner：「添加一个直接导出 Markdown 文件的功能」）**：
+   * 把当前这一页**直接存成 `.md` 文件**（保存对话框里自己选存到哪）。
+   *
+   * ⚠️ 内容取**页面快照**（`api.getPage`）而不是编辑器的实时状态：与「导出 HTML/PDF」取标题、
+   * 「发布到社区」取正文同一条做法 ✓，而且 Markdown 的转换必须走
+   * `lib/exportMarkdown.ts` 那一份（列块展开在里面，否则列里的内容整块丢 ✗）。
+   * ⚠️ 取消 ⇒ 如实说"已取消"，⛔ 不报成功 ✗。
+   */
+  const exportMarkdownFile = async () => {
+    try {
+      const page = await api.getPage(pageId);
+      // 正文经 `docContent.ts` 那一层取（⛔ 不在组件里写那个存储列名 ✗ —— 门禁只减不增）
+      const msg = await exportPageToMarkdown({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
+      toast(msg, msg.startsWith("已取消") ? "info" : "success");
+    } catch (e) {
+      toast(`导出失败：${e}`, "error");
+    }
   };
 
   const exportHtml = async () => {
@@ -338,7 +364,11 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             >
               <BellIcon /> {t("editor.notifications")}
             </button>
-            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportMarkdown(); }} title={t("editor.exportMarkdown")}>
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); copyMarkdown(); }} title={t("editor.copyMarkdown")}>
+              <CopyIcon /> {t("editor.copyMarkdown")}
+            </button>
+            {/* ⭐ 2026-10-15（owner）：**直接存成 .md 文件**（原来这一格只是复制剪贴板 ✗）。 */}
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); void exportMarkdownFile(); }} title={t("editor.exportMarkdown")}>
               <UploadIcon /> {t("editor.exportMarkdown")}
             </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title={t("editor.exportHtml")}>
