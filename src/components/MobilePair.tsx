@@ -44,11 +44,17 @@ export function MobilePair() {
   } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  /** 返回：回首页（与 03／04／10 同一处置 ✓，不新造第二种口径 ✓）。 */
-  const goHome = useCallback(() => setScreen("home"), [setScreen]);
+  /**
+   * 返回：**回来处** ✓（阶段 3 修 —— 原先是**写死** `home` ✗：从设置那行进来的也会被丢回首页 ✓）。
+   *
+   * ⭐ 来处由 `mobileNav` 的 `cameFrom` 自动记 ✓（⛔ 这里不另存一份 ✗）；兜底 `home` ✓（⛔ 不崩 ✗）。
+   * ⚠️ 从**本屏内**进「首次配对」时，来处同样是本屏 ✓ ⇒ 返回回「设备直连」✓（⛔ 不是首页 ✗）。
+   */
+  const cameFrom = useMobileNav((s) => s.cameFrom);
+  const goBack = useCallback(() => setScreen(cameFrom ?? "home"), [setScreen, cameFrom]);
 
   // ⭐ 安卓返回键：直连返回栈底层（与其余几张移动屏同一处置 ✓）。
-  useEffect(() => pushOverlay("mobile-pair", goHome), [goHome]);
+  useEffect(() => pushOverlay("mobile-pair", goBack), [goBack]);
 
   // 读数：一处取（`lan_status` ✓）—— ⛔ 不自己算"档位"、不按地址形状猜 ✗。
   useEffect(() => {
@@ -72,7 +78,8 @@ export function MobilePair() {
   return (
     <div className="mshell mpair" data-testid="mobile-pair">
       <header className="mpair-head">
-        <button className="mpair-back" onClick={goHome} aria-label="返回首页">
+        {/* ⭐ 阶段 3：文案**不再写"返回首页"** ✗ —— 现在是回**来处** ✓（设置那行进 ⇒ 回设置 ✓；首页进 ⇒ 回首页 ✓）。 */}
+        <button className="mpair-back" onClick={goBack} aria-label="返回">
           ‹
         </button>
         <span className="mpair-head-title">设备配对 · 同步</span>

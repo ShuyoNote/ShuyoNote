@@ -18,10 +18,21 @@ export type MobileScreen = "home" | "capture" | "search" | "pair" | "settings";
 
 interface MobileNavState {
   screen: MobileScreen;
+  /**
+   * ⭐ **上一屏**（阶段 3 加 ✓）：供"返回"回到**来处** ✓（⛔ 不是写死的首页 ✗）。
+   *
+   * ⚠️ 它**不是第二份导航状态** ✗ —— 就是 `screen` 的伴生字段 ✓（同一份 state ✓、同一个 store ✓），
+   *    而且**由 store 自己维护** ✓ ⇒ ⛔ 不需要每个入口各写一遍"我从哪来" ✗
+   *    （`MobileSettings` 那行 ✓ 与首页「同步」胶囊 ✓ 天然各带来处 ✓）。
+   * ⚠️ 兜底：`null` ⇒ 调用方回 `home` ✓（⛔ 不崩 ✗）。
+   */
+  cameFrom: MobileScreen | null;
   setScreen: (screen: MobileScreen) => void;
 }
 
 export const useMobileNav = create<MobileNavState>((set) => ({
   screen: "home",
-  setScreen: (screen) => set({ screen }),
+  cameFrom: null,
+  // ⭐ 切到**不同**的屏时记下上一屏 ✓；重复 set 同一屏 ⇒ 不覆盖来处 ✓（免得把自己的来处冲掉 ✗）。
+  setScreen: (screen) => set((s) => ({ screen, cameFrom: s.screen === screen ? s.cameFrom : s.screen })),
 }));
