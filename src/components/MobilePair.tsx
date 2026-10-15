@@ -4,8 +4,6 @@ import { pushOverlay } from "../lib/overlayStack";
 import { peerIdentityLine } from "../lib/peerIdentity";
 import { useMobileNav } from "../store/mobileNav";
 import { useSpaceStore } from "../store/space";
-// ⭐ 阶段 3：自动同步那格的**唯一判定处** ✓（与 `App.tsx:73` 同源 ✓ ⇒ ⛔ 不抄第二份判定 ✗）。
-import { AUTO_SYNC_CHANGED_EVENT, effectiveAutoSyncMs } from "../lib/syncMode";
 import type { NearbyPeer } from "../lib/platform/commands";
 
 /**
@@ -85,18 +83,6 @@ export function MobilePair() {
    *    （`SpacePrivacySection.tsx:176` ✓）⇒ 渲染它就是**假按钮** ✗（与 08 屏那条同一口径 ✓）。
    */
   const spaces = useSpaceStore((s) => s.spaces);
-
-  /**
-   * ⭐ 绿卡那格的「**自动同步中**」✓ —— 走 `syncMode.ts` 的**同一个**判定 ✓
-   *    （与 `App.tsx:574/579` 同形：初值 `effectiveAutoSyncMs()` ✓ ＋ 订阅 `AUTO_SYNC_CHANGED_EVENT` ✓）。
-   * ⚠️ 判据：**`> 0` 才显示** ✗（`0` ＝ 关 ⇒ 不写那一句 ✓）；⛔ 绝不恒真 ✗。
-   */
-  const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
-  useEffect(() => {
-    const onChanged = () => setAutoSyncMs(effectiveAutoSyncMs());
-    window.addEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(AUTO_SYNC_CHANGED_EVENT, onChanged);
-  }, []);
   const unencryptedCount = spaces.filter((sp) => !sp.encrypted_on_disk).length;
 
   return (
@@ -110,33 +96,6 @@ export function MobilePair() {
       </header>
 
       <div className="mpair-scroll">
-        {/**
-          * ⭐ 绿卡（照 owner 2026-10-14 参考图 ✓）—— ⭐ **只拼证得出来的词** ✓：
-          *    `status.enabled === true` ⇒「在线」✓；`autoSyncMs > 0` ⇒「自动同步中」✓。
-          * ⛔ **不写「已配对」** ✗ —— ⭐ 已核清它**没有出处** ✓：`LanStatus` 只有
-          *    `enabled/peers/kind/line/mesh/nearby` ✓、`MeshPanelScope` 只有 `wsId/name/kind/announced` ✓
-          *    （`peers` 是"同网段听得见的台数" ✗ ≠ 已配对 ✓；账本 `mesh_paired_devices` 在
-          *    `db.rs:201/253` ✓ 但**没有对前端的命令** ✗）⇒ ⛔ 不渲染一句证不出来的状态 ✗。
-          * ⚠️ 两个词都缺 ⇒ **整行不渲染** ✓（⛔ 不留一个只有 ● 的空壳 ✗）。
-          */}
-        {(() => {
-          const words = [status?.enabled ? "在线" : null, autoSyncMs > 0 ? "自动同步中" : null].filter(
-            (w): w is string => w !== null,
-          );
-          if (words.length === 0) return null;
-          return (
-            <div className="mpair-ok" role="status" data-testid="mpair-online-card">
-              <span className="mpair-ok-line">
-                <span className="mpair-ok-dot" aria-hidden>
-                  ●
-                </span>
-                {words.join(" · ")}
-              </span>
-              {/* 副文案：**纯文案** ✓ 照图抄 ✓（⛔ 不承载任何读数 ✗）。 */}
-              <span className="mpair-ok-sub">配对一次之后，不用再点任何东西</span>
-            </div>
-          );
-        })()}
         {/* ⭐ 黄条（照 owner 2026-10-14 参考图 ✓）：只有**真有问题**时才出现 ✓（`N === 0` ⇒ 不渲染 ✗）。 */}
         {unencryptedCount > 0 && (
           <div className="mpair-warn" role="note" data-testid="mpair-unencrypted-warn">
