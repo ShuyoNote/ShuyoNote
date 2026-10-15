@@ -19715,6 +19715,19 @@ p:has(> .editor-drawing-container) {
   width: 100%;
   max-width: none;
 }
+/* ⭐ **2026-10-15（活体实测查出"放大不变大"的真因）**：上面那条 `width:100%` **一直没生效** ✗ ——
+   因为 `.pdf-annot` 是**列向 flex ＋ `align-items:center`**（见上面 `annotation canvas` 那段），
+   而 `.pdf-annot-stage` 是它的 flex item ⇒ 宽度由**内容**（＝`<img>` 的固有尺寸＝光栅的像素宽）决定，
+   `width:100%` 解在 shrink-to-fit 的父级上就等于 `auto` ✗。
+   实测（3152×5752 pt 那篇，250%）：页块 **7880 px**、`.pdf-annot-stage` 只有 **2564 px**
+   （＝光栅自然宽）⇒ 页看着**没变大**，只有页块在长（右/下方留白）✗ —— 用户那句"放大不动"就是这个。
+   这里把 stage 铺满页块宽 ⇒ `width:100%` 才真的拉伸 ✓。
+   ⚠️ 只改这一条（⛔ 不动 `.pdf-annot` 的 `align-items` ✗ —— 那一层还管着页内工具栏的居中）。
+   ⚠️ 拉伸的是**底图**：巨幅页的底图受 12 Mpx 预算封顶 ⇒ 放大后略糊 ✓，
+   可见区域由 **D2 的瓦片**补清 ✓（`PdfReader.tsx` 的 D2/D3 注释）。 */
+.pdf-continuous-page .pdf-annot-stage {
+  width: 100%;
+}
 .pdf-continuous-spacer {
   /* 占位：视口外未挂载的页在滚动轴上占位，保持整段可滚。 */
   width: 1px;
