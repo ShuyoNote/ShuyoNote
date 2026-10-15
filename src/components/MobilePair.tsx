@@ -78,20 +78,6 @@ export function MobilePair() {
   const nearby = status?.nearby ?? [];
 
   /**
-   * ⭐ 【C1】**分组**（照 owner 2026-10-14 参考图 ✓）：已配对 ① → **要重配** ② → 附近 ③。
-   *
-   * ⚠️ 分组判据＝**本机认过的那份名单** ✓（`pairedIds`，取自 `api.meshSetConfig(activeId, null, null)` ✓，
-   *    与 `SyncPanel.tsx:305-309` **同一个命令** ✓）—— ⛔ **不自己再算一遍**"算不算配上了" ✗
-   *    （口径逐字在 `SyncPanel.tsx:1485-1487` ✓：「取**本机认过的那份名单** ✓…⛔ 不自己再算一遍 ✗
-   *      （两份真相迟早各说各话 ✓）」）。
-   * ⚠️ ⭐ 用**排序**实现 ⇒ ⛔ **不新增／不删除任何结构** ✗（那是 C2/C3 的事 ✓）；
-   *    分不进任何一档的 ⇒ 第③组「附近」✓（⛔ 不丢设备 ✗）。
-   */
-  const nearbyGroup = (p: NearbyPeer): 0 | 1 | 2 =>
-    p.key_changed === true ? 1 : pairedIds.includes(p.device_id) ? 0 : 2;
-  const nearbyOrdered = [...nearby].sort((x, y) => nearbyGroup(x) - nearbyGroup(y));
-
-  /**
    * ⭐ 「本机有 N 个空间**没开加密**」（图上黄条的 N ✓）—— ⛔ **不新造后端** ✗：
    *    直接用 store 里那份空间表算 ✓（`WorkspaceMeta.encrypted_on_disk` ✓，逐字确认于 `src/types.ts` ✓）。
    * ⚠️ `N === 0` ⇒ **整条不渲染** ✓（没问题的机器不该看到警告 ✓）。
@@ -214,7 +200,7 @@ export function MobilePair() {
             <p className="mpair-line mpair-dim">这个网络里还没发现别的设备。</p>
           ) : (
             <ul className="mpair-list">
-              {nearbyOrdered.map((p, i) => (
+              {nearby.map((p, i) => (
                 <li key={`${p.device_id}-${i}`} className="mpair-item">
                   <span className="mpair-item-main">
                     {/* ⭐ 「设备名 ＋ 短标识」；对端**没报**短标识 ⇒ 如实写「对方没报短标识」✓（⛔ 不回落 ✗） */}
@@ -226,21 +212,8 @@ export function MobilePair() {
                              ⛔ **不**拿它做判据／文案 ✗（⛔ 桌面侧维持不显示 ✗）。
                           ⚠️ 字段注记写明**不含端口** ✓ ⇒ 原样出 ✓（⛔ 不加端口 ✗）；⛔ 取不到 ⇒ 整段不写 ✗。 */}
                       {p.addr ? `${p.addr} · ` : ""}
-                      {/* ⭐ 【C1】状态文案照图 ✓ —— ⚠️ 每句都要**有出处** ✗：
-                          ② 钥匙变了 ＝ 只有 `key_changed === true` ✓（`SyncPanel.tsx:1120` 那条口径 ✓：
-                             「只有 `key_changed === true` 才算…**读不到（`null`）与 `false` 一律不算** ✓」）；
-                          ① 已配对 ＝ 在 `pairedIds`（本机认过的名单 ✓）里；
-                          ③ 其余 ＝「未配对」✓。
-                          ⛔ **「正在广播」那半句不写** ✗ —— `NearbyPeer.reason` 的取值里核不到那一档
-                             （`"ok"`／`"no_secret"`… ✓）⇒ ⛔ 不写一个没有出处的状态 ✗。 */}
-                      {p.key_changed === true
-                        ? "对方换过钥匙 ⇒ 旧信任已失效"
-                        : pairedIds.includes(p.device_id)
-                          ? p.serves_current
-                            ? "与当前空间相关"
-                            : "与当前空间无关"
-                          : "未配对"}
-                      {p.invitable && p.key_changed !== true ? " · 可直接连接" : ""}
+                      {p.serves_current ? "与当前空间相关" : "与当前空间无关"}
+                      {p.invitable ? " · 可直接连接" : ""}
                     </span>
                   </span>
                   {/* ⛔ 信任/配对后端尚未定形状 ⇒ **明标未接** ✗（禁用 ＋ title 写原因 ✓，⛔ 不做假按钮 ✗） */}
