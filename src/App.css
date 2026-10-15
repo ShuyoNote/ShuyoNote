@@ -25764,6 +25764,33 @@ body.is-plugin-panel-open .main {
   font-size: 12px;
   color: var(--text-dim);
 }
+/* ⭐ 【C2】设备卡上的小胶囊（照 owner 2026-10-14 参考图 ✓）。
+   ⚠️ 颜色一律用**仓里既有 token** ✓（照 `.sync-status.is-err`／`.is-ok` 那一族 ✓）
+      —— ⛔ 不写死色值 ✗（深色主题会不跟 ✓，本仓为此吃过亏 ✓）。 */
+.mpair-item-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.mpair-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mpair-pill.is-ok {
+  background: var(--cat-green-soft);
+  color: var(--success);
+}
+.mpair-pill.is-bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .mpair-list {
   margin: 0;
   padding: 0;

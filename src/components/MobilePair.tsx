@@ -242,6 +242,25 @@ export function MobilePair() {
                           : "未配对"}
                       {p.invitable && p.key_changed !== true ? " · 可直接连接" : ""}
                     </span>
+                    {/* ⭐ 【C2】两颗小胶囊（照 owner 2026-10-14 参考图 ✓）—— ⚠️ 都**只在有出处时**渲染 ✗：
+                        ② 红胶囊「⊘ 钥匙不匹配」⇒ ⭐ **只有 `key_changed === true`** ✗
+                           （`null`（读不到）／`false` **一律不渲染** ✓ —— 口径逐字在 `SyncPanel.tsx:1120`：
+                            「只有 `key_changed === true` 才算"钥匙变了"✗…**读不到（`null`）与 `false` 一律不算** ✓」）；
+                        ① 绿胶囊「✓ 自动同步」⇒ `autoSyncMs > 0` **才**渲染 ✗（⛔ 不恒真 ✗），
+                           且只挂在**已配对**那一档上 ✓（与「配对一次之后…」那句同指 ✓）。
+                        ⛔ 两颗都**不承载动作** ✗（本轮不新增按钮 ✓ —— 三颗动作是面板内部流程 ✓，见 C1 那份记录 ✓）。 */}
+                    <span className="mpair-item-pills">
+                      {p.key_changed === true ? (
+                        <span className="mpair-pill is-bad" data-testid="mpair-pill-keychanged">
+                          ⊘ 钥匙不匹配
+                        </span>
+                      ) : null}
+                      {autoSyncMs > 0 && pairedIds.includes(p.device_id) ? (
+                        <span className="mpair-pill is-ok" data-testid="mpair-pill-autosync">
+                          ✓ 自动同步
+                        </span>
+                      ) : null}
+                    </span>
                   </span>
                   {/* ⛔ 信任/配对后端尚未定形状 ⇒ **明标未接** ✗（禁用 ＋ title 写原因 ✓，⛔ 不做假按钮 ✗） */}
                   <button
