@@ -91,6 +91,30 @@ export function MobilePair() {
    *    （与 `App.tsx:574/579` 同形：初值 `effectiveAutoSyncMs()` ✓ ＋ 订阅 `AUTO_SYNC_CHANGED_EVENT` ✓）。
    * ⚠️ 判据：**`> 0` 才显示** ✗（`0` ＝ 关 ⇒ 不写那一句 ✓）；⛔ 绝不恒真 ✗。
    */
+  /**
+   * ⭐ 【B】**已配对名单** ✓ —— 与 `SyncPanel.tsx:305-309` 取的是**同一个命令** ✓
+   *    （⭐ 那是 **`api.meshSetConfig(activeId, null, null)`** ✓ ＝ **写命令的 `null` 只读形** ✓，
+   *     原注释逐字：「两个参数都给 `null` ⇒ **不写任何东西** ✓（只取读数 ✓）」）。
+   *    ⛔ **不自己再算一遍**"算不算配上了" ✗（口径逐字在 `SyncPanel.tsx:1485-1487`：
+   *    「取**本机认过的那份名单** ✓…⛔ 不自己再算一遍"算不算配上了"✗（两份真相迟早各说各话 ✓）」）。
+   * ⚠️ 读不到（还没配／读失败）⇒ **空名单** ✓ ⇒ 绿卡那句「已配对」**不写** ✗（⛔ 不假装有设备 ✗）。
+   */
+  const [pairedIds, setPairedIds] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api
+      .meshSetConfig(activeId ?? null)
+      .then((st) => {
+        if (alive) setPairedIds((st.paired ?? []).map((d) => d.deviceId));
+      })
+      .catch(() => {
+        if (alive) setPairedIds([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [activeId]);
+
   const [autoSyncMs, setAutoSyncMs] = useState(() => effectiveAutoSyncMs());
   useEffect(() => {
     const onChanged = () => setAutoSyncMs(effectiveAutoSyncMs());
@@ -120,7 +144,13 @@ export function MobilePair() {
           * ⚠️ 两个词都缺 ⇒ **整行不渲染** ✓（⛔ 不留一个只有 ● 的空壳 ✗）。
           */}
         {(() => {
-          const words = [status?.enabled ? "在线" : null, autoSyncMs > 0 ? "自动同步中" : null].filter(
+          const words = [
+            // ⭐ 【B】出处＝`duList.length > 0` ✓（引 `SyncPanel.tsx:1141-1148` ✓ —— ⭐ 尤其那句
+            //    「N 来自 `duList` ✓，⛔ **不是** `lanStatus.peers`（那是**附近**的台数 ✗）」）。
+            pairedIds.length > 0 ? "已配对" : null,
+            status?.enabled ? "在线" : null,
+            autoSyncMs > 0 ? "自动同步中" : null,
+          ].filter(
             (w): w is string => w !== null,
           );
           if (words.length === 0) return null;
@@ -176,6 +206,12 @@ export function MobilePair() {
                     {/* ⭐ 「设备名 ＋ 短标识」；对端**没报**短标识 ⇒ 如实写「对方没报短标识」✓（⛔ 不回落 ✗） */}
                     <span className="mpair-item-who">{peerIdentityLine(p.device_name, p.short_id)}</span>
                     <span className="mpair-item-meta">
+                      {/* ⭐ 阶段 3（owner 2026-10-14 移动参考图 ✓）：设备卡 meta 行**显示**对端来源地址 ✓。
+                          ⚠️ 口径见 `docs/specs/2026-09-29-nearby-devices-spec.md` §3.4（同刀已改 ✓）：
+                             它是"**最后一次听到的来源**"、**可能过期** ✗ ⇒ ⭐ 只当**辅助信息** ✓，
+                             ⛔ **不**拿它做判据／文案 ✗（⛔ 桌面侧维持不显示 ✗）。
+                          ⚠️ 字段注记写明**不含端口** ✓ ⇒ 原样出 ✓（⛔ 不加端口 ✗）；⛔ 取不到 ⇒ 整段不写 ✗。 */}
+                      {p.addr ? `${p.addr} · ` : ""}
                       {p.serves_current ? "与当前空间相关" : "与当前空间无关"}
                       {p.invitable ? " · 可直接连接" : ""}
                     </span>
