@@ -25681,6 +25681,36 @@ body.is-plugin-panel-open .main {
 }
 /* ⭐ 阶段 3（owner 2026-10-14 参考图）：本机有空间没开加密时的**警示条** ✓。
    ⚠️ 只做"说明"✓，⛔ 不带任何动作（目的地是桌面专属 ⇒ 假按钮 ✗）。 */
+/* ⭐ 阶段 3（owner 2026-10-14 参考图）：绿卡**两行**（短句 ＋ 副文案 ✓，⛔ 不拼长句 ✗）。
+   ⚠️ 配色用**仓里既有 token** ✓（照 `.sync-status.is-ok` ✓）—— ⛔ 不写死色值 ✗（深色主题会不跟 ✓）。 */
+.mpair-ok {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--cat-green);
+  border-radius: var(--radius-sm);
+  background: var(--cat-green-soft);
+  color: var(--success);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.mpair-ok-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.mpair-ok-dot {
+  font-size: 10px;
+  line-height: 1;
+}
+.mpair-ok-sub {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
 .mpair-warn {
   display: flex;
   align-items: flex-start;
