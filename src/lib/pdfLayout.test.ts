@@ -181,4 +181,13 @@ describe("2026-10-15：显示位图按像素预算削（owner 选「先 F 再 D�
     expect(displayRasterScale(1.7, 0, 0, 2)).toBeCloseTo(1.7, 3);
     expect(displayRasterScale(1.7, NaN, 100, 2)).toBeCloseTo(1.7, 3);
   });
+  it("⭐ 2026-10-15 调过预算：5 Mpx ⇒ 12 Mpx（削像素换不来速度 ✗，只当荒谬尺寸兜底 ✓）", () => {
+    expect(DISPLAY_PIXEL_BUDGET).toBe(12_000_000);
+    // ⭐ 普通 A4 仍然**永远不会被削** ✓（预算 4.97× 、上界 2× ⇒ 取 2×）
+    expect(displayRasterScale(4, 612, 792, 2)).toBe(2);
+    // ⭐ 巨幅页仍然被兜住 ✓（不吃满 600 MB）
+    const s = displayRasterScale(2.5, 3152, 5752, 2);
+    expect(3152 * 5752 * s * s).toBeLessThanOrEqual(DISPLAY_PIXEL_BUDGET + 1);
+  });
+
 });
