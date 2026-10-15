@@ -1756,9 +1756,13 @@ trailer
   const sPct = layoutMod.resolveZoomScale({ mode: "pct", pct: 150 }, refW, refH, 800, 1000);
   assert("resolve pct = pct/100", Math.abs(sPct - 1.5) < 0.001, `s=${sPct}`);
   assert("resolve clamps to max", layoutMod.resolveZoomScale({ mode: "pct", pct: 99999 }, refW, refH, 800, 1000) === layoutMod.MAX_SCALE, `s=${layoutMod.resolveZoomScale({ mode: "pct", pct: 99999 }, refW, refH, 800, 1000)}`);
-  // 阶梯从大到小，顶=400（MAX_SCALE 上限，真实生效），底=50（MIN_SCALE），且全体在 [MIN,MAX] 内。
+  // 阶梯从大到小，顶=400（MAX_SCALE 上限，真实生效），底=**25**（MIN_SCALE=0.25），且全体在 [MIN,MAX] 内。
+  // ⚠️ 2026-10-15 改准：这条原来写着 bottom=50 —— 而梯子早已按 owner 的要求补了 **33／25** 两档
+  //    （`pdfLayout.ts`：`ZOOM_LADDER = [400, …, 50, 33, 25]` ＋ `MIN_SCALE = 0.25`，带日期注释：
+  //    "原来最低只到 50 ⇒ 遇到超宽图就再也缩不下去"）⇒ 断言是**过期的**，不是产品错了 ✗。
+  //    实测：改前 `pnpm verify` 里 smoke-web 364/365 红，且它是**我们这批改动之前**就红的（与本次发版无关）。
   const _l = layoutMod.ZOOM_LADDER;
-  assert("ZOOM_LADDER top=400 bottom=50", _l[0] === 400 && _l[_l.length - 1] === 50, `top=${_l[0]} bottom=${_l[_l.length - 1]}`);
+  assert("ZOOM_LADDER top=400 bottom=25", _l[0] === 400 && _l[_l.length - 1] === 25, `top=${_l[0]} bottom=${_l[_l.length - 1]}`);
   assert("ZOOM_LADDER every value in [MIN,MAX]", _l.every((p) => p >= layoutMod.MIN_SCALE * 100 && p <= layoutMod.MAX_SCALE * 100), `ladder=${JSON.stringify(_l)}`);
   // ± 步进：从 100% 放大到上一档（125%），缩小到下一档（75%）。
   const up = layoutMod.stepZoom(1, 1);
