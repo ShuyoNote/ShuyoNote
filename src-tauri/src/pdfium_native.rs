@@ -416,7 +416,6 @@ pub fn render_page_owned(
 ///
 /// ⚠️ **矩形会被夹到页面内**（页面外的部分本来也画不出来）；整个矩形都在页面外时显式报错，
 /// 不给"一张空图"。
-#[allow(dead_code)] // D1a 收据：函数先落地并自带判据（D1b 给渲染命令加 rect 入参后即可去掉）。删除条件 = 若最终不做 D，则连本函数与它的判据一起删。
 pub fn render_page_rect(
     cache_key: &str,
     bytes: Vec<u8>,
