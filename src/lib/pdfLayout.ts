@@ -134,6 +134,138 @@ export function displayRasterScale(scale: number, pageW: number, pageH: number, 
  *  （连同「适合页面」一起被 `MIN_SCALE` 夹住 ✓ —— 见上面那段注释 ✓）。 */
 export const ZOOM_LADDER = [400, 300, 250, 200, 150, 125, 100, 75, 50, 33, 25];
 
+// ── D2 / D3（2026-10-15，owner：「pdf 放大很卡」的 D 一步）────────────────────────
+//
+// 读数（真机分段埋点 ＋ D1 的对照实验）：`renderPdfPage` 的「命令往返」821 ms 里纯光栅化只占
+// ≈106 ms ⇒ **约 715 ms 花在把载荷送过去**，而且**与字节数成正比**（≈0.55 ms/KB）。
+// ⇒ 只把**看得见的那一条**送过去，载荷就按"可见带占整页的比例"缩小 ✓（这是 D 的全部要点）。
+//
+// 分工：
+//   · **D3**：整页（底图）的倍率封到 **1×**（[`baseRasterScale`]）⇒ >100% 不再出整页高清；
+//   · **D2**：可见带按**真倍率**出（[`tileRasterScale`]）⇒ 那块位图小，像素预算管得住，
+//     所以它可以比旧的 2× 封顶**更清楚**（上限 `MAX_SCALE`）✓。
+//
+// ⚠️ 三条口径必须一致，⛔ 别混：
+//   ① [`visibleBandPt`] 返回的是**页面 pt、左上角为原点**（＝ Rust `render_page_rect` 吃的口径 ✓）；
+//   ② 它只吃**已经量好的 CSS 数字**（DOM 里量出来的 ✓）⇒ 能单测，且不掺任何 DOM 假设 ✓；
+//   ③ 贴回页面时用**百分比**（`topPct = topPt / pageH × 100`，见 PdfReader 的 `tileStyle`）——
+//      这样"请求哪一块"和"贴在哪一块"用的是**同一个 pt 区间**，不会各算一套而贴歪 ✓。
+
+/**
+ * ⭐ **D3**：**底图**（整页）的显示倍率上限 —— 放大到 >100% 时底图**不再跟着放大** ✓。
+ *
+ * 它取代了原来的 `DISPLAY_RASTER_CAP = 2`（整页位图封顶 2×）：
+ *   · 旧口径：>200% 看到的是"放大的位图"（略糊 ✓），而且**每次缩放都要重出一整页** ✗；
+ *   · 新口径：整页只到 1×（一次，之后缩放**不必重出** ✓），高清由可见带负责 ✓。
+ * ⚠️ ≤100% 时两者**完全一致**（`min(scale, 1) === scale`）⇒ 缩小档位的行为一个字节都没变 ✓。
+ */
+export const BASE_RASTER_CAP = 1;
+
+/** D3：底图该用多大倍率（纯函数 ⇒ 好判）。`scale ≤ 1` 时与 [`displayRasterScale`] 逐值相同。 */
+export function baseRasterScale(
+  scale: number,
+  pageW: number,
+  pageH: number,
+  cap: number = BASE_RASTER_CAP,
+): number {
+  return displayRasterScale(Math.min(scale, cap), pageW, pageH, cap);
+}
+
+/**
+ * D2：**可见带**该用多大倍率（纯函数）。
+ *
+ * 与底图的关键差别：位图只覆盖一条带子 ⇒ 预算按**这条带自己的 pt 面积**算 ✓
+ * （`displayRasterScale` 里的 `sqrt(预算 / px)` 就是这么用的 ✓）⇒ 小带子能拿到 `MAX_SCALE` ✓。
+ * ⚠️ 上限仍是 `MAX_SCALE`（4×）—— 与 `resolveZoomScale` 的上界同一个数，不发明第三个上限 ✓。
+ */
+export function tileRasterScale(scale: number, bandW: number, bandH: number): number {
+  return displayRasterScale(scale, bandW, bandH, MAX_SCALE);
+}
+
+/**
+ * ⭐ **D2 的承重几何**：算出"这一页**真正看得见**的那块矩形"（页面 pt、左上角为原点）。
+ *
+ * 为什么是**两个轴**都要裁（活体实测 2026-10-15 才发现 ✗）：只裁纵向（一条"横带"）在**放大**时
+ * 白送掉大头 —— 200% 下一张 1427 pt 宽的横向流程图有 **一半宽度在视口外**，那条"带子"仍是
+ * **23% 的页面**；而按矩形裁是 **6%**（400% 时）⇒ 载荷与过桥成本直接差 4 倍 ✓。
+ * ⛔ 而 D 的全部要点就是"载荷按面积缩" ✓（读数：过桥 ≈ 0.55 ms/KB ✓）。
+ *
+ * 为什么只吃**量好的数字**、单独抽出来单测：**贴歪比糊更糟** ✗ —— 这块矩形的 pt 区间同时决定
+ * "请求哪一块"和"贴回哪里"（见文件头那段 ③ ✓），错一格就是画面上一块错位的 patch。
+ * 所以它不碰 DOM，并且**去程/回程用同一个 `ptPerCss`** ✓。
+ *
+ * @param imgLeft/imgTop 页图像左上角相对滚动视口左上角的 CSS 坐标（可负：已经滚出视口 ✓）
+ * @param imgWidth/imgHeight 页图像在屏上的 CSS 尺寸（> 0）
+ * @param pageW/pageH 该页的 **pt** 尺寸（> 0）
+ * @param viewWidth/viewHeight 视口的 CSS 尺寸（> 0）
+ * @param marginCss 四周各留多少 CSS 余量（滚一点不必重出 ✓）；⛔ 会被夹在页面内
+ * @returns `null` ⇒ 这块与视口**不相交**，或参数退化（⇒ **不请求**，⛔ 而不是请求一个退化矩形）
+ */
+export function visibleRectPt({
+  imgLeft,
+  imgTop,
+  imgWidth,
+  imgHeight,
+  pageW,
+  pageH,
+  viewWidth,
+  viewHeight,
+  marginCss = 0,
+}: {
+  imgLeft: number;
+  imgTop: number;
+  imgWidth: number;
+  imgHeight: number;
+  pageW: number;
+  pageH: number;
+  viewWidth: number;
+  viewHeight: number;
+  marginCss?: number;
+}): { xPt: number; yPt: number; wPt: number; hPt: number } | null {
+  if (
+    ![imgLeft, imgTop, imgWidth, imgHeight, pageW, pageH, viewWidth, viewHeight].every((v) => Number.isFinite(v)) ||
+    imgWidth <= 0 ||
+    imgHeight <= 0 ||
+    pageW <= 0 ||
+    pageH <= 0 ||
+    viewWidth <= 0 ||
+    viewHeight <= 0
+  ) {
+    return null;
+  }
+  // 视口在"图片坐标系"里的两条区间：视口左上 = (0, 0)，右下 = (viewWidth, viewHeight)。
+  const overlapLeft = Math.max(imgLeft, 0);
+  const overlapRight = Math.min(imgLeft + imgWidth, viewWidth);
+  const overlapTop = Math.max(imgTop, 0);
+  const overlapBottom = Math.min(imgTop + imgHeight, viewHeight);
+  if (!(overlapRight > overlapLeft) || !(overlapBottom > overlapTop)) return null;
+
+  // 两个轴**共用一个换算比**（图片是等比铺开的 ✓：`imgWidth/pageW === imgHeight/pageH`）。
+  const ptPerCss = pageW / imgWidth;
+  const margin = Number.isFinite(marginCss) && marginCss > 0 ? marginCss : 0;
+  const xPt = Math.max(0, (overlapLeft - imgLeft - margin) * ptPerCss);
+  const yPt = Math.max(0, (overlapTop - imgTop - margin) * ptPerCss);
+  const xEnd = Math.min(pageW, (overlapRight - imgLeft + margin) * ptPerCss);
+  const yEnd = Math.min(pageH, (overlapBottom - imgTop + margin) * ptPerCss);
+  if (!(xEnd > xPt) || !(yEnd > yPt)) return null;
+  return { xPt, yPt, wPt: xEnd - xPt, hPt: yEnd - yPt };
+}
+
+/** 把 [`visibleRectPt`] 的 pt 矩形换算回"相对页图像左上角的 CSS 矩形"（贴回去用它 ✓ 同一套换算）。 */
+export function rectCssFromPt(
+  rect: { xPt: number; yPt: number; wPt: number; hPt: number },
+  pageW: number,
+  imgWidth: number,
+): { leftCss: number; topCss: number; widthCss: number; heightCss: number } {
+  const ptPerCss = pageW / imgWidth;
+  return {
+    leftCss: rect.xPt / ptPerCss,
+    topCss: rect.yPt / ptPerCss,
+    widthCss: rect.wPt / ptPerCss,
+    heightCss: rect.hPt / ptPerCss,
+  };
+}
+
 /** 把缩放模式映射成展示标签（下拉触发器/当前项）。 */
 export function zoomLabel(zoom: ZoomMode): string {
   switch (zoom.mode) {

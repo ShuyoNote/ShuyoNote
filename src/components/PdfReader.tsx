@@ -23,7 +23,8 @@ import { loadAiOutline, saveAiOutline } from "../lib/pdfOutlineStore";
 import { tryConsume } from "../lib/ai/gate";
 import { rebuildOutlineTree } from "../lib/pdfOutlineGen";
 import type { ProviderConfig } from "../lib/ai/llm";
-import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, displayRasterScale, type ZoomMode } from "../lib/pdfLayout";
+import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, baseRasterScale, tileRasterScale, visibleRectPt, type ZoomMode } from "../lib/pdfLayout";
+import type { PdfPageRect } from "../lib/platform/types";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
 import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
@@ -300,8 +301,15 @@ const EYE_MODES: { id: EyeMode; label: string }[] = [
  *    · ⛔ **只管显示** ✗：AI 目录／OCR（`renderPage: (a,i,s) => …` 那一处 ✓）与
  *      「导出批注副本」照旧按**真实倍率**出图 ✓（它们要的是精度 ✓，不是帧率 ✓）。
  *    · 代价：>200% 是"放大的位图" ⇒ 略糊 ✓（换来像素数降一档 ✓）。
+ *
+ * ⛔⭐ **2026-10-15 D2/D3：上面那个 `DISPLAY_RASTER_CAP = 2` 已经拿掉** ✗ —— 它被 D3 取代：
+ *    · **底图（整页）封到 1×**（`pdfLayout.BASE_RASTER_CAP` ✓）⇒ >100% 不再出整页高清 ✓，
+ *      而且**缩放时底图不必重出**（倍率都是 1，缓存键不变 ✓）；
+ *    · **高清只出可见的那一条带子**（`tileRasterScale`，上限 `MAX_SCALE` ✓）⇒ 位图小得多、
+ *      还比原来的 2× 更清楚 ✓（D1 的读数：过桥成本 ∝ 载荷字节数 ⇒ 这条也直接换成了时间 ✓）。
+ *    · ⚠️ ≤100% 时与旧行为**逐值相同**（`baseRasterScale` 就是 `displayRasterScale` ✓）：
+ *      缩小档、适配模式、OCR／导出一个都没变 ✓。判据在 `pdfLayout.test.ts` 的 D2/D3 那一组 ✓。
  */
-const DISPLAY_RASTER_CAP = 2;
 
 async function renderPagePng(
   eng: ReturnType<typeof createPdfjsEngine>,
@@ -321,9 +329,8 @@ async function renderPagePng(
   return eng.renderPageToBlob(pageIndex, scale);
 }
 
-/** 原生（MuPDF）渲染：RGBA8 → 白底画布 → JPEG Blob。 */
-async function renderPageNative(attachmentId: string, pageIndex: number, scale: number): Promise<Blob> {
-  const { bytes, width, height } = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale);
+/** 原生（MuPDF/PDFium）来的 RGBA8 → 白底画布 → JPEG Blob（整页与瓦片**共用这一条** ✓）。 */
+async function rgbaToJpegBlob(bytes: Uint8Array, width: number, height: number): Promise<Blob> {
   // 再挡一道：宽高/字节数不合法时绝不进画布（NaN 会让 WKWebView 抛
   // "Value NaN is outside the range …"，Chrome 则静默画成 0×0）。
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
@@ -359,6 +366,43 @@ async function renderPageNative(attachmentId: string, pageIndex: number, scale: 
   return jpeg ?? canvasToPngBlob(canvas);
 }
 
+/** 原生（MuPDF）渲染：RGBA8 → 白底画布 → JPEG Blob。 */
+async function renderPageNative(
+  attachmentId: string,
+  pageIndex: number,
+  scale: number,
+  rect?: PdfPageRect,
+): Promise<Blob> {
+  const { bytes, width, height } = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale, rect);
+  return rgbaToJpegBlob(bytes, width, height);
+}
+
+/**
+ * ⭐ **D2（2026-10-15）**：只渲染页面上的**一条可见带**（`rect` 用页面 pt、左上角原点 ✓）。
+ *
+ * ⛔ **这条不许退回 pdf.js** ✗ —— 那条路（`web.ts`）没有裁剪入口，会返回**整页**图；
+ *   把它当"一块"贴上去就是**静默错位**（比慢更坏的一类错 ✓）。所以这里不走 `renderPagePng`。
+ *
+ * ⭐ 它还**自证"引擎真照做了"** ✓：返回尺寸必须是 `round(rect.w×scale) × round(rect.h×scale)`
+ *   （＝ D1b 写在 `RenderPdfPageArgs.rect` 上的契约 ✓）。对不上 ⇒ **丢掉这块瓦片**，
+ *   宁可不贴也不贴错 ✓。
+ */
+async function renderTileNative(
+  attachmentId: string,
+  pageIndex: number,
+  scale: number,
+  rect: PdfPageRect,
+): Promise<Blob> {
+  if (!platform.pdfRender.nativeAvailable()) throw new Error("没有原生引擎：不做可见带瓦片");
+  const { bytes, width, height } = await platform.pdfRender.renderPdfPage(attachmentId, pageIndex, scale, rect);
+  const wantW = Math.round(rect[2] * scale);
+  const wantH = Math.round(rect[3] * scale);
+  if (Math.abs(width - wantW) > 1 || Math.abs(height - wantH) > 1) {
+    throw new Error(`引擎没有按 rect 出图（得到 ${width}×${height}，要 ${wantW}×${wantH}）`);
+  }
+  return rgbaToJpegBlob(bytes, width, height);
+}
+
 /** 触发浏览器下载一个 Blob（用于「导出带批注的 PDF 副本」）。 */
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -367,6 +411,22 @@ function downloadBlob(blob: Blob, filename: string): void {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * ⭐ **D2（2026-10-15）**：一页的"可见带高清瓦片"（叠在低清整页图上）。
+ *
+ * 位置一律**百分比**（相对整页图）—— 与请求时的 pt 区间**同一套换算**（见 `pdfLayout` 文件头 ③ ✓），
+ * 所以"请求哪一块、贴回哪里"不会各算一套 ⇒ 贴不歪 ✓。
+ * `key` 是这块瓦片的指纹（页／倍率／pt 区间）—— 用来丢弃**过期**结果（滚动/缩放已经又变了 ✓）。
+ */
+interface PageTile {
+  url: string;
+  key: string;
+  leftPct: number;
+  topPct: number;
+  widthPct: number;
+  heightPct: number;
 }
 
 // 单页块数据（懒加载，视口内才拉取）。
@@ -403,6 +463,7 @@ function PdfContinuousPage({
   onChanged,
   renderPage,
   onRetry,
+  tile,
 }: {
   pageIndex: number;
   attachmentId: string;
@@ -421,6 +482,8 @@ function PdfContinuousPage({
   renderPage: (pageIndex: number, scale: number) => Promise<Blob>;
   /** 重新光栅化这一页（失败后给用户一个出口，而不是让他去关掉重开）。 */
   onRetry: (pageIndex: number) => void;
+  /** ⭐ D2：这一页的可见带高清瓦片（`null` ⇒ 没有，就是那张低清整页图）。 */
+  tile?: PageTile | null;
 }) {
   const { url, textItems, hasTextLayer, meta, error } = data;
   if (!meta) {
@@ -454,6 +517,7 @@ function PdfContinuousPage({
       onStateChange={onStateChange}
       onChanged={onChanged}
       renderPage={renderPage}
+      tile={tile ?? null}
     />
   );
 }
@@ -738,6 +802,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const [currentPage, setCurrentPage] = useState(0);
   const [viewRange, setViewRange] = useState<{ start: number; end: number }>({ start: -1, end: -1 });
   const [pageData, setPageData] = useState<Record<number, PageBlockData>>({});
+  /** ⭐ D2：可见带的高清瓦片（每页一条）；`tilesRef` 是它的"最新值"镜像，见那边的注释。 */
+  const [tiles, setTiles] = useState<Record<number, PageTile>>({});
   const [stageWidth, setStageWidth] = useState(0);
   const [stageHeight, setStageHeight] = useState(0);
   // 「导出带批注副本」进度 / 取消（60 页扫描版导出耗时，需可取消 + 防假死）。
@@ -760,6 +826,20 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
   const mountedPagesRef = useRef<Set<number>>(new Set());
   const inflightRef = useRef<Set<string>>(new Set());
   const scrollRafRef = useRef<number | null>(null);
+  // ⭐ **D2（2026-10-15）**：可见带瓦片的账（与页面图那条**分开**，因为它按"带子"而不是按页缓存 ✓）。
+  //   · `tilesRef` 是给异步回调看的**最新值**（`setTiles` 只管渲染 ✓）；
+  //   · `tileWantedRef` 记"每页**现在**要的是哪个 key" ⇒ 回来的旧结果直接丢掉 ✓（同页面图那条的"过期就丢"✓）；
+  //   · `tileUnsupportedRef`：引擎明确说不支持（MuPDF 那条 / web）⇒ **之后一律不再请求** ✓，
+  //     ⛔ 不是每滚一下都去撞一次墙 ✗。
+  const tilesRef = useRef<Record<number, PageTile>>({});
+  const tileInflightRef = useRef<Set<string>>(new Set());
+  const tileWantedRef = useRef<Record<number, string>>({});
+  const tileUnsupportedRef = useRef(false);
+  // ⚠️ 转发一层：`onStageScroll` 定义在 `refreshTiles` **之前**（顺序不能动，动了两者的依赖会打架）
+  //   ⇒ 用 ref 拿"最新的那个函数" ✓（直接引用会踩"块级变量先用后声明"）。
+  const refreshTilesRef = useRef<() => void>(() => {});
+  /** 图片还没解码完时的**短重试**定时器（见 `refreshTiles` 里那条注释 ✓）。 */
+  const tileRetryRef = useRef<number | null>(null);
   const zoomWrapRef = useRef<HTMLDivElement | null>(null);
   const zoomCustomRef = useRef<HTMLInputElement | null>(null);
   const resyncedRef = useRef(false);
@@ -1143,6 +1223,16 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
       const cache = pageCacheRef.current;
       for (const u of cache.values()) URL.revokeObjectURL(u);
       cache.clear();
+      // ⭐ D2：瓦片也要一起清 —— 同一条理由（关掉时留下的 blob URL 会在下次打开变成
+      // `net::ERR_FILE_NOT_FOUND` ✓），而且它们**另有一本账**（`tilesRef`）⇒ 清一处不够 ✓。
+      for (const t of Object.values(tilesRef.current)) URL.revokeObjectURL(t.url);
+      tilesRef.current = {};
+      tileWantedRef.current = {};
+      if (tileRetryRef.current) {
+        window.clearTimeout(tileRetryRef.current);
+        tileRetryRef.current = null;
+      }
+      setTiles({});
       setReady(false);
       setPageData({});
     };
@@ -1172,6 +1262,9 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     scrollRafRef.current = window.requestAnimationFrame(() => {
       scrollRafRef.current = null;
       updateViewport();
+      // ⭐ D2：滚动也要重算可见带 —— `updateViewport` 只在**换页**时改 state，
+      //   在同一页里滚动时它什么都不触发 ⇒ 不在这里叫一次，瓦片就停在旧位置上 ✗。
+      refreshTilesRef.current();
     });
   }, [updateViewport]);
 
@@ -1182,14 +1275,15 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     async (pageIndex: number) => {
       const eng = engRef.current;
       if (!eng || !ready) return;
-      // ⭐ 显示位图封顶 ✓ ＋（**2026-10-15 加**）**按像素预算**再削一刀 ✓ —— 理由见
-      // `displayRasterScale` 那段注释：倍数封顶对「单页 18 Mpx 的巨幅版面」根本不够 ✗。
-      // ⚠️ 尺寸取该页自己的 pt 尺寸 ✓（`getPageMeta` ✓）；取不到 ⇒ 按 A4 退 ✓（那时预算
-      // 约 3.2× ⇒ 不会削 ✗，等于退回旧行为 ✓ —— 不猜、也不误伤普通页 ✓）。
+      // ⭐ **D3（2026-10-15）**：这里从 `displayRasterScale(scale, …)` 换成
+      // `baseRasterScale(scale, …)` —— **底图（整页）封到 1×**（>100% 不再出整页高清 ✓），
+      // 高清交给上面那条"可见带瓦片"（`refreshTiles` ✓）。副作用还有一个：>100% 时倍率恒为 1
+      // ⇒ **缩放时底图命中缓存、不必重出整页** ✓（原来每按一下放大都要重出一整页 ✗）。
+      // ⚠️ 尺寸取该页自己的 pt 尺寸 ✓（`getPageMeta` ✓）；取不到 ⇒ 按 A4 退 ✓。
       const meta = await eng
         .getPageMeta(pageIndex)
         .catch(() => ({ width: 612, height: 792 }));
-      const rasterScale = displayRasterScale(scale, meta.width, meta.height, DISPLAY_RASTER_CAP);
+      const rasterScale = baseRasterScale(scale, meta.width, meta.height);
       const key = `${pageIndex}@${rasterScale}`;
       if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
       inflightRef.current.add(key);
@@ -1239,6 +1333,195 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     },
     [ready, scale, attachmentId],
   );
+
+  // ⭐⭐ **D2（2026-10-15）**：给挂载中的页块请求"**可见带**"的高清瓦片。
+  //
+  // 为什么要它：D1 的读数说**过桥成本 ∝ 载荷字节数**（≈0.55 ms/KB）⇒ 只把看得见的那一条送过去，
+  //   那 715 ms 就按"这条带占整页的比例"缩小 ✓（D3 已把底图封到 1× ⇒ >100% 的清晰度全靠它 ✓）。
+  //
+  // 三条要点（都在代码里对着实现看）：
+  //   ① **取哪一条**：`visibleBandPt`（纯函数、有判据 ✓）只吃**量出来的**图片位置 —— ⛔ 不猜
+  //      `CHROME` 偏移 ✗（那玩意儿一改就贴歪 ✓）；上下各留 25% 视口高的余量 ⇒ 滚一点不必重出 ✓。
+  //   ② **量化**（关键！）：可见区间按**半个视口**为一格向上/下取整 ⇒ 小幅滚动**复用同一块瓦片** ✓。
+  //      ⛔ 不量化就会"每滚一个像素换一个 key"⇒ 请求风暴 ✗（比不做还糟）。
+  //   ③ **贴回哪里**：`topPct = topPt / pageH × 100`（与请求同一个 pt 区间 ✓，见 pdfLayout 文件头 ③ ✓）。
+  //
+  // ⛔ 只在 `scale > 100%` 且**原生引擎**在时才做 ✗ —— ≤100% 时底图就是真倍率（与今天逐字节相同 ✓）。
+  /** 撤掉某一页的瓦片（⛔ 别只从表里删 ✗ —— blob URL 得还回去，否则一直挂着 ✓）。 */
+  const dropTile = useCallback((pageIndex: number) => {
+    const cur = tilesRef.current[pageIndex];
+    if (!cur) return;
+    URL.revokeObjectURL(cur.url);
+    const next = { ...tilesRef.current };
+    delete next[pageIndex];
+    tilesRef.current = next;
+    setTiles(next);
+  }, []);
+
+  const refreshTiles = useCallback(() => {
+    if (!open || !ready || !attachmentId || viewRange.start < 0) return;
+    const st = stageRef.current;
+    const eng = engRef.current;
+    if (!st || !eng) return;
+
+    // ≤100%（或引擎已明确说不支持）：**撤掉**已有瓦片（底图就是真倍率，留着只会挡着看 ✓）。
+    if (!(scale > 1 + 1e-6) || tileUnsupportedRef.current) {
+      const olds = tilesRef.current;
+      if (Object.keys(olds).length) {
+        for (const t of Object.values(olds)) URL.revokeObjectURL(t.url);
+        tilesRef.current = {};
+        setTiles({});
+      }
+      return;
+    }
+
+    const stageRect = st.getBoundingClientRect();
+    const viewHeight = st.clientHeight;
+
+    type Job = {
+      pageIndex: number;
+      key: string;
+      rect: PdfPageRect;
+      tileScale: number;
+      pageW: number;
+      pageH: number;
+      xPt: number;
+      yPt: number;
+      wPt: number;
+      hPt: number;
+    };
+    const jobs: Job[] = [];
+    // ⛔ 还没解码完的 `<img>` 量出来是**占位尺寸** ⇒ 会算成"整页可见"、白白要一整页 ✗
+    //   （活体实测踩到过：瓦片盖了 87% 的页面）。⇒ 跳过它，并排一次**短重试**（图片到了再量 ✓）。
+    let sawUnloaded = false;
+    const wantedPages = new Set<number>();
+
+    for (let i = viewRange.start; i <= viewRange.end; i++) {
+      const meta = pageData[i]?.meta;
+      if (!meta?.w || !meta?.h) continue;
+      wantedPages.add(i);
+      const el = st.querySelector<HTMLImageElement>(`[data-pi="${i}"] .pdf-annot-img`);
+      if (!el || !el.complete || el.naturalWidth <= 0) {
+        sawUnloaded = true;
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      const rect0 = visibleRectPt({
+        imgLeft: r.left - stageRect.left,
+        imgTop: r.top - stageRect.top,
+        imgWidth: r.width,
+        imgHeight: r.height,
+        pageW: meta.w,
+        pageH: meta.h,
+        viewWidth: st.clientWidth,
+        viewHeight,
+        // ⚠️ **不给额外余量**：余量与"格"重复了就白要一块（活体实测：400% 下瓦片曾占 83% 的页面 ✗）。
+        //   下面按"可见块的 1/4"为格向外取整 —— 过绘**最多 1/4 可见块每边**（瓦片 ≤ 1.5× 可见块 ✓），
+        //   同时把"每滚一个像素换一块瓦片"的请求风暴挡住 ✓（每滚过 1/4 个可见块才换一次 ✓）。
+        marginCss: 0,
+      });
+      if (!rect0) continue;
+
+      const stepX = Math.max(1, rect0.wPt / 4);
+      const stepY = Math.max(1, rect0.hPt / 4);
+      const qLeft = Math.max(0, Math.floor(rect0.xPt / stepX) * stepX);
+      const qTop = Math.max(0, Math.floor(rect0.yPt / stepY) * stepY);
+      const qRight = Math.min(meta.w, Math.ceil((rect0.xPt + rect0.wPt) / stepX) * stepX);
+      const qBottom = Math.min(meta.h, Math.ceil((rect0.yPt + rect0.hPt) / stepY) * stepY);
+      const wPt = qRight - qLeft;
+      const hPt = qBottom - qTop;
+      if (!(wPt > 0) || !(hPt > 0)) continue;
+
+      const baseScale = baseRasterScale(scale, meta.w, meta.h);
+      const tileScale = tileRasterScale(scale, wPt, hPt);
+      // ⛔ **只有"真能更清楚"才值得那次过桥** ✗：这块大到接近整页时（巨幅版面 ＋ 中等倍率），
+      //   像素预算会把 `tileScale` 压到跟底图差不多 ⇒ 那就**不要**（白白多一次渲染 + 一次过桥 ✗）。
+      //   活体实测：3152×5752 pt 的页面在 125% 下 `tileScale` 0.87× < 底图 1× ⇒ 正是这种情形 ✓。
+      if (!(tileScale >= baseScale * 1.25)) {
+        dropTile(i);
+        continue;
+      }
+
+      const rect: PdfPageRect = [
+        +qLeft.toFixed(2),
+        +qTop.toFixed(2),
+        +wPt.toFixed(2),
+        +hPt.toFixed(2),
+      ];
+      const key = `${i}@${meta.w}x${meta.h}@${tileScale.toFixed(3)}@${rect.join(",")}`;
+      tileWantedRef.current[i] = key;
+      if (tilesRef.current[i]?.key === key || tileInflightRef.current.has(key)) continue;
+      jobs.push({ pageIndex: i, key, rect, tileScale, pageW: meta.w, pageH: meta.h, xPt: qLeft, yPt: qTop, wPt, hPt });
+    }
+
+    // 已经不在挂载范围内的页：瓦片一并撤掉（否则 URL 与内存一直挂着 ✓）
+    for (const k of Object.keys(tilesRef.current)) {
+      const idx = Number(k);
+      if (!wantedPages.has(idx)) dropTile(idx);
+    }
+
+    if (sawUnloaded) {
+      // 图片解码完再量一次（只排一次在飞的；重复排会自己顶掉 ✓）
+      if (tileRetryRef.current) window.clearTimeout(tileRetryRef.current);
+      tileRetryRef.current = window.setTimeout(() => {
+        tileRetryRef.current = null;
+        refreshTilesRef.current();
+      }, 250);
+    }
+
+    for (const j of jobs) {
+      tileInflightRef.current.add(j.key);
+      void (async () => {
+        try {
+          const blob = await renderTileNative(attachmentId, j.pageIndex, j.tileScale, j.rect);
+          const url = URL.createObjectURL(blob);
+          // 过期就丢（与页面图那条同一个口径 ✓）：倍率变了／这一页现在要的是别的带子／阅读器已关
+          if (
+            liveScaleRef.current !== scale ||
+            tileWantedRef.current[j.pageIndex] !== j.key ||
+            !usePdfReader.getState().open
+          ) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          const prev = tilesRef.current[j.pageIndex];
+          if (prev?.url && prev.url !== url) URL.revokeObjectURL(prev.url);
+          const next: Record<number, PageTile> = {
+            ...tilesRef.current,
+            [j.pageIndex]: {
+              url,
+              key: j.key,
+              leftPct: (j.xPt / j.pageW) * 100,
+              topPct: (j.yPt / j.pageH) * 100,
+              widthPct: (j.wPt / j.pageW) * 100,
+              heightPct: (j.hPt / j.pageH) * 100,
+            },
+          };
+          tilesRef.current = next;
+          setTiles(next);
+        } catch (e) {
+          // ⛔ 瓦片失败**不改这一页的状态** ✓（底图照旧在，用户看到的仍是完整一页）。
+          // 但引擎"明确说不支持"时记下来 ⇒ 之后不再请求（否则每滚一下撞一次墙 ✗）。
+          // 契约：MuPDF（`MUPDF_NO_RECT`）与 web（pdf.js）都必须**拒绝**，不许静默给整页 ✓。
+          const why = e instanceof Error ? e.message : String(e);
+          if (/可视矩形|rect|MuPDF|不支持/.test(why)) {
+            tileUnsupportedRef.current = true;
+            console.warn("可见带瓦片不可用（保持整页那条路）", why);
+          }
+        } finally {
+          tileInflightRef.current.delete(j.key);
+        }
+      })();
+    }
+  }, [open, ready, attachmentId, scale, viewRange, pageData, dropTile]);
+
+  // 触发点一：viewRange / 倍率 / pageData 一变就重算。
+  // ⚠️ 排在 rAF 里再量：`viewRange` 一变页块才刚挂上，`<img>` 要等 React 提交 ＋ 解码才有尺寸 ✓。
+  useEffect(() => {
+    refreshTilesRef.current = refreshTiles;
+    const id = window.requestAnimationFrame(() => refreshTiles());
+    return () => window.cancelAnimationFrame(id);
+  }, [refreshTiles]);
 
   // 滚动到某页：瞬时把该页顶部对齐到滚动容器顶部（目录/侧栏跳到远页——快速到达）。
   const focusPage = useCallback(
@@ -1393,18 +1676,40 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
         });
       }
 
-      // 2) 并行拉取每个可见页在当前缩放下的图像（缓存 miss 才拉）。
-      const needImg = pages.filter((i) => !pageCacheRef.current.has(`${i}@${scale}`));
+      // 2) 并行拉取每个可见页在当前缩放下的底图（缓存 miss 才拉）。
+      // ⭐ **D3（2026-10-15，活体实测后补的一刀）**：这条**主路径**原来直接用 `scale`
+      //   （⇒ 125% 就是 3152×5752 pt 那种巨幅页的 **28 Mpx 位图** ✗，`DISPLAY_RASTER_CAP` 只管到了
+      //   `launchPageImage` 那条**预取**路 ⇒ 两条路各写一个 key、还赛跑 ✗）。
+      //   ⇒ 现在两条路都走 **`baseRasterScale`**（底图封 1× ＋ 像素预算 ✓），**key 也就统一了**
+      //   （同一个 `rasterScale` ⇒ 谁先到都一样，不再重复渲染 ✓）。
+      const metaByPage = new Map<number, { w: number; h: number }>();
+      for (const i of pages) {
+        const m = pageData[i]?.meta;
+        if (m?.w && m?.h) metaByPage.set(i, m);
+      }
+      for (const i of pages) {
+        if (metaByPage.has(i)) continue;
+        const m = await eng.getPageMeta(i).catch(() => ({ width: 600, height: 848 }));
+        metaByPage.set(i, { w: m.width, h: m.height });
+        if (!alive) return;
+      }
+      const baseScaleFor = (i: number) => {
+        const m = metaByPage.get(i);
+        return m ? baseRasterScale(scale, m.w, m.h) : Math.min(scale, 1);
+      };
+
+      const needImg = pages.filter((i) => !pageCacheRef.current.has(`${i}@${baseScaleFor(i)}`));
       if (needImg.length) {
         await Promise.all(
           needImg.map(async (i) => {
-            const key = `${i}@${scale}`;
+            const rasterScale = baseScaleFor(i);
+            const key = `${i}@${rasterScale}`;
             if (inflightRef.current.has(key)) return;
             inflightRef.current.add(key);
             let url: string | null = null;
             let failure: string | null = null;
             try {
-              const blob = await renderPagePng(eng, attachmentId, i, scale);
+              const blob = await renderPagePng(eng, attachmentId, i, rasterScale);
               if (!alive) return;
               url = URL.createObjectURL(blob);
               const cache = pageCacheRef.current;
@@ -1562,6 +1867,8 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
         <div
           className="pdf-continuous-page"
           key={i}
+          // ⭐ D2：`refreshTiles` 按这个属性找每页的 `<img>` 去量"可见带"（⛔ 不猜偏移 ✗）。
+          data-pi={i}
           style={{ position: "absolute", top: layout.tops[i], left: "50%", transform: "translateX(-50%)", width: contentWidth, minHeight: layout.heights[i] }}
         >
           <PdfContinuousPage
@@ -1580,6 +1887,7 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
             onChanged={refreshAnnRecords}
             renderPage={renderPageForOcr}
             onRetry={launchPageImage}
+            tile={tiles[i] ?? null}
           />
         </div>,
       );

@@ -54,6 +54,17 @@ interface Props {
   onChanged?: () => void;
   /** 以指定缩放渲染本页为 Blob（OCR 用高分辨率重渲染，而非当前低清显示图）。 */
   renderPage?: (pageIndex: number, scale: number) => Promise<Blob>;
+  /**
+   * ⭐ **D2（2026-10-15）**：**可见带的高清瓦片** —— 叠在（低清）整页图上、压在批注层**之下**。
+   *
+   * 位置一律用**百分比**（相对本 stage，也就是相对整页图 ✓）：`topPct = topPt / pageH × 100`
+   * —— ⛔ 不要在这里换算像素 ✗：百分比让"请求哪一块"和"贴回哪里"共用**同一个 pt 区间**
+   * （换算只发生在 `.pdf-annot-stage`，见组件里那个 `position: relative` 的容器 ✓）。
+   *
+   * `null` ⇒ 没有瓦片（缩小档、非原生引擎、或还没渲染好）⇒ 就是今天那张整页图 ✓。
+   * ⚠️ 瓦片**只画不接管事件**（`pointer-events: none`）⇒ 批注的点击/拖拽一个都不变 ✓。
+   */
+  tile?: { url: string; leftPct: number; topPct: number; widthPct: number; heightPct: number } | null;
 }
 
 const highlightColor = "rgba(255, 214, 0, 0.35)";
@@ -94,7 +105,7 @@ function OcrTip({ copy }: { copy: { main: string; hint?: string } }) {
 // 高亮/矩形按 box 的 x0..x1；墨迹按 points 包围盒。统一走 pdfAnnotation 的 annPxBox，
 // 让屏幕 SVG 与「导出带批注副本」的 canvas 渲染共用同一套几何。以下注释保留示意。
 
-export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, deleteTarget, onDeleteConsumed, tool, onToolChange, registerController, onStateChange, onChanged, renderPage }: Props) {
+export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pageImageUrl, hasTextLayer, textItems, focusTarget, onFocusConsumed, deleteTarget, onDeleteConsumed, tool, onToolChange, registerController, onStateChange, onChanged, renderPage, tile }: Props) {
   const [annotations, setAnnotations] = useState<PdfAnnotation[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [ocrText, setOcrText] = useState<string | null>(null);
@@ -758,6 +769,27 @@ export function PdfAnnotationCanvas({ attachmentId, pageIndex, pageW, pageH, pag
           <img className="pdf-annot-img" src={pageImageUrl} alt={`第 ${pageIndex + 1} 页`} draggable={false} />
         ) : (
           <div className="pdf-annot-placeholder">第 {pageIndex + 1} 页</div>
+        )}
+        {/* ⭐ **D2（2026-10-15）**：高清瓦片压在这张低清整页图上、**在批注层之前** ——
+            ⛔ 位置有讲究：DOM 顺序就是 z 序（后画的在上）⇒ 瓦片盖住底图 ✓、却被下面的 SVG 盖住 ✓，
+              ⛔ 不需要 z-index，也不会把批注挡掉 ✗（它 `pointer-events: none`，点击照旧落在 SVG 上 ✓）。
+            ⚠️ 百分比是**相对本 stage**（＝相对整页图 ✓）：`topPct = topPt / pageH × 100`。 */}
+        {tile && (
+          <img
+            className="pdf-annot-tile"
+            src={tile.url}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            style={{
+              position: "absolute",
+              left: `${tile.leftPct}%`,
+              top: `${tile.topPct}%`,
+              width: `${tile.widthPct}%`,
+              height: `${tile.heightPct}%`,
+              pointerEvents: "none",
+            }}
+          />
         )}
         <svg
           ref={svgRef}

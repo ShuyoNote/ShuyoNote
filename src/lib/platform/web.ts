@@ -36,7 +36,7 @@ import type { RelayStatus } from "./commands";
 // storage, sync, encryption, plugins, database lens... still lives in the Rust
 // backend. Commands that need it return empty/no-op here so the UI degrades
 // gracefully instead of crashing.
-import type { Platform } from "./types";
+import type { PdfPageRect, Platform } from "./types";
 import { getMobileBridge } from "./mobile";
 import { SqliteStore, setWasmUrl, setWasmBytesProvider, setDefaultAdapter } from "./sqliteStore";
 import { createChunkStore } from "../extract/chunkStore";
@@ -4392,7 +4392,14 @@ export function createWebPlatform(): Platform {
       },
     },
     pdfRender: {
-      renderPdfPage: async (attachmentId, pageIndex, scale) => {
+      renderPdfPage: async (attachmentId, pageIndex, scale, rect?: PdfPageRect) => {
+        // ⭐ **D1b/D2 的契约**：引擎做不到时必须 **reject**，⛔ 不许静默给整页 ✗ ——
+        //   D2 会把返回值当成"页面上的那一块"贴到低清整页上 ⇒ 给了整页就会**静默错位**
+        //   （比"慢"更坏的一类错）。web 这条是 pdf.js，没有裁剪入口 ⇒ 直接拒绝；
+        //   阅读器据此**退回整页那条路** ✓（并且只在 `nativeAvailable()` 时才请求瓦片 ✓）。
+        if (rect) {
+          throw new Error("web（pdf.js）不支持只渲染可视矩形：D2 的高清瓦片需要原生引擎");
+        }
         // Web 没有原生引擎，但**有能力**：平台层本来就允许有 DOM，用 pdf.js + canvas 渲染。
         // （抽取层的 `pdf.ocr` 需要"页 → 像素"时就走这里；那份判断见信箱
         //  2026-09-17-pdf-ocr-rasterizer-gap.reply-1.md：桩补在平台层，不塞进抽取层。）
