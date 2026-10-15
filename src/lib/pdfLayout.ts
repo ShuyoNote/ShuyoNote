@@ -93,6 +93,39 @@ export function resolveZoomScale(
   return isFit ? capped : Math.max(MIN_SCALE, capped);
 }
 
+/**
+ * ⭐⭐ **2026-10-15（owner 选「先 F 再 D」）** ✗：**显示位图的像素预算** ✓。
+ *
+ * 来由（真机读数 ✓）：本机那篇 PDF 的**单页就有 3152×5752 pt**（≈111×203 cm ✓，18.1 Mpx 基准）
+ * ⇒ 就算按倍数封到 2×，位图仍是 **72 Mpx** ✗ ⇒ 每按一下放大要等 ~1.5 s ✓（实测位图换过来 1542 ms ✓）。
+ * ⇒ ⭐ 改成**按像素**封：位图总像素不超过这个预算 ✓。
+ *
+ * ⚠️ 这条**不会**削普通页 ✗：A4（612×792 pt）算出 ≈3.2× ⇒ 永远够 ✓；
+ * 只有超大版面才会被削 ✓（那就是 F 的代价：放大后略糊 ✓）。⛔ 清楚留给后面的 D ✗。
+ * ⛔ 只管**显示** ✗：OCR 与导出照旧真实倍率 ✓。
+ */
+export const DISPLAY_PIXEL_BUDGET = 5_000_000;
+
+/**
+ * 显示位图该用多大倍率 ✓（纯函数 ⇒ 好判 ✓）。
+ *
+ * 规则：`min(scale, cap, max(MIN_SCALE, sqrt(预算 / (pageW*pageH))))` ✓
+ *  · ⛔ 不会超过 `scale` ✗（放大时不需要比屏幕更清楚 ✓）；
+ *  · ⛔ 不会低于 `MIN_SCALE` ✗（那会小到连缩小档都不够 ✓）；
+ *  · 尺寸拿不到（0/NaN）⇒ 退回 `min(scale, cap)` ✓（不猜 ✓）。
+ *
+ * @param scale 布局倍率（用户看到的缩放 ✓）
+ * @param pageW/pageH 该页的 **pt** 尺寸（`getPageMeta` ✓）
+ * @param cap 绝对上界（当前 2× ✓）
+ */
+export function displayRasterScale(scale: number, pageW: number, pageH: number, cap: number): number {
+  const need = Math.min(scale, cap);
+  const px = pageW * pageH;
+  if (!Number.isFinite(px) || px <= 0) return need;
+  const budget = Math.sqrt(DISPLAY_PIXEL_BUDGET / px);
+  return Math.min(need, Math.max(MIN_SCALE, budget));
+}
+
 /** 缩放下拉的百分比阶梯（从大到小）。只保留实用档位：**25%–400%**，全都在 MIN/MAX 范围内、真实生效。
  *  ⭐ **2026-10-15**：补 **33／25** 两档 ✓ —— 原来最低只到 50 ✓，遇到**超宽图**就再也缩不下去 ✗
  *  （连同「适合页面」一起被 `MIN_SCALE` 夹住 ✓ —— 见上面那段注释 ✓）。 */

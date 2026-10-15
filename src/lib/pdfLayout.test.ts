@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   A4_WIDTH_FALLBACK,
   MAX_SCALE,
+  DISPLAY_PIXEL_BUDGET,
+  displayRasterScale,
   MIN_SCALE,
   fitScaleForWidth,
   resolveZoomScale,
@@ -157,5 +159,26 @@ describe("2026-10-15：适配模式不许被下界夹住（owner：「为何不�
     expect(Math.min(...ZOOM_LADDER)).toBe(25);
     expect(stepZoom(0.25, -1)).toEqual({ mode: "pct", pct: 25 });
     expect(stepZoom(0.5, -1)).toEqual({ mode: "pct", pct: 33 });
+  });
+});
+
+describe("2026-10-15：显示位图按像素预算削（owner 选「先 F 再 D」）", () => {
+  it("⭐ 普通 A4（612×792）永远不被削 ✓（预算 3.2× > 上界 2×）", () => {
+    expect(displayRasterScale(4, 612, 792, 2)).toBe(2);
+    expect(displayRasterScale(1.5, 612, 792, 2)).toBeCloseTo(1.5, 3);
+  });
+
+  it("⭐ 巨幅页（3152×5752 ＝ 那篇 PDF）削到 ≈0.53× ⇒ 像素 72 Mpx → ~5 Mpx ✓", () => {
+    const s = displayRasterScale(2.5, 3152, 5752, 2);
+    expect(s).toBeCloseTo(Math.sqrt(DISPLAY_PIXEL_BUDGET / (3152 * 5752)), 3);
+    expect(s).toBeLessThan(1);
+    expect(3152 * 5752 * s * s).toBeLessThanOrEqual(DISPLAY_PIXEL_BUDGET + 1);
+  });
+
+  it("⭐ 边界：不超过布局倍率 ✓／不低于 MIN_SCALE ✓／尺寸读不到时退回旧行为 ✓", () => {
+    expect(displayRasterScale(0.3, 3152, 5752, 2)).toBeCloseTo(0.3, 3);
+    expect(displayRasterScale(2.5, 100000, 100000, 2)).toBe(MIN_SCALE);
+    expect(displayRasterScale(1.7, 0, 0, 2)).toBeCloseTo(1.7, 3);
+    expect(displayRasterScale(1.7, NaN, 100, 2)).toBeCloseTo(1.7, 3);
   });
 });

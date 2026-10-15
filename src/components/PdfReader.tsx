@@ -23,7 +23,7 @@ import { loadAiOutline, saveAiOutline } from "../lib/pdfOutlineStore";
 import { tryConsume } from "../lib/ai/gate";
 import { rebuildOutlineTree } from "../lib/pdfOutlineGen";
 import type { ProviderConfig } from "../lib/ai/llm";
-import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, type ZoomMode } from "../lib/pdfLayout";
+import { buildLayout, computeViewport, annCenterY, pageImageHeight, resolveZoomScale, stepZoom, zoomContentWidth, zoomLabel, zoomPct, ZOOM_LADDER, displayRasterScale, type ZoomMode } from "../lib/pdfLayout";
 import { PdfAnnotationCanvas } from "./PdfAnnotationCanvas";
 import { PdfAnnotTopToolbar } from "./PdfAnnotTopToolbar";
 import type { AnnotTool, PdfPageController } from "./pdfAnnotController";
@@ -1182,8 +1182,14 @@ export function PdfReader({ inline = false }: { inline?: boolean } = {}) {
     async (pageIndex: number) => {
       const eng = engRef.current;
       if (!eng || !ready) return;
-      // ⭐ 显示位图封顶 ✓（理由见 `DISPLAY_RASTER_CAP` 那段注释 ✓）—— ⛔ 只影响这一条路 ✗。
-      const rasterScale = Math.min(scale, DISPLAY_RASTER_CAP);
+      // ⭐ 显示位图封顶 ✓ ＋（**2026-10-15 加**）**按像素预算**再削一刀 ✓ —— 理由见
+      // `displayRasterScale` 那段注释：倍数封顶对「单页 18 Mpx 的巨幅版面」根本不够 ✗。
+      // ⚠️ 尺寸取该页自己的 pt 尺寸 ✓（`getPageMeta` ✓）；取不到 ⇒ 按 A4 退 ✓（那时预算
+      // 约 3.2× ⇒ 不会削 ✗，等于退回旧行为 ✓ —— 不猜、也不误伤普通页 ✓）。
+      const meta = await eng
+        .getPageMeta(pageIndex)
+        .catch(() => ({ width: 612, height: 792 }));
+      const rasterScale = displayRasterScale(scale, meta.width, meta.height, DISPLAY_RASTER_CAP);
       const key = `${pageIndex}@${rasterScale}`;
       if (pageCacheRef.current.has(key) || inflightRef.current.has(key)) return;
       inflightRef.current.add(key);
