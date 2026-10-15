@@ -1279,8 +1279,13 @@ export function SyncPanel({
         }}
         title={pendingTotal > 0 ? `同步设置（有 ${pendingTotal} 页等你裁决）` : "同步设置"}
       >
+        {/* ⛔⭐ **2026-10-14（owner 逐字：「去掉侧边工具栏按钮里面的汉字」）** ✗ —— 这一格**之前漏了** ✓：
+            ① 上一次只把 `ActivityBar.tsx` 里的文字 span 去掉了 ✓，而**真正渲染在屏幕上的**
+            是**这里这一颗**（`.btn-sync` 触发器 ✓）⇒ ⭐ 屏幕上「同步」两个字**一直都在** ✗，
+            而判据查的是 `ActivityBar` ⇒ **判据一直绿** ✓（"判据在它能看见的范围之外" ✓）。
+            ⇒ ⭐ 现在去掉（⛔ **不动** `title` ✗ —— 那是悬停提示与无障碍名字 ✓，去了汉字 ≠ 去了名字 ✓）；
+            角标与脉冲点照旧 ✓。 */}
         <CloudSyncIcon width={14} height={14} />
-        <span>同步</span>
         {/* ★ 角标：只报"要你动手"的那一件事（待取回的远端版本），不报"你输了但没丢" */}
         {pendingTotal > 0 && (
           <span className="sync-badge" aria-label={`有 ${pendingTotal} 页等你裁决`}>
