@@ -824,6 +824,14 @@ pub async fn render_pdf_page(app: tauri::AppHandle, db: State<'_, Db>, args: Ren
     //   ⚠️ flate2 **早就是直接依赖**（Cargo.toml:80 ✓，随 zip 进来）⇒ ⛔ 没有新增任何下载 ✗。
     //   ⚠️ 前端对应改动在 `src/lib/pdfNativePage.ts`（fflate `gunzipSync` ✓ 也已是既有依赖 ✓）。
     //   ⚠️ 版本不一致时前端会明确报「无法识别的原生渲染响应」并要求重启 ✓ —— ⛔ 不静默出半成品 ✗。
+    //
+    // ⭐⭐ **2026-10-15 对照实验（owner 同意「先量」）** —— ⛔ 它改写了诊断结论 ✗：
+    //   同一台机器上量 `render_page_owned`（纯光栅化 ✓，不含本文件的 gzip/base64 ✓）：
+    //     一份 A4 真文档、2.00 Mpx ⇒ **106 ms** ✓（只出一块 0.10 Mpx ⇒ 44 ms ✓ ⇒ 裁剪只值 2.41× ✓）；
+    //   而 App 里同量级的一步实测 **795 ms** ✗ ⇒ ⭐ **~690 ms 不在光栅化里** ✗，
+    //   而在这条链上：**gzip ＋ base64 ＋ IPC 传输 ＋ 前端解码** ✓
+    //   ⇒ ⭐ 下一步该打的是**这条链**（例如换更小的载体／更省的通道 ✓），
+    //     ⛔ 而不是继续削像素 ✗，也不是急着写「只渲染可视区域」✗（它只值 2.4× ✓）。
     let gz = {
         let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         std::io::Write::write_all(&mut e, &compact).map_err(|x| format!("PDF: gzip 失败：{x}"))?;
