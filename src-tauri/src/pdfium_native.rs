@@ -375,6 +375,67 @@ pub fn render_page_owned(
     render_entry(entry, page_index, scale)
 }
 
+// ── D1（2026-10-15）：只渲染页面上的一个矩形 ──────────────────────────────────────
+//
+// 来由（真机分段读数）：`renderPdfPage` 里「命令往返」这一段 821 ms，而纯光栅化只占 ≈106 ms
+// ⇒ **约 715 ms 花在把载荷送过去**，且**与字节数成正比**（894 KB ⇒ 520 ms ｜ 1887 KB ⇒ 1122 ms
+// ⇒ 约 0.55 ms/KB）⇒ 只出可视区域（约 1/20 面积）⇒ 载荷约 1/20 ⇒ 这一段约 36 ms。
+//
+// ## ⚠️ 施工单指定的「自己再绑一张表走裸 FFI」那条路走不通，前提也是错的（2026-10-15 实测更正）
+//
+// 1. ⛔ **一个进程里只允许绑一次**：`Pdfium::bind_to_library` 第一件事就是查进程级
+//    `static BINDINGS: OnceCell`（pdfium-render 0.9.4 `src/pdfium.rs:70`），已初始化时直接回
+//    `Err(PdfiumError::PdfiumLibraryBindingsAlreadyInitialized)`（同文件 `:176-188`）。
+//    而生产路径 [`shared_pdfium`] **启动时就绑过了** ⇒ 裸 FFI 那条路必然失败。
+//    「把 raw_bindings() 挪到最前面」不是修，只是把失败**换到另一条路**上 ——
+//    那样 `shared_pdfium()` 自己会成为那个"第二次"，整页渲染全挂。
+//    判据：本文件 `d1_rect_tests::a_second_library_binding_is_refused_by_the_crate`
+//    （把那条错误的**原文**打在测试输出里，也把"为什么不用第二张表"钉住）。
+// 2. ❌ **前提错**：施工单说「`PdfRenderConfig` 里没有裁剪入口」。**0.9.4 有** ——
+//    `PdfRenderConfig::clip(left, top, right, bottom)`（`render_config.rs:655`）＋ `reset_matrix()`；
+//    而且 crate 自带一条**同形的判据** `test_matrix_path_strip_stitch_matches_full_render`
+//    （`render_config.rs:1291-1354`）：按条带分块渲染再拼起来，必须与整页渲染逐像素一致。
+//    它用的矩阵 `[1,0,0,1,0,-y_offset]` 直接给出了坐标约定：**设备像素、y 向下**
+//    （负的 y 平移 ＝ 把页面往上挪 ⇒ 位图里出现更靠下的那些行）。
+//
+// ⇒ 于是这里**复用已经绑好的那一张表**（走高层封装），换来：无 `unsafe`、无第二份文档缓存
+// （模块头 P2 第 1 条担心的「两套缓存 ⇒ 内存翻倍」因此也不存在）、不动既有输出的口径。
+//
+// ## ⚠️ 一条已核实的边界（不是本实现引入的）
+//
+// `clip()` 会把 `do_render_form_data` 关掉（`render_config.rs:657`）⇒ 这条路上**表单域已填的值不渲染**
+// （crate 注释写明：要么表单数据、要么矩阵＋裁剪，不能两全）。施工单本来指定的
+// `FPDF_RenderPageBitmapWithMatrix` 同样不画表单数据 ⇒ 两条路一样。
+// D2 的「低清整页垫在底下」那一层走的是老路径（`do_render_form_data = true`）⇒ 表单值仍由它带着。
+
+/// ⭐ **D1**：把某页的**一个矩形**渲染成紧凑 RGBA（`width * height * 4`）。
+///
+/// `rect` ＝ `(x, y, w, h)`，单位**页面 pt、左上角为原点**（前端就是这么想坐标的；PDF 自己原点在左下，
+/// 翻转由 PDFium 的 display transform 完成 —— 见本函数上面那段矩阵约定，**由判据自证**）。
+/// 返回 `(rgba, width_px, height_px)`，宽高 ＝ `round(w × scale) × round(h × scale)`（与整页那条同一取整口径）。
+///
+/// ⚠️ **矩形会被夹到页面内**（页面外的部分本来也画不出来）；整个矩形都在页面外时显式报错，
+/// 不给"一张空图"。
+#[allow(dead_code)] // D1a 收据：函数先落地并自带判据（D1b 给渲染命令加 rect 入参后即可去掉）。删除条件 = 若最终不做 D，则连本函数与它的判据一起删。
+pub fn render_page_rect(
+    cache_key: &str,
+    bytes: Vec<u8>,
+    page_index: usize,
+    scale: f32,
+    rect: (f64, f64, f64, f64),
+) -> Result<(Vec<u8>, usize, usize), String> {
+    let mut cache = doc_cache()
+        .lock()
+        .map_err(|_| "PDFium 文档缓存锁已中毒".to_string())?;
+    let entry = ensure_cached(&mut cache, cache_key, move || {
+        if bytes.is_empty() {
+            return Err(empty_bytes_error(cache_key));
+        }
+        Ok(bytes)
+    })?;
+    render_entry_rect(entry, page_index, scale, rect)
+}
+
 fn empty_bytes_error(cache_key: &str) -> String {
     format!("PDFium: 文档 {cache_key} 不在缓存中，但调用方传了空字节（应先查 has_document）")
 }
@@ -497,6 +558,109 @@ fn render_entry(
         ));
     }
     Ok((rgba, w, h))
+}
+
+/// **D1 的真正渲染**：页面自然尺寸 × `scale` 之后，只出 `rect` 那一块（pt、左上角为原点）。
+///
+/// 矩阵＝**设备坐标**（y 向下；PDFium 的 display transform 已经把 PDF 的左下原点与页面的 `/Rotate`
+/// 都算进去了）⇒ 只要**缩放**再把目标区域**平移到设备原点**：
+/// `[scale, 0, 0, scale, -x·scale, -y·scale]`。
+///
+/// ⚠️ 这一处**由判据自证**（`d1_rect_tests` 那条逐像素比较 ＋ 镜像负控）：约定写错时命中率会掉下去 ⇒ 当场红。
+fn render_entry_rect(
+    entry: &CachedDocument,
+    page_index: usize,
+    scale: f32,
+    rect: (f64, f64, f64, f64),
+) -> Result<(Vec<u8>, usize, usize), String> {
+    let (x, y, w, h) = rect;
+    // ⚠️ 与 [`render_entry`] 那条「不合法按 1.0」**故意不同**：裁剪矩形退化会让输出变成一条线，
+    //    那种输入必须显式报错，不许猜。
+    if !x.is_finite() || !y.is_finite() || !w.is_finite() || !h.is_finite() {
+        return Err(format!("PDFium: 裁剪矩形含非有限值（rect={rect:?}）"));
+    }
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(format!("PDFium: 裁剪渲染的 scale 不合法（{scale}）"));
+    }
+    if !(w > 0.0) || !(h > 0.0) {
+        return Err(format!("PDFium: 裁剪矩形的宽高必须为正（rect={rect:?}）"));
+    }
+
+    let pages = entry.doc.pages();
+    let count = pages.len();
+    if count <= 0 {
+        return Err("PDFium: 这份 PDF 没有页面".to_string());
+    }
+    let idx = i32::try_from(page_index).map_err(|_| format!("页码 {page_index} 超出范围"))?;
+    if idx >= count {
+        return Err(format!("页码 {page_index} 超出范围（共 {count} 页）"));
+    }
+    let page = pages
+        .get(idx)
+        .map_err(|e| format!("PDFium 取第 {page_index} 页失败：{e}"))?;
+
+    // 夹到页面内。`page.width()/height()` 与 `render_entry` 用的是同一个口径（含页面自身的旋转）。
+    let (pw, ph) = (page.width().value as f64, page.height().value as f64);
+    let x0 = x.max(0.0);
+    let y0 = y.max(0.0);
+    let x1 = (x + w).min(pw);
+    let y1 = (y + h).min(ph);
+    if !(x1 > x0) || !(y1 > y0) {
+        return Err(format!(
+            "PDFium: 裁剪矩形不在页面内（rect={rect:?}，页面 {pw}×{ph} pt）"
+        ));
+    }
+    let (rw, rh) = (x1 - x0, y1 - y0);
+
+    // 目标设备像素：与 `render_entry` 同一个取整口径。
+    let width_px = (rw * scale as f64).round().max(1.0);
+    let height_px = (rh * scale as f64).round().max(1.0);
+
+    // ⚠️ 两道像素闸门与整页那条**同一套**：裁剪之后目标更小，但口径不许在这里悄悄放宽。
+    check_pixel_budget(width_px, height_px, scale, "裁剪渲染前")?;
+    let target_width = width_px as i32;
+    let target_height = height_px as i32;
+
+    // ⚠️ 顺序有讲究：
+    //   · `set_fixed_size` ⇒ 位图就是这一块的大小（并关掉自动缩放）；
+    //   · `clip` ⇒ 走矩阵那条渲染分支（`clip()` 自己会把表单数据关掉，理由见 crate 注释）；
+    //   · `reset_matrix` ⇒ 直接用给的那六个值（不叠加默认矩阵，也不受 `scale_page_by_factor` 影响）。
+    let matrix = PdfMatrix::new(
+        scale,
+        0.0,
+        0.0,
+        scale,
+        -(x0 * scale as f64) as f32,
+        -(y0 * scale as f64) as f32,
+    );
+    let config = PdfRenderConfig::new()
+        .set_fixed_size(target_width, target_height)
+        .clip(0, 0, target_width, target_height)
+        .render_form_data(false)
+        // 未绘制区域清成**透明**，与整页那条口径一致（理由见 `CLEAR_COLOR_TRANSPARENT`）。
+        .set_clear_color(CLEAR_COLOR_TRANSPARENT)
+        .reset_matrix(matrix)
+        .map_err(|e| format!("PDFium: 裁剪矩阵被拒（scale={scale}, rect={rect:?}）：{e}"))?;
+    let bitmap = page
+        .render_with_config(&config)
+        .map_err(|e| format!("PDFium 裁剪渲染第 {page_index} 页失败：{e}"))?;
+
+    let out_w = bitmap.width() as usize;
+    let out_h = bitmap.height() as usize;
+
+    // 第二道闸门（渲染之后），与整页那条同义。
+    check_pixel_budget(out_w as f64, out_h as f64, scale, "裁剪渲染后")?;
+
+    // 这里**不做**通道转换与去填充：`as_rgba_bytes()` 已经输出紧凑 RGBA（模块头第 1 条）。
+    let rgba = bitmap.as_rgba_bytes();
+    let expect = out_w * out_h * 4;
+    if rgba.len() != expect {
+        return Err(format!(
+            "PDFium 裁剪渲染返回的位图大小对不上：{} 字节，期望 {expect}（{out_w}×{out_h}×4）",
+            rgba.len()
+        ));
+    }
+    Ok((rgba, out_w, out_h))
 }
 
 /// 像素预算闸门：`width × height` 与 `max_page_pixels()` 比较，超了就报出**总量与 MB**。
@@ -961,6 +1125,203 @@ mod tests {
         assert!(bundled_font_beside(&missing).is_none(), "目录不存在时不许 panic");
 
         let _ = fs::remove_dir_all(&empty);
+    }
+}
+
+// ── D1 的判据（2026-10-15）────────────────────────────────────────────────────
+//
+// 两条各守一件事：
+//   · `the_clipped_tile_matches_the_same_region_of_the_full_page` —— **承重**：裁剪块必须与整页渲染的
+//     对应区域逐像素对得上，**并且**由此自证矩阵的坐标约定（左上原点、设备 y 向下）。
+//   · `a_second_library_binding_is_refused_by_the_crate` —— 把「为什么不用第二张绑定表」钉住，
+//     连那条错误的**原文**一起打在输出里（施工单那条路的前提就错在这儿）。
+#[cfg(test)]
+mod d1_rect_tests {
+    use super::*;
+
+    /// 夹具：默认 `tests/fixtures/pdf/a0-large.pdf` —— A0（2384×3370 pt），**下半部分**有一块
+    /// 1000×1000 的 50% 灰方块，左上角还有一行文字。这两个特征正是判据要的：
+    /// 请求区域横跨「白纸 ｜ 灰块边缘 ＋ 文字」⇒ 有结构可比；镜像区域在上半部 ⇒ 是白纸。
+    /// 想量真文档：`SHUYONOTE_D1_PDF=<路径>`。
+    fn probe_bytes() -> Vec<u8> {
+        // ⚠️ **必须锚在 `CARGO_MANIFEST_DIR`，不许用相对路径**：`scripts/win-cargo-test.ps1` 是**从仓根**
+        // 调测试 exe 的（实测 2026-10-15：写 `tests/fixtures/...` 当场报 os error 3），
+        // 而 `cargo test` 自己是从 `src-tauri/` 起的 —— 两种 CWD 都得能用。
+        let p = std::env::var("SHUYONOTE_D1_PDF").unwrap_or_else(|_| {
+            format!(
+                "{}/tests/fixtures/pdf/a0-large.pdf",
+                env!("CARGO_MANIFEST_DIR")
+            )
+        });
+        std::fs::read(&p).unwrap_or_else(|e| panic!("读不到 PDF {p}：{e}"))
+    }
+
+    /// 本机没有可加载的库时**响亮自报跳过**（`! …`，报告器会收成一等公民），而不是把 cargo test 判红：
+    /// 库里那份二进制不入 git（`vendor/pdfium/` 在 `.gitignore` 里）⇒ 新克隆 / CI 上可能没有它
+    /// （理由与 [`library_preflight`] 那段注释同源）。
+    fn skip_if_no_library(err: &str) -> bool {
+        err.contains("找不到 PDFium") || err.contains("加载 PDFium 失败")
+    }
+
+    /// 采样比较：返回 `(命中率, 平均绝对偏差, 采样点数, 最大偏差, 区域值域 lo, hi)`。
+    ///
+    /// 口径按施工单：**容差 ±8**、去掉 2px 边、步长 7 像素。平均偏差是给负控用的 ——
+    /// 命中率对「白底 ＋ 稀疏文字」那种页不敏感（两块**不同**的文字区也会命中九成以上）。
+    fn compare(
+        tile: &[u8],
+        tw: usize,
+        th: usize,
+        full: &[u8],
+        fw: usize,
+        fx: usize,
+        fy: usize,
+    ) -> (f64, f64, usize, i32, u8, u8) {
+        let (mut same, mut tot, mut maxd, mut sum) = (0usize, 0usize, 0i32, 0i64);
+        let (mut lo, mut hi) = (255u8, 0u8);
+        let mut y = 2usize;
+        while y + 2 < th {
+            let mut x = 2usize;
+            while x + 2 < tw {
+                let fi = ((fy + y) * fw + (fx + x)) * 4;
+                if fi + 3 < full.len() {
+                    let ti = (y * tw + x) * 4;
+                    let d = (0..3)
+                        .map(|k| (tile[ti + k] as i32 - full[fi + k] as i32).abs())
+                        .max()
+                        .unwrap_or(0);
+                    if d <= 8 {
+                        same += 1;
+                    } else if d > maxd {
+                        maxd = d;
+                    }
+                    for k in 0..3 {
+                        sum += (tile[ti + k] as i32 - full[fi + k] as i32).abs() as i64;
+                        lo = lo.min(full[fi + k]);
+                        hi = hi.max(full[fi + k]);
+                    }
+                    tot += 1;
+                }
+                x += 7;
+            }
+            y += 7;
+        }
+        (
+            same as f64 / tot.max(1) as f64,
+            sum as f64 / (tot.max(1) * 3) as f64,
+            tot,
+            maxd,
+            lo,
+            hi,
+        )
+    }
+
+    /// ⭐ **D1 判据**：只渲染一块 ⇒ 那一块必须与**整页渲染的同一区域**逐像素对得上
+    /// （容差 ±8、去掉 2px 边、命中率 ≥0.98）。
+    ///
+    /// ⚠️ 它同时**自证矩阵的坐标约定**，这是这条判据的另一半价值：
+    ///   · 若把 y 当成 PDF 的左下原点（平移取正）⇒ 块会偏到页面外 ⇒ 命中率≈0；
+    ///   · 若忘了矩阵自带的 `scale` ⇒ 块里是没放大的内容 ⇒ 命中率很低；
+    ///   · 若在设备坐标里又自己翻了一次 y（施工单初稿那种 `d: -scale`）⇒ 块等于**镜像** ⇒ 命中率≈0。
+    /// 三种错法都靠下面这条比较当场红，不是"看着像"。
+    ///
+    /// ⚠️ 第二个 scale（2.0）是**故意的**：矩阵里 scale 的乘法只有在放大时才真正承重。
+    ///   两个 scale 都取 2 的幂 ⇒ `x_dev / scale * scale == x_dev` 严格成立 ⇒ 裁剪块与整页渲染
+    ///   落在**同一个像素栅格**上（否则半像素偏移会让这条比较退化成"比重采样"，那种判据会假绿）。
+    #[test]
+    fn the_clipped_tile_matches_the_same_region_of_the_full_page() {
+        let bytes = probe_bytes();
+        for scale in [1.0f32, 2.0] {
+            let (full, fw, fh) = match render_page_owned("d1-rect", bytes.clone(), 0, scale) {
+                Ok(v) => v,
+                Err(e) if skip_if_no_library(&e) => {
+                    eprintln!("! 跳过（scale={scale}）：本机没有可加载的 PDFium 动态库（{e}）");
+                    return;
+                }
+                Err(e) => panic!("整页渲染失败（scale={scale}）：{e}"),
+            };
+            // 页面 pt 尺寸：整页像素 ÷ scale（与生产同一条口径）。
+            let (pw, ph) = (fw as f64 / scale as f64, fh as f64 / scale as f64);
+            // 矩形**按整数设备像素构造**（`x_dev / scale`）：x 从 0 起 ⇒ 横跨"白纸 ｜ 灰块 ＋ 文字"
+            // 那条边界；y 从 70% 处起 ⇒ 整块落在灰方块里（不碰它的上下边，边界像素才不会有抗锯齿分歧）。
+            let x_dev = 0.0f64;
+            let y_dev = (ph * 0.70 * scale as f64).round();
+            let tw_dev = (pw * 0.25 * scale as f64).round();
+            let th_dev = (ph * 0.15 * scale as f64).round();
+            let rect = (
+                x_dev / scale as f64,
+                y_dev / scale as f64,
+                tw_dev / scale as f64,
+                th_dev / scale as f64,
+            );
+            let (tile, tw, th) = render_page_rect("d1-rect", bytes.clone(), 0, scale, rect)
+                .unwrap_or_else(|e| panic!("裁剪渲染失败（scale={scale}, rect={rect:?}）：{e}"));
+            assert_eq!(tw, tw_dev as usize, "块宽不符（scale={scale}）");
+            assert_eq!(th, th_dev as usize, "块高不符（scale={scale}）");
+            assert_eq!(tile.len(), tw * th * 4, "块字节数不符（前端按 宽×高×4 校验）");
+
+            let (fx, fy) = (x_dev as usize, y_dev as usize);
+            let (ratio, mean, tot, maxd, lo, hi) = compare(&tile, tw, th, &full, fw, fx, fy);
+            // 负控：**页面上下翻过来**的那一块（约定写成"PDF 左下原点"时命中的就是它）。
+            let (ratio_mirror, mean_mirror, ..) =
+                compare(&tile, tw, th, &full, fw, fx, fh - fy - th);
+
+            println!(
+                "[D1] scale={scale} ｜ 整页 {fw}×{fh} ｜ 块 {tw}×{th}（占 {:.1}%）｜ 采样 {tot} 点 ⇒ \
+                 命中 {ratio:.3}（均差 {mean:.2}，最大 {maxd}）｜ 镜像对照 命中 {ratio_mirror:.3}（均差 {mean_mirror:.2}）\
+                 ｜ 区域值域 {lo}..{hi}",
+                100.0 * (tw * th) as f64 / (fw * fh) as f64
+            );
+
+            assert!(tot > 100, "采样点太少（{tot}）⇒ 这份判据没在验（scale={scale}）");
+            assert!(
+                hi as i32 - lo as i32 >= 16,
+                "请求的那块几乎是纯色（值域 {lo}..{hi}）⇒ 这条判据比不出内容 ⇒ 它没在验；\
+                 换一块矩形或换夹具（scale={scale}）"
+            );
+            assert!(
+                ratio >= 0.98 && mean < 8.0,
+                "裁剪块与整页对应区域对不上（命中率 {ratio:.3}，均差 {mean:.2}，最大偏差 {maxd}）\
+                 ⇒ 矩阵的坐标约定写错了（scale={scale}）"
+            );
+            // 负控只下"镜像不会更好"这一条断言：白底稀疏墨迹的页上，两块**不同**的文字区也会命中九成，
+            // 所以这里不写死 0.9 那种阈值（那会在真文档上假红）。均差是更敏感的读数，它必须明显更差。
+            assert!(
+                mean_mirror > mean,
+                "负控失效：镜像区域的均差（{mean_mirror:.2}）不比正确区域（{mean:.2}）差 ⇒ \
+                 这份判据没有在比内容或约定反了（scale={scale}）"
+            );
+        }
+    }
+
+    /// 把**卡点**钉住（2026-10-15）：一个进程里 `Pdfium::bind_to_library` **只允许成功一次**。
+    ///
+    /// 为什么值一条判据：施工单要求「自己再绑一张表走裸 FFI」，而生产路径 [`shared_pdfium`] 启动时
+    /// 就绑过了 —— 那条路**必然**失败（`pdfium.rs:70` 的进程级 `OnceCell`）。这条判据把失败原文与
+    /// 变体名一起留下来，下一个人不必再走一遍；同时它也是「`render_page_rect` 为什么走高层封装」的依据。
+    ///
+    /// ⚠️ 先调 [`shared_pdfium`] 再试第二次，是为了**不引入"谁先跑"的竞态**：本判据证的就是
+    /// "第二次"这件事，所以第一次必须先发生（否则在空进程里它自己会绑成功，并把后续测试的
+    /// `shared_pdfium()` 变成那个"第二次" ⇒ 整页渲染全挂）。
+    #[test]
+    fn a_second_library_binding_is_refused_by_the_crate() {
+        if let Err(e) = shared_pdfium() {
+            eprintln!("! 跳过：本机没有可加载的 PDFium 动态库（{e}）");
+            return;
+        }
+        let lib = Pdfium::pdfium_platform_library_name_at_path(&library_dir());
+        match Pdfium::bind_to_library(&lib) {
+            Ok(_) => panic!(
+                "第二次 bind_to_library 竟然成功了 ⇒ 施工单那条「自己再绑一张表」的路前提变了，\
+                 请重新核对本模块 D1 那段的结论"
+            ),
+            Err(err) => {
+                println!("[D1] 第二次 bind_to_library（{}）的原文：{err}", lib.display());
+                assert!(
+                    matches!(err, PdfiumError::PdfiumLibraryBindingsAlreadyInitialized),
+                    "二次绑定被拒的**理由**变了（现在是 {err:?}）⇒ 裸 FFI 那条路的结论要重新核"
+                );
+            }
+        }
     }
 }
 
