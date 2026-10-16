@@ -1,4 +1,4 @@
 {
-  "mobileVersion": "1.92.13",
+  "mobileVersion": "1.92.14",
   "note": "移动端自己的版号（阶段 3「交付单立」✓，R204 owner 拍「从当前桌面号分叉」✓）。⛔ 不是桌面 package.json 的别名 ✗；⛔ 不许低于桌面号 ✗（手机上装的是 1.92.x ✓，往回跳会让用户看到版本变低 ✓）。消费方＝scripts/write-mobile-version.mjs（写进 tauri.properties ✓）。"
 }

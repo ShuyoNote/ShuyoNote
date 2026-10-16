@@ -4,6 +4,10 @@ import {
   $createParagraphNode,
   $createTextNode,
   $isElementNode,
+  $isParagraphNode,
+  $isDecoratorNode,
+  $isLineBreakNode,
+  $isTextNode,
   type LexicalNode,
 } from "lexical";
 import {
@@ -191,26 +195,53 @@ export function pageContentToMarkdown(docJson: string, resolveImage?: ResolveIma
   const editor = createEditor({ nodes: NODES, namespace: "shuyonote-export" });
   editor.setEditorState(editor.parseEditorState(docJson));
   // Expand Route-B columns blocks into plain paragraphs (from each column's own
-  // EditorState) so their content isn't lost in the Markdown export.
-  editor.update(() => {
-    const root = $getRoot();
-    const blocks = root.getChildren().filter((n) => $isColumnsBlockNode(n));
-    for (const block of blocks) {
-      const text = (block as ColumnsBlockNode).__cols
-        .map((c) => extractColumnText(c))
-        .filter(Boolean)
-        .join("\n");
-      const para = $createParagraphNode();
-      if (text) para.append($createTextNode(text));
-      block.insertBefore(para);
-      block.remove();
-    }
-  });
-  let md = "";
+  // ⭐ **2026-10-15（owner 实测：导出的 .md 里 mermaid 块没有 ```mermaid 围栏 ✗）**：
+  //   真因是**树的形状** ＋ **导出时机**，不是那条 transformer：
+  //   ① 实测真页里 mermaid 被包在段落里（`root > paragraph > mermaid`）⇒
+  //      `$convertToMarkdownString` 对"段落里的装饰块"**不走**它自己的 `export` ⇒ 裸源码 ✗
+  //      （逐字：`## 四、执行框架：五步走` 后面直接跟 `flowchart TB`，一个围栏都没有）；
+  //   ② ⚠️ 光"提前把它提到根上"也**没用** ✗ —— Lexical 提交时会把根上的裸装饰节点
+  //      **再包回段落**（本文件试过：树里 hoist ＋ `discrete: true`、以及解析前改 JSON，都不行 ✓）。
+  //   ⇒ 唯一的形状是 `markdownTransformers.test.ts` 那条绿判据用的那个：
+  //      **在同一次 `editor.update` 里**先规整树、**紧接着**在同一份 pending 状态上导出 ✓。
+  //   ⚠️ 所以下面三趟（列块展开 → 装饰节点提级 → 导出）**必须在同一个 update 里**，
+  //      ⛔ 不许把导出挪到 `editor.getEditorState().read(...)` 里 ✗（那样看到的是提交后的树 ✗）。
   const transformers = resolveImage ? transformersWithImageResolver(resolveImage) : SHUYONOTE_TRANSFORMERS;
-  editor.getEditorState().read(() => {
-    md = $convertToMarkdownString(transformers);
-  });
+  let md = "";
+  editor.update(
+    () => {
+      const root = $getRoot();
+      // ① Route-B 列块 → 普通段落（否则列里的内容整块丢 ✗）
+      for (const block of root.getChildren().filter((n) => $isColumnsBlockNode(n))) {
+        const text = (block as ColumnsBlockNode).__cols
+          .map((c) => extractColumnText(c))
+          .filter(Boolean)
+          .join("\n");
+        const para = $createParagraphNode();
+        if (text) para.append($createTextNode(text));
+        block.insertBefore(para);
+        block.remove();
+      }
+      // ② 段落里的**块级装饰节点**提到段落的位置（判据：实质孩子恰好一个装饰节点；
+      //    实质 ＝ 非换行、非空文本 ⇒ `文字＋图片＋文字` 这种行内用法一个字都不动 ✓）
+      for (const para of $getRoot().getChildren()) {
+        if (!$isParagraphNode(para)) continue;
+        const meaningful = para
+          .getChildren()
+          .filter((k) => !$isLineBreakNode(k) && !($isTextNode(k) && k.getTextContent() === ""));
+        if (meaningful.length !== 1 || !$isDecoratorNode(meaningful[0])) continue;
+        const only = meaningful[0];
+        para.insertBefore(only);
+        const rest = para
+          .getChildren()
+          .filter((k) => !$isLineBreakNode(k) && !($isTextNode(k) && k.getTextContent() === ""));
+        if (rest.length === 0) para.remove();
+      }
+      // ③ 就在这份 pending 状态上导出 ✓
+      md = $convertToMarkdownString(transformers);
+    },
+    { discrete: true },
+  );
   return md;
 }
 
