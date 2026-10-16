@@ -771,12 +771,22 @@ mod tests {
 
     /// ⭐ **P-4 片③-a 判据④ 的两条锁（今天已绿 ✓，⛔ 不是本片的修 ✗）**：
     /// ⭐ `WIRE_VERSION` 仍 1 ✓ ＋ ⭐ `NearbyPeer` 仍是 **8 格** ✓（⭐ 读数契约没动 ✓）。
+    ///
+    /// ⚠️⚠️ **2026-10-16 更新（owner 拍「同意」✓）：第二条的"格数"从 8 改成 11** ✗
+    /// —— 那条锁**本来就是片级的**（上句逐字"⛔ 不是本片的修"，它锁的是**当时那一片**不许动契约 ✓），
+    /// 而后面几片按**既定手法**合法加了格：**可选字段 ＋ 不升 `WIRE_VERSION`**
+    /// （`lan.rs:148`／`:167` 逐字：「与 `short_id`（08-b②）／`trust_ask` 同一个手法 ✓」✓）。
+    /// ⇒ 计数断言**过期**（实测 11 格 ✓），**不是产品错了** ✗。
+    /// ⭐ **本锁的用意保留** ✓：谁给 `NearbyPeer` 加格，**谁就必须来改这一行并写明来由** ✓ ——
+    /// 它是个 **tripwire**（⛔ 不是"永远不许加" ✗）；`WIRE_VERSION == 1` 那半**继续**有效 ✓
+    /// （加可选字段**不许**升版本 ✓，否则新老互不可见 ✗）。
+    /// 本次只动计数与这段说明，⛔ 不动任何产品代码 ✗。
     #[test]
     fn the_wire_version_and_the_nearby_contract_are_untouched() {
         let lan_src = include_str!("lan.rs");
         assert!(
             lan_src.contains("pub const WIRE_VERSION: u32 = 1;"),
-            "⛔ 本片**不许**升 `WIRE_VERSION` ✗（⭐ 本片只加读数出口 ✓）"
+            "⛔ **不许**升 `WIRE_VERSION` ✗（加字段只能「可选 ＋ 不升版本」✓；升了 ⇒ 新老互不可见 ✗）"
         );
         let sync_src = include_str!("sync.rs");
         let at = sync_src.find("pub struct NearbyPeer {").expect("`NearbyPeer` 必须在");
@@ -785,7 +795,11 @@ mod tests {
             .lines()
             .filter(|l| l.trim_start().starts_with("pub ") && l.trim_end().ends_with(','))
             .count();
-        assert_eq!(fields, 8, "⛔ 本片**不许**给 `NearbyPeer` 加格 ✗（⭐ 读数契约不动 ✓；实际 {fields} 格）");
+        assert_eq!(
+            fields, 11,
+            "⛔ 给 `NearbyPeer` 加/删格**必须同时来改这一行并写明来由** ✗（tripwire ✓；实际 {fields} 格）\
+             —— ⚠️ 2026-10-16 由 8 改 11：08-b② 的 `short_id` ＋ P-B 的原因码等（各带日期注释 ✓）"
+        );
     }
 
     /// ⭐ **判据②（锁，今天已绿 ✓，⛔ 不是本片的修 ✗）**：⭐ 出站**过期 ⇒ 一个字节都不带** ✓。
