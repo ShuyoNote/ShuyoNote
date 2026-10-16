@@ -68,6 +68,64 @@ beforeEach(() => {
   writeMock.mockReset();
 });
 
+describe("pageContentToMarkdown —— 段落里被包住的 mermaid 也必须出围栏（2026-10-15 owner 实测）", () => {
+  // 现场：owner 导出的 .md 里 mermaid 块**没有 ```mermaid 围栏**（源码裸奔）✗。
+  // 真因（拿真页复现出来的）：那些图块在树里是 `root > paragraph > mermaid`（老内容的形状），
+  // 而 `$convertToMarkdownString` 对"段落里的装饰块"**不走** MERMAID 那条 `export` ✗。
+  // ⚠️ 修法有个反直觉的点：**不能**在另一趟 update 里先提级再导出 —— Lexical 提交时会把根上的
+  //   裸装饰节点**再包回段落**（试过：树里 hoist ＋ `discrete: true`、以及解析前改 JSON，都无效 ✗），
+  //   ⇒ 提级与导出**必须在同一次 `editor.update` 里**（`markdownTransformers.test.ts` 那条绿判据
+  //   用的正是这个形状 ✓）。
+  const nested = JSON.stringify({
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            { type: "linebreak", version: 1 },
+            { type: "mermaid", version: 1, src: "flowchart LR\n  A-->B", syntax: "flowchart" },
+          ],
+        },
+        { type: "paragraph", version: 1, children: [{ type: "text", text: "后面的段落", version: 1 }] },
+      ],
+    },
+  });
+
+  it("★ 围栏在，且源码原样（`paragraph > linebreak,mermaid` 这个真原形）", () => {
+    const md = pageContentToMarkdown(nested);
+    expect(md, "mermaid 没有围栏 ⇒ 导出的 .md 里会是一段裸源码").toContain("```mermaid\nflowchart LR\n  A-->B\n```");
+    expect(md).toContain("后面的段落");
+    expect(md).not.toContain("\n\n\n");
+  });
+
+  it("★ 控制组：段落里还有真文字 ⇒ 一个字都不动（⛔ 不误伤行内用法 ✗）", () => {
+    // 这是**有意保留的边界**（记在这儿，免得下一个人以为漏了）：`文字 ＋ 装饰块` 同段时不提级，
+    // 因为"把文字与块拆开"会改变语义；要覆盖它得先有 owner 的实例 ✓。
+    const inline = JSON.stringify({
+      root: {
+        type: "root",
+        version: 1,
+        children: [
+          {
+            type: "paragraph",
+            version: 1,
+            children: [
+              { type: "text", text: "前面的文字", version: 1 },
+              { type: "mermaid", version: 1, src: "flowchart LR\n  A-->B", syntax: "flowchart" },
+            ],
+          },
+        ],
+      },
+    });
+    const md = pageContentToMarkdown(inline);
+    expect(md).toContain("前面的文字");
+    expect(md).not.toContain("```mermaid");
+  });
+});
+
 describe("exportPageToMarkdown —— 把当前页存成 .md 文件", () => {
   it("① 用户在保存对话框里点了取消 ⇒ ⛔ 不写文件、也⛔不报成功", async () => {
     saveMock.mockResolvedValue(null);
