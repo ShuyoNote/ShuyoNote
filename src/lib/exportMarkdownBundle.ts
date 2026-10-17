@@ -113,15 +113,54 @@ export function safeEntryName(raw: string | null | undefined, fallback: string):
 }
 
 /**
- * 一份附件在 zip 里的相对路径：`assets/<hash>.<ext>`。
+ * 一份附件在 zip 里的**条目基名**：优先用它**原来的文件名**（去掉目录与扩展名后过 `safeEntryName` ✓），
+ * 认不出来才退回 hash（清洗后）。
  *
+ * ⭐ 2026-10-18（owner 报的缺口：导出的附件全叫 `assets/<hash>.png`，等于一堆乱码文件名 ✗）：
+ * 原名是**用户认得出的唯一线索** ⇒ 有就用它 ✓。冲突由 `planBundle` 统一退化成
+ * `-<hash 前 6 位>`（同名附件互不覆盖 ✓）。
+ * ⚠️ 原名来自数据库、不可信 ⇒ 仍要过 `safeEntryName`（剥 `..` / 分隔符 / 控制字符 ✓）。
+ */
+function assetBaseFor(hash: string, name?: string | null): string {
+  const id = String(hash ?? "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128) || "attachment";
+  const base = String(name ?? "").replace(/^.*[\\/]/, ""); // 只留文件名部分（剥目录）
+  const ext = extensionFromName(base);
+  const stem = ext ? base.slice(0, base.length - ext.length - 1) : base;
+  return safeEntryName(stem, id);
+}
+
+/**
+ * 一份附件在 zip 里的相对路径：`assets/<原名或 hash>.<ext>`。
+ *
+ * 原名可用 ⇒ 用原名 ✓（见 [`assetBaseFor`]）；扩展名依次问 mime、文件名，都认不出来才 `.bin` ✓。
  * hash 来自正文（不可信）⇒ 只留 `[A-Za-z0-9_-]`（`../../x` 会退化成 `x`，剥空了就叫
  * `attachment`）；扩展名依次问 mime、文件名，都认不出来才 `.bin` ✓。
+ *
+ * ⚠️ 这里**不处理重名** —— 重名要在一整份 bundle 里判（同一个 hash 只算一次、不同 hash 撞名才退
+ * `-<hash 前 6 位>`），那是 [`planBundle`] 的活 ✓。
  */
 export function assetPathFor(hash: string, meta?: BundleAttachmentMeta | null): string {
   const id = String(hash ?? "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128) || "attachment";
   const ext = extensionForMime(meta?.mime) || extensionFromName(meta?.name) || "bin";
-  return `${BUNDLE_ASSET_DIR}/${id}.${ext}`;
+  const base = assetBaseFor(hash, meta?.name) || id;
+  return `${BUNDLE_ASSET_DIR}/${base}.${ext}`;
+}
+
+/**
+ * 附件条目名撞车时的退化路径：`…/名录-<hash 前 6 位>.<ext>`（再撞就继续加 `-1`/`-2`…）。
+ *
+ * 为什么留 hash 前 6 位而不是 `-1`/`-2`：出口件里能拿这段反查到"这是哪一个附件" ✓，
+ * 纯序号丢掉这条线索。与页面重名的既有策略（`-<id 前 6 位>`）同一手法 ✓。
+ */
+function dedupeAssetPath(path: string, hash: string, used: ReadonlySet<string>): string {
+  const dot = path.lastIndexOf(".");
+  const stem = dot > 0 ? path.slice(0, dot) : path;
+  const ext = dot > 0 ? path.slice(dot) : "";
+  const tag = String(hash ?? "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 6) || "dup";
+  let candidate = `${stem}-${tag}${ext}`;
+  let n = 1;
+  while (used.has(candidate)) candidate = `${stem}-${tag}-${n++}${ext}`;
+  return candidate;
 }
 
 /**
@@ -312,25 +351,75 @@ export interface BundleAsset {
 
 export interface BundlePlan {
   files: BundleFile[];
-  /** 要装进 zip 的附件（**已按 hash 去重**）。 */
+  /** 要装进 zip 的附件（**已按 hash 去重**；空间导出时**含未被正文引用的那些** ✓）。 */
   assets: BundleAsset[];
   /** 正文引用了、但这一轮**装不进去**的 hash（字节没取到 ⇒ 正文里保留原引用）。 */
   unresolved: string[];
   /** 转换失败被跳过的页数。 */
   skipped: number;
+  /** ⭐ 2026-10-18：`_attachments.md` 索引在 zip 里的路径（没有生成 ⇒ 缺省）。 */
+  indexPath?: string;
+}
+
+/** [`planBundle`] 的排版选项（都是后加的，缺省 ⇒ 行为与加之前一致 ✓）。 */
+export interface BundlePlanOptions {
+  /**
+   * ⭐ 2026-10-18：**额外**要装进 zip 的附件 hash（空间导出传"这个空间的全部附件"）。
+   *
+   * 未被正文引用的那些也进 `assets/` ✓ —— 口径是**完整备份**，不是"渲染得出来的那部分" ✓。
+   * 按 hash 去重 ✓；`available` 里没有的不装（⛔ 不假装装进去了 ✗）。
+   */
+  extraHashes?: readonly string[];
+  /** ⭐ 2026-10-18：生成 `_attachments.md` 索引（**条目数 ＝ 附件数** ✓）。 */
+  attachmentIndex?: boolean;
+}
+
+/** 索引表格里的一格：竖线 / 换行会把表格拆坏 ⇒ 转义 ✓。 */
+function indexCell(text: string): string {
+  return text.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+/**
+ * ⭐ 2026-10-18：附件索引（`原名 → assets/…`）那一页的正文 —— **纯函数**，好测 ✓。
+ *
+ * 为什么需要它：附件改用原名之后，只有**正文引用到的**那些能在 `.md` 里看到；
+ * 其余"完整备份"带进来的附件得有个地方交代自己是哪个、在哪 ✓。
+ * ⚠️ 条目数必须**等于附件数**（一条一行 —— 漏一条就是索引在骗人 ✓）。
+ */
+export function attachmentIndexText(
+  assets: readonly BundleAsset[],
+  nameOf: (hash: string) => string | null | undefined,
+): string {
+  const rows = assets.map((a) => {
+    const name = nameOf(a.hash);
+    // 原名问不到（附件表里没有 / 没法列）⇒ 如实写 hash，⛔ 不留空 ✗
+    return `| ${indexCell(name || `（原名未知）${a.hash}`)} | ${a.path} |`;
+  });
+  return [
+    `<!-- 附件索引 · 共 ${assets.length} 个 · 条目数 = zip 里的附件数 -->`,
+    "# 附件索引",
+    "",
+    "| 原名 | zip 内路径 |",
+    "|---|---|",
+    ...rows,
+    "",
+  ].join("\n");
 }
 
 /**
  * 排版：算出 zip 里放哪些文件、每个引用换成什么路径。**纯函数**（不读字节、不碰文件）。
  *
  * @param prepared  [`preparePages`] 的产物
- * @param metaOf    按 hash 补元数据（mime/name）—— 节点上没带 mime 的那些靠它
+ * @param metaOf    按 hash 补元数据（mime/name）—— 节点上没带 mime 的那些靠它，
+ *                  原名（`name`）也靠它 ✓
  * @param available 给了就只装**这些** hash（字节没取到的那批 ⇒ 正文保留原引用，⛔ 不留坏链接 ✗）
+ * @param opts      见 [`BundlePlanOptions`]（后加的；缺省 ⇒ 与加之前逐字相同 ✓）
  */
 export function planBundle(
   prepared: readonly PreparedPage[],
   metaOf: (hash: string) => BundleAttachmentMeta | undefined = () => undefined,
   available?: ReadonlySet<string>,
+  opts: BundlePlanOptions = {},
 ): BundlePlan {
   // 节点上读到的 mime 优先（那是"这个文件本来是什么"的第一手读数）
   const nodeMime = new Map<string, string>();
@@ -348,6 +437,21 @@ export function planBundle(
   const assets = new Map<string, BundleAsset>();
   const unresolved = new Set<string>();
   let skipped = 0;
+
+  // ⭐ 2026-10-18：同一个 hash 只分一条路径（跨页/跨引用 ✓）；**不同 hash 撞名**时后到的
+  //   退 `-<hash 前 6 位>` ✓（原名可能重名 —— 两份都叫「报告.pdf」也是真实场景 ✓）。
+  const usedAssetPaths = new Set<string>();
+  const pathByHash = new Map<string, string>();
+  const allocAssetPath = (hash: string): string => {
+    const hit = pathByHash.get(hash);
+    if (hit) return hit;
+    const base = assetPathFor(hash, metaFor(hash));
+    // 第一条用原名；只有**真的撞了**才退 `-<hash 前 6 位>` ✓
+    const path = usedAssetPaths.has(base) ? dedupeAssetPath(base, hash, usedAssetPaths) : base;
+    usedAssetPaths.add(path);
+    pathByHash.set(hash, path);
+    return path;
+  };
 
   for (const p of prepared) {
     if (p.error) {
@@ -373,25 +477,25 @@ export function planBundle(
       refs.push(hash);
     }
 
-    // ② 每个 hash 分到一条 `assets/<hash>.<ext>`（同一 hash 全篇只一条 ⇒ 天然去重 ✓）
-    const pathByHash = new Map<string, string>();
+    // ② 每个 hash 分到一条 `assets/<原名或 hash>.<ext>`（同一 hash 全篇只一条 ⇒ 天然去重 ✓）
+    const refPath = new Map<string, string>();
     for (const hash of refs) {
       if (!canUse(hash)) {
         unresolved.add(hash);
         continue;
       }
-      const path = assetPathFor(hash, metaFor(hash));
-      pathByHash.set(hash, path);
+      const path = allocAssetPath(hash);
+      refPath.set(hash, path);
       if (!assets.has(hash)) assets.set(hash, { hash, path });
     }
 
     // ③ 节点指纹那条路：**精确串**替换（`attachment://localhost/…` 只能这么换）
     for (const [src, ref] of p.srcToHash) {
-      const path = pathByHash.get(ref.hash);
+      const path = refPath.get(ref.hash);
       if (path && md.includes(src)) md = md.split(src).join(path);
     }
     // ④ 字面量那条路（office 导入的图片没有指纹，正文里只剩 `attachment://<hash>`）
-    md = rewriteAttachmentRefs(md, (hash) => pathByHash.get(hash) ?? null);
+    md = rewriteAttachmentRefs(md, (hash) => refPath.get(hash) ?? null);
 
     // ⑤ 路径：**目录树** ✓（同目录重名去重已在 `treePaths` 里做完 ✓）
     const name = treePathsById.get(p.id) ?? `${safeEntryName(p.title || p.id, p.id)}.md`;
@@ -399,7 +503,25 @@ export function planBundle(
     files.push({ path: name, text: `<!-- title: ${p.title || "未命名"} · id: ${p.id} -->\n${md}` });
   }
 
-  return { files, assets: [...assets.values()], unresolved: [...unresolved], skipped };
+  // ⭐ 2026-10-18：空间导出的"完整备份"口径 —— **没被正文引用的附件也装进来** ✓
+  //   （`available` 里没有的不装：字节取不到已经没东西可装，且返回消息会另报数 ✓）
+  for (const hash of opts.extraHashes ?? []) {
+    if (assets.has(hash) || !canUse(hash)) continue;
+    assets.set(hash, { hash, path: allocAssetPath(hash) });
+  }
+
+  // ⭐ 2026-10-18：附件索引（条目数 ＝ 附件数 ✓）。文件名若被某页占用 ⇒ 前面补 `_` 让开 ✓
+  let indexPath: string | undefined;
+  if (opts.attachmentIndex && assets.size > 0) {
+    indexPath = "_attachments.md";
+    while (files.some((f) => f.path === indexPath)) indexPath = `_${indexPath}`;
+    files.push({
+      path: indexPath,
+      text: attachmentIndexText([...assets.values()], (hash) => metaFor(hash).name),
+    });
+  }
+
+  return { files, assets: [...assets.values()], unresolved: [...unresolved], skipped, indexPath };
 }
 
 /**
@@ -469,6 +591,36 @@ async function attachmentMetaMap(
   return meta;
 }
 
+/**
+ * ⭐ 2026-10-18：把**这个空间的全部附件**列出来（逐页求并集，按 hash 去重 ✓）。
+ *
+ * 口径是**完整备份**：没被正文引用的附件也要带走 ✓ —— 否则导出件只是"渲染得出来的那部分"，
+ * 用户塞进来的 PDF / Word / 原始图片就丢了 ✗（owner 真机报的缺口）。
+ * ⚠️ 用的是现成命令 `list_page_attachments`（⛔ 不新造后端命令 ✗）。
+ * ⚠️ 还列 **空间根**（`pageId = null` 的「未整理」附件）—— 它们同样属于这个空间 ✓。
+ * ⚠️ 某一处列不出来 ⇒ 记进 `unreadable` 并在返回消息里如实说（⛔ 当成"这里没有附件" ✗）。
+ */
+async function allAttachmentMeta(
+  pages: readonly MarkdownPageInput[],
+): Promise<{ meta: Map<string, BundleAttachmentMeta>; unreadable: number }> {
+  const meta = new Map<string, BundleAttachmentMeta>();
+  let unreadable = 0;
+  for (const pageId of [...pages.map((p) => p.id), null]) {
+    let rows: AttachmentMeta[] = [];
+    try {
+      rows = await api.listPageAttachments(pageId);
+    } catch {
+      unreadable += 1;
+      continue; // 列不出来 ⇒ 这一处的附件可能漏带，但不把它当成"没有" ✓
+    }
+    for (const row of rows ?? []) {
+      if (!row?.hash || meta.has(row.hash)) continue;
+      meta.set(row.hash, { mime: row.mime || "", name: row.name || null });
+    }
+  }
+  return { meta, unreadable };
+}
+
 interface BundleResult {
   bytes: Uint8Array;
   pages: number;
@@ -476,8 +628,43 @@ interface BundleResult {
   unresolved: number;
   bins: number;
   skipped: number;
+  /** ⭐ 2026-10-18：其中**没被正文引用**、只因"完整备份"口径装进来的附件数 ✓。 */
+  extras: number;
+  /** ⭐ 2026-10-18：未被正文引用、但字节没取到的附件数（如实说，⛔ 不静默漏 ✗）。 */
+  extraMissing: number;
+  /** ⭐ 2026-10-18：附件清单没列出来的地方数（可能漏带 ⇒ 如实说 ✓）。 */
+  unlisted: number;
   /** ⭐ 2026-10-17：这次要打的字节数 —— **超过 [`BUNDLE_BYTE_CAP`] 时才有值** ⇒ 没有产出 zip ✓。 */
   tooLarge?: number;
+}
+
+/**
+ * 导出进度回调（⭐ 2026-10-18：owner 报"导出没有任何进度反馈"✗）。
+ *
+ * 契约（判据在 `exportMarkdownBundle.test.ts` 里钉着）：
+ * · `done` 从 1 **单调递增**到 `total` ✓；
+ * · **总调用次数 ＝ 附件数**（每取一个附件报一次，成功/失败都算走了一件 ✓）；
+ * · `phase` 是给用户看的阶段名（当前只有取附件这一段）✓。
+ */
+export type BundleProgress = (done: number, total: number, phase: string) => void;
+
+/** 两个导出入口共用的选项（都可缺省 ⇒ 与加之前行为一致 ✓）。 */
+export interface BundleExportOptions {
+  /**
+   * 进度回调。不传 ⇒ 入口自己弹**持久 toast**（「正在导出…（取附件 3/32）」⇒ 结束替换成结果 ✓）。
+   * 传了 ⇒ 用你的（测试/别的壳用得到 ✓）。
+   */
+  onProgress?: BundleProgress;
+}
+
+/** [`bundleFor`] 的内部选项。 */
+interface BundleForOptions {
+  onProgress?: BundleProgress;
+  /**
+   * ⭐ 2026-10-18：空间导出用 —— 把**全部**附件（含未被正文引用的）装进 zip ＋ 生成
+   * `_attachments.md` 索引 ✓。单页导出不开它（只看这一页正文引用的那些 ✓）。
+   */
+  allAttachments?: boolean;
 }
 
 /**
@@ -522,16 +709,33 @@ export function bundleTooLargeMessage(totalBytes: number): string | null {
   );
 }
 
-/** 导出核心：转换 → 问类型 → 取字节（同 hash 只取一次）→ 排版 → 打包。 */
-async function bundleFor(pages: readonly MarkdownPageInput[]): Promise<BundleResult> {
+/**
+ * 导出核心：转换 → 问类型（空间导出还要列**全部**附件）→ 取字节（同 hash 只取一次）→ 排版 → 打包。
+ *
+ * ⭐ 2026-10-18：加了 `onProgress`（每取一个附件报一次 ✓）与 `allAttachments`（完整备份口径 ✓）。
+ */
+async function bundleFor(
+  pages: readonly MarkdownPageInput[],
+  opts: BundleForOptions = {},
+): Promise<BundleResult> {
   const prepared = preparePages(pages);
-  const meta = await attachmentMetaMap(pages, prepared);
+  // 空间导出 ⇒ 逐页求并集拿到**全部**附件（含未被正文引用的 ✓）；单页导出仍只问正文引用的那些 ✓
+  const all = opts.allAttachments ? await allAttachmentMeta(pages) : null;
+  const meta = all ? all.meta : await attachmentMetaMap(pages, prepared);
+  const unlisted = all ? all.unreadable : 0;
+  const extraHashes = all ? [...all.meta.keys()] : [];
   const metaOf = (hash: string) => meta.get(hash);
+  const planOpts: BundlePlanOptions = {
+    extraHashes,
+    attachmentIndex: Boolean(opts.allAttachments),
+  };
+  const referenced = new Set(referencedHashes(prepared));
 
   // 先按"全都取得到"排一次版（拿到完整附件清单），再去取字节。
-  const planned = planBundle(prepared, metaOf);
+  const planned = planBundle(prepared, metaOf, undefined, planOpts);
   const bytesOf = new Map<string, Uint8Array>();
   const failed = new Set<string>();
+  let done = 0;
   for (const asset of planned.assets) {
     try {
       bytesOf.set(asset.hash, toBytes(await api.readAttachmentBytes(asset.hash)));
@@ -540,6 +744,9 @@ async function bundleFor(pages: readonly MarkdownPageInput[]): Promise<BundleRes
       // （⛔ 不改成 `assets/…` 留一个坏链接 ✗，也⛔ 不静默删掉那行 ✗）
       failed.add(asset.hash);
     }
+    // ⭐ 2026-10-18：**每取一件报一次**（成功/失败都算走了一件）⇒ 单调递增、总次数 ＝ 附件数 ✓
+    done += 1;
+    opts.onProgress?.(done, planned.assets.length, "取附件");
   }
 
   const final =
@@ -549,7 +756,14 @@ async function bundleFor(pages: readonly MarkdownPageInput[]): Promise<BundleRes
           prepared,
           metaOf,
           new Set(planned.assets.filter((a) => !failed.has(a.hash)).map((a) => a.hash)),
+          planOpts,
         );
+
+  // 说明账：未被正文引用的那些装了几个 / 漏了几个（⛔ 不静默漏 ✗）
+  const extras = final.assets.filter((a) => !referenced.has(a.hash)).length;
+  const extraMissing = extraHashes.filter((h) => !referenced.has(h) && !bytesOf.has(h)).length;
+  // 页面数只数页面文件（索引那一页不算"页" ✓；folder 节点本来就不在 `files` 里 ✓）
+  const pageCount = final.files.length - (final.indexPath ? 1 : 0);
 
   // ⚠️ `zipSync` 是**同步**的 ✗（见 `BUNDLE_BYTE_CAP` 的注释）⇒ 超限就**先别打** ✓
   const textBytes = final.files.reduce((n, f) => n + f.text.length, 0);
@@ -558,45 +772,61 @@ async function bundleFor(pages: readonly MarkdownPageInput[]): Promise<BundleRes
   if (bundleTooLargeMessage(totalBytes)) {
     return {
       bytes: new Uint8Array(0),
-      pages: final.files.length,
+      pages: pageCount,
       assets: final.assets.length,
       unresolved: final.unresolved.length,
       bins: final.assets.filter((a) => a.path.endsWith(".bin")).length,
       skipped: final.skipped,
+      extras,
+      extraMissing,
+      unlisted,
       tooLarge: totalBytes,
     };
   }
 
   return {
     bytes: packBundle(final, bytesOf),
-    pages: final.files.length,
+    pages: pageCount,
     assets: final.assets.length,
     unresolved: final.unresolved.length,
     bins: final.assets.filter((a) => a.path.endsWith(".bin")).length,
     skipped: final.skipped,
+    extras,
+    extraMissing,
+    unlisted,
   };
 }
 
 /** 一句给用户的话：成功的部分说清，**没装进去的那几件也如实说** ✓。 */
 function bundleMessage(title: string, path: string, r: BundleResult): string {
   const bits = [`${r.pages} 页`, `${r.assets} 个附件`];
+  if (r.extras) bits.push(`其中 ${r.extras} 个未被正文引用（完整备份口径一并带走）`);
   if (r.bins) bits.push(`其中 ${r.bins} 个拿不到类型 ⇒ 存成 .bin`);
   if (r.unresolved) {
     bits.push(`${r.unresolved} 个附件字节没取到 ⇒ 正文里保留 attachment:// 原引用（没静默删）`);
   }
+  if (r.extraMissing) {
+    bits.push(`${r.extraMissing} 个未被正文引用的附件字节没取到 ⇒ 没装进 zip（没假装带走）`);
+  }
+  if (r.unlisted) bits.push(`${r.unlisted} 处附件清单没列出来 ⇒ 可能漏带附件`);
   if (r.skipped) bits.push(`${r.skipped} 页转换失败已跳过`);
   return `已导出「${title}」到 ${path}（${bits.join(" · ")}）`;
 }
 
 /**
- * ⭐ **把当前这一页存成一个 zip**：`<标题>.md` ＋ `assets/<hash>.<ext>`。
+ * ⭐ **把当前这一页存成一个 zip**：`<标题>.md` ＋ `assets/<原名或 hash>.<ext>`。
  *
  * 与 [`exportPageToMarkdown`]（纯 .md）**并存**：那一个不碰附件、也不改引用，判据在那儿钉着。
  * 这一页的正文经 `docJsonOfPage` 那层取（⛔ 不在这里提存储列名 ✗）。
  *
+ * ⚠️ 这一条**只带这一页正文引用到的附件** ✓（"整份带走"的口径在空间导出那条 —— 那里才是完整备份 ✓）。
+ *
  * @returns 一句给用户的话（取消 ⇒ 明确说"已取消"，⛔ 不假装成功 ✗）
  */
-export async function exportPageBundleToZip(page: MarkdownPageInput): Promise<string> {
+export async function exportPageBundleToZip(
+  page: MarkdownPageInput,
+  opts: BundleExportOptions = {},
+): Promise<string> {
   const title = page.title || "未命名";
   // ⭐ 2026-10-18：文件夹节点没有正文（它只是目录层，见 `treePaths`）⇒ **一个字节都不写**，
   //   也⛔ 不产出一个"0 页的空 zip"假装成功 ✗。
@@ -609,7 +839,7 @@ export async function exportPageBundleToZip(page: MarkdownPageInput): Promise<st
     filters: [{ name: "Zip", extensions: ["zip"] }],
   });
   if (!path) return "已取消导出"; // 取消 ⇒ 一个字节都不写 ✓
-  const result = await bundleFor([page]);
+  const result = await bundleFor([page], { onProgress: opts.onProgress });
   // ⚠️ 超限 ⇒ **一个字节都不写** ✓，把原因如实返回（⛔ 不假装成功 ✗）
   if (result.tooLarge) return bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
   // Web 侧 `write_binary_file` 是 Blob ＋ `<a download>`（见 `web.ts`）；桌面是真实落盘 ✓
@@ -617,8 +847,13 @@ export async function exportPageBundleToZip(page: MarkdownPageInput): Promise<st
   return bundleMessage(title, path, result);
 }
 
-/** 把**本空间所有页面**＋它们引用的附件打成一个 zip（同一 hash 只出现一次 ✓）。 */
-export async function exportWorkspaceBundleToZip(): Promise<string> {
+/**
+ * 把**本空间所有页面**＋**全部附件**打成一个 zip（同一 hash 只出现一次 ✓）。
+ *
+ * ⭐ 2026-10-18：口径从"正文引用的附件"改成**完整备份** ✓ —— 未被正文引用的附件也进 `assets/`，
+ * 并生成 `_attachments.md` 索引（原名 → 路径 ✓）。
+ */
+export async function exportWorkspaceBundleToZip(opts: BundleExportOptions = {}): Promise<string> {
   const path = await platform.dialog.save({
     title: "导出本空间为 Markdown ＋ 附件（zip）",
     defaultPath: "空间导出.zip",
@@ -647,7 +882,7 @@ export async function exportWorkspaceBundleToZip(): Promise<string> {
     }
   }
 
-  const result = await bundleFor(pages);
+  const result = await bundleFor(pages, { onProgress: opts.onProgress, allAttachments: true });
   // ⚠️ 超限 ⇒ **一个字节都不写** ✓（与单页那条同口径 ✓）
   if (result.tooLarge) return bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
   await api.writeBinaryFile(path, Array.from(result.bytes));

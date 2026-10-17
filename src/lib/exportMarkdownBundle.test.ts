@@ -120,8 +120,9 @@ describe("① 路径重写：`attachment://<hash>` ⇒ `assets/<hash>.<ext>`", (
 
   it("扩展名依次问 mime → 文件名 → `.bin`（⛔ 不猜 ✗）", () => {
     expect(assetPathFor("h1", { mime: "image/jpeg" })).toBe("assets/h1.jpg");
-    expect(assetPathFor("h1", { mime: "", name: "年报.PDF" })).toBe("assets/h1.pdf");
-    expect(assetPathFor("h1", { mime: "", name: "没有后缀" })).toBe("assets/h1.bin");
+    // ⭐ 2026-10-18：有原文件名就用原名（owner 报的缺口：全叫 `<hash>.png` 认不出来 ✓）
+    expect(assetPathFor("h1", { mime: "", name: "年报.PDF" })).toBe("assets/年报.pdf");
+    expect(assetPathFor("h1", { mime: "", name: "没有后缀" })).toBe("assets/没有后缀.bin");
     expect(assetPathFor("h1")).toBe("assets/h1.bin");
   });
 
@@ -193,6 +194,9 @@ describe("③ 文件名安全化：非法字符、上跳、重名", () => {
     // hash 来自正文（不可信）⇒ 也逃不出 `assets/`
     expect(assetPathFor("../../etc/passwd", { mime: "image/png" })).toBe("assets/etcpasswd.png");
     expect(assetPathFor("../../", { mime: "image/png" })).toBe("assets/attachment.png");
+    // ⭐ 2026-10-18：原名也来自数据库（不可信）⇒ 同样逃不出 `assets/`（⛔ zip-slip ✗）
+    expect(assetPathFor("h1", { mime: "image/png", name: "../../etc/passwd.png" })).toBe("assets/passwd.png");
+    expect(assetPathFor("h1", { mime: "image/png", name: "..\\..\\win.png" })).toBe("assets/win.png");
   });
 
   it("重名沿用现有的 `-<id 前 6 位>` 策略", () => {
@@ -311,7 +315,8 @@ describe("导出接线（保存对话框 ＋ 写二进制）", () => {
     const msg = await exportPageBundleToZip({ id: "p1", title: "问类型", docJson: doc });
     expect(listAttachmentsMock).toHaveBeenCalledWith("p1");
     const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
-    expect(Object.keys(out).sort()).toEqual(["assets/h2.pdf", "问类型.md"]);
+    // ⭐ 2026-10-18：问到的 `name` 现在也参与条目名 ⇒ 用**原名**，扩展名仍来自 mime ✓
+    expect(Object.keys(out).sort()).toEqual(["assets/年报.pdf", "问类型.md"]);
     expect(msg).toContain("1 个附件");
     expect(msg).not.toContain(".bin");
   });
@@ -328,9 +333,117 @@ describe("导出接线（保存对话框 ＋ 写二进制）", () => {
     const msg = await exportWorkspaceBundleToZip();
     expect(listPagesMock).toHaveBeenCalledTimes(1);
     const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
-    expect(Object.keys(out).sort()).toEqual(["assets/h1.png", "乙.md", "甲.md"].sort());
+    // ⭐ 2026-10-18：空间导出多一页 `_attachments.md` 索引（条目数 ＝ 附件数 ✓）
+    expect(Object.keys(out).sort()).toEqual(["_attachments.md", "assets/h1.png", "乙.md", "甲.md"].sort());
     expect(msg).toContain("已导出");
     expect(msg).toContain("2 页");
     expect(msg).toContain("1 个附件");
+  });
+});
+
+// ⭐ 2026-10-18（owner 报的缺口：空间导出只带"正文引用的"附件 ⇒ 塞进空间的 PDF/Word/素材丢了 ✗）：
+//   口径改成**完整备份** —— 全部附件都进 zip ＋ `_attachments.md` 索引（原名 → 路径 ✓）。
+describe("⑤ 空间导出带上**全部附件**（2026-10-18 加）", () => {
+  /** 一个只有 `p1` 一页、正文没有任何附件引用的空间。 */
+  function singlePageSpace(rows: unknown[]) {
+    saveMock.mockResolvedValue("D:/out/完整.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([1, 2]));
+    listPagesMock.mockResolvedValue([{ id: "p1", parent_id: null, kind: "page" }]);
+    getPageMock.mockResolvedValue({ id: "p1", title: "页", content_json: plainDoc("没有引用附件") });
+    listAttachmentsMock.mockResolvedValue(rows);
+  }
+  const indexRows = (text: string) =>
+    text.split("\n").filter((line) => /^\| .* \| assets\//.test(line)).length;
+
+  it("未引用附件也在包里 ＋ 索引条目数＝附件数 ✓", async () => {
+    singlePageSpace([
+      { id: "a1", hash: "z9", mime: "application/pdf", name: "手册.pdf", size: 1, path: "" },
+      {
+        id: "a2",
+        hash: "z8",
+        mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        name: "需求.docx",
+        size: 2,
+        path: "",
+      },
+    ]);
+    const msg = await exportWorkspaceBundleToZip();
+    const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
+    expect(Object.keys(out).sort()).toEqual(["_attachments.md", "assets/手册.pdf", "assets/需求.docx", "页.md"].sort());
+    const index = textOf(out, "_attachments.md");
+    expect(indexRows(index)).toBe(2);
+    expect(index).toContain("| 手册.pdf | assets/手册.pdf |");
+    expect(index).toContain("| 需求.docx | assets/需求.docx |");
+    expect(msg).toContain("2 个附件");
+    expect(msg).toContain("未被正文引用");
+    // 附件字节原样进包（不是空壳 ✓）
+    expect(Array.from(out["assets/手册.pdf"])).toEqual([1, 2]);
+  });
+
+  it("同名附件互不覆盖（后到的退 `-<hash 前 6 位>` ✓）", async () => {
+    singlePageSpace([
+      { id: "a1", hash: "aaaaaa11", mime: "application/pdf", name: "报告.pdf", size: 1, path: "" },
+      { id: "a2", hash: "bbbbbb22", mime: "application/pdf", name: "报告.pdf", size: 1, path: "" },
+    ]);
+    await exportWorkspaceBundleToZip();
+    const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
+    expect(Object.keys(out).filter((k) => k.startsWith("assets/")).sort()).toEqual([
+      "assets/报告-bbbbbb.pdf",
+      "assets/报告.pdf",
+    ]);
+    expect(indexRows(textOf(out, "_attachments.md"))).toBe(2);
+  });
+
+  it("附件原名里的 `..` / 分隔符逃不出 `assets/`（zip-slip ✗）", async () => {
+    singlePageSpace([
+      { id: "a1", hash: "evil01", mime: "image/png", name: "../../etc/passwd.png", size: 1, path: "" },
+    ]);
+    await exportWorkspaceBundleToZip();
+    const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
+    const assetKeys = Object.keys(out).filter((k) => k.startsWith("assets/"));
+    expect(assetKeys).toEqual(["assets/passwd.png"]);
+    expect(assetKeys.every((k) => !k.includes(".."))).toBe(true);
+  });
+
+  it("正文引用的附件也用原名进 zip，正文里的引用跟着换成新路径 ✓", async () => {
+    saveMock.mockResolvedValue("D:/out/引用.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([7]));
+    listPagesMock.mockResolvedValue([{ id: "p1", parent_id: null, kind: "page" }]);
+    getPageMock.mockResolvedValue({
+      id: "p1",
+      title: "带图",
+      content_json: imageDoc("attachment://localhost/C%3A/a.png", "h1", "image/png"),
+    });
+    listAttachmentsMock.mockResolvedValue([
+      { id: "a1", hash: "h1", mime: "image/png", name: "封面.png", size: 1, path: "" },
+    ]);
+    await exportWorkspaceBundleToZip();
+    const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
+    expect(Object.keys(out).sort()).toEqual(["_attachments.md", "assets/封面.png", "带图.md"].sort());
+    expect(textOf(out, "带图.md")).toContain("![图](assets/封面.png)");
+    expect(textOf(out, "带图.md")).not.toContain("attachment://");
+  });
+
+  it("附件清单列不出来 ⇒ 如实说「可能漏带」，⛔ 不假装完整 ✗", async () => {
+    saveMock.mockResolvedValue("D:/out/x.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([1]));
+    listPagesMock.mockResolvedValue([{ id: "p1", parent_id: null, kind: "page" }]);
+    getPageMock.mockResolvedValue({ id: "p1", title: "页", content_json: plainDoc() });
+    listAttachmentsMock.mockRejectedValue(new Error("列不出来"));
+    const msg = await exportWorkspaceBundleToZip();
+    expect(msg).toContain("附件清单没列出来");
+    expect(msg).toContain("可能漏带");
+  });
+
+  it("单页导出仍只带正文引用的附件（完整备份口径只属于空间导出 ✓）", async () => {
+    saveMock.mockResolvedValue("D:/out/单页.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([1]));
+    listAttachmentsMock.mockResolvedValue([
+      { id: "a1", hash: "z9", mime: "application/pdf", name: "手册.pdf", size: 1, path: "" },
+    ]);
+    const msg = await exportPageBundleToZip({ id: "p1", title: "页", docJson: plainDoc() });
+    const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
+    expect(Object.keys(out)).toEqual(["页.md"]);
+    expect(msg).toContain("0 个附件");
   });
 });
