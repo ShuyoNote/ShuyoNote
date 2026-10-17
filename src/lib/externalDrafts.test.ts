@@ -6,7 +6,14 @@
 // 选错方向的后果都是用户数据：① 该问的时候不问 = 外部 AI 能偷偷改笔记 ✗；
 // ② 不该弹框的时候弹 = 插件/AI 那条现成链路被重复打扰 ✗。
 import { describe, expect, it, vi } from "vitest";
-import { handleExternalDraftsEvent, parseExternalDraftsEvent, type ExternalDraftDeps } from "./externalDrafts";
+import {
+  draftTouchesPage,
+  draftsTouchPage,
+  handleExternalDraftsEvent,
+  parseExternalDraftsEvent,
+  standalonePageIdOf,
+  type ExternalDraftDeps,
+} from "./externalDrafts";
 import type { PluginDraft } from "../types";
 
 const drafts: PluginDraft[] = [
@@ -79,5 +86,58 @@ describe("外部草稿的分岔路", () => {
     expect(parseExternalDraftsEvent({ source: "s", auto_apply: true, drafts })?.auto_apply).toBe(true);
     expect(parseExternalDraftsEvent({ payload: "{坏" })).toBeNull();
     expect(parseExternalDraftsEvent(null)).toBeNull();
+  });
+});
+
+// ⭐ 2026-10-17（R155 配套）：独立页窗口（`?page=<id>`）**不应用外部草稿**，只在
+// "改动打到我这一页"时整窗重载。这里钉的是那条岔路的判断（纯函数，注入 search 便于测）。
+describe("独立页窗口：判断这次外部改动是不是打到我这一页", () => {
+  const appendTo = (pageId: string): PluginDraft => ({
+    key: `append:${pageId}`,
+    summary: "追加",
+    payload: { kind: "append_block", pageId },
+  });
+  const tagTo = (pageId: string): PluginDraft => ({
+    key: `tag:${pageId}`,
+    summary: "加标签",
+    payload: { kind: "add_tag", pageId },
+  });
+  const propTo = (pageId: string): PluginDraft => ({
+    key: `prop:${pageId}`,
+    summary: "设属性",
+    payload: { kind: "set_page_prop", args: { pageId } },
+  });
+  const createPage: PluginDraft = {
+    key: "create",
+    summary: "新建页",
+    payload: { kind: "create_page", args: { title: "新页" } },
+  };
+
+  it("append_block / add_tag / set_page_prop 认得出目标页（含 args.pageId 形态）", () => {
+    expect(draftTouchesPage(appendTo("p1"), "p1")).toBe(true);
+    expect(draftTouchesPage(tagTo("p1"), "p1")).toBe(true);
+    expect(draftTouchesPage(propTo("p1"), "p1")).toBe(true);
+    expect(draftTouchesPage(appendTo("p1"), "p2")).toBe(false);
+    expect(draftTouchesPage(tagTo("p1"), "p2")).toBe(false);
+  });
+
+  it("create_page 没有 pageId（新页还没 id）⇒ 与任何已存在页无关", () => {
+    expect(draftTouchesPage(createPage, "p1")).toBe(false);
+  });
+
+  it("一组草稿里只要有一条打到这一页就返回 true（坏形状不炸）", () => {
+    expect(draftsTouchPage([createPage, appendTo("p1")], "p1")).toBe(true);
+    expect(draftsTouchPage([createPage, appendTo("p2")], "p1")).toBe(false);
+    expect(draftsTouchPage([], "p1")).toBe(false);
+    expect(draftsTouchPage(undefined, "p1")).toBe(false);
+    expect(draftsTouchPage([{ key: "x", summary: "", payload: null }], "p1")).toBe(false);
+  });
+
+  it("?page=<id> 解析：有 id 才算独立页窗口，坏输入返回 null", () => {
+    expect(standalonePageIdOf("?page=abc")).toBe("abc");
+    expect(standalonePageIdOf("?x=1&page=p9")).toBe("p9");
+    expect(standalonePageIdOf("")).toBeNull();
+    expect(standalonePageIdOf("?page=")).toBeNull();
+    expect(standalonePageIdOf("?x=1")).toBeNull();
   });
 });

@@ -59,7 +59,14 @@ const NODES = [
   TableRowNode,
 ];
 
-function sanitizeName(name: string): string {
+/**
+ * 文件名清洗（`/ \ : * ? " < > |` 与控制字符 ⇒ `_`、去掉首尾点/空格、限长 120）。
+ *
+ * 导出成 .md 文件与「带附件打成 zip」（`exportMarkdownBundle.ts`）**共用这一份** ——
+ * zip 条目名另有更严的一层（额外剥 `..`，防 zip-slip ✗），但那层是**在这份之上**加的，
+ * ⛔ 不是另写一份清洗 ✗（两份就会漂）。
+ */
+export function sanitizeName(name: string): string {
   // Strips characters invalid on Windows/macOS paths; keeps CJK & starts safe.
   let s = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim();
   s = s.replace(/[.\s]+$/g, ""); // trailing dots/spaces
@@ -257,6 +264,22 @@ export type MarkdownPageInput = {
   title?: string | null;
   /** 文档 JSON 文本（页面正文）；取法见上面那条注释 ✓ */
   docJson: string;
+  /**
+   * ⭐ 2026-10-17：它在页面树里的**父页 id**（`null`／缺省 ⇒ 顶层）。
+   *
+   * ⚠️ 只被 `exportMarkdownBundle.ts` 用来**决定 zip 内的目录** ✓ ——
+   * 纯 `.md` 导出（`exportPageToMarkdown` / `exportWorkspaceToMarkdown`）**不读它** ✓
+   * （那两条保持原样：一条单文件、一条平铺 ✓）。⛔ 缺省不猜父页 ✗。
+   */
+  parentId?: string | null;
+  /**
+   * ⭐ 2026-10-18：页面类型（`"page"` / `"database"` / `"folder"`；缺省 ＝ 不知道 ⇒ 按普通页处理 ✓）。
+   *
+   * ⚠️ 只有 `exportMarkdownBundle.ts` 读它，且**只认 `"folder"` 这一个值** ✓：
+   * 文件夹节点在 zip 里**不产出自己的 `.md`**，但它仍然是子页的目录层级（否则子页会被摊平到根 ✗）。
+   * `"database"` 照旧出 `.md` ✓（数据库页有正文）。⛔ 不在这里判别的 kind ✗。
+   */
+  kind?: string;
 };
 
 /**

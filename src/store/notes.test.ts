@@ -189,4 +189,48 @@ describe("notes store · 记住并还原当前文档", () => {
 
     expect(localStorage.getItem("shuyonote:lastPageId")).toBe("c");
   });
+
+  // ⭐ 2026-10-18（owner：「一个空间…最后的文档位置，可否记录下来？」）：
+  //   记忆从**一个全局键**改成**按空间各记一份** —— 切走再切回来不再被别的空间覆盖 ✓。
+  it("⭐ 按空间记：openPage 写**这一页所在空间**的键（老键也照写，降级不丢 ✓）", async () => {
+    await useNotes.getState().openPage("c");
+
+    expect(localStorage.getItem("shuyonote:lastPageId:ws1")).toBe("c");
+    expect(localStorage.getItem("shuyonote:lastPageId")).toBe("c");
+  });
+
+  it("⭐ 启动还原**按空间读**：老键里是别的空间的页，不许把人带过去 ✓", async () => {
+    localStorage.setItem("shuyonote:lastPageId", "zzz"); // 老键（可能是另一个空间的旧值）
+    localStorage.setItem("shuyonote:lastPageId:ws1", "b"); // 本空间（列表里的页都是 ws1）
+
+    await useNotes.getState().loadPages();
+
+    expect(useNotes.getState().currentId).toBe("b");
+  });
+
+  it("⭐ 切回一个空间 ⇒ 回到**这个空间**上次看的那一页", async () => {
+    await useNotes.getState().loadPages(); // 启动落定（没记忆 ⇒ 打开第一页 a）
+    expect(useNotes.getState().currentId).toBe("a");
+    localStorage.setItem("shuyonote:lastPageId:ws2", "b"); // ws2 上次看的是 b
+
+    await useNotes.getState().loadPages({ restoreSpaceId: "ws2" });
+
+    expect(useNotes.getState().currentId).toBe("b");
+    expect(useNotes.getState().startupSettled, "还原完要让 App 那个兜底 effect 重新上岗").toBe(true);
+  });
+
+  it("⭐ 切回的空间没记录 / 记的那页没了 ⇒ 什么都不打开（交给调用方的兜底 ✓）", async () => {
+    await useNotes.getState().loadPages();
+    useNotes.setState({ currentId: null, current: null });
+    // 老键（迁移用）也清掉 ⇒ 这个空间**真的**没记录
+    // ⚠️ 不清的话：老键的兜底会把刚才那页再还回来（那是**迁移口径**，由 lastPageMemory 的判据钉着 ✓）
+    localStorage.removeItem("shuyonote:lastPageId");
+
+    await useNotes.getState().loadPages({ restoreSpaceId: "ws-没记录" });
+    expect(useNotes.getState().currentId).toBeNull();
+
+    localStorage.setItem("shuyonote:lastPageId:ws-坏", "不存在的页");
+    await useNotes.getState().loadPages({ restoreSpaceId: "ws-坏" });
+    expect(useNotes.getState().currentId).toBeNull();
+  });
 });

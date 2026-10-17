@@ -23,6 +23,8 @@ import { docHtml, printDoc } from "../lib/print";
 import { inlineExportMedia } from "../lib/exportInline";
 import { renderExportMermaid } from "../lib/exportMermaid";
 import { exportPageToMarkdown } from "../lib/exportMarkdown";
+// ⭐ 2026-10-17：带附件的一键导出（zip）。与上面那条**并存** ✓ —— 纯 .md 那条不碰附件、不改引用 ✓。
+import { exportPageBundleToZip, ExportReportedError } from "../lib/exportMarkdownBundle";
 import { docJsonOfPage } from "../lib/docContent";
 
 /**
@@ -147,6 +149,29 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
       toast(msg, msg.startsWith("已取消") ? "info" : "success");
     } catch (e) {
       toast(`导出失败：${e}`, "error");
+    }
+  };
+
+  /**
+   * ⭐⭐ **2026-10-17**：把当前这一页**连同它引用的附件**一起存成一个 `.zip`
+   * （`<标题>.md` ＋ `assets/<hash>.<ext>`，正文里的 `attachment://<hash>` 改写成相对路径）。
+   *
+   * ⚠️ 与 [`exportMarkdownFile`] **并存** ✓（那一条是纯 `.md`、不碰附件、不改引用 ✓ —— 导出件要干净就用它）；
+   * 这一条是"带走整份东西"的那条路 ✓。
+   * 传的是**同一份页面快照**（`api.getPage` ✓）与**同一层取正文**（`docJsonOfPage` ✓）——
+   * ⛔ 不在组件里写存储列名 ✗（`check-doc-content-access` 只减不增 ✓）。
+   * 取消 ⇒ 如实说"已取消"，⛔ 不报成功 ✗（由 `exportMarkdownBundle.ts` 负责措辞 ✓）。
+   */
+  const exportMarkdownBundleFile = async () => {
+    try {
+      const page = await api.getPage(pageId);
+      // ⭐ 2026-10-18：**进度与结果都由 `exportPageBundleToZip` 的持久 toast 负责**
+      //   （「正在导出…（取附件 3/32）」⇒ 同一条替换成结果 ✓）⇒ 这里⛔ 不再弹第二遍同一句 ✗。
+      await exportPageBundleToZip({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
+    } catch (e) {
+      // 导出链里失败 ⇒ 那条持久 toast 已经如实变成「导出失败：…」（`ExportReportedError`）⇒ 不重复弹。
+      // 只有**还没走到导出**就失败的（例如取页面失败）才在这里补一句，否则用户什么都看不到 ✗。
+      if (!(e instanceof ExportReportedError)) toast(`导出失败：${e}`, "error");
     }
   };
 
@@ -370,6 +395,10 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
             {/* ⭐ 2026-10-15（owner）：**直接存成 .md 文件**（原来这一格只是复制剪贴板 ✗）。 */}
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); void exportMarkdownFile(); }} title={t("editor.exportMarkdown")}>
               <UploadIcon /> {t("editor.exportMarkdown")}
+            </button>
+            {/* ⭐ 2026-10-17：一键导出**含附件**的 zip（与上面那条纯 .md 并存 ✓） */}
+            <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); void exportMarkdownBundleFile(); }} title={t("editor.exportMarkdownZip")}>
+              <UploadIcon /> {t("editor.exportMarkdownZip")}
             </button>
             <button className="toolbar-menu-item" onClick={() => { setExportOpen(false); exportHtml(); }} title={t("editor.exportHtml")}>
               <FileCodeIcon /> {t("editor.exportHtml")}

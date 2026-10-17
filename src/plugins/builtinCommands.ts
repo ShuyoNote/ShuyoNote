@@ -14,7 +14,13 @@ import { buildHelpSite } from "../lib/helpSite";
 import { buildWikiExport, type WikiPageInput } from "../lib/wikiExport";
 import { usePdfReader } from "../store/pdfReader";
 import { useCommunitySave } from "../store/communitySave";
+// ⭐ 2026-10-18（C 弹窗）：两个新入口只负责**打开浮层**；勾选项与执行全在同一条链上 ✓
+import { useExportDialog } from "../store/exportDialog";
 import { exportWorkspaceToMarkdown, exportPageToMarkdown } from "../lib/exportMarkdown";
+import {
+  exportPageBundleToZip,
+  exportWorkspaceBundleToZip,
+} from "../lib/exportMarkdownBundle";
 import { docJsonOfPage } from "../lib/docContent";
 import type { PageMeta } from "../types";
 
@@ -96,6 +102,30 @@ registerCommandGroup({
   id: "export",
   name: "导出",
   commands: [
+    // ⭐ 2026-10-18（C 弹窗）：先给**两个统一入口** —— 点开同一个对话框（预估 ＋ 三个勾选项），
+    //   执行在 `lib/exportMarkdownDialog.ts` ✓。
+    //   ⛔ 下面四条旧命令**一条不删** ✗ —— owner 真机验过新入口再收（不做"先删后补" ✓）。
+    {
+      id: "export.entry-page",
+      title: "导出当前页…",
+      description: "打开导出对话框：附件 zip ／ 元数据 YAML ／ 纯 .md 平铺，先给预估（新入口）",
+      closeOnRun: true,
+      run: (ctx) => {
+        if (!ctx.currentId) return "未打开页面";
+        useExportDialog.getState().openFor("page", ctx.currentId);
+        return "已打开导出对话框";
+      },
+    },
+    {
+      id: "export.entry-space",
+      title: "导出本空间…",
+      description: "打开导出对话框（本空间的页 ＋ 全部附件）：选项与预估同上（新入口）",
+      closeOnRun: true,
+      run: () => {
+        useExportDialog.getState().openFor("space");
+        return "已打开导出对话框";
+      },
+    },
     {
       id: "export.current-json",
       title: "导出当前页 JSON",
@@ -109,7 +139,7 @@ registerCommandGroup({
     },
     {
       id: "export.current-markdown",
-      title: "导出当前页为 Markdown",
+      title: "导出当前页为 .md 单文件（不含附件）",
       description: "把当前这一页存成 .md 文件（自选存到哪）",
       // ⭐ 2026-10-15（owner：「添加一个直接导出 Markdown 文件的功能」）：
       //   命令面板这一格与编辑器工具栏那格**调同一个** `exportPageToMarkdown` ✓ ——
@@ -126,10 +156,30 @@ registerCommandGroup({
     },
     {
       id: "export.workspace-markdown",
-      title: "导出工作空间为 Markdown",
+      title: "导出本空间为多个 .md 文件（平铺，不含附件）",
       description: "把本工作空间所有页面导出为 .md 文件到所选目录",
       closeOnRun: true,
       run: () => exportWorkspaceToMarkdown(),
+    },
+    {
+      id: "export.current-markdown-zip",
+      title: "导出当前页为 .md ＋ 附件（打包 zip）",
+      description: "把这一页的 .md 与它引用的附件打成一个 zip；正文里的 attachment://<hash> 换成 assets/ 相对路径",
+      // ⭐ V1.1：与上面那格**并存** —— 纯 .md 那条路不碰附件、也不改引用（判据在
+      //   `exportMarkdown.test.ts` 里钉着）。这一格只多"打包 ＋ 重写路径"，转换仍是同一份 ✓。
+      closeOnRun: true,
+      run: async (ctx) => {
+        if (!ctx.currentId) return "未打开页面";
+        const page = await api.getPage(ctx.currentId);
+        return exportPageBundleToZip({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
+      },
+    },
+    {
+      id: "export.workspace-markdown-zip",
+      title: "导出本空间为 .md ＋ 附件（打包 zip）",
+      description: "全部页面 ＋ 它们引用的附件打成一个 zip（同 hash 只放一份，引用换成 assets/ 相对路径）",
+      closeOnRun: true,
+      run: () => exportWorkspaceBundleToZip(),
     },
     {
       id: "export.workspace-wiki",

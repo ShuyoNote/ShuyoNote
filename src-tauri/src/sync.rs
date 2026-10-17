@@ -354,6 +354,66 @@ pub fn record_change(
     Ok(())
 }
 
+/// 载荷里那格"**我这边管它叫什么**"（空间名）的字段名。
+///
+/// ⚠️ 与 `hlc::HLC_PAYLOAD_FIELD`（`_hlc`）／`crdt_wire` 的挂件**同一个形状与同一条纪律**：
+/// · 下划线开头 ⇒ 一看就是**元数据**，不是页内容 ✓；
+/// · **只在有值时挂** ✓ ⇒ 没有名字时载荷**逐字节不变**（老对端零感知 ✓）；
+/// · 老对端读到不认识的键 ⇒ 忽略 ✓（载荷不带 `deny_unknown_fields` ✓）。
+///
+/// ⭐ 为什么要它（2026-10-17，owner 拍"同名空间融合按第 1 档起步"）：
+/// 仓里收据 `lib.rs:118-131` 逐字写着"按名融合还缺一格数据：远端载荷**只有 id、没有空间名** ⇒
+/// 判不了『同名』✗"。这一格就是补那个缺 ✗ —— **只补数据，不改任何判定** ✓
+/// （身份闸 `mesh_merge_ledger::merge_gate` 今天仍无生产调用者 ✗，接线是下一笔 ✓）。
+pub const SPACE_NAME_PAYLOAD_FIELD: &str = "_space_name";
+
+/// 从**空间库**里取这个空间的名字（每个空间库恰好一行 `workspaces` ✓ —— 见 `doc_content.rs:409-411`）。
+///
+/// ⚠️ **取不到就返回 `None`，⛔ 不许让保存失败** ✗ —— 名字只是"融合用的提示"，
+/// 丢的是那一次的同名判断，不是用户的编辑 ✓（与 `local_stamp` 那条同一条纪律 ✓）。
+pub(crate) fn local_space_name(c: &Connection) -> Option<String> {
+    let name: Option<String> = c
+        .query_row("SELECT name FROM workspaces LIMIT 1", [], |r| r.get(0))
+        .ok();
+    let name = name?.trim().to_string();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+/// 把空间名挂到载荷上（**推**那一侧用）。与 `hlc::with_stamp` 逐条同形：
+/// **不是 JSON ⇒ 响亮报错**（我们自己的载荷坏了，不该猜 ✗）；JSON 但**非对象** ⇒ **原样返回**
+/// （形态是别人定的，包一层会改掉它的字节 ✗）。
+pub(crate) fn with_space_name(payload_json: &str, space_name: &str) -> Result<String, String> {
+    let name = space_name.trim();
+    if name.is_empty() {
+        return Ok(payload_json.to_string());
+    }
+    let mut value: serde_json::Value = serde_json::from_str(payload_json).map_err(|e| e.to_string())?;
+    let Some(obj) = value.as_object_mut() else {
+        return Ok(payload_json.to_string());
+    };
+    obj.insert(
+        SPACE_NAME_PAYLOAD_FIELD.to_string(),
+        serde_json::Value::String(name.to_string()),
+    );
+    serde_json::to_string(&value).map_err(|e| e.to_string())
+}
+
+/// 从载荷里读空间名。⭐ **老载荷／老对端 ⇒ `None`**（不是错误 ✓）；读不出来（形状不对）也 `None`
+/// —— 这一格**只用于"同名"提示** ⇒ 保守取"没有"最安全（⛔ 不猜、⛔ 不从 id 反推 ✗）。
+pub(crate) fn space_name_of_payload(payload_json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(payload_json).ok()?;
+    let s = value.get(SPACE_NAME_PAYLOAD_FIELD)?.as_str()?.trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
 pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), String> {
     let payload = serde_json::to_string(page).map_err(|e| e.to_string())?;
     // ★ §11.4 收口（第 42 轮）· **推**那一半：这一页有 CRDT 状态 ⇒ 把它挂到载荷上
@@ -382,6 +442,13 @@ pub fn record_page_upsert(c: &Connection, page: &PageDetail) -> Result<(), Strin
             eprintln!("[sync] page {} 取不到本机戳 ⇒ **这一条不带戳**（收侧按今天那条路判）：{e}", page.id);
             payload
         }
+    };
+    // ⭐ 同名空间融合第 1 档（2026-10-17）：把**空间名**挂进载荷。
+    //   只补数据、⛔ 不改任何判定 ✓；取不到名字 ⇒ **载荷逐字节不变** ✓（与上面两条挂件同一条纪律 ✓）。
+    //   ⚠️ 顺序是"先戳后名" ⇒ 谁后挂谁在最外层，两种挂件的读法都是按键取 ⇒ 互不影响 ✓。
+    let payload = match local_space_name(c) {
+        Some(name) => with_space_name(&payload, &name)?,
+        None => payload,
     };
     record_change(c, "page", &page.id, "upsert", Some(&payload), page.updated_at)
 }
@@ -9886,5 +9953,72 @@ mod tests {
 
         crate::lan_state::with_trust(|h| h.clear());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- ⭐ 同名空间融合第 1 档（2026-10-17）：载荷里挂"我这边管它叫什么" ----
+    // 口径与 `hlc::with_stamp`／`crdt_wire` 的挂件**逐条同形**：只在有值时挂 ⇒ 老载荷**逐字节不变** ✓。
+    // ⚠️ 必须**并进这个 `mod tests`**（⛔ 不许另起一个尾部的 `#[cfg(test)]` 项 ✗）：
+    //    `scripts/lib/rust-scan.mjs::productionText` 只剔"配对后正好走到文件尾的**那一个**" ✓
+    //    ⇒ 另起一个会让整段 `mod tests`（含测试里的字面量）被当成**生产代码**计数 ✗
+    //    （实测：那样 `check-doc-content-access` 从绿变红、把 `sync.rs` 报成 16 处 ✗ —— 它在干该干的事 ✓）。
+    mod space_name_wire_tests {
+        use crate::sync::*;
+
+    fn payload() -> String {
+        // ⚠️ 刻意**不写**那两个存储列名 ✗ —— `check-doc-content-access` 按"文件里直接摸它们的面"
+        //    计只减不增，**连注释里出现都算一处** ✓（这是它在干该干的事 ✓）。
+        //    本组判据只需要"一个像载荷的 JSON 对象" ⇒ 用中性的键名即可 ✓。
+        serde_json::json!({
+            "id": "p1", "workspace_id": "w1", "title": "页",
+            "body": "{}", "text": "", "sort_order": 1.0,
+            "created_at": 1, "updated_at": 2
+        })
+        .to_string()
+    }
+
+    /// ⭐ ① 挂了就真在载荷里、且读得回来；页内容一个字节都不许被改 ✓。
+    #[test]
+    fn space_name_really_lands_in_the_payload() {
+        let p = with_space_name(&payload(), "  工作  ").unwrap();
+        assert_eq!(space_name_of_payload(&p).as_deref(), Some("工作"), "⛔ 没挂上（或没折空白）✗");
+        assert!(p.contains("_space_name"), "⛔ 键名不是 `_space_name` ⇒ 收侧读不到 ✗");
+        let v: serde_json::Value = serde_json::from_str(&p).unwrap();
+        let orig: serde_json::Value = serde_json::from_str(&payload()).unwrap();
+        assert_eq!(v["title"], orig["title"], "⛔ 页内容被改动了 ✗");
+        assert_eq!(v["body"], orig["body"], "⛔ 页内容被改动了 ✗");
+    }
+
+    /// ⭐ ② 老载荷（没有这一格）⇒ `None`，⛔ **不许从 id 反推一个名字** ✗。
+    #[test]
+    fn absent_space_name_is_not_invented() {
+        assert_eq!(space_name_of_payload(&payload()), None);
+        assert_eq!(space_name_of_payload(r#"{"workspace_id":"w1"}"#), None, "⛔ 不许拿 workspace_id 充当名字 ✗");
+    }
+
+    /// ⭐ ③ 空名字 ⇒ **载荷逐字节不变**（老对端零感知 ✓ —— 承重口径 ✓）。
+    #[test]
+    fn empty_name_keeps_payload_byte_identical() {
+        let p = payload();
+        assert_eq!(with_space_name(&p, "").unwrap(), p, "⛔ 空名字不许动载荷一个字节 ✗");
+        assert_eq!(with_space_name(&p, "   ").unwrap(), p, "⛔ 全是空白也不许动 ✗");
+    }
+
+    /// ⭐ ④ 坏形状**不猜**：不是 JSON ⇒ `Err`（我们自己的载荷坏了，响亮报错）；非对象 ⇒ 原样返回 ✓。
+    #[test]
+    fn bad_shapes_are_refused_not_guessed() {
+        assert!(with_space_name("not json", "工作").is_err(), "⛔ 不是 JSON ⇒ 必须 Err ✗");
+        assert_eq!(with_space_name("[1,2]", "工作").unwrap(), "[1,2]", "非对象 ⇒ 原样返回（包一层会改字节 ✗）");
+        assert_eq!(space_name_of_payload("not json"), None);
+        assert_eq!(space_name_of_payload("[1,2]"), None);
+        assert_eq!(space_name_of_payload(r#"{"_space_name":""}"#), None, "空串 ⇒ 当成没有 ✓");
+        assert_eq!(space_name_of_payload(r#"{"_space_name":123}"#), None, "不是字符串 ⇒ 当成没有（不猜）✓");
+    }
+
+    /// ⭐ ⑤ 空间库读不到 `workspaces` ⇒ `None`（⛔ 名字只是提示，**不许让保存失败** ✗）。
+    #[test]
+    fn missing_workspace_table_yields_none_not_a_failure() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        assert_eq!(local_space_name(&c), None, "⛔ 没有表时不许 panic／Err ✗");
+    }
     }
 }

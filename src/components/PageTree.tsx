@@ -5,6 +5,7 @@ import { platform } from "../lib/platform";
 import { usePopover } from "../hooks/usePopover";
 import { isMobileViewport } from "../hooks/useMobile";
 import { api, type SyncProfile } from "../lib/api";
+import { isNodeExpanded, rememberNodeExpanded } from "../lib/treeMemory";
 import { useNotes } from "../store/notes";
 import { PluginMenuItems } from "./PluginMenuItems";
 
@@ -476,10 +477,13 @@ function TreeFiles({ folderId, depth }: { folderId: string; depth: number }) {
 function TreeItem({
   node,
   depth,
+  spaceId,
   onRowPointerDown,
 }: {
   node: TreeNode;
   depth: number;
+  /** 当前空间 id（用于"这个空间里哪些节点折起来"的记忆 ✓；还没加载出来 ⇒ null ⇒ 默认展开 ✓） */
+  spaceId: string | null;
   onRowPointerDown: (id: string, e: React.MouseEvent) => void;
 }) {
   const { t } = useTranslation();
@@ -496,7 +500,23 @@ function TreeItem({
   const draggingId = useTreeDrag((s) => s.draggingId);
   const overId = useTreeDrag((s) => s.overId);
   const zone = useTreeDrag((s) => s.zone);
-  const [expanded, setExpanded] = useState(true);
+  // ⭐ 2026-10-18（owner：「一个空间的那个文件夹展开、哪个折叠…可否记录下来？」）：
+  //   展开/折叠**按空间记进 localStorage**（纯存取在 `lib/treeMemory.ts` ✓）。
+  //   · 没记录 ⇒ 默认展开（**旧行为不变** ✓，⛔ 不因为没记忆就把树折起来 ✗）；
+  //   · 只记用户**显式点过**的节点 ✓。
+  const [expanded, setExpanded] = useState(() => isNodeExpanded(spaceId, node.id));
+  /** 用户在这一行**亲手**点过 ⇒ 之后 `spaceId` 晚到位也不许把它的选择盖掉 ✓。 */
+  const userToggledRef = useRef(false);
+  const toggleExpanded = (next: boolean) => {
+    userToggledRef.current = true;
+    setExpanded(next);
+    rememberNodeExpanded(spaceId, node.id, next);
+  };
+  // 空间 id 是异步加载的：挂载时若还是 null，等它到位**补读一次**记忆 ✓（⛔ 不能只在初始化时读 ✗）。
+  useEffect(() => {
+    if (userToggledRef.current || !spaceId) return;
+    setExpanded(isNodeExpanded(spaceId, node.id));
+  }, [spaceId, node.id]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
   const menuRef = useRef<HTMLSpanElement>(null);
@@ -549,9 +569,11 @@ function TreeItem({
   const dragExpandId = useTreeDrag((s) => s.expandId);
   useEffect(() => {
     if (isFolder && node.id === dragExpandId) {
-      setExpanded(true);
+      // 拖动悬停展开也是**用户的动作** ⇒ 一起记住 ✓（否则下次回来它又折起来了 ✗）
+      toggleExpanded(true);
       useTreeDrag.getState().requestExpand(null); // one-shot
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragExpandId, node.id, isFolder]);
 
   // Highlight the focused folder while browsing the file manager; otherwise
@@ -670,7 +692,7 @@ function TreeItem({
           className="tree-toggle"
           onClick={(e) => {
             e.stopPropagation();
-            setExpanded((v) => !v);
+            toggleExpanded(!expanded);
           }}
         >
           {isFolder ? (expanded ? "▾" : "▸") : node.children.length > 0 ? (expanded ? "▾" : "▸") : "·"}
@@ -856,7 +878,7 @@ startRename();
       </div>
       {expanded &&
         node.children.map((child) => (
-          <TreeItem key={child.id} node={child} depth={depth + 1} onRowPointerDown={onRowPointerDown} />
+          <TreeItem key={child.id} node={child} depth={depth + 1} spaceId={spaceId} onRowPointerDown={onRowPointerDown} />
         ))}
       {isFolder && expanded && <TreeFiles folderId={node.id} depth={depth + 1} />}
     </div>
@@ -1142,9 +1164,11 @@ export function PageTree(_props: {
   }, [activeSpaceId]);
 
   const switchSpace = async (id: string) => {
+    // ⭐ 2026-10-18：`switchTo` 内部已经 `await loadPages({ restoreSpaceId: id })`（含"回到这个空间
+    //   上次看的那一页" ✓）⇒ 这里⛔ **不再**第二遍 `loadPages()` ✗ —— 那是多一次全量读，
+    //   还会把刚还原好的选择再刷一遍。
     const ok = await useSpaceStore.getState().switchTo(id);
     if (ok) {
-      await useNotes.getState().loadPages();
       const name = useSpaceStore
         .getState()
         .spaces.find((s) => s.id === id)?.name;
@@ -1637,7 +1661,15 @@ export function PageTree(_props: {
             {collapsed ? "·" : t("trees.empty")}
           </div>
         ) : (
-          tree.map((node) => <TreeItem key={node.id} node={node} depth={0} onRowPointerDown={onRowPointerDown} />)
+          tree.map((node) => (
+            <TreeItem
+              key={node.id}
+              node={node}
+              depth={0}
+              spaceId={activeSpaceId}
+              onRowPointerDown={onRowPointerDown}
+            />
+          ))
         )}
         <BatchToolbar pages={pages} />
       </div>

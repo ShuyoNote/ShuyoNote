@@ -119,6 +119,7 @@ export default {
     saveAsTemplate: "Save page as a template (Mine)",
     more: "More (export…)",
     exportMarkdown: "Export as Markdown (.md file)",
+    exportMarkdownZip: "Export as Markdown + attachments (.zip)",
     copyMarkdown: "Copy Markdown to clipboard",
     exportHtml: "Export as HTML",
     discuss: "Discussion",
