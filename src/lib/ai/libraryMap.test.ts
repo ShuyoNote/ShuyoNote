@@ -152,6 +152,27 @@ describe("INV-WIKI-coverage-visible —— 未知 ≠ 0，也 ≠ 完整", () =>
     expect(zero.count).toBe(0);
     expect(zero.count).not.toBeNull();
   });
+
+  // ⭐ 2026-10-18 真机现场抓到的：`页面在检索面没内容 0` 却挂着 1 条来源 ✗
+  //    根因＝`reason` 这个字面量是**跨域共用**的（页面侧与附件侧都有 `page_empty`），
+  //    只按 reason 过滤就会把页面侧的缺口挂到附件侧的计数上 ⇒ 计数与来源当场对不上。
+  it("★ 同一 reason 跨域时不许串台：页面侧的 page_empty 不许挂到附件侧那格上", () => {
+    const m = buildLibraryMap(
+      makeReport({
+        byReason: { no_extractor: 0, no_content: 0, not_chunked: 0, page_empty: 0 },
+        gaps: [gap("5e70bb94-page", "page_empty", "page")],
+      }),
+    );
+    const item = allItems(m).find((it) => it.key === "byReason.page_empty")!;
+    expect(item.count).toBe(0);
+    expect(item.sources).toEqual([]); // 曾经是 ["5e70bb94-page"] ✗（0 条却列了来源）
+  });
+
+  it("附件侧的缺口照样挂得上（收窄 kind 不许把正常的也筛掉 ✓）", () => {
+    const m = buildLibraryMap(makeReport({ gaps: [gap("att-1", "page_empty", "attachment")] }));
+    const item = allItems(m).find((it) => it.key === "byReason.page_empty")!;
+    expect(item.sources).toEqual(["att-1"]);
+  });
 });
 
 describe("INV-WIKI-readonly-default —— 纯函数：不改输入、不碰平台", () => {

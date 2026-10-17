@@ -232,3 +232,31 @@ describe("库地图视图 · 第四块（采用为页面）", () => {
     expect(host!.querySelector('[data-testid="draft-dismiss"]')).toBeTruthy();
   });
 });
+
+// ── 渲染口径（2026-10-18 真机现场抓到的两条）────────────────────────────────────
+describe("库地图视图 · 文案与来源的渲染", () => {
+  it("★ 文案里的 `**重点**` 要渲染成 <strong>，界面上不许出现字面星号", () => {
+    mountWith({});
+    const summary = host!.querySelector(".ai-libmap-sec-summary")!;
+    expect(summary.textContent).not.toContain("**");
+    expect(summary.querySelector("strong")).toBeTruthy();
+  });
+
+  it("★ 来源超过 3 个 ⇒ 只列前 3 个，并说明**共几个**（8 个原始 id 曾把一行撑成三行 ✗）", () => {
+    const r = report({
+      gaps: [
+        { kind: "attachment", id: "att-1", reason: "no_content", detail: "d1" },
+        { kind: "attachment", id: "att-2", reason: "no_content", detail: "d2" },
+        { kind: "attachment", id: "att-3", reason: "no_content", detail: "d3" },
+        { kind: "attachment", id: "att-4", reason: "no_content", detail: "d4" },
+        { kind: "attachment", id: "att-5", reason: "no_content", detail: "d5" },
+      ],
+    });
+    r.attachments.byReason.no_content = 5;
+    mountWith({}, r);
+    const src = host!.querySelector('[data-item="byReason.no_content"] .ai-libmap-item-src')!;
+    expect(src.textContent).toContain("att-1");
+    expect(src.textContent).not.toContain("att-4");
+    expect(src.textContent).toContain("共 5 个");
+  });
+});

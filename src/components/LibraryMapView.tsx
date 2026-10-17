@@ -14,8 +14,27 @@
 // ② **草稿必须自证"未落库"**：第三块的产物是草稿，界面上必须写着「**草稿，未落库**」＋ 页脚
 //    「派生，非出处 ｜ 模型 ｜ 时间」＋ 覆盖度 ⇒ 别让读者以为库已经被改了 ✓
 
+import type { ReactNode } from "react";
 import type { LibraryMap, MapSection } from "../lib/ai/libraryMap";
 import type { TopicDraft } from "../lib/ai/topicDraft";
+
+/**
+ * 把文案里的 `**重点**` 渲染成 `<strong>`。
+ * ⚠️ 这是**渲染**层的活儿：地图的 summary/note 是纯字符串，`**` 是写给人看的重点标记；
+ *    不处理就会把星号原样画出来（2026-10-18 实测：界面上真是 `**能搜到不等于抽全了**` ✗）。
+ */
+function withEmphasis(text: string): ReactNode {
+  return text
+    .split(/(\*\*[^*]+\*\*)/g)
+    .map((p, i) => (p.length > 4 && p.startsWith("**") && p.endsWith("**") ? <strong key={i}>{p.slice(2, -2)}</strong> : p));
+}
+
+/** 来源最多列 3 个：原始 id 很长，全列会把一行撑成三行（实测 8 个 id = 3 行 ✗） */
+const SOURCES_SHOWN = 3;
+function sourcesText(sources: string[]): string {
+  if (sources.length <= SOURCES_SHOWN) return `来源：${sources.join("、")}`;
+  return `来源：${sources.slice(0, SOURCES_SHOWN).join("、")} … 共 ${sources.length} 个`;
+}
 
 export interface LibraryMapViewProps {
   map: LibraryMap;
@@ -71,7 +90,7 @@ export function LibraryMapView({
               </button>
             ) : null}
           </div>
-          <div className="ai-libmap-sec-summary">{s.summary}</div>
+          <div className="ai-libmap-sec-summary">{withEmphasis(s.summary)}</div>
           <ul className="ai-libmap-items">
             {s.items.map((it) => (
               <li key={it.key} className={`ai-libmap-item is-${it.tone}`} data-tone={it.tone} data-item={it.key}>
@@ -79,8 +98,8 @@ export function LibraryMapView({
                 <span className="ai-libmap-item-count" data-count={it.count === null ? "unknown" : String(it.count)}>
                   {it.count === null ? "未知" : it.count}
                 </span>
-                {it.note ? <span className="ai-libmap-item-note">{it.note}</span> : null}
-                {it.sources.length > 0 ? <span className="ai-libmap-item-src">{`来源：${it.sources.join("、")}`}</span> : null}
+                {it.note ? <span className="ai-libmap-item-note">{withEmphasis(it.note)}</span> : null}
+                {it.sources.length > 0 ? <span className="ai-libmap-item-src">{sourcesText(it.sources)}</span> : null}
               </li>
             ))}
           </ul>

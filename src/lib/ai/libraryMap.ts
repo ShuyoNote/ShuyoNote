@@ -123,7 +123,10 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
       count: report.attachments.partial,
       tone: "partial",
       note: "抽取器自己报了缺口（如混合 PDF 只抽到正文页）—— **搜得到，但没抽全**",
-      sources: shown.filter((g) => g.reason === "partial").map((g) => g.id),
+      // ⚠️ 必须按 `kind` 收窄：`reason` 是**跨域共用**的字面量（`page_empty`／`partial` 在页面侧
+      //    与附件侧都会出现）⇒ 只按 reason 过滤，就会把"页面侧"的缺口挂到"附件侧"的计数上
+      //    （2026-10-18 实测：`页面在检索面没内容 0` 却挂着 1 条来源 ✓ 当场红）。
+      sources: shown.filter((g) => g.kind === "attachment" && g.reason === "partial").map((g) => g.id),
     },
   ];
   if (staleKnown) {
@@ -133,7 +136,7 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
       count: stale,
       tone: stale > 0 ? "partial" : "ok",
       note: "合并之后派生文本还没重建 ⇒ 搜得到，但搜到的是**旧**内容",
-      sources: shown.filter((g) => g.reason === "text_stale").map((g) => g.id),
+      sources: shown.filter((g) => g.kind === "page" && g.reason === "text_stale").map((g) => g.id),
     });
   }
 
@@ -145,7 +148,8 @@ export function buildLibraryMap(report: CoverageReport, opts: { gapLimit?: numbe
     count: byReason[reason] ?? 0,
     tone: (byReason[reason] ?? 0) > 0 ? "missing" : "ok",
     note: "",
-    sources: shown.filter((g) => g.reason === reason).map((g) => g.id),
+    // 同上：这一节的计数来自 `attachments.byReason`（**附件侧**），来源也必须只取附件侧的缺口 ✓
+    sources: shown.filter((g) => g.kind === "attachment" && g.reason === reason).map((g) => g.id),
   }));
 
   const sections: MapSection[] = [
