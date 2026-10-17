@@ -465,6 +465,27 @@ interface BundleResult {
 }
 
 /**
+ * 导出前的**预估**那句话说成什么（2026-10-17，C 弹窗的前置 ✓）。纯函数 ⇒ 好测 ✓。
+ *
+ * ⚠️ 口径（⛔ 不许把"不知道"说成 0 ✗）：
+ * · 字节数**只算已知的**（`knownBytes` ✓）；
+ * · 读不到大小的附件**照样计数** ✓，并且**另说一句**"另有 N 个大小未知" ✓
+ *   —— 界面不能给出一个看起来精确、其实少算了的体积 ✗（那正是 owner 最讨厌的"假读数"✓）。
+ */
+export function estimateBundleText(
+  pageCount: number,
+  assetCount: number,
+  knownBytes: number,
+  unknownSize: number,
+): string {
+  const mb = knownBytes > 0 ? Math.max(1, Math.round(knownBytes / (1024 * 1024))) : 0;
+  const bits = [`${pageCount} 篇`, `${assetCount} 个附件`];
+  if (mb > 0) bits.push(`已知约 ${mb} MB`);
+  if (unknownSize > 0) bits.push(`另有 ${unknownSize} 个大小未知`);
+  return bits.join(" · ");
+}
+
+/**
  * 一键导出的**字节上限**（`300 MB`）。
  *
  * ⚠️ 为什么要有它：`packBundle` 用的是 `fflate` 的 `zipSync` —— **同步** ✗ ⇒ 大空间会把主线程
