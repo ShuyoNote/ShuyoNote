@@ -119,6 +119,7 @@ export default {
     saveAsTemplate: "把当前页保存为模板（我的模板）",
     more: "更多（导出等）",
     exportMarkdown: "导出为 Markdown（.md 文件）",
+    exportMarkdownZip: "导出为 Markdown ＋ 附件（.zip）",
     copyMarkdown: "复制 Markdown 到剪贴板",
     exportHtml: "导出为 HTML",
     discuss: "讨论",
