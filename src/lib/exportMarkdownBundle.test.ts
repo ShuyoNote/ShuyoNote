@@ -665,3 +665,42 @@ describe("⑦ 压缩包名带上空间名称（2026-10-18 加）", () => {
     expect(msg2).toContain("已取消");
   });
 });
+
+// ⭐⭐ **2026-10-18（owner 报：空间导出 zip 漏掉「设计效果图」整个文件夹里的东西）**：
+//   真因 —— `get_page` 对 `kind === "folder"` **如实拒**（"该节点不是页面"）⇒ 收集循环把它算成
+//   "读不出来"跳过 ⇒ ①目录层级没了 ②**文件夹名下的附件**再也没人去问（`allAttachmentMeta` 只遍历
+//   `pages` 里的 id）⇒ 整个文件夹的内容漏导出 ✗。修法：文件夹节点**不调 `getPage`**、直接收下。
+describe("⑧ 文件夹节点：不出 .md，但目录层级 ＋ 文件夹里的附件都要带走（2026-10-18 修）", () => {
+  it("文件夹不产 .md；子页落进文件夹目录；文件夹名下的附件进 assets/ 且进索引", async () => {
+    saveMock.mockResolvedValue("D:/out/folder.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    listPagesMock.mockResolvedValue([
+      { id: "f1", parent_id: null, kind: "folder", title: "设计效果图" },
+      { id: "p1", parent_id: "f1", kind: "page", title: "工作台" },
+    ]);
+    getPageMock.mockImplementation(async (id: string) => {
+      if (id === "p1") return { id: "p1", title: "工作台", content_json: plainDoc("正文") };
+      throw new Error("该节点不是页面"); // 真实行为：文件夹被 `get_page` 拒
+    });
+    listAttachmentsMock.mockImplementation(async (pageId: string | null) =>
+      pageId === "f1"
+        ? [{ id: "a1", hash: "html01", mime: "text/html", name: "工作台.html", size: 3, path: "" }]
+        : [],
+    );
+    const msg = await exportWorkspaceBundleToZip();
+    const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
+    expect(Object.keys(out).sort()).toEqual(
+      ["_attachments.md", "assets/工作台.html", "设计效果图/工作台.md"].sort(),
+    );
+    // ⛔ 文件夹节点自己不出 `.md` ✓
+    expect(out["设计效果图.md"]).toBeUndefined();
+    // ⭐ 文件夹名下的附件真的进包 ＋ 进索引 ✓（这正是 owner 报漏的那批）
+    expect(textOf(out, "_attachments.md")).toContain("| 工作台.html | assets/工作台.html |");
+    // ⛔ 文件夹不许被算成"读不出来的页面"（那正是旧的错误处置）
+    expect(msg).not.toContain("读不出来");
+    // ⭐ 文件夹这一档**不调 `getPage`**（调了就会被如实拒 ⇒ 又漏）
+    expect(getPageMock).not.toHaveBeenCalledWith("f1");
+    // ⭐ 附件清单必须按**文件夹 id** 问过（否则文件夹里的文件永远没人问）
+    expect(listAttachmentsMock).toHaveBeenCalledWith("f1");
+  });
+});

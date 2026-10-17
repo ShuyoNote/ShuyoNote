@@ -233,6 +233,13 @@ export function preparePages(pages: readonly MarkdownPageInput[]): PreparedPage[
     const srcToHash = new Map<string, { hash: string; mime: string }>();
     // ⭐ 2026-10-18：`kind` 原样带过来（只有 `treePaths` / `planBundle` 认 `"folder"` ✓）
     const carry = { parentId: page.parentId ?? null, kind: page.kind ?? null };
+    // ⭐⭐ **2026-10-18 修（owner 报：空间导出漏掉文件夹里的东西）**：文件夹节点**没有正文** ✓
+    //   ⇒ 不拿去转换（`preparePages` 的转换路径会读 `docJson`；空内容不是错误 ✓）。
+    //   ⚠️ 真正的漏因**不在这**：`api.listPages()` 里有它、而 `api.getPage(folder)` 会如实拒
+    //   ⇒ 收集那一步把它当"读不出来"丢掉了（见 [`collectWorkspaceBundlePages`] ✓）。
+    if (page.kind === "folder") {
+      return { id: page.id, title: page.title || "", markdown: "", srcToHash, ...carry };
+    }
     try {
       const markdown = pageContentToMarkdown(page.docJson, (hash, mime, src) => {
         if (hash && src) srcToHash.set(src, { hash, mime: mime || "" });
@@ -1069,6 +1076,55 @@ export async function exportPageBundleToZip(
 }
 
 /**
+ * ⭐⭐ **2026-10-18（owner 报：空间导出 zip 漏掉「设计效果图」整个文件夹里的东西）**：
+ * 收集**本空间这次要导出的全部节点** —— ⭐ 文件夹节点也算 ✓（它自己不出 `.md`，但它是子页的目录层级，
+ * 而且**挂在它名下的附件只能靠它这条 id 去问** ✓）。
+ *
+ * ## ⚠️ 真因（别再踩）
+ * `api.listPages()` 会返回 `kind === "folder"` 的节点 ✓，但 `api.getPage(id)` 对文件夹**如实拒**
+ * （Rust `get_page`：「该节点不是页面」✓）。以前的收集循环把每个 meta 都 `getPage` 一遍 ⇒ 文件夹抛错
+ * ⇒ 被算进"读不出来"跳过 ⇒ ①目录层级没了 ②`allAttachmentMeta` 只遍历 `pages` 里的 id
+ * （＋`null` 那一档"未整理"）⇒ **文件夹里拖进去的附件再也没人去问** ✗ ⇒ 整个文件夹的内容漏导出 ✓。
+ *
+ * ⚠️ 因此：**文件夹不调 `getPage`**（它没有正文）⇒ 直接当节点收下；⛔ 也不算进 `unreadable` ✗。
+ */
+export async function collectWorkspaceBundlePages(): Promise<{
+  pages: MarkdownPageInput[];
+  unreadable: number;
+}> {
+  const metas = await api.listPages();
+  const pages: MarkdownPageInput[] = [];
+  let unreadable = 0;
+  for (const m of metas) {
+    if (m.kind === "folder") {
+      // 文件夹没有正文 ⇒ `docJson` 只占位（`preparePages` 对 folder 直接返回、不解析它 ✓）
+      pages.push({
+        id: m.id,
+        title: m.title || "",
+        docJson: "{}",
+        parentId: m.parent_id ?? null,
+        kind: "folder",
+      });
+      continue;
+    }
+    try {
+      const page = await api.getPage(m.id);
+      // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写存储列名 ✗ —— 门禁只减不增）
+      pages.push({
+        id: page.id,
+        title: page.title,
+        docJson: docJsonOfPage(page),
+        parentId: m.parent_id ?? null,
+        kind: m.kind,
+      });
+    } catch {
+      unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（返回消息里报数 ✓）
+    }
+  }
+  return { pages, unreadable };
+}
+
+/**
  * 把**本空间所有页面**＋**全部附件**打成一个 zip（同一 hash 只出现一次 ✓）。
  *
  * ⭐ 2026-10-18：口径从"正文引用的附件"改成**完整备份** ✓ —— 未被正文引用的附件也进 `assets/`，
@@ -1091,26 +1147,9 @@ export async function exportWorkspaceBundleToZip(opts: BundleExportOptions = {})
       return "已取消导出";
     }
 
-    const metas = await api.listPages();
-    const pages: MarkdownPageInput[] = [];
-    let unreadable = 0;
-    for (const m of metas) {
-      try {
-        const page = await api.getPage(m.id);
-        // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写存储列名 ✗ —— 门禁只减不增）
-        // ⭐ 2026-10-17：带上 `parent_id` ⇒ zip 内按页面树建目录 ✓（`PageMeta.parent_id` ✓）
-        // ⭐ 2026-10-18：带上 `kind` ⇒ 文件夹节点只作目录、不出 `.md` ✓（`PageMeta.kind` ✓）
-        pages.push({
-          id: page.id,
-          title: page.title,
-          docJson: docJsonOfPage(page),
-          parentId: m.parent_id ?? null,
-          kind: m.kind,
-        });
-      } catch {
-        unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（下面报数）
-      }
-    }
+    // ⭐⭐ 2026-10-18：收集口径收进 [`collectWorkspaceBundlePages`] ✓（含**文件夹节点** ——
+    //   它不调 `getPage`（会被如实拒），但必须收下：子页目录层级 ＋ 挂在它名下的附件都靠它 ✓）。
+    const { pages, unreadable } = await collectWorkspaceBundlePages();
 
     const result = await prepareBundle(pages, { onProgress: progress.onProgress, allAttachments: true });
     // ⚠️ 超限 ⇒ **一个字节都不写** ✓（与单页那条同口径 ✓）

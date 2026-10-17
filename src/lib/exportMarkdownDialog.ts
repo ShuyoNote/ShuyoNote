@@ -20,6 +20,7 @@ import { sanitizeName, type MarkdownPageInput } from "./exportMarkdown";
 import {
   bundleMessage,
   bundleTooLargeMessage,
+  collectWorkspaceBundlePages,
   defaultBundleZipName,
   ExportReportedError,
   planBundle,
@@ -79,23 +80,10 @@ async function collectPages(
       title: page.title || "未命名",
     };
   }
-  const metas = await api.listPages();
-  const pages: MarkdownPageInput[] = [];
-  let unreadable = 0;
-  for (const m of metas) {
-    try {
-      const page = await api.getPage(m.id);
-      pages.push({
-        id: page.id,
-        title: page.title,
-        docJson: docJsonOfPage(page),
-        parentId: m.parent_id ?? null,
-        kind: m.kind,
-      });
-    } catch {
-      unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（返回消息里报数 ✓）
-    }
-  }
+  // ⭐⭐ 2026-10-18：空间这一档改走**同一个收集口** ✓ —— 文件夹节点不调 `getPage`
+  //   （会被如实拒），但必须收下：子页目录层级 ＋ 挂在文件夹名下的附件都靠它 ✓
+  //   （owner 报：空间导出漏掉「设计效果图」整个文件夹里的东西 ✗）。
+  const { pages, unreadable } = await collectWorkspaceBundlePages();
   return { pages, unreadable, title: "本空间" };
 }
 
