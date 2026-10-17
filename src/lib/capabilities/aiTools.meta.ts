@@ -159,4 +159,19 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
     },
     isWrite: true,
   },
+  {
+    id: "pages.update",
+    description: "更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
+    argsSchema: {
+      type: "object",
+      properties: {
+      "id": { type: "string" },
+      "markdown": { type: "string" },
+      "content": { type: "string" },
+      "title": { type: "string" },
+      },
+      required: ["id"],
+    },
+    isWrite: true,
+  },
 ];

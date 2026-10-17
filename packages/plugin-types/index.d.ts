@@ -158,6 +158,10 @@ export interface PluginApi {
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
     importMarkdown(title: string, markdown: string, parentId?: string): { drafted: true; summary: string };
+  /** 更新已有页面（整页替换 / 草稿确认）（权限 `write:pages`；1.1.0 起）
+   * 返回：{drafted: true, summary}——**草稿已产出**，用户确认后才落库
+   */
+    update(id: string, markdown?: string, content?: string, title?: string): { drafted: true; summary: string };
   };
   tags: {
   /** 列出本空间标签（权限 `read:tags`；1.0.0 起）

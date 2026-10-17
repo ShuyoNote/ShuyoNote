@@ -46,6 +46,7 @@ pub const CAPABILITIES: &[Capability] = &[
     Capability { id: "log.write", kind: "host", scope: "app", permission: None, since: "1.0.0", mediate: "-", rust: "cap_log_write" },
     Capability { id: "files.export", kind: "write", scope: "app", permission: Some("export:files"), since: "1.0.0", mediate: "draft", rust: "cap_files_export" },
     Capability { id: "pages.importMarkdown", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.0.0", mediate: "draft", rust: "cap_pages_import_markdown" },
+    Capability { id: "pages.update", kind: "write", scope: "current-space", permission: Some("write:pages"), since: "1.1.0", mediate: "draft", rust: "cap_pages_update" },
 ];
 
 /// 权限清单（manifest 校验 + 旧 manifest 无 permissions 时的基线授权 + 安装界面展示用）。

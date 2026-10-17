@@ -352,6 +352,39 @@ mod w3_draft_tests {
         assert!(rows[0].ok, "这次调用本身是成功的（草稿生成了 ✓）");
         assert_eq!(rows[0].capability, "pages.create");
     }
+
+    /// `pages.update`（2026-10-17）：MCP 的**整页替换**入口 —— 同样只产出草稿。
+    /// 判据：草稿真的交出去、kind 是 `update_page`、payload 带着**目标页 id**（⛔ 不带=不知道改哪页 ✗）。
+    #[test]
+    fn pages_update_is_drafted_with_target_page_id() {
+        let _serial = DRAFT_SINK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _dir = crate::db::ensure_test_app_data_dir();
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen2 = seen.clone();
+        set_external_draft_sink(move |source, payload| {
+            if let Ok(mut g) = seen2.lock() {
+                g.push(format!("{source}|{payload}"));
+            }
+        });
+
+        let session = "sdk-w3-update-1";
+        let cap = crate::capabilities_gen::lookup("pages.update").expect("pages.update 必须存在 ✓");
+        let perm = cap.permission.expect("写能力必须有 permission ✓");
+        let out = handle_external_call(
+            session,
+            &[perm.to_string()],
+            "pages.update",
+            r##"{"id":"p-update-1","title":"新标题","markdown":"# 新标题\n\n新正文"}"##,
+        )
+        .expect("外部写请求本身应当成功（它产出的是草稿 ✓）");
+
+        let got = seen.lock().map(|g| g.clone()).unwrap_or_default();
+        assert_eq!(got.len(), 1, "草稿必须交出去一次（拿到 {} 条）✗", got.len());
+        assert!(got[0].contains("update_page"), "payload 的 kind 必须是 update_page ✓：{got:?}");
+        assert!(got[0].contains("p-update-1"), "payload 必须带目标页 id ✓：{got:?}");
+        assert!(out.contains("\"drafted\":true"), "回话要带 drafted ✓：{out}");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -23,7 +23,7 @@
 
 import { assignBlockRevs, blockRevOf, canonicalContent } from "./blockRev";
 // ⚠️ 第 47 轮起：这一层**不再 import `crdt/plane`** —— 磁盘边界的平面壳已撤出（见 `readContent` 注释）。
-import { newBlockId } from "./blockIdentity";
+import { newBlockId, toLegacyDoc, toModelDoc } from "./blockIdentity";
 import { repairPageTextIfStale } from "./pageTextRepair";
 
 /** 一页的**内容** —— 那一层的单位（与 Rust 侧 `DocContent` 字段一一对应）。 */
@@ -75,6 +75,29 @@ export function fenceDoc(
 ): { content_json: string; content_text: string } {
   const doc = { root: { type: "root", version: 1, direction: "ltr", format: "", indent: 0, children: [JSON.parse(fenceNodeJson(language, text, makeId))] } };
   return { content_json: JSON.stringify(doc), content_text: text };
+}
+
+/**
+ * ⭐ pages.update / Markdown 导入（2026-10-17）：落库前给**顶层块**补块身份（缺才补、幂等）。
+ *
+ * 为什么必须在这一步补：`markdownToPageContent` 由 Markdown 新建的块**没有 blockId**，
+ * 而 CRDT 播种（`contentJsonToYDoc`）明确**不造身份** —— 两设备各造一套 ⇒ 同一块被当成两块 ✗。
+ * ⇒ 谁写整页（一次写完整页、只有这一份写入者），就由谁在落库前补一次；
+ *   这里复用 `toModelDoc`（只补顶层、幂等）＋ `toLegacyDoc`（转回落盘形态，blockId 保留）。
+ * 脏数据解析失败时**原样返回**：这是写入前的补种，不能因为一页历史脏数据把落库搞挂 ✗。
+ */
+export function stampTopLevelBlockIds<T extends { content_json: string; content_text: string }>(
+  page: T,
+): T {
+  const json = page.content_json;
+  if (!json || json === "{}") return page;
+  let stamped = json;
+  try {
+    stamped = toLegacyDoc(toModelDoc(json, newBlockId));
+  } catch {
+    return page;
+  }
+  return stamped === json ? page : { ...page, content_json: stamped };
 }
 
 /** ⭐ R166：把**一个** code 块追加到现有文档末尾 ✓（追加那条路用 ✓）。 */

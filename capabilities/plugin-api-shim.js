@@ -18,7 +18,8 @@ var api = {
     get: function(id, offset, limit) { return __capCall("pages.get", { id: id === undefined ? undefined : String(id), offset: offset === undefined ? 0 : Number(offset), limit: limit === undefined ? 6000 : Number(limit) }); },
     search: function(q, limit) { return __capCall("pages.search", { q: q === undefined ? undefined : String(q), limit: limit === undefined ? 8 : Number(limit) }); },
     create: function(title, content, parentId, fence) { return __capCall("pages.create", { title: title === undefined ? undefined : String(title), content: content === undefined ? undefined : String(content), parentId: parentId === undefined ? undefined : String(parentId), fence: fence === undefined ? undefined : String(fence) }); },
-    importMarkdown: function(title, markdown, parentId) { return __capCall("pages.importMarkdown", { title: title === undefined ? undefined : String(title), markdown: markdown === undefined ? undefined : String(markdown), parentId: parentId === undefined ? undefined : String(parentId) }); }
+    importMarkdown: function(title, markdown, parentId) { return __capCall("pages.importMarkdown", { title: title === undefined ? undefined : String(title), markdown: markdown === undefined ? undefined : String(markdown), parentId: parentId === undefined ? undefined : String(parentId) }); },
+    update: function(id, markdown, content, title) { return __capCall("pages.update", { id: id === undefined ? undefined : String(id), markdown: markdown === undefined ? undefined : String(markdown), content: content === undefined ? undefined : String(content), title: title === undefined ? undefined : String(title) }); }
   },
   tags: {
     list: function() { return __capCall("tags.list", {}); },

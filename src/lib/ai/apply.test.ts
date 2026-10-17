@@ -87,8 +87,7 @@ describe("applyDraft（落库层）", () => {
   });
 });
 
-describe("applyDraft（属性 / 标签写）", () => {
-  it("set_page_prop：写属性并回读页面（供界面刷新）", async () => {
+describe("applyDraft（属性 / 标签写）", () => {  it("set_page_prop：写属性并回读页面（供界面刷新）", async () => {
     vi.mocked(api.setPageProp).mockResolvedValue(undefined as never);
     vi.mocked(api.getPage).mockResolvedValue({ id: "p1", title: "页", content_json: "{}", content_text: "" } as never);
 
@@ -118,5 +117,66 @@ describe("applyDraft（属性 / 标签写）", () => {
     const r2 = await applyDraft({ kind: "add_tag", pageId: "p1", name: "   " });
     expect(r2.ok).toBe(false);
     expect(api.addTag).not.toHaveBeenCalled();
+  });
+});
+
+// ⭐ pages.update（2026-10-17）：MCP / 插件要把**整页替换**成新正文时走这条路。
+//   判据：目标页必须已存在（不偷偷新建 ✗）、Markdown 要真的转成块再落库（不是原文塞进去 ✗）、
+//   标题可选、纯文本与 Markdown 二选一。
+describe("applyDraft（pages.update 整页替换）", () => {
+  it("Markdown 正文：转成块再写回**同一页**，标题可选更新", async () => {
+    vi.mocked(api.getPage).mockResolvedValue({
+      id: "p1",
+      title: "旧标题",
+      content_json: "{}",
+      content_text: "",
+    } as never);
+    vi.mocked(api.savePage).mockResolvedValue({ id: "p1", title: "新标题" } as never);
+
+    const r = await applyDraft({
+      kind: "update_page",
+      pageId: "p1",
+      title: "新标题",
+      markdown: "# 新标题\n\n第一段正文\n\n- 列表项一\n- 列表项二",
+    });
+
+    expect(r.ok, r.message).toBe(true);
+    const arg = vi.mocked(api.savePage).mock.calls[0][0];
+    expect(arg.id, "必须写回同一页（⛔ 不是新建 ✗）").toBe("p1");
+    expect(arg.title).toBe("新标题");
+    expect(String(arg.content_text)).toContain("第一段正文");
+    const json = JSON.parse(String(arg.content_json));
+    expect(json.root.children.length, "Markdown 的标题/段落/列表要各自落块 ✓").toBeGreaterThan(1);
+    // ⭐ 2026-10-17：落库前必须补块身份（CRDT 播种明确不造身份；缺了会 R155-SEED FAIL ✗）
+    for (const child of json.root.children) {
+      expect(typeof child.blockId, "顶层块必须有 blockId（否则播种会失败）").toBe("string");
+      expect(String(child.blockId).length).toBeGreaterThan(0);
+    }
+    expect(vi.mocked(api.createPage)).not.toHaveBeenCalled();
+  });
+
+  it("纯文本正文：按行分段写回，不给标题就保留原标题（不传 title）", async () => {
+    vi.mocked(api.getPage).mockResolvedValue({ id: "p2", title: "原标题" } as never);
+    vi.mocked(api.savePage).mockResolvedValue({ id: "p2", title: "原标题" } as never);
+
+    const r = await applyDraft({ kind: "update_page", pageId: "p2", plain: "A 段\n\nB 段" });
+
+    expect(r.ok, r.message).toBe(true);
+    const arg = vi.mocked(api.savePage).mock.calls[0][0];
+    expect(arg.title, "没给标题 ⇒ 不该写 title（免得把原标题清空）").toBeUndefined();
+    expect(String(arg.content_text)).toContain("A 段");
+    expect(String(arg.content_text)).toContain("B 段");
+  });
+
+  it("目标页不存在 / 没有新正文 ⇒ 明确失败，且一次写库都不发生", async () => {
+    vi.mocked(api.getPage).mockResolvedValue(null as never);
+    const r1 = await applyDraft({ kind: "update_page", pageId: "p404", plain: "新正文" });
+    expect(r1.ok).toBe(false);
+    expect(r1.message).toContain("不存在");
+    expect(api.savePage).not.toHaveBeenCalled();
+
+    const r2 = await applyDraft({ kind: "update_page", pageId: "p1", markdown: "  ", plain: "" });
+    expect(r2.ok).toBe(false);
+    expect(api.savePage).not.toHaveBeenCalled();
   });
 });

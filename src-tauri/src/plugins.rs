@@ -2004,6 +2004,52 @@ fn cap_pages_import_markdown(title: &str, markdown: &str, parent_id: Option<&str
     cap_pages_create(title, text, parent_id, None, Some(true))
 }
 
+/// `pages.update`：**不写库**，只产出草稿（**整页替换**，走前端既有的 Markdown 导入管道）。
+///
+/// 为什么这里不拼落盘那份正文 JSON：Rust 侧没有 markdown 解析器（与 `pages.importMarkdown`
+/// 同一个理由 ✓）；这里只交出「目标页 + 新正文原文 + 可选新标题」，由 `ai/apply.ts` 那一步
+/// 调 `markdownToPageContent` / `pageJsonFromText` 转块 —— 全仓仍然只有一份解析实现 ✓。
+///
+/// ⚠️ 语义边界：这是**整篇替换**（不是追加）。调用方（DSH 插件）自己负责「先读 → 再整篇写回」
+/// 的串行化；落库那一步 `ai/apply.ts` 会再走 `serializeByKey` 串行区 ✓。
+fn cap_pages_update(
+    page_id: &str,
+    title: Option<&str>,
+    markdown: Option<&str>,
+    content: Option<&str>,
+) -> CapResult {
+    let id = page_id.trim();
+    if id.is_empty() {
+        return Err("bad_args: 更新页面需要 id".to_string());
+    }
+    let md = markdown.map(str::trim).filter(|s| !s.is_empty());
+    let plain = content.filter(|s| !s.trim().is_empty());
+    if md.is_none() && plain.is_none() {
+        return Err("bad_args: 更新页面需要 markdown 或 content 之一".to_string());
+    }
+    let body_len = md.map(|s| s.len()).or_else(|| plain.map(|s| s.len())).unwrap_or(0);
+    if body_len > 200 * 1024 {
+        return Err("bad_args: 新正文超过 200KB 上限，请拆分后再更新".to_string());
+    }
+    let new_title = title.map(str::trim).filter(|s| !s.is_empty());
+    let summary = match new_title {
+        Some(t) => format!("更新页面 {id}（整页替换，标题改为「{t}」）"),
+        None => format!("更新页面 {id}（整页替换）"),
+    };
+    push_draft(
+        format!("update_page:{id}"),
+        summary.clone(),
+        serde_json::json!({
+            "kind": "update_page",
+            "pageId": id,
+            "title": new_title,
+            "markdown": md,
+            "plain": plain,
+        }),
+    );
+    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
 fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> CapResult {
     if text.trim().is_empty() {
@@ -2379,6 +2425,12 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             &arg_str("title")?,
             &arg_str("markdown")?,
             arg_opt_str("parentId").as_deref(),
+        ),
+        "pages.update" => cap_pages_update(
+            &arg_str("id")?,
+            arg_opt_str("title").as_deref(),
+            arg_opt_str("markdown").as_deref(),
+            arg_opt_str("content").as_deref(),
         ),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,
