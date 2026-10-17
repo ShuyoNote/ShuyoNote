@@ -11,7 +11,11 @@ import { toast } from "../store/toast";
 // ⭐ **2026-10-14**：⭐ `MeshAdvancedForm` **又回到面板了** ✓（⭐ 设备级那三格在 `:2120` 一带 ✓）——
 //   ⚠️ 旧注释那句"已搬到「设置 · 同步」⇒ 面板不再引它"是**旧口径** ✗，已改 ✓；⭐ 设置那边已去掉 ✓。
 // ⚠️ **2026-10-14**：`Reading` 现在从**读数那个 lib** 引 ✓（它原来住 `TrustDevicePanel.tsx` ✓，而那个组件**已删** ✓）。
-import { MESH_TRUST_BEGIN_COMMAND, type Reading } from "../lib/trustDevicePanelReadings";
+import {
+  MESH_TRUST_BEGIN_COMMAND,
+  MESH_TRUST_PREPARE_COMMAND,
+  type Reading,
+} from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -392,6 +396,25 @@ export function SyncPanel({
       );
     } catch (e) {
       setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
+    }
+  };
+  /** ⭐⭐ **2026-10-17**：⭐ 点「接入」＝ ⭐ 先**开一轮比对** ✗，再取码 ✓。
+   *
+   *  ⚠️ 为什么必须多这一步（owner 真机："点接入了，也没有（码）"✗）：⭐ 比对码 ＝
+   *  `f(本机公钥, 对面公钥, 这一轮 trust_ask)` ✓，而 `trust_ask` 原来**只在 `mesh_trust_begin`
+   *  （登记 ＋ 广播）里生成** ✗ ⇒ ⭐ 不先开一轮就取码 ⇒ 后端如实回"这一轮没有进行中的握手" ✓。
+   *  ⭐ 所以「接入」只**开一轮**（不登记 ✓）、「码对得上，确认」才登记 ✓（⛔ 人没确认之前不登记 ✗）。
+   *  ⚠️ 只有桌面有发现层（Web 没有 UDP 那一层 ✓）⇒ 非桌面走到这里会如实失败 ⇒ 走 catch ✓。 */
+  const preparePairCode = async (peer: NearbyPeer) => {
+    if (pairCode !== PAIR_CODE_UNAVAILABLE) return; // ⭐ 调用方给了读数 ⇒ 不抢它的 ✓
+    setPairReading({ kind: "unavailable", reason: "正在发起这一轮比对…" });
+    try {
+      await platform.executor.invoke(MESH_TRUST_PREPARE_COMMAND, {
+        peerDeviceId: peer.device_id,
+      });
+      await fetchPairCode(peer);
+    } catch (e) {
+      setPairReading({ kind: "unavailable", reason: `发起比对失败：${String(e)}` });
     }
   };
   /**
@@ -1557,7 +1580,9 @@ export function SyncPanel({
                       setPairPeer(p);
                       setPairScreen(true);
                       // ⭐ **P-4 片③**：⭐ 就在这一下里取真读数 ✓（⛔ 不用 effect ✗）
-                      void fetchPairCode(p);
+                      // ⭐⭐ **2026-10-17**：⭐ 取码之前**先开一轮比对** ✗（`mesh_trust_prepare` ✓，
+                      //   ⛔ 不登记信任 ✗）—— ⭐ 不先开 ⇒ 后端如实回"没有握手"（owner 真机症状 ✓）。
+                      void preparePairCode(p);
                     }}
                   >
                     接入

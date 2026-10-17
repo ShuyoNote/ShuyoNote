@@ -1268,11 +1268,22 @@ describe("P-4 片③：屏上那份 `pairCode` 换成**真读数**", () => {
     expect(el.querySelector('[data-testid="pair-code-value"]'), "⛔ 读不到时**一个码都不许出现** ✗").toBeNull();
   });
 
-  it("③ ⭐ 点「接入」⇒ `pairingCodeReading` **恰好一次**，且实参是那一台的 id 与 pubkey（今天【红】✓）", async () => {
+  it("③ ⭐ 点「接入」⇒ 先开一轮比对、再取码，且 `pairingCodeReading` **恰好一次**（今天【红】✓）", async () => {
     pairingCodeReadingSpy.mockResolvedValue({ code: null, reason: "先放着" });
     const el = await openPanelWith([peer(true)]);
     expect(pairingCodeReadingSpy, "⛔ 还没点就不许取 ✗").not.toHaveBeenCalled();
     await clickAndSettle(el.querySelector<HTMLElement>('[data-testid="nearby-allow"]')!);
+    // ⭐⭐ **2026-10-17**：⭐ 取码之前必须先 `mesh_trust_prepare` ✗（⭐ 不开一轮 ⇒ 后端没有
+    //   `trust_ask` ⇒ 屏上永远"读不到" ✓ —— owner 真机症状 ✓）；而它⛔ **不是** `mesh_trust_begin`
+    //   （登记信任仍然只在「码对得上，确认」那一下 ✓）。
+    expect(
+      invokeSpy.mock.calls.some((c) => c[0] === "mesh_trust_prepare"),
+      "⭐ 点「接入」必须先开一轮比对 ✓（`mesh_trust_prepare`）",
+    ).toBe(true);
+    expect(
+      invokeSpy.mock.calls.some((c) => c[0] === "mesh_trust_begin"),
+      "⛔ 人还没确认 ⇒ 不许登记信任 ✗（`mesh_trust_begin` 必须只出现在确认那一下 ✓）",
+    ).toBe(false);
     expect(pairingCodeReadingSpy, "⭐ 点「接入」⇒ **恰好一次** ✓").toHaveBeenCalledTimes(1);
     expect(pairingCodeReadingSpy, "⭐ 实参必须是**那一台** ✓（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）").toHaveBeenCalledWith({
       peerDeviceId: "dev-amd",

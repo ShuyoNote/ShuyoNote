@@ -93,6 +93,44 @@ pub fn mesh_trust_state() -> MeshTrustStateView {
     trust_state_view(state, active, pending)
 }
 
+/// ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** ✗ —— ⭐ 生成 `trust_ask` ＋ 让本机能按那一台读到它 ✓，
+/// ⛔ **不登记信任** ✗（⭐ 登记仍然是 [`mesh_trust_begin`] 那一下 ✓）。
+///
+/// ## ⚠️ 为什么必须有这一条命令（owner 2026-10-17 真机："点接入了，也没有（码）" ✗）
+/// 比对码 ＝ `f(本机公钥, 对面公钥, 这一轮 trust_ask)` ✓；而 `trust_ask` 原来**只在**
+/// `mesh_trust_begin`（登记 ＋ 广播 ✓）里生成 ✗ ⇒ ⭐ 而登记是**信任动作** ✓，必须等**人看过码**
+/// 之后才做 ✓ ⇒ ⭐ 结构性死锁：⭐ 码要在"登记之前"看到 ✓，而码的料只在"登记那一格里" ✗。
+/// ⇒ ⭐ 这一条把"开一轮"和"登记"拆开 ✓：⭐ 前端点「接入」调它 ⇒ 码可读 ✓；
+///   ⭐ 点「码对得上，确认」才调 `mesh_trust_begin` ⇒ 登记 ✓。
+///
+/// ## ⛔ 它**不写库**、⛔ **不碰信任名单**
+/// ⭐ 只推进 `lan_state` 里那格进程内的握手（⭐ `TrustHandshake::prepare` ✓ —— ⛔ 连 `state` 都不动 ✓）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MeshTrustPrepare {
+    /// ⭐ `prepared: false` ⇒ 没开成（⭐ 如没给对面 ✓）；理由在人话里 ✓。
+    pub prepared: bool,
+    /// ⭐ 一句给用户看的话 ✓（⭐ 人话 ✓，⛔ 不含内部标识 ✗）。
+    pub message: String,
+}
+
+#[tauri::command]
+pub fn mesh_trust_prepare(peer_device_id: String) -> Result<MeshTrustPrepare, String> {
+    let peer = peer_device_id.trim().to_string();
+    if peer.is_empty() {
+        return Ok(MeshTrustPrepare {
+            prepared: false,
+            message: "不知道要跟哪一台核对（没有指定对面）".to_string(),
+        });
+    }
+    let ask = new_trust_ask();
+    let now = crate::lan_state::now_ms();
+    crate::lan_state::with_trust(|h| h.prepare(&peer, &ask, now, crate::pairing_trust::TRUST_TTL_MS));
+    Ok(MeshTrustPrepare {
+        prepared: true,
+        message: "已发起这一轮比对（还没登记信任 —— 码对上之后再确认）".to_string(),
+    })
+}
+
 /// ⭐ 把随机字节写成十六进制 ✗（⭐ 自带小函数 ✓：⛔ 不为一个 nonce 引依赖 ✓）。
 fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";

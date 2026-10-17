@@ -399,6 +399,17 @@ export interface MeshTrustStateView {
 }
 
 /**
+ * ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** 命令的结果 ✗（与 Rust `mesh_trust::MeshTrustPrepare`
+ * 逐字段相同 ✓）—— ⭐ 它**不登记信任** ✓（登记仍是 `mesh_trust_begin` ✓）。
+ */
+export interface MeshTrustPrepare {
+  /** `false` ＝ 没开成（⭐ 如没给对面 ✓）—— 理由在 `message` 里 ✓。 */
+  prepared: boolean;
+  /** 一句能给用户看的话 ✓（⛔ 不含任何内部标识 ✗）。 */
+  message: string;
+}
+
+/**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
  * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
@@ -1362,6 +1373,20 @@ export interface CommandMap {
   mesh_trust_begin: {
     args: { spaceId: string; peerDeviceId: string; peerPubkey: string };
     result: { outcome: string; message: string };
+  };
+  /**
+   * ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** ✗ —— ⭐ 生成这一轮的 `trust_ask` ✓，⛔ 不登记信任 ✓。
+   *
+   * ⚠️ 为什么需要它：比对码 ＝ `f(本机公钥, 对面公钥, trust_ask)` ✓，而 `trust_ask` 原来只在
+   *   `mesh_trust_begin`（登记 ＋ 广播）里生成 ⇒ ⭐ 码要在"登记之前"看到，料却只在登记那一格里 ✗
+   *   ⇒ 死锁（owner 真机："点接入了，也没有（码）" ✓）。⭐ 这一条把"开一轮"和"登记"拆开 ✓：
+   *   点「接入」调它 ⇒ 码可读 ✓；点「码对得上，确认」才调 `mesh_trust_begin` ⇒ 登记 ✓。
+   *
+   * ⛔ 它**不写库**、⛔ 不碰信任名单 ✓（只推进进程内的握手那格 ✓）。
+   */
+  mesh_trust_prepare: {
+    args: { peerDeviceId: string };
+    result: MeshTrustPrepare;
   };
   /**
    * ⭐ 2026-10-11（任务 B）：⭐ **信任走到哪一步** ✗ —— 只读读数（`TrustHandshake::state()` 一直在推进 ✓，

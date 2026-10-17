@@ -90,15 +90,23 @@ describe("T4 · 把这台设备接进来", () => {
     const confirm = between(SRC, 'data-testid="pair-confirm"', 'data-testid="pair-cancel"');
     expect(confirm).toContain("void trustDevice([activeId], peer)");
     expect(confirm).toContain("setDpPeer(peer.device_id)");
-    // ⛔ 而「接入」那一下**只开屏 ＋ 取读数** ⇒ **零调用**（`syncPanelDevicePair` 的旧断言"预览不许写"
-    //    同一条口径 ✓：⭐ 人没确认之前，一个字节都不发 ✓）。
+    // ⛔ 而「接入」那一下**只开一轮比对 ＋ 取读数** ⇒ **零信任登记**（`syncPanelDevicePair` 的旧断言
+    //    "预览不许写"同一条口径 ✓：⭐ 人没确认之前，一个字节的**登记**都不做 ✓；
+    //    ⚠️ 2026-10-17 起它会调 `mesh_trust_prepare`（只开一轮、⛔ 不写库 ✓）。
     const allow = allowRow();
     expect(allow, "⛔ 「接入」那一下不许直接调 `trustDevice` ✗（人还没确认 ✓）").not.toContain(
       "void trustDevice(",
     );
     expect(allow, "⭐ 它要开的正是那一屏 ✓").toContain("setPairScreen(true)");
     // ⭐ 而取读数那一下走的是**这一台**（⛔ 不传 space_id ✗ —— 空间不参与派生 ✓）
-    expect(allow).toContain("void fetchPairCode(p)");
+    // ⭐⭐ **2026-10-17**：⭐ 取码前**先开一轮比对**（`mesh_trust_prepare` ✓，
+    //   ⛔ 不登记信任 ✗）—— 否则码的料（`trust_ask`）根本还没生成（owner 真机症状 ✓）。
+    expect(allow).toContain("void preparePairCode(p)");
+    const prep = between(SRC, "const preparePairCode = async", "\n  };");
+    expect(prep, "⭐ 先开一轮比对 ✓（命令名逐字 ✓）").toContain("MESH_TRUST_PREPARE_COMMAND");
+    expect(prep, "⭐ 开完再取码 ✓").toContain("await fetchPairCode(peer)");
+    // ⛔ 而「开一轮」**不是**登记：它一个字节都不写库 ✓（`mesh_trust_begin` 只在确认那颗上 ✓）
+    expect(prep).not.toContain("MESH_TRUST_BEGIN_COMMAND");
   });
 
   it("④ 文案红线：只显示、不下结论；载荷含窗口口令 ⇒ 必须明说不能外传", () => {
@@ -125,7 +133,8 @@ describe("T4 · 把这台设备接进来", () => {
     // ① 「接入」记下的是**当前这一台**（⛔ 不是"第一台"／不是全选 ✗）
     expect(allow).toContain("setPairPeer(p)");
     // ② 候选来自**唯一那处读数**（`nearby` ✓）—— 界面不自己造一个身份 ✓
-    expect(allow).toContain("void fetchPairCode(p)");
+    // ⭐⭐ **2026-10-17**：⭐ 接线点从 `fetchPairCode` 换成 `preparePairCode` ✓（它先开一轮、再取码 ✓）
+    expect(allow).toContain("void preparePairCode(p)");
     // ③ ⭐ 那两格**真的传给了后端**（`mesh_trust_begin` 的实参 ✓ —— 命令名/参数逐字 ✓）
     const fn = between(SRC, "const trustDevice = async", "\n  };");
     expect(fn).toContain("peerDeviceId: peer.device_id");
