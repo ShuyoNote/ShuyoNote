@@ -25818,6 +25818,87 @@ body.is-plugin-panel-open .main {
    ⚠️ 颜色用**既有 token** ✓（⛔ 不写死色值 ✗）。 */
 /* ⭐ d1：移动端「首次配对」屏**骨架**（20 格对码未接 ✗ —— 见组件注释 ✓）。
    ⚠️ 类名 `mpair-code-` 开头 ✓（⛔ 泛名 ✗）；颜色用既有 token ✓（⛔ 不写死色值 ✗）。 */
+.mpair-code-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 10px;
+}
+.mpair-code-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.mpair-code-cell {
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text);
+  font-size: 24px;
+  font-weight: 600;
+}
+.mpair-code-caption {
+  margin: 0 0 12px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+.mpair-code-note {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.mpair-code-warn {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--cat-yellow);
+  border-radius: var(--radius-sm);
+  background: var(--cat-yellow-soft);
+  color: var(--cat-yellow);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.mpair-code-actions {
+  display: flex;
+  gap: 10px;
+}
+.mpair-code-cancel,
+.mpair-code-confirm {
+  flex: 1;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  cursor: pointer;
+}
+.mpair-code-cancel {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+.mpair-code-confirm {
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.mpair-code-confirm:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.mpair-code-star {
+  margin: 14px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .mpair-code {
   flex: 1;
   display: flex;

@@ -1,31 +1,64 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "../lib/api";
 import { pushOverlay } from "../lib/overlayStack";
 import { useMobileNav } from "../store/mobileNav";
 
 /**
- * **移动端「首次配对」屏 · d1 骨架**（owner 2026-10-17 拍「甲」✓ —— 效果图见
- * `docs/plans/mobile/mockups/2026-10-14-owner-mobile-reference.png` 右屏 ✓）。
+ * **移动端「首次配对」屏**（owner 2026-10-17 拍「甲」✓ ＋ 追加「完成配对相关功能」✓）。
+ * 效果图：`docs/plans/mobile/mockups/2026-10-14-owner-mobile-reference.png` 右屏 ✓。
  *
- * ## ⛔ 本刀**只做骨架**（如实标注 ✓，⛔ 不假装能用 ✗）
- * · ✅ **屏可到** ✓：从「设备直连」那两颗入口（接入／重新配对 ✓）带着 peer 打开 ✓；
- * · ⛔ **对码未接** ✗：20 格 · 5 组 × 4 位 · 竖排 5 行 —— ⭐ 那 20 格要等 **d2** ✓；
- * · ⛔ **不发任何 api** ✗：码**只许**来自 `api.pairingCodeReading({ peerDeviceId, peerPubkey })` ✓
- *   （`src/lib/api.ts:524` ✓，⭐ **后端算** ✓ ⇒ ⛔ 前端不许自己算码 ✗）；
- *   且 `code: null` ⇒ ⭐ **如实显示 `reason`** ✗（⛔ 不渲染空格子冒充码 ✗）；
- * · ⛔ **不建立信任** ✗：⭐ `SyncPanel` 里 `trustDevice` 第一行就是
- *   `if (!isDesktopPlatform()) { toast("信任设备要在桌面端操作"); return; }` ✓
- *   ⇒ ⭐ **那道守卫不许松动** ✗（安全设计 ✓）；手机上的可信路径是"**人对 20 位码点一下**"✓（d2 ✓）。
+ * ## ⭐ 码从哪来（⛔ 前端不许自己算 ✗）
+ * `api.pairingCodeReading({ peerDeviceId, peerPubkey })` ✓（`src/lib/api.ts:524` ✓）——
+ *   ⭐ **后端算** ✓；`code: null` ⇒ ⭐ **如实显示 `reason`** ✗（⛔ 不渲染空格子冒充码 ✗）；
+ *   ⚠️ `reason` 也读不到 ⇒ 明标「读不到码」✓（⛔ 不编 ✗）。
  *
- * ⚠️ 【取消】**是真的** ✓：回**来处** ✓（`cameFrom` ✓ —— ⛔ 不写死回首页 ✗）。
+ * ## ⛔ 「码对得上，确认」本轮**明标未接** ✗（照 08 屏 v1 老规矩 ✓）
+ * 原因（逐字，只读 `SyncPanel.tsx:1200-1202` ✓）：
+ *   `trustDevice` 的**第一行**就是 `if (!isDesktopPlatform()) { toast("信任设备要在桌面端操作"); return; }` ✓
+ *   ⇒ ⭐ **那道守卫不许松动** ✗（安全设计 ✓）；而它真正干的事**只有一条命令** ✓（`:1237` 附近逐字）：
+ *      `platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, { spaceId, peerDeviceId, peerPubkey })` ✓
+ *   ⚠️ ⇒ 移动端**要接这条**，得先由 owner/Lead 拍「移动端是否允许调这条命令」✗
+ *      （⛔ 我不绕过那道守卫 ✗）⇒ 本轮「确认」**禁用 ＋ title 写清** ✓。
  */
 export function MobilePairCode() {
   const setScreen = useMobileNav((s) => s.setScreen);
   const cameFrom = useMobileNav((s) => s.cameFrom);
-  // ⚠️ 只读它来确认"带着哪一台进来的" ✓（⛔ 本轮不用它做任何请求 ✗）。
   const pairPeer = useMobileNav((s) => s.pairPeer);
-  // ⚠️ 兜底回「设备直连」✓（这屏本来就只从那里进 ✓）—— ⛔ 不写死回首页 ✗。
   const goBack = useCallback(() => setScreen(cameFrom ?? "pair"), [setScreen, cameFrom]);
   useEffect(() => pushOverlay("mobile-paircode", goBack), [goBack]);
+
+  const [code, setCode] = useState<string | null>(null);
+  const [reason, setReason] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!pairPeer) {
+      setLoading(false);
+      setReason("没带着设备进来");
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    api
+      .pairingCodeReading({ peerDeviceId: pairPeer.deviceId, peerPubkey: pairPeer.pubkey })
+      .then((r) => {
+        if (!alive) return;
+        setCode(r.code);
+        setReason(r.reason || "");
+      })
+      .catch((e) => {
+        if (alive) setReason(`读不到码（${String(e instanceof Error ? e.message : e).slice(0, 60)}）`);
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [pairPeer]);
+
+  const digits = code ? code.replace(/\s+/g, "").split("") : [];
+  const rows = [0, 1, 2, 3, 4].map((r) => digits.slice(r * 4, r * 4 + 4));
 
   return (
     <div className="mshell mpair-code" data-testid="mobile-paircode">
@@ -39,26 +72,53 @@ export function MobilePairCode() {
       <div className="mpair-code-scroll">
         <p className="mpair-code-lead">👋 只需一次 · 两台显示同一串码</p>
 
-        {/**
-         * ⛔ **明标未接** ✗（照 08 屏 v1 的老规矩 ✓）：这一格将来显示 **20 位码（5 组 × 4 位 · 竖排 5 行）** ✓，
-         * 现在**禁用** ＋ `title` 写清原因 ✓ —— ⛔ 不放一个假码／空格子冒充"已接"✗。
-         */}
-        <div
-          className="mpair-code-pending"
-          aria-disabled="true"
-          data-testid="mpair-code-pending"
-          title="对码还没接：码要走 api.pairingCodeReading（后端算），下一刀接上 —— 未做 ✗"
-        >
-          <span className="mpair-code-pending-title">对码未接</span>
-          <span className="mpair-code-pending-sub">
-            这一格将显示 20 位码（5 组 × 4 位 · 竖排 5 行）—— 下一刀接后端 ✓
-          </span>
-          {pairPeer ? <span className="mpair-code-pending-peer">已带着一台设备进来 ✓</span> : null}
+        {loading ? (
+          <p className="mpair-code-note">正在读码…</p>
+        ) : code ? (
+          <>
+            <div className="mpair-code-grid" data-testid="mpair-code-grid" aria-label="20 位对码">
+              {rows.map((row, ri) => (
+                <div className="mpair-code-row" key={ri}>
+                  {row.map((ch, ci) => (
+                    <span className="mpair-code-cell" key={ci}>
+                      {ch}
+                    </span>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <p className="mpair-code-caption">20 位 · 5 组 × 4 位 ｜ 两台必须一模一样</p>
+          </>
+        ) : (
+          /* ⛔ 读不到码 ⇒ **如实说**（显示 reason ✓），⛔ 不渲染空格子冒充码 ✗ */
+          <p className="mpair-code-note" data-testid="mpair-code-unavailable">
+            读不到对码{reason ? `：${reason}` : "（后端没给原因）"}
+          </p>
+        )}
+
+        <p className="mpair-code-warn">
+          ⚠ 对不上一律不建立信任（本机一个字都不收）。两串不一样 ⇒ 多半是中间有人在替它回答，或者两台不在同一个网络 ⇒
+          取消、查网络。
+        </p>
+
+        <div className="mpair-code-actions">
+          <button className="mpair-code-cancel" onClick={goBack}>
+            取消
+          </button>
+          {/* ⛔ 明标未接 ✗（照 08 屏 v1 老规矩 ✓）：⛔ 不做假按钮 ✗ */}
+          <button
+            className="mpair-code-confirm"
+            disabled
+            data-testid="mpair-code-confirm"
+            title="确认还没接：它要调 MESH_TRUST_BEGIN_COMMAND（与桌面 trustDevice 同一条命令 ✓），但那道 isDesktopPlatform() 守卫不许绕过 —— 等 owner 拍 ✗"
+          >
+            码对得上，确认
+          </button>
         </div>
 
-        <button className="mpair-code-cancel" onClick={goBack}>
-          取消
-        </button>
+        <p className="mpair-code-star">
+          ★ 这一步没有"自动通过"：第一次必须由人点一下。（更短的 6 位码要先做 PAKE —— 已拍板不做，所以就是这 20 位。）
+        </p>
       </div>
     </div>
   );

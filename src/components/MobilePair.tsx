@@ -330,7 +330,7 @@ export function MobilePair() {
                         className="mpair-entry"
                         data-testid={p.key_changed === true ? "mpair-repair" : "mpair-allow"}
                         onClick={() => {
-                          setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id });
+                          setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id, pubkey: p.pubkey ?? "" });
                           setScreen("paircode");
                         }}
                       >
