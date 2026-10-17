@@ -6,7 +6,7 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `58a5a87d23b603b3c1abf77ba62d43f31fec2dbb32ca469037628129602b81e1` |
+| 注册表 sha256 | `a321ba06da0789e0dc298b64abf02d33e9daba7c728561e53d4f8da0341662ae` |
 | `registryVersion` | 1 |
 | `apiVersion` | 1.1.0 |
 | 能力条数 | **29**（按 `kind`：host 2 / read 16 / write 11） |
@@ -32,8 +32,8 @@
 | pages.create | write | current-space | write:pages | ✓ | ✓ | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.get | read | current-space | read:pages | ✓ |  | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。 |
 | pages.importMarkdown | write | current-space | write:pages | ✓ | ✓ | 导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
-| pages.list | read | current-space | read:pages | ✓ |  | 列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200)。 |
-| pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8)。返回 [{id,title,snippet}]；**空数组 = 本空间没有命中，不是失败**。 |
+| pages.list | read | current-space | read:pages | ✓ |  | 列出页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。默认本空间；可用 spaceId 指定别的空间（需「只读（全部空间）」档）。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。 |
+| pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面（可用 spaceId 指定别的空间，需「只读（全部空间）」档）：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8), spaceId (可选)。返回 [{id,title,snippet}]；**空数组 = 该空间没有命中，不是失败**。 |
 | pages.update | write | current-space | write:pages | ✓ | ✓ | 更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
 | properties.list | read | current-space | read:properties |  |  | 列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。 |
 | properties.set | write | current-space | write:properties |  | ✓ | 设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |

@@ -1,7 +1,7 @@
 // `McpAccessPane`（设置里的「外部 AI 接入」面）的判据 ✓
 //
 // ⭐ **R152（owner 2026-10-08 选 A）**：这里原来是**三颗开关**（接入／免确认／授权写 ✓），
-//   现已换成**一个四档选择** ✓ —— 理由（结构问题 ✗）：②「免确认」与③「授权写入」不独立
+//   现已换成**一个五档选择** ✓ —— 理由（结构问题 ✗）：②「免确认」与③「授权写入」不独立
 //   （③ 关着 ⇒ 没有写工具 ⇒ ② 打开也毫无作用 ✗）、① 关着时 ②③ 是死 UI ✗ ⇒
 //   真状态只有 4 个，却用 3 个布尔表达 ⇒ 一半组合是死的或骗人的 ✗。
 // 这一节钉五件容易做错的事：
@@ -98,7 +98,7 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     await tick();
     await tick();
     expect(mocks.mcpStatus).toHaveBeenCalled();
-    expect(tabs().length, "四个档位都要在").toBe(4);
+    expect(tabs().length, "五个档位都要在").toBe(5);
     const on = tabs().filter((t) => t.className.includes("is-on"));
     expect(on.length, "只能有一个选中").toBe(1);
     expect(on[0].textContent).toContain("不接");
@@ -171,7 +171,7 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     expect(document.body.textContent).toContain("自动填好");
   });
 
-  it("★ 四档的文案必须说全（每档讲清「要不要问」＋ 免确认必留痕），⛔ 不许再说成只读", async () => {
+  it("★ 五档的文案必须说全（每档讲清「要不要问」＋ 免确认必留痕），⛔ 不许再说成只读", async () => {
     // 口径（R152）：**每个档位的说明只在它被选中时显示** ✓ ⇒ 判据要"逐档看"，
     // 而不是"整页搜关键词" ✗（那会漏掉"切过去之后文案对不对" ✓）。
     mount();
@@ -179,9 +179,9 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     await tick();
     // 默认「不接」那一档的说明：既不读也不写 ✓
     expect(document.body.textContent).toContain("既不读也不写");
-    // 四档标签都在 ✓（这就是"用户看得见的全部选择" ✓）
+    // 五档标签都在 ✓（这就是"用户看得见的全部选择" ✓）
     const labels = tabs().map((t) => t.textContent || "").join(" ｜ ");
-    for (const l of ["不接", "只读", "可写（每次确认）", "可写（免确认）"]) {
+    for (const l of ["不接", "只读", "只读（全部空间）", "可写（每次确认）", "可写（免确认）"]) {
       expect(labels, `缺档位「${l}」✗`).toContain(l);
     }
     // ⭐ 切到「可写（免确认）」⇒ 那一档的说明必须**立刻**说清：直接落库 ＋ 每一次写仍留一行审计 ✓
@@ -243,3 +243,5 @@ describe("R158：面板文案与呈现的四条", () => {
     expect(primary.some((t) => t.includes("复制令牌")), "复制令牌不该是主按钮 ✗").toBe(false);
   });
 });
+
+

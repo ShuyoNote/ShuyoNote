@@ -1672,9 +1672,73 @@ fn cap_log_write(message: &str, level: &str) -> CapResult {
     Ok(serde_json::Value::Null)
 }
 
-fn cap_pages_list(limit: i64) -> CapResult {
+/// 当前调用方有没有这个 scope（插件来自 manifest 的授权；外部来自令牌的 `granted` ✓）。
+fn has_scope(id: &str) -> bool {
+    RUN_STATE.with(|s| s.borrow().permissions.iter().any(|p| p == id))
+}
+
+/// 能不能读**别的空间** —— 只有令牌/插件拿到 `read:all-spaces` 才行 ✓。
+///
+/// ⚠️ 这条**不是**给"顺手放开"的：没有它时，`spaceId` 指向别的空间必须**明确拒**
+/// （`permission_denied`），⛔ 不许悄悄当成当前空间（那会让调用方以为读到了 ✗）。
+fn can_read_other_spaces() -> bool {
+    has_scope(crate::mcp_channel::READ_ALL_SCOPE)
+}
+
+/// 在**指定空间**上执行一次只读访问（`space_id` 省略/等于活动空间 ⇒ 就是 [`with_read_conn`] ✓）。
+///
+/// 为什么要有这一步（2026-10-18）：MCP 的读写都钉在**用户的活动空间**上，而
+/// `spaces_switch` 要 `write:pages` ⇒ 只读令牌**根本跨不了空间**，且切换会改用户的界面。
+/// 这里给"显式、只读、带授权"的那条路：
+///   1. 目标**必须真的存在**（先查 meta —— ⛔ 不能先 open：`open_space_conn` 会给不存在的 id
+///      **新建一个空库** ✗）；
+///   2. 没有 `read:all-spaces` ⇒ `permission_denied`（⛔ 不静默降级成当前空间 ✗）；
+///   3. 打开的是**独立的只读连接**（`open_space_conn`），不动活动空间、不切用户界面 ✓。
+fn with_conn_for_space<T>(
+    space_id: Option<&str>,
+    f: impl FnOnce(&rusqlite::Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    let wanted = space_id.map(str::trim).filter(|s| !s.is_empty());
+    let active = RUN_STATE.with(|s| s.borrow().read_space.clone());
+    let on_active = match (wanted, active.as_deref()) {
+        (None, _) => true,
+        (Some(w), Some(a)) => w == a,
+        (Some(_), None) => false,
+    };
+    if on_active {
+        return with_read_conn(f);
+    }
+    let sid = wanted.expect("不是活动空间 ⇒ 一定给了 spaceId");
+    if !can_read_other_spaces() {
+        return Err(
+            "permission_denied: 缺 read:all-spaces（跨空间只读）—— 要在「外部 AI 接入」里选「只读（全部空间）」或更高档".to_string(),
+        );
+    }
+    let exists = with_read_conn(|c| {
+        use rusqlite::OptionalExtension;
+        c.query_row(
+            "SELECT 1 FROM meta.workspaces WHERE id = ?1 AND deleted_at IS NULL",
+            params![sid],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|o| o.is_some())
+        .map_err(|e| format!("db_error: {e}"))
+    })?;
+    if !exists {
+        return Err(format!("bad_args: 找不到空间 {sid}（先用 spaces.list 看 id）"));
+    }
+    let opened = match RUN_STATE.with(|s| s.borrow().read_dir.clone()) {
+        Some(d) => crate::db::open_space_conn_at(sid, &d),
+        None => crate::db::open_space_conn(sid),
+    }
+    .map_err(map_open_error)?;
+    f(&opened)
+}
+
+fn cap_pages_list(limit: i64, space_id: Option<&str>) -> CapResult {
     let limit = limit.clamp(1, 200);
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         // created_at 一起给：插件判断"这页是不是刚建的"只能靠它（updated_at 会被编辑
         // 刷新）。写「孤立页巡检」「本周新建了哪些」这类插件时撞到的就是这个字段的缺失——
         // 加字段是非破坏性的（读不到就别读），比新加一条能力便宜得多。
@@ -1755,9 +1819,9 @@ fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
 /// 返回形状**不变**（`[{id,title,snippet}]`）：`api.pages.search(...)` 已被插件当数组用
 /// （`ops-publish-log` / `ops-redline-check` 都是 `var pages = api.pages.search(...) || []`），
 /// 空结果的**范围信息**由 MCP 面在外面包一层信封（`mcp_host::with_search_scope`）。
-fn cap_pages_search(q: &str, limit: i64) -> CapResult {
+fn cap_pages_search(q: &str, limit: i64, space_id: Option<&str>) -> CapResult {
     let limit = limit.clamp(1, 100) as usize;
-    with_read_conn(|c| {
+    with_conn_for_space(space_id, |c| {
         let rows = crate::search::search_pages_for_capability(c, q, limit)?;
         Ok(serde_json::Value::Array(
             rows.into_iter()
@@ -1773,24 +1837,26 @@ fn cap_pages_search(q: &str, limit: i64) -> CapResult {
     })
 }
 
-/// 当前检索**作用域**的快照：空间 id／名字／本空间页面数。
+/// 某个**空间**的检索作用域快照：空间 id／名字／页面数（`space_id` 省略 ⇒ 活动空间 ✓）。
 ///
 /// 为什么宿主得给：`pages.search` 的返回值是**裸数组**（插件面契约），而外部 agent 拿到 `[]`
 /// 时**分不清**「这个空间里没有」与「我搜错空间了」——它连自己搜的是哪个空间都不知道。
 /// MCP 面用它包信封（`mcp_host::with_search_scope`），插件面仍只看见数组。
-pub(crate) fn space_scope_snapshot() -> Result<serde_json::Value, String> {
-    with_read_conn(|c| {
-        // 活动空间 id：先读 meta 那份指针；读不到（测试夹具/半初始化）就用**这条线程正在读的那个空间**
-        // —— 两者在生产里是同一个值，但夹具里可能只装了后者 ⇒ 不让范围变成空串 ✓
-        let active = crate::workspaces::active_workspace_id(c)
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| RUN_STATE.with(|s| s.borrow().read_space.clone()))
-            .unwrap_or_default();
+///
+/// ⚠️ 信封里的 `spaceId` 必须是**这次真正搜的那个空间**（`spaceId` 参数给了就是它 ✓）——
+/// 否则"跨空间搜 A、信封说 B"比没有信封更糟 ✗。
+pub(crate) fn space_scope_snapshot_of(space_id: Option<&str>) -> Result<serde_json::Value, String> {
+    let target = space_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| RUN_STATE.with(|s| s.borrow().read_space.clone()))
+        .unwrap_or_default();
+    with_conn_for_space(space_id, |c| {
         let name: Option<String> = c
             .query_row(
                 "SELECT name FROM meta.workspaces WHERE id = ?1",
-                params![&active],
+                params![&target],
                 |r| r.get(0),
             )
             .ok();
@@ -1802,7 +1868,7 @@ pub(crate) fn space_scope_snapshot() -> Result<serde_json::Value, String> {
             )
             .map_err(|e| format!("db_error: {e}"))?;
         Ok(serde_json::json!({
-            "spaceId": active,
+            "spaceId": target,
             "spaceName": name.unwrap_or_default(),
             "pageCount": page_count,
         }))
@@ -2532,9 +2598,13 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
     let out = match cap.id {
         "page.current" => cap_page_current(),
         "pages.count" => cap_pages_count(),
-        "pages.list" => cap_pages_list(arg_i64("limit", 50)),
+        "pages.list" => cap_pages_list(arg_i64("limit", 50), arg_opt_str("spaceId").as_deref()),
         "pages.get" => cap_pages_get(&arg_str("id")?, arg_i64("offset", 0), arg_i64("limit", 6000)),
-        "pages.search" => cap_pages_search(&arg_str("q")?, arg_i64("limit", 8)),
+        "pages.search" => cap_pages_search(
+            &arg_str("q")?,
+            arg_i64("limit", 8),
+            arg_opt_str("spaceId").as_deref(),
+        ),
         "tags.list" => cap_tags_list(),
         "backlinks.list" => cap_backlinks_list(arg_opt_str("pageId").as_deref()),
         "files.list" => cap_files_list(arg_opt_str("pageId").as_deref()),
@@ -7885,6 +7955,63 @@ register({ id: "s.run", title: "结构化", run: function () {
             drafts[0].payload["beforeChars"], 9,
             "改前字数必须随草稿给（否则确认框只能盲签）"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// ⭐ 2026-10-18：`spaceId` —— 跨空间**只读**要有 `read:all-spaces`（面板「只读（全部空间）」档）。
+    /// 判据四件事：① 没授权 ⇒ 明确拒（⛔ 不许悄悄当成当前空间）；② 给了 ⇒ 真读到那个空间；
+    /// ③ `pages.list` 也认这个参数；④ 空间 id 不存在 ⇒ `bad_args`（⛔ 不许先 open 出一个空库）。
+    #[test]
+    fn cross_space_read_needs_the_scope_and_never_touches_the_active_space() {
+        let (space, dir) = seed_space("cross-space");
+        {
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            let now = now_ms();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at)
+                 VALUES ('s2','另一个空间',?1,?1)",
+                params![now],
+            )
+            .unwrap();
+            let c = crate::db::open_space_conn_at("s2", &dir).unwrap();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('x1','s2','焦煤材料','{}','山西焦煤集团的招标材料','page',?1,?1)",
+                params![now],
+            )
+            .unwrap();
+            crate::search::sync_fts(&c, "x1", "焦煤材料", "山西焦煤集团的招标材料").unwrap();
+        }
+        let mut st = state_for_space(&space, &dir);
+
+        // ① 没有 read:all-spaces ⇒ 明确拒（⛔ 不静默降级成当前空间）
+        let err = call(&st, "pages.search", r#"{"q":"焦煤","spaceId":"s2"}"#).unwrap_err();
+        assert!(
+            err.contains("permission_denied") && err.contains("read:all-spaces"),
+            "缺授权必须点名缺哪一条：{err}"
+        );
+
+        // ② 给了 ⇒ 命中 s2 的那页（当前空间 s1 里根本没有「焦煤」）
+        st.permissions
+            .push(crate::mcp_channel::READ_ALL_SCOPE.to_string());
+        let hits = call(&st, "pages.search", r#"{"q":"焦煤","spaceId":"s2"}"#).unwrap();
+        assert_eq!(hits.as_array().unwrap().len(), 1, "{hits}");
+        assert_eq!(hits[0]["id"], "x1");
+
+        // ③ pages.list 也认这个参数
+        let list = call(&st, "pages.list", r#"{"spaceId":"s2"}"#).unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+
+        // ④ 不存在的空间 ⇒ bad_args（⛔ 先 open 会新建一个空库）
+        let err = call(&st, "pages.list", r#"{"spaceId":"nope"}"#).unwrap_err();
+        assert!(err.contains("找不到空间"), "{err}");
+
+        // ⑤ 信封拿的是**目标空间**的读数（不是活动空间）
+        let scope = space_scope_snapshot_of(Some("s2")).unwrap();
+        assert_eq!(scope["spaceId"], "s2");
+        assert_eq!(scope["pageCount"], 1);
+        assert_eq!(scope["spaceName"], "另一个空间");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 

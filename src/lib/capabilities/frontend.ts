@@ -143,7 +143,10 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
   // `updated_at` 倒序（`api.listPages` 给的是侧栏树的 `sort_order/created_at` 顺序，别直接用）。
   "pages.list": async (args) => {
     const limit = intArg(args, "limit", PAGES_LIST_LIMIT_DEFAULT, 1, PAGES_LIST_LIMIT_MAX);
-    const rows = await api.listPages();
+    // ⭐ 2026-10-18：`spaceId` —— 指定别的空间时走 `listWorkspacePages`（只读、不动活动空间 ✓）；
+    //   不指定就是本空间那一条（`api.listPages`）。排序/字段两边一致。
+    const spaceId = String(args.spaceId ?? "").trim();
+    const rows = spaceId ? await api.listWorkspacePages(spaceId) : await api.listPages();
     const sorted = [...rows].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
     return {
       ok: true,
@@ -163,7 +166,16 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     // 传 `limit: 999` 时 Web 与桌面拿到的条数就不一样了。
     const limit = intArg(args, "limit", SEARCH_LIMIT_DEFAULT, 1, SEARCH_LIMIT_MAX);
     if (!query) return { ok: false, error: "pages.search 需要 q" };
-    const rows = await api.search(query, limit, false);
+    const spaceId = String(args.spaceId ?? "").trim();
+    if (!spaceId) {
+      const rows = await api.search(query, limit, false);
+      return { ok: true, pages: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.snippet })) };
+    }
+    // ⭐ 2026-10-18：指定了空间 ⇒ 走**全空间**检索再按 `workspace_id` 筛（命令面没有"只搜某一个
+    // 非活动空间"的入口）。候选集给到 200（`search` 的上限），筛完再截 limit —— 否则跨空间那一路
+    // 会因为"每空间平分 limit"而少给。
+    const all = await api.search(query, 200, true);
+    const rows = all.filter((r) => r.workspace_id === spaceId).slice(0, limit);
     return { ok: true, pages: rows.map((r) => ({ id: r.id, title: r.title, snippet: r.snippet })) };
   },
 

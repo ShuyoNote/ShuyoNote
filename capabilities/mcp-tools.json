@@ -2,13 +2,17 @@
   {
     "name": "pages_list",
     "capabilityId": "pages.list",
-    "description": "列出本空间页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把本空间最近改过的页面看一遍，再决定读哪一页。参数: limit (可选, 默认 50, 上限 200)。",
+    "description": "列出页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。默认只列**当前空间**；给了 spaceId 就列那个空间（只读，需要「只读（全部空间）」档），**不改变活动空间**。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把那个空间最近改过的页面看一遍。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。",
     "inputSchema": {
       "type": "object",
       "properties": {
         "limit": {
           "type": "number",
           "description": "最多返回多少条（上限 200）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
         }
       },
       "required": []
@@ -44,13 +48,17 @@
   {
     "name": "pages_search",
     "capabilityId": "pages.search",
-    "description": "在本空间检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— **空结果只说明「当前这个空间」没命中，不代表别的空间没有**：先用 spaces_list 看清当前空间，或换更短的词再试。",
+    "description": "检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。默认只搜**当前空间**；给了 spaceId 就搜那个空间（只读，需要用户把外部接入开到「只读（全部空间）」档），**不会改变你界面上的活动空间**。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— 空结果只说明**这个**空间没命中，不代表别的空间没有。",
     "inputSchema": {
       "type": "object",
       "properties": {
         "q": {
           "type": "string",
           "description": "关键词；多个词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串）"
+        },
+        "spaceId": {
+          "type": "string",
+          "description": "目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间"
         },
         "limit": {
           "type": "number",

@@ -141,7 +141,7 @@ export interface PluginApi {
   /** 列出本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳
    */
-    list(limit?: number): { id: string; title: string; created_at: number; updated_at: number }[];
+    list(limit?: number, spaceId?: string): { id: string; title: string; created_at: number; updated_at: number }[];
   /** 读取指定页面（权限 `read:pages`；1.0.0 起）
    * 返回：{id, title, content_text(**已按 offset/limit 切好的窗口**), kind, chars_total(整页字符数), offset, limit}；不存在返回 null
    */
@@ -149,7 +149,7 @@ export interface PluginApi {
   /** 搜索本空间页面（权限 `read:pages`；1.0.0 起）
    * 返回：[{id, title, snippet}]：多词按「全部出现」筛（AND），单词走全文索引（按相关度）、短词走子串；附件里的命中会带「【来自附件】」前缀。**空数组 = 本空间没有命中，不是失败**
    */
-    search(q: string, limit?: number): { id: string; title: string; snippet: string }[];
+    search(q: string, spaceId?: string, limit?: number): { id: string; title: string; snippet: string }[];
   /** 新建页面（草稿确认）（权限 `write:pages`；1.0.0 起）
    * 返回：{drafted: true, summary}——**不代表已创建**，用户确认后才落库
    */
