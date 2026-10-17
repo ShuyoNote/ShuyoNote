@@ -1,6 +1,10 @@
 # LLM wiki（库地图 / 专题页）—— 方案（2026-09-28）
 
-> 状态：**待 owner 拍板**。本文只给事实与选项，**没有改任何代码**。
+> 状态：**已落地**（选项 A 只读库地图 ＋ 按需单页 ＋ 采用＝新建一页；2026-10-05 起接线，2026-10-18 补齐「采用／落库」）。
+> 证据：判据 `../../src/lib/ai/topicDraft.test.ts`（`buildTopicPageInput` 三条 ＋ "只 createPage 不 update"静态断言）｜视图 `../../src/components/LibraryMapView.test.tsx`（`draft-adopt` 四条）｜计数 `../../src/store/ai.topic.test.ts`（采用率分子分母）｜实现 `../../src/lib/ai/topicDraft.ts`、`../../src/components/LibraryMapView.tsx`、`../../src/components/AiSettingsForm.tsx` 的 `adoptDraft`
+> 现在**仍待 owner 拍板**的只有两件：**采纳率阈值**、以及 B/C/D（专题页增量维护 / AI 记忆层 / 受控编辑）要不要做。
+> ⚠️ 本文 2026-09-28 立稿时这一行写的是「待 owner 拍板。本文只给事实与选项，**没有改任何代码**」——
+>    后半句**早已过期** ✗（代码从 2026-10-05 起就陆续改了）；按本仓惯例**改准并留痕**，不留一句错的给后来人。
 > 上位：[全库 AI 覆盖方案](2026-09-17-knowledge-base-ai-coverage-plan.md)（P1 三层派生 · P4 跨库总结与强制引用）· [设计哲学](../design-philosophy.md)（本地优先 · 倾向本地 AI）
 > 判据出处：`src/lib/ai/librarySummary.ts`（跨库总结 + 强制引用）· `src/lib/extract/coverageReport.ts`（覆盖度报告）· `src/lib/libraryCoverage.ts`（`coverage.report` 的形状）· `scripts/check-derived-writers.mjs`（派生层唯一写入者）· `docs/TESTING.md`（三态：就绪 / 未就绪 / 未实查）
 > ⚠️ 引用一律用**锚点**（文件名 / 函数名 / 节名），**不写行号** —— 行号会漂（2026-09-28 实测：本仓一处方案引用**一天内漂了约 27 行**）。
