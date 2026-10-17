@@ -9018,6 +9018,31 @@ select.prop-value {
   background: var(--accent-soft);
 }
 
+/* ⚠️ **2026-10-17（owner 截图报的真 bug）**：长标题在命令面板里被**挤到没有了** ✗ ——
+   实测：`导出当前页为 Markdown ＋ 附件（zip）` 这种 20+ 字的标签只剩 `导.` ✗，
+   而 8–12 字的命令显示正常 ✓ ⇒ 是 flex 收缩把**标题**让掉了（描述占了整行 ✓）。
+   口径：**标题优先、描述让位** ✓ —— 标题不参与收缩（超长自己省略），描述拿剩余宽度并省略 ✓。
+   ⛔ 只动布局，一个字都没改文案 ✗。 */
+.palette-item {
+  min-width: 0;
+}
+.palette-item .palette-title {
+  /* ⛔ 不许收缩 ✗（标题永远完整可见 ✓）；只给一个上限，超长自己省略 ✓ */
+  flex: 0 0 auto;
+  max-width: 62%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-item .palette-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .palette-title {
   flex: 1;
   font-size: 14px;
