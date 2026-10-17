@@ -33,7 +33,7 @@ export function SyncAdvancedFold({ children }: SyncAdvancedFoldProps) {
     // ⚠️ 类名沿用手边那个 `.sync-advanced`（它就是原来那个"高级（已自动填好）"折 ✓）：
     //    ⛔ 不新造类名 ✗（新类名要配 `App.css` 规则 ✓，而本笔不碰样式表 ✓）。
     <details className="sync-advanced">
-      <summary>高级（已自动填好，一般不用动）</summary>
+      <summary>高级</summary>
       {children}
     </details>
   );

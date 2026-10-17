@@ -83,5 +83,57 @@
       ]
     },
     "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "pages_update",
+    "capabilityId": "pages.update",
+    "description": "更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "目标页面 id"
+        },
+        "markdown": {
+          "type": "string",
+          "description": "整篇 Markdown 新正文（与 content 二选一）；走应用自己的 Markdown 导入管道（mermaid/表格/列表按各自类型落块）"
+        },
+        "content": {
+          "type": "string",
+          "description": "整篇纯文本新正文（按换行分段）；与 markdown 二选一"
+        },
+        "title": {
+          "type": "string",
+          "description": "新标题；省略=保留原标题"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "permission": "write:pages"
+  },
+  {
+    "kind": "write",
+    "name": "spaces_switch",
+    "capabilityId": "spaces.switch",
+    "description": "切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "目标空间 id（与 name 二选一；都传时以 id 为准）"
+        },
+        "name": {
+          "type": "string",
+          "description": "目标空间名称（如「运营」）；重名时报错要求改用 id"
+        }
+      },
+      "required": []
+    },
+    "permission": "write:pages"
   }
 ]

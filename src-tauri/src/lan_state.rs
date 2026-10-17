@@ -102,7 +102,9 @@ impl LanState {
         let ask_from = if p.announce.trust_ask.is_empty() {
             None
         } else {
-            Some(p.announce.device_id.clone())
+            // ⭐⭐ 2026-10-17：⭐ 连**值**一起带下去 ✗ —— 被问的那一半也要能算出**同一串**比对码 ✓
+            //   （原来只记"谁问的" ⇒ 它算不出码 ⇒ 屏上永远是"读不到" ✓）。
+            Some((p.announce.device_id.clone(), p.announce.trust_ask.clone()))
         };
         let seen_at = p.seen_at_ms;
         let mine = self.table.upsert(p);
@@ -110,8 +112,10 @@ impl LanState {
         //   "这条是我自己的公告（回环回来的 ✓）" ✓（见 `lan.rs` 的实现与 `record_datagram` 的用法 ✓）。
         //   ⇒ ⭐ ⚠️ 判据①当场抓到我把这个条件**写反了** ✗（写成 `!mine` ⇒ 永远不记账 ⇒ "点了没反应" ✓）。
         if mine {
-            if let Some(dev) = ask_from {
-                with_trust(|h| h.note_ask(&dev, seen_at, crate::pairing_trust::TRUST_TTL_MS));
+            if let Some((dev, ask)) = ask_from {
+                with_trust(|h| {
+                    h.note_ask_with(&dev, &ask, seen_at, crate::pairing_trust::TRUST_TTL_MS)
+                });
             }
         }
         mine

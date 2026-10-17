@@ -11,7 +11,11 @@ import { toast } from "../store/toast";
 // ⭐ **2026-10-14**：⭐ `MeshAdvancedForm` **又回到面板了** ✓（⭐ 设备级那三格在 `:2120` 一带 ✓）——
 //   ⚠️ 旧注释那句"已搬到「设置 · 同步」⇒ 面板不再引它"是**旧口径** ✗，已改 ✓；⭐ 设置那边已去掉 ✓。
 // ⚠️ **2026-10-14**：`Reading` 现在从**读数那个 lib** 引 ✓（它原来住 `TrustDevicePanel.tsx` ✓，而那个组件**已删** ✓）。
-import { MESH_TRUST_BEGIN_COMMAND, type Reading } from "../lib/trustDevicePanelReadings";
+import {
+  MESH_TRUST_BEGIN_COMMAND,
+  MESH_TRUST_PREPARE_COMMAND,
+  type Reading,
+} from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
 import { useAuth } from "../store/auth";
 import { useEditorStore } from "../store/editor";
@@ -392,6 +396,25 @@ export function SyncPanel({
       );
     } catch (e) {
       setPairReading({ kind: "unavailable", reason: `取比对码失败：${String(e)}` });
+    }
+  };
+  /** ⭐⭐ **2026-10-17**：⭐ 点「接入」＝ ⭐ 先**开一轮比对** ✗，再取码 ✓。
+   *
+   *  ⚠️ 为什么必须多这一步（owner 真机："点接入了，也没有（码）"✗）：⭐ 比对码 ＝
+   *  `f(本机公钥, 对面公钥, 这一轮 trust_ask)` ✓，而 `trust_ask` 原来**只在 `mesh_trust_begin`
+   *  （登记 ＋ 广播）里生成** ✗ ⇒ ⭐ 不先开一轮就取码 ⇒ 后端如实回"这一轮没有进行中的握手" ✓。
+   *  ⭐ 所以「接入」只**开一轮**（不登记 ✓）、「码对得上，确认」才登记 ✓（⛔ 人没确认之前不登记 ✗）。
+   *  ⚠️ 只有桌面有发现层（Web 没有 UDP 那一层 ✓）⇒ 非桌面走到这里会如实失败 ⇒ 走 catch ✓。 */
+  const preparePairCode = async (peer: NearbyPeer) => {
+    if (pairCode !== PAIR_CODE_UNAVAILABLE) return; // ⭐ 调用方给了读数 ⇒ 不抢它的 ✓
+    setPairReading({ kind: "unavailable", reason: "正在发起这一轮比对…" });
+    try {
+      await platform.executor.invoke(MESH_TRUST_PREPARE_COMMAND, {
+        peerDeviceId: peer.device_id,
+      });
+      await fetchPairCode(peer);
+    } catch (e) {
+      setPairReading({ kind: "unavailable", reason: `发起比对失败：${String(e)}` });
     }
   };
   /**
@@ -1229,8 +1252,10 @@ export function SyncPanel({
           peerPubkey: peer.pubkey,
         });
       }
-      // ⭐ 文案说的是**方向** ✗（⛔ 不声称"双向已通" ✗ —— 那要对面也点一次 ✓）
-      toast("已允许这台设备来拿你的内容（要双向，得它那边也点一次）", "success");
+      // ⭐ 文案说的是**结果** ✗（⛔ 不声称"已经双向同步完成" ✗ —— 那要等第一轮真的跑起来 ✓）。
+      // ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 不再说"要它那边也点一次" ✗ ——
+      //   ⭐ 对面收到这一轮 ask 就会**互相登记** ✓（`sync::note_pending_trust_asks` ✓）⇒ 一次配对两个方向都通 ✓。
+      toast("配对成功：两边都通了 ✓", "success");
       // ⚠️ **2026-10-14**：这一格原来会「点完再读一次」后端那份信任读数 ✓ —— ⭐ 而显示它的那一屏
       //    （`TrustDevicePanel` ✓）**已随「附近设备」那一行删掉** ✗ ⇒ 那格读数**没人看**了 ✓ ⇒
       //    ⭐ 那一下也一起去掉 ✓（⛔ 不去刷一个看不见的状态 ✗；命令与参数一个字没动 ✓）。
@@ -1557,7 +1582,9 @@ export function SyncPanel({
                       setPairPeer(p);
                       setPairScreen(true);
                       // ⭐ **P-4 片③**：⭐ 就在这一下里取真读数 ✓（⛔ 不用 effect ✗）
-                      void fetchPairCode(p);
+                      // ⭐⭐ **2026-10-17**：⭐ 取码之前**先开一轮比对** ✗（`mesh_trust_prepare` ✓，
+                      //   ⛔ 不登记信任 ✗）—— ⭐ 不先开 ⇒ 后端如实回"没有握手"（owner 真机症状 ✓）。
+                      void preparePairCode(p);
                     }}
                   >
                     接入
@@ -1589,14 +1616,14 @@ export function SyncPanel({
               ══════════════════════════════════════════════════════════════════════ */}
           {pairScreen && (
             <div className="set-section" data-testid="pair-code-screen">
-              <div className="set-section-title">两台设备核对一下这串码</div>
+              <div className="set-section-title">两台设备核对这串码</div>
 
               {pairReading.kind === "unavailable" ? (
                 <div className="sync-status is-warn" data-testid="pair-code-unavailable">
-                  读不到比对码（{pairReading.reason}）—— ⭐ 读不到就<b>不显示任何码</b> ✓
+                  读不到比对码（{pairReading.reason}）
                 </div>
               ) : pairReading.value === null ? (
-                <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码 ✓</div>
+                <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码</div>
               ) : (
                 <div
                   className="sync-status"
@@ -1609,10 +1636,10 @@ export function SyncPanel({
               )}
 
               <div className="sync-hint">
-                请在两台设备上核对：<b>两边一样</b> ⇒ 确认 ✓
+                两边一样 ⇒ 点「确认」 ✓
               </div>
               <div className="sync-hint" data-testid="pair-code-mismatch">
-                ⚠️ 两边的码不一样 ⇒ 先别确认（你可能正连到另一个设备）✓
+                ⚠️ 不一样 ⇒ 先别确认（可能连到别的设备）✓
               </div>
 
               <div className="sync-field">
@@ -1654,11 +1681,9 @@ export function SyncPanel({
                     ⛔ 旧那句"更短的 6 位码**要等** PAKE 落地"是一句**过期的承诺** ✗（已删 ✓）；
                     ⭐ 这串 20 位比对码**就是现在的做法** ✓（⛔ 不再有"以后换 6 位"的暗示 ✗）。 */}
               <div className="sync-hint" data-testid="pair-code-notes">
-                这是<b>比对码</b>（20 位、5 组）—— 这是<b>现在的做法</b>；更短的 6 位码需要 PAKE，而<b>已决定不做</b> ✓
+                这是<b>比对码</b>（20 位、5 组）；6 位码要 PAKE —— <b>已决定不做</b> ✓
                 <br />
-                含窗口口令 ＝ 钥匙材料 ⇒ <b>只发你自己那台</b> ✓
-                <br />
-                <b>不是一次性的</b> ⇒ 用后建议换一次窗口口令 ✓
+                <b>含窗口口令</b> ⇒ <b>只发你自己那台</b> ✓；<b>不是一次性的</b> ⇒ 用后建议换窗口口令 ✓
               </div>
             </div>
           )}

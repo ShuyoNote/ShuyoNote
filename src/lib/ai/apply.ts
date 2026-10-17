@@ -4,11 +4,12 @@
 
 import { api } from "../api";
 import { appendBlocksToJson, pageJsonFromText } from "./lexical";
-import { appendFence, fenceDoc } from "../docContent";
+import { appendFence, fenceDoc, stampTopLevelBlockIds } from "../docContent";
 import { markdownToPageContent } from "../mdPreview";
 import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
 import { serializeByKey } from "../serializeByKey";
+import { useSpaceStore } from "../../store/space";
 import type { PageDetail } from "../../types";
 
 export interface ApplyResult {
@@ -33,7 +34,13 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         const g = importMarkdownGuard(contentText);
         if (!g.ok) throw new Error(g.error);
       }
-      const mdDoc = importing ? markdownToPageContent(contentText) : null;
+      const mdDoc = importing
+        ? (() => {
+            const doc = markdownToPageContent(contentText);
+            // ⭐ 2026-10-17：Markdown 转出来的块没有 blockId，而 CRDT 播种不造身份 ⇒ 落库前先补种一次。
+            return doc ? stampTopLevelBlockIds(doc) : null;
+          })()
+        : null;
       const built = p.args?.content_json
         ? { content_json: String(p.args.content_json), content_text: contentText }
         : mdDoc
@@ -47,6 +54,48 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         ...built,
       });
       return { ok: true, message: `已创建页面「${page.title}」`, page };
+    }
+
+    case "update_page": {
+      // ⭐ pages.update（2026-10-17）：**整页替换**已有页面（不是追加）。
+      //   正文可以是 Markdown 原文（复用导入管道 `markdownToPageContent` ✓，全仓一份解析）
+      //   或纯文本（`pageJsonFromText` ✓）；目标页必须已存在（不存在就报错，不偷偷新建 ✗）。
+      //   ⚠️ 串行化与 append_block 同理：读 ⇒ 改 ⇒ 写三跳同区，避免和自动保存互相覆盖。
+      const pageId = String(p.pageId ?? p.args?.pageId ?? "");
+      const title = typeof p.title === "string" && p.title.trim() ? p.title.trim() : undefined;
+      const md = typeof p.markdown === "string" ? p.markdown : "";
+      const plain = typeof p.plain === "string" ? p.plain : "";
+      if (!pageId) return { ok: false, message: "update_page 参数不完整" };
+      if (!md.trim() && !plain.trim()) return { ok: false, message: "update_page 需要新正文" };
+      return serializeByKey(`page:${pageId}`, async () => {
+        const cur = await api.getPage(pageId);
+        if (!cur) return { ok: false, message: "目标页面不存在" };
+        let built;
+        if (md.trim()) {
+          const g = importMarkdownGuard(md);
+          if (!g.ok) throw new Error(g.error);
+          const doc = markdownToPageContent(md);
+          if (!doc) return { ok: false, message: "Markdown 转块失败（正文为空）" };
+          built = doc;
+        } else {
+          built = pageJsonFromText(plain, uid);
+        }
+        // ⭐ 2026-10-17：同上 —— 整页写入前补块身份（CRDT 播种不造身份，缺了会播种失败）。
+        built = stampTopLevelBlockIds(built);
+        const page = await api.savePage({ id: pageId, ...(title ? { title } : {}), ...built });
+        return { ok: true, message: `已更新「${page.title}」`, page };
+      });
+    }
+
+    case "switch_space": {
+      // ⭐ spaces.switch（2026-10-17）：真正切空间的唯一实现是 space store（换连接 + 刷新界面）。
+      //   这里只把草稿交给它，不另写一条切换路径。
+      const spaceId = String(p.spaceId ?? "");
+      if (!spaceId) return { ok: false, message: "switch_space 需要 spaceId" };
+      const ok = await useSpaceStore.getState().switchTo(spaceId);
+      return ok
+        ? { ok: true, message: `已切换到空间「${String(p.name ?? spaceId)}」` }
+        : { ok: false, message: "切换空间失败（可能需要口令或被拒绝）" };
     }
 
     case "append_block": {

@@ -57,19 +57,17 @@ pub struct MeshTrustStateView {
 /// ⚠️ 兜底那一档要说**下一步做什么** ✗，⛔ 不是只说"没有" ✗（owner 口径：界面上的话要能照着做 ✓）。
 ///
 /// ⭐⭐ **2026-10-12（第 3 步改口径 ✓）** ✗：⭐ 那两句**声称的是双向** ✗ ⇒ 与 owner 的口径矛盾 ⇒ 换掉 ✓
-/// （「『信任这台设备』＝『**允许它来拿我的**』」✓ ＋「**单方信任 ⇒ 同步是单向的**」✓）——
-/// ⚠️ 这一格是**进程级的一个槽** ✗（它分不出方向 ✓）⇒ ⭐ 所以人话里**必须**把"方向"说出来 ✓，
-/// ⛔ 不许再声称"已经建立信任"✗（那是上一版的说法 ✓）。
+/// ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 这一格的人话也改了 ✗ ——
+/// 配对**一次**两边都通 ✓（收到 ask 的那一侧会在下一次交换里互相登记 ✓），⛔ 不再说"要两台各点一次" ✗。
 pub fn trust_state_view(state: TrustState, active: bool, pending: usize) -> MeshTrustStateView {
     let (state, message) = match state {
         TrustState::Idle => (
             "idle",
-            "还没有允许过哪台设备来拿你的内容 —— 在「附近的设备」里，点那一行右端的「接入」就是允许它",
+            "还没有配对过设备 —— 在「附近的设备」里点那一行右端的「接入」，核对比对码一致后确认即可",
         ),
         TrustState::Trusted => (
             "trusted",
-            "已经有过信任动作了（⭐ 一方点一次只开一个方向：要双向，两台各点一次）\
-             —— 谁在名单里看下面那份「这台机器认了 N 台设备」",
+            "已经配对过（⭐ 一方配对成功 ⇒ 两个方向都通 ✓）—— 谁在名单里看下面那份「这台机器认了 N 台设备」",
         ),
     };
     MeshTrustStateView {
@@ -91,6 +89,55 @@ pub fn mesh_trust_state() -> MeshTrustStateView {
         (h.state(), h.is_active(now), h.pending_asks(now).len())
     });
     trust_state_view(state, active, pending)
+}
+
+/// ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** ✗ —— ⭐ 生成 `trust_ask` ＋ 让本机能按那一台读到它 ✓，
+/// ⛔ **不登记信任** ✗（⭐ 登记仍然是 [`mesh_trust_begin`] 那一下 ✓）。
+///
+/// ## ⚠️ 为什么必须有这一条命令（owner 2026-10-17 真机："点接入了，也没有（码）" ✗）
+/// 比对码 ＝ `f(本机公钥, 对面公钥, 这一轮 trust_ask)` ✓；而 `trust_ask` 原来**只在**
+/// `mesh_trust_begin`（登记 ＋ 广播 ✓）里生成 ✗ ⇒ ⭐ 而登记是**信任动作** ✓，必须等**人看过码**
+/// 之后才做 ✓ ⇒ ⭐ 结构性死锁：⭐ 码要在"登记之前"看到 ✓，而码的料只在"登记那一格里" ✗。
+/// ⇒ ⭐ 这一条把"开一轮"和"登记"拆开 ✓：⭐ 前端点「接入」调它 ⇒ 码可读 ✓；
+///   ⭐ 点「码对得上，确认」才调 `mesh_trust_begin` ⇒ 登记 ✓。
+///
+/// ## ⛔ 它**不写库**、⛔ **不碰信任名单**
+/// ⭐ 只推进 `lan_state` 里那格进程内的握手（⭐ `TrustHandshake::prepare` ✓ —— ⛔ 连 `state` 都不动 ✓）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MeshTrustPrepare {
+    /// ⭐ `prepared: false` ⇒ 没开成（⭐ 如没给对面 ✓）；理由在人话里 ✓。
+    pub prepared: bool,
+    /// ⭐ 一句给用户看的话 ✓（⭐ 人话 ✓，⛔ 不含内部标识 ✗）。
+    pub message: String,
+}
+
+#[tauri::command]
+pub fn mesh_trust_prepare(peer_device_id: String) -> Result<MeshTrustPrepare, String> {
+    let peer = peer_device_id.trim().to_string();
+    if peer.is_empty() {
+        return Ok(MeshTrustPrepare {
+            prepared: false,
+            message: "不知道要跟哪一台核对（没有指定对面）".to_string(),
+        });
+    }
+    let now = crate::lan_state::now_ms();
+    // ⭐⭐ **2026-10-17 第二版（重要 ✓）**：⭐ **已经有这一轮的 ask ⇒ 采纳它，不另生成** ✗。
+    //
+    // ⚠️ 为什么必须这样：公告 30 秒一轮（`lan_state::ANNOUNCE_INTERVAL_MS` ✓）⇒ 两台机器
+    //   几乎不可能同时互相听到 ✓。真实顺序是：甲点「接入」⇒ 甲的 ask 广播出去（≤30 秒）⇒
+    //   乙收到、点「接入」✓。⭐ 若乙这时**自己新造一串** ⇒ 两边码必然不同 ⇒ 永远对不上 ✗
+    //   （这正是"点接入了也没有"的第二半 ✓）。⇒ ⭐ 有现成那串（自己发起的 ／ 对面发起的 ✓）
+    //   **就沿用它** ✓；只有一发都没有时才新造 ✓。
+    // ⭐ 顺带一个好处：重复点「接入」是**幂等**的（同一轮 ⇒ 同一串 ⇒ 同一个码 ✓）。
+    let existing = crate::lan_state::with_trust(|h| h.ask_for(&peer, now));
+    let ask = existing.unwrap_or_else(new_trust_ask);
+    crate::lan_state::with_trust(|h| {
+        h.prepare(&peer, &ask, now, crate::pairing_trust::TRUST_TTL_MS)
+    });
+    Ok(MeshTrustPrepare {
+        prepared: true,
+        message: "已发起这一轮比对（还没登记信任 —— 码对上之后再确认）".to_string(),
+    })
 }
 
 /// ⭐ 把随机字节写成十六进制 ✗（⭐ 自带小函数 ✓：⛔ 不为一个 nonce 引依赖 ✓）。
@@ -170,8 +217,7 @@ pub fn mesh_trust_begin(
     });
     Ok(MeshTrustOutcome {
         outcome: "trusted".to_string(),
-        message: "已允许这台设备来拿你的内容（⭐ 单方就算数 ✓）。\
-                  ⚠️ 反过来你要拿它的，得**它那边也允许你一次** ✓ —— 那时候才是双向 ✓"
+        message: "配对成功：两边都通了 ✓（对面收到这一轮「想信任」后会自动互相登记 —— 它那边不用再点一次 ✓）"
             .to_string(),
     })
 }

@@ -34,6 +34,8 @@ import type { NearbyPeer } from "../lib/platform/commands";
 export function MobilePair() {
   // ⚠️ 一律**字段级选择器**（`check-store-subscriptions` 挡整店订阅 ✓）。
   const setScreen = useMobileNav((s) => s.setScreen);
+  // ⭐ d1：两颗入口只做一件事 —— **带着这台 peer 打开「首次配对」屏** ✓（与桌面 `nearby-allow` 同形 ✓，⛔ 先不发信任请求 ✗）。
+  const setPairPeer = useMobileNav((s) => s.setPairPeer);
   // 与 `SyncPanel` **同一个口径**：`api.lanStatus(activeId)` 是按空间查的 ✓（`SyncPanel.tsx:197` ✓）
   const activeId = useSpaceStore((s) => s.activeId);
 
@@ -320,6 +322,21 @@ export function MobilePair() {
                         </span>
                       ) : null}
                     </span>
+                    {/* ⭐ d1：**真入口** ✓ —— 只打开「首次配对」屏 ✓，⛔ 这里**不发任何信任请求** ✗
+                        （与桌面 `nearby-allow` 同形 ✓：桌面那一下也只是"记下这一台 ＋ 打开对码屏"✓）。
+                        ⚠️ ⛔ 「立即同步」**仍然不渲染** ✗ —— 它按**空间**同步 ✓，挂到某一台设备上会指错 ✓。 */}
+                    {p.key_changed === true || !pairedIds.includes(p.device_id) ? (
+                      <button
+                        className="mpair-entry"
+                        data-testid={p.key_changed === true ? "mpair-repair" : "mpair-allow"}
+                        onClick={() => {
+                          setPairPeer({ deviceId: p.device_id, deviceName: p.device_name, shortId: p.short_id, pubkey: p.pubkey ?? "" });
+                          setScreen("paircode");
+                        }}
+                      >
+                        {p.key_changed === true ? "重新配对" : "接入"}
+                      </button>
+                    ) : null}
                   </span>
                   {/* ⛔ 信任/配对后端尚未定形状 ⇒ **明标未接** ✗（禁用 ＋ title 写原因 ✓，⛔ 不做假按钮 ✗） */}
                   <button
@@ -332,6 +349,14 @@ export function MobilePair() {
                 </li>
               ))}
             </ul>
+          )}
+          {/* ⭐ owner 2026-10-14 移动参考图：底部虚线框（**纯文案** ✓ 照抄 ✓，⛔ 不承载读数 ✗）。
+              显示条件 ✓：「附近」档被选中 ✓，或一台设备都没有 ✓（那时屏上正需要这条指引）；
+              ⛔ 在「已配对／要重配」两档不显示 ✗ —— 那两档说的是别的设备 ✓，这句会误导 ✗。 */}
+          {(activeCap === "nearby" || nearbyOrdered.length === 0) && (
+            <p className="mpair-nonearby" data-testid="mpair-empty-hint">
+              附近没找到别的设备 —— 两台要在同一个网络里（也没开「AP 隔离」）。最快的验证：开手机热点再试。
+            </p>
           )}
         </section>
 

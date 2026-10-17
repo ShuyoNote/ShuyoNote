@@ -319,6 +319,65 @@ export const FRONTEND_ADAPTERS: Record<string, CapabilityAdapter> = {
     });
   },
 
+  // ⭐ pages.update（2026-10-17）：**整页替换**已有页面 —— 与 Rust `cap_pages_update` 同一语义：
+  //   只产出草稿、不落库；正文只做轻守卫（空/超限），md→块的解析留给落库层（`ai/apply.ts` ✓）。
+  //   ⚠️ 目标页 id 必填（Rust 侧 `arg_str("id")?` ✓），不走"当前页"回落。
+  "pages.update": async (args) => {
+    const id = String(args.id ?? "").trim();
+    if (!id) return { ok: false, error: "pages.update 需要 id" };
+    const markdown = typeof args.markdown === "string" ? args.markdown : "";
+    const content = typeof args.content === "string" ? args.content : "";
+    const title = typeof args.title === "string" && args.title.trim() ? args.title.trim() : null;
+    if (!markdown.trim() && !content.trim()) {
+      return { ok: false, error: "pages.update 需要 markdown 或 content 之一" };
+    }
+    const bodyLen = Math.max(markdown.length, content.length);
+    if (bodyLen > 200 * 1024) {
+      return { ok: false, error: "pages.update 的新正文超过 200KB 上限，请拆分后再更新" };
+    }
+    const body = markdown.trim() ? { markdown } : { plain: content };
+    return draft(`update_page:${id}`, `更新页面 ${id}（整页替换）`, {
+      kind: "update_page",
+      pageId: id,
+      title,
+      ...body,
+    });
+  },
+
+  // ⭐ spaces.list / spaces.switch（2026-10-17）：MCP / AI 宿主都要能看见并切换空间。
+  //   list：只读两跳（listWorkspaces + active id）；switch：只产出草稿，真正切换走 store（唯一实现）。
+  "spaces.list": async () => {
+    const [spaces, active] = await Promise.all([api.listWorkspaces(), api.getActiveWorkspaceId()]);
+    return {
+      ok: true,
+      active,
+      spaces: spaces.map((s) => ({ id: s.id, name: s.name })),
+    };
+  },
+
+  "spaces.switch": async (args) => {
+    const id = typeof args.id === "string" ? args.id.trim() : "";
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!id && !name) return { ok: false, error: "spaces.switch 需要 id 或 name 之一" };
+    const spaces = await api.listWorkspaces();
+    let target: { id: string; name: string } | null = null;
+    if (id) {
+      target = spaces.find((s) => s.id === id) ?? null;
+    } else {
+      const hits = spaces.filter((s) => s.name === name);
+      if (hits.length > 1) {
+        return { ok: false, error: `有 ${hits.length} 个空间都叫「${name}」，请改用 id` };
+      }
+      target = hits[0] ?? null;
+    }
+    if (!target) return { ok: false, error: "找不到目标空间（可先调 spaces.list）" };
+    return draft(`switch_space:${target.id}`, `切换空间到「${target.name}」`, {
+      kind: "switch_space",
+      spaceId: target.id,
+      name: target.name,
+    });
+  },
+
   "blocks.append": async (args, ctx) => {
     const pageId = targetPage(args, ctx);
     const text = String(args.text ?? "").trim();

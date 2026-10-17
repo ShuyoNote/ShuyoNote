@@ -411,10 +411,12 @@ pub fn upsert_remote(
 ///   而该库 `pages.workspace_id` **全部**等于它 ✓）；
 /// · **判不了**（表不在 / 读不出来）⇒ **保持原样** ✓ —— ⛔ 别把老判据的手抄 schema 弄红 ✗。
 ///
-/// ⚠️ **"按名融合"这里做不到**（owner 口径「用空间名称融合，而不是空间id」✓）：
-///   远端页的载荷里**只有 id、没有空间名**（`PageDetail` 没有 `name` 字段 ✓）⇒ 没有可比的"名" ✗。
-///   要真做，得让**载荷带上空间名**（或把 `workspaces` 当实体同步 ✓）—— 那比这一笔大，
-///   已作为**下一条**单独报（⛔ 本笔只保证"当场不炸 ＋ 落到本机那个空间"✓）。
+/// ⚠️ **"按名融合"不在这一层做**（owner 口径「用空间名称融合，而不是空间id」✓）：
+///   远端页的载荷里**没有空间名**（`PageDetail` 没有 `name` 字段 ✓）⇒ 这一层没有可比的"名" ✗。
+///   ⭐ **2026-10-17 起那道闸在上游**：`mesh::absorb_peer_batch` 先按
+///   `_space_name`（`sync::SPACE_NAME_PAYLOAD_FIELD`）＋ `meta.workspaces.kind` ＋ 信任名单判
+///   「同名个人空间才融合」（`mesh_merge_ledger::batch_merge_gate`）；判过之后才走到这里 ✓。
+///   ⇒ 本函数仍只做**按 id 锚定**（那是"落进本机这一格的库"的技术动作，⛔ 不是"按 id 融合" ✗）。
 fn anchor_workspace_id(c: &Connection, want: &str) -> String {
     let want = want.trim();
     if want.is_empty() {

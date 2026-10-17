@@ -399,6 +399,17 @@ export interface MeshTrustStateView {
 }
 
 /**
+ * ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** 命令的结果 ✗（与 Rust `mesh_trust::MeshTrustPrepare`
+ * 逐字段相同 ✓）—— ⭐ 它**不登记信任** ✓（登记仍是 `mesh_trust_begin` ✓）。
+ */
+export interface MeshTrustPrepare {
+  /** `false` ＝ 没开成（⭐ 如没给对面 ✓）—— 理由在 `message` 里 ✓。 */
+  prepared: boolean;
+  /** 一句能给用户看的话 ✓（⛔ 不含任何内部标识 ✗）。 */
+  message: string;
+}
+
+/**
  * 「操作系统刚把一条 `shuyonote://` 交给应用」的宿主事件名。
  *
  * **必须与 Rust 侧 `src-tauri/src/deeplink.rs` 的 `EVENT_NEW_URL` 逐字符相同。**
@@ -1355,13 +1366,32 @@ export interface CommandMap {
    * ⭐⭐ **2026-10-12（设备身份第 3 步改口径 ✓，取代「甲」的一半）** ✗：
    * ⭐ owner 逐字「『信任这台设备』是『**允许它来拿我的**』」✓ ＋「单方信任 ⇒ 同步是单向的」✓
    * ⇒ ⭐ 这一下的产物**不再是"共用口令的哈希"** ✗，⭐ 而是 ⭐ **把对方的公钥记进自己那份名单** ✗
-   *   （`peerPubkey` ⇒ 门此后**验签** ✓）。⭐ 想拿**它的**东西 ⇒ ⭐ 得**它那边也点一次** ✓。
+   *   （`peerPubkey` ⇒ 门此后**验签** ✓）。
+   *
+   * ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ 上面「单方信任 ⇒ 单向」那半**作废** ✓
+   * ⇒ ⭐ 点这一下之后：本机登记对面 ✓，⭐ 对面收到这一轮 `trust_ask` 也会**互相登记** ✓
+   *   （`sync::note_pending_trust_asks` ✓）⇒ ⭐ **一次配对，两个方向都通** ✓（对面不用再点一次 ✓）。
+   * ⚠️ 真机来由：AMD 侧配对后拉本机每一轮 401（「这张卡不在名册里」）—— 那正是单方配对只开一个方向 ✓。
    * ⚠️ 结果档随之变：`trusted` ／ `no_identity`（对面没报公钥 ⇒ 如实说、⛔ 不硬凑）／
    *   `not_configured` ／ `bad_peer`；⭐ `no_token` **退役**（⛔ 没口令也照样能信任 ✓）。
    */
   mesh_trust_begin: {
     args: { spaceId: string; peerDeviceId: string; peerPubkey: string };
     result: { outcome: string; message: string };
+  };
+  /**
+   * ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** ✗ —— ⭐ 生成这一轮的 `trust_ask` ✓，⛔ 不登记信任 ✓。
+   *
+   * ⚠️ 为什么需要它：比对码 ＝ `f(本机公钥, 对面公钥, trust_ask)` ✓，而 `trust_ask` 原来只在
+   *   `mesh_trust_begin`（登记 ＋ 广播）里生成 ⇒ ⭐ 码要在"登记之前"看到，料却只在登记那一格里 ✗
+   *   ⇒ 死锁（owner 真机："点接入了，也没有（码）" ✓）。⭐ 这一条把"开一轮"和"登记"拆开 ✓：
+   *   点「接入」调它 ⇒ 码可读 ✓；点「码对得上，确认」才调 `mesh_trust_begin` ⇒ 登记 ✓。
+   *
+   * ⛔ 它**不写库**、⛔ 不碰信任名单 ✓（只推进进程内的握手那格 ✓）。
+   */
+  mesh_trust_prepare: {
+    args: { peerDeviceId: string };
+    result: MeshTrustPrepare;
   };
   /**
    * ⭐ 2026-10-11（任务 B）：⭐ **信任走到哪一步** ✗ —— 只读读数（`TrustHandshake::state()` 一直在推进 ✓，

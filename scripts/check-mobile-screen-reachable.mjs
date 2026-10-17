@@ -49,10 +49,11 @@ const SCREENS = [
   { file: "MobileSettings.tsx", id: "settings", testid: "mobile-settings", reach: "nav", reachable: true, why: "⭐ **阶段 2 已建成** ✓（2026-10-14）：手机 ⚙️（`ActivityBar` 的 `.activity-btn`）在**手机形态**下走 `setScreen(\"settings\")` ✓（桌面仍是原 `SettingsDialog` ✓）" },
   { file: "MobileMergeHistory.tsx", id: "merge-history", testid: "mobile-merge-history", reach: "not-a-screen", reachable: false, why: "未接线**原型** ✓（`0e79ae91` ✓）：**故意不接进任何用户可见路径** ✓ ⇒ 不是屏、也不是死屏 ✓" },
   { file: "MobileDictCard.tsx", id: null, testid: null, reach: "not-a-screen", reachable: false, why: "**卡片**不是屏 ✓（划词卡，锚在 `.mread` 里 ✓）" },
+  { file: "MobilePairCode.tsx", id: "paircode", testid: "mobile-paircode", reach: "nav", reachable: true, why: "⭐ d1（2026-10-17 owner 拍「甲」）新建 ✓：从「设备直连」的两颗入口（接入／重新配对 ⇒ `setScreen(「paircode」)` ✓）进来 ✓；⚠️ 20 格对码**本轮未接** ✗（下一刀 d2 ✓），屏上明标未接 ✓" },
 ];
 
 /** ⭐ 长度常量（棘轮 ✓）：加一屏必须同时改它 ⇒ **悄悄加不了** ✗。 */
-const SCREENS_EXPECTED = 9;
+const SCREENS_EXPECTED = 10;
 
 const findings = [];
 const files = readdirSync(COMPONENTS).filter((n) => /^Mobile.*\.tsx$/.test(n) && !/\.test\.tsx$/.test(n));

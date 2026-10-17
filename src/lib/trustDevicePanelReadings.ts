@@ -23,6 +23,12 @@ import type { MeshTrustStateView } from "./platform/commands";
  *  ⚠️ 名字按 Lead 给的写；他落地时会喊我确认（⛔ 我先不猜参数名之外的形态 ✗）。 */
 export const MESH_TRUST_BEGIN_COMMAND = "mesh_trust_begin";
 
+/** ⭐⭐ **2026-10-17**：⭐ **只开一轮比对** ✗ —— ⭐ 生成这一轮的 `trust_ask` ✓，⛔ 不登记信任 ✓。
+ *  ⚠️ 为什么需要它：比对码要**在登记之前**看到（⭐ 码 ＝ f(本机公钥, 对面公钥, trust_ask) ✓），
+ *  而 `trust_ask` 原来只在 `mesh_trust_begin` 里生成 ⇒ ⭐ 死锁（owner 真机："点接入了，也没有（码）" ✓）。
+ *  ⇒ 点「接入」调它 ⇒ 码可读 ✓；点「码对得上，确认」才调 `mesh_trust_begin` ⇒ 登记 ✓。 */
+export const MESH_TRUST_PREPARE_COMMAND = "mesh_trust_prepare";
+
 /** ⭐ **2026-10-11（任务 B）：读"信任走到哪一步"** ✗ —— ⭐ 只读 ✓（⛔ 一个字节都不写 ✗）。 */
 export const MESH_TRUST_STATE_COMMAND = "mesh_trust_state";
 

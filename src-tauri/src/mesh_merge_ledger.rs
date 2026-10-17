@@ -141,6 +141,83 @@ pub fn normalize_space_name(raw: &str) -> String {
     out
 }
 
+/// ⭐⭐ **同名判据（接线口径，2026-10-17）**：两边 **`trim` 后逐字相等** 才算同名。
+///
+/// ## 为什么这里**不**用 [`normalize_space_name`]（那张更宽的梯子）
+/// owner 2026-10-17 逐字：「**个人版：空间名称完全一致才算同一空间，需要融合，space_id 可以不同。**」
+/// ⇒ Lead 当日对齐的补充口径：**名字 trim 后逐字相等**才算同名，**不做相似度、不做全半角／大小写折叠**。
+///
+/// ⚠️ 这与 §3 那张「形状归一」的梯子**不是同一件事**，⛔ 别拿一张去替另一张：
+/// · 本节管的是**融合判据**（多合一个就是不可逆的数据动作 ⇒ 取 owner 的原话，最窄）；
+/// · [`normalize_space_name`] 仍是**账本内部的分组键**（`name_key`，同一次融合的账要能归到一格）；
+/// · ⛔ 二者都不是"语义归一"：简繁/异体明确不做（owner 2026-10-10 拍定）。
+///
+/// ⚠️ 空名字 ⇒ **永远不算同名**（⛔ 不许"两个空名字"被当成同一空间）。
+pub fn same_space_name_by_trim(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    !a.is_empty() && a == b
+}
+
+// ─────────────────────────── ⭐ 一次接入该不该融（纯函数） ───────────────────────────
+
+/// ⭐ 一次**设备直连批次**的融合结论 —— [`batch_merge_gate`] 的唯一产物（⛔ 不是 `bool`：
+/// "不参与"与"明确拒绝"**必须分得开**，它们对已收到的那一批数据的处置完全不同）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchMerge {
+    /// ⭐ **同一人 ＋ 同名个人空间** ⇒ 允许并进本机这一个空间（并记一笔账）。
+    Allow,
+    /// ⭐ **这一档不参与按名融合**（团队/未分类/判不出类别/对面没带名字）
+    /// ⇒ ⛔ **不记融合账**，**沿用既有那条"按暗号"同步**（⛔ 不静默丢数据、不造成回归）。
+    NotEligible(NotEligibleWhy),
+    /// ⭐ **明确拒绝**（判得出"不是同一个空间/不是同一个人"）⇒ 这一批**一条都不落库**、水位不前进。
+    Refuse(MergeGate),
+}
+
+/// ⭐ "不参与"的**原因**（排障要分得开，⛔ 不许糊成一句"不融"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotEligibleWhy {
+    /// 本机这一档不是个人空间（`team` / `unclassified`）—— 「一个字节都不动」。
+    NotPersonal(SpaceKind),
+    /// 本机这**一格类别读不出来**（`meta.workspaces` 没有那一行/没有那张表）⇒ 判不出 ⇒ 不参与。
+    KindUnknown,
+    /// ⭐ 对面那份载荷里**没有空间名**（老对端 / 老载荷）⇒ 判不了"同名" ⇒ 不参与。
+    NoPeerName,
+}
+
+/// ⭐⭐ **按名融合闸（接线口径）**：**先类别、再身份、后名字**（顺序即口径，见语义规格 §2 〈身份闸〉）。
+///
+/// - ① 本机**不是个人空间**（或类别判不出）⇒ [`BatchMerge::NotEligible`]（⛔ 连身份都不问：一个字节都不动）；
+/// - ② 对面**没带空间名** ⇒ [`BatchMerge::NotEligible`]（⛔ 不猜、⛔ 不从 id 反推名字）；
+/// - ③ 走到这里才问**身份**（[`merge_gate`] 自己先判身份、再判名 ⇒ Q1–Q4）；
+/// - ④ 同一人 ＋ 同名 ⇒ [`BatchMerge::Allow`]；其余三种拒绝**原样带回**（`Refuse*` 三态不折叠）。
+///
+/// ⚠️ 为什么"不参与"不落成 `Refuse`：团队/未分类空间**本来就该照旧同步**（那条老路不是融合），
+/// 若在这里拒绝，会把既有用户的空间直连同步**整条停掉** —— 那是回归，不是口径。
+pub fn batch_merge_gate(
+    kind: Option<SpaceKind>,
+    local_name: &str,
+    peer_name: Option<&str>,
+    identity: &SamePerson,
+) -> BatchMerge {
+    // ① 类别（⭐ 读不出来 ⇒ 判不出 ⇒ 不参与；⛔ 不许默认成个人空间 —— 那会把团队空间并进来）。
+    let Some(kind) = kind else {
+        return BatchMerge::NotEligible(NotEligibleWhy::KindUnknown);
+    };
+    if !kind.merge_eligible() {
+        return BatchMerge::NotEligible(NotEligibleWhy::NotPersonal(kind));
+    }
+    // ② 对面的名字（⭐ 没有 ⇒ 判不了同名 ⇒ 不参与；⛔ 不猜）。
+    let Some(peer_name) = peer_name.map(str::trim).filter(|n| !n.is_empty()) else {
+        return BatchMerge::NotEligible(NotEligibleWhy::NoPeerName);
+    };
+    // ③④ 身份 → 名字（唯一实现是 `merge_gate`；本函数**不许**自己再写一遍顺序）。
+    let same_name = same_space_name_by_trim(local_name, peer_name);
+    match merge_gate(identity, same_name) {
+        MergeGate::Allow => BatchMerge::Allow,
+        refuse => BatchMerge::Refuse(refuse),
+    }
+}
+
 // ─────────────────────────── 数据形状 ───────────────────────────
 
 /// 一条融合记录 —— ⭐ 回答「**撤销它要动哪几行**」（[`MergeRecord::moved`]）。
@@ -669,7 +746,10 @@ impl<'a> MergeLedger<'a> {
 
 // ─────────────────────────── ⭐ 身份闸（Q1–Q4；**第一档**） ───────────────────────────
 //
-// ⚠️ 这一节**只有形状与纯逻辑**：⛔ 今天**不接线**（判据主体在还没写的接线里 ⇒ 它天然属于接线那一轮）。
+// ⭐ **2026-10-17 已接线**（原文"这一节不接线"已过期，订正在此）：
+//   `mesh::absorb_peer_batch` ⇒ [`batch_merge_gate`]（本文件）⇒ [`merge_gate`]＋[`PairedDeviceOracle`] ✓
+//   ⇒ 落点是**设备直连那一批的落库口**（⛔ 不是服务器同步：那条路的 `Ingest::Server` 逐字不变）。
+// ⚠️ **只有第 1 档有实现**（配对/信任）；账号／许可证那两档仍是**留位**（见 [`IdentityBasis`]）。
 // 口径：owner 2026-10-10「现在修」＝ **让这道闸立起来**（⛔ 不是"今天就把账号身份打通"）。
 //
 // ⭐ **顺序**：**先取身份、再判名**（反过来会先花力气归一名字、最后才否决 ⇒ 白做，而且容易漏）。
@@ -1327,6 +1407,86 @@ mod tests {
         assert_ne!(
             merge_gate(&oracle.same_person("陌生设备", "工作"), true),
             MergeGate::Allow
+        );
+    }
+
+    // ── ⭐ 接线口径（2026-10-17）：同名＝trim 后逐字相等 ＋ 批次闸的**顺序** ──────────
+
+    /// ⭐ m) **同名判据比账本的分组键更窄** —— owner 2026-10-17 逐字「空间名称**完全一致**」。
+    /// 反例（逐字）：把 `same_space_name_by_trim` 换成 `normalize_space_name(a)==normalize_space_name(b)`
+    /// ⇒ `"ＡＢＣ"` 与 `"abc"` 会判成同名 ⇒ **本判据当场红**（那就是把"完全一致"扩成了形状折叠）。
+    #[test]
+    fn m_same_name_is_trim_exact_not_shape_folded() {
+        // ⭐ 该算同名的：只差首尾空白（含全角空格）。
+        for (a, b) in [("工作", "工作"), (" 工作 ", "工作"), ("工作", "\u{3000}工作\u{3000}")] {
+            assert!(same_space_name_by_trim(a, b), "trim 后逐字相等 ⇒ 同名：{a:?} / {b:?}");
+        }
+        // ⭐⭐ **反向**：形状不同**不算**同名（Lead 2026-10-17 补充口径：不做全半角／大小写折叠）。
+        for (a, b) in [
+            ("ＡＢＣ", "abc"),
+            ("ABC", "abc"),
+            ("工 作", "工作"),
+            ("读书笔记", "讀書筆記"), // 简繁：owner 2026-10-10 拍定**不算同名**
+        ] {
+            assert!(
+                !same_space_name_by_trim(a, b),
+                "⛔ 形状/语义不同却判成同名：{a:?} / {b:?}（会把两个本来分开的空间悄悄融在一起）"
+            );
+        }
+        // ⛔ 空名字永远不算同名（两个空名字也不是"同一个空间"）。
+        assert!(!same_space_name_by_trim("", ""));
+        assert!(!same_space_name_by_trim("  ", "工作"));
+    }
+
+    /// ⭐ n) **批次闸的顺序**：① 类别 → ② 对面名字 → ③④ 身份 → 名字。
+    /// 反例（逐字）：把类别/名字两关挪到身份之后 ⇒ 团队那两行会先问身份 ⇒ 本判据红
+    /// （口径：团队空间**一个字节都不动** ⇒ 连身份都不该去问）。
+    #[test]
+    fn n_batch_gate_is_kind_then_identity_then_name() {
+        let yes = SamePerson::Yes(IdentityBasis::PairedDevice);
+        let unknown = SamePerson::Unknown(WhyUnknown::NotPaired);
+        let no = SamePerson::No(IdentityBasis::Account("bob".into()));
+
+        // ① 类别判不出 / 不是个人 ⇒ 不参与（哪怕身份是 Yes、名字相同）。
+        assert_eq!(
+            batch_merge_gate(None, "工作", Some("工作"), &yes),
+            BatchMerge::NotEligible(NotEligibleWhy::KindUnknown),
+            "⛔ 类别读不出来时不许默认成个人空间（读不到 ≠ 读到 0）"
+        );
+        for kind in [SpaceKind::Team, SpaceKind::Unclassified] {
+            assert_eq!(
+                batch_merge_gate(Some(kind), "工作", Some("工作"), &yes),
+                BatchMerge::NotEligible(NotEligibleWhy::NotPersonal(kind)),
+                "⛔ {kind:?} 不参与按名融合（一个字节都不动）"
+            );
+        }
+        // ② 对面没名字 ⇒ 不参与（⛔ 不猜、⛔ 不拿 id 反推）。
+        assert_eq!(
+            batch_merge_gate(Some(SpaceKind::Personal), "工作", None, &yes),
+            BatchMerge::NotEligible(NotEligibleWhy::NoPeerName)
+        );
+        assert_eq!(
+            batch_merge_gate(Some(SpaceKind::Personal), "工作", Some("   "), &yes),
+            BatchMerge::NotEligible(NotEligibleWhy::NoPeerName)
+        );
+        // ③④ 同一人 ＋ 同名 ⇒ 才允许融。
+        assert_eq!(
+            batch_merge_gate(Some(SpaceKind::Personal), "工作", Some(" 工作 "), &yes),
+            BatchMerge::Allow
+        );
+        // 同一人但不同名 ⇒ 拒（⛔ 不融）。
+        assert_eq!(
+            batch_merge_gate(Some(SpaceKind::Personal), "工作", Some("私人"), &yes),
+            BatchMerge::Refuse(MergeGate::RefuseDifferentName)
+        );
+        // 判不出身份 / 判得出不是同一人 ⇒ 拒（两条理由**不许合并**）。
+        assert_eq!(
+            batch_merge_gate(Some(SpaceKind::Personal), "工作", Some("工作"), &unknown),
+            BatchMerge::Refuse(MergeGate::RefuseUnknownIdentity)
+        );
+        assert_eq!(
+            batch_merge_gate(Some(SpaceKind::Personal), "工作", Some("工作"), &no),
+            BatchMerge::Refuse(MergeGate::RefuseDifferentPerson)
         );
     }
 }
