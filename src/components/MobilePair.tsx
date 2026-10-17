@@ -333,6 +333,14 @@ export function MobilePair() {
               ))}
             </ul>
           )}
+          {/* ⭐ owner 2026-10-14 移动参考图：底部虚线框（**纯文案** ✓ 照抄 ✓，⛔ 不承载读数 ✗）。
+              显示条件 ✓：「附近」档被选中 ✓，或一台设备都没有 ✓（那时屏上正需要这条指引）；
+              ⛔ 在「已配对／要重配」两档不显示 ✗ —— 那两档说的是别的设备 ✓，这句会误导 ✗。 */}
+          {(activeCap === "nearby" || nearbyOrdered.length === 0) && (
+            <p className="mpair-nonearby" data-testid="mpair-empty-hint">
+              附近没找到别的设备 —— 两台要在同一个网络里（也没开「AP 隔离」）。最快的验证：开手机热点再试。
+            </p>
+          )}
         </section>
 
         {/* ④ 逐台解除：同样明标未接 ✓（那侧只有 device_id ＋ 时间，没有名字 ⇒ 显示会说谎 ✗） */}

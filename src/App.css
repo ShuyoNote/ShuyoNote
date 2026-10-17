@@ -25869,6 +25869,17 @@ body.is-plugin-panel-open .main {
   color: var(--danger);
 }
 
+/* ⭐ owner 2026-10-14 移动参考图：底部虚线框（「附近」档的脚注 ✓，纯文案 ✓） */
+.mpair-nonearby {
+  margin: 10px 2px 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
 .mpair-list {
   margin: 0;
   padding: 0;
