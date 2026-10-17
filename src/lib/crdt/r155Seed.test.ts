@@ -10,9 +10,9 @@ import { contentJsonToYDoc, yDocToContentJson } from "./yDocBridge";
 //   ⇒ 重启时按状态重建/合并 ⇒ **旧内容赢** ✗（`changes` 里记成一次普通 upsert，发生在启动后约 12 秒 ✓）
 //   ⇒ ⇒ 免确认档的写入**不能算落定** ✗（重启一次可能就没了 ✓）。
 //
-// ⚠️ 第二半（接线：`applyDraftAndRefresh` 落库后真的去 `api.savePageState` ✓）**按约定暂缓** ✗ ——
-//    那个动作会改"那一页已有的 CRDT 状态" ⇒ 碰血统/合并那条线 ⇒ 已发信给 windows 商量（a/b/c ✓，
-//    沉默 24h 默认 a ✓）。本文件只钉**工具那一半** ✓，实现一到就能直接接上 ✓。
+// ⭐ 2026-10-17：第二半（接线：`applyDraftAndRefresh` 落库后真的去 `api.savePageState` ✓）
+//   已接线（owner 拍选项 a：整篇替换语义，原有血统放弃）。执行体在 `crdt/seedExternalWrite.ts`，
+//   判据在同目录 `seedExternalWrite.test.ts`；本文件继续钉"工具那一半" ✓。
 describe("R155：把正文播种成 CRDT 状态这条工具链", () => {
   const json = JSON.stringify({
     root: {

@@ -58,6 +58,42 @@ export interface ExternalDraftDeps {
   notify: (message: string, kind: "success" | "info" | "error") => void;
 }
 
+/**
+ * ⭐ 2026-10-17（R155 配套）：**这条草稿会不会改到某一页**。
+ *
+ * 用途只有一个：**独立页窗口**（`index.html?page=<id>`）不再应用外部草稿（否则同一个写入
+ * 会被主窗口和页窗口各应用一次 ✗），但它要能判断"这次改动是不是我这一页"——是就刷新自己，
+ * 免得它用刷新前的旧编辑器状态把主窗口刚写进去的内容盖回去 ✗。
+ *
+ * `create_page` 没有 pageId（新页还没 id）⇒ 与"我这一页"无关 ⇒ false ✓。
+ */
+export function draftTouchesPage(draft: PluginDraft, pageId: string): boolean {
+  const payload = (draft?.payload ?? {}) as Record<string, unknown>;
+  const kind = String(payload.kind ?? "");
+  if (kind === "append_block") return String(payload.pageId ?? "") === pageId;
+  if (kind === "set_page_prop" || kind === "add_tag") {
+    const args = (payload.args ?? {}) as Record<string, unknown>;
+    return String(payload.pageId ?? args.pageId ?? "") === pageId;
+  }
+  return false;
+}
+
+/** 一组草稿里有没有一条改到这一页（独立窗口据此决定是否刷新）。 */
+export function draftsTouchPage(drafts: readonly PluginDraft[] | undefined, pageId: string): boolean {
+  if (!Array.isArray(drafts) || !pageId) return false;
+  return drafts.some((d) => draftTouchesPage(d, pageId));
+}
+
+/** 当前窗口是不是**独立页窗口**（`?page=<id>`）。判据注入 search，便于测试。 */
+export function standalonePageIdOf(search: string): string | null {
+  try {
+    const id = new URLSearchParams(search).get("page");
+    return id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export function defaultExternalDraftDeps(): ExternalDraftDeps {
   return {
     confirmAndApply: confirmAndApplyDrafts,

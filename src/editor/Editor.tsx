@@ -19,6 +19,8 @@ import { newBlockId, readBlockId, toLegacyDoc, toModelDoc, topLevelBlockIds } fr
 import { applyConflictBadges, installConflictBadges } from "./blockConflictBadge";
 import { lazy, Suspense, useEffect, useMemo, useRef, memo } from "react";
 import { toast } from "../store/toast";
+import { useNotes } from "../store/notes";
+import { shouldDropPendingSave } from "../lib/pendingSave";
 import {
   bindPageToEditorViaPort,
   type AsyncPageBinding,
@@ -600,6 +602,14 @@ function PageCrdtBinding({
           toast(refusal.message, "error");
         }
         b.session.onLocalEdit(() => {
+          // ⭐ 2026-10-17（R155 配套）：外部写刚落库的窗口内，**旧会话的一次落盘会把刚播种的状态盖回去**
+          //   （现场实测：播种 9021 B 后约 150ms，又被写回 8547 B 的旧状态 ⇒ 打开着的这一页回退）。
+          //   这条与 R150 同一个判定（`shouldDropPendingSave`）：窗口内、且是同一页 ⇒ 这次落盘的内容已旧，丢掉。
+          if (disposed) return; // 会话已卸载：不许再往库里写
+          if (shouldDropPendingSave({ pageId }, useNotes.getState().lastExternalWrite, Date.now())) {
+            console.warn("[crdt] 外部写窗口内：跳过这次陈旧状态落盘 page=" + pageId);
+            return;
+          }
           void b.persist().catch((e) => {
             console.error("[crdt] 状态保存失败", e);
             toast(`CRDT 状态保存失败：${e instanceof Error ? e.message : String(e)}`, "error");
