@@ -9,27 +9,14 @@ import { useFilePreview } from "./filePreview";
 
 // ── 「刷新之后还记得当前文档」──────────────────────────────────────────────────
 // 2026-10-05 owner 实测报的：「页面刷新后，忘记了当前文档」。
+// ⭐ 2026-10-18（owner：「一个空间…最后的文档位置，可否记录下来？」）：从**一个全局记录**
+// 改成**按空间各记一份** —— 切到别的空间再切回来，记忆不再被那个空间的第一页改写掉 ✓。
 //
 // 存 **localStorage**（不是用户数据表）：它是**这台设备的界面状态**，与本仓其它界面记忆同一套做法
 // （`AiAssistantPanel` 的面板宽、`EmojiPicker` 的最近用、`FileManagerView` 的视图/网格尺寸都在这儿）。
 // 读写一律 `try/catch`：隐私模式/配额异常时**记不住也不该影响用**（退化成"不还原"）。
-const LAST_PAGE_KEY = "shuyonote:lastPageId";
-
-function readRememberedPageId(): string {
-  try {
-    return localStorage.getItem(LAST_PAGE_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function rememberPageId(id: string): void {
-  try {
-    if (id) localStorage.setItem(LAST_PAGE_KEY, id);
-  } catch {
-    /* 记不住不影响用 */
-  }
-}
+// ⚠️ 具体键名/迁移口径在 `lib/lastPageMemory.ts`（纯存取那一半 ✓）：**先按空间键、再退回老键** ✓。
+import { readLastPage, writeLastPage } from "../lib/lastPageMemory";
 
 export interface NoteState {
   pages: PageMeta[];
@@ -54,10 +41,19 @@ export interface NoteState {
    * 之后立刻跑，而"还原记住的那一页"还挂在 `await` 上 ⇒ 两个 `openPage` 赛跑，
    * 且兜底那次会把 `lastPageId` 改写成第一页 ✗（用户报「当前页面还是不能持久」的真因）。
    * ⇒ 启动那次由 `loadPages` **一口决定**，兜底 effect 读到 `startupSettled === false` 时不插手 ✓。
+   *
+   * ⭐ 2026-10-18：**切换空间**的还原也用它让位（`loadPages({ restoreSpaceId })` 还原期间临时置 false，
+   * 还原完再置 true ✓）—— 与启动那次同一手法，理由同一个（不让兜底 effect 把记忆改写成第一页 ✗）。
    */
   startupSettled: boolean;
 
-  loadPages: () => Promise<void>;
+  /**
+   * 重新读页面列表。
+   *
+   * @param opts.restoreSpaceId ⭐ 2026-10-18：**切换空间**之后调用时给上 —— 读完列表就回到
+   *   这个空间上次看的那一页（没有记录 / 那页已不在 ⇒ 什么都不做，交给调用方或兜底 effect ✓）。
+   */
+  loadPages: (opts?: { restoreSpaceId?: string }) => Promise<void>;
   openPage: (id: string) => Promise<void>;
   createPage: (parentId: string | null, content?: { content_json: string; content_text: string; title?: string }, opts?: { select?: boolean }) => Promise<string | null>;
   createFolder: (parentId: string | null) => Promise<void>;
@@ -103,7 +99,7 @@ export const useNotes = create<NoteState>((set, get) => ({
   lastPageRestored: false,
   startupSettled: false,
 
-  loadPages: async () => {
+  loadPages: async (opts = {}) => {
     set({ loading: true, error: null });
     try {
       const pages = await api.listPages();
@@ -114,6 +110,9 @@ export const useNotes = create<NoteState>((set, get) => ({
         set({ currentId: null, current: null });
       }
       set({ pages, loading: false });
+      // ⭐ 2026-10-18：**当前空间 id 从列表自己读**（每页都带 `workspace_id` ✓）——
+      //   ⛔ 不为一个键名再问一次内核 ✗（那会多一次 IPC，而且这一层不该知道"怎么问活动空间"）。
+      const spaceId = pages.find((p) => p.workspace_id)?.workspace_id ?? "";
       // ⭐ 2026-10-05（owner：「页面刷新后，忘记了当前文档」）＋ 2026-10-06 修正
       //    （owner 再报：「当前页面**还是**不能持久」）：**本次启动的第一次**列表加载之后，
       //    由**这里一口决定**"打开哪一页"：
@@ -127,9 +126,10 @@ export const useNotes = create<NoteState>((set, get) => ({
       //      现在组件里那个 effect 用 `startupSettled` 让位（启动那一次它不插手 ✓）。
       //    · 只做一次（`lastPageRestored`）—— 之后清空选择（删掉当前页、换空间）不该被"拉回去"；
       //    · 列表 membership 检查同时挡掉两种失效：那一页被删了 / 记住的是**另一个空间**的页。
+      //    · ⭐ 2026-10-18：记忆**按空间**读（`spaceId`）；老键仍作兜底 ⇒ 老记忆照样还原 ✓。
       if (!get().lastPageRestored) {
         set({ lastPageRestored: true });
-        const remembered = readRememberedPageId();
+        const remembered = readLastPage(spaceId);
         const target =
           remembered && pages.some((p) => p.id === remembered)
             ? remembered
@@ -139,6 +139,20 @@ export const useNotes = create<NoteState>((set, get) => ({
         if (!get().currentId && target) await get().openPage(target);
         // 落定之后才允许组件里那个兜底 effect 插手 ✓（它自己会读这个字段 ✓）
         set({ startupSettled: true });
+      } else if (opts.restoreSpaceId) {
+        // ⭐ 2026-10-18（owner：「一个空间…最后的文档位置，可否记录下来？」）：
+        //   **切回一个空间** ⇒ 回到这个空间上次看的那一页 ✓（启动那次由上面接管 ✓）。
+        //   ⚠️ 还原期间让 `App.tsx` 的兜底 effect **让位**（否则它会同时打开第一页 ⇒
+        //      两个 `openPage` 赛跑、把记忆改写成第一页 ✗ —— 与启动那次同一手法 ✓）。
+        const remembered = readLastPage(opts.restoreSpaceId);
+        if (remembered && pages.some((p) => p.id === remembered) && get().currentId !== remembered) {
+          set({ startupSettled: false });
+          try {
+            await get().openPage(remembered);
+          } finally {
+            set({ startupSettled: true });
+          }
+        }
       }
     } catch (e) {
       set({ error: String(e), loading: false });
@@ -153,7 +167,9 @@ export const useNotes = create<NoteState>((set, get) => ({
       set({ currentId: id, current, error: null });
       // ⭐ 2026-10-05：**当前文档**在这里被记住（`openPage` 是"换文档"的唯一收口）⇒
       //    刷新/重开之后由 `loadPages` 那条一次性还原把它接回来。
-      rememberPageId(id);
+      // ⭐ 2026-10-18：**按空间记**（`current.workspace_id`）—— 切回别的空间时不会被这一笔盖掉 ✓
+      //    （老键仍照写，见 `lib/lastPageMemory.ts` 的迁移口径 ✓）。
+      writeLastPage(id, current.workspace_id || get().pages.find((p) => p.id === id)?.workspace_id || "");
       // Opening a page/database switches back to the editor view and closes any
       // overlay (template center).
       useViewStore.getState().setView("notes");

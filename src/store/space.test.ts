@@ -144,4 +144,15 @@ describe("设置-空间 · 切到打不开的空间：拒绝必须可见", () =>
     expect(useSpaceStore.getState().activeId).toBe(WORK.id);
     expect(mocks.loadPages, "切成功之后照样要重读页面列表").toHaveBeenCalled();
   });
+
+  // ⭐ 2026-10-18（owner：「一个空间…最后的文档位置，可否记录下来？」）：
+  //   切成功之后要把**目标空间**交给 `loadPages` —— 由它回到这个空间上次看的那一页 ✓。
+  //   ⛔ 不许只 `loadPages()` 不带空间（那样只会落到"第一页"✗，记忆就白记了 ✓）。
+  it("c) ⭐ 切成功之后：把**目标空间**交给 loadPages（还原该空间上次看的那一页 ✓）", async () => {
+    mocks.setActive.mockResolvedValueOnce(undefined);
+
+    await useSpaceStore.getState().switchTo(WORK.id);
+
+    expect(mocks.loadPages).toHaveBeenCalledWith({ restoreSpaceId: WORK.id });
+  });
 });
