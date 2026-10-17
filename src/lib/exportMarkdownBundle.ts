@@ -167,6 +167,8 @@ export interface PreparedPage {
   markdown: string;
   /** 节点里带指纹的图片/视频：`__src` → `__hash` ＋ `__mime`（`resolveImage` 只记录、不改写）。 */
   srcToHash: Map<string, { hash: string; mime: string }>;
+  /** ⭐ 2026-10-17：页面树里的父页 id（`null`／缺省 ⇒ 顶层）；只用于 zip 内的**目录** ✓。 */
+  parentId?: string | null;
   /** 转换失败的原因（有值 ⇒ 这一页不进 zip，但**要在返回消息里如实说**）。 */
   error?: string;
 }
@@ -189,10 +191,10 @@ export function preparePages(pages: readonly MarkdownPageInput[]): PreparedPage[
         if (hash && src) srcToHash.set(src, { hash, mime: mime || "" });
         return ""; // 空串 ＝ 保持 `__src`（见 `exportMarkdown.ts::transformersWithImageResolver`）
       });
-      return { id: page.id, title: page.title || "", markdown, srcToHash };
+      return { id: page.id, title: page.title || "", markdown, srcToHash, parentId: page.parentId ?? null };
     } catch (e) {
       // 这一页转换不了（正文 JSON 坏了）⇒ 跳过它，但账要留着（返回消息里报数）
-      return { id: page.id, title: page.title || "", markdown: "", srcToHash, error: messageOf(e) };
+      return { id: page.id, title: page.title || "", markdown: "", srcToHash, parentId: page.parentId ?? null, error: messageOf(e) };
     }
   });
 }
@@ -217,6 +219,70 @@ export function referencedHashes(prepared: readonly PreparedPage[]): string[] {
     for (const hash of attachmentHashesIn(p.markdown)) push(hash);
   }
   return out;
+}
+
+/**
+ * ⭐ **2026-10-17**：算出**每个页面在 zip 里的路径**（目录树 ✓，纯函数 ✓）。
+ *
+ * 口径（与 `wikiExport.ts::findChildren` 同一套惯例 ✓）：
+ * · 兄弟顺序＝标题（`localeCompare("zh")`）再按 `id` ⇒ **稳定** ✓
+ *   （这一层没有 `sort_order` ✗ —— ⛔ 不为排序再去多读一列 ✗）；
+ * · 同名兄弟 ⇒ **后出现的**那份加 `-<id 前 6 位>` ✓（与文件重名同一策略 ✓）；
+ * · 父**不在这一轮清单里**、或父链**成环** ⇒ 当**顶层** ✓（⛔ 不猜、不造空目录 ✗）；
+ * · 子页放进**与父页同名的目录**（Obsidian folder-note 惯例 ✓：`父.md` ＋ `父/子.md`）；
+ * · 名字仍走 `safeEntryName` ✓（清理 ＋ 防 `..` ✓）。
+ */
+export function treePaths(prepared: readonly PreparedPage[]): Map<string, string> {
+  const usable = prepared.filter((p) => !p.error);
+  const byId = new Map(usable.map((p) => [p.id, p] as const));
+
+  // 父指针归一：父必须在清单里、不是自己、且父链**不成环** ⇒ 否则当顶层 ✓
+  const parentOf = new Map<string, string | null>();
+  for (const p of usable) {
+    let parent = p.parentId && byId.has(p.parentId) && p.parentId !== p.id ? p.parentId : null;
+    if (parent) {
+      const seen = new Set<string>([p.id]);
+      let walk: string | null = parent;
+      while (walk) {
+        if (seen.has(walk)) {
+          parent = null; // 成环 ⇒ 这一页当顶层 ✓（⛔ 死循环 ✗）
+          break;
+        }
+        seen.add(walk);
+        const next: string | null = byId.get(walk)?.parentId ?? null;
+        if (!next || !byId.has(next) || next === walk) break;
+        walk = next;
+      }
+    }
+    parentOf.set(p.id, parent);
+  }
+
+  const children = new Map<string | null, PreparedPage[]>();
+  for (const p of usable) {
+    const key = parentOf.get(p.id) ?? null;
+    const list = children.get(key) ?? [];
+    list.push(p);
+    children.set(key, list);
+  }
+  const byTitle = (a: PreparedPage, b: PreparedPage) =>
+    (a.title || "").localeCompare(b.title || "", "zh") || a.id.localeCompare(b.id);
+
+  const paths = new Map<string, string>();
+  const nameMaps = new Map<string, Set<string>>(); // 目录 → 该目录里已用掉的名字（去重 ✓）
+  const walk = (parent: string | null, dir: string) => {
+    for (const p of (children.get(parent) ?? []).slice().sort(byTitle)) {
+      const base = safeEntryName(p.title || p.id, p.id);
+      const used = nameMaps.get(dir) ?? new Set<string>();
+      nameMaps.set(dir, used);
+      let name = base;
+      if (used.has(name)) name = safeEntryName(`${base}-${p.id.slice(0, 6)}`, p.id);
+      used.add(name);
+      paths.set(p.id, dir ? `${dir}/${name}.md` : `${name}.md`);
+      walk(p.id, dir ? `${dir}/${name}` : name); // 子页进同名目录 ✓
+    }
+  };
+  walk(null, "");
+  return paths;
 }
 
 export interface BundleFile {
@@ -265,7 +331,7 @@ export function planBundle(
   const canUse = (hash: string) => !available || available.has(hash);
 
   const files: BundleFile[] = [];
-  const usedNames = new Set<string>();
+  const treePathsById = treePaths(prepared);
   const assets = new Map<string, BundleAsset>();
   const unresolved = new Set<string>();
   let skipped = 0;
@@ -311,11 +377,8 @@ export function planBundle(
     // ④ 字面量那条路（office 导入的图片没有指纹，正文里只剩 `attachment://<hash>`）
     md = rewriteAttachmentRefs(md, (hash) => pathByHash.get(hash) ?? null);
 
-    // ⑤ 文件名：清洗 ＋ 重名沿用现有的 `-<id 前 6 位>` 策略 ✓
-    const base = safeEntryName(p.title || p.id, p.id);
-    let name = `${base}.md`;
-    if (usedNames.has(name)) name = `${safeEntryName(`${base}-${p.id.slice(0, 6)}`, p.id)}.md`;
-    usedNames.add(name);
+    // ⑤ 路径：**目录树** ✓（同目录重名去重已在 `treePaths` 里做完 ✓）
+    const name = treePathsById.get(p.id) ?? `${safeEntryName(p.title || p.id, p.id)}.md`;
     // 文件头与单页 / 空间导出**同一个形状**（`<!-- title: … · id: … -->`）
     files.push({ path: name, text: `<!-- title: ${p.title || "未命名"} · id: ${p.id} -->\n${md}` });
   }
@@ -487,7 +550,8 @@ export async function exportWorkspaceBundleToZip(): Promise<string> {
     try {
       const page = await api.getPage(m.id);
       // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写存储列名 ✗ —— 门禁只减不增）
-      pages.push({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
+      // ⭐ 2026-10-17：带上 `parent_id` ⇒ zip 内按页面树建目录 ✓（`PageMeta.parent_id` ✓）
+      pages.push({ id: page.id, title: page.title, docJson: docJsonOfPage(page), parentId: m.parent_id ?? null });
     } catch {
       unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（下面报数）
     }

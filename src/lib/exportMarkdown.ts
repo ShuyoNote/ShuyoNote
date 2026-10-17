@@ -264,6 +264,14 @@ export type MarkdownPageInput = {
   title?: string | null;
   /** 文档 JSON 文本（页面正文）；取法见上面那条注释 ✓ */
   docJson: string;
+  /**
+   * ⭐ 2026-10-17：它在页面树里的**父页 id**（`null`／缺省 ⇒ 顶层）。
+   *
+   * ⚠️ 只被 `exportMarkdownBundle.ts` 用来**决定 zip 内的目录** ✓ ——
+   * 纯 `.md` 导出（`exportPageToMarkdown` / `exportWorkspaceToMarkdown`）**不读它** ✓
+   * （那两条保持原样：一条单文件、一条平铺 ✓）。⛔ 缺省不猜父页 ✗。
+   */
+  parentId?: string | null;
 };
 
 /**
