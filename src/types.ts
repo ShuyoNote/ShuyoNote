@@ -718,4 +718,10 @@ export interface McpStatus {
   config_path: string | null;
   token_path: string | null;
   port_path: string | null;
+  /**
+   * ⭐ 2026-10-18：桥（`tools/shuyonote-mcp/index.mjs`）在本机的绝对路径 —— 面板拿它把
+   * 配置片段里的 `"args"` **自动填好**（owner：「省却用户麻烦」✓）。
+   * 找不到（比如打包版没带桥）⇒ `null`，面板会说明怎么手动指 ✓。
+   */
+  bridge_path: string | null;
 }

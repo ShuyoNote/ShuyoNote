@@ -41,10 +41,13 @@ const STATUS_OFF = {
   token: null as string | null,
   granted: ["read:pages"],
   level: "off" as const,
+  allow_write: false,
   env_override: false,
   config_path: "/data/mcp/config.json",
   token_path: "/data/mcp/token",
   port_path: "/data/mcp/port",
+  // ⭐ 2026-10-18：桥路径 —— 默认「找不到」（打包版没带桥的那种如实状态 ✓）
+  bridge_path: null as string | null,
 };
 const STATUS_ON = {
   ...STATUS_OFF,
@@ -151,6 +154,21 @@ describe("McpAccessPane：外部 AI 接入的档位面", () => {
     flushSync(() => copyBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await tick();
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(expect.stringContaining("SHUYONOTE_MCP_TOKEN_FILE"));
+  });
+
+  it("★ owner 2026-10-18：桥路径**自动填好**（Windows 反斜杠也必须粘得进 JSON）", async () => {
+    // 真因之一：片段原来是手写字符串拼的 ⇒ `C:\repo\...` 里的 `\r` 会被拼成回车、JSON 非法 ✗。
+    // 这里钉两件事：① 整段能被 `JSON.parse`；② `args[0]` 逐字等于后端给的绝对路径 ✓。
+    const bridge = "C:\\Users\\me\\ShuyoNote\\tools\\shuyonote-mcp\\index.mjs";
+    mocks.mcpStatus.mockResolvedValue({ ...STATUS_ON, bridge_path: bridge });
+    mount();
+    await tick();
+    await tick();
+    const snippet = document.querySelector(".mcp-access-snippet")?.textContent || "";
+    const cfg = JSON.parse(snippet);
+    expect(cfg.mcpServers.shuyonote.args[0]).toBe(bridge);
+    // 面板要说「自动填好」，⛔ 不是让用户自己找路径 ✗
+    expect(document.body.textContent).toContain("自动填好");
   });
 
   it("★ 四档的文案必须说全（每档讲清「要不要问」＋ 免确认必留痕），⛔ 不许再说成只读", async () => {

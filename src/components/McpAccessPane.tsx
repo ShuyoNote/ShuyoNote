@@ -96,22 +96,30 @@ export function McpAccessPane() {
     }
   };
 
-  // 给 agent 的配置片段：**路径取自后端读数** ✓（界面不猜路径 ✗）；桥的路径由用户/README 指 ✓
+  // 给 agent 的配置片段：**路径取自后端读数** ✓（界面不猜路径 ✗）。
+  // ⭐ 2026-10-18（owner：「让程序自动填好 args，省却用户麻烦」）：
+  //   `args` 里的桥路径**不再让用户自己找** —— 后端能定位到就填绝对路径（`bridge_path` ✓），
+  //   定位不到才退回占位文案（并说明可以设 `SHUYONOTE_MCP_BRIDGE` ✓）。
+  //   ⚠️ 同时把整段改成 `JSON.stringify`：原来是用手写字符串拼的，**Windows 路径里的反斜杠**
+  //   会拼出非法 JSON（`C:\repo` 里的 `\r` 会被转义成回车 ✗）⇒ 这就是"自动填了也粘不过去"的坑 ✓。
+  const bridgePath = st?.bridge_path ?? null;
   const snippet = st
-    ? [
-        "{",
-        '  "mcpServers": {',
-        '    "shuyonote": {',
-        '      "command": "node",',
-        '      "args": ["<桥的路径：本仓 tools/shuyonote-mcp/index.mjs>"],',
-        '      "env": {',
-        `        "SHUYONOTE_MCP_TOKEN_FILE": "${st.token_path ?? ""}",`,
-        `        "SHUYONOTE_MCP_PORT_FILE": "${st.port_path ?? ""}"`,
-        "      }",
-        "    }",
-        "  }",
-        "}",
-      ].join("\n")
+    ? JSON.stringify(
+        {
+          mcpServers: {
+            shuyonote: {
+              command: "node",
+              args: [bridgePath ?? "<桥的路径：<本仓>/tools/shuyonote-mcp/index.mjs>"],
+              env: {
+                SHUYONOTE_MCP_TOKEN_FILE: st.token_path ?? "",
+                SHUYONOTE_MCP_PORT_FILE: st.port_path ?? "",
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )
     : "";
 
   return (
@@ -221,9 +229,17 @@ export function McpAccessPane() {
       <section className="set-section">
         <div className="set-section-title">给 AI 的配置</div>
         <p className="set-hint">
-          把下面这段粘进 AI 客户端的 MCP 配置即可。桥在仓库里
-          （<code>tools/shuyonote-mcp/index.mjs</code>）—— 把 <code>args</code> 换成你机器上那个路径；
-          两个环境变量指的就是上面那两个文件。
+          把下面这段粘进 AI 客户端的 MCP 配置即可。
+          {bridgePath ? (
+            <>
+              桥的路径已<b>自动填好</b>（本机：<code>{bridgePath}</code>）；两个环境变量指的就是上面那两个文件。
+            </>
+          ) : (
+            <>
+              桥在仓库里（<code>tools/shuyonote-mcp/index.mjs</code>）—— 没找到本机路径：把{' '}
+              <code>args</code> 换成你机器上那个（或设 <code>SHUYONOTE_MCP_BRIDGE</code> 指过去）。
+            </>
+          )}
         </p>
         <pre className="mcp-access-snippet">{snippet}</pre>
         <div className="set-actions">
