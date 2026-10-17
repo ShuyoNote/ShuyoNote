@@ -1614,14 +1614,14 @@ export function SyncPanel({
               ══════════════════════════════════════════════════════════════════════ */}
           {pairScreen && (
             <div className="set-section" data-testid="pair-code-screen">
-              <div className="set-section-title">两台设备核对一下这串码</div>
+              <div className="set-section-title">两台设备核对这串码</div>
 
               {pairReading.kind === "unavailable" ? (
                 <div className="sync-status is-warn" data-testid="pair-code-unavailable">
-                  读不到比对码（{pairReading.reason}）—— ⭐ 读不到就<b>不显示任何码</b> ✓
+                  读不到比对码（{pairReading.reason}）
                 </div>
               ) : pairReading.value === null ? (
-                <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码 ✓</div>
+                <div className="sync-hint" data-testid="pair-code-empty">这一轮还没有比对码</div>
               ) : (
                 <div
                   className="sync-status"
@@ -1634,10 +1634,10 @@ export function SyncPanel({
               )}
 
               <div className="sync-hint">
-                请在两台设备上核对：<b>两边一样</b> ⇒ 确认 ✓
+                两边一样 ⇒ 点「确认」 ✓
               </div>
               <div className="sync-hint" data-testid="pair-code-mismatch">
-                ⚠️ 两边的码不一样 ⇒ 先别确认（你可能正连到另一个设备）✓
+                ⚠️ 不一样 ⇒ 先别确认（可能连到别的设备）✓
               </div>
 
               <div className="sync-field">
@@ -1679,11 +1679,9 @@ export function SyncPanel({
                     ⛔ 旧那句"更短的 6 位码**要等** PAKE 落地"是一句**过期的承诺** ✗（已删 ✓）；
                     ⭐ 这串 20 位比对码**就是现在的做法** ✓（⛔ 不再有"以后换 6 位"的暗示 ✗）。 */}
               <div className="sync-hint" data-testid="pair-code-notes">
-                这是<b>比对码</b>（20 位、5 组）—— 这是<b>现在的做法</b>；更短的 6 位码需要 PAKE，而<b>已决定不做</b> ✓
+                这是<b>比对码</b>（20 位、5 组）；6 位码要 PAKE —— <b>已决定不做</b> ✓
                 <br />
-                含窗口口令 ＝ 钥匙材料 ⇒ <b>只发你自己那台</b> ✓
-                <br />
-                <b>不是一次性的</b> ⇒ 用后建议换一次窗口口令 ✓
+                <b>含窗口口令</b> ⇒ <b>只发你自己那台</b> ✓；<b>不是一次性的</b> ⇒ 用后建议换窗口口令 ✓
               </div>
             </div>
           )}
