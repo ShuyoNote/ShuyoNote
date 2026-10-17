@@ -23,6 +23,7 @@ const readBytesMock = vi.fn();
 const listAttachmentsMock = vi.fn();
 const listPagesMock = vi.fn();
 const getPageMock = vi.fn();
+const getWorkspaceNameMock = vi.fn();
 
 // 只 mock"会碰外部世界"的那两头（保存对话框 ＋ 后端命令）；转换与排版走真实现 ✓
 vi.mock("./platform", () => ({
@@ -36,6 +37,7 @@ vi.mock("./api", () => ({
     listPageAttachments: (...a: unknown[]) => listAttachmentsMock(...a),
     listPages: (...a: unknown[]) => listPagesMock(...a),
     getPage: (...a: unknown[]) => getPageMock(...a),
+    getWorkspaceName: () => getWorkspaceNameMock(),
   },
 }));
 
@@ -108,6 +110,7 @@ beforeEach(() => {
   listAttachmentsMock.mockReset().mockResolvedValue([]);
   listPagesMock.mockReset().mockResolvedValue([]);
   getPageMock.mockReset();
+  getWorkspaceNameMock.mockReset().mockResolvedValue("默认空间");
   // ⭐ 2026-10-18：导出会弹持久 toast ⇒ 每条用例从"一条都没有"开始（否则上一条的残留会串味）
   useToast.setState({ toasts: [] });
 });
@@ -257,7 +260,8 @@ describe("导出接线（保存对话框 ＋ 写二进制）", () => {
 
     expect(saveMock).toHaveBeenCalledTimes(1);
     const arg = saveMock.mock.calls[0][0] as { defaultPath: string; filters: { extensions: string[] }[] };
-    expect(arg.defaultPath).toBe("带图页.zip");
+    // ⭐ 2026-10-18（owner：「压缩包名加上空间名称」）：单页 zip 也带空间名 ⇒ `默认空间-带图页.zip` ✓
+    expect(arg.defaultPath).toBe("默认空间-带图页.zip");
     expect(arg.filters[0].extensions).toEqual(["zip"]);
 
     expect(writeMock).toHaveBeenCalledTimes(1);
@@ -532,5 +536,41 @@ describe("⑥ 导出进度反馈（2026-10-18 加）", () => {
     expect(toasts).toHaveLength(1);
     expect(toasts[0].kind).toBe("error");
     expect(toasts[0].message).toContain("盘满了");
+  });
+});
+
+// ⭐ 2026-10-18（owner：「压缩包名加上空间名称」）：两个导出入口的 zip 默认文件名都要能**看出是哪个空间** ✓ ——
+//   否则多个空间各导一份时全叫「空间导出.zip」/ 同名页的 zip 也分不清（浏览器只会加 (1)/(2) ✗）。
+describe("⑦ 压缩包名带上空间名称（2026-10-18 加）", () => {
+  it("空间导出：`<空间名>-空间导出.zip`（非法字符照样被清洗 ✓）", async () => {
+    saveMock.mockResolvedValue(null); // 取消即可 —— 这一条只看"对话框里预填的名字"
+    getWorkspaceNameMock.mockResolvedValue("工作/空间");
+    await exportWorkspaceBundleToZip();
+    const arg = saveMock.mock.calls[0][0] as { defaultPath: string };
+    expect(arg.defaultPath).toBe("工作_空间-空间导出.zip");
+    expect(arg.defaultPath.endsWith(".zip")).toBe(true);
+  });
+
+  it("单页导出：`<空间名>-<页标题>.zip` ✓", async () => {
+    saveMock.mockResolvedValue(null);
+    getWorkspaceNameMock.mockResolvedValue("默认空间");
+    await exportPageBundleToZip({ id: "p1", title: "我/的笔记", docJson: plainDoc() });
+    const arg = saveMock.mock.calls[0][0] as { defaultPath: string };
+    expect(arg.defaultPath).toBe("默认空间-我_的笔记.zip");
+  });
+
+  it("读不到空间名 ⇒ 两个入口都退回原来的名字（⛔ 不让一个文件名把导出弄失败 ✗）", async () => {
+    getWorkspaceNameMock.mockRejectedValue(new Error("读不到"));
+    saveMock.mockResolvedValue(null);
+    const msg1 = await exportWorkspaceBundleToZip();
+    const spaceArg = saveMock.mock.calls[0][0] as { defaultPath: string };
+    expect(spaceArg.defaultPath).toBe("空间导出.zip");
+    expect(msg1).toContain("已取消"); // 是"取消"，不是"失败" ✓
+
+    saveMock.mockClear();
+    const msg2 = await exportPageBundleToZip({ id: "p1", title: "页", docJson: plainDoc() });
+    const pageArg = saveMock.mock.calls[0][0] as { defaultPath: string };
+    expect(pageArg.defaultPath).toBe("页.zip");
+    expect(msg2).toContain("已取消");
   });
 });

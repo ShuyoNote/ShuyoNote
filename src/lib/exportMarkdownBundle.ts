@@ -669,6 +669,20 @@ interface BundleForOptions {
 }
 
 /**
+ * ⭐ 2026-10-18（owner：「压缩包名加上空间名称」）：zip 的默认文件名 = `<空间名>-<原名>` ✓。
+ *
+ * 为什么两个导出入口都要：多空间各导一份时，文件不再全叫「空间导出.zip」/ 同名页的 zip 也分得清 ✓
+ * （浏览器对重名只会加 `(1)`/`(2)` ✗）。空间名仍过 `sanitizeName`（Windows/macOS 非法字符 +
+ * 首尾点空格 ＋ 限长 ✓）。
+ * ⚠️ 名字读不到（命令失败 / 为空）⇒ **原样退回 `fallback`**（⛔ 不因为一个文件名把导出弄失败 ✗）。
+ */
+async function defaultBundleZipName(fallback: string): Promise<string> {
+  const spaceName = await api.getWorkspaceName().catch(() => "");
+  const named = spaceName ? sanitizeName(spaceName) : "";
+  return named ? `${named}-${fallback}` : fallback;
+}
+
+/**
  * ⭐ 2026-10-18：**进度/结果已经如实报过**的那条错误。
  *
  * 有什么用：导出入口自己弹一条**持久 toast**，失败时把它替换成「导出失败：…」✓。
@@ -880,7 +894,8 @@ export async function exportPageBundleToZip(
     }
     const path = await platform.dialog.save({
       title: "导出 Markdown ＋ 附件（zip）",
-      defaultPath: `${sanitizeName(page.title || page.id)}.zip`,
+      // ⭐ 2026-10-18（owner：「压缩包名加上空间名称」）：带上空间名 ⇒ 同名页跨空间也分得清 ✓
+      defaultPath: await defaultBundleZipName(`${sanitizeName(page.title || page.id)}.zip`),
       filters: [{ name: "Zip", extensions: ["zip"] }],
     });
     // 取消 ⇒ 一个字节都不写 ✓，但那条持久 toast 也要**如实**变成"已取消"（⛔ 不能假装成功 ✗）
@@ -917,9 +932,12 @@ export async function exportWorkspaceBundleToZip(opts: BundleExportOptions = {})
   // ⭐ 2026-10-18：先弹**持久 toast**（「正在导出…」⇒「取附件 3/32」⇒ 结果 ✓）
   const progress = beginExportProgress("正在导出本空间", opts.onProgress);
   try {
+    // ⭐ 2026-10-18（owner：「压缩包名加上空间名称」）：默认文件名带上**当前空间名** ✓ ——
+    //   否则多个空间各导一份时全叫「空间导出.zip」（浏览器只会加 (1)/(2) ✗，分不出是哪个空间 ✓）。
+    //   ⚠️ 读不到名字 ⇒ **退回原来的名字**（⛔ 不因为一个文件名让整个导出失败 ✗）。
     const path = await platform.dialog.save({
       title: "导出本空间为 Markdown ＋ 附件（zip）",
-      defaultPath: "空间导出.zip",
+      defaultPath: await defaultBundleZipName("空间导出.zip"),
       filters: [{ name: "Zip", extensions: ["zip"] }],
     });
     if (!path) {
