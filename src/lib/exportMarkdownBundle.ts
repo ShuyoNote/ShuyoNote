@@ -26,6 +26,7 @@ import { platform } from "./platform";
 import { api } from "./api";
 import { docJsonOfPage } from "./docContent";
 import { pageContentToMarkdown, sanitizeName, type MarkdownPageInput } from "./exportMarkdown";
+import { useToast, type ToastKind } from "../store/toast";
 import type { AttachmentMeta } from "../types";
 
 /** zip 里附件都放这个目录（⛔ 别改成 `./assets` / 绝对路径：正文里的引用与它必须**逐字**一致） */
@@ -668,6 +669,45 @@ interface BundleForOptions {
 }
 
 /**
+ * ⭐ 2026-10-18：**进度/结果已经如实报过**的那条错误。
+ *
+ * 有什么用：导出入口自己弹一条**持久 toast**，失败时把它替换成「导出失败：…」✓。
+ * 调用方（工具栏等）的 `catch` 就**不该再弹一遍**同一句（⛔ 一次失败弹两条 ✗）——
+ * 用这个类型分得清"已经报过"与"还没走到导出就失败了"（例如取页面就失败 ⇒ 还没报过 ⇒ 调用方补报 ✓）。
+ */
+export class ExportReportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExportReportedError";
+  }
+}
+
+interface ExportProgressHandle {
+  onProgress: BundleProgress;
+  /** 结束：把**同一条** toast 替换成结果（成功/取消/失败都如实说 ✓；⛔ 不假装成功 ✗）。 */
+  finish: (message: string, kind: ToastKind) => void;
+}
+
+/**
+ * ⭐ 2026-10-18（owner 报"导出没有任何进度反馈"✗）：导出用的**持久 toast**。
+ *
+ * 形状：开始「正在导出…」→ 每取一个附件就**就地更新**成「正在导出…（取附件 3/32）」→
+ * 结束**同一条** toast 替换成结果（3 秒后自己消失 ✓；⛔ 不另弹一条重复的 ✗）。
+ * 传了 `provided`（测试 / 别的壳）⇒ **一个 toast 都不弹**，结果由调用方自己展示 ✓。
+ */
+function beginExportProgress(label: string, provided?: BundleProgress): ExportProgressHandle {
+  if (provided) return { onProgress: provided, finish: () => {} };
+  // 0 ⇒ 持久：不自动消失 ✓（拿到 id 才能**就地**改成进度/结果 ✓）
+  const id = useToast.getState().show(`${label}…`, "info", { duration: 0 });
+  const update = (message: string, kind: ToastKind, duration?: number) =>
+    useToast.getState().update(id, message, kind, duration === undefined ? undefined : { duration });
+  return {
+    onProgress: (done, total, phase) => update(`${label}…（${phase} ${done}/${total}）`, "info", 0),
+    finish: (message, kind) => update(message, kind),
+  };
+}
+
+/**
  * 导出前的**预估**那句话说成什么（2026-10-17，C 弹窗的前置 ✓）。纯函数 ⇒ 好测 ✓。
  *
  * ⚠️ 口径（⛔ 不许把"不知道"说成 0 ✗）：
@@ -828,23 +868,43 @@ export async function exportPageBundleToZip(
   opts: BundleExportOptions = {},
 ): Promise<string> {
   const title = page.title || "未命名";
-  // ⭐ 2026-10-18：文件夹节点没有正文（它只是目录层，见 `treePaths`）⇒ **一个字节都不写**，
-  //   也⛔ 不产出一个"0 页的空 zip"假装成功 ✗。
-  if (page.kind === "folder") {
-    return `「${title}」是文件夹，没有正文可导出 —— 要整棵子树请用「导出本空间为 Markdown ＋ 附件」（这次没有写文件）`;
+  // ⭐ 2026-10-18：先弹**持久 toast**，后面每一步都以它为准（⛔ 中途无声无息 ✗）
+  const progress = beginExportProgress("正在导出", opts.onProgress);
+  try {
+    // ⭐ 2026-10-18：文件夹节点没有正文（它只是目录层，见 `treePaths`）⇒ **一个字节都不写**，
+    //   也⛔ 不产出一个"0 页的空 zip"假装成功 ✗。
+    if (page.kind === "folder") {
+      const folderMsg = `「${title}」是文件夹，没有正文可导出 —— 要整棵子树请用「导出本空间为 Markdown ＋ 附件」（这次没有写文件）`;
+      progress.finish(folderMsg, "info");
+      return folderMsg;
+    }
+    const path = await platform.dialog.save({
+      title: "导出 Markdown ＋ 附件（zip）",
+      defaultPath: `${sanitizeName(page.title || page.id)}.zip`,
+      filters: [{ name: "Zip", extensions: ["zip"] }],
+    });
+    // 取消 ⇒ 一个字节都不写 ✓，但那条持久 toast 也要**如实**变成"已取消"（⛔ 不能假装成功 ✗）
+    if (!path) {
+      progress.finish("已取消导出", "info");
+      return "已取消导出";
+    }
+    const result = await bundleFor([page], { onProgress: progress.onProgress });
+    // ⚠️ 超限 ⇒ **一个字节都不写** ✓，把原因如实返回（⛔ 不假装成功 ✗）
+    if (result.tooLarge) {
+      const tooLargeMsg = bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
+      progress.finish(tooLargeMsg, "error");
+      return tooLargeMsg;
+    }
+    // Web 侧 `write_binary_file` 是 Blob ＋ `<a download>`（见 `web.ts`）；桌面是真实落盘 ✓
+    await api.writeBinaryFile(path, Array.from(result.bytes));
+    const msg = bundleMessage(title, path, result);
+    progress.finish(msg, "success");
+    return msg;
+  } catch (e) {
+    const text = `导出失败：${e instanceof Error ? e.message : String(e)}`;
+    progress.finish(text, "error");
+    throw new ExportReportedError(text);
   }
-  const path = await platform.dialog.save({
-    title: "导出 Markdown ＋ 附件（zip）",
-    defaultPath: `${sanitizeName(page.title || page.id)}.zip`,
-    filters: [{ name: "Zip", extensions: ["zip"] }],
-  });
-  if (!path) return "已取消导出"; // 取消 ⇒ 一个字节都不写 ✓
-  const result = await bundleFor([page], { onProgress: opts.onProgress });
-  // ⚠️ 超限 ⇒ **一个字节都不写** ✓，把原因如实返回（⛔ 不假装成功 ✗）
-  if (result.tooLarge) return bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
-  // Web 侧 `write_binary_file` 是 Blob ＋ `<a download>`（见 `web.ts`）；桌面是真实落盘 ✓
-  await api.writeBinaryFile(path, Array.from(result.bytes));
-  return bundleMessage(title, path, result);
 }
 
 /**
@@ -854,38 +914,55 @@ export async function exportPageBundleToZip(
  * 并生成 `_attachments.md` 索引（原名 → 路径 ✓）。
  */
 export async function exportWorkspaceBundleToZip(opts: BundleExportOptions = {}): Promise<string> {
-  const path = await platform.dialog.save({
-    title: "导出本空间为 Markdown ＋ 附件（zip）",
-    defaultPath: "空间导出.zip",
-    filters: [{ name: "Zip", extensions: ["zip"] }],
-  });
-  if (!path) return "已取消导出";
-
-  const metas = await api.listPages();
-  const pages: MarkdownPageInput[] = [];
-  let unreadable = 0;
-  for (const m of metas) {
-    try {
-      const page = await api.getPage(m.id);
-      // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写存储列名 ✗ —— 门禁只减不增）
-      // ⭐ 2026-10-17：带上 `parent_id` ⇒ zip 内按页面树建目录 ✓（`PageMeta.parent_id` ✓）
-      // ⭐ 2026-10-18：带上 `kind` ⇒ 文件夹节点只作目录、不出 `.md` ✓（`PageMeta.kind` ✓）
-      pages.push({
-        id: page.id,
-        title: page.title,
-        docJson: docJsonOfPage(page),
-        parentId: m.parent_id ?? null,
-        kind: m.kind,
-      });
-    } catch {
-      unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（下面报数）
+  // ⭐ 2026-10-18：先弹**持久 toast**（「正在导出…」⇒「取附件 3/32」⇒ 结果 ✓）
+  const progress = beginExportProgress("正在导出本空间", opts.onProgress);
+  try {
+    const path = await platform.dialog.save({
+      title: "导出本空间为 Markdown ＋ 附件（zip）",
+      defaultPath: "空间导出.zip",
+      filters: [{ name: "Zip", extensions: ["zip"] }],
+    });
+    if (!path) {
+      progress.finish("已取消导出", "info"); // 取消也如实说 ✓
+      return "已取消导出";
     }
-  }
 
-  const result = await bundleFor(pages, { onProgress: opts.onProgress, allAttachments: true });
-  // ⚠️ 超限 ⇒ **一个字节都不写** ✓（与单页那条同口径 ✓）
-  if (result.tooLarge) return bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
-  await api.writeBinaryFile(path, Array.from(result.bytes));
-  const msg = bundleMessage("本空间", path, result);
-  return unreadable ? `${msg}；另有 ${unreadable} 页读不出来已跳过` : msg;
+    const metas = await api.listPages();
+    const pages: MarkdownPageInput[] = [];
+    let unreadable = 0;
+    for (const m of metas) {
+      try {
+        const page = await api.getPage(m.id);
+        // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写存储列名 ✗ —— 门禁只减不增）
+        // ⭐ 2026-10-17：带上 `parent_id` ⇒ zip 内按页面树建目录 ✓（`PageMeta.parent_id` ✓）
+        // ⭐ 2026-10-18：带上 `kind` ⇒ 文件夹节点只作目录、不出 `.md` ✓（`PageMeta.kind` ✓）
+        pages.push({
+          id: page.id,
+          title: page.title,
+          docJson: docJsonOfPage(page),
+          parentId: m.parent_id ?? null,
+          kind: m.kind,
+        });
+      } catch {
+        unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（下面报数）
+      }
+    }
+
+    const result = await bundleFor(pages, { onProgress: progress.onProgress, allAttachments: true });
+    // ⚠️ 超限 ⇒ **一个字节都不写** ✓（与单页那条同口径 ✓）
+    if (result.tooLarge) {
+      const tooLargeMsg = bundleTooLargeMessage(result.tooLarge) ?? "导出体积超过上限";
+      progress.finish(tooLargeMsg, "error");
+      return tooLargeMsg;
+    }
+    await api.writeBinaryFile(path, Array.from(result.bytes));
+    const baseMsg = bundleMessage("本空间", path, result);
+    const msg = unreadable ? `${baseMsg}；另有 ${unreadable} 页读不出来已跳过` : baseMsg;
+    progress.finish(msg, "success");
+    return msg;
+  } catch (e) {
+    const text = `导出失败：${e instanceof Error ? e.message : String(e)}`;
+    progress.finish(text, "error");
+    throw new ExportReportedError(text);
+  }
 }

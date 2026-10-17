@@ -24,7 +24,7 @@ import { inlineExportMedia } from "../lib/exportInline";
 import { renderExportMermaid } from "../lib/exportMermaid";
 import { exportPageToMarkdown } from "../lib/exportMarkdown";
 // ⭐ 2026-10-17：带附件的一键导出（zip）。与上面那条**并存** ✓ —— 纯 .md 那条不碰附件、不改引用 ✓。
-import { exportPageBundleToZip } from "../lib/exportMarkdownBundle";
+import { exportPageBundleToZip, ExportReportedError } from "../lib/exportMarkdownBundle";
 import { docJsonOfPage } from "../lib/docContent";
 
 /**
@@ -165,10 +165,13 @@ export function EditorToolbar({ pageId }: { pageId: string }) {
   const exportMarkdownBundleFile = async () => {
     try {
       const page = await api.getPage(pageId);
-      const msg = await exportPageBundleToZip({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
-      toast(msg, msg.startsWith("已取消") ? "info" : "success");
+      // ⭐ 2026-10-18：**进度与结果都由 `exportPageBundleToZip` 的持久 toast 负责**
+      //   （「正在导出…（取附件 3/32）」⇒ 同一条替换成结果 ✓）⇒ 这里⛔ 不再弹第二遍同一句 ✗。
+      await exportPageBundleToZip({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
     } catch (e) {
-      toast(`导出失败：${e}`, "error");
+      // 导出链里失败 ⇒ 那条持久 toast 已经如实变成「导出失败：…」（`ExportReportedError`）⇒ 不重复弹。
+      // 只有**还没走到导出**就失败的（例如取页面失败）才在这里补一句，否则用户什么都看不到 ✗。
+      if (!(e instanceof ExportReportedError)) toast(`导出失败：${e}`, "error");
     }
   };
 

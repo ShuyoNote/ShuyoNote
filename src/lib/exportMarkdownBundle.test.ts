@@ -41,9 +41,11 @@ vi.mock("./api", () => ({
 
 // ⚠️ import 必须在 vi.mock 之后（读起来也清楚）
 import { $createImageNode, ImageNode } from "../editor/nodes/ImageNode";
+import { useToast } from "../store/toast";
 import {
   assetPathFor,
   attachmentHashesIn,
+  ExportReportedError,
   exportPageBundleToZip,
   exportWorkspaceBundleToZip,
   packBundle,
@@ -106,6 +108,8 @@ beforeEach(() => {
   listAttachmentsMock.mockReset().mockResolvedValue([]);
   listPagesMock.mockReset().mockResolvedValue([]);
   getPageMock.mockReset();
+  // ⭐ 2026-10-18：导出会弹持久 toast ⇒ 每条用例从"一条都没有"开始（否则上一条的残留会串味）
+  useToast.setState({ toasts: [] });
 });
 
 describe("① 路径重写：`attachment://<hash>` ⇒ `assets/<hash>.<ext>`", () => {
@@ -445,5 +449,88 @@ describe("⑤ 空间导出带上**全部附件**（2026-10-18 加）", () => {
     const out = unzipBytes(writeMock.mock.calls[0][1] as number[]);
     expect(Object.keys(out)).toEqual(["页.md"]);
     expect(msg).toContain("0 个附件");
+  });
+});
+
+// ⭐ 2026-10-18（owner 报的缺口：导出全程没有任何进度反馈 —— 点了不知道在跑、也不知道跑完没 ✗）：
+//   取附件时回调**单调递增**、总次数＝附件数；界面那条 toast 是**同一条**被就地更新后替换成结果。
+describe("⑥ 导出进度反馈（2026-10-18 加）", () => {
+  /** 一个 `p1` 引用 h1、附件表里另有 h2/h3（空间导出时会一并带走）的空间。 */
+  function spaceWithThreeAttachments() {
+    saveMock.mockResolvedValue("D:/out/进度.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([1]));
+    listPagesMock.mockResolvedValue([{ id: "p1", parent_id: null, kind: "page" }]);
+    getPageMock.mockResolvedValue({
+      id: "p1",
+      title: "页",
+      content_json: imageDoc("attachment://localhost/C%3A/a.png", "h1", "image/png"),
+    });
+    listAttachmentsMock.mockResolvedValue([
+      { id: "a1", hash: "h1", mime: "image/png", name: "a.png", size: 1, path: "" },
+      { id: "a2", hash: "h2", mime: "application/pdf", name: "b.pdf", size: 1, path: "" },
+      { id: "a3", hash: "h3", mime: "text/plain", name: "c.txt", size: 1, path: "" },
+    ]);
+  }
+
+  it("onProgress 单调递增、总次数＝附件数 ✓", async () => {
+    spaceWithThreeAttachments();
+    const calls: { done: number; total: number; phase: string }[] = [];
+    const msg = await exportWorkspaceBundleToZip({
+      onProgress: (done, total, phase) => calls.push({ done, total, phase }),
+    });
+    expect(calls).toHaveLength(3); // 3 个附件 ⇒ 正好 3 次
+    expect(calls.map((c) => c.done)).toEqual([1, 2, 3]); // 单调递增 ✓
+    expect(calls.every((c) => c.total === 3)).toBe(true);
+    expect(calls[0].phase).toBe("取附件");
+    expect(msg).toContain("3 个附件");
+  });
+
+  it("传了 onProgress ⇒ 不弹默认的持久 toast（测试 / 别的壳要干净 ✓）", async () => {
+    spaceWithThreeAttachments();
+    await exportWorkspaceBundleToZip({ onProgress: () => {} });
+    expect(useToast.getState().toasts).toHaveLength(0);
+  });
+
+  it("不传 onProgress ⇒ 持久 toast 跟着进度改，结束**同一条**替换成结果（⛔ 不弹第二条 ✗）", async () => {
+    spaceWithThreeAttachments();
+    const seen: string[] = [];
+    const unsub = useToast.subscribe((s) => {
+      const last = s.toasts[s.toasts.length - 1];
+      if (last) seen.push(last.message);
+    });
+    const msg = await exportWorkspaceBundleToZip();
+    unsub();
+    // 开头是一条"还没开始取附件"的持久提示（⛔ 不是 3 秒就消失的普通 toast ✗）
+    expect(seen[0]).toBe("正在导出本空间…");
+    expect(seen.some((m) => m.includes("（取附件 1/3）"))).toBe(true);
+    expect(seen.some((m) => m.includes("（取附件 3/3）"))).toBe(true);
+    // 结束：**同一条**被替换成结果（toasts 仍然只有一条，且内容＝返回值 ✓）
+    const { toasts } = useToast.getState();
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toBe(msg);
+    expect(toasts[0].kind).toBe("success");
+  });
+
+  it("取消 ⇒ 持久 toast 如实变成「已取消导出」（⛔ 不假装成功 ✗）", async () => {
+    saveMock.mockResolvedValue(null);
+    const msg = await exportPageBundleToZip({ id: "p1", title: "页", docJson: plainDoc() });
+    expect(msg).toContain("已取消");
+    const { toasts } = useToast.getState();
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toContain("已取消");
+    expect(toasts[0].kind).toBe("info"); // 不是 success ✓
+  });
+
+  it("失败 ⇒ 持久 toast 如实变成失败，并抛 `ExportReportedError`（调用方别重复弹 ✗）", async () => {
+    saveMock.mockResolvedValue("D:/out/失败.zip");
+    readBytesMock.mockResolvedValue(new Uint8Array([1]));
+    writeMock.mockRejectedValue(new Error("盘满了"));
+    await expect(
+      exportPageBundleToZip({ id: "p1", title: "页", docJson: plainDoc() }),
+    ).rejects.toBeInstanceOf(ExportReportedError);
+    const { toasts } = useToast.getState();
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe("error");
+    expect(toasts[0].message).toContain("盘满了");
   });
 });
