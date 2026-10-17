@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { pushOverlay } from "../lib/overlayStack";
 import { useMobileNav } from "../store/mobileNav";
+import { platform } from "../lib/platform";
+import { MESH_TRUST_BEGIN_COMMAND } from "../lib/trustDevicePanelReadings";
+import { useSpaceStore } from "../store/space";
 
 /**
  * **移动端「首次配对」屏**（owner 2026-10-17 拍「甲」✓ ＋ 追加「完成配对相关功能」✓）。
@@ -24,6 +27,8 @@ export function MobilePairCode() {
   const setScreen = useMobileNav((s) => s.setScreen);
   const cameFrom = useMobileNav((s) => s.cameFrom);
   const pairPeer = useMobileNav((s) => s.pairPeer);
+  // ⭐ 活动空间（`spaceId` 的前置 ✓ —— ⛔ 空就不发命令 ✗）。
+  const activeId = useSpaceStore((s) => s.activeId);
   const goBack = useCallback(() => setScreen(cameFrom ?? "pair"), [setScreen, cameFrom]);
   useEffect(() => pushOverlay("mobile-paircode", goBack), [goBack]);
 
@@ -56,6 +61,36 @@ export function MobilePairCode() {
       alive = false;
     };
   }, [pairPeer]);
+
+  /**
+   * ⭐ **只有人真的点了这颗按钮**才发命令 ✗（⛔ 不在挂载／effect／读码成功时自动发 ✗ ——
+   *   与图上那句「**没有"自动通过"**」一致 ✓）。
+   * ⚠️ 两条前置校验都**不发命令** ✗：没有活动空间 ✓／缺 `pubkey` ✓（与 `pairingCodeReading` 同一份 peer 数据 ✓）。
+   * ⚠️ ⛔ 不碰 `SyncPanel.tsx` 那道 `isDesktopPlatform()` 守卫 ✗ —— 只是**调同一条命令** ✓（参数形状照
+   *   `SyncPanel.tsx:1226` 抄 ✓：`{ spaceId, peerDeviceId, peerPubkey }` ✓，⛔ 不自创参数 ✗）。
+   */
+  const [busy, setBusy] = useState(false);
+  const [errText, setErrText] = useState("");
+  const confirmTrust = async () => {
+    if (!pairPeer) return setErrText("没带着设备进来 ✗（回「设备直连」重选一台 ✓）");
+    if (!activeId) return setErrText("没有活动空间 ✗ —— 先在桌面端选一个空间，再回来配对 ✓");
+    if (!pairPeer.pubkey) return setErrText("这台设备还没报出身份（缺 pubkey）✗ —— 它需要这一版的程序，并且开过一次设备直连 ✓");
+    setBusy(true);
+    setErrText("");
+    try {
+      await platform.executor.invoke(MESH_TRUST_BEGIN_COMMAND, {
+        spaceId: activeId,
+        peerDeviceId: pairPeer.deviceId,
+        peerPubkey: pairPeer.pubkey,
+      });
+      goBack(); // ⭐ 成功 ⇒ 回「设备直连」✓（`cameFrom` 那套 ✓，⛔ 不写死首页 ✗）
+    } catch (e) {
+      // ⚠️ 失败**如实显示** ✓（⛔ 不吞 ✗、⛔ 不假装成功 ✗）＋ 就地停在这屏 ✓（可重试 ✓）。
+      setErrText(`建立信任失败：${String(e instanceof Error ? e.message : e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const digits = code ? code.replace(/\s+/g, "").split("") : [];
   const rows = [0, 1, 2, 3, 4].map((r) => digits.slice(r * 4, r * 4 + 4));
@@ -105,16 +140,24 @@ export function MobilePairCode() {
           <button className="mpair-code-cancel" onClick={goBack}>
             取消
           </button>
-          {/* ⛔ 明标未接 ✗（照 08 屏 v1 老规矩 ✓）：⛔ 不做假按钮 ✗ */}
+          {/* ⭐ d3：**真按钮** ✓ —— ⚠️ 只有**读到码**时才可点 ✗（看不到码就没法"对得上" ✓）；
+              ⛔ 点之前**不发任何命令** ✗（⛔ 没有"自动通过"✗）。 */}
           <button
             className="mpair-code-confirm"
-            disabled
+            disabled={!code || busy}
             data-testid="mpair-code-confirm"
-            title="确认还没接：它要调 MESH_TRUST_BEGIN_COMMAND（与桌面 trustDevice 同一条命令 ✓），但那道 isDesktopPlatform() 守卫不许绕过 —— 等 owner 拍 ✗"
+            onClick={() => void confirmTrust()}
+            title={code ? "码对得上，确认（会建立信任）" : "还没读到码，不能确认"}
           >
-            码对得上，确认
+            {busy ? "正在建立信任…" : "码对得上，确认"}
           </button>
         </div>
+
+        {errText ? (
+          <p className="mpair-code-error" role="alert" data-testid="mpair-code-error">
+            {errText}
+          </p>
+        ) : null}
 
         <p className="mpair-code-star">
           ★ 这一步没有"自动通过"：第一次必须由人点一下。（更短的 6 位码要先做 PAKE —— 已拍板不做，所以就是这 20 位。）

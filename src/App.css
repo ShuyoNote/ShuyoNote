@@ -25892,6 +25892,16 @@ body.is-plugin-panel-open .main {
   opacity: 0.45;
   cursor: default;
 }
+.mpair-code-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
 .mpair-code-star {
   margin: 14px 0 0;
   color: var(--text-dim);
