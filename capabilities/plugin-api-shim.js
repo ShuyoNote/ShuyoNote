@@ -54,5 +54,9 @@ var api = {
     list: function() { return __capCall("properties.list", {}); },
     set: function(attrId, value, pageId) { return __capCall("properties.set", { attrId: attrId === undefined ? undefined : String(attrId), value: value === undefined ? undefined : String(value), pageId: pageId === undefined ? undefined : String(pageId) }); }
   },
-  log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); }
+  log: function(message, level) { return __capCall("log.write", { message: message === undefined ? undefined : String(message), level: level === undefined ? "info" : String(level) }); },
+  spaces: {
+    list: function() { return __capCall("spaces.list", {}); },
+    switch: function(id, name) { return __capCall("spaces.switch", { id: id === undefined ? undefined : String(id), name: name === undefined ? undefined : String(name) }); }
+  }
 };

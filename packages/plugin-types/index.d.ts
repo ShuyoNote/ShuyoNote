@@ -249,6 +249,16 @@ export interface PluginApi {
    * 返回：进插件日志环形缓冲，可在插件面板查看
    */
   log(message: string, level?: "info" | "warn" | "error"): void;
+  spaces: {
+  /** 列出空间（含当前空间）（权限 `read:pages`；1.1.0 起）
+   * 返回：当前空间 id ＋ 全部未删除空间
+   */
+    list(): { active: string; spaces: { id: string; name: string }[] };
+  /** 切换空间（草稿确认）（权限 `write:pages`；1.1.0 起）
+   * 返回：{drafted:true, summary}——草稿已产出，确认后才切换
+   */
+    switch(id?: string, name?: string): { drafted: true; summary: string };
+  };
 }
 
 export declare const SDK_API_VERSION: "1.1.0";

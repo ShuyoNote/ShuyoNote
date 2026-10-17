@@ -2050,6 +2050,93 @@ fn cap_pages_update(
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
 }
 
+/// `spaces.list`：列出未删除的空间 ＋ 当前激活空间（只读；meta 已 ATTACH 在当前空间连接上）。
+fn cap_spaces_list() -> CapResult {
+    with_read_conn(|c| {
+        let active: String = crate::workspaces::active_workspace_id(c).unwrap_or_default();
+        let mut stmt = c
+            .prepare("SELECT id, name FROM meta.workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC")
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<serde_json::Value> = stmt
+            .query_map([], |r| {
+                Ok(serde_json::json!({
+                    "id": r.get::<_, String>(0)?,
+                    "name": r.get::<_, String>(1)?,
+                }))
+            })
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(serde_json::json!({ "active": active, "spaces": rows }))
+    })
+}
+
+/// `spaces.switch`：**不切库、不写指针**，只产出草稿（`switch_space`）。
+///
+/// 为什么不在 Rust 侧直接切：真正的切换要换主连接（含加密/口令闸门）＋刷新界面 store，
+/// 这条逻辑的唯一实现是前端的 `useSpaceStore.switchTo`（`src/store/space.ts`）——
+/// 与"落库只有 `ai/apply.ts` 一处"同一纪律：这里只产出草稿，apply 那一步去调它。
+fn cap_spaces_switch(id: Option<&str>, name: Option<&str>) -> CapResult {
+    let want_id = id.map(str::trim).filter(|s| !s.is_empty());
+    let want_name = name.map(str::trim).filter(|s| !s.is_empty());
+    if want_id.is_none() && want_name.is_none() {
+        return Err("bad_args: 切换空间需要 id 或 name 之一".to_string());
+    }
+    let picked = with_read_conn(|c| {
+        let active: String = crate::workspaces::active_workspace_id(c).unwrap_or_default();
+        let mut stmt = c
+            .prepare("SELECT id, name FROM meta.workspaces WHERE deleted_at IS NULL ORDER BY created_at ASC, id ASC")
+            .map_err(|e| format!("db_error: {e}"))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| format!("db_error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let picked = match want_id {
+            Some(wid) => rows.iter().find(|(i, _)| i == wid).cloned(),
+            None => {
+                let wn = want_name.unwrap_or("");
+                let hits: Vec<(String, String)> =
+                    rows.iter().filter(|(_, n)| n == wn).cloned().collect();
+                if hits.len() > 1 {
+                    return Err(format!(
+                        "bad_args: 有 {} 个空间都叫「{wn}」，请改用 id",
+                        hits.len()
+                    ));
+                }
+                hits.into_iter().next()
+            }
+        };
+        match picked {
+            Some(p) => Ok((p.0, p.1, active)),
+            None => Err(format!(
+                "bad_args: 找不到空间（id={:?} name={:?}）；可先调 spaces.list",
+                want_id, want_name
+            )),
+        }
+    })?;
+    let (target_id, target_name, active) = picked;
+    if target_id == active {
+        return Ok(serde_json::json!({
+            "drafted": false,
+            "already": true,
+            "summary": format!("当前已经在「{target_name}」"),
+            "active": active,
+        }));
+    }
+    let summary = format!("切换空间到「{target_name}」");
+    push_draft(
+        format!("switch_space:{target_id}"),
+        summary.clone(),
+        serde_json::json!({
+            "kind": "switch_space",
+            "spaceId": target_id,
+            "name": target_name,
+        }),
+    );
+    Ok(serde_json::json!({ "drafted": true, "summary": summary }))
+}
+
 /// `blocks.append`：**不写库**，只产出草稿。省略 pageId 时用当前打开的页面。
 fn cap_blocks_append(page_id: Option<&str>, text: &str, fence: Option<&str>) -> CapResult {
     if text.trim().is_empty() {
@@ -2431,6 +2518,11 @@ pub(crate) fn dispatch_capability(method: &str, args_json: &str) -> Result<Strin
             arg_opt_str("title").as_deref(),
             arg_opt_str("markdown").as_deref(),
             arg_opt_str("content").as_deref(),
+        ),
+        "spaces.list" => cap_spaces_list(),
+        "spaces.switch" => cap_spaces_switch(
+            arg_opt_str("id").as_deref(),
+            arg_opt_str("name").as_deref(),
         ),
         "pages.create" => cap_pages_create(
             &arg_str("title")?,

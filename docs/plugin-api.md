@@ -127,6 +127,8 @@ register({
 | `files.export` | `api.files.export(fileName, content)` | `export:files` | `app` | **草稿确认** | object | 1.0.0 |
 | `pages.importMarkdown` | `api.pages.importMarkdown(title, markdown, parentId)` | `write:pages` | `current-space` | **草稿确认** | object | 1.0.0 |
 | `pages.update` | `api.pages.update(id, markdown, content, title)` | `write:pages` | `current-space` | **草稿确认** | object | 1.1.0 |
+| `spaces.list` | `api.spaces.list()` | `read:pages` | `app` | — | object | 1.1.0 |
+| `spaces.switch` | `api.spaces.switch(id, name)` | `write:pages` | `app` | **草稿确认** | object | 1.1.0 |
 
 ### `page.current` — 读取当前页
 
@@ -387,6 +389,24 @@ register({
   - `markdown`: `string`（可选） —— 整篇 Markdown 新正文（与 content 二选一）；走应用自己的 Markdown 导入管道（mermaid/表格/列表按各自类型落块）
   - `content`: `string`（可选） —— 整篇纯文本新正文（按换行分段）；与 markdown 二选一
   - `title`: `string`（可选） —— 新标题；省略=保留原标题
+
+### `spaces.list` — 列出空间（含当前空间）
+
+- 调用：`api.spaces.list()`
+- 权限：`read:pages`
+- scope：`app`
+- 返回：当前空间 id ＋ 全部未删除空间
+
+### `spaces.switch` — 切换空间（草稿确认）
+
+- 调用：`api.spaces.switch(id, name)`
+- 权限：`write:pages`
+- scope：`app`
+- 写入中介：**草稿确认（落库前需用户点确认）** —— 切换空间会改变后续所有读写的作用域（界面也会跟着换页）→ 先给用户看草稿，免确认档才直接落
+- 返回：{drafted:true, summary}——草稿已产出，确认后才切换
+- 参数：
+  - `id`: `string`（可选） —— 目标空间 id（与 name 二选一；都传时以 id 为准）
+  - `name`: `string`（可选） —— 目标空间名称（如「运营」）；重名时报错要求改用 id
 
 ## 4b. 只有 AI 宿主可用的工具（**插件调不到**）
 

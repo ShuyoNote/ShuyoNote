@@ -146,5 +146,16 @@
       ]
     },
     "permission": "read:files"
+  },
+  {
+    "name": "spaces_list",
+    "capabilityId": "spaces.list",
+    "description": "列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "permission": "read:pages"
   }
 ]

@@ -9,6 +9,7 @@ import { markdownToPageContent } from "../mdPreview";
 import { importMarkdownGuard } from "../docContent";
 import { contentTextOf } from "./lexicalContent";
 import { serializeByKey } from "../serializeByKey";
+import { useSpaceStore } from "../../store/space";
 import type { PageDetail } from "../../types";
 
 export interface ApplyResult {
@@ -84,6 +85,17 @@ export async function applyDraft(payload: unknown): Promise<ApplyResult> {
         const page = await api.savePage({ id: pageId, ...(title ? { title } : {}), ...built });
         return { ok: true, message: `已更新「${page.title}」`, page };
       });
+    }
+
+    case "switch_space": {
+      // ⭐ spaces.switch（2026-10-17）：真正切空间的唯一实现是 space store（换连接 + 刷新界面）。
+      //   这里只把草稿交给它，不另写一条切换路径。
+      const spaceId = String(p.spaceId ?? "");
+      if (!spaceId) return { ok: false, message: "switch_space 需要 spaceId" };
+      const ok = await useSpaceStore.getState().switchTo(spaceId);
+      return ok
+        ? { ok: true, message: `已切换到空间「${String(p.name ?? spaceId)}」` }
+        : { ok: false, message: "切换空间失败（可能需要口令或被拒绝）" };
     }
 
     case "append_block": {
