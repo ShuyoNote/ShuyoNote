@@ -21344,6 +21344,9 @@ p:has(> .editor-drawing-container) {
   }
   .mobile-sync-slot .btn-sync {
     min-height: 44px;
+    /* ⚠️ 2026-10-17：这一颗原来**只定了高**✗ ⇒ 实测 40×44（宽差 4px ✗）。
+       它就是"手机上主界面那个同步入口"✓ ⇒ 命中区补到 44，视觉只是一个略宽的胶囊 ✓。 */
+    min-width: 44px;
     padding: 0 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-full);
@@ -23014,9 +23017,14 @@ body.is-plugin-panel-open .main {
   .activity-bar .btn-trash { width: 44px; height: 44px; }
   .activity-group { gap: 0; }
 
-  /* ---------- 侧栏头部：同步 / 新建 / 空间名 ---------- */
+  /* ---------- 侧栏头部：同步 / 新建 / 空间名 ----------
+     ⚠️ 2026-10-17 补 `min-width`：门禁 `mobile-views` 实测这颗是 **40×44** ✗
+     （高有 44 ✓、**宽只有 40** ✗ —— 宽度是**内容撑出来**的，不是写死的）。
+     本节口径本来就是"命中区 44、视觉尽量小"✓ ⇒ 加最小宽度正好补上那 4px；
+     侧栏那两颗（61/62 宽）**不受影响** ✓。同一条读数是 macOS 侧在信箱里点给我们的
+     （"10 条红都在 button.btn-sync 40x44"✓）⇒ 与那条对齐 ✓。 */
   .btn-sync,
-  .btn-new { height: 44px; }
+  .btn-new { height: 44px; min-width: 44px; }
   .sidebar-title { min-height: 44px; }
 
   /* ---------- 编辑工具栏 ----------
