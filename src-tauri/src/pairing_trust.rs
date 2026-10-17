@@ -101,10 +101,10 @@ pub fn confirm_generates_secret(role: TrustRole) -> bool {
 /// ⭐ **自动采纳** ✓」，⚠️ 它**半对半错** ✗（以代码为准，⛔ 不凭注释 ✗）：
 /// · ✅ 还成立的：⭐ 收到 ask ⇒ ⭐ 本机**状态**推进到已信任 ✓（`state_after_ask_seen` ✓，判据
 ///   `remote_side_acting_alone_also_reaches_trusted` ✓ 仍在 ✓）；
-/// · ⛔ 已过期的：⭐ 那**不是"采纳"** ✗ —— ⭐ ⭐ 2026-10-12（owner 逐字「『信任这台设备』是『**允许它来拿我的**』」✓）
-///   之后：⭐ **登记只在"点的那一侧"**（`mesh_trust_begin` ✓），⭐ 这一侧收到 ask ⭐ **只记一行
-///   「对面允许了你」** ✗（`sync.rs:2787-2794` ✓，⭐ 两条判据 `sync.rs:5010`／`:9755` 钉着
-///   "收到 ask **一个字节都不登记**" ✓）。
+/// · ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ 「自动采纳」那半**又成立**了 ✓
+///   —— ⭐ 收到 ask ⇒ ⭐ 这一侧**也把对面登记上** ✓（`sync::note_pending_trust_asks` ⇒
+///   `pair_pubkey` ＋ `add_paired_pubkey` ✓；判据 `receiving_a_trust_ask_registers_the_asker_so_both_directions_work` ✓）。
+///   ⚠️ 2026-10-12 那条「登记只在点的那一侧」**已被推翻** ✓（真机来由：AMD 侧配对后拉本机每轮 401 ✓）。
 pub const fn one_sided_click_establishes_trust() -> bool {
     true
 }
@@ -298,10 +298,11 @@ impl TrustHandshake {
     /// ⭐⭐ **2026-10-13（P-4 片①）按代码实际行为订正** ✗ —— 上面那段「采纳（登记对面 ＋ 推进状态）
     /// 在 `sync.rs`」⚠️ **两头都不准** ✗（以代码为准，⛔ 不凭注释 ✗）：
     /// · ⛔ "推进状态在 sync.rs" ✗ —— ⭐ 它就在**本函数紧下面那一行**（`state_after_ask_seen` ✓）；
-    /// · ⛔ "登记对面在 sync.rs" ✗ —— ⭐ ⭐ 2026-10-12 之后 ⭐ **收到 ask 一个字节都不登记** ✓
-    ///   （`sync.rs:2787-2794` ✓；⭐ 判据 `sync.rs:5010 receiving_a_trust_ask_registers_nothing_at_all` ✓
-    ///   ＋ `sync.rs:9755 receiving_a_trust_ask_never_writes_any_registration` ✓）⇒ ⭐ 登记只在
-    ///   **点的那一侧**（`mesh_trust_begin` ⇒ `remember_peer_card` ✓）。
+    /// · ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）** ✗：⭐ "登记对面在 sync.rs" 那半**又成立**了 ✓
+    ///   —— ⭐ 这一侧收到 ask ⇒ `sync::note_pending_trust_asks` 会登记对面 ✓
+    ///   （判据 `sync.rs` 的 `receiving_a_trust_ask_registers_the_asker_so_both_directions_work` ✓
+    ///   ＋ `receiving_a_pending_ask_registers_the_asker_and_respects_space_and_ttl` ✓）。
+    ///   ⚠️ 2026-10-12 的「收到 ask 一个字节都不登记」**已被 owner 推翻** ✓（真机来由：AMD 侧 401 ✓）。
     pub fn note_ask(&mut self, peer_device_id: &str, now_ms: i64, ttl_ms: i64) {
         // ⚠️ 兼容旧调用点（⭐ 只记"谁问的" ✓）；⭐ 要算比对码的那条路走 [`Self::note_ask_with`] ✓
         self.note_ask_with(peer_device_id, "", now_ms, ttl_ms);
@@ -1002,20 +1003,22 @@ mod tests {
 
     /// ⭐ **判据③（锁，今天已绿 ✓）**：⭐ 收到 ask ⇒ ⭐ **一个字节都不登记** ✓
     /// （⭐ 与 `sync.rs` 那两条**同源** ✓ —— 本格只是把"我还认这条"钉在这里 ✓）。
+    /// ⭐ **判据③（**2026-10-17 改口径** ✗）**：⭐ 收到 ask ⇒ ⭐ **这一侧也登记对面** ✓
+    /// （owner 拍「一方配对成功，就双向通」✓ —— ⛔ 不再是 2026-10-12 的"一个字节都不登记"✗）。
     #[test]
-    fn receiving_an_ask_registers_nothing_here_either() {
+    fn receiving_an_ask_registers_reciprocally() {
         let src = include_str!("sync.rs");
         assert!(
             src.contains("pub(crate) fn note_pending_trust_asks("),
             "⭐ 那条**唯一实现**要在 ✓（⭐ 名字改了这条要跟着改 ✓）"
         );
         assert!(
-            src.contains("receiving_a_trust_ask_registers_nothing_at_all"),
-            "⭐ 它是「收到 ask 不登记」那条判据的名字 ✓"
+            src.contains("receiving_a_trust_ask_registers_the_asker_so_both_directions_work"),
+            "⭐ 它是「收到 ask ⇒ 本侧也登记（双向通）」那条判据的名字 ✓"
         );
         assert!(
-            src.contains("receiving_a_trust_ask_never_writes_any_registration"),
-            "⭐ 同上（真变异那条 ✓）"
+            src.contains("receiving_a_trust_ask_writes_only_the_pubkey_registration"),
+            "⭐ 同上（登记面收窄那条真变异 ✓）"
         );
     }
 

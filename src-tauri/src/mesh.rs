@@ -5134,15 +5134,16 @@ mod tests {
         );
     }
 
-    /// ⭐⭐ **2026-10-12（设备身份第 3 步）的核心判据**：
-    /// ⭐ **单方信任 ⇒ 同步是单向的** ✗；⭐ **两边都信任 ⇒ 双向** ✓。
+    /// ⭐⭐ **2026-10-17（owner 拍「一方配对成功，就双向通」）**：⭐ 一趟配对 ⇒ **两个方向都通** ✓。
     ///
-    /// 这是 owner 那句话的**代码表达式**（逐字：「『信任这台设备』是『**允许它来拿我的**』」✓
-    /// ＋「**单方信任时，同步就是单向的**」✓）—— ⭐ 两台机器（两个目录 ＋ 两扇真门 ✓）✓。
-    ///
-    /// ⚠️ 它**取代**了「甲」那半（旧口径：点一下 ⇒ 对面一露脸就**自动替它同意** ⇒ 悄悄变双向 ✓）。
+    /// ## ⚠️ 本条**取代** 2026-10-12 那版（原话：「单方信任 ⇒ 同步是单向的」✗）
+    /// owner 2026-10-12 逐字是「『信任这台设备』是『**允许它来拿我的**』」＋「单方信任时，同步就是单向的」✓；
+    /// ⭐ **2026-10-17 owner 改口径**：「**一方配对成功，就双向通**」✓
+    /// ⇒ ⭐ 发起侧点一次（登记对面 ✓）＋ 对面收到 ask 后**互相登记** ✓ ⇒ 两个方向都进得来 ✓。
+    /// ⚠️ 真机来由：AMD 侧配对后拉本机**每一轮 401**（「这张卡不在名册里」✓）——
+    ///    那正是"单方只开一个方向"的形状 ✓。
     #[tokio::test]
-    async fn one_sided_trust_opens_one_direction_only() {
+    async fn one_pairing_round_opens_both_directions() {
         let dir_a = temp_dir("trust-oneway-a");
         let dir_b = temp_dir("trust-oneway-b");
         for d in [&dir_a, &dir_b] {
@@ -5212,34 +5213,25 @@ mod tests {
         // 关掉 A 的门（此刻只有它在服务这个空间 ⇒ 摘的就是它 ✓）
         stop_window(space).unwrap();
 
-        // ─── ② 换成只有 B 的门开着（B 的库里**还没有** A 的公钥 ✓）───
+        // ─── ② ⭐ **B 收到 A 的「想信任」⇒ 这一侧也登记 A**（owner 2026-10-17：一方配对成功，就双向通 ✓）───
+        //   ⚠️ 生产里这一步是 `sync::note_pending_trust_asks` 做的 ✓（这里直接落那两行，等价 ✓）——
+        //   ⛔ 不再是"B 也点一次"✗：那一侧**不用人再点** ✓。
+        crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
+        // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
+        crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
         let addr_b =
             ensure_window(&[("default".to_string(), space.to_string(), true)], "dev-b", "127.0.0.1:0000", &dir_b)
                 .unwrap()
                 .expect("B 的门要起得来");
-        // ⛔ **A 去拿 B 的** ⇒ **进不来** ✗（⭐ B 还没允许过 A ✓ ⇒ 单向 ✓）
+        // ⭐ **A 去拿 B 的** ⇒ **必须进得来** ✓（双向已通 ✓；⛔ 门口不用重启 ✗）
         let (ta, sa) = sign(&ca, "dev-a");
-        let blocked =
+        let both =
             crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta, &sa)))
                 .await;
         assert!(
-            blocked.is_err(),
-            "⛔ **单方信任必须是单向的** ✗ —— A 还没被 B 允许 ⇒ 它**不许**拿得到 B 的东西 ✓：{blocked:?}"
+            both.is_ok(),
+            "⭐ **一方配对成功 ⇒ 双向通** ✓（⛔ 不许只开一个方向 ✗；⭐ 门没重启 ✓）：{both:?}"
         );
-        assert!(
-            format!("{blocked:?}").contains("401"),
-            "⭐ 而且挡它的理由是 401（不是网络故障 ✓）：{blocked:?}"
-        );
-
-        // ─── ③ ⭐ **B 也点一次（允许 A）** ⇒ ⭐ 双向 ✓，而且 **B 的门不用重启** ✗ ───
-        crate::db::pair_pubkey(&cb, "", "dev-a", &ida.public_key_hex()).unwrap();
-        // ⭐ 跑着的门**也要认它** ✗ —— ⛔ 只写库不算 ✗（那正是"配对成功却 401" ✓）
-        crate::mesh::add_paired_pubkey(space, "dev-a", &ida.public_key_hex()).unwrap();
-        let (ta2, sa2) = sign(&ca, "dev-a");
-        let both =
-            crate::mesh::pull_from_peer(&client, &near("dev-b", addr_b), space, 0, None, Some(("dev-a", ta2, &sa2)))
-                .await;
-        assert!(both.is_ok(), "⭐ 两边都允许过 ⇒ **必须双向** ✓（⭐ 门没重启 ✓）：{both:?}");
 
         stop_window(space).unwrap();
     }
