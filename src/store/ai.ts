@@ -30,6 +30,8 @@ import { capLabel, type Aicap } from "../lib/ai/entitlements";
 
 const CFG_KEY = "shuyonote.ai.config";
 const HISTORY_KEY = "shuyonote.ai.history";
+/** 第四块「采用」的本地计数（采纳率＝adopted/generated；只在本机 ✓） */
+const WIKI_STATS_KEY = "shuyonote.ai.wikiStats";
 // Web (browser) can stream cloud/local LLMs directly via fetch; desktop goes
 // through the backend proxy (non-streaming) to bypass CORS.
 const IS_WEB = typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window);
@@ -123,6 +125,17 @@ interface AiState {
   topicRunning: boolean;
   topicError: string | null;
 
+  /**
+   * 第四块「采用」的**埋点**：生成了几次 / 采用了几次。
+   * ⚠️ 只在本地（与 `CFG_KEY`／`HISTORY_KEY` 同一层 localStorage）—— "采纳率"是**产品读数**，
+   *    不是遥测：不上报、不出本机 ✓（需求 §8 那一行要的就是这个数）。
+   */
+  wikiStats: { generated: number; adopted: number };
+  /** 生成成功时 +1（面板不调它也照样计数，别绕过）✓ */
+  noteWikiGenerated: () => void;
+  /** 采用（**新建一页**）成功时 +1 ✓ */
+  noteWikiAdopted: () => void;
+
   setOpen: (open: boolean) => void;
   update: (patch: Partial<AiConfig>) => void;
   run: (prompt: string) => Promise<void>;
@@ -197,6 +210,32 @@ function saveHistory(h: Array<{ role: "user" | "assistant"; content: string }>) 
   }
 }
 
+/**
+ * 读「生成 / 采用」两个计数。
+ * ⚠️ 读不出来或形状不认识 ⇒ **全当 0**（不是"未知"）：这是**计数器**不是覆盖率读数，
+ *    "还没数过"与"数到 0"在这里是同一件事，画成「未知」反而更难读 ✓。
+ */
+function loadWikiStats(): { generated: number; adopted: number } {
+  const zero = { generated: 0, adopted: 0 };
+  try {
+    const raw = localStorage.getItem(WIKI_STATS_KEY);
+    if (!raw) return zero;
+    const v = JSON.parse(raw);
+    const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) && x > 0 ? Math.floor(x) : 0);
+    return { generated: n(v?.generated), adopted: n(v?.adopted) };
+  } catch {
+    return zero;
+  }
+}
+
+function saveWikiStats(s: { generated: number; adopted: number }) {
+  try {
+    localStorage.setItem(WIKI_STATS_KEY, JSON.stringify(s));
+  } catch {
+    // localStorage unavailable (privacy mode) — counters just won't persist.
+  }
+}
+
 export const useAiStore = create<AiState>((set, get) => ({
   config: loadConfig(),
   open: false,
@@ -211,6 +250,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   topicDraft: null,
   topicRunning: false,
   topicError: null,
+  wikiStats: loadWikiStats(),
 
   setOpen: (open) => set({ open }),
 
@@ -455,6 +495,8 @@ export const useAiStore = create<AiState>((set, get) => ({
           },
         ],
       });
+      // 采纳率的分母：**真的出了一页草稿**才算一次（失败/被 stop 作废的不计 ✓）
+      get().noteWikiGenerated();
     } catch (e) {
       if (seq !== runSeq) return;
       set({ topicRunning: false, topicError: String((e as Error)?.message ?? e) });
@@ -462,6 +504,19 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   clearTopicDraft: () => set({ topicDraft: null, topicError: null }),
+
+  // ⚠️ 计数只走这两条：**别在组件里自己 +1**（那会变成第二份口径，采纳率也就不可信了 ✓）。
+  noteWikiGenerated: () => {
+    const next = { ...get().wikiStats, generated: get().wikiStats.generated + 1 };
+    saveWikiStats(next);
+    set({ wikiStats: next });
+  },
+
+  noteWikiAdopted: () => {
+    const next = { ...get().wikiStats, adopted: get().wikiStats.adopted + 1 };
+    saveWikiStats(next);
+    set({ wikiStats: next });
+  },
 
   stop: () => {
     runSeq++;

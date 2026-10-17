@@ -8,8 +8,11 @@ import { isDesktopPlatform, platform } from "../lib/platform";
 import { indexAvailability, runLibraryIndex, type IndexProgress } from "../lib/libraryIndexing";
 import { coverageReportTool, scanLibraryCoverage } from "../lib/libraryCoverage";
 import { buildLibraryMap, type LibraryMap } from "../lib/ai/libraryMap";
+import { buildTopicPageInput, TOPIC_PAGE_TAG, type TopicDraft } from "../lib/ai/topicDraft";
 import { LibraryMapView } from "./LibraryMapView";
 import { api } from "../lib/api";
+import { useNotes } from "../store/notes";
+import { emailHtmlToLexical } from "../lib/emailRichNote";
 import { isActiveSpaceKnownEncrypted, setSpaceSecurityState } from "../lib/ai/cloudGuard";
 import {
   AI_PRESETS,
@@ -59,6 +62,11 @@ export function AiSettingsForm({
   const topicError = useAiStore((s) => s.topicError);
   const generateTopic = useAiStore((s) => s.generateTopic);
   const clearTopicDraft = useAiStore((s) => s.clearTopicDraft);
+  const noteWikiAdopted = useAiStore((s) => s.noteWikiAdopted);
+  const wikiStats = useAiStore((s) => s.wikiStats);
+  // 第四块：**采用＝新建一页**。两种状态都在本地：连点防重 ＋ 失败如实说（草稿还在、没写库 ✓）
+  const [adoptingDraft, setAdoptingDraft] = useState(false);
+  const [adoptError, setAdoptError] = useState("");
   const [enabled, setEnabled] = useState(config.enabled);
   // ⚠️ **2026-10-05 加**（owner 更正：「个人版**未加密**空间可以使用云端大模型」）：
   // ① 把「这个空间是不是加密的」读进**共用判定**（`lib/ai/cloudGuard.ts`）—— AI store 与嵌入通道都用它，
@@ -228,8 +236,42 @@ export function AiSettingsForm({
     }
   }
 
-  // 「开始索引」：把整库内容变成可被 AI 检索的派生文本与块。
+  // 第四块「采用」：**把草稿变成真页面** —— 这是 LLM wiki 唯一会写库的一次点击。
   //
+  // 口径（都是硬约束，别在这里松）：
+  //  · **只新增**：`api.createPage`（新页、parent 为根）；⛔ 不 update、不覆盖任何已有页 ✓
+  //  · 页面仍自证派生：页脚「派生，非出处 ｜ 模型 ｜ 时间」＋ 覆盖度 ＋ 来源清单由
+  //    `buildTopicPageInput` 一并写进正文（判据在 topicDraft.test.ts）✓
+  //  · 打 `llm-wiki` 标签，事后可搜/可批量筛 ✓
+  //  · 写成功才 `noteWikiAdopted()`（采纳率的分母在 store，组件不自己数 ✓）；
+  //    失败 ⇒ 草稿**不动**、如实报错 —— 不许"失败了还显示成功" ✓
+  async function adoptDraft(draft: TopicDraft) {
+    if (adoptingDraft) return; // 连点保护：一次点击只建一页
+    setAdoptingDraft(true);
+    setAdoptError("");
+    try {
+      const input = buildTopicPageInput(draft);
+      const content = emailHtmlToLexical(input.html);
+      const page = await api.createPage({
+        parent_id: null,
+        title: input.title,
+        content_json: content.content_json,
+        content_text: content.content_text,
+      });
+      if (!page?.id) throw new Error("后端没有返回页面 id（这一页没写成）");
+      await api.addTag(page.id, TOPIC_PAGE_TAG).catch(() => {});
+      await useNotes.getState().loadPages();
+      await useNotes.getState().openPage(page.id);
+      noteWikiAdopted();
+      clearTopicDraft();
+    } catch (e) {
+      setAdoptError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdoptingDraft(false);
+    }
+  }
+
+  // 「开始索引」：把整库内容变成可被 AI 检索的派生文本与块。  //
   // 两件与红线有关的事，都**如实显示**而不是静默降级：
   //  · 平台不支持（移动壳等）⇒ 按钮禁用 + 说明写清；
   //  · 配的不是本机端点 ⇒ `localVision` / `localTranscribe` 拒绝注入，需要视觉/转写的抽取器会走
@@ -600,6 +642,8 @@ export function AiSettingsForm({
                 }}
                 draft={topicDraft}
                 onDismissDraft={clearTopicDraft}
+                onAdoptDraft={(d) => void adoptDraft(d)}
+                adopting={adoptingDraft}
               />
             )}
             {topicRunning && !topicDraft ? (
@@ -610,6 +654,18 @@ export function AiSettingsForm({
             {topicError ? (
               <p className="ai-libmap-note ai-warn" data-testid="topic-error">
                 {`生成草稿失败：${topicError}`}
+              </p>
+            ) : null}
+            {adoptError ? (
+              <p className="ai-libmap-note ai-warn" data-testid="draft-adopt-error">
+                {`保存为页面失败：${adoptError}（草稿还在，什么都没写）`}
+              </p>
+            ) : null}
+            {/* 采纳率＝采用 ÷ 生成（本地计数，不上报；需求 §8「采纳率」那一行要的是它 ✓） */}
+            {wikiStats.generated > 0 ? (
+              <p className="ai-libmap-note" data-testid="wiki-adopt-rate">
+                {`草稿 ${wikiStats.generated} 页 · 采用 ${wikiStats.adopted} 页 · 采用率 ` +
+                  `${Math.round((wikiStats.adopted / wikiStats.generated) * 100)}%`}
               </p>
             ) : null}
           </div>

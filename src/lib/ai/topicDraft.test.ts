@@ -13,7 +13,9 @@ import { dirname, join } from "node:path";
 import {
   DRAFT_FOOTER,
   NO_MATERIAL_TEXT,
+  TOPIC_PAGE_TAG,
   allowedRefsOf,
+  buildTopicPageInput,
   buildTopicPrompt,
   coverageNoteOf,
   generateTopicDraft,
@@ -138,5 +140,66 @@ describe("generateTopicDraft —— 草稿不落库（INV-WIKI-readonly-default�
     }
     // 也不许调用落库函数（即使有人以后 import 进来）
     expect(src).not.toMatch(/applySummary|createPage|pages\.create|create_page/);
+  });
+});
+
+// ── 第四块（采用／落库）：草稿 ⇒ 新建页的输入 ───────────────────────────────────
+//
+// 这一层是"落库那页长什么样"的**唯一**出处：页脚、覆盖度、来源清单都在这里拼好，
+// 判据因此能逐字断言"写进去的那版也自证派生"（组件里拼的话就只能测到渲染 ✓）。
+
+describe("buildTopicPageInput —— 采用后落库的那一页", () => {
+  const base = {
+    title: "专题",
+    body: "[[同步总览]] 同步靠变更日志。\n[[blk-a1b2c3]] 冲突按时间戳定序。",
+    refs: ["[[同步总览]]", "blk-a1b2c3"],
+    droppedInventedRefs: 0,
+    droppedUnreferenced: 0,
+    coverage: "覆盖度：3/9",
+    footer: "派生，非出处 ｜ 模型：Qwen3:8B ｜ 生成于：2026-09-29T02:00:00.000Z",
+    model: "Qwen3:8B",
+    generatedAt: "2026-09-29T02:00:00.000Z",
+    materialCount: 2,
+    calledModel: true,
+  };
+
+  it("★ 页面自带三条自证：页脚「派生，非出处」＋ 覆盖度＋ 来源清单（text 与 html 都有）", () => {
+    const input = buildTopicPageInput(base);
+    expect(input.title).toBe("专题");
+    for (const s of [DRAFT_FOOTER, "覆盖度：3/9", "[[同步总览]]", "blk-a1b2c3"]) {
+      expect(input.text).toContain(s);
+      expect(input.html).toContain(s);
+    }
+    expect(input.text.split("\n").length).toBe(5); // 正文两行 / 来源 / 覆盖度 / 页脚
+  });
+
+  it("标题为空 ⇒ 用「未命名专题」（不许落成一页没有标题的孤儿 ✓）", () => {
+    expect(buildTopicPageInput({ ...base, title: "   " }).title).toBe("未命名专题");
+  });
+
+  it("正文里的尖括号被转义（草稿来自模型，不许原样当 HTML 塞进页面 ✓）", () => {
+    const input = buildTopicPageInput({ ...base, body: "[[同步总览]] <script>alert(1)</script>" });
+    expect(input.html).not.toContain("<script>");
+    expect(input.html).toContain("&lt;script&gt;");
+    // 纯文本那版保留原样（它进的是全文索引，不是 HTML）
+    expect(input.text).toContain("<script>");
+  });
+
+  it("采用后打的标签是 `llm-wiki`（可搜、可批量筛 —— 改这个值等于改产品的检索口径）", () => {
+    expect(TOPIC_PAGE_TAG).toBe("llm-wiki");
+  });
+
+  // ⭐ 这条是"只增不改"的**静态**守门：采用那条路一旦被改成 update/delete 用户页面，
+  //    就违背了需求 §4「不要自动写进用户已有页」（那条是信任问题，不是风格问题 ✓）。
+  it("静态断言：采用那条路只 `createPage`，**不 update / 不 delete** 任何已有页", () => {
+    const src = readFileSync(join(HERE, "..", "..", "components", "AiSettingsForm.tsx"), "utf8");
+    const from = src.indexOf("async function adoptDraft");
+    const to = src.indexOf("// 「开始索引」");
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const fn = src.slice(from, to);
+    expect(fn).toContain("api.createPage(");
+    expect(fn).toMatch(/noteWikiAdopted\(\)/);
+    expect(fn).not.toMatch(/updatePage|deletePage|trashPage|applyDraftAndRefresh|saveContent/);
   });
 });

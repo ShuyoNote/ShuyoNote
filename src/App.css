@@ -24344,6 +24344,22 @@ body.is-plugin-panel-open .main {
   cursor: pointer;
   text-decoration: underline;
 }
+/* ⭐ 2026-10-18（第四块「采用」）：这是**唯一**会把草稿写成真页面的键 ⇒ 与「不采用」**视觉分档**：
+ * 采用是描边按钮（accent），不采用是低调的下划线文字 —— 别让两个键长得一样 ✓。 */
+.ai-libmap-draft-keep {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+.ai-libmap-draft-keep:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .ai-libmap-draft-body {
   white-space: pre-wrap;
   font-family: inherit;
