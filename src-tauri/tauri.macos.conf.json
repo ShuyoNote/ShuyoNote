@@ -1,6 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
+    "resources": {
+      "../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"
+    },
     "macOS": {
       "files": {
         "Frameworks/libpdfium.dylib": "vendor/pdfium/mac-univ/lib/libpdfium.dylib"

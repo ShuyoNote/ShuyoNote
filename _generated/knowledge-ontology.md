@@ -6,10 +6,10 @@
 | 源 | 值 |
 |---|---|
 | 注册表文件 | `capabilities/capabilities.json` |
-| 注册表 sha256 | `7e0c07f9e5d91f91740804a01f403ff4c9243add33bc96f46a3c2acaa31d4375` |
+| 注册表 sha256 | `58a5a87d23b603b3c1abf77ba62d43f31fec2dbb32ca469037628129602b81e1` |
 | `registryVersion` | 1 |
 | `apiVersion` | 1.1.0 |
-| 能力条数 | **26**（按 `kind`：host 2 / read 15 / write 9） |
+| 能力条数 | **29**（按 `kind`：host 2 / read 16 / write 11） |
 | 生成命令 | `node scripts/gen-knowledge-ontology.mjs` |
 
 | id | kind | scope | permission | ai | mediate | desc |
@@ -32,11 +32,14 @@
 | pages.create | write | current-space | write:pages | ✓ | ✓ | 新建页面。参数: title (必填), content (可选正文, 支持换行分段), parentId (可选父页面 id, 缺省为顶层)。这是写操作，返回草稿供用户确认。 |
 | pages.get | read | current-space | read:pages | ✓ |  | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。 |
 | pages.importMarkdown | write | current-space | write:pages | ✓ | ✓ | 导入 Markdown 新建一页（一次调用写完整页）。参数: title (必填), markdown (必填，Markdown 原文), parentId (父页面 id；不传就是顶层)。这是写操作，返回草稿供用户确认。 |
-| pages.list | read | current-space | read:pages |  |  | 列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序。参数: limit (可选, 默认 50, 上限 200)。不含正文。 |
-| pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面（关键词匹配；应用内 AI 检索会叠加本地嵌入的语义加分，配了嵌入模型时意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。 |
+| pages.list | read | current-space | read:pages | ✓ |  | 列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200)。 |
+| pages.search | read | current-space | read:pages | ✓ |  | 在本空间检索页面：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8)。返回 [{id,title,snippet}]；**空数组 = 本空间没有命中，不是失败**。 |
+| pages.update | write | current-space | write:pages | ✓ | ✓ | 更新已有页面：把整页正文替换成新内容（草稿确认）。参数: id (必填目标页), markdown 或 content (二选一，整篇新正文), title (可选新标题)。这是写操作，返回草稿供用户确认。 |
 | properties.list | read | current-space | read:properties |  |  | 列出本空间的属性定义 [{id, name, type}]。**写属性要的是 id**（properties.set 的第一个参数），所以通常先调它按名字找 id。 |
 | properties.set | write | current-space | write:properties |  | ✓ | 设置某个页面的属性值。参数: attrId (必填, 从 properties.list 拿), value (必填), pageId (可选, 省略=当前打开的页面)。这是写操作，返回草稿供用户确认。 |
 | settings.get | read | app | kv:own |  |  | 读取用户在插件管理里为该插件设置的值。参数: key (必填, manifest.settings 里声明的 key)。没设过返回 null（此时用你自己的默认值）。**只有宿主界面能写**——插件不能改用户给它设的配置。 |
+| spaces.list | read | app | read:pages | ✓ |  | 列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。 |
+| spaces.switch | write | app | write:pages | ✓ | ✓ | 切换 ShuyoNote 的当前空间：参数 id 或 name 二选一。这是写操作（影响后续读写作用域），返回草稿供用户确认。 |
 | tags.add | write | current-space | write:tags |  | ✓ | 给页面加一个标签。参数: name (必填, 不带 #), pageId (可选, 省略=当前打开的页面)。标签不需要预先创建。这是写操作，返回草稿供用户确认。 |
 | tags.list | read | current-space | read:tags |  |  | 列出本空间用到的标签及各自的页面数。返回 [{id, name, page_count}]。 |
 | user.notify | host | app | — |  |  | 给用户弹一条提示。参数: message (必填)。命令执行结束后显示；插件没有 console，这是给人看的那条路（写日志用 log.write）。 |

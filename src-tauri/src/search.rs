@@ -167,7 +167,7 @@ fn list_pages_brief(c: &Connection, limit: usize) -> Result<Vec<SearchResult>, S
 #[allow(dead_code)] // 2026-10-01 收据：本常量是**接线完成的证据**（判据 check-kb-s1-search 靠它从"自报跳过"转真检查 ✓）；代码路径不读它、由判据读 ⇒ 现在必然"未被使用" ✓；删除条件 = 判据改成不靠常量识别来源（或界面反过来展示它）
 pub const SEARCH_SOURCES: [&str; 2] = ["page", "attachment"];
 
-fn search_in_conn(
+pub(crate) fn search_in_conn(
     c: &Connection,
     text: &str,
     filters: &[(String, String)],
@@ -237,6 +237,39 @@ fn search_in_conn(
 
     results.truncate(limit);
     Ok(results)
+}
+
+/// 能力面（插件／MCP）的页面检索 —— **与命令面同一个引擎**，只是没有 `prop:` 过滤与查询向量
+/// （能力面本来就没有那两个参数）。
+///
+/// 为什么必须复用 `search_in_conn`（2026-10-17 的实测事故）：
+///   能力面 v1 是一句 `LIKE '%q%'`（整串子串匹配）⇒ 调用方只要传**多个词或一句人话**，
+///   哪怕库里命中一大堆也**必然返回空数组**。同一份数据的实测读数（42 页的「运营」空间）：
+///     · `品牌短剧 拍摄` ⇒ 命令面 **7** 条 ／ 能力面 **0** 条
+///     · `MCP 导出`     ⇒ 命令面 **8** 条 ／ 能力面 **0** 条
+///     · `短剧`         ⇒ 两边都 **8** 条（单串子串恰好能过）
+///   而外部 agent 恰恰**总是**这么查 ⇒ 它看到的是「知识库是空的」。
+///
+/// 两条口径：
+///   1. **查询侧归一化**（与命令面的 `prepare_query` 同一条 §15.9 口径）：抽取层落库前折过
+///      兼容形（如康熙部首），查询不折就会"索引里有一模一样的字却搜不到"。
+///   2. **FTS 空 ⇒ 子串兜底**：FTS 索引可能落后于正文（同步进来的页、尚未重建索引），
+///      而子串匹配永远读的是**当前正文列** ⇒ 兜底比"等索引追上来"更接近用户预期。
+pub(crate) fn search_pages_for_capability(
+    c: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SearchResult>, String> {
+    let text = crate::textnorm::normalize_for_match(query.trim());
+    if text.is_empty() {
+        // ⚠️ 空查询**不许**当通配符：v1 的 `%%` 会把整个空间倒给调用方（有 limit 也毫无意义）。
+        return Ok(Vec::new());
+    }
+    let hits = search_in_conn(c, &text, &[], limit)?;
+    if !hits.is_empty() {
+        return Ok(hits);
+    }
+    search_like(c, &text, limit)
 }
 
 /// Bounded vector bonus (mirrors web.ts VECTOR_BONUS) — a positive embedding hit
@@ -1382,6 +1415,10 @@ mod tests {
     // ⚠️ 本条只跑**桌面**那一半 —— 两条测试断的是**同一组**期望值 ⇒ "两侧命中集合相等"是**传递**出来的 ✓。
     const SEARCH_PARITY_JSON: &str = include_str!("../../tests/search-parity.json");
 
+    /// 检索**召回**夹具（与上面那份「跨平台一致」不是一回事：那份比的是两侧命中集合相等，
+    /// 这份比的是「已知答案在不在这批命中里」—— 也就是外部 agent 真正在乎的那个数 ✓）。
+    const SEARCH_RECALL_JSON: &str = include_str!("../../tests/search-recall.json");
+
     /// 夹具用的连接：**走仓库自己的建库路径**（`db::migrate` ⇒ 真 `pages` / 真 `page_fts`（trigram）✓），
     /// 再 ATTACH 一份最小 `meta.workspaces`（`search_like` / `search_fts` 都要 JOIN 它 ✓）。
     fn parity_conn() -> Connection {
@@ -1397,10 +1434,16 @@ mod tests {
     }
 
     fn add_parity_page(c: &Connection, id: &str, title: &str, text: &str) {
+        add_page_at(c, id, title, text, 1);
+    }
+
+    /// 与 [`add_parity_page`] 同一条写入路（`sync_fts` ✓），但能让夹具控制 `updated_at` ——
+    /// 召回夹具里「相关度 vs 最近更新」那条要靠它（答案页必须是**最旧**的 ✓）。
+    fn add_page_at(c: &Connection, id: &str, title: &str, text: &str, updated_at: i64) {
         c.execute(
             "INSERT INTO pages (id, workspace_id, title, content_text, created_at, updated_at)
-             VALUES (?1, 'ws1', ?2, ?3, 1, 1)",
-            params![id, title, text],
+             VALUES (?1, 'ws1', ?2, ?3, 1, ?4)",
+            params![id, title, text, updated_at],
         )
         .unwrap();
         sync_fts(c, id, title, text).unwrap(); // 与生产同一条写入路 ✓（不手插 page_fts ✗）
@@ -1496,6 +1539,95 @@ mod tests {
             bad.is_empty(),
             "knownDivergences 的**桌面侧读数**与实测不一致（记录过期，或语义已对齐 ⇒ 请同步夹具那一节 ✓）：\n{}",
             bad.join("\n")
+        );
+    }
+
+    /// ★ **召回判据**（2026-10-17）：`hit@limit` —— 每条用例的答案页必须出现在前 `limit` 条里。
+    ///
+    /// 它测的是**能力面**那个入口（`search_pages_for_capability`，插件与 MCP 都走它），不是命令面：
+    /// 事故现场正是「能力面 v1 只做整串子串匹配 ⇒ 多词查询必然 0 条」，而同一份数据走命令面
+    /// 能命中 7~8 条。所以夹具里那一族用例的**整串故意不在库里**（`old_impl_would_miss`），
+    /// 这条判据会先断言这一点 —— 否则用例可能只是"恰好被子串匹配救回来"，证明不了任何事。
+    ///
+    /// 两条附加口径：
+    /// 1. **负例**必须空（"没匹配就返回全库"是比"搜不到"更坏的错）；
+    /// 2. 排序看**相关度**而不是"最近更新"（`语义检索` 那条：9 页命中、limit 8，答案页最旧、
+    ///    但词频最高 —— 它排在第一名才算过）。
+    #[test]
+    fn recall_fixture_meets_hit_at_limit() {
+        let fx: serde_json::Value =
+            serde_json::from_str(SEARCH_RECALL_JSON).expect("召回夹具必须是合法 JSON");
+        let limit = fx["limit"].as_u64().unwrap_or(8) as usize;
+        let pages = fx["pages"].as_array().expect("召回夹具缺 pages");
+        let cases = fx["cases"].as_array().expect("召回夹具缺 cases");
+        assert!(
+            cases.len() >= 20,
+            "召回夹具至少要 20 条用例（现在 {} 条）—— 少于这个数它就只是装饰 ✗",
+            cases.len()
+        );
+
+        let c = parity_conn();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for p in pages {
+            let id = p["id"].as_str().expect("页面缺 id");
+            assert!(seen.insert(id.to_string()), "页面 id 重复：{id}");
+            add_page_at(
+                &c,
+                id,
+                p["title"].as_str().expect("页面缺 title"),
+                p["text"].as_str().expect("页面缺 text"),
+                p["updated_at"].as_i64().unwrap_or(1),
+            );
+        }
+
+        let mut misses: Vec<String> = Vec::new();
+        for case in cases {
+            let q = case["query"].as_str().expect("用例缺 query");
+            let name = case["name"].as_str().unwrap_or(q);
+            let expect: Vec<String> = case["expect"]
+                .as_array()
+                .expect("用例缺 expect")
+                .iter()
+                .map(|v| v.as_str().expect("expect 里的 id 必须是字符串").to_string())
+                .collect();
+
+            // 夹具的「可证伪」自检：标了 old_impl_would_miss 的用例，整串**不许**真的在库里
+            if case["old_impl_would_miss"].as_bool().unwrap_or(false) {
+                for p in pages {
+                    let hit = p["title"].as_str().unwrap_or("").contains(q)
+                        || p["text"].as_str().unwrap_or("").contains(q);
+                    assert!(
+                        !hit,
+                        "用例「{name}」标了 old_impl_would_miss，但整串「{q}」真的在库里 —— 这条用例证明不了任何事 ✗"
+                    );
+                }
+            }
+
+            let got: Vec<String> = search_pages_for_capability(&c, q, limit)
+                .expect("检索本身不许报错")
+                .into_iter()
+                .map(|r| r.id)
+                .collect();
+
+            if expect.is_empty() {
+                assert!(
+                    got.is_empty(),
+                    "负例「{name}」必须返回空，实际拿到 {got:?} —— 「没匹配就返回全库」是更坏的错 ✗"
+                );
+                continue;
+            }
+            for id in &expect {
+                if !got.contains(id) {
+                    misses.push(format!("「{name}」（q={q}）缺 {id}；实际命中 {got:?}"));
+                }
+            }
+        }
+
+        assert!(
+            misses.is_empty(),
+            "hit@{limit} 未达标（{} 条用例没命中）：\n{}",
+            misses.len(),
+            misses.join("\n")
         );
     }
 

@@ -154,3 +154,52 @@ describe("store.generateTopic —— 按需单页", () => {
     expect(mocks.apply).toHaveBeenCalledTimes(0);
   });
 });
+
+// ── 第四块（采用）的计数：采纳率＝adopted ÷ generated ─────────────────────────────
+//
+// 为什么必须由 store 数、必须落 localStorage：
+//  · **由 store 数** ⇒ 分母只有一处口径（组件自己 +1 就会变成两份，采纳率不可信 ✗）；
+//  · **落 localStorage** ⇒ 采纳率是"跨会话"的读数，刷新一次就归零的计数没法用 ✓。
+// 分母只算**真出了一页草稿**的那次：失败 / 被 stop 作废的那些不算（否则采纳率被稀释 ✓）。
+
+describe("store · 第四块（采用）的计数", () => {
+  beforeEach(() => {
+    localStorage.removeItem("shuyonote.ai.wikiStats");
+    useAiStore.setState({ wikiStats: { generated: 0, adopted: 0 } });
+  });
+
+  it("生成成功 ⇒ 分母 +1，且写进 localStorage", async () => {
+    mocks.collect.mockResolvedValue(collected());
+    mocks.complete.mockResolvedValue({ content: `${PAGE_REF} 甲。` });
+    await useAiStore.getState().generateTopic(section, null);
+
+    expect(useAiStore.getState().wikiStats).toEqual({ generated: 1, adopted: 0 });
+    expect(JSON.parse(localStorage.getItem("shuyonote.ai.wikiStats")!)).toEqual({ generated: 1, adopted: 0 });
+  });
+
+  it("★ 取材被挡住（没出草稿）⇒ **不计数**（分母不许算空气 ✓）", async () => {
+    mocks.collect.mockResolvedValue({ sources: [], skipped: [], chars: 0, pages: 0, attachments: 0, blocked: "这个平台不提供派生层" });
+    await useAiStore.getState().generateTopic(section, null);
+    expect(useAiStore.getState().wikiStats.generated).toBe(0);
+    expect(localStorage.getItem("shuyonote.ai.wikiStats")).toBeNull();
+  });
+
+  it("★ 取消（stop）⇒ 也不计数（被作废的那次不算一次生成 ✓）", async () => {
+    mocks.collect.mockResolvedValue(collected());
+    let release: (v: { content: string }) => void = () => {};
+    mocks.complete.mockImplementation(() => new Promise((res) => (release = res)));
+
+    const inflight = useAiStore.getState().generateTopic(section, null);
+    useAiStore.getState().stop();
+    release({ content: `${PAGE_REF} 迟到的结论。` });
+    await inflight;
+
+    expect(useAiStore.getState().wikiStats.generated).toBe(0);
+  });
+
+  it("采用 ⇒ 分子 +1，且持久化（重复调用就重复计 —— 一次采用只 +1 由面板防连点保证 ✓）", () => {
+    useAiStore.getState().noteWikiAdopted();
+    expect(useAiStore.getState().wikiStats).toEqual({ generated: 0, adopted: 1 });
+    expect(JSON.parse(localStorage.getItem("shuyonote.ai.wikiStats")!)).toEqual({ generated: 0, adopted: 1 });
+  });
+});

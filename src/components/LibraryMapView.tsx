@@ -28,6 +28,14 @@ export interface LibraryMapViewProps {
   draft?: TopicDraft | null;
   /** 「不采用」：**什么都不写**，只是把草稿清掉 ✓ */
   onDismissDraft?: () => void;
+  /**
+   * 「采用为页面」（第四块）：**唯一**会把草稿写成真页面的一次点击 ✓
+   * ⚠️ 组件自己**仍然不写库**（照第 9 行那条），它只把草稿喊上去；写库在面板那一层
+   *   —— 一次 `createPage`、新页、不覆盖任何已有页 ✓。
+   */
+  onAdoptDraft?: (draft: TopicDraft) => void;
+  /** 正在落库（按钮变「保存中…」并禁用，防止连点两次建出两页 ✓） */
+  adopting?: boolean;
 }
 
 export function LibraryMapView({
@@ -37,6 +45,8 @@ export function LibraryMapView({
   generatingSection = null,
   draft = null,
   onDismissDraft,
+  onAdoptDraft,
+  adopting = false,
 }: LibraryMapViewProps) {
   return (
     <div className="ai-libmap" data-testid="library-map">
@@ -88,6 +98,18 @@ export function LibraryMapView({
             <span className="ai-libmap-draft-badge" data-testid="draft-badge">
               草稿，未落库
             </span>
+            {onAdoptDraft ? (
+              <button
+                type="button"
+                className="ai-libmap-draft-keep"
+                data-testid="draft-adopt"
+                disabled={adopting}
+                onClick={() => onAdoptDraft(draft)}
+                title="新建一页存下这份草稿：只新增，不覆盖任何已有页"
+              >
+                {adopting ? "保存中…" : "采用为页面"}
+              </button>
+            ) : null}
             {onDismissDraft ? (
               <button type="button" className="ai-libmap-draft-drop" data-testid="draft-dismiss" onClick={onDismissDraft}>
                 不采用

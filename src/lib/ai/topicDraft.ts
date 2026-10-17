@@ -17,6 +17,55 @@ import type { MapSection } from "./libraryMap";
 /** 页脚必须出现的串（判据用：每页都要有 ✓）。 */
 export const DRAFT_FOOTER = "派生，非出处";
 
+// ── 第四块（采用／落库）：把草稿折成「新建一页」的输入 ─────────────────────────────
+//
+// ⚠️ **边界（别在这里越界）**：本文件仍然**不落库**（第 8 行那条静态断言还钉着）。
+//    这里只把草稿折成「标题 ＋ HTML ＋ 纯文本」三样，**写库由调用方（面板）显式完成**
+//    —— 一次用户点击、一次新建，**不覆盖任何已有页** ✓。
+//
+// 为什么标题/正文/页脚都要在**这一层**定：判据要能逐字断言"落库那页也带派生标记"——
+// 如果拼接写在组件里，那就只能在渲染级测，测不到真写进去的那一版 ✓。
+
+/** 采用后打的标签：让人一眼看出这页是 AI 派生的（可搜、可批量筛 ✓）。 */
+export const TOPIC_PAGE_TAG = "llm-wiki";
+
+export interface TopicPageInput {
+  title: string;
+  /** 交给 `emailHtmlToLexical` 那种 HTML→Lexical 转换（复用既有那条，不新造格式 ✓） */
+  html: string;
+  /** 纯文本：与 `html` 同源，落库后全文检索用 ✓ */
+  text: string;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * 草稿 ⇒ 「新建一页」的输入。三条**承重**的：
+ *   ① 页脚原样带着（`派生，非出处 ｜ 模型 ｜ 时间`）—— 落库的页也必须自证派生 ✓
+ *   ② 覆盖度原样带着（没读数就是「未知」，**不许**在这一层变成 0 ✓）
+ *   ③ 回链清单不丢（正文里的 `[n]` 已在 `body` 里，这里再单独列一行来源，便于人点）✓
+ */
+export function buildTopicPageInput(draft: TopicDraft): TopicPageInput {
+  const title = (draft.title || "").trim() || "未命名专题";
+  const refsLine = draft.refs.length > 0 ? `来源：${draft.refs.join("、")}` : "来源：（无）";
+  const text = [draft.body, refsLine, draft.coverage, draft.footer].join("\n");
+  const paras = draft.body
+    .split(/\n+/)
+    .map((s) => s.replace(/\r/g, "").trim())
+    .filter(Boolean)
+    .map((p) => `<p>${escapeHtml(p)}</p>`);
+  const html = [
+    ...(paras.length > 0 ? paras : ["<p>材料不足：未知</p>"]),
+    `<p>${escapeHtml(refsLine)}</p>`,
+    `<p>${escapeHtml(draft.coverage)}</p>`,
+    `<p><em>${escapeHtml(draft.footer)}</em></p>`,
+  ].join("");
+  return { title, html, text };
+}
+
+
 /** 选中的材料一条都没有时，正文就写这一句 —— **不许留空**，也不许编内容 ✓ */
 export const NO_MATERIAL_TEXT = "材料不足：未知";
 

@@ -194,3 +194,41 @@ describe("库地图视图 · 第三块（生成这一页）", () => {
     expect(host!.querySelector('[data-testid="topic-draft"]')).toBeNull();
   });
 });
+
+// ── 第四块（采用）：草稿区那颗「采用为页面」 ────────────────────────────────────────
+//
+// 这一颗是**唯一**会把草稿写成真页面的入口，所以判据只钉三件事：
+// ① 没接线就不出现（免得点了没反应）② 点它要把**那份草稿**原样喊上去（不是别的草稿）
+// ③ 落库期间禁用（连点两次会建出两页 ✓）。
+
+describe("库地图视图 · 第四块（采用为页面）", () => {
+  it("给了 onAdoptDraft ⇒ 草稿区有「采用为页面」，点击回调带上**那份草稿**", () => {
+    const d = draftOf();
+    const seen: TopicDraft[] = [];
+    mountWith({ draft: d, onAdoptDraft: (x) => seen.push(x) });
+    const btn = host!.querySelector('[data-testid="draft-adopt"]') as HTMLButtonElement | null;
+    expect(btn).toBeTruthy();
+    expect(btn!.textContent).toContain("采用为页面");
+    flushSync(() => btn!.click());
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(d); // 同一个对象：不许在这里复制/改写草稿 ✓
+  });
+
+  it("没给 onAdoptDraft ⇒ **没有**这颗按钮（不接线就不出现 ✓）", () => {
+    mountWith({ draft: draftOf() });
+    expect(host!.querySelector('[data-testid="draft-adopt"]')).toBeNull();
+  });
+
+  it("★ 落库中（adopting）⇒ 按钮禁用且文案变「保存中…」（防连点建出两页 ✓）", () => {
+    mountWith({ draft: draftOf(), onAdoptDraft: () => {}, adopting: true });
+    const btn = host!.querySelector('[data-testid="draft-adopt"]') as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.textContent).toContain("保存中…");
+  });
+
+  it("「不采用」与「采用」是两颗**不同**的键（别把「清掉草稿」和「存成页面」做成同一个 ✓）", () => {
+    mountWith({ draft: draftOf(), onAdoptDraft: () => {}, onDismissDraft: () => {} });
+    expect(host!.querySelector('[data-testid="draft-adopt"]')).toBeTruthy();
+    expect(host!.querySelector('[data-testid="draft-dismiss"]')).toBeTruthy();
+  });
+});

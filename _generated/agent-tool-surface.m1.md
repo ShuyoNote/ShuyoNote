@@ -5,10 +5,10 @@
 
 | 源 | 值 |
 |---|---|
-| 注册表 sha256 | `7e0c07f9e5d91f91740804a01f403ff4c9243add33bc96f46a3c2acaa31d4375` |
+| 注册表 sha256 | `58a5a87d23b603b3c1abf77ba62d43f31fec2dbb32ca469037628129602b81e1` |
 | `apiVersion` | 1.1.0 |
 | 取用条件 | `ai === true` **且** `kind === "read"` |
-| 条数 | **8** |
+| 条数 | **10** |
 | 生成命令 | `node scripts/gen-agent-tool-surface.mjs --phase m1` |
 
 | id | scope | permission | desc |
@@ -19,5 +19,7 @@
 | files.list | current-space | read:files | 列出页面附件。参数: pageId (可选, 省略=当前打开的页面)。返回文件名/类型/大小。 |
 | files.read | current-space | read:files | 读取某个附件的**派生文本**（抽取结果，**不含原文字节**）。参数: id (必填), offset/limit (可选分页)。返回 {segments, total, truncated, coverage}；**还没抽过 ⇒ segments 空 + total 0**（不是失败，别据此断言文件里没有内容）。`truncated` 说的是「这一页没给全」，而 `coverage` 说的是「**抽取本身**有没有承认没抽全」（§15.10：成功 ≠ 抽全了）：coverage 里每个抽取器一条 `{extractor, coverage}`，`coverage` 是原始 JSON（如 `{"complete":false,"gapIndexes":[2]}`），**空字符串或空数组都表示「未知」，不许读成「完整」**。 |
 | files.search | current-space | read:files | 在已抽取的文件内容里做块级检索（含扫描件/文档正文）。参数: query (必填), limit (可选, 默认 10)。返回 {chunkId, pageId, attId, loc, snippet, score}：pageId/attId 用来回链到原文位置。 |
-| pages.get | current-space | read:pages | 读取单个页面的标题与正文纯文本。参数: id (必填), offset/limit (可选分页，按**字符/Unicode 标量**计数)。**必须看 `chars_total` 与返回长度判断是否读全**：只读了窗口就当整页用，是这类工具最常见的误用。 |
-| pages.search | current-space | read:pages | 在本空间检索页面（关键词匹配；应用内 AI 检索会叠加本地嵌入的语义加分，配了嵌入模型时意思相近的内容也能命中）。参数: q (必填, 关键词/内容描述), limit (可选, 默认 8)。返回匹配页面的 id/title/snippet。 |
+| pages.get | current-space | read:pages | 读取单个页面的标题与正文纯文本（分页，按字符计数；**必须看 chars_total 判断读全没有**）。⚠️ 返回值里**没有块身份**：要把结论锚定到具体段落，另调 blocks_list 拿各块的 blockId，再在笔记里用块引用（这样页面被改/删时引用会显式失效）。参数: id (必填), offset/limit (可选, 默认 6000, 上限 20000)。 |
+| pages.list | current-space | read:pages | 列出本空间页面（id、标题、创建与更新时间），按**最近更新**倒序，不含正文。这是**搜索之外的发现通路**：pages_search 返回空、或不知道该搜什么词时，先调它把本空间最近改过的页面看一遍，再决定读哪一页。参数: limit (可选, 默认 50, 上限 200)。 |
+| pages.search | current-space | read:pages | 在本空间检索页面：关键词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串匹配）。返回 {matched（本次返回条数，受 limit 截断）, results:[{id,title,snippet}], scope:{spaceId,spaceName,pageCount}}；matched=0 时另给 hint —— **空结果只说明「当前这个空间」没命中，不代表别的空间没有**：先用 spaces_list 看清当前空间，或换更短的词再试。 |
+| spaces.list | app | read:pages | 列出所有空间及当前激活空间（切换空间前先看 id/名称）。只读，不改变任何状态。 |

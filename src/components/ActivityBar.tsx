@@ -15,18 +15,18 @@ import { SearchPanel } from "./SearchPanel";
 import { EmailPanel } from "./EmailPanel";
 import { isDesktopPlatform } from "../lib/platform";
 import {
-  PageIcon,
-  FolderIcon,
-  GraphIcon,
-  TimelineIcon,
-  TagIcon,
-  TemplateIcon,
-  SettingsIcon,
-  SidebarIcon,
-  LlmWikiIcon,
-  CloudSyncIcon,
-  MailIcon,
-} from "./icons";
+  RailSidebarIcon,
+  RailNotesIcon,
+  RailSyncIcon,
+  RailMailIcon,
+  RailFolderIcon,
+  RailGraphIcon,
+  RailTimelineIcon,
+  RailTagIcon,
+  RailWikiIcon,
+  RailTemplateIcon,
+  RailSettingsIcon,
+} from "./railIcons";
 
 // 左侧竖条（activity bar）。
 //
@@ -47,7 +47,7 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   //   ⚠️ 因为 owner 要「页面」当第一位 ✓）。⭐ 形态**逐字照抄**本表原来那一颗 ✓
   //   （同一个 `pick("notes")` ✓、同一条高亮 ✓、同一对 `t("nav.notes")` ✓）——
   //   ⛔ 只是"位置变了" ✗，⭐ **不是**"页面这个活动变了" ✓。
-  { id: "files", labelKey: "nav.files", icon: <FolderIcon width={18} height={18} /> },
+  { id: "files", labelKey: "nav.files", icon: <RailFolderIcon /> },
   // ⭐ **2026-10-08 去掉**（owner：「去掉侧边工具栏中系统看板的一级入口图标」✓）：
   //   `{ id: "board", labelKey: "nav.board", icon: <BoardIcon … /> }` 这一条**已删** ✗。
   //   ⚠️ **视图本身没删** —— 「系统看板」（`BoardView`）仍然可达，走**命令面板**那条真路径：
@@ -59,10 +59,10 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   //   ⚠️ 连带影响（**已记**，不是没想到）：`activity` 现在不会再变成 `"board"` 被竖条点亮 ——
   //   从命令面板进看板时**没有图标是亮的**（`isActivity("board")` 仍成立、`Activity` 类型仍含它 ✓，
   //   只是竖条上不再有对应那颗 ⇒ 没有"当前活动"可高亮）。这是"去掉一级入口"的必然结果 ✓。
-  { id: "graph", labelKey: "nav.graph", icon: <GraphIcon width={18} height={18} /> },
-  { id: "timeline", labelKey: "nav.timeline", icon: <TimelineIcon width={18} height={18} /> },
+  { id: "graph", labelKey: "nav.graph", icon: <RailGraphIcon /> },
+  { id: "timeline", labelKey: "nav.timeline", icon: <RailTimelineIcon /> },
   // S4：知识地图（按标签聚类；数据来自 `get_graph` 那**同一条**既有出处 ✓）
-  { id: "map", labelKey: "nav.map", icon: <TagIcon width={18} height={18} /> },
+  { id: "map", labelKey: "nav.map", icon: <RailTagIcon /> },
   // ⚠️ **2026-10-04 并进来**（owner 批的 c-2）：模板中心原来在竖条**底部**是**另一颗独立按钮** ✗ ——
   //   ⭐ 那颗只 `setOpen(true)`、不参与高亮 ✓，与统一体系是两套 ✓。现在它是 `Activity` 的第 7 个值 ✓
   //   ⇒ ⭐ 与上面 6 项**完全同形** ✓（⭐ 同一套 `pick()` ✓ ／ ⭐ 同一套高亮 ✓）。
@@ -75,7 +75,7 @@ const ITEMS: { id: Activity; labelKey: string; icon: JSX.Element }[] = [
   //   而 CI 的移动端验收正好按 `[title="模板中心"]` 找它 ⇒ 直接「找不到元素」、整条门禁 5 秒异常退出 ✗
   //   （2026-10-05 `mobile-layout` 在 dev/main 上红的就是它）。
   //   判据：本机真 Chromium 探针读出来的 title 列表里那一项是 `templateCenter`（不是「模板中心」）。
-  { id: "templates", labelKey: "nav.templateCenter", icon: <TemplateIcon width={18} height={18} /> },
+  { id: "templates", labelKey: "nav.templateCenter", icon: <RailTemplateIcon /> },
 ];
 
 /**
@@ -106,7 +106,7 @@ function LlmWikiButton() {
       aria-label={t("kbMap.wikiEntry")}
       onClick={() => useEditorStore.getState().openSettings("ai")}
     >
-      <LlmWikiIcon width={18} height={18} />
+      <RailWikiIcon />
     </button>
   );
 }
@@ -223,7 +223,7 @@ export function ActivityBar() {
           aria-expanded={sidebarOpen}
           onClick={() => toggleSidebar()}
         >
-          <SidebarIcon width={18} height={18} />
+          <RailSidebarIcon />
         </button>
         {/* ⭐ **2026-10-13（owner 口径：全局功能进左栏 ＋ 「页面」当第一位）** ✗ ——
             ⭐ 这一颗就是 `ITEMS` 里原来的 `notes` ✓（⭐ 渲染**逐字照抄**那颗：同一个 `pick("notes")` ✓、
@@ -236,7 +236,7 @@ export function ActivityBar() {
           aria-current={activity === "notes"}
           onClick={() => pick("notes")}
         >
-          <PageIcon width={18} height={18} />
+          <RailNotesIcon />
         </button>
         {/* 搜索自带触发器（弹层），放在导航组顶部；它不改变侧栏内容，
             所以不是一个「活动」，不参与选中态。
@@ -254,7 +254,7 @@ export function ActivityBar() {
           data-testid="rail-sync"
           onClick={() => setView("sync")}
         >
-          <CloudSyncIcon width={20} height={20} />
+          <RailSyncIcon />
           {typeof syncPeers === "number" && syncPeers > 0 && (
             <span className="sync-badge" aria-label={`本网段发现 ${syncPeers} 台`}>
               {syncPeers}
@@ -274,7 +274,7 @@ export function ActivityBar() {
           data-testid="rail-mail"
           onClick={() => useEmailPanel.getState().openPanel()}
         >
-          <MailIcon width={20} height={20} />
+          <RailMailIcon />
           {typeof mailUnread === "number" && mailUnread > 0 && (
             <span className="sync-badge" aria-label={`${mailUnread} 封未读`}>
               {mailUnread > 99 ? "99+" : mailUnread}
@@ -329,7 +329,7 @@ export function ActivityBar() {
             useEditorStore.getState().openSettings();
           }}
         >
-          <SettingsIcon width={18} height={18} />
+          <RailSettingsIcon />
         </button>
       </div>
     </nav>

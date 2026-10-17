@@ -34,6 +34,9 @@ pub const MCP_CHANNEL_ENABLED: bool = false;
 const SWITCH_ENV: &str = "SHUYONOTE_MCP_SWITCH";
 const TOKEN_FILE_ENV: &str = "SHUYONOTE_MCP_TOKEN_FILE";
 const PORT_FILE_ENV: &str = "SHUYONOTE_MCP_PORT_FILE";
+/// ⭐ 2026-10-18：显式指定桥路径（`SHUYONOTE_MCP_BRIDGE=<index.mjs 绝对路径>`）——
+/// 面板自动填 `args` 时优先用它；给了但文件不存在 ⇒ **忽略**（⛔ 不把坏路径填给用户 ✗）。
+const BRIDGE_ENV: &str = "SHUYONOTE_MCP_BRIDGE";
 /// 只绑回环 ✓（判据第②条同时禁止 `0.0.0.0` 与 `Ipv4Addr::UNSPECIFIED` ✓）。
 const LOOPBACK: &str = "127.0.0.1";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
@@ -709,6 +712,74 @@ pub fn read_token() -> Option<String> {
     parse_token_file(&text).map(|(t, _)| t)
 }
 
+/// ⭐ 2026-10-18（owner：「让程序自动填好 args，省却用户麻烦」）：桥（`tools/shuyonote-mcp/index.mjs`）
+/// 在**本机**的绝对路径 —— 面板拿它把配置片段里的 `"args"` 直接填好，用户不用自己找路径 ✓。
+///
+/// 解析顺序（都要求文件**真的存在**，⛔ 不猜）：
+/// ① 显式覆盖 `SHUYONOTE_MCP_BRIDGE`（给了且是文件 ⇒ 用它）；
+/// ② 从**当前 exe 所在目录**往上最多 8 层找 `<dir>/tools/shuyonote-mcp/index.mjs`
+///    （`pnpm tauri dev` / 仓内构建就跑得到仓库根 ✓）；
+/// ③ 打包后的资源目录 `<resource>/mcp/index.mjs`（由命令层传进来 ✓；
+///    ⭐ 2026-10-18 起**真的打进包**了 —— 三份平台包配置都写了
+///    `"../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"` ⇒ 安装版也能自动填好路径 ✓）。
+fn resolve_bridge_from(start: &std::path::Path, resource_dir: Option<&std::path::Path>) -> Option<PathBuf> {
+    let mut cur = Some(start.to_path_buf());
+    let mut hops = 0;
+    while let Some(dir) = cur {
+        let cand = dir.join("tools").join("shuyonote-mcp").join("index.mjs");
+        if cand.is_file() {
+            return Some(cand);
+        }
+        hops += 1;
+        if hops >= 8 {
+            break;
+        }
+        cur = dir.parent().map(std::path::Path::to_path_buf);
+    }
+    if let Some(res) = resource_dir {
+        let cand = res.join("mcp").join("index.mjs");
+        if cand.is_file() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// 给人看／给客户端配置用的路径：**去掉 Windows 的 `\\?\`（verbatim）前缀**。
+///
+/// 为什么必须有这一步（2026-10-18 装包实测）：Tauri 的 `resource_dir` 是
+/// `std::path::Path::canonicalize` 出来的（为了解软链接 ✓），而 Windows 上 canonicalize
+/// 返回的是**设备路径** `\\?\C:\...` ⇒ 面板把整串填进配置片段：
+///
+/// ```text
+/// "args": ["\\\\?\\C:\\Users\\<你>\\AppData\\Local\\Programs\\ShuyoNote\\mcp\\index.mjs"]
+/// ```
+///
+/// Node 恰好认它（本机实测 bridge 能 `initialize` ✓），但这是"碰巧能跑"：
+/// ① 设备路径不是普通路径 —— 别的 MCP 客户端／脚本未必认；② 用户看到只会以为我们出 bug。
+/// `\\?\UNC\server\share` 要折回 `\\server\share`（网络盘同理 ✓）。
+fn display_path(p: &std::path::Path) -> String {
+    let s = p.display().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => s,
+    }
+}
+
+fn resolve_bridge_path(resource_dir: Option<&std::path::Path>) -> Option<String> {
+    if let Some(v) = std::env::var_os(BRIDGE_ENV) {
+        let p = PathBuf::from(v);
+        if p.is_file() {
+            return Some(display_path(&p));
+        }
+    }
+    let start = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    resolve_bridge_from(&start, resource_dir).map(|p| display_path(&p))
+}
+
 /// 给 GUI／命令用的状态读数 ✓（含令牌全文 —— 本机同一用户 ✓，面板要能"复制给 agent" ✓）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct McpStatus {
@@ -728,6 +799,8 @@ pub struct McpStatus {
     pub config_path: Option<String>,
     pub token_path: Option<String>,
     pub port_path: Option<String>,
+    /// ⭐ 2026-10-18：桥的绝对路径（找得到 ⇒ 面板自动填 `args` ✓；找不到 ⇒ `null` ＋ 面板说清原因 ✓）
+    pub bridge_path: Option<String>,
 }
 
 /// 当前运行的监听（**停得掉** ✓：非阻塞 accept ⇒ 停 = 置标志 ＋ 等线程自己退 ✓）。
@@ -743,8 +816,13 @@ fn current_addr() -> Option<SocketAddr> {
     RUN.lock().ok().and_then(|g| g.as_ref().map(|r| r.addr))
 }
 
-/// 读状态 ✓。
+/// 读状态 ✓（桌面命令走 [`status_with_resources`]；这里给内部调用／测试用 ✓）。
 pub fn status() -> McpStatus {
+    status_with_resources(None)
+}
+
+/// 读状态 ＋ 允许传入**打包资源目录**（`tauri::AppHandle` 那一路 ✓；见 [`resolve_bridge_path`]）。
+pub fn status_with_resources(resource_dir: Option<&std::path::Path>) -> McpStatus {
     let file = read_file_config();
     let (token, granted) = match token_path().and_then(|p| std::fs::read_to_string(p).ok()) {
         Some(text) => match parse_token_file(&text) {
@@ -766,6 +844,7 @@ pub fn status() -> McpStatus {
         config_path: config_path().map(|p| p.display().to_string()),
         token_path: token_path().map(|p| p.display().to_string()),
         port_path: port_path().map(|p| p.display().to_string()),
+        bridge_path: resolve_bridge_path(resource_dir),
     }
 }
 
@@ -898,8 +977,11 @@ pub fn start_if_enabled() -> Option<SocketAddr> {
 // ---- Tauri 命令（GUI 开关那一面）-----------------------------------------------------
 /// 状态（面板显示 ✓）。
 #[tauri::command]
-pub fn mcp_status() -> McpStatus {
-    status()
+pub fn mcp_status(app: tauri::AppHandle) -> McpStatus {
+    use tauri::Manager; // `app.path()` 要这个 trait 在作用域里 ✓
+    // ⭐ 2026-10-18：把打包资源目录也交给解析器（将来桥随包发时直接生效；现在通常是 `None` ✓）
+    let res = app.path().resource_dir().ok();
+    status_with_resources(res.as_deref())
 }
 
 /// 开关（面板切换 ✓）。返回最新状态 ✓。
@@ -1062,6 +1144,106 @@ pub fn mcp_set_level(level: McpLevel) -> Result<McpStatus, String> {
 //   `powershell -ExecutionPolicy Bypass -File scripts\win-cargo-test.ps1 -Filter mcp_channel`
 //   整组读数仍以 Linux(CI/WSL) 为准 ✓。
 // =====================================================================================
+#[cfg(test)]
+mod bridge_path_tests {
+    use super::*;
+
+    /// ⭐ 2026-10-18（owner：「让程序自动填好 args」）：桥路径的解析必须**真的找到文件**才认
+    /// —— ① 从 exe 目录往上有仓库 ⇒ 用仓库里那条；② 没有仓库才退打包资源目录；
+    /// ③ 两处都没有 ⇒ **如实 `None`**（⛔ 不编一个不存在的路径填给用户 ✗）。
+    #[test]
+    fn resolves_bridge_by_walking_up_then_falls_back_to_resource_dir() {
+        let tag = format!(
+            "{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let repo = std::env::temp_dir().join(format!("shuyonote-bridge-repo-{tag}"));
+        let exe_dir = repo.join("src-tauri").join("target").join("debug");
+        let bridge = repo.join("tools").join("shuyonote-mcp").join("index.mjs");
+        std::fs::create_dir_all(bridge.parent().expect("parent")).unwrap();
+        std::fs::write(&bridge, "// bridge\n").unwrap();
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        assert_eq!(
+            resolve_bridge_from(&exe_dir, None).as_deref(),
+            Some(bridge.as_path()),
+            "从 exe 目录往上找仓库里的桥（{exe_dir:?} → {bridge:?}）"
+        );
+
+        // 干净的另一棵树：没有仓库，只有打包资源目录
+        let clean = std::env::temp_dir().join(format!("shuyonote-bridge-res-{tag}"));
+        let res = clean.join("resources");
+        std::fs::create_dir_all(res.join("mcp")).unwrap();
+        std::fs::write(res.join("mcp").join("index.mjs"), "// res\n").unwrap();
+        let no_repo = clean.join("somewhere").join("deeper");
+        std::fs::create_dir_all(&no_repo).unwrap();
+        assert_eq!(
+            resolve_bridge_from(&no_repo, Some(&res)).as_deref(),
+            Some(res.join("mcp").join("index.mjs").as_path()),
+            "没有仓库时退到资源目录（<resource>/mcp/index.mjs）"
+        );
+
+        let empty_res = clean.join("empty-res");
+        std::fs::create_dir_all(&empty_res).unwrap();
+        assert!(
+            resolve_bridge_from(&no_repo, Some(&empty_res)).is_none(),
+            "两处都没有 ⇒ 如实 None（⛔ 不编路径）"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&clean);
+    }
+
+    /// ⭐ 2026-10-18：**桥必须随包发** —— 三份平台包配置里都要有
+    /// `"../tools/shuyonote-mcp/index.mjs": "mcp/index.mjs"`。
+    ///
+    /// 为什么要有这条：`resolve_bridge_from` 的资源分支只是"能找到就用"，**找不到不会红** ——
+    /// 于是打包配置哪天被人删一行，安装版就会永远拿不到 `bridge_path`（面板退回占位文案），
+    /// 而所有既有判据照样是绿的。这就是本仓最忌的那族：**行为悄悄变差、没有信号** ✗。
+    #[test]
+    fn every_platform_bundle_ships_the_bridge() {
+        for (name, text) in [
+            ("windows", include_str!("../tauri.windows.conf.json")),
+            ("linux", include_str!("../tauri.linux.conf.json")),
+            ("macos", include_str!("../tauri.macos.conf.json")),
+        ] {
+            assert!(
+                text.contains("\"../tools/shuyonote-mcp/index.mjs\": \"mcp/index.mjs\""),
+                "{name} 的打包配置没有把桥映射到 mcp/index.mjs（安装版会拿不到 bridge_path）✗"
+            );
+        }
+        // 源文件真的在（`include_str!` 的映射指向它 ✓）
+        let bridge = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tools")
+            .join("shuyonote-mcp")
+            .join("index.mjs");
+        assert!(bridge.is_file(), "桥源文件不在：{bridge:?}");
+    }
+
+    /// ⭐ 2026-10-18（装包实测）：Tauri 的 `resource_dir` 来自 `Path::canonicalize` ⇒ Windows 上是
+    /// `\\?\C:\...` 设备路径。面板把它原样填进配置片段，用户看到的是一串 `\\\\?\\`。
+    /// Node 碰巧认（实测能 initialize），但这不是"对"—— 这里钉死"给人看的路径必须是普通路径"。
+    #[test]
+    fn verbatim_paths_are_shown_as_plain_paths() {
+        assert_eq!(
+            display_path(std::path::Path::new(r"\\?\C:\Users\x\ShuyoNote\mcp\index.mjs")),
+            r"C:\Users\x\ShuyoNote\mcp\index.mjs",
+            "`\\\\?\\C:\\…` 必须折回 `C:\\…`（安装版面板的配置片段就是这条）"
+        );
+        assert_eq!(
+            display_path(std::path::Path::new(r"\\?\UNC\srv\share\index.mjs")),
+            r"\\srv\share\index.mjs",
+            "网络盘：`\\\\?\\UNC\\srv\\share` 必须折回 `\\\\srv\\share`"
+        );
+        assert_eq!(
+            display_path(std::path::Path::new(r"C:\plain\path.mjs")),
+            r"C:\plain\path.mjs",
+            "普通路径**不许**被改动"
+        );
+    }
+}
+
 #[cfg(test)]
 mod switch_tests {
     use super::*;

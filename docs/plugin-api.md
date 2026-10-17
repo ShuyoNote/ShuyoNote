@@ -169,9 +169,9 @@ register({
 - 调用：`api.pages.search(q, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
-- 返回：[{id, title, snippet}]；**插件面（`pages.search` 能力本身）v1 是子串匹配、不做相关度排序** —— 语义加分那条只在应用内 AI 检索路径上（`desc` 里说的那一半）
+- 返回：[{id, title, snippet}]：多词按「全部出现」筛（AND），单词走全文索引（按相关度）、短词走子串；附件里的命中会带「【来自附件】」前缀。**空数组 = 本空间没有命中，不是失败**
 - 参数：
-  - `q`: `string` —— 关键词
+  - `q`: `string` —— 关键词；多个词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串）
   - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
 
 ### `tags.list` — 列出本空间标签

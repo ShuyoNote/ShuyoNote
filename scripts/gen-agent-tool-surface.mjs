@@ -47,7 +47,9 @@ export function renderSurface(registryText, phase) {
   L.push("|---|---|---|---|");
   for (const c of caps) {
     const cell = (v) => (v === undefined || v === null || v === "" ? "—" : String(v).replace(/\|/g, "\\|").replace(/\s+/g, " ").trim());
-    L.push("| " + cell(c.id) + " | " + cell(c.scope) + " | " + cell(c.permission) + " | " + cell(c.desc) + " |");
+    // `mcpDesc` 优先（与 `gen-capabilities.mjs` 的 MCP 清单同一条规则 ✓）：
+    // 这张表就是**外部面**的说明，返回值与插件面不同的能力（目前只有 `pages.search`）必须按外部面写。
+    L.push("| " + cell(c.id) + " | " + cell(c.scope) + " | " + cell(c.permission) + " | " + cell(c.mcpDesc ?? c.desc) + " |");
   }
   L.push("");
   return L.join("\n");

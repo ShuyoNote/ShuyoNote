@@ -1744,34 +1744,68 @@ fn cap_pages_get(id: &str, offset: i64, limit: i64) -> CapResult {
     })
 }
 
+/// `pages.search`：在本空间检索页面。
+///
+/// ⭐ **2026-10-17 改**：这里原来是**第二份**检索实现（一句 `LIKE '%q%'`，整串子串匹配、
+/// 不做分词、不排序、只取正文前 80 字当 snippet）✗ —— 同一条能力在 WebView 那条路上走
+/// `api.search`（多词 AND ＋ 短词 LIKE ＋ FTS ＋ 附件块并集 ＋ 可选向量），两侧**答案不同而都不报错**。
+/// 代价是外部 agent 实测「四次搜索全空」：查 `品牌短剧 拍摄` 时命令面 7 条、这里 0 条。
+/// ⇒ 现在**只留一个引擎**（`search::search_pages_for_capability`），本函数只负责收窄返回形状。
+///
+/// 返回形状**不变**（`[{id,title,snippet}]`）：`api.pages.search(...)` 已被插件当数组用
+/// （`ops-publish-log` / `ops-redline-check` 都是 `var pages = api.pages.search(...) || []`），
+/// 空结果的**范围信息**由 MCP 面在外面包一层信封（`mcp_host::with_search_scope`）。
 fn cap_pages_search(q: &str, limit: i64) -> CapResult {
-    let limit = limit.clamp(1, 100);
-    // v1 用子串匹配（诚实标注：不做相关度排序，FTS 复用留后续）。
-    let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-    let pattern = format!("%{escaped}%");
+    let limit = limit.clamp(1, 100) as usize;
     with_read_conn(|c| {
-        let mut stmt = c
-            .prepare(
-                "SELECT id, title, content_text FROM pages
-                 WHERE deleted_at IS NULL
-                   AND (title LIKE ?1 ESCAPE '\\' OR content_text LIKE ?1 ESCAPE '\\')
-                 ORDER BY updated_at DESC LIMIT ?2",
+        let rows = crate::search::search_pages_for_capability(c, q, limit)?;
+        Ok(serde_json::Value::Array(
+            rows.into_iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "title": r.title,
+                        "snippet": r.snippet,
+                    })
+                })
+                .collect(),
+        ))
+    })
+}
+
+/// 当前检索**作用域**的快照：空间 id／名字／本空间页面数。
+///
+/// 为什么宿主得给：`pages.search` 的返回值是**裸数组**（插件面契约），而外部 agent 拿到 `[]`
+/// 时**分不清**「这个空间里没有」与「我搜错空间了」——它连自己搜的是哪个空间都不知道。
+/// MCP 面用它包信封（`mcp_host::with_search_scope`），插件面仍只看见数组。
+pub(crate) fn space_scope_snapshot() -> Result<serde_json::Value, String> {
+    with_read_conn(|c| {
+        // 活动空间 id：先读 meta 那份指针；读不到（测试夹具/半初始化）就用**这条线程正在读的那个空间**
+        // —— 两者在生产里是同一个值，但夹具里可能只装了后者 ⇒ 不让范围变成空串 ✓
+        let active = crate::workspaces::active_workspace_id(c)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| RUN_STATE.with(|s| s.borrow().read_space.clone()))
+            .unwrap_or_default();
+        let name: Option<String> = c
+            .query_row(
+                "SELECT name FROM meta.workspaces WHERE id = ?1",
+                params![&active],
+                |r| r.get(0),
+            )
+            .ok();
+        let page_count: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
             )
             .map_err(|e| format!("db_error: {e}"))?;
-        let rows = stmt
-            .query_map(params![pattern, limit], |r| {
-                let text: String = r.get::<_, String>(2)?;
-                let snippet: String = text.chars().take(80).collect();
-                Ok(serde_json::json!({
-                    "id": r.get::<_, String>(0)?,
-                    "title": r.get::<_, String>(1)?,
-                    "snippet": snippet,
-                }))
-            })
-            .map_err(|e| format!("db_error: {e}"))?
-            .filter_map(|r| r.ok())
-            .collect();
-        Ok(serde_json::Value::Array(rows))
+        Ok(serde_json::json!({
+            "spaceId": active,
+            "spaceName": name.unwrap_or_default(),
+            "pageCount": page_count,
+        }))
     })
 }
 
@@ -2036,6 +2070,18 @@ fn cap_pages_update(
         Some(t) => format!("更新页面 {id}（整页替换，标题改为「{t}」）"),
         None => format!("更新页面 {id}（整页替换）"),
     };
+    // ⭐ 2026-10-18：把**改前读数**随草稿交出去 —— 确认框要能让用户看见「原文 N 字 → 新文 M 字」。
+    //   为什么在后端取：渲染层不该去摸正文列（`check-doc-content-access` 只许减不许多）；
+    //   这里走的是唯一读出口 `doc_content::read`（不直接写 SQL）✓。
+    //   读不到（页不存在 / 空间锁定）⇒ `null`，**不编一个 0**（前端会如实显示"读不到原文"）。
+    let before_chars: Option<usize> = with_read_conn(|c| {
+        Ok(crate::doc_content::read(c, id)
+            .ok()
+            .flatten()
+            .map(|d| d.text.chars().count()))
+    })
+    .ok()
+    .flatten();
     push_draft(
         format!("update_page:{id}"),
         summary.clone(),
@@ -2045,6 +2091,7 @@ fn cap_pages_update(
             "title": new_title,
             "markdown": md,
             "plain": plain,
+            "beforeChars": before_chars,
         }),
     );
     Ok(serde_json::json!({ "drafted": true, "summary": summary }))
@@ -7533,6 +7580,19 @@ register({ id: "s.run", title: "结构化", run: function () {
         std::fs::create_dir_all(crate::db::spaces_dir(&dir)).unwrap();
         let space = "s1".to_string();
         {
+            // ⭐ 2026-10-18：**meta.db 也要建好并带上这行** —— 检索 SQL（`search_in_conn` 的三条分支）
+            // 都会 `JOIN meta.workspaces` 取空间名；`open_space_conn_at` 只 attach、不建 meta 的表
+            // ⇒ 不补这行，`pages.search` 会以 `no such table: meta.workspaces` 失败（本机实测 ✓）。
+            let m = crate::db::open_meta_conn_at(&dir).unwrap();
+            let now = now_ms();
+            m.execute(
+                "INSERT OR IGNORE INTO workspaces (id, name, created_at, updated_at)
+                 VALUES (?1,'测试空间',?2,?2)",
+                params![&space, now],
+            )
+            .unwrap();
+        }
+        {
             let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
             let now = now_ms();
             c.execute(
@@ -7765,6 +7825,67 @@ register({ id: "s.run", title: "结构化", run: function () {
             call(&st, "pages.get", r#"{"id":"nope"}"#).unwrap().is_null(),
             "不存在的页面仍然是 null"
         );
+    }
+
+    /// `pages.search`（2026-10-17）：能力面必须与命令面**同一个引擎**。
+    ///
+    /// 挡的是哪次现场：v1 是整串 `LIKE '%q%'` ⇒ 调用方传**多个词**时（`品牌短剧 拍摄`），
+    /// 哪怕库里命中一大堆也**必然 0 条**（外部 agent 实测「四次搜索全空」的直接原因之一）。
+    /// 这条判据同时钉三件事：多词命中 ／ 单词仍命中 ／ **空查询不是通配符**。
+    #[test]
+    fn pages_search_shares_the_in_app_engine_instead_of_a_bare_substring() {
+        let (space, dir) = seed_space("search-engine");
+        {
+            // `seed_space` 已经把 `meta.workspaces` 那行补好了（检索 SQL 要 JOIN 它 ✓）
+            let c = crate::db::open_space_conn_at(&space, &dir).unwrap();
+            let now = now_ms();
+            c.execute(
+                "INSERT INTO pages (id, workspace_id, title, content_json, content_text, kind, created_at, updated_at)
+                 VALUES ('p3','s1','短剧方案','{}','品牌短剧的拍摄方案与分镜','page',?1,?1)",
+                params![now + 2],
+            )
+            .unwrap();
+            crate::search::sync_fts(&c, "p3", "短剧方案", "品牌短剧的拍摄方案与分镜").unwrap();
+        }
+        let st = state_for_space(&space, &dir);
+
+        // ① 多词：库里**没有**「品牌短剧 拍摄」这个连续串 ⇒ v1 必 0；命令面口径（多词 AND）应命中
+        let hits = call(&st, "pages.search", r#"{"q":"品牌短剧 拍摄"}"#).unwrap();
+        assert_eq!(
+            hits.as_array().unwrap().len(),
+            1,
+            "多词查询必须命中（与应用内 search 同口径）：{hits}"
+        );
+        assert_eq!(hits[0]["id"], "p3");
+
+        // ② 单词（≥3 字）仍命中（FTS 那条路；索引没跟上时还有子串兜底）
+        let one = call(&st, "pages.search", r#"{"q":"品牌短剧"}"#).unwrap();
+        assert_eq!(one.as_array().unwrap().len(), 1, "{one}");
+
+        // ③ 空查询**不是通配符**：v1 的 `%%` 会把整个空间倒给调用方
+        let all = call(&st, "pages.search", r#"{"q":""}"#).unwrap();
+        assert_eq!(all.as_array().unwrap().len(), 0, "空查询不许当通配符：{all}");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `pages.update` 的草稿必须带**改前字数**（确认框要显示「原文 N 字 → 新文 M 字」）。
+    /// 判据：p1 的正文是「本周进展与下周计划」（9 字）⇒ 草稿 payload 的 `beforeChars` 必须是 9。
+    /// ⚠️ 读数由**后端**给：渲染层不去读正文列（`check-doc-content-access` 只许减不许多）。
+    #[test]
+    fn pages_update_draft_carries_before_chars() {
+        let (space, dir) = seed_space("update-before");
+        let st = state_for_space(&space, &dir);
+        let (out, drafts) =
+            with_fresh_drafts(|| call(&st, "pages.update", r#"{"id":"p1","content":"新正文"}"#));
+        assert!(out.is_ok(), "草稿应当生成成功：{out:?}");
+        assert_eq!(drafts.len(), 1, "应当产出一条草稿");
+        assert_eq!(drafts[0].payload["kind"], "update_page");
+        assert_eq!(
+            drafts[0].payload["beforeChars"], 9,
+            "改前字数必须随草稿给（否则确认框只能盲签）"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -9916,3 +10037,4 @@ register({ id: "s.run", title: "结构化", run: function () {
         unpoint_cap_search(&dir);
     }
 }
+

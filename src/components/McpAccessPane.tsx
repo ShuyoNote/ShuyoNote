@@ -50,7 +50,7 @@ export function McpAccessPane() {
     ["off", "不接", "关掉本机通道：外部请求立刻被拒，之前那枚令牌同时失效。既不读也不写。"],
     ["read", "只读", "可以读笔记；请求新建页面或追加内容会被明确拒绝。"],
     ["write_confirm", "可写（每次确认）", "外部改动先变成一条待你确认的改动，你点确定才会写入。"],
-    ["write_auto", "可写（免确认）", "外部改动直接写入；每一次写都会留一行审计。"],
+    ["write_auto", "可写（免确认）", "外部改动直接写入；每一次写都会留一行审计。整页替换仍会先要求你确认。"],
   ];
   const [showToken, setShowToken] = useState(false);
   const level: McpStatus["level"] = st?.level ?? "off";
@@ -96,22 +96,30 @@ export function McpAccessPane() {
     }
   };
 
-  // 给 agent 的配置片段：**路径取自后端读数** ✓（界面不猜路径 ✗）；桥的路径由用户/README 指 ✓
+  // 给 agent 的配置片段：**路径取自后端读数** ✓（界面不猜路径 ✗）。
+  // ⭐ 2026-10-18（owner：「让程序自动填好 args，省却用户麻烦」）：
+  //   `args` 里的桥路径**不再让用户自己找** —— 后端能定位到就填绝对路径（`bridge_path` ✓），
+  //   定位不到才退回占位文案（并说明可以设 `SHUYONOTE_MCP_BRIDGE` ✓）。
+  //   ⚠️ 同时把整段改成 `JSON.stringify`：原来是用手写字符串拼的，**Windows 路径里的反斜杠**
+  //   会拼出非法 JSON（`C:\repo` 里的 `\r` 会被转义成回车 ✗）⇒ 这就是"自动填了也粘不过去"的坑 ✓。
+  const bridgePath = st?.bridge_path ?? null;
   const snippet = st
-    ? [
-        "{",
-        '  "mcpServers": {',
-        '    "shuyonote": {',
-        '      "command": "node",',
-        '      "args": ["<桥的路径：本仓 tools/shuyonote-mcp/index.mjs>"],',
-        '      "env": {',
-        `        "SHUYONOTE_MCP_TOKEN_FILE": "${st.token_path ?? ""}",`,
-        `        "SHUYONOTE_MCP_PORT_FILE": "${st.port_path ?? ""}"`,
-        "      }",
-        "    }",
-        "  }",
-        "}",
-      ].join("\n")
+    ? JSON.stringify(
+        {
+          mcpServers: {
+            shuyonote: {
+              command: "node",
+              args: [bridgePath ?? "<桥的路径：<本仓>/tools/shuyonote-mcp/index.mjs>"],
+              env: {
+                SHUYONOTE_MCP_TOKEN_FILE: st.token_path ?? "",
+                SHUYONOTE_MCP_PORT_FILE: st.port_path ?? "",
+              },
+            },
+          },
+        },
+        null,
+        2,
+      )
     : "";
 
   return (
@@ -159,6 +167,12 @@ export function McpAccessPane() {
           <b>读</b>：列／搜页面、看块与反链、读附件。<b>提改动</b>：新建页面或追加内容 —— 默认要你确认；
           免确认档直接写入，但每次写都留一行审计。「审计」里看得见每一次调用：谁 · 何时 · 调了什么 · 成败；
           权限与插件同一处。
+        </p>
+        <p className="set-hint">
+          {/* ⭐ 2026-10-18：把「数据去哪儿」说准 —— 原来只说「只在本机」，容易被读成
+              「内容没出过这台机器」。存储在本机 ≠ 内容没出去：外部 AI 读到什么由它决定，读到的正文会进那个 AI 的服务。 */}
+          <b>数据去哪儿</b>：笔记存在本机，ShuyoNote 自己不上传。但外部 AI 读到什么由它自己决定 ——
+          读到的正文会进入那个 AI 的服务（它若是云端服务商，这部分内容就离开了本机）。
         </p>
       </section>
 
@@ -221,9 +235,17 @@ export function McpAccessPane() {
       <section className="set-section">
         <div className="set-section-title">给 AI 的配置</div>
         <p className="set-hint">
-          把下面这段粘进 AI 客户端的 MCP 配置即可。桥在仓库里
-          （<code>tools/shuyonote-mcp/index.mjs</code>）—— 把 <code>args</code> 换成你机器上那个路径；
-          两个环境变量指的就是上面那两个文件。
+          把下面这段粘进 AI 客户端的 MCP 配置即可。
+          {bridgePath ? (
+            <>
+              桥的路径已<b>自动填好</b>（本机：<code>{bridgePath}</code>）；两个环境变量指的就是上面那两个文件。
+            </>
+          ) : (
+            <>
+              桥在仓库里（<code>tools/shuyonote-mcp/index.mjs</code>）—— 没找到本机路径：把{' '}
+              <code>args</code> 换成你机器上那个（或设 <code>SHUYONOTE_MCP_BRIDGE</code> 指过去）。
+            </>
+          )}
         </p>
         <pre className="mcp-access-snippet">{snippet}</pre>
         <div className="set-actions">
