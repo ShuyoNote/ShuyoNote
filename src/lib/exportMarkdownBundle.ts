@@ -169,6 +169,11 @@ export interface PreparedPage {
   srcToHash: Map<string, { hash: string; mime: string }>;
   /** ⭐ 2026-10-17：页面树里的父页 id（`null`／缺省 ⇒ 顶层）；只用于 zip 内的**目录** ✓。 */
   parentId?: string | null;
+  /**
+   * ⭐ 2026-10-18：页面类型，**只认 `"folder"`** ✓ —— 文件夹节点不产出自己的 `.md`，
+   * 但仍是子页的目录层级（见 [`treePaths`]）。
+   */
+  kind?: string | null;
   /** 转换失败的原因（有值 ⇒ 这一页不进 zip，但**要在返回消息里如实说**）。 */
   error?: string;
 }
@@ -186,15 +191,17 @@ function messageOf(e: unknown): string {
 export function preparePages(pages: readonly MarkdownPageInput[]): PreparedPage[] {
   return pages.map((page) => {
     const srcToHash = new Map<string, { hash: string; mime: string }>();
+    // ⭐ 2026-10-18：`kind` 原样带过来（只有 `treePaths` / `planBundle` 认 `"folder"` ✓）
+    const carry = { parentId: page.parentId ?? null, kind: page.kind ?? null };
     try {
       const markdown = pageContentToMarkdown(page.docJson, (hash, mime, src) => {
         if (hash && src) srcToHash.set(src, { hash, mime: mime || "" });
         return ""; // 空串 ＝ 保持 `__src`（见 `exportMarkdown.ts::transformersWithImageResolver`）
       });
-      return { id: page.id, title: page.title || "", markdown, srcToHash, parentId: page.parentId ?? null };
+      return { id: page.id, title: page.title || "", markdown, srcToHash, ...carry };
     } catch (e) {
       // 这一页转换不了（正文 JSON 坏了）⇒ 跳过它，但账要留着（返回消息里报数）
-      return { id: page.id, title: page.title || "", markdown: "", srcToHash, parentId: page.parentId ?? null, error: messageOf(e) };
+      return { id: page.id, title: page.title || "", markdown: "", srcToHash, ...carry, error: messageOf(e) };
     }
   });
 }
@@ -230,6 +237,10 @@ export function referencedHashes(prepared: readonly PreparedPage[]): string[] {
  * · 同名兄弟 ⇒ **后出现的**那份加 `-<id 前 6 位>` ✓（与文件重名同一策略 ✓）；
  * · 父**不在这一轮清单里**、或父链**成环** ⇒ 当**顶层** ✓（⛔ 不猜、不造空目录 ✗）；
  * · 子页放进**与父页同名的目录**（Obsidian folder-note 惯例 ✓：`父.md` ＋ `父/子.md`）；
+ *   ⭐ 2026-10-18：**文件夹节点（`kind === "folder"`）自己不产出 `.md`** ✓ —— 它只是一层目录，
+ *   子页落在 `文件夹/子.md`（owner 报的缺口：空间里的目录与子页原来一起被摊成平铺 ✗）。
+ *   文件夹下属的空目录**不写 zip 条目**（zip 里造空目录对"带走内容"没有意义 ✓）；
+ *   数据库节点（`kind === "database"`）**照旧出 `.md`** ✓（它有正文）。
  * · 名字仍走 `safeEntryName` ✓（清理 ＋ 防 `..` ✓）。
  */
 export function treePaths(prepared: readonly PreparedPage[]): Map<string, string> {
@@ -277,8 +288,10 @@ export function treePaths(prepared: readonly PreparedPage[]): Map<string, string
       let name = base;
       if (used.has(name)) name = safeEntryName(`${base}-${p.id.slice(0, 6)}`, p.id);
       used.add(name);
-      paths.set(p.id, dir ? `${dir}/${name}.md` : `${name}.md`);
-      walk(p.id, dir ? `${dir}/${name}` : name); // 子页进同名目录 ✓
+      // ⭐ 2026-10-18：文件夹节点**不产出自己的 `.md`** ✓ —— 只把它当一层目录往下走
+      //   （`paths` 里没有它的条目；`planBundle` 也据此不再给它兜底造一个文件 ✓）。
+      if (p.kind !== "folder") paths.set(p.id, dir ? `${dir}/${name}.md` : `${name}.md`);
+      walk(p.id, dir ? `${dir}/${name}` : name); // 子页进同名目录 ✓（文件夹也一样）
     }
   };
   walk(null, "");
@@ -341,6 +354,9 @@ export function planBundle(
       skipped += 1;
       continue;
     }
+    // ⭐ 2026-10-18：文件夹节点**没有正文可导** ⇒ 不产出 `.md`（它在 `treePaths` 里只是目录层 ✓）。
+    //   ⛔ 不算 `skipped`（那不是"转换失败"，别在返回消息里报成失败 ✗）。
+    if (p.kind === "folder") continue;
     let md = p.markdown;
 
     // ① 这一页真正引用到的 hash（节点指纹 ＋ 字面量，去重）
@@ -582,6 +598,11 @@ function bundleMessage(title: string, path: string, r: BundleResult): string {
  */
 export async function exportPageBundleToZip(page: MarkdownPageInput): Promise<string> {
   const title = page.title || "未命名";
+  // ⭐ 2026-10-18：文件夹节点没有正文（它只是目录层，见 `treePaths`）⇒ **一个字节都不写**，
+  //   也⛔ 不产出一个"0 页的空 zip"假装成功 ✗。
+  if (page.kind === "folder") {
+    return `「${title}」是文件夹，没有正文可导出 —— 要整棵子树请用「导出本空间为 Markdown ＋ 附件」（这次没有写文件）`;
+  }
   const path = await platform.dialog.save({
     title: "导出 Markdown ＋ 附件（zip）",
     defaultPath: `${sanitizeName(page.title || page.id)}.zip`,
@@ -613,7 +634,14 @@ export async function exportWorkspaceBundleToZip(): Promise<string> {
       const page = await api.getPage(m.id);
       // 正文经 `docContent.ts` 那一层取 ✓（⛔ 不在这里写存储列名 ✗ —— 门禁只减不增）
       // ⭐ 2026-10-17：带上 `parent_id` ⇒ zip 内按页面树建目录 ✓（`PageMeta.parent_id` ✓）
-      pages.push({ id: page.id, title: page.title, docJson: docJsonOfPage(page), parentId: m.parent_id ?? null });
+      // ⭐ 2026-10-18：带上 `kind` ⇒ 文件夹节点只作目录、不出 `.md` ✓（`PageMeta.kind` ✓）
+      pages.push({
+        id: page.id,
+        title: page.title,
+        docJson: docJsonOfPage(page),
+        parentId: m.parent_id ?? null,
+        kind: m.kind,
+      });
     } catch {
       unreadable += 1; // 单页读不出来 ⇒ 跳过，但**不假装它不存在**（下面报数）
     }

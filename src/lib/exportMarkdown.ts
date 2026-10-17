@@ -272,6 +272,14 @@ export type MarkdownPageInput = {
    * （那两条保持原样：一条单文件、一条平铺 ✓）。⛔ 缺省不猜父页 ✗。
    */
   parentId?: string | null;
+  /**
+   * ⭐ 2026-10-18：页面类型（`"page"` / `"database"` / `"folder"`；缺省 ＝ 不知道 ⇒ 按普通页处理 ✓）。
+   *
+   * ⚠️ 只有 `exportMarkdownBundle.ts` 读它，且**只认 `"folder"` 这一个值** ✓：
+   * 文件夹节点在 zip 里**不产出自己的 `.md`**，但它仍然是子页的目录层级（否则子页会被摊平到根 ✗）。
+   * `"database"` 照旧出 `.md` ✓（数据库页有正文）。⛔ 不在这里判别的 kind ✗。
+   */
+  kind?: string;
 };
 
 /**
