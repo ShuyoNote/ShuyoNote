@@ -16,11 +16,12 @@ export interface AiCapabilityMeta {
 export const AI_TOOL_META: AiCapabilityMeta[] = [
   {
     id: "pages.list",
-    description: "列出本空间页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200)。",
+    description: "列出页面（id / 标题 / 创建时间 / 更新时间），按更新时间倒序；不含正文。默认本空间；可用 spaceId 指定别的空间（需「只读（全部空间）」档）。**搜索之外的发现通路**：不知道关键词、或检索返回空时，先用它看这个空间里有什么。参数: limit (可选, 默认 50, 上限 200), spaceId (可选)。",
     argsSchema: {
       type: "object",
       properties: {
       "limit": { type: "number" },
+      "spaceId": { type: "string" },
       },
       required: [],
     },
@@ -42,11 +43,12 @@ export const AI_TOOL_META: AiCapabilityMeta[] = [
   },
   {
     id: "pages.search",
-    description: "在本空间检索页面：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8)。返回 [{id,title,snippet}]；**空数组 = 本空间没有命中，不是失败**。",
+    description: "在本空间检索页面（可用 spaceId 指定别的空间，需「只读（全部空间）」档）：关键词用空格分隔 ⇒ 全部出现才算命中（与应用内搜索同一个引擎，含正文与附件抽取文本）。参数: q (必填), limit (可选, 默认 8), spaceId (可选)。返回 [{id,title,snippet}]；**空数组 = 该空间没有命中，不是失败**。",
     argsSchema: {
       type: "object",
       properties: {
       "q": { type: "string" },
+      "spaceId": { type: "string" },
       "limit": { type: "number" },
       },
       required: ["q"],

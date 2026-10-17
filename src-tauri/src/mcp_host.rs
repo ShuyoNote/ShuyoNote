@@ -207,11 +207,42 @@ fn with_search_scope(
     };
     match items {
         Some(items) => {
-            let hint = long_cjk_retry_hint(args_json);
-            Ok(search_envelope(items, plugins::space_scope_snapshot(), hint.as_deref()).to_string())
+            let target = target_space_id(args_json);
+            let mut hints: Vec<String> = Vec::new();
+            // 没指定空间时，才提"可以带 spaceId 直接搜别的空间"（否则等于劝它改条件 ✓）
+            if target.is_none() {
+                hints.push(
+                    "若目标在别的空间、且已获「只读（全部空间）」授权，可直接用 spaceId 参数搜那个空间\
+                     （不会改变你界面上的活动空间）。"
+                        .to_string(),
+                );
+            }
+            if let Some(h) = long_cjk_retry_hint(args_json) {
+                hints.push(h);
+            }
+            let hint = if hints.is_empty() { None } else { Some(hints.join("\n")) };
+            Ok(search_envelope(
+                items,
+                plugins::space_scope_snapshot_of(target.as_deref()),
+                hint.as_deref(),
+            )
+            .to_string())
         }
         None => out,
     }
+}
+
+/// 从调用参数里取 `spaceId`（空串当没给 ✓）。**只在 pages.search / pages.list 上有意义**。
+pub(crate) fn target_space_id(args_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(args_json)
+        .ok()
+        .and_then(|v| {
+            v.get("spaceId")
+                .and_then(|x| x.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
 }
 
 /// 中文**整句**查询的补救提示（2026-10-18）。

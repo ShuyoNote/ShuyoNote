@@ -297,16 +297,22 @@ mod tests {
     ///
     /// 变异：让「可写（每次确认）」把 `allow_write` 置真 ⇒ **本表必红** ✓（那就是"没问就写" ✗）。
     #[test]
-    fn the_four_levels_map_to_exactly_three_fields() {
+    fn the_five_levels_map_to_exactly_three_fields() {
         let reads = default_read_scopes();
         let with_write = {
             let mut v = reads.clone();
             v.push(WRITE_SCOPE.to_string());
             v
         };
+        let with_all = {
+            let mut v = reads.clone();
+            v.push(READ_ALL_SCOPE.to_string());
+            v
+        };
         let table = [
             (McpLevel::Off, false, reads.clone(), false),
             (McpLevel::Read, true, reads.clone(), false),
+            (McpLevel::ReadAll, true, with_all.clone(), false),
             (McpLevel::WriteConfirm, true, with_write.clone(), false),
             (McpLevel::WriteAuto, true, with_write.clone(), true),
         ];
@@ -319,8 +325,14 @@ mod tests {
         let (_, g, _) = level_to_config(McpLevel::WriteAuto, &["read:pages".into(), "delete:everything".into()]);
         assert!(!g.iter().any(|s| s == "delete:everything"), "授权面不许被放大 ✗");
         assert_eq!(g.len(), 4, "只该是读三项 ＋ write:pages ✓");
+        // ⭐ 跨空间只读：给了就只在 ReadAll 那一档；换到别的读档必须**收回**（⛔ 不靠"以前给过"留着 ✗）
+        let (_, g_all, _) = level_to_config(McpLevel::Read, &with_all);
+        assert!(!g_all.iter().any(|s| s == READ_ALL_SCOPE), "换回「只读」必须收回 read:all-spaces");
+        let (_, g_w, _) = level_to_config(McpLevel::WriteAuto, &with_all);
+        assert!(!g_w.iter().any(|s| s == READ_ALL_SCOPE), "可写档不许顺带保留跨空间读（它不在那一档的授权面里）");
         assert_eq!(level_of(false, &with_write, true), McpLevel::Off);
         assert_eq!(level_of(true, &reads, false), McpLevel::Read);
+        assert_eq!(level_of(true, &with_all, false), McpLevel::ReadAll);
         assert_eq!(level_of(true, &with_write, false), McpLevel::WriteConfirm);
         assert_eq!(level_of(true, &with_write, true), McpLevel::WriteAuto);
     }
@@ -614,6 +626,16 @@ pub fn set_allow_write(on: bool) -> Result<McpStatus, String> {
 /// ⚠️ 在此之前**全仓没有任何地方把它加进 `granted`** ✗ ⇒ 面板那个「免确认写」开关是个**空开关** ✓
 /// （打开也只影响"草稿要不要自动落库" ✓，而它前面那道**授权门从来没开过** ✗）。
 pub(crate) const WRITE_SCOPE: &str = "write:pages";
+
+/// ⭐ **2026-10-18**：**跨空间只读**那一条 scope —— 只有面板的「只读（全部空间）」档会给它 ✓。
+///
+/// 为什么不是注册表里的 `permission`：注册表那条门禁要求"每条权限至少被一条能力用到"，
+/// 而它是**同一批能力上的附加条件**（`pages.search` / `pages.list` 的 `spaceId` 参数），
+/// 不是某条能力的门槛 ⇒ 放进注册表会成为"死权限" ✗。它是**令牌上的一个 scope** ✓：
+/// 派发时按能力查 `read:pages`，参数要跨空间时再查这一条（`plugins::can_read_other_spaces` ✓）。
+///
+/// ⚠️ 默认**不给** ✓；插件 manifest **声明不了**它（不在注册表里）⇒ 插件面永远跨不了空间 ✓。
+pub(crate) const READ_ALL_SCOPE: &str = "read:all-spaces";
 
 /// 默认的**读**三项 ✓ —— 与 `FileConfig::default()` 同一份口径 ✓（只读是 M1 的边界 ✓）。
 pub(crate) fn default_read_scopes() -> Vec<String> {
@@ -1034,15 +1056,21 @@ pub fn mcp_log_apply_result(line: String) -> Result<(), String> {
     std::fs::write(&path, old).map_err(|e| format!("写 apply.log 失败：{e}"))
 }
 
-/// ⭐ **R152（owner 2026-10-08 选 A）**：面板那一档 —— **四档** ✓，它是 `enabled`／`granted`／`allow_write`
-/// 三个底层字段的**唯一推导源** ✓（⛔ 不再让用户分别拨三个开关 ✗）。
+/// ⭐ **R152（owner 2026-10-08 选 A）**：面板那一档 —— **五档** ✓（2026-10-18 加了「只读（全部空间）」），
+/// 它是 `enabled`／`granted`／`allow_write` 三个底层字段的**唯一推导源** ✓（⛔ 不再让用户分别拨开关 ✗）。
 ///
 /// ## 为什么合成一档（结构问题，不是审美 ✗）
 ///
 /// 原先那三个开关**不是一个正交集合** ✗：②「免确认」与③「授权写入」**不独立** ✓ ——
 /// ③ 关着 ⇒ 根本没有写工具 ⇒ ② 打开也**毫无作用** ✗（就是 2026-10-08 修掉的那个"空开关" ✓）；
-/// ① 关着时 ②③ 都是**死 UI** ✗。⇒ **真状态只有 4 个** ✓，却用 3 个布尔（8 种）表达 ⇒
+/// ① 关着时 ②③ 都是**死 UI** ✗。⇒ 真状态只有几档 ✓，却用 3 个布尔（8 种）表达 ⇒
 /// 一半组合是死的或骗人的 ✗，而面板得用**一整段话**去解释两个开关的关系 ✗。
+///
+/// ## 为什么加 `ReadAll` 而不是一个独立开关（2026-10-18）
+///
+/// "能不能跨空间读"与"能不能写"是两件事，但它和「免确认」不一样：**它不与写耦合** ✓。
+/// 若做成独立布尔 ⇒ 又回到"两个开关的组合谁先谁后"的老问题 ✗。放进档位表后：
+/// 选了「只读（全部空间）」⇒ 只有读三项 ＋ `read:all-spaces` ✓，`write:pages` **一定不在** ✓。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum McpLevel {
@@ -1050,6 +1078,9 @@ pub enum McpLevel {
     Off,
     /// 只读：能读、**写能力会被明确拒** ✓（`permission_denied`）。
     Read,
+    /// 只读（全部空间）：读三项 ＋ `read:all-spaces` ✓ —— 检索/列表可带 `spaceId` 读别的空间，
+    /// 仍然**不能写** ✓；`spaces_switch` 也不在（它要 `write:pages` ✓）⇒ **不改用户的活动空间** ✓。
+    ReadAll,
     /// 可写、但**每次要人确认** ✓（草稿进"待确认"队列）。
     WriteConfirm,
     /// 可写、**免确认** ✓（直接落库；⚠️ 每一次写仍留一行审计 ✓）。
@@ -1060,19 +1091,29 @@ pub enum McpLevel {
 ///
 /// 三条口径（都承重 ✓）：
 /// · **只读三项永远在** ✓（任何档都不拿读换写 ✗）；
-/// · **`granted` 只会是「读三项 ＋ 可选 `write:pages`」** ✓ —— 授权面**不许更大** ✗（MCP 面就两条增量能力 ✓）；
+/// · **`granted` 只会是「读三项 ＋ 可选 `read:all-spaces` ＋ 可选 `write:pages`」** ✓
+///   —— 授权面**不许更大** ✗（MCP 面就这几条增量能力 ✓）；
 /// · `base` 里**认识**的项保留 ✓（向前兼容 ✓），⛔ 但不认识的 scope 一律**不放行** ✗。
 pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<String>, bool) {
     let reads = default_read_scopes();
     let mut granted: Vec<String> = base
         .iter()
-        .filter(|s| reads.contains(s) || s.as_str() == WRITE_SCOPE)
+        .filter(|s| reads.contains(s) || s.as_str() == WRITE_SCOPE || s.as_str() == READ_ALL_SCOPE)
         .cloned()
         .collect();
     for r in &reads {
         if !granted.contains(r) {
             granted.push(r.clone());
         }
+    }
+    // 跨空间只读：只有 ReadAll 给；其余档一律**收回**（⛔ 不靠"以前给过"留着 ✗）
+    let all = READ_ALL_SCOPE.to_string();
+    if level == McpLevel::ReadAll {
+        if !granted.contains(&all) {
+            granted.push(all);
+        }
+    } else {
+        granted.retain(|s| s != &all);
     }
     let wants_write = matches!(level, McpLevel::WriteConfirm | McpLevel::WriteAuto);
     let w = WRITE_SCOPE.to_string();
@@ -1086,6 +1127,7 @@ pub(crate) fn level_to_config(level: McpLevel, base: &[String]) -> (bool, Vec<St
     match level {
         McpLevel::Off => (false, granted, false),
         McpLevel::Read => (true, granted, false),
+        McpLevel::ReadAll => (true, granted, false),
         McpLevel::WriteConfirm => (true, granted, false),
         McpLevel::WriteAuto => (true, granted, true),
     }
@@ -1096,10 +1138,16 @@ pub fn level_of(enabled: bool, granted: &[String], allow_write: bool) -> McpLeve
     if !enabled {
         return McpLevel::Off;
     }
-    match (granted.iter().any(|s| s == WRITE_SCOPE), allow_write) {
-        (false, _) => McpLevel::Read,
-        (true, false) => McpLevel::WriteConfirm,
-        (true, true) => McpLevel::WriteAuto,
+    match (
+        granted.iter().any(|s| s == WRITE_SCOPE),
+        granted.iter().any(|s| s == READ_ALL_SCOPE),
+        allow_write,
+    ) {
+        // 写优先：带了 write:pages 就是写档（读全部空间与否不改变它是"可写"这件事 ✓）
+        (true, _, false) => McpLevel::WriteConfirm,
+        (true, _, true) => McpLevel::WriteAuto,
+        (false, true, _) => McpLevel::ReadAll,
+        (false, false, _) => McpLevel::Read,
     }
 }
 

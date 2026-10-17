@@ -103,9 +103,9 @@ register({
 |---|---|---|---|---|---|---|
 | `page.current` | `api.page.current()` | `read:page.current` | `current-space` | — | string | 1.0.0 |
 | `pages.count` | `api.pages.count()` | `read:pages` | `current-space` | — | number | 1.0.0 |
-| `pages.list` | `api.pages.list(limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `pages.list` | `api.pages.list(limit, spaceId)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `pages.get` | `api.pages.get(id, offset, limit)` | `read:pages` | `current-space` | — | object | 1.0.0 |
-| `pages.search` | `api.pages.search(q, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
+| `pages.search` | `api.pages.search(q, spaceId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `tags.list` | `api.tags.list()` | `read:tags` | `current-space` | — | array | 1.0.0 |
 | `blocks.list` | `api.blocks.list(pageId, limit)` | `read:pages` | `current-space` | — | array | 1.0.0 |
 | `backlinks.list` | `api.backlinks.list(pageId)` | `read:backlinks` | `current-space` | — | array | 1.0.0 |
@@ -146,12 +146,13 @@ register({
 
 ### `pages.list` — 列出本空间页面
 
-- 调用：`api.pages.list(limit)`
+- 调用：`api.pages.list(limit, spaceId)`
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：[{id, title, created_at, updated_at}]，按更新时间倒序；不含正文。时间都是毫秒时间戳
 - 参数：
   - `limit`: `number`（可选），默认 `50` —— 最多返回多少条（上限 200）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
 
 ### `pages.get` — 读取指定页面
 
@@ -166,12 +167,13 @@ register({
 
 ### `pages.search` — 搜索本空间页面
 
-- 调用：`api.pages.search(q, limit)`
+- 调用：`api.pages.search(q, spaceId, limit)`
 - 权限：`read:pages`
 - scope：`current-space`
 - 返回：[{id, title, snippet}]：多词按「全部出现」筛（AND），单词走全文索引（按相关度）、短词走子串；附件里的命中会带「【来自附件】」前缀。**空数组 = 本空间没有命中，不是失败**
 - 参数：
   - `q`: `string` —— 关键词；多个词用空格分隔 ⇒ **全部出现**才算命中（不是连续子串）
+  - `spaceId`: `string`（可选） —— 目标空间 id（省略 = 当前空间）。**跨空间只读**需要外部接入选「只读（全部空间）」档；否则会明确拒（permission_denied），不会悄悄当成当前空间
   - `limit`: `number`（可选），默认 `8` —— 最多返回多少条（上限 100）
 
 ### `tags.list` — 列出本空间标签

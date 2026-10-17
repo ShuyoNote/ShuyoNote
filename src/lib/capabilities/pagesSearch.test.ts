@@ -55,4 +55,20 @@ describe("pages.search：limit 默认值与上限", () => {
     await run()({ q: "甲", limit: Number.NaN }, CTX);
     expect(searchMock().mock.calls[1][1]).toBe(8);
   });
+
+  // ⭐ 2026-10-18：`spaceId` —— 命令面没有"只搜某个非活动空间"的入口 ⇒ 走全空间再按
+  //   `workspace_id` 筛；候选集必须给到上限（200），否则"每空间平分 limit"会少给。
+  it("给了 spaceId ⇒ 全空间检索（200 条候选）后按 workspace_id 筛，再截 limit", async () => {
+    searchMock().mockResolvedValue([
+      { id: "p1", title: "A", snippet: "s", workspace_id: "s1" },
+      { id: "p2", title: "B", snippet: "s", workspace_id: "s2" },
+      { id: "p3", title: "C", snippet: "s", workspace_id: "s2" },
+    ]);
+    const out = (await run()({ q: "甲", limit: 1, spaceId: "s2" }, CTX)) as {
+      pages: Array<{ id: string }>;
+    };
+    expect(searchMock().mock.calls[0][1]).toBe(200);
+    expect(searchMock().mock.calls[0][2]).toBe(true);
+    expect(out.pages.map((p) => p.id)).toEqual(["p2"]);
+  });
 });

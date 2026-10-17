@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../api", () => ({
-  api: { listPages: vi.fn() },
+  api: { listPages: vi.fn(), listWorkspacePages: vi.fn() },
 }));
 
 import { api } from "../api";
@@ -62,4 +62,15 @@ describe("pages.list：limit 口径 + 按更新时间倒序", () => {
       ["created_at", "id", "title", "updated_at"].sort(),
     );
   });
+
+  // ⭐ 2026-10-18：`spaceId` —— 列别的空间走 `listWorkspacePages`（只读、不动活动空间 ✓）。
+  it("给了 spaceId ⇒ 走 listWorkspacePages（不是 listPages）", async () => {
+    const bySpace = api.listWorkspacePages as unknown as ReturnType<typeof vi.fn>;
+    bySpace.mockResolvedValue([page("x", 5), page("y", 9)]);
+    const out = (await run()({ spaceId: "s2" }, CTX)) as { pages: Array<{ id: string }> };
+    expect(bySpace).toHaveBeenCalledWith("s2");
+    expect(listMock()).not.toHaveBeenCalled();
+    expect(out.pages.map((p) => p.id)).toEqual(["y", "x"]);
+  });
 });
+
