@@ -486,7 +486,9 @@ html[data-platform="win"] .app-body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 8px 0;
+  /* ⭐ 2026-10-18（owner：图标要像 VS Code 那样齐整）：与窄屏那条 `.activity-bar{padding:4px 2px}`
+     统一 —— 竖条 48，按钮 44，两侧各 2。 */
+  padding: 4px 2px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
 }
@@ -494,12 +496,13 @@ html[data-platform="win"] .app-body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  /* ⭐ 2026-10-18：节距取 **44**（原来 40＋2 缝 ＝ 42）—— 与窄屏 `.activity-group{gap:0}` 同口径 ✓ */
+  gap: 0;
 }
 .activity-btn {
   position: relative;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border: none;
@@ -508,6 +511,28 @@ html[data-platform="win"] .app-body {
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: color var(--transition-fast), background var(--transition-fast);
+}
+/* ⭐⭐ **2026-10-18（owner：侧边工具栏图标不像 VS Code 那样齐整）**：
+ * rail 里的图标**只在这里定规格** —— 20×20 渲染、`viewBox` 24（图标组件自带）、**线宽 2**。
+ * ⚠️ 真因（改前量到的）：11 颗按 18px 渲染、同步/邮箱 2 颗按 20px ⇒ 同一 `strokeWidth=1.7`
+ *   在两档里实际是 **1.28px / 1.42px**；再加上 18px 下各图标的视觉外接框从 ~9px 到 ~15px 不等 ⇒ 看着散。
+ * ⇒ 统一渲染 20px ＋ 线宽 2（实际 ≈1.67px），并**禁止**在 `ActivityBar.tsx` 里再传 `width/height`。
+ */
+.activity-bar .activity-btn > svg,
+.activity-bar .btn-trash > svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
+/* ⭐ 2026-10-18：徽标**绝对定位到右上角** —— 原来 `.sync-badge` 是 grid 的第二行，
+ * 会把 20px 图标往上顶（带徽标的那两颗与邻居**不在一根中线上**）；`.trash-badge` 又是 -5/-5 另一套。 */
+.activity-bar .activity-btn > .sync-badge,
+.activity-bar .activity-btn > .trash-badge,
+.activity-bar .btn-trash > .trash-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  pointer-events: none;
 }
 .activity-btn:hover {
   color: var(--text);
@@ -532,9 +557,10 @@ html[data-platform="win"] .app-body {
 .activity-btn.is-on::before {
   content: "";
   position: absolute;
+  /* ⭐ 2026-10-18：**通高**（原来 top/bottom 各缩 8 ⇒ 只有 24px 高，比按钮矮一截 ⇒ 显不齐） */
   left: 0;
-  top: 8px;
-  bottom: 8px;
+  top: 0;
+  bottom: 0;
   width: 2px;
   border-radius: 0 2px 2px 0;
   background: var(--accent);
@@ -547,8 +573,9 @@ html[data-platform="win"] .app-body {
   display: flex;
 }
 .activity-bar .btn-trash {
-  width: 40px;
-  height: 40px;
+  position: relative; /* ⭐ 2026-10-18：徽标按这个按钮定位（右上角，与 rail 其余徽标同一格） */
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border: none;

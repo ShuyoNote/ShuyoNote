@@ -144,7 +144,7 @@ export function SearchPanel() {
         title="搜索笔记"
         aria-label="搜索笔记"
       >
-        <SearchIcon width={18} height={18} />
+        <SearchIcon />
       </button>
       {open && (
         <div

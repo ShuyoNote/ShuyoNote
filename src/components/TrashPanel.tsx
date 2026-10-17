@@ -149,7 +149,7 @@ export function TrashPanel() {
   return (
     <div className="trash-panel">
       <button ref={triggerRef} className="btn-trash" onClick={toggle} title="回收站" aria-label="回收站">
-        <TrashIcon width={18} height={18} />
+        <TrashIcon />
         {items.length > 0 && <span className="trash-badge">{items.length > 99 ? "99+" : items.length}</span>}
       </button>
       {open && (

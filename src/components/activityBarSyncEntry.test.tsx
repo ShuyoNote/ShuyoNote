@@ -106,7 +106,7 @@ describe("2026-10-14：左栏「邮箱」换成 SVG（与其余图标同一套�
     const bar = src("ActivityBar.tsx");
     // ⚠️ **2026-10-14**：⭐ 这句原来把**尺寸字面**也钉进去了 ✗ —— ⭐ 而尺寸刚被对齐过 ✓
     //   ⇒ ⭐ 按 R192「换对象不删断言」：⭐ 只钉**用的是 `MailIcon` 这个组件** ✓，⛔ 不再钉具体像素 ✗。
-    expect(bar, "⭐ 必须用的是 `MailIcon` 这个 SVG 组件 ✓").toContain("<MailIcon width={");
+    expect(bar, "⭐ 必须用的是 `MailIcon` 这个 SVG 组件 ✓").toContain("<MailIcon");
     expect(bar, "⭐ `MailIcon` 也要在 import 名单里 ✓").toContain("  MailIcon,");
   });
 
