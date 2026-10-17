@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { pushOverlay } from "../lib/overlayStack";
 import { useMobileNav } from "../store/mobileNav";
 import { platform } from "../lib/platform";
-import { MESH_TRUST_BEGIN_COMMAND } from "../lib/trustDevicePanelReadings";
+import { MESH_TRUST_BEGIN_COMMAND, MESH_TRUST_PREPARE_COMMAND } from "../lib/trustDevicePanelReadings";
 import { useSpaceStore } from "../store/space";
 
 /**
@@ -44,8 +44,26 @@ export function MobilePairCode() {
     }
     let alive = true;
     setLoading(true);
-    api
-      .pairingCodeReading({ peerDeviceId: pairPeer.deviceId, peerPubkey: pairPeer.pubkey })
+    // ⭐ d4（`ca480e7a` 那条**死锁**的移动版 ✓）：**「接入」那一步必须先 `mesh_trust_prepare`** ✗ ——
+    //   桌面那边逐字注释：「`trust_ask` 原来**只在** `mesh_trust_begin` 里生成 ⇒ ⭐ **死锁**
+    //   （owner 真机："点接入了，也没有（码）"✓）⇒ **点「接入」调它** ⇒ 码可读 ✓」✓
+    //   ⇒ ⭐ 参数形状**照抄** `SyncPanel.tsx:412`（`{ peerDeviceId }` ✓ —— ⛔ 不自创参数 ✗）。
+    //   ⚠️ ⭐ **这不是"发信任"** ✓：`prepare` **只产生对码、不登记** ✗ ⇒ 「没有自动通过」那条**不被违反** ✓；
+    //      ⛔ `mesh_trust_begin` **仍然只在人点「确认」时调** ✗（见 `confirmTrust` ✓）。
+    (async () => {
+      try {
+        await platform.executor.invoke(MESH_TRUST_PREPARE_COMMAND, { peerDeviceId: pairPeer.deviceId });
+      } catch (e) {
+        // ⚠️ 失败**如实显示** ✓（⛔ 不吞 ✗）⇒ 码区就显示"读不到码 ＋ 原因" ✓（已有那条路径 ✓）。
+        if (alive) {
+          setReason(`准备对码失败：${String(e instanceof Error ? e.message : e).slice(0, 80)}`);
+          setLoading(false);
+        }
+        return;
+      }
+      if (!alive) return;
+      api
+        .pairingCodeReading({ peerDeviceId: pairPeer.deviceId, peerPubkey: pairPeer.pubkey })
       .then((r) => {
         if (!alive) return;
         setCode(r.code);
@@ -54,9 +72,10 @@ export function MobilePairCode() {
       .catch((e) => {
         if (alive) setReason(`读不到码（${String(e instanceof Error ? e.message : e).slice(0, 60)}）`);
       })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+        .finally(() => {
+          if (alive) setLoading(false);
+        });
+    })();
     return () => {
       alive = false;
     };
