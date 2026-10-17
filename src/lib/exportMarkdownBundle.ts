@@ -70,6 +70,11 @@ const MIME_EXT: Record<string, string> = {
 export interface BundleAttachmentMeta {
   mime?: string | null;
   name?: string | null;
+  /**
+   * ⭐ 2026-10-18：它**挂在哪一个文件夹节点**下（`page_id = 文件夹 id` ✓；页面/未整理 ⇒ 缺省）。
+   * 有值 ⇒ 导出时放进那个文件夹的目录（owner：「文件夹里的附件也放进 `设计效果图/` 那个目录」✓）。
+   */
+  folderId?: string | null;
 }
 
 /** mime → 扩展名（认不出来 ⇒ 空串；⛔ 不返回 `bin`，让调用方决定兜底 ✗）。 */
@@ -291,6 +296,20 @@ export function referencedHashes(prepared: readonly PreparedPage[]): string[] {
  * · 名字仍走 `safeEntryName` ✓（清理 ＋ 防 `..` ✓）。
  */
 export function treePaths(prepared: readonly PreparedPage[]): Map<string, string> {
+  return treePathsAndFolderDirs(prepared).paths;
+}
+
+/**
+ * ⭐⭐ **2026-10-18（owner：「文件夹里的附件也放进 `设计效果图/` 那个目录」）**：
+ * 目录树的**另一半读数** —— 每个文件夹节点在 zip 里的目录前缀（`设计效果图` ／ `父/子` ✓）。
+ *
+ * ⚠️ 与 [`treePaths`] 必须**同一套命名与去重**（同一个 `name`、同一个 `nameMaps` ✓）——
+ * 各算一遍迟早会漂（正是"文件夹里附件放错目录"的形状 ✓）。
+ */
+function treePathsAndFolderDirs(prepared: readonly PreparedPage[]): {
+  paths: Map<string, string>;
+  folderDirs: Map<string, string>;
+} {
   const usable = prepared.filter((p) => !p.error);
   const byId = new Map(usable.map((p) => [p.id, p] as const));
 
@@ -326,6 +345,8 @@ export function treePaths(prepared: readonly PreparedPage[]): Map<string, string
     (a.title || "").localeCompare(b.title || "", "zh") || a.id.localeCompare(b.id);
 
   const paths = new Map<string, string>();
+  /** ⭐ 2026-10-18：文件夹节点 ⇒ zip 里的目录前缀（附件按归属放进来时用它 ✓） */
+  const folderDirs = new Map<string, string>();
   const nameMaps = new Map<string, Set<string>>(); // 目录 → 该目录里已用掉的名字（去重 ✓）
   const walk = (parent: string | null, dir: string) => {
     for (const p of (children.get(parent) ?? []).slice().sort(byTitle)) {
@@ -337,12 +358,14 @@ export function treePaths(prepared: readonly PreparedPage[]): Map<string, string
       used.add(name);
       // ⭐ 2026-10-18：文件夹节点**不产出自己的 `.md`** ✓ —— 只把它当一层目录往下走
       //   （`paths` 里没有它的条目；`planBundle` 也据此不再给它兜底造一个文件 ✓）。
-      if (p.kind !== "folder") paths.set(p.id, dir ? `${dir}/${name}.md` : `${name}.md`);
+      //   ⭐ 同一天：它的**目录前缀**要记下来（挂在它名下的附件按这个目录放 ✓）。
+      if (p.kind === "folder") folderDirs.set(p.id, dir ? `${dir}/${name}` : name);
+      else paths.set(p.id, dir ? `${dir}/${name}.md` : `${name}.md`);
       walk(p.id, dir ? `${dir}/${name}` : name); // 子页进同名目录 ✓（文件夹也一样）
     }
   };
   walk(null, "");
-  return paths;
+  return { paths, folderDirs };
 }
 
 export interface BundleFile {
@@ -506,13 +529,23 @@ export function planBundle(
   }
   const metaFor = (hash: string): BundleAttachmentMeta => {
     const m = metaOf(hash);
-    return { mime: nodeMime.get(hash) || m?.mime || "", name: m?.name ?? null };
+    return {
+      mime: nodeMime.get(hash) || m?.mime || "",
+      name: m?.name ?? null,
+      // ⭐ 2026-10-18：挂在文件夹名下的附件要进那个目录（owner 口径）
+      folderId: m?.folderId ?? null,
+    };
   };
   const canUse = (hash: string) => !available || available.has(hash);
 
   const files: BundleFile[] = [];
   // ⭐ 2026-10-18：两种路径口径（C 弹窗的「纯 .md 平铺」）—— 缺省仍是目录树 ✓
-  const treePathsById = opts.flat ? flatPaths(prepared) : treePaths(prepared);
+  //   ⭐ 同一天：目录树这一档**同时**拿到文件夹目录前缀（附件按归属放进去 ✓）
+  const tree = opts.flat
+    ? { paths: flatPaths(prepared), folderDirs: new Map<string, string>() }
+    : treePathsAndFolderDirs(prepared);
+  const treePathsById = tree.paths;
+  const folderDirs = tree.folderDirs;
   const assets = new Map<string, BundleAsset>();
   const unresolved = new Set<string>();
   let skipped = 0;
@@ -524,7 +557,16 @@ export function planBundle(
   const allocAssetPath = (hash: string): string => {
     const hit = pathByHash.get(hash);
     if (hit) return hit;
-    const base = assetPathFor(hash, metaFor(hash));
+    const meta = metaFor(hash);
+    const baseAssetsPath = assetPathFor(hash, meta);
+    // ⭐⭐ 2026-10-18（owner：「文件夹里的附件也放进 `设计效果图/` 那个目录」）：
+    //   挂在**文件夹节点**名下的附件 ⇒ 用那个文件夹的目录前缀（与子页同名的那个目录 ✓）。
+    //   ⚠️ 文件名/扩展名/清洗仍走 `assetPathFor`（⛔ 不另写一套 ✗），只换目录前缀；
+    //   去重也在**目标目录内**做（`usedAssetPaths` 是整包集合 ⇒ 同名会退 `-<hash 前 6>` ✓）。
+    const folderDir = meta.folderId ? folderDirs.get(meta.folderId) : undefined;
+    const base = folderDir
+      ? `${folderDir}/${baseAssetsPath.replace(/^assets\//, "")}`
+      : baseAssetsPath;
     // 第一条用原名；只有**真的撞了**才退 `-<hash 前 6 位>` ✓
     const path = usedAssetPaths.has(base) ? dedupeAssetPath(base, hash, usedAssetPaths) : base;
     usedAssetPaths.add(path);
@@ -687,8 +729,11 @@ async function allAttachmentMeta(
   pages: readonly MarkdownPageInput[],
 ): Promise<{ meta: Map<string, BundleAttachmentMeta>; unreadable: number }> {
   const meta = new Map<string, BundleAttachmentMeta>();
+  // ⭐ 2026-10-18：这一轮里哪些是**文件夹节点**（它的附件要按它的目录放 ✓）
+  const folderIds = new Set(pages.filter((p) => p.kind === "folder").map((p) => p.id));
   let unreadable = 0;
   for (const pageId of [...pages.map((p) => p.id), null]) {
+    const folderId = pageId !== null && folderIds.has(pageId) ? pageId : null;
     let rows: AttachmentMeta[] = [];
     try {
       rows = await api.listPageAttachments(pageId);
@@ -698,7 +743,7 @@ async function allAttachmentMeta(
     }
     for (const row of rows ?? []) {
       if (!row?.hash || meta.has(row.hash)) continue;
-      meta.set(row.hash, { mime: row.mime || "", name: row.name || null });
+      meta.set(row.hash, { mime: row.mime || "", name: row.name || null, folderId });
     }
   }
   return { meta, unreadable };
