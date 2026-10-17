@@ -122,9 +122,20 @@ pub fn mesh_trust_prepare(peer_device_id: String) -> Result<MeshTrustPrepare, St
             message: "不知道要跟哪一台核对（没有指定对面）".to_string(),
         });
     }
-    let ask = new_trust_ask();
     let now = crate::lan_state::now_ms();
-    crate::lan_state::with_trust(|h| h.prepare(&peer, &ask, now, crate::pairing_trust::TRUST_TTL_MS));
+    // ⭐⭐ **2026-10-17 第二版（重要 ✓）**：⭐ **已经有这一轮的 ask ⇒ 采纳它，不另生成** ✗。
+    //
+    // ⚠️ 为什么必须这样：公告 30 秒一轮（`lan_state::ANNOUNCE_INTERVAL_MS` ✓）⇒ 两台机器
+    //   几乎不可能同时互相听到 ✓。真实顺序是：甲点「接入」⇒ 甲的 ask 广播出去（≤30 秒）⇒
+    //   乙收到、点「接入」✓。⭐ 若乙这时**自己新造一串** ⇒ 两边码必然不同 ⇒ 永远对不上 ✗
+    //   （这正是"点接入了也没有"的第二半 ✓）。⇒ ⭐ 有现成那串（自己发起的 ／ 对面发起的 ✓）
+    //   **就沿用它** ✓；只有一发都没有时才新造 ✓。
+    // ⭐ 顺带一个好处：重复点「接入」是**幂等**的（同一轮 ⇒ 同一串 ⇒ 同一个码 ✓）。
+    let existing = crate::lan_state::with_trust(|h| h.ask_for(&peer, now));
+    let ask = existing.unwrap_or_else(new_trust_ask);
+    crate::lan_state::with_trust(|h| {
+        h.prepare(&peer, &ask, now, crate::pairing_trust::TRUST_TTL_MS)
+    });
     Ok(MeshTrustPrepare {
         prepared: true,
         message: "已发起这一轮比对（还没登记信任 —— 码对上之后再确认）".to_string(),

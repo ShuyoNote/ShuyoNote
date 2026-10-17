@@ -685,6 +685,23 @@ mod tests {
         assert_eq!(h.ask_for("dev-a", 2_500), None, "过了 TTL ⇒ 读不到 ✓");
     }
 
+    /// ⭐⭐ **2026-10-17**：⭐ 已经收到对面的 ask 时，本机 `prepare` **沿用它** ⇒ 两端同一串 ✓
+    /// （否则第二台会自己新造一串 ⇒ 码永远对不上 ✓）。委托 `mesh_trust_prepare` 采用这一判定 ✓。
+    #[test]
+    fn prepare_can_adopt_the_incoming_ask_so_both_ends_agree() {
+        let mut h = TrustHandshake::default();
+        h.note_ask_with("dev-a", "ask-from-a", 1_000, TRUST_TTL_MS);
+        // 第二台在收到 ask 之后才点「接入」：命令层会把 `ask_for` 读到的这一串原样交给 prepare ✓
+        let adopted = h.ask_for("dev-a", 1_500).expect("对面那串必须读得到");
+        assert_eq!(adopted, "ask-from-a");
+        h.prepare("dev-a", &adopted, 1_500, TRUST_TTL_MS);
+        assert_eq!(
+            h.ask_for("dev-a", 1_600),
+            Some("ask-from-a".to_string()),
+            "⭐ 采纳之后本机读到的仍是**同一串** ⇒ 两端同一个码 ✓"
+        );
+    }
+
     /// ⭐ `begin` 之后**过期**也读不到（⭐ 与 incoming 同一条口径 ✓）。
     #[test]
     fn an_expired_outgoing_ask_is_not_readable() {
