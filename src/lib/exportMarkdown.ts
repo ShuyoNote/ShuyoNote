@@ -59,7 +59,14 @@ const NODES = [
   TableRowNode,
 ];
 
-function sanitizeName(name: string): string {
+/**
+ * 文件名清洗（`/ \ : * ? " < > |` 与控制字符 ⇒ `_`、去掉首尾点/空格、限长 120）。
+ *
+ * 导出成 .md 文件与「带附件打成 zip」（`exportMarkdownBundle.ts`）**共用这一份** ——
+ * zip 条目名另有更严的一层（额外剥 `..`，防 zip-slip ✗），但那层是**在这份之上**加的，
+ * ⛔ 不是另写一份清洗 ✗（两份就会漂）。
+ */
+export function sanitizeName(name: string): string {
   // Strips characters invalid on Windows/macOS paths; keeps CJK & starts safe.
   let s = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim();
   s = s.replace(/[.\s]+$/g, ""); // trailing dots/spaces

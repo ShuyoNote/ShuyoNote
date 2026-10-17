@@ -15,6 +15,10 @@ import { buildWikiExport, type WikiPageInput } from "../lib/wikiExport";
 import { usePdfReader } from "../store/pdfReader";
 import { useCommunitySave } from "../store/communitySave";
 import { exportWorkspaceToMarkdown, exportPageToMarkdown } from "../lib/exportMarkdown";
+import {
+  exportPageBundleToZip,
+  exportWorkspaceBundleToZip,
+} from "../lib/exportMarkdownBundle";
 import { docJsonOfPage } from "../lib/docContent";
 import type { PageMeta } from "../types";
 
@@ -130,6 +134,26 @@ registerCommandGroup({
       description: "把本工作空间所有页面导出为 .md 文件到所选目录",
       closeOnRun: true,
       run: () => exportWorkspaceToMarkdown(),
+    },
+    {
+      id: "export.current-markdown-zip",
+      title: "导出当前页为 Markdown ＋ 附件（zip）",
+      description: "把这一页的 .md 与它引用的附件打成一个 zip；正文里的 attachment://<hash> 换成 assets/ 相对路径",
+      // ⭐ V1.1：与上面那格**并存** —— 纯 .md 那条路不碰附件、也不改引用（判据在
+      //   `exportMarkdown.test.ts` 里钉着）。这一格只多"打包 ＋ 重写路径"，转换仍是同一份 ✓。
+      closeOnRun: true,
+      run: async (ctx) => {
+        if (!ctx.currentId) return "未打开页面";
+        const page = await api.getPage(ctx.currentId);
+        return exportPageBundleToZip({ id: page.id, title: page.title, docJson: docJsonOfPage(page) });
+      },
+    },
+    {
+      id: "export.workspace-markdown-zip",
+      title: "导出本空间为 Markdown ＋ 附件（zip）",
+      description: "全部页面 ＋ 它们引用的附件打成一个 zip（同 hash 只放一份，引用换成 assets/ 相对路径）",
+      closeOnRun: true,
+      run: () => exportWorkspaceBundleToZip(),
     },
     {
       id: "export.workspace-wiki",
