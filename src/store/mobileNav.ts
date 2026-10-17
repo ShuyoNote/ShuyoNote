@@ -14,7 +14,7 @@ import { create } from "zustand";
  *    它由 `App.tsx` 的 `isMobile && currentId` 那一支决定 ✓，见 `MobileRead.tsx` 文件头 ✓）。
  * ⚠️ 它**只管移动端**：`App.tsx` 里是在 `isMobile` 那一支里读它的 ✓，桌面分支一个字不动 ✓。
  */
-export type MobileScreen = "home" | "capture" | "search" | "pair" | "settings";
+export type MobileScreen = "home" | "capture" | "search" | "pair" | "settings" | "paircode";
 
 interface MobileNavState {
   screen: MobileScreen;
@@ -27,12 +27,20 @@ interface MobileNavState {
    * ⚠️ 兜底：`null` ⇒ 调用方回 `home` ✓（⛔ 不崩 ✗）。
    */
   cameFrom: MobileScreen | null;
+  /**
+   * ⭐ **带着哪一台设备进「首次配对」**（d1 ✓）—— 与桌面 `nearby-allow` **同形** ✓：
+   * 只记 peer ＋ 打开对码屏 ✓，⛔ **先不发任何信任请求** ✗；⛔ 不复制面板的 `setDpPeer` 整套状态 ✗。
+   */
+  pairPeer: { deviceId: string; deviceName: string; shortId: string } | null;
+  setPairPeer: (peer: { deviceId: string; deviceName: string; shortId: string } | null) => void;
   setScreen: (screen: MobileScreen) => void;
 }
 
 export const useMobileNav = create<MobileNavState>((set) => ({
   screen: "home",
   cameFrom: null,
+  pairPeer: null,
+  setPairPeer: (peer) => set({ pairPeer: peer }),
   // ⭐ 切到**不同**的屏时记下上一屏 ✓；重复 set 同一屏 ⇒ 不覆盖来处 ✓（免得把自己的来处冲掉 ✗）。
   setScreen: (screen) => set((s) => ({ screen, cameFrom: s.screen === screen ? s.cameFrom : s.screen })),
 }));

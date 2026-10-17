@@ -25816,6 +25816,82 @@ body.is-plugin-panel-open .main {
 /* ⭐ 【C3】三颗胶囊＝过滤器（选中态**实心蓝** ✓）。⚠️ 类名一律 `mpair-` 开头 ✓
    （⛔ `.is-active`／`.active` 这类泛名会撞 `check-mobile-class-namespace` ✗ —— 今晚刚栽过 ✓）；
    ⚠️ 颜色用**既有 token** ✓（⛔ 不写死色值 ✗）。 */
+/* ⭐ d1：移动端「首次配对」屏**骨架**（20 格对码未接 ✗ —— 见组件注释 ✓）。
+   ⚠️ 类名 `mpair-code-` 开头 ✓（⛔ 泛名 ✗）；颜色用既有 token ✓（⛔ 不写死色值 ✗）。 */
+.mpair-code {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+  background: var(--bg);
+}
+.mpair-code-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.mpair-code-back {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+}
+.mpair-code-head-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mpair-code-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 14px 24px;
+}
+.mpair-code-lead {
+  margin: 0 0 14px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.mpair-code-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 12px;
+  margin-bottom: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--chip-bg);
+  color: var(--text-dim);
+}
+.mpair-code-pending-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.mpair-code-pending-sub,
+.mpair-code-pending-peer {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.mpair-code-cancel {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
 .mpair-caps {
   display: flex;
   flex-wrap: wrap;
