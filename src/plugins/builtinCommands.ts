@@ -113,7 +113,7 @@ registerCommandGroup({
     },
     {
       id: "export.current-markdown",
-      title: "导出当前页为 Markdown",
+      title: "导出当前页为 .md 单文件（不含附件）",
       description: "把当前这一页存成 .md 文件（自选存到哪）",
       // ⭐ 2026-10-15（owner：「添加一个直接导出 Markdown 文件的功能」）：
       //   命令面板这一格与编辑器工具栏那格**调同一个** `exportPageToMarkdown` ✓ ——
@@ -130,14 +130,14 @@ registerCommandGroup({
     },
     {
       id: "export.workspace-markdown",
-      title: "导出工作空间为 Markdown",
+      title: "导出本空间为多个 .md 文件（平铺，不含附件）",
       description: "把本工作空间所有页面导出为 .md 文件到所选目录",
       closeOnRun: true,
       run: () => exportWorkspaceToMarkdown(),
     },
     {
       id: "export.current-markdown-zip",
-      title: "导出当前页为 Markdown ＋ 附件（zip）",
+      title: "导出当前页为 .md ＋ 附件（打包 zip）",
       description: "把这一页的 .md 与它引用的附件打成一个 zip；正文里的 attachment://<hash> 换成 assets/ 相对路径",
       // ⭐ V1.1：与上面那格**并存** —— 纯 .md 那条路不碰附件、也不改引用（判据在
       //   `exportMarkdown.test.ts` 里钉着）。这一格只多"打包 ＋ 重写路径"，转换仍是同一份 ✓。
@@ -150,7 +150,7 @@ registerCommandGroup({
     },
     {
       id: "export.workspace-markdown-zip",
-      title: "导出本空间为 Markdown ＋ 附件（zip）",
+      title: "导出本空间为 .md ＋ 附件（打包 zip）",
       description: "全部页面 ＋ 它们引用的附件打成一个 zip（同 hash 只放一份，引用换成 assets/ 相对路径）",
       closeOnRun: true,
       run: () => exportWorkspaceBundleToZip(),
